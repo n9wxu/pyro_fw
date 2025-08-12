@@ -1,0 +1,2 @@
+#define VERSION_MAJOR @pyro_test_VERSION_MAJOR@
+#define VERSION_MINOR @pyro_test_VERSION_MINOR@
