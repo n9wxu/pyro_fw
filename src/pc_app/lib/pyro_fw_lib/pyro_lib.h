@@ -10,7 +10,7 @@
 
 // Data structures
 
-typedef struct {
+typedef struct report_struct {
   float altitude;
   bool main_present;
   bool drog_present;
@@ -18,7 +18,7 @@ typedef struct {
   bool drog_fired;
 } pyro_report;
 
-typedef struct {
+typedef struct pyro_struct {
   double launch_height_trigger;  ///< altitude to climb before arming system
   double maximum_time_to_main;   ///< maximum flight time before firing the main
                                  ///< chute
@@ -30,21 +30,24 @@ typedef struct {
                              ///< firing the drogue
 } pyro_config;
 
-#define ALTITUDE_COUNTS 4
 // All data required by the pyro to exist between runs of the pyro algorithm
 // the pyro algorithm must not have any local state.
-typedef struct {
-  double altitude[ALTITUDE_COUNTS]; // last 4 altitude readings
+typedef struct context_struct {
+  double altitude;
   bool waiting_to_launch;
+  double maximum_altitude;
 
   double altitude_sum;
   double altitude_average;
 
   pyro_config *config;
-} pyro_context;
 
-// interface functions
-void pyro_log(char *s);
+  // interface functions
+  void (*log)(char *s);
+  void (*fire_main)(void);
+  void (*fire_drogue)(void);
+
+} pyro_context;
 
 // library entry
 void pyro_init_context(pyro_context *context, pyro_config *config);

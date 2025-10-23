@@ -1,9 +1,13 @@
 #include <pyro_lib.h>
 
+#include "unity.h"
+#include <ini.h>
+
 #include "pyro_testConfig.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 typedef struct {
   double met;
@@ -74,33 +78,82 @@ double get_altitude_for_time(double met) {
   return result;
 }
 
-void load_config_from_file(pyro_config *config) {
+static int handler(void *user, const char *section, const char *name,
+                   const char *value) {
+
+  pyro_config *config = (pyro_config *)user;
+#define MATCH(s, n) strcmp(section, s) == 0 && strcmp(name, n) == 0
+  //  bool metric = iniparser_getboolean(ini, "global:metric", false);
+  // TODO add code to normalize all internal units.
+
+  if (MATCH("global", "LaunchHeightTrigger")) {
+    config->launch_height_trigger = atof(value);
+  } else if (MATCH("main", "MaxTimeToRelease")) {
+    config->maximum_time_to_main = atof(value);
+  } else if (MATCH("drogue", "MaxTimeToRelease")) {
+    config->maximum_time_to_drogue = atof(value);
+  } else if (MATCH("main", "ReleaseAltitude")) {
+    config->main_deploy_height = atof(value);
+  } else if (MATCH("drogue", "MaxDistanceToFall")) {
+    config->drogue_deploy_fall = atof(value);
+  } else {
+    return 0;
+  }
+  return 1;
+}
+
+void load_config_from_file(char *filename, pyro_config *config) {
+
   if (config) {
-    // load some defaults for now.  Read from a file later.
-    config->launch_height_trigger = 50.0;
-    config->maximum_time_to_main = 20.0;
-    config->maximum_time_to_drogue = 5.0;
-    config->main_deploy_height = 500.0;
-    config->drogue_deploy_fall = 20.0;
+    int error = ini_parse(filename, handler, config);
+
+    if (error < 0) {
+      fprintf(stderr, "cannot parse: %s : %d\n", filename, error);
+      exit(1);
+    }
   }
 }
 
 void pyro_log(char *s) { puts(s); }
 
+bool main_fired = false;
+bool drogue_fired = false;
+
+void pyro_fire_main(void) {
+  if (!main_fired) {
+    puts("Fire MAIN");
+    main_fired = true;
+  }
+}
+void pyro_fire_drogue(void) {
+  if (!drogue_fired) {
+    puts("Fire DROGUE");
+    drogue_fired = true;
+  }
+}
+
 int main(int argc, char **argv) {
 
   pyro_report theReport;
   pyro_context theContext;
+  pyro_config theConfig;
 
-  if (argc != 2) {
+  if (argc != 3) {
     printf("Error, no file argument\n");
     exit(1);
   }
 
   load_launch_data(argv[1]);
+  load_config_from_file(argv[2], &theConfig);
+
   double flight_time = theData[launch_data_size - 1].met;
 
   printf("Test v%d.%d\n", VERSION_MAJOR, VERSION_MINOR);
+
+  pyro_init_context(&theContext, &theConfig);
+  theContext.log = pyro_log;
+  theContext.fire_main = pyro_fire_main;
+  theContext.fire_drogue = pyro_fire_drogue;
 
   double mission_elapsed_time = 0;
 
