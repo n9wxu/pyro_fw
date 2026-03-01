@@ -95,7 +95,6 @@ void mimic_fat_init(const struct lfs_config *c) {
     // Try to mount, format if it fails
     int err = lfs_mount(&real_filesystem, littlefs_lfs_config);
     if (err) {
-        printf("Formatting littlefs (error=%d)...\n", err);
         lfs_format(&real_filesystem, littlefs_lfs_config);
         lfs_mount(&real_filesystem, littlefs_lfs_config);
     }
@@ -1420,16 +1419,21 @@ void mimic_fat_read(uint8_t lun, uint32_t sector, void *buffer, uint32_t bufsize
         return;
     }
 
-    printf("Reading data sector %lu\n", sector);
-    uint32_t cluster = sector - fat_sector_size();
-    size_t offset = 0;
-    find_dir_entry_cache_result_t result = {0};
-
-    if (cluster == 1) {
-        printf("Reading root directory (cluster 1, sector %lu)\n", sector);
-        read_temporary_file(cluster, buffer);
+    // Root directory is after FAT, before data area
+    uint32_t root_dir_start = 1 + fat_sector_size();
+    uint32_t root_dir_sectors = 1; // 16 entries * 32 bytes / 512
+    
+    if (sector >= root_dir_start && sector < root_dir_start + root_dir_sectors) {
+        printf("Reading root directory (sector %lu)\n", sector);
+        read_temporary_file(1, buffer);
         return;
     }
+
+    printf("Reading data sector %lu\n", sector);
+    uint32_t data_start = root_dir_start + root_dir_sectors;
+    uint32_t cluster = sector - data_start + 2; // Clusters start at 2
+    size_t offset = 0;
+    find_dir_entry_cache_result_t result = {0};
 
     uint32_t base_cluster = find_base_cluster_and_offset(cluster, &offset);
     if (base_cluster == 0) { // is not allocated
