@@ -45,6 +45,7 @@ typedef struct {
 #define DISK_SECTOR_SIZE 512
 
 void mimic_fat_init(const struct lfs_config *c);
+void mimic_fat_format_if_needed(void);
 size_t mimic_fat_total_sector_size(void);
 void mimic_fat_create_cache(void);
 void mimic_fat_cleanup_cache(void);

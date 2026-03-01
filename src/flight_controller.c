@@ -8,6 +8,7 @@
 #include "pressure_sensor.h"
 #include "tusb.h"
 #include "bsp/board_api.h"
+#include "mimic_fat.h"
 
 
 // GPIO Pins
@@ -320,8 +321,10 @@ int main() {
     
     printf("Pyro MK1B Flight Computer\n");
     
-    // Don't mount here - let mimic_fat_create_cache() handle it
-    // The MSC driver will mount on first read
+    // Format littlefs if needed (before USB MSC operations)
+    extern const struct lfs_config lfs_pico_flash_config;
+    mimic_fat_init(&lfs_pico_flash_config);
+    mimic_fat_format_if_needed();
     
     // Init UART0 for telemetry
     uart_init(uart0, 115200);
