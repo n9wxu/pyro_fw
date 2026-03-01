@@ -51,6 +51,8 @@ int main() {
   stdio_init_all();
   board_init();
 
+  printf("starting up\n\n");
+
   tud_init(BOARD_TUD_RHPORT);
 
   if (board_init_after_tusb) {
@@ -58,11 +60,11 @@ int main() {
   }
 
   // // Set up our UART
-  // uart_init(UART_ID, BAUD_RATE);
-  // // Set the TX and RX pins by using the function select on the GPIO
-  // // Set datasheet for more information on function select
-  // gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
-  // gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+  uart_init(UART_ID, BAUD_RATE);
+  // Set the TX and RX pins by using the function select on the GPIO
+  // Set datasheet for more information on function select
+  gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
+  gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
 
   // Use some the various UART functions to send out data
   // In a default system, printf will also output via the default UART
@@ -92,9 +94,10 @@ int main() {
 
   watchdog_enable(100, 1);
   watchdog_update();
-
+  int count = 0;
   while (true) {
     watchdog_update();
     tud_task();
+    printf("Test : %d\n", count++);
   }
 }

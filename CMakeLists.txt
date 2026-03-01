@@ -92,7 +92,7 @@ target_include_directories(pyro_fw_c PRIVATE
 )
 
 target_include_directories(pyro_fw_c SYSTEM PUBLIC
-        ${littleFS_SOURCE_DIR}
+        ${littlefs_SOURCE_DIR}
 )
 
 pico_add_extra_outputs(pyro_fw_c)
