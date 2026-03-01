@@ -97,7 +97,7 @@ Time_ms,Pressure_Pa,Altitude_cm,State
 
 ### Data Collection
 - **Sample Rate:** 
-  - PAD_IDLE: 1Hz (1000ms intervals)
+  - PAD_IDLE: 100Hz (10ms intervals) - for quick launch detection
   - LAUNCH/APOGEE: 10Hz (100ms intervals)
   - FALLING: 20Hz (50ms intervals) - for precise pyro deployment
   - LANDED: 1Hz (1000ms intervals)

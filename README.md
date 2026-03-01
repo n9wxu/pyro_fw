@@ -92,7 +92,7 @@ Two-digit codes (1-5 beeps per digit):
 Flight data saved to `flight_NNNN.csv` with:
 - **Metadata:** ID, name, config, continuity test results
 - **Flight Data:** Variable rate pressure/altitude/time/state
-  - PAD_IDLE: 1Hz
+  - PAD_IDLE: 100Hz (10ms - quick launch detection)
   - LAUNCH/APOGEE: 10Hz
   - FALLING: 20Hz (for precise pyro deployment, ±5m accuracy)
   - LANDED: 1Hz

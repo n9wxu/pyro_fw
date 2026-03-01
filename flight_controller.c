@@ -201,7 +201,7 @@ int main() {
         int32_t altitude = pressure_to_altitude_cm(pdata.pressure_pa, ground_pressure);
         
         // State machine
-        uint32_t sample_interval = (state == FALLING) ? 50 : (state == PAD_IDLE || state == LANDED) ? 1000 : 100;
+        uint32_t sample_interval = (state == PAD_IDLE) ? 10 : (state == FALLING) ? 50 : (state == LANDED) ? 1000 : 100;
         
         if (now - last_sample >= sample_interval) {
             uint32_t flight_time = (state >= LAUNCH) ? (now - launch_time) : 0;
