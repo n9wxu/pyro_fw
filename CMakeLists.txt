@@ -23,6 +23,28 @@ if (EXISTS ${picoVscode})
     include(${picoVscode})
 endif()
 # ====================================================================================
+include(FetchContent)
+
+FetchContent_Declare(
+    littlefs
+    GIT_REPOSITORY https://github.com/littlefs-project/littlefs
+    GIT_TAG v2.11.2
+)
+
+FetchContent_MakeAvailable(littlefs)
+message("littlefs is here: ${littlefs_SOURCE_DIR}")
+
+add_library(littlefs_lib STATIC
+    ${littlefs_SOURCE_DIR}/lfs.c
+    ${littlefs_SOURCE_DIR}/lfs_util.c
+)
+target_include_directories(littlefs_lib PUBLIC
+  ${littlefs_SOURCE_DIR}
+)
+target_compile_options(littlefs_lib INTERFACE -Wno-unused-function -Wno-null-dereference)
+target_link_libraries(littlefs_lib INTERFACE hardware_flash)
+
+# ====================================================================================
 
 set(PICO_BOARD pico CACHE STRING "Board type")
 
@@ -46,6 +68,9 @@ add_executable(pyro_fw_c
         hardware_i2c
         hardware_adc
         hardware_uart
+        tinyusb_device
+        tinyusb_board
+        littlefs_lib
         )
 
 pico_set_program_name(pyro_fw_c "pyro_fw_c")
@@ -58,6 +83,10 @@ pico_enable_stdio_usb(pyro_fw_c 1)
 # Add the standard include files to the build
 target_include_directories(pyro_fw_c PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
+)
+
+target_include_directories(pyro_fw_c SYSTEM PUBLIC
+        ${littlefs_SOURCE_DIR}
 )
 
 pico_add_extra_outputs(pyro_fw_c)
