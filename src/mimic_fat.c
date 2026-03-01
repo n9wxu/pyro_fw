@@ -980,6 +980,10 @@ static bool is_fat_sector(uint32_t sector) {
 }
 
 size_t mimic_fat_total_sector_size(void) {
+    if (littlefs_lfs_config == NULL) {
+        extern const struct lfs_config lfs_pico_flash_config;
+        littlefs_lfs_config = &lfs_pico_flash_config;
+    }
     uint64_t storage_size = littlefs_lfs_config->block_count * littlefs_lfs_config->block_size;
     return (double)storage_size / DISK_SECTOR_SIZE;
 }
@@ -1408,6 +1412,7 @@ void mimic_fat_read(uint8_t lun, uint32_t sector, void *buffer, uint32_t bufsize
     find_dir_entry_cache_result_t result = {0};
 
     if (cluster == 1) {
+        printf("Reading root directory (cluster 1)\n");
         read_temporary_file(cluster, buffer);
         return;
     }

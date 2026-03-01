@@ -35,6 +35,8 @@ void tud_msc_capacity_cb(uint8_t lun, uint32_t* block_count, uint16_t* block_siz
 
     *block_count = mimic_fat_total_sector_size();
     *block_size  = DISK_SECTOR_SIZE;
+    
+    printf("MSC capacity: block_count=%lu block_size=%u\n", *block_count, *block_size);
 }
 
 bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start, bool load_eject) {

@@ -399,7 +399,6 @@ int main() {
             pressure_sensor_read(&pdata);
             int32_t altitude = pressure_to_altitude_cm((int32_t)pdata.pressure_pa, ctx.ground_pressure);
             uint32_t flight_time = (ctx.current_state != PAD_IDLE) ? (now - ctx.launch_time) : 0;
-            printf("telemetry\n");
             send_telemetry(&ctx, flight_time, altitude, ctx.current_state);
             ctx.last_telemetry = now;
         }
