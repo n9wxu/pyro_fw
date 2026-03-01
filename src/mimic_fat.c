@@ -990,9 +990,11 @@ size_t mimic_fat_total_sector_size(void) {
 static void read_boot_sector(void *buffer, uint32_t bufsize) {
     TRACE("\e[36mRead read_boot_sector()\e[0m\n");
 
+    size_t total_sectors = mimic_fat_total_sector_size();
+    
     // BPB_TotSec16
-    fat_disk_image[0][19] = (uint8_t)(mimic_fat_total_sector_size() & 0xFF);
-    fat_disk_image[0][20] = (uint8_t)(mimic_fat_total_sector_size() >> 8);
+    fat_disk_image[0][19] = (uint8_t)(total_sectors & 0xFF);
+    fat_disk_image[0][20] = (uint8_t)(total_sectors >> 8);
 
     // BPB_FATSz16 - FAT12 uses 1.5 bytes per cluster
     size_t num_clusters = cluster_size();
@@ -1000,6 +1002,9 @@ static void read_boot_sector(void *buffer, uint32_t bufsize) {
     size_t fat_size = (fat_bytes + DISK_SECTOR_SIZE - 1) / DISK_SECTOR_SIZE;
     fat_disk_image[0][22] = fat_size & 0xFF;
     fat_disk_image[0][23] = (fat_size & 0xFF00) >> 8;
+
+    printf("Boot sector: total_sectors=%zu fat_size=%zu num_clusters=%zu\n", 
+           total_sectors, fat_size, num_clusters);
 
     uint8_t const *addr = fat_disk_image[0];
     memcpy(buffer, addr, bufsize);
