@@ -41,7 +41,7 @@ typedef struct {
 
 // Forward declaration
 struct flight_context_t;
-typedef void (*state_fn_t)(struct flight_context_t *ctx, uint32_t now);
+typedef state_fn_t (*state_fn_t)(struct flight_context_t *ctx, uint32_t now);
 
 // Flight context
 typedef struct flight_context_t {
@@ -144,15 +144,15 @@ void update_pyro_fire(flight_context_t *ctx, uint32_t now) {
 }
 
 // Forward declarations
-void state_pad_idle(flight_context_t *ctx, uint32_t now);
-void state_launch(flight_context_t *ctx, uint32_t now);
-void state_apogee(flight_context_t *ctx, uint32_t now);
-void state_falling(flight_context_t *ctx, uint32_t now);
-void state_landed(flight_context_t *ctx, uint32_t now);
+state_fn_t state_pad_idle(flight_context_t *ctx, uint32_t now);
+state_fn_t state_launch(flight_context_t *ctx, uint32_t now);
+state_fn_t state_apogee(flight_context_t *ctx, uint32_t now);
+state_fn_t state_falling(flight_context_t *ctx, uint32_t now);
+state_fn_t state_landed(flight_context_t *ctx, uint32_t now);
 
 // State: PAD_IDLE
-void state_pad_idle(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_sample < 10) return;
+state_fn_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
+    if (now - ctx->last_sample < 10) return state_pad_idle;
     
     pressure_data_t pdata;
     pressure_sensor_read(&pdata);
@@ -164,14 +164,15 @@ void state_pad_idle(flight_context_t *ctx, uint32_t now) {
     ctx->last_sample = now;
     
     if (altitude > 1000) {
-        ctx->state_fn = state_launch;
         ctx->launch_time = now;
+        return state_launch;
     }
+    return state_pad_idle;
 }
 
 // State: LAUNCH
-void state_launch(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_sample < 100) return;
+state_fn_t state_launch(flight_context_t *ctx, uint32_t now) {
+    if (now - ctx->last_sample < 100) return state_launch;
     
     pressure_data_t pdata;
     pressure_sensor_read(&pdata);
@@ -183,18 +184,21 @@ void state_launch(flight_context_t *ctx, uint32_t now) {
     if (altitude > ctx->max_altitude) {
         ctx->max_altitude = altitude;
     } else if (altitude < ctx->max_altitude - 1000) {
-        ctx->state_fn = state_apogee;
         ctx->apogee_protect_idx = (ctx->buf_head >= 50) ? (ctx->buf_head - 50) : (4096 + ctx->buf_head - 50);
         ctx->apogee_protected = true;
+        ctx->last_altitude = altitude;
+        ctx->last_sample = now;
+        return state_apogee;
     }
     
     ctx->last_altitude = altitude;
     ctx->last_sample = now;
+    return state_launch;
 }
 
 // State: APOGEE
-void state_apogee(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_sample < 100) return;
+state_fn_t state_apogee(flight_context_t *ctx, uint32_t now) {
+    if (now - ctx->last_sample < 100) return state_apogee;
     
     pressure_data_t pdata;
     pressure_sensor_read(&pdata);
@@ -203,14 +207,14 @@ void state_apogee(flight_context_t *ctx, uint32_t now) {
     uint32_t flight_time = now - ctx->launch_time;
     buf_add(ctx, flight_time, pdata.pressure_pa, altitude, APOGEE);
     
-    ctx->state_fn = state_falling;
     ctx->last_altitude = altitude;
     ctx->last_sample = now;
+    return state_falling;
 }
 
 // State: FALLING
-void state_falling(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_sample < 50) return;
+state_fn_t state_falling(flight_context_t *ctx, uint32_t now) {
+    if (now - ctx->last_sample < 50) return state_falling;
     
     pressure_data_t pdata;
     pressure_sensor_read(&pdata);
@@ -234,16 +238,19 @@ void state_falling(flight_context_t *ctx, uint32_t now) {
     }
     
     if (altitude < 500 && abs(altitude - ctx->last_altitude) < 100) {
-        ctx->state_fn = state_landed;
+        ctx->last_altitude = altitude;
+        ctx->last_sample = now;
+        return state_landed;
     }
     
     ctx->last_altitude = altitude;
     ctx->last_sample = now;
+    return state_falling;
 }
 
 // State: LANDED
-void state_landed(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_sample < 1000) return;
+state_fn_t state_landed(flight_context_t *ctx, uint32_t now) {
+    if (now - ctx->last_sample < 1000) return state_landed;
     
     pressure_data_t pdata;
     pressure_sensor_read(&pdata);
@@ -254,6 +261,7 @@ void state_landed(flight_context_t *ctx, uint32_t now) {
     
     ctx->last_altitude = altitude;
     ctx->last_sample = now;
+    return state_landed;
 }
 
 int main() {
@@ -320,8 +328,8 @@ int main() {
         // Update pyro fire state
         update_pyro_fire(&ctx, now);
         
-        // Run current state
-        ctx.state_fn(&ctx, now);
+        // Run current state and get next state
+        ctx.state_fn = ctx.state_fn(&ctx, now);
         
         // Telemetry at 1Hz
         if (now - ctx.last_telemetry >= 1000) {
