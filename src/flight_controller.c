@@ -314,11 +314,19 @@ int main() {
     // Initialize board first (sets up clocks, etc)
     board_init();
     
+    // Initialize TinyUSB BEFORE stdio
+    tud_init(BOARD_TUD_RHPORT);
+    
+    // Initialize stdio (USB and/or UART)
+    stdio_init_all();
+    
+    printf("Pyro MK1B Flight Computer\n");
+    
     // Initialize littlefs config
     extern const struct lfs_config lfs_pico_flash_config;
     mimic_fat_init(&lfs_pico_flash_config);
     
-    // Format littlefs if needed and create FAT cache
+    // Format littlefs if needed
     static lfs_t lfs;
     int err = lfs_mount(&lfs, &lfs_pico_flash_config);
     if (err) {
@@ -327,16 +335,10 @@ int main() {
         lfs_unmount(&lfs);
     }
     
-    // Create FAT filesystem cache (mounts internally)
+    // Create FAT filesystem cache
+    printf("Creating FAT cache...\n");
     mimic_fat_create_cache();
-    
-    // Initialize TinyUSB BEFORE stdio
-    tud_init(BOARD_TUD_RHPORT);
-    
-    // Initialize stdio (USB and/or UART)
-    stdio_init_all();
-    
-    printf("Pyro MK1B Flight Computer\n");
+    printf("FAT cache ready\n");
     
     // Init UART0 for telemetry
     uart_init(uart0, 115200);

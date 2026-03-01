@@ -994,8 +994,10 @@ static void read_boot_sector(void *buffer, uint32_t bufsize) {
     fat_disk_image[0][19] = (uint8_t)(mimic_fat_total_sector_size() & 0xFF);
     fat_disk_image[0][20] = (uint8_t)(mimic_fat_total_sector_size() >> 8);
 
-    // BPB_FATSz16
-    size_t fat_size = ceil((double)mimic_fat_total_sector_size() / DISK_SECTOR_SIZE);
+    // BPB_FATSz16 - FAT12 uses 1.5 bytes per cluster
+    size_t num_clusters = cluster_size();
+    size_t fat_bytes = (num_clusters * 3 + 1) / 2;
+    size_t fat_size = (fat_bytes + DISK_SECTOR_SIZE - 1) / DISK_SECTOR_SIZE;
     fat_disk_image[0][22] = fat_size & 0xFF;
     fat_disk_image[0][23] = (fat_size & 0xFF00) >> 8;
 
