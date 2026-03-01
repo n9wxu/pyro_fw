@@ -364,10 +364,10 @@ static void init_fat(void) {
     err = lfs_file_open(&real_filesystem, &fat_cache, ".mimic/FAT", LFS_O_RDWR|LFS_O_CREAT);
     assert(err == 0);
 
-    uint8_t head[3] = {0xF8, 0xFF, 0xFF};
-    head[0] = 0xF8;
-    head[1] = 0xFF;
-    head[2] = 0xFF;
+    // FAT12 header: media descriptor in entry 0, entry 1 should be free
+    // Entry 0 = 0xFF8 (media descriptor F8 + 0xF)
+    // Entry 1 = 0x000 (free - root dir is not in cluster area for FAT12)
+    uint8_t head[3] = {0xF8, 0xFF, 0x0F};  // Entry 0=FF8, Entry 1=000
     lfs_ssize_t s = lfs_file_write(&real_filesystem, &fat_cache, head, sizeof(head));
     if (s != sizeof(head)) {
         printf("init_fat: lfs_file_write error=%ld\n", s);
@@ -1092,6 +1092,21 @@ static void read_fat_sector(uint32_t sector, void *buffer, uint32_t bufsize) {
     if (s < 0) {
         char buf[64];
         snprintf(buf, sizeof(buf), "read_fat_sector: lfs_file_read error=%ld\r\n", s);
+        uart_puts(uart0, buf);
+    } else if (s < (lfs_ssize_t)bufsize) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "read_fat_sector: short read %ld/%lu\r\n", s, bufsize);
+        uart_puts(uart0, buf);
+        // Zero the rest
+        memset((uint8_t*)buffer + s, 0, bufsize - s);
+    }
+    
+    // Debug: show first 16 bytes of FAT data
+    if (sector <= 2) {
+        char buf[80];
+        uint8_t *b = (uint8_t*)buffer;
+        snprintf(buf, sizeof(buf), "FAT[%lu]: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+                 sector, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
         uart_puts(uart0, buf);
     }
 }
