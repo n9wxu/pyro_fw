@@ -8,6 +8,7 @@
 #include "pressure_sensor.h"
 #include "tusb.h"
 #include "bsp/board_api.h"
+#include "mimic_fat.h"
 
 
 // GPIO Pins
@@ -312,6 +313,10 @@ int main() {
     // Initialize board first (sets up clocks, etc)
     board_init();
     
+    // Initialize mimic_fat with littlefs config BEFORE USB init
+    extern const struct lfs_config lfs_pico_flash_config;
+    mimic_fat_init(&lfs_pico_flash_config);
+    
     // Initialize TinyUSB BEFORE stdio
     tud_init(BOARD_TUD_RHPORT);
     
@@ -399,7 +404,7 @@ int main() {
             pressure_sensor_read(&pdata);
             int32_t altitude = pressure_to_altitude_cm((int32_t)pdata.pressure_pa, ctx.ground_pressure);
             uint32_t flight_time = (ctx.current_state != PAD_IDLE) ? (now - ctx.launch_time) : 0;
-            
+            printf("telemetry\n");
             send_telemetry(&ctx, flight_time, altitude, ctx.current_state);
             ctx.last_telemetry = now;
         }
