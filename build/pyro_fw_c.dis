@@ -8125,7 +8125,7 @@ Disassembly of section .text:
 1000458a:	4540      	cmp	r0, r8
 1000458c:	da00      	bge.n	10004590 <mimic_fat_read+0x198>
 1000458e:	e0fc      	b.n	1000478a <mimic_fat_read+0x392>
-10004590:	2e02      	cmp	r6, #2
+10004590:	2e17      	cmp	r6, #23
 10004592:	d893      	bhi.n	100044bc <mimic_fat_read+0xc4>
 10004594:	ab2a      	add	r3, sp, #168	@ 0xa8
 10004596:	4698      	mov	r8, r3

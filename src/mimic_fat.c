@@ -1105,7 +1105,7 @@ static void read_fat_sector(uint32_t sector, void *buffer, uint32_t bufsize) {
     }
     
     // Debug: show first 16 bytes of FAT data
-    if (sector <= 2) {
+    if (sector <= 23) {
         char buf[80];
         uint8_t *b = (uint8_t*)buffer;
         snprintf(buf, sizeof(buf), "FAT[%lu]: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
