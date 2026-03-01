@@ -1,2 +1,0 @@
-/Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-ar qc liblittlefs_lib.a "CMakeFiles/littlefs_lib.dir/_deps/littlefs-src/lfs.c.o" "CMakeFiles/littlefs_lib.dir/_deps/littlefs-src/lfs_util.c.o"
-/Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-ranlib liblittlefs_lib.a

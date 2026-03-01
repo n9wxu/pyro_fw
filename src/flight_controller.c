@@ -404,7 +404,7 @@ int main() {
             ctx.last_telemetry = now;
         }
         
-        sleep_ms(10);
+        // No sleep - tud_task() needs to run as fast as possible for USB
     }
     
     return 0;

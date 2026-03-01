@@ -1,13 +1,13 @@
 [
 {
   "directory": "/Users/jjulich/pyro_fw/build",
-  "command": "/Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-gcc  -I/Users/jjulich/pyro_fw/build/_deps/littlefs-src -mcpu=cortex-m0plus -mthumb -g -O3 -DNDEBUG -std=gnu11 -o CMakeFiles/littlefs_lib.dir/_deps/littlefs-src/lfs.c.o -c /Users/jjulich/pyro_fw/build/_deps/littlefs-src/lfs.c",
+  "command": "/Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-gcc -I/Users/jjulich/pyro_fw/build/_deps/littlefs-src -mcpu=cortex-m0plus -mthumb -g -O3 -DNDEBUG -std=gnu11 -o CMakeFiles/littlefs_lib.dir/_deps/littlefs-src/lfs.c.o -c /Users/jjulich/pyro_fw/build/_deps/littlefs-src/lfs.c",
   "file": "/Users/jjulich/pyro_fw/build/_deps/littlefs-src/lfs.c",
   "output": "CMakeFiles/littlefs_lib.dir/_deps/littlefs-src/lfs.c.o"
 },
 {
   "directory": "/Users/jjulich/pyro_fw/build",
-  "command": "/Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-gcc  -I/Users/jjulich/pyro_fw/build/_deps/littlefs-src -mcpu=cortex-m0plus -mthumb -g -O3 -DNDEBUG -std=gnu11 -o CMakeFiles/littlefs_lib.dir/_deps/littlefs-src/lfs_util.c.o -c /Users/jjulich/pyro_fw/build/_deps/littlefs-src/lfs_util.c",
+  "command": "/Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-gcc -I/Users/jjulich/pyro_fw/build/_deps/littlefs-src -mcpu=cortex-m0plus -mthumb -g -O3 -DNDEBUG -std=gnu11 -o CMakeFiles/littlefs_lib.dir/_deps/littlefs-src/lfs_util.c.o -c /Users/jjulich/pyro_fw/build/_deps/littlefs-src/lfs_util.c",
   "file": "/Users/jjulich/pyro_fw/build/_deps/littlefs-src/lfs_util.c",
   "output": "CMakeFiles/littlefs_lib.dir/_deps/littlefs-src/lfs_util.c.o"
 },
@@ -948,20 +948,20 @@
   "output": "CMakeFiles/test_flight_controller.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_adc/adc.c.o"
 },
 {
-  "directory": "/Users/jjulich/pyro_fw/build/pico-sdk/src/rp2040/boot_stage2",
-  "command": "/Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-gcc -DLIB_BOOT_STAGE2_HEADERS=1 -DPICO_32BIT=1 -DPICO_BOARD=\\\"pico\\\" -DPICO_BUILD=1 -DPICO_NO_HARDWARE=0 -DPICO_ON_DEVICE=1 -DPICO_RP2040=1 -I/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/boot_stage2/asminclude -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_base/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_base_headers/include -isystem /Users/jjulich/pyro_fw/build/generated/pico_base -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/boards/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_common/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_compiler/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_panic/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_sections/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/boot_stage2/include -mcpu=cortex-m0plus -mthumb -g -O3 -DNDEBUG -o CMakeFiles/bs2_default.dir/compile_time_choice.S.o   -c /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/boot_stage2/compile_time_choice.S",
+  "directory": "/Users/jjulich/pyro_fw/build",
+  "command": "/Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-gcc -DLIB_BOOT_STAGE2_HEADERS=1 -DPICO_32BIT=1 -DPICO_BOARD=\\\"pico\\\" -DPICO_BUILD=1 -DPICO_NO_HARDWARE=0 -DPICO_ON_DEVICE=1 -DPICO_RP2040=1 -I/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/boot_stage2/asminclude -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_base/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_base_headers/include -isystem /Users/jjulich/pyro_fw/build/generated/pico_base -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/boards/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_common/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_compiler/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_panic/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_sections/include -isystem /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/boot_stage2/include -mcpu=cortex-m0plus -mthumb -g -O3 -DNDEBUG -o pico-sdk/src/rp2040/boot_stage2/CMakeFiles/bs2_default.dir/compile_time_choice.S.o   -c /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/boot_stage2/compile_time_choice.S",
   "file": "/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/boot_stage2/compile_time_choice.S",
   "output": "pico-sdk/src/rp2040/boot_stage2/CMakeFiles/bs2_default.dir/compile_time_choice.S.o"
 },
 {
-  "directory": "/Users/jjulich/pyro_fw/build/pico-sdk/src/rp2040/boot_stage2",
-  "command": "/Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-gcc   -mcpu=cortex-m0plus -mthumb -g -O3 -DNDEBUG -o CMakeFiles/bs2_default_library.dir/bs2_default_padded_checksummed.S.o   -c /Users/jjulich/pyro_fw/build/pico-sdk/src/rp2040/boot_stage2/bs2_default_padded_checksummed.S",
+  "directory": "/Users/jjulich/pyro_fw/build",
+  "command": "/Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-gcc -mcpu=cortex-m0plus -mthumb -g -O3 -DNDEBUG -o pico-sdk/src/rp2040/boot_stage2/CMakeFiles/bs2_default_library.dir/bs2_default_padded_checksummed.S.o   -c /Users/jjulich/pyro_fw/build/pico-sdk/src/rp2040/boot_stage2/bs2_default_padded_checksummed.S",
   "file": "/Users/jjulich/pyro_fw/build/pico-sdk/src/rp2040/boot_stage2/bs2_default_padded_checksummed.S",
   "output": "pico-sdk/src/rp2040/boot_stage2/CMakeFiles/bs2_default_library.dir/bs2_default_padded_checksummed.S.o"
 },
 {
-  "directory": "/Users/jjulich/pyro_fw/build/_deps/unity-build",
-  "command": "/Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-gcc  -I/Users/jjulich/pyro_fw/build/_deps/unity-src/src -I/Users/jjulich/pyro_fw/build/_deps/unity-build -mcpu=cortex-m0plus -mthumb -g -O3 -DNDEBUG -std=c11 -Waddress -Waggregate-return -Wformat-nonliteral -Wformat-security -Wformat -Winit-self -Wmissing-declarations -Wmissing-include-dirs -Wno-multichar -Wno-parentheses -Wno-type-limits -Wno-unused-parameter -Wunreachable-code -Wwrite-strings -Wpointer-arith -Werror -Wall -o CMakeFiles/unity.dir/src/unity.c.o -c /Users/jjulich/pyro_fw/build/_deps/unity-src/src/unity.c",
+  "directory": "/Users/jjulich/pyro_fw/build",
+  "command": "/Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-gcc -I/Users/jjulich/pyro_fw/build/_deps/unity-src/src -I/Users/jjulich/pyro_fw/build/_deps/unity-build -mcpu=cortex-m0plus -mthumb -g -O3 -DNDEBUG -std=c11 -Waddress -Waggregate-return -Wformat-nonliteral -Wformat-security -Wformat -Winit-self -Wmissing-declarations -Wmissing-include-dirs -Wno-multichar -Wno-parentheses -Wno-type-limits -Wno-unused-parameter -Wunreachable-code -Wwrite-strings -Wpointer-arith -Werror -Wall -o _deps/unity-build/CMakeFiles/unity.dir/src/unity.c.o -c /Users/jjulich/pyro_fw/build/_deps/unity-src/src/unity.c",
   "file": "/Users/jjulich/pyro_fw/build/_deps/unity-src/src/unity.c",
   "output": "_deps/unity-build/CMakeFiles/unity.dir/src/unity.c.o"
 }

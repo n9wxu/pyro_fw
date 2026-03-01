@@ -3,7 +3,7 @@
 # No other meaning or use of this file is supported.
 
 method=git
-command=/opt/homebrew/bin/cmake;-DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE;-P;/Users/jjulich/pyro_fw/build/_deps/unity-subbuild/unity-populate-prefix/tmp/unity-populate-gitclone.cmake
+command=/Users/jjulich/.pico-sdk/cmake/v3.31.5/CMake.app/Contents/bin/cmake;-DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE;-P;/Users/jjulich/pyro_fw/build/_deps/unity-subbuild/unity-populate-prefix/tmp/unity-populate-gitclone.cmake
 source_dir=/Users/jjulich/pyro_fw/build/_deps/unity-src
 work_dir=/Users/jjulich/pyro_fw/build/_deps
 repository=https://github.com/ThrowTheSwitch/Unity.git
