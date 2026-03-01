@@ -314,20 +314,21 @@ int main() {
     // Initialize board first (sets up clocks, etc)
     board_init();
     
-    // Initialize and mount littlefs
+    // Initialize littlefs config
     extern const struct lfs_config lfs_pico_flash_config;
-    static lfs_t lfs;
+    mimic_fat_init(&lfs_pico_flash_config);
     
-    // Try to mount, format if it fails
+    // Format littlefs if needed and create FAT cache
+    static lfs_t lfs;
     int err = lfs_mount(&lfs, &lfs_pico_flash_config);
     if (err) {
         printf("Formatting littlefs...\n");
         lfs_format(&lfs, &lfs_pico_flash_config);
-        lfs_mount(&lfs, &lfs_pico_flash_config);
+        lfs_unmount(&lfs);
     }
     
-    // Initialize mimic_fat with littlefs config BEFORE USB init
-    mimic_fat_init(&lfs_pico_flash_config);
+    // Create FAT filesystem cache (mounts internally)
+    mimic_fat_create_cache();
     
     // Initialize TinyUSB BEFORE stdio
     tud_init(BOARD_TUD_RHPORT);
