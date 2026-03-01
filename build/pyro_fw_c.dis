@@ -45,13 +45,13 @@ Idx Name          Size      VMA       LMA       File off  Algn
                   CONTENTS, READONLY, DEBUGGING, OCTETS
  20 .debug_rnglists 0000a030  00000000  00000000  000c43d0  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 21 .debug_line   0003fd33  00000000  00000000  000ce400  2**0
+ 21 .debug_line   0003fd39  00000000  00000000  000ce400  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 22 .debug_str    0000be83  00000000  00000000  0010e133  2**0
+ 22 .debug_str    0000be83  00000000  00000000  0010e139  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 23 .debug_frame  00004fac  00000000  00000000  00119fb8  2**2
+ 23 .debug_frame  00004fac  00000000  00000000  00119fbc  2**2
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 24 .debug_line_str 0000043f  00000000  00000000  0011ef64  2**0
+ 24 .debug_line_str 0000043f  00000000  00000000  0011ef68  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
 
 /Users/jjulich/pyro_fw/build/pyro_fw_c.elf:     file format elf32-littlearm
@@ -7510,18 +7510,18 @@ Disassembly of section .text:
 100040b2:	0020      	movs	r0, r4
 100040b4:	f00d fc76 	bl	100119a4 <lfs_mount>
 100040b8:	2800      	cmp	r0, #0
-100040ba:	d103      	bne.n	100040c4 <mimic_fat_init+0x1c>
-100040bc:	0020      	movs	r0, r4
-100040be:	f00d fe07 	bl	10011cd0 <lfs_unmount>
-100040c2:	bd70      	pop	{r4, r5, r6, pc}
-100040c4:	6829      	ldr	r1, [r5, #0]
-100040c6:	0020      	movs	r0, r4
-100040c8:	f00d fbcc 	bl	10011864 <lfs_format>
-100040cc:	0020      	movs	r0, r4
-100040ce:	6829      	ldr	r1, [r5, #0]
-100040d0:	f00d fc68 	bl	100119a4 <lfs_mount>
-100040d4:	e7f2      	b.n	100040bc <mimic_fat_init+0x14>
-100040d6:	46c0      	nop			@ (mov r8, r8)
+100040ba:	d009      	beq.n	100040d0 <mimic_fat_init+0x28>
+100040bc:	6829      	ldr	r1, [r5, #0]
+100040be:	0020      	movs	r0, r4
+100040c0:	f00d fbd0 	bl	10011864 <lfs_format>
+100040c4:	0020      	movs	r0, r4
+100040c6:	6829      	ldr	r1, [r5, #0]
+100040c8:	f00d fc6c 	bl	100119a4 <lfs_mount>
+100040cc:	2800      	cmp	r0, #0
+100040ce:	d102      	bne.n	100040d6 <mimic_fat_init+0x2e>
+100040d0:	0020      	movs	r0, r4
+100040d2:	f00d fdfd 	bl	10011cd0 <lfs_unmount>
+100040d6:	bd70      	pop	{r4, r5, r6, pc}
 100040d8:	20002904 	.word	0x20002904
 100040dc:	20002944 	.word	0x20002944
 

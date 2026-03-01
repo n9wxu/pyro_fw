@@ -96,9 +96,11 @@ void mimic_fat_init(const struct lfs_config *c) {
     int err = lfs_mount(&real_filesystem, littlefs_lfs_config);
     if (err) {
         lfs_format(&real_filesystem, littlefs_lfs_config);
-        lfs_mount(&real_filesystem, littlefs_lfs_config);
+        err = lfs_mount(&real_filesystem, littlefs_lfs_config);
     }
-    lfs_unmount(&real_filesystem);
+    if (err == 0) {
+        lfs_unmount(&real_filesystem);
+    }
 }
 
 bool mimic_fat_usb_device_is_enabled(void) {
