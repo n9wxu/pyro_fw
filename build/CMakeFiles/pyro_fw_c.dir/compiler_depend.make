@@ -85,6 +85,112 @@ CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o: /Users/jjulich/pyro_fw/src/f
   generated/pico_base/pico/version.h \
   /Users/jjulich/pyro_fw/src/pressure_sensor.h
 
+CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o: /Users/jjulich/pyro_fw/src/ms5607_driver.c \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/boards/include/boards/pico.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_base_headers/include/pico.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_base_headers/include/pico/assert.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_base_headers/include/pico/config.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_base_headers/include/pico/error.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_base_headers/include/pico/types.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/include/pico/time.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include/hardware/platform_defs.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include/hardware/regs/addressmap.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include/hardware/regs/dreq.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include/hardware/regs/i2c.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include/hardware/regs/intctrl.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include/hardware/regs/sio.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include/hardware/regs/timer.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_structs/include/hardware/structs/i2c.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_structs/include/hardware/structs/timer.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/include/pico/platform.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/cmsis/include/cmsis/rename_exceptions.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_base/include/hardware/address_mapped.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_i2c/include/hardware/i2c.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_timer/include/hardware/timer.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_common/include/pico/platform/common.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_compiler/include/pico/platform/compiler.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_panic/include/pico/platform/panic.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_sections/include/pico/platform/sections.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/_ansi.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/_newlib_version.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/assert.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/machine/_default_types.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/machine/_types.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/machine/ieeefp.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/newlib.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/stdint.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/stdio.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/_intsup.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/_stdint.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/_types.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/cdefs.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/config.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/features.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/lock.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/reent.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/stdio.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/lib/gcc/arm-none-eabi/14.2.1/include/stdarg.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/lib/gcc/arm-none-eabi/14.2.1/include/stdbool.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/lib/gcc/arm-none-eabi/14.2.1/include/stddef.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/lib/gcc/arm-none-eabi/14.2.1/include/stdint.h \
+  generated/pico_base/pico/config_autogen.h \
+  generated/pico_base/pico/version.h \
+  /Users/jjulich/pyro_fw/src/pressure_sensor.h
+
+CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o: /Users/jjulich/pyro_fw/src/pressure_sensor.c \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/boards/include/boards/pico.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_base_headers/include/pico.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_base_headers/include/pico/assert.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_base_headers/include/pico/config.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_base_headers/include/pico/error.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_base_headers/include/pico/types.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/include/pico/time.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include/hardware/platform_defs.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include/hardware/regs/addressmap.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include/hardware/regs/dreq.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include/hardware/regs/i2c.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include/hardware/regs/intctrl.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include/hardware/regs/sio.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_regs/include/hardware/regs/timer.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_structs/include/hardware/structs/i2c.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_structs/include/hardware/structs/timer.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/include/pico/platform.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/cmsis/include/cmsis/rename_exceptions.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_base/include/hardware/address_mapped.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_i2c/include/hardware/i2c.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_timer/include/hardware/timer.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_common/include/pico/platform/common.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_compiler/include/pico/platform/compiler.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_panic/include/pico/platform/panic.h \
+  /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_sections/include/pico/platform/sections.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/_ansi.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/_newlib_version.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/assert.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/machine/_default_types.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/machine/_types.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/machine/ieeefp.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/newlib.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/stdint.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/stdio.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/_intsup.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/_stdint.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/_types.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/cdefs.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/config.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/features.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/lock.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/reent.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/arm-none-eabi/include/sys/stdio.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/lib/gcc/arm-none-eabi/14.2.1/include/stdarg.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/lib/gcc/arm-none-eabi/14.2.1/include/stdbool.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/lib/gcc/arm-none-eabi/14.2.1/include/stddef.h \
+  /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/lib/gcc/arm-none-eabi/14.2.1/include/stdint.h \
+  generated/pico_base/pico/config_autogen.h \
+  generated/pico_base/pico/version.h \
+  /Users/jjulich/pyro_fw/src/pressure_sensor.h
+
+
+/Users/jjulich/pyro_fw/src/pressure_sensor.c:
 
 generated/pico_base/pico/version.h:
 
@@ -155,6 +261,8 @@ generated/pico_base/pico/config_autogen.h:
 /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_structs/include/hardware/structs/timer.h:
 
 /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_structs/include/hardware/structs/sio.h:
+
+/Users/jjulich/pyro_fw/src/ms5607_driver.c:
 
 /Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/hardware_structs/include/hardware/structs/resets.h:
 
