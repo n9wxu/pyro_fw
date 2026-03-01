@@ -91,9 +91,14 @@ Two-digit codes (1-5 beeps per digit):
 ## Data Logging
 Flight data saved to `flight_NNNN.csv` with:
 - **Metadata:** ID, name, config, continuity test results
-- **Flight Data:** 10Hz pressure/altitude/time/state
+- **Flight Data:** Variable rate pressure/altitude/time/state
+  - PAD_IDLE: 1Hz
+  - LAUNCH/APOGEE: 10Hz
+  - FALLING: 20Hz (for precise pyro deployment, ±5m accuracy)
+  - LANDED: 1Hz
 - **Events:** Launch time, peak altitude, pyro deployments
 - **Verification:** Post-fire ADC readings
+- **Buffer:** 64KB RAM (4,096 samples, ~6.8 minutes capacity)
 
 ### Example CSV Header
 ```
@@ -116,18 +121,36 @@ Time_ms,Pressure_Pa,Altitude_cm,State
 ```
 
 ## Telemetry (UART0)
-**Format:** JSON, 115200 baud, 1Hz
-```json
-{
-  "state": "LAUNCH",
-  "time_ms": 1234,
-  "pressure_pa": 95000,
-  "altitude_cm": 54500,
-  "ground_pressure_pa": 101325,
-  "pyro1_fired": false,
-  "pyro2_fired": false
-}
+**Format:** Eggtimer-compatible data elements, 115200 baud, 1Hz
+
+### Data Element Structure
+`<trigger><data>>`
+
+**Example transmission:**
 ```
+{046>@5>#0018>~1B---->(0213>%04679>^0660>?079>!210>=PYRO001>
+```
+
+### Key Data Elements
+| Trigger | Data | Description |
+|---------|------|-------------|
+| `{` | nnn | Altitude in hundreds of feet (046 = 4600 ft) |
+| `@` | n | Flight phase (1=WT, 2=LD, 5=AP, 8=FS, 9=TD) |
+| `#` | nnnn | Flight time in seconds |
+| `~` | nn---- | Channel status (A/B=enabled, 1/2=fired, -=disabled) |
+| `(` | -nnnn | Velocity in fps |
+| `%` | nnnnn | Apogee in feet (after apogee only) |
+| `^` | nnnn | Max velocity in fps (after apogee only) |
+| `?` | nnn | Battery voltage × 10 (079 = 7.9V) |
+| `!` | -nnn | Temperature × 10 °C (210 = 21.0°C) |
+| `=` | xxxxxxxx | Device name/ID (8 chars) |
+
+**Channel Status Examples:**
+- `~AB---->` - Both channels enabled (pre-launch)
+- `~1B---->` - Channel 1 fired, Channel 2 enabled
+- `~12---->` - Both channels fired
+
+**Benefits:** Compatible with Eggfinder receivers, robust against packet loss
 
 ## Safety Features
 1. **Pre-flight Continuity Check** - ADC oversampling (256 samples, 16-bit effective)

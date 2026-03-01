@@ -96,26 +96,122 @@ Time_ms,Pressure_Pa,Altitude_cm,State
 ```
 
 ### Data Collection
-- **Sample Rate:** 10Hz (100ms intervals) during flight
-- **Buffer:** In-memory circular buffer (size TBD based on max flight time)
-- **Write:** All data written to file after LANDED state entered
+- **Sample Rate:** 
+  - PAD_IDLE: 1Hz (1000ms intervals)
+  - LAUNCH/APOGEE: 10Hz (100ms intervals)
+  - FALLING: 20Hz (50ms intervals) - for precise pyro deployment
+  - LANDED: 1Hz (1000ms intervals)
+- **Buffer:** 64KB circular buffer in RAM
+- **Capacity:** 4,096 samples (16 bytes each)
+- **Write:** All buffered data written to CSV file after LANDED state
+
+**Sample Structure:**
+```c
+struct flight_sample {
+    uint32_t time_ms;        // Time since launch (ms)
+    int32_t pressure_pa;     // Pressure (Pa)
+    int32_t altitude_cm;     // Altitude (cm)
+    uint8_t state;           // Flight state
+    uint8_t padding[3];      // Alignment
+};  // 16 bytes per sample
+```
+
+**Buffer Management:**
+- Pre-allocated 64KB circular buffer at startup
+- **Protected region:** 50 samples before apogee are locked (cannot be overwritten)
+- Circular buffer overwrites oldest unprotected data if full
+- Typical 3-minute flight: ~1,800 samples at 10Hz + descent at 20Hz = ~40KB
+
+**Deployment Accuracy:**
+- 20Hz sampling during FALLING = 50ms intervals
+- At 100 m/s ballistic descent: 5m maximum altitude error
+- Ensures pyro deployment within 5m of configured setpoint
 
 ## Telemetry (UART0)
 
-### Format: JSON
-```json
-{
-  "state": "LAUNCH",
-  "time_ms": 1234,
-  "pressure_pa": 95000,
-  "altitude_cm": 54500,
-  "ground_pressure_pa": 101325,
-  "pyro1_fired": false,
-  "pyro2_fired": false
-}
-```
+### Format: Eggtimer-compatible data elements
+**Settings:** 115200 baud, 8N1, 1Hz update rate (2 seconds during flight)
 
-### Rate: 1Hz (every second)
+### Data Element Structure
+Each data element consists of:
+- **Trigger byte:** Single ASCII character identifying data type
+- **Data:** 1-8 ASCII characters
+- **Terminator:** `>` character
+
+### Data Elements
+
+| Element | Trigger | Format | Range | Units | Notes |
+|---------|---------|--------|-------|-------|-------|
+| Flight Time | `#` | nnnn | 0000-9999 | seconds | Time since launch |
+| Altitude/100 | `{` | nnn | 000-999 | feet/100 | 0 to 99,900 ft |
+| Flight Phase | `@` | n | 1-9 | state | See phase codes below |
+| Velocity | `(` | -nnnn | -9999 to 9999 | fps | After launch only |
+| Channel Status | `~` | nn---- | varies | - | Pyro channel status |
+| Temperature | `!` | -nnn | -999 to 999 | °C × 10 | 21.1°C = 211 |
+| Name/ID | `=` | xxxxxxxx | 8 chars | text | Device identifier |
+| Battery Voltage | `?` | nnn | 000-999 | V × 10 | 7.9V = 079 |
+| Apogee | `%` | nnnnn | 00000-99999 | feet | After apogee only |
+| Max Velocity | `^` | nnnn | 0000-9999 | fps | After apogee only |
+
+### Flight Phase Codes
+| Code | Phase | Description |
+|------|-------|-------------|
+| 1 | WT | Waiting for Launch (PAD_IDLE) |
+| 2 | LD | Launch Detected (LAUNCH) |
+| 4 | LV | Low Velocity |
+| 5 | AP | Nose-Over (APOGEE) |
+| 8 | FS | Failsafe (FALLING) |
+| 9 | TD | Touchdown (LANDED) |
+
+### Channel Status Format
+`~` followed by 6 characters (one per channel, we use 2):
+- **Enabled (pre-launch):** `A`, `B`, `C`, `D`, `E`, `F`
+- **Disabled:** `-`
+- **Fired:** `1`, `2`, `3`, `4`, `5`, `6`
+
+**Examples:**
+- `~AB---->` - Channel 1 and 2 enabled, others disabled
+- `~1B---->` - Channel 1 fired, Channel 2 enabled
+- `~12---->` - Both channels fired
+
+### Example Transmission (Pre-launch)
+```
+{000>@1>#0000>~AB---->?079>!211>=PYRO001>
+```
+- `{000>` - Altitude 0 feet
+- `@1>` - Waiting for launch
+- `#0000>` - Flight time 0 seconds
+- `~AB---->` - Channels 1 & 2 enabled
+- `?079>` - Battery 7.9V
+- `!211>` - Temperature 21.1°C
+- `=PYRO001>` - Device ID
+
+### Example Transmission (In Flight)
+```
+{046>@5>#0018>~1B---->(0213>%04679>^0660>?079>!210>=PYRO001>
+```
+- `{046>` - Altitude 4600 feet
+- `@5>` - Nose-over (apogee)
+- `#0018>` - 18 seconds flight time
+- `~1B---->` - Channel 1 fired, Channel 2 enabled
+- `(0213>` - Velocity 213 fps
+- `%04679>` - Apogee 4679 feet
+- `^0660>` - Max velocity 660 fps
+- `?079>` - Battery 7.9V
+- `!210>` - Temperature 21.0°C
+- `=PYRO001>` - Device ID
+
+### Transmission Strategy
+- **Real-time data:** Altitude, velocity, time (sent once)
+- **Status data:** Flight phase, channel status (repeated every transmission)
+- **Post-event data:** Apogee, max velocity (repeated after occurrence)
+- **Static data:** Name, battery, temperature (repeated every transmission)
+
+### Benefits
+- **Robust:** Missing packets don't corrupt subsequent data
+- **Simple parsing:** Each element self-contained
+- **Compatible:** Works with Eggfinder receivers
+- **Efficient:** Only sends relevant data for current flight phase
 
 ## Pyrotechnic Control
 
