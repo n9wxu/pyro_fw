@@ -91,6 +91,15 @@ static lfs_file_t fat_cache;
 
 void mimic_fat_init(const struct lfs_config *c) {
     littlefs_lfs_config = c;
+    
+    // Try to mount, format if it fails
+    int err = lfs_mount(&real_filesystem, littlefs_lfs_config);
+    if (err) {
+        printf("Formatting littlefs (error=%d)...\n", err);
+        lfs_format(&real_filesystem, littlefs_lfs_config);
+        lfs_mount(&real_filesystem, littlefs_lfs_config);
+    }
+    lfs_unmount(&real_filesystem);
 }
 
 bool mimic_fat_usb_device_is_enabled(void) {

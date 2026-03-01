@@ -1,6 +1,6 @@
 Archive member included to satisfy reference by file (symbol)
 
-liblittlefs_lib.a(lfs.c.o)    CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o (lfs_format)
+liblittlefs_lib.a(lfs.c.o)    CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o (lfs_format)
 liblittlefs_lib.a(lfs_util.c.o)
                               liblittlefs_lib.a(lfs.c.o) (lfs_crc)
 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp/libgcc.a(_dvmd_tls.o)
@@ -2710,116 +2710,116 @@ LOAD /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/1
                 0x10000aa4      0x194 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
                 0x10000aa4                send_telemetry
  .text.startup.main
-                0x10000c38      0x2e0 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
+                0x10000c38      0x2ac CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
                 0x10000c38                main
  .text.pressure_sensor_init
-                0x10000f18       0x4c CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
-                0x10000f18                pressure_sensor_init
+                0x10000ee4       0x4c CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
+                0x10000ee4                pressure_sensor_init
  .text.pressure_sensor_read
-                0x10000f64       0x24 CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
-                0x10000f64                pressure_sensor_read
+                0x10000f30       0x24 CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
+                0x10000f30                pressure_sensor_read
  .text.ms5607_detect
-                0x10000f88       0xcc CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
-                0x10000f88                ms5607_detect
+                0x10000f54       0xcc CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
+                0x10000f54                ms5607_detect
  .text.ms5607_read
-                0x10001054      0x1a4 CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
-                0x10001054                ms5607_read
+                0x10001020      0x1a4 CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
+                0x10001020                ms5607_read
  .text.bmp280_detect
-                0x100011f8      0x154 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
-                0x100011f8                bmp280_detect
+                0x100011c4      0x154 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+                0x100011c4                bmp280_detect
  .text.bmp280_read
-                0x1000134c      0x260 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
-                0x1000134c                bmp280_read
+                0x10001318      0x260 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+                0x10001318                bmp280_read
  .text.tud_descriptor_device_cb
-                0x100015ac        0x8 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
-                0x100015ac                tud_descriptor_device_cb
+                0x10001578        0x8 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
+                0x10001578                tud_descriptor_device_cb
  .text.tud_descriptor_configuration_cb
-                0x100015b4        0x8 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
-                0x100015b4                tud_descriptor_configuration_cb
+                0x10001580        0x8 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
+                0x10001580                tud_descriptor_configuration_cb
  .text.tud_descriptor_string_cb
-                0x100015bc       0x74 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
-                0x100015bc                tud_descriptor_string_cb
+                0x10001588       0x74 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
+                0x10001588                tud_descriptor_string_cb
  .text.tud_msc_inquiry_cb
-                0x10001630       0x60 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
-                0x10001630                tud_msc_inquiry_cb
+                0x100015fc       0x60 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x100015fc                tud_msc_inquiry_cb
  .text.tud_msc_test_unit_ready_cb
-                0x10001690        0x4 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
-                0x10001690                tud_msc_test_unit_ready_cb
+                0x1000165c        0x4 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x1000165c                tud_msc_test_unit_ready_cb
  .text.tud_msc_capacity_cb
-                0x10001694       0x20 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
-                0x10001694                tud_msc_capacity_cb
+                0x10001660       0x20 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x10001660                tud_msc_capacity_cb
  .text.tud_msc_start_stop_cb
-                0x100016b4        0x4 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
-                0x100016b4                tud_msc_start_stop_cb
+                0x10001680        0x4 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x10001680                tud_msc_start_stop_cb
  .text.tud_msc_read10_cb
-                0x100016b8       0x4c CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
-                0x100016b8                tud_msc_read10_cb
+                0x10001684       0x4c CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x10001684                tud_msc_read10_cb
  .text.tud_msc_is_writable_cb
-                0x10001704        0x4 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
-                0x10001704                tud_msc_is_writable_cb
+                0x100016d0        0x4 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x100016d0                tud_msc_is_writable_cb
  .text.tud_msc_write10_cb
-                0x10001708       0x10 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
-                0x10001708                tud_msc_write10_cb
+                0x100016d4       0x10 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x100016d4                tud_msc_write10_cb
  .text.tud_msc_scsi_cb
-                0x10001718       0x14 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
-                0x10001718                tud_msc_scsi_cb
+                0x100016e4       0x14 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x100016e4                tud_msc_scsi_cb
  .text.tud_mount_cb
-                0x1000172c       0x18 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
-                0x1000172c                tud_mount_cb
+                0x100016f8       0x18 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x100016f8                tud_mount_cb
  .text.tud_suspend_cb
-                0x10001744       0x18 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
-                0x10001744                tud_suspend_cb
+                0x10001710       0x18 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x10001710                tud_suspend_cb
  .text.pico_sync
-                0x1000175c        0x4 CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
+                0x10001728        0x4 CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
  .text.pico_erase
-                0x10001760       0x2c CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
+                0x1000172c       0x2c CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
  .text.pico_prog
-                0x1000178c       0x30 CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
+                0x10001758       0x30 CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
  .text.pico_read
-                0x100017bc       0x24 CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
+                0x10001788       0x24 CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
  .text.init_fat
-                0x100017e0       0xe4 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x100017ac       0xe4 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.read_fat
-                0x100018c4       0x9c CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10001890       0x9c CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.read_temporary_file
-                0x10001960       0xb4 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x1000192c       0xb4 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.delete_directory
-                0x10001a14       0xd0 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x100019e0       0xd0 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.print_dir_entry
-                0x10001ae4       0x78 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10001ab0       0x78 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.restore_from_short_filename
-                0x10001b5c       0xbc CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10001b28       0xbc CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.difference_of_dir_entry.part.0
-                0x10001c18      0x19c CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10001be4      0x19c CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.read_temporary_file.constprop.0
-                0x10001db4       0x88 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10001d80       0x88 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.update_fat.constprop.0
-                0x10001e3c       0xcc CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10001e08       0xcc CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.littlefs_write.isra.0
-                0x10001f08       0x98 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10001ed4       0x98 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.save_temporary_file.isra.0
-                0x10001fa0      0x148 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10001f6c      0x148 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.restore_directory_from
-                0x100020e8      0x28c CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x100020b4      0x28c CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.restore_file_from
-                0x10002374      0x300 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10002340      0x300 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.find_dir_entry_cache
-                0x10002674       0xd4 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10002640       0xd4 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.delete_dir_entry_cache
-                0x10002748      0x128 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10002714      0x128 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.find_dir_entry_cache.constprop.0
-                0x10002870       0xbc CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x1000283c       0xbc CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.update_lfs_file_or_directory
-                0x1000292c      0x628 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x100028f8      0x628 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.append_dir_entry_directory
-                0x10002f54      0x36c CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10002f20      0x36c CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.create_dir_entry_cache
-                0x100032c0      0xc7c CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x1000328c      0xc7c CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.find_base_cluster_and_offset.constprop.0
-                0x10003f3c      0x1a0 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10003f08      0x1a0 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .text.mimic_fat_init
-                0x100040dc        0xc CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
-                0x100040dc                mimic_fat_init
+                0x100040a8       0x40 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x100040a8                mimic_fat_init
  .text.mimic_fat_update_usb_device_is_enabled
                 0x100040e8        0xc CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
                 0x100040e8                mimic_fat_update_usb_device_is_enabled
@@ -3711,186 +3711,188 @@ LOAD /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/1
 .iplt           0x10014af4        0x0
  .iplt          0x10014af4        0x0 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp/crtbegin.o
 
-.rodata         0x10014af8     0x1704
+.rodata         0x10014af8     0x1714
  *(EXCLUDE_FILE(*libm.a: *libc.a:*lib_a-mem*.o *libgcc.a:) .rodata*)
  .rodata.send_telemetry.str1.4
-                0x10014af8     0x10c3 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
+                0x10014af8     0x10d3 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
                                  0x41 (size before relaxing)
  .rodata.main.str1.4
-                0x10015bbb       0x33 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
- *fill*         0x10015bbb        0x1 
+                0x10015bcb       0x1a CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
+ *fill*         0x10015bcb        0x1 
  .rodata.CSWTCH.69
-                0x10015bbc       0x10 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
- .rodata        0x10015bcc       0x1a CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
+                0x10015bcc       0x10 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
+ .rodata        0x10015bdc       0x1a CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
  .rodata.pressure_sensor_init.str1.4
-                0x10015be6       0x68 CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
+                0x10015bf6       0x68 CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
  .rodata.str1.4
-                0x10015be6       0x40 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
- *fill*         0x10015be6        0x2 
+                0x10015bf6       0x40 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
+ *fill*         0x10015bf6        0x2 
  .rodata.__compound_literal.0
-                0x10015be8        0x2 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
- *fill*         0x10015bea        0x2 
+                0x10015bf8        0x2 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
+ *fill*         0x10015bfa        0x2 
  .rodata.desc_fs_configuration
-                0x10015bec       0x62 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
-                0x10015bec                desc_fs_configuration
- *fill*         0x10015c4e        0x2 
+                0x10015bfc       0x62 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
+                0x10015bfc                desc_fs_configuration
+ *fill*         0x10015c5e        0x2 
  .rodata.desc_device
-                0x10015c50       0x12 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
-                0x10015c50                desc_device
+                0x10015c60       0x12 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
+                0x10015c60                desc_device
  .rodata.tud_msc_inquiry_cb.str1.4
-                0x10015c62       0x19 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x10015c72       0x19 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
  .rodata.tud_msc_capacity_cb.str1.4
-                0x10015c62       0x2d CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x10015c72       0x2d CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
  .rodata.tud_msc_read10_cb.str1.4
-                0x10015c62       0x1f CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x10015c72       0x1f CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
  .rodata.tud_mount_cb.str1.4
-                0x10015c62        0xf CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x10015c72        0xf CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
  .rodata.tud_suspend_cb.str1.4
-                0x10015c62       0x11 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
- *fill*         0x10015c62        0x2 
+                0x10015c72       0x11 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+ *fill*         0x10015c72        0x2 
  .rodata.lfs_pico_flash_config
-                0x10015c64       0x54 CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
-                0x10015c64                lfs_pico_flash_config
+                0x10015c74       0x54 CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
+                0x10015c74                lfs_pico_flash_config
  .rodata.init_fat.str1.4
-                0x10015cb8       0x70 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8       0x70 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.read_fat.str1.4
-                0x10015cb8       0x47 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8       0x47 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.read_temporary_file.str1.4
-                0x10015cb8       0x78 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8       0x78 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.delete_directory.str1.4
-                0x10015cb8       0x6d CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8       0x6d CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.restore_from_short_filename.str1.4
-                0x10015cb8        0x6 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8        0x6 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.difference_of_dir_entry.part.0.str1.4
-                0x10015cb8       0x18 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8       0x18 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.update_fat.constprop.0.str1.4
-                0x10015cb8       0x76 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8       0x76 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.littlefs_write.isra.0.str1.4
-                0x10015cb8       0x31 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8       0x31 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.save_temporary_file.isra.0.str1.4
-                0x10015cb8       0xa2 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8       0xa2 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.restore_file_from.str1.4
-                0x10015cb8       0x28 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8       0x28 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.delete_dir_entry_cache.str1.4
-                0x10015cb8       0x9f CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8       0x9f CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.update_lfs_file_or_directory.str1.4
-                0x10015cb8        0x6 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8        0x6 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.append_dir_entry_directory.str1.4
-                0x10015cb8        0xc CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8        0xc CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.create_dir_entry_cache.str1.4
-                0x10015cb8      0x175 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8      0x175 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+ .rodata.mimic_fat_init.str1.4
+                0x10015cc8       0x23 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.mimic_fat_cleanup_cache.str1.4
-                0x10015cb8       0x36 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8       0x36 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.mimic_fat_create_cache.str1.4
-                0x10015cb8       0x2d CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8       0x2d CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.mimic_fat_read.str1.4
-                0x10015cb8      0x1af CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8      0x1af CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.mimic_fat_write.str1.4
-                0x10015cb8      0x15a CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x10015cc8      0x15a CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .rodata.panic.str1.4
-                0x10015cb8       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_panic/panic.c.o
+                0x10015cc8       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_panic/panic.c.o
  .rodata.spin_lock_claim_unused.str1.4
-                0x10015cb8       0x1b CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync/sync.c.o
+                0x10015cc8       0x1b CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync/sync.c.o
  .rodata.timer_hardware_alarm_claim.str1.4
-                0x10015cb8       0x22 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_timer/timer.c.o
+                0x10015cc8       0x22 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_timer/timer.c.o
  .rodata.hard_assertion_failure.str1.4
-                0x10015cb8        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime/runtime.c.o
+                0x10015cc8        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime/runtime.c.o
  .rodata.__wrap_malloc.str1.4
-                0x10015cb8        0xe CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_malloc/malloc.c.o
+                0x10015cc8        0xe CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_malloc/malloc.c.o
  .rodata.str1.4
-                0x10015cb8       0x44 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+                0x10015cc8       0x44 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
  .rodata.__bi_84
-                0x10015cb8        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+                0x10015cc8        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
  .rodata.__bi_78
-                0x10015cc4        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+                0x10015cd4        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
  .rodata.__bi_60
-                0x10015cd0        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+                0x10015ce0        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
  .rodata.__bi_54
-                0x10015cdc        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+                0x10015cec        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
  .rodata.__bi_48
-                0x10015ce8        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+                0x10015cf8        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
  .rodata.__bi_42
-                0x10015cf4        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+                0x10015d04        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
  .rodata.__bi_34
-                0x10015d00        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+                0x10015d10        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
  .rodata.__bi_26
-                0x10015d0c        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+                0x10015d1c        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
  .rodata._ftoa.str1.4
-                0x10015d18       0x15 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
+                0x10015d28       0x15 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
  .rodata._vsnprintf
-                0x10015d18      0x19c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
- *fill*         0x10015eb4        0x4 
+                0x10015d28      0x19c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
+ *fill*         0x10015ec4        0x4 
  .rodata.pow10.0
-                0x10015eb8       0x50 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
+                0x10015ec8       0x50 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
  .rodata.crlf_str.0
-                0x10015f08        0x2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio/stdio.c.o
+                0x10015f18        0x2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio/stdio.c.o
  .rodata.str1.4
-                0x10015f0a       0x13 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
- *fill*         0x10015f0a        0x2 
+                0x10015f1a       0x13 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
+ *fill*         0x10015f1a        0x2 
  .rodata.__bi_202.0
-                0x10015f0c        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
+                0x10015f1c        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
  .rodata.str1.4
-                0x10015f18       0x14 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
+                0x10015f28       0x14 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
  .rodata.str1.4
-                0x10015f18       0x48 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
+                0x10015f28       0x48 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
  .rodata.tud_task_ext
-                0x10015f18       0x8c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
- .rodata        0x10015fa4       0x1c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
+                0x10015f28       0x8c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
+ .rodata        0x10015fb4       0x1c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
  .rodata._usbd_driver
-                0x10015fc0       0x40 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
+                0x10015fd0       0x40 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
  .rodata.mscd_xfer_cb
-                0x10016000       0x98 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/msc/msc_device.c.o
+                0x10016010       0x98 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/msc/msc_device.c.o
  .rodata.str1.4
-                0x10016098        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
+                0x100160a8        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
  .rodata.__bi_153.0
-                0x10016098        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
+                0x100160a8        0xc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
  .rodata.str1.4
-                0x100160a4      0x51e liblittlefs_lib.a(lfs.c.o)
- .rodata        0x100160a4       0x14 liblittlefs_lib.a(lfs.c.o)
- .rodata        0x100160b8       0x40 liblittlefs_lib.a(lfs_util.c.o)
+                0x100160b4      0x51e liblittlefs_lib.a(lfs.c.o)
+ .rodata        0x100160b4       0x14 liblittlefs_lib.a(lfs.c.o)
+ .rodata        0x100160c8       0x40 liblittlefs_lib.a(lfs_util.c.o)
  .rodata._ctype_
-                0x100160f8      0x101 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-ctype_.o)
-                0x100160f8                _ctype_
-                0x100165c4                        . = ALIGN (0x4)
- *fill*         0x100161f9        0x3 
+                0x10016108      0x101 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-ctype_.o)
+                0x10016108                _ctype_
+                0x100165d4                        . = ALIGN (0x4)
+ *fill*         0x10016209        0x3 
  *(SORT_BY_ALIGNMENT(SORT_BY_NAME(.flashdata*)))
-                0x100161fc                        . = ALIGN (0x4)
+                0x1001620c                        . = ALIGN (0x4)
 
 .ARM.extab
  *(.ARM.extab* .gnu.linkonce.armextab.*)
-                0x100161fc                        __exidx_start = .
+                0x1001620c                        __exidx_start = .
 
 .ARM.exidx
  *(.ARM.exidx* .gnu.linkonce.armexidx.*)
-                0x100161fc                        __exidx_end = .
-                0x100161fc                        . = ALIGN (0x4)
-                0x100161fc                        __binary_info_start = .
+                0x1001620c                        __exidx_end = .
+                0x1001620c                        . = ALIGN (0x4)
+                0x1001620c                        __binary_info_start = .
 
-.binary_info    0x100161fc       0x28
+.binary_info    0x1001620c       0x28
  *(.binary_info.keep.*)
  .binary_info.keep.__bi_ptr84
-                0x100161fc        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
- .binary_info.keep.__bi_ptr78
-                0x10016200        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
- .binary_info.keep.__bi_ptr60
-                0x10016204        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
- .binary_info.keep.__bi_ptr54
-                0x10016208        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
- .binary_info.keep.__bi_ptr48
                 0x1001620c        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
- .binary_info.keep.__bi_ptr42
+ .binary_info.keep.__bi_ptr78
                 0x10016210        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
- .binary_info.keep.__bi_ptr34
+ .binary_info.keep.__bi_ptr60
                 0x10016214        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
- .binary_info.keep.__bi_ptr26
+ .binary_info.keep.__bi_ptr54
                 0x10016218        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+ .binary_info.keep.__bi_ptr48
+                0x1001621c        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+ .binary_info.keep.__bi_ptr42
+                0x10016220        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+ .binary_info.keep.__bi_ptr34
+                0x10016224        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+ .binary_info.keep.__bi_ptr26
+                0x10016228        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
  .binary_info.keep.__bi_ptr153
-                0x1001621c        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
+                0x1001622c        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
  *(.binary_info.*)
  .binary_info.__bi_ptr202
-                0x10016220        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
-                0x10016224                        __binary_info_end = .
-                0x10016224                        . = ALIGN (0x4)
+                0x10016230        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
+                0x10016234                        __binary_info_end = .
+                0x10016234                        . = ALIGN (0x4)
 
 .ram_vector_table
                 0x20000000       0xc0
@@ -3904,7 +3906,7 @@ LOAD /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/1
                 0x200000c0                        . = ALIGN (0x4)
  *(.uninitialized_data*)
 
-.data           0x200000c0     0x1850 load address 0x10016224
+.data           0x200000c0     0x1850 load address 0x10016234
                 0x200000c0                        __data_start__ = .
  *(vtable)
  *(.time_critical*)
@@ -4040,23 +4042,23 @@ LOAD /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/1
                 0x20001910                        . = ALIGN (0x4)
 
 .tm_clone_table
-                0x20001910        0x0 load address 0x10017a74
+                0x20001910        0x0 load address 0x10017a84
  .tm_clone_table
                 0x20001910        0x0 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp/crtbegin.o
  .tm_clone_table
                 0x20001910        0x0 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp/crtend.o
 
-.igot.plt       0x20001910        0x0 load address 0x10017a74
+.igot.plt       0x20001910        0x0 load address 0x10017a84
  .igot.plt      0x20001910        0x0 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp/crtbegin.o
 
-.tdata          0x20001910        0x0 load address 0x10017a74
+.tdata          0x20001910        0x0 load address 0x10017a84
                 0x20001910                        . = ALIGN (0x4)
  *(.tdata .tdata.* .gnu.linkonce.td.*)
                 0x20001910                        __tdata_end = .
                 0x20001910                        PROVIDE (__data_end__ = .)
-                0x10016224                        __etext = LOADADDR (.data)
+                0x10016234                        __etext = LOADADDR (.data)
 
-.tbss           0x20001910        0x0 load address 0x10017a74
+.tbss           0x20001910        0x0 load address 0x10017a84
                 0x20001910                        . = ALIGN (0x4)
                 0x20001910                        __bss_start__ = .
                 0x20001910                        __tls_base = .
@@ -4064,7 +4066,7 @@ LOAD /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/1
  *(.tcommon)
                 0x20001910                        __tls_end = .
 
-.bss            0x20001910     0x1188 load address 0x10017a74
+.bss            0x20001910     0x1108 load address 0x10017a84
                 0x20001910                        . = ALIGN (0x4)
                 0x20001910                        __tbss_end = .
  *(SORT_BY_ALIGNMENT(SORT_BY_NAME(.bss*)))
@@ -4152,87 +4154,86 @@ LOAD /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/1
                 0x20002500      0x400 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
  .bss.lazy_vsnprintf
                 0x20002900        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
- .bss.lfs.0     0x20002904       0x80 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
  .bss.littlefs_lfs_config
-                0x20002984        0x4 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x20002904        0x4 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .bss.next_buffer_ptr
-                0x20002988        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
- .bss.object.0  0x2000298c       0x18 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp/crtbegin.o
- .bss.pools     0x200029a4       0x10 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/time.c.o
- .bss.prom      0x200029b4       0x10 CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
+                0x20002908        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
+ .bss.object.0  0x2000290c       0x18 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp/crtbegin.o
+ .bss.pools     0x20002924       0x10 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/time.c.o
+ .bss.prom      0x20002934       0x10 CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
  .bss.real_filesystem
-                0x200029c4       0x80 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x20002944       0x80 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .bss.retrieved_id
-                0x20002a44        0x8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_unique_id/unique_id.c.o
+                0x200029c4        0x8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_unique_id/unique_id.c.o
  .bss.sf_clz_func
-                0x20002a4c        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
-                0x20002a4c                sf_clz_func
+                0x200029cc        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
+                0x200029cc                sf_clz_func
  .bss.sleep_notifier
-                0x20002a50        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/time.c.o
+                0x200029d0        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/time.c.o
  .bss.state_functions
-                0x20002a54       0x14 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
+                0x200029d4       0x14 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
  .bss.stdio_usb_mutex
-                0x20002a68        0x8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
+                0x200029e8        0x8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
  .bss.uart_char_to_line_feed
-                0x20002a70        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_uart/uart.c.o
-                0x20002a70                uart_char_to_line_feed
- .bss.dig_P1    0x20002a74        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
- .bss.dig_P2    0x20002a76        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
- .bss.dig_P3    0x20002a78        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
- .bss.dig_P4    0x20002a7a        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
- .bss.dig_P5    0x20002a7c        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
- .bss.dig_P6    0x20002a7e        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
- .bss.dig_P7    0x20002a80        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
- .bss.dig_P8    0x20002a82        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
- .bss.dig_P9    0x20002a84        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
- .bss.dig_T1    0x20002a86        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
- .bss.dig_T2    0x20002a88        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
- .bss.dig_T3    0x20002a8a        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+                0x200029f0        0x4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_uart/uart.c.o
+                0x200029f0                uart_char_to_line_feed
+ .bss.dig_P1    0x200029f4        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+ .bss.dig_P2    0x200029f6        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+ .bss.dig_P3    0x200029f8        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+ .bss.dig_P4    0x200029fa        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+ .bss.dig_P5    0x200029fc        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+ .bss.dig_P6    0x200029fe        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+ .bss.dig_P7    0x20002a00        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+ .bss.dig_P8    0x20002a02        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+ .bss.dig_P9    0x20002a04        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+ .bss.dig_T1    0x20002a06        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+ .bss.dig_T2    0x20002a08        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+ .bss.dig_T3    0x20002a0a        0x2 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
  .bss._app_driver_count
-                0x20002a8c        0x1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
+                0x20002a0c        0x1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
  .bss._sof_enable
-                0x20002a8d        0x1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
+                0x20002a0d        0x1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
  .bss._usbd_queued_setup
-                0x20002a8e        0x1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
+                0x20002a0e        0x1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
  .bss.bmp280_addr
-                0x20002a8f        0x1 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+                0x20002a0f        0x1 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
  .bss.boot2_copyout_valid
-                0x20002a90        0x1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_flash/flash.c.o
+                0x20002a10        0x1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_flash/flash.c.o
  .bss.detected_sensor
-                0x20002a91        0x1 CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
+                0x20002a11        0x1 CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
  .bss.irq_handler_chain_free_slot_head
-                0x20002a92        0x1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_irq/irq.c.o
+                0x20002a12        0x1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_irq/irq.c.o
  .bss.is_initialized
-                0x20002a93        0x1 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x20002a13        0x1 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
  .bss.ms5607_addr
-                0x20002a94        0x1 CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
+                0x20002a14        0x1 CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
  .bss.usb_device_is_enabled
-                0x20002a95        0x1 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x20002a15        0x1 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  *(COMMON)
-                0x20002a98                        . = ALIGN (0x4)
- *fill*         0x20002a96        0x2 
-                0x20002a98                        __bss_end__ = .
+                0x20002a18                        . = ALIGN (0x4)
+ *fill*         0x20002a16        0x2 
+                0x20002a18                        __bss_end__ = .
 
-.heap           0x20002a98      0x800 load address 0x10017a74
-                0x20002a98                        __end__ = .
-                0x20002a98                        end = __end__
+.heap           0x20002a18      0x800 load address 0x10017a84
+                0x20002a18                        __end__ = .
+                0x20002a18                        end = __end__
  *(.heap*)
- .heap          0x20002a98      0x800 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_crt0/crt0.S.o
+ .heap          0x20002a18      0x800 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_crt0/crt0.S.o
                 0x20040000                        __HeapLimit = (ORIGIN (RAM) + LENGTH (RAM))
 
-.scratch_x      0x20040000        0x0 load address 0x10017a74
+.scratch_x      0x20040000        0x0 load address 0x10017a84
                 0x20040000                        __scratch_x_start__ = .
  *(.scratch_x.*)
                 0x20040000                        . = ALIGN (0x4)
                 0x20040000                        __scratch_x_end__ = .
-                0x10017a74                        __scratch_x_source__ = LOADADDR (.scratch_x)
+                0x10017a84                        __scratch_x_source__ = LOADADDR (.scratch_x)
 
-.scratch_y      0x20041000        0x0 load address 0x10017a74
+.scratch_y      0x20041000        0x0 load address 0x10017a84
                 0x20041000                        __scratch_y_start__ = .
  *(.scratch_y.*)
                 0x20041000                        . = ALIGN (0x4)
                 0x20041000                        __scratch_y_end__ = .
-                0x10017a74                        __scratch_y_source__ = LOADADDR (.scratch_y)
+                0x10017a84                        __scratch_y_source__ = LOADADDR (.scratch_y)
 
 .stack1_dummy
  *(.stack1*)
@@ -4244,9 +4245,9 @@ LOAD /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/1
 .rel.dyn        0x20041800        0x0
  .rel.iplt      0x20041800        0x0 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp/crtbegin.o
 
-.flash_end      0x10017a74        0x0
+.flash_end      0x10017a84        0x0
  *(.embedded_end_block*)
-                0x10017a74                        PROVIDE (__flash_binary_end = .)
+                0x10017a84                        PROVIDE (__flash_binary_end = .)
                 0x20040000                        __StackLimit = (ORIGIN (RAM) + LENGTH (RAM))
                 0x20041000                        __StackOneTop = (ORIGIN (SCRATCH_X) + LENGTH (SCRATCH_X))
                 0x20042000                        __StackTop = (ORIGIN (SCRATCH_Y) + LENGTH (SCRATCH_Y))
@@ -4622,242 +4623,242 @@ LOAD linker stubs
  .comment       0x00000045       0x46 liblittlefs_lib.a(lfs.c.o)
  .comment       0x00000045       0x46 liblittlefs_lib.a(lfs_util.c.o)
 
-.debug_info     0x00000000    0x5dce3
- .debug_info    0x00000000     0x3ef4 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
- .debug_info    0x00003ef4      0x415 CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
- .debug_info    0x00004309      0xb24 CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
- .debug_info    0x00004e2d      0xcfa CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
- .debug_info    0x00005b27      0x752 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
- .debug_info    0x00006279      0xb40 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
- .debug_info    0x00006db9      0x691 CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
- .debug_info    0x0000744a     0x6cff CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
- .debug_info    0x0000e149      0x3b5 CMakeFiles/pyro_fw_c.dir/src/unicode.c.o
- .debug_info    0x0000e4fe     0x2421 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_gpio/gpio.c.o
- .debug_info    0x0001091f      0x129 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/platform.c.o
- .debug_info    0x00010a48      0x1bf CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_panic/panic.c.o
- .debug_info    0x00010c07      0x9a1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/hardware_claim/claim.c.o
- .debug_info    0x000115a8      0x45c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync/sync.c.o
- .debug_info    0x00011a04      0x245 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o
- .debug_info    0x00011c49     0x2233 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_irq/irq.c.o
- .debug_info    0x00013e7c      0x15f CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/lock_core.c.o
- .debug_info    0x00013fdb     0x2815 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/mutex.c.o
- .debug_info    0x000167f0      0x308 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/critical_section.c.o
- .debug_info    0x00016af8     0x5065 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/time.c.o
- .debug_info    0x0001bb5d     0x2b37 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_timer/timer.c.o
- .debug_info    0x0001e694     0x1983 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_uart/uart.c.o
- .debug_info    0x00020017     0x2a05 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_clocks/clocks.c.o
- .debug_info    0x00022a1c      0x4e5 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_pll/pll.c.o
- .debug_info    0x00022f01      0x248 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_ticks/ticks.c.o
- .debug_info    0x00023149      0x678 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bootrom/bootrom.c.o
- .debug_info    0x000237c1      0x1d0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_xosc/xosc.c.o
- .debug_info    0x00023991      0x21a CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime/runtime.c.o
- .debug_info    0x00023bab      0x7ea CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init.c.o
- .debug_info    0x00024395      0x781 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o
- .debug_info    0x00024b16       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bit_ops/bit_ops_aeabi.S.o
- .debug_info    0x00024b39       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_divider/divider_hardware.S.o
- .debug_info    0x00024b5c       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_aeabi_rp2040.S.o
- .debug_info    0x00024b7f      0x27e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
- .debug_info    0x00024dfd     0x3e71 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_math.c.o
- .debug_info    0x00028c6e       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_v1_rom_shim_rp2040.S.o
- .debug_info    0x00028c91       0x24 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_int64_ops/pico_int64_ops_aeabi.S.o
- .debug_info    0x00028cb5       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_aeabi_rp2040.S.o
- .debug_info    0x00028cd8      0x27e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_init_rom_rp2040.c.o
- .debug_info    0x00028f56       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_v1_rom_shim_rp2040.S.o
- .debug_info    0x00028f79      0x3e4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_malloc/malloc.c.o
- .debug_info    0x0002935d       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_mem_ops/mem_ops_aeabi.S.o
- .debug_info    0x00029380      0x2e2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
- .debug_info    0x00029662     0x22f2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
- .debug_info    0x0002b954       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_crt0/crt0.S.o
- .debug_info    0x0002b977      0xbbe CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_clib_interface/newlib_interface.c.o
- .debug_info    0x0002c535     0x1c76 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio/stdio.c.o
- .debug_info    0x0002e1ab     0x1118 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
- .debug_info    0x0002f2c3      0x201 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_unique_id/unique_id.c.o
- .debug_info    0x0002f4c4     0x177f CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_flash/flash.c.o
- .debug_info    0x00030c43     0x2b1c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
- .debug_info    0x0003375f     0x117c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
- .debug_info    0x000348db     0x49e0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
- .debug_info    0x000392bb      0xb66 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd_control.c.o
- .debug_info    0x00039e21     0x1fd2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/cdc/cdc_device.c.o
- .debug_info    0x0003bdf3     0x3749 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/msc/msc_device.c.o
- .debug_info    0x0003f53c     0x1e7e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/tusb.c.o
- .debug_info    0x000413ba     0x283d CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/common/tusb_fifo.c.o
- .debug_info    0x00043bf7     0x1cf8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_i2c/i2c.c.o
- .debug_info    0x000458ef      0x3fc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_adc/adc.c.o
- .debug_info    0x00045ceb      0xc17 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
- .debug_info    0x00046902    0x1726f liblittlefs_lib.a(lfs.c.o)
- .debug_info    0x0005db71      0x172 liblittlefs_lib.a(lfs_util.c.o)
+.debug_info     0x00000000    0x5d83b
+ .debug_info    0x00000000     0x39a2 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
+ .debug_info    0x000039a2      0x415 CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
+ .debug_info    0x00003db7      0xb24 CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
+ .debug_info    0x000048db      0xcfa CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+ .debug_info    0x000055d5      0x752 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
+ .debug_info    0x00005d27      0xb40 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+ .debug_info    0x00006867      0x691 CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
+ .debug_info    0x00006ef8     0x6da9 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+ .debug_info    0x0000dca1      0x3b5 CMakeFiles/pyro_fw_c.dir/src/unicode.c.o
+ .debug_info    0x0000e056     0x2421 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_gpio/gpio.c.o
+ .debug_info    0x00010477      0x129 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/platform.c.o
+ .debug_info    0x000105a0      0x1bf CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_panic/panic.c.o
+ .debug_info    0x0001075f      0x9a1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/hardware_claim/claim.c.o
+ .debug_info    0x00011100      0x45c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync/sync.c.o
+ .debug_info    0x0001155c      0x245 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o
+ .debug_info    0x000117a1     0x2233 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_irq/irq.c.o
+ .debug_info    0x000139d4      0x15f CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/lock_core.c.o
+ .debug_info    0x00013b33     0x2815 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/mutex.c.o
+ .debug_info    0x00016348      0x308 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/critical_section.c.o
+ .debug_info    0x00016650     0x5065 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/time.c.o
+ .debug_info    0x0001b6b5     0x2b37 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_timer/timer.c.o
+ .debug_info    0x0001e1ec     0x1983 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_uart/uart.c.o
+ .debug_info    0x0001fb6f     0x2a05 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_clocks/clocks.c.o
+ .debug_info    0x00022574      0x4e5 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_pll/pll.c.o
+ .debug_info    0x00022a59      0x248 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_ticks/ticks.c.o
+ .debug_info    0x00022ca1      0x678 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bootrom/bootrom.c.o
+ .debug_info    0x00023319      0x1d0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_xosc/xosc.c.o
+ .debug_info    0x000234e9      0x21a CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime/runtime.c.o
+ .debug_info    0x00023703      0x7ea CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init.c.o
+ .debug_info    0x00023eed      0x781 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o
+ .debug_info    0x0002466e       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bit_ops/bit_ops_aeabi.S.o
+ .debug_info    0x00024691       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_divider/divider_hardware.S.o
+ .debug_info    0x000246b4       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_aeabi_rp2040.S.o
+ .debug_info    0x000246d7      0x27e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
+ .debug_info    0x00024955     0x3e71 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_math.c.o
+ .debug_info    0x000287c6       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_v1_rom_shim_rp2040.S.o
+ .debug_info    0x000287e9       0x24 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_int64_ops/pico_int64_ops_aeabi.S.o
+ .debug_info    0x0002880d       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_aeabi_rp2040.S.o
+ .debug_info    0x00028830      0x27e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_init_rom_rp2040.c.o
+ .debug_info    0x00028aae       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_v1_rom_shim_rp2040.S.o
+ .debug_info    0x00028ad1      0x3e4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_malloc/malloc.c.o
+ .debug_info    0x00028eb5       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_mem_ops/mem_ops_aeabi.S.o
+ .debug_info    0x00028ed8      0x2e2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+ .debug_info    0x000291ba     0x22f2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
+ .debug_info    0x0002b4ac       0x23 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_crt0/crt0.S.o
+ .debug_info    0x0002b4cf      0xbbe CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_clib_interface/newlib_interface.c.o
+ .debug_info    0x0002c08d     0x1c76 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio/stdio.c.o
+ .debug_info    0x0002dd03     0x1118 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
+ .debug_info    0x0002ee1b      0x201 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_unique_id/unique_id.c.o
+ .debug_info    0x0002f01c     0x177f CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_flash/flash.c.o
+ .debug_info    0x0003079b     0x2b1c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
+ .debug_info    0x000332b7     0x117c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
+ .debug_info    0x00034433     0x49e0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
+ .debug_info    0x00038e13      0xb66 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd_control.c.o
+ .debug_info    0x00039979     0x1fd2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/cdc/cdc_device.c.o
+ .debug_info    0x0003b94b     0x3749 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/msc/msc_device.c.o
+ .debug_info    0x0003f094     0x1e7e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/tusb.c.o
+ .debug_info    0x00040f12     0x283d CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/common/tusb_fifo.c.o
+ .debug_info    0x0004374f     0x1cf8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_i2c/i2c.c.o
+ .debug_info    0x00045447      0x3fc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_adc/adc.c.o
+ .debug_info    0x00045843      0xc17 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
+ .debug_info    0x0004645a    0x1726f liblittlefs_lib.a(lfs.c.o)
+ .debug_info    0x0005d6c9      0x172 liblittlefs_lib.a(lfs_util.c.o)
 
-.debug_abbrev   0x00000000     0xb234
- .debug_abbrev  0x00000000      0x6bd CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
- .debug_abbrev  0x000006bd      0x16e CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
- .debug_abbrev  0x0000082b      0x29b CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
- .debug_abbrev  0x00000ac6      0x277 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
- .debug_abbrev  0x00000d3d      0x1b6 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
- .debug_abbrev  0x00000ef3      0x25d CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
- .debug_abbrev  0x00001150      0x22e CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
- .debug_abbrev  0x0000137e      0x5e1 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
- .debug_abbrev  0x0000195f      0x144 CMakeFiles/pyro_fw_c.dir/src/unicode.c.o
- .debug_abbrev  0x00001aa3      0x4f9 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_gpio/gpio.c.o
- .debug_abbrev  0x00001f9c       0x77 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/platform.c.o
- .debug_abbrev  0x00002013      0x12b CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_panic/panic.c.o
- .debug_abbrev  0x0000213e      0x328 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/hardware_claim/claim.c.o
- .debug_abbrev  0x00002466      0x20f CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync/sync.c.o
- .debug_abbrev  0x00002675      0x1bb CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o
- .debug_abbrev  0x00002830      0x614 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_irq/irq.c.o
- .debug_abbrev  0x00002e44       0xee CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/lock_core.c.o
- .debug_abbrev  0x00002f32      0x48c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/mutex.c.o
- .debug_abbrev  0x000033be      0x1d5 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/critical_section.c.o
- .debug_abbrev  0x00003593      0x659 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/time.c.o
- .debug_abbrev  0x00003bec      0x4f2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_timer/timer.c.o
- .debug_abbrev  0x000040de      0x365 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_uart/uart.c.o
- .debug_abbrev  0x00004443      0x512 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_clocks/clocks.c.o
- .debug_abbrev  0x00004955      0x1d2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_pll/pll.c.o
- .debug_abbrev  0x00004b27      0x145 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_ticks/ticks.c.o
- .debug_abbrev  0x00004c6c      0x1bc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bootrom/bootrom.c.o
- .debug_abbrev  0x00004e28      0x11d CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_xosc/xosc.c.o
- .debug_abbrev  0x00004f45      0x182 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime/runtime.c.o
- .debug_abbrev  0x000050c7      0x26b CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init.c.o
- .debug_abbrev  0x00005332      0x2af CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o
- .debug_abbrev  0x000055e1       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bit_ops/bit_ops_aeabi.S.o
- .debug_abbrev  0x000055f3       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_divider/divider_hardware.S.o
- .debug_abbrev  0x00005605       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_aeabi_rp2040.S.o
- .debug_abbrev  0x00005617      0x17a CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
- .debug_abbrev  0x00005791      0x342 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_math.c.o
- .debug_abbrev  0x00005ad3       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_v1_rom_shim_rp2040.S.o
- .debug_abbrev  0x00005ae5       0x14 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_int64_ops/pico_int64_ops_aeabi.S.o
- .debug_abbrev  0x00005af9       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_aeabi_rp2040.S.o
- .debug_abbrev  0x00005b0b      0x173 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_init_rom_rp2040.c.o
- .debug_abbrev  0x00005c7e       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_v1_rom_shim_rp2040.S.o
- .debug_abbrev  0x00005c90      0x1ad CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_malloc/malloc.c.o
- .debug_abbrev  0x00005e3d       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_mem_ops/mem_ops_aeabi.S.o
- .debug_abbrev  0x00005e4f       0xb8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
- .debug_abbrev  0x00005f07      0x50c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
- .debug_abbrev  0x00006413       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_crt0/crt0.S.o
- .debug_abbrev  0x00006425      0x352 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_clib_interface/newlib_interface.c.o
- .debug_abbrev  0x00006777      0x5c4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio/stdio.c.o
- .debug_abbrev  0x00006d3b      0x464 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
- .debug_abbrev  0x0000719f      0x153 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_unique_id/unique_id.c.o
- .debug_abbrev  0x000072f2      0x412 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_flash/flash.c.o
- .debug_abbrev  0x00007704      0x5d9 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
- .debug_abbrev  0x00007cdd      0x480 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
- .debug_abbrev  0x0000815d      0x7f2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
- .debug_abbrev  0x0000894f      0x38d CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd_control.c.o
- .debug_abbrev  0x00008cdc      0x560 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/cdc/cdc_device.c.o
- .debug_abbrev  0x0000923c      0x5c7 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/msc/msc_device.c.o
- .debug_abbrev  0x00009803      0x523 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/tusb.c.o
- .debug_abbrev  0x00009d26      0x443 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/common/tusb_fifo.c.o
- .debug_abbrev  0x0000a169      0x4a3 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_i2c/i2c.c.o
- .debug_abbrev  0x0000a60c      0x142 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_adc/adc.c.o
- .debug_abbrev  0x0000a74e      0x42e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
- .debug_abbrev  0x0000ab7c      0x5d0 liblittlefs_lib.a(lfs.c.o)
- .debug_abbrev  0x0000b14c       0xe8 liblittlefs_lib.a(lfs_util.c.o)
+.debug_abbrev   0x00000000     0xb1f4
+ .debug_abbrev  0x00000000      0x67a CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
+ .debug_abbrev  0x0000067a      0x16e CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
+ .debug_abbrev  0x000007e8      0x29b CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
+ .debug_abbrev  0x00000a83      0x277 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+ .debug_abbrev  0x00000cfa      0x1b6 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
+ .debug_abbrev  0x00000eb0      0x25d CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+ .debug_abbrev  0x0000110d      0x22e CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
+ .debug_abbrev  0x0000133b      0x5e4 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+ .debug_abbrev  0x0000191f      0x144 CMakeFiles/pyro_fw_c.dir/src/unicode.c.o
+ .debug_abbrev  0x00001a63      0x4f9 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_gpio/gpio.c.o
+ .debug_abbrev  0x00001f5c       0x77 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/platform.c.o
+ .debug_abbrev  0x00001fd3      0x12b CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_panic/panic.c.o
+ .debug_abbrev  0x000020fe      0x328 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/hardware_claim/claim.c.o
+ .debug_abbrev  0x00002426      0x20f CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync/sync.c.o
+ .debug_abbrev  0x00002635      0x1bb CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o
+ .debug_abbrev  0x000027f0      0x614 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_irq/irq.c.o
+ .debug_abbrev  0x00002e04       0xee CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/lock_core.c.o
+ .debug_abbrev  0x00002ef2      0x48c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/mutex.c.o
+ .debug_abbrev  0x0000337e      0x1d5 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/critical_section.c.o
+ .debug_abbrev  0x00003553      0x659 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/time.c.o
+ .debug_abbrev  0x00003bac      0x4f2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_timer/timer.c.o
+ .debug_abbrev  0x0000409e      0x365 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_uart/uart.c.o
+ .debug_abbrev  0x00004403      0x512 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_clocks/clocks.c.o
+ .debug_abbrev  0x00004915      0x1d2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_pll/pll.c.o
+ .debug_abbrev  0x00004ae7      0x145 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_ticks/ticks.c.o
+ .debug_abbrev  0x00004c2c      0x1bc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bootrom/bootrom.c.o
+ .debug_abbrev  0x00004de8      0x11d CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_xosc/xosc.c.o
+ .debug_abbrev  0x00004f05      0x182 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime/runtime.c.o
+ .debug_abbrev  0x00005087      0x26b CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init.c.o
+ .debug_abbrev  0x000052f2      0x2af CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o
+ .debug_abbrev  0x000055a1       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bit_ops/bit_ops_aeabi.S.o
+ .debug_abbrev  0x000055b3       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_divider/divider_hardware.S.o
+ .debug_abbrev  0x000055c5       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_aeabi_rp2040.S.o
+ .debug_abbrev  0x000055d7      0x17a CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
+ .debug_abbrev  0x00005751      0x342 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_math.c.o
+ .debug_abbrev  0x00005a93       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_v1_rom_shim_rp2040.S.o
+ .debug_abbrev  0x00005aa5       0x14 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_int64_ops/pico_int64_ops_aeabi.S.o
+ .debug_abbrev  0x00005ab9       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_aeabi_rp2040.S.o
+ .debug_abbrev  0x00005acb      0x173 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_init_rom_rp2040.c.o
+ .debug_abbrev  0x00005c3e       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_v1_rom_shim_rp2040.S.o
+ .debug_abbrev  0x00005c50      0x1ad CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_malloc/malloc.c.o
+ .debug_abbrev  0x00005dfd       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_mem_ops/mem_ops_aeabi.S.o
+ .debug_abbrev  0x00005e0f       0xb8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+ .debug_abbrev  0x00005ec7      0x50c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
+ .debug_abbrev  0x000063d3       0x12 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_crt0/crt0.S.o
+ .debug_abbrev  0x000063e5      0x352 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_clib_interface/newlib_interface.c.o
+ .debug_abbrev  0x00006737      0x5c4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio/stdio.c.o
+ .debug_abbrev  0x00006cfb      0x464 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
+ .debug_abbrev  0x0000715f      0x153 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_unique_id/unique_id.c.o
+ .debug_abbrev  0x000072b2      0x412 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_flash/flash.c.o
+ .debug_abbrev  0x000076c4      0x5d9 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
+ .debug_abbrev  0x00007c9d      0x480 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
+ .debug_abbrev  0x0000811d      0x7f2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
+ .debug_abbrev  0x0000890f      0x38d CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd_control.c.o
+ .debug_abbrev  0x00008c9c      0x560 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/cdc/cdc_device.c.o
+ .debug_abbrev  0x000091fc      0x5c7 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/msc/msc_device.c.o
+ .debug_abbrev  0x000097c3      0x523 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/tusb.c.o
+ .debug_abbrev  0x00009ce6      0x443 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/common/tusb_fifo.c.o
+ .debug_abbrev  0x0000a129      0x4a3 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_i2c/i2c.c.o
+ .debug_abbrev  0x0000a5cc      0x142 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_adc/adc.c.o
+ .debug_abbrev  0x0000a70e      0x42e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
+ .debug_abbrev  0x0000ab3c      0x5d0 liblittlefs_lib.a(lfs.c.o)
+ .debug_abbrev  0x0000b10c       0xe8 liblittlefs_lib.a(lfs_util.c.o)
 
 .debug_loclists
-                0x00000000    0x40500
+                0x00000000    0x40529
  .debug_loclists
-                0x00000000     0x1a1d CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
+                0x00000000     0x1a07 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
  .debug_loclists
-                0x00001a1d       0x57 CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
+                0x00001a07       0x57 CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
  .debug_loclists
-                0x00001a74      0x1e4 CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
+                0x00001a5e      0x1e4 CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
  .debug_loclists
-                0x00001c58      0x4f9 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+                0x00001c42      0x4f9 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
  .debug_loclists
-                0x00002151      0x104 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
+                0x0000213b      0x104 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
  .debug_loclists
-                0x00002255      0x30b CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+                0x0000223f      0x30b CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
  .debug_loclists
-                0x00002560      0x350 CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
+                0x0000254a      0x350 CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
  .debug_loclists
-                0x000028b0     0x630f CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+                0x0000289a     0x634e CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .debug_loclists
-                0x00008bbf      0x64d CMakeFiles/pyro_fw_c.dir/src/unicode.c.o
+                0x00008be8      0x64d CMakeFiles/pyro_fw_c.dir/src/unicode.c.o
  .debug_loclists
-                0x0000920c     0x1a7f CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_gpio/gpio.c.o
+                0x00009235     0x1a7f CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_gpio/gpio.c.o
  .debug_loclists
-                0x0000ac8b       0x53 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/platform.c.o
+                0x0000acb4       0x53 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/platform.c.o
  .debug_loclists
-                0x0000acde      0x349 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/hardware_claim/claim.c.o
+                0x0000ad07      0x349 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/hardware_claim/claim.c.o
  .debug_loclists
-                0x0000b027      0x108 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync/sync.c.o
+                0x0000b050      0x108 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync/sync.c.o
  .debug_loclists
-                0x0000b12f       0x7d CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o
+                0x0000b158       0x7d CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o
  .debug_loclists
-                0x0000b1ac     0x11ed CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_irq/irq.c.o
+                0x0000b1d5     0x11ed CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_irq/irq.c.o
  .debug_loclists
-                0x0000c399       0x41 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/lock_core.c.o
+                0x0000c3c2       0x41 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/lock_core.c.o
  .debug_loclists
-                0x0000c3da      0xaec CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/mutex.c.o
+                0x0000c403      0xaec CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/mutex.c.o
  .debug_loclists
-                0x0000cec6       0xb6 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/critical_section.c.o
+                0x0000ceef       0xb6 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/critical_section.c.o
  .debug_loclists
-                0x0000cf7c     0x27af CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/time.c.o
+                0x0000cfa5     0x27af CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/time.c.o
  .debug_loclists
-                0x0000f72b     0x19f1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_timer/timer.c.o
+                0x0000f754     0x19f1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_timer/timer.c.o
  .debug_loclists
-                0x0001111c      0xc90 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_uart/uart.c.o
+                0x00011145      0xc90 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_uart/uart.c.o
  .debug_loclists
-                0x00011dac     0x2b7c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_clocks/clocks.c.o
+                0x00011dd5     0x2b7c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_clocks/clocks.c.o
  .debug_loclists
-                0x00014928      0x1e0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_pll/pll.c.o
+                0x00014951      0x1e0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_pll/pll.c.o
  .debug_loclists
-                0x00014b08       0x47 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_ticks/ticks.c.o
+                0x00014b31       0x47 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_ticks/ticks.c.o
  .debug_loclists
-                0x00014b4f      0x351 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bootrom/bootrom.c.o
+                0x00014b78      0x351 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bootrom/bootrom.c.o
  .debug_loclists
-                0x00014ea0       0x48 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_xosc/xosc.c.o
+                0x00014ec9       0x48 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_xosc/xosc.c.o
  .debug_loclists
-                0x00014ee8       0x7e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime/runtime.c.o
+                0x00014f11       0x7e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime/runtime.c.o
  .debug_loclists
-                0x00014f66      0x139 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init.c.o
+                0x00014f8f      0x139 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init.c.o
  .debug_loclists
-                0x0001509f       0x74 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o
+                0x000150c8       0x74 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o
  .debug_loclists
-                0x00015113       0x3d CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
+                0x0001513c       0x3d CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
  .debug_loclists
-                0x00015150     0x43fa CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_math.c.o
+                0x00015179     0x43fa CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_math.c.o
  .debug_loclists
-                0x0001954a       0x59 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_init_rom_rp2040.c.o
+                0x00019573       0x59 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_init_rom_rp2040.c.o
  .debug_loclists
-                0x000195a3      0x206 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_malloc/malloc.c.o
+                0x000195cc      0x206 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_malloc/malloc.c.o
  .debug_loclists
-                0x000197a9     0x355f CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
+                0x000197d2     0x355f CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
  .debug_loclists
-                0x0001cd08      0x44e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_clib_interface/newlib_interface.c.o
+                0x0001cd31      0x44e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_clib_interface/newlib_interface.c.o
  .debug_loclists
-                0x0001d156      0xf4f CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio/stdio.c.o
+                0x0001d17f      0xf4f CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio/stdio.c.o
  .debug_loclists
-                0x0001e0a5      0x424 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
+                0x0001e0ce      0x424 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
  .debug_loclists
-                0x0001e4c9      0x3d5 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_unique_id/unique_id.c.o
+                0x0001e4f2      0x3d5 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_unique_id/unique_id.c.o
  .debug_loclists
-                0x0001e89e      0xb24 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_flash/flash.c.o
+                0x0001e8c7      0xb24 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_flash/flash.c.o
  .debug_loclists
-                0x0001f3c2     0x1bd5 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
+                0x0001f3eb     0x1bd5 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
  .debug_loclists
-                0x00020f97      0x719 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
+                0x00020fc0      0x719 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
  .debug_loclists
-                0x000216b0     0x21ed CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
+                0x000216d9     0x21ed CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
  .debug_loclists
-                0x0002389d      0x45e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd_control.c.o
+                0x000238c6      0x45e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd_control.c.o
  .debug_loclists
-                0x00023cfb      0xdc9 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/cdc/cdc_device.c.o
+                0x00023d24      0xdc9 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/cdc/cdc_device.c.o
  .debug_loclists
-                0x00024ac4     0x22da CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/msc/msc_device.c.o
+                0x00024aed     0x22da CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/msc/msc_device.c.o
  .debug_loclists
-                0x00026d9e      0xf52 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/tusb.c.o
+                0x00026dc7      0xf52 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/tusb.c.o
  .debug_loclists
-                0x00027cf0     0x1fdb CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/common/tusb_fifo.c.o
+                0x00027d19     0x1fdb CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/common/tusb_fifo.c.o
  .debug_loclists
-                0x00029ccb     0x1422 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_i2c/i2c.c.o
+                0x00029cf4     0x1422 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_i2c/i2c.c.o
  .debug_loclists
-                0x0002b0ed       0x98 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_adc/adc.c.o
+                0x0002b116       0x98 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_adc/adc.c.o
  .debug_loclists
-                0x0002b185      0x1ca CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
+                0x0002b1ae      0x1ca CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
  .debug_loclists
-                0x0002b34f    0x15117 liblittlefs_lib.a(lfs.c.o)
+                0x0002b378    0x15117 liblittlefs_lib.a(lfs.c.o)
  .debug_loclists
-                0x00040466       0x9a liblittlefs_lib.a(lfs_util.c.o)
+                0x0004048f       0x9a liblittlefs_lib.a(lfs_util.c.o)
 
 .debug_aranges  0x00000000     0x1b48
  .debug_aranges
@@ -5112,81 +5113,81 @@ LOAD linker stubs
  .debug_rnglists
                 0x0000a046       0x13 liblittlefs_lib.a(lfs_util.c.o)
 
-.debug_line     0x00000000    0x3fdaa
- .debug_line    0x00000000     0x2144 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
- .debug_line    0x00002144      0x19d CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
- .debug_line    0x000022e1      0x624 CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
- .debug_line    0x00002905      0x6ca CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
- .debug_line    0x00002fcf      0x403 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
- .debug_line    0x000033d2      0x4d2 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
- .debug_line    0x000038a4      0x45f CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
- .debug_line    0x00003d03     0x38eb CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
- .debug_line    0x000075ee      0x6aa CMakeFiles/pyro_fw_c.dir/src/unicode.c.o
- .debug_line    0x00007c98     0x1c78 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_gpio/gpio.c.o
- .debug_line    0x00009910      0x262 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/platform.c.o
- .debug_line    0x00009b72      0x28a CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_panic/panic.c.o
- .debug_line    0x00009dfc      0x906 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/hardware_claim/claim.c.o
- .debug_line    0x0000a702      0x4d8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync/sync.c.o
- .debug_line    0x0000abda      0x3ba CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o
- .debug_line    0x0000af94     0x17df CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_irq/irq.c.o
- .debug_line    0x0000c773      0x2e5 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/lock_core.c.o
- .debug_line    0x0000ca58     0x1bac CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/mutex.c.o
- .debug_line    0x0000e604      0x419 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/critical_section.c.o
- .debug_line    0x0000ea1d     0x35aa CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/time.c.o
- .debug_line    0x00011fc7     0x1d81 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_timer/timer.c.o
- .debug_line    0x00013d48      0xfba CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_uart/uart.c.o
- .debug_line    0x00014d02     0x216a CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_clocks/clocks.c.o
- .debug_line    0x00016e6c      0x514 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_pll/pll.c.o
- .debug_line    0x00017380      0x344 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_ticks/ticks.c.o
- .debug_line    0x000176c4      0x460 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bootrom/bootrom.c.o
- .debug_line    0x00017b24      0x35f CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_xosc/xosc.c.o
- .debug_line    0x00017e83      0x319 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime/runtime.c.o
- .debug_line    0x0001819c      0x6f0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init.c.o
- .debug_line    0x0001888c      0x57b CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o
- .debug_line    0x00018e07      0x108 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bit_ops/bit_ops_aeabi.S.o
- .debug_line    0x00018f0f      0x2a9 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_divider/divider_hardware.S.o
- .debug_line    0x000191b8      0x452 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_aeabi_rp2040.S.o
- .debug_line    0x0001960a      0x49c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
- .debug_line    0x00019aa6     0x2d43 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_math.c.o
- .debug_line    0x0001c7e9      0x66d CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_v1_rom_shim_rp2040.S.o
- .debug_line    0x0001ce56       0x61 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_int64_ops/pico_int64_ops_aeabi.S.o
- .debug_line    0x0001ceb7      0x3d2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_aeabi_rp2040.S.o
- .debug_line    0x0001d289      0x3b1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_init_rom_rp2040.c.o
- .debug_line    0x0001d63a      0x195 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_v1_rom_shim_rp2040.S.o
- .debug_line    0x0001d7cf      0x2a4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_malloc/malloc.c.o
- .debug_line    0x0001da73       0x94 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_mem_ops/mem_ops_aeabi.S.o
- .debug_line    0x0001db07      0x1f5 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
- .debug_line    0x0001dcfc     0x1d18 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
- .debug_line    0x0001fa14       0xa2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_crt0/crt0.S.o
- .debug_line    0x0001fab6      0x8ec CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_clib_interface/newlib_interface.c.o
- .debug_line    0x000203a2     0x14d1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio/stdio.c.o
- .debug_line    0x00021873      0xbec CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
- .debug_line    0x0002245f      0x667 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_unique_id/unique_id.c.o
- .debug_line    0x00022ac6      0xebb CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_flash/flash.c.o
- .debug_line    0x00023981     0x1f04 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
- .debug_line    0x00025885      0xd26 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
- .debug_line    0x000265ab     0x28b2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
- .debug_line    0x00028e5d      0x6ef CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd_control.c.o
- .debug_line    0x0002954c     0x10c2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/cdc/cdc_device.c.o
- .debug_line    0x0002a60e     0x1a10 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/msc/msc_device.c.o
- .debug_line    0x0002c01e     0x120c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/tusb.c.o
- .debug_line    0x0002d22a     0x1a67 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/common/tusb_fifo.c.o
- .debug_line    0x0002ec91     0x132c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_i2c/i2c.c.o
- .debug_line    0x0002ffbd      0x40e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_adc/adc.c.o
- .debug_line    0x000303cb      0x781 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
- .debug_line    0x00030b4c     0xf073 liblittlefs_lib.a(lfs.c.o)
- .debug_line    0x0003fbbf      0x1eb liblittlefs_lib.a(lfs_util.c.o)
+.debug_line     0x00000000    0x3fd7f
+ .debug_line    0x00000000     0x20ed CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
+ .debug_line    0x000020ed      0x19d CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
+ .debug_line    0x0000228a      0x624 CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
+ .debug_line    0x000028ae      0x6ca CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
+ .debug_line    0x00002f78      0x403 CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
+ .debug_line    0x0000337b      0x4d2 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+ .debug_line    0x0000384d      0x45f CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
+ .debug_line    0x00003cac     0x3917 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+ .debug_line    0x000075c3      0x6aa CMakeFiles/pyro_fw_c.dir/src/unicode.c.o
+ .debug_line    0x00007c6d     0x1c78 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_gpio/gpio.c.o
+ .debug_line    0x000098e5      0x262 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/platform.c.o
+ .debug_line    0x00009b47      0x28a CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_panic/panic.c.o
+ .debug_line    0x00009dd1      0x906 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/hardware_claim/claim.c.o
+ .debug_line    0x0000a6d7      0x4d8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync/sync.c.o
+ .debug_line    0x0000abaf      0x3ba CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o
+ .debug_line    0x0000af69     0x17df CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_irq/irq.c.o
+ .debug_line    0x0000c748      0x2e5 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/lock_core.c.o
+ .debug_line    0x0000ca2d     0x1bac CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/mutex.c.o
+ .debug_line    0x0000e5d9      0x419 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/critical_section.c.o
+ .debug_line    0x0000e9f2     0x35aa CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/time.c.o
+ .debug_line    0x00011f9c     0x1d81 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_timer/timer.c.o
+ .debug_line    0x00013d1d      0xfba CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_uart/uart.c.o
+ .debug_line    0x00014cd7     0x216a CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_clocks/clocks.c.o
+ .debug_line    0x00016e41      0x514 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_pll/pll.c.o
+ .debug_line    0x00017355      0x344 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_ticks/ticks.c.o
+ .debug_line    0x00017699      0x460 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bootrom/bootrom.c.o
+ .debug_line    0x00017af9      0x35f CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_xosc/xosc.c.o
+ .debug_line    0x00017e58      0x319 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime/runtime.c.o
+ .debug_line    0x00018171      0x6f0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init.c.o
+ .debug_line    0x00018861      0x57b CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o
+ .debug_line    0x00018ddc      0x108 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bit_ops/bit_ops_aeabi.S.o
+ .debug_line    0x00018ee4      0x2a9 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_divider/divider_hardware.S.o
+ .debug_line    0x0001918d      0x452 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_aeabi_rp2040.S.o
+ .debug_line    0x000195df      0x49c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
+ .debug_line    0x00019a7b     0x2d43 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_math.c.o
+ .debug_line    0x0001c7be      0x66d CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_v1_rom_shim_rp2040.S.o
+ .debug_line    0x0001ce2b       0x61 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_int64_ops/pico_int64_ops_aeabi.S.o
+ .debug_line    0x0001ce8c      0x3d2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_aeabi_rp2040.S.o
+ .debug_line    0x0001d25e      0x3b1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_init_rom_rp2040.c.o
+ .debug_line    0x0001d60f      0x195 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_v1_rom_shim_rp2040.S.o
+ .debug_line    0x0001d7a4      0x2a4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_malloc/malloc.c.o
+ .debug_line    0x0001da48       0x94 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_mem_ops/mem_ops_aeabi.S.o
+ .debug_line    0x0001dadc      0x1f5 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+ .debug_line    0x0001dcd1     0x1d18 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
+ .debug_line    0x0001f9e9       0xa2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_crt0/crt0.S.o
+ .debug_line    0x0001fa8b      0x8ec CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_clib_interface/newlib_interface.c.o
+ .debug_line    0x00020377     0x14d1 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio/stdio.c.o
+ .debug_line    0x00021848      0xbec CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
+ .debug_line    0x00022434      0x667 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_unique_id/unique_id.c.o
+ .debug_line    0x00022a9b      0xebb CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_flash/flash.c.o
+ .debug_line    0x00023956     0x1f04 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
+ .debug_line    0x0002585a      0xd26 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
+ .debug_line    0x00026580     0x28b2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
+ .debug_line    0x00028e32      0x6ef CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd_control.c.o
+ .debug_line    0x00029521     0x10c2 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/cdc/cdc_device.c.o
+ .debug_line    0x0002a5e3     0x1a10 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/msc/msc_device.c.o
+ .debug_line    0x0002bff3     0x120c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/tusb.c.o
+ .debug_line    0x0002d1ff     0x1a67 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/common/tusb_fifo.c.o
+ .debug_line    0x0002ec66     0x132c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_i2c/i2c.c.o
+ .debug_line    0x0002ff92      0x40e CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_adc/adc.c.o
+ .debug_line    0x000303a0      0x781 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
+ .debug_line    0x00030b21     0xf073 liblittlefs_lib.a(lfs.c.o)
+ .debug_line    0x0003fb94      0x1eb liblittlefs_lib.a(lfs_util.c.o)
 
 .debug_str      0x00000000     0xbe58
  .debug_str     0x00000000     0xbe58 CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
-                               0x1526 (size before relaxing)
+                               0x130d (size before relaxing)
  .debug_str     0x0000be58      0x6b0 CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
  .debug_str     0x0000be58      0x900 CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
  .debug_str     0x0000be58      0x9b9 CMakeFiles/pyro_fw_c.dir/src/bmp280_driver.c.o
  .debug_str     0x0000be58     0x108b CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
  .debug_str     0x0000be58      0xa7c CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
  .debug_str     0x0000be58      0x394 CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
- .debug_str     0x0000be58     0x18c4 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+ .debug_str     0x0000be58     0x18cf CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
  .debug_str     0x0000be58      0x252 CMakeFiles/pyro_fw_c.dir/src/unicode.c.o
  .debug_str     0x0000be58      0xcb8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_gpio/gpio.c.o
  .debug_str     0x0000be58      0x1e9 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/platform.c.o
@@ -5243,7 +5244,7 @@ LOAD linker stubs
  .debug_str     0x0000be58     0x1752 liblittlefs_lib.a(lfs.c.o)
  .debug_str     0x0000be58      0x1a1 liblittlefs_lib.a(lfs_util.c.o)
 
-.debug_frame    0x00000000     0x4fa0
+.debug_frame    0x00000000     0x4fac
  .debug_frame   0x00000000      0x1fc CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.o
  .debug_frame   0x000001fc       0x50 CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.o
  .debug_frame   0x0000024c       0x68 CMakeFiles/pyro_fw_c.dir/src/ms5607_driver.c.o
@@ -5251,76 +5252,76 @@ LOAD linker stubs
  .debug_frame   0x0000031c       0x4c CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
  .debug_frame   0x00000368      0x104 CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
  .debug_frame   0x0000046c       0x70 CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
- .debug_frame   0x000004dc      0x424 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
- .debug_frame   0x00000900       0xa8 CMakeFiles/pyro_fw_c.dir/src/unicode.c.o
- .debug_frame   0x000009a8      0x320 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_gpio/gpio.c.o
- .debug_frame   0x00000cc8       0x20 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/platform.c.o
- .debug_frame   0x00000ce8       0x44 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_panic/panic.c.o
- .debug_frame   0x00000d2c       0xa0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/hardware_claim/claim.c.o
- .debug_frame   0x00000dcc       0xa8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync/sync.c.o
- .debug_frame   0x00000e74       0x30 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o
- .debug_frame   0x00000ea4      0x1cc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_irq/irq.c.o
- .debug_frame   0x00001070       0x20 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/lock_core.c.o
- .debug_frame   0x00001090      0x1e8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/mutex.c.o
- .debug_frame   0x00001278       0x50 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/critical_section.c.o
- .debug_frame   0x000012c8      0x2ec CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/time.c.o
- .debug_frame   0x000015b4      0x2c4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_timer/timer.c.o
- .debug_frame   0x00001878       0xec CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_uart/uart.c.o
- .debug_frame   0x00001964      0x1f4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_clocks/clocks.c.o
- .debug_frame   0x00001b58       0x40 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_pll/pll.c.o
- .debug_frame   0x00001b98       0x40 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_ticks/ticks.c.o
- .debug_frame   0x00001bd8       0xa0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bootrom/bootrom.c.o
- .debug_frame   0x00001c78       0x40 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_xosc/xosc.c.o
- .debug_frame   0x00001cb8       0x70 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime/runtime.c.o
- .debug_frame   0x00001d28       0x88 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init.c.o
- .debug_frame   0x00001db0       0x2c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o
- .debug_frame   0x00001ddc       0x2c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
- .debug_frame   0x00001e08      0x444 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_math.c.o
- .debug_frame   0x0000224c       0x28 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_init_rom_rp2040.c.o
- .debug_frame   0x00002274       0x74 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_malloc/malloc.c.o
- .debug_frame   0x000022e8      0x1f0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
- .debug_frame   0x000024d8      0x184 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_clib_interface/newlib_interface.c.o
- .debug_frame   0x0000265c      0x2a8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio/stdio.c.o
- .debug_frame   0x00002904       0xdc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
- .debug_frame   0x000029e0       0x5c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_unique_id/unique_id.c.o
- .debug_frame   0x00002a3c      0x15c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_flash/flash.c.o
- .debug_frame   0x00002b98      0x220 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
- .debug_frame   0x00002db8      0x124 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
- .debug_frame   0x00002edc      0x414 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
- .debug_frame   0x000032f0       0xc0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd_control.c.o
- .debug_frame   0x000033b0      0x234 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/cdc/cdc_device.c.o
- .debug_frame   0x000035e4      0x114 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/msc/msc_device.c.o
- .debug_frame   0x000036f8      0x238 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/tusb.c.o
- .debug_frame   0x00003930      0x220 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/common/tusb_fifo.c.o
- .debug_frame   0x00003b50      0x238 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_i2c/i2c.c.o
- .debug_frame   0x00003d88       0x20 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_adc/adc.c.o
- .debug_frame   0x00003da8       0xb8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
- .debug_frame   0x00003e60      0xb04 liblittlefs_lib.a(lfs.c.o)
- .debug_frame   0x00004964       0x2c liblittlefs_lib.a(lfs_util.c.o)
- .debug_frame   0x00004990       0x40 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-malloc.o)
- .debug_frame   0x000049d0       0x3c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-mallocr.o)
- .debug_frame   0x00004a0c       0x40 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-mlock.o)
- .debug_frame   0x00004a4c       0x38 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-rand.o)
- .debug_frame   0x00004a84       0x2c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-memcmp.o)
- .debug_frame   0x00004ab0       0x34 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-memmove.o)
- .debug_frame   0x00004ae4       0x30 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strchr.o)
- .debug_frame   0x00004b14       0x2c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strcspn.o)
- .debug_frame   0x00004b40       0x2c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strncmp.o)
- .debug_frame   0x00004b6c       0x2c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strncpy.o)
- .debug_frame   0x00004b98       0x2c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strspn.o)
- .debug_frame   0x00004bc4       0x28 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strtok.o)
- .debug_frame   0x00004bec       0x48 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strtok_r.o)
- .debug_frame   0x00004c34       0x2c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-sbrkr.o)
- .debug_frame   0x00004c60       0x20 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-errno.o)
- .debug_frame   0x00004c80       0x28 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-sysconf.o)
- .debug_frame   0x00004ca8       0x20 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strcmp.o)
- .debug_frame   0x00004cc8       0x20 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strcpy.o)
- .debug_frame   0x00004ce8       0xb0 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-lock.o)
- .debug_frame   0x00004d98       0x28 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strlen-stub.o)
- .debug_frame   0x00004dc0       0x20 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-ctype_.o)
- .debug_frame   0x00004de0       0x5c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-freer.o)
- .debug_frame   0x00004e3c      0x138 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-findfp.o)
- .debug_frame   0x00004f74       0x2c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-reent.o)
+ .debug_frame   0x000004dc      0x430 CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+ .debug_frame   0x0000090c       0xa8 CMakeFiles/pyro_fw_c.dir/src/unicode.c.o
+ .debug_frame   0x000009b4      0x320 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_gpio/gpio.c.o
+ .debug_frame   0x00000cd4       0x20 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2040/pico_platform/platform.c.o
+ .debug_frame   0x00000cf4       0x44 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_platform_panic/panic.c.o
+ .debug_frame   0x00000d38       0xa0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/hardware_claim/claim.c.o
+ .debug_frame   0x00000dd8       0xa8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync/sync.c.o
+ .debug_frame   0x00000e80       0x30 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o
+ .debug_frame   0x00000eb0      0x1cc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_irq/irq.c.o
+ .debug_frame   0x0000107c       0x20 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/lock_core.c.o
+ .debug_frame   0x0000109c      0x1e8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/mutex.c.o
+ .debug_frame   0x00001284       0x50 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_sync/critical_section.c.o
+ .debug_frame   0x000012d4      0x2ec CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/common/pico_time/time.c.o
+ .debug_frame   0x000015c0      0x2c4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_timer/timer.c.o
+ .debug_frame   0x00001884       0xec CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_uart/uart.c.o
+ .debug_frame   0x00001970      0x1f4 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_clocks/clocks.c.o
+ .debug_frame   0x00001b64       0x40 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_pll/pll.c.o
+ .debug_frame   0x00001ba4       0x40 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_ticks/ticks.c.o
+ .debug_frame   0x00001be4       0xa0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_bootrom/bootrom.c.o
+ .debug_frame   0x00001c84       0x40 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_xosc/xosc.c.o
+ .debug_frame   0x00001cc4       0x70 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime/runtime.c.o
+ .debug_frame   0x00001d34       0x88 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init.c.o
+ .debug_frame   0x00001dbc       0x2c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o
+ .debug_frame   0x00001de8       0x2c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
+ .debug_frame   0x00001e14      0x444 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_double/double_math.c.o
+ .debug_frame   0x00002258       0x28 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_float/float_init_rom_rp2040.c.o
+ .debug_frame   0x00002280       0x74 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_malloc/malloc.c.o
+ .debug_frame   0x000022f4      0x1f0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_printf/printf.c.o
+ .debug_frame   0x000024e4      0x184 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_clib_interface/newlib_interface.c.o
+ .debug_frame   0x00002668      0x2a8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio/stdio.c.o
+ .debug_frame   0x00002910       0xdc CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
+ .debug_frame   0x000029ec       0x5c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/pico_unique_id/unique_id.c.o
+ .debug_frame   0x00002a48      0x15c CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_flash/flash.c.o
+ .debug_frame   0x00002ba4      0x220 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
+ .debug_frame   0x00002dc4      0x124 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
+ .debug_frame   0x00002ee8      0x414 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd.c.o
+ .debug_frame   0x000032fc       0xc0 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/device/usbd_control.c.o
+ .debug_frame   0x000033bc      0x234 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/cdc/cdc_device.c.o
+ .debug_frame   0x000035f0      0x114 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/class/msc/msc_device.c.o
+ .debug_frame   0x00003704      0x238 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/tusb.c.o
+ .debug_frame   0x0000393c      0x220 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/src/common/tusb_fifo.c.o
+ .debug_frame   0x00003b5c      0x238 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_i2c/i2c.c.o
+ .debug_frame   0x00003d94       0x20 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/src/rp2_common/hardware_adc/adc.c.o
+ .debug_frame   0x00003db4       0xb8 CMakeFiles/pyro_fw_c.dir/Users/jjulich/.pico-sdk/sdk/2.2.0/lib/tinyusb/hw/bsp/rp2040/family.c.o
+ .debug_frame   0x00003e6c      0xb04 liblittlefs_lib.a(lfs.c.o)
+ .debug_frame   0x00004970       0x2c liblittlefs_lib.a(lfs_util.c.o)
+ .debug_frame   0x0000499c       0x40 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-malloc.o)
+ .debug_frame   0x000049dc       0x3c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-mallocr.o)
+ .debug_frame   0x00004a18       0x40 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-mlock.o)
+ .debug_frame   0x00004a58       0x38 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-rand.o)
+ .debug_frame   0x00004a90       0x2c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-memcmp.o)
+ .debug_frame   0x00004abc       0x34 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-memmove.o)
+ .debug_frame   0x00004af0       0x30 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strchr.o)
+ .debug_frame   0x00004b20       0x2c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strcspn.o)
+ .debug_frame   0x00004b4c       0x2c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strncmp.o)
+ .debug_frame   0x00004b78       0x2c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strncpy.o)
+ .debug_frame   0x00004ba4       0x2c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strspn.o)
+ .debug_frame   0x00004bd0       0x28 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strtok.o)
+ .debug_frame   0x00004bf8       0x48 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strtok_r.o)
+ .debug_frame   0x00004c40       0x2c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-sbrkr.o)
+ .debug_frame   0x00004c6c       0x20 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-errno.o)
+ .debug_frame   0x00004c8c       0x28 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-sysconf.o)
+ .debug_frame   0x00004cb4       0x20 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strcmp.o)
+ .debug_frame   0x00004cd4       0x20 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strcpy.o)
+ .debug_frame   0x00004cf4       0xb0 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-lock.o)
+ .debug_frame   0x00004da4       0x28 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-strlen-stub.o)
+ .debug_frame   0x00004dcc       0x20 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-ctype_.o)
+ .debug_frame   0x00004dec       0x5c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-freer.o)
+ .debug_frame   0x00004e48      0x138 /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-findfp.o)
+ .debug_frame   0x00004f80       0x2c /Users/jjulich/.pico-sdk/toolchain/14_2_Rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/../../../../arm-none-eabi/lib/thumb/v6-m/nofp/libg.a(libc_a-reent.o)
 
 .debug_line_str
                 0x00000000      0x43f

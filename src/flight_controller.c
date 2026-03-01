@@ -8,7 +8,6 @@
 #include "pressure_sensor.h"
 #include "tusb.h"
 #include "bsp/board_api.h"
-#include "lfs.h"
 
 
 // GPIO Pins
@@ -321,15 +320,8 @@ int main() {
     
     printf("Pyro MK1B Flight Computer\n");
     
-    // Mount littlefs filesystem
-    extern const struct lfs_config lfs_pico_flash_config;
-    static lfs_t lfs;
-    int err = lfs_mount(&lfs, &lfs_pico_flash_config);
-    if (err) {
-        printf("Formatting littlefs...\n");
-        lfs_format(&lfs, &lfs_pico_flash_config);
-        lfs_mount(&lfs, &lfs_pico_flash_config);
-    }
+    // Don't mount here - let mimic_fat_create_cache() handle it
+    // The MSC driver will mount on first read
     
     // Init UART0 for telemetry
     uart_init(uart0, 115200);
