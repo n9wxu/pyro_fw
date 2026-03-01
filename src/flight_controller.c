@@ -39,9 +39,11 @@ typedef struct {
     uint16_t pyro2_distance;
 } config_t;
 
-// Forward declaration
-struct flight_context_t;
-typedef state_fn_t (*state_fn_t)(struct flight_context_t *ctx, uint32_t now);
+// Forward declarations  
+typedef struct flight_context_t flight_context_t;
+
+// State function type - returns pointer to next state function
+typedef void *(*state_fn_t)(flight_context_t *, uint32_t);
 
 // Flight context
 typedef struct flight_context_t {
@@ -173,7 +175,7 @@ state_fn_t state_landed(flight_context_t *ctx, uint32_t now);
 state_fn_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 10) return state_pad_idle;
     
-    pressure_data_t pdata;
+    pressure_reading_t pdata;
     pressure_sensor_read(&pdata);
     uint32_t dt = (ctx->last_sample > 0) ? (now - ctx->last_sample) : 10;
     int32_t filtered = filter_pressure(ctx, pdata.pressure_pa, dt);
@@ -195,7 +197,7 @@ state_fn_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
 state_fn_t state_launch(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 100) return state_launch;
     
-    pressure_data_t pdata;
+    pressure_reading_t pdata;
     pressure_sensor_read(&pdata);
     uint32_t dt = now - ctx->last_sample;
     int32_t filtered = filter_pressure(ctx, pdata.pressure_pa, dt);
@@ -223,7 +225,7 @@ state_fn_t state_launch(flight_context_t *ctx, uint32_t now) {
 state_fn_t state_apogee(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 100) return state_apogee;
     
-    pressure_data_t pdata;
+    pressure_reading_t pdata;
     pressure_sensor_read(&pdata);
     uint32_t dt = now - ctx->last_sample;
     int32_t filtered = filter_pressure(ctx, pdata.pressure_pa, dt);
@@ -241,7 +243,7 @@ state_fn_t state_apogee(flight_context_t *ctx, uint32_t now) {
 state_fn_t state_falling(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 50) return state_falling;
     
-    pressure_data_t pdata;
+    pressure_reading_t pdata;
     pressure_sensor_read(&pdata);
     uint32_t dt = now - ctx->last_sample;
     int32_t filtered = filter_pressure(ctx, pdata.pressure_pa, dt);
@@ -279,7 +281,7 @@ state_fn_t state_falling(flight_context_t *ctx, uint32_t now) {
 state_fn_t state_landed(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 1000) return state_landed;
     
-    pressure_data_t pdata;
+    pressure_reading_t pdata;
     pressure_sensor_read(&pdata);
     uint32_t dt = now - ctx->last_sample;
     int32_t filtered = filter_pressure(ctx, pdata.pressure_pa, dt);
@@ -344,7 +346,7 @@ int main() {
     // Calibrate ground pressure
     int32_t sum = 0;
     for (int i = 0; i < 10; i++) {
-        pressure_data_t data;
+        pressure_reading_t data;
         pressure_sensor_read(&data);
         sum += data.pressure_pa;
         sleep_ms(100);
@@ -362,7 +364,7 @@ int main() {
         
         // Telemetry at 1Hz
         if (now - ctx.last_telemetry >= 1000) {
-            pressure_data_t pdata;
+            pressure_reading_t pdata;
             pressure_sensor_read(&pdata);
             int32_t altitude = pressure_to_altitude_cm(pdata.pressure_pa, ctx.ground_pressure);
             uint32_t flight_time = (ctx.state_fn != state_pad_idle) ? (now - ctx.launch_time) : 0;

@@ -23,6 +23,18 @@ if (EXISTS ${picoVscode})
     include(${picoVscode})
 endif()
 # ====================================================================================
+
+set(PICO_BOARD pico CACHE STRING "Board type")
+
+# Pull in Raspberry Pi Pico SDK (must be before project)
+include(pico_sdk_import.cmake)
+
+project(pyro_fw_c C CXX ASM)
+
+# Initialise the Raspberry Pi Pico SDK
+pico_sdk_init()
+
+# ====================================================================================
 include(FetchContent)
 
 FetchContent_Declare(
@@ -51,16 +63,6 @@ target_compile_options(littlefs_lib INTERFACE -Wno-unused-function -Wno-null-der
 target_link_libraries(littlefs_lib INTERFACE hardware_flash)
 
 # ====================================================================================
-
-set(PICO_BOARD pico CACHE STRING "Board type")
-
-# Pull in Raspberry Pi Pico SDK (must be before project)
-include(pico_sdk_import.cmake)
-
-project(pyro_fw_c C CXX ASM)
-
-# Initialise the Raspberry Pi Pico SDK
-pico_sdk_init()
 
 add_executable(pyro_fw_c 
     src/flight_controller.c
