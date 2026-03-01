@@ -69,11 +69,11 @@ add_executable(pyro_fw_c
     src/pressure_sensor.c
     src/ms5607_driver.c
     src/bmp280_driver.c
-    usb_descriptors.c
-    usb_msc_driver.c
-    littlefs_driver.c
-    mimic_fat.c
-    unicode.c
+    src/usb_descriptors.c
+    src/usb_msc_driver.c
+    src/littlefs_driver.c
+    src/mimic_fat.c
+    src/unicode.c
  )
 
  target_link_libraries(pyro_fw_c

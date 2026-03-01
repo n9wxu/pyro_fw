@@ -2403,6 +2403,54 @@ src/flight_controller.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/flight_controller.c.s
 .PHONY : src/flight_controller.c.s
 
+src/littlefs_driver.o: src/littlefs_driver.c.o
+.PHONY : src/littlefs_driver.o
+
+# target to build an object file
+src/littlefs_driver.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.o
+.PHONY : src/littlefs_driver.c.o
+
+src/littlefs_driver.i: src/littlefs_driver.c.i
+.PHONY : src/littlefs_driver.i
+
+# target to preprocess a source file
+src/littlefs_driver.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.i
+.PHONY : src/littlefs_driver.c.i
+
+src/littlefs_driver.s: src/littlefs_driver.c.s
+.PHONY : src/littlefs_driver.s
+
+# target to generate assembly for a file
+src/littlefs_driver.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/littlefs_driver.c.s
+.PHONY : src/littlefs_driver.c.s
+
+src/mimic_fat.o: src/mimic_fat.c.o
+.PHONY : src/mimic_fat.o
+
+# target to build an object file
+src/mimic_fat.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.o
+.PHONY : src/mimic_fat.c.o
+
+src/mimic_fat.i: src/mimic_fat.c.i
+.PHONY : src/mimic_fat.i
+
+# target to preprocess a source file
+src/mimic_fat.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.i
+.PHONY : src/mimic_fat.c.i
+
+src/mimic_fat.s: src/mimic_fat.c.s
+.PHONY : src/mimic_fat.s
+
+# target to generate assembly for a file
+src/mimic_fat.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/mimic_fat.c.s
+.PHONY : src/mimic_fat.c.s
+
 src/ms5607_driver.o: src/ms5607_driver.c.o
 .PHONY : src/ms5607_driver.o
 
@@ -2456,6 +2504,78 @@ src/pressure_sensor.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/pressure_sensor.c.s
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_flight_controller.dir/build.make CMakeFiles/test_flight_controller.dir/src/pressure_sensor.c.s
 .PHONY : src/pressure_sensor.c.s
+
+src/unicode.o: src/unicode.c.o
+.PHONY : src/unicode.o
+
+# target to build an object file
+src/unicode.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/unicode.c.o
+.PHONY : src/unicode.c.o
+
+src/unicode.i: src/unicode.c.i
+.PHONY : src/unicode.i
+
+# target to preprocess a source file
+src/unicode.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/unicode.c.i
+.PHONY : src/unicode.c.i
+
+src/unicode.s: src/unicode.c.s
+.PHONY : src/unicode.s
+
+# target to generate assembly for a file
+src/unicode.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/unicode.c.s
+.PHONY : src/unicode.c.s
+
+src/usb_descriptors.o: src/usb_descriptors.c.o
+.PHONY : src/usb_descriptors.o
+
+# target to build an object file
+src/usb_descriptors.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.o
+.PHONY : src/usb_descriptors.c.o
+
+src/usb_descriptors.i: src/usb_descriptors.c.i
+.PHONY : src/usb_descriptors.i
+
+# target to preprocess a source file
+src/usb_descriptors.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.i
+.PHONY : src/usb_descriptors.c.i
+
+src/usb_descriptors.s: src/usb_descriptors.c.s
+.PHONY : src/usb_descriptors.s
+
+# target to generate assembly for a file
+src/usb_descriptors.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/usb_descriptors.c.s
+.PHONY : src/usb_descriptors.c.s
+
+src/usb_msc_driver.o: src/usb_msc_driver.c.o
+.PHONY : src/usb_msc_driver.o
+
+# target to build an object file
+src/usb_msc_driver.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.o
+.PHONY : src/usb_msc_driver.c.o
+
+src/usb_msc_driver.i: src/usb_msc_driver.c.i
+.PHONY : src/usb_msc_driver.i
+
+# target to preprocess a source file
+src/usb_msc_driver.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.i
+.PHONY : src/usb_msc_driver.c.i
+
+src/usb_msc_driver.s: src/usb_msc_driver.c.s
+.PHONY : src/usb_msc_driver.s
+
+# target to generate assembly for a file
+src/usb_msc_driver.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pyro_fw_c.dir/build.make CMakeFiles/pyro_fw_c.dir/src/usb_msc_driver.c.s
+.PHONY : src/usb_msc_driver.c.s
 
 test/test_flight_controller.o: test/test_flight_controller.c.o
 .PHONY : test/test_flight_controller.o
@@ -2748,12 +2868,27 @@ help:
 	@echo "... src/flight_controller.o"
 	@echo "... src/flight_controller.i"
 	@echo "... src/flight_controller.s"
+	@echo "... src/littlefs_driver.o"
+	@echo "... src/littlefs_driver.i"
+	@echo "... src/littlefs_driver.s"
+	@echo "... src/mimic_fat.o"
+	@echo "... src/mimic_fat.i"
+	@echo "... src/mimic_fat.s"
 	@echo "... src/ms5607_driver.o"
 	@echo "... src/ms5607_driver.i"
 	@echo "... src/ms5607_driver.s"
 	@echo "... src/pressure_sensor.o"
 	@echo "... src/pressure_sensor.i"
 	@echo "... src/pressure_sensor.s"
+	@echo "... src/unicode.o"
+	@echo "... src/unicode.i"
+	@echo "... src/unicode.s"
+	@echo "... src/usb_descriptors.o"
+	@echo "... src/usb_descriptors.i"
+	@echo "... src/usb_descriptors.s"
+	@echo "... src/usb_msc_driver.o"
+	@echo "... src/usb_msc_driver.i"
+	@echo "... src/usb_msc_driver.s"
 	@echo "... test/test_flight_controller.o"
 	@echo "... test/test_flight_controller.i"
 	@echo "... test/test_flight_controller.s"
