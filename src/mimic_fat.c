@@ -201,7 +201,7 @@ static int is_fat_sfn_symbol(uint8_t c) {
 }
 
 static uint16_t read_fat(int cluster) {
-    uint16_t offset = (uint16_t)floor((float)cluster + ((float)cluster / 2));
+    uint16_t offset = (cluster * 3) / 2;
     lfs_soff_t o = lfs_file_seek(&real_filesystem, &fat_cache, offset, LFS_SEEK_SET);
     if (o < 0) {
         printf("read_fat: lfs_file_seek error=%ld\n", o);
@@ -223,7 +223,7 @@ static uint16_t read_fat(int cluster) {
 }
 
 static void update_fat(uint32_t cluster, uint16_t value) {
-    size_t offset = (size_t)floor((float)cluster + ((float)cluster / 2));
+    size_t offset = (cluster * 3) / 2;
 
     uint8_t previous[2] = {0};
     lfs_soff_t o = lfs_file_seek(&real_filesystem, &fat_cache, offset, LFS_SEEK_SET);
@@ -287,7 +287,7 @@ static size_t bulk_update_fat_buffer_write(size_t offset, void *buffer, size_t s
 }
 
 static size_t bulk_update_fat(uint32_t start_cluster, size_t size) {
-    size_t num_clusters = ceil((double)size / 512);
+    size_t num_clusters = (size + 511) / 512;  // Round up
     unsigned char buffer[BUFFER_SIZE];
     unsigned int current_cluster = start_cluster;
     unsigned int next_cluster;
