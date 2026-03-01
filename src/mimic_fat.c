@@ -30,11 +30,11 @@ static uint8_t fat_disk_image[1][DISK_SECTOR_SIZE] = {
   {
       0xEB, 0x3C, 0x90, // BS_JmpBoot
       'M', 'S', 'D', 'O', 'S', '5', '.', '0', // BS_OEMName
-      0x00, 0x02, // BPB_BytsPerSec
-      0x01, // BPB_SecPerClus
-      0x01, 0x00, // BPB_RsvdSecCnt
-      0x01, // BPB_NumFATs
-      0x10, 0x00, // BPB_RootEntCnt
+      0x00, 0x02, // BPB_BytsPerSec = 512
+      0x01, // BPB_SecPerClus = 1
+      0x01, 0x00, // BPB_RsvdSecCnt = 1
+      0x02, // BPB_NumFATs = 2 (standard for FAT12)
+      0x10, 0x00, // BPB_RootEntCnt = 16
       0x00, 0x00, // BPB_TotSec16, to be set up later
       0xF8, // BPB_Media
       0x01, 0x00, // BPB_FATSz16
@@ -1007,7 +1007,9 @@ static size_t fat_sector_size(void) {
 }
 
 static bool is_fat_sector(uint32_t sector) {
-    return sector > 0 && sector <= fat_sector_size();
+    size_t fat_size = fat_sector_size();
+    // 2 FAT copies: sectors 1 to (1 + 2*fat_size - 1)
+    return sector > 0 && sector <= (2 * fat_size);
 }
 
 size_t mimic_fat_total_sector_size(void) {
@@ -1444,7 +1446,8 @@ void mimic_fat_read(uint8_t lun, uint32_t sector, void *buffer, uint32_t bufsize
     }
 
     // Root directory is after FAT, before data area
-    uint32_t root_dir_start = 1 + fat_sector_size();
+    // With 2 FAT copies: root starts at 1 + 2*fat_size
+    uint32_t root_dir_start = 1 + (2 * fat_sector_size());
     uint32_t root_dir_sectors = 1; // 16 entries * 32 bytes / 512
     
     if (sector >= root_dir_start && sector < root_dir_start + root_dir_sectors) {
