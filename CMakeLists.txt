@@ -104,14 +104,6 @@ pico_add_extra_outputs(pyro_fw_c)
 
 enable_testing()
 
-# Unity library
-add_library(unity STATIC
-    ${unity_SOURCE_DIR}/src/unity.c
-)
-target_include_directories(unity PUBLIC
-    ${unity_SOURCE_DIR}/src
-)
-
 # Test executable
 add_executable(test_flight_controller
     test/test_flight_controller.c
