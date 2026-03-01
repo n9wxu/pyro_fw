@@ -351,6 +351,9 @@ static void init_fat(void) {
     uint64_t storage_size = littlefs_lfs_config->block_count * littlefs_lfs_config->block_size;
     uint32_t total_size = storage_size / (DISK_SECTOR_SIZE * 1);
 
+    // Delete old FAT file if it exists to force recreation
+    lfs_remove(&real_filesystem, ".mimic/FAT");
+    
     struct lfs_info finfo;
     int err = lfs_stat(&real_filesystem, ".mimic", &finfo);
     if (err == LFS_ERR_NOENT) {
@@ -361,7 +364,7 @@ static void init_fat(void) {
         }
     }
 
-    err = lfs_file_open(&real_filesystem, &fat_cache, ".mimic/FAT", LFS_O_RDWR|LFS_O_CREAT);
+    err = lfs_file_open(&real_filesystem, &fat_cache, ".mimic/FAT", LFS_O_RDWR|LFS_O_CREAT|LFS_O_TRUNC);
     assert(err == 0);
 
     // FAT12 header: media descriptor in entry 0, entry 1 should be free
