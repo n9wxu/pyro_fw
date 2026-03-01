@@ -1061,23 +1061,38 @@ static void read_boot_sector(void *buffer, uint32_t bufsize) {
 }
 
 /*
- * Return the FAT table when USB requests sector 1.
- * Build a FAT table based on littlefs files.
+ * Return the FAT table when USB requests FAT sectors.
+ * Both FAT copies return the same data.
  */
 static void read_fat_sector(uint32_t sector, void *buffer, uint32_t bufsize) {
     (void)bufsize;
     TRACE("\e[36mRead sector=%lu read_fat_sector()\e[0m\n", sector);
 
-    lfs_soff_t offset = (sector - 1) * 512;
+    // Map sector to FAT offset (both copies use same data)
+    size_t fat_size = fat_sector_size();
+    uint32_t fat_sector_offset;
+    if (sector >= 1 && sector <= fat_size) {
+        // First FAT copy
+        fat_sector_offset = sector - 1;
+    } else {
+        // Second FAT copy
+        fat_sector_offset = sector - fat_size - 1;
+    }
+    
+    lfs_soff_t offset = fat_sector_offset * 512;
     lfs_soff_t o = lfs_file_seek(&real_filesystem, &fat_cache, offset, LFS_SEEK_SET);
     if (o < 0) {
-        printf("read_fat_sector: lfs_file_seek err=%ld\n", o);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "read_fat_sector: lfs_file_seek err=%ld\r\n", o);
+        uart_puts(uart0, buf);
         return;
     }
 
     lfs_ssize_t s = lfs_file_read(&real_filesystem, &fat_cache, buffer, bufsize);
     if (s < 0) {
-        printf("read_fat_sector: lfs_file_read error=%ld\n", s);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "read_fat_sector: lfs_file_read error=%ld\r\n", s);
+        uart_puts(uart0, buf);
     }
 }
 
