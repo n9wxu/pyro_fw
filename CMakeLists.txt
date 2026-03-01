@@ -63,6 +63,9 @@ add_executable(pyro_fw_c
     unicode.c
     usb_descriptors.c
     usb_msc_driver.c
+    pressure_sensor.c
+    ms5607_driver.c
+    bmp280_driver.c
  )
 
  target_link_libraries(pyro_fw_c

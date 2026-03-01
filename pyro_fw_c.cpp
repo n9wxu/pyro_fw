@@ -19,6 +19,8 @@ extern "C" void hid_app_task(void);
 #define I2C_SDA 8
 #define I2C_SCL 9
 
+#include "pressure_sensor.h"
+
 // Data will be copied from src to dst
 const char src[] = "Hello, world! (from DMA)";
 char dst[count_of(src)];
@@ -73,14 +75,18 @@ int main() {
   uart_puts(UART_ID, " Hello, UART!\n");
 
   // I2C Initialisation. Using it at 400Khz.
-  //   i2c_init(I2C_PORT, 400 * 1000);
-  //
-  //   gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
-  //   gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
-  //   gpio_pull_up(I2C_SDA);
-  //   gpio_pull_up(I2C_SCL);
-  // For more examples of I2C use see
-  // https://github.com/raspberrypi/pico-examples/tree/master/i2c
+  i2c_init(I2C_PORT, 400 * 1000);
+
+  gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
+  gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
+  gpio_pull_up(I2C_SDA);
+  gpio_pull_up(I2C_SCL);
+
+  // Detect and initialize pressure sensor
+  pressure_sensor_type_t sensor = pressure_sensor_init();
+  if (sensor == PRESSURE_SENSOR_NONE) {
+    printf("WARNING: No pressure sensor detected!\n");
+  }
 
   // PIO Blinking example
   PIO pio = pio0;
@@ -98,6 +104,17 @@ int main() {
   while (true) {
     watchdog_update();
     tud_task();
-    printf("Test : %d\n", count++);
+    
+    // Read pressure sensor every second
+    if (count % 100 == 0 && sensor != PRESSURE_SENSOR_NONE) {
+      pressure_reading_t reading;
+      if (pressure_sensor_read(&reading)) {
+        printf("Pressure: %.2f Pa, Temperature: %.2f C\n", 
+               reading.pressure_pa, reading.temperature_c);
+      }
+    }
+    
+    sleep_ms(10);
+    count++;
   }
 }
