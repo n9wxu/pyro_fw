@@ -31,7 +31,13 @@ FetchContent_Declare(
     GIT_TAG v2.11.2
 )
 
-FetchContent_MakeAvailable(littlefs)
+FetchContent_Declare(
+    unity
+    GIT_REPOSITORY https://github.com/ThrowTheSwitch/Unity.git
+    GIT_TAG v2.6.0
+)
+
+FetchContent_MakeAvailable(littlefs unity)
 message("littlefs is here: ${littlefs_SOURCE_DIR}")
 
 add_library(littlefs_lib STATIC
@@ -57,10 +63,10 @@ project(pyro_fw_c C CXX ASM)
 pico_sdk_init()
 
 add_executable(pyro_fw_c 
-    flight_controller.c
-    pressure_sensor.c
-    ms5607_driver.c
-    bmp280_driver.c
+    src/flight_controller.c
+    src/pressure_sensor.c
+    src/ms5607_driver.c
+    src/bmp280_driver.c
  )
 
  target_link_libraries(pyro_fw_c
@@ -83,6 +89,7 @@ pico_enable_stdio_usb(pyro_fw_c 1)
 # Add the standard include files to the build
 target_include_directories(pyro_fw_c PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
+        ${CMAKE_CURRENT_LIST_DIR}/src
 )
 
 target_include_directories(pyro_fw_c SYSTEM PUBLIC
@@ -90,4 +97,41 @@ target_include_directories(pyro_fw_c SYSTEM PUBLIC
 )
 
 pico_add_extra_outputs(pyro_fw_c)
+
+# ====================================================================================
+# Unit Tests
+# ====================================================================================
+
+enable_testing()
+
+# Unity library
+add_library(unity STATIC
+    ${unity_SOURCE_DIR}/src/unity.c
+)
+target_include_directories(unity PUBLIC
+    ${unity_SOURCE_DIR}/src
+)
+
+# Test executable
+add_executable(test_flight_controller
+    test/test_flight_controller.c
+    src/pressure_sensor.c
+    src/ms5607_driver.c
+    src/bmp280_driver.c
+)
+
+target_include_directories(test_flight_controller PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/src
+    ${unity_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_flight_controller
+    unity
+    pico_stdlib
+    hardware_i2c
+    hardware_adc
+    hardware_uart
+)
+
+add_test(NAME flight_controller_tests COMMAND test_flight_controller)
 
