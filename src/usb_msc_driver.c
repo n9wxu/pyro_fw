@@ -36,7 +36,9 @@ void tud_msc_capacity_cb(uint8_t lun, uint32_t* block_count, uint16_t* block_siz
     *block_count = mimic_fat_total_sector_size();
     *block_size  = DISK_SECTOR_SIZE;
     
-    printf("MSC capacity: block_count=%lu block_size=%u\n", *block_count, *block_size);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "MSC capacity: block_count=%lu block_size=%u\r\n", *block_count, *block_size);
+    uart_puts(uart0, buf);
 }
 
 bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start, bool load_eject) {
@@ -58,7 +60,9 @@ int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset, void* buff
     (void)lun;
     (void)offset;
 
-    printf("MSC read: lba=%lu bufsize=%lu\n", lba, bufsize);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "MSC read: lba=%lu bufsize=%lu\r\n", lba, bufsize);
+    uart_puts(uart0, buf);
 
     if (!is_initialized) {
         mimic_fat_init(&lfs_pico_flash_config);

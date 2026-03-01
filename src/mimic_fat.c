@@ -826,7 +826,9 @@ static int create_dir_entry_cache(const char *path, uint32_t parent_cluster, uin
 
     int err = lfs_dir_open(&real_filesystem, &dir, path);
     if (err != LFS_ERR_OK) {
-        printf("create_dir_entry_cache: lfs_dir_open('%s') error=%d\n", path, err);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "create_dir_entry_cache: lfs_dir_open('%s') error=%d\r\n", path, err);
+        uart_puts(uart0, buf);
         return err;
     }
 
@@ -1024,8 +1026,10 @@ static void read_boot_sector(void *buffer, uint32_t bufsize) {
     fat_disk_image[0][22] = fat_size & 0xFF;
     fat_disk_image[0][23] = (fat_size & 0xFF00) >> 8;
 
-    printf("Boot sector: total_sectors=%zu fat_size=%zu num_clusters=%zu\n", 
+    char buf[80];
+    snprintf(buf, sizeof(buf), "Boot sector: total_sectors=%zu fat_size=%zu num_clusters=%zu\r\n", 
            total_sectors, fat_size, num_clusters);
+    uart_puts(uart0, buf);
 
     uint8_t const *addr = fat_disk_image[0];
     memcpy(buffer, addr, bufsize);
@@ -1420,7 +1424,9 @@ void mimic_fat_read(uint8_t lun, uint32_t sector, void *buffer, uint32_t bufsize
         read_boot_sector(buffer, bufsize);
         return;
     } else if (is_fat_sector(sector)) {
-        printf("Reading FAT sector %lu\n", sector);
+        char buf[32];
+        snprintf(buf, sizeof(buf), "Reading FAT sector %lu\r\n", sector);
+        uart_puts(uart0, buf);
         read_fat_sector(sector, buffer, bufsize);
         return;
     }
@@ -1430,12 +1436,16 @@ void mimic_fat_read(uint8_t lun, uint32_t sector, void *buffer, uint32_t bufsize
     uint32_t root_dir_sectors = 1; // 16 entries * 32 bytes / 512
     
     if (sector >= root_dir_start && sector < root_dir_start + root_dir_sectors) {
-        printf("Reading root directory (sector %lu)\n", sector);
+        char buf[48];
+        snprintf(buf, sizeof(buf), "Reading root directory (sector %lu)\r\n", sector);
+        uart_puts(uart0, buf);
         read_temporary_file(1, buffer);
         return;
     }
 
-    printf("Reading data sector %lu\n", sector);
+    char buf[48];
+    snprintf(buf, sizeof(buf), "Reading data sector %lu\r\n", sector);
+    uart_puts(uart0, buf);
     uint32_t data_start = root_dir_start + root_dir_sectors;
     uint32_t cluster = sector - data_start + 2; // Clusters start at 2
     size_t offset = 0;
