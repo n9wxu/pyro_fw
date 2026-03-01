@@ -972,11 +972,14 @@ static uint32_t cluster_size(void) {
 }
 
 static size_t fat_sector_size(void) {
-    return ceil((double)cluster_size() / DISK_SECTOR_SIZE);
+    // FAT12 uses 1.5 bytes per cluster
+    size_t num_clusters = cluster_size();
+    size_t fat_bytes = (num_clusters * 3 + 1) / 2;
+    return (fat_bytes + DISK_SECTOR_SIZE - 1) / DISK_SECTOR_SIZE;
 }
 
 static bool is_fat_sector(uint32_t sector) {
-    return sector > 0 && fat_sector_size() >= sector;
+    return sector > 0 && sector <= fat_sector_size();
 }
 
 size_t mimic_fat_total_sector_size(void) {
