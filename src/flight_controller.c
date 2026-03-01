@@ -9,6 +9,7 @@
 #include "tusb.h"
 #include "bsp/board_api.h"
 #include "mimic_fat.h"
+#include "lfs.h"
 
 
 // GPIO Pins
@@ -313,8 +314,19 @@ int main() {
     // Initialize board first (sets up clocks, etc)
     board_init();
     
-    // Initialize mimic_fat with littlefs config BEFORE USB init
+    // Initialize and mount littlefs
     extern const struct lfs_config lfs_pico_flash_config;
+    static lfs_t lfs;
+    
+    // Try to mount, format if it fails
+    int err = lfs_mount(&lfs, &lfs_pico_flash_config);
+    if (err) {
+        printf("Formatting littlefs...\n");
+        lfs_format(&lfs, &lfs_pico_flash_config);
+        lfs_mount(&lfs, &lfs_pico_flash_config);
+    }
+    
+    // Initialize mimic_fat with littlefs config BEFORE USB init
     mimic_fat_init(&lfs_pico_flash_config);
     
     // Initialize TinyUSB BEFORE stdio
