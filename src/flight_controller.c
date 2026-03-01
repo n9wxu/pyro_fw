@@ -312,16 +312,11 @@ int main() {
     // Initialize board first (sets up clocks, etc)
     board_init();
     
-    // Initialize stdio (USB and/or UART)
-    stdio_init_all();
-    
-    // Initialize TinyUSB
+    // Initialize TinyUSB BEFORE stdio
     tud_init(BOARD_TUD_RHPORT);
     
-    // Board-specific post-USB init
-    if (board_init_after_tusb) {
-        board_init_after_tusb();
-    }
+    // Initialize stdio (USB and/or UART)
+    stdio_init_all();
     
     printf("Pyro MK1B Flight Computer\n");
     
