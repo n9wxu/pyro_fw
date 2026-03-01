@@ -1403,16 +1403,18 @@ void mimic_fat_read(uint8_t lun, uint32_t sector, void *buffer, uint32_t bufsize
         read_boot_sector(buffer, bufsize);
         return;
     } else if (is_fat_sector(sector)) {
+        printf("Reading FAT sector %lu\n", sector);
         read_fat_sector(sector, buffer, bufsize);
         return;
     }
 
+    printf("Reading data sector %lu\n", sector);
     uint32_t cluster = sector - fat_sector_size();
     size_t offset = 0;
     find_dir_entry_cache_result_t result = {0};
 
     if (cluster == 1) {
-        printf("Reading root directory (cluster 1)\n");
+        printf("Reading root directory (cluster 1, sector %lu)\n", sector);
         read_temporary_file(cluster, buffer);
         return;
     }
