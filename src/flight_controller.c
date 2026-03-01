@@ -6,6 +6,9 @@
 #include "hardware/adc.h"
 #include "hardware/uart.h"
 #include "pressure_sensor.h"
+#include "tusb.h"
+#include "bsp/board_api.h"
+
 
 // GPIO Pins
 #define PYRO_COMMON_EN 15
@@ -306,7 +309,21 @@ flight_state_t state_landed(flight_context_t *ctx, uint32_t now) {
 }
 
 int main() {
+    // Initialize board first (sets up clocks, etc)
+    board_init();
+    
+    // Initialize stdio (USB and/or UART)
     stdio_init_all();
+    
+    // Initialize TinyUSB
+    tud_init(BOARD_TUD_RHPORT);
+    
+    // Board-specific post-USB init
+    if (board_init_after_tusb) {
+        board_init_after_tusb();
+    }
+    
+    printf("Pyro MK1B Flight Computer\n");
     
     // Init UART0 for telemetry
     uart_init(uart0, 115200);
@@ -372,7 +389,9 @@ int main() {
     
     while (1) {
         uint32_t now = to_ms_since_boot(get_absolute_time());
-        
+
+        tud_task();
+
         // Update pyro fire state
         update_pyro_fire(&ctx, now);
         

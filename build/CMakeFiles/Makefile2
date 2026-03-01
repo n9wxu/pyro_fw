@@ -2391,8 +2391,8 @@ CMakeFiles/pyro_fw_c.dir/clean:
 # Target rules for target CMakeFiles/test_flight_controller.dir
 
 # All Build rule for target.
-CMakeFiles/test_flight_controller.dir/all: _deps/unity-build/CMakeFiles/unity.dir/all
 CMakeFiles/test_flight_controller.dir/all: pico-sdk/src/rp2040/boot_stage2/CMakeFiles/bs2_default_library.dir/all
+CMakeFiles/test_flight_controller.dir/all: _deps/unity-build/CMakeFiles/unity.dir/all
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_flight_controller.dir/build.make CMakeFiles/test_flight_controller.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_flight_controller.dir/build.make CMakeFiles/test_flight_controller.dir/build
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/Users/jjulich/pyro_fw/build/CMakeFiles --progress-num=62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98 "Built target test_flight_controller"
