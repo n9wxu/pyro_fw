@@ -897,24 +897,36 @@ static int create_dir_entry_cache(const char *path, uint32_t parent_cluster, uin
 void mimic_fat_create_cache(void) {
     TRACE(ANSI_RED "mimic_fat_create_cache()\n" ANSI_CLEAR);
 
+    uart_puts(uart0, "mimic_fat_create_cache: unmounting\r\n");
     lfs_unmount(&real_filesystem);
+    
+    uart_puts(uart0, "mimic_fat_create_cache: mounting\r\n");
     int err = lfs_mount(&real_filesystem, littlefs_lfs_config);
     if (err < 0) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Mount failed (%d), formatting...\r\n", err);
+        uart_puts(uart0, buf);
+        
         // Format if mount fails
         lfs_format(&real_filesystem, littlefs_lfs_config);
+        uart_puts(uart0, "Format complete, mounting...\r\n");
+        
         err = lfs_mount(&real_filesystem, littlefs_lfs_config);
         if (err < 0) {
-            printf("mimic_fat_create_cache: lfs_mount error=%d\n", err);
+            snprintf(buf, sizeof(buf), "mimic_fat_create_cache: lfs_mount error=%d\r\n", err);
+            uart_puts(uart0, buf);
             return;
         }
     }
+    
+    uart_puts(uart0, "Mounted successfully\r\n");
 
     mimic_fat_cleanup_cache();
 
     init_fat();
 
     uint32_t allocated_cluster = 1;
-    create_dir_entry_cache("", 0, &allocated_cluster);
+    create_dir_entry_cache("/", 0, &allocated_cluster);
 }
 
 static void delete_directory(const char *path) {
