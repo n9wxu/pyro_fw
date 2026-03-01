@@ -63,6 +63,8 @@ typedef struct flight_context_t {
     uint32_t pyro_fire_start;
     config_t config;
     state_fn_t state_fn;
+    int32_t filtered_pressure;
+    bool filter_initialized;
 } flight_context_t;
 
 // Continuity check
@@ -100,6 +102,21 @@ void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t 
     ctx->flight_buffer[ctx->buf_head].state = st;
     ctx->buf_head = (ctx->buf_head + 1) % 4096;
     ctx->buf_count++;
+}
+
+// Filter pressure with 1-second time constant
+// alpha = dt / (tau + dt), tau = 1.0s
+int32_t filter_pressure(flight_context_t *ctx, int32_t raw_pressure, uint32_t dt_ms) {
+    if (!ctx->filter_initialized) {
+        ctx->filtered_pressure = raw_pressure;
+        ctx->filter_initialized = true;
+        return raw_pressure;
+    }
+    // alpha = dt / (1000 + dt), scaled by 1000 for integer math
+    // filtered = filtered + alpha * (raw - filtered)
+    int32_t alpha = (dt_ms * 1000) / (1000 + dt_ms);
+    ctx->filtered_pressure += ((raw_pressure - ctx->filtered_pressure) * alpha) / 1000;
+    return ctx->filtered_pressure;
 }
 
 // Telemetry
@@ -158,10 +175,12 @@ state_fn_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
     
     pressure_data_t pdata;
     pressure_sensor_read(&pdata);
-    int32_t altitude = pressure_to_altitude_cm(pdata.pressure_pa, ctx->ground_pressure);
+    uint32_t dt = (ctx->last_sample > 0) ? (now - ctx->last_sample) : 10;
+    int32_t filtered = filter_pressure(ctx, pdata.pressure_pa, dt);
+    int32_t altitude = pressure_to_altitude_cm(filtered, ctx->ground_pressure);
     
     uint32_t flight_time = 0;
-    buf_add(ctx, flight_time, pdata.pressure_pa, altitude, PAD_IDLE);
+    buf_add(ctx, flight_time, filtered, altitude, PAD_IDLE);
     ctx->last_altitude = altitude;
     ctx->last_sample = now;
     
@@ -178,10 +197,12 @@ state_fn_t state_launch(flight_context_t *ctx, uint32_t now) {
     
     pressure_data_t pdata;
     pressure_sensor_read(&pdata);
-    int32_t altitude = pressure_to_altitude_cm(pdata.pressure_pa, ctx->ground_pressure);
+    uint32_t dt = now - ctx->last_sample;
+    int32_t filtered = filter_pressure(ctx, pdata.pressure_pa, dt);
+    int32_t altitude = pressure_to_altitude_cm(filtered, ctx->ground_pressure);
     
     uint32_t flight_time = now - ctx->launch_time;
-    buf_add(ctx, flight_time, pdata.pressure_pa, altitude, LAUNCH);
+    buf_add(ctx, flight_time, filtered, altitude, LAUNCH);
     
     if (altitude > ctx->max_altitude) {
         ctx->max_altitude = altitude;
@@ -204,10 +225,12 @@ state_fn_t state_apogee(flight_context_t *ctx, uint32_t now) {
     
     pressure_data_t pdata;
     pressure_sensor_read(&pdata);
-    int32_t altitude = pressure_to_altitude_cm(pdata.pressure_pa, ctx->ground_pressure);
+    uint32_t dt = now - ctx->last_sample;
+    int32_t filtered = filter_pressure(ctx, pdata.pressure_pa, dt);
+    int32_t altitude = pressure_to_altitude_cm(filtered, ctx->ground_pressure);
     
     uint32_t flight_time = now - ctx->launch_time;
-    buf_add(ctx, flight_time, pdata.pressure_pa, altitude, APOGEE);
+    buf_add(ctx, flight_time, filtered, altitude, APOGEE);
     
     ctx->last_altitude = altitude;
     ctx->last_sample = now;
@@ -220,10 +243,12 @@ state_fn_t state_falling(flight_context_t *ctx, uint32_t now) {
     
     pressure_data_t pdata;
     pressure_sensor_read(&pdata);
-    int32_t altitude = pressure_to_altitude_cm(pdata.pressure_pa, ctx->ground_pressure);
+    uint32_t dt = now - ctx->last_sample;
+    int32_t filtered = filter_pressure(ctx, pdata.pressure_pa, dt);
+    int32_t altitude = pressure_to_altitude_cm(filtered, ctx->ground_pressure);
     
     uint32_t flight_time = now - ctx->launch_time;
-    buf_add(ctx, flight_time, pdata.pressure_pa, altitude, FALLING);
+    buf_add(ctx, flight_time, filtered, altitude, FALLING);
     
     int32_t fallen = (ctx->max_altitude - altitude) / 100;
     int32_t agl = altitude / 100;
@@ -256,10 +281,12 @@ state_fn_t state_landed(flight_context_t *ctx, uint32_t now) {
     
     pressure_data_t pdata;
     pressure_sensor_read(&pdata);
-    int32_t altitude = pressure_to_altitude_cm(pdata.pressure_pa, ctx->ground_pressure);
+    uint32_t dt = now - ctx->last_sample;
+    int32_t filtered = filter_pressure(ctx, pdata.pressure_pa, dt);
+    int32_t altitude = pressure_to_altitude_cm(filtered, ctx->ground_pressure);
     
     uint32_t flight_time = now - ctx->launch_time;
-    buf_add(ctx, flight_time, pdata.pressure_pa, altitude, LANDED);
+    buf_add(ctx, flight_time, filtered, altitude, LANDED);
     
     ctx->last_altitude = altitude;
     ctx->last_sample = now;
