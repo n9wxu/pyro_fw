@@ -996,7 +996,24 @@ void mimic_fat_cleanup_cache(void) {
 
 static uint32_t cluster_size(void) {
     uint64_t storage_size = littlefs_lfs_config->block_count * littlefs_lfs_config->block_size;
-    return storage_size / (DISK_SECTOR_SIZE * 1);
+    uint32_t total_sectors = storage_size / DISK_SECTOR_SIZE;
+    
+    // Calculate data clusters for FAT12
+    // Layout: 1 reserved + 2*FAT + root_dir + data
+    // We need to solve for FAT size and data clusters iteratively
+    // For simplicity, use total_sectors as initial estimate
+    uint32_t num_clusters = total_sectors;
+    uint32_t fat_bytes = (num_clusters * 3 + 1) / 2;
+    uint32_t fat_sectors = (fat_bytes + DISK_SECTOR_SIZE - 1) / DISK_SECTOR_SIZE;
+    uint32_t root_sectors = 1; // 16 entries
+    uint32_t overhead = 1 + (2 * fat_sectors) + root_sectors;
+    
+    // Actual data clusters
+    if (total_sectors > overhead) {
+        num_clusters = total_sectors - overhead;
+    }
+    
+    return num_clusters;
 }
 
 static size_t fat_sector_size(void) {
