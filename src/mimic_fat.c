@@ -344,9 +344,12 @@ static size_t bulk_update_fat(uint32_t start_cluster, size_t size) {
     return start_cluster + num_clusters + 1;
 }
 
+// Forward declarations
+static uint32_t cluster_size(void);
+
 static void init_fat(void) {
     uint64_t storage_size = littlefs_lfs_config->block_count * littlefs_lfs_config->block_size;
-    uint32_t cluster_size = storage_size / (DISK_SECTOR_SIZE * 1);
+    uint32_t total_size = storage_size / (DISK_SECTOR_SIZE * 1);
 
     struct lfs_info finfo;
     int err = lfs_stat(&real_filesystem, ".mimic", &finfo);
@@ -372,7 +375,8 @@ static void init_fat(void) {
     }
 
     uint8_t pair[3] = {0x00, 0x00, 0x00};
-    for (size_t i = 0; i < (float)cluster_size / 2; i++) {
+    size_t num_clusters = cluster_size();
+    for (size_t i = 0; i < num_clusters / 2; i++) {
         s = lfs_file_write(&real_filesystem, &fat_cache, pair, sizeof(pair));
         if (s != sizeof(pair)) {
             printf("init_fat: lfs_file_write error=%ld\n", s);
@@ -994,26 +998,17 @@ void mimic_fat_cleanup_cache(void) {
     lfs_dir_close(&real_filesystem, &dir);
 }
 
-static uint32_t cluster_size(void) {
+static uint32_t total_sectors_count(void) {
     uint64_t storage_size = littlefs_lfs_config->block_count * littlefs_lfs_config->block_size;
-    uint32_t total_sectors = storage_size / DISK_SECTOR_SIZE;
-    
-    // Calculate data clusters for FAT12
-    // Layout: 1 reserved + 2*FAT + root_dir + data
-    // We need to solve for FAT size and data clusters iteratively
-    // For simplicity, use total_sectors as initial estimate
-    uint32_t num_clusters = total_sectors;
-    uint32_t fat_bytes = (num_clusters * 3 + 1) / 2;
-    uint32_t fat_sectors = (fat_bytes + DISK_SECTOR_SIZE - 1) / DISK_SECTOR_SIZE;
-    uint32_t root_sectors = 1; // 16 entries
-    uint32_t overhead = 1 + (2 * fat_sectors) + root_sectors;
-    
-    // Actual data clusters
-    if (total_sectors > overhead) {
-        num_clusters = total_sectors - overhead;
-    }
-    
-    return num_clusters;
+    return storage_size / DISK_SECTOR_SIZE;
+}
+
+static uint32_t cluster_size(void) {
+    // Return number of data clusters
+    // This is used for FAT size calculation, so we approximate
+    uint32_t total = total_sectors_count();
+    // Rough estimate: assume ~1% overhead for FAT+root
+    return total * 99 / 100;
 }
 
 static size_t fat_sector_size(void) {
@@ -1034,8 +1029,7 @@ size_t mimic_fat_total_sector_size(void) {
         extern const struct lfs_config lfs_pico_flash_config;
         littlefs_lfs_config = &lfs_pico_flash_config;
     }
-    uint64_t storage_size = littlefs_lfs_config->block_count * littlefs_lfs_config->block_size;
-    return (double)storage_size / DISK_SECTOR_SIZE;
+    return total_sectors_count();
 }
 
 /*
