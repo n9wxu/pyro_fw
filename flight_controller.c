@@ -15,6 +15,7 @@
 #define PYRO2_FAULT 18
 #define PYRO1_CONT_ADC 0
 #define PYRO2_CONT_ADC 1
+#define BUZZER 16
 
 // Flight states
 typedef enum { PAD_IDLE, LAUNCH, APOGEE, FALLING, LANDED } flight_state_t;
@@ -50,6 +51,10 @@ static uint32_t launch_time = 0;
 static bool pyro1_fired = false, pyro2_fired = false;
 static config_t config = {"PYRO001", "PYRO001", 1, 300, 1, 150};
 
+// Pyro fire state
+static uint8_t pyro_firing = 0;  // 0=none, 1=pyro1, 2=pyro2
+static uint32_t pyro_fire_start = 0;
+
 // Continuity check
 uint16_t adc_oversample(uint8_t channel, uint16_t samples) {
     uint32_t sum = 0;
@@ -63,8 +68,6 @@ uint16_t adc_oversample(uint8_t channel, uint16_t samples) {
 void check_continuity(uint16_t *pyro1, uint16_t *pyro2) {
     gpio_put(PYRO1_EN, 0);
     gpio_put(PYRO2_EN, 0);
-    gpio_put(PYRO_COMMON_EN, 0);
-    sleep_ms(10);
     gpio_put(PYRO_COMMON_EN, 1);
     sleep_ms(10);
     *pyro1 = adc_oversample(PYRO1_CONT_ADC, 256);
@@ -111,15 +114,23 @@ void send_telemetry(uint32_t time_ms, int32_t altitude_cm) {
     uart_puts(uart0, buf);
 }
 
-// Fire pyro
+// Fire pyro (non-blocking start)
 void fire_pyro(uint8_t channel) {
     gpio_put(PYRO_COMMON_EN, 1);
     gpio_put(channel == 1 ? PYRO1_EN : PYRO2_EN, 1);
-    sleep_ms(500);
-    gpio_put(channel == 1 ? PYRO1_EN : PYRO2_EN, 0);
-    gpio_put(PYRO_COMMON_EN, 0);
-    if (channel == 1) pyro1_fired = true;
-    else pyro2_fired = true;
+    pyro_firing = channel;
+    pyro_fire_start = to_ms_since_boot(get_absolute_time());
+}
+
+// Update pyro fire state (call in main loop)
+void update_pyro_fire(uint32_t now) {
+    if (pyro_firing && (now - pyro_fire_start >= 500)) {
+        gpio_put(pyro_firing == 1 ? PYRO1_EN : PYRO2_EN, 0);
+        gpio_put(PYRO_COMMON_EN, 0);
+        if (pyro_firing == 1) pyro1_fired = true;
+        else pyro2_fired = true;
+        pyro_firing = 0;
+    }
 }
 
 int main() {
@@ -146,12 +157,15 @@ int main() {
     gpio_init(PYRO_COMMON_EN);
     gpio_init(PYRO1_EN);
     gpio_init(PYRO2_EN);
+    gpio_init(BUZZER);
     gpio_set_dir(PYRO_COMMON_EN, GPIO_OUT);
     gpio_set_dir(PYRO1_EN, GPIO_OUT);
     gpio_set_dir(PYRO2_EN, GPIO_OUT);
+    gpio_set_dir(BUZZER, GPIO_OUT);
     gpio_put(PYRO_COMMON_EN, 0);
     gpio_put(PYRO1_EN, 0);
     gpio_put(PYRO2_EN, 0);
+    gpio_put(BUZZER, 0);
     
     // Init pressure sensor
     if (pressure_sensor_init(i2c0) != 0) {
@@ -178,6 +192,10 @@ int main() {
     
     while (1) {
         uint32_t now = to_ms_since_boot(get_absolute_time());
+        
+        // Update pyro fire state
+        update_pyro_fire(now);
+        
         pressure_data_t pdata;
         pressure_sensor_read(&pdata);
         int32_t altitude = pressure_to_altitude_cm(pdata.pressure_pa, ground_pressure);
@@ -204,12 +222,14 @@ int main() {
                 int32_t fallen = (max_altitude - altitude) / 100;
                 int32_t agl = altitude / 100;
                 
-                if (!pyro1_fired && ((config.pyro1_mode == 1 && fallen >= config.pyro1_distance) || 
-                                     (config.pyro1_mode == 2 && agl <= config.pyro1_distance))) {
+                if (!pyro1_fired && !pyro_firing && 
+                    ((config.pyro1_mode == 1 && fallen >= config.pyro1_distance) || 
+                     (config.pyro1_mode == 2 && agl <= config.pyro1_distance))) {
                     fire_pyro(1);
                 }
-                if (!pyro2_fired && ((config.pyro2_mode == 1 && fallen >= config.pyro2_distance) || 
-                                     (config.pyro2_mode == 2 && agl <= config.pyro2_distance))) {
+                if (!pyro2_fired && !pyro_firing && 
+                    ((config.pyro2_mode == 1 && fallen >= config.pyro2_distance) || 
+                     (config.pyro2_mode == 2 && agl <= config.pyro2_distance))) {
                     fire_pyro(2);
                 }
                 
