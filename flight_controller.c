@@ -72,7 +72,9 @@ uint16_t adc_oversample(uint8_t channel, uint16_t samples) {
         adc_select_input(channel);
         sum += adc_read();
     }
-    return sum / samples;
+    // 256 samples gives 4 extra bits (12-bit -> 16-bit)
+    // Sum of 256 12-bit values, shift right by 4 to get 16-bit result
+    return (sum >> 4);
 }
 
 void check_continuity(uint16_t *pyro1, uint16_t *pyro2) {
