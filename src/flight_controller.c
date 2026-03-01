@@ -321,10 +321,16 @@ int main() {
     
     printf("Pyro MK1B Flight Computer\n");
     
+    // Init UART0 for telemetry FIRST so we can see debug messages
+    uart_init(uart0, 115200);
+    gpio_set_function(0, GPIO_FUNC_UART);
+    gpio_set_function(1, GPIO_FUNC_UART);
+    uart_puts(uart0, "UART initialized\r\n");
+    
     // Format littlefs if needed (before USB MSC operations)
     extern const struct lfs_config lfs_pico_flash_config;
     mimic_fat_init(&lfs_pico_flash_config);
-    mimic_fat_format_if_needed();
+    uart_puts(uart0, "mimic_fat_init done\r\n");
     
     // Init UART0 for telemetry
     uart_init(uart0, 115200);
@@ -399,7 +405,8 @@ int main() {
         // Run current state and get next state
         ctx.current_state = state_functions[ctx.current_state](&ctx, now);
         
-        // Telemetry at 1Hz
+        // Telemetry at 1Hz - TEMPORARILY DISABLED FOR DEBUG
+        /*
         if (now - ctx.last_telemetry >= 1000) {
             pressure_reading_t pdata;
             pressure_sensor_read(&pdata);
@@ -408,6 +415,7 @@ int main() {
             send_telemetry(&ctx, flight_time, altitude, ctx.current_state);
             ctx.last_telemetry = now;
         }
+        */
         
         // No sleep - tud_task() needs to run as fast as possible for USB
     }

@@ -898,8 +898,13 @@ void mimic_fat_create_cache(void) {
     lfs_unmount(&real_filesystem);
     int err = lfs_mount(&real_filesystem, littlefs_lfs_config);
     if (err < 0) {
-        printf("mimic_fat_create_cache: lfs_mount error=%d\n", err);
-        return;
+        // Format if mount fails
+        lfs_format(&real_filesystem, littlefs_lfs_config);
+        err = lfs_mount(&real_filesystem, littlefs_lfs_config);
+        if (err < 0) {
+            printf("mimic_fat_create_cache: lfs_mount error=%d\n", err);
+            return;
+        }
     }
 
     mimic_fat_cleanup_cache();
