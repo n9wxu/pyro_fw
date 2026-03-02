@@ -39,3 +39,14 @@
 
 # debug information files
 *.dwo
+
+# Build directory
+build/
+
+# Backup files
+*.backup
+*.bak*
+
+# IDE
+.vscode/
+.kiro/

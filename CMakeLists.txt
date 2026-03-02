@@ -64,6 +64,11 @@ target_link_libraries(littlefs_lib INTERFACE hardware_flash)
 
 # ====================================================================================
 
+add_subdirectory(lib/fat_mimic)
+target_compile_definitions(fat_mimic PRIVATE FAT_MIMIC_DEBUG=1)
+target_link_libraries(fat_mimic PUBLIC littlefs_lib tinyusb_device pico_stdlib)
+target_include_directories(fat_mimic PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src)
+
 add_executable(pyro_fw_c 
     src/flight_controller.c
     src/pressure_sensor.c
@@ -72,7 +77,6 @@ add_executable(pyro_fw_c
     src/usb_descriptors.c
     src/usb_msc_driver.c
     src/littlefs_driver.c
-    src/mimic_fat.c
     src/unicode.c
  )
 
@@ -84,6 +88,7 @@ add_executable(pyro_fw_c
         tinyusb_device
         tinyusb_board
         littlefs_lib
+        fat_mimic
         )
 
 pico_set_program_name(pyro_fw_c "pyro_fw_c")

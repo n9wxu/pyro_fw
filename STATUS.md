@@ -5,186 +5,111 @@
 ### Flight Controller Core
 - **State machine**: Enum-indexed function pointer array (5 states)
 - **States**: PAD_IDLE, LAUNCH, APOGEE, FALLING, LANDED
-- **Function signature**: `flight_state_t (*state_fn_t)(flight_context_t *, uint32_t)`
 - **Pure functions**: All state passed via context, no globals
-- **Sample rates**: 
-  - PAD_IDLE: 100Hz
-  - LAUNCH/APOGEE: 10Hz  
-  - FALLING: 20Hz
-  - LANDED: 1Hz
+- **Variable sample rates**: 100Hz (pad), 10Hz (launch/apogee), 20Hz (falling), 1Hz (landed)
 
 ### Sensor & Data Processing
-- **Pressure filtering**: Exponential moving average, 1-second time constant
+- **Dual sensor support**: MS5607 and BMP280 with auto-detection
 - **Integer-only math**: No floating point operations
-- **Altitude calculation**: Simplified barometric formula `(P0-P)*8.3 cm/Pa`
-- **Dual sensor support**: MS5607 and BMP280 with unified interface
-- **I2C**: GPIO8 (SDA), GPIO9 (SCL), 400kHz
+- **Pressure filtering**: Exponential moving average, 1-second time constant
+- **Altitude calculation**: Simplified barometric formula
 
 ### Pyrotechnic Control
 - **Non-blocking fire**: 500ms duration tracked in main loop
-- **Dual channels**: GPIO21 (PYRO1), GPIO22 (PYRO2)
-- **Common enable**: GPIO15
-- **Fault detection**: GPIO17/18 (hardware ready, not implemented)
+- **Dual channels**: GPIO21 (PYRO1), GPIO22 (PYRO2), GPIO15 (common enable)
 - **Continuity check**: ADC0/1 with 256x oversampling (12→16 bit)
 
 ### Data Logging
-- **Buffer**: 64KB RAM circular buffer
-- **Apogee protection**: 50 samples before apogee preserved
+- **Buffer**: 64KB RAM circular buffer with apogee protection
 - **Format**: Timestamp, pressure, altitude, state
-- **Capacity**: ~8000 samples at 8 bytes each
 
 ### Telemetry
 - **Format**: Eggtimer-compatible with trigger bytes
-- **Example**: `{046>@5>#0018>~1B---->%04679>=PYRO001>}`
-- **Output**: UART0 GPIO0 (TX), GPIO1 (RX), 115200 baud
-- **Currently**: Disabled for USB MSC debugging
+- **Output**: UART0 at 115200 baud
 
-### USB Integration
-- **CDC**: Working (stdio over USB)
-- **MSC**: Enumerates as 1.9MB drive
-- **Initialization order**: board_init() → tud_init() → stdio_init_all()
-- **Main loop**: No sleep, tud_task() runs at full speed
-- **LittleFS**: Mounts and formats correctly (1.8MB partition)
+### USB Mass Storage (fat_mimic library)
+- **Read/write FAT12 filesystem** over littlefs on RP2040 flash
+- **macOS, Windows, Linux compatible** USB Mass Storage device
+- **File edits persist** across reboots via littlefs
+- **File deletion** works via eject/unmount
+- **No USB panics**: Flash writes gated on 50ms USB quiet period
+- **~35KB RAM**: FAT cache (2KB) + root dir (16KB) + dirty cache (16KB) + file table (512B)
+- **Three-layer architecture**:
+  - USB callbacks: RAM-only, no flash I/O
+  - Poll (main loop): One file flush per call to littlefs
+  - Init (mount): Build FAT12 image from littlefs
+- **Three sync triggers**: Sector 32 batch complete, slot reuse detection, gap detection
+- **Orphan deletion**: Only on unmount/eject (prevents premature deletion)
+- **Library structure**: `lib/fat_mimic/` with separate CMakeLists.txt for future FetchContent use
 
 ### Build System
-- **Toolchain**: ARM GCC from Pico SDK
-- **Generator**: Ninja (fast builds)
-- **Structure**: src/, test/, build/
-- **Output**: 182KB .uf2 flashable firmware
-- **Tests**: Unity framework integrated
+- **Toolchain**: ARM GCC from Pico SDK 2.2.0
+- **Generator**: Ninja
+- **Dependencies**: littlefs v2.11.2 (FetchContent), Unity v2.6.0 (tests)
+- **Output**: ~90KB text, ~40KB BSS
 
-## ⚠️ Known Issues
+## ⚠️ Known Limitations
 
-### USB MSC Filesystem Not Recognized (macOS)
-**Symptoms:**
-- macOS reads boot sector 6 times
-- Reads FAT sector 1 twice, FAT sector 2 once
-- Never reads root directory (sector 23)
-- Rejects filesystem and asks to initialize
-
-**Investigation Done:**
-- Boot sector values verified correct:
-  - 3680 total sectors (1.9MB)
-  - 11 FAT sectors per copy
-  - 2 FAT copies (standard FAT12)
-  - 16 root directory entries
-  - 512 bytes per sector
-  - 1 sector per cluster
-- FAT header verified: F8 FF FF (media descriptor + cluster 1)
-- Both FAT copies return same data
-- Root directory calculation correct (sector 23)
-- Integer-only math (no floating point)
-
-**Possible Causes:**
-- macOS-specific validation requirements
-- Subtle FAT12 spec compliance issue
-- Boot sector field mismatch
-- FAT entry interpretation
-
-**Next Steps:**
-1. Test with Windows/Linux to isolate macOS-specific issue
-2. Compare byte-by-byte with working FAT12 image
-3. Use USB analyzer to see exact validation macOS performs
-4. Review FAT12 specification for required vs optional fields
+### USB Mass Storage
+- FAT12 only (max ~680KB usable space)
+- 16 files maximum in root directory
+- 8.3 filenames (LFN entries preserved in cache but not decoded for littlefs storage)
+- No subdirectory support
+- 32 dirty sector cache slots (backpressure eviction on overflow)
+- Hard unplug may lose in-progress edits (littlefs metadata remains safe)
+- Temp files from editors accumulate until eject
 
 ## 🔧 Not Yet Implemented
 
 ### Configuration
 - [ ] config.ini parser
-- [ ] Default configuration values
 - [ ] Runtime configuration updates
 
 ### File Operations
 - [ ] CSV file writer for flight data
-- [ ] Metadata header in CSV
 - [ ] File naming with flight number
 
 ### Safety Features
 - [ ] Fault detection monitoring (GPIO17/18)
-- [ ] Safe input handler for manual pyro test
 - [ ] Post-fire ADC verification
 - [ ] Arming sequence
 
 ### User Interface
-- [ ] Beep code generator (GPIO16)
+- [ ] Beep code generator
 - [ ] Status LED patterns
-- [ ] Button input handling
-
-### Testing
-- [ ] Unit tests for state machine
-- [ ] Pressure simulation for state transitions
-- [ ] Pyro fire sequence validation
-- [ ] Buffer overflow protection tests
-- [ ] Complete flight sequence simulation
 
 ## 📝 Technical Notes
-
-### Hardware Configuration
-```
-I2C0:    GPIO8 (SDA), GPIO9 (SCL), 400kHz
-UART0:   GPIO0 (TX), GPIO1 (RX), 115200 baud
-Pyro:    GPIO15 (common), GPIO21/22 (channels)
-Fault:   GPIO17/18 (detection inputs)
-ADC:     GPIO26/27 (continuity check)
-Buzzer:  GPIO16
-```
 
 ### Memory Layout
 ```
 Flash:   2MB total
-  - Firmware: ~182KB
-  - LittleFS: 1.8MB (at end of flash)
+  - Firmware: ~90KB
+  - LittleFS: ~680KB (at end of flash)
 RAM:     264KB total
   - Flight data buffer: 64KB
-  - Stack/heap: ~200KB
+  - fat_mimic caches: ~35KB
+  - Stack/heap: ~165KB
 ```
 
-### Key Code Patterns
-```c
-// State function signature
-typedef flight_state_t (*state_fn_t)(flight_context_t *, uint32_t);
-
-// Main loop
-while (1) {
-    uint32_t now = to_ms_since_boot(get_absolute_time());
-    tud_task();  // USB - must run fast
-    update_pyro_fire(&ctx, now);
-    ctx.current_state = state_functions[ctx.current_state](&ctx, now);
-}
-
-// Pressure filter (integer only)
-int32_t alpha = (dt_ms * 1000) / (1000 + dt_ms);
-ctx->filtered_pressure += ((raw - ctx->filtered_pressure) * alpha) / 1000;
-```
+### Key Architecture Decision: fat_mimic
+The FAT12-over-littlefs translation was rewritten from a 2200-line monolithic implementation (~57KB RAM) to a 400-line library (~35KB RAM). Key design choices:
+- **No flash I/O in USB callbacks** prevents RP2040 XIP/DMA conflicts
+- **Write-back dirty cache** buffers data sector writes in RAM
+- **Deferred sync** waits for USB quiet period before flash operations
+- **Cluster-based orphan detection** avoids FAT 8.3 name comparison issues
+- **One file per poll cycle** keeps flash operations short
 
 ## 🚀 Usage
 
 ### Build
 ```bash
-cd pyro_fw
 mkdir -p build && cd build
 cmake -G Ninja ..
 ninja
 ```
 
 ### Flash
-```bash
-# Hold BOOTSEL, connect USB, release BOOTSEL
-cp build/pyro_fw_c.uf2 /Volumes/RPI-RP2/
-```
+Hold BOOTSEL, connect USB, copy `build/pyro_fw_c.uf2` to RPI-RP2 drive.
 
-### Monitor
-```bash
-# USB CDC (stdio)
-screen /dev/tty.usbmodem* 115200
-
-# UART telemetry
-screen /dev/tty.usbserial* 115200
-```
-
-## 📚 References
-- [Pico SDK Documentation](https://www.raspberrypi.com/documentation/pico-sdk/)
-- [TinyUSB Documentation](https://docs.tinyusb.org/)
-- [LittleFS](https://github.com/littlefs-project/littlefs)
-- [Oyama pico-littlefs-usb](https://github.com/oyama/pico-littlefs-usb)
-- [FAT12 Specification](https://en.wikipedia.org/wiki/File_Allocation_Table#FAT12)
+### Edit Configuration
+Connect USB → edit `config.ini` on the mounted drive → eject before unplugging.

@@ -23,7 +23,25 @@ static const struct lfs_config *littlefs_lfs_config = NULL;
 
 #define FAT_SHORT_NAME_MAX           11
 #define FAT_LONG_FILENAME_CHUNK_MAX  13
+#define MBR_PARTITION_OFFSET         63  // Standard MBR partition starts at sector 63
 
+
+static uint8_t mbr_sector[DISK_SECTOR_SIZE] = {
+    // MBR boot code area (446 bytes) - all zeros
+    [0 ... 445] = 0x00,
+    
+    // Partition entry 1 (offset 446 = 0x1BE) - exact bytes from working macOS image
+    0x00, 0x01, 0x01, 0x00,  // Not bootable, CHS start
+    0x0B, 0xFE, 0xFF, 0xFF,  // Type=FAT12, CHS end
+    0x3F, 0x00, 0x00, 0x00,  // LBA start = 63
+    0x2B, 0x05, 0x00, 0x00,  // Size = 1323 sectors
+    
+    // Partition entries 2-4 (empty)
+    [462 ... 509] = 0x00,
+    
+    // MBR signature
+    0x55, 0xAA
+};
 
 static uint8_t fat_disk_image[1][DISK_SECTOR_SIZE] = {
   //------------- Block0: Boot Sector -------------//
@@ -33,13 +51,13 @@ static uint8_t fat_disk_image[1][DISK_SECTOR_SIZE] = {
       0x00, 0x02, // BPB_BytsPerSec = 512
       0x01, // BPB_SecPerClus = 1
       0x01, 0x00, // BPB_RsvdSecCnt = 1
-      0x02, // BPB_NumFATs = 2 (standard for FAT12)
-      0x10, 0x00, // BPB_RootEntCnt = 16
+      0x01, // BPB_NumFATs = 1
+      0x00, 0x02, // BPB_RootEntCnt = 512
       0x00, 0x00, // BPB_TotSec16, to be set up later
-      0xF8, // BPB_Media
+      0xF8, // BPB_Media = 0xF8
       0x01, 0x00, // BPB_FATSz16
-      0x01, 0x00, // BPB_SecPerTrk
-      0x01, 0x00, // BPB_NumHeads
+      0x20, 0x00, // BPB_SecPerTrk = 32
+      0x10, 0x00, // BPB_NumHeads = 16
       0x00, 0x00, 0x00, 0x00, // BPB_HiddSec
       0x00, 0x00, 0x00, 0x00, // BPB_TotSec32
       0x80, // BS_DrvNum
@@ -47,7 +65,7 @@ static uint8_t fat_disk_image[1][DISK_SECTOR_SIZE] = {
       0x29, // BS_BootSig
       0x34, 0x12, 0x00, 0x00, // BS_VolID
       'l' , 'i' , 't' , 't' , 'l' , 'e' , 'f' , 's' , 'U' , 'S' , 'B' , // BS_VolLab
-      0x46, 0x41, 0x54, 0x31, 0x32, 0x20, 0x20, 0x20, // BS_FilSysType
+      0x46, 0x41, 0x54, 0x31, 0x32, 0x20, 0x20, 0x20, // BS_FilSysType "FAT12   "
       0x00, 0x00,
       // Zero up to 2 last bytes of FAT magic code
       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -86,20 +104,42 @@ static uint8_t fat_disk_image[1][DISK_SECTOR_SIZE] = {
 
 static lfs_t real_filesystem;
 static bool usb_device_is_enabled = false;
+static volatile bool sync_needed = false;
 
-static lfs_file_t fat_cache;
+// RAM-based FAT cache (max ~11 sectors * 512 bytes = ~5.5KB for 3680 sectors)
+#define MAX_FAT_SECTORS 32
+static uint8_t fat_cache_ram[MAX_FAT_SECTORS * DISK_SECTOR_SIZE];
+static size_t fat_cache_size = 0;
+
+// RAM-based directory cache
+static fat_dir_entry_t root_dir_cache[512];
+static size_t root_dir_entries = 0;
+
+// Cluster to filename mapping (for file reads)
+#define MAX_FILES 16
+typedef struct {
+    uint32_t cluster;
+    char path[LFS_NAME_MAX + 1];
+    uint32_t size;
+} cluster_map_t;
+static cluster_map_t cluster_map[MAX_FILES];
+static size_t cluster_map_count = 0;
 
 void mimic_fat_init(const struct lfs_config *c) {
     littlefs_lfs_config = c;
 }
 
 void mimic_fat_format_if_needed(void) {
+    uart_puts(uart0, "Attempting to mount littlefs...\r\n");
     int err = lfs_mount(&real_filesystem, littlefs_lfs_config);
     if (err) {
+        uart_puts(uart0, "Mount failed, formatting (this may take 30+ seconds)...\r\n");
         lfs_format(&real_filesystem, littlefs_lfs_config);
+        uart_puts(uart0, "Format complete, mounting...\r\n");
         lfs_mount(&real_filesystem, littlefs_lfs_config);
     }
-    // Leave mounted - mimic_fat_create_cache will unmount/remount
+    uart_puts(uart0, "Littlefs ready\r\n");
+    lfs_unmount(&real_filesystem);
 }
 
 bool mimic_fat_usb_device_is_enabled(void) {
@@ -201,57 +241,37 @@ static int is_fat_sfn_symbol(uint8_t c) {
 }
 
 static uint16_t read_fat(int cluster) {
-    uint16_t offset = (cluster * 3) / 2;
-    lfs_soff_t o = lfs_file_seek(&real_filesystem, &fat_cache, offset, LFS_SEEK_SET);
-    if (o < 0) {
-        printf("read_fat: lfs_file_seek error=%ld\n", o);
+    uint16_t offset = (cluster * 3) / 2;  // FAT12: 1.5 bytes per entry
+    if (offset + 1 >= fat_cache_size) {
+        printf("read_fat: cluster %d out of bounds\n", cluster);
         return 0xFFF;
     }
-    uint8_t current[2] = {0};
-    lfs_ssize_t s = lfs_file_read(&real_filesystem, &fat_cache, current, sizeof(current));
-    if (s < 0) {
-        printf("read_fat: lfs_file_read error=%ld\n", s);
-    }
-
-    int16_t result = 0;
+    
+    uint8_t *current = &fat_cache_ram[offset];
+    
     if (cluster & 0x01) {
-        result = (current[0] >> 4) | ((uint16_t)current[1] << 4);
+        return (current[0] >> 4) | ((uint16_t)current[1] << 4);
     } else {
-        result = current[0] | ((uint16_t)(current[1] & 0x0F) << 8);
+        return current[0] | ((uint16_t)(current[1] & 0x0F) << 8);
     }
-    return result;
 }
 
 static void update_fat(uint32_t cluster, uint16_t value) {
-    size_t offset = (cluster * 3) / 2;
+    size_t offset = (cluster * 3) / 2;  // FAT12: 1.5 bytes per entry
+    
+    if (offset + 1 >= fat_cache_size) {
+        printf("update_fat: cluster %lu out of bounds\n", cluster);
+        return;
+    }
 
-    uint8_t previous[2] = {0};
-    lfs_soff_t o = lfs_file_seek(&real_filesystem, &fat_cache, offset, LFS_SEEK_SET);
-    if (o < 0) {
-        printf("update_fat: lfs_file_seek error=%ld\n", o);
-        return;
-    }
-    lfs_ssize_t s = lfs_file_read(&real_filesystem, &fat_cache, previous, sizeof(previous));
-    if (s < 0) {
-        printf("update_fat: lfs_file_read error=%ld\n", s);
-        return;
-    }
+    uint8_t *entry = &fat_cache_ram[offset];
+    
     if (cluster & 0x01) {
-        previous[0] = (previous[0] & 0x0F) | (value << 4);
-        previous[1] = value >> 4;
+        entry[0] = (entry[0] & 0x0F) | (value << 4);
+        entry[1] = value >> 4;
     } else {
-        previous[0] = value;
-        previous[1] = (previous[1] & 0xF0) | ((value >> 8) & 0x0F);
-    }
-
-    o = lfs_file_seek(&real_filesystem, &fat_cache, offset, LFS_SEEK_SET);
-    if (o < 0) {
-        printf("update_fat: lfs_file_seek error=%ld\n", o);
-        return;
-    }
-    s = lfs_file_write(&real_filesystem, &fat_cache, previous, sizeof(previous));
-    if (s != sizeof(previous)) {
-        printf("update_fat: lfs_file_write error=%ld\n", s);
+        entry[0] = value;
+        entry[1] = (entry[1] & 0xF0) | ((value >> 8) & 0x0F);
     }
 }
 
@@ -259,31 +279,21 @@ static void update_fat(uint32_t cluster, uint16_t value) {
 #define END_OF_CLUSTER_CHAIN  0xFFF
 
 static size_t bulk_update_fat_buffer_read(size_t offset, void *buffer, size_t size) {
-    lfs_soff_t o = lfs_file_seek(&real_filesystem, &fat_cache, offset, LFS_SEEK_SET);
-    if (o < 0) {
-         printf("bulk_update_fat_buffer_read: lfs_file_seek error=%ld\n", o);
-         return 0;
-    }
-    lfs_ssize_t s = lfs_file_read(&real_filesystem, &fat_cache, buffer, size);
-    if (s < 0) {
-        printf("bulk_update_fat_buffer_read: lfs_file_read error=%ld\n", s);
+    if (offset + size > fat_cache_size) {
+        printf("bulk_update_fat_buffer_read: offset %zu out of bounds\n", offset);
         return 0;
     }
-    return (size_t)s;
+    memcpy(buffer, &fat_cache_ram[offset], size);
+    return size;
 }
 
 static size_t bulk_update_fat_buffer_write(size_t offset, void *buffer, size_t size) {
-    lfs_soff_t o = lfs_file_seek(&real_filesystem, &fat_cache, offset, LFS_SEEK_SET);
-    if (o < 0) {
-        printf("bulk_update_fat_buffer_write: lfs_file_seek error=%ld\n", o);
+    if (offset + size > fat_cache_size) {
+        printf("bulk_update_fat_buffer_write: offset %zu out of bounds\n", offset);
         return 0;
     }
-    lfs_ssize_t s = lfs_file_write(&real_filesystem, &fat_cache, buffer, size);
-    if (s < 0) {
-        printf("bulk_update_fat_buffer_write: lfs_file_read error=%ld\n", s);
-        return 0;
-    }
-    return (size_t)s;
+    memcpy(&fat_cache_ram[offset], buffer, size);
+    return size;
 }
 
 static size_t bulk_update_fat(uint32_t start_cluster, size_t size) {
@@ -348,44 +358,24 @@ static size_t bulk_update_fat(uint32_t start_cluster, size_t size) {
 static uint32_t cluster_size(void);
 
 static void init_fat(void) {
-    uint64_t storage_size = littlefs_lfs_config->block_count * littlefs_lfs_config->block_size;
-    uint32_t total_size = storage_size / (DISK_SECTOR_SIZE * 1);
-
-    // Delete old FAT file if it exists to force recreation
-    lfs_remove(&real_filesystem, ".mimic/FAT");
-    
-    struct lfs_info finfo;
-    int err = lfs_stat(&real_filesystem, ".mimic", &finfo);
-    if (err == LFS_ERR_NOENT) {
-        err = lfs_mkdir(&real_filesystem, ".mimic");
-        if (err != LFS_ERR_OK) {
-            printf("init_fat: can't create .mimic directory: err=%d\n", err);
-            return;
-        }
-    }
-
-    err = lfs_file_open(&real_filesystem, &fat_cache, ".mimic/FAT", LFS_O_RDWR|LFS_O_CREAT|LFS_O_TRUNC);
-    assert(err == 0);
-
-    // FAT12 header: media descriptor in entry 0, entry 1 should be free
-    // Entry 0 = 0xFF8 (media descriptor F8 + 0xF)
-    // Entry 1 = 0x000 (free - root dir is not in cluster area for FAT12)
-    uint8_t head[3] = {0xF8, 0xFF, 0x0F};  // Entry 0=FF8, Entry 1=000
-    lfs_ssize_t s = lfs_file_write(&real_filesystem, &fat_cache, head, sizeof(head));
-    if (s != sizeof(head)) {
-        printf("init_fat: lfs_file_write error=%ld\n", s);
-        return;
-    }
-
-    uint8_t pair[3] = {0x00, 0x00, 0x00};
     size_t num_clusters = cluster_size();
-    for (size_t i = 0; i < num_clusters / 2; i++) {
-        s = lfs_file_write(&real_filesystem, &fat_cache, pair, sizeof(pair));
-        if (s != sizeof(pair)) {
-            printf("init_fat: lfs_file_write error=%ld\n", s);
-            break;
-        }
+    size_t fat_bytes = (num_clusters * 3 + 1) / 2;  // FAT12
+    size_t fat_sectors = (fat_bytes + 511) / 512;  // Round up to sectors
+    fat_cache_size = fat_sectors * 512;  // Allocate full sectors
+    
+    if (fat_cache_size > sizeof(fat_cache_ram)) {
+        printf("init_fat: FAT too large (%zu > %zu)\n", fat_cache_size, sizeof(fat_cache_ram));
+        fat_cache_size = sizeof(fat_cache_ram);
     }
+    
+    memset(fat_cache_ram, 0, fat_cache_size);
+
+    // FAT12 header matching macOS format
+    fat_cache_ram[0] = 0xF8;  // Media descriptor
+    fat_cache_ram[1] = 0xFF;
+    fat_cache_ram[2] = 0xFF;
+    
+    uart_puts(uart0, "FAT12 initialized in RAM\r\n");
 }
 
 
@@ -811,89 +801,84 @@ static fat_dir_entry_t *append_dir_entry_file(fat_dir_entry_t *entry, struct lfs
 }
 
 /*
- * Create a directory entry cache corresponding to the base file system
- *
- * Recursively traverse the specified base file system directory and update cache and allocation tables.
+ * Build FAT directory and cluster map from littlefs
  */
-static int create_dir_entry_cache(const char *path, uint32_t parent_cluster, uint32_t *allocated_cluster) {
-    TRACE("create_dir_entry_cache('%s', %lu, %lu)\n", path, parent_cluster, *allocated_cluster);
-    uint32_t current_cluster = *allocated_cluster;
-    fat_dir_entry_t *entry;
-    fat_dir_entry_t dir_entry[DISK_SECTOR_SIZE / sizeof(fat_dir_entry_t)] = {0};
+static void build_directory_cache(void) {
     lfs_dir_t dir;
     struct lfs_info finfo;
-    char directory_path[LFS_NAME_MAX * 2 + 1 + 1];  // for sprintf "%s/%s"
-    entry = dir_entry;
-
-    if (parent_cluster == 0) {
-        entry = append_dir_entry_volume_label(entry, "littlefsUSB");
-        current_cluster = 1;
-    }
-    update_fat(current_cluster, 0xFFF);
-
-    int err = lfs_dir_open(&real_filesystem, &dir, path);
+    
+    memset(root_dir_cache, 0, sizeof(root_dir_cache));
+    memset(cluster_map, 0, sizeof(cluster_map));
+    root_dir_entries = 0;
+    cluster_map_count = 0;
+    
+    // Add volume label
+    set_volume_label_entry(&root_dir_cache[root_dir_entries], "littlefsUSB");
+    root_dir_entries++;
+    
+    int err = lfs_dir_open(&real_filesystem, &dir, "/");
     if (err != LFS_ERR_OK) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "create_dir_entry_cache: lfs_dir_open('%s') error=%d\r\n", path, err);
-        uart_puts(uart0, buf);
-        return err;
+        uart_puts(uart0, "build_directory_cache: can't open root\r\n");
+        return;
     }
-
-    while (true) {
+    
+    uint32_t next_cluster = 2;  // Clusters start at 2
+    
+    while (root_dir_entries < 16 && cluster_map_count < MAX_FILES) {
         err = lfs_dir_read(&real_filesystem, &dir, &finfo);
-        if (err == 0)
-            break;
-        if (err < 0) {
-            printf("create_dir_entry_cache: lfs_dir_read('%s') error=%d\n", path, err);
-            break;
-        }
-
-        if (finfo.type == LFS_TYPE_DIR && parent_cluster == 0 && strcmp(finfo.name, ".mimic") == 0) {
+        if (err <= 0) break;
+        
+        // Debug: show what we found
+        char buf[80];
+        snprintf(buf, sizeof(buf), "Found: '%s' type=%d\r\n", finfo.name, finfo.type);
+        uart_puts(uart0, buf);
+        
+        // Skip . and .. and hidden .mimic directory
+        if (strcmp(finfo.name, ".") == 0 || 
+            strcmp(finfo.name, "..") == 0 ||
+            strcmp(finfo.name, ".mimic") == 0) {
             continue;
         }
-        if (finfo.type == LFS_TYPE_DIR && parent_cluster == 0
-            && (strcmp(finfo.name, ".") == 0 || strcmp(finfo.name, "..") == 0))
-        {
+        
+        // Only show regular files in root
+        if (finfo.type != LFS_TYPE_REG) {
+            uart_puts(uart0, "  Skipped: not a regular file\r\n");
             continue;
         }
-        if (finfo.type == LFS_TYPE_DIR  && strcmp(finfo.name, ".") == 0) {
-            entry = append_dir_entry_directory(entry, &finfo, current_cluster);
-            continue;
-        }
-        if (finfo.type == LFS_TYPE_DIR  && strcmp(finfo.name, "..") == 0) {
-            if (parent_cluster == 0)
-                entry = append_dir_entry_directory(entry, &finfo, 0);
-            else
-                entry = append_dir_entry_directory(entry, &finfo, parent_cluster);
-            continue;
-        }
-
-        if (finfo.type == LFS_TYPE_DIR) {
-            *allocated_cluster += 1;
-            update_fat(*allocated_cluster, 0xFFF);
-            entry = append_dir_entry_directory(entry, &finfo, *allocated_cluster);
-            if (parent_cluster == 0)
-                strncpy(directory_path, finfo.name, sizeof(directory_path));
-            else
-                snprintf(directory_path, sizeof(directory_path), "%s/%s", path, finfo.name);
-            directory_path[LFS_NAME_MAX] = '\0';
-
-            err = create_dir_entry_cache((const char *)directory_path, current_cluster, allocated_cluster);
-            if (err < 0) {
-                lfs_dir_close(&real_filesystem, &dir);
-                return err;
+        
+        uart_puts(uart0, "  Added to cache\r\n");
+        
+        // Create FAT directory entry
+        set_file_entry(&root_dir_cache[root_dir_entries], &finfo, next_cluster);
+        
+        // Map cluster to file
+        cluster_map[cluster_map_count].cluster = next_cluster;
+        snprintf(cluster_map[cluster_map_count].path, LFS_NAME_MAX + 1, "/%s", finfo.name);
+        cluster_map[cluster_map_count].size = finfo.size;
+        cluster_map_count++;
+        
+        if (finfo.size > 0) {
+            uint32_t cluster_bytes = DISK_SECTOR_SIZE;  // 1 sector per cluster
+            uint32_t num_clusters = (finfo.size + cluster_bytes - 1) / cluster_bytes;
+            for (uint32_t i = 0; i < num_clusters; i++) {
+                if (i == num_clusters - 1) {
+                    update_fat(next_cluster + i, 0xFFF);  // EOF for FAT12
+                } else {
+                    update_fat(next_cluster + i, next_cluster + i + 1);
+                }
             }
-
-        } else if (finfo.type == LFS_TYPE_REG) {
-            uint32_t file_cluster = *allocated_cluster + 1;
-            if (finfo.size > 0)
-                *allocated_cluster = bulk_update_fat(file_cluster, finfo.size);
-            entry = append_dir_entry_file(entry, &finfo, file_cluster);
+            next_cluster += num_clusters;
         }
+        
+        root_dir_entries++;
     }
+    
     lfs_dir_close(&real_filesystem, &dir);
-    save_temporary_file(current_cluster, dir_entry);
-    return 0;
+    
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Built cache: %zu files, next_cluster=%lu\r\n", 
+             cluster_map_count, next_cluster);
+    uart_puts(uart0, buf);
 }
 
 /*
@@ -904,9 +889,6 @@ static int create_dir_entry_cache(const char *path, uint32_t parent_cluster, uin
 void mimic_fat_create_cache(void) {
     TRACE(ANSI_RED "mimic_fat_create_cache()\n" ANSI_CLEAR);
 
-    uart_puts(uart0, "mimic_fat_create_cache: unmounting\r\n");
-    lfs_unmount(&real_filesystem);
-    
     uart_puts(uart0, "mimic_fat_create_cache: mounting\r\n");
     int err = lfs_mount(&real_filesystem, littlefs_lfs_config);
     if (err < 0) {
@@ -914,7 +896,6 @@ void mimic_fat_create_cache(void) {
         snprintf(buf, sizeof(buf), "Mount failed (%d), formatting...\r\n", err);
         uart_puts(uart0, buf);
         
-        // Format if mount fails
         lfs_format(&real_filesystem, littlefs_lfs_config);
         uart_puts(uart0, "Format complete, mounting...\r\n");
         
@@ -928,12 +909,10 @@ void mimic_fat_create_cache(void) {
     
     uart_puts(uart0, "Mounted successfully\r\n");
 
-    mimic_fat_cleanup_cache();
-
     init_fat();
-
-    uint32_t allocated_cluster = 1;
-    create_dir_entry_cache("/", 0, &allocated_cluster);
+    build_directory_cache();
+    
+    uart_puts(uart0, "FAT cache ready\r\n");
 }
 
 static void delete_directory(const char *path) {
@@ -973,58 +952,46 @@ static void delete_directory(const char *path) {
 }
 
 void mimic_fat_cleanup_cache(void) {
-    uint8_t filename[LFS_NAME_MAX + 1 + 8];
-    lfs_dir_t dir;
-    struct lfs_info finfo;
-
-    int err = lfs_dir_open(&real_filesystem, &dir, ".mimic");
-    if (err != LFS_ERR_OK) {
-        return;
-    }
-    while (true) {
-        err = lfs_dir_read(&real_filesystem, &dir, &finfo);
-        if (err == 0)
-            break;
-        if (err < 0) {
-            printf("mimic_fat_cleanup_cache: lfs_dir_read('%s') error=%d\n", ".mimic", err);
-            break;
-        }
-        if (strcmp(finfo.name, ".") == 0 ||
-            strcmp(finfo.name, "..") == 0)
-        {
-            continue;
-        }
-
-        snprintf((char *)filename, sizeof(filename), "%s/%s", ".mimic", finfo.name);
-        delete_directory((const char *)filename);
-    }
-    lfs_dir_close(&real_filesystem, &dir);
+    // No temp files to clean up anymore
 }
 
 static uint32_t total_sectors_count(void) {
-    uint64_t storage_size = littlefs_lfs_config->block_count * littlefs_lfs_config->block_size;
-    return storage_size / DISK_SECTOR_SIZE;
+    return MBR_PARTITION_OFFSET + 1323;  // MBR + partition (1386 total)
 }
 
 static uint32_t cluster_size(void) {
-    // Return number of data clusters
-    // This is used for FAT size calculation, so we approximate
     uint32_t total = total_sectors_count();
-    // Rough estimate: assume ~1% overhead for FAT+root
-    return total * 99 / 100;
+    uint32_t reserved = 1;
+    uint32_t root_sectors = 32;  // 512 root entries = 32 sectors
+    uint32_t num_fats = 1;
+    uint32_t sec_per_clus = 1;
+    
+    uint32_t data_sectors = total - reserved - root_sectors;
+    uint32_t clusters = data_sectors / sec_per_clus;
+    
+    for (int i = 0; i < 10; i++) {
+        uint32_t fat_bytes = (clusters * 3 + 1) / 2;  // FAT12: 1.5 bytes per cluster
+        uint32_t fat_sectors = (fat_bytes + DISK_SECTOR_SIZE - 1) / DISK_SECTOR_SIZE;
+        uint32_t new_data_sectors = total - reserved - (num_fats * fat_sectors) - root_sectors;
+        uint32_t new_clusters = new_data_sectors / sec_per_clus;
+        
+        if (new_clusters == clusters) break;
+        clusters = new_clusters;
+    }
+    
+    return clusters;
 }
 
 static size_t fat_sector_size(void) {
-    // FAT12 uses 1.5 bytes per cluster
     size_t num_clusters = cluster_size();
-    size_t fat_bytes = (num_clusters * 3 + 1) / 2;
+    size_t fat_bytes = (num_clusters * 3 + 1) / 2;  // FAT12
     return (fat_bytes + DISK_SECTOR_SIZE - 1) / DISK_SECTOR_SIZE;
 }
 
 static bool is_fat_sector(uint32_t sector) {
     size_t fat_size = fat_sector_size();
-    // 2 FAT copies: sectors 1 to (1 + 2*fat_size - 1)
-    return sector > 0 && sector <= (2 * fat_size);
+    // 1 FAT copy: sectors 1 to fat_size
+    return sector > 0 && sector <= fat_size;
 }
 
 size_t mimic_fat_total_sector_size(void) {
@@ -1043,9 +1010,22 @@ static void read_boot_sector(void *buffer, uint32_t bufsize) {
 
     size_t total_sectors = mimic_fat_total_sector_size();
     
-    // BPB_TotSec16
-    fat_disk_image[0][19] = (uint8_t)(total_sectors & 0xFF);
-    fat_disk_image[0][20] = (uint8_t)(total_sectors >> 8);
+    // BPB_TotSec16 or BPB_TotSec32
+    if (total_sectors < 65536) {
+        fat_disk_image[0][19] = (uint8_t)(total_sectors & 0xFF);
+        fat_disk_image[0][20] = (uint8_t)(total_sectors >> 8);
+        fat_disk_image[0][32] = 0;  // BPB_TotSec32 = 0
+        fat_disk_image[0][33] = 0;
+        fat_disk_image[0][34] = 0;
+        fat_disk_image[0][35] = 0;
+    } else {
+        fat_disk_image[0][19] = 0;  // BPB_TotSec16 = 0
+        fat_disk_image[0][20] = 0;
+        fat_disk_image[0][32] = (uint8_t)(total_sectors & 0xFF);
+        fat_disk_image[0][33] = (uint8_t)((total_sectors >> 8) & 0xFF);
+        fat_disk_image[0][34] = (uint8_t)((total_sectors >> 16) & 0xFF);
+        fat_disk_image[0][35] = (uint8_t)((total_sectors >> 24) & 0xFF);
+    }
 
     // BPB_FATSz16 - FAT12 uses 1.5 bytes per cluster
     size_t num_clusters = cluster_size();
@@ -1054,13 +1034,33 @@ static void read_boot_sector(void *buffer, uint32_t bufsize) {
     fat_disk_image[0][22] = fat_size & 0xFF;
     fat_disk_image[0][23] = (fat_size & 0xFF00) >> 8;
 
-    char buf[80];
-    snprintf(buf, sizeof(buf), "Boot sector: total_sectors=%zu fat_size=%zu num_clusters=%zu\r\n", 
-           total_sectors, fat_size, num_clusters);
+    char buf[128];
+    snprintf(buf, sizeof(buf), "Boot: TotSec=%zu FATSz=%zu Clusters=%zu RsvdSec=%u NumFATs=%u RootEnt=%u\r\n", 
+           total_sectors, fat_size, num_clusters, fat_disk_image[0][14], fat_disk_image[0][16], 
+           fat_disk_image[0][17] | (fat_disk_image[0][18] << 8));
+    uart_puts(uart0, buf);
+    
+    // Calculate where root dir should be
+    uint32_t root_start = 1 + fat_size;
+    snprintf(buf, sizeof(buf), "Root dir at sector %lu, data at %lu\r\n", root_start, root_start + 32);
     uart_puts(uart0, buf);
 
     uint8_t const *addr = fat_disk_image[0];
     memcpy(buffer, addr, bufsize);
+    
+    // Debug: dump first 64 bytes and last 2 bytes of boot sector
+    uart_puts(uart0, "Boot sector dump:\r\n");
+    uint8_t *b = (uint8_t*)buffer;
+    for (int i = 0; i < 64; i += 16) {
+        char hex[80];
+        snprintf(hex, sizeof(hex), "%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+                 b[i], b[i+1], b[i+2], b[i+3], b[i+4], b[i+5], b[i+6], b[i+7],
+                 b[i+8], b[i+9], b[i+10], b[i+11], b[i+12], b[i+13], b[i+14], b[i+15]);
+        uart_puts(uart0, hex);
+    }
+    char sig[32];
+    snprintf(sig, sizeof(sig), "Signature [510-511]: %02X %02X\r\n", b[510], b[511]);
+    uart_puts(uart0, sig);
 }
 
 /*
@@ -1082,27 +1082,16 @@ static void read_fat_sector(uint32_t sector, void *buffer, uint32_t bufsize) {
         fat_sector_offset = sector - fat_size - 1;
     }
     
-    lfs_soff_t offset = fat_sector_offset * 512;
-    lfs_soff_t o = lfs_file_seek(&real_filesystem, &fat_cache, offset, LFS_SEEK_SET);
-    if (o < 0) {
+    size_t offset = fat_sector_offset * 512;
+    if (offset + bufsize > fat_cache_size) {
         char buf[64];
-        snprintf(buf, sizeof(buf), "read_fat_sector: lfs_file_seek err=%ld\r\n", o);
+        snprintf(buf, sizeof(buf), "read_fat_sector: offset %zu out of bounds\r\n", offset);
         uart_puts(uart0, buf);
+        memset(buffer, 0, bufsize);
         return;
     }
-
-    lfs_ssize_t s = lfs_file_read(&real_filesystem, &fat_cache, buffer, bufsize);
-    if (s < 0) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "read_fat_sector: lfs_file_read error=%ld\r\n", s);
-        uart_puts(uart0, buf);
-    } else if (s < (lfs_ssize_t)bufsize) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "read_fat_sector: short read %ld/%lu\r\n", s, bufsize);
-        uart_puts(uart0, buf);
-        // Zero the rest
-        memset((uint8_t*)buffer + s, 0, bufsize - s);
-    }
+    
+    memcpy(buffer, &fat_cache_ram[offset], bufsize);
     
     // Debug: show first 16 bytes of FAT data
     if (sector <= 23) {
@@ -1116,15 +1105,11 @@ static void read_fat_sector(uint32_t sector, void *buffer, uint32_t bufsize) {
 
 static void save_fat_sector(uint32_t request_block, void *buffer, size_t bufsize) {
     size_t offset = (request_block - 1) * bufsize;
-    lfs_soff_t o = lfs_file_seek(&real_filesystem, &fat_cache, offset, LFS_SEEK_SET);
-    if (o < 0) {
-        printf("save_fat_sector: lfs_file_seek error=%ld\n", o);
+    if (offset + bufsize > fat_cache_size) {
+        printf("save_fat_sector: offset %zu out of bounds\n", offset);
         return;
     }
-    lfs_ssize_t s = lfs_file_write(&real_filesystem, &fat_cache, buffer, bufsize);
-    if (s != (lfs_ssize_t)bufsize) {
-        printf("save_fat_sector: lfs_file_read error=%ld\n", s);
-    }
+    memcpy(&fat_cache_ram[offset], buffer, bufsize);
 }
 
 /*
@@ -1477,68 +1462,92 @@ static void create_blank_dir_entry_cache(uint32_t cluster, uint32_t parent_dir_c
 void mimic_fat_read(uint8_t lun, uint32_t sector, void *buffer, uint32_t bufsize) {
     TRACE("\e[36mRead sector=%lu mimic_fat_read()\e[0m\n", sector);
     (void)lun;
+    
+    char debug_buf[48];
+    snprintf(debug_buf, sizeof(debug_buf), "MSC read: lba=%lu bufsize=%lu\r\n", sector, bufsize);
+    uart_puts(uart0, debug_buf);
 
+    // Sector 0 is MBR
     if (sector == 0) {
+        memcpy(buffer, mbr_sector, bufsize);
+        uart_puts(uart0, "Reading MBR\r\n");
+        return;
+    }
+    
+    // Sectors 1-62 are unused (between MBR and partition)
+    if (sector < MBR_PARTITION_OFFSET) {
+        memset(buffer, 0, bufsize);
+        return;
+    }
+    
+    // Translate to partition-relative sector
+    uint32_t part_sector = sector - MBR_PARTITION_OFFSET;
+    
+    if (part_sector == 0) {
         read_boot_sector(buffer, bufsize);
         return;
-    } else if (is_fat_sector(sector)) {
+    } else if (is_fat_sector(part_sector)) {
         char buf[32];
-        snprintf(buf, sizeof(buf), "Reading FAT sector %lu\r\n", sector);
+        snprintf(buf, sizeof(buf), "Reading FAT sector %lu\r\n", part_sector);
         uart_puts(uart0, buf);
-        read_fat_sector(sector, buffer, bufsize);
+        read_fat_sector(part_sector, buffer, bufsize);
         return;
     }
 
-    // Root directory is after FAT, before data area
-    // With 2 FAT copies: root starts at 1 + 2*fat_size
-    uint32_t root_dir_start = 1 + (2 * fat_sector_size());
-    uint32_t root_dir_sectors = 1; // 16 entries * 32 bytes / 512
+    // Root directory is after FAT
+    uint32_t root_dir_start = 1 + fat_sector_size();
+    uint32_t root_dir_sectors = 32;  // 512 entries × 32 bytes / 512 = 32 sectors
     
-    if (sector >= root_dir_start && sector < root_dir_start + root_dir_sectors) {
+    if (part_sector >= root_dir_start && part_sector < root_dir_start + root_dir_sectors) {
         char buf[48];
-        snprintf(buf, sizeof(buf), "Reading root directory (sector %lu)\r\n", sector);
+        snprintf(buf, sizeof(buf), "Reading root directory (sector %lu)\r\n", part_sector);
         uart_puts(uart0, buf);
-        read_temporary_file(1, buffer);
+        uint32_t offset = (part_sector - root_dir_start) * DISK_SECTOR_SIZE;
+        memcpy(buffer, (uint8_t*)root_dir_cache + offset, bufsize);
         return;
     }
 
+    // Data area
     char buf[48];
-    snprintf(buf, sizeof(buf), "Reading data sector %lu\r\n", sector);
+    snprintf(buf, sizeof(buf), "Reading data sector %lu\r\n", part_sector);
     uart_puts(uart0, buf);
+    
     uint32_t data_start = root_dir_start + root_dir_sectors;
-    uint32_t cluster = sector - data_start + 2; // Clusters start at 2
-    size_t offset = 0;
-    find_dir_entry_cache_result_t result = {0};
-
-    uint32_t base_cluster = find_base_cluster_and_offset(cluster, &offset);
-    if (base_cluster == 0) { // is not allocated
+    uint32_t cluster = (part_sector - data_start) + 2;  // 1 sector per cluster
+    
+    cluster_map_t *file = NULL;
+    uint32_t cluster_offset = 0;
+    
+    for (size_t i = 0; i < cluster_map_count; i++) {
+        uint32_t file_clusters = (cluster_map[i].size + DISK_SECTOR_SIZE - 1) / DISK_SECTOR_SIZE;
+        if (cluster >= cluster_map[i].cluster && 
+            cluster < cluster_map[i].cluster + file_clusters) {
+            file = &cluster_map[i];
+            cluster_offset = cluster - cluster_map[i].cluster;
+            break;
+        }
+    }
+    
+    if (!file) {
+        snprintf(buf, sizeof(buf), "Cluster %lu not mapped\r\n", cluster);
+        uart_puts(uart0, buf);
+        memset(buffer, 0, bufsize);
         return;
     }
-
-    find_dir_entry_cache_return_t r = find_dir_entry_cache(&result, 1, base_cluster);
-    if (r != FIND_DIR_ENTRY_CACHE_RESULT_FOUND)
-        return;
-    if (result.is_directory) {
-        read_temporary_file(cluster, buffer);
-        return;
-    }
-
-    TRACE("mimic_fat_read: result.path='%s'\n", result.path);
-
+    
     lfs_file_t f;
-    int err = lfs_file_open(&real_filesystem, &f, result.path, LFS_O_RDONLY);
+    int err = lfs_file_open(&real_filesystem, &f, file->path, LFS_O_RDONLY);
     if (err != LFS_ERR_OK) {
-        printf("mimic_fat_read_cluster: lfs_file_open('%s') error=%d\n", result.path, err);
+        snprintf(buf, sizeof(buf), "Can't open '%s': %d\r\n", file->path, err);
+        uart_puts(uart0, buf);
+        memset(buffer, 0, bufsize);
         return;
     }
-
-    lfs_soff_t seek = lfs_file_seek(&real_filesystem, &f, offset * DISK_SECTOR_SIZE, LFS_SEEK_SET);
-    if (seek < 0) {
-        printf("mimic_fat_read: lfs_file_seek(path='%s', offset=%u) error=%ld\n", result.path, offset * DISK_SECTOR_SIZE, seek);
-    }
-    lfs_ssize_t size = lfs_file_read(&real_filesystem, &f, buffer, bufsize);
-    if (size < 0) {
-        printf("mimic_fat_read: lfs_file_read(path='%s', offset=%u) error=%ld\n", result.path, offset, seek);
+    
+    lfs_file_seek(&real_filesystem, &f, cluster_offset * DISK_SECTOR_SIZE, LFS_SEEK_SET);
+    lfs_ssize_t bytes = lfs_file_read(&real_filesystem, &f, buffer, bufsize);
+    if (bytes < (lfs_ssize_t)bufsize) {
+        memset((uint8_t*)buffer + bytes, 0, bufsize - bytes);
     }
     lfs_file_close(&real_filesystem, &f);
 }
@@ -1929,71 +1938,246 @@ static void update_file_entry(uint32_t cluster, void *buffer, uint32_t bufsize,
     }
 }
 
-void mimic_fat_write(uint8_t lun, uint32_t request_block, void *buffer, uint32_t bufsize) {
-    (void)lun;
-    find_dir_entry_cache_result_t result;
-
-    if (request_block == 0) // master boot record
-        return;
-
-    if (is_fat_sector(request_block)) { // FAT table
-        TRACE("\e[35mWrite FAT table\n" ANSI_CLEAR);
-        save_fat_sector(request_block, buffer, bufsize);
-        return;
+static uint16_t get_fat_entry(uint32_t cluster) {
+    size_t byte_offset = (cluster * 3) / 2;
+    if (byte_offset + 1 >= fat_cache_size) return 0xFFF;
+    
+    if (cluster & 1) {
+        return ((fat_cache_ram[byte_offset] >> 4) & 0x0F) | (fat_cache_ram[byte_offset + 1] << 4);
+    } else {
+        return fat_cache_ram[byte_offset] | ((fat_cache_ram[byte_offset + 1] & 0x0F) << 8);
     }
+}
 
-    uint32_t cluster = request_block - fat_sector_size();
-    TRACE("\e[35mWrite cluster=%lu\e[0m\n", cluster);
-    if (cluster == 1) { // root dir entry
-        TRACE("mimic_fat_write: update root dir_entry\n");
+// Pending data buffer - holds data writes until directory entry arrives
+#define MAX_PENDING 48
+static struct {
+    uint32_t cluster;
+    uint8_t data[DISK_SECTOR_SIZE];
+} pending_data[MAX_PENDING];
+static size_t pending_count = 0;
 
-        fat_dir_entry_t orig[16] = {0};
-        fat_dir_entry_t dir_update[16] = {0};
-        fat_dir_entry_t dir_delete[16] = {0};
+// Extract 8.3 filename from FAT directory entry
+static void fat_name_to_string(const fat_dir_entry_t *entry, char *out) {
+    int j = 0;
+    for (int k = 0; k < 8 && entry->DIR_Name[k] != ' '; k++)
+        out[j++] = entry->DIR_Name[k];
+    if (entry->DIR_Name[8] != ' ') {
+        out[j++] = '.';
+        for (int k = 8; k < 11 && entry->DIR_Name[k] != ' '; k++)
+            out[j++] = entry->DIR_Name[k];
+    }
+    out[j] = '\0';
+}
 
-        read_temporary_file(cluster, orig);
-        difference_of_dir_entry(&orig[0], (fat_dir_entry_t *)buffer, dir_update, dir_delete);
-
-        delete_dir_entry_cache(dir_delete, cluster);
-
-        save_temporary_file(cluster, buffer);
-        save_temporary_file(0, buffer); // FIXME
-
-        update_lfs_file_or_directory(dir_update, cluster);
-    } else { // data or directory entry
-        size_t offset = 0;
-        uint32_t base_cluster = find_base_cluster_and_offset(cluster, &offset);
-
-        if (base_cluster == 0) {
-            TRACE("mimic_fat_write: not allocated cluster\n");
-            save_temporary_file(cluster, buffer);
-
-            // For hosts that write to unallocated space first
-            find_dir_entry_cache_return_t r = find_dir_entry_cache(&result, 1, cluster);
-            if (r != FIND_DIR_ENTRY_CACHE_RESULT_FOUND)  // error or not found
-                return;
-            if (result.is_found && !result.is_directory) {
-                littlefs_write(result.path, cluster, result.size);
+// Flush pending data for a given cluster chain to a littlefs file
+static void flush_pending_to_file(const char *path, uint16_t start_cluster, uint32_t file_size) {
+    if (start_cluster < 2 || pending_count == 0) return;
+    
+    // Check if any pending data matches this file's cluster chain
+    bool has_data = false;
+    uint16_t cluster = start_cluster;
+    while (cluster >= 2 && cluster < 0xFF0 && !has_data) {
+        for (size_t i = 0; i < pending_count; i++) {
+            if (pending_data[i].cluster == cluster) { has_data = true; break; }
+        }
+        uint16_t next = get_fat_entry(cluster);
+        if (next >= 0xFF8) break;
+        cluster = next;
+    }
+    if (!has_data) return;
+    
+    char msg[64];
+    snprintf(msg, sizeof(msg), "FLUSH %s clus=%u sz=%lu pend=%zu\r\n", path, start_cluster, file_size, pending_count);
+    uart_puts(uart0, msg);
+    
+    lfs_file_t f;
+    if (lfs_file_open(&real_filesystem, &f, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) < 0)
+        return;
+    
+    // Follow FAT chain, write pending data in order
+    cluster = start_cluster;
+    while (cluster >= 2 && cluster < 0xFF0) {
+        for (size_t i = 0; i < pending_count; i++) {
+            if (pending_data[i].cluster == cluster) {
+                lfs_file_write(&real_filesystem, &f, pending_data[i].data, DISK_SECTOR_SIZE);
+                break;
             }
-            return;
         }
-
-        find_dir_entry_cache_return_t r = find_dir_entry_cache(&result, 1, base_cluster);
-
-        if (r == FIND_DIR_ENTRY_CACHE_RESULT_ERROR) {
-            TRACE("mimic_fat_write: find_dir_entry_cache(1, base_cluster=%lu) error=%d\n",
-                   base_cluster, r);
-            return;
-        }
-        if (r == FIND_DIR_ENTRY_CACHE_RESULT_NOT_FOUND) {
-            TRACE(ANSI_RED "find_dir_entry_cache not found cluster=%lu\n" ANSI_CLEAR, base_cluster);
-            save_temporary_file(cluster, buffer);
-            return;
-        }
-
-        if (result.is_directory)
-            update_dir_entry(cluster, buffer);
-        else
-            update_file_entry(cluster, buffer, bufsize, &result, offset);
+        uint16_t next = get_fat_entry(cluster);
+        if (next >= 0xFF8) break;
+        cluster = next;
     }
+    
+    // Truncate to actual file size
+    if (file_size > 0) {
+        lfs_file_seek(&real_filesystem, &f, file_size, LFS_SEEK_SET);
+        lfs_file_truncate(&real_filesystem, &f, file_size);
+    }
+    
+    lfs_file_close(&real_filesystem, &f);
+}
+
+// Process all root_dir_cache entries: create/delete files, flush pending data
+static void sync_root_dir_to_littlefs(void) {
+    // Flush pending data to files
+    for (size_t i = 0; i < 512; i++) {
+        fat_dir_entry_t *entry = &root_dir_cache[i];
+        if (entry->DIR_Name[0] == 0x00) break;
+        if (entry->DIR_Name[0] == 0xE5) continue;
+        if ((entry->DIR_Attr & 0x0F) == 0x0F) continue;
+        if (entry->DIR_Attr & 0x08) continue;
+        if (entry->DIR_Attr & 0x10) continue;
+        
+        char filename[13];
+        fat_name_to_string(entry, filename);
+        if (filename[0] == '.') continue;
+        
+        char path[32];
+        snprintf(path, sizeof(path), "/%s", filename);
+        
+        uint16_t start_cluster = entry->DIR_FstClusLO;
+        if (start_cluster < 2) continue;
+        
+        // Flush any pending data for this file's cluster chain
+        flush_pending_to_file(path, start_cluster, entry->DIR_FileSize);
+        
+        // Update cluster_map so reads work for new/changed files
+        bool mapped = false;
+        for (size_t j = 0; j < cluster_map_count; j++) {
+            if (cluster_map[j].cluster == start_cluster) {
+                cluster_map[j].size = entry->DIR_FileSize;
+                mapped = true;
+                break;
+            }
+        }
+        if (!mapped && cluster_map_count < MAX_FILES) {
+            cluster_map[cluster_map_count].cluster = start_cluster;
+            snprintf(cluster_map[cluster_map_count].path, LFS_NAME_MAX + 1, "%s", path);
+            cluster_map[cluster_map_count].size = entry->DIR_FileSize;
+            cluster_map_count++;
+        }
+    }
+    pending_count = 0;
+    
+    // Delete littlefs files that were in cluster_map but no longer in root_dir_cache
+    for (size_t j = 0; j < cluster_map_count; j++) {
+        bool found = false;
+        for (size_t i = 0; i < 512 && !found; i++) {
+            fat_dir_entry_t *entry = &root_dir_cache[i];
+            if (entry->DIR_Name[0] == 0x00) break;
+            if (entry->DIR_Name[0] == 0xE5) continue;
+            if ((entry->DIR_Attr & 0x0F) == 0x0F) continue;
+            if (entry->DIR_Attr & 0x08) continue;
+            if (entry->DIR_Attr & 0x10) continue;
+            if (entry->DIR_FstClusLO == cluster_map[j].cluster) found = true;
+        }
+        if (!found) {
+            lfs_remove(&real_filesystem, cluster_map[j].path);
+            // Remove from cluster_map
+            cluster_map[j] = cluster_map[cluster_map_count - 1];
+            cluster_map_count--;
+            j--;
+        }
+    }
+}
+
+void mimic_fat_write(uint8_t lun, uint32_t sector, void *buffer, uint32_t bufsize) {
+    (void)lun;
+
+    // Ignore MBR and gap
+    if (sector < MBR_PARTITION_OFFSET) return;
+    
+    uint32_t part_sector = sector - MBR_PARTITION_OFFSET;
+    
+    // Ignore boot sector
+    if (part_sector == 0) return;
+    
+    // FAT writes - update RAM cache
+    if (is_fat_sector(part_sector)) {
+        size_t fat_sector_offset = part_sector - 1;
+        size_t offset = fat_sector_offset * 512;
+        if (offset + bufsize <= fat_cache_size)
+            memcpy(&fat_cache_ram[offset], buffer, bufsize);
+        return;
+    }
+    
+    uint32_t root_dir_start = 1 + fat_sector_size();
+    uint32_t root_dir_sectors = 32;
+    
+    // Root directory writes - update cache, defer sync
+    if (part_sector >= root_dir_start && part_sector < root_dir_start + root_dir_sectors) {
+        uint32_t offset = (part_sector - root_dir_start) * DISK_SECTOR_SIZE;
+        memcpy((uint8_t*)root_dir_cache + offset, buffer, bufsize);
+        sync_needed = true;
+        return;
+    }
+    
+    // Data sector writes - buffer until directory entry arrives
+    uint32_t data_start = root_dir_start + root_dir_sectors;
+    if (part_sector >= data_start) {
+        uint32_t cluster = (part_sector - data_start) + 2;
+        
+        // First try to write directly if file already known
+        for (size_t i = 0; i < 512; i++) {
+            fat_dir_entry_t *entry = &root_dir_cache[i];
+            if (entry->DIR_Name[0] == 0x00) break;
+            if (entry->DIR_Name[0] == 0xE5) continue;
+            if ((entry->DIR_Attr & 0x0F) == 0x0F) continue;
+            if (entry->DIR_Attr & 0x08) continue;
+            if (entry->DIR_Attr & 0x10) continue;
+            
+            uint16_t cur = entry->DIR_FstClusLO;
+            uint32_t file_offset = 0;
+            while (cur >= 2 && cur < 0xFF0) {
+                if (cur == cluster) {
+                    char filename[13];
+                    fat_name_to_string(entry, filename);
+                    if (filename[0] == '.') return;
+                    
+                    char path[32];
+                    snprintf(path, sizeof(path), "/%s", filename);
+                    
+                    lfs_file_t f;
+                    if (lfs_file_open(&real_filesystem, &f, path, LFS_O_RDWR | LFS_O_CREAT) >= 0) {
+                        lfs_file_seek(&real_filesystem, &f, file_offset * DISK_SECTOR_SIZE, LFS_SEEK_SET);
+                        lfs_file_write(&real_filesystem, &f, buffer, bufsize);
+                        lfs_file_close(&real_filesystem, &f);
+                    }
+                    return;
+                }
+                uint16_t next = get_fat_entry(cur);
+                if (next >= 0xFF8) break;
+                cur = next;
+                file_offset++;
+            }
+        }
+        
+        // Not found - buffer it (overwrite if cluster already pending)
+        if (pending_count < MAX_PENDING) {
+            // Check if this cluster is already buffered
+            bool replaced = false;
+            for (size_t i = 0; i < pending_count; i++) {
+                if (pending_data[i].cluster == cluster) {
+                    memcpy(pending_data[i].data, buffer, DISK_SECTOR_SIZE);
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                pending_data[pending_count].cluster = cluster;
+                memcpy(pending_data[pending_count].data, buffer, DISK_SECTOR_SIZE);
+                pending_count++;
+            }
+            char msg[48];
+            snprintf(msg, sizeof(msg), "PEND clus=%lu cnt=%zu\r\n", cluster, pending_count);
+            uart_puts(uart0, msg);
+        }
+    }
+}
+
+void mimic_fat_poll(void) {
+    if (!sync_needed) return;
+    sync_needed = false;
+    sync_root_dir_to_littlefs();
 }

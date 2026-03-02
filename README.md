@@ -8,7 +8,7 @@ Firmware for the Pyro MK1B Rocket Flight Computer
 - **Pressure Sensing** - MS5607-02BA03 or BMP280 (auto-detected)
 - **Altitude Calculation** - Integer-only barometric formula
 - **Continuity Checking** - ADC oversampling for pre-flight verification
-- **USB Mass Storage** - littlefs with FAT12 emulation
+- **USB Mass Storage** - Writable FAT12 over littlefs ([fat_mimic library](lib/fat_mimic/README.md))
 - **Status Beep Codes** - Field-diagnosable error reporting
 - **Configurable Deployment** - INI file configuration
 

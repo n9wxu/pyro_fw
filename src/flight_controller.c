@@ -8,7 +8,7 @@
 #include "pressure_sensor.h"
 #include "tusb.h"
 #include "bsp/board_api.h"
-#include "mimic_fat.h"
+#include "fat_mimic.h"
 
 
 // GPIO Pins
@@ -327,15 +327,42 @@ int main() {
     gpio_set_function(1, GPIO_FUNC_UART);
     uart_puts(uart0, "UART initialized\r\n");
     
-    // Format littlefs if needed (before USB MSC operations)
+    // Create config.ini with defaults if it doesn't exist
     extern const struct lfs_config lfs_pico_flash_config;
-    mimic_fat_init(&lfs_pico_flash_config);
-    uart_puts(uart0, "mimic_fat_init done\r\n");
+    {
+        lfs_t lfs;
+        int err = lfs_mount(&lfs, &lfs_pico_flash_config);
+        if (err < 0) {
+            lfs_format(&lfs, &lfs_pico_flash_config);
+            lfs_mount(&lfs, &lfs_pico_flash_config);
+        }
+        uart_puts(uart0, "littlefs mounted\r\n");
+        lfs_file_t config_file;
+        err = lfs_file_open(&lfs, &config_file, "config.ini", LFS_O_RDONLY);
+        if (err == LFS_ERR_NOENT) {
+            uart_puts(uart0, "Creating config.ini...\r\n");
+            err = lfs_file_open(&lfs, &config_file, "config.ini", LFS_O_WRONLY | LFS_O_CREAT);
+            if (err == LFS_ERR_OK) {
+                const char *config = 
+                    "[pyro]\r\n"
+                    "id=PYRO001\r\n"
+                    "name=My Rocket\r\n"
+                    "pyro1_mode=1\r\n"
+                    "pyro1_distance=300\r\n"
+                    "pyro2_mode=2\r\n"
+                    "pyro2_distance=500\r\n";
+                lfs_file_write(&lfs, &config_file, config, strlen(config));
+                lfs_file_close(&lfs, &config_file);
+                uart_puts(uart0, "config.ini created\r\n");
+            }
+        } else if (err == LFS_ERR_OK) {
+            lfs_file_close(&lfs, &config_file);
+        }
+        lfs_unmount(&lfs);
+    }
     
-    // Init UART0 for telemetry
-    uart_init(uart0, 115200);
-    gpio_set_function(0, GPIO_FUNC_UART);
-    gpio_set_function(1, GPIO_FUNC_UART);
+    fat_mimic_init(&lfs_pico_flash_config);
+    uart_puts(uart0, "fat_mimic_init done\r\n");
     
     // Init I2C
     i2c_init(i2c0, 400000);
@@ -398,6 +425,7 @@ int main() {
         uint32_t now = to_ms_since_boot(get_absolute_time());
 
         tud_task();
+        fat_mimic_poll();
 
         // Update pyro fire state
         update_pyro_fire(&ctx, now);
