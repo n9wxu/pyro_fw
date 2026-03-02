@@ -33,9 +33,9 @@ Apogee is an event within ASCENT, not a separate state. Pyros arm only after ver
 ## Pyro Modes
 | Mode | Description |
 |------|-------------|
-| fallen | Distance fallen from apogee (meters) |
-| agl | Altitude above ground level (meters) |
-| speed | Downward vertical speed threshold (m/s) |
+| fallen | Distance fallen from apogee (in configured units) |
+| agl | Altitude above ground level (in configured units) |
+| speed | Downward vertical speed threshold (configured units/second) |
 | delay | Seconds after apogee event |
 
 ## Configuration
@@ -54,9 +54,9 @@ beep_mode=digits
 ```
 
 **Pyro Modes:**
-- **fallen:** Distance fallen from apogee
-- **agl:** Altitude above ground level
-- **speed:** Downward vertical speed threshold
+- **fallen:** Distance fallen from apogee (in configured units)
+- **agl:** Altitude above ground level (in configured units)
+- **speed:** Downward vertical speed threshold (configured units/second)
 - **delay:** Seconds after apogee event
 
 **Units:** `cm` (centimeters), `m` (meters), `ft` (feet) - applies to pyro values and altitude reporting
@@ -105,8 +105,8 @@ Two-digit codes (1-5 beeps per digit):
 
 ### User Interface
 - **GPIO 25:** Onboard LED (status)
-- **GPIO TBD:** Buzzer (PWM)
-- **GPIO TBD:** Safe input (active low, manual test)
+- **GPIO 16:** Buzzer (PWM, 3kHz square wave)
+- **GPIO 8:** Test input (active low, internal pull-up; also I2C0 SDA after boot)
 
 ## Data Logging
 Flight data saved to `flight_NNNN.csv` with:

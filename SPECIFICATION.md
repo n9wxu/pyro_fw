@@ -40,10 +40,10 @@ Dependencies: littlefs v2.11.2, Unity v2.6.0 (FetchContent).
 |------|----------|-------|
 | 0 | UART0 TX | Telemetry, 115200 baud |
 | 1 | UART0 RX | |
-| 8 | Test jumper / I2C0 SDA | Digital at boot, then I2C |
+| 8 | Test input / I2C0 SDA | Active low, pull-up; digital at boot, then I2C |
 | 9 | I2C0 SCL | Pressure sensor, 400kHz |
 | 15 | Pyro common enable | HIGH = enabled |
-| 16 | Buzzer | PWM |
+| 16 | Buzzer | PWM, 3kHz square wave |
 | 17 | Pyro 1 fault | AP2192 FLAG1, active low |
 | 18 | Pyro 2 fault | AP2192 FLAG2, active low |
 | 21 | Pyro 1 enable | AP2192 EN1 |
@@ -72,11 +72,12 @@ DESCENT ──[altitude stable <1m for 1s]──→ LANDED
 ```
 
 ### Test Mode
-- Entry: GPIO 8 LOW at boot (jumper to ground)
+- Entry: GPIO 8 test input LOW at boot (jumper to ground)
 - Beep test pattern, signal continuity status
 - Stay until jumper removed
 - On removal: 10s countdown → fire pyro 1 (if good) → 5s → fire pyro 2 (if good)
 - GPIO 8 reconfigured for I2C only after normal boot proceeds
+- After landing, short press of test button triggers altitude beep-out
 
 ### PAD_IDLE
 - 100Hz sampling, ground pressure calibration
@@ -105,6 +106,7 @@ DESCENT ──[altitude stable <1m for 1s]──→ LANDED
 - 1Hz sampling
 - Write flight CSV, beep max altitude, continue telemetry
 - Altitude beep units from config: cm, m, or ft. Beep mode: digits (each digit) or hundreds (value / 100).
+- Short press of test button (GPIO 8) triggers altitude beep-out repeat
 
 ## Pyro Firing Modes (both channels)
 
