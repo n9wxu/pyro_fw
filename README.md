@@ -3,14 +3,17 @@ Firmware for the Pyro MK1B Rocket Flight Computer
 
 ## Features
 - **Dual Pyrotechnic Control** - AP2192 power switches with fault detection
-- **Flight Data Logging** - 10Hz CSV logging to littlefs
-- **Real-time Telemetry** - 1Hz JSON output via UART
+- **Four Firing Modes** - Fallen distance, AGL altitude, descent speed, timed delay
+- **Flight Data Logging** - 10-20Hz CSV logging to littlefs
+- **Real-time Telemetry** - 1Hz Eggtimer-compatible output via UART
 - **Pressure Sensing** - MS5607-02BA03 or BMP280 (auto-detected)
 - **Altitude Calculation** - Integer-only barometric formula
 - **Continuity Checking** - ADC oversampling for pre-flight verification
 - **USB Mass Storage** - Writable FAT12 over littlefs ([fat_mimic library](lib/fat_mimic/README.md))
+- **Test Mode** - GPIO 8 jumper for ground pyro testing
 - **Status Beep Codes** - Field-diagnosable error reporting
-- **Configurable Deployment** - INI file configuration
+- **Altitude Beep-out** - Max altitude announced after landing (m/ft/ft100)
+- **Configurable Deployment** - INI file configuration via USB
 
 ## Hardware
 - **MCU:** Raspberry Pi Pico (RP2040)
@@ -19,12 +22,21 @@ Firmware for the Pyro MK1B Rocket Flight Computer
 - **Storage:** littlefs on Pico flash (1.8MB)
 - **Interfaces:** USB, UART0, I2C0
 
-## Flight Modes
-1. **PAD_IDLE** - Ground calibration, launch detection (+10m in <100ms)
-2. **LAUNCH** - Boost phase, 10Hz data logging
-3. **APOGEE** - Peak altitude detection (<10m change in 1s)
-4. **FALLING** - Descent, pyro deployment monitoring
-5. **LANDED** - Post-flight data write and telemetry
+## Flight States
+1. **PAD_IDLE** - Ground calibration, ascent detection (+10m in <1s)
+2. **ASCENT** - Boost/coast phase, 10Hz logging, apogee detection
+3. **DESCENT** - Pyro deployment, 20Hz logging, landing detection
+4. **LANDED** - Post-flight data write, altitude beep-out
+
+Apogee is an event within ASCENT, not a separate state. Pyros arm only after vertical speed drops below 10 m/s.
+
+## Pyro Modes
+| Mode | Description |
+|------|-------------|
+| fallen | Distance fallen from apogee (meters) |
+| agl | Altitude above ground level (meters) |
+| speed | Downward vertical speed threshold (m/s) |
+| delay | Seconds after apogee event |
 
 ## Configuration
 Edit `config.ini` on the USB drive (appears when connected to PC):
@@ -33,15 +45,23 @@ Edit `config.ini` on the USB drive (appears when connected to PC):
 [pyro]
 id=PYRO001
 name=My Rocket
-pyro1_mode=1
-pyro1_distance=300
-pyro2_mode=2
-pyro2_distance=500
+pyro1_mode=delay
+pyro1_value=0
+pyro2_mode=agl
+pyro2_value=300
+units=m
+beep_mode=digits
 ```
 
 **Pyro Modes:**
-- **Mode 1:** Distance fallen from apogee (meters)
-- **Mode 2:** Altitude above ground level (meters)
+- **fallen:** Distance fallen from apogee
+- **agl:** Altitude above ground level
+- **speed:** Downward vertical speed threshold
+- **delay:** Seconds after apogee event
+
+**Units:** `cm` (centimeters), `m` (meters), `ft` (feet) - applies to pyro values and altitude reporting
+
+**Beep Mode:** `digits` (each digit beeped) or `hundreds` (value / 100, then each digit)
 
 **Defaults:** If `config.ini` is missing, defaults are created automatically.
 

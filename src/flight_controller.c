@@ -22,7 +22,10 @@
 #define BUZZER 16
 
 // Flight states
-typedef enum { PAD_IDLE, LAUNCH, APOGEE, FALLING, LANDED } flight_state_t;
+typedef enum { PAD_IDLE, ASCENT, DESCENT, LANDED } flight_state_t;
+
+// Pyro firing modes
+typedef enum { PYRO_MODE_FALLEN = 1, PYRO_MODE_AGL, PYRO_MODE_SPEED, PYRO_MODE_DELAY } pyro_mode_t;
 
 // Flight sample
 typedef struct {
@@ -30,24 +33,24 @@ typedef struct {
     int32_t pressure_pa;
     int32_t altitude_cm;
     uint8_t state;
-    uint8_t padding[3];
+    uint8_t under_thrust;
+    uint8_t padding[2];
 } flight_sample_t;
 
 // Config
 typedef struct {
     char id[9];
     char name[9];
-    uint8_t pyro1_mode;
-    uint16_t pyro1_distance;
+    uint8_t pyro1_mode;     // pyro_mode_t
+    uint16_t pyro1_value;   // in reporting units (cm, m, or ft depending on mode)
     uint8_t pyro2_mode;
-    uint16_t pyro2_distance;
+    uint16_t pyro2_value;
+    uint8_t units;          // 0=cm, 1=m, 2=ft
+    uint8_t beep_mode;      // 0=digits, 1=hundreds
 } config_t;
 
 // Forward declarations  
 typedef struct flight_context_t flight_context_t;
-
-// State function type - returns next state enum
-typedef flight_state_t (*state_fn_t)(flight_context_t *, uint32_t);
 
 // Flight context
 typedef struct flight_context_t {
@@ -60,21 +63,31 @@ typedef struct flight_context_t {
     int32_t ground_pressure;
     int32_t max_altitude;
     int32_t last_altitude;
-    uint32_t launch_time;
+    int32_t vertical_speed_cms;  // cm/s, positive = up
+    int32_t prev_vertical_speed_cms;
+    uint32_t launch_time;        // backdated T=0
+    uint32_t apogee_time;
     uint32_t last_sample;
     uint32_t last_telemetry;
+    uint32_t landing_stable_since; // for landing detection
     bool pyro1_fired;
     bool pyro2_fired;
-    uint8_t pyro_firing;
+    bool pyro1_continuity_good;
+    bool pyro2_continuity_good;
+    bool pyros_armed;
+    bool apogee_detected;
+    uint8_t pyro_firing;       // 0=none, 1=pyro1, 2=pyro2
     uint32_t pyro_fire_start;
+    uint32_t pyro1_fire_time;  // for post-fire diagnostics
+    uint32_t pyro2_fire_time;
     config_t config;
     flight_state_t current_state;
     int32_t filtered_pressure;
     bool filter_initialized;
 } flight_context_t;
 
-// State function array
-static state_fn_t state_functions[5];
+// State dispatch - defined after state functions
+static flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now);
 
 // Continuity check
 uint16_t adc_oversample(uint8_t channel, uint16_t samples) {
@@ -141,7 +154,9 @@ void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm
     int len = 0;
     
     len += snprintf(buf + len, sizeof(buf) - len, "{%03ld>", altitude_cm / 3048);
-    len += snprintf(buf + len, sizeof(buf) - len, "@%d>", state == PAD_IDLE ? 1 : state == LAUNCH ? 2 : state == APOGEE ? 5 : state == FALLING ? 8 : 9);
+    uint8_t phase = state == PAD_IDLE ? 1 : state == ASCENT ? (ctx->pyros_armed ? 4 : 2) : state == DESCENT ? 8 : 9;
+    if (ctx->apogee_detected && state == DESCENT && time_ms - ctx->apogee_time < 2000) phase = 5;
+    len += snprintf(buf + len, sizeof(buf) - len, "@%d>", phase);
     len += snprintf(buf + len, sizeof(buf) - len, "#%04lu>", time_ms / 1000);
     
     if (state == PAD_IDLE) {
@@ -150,12 +165,11 @@ void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm
         len += snprintf(buf + len, sizeof(buf) - len, "~%c%c---->", ctx->pyro1_fired ? '1' : 'A', ctx->pyro2_fired ? '2' : 'B');
     }
     
-    if (state >= APOGEE) {
+    if (ctx->apogee_detected) {
         len += snprintf(buf + len, sizeof(buf) - len, "%%0%04ld>", ctx->max_altitude / 30);
     }
     
     len += snprintf(buf + len, sizeof(buf) - len, "=%s>", ctx->config.name);
-    
     uart_puts(uart0, buf);
 }
 
@@ -178,11 +192,36 @@ void update_pyro_fire(flight_context_t *ctx, uint32_t now) {
     }
 }
 
+// Convert internal cm to reporting units
+static int32_t cm_to_units(int32_t cm, uint8_t units) {
+    switch (units) {
+        case 1:  return cm / 100;           // meters
+        case 2:  return cm * 100 / 3048;    // feet (integer approx)
+        default: return cm;                 // cm
+    }
+}
+
+// Check pyro firing condition (values in config units)
+bool should_fire_pyro(flight_context_t *ctx, uint8_t mode, uint16_t value) {
+    if (!ctx->apogee_detected) return false;
+    int32_t fallen = cm_to_units(ctx->max_altitude - ctx->last_altitude, ctx->config.units);
+    int32_t agl = cm_to_units(ctx->last_altitude, ctx->config.units);
+    int32_t speed = cm_to_units(-ctx->vertical_speed_cms, ctx->config.units); // positive = downward, per second
+    uint32_t delay_s = (to_ms_since_boot(get_absolute_time()) - ctx->apogee_time) / 1000;
+    
+    switch (mode) {
+        case PYRO_MODE_FALLEN: return fallen >= value;
+        case PYRO_MODE_AGL:    return agl <= (int32_t)value;
+        case PYRO_MODE_SPEED:  return speed >= (int32_t)value;
+        case PYRO_MODE_DELAY:  return delay_s >= value;
+        default: return false;
+    }
+}
+
 // Forward declarations
 flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now);
-flight_state_t state_launch(flight_context_t *ctx, uint32_t now);
-flight_state_t state_apogee(flight_context_t *ctx, uint32_t now);
-flight_state_t state_falling(flight_context_t *ctx, uint32_t now);
+flight_state_t state_ascent(flight_context_t *ctx, uint32_t now);
+flight_state_t state_descent(flight_context_t *ctx, uint32_t now);
 flight_state_t state_landed(flight_context_t *ctx, uint32_t now);
 
 // State: PAD_IDLE
@@ -192,24 +231,32 @@ flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
     pressure_reading_t pdata;
     pressure_sensor_read(&pdata);
     uint32_t dt = (ctx->last_sample > 0) ? (now - ctx->last_sample) : 10;
-    int32_t filtered = filter_pressure(ctx, (int32_t)(int32_t)pdata.pressure_pa, dt);
+    int32_t filtered = filter_pressure(ctx, (int32_t)pdata.pressure_pa, dt);
     int32_t altitude = pressure_to_altitude_cm(filtered, ctx->ground_pressure);
     
-    uint32_t flight_time = 0;
-    buf_add(ctx, flight_time, filtered, altitude, PAD_IDLE);
+    buf_add(ctx, 0, filtered, altitude, PAD_IDLE);
     ctx->last_altitude = altitude;
     ctx->last_sample = now;
     
+    // Ascent detection: +10m (1000cm) in <1s
     if (altitude > 1000) {
+        // Backdate T=0: scan buffer for first positive altitude
         ctx->launch_time = now;
-        return LAUNCH;
+        for (int i = ctx->buf_count - 1; i >= 0; i--) {
+            uint16_t idx = (ctx->buf_head - 1 - i + 4096) % 4096;
+            if (ctx->flight_buffer[idx].altitude_cm <= 50) { // ~0.5m threshold
+                ctx->launch_time = now - (ctx->buf_count - 1 - i) * 10; // 10ms per sample
+                break;
+            }
+        }
+        return ASCENT;
     }
     return PAD_IDLE;
 }
 
-// State: LAUNCH
-flight_state_t state_launch(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_sample < 100) return LAUNCH;
+// State: ASCENT
+flight_state_t state_ascent(flight_context_t *ctx, uint32_t now) {
+    if (now - ctx->last_sample < 100) return ASCENT;
     
     pressure_reading_t pdata;
     pressure_sensor_read(&pdata);
@@ -217,27 +264,60 @@ flight_state_t state_launch(flight_context_t *ctx, uint32_t now) {
     int32_t filtered = filter_pressure(ctx, (int32_t)pdata.pressure_pa, dt);
     int32_t altitude = pressure_to_altitude_cm(filtered, ctx->ground_pressure);
     
-    uint32_t flight_time = now - ctx->launch_time;
-    buf_add(ctx, flight_time, filtered, altitude, LAUNCH);
+    // Vertical speed
+    ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
+    if (dt > 0)
+        ctx->vertical_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
     
-    if (altitude > ctx->max_altitude) {
+    // Thrust detection: speed increasing
+    bool under_thrust = ctx->vertical_speed_cms > ctx->prev_vertical_speed_cms;
+    
+    uint32_t flight_time = now - ctx->launch_time;
+    flight_sample_t *s = &ctx->flight_buffer[ctx->buf_head];
+    buf_add(ctx, flight_time, filtered, altitude, ASCENT);
+    // Set under_thrust on the sample we just added
+    uint16_t last_idx = (ctx->buf_head - 1 + 4096) % 4096;
+    ctx->flight_buffer[last_idx].under_thrust = under_thrust ? 1 : 0;
+    
+    if (altitude > ctx->max_altitude)
         ctx->max_altitude = altitude;
-    } else if (altitude < ctx->max_altitude - 1000) {
+    
+    // Arm pyros when speed < 10 m/s (1000 cm/s)
+    if (!ctx->pyros_armed && ctx->vertical_speed_cms < 1000 && ctx->vertical_speed_cms >= 0)
+        ctx->pyros_armed = true;
+    
+    // Apogee: armed AND altitude not increasing
+    if (ctx->pyros_armed && !ctx->apogee_detected && ctx->vertical_speed_cms <= 0) {
+        ctx->apogee_detected = true;
+        ctx->apogee_time = now;
         ctx->apogee_protect_idx = (ctx->buf_head >= 50) ? (ctx->buf_head - 50) : (4096 + ctx->buf_head - 50);
         ctx->apogee_protected = true;
+        
+        // Check pyro firing at apogee
+        if (!ctx->pyro1_fired && !ctx->pyro_firing && ctx->pyro1_continuity_good &&
+            should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value)) {
+            fire_pyro(ctx, 1);
+            ctx->pyro1_fire_time = now;
+        }
+        if (!ctx->pyro2_fired && !ctx->pyro_firing && ctx->pyro2_continuity_good &&
+            should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
+            fire_pyro(ctx, 2);
+            ctx->pyro2_fire_time = now;
+        }
+        
         ctx->last_altitude = altitude;
         ctx->last_sample = now;
-        return APOGEE;
+        return DESCENT;
     }
     
     ctx->last_altitude = altitude;
     ctx->last_sample = now;
-    return LAUNCH;
+    return ASCENT;
 }
 
-// State: APOGEE
-flight_state_t state_apogee(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_sample < 100) return APOGEE;
+// State: DESCENT
+flight_state_t state_descent(flight_context_t *ctx, uint32_t now) {
+    if (now - ctx->last_sample < 50) return DESCENT;
     
     pressure_reading_t pdata;
     pressure_sensor_read(&pdata);
@@ -245,50 +325,66 @@ flight_state_t state_apogee(flight_context_t *ctx, uint32_t now) {
     int32_t filtered = filter_pressure(ctx, (int32_t)pdata.pressure_pa, dt);
     int32_t altitude = pressure_to_altitude_cm(filtered, ctx->ground_pressure);
     
-    uint32_t flight_time = now - ctx->launch_time;
-    buf_add(ctx, flight_time, filtered, altitude, APOGEE);
-    
-    ctx->last_altitude = altitude;
-    ctx->last_sample = now;
-    return FALLING;
-}
-
-// State: FALLING
-flight_state_t state_falling(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_sample < 50) return FALLING;
-    
-    pressure_reading_t pdata;
-    pressure_sensor_read(&pdata);
-    uint32_t dt = now - ctx->last_sample;
-    int32_t filtered = filter_pressure(ctx, (int32_t)pdata.pressure_pa, dt);
-    int32_t altitude = pressure_to_altitude_cm(filtered, ctx->ground_pressure);
+    ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
+    if (dt > 0)
+        ctx->vertical_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
     
     uint32_t flight_time = now - ctx->launch_time;
-    buf_add(ctx, flight_time, filtered, altitude, FALLING);
+    buf_add(ctx, flight_time, filtered, altitude, DESCENT);
     
-    int32_t fallen = (ctx->max_altitude - altitude) / 100;
-    int32_t agl = altitude / 100;
-    
-    if (!ctx->pyro1_fired && !ctx->pyro_firing && 
-        ((ctx->config.pyro1_mode == 1 && fallen >= ctx->config.pyro1_distance) || 
-         (ctx->config.pyro1_mode == 2 && agl <= ctx->config.pyro1_distance))) {
+    // Check pyro firing
+    if (!ctx->pyro1_fired && !ctx->pyro_firing && ctx->pyro1_continuity_good &&
+        should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value)) {
         fire_pyro(ctx, 1);
+        ctx->pyro1_fire_time = now;
     }
-    if (!ctx->pyro2_fired && !ctx->pyro_firing && 
-        ((ctx->config.pyro2_mode == 1 && fallen >= ctx->config.pyro2_distance) || 
-         (ctx->config.pyro2_mode == 2 && agl <= ctx->config.pyro2_distance))) {
+    if (!ctx->pyro2_fired && !ctx->pyro_firing && ctx->pyro2_continuity_good &&
+        should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
         fire_pyro(ctx, 2);
+        ctx->pyro2_fire_time = now;
     }
     
-    if (altitude < 500 && abs(altitude - ctx->last_altitude) < 100) {
-        ctx->last_altitude = altitude;
-        ctx->last_sample = now;
-        return LANDED;
+    // Post-fire diagnostics: ~1s after fire, check if re-fire needed
+    if (ctx->pyro1_fired && ctx->pyro1_fire_time > 0 && now - ctx->pyro1_fire_time > 1000 && now - ctx->pyro1_fire_time < 1500) {
+        bool accel_high = ctx->vertical_speed_cms < -3000; // >30 m/s downward = ballistic
+        uint16_t cont;
+        uint16_t dummy;
+        check_continuity(&cont, &dummy);
+        bool cont_open = cont > 60000;
+        if (accel_high && !cont_open) {
+            // BAD_PYRO: re-fire
+            fire_pyro(ctx, 1);
+            ctx->pyro1_fire_time = now;
+        }
+        // BAD_PARACHUTE: cont_open && accel_high (logged but can't fix)
+    }
+    if (ctx->pyro2_fired && ctx->pyro2_fire_time > 0 && now - ctx->pyro2_fire_time > 1000 && now - ctx->pyro2_fire_time < 1500) {
+        bool accel_high = ctx->vertical_speed_cms < -3000;
+        uint16_t dummy;
+        uint16_t cont;
+        check_continuity(&dummy, &cont);
+        bool cont_open = cont > 60000;
+        if (accel_high && !cont_open) {
+            fire_pyro(ctx, 2);
+            ctx->pyro2_fire_time = now;
+        }
+    }
+    
+    // Landing detection: altitude change < 1m (100cm) for 1 second
+    if (abs(altitude - ctx->last_altitude) < 100) {
+        if (ctx->landing_stable_since == 0) ctx->landing_stable_since = now;
+        if (now - ctx->landing_stable_since >= 1000) {
+            ctx->last_altitude = altitude;
+            ctx->last_sample = now;
+            return LANDED;
+        }
+    } else {
+        ctx->landing_stable_since = 0;
     }
     
     ctx->last_altitude = altitude;
     ctx->last_sample = now;
-    return FALLING;
+    return DESCENT;
 }
 
 // State: LANDED
@@ -307,6 +403,16 @@ flight_state_t state_landed(flight_context_t *ctx, uint32_t now) {
     ctx->last_altitude = altitude;
     ctx->last_sample = now;
     return LANDED;
+}
+
+static flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {
+    switch (ctx->current_state) {
+        case PAD_IDLE: return state_pad_idle(ctx, now);
+        case ASCENT:   return state_ascent(ctx, now);
+        case DESCENT:  return state_descent(ctx, now);
+        case LANDED:   return state_landed(ctx, now);
+        default:       return PAD_IDLE;
+    }
 }
 
 int main() {
@@ -347,10 +453,12 @@ int main() {
                     "[pyro]\r\n"
                     "id=PYRO001\r\n"
                     "name=My Rocket\r\n"
-                    "pyro1_mode=1\r\n"
-                    "pyro1_distance=300\r\n"
-                    "pyro2_mode=2\r\n"
-                    "pyro2_distance=500\r\n";
+                    "pyro1_mode=delay\r\n"
+                    "pyro1_value=0\r\n"
+                    "pyro2_mode=agl\r\n"
+                    "pyro2_value=300\r\n"
+                    "units=m\r\n"
+                    "beep_mode=digits\r\n";
                 lfs_file_write(&lfs, &config_file, config, strlen(config));
                 lfs_file_close(&lfs, &config_file);
                 uart_puts(uart0, "config.ini created\r\n");
@@ -400,13 +508,6 @@ int main() {
     ctx.config = (config_t){"PYRO001", "PYRO001", 1, 300, 1, 150};
     ctx.current_state = PAD_IDLE;
     
-    // Initialize state function array
-    state_functions[PAD_IDLE] = state_pad_idle;
-    state_functions[LAUNCH] = state_launch;
-    state_functions[APOGEE] = state_apogee;
-    state_functions[FALLING] = state_falling;
-    state_functions[LANDED] = state_landed;
-    
     // Continuity check
     uint16_t cont1, cont2;
     check_continuity(&cont1, &cont2);
@@ -431,7 +532,7 @@ int main() {
         update_pyro_fire(&ctx, now);
         
         // Run current state and get next state
-        ctx.current_state = state_functions[ctx.current_state](&ctx, now);
+        ctx.current_state = dispatch_state(&ctx, now);
         
         // Telemetry at 1Hz - TEMPORARILY DISABLED FOR DEBUG
         /*
