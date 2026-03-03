@@ -6,19 +6,22 @@
 #include "hardware/adc.h"
 #include "hardware/uart.h"
 #include "pressure_sensor.h"
+#include "pyro.h"
 #include "tusb.h"
 #include "bsp/board_api.h"
-#include "fat_mimic.h"
+#include <lfs.h>
+#include "device_status.h"
+
+volatile device_status_t g_status = {0};
+
+/* Network interface */
+void net_init(void);
+void net_start(void);
+void net_service(void);
+void http_server_init(void);
 
 
 // GPIO Pins
-#define PYRO_COMMON_EN 15
-#define PYRO1_EN 21
-#define PYRO2_EN 22
-#define PYRO1_FAULT 17
-#define PYRO2_FAULT 18
-#define PYRO1_CONT_ADC 0
-#define PYRO2_CONT_ADC 1
 #define BUZZER 16
 
 // Flight states
@@ -89,28 +92,6 @@ typedef struct flight_context_t {
 // State dispatch - defined after state functions
 static flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now);
 
-// Continuity check
-uint16_t adc_oversample(uint8_t channel, uint16_t samples) {
-    uint32_t sum = 0;
-    for (uint16_t i = 0; i < samples; i++) {
-        adc_select_input(channel);
-        sum += adc_read();
-    }
-    // 256 samples gives 4 extra bits (12-bit -> 16-bit)
-    // Sum of 256 12-bit values, shift right by 4 to get 16-bit result
-    return (sum >> 4);
-}
-
-void check_continuity(uint16_t *pyro1, uint16_t *pyro2) {
-    gpio_put(PYRO1_EN, 0);
-    gpio_put(PYRO2_EN, 0);
-    gpio_put(PYRO_COMMON_EN, 1);
-    sleep_ms(10);
-    *pyro1 = adc_oversample(PYRO1_CONT_ADC, 256);
-    *pyro2 = adc_oversample(PYRO2_CONT_ADC, 256);
-    gpio_put(PYRO_COMMON_EN, 0);
-}
-
 // Buffer operations
 void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t altitude, uint8_t st) {
     if (ctx->buf_count == 4096) {
@@ -173,25 +154,6 @@ void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm
     uart_puts(uart0, buf);
 }
 
-// Fire pyro (non-blocking start)
-void fire_pyro(flight_context_t *ctx, uint8_t channel) {
-    gpio_put(PYRO_COMMON_EN, 1);
-    gpio_put(channel == 1 ? PYRO1_EN : PYRO2_EN, 1);
-    ctx->pyro_firing = channel;
-    ctx->pyro_fire_start = to_ms_since_boot(get_absolute_time());
-}
-
-// Update pyro fire state (call in main loop)
-void update_pyro_fire(flight_context_t *ctx, uint32_t now) {
-    if (ctx->pyro_firing && (now - ctx->pyro_fire_start >= 500)) {
-        gpio_put(ctx->pyro_firing == 1 ? PYRO1_EN : PYRO2_EN, 0);
-        gpio_put(PYRO_COMMON_EN, 0);
-        if (ctx->pyro_firing == 1) ctx->pyro1_fired = true;
-        else ctx->pyro2_fired = true;
-        ctx->pyro_firing = 0;
-    }
-}
-
 // Convert internal cm to reporting units
 static int32_t cm_to_units(int32_t cm, uint8_t units) {
     switch (units) {
@@ -228,6 +190,18 @@ flight_state_t state_landed(flight_context_t *ctx, uint32_t now);
 flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 10) return PAD_IDLE;
     
+    /* Re-check continuity every ~1 second while on pad */
+    static uint32_t last_cont_check = 0;
+    if (now - last_cont_check > 1000) {
+        pyro_continuity_t c1, c2;
+        pyro_check_continuity(&c1, &c2);
+        ctx->pyro1_continuity_good = c1.good;
+        ctx->pyro2_continuity_good = c2.good;
+        g_status.pyro1_adc = c1.raw_adc;
+        g_status.pyro2_adc = c2.raw_adc;
+        last_cont_check = now;
+    }
+
     pressure_reading_t pdata;
     pressure_sensor_read(&pdata);
     uint32_t dt = (ctx->last_sample > 0) ? (now - ctx->last_sample) : 10;
@@ -294,14 +268,14 @@ flight_state_t state_ascent(flight_context_t *ctx, uint32_t now) {
         ctx->apogee_protected = true;
         
         // Check pyro firing at apogee
-        if (!ctx->pyro1_fired && !ctx->pyro_firing && ctx->pyro1_continuity_good &&
+        if (!ctx->pyro1_fired && !pyro_is_firing() && ctx->pyro1_continuity_good &&
             should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value)) {
-            fire_pyro(ctx, 1);
+            pyro_fire(1);
             ctx->pyro1_fire_time = now;
         }
-        if (!ctx->pyro2_fired && !ctx->pyro_firing && ctx->pyro2_continuity_good &&
+        if (!ctx->pyro2_fired && !pyro_is_firing() && ctx->pyro2_continuity_good &&
             should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
-            fire_pyro(ctx, 2);
+            pyro_fire(2);
             ctx->pyro2_fire_time = now;
         }
         
@@ -333,39 +307,33 @@ flight_state_t state_descent(flight_context_t *ctx, uint32_t now) {
     buf_add(ctx, flight_time, filtered, altitude, DESCENT);
     
     // Check pyro firing
-    if (!ctx->pyro1_fired && !ctx->pyro_firing && ctx->pyro1_continuity_good &&
+    if (!ctx->pyro1_fired && !pyro_is_firing() && ctx->pyro1_continuity_good &&
         should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value)) {
-        fire_pyro(ctx, 1);
+        pyro_fire(1);
         ctx->pyro1_fire_time = now;
     }
-    if (!ctx->pyro2_fired && !ctx->pyro_firing && ctx->pyro2_continuity_good &&
+    if (!ctx->pyro2_fired && !pyro_is_firing() && ctx->pyro2_continuity_good &&
         should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
-        fire_pyro(ctx, 2);
+        pyro_fire(2);
         ctx->pyro2_fire_time = now;
     }
     
-    // Post-fire diagnostics: ~1s after fire, check if re-fire needed
+    /* Post-fire diagnostics: ~1s after fire, check if re-fire needed */
     if (ctx->pyro1_fired && ctx->pyro1_fire_time > 0 && now - ctx->pyro1_fire_time > 1000 && now - ctx->pyro1_fire_time < 1500) {
-        bool accel_high = ctx->vertical_speed_cms < -3000; // >30 m/s downward = ballistic
-        uint16_t cont;
-        uint16_t dummy;
-        check_continuity(&cont, &dummy);
-        bool cont_open = cont > 60000;
-        if (accel_high && !cont_open) {
-            // BAD_PYRO: re-fire
-            fire_pyro(ctx, 1);
+        bool ballistic = ctx->vertical_speed_cms < -3000;
+        pyro_continuity_t c1, c2;
+        pyro_check_continuity(&c1, &c2);
+        if (ballistic && !c1.open) {
+            pyro_fire(1);
             ctx->pyro1_fire_time = now;
         }
-        // BAD_PARACHUTE: cont_open && accel_high (logged but can't fix)
     }
     if (ctx->pyro2_fired && ctx->pyro2_fire_time > 0 && now - ctx->pyro2_fire_time > 1000 && now - ctx->pyro2_fire_time < 1500) {
-        bool accel_high = ctx->vertical_speed_cms < -3000;
-        uint16_t dummy;
-        uint16_t cont;
-        check_continuity(&dummy, &cont);
-        bool cont_open = cont > 60000;
-        if (accel_high && !cont_open) {
-            fire_pyro(ctx, 2);
+        bool ballistic = ctx->vertical_speed_cms < -3000;
+        pyro_continuity_t c1, c2;
+        pyro_check_continuity(&c1, &c2);
+        if (ballistic && !c2.open) {
+            pyro_fire(2);
             ctx->pyro2_fire_time = now;
         }
     }
@@ -469,39 +437,25 @@ int main() {
         lfs_unmount(&lfs);
     }
     
-    fat_mimic_init(&lfs_pico_flash_config);
-    uart_puts(uart0, "fat_mimic_init done\r\n");
+    net_init();
+    net_start();
+    http_server_init();
+    uart_puts(uart0, "network ready\r\n");
     
-    // Init I2C
-    i2c_init(i2c0, 400000);
-    gpio_set_function(8, GPIO_FUNC_I2C);
-    gpio_set_function(9, GPIO_FUNC_I2C);
-    gpio_pull_up(8);
-    gpio_pull_up(9);
-    
-    // Init ADC
-    adc_init();
+    pressure_sensor_type_t sensor = pressure_sensor_init();
+    if (sensor == PRESSURE_SENSOR_NONE) {
+        uart_puts(uart0, "No pressure sensor!\r\n");
+    } else {
+        uart_puts(uart0, pressure_sensor_name());
+        uart_puts(uart0, " detected\r\n");
+    }
+
     adc_gpio_init(26);
     adc_gpio_init(27);
-    
-    // Init pyro GPIOs
-    gpio_init(PYRO_COMMON_EN);
-    gpio_init(PYRO1_EN);
-    gpio_init(PYRO2_EN);
+
     gpio_init(BUZZER);
-    gpio_set_dir(PYRO_COMMON_EN, GPIO_OUT);
-    gpio_set_dir(PYRO1_EN, GPIO_OUT);
-    gpio_set_dir(PYRO2_EN, GPIO_OUT);
     gpio_set_dir(BUZZER, GPIO_OUT);
-    gpio_put(PYRO_COMMON_EN, 0);
-    gpio_put(PYRO1_EN, 0);
-    gpio_put(PYRO2_EN, 0);
     gpio_put(BUZZER, 0);
-    
-    // Init pressure sensor
-    if (pressure_sensor_init() != 0) {
-        while (1) sleep_ms(1000);
-    }
     
     // Init context
     flight_context_t ctx = {0};
@@ -509,10 +463,15 @@ int main() {
     ctx.current_state = PAD_IDLE;
     
     // Continuity check
-    uint16_t cont1, cont2;
-    check_continuity(&cont1, &cont2);
-    
-    // Calibrate ground pressure
+    pyro_init();
+
+    pyro_continuity_t cont1, cont2;
+    pyro_check_continuity(&cont1, &cont2);
+    ctx.pyro1_continuity_good = cont1.good;
+    ctx.pyro2_continuity_good = cont2.good;
+
+    sleep_ms(2000);  /* let sensor stabilize before calibration */
+
     int32_t sum = 0;
     for (int i = 0; i < 10; i++) {
         pressure_reading_t data;
@@ -526,13 +485,26 @@ int main() {
         uint32_t now = to_ms_since_boot(get_absolute_time());
 
         tud_task();
-        fat_mimic_poll();
+        net_service();
 
         // Update pyro fire state
-        update_pyro_fire(&ctx, now);
+        pyro_update(now);
         
         // Run current state and get next state
         ctx.current_state = dispatch_state(&ctx, now);
+        
+        // Update shared status for HTTP dashboard
+        g_status.state = ctx.current_state;
+        g_status.altitude_cm = ctx.last_altitude;
+        g_status.max_altitude_cm = ctx.max_altitude;
+        g_status.vertical_speed_cms = ctx.vertical_speed_cms;
+        g_status.pressure_pa = ctx.filtered_pressure;
+        g_status.pyro1_fired = ctx.pyro1_fired;
+        g_status.pyro2_fired = ctx.pyro2_fired;
+        g_status.pyros_armed = ctx.pyros_armed;
+        g_status.pyro1_continuity = ctx.pyro1_continuity_good;
+        g_status.pyro2_continuity = ctx.pyro2_continuity_good;
+        g_status.flight_time_ms = (ctx.launch_time > 0) ? (now - ctx.launch_time) : 0;
         
         // Telemetry at 1Hz - TEMPORARILY DISABLED FOR DEBUG
         /*

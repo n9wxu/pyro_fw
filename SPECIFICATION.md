@@ -8,15 +8,17 @@ This section contains everything needed to resume development with a new AI sess
 Dual-deployment rocket flight computer on Raspberry Pi Pico (RP2040). Logs flight data to littlefs flash, presents files via USB Mass Storage (FAT12 emulation), fires two pyrotechnic channels for parachute deployment, outputs Eggtimer-compatible telemetry via UART.
 
 ### Current Implementation Status
-- **Flight controller**: `src/flight_controller.c` - NEEDS OVERHAUL per this spec
-- **fat_mimic library**: `lib/fat_mimic/` - COMPLETE. Writable FAT12 over littlefs. See `lib/fat_mimic/README.md`
-- **Pressure sensors**: `src/pressure_sensor.c`, `src/ms5607_driver.c`, `src/bmp280_driver.c` - COMPLETE
+- **Flight controller**: `src/flight_controller.c` - State machine overhauled, needs flight testing
+- **HTTP web interface**: `src/http_server.c` + `src/net_glue.c` - WORKING. Live dashboard at 192.168.7.1
+- **USB network device**: ECM+RNDIS via TinyUSB + lwIP - WORKING. Ping + HTTP confirmed
+- **fat_mimic library**: `lib/fat_mimic/` - COMPLETE but superseded by HTTP approach
+- **Pyro module**: `src/pyro.c` - Refactored, raw ADC, needs threshold calibration
+- **Pressure sensors**: `src/pressure_sensor.c` - I2C1, GPIO 6/7 (BMP280) or GPIO 10/7 (MS5607)
 - **littlefs driver**: `src/littlefs_driver.c` - COMPLETE
-- **USB MSC driver**: `src/usb_msc_driver.c` - COMPLETE
-- **Config parser**: NOT IMPLEMENTED. config.ini created with defaults but not parsed
-- **Beep codes**: NOT IMPLEMENTED. Buzzer on GPIO 16
-- **CSV flight logging**: NOT IMPLEMENTED. Buffer exists, file write not done
-- **Test mode**: NOT IMPLEMENTED
+- **Config parser**: NOT IMPLEMENTED
+- **Beep codes**: NOT IMPLEMENTED (GPIO 16, 3kHz PWM)
+- **CSV flight logging**: NOT IMPLEMENTED
+- **Test mode**: NOT IMPLEMENTED (GPIO 8 jumper)
 
 ### Build
 ```bash

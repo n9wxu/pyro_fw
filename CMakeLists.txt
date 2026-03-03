@@ -64,20 +64,53 @@ target_link_libraries(littlefs_lib INTERFACE hardware_flash)
 
 # ====================================================================================
 
-add_subdirectory(lib/fat_mimic)
-target_compile_definitions(fat_mimic PRIVATE FAT_MIMIC_DEBUG=1)
-target_link_libraries(fat_mimic PUBLIC littlefs_lib tinyusb_device pico_stdlib)
-target_include_directories(fat_mimic PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src)
+set(LWIP_DIR ${USERHOME}/.pico-sdk/sdk/${sdkVersion}/lib/lwip)
+set(TINYUSB_DIR ${USERHOME}/.pico-sdk/sdk/${sdkVersion}/lib/tinyusb)
 
 add_executable(pyro_fw_c 
     src/flight_controller.c
     src/pressure_sensor.c
+    src/pyro.c
     src/ms5607_driver.c
     src/bmp280_driver.c
     src/usb_descriptors.c
-    src/usb_msc_driver.c
+    src/net_glue.c
+    src/http_server.c
     src/littlefs_driver.c
-    src/unicode.c
+    # TinyUSB networking helpers
+    ${TINYUSB_DIR}/lib/networking/dhserver.c
+    ${TINYUSB_DIR}/lib/networking/dnserver.c
+    ${TINYUSB_DIR}/lib/networking/rndis_reports.c
+    # lwIP core
+    ${LWIP_DIR}/src/core/altcp.c
+    ${LWIP_DIR}/src/core/altcp_alloc.c
+    ${LWIP_DIR}/src/core/altcp_tcp.c
+    ${LWIP_DIR}/src/core/def.c
+    ${LWIP_DIR}/src/core/dns.c
+    ${LWIP_DIR}/src/core/inet_chksum.c
+    ${LWIP_DIR}/src/core/init.c
+    ${LWIP_DIR}/src/core/ip.c
+    ${LWIP_DIR}/src/core/mem.c
+    ${LWIP_DIR}/src/core/memp.c
+    ${LWIP_DIR}/src/core/netif.c
+    ${LWIP_DIR}/src/core/pbuf.c
+    ${LWIP_DIR}/src/core/raw.c
+    ${LWIP_DIR}/src/core/stats.c
+    ${LWIP_DIR}/src/core/sys.c
+    ${LWIP_DIR}/src/core/tcp.c
+    ${LWIP_DIR}/src/core/tcp_in.c
+    ${LWIP_DIR}/src/core/tcp_out.c
+    ${LWIP_DIR}/src/core/timeouts.c
+    ${LWIP_DIR}/src/core/udp.c
+    ${LWIP_DIR}/src/core/ipv4/autoip.c
+    ${LWIP_DIR}/src/core/ipv4/dhcp.c
+    ${LWIP_DIR}/src/core/ipv4/etharp.c
+    ${LWIP_DIR}/src/core/ipv4/icmp.c
+    ${LWIP_DIR}/src/core/ipv4/igmp.c
+    ${LWIP_DIR}/src/core/ipv4/ip4.c
+    ${LWIP_DIR}/src/core/ipv4/ip4_addr.c
+    ${LWIP_DIR}/src/core/ipv4/ip4_frag.c
+    ${LWIP_DIR}/src/netif/ethernet.c
  )
 
  target_link_libraries(pyro_fw_c
@@ -88,7 +121,6 @@ add_executable(pyro_fw_c
         tinyusb_device
         tinyusb_board
         littlefs_lib
-        fat_mimic
         )
 
 pico_set_program_name(pyro_fw_c "pyro_fw_c")
@@ -96,16 +128,26 @@ pico_set_program_version(pyro_fw_c "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(pyro_fw_c 0)
-pico_enable_stdio_usb(pyro_fw_c 1)
+pico_enable_stdio_usb(pyro_fw_c 0)
 
 # Add the standard include files to the build
 target_include_directories(pyro_fw_c PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
         ${CMAKE_CURRENT_LIST_DIR}/src
+        ${LWIP_DIR}/src/include
+        ${TINYUSB_DIR}/lib/networking
 )
 
 target_include_directories(pyro_fw_c SYSTEM PUBLIC
         ${littlefs_SOURCE_DIR}
+)
+
+# Suppress warnings from lwIP and networking code
+target_compile_options(pyro_fw_c PRIVATE
+        -Wno-null-dereference
+        -Wno-conversion
+        -Wno-sign-conversion
+        -Wno-sign-compare
 )
 
 pico_add_extra_outputs(pyro_fw_c)

@@ -8,7 +8,7 @@
 #include "hardware/i2c.h"
 #include <stdio.h>
 
-#define I2C_PORT i2c0
+#define I2C_PORT i2c1
 
 #define MS5607_ADDR_CSB_LOW   0x76
 #define MS5607_ADDR_CSB_HIGH  0x77
