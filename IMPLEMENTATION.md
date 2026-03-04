@@ -49,12 +49,18 @@ If step 7 doesn't happen before next reboot, bootloader rolls back.
 All API responses include CORS headers for cross-origin access.
 
 ### Networking
-- **Addressing:** Link-local 169.254.{board_id}.1/24 (unique per board, no router conflicts)
-- **DHCP:** PC gets 169.254.{board_id}.2 automatically
-- **mDNS:** Advertises as `pyro.local` (RFC 6762)
+- **Addressing:** 192.168.7.1/24 (DHCP assigns PC 192.168.7.2)
+- **mDNS:** Advertises as `pyro.local` (RFC 6762) with conflict resolution
 - **DNS-SD:** Registers `_pyro._tcp` service for automatic discovery
+- **CORS:** API endpoints include `Access-Control-Allow-Origin: *`
 - **Single device:** http://pyro.local/ just works
 - **Multiple devices:** Data collection server browses `_pyro._tcp` to find all trackers
+
+### Versioning
+- `VERSION` file contains semantic version (major.minor.patch)
+- Patch auto-increments on every build via `scripts/gen_version.sh`
+- `src/version.h` generated at build time with `FW_VERSION` and `FW_BUILD_DATE`
+- Version reported in UART boot message, HTTP API, and web dashboard
 
 ### Debugging
 The VS Code launch config loads both bootloader and app ELFs:
@@ -73,3 +79,5 @@ ninja
 |--------|---------|
 | `upload_fw.sh` | OTA firmware upload via curl |
 | `upload_www.sh` | Upload web files to device |
+| `test_network.py` | Comprehensive network/API test suite |
+| `scripts/gen_version.sh` | Auto-generate version.h at build time |

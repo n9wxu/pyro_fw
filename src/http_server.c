@@ -11,8 +11,8 @@
 #include <hardware/sync.h>
 #include <pico_fota_bootloader/core.h>
 #include "device_status.h"
+#include "version.h"
 
-#define FW_VERSION "1.0.0"
 #define CORS_HDR "Access-Control-Allow-Origin: *\r\n"
 
 extern const struct lfs_config lfs_pico_flash_config;
@@ -38,7 +38,7 @@ typedef struct {
     char         path[64];
 } conn_state_t;
 
-static conn_state_t conn_pool[4];
+static conn_state_t conn_pool[8];
 
 static conn_state_t *conn_alloc(void) {
     for (int i = 0; i < 4; i++)
@@ -193,6 +193,12 @@ static const char *DEFAULT_PAGE =
     "<p><a href=\"/api/status\">Status JSON</a></p></body></html>";
 
 /* ── TCP callbacks ────────────────────────────────────────────────── */
+
+static void on_err(void *arg, err_t err) {
+    (void)err;
+    conn_state_t *cs = (conn_state_t *)arg;
+    if (cs) conn_free(cs);
+}
 
 static err_t on_sent(void *arg, struct tcp_pcb *pcb, u16_t len) {
     (void)len;
@@ -472,12 +478,13 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
 static err_t on_accept(void *arg, struct tcp_pcb *pcb, err_t err) {
     (void)arg; (void)err;
     tcp_recv(pcb, on_recv);
+    tcp_err(pcb, on_err);
     return ERR_OK;
 }
 
 void http_server_init(void) {
     struct tcp_pcb *pcb = tcp_new();
     tcp_bind(pcb, IP_ADDR_ANY, 80);
-    pcb = tcp_listen_with_backlog(pcb, 4);
+    pcb = tcp_listen_with_backlog(pcb, 8);
     tcp_accept(pcb, on_accept);
 }

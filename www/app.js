@@ -1,5 +1,7 @@
+var missCount = 0;
 function update() {
   fetch('/api/status').then(r => r.json()).then(d => {
+    missCount = 0;
     var s = '<b>' + d.state + '</b>';
     s += ' Alt:' + (d.alt_cm/100).toFixed(1) + 'm';
     s += ' Max:' + (d.max_alt_cm/100).toFixed(1) + 'm';
@@ -13,9 +15,10 @@ function update() {
     s += '<br><small>FW ' + d.fw_version + '</small>';
     document.getElementById('status').innerHTML = s;
   }).catch(() => {
-    document.getElementById('status').innerHTML = 'Connection lost';
+    if (++missCount > 3)
+      document.getElementById('status').innerHTML = 'Connection lost';
   });
-  setTimeout(update, 500);
+  setTimeout(update, 1000);
 }
 
 function dlConfig() {

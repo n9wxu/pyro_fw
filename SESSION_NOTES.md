@@ -1,4 +1,49 @@
-# Session Notes - March 3, 2026
+# Session Notes - March 4, 2026 (Morning)
+
+## What We Did
+
+### 1. mDNS/DNS-SD — Working
+- lwIP mDNS responder with `pyro.local` hostname and `_pyro._tcp` service
+- Root cause of HTTP stall: TCP PCB pool exhaustion (8 too few) and heap too small for segment coalescing
+- Fix: `MEMP_NUM_TCP_PCB=16`, `MEM_SIZE=8000`
+- lwIP debug infrastructure added (`arch/cc.h` → UART printf)
+
+### 2. HTTP Connection Leak — Fixed
+- Missing `tcp_err` callback meant conn_pool slots leaked on connection reset
+- After a few browser page loads, all slots permanently consumed → HTTP dead
+- Fix: `on_err` callback registered in `on_accept`, frees conn_state
+- Connection pool increased from 4 to 8, listen backlog to 8
+
+### 3. Multi-device Networking
+- Unique MAC per board from `pico_unique_board_id`
+- Link-local 169.254.x.y rejected by macOS DHCP — reverted to 192.168.7.1
+- CORS headers on API endpoints
+- mDNS conflict resolution callback (for future multi-device)
+
+### 4. Build Versioning
+- `VERSION` file (committed, semantic version)
+- Patch auto-increments on every `ninja` build
+- `scripts/gen_version.sh` generates `src/version.h`
+- Version shown in UART boot, API, and web dashboard
+
+### 5. Testing & Diagnostics
+- `test_network.py` — comprehensive test suite (ping, API, files, parallel, sequential, mDNS)
+- Fail-fast by default, `--all` for complete run
+- `--uart PORT` for UART monitoring, `--wait-boot` for reset capture
+- 1Hz UART heartbeat in main loop for liveness monitoring
+- lwIP debug flags available (MEM_DEBUG, MEMP_DEBUG, PBUF_DEBUG)
+
+### 6. Status Polling
+- Reduced from 500ms to 1000ms to halve TCP load
+- 3 consecutive misses before showing "Connection lost"
+
+### Open Items
+- Multi-device unique IPs (192.168.7.x shared — works for single device)
+- UART port detection in test script needs verification
+
+---
+
+
 
 ## What We Did Tonight
 

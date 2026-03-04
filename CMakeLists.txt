@@ -82,6 +82,14 @@ target_link_libraries(littlefs_lib INTERFACE hardware_flash)
 set(LWIP_DIR ${USERHOME}/.pico-sdk/sdk/${sdkVersion}/lib/lwip)
 set(TINYUSB_DIR ${USERHOME}/.pico-sdk/sdk/${sdkVersion}/lib/tinyusb)
 
+# Generate version.h on every build
+add_custom_target(generate_version ALL
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_version.sh
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/version.h
+            ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Generating version.h"
+)
+
 add_executable(pyro_fw_c 
     src/flight_controller.c
     src/pressure_sensor.c
@@ -142,6 +150,8 @@ add_executable(pyro_fw_c
         littlefs_lib
         pico_fota_bootloader_lib
         )
+
+add_dependencies(pyro_fw_c generate_version)
 
 pico_set_program_name(pyro_fw_c "pyro_fw_c")
 pico_set_program_version(pyro_fw_c "0.1")

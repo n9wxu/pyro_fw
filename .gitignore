@@ -1,6 +1,9 @@
 # Build directory
 build/
 
+# Generated
+src/version.h
+
 # IDE
 .vscode/
 .kiro/

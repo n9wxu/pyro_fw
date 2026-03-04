@@ -12,6 +12,7 @@
 #include <lfs.h>
 #include "device_status.h"
 #include <pico_fota_bootloader/core.h>
+#include "version.h"
 
 volatile device_status_t g_status = {0};
 
@@ -405,6 +406,7 @@ int main() {
     gpio_set_function(0, GPIO_FUNC_UART);
     gpio_set_function(1, GPIO_FUNC_UART);
     uart_puts(uart0, "UART initialized\r\n");
+    uart_puts(uart0, "Pyro MK1B v" FW_VERSION " (" FW_BUILD_DATE ")\r\n");
     
     // Create config.ini with defaults if it doesn't exist
     extern const struct lfs_config lfs_pico_flash_config;
@@ -545,6 +547,16 @@ int main() {
         }
         */
         
+        // Heartbeat on UART every second
+        static uint32_t last_hb;
+        if (now - last_hb >= 1000) {
+            last_hb = now;
+            char hb[48];
+            snprintf(hb, sizeof(hb), "[%lu] alive pa=%ld\r\n",
+                     (unsigned long)now, (long)g_status.pressure_pa);
+            uart_puts(uart0, hb);
+        }
+
         // No sleep - tud_task() needs to run as fast as possible for USB
     }
     
