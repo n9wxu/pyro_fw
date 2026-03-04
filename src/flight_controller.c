@@ -502,12 +502,10 @@ int main() {
     snprintf(dbg, sizeof(dbg), "ground_pressure=%ld\r\n", (long)ctx.ground_pressure);
     uart_puts(uart0, dbg);
 
-    /* mDNS disabled - causes TCP stalls on USB RNDIS link. TODO: fix interaction */
-#if 0
+    /* Start mDNS after init is complete */
     uart_puts(uart0, "starting mDNS...\r\n");
     net_mdns_poll();
     uart_puts(uart0, "mDNS started\r\n");
-#endif
     
     uart_puts(uart0, "entering main loop\r\n");
     while (1) {

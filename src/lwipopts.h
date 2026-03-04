@@ -30,8 +30,9 @@ unsigned int lwip_port_rand(void);
 #define ETHARP_SUPPORT_STATIC_ENTRIES 1
 #define LWIP_SINGLE_NETIF            1
 #define PBUF_POOL_SIZE               24
-#define MEMP_NUM_TCP_PCB             8
+#define MEMP_NUM_TCP_PCB             16
 #define MEMP_NUM_UDP_PCB             4
+#define MEM_SIZE                      8000
 #define LWIP_MULTICAST_PING          1
 #define LWIP_BROADCAST_PING          1
 

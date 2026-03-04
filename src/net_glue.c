@@ -162,3 +162,13 @@ sys_prot_t sys_arch_protect(void) { return 0; }
 void sys_arch_unprotect(sys_prot_t pval) { (void)pval; }
 uint32_t sys_now(void) { return to_ms_since_boot(get_absolute_time()); }
 unsigned int lwip_port_rand(void) { return to_ms_since_boot(get_absolute_time()); }
+
+#include <stdarg.h>
+void lwip_uart_printf(const char *fmt, ...) {
+    char buf[256];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    if (n > 0) uart_write_blocking(uart0, (const uint8_t *)buf, n);
+}

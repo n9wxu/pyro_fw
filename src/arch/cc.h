@@ -5,4 +5,9 @@
 
 typedef int sys_prot_t;
 
+#include <stdio.h>
+#include "hardware/uart.h"
+void lwip_uart_printf(const char *fmt, ...);
+#define LWIP_PLATFORM_DIAG(x) lwip_uart_printf x
+
 #endif
