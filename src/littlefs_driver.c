@@ -10,7 +10,7 @@
 #include <lfs.h>
 
 
-#define FS_SIZE (1323 * 512)  // Match working macOS FAT12 image
+#define FS_SIZE (984 * 1024)  // 984KB reserved by pico_fota_bootloader
 
 
 static uint32_t fs_base(const struct lfs_config *c) {

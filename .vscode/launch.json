@@ -21,6 +21,7 @@
             // Also works fine for flash binaries
             "overrideLaunchCommands": [
                 "monitor reset init",
+                "load \"${workspaceFolder}/build/_deps/pico_fota_bootloader-build/pico_fota_bootloader.elf\"",
                 "load \"${command:raspberry-pi-pico.launchTargetPath}\""
             ],
             "openOCDLaunchCommands": [
@@ -43,6 +44,7 @@
             // Also works fine for flash binaries
             "overrideLaunchCommands": [
                 "monitor reset init",
+                "load \"${workspaceFolder}/build/_deps/pico_fota_bootloader-build/pico_fota_bootloader.elf\"",
                 "load \"${command:raspberry-pi-pico.launchTargetPath}\""
             ]
         },

@@ -11,6 +11,7 @@
 #include "bsp/board_api.h"
 #include <lfs.h>
 #include "device_status.h"
+#include <pico_fota_bootloader/core.h>
 
 volatile device_status_t g_status = {0};
 
@@ -384,8 +385,10 @@ static flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {
 }
 
 int main() {
-    // Initialize board first (sets up clocks, etc)
-    board_init();
+    // Initialize board first (sets up clocks, etc)here are a    board_init();
+    
+    // Commit firmware so bootloader won't roll back
+    pfb_firmware_commit();
     
     // Initialize TinyUSB BEFORE stdio
     tud_init(BOARD_TUD_RHPORT);

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Pyro MK1B</title>
+<link rel="stylesheet" href="/www/style.css">
+</head><body>
+<h2>Pyro MK1B</h2>
+<div id="status">Connecting...</div>
+<hr>
+<h3>Files</h3>
+<div id="actions">
+  <button onclick="dlConfig()">⬇ Download Config</button>
+  <button onclick="dlFlight()">⬇ Download Flight CSV</button>
+</div>
+<hr>
+<h3>Upload Config</h3>
+<textarea id="cfg" rows="10" cols="50"></textarea><br>
+<button onclick="uploadConfig()">Upload Config</button>
+<span id="cfgmsg"></span>
+<hr>
+<h3>Update Web Files</h3>
+<input type="file" id="webfile">
+<input type="text" id="webpath" placeholder="/www/filename.html" size="30">
+<button onclick="uploadWeb()">Upload</button>
+<span id="webmsg"></span>
+<hr>
+<h3>Firmware Update</h3>
+<input type="file" id="fwfile" accept=".bin">
+<button onclick="uploadFW()">⬆ Upload Firmware</button>
+<span id="fwmsg"></span>
+
+<script src="/www/app.js"></script>
+</body></html>

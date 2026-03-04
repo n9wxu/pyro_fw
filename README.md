@@ -9,17 +9,18 @@ Firmware for the Pyro MK1B Rocket Flight Computer
 - **Pressure Sensing** - MS5607-02BA03 or BMP280 (auto-detected)
 - **Altitude Calculation** - Integer-only barometric formula
 - **Continuity Checking** - ADC oversampling for pre-flight verification
-- **USB Mass Storage** - Writable FAT12 over littlefs ([fat_mimic library](lib/fat_mimic/README.md))
+- **Web Interface** - Live dashboard via USB network (192.168.7.1)
+- **OTA Firmware Updates** - A/B bootloader with automatic rollback
 - **Test Mode** - GPIO 8 jumper for ground pyro testing
 - **Status Beep Codes** - Field-diagnosable error reporting
 - **Altitude Beep-out** - Max altitude announced after landing (m/ft/ft100)
-- **Configurable Deployment** - INI file configuration via USB
+- **Configurable Deployment** - INI file configuration via USB or web
 
 ## Hardware
 - **MCU:** Raspberry Pi Pico (RP2040)
 - **Pressure Sensor:** MS5607-02BA03 or BMP280 (auto-detected)
 - **Pyro Control:** AP2192 dual channel power switch (1.5A per channel)
-- **Storage:** littlefs on Pico flash (1.8MB)
+- **Storage:** littlefs on Pico flash (984KB)
 - **Interfaces:** USB, UART0, I2C0
 
 ## Flight States
@@ -192,20 +193,60 @@ Time_ms,Pressure_Pa,Altitude_cm,State
 Requires Pico SDK 2.2.0 or later:
 ```bash
 mkdir build && cd build
-cmake ..
-make
+cmake -G Ninja ..
+ninja
 ```
 
-Flash `pyro_fw_c.uf2` to Pico in bootloader mode (hold BOOTSEL while connecting USB).
+This produces:
+- `build/_deps/pico_fota_bootloader-build/pico_fota_bootloader.uf2` — A/B bootloader
+- `build/pyro_fw_c.uf2` — application firmware
+- `build/pyro_fw_c_fota_image.bin` — OTA update image
+
+## Flash Layout
+```
+0x000000  Bootloader           36 KB   (pico_fota_bootloader)
+0x009000  Info block             4 KB   (swap flags, rollback state)
+0x00A000  App Slot A           512 KB   (active firmware)
+0x08A000  App Slot B           512 KB   (OTA download target)
+0x10A000  LittleFS             984 KB   (config, web files, flight data)
+0x200000  End of flash
+```
+
+## Initial Flash (one-time via BOOTSEL)
+1. Hold BOOTSEL, plug in USB
+2. Copy `pico_fota_bootloader.uf2` to the Pico drive
+3. Hold BOOTSEL again
+4. Copy `pyro_fw_c.uf2` to the Pico drive
+5. Upload web files: `./upload_www.sh`
+
+## OTA Firmware Updates
+After initial flash, all future updates are over-the-air via USB network:
+```bash
+./upload_fw.sh
+```
+Or use the "Firmware Update" button in the web interface at http://192.168.7.1/.
+
+The A/B bootloader ([pico_fota_bootloader](https://github.com/JZimnol/pico_fota_bootloader)) provides:
+- **Safe updates** — new firmware is written to the inactive slot while the device keeps running
+- **Automatic rollback** — if new firmware doesn't call `pfb_firmware_commit()`, the bootloader reverts on next reboot
+- **No bricking** — a failed or interrupted OTA leaves the current firmware intact
+
+## Web Interface
+Connect the Pico via USB. It appears as a network adapter with DHCP.
+
+- **Dashboard:** http://192.168.7.1/ — live status, altitude, pyro continuity
+- **Status API:** http://192.168.7.1/api/status — JSON telemetry
+- **Config API:** http://192.168.7.1/api/config — download/upload config.ini
+- **OTA API:** POST to http://192.168.7.1/api/ota — firmware update
 
 ## Usage
 1. **Power on** - System initializes
 2. **Wait 3 seconds** - Continuity check performed
 3. **Listen for beeps** - 1-1 = good, others = fault
-4. **Connect USB** - Edit `config.ini` if needed
+4. **Connect USB** - Open http://192.168.7.1/ to view status or edit config
 5. **Arm system** - Place in rocket
 6. **Launch** - Automatic detection and logging
-7. **Retrieve** - Download `flight_NNNN.csv` from USB drive
+7. **Retrieve** - Download flight data from web interface
 
 ## Development Status
 See [SPECIFICATION.md](SPECIFICATION.md) for detailed requirements and implementation notes.

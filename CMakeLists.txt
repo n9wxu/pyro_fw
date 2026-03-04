@@ -49,8 +49,23 @@ FetchContent_Declare(
     GIT_TAG v2.6.0
 )
 
-FetchContent_MakeAvailable(littlefs unity)
+# A/B OTA bootloader
+set(PFB_WITH_IMAGE_ENCRYPTION OFF CACHE BOOL "" FORCE)
+set(PFB_WITH_SHA256_HASHING OFF CACHE BOOL "" FORCE)
+set(PFB_REDIRECT_BOOTLOADER_LOGS_TO_UART ON CACHE BOOL "" FORCE)
+set(PFB_RESERVED_FILESYSTEM_SIZE_KB 984 CACHE STRING "" FORCE)
+FetchContent_Declare(
+    pico_fota_bootloader
+    GIT_REPOSITORY https://github.com/JZimnol/pico_fota_bootloader.git
+    GIT_TAG master
+)
+
+FetchContent_MakeAvailable(littlefs unity pico_fota_bootloader)
 message("littlefs is here: ${littlefs_SOURCE_DIR}")
+
+# Suppress warnings in third-party pico_fota_bootloader
+get_target_property(_pfb_sources pico_fota_bootloader_lib SOURCES)
+set_source_files_properties(${_pfb_sources} PROPERTIES COMPILE_OPTIONS "-Wno-array-bounds")
 
 add_library(littlefs_lib STATIC
     ${littlefs_SOURCE_DIR}/lfs.c
@@ -121,6 +136,7 @@ add_executable(pyro_fw_c
         tinyusb_device
         tinyusb_board
         littlefs_lib
+        pico_fota_bootloader_lib
         )
 
 pico_set_program_name(pyro_fw_c "pyro_fw_c")
@@ -151,6 +167,7 @@ target_compile_options(pyro_fw_c PRIVATE
 )
 
 pico_add_extra_outputs(pyro_fw_c)
+pfb_compile_with_bootloader(pyro_fw_c)
 
 # ====================================================================================
 # Unit Tests

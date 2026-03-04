@@ -1,3 +1,54 @@
+# Session Notes - March 3, 2026
+
+## What We Did Tonight
+
+### 1. OTA Firmware Updates (COMPLETE)
+- Added POST `/api/ota` endpoint for firmware upload
+- Initial attempt: direct flash write — bricked device (overwrites running code)
+- Evaluated A/B bootloader options:
+  - RP2350 has native partition table support in ROM — not available on RP2040
+  - Found [pico_fota_bootloader](https://github.com/JZimnol/pico_fota_bootloader) (MIT, RP2040 support)
+- Integrated pico_fota_bootloader via FetchContent
+- Hit HardFault: `pfb_initialize_download_slot()` erases 512KB with interrupts disabled (~6s), kills USB
+- Fix: incremental sector erase (4KB at a time) — keeps interrupt-disabled window to ~50ms
+- A/B swap + automatic rollback working
+
+### 2. Flash Layout Redesign
+- Old: firmware at 0x0, littlefs 660KB at top
+- New: bootloader 36KB, info 4KB, Slot A 512KB, Slot B 512KB, littlefs 984KB
+- Updated littlefs driver FS_SIZE from (1323*512) to (984*1024)
+
+### 3. Web Interface Improvements
+- Added firmware update button with file picker and confirmation dialog
+- Fixed config download: was returning hardcoded `{}`, now reads config.ini from littlefs
+- Fixed app.js: was parsing config as JSON, changed to plain text
+- Added firmware version (FW_VERSION "1.0.0") to status API and dashboard
+
+### 4. Debugger Configuration
+- App now linked to Slot A (0x1000A000) — debugger couldn't find main
+- Updated launch.json to load bootloader ELF before app ELF
+
+### 5. Build System
+- Added pico_fota_bootloader via FetchContent with options:
+  - PFB_WITH_IMAGE_ENCRYPTION=OFF
+  - PFB_WITH_SHA256_HASHING=OFF
+  - PFB_REDIRECT_BOOTLOADER_LOGS_TO_UART=ON
+  - PFB_RESERVED_FILESYSTEM_SIZE_KB=984
+- Suppressed -Warray-bounds warning from third-party flash_utils.c
+- Fixed cmake generator: project uses Ninja, not Make
+
+### Key Files Modified
+- `CMakeLists.txt` — pico_fota_bootloader dep, flash layout config
+- `src/http_server.c` — OTA endpoint, config download fix, version API
+- `src/flight_controller.c` — pfb_firmware_commit() on boot
+- `src/littlefs_driver.c` — FS_SIZE updated to 984KB
+- `www/index.html` — firmware update UI section
+- `www/app.js` — firmware upload function, config as text, version display
+- `.vscode/launch.json` — dual ELF loading for debugger
+- `upload_fw.sh` — OTA upload script (uses fota_image.bin)
+
+---
+
 # Session Notes - March 2, 2026
 
 ## What We Did Tonight

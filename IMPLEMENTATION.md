@@ -1,96 +1,65 @@
 # Flight Controller Implementation
 
-## Files Created
+## Architecture
 
-### flight_controller.c
-Minimal flight computer firmware implementing:
-
-**Core Features:**
-- 5-state flight state machine (PAD_IDLE → LAUNCH → APOGEE → FALLING → LANDED)
-- Variable sample rate (1Hz/10Hz/20Hz based on state)
-- 64KB circular buffer with apogee protection
-- Eggtimer-compatible telemetry output
-- Dual pyro channel control with safety
-- ADC oversampling (256x) for continuity check
-- Barometric altitude calculation
-
-**State Machine:**
-- PAD_IDLE: Ground calibration, 1Hz sampling
-- LAUNCH: Detect +10m altitude, 10Hz sampling, track max altitude
-- APOGEE: Detect altitude drop >10m, protect last 50 samples
-- FALLING: 20Hz sampling, pyro deployment logic (±5m accuracy)
-- LANDED: Detect <5m altitude with <1m change
-
-**Pyro Deployment:**
-- Mode 1: Distance fallen from apogee (meters)
-- Mode 2: Altitude AGL (meters)
-- Fire when EITHER condition met
-- 500ms fire duration
-
-**Telemetry Format (Eggtimer):**
+### Flash Layout (2MB)
 ```
-{046>@5>#0018>~1B---->%04679>=PYRO001>
+0x000000  Bootloader           36 KB   pico_fota_bootloader
+0x009000  Info block             4 KB   swap flags, rollback state
+0x00A000  App Slot A           512 KB   active firmware
+0x08A000  App Slot B           512 KB   OTA download target
+0x10A000  LittleFS             984 KB   config, web files, flight data
+0x200000  End
 ```
-- `{nnn>` - Altitude (hundreds of feet)
-- `@n>` - Flight phase (1=WT, 2=LD, 5=AP, 8=FS, 9=TD)
-- `#nnnn>` - Flight time (seconds)
-- `~nn---->` - Channel status (A/B=enabled, 1/2=fired)
-- `%nnnnn>` - Apogee (feet, after apogee)
-- `=xxxxxxxx>` - Device name
 
-**Buffer Management:**
-- 4,096 samples × 16 bytes = 64KB
-- Circular buffer overwrites oldest data
-- 50 samples before apogee are protected
-- Typical 3-minute flight: ~40KB
+### Key Source Files
+| File | Purpose |
+|------|---------|
+| `src/flight_controller.c` | Main loop, state machine, `main()` |
+| `src/http_server.c` | HTTP server, API endpoints, OTA handler |
+| `src/net_glue.c` | TinyUSB RNDIS ↔ lwIP bridge, DHCP/DNS |
+| `src/pyro.c` | Pyro channel control, continuity, fire |
+| `src/pressure_sensor.c` | Unified sensor interface |
+| `src/littlefs_driver.c` | Flash driver for littlefs |
+| `src/device_status.h` | Shared status struct for HTTP dashboard |
+| `www/` | Web interface files (uploaded to littlefs) |
 
-## Build Configuration
+### OTA Update Flow
+1. HTTP POST to `/api/ota` with firmware .bin body
+2. `pfb_firmware_commit()` — prevent rollback of current firmware
+3. Incoming data buffered to 4KB sector boundaries
+4. Each sector: erase + program to Slot B (incremental, USB-safe)
+5. `pfb_mark_download_slot_as_valid()` — mark Slot B ready
+6. `pfb_perform_update()` — watchdog reboot, bootloader swaps A↔B
+7. New firmware calls `pfb_firmware_commit()` on boot to confirm
 
-### CMakeLists.txt
-Simplified build:
-- Removed USB/littlefs/PIO dependencies
-- Added hardware_adc and hardware_uart
-- Minimal executable with pressure sensor drivers
+If step 7 doesn't happen before next reboot, bootloader rolls back.
 
-## What's Missing (Future Work)
+### HTTP API
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/status` | JSON: state, altitude, pyro, version, uptime |
+| GET | `/api/config` | Plain text config.ini from littlefs |
+| POST | `/api/config` | Upload new config.ini |
+| POST | `/api/ota` | Firmware update (raw .bin body) |
+| GET | `/api/flight.csv` | Download flight data |
+| GET | `/` | Web dashboard (served from littlefs /www/) |
+| POST | `/www/<file>` | Upload web file to littlefs |
 
-1. **Config file parser** - Currently uses hardcoded defaults
-2. **CSV file writer** - Data logging to filesystem
-3. **Beep code generator** - Status indication
-4. **Fault detection** - AP2192 FLAG pin monitoring
-5. **Post-fire verification** - ADC check after pyro fire
-6. **Velocity calculation** - For telemetry (currently 0)
-7. **Max velocity tracking** - For telemetry
-8. **Safe input handler** - Manual pyro test mode
+### Debugging
+The VS Code launch config loads both bootloader and app ELFs:
+1. `pico_fota_bootloader.elf` → flash at 0x10000000
+2. `pyro_fw_c.elf` → flash at 0x1000A000 (Slot A)
 
-## Testing Requirements
-
-Before flight:
-1. Verify continuity check thresholds (Open>60000, Good 1-100, Short=0)
-2. Test pyro fire sequence with LED/resistor load
-3. Verify state transitions with altitude simulation
-4. Check telemetry output format
-5. Validate buffer protection logic
-6. Test 20Hz sampling during FALLING state
-
-## Build Instructions
-
+### Build
 ```bash
-export PICO_SDK_PATH=/path/to/pico-sdk
-cd pyro_fw
-mkdir -p build && cd build
-cmake ..
-make
+mkdir build && cd build
+cmake -G Ninja ..
+ninja
 ```
 
-Flash `pyro_fw_c.uf2` to Pico in BOOTSEL mode.
-
-## Code Size Estimate
-
-- Core logic: ~2KB
-- Pressure drivers: ~3KB
-- Buffer: 64KB (RAM)
-- Total flash: ~5KB
-- Total RAM: ~66KB (buffer + stack + globals)
-
-Plenty of headroom on RP2040 (2MB flash, 264KB RAM).
+### Scripts
+| Script | Purpose |
+|--------|---------|
+| `upload_fw.sh` | OTA firmware upload via curl |
+| `upload_www.sh` | Upload web files to device |
