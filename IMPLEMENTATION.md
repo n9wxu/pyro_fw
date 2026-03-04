@@ -46,6 +46,16 @@ If step 7 doesn't happen before next reboot, bootloader rolls back.
 | GET | `/` | Web dashboard (served from littlefs /www/) |
 | POST | `/www/<file>` | Upload web file to littlefs |
 
+All API responses include CORS headers for cross-origin access.
+
+### Networking
+- **Addressing:** Link-local 169.254.{board_id}.1/24 (unique per board, no router conflicts)
+- **DHCP:** PC gets 169.254.{board_id}.2 automatically
+- **mDNS:** Advertises as `pyro.local` (RFC 6762)
+- **DNS-SD:** Registers `_pyro._tcp` service for automatic discovery
+- **Single device:** http://pyro.local/ just works
+- **Multiple devices:** Data collection server browses `_pyro._tcp` to find all trackers
+
 ### Debugging
 The VS Code launch config loads both bootloader and app ELFs:
 1. `pico_fota_bootloader.elf` → flash at 0x10000000

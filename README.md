@@ -234,16 +234,24 @@ The A/B bootloader ([pico_fota_bootloader](https://github.com/JZimnol/pico_fota_
 ## Web Interface
 Connect the Pico via USB. It appears as a network adapter with DHCP.
 
-- **Dashboard:** http://192.168.7.1/ — live status, altitude, pyro continuity
-- **Status API:** http://192.168.7.1/api/status — JSON telemetry
-- **Config API:** http://192.168.7.1/api/config — download/upload config.ini
-- **OTA API:** POST to http://192.168.7.1/api/ota — firmware update
+- **Address:** http://pyro.local/ (or http://169.254.{id}.1/ — link-local, unique per board)
+- **Dashboard:** Live status, altitude, pyro continuity
+- **Status API:** /api/status — JSON telemetry (CORS enabled)
+- **Config API:** /api/config — download/upload config.ini (CORS enabled)
+- **OTA API:** POST to /api/ota — firmware update
+
+### Network Architecture
+Each tracker creates an isolated USB network interface using link-local addressing (169.254.x.y/24), avoiding conflicts with any router or VPN.
+
+**Single device:** Browse to http://pyro.local/ — just works.
+
+**Multiple devices:** Each tracker advertises a `_pyro._tcp` DNS-SD service via mDNS. A data collection server browses for this service to discover all attached trackers automatically. DNS-SD is interface-aware, so all devices are found even though they share the `pyro.local` hostname on isolated USB links.
 
 ## Usage
 1. **Power on** - System initializes
 2. **Wait 3 seconds** - Continuity check performed
 3. **Listen for beeps** - 1-1 = good, others = fault
-4. **Connect USB** - Open http://192.168.7.1/ to view status or edit config
+4. **Connect USB** - Open http://pyro.local/ to view status or edit config
 5. **Arm system** - Place in rocket
 6. **Launch** - Automatic detection and logging
 7. **Retrieve** - Download flight data from web interface

@@ -2,7 +2,7 @@
 # Upload web files to Pyro MK1B device
 # Usage: ./upload_www.sh [host]
 
-HOST=${1:-192.168.7.1}
+HOST=${1:-pyro.local}
 DIR="$(dirname "$0")/www"
 
 echo "Uploading web files to $HOST..."

@@ -4,18 +4,24 @@
  */
 #include "tusb.h"
 #include "pico/stdlib.h"
+#include "pico/unique_id.h"
 #include "dhserver.h"
 #include "dnserver.h"
 #include "lwip/init.h"
 #include "lwip/timeouts.h"
 #include "lwip/ethip6.h"
+#include "lwip/igmp.h"
+#include "lwip/apps/mdns.h"
 
 #define INIT_IP4(a, b, c, d) { PP_HTONL(LWIP_MAKEU32(a, b, c, d)) }
 
 static struct netif netif_data;
 static struct pbuf *received_frame;
 
+/* Derived from board unique ID at init time */
 uint8_t tud_network_mac_address[6] = {0x02, 0x02, 0x84, 0x6A, 0x96, 0x00};
+static char mdns_hostname[16];
+static uint8_t mdns_suffix;
 
 static const ip4_addr_t ipaddr  = INIT_IP4(192, 168, 7, 1);
 static const ip4_addr_t netmask = INIT_IP4(255, 255, 255, 0);
@@ -35,6 +41,10 @@ static const dhcp_config_t dhcp_config = {
     entries
 };
 
+/* Must be called BEFORE tud_init() — currently a no-op with hardcoded MAC */
+void net_mac_init(void) {
+}
+
 static err_t linkoutput_fn(struct netif *netif, struct pbuf *p) {
     (void)netif;
     for (;;) {
@@ -53,7 +63,7 @@ static err_t ip4_output_fn(struct netif *netif, struct pbuf *p, const ip4_addr_t
 
 static err_t netif_init_cb(struct netif *netif) {
     netif->mtu = CFG_TUD_NET_MTU;
-    netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP | NETIF_FLAG_UP;
+    netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP | NETIF_FLAG_UP | NETIF_FLAG_IGMP;
     netif->state = NULL;
     netif->name[0] = 'E';
     netif->name[1] = 'X';
@@ -107,10 +117,34 @@ void net_init(void) {
     netif_set_default(netif);
 }
 
+static void mdns_name_result(struct netif *netif, u8_t result, s8_t slot) {
+    (void)slot;
+    if (result == MDNS_PROBING_CONFLICT) {
+        mdns_suffix++;
+        snprintf(mdns_hostname, sizeof(mdns_hostname), "pyro-%u", mdns_suffix);
+        mdns_resp_rename_netif(netif, mdns_hostname);
+    }
+}
+
+static bool mdns_started = false;
+
 void net_start(void) {
     while (!netif_is_up(&netif_data)) {}
     dhserv_init(&dhcp_config);
     dnserv_init(IP_ADDR_ANY, 53, dns_query_proc);
+}
+
+/* Call from main loop — starts mDNS once, safe to call repeatedly */
+void net_mdns_poll(void) {
+    if (mdns_started) return;
+    mdns_started = true;
+    snprintf(mdns_hostname, sizeof(mdns_hostname), "pyro");
+    mdns_suffix = 0;
+    mdns_resp_init();
+    mdns_resp_register_name_result_cb(mdns_name_result);
+    mdns_resp_add_netif(&netif_data, mdns_hostname);
+    mdns_resp_add_service(&netif_data, mdns_hostname, "_pyro",
+                          DNSSD_PROTO_TCP, 80, NULL, NULL);
 }
 
 void net_service(void) {
@@ -127,3 +161,4 @@ void net_service(void) {
 sys_prot_t sys_arch_protect(void) { return 0; }
 void sys_arch_unprotect(sys_prot_t pval) { (void)pval; }
 uint32_t sys_now(void) { return to_ms_since_boot(get_absolute_time()); }
+unsigned int lwip_port_rand(void) { return to_ms_since_boot(get_absolute_time()); }

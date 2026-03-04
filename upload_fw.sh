@@ -3,7 +3,7 @@
 # Usage: ./upload_fw.sh [path_to_bin] [host]
 
 BIN=${1:-build/pyro_fw_c_fota_image.bin}
-HOST=${2:-192.168.7.1}
+HOST=${2:-pyro.local}
 
 if [ ! -f "$BIN" ]; then
     echo "Error: $BIN not found. Build first, then pass the .bin path."

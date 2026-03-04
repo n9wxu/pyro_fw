@@ -126,6 +126,10 @@ add_executable(pyro_fw_c
     ${LWIP_DIR}/src/core/ipv4/ip4_addr.c
     ${LWIP_DIR}/src/core/ipv4/ip4_frag.c
     ${LWIP_DIR}/src/netif/ethernet.c
+    # lwIP mDNS
+    ${LWIP_DIR}/src/apps/mdns/mdns.c
+    ${LWIP_DIR}/src/apps/mdns/mdns_out.c
+    ${LWIP_DIR}/src/apps/mdns/mdns_domain.c
  )
 
  target_link_libraries(pyro_fw_c

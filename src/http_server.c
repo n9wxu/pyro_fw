@@ -13,6 +13,7 @@
 #include "device_status.h"
 
 #define FW_VERSION "1.0.0"
+#define CORS_HDR "Access-Control-Allow-Origin: *\r\n"
 
 extern const struct lfs_config lfs_pico_flash_config;
 
@@ -127,7 +128,7 @@ static void serve_api_status(struct tcp_pcb *pcb) {
     char buf[512];
     const char *sn = (g_status.state < 4) ? state_names[g_status.state] : "UNKNOWN";
     int pos = snprintf(buf, sizeof(buf),
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" CORS_HDR "Connection: close\r\n\r\n"
         "{\"state\":\"%s\",\"alt_cm\":%ld,\"max_alt_cm\":%ld,"
         "\"vspeed_cms\":%ld,\"pressure_pa\":%ld,"
         "\"pyro1_cont\":%s,\"pyro2_cont\":%s,"
@@ -158,7 +159,7 @@ static void serve_api_config(struct tcp_pcb *pcb) {
         goto fallback;
     }
     {
-        const char *hdr = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n";
+        const char *hdr = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n" CORS_HDR "Connection: close\r\n\r\n";
         tcp_write(pcb, hdr, strlen(hdr), TCP_WRITE_FLAG_COPY);
         char buf[256];
         lfs_ssize_t n;

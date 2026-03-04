@@ -16,8 +16,10 @@
 volatile device_status_t g_status = {0};
 
 /* Network interface */
+void net_mac_init(void);
 void net_init(void);
 void net_start(void);
+void net_mdns_poll(void);
 void net_service(void);
 void http_server_init(void);
 
@@ -387,9 +389,9 @@ static flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {
 int main() {
     // Initialize board first (sets up clocks, etc)here are a    board_init();
     
-    // Commit firmware so bootloader won't roll back
-    pfb_firmware_commit();
-    
+    // Set MAC from board ID BEFORE TinyUSB init
+    net_mac_init();
+
     // Initialize TinyUSB BEFORE stdio
     tud_init(BOARD_TUD_RHPORT);
     
@@ -445,7 +447,17 @@ int main() {
     http_server_init();
     uart_puts(uart0, "network ready\r\n");
     
+    // Commit firmware before any I2C activity to avoid interrupting bus transactions
+    pfb_firmware_commit();
+
+    sleep_ms(500);
+    uart_puts(uart0, "I2C init...\r\n");
+
+    i2c_deinit(i2c1);
+    
     pressure_sensor_type_t sensor = pressure_sensor_init();
+
+
     if (sensor == PRESSURE_SENSOR_NONE) {
         uart_puts(uart0, "No pressure sensor!\r\n");
     } else {
@@ -467,12 +479,14 @@ int main() {
     
     // Continuity check
     pyro_init();
+    uart_puts(uart0, "pyro init done\r\n");
 
     pyro_continuity_t cont1, cont2;
     pyro_check_continuity(&cont1, &cont2);
     ctx.pyro1_continuity_good = cont1.good;
     ctx.pyro2_continuity_good = cont2.good;
 
+    uart_puts(uart0, "calibrating...\r\n");
     sleep_ms(2000);  /* let sensor stabilize before calibration */
 
     int32_t sum = 0;
@@ -483,7 +497,19 @@ int main() {
         sleep_ms(100);
     }
     ctx.ground_pressure = sum / 10;
+
+    char dbg[64];
+    snprintf(dbg, sizeof(dbg), "ground_pressure=%ld\r\n", (long)ctx.ground_pressure);
+    uart_puts(uart0, dbg);
+
+    /* mDNS disabled - causes TCP stalls on USB RNDIS link. TODO: fix interaction */
+#if 0
+    uart_puts(uart0, "starting mDNS...\r\n");
+    net_mdns_poll();
+    uart_puts(uart0, "mDNS started\r\n");
+#endif
     
+    uart_puts(uart0, "entering main loop\r\n");
     while (1) {
         uint32_t now = to_ms_since_boot(get_absolute_time());
 
