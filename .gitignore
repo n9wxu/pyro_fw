@@ -50,3 +50,4 @@ src/version.h
 # Backup files
 *.backup
 *.bak*
+*.log

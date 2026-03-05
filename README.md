@@ -217,21 +217,19 @@ This produces:
 2. Copy `pico_fota_bootloader.uf2` to the Pico drive
 3. Hold BOOTSEL again
 4. Copy `pyro_fw_c.uf2` to the Pico drive
-5. Upload web files: `./upload_www.sh`
+5. Upload web files: `./support/upload_www.sh`
 
 ## Flashing via picotool
 After the initial flash, use picotool for all subsequent flashing (no BOOTSEL button needed):
 ```bash
-./flash_picotool.sh
+./support/flash_picotool.sh
 ```
 This forces BOOTSEL via the vendor reset interface, loads both bootloader and app, reboots, and waits for the network to come up.
-
-Requires `picotool` and the device to be running firmware with the vendor reset interface (VID `0x2E8A`, PID `0x4002`).
 
 ## OTA Firmware Updates
 For routine updates without reflashing the bootloader:
 ```bash
-./upload_fw.sh
+./support/upload_fw.sh
 ```
 Or use the "Firmware Update" button in the web interface at http://pyro.local/.
 
@@ -257,24 +255,35 @@ Each tracker advertises a `_pyro._tcp` DNS-SD service via mDNS.
 **Multiple devices:** A data collection server browses for `_pyro._tcp` to discover all attached trackers automatically.
 
 ## Testing
+
+A comprehensive test suite validates the device's network stack, HTTP server, mDNS, and picotool integration.
+
 ```bash
-# Quick test (fail-fast)
-python3 test_network.py
+# Interactive mode — guided setup for new users
+python3 support/test_network.py
 
-# Full test suite with UART monitoring
-python3 test_network.py --all --uart /dev/tty.usbmodem201202
+# Quick test against direct IP
+python3 support/test_network.py 192.168.7.1
 
-# Reset device before testing
-python3 test_network.py --all --reset
+# Full suite with UART monitoring and log file
+python3 support/test_network.py --all --uart /dev/tty.usbmodem201202 --log test.log
 
-# Stress test (10 iterations with reset between each)
-python3 test_network.py --all --reset --repeat 10
-
-# Test with direct IP (bypasses mDNS)
-python3 test_network.py --all 192.168.7.1
+# Analyze a log file from a remote user
+python3 support/test_network.py --analyze test.log
 ```
 
-Tests cover: connectivity, API responses, CORS headers, file serving, file consistency, error handling, parallel connections, sequential requests, sustained downloads, mDNS/DNS-SD, and picotool visibility.
+The test suite features a live TUI with colored results, UART monitoring via pyserial, timestamped diagnostic logging, and automated failure analysis. See [support/README.md](support/README.md) for full documentation.
+
+## Support Tools
+
+All development and deployment scripts are in the `support/` directory:
+
+| Script | Purpose |
+|--------|---------|
+| `support/test_network.py` | Network/API test suite with TUI |
+| `support/flash_picotool.sh` | Flash via picotool (no BOOTSEL button) |
+| `support/upload_fw.sh` | OTA firmware update |
+| `support/upload_www.sh` | Upload web files |
 
 ## Usage
 1. **Power on** - System initializes

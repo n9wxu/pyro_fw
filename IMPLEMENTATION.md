@@ -77,7 +77,8 @@ ninja
 ### Scripts
 | Script | Purpose |
 |--------|---------|
-| `upload_fw.sh` | OTA firmware upload via curl |
-| `upload_www.sh` | Upload web files to device |
-| `test_network.py` | Comprehensive network/API test suite |
+| `support/upload_fw.sh` | OTA firmware upload via curl |
+| `support/upload_www.sh` | Upload web files to device |
+| `support/flash_picotool.sh` | Flash via picotool (no BOOTSEL button) |
+| `support/test_network.py` | Comprehensive network/API test suite |
 | `scripts/gen_version.sh` | Auto-generate version.h at build time |
