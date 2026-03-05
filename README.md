@@ -219,12 +219,21 @@ This produces:
 4. Copy `pyro_fw_c.uf2` to the Pico drive
 5. Upload web files: `./upload_www.sh`
 
+## Flashing via picotool
+After the initial flash, use picotool for all subsequent flashing (no BOOTSEL button needed):
+```bash
+./flash_picotool.sh
+```
+This forces BOOTSEL via the vendor reset interface, loads both bootloader and app, reboots, and waits for the network to come up.
+
+Requires `picotool` and the device to be running firmware with the vendor reset interface (VID `0x2E8A`, PID `0x4002`).
+
 ## OTA Firmware Updates
-After initial flash, all future updates are over-the-air via USB network:
+For routine updates without reflashing the bootloader:
 ```bash
 ./upload_fw.sh
 ```
-Or use the "Firmware Update" button in the web interface at http://192.168.7.1/.
+Or use the "Firmware Update" button in the web interface at http://pyro.local/.
 
 The A/B bootloader ([pico_fota_bootloader](https://github.com/JZimnol/pico_fota_bootloader)) provides:
 - **Safe updates** — new firmware is written to the inactive slot while the device keeps running
@@ -234,18 +243,38 @@ The A/B bootloader ([pico_fota_bootloader](https://github.com/JZimnol/pico_fota_
 ## Web Interface
 Connect the Pico via USB. It appears as a network adapter with DHCP.
 
-- **Address:** http://pyro.local/ (or http://169.254.{id}.1/ — link-local, unique per board)
+- **Address:** http://pyro.local/ (or http://192.168.7.1/)
 - **Dashboard:** Live status, altitude, pyro continuity
 - **Status API:** /api/status — JSON telemetry (CORS enabled)
 - **Config API:** /api/config — download/upload config.ini (CORS enabled)
 - **OTA API:** POST to /api/ota — firmware update
 
 ### Network Architecture
-Each tracker creates an isolated USB network interface using link-local addressing (169.254.x.y/24), avoiding conflicts with any router or VPN.
+Each tracker advertises a `_pyro._tcp` DNS-SD service via mDNS.
 
 **Single device:** Browse to http://pyro.local/ — just works.
 
-**Multiple devices:** Each tracker advertises a `_pyro._tcp` DNS-SD service via mDNS. A data collection server browses for this service to discover all attached trackers automatically. DNS-SD is interface-aware, so all devices are found even though they share the `pyro.local` hostname on isolated USB links.
+**Multiple devices:** A data collection server browses for `_pyro._tcp` to discover all attached trackers automatically.
+
+## Testing
+```bash
+# Quick test (fail-fast)
+python3 test_network.py
+
+# Full test suite with UART monitoring
+python3 test_network.py --all --uart /dev/tty.usbmodem201202
+
+# Reset device before testing
+python3 test_network.py --all --reset
+
+# Stress test (10 iterations with reset between each)
+python3 test_network.py --all --reset --repeat 10
+
+# Test with direct IP (bypasses mDNS)
+python3 test_network.py --all 192.168.7.1
+```
+
+Tests cover: connectivity, API responses, CORS headers, file serving, file consistency, error handling, parallel connections, sequential requests, sustained downloads, mDNS/DNS-SD, and picotool visibility.
 
 ## Usage
 1. **Power on** - System initializes
