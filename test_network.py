@@ -417,6 +417,58 @@ def safe_addstr(stdscr, y, x, s, attr=0):
         try: stdscr.addnstr(y, x, s, w - x - 1, attr)
         except curses.error: pass
 
+# ── Pre-test diagnostics (logged for remote analysis) ──
+
+def collect_diagnostics(host):
+    log("DIAG", "=== Pre-test diagnostics ===")
+
+    # mDNS resolution
+    log("DIAG", f"Resolving {host}...")
+    out, rc, elapsed = run_cmd(["dns-sd", "-G", "v4", host], timeout=5)
+    # dns-sd doesn't exit on its own, so it'll timeout — parse what we got
+    log("DIAG", f"dns-sd result ({elapsed:.1f}s): {out.strip()[:200]}")
+
+    # Try to get the actual IP
+    out2, rc2, _ = run_cmd(["dscacheutil", "-q", "host", "-a", "name", host], timeout=3)
+    log("DIAG", f"dscacheutil: {out2.strip()[:200]}")
+
+    # Ping by name
+    out3, rc3, elapsed3 = run_cmd(["ping", "-c", "1", "-t", "3", host])
+    log("DIAG", f"ping {host}: rc={rc3} ({elapsed3:.1f}s) {out3.strip()[:200]}")
+
+    # If host is a name, also try direct IP
+    if not host[0].isdigit():
+        out4, rc4, elapsed4 = run_cmd(["ping", "-c", "1", "-t", "3", "192.168.7.1"])
+        log("DIAG", f"ping 192.168.7.1: rc={rc4} ({elapsed4:.1f}s)")
+        if rc4 == 0:
+            out5, _, elapsed5 = run_cmd(
+                ["curl", "-s", "-w", "\n%{http_code}", "--max-time", "3",
+                 "http://192.168.7.1/api/status"])
+            log("DIAG", f"curl 192.168.7.1: {elapsed5:.1f}s {out5.strip()[:200]}")
+
+    # Network interfaces
+    out6, _, _ = run_cmd(["ifconfig"], timeout=3)
+    for line in out6.split("\n"):
+        if "192.168" in line or "169.254" in line or "RNDIS" in line.lower() or "en1" in line:
+            log("DIAG", f"ifconfig: {line.strip()}")
+
+    # DNS-SD browse
+    log("DIAG", "Browsing _pyro._tcp...")
+    p = subprocess.Popen(["dns-sd", "-B", "_pyro._tcp", "local."],
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    time.sleep(2)
+    p.kill()
+    browse_out = p.communicate()[0].decode()
+    for line in browse_out.strip().split("\n"):
+        if line.strip():
+            log("DIAG", f"dns-sd browse: {line.strip()}")
+
+    # picotool
+    out7, rc7, _ = run_cmd([PICOTOOL, "info", "--vid", "0x2E8A", "--pid", "0x4002"], timeout=5)
+    log("DIAG", f"picotool info: rc={rc7} {out7.strip()[:200]}")
+
+    log("DIAG", "=== End diagnostics ===")
+
 # ── Plain text mode ──
 
 def run_plain():
@@ -463,7 +515,7 @@ def analyze_log(filepath):
         print(f"Error: {filepath} not found"); sys.exit(1)
 
     lines = open(filepath).readlines()
-    sys_info, failures, all_tests = [], [], []
+    sys_info, diag_info, failures, all_tests = [], [], [], []
 
     for line in lines:
         line = line.rstrip()
@@ -477,6 +529,8 @@ def analyze_log(filepath):
 
         if src == "SYS":
             sys_info.append(msg)
+        elif src == "DIAG":
+            diag_info.append(msg)
         elif src == "TEST":
             if msg.startswith("PASS"):
                 all_tests.append(("PASS", msg[5:], ts))
@@ -492,6 +546,10 @@ def analyze_log(filepath):
     print("=" * 60)
     print("\nSystem Info:")
     for s in sys_info: print(f"  {s}")
+
+    if diag_info:
+        print("\nPre-test Diagnostics:")
+        for d in diag_info: print(f"  {d}")
 
     total = len(all_tests)
     p = sum(1 for s, _, _ in all_tests if s == "PASS")
@@ -519,6 +577,11 @@ def analyze_log(filepath):
         print("  ⚠ HTTP 000 responses — device not accepting TCP connections")
     if not any("UART" in l for l in lines):
         print("  ℹ No UART data — rerun with --uart for device-side diagnostics")
+    if any("Resolving timed out" in l or "dns-sd result" in l and "0b" in l for l in lines):
+        print("  ⚠ mDNS resolution failed — try with direct IP (192.168.7.1)")
+    if diag_info and any("ping 192.168.7.1: rc=0" in d for d in diag_info):
+        if any("(empty)" in c for _, _, ctx in failures for c in ctx):
+            print("  ℹ Direct IP reachable but host failed — likely mDNS issue, not device")
     print()
 
 # ── Interactive mode ──
@@ -596,6 +659,7 @@ if __name__ == "__main__":
         log("SYS", f"Python: {sys.version.split()[0]}")
         log("SYS", f"pyserial: {'yes' if HAS_SERIAL else 'no'}")
         log("SYS", f"args: {vars(args)}")
+        collect_diagnostics(args.host)
 
     try:
         if args.plain or not sys.stdout.isatty():
