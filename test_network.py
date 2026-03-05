@@ -34,19 +34,20 @@ args = parser.parse_args()
 
 # ── Timeline log ──
 
-log_entries = []  # [(timestamp, source, message)]
+log_entries = []
 log_lock = threading.Lock()
 log_file = None
 t0 = time.time()
+screen_dirty = threading.Event()
 
 def log(source, msg):
     ts = time.time() - t0
-    entry = (ts, source, msg)
     with log_lock:
-        log_entries.append(entry)
+        log_entries.append((ts, source, msg))
     if log_file:
         log_file.write(f"[{ts:8.3f}] [{source:5s}] {msg}\n")
         log_file.flush()
+    screen_dirty.set()
 
 # ── Test registry ──
 
@@ -144,20 +145,39 @@ def picotool_reset(host):
 # ── Test helpers ──
 
 def run_cmd(cmd, timeout=5):
+    t_start = time.time()
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return r.stdout + r.stderr, r.returncode
+        elapsed = time.time() - t_start
+        return r.stdout + r.stderr, r.returncode, elapsed
     except subprocess.TimeoutExpired:
-        return "", 1
+        elapsed = time.time() - t_start
+        return "", 1, elapsed
 
 def curl(host, path, timeout=5):
-    log("CMD", f"curl http://{host}{path}")
-    out, rc = run_cmd(["curl", "-s", "--max-time", str(timeout), f"http://{host}{path}"])
-    log("CMD", f"  -> {len(out)}b rc={rc}")
-    return out
+    log("CMD", f"GET http://{host}{path}")
+    out, rc, elapsed = run_cmd(
+        ["curl", "-s", "-w", "\n%{http_code}", "--max-time", str(timeout),
+         f"http://{host}{path}"])
+    # Split body and status code
+    parts = out.rsplit("\n", 1)
+    body = parts[0] if len(parts) > 1 else out
+    http_code = parts[1] if len(parts) > 1 else "?"
+    # Log response details
+    preview = body[:200].replace("\n", "\\n") if body else "(empty)"
+    log("RESP", f"{http_code} {len(body)}b {elapsed:.3f}s {preview}")
+    if rc != 0 or http_code == "000":
+        log("RESP", f"FULL BODY: {body[:2000]}")
+    return body
 
 def curl_headers(host, path, timeout=5):
-    out, _ = run_cmd(["curl", "-s", "-D-", "--max-time", str(timeout), f"http://{host}{path}"])
+    log("CMD", f"GET -D- http://{host}{path}")
+    out, _, elapsed = run_cmd(
+        ["curl", "-s", "-D-", "--max-time", str(timeout), f"http://{host}{path}"])
+    # Log headers
+    hdr_end = out.find("\r\n\r\n")
+    if hdr_end > 0:
+        log("RESP", f"HEADERS: {out[:hdr_end].replace(chr(13), '')}")
     return out
 
 # ── Test definitions ──
@@ -168,7 +188,7 @@ def define_tests():
     add_section("Connectivity")
     idx = add_test("ping")
     def t_ping(h):
-        _, rc = run_cmd(["ping", "-c", "1", "-t", "3", h])
+        _, rc, _ = run_cmd(["ping", "-c", "1", "-t", "3", h])
         return rc == 0, ""
     plan.append((idx, t_ping))
 
@@ -292,8 +312,8 @@ def define_tests():
     idx = add_test("picotool sees device")
     def t_pico(h):
         log("CMD", "picotool reboot -f")
-        out, rc = run_cmd([PICOTOOL, "reboot", "-f", "--vid", "0x2E8A", "--pid", "0x4002"], 10)
-        log("CMD", f"  -> rc={rc}")
+        out, rc, _ = run_cmd([PICOTOOL, "reboot", "-f", "--vid", "0x2E8A", "--pid", "0x4002"], 10)
+        log("RESP", f"rc={rc} {out.strip()}")
         return rc == 0 or "RP-series" in out, ""
     plan.append((idx, t_pico))
 
@@ -315,14 +335,15 @@ def draw_tui(stdscr):
 
     tui_running = True
 
-    # Background refresh thread for live UART
+    # Background refresh thread — wakes on data arrival or 200ms
     def refresher():
         while tui_running:
+            screen_dirty.wait(timeout=0.2)
+            screen_dirty.clear()
             try:
                 refresh_screen(stdscr, args.host)
             except:
                 pass
-            time.sleep(0.1)
     rt = threading.Thread(target=refresher, daemon=True)
     rt.start()
 
@@ -482,7 +503,12 @@ def run_plain():
 if __name__ == "__main__":
     if args.log:
         log_file = open(args.log, "w")
+        import platform
         log("SYS", f"Test started host={args.host}")
+        log("SYS", f"OS: {platform.system()} {platform.release()} {platform.machine()}")
+        log("SYS", f"Python: {sys.version.split()[0]}")
+        log("SYS", f"pyserial: {'yes' if HAS_SERIAL else 'no'}")
+        log("SYS", f"args: {vars(args)}")
 
     try:
         if args.plain or not sys.stdout.isatty():
