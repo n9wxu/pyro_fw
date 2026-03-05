@@ -99,6 +99,7 @@ add_executable(pyro_fw_c
     src/usb_descriptors.c
     src/net_glue.c
     src/http_server.c
+    src/reset_interface.c
     src/littlefs_driver.c
     # TinyUSB networking helpers
     ${TINYUSB_DIR}/lib/networking/dhserver.c
@@ -153,7 +154,7 @@ add_executable(pyro_fw_c
 
 add_dependencies(pyro_fw_c generate_version)
 
-pico_set_program_name(pyro_fw_c "pyro_fw_c")
+pico_set_program_name(pyro_fw_c "Pyro MK1B")
 pico_set_program_version(pyro_fw_c "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
@@ -166,6 +167,7 @@ target_include_directories(pyro_fw_c PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/src
         ${LWIP_DIR}/src/include
         ${TINYUSB_DIR}/lib/networking
+        ${USERHOME}/.pico-sdk/sdk/${sdkVersion}/src/common/pico_usb_reset_interface_headers/include
 )
 
 target_include_directories(pyro_fw_c SYSTEM PUBLIC

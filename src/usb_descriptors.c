@@ -1,25 +1,39 @@
 /*
- * USB descriptors for ECM+RNDIS network device.
- * Adapted from TinyUSB net_lwip_webserver example.
+ * USB descriptors for composite device: ECM/RNDIS network + vendor reset.
  */
 #include "tusb.h"
+#include "pico/usb_reset_interface.h"
 
-#define USB_VID   0xCafe
+#define USB_VID   0x2E8A
 #define USB_PID   0x4002
 #define USB_BCD   0x0200
 
-#define STRID_LANGID   0
-#define STRID_MFG      1
-#define STRID_PRODUCT  2
-#define STRID_SERIAL   3
-#define STRID_IF       4
-#define STRID_MAC      5
+enum {
+    STRID_LANGID = 0,
+    STRID_MFG,
+    STRID_PRODUCT,
+    STRID_SERIAL,
+    STRID_IF_NET,
+    STRID_MAC,
+    STRID_IF_RESET,
+};
 
 enum {
     CONFIG_ID_RNDIS = 0,
     CONFIG_ID_ECM = 1,
     CONFIG_ID_COUNT
 };
+
+/* Network endpoints */
+#define EPNUM_NET_NOTIF   0x81
+#define EPNUM_NET_OUT     0x02
+#define EPNUM_NET_IN      0x82
+
+/* Vendor reset interface descriptor (9 bytes, no endpoints) */
+#define TUD_RPI_RESET_DESC_LEN 9
+#define TUD_RPI_RESET_DESCRIPTOR(_itfnum, _stridx) \
+  9, TUSB_DESC_INTERFACE, _itfnum, 0, 0, TUSB_CLASS_VENDOR_SPECIFIC, \
+  RESET_INTERFACE_SUBCLASS, RESET_INTERFACE_PROTOCOL, _stridx
 
 /* Device descriptor */
 tusb_desc_device_t const desc_device = {
@@ -43,22 +57,20 @@ uint8_t const *tud_descriptor_device_cb(void) {
     return (uint8_t const *)&desc_device;
 }
 
-/* RNDIS config (Windows) */
-#define EPNUM_NET_NOTIF   0x81
-#define EPNUM_NET_OUT     0x02
-#define EPNUM_NET_IN      0x82
-
-#define MAIN_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_RNDIS_DESC_LEN)
+/* RNDIS config (Windows): RNDIS(2 itf) + Reset(1 itf) = 3 interfaces */
+#define RNDIS_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_RNDIS_DESC_LEN + TUD_RPI_RESET_DESC_LEN)
 static uint8_t const rndis_configuration[] = {
-    TUD_CONFIG_DESCRIPTOR(CONFIG_ID_RNDIS + 1, 2, 0, MAIN_CONFIG_TOTAL_LEN, 0, 100),
-    TUD_RNDIS_DESCRIPTOR(0, STRID_IF, EPNUM_NET_NOTIF, 8, EPNUM_NET_OUT, EPNUM_NET_IN, CFG_TUD_NET_ENDPOINT_SIZE),
+    TUD_CONFIG_DESCRIPTOR(CONFIG_ID_RNDIS + 1, 3, 0, RNDIS_CONFIG_TOTAL_LEN, 0, 100),
+    TUD_RNDIS_DESCRIPTOR(0, STRID_IF_NET, EPNUM_NET_NOTIF, 8, EPNUM_NET_OUT, EPNUM_NET_IN, CFG_TUD_NET_ENDPOINT_SIZE),
+    TUD_RPI_RESET_DESCRIPTOR(2, STRID_IF_RESET),
 };
 
-/* ECM config (macOS/Linux) */
-#define ALT_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_CDC_ECM_DESC_LEN)
+/* ECM config (macOS/Linux): ECM(2 itf) + Reset(1 itf) = 3 interfaces */
+#define ECM_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_CDC_ECM_DESC_LEN + TUD_RPI_RESET_DESC_LEN)
 static uint8_t const ecm_configuration[] = {
-    TUD_CONFIG_DESCRIPTOR(CONFIG_ID_ECM + 1, 2, 0, ALT_CONFIG_TOTAL_LEN, 0, 100),
-    TUD_CDC_ECM_DESCRIPTOR(0, STRID_IF, STRID_MAC, EPNUM_NET_NOTIF, 64, EPNUM_NET_OUT, EPNUM_NET_IN, CFG_TUD_NET_ENDPOINT_SIZE, CFG_TUD_NET_MTU),
+    TUD_CONFIG_DESCRIPTOR(CONFIG_ID_ECM + 1, 3, 0, ECM_CONFIG_TOTAL_LEN, 0, 100),
+    TUD_CDC_ECM_DESCRIPTOR(0, STRID_IF_NET, STRID_MAC, EPNUM_NET_NOTIF, 64, EPNUM_NET_OUT, EPNUM_NET_IN, CFG_TUD_NET_ENDPOINT_SIZE, CFG_TUD_NET_MTU),
+    TUD_RPI_RESET_DESCRIPTOR(2, STRID_IF_RESET),
 };
 
 static uint8_t const *const config_descriptors[CONFIG_ID_COUNT] = {
@@ -72,12 +84,13 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
 
 /* String descriptors */
 static char const *string_desc_arr[] = {
-    [STRID_LANGID]  = (const char[]){0x09, 0x04},  /* English */
-    [STRID_MFG]     = "Pyro",
-    [STRID_PRODUCT] = "Pyro MK1B",
-    [STRID_SERIAL]  = "000001",
-    [STRID_IF]      = "Pyro Network",
-    [STRID_MAC]     = "020284006A00",
+    [STRID_LANGID]    = (const char[]){0x09, 0x04},
+    [STRID_MFG]       = "Pyro",
+    [STRID_PRODUCT]   = "Pyro MK1B",
+    [STRID_SERIAL]    = "000001",
+    [STRID_IF_NET]    = "Pyro Network",
+    [STRID_MAC]       = "020284006A00",
+    [STRID_IF_RESET]  = "Reset",
 };
 
 static uint16_t _desc_str[32 + 1];
