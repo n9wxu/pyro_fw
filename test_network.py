@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Comprehensive network test for Pyro MK1B with live TUI.
 
-Usage: ./test_network.py [options] [host]
+Usage:
+  ./test_network.py                     Interactive mode
+  ./test_network.py [options] [host]    Direct mode
+  ./test_network.py --analyze FILE      Analyze a log file
 
 Options:
   --all           Run all tests even if one fails
@@ -10,9 +13,10 @@ Options:
   --repeat N      Repeat test suite N times
   --plain         Disable TUI, plain text output
   --log FILE      Write timestamped log to file
+  --analyze FILE  Analyze a previous log file
   host            Default: pyro.local
 """
-import subprocess, sys, time, os, argparse, threading, json, curses
+import subprocess, sys, time, os, argparse, threading, json, curses, glob
 
 try:
     import serial
@@ -23,13 +27,14 @@ except ImportError:
 PICOTOOL = os.path.expanduser("~/.pico-sdk/picotool/2.2.0-a4/picotool/picotool")
 
 parser = argparse.ArgumentParser(description="Pyro MK1B network test")
-parser.add_argument("host", nargs="?", default="pyro.local")
+parser.add_argument("host", nargs="?", default=None)
 parser.add_argument("--all", action="store_true")
 parser.add_argument("--uart", metavar="PORT")
 parser.add_argument("--reset", action="store_true")
 parser.add_argument("--repeat", type=int, default=1)
 parser.add_argument("--plain", action="store_true")
 parser.add_argument("--log", metavar="FILE")
+parser.add_argument("--analyze", metavar="FILE")
 args = parser.parse_args()
 
 # ── Timeline log ──
@@ -52,7 +57,6 @@ def log(source, msg):
 # ── Test registry ──
 
 PENDING, RUNNING, PASSED, FAILED = 0, 1, 2, 3
-
 tests = []
 uart_lines = []
 uart_error = None
@@ -77,8 +81,7 @@ def set_result(idx, ok, detail=""):
     with ui_lock:
         s, n, _, _ = tests[idx]
         tests[idx] = (s, n, PASSED if ok else FAILED, detail)
-    status = "PASS" if ok else "FAIL"
-    log("TEST", f"{status} {tests[idx][1]} {detail}")
+    log("TEST", f"{'PASS' if ok else 'FAIL'} {tests[idx][1]} {detail}")
 
 # ── UART via pyserial ──
 
@@ -148,22 +151,18 @@ def run_cmd(cmd, timeout=5):
     t_start = time.time()
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        elapsed = time.time() - t_start
-        return r.stdout + r.stderr, r.returncode, elapsed
+        return r.stdout + r.stderr, r.returncode, time.time() - t_start
     except subprocess.TimeoutExpired:
-        elapsed = time.time() - t_start
-        return "", 1, elapsed
+        return "", 1, time.time() - t_start
 
 def curl(host, path, timeout=5):
     log("CMD", f"GET http://{host}{path}")
     out, rc, elapsed = run_cmd(
         ["curl", "-s", "-w", "\n%{http_code}", "--max-time", str(timeout),
          f"http://{host}{path}"])
-    # Split body and status code
     parts = out.rsplit("\n", 1)
     body = parts[0] if len(parts) > 1 else out
     http_code = parts[1] if len(parts) > 1 else "?"
-    # Log response details
     preview = body[:200].replace("\n", "\\n") if body else "(empty)"
     log("RESP", f"{http_code} {len(body)}b {elapsed:.3f}s {preview}")
     if rc != 0 or http_code == "000":
@@ -174,7 +173,6 @@ def curl_headers(host, path, timeout=5):
     log("CMD", f"GET -D- http://{host}{path}")
     out, _, elapsed = run_cmd(
         ["curl", "-s", "-D-", "--max-time", str(timeout), f"http://{host}{path}"])
-    # Log headers
     hdr_end = out.find("\r\n\r\n")
     if hdr_end > 0:
         log("RESP", f"HEADERS: {out[:hdr_end].replace(chr(13), '')}")
@@ -229,14 +227,13 @@ def define_tests():
         ("GET /www/style.css", "/www/style.css", 300, None),
     ]:
         idx = add_test(name)
-        p, ms, cs = path, min_sz, check_str
         def make_fn(p, ms, cs):
             def fn(h):
                 s = curl(h, p)
                 ok = len(s) > ms and (cs is None or cs in s)
                 return ok, f"{len(s)}b"
             return fn
-        plan.append((idx, make_fn(p, ms, cs)))
+        plan.append((idx, make_fn(path, min_sz, check_str)))
 
     add_section("File Consistency")
     idx = add_test("app.js 5x consistent")
@@ -273,7 +270,7 @@ def define_tests():
     idx = add_test("6 parallel mixed requests")
     def t_parmix(h):
         paths = ["/", "/www/app.js", "/www/style.css", "/api/status", "/api/config", "/"]
-        log("CMD", f"6x parallel mixed")
+        log("CMD", "6x parallel mixed")
         procs = [subprocess.Popen(["curl", "-s", "--max-time", "5", f"http://{h}{p}"],
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE) for p in paths]
         sizes = [len(p.communicate()[0]) for p in procs]
@@ -319,7 +316,7 @@ def define_tests():
 
     return plan
 
-# ── TUI with live refresh thread ──
+# ── TUI ──
 
 tui_running = False
 
@@ -332,26 +329,19 @@ def draw_tui(stdscr):
     curses.init_pair(2, curses.COLOR_RED, -1)
     curses.init_pair(3, curses.COLOR_WHITE, -1)
     curses.init_pair(4, 8, -1)
-
     tui_running = True
 
-    # Background refresh thread — wakes on data arrival or 200ms
     def refresher():
         while tui_running:
             screen_dirty.wait(timeout=0.2)
             screen_dirty.clear()
-            try:
-                refresh_screen(stdscr, args.host)
-            except:
-                pass
-    rt = threading.Thread(target=refresher, daemon=True)
-    rt.start()
+            try: refresh_screen(stdscr, args.host)
+            except: pass
+    threading.Thread(target=refresher, daemon=True).start()
 
     host = args.host
     plan = define_tests()
-
-    if args.uart:
-        start_uart(args.uart)
+    if args.uart: start_uart(args.uart)
 
     if args.reset:
         with ui_lock:
@@ -363,19 +353,14 @@ def draw_tui(stdscr):
             tests[1] = (None, "picotool reset", PASSED if ok else FAILED, "")
         log("TEST", f"{'PASS' if ok else 'FAIL'} picotool reset")
         if not ok and not args.all:
-            time.sleep(2)
-            tui_running = False
-            return
+            time.sleep(2); tui_running = False; return
 
     for idx, fn in plan:
         set_running(idx)
-        try:
-            ok, detail = fn(host)
-        except Exception as e:
-            ok, detail = False, str(e)
+        try: ok, detail = fn(host)
+        except Exception as e: ok, detail = False, str(e)
         set_result(idx, ok, detail)
-        if not ok and not args.all:
-            break
+        if not ok and not args.all: break
 
     tui_running = False
     time.sleep(0.2)
@@ -388,7 +373,6 @@ def draw_tui(stdscr):
 def refresh_screen(stdscr, host):
     stdscr.erase()
     h, w = stdscr.getmaxyx()
-
     has_uart = args.uart is not None
     left_w = w // 2 if has_uart else w - 1
     right_x = left_w + 1
@@ -397,75 +381,55 @@ def refresh_screen(stdscr, host):
     f = sum(1 for _, n, s, _ in tests if n and s == FAILED)
     t = sum(1 for _, n, _, _ in tests if n)
     hdr = f" Pyro MK1B Test — {host} — {p}/{t} passed"
-    if f:
-        hdr += f", {f} failed"
+    if f: hdr += f", {f} failed"
     safe_addstr(stdscr, 0, 0, hdr[:w-1], curses.A_BOLD)
 
     row = 2
     with ui_lock:
         for sec, name, state, detail in tests:
-            if row >= h - 2:
-                break
+            if row >= h - 2: break
             if sec and not name:
-                safe_addstr(stdscr, row, 1, f"── {sec} ──", curses.A_BOLD)
-                row += 1
-                continue
-            if state == PASSED:
-                sym, attr = "✓", curses.color_pair(1)
-            elif state == FAILED:
-                sym, attr = "✗", curses.color_pair(2)
-            elif state == RUNNING:
-                sym, attr = "▸", curses.color_pair(3) | curses.A_BOLD
-            else:
-                sym, attr = "·", curses.color_pair(4)
+                safe_addstr(stdscr, row, 1, f"── {sec} ──", curses.A_BOLD); row += 1; continue
+            if state == PASSED:    sym, attr = "✓", curses.color_pair(1)
+            elif state == FAILED:  sym, attr = "✗", curses.color_pair(2)
+            elif state == RUNNING: sym, attr = "▸", curses.color_pair(3) | curses.A_BOLD
+            else:                  sym, attr = "·", curses.color_pair(4)
             line = f" {sym} {name}"
-            if detail and state in (PASSED, FAILED):
-                line += f"  ({detail})"
-            safe_addstr(stdscr, row, 1, line[:left_w-2], attr)
-            row += 1
+            if detail and state in (PASSED, FAILED): line += f"  ({detail})"
+            safe_addstr(stdscr, row, 1, line[:left_w-2], attr); row += 1
 
     if has_uart:
-        for r in range(h):
-            safe_addstr(stdscr, r, left_w, "│")
+        for r in range(h): safe_addstr(stdscr, r, left_w, "│")
         uhdr = " UART"
-        if uart_error:
-            uhdr += f" ⚠ {uart_error}"
+        if uart_error: uhdr += f" ⚠ {uart_error}"
         safe_addstr(stdscr, 0, right_x, uhdr[:w-right_x-1], curses.A_BOLD)
         with ui_lock:
             visible = uart_lines[-(h-3):]
         for i, line in enumerate(visible):
             r = 2 + i
-            if r >= h - 1:
-                break
+            if r >= h - 1: break
             safe_addstr(stdscr, r, right_x + 1, line[:w-right_x-2])
-
     stdscr.refresh()
 
 def safe_addstr(stdscr, y, x, s, attr=0):
     h, w = stdscr.getmaxyx()
     if y < h and x < w:
-        try:
-            stdscr.addnstr(y, x, s, w - x - 1, attr)
-        except curses.error:
-            pass
+        try: stdscr.addnstr(y, x, s, w - x - 1, attr)
+        except curses.error: pass
 
 # ── Plain text mode ──
 
 def run_plain():
     host = args.host
     plan = define_tests()
-
     if args.uart:
         start_uart(args.uart)
-        if uart_error:
-            print(f"UART error: {uart_error}")
-
+        if uart_error: print(f"UART error: {uart_error}")
     if args.reset:
         print("Resetting device via picotool...")
         if not picotool_reset(host):
             print("  Reset failed")
-            if not args.all:
-                return
+            if not args.all: return
 
     print(f"=== Pyro MK1B Network Test ===")
     print(f"Host: {host}  Mode: {'all' if args.all else 'fail-fast'}\n")
@@ -473,34 +437,157 @@ def run_plain():
     passed = failed = 0
     printed_sections = set()
     for idx, fn in plan:
-        # Print section headers
         for i in range(idx + 1):
             s, n, st, _ = tests[i]
             if s and not n and s not in printed_sections:
-                print(f"\n-- {s} --")
-                printed_sections.add(s)
-        try:
-            ok, detail = fn(host)
-        except Exception as e:
-            ok, detail = False, str(e)
+                print(f"\n-- {s} --"); printed_sections.add(s)
+        try: ok, detail = fn(host)
+        except Exception as e: ok, detail = False, str(e)
         set_result(idx, ok, detail)
         sym = "✓" if ok else "✗"
         extra = f" ({detail})" if detail else ""
         print(f"  {sym} {tests[idx][1]}{extra}")
-        if ok:
-            passed += 1
+        if ok: passed += 1
         else:
             failed += 1
-            if not args.all:
-                break
+            if not args.all: break
 
     print(f"\n=== Results: {passed} passed, {failed} failed ===")
     stop_uart()
-    sys.exit(1 if failed else 0)
+    return failed
+
+# ── Log analyzer ──
+
+def analyze_log(filepath):
+    if not os.path.exists(filepath):
+        print(f"Error: {filepath} not found"); sys.exit(1)
+
+    lines = open(filepath).readlines()
+    sys_info, failures, all_tests = [], [], []
+
+    for line in lines:
+        line = line.rstrip()
+        if not line: continue
+        try:
+            ts = float(line[1:9].strip())
+            src = line[12:17].strip()
+            msg = line[19:]
+        except (ValueError, IndexError):
+            continue
+
+        if src == "SYS":
+            sys_info.append(msg)
+        elif src == "TEST":
+            if msg.startswith("PASS"):
+                all_tests.append(("PASS", msg[5:], ts))
+            elif msg.startswith("FAIL"):
+                name = msg[5:]
+                all_tests.append(("FAIL", name, ts))
+                context = [l.rstrip() for l in lines
+                           if l.strip() and abs(float(l[1:9].strip()) - ts) < 2.0]
+                failures.append((name, ts, context))
+
+    print("=" * 60)
+    print("  Pyro MK1B Test Log Analysis")
+    print("=" * 60)
+    print("\nSystem Info:")
+    for s in sys_info: print(f"  {s}")
+
+    total = len(all_tests)
+    p = sum(1 for s, _, _ in all_tests if s == "PASS")
+    f = sum(1 for s, _, _ in all_tests if s == "FAIL")
+    print(f"\nResults: {p}/{total} passed, {f} failed")
+
+    if not failures:
+        print("\n✓ All tests passed — no issues found."); return
+
+    print(f"\n{'='*60}\n  {f} FAILURE(S)\n{'='*60}")
+    for name, ts, context in failures:
+        print(f"\n✗ {name} (at {ts:.3f}s)")
+        print("  Context:")
+        for cl in context: print(f"    {cl}")
+
+    print(f"\n{'='*60}\n  Diagnosis\n{'='*60}")
+    full = "".join(lines)
+    if "out of memory in pool TCP_PCB" in full:
+        print("  ⚠ TCP PCB pool exhaustion — increase MEMP_NUM_TCP_PCB")
+    if "could not allocate" in full:
+        print("  ⚠ Memory allocation failure — increase MEM_SIZE")
+    if any("(empty)" in c for _, _, ctx in failures for c in ctx):
+        print("  ⚠ Empty responses — possible connection pool leak or TCP stall")
+    if any(" 000 " in c for _, _, ctx in failures for c in ctx):
+        print("  ⚠ HTTP 000 responses — device not accepting TCP connections")
+    if not any("UART" in l for l in lines):
+        print("  ℹ No UART data — rerun with --uart for device-side diagnostics")
+    print()
+
+# ── Interactive mode ──
+
+def interactive_setup():
+    print("=" * 50)
+    print("  Pyro MK1B Network Test — Setup")
+    print("=" * 50)
+    print()
+
+    host = input("Device address [pyro.local]: ").strip() or "pyro.local"
+
+    r = input("Stop on first failure? [Y/n]: ").strip().lower()
+    run_all = r in ("n", "no")
+
+    uart_port = None
+    r = input("Monitor UART? [y/N]: ").strip().lower()
+    if r in ("y", "yes"):
+        ports = sorted(glob.glob("/dev/tty.usbmodem*"))
+        if ports:
+            print("  Available ports:")
+            for i, p in enumerate(ports): print(f"    {i+1}. {p}")
+            sel = input(f"  Select port [1]: ").strip()
+            idx = int(sel) - 1 if sel.isdigit() else 0
+            if 0 <= idx < len(ports): uart_port = ports[idx]
+        else:
+            uart_port = input("  Enter port path: ").strip() or None
+
+    r = input("Reset device before testing? [y/N]: ").strip().lower()
+    do_reset = r in ("y", "yes")
+
+    r = input("Save log file? [Y/n]: ").strip().lower()
+    log_path = None
+    if r not in ("n", "no"):
+        default = f"pyro_test_{time.strftime('%Y%m%d_%H%M%S')}.log"
+        log_path = input(f"  Log file [{default}]: ").strip() or default
+
+    # Build repeat command
+    cmd = ["python3", "test_network.py"]
+    if run_all: cmd.append("--all")
+    if uart_port: cmd.extend(["--uart", uart_port])
+    if do_reset: cmd.append("--reset")
+    if log_path: cmd.extend(["--log", log_path])
+    cmd.append(host)
+    cmd_line = " ".join(cmd)
+
+    print(f"\nStarting tests...\n")
+
+    args.host = host
+    args.all = run_all
+    args.uart = uart_port
+    args.reset = do_reset
+    args.log = log_path
+    return cmd_line
 
 # ── Main ──
 
 if __name__ == "__main__":
+    if args.analyze:
+        analyze_log(args.analyze)
+        sys.exit(0)
+
+    cmd_line = None
+    has_flags = args.all or args.uart or args.reset or args.log or args.plain
+    if args.host is None and not has_flags:
+        cmd_line = interactive_setup()
+    elif args.host is None:
+        args.host = "pyro.local"
+
     if args.log:
         log_file = open(args.log, "w")
         import platform
@@ -512,13 +599,14 @@ if __name__ == "__main__":
 
     try:
         if args.plain or not sys.stdout.isatty():
-            run_plain()
+            f = run_plain()
+            if cmd_line: print(f"\nTo repeat this test:\n  {cmd_line}")
+            sys.exit(1 if f else 0)
         else:
-            try:
-                curses.wrapper(draw_tui)
-            finally:
-                stop_uart()
+            try: curses.wrapper(draw_tui)
+            finally: stop_uart()
             f = sum(1 for _, n, s, _ in tests if n and s == FAILED)
+            if cmd_line: print(f"\nTo repeat this test:\n  {cmd_line}")
             sys.exit(1 if f else 0)
     finally:
         if log_file:
