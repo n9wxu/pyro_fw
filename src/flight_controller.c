@@ -12,6 +12,8 @@
 #include <lfs.h>
 #include "device_status.h"
 #include <pico_fota_bootloader/core.h>
+#include "pico/bootrom.h"
+#include "hardware/watchdog.h"
 #include "version.h"
 
 volatile device_status_t g_status = {0};
@@ -515,6 +517,11 @@ int main() {
 
         tud_task();
         net_service();
+
+        /* Handle deferred picotool reset (safe — I2C is idle here) */
+        extern volatile uint8_t pending_reset;
+        if (pending_reset == 1) rom_reset_usb_boot(0, 0);
+        if (pending_reset == 2) watchdog_reboot(0, 0, 100);
 
         // Update pyro fire state
         pyro_update(now);

@@ -1,6 +1,6 @@
 /*
  * Vendor reset interface for picotool support.
- * Handles BOOTSEL and flash reset via vendor control requests.
+ * Defers reset to main loop to avoid interrupting I2C.
  */
 #include "tusb.h"
 #include "device/usbd_pvt.h"
@@ -9,6 +9,9 @@
 #include "hardware/watchdog.h"
 
 static uint8_t itf_num;
+
+/* Deferred reset flags — checked by main loop */
+volatile uint8_t pending_reset = 0;  /* 1=BOOTSEL, 2=flash */
 
 static void resetd_init(void) {}
 static void resetd_reset(uint8_t rhport) { (void)rhport; itf_num = 0; }
@@ -29,10 +32,11 @@ static bool resetd_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_r
     if (request->wIndex != itf_num) return false;
 
     if (request->bRequest == RESET_REQUEST_BOOTSEL) {
-        rom_reset_usb_boot(0, 0);
+        pending_reset = 1;
+        return true;
     }
     if (request->bRequest == RESET_REQUEST_FLASH) {
-        watchdog_reboot(0, 0, 100);
+        pending_reset = 2;
         return true;
     }
     return false;
