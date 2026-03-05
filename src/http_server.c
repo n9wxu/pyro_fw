@@ -110,14 +110,24 @@ static const char *content_type_hdr(const char *path) {
 
 static void send_next_chunk(struct tcp_pcb *pcb, conn_state_t *cs) {
     char buf[CHUNK_SIZE];
-    lfs_ssize_t n = lfs_file_read(&cs->lfs, &cs->file, buf, CHUNK_SIZE);
-    if (n > 0) {
-        tcp_write(pcb, buf, n, TCP_WRITE_FLAG_COPY);
-        tcp_output(pcb);
-    } else {
-        conn_free(cs);
-        tcp_close(pcb);
+    /* Write as many chunks as the send buffer can hold */
+    while (tcp_sndbuf(pcb) >= CHUNK_SIZE) {
+        lfs_ssize_t n = lfs_file_read(&cs->lfs, &cs->file, buf, CHUNK_SIZE);
+        if (n <= 0) {
+            /* EOF — flush and close after send completes */
+            tcp_output(pcb);
+            conn_free(cs);
+            tcp_arg(pcb, NULL);
+            tcp_close(pcb);
+            return;
+        }
+        err_t err = tcp_write(pcb, buf, n, TCP_WRITE_FLAG_COPY);
+        if (err != ERR_OK) {
+            lfs_file_seek(&cs->lfs, &cs->file, -n, LFS_SEEK_CUR);
+            break;
+        }
     }
+    tcp_output(pcb);
 }
 
 /* ── API handlers ─────────────────────────────────────────────────── */
@@ -204,9 +214,11 @@ static err_t on_sent(void *arg, struct tcp_pcb *pcb, u16_t len) {
     (void)len;
     conn_state_t *cs = (conn_state_t *)arg;
     if (cs && cs->phase == CONN_SENDING_FILE) {
-        send_next_chunk(pcb, cs);
+        send_next_chunk(pcb, cs);  /* may close connection on EOF */
+    } else if (!cs) {
+        tcp_close(pcb);  /* non-file response fully sent */
     } else {
-        if (cs) conn_free(cs);
+        conn_free(cs);
         tcp_close(pcb);
     }
     return ERR_OK;
