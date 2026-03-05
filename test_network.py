@@ -9,6 +9,7 @@ Options:
   --reset         Reset device via picotool before testing
   --repeat N      Repeat test suite N times
   --plain         Disable TUI, plain text output
+  --log FILE      Write timestamped log to file
   host            Default: pyro.local
 """
 import subprocess, sys, time, os, argparse, threading, json, curses
@@ -23,43 +24,60 @@ PICOTOOL = os.path.expanduser("~/.pico-sdk/picotool/2.2.0-a4/picotool/picotool")
 
 parser = argparse.ArgumentParser(description="Pyro MK1B network test")
 parser.add_argument("host", nargs="?", default="pyro.local")
-parser.add_argument("--all", action="store_true", help="Run all tests even on failure")
-parser.add_argument("--uart", metavar="PORT", help="Monitor UART port during tests")
-parser.add_argument("--reset", action="store_true", help="Reset device via picotool before testing")
-parser.add_argument("--repeat", type=int, default=1, help="Repeat test suite N times")
-parser.add_argument("--plain", action="store_true", help="Plain text output (no TUI)")
+parser.add_argument("--all", action="store_true")
+parser.add_argument("--uart", metavar="PORT")
+parser.add_argument("--reset", action="store_true")
+parser.add_argument("--repeat", type=int, default=1)
+parser.add_argument("--plain", action="store_true")
+parser.add_argument("--log", metavar="FILE")
 args = parser.parse_args()
+
+# ── Timeline log ──
+
+log_entries = []  # [(timestamp, source, message)]
+log_lock = threading.Lock()
+log_file = None
+t0 = time.time()
+
+def log(source, msg):
+    ts = time.time() - t0
+    entry = (ts, source, msg)
+    with log_lock:
+        log_entries.append(entry)
+    if log_file:
+        log_file.write(f"[{ts:8.3f}] [{source:5s}] {msg}\n")
+        log_file.flush()
 
 # ── Test registry ──
 
-PENDING = 0
-RUNNING = 1
-PASSED = 2
-FAILED = 3
+PENDING, RUNNING, PASSED, FAILED = 0, 1, 2, 3
 
-tests = []       # [(section, name, state, detail)]
-uart_lines = []  # ring buffer of UART lines
+tests = []
+uart_lines = []
 uart_error = None
-lock = threading.Lock()
+ui_lock = threading.Lock()
 
 def add_section(name):
-    with lock:
+    with ui_lock:
         tests.append((name, None, PENDING, ""))
 
 def add_test(name):
-    with lock:
+    with ui_lock:
         tests.append((None, name, PENDING, ""))
     return len(tests) - 1
 
 def set_running(idx):
-    with lock:
+    with ui_lock:
         s, n, _, d = tests[idx]
         tests[idx] = (s, n, RUNNING, d)
+    log("TEST", f"START {tests[idx][1]}")
 
 def set_result(idx, ok, detail=""):
-    with lock:
+    with ui_lock:
         s, n, _, _ = tests[idx]
         tests[idx] = (s, n, PASSED if ok else FAILED, detail)
+    status = "PASS" if ok else "FAIL"
+    log("TEST", f"{status} {tests[idx][1]} {detail}")
 
 # ── UART via pyserial ──
 
@@ -69,10 +87,12 @@ def start_uart(port):
     global uart_ser, uart_error
     if not HAS_SERIAL:
         uart_error = "pyserial not installed (pip install pyserial)"
+        log("UART", f"ERROR: {uart_error}")
         return
     try:
         uart_ser = serial.Serial(port, 115200, timeout=0.1)
         uart_ser.reset_input_buffer()
+        log("UART", f"Opened {port}")
         def reader():
             buf = b""
             while uart_ser and uart_ser.is_open:
@@ -82,16 +102,19 @@ def start_uart(port):
                         buf += data
                         while b"\n" in buf:
                             line, buf = buf.split(b"\n", 1)
-                            with lock:
-                                uart_lines.append(line.decode(errors="replace").rstrip())
+                            text = line.decode(errors="replace").rstrip()
+                            with ui_lock:
+                                uart_lines.append(text)
                                 if len(uart_lines) > 500:
                                     del uart_lines[:100]
+                            log("UART", text)
                 except (serial.SerialException, OSError):
                     break
         t = threading.Thread(target=reader, daemon=True)
         t.start()
     except serial.SerialException as e:
         uart_error = str(e)
+        log("UART", f"ERROR: {uart_error}")
 
 def stop_uart():
     global uart_ser
@@ -102,16 +125,20 @@ def stop_uart():
 # ── picotool ──
 
 def picotool_reset(host):
+    log("CMD", "picotool reboot -u -f")
     subprocess.run([PICOTOOL, "reboot", "-u", "-f", "--vid", "0x2E8A", "--pid", "0x4002"],
                    capture_output=True, timeout=10)
     time.sleep(1)
+    log("CMD", "picotool reboot")
     subprocess.run([PICOTOOL, "reboot"], capture_output=True, timeout=10)
     for i in range(20):
         time.sleep(1)
         r = subprocess.run(["ping", "-c", "1", "-t", "2", host], capture_output=True)
         if r.returncode == 0:
+            log("CMD", f"Device up after {i+1}s")
             time.sleep(1)
             return True
+    log("CMD", "Device reset timeout")
     return False
 
 # ── Test helpers ──
@@ -124,7 +151,9 @@ def run_cmd(cmd, timeout=5):
         return "", 1
 
 def curl(host, path, timeout=5):
-    out, _ = run_cmd(["curl", "-s", "--max-time", str(timeout), f"http://{host}{path}"])
+    log("CMD", f"curl http://{host}{path}")
+    out, rc = run_cmd(["curl", "-s", "--max-time", str(timeout), f"http://{host}{path}"])
+    log("CMD", f"  -> {len(out)}b rc={rc}")
     return out
 
 def curl_headers(host, path, timeout=5):
@@ -134,7 +163,6 @@ def curl_headers(host, path, timeout=5):
 # ── Test definitions ──
 
 def define_tests():
-    """Register all tests. Returns list of (idx, run_fn) tuples."""
     plan = []
 
     add_section("Connectivity")
@@ -152,7 +180,7 @@ def define_tests():
     plan.append((idx, t_status))
 
     idx = add_test("status is valid JSON with fields")
-    def t_status_fields(h):
+    def t_fields(h):
         s = curl(h, "/api/status")
         try:
             d = json.loads(s)
@@ -160,7 +188,7 @@ def define_tests():
             return ok, d.get("fw_version", "?")
         except:
             return False, "invalid JSON"
-    plan.append((idx, t_status_fields))
+    plan.append((idx, t_fields))
 
     idx = add_test("GET /api/config returns INI")
     def t_config(h):
@@ -175,38 +203,33 @@ def define_tests():
     plan.append((idx, t_cors))
 
     add_section("File Serving")
-    idx = add_test("GET / (index.html)")
-    def t_index(h):
-        s = curl(h, "/")
-        return len(s) > 900 and "<!DOCTYPE" in s, f"{len(s)}b"
-    plan.append((idx, t_index))
-
-    idx = add_test("GET /www/app.js")
-    def t_js(h):
-        s = curl(h, "/www/app.js")
-        return len(s) > 2000 and "function update" in s, f"{len(s)}b"
-    plan.append((idx, t_js))
-
-    idx = add_test("GET /www/style.css")
-    def t_css(h):
-        s = curl(h, "/www/style.css")
-        return len(s) > 300, f"{len(s)}b"
-    plan.append((idx, t_css))
+    for name, path, min_sz, check_str in [
+        ("GET / (index.html)", "/", 900, "<!DOCTYPE"),
+        ("GET /www/app.js", "/www/app.js", 2000, "function update"),
+        ("GET /www/style.css", "/www/style.css", 300, None),
+    ]:
+        idx = add_test(name)
+        p, ms, cs = path, min_sz, check_str
+        def make_fn(p, ms, cs):
+            def fn(h):
+                s = curl(h, p)
+                ok = len(s) > ms and (cs is None or cs in s)
+                return ok, f"{len(s)}b"
+            return fn
+        plan.append((idx, make_fn(p, ms, cs)))
 
     add_section("File Consistency")
     idx = add_test("app.js 5x consistent")
-    def t_js_consist(h):
+    def t_js5(h):
         sizes = [len(curl(h, "/www/app.js")) for _ in range(5)]
-        ok = len(set(sizes)) == 1 and sizes[0] > 2000
-        return ok, str(sizes)
-    plan.append((idx, t_js_consist))
+        return len(set(sizes)) == 1 and sizes[0] > 2000, str(sizes)
+    plan.append((idx, t_js5))
 
     idx = add_test("index.html 5x consistent")
-    def t_idx_consist(h):
+    def t_idx5(h):
         sizes = [len(curl(h, "/")) for _ in range(5)]
-        ok = len(set(sizes)) == 1 and sizes[0] > 900
-        return ok, str(sizes)
-    plan.append((idx, t_idx_consist))
+        return len(set(sizes)) == 1 and sizes[0] > 900, str(sizes)
+    plan.append((idx, t_idx5))
 
     add_section("Error Handling")
     idx = add_test("404 for missing file")
@@ -217,102 +240,124 @@ def define_tests():
 
     add_section("Parallel Connections")
     idx = add_test("6 parallel status requests")
-    def t_par_status(h):
+    def t_par(h):
+        log("CMD", "6x parallel /api/status")
         procs = [subprocess.Popen(["curl", "-s", "--max-time", "5", f"http://{h}/api/status"],
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(6)]
         results = [p.communicate()[0].decode() for p in procs]
         ok = sum(1 for r in results if "fw_version" in r)
+        log("CMD", f"  -> {ok}/6 succeeded")
         return ok == 6, f"{ok}/6"
-    plan.append((idx, t_par_status))
+    plan.append((idx, t_par))
 
     idx = add_test("6 parallel mixed requests")
-    def t_par_mixed(h):
+    def t_parmix(h):
         paths = ["/", "/www/app.js", "/www/style.css", "/api/status", "/api/config", "/"]
+        log("CMD", f"6x parallel mixed")
         procs = [subprocess.Popen(["curl", "-s", "--max-time", "5", f"http://{h}{p}"],
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE) for p in paths]
         sizes = [len(p.communicate()[0]) for p in procs]
+        log("CMD", f"  -> sizes {sizes}")
         return all(s > 0 for s in sizes), str(sizes)
-    plan.append((idx, t_par_mixed))
+    plan.append((idx, t_parmix))
 
     add_section("Sequential Requests")
     idx = add_test("20 sequential status requests")
-    def t_seq_status(h):
+    def t_seq20(h):
         ok = sum(1 for _ in range(20) if "fw_version" in curl(h, "/api/status", 3))
         return ok == 20, f"{ok}/20"
-    plan.append((idx, t_seq_status))
+    plan.append((idx, t_seq20))
 
     idx = add_test("10 sequential file downloads")
-    def t_seq_files(h):
+    def t_seq10(h):
         ok = sum(1 for _ in range(10) if len(curl(h, "/www/app.js")) > 2000)
         return ok == 10, f"{ok}/10"
-    plan.append((idx, t_seq_files))
+    plan.append((idx, t_seq10))
 
     add_section("mDNS/DNS-SD")
     idx = add_test("_pyro._tcp service found")
     def t_mdns(h):
+        log("CMD", "dns-sd -B _pyro._tcp local.")
         p = subprocess.Popen(["dns-sd", "-B", "_pyro._tcp", "local."],
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         time.sleep(3)
         p.kill()
         out = p.communicate()[0].decode()
-        return "pyro" in out, ""
+        found = "pyro" in out
+        log("CMD", f"  -> {'found' if found else 'not found'}")
+        return found, ""
     plan.append((idx, t_mdns))
 
     add_section("picotool")
     idx = add_test("picotool sees device")
-    def t_picotool(h):
+    def t_pico(h):
+        log("CMD", "picotool reboot -f")
         out, rc = run_cmd([PICOTOOL, "reboot", "-f", "--vid", "0x2E8A", "--pid", "0x4002"], 10)
+        log("CMD", f"  -> rc={rc}")
         return rc == 0 or "RP-series" in out, ""
-    plan.append((idx, t_picotool))
+    plan.append((idx, t_pico))
 
     return plan
 
-# ── TUI rendering ──
+# ── TUI with live refresh thread ──
+
+tui_running = False
 
 def draw_tui(stdscr):
+    global tui_running
     curses.curs_set(0)
     curses.start_color()
     curses.use_default_colors()
-    curses.init_pair(1, curses.COLOR_GREEN, -1)   # passed
-    curses.init_pair(2, curses.COLOR_RED, -1)      # failed
-    curses.init_pair(3, curses.COLOR_WHITE, -1)    # running/bold
-    curses.init_pair(4, 8, -1)                     # grey (pending) - color 8 = bright black
+    curses.init_pair(1, curses.COLOR_GREEN, -1)
+    curses.init_pair(2, curses.COLOR_RED, -1)
+    curses.init_pair(3, curses.COLOR_WHITE, -1)
+    curses.init_pair(4, 8, -1)
+
+    tui_running = True
+
+    # Background refresh thread for live UART
+    def refresher():
+        while tui_running:
+            try:
+                refresh_screen(stdscr, args.host)
+            except:
+                pass
+            time.sleep(0.1)
+    rt = threading.Thread(target=refresher, daemon=True)
+    rt.start()
 
     host = args.host
     plan = define_tests()
 
-    # Start UART
     if args.uart:
         start_uart(args.uart)
 
-    # Reset
     if args.reset:
-        with lock:
+        with ui_lock:
             tests.insert(0, ("Setup", None, PENDING, ""))
             tests.insert(1, (None, "picotool reset", RUNNING, ""))
-        refresh_screen(stdscr, host)
+        log("TEST", "START picotool reset")
         ok = picotool_reset(host)
-        with lock:
+        with ui_lock:
             tests[1] = (None, "picotool reset", PASSED if ok else FAILED, "")
-        refresh_screen(stdscr, host)
+        log("TEST", f"{'PASS' if ok else 'FAIL'} picotool reset")
         if not ok and not args.all:
             time.sleep(2)
+            tui_running = False
             return
 
-    # Run tests
     for idx, fn in plan:
         set_running(idx)
-        refresh_screen(stdscr, host)
         try:
             ok, detail = fn(host)
         except Exception as e:
             ok, detail = False, str(e)
         set_result(idx, ok, detail)
-        refresh_screen(stdscr, host)
         if not ok and not args.all:
             break
 
-    # Final display
+    tui_running = False
+    time.sleep(0.2)
     refresh_screen(stdscr, host)
     stdscr.addstr(curses.LINES - 1, 0, "Press any key to exit...")
     stdscr.refresh()
@@ -327,52 +372,45 @@ def refresh_screen(stdscr, host):
     left_w = w // 2 if has_uart else w - 1
     right_x = left_w + 1
 
-    # Header
     p = sum(1 for _, n, s, _ in tests if n and s == PASSED)
     f = sum(1 for _, n, s, _ in tests if n and s == FAILED)
     t = sum(1 for _, n, _, _ in tests if n)
-    header = f" Pyro MK1B Test — {host} — {p}/{t} passed"
+    hdr = f" Pyro MK1B Test — {host} — {p}/{t} passed"
     if f:
-        header += f", {f} failed"
-    safe_addstr(stdscr, 0, 0, header[:w-1], curses.A_BOLD)
+        hdr += f", {f} failed"
+    safe_addstr(stdscr, 0, 0, hdr[:w-1], curses.A_BOLD)
 
-    # Test list
     row = 2
-    for sec, name, state, detail in tests:
-        if row >= h - 2:
-            break
-        if sec and not name:
-            safe_addstr(stdscr, row, 1, f"── {sec} ──", curses.A_BOLD)
+    with ui_lock:
+        for sec, name, state, detail in tests:
+            if row >= h - 2:
+                break
+            if sec and not name:
+                safe_addstr(stdscr, row, 1, f"── {sec} ──", curses.A_BOLD)
+                row += 1
+                continue
+            if state == PASSED:
+                sym, attr = "✓", curses.color_pair(1)
+            elif state == FAILED:
+                sym, attr = "✗", curses.color_pair(2)
+            elif state == RUNNING:
+                sym, attr = "▸", curses.color_pair(3) | curses.A_BOLD
+            else:
+                sym, attr = "·", curses.color_pair(4)
+            line = f" {sym} {name}"
+            if detail and state in (PASSED, FAILED):
+                line += f"  ({detail})"
+            safe_addstr(stdscr, row, 1, line[:left_w-2], attr)
             row += 1
-            continue
 
-        if state == PASSED:
-            sym, attr = "✓", curses.color_pair(1)
-        elif state == FAILED:
-            sym, attr = "✗", curses.color_pair(2)
-        elif state == RUNNING:
-            sym, attr = "▸", curses.color_pair(3) | curses.A_BOLD
-        else:
-            sym, attr = "·", curses.color_pair(4)
-
-        line = f" {sym} {name}"
-        if detail and state in (PASSED, FAILED):
-            line += f"  ({detail})"
-        safe_addstr(stdscr, row, 1, line[:left_w-2], attr)
-        row += 1
-
-    # UART panel
     if has_uart:
-        # Divider
         for r in range(h):
             safe_addstr(stdscr, r, left_w, "│")
-
-        uart_header = f" UART"
+        uhdr = " UART"
         if uart_error:
-            uart_header += f" ⚠ {uart_error}"
-        safe_addstr(stdscr, 0, right_x, uart_header[:w-right_x-1], curses.A_BOLD)
-
-        with lock:
+            uhdr += f" ⚠ {uart_error}"
+        safe_addstr(stdscr, 0, right_x, uhdr[:w-right_x-1], curses.A_BOLD)
+        with ui_lock:
             visible = uart_lines[-(h-3):]
         for i, line in enumerate(visible):
             r = 2 + i
@@ -412,33 +450,28 @@ def run_plain():
     print(f"Host: {host}  Mode: {'all' if args.all else 'fail-fast'}\n")
 
     passed = failed = 0
+    printed_sections = set()
     for idx, fn in plan:
-        sec, name, _, _ = tests[idx]
         # Print section headers
-        for i in range(idx):
+        for i in range(idx + 1):
             s, n, st, _ = tests[i]
-            if s and not n and st == PENDING:
+            if s and not n and s not in printed_sections:
                 print(f"\n-- {s} --")
-                tests[i] = (s, n, RUNNING, "")
+                printed_sections.add(s)
         try:
             ok, detail = fn(host)
         except Exception as e:
             ok, detail = False, str(e)
+        set_result(idx, ok, detail)
         sym = "✓" if ok else "✗"
         extra = f" ({detail})" if detail else ""
-        print(f"  {sym} {name}{extra}")
-        set_result(idx, ok, detail)
+        print(f"  {sym} {tests[idx][1]}{extra}")
         if ok:
             passed += 1
         else:
             failed += 1
             if not args.all:
                 break
-
-    if uart_lines:
-        print(f"\n=== UART LOG ({len(uart_lines)} lines) ===")
-        for line in uart_lines[-30:]:
-            print(f"  {line}")
 
     print(f"\n=== Results: {passed} passed, {failed} failed ===")
     stop_uart()
@@ -447,12 +480,21 @@ def run_plain():
 # ── Main ──
 
 if __name__ == "__main__":
-    if args.plain or not sys.stdout.isatty():
-        run_plain()
-    else:
-        try:
-            curses.wrapper(draw_tui)
-        finally:
-            stop_uart()
-        f = sum(1 for _, n, s, _ in tests if n and s == FAILED)
-        sys.exit(1 if f else 0)
+    if args.log:
+        log_file = open(args.log, "w")
+        log("SYS", f"Test started host={args.host}")
+
+    try:
+        if args.plain or not sys.stdout.isatty():
+            run_plain()
+        else:
+            try:
+                curses.wrapper(draw_tui)
+            finally:
+                stop_uart()
+            f = sum(1 for _, n, s, _ in tests if n and s == FAILED)
+            sys.exit(1 if f else 0)
+    finally:
+        if log_file:
+            log("SYS", "Test finished")
+            log_file.close()
