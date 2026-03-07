@@ -21,6 +21,10 @@ static void configure_i2c_pins(uint sda_pin) {
     gpio_pull_up(I2C_SCL_PIN);
 }
 
+static void release_i2c_pin(uint pin) {
+    gpio_init(pin);  /* reset to SIO input, removes I2C function */
+}
+
 pressure_sensor_type_t pressure_sensor_init(void) {
     i2c_init(i2c1, 400000);
 
@@ -29,6 +33,7 @@ pressure_sensor_type_t pressure_sensor_init(void) {
         detected_sensor = PRESSURE_SENSOR_BMP280;
         return detected_sensor;
     }
+    release_i2c_pin(BMP280_SDA);
 
     configure_i2c_pins(MS5607_SDA);
     if (ms5607_detect()) {

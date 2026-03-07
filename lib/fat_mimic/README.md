@@ -1,5 +1,7 @@
 # fat_mimic
 
+> **ARCHIVED:** This library is no longer used. The USB Mass Storage approach was replaced by an HTTP web interface over USB networking (RNDIS/ECM). Kept for reference.
+
 FAT12 USB Mass Storage over littlefs for RP2040.
 
 ## Overview
@@ -92,4 +94,4 @@ target_link_libraries(your_target fat_mimic)
 
 ## License
 
-BSD-3-Clause
+MIT

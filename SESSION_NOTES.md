@@ -1,4 +1,70 @@
-# Session Notes - March 4, 2026 (Morning)
+# Session Notes - March 6, 2026
+
+## What We Did
+
+### 1. GitHub Actions CI/CD
+- build.yml: builds on push to main, uploads versioned artifacts
+- release.yml: creates GitHub Release with firmware on v* tags
+- CMakeLists.txt: SDK paths use PICO_SDK_PATH (works in CI and local)
+- gen_version.sh: CI-aware (no auto-increment when CI_BUILD=1)
+
+### 2. Self-Update from GitHub Releases
+- support/update_from_release.py: PC-side tool checks GitHub, downloads, OTAs
+- Web UI "Check for Updates" button: browser fetches GitHub API directly (CORS allowed), downloads .bin, POSTs to /api/ota
+- Repo set to n9wxu/pyro_fw
+
+### 3. Interactive Installer
+- support/install.py: detects device state, offers OTA/BOOTSEL/picotool options
+- Included in build artifacts and release zip
+
+### 4. MS5607 Pressure Sensor
+- Fixed I2C bus contention: release BMP280 SDA pin before trying MS5607
+- gpio_init() to reset pin function (GPIO_FUNC_NULL caused issues)
+
+### 5. Non-blocking Boot State Machine
+- All startup moved into state functions in dispatch_state()
+- No sleep_ms in startup — USB enumerates immediately
+- Fixed USB enumeration failure after picotool flash
+
+### 6. Unified State Machine
+- Merged boot states into flight_state_t enum
+- Single dispatch_state() handles: BOOT_FILESYSTEM → ... → BOOT_MDNS → PAD_IDLE → ASCENT → DESCENT → LANDED
+- main() is minimal: board_init, tud_init, uart_init, then loop
+
+### 7. Release v1.2.0
+- Tagged and pushed, GitHub Actions building release
+
+---
+
+# Session Notes - March 5, 2026
+
+## What We Did
+
+### 1. picotool Support
+- Vendor reset interface added to USB composite device
+- VID changed to 0x2E8A (Raspberry Pi) for picotool compatibility
+- Deferred reset to main loop to protect I2C bus
+- flash_picotool.sh script for full flash cycle
+
+### 2. HTTP Server Reliability
+- Fixed file truncation: fill TCP send buffer with multiple chunks
+- Handle tcp_write ERR_MEM by rewinding file and retrying
+- 50/50 sustained file downloads passing
+
+### 3. Comprehensive Test Suite
+- TUI with split screen (tests left, UART right)
+- pyserial UART monitoring, timestamped diagnostic logging
+- Interactive mode, log analyzer, pre-test diagnostics
+- 17/17 tests passing
+
+### 4. Build Versioning
+- VERSION file with auto-increment patch on local builds
+- gen_version.sh generates version.h
+- UART boot message shows version and build date
+
+---
+
+
 
 ## What We Did
 

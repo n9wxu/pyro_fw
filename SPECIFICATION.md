@@ -5,27 +5,34 @@
 This section contains everything needed to resume development with a new AI session.
 
 ### Project Overview
-Dual-deployment rocket flight computer on Raspberry Pi Pico (RP2040). Logs flight data to littlefs flash, presents files via USB Mass Storage (FAT12 emulation), fires two pyrotechnic channels for parachute deployment, outputs Eggtimer-compatible telemetry via UART.
+Dual-deployment rocket flight computer on Raspberry Pi Pico (RP2040). Logs flight data to littlefs flash, serves web dashboard via USB network (RNDIS/ECM), fires two pyrotechnic channels for parachute deployment, outputs Eggtimer-compatible telemetry via UART. OTA firmware updates via A/B bootloader.
 
-### Current Implementation Status
-- **Flight controller**: `src/flight_controller.c` - State machine overhauled, needs flight testing
-- **HTTP web interface**: `src/http_server.c` + `src/net_glue.c` - WORKING. Live dashboard at 192.168.7.1
-- **USB network device**: ECM+RNDIS via TinyUSB + lwIP - WORKING. Ping + HTTP confirmed
-- **fat_mimic library**: `lib/fat_mimic/` - COMPLETE but superseded by HTTP approach
-- **Pyro module**: `src/pyro.c` - Refactored, raw ADC, needs threshold calibration
-- **Pressure sensors**: `src/pressure_sensor.c` - I2C1, GPIO 6/7 (BMP280) or GPIO 10/7 (MS5607)
-- **littlefs driver**: `src/littlefs_driver.c` - COMPLETE
+### Current Implementation Status (v1.2.0)
+- **Unified state machine**: `src/flight_controller.c` — Non-blocking boot + flight in single dispatch
+- **HTTP web interface**: `src/http_server.c` + `src/net_glue.c` — WORKING. Dashboard at pyro.local / 192.168.7.1
+- **USB composite device**: ECM/RNDIS network + vendor reset (picotool support)
+- **mDNS/DNS-SD**: pyro.local hostname, _pyro._tcp service discovery
+- **OTA updates**: A/B bootloader (pico_fota_bootloader), web UI + CLI + GitHub release update
+- **Pressure sensors**: `src/pressure_sensor.c` — MS5607 (GPIO 10/7) and BMP280 (GPIO 6/7) auto-detect
+- **Pyro module**: `src/pyro.c` — Dual channel, raw ADC, needs threshold calibration
+- **littlefs driver**: `src/littlefs_driver.c` — 984KB partition
+- **CI/CD**: GitHub Actions build + release pipeline
+- **Test suite**: `support/test_network.py` — TUI, UART monitoring, log analysis
+- **fat_mimic library**: `lib/fat_mimic/` — ARCHIVED, superseded by HTTP approach
 - **Config parser**: NOT IMPLEMENTED
 - **Beep codes**: NOT IMPLEMENTED (GPIO 16, 3kHz PWM)
 - **CSV flight logging**: NOT IMPLEMENTED
-- **Test mode**: NOT IMPLEMENTED (GPIO 8 jumper)
+- **Telemetry UART**: Code exists but DISABLED
+- **Event logging**: NOT IMPLEMENTED
 
 ### Build
 ```bash
 mkdir -p build && cd build && cmake -G Ninja .. && ninja
-# Flash: copy build/pyro_fw_c.uf2 to RPI-RP2 drive
+# Flash: ./support/flash_picotool.sh
+# OTA: ./support/upload_fw.sh
+# Test: python3 support/test_network.py --all 192.168.7.1
 ```
-Dependencies: littlefs v2.11.2, Unity v2.6.0 (FetchContent).
+Dependencies: Pico SDK 2.2.0, littlefs v2.11.2, Unity v2.6.0, pico_fota_bootloader (all via FetchContent).
 
 ### Key Design Decisions
 1. Integer-only math everywhere

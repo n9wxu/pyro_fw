@@ -2,7 +2,7 @@
  * BMP280 pressure sensor driver
  * I2C address: 0x76 or 0x77
  * 
- * SPDX-License-Identifier: BSD-3-Clause
+ * SPDX-License-Identifier: MIT
  */
 #include "pressure_sensor.h"
 #include "hardware/i2c.h"

@@ -10,6 +10,7 @@ Scripts for flashing, testing, and managing the Pyro MK1B flight computer.
 | `flash_picotool.sh` | Flash bootloader + app via picotool |
 | `upload_fw.sh` | OTA firmware update via HTTP |
 | `upload_www.sh` | Upload web files to device |
+| `update_from_release.py` | Update firmware from GitHub releases |
 
 ## Test Suite (test_network.py)
 
@@ -130,3 +131,28 @@ Uploads firmware over HTTP to the A/B bootloader's download slot. Device reboots
 ```
 
 Uploads `www/` directory contents to the device's littlefs filesystem.
+
+## Self-Update from GitHub Releases
+
+```bash
+# Check if update is available
+python3 support/update_from_release.py --check
+
+# Update to latest release
+python3 support/update_from_release.py
+
+# Update to specific version
+python3 support/update_from_release.py --version 2.0.0
+
+# Force update even if same version
+python3 support/update_from_release.py --force
+```
+
+The tool:
+1. Queries the device's current version via `/api/status`
+2. Checks GitHub releases API for the latest (or specified) version
+3. Downloads `pyro_fw_c_fota_image.bin` from the release
+4. Pushes it to the device via `/api/ota`
+5. Waits for reboot and verifies the new version
+
+Configure the GitHub repo by editing `REPO` at the top of the script.

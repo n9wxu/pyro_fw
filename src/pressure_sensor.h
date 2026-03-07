@@ -1,7 +1,7 @@
 /*
  * Unified pressure sensor interface for Pyro MK1B
  * 
- * SPDX-License-Identifier: BSD-3-Clause
+ * SPDX-License-Identifier: MIT
  */
 #ifndef PRESSURE_SENSOR_H
 #define PRESSURE_SENSOR_H
