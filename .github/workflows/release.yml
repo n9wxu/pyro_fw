@@ -43,6 +43,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
           files: |
             build/pyro_fw_c.uf2
             build/pyro_fw_c_fota_image.bin

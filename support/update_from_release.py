@@ -25,6 +25,7 @@ parser.add_argument("--host", default="192.168.7.1", help="Device address")
 parser.add_argument("--check", action="store_true", help="Check only, don't update")
 parser.add_argument("--version", help="Update to specific version (e.g. 1.2.0)")
 parser.add_argument("--force", action="store_true", help="Update even if same version")
+parser.add_argument("--beta", action="store_true", help="Include beta/prerelease versions")
 args = parser.parse_args()
 
 
@@ -52,10 +53,12 @@ def get_releases():
         return None
 
 
-def find_release(releases, version=None):
+def find_release(releases, version=None, include_beta=False):
     """Find a release by version, or return latest."""
     for r in releases:
-        if r.get("draft") or r.get("prerelease"):
+        if r.get("draft"):
+            continue
+        if r.get("prerelease") and not include_beta:
             continue
         tag = r.get("tag_name", "")
         ver = tag.lstrip("v")
@@ -155,7 +158,7 @@ def main():
     if not releases:
         sys.exit(1)
 
-    release, release_ver = find_release(releases, args.version)
+    release, release_ver = find_release(releases, args.version, args.beta)
     if not release:
         target = f"v{args.version}" if args.version else "any"
         print(f"No release found ({target})")

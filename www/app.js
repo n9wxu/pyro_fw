@@ -83,19 +83,24 @@ var currentVersion = null;
 
 function checkUpdate() {
   var msg = document.getElementById('updmsg');
+  var includeBeta = document.getElementById('betaCheck').checked;
   msg.style.color = 'orange';
   msg.textContent = ' Checking...';
   if (!currentVersion) {
     msg.textContent = ' Waiting for device status...';
     return;
   }
-  fetch('https://api.github.com/repos/' + GITHUB_REPO + '/releases/latest')
+  var url = includeBeta
+    ? 'https://api.github.com/repos/' + GITHUB_REPO + '/releases'
+    : 'https://api.github.com/repos/' + GITHUB_REPO + '/releases/latest';
+  fetch(url)
     .then(r => {
       if (!r.ok) throw new Error('No releases found (HTTP ' + r.status + ')');
       return r.json();
     })
-    .then(rel => {
-      if (!rel.tag_name) throw new Error('No releases published yet');
+    .then(data => {
+      var rel = Array.isArray(data) ? data[0] : data;
+      if (!rel || !rel.tag_name) throw new Error('No releases published yet');
       var ver = rel.tag_name.replace(/^v/, '');
       if (ver === currentVersion) {
         msg.style.color = 'green';
