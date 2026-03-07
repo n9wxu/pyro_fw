@@ -47,3 +47,5 @@ jobs:
             build/pyro_fw_c_fota_image.bin
             build/_deps/pico_fota_bootloader-build/pico_fota_bootloader.uf2
             VERSION
+            www/
+            support/
