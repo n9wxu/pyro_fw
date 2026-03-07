@@ -193,9 +193,12 @@ pfb_compile_with_bootloader(pyro_fw_c)
 # These tests use mocks instead of real hardware.
 # They compile with the host compiler via a custom command.
 
+# Find host C compiler (not the ARM cross-compiler)
+find_program(HOST_CC NAMES gcc cc PATHS /usr/bin /usr/local/bin NO_CMAKE_FIND_ROOT_PATH)
+
 add_custom_target(host_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building host tests..."
-    COMMAND cc -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
                -I${CMAKE_CURRENT_LIST_DIR}/test
                -I${unity_SOURCE_DIR}/src
                -DUNIT_TEST
