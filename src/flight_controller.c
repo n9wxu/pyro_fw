@@ -39,8 +39,6 @@ int main() {
     ctx.config = (config_t){"PYRO001", "PYRO001", 1, 300, 1, 150};
     ctx.current_state = BOOT_FILESYSTEM;
 
-    static uint32_t last_hb = 0;
-
     while (1) {
         uint32_t now = to_ms_since_boot(get_absolute_time());
 
@@ -85,14 +83,6 @@ int main() {
             }
         }
 
-        /* Heartbeat */
-        if (now - last_hb >= 1000) {
-            last_hb = now;
-            char hb[48];
-            snprintf(hb, sizeof(hb), "[%lu] alive pa=%ld\r\n",
-                     (unsigned long)now, (long)g_status.pressure_pa);
-            uart_puts(uart0, hb);
-        }
     }
 
     return 0;
