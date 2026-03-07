@@ -77,7 +77,7 @@ function uploadFW() {
   });
 }
 
-var GITHUB_REPO = 'jjulich/pyro_fw';
+var GITHUB_REPO = 'n9wxu/pyro_fw';
 var ASSET_NAME = 'pyro_fw_c_fota_image.bin';
 var currentVersion = null;
 

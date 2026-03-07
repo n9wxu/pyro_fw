@@ -16,7 +16,7 @@ except ImportError:
     print("Error: Python urllib required")
     sys.exit(1)
 
-REPO = "jjulich/pyro_fw"  # Update to your GitHub repo
+REPO = "n9wxu/pyro_fw"  # Update to your GitHub repo
 API_URL = f"https://api.github.com/repos/{REPO}/releases"
 ASSET_NAME = "pyro_fw_c_fota_image.bin"
 
