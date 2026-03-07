@@ -121,14 +121,17 @@ function doUpdate(tag) {
     .then(rel => {
       var asset = rel.assets.find(a => a.name === ASSET_NAME);
       if (!asset) throw new Error(ASSET_NAME + ' not found in release');
-      return fetch(asset.browser_download_url);
+      // Use API URL with Accept header to get binary directly
+      return fetch(asset.url, {
+        headers: { 'Accept': 'application/octet-stream' }
+      });
     })
     .then(r => {
       if (!r.ok) throw new Error('Download failed: ' + r.status);
-      msg.textContent = ' Downloading... (' + (r.headers.get('content-length') || '?') + ' bytes)';
       return r.arrayBuffer();
     })
     .then(buf => {
+      if (buf.byteLength < 1000) throw new Error('Download too small (' + buf.byteLength + 'b) - not a firmware file');
       msg.textContent = ' Flashing ' + buf.byteLength + ' bytes...';
       return fetch('/api/ota', {
         method: 'POST',
