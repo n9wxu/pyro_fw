@@ -4,6 +4,9 @@ build/
 # Generated
 src/version.h
 
+# Caches
+.cache/
+
 # IDE
 .vscode/
 .kiro/

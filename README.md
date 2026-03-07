@@ -282,8 +282,46 @@ All development and deployment scripts are in the `support/` directory:
 |--------|---------|
 | `support/test_network.py` | Network/API test suite with TUI |
 | `support/flash_picotool.sh` | Flash via picotool (no BOOTSEL button) |
-| `support/upload_fw.sh` | OTA firmware update |
+| `support/upload_fw.sh` | OTA firmware update (local build) |
 | `support/upload_www.sh` | Upload web files |
+| `support/update_from_release.py` | Update firmware from GitHub releases |
+
+## Releasing
+
+Releases are automated via GitHub Actions:
+
+- **Every push to main** builds firmware and uploads artifacts
+- **Git tags** (`v*`) create a GitHub Release with downloadable binaries
+
+To create a release:
+```bash
+# Set version in VERSION file
+echo "2.0.0" > VERSION
+git add VERSION && git commit -m "release: v2.0.0"
+git tag v2.0.0
+git push && git push --tags
+```
+
+GitHub Actions will build and publish `pyro_fw_c.uf2`, `pyro_fw_c_fota_image.bin`, and `pico_fota_bootloader.uf2` as release assets.
+
+## Self-Update from GitHub
+
+Update a device to the latest release directly from GitHub:
+```bash
+# Check for updates
+python3 support/update_from_release.py --check
+
+# Update to latest
+python3 support/update_from_release.py
+
+# Update to specific version
+python3 support/update_from_release.py --version 2.0.0
+
+# Update device at specific address
+python3 support/update_from_release.py --host 192.168.7.1
+```
+
+The tool checks the device's current version, compares with GitHub releases, downloads the OTA binary, pushes it to the device, and verifies the update.
 
 ## Usage
 1. **Power on** - System initializes

@@ -79,8 +79,8 @@ target_link_libraries(littlefs_lib INTERFACE hardware_flash)
 
 # ====================================================================================
 
-set(LWIP_DIR ${USERHOME}/.pico-sdk/sdk/${sdkVersion}/lib/lwip)
-set(TINYUSB_DIR ${USERHOME}/.pico-sdk/sdk/${sdkVersion}/lib/tinyusb)
+set(LWIP_DIR ${PICO_SDK_PATH}/lib/lwip)
+set(TINYUSB_DIR ${PICO_SDK_PATH}/lib/tinyusb)
 
 # Generate version.h on every build
 add_custom_target(generate_version ALL
@@ -167,7 +167,7 @@ target_include_directories(pyro_fw_c PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/src
         ${LWIP_DIR}/src/include
         ${TINYUSB_DIR}/lib/networking
-        ${USERHOME}/.pico-sdk/sdk/${sdkVersion}/src/common/pico_usb_reset_interface_headers/include
+        ${PICO_SDK_PATH}/src/common/pico_usb_reset_interface_headers/include
 )
 
 target_include_directories(pyro_fw_c SYSTEM PUBLIC

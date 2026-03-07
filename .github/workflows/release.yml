@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  PICO_SDK_VERSION: 2.2.0
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi
+
+      - name: Install Pico SDK
+        run: |
+          git clone --depth 1 --branch ${{ env.PICO_SDK_VERSION }} https://github.com/raspberrypi/pico-sdk.git /tmp/pico-sdk
+          cd /tmp/pico-sdk && git submodule update --init lib/tinyusb lib/mbedtls lib/lwip lib/btstack lib/cyw43-driver
+
+      - name: Set version from tag
+        run: echo "${GITHUB_REF_NAME#v}" > VERSION
+
+      - name: Build
+        run: |
+          mkdir build && cd build
+          cmake -G Ninja -DPICO_SDK_PATH=/tmp/pico-sdk ..
+          ninja
+        env:
+          CI_BUILD: 1
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            build/pyro_fw_c.uf2
+            build/pyro_fw_c_fota_image.bin
+            build/_deps/pico_fota_bootloader-build/pico_fota_bootloader.uf2
