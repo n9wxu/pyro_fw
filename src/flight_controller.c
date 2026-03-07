@@ -389,28 +389,32 @@ static flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {
     }
 }
 
-int main() {
-    // Initialize board first (sets up clocks, etc)here are a    board_init();
-    
-    // Set MAC from board ID BEFORE TinyUSB init
-    net_mac_init();
+// Startup states
+typedef enum {
+    BOOT_INIT,
+    BOOT_I2C_SETTLE,
+    BOOT_SENSOR_DETECT,
+    BOOT_PYRO_INIT,
+    BOOT_CONTINUITY,
+    BOOT_STABILIZE,
+    BOOT_CALIBRATE,
+    BOOT_MDNS,
+    BOOT_DONE
+} boot_state_t;
 
-    // Initialize TinyUSB BEFORE stdio
+int main() {
+    board_init();
+    net_mac_init();
     tud_init(BOARD_TUD_RHPORT);
-    
-    // Initialize stdio (USB and/or UART)
     stdio_init_all();
-    
-    printf("Pyro MK1B Flight Computer\n");
-    
-    // Init UART0 for telemetry FIRST so we can see debug messages
+
     uart_init(uart0, 115200);
     gpio_set_function(0, GPIO_FUNC_UART);
     gpio_set_function(1, GPIO_FUNC_UART);
     uart_puts(uart0, "UART initialized\r\n");
     uart_puts(uart0, "Pyro MK1B v" FW_VERSION " (" FW_BUILD_DATE ")\r\n");
-    
-    // Create config.ini with defaults if it doesn't exist
+
+    // Filesystem init (fast, no delays needed)
     extern const struct lfs_config lfs_pico_flash_config;
     {
         lfs_t lfs;
@@ -423,10 +427,9 @@ int main() {
         lfs_file_t config_file;
         err = lfs_file_open(&lfs, &config_file, "config.ini", LFS_O_RDONLY);
         if (err == LFS_ERR_NOENT) {
-            uart_puts(uart0, "Creating config.ini...\r\n");
             err = lfs_file_open(&lfs, &config_file, "config.ini", LFS_O_WRONLY | LFS_O_CREAT);
             if (err == LFS_ERR_OK) {
-                const char *config = 
+                const char *config =
                     "[pyro]\r\n"
                     "id=PYRO001\r\n"
                     "name=My Rocket\r\n"
@@ -438,98 +441,135 @@ int main() {
                     "beep_mode=digits\r\n";
                 lfs_file_write(&lfs, &config_file, config, strlen(config));
                 lfs_file_close(&lfs, &config_file);
-                uart_puts(uart0, "config.ini created\r\n");
             }
         } else if (err == LFS_ERR_OK) {
             lfs_file_close(&lfs, &config_file);
         }
         lfs_unmount(&lfs);
     }
-    
+
     net_init();
     net_start();
     http_server_init();
     uart_puts(uart0, "network ready\r\n");
-    
-    // Commit firmware before any I2C activity to avoid interrupting bus transactions
+
     pfb_firmware_commit();
 
-    sleep_ms(500);
-    uart_puts(uart0, "I2C init...\r\n");
-
-    i2c_deinit(i2c1);
-    
-    pressure_sensor_type_t sensor = pressure_sensor_init();
-
-
-    if (sensor == PRESSURE_SENSOR_NONE) {
-        uart_puts(uart0, "No pressure sensor!\r\n");
-    } else {
-        uart_puts(uart0, pressure_sensor_name());
-        uart_puts(uart0, " detected\r\n");
-    }
-
-    adc_gpio_init(26);
-    adc_gpio_init(27);
-
-    gpio_init(BUZZER);
-    gpio_set_dir(BUZZER, GPIO_OUT);
-    gpio_put(BUZZER, 0);
-    
     // Init context
     flight_context_t ctx = {0};
     ctx.config = (config_t){"PYRO001", "PYRO001", 1, 300, 1, 150};
     ctx.current_state = PAD_IDLE;
-    
-    // Continuity check
-    pyro_init();
-    uart_puts(uart0, "pyro init done\r\n");
 
-    pyro_continuity_t cont1, cont2;
-    pyro_check_continuity(&cont1, &cont2);
-    ctx.pyro1_continuity_good = cont1.good;
-    ctx.pyro2_continuity_good = cont2.good;
+    adc_gpio_init(26);
+    adc_gpio_init(27);
+    gpio_init(BUZZER);
+    gpio_set_dir(BUZZER, GPIO_OUT);
+    gpio_put(BUZZER, 0);
 
-    uart_puts(uart0, "calibrating...\r\n");
-    sleep_ms(2000);  /* let sensor stabilize before calibration */
+    // Boot state machine
+    boot_state_t boot = BOOT_I2C_SETTLE;
+    uint32_t boot_timer = to_ms_since_boot(get_absolute_time());
+    int cal_count = 0;
+    int32_t cal_sum = 0;
+    static uint32_t last_hb = 0;
 
-    int32_t sum = 0;
-    for (int i = 0; i < 10; i++) {
-        pressure_reading_t data;
-        pressure_sensor_read(&data);
-        sum += data.pressure_pa;
-        sleep_ms(100);
-    }
-    ctx.ground_pressure = sum / 10;
+    uart_puts(uart0, "I2C init...\r\n");
+    i2c_deinit(i2c1);
 
-    char dbg[64];
-    snprintf(dbg, sizeof(dbg), "ground_pressure=%ld\r\n", (long)ctx.ground_pressure);
-    uart_puts(uart0, dbg);
-
-    /* Start mDNS after init is complete */
-    uart_puts(uart0, "starting mDNS...\r\n");
-    net_mdns_poll();
-    uart_puts(uart0, "mDNS started\r\n");
-    
-    uart_puts(uart0, "entering main loop\r\n");
     while (1) {
         uint32_t now = to_ms_since_boot(get_absolute_time());
 
         tud_task();
         net_service();
 
-        /* Handle deferred picotool reset (safe — I2C is idle here) */
+        /* Handle deferred picotool reset */
         extern volatile uint8_t pending_reset;
         if (pending_reset == 1) rom_reset_usb_boot(0, 0);
         if (pending_reset == 2) watchdog_reboot(0, 0, 100);
 
-        // Update pyro fire state
+        /* ── Boot state machine (non-blocking) ──────────────── */
+        if (boot != BOOT_DONE) {
+            switch (boot) {
+            case BOOT_I2C_SETTLE:
+                if (now - boot_timer >= 500) {
+                    boot = BOOT_SENSOR_DETECT;
+                }
+                break;
+
+            case BOOT_SENSOR_DETECT: {
+                pressure_sensor_type_t sensor = pressure_sensor_init();
+                if (sensor == PRESSURE_SENSOR_NONE) {
+                    uart_puts(uart0, "No pressure sensor!\r\n");
+                } else {
+                    uart_puts(uart0, pressure_sensor_name());
+                    uart_puts(uart0, " detected\r\n");
+                }
+                boot = BOOT_PYRO_INIT;
+                break;
+            }
+
+            case BOOT_PYRO_INIT:
+                pyro_init();
+                uart_puts(uart0, "pyro init done\r\n");
+                boot = BOOT_CONTINUITY;
+                break;
+
+            case BOOT_CONTINUITY: {
+                pyro_continuity_t cont1, cont2;
+                pyro_check_continuity(&cont1, &cont2);
+                ctx.pyro1_continuity_good = cont1.good;
+                ctx.pyro2_continuity_good = cont2.good;
+                uart_puts(uart0, "calibrating...\r\n");
+                boot_timer = now;
+                boot = BOOT_STABILIZE;
+                break;
+            }
+
+            case BOOT_STABILIZE:
+                if (now - boot_timer >= 2000) {
+                    cal_count = 0;
+                    cal_sum = 0;
+                    boot_timer = now;
+                    boot = BOOT_CALIBRATE;
+                }
+                break;
+
+            case BOOT_CALIBRATE:
+                if (now - boot_timer >= 100) {
+                    boot_timer = now;
+                    pressure_reading_t data;
+                    pressure_sensor_read(&data);
+                    cal_sum += data.pressure_pa;
+                    cal_count++;
+                    if (cal_count >= 10) {
+                        ctx.ground_pressure = cal_sum / 10;
+                        char dbg[64];
+                        snprintf(dbg, sizeof(dbg), "ground_pressure=%ld\r\n", (long)ctx.ground_pressure);
+                        uart_puts(uart0, dbg);
+                        boot = BOOT_MDNS;
+                    }
+                }
+                break;
+
+            case BOOT_MDNS:
+                uart_puts(uart0, "starting mDNS...\r\n");
+                net_mdns_poll();
+                uart_puts(uart0, "mDNS started\r\n");
+                uart_puts(uart0, "entering main loop\r\n");
+                boot = BOOT_DONE;
+                break;
+
+            default:
+                boot = BOOT_DONE;
+                break;
+            }
+            continue;  /* skip flight logic during boot */
+        }
+
+        /* ── Flight logic ───────────────────────────────────── */
         pyro_update(now);
-        
-        // Run current state and get next state
         ctx.current_state = dispatch_state(&ctx, now);
-        
-        // Update shared status for HTTP dashboard
+
         g_status.state = ctx.current_state;
         g_status.altitude_cm = ctx.last_altitude;
         g_status.max_altitude_cm = ctx.max_altitude;
@@ -541,21 +581,8 @@ int main() {
         g_status.pyro1_continuity = ctx.pyro1_continuity_good;
         g_status.pyro2_continuity = ctx.pyro2_continuity_good;
         g_status.flight_time_ms = (ctx.launch_time > 0) ? (now - ctx.launch_time) : 0;
-        
-        // Telemetry at 1Hz - TEMPORARILY DISABLED FOR DEBUG
-        /*
-        if (now - ctx.last_telemetry >= 1000) {
-            pressure_reading_t pdata;
-            pressure_sensor_read(&pdata);
-            int32_t altitude = pressure_to_altitude_cm((int32_t)pdata.pressure_pa, ctx.ground_pressure);
-            uint32_t flight_time = (ctx.current_state != PAD_IDLE) ? (now - ctx.launch_time) : 0;
-            send_telemetry(&ctx, flight_time, altitude, ctx.current_state);
-            ctx.last_telemetry = now;
-        }
-        */
-        
+
         // Heartbeat on UART every second
-        static uint32_t last_hb;
         if (now - last_hb >= 1000) {
             last_hb = now;
             char hb[48];
@@ -563,9 +590,7 @@ int main() {
                      (unsigned long)now, (long)g_status.pressure_pa);
             uart_puts(uart0, hb);
         }
-
-        // No sleep - tud_task() needs to run as fast as possible for USB
     }
-    
+
     return 0;
 }
