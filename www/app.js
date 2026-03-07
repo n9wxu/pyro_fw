@@ -106,80 +106,19 @@ function checkUpdate() {
         msg.style.color = 'green';
         msg.textContent = ' Up to date (v' + ver + ')';
       } else {
+        var asset = rel.assets.find(a => a.name === ASSET_NAME);
+        if (!asset) throw new Error(ASSET_NAME + ' not found in release');
         msg.style.color = 'blue';
-        msg.innerHTML = ' Update available: v' + currentVersion + ' → v' + ver +
-          ' <button onclick="doUpdate(\'' + rel.tag_name + '\')">⬆ Install</button>';
+        msg.innerHTML = ' v' + currentVersion + ' → v' + ver +
+          ' <a href="' + asset.browser_download_url + '">⬇ Download</a>' +
+          ' then use Upload Firmware below.' +
+          '<br><small>Or run: <code>python3 support/update_from_release.py</code></small>';
       }
     })
     .catch(e => {
       msg.style.color = 'red';
-      msg.textContent = ' Cannot reach GitHub: ' + e.message;
+      msg.textContent = ' ' + e.message;
     });
-}
-
-function doUpdate(tag) {
-  var msg = document.getElementById('updmsg');
-  msg.style.color = 'orange';
-  msg.textContent = ' Downloading from GitHub...';
-  fetch('https://api.github.com/repos/' + GITHUB_REPO + '/releases/tags/' + tag)
-    .then(r => r.json())
-    .then(rel => {
-      var asset = rel.assets.find(a => a.name === ASSET_NAME);
-      if (!asset) throw new Error(ASSET_NAME + ' not found in release');
-      return fetch(asset.browser_download_url);
-    })
-    .then(r => {
-      if (!r.ok) throw new Error('Download failed: ' + r.status);
-      return r.arrayBuffer();
-    })
-    .then(buf => {
-      if (buf.byteLength < 1000) throw new Error('Download too small (' + buf.byteLength + 'b) - not a firmware file');
-      msg.textContent = ' Flashing ' + buf.byteLength + ' bytes to device...';
-      console.log('OTA: posting ' + buf.byteLength + ' bytes to /api/ota');
-      var body = new Uint8Array(buf);
-      return fetch('/api/ota', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'Content-Length': body.length.toString()
-        },
-        body: body
-      });
-    })
-    .then(r => {
-      msg.style.color = r.ok ? 'green' : 'red';
-      msg.textContent = r.ok ? ' Done, rebooting...' : ' OTA failed: ' + r.status;
-      if (r.ok) waitForReboot(msg);
-    })
-    .catch(e => {
-      if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
-        msg.style.color = 'green';
-        msg.textContent = ' Rebooting...';
-        waitForReboot(msg);
-      } else {
-        msg.style.color = 'red';
-        msg.textContent = ' Error: ' + e.message;
-      }
-    });
-}
-
-function waitForReboot(msg) {
-  var attempts = 0;
-  var poll = setInterval(function() {
-    attempts++;
-    if (attempts > 30) {
-      clearInterval(poll);
-      msg.textContent = ' Device not responding. Refresh manually.';
-      msg.style.color = 'red';
-      return;
-    }
-    fetch('/api/status').then(r => r.json()).then(d => {
-      clearInterval(poll);
-      msg.style.color = 'green';
-      msg.textContent = ' Updated to v' + d.fw_version;
-      currentVersion = d.fw_version;
-    }).catch(() => {});
-  }, 2000);
 }
 
 update();
