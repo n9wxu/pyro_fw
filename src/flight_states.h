@@ -25,14 +25,28 @@ typedef enum {
 // Pyro firing modes
 typedef enum { PYRO_MODE_FALLEN = 1, PYRO_MODE_AGL, PYRO_MODE_SPEED, PYRO_MODE_DELAY } pyro_mode_t;
 
-// Flight sample
+// Event types (stored in flight_sample_t.event)
+#define EVT_NONE          0
+#define EVT_LAUNCH         1
+#define EVT_APOGEE         2
+#define EVT_PYRO1_FIRE     3
+#define EVT_PYRO2_FIRE     4
+#define EVT_PYRO1_CONT     5   /* data1 = adc */
+#define EVT_PYRO2_CONT     6   /* data1 = adc */
+#define EVT_LANDING        7
+#define EVT_STATE_CHANGE   8   /* data1 = new state */
+#define EVT_ARMED          9
+#define EVT_BOOT_DONE     10
+
+// Flight sample (16 bytes)
 typedef struct {
     uint32_t time_ms;
-    int32_t pressure_pa;
-    int32_t altitude_cm;
+    int32_t pressure_pa;    /* or event data1 */
+    int32_t altitude_cm;    /* or event data2 */
     uint8_t state;
     uint8_t under_thrust;
-    uint8_t padding[2];
+    uint8_t event;          /* EVT_NONE = normal sample */
+    uint8_t event_data;     /* extra byte for event info */
 } flight_sample_t;
 
 // Config
@@ -101,6 +115,7 @@ void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm
 
 // Helpers used by state functions
 void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t altitude, uint8_t st);
+void buf_add_event(flight_context_t *ctx, uint32_t time_ms, uint8_t event, int32_t data1, int32_t data2);
 int32_t filter_pressure(flight_context_t *ctx, int32_t raw_pressure, uint32_t dt_ms);
 int32_t pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa);
 
