@@ -121,10 +121,7 @@ function doUpdate(tag) {
     .then(rel => {
       var asset = rel.assets.find(a => a.name === ASSET_NAME);
       if (!asset) throw new Error(ASSET_NAME + ' not found in release');
-      // Use API URL with Accept header to get binary directly
-      return fetch(asset.url, {
-        headers: { 'Accept': 'application/octet-stream' }
-      });
+      return fetch(asset.browser_download_url);
     })
     .then(r => {
       if (!r.ok) throw new Error('Download failed: ' + r.status);
@@ -133,14 +130,19 @@ function doUpdate(tag) {
     .then(buf => {
       if (buf.byteLength < 1000) throw new Error('Download too small (' + buf.byteLength + 'b) - not a firmware file');
       msg.textContent = ' Flashing ' + buf.byteLength + ' bytes...';
+      var body = new Uint8Array(buf);
       return fetch('/api/ota', {
         method: 'POST',
-        body: new Uint8Array(buf)
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': body.length.toString()
+        },
+        body: body
       });
     })
     .then(r => {
-      msg.style.color = 'green';
-      msg.textContent = ' Done, rebooting...';
+      msg.style.color = r.ok ? 'green' : 'red';
+      msg.textContent = r.ok ? ' Done, rebooting...' : ' OTA failed: ' + r.status;
     })
     .catch(e => {
       if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
