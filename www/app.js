@@ -90,8 +90,12 @@ function checkUpdate() {
     return;
   }
   fetch('https://api.github.com/repos/' + GITHUB_REPO + '/releases/latest')
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok) throw new Error('No releases found (HTTP ' + r.status + ')');
+      return r.json();
+    })
     .then(rel => {
+      if (!rel.tag_name) throw new Error('No releases published yet');
       var ver = rel.tag_name.replace(/^v/, '');
       if (ver === currentVersion) {
         msg.style.color = 'green';
