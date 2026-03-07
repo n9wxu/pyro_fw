@@ -30,8 +30,23 @@ void http_server_init(void);
 // GPIO Pins
 #define BUZZER 16
 
-// Flight states
-typedef enum { PAD_IDLE, ASCENT, DESCENT, LANDED } flight_state_t;
+// System states (boot + flight)
+typedef enum {
+    // Boot sequence
+    BOOT_FILESYSTEM,
+    BOOT_I2C_SETTLE,
+    BOOT_SENSOR_DETECT,
+    BOOT_PYRO_INIT,
+    BOOT_CONTINUITY,
+    BOOT_STABILIZE,
+    BOOT_CALIBRATE,
+    BOOT_MDNS,
+    // Flight sequence
+    PAD_IDLE,
+    ASCENT,
+    DESCENT,
+    LANDED
+} flight_state_t;
 
 // Pyro firing modes
 typedef enum { PYRO_MODE_FALLEN = 1, PYRO_MODE_AGL, PYRO_MODE_SPEED, PYRO_MODE_DELAY } pyro_mode_t;
@@ -93,6 +108,10 @@ typedef struct flight_context_t {
     flight_state_t current_state;
     int32_t filtered_pressure;
     bool filter_initialized;
+    // Boot state fields
+    uint32_t boot_timer;
+    int cal_count;
+    int32_t cal_sum;
 } flight_context_t;
 
 // State dispatch - defined after state functions
@@ -185,6 +204,136 @@ bool should_fire_pyro(flight_context_t *ctx, uint8_t mode, uint16_t value) {
         default: return false;
     }
 }
+
+// ── Boot state functions ──
+
+flight_state_t state_boot_filesystem(flight_context_t *ctx, uint32_t now) {
+    (void)ctx; (void)now;
+    extern const struct lfs_config lfs_pico_flash_config;
+    lfs_t lfs;
+    int err = lfs_mount(&lfs, &lfs_pico_flash_config);
+    if (err < 0) {
+        lfs_format(&lfs, &lfs_pico_flash_config);
+        lfs_mount(&lfs, &lfs_pico_flash_config);
+    }
+    uart_puts(uart0, "littlefs mounted\r\n");
+    lfs_file_t config_file;
+    err = lfs_file_open(&lfs, &config_file, "config.ini", LFS_O_RDONLY);
+    if (err == LFS_ERR_NOENT) {
+        err = lfs_file_open(&lfs, &config_file, "config.ini", LFS_O_WRONLY | LFS_O_CREAT);
+        if (err == LFS_ERR_OK) {
+            const char *config =
+                "[pyro]\r\n"
+                "id=PYRO001\r\n"
+                "name=My Rocket\r\n"
+                "pyro1_mode=delay\r\n"
+                "pyro1_value=0\r\n"
+                "pyro2_mode=agl\r\n"
+                "pyro2_value=300\r\n"
+                "units=m\r\n"
+                "beep_mode=digits\r\n";
+            lfs_file_write(&lfs, &config_file, config, strlen(config));
+            lfs_file_close(&lfs, &config_file);
+        }
+    } else if (err == LFS_ERR_OK) {
+        lfs_file_close(&lfs, &config_file);
+    }
+    lfs_unmount(&lfs);
+
+    net_init();
+    net_start();
+    http_server_init();
+    uart_puts(uart0, "network ready\r\n");
+
+    pfb_firmware_commit();
+
+    adc_gpio_init(26);
+    adc_gpio_init(27);
+    gpio_init(BUZZER);
+    gpio_set_dir(BUZZER, GPIO_OUT);
+    gpio_put(BUZZER, 0);
+
+    uart_puts(uart0, "I2C init...\r\n");
+    i2c_deinit(i2c1);
+
+    ctx->boot_timer = to_ms_since_boot(get_absolute_time());
+    return BOOT_I2C_SETTLE;
+}
+
+flight_state_t state_boot_i2c_settle(flight_context_t *ctx, uint32_t now) {
+    if (now - ctx->boot_timer >= 500) {
+        return BOOT_SENSOR_DETECT;
+    }
+    return BOOT_I2C_SETTLE;
+}
+
+flight_state_t state_boot_sensor_detect(flight_context_t *ctx, uint32_t now) {
+    (void)now;
+    pressure_sensor_type_t sensor = pressure_sensor_init();
+    if (sensor == PRESSURE_SENSOR_NONE) {
+        uart_puts(uart0, "No pressure sensor!\r\n");
+    } else {
+        uart_puts(uart0, pressure_sensor_name());
+        uart_puts(uart0, " detected\r\n");
+    }
+    return BOOT_PYRO_INIT;
+}
+
+flight_state_t state_boot_pyro_init(flight_context_t *ctx, uint32_t now) {
+    (void)now;
+    pyro_init();
+    uart_puts(uart0, "pyro init done\r\n");
+    return BOOT_CONTINUITY;
+}
+
+flight_state_t state_boot_continuity(flight_context_t *ctx, uint32_t now) {
+    pyro_continuity_t cont1, cont2;
+    pyro_check_continuity(&cont1, &cont2);
+    ctx->pyro1_continuity_good = cont1.good;
+    ctx->pyro2_continuity_good = cont2.good;
+    uart_puts(uart0, "calibrating...\r\n");
+    ctx->boot_timer = now;
+    return BOOT_STABILIZE;
+}
+
+flight_state_t state_boot_stabilize(flight_context_t *ctx, uint32_t now) {
+    if (now - ctx->boot_timer >= 2000) {
+        ctx->cal_count = 0;
+        ctx->cal_sum = 0;
+        ctx->boot_timer = now;
+        return BOOT_CALIBRATE;
+    }
+    return BOOT_STABILIZE;
+}
+
+flight_state_t state_boot_calibrate(flight_context_t *ctx, uint32_t now) {
+    if (now - ctx->boot_timer >= 100) {
+        ctx->boot_timer = now;
+        pressure_reading_t data;
+        pressure_sensor_read(&data);
+        ctx->cal_sum += data.pressure_pa;
+        ctx->cal_count++;
+        if (ctx->cal_count >= 10) {
+            ctx->ground_pressure = ctx->cal_sum / 10;
+            char dbg[64];
+            snprintf(dbg, sizeof(dbg), "ground_pressure=%ld\r\n", (long)ctx->ground_pressure);
+            uart_puts(uart0, dbg);
+            return BOOT_MDNS;
+        }
+    }
+    return BOOT_CALIBRATE;
+}
+
+flight_state_t state_boot_mdns(flight_context_t *ctx, uint32_t now) {
+    (void)ctx; (void)now;
+    uart_puts(uart0, "starting mDNS...\r\n");
+    net_mdns_poll();
+    uart_puts(uart0, "mDNS started\r\n");
+    uart_puts(uart0, "entering PAD_IDLE\r\n");
+    return PAD_IDLE;
+}
+
+// ── Flight state functions ──
 
 // Forward declarations
 flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now);
@@ -381,6 +530,16 @@ flight_state_t state_landed(flight_context_t *ctx, uint32_t now) {
 
 static flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {
     switch (ctx->current_state) {
+        // Boot states
+        case BOOT_FILESYSTEM:    return state_boot_filesystem(ctx, now);
+        case BOOT_I2C_SETTLE:    return state_boot_i2c_settle(ctx, now);
+        case BOOT_SENSOR_DETECT: return state_boot_sensor_detect(ctx, now);
+        case BOOT_PYRO_INIT:     return state_boot_pyro_init(ctx, now);
+        case BOOT_CONTINUITY:    return state_boot_continuity(ctx, now);
+        case BOOT_STABILIZE:     return state_boot_stabilize(ctx, now);
+        case BOOT_CALIBRATE:     return state_boot_calibrate(ctx, now);
+        case BOOT_MDNS:          return state_boot_mdns(ctx, now);
+        // Flight states
         case PAD_IDLE: return state_pad_idle(ctx, now);
         case ASCENT:   return state_ascent(ctx, now);
         case DESCENT:  return state_descent(ctx, now);
@@ -388,19 +547,6 @@ static flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {
         default:       return PAD_IDLE;
     }
 }
-
-// Startup states
-typedef enum {
-    BOOT_INIT,
-    BOOT_I2C_SETTLE,
-    BOOT_SENSOR_DETECT,
-    BOOT_PYRO_INIT,
-    BOOT_CONTINUITY,
-    BOOT_STABILIZE,
-    BOOT_CALIBRATE,
-    BOOT_MDNS,
-    BOOT_DONE
-} boot_state_t;
 
 int main() {
     board_init();
@@ -414,67 +560,11 @@ int main() {
     uart_puts(uart0, "UART initialized\r\n");
     uart_puts(uart0, "Pyro MK1B v" FW_VERSION " (" FW_BUILD_DATE ")\r\n");
 
-    // Filesystem init (fast, no delays needed)
-    extern const struct lfs_config lfs_pico_flash_config;
-    {
-        lfs_t lfs;
-        int err = lfs_mount(&lfs, &lfs_pico_flash_config);
-        if (err < 0) {
-            lfs_format(&lfs, &lfs_pico_flash_config);
-            lfs_mount(&lfs, &lfs_pico_flash_config);
-        }
-        uart_puts(uart0, "littlefs mounted\r\n");
-        lfs_file_t config_file;
-        err = lfs_file_open(&lfs, &config_file, "config.ini", LFS_O_RDONLY);
-        if (err == LFS_ERR_NOENT) {
-            err = lfs_file_open(&lfs, &config_file, "config.ini", LFS_O_WRONLY | LFS_O_CREAT);
-            if (err == LFS_ERR_OK) {
-                const char *config =
-                    "[pyro]\r\n"
-                    "id=PYRO001\r\n"
-                    "name=My Rocket\r\n"
-                    "pyro1_mode=delay\r\n"
-                    "pyro1_value=0\r\n"
-                    "pyro2_mode=agl\r\n"
-                    "pyro2_value=300\r\n"
-                    "units=m\r\n"
-                    "beep_mode=digits\r\n";
-                lfs_file_write(&lfs, &config_file, config, strlen(config));
-                lfs_file_close(&lfs, &config_file);
-            }
-        } else if (err == LFS_ERR_OK) {
-            lfs_file_close(&lfs, &config_file);
-        }
-        lfs_unmount(&lfs);
-    }
-
-    net_init();
-    net_start();
-    http_server_init();
-    uart_puts(uart0, "network ready\r\n");
-
-    pfb_firmware_commit();
-
-    // Init context
     flight_context_t ctx = {0};
     ctx.config = (config_t){"PYRO001", "PYRO001", 1, 300, 1, 150};
-    ctx.current_state = PAD_IDLE;
+    ctx.current_state = BOOT_FILESYSTEM;
 
-    adc_gpio_init(26);
-    adc_gpio_init(27);
-    gpio_init(BUZZER);
-    gpio_set_dir(BUZZER, GPIO_OUT);
-    gpio_put(BUZZER, 0);
-
-    // Boot state machine
-    boot_state_t boot = BOOT_I2C_SETTLE;
-    uint32_t boot_timer = to_ms_since_boot(get_absolute_time());
-    int cal_count = 0;
-    int32_t cal_sum = 0;
     static uint32_t last_hb = 0;
-
-    uart_puts(uart0, "I2C init...\r\n");
-    i2c_deinit(i2c1);
 
     while (1) {
         uint32_t now = to_ms_since_boot(get_absolute_time());
@@ -487,89 +577,13 @@ int main() {
         if (pending_reset == 1) rom_reset_usb_boot(0, 0);
         if (pending_reset == 2) watchdog_reboot(0, 0, 100);
 
-        /* ── Boot state machine (non-blocking) ──────────────── */
-        if (boot != BOOT_DONE) {
-            switch (boot) {
-            case BOOT_I2C_SETTLE:
-                if (now - boot_timer >= 500) {
-                    boot = BOOT_SENSOR_DETECT;
-                }
-                break;
-
-            case BOOT_SENSOR_DETECT: {
-                pressure_sensor_type_t sensor = pressure_sensor_init();
-                if (sensor == PRESSURE_SENSOR_NONE) {
-                    uart_puts(uart0, "No pressure sensor!\r\n");
-                } else {
-                    uart_puts(uart0, pressure_sensor_name());
-                    uart_puts(uart0, " detected\r\n");
-                }
-                boot = BOOT_PYRO_INIT;
-                break;
-            }
-
-            case BOOT_PYRO_INIT:
-                pyro_init();
-                uart_puts(uart0, "pyro init done\r\n");
-                boot = BOOT_CONTINUITY;
-                break;
-
-            case BOOT_CONTINUITY: {
-                pyro_continuity_t cont1, cont2;
-                pyro_check_continuity(&cont1, &cont2);
-                ctx.pyro1_continuity_good = cont1.good;
-                ctx.pyro2_continuity_good = cont2.good;
-                uart_puts(uart0, "calibrating...\r\n");
-                boot_timer = now;
-                boot = BOOT_STABILIZE;
-                break;
-            }
-
-            case BOOT_STABILIZE:
-                if (now - boot_timer >= 2000) {
-                    cal_count = 0;
-                    cal_sum = 0;
-                    boot_timer = now;
-                    boot = BOOT_CALIBRATE;
-                }
-                break;
-
-            case BOOT_CALIBRATE:
-                if (now - boot_timer >= 100) {
-                    boot_timer = now;
-                    pressure_reading_t data;
-                    pressure_sensor_read(&data);
-                    cal_sum += data.pressure_pa;
-                    cal_count++;
-                    if (cal_count >= 10) {
-                        ctx.ground_pressure = cal_sum / 10;
-                        char dbg[64];
-                        snprintf(dbg, sizeof(dbg), "ground_pressure=%ld\r\n", (long)ctx.ground_pressure);
-                        uart_puts(uart0, dbg);
-                        boot = BOOT_MDNS;
-                    }
-                }
-                break;
-
-            case BOOT_MDNS:
-                uart_puts(uart0, "starting mDNS...\r\n");
-                net_mdns_poll();
-                uart_puts(uart0, "mDNS started\r\n");
-                uart_puts(uart0, "entering main loop\r\n");
-                boot = BOOT_DONE;
-                break;
-
-            default:
-                boot = BOOT_DONE;
-                break;
-            }
-            continue;  /* skip flight logic during boot */
-        }
-
-        /* ── Flight logic ───────────────────────────────────── */
-        pyro_update(now);
+        /* Unified state machine: boot → flight */
         ctx.current_state = dispatch_state(&ctx, now);
 
+        /* Update pyro (safe during boot — pyro_init hasn't run yet, pyro_update is a no-op) */
+        pyro_update(now);
+
+        /* Update shared status for HTTP dashboard */
         g_status.state = ctx.current_state;
         g_status.altitude_cm = ctx.last_altitude;
         g_status.max_altitude_cm = ctx.max_altitude;
@@ -582,7 +596,7 @@ int main() {
         g_status.pyro2_continuity = ctx.pyro2_continuity_good;
         g_status.flight_time_ms = (ctx.launch_time > 0) ? (now - ctx.launch_time) : 0;
 
-        // Heartbeat on UART every second
+        /* Heartbeat */
         if (now - last_hb >= 1000) {
             last_hb = now;
             char hb[48];
