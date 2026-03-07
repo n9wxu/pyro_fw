@@ -4,12 +4,9 @@
  * SPDX-License-Identifier: MIT
  */
 #include "flight_states.h"
-#include "device_status.h"
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "hardware/uart.h"
-
-extern volatile device_status_t g_status;
 
 static uint8_t telemetry_state_id(flight_state_t state) {
     switch (state) {
@@ -44,8 +41,8 @@ void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm
              (long)ctx->filtered_pressure,
              (unsigned long)time_ms,
              flags,
-             g_status.pyro1_adc,
-             g_status.pyro2_adc,
+             ctx->pyro1_adc,
+             ctx->pyro2_adc,
              0,
              0);
 

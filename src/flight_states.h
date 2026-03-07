@@ -73,6 +73,8 @@ typedef struct flight_context_t {
     bool apogee_detected;
     bool under_thrust;
     uint16_t telemetry_seq;
+    uint16_t pyro1_adc;
+    uint16_t pyro2_adc;
     uint8_t pyro_firing;
     uint32_t pyro_fire_start;
     uint32_t pyro1_fire_time;
@@ -85,6 +87,8 @@ typedef struct flight_context_t {
     uint32_t boot_timer;
     int cal_count;
     int32_t cal_sum;
+    // PAD_IDLE state
+    uint32_t last_cont_check;
 } flight_context_t;
 
 // State dispatch

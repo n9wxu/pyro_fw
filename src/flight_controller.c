@@ -68,6 +68,8 @@ int main() {
         g_status.pyros_armed = ctx.pyros_armed;
         g_status.pyro1_continuity = ctx.pyro1_continuity_good;
         g_status.pyro2_continuity = ctx.pyro2_continuity_good;
+        g_status.pyro1_adc = ctx.pyro1_adc;
+        g_status.pyro2_adc = ctx.pyro2_adc;
         g_status.under_thrust = ctx.under_thrust;
         g_status.flight_time_ms = (ctx.launch_time > 0) ? (now - ctx.launch_time) : 0;
 

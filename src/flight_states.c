@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: MIT
  */
 #include "flight_states.h"
-#include "device_status.h"
 #include "pressure_sensor.h"
 #include "pyro.h"
 #include <stdio.h>
@@ -17,7 +16,6 @@
 #include <lfs.h>
 #include <pico_fota_bootloader/core.h>
 
-extern volatile device_status_t g_status;
 extern const struct lfs_config lfs_pico_flash_config;
 
 /* Network functions (defined in net_glue.c / http_server.c) */
@@ -211,15 +209,14 @@ flight_state_t state_boot_mdns(flight_context_t *ctx, uint32_t now) {
 flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 10) return PAD_IDLE;
 
-    static uint32_t last_cont_check = 0;
-    if (now - last_cont_check > 1000) {
+    if (now - ctx->last_cont_check > 1000) {
         pyro_continuity_t c1, c2;
         pyro_check_continuity(&c1, &c2);
         ctx->pyro1_continuity_good = c1.good;
         ctx->pyro2_continuity_good = c2.good;
-        g_status.pyro1_adc = c1.raw_adc;
-        g_status.pyro2_adc = c2.raw_adc;
-        last_cont_check = now;
+        ctx->pyro1_adc = c1.raw_adc;
+        ctx->pyro2_adc = c2.raw_adc;
+        ctx->last_cont_check = now;
     }
 
     pressure_reading_t pdata;
