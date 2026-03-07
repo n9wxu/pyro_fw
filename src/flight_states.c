@@ -98,7 +98,7 @@ flight_state_t state_boot_filesystem(flight_context_t *ctx, uint32_t now) {
         lfs_format(&lfs, &lfs_pico_flash_config);
         lfs_mount(&lfs, &lfs_pico_flash_config);
     }
-    uart_puts(uart0, "littlefs mounted\r\n");
+    (void)0;
     lfs_file_t config_file;
     err = lfs_file_open(&lfs, &config_file, "config.ini", LFS_O_RDONLY);
     if (err == LFS_ERR_NOENT) {
@@ -125,7 +125,7 @@ flight_state_t state_boot_filesystem(flight_context_t *ctx, uint32_t now) {
     net_init();
     net_start();
     http_server_init();
-    uart_puts(uart0, "network ready\r\n");
+    (void)0;
 
     pfb_firmware_commit();
 
@@ -133,7 +133,7 @@ flight_state_t state_boot_filesystem(flight_context_t *ctx, uint32_t now) {
     adc_gpio_init(27);
     buzzer_init();
 
-    uart_puts(uart0, "I2C init...\r\n");
+    (void)0;
     i2c_deinit(i2c1);
 
     ctx->boot_timer = to_ms_since_boot(get_absolute_time());
@@ -148,10 +148,10 @@ flight_state_t state_boot_sensor_detect(flight_context_t *ctx, uint32_t now) {
     (void)ctx; (void)now;
     pressure_sensor_type_t sensor = pressure_sensor_init();
     if (sensor == PRESSURE_SENSOR_NONE)
-        uart_puts(uart0, "No pressure sensor!\r\n");
+        (void)0;
     else {
-        uart_puts(uart0, pressure_sensor_name());
-        uart_puts(uart0, " detected\r\n");
+        (void)0;
+        (void)0;
     }
     return BOOT_PYRO_INIT;
 }
@@ -159,7 +159,7 @@ flight_state_t state_boot_sensor_detect(flight_context_t *ctx, uint32_t now) {
 flight_state_t state_boot_pyro_init(flight_context_t *ctx, uint32_t now) {
     (void)ctx; (void)now;
     pyro_init();
-    uart_puts(uart0, "pyro init done\r\n");
+    (void)0;
     return BOOT_CONTINUITY;
 }
 
@@ -168,7 +168,7 @@ flight_state_t state_boot_continuity(flight_context_t *ctx, uint32_t now) {
     pyro_check_continuity(&cont1, &cont2);
     ctx->pyro1_continuity_good = cont1.good;
     ctx->pyro2_continuity_good = cont2.good;
-    uart_puts(uart0, "calibrating...\r\n");
+    (void)0;
     ctx->boot_timer = now;
     return BOOT_STABILIZE;
 }
@@ -192,9 +192,6 @@ flight_state_t state_boot_calibrate(flight_context_t *ctx, uint32_t now) {
         ctx->cal_count++;
         if (ctx->cal_count >= 10) {
             ctx->ground_pressure = ctx->cal_sum / 10;
-            char dbg[64];
-            snprintf(dbg, sizeof(dbg), "ground_pressure=%ld\r\n", (long)ctx->ground_pressure);
-            uart_puts(uart0, dbg);
             return BOOT_MDNS;
         }
     }
@@ -203,10 +200,10 @@ flight_state_t state_boot_calibrate(flight_context_t *ctx, uint32_t now) {
 
 flight_state_t state_boot_mdns(flight_context_t *ctx, uint32_t now) {
     (void)ctx; (void)now;
-    uart_puts(uart0, "starting mDNS...\r\n");
+    (void)0;
     net_mdns_poll();
-    uart_puts(uart0, "mDNS started\r\n");
-    uart_puts(uart0, "entering PAD_IDLE\r\n");
+    (void)0;
+    (void)0;
     return PAD_IDLE;
 }
 

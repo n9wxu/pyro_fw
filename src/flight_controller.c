@@ -32,8 +32,6 @@ int main() {
     uart_init(uart0, 115200);
     gpio_set_function(0, GPIO_FUNC_UART);
     gpio_set_function(1, GPIO_FUNC_UART);
-    uart_puts(uart0, "UART initialized\r\n");
-    uart_puts(uart0, "Pyro MK1B v" FW_VERSION " (" FW_BUILD_DATE ")\r\n");
 
     flight_context_t ctx = {0};
     ctx.config = (config_t){"PYRO001", "PYRO001", 1, 300, 1, 150};
