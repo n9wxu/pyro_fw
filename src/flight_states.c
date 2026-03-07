@@ -362,6 +362,13 @@ flight_state_t state_descent(flight_context_t *ctx, uint32_t now) {
 }
 
 flight_state_t state_landed(flight_context_t *ctx, uint32_t now) {
+    /* Start altitude beep-out once */
+    if (!ctx->landed_beep_started) {
+        ctx->landed_beep_started = true;
+        int32_t alt = cm_to_units(ctx->max_altitude, ctx->config.units);
+        buzzer_set_altitude(alt);
+    }
+
     if (now - ctx->last_sample < 1000) return LANDED;
 
     pressure_reading_t pdata;

@@ -25,6 +25,7 @@
 
 void buzzer_init(void);
 void buzzer_set_code(uint8_t code, bool repeat);
+void buzzer_set_altitude(int32_t altitude);  /* apogee beep-out, repeats forever */
 void buzzer_stop(void);
 void buzzer_update(uint32_t now_ms);
 bool buzzer_is_active(void);
