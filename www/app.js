@@ -143,16 +143,37 @@ function doUpdate(tag) {
     .then(r => {
       msg.style.color = r.ok ? 'green' : 'red';
       msg.textContent = r.ok ? ' Done, rebooting...' : ' OTA failed: ' + r.status;
+      if (r.ok) waitForReboot(msg);
     })
     .catch(e => {
       if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
         msg.style.color = 'green';
         msg.textContent = ' Rebooting...';
+        waitForReboot(msg);
       } else {
         msg.style.color = 'red';
         msg.textContent = ' Error: ' + e.message;
       }
     });
+}
+
+function waitForReboot(msg) {
+  var attempts = 0;
+  var poll = setInterval(function() {
+    attempts++;
+    if (attempts > 30) {
+      clearInterval(poll);
+      msg.textContent = ' Device not responding. Refresh manually.';
+      msg.style.color = 'red';
+      return;
+    }
+    fetch('/api/status').then(r => r.json()).then(d => {
+      clearInterval(poll);
+      msg.style.color = 'green';
+      msg.textContent = ' Updated to v' + d.fw_version;
+      currentVersion = d.fw_version;
+    }).catch(() => {});
+  }, 2000);
 }
 
 update();
