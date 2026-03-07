@@ -14,6 +14,7 @@
 #include "flight_states.h"
 #include "device_status.h"
 #include "pyro.h"
+#include "buzzer.h"
 #include "version.h"
 
 volatile device_status_t g_status = {0};
@@ -56,6 +57,7 @@ int main() {
 
         /* Update pyro */
         pyro_update(now);
+        buzzer_update(now);
 
         /* Update shared status for HTTP dashboard */
         g_status.state = ctx.current_state;

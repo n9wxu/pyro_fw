@@ -94,6 +94,7 @@ add_executable(pyro_fw_c
     src/flight_controller.c
     src/flight_states.c
     src/telemetry.c
+    src/buzzer.c
     src/pressure_sensor.c
     src/pyro.c
     src/ms5607_driver.c
@@ -148,6 +149,8 @@ add_executable(pyro_fw_c
         hardware_i2c
         hardware_adc
         hardware_uart
+        hardware_pwm
+        hardware_watchdog
         tinyusb_device
         tinyusb_board
         littlefs_lib
@@ -206,6 +209,7 @@ add_custom_target(host_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/mocks.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_flight_states
     COMMAND ${CMAKE_COMMAND} -E echo "Running tests..."

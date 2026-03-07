@@ -17,6 +17,7 @@
 #include "flight_states.h"
 #include "pressure_sensor.h"
 #include "pyro.h"
+#include "buzzer.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -133,6 +134,7 @@ flight_state_t state_boot_filesystem(flight_context_t *ctx, uint32_t now) {
     gpio_init(BUZZER);
     gpio_set_dir(BUZZER, GPIO_OUT);
     gpio_put(BUZZER, 0);
+    buzzer_init();
 
     uart_puts(uart0, "I2C init...\r\n");
     i2c_deinit(i2c1);
@@ -224,6 +226,13 @@ flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
         ctx->pyro1_adc = c1.raw_adc;
         ctx->pyro2_adc = c2.raw_adc;
         ctx->last_cont_check = now;
+
+        /* Update beep code based on continuity */
+        uint8_t code = BEEP_ALL_GOOD;
+        if (!c1.good) code = c1.open ? BEEP_P1_OPEN : BEEP_P1_SHORT;
+        else if (!c2.good) code = c2.open ? BEEP_P2_OPEN : BEEP_P2_SHORT;
+        if (!buzzer_is_active())
+            buzzer_set_code(code, true);
     }
 
     pressure_reading_t pdata;
@@ -237,6 +246,7 @@ flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
     ctx->last_sample = now;
 
     if (altitude > 1000) {
+        buzzer_stop();
         ctx->launch_time = now;
         for (int i = ctx->buf_count - 1; i >= 0; i--) {
             uint16_t idx = (ctx->buf_head - 1 - i + 4096) % 4096;
