@@ -3,7 +3,7 @@
 # Usage: ./upload_www.sh [host]
 
 HOST=${1:-pyro.local}
-DIR="$(dirname "$0")/www"
+DIR="$(dirname "$0")/../www"
 
 echo "Uploading web files to $HOST..."
 
