@@ -68,13 +68,34 @@ function uploadFW() {
       method: 'POST',
       body: new Uint8Array(buf)
     }).then(r => {
-      msg.style.color = r.ok ? 'green' : 'red';
-      msg.textContent = r.ok ? ' Done, rebooting...' : ' Error!';
-    }).catch(() => {
-      msg.style.color = 'green';
+      msg.style.color = 'orange';
       msg.textContent = ' Rebooting...';
+      waitForReboot(msg);
+    }).catch(() => {
+      msg.style.color = 'orange';
+      msg.textContent = ' Rebooting...';
+      waitForReboot(msg);
     });
   });
+}
+
+function waitForReboot(msg) {
+  var attempts = 0;
+  var poll = setInterval(function() {
+    attempts++;
+    if (attempts > 30) {
+      clearInterval(poll);
+      msg.textContent = ' Device not responding. Refresh manually.';
+      msg.style.color = 'red';
+      return;
+    }
+    fetch('/api/status').then(r => r.json()).then(d => {
+      clearInterval(poll);
+      msg.style.color = 'green';
+      msg.textContent = ' Updated to v' + d.fw_version;
+      currentVersion = d.fw_version;
+    }).catch(() => {});
+  }, 2000);
 }
 
 var GITHUB_REPO = 'n9wxu/pyro_fw';
