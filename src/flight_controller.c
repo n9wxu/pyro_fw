@@ -100,6 +100,8 @@ typedef struct flight_context_t {
     bool pyro2_continuity_good;
     bool pyros_armed;
     bool apogee_detected;
+    bool under_thrust;
+    uint16_t telemetry_seq;
     uint8_t pyro_firing;       // 0=none, 1=pyro1, 2=pyro2
     uint32_t pyro_fire_start;
     uint32_t pyro1_fire_time;  // for post-fire diagnostics
@@ -154,29 +156,57 @@ int32_t pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa)
     return ((ground_pressure_pa - pressure_pa) * 83) / 10;
 }
 
-// Telemetry
+// Telemetry: $PYRO NMEA sentence
+// Format: $PYRO,<seq>,<state>,<thrust>,<alt>,<vel>,<maxalt>,<press>,<time>,<flags>,<p1adc>,<p2adc>,<batt>,<temp>*<XX>\r\n
+// All values integer, all units metric (cm, cm/s, Pa, ms, deci-°C).
+// XOR checksum covers bytes between $ and * (exclusive).
+static uint8_t telemetry_state_id(flight_state_t state) {
+    switch (state) {
+        case PAD_IDLE: return 0;
+        case ASCENT:   return 1;
+        case DESCENT:  return 2;
+        case LANDED:   return 3;
+        default:       return 0;  // boot states → 0
+    }
+}
+
 void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm, flight_state_t state) {
-    char buf[128];
-    int len = 0;
-    
-    len += snprintf(buf + len, sizeof(buf) - len, "{%03ld>", altitude_cm / 3048);
-    uint8_t phase = state == PAD_IDLE ? 1 : state == ASCENT ? (ctx->pyros_armed ? 4 : 2) : state == DESCENT ? 8 : 9;
-    if (ctx->apogee_detected && state == DESCENT && time_ms - ctx->apogee_time < 2000) phase = 5;
-    len += snprintf(buf + len, sizeof(buf) - len, "@%d>", phase);
-    len += snprintf(buf + len, sizeof(buf) - len, "#%04lu>", time_ms / 1000);
-    
-    if (state == PAD_IDLE) {
-        len += snprintf(buf + len, sizeof(buf) - len, "~AB---->");
-    } else {
-        len += snprintf(buf + len, sizeof(buf) - len, "~%c%c---->", ctx->pyro1_fired ? '1' : 'A', ctx->pyro2_fired ? '2' : 'B');
-    }
-    
-    if (ctx->apogee_detected) {
-        len += snprintf(buf + len, sizeof(buf) - len, "%%0%04ld>", ctx->max_altitude / 30);
-    }
-    
-    len += snprintf(buf + len, sizeof(buf) - len, "=%s>", ctx->config.name);
-    uart_puts(uart0, buf);
+    uint8_t flags = 0;
+    if (ctx->pyro1_continuity_good) flags |= (1 << 0);
+    if (ctx->pyro2_continuity_good) flags |= (1 << 1);
+    if (ctx->pyro1_fired)           flags |= (1 << 2);
+    if (ctx->pyro2_fired)           flags |= (1 << 3);
+    if (ctx->pyros_armed)           flags |= (1 << 4);
+    if (ctx->apogee_detected)       flags |= (1 << 5);
+
+    uint8_t thrust = (state == ASCENT && ctx->under_thrust) ? 1 : 0;
+
+    char payload[160];
+    snprintf(payload, sizeof(payload),
+             "PYRO,%u,%u,%u,%ld,%ld,%ld,%ld,%lu,%02X,%u,%u,%u,%d",
+             ctx->telemetry_seq,
+             telemetry_state_id(state),
+             thrust,
+             (long)altitude_cm,
+             (long)ctx->vertical_speed_cms,
+             (long)ctx->max_altitude,
+             (long)ctx->filtered_pressure,
+             (unsigned long)time_ms,
+             flags,
+             g_status.pyro1_adc,
+             g_status.pyro2_adc,
+             0,   // battery ADC (not yet implemented)
+             0);  // temperature deci-°C (not yet implemented)
+
+    uint8_t checksum = 0;
+    for (int i = 0; payload[i] != '\0'; i++)
+        checksum ^= (uint8_t)payload[i];
+
+    char sentence[180];
+    snprintf(sentence, sizeof(sentence), "$%s*%02X\r\n", payload, checksum);
+    uart_puts(uart0, sentence);
+
+    ctx->telemetry_seq++;
 }
 
 // Convert internal cm to reporting units
@@ -399,14 +429,14 @@ flight_state_t state_ascent(flight_context_t *ctx, uint32_t now) {
         ctx->vertical_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
     
     // Thrust detection: speed increasing
-    bool under_thrust = ctx->vertical_speed_cms > ctx->prev_vertical_speed_cms;
+    ctx->under_thrust = ctx->vertical_speed_cms > ctx->prev_vertical_speed_cms;
     
     uint32_t flight_time = now - ctx->launch_time;
     flight_sample_t *s = &ctx->flight_buffer[ctx->buf_head];
     buf_add(ctx, flight_time, filtered, altitude, ASCENT);
     // Set under_thrust on the sample we just added
     uint16_t last_idx = (ctx->buf_head - 1 + 4096) % 4096;
-    ctx->flight_buffer[last_idx].under_thrust = under_thrust ? 1 : 0;
+    ctx->flight_buffer[last_idx].under_thrust = ctx->under_thrust ? 1 : 0;
     
     if (altitude > ctx->max_altitude)
         ctx->max_altitude = altitude;
@@ -594,7 +624,18 @@ int main() {
         g_status.pyros_armed = ctx.pyros_armed;
         g_status.pyro1_continuity = ctx.pyro1_continuity_good;
         g_status.pyro2_continuity = ctx.pyro2_continuity_good;
+        g_status.under_thrust = ctx.under_thrust;
         g_status.flight_time_ms = (ctx.launch_time > 0) ? (now - ctx.launch_time) : 0;
+
+        /* $PYRO telemetry: 10Hz during ASCENT/DESCENT, 1Hz otherwise, skip during boot */
+        if (ctx.current_state >= PAD_IDLE) {
+            uint32_t telem_interval = (ctx.current_state == ASCENT || ctx.current_state == DESCENT) ? 100 : 1000;
+            if (now - ctx.last_telemetry >= telem_interval) {
+                uint32_t flight_time = (ctx.current_state != PAD_IDLE) ? (now - ctx.launch_time) : 0;
+                send_telemetry(&ctx, flight_time, ctx.last_altitude, ctx.current_state);
+                ctx.last_telemetry = now;
+            }
+        }
 
         /* Heartbeat */
         if (now - last_hb >= 1000) {
