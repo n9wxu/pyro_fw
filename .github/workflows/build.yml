@@ -48,4 +48,10 @@ jobs:
             build/_deps/pico_fota_bootloader-build/pico_fota_bootloader.uf2
             VERSION
             www/
-            support/
+            support/install.py
+            support/upload_www.sh
+            support/upload_fw.sh
+            support/flash_picotool.sh
+            support/update_from_release.py
+            support/test_network.py
+            support/README.md
