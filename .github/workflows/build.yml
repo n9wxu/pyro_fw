@@ -33,6 +33,9 @@ jobs:
         env:
           CI_BUILD: 1
 
+      - name: Run unit tests
+        run: cd build && ninja host_tests
+
       - name: Read version
         id: ver
         run: echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT

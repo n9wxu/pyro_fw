@@ -1,12 +1,16 @@
 /*
  * $PYRO NMEA telemetry output.
- * Format: $PYRO,seq,state,thrust,alt,vel,maxalt,press,time,flags,p1adc,p2adc,batt,temp*XX\r\n
  * SPDX-License-Identifier: MIT
  */
-#include "flight_states.h"
-#include <stdio.h>
+#ifdef UNIT_TEST
+#include "mocks.h"
+#else
 #include "pico/stdlib.h"
 #include "hardware/uart.h"
+#endif
+
+#include "flight_states.h"
+#include <stdio.h>
 
 static uint8_t telemetry_state_id(flight_state_t state) {
     switch (state) {

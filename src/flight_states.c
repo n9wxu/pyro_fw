@@ -2,12 +2,9 @@
  * Flight state machine: boot sequence + flight states.
  * SPDX-License-Identifier: MIT
  */
-#include "flight_states.h"
-#include "pressure_sensor.h"
-#include "pyro.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#ifdef UNIT_TEST
+#include "mocks.h"
+#else
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
 #include "hardware/adc.h"
@@ -15,7 +12,16 @@
 #include "hardware/gpio.h"
 #include <lfs.h>
 #include <pico_fota_bootloader/core.h>
+#endif
 
+#include "flight_states.h"
+#include "pressure_sensor.h"
+#include "pyro.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifndef UNIT_TEST
 extern const struct lfs_config lfs_pico_flash_config;
 
 /* Network functions (defined in net_glue.c / http_server.c) */
@@ -23,6 +29,7 @@ void net_init(void);
 void net_start(void);
 void net_mdns_poll(void);
 void http_server_init(void);
+#endif
 
 #define BUZZER 16
 

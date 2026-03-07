@@ -1,30 +1,31 @@
-# Test Directory
+# Unit Tests
 
-Unit tests for the Pyro MK1B flight computer firmware.
+Host-compiled unit tests for the Pyro MK1B flight state machine and telemetry.
 
-## Framework
-
-Uses [Unity](https://www.throwtheswitch.org/unity) test framework.
-
-## Building Tests
+## Running
 
 ```bash
 cd build
-cmake ..
-make test_flight_controller
+ninja host_tests
 ```
 
-## Running Tests
+Tests compile with the host compiler (not ARM cross-compiler) using mock
+hardware implementations. They run as part of the GitHub Actions CI build.
 
-```bash
-./test_flight_controller
-```
+## Files
 
-Or use CTest:
-```bash
-ctest --verbose
-```
+| File | Purpose |
+|------|---------|
+| `test_flight_states.c` | Tests for boot sequence, flight states, helpers, telemetry |
+| `mocks.h` | Mock declarations for Pico SDK, sensors, pyro, UART, LFS |
+| `mocks.c` | Mock implementations with configurable state |
 
-## Test Files
+## Test Coverage
 
-- `test_flight_controller.c` - Main flight controller tests
+- **Helpers:** pressure_to_altitude_cm, filter_pressure, buf_add
+- **Boot:** full sequence to PAD_IDLE, calibration, no-sensor handling, I2C settle timing
+- **PAD_IDLE:** ground stability, ascent detection, continuity checking
+- **ASCENT:** max altitude tracking, pyro arming, apogee detection
+- **DESCENT:** landing detection
+- **LANDED:** state persistence
+- **Telemetry:** $PYRO format, sequence counter, XOR checksum, state mapping, flags

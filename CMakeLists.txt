@@ -188,31 +188,26 @@ pico_add_extra_outputs(pyro_fw_c)
 pfb_compile_with_bootloader(pyro_fw_c)
 
 # ====================================================================================
-# Unit Tests
+# Unit Tests (host-compiled, run on build machine)
 # ====================================================================================
+# These tests use mocks instead of real hardware.
+# They compile with the host compiler via a custom command.
 
-enable_testing()
-
-# Test executable
-add_executable(test_flight_controller
-    test/test_flight_controller.c
-    src/pressure_sensor.c
-    src/ms5607_driver.c
-    src/bmp280_driver.c
+add_custom_target(host_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building host tests..."
+    COMMAND cc -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/test
+               -I${unity_SOURCE_DIR}/src
+               -DUNIT_TEST
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/mocks.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_flight_states
+    COMMAND ${CMAKE_COMMAND} -E echo "Running tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_flight_states
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Host unit tests"
 )
-
-target_include_directories(test_flight_controller PRIVATE
-    ${CMAKE_CURRENT_LIST_DIR}/src
-    ${unity_SOURCE_DIR}/src
-)
-
-target_link_libraries(test_flight_controller
-    unity
-    pico_stdlib
-    hardware_i2c
-    hardware_adc
-    hardware_uart
-)
-
-add_test(NAME flight_controller_tests COMMAND test_flight_controller)
 
