@@ -92,4 +92,4 @@ target_link_libraries(your_target fat_mimic)
 
 ## License
 
-BSD-3-Clause
+MIT
