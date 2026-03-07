@@ -7,27 +7,21 @@ Run from the downloaded artifact directory:
 import subprocess, sys, os, time, glob
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(SCRIPT_DIR)  # parent of support/
 
-# Find files relative to script location
+# Find files relative to base directory
 def find(pattern):
-    matches = glob.glob(os.path.join(SCRIPT_DIR, "**", pattern), recursive=True)
+    matches = glob.glob(os.path.join(BASE_DIR, "**", pattern), recursive=True)
     return matches[0] if matches else None
 
 BOOTLOADER = find("pico_fota_bootloader.uf2")
 APP_UF2 = find("pyro_fw_c.uf2")
 FOTA_BIN = find("pyro_fw_c_fota_image.bin")
-WWW_DIR = find("www")
-if WWW_DIR and not os.path.isdir(WWW_DIR):
-    WWW_DIR = os.path.dirname(WWW_DIR)
-else:
-    for d in [os.path.join(SCRIPT_DIR, "www"), os.path.join(SCRIPT_DIR, "..", "www")]:
-        if os.path.isdir(d):
-            WWW_DIR = d
-            break
+WWW_DIR = os.path.join(BASE_DIR, "www") if os.path.isdir(os.path.join(BASE_DIR, "www")) else None
 
 VERSION = "unknown"
-vf = find("VERSION")
-if vf:
+vf = os.path.join(BASE_DIR, "VERSION")
+if os.path.exists(vf):
     VERSION = open(vf).read().strip()
 
 HOST = "192.168.7.1"
