@@ -1,53 +1,36 @@
 # HTTP Interface Implementation Notes
 
-## Status: IN PROGRESS
+## Status: COMPLETE (v1.2.0)
 
 ## Architecture
-Based on TinyUSB's net_lwip_webserver example, adapted for Pyro MK1B.
+USB composite device (ECM/RNDIS + vendor reset) with lwIP TCP/IP stack, custom HTTP server, mDNS, and DNS-SD. Based on TinyUSB's net_lwip_webserver example, heavily modified.
 
-## Key Source References (in Pico SDK 2.2.0)
-- Example: `lib/tinyusb/examples/device/net_lwip_webserver/`
-- lwIP: `lib/lwip/`
-- Networking helpers: `lib/tinyusb/lib/networking/` (DHCP server, DNS server, RNDIS)
-- Net class driver: `lib/tinyusb/src/class/net/`
+## Key Files
+- `src/http_server.c` — Custom streaming HTTP server with littlefs
+- `src/net_glue.c` — TinyUSB ↔ lwIP bridge, DHCP, DNS, mDNS
+- `src/usb_descriptors.c` — USB composite: ECM/RNDIS + vendor reset
+- `src/reset_interface.c` — Vendor reset for picotool
+- `src/tusb_config.h` — TinyUSB configuration
+- `src/lwipopts.h` — lwIP configuration
+- `src/arch/cc.h` — lwIP platform hooks
 
-## What the example provides
-- USB ECM+RNDIS composite network device
-- lwIP TCP/IP stack initialization
-- DHCP server (assigns 192.168.7.2 to host)
-- DNS server (resolves custom hostname)
-- lwIP httpd (static pages)
-- Network interface bridge (TinyUSB ↔ lwIP)
+## lwIP Configuration
+- `MEMP_NUM_TCP_PCB=16` — supports browser parallel connections + mDNS
+- `MEM_SIZE=8000` — heap for TCP segment coalescing
+- `PBUF_POOL_SIZE=24` — packet buffers
+- `MEMP_NUM_SYS_TIMEOUT=16` — timers for mDNS
+- `LWIP_MDNS_RESPONDER=1` — mDNS with DNS-SD
+- `LWIP_IGMP=1` — multicast for mDNS
 
-## What we need to add
-- Custom HTTP handler for file operations (replace lwIP httpd)
-- littlefs integration for file storage
-- Flight status API endpoint
-- HTML templates for dashboard, file list, editor
-- Integration with flight controller main loop
+## HTTP Server Design
+- 8-slot connection pool (`conn_state_t`)
+- Streaming file reads (512-byte chunks, fills TCP send buffer)
+- `tcp_err` callback prevents connection pool leaks
+- `on_sent` callback chain for multi-chunk file transfers
+- Handles ERR_MEM by rewinding file position and retrying
 
-## Implementation Plan
-1. Get USB network device working (ECM+RNDIS)
-2. Get lwIP + DHCP + ping working
-3. Add custom HTTP server with file listing
-4. Add file download/upload
-5. Add config editor
-6. Add status dashboard
-7. Integrate with flight controller
-
-## tusb_config.h changes
-- Remove: CFG_TUD_MSC
-- Add: CFG_TUD_ECM_RNDIS or CFG_TUD_NCM
-- Keep: CFG_TUD_CDC (for debug serial)
-
-## New files needed
-- src/lwipopts.h - lwIP configuration
-- src/usb_descriptors.c - rewrite for net device
-- src/http_server.c - custom HTTP handler with littlefs
-- src/net_glue.c - TinyUSB ↔ lwIP bridge (from example)
-
-## CMakeLists.txt additions
-- lwIP source files (~30 .c files)
-- TinyUSB networking helpers
-- New source files
-- Remove: fat_mimic dependency
+## USB Configuration
+- VID: 0x2E8A (Raspberry Pi), PID: 0x4002
+- Two configurations: RNDIS (Windows) and ECM (macOS/Linux)
+- Vendor reset interface for picotool (deferred to main loop)
+- No CDC — removed to avoid macOS driver conflicts with ECM
