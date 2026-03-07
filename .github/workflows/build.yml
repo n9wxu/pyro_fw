@@ -33,10 +33,14 @@ jobs:
         env:
           CI_BUILD: 1
 
+      - name: Read version
+        id: ver
+        run: echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: firmware-${{ github.sha }}
+          name: pyro-mk1b-v${{ steps.ver.outputs.version }}
           path: |
             build/pyro_fw_c.uf2
             build/pyro_fw_c.bin
