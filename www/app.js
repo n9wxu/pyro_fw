@@ -129,7 +129,8 @@ function doUpdate(tag) {
     })
     .then(buf => {
       if (buf.byteLength < 1000) throw new Error('Download too small (' + buf.byteLength + 'b) - not a firmware file');
-      msg.textContent = ' Flashing ' + buf.byteLength + ' bytes...';
+      msg.textContent = ' Flashing ' + buf.byteLength + ' bytes to device...';
+      console.log('OTA: posting ' + buf.byteLength + ' bytes to /api/ota');
       var body = new Uint8Array(buf);
       return fetch('/api/ota', {
         method: 'POST',
