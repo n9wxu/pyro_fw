@@ -92,6 +92,8 @@ add_custom_target(generate_version ALL
 
 add_executable(pyro_fw_c 
     src/flight_controller.c
+    src/flight_states.c
+    src/telemetry.c
     src/pressure_sensor.c
     src/pyro.c
     src/ms5607_driver.c
