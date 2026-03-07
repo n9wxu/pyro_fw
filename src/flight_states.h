@@ -89,6 +89,7 @@ typedef struct flight_context_t {
     int32_t cal_sum;
     // PAD_IDLE state
     uint32_t last_cont_check;
+    bool buzzer_started;
 } flight_context_t;
 
 // State dispatch

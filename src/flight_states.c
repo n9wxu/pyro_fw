@@ -131,9 +131,6 @@ flight_state_t state_boot_filesystem(flight_context_t *ctx, uint32_t now) {
 
     adc_gpio_init(26);
     adc_gpio_init(27);
-    gpio_init(BUZZER);
-    gpio_set_dir(BUZZER, GPIO_OUT);
-    gpio_put(BUZZER, 0);
     buzzer_init();
 
     uart_puts(uart0, "I2C init...\r\n");
@@ -227,12 +224,14 @@ flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
         ctx->pyro2_adc = c2.raw_adc;
         ctx->last_cont_check = now;
 
-        /* Update beep code based on continuity */
-        uint8_t code = BEEP_ALL_GOOD;
-        if (!c1.good) code = c1.open ? BEEP_P1_OPEN : BEEP_P1_SHORT;
-        else if (!c2.good) code = c2.open ? BEEP_P2_OPEN : BEEP_P2_SHORT;
-        if (!buzzer_is_active())
+        /* Set beep code once on first check */
+        if (!ctx->buzzer_started) {
+            ctx->buzzer_started = true;
+            uint8_t code = BEEP_ALL_GOOD;
+            if (!c1.good) code = c1.open ? BEEP_P1_OPEN : BEEP_P1_SHORT;
+            else if (!c2.good) code = c2.open ? BEEP_P2_OPEN : BEEP_P2_SHORT;
             buzzer_set_code(code, true);
+        }
     }
 
     pressure_reading_t pdata;
