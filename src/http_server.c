@@ -475,10 +475,29 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             }
             return ERR_OK;
 
-        } else if (strcmp(path, "/api/config") == 0) {
+        } else if (strcmp(path, "/api/config") == 0 && content_length > 0 && content_length < 512) {
+            /* Write config.ini to littlefs */
+            char cfgbuf[512];
+            uint16_t len = (body_in_first < content_length) ? body_in_first : content_length;
+            pbuf_copy_partial(p, cfgbuf, len, body_offset);
             pbuf_free(p);
-            /* TODO: parse + validate + store config */
-            const char *resp = "HTTP/1.1 201 Created\r\nConnection: close\r\n\r\nOK";
+            cfgbuf[len] = '\0';
+
+            lfs_t lfs;
+            const char *resp;
+            if (lfs_mount(&lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
+                lfs_file_t f;
+                if (lfs_file_open(&lfs, &f, "config.ini", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) == LFS_ERR_OK) {
+                    lfs_file_write(&lfs, &f, cfgbuf, len);
+                    lfs_file_close(&lfs, &f);
+                    resp = "HTTP/1.1 201 Created\r\n" CORS_HDR "Connection: close\r\n\r\nOK";
+                } else {
+                    resp = "HTTP/1.1 500 Error\r\nConnection: close\r\n\r\nFile open failed";
+                }
+                lfs_unmount(&lfs);
+            } else {
+                resp = "HTTP/1.1 500 Error\r\nConnection: close\r\n\r\nMount failed";
+            }
             tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
         } else if (strcmp(path, "/api/reboot") == 0) {
             pbuf_free(p);
