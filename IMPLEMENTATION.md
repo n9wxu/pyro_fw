@@ -153,3 +153,90 @@ $PYRO,seq,state,thrust,alt_cm,vel_cms,maxalt_cm,press_pa,time_ms,flags_hex,p1adc
 - **Startup:** 10 chirps (30ms) → 500ms pause → status code × 2 → stop
 - **Status codes:** two-digit (1-5 beeps each), 100ms beep, 200ms gap, 300ms digit gap
 - **Altitude beep-out (LANDED):** 2s pause → 500ms long beep → digits (0=10 beeps) → repeat
+
+### Closed-Loop Flight Model
+
+The closed-loop simulation (`test/test_closedloop.c`) uses a 1D physics model with atmospheric feedback. Pyro fires from the firmware feed back into the physics, deploying chutes that change the descent rate.
+
+#### Equations of Motion
+
+Each 1ms timestep:
+
+```
+a = -g                                          (gravity, always)
+a += thrust_accel              if t < burn_time  (motor phase)
+a += drag × ρ(h) × |v|        if v < 0          (descent drag)
+
+v(t+dt) = v(t) + a × dt
+h(t+dt) = h(t) + v × dt
+```
+
+Where `v` is positive-up, `h` is altitude in meters, `dt` = 0.001s.
+
+#### Thrust Profile
+
+Burn time is computed via binary search to hit the target apogee, accounting for altitude gained during the burn:
+
+```
+h_apogee = h_burn + h_coast
+h_burn   = ½(a_thrust - g) × t_burn²
+h_coast  = v_burnout² / (2g)
+v_burnout = (a_thrust - g) × t_burn
+```
+
+Thrust acceleration by altitude class:
+| Target | Thrust | Typical Burn |
+|--------|--------|-------------|
+| < 500m | 20g | 0.06–0.12s |
+| 500–50km | 10g | 0.6–1.8s |
+| > 50km | 5g | 20–30s |
+
+#### Drag Model
+
+Drag force opposes velocity during descent only:
+
+```
+a_drag = C_d × ρ_frac × |v|
+```
+
+Drag coefficients:
+| State | C_d | Terminal Velocity (sea level) |
+|-------|-----|------------------------------|
+| Ballistic | 0.05 | ~140 m/s |
+| Drogue deployed | 0.8 | ~12 m/s |
+| Main deployed | 4.0 | ~2.5 m/s |
+
+#### Atmospheric Density
+
+Density scales exponentially with altitude (scale height 8500m):
+
+```
+ρ_frac = e^(-h / 8500)
+```
+
+This means chutes are ineffective above ~25km (density < 5% of sea level), producing realistic Karman-line descent profiles where the rocket falls nearly ballistically through the upper atmosphere.
+
+#### Pressure Model (Standard Atmosphere)
+
+The mock pressure sensor uses the International Standard Atmosphere:
+
+| Layer | Altitude | Formula |
+|-------|----------|---------|
+| Troposphere | 0–11 km | P = 101325 × (1 − 0.0065h/288.15)^5.2561 |
+| Stratosphere | 11–47 km | P = P₁₁ × e^(−g(h−11000)/(R×216.65)) |
+| Upper | > 47 km | P = P₄₇ × e^(−g(h−47000)/(R×270.65)) |
+
+The firmware's linear barometric formula (`alt = (P₀−P) × 83/10`) saturates at ~8400m equivalent altitude when pressure approaches zero. The pressure filter tracks through this range using a minimum ±1 Pa step to prevent integer truncation stall.
+
+#### Closed-Loop Feedback
+
+When the firmware calls `pyro_fire(channel)`, the mock records the fire. On the next physics timestep, the simulation checks for new fires and sets the corresponding deployment flag, immediately changing the drag coefficient for all subsequent physics steps.
+
+```
+firmware fires pyro 1 → drogue_deployed = true → C_d changes from 0.05 to 0.8
+firmware fires pyro 2 → main_deployed = true   → C_d changes from 0.8 to 4.0
+```
+
+#### Timing
+
+A 2-second pad dwell precedes the physics to allow the firmware's PAD_IDLE state to complete continuity checks (requires 1s). Karman-line flights use 50ms timesteps (vs 1ms for lower flights) to keep simulation time under 2 seconds.
