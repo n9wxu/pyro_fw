@@ -13,9 +13,42 @@
   <button onclick="dlFlight()">⬇ Download Flight CSV</button>
 </div>
 <hr>
-<h3>Upload Config</h3>
+<h3>Pyro Configuration</h3>
+<div id="cfgEditor">
+  <table>
+  <tr><td>Units:</td><td>
+    <select id="cfgUnits" onchange="cfgUnitsChanged()">
+      <option value="0">cm</option><option value="1">meters</option><option value="2">feet</option>
+    </select></td></tr>
+  <tr><td colspan="2"><b>Pyro 1 (Drogue)</b></td></tr>
+  <tr><td>Mode:</td><td>
+    <select id="p1mode" onchange="cfgModeChanged(1)">
+      <option value="delay">Delay (seconds after apogee)</option>
+      <option value="agl">AGL (altitude above ground)</option>
+      <option value="fallen">Fallen (distance from apogee)</option>
+      <option value="speed">Speed (descent speed)</option>
+    </select></td></tr>
+  <tr><td>Value:</td><td><input type="number" id="p1val" min="0" max="65535" value="0" onchange="cfgValChanged(1)">
+    <span id="p1unit"></span> <span id="p1warn" style="color:red"></span></td></tr>
+  <tr><td colspan="2"><b>Pyro 2 (Main)</b></td></tr>
+  <tr><td>Mode:</td><td>
+    <select id="p2mode" onchange="cfgModeChanged(2)">
+      <option value="delay">Delay (seconds after apogee)</option>
+      <option value="agl">AGL (altitude above ground)</option>
+      <option value="fallen">Fallen (distance from apogee)</option>
+      <option value="speed">Speed (descent speed)</option>
+    </select></td></tr>
+  <tr><td>Value:</td><td><input type="number" id="p2val" min="0" max="65535" value="0" onchange="cfgValChanged(2)">
+    <span id="p2unit"></span> <span id="p2warn" style="color:red"></span></td></tr>
+  </table>
+  <div id="cfgTips" style="margin:8px 0;padding:8px;background:#ffe;border:1px solid #cc0;display:none"></div>
+  <button onclick="saveConfig()">💾 Save Config</button>
+  <span id="cfgSaveMsg"></span>
+</div>
+<hr>
+<h3>Raw Config</h3>
 <textarea id="cfg" rows="10" cols="50"></textarea><br>
-<button onclick="uploadConfig()">Upload Config</button>
+<button onclick="uploadConfig()">Upload Raw Config</button>
 <span id="cfgmsg"></span>
 <hr>
 <h3>Update Web Files</h3>

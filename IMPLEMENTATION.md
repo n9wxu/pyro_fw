@@ -152,6 +152,12 @@ $PYRO,seq,state,thrust,alt_cm,vel_cms,maxalt_cm,press_pa,time_ms,flags_hex,p1adc
 ### Buzzer
 - **Startup:** 10 chirps (30ms) → 500ms pause → status code × 2 → stop
 - **Status codes:** two-digit (1-5 beeps each), 100ms beep, 200ms gap, 300ms digit gap
+  - 1-1: All good
+  - 2-1/2-2: P1 open/short
+  - 3-1/3-2: P2 open/short
+  - 4-1: Sensor fail
+  - 4-2: Filesystem fail
+  - 4-3: Pyro altitude setting exceeds 8,000m sensor limit
 - **Altitude beep-out (LANDED):** 2s pause → 500ms long beep → digits (0=10 beeps) → repeat
 
 ### Closed-Loop Flight Model

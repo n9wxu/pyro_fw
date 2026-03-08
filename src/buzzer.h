@@ -21,6 +21,7 @@
 #define BEEP_P2_NO_OPEN     BEEP_CODE(3, 4)
 #define BEEP_SENSOR_FAIL    BEEP_CODE(4, 1)
 #define BEEP_FS_FAIL        BEEP_CODE(4, 2)
+#define BEEP_CFG_RANGE      BEEP_CODE(4, 3)  /* pyro altitude setting out of range */
 #define BEEP_CRITICAL        BEEP_CODE(5, 5)
 
 void buzzer_init(void);

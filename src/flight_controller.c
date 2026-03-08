@@ -70,6 +70,11 @@ int main() {
         g_status.pyro2_adc = ctx.pyro2_adc;
         g_status.under_thrust = ctx.under_thrust;
         g_status.flight_time_ms = (ctx.launch_time > 0) ? (now - ctx.launch_time) : 0;
+        g_status.pyro1_mode = ctx.config.pyro1_mode;
+        g_status.pyro1_value = ctx.config.pyro1_value;
+        g_status.pyro2_mode = ctx.config.pyro2_mode;
+        g_status.pyro2_value = ctx.config.pyro2_value;
+        g_status.units = ctx.config.units;
 
         /* $PYRO telemetry: 10Hz during ASCENT/DESCENT, 1Hz otherwise, skip during boot */
         if (ctx.current_state >= PAD_IDLE) {

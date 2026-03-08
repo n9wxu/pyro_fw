@@ -15,6 +15,7 @@ function update() {
     s += '<br><small>FW ' + d.fw_version + '</small>';
     currentVersion = d.fw_version;
     document.getElementById('status').innerHTML = s;
+    loadConfigFromStatus(d);
   }).catch(() => {
     if (++missCount > 3)
       document.getElementById('status').innerHTML = 'Connection lost';
@@ -99,6 +100,84 @@ function waitForReboot(msg) {
 }
 
 var GITHUB_REPO = 'n9wxu/pyro_fw';
+
+/* ── Config editor ──────────────────────────────────────────────── */
+var MAX_ALT = {0: 800000, 1: 8000, 2: 26247};
+var UNIT_LABELS = {0: 'cm', 1: 'm', 2: 'ft'};
+var cfgLoaded = false;
+
+function getUnits() { return parseInt(document.getElementById('cfgUnits').value); }
+function getMaxAlt() { return MAX_ALT[getUnits()]; }
+function getUnitLabel() { return UNIT_LABELS[getUnits()]; }
+
+function cfgUnitsChanged() { cfgModeChanged(1); cfgModeChanged(2); cfgValChanged(1); cfgValChanged(2); }
+
+function cfgModeChanged(ch) {
+  var mode = document.getElementById('p'+ch+'mode').value;
+  var unitSpan = document.getElementById('p'+ch+'unit');
+  var valInput = document.getElementById('p'+ch+'val');
+  if (mode === 'delay') { unitSpan.textContent = 'seconds'; valInput.max = 65535; }
+  else if (mode === 'speed') { unitSpan.textContent = getUnitLabel() + '/s'; valInput.max = getMaxAlt(); }
+  else { unitSpan.textContent = getUnitLabel(); valInput.max = getMaxAlt(); }
+  cfgValChanged(ch);
+  updateTips();
+}
+
+function cfgValChanged(ch) {
+  var mode = document.getElementById('p'+ch+'mode').value;
+  var val = parseInt(document.getElementById('p'+ch+'val').value) || 0;
+  var warn = document.getElementById('p'+ch+'warn');
+  if (mode !== 'delay' && val > getMaxAlt())
+    warn.textContent = '⚠ Exceeds ' + getMaxAlt() + ' ' + getUnitLabel() + ' sensor limit — will be clamped';
+  else warn.textContent = '';
+}
+
+function updateTips() {
+  var tips = document.getElementById('cfgTips');
+  var p1 = document.getElementById('p1mode').value;
+  var p2 = document.getElementById('p2mode').value;
+  var msgs = [];
+  if (p1 === 'delay' && document.getElementById('p1val').value === '0')
+    msgs.push('💡 Pyro 1 delay=0 fires at apogee (typical for drogue)');
+  if (p2 === 'agl') {
+    var v = parseInt(document.getElementById('p2val').value) || 0;
+    var u = getUnits();
+    var low = u===2 ? 200 : u===1 ? 60 : 6000;
+    var high = u===2 ? 1000 : u===1 ? 300 : 30000;
+    if (v > 0 && v < low) msgs.push('⚠ Pyro 2 AGL very low — main may deploy close to ground');
+    if (v > high) msgs.push('⚠ Pyro 2 AGL high — main deploys early, long descent');
+  }
+  if (p1 === p2 && p1 !== 'delay')
+    msgs.push('💡 Both pyros use same mode — consider different modes for redundancy');
+  tips.style.display = msgs.length ? 'block' : 'none';
+  tips.innerHTML = msgs.join('<br>');
+}
+
+function loadConfigFromStatus(d) {
+  if (cfgLoaded || !d.pyro1_mode) return;
+  cfgLoaded = true;
+  document.getElementById('cfgUnits').value = d.units || 0;
+  document.getElementById('p1mode').value = d.pyro1_mode || 'delay';
+  document.getElementById('p1val').value = d.pyro1_value || 0;
+  document.getElementById('p2mode').value = d.pyro2_mode || 'agl';
+  document.getElementById('p2val').value = d.pyro2_value || 0;
+  cfgUnitsChanged();
+}
+
+function saveConfig() {
+  var uname = ['cm','m','ft'][getUnits()];
+  var ini = '[pyro]\r\npyro1_mode=' + document.getElementById('p1mode').value +
+    '\r\npyro1_value=' + document.getElementById('p1val').value +
+    '\r\npyro2_mode=' + document.getElementById('p2mode').value +
+    '\r\npyro2_value=' + document.getElementById('p2val').value +
+    '\r\nunits=' + uname + '\r\n';
+  var msg = document.getElementById('cfgSaveMsg');
+  fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:ini})
+    .then(function(r) {
+      msg.style.color = r.ok ? 'green' : 'red';
+      msg.textContent = r.ok ? ' Saved! Reboot to apply.' : ' Error saving';
+    });
+}
 var ASSET_NAME = 'pyro_fw_c_fota_image.bin';
 var currentVersion = null;
 

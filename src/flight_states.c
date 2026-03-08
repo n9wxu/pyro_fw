@@ -245,8 +245,14 @@ flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
         /* Set beep code once on first check */
         if (!ctx->buzzer_started) {
             ctx->buzzer_started = true;
+            int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
+            bool p1_over = (ctx->config.pyro1_mode != PYRO_MODE_DELAY &&
+                            ctx->config.pyro1_value > max_units);
+            bool p2_over = (ctx->config.pyro2_mode != PYRO_MODE_DELAY &&
+                            ctx->config.pyro2_value > max_units);
             uint8_t code = BEEP_ALL_GOOD;
-            if (!c1.good) code = c1.open ? BEEP_P1_OPEN : BEEP_P1_SHORT;
+            if (p1_over || p2_over) code = BEEP_CFG_RANGE;
+            else if (!c1.good) code = c1.open ? BEEP_P1_OPEN : BEEP_P1_SHORT;
             else if (!c2.good) code = c2.open ? BEEP_P2_OPEN : BEEP_P2_SHORT;
             buzzer_set_code(code, true);
         }

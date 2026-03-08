@@ -135,8 +135,11 @@ static void send_next_chunk(struct tcp_pcb *pcb, conn_state_t *cs) {
 static const char *state_names[] = {"PAD_IDLE", "ASCENT", "DESCENT", "LANDED"};
 
 static void serve_api_status(struct tcp_pcb *pcb) {
-    char buf[512];
+    char buf[768];
     const char *sn = (g_status.state < 4) ? state_names[g_status.state] : "UNKNOWN";
+    static const char *mode_names[] = {"none","fallen","agl","speed","delay"};
+    const char *p1m = (g_status.pyro1_mode < 5) ? mode_names[g_status.pyro1_mode] : "?";
+    const char *p2m = (g_status.pyro2_mode < 5) ? mode_names[g_status.pyro2_mode] : "?";
     int pos = snprintf(buf, sizeof(buf),
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" CORS_HDR "Connection: close\r\n\r\n"
         "{\"state\":\"%s\",\"alt_cm\":%ld,\"max_alt_cm\":%ld,"
@@ -144,7 +147,10 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         "\"pyro1_cont\":%s,\"pyro2_cont\":%s,"
         "\"pyro1_adc\":%u,\"pyro2_adc\":%u,"
         "\"pyro1_fired\":%s,\"pyro2_fired\":%s,"
-        "\"armed\":%s,\"flight_ms\":%lu,\"uptime\":%lu,\"fw_version\":\"%s\"}",
+        "\"armed\":%s,\"flight_ms\":%lu,\"uptime\":%lu,\"fw_version\":\"%s\","
+        "\"pyro1_mode\":\"%s\",\"pyro1_value\":%u,"
+        "\"pyro2_mode\":\"%s\",\"pyro2_value\":%u,"
+        "\"units\":%u}",
         sn,
         (long)g_status.altitude_cm, (long)g_status.max_altitude_cm,
         (long)g_status.vertical_speed_cms, (long)g_status.pressure_pa,
@@ -156,7 +162,10 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         g_status.pyros_armed ? "true" : "false",
         (unsigned long)g_status.flight_time_ms,
         (unsigned long)to_ms_since_boot(get_absolute_time()),
-        FW_VERSION);
+        FW_VERSION,
+        p1m, (unsigned)g_status.pyro1_value,
+        p2m, (unsigned)g_status.pyro2_value,
+        (unsigned)g_status.units);
     tcp_write(pcb, buf, pos, TCP_WRITE_FLAG_COPY);
 }
 

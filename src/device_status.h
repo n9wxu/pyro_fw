@@ -19,6 +19,11 @@ typedef struct {
     bool     pyros_armed;
     bool     under_thrust;
     uint32_t flight_time_ms;
+    uint8_t  pyro1_mode;
+    uint16_t pyro1_value;
+    uint8_t  pyro2_mode;
+    uint16_t pyro2_value;
+    uint8_t  units;
 } device_status_t;
 
 extern volatile device_status_t g_status;
