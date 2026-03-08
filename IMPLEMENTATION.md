@@ -265,25 +265,23 @@ Above ~8,400m, the firmware cannot distinguish altitudes — all read as approxi
 
 #### What Still Works at Any Altitude
 
-Pyro deployment is safe at all altitudes because the critical triggers fire during descent through the measurable range:
-
-- **Apogee detection:** Triggers when vertical speed ≤ 0. Since altitude is capped, speed reads zero above ~8,400m, so apogee is detected early (when ascending through 8,400m, not at true apogee). Pyros arm and fire on the way up — the rocket still descends safely with chutes.
-- **DELAY mode:** Fires N seconds after apogee detection. Since apogee triggers early, the delay starts early too. For short delays this means the pyro fires while still ascending — the chute deploys at high speed but the rocket is safe.
-- **AGL mode:** Fires when altitude drops below threshold. As the rocket descends through the measurable range (<8,400m), AGL readings become accurate and the trigger fires correctly.
+- **AGL mode:** Fires when altitude drops below threshold. The rocket must descend through the measurable range (<8,400m) to reach any AGL target, so the reading is accurate when the trigger fires. This is the only mode that works correctly above 8,000m.
 
 #### What Doesn't Work Above ~8,400m
 
+- **Apogee detection:** Triggers early — when ascending through ~8,400m, not at true apogee. Speed reads zero while altitude is capped, satisfying the `vertical_speed ≤ 0` check prematurely.
+- **DELAY mode:** Fires N seconds after apogee detection. Since apogee is detected early (during ascent), the delay countdown starts too soon. Short delays fire while still ascending; long delays fire at unpredictable points.
+- **SPEED mode:** Fires when descent speed exceeds a threshold, but speed reads zero while altitude is capped. Only works once the rocket descends below ~8,400m — fires late, at the wrong altitude.
+- **FALLEN mode:** Uses `max_altitude − current_altitude`. Since max is capped at ~8,410m, the firmware sees zero fallen distance until below 8,400m. Fires relative to the cap, not true apogee.
 - **Recorded apogee:** Capped at ~8,410m regardless of true altitude.
-- **Vertical speed:** Reads zero while altitude is capped. Only accurate once the rocket descends below ~8,400m.
-- **SPEED mode:** Fires when descent speed exceeds a threshold, but speed reads zero while capped. The trigger only works once the rocket descends into measurable atmosphere — it fires late, at ~8,400m instead of at the configured speed near apogee.
-- **FALLEN mode:** Uses `max_altitude − current_altitude`. Since max is capped, the firmware sees zero fallen distance until the rocket descends below 8,400m. The trigger fires relative to 8,410m, not the true apogee.
+- **Vertical speed:** Reads zero while altitude is capped.
 - **Telemetry altitude/speed:** Capped and zero respectively during the high-altitude portion. Accurate again below ~2,000m.
-- **Altitude beep-out:** Reports the capped value (~8,410m / ~27,600ft) instead of true apogee.
+- **Altitude beep-out:** Reports the capped value (~8,410m / ~27,600ft).
 
 #### Practical Guidance
 
-| Flight Ceiling | Apogee Accuracy | Pyro Safety | Notes |
-|---------------|----------------|-------------|-------|
-| < 2,000 m | ±5% | ✅ All modes | Full accuracy |
-| 2,000–8,000 m | ±5–35% | ✅ All modes | Apogee underreads |
-| > 8,000 m | Capped at 8,410m | ⚠️ DELAY + AGL only | Apogee detected early, SPEED/FALLEN fire late |
+| Flight Ceiling | Apogee Accuracy | Pyro Modes | Notes |
+|---------------|----------------|------------|-------|
+| < 2,000 m | ±5% | ✅ All | Full accuracy |
+| 2,000–8,000 m | ±5–35% | ✅ All | Apogee underreads progressively |
+| > 8,000 m | Capped at 8,410m | ⚠️ AGL only | All other modes depend on false apogee or zero speed |
