@@ -253,3 +253,18 @@ add_custom_target(closedloop_tests
     COMMENT "Closed-loop simulation tests"
 )
 
+add_custom_target(sim
+    COMMAND ${CMAKE_COMMAND} -E echo "Building simulator..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/sim/main_sim.c
+               ${CMAKE_CURRENT_LIST_DIR}/sim/hal_sim.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
+               -lm
+               -o ${CMAKE_BINARY_DIR}/pyro_sim
+    COMMAND ${CMAKE_COMMAND} -E echo "Simulator built: ${CMAKE_BINARY_DIR}/pyro_sim"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flight simulator"
+)
+
