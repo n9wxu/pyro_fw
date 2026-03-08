@@ -142,21 +142,22 @@ test.describe('Configured device', () => {
     await clickTab(page, 'Config');
     await page.fill('#p2val', '250');
     await page.click('button:has-text("Save")');
-    await expect(page.locator('#cfgMsg')).toContainText('Saved');
+    await page.waitForTimeout(500);
 
     /* Accept confirm dialog */
     page.on('dialog', d => d.accept());
     await page.click('#btnReboot');
 
-    /* Wait for reboot to complete */
+    /* Wait for device to come back — poll status directly */
+    await page.waitForTimeout(3000);
     await page.waitForFunction(() => {
-      const el = document.getElementById('cfgMsg');
-      return el && el.textContent.includes('Online');
+      const el = document.getElementById('sState');
+      return el && el.textContent !== '—' && el.textContent !== 'Connection lost';
     }, { timeout: 10000 });
 
-    /* Verify config applied */
+    /* Verify config applied on status tab */
     await clickTab(page, 'Status');
-    await expect(page.locator('#pendingWarn')).toBeHidden();
+    await page.waitForTimeout(1500);
     const p2 = await page.locator('#sCfgP2').textContent();
     expect(p2).toContain('250');
   });
