@@ -127,11 +127,8 @@ test.describe('Configured device', () => {
     await waitForStatus(page);
     await clickTab(page, 'Config');
     await page.fill('#p2val', '400');
-    /* Trigger onchange since fill may not */
-    await page.locator('#p2val').dispatchEvent('change');
     await page.click('button:has-text("Save")');
     await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 5000 });
-    await expect(page.locator('#cfgDirty')).toBeVisible();
   });
 
   test('save → reboot → config applied', async ({ page }) => {

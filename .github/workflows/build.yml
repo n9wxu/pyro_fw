@@ -59,7 +59,10 @@ jobs:
             node mock_server.js $MODE 3456 &
             PID=$!
             sleep 2
-            PYRO_MODE=$MODE BASE_URL=http://localhost:3456 npx playwright test 2>&1
+            # Verify server is up
+            curl -s http://localhost:3456/api/status | head -c 100
+            echo ""
+            PYRO_MODE=$MODE BASE_URL=http://localhost:3456 npx playwright test --reporter=list 2>&1
             RESULT=$?
             kill $PID 2>/dev/null; wait $PID 2>/dev/null || true
             sleep 1
