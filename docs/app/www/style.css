@@ -1,0 +1,44 @@
+body { font-family: -apple-system, sans-serif; max-width: 700px; margin: 20px auto; padding: 0 16px; color: #222; }
+h2 { margin: 0 0 12px; }
+h3 { color: #555; margin: 16px 0 8px; font-size: 15px; }
+
+/* Tabs */
+.tabs { display: flex; gap: 0; border-bottom: 2px solid #ccc; margin-bottom: 16px; }
+.tab { padding: 8px 16px; border: none; background: #eee; cursor: pointer; font-size: 14px; border-radius: 6px 6px 0 0; }
+.tab.active { background: #fff; border: 2px solid #ccc; border-bottom: 2px solid #fff; margin-bottom: -2px; font-weight: bold; }
+.tabpanel { animation: fadeIn 0.15s; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* Info tables */
+table.info { width: 100%; border-collapse: collapse; }
+table.info td { padding: 6px 10px; border-bottom: 1px solid #eee; }
+td.lbl { color: #666; width: 140px; font-size: 13px; }
+td.val { font-size: 16px; font-weight: 500; }
+td.val.big { font-size: 22px; font-weight: 700; }
+
+/* Buttons */
+button { padding: 6px 14px; margin: 4px 2px; cursor: pointer; border-radius: 4px; border: 1px solid #ccc; background: #f8f8f8; }
+button:hover { background: #e8e8e8; }
+.btnrow { margin: 12px 0; }
+
+/* Warnings & tips */
+.warn { background: #fee; border: 1px solid #c33; color: #900; padding: 8px 12px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
+.warn-inline { color: #c00; font-size: 12px; }
+.tips { background: #ffe; border: 1px solid #cc0; padding: 8px 12px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
+
+/* Pyro status */
+.pyro-ok { color: #080; font-weight: bold; }
+.pyro-open { color: #c60; font-weight: bold; }
+.pyro-fired { color: #c00; font-weight: bold; }
+
+/* Inputs */
+select, input[type=number], input[type=text] { padding: 4px 8px; font-size: 14px; }
+select { min-width: 200px; }
+input[type=number] { width: 100px; }
+
+/* Version list */
+#versionList { margin: 8px 0; max-height: 300px; overflow-y: auto; }
+#versionList table { width: 100%; }
+#versionList td { padding: 4px 8px; font-size: 13px; }
+#versionList tr:hover { background: #f0f0ff; }
+#versionList .current { background: #e8ffe8; }

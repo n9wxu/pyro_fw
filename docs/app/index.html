@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pyro MK1B</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><polygon points='50,5 60,40 55,40 58,95 42,95 45,40 40,40' fill='%23c33'/><polygon points='42,95 50,80 58,95' fill='%23f80'/></svg>">
+<link rel="stylesheet" href="www/style.css">
+</head><body>
+
+<h2>🚀 Pyro MK1B</h2>
+
+<div class="tabs">
+  <button class="tab active" onclick="showTab('status')">Status</button>
+  <button class="tab" onclick="showTab('config')">Config</button>
+  <button class="tab" onclick="showTab('data')">Flight Data</button>
+  <button class="tab" onclick="showTab('update')">Update</button>
+</div>
+
+<!-- ── Tab 1: Status ──────────────────────────────────────────── -->
+<div id="tab-status" class="tabpanel">
+  <div id="pendingWarn" class="warn" style="display:none">⚠ Configuration changed but not applied — press Reboot in Config tab</div>
+  <table class="info" id="statusTable">
+    <tr><td class="lbl">State</td><td id="sState" class="val big">—</td></tr>
+    <tr><td class="lbl">Altitude</td><td id="sAlt" class="val big">—</td></tr>
+    <tr><td class="lbl">Max Altitude</td><td id="sMax" class="val big">—</td></tr>
+    <tr><td class="lbl">Vertical Speed</td><td id="sSpd" class="val">—</td></tr>
+    <tr><td class="lbl">Pressure</td><td id="sPa" class="val">—</td></tr>
+    <tr><td class="lbl">Flight Time</td><td id="sFt" class="val">—</td></tr>
+    <tr><td class="lbl">Uptime</td><td id="sUp" class="val">—</td></tr>
+  </table>
+  <h3>Pyro Channels</h3>
+  <table class="info">
+    <tr><td class="lbl">Pyro 1</td><td id="sP1" class="val">—</td></tr>
+    <tr><td class="lbl">Pyro 2</td><td id="sP2" class="val">—</td></tr>
+    <tr><td class="lbl">Armed</td><td id="sArm" class="val">—</td></tr>
+  </table>
+  <h3>Active Configuration</h3>
+  <table class="info">
+    <tr><td class="lbl">Rocket ID</td><td id="sCfgId" class="val">—</td></tr>
+    <tr><td class="lbl">Rocket Name</td><td id="sCfgName" class="val">—</td></tr>
+    <tr><td class="lbl">Units</td><td id="sCfgUnits" class="val">—</td></tr>
+    <tr><td class="lbl">Pyro 1 (Drogue)</td><td id="sCfgP1" class="val">—</td></tr>
+    <tr><td class="lbl">Pyro 2 (Main)</td><td id="sCfgP2" class="val">—</td></tr>
+  </table>
+</div>
+
+<!-- ── Tab 2: Config ──────────────────────────────────────────── -->
+<div id="tab-config" class="tabpanel" style="display:none">
+  <table class="info">
+    <tr><td class="lbl">Units</td><td>
+      <select id="cfgUnits" onchange="cfgChanged()">
+        <option value="0">cm</option><option value="1">meters</option><option value="2">feet</option>
+      </select></td></tr>
+  </table>
+  <h3>Pyro 1 — Drogue</h3>
+  <table class="info">
+    <tr><td class="lbl">Mode</td><td>
+      <select id="p1mode" onchange="cfgChanged()">
+        <option value="delay">Delay (seconds after apogee)</option>
+        <option value="agl">AGL (altitude above ground)</option>
+        <option value="fallen">Fallen (distance from apogee)</option>
+        <option value="speed">Speed (descent speed)</option>
+      </select></td></tr>
+    <tr><td class="lbl">Value</td><td>
+      <input type="number" id="p1val" min="0" max="65535" value="0" onchange="cfgChanged()">
+      <span id="p1unit"></span>
+      <span id="p1warn" class="warn-inline"></span></td></tr>
+  </table>
+  <h3>Pyro 2 — Main</h3>
+  <table class="info">
+    <tr><td class="lbl">Mode</td><td>
+      <select id="p2mode" onchange="cfgChanged()">
+        <option value="delay">Delay (seconds after apogee)</option>
+        <option value="agl">AGL (altitude above ground)</option>
+        <option value="fallen">Fallen (distance from apogee)</option>
+        <option value="speed">Speed (descent speed)</option>
+      </select></td></tr>
+    <tr><td class="lbl">Value</td><td>
+      <input type="number" id="p2val" min="0" max="65535" value="0" onchange="cfgChanged()">
+      <span id="p2unit"></span>
+      <span id="p2warn" class="warn-inline"></span></td></tr>
+  </table>
+  <div id="cfgTips" class="tips" style="display:none"></div>
+  <div id="cfgDirty" class="warn" style="display:none">⚠ Changes not applied — press Reboot after saving</div>
+  <div class="btnrow">
+    <button onclick="cfgDefault()">🏭 Default</button>
+    <button onclick="cfgCurrent()">↩ Current</button>
+    <button onclick="cfgSave()">💾 Save</button>
+    <button onclick="cfgUpload()">⬆ Upload File</button>
+    <button onclick="cfgReboot()" id="btnReboot">🔄 Reboot</button>
+  </div>
+  <input type="file" id="cfgFile" accept=".ini,.txt" style="display:none" onchange="cfgFileSelected()">
+  <span id="cfgMsg"></span>
+</div>
+
+<!-- ── Tab 3: Flight Data ─────────────────────────────────────── -->
+<div id="tab-data" class="tabpanel" style="display:none">
+  <h3>Flight Summary</h3>
+  <table class="info" id="flightSummary">
+    <tr><td class="lbl">Duration</td><td id="dDur" class="val">—</td></tr>
+    <tr><td class="lbl">Apogee</td><td id="dApogee" class="val">—</td></tr>
+    <tr><td class="lbl">Pyro 1</td><td id="dP1" class="val">—</td></tr>
+    <tr><td class="lbl">Pyro 2</td><td id="dP2" class="val">—</td></tr>
+  </table>
+  <button onclick="dlFlight()">⬇ Download Flight CSV</button>
+  <h3>Altitude Profile</h3>
+  <canvas id="flightGraph" width="660" height="300" style="border:1px solid #ccc;width:100%;max-width:660px"></canvas>
+</div>
+
+<!-- ── Tab 4: Update ──────────────────────────────────────────── -->
+<div id="tab-update" class="tabpanel" style="display:none">
+  <h3>Firmware</h3>
+  <table class="info">
+    <tr><td class="lbl">FW Version</td><td id="uFwVer" class="val">—</td></tr>
+    <tr><td class="lbl">Web Version</td><td id="uWebVer" class="val">—</td></tr>
+  </table>
+  <div class="btnrow">
+    <button onclick="checkUpdate()">🔍 Check for Updates</button>
+    <button id="btnAllVer" onclick="toggleAllVersions()">📋 Show All Versions</button>
+  </div>
+  <span id="updMsg"></span>
+  <div id="versionList" style="display:none"></div>
+  <h3>Manual Firmware Upload</h3>
+  <input type="file" id="fwfile" accept=".bin">
+  <button onclick="uploadFW()">⬆ Upload Firmware</button>
+  <span id="fwmsg"></span>
+  <h3>Web File Upload</h3>
+  <input type="file" id="webfile">
+  <input type="text" id="webpath" placeholder="www/filename.html" size="30">
+  <button onclick="uploadWeb()">⬆ Upload</button>
+  <span id="webmsg"></span>
+</div>
+
+<script src="www/app.js"></script>
+</body></html>

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pyro MK1B — Demo</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><polygon points='50,5 60,40 55,40 58,95 42,95 45,40 40,40' fill='%23c33'/><polygon points='42,95 50,80 58,95' fill='%23f80'/></svg>">
+<style>
+  body { font-family: -apple-system, sans-serif; margin: 0; padding: 0; }
+  #demo-bar {
+    background: #1a1a2e; color: #eee; padding: 8px 16px;
+    display: flex; align-items: center; gap: 16px; font-size: 14px;
+  }
+  #demo-bar select { padding: 4px 8px; font-size: 14px; }
+  #demo-bar .label { font-weight: bold; color: #7fdbca; }
+  #demo-bar .info { color: #999; font-size: 12px; }
+  #app-frame { border: none; width: 100%; height: calc(100vh - 44px); }
+</style>
+</head><body>
+
+<div id="demo-bar">
+  <span class="label">🚀 Pyro MK1B Demo</span>
+  <label>Mode:
+    <select id="modeSelect" onchange="switchMode(this.value)">
+      <option value="new">New Device (defaults)</option>
+      <option value="configured">Configured (custom settings)</option>
+      <option value="flown">Post-Flight (10,000ft)</option>
+    </select>
+  </label>
+  <span class="info">Simulated — no hardware required</span>
+  <a href="https://github.com/n9wxu/pyro_fw" style="color:#7fdbca;margin-left:auto">GitHub</a>
+</div>
+
+<iframe id="app-frame" src="app/index.html"></iframe>
+
+<script>
+let swReady = false;
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {
+    console.log('SW registered');
+    // Wait for SW to be active
+    const sw = reg.active || reg.installing || reg.waiting;
+    if (sw) {
+      if (sw.state === 'activated') { swReady = true; }
+      sw.addEventListener('statechange', () => {
+        if (sw.state === 'activated') { swReady = true; }
+      });
+    }
+  });
+
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data.type === 'modeChanged') {
+      document.getElementById('app-frame').src = 'app/index.html?' + Date.now();
+    }
+  });
+}
+
+function switchMode(mode) {
+  if (navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({ type: 'setMode', mode: mode });
+  }
+}
+</script>
+</body></html>
