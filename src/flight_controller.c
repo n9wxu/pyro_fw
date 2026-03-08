@@ -34,7 +34,14 @@ int main() {
     gpio_set_function(1, GPIO_FUNC_UART);
 
     flight_context_t ctx = {0};
-    ctx.config = (config_t){"PYRO001", "PYRO001", 1, 300, 1, 150};
+    /* Defaults — overridden by config.ini parser in boot_filesystem */
+    strncpy(ctx.config.id, "PYRO001", 8);
+    strncpy(ctx.config.name, "PYRO001", 8);
+    ctx.config.pyro1_mode = PYRO_MODE_DELAY;
+    ctx.config.pyro1_value = 0;
+    ctx.config.pyro2_mode = PYRO_MODE_AGL;
+    ctx.config.pyro2_value = 300;
+    ctx.config.units = 1;
     ctx.current_state = BOOT_FILESYSTEM;
 
     while (1) {
