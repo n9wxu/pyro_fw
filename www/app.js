@@ -89,10 +89,20 @@ function update() {
     document.getElementById('uFwVer').textContent = d.fw_version;
     document.getElementById('uWebVer').textContent = WEB_VERSION;
 
-    /* Store device config */
+    /* Store device config — update every poll */
+    var newCfg = {units:u, p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value};
     if (!deviceConfig) {
-      deviceConfig = {units:u, p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value};
+      deviceConfig = newCfg;
       cfgLoadFromObj(deviceConfig);
+    } else {
+      /* Detect device-side change (reboot applied new config) */
+      if (deviceConfig.p1mode !== newCfg.p1mode || deviceConfig.p1val !== newCfg.p1val ||
+          deviceConfig.p2mode !== newCfg.p2mode || deviceConfig.p2val !== newCfg.p2val ||
+          deviceConfig.units !== newCfg.units) {
+        deviceConfig = newCfg;
+        pendingConfig = null;
+        cfgLoadFromObj(deviceConfig);
+      }
     }
   }).catch(function() {
     if (++missCount > 3) document.getElementById('sState').textContent = 'Connection lost';
