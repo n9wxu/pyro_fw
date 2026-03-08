@@ -164,6 +164,7 @@ test.describe('Configured device', () => {
     await clickTab(page, 'Config');
     await page.selectOption('#p2mode', 'agl');
     await page.fill('#p2val', '30000');
+    await page.locator('#p2val').dispatchEvent('change');
     const warn = await page.locator('#p2warn').textContent();
     expect(warn).toContain('sensor limit');
   });
