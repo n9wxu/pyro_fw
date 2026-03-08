@@ -25,17 +25,28 @@ Boot states are non-blocking (timer-based delays). `tud_task()` and `net_service
 ### Key Source Files
 | File | Purpose |
 |------|---------|
-| `src/flight_controller.c` | Unified state machine (boot + flight), `main()` |
+| `src/flight_controller.c` | Main loop only (~80 lines) |
+| `src/flight_states.c` | All boot + flight state functions, helpers |
+| `src/flight_states.h` | Types, context struct, declarations |
+| `src/telemetry.c` | $PYRO NMEA telemetry formatting |
+| `src/buzzer.c` | Buzzer: status codes + altitude beep-out |
+| `src/buzzer.h` | Buzzer API and beep code definitions |
 | `src/http_server.c` | HTTP server, API endpoints, OTA handler |
 | `src/net_glue.c` | TinyUSB RNDIS ↔ lwIP bridge, DHCP/DNS, mDNS |
 | `src/reset_interface.c` | Vendor reset interface for picotool |
-| `src/usb_descriptors.c` | USB composite device: ECM/RNDIS + vendor reset |
+| `src/usb_descriptors.c` | USB composite: ECM/RNDIS + vendor reset |
 | `src/pyro.c` | Pyro channel control, continuity, fire |
 | `src/pressure_sensor.c` | Unified sensor interface (MS5607/BMP280) |
 | `src/littlefs_driver.c` | Flash driver for littlefs |
 | `src/device_status.h` | Shared status struct for HTTP dashboard |
-| `src/arch/cc.h` | lwIP platform hooks (UART debug output) |
+| `src/arch/cc.h` | lwIP platform hooks |
 | `www/` | Web interface files (uploaded to littlefs) |
+
+### Testing
+- 27 unit tests + 11 integration tests = 38 total
+- Host-compiled with mocks (no ARM target needed)
+- Integration tests use OpenRocket simulation data at 1ms resolution
+- See [test/README.md](test/README.md) for comprehensive test plan
 
 ### OTA Update Flow
 1. HTTP POST to `/api/ota` with firmware .bin body
@@ -113,3 +124,17 @@ ninja
 | `support/update_from_release.py` | Update firmware from GitHub releases |
 | `support/test_network.py` | Comprehensive network/API test suite |
 | `scripts/gen_version.sh` | Auto-generate version.h at build time |
+
+### Telemetry ($PYRO NMEA)
+```
+$PYRO,seq,state,thrust,alt_cm,vel_cms,maxalt_cm,press_pa,time_ms,flags_hex,p1adc,p2adc,batt,temp*XX\r\n
+```
+- State: 0=PAD_IDLE, 1=ASCENT, 2=DESCENT, 3=LANDED
+- Flags: bit0=P1_CONT, bit1=P2_CONT, bit2=P1_FIRED, bit3=P2_FIRED, bit4=ARMED, bit5=APOGEE
+- XOR checksum between $ and *
+- 10Hz during ASCENT/DESCENT, 1Hz otherwise
+
+### Buzzer
+- **Startup:** 10 chirps (30ms) → 500ms pause → status code × 2 → stop
+- **Status codes:** two-digit (1-5 beeps each), 100ms beep, 200ms gap, 300ms digit gap
+- **Altitude beep-out (LANDED):** 2s pause → 500ms long beep → digits (0=10 beeps) → repeat

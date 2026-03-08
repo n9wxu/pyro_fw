@@ -1,85 +1,69 @@
-# Pyro MK1B Firmware - Current Status (v1.2.0)
+# Pyro MK1B Firmware - Current Status
 
 ## ✅ Completed
 
 ### Unified State Machine
-- Non-blocking boot sequence: filesystem → I2C → sensor detect → pyro → calibration → mDNS → PAD_IDLE
-- Flight states: PAD_IDLE → ASCENT → DESCENT → LANDED
-- No sleep_ms in startup — USB enumeration works immediately
-- Single dispatch_state() handles all boot + flight states
+- Non-blocking boot: BOOT_FILESYSTEM → I2C_SETTLE → SENSOR_DETECT → PYRO_INIT → CONTINUITY → STABILIZE → CALIBRATE → MDNS → PAD_IDLE
+- Flight: PAD_IDLE → ASCENT → DESCENT → LANDED
+- Pure functional: all state in flight_context_t, no globals in state/telemetry code
+- Split into flight_states.c (states + helpers), telemetry.c, buzzer.c, flight_controller.c (main loop)
+
+### Telemetry
+- $PYRO NMEA format with XOR checksum
+- Fields: seq, state, thrust, alt, vel, maxalt, press, time, flags, p1adc, p2adc, batt, temp
+- 10Hz during ASCENT/DESCENT, 1Hz during PAD_IDLE/LANDED
+- Skipped during boot states
+
+### Buzzer
+- GPIO 16 on/off (no PWM needed)
+- Startup: 10 fast chirps → pause → status code × 2 → stop
+- Status codes: 1-1 good, 2-1 P1 open, 2-2 P1 short, etc.
+- Altitude beep-out after landing: long pause → long beep → digit sequence → repeat
+- Digit encoding: 0 = 10 beeps, 1-9 = N beeps
+- Uses config.units for altitude conversion
+
+### Event Logging
+- Events tagged on existing data samples (no separate records)
+- EVT_LAUNCH, EVT_ARMED, EVT_APOGEE, EVT_PYRO1_FIRE, EVT_PYRO2_FIRE, EVT_LANDING
+- Same 16-byte sample struct (event + event_data replace padding)
 
 ### Web Interface & Networking
-- USB composite device: ECM/RNDIS network + vendor reset interface
-- HTTP server at 192.168.7.1 with DHCP
-- mDNS: pyro.local (RFC 6762) with conflict resolution
-- DNS-SD: _pyro._tcp service for automatic discovery
-- CORS headers on API endpoints
-- Live dashboard with 1s polling, 3-miss tolerance
-- Config download/upload, file upload, firmware update via web
-- One-click firmware update from GitHub releases in browser
+- USB composite: ECM/RNDIS + vendor reset (picotool)
+- HTTP server with CORS, mDNS (pyro.local), DNS-SD (_pyro._tcp)
+- Live dashboard, config editor, firmware update
+- GitHub release update checker in web UI
 
-### OTA Firmware Updates
-- A/B bootloader via pico_fota_bootloader
-- Incremental sector erase during upload (USB-safe)
-- Automatic rollback if new firmware doesn't commit
-- Upload via web UI, support/upload_fw.sh, or support/update_from_release.py
-
-### picotool Support
-- Vendor reset interface (VID 0x2E8A, PID 0x4002)
-- Deferred reset to main loop (protects I2C bus)
-- support/flash_picotool.sh for full flash cycle
-
-### HTTP Server
-- Reliable file serving (fills TCP send buffer, handles ERR_MEM)
-- Connection pool (8 slots) with tcp_err cleanup
-- TCP PCB pool: 16, heap: 8KB
-- Streaming file reads from littlefs
+### OTA & Flashing
+- A/B bootloader with automatic rollback
+- picotool vendor reset interface (deferred to main loop)
+- flash_picotool.sh, upload_fw.sh, upload_www.sh, install.py
+- update_from_release.py for GitHub release updates
 
 ### Pressure Sensors
-- MS5607 and BMP280 with auto-detection
-- I2C pin release between detect attempts (no bus contention)
-- Unified interface, I2C1 at 400kHz
-
-### Pyro Module
-- Dual channel with AP2192 power switches
-- Raw 12-bit ADC continuity sensing
-- 500ms fire duration with auto-shutoff
+- MS5607 (GPIO 10/7) and BMP280 (GPIO 6/7) auto-detection
+- I2C pin release between detect attempts
 
 ### Build & CI/CD
-- Pico SDK 2.2.0, Ninja, littlefs v2.11.2 via FetchContent
-- pico_fota_bootloader via FetchContent
-- GitHub Actions: build on push, release on tag
-- Auto-incrementing version (VERSION file + gen_version.sh)
-- CI-aware version generation (no increment in CI)
+- GitHub Actions: build on push, release on tag, 38 tests in CI
+- Auto-incrementing version (CI-aware)
+- Beta/prerelease support
 
-### Testing
-- Comprehensive Python test suite (support/test_network.py)
-- Live TUI with split screen (tests + UART)
-- Interactive mode, log analyzer, pre-test diagnostics
-- 16/17 tests passing (1 parallel connection drop under heavy load)
+### Testing (38 tests)
+- 27 unit tests: helpers, boot sequence, all flight states, telemetry formatting
+- 11 integration tests: full flight simulation with OpenRocket data
+- Host-compiled with mocks (pressure, pyro, UART, buzzer, GPIO, LFS)
+- Network test suite (support/test_network.py) with TUI
 
-### Support Tools
-- support/install.py — interactive installer for build artifacts
-- support/flash_picotool.sh — picotool flash cycle
-- support/upload_fw.sh — OTA firmware upload
-- support/upload_www.sh — web file upload
-- support/update_from_release.py — update from GitHub releases
-- support/test_network.py — network test suite
+## 🔨 Known Issues
 
-## 🔨 In Progress
-
-- [ ] Parallel connection handling under heavy load (6+ simultaneous)
+- [ ] Landing detection triggers early due to pressure filter lag during rapid descent
+- [ ] Parallel HTTP connections (6+) can drop under heavy load
 
 ## 🔧 Not Yet Implemented
 
-- [ ] Telemetry UART (Eggtimer format — code exists, disabled)
-- [ ] Event logging system (RAM buffer + flash on error)
-- [ ] Buzzer/beep code driver (GPIO 16, 3kHz PWM)
-- [ ] Config parser for pyro modes/values from config.ini
-- [ ] CSV flight data writer
-- [ ] Fault detection monitoring (GPIO 17/18)
+- [ ] Config parser (read pyro modes/values/units from config.ini)
+- [ ] CSV flight data writer (save log to littlefs)
+- [ ] Fault detection monitoring (GPIO 17/18 AP2192 FLAG pins)
 - [ ] Post-fire ADC verification
-- [ ] Altitude beep-out after landing
 - [ ] Test mode via GPIO 8 jumper
-- [ ] Unit tests for state machine
-- [ ] Web app separate versioning + self-update
+- [ ] Web app separate versioning
