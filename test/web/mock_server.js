@@ -112,6 +112,9 @@ const server = http.createServer((req, res) => {
 
   /* API routes */
   if (req.url === '/api/status' && req.method === 'GET') {
+    if (status._rebooting && Date.now() < status._rebooting) {
+      res.writeHead(503, cors); res.end('Rebooting'); return;
+    }
     status.uptime += 1000;
     res.writeHead(200, {...cors, 'Content-Type':'application/json'});
     res.end(JSON.stringify(status));
@@ -139,10 +142,12 @@ const server = http.createServer((req, res) => {
   if (req.url === '/api/reboot' && req.method === 'POST') {
     res.writeHead(200, cors);
     res.end('Rebooting');
-    /* Simulate reboot: apply pending config after 1s */
+    /* Simulate reboot: reject requests for 1.5s, then apply config */
+    const rebootUntil = Date.now() + 1500;
+    const origStatus = status.state;
+    status._rebooting = rebootUntil;
     setTimeout(() => {
       if (pendingConfig) {
-        /* Parse INI back into status */
         for (const line of pendingConfig.split(/\r?\n/)) {
           const [k, v] = line.split('=');
           if (!v) continue;
@@ -157,7 +162,8 @@ const server = http.createServer((req, res) => {
         pendingConfig = null;
       }
       status.uptime = 3000;
-    }, 500);
+      delete status._rebooting;
+    }, 1500);
     return;
   }
 

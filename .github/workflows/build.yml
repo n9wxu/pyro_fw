@@ -54,26 +54,29 @@ jobs:
       - name: Web UI tests (new device)
         run: |
           node test/web/mock_server.js new 3456 &
+          PID=$!
           sleep 1
           cd test/web
           PYRO_MODE=new BASE_URL=http://localhost:3456 npx playwright test
-          kill %1 || true
+          kill $PID 2>/dev/null; wait $PID 2>/dev/null || true
 
       - name: Web UI tests (configured device)
         run: |
-          node test/web/mock_server.js configured 3456 &
+          node test/web/mock_server.js configured 3457 &
+          PID=$!
           sleep 1
           cd test/web
-          PYRO_MODE=configured BASE_URL=http://localhost:3456 npx playwright test
-          kill %1 || true
+          PYRO_MODE=configured BASE_URL=http://localhost:3457 npx playwright test
+          kill $PID 2>/dev/null; wait $PID 2>/dev/null || true
 
       - name: Web UI tests (post-flight)
         run: |
-          node test/web/mock_server.js flown 3456 &
+          node test/web/mock_server.js flown 3458 &
+          PID=$!
           sleep 1
           cd test/web
-          PYRO_MODE=flown BASE_URL=http://localhost:3456 npx playwright test
-          kill %1 || true
+          PYRO_MODE=flown BASE_URL=http://localhost:3458 npx playwright test
+          kill $PID 2>/dev/null; wait $PID 2>/dev/null || true
 
       - name: Read version
         id: ver
