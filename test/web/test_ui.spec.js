@@ -122,17 +122,16 @@ test.describe('Configured device', () => {
     expect(p2).toContain('500');
   });
 
-  test('edit config → save → pending warning appears', async ({ page }) => {
+  test('edit config → save shows confirmation', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Config');
     await page.fill('#p2val', '400');
+    /* Trigger onchange since fill may not */
+    await page.locator('#p2val').dispatchEvent('change');
     await page.click('button:has-text("Save")');
-    await page.waitForTimeout(1000);
-    /* Switch to status tab — pending warning should show after next poll */
-    await clickTab(page, 'Status');
-    await page.waitForTimeout(2000);
-    await expect(page.locator('#pendingWarn')).toBeVisible();
+    await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 5000 });
+    await expect(page.locator('#cfgDirty')).toBeVisible();
   });
 
   test('save → reboot → config applied', async ({ page }) => {
