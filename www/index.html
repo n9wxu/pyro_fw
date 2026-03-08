@@ -47,9 +47,16 @@
 <!-- ── Tab 2: Config ──────────────────────────────────────────── -->
 <div id="tab-config" class="tabpanel" style="display:none">
   <table class="info">
+    <tr><td class="lbl">Rocket ID</td><td><input type="text" id="cfgId" maxlength="8" size="10" onchange="cfgChanged()"></td></tr>
+    <tr><td class="lbl">Rocket Name</td><td><input type="text" id="cfgName" maxlength="8" size="10" onchange="cfgChanged()"></td></tr>
     <tr><td class="lbl">Units</td><td>
       <select id="cfgUnits" onchange="cfgChanged()">
         <option value="0">cm</option><option value="1">meters</option><option value="2">feet</option>
+      </select></td></tr>
+    <tr><td class="lbl">Beep Mode</td><td>
+      <select id="cfgBeep" onchange="cfgChanged()">
+        <option value="digits">Digits (each digit beeped)</option>
+        <option value="hundreds">Hundreds (value/100, then digits)</option>
       </select></td></tr>
   </table>
   <h3>Pyro 1 — Drogue</h3>

@@ -96,7 +96,8 @@ function update() {
     document.getElementById('uWebVer').textContent = WEB_VERSION;
 
     /* Store device config — update every poll */
-    var newCfg = {units:u, p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value};
+    var newCfg = {id:d.rocket_id, name:d.rocket_name, units:u, beep:'digits',
+      p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value};
     if (!deviceConfig) {
       deviceConfig = newCfg;
       cfgLoadFromObj(deviceConfig);
@@ -158,7 +159,10 @@ function cfgChanged() {
 }
 
 function cfgLoadFromObj(c) {
+  document.getElementById('cfgId').value = c.id || '';
+  document.getElementById('cfgName').value = c.name || '';
   document.getElementById('cfgUnits').value = c.units || 0;
+  document.getElementById('cfgBeep').value = c.beep || 'digits';
   document.getElementById('p1mode').value = c.p1mode || 'delay';
   document.getElementById('p1val').value = c.p1val || 0;
   document.getElementById('p2mode').value = c.p2mode || 'agl';
@@ -169,7 +173,7 @@ function cfgLoadFromObj(c) {
 }
 
 function cfgDefault() {
-  cfgLoadFromObj({units:1, p1mode:'delay', p1val:0, p2mode:'agl', p2val:300});
+  cfgLoadFromObj({id:'PYRO001', name:'My Rocke', units:1, beep:'digits', p1mode:'delay', p1val:0, p2mode:'agl', p2val:300});
   document.getElementById('cfgDirty').style.display = 'block';
   document.getElementById('cfgDirty').innerHTML = '⚠ Defaults loaded — press <b>Save</b> then <b>Reboot</b> to apply';
 }
@@ -180,7 +184,10 @@ function cfgCurrent() {
 
 function cfgGetObj() {
   return {
+    id: document.getElementById('cfgId').value,
+    name: document.getElementById('cfgName').value,
     units: getUnits(),
+    beep: document.getElementById('cfgBeep').value,
     p1mode: document.getElementById('p1mode').value,
     p1val: parseInt(document.getElementById('p1val').value) || 0,
     p2mode: document.getElementById('p2mode').value,
@@ -191,9 +198,10 @@ function cfgGetObj() {
 function cfgSave() {
   var c = cfgGetObj();
   var uname = UNIT_NAMES[c.units];
-  var ini = '[pyro]\r\npyro1_mode=' + c.p1mode + '\r\npyro1_value=' + c.p1val +
+  var ini = '[pyro]\r\nid=' + c.id + '\r\nname=' + c.name +
+    '\r\npyro1_mode=' + c.p1mode + '\r\npyro1_value=' + c.p1val +
     '\r\npyro2_mode=' + c.p2mode + '\r\npyro2_value=' + c.p2val +
-    '\r\nunits=' + uname + '\r\n';
+    '\r\nunits=' + uname + '\r\nbeep_mode=' + c.beep + '\r\n';
   var msg = document.getElementById('cfgMsg');
   fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:ini})
     .then(function(r) {
