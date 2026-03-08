@@ -370,14 +370,82 @@ void test_telemetry_state_mapping(void) {
 
 void test_telemetry_flags(void) {
     flight_context_t ctx = {0};
-    ctx.pyro1_continuity_good = true;  /* bit 0 */
-    ctx.pyro2_continuity_good = true;  /* bit 1 */
-    ctx.pyros_armed = true;            /* bit 4 */
-    /* flags = 0x13 */
+    ctx.pyro1_continuity_good = true;
+    ctx.pyro2_continuity_good = true;
+    ctx.pyros_armed = true;
 
     mock_uart_len = 0;
     send_telemetry(&ctx, 0, 0, PAD_IDLE);
     TEST_ASSERT_TRUE(strstr(mock_uart_buf, ",13,") != NULL);
+}
+
+void test_telemetry_altitude_and_speed(void) {
+    flight_context_t ctx = {0};
+    ctx.vertical_speed_cms = -1500;
+    ctx.max_altitude = 30000;
+    ctx.filtered_pressure = 98000;
+
+    mock_uart_len = 0;
+    send_telemetry(&ctx, 5000, 25000, DESCENT);
+
+    int seq, st, thr;
+    long alt, vel, maxalt, press;
+    unsigned long time_ms;
+    int n = sscanf(mock_uart_buf, "$PYRO,%d,%d,%d,%ld,%ld,%ld,%ld,%lu,",
+                   &seq, &st, &thr, &alt, &vel, &maxalt, &press, &time_ms);
+    TEST_ASSERT_EQUAL(8, n);
+    TEST_ASSERT_EQUAL(25000, alt);
+    TEST_ASSERT_EQUAL(-1500, vel);
+    TEST_ASSERT_EQUAL(30000, maxalt);
+    TEST_ASSERT_EQUAL(98000, press);
+    TEST_ASSERT_EQUAL(5000, time_ms);
+    TEST_ASSERT_EQUAL(2, st);
+}
+
+void test_telemetry_thrust_flag(void) {
+    flight_context_t ctx = {0};
+    ctx.under_thrust = true;
+
+    mock_uart_len = 0;
+    send_telemetry(&ctx, 0, 0, ASCENT);
+    TEST_ASSERT_TRUE(strstr(mock_uart_buf, ",1,1,") != NULL);
+
+    mock_uart_len = 0;
+    ctx.telemetry_seq = 0;
+    send_telemetry(&ctx, 0, 0, PAD_IDLE);
+    TEST_ASSERT_TRUE(strstr(mock_uart_buf, ",0,0,") != NULL);
+}
+
+void test_telemetry_pyro_adc(void) {
+    flight_context_t ctx = {0};
+    ctx.pyro1_adc = 42;
+    ctx.pyro2_adc = 3800;
+
+    mock_uart_len = 0;
+    send_telemetry(&ctx, 0, 0, PAD_IDLE);
+    TEST_ASSERT_TRUE(strstr(mock_uart_buf, ",42,3800,") != NULL);
+}
+
+void test_telemetry_all_flags(void) {
+    flight_context_t ctx = {0};
+    ctx.pyro1_continuity_good = true;
+    ctx.pyro2_continuity_good = true;
+    ctx.pyro1_fired = true;
+    ctx.pyro2_fired = true;
+    ctx.pyros_armed = true;
+    ctx.apogee_detected = true;
+
+    mock_uart_len = 0;
+    send_telemetry(&ctx, 0, 0, PAD_IDLE);
+    TEST_ASSERT_TRUE(strstr(mock_uart_buf, ",3F,") != NULL);
+}
+
+void test_telemetry_boot_state_maps_to_zero(void) {
+    flight_context_t ctx = {0};
+
+    mock_uart_len = 0;
+    send_telemetry(&ctx, 0, 0, BOOT_CALIBRATE);
+    TEST_ASSERT_TRUE(strstr(mock_uart_buf, "PYRO,0,0,") != NULL);
 }
 
 /* ── Main ─────────────────────────────────────────────────────────── */
@@ -420,6 +488,11 @@ int main(void) {
     RUN_TEST(test_telemetry_checksum);
     RUN_TEST(test_telemetry_state_mapping);
     RUN_TEST(test_telemetry_flags);
+    RUN_TEST(test_telemetry_altitude_and_speed);
+    RUN_TEST(test_telemetry_thrust_flag);
+    RUN_TEST(test_telemetry_pyro_adc);
+    RUN_TEST(test_telemetry_all_flags);
+    RUN_TEST(test_telemetry_boot_state_maps_to_zero);
 
     return UNITY_END();
 }
