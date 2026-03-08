@@ -217,3 +217,22 @@ add_custom_target(host_tests
     COMMENT "Host unit tests"
 )
 
+add_custom_target(integration_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building integration tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/test
+               -I${unity_SOURCE_DIR}/src
+               -DUNIT_TEST
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_integration.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/mocks.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -lm
+               -o ${CMAKE_BINARY_DIR}/test_integration
+    COMMAND ${CMAKE_COMMAND} -E echo "Running integration tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_integration
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Integration tests with OpenRocket data"
+)
+
