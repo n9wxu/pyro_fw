@@ -66,8 +66,12 @@ int32_t filter_pressure(flight_context_t *ctx, int32_t raw_pressure, uint32_t dt
         ctx->filter_initialized = true;
         return raw_pressure;
     }
+    int32_t diff = raw_pressure - ctx->filtered_pressure;
     int32_t alpha = (dt_ms * 1000) / (1000 + dt_ms);
-    ctx->filtered_pressure += ((raw_pressure - ctx->filtered_pressure) * alpha) / 1000;
+    int32_t step = (diff * alpha) / 1000;
+    /* Prevent integer truncation from stalling the filter */
+    if (step == 0 && diff != 0) step = (diff > 0) ? 1 : -1;
+    ctx->filtered_pressure += step;
     return ctx->filtered_pressure;
 }
 
@@ -304,12 +308,12 @@ flight_state_t state_ascent(flight_context_t *ctx, uint32_t now) {
 
         if (!ctx->pyro1_fired && !pyro_is_firing() && ctx->pyro1_continuity_good &&
             should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value)) {
-            pyro_fire(1); ctx->pyro1_fire_time = now;
+            pyro_fire(1); ctx->pyro1_fired = true; ctx->pyro1_fire_time = now;
             buf_tag_event(ctx, EVT_PYRO1_FIRE);
         }
         if (!ctx->pyro2_fired && !pyro_is_firing() && ctx->pyro2_continuity_good &&
             should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
-            pyro_fire(2); ctx->pyro2_fire_time = now;
+            pyro_fire(2); ctx->pyro2_fired = true; ctx->pyro2_fire_time = now;
             buf_tag_event(ctx, EVT_PYRO2_FIRE);
         }
 
@@ -341,12 +345,12 @@ flight_state_t state_descent(flight_context_t *ctx, uint32_t now) {
 
     if (!ctx->pyro1_fired && !pyro_is_firing() && ctx->pyro1_continuity_good &&
         should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value)) {
-        pyro_fire(1); ctx->pyro1_fire_time = now;
+        pyro_fire(1); ctx->pyro1_fired = true; ctx->pyro1_fire_time = now;
         buf_tag_event(ctx, EVT_PYRO1_FIRE);
     }
     if (!ctx->pyro2_fired && !pyro_is_firing() && ctx->pyro2_continuity_good &&
         should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
-        pyro_fire(2); ctx->pyro2_fire_time = now;
+        pyro_fire(2); ctx->pyro2_fired = true; ctx->pyro2_fire_time = now;
         buf_tag_event(ctx, EVT_PYRO2_FIRE);
     }
 

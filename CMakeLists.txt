@@ -236,3 +236,22 @@ add_custom_target(integration_tests
     COMMENT "Integration tests with OpenRocket data"
 )
 
+add_custom_target(closedloop_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building closed-loop tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/test
+               -I${unity_SOURCE_DIR}/src
+               -DUNIT_TEST
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_closedloop.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/mocks.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -lm
+               -o ${CMAKE_BINARY_DIR}/test_closedloop
+    COMMAND ${CMAKE_COMMAND} -E echo "Running closed-loop tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_closedloop
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Closed-loop simulation tests"
+)
+

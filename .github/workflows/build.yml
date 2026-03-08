@@ -39,6 +39,9 @@ jobs:
       - name: Run integration tests
         run: cd build && ninja integration_tests
 
+      - name: Run closed-loop tests
+        run: cd build && ninja closedloop_tests
+
       - name: Read version
         id: ver
         run: echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
