@@ -12,6 +12,19 @@ PAD_IDLE → ASCENT → DESCENT → LANDED
 
 Boot states are non-blocking (timer-based delays). `tud_task()` and `net_service()` run every main loop iteration, ensuring USB and networking work during boot.
 
+### State Transition Criteria
+
+**PAD_IDLE → ASCENT:** Filtered altitude exceeds 1000 cm (10 m). Launch time is backdated by scanning the ring buffer for the first sample above 50 cm.
+
+**ASCENT → DESCENT:** Vertical speed ≤ 0 cm/s while pyros are armed. Pyros arm when vertical speed drops below 1000 cm/s (10 m/s).
+
+**DESCENT → LANDED:** All three conditions must hold continuously for 1 second:
+- Altitude change between consecutive samples < 100 cm
+- Absolute vertical speed < 200 cm/s
+- Altitude < 3000 cm (30 m AGL)
+
+The triple check prevents false landing during descent — the pressure filter can smooth consecutive samples enough to appear stable even at high altitude and speed.
+
 ### Flash Layout (2MB)
 ```
 0x000000  Bootloader           36 KB   pico_fota_bootloader
