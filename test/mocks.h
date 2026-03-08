@@ -89,6 +89,10 @@ static inline int i2c_init(i2c_inst_t *i2c, unsigned int baud) { (void)i2c; (voi
 #define LFS_O_RDONLY 1
 #define LFS_O_WRONLY 2
 #define LFS_O_CREAT 0x0100
+#define LFS_O_TRUNC 0x0200
+#define LFS_ERR_NOENT (-2)
+#define LFS_ERR_OK 0
+typedef int lfs_ssize_t;
 typedef struct { int dummy; } lfs_t;
 typedef struct { int dummy; } lfs_file_t;
 typedef struct { int block_count; int block_size; } lfs_config;
@@ -97,6 +101,7 @@ static inline int lfs_mount(lfs_t *l, const lfs_config *c) { (void)l; (void)c; r
 static inline int lfs_format(lfs_t *l, const lfs_config *c) { (void)l; (void)c; return 0; }
 static inline int lfs_unmount(lfs_t *l) { (void)l; return 0; }
 static inline int lfs_file_open(lfs_t *l, lfs_file_t *f, const char *p, int fl) { (void)l; (void)f; (void)p; (void)fl; return 0; }
+static inline lfs_ssize_t lfs_file_read(lfs_t *l, lfs_file_t *f, void *b, size_t s) { (void)l; (void)f; (void)b; (void)s; return 0; }
 static inline int lfs_file_write(lfs_t *l, lfs_file_t *f, const void *b, size_t s) { (void)l; (void)f; (void)b; return (int)s; }
 static inline int lfs_file_close(lfs_t *l, lfs_file_t *f) { (void)l; (void)f; return 0; }
 
