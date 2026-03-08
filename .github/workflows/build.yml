@@ -51,32 +51,20 @@ jobs:
           npm install
           npx playwright install --with-deps chromium
 
-      - name: Web UI tests (new device)
+      - name: Web UI tests
         run: |
-          node test/web/mock_server.js new 3456 &
-          PID=$!
-          sleep 1
           cd test/web
-          PYRO_MODE=new BASE_URL=http://localhost:3456 npx playwright test
-          kill $PID 2>/dev/null; wait $PID 2>/dev/null || true
-
-      - name: Web UI tests (configured device)
-        run: |
-          node test/web/mock_server.js configured 3457 &
-          PID=$!
-          sleep 1
-          cd test/web
-          PYRO_MODE=configured BASE_URL=http://localhost:3457 npx playwright test
-          kill $PID 2>/dev/null; wait $PID 2>/dev/null || true
-
-      - name: Web UI tests (post-flight)
-        run: |
-          node test/web/mock_server.js flown 3458 &
-          PID=$!
-          sleep 1
-          cd test/web
-          PYRO_MODE=flown BASE_URL=http://localhost:3458 npx playwright test
-          kill $PID 2>/dev/null; wait $PID 2>/dev/null || true
+          for MODE in new configured flown; do
+            echo "=== Testing mode: $MODE ==="
+            node mock_server.js $MODE 3456 &
+            PID=$!
+            sleep 2
+            PYRO_MODE=$MODE BASE_URL=http://localhost:3456 npx playwright test 2>&1
+            RESULT=$?
+            kill $PID 2>/dev/null; wait $PID 2>/dev/null || true
+            sleep 1
+            if [ $RESULT -ne 0 ]; then exit $RESULT; fi
+          done
 
       - name: Upload Playwright results
         if: failure()
