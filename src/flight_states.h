@@ -109,6 +109,7 @@ typedef struct flight_context_t {
 
 // State dispatch
 flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now);
+void parse_config_ini(char *buf, config_t *cfg);
 
 // Telemetry
 void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm, flight_state_t state);

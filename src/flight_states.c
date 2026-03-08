@@ -109,6 +109,42 @@ bool should_fire_pyro(flight_context_t *ctx, uint8_t mode, uint16_t value) {
     }
 }
 
+/* ── Config parser ─────────────────────────────────────────────────── */
+
+static uint8_t parse_mode(const char *val) {
+    if (strcmp(val, "delay") == 0) return PYRO_MODE_DELAY;
+    if (strcmp(val, "agl") == 0)   return PYRO_MODE_AGL;
+    if (strcmp(val, "fallen") == 0) return PYRO_MODE_FALLEN;
+    if (strcmp(val, "speed") == 0) return PYRO_MODE_SPEED;
+    return 0;
+}
+
+void parse_config_ini(char *buf, config_t *cfg) {
+    char *line = buf;
+    while (line && *line) {
+        char *nl = strstr(line, "\r\n");
+        if (nl) { *nl = '\0'; nl += 2; }
+        else { char *nl2 = strchr(line, '\n'); if (nl2) { *nl2 = '\0'; nl = nl2 + 1; } else nl = NULL; }
+        char *eq = strchr(line, '=');
+        if (eq) {
+            *eq = '\0';
+            char *key = line, *val = eq + 1;
+            if (strcmp(key, "id") == 0)          { strncpy(cfg->id, val, 8); cfg->id[8] = '\0'; }
+            else if (strcmp(key, "name") == 0)    { strncpy(cfg->name, val, 8); cfg->name[8] = '\0'; }
+            else if (strcmp(key, "pyro1_mode") == 0)  cfg->pyro1_mode = parse_mode(val);
+            else if (strcmp(key, "pyro1_value") == 0) cfg->pyro1_value = (uint16_t)atoi(val);
+            else if (strcmp(key, "pyro2_mode") == 0)  cfg->pyro2_mode = parse_mode(val);
+            else if (strcmp(key, "pyro2_value") == 0) cfg->pyro2_value = (uint16_t)atoi(val);
+            else if (strcmp(key, "units") == 0) {
+                if (strcmp(val, "m") == 0) cfg->units = 1;
+                else if (strcmp(val, "ft") == 0) cfg->units = 2;
+                else cfg->units = 0;
+            }
+        }
+        line = nl;
+    }
+}
+
 /* ── Boot states ──────────────────────────────────────────────────── */
 
 flight_state_t state_boot_filesystem(flight_context_t *ctx, uint32_t now) {
@@ -139,45 +175,12 @@ flight_state_t state_boot_filesystem(flight_context_t *ctx, uint32_t now) {
             lfs_file_close(&lfs, &config_file);
         }
     } else if (err == LFS_ERR_OK) {
-        /* Parse config.ini into ctx->config */
         char buf[256];
         lfs_ssize_t n = lfs_file_read(&lfs, &config_file, buf, sizeof(buf) - 1);
         lfs_file_close(&lfs, &config_file);
         if (n > 0) {
             buf[n] = '\0';
-            char *line = buf;
-            while (line && *line) {
-                char *nl = strstr(line, "\r\n");
-                if (nl) { *nl = '\0'; nl += 2; }
-                else { char *nl2 = strchr(line, '\n'); if (nl2) { *nl2 = '\0'; nl = nl2 + 1; } }
-                char *eq = strchr(line, '=');
-                if (eq) {
-                    *eq = '\0';
-                    char *key = line, *val = eq + 1;
-                    if (strcmp(key, "id") == 0) { strncpy(ctx->config.id, val, 8); ctx->config.id[8] = '\0'; }
-                    else if (strcmp(key, "name") == 0) { strncpy(ctx->config.name, val, 8); ctx->config.name[8] = '\0'; }
-                    else if (strcmp(key, "pyro1_mode") == 0) {
-                        if (strcmp(val,"delay")==0) ctx->config.pyro1_mode = PYRO_MODE_DELAY;
-                        else if (strcmp(val,"agl")==0) ctx->config.pyro1_mode = PYRO_MODE_AGL;
-                        else if (strcmp(val,"fallen")==0) ctx->config.pyro1_mode = PYRO_MODE_FALLEN;
-                        else if (strcmp(val,"speed")==0) ctx->config.pyro1_mode = PYRO_MODE_SPEED;
-                    }
-                    else if (strcmp(key, "pyro1_value") == 0) ctx->config.pyro1_value = (uint16_t)atoi(val);
-                    else if (strcmp(key, "pyro2_mode") == 0) {
-                        if (strcmp(val,"delay")==0) ctx->config.pyro2_mode = PYRO_MODE_DELAY;
-                        else if (strcmp(val,"agl")==0) ctx->config.pyro2_mode = PYRO_MODE_AGL;
-                        else if (strcmp(val,"fallen")==0) ctx->config.pyro2_mode = PYRO_MODE_FALLEN;
-                        else if (strcmp(val,"speed")==0) ctx->config.pyro2_mode = PYRO_MODE_SPEED;
-                    }
-                    else if (strcmp(key, "pyro2_value") == 0) ctx->config.pyro2_value = (uint16_t)atoi(val);
-                    else if (strcmp(key, "units") == 0) {
-                        if (strcmp(val,"m")==0) ctx->config.units = 1;
-                        else if (strcmp(val,"ft")==0) ctx->config.units = 2;
-                        else ctx->config.units = 0;
-                    }
-                }
-                line = nl;
-            }
+            parse_config_ini(buf, &ctx->config);
         }
     }
     lfs_unmount(&lfs);

@@ -449,6 +449,118 @@ void test_telemetry_boot_state_maps_to_zero(void) {
     TEST_ASSERT_TRUE(strstr(mock_uart_buf, "PYRO,0,0,") != NULL);
 }
 
+/* ── Config parser tests ──────────────────────────────────────────── */
+
+void test_parse_full_config(void) {
+    config_t cfg = {0};
+    char ini[] = "[pyro]\r\nid=ROCKET1\r\nname=MyRkt\r\npyro1_mode=delay\r\npyro1_value=0\r\npyro2_mode=agl\r\npyro2_value=300\r\nunits=ft\r\n";
+    parse_config_ini(ini, &cfg);
+    TEST_ASSERT_EQUAL_STRING("ROCKET1", cfg.id);
+    TEST_ASSERT_EQUAL_STRING("MyRkt", cfg.name);
+    TEST_ASSERT_EQUAL(PYRO_MODE_DELAY, cfg.pyro1_mode);
+    TEST_ASSERT_EQUAL(0, cfg.pyro1_value);
+    TEST_ASSERT_EQUAL(PYRO_MODE_AGL, cfg.pyro2_mode);
+    TEST_ASSERT_EQUAL(300, cfg.pyro2_value);
+    TEST_ASSERT_EQUAL(2, cfg.units);
+}
+
+void test_parse_all_modes(void) {
+    config_t cfg = {0};
+    char ini1[] = "pyro1_mode=delay\r\n"; parse_config_ini(ini1, &cfg);
+    TEST_ASSERT_EQUAL(PYRO_MODE_DELAY, cfg.pyro1_mode);
+    char ini2[] = "pyro1_mode=agl\r\n"; parse_config_ini(ini2, &cfg);
+    TEST_ASSERT_EQUAL(PYRO_MODE_AGL, cfg.pyro1_mode);
+    char ini3[] = "pyro1_mode=fallen\r\n"; parse_config_ini(ini3, &cfg);
+    TEST_ASSERT_EQUAL(PYRO_MODE_FALLEN, cfg.pyro1_mode);
+    char ini4[] = "pyro1_mode=speed\r\n"; parse_config_ini(ini4, &cfg);
+    TEST_ASSERT_EQUAL(PYRO_MODE_SPEED, cfg.pyro1_mode);
+}
+
+void test_parse_all_units(void) {
+    config_t cfg = {0};
+    char ini1[] = "units=cm\r\n"; parse_config_ini(ini1, &cfg);
+    TEST_ASSERT_EQUAL(0, cfg.units);
+    char ini2[] = "units=m\r\n"; parse_config_ini(ini2, &cfg);
+    TEST_ASSERT_EQUAL(1, cfg.units);
+    char ini3[] = "units=ft\r\n"; parse_config_ini(ini3, &cfg);
+    TEST_ASSERT_EQUAL(2, cfg.units);
+}
+
+void test_parse_unix_newlines(void) {
+    config_t cfg = {0};
+    char ini[] = "[pyro]\npyro1_mode=speed\npyro1_value=42\n";
+    parse_config_ini(ini, &cfg);
+    TEST_ASSERT_EQUAL(PYRO_MODE_SPEED, cfg.pyro1_mode);
+    TEST_ASSERT_EQUAL(42, cfg.pyro1_value);
+}
+
+void test_parse_no_section_header(void) {
+    config_t cfg = {0};
+    char ini[] = "pyro2_mode=fallen\r\npyro2_value=100\r\n";
+    parse_config_ini(ini, &cfg);
+    TEST_ASSERT_EQUAL(PYRO_MODE_FALLEN, cfg.pyro2_mode);
+    TEST_ASSERT_EQUAL(100, cfg.pyro2_value);
+}
+
+void test_parse_unknown_keys_ignored(void) {
+    config_t cfg = {0};
+    char ini[] = "foo=bar\r\npyro1_value=55\r\nbaz=qux\r\n";
+    parse_config_ini(ini, &cfg);
+    TEST_ASSERT_EQUAL(55, cfg.pyro1_value);
+}
+
+void test_parse_unknown_mode_stays_zero(void) {
+    config_t cfg = {0};
+    char ini[] = "pyro1_mode=bogus\r\n";
+    parse_config_ini(ini, &cfg);
+    TEST_ASSERT_EQUAL(0, cfg.pyro1_mode);
+}
+
+void test_parse_empty_string(void) {
+    config_t cfg = {0};
+    char ini[] = "";
+    parse_config_ini(ini, &cfg);
+    TEST_ASSERT_EQUAL(0, cfg.pyro1_mode);
+    TEST_ASSERT_EQUAL(0, cfg.pyro2_value);
+}
+
+void test_parse_no_trailing_newline(void) {
+    config_t cfg = {0};
+    char ini[] = "pyro1_value=123";
+    parse_config_ini(ini, &cfg);
+    TEST_ASSERT_EQUAL(123, cfg.pyro1_value);
+}
+
+void test_parse_id_truncated_to_8(void) {
+    config_t cfg = {0};
+    char ini[] = "id=ABCDEFGHIJKLMNOP\r\n";
+    parse_config_ini(ini, &cfg);
+    TEST_ASSERT_EQUAL(8, strlen(cfg.id));
+    TEST_ASSERT_EQUAL_STRING("ABCDEFGH", cfg.id);
+}
+
+void test_parse_preserves_unset_fields(void) {
+    config_t cfg = {0};
+    cfg.pyro1_mode = PYRO_MODE_DELAY;
+    cfg.pyro1_value = 99;
+    char ini[] = "pyro2_mode=agl\r\npyro2_value=200\r\n";
+    parse_config_ini(ini, &cfg);
+    /* pyro1 fields unchanged */
+    TEST_ASSERT_EQUAL(PYRO_MODE_DELAY, cfg.pyro1_mode);
+    TEST_ASSERT_EQUAL(99, cfg.pyro1_value);
+    /* pyro2 fields set */
+    TEST_ASSERT_EQUAL(PYRO_MODE_AGL, cfg.pyro2_mode);
+    TEST_ASSERT_EQUAL(200, cfg.pyro2_value);
+}
+
+void test_parse_comment_lines(void) {
+    config_t cfg = {0};
+    /* Lines without '=' are skipped (section headers, comments) */
+    char ini[] = "[pyro]\r\n; this is a comment\r\npyro1_value=77\r\n# another comment\r\n";
+    parse_config_ini(ini, &cfg);
+    TEST_ASSERT_EQUAL(77, cfg.pyro1_value);
+}
+
 /* ── Main ─────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -494,6 +606,20 @@ int main(void) {
     RUN_TEST(test_telemetry_pyro_adc);
     RUN_TEST(test_telemetry_all_flags);
     RUN_TEST(test_telemetry_boot_state_maps_to_zero);
+
+    /* Config parser */
+    RUN_TEST(test_parse_full_config);
+    RUN_TEST(test_parse_all_modes);
+    RUN_TEST(test_parse_all_units);
+    RUN_TEST(test_parse_unix_newlines);
+    RUN_TEST(test_parse_no_section_header);
+    RUN_TEST(test_parse_unknown_keys_ignored);
+    RUN_TEST(test_parse_unknown_mode_stays_zero);
+    RUN_TEST(test_parse_empty_string);
+    RUN_TEST(test_parse_no_trailing_newline);
+    RUN_TEST(test_parse_id_truncated_to_8);
+    RUN_TEST(test_parse_preserves_unset_fields);
+    RUN_TEST(test_parse_comment_lines);
 
     return UNITY_END();
 }
