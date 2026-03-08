@@ -6,14 +6,14 @@ Firmware for the Pyro MK1B Rocket Flight Computer
 ## Features
 - **Dual Pyrotechnic Control** - AP2192 power switches with fault detection
 - **Four Firing Modes** - Fallen distance, AGL altitude, descent speed, timed delay
-- **Flight Data Logging** - 10-20Hz CSV logging to littlefs
-- **Real-time Telemetry** - 1Hz Eggtimer-compatible output via UART
+- **Flight Data Logging** - 10Hz ring buffer (4096 samples)
+- **Real-time Telemetry** - $PYRO NMEA format via UART, 10Hz in flight
 - **Pressure Sensing** - MS5607-02BA03 or BMP280 (auto-detected)
 - **Altitude Calculation** - Integer-only barometric formula
 - **Continuity Checking** - ADC oversampling for pre-flight verification
 - **Web Interface** - Live dashboard via USB network (192.168.7.1)
 - **OTA Firmware Updates** - A/B bootloader with automatic rollback
-- **Test Mode** - GPIO 8 jumper for ground pyro testing
+- **Test Mode** - GPIO 8 jumper for ground pyro testing (planned)
 - **Status Beep Codes** - Field-diagnosable error reporting
 - **Altitude Beep-out** - Max altitude announced after landing (m/ft/ft100)
 - **Configurable Deployment** - INI file configuration via USB or web
@@ -88,14 +88,20 @@ Two-digit codes (1-5 beeps per digit):
 | 3-4  | Pyro 2 failed to open after fire |
 | 4-1  | Pressure sensor failure |
 | 4-2  | Filesystem failure |
+| 4-3  | Pyro altitude setting exceeds sensor limit |
 | 5-5  | Critical system failure |
 
 ## Pin Assignments
 ### Communication
 - **GPIO 0:** UART0 TX (telemetry output)
 - **GPIO 1:** UART0 RX
-- **GPIO 8:** I2C0 SDA (pressure sensor)
+- **GPIO 8:** I2C0 SDA (pressure sensor) / Test input (active low, internal pull-up)
 - **GPIO 9:** I2C0 SCL (pressure sensor)
+
+### Pressure Sensor I2C
+- **MS5607:** GPIO 10 (SDA), GPIO 7 (SCL)
+- **BMP280:** GPIO 6 (SDA), GPIO 7 (SCL)
+- Auto-detected at boot with I2C pin release between attempts
 
 ### Pyrotechnic Control
 - **GPIO 15:** Common enable (master switch)
@@ -108,72 +114,33 @@ Two-digit codes (1-5 beeps per digit):
 
 ### User Interface
 - **GPIO 25:** Onboard LED (status)
-- **GPIO 16:** Buzzer (PWM, 3kHz square wave)
-- **GPIO 8:** Test input (active low, internal pull-up; also I2C0 SDA after boot)
+- **GPIO 16:** Buzzer (GPIO on/off, external circuit produces tone)
 
 ## Data Logging
-Flight data saved to `flight_NNNN.csv` with:
-- **Metadata:** ID, name, config, continuity test results
-- **Flight Data:** Variable rate pressure/altitude/time/state
-  - PAD_IDLE: 100Hz (10ms - quick launch detection)
-  - LAUNCH/APOGEE: 10Hz
-  - FALLING: 20Hz (for precise pyro deployment, ±5m accuracy)
-  - LANDED: 1Hz
-- **Events:** Launch time, peak altitude, pyro deployments
-- **Verification:** Post-fire ADC readings
-- **Buffer:** 64KB RAM (4,096 samples, ~6.8 minutes capacity)
+Flight data stored in a 4096-sample ring buffer (16 bytes/sample):
+- **Sample rate:** 10Hz PAD_IDLE, 100ms ASCENT, 50ms DESCENT, 1Hz LANDED
+- **Fields:** time_ms, pressure_pa, altitude_cm, state, event, event_data
+- **Events:** Tagged on existing samples (LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING)
+- **Capacity:** ~6.8 minutes at 10Hz
 
-### Example CSV Header
-```
-# Pyro ID: PYRO001
-# Name: Test Rocket
-# Flight Configuration:
-# Pyro 1 Mode: 1 (fallen), Distance: 300m
-# Pyro 2 Mode: 2 (AGL), Distance: 500m
-# Pre-flight Continuity Test:
-# Pyro 1 ADC: 45 (Good)
-# Pyro 2 ADC: 52 (Good)
-# Ground Pressure: 101325 Pa
-# Launch Time: 0ms
-# Peak Altitude: 120000 cm
-# Pyro 1 Fire: Time=1234ms, Alt=90000cm, Pressure=95000Pa, Post-fire ADC=65000
-# Pyro 2 Fire: Time=2345ms, Alt=50000cm, Pressure=98000Pa, Post-fire ADC=65100
-Time_ms,Pressure_Pa,Altitude_cm,State
-0,101325,0,PAD_IDLE
-...
-```
+CSV flight data export to littlefs is planned but not yet implemented.
 
 ## Telemetry (UART0)
-**Format:** Eggtimer-compatible data elements, 115200 baud, 1Hz
+**Format:** $PYRO NMEA sentences, 115200 baud
 
-### Data Element Structure
-`<trigger><data>>`
-
-**Example transmission:**
 ```
-{046>@5>#0018>~1B---->(0213>%04679>^0660>?079>!210>=PYRO001>
+$PYRO,seq,state,thrust,alt_cm,vel_cms,maxalt_cm,press_pa,time_ms,flags_hex,p1adc,p2adc,batt,temp*XX\r\n
 ```
 
-### Key Data Elements
-| Trigger | Data | Description |
-|---------|------|-------------|
-| `{` | nnn | Altitude in hundreds of feet (046 = 4600 ft) |
-| `@` | n | Flight phase (1=WT, 2=LD, 5=AP, 8=FS, 9=TD) |
-| `#` | nnnn | Flight time in seconds |
-| `~` | nn---- | Channel status (A/B=enabled, 1/2=fired, -=disabled) |
-| `(` | -nnnn | Velocity in fps |
-| `%` | nnnnn | Apogee in feet (after apogee only) |
-| `^` | nnnn | Max velocity in fps (after apogee only) |
-| `?` | nnn | Battery voltage × 10 (079 = 7.9V) |
-| `!` | -nnn | Temperature × 10 °C (210 = 21.0°C) |
-| `=` | xxxxxxxx | Device name/ID (8 chars) |
+- **Rate:** 10Hz during ASCENT/DESCENT, 1Hz during PAD_IDLE/LANDED
+- **State:** 0=PAD_IDLE, 1=ASCENT, 2=DESCENT, 3=LANDED
+- **Flags:** bit0=P1_CONT, bit1=P2_CONT, bit2=P1_FIRED, bit3=P2_FIRED, bit4=ARMED, bit5=APOGEE
+- **Checksum:** XOR of all bytes between `$` and `*`
 
-**Channel Status Examples:**
-- `~AB---->` - Both channels enabled (pre-launch)
-- `~1B---->` - Channel 1 fired, Channel 2 enabled
-- `~12---->` - Both channels fired
-
-**Benefits:** Compatible with Eggfinder receivers, robust against packet loss
+**Example:**
+```
+$PYRO,42,1,1,150000,-200,150000,95000,8500,13,48,52,0,0*4A
+```
 
 ## Safety Features
 1. **Pre-flight Continuity Check** - ADC oversampling (256 samples, 16-bit effective)
@@ -244,10 +211,11 @@ The A/B bootloader ([pico_fota_bootloader](https://github.com/JZimnol/pico_fota_
 Connect the Pico via USB. It appears as a network adapter with DHCP.
 
 - **Address:** http://pyro.local/ (or http://192.168.7.1/)
-- **Dashboard:** Live status, altitude, pyro continuity
-- **Status API:** /api/status — JSON telemetry (CORS enabled)
-- **Config API:** /api/config — download/upload config.ini (CORS enabled)
-- **OTA API:** POST to /api/ota — firmware update
+- **Status tab:** Live state, altitude, speed, pressure in configured units
+- **Config tab:** Guided pyro editor with range warnings and tips
+- **Flight Data tab:** Summary, CSV download, altitude graph
+- **Update tab:** Firmware/web upload, GitHub release checker
+- **APIs:** /api/status, /api/config, /api/reboot, /api/ota, /api/flight.csv (all CORS enabled)
 
 ### Network Architecture
 Each tracker advertises a `_pyro._tcp` DNS-SD service via mDNS.

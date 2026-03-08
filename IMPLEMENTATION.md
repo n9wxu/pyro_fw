@@ -1,4 +1,4 @@
-# Flight Controller Implementation (v1.2.0)
+# Flight Controller Implementation
 
 ## Architecture
 
@@ -56,11 +56,13 @@ The triple check prevents false landing during descent — the pressure filter c
 | `www/` | Web interface files (uploaded to littlefs) |
 
 ### Testing
-- 27 unit tests + 11 integration tests + 9 closed-loop tests = 47 total
+- 39 unit tests + 11 integration tests + 9 closed-loop tests = 59 C tests
+- 22 Playwright web UI tests against mock server (3 device modes)
 - Host-compiled with mocks (no ARM target needed)
 - Integration tests use OpenRocket simulation data at 1ms resolution
 - Closed-loop tests: 28 flights with physics feedback, 7 pyro configs × 4 altitudes (100ft–100km)
 - Flight summaries with event times/altitudes printed in build logs
+- GitHub Pages interactive demo: https://n9wxu.github.io/pyro_fw/
 - See [test/README.md](test/README.md) for comprehensive test plan
 
 ### OTA Update Flow
@@ -80,6 +82,7 @@ If step 7 doesn't happen before next reboot, bootloader rolls back.
 | GET | `/api/status` | JSON: state, altitude, pyro, version, uptime |
 | GET | `/api/config` | Plain text config.ini from littlefs |
 | POST | `/api/config` | Upload new config.ini |
+| POST | `/api/reboot` | Reboot device (deferred watchdog reset) |
 | POST | `/api/ota` | Firmware update (raw .bin body) |
 | GET | `/api/flight.csv` | Download flight data |
 | GET | `/` | Web dashboard (served from littlefs /www/) |
@@ -232,7 +235,7 @@ The mock pressure sensor uses the International Standard Atmosphere:
 | Stratosphere | 11–47 km | P = P₁₁ × e^(−g(h−11000)/(R×216.65)) |
 | Upper | > 47 km | P = P₄₇ × e^(−g(h−47000)/(R×270.65)) |
 
-The firmware's linear barometric formula (`alt = (P₀−P) × 83/10`) saturates at ~8400m equivalent altitude when pressure approaches zero. The pressure filter tracks through this range using a minimum ±1 Pa step to prevent integer truncation stall.
+The firmware's linear barometric formula (`alt = (P₀−P) × 83/10`) is clamped at 8,000m. The pressure filter tracks through this range using a minimum ±1 Pa step to prevent integer truncation stall.
 
 #### Closed-Loop Feedback
 
