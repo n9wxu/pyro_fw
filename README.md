@@ -1,6 +1,8 @@
 # pyro_fw
 Firmware for the Pyro MK1B Rocket Flight Computer
 
+**[🚀 Try the web interface — no hardware needed](https://n9wxu.github.io/pyro_fw/)**
+
 ## Features
 - **Dual Pyrotechnic Control** - AP2192 power switches with fault detection
 - **Four Firing Modes** - Fallen distance, AGL altitude, descent speed, timed delay
