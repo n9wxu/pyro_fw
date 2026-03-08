@@ -46,27 +46,33 @@ jobs:
         run: node --check www/app.js
 
       - name: Install Playwright
-        run: npx playwright install --with-deps chromium
+        run: |
+          cd test/web
+          npm install
+          npx playwright install --with-deps chromium
 
       - name: Web UI tests (new device)
         run: |
           node test/web/mock_server.js new 3456 &
           sleep 1
-          PYRO_MODE=new BASE_URL=http://localhost:3456 npx playwright test --config=test/web/playwright.config.js
+          cd test/web
+          PYRO_MODE=new BASE_URL=http://localhost:3456 npx playwright test
           kill %1 || true
 
       - name: Web UI tests (configured device)
         run: |
           node test/web/mock_server.js configured 3456 &
           sleep 1
-          PYRO_MODE=configured BASE_URL=http://localhost:3456 npx playwright test --config=test/web/playwright.config.js
+          cd test/web
+          PYRO_MODE=configured BASE_URL=http://localhost:3456 npx playwright test
           kill %1 || true
 
       - name: Web UI tests (post-flight)
         run: |
           node test/web/mock_server.js flown 3456 &
           sleep 1
-          PYRO_MODE=flown BASE_URL=http://localhost:3456 npx playwright test --config=test/web/playwright.config.js
+          cd test/web
+          PYRO_MODE=flown BASE_URL=http://localhost:3456 npx playwright test
           kill %1 || true
 
       - name: Read version
