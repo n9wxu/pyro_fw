@@ -7,14 +7,12 @@ Host-compiled tests for the Pyro MK1B flight computer. All tests run on the buil
 ```bash
 cd build
 
-# Unit tests (27 tests)
-ninja host_tests
-
-# Integration tests (11 tests)
-ninja integration_tests
+ninja host_tests          # 27 unit tests
+ninja integration_tests   # 11 integration tests (OpenRocket data)
+ninja closedloop_tests    # 9 closed-loop tests (28 simulated flights)
 ```
 
-Both run automatically in GitHub Actions CI on every push.
+All three run automatically in GitHub Actions CI on every push.
 
 ## Architecture
 
@@ -26,11 +24,12 @@ test/
   mocks.c              Mock implementations (pressure sensor, pyro, UART capture)
   test_flight_states.c  27 unit tests
   test_integration.c    11 integration tests
+  test_closedloop.c     9 closed-loop simulation tests
 test_data/
   open_rocket_export.csv  OpenRocket simulation (228 points, 16s flight, 165ft peak)
 ```
 
-## Unit Tests (test_flight_states.c)
+## Unit Tests (test_flight_states.c) — 27 tests
 
 ### Helpers
 | Test | Verifies |
@@ -66,7 +65,7 @@ test_data/
 ### DESCENT
 | Test | Verifies |
 |------|----------|
-| descent_detects_landing | Transitions to LANDED after 1s stable altitude |
+| descent_detects_landing | Transitions to LANDED after 1s stable + low speed + low altitude |
 
 ### LANDED
 | Test | Verifies |
@@ -87,7 +86,7 @@ test_data/
 | telemetry_all_flags | All 6 flags set = 0x3F |
 | telemetry_boot_state_maps_to_zero | Boot states output state=0 |
 
-## Integration Tests (test_integration.c)
+## Integration Tests (test_integration.c) — 11 tests
 
 Simulates a complete flight using OpenRocket trajectory data at 1ms resolution.
 
@@ -97,11 +96,6 @@ Simulates a complete flight using OpenRocket trajectory data at 1ms resolution.
 3. **Convert** altitude to pressure: `P = 101325 - (alt_ft × 30.48 × 10 / 83)`
 4. **Run** app_tick() at 1ms intervals for ~18 seconds (sim + 2s settling)
 5. **Verify** state transitions, pyro fires, telemetry, data log, buzzer
-
-### Configuration
-- Pyro 1: delay = 0 (fire at apogee)
-- Pyro 2: AGL = 50 ft
-- Units: feet
 
 ### Tests
 | Test | Verifies |
@@ -113,10 +107,67 @@ Simulates a complete flight using OpenRocket trajectory data at 1ms resolution.
 | apogee_detected_and_altitude | Apogee flagged, max altitude ~5000cm (165ft) |
 | pyro_fires | At least one pyro channel fired |
 | buzzer_lifecycle | Stops on launch, plays altitude on landing |
-| data_log_complete | >100 samples, launch/armed/pyro/landing events present |
+| data_log_complete | >100 samples with launch/armed/pyro/landing events |
 | telemetry_output | ≥10 $PYRO sentences with valid checksum |
 | state_timing | Ascent <3s, descent <6s, landed after 12s |
 | flight_duration | Total flight ~15 seconds |
 
-### Known Issue
-None currently.
+## Closed-Loop Simulation Tests (test_closedloop.c) — 9 tests, 28 flights
+
+Full physics simulation with pyro deployment feedback. When the firmware fires a pyro, the physics model deploys the corresponding chute, changing the descent rate.
+
+### Physics Model
+- **Thrust phase:** configurable acceleration and burn time (binary search for target apogee)
+- **Coast:** ballistic trajectory under gravity
+- **Descent drag:** `a_drag = drag_coeff × density_fraction × |velocity|`
+- **Atmospheric density:** exponential decay with 8.5km scale height
+- **Standard atmosphere:** troposphere + stratosphere pressure model
+- **Chute deployment:** drogue (0.8 drag) and main (4.0 drag) change terminal velocity
+
+### Configurations Tested
+| Config | Pyro 1 (Drogue) | Pyro 2 (Main) |
+|--------|-----------------|---------------|
+| Dly+Dly | Delay 0s (at apogee) | Delay 3s |
+| Dly+AGL | Delay 0s | AGL 200ft |
+| Dly+Fal | Delay 0s | Fallen 100ft |
+| Dly+Spd | Delay 0s | Speed 30ft/s |
+| AGL+AGL | AGL 400ft | AGL 200ft |
+| Fal+AGL | Fallen 50ft | AGL 200ft |
+| Spd+AGL | Speed 20ft/s | AGL 200ft |
+
+### Altitude Profiles
+| Profile | Target | Typical Apogee | Flight Time |
+|---------|--------|---------------|-------------|
+| Low | 100 ft (31m) | 31m | ~10s |
+| Medium | 500 ft (152m) | 152m | ~35-60s |
+| High | 5000 ft (1524m) | 1525m | ~150-580s |
+| Karman | 100 km | 100,045m | ~860-3630s |
+
+### Sample Output
+```
+  Dly+Dly@100ft        apogee=    31m  launch=3.2s apogee=5.5s P1=5.5s@26m P2=8.5s@0m landed=10.3s
+  Dly+AGL@5000ft       apogee=  1525m  launch=3.0s apogee=21.8s P1=21.8s@1519m P2=131.5s@47m landed=150.6s
+  Fal+AGL@Karman       apogee=100045m  launch=3.2s apogee=64.2s P1=273.1s@39233m P2=845.9s@47m landed=864.9s
+  chute: with          apogee=  1525m  launch=3.0s apogee=21.8s P1=21.8s@1519m P2=131.5s@47m landed=150.6s
+  chute: without       apogee=  1525m  launch=3.0s apogee=21.8s landed=45.9s
+```
+
+### Tests
+| Test | Flights | Verifies |
+|------|---------|----------|
+| test_delay_delay | 4 | DELAY+DELAY at all altitudes |
+| test_delay_agl | 4 | DELAY+AGL at all altitudes |
+| test_delay_fallen | 4 | DELAY+FALLEN at all altitudes |
+| test_delay_speed | 4 | DELAY+SPEED at all altitudes |
+| test_agl_agl | 4 | AGL+AGL at all altitudes |
+| test_fallen_agl | 4 | FALLEN+AGL at all altitudes |
+| test_speed_agl | 4 | SPEED+AGL at all altitudes |
+| test_chute_slows_descent | 2 | With chutes takes longer than ballistic |
+| test_karman_apogee | 1 | Apogee within 20km of 100km target |
+
+Each flight verifies: full state sequence, drogue fires, data log, telemetry. Medium+ flights also verify main fires and drogue-before-main ordering (except Karman where both fire near apogee).
+
+### Firmware Bugs Found
+These tests discovered two real firmware bugs:
+1. **pyro_fired flags never set** — pyros re-fired every tick, blocking the other channel
+2. **Pressure filter integer stall** — truncation to 0 when diff < 22 Pa prevented convergence from near-vacuum

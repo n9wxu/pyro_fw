@@ -56,9 +56,11 @@ The triple check prevents false landing during descent — the pressure filter c
 | `www/` | Web interface files (uploaded to littlefs) |
 
 ### Testing
-- 27 unit tests + 11 integration tests = 38 total
+- 27 unit tests + 11 integration tests + 9 closed-loop tests = 47 total
 - Host-compiled with mocks (no ARM target needed)
 - Integration tests use OpenRocket simulation data at 1ms resolution
+- Closed-loop tests: 28 flights with physics feedback, 7 pyro configs × 4 altitudes (100ft–100km)
+- Flight summaries with event times/altitudes printed in build logs
 - See [test/README.md](test/README.md) for comprehensive test plan
 
 ### OTA Update Flow

@@ -114,8 +114,20 @@ typedef struct {
     float pyro1_alt_m, pyro2_alt_m;
     float apogee_m, landing_speed_ms;
     uint32_t flight_time_ms;
+    uint32_t launch_ms, apogee_ms, p1_fire_ms, p2_fire_ms, landed_ms;
+    float launch_alt_m, apogee_alt_m;
     int sample_count, telemetry_count;
 } sim_result_t;
+
+static void print_summary(const char *label, sim_result_t *r) {
+    printf("  %-20s apogee=%6.0fm  ", label, r->apogee_m);
+    if (r->reached_ascent)  printf("launch=%.1fs ", r->launch_ms / 1000.0);
+    if (r->reached_descent) printf("apogee=%.1fs ", r->apogee_ms / 1000.0);
+    if (r->pyro1_fired)     printf("P1=%.1fs@%.0fm ", r->p1_fire_ms / 1000.0, r->pyro1_alt_m);
+    if (r->pyro2_fired)     printf("P2=%.1fs@%.0fm ", r->p2_fire_ms / 1000.0, r->pyro2_alt_m);
+    if (r->reached_landed)  printf("landed=%.1fs ", r->landed_ms / 1000.0);
+    printf("samples=%d telem=%d\n", r->sample_count, r->telemetry_count);
+}
 
 static sim_result_t run_sim(config_t cfg, flight_profile_t prof, bool enable_pyros) {
     mock_reset_all();
@@ -151,11 +163,13 @@ static sim_result_t run_sim(config_t cfg, flight_profile_t prof, bool enable_pyr
                 ps.drogue_deployed = true;
                 res.pyro1_fired = true;
                 res.pyro1_alt_m = ps.alt_m;
+                res.p1_fire_ms = t;
             }
             if (ch == 2 && !ps.main_deployed) {
                 ps.main_deployed = true;
                 res.pyro2_fired = true;
                 res.pyro2_alt_m = ps.alt_m;
+                res.p2_fire_ms = t;
             }
             prev_fires = mock_pyro.fire_count;
         }
@@ -175,11 +189,20 @@ static sim_result_t run_sim(config_t cfg, flight_profile_t prof, bool enable_pyr
         mock_pyro.firing = false;
         ctx.current_state = dispatch_state(&ctx, t);
 
-        if (ctx.current_state == ASCENT) res.reached_ascent = true;
-        if (ctx.current_state == DESCENT) res.reached_descent = true;
+        if (ctx.current_state == ASCENT && !res.reached_ascent) {
+            res.reached_ascent = true;
+            res.launch_ms = t;
+            res.launch_alt_m = ps.alt_m;
+        }
+        if (ctx.current_state == DESCENT && !res.reached_descent) {
+            res.reached_descent = true;
+            res.apogee_ms = t;
+            res.apogee_alt_m = ps.alt_m;
+        }
         if (ctx.current_state == LANDED && !res.reached_landed) {
             res.reached_landed = true;
             res.flight_time_ms = t - ctx.launch_time;
+            res.landed_ms = t;
             res.landing_speed_ms = fabsf(ps.vel_ms);
             break;
         }
@@ -279,6 +302,7 @@ static void run_suite(cfg_fn make, const char *name) {
 
         sim_result_t r = run_sim(c, prof, true);
 
+        print_summary(label, &r);
         assert_flight(&r, label);
         assert_p1(&r, label);
         assert_data(&r, label);
@@ -311,7 +335,9 @@ void test_chute_slows_descent(void) {
     config_t cfg = cfg_delay_agl();
 
     sim_result_t with = run_sim(cfg, prof, true);
+    print_summary("chute: with", &with);
     sim_result_t without = run_sim(cfg, prof, false);
+    print_summary("chute: without", &without);
 
     char msg[128];
     snprintf(msg, sizeof(msg), "With chutes (%ums) should be longer than ballistic (%ums)",
@@ -323,6 +349,7 @@ void test_karman_apogee(void) {
     flight_profile_t prof = make_profile(ALT_KARMAN);
     config_t cfg = cfg_delay_delay();
     sim_result_t r = run_sim(cfg, prof, true);
+    print_summary("Karman", &r);
 
     assert_flight(&r, "Karman");
     TEST_ASSERT_INT_WITHIN(20000, 100000, (int)r.apogee_m);

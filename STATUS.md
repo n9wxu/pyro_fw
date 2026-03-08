@@ -44,13 +44,14 @@
 - I2C pin release between detect attempts
 
 ### Build & CI/CD
-- GitHub Actions: build on push, release on tag, 38 tests in CI
+- GitHub Actions: build on push, release on tag, 47 tests in CI
 - Auto-incrementing version (CI-aware)
 - Beta/prerelease support
 
-### Testing (38 tests)
+### Testing (47 tests)
 - 27 unit tests: helpers, boot sequence, all flight states, telemetry formatting
 - 11 integration tests: full flight simulation with OpenRocket data
+- 9 closed-loop tests: 28 simulated flights with physics feedback (100ft to Karman line)
 - Host-compiled with mocks (pressure, pyro, UART, buzzer, GPIO, LFS)
 - Network test suite (support/test_network.py) with TUI
 
