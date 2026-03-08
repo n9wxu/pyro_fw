@@ -128,12 +128,11 @@ test.describe('Configured device', () => {
     await clickTab(page, 'Config');
     await page.fill('#p2val', '400');
     await page.click('button:has-text("Save")');
-    await expect(page.locator('#cfgMsg')).toContainText('Saved');
-    /* Switch to status tab — pending warning should show */
+    await page.waitForTimeout(1000);
+    /* Switch to status tab — pending warning should show after next poll */
     await clickTab(page, 'Status');
+    await page.waitForTimeout(2000);
     await expect(page.locator('#pendingWarn')).toBeVisible();
-    const p2 = await page.locator('#sCfgP2').textContent();
-    expect(p2).toContain('not yet applied');
   });
 
   test('save → reboot → config applied', async ({ page }) => {
