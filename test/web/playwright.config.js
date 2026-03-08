@@ -9,7 +9,10 @@ module.exports = defineConfig({
   use: {
     headless: true,
     viewport: { width: 800, height: 600 },
+    screenshot: 'only-on-failure',
+    trace: 'on-first-retry',
   },
+  reporter: [['list'], ['html', { open: 'never' }]],
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },
   ],

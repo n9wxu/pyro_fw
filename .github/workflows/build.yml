@@ -78,6 +78,15 @@ jobs:
           PYRO_MODE=flown BASE_URL=http://localhost:3458 npx playwright test
           kill $PID 2>/dev/null; wait $PID 2>/dev/null || true
 
+      - name: Upload Playwright results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: |
+            test/web/test-results/
+            test/web/playwright-report/
+
       - name: Read version
         id: ver
         run: echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
