@@ -115,7 +115,6 @@ void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm
 
 // Helpers used by state functions
 void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t altitude, uint8_t st);
-void buf_add_event(flight_context_t *ctx, uint32_t time_ms, uint8_t event, int32_t data1, int32_t data2);
 int32_t filter_pressure(flight_context_t *ctx, int32_t raw_pressure, uint32_t dt_ms);
 int32_t pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa);
 

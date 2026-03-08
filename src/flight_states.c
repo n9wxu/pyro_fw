@@ -54,22 +54,10 @@ void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t 
     ctx->buf_count++;
 }
 
-void buf_add_event(flight_context_t *ctx, uint32_t time_ms, uint8_t event, int32_t data1, int32_t data2) {
-    if (ctx->buf_count == 4096) {
-        if (ctx->apogee_protected && ctx->buf_tail == ctx->apogee_protect_idx) return;
-        ctx->buf_tail = (ctx->buf_tail + 1) % 4096;
-        ctx->buf_count--;
-    }
-    flight_sample_t *s = &ctx->flight_buffer[ctx->buf_head];
-    s->time_ms = time_ms;
-    s->pressure_pa = data1;
-    s->altitude_cm = data2;
-    s->state = ctx->current_state;
-    s->under_thrust = 0;
-    s->event = event;
-    s->event_data = 0;
-    ctx->buf_head = (ctx->buf_head + 1) % 4096;
-    ctx->buf_count++;
+/* Tag the most recently added sample with an event */
+static void buf_tag_event(flight_context_t *ctx, uint8_t event) {
+    uint16_t last = (ctx->buf_head - 1 + 4096) % 4096;
+    ctx->flight_buffer[last].event = event;
 }
 
 int32_t filter_pressure(flight_context_t *ctx, int32_t raw_pressure, uint32_t dt_ms) {
@@ -226,7 +214,6 @@ flight_state_t state_boot_mdns(flight_context_t *ctx, uint32_t now) {
     net_mdns_poll();
     (void)0;
     (void)0;
-    buf_add_event(ctx, now, EVT_BOOT_DONE, 0, 0);
     return PAD_IDLE;
 }
 
@@ -274,7 +261,7 @@ flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
                 break;
             }
         }
-        buf_add_event(ctx, 0, EVT_LAUNCH, filtered, altitude);
+        buf_tag_event(ctx, EVT_LAUNCH);
         return ASCENT;
     }
     return PAD_IDLE;
@@ -305,25 +292,25 @@ flight_state_t state_ascent(flight_context_t *ctx, uint32_t now) {
 
     if (!ctx->pyros_armed && ctx->vertical_speed_cms < 1000 && ctx->vertical_speed_cms >= 0) {
         ctx->pyros_armed = true;
-        buf_add_event(ctx, flight_time, EVT_ARMED, ctx->vertical_speed_cms, altitude);
+        buf_tag_event(ctx, EVT_ARMED);
     }
 
     if (ctx->pyros_armed && !ctx->apogee_detected && ctx->vertical_speed_cms <= 0) {
         ctx->apogee_detected = true;
         ctx->apogee_time = now;
-        buf_add_event(ctx, flight_time, EVT_APOGEE, filtered, altitude);
+        buf_tag_event(ctx, EVT_APOGEE);
         ctx->apogee_protect_idx = (ctx->buf_head >= 50) ? (ctx->buf_head - 50) : (4096 + ctx->buf_head - 50);
         ctx->apogee_protected = true;
 
         if (!ctx->pyro1_fired && !pyro_is_firing() && ctx->pyro1_continuity_good &&
             should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value)) {
             pyro_fire(1); ctx->pyro1_fire_time = now;
-            buf_add_event(ctx, flight_time, EVT_PYRO1_FIRE, filtered, altitude);
+            buf_tag_event(ctx, EVT_PYRO1_FIRE);
         }
         if (!ctx->pyro2_fired && !pyro_is_firing() && ctx->pyro2_continuity_good &&
             should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
             pyro_fire(2); ctx->pyro2_fire_time = now;
-            buf_add_event(ctx, flight_time, EVT_PYRO2_FIRE, filtered, altitude);
+            buf_tag_event(ctx, EVT_PYRO2_FIRE);
         }
 
         ctx->last_altitude = altitude;
@@ -355,12 +342,12 @@ flight_state_t state_descent(flight_context_t *ctx, uint32_t now) {
     if (!ctx->pyro1_fired && !pyro_is_firing() && ctx->pyro1_continuity_good &&
         should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value)) {
         pyro_fire(1); ctx->pyro1_fire_time = now;
-        buf_add_event(ctx, flight_time, EVT_PYRO1_FIRE, filtered, altitude);
+        buf_tag_event(ctx, EVT_PYRO1_FIRE);
     }
     if (!ctx->pyro2_fired && !pyro_is_firing() && ctx->pyro2_continuity_good &&
         should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
         pyro_fire(2); ctx->pyro2_fire_time = now;
-        buf_add_event(ctx, flight_time, EVT_PYRO2_FIRE, filtered, altitude);
+        buf_tag_event(ctx, EVT_PYRO2_FIRE);
     }
 
     if (ctx->pyro1_fired && ctx->pyro1_fire_time > 0 && now - ctx->pyro1_fire_time > 1000 && now - ctx->pyro1_fire_time < 1500) {
@@ -379,7 +366,7 @@ flight_state_t state_descent(flight_context_t *ctx, uint32_t now) {
     if (abs(altitude - ctx->last_altitude) < 100) {
         if (ctx->landing_stable_since == 0) ctx->landing_stable_since = now;
         if (now - ctx->landing_stable_since >= 1000) {
-            buf_add_event(ctx, flight_time, EVT_LANDING, filtered, altitude);
+            buf_tag_event(ctx, EVT_LANDING);
             ctx->last_altitude = altitude;
             ctx->last_sample = now;
             return LANDED;
