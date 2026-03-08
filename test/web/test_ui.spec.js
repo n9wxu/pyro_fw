@@ -241,10 +241,15 @@ test.describe('Flown device', () => {
   test('all four tabs are navigable', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
-    for (const tab of ['Status', 'Config', 'Flight Data', 'Update']) {
-      await clickTab(page, tab);
-      const panel = page.locator(`#tab-${tab.toLowerCase().replace(' ', '-')}, #tab-${tab.toLowerCase().split(' ')[0]}`).first();
-      await expect(panel).toBeVisible();
+    var tabs = [
+      ['Status', '#tab-status'],
+      ['Config', '#tab-config'],
+      ['Flight Data', '#tab-data'],
+      ['Update', '#tab-update']
+    ];
+    for (const [name, id] of tabs) {
+      await clickTab(page, name);
+      await expect(page.locator(id)).toBeVisible();
     }
   });
 });
