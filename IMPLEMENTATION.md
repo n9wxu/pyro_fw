@@ -240,3 +240,49 @@ firmware fires pyro 2 → main_deployed = true   → C_d changes from 0.8 to 4.0
 #### Timing
 
 A 2-second pad dwell precedes the physics to allow the firmware's PAD_IDLE state to complete continuity checks (requires 1s). Karman-line flights use 50ms timesteps (vs 1ms for lower flights) to keep simulation time under 2 seconds.
+
+### Altitude Limitations
+
+The firmware uses a linear barometric formula:
+
+```
+altitude_cm = (P_ground − P_current) × 83 / 10
+```
+
+This is accurate below ~2000m where the pressure-altitude relationship is approximately linear. Above that, it progressively underreads. At very high altitudes, pressure approaches zero and the formula saturates:
+
+| Actual Altitude | Pressure | Firmware Reads | Error |
+|----------------|----------|---------------|-------|
+| 1,000 m | 89,874 Pa | 950 m | −5% |
+| 3,000 m | 70,108 Pa | 2,590 m | −14% |
+| 5,000 m | 54,019 Pa | 3,925 m | −21% |
+| 8,400 m | ~120 Pa | 8,400 m | 0% (coincidence) |
+| 10,000 m | 26,435 Pa | 6,216 m | −38% |
+| 50,000 m | 53 Pa | 8,406 m | −83% |
+| 100,000 m | 0.1 Pa | 8,410 m | −92% |
+
+Above ~8,400m, the firmware cannot distinguish altitudes — all read as approximately 8,410m (the formula's ceiling when pressure reaches zero).
+
+#### What Still Works at Any Altitude
+
+Pyro deployment is safe at all altitudes because the critical triggers don't depend on accurate absolute altitude:
+
+- **Apogee detection:** Based on vertical speed crossing zero, not altitude value. Works correctly at any height.
+- **DELAY mode:** Fires N seconds after apogee. Independent of altitude.
+- **SPEED mode:** Fires when descent speed exceeds threshold. Speed is computed from pressure changes, which become accurate again as the rocket descends into denser atmosphere.
+- **AGL mode:** Fires when altitude drops below threshold. As the rocket descends through the measurable range (<8,400m), AGL readings become accurate and the trigger fires correctly.
+
+#### What Doesn't Work Above ~8,400m
+
+- **Recorded apogee:** Capped at ~8,410m regardless of true altitude. A 100km flight reports the same max altitude as a 10km flight.
+- **FALLEN mode:** Uses `max_altitude − current_altitude`. Since max is capped, the firmware sees zero fallen distance until the rocket descends below 8,400m. The trigger then fires relative to 8,410m, not the true apogee. For a 50km flight with FALLEN=1000ft, the pyro fires at ~8,100m instead of ~49,700m.
+- **Telemetry altitude:** Capped during the high-altitude portion of flight. Altitude data is accurate again below ~2,000m.
+- **Altitude beep-out:** Reports the capped value (~8,410m / ~27,600ft) instead of true apogee.
+
+#### Practical Guidance
+
+| Flight Ceiling | Apogee Accuracy | Pyro Safety | Recommended Modes |
+|---------------|----------------|-------------|-------------------|
+| < 2,000 m | ±5% | ✅ All modes | Any |
+| 2,000–8,000 m | ±5–35% | ✅ All modes | Any (apogee underreads) |
+| > 8,000 m | Capped at 8,410m | ✅ DELAY, SPEED, AGL | Avoid FALLEN |
