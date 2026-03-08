@@ -479,6 +479,12 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             /* TODO: parse + validate + store config */
             const char *resp = "HTTP/1.1 201 Created\r\nConnection: close\r\n\r\nOK";
             tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
+        } else if (strcmp(path, "/api/reboot") == 0) {
+            pbuf_free(p);
+            extern volatile uint8_t pending_reset;
+            pending_reset = 2;
+            const char *resp = "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n\r\nRebooting";
+            tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
         } else {
             pbuf_free(p);
             const char *resp = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nBad request";

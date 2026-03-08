@@ -175,8 +175,18 @@ function saveConfig() {
   fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:ini})
     .then(function(r) {
       msg.style.color = r.ok ? 'green' : 'red';
-      msg.textContent = r.ok ? ' Saved! Reboot to apply.' : ' Error saving';
+      msg.textContent = r.ok ? ' Saved! Click Reboot to apply.' : ' Error saving';
     });
+}
+
+function rebootDevice() {
+  if (!confirm('Reboot device?')) return;
+  var msg = document.getElementById('cfgSaveMsg');
+  msg.style.color = 'orange';
+  msg.textContent = ' Rebooting...';
+  cfgLoaded = false;
+  fetch('/api/reboot', {method:'POST'}).catch(function(){});
+  waitForReboot(msg);
 }
 var ASSET_NAME = 'pyro_fw_c_fota_image.bin';
 var currentVersion = null;
