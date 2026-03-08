@@ -256,6 +256,7 @@ add_custom_target(closedloop_tests
 add_custom_target(sim
     COMMAND ${CMAKE_COMMAND} -E echo "Building simulator..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/sim/sim_cli.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/main_sim.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/hal_sim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
