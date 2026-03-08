@@ -75,8 +75,13 @@ int32_t filter_pressure(flight_context_t *ctx, int32_t raw_pressure, uint32_t dt
     return ctx->filtered_pressure;
 }
 
+#define MAX_ALTITUDE_CM 800000  /* 8000m — barometric formula ceiling */
+
 int32_t pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa) {
-    return ((ground_pressure_pa - pressure_pa) * 83) / 10;
+    int32_t alt = ((ground_pressure_pa - pressure_pa) * 83) / 10;
+    if (alt > MAX_ALTITUDE_CM) alt = MAX_ALTITUDE_CM;
+    if (alt < 0) alt = 0;
+    return alt;
 }
 
 static int32_t cm_to_units(int32_t cm, uint8_t units) {
@@ -89,15 +94,17 @@ static int32_t cm_to_units(int32_t cm, uint8_t units) {
 
 bool should_fire_pyro(flight_context_t *ctx, uint8_t mode, uint16_t value) {
     if (!ctx->apogee_detected) return false;
+    int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
+    int32_t clamped = ((int32_t)value > max_units) ? max_units : (int32_t)value;
     int32_t fallen = cm_to_units(ctx->max_altitude - ctx->last_altitude, ctx->config.units);
     int32_t agl = cm_to_units(ctx->last_altitude, ctx->config.units);
     int32_t speed = cm_to_units(-ctx->vertical_speed_cms, ctx->config.units);
     uint32_t delay_s = (to_ms_since_boot(get_absolute_time()) - ctx->apogee_time) / 1000;
     switch (mode) {
-        case PYRO_MODE_FALLEN: return fallen >= value;
-        case PYRO_MODE_AGL:    return agl <= (int32_t)value;
-        case PYRO_MODE_SPEED:  return speed >= (int32_t)value;
-        case PYRO_MODE_DELAY:  return delay_s >= value;
+        case PYRO_MODE_FALLEN: return fallen >= clamped;
+        case PYRO_MODE_AGL:    return agl <= clamped;
+        case PYRO_MODE_SPEED:  return speed >= clamped;
+        case PYRO_MODE_DELAY:  return delay_s >= value;  /* delay is seconds, not altitude */
         default: return false;
     }
 }

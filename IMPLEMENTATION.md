@@ -256,27 +256,27 @@ This is accurate below ~2000m where the pressure-altitude relationship is approx
 | 1,000 m | 89,874 Pa | 950 m | −5% |
 | 3,000 m | 70,108 Pa | 2,590 m | −14% |
 | 5,000 m | 54,019 Pa | 3,925 m | −21% |
-| 8,400 m | ~120 Pa | 8,400 m | 0% (coincidence) |
-| 10,000 m | 26,435 Pa | 6,216 m | −38% |
-| 50,000 m | 53 Pa | 8,406 m | −83% |
-| 100,000 m | 0.1 Pa | 8,410 m | −92% |
+| 8,400 m | ~120 Pa | 8,000 m | capped |
+| 10,000 m | 26,435 Pa | 8,000 m | capped |
+| 50,000 m | 53 Pa | 8,000 m | capped |
+| 100,000 m | 0.1 Pa | 8,000 m | capped |
 
-Above ~8,400m, the firmware cannot distinguish altitudes — all read as approximately 8,410m (the formula's ceiling when pressure reaches zero).
+Above ~8,000m, the firmware clamps altitude — all higher readings report 8,000m.
 
 #### What Still Works at Any Altitude
 
-- **AGL mode:** Fires when altitude drops below threshold. The rocket must descend through the measurable range (<8,400m) to reach any AGL target, so the reading is accurate when the trigger fires. This is the only mode that works correctly above 8,000m.
+- **AGL mode:** Fires when altitude drops below threshold. The rocket must descend through the measurable range (<8,000m) to reach any AGL target, so the reading is accurate when the trigger fires. This is the only mode that works correctly above 8,000m.
 
-#### What Doesn't Work Above ~8,400m
+#### What Doesn't Work Above ~8,000m
 
-- **Apogee detection:** Triggers early — when ascending through ~8,400m, not at true apogee. Speed reads zero while altitude is capped, satisfying the `vertical_speed ≤ 0` check prematurely.
+- **Apogee detection:** Triggers early — when ascending through ~8,000m, not at true apogee. Speed reads zero while altitude is capped, satisfying the `vertical_speed ≤ 0` check prematurely.
 - **DELAY mode:** Fires N seconds after apogee detection. Since apogee is detected early (during ascent), the delay countdown starts too soon. Short delays fire while still ascending; long delays fire at unpredictable points.
-- **SPEED mode:** Fires when descent speed exceeds a threshold, but speed reads zero while altitude is capped. Only works once the rocket descends below ~8,400m — fires late, at the wrong altitude.
-- **FALLEN mode:** Uses `max_altitude − current_altitude`. Since max is capped at ~8,410m, the firmware sees zero fallen distance until below 8,400m. Fires relative to the cap, not true apogee.
-- **Recorded apogee:** Capped at ~8,410m regardless of true altitude.
+- **SPEED mode:** Fires when descent speed exceeds a threshold, but speed reads zero while altitude is capped. Only works once the rocket descends below ~8,000m — fires late, at the wrong altitude.
+- **FALLEN mode:** Uses `max_altitude − current_altitude`. Since max is capped at ~8,000m, the firmware sees zero fallen distance until below 8,000m. Fires relative to the cap, not true apogee.
+- **Recorded apogee:** Capped at ~8,000m regardless of true altitude.
 - **Vertical speed:** Reads zero while altitude is capped.
 - **Telemetry altitude/speed:** Capped and zero respectively during the high-altitude portion. Accurate again below ~2,000m.
-- **Altitude beep-out:** Reports the capped value (~8,410m / ~27,600ft).
+- **Altitude beep-out:** Reports the capped value (~8,000m / ~27,600ft).
 
 #### Practical Guidance
 
@@ -284,4 +284,11 @@ Above ~8,400m, the firmware cannot distinguish altitudes — all read as approxi
 |---------------|----------------|------------|-------|
 | < 2,000 m | ±5% | ✅ All | Full accuracy |
 | 2,000–8,000 m | ±5–35% | ✅ All | Apogee underreads progressively |
-| > 8,000 m | Capped at 8,410m | ⚠️ AGL only | All other modes depend on false apogee or zero speed |
+| > 8,000 m | Capped at 8,000m | ⚠️ AGL only | All other modes depend on false apogee or zero speed |
+
+#### Firmware Clamping
+
+The firmware enforces the 8,000m ceiling in two places:
+
+1. **`pressure_to_altitude_cm()`** clamps output to 800,000 cm (8,000m). Negative altitudes clamp to 0.
+2. **`should_fire_pyro()`** clamps AGL, FALLEN, and SPEED config values to the ceiling in the configured units (8,000m / 26,247ft). Settings above the ceiling are silently reduced. DELAY values (in seconds) are not clamped.
