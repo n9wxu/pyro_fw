@@ -65,6 +65,8 @@ function update() {
     document.getElementById('sArm').textContent = d.armed ? 'YES' : 'No';
 
     /* Config display */
+    document.getElementById('sCfgId').textContent = d.rocket_id || '—';
+    document.getElementById('sCfgName').textContent = d.rocket_name || '—';
     document.getElementById('sCfgUnits').textContent = UNIT_NAMES[u] || 'cm';
     var p1Str = fmtMode(d.pyro1_mode, d.pyro1_value, u);
     var p2Str = fmtMode(d.pyro2_mode, d.pyro2_value, u);

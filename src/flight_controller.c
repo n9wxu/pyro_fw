@@ -75,6 +75,8 @@ int main() {
         g_status.pyro2_mode = ctx.config.pyro2_mode;
         g_status.pyro2_value = ctx.config.pyro2_value;
         g_status.units = ctx.config.units;
+        memcpy((char*)g_status.rocket_id, ctx.config.id, 9);
+        memcpy((char*)g_status.rocket_name, ctx.config.name, 9);
 
         /* $PYRO telemetry: 10Hz during ASCENT/DESCENT, 1Hz otherwise, skip during boot */
         if (ctx.current_state >= PAD_IDLE) {

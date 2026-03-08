@@ -24,6 +24,8 @@ typedef struct {
     uint8_t  pyro2_mode;
     uint16_t pyro2_value;
     uint8_t  units;
+    char     rocket_id[9];
+    char     rocket_name[9];
 } device_status_t;
 
 extern volatile device_status_t g_status;

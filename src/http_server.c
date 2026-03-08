@@ -150,7 +150,7 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         "\"armed\":%s,\"flight_ms\":%lu,\"uptime\":%lu,\"fw_version\":\"%s\","
         "\"pyro1_mode\":\"%s\",\"pyro1_value\":%u,"
         "\"pyro2_mode\":\"%s\",\"pyro2_value\":%u,"
-        "\"units\":%u}",
+        "\"units\":%u,\"rocket_id\":\"%.8s\",\"rocket_name\":\"%.8s\"}",
         sn,
         (long)g_status.altitude_cm, (long)g_status.max_altitude_cm,
         (long)g_status.vertical_speed_cms, (long)g_status.pressure_pa,
@@ -165,7 +165,8 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         FW_VERSION,
         p1m, (unsigned)g_status.pyro1_value,
         p2m, (unsigned)g_status.pyro2_value,
-        (unsigned)g_status.units);
+        (unsigned)g_status.units,
+        g_status.rocket_id, g_status.rocket_name);
     tcp_write(pcb, buf, pos, TCP_WRITE_FLAG_COPY);
 }
 
