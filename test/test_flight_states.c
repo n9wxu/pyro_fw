@@ -260,12 +260,13 @@ void test_descent_detects_landing(void) {
     ctx.current_state = DESCENT;
     ctx.ground_pressure = 101325;
     ctx.filter_initialized = true;
-    ctx.filtered_pressure = 101300;
+    ctx.filtered_pressure = 101313;  /* pre-converged near mock pressure */
     ctx.launch_time = 0;
     ctx.last_altitude = 100;
+    ctx.vertical_speed_cms = 0;
     ctx.apogee_detected = true;
 
-    /* Stable altitude for >1 second */
+    /* Stable altitude near ground for >1 second */
     mock_pressure.pressure_pa = 101325.0f - 12.0f;  /* ~100 cm */
     ctx.last_sample = 0;
     mock_time_ms = 100;

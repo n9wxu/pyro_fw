@@ -296,8 +296,7 @@ void test_state_timing(void) {
     snprintf(msg, sizeof(msg), "Ascent=%u Descent=%u Landed=%u", ascent_start, descent_start, landed_start);
     TEST_ASSERT_TRUE_MESSAGE(ascent_start > 0 && ascent_start < 3000, msg);
     TEST_ASSERT_TRUE_MESSAGE(descent_start > 2000 && descent_start < 6000, msg);
-    /* Note: landing may trigger early due to filter lag — this is a known issue */
-    TEST_ASSERT_TRUE_MESSAGE(landed_start > descent_start, msg);
+    TEST_ASSERT_TRUE_MESSAGE(landed_start > 12000, msg);
 }
 
 void test_flight_duration(void) {

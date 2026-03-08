@@ -56,7 +56,6 @@
 
 ## 🔨 Known Issues
 
-- [ ] Landing detection triggers early due to pressure filter lag during rapid descent
 - [ ] Parallel HTTP connections (6+) can drop under heavy load
 
 ## 🔧 Not Yet Implemented

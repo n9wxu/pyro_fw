@@ -115,8 +115,8 @@ Simulates a complete flight using OpenRocket trajectory data at 1ms resolution.
 | buzzer_lifecycle | Stops on launch, plays altitude on landing |
 | data_log_complete | >100 samples, launch/armed/pyro/landing events present |
 | telemetry_output | ≥10 $PYRO sentences with valid checksum |
-| state_timing | Ascent <3s, descent <6s, landed after descent |
+| state_timing | Ascent <3s, descent <6s, landed after 12s |
 | flight_duration | Total flight ~15 seconds |
 
 ### Known Issue
-Landing detection triggers at ~5.7s (should be ~15s) due to pressure filter lag during rapid descent. The filter smooths altitude changes enough that the "stable for 1 second" check passes prematurely. This needs tuning of the landing detector or filter parameters.
+None currently.

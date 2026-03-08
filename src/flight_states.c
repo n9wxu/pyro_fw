@@ -363,7 +363,9 @@ flight_state_t state_descent(flight_context_t *ctx, uint32_t now) {
         if (ballistic && !c2.open) { pyro_fire(2); ctx->pyro2_fire_time = now; }
     }
 
-    if (abs(altitude - ctx->last_altitude) < 100) {
+    if (abs(altitude - ctx->last_altitude) < 100 &&
+        abs(ctx->vertical_speed_cms) < 200 &&
+        altitude < 3000) {
         if (ctx->landing_stable_since == 0) ctx->landing_stable_since = now;
         if (now - ctx->landing_stable_since >= 1000) {
             buf_tag_event(ctx, EVT_LANDING);
