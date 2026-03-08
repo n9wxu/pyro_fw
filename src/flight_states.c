@@ -2,37 +2,12 @@
  * Flight state machine: boot sequence + flight states.
  * SPDX-License-Identifier: MIT
  */
-#ifdef UNIT_TEST
-#include "mocks.h"
-#else
-#include "pico/stdlib.h"
-#include "hardware/i2c.h"
-#include "hardware/adc.h"
-#include "hardware/uart.h"
-#include "hardware/gpio.h"
-#include <lfs.h>
-#include <pico_fota_bootloader/core.h>
-#endif
-
+#include "hal.h"
 #include "flight_states.h"
-#include "pressure_sensor.h"
-#include "pyro.h"
 #include "buzzer.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#ifndef UNIT_TEST
-extern const struct lfs_config lfs_pico_flash_config;
-
-/* Network functions (defined in net_glue.c / http_server.c) */
-void net_init(void);
-void net_start(void);
-void net_mdns_poll(void);
-void http_server_init(void);
-#endif
-
-#define BUZZER 16
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 
@@ -54,7 +29,6 @@ void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t 
     ctx->buf_count++;
 }
 
-/* Tag the most recently added sample with an event */
 static void buf_tag_event(flight_context_t *ctx, uint8_t event) {
     uint16_t last = (ctx->buf_head - 1 + 4096) % 4096;
     ctx->flight_buffer[last].event = event;
@@ -69,13 +43,12 @@ int32_t filter_pressure(flight_context_t *ctx, int32_t raw_pressure, uint32_t dt
     int32_t diff = raw_pressure - ctx->filtered_pressure;
     int32_t alpha = (dt_ms * 1000) / (1000 + dt_ms);
     int32_t step = (diff * alpha) / 1000;
-    /* Prevent integer truncation from stalling the filter */
     if (step == 0 && diff != 0) step = (diff > 0) ? 1 : -1;
     ctx->filtered_pressure += step;
     return ctx->filtered_pressure;
 }
 
-#define MAX_ALTITUDE_CM 800000  /* 8000m — barometric formula ceiling */
+#define MAX_ALTITUDE_CM 800000
 
 int32_t pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa) {
     int32_t alt = ((ground_pressure_pa - pressure_pa) * 83) / 10;
@@ -99,12 +72,12 @@ bool should_fire_pyro(flight_context_t *ctx, uint8_t mode, uint16_t value) {
     int32_t fallen = cm_to_units(ctx->max_altitude - ctx->last_altitude, ctx->config.units);
     int32_t agl = cm_to_units(ctx->last_altitude, ctx->config.units);
     int32_t speed = cm_to_units(-ctx->vertical_speed_cms, ctx->config.units);
-    uint32_t delay_s = (to_ms_since_boot(get_absolute_time()) - ctx->apogee_time) / 1000;
+    uint32_t delay_s = (hal_time_ms() - ctx->apogee_time) / 1000;
     switch (mode) {
         case PYRO_MODE_FALLEN: return fallen >= clamped;
         case PYRO_MODE_AGL:    return agl <= clamped;
         case PYRO_MODE_SPEED:  return speed >= clamped;
-        case PYRO_MODE_DELAY:  return delay_s >= value;  /* delay is seconds, not altitude */
+        case PYRO_MODE_DELAY:  return delay_s >= value;
         default: return false;
     }
 }
@@ -147,59 +120,31 @@ void parse_config_ini(char *buf, config_t *cfg) {
 
 /* ── Boot states ──────────────────────────────────────────────────── */
 
+static const char *DEFAULT_CONFIG =
+    "[pyro]\r\n"
+    "id=PYRO001\r\n"
+    "name=My Rocket\r\n"
+    "pyro1_mode=delay\r\n"
+    "pyro1_value=0\r\n"
+    "pyro2_mode=agl\r\n"
+    "pyro2_value=300\r\n"
+    "units=m\r\n"
+    "beep_mode=digits\r\n";
+
 flight_state_t state_boot_filesystem(flight_context_t *ctx, uint32_t now) {
-    (void)ctx; (void)now;
-    lfs_t lfs;
-    int err = lfs_mount(&lfs, &lfs_pico_flash_config);
-    if (err < 0) {
-        lfs_format(&lfs, &lfs_pico_flash_config);
-        lfs_mount(&lfs, &lfs_pico_flash_config);
+    (void)now;
+    char buf[256];
+    int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
+    if (n < 0) {
+        /* File missing or error — create default */
+        hal_fs_write_file("config.ini", DEFAULT_CONFIG, strlen(DEFAULT_CONFIG));
+    } else if (n > 0) {
+        buf[n] = '\0';
+        parse_config_ini(buf, &ctx->config);
     }
-    (void)0;
-    lfs_file_t config_file;
-    err = lfs_file_open(&lfs, &config_file, "config.ini", LFS_O_RDONLY);
-    if (err == LFS_ERR_NOENT) {
-        err = lfs_file_open(&lfs, &config_file, "config.ini", LFS_O_WRONLY | LFS_O_CREAT);
-        if (err == LFS_ERR_OK) {
-            const char *config =
-                "[pyro]\r\n"
-                "id=PYRO001\r\n"
-                "name=My Rocket\r\n"
-                "pyro1_mode=delay\r\n"
-                "pyro1_value=0\r\n"
-                "pyro2_mode=agl\r\n"
-                "pyro2_value=300\r\n"
-                "units=m\r\n"
-                "beep_mode=digits\r\n";
-            lfs_file_write(&lfs, &config_file, config, strlen(config));
-            lfs_file_close(&lfs, &config_file);
-        }
-    } else if (err == LFS_ERR_OK) {
-        char buf[256];
-        lfs_ssize_t n = lfs_file_read(&lfs, &config_file, buf, sizeof(buf) - 1);
-        lfs_file_close(&lfs, &config_file);
-        if (n > 0) {
-            buf[n] = '\0';
-            parse_config_ini(buf, &ctx->config);
-        }
-    }
-    lfs_unmount(&lfs);
 
-    net_init();
-    net_start();
-    http_server_init();
-    (void)0;
-
-    pfb_firmware_commit();
-
-    adc_gpio_init(26);
-    adc_gpio_init(27);
-    buzzer_init();
-
-    (void)0;
-    i2c_deinit(i2c1);
-
-    ctx->boot_timer = to_ms_since_boot(get_absolute_time());
+    hal_buzzer_init();
+    ctx->boot_timer = hal_time_ms();
     return BOOT_I2C_SETTLE;
 }
 
@@ -209,29 +154,21 @@ flight_state_t state_boot_i2c_settle(flight_context_t *ctx, uint32_t now) {
 
 flight_state_t state_boot_sensor_detect(flight_context_t *ctx, uint32_t now) {
     (void)ctx; (void)now;
-    pressure_sensor_type_t sensor = pressure_sensor_init();
-    if (sensor == PRESSURE_SENSOR_NONE)
-        (void)0;
-    else {
-        (void)0;
-        (void)0;
-    }
+    hal_pressure_init();
     return BOOT_PYRO_INIT;
 }
 
 flight_state_t state_boot_pyro_init(flight_context_t *ctx, uint32_t now) {
     (void)ctx; (void)now;
-    pyro_init();
-    (void)0;
+    hal_pyro_init();
     return BOOT_CONTINUITY;
 }
 
 flight_state_t state_boot_continuity(flight_context_t *ctx, uint32_t now) {
-    pyro_continuity_t cont1, cont2;
-    pyro_check_continuity(&cont1, &cont2);
-    ctx->pyro1_continuity_good = cont1.good;
-    ctx->pyro2_continuity_good = cont2.good;
-    (void)0;
+    hal_continuity_t c1, c2;
+    hal_pyro_check(&c1, &c2);
+    ctx->pyro1_continuity_good = c1.good;
+    ctx->pyro2_continuity_good = c2.good;
     ctx->boot_timer = now;
     return BOOT_STABILIZE;
 }
@@ -249,8 +186,8 @@ flight_state_t state_boot_stabilize(flight_context_t *ctx, uint32_t now) {
 flight_state_t state_boot_calibrate(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->boot_timer >= 100) {
         ctx->boot_timer = now;
-        pressure_reading_t data;
-        pressure_sensor_read(&data);
+        hal_pressure_t data;
+        hal_pressure_read(&data);
         ctx->cal_sum += data.pressure_pa;
         ctx->cal_count++;
         if (ctx->cal_count >= 10) {
@@ -263,10 +200,6 @@ flight_state_t state_boot_calibrate(flight_context_t *ctx, uint32_t now) {
 
 flight_state_t state_boot_mdns(flight_context_t *ctx, uint32_t now) {
     (void)ctx; (void)now;
-    (void)0;
-    net_mdns_poll();
-    (void)0;
-    (void)0;
     return PAD_IDLE;
 }
 
@@ -276,15 +209,14 @@ flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 10) return PAD_IDLE;
 
     if (now - ctx->last_cont_check > 1000) {
-        pyro_continuity_t c1, c2;
-        pyro_check_continuity(&c1, &c2);
+        hal_continuity_t c1, c2;
+        hal_pyro_check(&c1, &c2);
         ctx->pyro1_continuity_good = c1.good;
         ctx->pyro2_continuity_good = c2.good;
         ctx->pyro1_adc = c1.raw_adc;
         ctx->pyro2_adc = c2.raw_adc;
         ctx->last_cont_check = now;
 
-        /* Set beep code once on first check */
         if (!ctx->buzzer_started) {
             ctx->buzzer_started = true;
             int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
@@ -300,8 +232,8 @@ flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
         }
     }
 
-    pressure_reading_t pdata;
-    pressure_sensor_read(&pdata);
+    hal_pressure_t pdata;
+    hal_pressure_read(&pdata);
     uint32_t dt = (ctx->last_sample > 0) ? (now - ctx->last_sample) : 10;
     int32_t filtered = filter_pressure(ctx, (int32_t)pdata.pressure_pa, dt);
     int32_t altitude = pressure_to_altitude_cm(filtered, ctx->ground_pressure);
@@ -329,8 +261,8 @@ flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
 flight_state_t state_ascent(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 100) return ASCENT;
 
-    pressure_reading_t pdata;
-    pressure_sensor_read(&pdata);
+    hal_pressure_t pdata;
+    hal_pressure_read(&pdata);
     uint32_t dt = now - ctx->last_sample;
     int32_t filtered = filter_pressure(ctx, (int32_t)pdata.pressure_pa, dt);
     int32_t altitude = pressure_to_altitude_cm(filtered, ctx->ground_pressure);
@@ -361,14 +293,14 @@ flight_state_t state_ascent(flight_context_t *ctx, uint32_t now) {
         ctx->apogee_protect_idx = (ctx->buf_head >= 50) ? (ctx->buf_head - 50) : (4096 + ctx->buf_head - 50);
         ctx->apogee_protected = true;
 
-        if (!ctx->pyro1_fired && !pyro_is_firing() && ctx->pyro1_continuity_good &&
+        if (!ctx->pyro1_fired && !hal_pyro_is_firing() && ctx->pyro1_continuity_good &&
             should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value)) {
-            pyro_fire(1); ctx->pyro1_fired = true; ctx->pyro1_fire_time = now;
+            hal_pyro_fire(1); ctx->pyro1_fired = true; ctx->pyro1_fire_time = now;
             buf_tag_event(ctx, EVT_PYRO1_FIRE);
         }
-        if (!ctx->pyro2_fired && !pyro_is_firing() && ctx->pyro2_continuity_good &&
+        if (!ctx->pyro2_fired && !hal_pyro_is_firing() && ctx->pyro2_continuity_good &&
             should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
-            pyro_fire(2); ctx->pyro2_fired = true; ctx->pyro2_fire_time = now;
+            hal_pyro_fire(2); ctx->pyro2_fired = true; ctx->pyro2_fire_time = now;
             buf_tag_event(ctx, EVT_PYRO2_FIRE);
         }
 
@@ -385,8 +317,8 @@ flight_state_t state_ascent(flight_context_t *ctx, uint32_t now) {
 flight_state_t state_descent(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 50) return DESCENT;
 
-    pressure_reading_t pdata;
-    pressure_sensor_read(&pdata);
+    hal_pressure_t pdata;
+    hal_pressure_read(&pdata);
     uint32_t dt = now - ctx->last_sample;
     int32_t filtered = filter_pressure(ctx, (int32_t)pdata.pressure_pa, dt);
     int32_t altitude = pressure_to_altitude_cm(filtered, ctx->ground_pressure);
@@ -398,28 +330,28 @@ flight_state_t state_descent(flight_context_t *ctx, uint32_t now) {
     uint32_t flight_time = now - ctx->launch_time;
     buf_add(ctx, flight_time, filtered, altitude, DESCENT);
 
-    if (!ctx->pyro1_fired && !pyro_is_firing() && ctx->pyro1_continuity_good &&
+    if (!ctx->pyro1_fired && !hal_pyro_is_firing() && ctx->pyro1_continuity_good &&
         should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value)) {
-        pyro_fire(1); ctx->pyro1_fired = true; ctx->pyro1_fire_time = now;
+        hal_pyro_fire(1); ctx->pyro1_fired = true; ctx->pyro1_fire_time = now;
         buf_tag_event(ctx, EVT_PYRO1_FIRE);
     }
-    if (!ctx->pyro2_fired && !pyro_is_firing() && ctx->pyro2_continuity_good &&
+    if (!ctx->pyro2_fired && !hal_pyro_is_firing() && ctx->pyro2_continuity_good &&
         should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
-        pyro_fire(2); ctx->pyro2_fired = true; ctx->pyro2_fire_time = now;
+        hal_pyro_fire(2); ctx->pyro2_fired = true; ctx->pyro2_fire_time = now;
         buf_tag_event(ctx, EVT_PYRO2_FIRE);
     }
 
     if (ctx->pyro1_fired && ctx->pyro1_fire_time > 0 && now - ctx->pyro1_fire_time > 1000 && now - ctx->pyro1_fire_time < 1500) {
         bool ballistic = ctx->vertical_speed_cms < -3000;
-        pyro_continuity_t c1, c2;
-        pyro_check_continuity(&c1, &c2);
-        if (ballistic && !c1.open) { pyro_fire(1); ctx->pyro1_fire_time = now; }
+        hal_continuity_t c1, c2;
+        hal_pyro_check(&c1, &c2);
+        if (ballistic && !c1.open) { hal_pyro_fire(1); ctx->pyro1_fire_time = now; }
     }
     if (ctx->pyro2_fired && ctx->pyro2_fire_time > 0 && now - ctx->pyro2_fire_time > 1000 && now - ctx->pyro2_fire_time < 1500) {
         bool ballistic = ctx->vertical_speed_cms < -3000;
-        pyro_continuity_t c1, c2;
-        pyro_check_continuity(&c1, &c2);
-        if (ballistic && !c2.open) { pyro_fire(2); ctx->pyro2_fire_time = now; }
+        hal_continuity_t c1, c2;
+        hal_pyro_check(&c1, &c2);
+        if (ballistic && !c2.open) { hal_pyro_fire(2); ctx->pyro2_fire_time = now; }
     }
 
     if (abs(altitude - ctx->last_altitude) < 100 &&
@@ -442,7 +374,6 @@ flight_state_t state_descent(flight_context_t *ctx, uint32_t now) {
 }
 
 flight_state_t state_landed(flight_context_t *ctx, uint32_t now) {
-    /* Start altitude beep-out once */
     if (!ctx->landed_beep_started) {
         ctx->landed_beep_started = true;
         int32_t alt = cm_to_units(ctx->max_altitude, ctx->config.units);
@@ -451,8 +382,8 @@ flight_state_t state_landed(flight_context_t *ctx, uint32_t now) {
 
     if (now - ctx->last_sample < 1000) return LANDED;
 
-    pressure_reading_t pdata;
-    pressure_sensor_read(&pdata);
+    hal_pressure_t pdata;
+    hal_pressure_read(&pdata);
     uint32_t dt = now - ctx->last_sample;
     int32_t filtered = filter_pressure(ctx, (int32_t)pdata.pressure_pa, dt);
     int32_t altitude = pressure_to_altitude_cm(filtered, ctx->ground_pressure);

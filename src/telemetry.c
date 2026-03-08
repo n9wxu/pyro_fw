@@ -2,13 +2,7 @@
  * $PYRO NMEA telemetry output.
  * SPDX-License-Identifier: MIT
  */
-#ifdef UNIT_TEST
-#include "mocks.h"
-#else
-#include "pico/stdlib.h"
-#include "hardware/uart.h"
-#endif
-
+#include "hal.h"
 #include "flight_states.h"
 #include <stdio.h>
 
@@ -56,7 +50,7 @@ void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm
 
     char sentence[180];
     snprintf(sentence, sizeof(sentence), "$%s*%02X\r\n", payload, checksum);
-    uart_puts(uart0, sentence);
+    hal_telemetry_send(sentence);
 
     ctx->telemetry_seq++;
 }

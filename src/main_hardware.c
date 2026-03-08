@@ -1,37 +1,28 @@
 /*
- * Pyro MK1B Flight Controller — main loop.
+ * Pyro MK1B Flight Controller — hardware main loop.
+ * This is the only file that includes platform-specific headers.
  * SPDX-License-Identifier: MIT
  */
 #include <stdio.h>
 #include <string.h>
 #include "pico/stdlib.h"
-#include "hardware/uart.h"
-#include "tusb.h"
-#include "bsp/board_api.h"
 #include "pico/bootrom.h"
 #include "hardware/watchdog.h"
+#include "tusb.h"
 
+#include "hal.h"
 #include "flight_states.h"
 #include "device_status.h"
-#include "pyro.h"
 #include "buzzer.h"
 #include "version.h"
 
 volatile device_status_t g_status = {0};
 
 /* Network (defined in net_glue.c) */
-void net_mac_init(void);
-void net_service(void);
+void net_mdns_poll(void);
 
 int main() {
-    board_init();
-    net_mac_init();
-    tud_init(BOARD_TUD_RHPORT);
-    stdio_init_all();
-
-    uart_init(uart0, 115200);
-    gpio_set_function(0, GPIO_FUNC_UART);
-    gpio_set_function(1, GPIO_FUNC_UART);
+    hal_platform_init();
 
     flight_context_t ctx = {0};
     /* Defaults — overridden by config.ini parser in boot_filesystem */
@@ -45,10 +36,9 @@ int main() {
     ctx.current_state = BOOT_FILESYSTEM;
 
     while (1) {
-        uint32_t now = to_ms_since_boot(get_absolute_time());
+        uint32_t now = hal_time_ms();
 
-        tud_task();
-        net_service();
+        hal_platform_service();
 
         /* Handle deferred picotool reset */
         extern volatile uint8_t pending_reset;
@@ -58,9 +48,12 @@ int main() {
         /* Unified state machine */
         ctx.current_state = dispatch_state(&ctx, now);
 
-        /* Update pyro */
-        pyro_update(now);
+        hal_pyro_update(now);
         buzzer_update(now);
+
+        /* mDNS polling (hardware-specific) */
+        if (ctx.current_state == BOOT_MDNS)
+            net_mdns_poll();
 
         /* Update shared status for HTTP dashboard */
         g_status.state = ctx.current_state;
@@ -85,7 +78,7 @@ int main() {
         memcpy((char*)g_status.rocket_id, ctx.config.id, 9);
         memcpy((char*)g_status.rocket_name, ctx.config.name, 9);
 
-        /* $PYRO telemetry: 10Hz during ASCENT/DESCENT, 1Hz otherwise, skip during boot */
+        /* $PYRO telemetry */
         if (ctx.current_state >= PAD_IDLE) {
             uint32_t telem_interval = (ctx.current_state == ASCENT || ctx.current_state == DESCENT) ? 100 : 1000;
             if (now - ctx.last_telemetry >= telem_interval) {
@@ -94,7 +87,6 @@ int main() {
                 ctx.last_telemetry = now;
             }
         }
-
     }
 
     return 0;
