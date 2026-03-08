@@ -19,18 +19,18 @@ function showTab(name) {
   document.querySelectorAll('.tab').forEach(function(el) { el.classList.remove('active'); });
   document.getElementById('tab-' + name).style.display = 'block';
   event.target.classList.add('active');
-  if (name === 'data') drawGraph();
+  if (name === 'data') { loadFlightData(); drawGraph(); }
 }
 
 /* ── Unit conversion ───────────────────────────────────────────── */
 function cmToUnit(cm, u) {
   if (u === 1) return (cm / 100).toFixed(1);
-  if (u === 2) return (cm * 100 / 3048 / 100).toFixed(1);
+  if (u === 2) return (cm / 30.48).toFixed(1);
   return cm;
 }
 function cmsToUnit(cms, u) {
   if (u === 1) return (cms / 100).toFixed(1);
-  if (u === 2) return (cms * 100 / 3048 / 100).toFixed(1);
+  if (u === 2) return (cms / 30.48).toFixed(1);
   return cms;
 }
 function unitLabel(u) { return UNIT_LABELS[u] || 'cm'; }
@@ -81,8 +81,14 @@ function update() {
     /* Flight summary */
     document.getElementById('dDur').textContent = (d.flight_ms/1000).toFixed(1) + 's';
     document.getElementById('dApogee').textContent = cmToUnit(d.max_alt_cm, u) + ' ' + ul;
-    document.getElementById('dP1').textContent = d.pyro1_fired ? 'Fired' : 'Not fired';
-    document.getElementById('dP2').textContent = d.pyro2_fired ? 'Fired' : 'Not fired';
+    var p1Txt = 'Not fired';
+    if (d.pyro1_mode === 'none') p1Txt = 'Disabled';
+    else if (d.pyro1_fired) p1Txt = 'Fired';
+    var p2Txt = 'Not fired';
+    if (d.pyro2_mode === 'none') p2Txt = 'Disabled';
+    else if (d.pyro2_fired) p2Txt = 'Fired';
+    document.getElementById('dP1').innerHTML = p1Txt;
+    document.getElementById('dP2').innerHTML = p2Txt;
 
     /* Version info */
     currentVersion = d.fw_version;
@@ -120,9 +126,10 @@ function cfgChanged() {
     var mode = document.getElementById('p'+ch+'mode').value;
     var uSpan = document.getElementById('p'+ch+'unit');
     var vInput = document.getElementById('p'+ch+'val');
-    if (mode === 'delay') { uSpan.textContent = 'seconds'; vInput.max = 65535; }
-    else if (mode === 'speed') { uSpan.textContent = unitLabel(getUnits()) + '/s'; vInput.max = getMaxAlt(); }
-    else { uSpan.textContent = unitLabel(getUnits()); vInput.max = getMaxAlt(); }
+    if (mode === 'none') { uSpan.textContent = ''; vInput.disabled = true; vInput.value = 0; }
+    else if (mode === 'delay') { uSpan.textContent = 'seconds'; vInput.max = 65535; vInput.disabled = false; }
+    else if (mode === 'speed') { uSpan.textContent = unitLabel(getUnits()) + '/s'; vInput.max = getMaxAlt(); vInput.disabled = false; }
+    else { uSpan.textContent = unitLabel(getUnits()); vInput.max = getMaxAlt(); vInput.disabled = false; }
     /* Range warning */
     var val = parseInt(vInput.value) || 0;
     var warn = document.getElementById('p'+ch+'warn');
@@ -232,6 +239,42 @@ function cfgReboot() {
 function dlFlight() { window.location = 'api/flight.csv'; }
 
 var flightData = [];
+var flightEvents = {};
+var flightLoaded = false;
+
+function loadFlightData() {
+  if (flightLoaded) return;
+  fetch('api/flight.csv').then(function(r){return r.text()}).then(function(csv) {
+    flightData = [];
+    flightEvents = {};
+    csv.split('\n').forEach(function(line) {
+      if (!line || line.startsWith('time')) return;
+      var parts = line.split(',');
+      if (parts.length < 4) return;
+      var t = parseInt(parts[0]), alt = parseInt(parts[2]), evt = (parts[4]||'').trim();
+      if (!isNaN(t) && !isNaN(alt)) flightData.push({t:t, a:alt});
+      if (evt) flightEvents[evt] = {t:t, alt:alt};
+    });
+    flightLoaded = true;
+    updateFlightEvents();
+    drawGraph();
+  }).catch(function(){});
+}
+
+function updateFlightEvents() {
+  var u = deviceConfig ? deviceConfig.units : 0;
+  var ul = unitLabel(u);
+  var p1 = document.getElementById('dP1');
+  var p2 = document.getElementById('dP2');
+  if (flightEvents.PYRO1) {
+    p1.innerHTML = 'Fired at ' + (flightEvents.PYRO1.t/1000).toFixed(1) + 's, ' +
+      cmToUnit(flightEvents.PYRO1.alt, u) + ' ' + ul;
+  }
+  if (flightEvents.PYRO2) {
+    p2.innerHTML = 'Fired at ' + (flightEvents.PYRO2.t/1000).toFixed(1) + 's, ' +
+      cmToUnit(flightEvents.PYRO2.alt, u) + ' ' + ul;
+  }
+}
 function drawGraph() {
   var canvas = document.getElementById('flightGraph');
   var ctx = canvas.getContext('2d');
