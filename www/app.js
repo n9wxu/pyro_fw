@@ -164,6 +164,7 @@ function cfgLoadFromObj(c) {
 function cfgDefault() {
   cfgLoadFromObj({units:1, p1mode:'delay', p1val:0, p2mode:'agl', p2val:300});
   document.getElementById('cfgDirty').style.display = 'block';
+  document.getElementById('cfgDirty').innerHTML = '⚠ Defaults loaded — press <b>Save</b> then <b>Reboot</b> to apply';
 }
 
 function cfgCurrent() {
