@@ -396,6 +396,34 @@ flight_state_t state_landed(flight_context_t *ctx, uint32_t now) {
     return LANDED;
 }
 
+/* ── Flight init and output ────────────────────────────────────────── */
+
+void flight_init(flight_context_t *ctx) {
+    memset(ctx, 0, sizeof(*ctx));
+    strncpy(ctx->config.id, "PYRO001", 8);
+    strncpy(ctx->config.name, "PYRO001", 8);
+    ctx->config.pyro1_mode = PYRO_MODE_DELAY;
+    ctx->config.pyro1_value = 0;
+    ctx->config.pyro2_mode = PYRO_MODE_AGL;
+    ctx->config.pyro2_value = 300;
+    ctx->config.units = 1;
+    ctx->current_state = BOOT_FILESYSTEM;
+}
+
+void flight_update_outputs(flight_context_t *ctx, uint32_t now) {
+    hal_pyro_update(now);
+    buzzer_update(now);
+
+    if (ctx->current_state >= PAD_IDLE) {
+        uint32_t interval = (ctx->current_state == ASCENT || ctx->current_state == DESCENT) ? 100 : 1000;
+        if (now - ctx->last_telemetry >= interval) {
+            uint32_t ft = (ctx->current_state != PAD_IDLE) ? (now - ctx->launch_time) : 0;
+            send_telemetry(ctx, ft, ctx->last_altitude, ctx->current_state);
+            ctx->last_telemetry = now;
+        }
+    }
+}
+
 /* ── Dispatch ─────────────────────────────────────────────────────── */
 
 flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {

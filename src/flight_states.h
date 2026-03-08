@@ -107,8 +107,10 @@ typedef struct flight_context_t {
     bool landed_beep_started;
 } flight_context_t;
 
-// State dispatch
+// Flight init and dispatch
+void flight_init(flight_context_t *ctx);
 flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now);
+void flight_update_outputs(flight_context_t *ctx, uint32_t now);
 void parse_config_ini(char *buf, config_t *cfg);
 
 // Telemetry
