@@ -70,7 +70,15 @@
 - **PYR-CONT-01**: The system shall check pyro continuity at least once per second during PAD_IDLE.
 - **PYR-CONT-02**: The system shall report continuity status (good, open, short) for each channel.
 
-### 2.5 Altitude Limits
+### 2.5 Fault Protection
+- **PYR-FAULT-01**: The system shall disable pyro drive when current exceeds 1.5A.
+- **PYR-FAULT-02**: The system shall detect when pyro drive has exceeded the current limit.
+- **PYR-FAULT-03**: The system shall indicate to the user that an overcurrent condition occurred during pyro firing.
+
+### 2.6 Post-Fire Verification
+- **PYR-VERIFY-01**: The system shall verify pyro circuit opened after firing by reading continuity.
+
+### 2.7 Altitude Limits
 - **PYR-ALT-01**: The system shall clamp altitude-based pyro settings (AGL, FALLEN, SPEED) to the barometric sensor ceiling.
 - **PYR-ALT-02**: The system shall emit a warning beep code when any altitude-based pyro setting exceeds the sensor ceiling.
 
@@ -132,14 +140,45 @@
 - **DAT-06**: The system shall export flight data as CSV to persistent storage after landing.
 - **DAT-07**: The CSV shall include a metadata header with configuration and flight summary.
 
-## 8. Hardware Abstraction
+## 8. Web Interface & Network
+
+### 8.1 Network
+- **WEB-NET-01**: The system shall present a USB network interface to the host computer.
+- **WEB-NET-02**: The system shall serve DHCP, assigning itself 192.168.7.1.
+- **WEB-NET-03**: The system shall advertise its hostname via mDNS.
+- **WEB-NET-04**: The system shall advertise a DNS-SD service for automatic discovery.
+
+### 8.2 HTTP API
+- **WEB-API-01**: The system shall serve device status as JSON at `/api/status`.
+- **WEB-API-02**: The system shall serve the configuration file at `/api/config` (GET).
+- **WEB-API-03**: The system shall accept configuration updates at `/api/config` (POST) and write them to persistent storage.
+- **WEB-API-04**: The system shall accept firmware updates at `/api/ota` (POST).
+- **WEB-API-05**: The system shall trigger a device restart at `/api/reboot` (POST).
+- **WEB-API-06**: The system shall serve flight data as CSV at `/api/flight.csv`.
+- **WEB-API-07**: All API responses shall include CORS headers.
+
+### 8.3 Web UI
+- **WEB-UI-01**: The web interface shall display device status in the configured units.
+- **WEB-UI-02**: The web interface shall provide a guided configuration editor with input validation.
+- **WEB-UI-03**: The web interface shall warn when configuration has been saved but not applied (no reboot).
+- **WEB-UI-04**: The web interface shall display flight summary data and allow CSV download.
+- **WEB-UI-05**: The web interface shall support firmware upload and update checking.
+
+## 9. Firmware Update
+
+- **OTA-01**: The system shall support over-the-air firmware updates via HTTP.
+- **OTA-02**: The system shall write new firmware to an inactive slot while continuing to run.
+- **OTA-03**: The system shall automatically revert to the previous firmware if the new firmware does not confirm within one boot cycle.
+- **OTA-04**: A failed or interrupted update shall not affect the currently running firmware.
+
+## 10. Hardware Abstraction
 
 - **HAL-01**: Flight logic source files shall contain no platform-specific code or conditional compilation.
 - **HAL-02**: All hardware interaction shall occur through a defined HAL interface.
 - **HAL-03**: The HAL interface shall support at least three implementations: hardware, test, simulation.
 - **HAL-04**: The same flight logic source files shall compile unchanged for all targets.
 
-## 9. Build System
+## 11. Build System
 
 - **BLD-01**: The build system shall produce firmware for the RP2040 target.
 - **BLD-02**: The build system shall produce host-compiled test executables.
@@ -147,7 +186,7 @@
 - **BLD-04**: The build system shall auto-generate a version header from the VERSION file.
 - **BLD-05**: The build system shall support A/B OTA firmware images.
 
-## 10. Test System
+## 12. Test System
 
 - **TST-01**: Unit tests shall verify individual functions in isolation with mock hardware.
 - **TST-02**: Integration tests shall verify complete flight sequences using recorded trajectory data.

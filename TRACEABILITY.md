@@ -145,6 +145,23 @@
 | TEL-03..05 | Telemetry rates not directly tested | Integration test timing |
 | BUZ-01..02 | Startup chirps + code not tested | Unit test: verify buzzer sequence |
 | BUZ-04..06 | Altitude digit encoding not tested | Unit test: verify digit extraction |
+| PYR-FAULT-01 | Overcurrent disable not implemented | Hardware feature: AP2192 handles this |
+| PYR-FAULT-02 | Overcurrent detection not implemented | Read FLAG pins during/after fire |
+| PYR-FAULT-03 | Overcurrent indication not implemented | Beep code or web display |
+| PYR-VERIFY-01 | Post-fire verification not implemented | Read continuity after fire |
+| WEB-NET-01 | USB network not tested in CI | Hardware test only |
+| WEB-NET-02 | DHCP not tested in CI | Hardware test: support/test_network.py |
+| WEB-NET-03 | mDNS not tested in CI | Hardware test: support/test_network.py |
+| WEB-NET-04 | DNS-SD not tested in CI | Hardware test: support/test_network.py |
+| WEB-API-01 | Status API tested via web tests | Mock only, not real device |
+| WEB-API-02 | Config GET tested via web tests | Mock only |
+| WEB-API-03 | Config POST tested via web tests | Mock only |
+| WEB-API-04 | OTA not tested in CI | Hardware test |
+| WEB-API-05 | Reboot tested via web tests | Mock only |
+| WEB-API-06 | Flight CSV endpoint is a stub | Implement: serve flight.csv from littlefs |
+| WEB-API-07 | CORS not tested | Add to web tests |
+| WEB-UI-01..05 | Partially covered by Playwright | Mock server only |
+| OTA-01..04 | Not tested in CI | Hardware test: OTA + rollback |
 
 ### Requirements with PARTIAL coverage:
 
