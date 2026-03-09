@@ -19,7 +19,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi \
-            cppcheck clang-format
+            cppcheck clang-format pmccabe
 
       - name: Install Pico SDK
         run: |
@@ -58,6 +58,19 @@ jobs:
             src/flight_states.c src/telemetry.c src/buzzer.c \
             src/hal.h src/hal_hardware.c src/main_hardware.c \
             2>&1 || echo "::warning::Code formatting differences found. Run: clang-format -i src/*.c src/*.h"
+
+      - name: Cyclomatic complexity (pmccabe)
+        run: |
+          echo "=== Functions with complexity > 10 ==="
+          pmccabe src/flight_states.c src/telemetry.c src/buzzer.c | sort -rn | head -20
+          echo ""
+          OVER=$(pmccabe src/flight_states.c src/telemetry.c src/buzzer.c | awk '$1 > 15 {print}')
+          if [ -n "$OVER" ]; then
+            echo "::error::Functions exceed complexity threshold of 15:"
+            echo "$OVER"
+            exit 1
+          fi
+          echo "All functions within complexity limit"
 
       - name: Run integration tests
         run: cd build && ninja integration_tests

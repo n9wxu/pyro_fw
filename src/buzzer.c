@@ -117,11 +117,7 @@ bool buzzer_is_active(void) {
     return phase != BZ_IDLE;
 }
 
-void buzzer_update(uint32_t now_ms) {
-    if (phase == BZ_IDLE) return;
-    if (phase_start == 0) phase_start = now_ms;
-    uint32_t elapsed = now_ms - phase_start;
-
+static void update_status_code(uint32_t now_ms, uint32_t elapsed) {
     switch (phase) {
     case BZ_CHIRP_ON:
         if (elapsed >= CHIRP_ON_MS) {
@@ -155,6 +151,12 @@ void buzzer_update(uint32_t now_ms) {
     case BZ_CODE_GAP:
         if (elapsed >= CODE_GAP_MS) start_code_play(now_ms);
         break;
+    default: break;
+    }
+}
+
+static void update_altitude_beepout(uint32_t now_ms, uint32_t elapsed) {
+    switch (phase) {
     case BZ_ALT_LONG_PAUSE:
         if (elapsed >= ALT_LONG_PAUSE_MS) { buzzer_tone_on(); phase = BZ_ALT_LONG_BEEP; phase_start = now_ms; }
         break;
@@ -177,6 +179,17 @@ void buzzer_update(uint32_t now_ms) {
     case BZ_ALT_DIGIT_GAP:
         if (elapsed >= ALT_DIGIT_GAP_MS) start_alt_digit(now_ms);
         break;
-    default: phase = BZ_IDLE; break;
+    default: break;
     }
+}
+
+void buzzer_update(uint32_t now_ms) {
+    if (phase == BZ_IDLE) return;
+    if (phase_start == 0) phase_start = now_ms;
+    uint32_t elapsed = now_ms - phase_start;
+
+    if (phase >= BZ_ALT_LONG_PAUSE)
+        update_altitude_beepout(now_ms, elapsed);
+    else
+        update_status_code(now_ms, elapsed);
 }

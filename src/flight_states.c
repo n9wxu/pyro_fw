@@ -101,6 +101,22 @@ static uint8_t parse_mode(const char *val) {
     return 0;
 }
 
+static uint8_t parse_units(const char *val) {
+    if (strcmp(val, "m") == 0) return 1;
+    if (strcmp(val, "ft") == 0) return 2;
+    return 0;
+}
+
+static void parse_config_line(const char *key, const char *val, config_t *cfg) {
+    if (strcmp(key, "id") == 0)               { strncpy(cfg->id, val, 8); cfg->id[8] = '\0'; }
+    else if (strcmp(key, "name") == 0)         { strncpy(cfg->name, val, 8); cfg->name[8] = '\0'; }
+    else if (strcmp(key, "pyro1_mode") == 0)   cfg->pyro1_mode = parse_mode(val);
+    else if (strcmp(key, "pyro1_value") == 0)  cfg->pyro1_value = (uint16_t)atoi(val);
+    else if (strcmp(key, "pyro2_mode") == 0)   cfg->pyro2_mode = parse_mode(val);
+    else if (strcmp(key, "pyro2_value") == 0)  cfg->pyro2_value = (uint16_t)atoi(val);
+    else if (strcmp(key, "units") == 0)        cfg->units = parse_units(val);
+}
+
 void parse_config_ini(char *buf, config_t *cfg) {
     char *line = buf;
     while (line && *line) {
@@ -110,18 +126,7 @@ void parse_config_ini(char *buf, config_t *cfg) {
         char *eq = strchr(line, '=');
         if (eq) {
             *eq = '\0';
-            char *key = line, *val = eq + 1;
-            if (strcmp(key, "id") == 0)          { strncpy(cfg->id, val, 8); cfg->id[8] = '\0'; }
-            else if (strcmp(key, "name") == 0)    { strncpy(cfg->name, val, 8); cfg->name[8] = '\0'; }
-            else if (strcmp(key, "pyro1_mode") == 0)  cfg->pyro1_mode = parse_mode(val);
-            else if (strcmp(key, "pyro1_value") == 0) cfg->pyro1_value = (uint16_t)atoi(val);
-            else if (strcmp(key, "pyro2_mode") == 0)  cfg->pyro2_mode = parse_mode(val);
-            else if (strcmp(key, "pyro2_value") == 0) cfg->pyro2_value = (uint16_t)atoi(val);
-            else if (strcmp(key, "units") == 0) {
-                if (strcmp(val, "m") == 0) cfg->units = 1;
-                else if (strcmp(val, "ft") == 0) cfg->units = 2;
-                else cfg->units = 0;
-            }
+            parse_config_line(line, eq + 1, cfg);
         }
         line = nl;
     }
@@ -220,6 +225,39 @@ flight_state_t state_boot_mdns(flight_context_t *ctx, uint32_t now) {
 
 /* ── Flight states ────────────────────────────────────────────────── */
 
+static void check_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) {
+    if (now - ctx->last_cont_check <= 1000) return;
+    hal_continuity_t c1, c2;
+    hal_pyro_check(&c1, &c2);
+    ctx->pyro1_continuity_good = c1.good;
+    ctx->pyro2_continuity_good = c2.good;
+    ctx->pyro1_adc = c1.raw_adc;
+    ctx->pyro2_adc = c2.raw_adc;
+    ctx->last_cont_check = now;
+
+    if (ctx->buzzer_started) return;
+    ctx->buzzer_started = true;
+    int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
+    bool p1_over = (ctx->config.pyro1_mode != PYRO_MODE_DELAY && ctx->config.pyro1_value > max_units);
+    bool p2_over = (ctx->config.pyro2_mode != PYRO_MODE_DELAY && ctx->config.pyro2_value > max_units);
+    uint8_t code = BEEP_ALL_GOOD;
+    if (p1_over || p2_over) code = BEEP_CFG_RANGE;
+    else if (!c1.good) code = c1.open ? BEEP_P1_OPEN : BEEP_P1_SHORT;
+    else if (!c2.good) code = c2.open ? BEEP_P2_OPEN : BEEP_P2_SHORT;
+    buzzer_set_code(code, true);
+}
+
+static void backdate_launch_time(flight_context_t *ctx, uint32_t now) {
+    ctx->launch_time = now;
+    for (int i = ctx->buf_count - 1; i >= 0; i--) {
+        uint16_t idx = (ctx->buf_head - 1 - i + 4096) % 4096;
+        if (ctx->flight_buffer[idx].altitude_cm <= 50) {
+            ctx->launch_time = now - (ctx->buf_count - 1 - i) * 10;
+            break;
+        }
+    }
+}
+
 /* [FLT-LAUNCH-01] Transition to ASCENT when altitude > 10m */
 /* [FLT-LAUNCH-02] Remain in PAD_IDLE at ground level */
 /* [FLT-RATE-01] Sample every 10ms */
@@ -231,29 +269,7 @@ flight_state_t state_boot_mdns(flight_context_t *ctx, uint32_t now) {
 flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 10) return PAD_IDLE;
 
-    if (now - ctx->last_cont_check > 1000) {
-        hal_continuity_t c1, c2;
-        hal_pyro_check(&c1, &c2);
-        ctx->pyro1_continuity_good = c1.good;
-        ctx->pyro2_continuity_good = c2.good;
-        ctx->pyro1_adc = c1.raw_adc;
-        ctx->pyro2_adc = c2.raw_adc;
-        ctx->last_cont_check = now;
-
-        if (!ctx->buzzer_started) {
-            ctx->buzzer_started = true;
-            int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
-            bool p1_over = (ctx->config.pyro1_mode != PYRO_MODE_DELAY &&
-                            ctx->config.pyro1_value > max_units);
-            bool p2_over = (ctx->config.pyro2_mode != PYRO_MODE_DELAY &&
-                            ctx->config.pyro2_value > max_units);
-            uint8_t code = BEEP_ALL_GOOD;
-            if (p1_over || p2_over) code = BEEP_CFG_RANGE;
-            else if (!c1.good) code = c1.open ? BEEP_P1_OPEN : BEEP_P1_SHORT;
-            else if (!c2.good) code = c2.open ? BEEP_P2_OPEN : BEEP_P2_SHORT;
-            buzzer_set_code(code, true);
-        }
-    }
+    check_continuity_and_buzzer(ctx, now);
 
     hal_pressure_t pdata;
     hal_pressure_read(&pdata);
@@ -267,18 +283,53 @@ flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
 
     if (altitude > 1000) {
         buzzer_stop();
-        ctx->launch_time = now;
-        for (int i = ctx->buf_count - 1; i >= 0; i--) {
-            uint16_t idx = (ctx->buf_head - 1 - i + 4096) % 4096;
-            if (ctx->flight_buffer[idx].altitude_cm <= 50) {
-                ctx->launch_time = now - (ctx->buf_count - 1 - i) * 10;
-                break;
-            }
-        }
+        backdate_launch_time(ctx, now);
         buf_tag_event(ctx, EVT_LAUNCH);
         return ASCENT;
     }
     return PAD_IDLE;
+}
+
+/* ── Pyro and landing helpers ──────────────────────────────────────── */
+
+static void try_fire_pyros(flight_context_t *ctx, uint32_t now) {
+    if (!ctx->pyro1_fired && !hal_pyro_is_firing() && ctx->pyro1_continuity_good &&
+        should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value)) {
+        hal_pyro_fire(1); ctx->pyro1_fired = true; ctx->pyro1_fire_time = now;
+        buf_tag_event(ctx, EVT_PYRO1_FIRE);
+    }
+    if (!ctx->pyro2_fired && !hal_pyro_is_firing() && ctx->pyro2_continuity_good &&
+        should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
+        hal_pyro_fire(2); ctx->pyro2_fired = true; ctx->pyro2_fire_time = now;
+        buf_tag_event(ctx, EVT_PYRO2_FIRE);
+    }
+}
+
+static void check_refire(flight_context_t *ctx, uint32_t now) {
+    bool ballistic = ctx->vertical_speed_cms < -3000;
+    if (ctx->pyro1_fired && ctx->pyro1_fire_time > 0 &&
+        now - ctx->pyro1_fire_time > 1000 && now - ctx->pyro1_fire_time < 1500) {
+        hal_continuity_t c1, c2;
+        hal_pyro_check(&c1, &c2);
+        if (ballistic && !c1.open) { hal_pyro_fire(1); ctx->pyro1_fire_time = now; }
+    }
+    if (ctx->pyro2_fired && ctx->pyro2_fire_time > 0 &&
+        now - ctx->pyro2_fire_time > 1000 && now - ctx->pyro2_fire_time < 1500) {
+        hal_continuity_t c1, c2;
+        hal_pyro_check(&c1, &c2);
+        if (ballistic && !c2.open) { hal_pyro_fire(2); ctx->pyro2_fire_time = now; }
+    }
+}
+
+static bool check_landing(flight_context_t *ctx, int32_t altitude, uint32_t now) {
+    if (abs(altitude - ctx->last_altitude) < 100 &&
+        abs(ctx->vertical_speed_cms) < 200 &&
+        altitude < 3000) {
+        if (ctx->landing_stable_since == 0) ctx->landing_stable_since = now;
+        return (now - ctx->landing_stable_since >= 1000);
+    }
+    ctx->landing_stable_since = 0;
+    return false;
 }
 
 /* [FLT-ASC-01] Track max altitude */
@@ -327,16 +378,7 @@ flight_state_t state_ascent(flight_context_t *ctx, uint32_t now) {
         ctx->apogee_protect_idx = (ctx->buf_head >= 50) ? (ctx->buf_head - 50) : (4096 + ctx->buf_head - 50);
         ctx->apogee_protected = true;
 
-        if (!ctx->pyro1_fired && !hal_pyro_is_firing() && ctx->pyro1_continuity_good &&
-            should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value)) {
-            hal_pyro_fire(1); ctx->pyro1_fired = true; ctx->pyro1_fire_time = now;
-            buf_tag_event(ctx, EVT_PYRO1_FIRE);
-        }
-        if (!ctx->pyro2_fired && !hal_pyro_is_firing() && ctx->pyro2_continuity_good &&
-            should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
-            hal_pyro_fire(2); ctx->pyro2_fired = true; ctx->pyro2_fire_time = now;
-            buf_tag_event(ctx, EVT_PYRO2_FIRE);
-        }
+        try_fire_pyros(ctx, now);
 
         ctx->last_altitude = altitude;
         ctx->last_sample = now;
@@ -371,42 +413,14 @@ flight_state_t state_descent(flight_context_t *ctx, uint32_t now) {
     uint32_t flight_time = now - ctx->launch_time;
     buf_add(ctx, flight_time, filtered, altitude, DESCENT);
 
-    if (!ctx->pyro1_fired && !hal_pyro_is_firing() && ctx->pyro1_continuity_good &&
-        should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value)) {
-        hal_pyro_fire(1); ctx->pyro1_fired = true; ctx->pyro1_fire_time = now;
-        buf_tag_event(ctx, EVT_PYRO1_FIRE);
-    }
-    if (!ctx->pyro2_fired && !hal_pyro_is_firing() && ctx->pyro2_continuity_good &&
-        should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
-        hal_pyro_fire(2); ctx->pyro2_fired = true; ctx->pyro2_fire_time = now;
-        buf_tag_event(ctx, EVT_PYRO2_FIRE);
-    }
+    try_fire_pyros(ctx, now);
+    check_refire(ctx, now);
 
-    if (ctx->pyro1_fired && ctx->pyro1_fire_time > 0 && now - ctx->pyro1_fire_time > 1000 && now - ctx->pyro1_fire_time < 1500) {
-        bool ballistic = ctx->vertical_speed_cms < -3000;
-        hal_continuity_t c1, c2;
-        hal_pyro_check(&c1, &c2);
-        if (ballistic && !c1.open) { hal_pyro_fire(1); ctx->pyro1_fire_time = now; }
-    }
-    if (ctx->pyro2_fired && ctx->pyro2_fire_time > 0 && now - ctx->pyro2_fire_time > 1000 && now - ctx->pyro2_fire_time < 1500) {
-        bool ballistic = ctx->vertical_speed_cms < -3000;
-        hal_continuity_t c1, c2;
-        hal_pyro_check(&c1, &c2);
-        if (ballistic && !c2.open) { hal_pyro_fire(2); ctx->pyro2_fire_time = now; }
-    }
-
-    if (abs(altitude - ctx->last_altitude) < 100 &&
-        abs(ctx->vertical_speed_cms) < 200 &&
-        altitude < 3000) {
-        if (ctx->landing_stable_since == 0) ctx->landing_stable_since = now;
-        if (now - ctx->landing_stable_since >= 1000) {
-            buf_tag_event(ctx, EVT_LANDING);
-            ctx->last_altitude = altitude;
-            ctx->last_sample = now;
-            return LANDED;
-        }
-    } else {
-        ctx->landing_stable_since = 0;
+    if (check_landing(ctx, altitude, now)) {
+        buf_tag_event(ctx, EVT_LANDING);
+        ctx->last_altitude = altitude;
+        ctx->last_sample = now;
+        return LANDED;
     }
 
     ctx->last_altitude = altitude;
