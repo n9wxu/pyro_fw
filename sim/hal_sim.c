@@ -40,7 +40,7 @@ static int sim_telem_len = 0;
 
 /* In-memory filesystem */
 #define SIM_FS_MAX_FILES 4
-#define SIM_FS_MAX_SIZE 512
+#define SIM_FS_MAX_SIZE 65536
 typedef struct {
     char path[32];
     char data[SIM_FS_MAX_SIZE];

@@ -50,3 +50,5 @@ int      sim_flight_samples(void)       { return ctx.buf_count; }
 uint32_t sim_flight_launch_time(void)   { return ctx.launch_time; }
 
 const flight_context_t *sim_flight_ctx(void) { return &ctx; }
+
+void sim_flight_save_csv(void) { flight_save_csv(&ctx); }

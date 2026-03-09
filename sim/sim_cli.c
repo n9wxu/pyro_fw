@@ -14,6 +14,7 @@
 #include <math.h>
 
 #include "../src/flight_states.h"
+#include "../src/hal.h"
 #include "hal_sim.h"
 
 /* ── Pyro black box API (defined in main_sim.c) ──────────────────── */
@@ -25,6 +26,8 @@ int32_t sim_flight_max_alt_cm(void);
 int  sim_flight_samples(void);
 bool sim_flight_pyro1_fired(void);
 bool sim_flight_pyro2_fired(void);
+const flight_context_t *sim_flight_ctx(void);
+void sim_flight_save_csv(void);
 
 /* ── Physics (entirely outside the pyro code) ─────────────────────── */
 
@@ -151,6 +154,15 @@ int main(int argc, char **argv) {
     printf("P1 fired:   %s\n", sim_flight_pyro1_fired() ? "yes" : "no");
     printf("P2 fired:   %s\n", sim_flight_pyro2_fired() ? "yes" : "no");
     printf("Telemetry:  %d bytes\n", sim_get_telemetry_len());
+
+    /* Save and display CSV */
+    sim_flight_save_csv();
+    char csv[256];
+    int n = hal_fs_read_file("flight.csv", csv, sizeof(csv) - 1);
+    if (n > 0) {
+        csv[n] = '\0';
+        printf("\n=== CSV (first 256 bytes) ===\n%s\n", csv);
+    }
 
     return 0;
 }

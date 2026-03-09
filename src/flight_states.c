@@ -379,6 +379,11 @@ flight_state_t state_landed(flight_context_t *ctx, uint32_t now) {
         int32_t alt = cm_to_units(ctx->max_altitude, ctx->config.units);
         buzzer_set_altitude(alt);
     }
+    if (!ctx->csv_saved) {
+        ctx->csv_saved = true;
+        /* CSV save is destructive (reuses flight_buffer memory).
+         * Set flag for main to call flight_save_csv() when ready. */
+    }
 
     if (now - ctx->last_sample < 1000) return LANDED;
 
@@ -397,6 +402,72 @@ flight_state_t state_landed(flight_context_t *ctx, uint32_t now) {
 }
 
 /* ── Flight init and output ────────────────────────────────────────── */
+
+static const char *event_name(uint8_t evt) {
+    switch (evt) {
+        case EVT_LAUNCH:     return "LAUNCH";
+        case EVT_ARMED:      return "ARMED";
+        case EVT_APOGEE:     return "APOGEE";
+        case EVT_PYRO1_FIRE: return "PYRO1";
+        case EVT_PYRO2_FIRE: return "PYRO2";
+        case EVT_LANDING:    return "LANDING";
+        default:             return "";
+    }
+}
+
+static const char *mode_name(uint8_t mode) {
+    switch (mode) {
+        case PYRO_MODE_DELAY:  return "delay";
+        case PYRO_MODE_AGL:    return "agl";
+        case PYRO_MODE_FALLEN: return "fallen";
+        case PYRO_MODE_SPEED:  return "speed";
+        default:               return "none";
+    }
+}
+
+int flight_save_csv(flight_context_t *ctx) {
+    if (ctx->buf_count == 0) return -1;
+
+    int count = ctx->buf_count;
+    uint16_t idx = ctx->buf_tail;
+
+    /* Copy samples to the END of flight_buffer, then write CSV from the START.
+     * flight_buffer is 4096 entries × 16 bytes = 65536 bytes.
+     * We copy samples into the top half, write CSV into the bottom half. */
+    flight_sample_t *copy = &ctx->flight_buffer[2048];
+    int copy_count = (count < 2048) ? count : 2048;
+    for (int i = 0; i < copy_count; i++) {
+        copy[i] = ctx->flight_buffer[idx];
+        idx = (idx + 1) % 4096;
+    }
+
+    /* Now write CSV into the bottom half (reinterpreted as char*) */
+    char *buf = (char *)ctx->flight_buffer;
+    int buf_size = 2048 * (int)sizeof(flight_sample_t); /* 32768 bytes */
+
+    int off = snprintf(buf, buf_size,
+        "# Pyro MK1B Flight Data\n"
+        "# ID: %.8s\n# Name: %.8s\n"
+        "# Pyro1: %s %u\n# Pyro2: %s %u\n"
+        "# Units: %s\n# Ground Pa: %ld\n# Max Alt cm: %ld\n"
+        "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",
+        ctx->config.id, ctx->config.name,
+        mode_name(ctx->config.pyro1_mode), ctx->config.pyro1_value,
+        mode_name(ctx->config.pyro2_mode), ctx->config.pyro2_value,
+        ctx->config.units == 2 ? "ft" : ctx->config.units == 1 ? "m" : "cm",
+        (long)ctx->ground_pressure, (long)ctx->max_altitude);
+
+    for (int i = 0; i < copy_count && off < buf_size - 60; i++) {
+        flight_sample_t *s = &copy[i];
+        off += snprintf(buf + off, buf_size - off,
+            "%lu,%ld,%ld,%u,%u,%s\n",
+            (unsigned long)s->time_ms, (long)s->pressure_pa,
+            (long)s->altitude_cm, s->state, s->under_thrust,
+            event_name(s->event));
+    }
+
+    return hal_fs_write_file("flight.csv", buf, off);
+}
 
 void flight_init(flight_context_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));

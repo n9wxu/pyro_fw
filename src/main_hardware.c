@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include <string.h>
+#include <stdbool.h>
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
 #include "hardware/watchdog.h"
@@ -46,6 +47,7 @@ int main() {
 
     flight_context_t ctx;
     flight_init(&ctx);
+    bool csv_written = false;
 
     while (1) {
         uint32_t now = hal_time_ms();
@@ -63,6 +65,10 @@ int main() {
         /* Outputs */
         flight_update_outputs(&ctx, now);
         if (ctx.current_state == BOOT_MDNS) net_mdns_poll();
+        if (ctx.csv_saved && !csv_written) {
+            csv_written = true;
+            flight_save_csv(&ctx);
+        }
         update_status(&ctx, now);
     }
 }

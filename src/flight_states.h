@@ -105,6 +105,7 @@ typedef struct flight_context_t {
     uint32_t last_cont_check;
     bool buzzer_started;
     bool landed_beep_started;
+    bool csv_saved;
 } flight_context_t;
 
 // Flight init and dispatch
@@ -112,6 +113,7 @@ void flight_init(flight_context_t *ctx);
 flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now);
 void flight_update_outputs(flight_context_t *ctx, uint32_t now);
 void parse_config_ini(char *buf, config_t *cfg);
+int  flight_save_csv(flight_context_t *ctx);
 
 // Telemetry
 void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm, flight_state_t state);
