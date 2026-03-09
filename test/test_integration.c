@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "../src/flight_states.h"
+#include "../src/hal.h"
 #include "../src/buzzer.h"
 
 /* ── OpenRocket data ──────────────────────────────────────────────── */
@@ -310,6 +311,30 @@ void test_FLT_LAND_04_duration(void) {
     TEST_ASSERT_INT_WITHIN(5000, 15000, flight_ms);
 }
 
+void test_DAT_06_csv_export(void) {
+    load_sim_data("test_data/open_rocket_export.csv");
+    reset_sim();
+    run_full_sim();
+
+    flight_save_csv(&ctx);
+
+    char buf[4096];
+    int n = hal_fs_read_file("flight.csv", buf, sizeof(buf) - 1);
+    TEST_ASSERT_TRUE_MESSAGE(n > 0, "CSV file not written");
+    buf[n] = '\0';
+
+    /* Header must contain all metadata fields without truncation */
+    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "# Pyro MK1B") != NULL, "Missing header start");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "# ID:") != NULL, "Missing ID");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "# Pyro1:") != NULL, "Missing Pyro1 config");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "# Pyro2:") != NULL, "Missing Pyro2 config");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "# Max Alt cm:") != NULL, "Missing max altitude");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "time_ms,pressure_pa,altitude_cm,state,thrust,event") != NULL, "Missing CSV columns");
+
+    /* Must contain flight data rows */
+    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "LAUNCH") != NULL, "Missing LAUNCH event in CSV");
+}
+
 /* ── Main ─────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -326,6 +351,7 @@ int main(void) {
     RUN_TEST(test_TEL_01_output);
     RUN_TEST(test_FLT_LAUNCH_01_timing);
     RUN_TEST(test_FLT_LAND_04_duration);
+    RUN_TEST(test_DAT_06_csv_export);
 
     return UNITY_END();
 }
