@@ -118,6 +118,14 @@ jobs:
         id: ver
         run: echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
 
+      - name: Build WASM simulation
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git /tmp/emsdk
+          cd /tmp/emsdk && ./emsdk install latest && ./emsdk activate latest
+          source /tmp/emsdk/emsdk_env.sh
+          cd $GITHUB_WORKSPACE && scripts/build_wasm.sh
+        continue-on-error: true
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

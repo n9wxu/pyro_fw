@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pyro MK1B — Interactive Simulation</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><polygon points='50,5 60,40 55,40 58,95 42,95 45,40 40,40' fill='%23c33'/><polygon points='42,95 50,80 58,95' fill='%23f80'/></svg>">
+<style>
+body { font-family: -apple-system, sans-serif; max-width: 900px; margin: 20px auto; padding: 0 16px; color: #222; }
+h2 { margin: 0 0 8px; }
+.panel { border: 1px solid #ccc; border-radius: 6px; padding: 12px; margin: 8px 0; }
+.panel h3 { margin: 0 0 8px; font-size: 15px; color: #555; }
+table.info { width: 100%; border-collapse: collapse; }
+table.info td { padding: 4px 8px; border-bottom: 1px solid #eee; font-size: 14px; }
+td.lbl { color: #666; width: 130px; }
+td.val { font-weight: 600; font-size: 16px; }
+button { padding: 8px 16px; margin: 4px; cursor: pointer; border-radius: 4px; border: 1px solid #ccc; font-size: 14px; }
+button:hover { background: #e8e8e8; }
+button.primary { background: #2266cc; color: white; border: none; }
+button.primary:hover { background: #1a4fa0; }
+button:disabled { opacity: 0.5; cursor: default; }
+select, input { padding: 4px 8px; font-size: 14px; }
+.state-badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-weight: bold; font-size: 13px; }
+.state-boot { background: #ddd; }
+.state-pad { background: #ffe; border: 1px solid #cc0; }
+.state-ascent { background: #dfd; border: 1px solid #0a0; }
+.state-descent { background: #fdd; border: 1px solid #c00; }
+.state-landed { background: #def; border: 1px solid #06c; }
+canvas { border: 1px solid #ccc; width: 100%; max-width: 880px; }
+.cols { display: flex; gap: 12px; }
+.cols > * { flex: 1; }
+#log { font-family: monospace; font-size: 12px; height: 120px; overflow-y: auto; background: #111; color: #0f0; padding: 8px; border-radius: 4px; }
+.buzzer-on { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #f80; box-shadow: 0 0 6px #f80; }
+.buzzer-off { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #444; }
+</style>
+</head><body>
+
+<h2>🚀 Pyro MK1B — Interactive Simulation</h2>
+<p style="color:#666;font-size:13px">Real flight software compiled to WebAssembly. Physics simulation drives the flight computer.</p>
+
+<div class="cols">
+<div>
+  <div class="panel">
+    <h3>Configuration</h3>
+    <table class="info">
+      <tr><td class="lbl">Profile</td><td><select id="profile">
+        <option value="100ft">100 ft</option>
+        <option value="500ft">500 ft</option>
+        <option value="1000ft" selected>1,000 ft</option>
+        <option value="5000ft">5,000 ft</option>
+        <option value="10000ft">10,000 ft</option>
+      </select></td></tr>
+      <tr><td class="lbl">Pyro 1</td><td>Delay 0s (drogue at apogee)</td></tr>
+      <tr><td class="lbl">Pyro 2</td><td>AGL <input id="p2val" type="number" value="200" style="width:60px"> ft</td></tr>
+      <tr><td class="lbl">P1 Continuity</td><td><select id="p1cont">
+        <option value="good">Good</option><option value="open">Open</option><option value="short">Short</option>
+      </select></td></tr>
+      <tr><td class="lbl">P2 Continuity</td><td><select id="p2cont">
+        <option value="good">Good</option><option value="open">Open</option><option value="short">Short</option>
+      </select></td></tr>
+      <tr><td class="lbl">Speed</td><td><select id="speed">
+        <option value="1">1× Real-time</option>
+        <option value="10" selected>10× Fast</option>
+        <option value="100">100× Fastest</option>
+      </select></td></tr>
+    </table>
+    <div style="margin-top:8px">
+      <button class="primary" id="btnPower" onclick="powerOn()">⚡ Power On</button>
+      <button id="btnLaunch" onclick="launch()" disabled>🚀 Launch</button>
+      <button id="btnReset" onclick="resetSim()">↩ Reset</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Flight Status</h3>
+    <table class="info">
+      <tr><td class="lbl">State</td><td class="val"><span id="state" class="state-badge state-boot">—</span></td></tr>
+      <tr><td class="lbl">Altitude</td><td class="val" id="alt">—</td></tr>
+      <tr><td class="lbl">Speed</td><td class="val" id="spd">—</td></tr>
+      <tr><td class="lbl">Max Altitude</td><td class="val" id="maxalt">—</td></tr>
+      <tr><td class="lbl">Flight Time</td><td class="val" id="ftime">—</td></tr>
+      <tr><td class="lbl">Buzzer</td><td><span id="buzzer" class="buzzer-off"></span></td></tr>
+      <tr><td class="lbl">Pyro 1</td><td id="p1status">—</td></tr>
+      <tr><td class="lbl">Pyro 2</td><td id="p2status">—</td></tr>
+      <tr><td class="lbl">Armed</td><td id="armed">—</td></tr>
+    </table>
+  </div>
+</div>
+
+<div>
+  <div class="panel">
+    <h3>Altitude Profile</h3>
+    <canvas id="graph" width="440" height="280"></canvas>
+  </div>
+  <div class="panel">
+    <h3>Flight Log</h3>
+    <div id="log"></div>
+  </div>
+</div>
+</div>
+
+<div style="margin-top:8px;text-align:center">
+  <a href="https://github.com/n9wxu/pyro_fw" style="color:#666;font-size:12px">GitHub</a>
+  <span style="color:#ccc;margin:0 8px">|</span>
+  <span style="color:#666;font-size:12px">Running real flight software in WebAssembly</span>
+</div>
+
+<script src="physics.js"></script>
+<script src="buzzer.js"></script>
+<script src="wasm/pyro.js"></script>
+<script>
+var pyro = null;  // WASM module
+var physics = new PhysicsEngine();
+var buzzerAudio = new SimBuzzer();
+var simTimer = null;
+var simTime = 0;
+var launched = false;
+var powered = false;
+var graphData = [];
+
+var STATE_NAMES = ['BOOT_INIT','BOOT_SETTLE','BOOT_CONT','BOOT_CAL','PAD_IDLE','ASCENT','DESCENT','LANDED'];
+var STATE_CLASSES = ['state-boot','state-boot','state-boot','state-boot','state-pad','state-ascent','state-descent','state-landed'];
+
+function log(msg) {
+    var el = document.getElementById('log');
+    var t = (simTime / 1000).toFixed(1);
+    el.innerHTML += '<div>' + t + 's ' + msg + '</div>';
+    el.scrollTop = el.scrollHeight;
+}
+
+function setContFromUI(ch) {
+    var sel = document.getElementById(ch === 1 ? 'p1cont' : 'p2cont').value;
+    var good = sel === 'good', open = sel === 'open';
+    pyro._sim_set_continuity(ch, good ? 50 : 0, good ? 1 : 0, open ? 1 : 0);
+}
+
+function powerOn() {
+    if (!pyro) { log('WASM not loaded'); return; }
+    buzzerAudio.init();
+    powered = true;
+    document.getElementById('btnPower').disabled = true;
+
+    var p2v = parseInt(document.getElementById('p2val').value) || 200;
+    var config = '[pyro]\r\nid=SIM001\r\nname=SimRkt\r\n' +
+        'pyro1_mode=delay\r\npyro1_value=0\r\n' +
+        'pyro2_mode=agl\r\npyro2_value=' + p2v + '\r\n' +
+        'units=ft\r\n';
+
+    var buf = pyro._malloc(config.length + 1);
+    pyro.stringToUTF8(config, buf, config.length + 1);
+    pyro._sim_flight_init(buf);
+    pyro._free(buf);
+
+    setContFromUI(1);
+    setContFromUI(2);
+
+    simTime = 0;
+    graphData = [];
+    log('Power on — booting...');
+    startSimLoop();
+}
+
+function launch() {
+    if (!powered) return;
+    launched = true;
+    var prof = PROFILES[document.getElementById('profile').value];
+    physics.setProfile(prof.target_m);
+    document.getElementById('btnLaunch').disabled = true;
+    log('Launch command — ' + prof.label + ' profile');
+}
+
+function resetSim() {
+    if (simTimer) { clearInterval(simTimer); simTimer = null; }
+    if (pyro) pyro._sim_reset();
+    physics.reset();
+    buzzerAudio.stop();
+    powered = false;
+    launched = false;
+    simTime = 0;
+    graphData = [];
+    document.getElementById('btnPower').disabled = false;
+    document.getElementById('btnLaunch').disabled = true;
+    document.getElementById('state').textContent = '—';
+    document.getElementById('state').className = 'state-badge state-boot';
+    document.getElementById('alt').textContent = '—';
+    document.getElementById('spd').textContent = '—';
+    document.getElementById('maxalt').textContent = '—';
+    document.getElementById('ftime').textContent = '—';
+    document.getElementById('p1status').textContent = '—';
+    document.getElementById('p2status').textContent = '—';
+    document.getElementById('armed').textContent = '—';
+    document.getElementById('buzzer').className = 'buzzer-off';
+    document.getElementById('log').innerHTML = '';
+    clearGraph();
+    log('Reset');
+}
+
+var prevState = -1;
+var prevFires = 0;
+
+function simStep() {
+    var speed = parseInt(document.getElementById('speed').value);
+    var stepsPerFrame = speed;
+
+    for (var s = 0; s < stepsPerFrame; s++) {
+        simTime++;
+
+        // Physics (only after launch)
+        if (launched && simTime >= PAD_DWELL_MS) {
+            var ft = (simTime - PAD_DWELL_MS) / 1000;
+            physics.step(ft);
+        }
+
+        // Feed pyro black box
+        var fires = pyro._sim_get_pyro_fire_count();
+        if (fires > prevFires) {
+            var ch = pyro._sim_get_pyro_last_channel();
+            if (ch === 1 && !physics.drogue) { physics.drogue = true; log('🪂 Drogue deployed at ' + physics.alt_m.toFixed(0) + 'm'); }
+            if (ch === 2 && !physics.main_chute) { physics.main_chute = true; log('🪂 Main deployed at ' + physics.alt_m.toFixed(0) + 'm'); }
+            prevFires = fires;
+        }
+        pyro._sim_clear_pyro_firing();
+        pyro._sim_set_pressure(physics.pressurePa());
+        pyro._sim_flight_tick(simTime);
+    }
+
+    // Update UI at display rate
+    var state = pyro._sim_flight_state();
+    var alt_cm = pyro._sim_flight_altitude_cm();
+    var max_cm = pyro._sim_flight_max_alt_cm();
+    var spd_cms = pyro._sim_flight_vspeed_cms();
+    var buz = pyro._sim_get_buzzer_state();
+
+    if (state !== prevState) {
+        var name = STATE_NAMES[state] || '?';
+        document.getElementById('state').textContent = name;
+        document.getElementById('state').className = 'state-badge ' + (STATE_CLASSES[state] || 'state-boot');
+        log('State → ' + name);
+        if (state === 4) document.getElementById('btnLaunch').disabled = false; // PAD_IDLE
+        prevState = state;
+    }
+
+    document.getElementById('alt').textContent = (alt_cm / 30.48).toFixed(0) + ' ft (' + physics.alt_m.toFixed(1) + 'm actual)';
+    document.getElementById('spd').textContent = (spd_cms / 30.48).toFixed(0) + ' ft/s';
+    document.getElementById('maxalt').textContent = (max_cm / 30.48).toFixed(0) + ' ft';
+    document.getElementById('ftime').textContent = (simTime / 1000).toFixed(1) + 's';
+    document.getElementById('p1status').textContent = pyro._sim_flight_pyro1_fired() ? '🔥 FIRED' : 'Ready';
+    document.getElementById('p2status').textContent = pyro._sim_flight_pyro2_fired() ? '🔥 FIRED' : 'Ready';
+    document.getElementById('armed').textContent = pyro._sim_flight_armed() ? '⚠️ ARMED' : 'Safe';
+    document.getElementById('buzzer').className = buz ? 'buzzer-on' : 'buzzer-off';
+
+    buzzerAudio.update(buz);
+
+    // Graph
+    if (simTime % 100 === 0) {
+        graphData.push({ t: simTime, alt: physics.alt_m, fw_alt: alt_cm / 100 });
+        drawGraph();
+    }
+
+    // Stop after landing + 5s of beep-out
+    if (state === 7 && simTime > pyro._sim_flight_launch_time() + 5000) {
+        log('=== Flight complete. Apogee: ' + (max_cm / 30.48).toFixed(0) + ' ft ===');
+        clearInterval(simTimer);
+        simTimer = null;
+    }
+}
+
+function startSimLoop() {
+    prevState = -1;
+    prevFires = 0;
+    if (simTimer) clearInterval(simTimer);
+    simTimer = setInterval(simStep, 16); // ~60fps
+}
+
+function drawGraph() {
+    var canvas = document.getElementById('graph');
+    var c = canvas.getContext('2d');
+    var W = canvas.width, H = canvas.height;
+    c.clearRect(0, 0, W, H);
+    if (graphData.length < 2) return;
+
+    var maxT = graphData[graphData.length - 1].t;
+    var maxA = 1;
+    graphData.forEach(function(p) { if (p.alt > maxA) maxA = p.alt; });
+    var pad = { l: 50, r: 10, t: 10, b: 25 };
+    var gw = W - pad.l - pad.r, gh = H - pad.t - pad.b;
+
+    // Grid
+    c.strokeStyle = '#eee'; c.lineWidth = 1;
+    for (var i = 0; i <= 4; i++) {
+        var y = pad.t + gh - (i / 4) * gh;
+        c.beginPath(); c.moveTo(pad.l, y); c.lineTo(pad.l + gw, y); c.stroke();
+    }
+
+    // Labels
+    c.fillStyle = '#999'; c.font = '10px sans-serif';
+    for (var i = 0; i <= 4; i++) {
+        var y = pad.t + gh - (i / 4) * gh;
+        c.fillText((maxA * i / 4).toFixed(0) + 'm', 2, y + 3);
+    }
+
+    // Actual altitude (blue)
+    c.strokeStyle = '#2266cc'; c.lineWidth = 2;
+    c.beginPath();
+    graphData.forEach(function(p, idx) {
+        var x = pad.l + (p.t / maxT) * gw;
+        var y = pad.t + gh - (p.alt / maxA) * gh;
+        if (idx === 0) c.moveTo(x, y); else c.lineTo(x, y);
+    });
+    c.stroke();
+
+    // Firmware altitude (red dashed)
+    c.strokeStyle = '#cc2222'; c.lineWidth = 1; c.setLineDash([4, 4]);
+    c.beginPath();
+    graphData.forEach(function(p, idx) {
+        var x = pad.l + (p.t / maxT) * gw;
+        var y = pad.t + gh - (p.fw_alt / maxA) * gh;
+        if (idx === 0) c.moveTo(x, y); else c.lineTo(x, y);
+    });
+    c.stroke();
+    c.setLineDash([]);
+
+    // Legend
+    c.fillStyle = '#2266cc'; c.fillRect(pad.l + 5, pad.t + 5, 20, 2);
+    c.fillStyle = '#666'; c.fillText('Actual', pad.l + 30, pad.t + 10);
+    c.fillStyle = '#cc2222'; c.fillRect(pad.l + 85, pad.t + 5, 20, 2);
+    c.fillStyle = '#666'; c.fillText('Firmware', pad.l + 110, pad.t + 10);
+}
+
+function clearGraph() {
+    var canvas = document.getElementById('graph');
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+}
+
+// Wait for WASM to load
+Module.onRuntimeInitialized = function() {
+    pyro = Module;
+    log('WASM loaded — click Power On to start');
+};
+</script>
+</body></html>
