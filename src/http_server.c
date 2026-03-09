@@ -132,11 +132,14 @@ static void send_next_chunk(struct tcp_pcb *pcb, conn_state_t *cs) {
 
 /* ── API handlers ─────────────────────────────────────────────────── */
 
-static const char *state_names[] = {"PAD_IDLE", "ASCENT", "DESCENT", "LANDED"};
+static const char *state_names[] = {
+    "BOOT_INIT", "BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALIBRATE",
+    "PAD_IDLE", "ASCENT", "DESCENT", "LANDED"
+};
 
 static void serve_api_status(struct tcp_pcb *pcb) {
     char buf[768];
-    const char *sn = (g_status.state < 4) ? state_names[g_status.state] : "UNKNOWN";
+    const char *sn = (g_status.state < 8) ? state_names[g_status.state] : "UNKNOWN";
     static const char *mode_names[] = {"none","fallen","agl","speed","delay"};
     const char *p1m = (g_status.pyro1_mode < 5) ? mode_names[g_status.pyro1_mode] : "?";
     const char *p2m = (g_status.pyro2_mode < 5) ? mode_names[g_status.pyro2_mode] : "?";

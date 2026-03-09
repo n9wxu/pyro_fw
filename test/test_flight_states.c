@@ -8,26 +8,19 @@
 
 /* Helper: advance boot to PAD_IDLE */
 static void boot_to_pad_idle(flight_context_t *ctx) {
-    ctx->current_state = BOOT_FILESYSTEM;
-    /* Run through boot states */
+    ctx->current_state = BOOT_INIT;
     mock_time_ms = 0;
-    ctx->current_state = dispatch_state(ctx, mock_time_ms);  /* FILESYSTEM → I2C_SETTLE */
-    TEST_ASSERT_EQUAL(BOOT_I2C_SETTLE, ctx->current_state);
 
-    mock_time_ms = 600;  /* past 500ms settle */
+    /* BOOT_INIT → BOOT_SETTLE */
     ctx->current_state = dispatch_state(ctx, mock_time_ms);
-    TEST_ASSERT_EQUAL(BOOT_SENSOR_DETECT, ctx->current_state);
+    TEST_ASSERT_EQUAL(BOOT_SETTLE, ctx->current_state);
 
-    ctx->current_state = dispatch_state(ctx, mock_time_ms);  /* detect → PYRO_INIT */
-    TEST_ASSERT_EQUAL(BOOT_PYRO_INIT, ctx->current_state);
-
-    ctx->current_state = dispatch_state(ctx, mock_time_ms);  /* → CONTINUITY */
+    /* BOOT_SETTLE → BOOT_CONTINUITY (after 2500ms) */
+    mock_time_ms = 2600;
+    ctx->current_state = dispatch_state(ctx, mock_time_ms);
     TEST_ASSERT_EQUAL(BOOT_CONTINUITY, ctx->current_state);
 
-    ctx->current_state = dispatch_state(ctx, mock_time_ms);  /* → STABILIZE */
-    TEST_ASSERT_EQUAL(BOOT_STABILIZE, ctx->current_state);
-
-    mock_time_ms = 2700;  /* past 2000ms stabilize */
+    /* BOOT_CONTINUITY → BOOT_CALIBRATE */
     ctx->current_state = dispatch_state(ctx, mock_time_ms);
     TEST_ASSERT_EQUAL(BOOT_CALIBRATE, ctx->current_state);
 
@@ -36,9 +29,6 @@ static void boot_to_pad_idle(flight_context_t *ctx) {
         mock_time_ms += 110;
         ctx->current_state = dispatch_state(ctx, mock_time_ms);
     }
-    TEST_ASSERT_EQUAL(BOOT_MDNS, ctx->current_state);
-
-    ctx->current_state = dispatch_state(ctx, mock_time_ms);
     TEST_ASSERT_EQUAL(PAD_IDLE, ctx->current_state);
 }
 
@@ -119,14 +109,14 @@ void test_SNS_PRES_01_boot_no_sensor(void) {
     TEST_ASSERT_EQUAL(0, ctx.ground_pressure);
 }
 
-void test_FLT_BOOT_04_i2c_settle(void) {
+void test_FLT_BOOT_04_settle_wait(void) {
     flight_context_t ctx = {0};
-    ctx.current_state = BOOT_I2C_SETTLE;
+    ctx.current_state = BOOT_SETTLE;
     ctx.boot_timer = 0;
-    /* Before 500ms — stays in settle */
-    TEST_ASSERT_EQUAL(BOOT_I2C_SETTLE, dispatch_state(&ctx, 400));
-    /* After 500ms — advances */
-    TEST_ASSERT_EQUAL(BOOT_SENSOR_DETECT, dispatch_state(&ctx, 600));
+    /* Before 2500ms — stays in settle */
+    TEST_ASSERT_EQUAL(BOOT_SETTLE, dispatch_state(&ctx, 2000));
+    /* After 2500ms — advances to continuity */
+    TEST_ASSERT_EQUAL(BOOT_CONTINUITY, dispatch_state(&ctx, 2600));
 }
 
 /* ── PAD_IDLE tests ───────────────────────────────────────────────── */
@@ -577,7 +567,7 @@ int main(void) {
     RUN_TEST(test_FLT_BOOT_01_reaches_pad_idle);
     RUN_TEST(test_FLT_BOOT_08_calibrates_ground);
     RUN_TEST(test_SNS_PRES_01_boot_no_sensor);
-    RUN_TEST(test_FLT_BOOT_04_i2c_settle);
+    RUN_TEST(test_FLT_BOOT_04_settle_wait);
 
     /* PAD_IDLE */
     RUN_TEST(test_FLT_LAUNCH_02_stays_on_ground);

@@ -186,6 +186,7 @@ void hal_platform_init(void) {
 void hal_platform_service(void) {
     tud_task();
     net_service();
+    net_mdns_poll();
 }
 
 void hal_firmware_commit(void) {

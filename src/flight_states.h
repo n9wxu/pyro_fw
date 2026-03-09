@@ -4,18 +4,12 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// System states (boot + flight)
+// System states
 typedef enum {
-    // Boot sequence
-    BOOT_FILESYSTEM,
-    BOOT_I2C_SETTLE,
-    BOOT_SENSOR_DETECT,
-    BOOT_PYRO_INIT,
-    BOOT_CONTINUITY,
-    BOOT_STABILIZE,
-    BOOT_CALIBRATE,
-    BOOT_MDNS,
-    // Flight sequence
+    BOOT_INIT,          // load config, init buzzer
+    BOOT_SETTLE,        // wait for sensors to stabilize
+    BOOT_CONTINUITY,    // check pyro circuits
+    BOOT_CALIBRATE,     // establish ground reference
     PAD_IDLE,
     ASCENT,
     DESCENT,

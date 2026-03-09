@@ -165,7 +165,6 @@ void parse_config_ini(char *buf, config_t *cfg) {
 }
 
 /* ── Event detectors (one per state) ──────────────────────────────── */
-/* Each reads sensors, does per-tick work, returns an event or SEVT_NONE */
 
 static const char *DEFAULT_CONFIG =
     "[pyro]\r\nid=PYRO001\r\nname=My Rocket\r\n"
@@ -173,36 +172,28 @@ static const char *DEFAULT_CONFIG =
     "pyro2_mode=agl\r\npyro2_value=300\r\n"
     "units=m\r\nbeep_mode=digits\r\n";
 
-/* [FLT-BOOT-02, FLT-BOOT-03, CFG-05] */
-static state_event_t detect_boot_filesystem(flight_context_t *ctx, uint32_t now) {
+/* [FLT-BOOT-02, FLT-BOOT-03, CFG-05] Load config, init buzzer */
+static state_event_t detect_boot_init(flight_context_t *ctx, uint32_t now) {
     (void)now;
     char buf[256];
     int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
     if (n < 0) hal_fs_write_file("config.ini", DEFAULT_CONFIG, strlen(DEFAULT_CONFIG));
     else if (n > 0) { buf[n] = '\0'; parse_config_ini(buf, &ctx->config); }
     hal_buzzer_init();
+    hal_pressure_init();
+    hal_pyro_init();
     ctx->boot_timer = hal_time_ms();
     return SEVT_DONE;
 }
 
-/* [FLT-BOOT-04] */
-static state_event_t detect_boot_i2c_settle(flight_context_t *ctx, uint32_t now) {
-    return (now - ctx->boot_timer >= 500) ? SEVT_TIMER : SEVT_NONE;
+/* [FLT-BOOT-04, FLT-BOOT-09] Wait for hardware to stabilize */
+static state_event_t detect_boot_settle(flight_context_t *ctx, uint32_t now) {
+    return (now - ctx->boot_timer >= 2500) ? SEVT_TIMER : SEVT_NONE;
 }
 
-static state_event_t detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
-    (void)ctx; (void)now;
-    hal_pressure_init();
-    return SEVT_DONE;
-}
-
-static state_event_t detect_boot_pyro(flight_context_t *ctx, uint32_t now) {
-    (void)ctx; (void)now;
-    hal_pyro_init();
-    return SEVT_DONE;
-}
-
+/* [SYS-STATUS-02] Check pyro circuits */
 static state_event_t detect_boot_continuity(flight_context_t *ctx, uint32_t now) {
+    (void)now;
     hal_continuity_t c1, c2;
     hal_pyro_check(&c1, &c2);
     ctx->pyro1_continuity_good = c1.good;
@@ -211,12 +202,7 @@ static state_event_t detect_boot_continuity(flight_context_t *ctx, uint32_t now)
     return SEVT_DONE;
 }
 
-/* [FLT-BOOT-09] */
-static state_event_t detect_boot_stabilize(flight_context_t *ctx, uint32_t now) {
-    return (now - ctx->boot_timer >= 2000) ? SEVT_TIMER : SEVT_NONE;
-}
-
-/* [FLT-BOOT-08] */
+/* [FLT-BOOT-08] Calibrate ground pressure from 10 readings */
 static state_event_t detect_boot_calibrate(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->boot_timer < 100) return SEVT_NONE;
     ctx->boot_timer = now;
@@ -225,11 +211,6 @@ static state_event_t detect_boot_calibrate(flight_context_t *ctx, uint32_t now) 
     ctx->cal_sum += data.pressure_pa;
     ctx->cal_count++;
     return (ctx->cal_count >= 10) ? SEVT_CAL_DONE : SEVT_NONE;
-}
-
-static state_event_t detect_boot_mdns(flight_context_t *ctx, uint32_t now) {
-    (void)ctx; (void)now;
-    return SEVT_DONE;
 }
 
 /* [FLT-LAUNCH-01, FLT-LAUNCH-02, FLT-RATE-01, PYR-CONT-01] */
@@ -351,15 +332,6 @@ static state_event_t detect_landed(flight_context_t *ctx, uint32_t now) {
 
 /* ── Transition actions (side effects at transition) ──────────────── */
 
-static void action_cal_init(flight_context_t *ctx, uint32_t now) {
-    ctx->cal_count = 0; ctx->cal_sum = 0; ctx->boot_timer = now;
-}
-
-static void action_ground_cal(flight_context_t *ctx, uint32_t now) {
-    (void)now;
-    ctx->ground_pressure = ctx->cal_sum / 10;
-}
-
 /* [FLT-LAUNCH-03..05] */
 static void action_launch(flight_context_t *ctx, uint32_t now) {
     buzzer_stop();
@@ -404,14 +376,10 @@ static void action_landing(flight_context_t *ctx, uint32_t now) {
 /* ── Detector table (indexed by state) ────────────────────────────── */
 
 static const detect_fn detectors[STATE_COUNT] = {
-    [BOOT_FILESYSTEM]    = detect_boot_filesystem,
-    [BOOT_I2C_SETTLE]    = detect_boot_i2c_settle,
-    [BOOT_SENSOR_DETECT] = detect_boot_sensor,
-    [BOOT_PYRO_INIT]     = detect_boot_pyro,
+    [BOOT_INIT]          = detect_boot_init,
+    [BOOT_SETTLE]        = detect_boot_settle,
     [BOOT_CONTINUITY]    = detect_boot_continuity,
-    [BOOT_STABILIZE]     = detect_boot_stabilize,
     [BOOT_CALIBRATE]     = detect_boot_calibrate,
-    [BOOT_MDNS]          = detect_boot_mdns,
     [PAD_IDLE]           = detect_pad_idle,
     [ASCENT]             = detect_ascent,
     [DESCENT]            = detect_descent,
@@ -419,25 +387,28 @@ static const detect_fn detectors[STATE_COUNT] = {
 };
 
 /* ── Transition table ─────────────────────────────────────────────── */
-/* Every possible state transition is listed here.                     */
-/* (from_state, event) → (to_state, action)                           */
+
+static void action_cal_init(flight_context_t *ctx, uint32_t now) {
+    ctx->cal_count = 0; ctx->cal_sum = 0; ctx->boot_timer = now;
+}
+
+static void action_ground_cal(flight_context_t *ctx, uint32_t now) {
+    (void)now;
+    ctx->ground_pressure = ctx->cal_sum / 10;
+}
 
 static const transition_t transitions[] = {
-    /* Boot sequence */
-    { BOOT_FILESYSTEM,    SEVT_DONE,     BOOT_I2C_SETTLE,    NULL             },
-    { BOOT_I2C_SETTLE,    SEVT_TIMER,    BOOT_SENSOR_DETECT, NULL             },
-    { BOOT_SENSOR_DETECT, SEVT_DONE,     BOOT_PYRO_INIT,     NULL             },
-    { BOOT_PYRO_INIT,     SEVT_DONE,     BOOT_CONTINUITY,    NULL             },
-    { BOOT_CONTINUITY,    SEVT_DONE,     BOOT_STABILIZE,     NULL             },
-    { BOOT_STABILIZE,     SEVT_TIMER,    BOOT_CALIBRATE,     action_cal_init  },
-    { BOOT_CALIBRATE,     SEVT_CAL_DONE, BOOT_MDNS,          action_ground_cal},
-    { BOOT_MDNS,          SEVT_DONE,     PAD_IDLE,           NULL             },
+    /* Boot: init → settle → continuity → calibrate → ready */
+    { BOOT_INIT,       SEVT_DONE,     BOOT_SETTLE,     NULL             },
+    { BOOT_SETTLE,     SEVT_TIMER,    BOOT_CONTINUITY, NULL             },
+    { BOOT_CONTINUITY, SEVT_DONE,     BOOT_CALIBRATE,  action_cal_init  },
+    { BOOT_CALIBRATE,  SEVT_CAL_DONE, PAD_IDLE,        action_ground_cal},
 
     /* Flight */
-    { PAD_IDLE,           SEVT_LAUNCH,   ASCENT,             action_launch    },
-    { ASCENT,             SEVT_ARMED,    ASCENT,             action_armed     },
-    { ASCENT,             SEVT_APOGEE,   DESCENT,            action_apogee    },
-    { DESCENT,            SEVT_LANDING,  LANDED,             action_landing   },
+    { PAD_IDLE,        SEVT_LAUNCH,   ASCENT,          action_launch    },
+    { ASCENT,          SEVT_ARMED,    ASCENT,          action_armed     },
+    { ASCENT,          SEVT_APOGEE,   DESCENT,         action_apogee    },
+    { DESCENT,         SEVT_LANDING,  LANDED,          action_landing   },
 };
 
 #define NUM_TRANSITIONS (sizeof(transitions) / sizeof(transitions[0]))
@@ -523,7 +494,7 @@ void flight_init(flight_context_t *ctx) {
     ctx->config.pyro2_mode = PYRO_MODE_AGL;
     ctx->config.pyro2_value = 300;
     ctx->config.units = 1;
-    ctx->current_state = BOOT_FILESYSTEM;
+    ctx->current_state = BOOT_INIT;
 }
 
 void flight_update_outputs(flight_context_t *ctx, uint32_t now) {

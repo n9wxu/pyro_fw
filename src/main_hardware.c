@@ -64,7 +64,6 @@ int main() {
 
         /* Outputs */
         flight_update_outputs(&ctx, now);
-        if (ctx.current_state == BOOT_MDNS) net_mdns_poll();
         if (ctx.csv_saved && !csv_written) {
             csv_written = true;
             flight_save_csv(&ctx);
