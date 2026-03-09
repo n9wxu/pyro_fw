@@ -1,0 +1,8 @@
+// cppcheck suppressions for third-party and SDK code
+*:*/pico-sdk/*
+*:*/build/_deps/*
+*:*/lib/*
+
+// Known acceptable patterns in our code
+unusedFunction:src/hal_hardware.c
+unusedFunction:src/hal.h

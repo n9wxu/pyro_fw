@@ -18,7 +18,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi
+          sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            cppcheck clang-format
 
       - name: Install Pico SDK
         run: |
@@ -35,6 +36,28 @@ jobs:
 
       - name: Run unit tests
         run: cd build && ninja host_tests
+
+      - name: Static analysis (cppcheck)
+        run: |
+          cppcheck --enable=all --std=c11 \
+            --suppress=missingIncludeSystem \
+            --suppress=unusedFunction \
+            --suppressions-list=.cppcheck-suppress \
+            --addon=misra \
+            --error-exitcode=0 \
+            --inline-suppr \
+            -I src/ \
+            src/flight_states.c src/telemetry.c src/buzzer.c src/hal.h \
+            2>&1 | tee cppcheck-report.txt
+          echo "=== Cppcheck summary ==="
+          grep -c "error\|warning\|style\|performance\|portability" cppcheck-report.txt || echo "Clean"
+
+      - name: Format check (clang-format)
+        run: |
+          clang-format --dry-run --Werror \
+            src/flight_states.c src/telemetry.c src/buzzer.c \
+            src/hal.h src/hal_hardware.c src/main_hardware.c \
+            2>&1 || echo "::warning::Code formatting differences found. Run: clang-format -i src/*.c src/*.h"
 
       - name: Run integration tests
         run: cd build && ninja integration_tests
