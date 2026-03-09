@@ -2,302 +2,112 @@
 
 ## Architecture
 
-### Unified State Machine
-All system behavior runs through a single `dispatch_state()` function:
+### Event-Driven State Machine
+The flight computer uses a transition table that defines every possible state change:
+
 ```
-BOOT_FILESYSTEM → BOOT_I2C_SETTLE → BOOT_SENSOR_DETECT → BOOT_PYRO_INIT →
-BOOT_CONTINUITY → BOOT_STABILIZE → BOOT_CALIBRATE → BOOT_MDNS →
-PAD_IDLE → ASCENT → DESCENT → LANDED
+{ from_state, event, to_state, action }
 ```
 
-Boot states are non-blocking (timer-based delays). `tud_task()` and `net_service()` run every main loop iteration, ensuring USB and networking work during boot.
+Three components:
+- **Detectors**: One per state. Read sensors, do per-tick work, return an event or SEVT_NONE.
+- **Actions**: One-time side effects at transitions (logging, buzzer, pyro firing).
+- **Engine**: Calls detector → looks up (from, event) in table → calls action → returns new state.
+
+### Transition Table
+```
+BOOT_INIT       → BOOT_SETTLE      on SEVT_DONE
+BOOT_SETTLE     → BOOT_CONTINUITY  on SEVT_TIMER     (2.5s wait)
+BOOT_CONTINUITY → BOOT_CALIBRATE   on SEVT_DONE
+BOOT_CALIBRATE  → PAD_IDLE         on SEVT_CAL_DONE  (10 readings averaged)
+PAD_IDLE        → ASCENT           on SEVT_LAUNCH    (altitude > 10m)
+ASCENT          → ASCENT           on SEVT_ARMED     (speed < 10 m/s)
+ASCENT          → DESCENT          on SEVT_APOGEE    (speed ≤ 0 while armed)
+DESCENT         → LANDED           on SEVT_LANDING   (stable + slow + low for 1s)
+```
 
 ### State Transition Criteria
 
-**PAD_IDLE → ASCENT:** Filtered altitude exceeds 1000 cm (10 m). Launch time is backdated by scanning the ring buffer for the first sample above 50 cm.
+**PAD_IDLE → ASCENT:** Filtered altitude exceeds 10 meters. Launch time backdated to first sample above 50cm.
 
-**ASCENT → DESCENT:** Vertical speed ≤ 0 cm/s while pyros are armed. Pyros arm when vertical speed drops below 1000 cm/s (10 m/s).
+**ASCENT → DESCENT:** Vertical speed ≤ 0 while pyros are armed. Pyros arm when speed drops below 10 m/s.
 
-**DESCENT → LANDED:** All three conditions must hold continuously for 1 second:
-- Altitude change between consecutive samples < 100 cm
-- Absolute vertical speed < 200 cm/s
-- Altitude < 3000 cm (30 m AGL)
+**DESCENT → LANDED:** All three conditions hold for 1 second:
+- Altitude change < 1m between samples
+- Vertical speed < 2 m/s
+- Altitude < 30m AGL
 
-The triple check prevents false landing during descent — the pressure filter can smooth consecutive samples enough to appear stable even at high altitude and speed.
+### Hardware Abstraction Layer
+Flight logic files (`flight_states.c`, `telemetry.c`, `buzzer.c`) contain zero platform-specific code. All hardware interaction goes through `hal.h`:
 
-### Flash Layout (2MB)
-```
-0x000000  Bootloader           36 KB   pico_fota_bootloader
-0x009000  Info block             4 KB   swap flags, rollback state
-0x00A000  App Slot A           512 KB   active firmware
-0x08A000  App Slot B           512 KB   OTA download target
-0x10A000  LittleFS             984 KB   config, web files, flight data
-0x200000  End
-```
+| HAL Function | Purpose |
+|---|---|
+| `hal_time_ms()` | Current time |
+| `hal_pressure_init/read()` | Pressure sensor |
+| `hal_pyro_init/check/fire/update()` | Pyro channels |
+| `hal_buzzer_init/tone_on/tone_off()` | Buzzer |
+| `hal_telemetry_send()` | UART output |
+| `hal_fs_open/read/write/close()` | Filesystem |
+
+Three implementations: `hal_hardware.c` (Pico), `hal_test.c` (mocks), `hal_sim.c` (simulation).
 
 ### Key Source Files
 | File | Purpose |
-|------|---------|
-| `src/flight_controller.c` | Main loop only (~80 lines) |
-| `src/flight_states.c` | All boot + flight state functions, helpers |
-| `src/flight_states.h` | Types, context struct, declarations |
-| `src/telemetry.c` | $PYRO NMEA telemetry formatting |
-| `src/buzzer.c` | Buzzer: status codes + altitude beep-out |
-| `src/buzzer.h` | Buzzer API and beep code definitions |
-| `src/http_server.c` | HTTP server, API endpoints, OTA handler |
-| `src/net_glue.c` | TinyUSB RNDIS ↔ lwIP bridge, DHCP/DNS, mDNS |
-| `src/reset_interface.c` | Vendor reset interface for picotool |
-| `src/usb_descriptors.c` | USB composite: ECM/RNDIS + vendor reset |
-| `src/pyro.c` | Pyro channel control, continuity, fire |
-| `src/pressure_sensor.c` | Unified sensor interface (MS5607/BMP280) |
-| `src/littlefs_driver.c` | Flash driver for littlefs |
-| `src/device_status.h` | Shared status struct for HTTP dashboard |
-| `src/arch/cc.h` | lwIP platform hooks |
-| `www/` | Web interface files (uploaded to littlefs) |
+|---|---|
+| `src/flight_states.c` | State machine, detectors, actions, config parser, CSV export |
+| `src/flight_states.h` | Types, context struct, transition table types |
+| `src/telemetry.c` | $PYRO NMEA formatting |
+| `src/buzzer.c` | Non-blocking beep sequencer |
+| `src/hal.h` | Hardware abstraction interface |
+| `src/hal_hardware.c` | Pico SDK HAL implementation |
+| `src/main_hardware.c` | Hardware main loop |
+| `sim/main_sim.c` | Simulation black box (WASM target) |
+| `sim/hal_sim.c` | Simulation HAL |
+| `sim/sim_cli.c` | CLI physics driver |
 
-### Testing
-- 39 unit tests + 11 integration tests + 9 closed-loop tests = 59 C tests
-- 22 Playwright web UI tests against mock server (3 device modes)
-- Host-compiled with mocks (no ARM target needed)
-- Integration tests use OpenRocket simulation data at 1ms resolution
-- Closed-loop tests: 28 flights with physics feedback, 7 pyro configs × 4 altitudes (100ft–100km)
-- Flight summaries with event times/altitudes printed in build logs
-- GitHub Pages interactive demo: https://n9wxu.github.io/pyro_fw/
-- See [test/README.md](test/README.md) for comprehensive test plan
-
-### OTA Update Flow
-1. HTTP POST to `/api/ota` with firmware .bin body
-2. `pfb_firmware_commit()` — prevent rollback of current firmware
-3. Incoming data buffered to 4KB sector boundaries
-4. Each sector: erase + program to Slot B (incremental, USB-safe)
-5. `pfb_mark_download_slot_as_valid()` — mark Slot B ready
-6. `pfb_perform_update()` — watchdog reboot, bootloader swaps A↔B
-7. New firmware calls `pfb_firmware_commit()` on boot to confirm
-
-If step 7 doesn't happen before next reboot, bootloader rolls back.
+### Flash Layout (2MB)
+```
+0x000000  Bootloader           36 KB
+0x009000  Info block             4 KB
+0x00A000  App Slot A           512 KB
+0x08A000  App Slot B           512 KB
+0x10A000  LittleFS             984 KB
+```
 
 ### HTTP API
 | Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/status` | JSON: state, altitude, pyro, version, uptime |
-| GET | `/api/config` | Plain text config.ini from littlefs |
-| POST | `/api/config` | Upload new config.ini |
-| POST | `/api/reboot` | Reboot device (deferred watchdog reset) |
-| POST | `/api/ota` | Firmware update (raw .bin body) |
-| GET | `/api/flight.csv` | Download flight data |
-| GET | `/` | Web dashboard (served from littlefs /www/) |
-| POST | `/www/<file>` | Upload web file to littlefs |
-
-All API responses include CORS headers for cross-origin access.
-
-### Networking
-- **Addressing:** 192.168.7.1/24 (DHCP assigns PC 192.168.7.2)
-- **MAC:** Unique per board, derived from `pico_unique_board_id`
-- **mDNS:** Advertises as `pyro.local` (RFC 6762) with conflict resolution
-- **DNS-SD:** Registers `_pyro._tcp` service for automatic discovery
-- **CORS:** API endpoints include `Access-Control-Allow-Origin: *`
-- **Single device:** http://pyro.local/ just works
-- **Multiple devices:** Data collection server browses `_pyro._tcp` to find all trackers
-
-### USB Composite Device
-- **VID:** 0x2E8A (Raspberry Pi), **PID:** 0x4002
-- **Config 1 (RNDIS):** Network (Windows) + vendor reset
-- **Config 2 (ECM):** Network (macOS/Linux) + vendor reset
-- **Vendor reset:** picotool can reboot to BOOTSEL or application
-- **Deferred reset:** Reset request sets flag, main loop executes (protects I2C)
-
-### Versioning
-- `VERSION` file contains semantic version (major.minor.patch)
-- Patch auto-increments on local builds via `scripts/gen_version.sh`
-- CI builds use VERSION as-is (no increment when `CI_BUILD=1`)
-- Release tags set VERSION from tag name (v2.0.0 → VERSION=2.0.0)
-- `src/version.h` generated at build time with `FW_VERSION` and `FW_BUILD_DATE`
-- Version reported in UART boot message, HTTP API, and web dashboard
-
-### CI/CD (GitHub Actions)
-- **build.yml:** Builds on push to main, uploads artifacts
-- **release.yml:** Creates GitHub Release with firmware binaries on `v*` tags
-- Release assets: `pyro_fw_c.uf2`, `pyro_fw_c_fota_image.bin`, `pico_fota_bootloader.uf2`, `pyro-mk1b-support.zip`
-
-### Debugging
-- VS Code launch config loads both bootloader + app ELFs
-- lwIP debug infrastructure in `src/arch/cc.h` (UART printf)
-- Debug flags: `LWIP_DEBUG`, `MEM_DEBUG`, `MEMP_DEBUG`, `PBUF_DEBUG`
-- UART heartbeat: 1Hz `[uptime] alive pa=pressure`
-
-### Build
-```bash
-mkdir build && cd build
-cmake -G Ninja ..
-ninja
-```
-
-### Scripts
-| Script | Purpose |
-|--------|---------|
-| `support/install.py` | Interactive installer for build artifacts |
-| `support/flash_picotool.sh` | Flash via picotool (no BOOTSEL button) |
-| `support/upload_fw.sh` | OTA firmware upload via curl |
-| `support/upload_www.sh` | Upload web files to device |
-| `support/update_from_release.py` | Update firmware from GitHub releases |
-| `support/test_network.py` | Comprehensive network/API test suite |
-| `scripts/gen_version.sh` | Auto-generate version.h at build time |
+|---|---|---|
+| GET | `/api/status` | JSON device state |
+| GET | `/api/config` | Config INI file |
+| POST | `/api/config` | Write config |
+| POST | `/api/reboot` | Restart device |
+| POST | `/api/ota` | Firmware update |
+| GET | `/api/flight.csv` | Flight data CSV |
 
 ### Telemetry ($PYRO NMEA)
 ```
-$PYRO,seq,state,thrust,alt_cm,vel_cms,maxalt_cm,press_pa,time_ms,flags_hex,p1adc,p2adc,batt,temp*XX\r\n
+$PYRO,seq,state,thrust,alt_cm,vel_cms,maxalt_cm,press_pa,time_ms,flags,p1adc,p2adc,batt,temp*XX\r\n
 ```
-- State: 0=PAD_IDLE, 1=ASCENT, 2=DESCENT, 3=LANDED
-- Flags: bit0=P1_CONT, bit1=P2_CONT, bit2=P1_FIRED, bit3=P2_FIRED, bit4=ARMED, bit5=APOGEE
-- XOR checksum between $ and *
-- 10Hz during ASCENT/DESCENT, 1Hz otherwise
+10Hz during ASCENT/DESCENT, 1Hz otherwise. XOR checksum.
 
 ### Buzzer
-- **Startup:** 10 chirps (30ms) → 500ms pause → status code × 2 → stop
-- **Status codes:** two-digit (1-5 beeps each), 100ms beep, 200ms gap, 300ms digit gap
-  - 1-1: All good
-  - 2-1/2-2: P1 open/short
-  - 3-1/3-2: P2 open/short
-  - 4-1: Sensor fail
-  - 4-2: Filesystem fail
-  - 4-3: Pyro altitude setting exceeds 8,000m sensor limit
-- **Altitude beep-out (LANDED):** 2s pause → 500ms long beep → digits (0=10 beeps) → repeat
-
-### Closed-Loop Flight Model
-
-The closed-loop simulation (`test/test_closedloop.c`) uses a 1D physics model with atmospheric feedback. Pyro fires from the firmware feed back into the physics, deploying chutes that change the descent rate.
-
-#### Equations of Motion
-
-Each 1ms timestep:
-
-```
-a = -g                                          (gravity, always)
-a += thrust_accel              if t < burn_time  (motor phase)
-a += drag × ρ(h) × |v|        if v < 0          (descent drag)
-
-v(t+dt) = v(t) + a × dt
-h(t+dt) = h(t) + v × dt
-```
-
-Where `v` is positive-up, `h` is altitude in meters, `dt` = 0.001s.
-
-#### Thrust Profile
-
-Burn time is computed via binary search to hit the target apogee, accounting for altitude gained during the burn:
-
-```
-h_apogee = h_burn + h_coast
-h_burn   = ½(a_thrust - g) × t_burn²
-h_coast  = v_burnout² / (2g)
-v_burnout = (a_thrust - g) × t_burn
-```
-
-Thrust acceleration by altitude class:
-| Target | Thrust | Typical Burn |
-|--------|--------|-------------|
-| < 500m | 20g | 0.06–0.12s |
-| 500–50km | 10g | 0.6–1.8s |
-| > 50km | 5g | 20–30s |
-
-#### Drag Model
-
-Drag force opposes velocity during descent only:
-
-```
-a_drag = C_d × ρ_frac × |v|
-```
-
-Drag coefficients:
-| State | C_d | Terminal Velocity (sea level) |
-|-------|-----|------------------------------|
-| Ballistic | 0.05 | ~140 m/s |
-| Drogue deployed | 0.8 | ~12 m/s |
-| Main deployed | 4.0 | ~2.5 m/s |
-
-#### Atmospheric Density
-
-Density scales exponentially with altitude (scale height 8500m):
-
-```
-ρ_frac = e^(-h / 8500)
-```
-
-This means chutes are ineffective above ~25km (density < 5% of sea level), producing realistic Karman-line descent profiles where the rocket falls nearly ballistically through the upper atmosphere.
-
-#### Pressure Model (Standard Atmosphere)
-
-The mock pressure sensor uses the International Standard Atmosphere:
-
-| Layer | Altitude | Formula |
-|-------|----------|---------|
-| Troposphere | 0–11 km | P = 101325 × (1 − 0.0065h/288.15)^5.2561 |
-| Stratosphere | 11–47 km | P = P₁₁ × e^(−g(h−11000)/(R×216.65)) |
-| Upper | > 47 km | P = P₄₇ × e^(−g(h−47000)/(R×270.65)) |
-
-The firmware's linear barometric formula (`alt = (P₀−P) × 83/10`) is clamped at 8,000m. The pressure filter tracks through this range using a minimum ±1 Pa step to prevent integer truncation stall.
-
-#### Closed-Loop Feedback
-
-When the firmware calls `pyro_fire(channel)`, the mock records the fire. On the next physics timestep, the simulation checks for new fires and sets the corresponding deployment flag, immediately changing the drag coefficient for all subsequent physics steps.
-
-```
-firmware fires pyro 1 → drogue_deployed = true → C_d changes from 0.05 to 0.8
-firmware fires pyro 2 → main_deployed = true   → C_d changes from 0.8 to 4.0
-```
-
-#### Timing
-
-A 2-second pad dwell precedes the physics to allow the firmware's PAD_IDLE state to complete continuity checks (requires 1s). Karman-line flights use 50ms timesteps (vs 1ms for lower flights) to keep simulation time under 2 seconds.
+- **Startup:** 10 chirps → status code × 2 → stop
+- **Status codes:** 1-1 good, 2-1 P1 open, 4-3 config range, etc.
+- **Landing:** Altitude beep-out in configured units, repeats forever
 
 ### Altitude Limitations
+Linear barometric formula clamped at 8,000m. Above that:
+- Only AGL pyro mode works correctly
+- Apogee detection triggers early (ascending through 8,000m)
+- DELAY, SPEED, FALLEN modes unreliable
 
-The firmware uses a linear barometric formula:
+### Closed-Loop Flight Model
+See `sim/sim_cli.c` and `docs/physics.js`. Standard atmosphere pressure, exponential density scaling, binary-search burn time. Physics is completely separate from flight code.
 
-```
-altitude_cm = (P_ground − P_current) × 83 / 10
-```
-
-This is accurate below ~2000m where the pressure-altitude relationship is approximately linear. Above that, it progressively underreads. At very high altitudes, pressure approaches zero and the formula saturates:
-
-| Actual Altitude | Pressure | Firmware Reads | Error |
-|----------------|----------|---------------|-------|
-| 1,000 m | 89,874 Pa | 950 m | −5% |
-| 3,000 m | 70,108 Pa | 2,590 m | −14% |
-| 5,000 m | 54,019 Pa | 3,925 m | −21% |
-| 8,400 m | ~120 Pa | 8,000 m | capped |
-| 10,000 m | 26,435 Pa | 8,000 m | capped |
-| 50,000 m | 53 Pa | 8,000 m | capped |
-| 100,000 m | 0.1 Pa | 8,000 m | capped |
-
-Above ~8,000m, the firmware clamps altitude — all higher readings report 8,000m.
-
-#### What Still Works at Any Altitude
-
-- **AGL mode:** Fires when altitude drops below threshold. The rocket must descend through the measurable range (<8,000m) to reach any AGL target, so the reading is accurate when the trigger fires. This is the only mode that works correctly above 8,000m.
-
-#### What Doesn't Work Above ~8,000m
-
-- **Apogee detection:** Triggers early — when ascending through ~8,000m, not at true apogee. Speed reads zero while altitude is capped, satisfying the `vertical_speed ≤ 0` check prematurely.
-- **DELAY mode:** Fires N seconds after apogee detection. Since apogee is detected early (during ascent), the delay countdown starts too soon. Short delays fire while still ascending; long delays fire at unpredictable points.
-- **SPEED mode:** Fires when descent speed exceeds a threshold, but speed reads zero while altitude is capped. Only works once the rocket descends below ~8,000m — fires late, at the wrong altitude.
-- **FALLEN mode:** Uses `max_altitude − current_altitude`. Since max is capped at ~8,000m, the firmware sees zero fallen distance until below 8,000m. Fires relative to the cap, not true apogee.
-- **Recorded apogee:** Capped at ~8,000m regardless of true altitude.
-- **Vertical speed:** Reads zero while altitude is capped.
-- **Telemetry altitude/speed:** Capped and zero respectively during the high-altitude portion. Accurate again below ~2,000m.
-- **Altitude beep-out:** Reports the capped value (~8,000m / ~27,600ft).
-
-#### Practical Guidance
-
-| Flight Ceiling | Apogee Accuracy | Pyro Modes | Notes |
-|---------------|----------------|------------|-------|
-| < 2,000 m | ±5% | ✅ All | Full accuracy |
-| 2,000–8,000 m | ±5–35% | ✅ All | Apogee underreads progressively |
-| > 8,000 m | Capped at 8,000m | ⚠️ AGL only | All other modes depend on false apogee or zero speed |
-
-#### Firmware Clamping
-
-The firmware enforces the 8,000m ceiling in two places:
-
-1. **`pressure_to_altitude_cm()`** clamps output to 800,000 cm (8,000m). Negative altitudes clamp to 0.
-2. **`should_fire_pyro()`** clamps AGL, FALLEN, and SPEED config values to the ceiling in the configured units (8,000m / 26,247ft). Settings above the ceiling are silently reduced. DELAY values (in seconds) are not clamped.
+### Testing
+- 39 unit tests (implementation correctness)
+- 11 integration tests (OpenRocket trajectory)
+- 9 closed-loop tests (28 flights, 7 configs × 4 altitudes)
+- 22 Playwright web UI tests (3 mock server modes)
+- Requirements traced to integration/closed-loop tests (see TRACEABILITY.md)
+- cppcheck with MISRA addon, clang-format, pmccabe complexity checks in CI

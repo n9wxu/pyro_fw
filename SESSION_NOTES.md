@@ -1,279 +1,104 @@
-# Session Notes - March 6, 2026
+# Session Notes — March 7-8, 2026
 
-## What We Did
+## March 7 (Saturday)
 
-### 1. GitHub Actions CI/CD
-- build.yml: builds on push to main, uploads versioned artifacts
-- release.yml: creates GitHub Release with firmware on v* tags
-- CMakeLists.txt: SDK paths use PICO_SDK_PATH (works in CI and local)
-- gen_version.sh: CI-aware (no auto-increment when CI_BUILD=1)
+### Telemetry Tests
+- Added 6 telemetry formatting tests (altitude, speed, thrust flag, ADC, all flags, boot state mapping)
+- Total: 27 unit tests
 
-### 2. Self-Update from GitHub Releases
-- support/update_from_release.py: PC-side tool checks GitHub, downloads, OTAs
-- Web UI "Check for Updates" button: browser fetches GitHub API directly (CORS allowed), downloads .bin, POSTs to /api/ota
-- Repo set to n9wxu/pyro_fw
+### OpenRocket Integration Tests
+- Added open_rocket_export.csv (228 data points, 16s flight, 165ft peak)
+- 11 integration tests with 1ms interpolated pressure data
+- Binary search interpolation, inverse barometric formula
 
-### 3. Interactive Installer
-- support/install.py: detects device state, offers OTA/BOOTSEL/picotool options
-- Included in build artifacts and release zip
+### Closed-Loop Simulation Tests
+- 9 tests, 28 simulated flights (7 pyro configs × 4 altitudes: 100ft to Karman line)
+- Physics model: thrust, drag, atmospheric density, standard atmosphere
+- Closed-loop: pyro fires → chute deployment → changed descent rate
+- Flight summaries printed in build logs
 
-### 4. MS5607 Pressure Sensor
-- Fixed I2C bus contention: release BMP280 SDA pin before trying MS5607
-- gpio_init() to reset pin function (GPIO_FUNC_NULL caused issues)
+### Firmware Bugs Found by Tests
+- `pyro_fired` flags never set after `pyro_fire()` — pyros re-fired every tick
+- Pressure filter integer stall — truncation to 0 when diff < 22 Pa
+- Landing detection false trigger — needed speed + altitude + stability check
 
-### 5. Non-blocking Boot State Machine
-- All startup moved into state functions in dispatch_state()
-- No sleep_ms in startup — USB enumerates immediately
-- Fixed USB enumeration failure after picotool flash
+### Config System
+- INI parser reads config.ini on boot
+- Config POST writes to littlefs (was a stub)
+- Beep code 4-3 for out-of-range altitude settings
+- 8,000m altitude clamp in firmware and config values
+- 12 config parser unit tests
 
-### 6. Unified State Machine
-- Merged boot states into flight_state_t enum
-- Single dispatch_state() handles: BOOT_FILESYSTEM → ... → BOOT_MDNS → PAD_IDLE → ASCENT → DESCENT → LANDED
-- main() is minimal: board_init, tud_init, uart_init, then loop
+### Web Interface
+- 4-tab UI: Status, Config, Flight Data, Update
+- Guided config editor with all fields (id, name, units, beep, pyro1, pyro2)
+- Pending config warning, range warnings, tips
+- GitHub Pages demo with service worker mock
+- Rocket favicon
 
-### 7. Release v1.2.0
-- Tagged and pushed, GitHub Actions building release
+### Web Testing
+- Mock server with 3 modes (new, configured, post-flight)
+- 22 Playwright tests in CI
+- Flight CSV with graph and pyro event details
 
----
+### Documentation
+- REQUIREMENTS.md: 123 requirements in L1-L4 hierarchy (user needs → implementation)
+- TRACEABILITY.md: Requirements → integration/closed-loop tests
+- All tests renamed with requirement prefixes
+- Code annotated with requirement traceability tags
 
-# Session Notes - March 5, 2026
+## March 8 (Sunday)
 
-## What We Did
+### HAL Refactor
+- Created hal.h with ~15 functions (time, pressure, pyro, buzzer, telemetry, filesystem)
+- flight_states.c, telemetry.c, buzzer.c: zero #ifdef, zero platform includes
+- Three HAL implementations: hal_hardware.c, hal_test.c, hal_sim.c
+- flight_controller.c → main_hardware.c
+- flight_init() and flight_update_outputs() own all flight logic
 
-### 1. picotool Support
-- Vendor reset interface added to USB composite device
-- VID changed to 0x2E8A (Raspberry Pi) for picotool compatibility
-- Deferred reset to main loop to protect I2C bus
-- flash_picotool.sh script for full flash cycle
+### Simulator
+- sim/main_sim.c: pyro black box (no physics)
+- sim/hal_sim.c: simulation HAL with in-memory filesystem
+- sim/sim_cli.c: separate physics driver
+- ninja sim builds and runs
 
-### 2. HTTP Server Reliability
-- Fixed file truncation: fill TCP send buffer with multiple chunks
-- Handle tcp_write ERR_MEM by rewinding file and retrying
-- 50/50 sustained file downloads passing
+### Streaming CSV Writer
+- Added hal_fs_open/write/close for streaming file writes
+- flight_save_csv() streams line-by-line, flight buffer stays intact
+- /api/flight.csv serves actual file from littlefs
 
-### 3. Comprehensive Test Suite
-- TUI with split screen (tests left, UART right)
-- pyserial UART monitoring, timestamped diagnostic logging
-- Interactive mode, log analyzer, pre-test diagnostics
-- 17/17 tests passing
+### Event-Driven State Machine
+- Replaced switch/case dispatch with transition table (8 rows)
+- Detectors return events, actions handle side effects
+- Every transition visible in one place
 
-### 4. Build Versioning
-- VERSION file with auto-increment patch on local builds
-- gen_version.sh generates version.h
-- UART boot message shows version and build date
+### Boot State Cleanup
+- Collapsed 8 boot states to 4 (BOOT_INIT, BOOT_SETTLE, BOOT_CONTINUITY, BOOT_CALIBRATE)
+- Removed I2C, filesystem, mDNS, sensor detect from state names
+- HAL handles hardware init internally
 
----
+### Code Quality
+- cppcheck with MISRA addon in CI
+- clang-format check in CI
+- pmccabe complexity check (threshold 15)
+- Refactored: parse_config_ini, state_pad_idle, state_descent, buzzer_update
+- Removed apogee buffer protection (streaming CSV makes it unnecessary)
+- Clean comments: traceability tags + WHY comments + doc references only
 
+### Requirements Engineering
+- 123 requirements in L1-L4 hierarchy across 12 categories
+- Traceability restructured: requirements → integration tests (not unit tests)
+- Gap analysis: 7 critical safety gaps, 3 unimplemented features
 
+### Interactive WASM Simulation
+- scripts/build_wasm.sh for Emscripten compilation
+- docs/sim.html: interactive UI with config, launch, live graph
+- docs/physics.js: JS physics engine (separate from pyro code)
+- docs/buzzer.js: Web Audio driver for buzzer tones
+- CI builds WASM on every push
 
-## What We Did
-
-### 1. mDNS/DNS-SD — Working
-- lwIP mDNS responder with `pyro.local` hostname and `_pyro._tcp` service
-- Root cause of HTTP stall: TCP PCB pool exhaustion (8 too few) and heap too small for segment coalescing
-- Fix: `MEMP_NUM_TCP_PCB=16`, `MEM_SIZE=8000`
-- lwIP debug infrastructure added (`arch/cc.h` → UART printf)
-
-### 2. HTTP Connection Leak — Fixed
-- Missing `tcp_err` callback meant conn_pool slots leaked on connection reset
-- After a few browser page loads, all slots permanently consumed → HTTP dead
-- Fix: `on_err` callback registered in `on_accept`, frees conn_state
-- Connection pool increased from 4 to 8, listen backlog to 8
-
-### 3. Multi-device Networking
-- Unique MAC per board from `pico_unique_board_id`
-- Link-local 169.254.x.y rejected by macOS DHCP — reverted to 192.168.7.1
-- CORS headers on API endpoints
-- mDNS conflict resolution callback (for future multi-device)
-
-### 4. Build Versioning
-- `VERSION` file (committed, semantic version)
-- Patch auto-increments on every `ninja` build
-- `scripts/gen_version.sh` generates `src/version.h`
-- Version shown in UART boot, API, and web dashboard
-
-### 5. Testing & Diagnostics
-- `test_network.py` — comprehensive test suite (ping, API, files, parallel, sequential, mDNS)
-- Fail-fast by default, `--all` for complete run
-- `--uart PORT` for UART monitoring, `--wait-boot` for reset capture
-- 1Hz UART heartbeat in main loop for liveness monitoring
-- lwIP debug flags available (MEM_DEBUG, MEMP_DEBUG, PBUF_DEBUG)
-
-### 6. Status Polling
-- Reduced from 500ms to 1000ms to halve TCP load
-- 3 consecutive misses before showing "Connection lost"
-
-### Open Items
-- Multi-device unique IPs (192.168.7.x shared — works for single device)
-- UART port detection in test script needs verification
-
----
-
-
-
-## What We Did Tonight
-
-### 1. OTA Firmware Updates (COMPLETE)
-- Added POST `/api/ota` endpoint for firmware upload
-- Initial attempt: direct flash write — bricked device (overwrites running code)
-- Evaluated A/B bootloader options:
-  - RP2350 has native partition table support in ROM — not available on RP2040
-  - Found [pico_fota_bootloader](https://github.com/JZimnol/pico_fota_bootloader) (MIT, RP2040 support)
-- Integrated pico_fota_bootloader via FetchContent
-- Hit HardFault: `pfb_initialize_download_slot()` erases 512KB with interrupts disabled (~6s), kills USB
-- Fix: incremental sector erase (4KB at a time) — keeps interrupt-disabled window to ~50ms
-- A/B swap + automatic rollback working
-
-### 2. Flash Layout Redesign
-- Old: firmware at 0x0, littlefs 660KB at top
-- New: bootloader 36KB, info 4KB, Slot A 512KB, Slot B 512KB, littlefs 984KB
-- Updated littlefs driver FS_SIZE from (1323*512) to (984*1024)
-
-### 3. Web Interface Improvements
-- Added firmware update button with file picker and confirmation dialog
-- Fixed config download: was returning hardcoded `{}`, now reads config.ini from littlefs
-- Fixed app.js: was parsing config as JSON, changed to plain text
-- Added firmware version (FW_VERSION "1.0.0") to status API and dashboard
-
-### 4. Debugger Configuration
-- App now linked to Slot A (0x1000A000) — debugger couldn't find main
-- Updated launch.json to load bootloader ELF before app ELF
-
-### 5. Build System
-- Added pico_fota_bootloader via FetchContent with options:
-  - PFB_WITH_IMAGE_ENCRYPTION=OFF
-  - PFB_WITH_SHA256_HASHING=OFF
-  - PFB_REDIRECT_BOOTLOADER_LOGS_TO_UART=ON
-  - PFB_RESERVED_FILESYSTEM_SIZE_KB=984
-- Suppressed -Warray-bounds warning from third-party flash_utils.c
-- Fixed cmake generator: project uses Ninja, not Make
-
-### Key Files Modified
-- `CMakeLists.txt` — pico_fota_bootloader dep, flash layout config
-- `src/http_server.c` — OTA endpoint, config download fix, version API
-- `src/flight_controller.c` — pfb_firmware_commit() on boot
-- `src/littlefs_driver.c` — FS_SIZE updated to 984KB
-- `www/index.html` — firmware update UI section
-- `www/app.js` — firmware upload function, config as text, version display
-- `.vscode/launch.json` — dual ELF loading for debugger
-- `upload_fw.sh` — OTA upload script (uses fota_image.bin)
-
----
-
-# Session Notes - March 2, 2026
-
-## What We Did Tonight
-
-### 1. fat_mimic Library (COMPLETE)
-- Rewrote FAT12-over-littlefs as `lib/fat_mimic/` (~400 lines, ~35KB RAM)
-- Write-back dirty cache, 50ms USB quiet gate, three sync triggers
-- Tested: edits persist, deletions work, no USB panics
-- **Status: Working but has edge cases with filenames and temp files**
-
-### 2. Pivoted to HTTP Interface (IN PROGRESS)
-- Replaced USB Mass Storage with USB network device (ECM+RNDIS)
-- Added lwIP TCP/IP stack, DHCP server, DNS server
-- Built custom HTTP server with:
-  - File listing page at `http://192.168.7.1/`
-  - File download links
-  - Live JSON status API at `/api/status`
-  - Auto-refreshing dashboard (500ms polling)
-- **Ping works, page loads, dashboard updates live**
-- Pressure sensor reading live on dashboard (BMP280 on I2C1, GPIO 6 SDA / GPIO 7 SCL)
-
-### 3. Flight State Machine Overhaul (PARTIAL)
-- Renamed: LAUNCH→ASCENT, FALLING→DESCENT, removed APOGEE state
-- 4 states: PAD_IDLE, ASCENT, DESCENT, LANDED
-- Switch dispatch with default→PAD_IDLE
-- Four pyro modes: fallen, agl, speed, delay
-- Post-fire diagnostics: BAD_PARACHUTE, BAD_PYRO
-- Vertical speed calculation, apogee arming at <10 m/s
-- **Not yet tested in flight - only PAD_IDLE verified**
-
-### 4. Pyro Module Refactored
-- New `src/pyro.c` and `src/pyro.h` with clean API
-- Raw 12-bit ADC reads (no oversampling)
-- Live continuity check every 1s in PAD_IDLE
-- Raw ADC values shown on dashboard
-- **ADC readings: short=343, open=400 - very close, thresholds need tuning**
-
-### 5. Filesystem Analysis (docs/)
-- `docs/fat12_image_proposal.md` - FAT12 image on littlefs
-- `docs/pure_fat12_remap_proposal.md` - Custom FAT12 + cluster remap
-- `docs/fatfs_review.md` - FatFs + cluster remap (recommended for FAT approach)
-- `docs/petit_fatfs_review.md` - Rejected, too restricted
-- `docs/filesystem_analysis.md` - Full comparison matrix
-- `docs/web_interface_onepager.md` - Marketing one-pager for HTTP approach
-- `docs/http_implementation_notes.md` - Implementation notes
-
-## Tomorrow's Priorities
-
-### 1. Fix Pyro ADC Readings
-- 343 vs 400 counts is too close - investigate circuit
-- May need different ADC channel, pull-up value, or measurement technique
-- Consider: is GPIO 15 (common enable) actually toggling? Scope it.
-- The 100kΩ pull-up with ~0.5Ω pyro should give near-zero volts (ADC ~0)
-- Open circuit should give 3.3V (ADC ~4095)
-- Getting ~340-400 for both suggests the pull-up isn't working or wrong pin
-
-### 2. HTTP File Upload
-- Add POST handler for file upload
-- HTML form with file input
-- Write uploaded data to littlefs
-
-### 3. Config Editor
-- In-browser textarea for editing config.ini
-- Save button that POSTs back to device
-
-### 4. DNS Resolution
-- `http://pyro.local/` via mDNS (currently only IP works)
-- DNS server is initialized but hostname may need adjustment
-
-### 5. Test Mode (GPIO 8)
-- Jumper detection at boot before I2C init
-- Beep pattern, countdown, pyro fire sequence
-- Needs buzzer driver (GPIO 16, 3kHz PWM)
-
-## Key Files Modified
-- `src/flight_controller.c` - state machine, main loop
-- `src/tusb_config.h` - ECM+RNDIS network class
-- `src/usb_descriptors.c` - network device descriptors
-- `src/net_glue.c` - TinyUSB ↔ lwIP bridge + DHCP
-- `src/http_server.c` - HTTP server with dashboard
-- `src/device_status.h` - shared status struct
-- `src/pyro.c` / `src/pyro.h` - new pyro module
-- `src/pressure_sensor.c` - I2C1 on GPIO 6/7, auto-detect
-- `src/bmp280_driver.c` - changed to I2C1
-- `src/ms5607_driver.c` - changed to I2C1
-- `src/lwipopts.h` - lwIP configuration
-- `CMakeLists.txt` - lwIP sources, networking helpers
-
-## Files to Clean Up
-- `src/usb_msc_driver.c` - dead code (replaced by net_glue.c)
-- `src/mimic_fat.c` / `.h` / `.backup` / `.bak2` - old implementation
-- `src/fat_mimic.c` / `.h` - redirect stubs
-- `src/unicode.c` / `.h` - unused
-- `lib/fat_mimic/` - keep for reference but not in build
-
-## Commit Message
-```
-feat: HTTP web interface over USB, live dashboard
-
-Replace USB Mass Storage with USB network device (ECM+RNDIS).
-Device appears as network adapter, serves web interface at 192.168.7.1.
-
-- lwIP TCP/IP stack with DHCP server
-- HTTP server with file listing, download, live status API
-- Auto-refreshing dashboard: state, altitude, pressure, pyro continuity
-- Refactored pyro module (pyro.c) with clean API and raw ADC
-- Pressure sensor on I2C1 (BMP280 GPIO 6/7, MS5607 GPIO 10/7)
-- Flight state machine: PAD_IDLE, ASCENT, DESCENT, LANDED
-- Four pyro modes: fallen, agl, speed, delay
-- fat_mimic library preserved in lib/ for reference
-
-Known issues:
-- Pyro ADC readings need calibration (343 vs 400 too close)
-- File upload not yet implemented
-- Config editor not yet implemented
-- Test mode not yet implemented
-```
+### Hardware CI Plan
+- HARDWARE_CI_PLAN.md: 4 Proxmox VMs, 2× MS5607 + 2× BMP280
+- Self-hosted GitHub Actions runners
+- Flash → test → OTA → config cycle
+- Execute next week
