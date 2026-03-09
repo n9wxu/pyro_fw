@@ -198,13 +198,31 @@ fallback:;
 }
 
 static void serve_api_flight_csv(struct tcp_pcb *pcb) {
-    const char *resp =
-        "HTTP/1.1 200 OK\r\nContent-Type: text/csv\r\n"
-        "Content-Disposition: attachment; filename=\"flight.csv\"\r\n"
-        "Connection: close\r\n\r\n"
-        "time_ms,pressure_pa,altitude_cm,state\r\n";
+    lfs_t lfs;
+    lfs_file_t file;
+    if (lfs_mount(&lfs, &lfs_pico_flash_config) != LFS_ERR_OK) goto no_data;
+    if (lfs_file_open(&lfs, &file, "flight.csv", LFS_O_RDONLY) != LFS_ERR_OK) {
+        lfs_unmount(&lfs);
+        goto no_data;
+    }
+    {
+        const char *hdr = "HTTP/1.1 200 OK\r\nContent-Type: text/csv\r\n"
+            "Content-Disposition: attachment; filename=\"flight.csv\"\r\n"
+            CORS_HDR "Connection: close\r\n\r\n";
+        tcp_write(pcb, hdr, strlen(hdr), TCP_WRITE_FLAG_COPY);
+        char buf[256];
+        lfs_ssize_t n;
+        while ((n = lfs_file_read(&lfs, &file, buf, sizeof(buf))) > 0)
+            tcp_write(pcb, buf, n, TCP_WRITE_FLAG_COPY);
+        lfs_file_close(&lfs, &file);
+        lfs_unmount(&lfs);
+        return;
+    }
+no_data:;
+    const char *resp = "HTTP/1.1 200 OK\r\nContent-Type: text/csv\r\n"
+        CORS_HDR "Connection: close\r\n\r\n"
+        "time_ms,pressure_pa,altitude_cm,state,thrust,event\r\n";
     tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
-    /* TODO: stream flight data from raw file */
 }
 
 /* ── Default page if /www/index.html missing ──────────────────────── */
