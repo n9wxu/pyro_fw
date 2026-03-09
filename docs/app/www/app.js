@@ -41,7 +41,7 @@ function fmtMode(mode, val, u) {
 
 /* ── Status polling ────────────────────────────────────────────── */
 function update() {
-  fetch('api/status').then(function(r){return r.json()}).then(function(d) {
+  fetch('/api/status').then(function(r){return r.json()}).then(function(d) {
     missCount = 0;
     var u = d.units || 0;
     var ul = unitLabel(u);
@@ -203,7 +203,7 @@ function cfgSave() {
     '\r\npyro2_mode=' + c.p2mode + '\r\npyro2_value=' + c.p2val +
     '\r\nunits=' + uname + '\r\nbeep_mode=' + c.beep + '\r\n';
   var msg = document.getElementById('cfgMsg');
-  fetch('api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:ini})
+  fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:ini})
     .then(function(r) {
       if (r.ok) {
         pendingConfig = c;
@@ -223,7 +223,7 @@ function cfgFileSelected() {
   if (!file) return;
   var msg = document.getElementById('cfgMsg');
   file.text().then(function(txt) {
-    fetch('api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:txt})
+    fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:txt})
       .then(function(r) {
         msg.style.color = r.ok ? 'green' : 'red';
         msg.textContent = r.ok ? ' Uploaded — reboot to apply' : ' Error';
@@ -239,12 +239,12 @@ function cfgReboot() {
   msg.textContent = ' Rebooting...';
   pendingConfig = null;
   deviceConfig = null;
-  fetch('api/reboot', {method:'POST'}).catch(function(){});
+  fetch('/api/reboot', {method:'POST'}).catch(function(){});
   waitForReboot(msg);
 }
 
 /* ── Flight data ───────────────────────────────────────────────── */
-function dlFlight() { window.location = 'api/flight.csv'; }
+function dlFlight() { window.location = '/api/flight.csv'; }
 
 var flightData = [];
 var flightEvents = {};
@@ -252,7 +252,7 @@ var flightLoaded = false;
 
 function loadFlightData() {
   if (flightLoaded) return;
-  fetch('api/flight.csv').then(function(r){return r.text()}).then(function(csv) {
+  fetch('/api/flight.csv').then(function(r){return r.text()}).then(function(csv) {
     flightData = [];
     flightEvents = {};
     csv.split('\n').forEach(function(line) {
@@ -388,7 +388,7 @@ function uploadFW() {
   var msg = document.getElementById('fwmsg');
   msg.style.color = 'orange'; msg.textContent = ' Uploading...';
   file.arrayBuffer().then(function(buf) {
-    fetch('api/ota', {method:'POST', body:new Uint8Array(buf)})
+    fetch('/api/ota', {method:'POST', body:new Uint8Array(buf)})
       .then(function() { msg.textContent = ' Rebooting...'; deviceConfig = null; waitForReboot(msg); })
       .catch(function() { msg.textContent = ' Rebooting...'; deviceConfig = null; waitForReboot(msg); });
   });
@@ -409,7 +409,7 @@ function waitForReboot(msg) {
   var attempts = 0;
   var poll = setInterval(function() {
     if (++attempts > 30) { clearInterval(poll); msg.style.color='red'; msg.textContent=' Device not responding'; return; }
-    fetch('api/status').then(function(r){return r.json()}).then(function(d) {
+    fetch('/api/status').then(function(r){return r.json()}).then(function(d) {
       clearInterval(poll);
       msg.style.color = 'green';
       msg.textContent = ' Online — v' + d.fw_version;

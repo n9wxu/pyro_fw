@@ -122,6 +122,11 @@ canvas { border: 1px solid #ccc; width: 100%; max-width: 880px; }
 </div>
 </div>
 
+<div class="panel" style="margin-top:8px">
+  <h3>Pyro Web Interface</h3>
+  <iframe id="pyroUI" src="app/index.html" style="width:100%;height:500px;border:1px solid #ccc;border-radius:4px"></iframe>
+</div>
+
 <div style="margin-top:8px;text-align:center">
   <a href="https://github.com/n9wxu/pyro_fw" style="color:#666;font-size:12px">GitHub</a>
   <span style="color:#ccc;margin:0 8px">|</span>
@@ -144,6 +149,64 @@ var muted = false;
 
 var STATE_NAMES = ['BOOT_INIT','BOOT_SETTLE','BOOT_CONT','BOOT_CAL','PAD_IDLE','ASCENT','DESCENT','LANDED'];
 var STATE_CLASSES = ['state-boot','state-boot','state-boot','state-boot','state-pad','state-ascent','state-descent','state-landed'];
+var MODE_NAMES = ['none','fallen','agl','speed','delay'];
+
+/* Bridge: the iframe's fetch shim calls this for /api/* requests */
+function simApi(path, method, body) {
+    if (!pyro) return { status: 503, body: 'WASM not loaded', contentType: 'text/plain' };
+
+    if (path === '/api/status' && method === 'GET') {
+        var s = pyro._sim_flight_state();
+        var stateName = (s >= 4) ? STATE_NAMES[s] : 'BOOT';
+        var p1m = pyro._sim_flight_pyro1_fired;
+        return {
+            body: JSON.stringify({
+                state: stateName,
+                alt_cm: pyro._sim_flight_altitude_cm(),
+                max_alt_cm: pyro._sim_flight_max_alt_cm(),
+                vspeed_cms: pyro._sim_flight_vspeed_cms(),
+                pressure_pa: pyro._sim_flight_pressure(),
+                pyro1_cont: true, pyro2_cont: true,
+                pyro1_adc: 50, pyro2_adc: 50,
+                pyro1_fired: !!pyro._sim_flight_pyro1_fired(),
+                pyro2_fired: !!pyro._sim_flight_pyro2_fired(),
+                armed: !!pyro._sim_flight_armed(),
+                flight_ms: (pyro._sim_flight_launch_time() > 0) ? (simTime - pyro._sim_flight_launch_time()) : 0,
+                uptime: simTime,
+                fw_version: '1.4.0-sim',
+                pyro1_mode: document.getElementById('cfgP1Mode').value,
+                pyro1_value: parseInt(document.getElementById('cfgP1Val').value) || 0,
+                pyro2_mode: document.getElementById('cfgP2Mode').value,
+                pyro2_value: parseInt(document.getElementById('cfgP2Val').value) || 0,
+                units: {cm:0,m:1,ft:2}[document.getElementById('cfgUnits').value] || 0,
+                rocket_id: document.getElementById('cfgId').value,
+                rocket_name: document.getElementById('cfgName').value
+            }),
+            contentType: 'application/json'
+        };
+    }
+
+    if (path === '/api/config' && method === 'GET') {
+        return { body: buildConfigIni(), contentType: 'text/plain' };
+    }
+
+    if (path === '/api/config' && method === 'POST') {
+        return { status: 201, body: 'OK', contentType: 'text/plain' };
+    }
+
+    if (path === '/api/reboot' && method === 'POST') {
+        return { body: 'Rebooting', contentType: 'text/plain' };
+    }
+
+    if (path === '/api/flight.csv' && method === 'GET') {
+        return {
+            body: 'time_ms,pressure_pa,altitude_cm,state,thrust,event\n',
+            contentType: 'text/csv'
+        };
+    }
+
+    return { status: 404, body: 'Not found', contentType: 'text/plain' };
+}
 
 function log(msg) {
     var el = document.getElementById('log');
