@@ -450,7 +450,7 @@ int flight_save_csv(flight_context_t *ctx) {
     hal_file_t *f = hal_fs_open("flight.csv", false);
     if (!f) return -1;
 
-    char line[128];
+    char line[256];
     int n = snprintf(line, sizeof(line),
         "# Pyro MK1B Flight Data\n# ID: %.8s\n# Name: %.8s\n"
         "# Pyro1: %s %u\n# Pyro2: %s %u\n"
