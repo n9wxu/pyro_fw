@@ -15,7 +15,6 @@
 
 void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t altitude, uint8_t st) {
     if (ctx->buf_count == 4096) {
-        if (ctx->apogee_protected && ctx->buf_tail == ctx->apogee_protect_idx) return; /* [DAT-05] */
         ctx->buf_tail = (ctx->buf_tail + 1) % 4096;
         ctx->buf_count--;
     }
@@ -365,13 +364,11 @@ static void action_armed(flight_context_t *ctx, uint32_t now) {
     buf_tag_event(ctx, EVT_ARMED);
 }
 
-/* [FLT-APO-03] Protect 50 samples around apogee from ring buffer overwrite */
+/* [FLT-APO-03] */
 static void action_apogee(flight_context_t *ctx, uint32_t now) {
     ctx->apogee_detected = true;
     ctx->apogee_time = now;
     buf_tag_event(ctx, EVT_APOGEE);
-    ctx->apogee_protect_idx = (ctx->buf_head >= 50) ? (ctx->buf_head - 50) : (4096 + ctx->buf_head - 50);
-    ctx->apogee_protected = true;
     try_fire_pyros(ctx, now);
 }
 

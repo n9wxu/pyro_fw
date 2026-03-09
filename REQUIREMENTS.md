@@ -127,7 +127,6 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **DAT-02**: Each sample shall include: time, pressure, altitude, state, thrust flag, event. ← SYS-DATA-01
 - **DAT-03**: Events shall be tagged on existing data samples, not stored as separate records. ← SYS-DATA-01
 - **DAT-04**: The system shall log events: LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING. ← SYS-DATA-01
-- **DAT-05**: The ring buffer shall protect apogee-region samples from overwrite. ← SYS-DATA-01
 - **DAT-06**: The system shall export flight data as CSV to persistent storage after landing. ← SYS-DATA-02
 - **DAT-07**: The CSV shall include a metadata header with configuration and flight summary. ← SYS-DATA-02
 - **BUZ-03**: The system shall play an altitude beep-out sequence after landing. ← SYS-DATA-03

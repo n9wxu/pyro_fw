@@ -88,8 +88,6 @@ typedef struct flight_context_t {
     uint16_t buf_head;
     uint16_t buf_tail;
     uint16_t buf_count;
-    uint16_t apogee_protect_idx;
-    bool apogee_protected;
     int32_t ground_pressure;
     int32_t max_altitude;
     int32_t last_altitude;
