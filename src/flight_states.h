@@ -19,8 +19,35 @@ typedef enum {
     PAD_IDLE,
     ASCENT,
     DESCENT,
-    LANDED
+    LANDED,
+    STATE_COUNT
 } flight_state_t;
+
+// State machine events (drive transitions)
+typedef enum {
+    SEVT_NONE = 0,
+    SEVT_DONE,
+    SEVT_TIMER,
+    SEVT_CAL_DONE,
+    SEVT_LAUNCH,
+    SEVT_ARMED,
+    SEVT_APOGEE,
+    SEVT_LANDING,
+} state_event_t;
+
+// Forward declare for function pointer types
+struct flight_context_t;
+
+// Transition table entry
+typedef state_event_t (*detect_fn)(struct flight_context_t *ctx, uint32_t now);
+typedef void (*action_fn)(struct flight_context_t *ctx, uint32_t now);
+
+typedef struct {
+    flight_state_t from;
+    state_event_t  event;
+    flight_state_t to;
+    action_fn      action;
+} transition_t;
 
 // Pyro firing modes
 typedef enum { PYRO_MODE_FALLEN = 1, PYRO_MODE_AGL, PYRO_MODE_SPEED, PYRO_MODE_DELAY } pyro_mode_t;
