@@ -50,7 +50,7 @@ void tearDown(void) {}
 
 /* ── Helper tests ─────────────────────────────────────────────────── */
 
-void test_pressure_to_altitude_cm(void) {
+void test_SNS_ALT_01_pressure_to_altitude(void) {
     /* Sea level: 0 altitude */
     TEST_ASSERT_EQUAL(0, pressure_to_altitude_cm(101325, 101325));
     /* Lower pressure = higher altitude */
@@ -59,14 +59,14 @@ void test_pressure_to_altitude_cm(void) {
     TEST_ASSERT_INT_WITHIN(1000, 8300, alt);  /* ~8.3 cm/Pa * 1000 Pa ≈ 8300 cm */
 }
 
-void test_filter_pressure_init(void) {
+void test_SNS_PRES_03_filter_init(void) {
     flight_context_t ctx = {0};
     int32_t result = filter_pressure(&ctx, 101325, 10);
     TEST_ASSERT_EQUAL(101325, result);
     TEST_ASSERT_TRUE(ctx.filter_initialized);
 }
 
-void test_filter_pressure_smoothing(void) {
+void test_SNS_PRES_02_filter_smoothing(void) {
     flight_context_t ctx = {0};
     filter_pressure(&ctx, 101325, 10);
     /* Step change — filter should smooth */
@@ -83,7 +83,7 @@ void test_buf_add(void) {
     TEST_ASSERT_EQUAL(101325, ctx.flight_buffer[0].pressure_pa);
 }
 
-void test_buf_add_wraps(void) {
+void test_DAT_01_buf_wraps(void) {
     flight_context_t ctx = {0};
     for (int i = 0; i < 4096; i++)
         buf_add(&ctx, i, 101325, 0, PAD_IDLE);
@@ -95,14 +95,14 @@ void test_buf_add_wraps(void) {
 
 /* ── Boot state tests ─────────────────────────────────────────────── */
 
-void test_boot_sequence_reaches_pad_idle(void) {
+void test_FLT_BOOT_01_reaches_pad_idle(void) {
     flight_context_t ctx = {0};
     ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
     boot_to_pad_idle(&ctx);
     TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
 }
 
-void test_boot_calibrates_ground_pressure(void) {
+void test_FLT_BOOT_08_calibrates_ground(void) {
     flight_context_t ctx = {0};
     ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
     mock_pressure.pressure_pa = 101000.0f;
@@ -110,7 +110,7 @@ void test_boot_calibrates_ground_pressure(void) {
     TEST_ASSERT_INT_WITHIN(100, 101000, ctx.ground_pressure);
 }
 
-void test_boot_no_sensor(void) {
+void test_SNS_PRES_01_boot_no_sensor(void) {
     flight_context_t ctx = {0};
     ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
     mock_pressure.sensor_type = 0;
@@ -119,7 +119,7 @@ void test_boot_no_sensor(void) {
     TEST_ASSERT_EQUAL(0, ctx.ground_pressure);
 }
 
-void test_boot_i2c_settle_waits(void) {
+void test_FLT_BOOT_04_i2c_settle(void) {
     flight_context_t ctx = {0};
     ctx.current_state = BOOT_I2C_SETTLE;
     ctx.boot_timer = 0;
@@ -131,7 +131,7 @@ void test_boot_i2c_settle_waits(void) {
 
 /* ── PAD_IDLE tests ───────────────────────────────────────────────── */
 
-void test_pad_idle_stays_on_ground(void) {
+void test_FLT_LAUNCH_02_stays_on_ground(void) {
     flight_context_t ctx = {0};
     ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
     ctx.current_state = PAD_IDLE;
@@ -146,7 +146,7 @@ void test_pad_idle_stays_on_ground(void) {
     TEST_ASSERT_EQUAL(PAD_IDLE, next);
 }
 
-void test_pad_idle_detects_ascent(void) {
+void test_FLT_LAUNCH_01_detects_ascent(void) {
     flight_context_t ctx = {0};
     ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
     ctx.current_state = PAD_IDLE;
@@ -165,7 +165,7 @@ void test_pad_idle_detects_ascent(void) {
     TEST_ASSERT_TRUE(ctx.launch_time > 0);
 }
 
-void test_pad_idle_continuity_check(void) {
+void test_PYR_CONT_01_continuity_check(void) {
     flight_context_t ctx = {0};
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = 101325;
@@ -191,7 +191,7 @@ void test_pad_idle_continuity_check(void) {
 
 /* ── ASCENT tests ─────────────────────────────────────────────────── */
 
-void test_ascent_tracks_max_altitude(void) {
+void test_FLT_ASC_01_tracks_max_altitude(void) {
     flight_context_t ctx = {0};
     ctx.current_state = ASCENT;
     ctx.ground_pressure = 101325;
@@ -210,7 +210,7 @@ void test_ascent_tracks_max_altitude(void) {
     TEST_ASSERT_TRUE(ctx.max_altitude >= 2000);
 }
 
-void test_ascent_arms_pyros_at_low_speed(void) {
+void test_FLT_ASC_04_arms_pyros(void) {
     flight_context_t ctx = {0};
     ctx.current_state = ASCENT;
     ctx.ground_pressure = 101325;
@@ -229,7 +229,7 @@ void test_ascent_arms_pyros_at_low_speed(void) {
     TEST_ASSERT_TRUE(ctx.pyros_armed);
 }
 
-void test_ascent_detects_apogee(void) {
+void test_FLT_APO_01_detects_apogee(void) {
     flight_context_t ctx = {0};
     ctx.current_state = ASCENT;
     ctx.ground_pressure = 101325;
@@ -255,7 +255,7 @@ void test_ascent_detects_apogee(void) {
 
 /* ── DESCENT tests ────────────────────────────────────────────────── */
 
-void test_descent_detects_landing(void) {
+void test_FLT_LAND_01_detects_landing(void) {
     flight_context_t ctx = {0};
     ctx.current_state = DESCENT;
     ctx.ground_pressure = 101325;
@@ -284,7 +284,7 @@ void test_descent_detects_landing(void) {
 
 /* ── LANDED tests ─────────────────────────────────────────────────── */
 
-void test_landed_stays_landed(void) {
+void test_FLT_LAND_06_stays_landed(void) {
     flight_context_t ctx = {0};
     ctx.current_state = LANDED;
     ctx.ground_pressure = 101325;
@@ -301,7 +301,7 @@ void test_landed_stays_landed(void) {
 
 /* ── Telemetry tests ──────────────────────────────────────────────── */
 
-void test_telemetry_format(void) {
+void test_TEL_01_format(void) {
     flight_context_t ctx = {0};
     ctx.pyro1_continuity_good = true;
     ctx.pyro2_continuity_good = true;
@@ -322,7 +322,7 @@ void test_telemetry_format(void) {
     TEST_ASSERT_TRUE(strstr(mock_uart_buf, "\r\n") != NULL);
 }
 
-void test_telemetry_seq_increments(void) {
+void test_TEL_09_seq_increments(void) {
     flight_context_t ctx = {0};
     ctx.telemetry_seq = 0;
 
@@ -333,7 +333,7 @@ void test_telemetry_seq_increments(void) {
     TEST_ASSERT_EQUAL(2, ctx.telemetry_seq);
 }
 
-void test_telemetry_checksum(void) {
+void test_TEL_02_checksum(void) {
     flight_context_t ctx = {0};
     mock_uart_len = 0;
     send_telemetry(&ctx, 0, 0, PAD_IDLE);
@@ -355,7 +355,7 @@ void test_telemetry_checksum(void) {
     TEST_ASSERT_EQUAL_HEX8(expected, (uint8_t)actual);
 }
 
-void test_telemetry_state_mapping(void) {
+void test_TEL_07_state_mapping(void) {
     flight_context_t ctx = {0};
 
     /* PAD_IDLE should output state=0 */
@@ -380,7 +380,7 @@ void test_telemetry_flags(void) {
     TEST_ASSERT_TRUE(strstr(mock_uart_buf, ",13,") != NULL);
 }
 
-void test_telemetry_altitude_and_speed(void) {
+void test_TEL_06_altitude_and_speed(void) {
     flight_context_t ctx = {0};
     ctx.vertical_speed_cms = -1500;
     ctx.max_altitude = 30000;
@@ -403,7 +403,7 @@ void test_telemetry_altitude_and_speed(void) {
     TEST_ASSERT_EQUAL(2, st);
 }
 
-void test_telemetry_thrust_flag(void) {
+void test_TEL_10_thrust_flag(void) {
     flight_context_t ctx = {0};
     ctx.under_thrust = true;
 
@@ -417,7 +417,7 @@ void test_telemetry_thrust_flag(void) {
     TEST_ASSERT_TRUE(strstr(mock_uart_buf, ",0,0,") != NULL);
 }
 
-void test_telemetry_pyro_adc(void) {
+void test_TEL_06_pyro_adc(void) {
     flight_context_t ctx = {0};
     ctx.pyro1_adc = 42;
     ctx.pyro2_adc = 3800;
@@ -427,7 +427,7 @@ void test_telemetry_pyro_adc(void) {
     TEST_ASSERT_TRUE(strstr(mock_uart_buf, ",42,3800,") != NULL);
 }
 
-void test_telemetry_all_flags(void) {
+void test_TEL_08_all_flags(void) {
     flight_context_t ctx = {0};
     ctx.pyro1_continuity_good = true;
     ctx.pyro2_continuity_good = true;
@@ -441,7 +441,7 @@ void test_telemetry_all_flags(void) {
     TEST_ASSERT_TRUE(strstr(mock_uart_buf, ",3F,") != NULL);
 }
 
-void test_telemetry_boot_state_maps_to_zero(void) {
+void test_TEL_07_boot_maps_to_zero(void) {
     flight_context_t ctx = {0};
 
     mock_uart_len = 0;
@@ -451,7 +451,7 @@ void test_telemetry_boot_state_maps_to_zero(void) {
 
 /* ── Config parser tests ──────────────────────────────────────────── */
 
-void test_parse_full_config(void) {
+void test_CFG_02_parse_full(void) {
     config_t cfg = {0};
     char ini[] = "[pyro]\r\nid=ROCKET1\r\nname=MyRkt\r\npyro1_mode=delay\r\npyro1_value=0\r\npyro2_mode=agl\r\npyro2_value=300\r\nunits=ft\r\n";
     parse_config_ini(ini, &cfg);
@@ -464,7 +464,7 @@ void test_parse_full_config(void) {
     TEST_ASSERT_EQUAL(2, cfg.units);
 }
 
-void test_parse_all_modes(void) {
+void test_CFG_04_parse_all_modes(void) {
     config_t cfg = {0};
     char ini1[] = "pyro1_mode=delay\r\n"; parse_config_ini(ini1, &cfg);
     TEST_ASSERT_EQUAL(PYRO_MODE_DELAY, cfg.pyro1_mode);
@@ -476,7 +476,7 @@ void test_parse_all_modes(void) {
     TEST_ASSERT_EQUAL(PYRO_MODE_SPEED, cfg.pyro1_mode);
 }
 
-void test_parse_all_units(void) {
+void test_CFG_03_parse_all_units(void) {
     config_t cfg = {0};
     char ini1[] = "units=cm\r\n"; parse_config_ini(ini1, &cfg);
     TEST_ASSERT_EQUAL(0, cfg.units);
@@ -486,7 +486,7 @@ void test_parse_all_units(void) {
     TEST_ASSERT_EQUAL(2, cfg.units);
 }
 
-void test_parse_unix_newlines(void) {
+void test_CFG_09_unix_newlines(void) {
     config_t cfg = {0};
     char ini[] = "[pyro]\npyro1_mode=speed\npyro1_value=42\n";
     parse_config_ini(ini, &cfg);
@@ -494,7 +494,7 @@ void test_parse_unix_newlines(void) {
     TEST_ASSERT_EQUAL(42, cfg.pyro1_value);
 }
 
-void test_parse_no_section_header(void) {
+void test_CFG_02_no_section_header(void) {
     config_t cfg = {0};
     char ini[] = "pyro2_mode=fallen\r\npyro2_value=100\r\n";
     parse_config_ini(ini, &cfg);
@@ -502,21 +502,21 @@ void test_parse_no_section_header(void) {
     TEST_ASSERT_EQUAL(100, cfg.pyro2_value);
 }
 
-void test_parse_unknown_keys_ignored(void) {
+void test_CFG_08_unknown_keys(void) {
     config_t cfg = {0};
     char ini[] = "foo=bar\r\npyro1_value=55\r\nbaz=qux\r\n";
     parse_config_ini(ini, &cfg);
     TEST_ASSERT_EQUAL(55, cfg.pyro1_value);
 }
 
-void test_parse_unknown_mode_stays_zero(void) {
+void test_CFG_04_unknown_mode(void) {
     config_t cfg = {0};
     char ini[] = "pyro1_mode=bogus\r\n";
     parse_config_ini(ini, &cfg);
     TEST_ASSERT_EQUAL(0, cfg.pyro1_mode);
 }
 
-void test_parse_empty_string(void) {
+void test_CFG_02_empty_string(void) {
     config_t cfg = {0};
     char ini[] = "";
     parse_config_ini(ini, &cfg);
@@ -524,14 +524,14 @@ void test_parse_empty_string(void) {
     TEST_ASSERT_EQUAL(0, cfg.pyro2_value);
 }
 
-void test_parse_no_trailing_newline(void) {
+void test_CFG_09_no_trailing_newline(void) {
     config_t cfg = {0};
     char ini[] = "pyro1_value=123";
     parse_config_ini(ini, &cfg);
     TEST_ASSERT_EQUAL(123, cfg.pyro1_value);
 }
 
-void test_parse_id_truncated_to_8(void) {
+void test_CFG_07_id_truncated(void) {
     config_t cfg = {0};
     char ini[] = "id=ABCDEFGHIJKLMNOP\r\n";
     parse_config_ini(ini, &cfg);
@@ -539,7 +539,7 @@ void test_parse_id_truncated_to_8(void) {
     TEST_ASSERT_EQUAL_STRING("ABCDEFGH", cfg.id);
 }
 
-void test_parse_preserves_unset_fields(void) {
+void test_CFG_06_preserves_unset(void) {
     config_t cfg = {0};
     cfg.pyro1_mode = PYRO_MODE_DELAY;
     cfg.pyro1_value = 99;
@@ -553,7 +553,7 @@ void test_parse_preserves_unset_fields(void) {
     TEST_ASSERT_EQUAL(200, cfg.pyro2_value);
 }
 
-void test_parse_comment_lines(void) {
+void test_CFG_08_comment_lines(void) {
     config_t cfg = {0};
     /* Lines without '=' are skipped (section headers, comments) */
     char ini[] = "[pyro]\r\n; this is a comment\r\npyro1_value=77\r\n# another comment\r\n";
@@ -567,59 +567,59 @@ int main(void) {
     UNITY_BEGIN();
 
     /* Helpers */
-    RUN_TEST(test_pressure_to_altitude_cm);
-    RUN_TEST(test_filter_pressure_init);
-    RUN_TEST(test_filter_pressure_smoothing);
+    RUN_TEST(test_SNS_ALT_01_pressure_to_altitude);
+    RUN_TEST(test_SNS_PRES_03_filter_init);
+    RUN_TEST(test_SNS_PRES_02_filter_smoothing);
     RUN_TEST(test_buf_add);
-    RUN_TEST(test_buf_add_wraps);
+    RUN_TEST(test_DAT_01_buf_wraps);
 
     /* Boot */
-    RUN_TEST(test_boot_sequence_reaches_pad_idle);
-    RUN_TEST(test_boot_calibrates_ground_pressure);
-    RUN_TEST(test_boot_no_sensor);
-    RUN_TEST(test_boot_i2c_settle_waits);
+    RUN_TEST(test_FLT_BOOT_01_reaches_pad_idle);
+    RUN_TEST(test_FLT_BOOT_08_calibrates_ground);
+    RUN_TEST(test_SNS_PRES_01_boot_no_sensor);
+    RUN_TEST(test_FLT_BOOT_04_i2c_settle);
 
     /* PAD_IDLE */
-    RUN_TEST(test_pad_idle_stays_on_ground);
-    RUN_TEST(test_pad_idle_detects_ascent);
-    RUN_TEST(test_pad_idle_continuity_check);
+    RUN_TEST(test_FLT_LAUNCH_02_stays_on_ground);
+    RUN_TEST(test_FLT_LAUNCH_01_detects_ascent);
+    RUN_TEST(test_PYR_CONT_01_continuity_check);
 
     /* ASCENT */
-    RUN_TEST(test_ascent_tracks_max_altitude);
-    RUN_TEST(test_ascent_arms_pyros_at_low_speed);
-    RUN_TEST(test_ascent_detects_apogee);
+    RUN_TEST(test_FLT_ASC_01_tracks_max_altitude);
+    RUN_TEST(test_FLT_ASC_04_arms_pyros);
+    RUN_TEST(test_FLT_APO_01_detects_apogee);
 
     /* DESCENT */
-    RUN_TEST(test_descent_detects_landing);
+    RUN_TEST(test_FLT_LAND_01_detects_landing);
 
     /* LANDED */
-    RUN_TEST(test_landed_stays_landed);
+    RUN_TEST(test_FLT_LAND_06_stays_landed);
 
     /* Telemetry */
-    RUN_TEST(test_telemetry_format);
-    RUN_TEST(test_telemetry_seq_increments);
-    RUN_TEST(test_telemetry_checksum);
-    RUN_TEST(test_telemetry_state_mapping);
+    RUN_TEST(test_TEL_01_format);
+    RUN_TEST(test_TEL_09_seq_increments);
+    RUN_TEST(test_TEL_02_checksum);
+    RUN_TEST(test_TEL_07_state_mapping);
     RUN_TEST(test_telemetry_flags);
-    RUN_TEST(test_telemetry_altitude_and_speed);
-    RUN_TEST(test_telemetry_thrust_flag);
-    RUN_TEST(test_telemetry_pyro_adc);
-    RUN_TEST(test_telemetry_all_flags);
-    RUN_TEST(test_telemetry_boot_state_maps_to_zero);
+    RUN_TEST(test_TEL_06_altitude_and_speed);
+    RUN_TEST(test_TEL_10_thrust_flag);
+    RUN_TEST(test_TEL_06_pyro_adc);
+    RUN_TEST(test_TEL_08_all_flags);
+    RUN_TEST(test_TEL_07_boot_maps_to_zero);
 
     /* Config parser */
-    RUN_TEST(test_parse_full_config);
-    RUN_TEST(test_parse_all_modes);
-    RUN_TEST(test_parse_all_units);
-    RUN_TEST(test_parse_unix_newlines);
-    RUN_TEST(test_parse_no_section_header);
-    RUN_TEST(test_parse_unknown_keys_ignored);
-    RUN_TEST(test_parse_unknown_mode_stays_zero);
-    RUN_TEST(test_parse_empty_string);
-    RUN_TEST(test_parse_no_trailing_newline);
-    RUN_TEST(test_parse_id_truncated_to_8);
-    RUN_TEST(test_parse_preserves_unset_fields);
-    RUN_TEST(test_parse_comment_lines);
+    RUN_TEST(test_CFG_02_parse_full);
+    RUN_TEST(test_CFG_04_parse_all_modes);
+    RUN_TEST(test_CFG_03_parse_all_units);
+    RUN_TEST(test_CFG_09_unix_newlines);
+    RUN_TEST(test_CFG_02_no_section_header);
+    RUN_TEST(test_CFG_08_unknown_keys);
+    RUN_TEST(test_CFG_04_unknown_mode);
+    RUN_TEST(test_CFG_02_empty_string);
+    RUN_TEST(test_CFG_09_no_trailing_newline);
+    RUN_TEST(test_CFG_07_id_truncated);
+    RUN_TEST(test_CFG_06_preserves_unset);
+    RUN_TEST(test_CFG_08_comment_lines);
 
     return UNITY_END();
 }

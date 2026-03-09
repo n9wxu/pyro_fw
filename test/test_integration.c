@@ -158,12 +158,12 @@ static void run_full_sim(void) {
 void setUp(void) {}
 void tearDown(void) {}
 
-void test_sim_data_loads(void) {
+void test_TST_02_sim_data_loads(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     TEST_ASSERT_TRUE(sim_count > 100);
 }
 
-void test_interpolation(void) {
+void test_TST_02_interpolation(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     /* t=0 should be 0 altitude */
     TEST_ASSERT_FLOAT_WITHIN(0.1f, 0.0f, interpolate_altitude_ft(0.0f));
@@ -173,7 +173,7 @@ void test_interpolation(void) {
     TEST_ASSERT_FLOAT_WITHIN(1.0f, 0.0f, interpolate_altitude_ft(20.0f));
 }
 
-void test_pressure_conversion_roundtrip(void) {
+void test_SNS_ALT_01_roundtrip(void) {
     /* 100 ft → pressure → altitude should round-trip */
     float pa = altitude_ft_to_pressure_pa(100.0f, 101325.0f);
     int32_t alt_cm = pressure_to_altitude_cm((int32_t)pa, 101325);
@@ -181,7 +181,7 @@ void test_pressure_conversion_roundtrip(void) {
     TEST_ASSERT_INT_WITHIN(50, 3048, alt_cm);
 }
 
-void test_full_flight_reaches_all_states(void) {
+void test_FLT_BOOT_01_all_states(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     reset_sim();
 
@@ -203,7 +203,7 @@ void test_full_flight_reaches_all_states(void) {
     TEST_ASSERT_TRUE_MESSAGE(saw_landed, "Never in LANDED");
 }
 
-void test_apogee_detected_and_altitude(void) {
+void test_FLT_APO_01_detected(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     reset_sim();
     run_full_sim();
@@ -213,7 +213,7 @@ void test_apogee_detected_and_altitude(void) {
     TEST_ASSERT_INT_WITHIN(2000, 5000, ctx.max_altitude);
 }
 
-void test_pyro_fires(void) {
+void test_PYR_MODE_01_fires(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     reset_sim();
     run_full_sim();
@@ -221,7 +221,7 @@ void test_pyro_fires(void) {
     TEST_ASSERT_TRUE_MESSAGE(mock_pyro.fire_count > 0, "No pyro fired");
 }
 
-void test_buzzer_lifecycle(void) {
+void test_BUZ_07_03_lifecycle(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     reset_sim();
     run_full_sim();
@@ -231,7 +231,7 @@ void test_buzzer_lifecycle(void) {
     TEST_ASSERT_TRUE(last_buzzer_altitude > 0);
 }
 
-void test_data_log_complete(void) {
+void test_DAT_04_events(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     reset_sim();
     run_full_sim();
@@ -252,7 +252,7 @@ void test_data_log_complete(void) {
     TEST_ASSERT_TRUE_MESSAGE(events[EVT_ARMED] > 0, "Expected armed event");
 }
 
-void test_telemetry_output(void) {
+void test_TEL_01_output(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     reset_sim();
     run_full_sim();
@@ -277,7 +277,7 @@ void test_telemetry_output(void) {
     TEST_ASSERT_EQUAL_HEX8(expected, (uint8_t)actual);
 }
 
-void test_state_timing(void) {
+void test_FLT_LAUNCH_01_timing(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     reset_sim();
 
@@ -299,7 +299,7 @@ void test_state_timing(void) {
     TEST_ASSERT_TRUE_MESSAGE(landed_start > 12000, msg);
 }
 
-void test_flight_duration(void) {
+void test_FLT_LAND_04_duration(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     reset_sim();
     run_full_sim();
@@ -315,17 +315,17 @@ void test_flight_duration(void) {
 int main(void) {
     UNITY_BEGIN();
 
-    RUN_TEST(test_sim_data_loads);
-    RUN_TEST(test_interpolation);
-    RUN_TEST(test_pressure_conversion_roundtrip);
-    RUN_TEST(test_full_flight_reaches_all_states);
-    RUN_TEST(test_apogee_detected_and_altitude);
-    RUN_TEST(test_pyro_fires);
-    RUN_TEST(test_buzzer_lifecycle);
-    RUN_TEST(test_data_log_complete);
-    RUN_TEST(test_telemetry_output);
-    RUN_TEST(test_state_timing);
-    RUN_TEST(test_flight_duration);
+    RUN_TEST(test_TST_02_sim_data_loads);
+    RUN_TEST(test_TST_02_interpolation);
+    RUN_TEST(test_SNS_ALT_01_roundtrip);
+    RUN_TEST(test_FLT_BOOT_01_all_states);
+    RUN_TEST(test_FLT_APO_01_detected);
+    RUN_TEST(test_PYR_MODE_01_fires);
+    RUN_TEST(test_BUZ_07_03_lifecycle);
+    RUN_TEST(test_DAT_04_events);
+    RUN_TEST(test_TEL_01_output);
+    RUN_TEST(test_FLT_LAUNCH_01_timing);
+    RUN_TEST(test_FLT_LAND_04_duration);
 
     return UNITY_END();
 }

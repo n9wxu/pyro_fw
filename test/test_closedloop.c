@@ -322,15 +322,15 @@ static void run_suite(cfg_fn make, const char *name) {
 void setUp(void) {}
 void tearDown(void) {}
 
-void test_delay_delay(void)  { run_suite(cfg_delay_delay,  "Dly+Dly"); }
-void test_delay_agl(void)    { run_suite(cfg_delay_agl,    "Dly+AGL"); }
-void test_delay_fallen(void) { run_suite(cfg_delay_fallen, "Dly+Fal"); }
-void test_delay_speed(void)  { run_suite(cfg_delay_speed,  "Dly+Spd"); }
-void test_agl_agl(void)      { run_suite(cfg_agl_agl,      "AGL+AGL"); }
-void test_fallen_agl(void)   { run_suite(cfg_fallen_agl,   "Fal+AGL"); }
-void test_speed_agl(void)    { run_suite(cfg_speed_agl,    "Spd+AGL"); }
+void test_PYR_MODE_01_delay_delay(void)  { run_suite(cfg_delay_delay,  "Dly+Dly"); }
+void test_PYR_MODE_02_delay_agl(void)    { run_suite(cfg_delay_agl,    "Dly+AGL"); }
+void test_PYR_MODE_03_delay_fallen(void) { run_suite(cfg_delay_fallen, "Dly+Fal"); }
+void test_PYR_MODE_04_delay_speed(void)  { run_suite(cfg_delay_speed,  "Dly+Spd"); }
+void test_PYR_MODE_02_agl_agl(void)      { run_suite(cfg_agl_agl,      "AGL+AGL"); }
+void test_PYR_MODE_03_fallen_agl(void)   { run_suite(cfg_fallen_agl,   "Fal+AGL"); }
+void test_PYR_MODE_04_speed_agl(void)    { run_suite(cfg_speed_agl,    "Spd+AGL"); }
 
-void test_chute_slows_descent(void) {
+void test_TST_06_chute_effect(void) {
     flight_profile_t prof = make_profile(ALT_HIGH);
     config_t cfg = cfg_delay_agl();
 
@@ -345,7 +345,7 @@ void test_chute_slows_descent(void) {
     TEST_ASSERT_TRUE_MESSAGE(with.flight_time_ms > without.flight_time_ms, msg);
 }
 
-void test_karman_apogee(void) {
+void test_TST_05_karman_apogee(void) {
     flight_profile_t prof = make_profile(ALT_KARMAN);
     config_t cfg = cfg_delay_delay();
     sim_result_t r = run_sim(cfg, prof, true);
@@ -357,14 +357,14 @@ void test_karman_apogee(void) {
 
 int main(void) {
     UNITY_BEGIN();
-    RUN_TEST(test_delay_delay);
-    RUN_TEST(test_delay_agl);
-    RUN_TEST(test_delay_fallen);
-    RUN_TEST(test_delay_speed);
-    RUN_TEST(test_agl_agl);
-    RUN_TEST(test_fallen_agl);
-    RUN_TEST(test_speed_agl);
-    RUN_TEST(test_chute_slows_descent);
-    RUN_TEST(test_karman_apogee);
+    RUN_TEST(test_PYR_MODE_01_delay_delay);
+    RUN_TEST(test_PYR_MODE_02_delay_agl);
+    RUN_TEST(test_PYR_MODE_03_delay_fallen);
+    RUN_TEST(test_PYR_MODE_04_delay_speed);
+    RUN_TEST(test_PYR_MODE_02_agl_agl);
+    RUN_TEST(test_PYR_MODE_03_fallen_agl);
+    RUN_TEST(test_PYR_MODE_04_speed_agl);
+    RUN_TEST(test_TST_06_chute_effect);
+    RUN_TEST(test_TST_05_karman_apogee);
     return UNITY_END();
 }

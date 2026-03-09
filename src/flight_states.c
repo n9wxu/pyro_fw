@@ -34,6 +34,9 @@ static void buf_tag_event(flight_context_t *ctx, uint8_t event) {
     ctx->flight_buffer[last].event = event;
 }
 
+/* [SNS-PRES-02] Low-pass filter with variable alpha based on dt */
+/* [SNS-PRES-03] First reading passes through unfiltered */
+/* [SNS-PRES-04] Minimum ±1 Pa step prevents integer truncation stall */
 int32_t filter_pressure(flight_context_t *ctx, int32_t raw_pressure, uint32_t dt_ms) {
     if (!ctx->filter_initialized) {
         ctx->filtered_pressure = raw_pressure;
@@ -50,6 +53,9 @@ int32_t filter_pressure(flight_context_t *ctx, int32_t raw_pressure, uint32_t dt
 
 #define MAX_ALTITUDE_CM 800000
 
+/* [SNS-ALT-01] Altitude from pressure difference */
+/* [SNS-ALT-02] Clamped to MAX_ALTITUDE_CM (8000m) */
+/* [SNS-ALT-03] Clamped to minimum 0 */
 int32_t pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa) {
     int32_t alt = ((ground_pressure_pa - pressure_pa) * 83) / 10;
     if (alt > MAX_ALTITUDE_CM) alt = MAX_ALTITUDE_CM;
@@ -65,6 +71,9 @@ static int32_t cm_to_units(int32_t cm, uint8_t units) {
     }
 }
 
+/* [PYR-MODE-01..04] Pyro firing decision based on configured mode */
+/* [PYR-MODE-05] Requires apogee_detected */
+/* [PYR-ALT-01] Altitude values clamped to sensor ceiling */
 bool should_fire_pyro(flight_context_t *ctx, uint8_t mode, uint16_t value) {
     if (!ctx->apogee_detected) return false;
     int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
@@ -131,6 +140,9 @@ static const char *DEFAULT_CONFIG =
     "units=m\r\n"
     "beep_mode=digits\r\n";
 
+/* [FLT-BOOT-02] Read config from persistent storage */
+/* [FLT-BOOT-03] Create default config if missing */
+/* [CFG-05] Default configuration */
 flight_state_t state_boot_filesystem(flight_context_t *ctx, uint32_t now) {
     (void)now;
     char buf[256];
@@ -148,6 +160,7 @@ flight_state_t state_boot_filesystem(flight_context_t *ctx, uint32_t now) {
     return BOOT_I2C_SETTLE;
 }
 
+/* [FLT-BOOT-04] Wait 500ms for I2C bus settle */
 flight_state_t state_boot_i2c_settle(flight_context_t *ctx, uint32_t now) {
     return (now - ctx->boot_timer >= 500) ? BOOT_SENSOR_DETECT : BOOT_I2C_SETTLE;
 }
@@ -173,6 +186,7 @@ flight_state_t state_boot_continuity(flight_context_t *ctx, uint32_t now) {
     return BOOT_STABILIZE;
 }
 
+/* [FLT-BOOT-09] Wait 2s for sensor stabilization */
 flight_state_t state_boot_stabilize(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->boot_timer >= 2000) {
         ctx->cal_count = 0;
@@ -183,6 +197,7 @@ flight_state_t state_boot_stabilize(flight_context_t *ctx, uint32_t now) {
     return BOOT_STABILIZE;
 }
 
+/* [FLT-BOOT-08] Calibrate ground pressure from 10 readings */
 flight_state_t state_boot_calibrate(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->boot_timer >= 100) {
         ctx->boot_timer = now;
@@ -205,6 +220,14 @@ flight_state_t state_boot_mdns(flight_context_t *ctx, uint32_t now) {
 
 /* ── Flight states ────────────────────────────────────────────────── */
 
+/* [FLT-LAUNCH-01] Transition to ASCENT when altitude > 10m */
+/* [FLT-LAUNCH-02] Remain in PAD_IDLE at ground level */
+/* [FLT-RATE-01] Sample every 10ms */
+/* [PYR-CONT-01] Check continuity every 1s */
+/* [PYR-ALT-02] Warn if config exceeds sensor ceiling */
+/* [FLT-LAUNCH-03] Backdate launch time */
+/* [FLT-LAUNCH-04] Log LAUNCH event */
+/* [FLT-LAUNCH-05] Stop buzzer on launch */
 flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 10) return PAD_IDLE;
 
@@ -258,6 +281,17 @@ flight_state_t state_pad_idle(flight_context_t *ctx, uint32_t now) {
     return PAD_IDLE;
 }
 
+/* [FLT-ASC-01] Track max altitude */
+/* [FLT-ASC-02] Compute vertical speed */
+/* [FLT-ASC-03] Detect thrust phase */
+/* [FLT-ASC-04] Arm pyros when speed < 10 m/s */
+/* [FLT-ASC-05] Log ARMED event */
+/* [FLT-APO-01] Detect apogee when speed ≤ 0 and armed */
+/* [FLT-APO-02] Transition to DESCENT */
+/* [FLT-APO-03] Log APOGEE event */
+/* [FLT-APO-04] No apogee before armed */
+/* [FLT-RATE-02] Sample every 100ms */
+/* [PYR-SAFE-01..04] Fire checks: continuity, not firing, not already fired */
 flight_state_t state_ascent(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 100) return ASCENT;
 
@@ -314,6 +348,13 @@ flight_state_t state_ascent(flight_context_t *ctx, uint32_t now) {
     return ASCENT;
 }
 
+/* [FLT-LAND-01] Landing: altitude stable < 1m for 1s */
+/* [FLT-LAND-02] Landing: speed < 2 m/s */
+/* [FLT-LAND-03] Landing: altitude < 30m AGL */
+/* [FLT-LAND-04] Transition to LANDED */
+/* [FLT-LAND-05] Log LANDING event */
+/* [FLT-RATE-03] Sample every 50ms */
+/* [PYR-REFIRE-01] Re-fire if ballistic 1-1.5s after initial fire */
 flight_state_t state_descent(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 50) return DESCENT;
 
@@ -373,6 +414,10 @@ flight_state_t state_descent(flight_context_t *ctx, uint32_t now) {
     return DESCENT;
 }
 
+/* [FLT-LAND-06] Remain in LANDED permanently */
+/* [BUZ-03] Altitude beep-out after landing */
+/* [DAT-06] CSV export after landing */
+/* [FLT-RATE-04] Sample every 1000ms */
 flight_state_t state_landed(flight_context_t *ctx, uint32_t now) {
     if (!ctx->landed_beep_started) {
         ctx->landed_beep_started = true;
