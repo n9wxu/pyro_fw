@@ -155,3 +155,41 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
 void hal_platform_init(void) {}
 void hal_platform_service(void) {}
 void hal_firmware_commit(void) {}
+
+/* ── Streaming file writes ────────────────────────────────────────── */
+
+struct hal_file {
+    int slot;
+    bool open;
+};
+
+static struct hal_file sim_file_handle;
+
+hal_file_t *hal_fs_open(const char *path, bool append) {
+    if (sim_file_handle.open) return NULL;
+    int slot = -1;
+    for (int i = 0; i < SIM_FS_MAX_FILES; i++) {
+        if (sim_files[i].used && strcmp(sim_files[i].path, path) == 0) { slot = i; break; }
+        if (!sim_files[i].used && slot < 0) slot = i;
+    }
+    if (slot < 0) return NULL;
+    if (!append) sim_files[slot].len = 0;
+    strncpy(sim_files[slot].path, path, 31);
+    sim_files[slot].used = true;
+    sim_file_handle.slot = slot;
+    sim_file_handle.open = true;
+    return &sim_file_handle;
+}
+
+int hal_fs_write(hal_file_t *f, const char *data, int len) {
+    if (!f || !f->open) return -1;
+    sim_file_t *sf = &sim_files[f->slot];
+    int space = SIM_FS_MAX_SIZE - sf->len;
+    int n = (len < space) ? len : space;
+    if (n > 0) { memcpy(sf->data + sf->len, data, n); sf->len += n; }
+    return n;
+}
+
+void hal_fs_close(hal_file_t *f) {
+    if (f) f->open = false;
+}

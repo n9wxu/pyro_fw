@@ -64,6 +64,12 @@ void hal_fs_unmount(void);
 int  hal_fs_read_file(const char *path, char *buf, int max_len);  /* returns bytes read, <0 on error */
 int  hal_fs_write_file(const char *path, const char *data, int len); /* returns 0 on success */
 
+/* Streaming file writes */
+typedef struct hal_file hal_file_t;
+hal_file_t *hal_fs_open(const char *path, bool append);  /* NULL on error */
+int  hal_fs_write(hal_file_t *f, const char *data, int len);
+void hal_fs_close(hal_file_t *f);
+
 /* ── Platform (called from main, not flight code) ─────────────────── */
 
 void hal_platform_init(void);

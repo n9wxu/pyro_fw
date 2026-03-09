@@ -124,6 +124,41 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
     return 0;
 }
 
+/* ── Streaming file writes ─────────────────────────────────────────── */
+
+struct hal_file {
+    lfs_t lfs;
+    lfs_file_t file;
+    bool open;
+};
+
+static struct hal_file hw_file;
+
+hal_file_t *hal_fs_open(const char *path, bool append) {
+    if (hw_file.open) return NULL;
+    if (lfs_mount(&hw_file.lfs, &lfs_pico_flash_config) != LFS_ERR_OK) return NULL;
+    int flags = LFS_O_WRONLY | LFS_O_CREAT;
+    flags |= append ? LFS_O_APPEND : LFS_O_TRUNC;
+    if (lfs_file_open(&hw_file.lfs, &hw_file.file, path, flags) != LFS_ERR_OK) {
+        lfs_unmount(&hw_file.lfs);
+        return NULL;
+    }
+    hw_file.open = true;
+    return &hw_file;
+}
+
+int hal_fs_write(hal_file_t *f, const char *data, int len) {
+    if (!f || !f->open) return -1;
+    return (int)lfs_file_write(&f->lfs, &f->file, data, len);
+}
+
+void hal_fs_close(hal_file_t *f) {
+    if (!f || !f->open) return;
+    lfs_file_close(&f->lfs, &f->file);
+    lfs_unmount(&f->lfs);
+    f->open = false;
+}
+
 /* ── Platform ─────────────────────────────────────────────────────── */
 
 void hal_platform_init(void) {

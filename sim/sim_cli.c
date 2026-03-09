@@ -157,11 +157,11 @@ int main(int argc, char **argv) {
 
     /* Save and display CSV */
     sim_flight_save_csv();
-    char csv[256];
+    char csv[512];
     int n = hal_fs_read_file("flight.csv", csv, sizeof(csv) - 1);
     if (n > 0) {
         csv[n] = '\0';
-        printf("\n=== CSV (first 256 bytes) ===\n%s\n", csv);
+        printf("\n=== CSV (first %d bytes) ===\n%s...\n", n, csv);
     }
 
     return 0;
