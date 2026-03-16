@@ -26,6 +26,7 @@ typedef struct {
     bool p1_open;
     bool p2_open;
     bool firing;
+    bool fault; /* injectable fault state */
     int fire_count;
     uint8_t last_fire_channel;
 } mock_pyro_t;

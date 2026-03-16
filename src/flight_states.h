@@ -6,10 +6,10 @@
 
 // System states
 typedef enum {
-    BOOT_INIT,          // load config, init buzzer
-    BOOT_SETTLE,        // wait for sensors to stabilize
-    BOOT_CONTINUITY,    // check pyro circuits
-    BOOT_CALIBRATE,     // establish ground reference
+    BOOT_INIT,       // load config, init buzzer
+    BOOT_SETTLE,     // wait for sensors to stabilize
+    BOOT_CONTINUITY, // check pyro circuits
+    BOOT_CALIBRATE,  // establish ground reference
     PAD_IDLE,
     ASCENT,
     DESCENT,
@@ -38,36 +38,40 @@ typedef void (*action_fn)(struct flight_context_t *ctx, uint32_t now);
 
 typedef struct {
     flight_state_t from;
-    state_event_t  event;
+    state_event_t event;
     flight_state_t to;
-    action_fn      action;
+    action_fn action;
 } transition_t;
 
 // Pyro firing modes
 typedef enum { PYRO_MODE_FALLEN = 1, PYRO_MODE_AGL, PYRO_MODE_SPEED, PYRO_MODE_DELAY } pyro_mode_t;
 
 // Event types (stored in flight_sample_t.event)
-#define EVT_NONE          0
-#define EVT_LAUNCH         1
-#define EVT_APOGEE         2
-#define EVT_PYRO1_FIRE     3
-#define EVT_PYRO2_FIRE     4
-#define EVT_PYRO1_CONT     5   /* data1 = adc */
-#define EVT_PYRO2_CONT     6   /* data1 = adc */
-#define EVT_LANDING        7
-#define EVT_STATE_CHANGE   8   /* data1 = new state */
-#define EVT_ARMED          9
-#define EVT_BOOT_DONE     10
+#define EVT_NONE 0
+#define EVT_LAUNCH 1
+#define EVT_APOGEE 2
+#define EVT_PYRO1_FIRE 3
+#define EVT_PYRO2_FIRE 4
+#define EVT_PYRO1_CONT 5 /* data1 = adc */
+#define EVT_PYRO2_CONT 6 /* data1 = adc */
+#define EVT_LANDING 7
+#define EVT_STATE_CHANGE 8 /* data1 = new state */
+#define EVT_ARMED 9
+#define EVT_BOOT_DONE 10
+#define EVT_PYRO1_FAULT 11
+#define EVT_PYRO2_FAULT 12
+#define EVT_PYRO1_NOPEN 13 /* post-fire verify: pyro didn't open */
+#define EVT_PYRO2_NOPEN 14
 
 // Flight sample (16 bytes)
 typedef struct {
     uint32_t time_ms;
-    int32_t pressure_pa;    /* or event data1 */
-    int32_t altitude_cm;    /* or event data2 */
+    int32_t pressure_pa; /* or event data1 */
+    int32_t altitude_cm; /* or event data2 */
     uint8_t state;
     uint8_t under_thrust;
-    uint8_t event;          /* EVT_NONE = normal sample */
-    uint8_t event_data;     /* extra byte for event info */
+    uint8_t event;      /* EVT_NONE = normal sample */
+    uint8_t event_data; /* extra byte for event info */
 } flight_sample_t;
 
 // Config
@@ -112,6 +116,10 @@ typedef struct flight_context_t {
     uint32_t pyro_fire_start;
     uint32_t pyro1_fire_time;
     uint32_t pyro2_fire_time;
+    bool pyro1_fault; /* overcurrent detected during fire */
+    bool pyro2_fault;
+    bool pyro1_verify_fail; /* post-fire continuity still good (pyro didn't open) */
+    bool pyro2_verify_fail;
     config_t config;
     flight_state_t current_state;
     int32_t filtered_pressure;
@@ -132,7 +140,7 @@ void flight_init(flight_context_t *ctx);
 flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now);
 void flight_update_outputs(flight_context_t *ctx, uint32_t now);
 void parse_config_ini(char *buf, config_t *cfg);
-int  flight_save_csv(flight_context_t *ctx);
+int flight_save_csv(flight_context_t *ctx);
 
 // Telemetry
 void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm, flight_state_t state);

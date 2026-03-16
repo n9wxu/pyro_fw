@@ -15,13 +15,13 @@
 
 /* ── Physics ──────────────────────────────────────────────────────── */
 
-#define G           9.81f
-#define DT          0.001f
-#define GROUND_PA   101325.0f
-#define PAD_DWELL_MS 2000   /* sit on pad before launch */
+#define G 9.81f
+#define DT 0.001f
+#define GROUND_PA 101325.0f
+#define PAD_DWELL_MS 2000 /* sit on pad before launch */
 
-#define DROGUE_DRAG  0.8f   /* ~8 m/s terminal */
-#define MAIN_DRAG    4.0f   /* ~2 m/s terminal */
+#define DROGUE_DRAG 0.8f /* ~8 m/s terminal */
+#define MAIN_DRAG 4.0f   /* ~2 m/s terminal */
 
 typedef struct {
     float target_alt_m;
@@ -31,7 +31,7 @@ typedef struct {
 
 typedef struct {
     float alt_m;
-    float vel_ms;       /* positive = up */
+    float vel_ms; /* positive = up */
     bool drogue_deployed;
     bool main_deployed;
     bool on_ground;
@@ -42,11 +42,25 @@ static int buzzer_stop_count, buzzer_altitude_count;
 static int32_t last_buzzer_altitude;
 static bool buzzer_active_flag;
 void buzzer_init(void) {}
-void buzzer_set_code(uint8_t c, bool r) { (void)c; (void)r; buzzer_active_flag = true; }
-void buzzer_set_altitude(int32_t a) { buzzer_altitude_count++; last_buzzer_altitude = a; }
-void buzzer_stop(void) { buzzer_stop_count++; buzzer_active_flag = false; }
-bool buzzer_is_active(void) { return buzzer_active_flag; }
-void buzzer_update(uint32_t n) { (void)n; }
+void buzzer_set_code(uint8_t c, bool r) {
+    (void)c;
+    (void)r;
+    buzzer_active_flag = true;
+}
+void buzzer_set_altitude(int32_t a) {
+    buzzer_altitude_count++;
+    last_buzzer_altitude = a;
+}
+void buzzer_stop(void) {
+    buzzer_stop_count++;
+    buzzer_active_flag = false;
+}
+bool buzzer_is_active(void) {
+    return buzzer_active_flag;
+}
+void buzzer_update(uint32_t n) {
+    (void)n;
+}
 
 static float alt_m_to_pa(float alt_m) {
     /* Standard atmosphere: P = P0 * (1 - L*h/T0)^(g*M/(R*L))
@@ -65,11 +79,11 @@ static float alt_m_to_pa(float alt_m) {
 }
 
 static flight_profile_t make_profile(float target_m) {
-    flight_profile_t p = { .target_alt_m = target_m };
+    flight_profile_t p = {.target_alt_m = target_m};
     /* Solve for burn time: h = 0.5*(a-g)*t² + ((a-g)*t)²/(2g)
      * Simplify: pick thrust, iterate burn time */
     if (target_m > 50000.0f) {
-        p.thrust_accel = 5.0f * G;  /* 5g for Karman */
+        p.thrust_accel = 5.0f * G; /* 5g for Karman */
     } else if (target_m > 500.0f) {
         p.thrust_accel = 10.0f * G;
     } else {
@@ -83,27 +97,38 @@ static flight_profile_t make_profile(float target_m) {
         float v_bo = a_net * t;
         float h_burn = 0.5f * a_net * t * t;
         float h_coast = v_bo * v_bo / (2.0f * G);
-        if (h_burn + h_coast < target_m) lo = t; else hi = t;
+        if (h_burn + h_coast < target_m)
+            lo = t;
+        else
+            hi = t;
     }
     p.burn_time = (lo + hi) / 2.0f;
     return p;
 }
 
 static void physics_step(physics_state_t *ps, float flight_t, const flight_profile_t *p) {
-    if (ps->on_ground) return;
+    if (ps->on_ground)
+        return;
     float a = -G;
-    if (flight_t < p->burn_time) a += p->thrust_accel;
+    if (flight_t < p->burn_time)
+        a += p->thrust_accel;
     if (ps->vel_ms < 0.0f) {
         float drag = 0.05f;
-        if (ps->main_deployed) drag = MAIN_DRAG;
-        else if (ps->drogue_deployed) drag = DROGUE_DRAG;
+        if (ps->main_deployed)
+            drag = MAIN_DRAG;
+        else if (ps->drogue_deployed)
+            drag = DROGUE_DRAG;
         /* Scale drag by atmospheric density (exponential decay, scale height 8.5km) */
         float density_frac = expf(-ps->alt_m / 8500.0f);
         a += drag * density_frac * (-ps->vel_ms);
     }
     ps->vel_ms += a * DT;
     ps->alt_m += ps->vel_ms * DT;
-    if (ps->alt_m <= 0.0f) { ps->alt_m = 0; ps->vel_ms = 0; ps->on_ground = true; }
+    if (ps->alt_m <= 0.0f) {
+        ps->alt_m = 0;
+        ps->vel_ms = 0;
+        ps->on_ground = true;
+    }
 }
 
 /* ── Sim runner ───────────────────────────────────────────────────── */
@@ -121,11 +146,16 @@ typedef struct {
 
 static void print_summary(const char *label, sim_result_t *r) {
     printf("  %-20s apogee=%6.0fm  ", label, r->apogee_m);
-    if (r->reached_ascent)  printf("launch=%.1fs ", r->launch_ms / 1000.0);
-    if (r->reached_descent) printf("apogee=%.1fs ", r->apogee_ms / 1000.0);
-    if (r->pyro1_fired)     printf("P1=%.1fs@%.0fm ", r->p1_fire_ms / 1000.0, r->pyro1_alt_m);
-    if (r->pyro2_fired)     printf("P2=%.1fs@%.0fm ", r->p2_fire_ms / 1000.0, r->pyro2_alt_m);
-    if (r->reached_landed)  printf("landed=%.1fs ", r->landed_ms / 1000.0);
+    if (r->reached_ascent)
+        printf("launch=%.1fs ", r->launch_ms / 1000.0);
+    if (r->reached_descent)
+        printf("apogee=%.1fs ", r->apogee_ms / 1000.0);
+    if (r->pyro1_fired)
+        printf("P1=%.1fs@%.0fm ", r->p1_fire_ms / 1000.0, r->pyro1_alt_m);
+    if (r->pyro2_fired)
+        printf("P2=%.1fs@%.0fm ", r->p2_fire_ms / 1000.0, r->pyro2_alt_m);
+    if (r->reached_landed)
+        printf("landed=%.1fs ", r->landed_ms / 1000.0);
     printf("samples=%d telem=%d\n", r->sample_count, r->telemetry_count);
 }
 
@@ -150,9 +180,7 @@ static sim_result_t run_sim(config_t cfg, flight_profile_t prof, bool enable_pyr
 
     /* Scale sim: 1ms steps for normal, 50ms for Karman */
     uint32_t step = (prof.target_alt_m > 50000.0f) ? 50 : 1;
-    uint32_t max_ms = (prof.target_alt_m > 50000.0f) ? 15000000
-                    : (prof.target_alt_m > 500.0f)   ? 600000
-                    :                                   120000;
+    uint32_t max_ms = (prof.target_alt_m > 50000.0f) ? 15000000 : (prof.target_alt_m > 500.0f) ? 600000 : 120000;
     uint8_t prev_fires = 0;
 
     for (uint32_t t = 0; t <= max_ms; t += step) {
@@ -181,7 +209,8 @@ static sim_result_t run_sim(config_t cfg, flight_profile_t prof, bool enable_pyr
                 physics_step(&ps, flight_t + (float)s * DT, &prof);
             }
         }
-        if (ps.alt_m > res.apogee_m) res.apogee_m = ps.alt_m;
+        if (ps.alt_m > res.apogee_m)
+            res.apogee_m = ps.alt_m;
 
         /* Feed firmware */
         mock_time_ms = t;
@@ -220,49 +249,71 @@ static sim_result_t run_sim(config_t cfg, flight_profile_t prof, bool enable_pyr
 
     res.sample_count = ctx.buf_count;
     char *p = mock_uart_buf;
-    while ((p = strstr(p, "$PYRO,")) != NULL) { res.telemetry_count++; p++; }
+    while ((p = strstr(p, "$PYRO,")) != NULL) {
+        res.telemetry_count++;
+        p++;
+    }
     return res;
 }
 
 /* ── Configs ──────────────────────────────────────────────────────── */
 
 /* Pyro1 = drogue, Pyro2 = main */
-static config_t cfg_delay_delay(void)  { return (config_t){"DD","DlyDly", PYRO_MODE_DELAY,0, PYRO_MODE_DELAY,3, 2,0}; }
-static config_t cfg_delay_agl(void)    { return (config_t){"DA","DlyAgl", PYRO_MODE_DELAY,0, PYRO_MODE_AGL,200, 2,0}; }
-static config_t cfg_delay_fallen(void) { return (config_t){"DF","DlyFal", PYRO_MODE_DELAY,0, PYRO_MODE_FALLEN,100, 2,0}; }
-static config_t cfg_delay_speed(void)  { return (config_t){"DS","DlySpd", PYRO_MODE_DELAY,0, PYRO_MODE_SPEED,30, 2,0}; }
-static config_t cfg_agl_agl(void)      { return (config_t){"AA","AglAgl", PYRO_MODE_AGL,400, PYRO_MODE_AGL,200, 2,0}; }
-static config_t cfg_fallen_agl(void)   { return (config_t){"FA","FalAgl", PYRO_MODE_FALLEN,50, PYRO_MODE_AGL,200, 2,0}; }
-static config_t cfg_speed_agl(void)    { return (config_t){"SA","SpdAgl", PYRO_MODE_SPEED,20, PYRO_MODE_AGL,200, 2,0}; }
+static config_t cfg_delay_delay(void) {
+    return (config_t){"DD", "DlyDly", PYRO_MODE_DELAY, 0, PYRO_MODE_DELAY, 3, 2, 0};
+}
+static config_t cfg_delay_agl(void) {
+    return (config_t){"DA", "DlyAgl", PYRO_MODE_DELAY, 0, PYRO_MODE_AGL, 200, 2, 0};
+}
+static config_t cfg_delay_fallen(void) {
+    return (config_t){"DF", "DlyFal", PYRO_MODE_DELAY, 0, PYRO_MODE_FALLEN, 100, 2, 0};
+}
+static config_t cfg_delay_speed(void) {
+    return (config_t){"DS", "DlySpd", PYRO_MODE_DELAY, 0, PYRO_MODE_SPEED, 30, 2, 0};
+}
+static config_t cfg_agl_agl(void) {
+    return (config_t){"AA", "AglAgl", PYRO_MODE_AGL, 400, PYRO_MODE_AGL, 200, 2, 0};
+}
+static config_t cfg_fallen_agl(void) {
+    return (config_t){"FA", "FalAgl", PYRO_MODE_FALLEN, 50, PYRO_MODE_AGL, 200, 2, 0};
+}
+static config_t cfg_speed_agl(void) {
+    return (config_t){"SA", "SpdAgl", PYRO_MODE_SPEED, 20, PYRO_MODE_AGL, 200, 2, 0};
+}
 
 /* Altitudes */
-static const float ALT_LOW    = 30.48f;    /* 100 ft */
-static const float ALT_MED    = 152.4f;    /* 500 ft */
-static const float ALT_HIGH   = 1524.0f;   /* 5000 ft */
+static const float ALT_LOW = 30.48f;       /* 100 ft */
+static const float ALT_MED = 152.4f;       /* 500 ft */
+static const float ALT_HIGH = 1524.0f;     /* 5000 ft */
 static const float ALT_KARMAN = 100000.0f; /* 100 km */
 
 /* ── Assertions ───────────────────────────────────────────────────── */
 
 static void assert_flight(sim_result_t *r, const char *l) {
     char m[128];
-    snprintf(m, sizeof(m), "%s: no ASCENT", l);  TEST_ASSERT_TRUE_MESSAGE(r->reached_ascent, m);
-    snprintf(m, sizeof(m), "%s: no DESCENT", l); TEST_ASSERT_TRUE_MESSAGE(r->reached_descent, m);
-    snprintf(m, sizeof(m), "%s: no LANDED", l);  TEST_ASSERT_TRUE_MESSAGE(r->reached_landed, m);
+    snprintf(m, sizeof(m), "%s: no ASCENT", l);
+    TEST_ASSERT_TRUE_MESSAGE(r->reached_ascent, m);
+    snprintf(m, sizeof(m), "%s: no DESCENT", l);
+    TEST_ASSERT_TRUE_MESSAGE(r->reached_descent, m);
+    snprintf(m, sizeof(m), "%s: no LANDED", l);
+    TEST_ASSERT_TRUE_MESSAGE(r->reached_landed, m);
 }
 
 static void assert_p1(sim_result_t *r, const char *l) {
-    char m[128]; snprintf(m, sizeof(m), "%s: P1 didn't fire", l);
+    char m[128];
+    snprintf(m, sizeof(m), "%s: P1 didn't fire", l);
     TEST_ASSERT_TRUE_MESSAGE(r->pyro1_fired, m);
 }
 
 static void assert_p2(sim_result_t *r, const char *l) {
-    char m[128]; snprintf(m, sizeof(m), "%s: P2 didn't fire", l);
+    char m[128];
+    snprintf(m, sizeof(m), "%s: P2 didn't fire", l);
     TEST_ASSERT_TRUE_MESSAGE(r->pyro2_fired, m);
 }
 
 static void assert_order(sim_result_t *r, const char *l) {
-    char m[128]; snprintf(m, sizeof(m), "%s: main higher than drogue (P1=%.0f P2=%.0f)",
-                          l, r->pyro1_alt_m, r->pyro2_alt_m);
+    char m[128];
+    snprintf(m, sizeof(m), "%s: main higher than drogue (P1=%.0f P2=%.0f)", l, r->pyro1_alt_m, r->pyro2_alt_m);
     TEST_ASSERT_TRUE_MESSAGE(r->pyro1_alt_m >= r->pyro2_alt_m, m);
 }
 
@@ -279,8 +330,8 @@ static void assert_data(sim_result_t *r, const char *l) {
 typedef config_t (*cfg_fn)(void);
 
 static void run_suite(cfg_fn make, const char *name) {
-    float alts[] = { ALT_LOW, ALT_MED, ALT_HIGH, ALT_KARMAN };
-    const char *names[] = { "100ft", "500ft", "5000ft", "Karman" };
+    float alts[] = {ALT_LOW, ALT_MED, ALT_HIGH, ALT_KARMAN};
+    const char *names[] = {"100ft", "500ft", "5000ft", "Karman"};
 
     for (int i = 0; i < 4; i++) {
         config_t c = make();
@@ -322,13 +373,27 @@ static void run_suite(cfg_fn make, const char *name) {
 void setUp(void) {}
 void tearDown(void) {}
 
-void test_PYR_MODE_01_delay_delay(void)  { run_suite(cfg_delay_delay,  "Dly+Dly"); }
-void test_PYR_MODE_02_delay_agl(void)    { run_suite(cfg_delay_agl,    "Dly+AGL"); }
-void test_PYR_MODE_03_delay_fallen(void) { run_suite(cfg_delay_fallen, "Dly+Fal"); }
-void test_PYR_MODE_04_delay_speed(void)  { run_suite(cfg_delay_speed,  "Dly+Spd"); }
-void test_PYR_MODE_02_agl_agl(void)      { run_suite(cfg_agl_agl,      "AGL+AGL"); }
-void test_PYR_MODE_03_fallen_agl(void)   { run_suite(cfg_fallen_agl,   "Fal+AGL"); }
-void test_PYR_MODE_04_speed_agl(void)    { run_suite(cfg_speed_agl,    "Spd+AGL"); }
+void test_PYR_MODE_01_delay_delay(void) {
+    run_suite(cfg_delay_delay, "Dly+Dly");
+}
+void test_PYR_MODE_02_delay_agl(void) {
+    run_suite(cfg_delay_agl, "Dly+AGL");
+}
+void test_PYR_MODE_03_delay_fallen(void) {
+    run_suite(cfg_delay_fallen, "Dly+Fal");
+}
+void test_PYR_MODE_04_delay_speed(void) {
+    run_suite(cfg_delay_speed, "Dly+Spd");
+}
+void test_PYR_MODE_02_agl_agl(void) {
+    run_suite(cfg_agl_agl, "AGL+AGL");
+}
+void test_PYR_MODE_03_fallen_agl(void) {
+    run_suite(cfg_fallen_agl, "Fal+AGL");
+}
+void test_PYR_MODE_04_speed_agl(void) {
+    run_suite(cfg_speed_agl, "Spd+AGL");
+}
 
 void test_TST_06_chute_effect(void) {
     flight_profile_t prof = make_profile(ALT_HIGH);
@@ -340,9 +405,192 @@ void test_TST_06_chute_effect(void) {
     print_summary("chute: without", &without);
 
     char msg[128];
-    snprintf(msg, sizeof(msg), "With chutes (%ums) should be longer than ballistic (%ums)",
-             with.flight_time_ms, without.flight_time_ms);
+    snprintf(msg, sizeof(msg), "With chutes (%ums) should be longer than ballistic (%ums)", with.flight_time_ms,
+             without.flight_time_ms);
     TEST_ASSERT_TRUE_MESSAGE(with.flight_time_ms > without.flight_time_ms, msg);
+}
+
+/* ── Safety-critical tests ────────────────────────────────────────── */
+
+/* [PYR-SAFE-01] No fire without continuity: pyro1 open → should not fire */
+void test_PYR_SAFE_01_no_fire_without_continuity(void) {
+    flight_profile_t prof = make_profile(ALT_HIGH);
+    config_t cfg = cfg_delay_agl();
+
+    /* Run with pyro1 open (no continuity), pyro2 good */
+    mock_reset_all();
+    mock_pyro.p1_good = false;
+    mock_pyro.p1_open = true;
+    mock_pyro.p2_good = true;
+    mock_pyro.p2_adc = 50;
+    mock_pyro.p1_adc = 4000;
+    mock_uart_len = 0;
+    buzzer_stop_count = 0;
+    buzzer_altitude_count = 0;
+    buzzer_active_flag = true;
+
+    flight_context_t ctx = {0};
+    ctx.config = cfg;
+    ctx.current_state = PAD_IDLE;
+    ctx.ground_pressure = (int32_t)GROUND_PA;
+
+    physics_state_t ps = {0};
+    sim_result_t res = {0};
+    uint8_t prev_fires = 0;
+
+    for (uint32_t t = 0; t <= 120000; t++) {
+        if (mock_pyro.fire_count > prev_fires) {
+            uint8_t ch = mock_pyro.last_fire_channel;
+            if (ch == 1) {
+                res.pyro1_fired = true;
+                res.p1_fire_ms = t;
+            }
+            if (ch == 2 && !ps.main_deployed) {
+                ps.main_deployed = true;
+                res.pyro2_fired = true;
+                res.p2_fire_ms = t;
+            }
+            prev_fires = mock_pyro.fire_count;
+        }
+        if (t >= PAD_DWELL_MS) {
+            float ft = (float)(t - PAD_DWELL_MS) / 1000.0f;
+            physics_step(&ps, ft, &prof);
+        }
+        if (ps.alt_m > res.apogee_m)
+            res.apogee_m = ps.alt_m;
+        mock_time_ms = t;
+        mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
+        mock_pyro.firing = false;
+        ctx.current_state = dispatch_state(&ctx, t);
+        if (ctx.current_state == LANDED)
+            break;
+    }
+
+    print_summary("NoCont P1", &res);
+    TEST_ASSERT_FALSE_MESSAGE(res.pyro1_fired, "Pyro1 fired despite no continuity");
+    TEST_ASSERT_TRUE_MESSAGE(res.pyro2_fired, "Pyro2 should fire with good continuity");
+}
+
+/* [PYR-SAFE-02] No simultaneous fire: pyros fire sequentially */
+void test_PYR_SAFE_02_no_simultaneous_fire(void) {
+    flight_profile_t prof = make_profile(ALT_HIGH);
+    /* Both set to delay=0 so both want to fire at apogee */
+    config_t cfg = (config_t){"SS", "SimFir", PYRO_MODE_DELAY, 0, PYRO_MODE_DELAY, 0, 2, 0};
+
+    sim_result_t r = run_sim(cfg, prof, true);
+    print_summary("NoSimulFire", &r);
+
+    assert_flight(&r, "NoSimulFire");
+    assert_p1(&r, "NoSimulFire");
+    assert_p2(&r, "NoSimulFire");
+
+    /* The two pyros must fire on different ticks (P2 waits for P1 to finish) */
+    char msg[128];
+    snprintf(msg, sizeof(msg), "P1 and P2 fired at same time: P1=%u P2=%u", r.p1_fire_ms, r.p2_fire_ms);
+    TEST_ASSERT_TRUE_MESSAGE(r.p1_fire_ms != r.p2_fire_ms, msg);
+}
+
+/* [SYS-DEPLOY-03] No firing during ascent (before apogee) */
+void test_SYS_DEPLOY_03_no_fire_during_ascent(void) {
+    flight_profile_t prof = make_profile(ALT_HIGH);
+    config_t cfg = cfg_delay_agl();
+
+    mock_reset_all();
+    mock_pyro.p1_good = true;
+    mock_pyro.p2_good = true;
+    mock_pyro.p1_adc = 50;
+    mock_pyro.p2_adc = 50;
+    mock_uart_len = 0;
+    buzzer_stop_count = 0;
+    buzzer_altitude_count = 0;
+    buzzer_active_flag = true;
+
+    flight_context_t ctx = {0};
+    ctx.config = cfg;
+    ctx.current_state = PAD_IDLE;
+    ctx.ground_pressure = (int32_t)GROUND_PA;
+
+    physics_state_t ps = {0};
+    bool pyro_during_ascent = false;
+
+    for (uint32_t t = 0; t <= 120000; t++) {
+        if (t >= PAD_DWELL_MS) {
+            float ft = (float)(t - PAD_DWELL_MS) / 1000.0f;
+            physics_step(&ps, ft, &prof);
+        }
+        mock_time_ms = t;
+        mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
+        mock_pyro.firing = false;
+        ctx.current_state = dispatch_state(&ctx, t);
+
+        /* Check: any pyro fire during ASCENT is a safety violation */
+        if (ctx.current_state == ASCENT && mock_pyro.fire_count > 0) {
+            pyro_during_ascent = true;
+        }
+        if (ctx.current_state == LANDED)
+            break;
+    }
+
+    TEST_ASSERT_FALSE_MESSAGE(pyro_during_ascent, "Pyro fired during ASCENT — must only fire after apogee");
+}
+
+/* [PYR-FAULT-02] Overcurrent fault detection via FLAG pin */
+void test_PYR_FAULT_02_overcurrent_detection(void) {
+    flight_profile_t prof = make_profile(ALT_HIGH);
+    /* Use delay+delay so both fire quickly at apogee, within 120s budget */
+    config_t cfg = cfg_delay_delay();
+
+    mock_reset_all();
+    mock_pyro.p1_good = true;
+    mock_pyro.p2_good = true;
+    mock_pyro.p1_adc = 50;
+    mock_pyro.p2_adc = 50;
+    mock_pyro.fault = true; /* Inject fault on all channels */
+    mock_uart_len = 0;
+    buzzer_stop_count = 0;
+    buzzer_altitude_count = 0;
+    buzzer_active_flag = true;
+
+    flight_context_t ctx = {0};
+    ctx.config = cfg;
+    ctx.current_state = PAD_IDLE;
+    ctx.ground_pressure = (int32_t)GROUND_PA;
+
+    physics_state_t ps = {0};
+    uint8_t prev_fires = 0;
+
+    for (uint32_t t = 0; t <= 120000; t++) {
+        if (mock_pyro.fire_count > prev_fires) {
+            uint8_t ch = mock_pyro.last_fire_channel;
+            if (ch == 1 && !ps.drogue_deployed)
+                ps.drogue_deployed = true;
+            if (ch == 2 && !ps.main_deployed)
+                ps.main_deployed = true;
+            prev_fires = mock_pyro.fire_count;
+        }
+        if (t >= PAD_DWELL_MS) {
+            float ft = (float)(t - PAD_DWELL_MS) / 1000.0f;
+            physics_step(&ps, ft, &prof);
+        }
+        mock_time_ms = t;
+        mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
+        mock_pyro.firing = false;
+        ctx.current_state = dispatch_state(&ctx, t);
+        if (ctx.current_state == LANDED)
+            break;
+    }
+
+    TEST_ASSERT_TRUE_MESSAGE(ctx.pyro1_fault, "Pyro1 fault not detected");
+    TEST_ASSERT_TRUE_MESSAGE(ctx.pyro2_fault, "Pyro2 fault not detected");
+
+    /* Scan for fault events in buffer */
+    int fault_events = 0;
+    for (int i = 0; i < ctx.buf_count; i++) {
+        uint16_t idx = (ctx.buf_tail + i) % 4096;
+        if (ctx.flight_buffer[idx].event == EVT_PYRO1_FAULT || ctx.flight_buffer[idx].event == EVT_PYRO2_FAULT)
+            fault_events++;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(fault_events >= 1, "No fault events recorded in buffer");
 }
 
 void test_TST_05_karman_apogee(void) {
@@ -365,6 +613,10 @@ int main(void) {
     RUN_TEST(test_PYR_MODE_03_fallen_agl);
     RUN_TEST(test_PYR_MODE_04_speed_agl);
     RUN_TEST(test_TST_06_chute_effect);
+    RUN_TEST(test_PYR_SAFE_01_no_fire_without_continuity);
+    RUN_TEST(test_PYR_SAFE_02_no_simultaneous_fire);
+    RUN_TEST(test_SYS_DEPLOY_03_no_fire_during_ascent);
+    RUN_TEST(test_PYR_FAULT_02_overcurrent_detection);
     RUN_TEST(test_TST_05_karman_apogee);
     return UNITY_END();
 }
