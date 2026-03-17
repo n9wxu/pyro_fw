@@ -370,16 +370,7 @@
 
     <script src="physics.js"></script>
     <script src="buzzer.js"></script>
-    <script>
-        /* --- Try to load WASM, but don't block if it fails --- */
-        var wasmAvailable = false;
-        try {
-            var s = document.createElement('script');
-            s.src = 'wasm/pyro.js';
-            s.onerror = function () { console.log('WASM script not available — physics-only mode'); };
-            document.head.appendChild(s);
-        } catch (e) { }
-    </script>
+    <script src="wasm/pyro.js" onerror="console.log('WASM not available')"></script>
     <script>
         var pyro = null;
         var physics = new PhysicsEngine();
