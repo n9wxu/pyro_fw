@@ -4,18 +4,20 @@
 #include "pico/stdlib.h"
 
 #define PYRO_COMMON_EN 15
-#define PYRO1_EN       21
-#define PYRO2_EN       22
-#define PYRO1_ADC_CH   0   /* GPIO 26 */
-#define PYRO2_ADC_CH   1   /* GPIO 27 */
+#define PYRO1_EN 21
+#define PYRO2_EN 22
+#define PYRO1_ADC_CH 0    /* GPIO 26 */
+#define PYRO2_ADC_CH 1    /* GPIO 27 */
+#define PYRO1_FLAG_PIN 17 /* AP2192 FLAG1, active-low */
+#define PYRO2_FLAG_PIN 18 /* AP2192 FLAG2, active-low */
 
 #define FIRE_DURATION_MS 500
 
 /* Thresholds (raw 12-bit ADC, 0-4095) */
-#define ADC_OPEN_THRESHOLD   3800   /* above = open circuit */
-#define ADC_SHORT_THRESHOLD  50     /* below = dead short */
+#define ADC_OPEN_THRESHOLD 3800 /* above = open circuit */
+#define ADC_SHORT_THRESHOLD 50  /* below = dead short */
 
-static uint8_t  firing_channel;
+static uint8_t firing_channel;
 static uint32_t fire_start_ms;
 
 void pyro_init(void) {
@@ -33,12 +35,20 @@ void pyro_init(void) {
     gpio_put(PYRO1_EN, 0);
     gpio_put(PYRO2_EN, 0);
 
+    /* AP2192 FLAG pins: active-low open-drain, need pull-up */
+    gpio_init(PYRO1_FLAG_PIN);
+    gpio_set_dir(PYRO1_FLAG_PIN, GPIO_IN);
+    gpio_pull_up(PYRO1_FLAG_PIN);
+    gpio_init(PYRO2_FLAG_PIN);
+    gpio_set_dir(PYRO2_FLAG_PIN, GPIO_IN);
+    gpio_pull_up(PYRO2_FLAG_PIN);
+
     firing_channel = 0;
 }
 
 static uint16_t adc_read_channel(uint8_t channel) {
     adc_select_input(channel);
-    return adc_read();  /* raw 12-bit, 0-4095 */
+    return adc_read(); /* raw 12-bit, 0-4095 */
 }
 
 void pyro_check_continuity(pyro_continuity_t *p1, pyro_continuity_t *p2) {
@@ -52,13 +62,13 @@ void pyro_check_continuity(pyro_continuity_t *p1, pyro_continuity_t *p2) {
 
     gpio_put(PYRO_COMMON_EN, 0);
 
-    p1->open    = p1->raw_adc > ADC_OPEN_THRESHOLD;
+    p1->open = p1->raw_adc > ADC_OPEN_THRESHOLD;
     p1->shorted = p1->raw_adc < ADC_SHORT_THRESHOLD;
-    p1->good    = !p1->open && !p1->shorted;
+    p1->good = !p1->open && !p1->shorted;
 
-    p2->open    = p2->raw_adc > ADC_OPEN_THRESHOLD;
+    p2->open = p2->raw_adc > ADC_OPEN_THRESHOLD;
     p2->shorted = p2->raw_adc < ADC_SHORT_THRESHOLD;
-    p2->good    = !p2->open && !p2->shorted;
+    p2->good = !p2->open && !p2->shorted;
 }
 
 void pyro_fire(uint8_t channel) {
@@ -78,4 +88,9 @@ void pyro_update(uint32_t now_ms) {
 
 bool pyro_is_firing(void) {
     return firing_channel != 0;
+}
+
+bool pyro_fault(uint8_t channel) {
+    /* AP2192 FLAG is active-low: LOW = overcurrent/thermal fault */
+    return !gpio_get(channel == 1 ? PYRO1_FLAG_PIN : PYRO2_FLAG_PIN);
 }

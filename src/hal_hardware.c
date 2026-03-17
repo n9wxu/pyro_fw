@@ -43,7 +43,8 @@ int hal_pressure_init(void) {
 
 bool hal_pressure_read(hal_pressure_t *out) {
     pressure_reading_t r;
-    if (!pressure_sensor_read(&r)) return false;
+    if (!pressure_sensor_read(&r))
+        return false;
     out->pressure_pa = r.pressure_pa;
     out->temperature_c = r.temperature_c;
     return true;
@@ -51,18 +52,35 @@ bool hal_pressure_read(hal_pressure_t *out) {
 
 /* ── Pyro ─────────────────────────────────────────────────────────── */
 
-void hal_pyro_init(void) { pyro_init(); }
+void hal_pyro_init(void) {
+    pyro_init();
+}
 
 void hal_pyro_check(hal_continuity_t *p1, hal_continuity_t *p2) {
     pyro_continuity_t c1, c2;
     pyro_check_continuity(&c1, &c2);
-    p1->raw_adc = c1.raw_adc; p1->good = c1.good; p1->open = c1.open; p1->shorted = c1.shorted;
-    p2->raw_adc = c2.raw_adc; p2->good = c2.good; p2->open = c2.open; p2->shorted = c2.shorted;
+    p1->raw_adc = c1.raw_adc;
+    p1->good = c1.good;
+    p1->open = c1.open;
+    p1->shorted = c1.shorted;
+    p2->raw_adc = c2.raw_adc;
+    p2->good = c2.good;
+    p2->open = c2.open;
+    p2->shorted = c2.shorted;
 }
 
-void hal_pyro_fire(uint8_t channel) { pyro_fire(channel); }
-void hal_pyro_update(uint32_t now_ms) { pyro_update(now_ms); }
-bool hal_pyro_is_firing(void) { return pyro_is_firing(); }
+void hal_pyro_fire(uint8_t channel) {
+    pyro_fire(channel);
+}
+void hal_pyro_update(uint32_t now_ms) {
+    pyro_update(now_ms);
+}
+bool hal_pyro_is_firing(void) {
+    return pyro_is_firing();
+}
+bool hal_pyro_fault(uint8_t channel) {
+    return pyro_fault(channel);
+}
 
 /* ── Buzzer ───────────────────────────────────────────────────────── */
 
@@ -72,8 +90,12 @@ void hal_buzzer_init(void) {
     gpio_put(BUZZER_PIN, 0);
 }
 
-void hal_buzzer_tone_on(void)  { gpio_put(BUZZER_PIN, 1); }
-void hal_buzzer_tone_off(void) { gpio_put(BUZZER_PIN, 0); }
+void hal_buzzer_tone_on(void) {
+    gpio_put(BUZZER_PIN, 1);
+}
+void hal_buzzer_tone_off(void) {
+    gpio_put(BUZZER_PIN, 0);
+}
 
 /* ── Telemetry ────────────────────────────────────────────────────── */
 
@@ -90,7 +112,8 @@ int hal_fs_mount(void) {
         lfs_format(&lfs, &lfs_pico_flash_config);
         err = lfs_mount(&lfs, &lfs_pico_flash_config);
     }
-    if (err == 0) lfs_unmount(&lfs);
+    if (err == 0)
+        lfs_unmount(&lfs);
     return err;
 }
 
@@ -100,11 +123,18 @@ void hal_fs_unmount(void) {
 
 int hal_fs_read_file(const char *path, char *buf, int max_len) {
     lfs_t lfs;
-    if (lfs_mount(&lfs, &lfs_pico_flash_config) != LFS_ERR_OK) return -1;
+    if (lfs_mount(&lfs, &lfs_pico_flash_config) != LFS_ERR_OK)
+        return -1;
     lfs_file_t f;
     int err = lfs_file_open(&lfs, &f, path, LFS_O_RDONLY);
-    if (err == LFS_ERR_NOENT) { lfs_unmount(&lfs); return -2; }
-    if (err != LFS_ERR_OK) { lfs_unmount(&lfs); return -1; }
+    if (err == LFS_ERR_NOENT) {
+        lfs_unmount(&lfs);
+        return -2;
+    }
+    if (err != LFS_ERR_OK) {
+        lfs_unmount(&lfs);
+        return -1;
+    }
     lfs_ssize_t n = lfs_file_read(&lfs, &f, buf, max_len);
     lfs_file_close(&lfs, &f);
     lfs_unmount(&lfs);
@@ -113,10 +143,12 @@ int hal_fs_read_file(const char *path, char *buf, int max_len) {
 
 int hal_fs_write_file(const char *path, const char *data, int len) {
     lfs_t lfs;
-    if (lfs_mount(&lfs, &lfs_pico_flash_config) != LFS_ERR_OK) return -1;
+    if (lfs_mount(&lfs, &lfs_pico_flash_config) != LFS_ERR_OK)
+        return -1;
     lfs_file_t f;
     if (lfs_file_open(&lfs, &f, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) != LFS_ERR_OK) {
-        lfs_unmount(&lfs); return -1;
+        lfs_unmount(&lfs);
+        return -1;
     }
     lfs_file_write(&lfs, &f, data, len);
     lfs_file_close(&lfs, &f);
@@ -135,8 +167,10 @@ struct hal_file {
 static struct hal_file hw_file;
 
 hal_file_t *hal_fs_open(const char *path, bool append) {
-    if (hw_file.open) return NULL;
-    if (lfs_mount(&hw_file.lfs, &lfs_pico_flash_config) != LFS_ERR_OK) return NULL;
+    if (hw_file.open)
+        return NULL;
+    if (lfs_mount(&hw_file.lfs, &lfs_pico_flash_config) != LFS_ERR_OK)
+        return NULL;
     int flags = LFS_O_WRONLY | LFS_O_CREAT;
     flags |= append ? LFS_O_APPEND : LFS_O_TRUNC;
     if (lfs_file_open(&hw_file.lfs, &hw_file.file, path, flags) != LFS_ERR_OK) {
@@ -148,12 +182,14 @@ hal_file_t *hal_fs_open(const char *path, bool append) {
 }
 
 int hal_fs_write(hal_file_t *f, const char *data, int len) {
-    if (!f || !f->open) return -1;
+    if (!f || !f->open)
+        return -1;
     return (int)lfs_file_write(&f->lfs, &f->file, data, len);
 }
 
 void hal_fs_close(hal_file_t *f) {
-    if (!f || !f->open) return;
+    if (!f || !f->open)
+        return;
     lfs_file_close(&f->lfs, &f->file);
     lfs_unmount(&f->lfs);
     f->open = false;
