@@ -13,6 +13,8 @@
 
 /* ── Ring buffer ──────────────────────────────────────────────────── */
 
+static void csv_track_sample(flight_context_t *ctx);
+
 void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t altitude, uint8_t st) {
     if (ctx->buf_count == 4096) {
         ctx->buf_tail = (ctx->buf_tail + 1) % 4096;
@@ -28,6 +30,7 @@ void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t 
     s->event_data = 0;
     ctx->buf_head = (ctx->buf_head + 1) % 4096;
     ctx->buf_count++;
+    csv_track_sample(ctx);
 }
 
 static void buf_tag_event(flight_context_t *ctx, uint8_t event) { /* [DAT-03] */
@@ -565,7 +568,7 @@ static const char *mode_name(uint8_t mode) {
     }
 }
 
-/* [DAT-06, DAT-07] */
+/* [DAT-06, DAT-07] Batch CSV export (fallback, used by simulator) */
 int flight_save_csv(flight_context_t *ctx) {
     if (ctx->buf_count == 0)
         return -1;
@@ -597,6 +600,81 @@ int flight_save_csv(flight_context_t *ctx) {
     }
     hal_fs_close(f);
     return 0;
+}
+
+/* ── Incremental CSV logger ───────────────────────────────────────── */
+/* Uses the ring buffer as the write buffer — zero extra RAM.
+ * Flushes to flash only when safe (no XIP stall during pyro timing).
+ * See IMPLEMENTATION.md "Incremental CSV Logger" for analysis. */
+
+/* Safe to flush when flash writes won't interfere with pyro decisions:
+ * - PAD_IDLE: 10ms sample rate, no pyro timing
+ * - DESCENT after both pyros resolved: landing detection tolerates gaps
+ * - LANDED: 1Hz, no timing constraints
+ * NOT safe during ASCENT or DESCENT with pending pyros. */
+bool csv_flush_safe(flight_context_t *ctx) {
+    if (ctx->current_state == PAD_IDLE || ctx->current_state == LANDED)
+        return true;
+    if (ctx->current_state == DESCENT) {
+        bool p1_done = ctx->pyro1_fired || !ctx->pyro1_continuity_good;
+        bool p2_done = ctx->pyro2_fired || !ctx->pyro2_continuity_good;
+        return p1_done && p2_done;
+    }
+    return false;
+}
+
+/* Write up to max_lines samples from the ring buffer to flash.
+ * Returns number of lines written, or -1 on error.
+ * Call from main loop when csv_flush_safe() is true. */
+int csv_flush_step(flight_context_t *ctx, int max_lines) {
+    if (!ctx->csv_header_written) {
+        hal_file_t *f = hal_fs_open("flight.csv", false);
+        if (!f) return -1;
+        char hdr[256];
+        int n = snprintf(hdr, sizeof(hdr),
+                         "# Pyro MK1B Flight Data\n# ID: %.8s\n# Name: %.8s\n"
+                         "# Pyro1: %s %u\n# Pyro2: %s %u\n"
+                         "# Units: %s\n# Ground Pa: %ld\n"
+                         "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",
+                         ctx->config.id, ctx->config.name,
+                         mode_name(ctx->config.pyro1_mode), ctx->config.pyro1_value,
+                         mode_name(ctx->config.pyro2_mode), ctx->config.pyro2_value,
+                         ctx->config.units == 2 ? "ft" : ctx->config.units == 1 ? "m" : "cm",
+                         (long)ctx->ground_pressure);
+        hal_fs_write(f, hdr, n);
+        hal_fs_close(f);
+        ctx->csv_header_written = true;
+        ctx->csv_write_idx = ctx->buf_tail;
+        ctx->csv_pending = ctx->buf_count;
+    }
+
+    if (ctx->csv_pending == 0) return 0;
+
+    hal_file_t *f = hal_fs_open("flight.csv", true);
+    if (!f) return -1;
+
+    int written = 0;
+    char line[80];
+    while (written < max_lines && ctx->csv_pending > 0) {
+        flight_sample_t *s = &ctx->flight_buffer[ctx->csv_write_idx];
+        int n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%s\n",
+                         (unsigned long)s->time_ms, (long)s->pressure_pa,
+                         (long)s->altitude_cm, s->state, s->under_thrust,
+                         event_name(s->event));
+        hal_fs_write(f, line, n);
+        ctx->csv_write_idx = (ctx->csv_write_idx + 1) % 4096;
+        ctx->csv_pending--;
+        written++;
+    }
+
+    hal_fs_close(f);
+    return written;
+}
+
+/* Called from buf_add to track new samples for the CSV logger */
+static void csv_track_sample(flight_context_t *ctx) {
+    if (ctx->csv_header_written)
+        ctx->csv_pending++;
 }
 
 /* ── Init and output ──────────────────────────────────────────────── */

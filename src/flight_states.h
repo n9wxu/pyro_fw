@@ -133,6 +133,11 @@ typedef struct flight_context_t {
     bool buzzer_started;
     bool landed_beep_started;
     bool csv_saved;
+    // Incremental CSV logger
+    uint16_t csv_write_idx;     // ring buffer index of next sample to write
+    uint16_t csv_pending;       // samples waiting to be flushed
+    bool csv_header_written;
+    bool csv_file_open;
 } flight_context_t;
 
 // Flight init and dispatch
@@ -141,6 +146,8 @@ flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now);
 void flight_update_outputs(flight_context_t *ctx, uint32_t now);
 void parse_config_ini(char *buf, config_t *cfg);
 int flight_save_csv(flight_context_t *ctx);
+bool csv_flush_safe(flight_context_t *ctx);
+int csv_flush_step(flight_context_t *ctx, int max_lines);
 
 // Telemetry
 void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm, flight_state_t state);

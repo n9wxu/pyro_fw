@@ -103,6 +103,28 @@ $PYRO,seq,state,thrust,alt_cm,vel_cms,maxalt_cm,press_pa,time_ms,flags,p1adc,p2a
 - **Status codes:** 1-1 good, 2-1/2-2 P1 open/short, 2-3/2-4 P1 fault/verify, 3-1/3-2 P2 open/short, 3-3/3-4 P2 fault/verify, 4-3 config range
 - **Landing:** Altitude beep-out in configured units, repeats forever
 
+### Incremental CSV Logger
+The CSV logger writes flight data to flash incrementally during flight, using the ring buffer as its write buffer (zero extra RAM).
+
+**XIP stall problem:** The RP2040 executes code from flash via XIP. Flash sector erase (~50-100ms) stalls the CPU — no instructions can execute. During ASCENT, this could cause missed pyro arming or apogee detection.
+
+**Solution:** Buffer through critical phases, flush when safe.
+
+| Phase | Flash Writes | Rationale |
+|---|---|---|
+| PAD_IDLE | ✅ Flush | 10ms sample rate, no pyro timing |
+| ASCENT | ❌ Buffer | Pyro arming and apogee detection are time-critical |
+| DESCENT (pyros pending) | ❌ Buffer | Pyro firing decisions in progress |
+| DESCENT (pyros done) | ✅ Flush | Landing detection tolerates 100ms gaps |
+| LANDED | ✅ Flush | 1Hz, no timing constraints |
+
+**Capacity:** A typical 5000ft flight buffers ~180 samples during ASCENT + pre-pyro DESCENT (8s at 10Hz + 5s at 20Hz). The 4096-entry ring buffer holds this easily. After pyros fire, the backlog drains at ~5 lines per main loop iteration.
+
+**API:**
+- `csv_flush_safe(ctx)` — returns true when flash writes are safe
+- `csv_flush_step(ctx, max_lines)` — writes up to N samples, called from main loop
+- `flight_save_csv(ctx)` — batch fallback for simulator
+
 ### Altitude Limitations
 Linear barometric formula clamped at 8,000m. Above that only AGL pyro mode works correctly. See REQUIREMENTS.md for full analysis.
 

@@ -47,7 +47,6 @@ int main() {
 
     flight_context_t ctx;
     flight_init(&ctx);
-    bool csv_written = false;
 
     while (1) {
         uint32_t now = hal_time_ms();
@@ -64,10 +63,8 @@ int main() {
 
         /* Outputs */
         flight_update_outputs(&ctx, now);
-        if (ctx.csv_saved && !csv_written) {
-            csv_written = true;
-            flight_save_csv(&ctx);
-        }
+        if (csv_flush_safe(&ctx))
+            csv_flush_step(&ctx, 5);
         update_status(&ctx, now);
     }
 }
