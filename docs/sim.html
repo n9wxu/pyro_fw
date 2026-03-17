@@ -13,50 +13,50 @@
             max-width: 900px;
             margin: 20px auto;
             padding: 0 16px;
-            color: #222;
+            color: #222
         }
 
         h2 {
-            margin: 0 0 8px;
+            margin: 0 0 8px
         }
 
         .panel {
             border: 1px solid #ccc;
             border-radius: 6px;
             padding: 12px;
-            margin: 8px 0;
+            margin: 8px 0
         }
 
         .panel h3 {
             margin: 0 0 8px;
             font-size: 15px;
-            color: #555;
+            color: #555
         }
 
         .panel.disabled {
-            opacity: 0.5;
-            pointer-events: none;
+            opacity: .5;
+            pointer-events: none
         }
 
         table.info {
             width: 100%;
-            border-collapse: collapse;
+            border-collapse: collapse
         }
 
         table.info td {
             padding: 4px 8px;
             border-bottom: 1px solid #eee;
-            font-size: 14px;
+            font-size: 14px
         }
 
         td.lbl {
             color: #666;
-            width: 130px;
+            width: 130px
         }
 
         td.val {
             font-weight: 600;
-            font-size: 16px;
+            font-size: 16px
         }
 
         button {
@@ -65,33 +65,33 @@
             cursor: pointer;
             border-radius: 4px;
             border: 1px solid #ccc;
-            font-size: 14px;
+            font-size: 14px
         }
 
         button:hover {
-            background: #e8e8e8;
+            background: #e8e8e8
         }
 
         button.primary {
             background: #2266cc;
             color: white;
-            border: none;
+            border: none
         }
 
         button.primary:hover {
-            background: #1a4fa0;
+            background: #1a4fa0
         }
 
         button:disabled {
-            opacity: 0.5;
-            cursor: default;
+            opacity: .5;
+            cursor: default
         }
 
         select,
         input[type=number],
         input[type=text] {
             padding: 4px 8px;
-            font-size: 14px;
+            font-size: 14px
         }
 
         .state-badge {
@@ -99,46 +99,46 @@
             padding: 2px 10px;
             border-radius: 10px;
             font-weight: bold;
-            font-size: 13px;
+            font-size: 13px
         }
 
         .state-boot {
-            background: #ddd;
+            background: #ddd
         }
 
         .state-pad {
             background: #ffe;
-            border: 1px solid #cc0;
+            border: 1px solid #cc0
         }
 
         .state-ascent {
             background: #dfd;
-            border: 1px solid #0a0;
+            border: 1px solid #0a0
         }
 
         .state-descent {
             background: #fdd;
-            border: 1px solid #c00;
+            border: 1px solid #c00
         }
 
         .state-landed {
             background: #def;
-            border: 1px solid #06c;
+            border: 1px solid #06c
         }
 
         canvas {
             border: 1px solid #ccc;
             width: 100%;
-            max-width: 880px;
+            max-width: 880px
         }
 
         .cols {
             display: flex;
-            gap: 12px;
+            gap: 12px
         }
 
         .cols>* {
-            flex: 1;
+            flex: 1
         }
 
         #log {
@@ -149,7 +149,7 @@
             background: #111;
             color: #0f0;
             padding: 8px;
-            border-radius: 4px;
+            border-radius: 4px
         }
 
         .buzzer-on {
@@ -158,7 +158,7 @@
             height: 12px;
             border-radius: 50%;
             background: #f80;
-            box-shadow: 0 0 6px #f80;
+            box-shadow: 0 0 6px #f80
         }
 
         .buzzer-off {
@@ -166,14 +166,31 @@
             width: 12px;
             height: 12px;
             border-radius: 50%;
-            background: #444;
+            background: #444
         }
 
         .mute-btn {
             font-size: 11px;
             padding: 2px 8px;
             vertical-align: middle;
-            margin-left: 6px;
+            margin-left: 6px
+        }
+
+        .mode-badge {
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-left: 8px
+        }
+
+        .mode-full {
+            background: #dfd;
+            color: #060
+        }
+
+        .mode-phys {
+            background: #ffd;
+            color: #660
         }
     </style>
 </head>
@@ -181,8 +198,10 @@
 <body>
 
     <h2>🚀 Pyro MK1B — Interactive Simulation</h2>
-    <p style="color:#666;font-size:13px">Real flight software compiled to WebAssembly. Physics simulation drives the
-        flight computer.</p>
+    <p style="color:#666;font-size:13px">
+        Real flight software compiled to WebAssembly. Physics simulation drives the flight computer.
+        <span id="modeBadge" class="mode-badge mode-phys">Physics Only</span>
+    </p>
 
     <div class="cols">
         <div>
@@ -351,7 +370,16 @@
 
     <script src="physics.js"></script>
     <script src="buzzer.js"></script>
-    <script src="wasm/pyro.js"></script>
+    <script>
+        /* --- Try to load WASM, but don't block if it fails --- */
+        var wasmAvailable = false;
+        try {
+            var s = document.createElement('script');
+            s.src = 'wasm/pyro.js';
+            s.onerror = function () { console.log('WASM script not available — physics-only mode'); };
+            document.head.appendChild(s);
+        } catch (e) { }
+    </script>
     <script>
         var pyro = null;
         var physics = new PhysicsEngine();
@@ -363,65 +391,85 @@
         var powered = false;
         var graphData = [];
         var muted = false;
+        var physMaxAlt = 0;
+        var landedTime = 0;
+        var POST_LAND_DWELL_MS = 10000;
 
         var STATE_NAMES = ['BOOT_INIT', 'BOOT_SETTLE', 'BOOT_CONT', 'BOOT_CAL', 'PAD_IDLE', 'ASCENT', 'DESCENT', 'LANDED'];
         var STATE_CLASSES = ['state-boot', 'state-boot', 'state-boot', 'state-boot', 'state-pad', 'state-ascent', 'state-descent', 'state-landed'];
-        var MODE_NAMES = ['none', 'fallen', 'agl', 'speed', 'delay'];
+
+        /* ---- Simulated flight state for physics-only mode ---- */
+        var physState = 'PAD_IDLE';
+        var physStateClass = 'state-pad';
+
+        function hasWasm() { return pyro !== null; }
 
         /* Bridge: the iframe's fetch shim calls this for /api/* requests */
         function simApi(path, method, body) {
-            if (!pyro) return { status: 503, body: 'WASM not loaded', contentType: 'text/plain' };
-
             if (path === '/api/status' && method === 'GET') {
-                var s = pyro._sim_flight_state();
-                var stateName = (s >= 4) ? STATE_NAMES[s] : 'BOOT';
-                var p1m = pyro._sim_flight_pyro1_fired;
-                return {
-                    body: JSON.stringify({
-                        state: stateName,
-                        alt_cm: pyro._sim_flight_altitude_cm(),
-                        max_alt_cm: pyro._sim_flight_max_alt_cm(),
-                        vspeed_cms: pyro._sim_flight_vspeed_cms(),
-                        pressure_pa: pyro._sim_flight_pressure(),
-                        pyro1_cont: true, pyro2_cont: true,
-                        pyro1_adc: 50, pyro2_adc: 50,
-                        pyro1_fired: !!pyro._sim_flight_pyro1_fired(),
-                        pyro2_fired: !!pyro._sim_flight_pyro2_fired(),
-                        armed: !!pyro._sim_flight_armed(),
-                        flight_ms: (pyro._sim_flight_launch_time() > 0) ? (simTime - pyro._sim_flight_launch_time()) : 0,
-                        uptime: simTime,
-                        fw_version: '1.5.0-sim',
-                        pyro1_mode: document.getElementById('cfgP1Mode').value,
-                        pyro1_value: parseInt(document.getElementById('cfgP1Val').value) || 0,
-                        pyro2_mode: document.getElementById('cfgP2Mode').value,
-                        pyro2_value: parseInt(document.getElementById('cfgP2Val').value) || 0,
-                        units: { cm: 0, m: 1, ft: 2 }[document.getElementById('cfgUnits').value] || 0,
-                        rocket_id: document.getElementById('cfgId').value,
-                        rocket_name: document.getElementById('cfgName').value
-                    }),
-                    contentType: 'application/json'
-                };
+                if (hasWasm()) {
+                    var s = pyro._sim_flight_state();
+                    var stateName = (s >= 4) ? STATE_NAMES[s] : 'BOOT';
+                    return {
+                        body: JSON.stringify({
+                            state: stateName,
+                            alt_cm: pyro._sim_flight_altitude_cm(),
+                            max_alt_cm: pyro._sim_flight_max_alt_cm(),
+                            vspeed_cms: pyro._sim_flight_vspeed_cms(),
+                            pressure_pa: pyro._sim_flight_pressure(),
+                            pyro1_cont: true, pyro2_cont: true,
+                            pyro1_adc: 50, pyro2_adc: 50,
+                            pyro1_fired: !!pyro._sim_flight_pyro1_fired(),
+                            pyro2_fired: !!pyro._sim_flight_pyro2_fired(),
+                            armed: !!pyro._sim_flight_armed(),
+                            flight_ms: (pyro._sim_flight_launch_time() > 0) ? (simTime - pyro._sim_flight_launch_time()) : 0,
+                            uptime: simTime,
+                            fw_version: '1.5.0-sim',
+                            pyro1_mode: document.getElementById('cfgP1Mode').value,
+                            pyro1_value: parseInt(document.getElementById('cfgP1Val').value) || 0,
+                            pyro2_mode: document.getElementById('cfgP2Mode').value,
+                            pyro2_value: parseInt(document.getElementById('cfgP2Val').value) || 0,
+                            units: { cm: 0, m: 1, ft: 2 }[document.getElementById('cfgUnits').value] || 0,
+                            rocket_id: document.getElementById('cfgId').value,
+                            rocket_name: document.getElementById('cfgName').value
+                        }),
+                        contentType: 'application/json'
+                    };
+                } else {
+                    return {
+                        body: JSON.stringify({
+                            state: physState,
+                            alt_cm: Math.round(physics.alt_m * 100),
+                            max_alt_cm: Math.round(physMaxAlt * 100),
+                            vspeed_cms: Math.round(physics.vel_ms * 100),
+                            pressure_pa: Math.round(physics.pressurePa()),
+                            pyro1_cont: true, pyro2_cont: true,
+                            pyro1_adc: 50, pyro2_adc: 50,
+                            pyro1_fired: false, pyro2_fired: false,
+                            armed: false,
+                            flight_ms: launched ? (simTime - launchTime) : 0,
+                            uptime: simTime,
+                            fw_version: '1.5.0-phys',
+                            pyro1_mode: document.getElementById('cfgP1Mode').value,
+                            pyro1_value: parseInt(document.getElementById('cfgP1Val').value) || 0,
+                            pyro2_mode: document.getElementById('cfgP2Mode').value,
+                            pyro2_value: parseInt(document.getElementById('cfgP2Val').value) || 0,
+                            units: { cm: 0, m: 1, ft: 2 }[document.getElementById('cfgUnits').value] || 0,
+                            rocket_id: document.getElementById('cfgId').value,
+                            rocket_name: document.getElementById('cfgName').value
+                        }),
+                        contentType: 'application/json'
+                    };
+                }
             }
-
-            if (path === '/api/config' && method === 'GET') {
+            if (path === '/api/config' && method === 'GET')
                 return { body: buildConfigIni(), contentType: 'text/plain' };
-            }
-
-            if (path === '/api/config' && method === 'POST') {
+            if (path === '/api/config' && method === 'POST')
                 return { status: 201, body: 'OK', contentType: 'text/plain' };
-            }
-
-            if (path === '/api/reboot' && method === 'POST') {
+            if (path === '/api/reboot' && method === 'POST')
                 return { body: 'Rebooting', contentType: 'text/plain' };
-            }
-
-            if (path === '/api/flight.csv' && method === 'GET') {
-                return {
-                    body: 'time_ms,pressure_pa,altitude_cm,state,thrust,event\n',
-                    contentType: 'text/csv'
-                };
-            }
-
+            if (path === '/api/flight.csv' && method === 'GET')
+                return { body: 'time_ms,pressure_pa,altitude_cm,state,thrust,event\n', contentType: 'text/csv' };
             return { status: 404, body: 'Not found', contentType: 'text/plain' };
         }
 
@@ -447,35 +495,48 @@
                 '\r\nunits=' + document.getElementById('cfgUnits').value + '\r\n';
         }
 
-        function setContFromUI(ch) {
-            var sel = document.getElementById(ch === 1 ? 'p1cont' : 'p2cont').value;
-            var good = sel === 'good', open = sel === 'open';
-            pyro._sim_set_continuity(ch, good ? 50 : 0, good ? 1 : 0, open ? 1 : 0);
-        }
-
         function setFlightUI(enabled) {
             document.getElementById('panelConfig').className = enabled ? 'panel disabled' : 'panel';
         }
 
+        function setState(name, cls) {
+            document.getElementById('state').textContent = name;
+            document.getElementById('state').className = 'state-badge ' + cls;
+        }
+
         function powerOn() {
-            if (!pyro) { log('WASM not loaded'); return; }
             buzzerAudio.init();
             powered = true;
             document.getElementById('btnPower').disabled = true;
             setFlightUI(true);
-
-            var config = buildConfigIni();
-            var buf = pyro._malloc(config.length + 1);
-            pyro.stringToUTF8(config, buf, config.length + 1);
-            pyro._sim_flight_init(buf);
-            pyro._free(buf);
-
-            setContFromUI(1);
-            setContFromUI(2);
-
             simTime = 0;
             graphData = [];
-            log('Power on — booting...');
+            physMaxAlt = 0;
+
+            if (hasWasm()) {
+                /* Full WASM mode */
+                var config = buildConfigIni();
+                var buf = pyro._malloc(config.length + 1);
+                pyro.stringToUTF8(config, buf, config.length + 1);
+                pyro._sim_flight_init(buf);
+                pyro._free(buf);
+
+                var sel1 = document.getElementById('p1cont').value;
+                var good1 = sel1 === 'good', open1 = sel1 === 'open';
+                pyro._sim_set_continuity(1, good1 ? 50 : 0, good1 ? 1 : 0, open1 ? 1 : 0);
+                var sel2 = document.getElementById('p2cont').value;
+                var good2 = sel2 === 'good', open2 = sel2 === 'open';
+                pyro._sim_set_continuity(2, good2 ? 50 : 0, good2 ? 1 : 0, open2 ? 1 : 0);
+
+                log('Power on — booting (WASM)...');
+            } else {
+                /* Physics-only mode — skip boot, go to PAD_IDLE immediately */
+                physState = 'PAD_IDLE';
+                setState('PAD_IDLE', 'state-pad');
+                document.getElementById('btnLaunch').disabled = false;
+                log('Power on — physics-only mode (no WASM)');
+                log('Ready — click Launch to fly!');
+            }
             startSimLoop();
         }
 
@@ -491,18 +552,20 @@
 
         function resetSim() {
             if (simTimer) { clearInterval(simTimer); simTimer = null; }
-            if (pyro) pyro._sim_reset();
+            if (hasWasm()) pyro._sim_reset();
             physics.reset();
             buzzerAudio.stop();
             powered = false;
             launched = false;
             simTime = 0;
             graphData = [];
+            physMaxAlt = 0;
+            landedTime = 0;
+            physState = 'PAD_IDLE';
             document.getElementById('btnPower').disabled = false;
             document.getElementById('btnLaunch').disabled = true;
             setFlightUI(false);
-            document.getElementById('state').textContent = '—';
-            document.getElementById('state').className = 'state-badge state-boot';
+            setState('—', 'state-boot');
             ['alt', 'spd', 'maxalt', 'ftime', 'p1status', 'p2status', 'armed'].forEach(function (id) {
                 document.getElementById(id).textContent = '—';
             });
@@ -518,13 +581,20 @@
         function simStep() {
             var stepsPerFrame = parseInt(document.getElementById('speed').value);
 
+            if (hasWasm()) {
+                simStepWasm(stepsPerFrame);
+            } else {
+                simStepPhysicsOnly(stepsPerFrame);
+            }
+        }
+
+        /* --- Full WASM closed-loop mode --- */
+        function simStepWasm(stepsPerFrame) {
             for (var s = 0; s < stepsPerFrame; s++) {
                 simTime++;
-
                 if (launched) {
                     physics.step((simTime - launchTime) / 1000);
                 }
-
                 var fires = pyro._sim_get_pyro_fire_count();
                 if (fires > prevFires) {
                     var ch = pyro._sim_get_pyro_last_channel();
@@ -545,8 +615,7 @@
 
             if (state !== prevState) {
                 var name = STATE_NAMES[state] || '?';
-                document.getElementById('state').textContent = name;
-                document.getElementById('state').className = 'state-badge ' + (STATE_CLASSES[state] || 'state-boot');
+                setState(name, STATE_CLASSES[state] || 'state-boot');
                 log('State → ' + name);
                 if (state === 4) document.getElementById('btnLaunch').disabled = false;
                 prevState = state;
@@ -560,19 +629,73 @@
             document.getElementById('p2status').textContent = pyro._sim_flight_pyro2_fired() ? '🔥 FIRED' : 'Ready';
             document.getElementById('armed').textContent = pyro._sim_flight_armed() ? '⚠️ ARMED' : 'Safe';
             document.getElementById('buzzer').className = buz ? 'buzzer-on' : 'buzzer-off';
-
-            if (!muted) buzzerAudio.update(buz);
-            else buzzerAudio.stop();
+            if (!muted) buzzerAudio.update(buz); else buzzerAudio.stop();
 
             if (simTime % 100 === 0) {
                 graphData.push({ t: simTime, alt: physics.alt_m, fw_alt: alt_cm / 100 });
                 drawGraph();
             }
 
-            if (state === 7 && simTime > pyro._sim_flight_launch_time() + 5000) {
+            if (state === 7 && landedTime === 0) {
+                landedTime = simTime;
+            }
+            if (landedTime > 0 && (simTime - landedTime) >= POST_LAND_DWELL_MS) {
                 log('=== Flight complete. Apogee: ' + (max_cm / 30.48).toFixed(0) + ' ft ===');
-                clearInterval(simTimer);
-                simTimer = null;
+                clearInterval(simTimer); simTimer = null;
+                setFlightUI(false);
+            }
+        }
+
+        /* --- Physics-only mode (no WASM) --- */
+        function simStepPhysicsOnly(stepsPerFrame) {
+            for (var s = 0; s < stepsPerFrame; s++) {
+                simTime++;
+                if (launched) {
+                    physics.step((simTime - launchTime) / 1000);
+                    if (physics.alt_m > physMaxAlt) physMaxAlt = physics.alt_m;
+                }
+            }
+
+            /* Derive state from physics */
+            var oldState = physState;
+            if (!launched) {
+                physState = 'PAD_IDLE';
+            } else if (physics.on_ground && (simTime - launchTime) > 1000) {
+                physState = 'LANDED';
+            } else if (physics.vel_ms <= 0 && physics.alt_m > 1 && (simTime - launchTime) > 500) {
+                physState = 'DESCENT';
+            } else if (physics.alt_m > 1) {
+                physState = 'ASCENT';
+            }
+
+            if (physState !== oldState) {
+                var cls = { PAD_IDLE: 'state-pad', ASCENT: 'state-ascent', DESCENT: 'state-descent', LANDED: 'state-landed' }[physState] || 'state-boot';
+                setState(physState, cls);
+                log('State → ' + physState);
+            }
+
+            var alt_m = physics.alt_m;
+            var vel_ms = physics.vel_ms;
+            document.getElementById('alt').textContent = (alt_m * 3.28084).toFixed(0) + ' ft (' + alt_m.toFixed(1) + 'm)';
+            document.getElementById('spd').textContent = (vel_ms * 3.28084).toFixed(0) + ' ft/s';
+            document.getElementById('maxalt').textContent = (physMaxAlt * 3.28084).toFixed(0) + ' ft';
+            document.getElementById('ftime').textContent = (simTime / 1000).toFixed(1) + 's';
+            document.getElementById('p1status').textContent = '— (no WASM)';
+            document.getElementById('p2status').textContent = '— (no WASM)';
+            document.getElementById('armed').textContent = '— (no WASM)';
+            document.getElementById('buzzer').className = 'buzzer-off';
+
+            if (simTime % 100 === 0) {
+                graphData.push({ t: simTime, alt: alt_m, fw_alt: alt_m });
+                drawGraph();
+            }
+
+            if (physState === 'LANDED' && landedTime === 0) {
+                landedTime = simTime;
+            }
+            if (landedTime > 0 && (simTime - landedTime) >= POST_LAND_DWELL_MS) {
+                log('=== Flight complete. Apogee: ' + (physMaxAlt * 3.28084).toFixed(0) + ' ft (' + physMaxAlt.toFixed(0) + 'm) ===');
+                clearInterval(simTimer); simTimer = null;
                 setFlightUI(false);
             }
         }
@@ -608,6 +731,7 @@
                 c.fillText((maxA * i / 4).toFixed(0) + 'm', 2, y + 3);
             }
 
+            /* Blue line: actual physics altitude */
             c.strokeStyle = '#2266cc'; c.lineWidth = 2;
             c.beginPath();
             graphData.forEach(function (p, idx) {
@@ -617,30 +741,43 @@
             });
             c.stroke();
 
-            c.strokeStyle = '#cc2222'; c.lineWidth = 1; c.setLineDash([4, 4]);
-            c.beginPath();
-            graphData.forEach(function (p, idx) {
-                var x = pad.l + (p.t / maxT) * gw;
-                var y = pad.t + gh - (p.fw_alt / maxA) * gh;
-                if (idx === 0) c.moveTo(x, y); else c.lineTo(x, y);
-            });
-            c.stroke();
-            c.setLineDash([]);
+            /* Red dashed line: firmware altitude (only different when WASM active) */
+            if (hasWasm()) {
+                c.strokeStyle = '#cc2222'; c.lineWidth = 1; c.setLineDash([4, 4]);
+                c.beginPath();
+                graphData.forEach(function (p, idx) {
+                    var x = pad.l + (p.t / maxT) * gw;
+                    var y = pad.t + gh - (p.fw_alt / maxA) * gh;
+                    if (idx === 0) c.moveTo(x, y); else c.lineTo(x, y);
+                });
+                c.stroke();
+                c.setLineDash([]);
+            }
 
             c.fillStyle = '#2266cc'; c.fillRect(pad.l + 5, pad.t + 5, 20, 2);
-            c.fillStyle = '#666'; c.fillText('Actual', pad.l + 30, pad.t + 10);
-            c.fillStyle = '#cc2222'; c.fillRect(pad.l + 85, pad.t + 5, 20, 2);
-            c.fillStyle = '#666'; c.fillText('Firmware', pad.l + 110, pad.t + 10);
+            c.fillStyle = '#666'; c.fillText(hasWasm() ? 'Actual' : 'Altitude', pad.l + 30, pad.t + 10);
+            if (hasWasm()) {
+                c.fillStyle = '#cc2222'; c.fillRect(pad.l + 85, pad.t + 5, 20, 2);
+                c.fillStyle = '#666'; c.fillText('Firmware', pad.l + 110, pad.t + 10);
+            }
         }
 
         function clearGraph() {
             document.getElementById('graph').getContext('2d').clearRect(0, 0, 440, 280);
         }
 
-        Module.onRuntimeInitialized = function () {
-            pyro = Module;
-            log('WASM loaded — click Power On to start');
-        };
+        /* --- WASM loaded callback --- */
+        if (typeof Module !== 'undefined') {
+            Module.onRuntimeInitialized = function () {
+                pyro = Module;
+                document.getElementById('modeBadge').textContent = 'Full WASM';
+                document.getElementById('modeBadge').className = 'mode-badge mode-full';
+                log('WASM loaded — full closed-loop mode');
+            };
+        } else {
+            log('WASM not available — physics-only mode');
+            log('Click Power On to start');
+        }
     </script>
 </body>
 
