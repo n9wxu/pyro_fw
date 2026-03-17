@@ -37,7 +37,7 @@ static void buf_tag_event(flight_context_t *ctx, uint8_t event) { /* [DAT-03] */
 /* ── Pressure processing ──────────────────────────────────────────── */
 
 /* [SNS-PRES-02..04] First-order IIR with minimum step to prevent stall.
- * See IMPLEMENTATION.md "Pressure Filter" for derivation. */
+ * Time constant τ = 500ms. See IMPLEMENTATION.md "Pressure Filter". */
 int32_t filter_pressure(flight_context_t *ctx, int32_t raw_pressure, uint32_t dt_ms) {
     if (!ctx->filter_initialized) {
         ctx->filtered_pressure = raw_pressure;
@@ -45,7 +45,7 @@ int32_t filter_pressure(flight_context_t *ctx, int32_t raw_pressure, uint32_t dt
         return raw_pressure;
     }
     int32_t diff = raw_pressure - ctx->filtered_pressure;
-    int32_t alpha = (dt_ms * 1000) / (1000 + dt_ms);
+    int32_t alpha = (dt_ms * 1000) / (500 + dt_ms);
     int32_t step = (diff * alpha) / 1000;
     if (step == 0 && diff != 0)
         step = (diff > 0) ? 1 : -1;
