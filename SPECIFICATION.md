@@ -7,23 +7,25 @@ This section contains everything needed to resume development with a new AI sess
 ### Project Overview
 Dual-deployment rocket flight computer on Raspberry Pi Pico (RP2040). Logs flight data to littlefs flash, serves web dashboard via USB network (RNDIS/ECM), fires two pyrotechnic channels for parachute deployment, outputs Eggtimer-compatible telemetry via UART. OTA firmware updates via A/B bootloader.
 
-### Current Implementation Status (v1.2.0)
-- **Unified state machine**: `src/flight_controller.c` — Non-blocking boot + flight in single dispatch
-- **HTTP web interface**: `src/http_server.c` + `src/net_glue.c` — WORKING. Dashboard at pyro.local / 192.168.7.1
+### Current Implementation Status (v1.5.0)
+- **Event-driven state machine**: `src/flight_states.c` — Transition table, detectors, actions
+- **HTTP web interface**: `src/http_server.c` + `src/net_glue.c` — Dashboard at pyro.local / 192.168.7.1
 - **USB composite device**: ECM/RNDIS network + vendor reset (picotool support)
 - **mDNS/DNS-SD**: pyro.local hostname, _pyro._tcp service discovery
 - **OTA updates**: A/B bootloader (pico_fota_bootloader), web UI + CLI + GitHub release update
 - **Pressure sensors**: `src/pressure_sensor.c` — MS5607 (GPIO 10/7) and BMP280 (GPIO 6/7) auto-detect
-- **Pyro module**: `src/pyro.c` — Dual channel, raw ADC, needs threshold calibration
+- **Pyro module**: `src/pyro.c` — Dual AP2192 channels, ADC continuity, FLAG pin fault detection
 - **littlefs driver**: `src/littlefs_driver.c` — 984KB partition
 - **CI/CD**: GitHub Actions build + release pipeline
-- **Test suite**: `support/test_network.py` — TUI, UART monitoring, log analysis
+- **Test suite**: 64 C tests + 22 Playwright web UI tests
+- **Config parser**: INI parser with 12 unit tests, web config editor
+- **Beep codes**: GPIO 16, startup chirps + status codes + altitude beep-out
+- **Telemetry UART**: $PYRO NMEA at 10Hz flight / 1Hz idle
+- **Event logging**: LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING, fault events
+- **Data logging**: 4096-sample ring buffer, streaming CSV export after landing
+- **Pyro fault detection**: AP2192 FLAG pin monitoring, post-fire continuity verification
+- **WASM simulation**: Flight computer + physics engine compiled to WebAssembly
 - **fat_mimic library**: `lib/fat_mimic/` — ARCHIVED, superseded by HTTP approach
-- **Config parser**: NOT IMPLEMENTED
-- **Beep codes**: NOT IMPLEMENTED (GPIO 16, 3kHz PWM)
-- **CSV flight logging**: NOT IMPLEMENTED
-- **Telemetry UART**: Code exists but DISABLED
-- **Event logging**: NOT IMPLEMENTED
 
 ### Build
 ```bash
@@ -187,10 +189,15 @@ typedef struct {
 | 1-1 | All good |
 | 2-1 | Pyro 1 open |
 | 2-2 | Pyro 1 short |
+| 2-3 | Pyro 1 fault during fire (AP2192 FLAG) |
+| 2-4 | Pyro 1 failed to open after fire |
 | 3-1 | Pyro 2 open |
 | 3-2 | Pyro 2 short |
+| 3-3 | Pyro 2 fault during fire (AP2192 FLAG) |
+| 3-4 | Pyro 2 failed to open after fire |
 | 4-1 | Sensor failure |
 | 4-2 | Filesystem failure |
+| 4-3 | Pyro altitude setting exceeds sensor limit |
 | 5-5 | Critical failure |
 
 Altitude beep-out: digit by digit, zero = long beep, 2s pause between reps.

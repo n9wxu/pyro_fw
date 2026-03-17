@@ -7,9 +7,9 @@ Host-compiled tests for the Pyro MK1B flight computer. All tests run on the buil
 ```bash
 cd build
 
-ninja host_tests          # 27 unit tests
-ninja integration_tests   # 11 integration tests (OpenRocket data)
-ninja closedloop_tests    # 9 closed-loop tests (28 simulated flights)
+ninja host_tests          # 39 unit tests
+ninja integration_tests   # 12 integration tests (OpenRocket data)
+ninja closedloop_tests    # 13 closed-loop tests (32+ simulated flights)
 ```
 
 All three run automatically in GitHub Actions CI on every push.
@@ -22,9 +22,9 @@ Tests compile with the host C compiler using `-DUNIT_TEST`. Source files use `#i
 test/
   mocks.h              Mock declarations (GPIO, I2C, UART, LFS, time)
   mocks.c              Mock implementations (pressure sensor, pyro, UART capture)
-  test_flight_states.c  27 unit tests
-  test_integration.c    11 integration tests
-  test_closedloop.c     9 closed-loop simulation tests
+  test_flight_states.c  39 unit tests
+  test_integration.c    12 integration tests
+  test_closedloop.c     13 closed-loop simulation tests
 test_data/
   open_rocket_export.csv  OpenRocket simulation (228 points, 16s flight, 165ft peak)
 ```
@@ -112,7 +112,7 @@ Simulates a complete flight using OpenRocket trajectory data at 1ms resolution.
 | state_timing | Ascent <3s, descent <6s, landed after 12s |
 | flight_duration | Total flight ~15 seconds |
 
-## Closed-Loop Simulation Tests (test_closedloop.c) — 9 tests, 28 flights
+## Closed-Loop Simulation Tests (test_closedloop.c) — 13 tests, 32+ flights
 
 Full physics simulation with pyro deployment feedback. When the firmware fires a pyro, the physics model deploys the corresponding chute, changing the descent rate.
 
@@ -163,6 +163,10 @@ Full physics simulation with pyro deployment feedback. When the firmware fires a
 | test_fallen_agl | 4 | FALLEN+AGL at all altitudes |
 | test_speed_agl | 4 | SPEED+AGL at all altitudes |
 | test_chute_slows_descent | 2 | With chutes takes longer than ballistic |
+| test_no_fire_without_continuity | 1 | No pyro fires when continuity is open (PYR-SAFE-01) |
+| test_no_simultaneous_fire | 1 | Both channels never fire at the same time (PYR-SAFE-02) |
+| test_no_fire_during_ascent | 1 | No pyro fires before apogee (SYS-DEPLOY-03) |
+| test_overcurrent_detection | 1 | FLAG pin fault logged during fire (PYR-FAULT-02) |
 | test_karman_apogee | 1 | Apogee within 20km of 100km target |
 
 Each flight verifies: full state sequence, drogue fires, data log, telemetry. Medium+ flights also verify main fires and drogue-before-main ordering (except Karman where both fire near apogee).

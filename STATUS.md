@@ -43,8 +43,15 @@
 - CLI physics driver (sim/sim_cli.c)
 - Browser simulation (docs/sim.html) with Web Audio buzzer
 
-### Testing (59 C + 22 web)
-- 39 unit, 11 integration, 9 closed-loop (28 flights)
+### Pyro Fault Detection
+- AP2192 FLAG pin monitoring (GPIO 17/18, active-low with pull-ups)
+- Post-fire continuity verification (ADC re-check 500ms after fire)
+- Fault events logged to flight buffer (EVT_PYRO1_FAULT, EVT_PYRO2_FAULT, EVT_PYRO1_NOPEN, EVT_PYRO2_NOPEN)
+- Beep codes 2-3/2-4 (P1 fault/verify) and 3-3/3-4 (P2 fault/verify)
+
+### Testing (64 C + 22 web)
+- 39 unit, 12 integration, 13 closed-loop (32+ flights)
+- 4 safety-critical closed-loop tests (no-fire-without-continuity, no-simultaneous-fire, no-fire-during-ascent, overcurrent-fault-detection)
 - 22 Playwright web UI tests (3 mock server modes)
 - cppcheck/MISRA, clang-format, pmccabe in CI
 - Requirements traced to integration tests (TRACEABILITY.md)
@@ -59,7 +66,5 @@
 - [ ] Parallel HTTP connections (6+) can drop
 
 ## ❌ Not Implemented
-- [ ] PYR-FAULT-02: Overcurrent detection (FLAG pins)
-- [ ] PYR-FAULT-03: Overcurrent indication to user
-- [ ] PYR-VERIFY-01: Post-fire continuity verification
 - [ ] Progressive in-flight CSV logging
+- [ ] Test mode (GPIO 8 jumper ground test sequence)

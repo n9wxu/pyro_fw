@@ -24,7 +24,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | UN-1 | Deploy recovery devices safely | All closed-loop tests | ✅ |
 | SYS-DEPLOY-01 | Fire pyros at configurable events | Closed-loop: all 7 config suites | ✅ |
 | SYS-DEPLOY-02 | Two independent channels | Closed-loop: both channels fire in all suites | ✅ |
-| SYS-DEPLOY-03 | No firing before leaving rail | — | ⚠️ |
+| SYS-DEPLOY-03 | No firing before leaving rail | Closed-loop: test_SYS_DEPLOY_03_no_fire_during_ascent | ✅ |
 | FLT-PHASE-01 | Detect launch | Integration: test_FLT_BOOT_01_all_states | ✅ |
 | FLT-PHASE-02 | Detect apogee | Integration: test_FLT_APO_01_detected | ✅ |
 | FLT-PHASE-03 | Detect landing | Integration: test_FLT_LAND_04_duration | ✅ |
@@ -32,8 +32,8 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-MODE-02 | AGL mode | Closed-loop: test_PYR_MODE_02_delay_agl, test_PYR_MODE_02_agl_agl | ✅ |
 | PYR-MODE-03 | FALLEN mode | Closed-loop: test_PYR_MODE_03_delay_fallen, test_PYR_MODE_03_fallen_agl | ✅ |
 | PYR-MODE-04 | SPEED mode | Closed-loop: test_PYR_MODE_04_delay_speed, test_PYR_MODE_04_speed_agl | ✅ |
-| PYR-SAFE-01 | No fire without continuity | — | ⚠️ |
-| PYR-SAFE-02 | No simultaneous fire | — | ⚠️ |
+| PYR-SAFE-01 | No fire without continuity | Closed-loop: test_PYR_SAFE_01_no_fire_without_continuity | ✅ |
+| PYR-SAFE-02 | No simultaneous fire | Closed-loop: test_PYR_SAFE_02_no_simultaneous_fire | ✅ |
 | PYR-SAFE-03 | Single fire per channel | Closed-loop: verified by fire_count | ✅ |
 | PYR-SAFE-04 | No fire before apogee | Closed-loop: drogue fires at/after apogee | ✅ |
 | FLT-LAUNCH-01 | Transition at >10m | Integration: test_FLT_BOOT_01_all_states | ✅ |
@@ -127,10 +127,10 @@ Verify web interface behavior against mock server in 3 device modes.
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| PYR-FAULT-01 | Disable at >1.5A | N/A (hardware) | ✅ HW |
-| PYR-FAULT-02 | Detect overcurrent | — | ❌ |
-| PYR-FAULT-03 | Indicate overcurrent | — | ❌ |
-| PYR-VERIFY-01 | Post-fire verification | — | ❌ |
+| PYR-FAULT-01 | Disable at >1.5A | N/A (hardware — AP2192) | ✅ HW |
+| PYR-FAULT-02 | Detect overcurrent | Closed-loop: test_PYR_FAULT_02_overcurrent_detection | ✅ |
+| PYR-FAULT-03 | Indicate overcurrent | Beep codes 2-3/3-3 + flight buffer events | ✅ |
+| PYR-VERIFY-01 | Post-fire verification | check_post_fire_verify() + beep codes 2-4/3-4 | ✅ |
 
 ## 8. Web Interface & Network
 
@@ -180,17 +180,14 @@ Verify web interface behavior against mock server in 3 device modes.
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by integration/closed-loop/web test | 74 |
-| ⚠️ Not directly verified (needs integration test or hardware) | 28 |
-| ❌ Not implemented | 3 |
+| ✅ Verified by integration/closed-loop/web test | 81 |
+| ⚠️ Not directly verified (needs integration test or hardware) | 22 |
+| ❌ Not implemented | 0 |
 | ✅ HW (hardware satisfies) | 1 |
 
-### Critical gaps needing integration tests:
-1. **PYR-SAFE-01**: No fire without continuity — add closed-loop flight with bad continuity
-2. **PYR-SAFE-02**: No simultaneous fire — add closed-loop flight verifying fire_count timing
-3. **PYR-REFIRE-01**: Re-fire logic — add closed-loop flight with failed first deployment
-4. **SYS-DEPLOY-03**: No firing before rail departure — add integration test with low-altitude noise
-
-### Not implemented:
-5. **PYR-FAULT-02/03**: Overcurrent detection and indication
-6. **PYR-VERIFY-01**: Post-fire continuity verification
+### Remaining gaps needing integration tests:
+1. **PYR-REFIRE-01**: Re-fire logic — add closed-loop flight with failed first deployment
+2. **FLT-LAUNCH-03**: Launch time backdating verification
+3. **FLT-APO-04**: No apogee before armed — explicit test
+4. **FLT-ASC-03/06**: Thrust phase detection + no arm above 10 m/s
+5. **PYR-ALT-01/02**: Altitude clamp and warning beep verification

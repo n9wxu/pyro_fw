@@ -45,6 +45,7 @@ Flight logic files (`flight_states.c`, `telemetry.c`, `buzzer.c`) contain zero p
 | `hal_time_ms()` | Current time |
 | `hal_pressure_init/read()` | Pressure sensor |
 | `hal_pyro_init/check/fire/update()` | Pyro channels |
+| `hal_pyro_fault()` | AP2192 FLAG pin fault detection |
 | `hal_buzzer_init/tone_on/tone_off()` | Buzzer |
 | `hal_telemetry_send()` | UART output |
 | `hal_fs_open/read/write/close()` | Filesystem |
@@ -106,8 +107,8 @@ See `sim/sim_cli.c` and `docs/physics.js`. Standard atmosphere pressure, exponen
 
 ### Testing
 - 39 unit tests (implementation correctness)
-- 11 integration tests (OpenRocket trajectory)
-- 9 closed-loop tests (28 flights, 7 configs × 4 altitudes)
+- 12 integration tests (OpenRocket trajectory)
+- 13 closed-loop tests (32+ flights, 7 configs × 4 altitudes + 4 safety tests)
 - 22 Playwright web UI tests (3 mock server modes)
 - Requirements traced to integration/closed-loop tests (see TRACEABILITY.md)
 - cppcheck with MISRA addon, clang-format, pmccabe complexity checks in CI
