@@ -459,8 +459,17 @@
                 return { status: 201, body: 'OK', contentType: 'text/plain' };
             if (path === '/api/reboot' && method === 'POST')
                 return { body: 'Rebooting', contentType: 'text/plain' };
-            if (path === '/api/flight.csv' && method === 'GET')
-                return { body: 'time_ms,pressure_pa,altitude_cm,state,thrust,event\n', contentType: 'text/csv' };
+            if (path === '/api/flight.csv' && method === 'GET') {
+                var csv = 'time_ms,pressure_pa,altitude_cm,state,thrust,event\n';
+                graphData.forEach(function (p) {
+                    var alt_cm = Math.round(p.alt * 100);
+                    var pa = Math.round(standardAtmospherePa(p.alt));
+                    var st = 0;
+                    if (p.alt > 1 && p.t > (launchTime || 0)) st = 5;
+                    csv += p.t + ',' + pa + ',' + alt_cm + ',' + st + ',0,\n';
+                });
+                return { body: csv, contentType: 'text/csv' };
+            }
             return { status: 404, body: 'Not found', contentType: 'text/plain' };
         }
 

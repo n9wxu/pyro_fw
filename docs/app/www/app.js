@@ -251,7 +251,6 @@ var flightEvents = {};
 var flightLoaded = false;
 
 function loadFlightData() {
-  if (flightLoaded) return;
   fetch('/api/flight.csv').then(function(r){return r.text()}).then(function(csv) {
     flightData = [];
     flightEvents = {};
