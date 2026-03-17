@@ -590,6 +590,7 @@
 
         /* --- Full WASM closed-loop mode --- */
         function simStepWasm(stepsPerFrame) {
+            var buzOnCount = 0, buzOffCount = 0;
             for (var s = 0; s < stepsPerFrame; s++) {
                 simTime++;
                 if (launched) {
@@ -605,13 +606,16 @@
                 pyro._sim_clear_pyro_firing();
                 pyro._sim_set_pressure(physics.pressurePa());
                 pyro._sim_flight_tick(simTime);
+                /* Sample buzzer every tick to avoid aliasing at high speeds */
+                if (pyro._sim_get_buzzer_state()) buzOnCount++; else buzOffCount++;
             }
 
             var state = pyro._sim_flight_state();
             var alt_cm = pyro._sim_flight_altitude_cm();
             var max_cm = pyro._sim_flight_max_alt_cm();
             var spd_cms = pyro._sim_flight_vspeed_cms();
-            var buz = pyro._sim_get_buzzer_state();
+            /* Buzzer: play only if ON for majority of ticks this frame */
+            var buz = (buzOnCount > buzOffCount) ? 1 : 0;
 
             if (state !== prevState) {
                 var name = STATE_NAMES[state] || '?';
@@ -641,6 +645,8 @@
             }
             if (landedTime > 0 && (simTime - landedTime) >= POST_LAND_DWELL_MS) {
                 log('=== Flight complete. Apogee: ' + (max_cm / 30.48).toFixed(0) + ' ft ===');
+                buzzerAudio.stop();
+                document.getElementById('buzzer').className = 'buzzer-off';
                 clearInterval(simTimer); simTimer = null;
                 setFlightUI(false);
             }
