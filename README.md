@@ -4,8 +4,9 @@ Firmware for the Pyro MK1B Rocket Flight Computer
 **[🚀 Try the web interface — no hardware needed](https://n9wxu.github.io/pyro_fw/)**
 
 ## Features
-- **Dual Pyrotechnic Control** - AP2192 power switches with fault detection
+- **Dual Pyrotechnic Control** - AP2192 power switches with overcurrent detection
 - **Four Firing Modes** - Fallen distance, AGL altitude, descent speed, timed delay
+- **Fault Detection** - Overcurrent monitoring and post-fire verification
 - **Flight Data Logging** - 10Hz ring buffer (4096 samples)
 - **Real-time Telemetry** - $PYRO NMEA format via UART, 10Hz in flight
 - **Pressure Sensing** - MS5607-02BA03 or BMP280 (auto-detected)
@@ -13,7 +14,7 @@ Firmware for the Pyro MK1B Rocket Flight Computer
 - **Continuity Checking** - ADC oversampling for pre-flight verification
 - **Web Interface** - Live dashboard via USB network (192.168.7.1)
 - **OTA Firmware Updates** - A/B bootloader with automatic rollback
-- **Test Mode** - GPIO 8 jumper for ground pyro testing (planned)
+- **WASM Simulation** - Full flight computer runs in browser with physics engine
 - **Status Beep Codes** - Field-diagnosable error reporting
 - **Altitude Beep-out** - Max altitude announced after landing (m/ft/ft100)
 - **Configurable Deployment** - INI file configuration via USB or web

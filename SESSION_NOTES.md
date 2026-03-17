@@ -102,3 +102,31 @@
 - Self-hosted GitHub Actions runners
 - Flash → test → OTA → config cycle
 - Execute next week
+
+## March 9-17 (v1.5.0 work, separate session)
+
+### Safety Tests Added
+- test_PYR_SAFE_01_no_fire_without_continuity
+- test_PYR_SAFE_02_no_simultaneous_fire
+- test_SYS_DEPLOY_03_no_fire_during_ascent
+- test_PYR_FAULT_02_overcurrent_detection
+
+### Pyro Fault Detection Implemented
+- hal_pyro_fault() reads AP2192 FLAG pins (GPIO 17/18)
+- Post-fire continuity verification (ADC re-check 500ms after fire)
+- EVT_PYRO1_FAULT, EVT_PYRO2_FAULT, EVT_PYRO1_NOPEN, EVT_PYRO2_NOPEN events
+- Beep codes 2-3/2-4/3-3/3-4
+
+### Simulation Library
+- Physics engine extracted to sim/physics.c (shared between CLI and WASM)
+- sim/README.md and sim/INTEGRATION.md documentation
+- WASM rebuilt with 500ms filter time constant
+- Buzzer majority-vote fix for 10x speed
+- Flight time display fix (counts from launch, not boot)
+- Synchronous WASM loading fix
+- Physics-only fallback mode + 10s post-landing dwell
+
+### Test Count: 64 C + 22 web
+- 39 unit, 12 integration, 13 closed-loop
+
+### Released v1.5.0

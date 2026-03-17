@@ -44,13 +44,19 @@ Flight logic files (`flight_states.c`, `telemetry.c`, `buzzer.c`) contain zero p
 |---|---|
 | `hal_time_ms()` | Current time |
 | `hal_pressure_init/read()` | Pressure sensor |
-| `hal_pyro_init/check/fire/update()` | Pyro channels |
-| `hal_pyro_fault()` | AP2192 FLAG pin fault detection |
+| `hal_pyro_init/check/fire/update/fault()` | Pyro channels |
 | `hal_buzzer_init/tone_on/tone_off()` | Buzzer |
 | `hal_telemetry_send()` | UART output |
 | `hal_fs_open/read/write/close()` | Filesystem |
 
 Three implementations: `hal_hardware.c` (Pico), `hal_test.c` (mocks), `hal_sim.c` (simulation).
+
+### Pyro Fault Detection
+- `hal_pyro_fault(channel)` reads AP2192 FLAG pins (GPIO 17/18, active-low with pull-ups)
+- Post-fire continuity verification: ADC re-check 500ms after fire
+- Fault events: EVT_PYRO1_FAULT, EVT_PYRO2_FAULT (overcurrent during fire)
+- Verify events: EVT_PYRO1_NOPEN, EVT_PYRO2_NOPEN (pyro didn't open after fire)
+- Beep codes: 2-3/3-3 (fault), 2-4/3-4 (verify fail)
 
 ### Key Source Files
 | File | Purpose |
@@ -64,6 +70,7 @@ Three implementations: `hal_hardware.c` (Pico), `hal_test.c` (mocks), `hal_sim.c
 | `src/main_hardware.c` | Hardware main loop |
 | `sim/main_sim.c` | Simulation black box (WASM target) |
 | `sim/hal_sim.c` | Simulation HAL |
+| `sim/physics.c` | Shared physics engine |
 | `sim/sim_cli.c` | CLI physics driver |
 
 ### Flash Layout (2MB)
@@ -83,7 +90,7 @@ Three implementations: `hal_hardware.c` (Pico), `hal_test.c` (mocks), `hal_sim.c
 | POST | `/api/config` | Write config |
 | POST | `/api/reboot` | Restart device |
 | POST | `/api/ota` | Firmware update |
-| GET | `/api/flight.csv` | Flight data CSV |
+| GET | `/api/flight.csv` | Flight data CSV from littlefs |
 
 ### Telemetry ($PYRO NMEA)
 ```
@@ -93,22 +100,19 @@ $PYRO,seq,state,thrust,alt_cm,vel_cms,maxalt_cm,press_pa,time_ms,flags,p1adc,p2a
 
 ### Buzzer
 - **Startup:** 10 chirps → status code × 2 → stop
-- **Status codes:** 1-1 good, 2-1 P1 open, 4-3 config range, etc.
+- **Status codes:** 1-1 good, 2-1/2-2 P1 open/short, 2-3/2-4 P1 fault/verify, 3-1/3-2 P2 open/short, 3-3/3-4 P2 fault/verify, 4-3 config range
 - **Landing:** Altitude beep-out in configured units, repeats forever
 
 ### Altitude Limitations
-Linear barometric formula clamped at 8,000m. Above that:
-- Only AGL pyro mode works correctly
-- Apogee detection triggers early (ascending through 8,000m)
-- DELAY, SPEED, FALLEN modes unreliable
+Linear barometric formula clamped at 8,000m. Above that only AGL pyro mode works correctly. See REQUIREMENTS.md for full analysis.
 
-### Closed-Loop Flight Model
-See `sim/sim_cli.c` and `docs/physics.js`. Standard atmosphere pressure, exponential density scaling, binary-search burn time. Physics is completely separate from flight code.
+### Simulation
+The `sim/` directory contains a WASM-compilable flight computer black box and a shared physics engine. See `sim/README.md` for architecture and integration guide.
 
 ### Testing
-- 39 unit tests (implementation correctness)
-- 12 integration tests (OpenRocket trajectory)
-- 13 closed-loop tests (32+ flights, 7 configs × 4 altitudes + 4 safety tests)
+- 39 unit, 12 integration, 13 closed-loop = 64 C tests
 - 22 Playwright web UI tests (3 mock server modes)
-- Requirements traced to integration/closed-loop tests (see TRACEABILITY.md)
-- cppcheck with MISRA addon, clang-format, pmccabe complexity checks in CI
+- 4 safety-critical tests (no-fire-without-continuity, no-simultaneous-fire, no-fire-during-ascent, overcurrent)
+- Requirements traced to integration/closed-loop tests (TRACEABILITY.md)
+- cppcheck with MISRA addon, clang-format, pmccabe complexity in CI
+- See test/README.md for complete test plan
