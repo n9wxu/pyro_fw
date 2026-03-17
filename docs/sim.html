@@ -624,7 +624,7 @@
             document.getElementById('alt').textContent = (alt_cm / 30.48).toFixed(0) + ' ft (' + physics.alt_m.toFixed(1) + 'm actual)';
             document.getElementById('spd').textContent = (spd_cms / 30.48).toFixed(0) + ' ft/s';
             document.getElementById('maxalt').textContent = (max_cm / 30.48).toFixed(0) + ' ft';
-            document.getElementById('ftime').textContent = (simTime / 1000).toFixed(1) + 's';
+            document.getElementById('ftime').textContent = launched ? ((simTime - launchTime) / 1000).toFixed(1) + 's' : '—';
             document.getElementById('p1status').textContent = pyro._sim_flight_pyro1_fired() ? '🔥 FIRED' : 'Ready';
             document.getElementById('p2status').textContent = pyro._sim_flight_pyro2_fired() ? '🔥 FIRED' : 'Ready';
             document.getElementById('armed').textContent = pyro._sim_flight_armed() ? '⚠️ ARMED' : 'Safe';
@@ -679,7 +679,7 @@
             document.getElementById('alt').textContent = (alt_m * 3.28084).toFixed(0) + ' ft (' + alt_m.toFixed(1) + 'm)';
             document.getElementById('spd').textContent = (vel_ms * 3.28084).toFixed(0) + ' ft/s';
             document.getElementById('maxalt').textContent = (physMaxAlt * 3.28084).toFixed(0) + ' ft';
-            document.getElementById('ftime').textContent = (simTime / 1000).toFixed(1) + 's';
+            document.getElementById('ftime').textContent = launched ? ((simTime - launchTime) / 1000).toFixed(1) + 's' : '—';
             document.getElementById('p1status').textContent = '— (no WASM)';
             document.getElementById('p2status').textContent = '— (no WASM)';
             document.getElementById('armed').textContent = '— (no WASM)';
