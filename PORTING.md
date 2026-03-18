@@ -601,3 +601,104 @@ The web UI auto-detects the available transport:
 2. If `navigator.serial` available → offer WebSerial
 3. If `navigator.bluetooth` available → offer BLE
 4. Otherwise → try HTTP (on-device or Python bridge)
+
+## Future Planning
+
+This section evaluates future system capabilities against the v2.0 HAL
+interface to confirm they can be implemented without flight software changes
+and without new HAL functions.
+
+### Planned Future Capabilities
+
+1. **Shared serial bus** — multiple pyro boards on one UART, coordinated by a bus master
+2. **Self-discovery** — pyros identified by factory-unique ID, no user addressing
+3. **Ground station** — web UI manages N pyros, assigns roles, validates config
+4. **Telemetry radio** — SX1276/SX1278 on 433/915MHz, managed by radio module MCU
+5. **Multiplexed UART** — config, telemetry, and bus commands share one serial link
+6. **Safe fallback** — unconfigured or corrupted pyro reverts to delay-0 default
+7. **Topology change detection** — alert user when devices are added or removed
+
+### v2.0 HAL Compatibility Analysis
+
+Each future capability is mapped to existing v2.0 HAL functions. The flight
+software is unchanged — all new behavior lives in the HAL implementation
+or in external systems (bus master, ground station, radio module).
+
+| Future Capability | HAL Function Used | Flight Software Change | Notes |
+|---|---|---|---|
+| Shared serial bus | `hal_telemetry_send()` | None | HAL adds bus framing + address prefix to outbound messages |
+| Bus command handling | `hal_config_load/save()` | None | HAL's serial handler parses bus commands, updates config store |
+| Self-discovery | `hal_config_load()` | None | HAL reads MCU unique ID, includes in discovery response |
+| Unique device ID | `hal_config_load()` | None | UID is a config field populated by HAL from hardware |
+| Ground station UI | N/A (external) | None | Runs in browser, talks to bus master, not to flight software |
+| Telemetry radio | `hal_telemetry_send()` | None | HAL sends bytes to UART; radio module packetizes externally |
+| Multiplexed UART | `hal_telemetry_send()`, `hal_config_load/save()` | None | HAL demuxes inbound: config commands → config store, rest ignored |
+| Buzzer coordination | `hal_buzzer_play()` | None | HAL delays pattern start until bus master sends BUZZ command |
+| Safe fallback | `hal_config_load()` | None | HAL returns defaults when config is missing or corrupt |
+| Topology detection | N/A (external) | None | Bus master tracks discovery responses, alerts ground station |
+
+**Result: zero flight software changes, zero new HAL functions.**
+
+The v2.0 HAL interface is sufficient because:
+- `hal_telemetry_send()` is a raw byte transport — bus framing is a HAL concern
+- `hal_config_load/save()` is abstract storage — bus-delivered config is transparent
+- `hal_buzzer_play()` accepts a pattern — when to start is a HAL decision
+- The flight software never addresses other devices, never manages the bus, never knows about the radio
+
+### Bus Architecture
+
+```
+Ground Station (browser)
+  └── WebSerial or radio link
+        └── Bus Master (radio module MCU or USB adapter)
+              └── Shared UART (half-duplex)
+                    ├── Pyro #1 (uid: A3F7, role: drogue)
+                    ├── Pyro #2 (uid: 9C21, role: main)
+                    └── Pyro #3 (uid: E104, role: backup)
+```
+
+Each pyro is fully autonomous. The bus adds coordination but is never a dependency.
+
+### Discovery Protocol
+
+```
+Master → DISCOVER\n
+Pyro A → HELLO {"uid":"A3F7","name":"Drogue","role":"delay-0"}\n  (after random 0-50ms delay)
+Pyro B → HELLO {"uid":"9C21","name":"","role":"unconfigured"}\n
+Pyro C → HELLO {"uid":"E104","name":"","role":"unconfigured"}\n
+```
+
+The UID is derived from the MCU's hardware serial number (every MCU has one).
+No solder jumpers, no address configuration. The ground station UI shows
+discovered devices and guides the user to assign roles.
+
+### Safe Fallback Requirements
+
+- **SYS-SAFE-01**: An unconfigured pyro shall default to delay-0 (drogue at apogee).
+- **SYS-SAFE-02**: A pyro with corrupt configuration shall revert to the default.
+- **SYS-SAFE-03**: Each pyro shall fly its mission autonomously regardless of bus state.
+- **SYS-SAFE-04**: The ground station shall alert the user when device topology changes after configuration.
+- **SYS-SAFE-05**: The ground station shall refuse to arm until all devices are configured and validated.
+
+All safe fallback behavior is implemented in `hal_config_load()` (returns defaults
+on error) and in the ground station software (external to the pyro). The flight
+software always receives a valid `config_t` and flies accordingly.
+
+### Physical Interface
+
+Each pyro board exposes a single 4-pin connector:
+
+| Pin | Function |
+|---|---|
+| 1 | VCC (3.3-5V input) |
+| 2 | GND |
+| 3 | TX (pyro → bus) |
+| 4 | RX (bus → pyro) |
+
+This connector accepts:
+- Direct USB-serial adapter (config cable for single pyro)
+- Bus ribbon cable (daisy-chain multiple pyros to bus master)
+- Radio module (SX1276 + MCU, plugs into same connector)
+
+The pyro board has no USB connector, no radio, no bus transceiver.
+All external interfaces plug into the same 4-pin UART header.
