@@ -197,7 +197,152 @@ not flight computers.
 **If PIC is required:** Consider PIC32MX270F256B (32-bit, 256KB flash, 64KB RAM,
 USB, DMA) which meets all requirements comfortably.
 
-## Porting Checklist
+## Platform Variants
+
+The flight software is identical across all platforms — only the HAL
+implementation changes. This section defines three product variants
+and maps each HAL function to the platform-specific implementation.
+
+### Variant Summary
+
+| | MK1B Full | MK1B Lite | MK1B Backup |
+|---|---|---|---|
+| **MCU** | ESP32-C6 | STM32C011 + CH340E | ATtiny402 |
+| **Config** | WiFi web + USB | UART serial tool | Resistor-coded presets |
+| **Telemetry** | UART to radio | UART to radio | None |
+| **Data extraction** | WiFi or USB | UART dump | None (buzzer only) |
+| **Pyro channels** | 2 (AP2192) | 2 (AP2192) | 1 (MOSFET) |
+| **Buzzer** | Yes | Yes | Yes |
+| **OTA** | Yes (WiFi or USB) | Yes (UART bootloader) | No |
+| **BOM cost** | ~$4.90 | ~$3.70 | ~$2.30 |
+| **PCB size** | ~20×25mm | ~15×20mm | ~10×10mm |
+| **Use case** | Primary flight computer | Cost-optimized primary | Emergency backup |
+
+### HAL Mapping: MK1B Full (ESP32-C6)
+
+| HAL Function | Implementation |
+|---|---|
+| `hal_time_ms()` | `esp_timer_get_time() / 1000` |
+| `hal_sleep_until_event()` | `esp_light_sleep_start()`, wake on timer |
+| `hal_pressure_start()` | `gptimer` ISR triggers `i2c_master_transmit` into ping-pong buffers |
+| `hal_pressure_get_buffer()` | Return filled buffer, set by ISR flag |
+| `hal_pressure_release_buffer()` | Mark buffer available for ISR |
+| `hal_pyro_init()` | `gpio_config()` for EN, FLAG, common enable |
+| `hal_pyro_check()` | `adc_oneshot_read()` on 2 channels |
+| `hal_pyro_fire()` | `gpio_set_level()` on EN pin |
+| `hal_pyro_is_firing()` | Check fire timer state |
+| `hal_pyro_fault()` | `gpio_get_level()` on FLAG pin |
+| `hal_buzzer_play()` | Load pattern, `gptimer` ISR walks it |
+| `hal_buzzer_stop()` | Stop timer, GPIO low |
+| `hal_telemetry_send()` | `uart_write_bytes()` with TX DMA, priority queue |
+| `hal_log_header()` | Format header, write to SPIFFS/LittleFS |
+| `hal_log_sample()` | Append to RAM buffer, flush to flash when idle |
+| `hal_config_load()` | Read from NVS or SPIFFS, X-macro parser |
+| `hal_config_save()` | X-macro serializer, write to NVS or SPIFFS |
+| `hal_platform_init()` | WiFi AP init, HTTP server, USB init, UART init |
+
+**Notes:**
+- WiFi AP serves the web interface (same HTML/JS as current USB-ECM version)
+- USB provides fallback config/data path if WiFi unavailable
+- UART1 reserved for telemetry radio (SX1276, future)
+- LP core can run pressure sampling autonomously during main core sleep
+- ESP-IDF native OTA with automatic rollback
+
+### HAL Mapping: MK1B Lite (STM32C011 + CH340E)
+
+| HAL Function | Implementation |
+|---|---|
+| `hal_time_ms()` | `SysTick` counter |
+| `hal_sleep_until_event()` | `__WFE()`, wake on timer IRQ |
+| `hal_pressure_start()` | `TIM` ISR triggers I2C DMA read into ping-pong buffers |
+| `hal_pressure_get_buffer()` | Return filled buffer, set by DMA complete IRQ |
+| `hal_pressure_release_buffer()` | Mark buffer available |
+| `hal_pyro_init()` | `HAL_GPIO_Init()` for EN, FLAG, common enable |
+| `hal_pyro_check()` | `HAL_ADC_Start()` on 2 channels |
+| `hal_pyro_fire()` | `HAL_GPIO_WritePin()` on EN pin |
+| `hal_pyro_is_firing()` | Check fire timer state |
+| `hal_pyro_fault()` | `HAL_GPIO_ReadPin()` on FLAG pin |
+| `hal_buzzer_play()` | Load pattern, `TIM` ISR walks it |
+| `hal_buzzer_stop()` | Stop timer, GPIO low |
+| `hal_telemetry_send()` | `HAL_UART_Transmit_DMA()`, priority queue |
+| `hal_log_header()` | Format header, write to flash page |
+| `hal_log_sample()` | Append to RAM buffer, flush to flash page when idle |
+| `hal_config_load()` | Read from last flash page, X-macro parser |
+| `hal_config_save()` | X-macro serializer, erase + write flash page |
+| `hal_platform_init()` | UART init (CH340E provides USB-serial to PC) |
+
+**Notes:**
+- CH340E ($0.30, SOP-8) bridges UART to USB — PC sees a serial port
+- PC-side Python tool provides config UI over serial
+- Flight data downloaded via serial dump command
+- No web interface — config via `pyro_config.py` tool
+- UART2 reserved for telemetry radio
+- OTA via UART bootloader (STM32 built-in)
+
+### HAL Mapping: MK1B Backup (ATtiny402)
+
+| HAL Function | Implementation |
+|---|---|
+| `hal_time_ms()` | `TCB0` overflow counter |
+| `hal_sleep_until_event()` | `sleep_cpu()` (idle mode), wake on TCB0 |
+| `hal_pressure_start()` | `TCB0` ISR triggers TWI read into ping-pong buffers |
+| `hal_pressure_get_buffer()` | Return filled buffer, set by ISR flag |
+| `hal_pressure_release_buffer()` | Mark buffer available |
+| `hal_pyro_init()` | `PORTA.DIR` for fire pin |
+| `hal_pyro_check()` | `ADC0` read on fire pin (before arming) |
+| `hal_pyro_fire()` | `PORTA.OUT` set fire pin |
+| `hal_pyro_is_firing()` | Check fire timer state |
+| `hal_pyro_fault()` | Always returns false (no FLAG pin) |
+| `hal_buzzer_play()` | Load pattern, `TCB0` ISR walks it (shared with sampling) |
+| `hal_buzzer_stop()` | Clear pattern, GPIO low |
+| `hal_telemetry_send()` | No-op (no telemetry on backup) |
+| `hal_log_header()` | No-op (no data logging on backup) |
+| `hal_log_sample()` | No-op (no data logging on backup) |
+| `hal_config_load()` | Read ADC on config pin, map resistor value to preset config |
+| `hal_config_save()` | No-op (resistor-coded, not writable) |
+| `hal_platform_init()` | Pin directions, ADC init, timer init |
+
+**Notes:**
+- Single pyro channel via N-MOSFET (no AP2192 — cost/size reduction)
+- Continuity check shares the fire pin: ADC read before arming, GPIO drive after
+- Config via resistor voltage divider on one ADC pin:
+
+| Resistor to GND | ADC | Preset |
+|---|---|---|
+| Open | 1023 | Drogue at apogee (delay 0s) |
+| 10kΩ | ~512 | Main at 500ft AGL |
+| 4.7kΩ | ~330 | Main at 300ft AGL |
+| Short | 0 | Delay 3 seconds |
+
+- Buzzer and pressure sampling share the timer ISR (buzzer runs between samples)
+- No telemetry, no data logging, no OTA — pure safety backup
+- 256 bytes RAM, 4KB flash — enough for v2.0 flight software core
+- SOT-23-6 package (2.9 × 1.6mm) — smallest possible flight computer
+
+### Flight Software Compatibility
+
+The same `flight_states.c`, `telemetry.c`, and `buzzer.c` compile for all
+three platforms. The HAL no-ops on the backup variant simply discard
+telemetry and log calls. The flight software does not know which platform
+it runs on — it processes pressure buffers, detects events, fires pyros,
+and emits telemetry identically on all three.
+
+| Flight software function | Full | Lite | Backup |
+|---|---|---|---|
+| `flight_process_samples()` | ✅ | ✅ | ✅ |
+| `flight_init()` | ✅ | ✅ | ✅ |
+| Pressure filter | ✅ | ✅ | ✅ |
+| Apogee detection | ✅ | ✅ | ✅ |
+| Pyro firing (all 4 modes) | ✅ | ✅ | ✅ |
+| Telemetry events | ✅ sent | ✅ sent | Discarded by HAL |
+| Data logging | ✅ to flash | ✅ to flash | Discarded by HAL |
+| Buzzer patterns | ✅ | ✅ | ✅ |
+| Config loading | WiFi/USB | Serial | Resistor preset |
+
+Tests run against `hal_test.c` which mocks all HAL functions. Since the
+flight software is identical, passing the test suite on the host verifies
+correctness for all three platforms. Platform-specific testing validates
+only the HAL implementation on real hardware.
 
 1. **Verify pin count:** ≥12 GPIO (≥14 with USB)
 2. **Verify RAM:** ≥2KB without USB, ≥16KB with USB
