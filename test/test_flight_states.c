@@ -75,12 +75,11 @@ void test_buf_add(void) {
 
 void test_DAT_01_buf_wraps(void) {
     flight_context_t ctx = {0};
-    for (int i = 0; i < 4096; i++)
+    for (int i = 0; i < FLIGHT_BUF_SIZE; i++)
         buf_add(&ctx, i, 101325, 0, PAD_IDLE);
-    TEST_ASSERT_EQUAL(4096, ctx.buf_count);
-    /* One more should overwrite oldest */
+    TEST_ASSERT_EQUAL(FLIGHT_BUF_SIZE, ctx.buf_count);
     buf_add(&ctx, 9999, 101325, 0, PAD_IDLE);
-    TEST_ASSERT_EQUAL(4096, ctx.buf_count);
+    TEST_ASSERT_EQUAL(FLIGHT_BUF_SIZE, ctx.buf_count);
 }
 
 /* ── Boot state tests ─────────────────────────────────────────────── */

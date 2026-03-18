@@ -87,8 +87,14 @@ typedef struct {
 } config_t;
 
 // Flight context
+/* Ring buffer size — only needs to hold samples during ASCENT/pre-pyro
+ * when flash writes are blocked. The incremental CSV logger drains to
+ * flash during PAD_IDLE and post-pyro DESCENT.
+ * 64 entries × 16 bytes = 1KB. Holds ~6s at 10Hz ASCENT rate. */
+#define FLIGHT_BUF_SIZE 64
+
 typedef struct flight_context_t {
-    flight_sample_t flight_buffer[4096];
+    flight_sample_t flight_buffer[FLIGHT_BUF_SIZE];
     uint16_t buf_head;
     uint16_t buf_tail;
     uint16_t buf_count;

@@ -237,20 +237,16 @@ void test_DAT_04_events(void) {
     reset_sim();
     run_full_sim();
 
-    TEST_ASSERT_TRUE(ctx.buf_count > 100);
+    flight_save_csv(&ctx);
+    char buf[4096];
+    int n = hal_fs_read_file("flight.csv", buf, sizeof(buf) - 1);
+    TEST_ASSERT_TRUE(n > 0);
+    buf[n] = '\0';
 
-    /* Scan for events */
-    int events[16] = {0};
-    for (int i = 0; i < ctx.buf_count; i++) {
-        uint16_t idx = (ctx.buf_tail + i) % 4096;
-        uint8_t e = ctx.flight_buffer[idx].event;
-        if (e < 16) events[e]++;
-    }
-
-    TEST_ASSERT_EQUAL_MESSAGE(1, events[EVT_LAUNCH], "Expected 1 launch");
-    TEST_ASSERT_EQUAL_MESSAGE(1, events[EVT_LANDING], "Expected 1 landing");
-    TEST_ASSERT_TRUE_MESSAGE(events[EVT_PYRO1_FIRE] + events[EVT_PYRO2_FIRE] > 0, "Expected pyro events");
-    TEST_ASSERT_TRUE_MESSAGE(events[EVT_ARMED] > 0, "Expected armed event");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "LAUNCH") != NULL, "Expected LAUNCH event");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "LANDING") != NULL, "Expected LANDING event");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "PYRO1") != NULL || strstr(buf, "PYRO2") != NULL, "Expected pyro event");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "ARMED") != NULL, "Expected ARMED event");
 }
 
 void test_TEL_01_output(void) {

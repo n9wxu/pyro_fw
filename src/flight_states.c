@@ -16,8 +16,8 @@
 static void csv_track_sample(flight_context_t *ctx);
 
 void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t altitude, uint8_t st) {
-    if (ctx->buf_count == 4096) {
-        ctx->buf_tail = (ctx->buf_tail + 1) % 4096;
+    if (ctx->buf_count == FLIGHT_BUF_SIZE) {
+        ctx->buf_tail = (ctx->buf_tail + 1) % FLIGHT_BUF_SIZE;
         ctx->buf_count--;
     }
     flight_sample_t *s = &ctx->flight_buffer[ctx->buf_head];
@@ -28,13 +28,13 @@ void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t 
     s->under_thrust = 0;
     s->event = EVT_NONE;
     s->event_data = 0;
-    ctx->buf_head = (ctx->buf_head + 1) % 4096;
+    ctx->buf_head = (ctx->buf_head + 1) % FLIGHT_BUF_SIZE;
     ctx->buf_count++;
     csv_track_sample(ctx);
 }
 
 static void buf_tag_event(flight_context_t *ctx, uint8_t event) { /* [DAT-03] */
-    ctx->flight_buffer[(ctx->buf_head - 1 + 4096) % 4096].event = event;
+    ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE].event = event;
 }
 
 /* ── Pressure processing ──────────────────────────────────────────── */
@@ -366,7 +366,7 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
     ctx->under_thrust = ctx->vertical_speed_cms > ctx->prev_vertical_speed_cms;
 
     buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, altitude, ASCENT);
-    ctx->flight_buffer[(ctx->buf_head - 1 + 4096) % 4096].under_thrust = ctx->under_thrust ? 1 : 0;
+    ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE].under_thrust = ctx->under_thrust ? 1 : 0;
 
     if (altitude > ctx->max_altitude)
         ctx->max_altitude = altitude;
@@ -451,7 +451,7 @@ static void action_launch(flight_context_t *ctx, uint32_t now) {
     buzzer_stop();
     ctx->launch_time = now;
     for (int i = ctx->buf_count - 1; i >= 0; i--) {
-        uint16_t idx = (ctx->buf_head - 1 - i + 4096) % 4096;
+        uint16_t idx = (ctx->buf_head - 1 - i + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE;
         if (ctx->flight_buffer[idx].altitude_cm <= 50) {
             ctx->launch_time = now - (ctx->buf_count - 1 - i) * 10;
             break;
@@ -596,7 +596,7 @@ int flight_save_csv(flight_context_t *ctx) {
         n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%s\n", (unsigned long)s->time_ms, (long)s->pressure_pa,
                      (long)s->altitude_cm, s->state, s->under_thrust, event_name(s->event));
         hal_fs_write(f, line, n);
-        idx = (idx + 1) % 4096;
+        idx = (idx + 1) % FLIGHT_BUF_SIZE;
     }
     hal_fs_close(f);
     return 0;
@@ -662,7 +662,7 @@ int csv_flush_step(flight_context_t *ctx, int max_lines) {
                          (long)s->altitude_cm, s->state, s->under_thrust,
                          event_name(s->event));
         hal_fs_write(f, line, n);
-        ctx->csv_write_idx = (ctx->csv_write_idx + 1) % 4096;
+        ctx->csv_write_idx = (ctx->csv_write_idx + 1) % FLIGHT_BUF_SIZE;
         ctx->csv_pending--;
         written++;
     }

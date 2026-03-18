@@ -312,3 +312,43 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **TST-07**: Web UI tests shall verify status display, configuration editing, and firmware update flows. ← SYS-WEB-01
 - **TST-08**: All tests shall run in CI on every push to main.
 - **TST-09**: Tests shall be traceable to requirements.
+
+---
+
+## 13. Power Management (v2.0 — planned)
+
+### L1 User Need
+- **UN-11**: The user needs the flight computer to operate on battery for extended pad time.
+
+### L2 System Requirements
+- **SYS-PWR-01**: The system shall minimize CPU active time to conserve battery. ← UN-11
+- **SYS-PWR-02**: The system shall perform all I/O autonomously without CPU involvement. ← SYS-PWR-01
+
+### L3 Subsystem Requirements
+- **PWR-SAMPLE-01**: Pressure sampling shall run autonomously at 50Hz via ISR, DMA, or second core. ← SYS-PWR-02
+- **PWR-SAMPLE-02**: Pressure data shall be delivered to the flight software in batches of 5 samples (100ms). ← PWR-SAMPLE-01
+- **PWR-TELEM-01**: Telemetry transmission shall be asynchronous via ISR or DMA. ← SYS-PWR-02
+- **PWR-BUZZ-01**: Buzzer patterns shall be played autonomously by a timer ISR. ← SYS-PWR-02
+- **PWR-USB-01**: USB servicing shall run autonomously via timer ISR or second core. ← SYS-PWR-02
+- **PWR-SLEEP-01**: The CPU shall sleep between pressure buffer delivery events. ← SYS-PWR-01
+- **PWR-LOG-01**: Data logging shall buffer in RAM and flush to flash only when the CPU is awake. ← SYS-PWR-02
+
+## 14. Telemetry Formatting (v2.0 — planned)
+
+### L2 System Requirements
+- **SYS-TELEM-FMT-01**: The telemetry format shall be configurable without changing flight software. ← UN-4
+
+### L3 Subsystem Requirements
+- **TELEM-FMT-01**: A telemetry formatter module shall convert flight events to protocol-specific messages. ← SYS-TELEM-FMT-01
+- **TELEM-FMT-02**: The formatter shall support event messages (apogee, pyro fire, landing) and periodic state messages. ← TELEM-FMT-01
+- **TELEM-FMT-03**: The HAL telemetry transport shall be a raw byte interface with no protocol knowledge. ← TELEM-FMT-01
+
+## 15. Configuration System (v2.0 — planned)
+
+### L2 System Requirements
+- **SYS-CFG-04**: Adding a configuration field shall require changes to a single location. ← UN-4
+
+### L3 Subsystem Requirements
+- **CFG-TABLE-01**: All configuration fields shall be defined in a single table that generates the struct, parser, serializer, and defaults. ← SYS-CFG-04
+- **CFG-TABLE-02**: A round-trip test shall automatically verify every field survives serialize → parse. ← CFG-TABLE-01
+- **CFG-SUBSYS-01**: Each subsystem (telemetry, logging, buzzer) shall have configurable parameters. ← UN-4
