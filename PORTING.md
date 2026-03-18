@@ -220,3 +220,84 @@ USB, DMA) which meets all requirements comfortably.
 | STM32F072 | 16 KB | 128 KB | ✅ | ❌ | ✅ | ⚠️ No web, tight RAM |
 | PIC16F1455 | 1 KB | 14 KB | ✅ | ❌ | ❌ | ❌ Insufficient |
 | PIC32MX270F256B | 64 KB | 256 KB | ✅ | ✅ | ✅ | ✅ If PIC required |
+
+## Recommended Platform: ESP32-C3
+
+The ESP32-C3 module replaces the MCU and the USB interface with WiFi,
+while keeping a UART free for a future telemetry radio (e.g., SX1276).
+
+| Parameter | ESP32-C3-MINI-1 |
+|---|---|
+| Core | RISC-V, 160MHz |
+| RAM | 400 KB |
+| Flash | 4 MB (on-module) |
+| WiFi | 802.11 b/g/n (pad-side config and data extraction) |
+| BLE | 5.0 (pad-side alternative) |
+| GPIO | 22 |
+| ADC | 12-bit, 6 channels |
+| I2C | 1 |
+| UART | 2 (one for telemetry radio, one for debug) |
+| SPI | 3 (for future SX1276 telemetry radio) |
+| DMA | 3 channels |
+| Package | 13 × 16.6mm module (includes antenna, flash, crystal) |
+| Price | ~$1.50 qty 100 |
+
+### Roles
+
+| Function | Mechanism |
+|---|---|
+| Flight computer | v2.0 flight software via HAL |
+| Pad-side config | WiFi AP, phone connects, web interface |
+| Pad-side data extraction | WiFi, download CSV from phone browser |
+| Telemetry radio (future) | UART to SX1276/SX1278 module (433/915MHz, out of scope) |
+
+### BOM
+
+| Component | Price (qty 100) |
+|---|---|
+| ESP32-C3-MINI-1 | $1.50 |
+| MS5607 or BMP280 | $2.00 |
+| AP2192 | $0.40 |
+| 3.3V regulator | $0.15 |
+| Passives | $0.05 |
+| Buzzer | $0.30 |
+| **Total (no radio)** | **$4.40** |
+| SX1276 module (future) | ~$3.00 |
+| **Total (with radio)** | **~$7.40** |
+
+### Advantages over RP2040
+
+- WiFi replaces USB — no cable on the pad, configure from phone
+- Module includes flash, crystal, antenna — fewer external parts
+- UART free for telemetry radio
+- SPI free for telemetry radio
+- 400KB RAM — comfortable for WiFi stack + flight software
+- 4MB flash — room for web files, flight data, OTA
+- Single module replaces MCU + flash + USB connector + ESD protection
+
+### Pad Workflow
+
+1. Power on rocket on pad
+2. Buzzer plays status beeps
+3. Connect phone to "PyroMK1B" WiFi network
+4. Open web interface in phone browser
+5. Verify config, check continuity, review status
+6. Disconnect phone, clear the pad
+7. Launch
+
+### HAL Implementation Notes
+
+- Pressure: ESP-IDF `i2c_master` with timer ISR into ping-pong buffers
+- Telemetry: UART DMA TX to radio connector
+- Buzzer: `gptimer` ISR walks pattern buffer
+- Web interface: ESP-IDF `httpd` over WiFi AP (replaces lwIP+TinyUSB)
+- Config: NVS (non-volatile storage) or SPIFFS/LittleFS
+- Sleep: `esp_light_sleep_start()` between buffer events
+- OTA: ESP-IDF native OTA with rollback (replaces pico_fota_bootloader)
+
+### Notes
+
+- WiFi and BLE are for pad-side use only (range: ~30m)
+- Long-range telemetry requires a separate radio (SX1276/SX1278, 433/915MHz)
+- The telemetry radio is out of scope for this document
+- The UART telemetry interface in the HAL supports any future radio module
