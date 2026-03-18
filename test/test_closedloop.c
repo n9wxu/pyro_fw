@@ -604,6 +604,120 @@ void test_TST_05_karman_apogee(void) {
     TEST_ASSERT_INT_WITHIN(20000, 100000, (int)r.apogee_m);
 }
 
+/* ── XIP stall robustness test ────────────────────────────────────── */
+/* Simulates RP2040 flash write stalls (XIP disabled during erase+write).
+ * Each hal_fs_write / hal_fs_close advances mock_time_ms by stall_ms.
+ * The sim loop accounts for time jumps just like real hardware:
+ * the CPU stalls, misses sample windows, then resumes.
+ *
+ * This verifies that:
+ * - Pyros still fire correctly despite time jumps from flash writes
+ * - No flight state machine lockup from unexpected time advances
+ * - csv_flush_safe() correctly gates flash writes away from pyro timing
+ */
+void test_XIP_stall_pyro_timing(void) {
+    mock_reset_all();
+    /* Realistic RP2040 flash timing: page program ~2-5ms,
+     * sector erase + program ~50ms. Use 10ms as pessimistic
+     * per-operation average (write = page program, close = metadata
+     * commit which may trigger erase). */
+    mock_xip_stall_ms = 10;
+    mock_pyro.p1_good = true;
+    mock_pyro.p2_good = true;
+    mock_pyro.p1_adc = 50;
+    mock_pyro.p2_adc = 50;
+
+    config_t cfg = cfg_delay_agl();
+    flight_context_t ctx = {0};
+    ctx.config = cfg;
+    ctx.current_state = PAD_IDLE;
+    ctx.ground_pressure = (int32_t)GROUND_PA;
+
+    flight_profile_t prof = make_profile(ALT_HIGH);
+    physics_state_t ps = {0};
+    uint32_t step = 1;
+    uint32_t max_ms = 600000;
+    uint8_t prev_fires = 0;
+    bool p1_fired = false, p2_fired = false;
+    float p1_alt = 0, p2_alt = 0;
+    uint32_t stall_during_descent = 0;
+
+    uint32_t phys_t = 0; /* last physics time — tracks real elapsed time */
+
+    for (uint32_t t = 0; t <= max_ms; t += step) {
+        /* Check pyro fires */
+        if (mock_pyro.fire_count > prev_fires) {
+            uint8_t ch = mock_pyro.last_fire_channel;
+            if (ch == 1 && !ps.drogue_deployed) {
+                ps.drogue_deployed = true;
+                p1_fired = true;
+                p1_alt = ps.alt_m;
+            }
+            if (ch == 2 && !ps.main_deployed) {
+                ps.main_deployed = true;
+                p2_fired = true;
+                p2_alt = ps.alt_m;
+            }
+            prev_fires = mock_pyro.fire_count;
+        }
+
+        /* Physics: advance all missed ms since last step.
+         * On real hardware, the rocket keeps flying during XIP stalls —
+         * only the CPU stalls. When it resumes, the pressure sensor
+         * reads the current physical state. */
+        if (t >= PAD_DWELL_MS) {
+            uint32_t phys_start = (phys_t >= PAD_DWELL_MS) ? phys_t : PAD_DWELL_MS;
+            uint32_t steps_needed = t - phys_start;
+            for (uint32_t s = 0; s < steps_needed; s++) {
+                float ft = (float)(phys_start + s - PAD_DWELL_MS) / 1000.0f;
+                physics_step(&ps, ft, &prof);
+            }
+        }
+        phys_t = t;
+
+        /* Feed firmware — it sees the post-stall time and current physics */
+        mock_time_ms = t;
+        mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
+        mock_pyro.firing = false;
+
+        uint32_t stall_before = mock_xip_total_stall_ms;
+        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+
+        /* Account for XIP stall: if flash write advanced time, skip ahead.
+         * Physics will catch up on the next iteration. */
+        if (mock_time_ms > t)
+            t = mock_time_ms;
+
+        /* CSV flush when safe (this triggers XIP stalls) */
+        if (csv_flush_safe(&ctx) && (ctx.buf_count > 0) && (!ctx.csv_header_written || ctx.csv_pending > 0)) {
+            csv_flush_step(&ctx, 4);
+            if (mock_time_ms > t)
+                t = mock_time_ms;
+        }
+
+        if (ctx.current_state == DESCENT)
+            stall_during_descent += (mock_xip_total_stall_ms - stall_before);
+
+        if (ctx.current_state == LANDED)
+            break;
+    }
+
+    printf("  XIP stall: %ums total, %d events, stall_per_op=%ums\n", mock_xip_total_stall_ms, mock_xip_stall_count,
+           mock_xip_stall_ms);
+    printf("  XIP descent stall: %ums (should be small until pyros resolve)\n", stall_during_descent);
+    printf("  XIP result: P1=%s@%.0fm P2=%s@%.0fm landed=%s\n", p1_fired ? "FIRED" : "MISSED", p1_alt,
+           p2_fired ? "FIRED" : "MISSED", p2_alt, ctx.current_state == LANDED ? "yes" : "no");
+
+    /* Both pyros must still fire despite XIP stalls */
+    TEST_ASSERT_TRUE_MESSAGE(p1_fired, "Pyro1 failed to fire with XIP stalls");
+    TEST_ASSERT_TRUE_MESSAGE(p2_fired, "Pyro2 failed to fire with XIP stalls");
+    TEST_ASSERT_EQUAL_MESSAGE(LANDED, ctx.current_state, "Did not reach LANDED with XIP stalls");
+
+    /* Verify stalls actually occurred */
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, mock_xip_stall_count, "No XIP stalls occurred — test didn't exercise flash");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, mock_xip_total_stall_ms, "No XIP stall time accumulated");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_PYR_MODE_01_delay_delay);
@@ -619,5 +733,6 @@ int main(void) {
     RUN_TEST(test_SYS_DEPLOY_03_no_fire_during_ascent);
     RUN_TEST(test_PYR_FAULT_02_overcurrent_detection);
     RUN_TEST(test_TST_05_karman_apogee);
+    RUN_TEST(test_XIP_stall_pyro_timing);
     return UNITY_END();
 }

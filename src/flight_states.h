@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "config.h"
 
 // System states
 typedef enum {
@@ -43,8 +44,7 @@ typedef struct {
     action_fn action;
 } transition_t;
 
-// Pyro firing modes
-typedef enum { PYRO_MODE_FALLEN = 1, PYRO_MODE_AGL, PYRO_MODE_SPEED, PYRO_MODE_DELAY } pyro_mode_t;
+/* Pyro firing modes — defined in config.h */
 
 // Event types (stored in flight_sample_t.event)
 #define EVT_NONE 0
@@ -74,17 +74,7 @@ typedef struct {
     uint8_t event_data; /* extra byte for event info */
 } flight_sample_t;
 
-// Config
-typedef struct {
-    char id[9];
-    char name[9];
-    uint8_t pyro1_mode;
-    uint16_t pyro1_value;
-    uint8_t pyro2_mode;
-    uint16_t pyro2_value;
-    uint8_t units;
-    uint8_t beep_mode;
-} config_t;
+/* config_t is defined in config.h */
 
 // Flight context
 /* Ring buffer size — only needs to hold samples during ASCENT/pre-pyro
@@ -140,8 +130,8 @@ typedef struct flight_context_t {
     bool landed_beep_started;
     bool csv_saved;
     // Incremental CSV logger
-    uint16_t csv_write_idx;     // ring buffer index of next sample to write
-    uint16_t csv_pending;       // samples waiting to be flushed
+    uint16_t csv_write_idx; // ring buffer index of next sample to write
+    uint16_t csv_pending;   // samples waiting to be flushed
     bool csv_header_written;
     bool csv_file_open;
 } flight_context_t;
@@ -150,7 +140,8 @@ typedef struct flight_context_t {
 void flight_init(flight_context_t *ctx);
 flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now);
 void flight_update_outputs(flight_context_t *ctx, uint32_t now);
-void parse_config_ini(char *buf, config_t *cfg);
+/* Legacy compat — redirects to config module */
+#define parse_config_ini(buf, cfg) config_parse_ini(buf, cfg)
 int flight_save_csv(flight_context_t *ctx);
 bool csv_flush_safe(flight_context_t *ctx);
 int csv_flush_step(flight_context_t *ctx, int max_lines);

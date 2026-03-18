@@ -36,6 +36,19 @@ char mock_uart_buf[MOCK_UART_BUF_SIZE];
 int mock_uart_len = 0;
 uint32_t mock_time_ms = 0;
 
+/* XIP stall simulation */
+uint32_t mock_xip_stall_ms = 0;
+uint32_t mock_xip_total_stall_ms = 0;
+int mock_xip_stall_count = 0;
+
+static void xip_stall(void) {
+    if (mock_xip_stall_ms > 0) {
+        mock_time_ms += mock_xip_stall_ms;
+        mock_xip_total_stall_ms += mock_xip_stall_ms;
+        mock_xip_stall_count++;
+    }
+}
+
 /* In-memory filesystem */
 #define SIM_FS_MAX_FILES 4
 #define SIM_FS_MAX_SIZE 65536
@@ -59,6 +72,9 @@ void mock_reset_all(void) {
     mock_uart_len = 0;
     mock_uart_buf[0] = '\0';
     mock_time_ms = 0;
+    mock_xip_stall_ms = 0;
+    mock_xip_total_stall_ms = 0;
+    mock_xip_stall_count = 0;
     memset(sim_files, 0, sizeof(sim_files));
 }
 
@@ -140,6 +156,7 @@ int hal_fs_read_file(const char *path, char *buf, int max_len) {
 }
 
 int hal_fs_write_file(const char *path, const char *data, int len) {
+    xip_stall(); /* simulate flash erase+write XIP stall */
     int slot = -1;
     for (int i = 0; i < SIM_FS_MAX_FILES; i++) {
         if (sim_files[i].used && strcmp(sim_files[i].path, path) == 0) {
@@ -195,6 +212,7 @@ hal_file_t *hal_fs_open(const char *path, bool append) {
 }
 
 int hal_fs_write(hal_file_t *f, const char *data, int len) {
+    xip_stall(); /* simulate flash page write XIP stall */
     if (!f || !f->open)
         return -1;
     sim_file_t *sf = &sim_files[f->slot];
@@ -208,6 +226,8 @@ int hal_fs_write(hal_file_t *f, const char *data, int len) {
 }
 
 void hal_fs_close(hal_file_t *f) {
-    if (f)
+    if (f) {
+        xip_stall(); /* simulate littlefs metadata commit */
         f->open = false;
+    }
 }

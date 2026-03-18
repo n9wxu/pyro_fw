@@ -39,6 +39,22 @@ extern char mock_uart_buf[MOCK_UART_BUF_SIZE];
 extern int mock_uart_len;
 extern uint32_t mock_time_ms;
 
+/* ── XIP stall simulation ─────────────────────────────────────────── */
+/* On RP2040, flash writes disable XIP (Execute In Place), stalling the
+ * CPU for the duration of the erase+write. This simulates that effect
+ * by advancing mock_time_ms on every flash write operation.
+ *
+ * Typical RP2040 flash timings:
+ *   Sector erase:  ~50ms
+ *   Page write:    ~2-5ms
+ *   Total per littlefs commit: ~60-200ms
+ *
+ * Set mock_xip_stall_ms > 0 to enable. Default 0 (no stall).
+ */
+extern uint32_t mock_xip_stall_ms;       /* time added per flash write op */
+extern uint32_t mock_xip_total_stall_ms; /* cumulative stall time */
+extern int mock_xip_stall_count;         /* number of stall events */
+
 void mock_reset_all(void);
 
 #endif

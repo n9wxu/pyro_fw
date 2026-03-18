@@ -217,18 +217,18 @@ and maps each HAL function to the platform-specific implementation.
 
 ### Variant Summary
 
-| | MK1B Full | MK1B Lite | MK1B Backup |
+| | MK1B Full | MK1B Reference | MK1B Lite |
 |---|---|---|---|
-| **MCU** | ESP32-C6 | STM32C011 + CH340E | ATtiny402 |
-| **Config** | WiFi web + USB | UART serial tool | Resistor-coded presets |
-| **Telemetry** | UART to radio | UART to radio | None |
-| **Data extraction** | WiFi or USB | UART dump | None (buzzer only) |
-| **Pyro channels** | 2 (AP2192) | 2 (AP2192) | 1 (MOSFET) |
+| **MCU** | ESP32-C3 | RP2040 | STM32C011 + CH340E |
+| **Config** | WiFi web | USB web | UART serial tool |
+| **Telemetry** | UART to radio | UART to radio | UART to radio |
+| **Data extraction** | WiFi | USB | UART dump |
+| **Pyro channels** | 2 (AP2192) | 2 (AP2192) | 2 (AP2192) |
 | **Buzzer** | Yes | Yes | Yes |
-| **OTA** | Yes (WiFi or USB) | Yes (UART bootloader) | No |
-| **BOM cost** | ~$4.90 | ~$3.70 | ~$2.30 |
-| **PCB size** | ~20×25mm | ~15×20mm | ~10×10mm |
-| **Use case** | Primary flight computer | Cost-optimized primary | Emergency backup |
+| **OTA** | Yes (WiFi) | Yes (USB A/B) | Yes (UART bootloader) |
+| **BOM cost** | ~$4.40 | ~$5.00 | ~$3.70 |
+| **PCB size** | ~20×25mm | ~20×25mm | ~15×20mm |
+| **Use case** | Primary (wireless) | Primary (wired) | Cost-optimized |
 
 ### HAL Mapping: MK1B Full (ESP32-C6)
 
@@ -291,65 +291,24 @@ and maps each HAL function to the platform-specific implementation.
 - UART2 reserved for telemetry radio
 - OTA via UART bootloader (STM32 built-in)
 
-### HAL Mapping: MK1B Backup (ATtiny402)
-
-| HAL Function | Implementation |
-|---|---|
-| `hal_time_ms()` | `TCB0` overflow counter |
-| `hal_sleep_until_event()` | `sleep_cpu()` (idle mode), wake on TCB0 |
-| `hal_pressure_start()` | `TCB0` ISR triggers TWI read into ping-pong buffers |
-| `hal_pressure_get_buffer()` | Return filled buffer, set by ISR flag |
-| `hal_pressure_release_buffer()` | Mark buffer available |
-| `hal_pyro_init()` | `PORTA.DIR` for fire pin |
-| `hal_pyro_check()` | `ADC0` read on fire pin (before arming) |
-| `hal_pyro_fire()` | `PORTA.OUT` set fire pin |
-| `hal_pyro_is_firing()` | Check fire timer state |
-| `hal_pyro_fault()` | Always returns false (no FLAG pin) |
-| `hal_buzzer_play()` | Load pattern, `TCB0` ISR walks it (shared with sampling) |
-| `hal_buzzer_stop()` | Clear pattern, GPIO low |
-| `hal_telemetry_send()` | No-op (no telemetry on backup) |
-| `hal_log_header()` | No-op (no data logging on backup) |
-| `hal_log_sample()` | No-op (no data logging on backup) |
-| `hal_config_load()` | Read ADC on config pin, map resistor value to preset config |
-| `hal_config_save()` | No-op (resistor-coded, not writable) |
-| `hal_platform_init()` | Pin directions, ADC init, timer init |
-
-**Notes:**
-- Single pyro channel via N-MOSFET (no AP2192 — cost/size reduction)
-- Continuity check shares the fire pin: ADC read before arming, GPIO drive after
-- Config via resistor voltage divider on one ADC pin:
-
-| Resistor to GND | ADC | Preset |
-|---|---|---|
-| Open | 1023 | Drogue at apogee (delay 0s) |
-| 10kΩ | ~512 | Main at 500ft AGL |
-| 4.7kΩ | ~330 | Main at 300ft AGL |
-| Short | 0 | Delay 3 seconds |
-
-- Buzzer and pressure sampling share the timer ISR (buzzer runs between samples)
-- No telemetry, no data logging, no OTA — pure safety backup
-- 256 bytes RAM, 4KB flash — enough for v2.0 flight software core
-- SOT-23-6 package (2.9 × 1.6mm) — smallest possible flight computer
-
 ### Flight Software Compatibility
 
 The same `flight_states.c`, `telemetry.c`, and `buzzer.c` compile for all
-three platforms. The HAL no-ops on the backup variant simply discard
-telemetry and log calls. The flight software does not know which platform
-it runs on — it processes pressure buffers, detects events, fires pyros,
-and emits telemetry identically on all three.
+three platforms. The flight software does not know which platform it runs
+on — it processes pressure buffers, detects events, fires pyros, and emits
+telemetry identically on all three.
 
-| Flight software function | Full | Lite | Backup |
+| Flight software function | Full (ESP32-C3) | Reference (RP2040) | Lite (STM32C011) |
 |---|---|---|---|
 | `flight_process_samples()` | ✅ | ✅ | ✅ |
 | `flight_init()` | ✅ | ✅ | ✅ |
 | Pressure filter | ✅ | ✅ | ✅ |
 | Apogee detection | ✅ | ✅ | ✅ |
 | Pyro firing (all 4 modes) | ✅ | ✅ | ✅ |
-| Telemetry events | ✅ sent | ✅ sent | Discarded by HAL |
-| Data logging | ✅ to flash | ✅ to flash | Discarded by HAL |
+| Telemetry events | ✅ sent | ✅ sent | ✅ sent |
+| Data logging | ✅ to flash | ✅ to flash | ✅ to flash |
 | Buzzer patterns | ✅ | ✅ | ✅ |
-| Config loading | WiFi/USB | Serial | Resistor preset |
+| Config loading | WiFi web | USB web | Serial tool |
 
 Tests run against `hal_test.c` which mocks all HAL functions. Since the
 flight software is identical, passing the test suite on the host verifies
@@ -373,13 +332,14 @@ only the HAL implementation on real hardware.
 | MCU | RAM | Flash | USB | Web | DMA | Verdict |
 |---|---|---|---|---|---|---|
 | RP2040 (current) | 264 KB | 2 MB | ✅ | ✅ | ✅ | ✅ Reference platform |
-| SAMD21G18A | 32 KB | 256 KB | ✅ | ✅ | ✅ | ✅ Best drop-in alternative |
-| ESP32-C6 | 512 KB | 4 MB | ✅ | ✅ WiFi | ✅ | ✅ Recommended (see below) |
-| STM32F072 | 16 KB | 128 KB | ✅ | ❌ | ✅ | ⚠️ No web, tight RAM |
+| ESP32-C3 | 400 KB | 4 MB | ✅ | ✅ WiFi | ✅ | ✅ Recommended (Full variant) |
 | STM32C011 | 6 KB | 32 KB | ❌ | ❌ | ✅ | ✅ Cost-optimized (Lite variant) |
+| SAMD21G18A | 32 KB | 256 KB | ✅ | ✅ | ✅ | ✅ Drop-in alternative |
+| STM32F072 | 16 KB | 128 KB | ✅ | ❌ | ✅ | ⚠️ No web, tight RAM |
 | PIC16F1455 | 1 KB | 14 KB | ✅ | ❌ | ❌ | ⚠️ Feasible but not recommended |
 | PIC32MX270F256B | 64 KB | 256 KB | ✅ | ✅ | ✅ | ✅ If PIC required |
-| ATtiny402 | 256 B | 4 KB | ❌ | ❌ | ❌ | ✅ Backup variant only |
+
+**Active targets (DD-009):** RP2040 (reference), ESP32-C3 (full), STM32C011 (lite).
 
 ## Recommended Platform: ESP32-C3
 
@@ -569,15 +529,13 @@ python3 pyro_bridge.py /dev/tty.usbmodem1234
 
 | Variant | Primary UI | Safari Fallback | Ground Station |
 |---|---|---|---|
-| MK1B Full (ESP32-C6) | WiFi AP (Option A) | Web Bluetooth (C) | WebSerial (B) |
+| MK1B Full (ESP32-C3) | WiFi AP (Option A) | Web Bluetooth (C) | WebSerial (B) |
+| MK1B Reference (RP2040) | On-device HTTP (Option A) | Python bridge (D) | WebSerial (B) |
 | MK1B Lite (STM32C011) | WebSerial (B) | Python bridge (D) | WebSerial (B) |
-| MK1B Backup (ATtiny402) | WebSerial (B) via CH340E | Python bridge (D) | WebSerial (B) |
 
-The MK1B Backup benefits most from WebSerial — it adds a full browser-based
-config UI to a $2.30 device with zero flash overhead. The CH340E bridge
-($0.30) provides the USB-CDC port. Config presets can be selected in the
-browser and written via serial, replacing the resistor-coded approach for
-users who prefer a UI.
+The MK1B Lite benefits most from WebSerial — it adds a full browser-based
+config UI to a $3.70 device with zero flash overhead. The CH340E bridge
+($0.30) provides the USB-CDC port.
 
 ### Shared Web UI
 

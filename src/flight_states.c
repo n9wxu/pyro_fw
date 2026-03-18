@@ -189,89 +189,22 @@ static void check_refire(flight_context_t *ctx, uint32_t now) {
     }
 }
 
-/* ── Config parser ────────────────────────────────────────────────── */
-
-static uint8_t parse_mode(const char *val) {
-    if (strcmp(val, "delay") == 0)
-        return PYRO_MODE_DELAY;
-    if (strcmp(val, "agl") == 0)
-        return PYRO_MODE_AGL;
-    if (strcmp(val, "fallen") == 0)
-        return PYRO_MODE_FALLEN;
-    if (strcmp(val, "speed") == 0)
-        return PYRO_MODE_SPEED;
-    return 0;
-}
-
-static uint8_t parse_units(const char *val) {
-    if (strcmp(val, "m") == 0)
-        return 1;
-    if (strcmp(val, "ft") == 0)
-        return 2;
-    return 0;
-}
-
-/* [CFG-02, CFG-06..09] */
-static void parse_config_line(const char *key, const char *val, config_t *cfg) {
-    if (strcmp(key, "id") == 0) {
-        strncpy(cfg->id, val, 8);
-        cfg->id[8] = '\0';
-    } else if (strcmp(key, "name") == 0) {
-        strncpy(cfg->name, val, 8);
-        cfg->name[8] = '\0';
-    } else if (strcmp(key, "pyro1_mode") == 0)
-        cfg->pyro1_mode = parse_mode(val);
-    else if (strcmp(key, "pyro1_value") == 0)
-        cfg->pyro1_value = (uint16_t)atoi(val);
-    else if (strcmp(key, "pyro2_mode") == 0)
-        cfg->pyro2_mode = parse_mode(val);
-    else if (strcmp(key, "pyro2_value") == 0)
-        cfg->pyro2_value = (uint16_t)atoi(val);
-    else if (strcmp(key, "units") == 0)
-        cfg->units = parse_units(val);
-}
-
-void parse_config_ini(char *buf, config_t *cfg) {
-    char *line = buf;
-    while (line && *line) {
-        char *nl = strstr(line, "\r\n");
-        if (nl) {
-            *nl = '\0';
-            nl += 2;
-        } else {
-            char *nl2 = strchr(line, '\n');
-            if (nl2) {
-                *nl2 = '\0';
-                nl = nl2 + 1;
-            } else
-                nl = NULL;
-        }
-        char *eq = strchr(line, '=');
-        if (eq) {
-            *eq = '\0';
-            parse_config_line(line, eq + 1, cfg);
-        }
-        line = nl;
-    }
-}
+/* Config parser moved to config.c — X-macro generated [CFG-TABLE-01] */
 
 /* ── Event detectors ──────────────────────────────────────────────── */
-
-static const char *DEFAULT_CONFIG = "[pyro]\r\nid=PYRO001\r\nname=My Rocket\r\n"
-                                    "pyro1_mode=delay\r\npyro1_value=0\r\n"
-                                    "pyro2_mode=agl\r\npyro2_value=300\r\n"
-                                    "units=m\r\nbeep_mode=digits\r\n";
 
 /* [FLT-BOOT-02, FLT-BOOT-03, CFG-05] */
 static state_event_t detect_boot_init(flight_context_t *ctx, uint32_t now) {
     (void)now;
-    char buf[256];
+    config_set_defaults(&ctx->config);
+    char buf[512];
     int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
-    if (n < 0)
-        hal_fs_write_file("config.ini", DEFAULT_CONFIG, strlen(DEFAULT_CONFIG));
-    else if (n > 0) {
+    if (n < 0) {
+        const char *def = config_default_ini();
+        hal_fs_write_file("config.ini", def, strlen(def));
+    } else if (n > 0) {
         buf[n] = '\0';
-        parse_config_ini(buf, &ctx->config);
+        config_parse_ini(buf, &ctx->config);
     }
     hal_buzzer_init();
     hal_pressure_init();
@@ -366,7 +299,8 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
     ctx->under_thrust = ctx->vertical_speed_cms > ctx->prev_vertical_speed_cms;
 
     buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, altitude, ASCENT);
-    ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE].under_thrust = ctx->under_thrust ? 1 : 0;
+    ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE].under_thrust =
+        ctx->under_thrust ? 1 : 0;
 
     if (altitude > ctx->max_altitude)
         ctx->max_altitude = altitude;
@@ -629,17 +563,19 @@ bool csv_flush_safe(flight_context_t *ctx) {
 int csv_flush_step(flight_context_t *ctx, int max_lines) {
     if (!ctx->csv_header_written) {
         hal_file_t *f = hal_fs_open("flight.csv", false);
-        if (!f) return -1;
+        if (!f)
+            return -1;
         char hdr[256];
         int n = snprintf(hdr, sizeof(hdr),
                          "# Pyro MK1B Flight Data\n# ID: %.8s\n# Name: %.8s\n"
                          "# Pyro1: %s %u\n# Pyro2: %s %u\n"
                          "# Units: %s\n# Ground Pa: %ld\n"
                          "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",
-                         ctx->config.id, ctx->config.name,
-                         mode_name(ctx->config.pyro1_mode), ctx->config.pyro1_value,
+                         ctx->config.id, ctx->config.name, mode_name(ctx->config.pyro1_mode), ctx->config.pyro1_value,
                          mode_name(ctx->config.pyro2_mode), ctx->config.pyro2_value,
-                         ctx->config.units == 2 ? "ft" : ctx->config.units == 1 ? "m" : "cm",
+                         ctx->config.units == 2   ? "ft"
+                         : ctx->config.units == 1 ? "m"
+                                                  : "cm",
                          (long)ctx->ground_pressure);
         hal_fs_write(f, hdr, n);
         hal_fs_close(f);
@@ -648,19 +584,19 @@ int csv_flush_step(flight_context_t *ctx, int max_lines) {
         ctx->csv_pending = ctx->buf_count;
     }
 
-    if (ctx->csv_pending == 0) return 0;
+    if (ctx->csv_pending == 0)
+        return 0;
 
     hal_file_t *f = hal_fs_open("flight.csv", true);
-    if (!f) return -1;
+    if (!f)
+        return -1;
 
     int written = 0;
     char line[80];
     while (written < max_lines && ctx->csv_pending > 0) {
         flight_sample_t *s = &ctx->flight_buffer[ctx->csv_write_idx];
-        int n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%s\n",
-                         (unsigned long)s->time_ms, (long)s->pressure_pa,
-                         (long)s->altitude_cm, s->state, s->under_thrust,
-                         event_name(s->event));
+        int n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%s\n", (unsigned long)s->time_ms, (long)s->pressure_pa,
+                         (long)s->altitude_cm, s->state, s->under_thrust, event_name(s->event));
         hal_fs_write(f, line, n);
         ctx->csv_write_idx = (ctx->csv_write_idx + 1) % FLIGHT_BUF_SIZE;
         ctx->csv_pending--;
@@ -681,13 +617,7 @@ static void csv_track_sample(flight_context_t *ctx) {
 
 void flight_init(flight_context_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
-    strncpy(ctx->config.id, "PYRO001", 8);
-    strncpy(ctx->config.name, "PYRO001", 8);
-    ctx->config.pyro1_mode = PYRO_MODE_DELAY;
-    ctx->config.pyro1_value = 0;
-    ctx->config.pyro2_mode = PYRO_MODE_AGL;
-    ctx->config.pyro2_value = 300;
-    ctx->config.units = 1;
+    config_set_defaults(&ctx->config);
     ctx->current_state = BOOT_INIT;
 }
 

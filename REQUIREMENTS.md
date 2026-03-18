@@ -47,12 +47,16 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-LAUNCH-03**: The system shall record launch time by backdating to the first sample above 50cm. ← FLT-PHASE-01
 - **FLT-LAUNCH-04**: The system shall log a LAUNCH event at the transition. ← FLT-PHASE-01
 - **FLT-LAUNCH-05**: The system shall stop the buzzer upon launch detection. ← FLT-PHASE-01
+- **FLT-LAUNCH-06**: The system shall require altitude gain exceeding 10 meters within 2 seconds to confirm launch. ← FLT-PHASE-01
+- **FLT-LAUNCH-07**: The system shall require vertical speed exceeding 5 m/s at the time altitude exceeds 10 meters. ← FLT-PHASE-01
 
 #### Apogee Detection
 - **FLT-APO-01**: The system shall detect apogee when vertical speed crosses zero while pyros are armed. ← FLT-PHASE-02
 - **FLT-APO-02**: The system shall transition from ASCENT to DESCENT upon apogee detection. ← FLT-PHASE-02
 - **FLT-APO-03**: The system shall log an APOGEE event at the transition. ← FLT-PHASE-02
 - **FLT-APO-04**: The system shall not detect apogee before pyros are armed. ← FLT-PHASE-02, PYR-SAFE-04
+- **FLT-APO-05**: The system shall force apogee detection if no apogee is detected within a configurable time (default 30s, range 10-120s) after pyros are armed. ← FLT-PHASE-02
+- **FLT-APO-06**: The backup apogee timer shall only start after the system has detected launch AND armed pyros. ← FLT-APO-05, PYR-SAFE-04
 
 #### Pyro Arming
 - **FLT-ASC-01**: The system shall track maximum altitude during ascent. ← FLT-PHASE-02
@@ -61,6 +65,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-ASC-04**: The system shall arm pyrotechnics when vertical speed drops below 10 m/s. ← PYR-SAFE-04
 - **FLT-ASC-05**: The system shall log an ARMED event when pyrotechnics are armed. ← PYR-SAFE-04
 - **FLT-ASC-06**: The system shall not arm pyrotechnics while vertical speed exceeds 10 m/s. ← PYR-SAFE-04
+- **FLT-ASC-07**: The system shall not arm pyrotechnics unless maximum vertical speed during ASCENT exceeded 20 m/s. ← PYR-SAFE-04
 
 #### Landing Detection
 - **FLT-LAND-01**: The system shall detect landing when altitude change is less than 1 meter between consecutive samples for at least 1 second. ← FLT-PHASE-03
@@ -69,6 +74,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-LAND-04**: The system shall transition from DESCENT to LANDED upon landing detection. ← FLT-PHASE-03
 - **FLT-LAND-05**: The system shall log a LANDING event at the transition. ← FLT-PHASE-03
 - **FLT-LAND-06**: The system shall remain in LANDED state permanently after landing. ← FLT-PHASE-03
+- **FLT-LAND-07**: The system shall detect landing if descent has lasted 60 seconds and vertical speed is below 5 m/s, regardless of AGL altitude. ← FLT-PHASE-03
 
 #### Pyro Re-fire
 - **PYR-REFIRE-01**: The system shall re-fire a channel if descent speed exceeds 30 m/s between 1 and 1.5 seconds after initial fire and continuity is still present. ← SYS-DEPLOY-01
@@ -77,11 +83,11 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **PYR-ALT-01**: The system shall clamp altitude-based pyro settings to the barometric sensor ceiling. ← PYR-MODE-02, PYR-MODE-03, PYR-MODE-04
 - **PYR-ALT-02**: The system shall emit a warning beep code when any altitude-based pyro setting exceeds the sensor ceiling. ← PYR-ALT-01
 
-#### Sampling Rates
-- **FLT-RATE-01**: The system shall sample pressure at least every 10ms during PAD_IDLE. ← FLT-PHASE-01
-- **FLT-RATE-02**: The system shall sample pressure at least every 100ms during ASCENT. ← FLT-PHASE-02
-- **FLT-RATE-03**: The system shall sample pressure at least every 50ms during DESCENT. ← FLT-PHASE-03
-- **FLT-RATE-04**: The system shall sample pressure at least every 1000ms during LANDED. ← FLT-PHASE-03
+#### Sampling Rates (v2.0)
+- **FLT-RATE-01**: The system shall sample pressure at 50Hz (20ms) during PAD_IDLE, ASCENT, and DESCENT. ← FLT-PHASE-01, DD-001
+- **FLT-RATE-02**: The system shall deliver pressure samples to the flight software in batches of 5 (100ms). ← FLT-RATE-01, PWR-SAMPLE-02
+- **FLT-RATE-03**: The system shall reduce sampling to 1Hz during LANDED for power conservation. ← FLT-PHASE-03, SYS-PWR-01
+- **FLT-RATE-04**: The sampling rate shall be a HAL responsibility; flight software processes whatever buffer it receives. ← HAL-02
 
 ---
 
@@ -352,3 +358,17 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **CFG-TABLE-01**: All configuration fields shall be defined in a single table that generates the struct, parser, serializer, and defaults. ← SYS-CFG-04
 - **CFG-TABLE-02**: A round-trip test shall automatically verify every field survives serialize → parse. ← CFG-TABLE-01
 - **CFG-SUBSYS-01**: Each subsystem (telemetry, logging, buzzer) shall have configurable parameters. ← UN-4
+
+## 16. Ground Test (v2.0 — planned)
+
+### L1 User Need
+- **UN-12**: The user needs to verify pyro circuits and system behavior on the ground without a computer.
+
+### L2 System Requirements
+- **SYS-TEST-01**: The system shall support ground test operations via serial commands. ← UN-12, DD-011
+
+### L3 Subsystem Requirements
+- **GND-TEST-01**: The system shall accept serial commands to replay status and altitude beep codes. ← SYS-TEST-01
+- **GND-TEST-02**: The system shall accept serial commands to arm and fire individual pyro channels for ground testing. ← SYS-TEST-01
+- **GND-TEST-03**: Ground test arm shall require a multi-step confirmation and auto-disarm after 3 seconds. ← SYS-TEST-01
+- **GND-TEST-04**: Ground test shall be available only during PAD_IDLE state. ← PYR-SAFE-04

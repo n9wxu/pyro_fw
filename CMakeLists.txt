@@ -94,6 +94,7 @@ add_executable(pyro_fw_c
     src/main_hardware.c
     src/hal_hardware.c
     src/flight_states.c
+    src/config.c
     src/telemetry.c
     src/buzzer.c
     src/pressure_sensor.c
@@ -207,6 +208,7 @@ add_custom_target(host_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
                ${unity_SOURCE_DIR}/src/unity.c
@@ -225,6 +227,7 @@ add_custom_target(integration_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_integration.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
                ${unity_SOURCE_DIR}/src/unity.c
                -lm
@@ -243,6 +246,7 @@ add_custom_target(closedloop_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_closedloop.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
                ${unity_SOURCE_DIR}/src/unity.c
                -lm
@@ -260,6 +264,7 @@ add_custom_target(sim
                ${CMAKE_CURRENT_LIST_DIR}/sim/main_sim.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/hal_sim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
                -lm
@@ -267,5 +272,19 @@ add_custom_target(sim
     COMMAND ${CMAKE_COMMAND} -E echo "Simulator built: ${CMAKE_BINARY_DIR}/pyro_sim"
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Flight simulator"
+)
+
+add_custom_target(config_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building config tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_config.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_config
+    COMMAND ${CMAKE_COMMAND} -E echo "Running config tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_config
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Config module tests (round-trip, parser, serializer)"
 )
 
