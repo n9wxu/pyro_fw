@@ -308,6 +308,19 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
  *         backup_timer seconds after arming. Safety net for sensor failure. */
 #define ARM_SPEED_CMS 1000 /* 10 m/s filtered ≈ 20 m/s true [DD-017] */
 
+/* [DD-017] Arming requires confirmed motor burn: peak speed > threshold,
+ * coast phase entered (speed decreasing but still positive). */
+static bool arming_gate_met(const flight_context_t *ctx) {
+    return !ctx->pyros_armed && ctx->max_speed_cms >= ARM_SPEED_CMS && ctx->vertical_speed_cms < 1000 &&
+           ctx->vertical_speed_cms >= 0;
+}
+
+/* [DD-013] Backup apogee timer: force apogee after configurable timeout. */
+static bool backup_apogee_expired(const flight_context_t *ctx, uint32_t now) {
+    uint32_t timer_s = ctx->config.backup_timer;
+    return timer_s > 0 && ctx->armed_time > 0 && (now - ctx->armed_time) >= timer_s * 1000;
+}
+
 static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 100)
         return SEVT_NONE;
@@ -334,18 +347,13 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
     ctx->last_altitude = altitude;
     ctx->last_sample = now;
 
-    /* [DD-017] Arming requires confirmed motor burn: peak speed > 20 m/s */
-    if (!ctx->pyros_armed && ctx->max_speed_cms >= ARM_SPEED_CMS && ctx->vertical_speed_cms < 1000 &&
-        ctx->vertical_speed_cms >= 0)
+    if (arming_gate_met(ctx))
         return SEVT_ARMED;
 
     if (ctx->pyros_armed && !ctx->apogee_detected) {
-        /* Normal apogee detection: speed drops to zero */
         if (ctx->vertical_speed_cms <= 0)
             return SEVT_APOGEE;
-        /* [DD-013] Backup apogee timer: force apogee after configurable timeout */
-        uint32_t timer_s = ctx->config.backup_timer;
-        if (timer_s > 0 && ctx->armed_time > 0 && (now - ctx->armed_time) >= timer_s * 1000)
+        if (backup_apogee_expired(ctx, now))
             return SEVT_APOGEE;
     }
     return SEVT_NONE;
