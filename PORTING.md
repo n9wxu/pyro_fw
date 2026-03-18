@@ -686,48 +686,46 @@ software always receives a valid `config_t` and flies accordingly.
 
 ### Physical Interface
 
-Each pyro board exposes a single 4-pin connector:
+Each pyro board exposes a single 3.5mm TRRS audio jack (see below).
+All accessories (config cable, ground test plug, bus cable, radio module)
+connect via the same jack. Each accessory carries its own power.
 
-| Pin | Function |
+### Physical Interface: 3.5mm TRRS Jack
+
+| Ring | Function |
 |---|---|
-| 1 | VCC (3.3-5V input) |
-| 2 | GND |
-| 3 | TX (pyro → bus) |
-| 4 | RX (bus → pyro) |
+| Tip | TX (pyro → external) |
+| Ring 1 | RX (external → pyro) |
+| Sleeve | GND |
 
-This connector accepts:
-- Direct USB-serial adapter (config cable for single pyro)
-- Bus ribbon cable (daisy-chain multiple pyros to bus master)
-- Radio module (SX1276 + MCU, plugs into same connector)
+Three conductors (TRS) is sufficient. A TRRS jack provides a spare
+ring for future use (e.g., power output to low-current accessories).
 
-The pyro board has no USB connector, no radio, no bus transceiver.
-All external interfaces plug into the same 5-pin UART+BTN header.
+The 3.5mm jack is:
+- Standard, available everywhere ($0.10)
+- Small (5mm board footprint)
+- Designed for repeated plug/unplug
+- Routes cleanly out of an airframe via a small hole
+- Cables available in any length off the shelf
+
+The same jack accepts:
+- **Config cable:** 3.5mm to USB-serial adapter (FTDI/CH340 in the plug)
+- **Ground test plug:** 3.5mm plug with ATtiny202 + button (self-powered)
+- **Bus cable:** 3.5mm to 3.5mm between pyros (daisy-chain)
+- **Radio module:** 3.5mm plug with SX1276 + MCU (self-powered)
+
+All external accessories carry their own battery or draw power from USB.
+The pyro board provides only TX, RX, and GND — no power output required.
 
 ### Ground Test and Pad Operations
 
 A ground test button enables pre-flight verification and pad-side operations
-without a computer. The button connects via the 5-pin interface header or
-is built into the smallest pyro variant.
+without a computer. The ground test plug connects via the 3.5mm jack.
 
-#### 5-Pin Interface Header
+#### Ground Test Plug ($0.40 accessory)
 
-| Pin | Function |
-|---|---|
-| 1 | VCC (3.3-5V input) |
-| 2 | GND |
-| 3 | TX (pyro → bus) |
-| 4 | RX (bus → pyro) |
-| 5 | BTN (active-low, internal pull-up) |
-
-When no ground test plug is connected, pin 5 reads high (inactive).
-A ground test plug has a momentary button between pin 5 and GND.
-
-#### Button Handling Without New HAL Functions
-
-The button is handled externally — not by the flight software.
-
-**Ground test plug ($0.40 accessory):** A tiny MCU (ATtiny202) debounces
-the button and sends serial commands on the UART:
+A self-powered 3.5mm plug containing a tiny MCU and a button.
+Debounces presses and sends serial commands on TX/RX:
 
 ```
 Button press     → TEST REPLAY STATUS\n
@@ -735,11 +733,6 @@ Button press     → TEST REPLAY ALTITUDE\n
 3 presses in 2s  → TEST ARM 1\n
 Button press     → TEST FIRE 1\n
 ```
-
-**Bus master:** Owns the button and sequences operations across all pyros.
-
-In both cases, the pyro's HAL serial command handler processes TEST commands
-using existing HAL functions. The flight software is unchanged.
 
 #### Ground Test Sequence
 
@@ -778,15 +771,12 @@ Master press 6 → @9C21 TEST FIRE 1\n          (fire main)
 
 **Result: zero flight software changes, zero new HAL functions.**
 
-If a direct GPIO button is required on the smallest variant without an
-external plug MCU, one new HAL function would be needed: `hal_button_pressed()`.
-This is the only identified case where the v2.0 HAL may need extension.
-
 #### Ground Test Plug BOM
 
 | Component | Price |
 |---|---|
 | ATtiny202 (SOT-23-6) | $0.25 |
 | Momentary button | $0.10 |
-| 5-pin connector | $0.05 |
-| **Total** | **$0.40** |
+| 3.5mm TRRS plug | $0.10 |
+| Coin cell (CR1220) | $0.15 |
+| **Total** | **$0.60** |
