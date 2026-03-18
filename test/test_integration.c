@@ -30,11 +30,15 @@ static int sim_count = 0;
 
 static void load_sim_data(const char *path) {
     FILE *f = fopen(path, "r");
-    if (!f) { printf("Cannot open %s\n", path); return; }
+    if (!f) {
+        printf("Cannot open %s\n", path);
+        return;
+    }
     char line[256];
     sim_count = 0;
     while (fgets(line, sizeof(line), f) && sim_count < MAX_POINTS) {
-        if (line[0] == '#' || line[0] == '\n') continue;
+        if (line[0] == '#' || line[0] == '\n')
+            continue;
         float t, alt;
         if (sscanf(line, "%f,%f", &t, &alt) == 2) {
             sim_data[sim_count].time_s = t;
@@ -47,16 +51,21 @@ static void load_sim_data(const char *path) {
 
 /* Interpolate altitude at any time from sim data */
 static float interpolate_altitude_ft(float time_s) {
-    if (sim_count == 0) return 0.0f;
-    if (time_s <= sim_data[0].time_s) return sim_data[0].altitude_ft;
-    if (time_s >= sim_data[sim_count - 1].time_s) return sim_data[sim_count - 1].altitude_ft;
+    if (sim_count == 0)
+        return 0.0f;
+    if (time_s <= sim_data[0].time_s)
+        return sim_data[0].altitude_ft;
+    if (time_s >= sim_data[sim_count - 1].time_s)
+        return sim_data[sim_count - 1].altitude_ft;
 
     /* Binary search for bracket */
     int lo = 0, hi = sim_count - 1;
     while (hi - lo > 1) {
         int mid = (lo + hi) / 2;
-        if (sim_data[mid].time_s <= time_s) lo = mid;
-        else hi = mid;
+        if (sim_data[mid].time_s <= time_s)
+            lo = mid;
+        else
+            hi = mid;
     }
 
     /* Linear interpolation */
@@ -93,14 +102,26 @@ static bool buzzer_active_flag = false;
 
 void buzzer_init(void) {}
 void buzzer_set_code(uint8_t code, bool repeat) {
-    (void)repeat; buzzer_code_count++; last_buzzer_code = code; buzzer_active_flag = true;
+    (void)repeat;
+    buzzer_code_count++;
+    last_buzzer_code = code;
+    buzzer_active_flag = true;
 }
 void buzzer_set_altitude(int32_t altitude) {
-    buzzer_altitude_count++; last_buzzer_altitude = altitude; buzzer_active_flag = true;
+    buzzer_altitude_count++;
+    last_buzzer_altitude = altitude;
+    buzzer_active_flag = true;
 }
-void buzzer_stop(void) { buzzer_stop_count++; buzzer_active_flag = false; }
-bool buzzer_is_active(void) { return buzzer_active_flag; }
-void buzzer_update(uint32_t now_ms) { (void)now_ms; }
+void buzzer_stop(void) {
+    buzzer_stop_count++;
+    buzzer_active_flag = false;
+}
+bool buzzer_is_active(void) {
+    return buzzer_active_flag;
+}
+void buzzer_update(uint32_t now_ms) {
+    (void)now_ms;
+}
 
 /* ── Simulation runner ────────────────────────────────────────────── */
 
@@ -120,7 +141,7 @@ static void reset_sim(void) {
     buzzer_code_count = 0;
     buzzer_stop_count = 0;
     buzzer_altitude_count = 0;
-    buzzer_active_flag = true;  /* startup beep active */
+    buzzer_active_flag = true; /* startup beep active */
     mock_uart_len = 0;
 }
 
@@ -132,6 +153,13 @@ static void app_tick(uint32_t now_ms) {
 
     /* This is what main() does each iteration */
     ctx.current_state = dispatch_state(&ctx, now_ms);
+
+    /* Incremental CSV flush — same as real firmware main loop.
+     * Without this, the 64-entry ring buffer wraps and early events
+     * (LAUNCH, ARMED) are lost before flight_save_csv() is called. */
+    if (csv_flush_safe(&ctx) && ctx.csv_pending > 0) {
+        csv_flush_step(&ctx, 4);
+    }
 
     /* Telemetry: 10Hz ASCENT/DESCENT, 1Hz otherwise */
     if (ctx.current_state >= PAD_IDLE) {
@@ -192,10 +220,14 @@ void test_FLT_BOOT_01_all_states(void) {
 
     for (uint32_t t = 0; t <= end_ms; t++) {
         app_tick(t);
-        if (ctx.current_state == PAD_IDLE) saw_pad = true;
-        if (ctx.current_state == ASCENT) saw_ascent = true;
-        if (ctx.current_state == DESCENT) saw_descent = true;
-        if (ctx.current_state == LANDED) saw_landed = true;
+        if (ctx.current_state == PAD_IDLE)
+            saw_pad = true;
+        if (ctx.current_state == ASCENT)
+            saw_ascent = true;
+        if (ctx.current_state == DESCENT)
+            saw_descent = true;
+        if (ctx.current_state == LANDED)
+            saw_landed = true;
     }
 
     TEST_ASSERT_TRUE_MESSAGE(saw_pad, "Never in PAD_IDLE");
@@ -237,8 +269,12 @@ void test_DAT_04_events(void) {
     reset_sim();
     run_full_sim();
 
-    flight_save_csv(&ctx);
-    char buf[4096];
+    /* Flush any remaining pending samples (incremental logger already
+     * wrote early events including LAUNCH during the flight) */
+    if (ctx.csv_pending > 0)
+        csv_flush_step(&ctx, ctx.csv_pending);
+
+    char buf[32768];
     int n = hal_fs_read_file("flight.csv", buf, sizeof(buf) - 1);
     TEST_ASSERT_TRUE(n > 0);
     buf[n] = '\0';
@@ -259,7 +295,10 @@ void test_TEL_01_output(void) {
     /* Count $PYRO sentences */
     int count = 0;
     char *p = mock_uart_buf;
-    while ((p = strstr(p, "$PYRO,")) != NULL) { count++; p++; }
+    while ((p = strstr(p, "$PYRO,")) != NULL) {
+        count++;
+        p++;
+    }
     TEST_ASSERT_TRUE_MESSAGE(count >= 10, "Expected >=10 telemetry sentences");
 
     /* Verify checksum on first sentence */
@@ -268,7 +307,8 @@ void test_TEL_01_output(void) {
     TEST_ASSERT_NOT_NULL(dollar);
     TEST_ASSERT_NOT_NULL(star);
     uint8_t expected = 0;
-    for (char *c = dollar + 1; c < star; c++) expected ^= (uint8_t)*c;
+    for (char *c = dollar + 1; c < star; c++)
+        expected ^= (uint8_t)*c;
     unsigned int actual;
     sscanf(star + 1, "%02X", &actual);
     TEST_ASSERT_EQUAL_HEX8(expected, (uint8_t)actual);
@@ -284,9 +324,12 @@ void test_FLT_LAUNCH_01_timing(void) {
 
     for (uint32_t t = 0; t <= end_ms; t++) {
         app_tick(t);
-        if (ctx.current_state == ASCENT && ascent_start == 0) ascent_start = t;
-        if (ctx.current_state == DESCENT && descent_start == 0) descent_start = t;
-        if (ctx.current_state == LANDED && landed_start == 0) landed_start = t;
+        if (ctx.current_state == ASCENT && ascent_start == 0)
+            ascent_start = t;
+        if (ctx.current_state == DESCENT && descent_start == 0)
+            descent_start = t;
+        if (ctx.current_state == LANDED && landed_start == 0)
+            landed_start = t;
     }
 
     char msg[128];
@@ -312,6 +355,9 @@ void test_DAT_06_csv_export(void) {
     reset_sim();
     run_full_sim();
 
+    /* Use batch flight_save_csv() to test the complete header format
+     * (includes Max Alt which is unknown at incremental header time).
+     * Event completeness (LAUNCH etc.) is tested in test_DAT_04_events. */
     flight_save_csv(&ctx);
 
     char buf[4096];
@@ -325,10 +371,11 @@ void test_DAT_06_csv_export(void) {
     TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "# Pyro1:") != NULL, "Missing Pyro1 config");
     TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "# Pyro2:") != NULL, "Missing Pyro2 config");
     TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "# Max Alt cm:") != NULL, "Missing max altitude");
-    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "time_ms,pressure_pa,altitude_cm,state,thrust,event") != NULL, "Missing CSV columns");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "time_ms,pressure_pa,altitude_cm,state,thrust,event") != NULL,
+                             "Missing CSV columns");
 
-    /* Must contain flight data rows */
-    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "LAUNCH") != NULL, "Missing LAUNCH event in CSV");
+    /* Must contain data rows (last 64 ring buffer entries) */
+    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "LANDING") != NULL, "Missing LANDING in batch CSV");
 }
 
 /* ── Main ─────────────────────────────────────────────────────────── */
