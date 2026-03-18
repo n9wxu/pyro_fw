@@ -175,27 +175,39 @@ and flight data. Adds 1 SPI peripheral + 4 pins but solves the storage problem.
 | Parameter | PIC16F1455 | Requirement | Verdict |
 |---|---|---|---|
 | Clock | 48 MHz (USB) | 48 MHz | ✅ |
-| RAM | 1 KB | 2 KB (no USB flight) | ❌ |
-| Flash | 14 KB | 32 KB (no USB) | ❌ |
-| GPIO | 11 (14-pin) | 12 (no USB) | ❌ |
+| RAM | 1 KB | 2 KB (no USB flight) | ⚠️ Tight |
+| Flash | 14 KB | 32 KB (no USB) | ⚠️ Tight |
+| GPIO | 11 (14-pin) | 12 (no USB) | ⚠️ Feasible with pin sharing |
 | ADC | 10-bit, 5 ch | 10-bit, 2 ch | ✅ |
 | I2C | MSSP (1) | 1 | ✅ |
 | UART | EUSART (1) | 1 | ✅ |
 | USB | Device FS | Device FS | ✅ |
-| DMA | None | Optional | ❌ |
+| DMA | None | Optional | ✅ (ISR-driven) |
 | Timers | 4 | 2 | ✅ |
-| EEPROM | 128 bytes | 256 bytes | ⚠️ Short |
+| EEPROM | 128 bytes | 256 bytes | ⚠️ Short but workable |
 | Sleep modes | Sleep, Idle | WFE | ✅ |
 
-**Assessment:** Not feasible. 1KB RAM cannot hold even the v2.0 flight context
-(200 bytes) plus stack, buffers, and any USB operation. 14KB flash is too small
-for the flight software alone (~20KB). 11 GPIO pins are 1 short of the minimum
-12 without USB. 8-bit architecture with no DMA means the CPU cannot sleep during
-I2C transfers. The PIC16F1455 is designed for simple USB peripherals (HID, CDC),
-not flight computers.
+**Revised assessment (v2.0 architecture):** Technically feasible but not recommended.
 
-**If PIC is required:** Consider PIC32MX270F256B (32-bit, 256KB flash, 64KB RAM,
-USB, DMA) which meets all requirements comfortably.
+The v2.0 architecture reduces RAM to ~484 bytes for flight software, leaving
+~540 bytes for USB-CDC (Microchip MLA stack needs ~300-400 bytes). This fits
+but with ~50 bytes of margin — any growth breaks it.
+
+Flash: v2.0 flight software (~3KB) + USB-CDC stack (~4KB) + HAL (~2KB) +
+8-bit math runtime (~1KB) = ~10KB. Fits in 14KB with the free XC8 compiler
+but the free compiler's limited optimization may inflate code 30-50%.
+The PRO compiler ($75/year) would be needed for a comfortable fit.
+
+GPIO: 11 pins is 1 short of the 12-pin minimum, but sharing the continuity
+ADC pin with the pyro fire pin (read before arm, drive after) makes it work.
+
+**Why it doesn't make sense:** The PIC16F1455 costs $0.80 — more than the
+STM32C011 ($0.50) which has 6× the RAM, 2× the flash, DMA, and a free
+unlimited-optimization compiler. The PIC only wins if an existing PIC
+toolchain investment or 14-pin DIP package (hand-soldering) is required.
+
+**If PIC is required:** The PIC32MX270F256B ($2.50, 64KB RAM, 256KB flash,
+USB, DMA, 32-bit MIPS) meets all requirements comfortably with no compromises.
 
 ## Platform Variants
 
@@ -361,10 +373,13 @@ only the HAL implementation on real hardware.
 | MCU | RAM | Flash | USB | Web | DMA | Verdict |
 |---|---|---|---|---|---|---|
 | RP2040 (current) | 264 KB | 2 MB | ✅ | ✅ | ✅ | ✅ Reference platform |
-| SAMD21G18A | 32 KB | 256 KB | ✅ | ✅ | ✅ | ✅ Best alternative |
+| SAMD21G18A | 32 KB | 256 KB | ✅ | ✅ | ✅ | ✅ Best drop-in alternative |
+| ESP32-C6 | 512 KB | 4 MB | ✅ | ✅ WiFi | ✅ | ✅ Recommended (see below) |
 | STM32F072 | 16 KB | 128 KB | ✅ | ❌ | ✅ | ⚠️ No web, tight RAM |
-| PIC16F1455 | 1 KB | 14 KB | ✅ | ❌ | ❌ | ❌ Insufficient |
+| STM32C011 | 6 KB | 32 KB | ❌ | ❌ | ✅ | ✅ Cost-optimized (Lite variant) |
+| PIC16F1455 | 1 KB | 14 KB | ✅ | ❌ | ❌ | ⚠️ Feasible but not recommended |
 | PIC32MX270F256B | 64 KB | 256 KB | ✅ | ✅ | ✅ | ✅ If PIC required |
+| ATtiny402 | 256 B | 4 KB | ❌ | ❌ | ❌ | ✅ Backup variant only |
 
 ## Recommended Platform: ESP32-C3
 
