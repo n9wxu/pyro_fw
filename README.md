@@ -159,6 +159,65 @@ $PYRO,42,1,1,150000,-200,150000,95000,8500,13,48,52,0,0*4A
   - Good: ADC 1-100 (very low but non-zero)
   - Short: ADC = 0 (exactly 0V)
 
+## WASM Simulation — Use in Other Projects
+
+The Pyro MK1B flight computer and physics engine compile to **WebAssembly**, enabling any web project to run closed-loop rocket flight simulations entirely in the browser. The WASM module contains the real firmware state machine, pyro logic, and telemetry — identical to hardware.
+
+### Quick Start
+
+```bash
+# Build the WASM module (requires Emscripten SDK)
+./scripts/build_wasm.sh
+```
+
+Copy 3 files into your project:
+```
+docs/wasm/pyro.js       ← Emscripten glue (generated)
+docs/wasm/pyro.wasm     ← WASM binary (generated)
+docs/wasm/pyro-sim.js   ← ES module API wrapper
+```
+
+Then in your JavaScript:
+```javascript
+import { createPyroSim } from './wasm/pyro-sim.js';
+
+const sim = await createPyroSim();
+sim.init("pyro1_mode=delay\npyro1_value=0\nunits=ft\n");
+sim.setContinuity(1, 50, true, false);
+sim.setContinuity(2, 50, true, false);
+sim.physics.init(1524);  // 5000 ft target apogee
+
+// Closed-loop: physics feeds pressure → flight computer fires pyros → physics deploys chutes
+for (let t = 0; t <= 120000; t++) {
+    if (sim.pyroFireCount > 0 && sim.lastFireChannel === 1) sim.physics.deployDrogue();
+    if (t >= 2000) sim.physics.step((t - 2000) / 1000);
+    sim.setPressure(sim.physics.pressurePa);
+    sim.clearPyroFiring();
+    sim.tick(t);
+    if (sim.state === 7) break;  // LANDED
+}
+console.log("Apogee:", sim.physics.apogeeM.toFixed(0), "m");
+```
+
+### Integration Documentation
+
+| Document | Audience | Contents |
+|----------|----------|----------|
+| **[sim/INTEGRATION.md](sim/INTEGRATION.md)** | AI assistants & developers | Step-by-step integration guide, full API reference, troubleshooting, code examples |
+| **[sim/README.md](sim/README.md)** | Developers | Architecture diagram, API tables, build instructions, C library usage |
+| **[docs/sim.html](https://n9wxu.github.io/pyro_fw/sim.html)** | Anyone | Interactive browser demo — working example of WASM integration |
+
+### For C/C++ Projects (No WASM)
+
+The simulation also works as a plain C library:
+```bash
+cc -I sim/ -I src/ sim/physics.c sim/main_sim.c sim/hal_sim.c \
+   src/flight_states.c src/telemetry.c src/buzzer.c src/config.c \
+   my_test.c -lm -o my_test
+```
+
+See `sim/pyro_sim.h` and `sim/physics.h` for the C API.
+
 ## Building
 Requires Pico SDK 2.2.0 or later:
 ```bash
