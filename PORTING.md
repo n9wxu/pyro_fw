@@ -686,36 +686,95 @@ software always receives a valid `config_t` and flies accordingly.
 
 ### Physical Interface
 
-Each pyro board exposes a single 3.5mm TRRS audio jack (see below).
-All accessories (config cable, ground test plug, bus cable, radio module)
-connect via the same jack. Each accessory carries its own power.
+Each pyro board exposes:
+- **3.5mm TRRS jack** — pad-side only (config, test, data). Removed before flight.
+- **Solder pads** — flight bus (wired-OR shared bus). Soldered on the sled.
 
-### Physical Interface: 3.5mm TRRS Jack
+All accessories (config cable, ground test plug) connect via the 3.5mm jack.
+Inter-board communication uses the soldered flight bus.
+See "Physical Interfaces" section above for details.
 
-| Ring | Function |
+### Physical Interfaces
+
+The pyro system has two distinct interfaces for different environments.
+
+#### Pad Interface (external, removable): 3.5mm TRRS Jack
+
+For ground-side operations only — removed before flight.
+
+| Contact | Function |
 |---|---|
 | Tip | TX (pyro → external) |
 | Ring 1 | RX (external → pyro) |
 | Sleeve | GND |
 
-Three conductors (TRS) is sufficient. A TRRS jack provides a spare
-ring for future use (e.g., power output to low-current accessories).
+Accepts:
+- **Config cable:** 3.5mm to USB-serial adapter
+- **Ground test plug:** ATtiny202 + button, self-powered
+- **Direct serial terminal:** any UART adapter
 
-The 3.5mm jack is:
-- Standard, available everywhere ($0.10)
-- Small (5mm board footprint)
-- Designed for repeated plug/unplug
-- Routes cleanly out of an airframe via a small hole
-- Cables available in any length off the shelf
+This is the only connector that exits the airframe. It connects to the
+bus master or directly to a single pyro for standalone configuration.
 
-The same jack accepts:
-- **Config cable:** 3.5mm to USB-serial adapter (FTDI/CH340 in the plug)
-- **Ground test plug:** 3.5mm plug with ATtiny202 + button (self-powered)
-- **Bus cable:** 3.5mm to 3.5mm between pyros (daisy-chain)
-- **Radio module:** 3.5mm plug with SX1276 + MCU (self-powered)
+#### Flight Bus (internal, soldered): Shared Wired-OR
 
-All external accessories carry their own battery or draw power from USB.
-The pyro board provides only TX, RX, and GND — no power output required.
+For inter-board communication on the sled. All connections are soldered
+for maximum reliability, but wire failures from handling, vibration,
+maintenance, and poor joints are still the primary failure mode.
+
+**Topology: J1708-style shared bus (wired-OR)**
+
+```
+Pull-up ─────────────────────────── Bus (single wire)
+              │         │         │
+           Pyro A    Pyro B    Pyro C
+          (stub)    (stub)    (stub)
+```
+
+Each device connects to the bus via a short stub wire. TX is open-drain
+with a shared pull-up resistor. Collision avoidance by UID priority
+(lower UID wins, like CAN/J1708).
+
+**Why shared bus over ring:**
+
+| Topology | Wires (3 devices) | Single break effect | Complexity |
+|---|---|---|---|
+| Shared bus | 2 (bus + GND) + 3 stubs | Loses one device | Low |
+| Single ring | 6 (3 TX pairs) | Loses all downstream | Low |
+| Dual ring | 12 (6 TX pairs) | Survives any single break | High, 2 UARTs |
+
+The shared bus has the best fault isolation per wire: a broken stub loses
+only that device. A broken backbone loses devices past the break, but the
+backbone is short (inches on a sled) and can be made robust with heavier
+gauge wire or PCB traces.
+
+**Electrical:**
+- Single wire + GND (2 conductors total for the backbone)
+- Open-drain TX with 4.7kΩ pull-up to 3.3V
+- Each device taps the bus with a short stub (solder or board-to-board)
+- No transceiver needed — just an open-drain GPIO
+- 9600-115200 baud (short distances, no termination needed)
+
+**Protocol:**
+- Master polls: `@A3F7 STATUS\n`
+- Device responds: `@A3F7 {"state":"PAD_IDLE",...}\n`
+- Broadcast: `DISCOVER\n` → all devices respond with random backoff
+- Collision: lower UID wins (devices monitor bus during TX, back off on mismatch)
+
+**Independence:** Every pyro flies its mission autonomously regardless of
+bus state. The bus adds coordination (sequenced buzzer, shared radio,
+ground station visibility) but is never a dependency for pyro firing.
+
+#### Bus Master Location
+
+The bus master can be:
+- **Radio module:** SX1276 + MCU on the sled, bridges bus to ground station
+- **Pad controller:** Connected via 3.5mm jack for ground operations
+- **Any pyro:** One pyro can be designated master (simplest sled, no extra board)
+
+When the pad controller is connected via the 3.5mm jack, it talks to the
+bus master (or directly to a single pyro). The pad controller does not
+participate on the flight bus — it's a ground-side device.
 
 ### Ground Test and Pad Operations
 
