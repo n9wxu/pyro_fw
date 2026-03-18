@@ -461,3 +461,143 @@ while keeping a UART free for a future telemetry radio (e.g., SX1276).
 - Long-range telemetry requires a separate radio (SX1276/SX1278, 433/915MHz)
 - The telemetry radio is out of scope for this document
 - The UART telemetry interface in the HAL supports any future radio module
+
+## User Interface Options
+
+The web interface can be delivered to the browser in several ways depending
+on the MCU's capabilities. The choice affects flash usage, RAM requirements,
+browser compatibility, and multi-device support.
+
+### Option A: On-Device HTTP (current RP2040 implementation)
+
+```
+Pyro (serves HTML/JS/CSS + HTTP API) ← USB-ECM network → Browser
+```
+
+| Aspect | Detail |
+|---|---|
+| Browser support | All browsers |
+| Flash on pyro | ~64KB (web files) |
+| RAM on pyro | ~16KB (lwIP + HTTP + USB network) |
+| MCU needs | USB device + network stack |
+| Multi-device | One tab per pyro |
+| Offline | Yes (pyro serves everything) |
+| Suitable for | MK1B Full (RP2040, ESP32-C6) |
+
+### Option B: WebSerial (web UI from internet, serial to pyro)
+
+```
+GitHub Pages (HTML/JS/CSS) → Browser → WebSerial API → USB-CDC → Pyro
+```
+
+| Aspect | Detail |
+|---|---|
+| Browser support | Chrome/Edge only (no Safari, no Firefox) |
+| Flash on pyro | 0 (no web files) |
+| RAM on pyro | ~512 bytes (serial buffer) |
+| MCU needs | USB-CDC only |
+| Multi-device | One page manages N serial ports |
+| Offline | Needs cached PWA or local copy of web files |
+| Suitable for | MK1B Lite, MK1B Backup, ground station |
+
+Serial protocol replaces HTTP API:
+```
+→ STATUS\n
+← {"state":"PAD_IDLE","alt_cm":0,...}\n
+
+→ CONFIG\n
+← {"pyro1_mode":"delay",...}\n
+
+→ CONFIG pyro2_value=200\n
+← OK\n
+```
+
+Same JSON payloads — the web UI swaps `fetch()` for `serialPort.write()`.
+
+Ground station multi-device:
+```
+Browser (ground station UI)
+  ├── WebSerial → Pyro #1 (USB-CDC)
+  ├── WebSerial → Pyro #2 (USB-CDC via hub)
+  └── WebSerial → Ground radio → Pyro #3..N (telemetry)
+```
+
+One web page discovers and manages all connected pyros. The same serial
+protocol works over USB-CDC (pad-side) and telemetry radio (in-flight).
+
+### Option C: Web Bluetooth (Safari alternative)
+
+```
+GitHub Pages (HTML/JS/CSS) → Browser → Web Bluetooth API → BLE → Pyro
+```
+
+| Aspect | Detail |
+|---|---|
+| Browser support | Safari, Chrome, Edge (not Firefox) |
+| Flash on pyro | 0 |
+| RAM on pyro | BLE stack (~8KB on ESP32) |
+| MCU needs | BLE peripheral |
+| Multi-device | One page manages N BLE connections |
+| Range | ~30m (pad-side only) |
+| Suitable for | MK1B Full (ESP32-C3/C6) |
+
+### Option D: Python bridge (universal fallback)
+
+```
+GitHub Pages or local HTML → Browser → localhost:8080 → Python tool → Serial → Pyro
+```
+
+A small Python script bridges serial to a local HTTP server. The web UI
+connects to `http://localhost:8080` and uses the same HTTP API as Option A.
+Works on every browser and every OS.
+
+```bash
+python3 pyro_bridge.py /dev/tty.usbmodem1234
+# Open http://localhost:8080 in any browser
+```
+
+| Aspect | Detail |
+|---|---|
+| Browser support | All browsers |
+| Flash on pyro | 0 |
+| RAM on pyro | ~512 bytes (serial buffer) |
+| MCU needs | USB-CDC or UART |
+| Requires | Python 3 on PC |
+| Suitable for | All variants, Safari users, automation |
+
+### Recommended Configuration Per Variant
+
+| Variant | Primary UI | Safari Fallback | Ground Station |
+|---|---|---|---|
+| MK1B Full (ESP32-C6) | WiFi AP (Option A) | Web Bluetooth (C) | WebSerial (B) |
+| MK1B Lite (STM32C011) | WebSerial (B) | Python bridge (D) | WebSerial (B) |
+| MK1B Backup (ATtiny402) | WebSerial (B) via CH340E | Python bridge (D) | WebSerial (B) |
+
+The MK1B Backup benefits most from WebSerial — it adds a full browser-based
+config UI to a $2.30 device with zero flash overhead. The CH340E bridge
+($0.30) provides the USB-CDC port. Config presets can be selected in the
+browser and written via serial, replacing the resistor-coded approach for
+users who prefer a UI.
+
+### Shared Web UI
+
+All options use the same web interface code (HTML/JS/CSS). The transport
+layer is abstracted:
+
+```javascript
+class PyroTransport {
+    async getStatus() { /* implemented by subclass */ }
+    async setConfig(cfg) { /* implemented by subclass */ }
+}
+
+class HttpTransport extends PyroTransport { /* fetch('/api/status') */ }
+class SerialTransport extends PyroTransport { /* port.write('STATUS\n') */ }
+class BleTransport extends PyroTransport { /* characteristic.readValue() */ }
+class SimTransport extends PyroTransport { /* parent.simApi() */ }
+```
+
+The web UI auto-detects the available transport:
+1. If `window.parent.simApi` exists → simulation mode
+2. If `navigator.serial` available → offer WebSerial
+3. If `navigator.bluetooth` available → offer BLE
+4. Otherwise → try HTTP (on-device or Python bridge)
