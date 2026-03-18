@@ -129,6 +129,11 @@ typedef struct flight_context_t {
     bool buzzer_started;
     bool landed_beep_started;
     bool csv_saved;
+    // Safety features [DD-013, DD-016, DD-017]
+    int32_t max_speed_cms;       // peak speed during ASCENT (for arming gate)
+    uint32_t armed_time;         // when pyros were armed (for backup timer)
+    uint32_t descent_start_time; // when DESCENT started (for landing timeout)
+    int32_t pad_speed_cms;       // vertical speed during PAD_IDLE (for launch confirm)
     // Incremental CSV logger
     uint16_t csv_write_idx; // ring buffer index of next sample to write
     uint16_t csv_pending;   // samples waiting to be flushed

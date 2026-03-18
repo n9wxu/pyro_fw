@@ -268,7 +268,14 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
     buzzer_set_code(code, true);
 }
 
-/* [FLT-LAUNCH-01, FLT-LAUNCH-02, FLT-RATE-01] */
+/* [FLT-LAUNCH-01, FLT-LAUNCH-02, FLT-RATE-01, DD-016]
+ * Strengthened launch confirmation requires ALL of:
+ *   1. Filtered altitude > 10m (1000cm)
+ *   2. Vertical speed > 5 m/s (500 cm/s)
+ * This prevents false launch from barometric drift or thermal expansion. */
+#define LAUNCH_ALT_CM 1000
+#define LAUNCH_SPEED_CMS 500
+
 static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 10)
         return SEVT_NONE;
@@ -277,14 +284,30 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
 
     int32_t altitude;
     read_and_filter_pressure(ctx, now, &altitude);
+
+    /* Track speed on the pad for launch confirmation [DD-016] */
+    uint32_t dt = (ctx->last_sample > 0) ? (now - ctx->last_sample) : 10;
+    if (dt > 0)
+        ctx->pad_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
+
     buf_add(ctx, 0, ctx->filtered_pressure, altitude, PAD_IDLE);
     ctx->last_altitude = altitude;
     ctx->last_sample = now;
 
-    return (altitude > 1000) ? SEVT_LAUNCH : SEVT_NONE;
+    bool alt_ok = altitude > LAUNCH_ALT_CM;
+    bool speed_ok = ctx->pad_speed_cms > LAUNCH_SPEED_CMS;
+    return (alt_ok && speed_ok) ? SEVT_LAUNCH : SEVT_NONE;
 }
 
-/* [FLT-ASC-01..06, FLT-APO-01..04, FLT-RATE-02] */
+/* [FLT-ASC-01..06, FLT-APO-01..04, FLT-RATE-02, DD-013, DD-017]
+ * DD-017: Arming gate — pyros arm only after max filtered speed exceeds
+ *         threshold. The IIR filter (τ=500ms) attenuates measured speed
+ *         by ~50% for short flights, so 10 m/s filtered ≈ 20 m/s true.
+ *         Prevents false arming from barometric drift (~0 m/s filtered).
+ * DD-013: Backup apogee timer — force apogee if not detected within
+ *         backup_timer seconds after arming. Safety net for sensor failure. */
+#define ARM_SPEED_CMS 1000 /* 10 m/s filtered ≈ 20 m/s true [DD-017] */
+
 static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 100)
         return SEVT_NONE;
@@ -298,6 +321,10 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
         ctx->vertical_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
     ctx->under_thrust = ctx->vertical_speed_cms > ctx->prev_vertical_speed_cms;
 
+    /* Track peak speed for arming gate [DD-017] */
+    if (ctx->vertical_speed_cms > ctx->max_speed_cms)
+        ctx->max_speed_cms = ctx->vertical_speed_cms;
+
     buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, altitude, ASCENT);
     ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE].under_thrust =
         ctx->under_thrust ? 1 : 0;
@@ -307,14 +334,29 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
     ctx->last_altitude = altitude;
     ctx->last_sample = now;
 
-    if (!ctx->pyros_armed && ctx->vertical_speed_cms < 1000 && ctx->vertical_speed_cms >= 0)
+    /* [DD-017] Arming requires confirmed motor burn: peak speed > 20 m/s */
+    if (!ctx->pyros_armed && ctx->max_speed_cms >= ARM_SPEED_CMS && ctx->vertical_speed_cms < 1000 &&
+        ctx->vertical_speed_cms >= 0)
         return SEVT_ARMED;
-    if (ctx->pyros_armed && !ctx->apogee_detected && ctx->vertical_speed_cms <= 0)
-        return SEVT_APOGEE;
+
+    if (ctx->pyros_armed && !ctx->apogee_detected) {
+        /* Normal apogee detection: speed drops to zero */
+        if (ctx->vertical_speed_cms <= 0)
+            return SEVT_APOGEE;
+        /* [DD-013] Backup apogee timer: force apogee after configurable timeout */
+        uint32_t timer_s = ctx->config.backup_timer;
+        if (timer_s > 0 && ctx->armed_time > 0 && (now - ctx->armed_time) >= timer_s * 1000)
+            return SEVT_APOGEE;
+    }
     return SEVT_NONE;
 }
 
-/* [FLT-LAND-01..03, FLT-RATE-03] */
+/* [FLT-LAND-01..03, FLT-RATE-03, DD-015]
+ * DD-015: Landing timeout — if descent has lasted landing_timeout seconds
+ * and speed is below 5 m/s, force landing regardless of AGL altitude.
+ * Handles landing at elevations above the launch pad (mesa, hillside). */
+#define LANDING_SPEED_CMS 500 /* 5 m/s — slow enough to be "landed" */
+
 static state_event_t detect_descent(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample < 50)
         return SEVT_NONE;
@@ -333,6 +375,7 @@ static state_event_t detect_descent(flight_context_t *ctx, uint32_t now) {
     check_post_fire_verify(ctx, now);
     check_refire(ctx, now);
 
+    /* Normal landing: stable altitude + low speed + near ground */
     bool altitude_stable = abs(altitude - ctx->last_altitude) < 100;
     bool speed_low = abs(ctx->vertical_speed_cms) < 200;
     bool near_ground = altitude < 3000;
@@ -347,6 +390,17 @@ static state_event_t detect_descent(flight_context_t *ctx, uint32_t now) {
         }
     } else {
         ctx->landing_stable_since = 0;
+    }
+
+    /* [DD-015] Landing timeout: force landing if descent > N seconds
+     * and speed is low enough to be on the ground. Handles elevation
+     * mismatch (landed at higher altitude than launch site). */
+    uint32_t timeout_s = ctx->config.landing_timeout;
+    if (timeout_s > 0 && ctx->descent_start_time > 0 && (now - ctx->descent_start_time) >= timeout_s * 1000 &&
+        abs(ctx->vertical_speed_cms) < LANDING_SPEED_CMS) {
+        ctx->last_altitude = altitude;
+        ctx->last_sample = now;
+        return SEVT_LANDING;
     }
 
     ctx->last_altitude = altitude;
@@ -394,19 +448,26 @@ static void action_launch(flight_context_t *ctx, uint32_t now) {
     buf_tag_event(ctx, EVT_LAUNCH);
 }
 
-/* [FLT-ASC-05] */
+/* [FLT-ASC-05, DD-017] Record armed_time for backup timer */
 static void action_armed(flight_context_t *ctx, uint32_t now) {
-    (void)now;
     ctx->pyros_armed = true;
+    ctx->armed_time = now; /* [DD-013] start backup timer */
     buf_tag_event(ctx, EVT_ARMED);
 }
 
-/* [FLT-APO-03] */
+/* [FLT-APO-03, DD-014] Force CSV flush at apogee */
 static void action_apogee(flight_context_t *ctx, uint32_t now) {
     ctx->apogee_detected = true;
     ctx->apogee_time = now;
+    ctx->descent_start_time = now; /* [DD-015] start landing timeout */
     buf_tag_event(ctx, EVT_APOGEE);
     try_fire_pyros(ctx, now);
+    /* [DD-014] Force flush at apogee — if rocket lawn-darts, this
+     * ensures altitude and apogee event are on flash before impact. */
+    if (!ctx->csv_header_written && ctx->buf_count > 0)
+        csv_flush_step(ctx, ctx->buf_count);
+    else if (ctx->csv_pending > 0)
+        csv_flush_step(ctx, ctx->csv_pending);
 }
 
 /* [FLT-LAND-05, BUZ-03, DAT-06] */

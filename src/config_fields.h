@@ -36,6 +36,8 @@
     X(U8, telem_rate_hz, "telem_rate_hz", 10)                                                                          \
     X(U8, log_rate_hz, "log_rate_hz", 50)                                                                              \
     X(BOOL, log_enabled, "log_enabled", true)                                                                          \
-    X(BOOL, buzzer_startup, "buzzer_startup", true)
+    X(BOOL, buzzer_startup, "buzzer_startup", true)                                                                    \
+    X(U8, backup_timer, "backup_timer", 30)                                                                            \
+    X(U8, landing_timeout, "landing_timeout", 60)
 
 #endif

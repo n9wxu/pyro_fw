@@ -32,6 +32,41 @@ typedef struct {
 int hal_pressure_init(void); /* returns: 0=none, 1=ms5607, 2=bmp280 */
 bool hal_pressure_read(hal_pressure_t *out);
 
+/* ── Pressure FIFO (V2 batch API) [DD-002/003/006/007] ───────────── */
+/* The FIFO decouples sensor sampling from flight software processing.
+ * Producer: platform-specific (Core1, ISR, DMA).
+ * Consumer: flight software calls get_buffer/release_buffer.
+ *
+ * Platforms implement one of:
+ *   - hal_pressure_read() for polled mode (test, sim, simple HAL)
+ *   - hal_pressure_fifo_*() for autonomous mode (RP2040, ESP32, STM32)
+ *
+ * The flight software uses whichever is available. If FIFO is available,
+ * it processes batches for better efficiency and sleep behavior. */
+
+#define HAL_PRESSURE_BATCH_SIZE 5
+
+typedef struct {
+    hal_pressure_t samples[HAL_PRESSURE_BATCH_SIZE];
+    uint32_t timestamps_ms[HAL_PRESSURE_BATCH_SIZE];
+    uint8_t count;
+} hal_pressure_batch_t;
+
+/* Start autonomous pressure sampling at the given rate (Hz).
+ * Returns true if FIFO mode is supported, false if polled only.
+ * If false, flight software falls back to hal_pressure_read(). */
+bool hal_pressure_fifo_start(uint8_t rate_hz);
+
+/* Get a filled batch of samples. Returns true if batch is ready.
+ * The batch pointer is valid until hal_pressure_fifo_release(). */
+bool hal_pressure_fifo_get(hal_pressure_batch_t *batch);
+
+/* Release the batch buffer back to the producer. */
+void hal_pressure_fifo_release(void);
+
+/* Returns true if FIFO mode is active (vs polled mode). */
+bool hal_pressure_fifo_active(void);
+
 /* ── Pyro channels ────────────────────────────────────────────────── */
 
 typedef struct {

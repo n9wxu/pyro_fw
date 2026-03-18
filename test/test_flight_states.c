@@ -46,7 +46,7 @@ void test_SNS_ALT_01_pressure_to_altitude(void) {
     /* Lower pressure = higher altitude */
     int32_t alt = pressure_to_altitude_cm(100325, 101325);
     TEST_ASSERT_TRUE(alt > 0);
-    TEST_ASSERT_INT_WITHIN(1000, 8300, alt);  /* ~8.3 cm/Pa * 1000 Pa ≈ 8300 cm */
+    TEST_ASSERT_INT_WITHIN(1000, 8300, alt); /* ~8.3 cm/Pa * 1000 Pa ≈ 8300 cm */
 }
 
 void test_SNS_PRES_03_filter_init(void) {
@@ -208,10 +208,11 @@ void test_FLT_ASC_04_arms_pyros(void) {
     ctx.launch_time = 0;
     ctx.last_sample = 0;
     ctx.last_altitude = 5000;
-    ctx.vertical_speed_cms = 500;  /* 5 m/s — below 10 m/s threshold */
+    ctx.vertical_speed_cms = 500; /* 5 m/s — below 10 m/s threshold, coasting */
+    ctx.max_speed_cms = 5000;     /* [DD-017] peak was 50 m/s — motor burn confirmed */
 
     /* Altitude slightly higher than last — positive but slow speed */
-    mock_pressure.pressure_pa = 101325.0f - 620.0f;  /* ~5146 cm */
+    mock_pressure.pressure_pa = 101325.0f - 620.0f; /* ~5146 cm */
     mock_time_ms = 200;
     ctx.current_state = dispatch_state(&ctx, mock_time_ms);
 
@@ -223,7 +224,7 @@ void test_FLT_APO_01_detects_apogee(void) {
     ctx.current_state = ASCENT;
     ctx.ground_pressure = 101325;
     ctx.filter_initialized = true;
-    ctx.filtered_pressure = 100425;  /* close to what we'll read */
+    ctx.filtered_pressure = 100425; /* close to what we'll read */
     ctx.launch_time = 0;
     ctx.last_sample = 0;
     ctx.last_altitude = 8000;
@@ -234,7 +235,7 @@ void test_FLT_APO_01_detects_apogee(void) {
     ctx.pyro2_continuity_good = true;
 
     /* Altitude lower than last → negative speed → apogee */
-    mock_pressure.pressure_pa = 101325.0f - 900.0f;  /* ~7470 cm < 8000 */
+    mock_pressure.pressure_pa = 101325.0f - 900.0f; /* ~7470 cm < 8000 */
     mock_time_ms = 200;
     ctx.current_state = dispatch_state(&ctx, mock_time_ms);
 
@@ -249,14 +250,14 @@ void test_FLT_LAND_01_detects_landing(void) {
     ctx.current_state = DESCENT;
     ctx.ground_pressure = 101325;
     ctx.filter_initialized = true;
-    ctx.filtered_pressure = 101313;  /* pre-converged near mock pressure */
+    ctx.filtered_pressure = 101313; /* pre-converged near mock pressure */
     ctx.launch_time = 0;
     ctx.last_altitude = 100;
     ctx.vertical_speed_cms = 0;
     ctx.apogee_detected = true;
 
     /* Stable altitude near ground for >1 second */
-    mock_pressure.pressure_pa = 101325.0f - 12.0f;  /* ~100 cm */
+    mock_pressure.pressure_pa = 101325.0f - 12.0f; /* ~100 cm */
     ctx.last_sample = 0;
     mock_time_ms = 100;
     dispatch_state(&ctx, mock_time_ms);
@@ -381,8 +382,8 @@ void test_TEL_06_altitude_and_speed(void) {
     int seq, st, thr;
     long alt, vel, maxalt, press;
     unsigned long time_ms;
-    int n = sscanf(mock_uart_buf, "$PYRO,%d,%d,%d,%ld,%ld,%ld,%ld,%lu,",
-                   &seq, &st, &thr, &alt, &vel, &maxalt, &press, &time_ms);
+    int n = sscanf(mock_uart_buf, "$PYRO,%d,%d,%d,%ld,%ld,%ld,%ld,%lu,", &seq, &st, &thr, &alt, &vel, &maxalt, &press,
+                   &time_ms);
     TEST_ASSERT_EQUAL(8, n);
     TEST_ASSERT_EQUAL(25000, alt);
     TEST_ASSERT_EQUAL(-1500, vel);
@@ -442,7 +443,8 @@ void test_TEL_07_boot_maps_to_zero(void) {
 
 void test_CFG_02_parse_full(void) {
     config_t cfg = {0};
-    char ini[] = "[pyro]\r\nid=ROCKET1\r\nname=MyRkt\r\npyro1_mode=delay\r\npyro1_value=0\r\npyro2_mode=agl\r\npyro2_value=300\r\nunits=ft\r\n";
+    char ini[] = "[pyro]\r\nid=ROCKET1\r\nname=MyRkt\r\npyro1_mode=delay\r\npyro1_value=0\r\npyro2_mode=agl\r\npyro2_"
+                 "value=300\r\nunits=ft\r\n";
     parse_config_ini(ini, &cfg);
     TEST_ASSERT_EQUAL_STRING("ROCKET1", cfg.id);
     TEST_ASSERT_EQUAL_STRING("MyRkt", cfg.name);
@@ -455,23 +457,30 @@ void test_CFG_02_parse_full(void) {
 
 void test_CFG_04_parse_all_modes(void) {
     config_t cfg = {0};
-    char ini1[] = "pyro1_mode=delay\r\n"; parse_config_ini(ini1, &cfg);
+    char ini1[] = "pyro1_mode=delay\r\n";
+    parse_config_ini(ini1, &cfg);
     TEST_ASSERT_EQUAL(PYRO_MODE_DELAY, cfg.pyro1_mode);
-    char ini2[] = "pyro1_mode=agl\r\n"; parse_config_ini(ini2, &cfg);
+    char ini2[] = "pyro1_mode=agl\r\n";
+    parse_config_ini(ini2, &cfg);
     TEST_ASSERT_EQUAL(PYRO_MODE_AGL, cfg.pyro1_mode);
-    char ini3[] = "pyro1_mode=fallen\r\n"; parse_config_ini(ini3, &cfg);
+    char ini3[] = "pyro1_mode=fallen\r\n";
+    parse_config_ini(ini3, &cfg);
     TEST_ASSERT_EQUAL(PYRO_MODE_FALLEN, cfg.pyro1_mode);
-    char ini4[] = "pyro1_mode=speed\r\n"; parse_config_ini(ini4, &cfg);
+    char ini4[] = "pyro1_mode=speed\r\n";
+    parse_config_ini(ini4, &cfg);
     TEST_ASSERT_EQUAL(PYRO_MODE_SPEED, cfg.pyro1_mode);
 }
 
 void test_CFG_03_parse_all_units(void) {
     config_t cfg = {0};
-    char ini1[] = "units=cm\r\n"; parse_config_ini(ini1, &cfg);
+    char ini1[] = "units=cm\r\n";
+    parse_config_ini(ini1, &cfg);
     TEST_ASSERT_EQUAL(0, cfg.units);
-    char ini2[] = "units=m\r\n"; parse_config_ini(ini2, &cfg);
+    char ini2[] = "units=m\r\n";
+    parse_config_ini(ini2, &cfg);
     TEST_ASSERT_EQUAL(1, cfg.units);
-    char ini3[] = "units=ft\r\n"; parse_config_ini(ini3, &cfg);
+    char ini3[] = "units=ft\r\n";
+    parse_config_ini(ini3, &cfg);
     TEST_ASSERT_EQUAL(2, cfg.units);
 }
 

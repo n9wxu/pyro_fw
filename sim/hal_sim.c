@@ -123,6 +123,20 @@ bool hal_pressure_read(hal_pressure_t *out) {
     return true;
 }
 
+/* Pressure FIFO stubs (sim uses polled mode) */
+bool hal_pressure_fifo_start(uint8_t rate_hz) {
+    (void)rate_hz;
+    return false;
+}
+bool hal_pressure_fifo_get(hal_pressure_batch_t *batch) {
+    (void)batch;
+    return false;
+}
+void hal_pressure_fifo_release(void) {}
+bool hal_pressure_fifo_active(void) {
+    return false;
+}
+
 void hal_pyro_init(void) {}
 
 void hal_pyro_check(hal_continuity_t *p1, hal_continuity_t *p2) {

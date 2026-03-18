@@ -50,6 +50,21 @@ bool hal_pressure_read(hal_pressure_t *out) {
     return true;
 }
 
+/* ── Pressure FIFO (polled for now — V2 will use Core1) ───────────── */
+
+bool hal_pressure_fifo_start(uint8_t rate_hz) {
+    (void)rate_hz;
+    return false; /* RP2040 V2: will use Core1 autonomous sampling */
+}
+bool hal_pressure_fifo_get(hal_pressure_batch_t *batch) {
+    (void)batch;
+    return false;
+}
+void hal_pressure_fifo_release(void) {}
+bool hal_pressure_fifo_active(void) {
+    return false;
+}
+
 /* ── Pyro ─────────────────────────────────────────────────────────── */
 
 void hal_pyro_init(void) {
