@@ -701,4 +701,92 @@ This connector accepts:
 - Radio module (SX1276 + MCU, plugs into same connector)
 
 The pyro board has no USB connector, no radio, no bus transceiver.
-All external interfaces plug into the same 4-pin UART header.
+All external interfaces plug into the same 5-pin UART+BTN header.
+
+### Ground Test and Pad Operations
+
+A ground test button enables pre-flight verification and pad-side operations
+without a computer. The button connects via the 5-pin interface header or
+is built into the smallest pyro variant.
+
+#### 5-Pin Interface Header
+
+| Pin | Function |
+|---|---|
+| 1 | VCC (3.3-5V input) |
+| 2 | GND |
+| 3 | TX (pyro → bus) |
+| 4 | RX (bus → pyro) |
+| 5 | BTN (active-low, internal pull-up) |
+
+When no ground test plug is connected, pin 5 reads high (inactive).
+A ground test plug has a momentary button between pin 5 and GND.
+
+#### Button Handling Without New HAL Functions
+
+The button is handled externally — not by the flight software.
+
+**Ground test plug ($0.40 accessory):** A tiny MCU (ATtiny202) debounces
+the button and sends serial commands on the UART:
+
+```
+Button press     → TEST REPLAY STATUS\n
+Button press     → TEST REPLAY ALTITUDE\n
+3 presses in 2s  → TEST ARM 1\n
+Button press     → TEST FIRE 1\n
+```
+
+**Bus master:** Owns the button and sequences operations across all pyros.
+
+In both cases, the pyro's HAL serial command handler processes TEST commands
+using existing HAL functions. The flight software is unchanged.
+
+#### Ground Test Sequence
+
+| Action | Command | Safety |
+|---|---|---|
+| Replay status beep | TEST REPLAY STATUS | None needed |
+| Replay altitude beep | TEST REPLAY ALTITUDE | None needed |
+| Arm pyro 1 | TEST ARM 1 | Buzzer warning, 3s auto-disarm |
+| Fire pyro 1 | TEST FIRE 1 | Only while armed |
+| Arm pyro 2 | TEST ARM 2 | Buzzer warning, 3s auto-disarm |
+| Fire pyro 2 | TEST FIRE 2 | Only while armed |
+
+The 3-press arm + 1-press fire prevents accidental firing.
+
+#### Bus Sequenced Ground Test
+
+The bus master sequences so only one pyro fires at a time:
+
+```
+Master press 1 → @A3F7 TEST REPLAY STATUS\n   (drogue beeps)
+Master press 2 → @9C21 TEST REPLAY STATUS\n   (main beeps)
+Master press 3 → @A3F7 TEST ARM 1\n           (arm drogue)
+Master press 4 → @A3F7 TEST FIRE 1\n          (fire drogue)
+Master press 5 → @9C21 TEST ARM 1\n           (arm main)
+Master press 6 → @9C21 TEST FIRE 1\n          (fire main)
+```
+
+#### v2.0 HAL Compatibility
+
+| Ground test function | HAL function used | Flight software change |
+|---|---|---|
+| Replay status beep | `hal_buzzer_play()` | None |
+| Replay altitude beep | `hal_buzzer_play()` | None |
+| Test fire pyro | `hal_pyro_fire()` | None |
+| Button detection | External (serial command) | None |
+
+**Result: zero flight software changes, zero new HAL functions.**
+
+If a direct GPIO button is required on the smallest variant without an
+external plug MCU, one new HAL function would be needed: `hal_button_pressed()`.
+This is the only identified case where the v2.0 HAL may need extension.
+
+#### Ground Test Plug BOM
+
+| Component | Price |
+|---|---|
+| ATtiny202 (SOT-23-6) | $0.25 |
+| Momentary button | $0.10 |
+| 5-pin connector | $0.05 |
+| **Total** | **$0.40** |
