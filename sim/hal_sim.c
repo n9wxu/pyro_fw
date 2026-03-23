@@ -8,6 +8,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "../src/hal.h"
+#include "../src/config.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -214,6 +215,44 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
     sim_files[slot].len = len;
     sim_files[slot].used = true;
     return 0;
+}
+
+/* ── Config (v2) ──────────────────────────────────────────────────── */
+
+int hal_config_load(config_t *cfg) {
+    config_set_defaults(cfg);
+    char buf[512];
+    int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = '\0';
+        config_parse_ini(buf, cfg);
+        return 0;
+    }
+    const char *def = config_default_ini();
+    hal_fs_write_file("config.ini", def, (int)strlen(def));
+    return -1;
+}
+
+int hal_config_save(const config_t *cfg) {
+    char buf[512];
+    int n = config_serialize_ini(cfg, buf, (int)sizeof(buf));
+    if (n <= 0)
+        return -1;
+    return hal_fs_write_file("config.ini", buf, n);
+}
+
+/* ── Serial readline (sim: no serial input) ──────────────────────── */
+
+bool hal_serial_readline(char *buf, int max_len) {
+    (void)buf;
+    (void)max_len;
+    return false; /* simulation has no serial input */
+}
+
+/* ── Sleep (sim: no-op) ───────────────────────────────────────────── */
+
+void hal_sleep_until_event(void) {
+    /* No-op: sim loop is driven by physics engine */
 }
 
 void hal_platform_init(void) {}

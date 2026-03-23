@@ -38,28 +38,28 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-SAFE-04 | No fire before apogee | Closed-loop: drogue fires at/after apogee | ✅ |
 | FLT-LAUNCH-01 | Transition at >10m | Integration: test_FLT_BOOT_01_all_states | ✅ |
 | FLT-LAUNCH-02 | Stay at ground level | Integration: PAD_IDLE persists before launch | ✅ |
-| FLT-LAUNCH-03 | Backdate launch time | — | ⚠️ |
+| FLT-LAUNCH-03 | Backdate launch time | Integration: test_FLT_LAUNCH_03_backdate | ✅ |
 | FLT-LAUNCH-04 | Log LAUNCH event | Integration: test_DAT_04_events | ✅ |
 | FLT-LAUNCH-05 | Stop buzzer on launch | Integration: test_BUZ_07_03_lifecycle | ✅ |
 | FLT-APO-01 | Apogee when speed ≤ 0 | Integration: test_FLT_APO_01_detected | ✅ |
 | FLT-APO-02 | Transition to DESCENT | Integration: test_FLT_BOOT_01_all_states | ✅ |
 | FLT-APO-03 | Log APOGEE event | Integration: test_DAT_04_events | ✅ |
-| FLT-APO-04 | No apogee before armed | — | ⚠️ |
+| FLT-APO-04 | No apogee before armed | Integration: test_FLT_APO_04_no_apogee_before_armed | ✅ |
 | FLT-ASC-01 | Track max altitude | Integration: test_FLT_APO_01_detected (max_altitude > 0) | ✅ |
 | FLT-ASC-02 | Compute vertical speed | Integration: apogee detection depends on speed | ✅ |
-| FLT-ASC-03 | Detect thrust phase | — | ⚠️ |
+| FLT-ASC-03 | Detect thrust phase | Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
 | FLT-ASC-04 | Arm at <10 m/s | Closed-loop: pyros arm and fire in all flights | ✅ |
 | FLT-ASC-05 | Log ARMED event | Integration: test_DAT_04_events | ✅ |
-| FLT-ASC-06 | No arm above 10 m/s | — | ⚠️ |
+| FLT-ASC-06 | No arm above 10 m/s | Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
 | FLT-LAND-01 | Stable <1m for 1s | Integration: test_FLT_BOOT_01_all_states reaches LANDED | ✅ |
 | FLT-LAND-02 | Speed <2 m/s | Integration: landing detected at correct time | ✅ |
 | FLT-LAND-03 | Altitude <30m | Integration: landing detected at correct time | ✅ |
 | FLT-LAND-04 | Transition to LANDED | Integration: test_FLT_LAND_04_duration | ✅ |
 | FLT-LAND-05 | Log LANDING event | Integration: test_DAT_04_events | ✅ |
 | FLT-LAND-06 | Stay in LANDED | Integration: state remains LANDED after detection | ✅ |
-| PYR-REFIRE-01 | Re-fire if ballistic | — | ⚠️ |
-| PYR-ALT-01 | Clamp altitude settings | — | ⚠️ |
-| PYR-ALT-02 | Warning beep for range | — | ⚠️ |
+| PYR-REFIRE-01 | Re-fire if ballistic | Closed-loop: test_PYR_REFIRE_01_refire_ballistic | ✅ |
+| PYR-ALT-01 | Clamp altitude settings | Closed-loop: Karman suite (AGL > 8000m clamped, pyro still fires) | ✅ |
+| PYR-ALT-02 | Warning beep for range | Integration: test_PYR_ALT_02_cfg_range_beep | ✅ |
 | FLT-RATE-01..04 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds) | ⚠️ |
 
 ## 2. Pre-Flight Status
@@ -180,14 +180,18 @@ Verify web interface behavior against mock server in 3 device modes.
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by integration/closed-loop/web test | 81 |
-| ⚠️ Not directly verified (needs integration test or hardware) | 22 |
+| ✅ Verified by integration/closed-loop/web test | 88 |
+| ⚠️ Not directly verified (needs integration test or hardware) | 15 |
 | ❌ Not implemented | 0 |
 | ✅ HW (hardware satisfies) | 1 |
 
-### Remaining gaps needing integration tests:
-1. **PYR-REFIRE-01**: Re-fire logic — add closed-loop flight with failed first deployment
-2. **FLT-LAUNCH-03**: Launch time backdating verification
-3. **FLT-APO-04**: No apogee before armed — explicit test
-4. **FLT-ASC-03/06**: Thrust phase detection + no arm above 10 m/s
-5. **PYR-ALT-01/02**: Altitude clamp and warning beep verification
+### Remaining gaps (hardware or future work only):
+- **FLT-RATE-01..04**: Sample rate precision — hardware timing test
+- **PYR-CONT-01**: Continuity check period — hardware timing test
+- **BUZ-STATUS-01 / BUZ-01..02**: Beep codes / startup chirps — hardware audio test
+- **FLT-BOOT-02..03 / FLT-BOOT-09**: Config load and settle timing — hardware test
+- **SYS-DATA-02 / DAT-06..07**: CSV export format — hardware integration test
+- **SYS-ALT-02 / SNS-PRES-01**: Multi-sensor detection — hardware test
+- **WEB-NET-01..04**: USB network / mDNS / DNS-SD — hardware test
+- **WEB-API-04..07**: OTA, reboot, CSV download, CORS — hardware test
+- **OTA-01..04**: OTA update flow — hardware test

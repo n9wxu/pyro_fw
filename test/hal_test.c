@@ -4,29 +4,12 @@
  * SPDX-License-Identifier: MIT
  */
 #include "../src/hal.h"
+#include "../src/config.h"
+#include "mocks.h"
 #include <string.h>
 #include <stdio.h>
 
-/* ── Mock state (shared with test files) ──────────────────────────── */
-
-typedef struct {
-    float pressure_pa;
-    float temperature_c;
-    int sensor_type; /* 0=none, 1=ms5607, 2=bmp280 */
-} mock_pressure_t;
-
-typedef struct {
-    uint16_t p1_adc;
-    uint16_t p2_adc;
-    bool p1_good;
-    bool p2_good;
-    bool p1_open;
-    bool p2_open;
-    bool firing;
-    bool fault; /* injectable fault state */
-    int fire_count;
-    uint8_t last_fire_channel;
-} mock_pyro_t;
+/* ── Mock state (shared with test files via mocks.h) ─────────────── */
 
 #define MOCK_UART_BUF_SIZE 4096
 
@@ -40,6 +23,10 @@ uint32_t mock_time_ms = 0;
 uint32_t mock_xip_stall_ms = 0;
 uint32_t mock_xip_total_stall_ms = 0;
 int mock_xip_stall_count = 0;
+
+/* Serial command mock queue [GND-TEST-01..04] */
+char mock_serial_queue[MOCK_SERIAL_QUEUE_DEPTH][MOCK_SERIAL_LINE_MAX];
+int mock_serial_queue_count = 0;
 
 static void xip_stall(void) {
     if (mock_xip_stall_ms > 0) {
@@ -75,7 +62,17 @@ void mock_reset_all(void) {
     mock_xip_stall_ms = 0;
     mock_xip_total_stall_ms = 0;
     mock_xip_stall_count = 0;
+    mock_serial_queue_count = 0;
     memset(sim_files, 0, sizeof(sim_files));
+}
+
+/* Enqueue a serial command line for hal_serial_readline() to return */
+void mock_serial_enqueue(const char *cmd) {
+    if (mock_serial_queue_count < MOCK_SERIAL_QUEUE_DEPTH) {
+        strncpy(mock_serial_queue[mock_serial_queue_count], cmd, MOCK_SERIAL_LINE_MAX - 1);
+        mock_serial_queue[mock_serial_queue_count][MOCK_SERIAL_LINE_MAX - 1] = '\0';
+        mock_serial_queue_count++;
+    }
 }
 
 /* ── HAL implementation ───────────────────────────────────────────── */
@@ -188,6 +185,52 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
     sim_files[slot].len = len;
     sim_files[slot].used = true;
     return 0;
+}
+
+/* ── Config (v2) ──────────────────────────────────────────────────── */
+
+int hal_config_load(config_t *cfg) {
+    config_set_defaults(cfg);
+    /* Check if config.ini is stored in the mock filesystem */
+    char buf[512];
+    int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = '\0';
+        config_parse_ini(buf, cfg);
+        return 0;
+    }
+    /* No file — write defaults so next boot finds them */
+    const char *def = config_default_ini();
+    hal_fs_write_file("config.ini", def, (int)strlen(def));
+    return -1;
+}
+
+int hal_config_save(const config_t *cfg) {
+    char buf[512];
+    int n = config_serialize_ini(cfg, buf, (int)sizeof(buf));
+    if (n <= 0)
+        return -1;
+    return hal_fs_write_file("config.ini", buf, n);
+}
+
+/* ── Serial readline (v2) ─────────────────────────────────────────── */
+
+bool hal_serial_readline(char *buf, int max_len) {
+    if (mock_serial_queue_count == 0)
+        return false;
+    strncpy(buf, mock_serial_queue[0], max_len - 1);
+    buf[max_len - 1] = '\0';
+    /* Shift queue left */
+    for (int i = 0; i < mock_serial_queue_count - 1; i++)
+        memcpy(mock_serial_queue[i], mock_serial_queue[i + 1], MOCK_SERIAL_LINE_MAX);
+    mock_serial_queue_count--;
+    return true;
+}
+
+/* ── Sleep (v2, no-op in test) ────────────────────────────────────── */
+
+void hal_sleep_until_event(void) {
+    /* No-op: test loop is tick-driven */
 }
 
 void hal_platform_init(void) {}

@@ -6,6 +6,7 @@
  */
 #include "hal.h"
 #include "flight_states.h"
+#include "ground_test.h"
 #include "buzzer.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -193,19 +194,11 @@ static void check_refire(flight_context_t *ctx, uint32_t now) {
 
 /* ── Event detectors ──────────────────────────────────────────────── */
 
-/* [FLT-BOOT-02, FLT-BOOT-03, CFG-05] */
+/* [FLT-BOOT-02, FLT-BOOT-03, CFG-05]
+ * [v2] Config load delegated to HAL — flight software has no file I/O knowledge. */
 static state_event_t detect_boot_init(flight_context_t *ctx, uint32_t now) {
     (void)now;
-    config_set_defaults(&ctx->config);
-    char buf[512];
-    int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
-    if (n < 0) {
-        const char *def = config_default_ini();
-        hal_fs_write_file("config.ini", def, strlen(def));
-    } else if (n > 0) {
-        buf[n] = '\0';
-        config_parse_ini(buf, &ctx->config);
-    }
+    hal_config_load(&ctx->config); /* [v2] replaces direct hal_fs_read/write_file */
     hal_buzzer_init();
     hal_pressure_init();
     hal_pyro_init();
@@ -265,6 +258,7 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
         code = c1.open ? BEEP_P1_OPEN : BEEP_P1_SHORT;
     else if (!c2.good)
         code = c2.open ? BEEP_P2_OPEN : BEEP_P2_SHORT;
+    ctx->last_status_code = code; /* [GND-TEST-01] remember for BEEP STATUS replay */
     buzzer_set_code(code, true);
 }
 
@@ -277,6 +271,13 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
 #define LAUNCH_SPEED_CMS 500
 
 static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
+    /* [GND-TEST-01..04, DD-011] Poll serial for ground test commands.
+     * Processed before the sample-rate gate so commands drain promptly. */
+    char cmd_buf[64];
+    if (hal_serial_readline(cmd_buf, sizeof(cmd_buf)))
+        ground_test_handle_command(&ctx->gt, cmd_buf, ctx, now);
+    ground_test_update(&ctx->gt, now);
+
     if (now - ctx->last_sample < 10)
         return SEVT_NONE;
 
@@ -688,6 +689,7 @@ void flight_init(flight_context_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     config_set_defaults(&ctx->config);
     ctx->current_state = BOOT_INIT;
+    ground_test_init(&ctx->gt);
 }
 
 void flight_update_outputs(flight_context_t *ctx, uint32_t now) {

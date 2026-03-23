@@ -261,25 +261,67 @@ static sim_result_t run_sim(config_t cfg, flight_profile_t prof, bool enable_pyr
 
 /* Pyro1 = drogue, Pyro2 = main */
 static config_t cfg_delay_delay(void) {
-    return (config_t){"DD", "DlyDly", PYRO_MODE_DELAY, 0, PYRO_MODE_DELAY, 3, 2, 0};
+    return (config_t){.id = "DD",
+                      .name = "DlyDly",
+                      .pyro1_mode = PYRO_MODE_DELAY,
+                      .pyro1_value = 0,
+                      .pyro2_mode = PYRO_MODE_DELAY,
+                      .pyro2_value = 3,
+                      .units = 2};
 }
 static config_t cfg_delay_agl(void) {
-    return (config_t){"DA", "DlyAgl", PYRO_MODE_DELAY, 0, PYRO_MODE_AGL, 200, 2, 0};
+    return (config_t){.id = "DA",
+                      .name = "DlyAgl",
+                      .pyro1_mode = PYRO_MODE_DELAY,
+                      .pyro1_value = 0,
+                      .pyro2_mode = PYRO_MODE_AGL,
+                      .pyro2_value = 200,
+                      .units = 2};
 }
 static config_t cfg_delay_fallen(void) {
-    return (config_t){"DF", "DlyFal", PYRO_MODE_DELAY, 0, PYRO_MODE_FALLEN, 100, 2, 0};
+    return (config_t){.id = "DF",
+                      .name = "DlyFal",
+                      .pyro1_mode = PYRO_MODE_DELAY,
+                      .pyro1_value = 0,
+                      .pyro2_mode = PYRO_MODE_FALLEN,
+                      .pyro2_value = 100,
+                      .units = 2};
 }
 static config_t cfg_delay_speed(void) {
-    return (config_t){"DS", "DlySpd", PYRO_MODE_DELAY, 0, PYRO_MODE_SPEED, 30, 2, 0};
+    return (config_t){.id = "DS",
+                      .name = "DlySpd",
+                      .pyro1_mode = PYRO_MODE_DELAY,
+                      .pyro1_value = 0,
+                      .pyro2_mode = PYRO_MODE_SPEED,
+                      .pyro2_value = 30,
+                      .units = 2};
 }
 static config_t cfg_agl_agl(void) {
-    return (config_t){"AA", "AglAgl", PYRO_MODE_AGL, 400, PYRO_MODE_AGL, 200, 2, 0};
+    return (config_t){.id = "AA",
+                      .name = "AglAgl",
+                      .pyro1_mode = PYRO_MODE_AGL,
+                      .pyro1_value = 400,
+                      .pyro2_mode = PYRO_MODE_AGL,
+                      .pyro2_value = 200,
+                      .units = 2};
 }
 static config_t cfg_fallen_agl(void) {
-    return (config_t){"FA", "FalAgl", PYRO_MODE_FALLEN, 50, PYRO_MODE_AGL, 200, 2, 0};
+    return (config_t){.id = "FA",
+                      .name = "FalAgl",
+                      .pyro1_mode = PYRO_MODE_FALLEN,
+                      .pyro1_value = 50,
+                      .pyro2_mode = PYRO_MODE_AGL,
+                      .pyro2_value = 200,
+                      .units = 2};
 }
 static config_t cfg_speed_agl(void) {
-    return (config_t){"SA", "SpdAgl", PYRO_MODE_SPEED, 20, PYRO_MODE_AGL, 200, 2, 0};
+    return (config_t){.id = "SA",
+                      .name = "SpdAgl",
+                      .pyro1_mode = PYRO_MODE_SPEED,
+                      .pyro1_value = 20,
+                      .pyro2_mode = PYRO_MODE_AGL,
+                      .pyro2_value = 200,
+                      .units = 2};
 }
 
 /* Altitudes */
@@ -476,7 +518,13 @@ void test_PYR_SAFE_01_no_fire_without_continuity(void) {
 void test_PYR_SAFE_02_no_simultaneous_fire(void) {
     flight_profile_t prof = make_profile(ALT_HIGH);
     /* Both set to delay=0 so both want to fire at apogee */
-    config_t cfg = (config_t){"SS", "SimFir", PYRO_MODE_DELAY, 0, PYRO_MODE_DELAY, 0, 2, 0};
+    config_t cfg = (config_t){.id = "SS",
+                              .name = "SimFir",
+                              .pyro1_mode = PYRO_MODE_DELAY,
+                              .pyro1_value = 0,
+                              .pyro2_mode = PYRO_MODE_DELAY,
+                              .pyro2_value = 0,
+                              .units = 2};
 
     sim_result_t r = run_sim(cfg, prof, true);
     print_summary("NoSimulFire", &r);
@@ -718,6 +766,98 @@ void test_XIP_stall_pyro_timing(void) {
     TEST_ASSERT_GREATER_THAN_MESSAGE(0, mock_xip_total_stall_ms, "No XIP stall time accumulated");
 }
 
+/* [PYR-REFIRE-01] Re-fire a channel if descent speed exceeds 30 m/s between
+ * 1.0 and 1.5 seconds after initial fire and continuity is still present.
+ *
+ * Scenario: 1000m apogee, pyro1 = FALLEN 100m (fires ~4.5s after apogee when
+ * falling at ~44 m/s). Failed deployment is simulated by keeping mock_pyro
+ * p1_good=true and p1_open=false — the circuit is intact, the e-match didn't
+ * fire the charge. The rocket stays ballistic (ps.drogue_deployed stays false).
+ * check_refire() in detect_descent() detects ballistic + continuity + timing
+ * and fires pyro1 a second time within the 1.0-1.5s window. */
+void test_PYR_REFIRE_01_refire_ballistic(void) {
+    mock_reset_all();
+    mock_pyro.p1_good = true;
+    mock_pyro.p2_good = true;
+    mock_pyro.p1_adc = 50;
+    mock_pyro.p2_adc = 50;
+    buzzer_stop_count = 0;
+    buzzer_altitude_count = 0;
+    buzzer_active_flag = true;
+
+    /* 1000m apogee: ballistic speed ~44 m/s when fallen 100m from peak.
+     * FALLEN 100m fires while descending fast — re-fire window at T+1.0-1.5s
+     * still has speed >> 30 m/s (ballistic = ctx->vertical_speed_cms < -3000). */
+    flight_profile_t prof = make_profile(1000.0f);
+
+    flight_context_t ctx = {0};
+    config_set_defaults(&ctx.config);
+    ctx.config.pyro1_mode = PYRO_MODE_FALLEN;
+    ctx.config.pyro1_value = 100; /* 100m below apogee — fires while descending fast */
+    ctx.config.pyro2_mode = PYRO_MODE_DELAY;
+    ctx.config.pyro2_value = 60; /* 60s delay — won't fire in test window */
+    ctx.config.units = 1;        /* meters */
+    ctx.config.backup_timer = 0; /* disable backup apogee timer */
+    ctx.current_state = PAD_IDLE;
+    ctx.ground_pressure = (int32_t)GROUND_PA;
+
+    physics_state_t ps = {0};
+    uint8_t prev_fires = 0;
+    bool initial_fired = false;
+    bool refire_detected = false;
+    uint32_t first_fire_time = 0;
+    uint32_t second_fire_time = 0;
+
+    for (uint32_t t = 0; t <= 120000; t++) {
+        /* Detect pyro fires from mock */
+        if (mock_pyro.fire_count > prev_fires) {
+            uint8_t ch = mock_pyro.last_fire_channel;
+            if (ch == 1) {
+                if (!initial_fired) {
+                    initial_fired = true;
+                    first_fire_time = t;
+                    /* Failed deployment: do NOT set ps.drogue_deployed.
+                     * mock_pyro.p1_good and p1_open stay at their defaults
+                     * (good=true, open=false) — circuit intact, charge failed. */
+                } else if (!refire_detected) {
+                    refire_detected = true;
+                    second_fire_time = t;
+                }
+            }
+            prev_fires = mock_pyro.fire_count;
+        }
+
+        /* Physics: pad dwell then flight. Without drogue, rocket is ballistic. */
+        if (t >= PAD_DWELL_MS) {
+            float ft = (float)(t - PAD_DWELL_MS) / 1000.0f;
+            physics_step(&ps, ft, &prof);
+        }
+
+        mock_time_ms = t;
+        mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
+        mock_pyro.firing = false;
+        ctx.current_state = dispatch_state(&ctx, t);
+
+        if (refire_detected)
+            break;
+        if (ctx.current_state == LANDED)
+            break;
+    }
+
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Pyro1 never fired initially (FALLEN threshold vs apogee height)");
+    TEST_ASSERT_TRUE_MESSAGE(initial_fired, msg);
+
+    snprintf(msg, sizeof(msg), "Re-fire not detected: initial_fire=%ums speed_cms=%d (need < -3000)", first_fire_time,
+             ctx.vertical_speed_cms);
+    TEST_ASSERT_TRUE_MESSAGE(refire_detected, msg);
+
+    /* Re-fire must occur within the 1000-1500ms window after initial fire */
+    uint32_t window_ms = second_fire_time - first_fire_time;
+    snprintf(msg, sizeof(msg), "Re-fire window %ums not in [1000,1500]ms", window_ms);
+    TEST_ASSERT_TRUE_MESSAGE(window_ms >= 1000 && window_ms <= 1500, msg);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_PYR_MODE_01_delay_delay);
@@ -734,5 +874,6 @@ int main(void) {
     RUN_TEST(test_PYR_FAULT_02_overcurrent_detection);
     RUN_TEST(test_TST_05_karman_apogee);
     RUN_TEST(test_XIP_stall_pyro_timing);
+    RUN_TEST(test_PYR_REFIRE_01_refire_ballistic);
     return UNITY_END();
 }

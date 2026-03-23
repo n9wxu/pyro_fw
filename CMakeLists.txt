@@ -94,6 +94,7 @@ add_executable(pyro_fw_c
     src/main_hardware.c
     src/hal_hardware.c
     src/flight_states.c
+    src/ground_test.c
     src/config.c
     src/telemetry.c
     src/buzzer.c
@@ -208,6 +209,7 @@ add_custom_target(host_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
@@ -227,6 +229,7 @@ add_custom_target(integration_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_integration.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
                ${unity_SOURCE_DIR}/src/unity.c
@@ -246,6 +249,7 @@ add_custom_target(closedloop_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_closedloop.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
                ${unity_SOURCE_DIR}/src/unity.c
@@ -264,6 +268,7 @@ add_custom_target(sim
                ${CMAKE_CURRENT_LIST_DIR}/sim/main_sim.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/hal_sim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c

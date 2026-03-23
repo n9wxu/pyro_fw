@@ -17,6 +17,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "config.h" /* config_t for hal_config_load/save */
 
 /* ── Time ─────────────────────────────────────────────────────────── */
 
@@ -105,6 +106,32 @@ typedef struct hal_file hal_file_t;
 hal_file_t *hal_fs_open(const char *path, bool append); /* NULL on error */
 int hal_fs_write(hal_file_t *f, const char *data, int len);
 void hal_fs_close(hal_file_t *f);
+
+/* ── Config [v2: replaces direct hal_fs_* in flight software] ──────── */
+
+/* Load configuration from persistent storage into cfg.
+ * Calls config_set_defaults() first, then overlays stored values.
+ * Returns 0 on success, -1 if no config file (defaults were used). */
+int hal_config_load(config_t *cfg);
+
+/* Save configuration to persistent storage.
+ * Returns 0 on success, -1 on error. */
+int hal_config_save(const config_t *cfg);
+
+/* ── Serial commands (ground test, DD-011) ────────────────────────── */
+
+/* Non-blocking serial line read from the TRRS telemetry jack (same UART
+ * as telemetry TX, but the RX side).
+ * Returns true if a complete line was read; buf is NUL-terminated with
+ * trailing CR/LF stripped.  Returns false if no complete line available. */
+bool hal_serial_readline(char *buf, int max_len);
+
+/* ── Power / sleep [v2, PWR-SLEEP-01] ────────────────────────────── */
+
+/* Sleep the CPU until the next pressure buffer, timer expiry, or serial
+ * input event.  Polled-mode HALs (test, sim, v1 hw) may implement this
+ * as a no-op; the CPU simply loops.  Full v2 hardware uses WFE/WFI. */
+void hal_sleep_until_event(void);
 
 /* ── Platform (called from main, not flight code) ─────────────────── */
 

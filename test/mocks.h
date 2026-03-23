@@ -55,6 +55,19 @@ extern uint32_t mock_xip_stall_ms;       /* time added per flash write op */
 extern uint32_t mock_xip_total_stall_ms; /* cumulative stall time */
 extern int mock_xip_stall_count;         /* number of stall events */
 
+/* ── Serial command mock [GND-TEST-01..04, DD-011] ─────────────────── */
+/* Queue serial command strings to be returned by hal_serial_readline().
+ * Each enqueued line is returned once on the next hal_serial_readline()
+ * call; subsequent calls return false until another line is enqueued. */
+#define MOCK_SERIAL_QUEUE_DEPTH 8
+#define MOCK_SERIAL_LINE_MAX 64
+
+extern char mock_serial_queue[MOCK_SERIAL_QUEUE_DEPTH][MOCK_SERIAL_LINE_MAX];
+extern int mock_serial_queue_count;
+
+/* Enqueue a command string (NUL-terminated, no CR/LF needed) */
+void mock_serial_enqueue(const char *cmd);
+
 void mock_reset_all(void);
 
 #endif

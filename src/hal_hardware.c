@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hal.h"
+#include "config.h"
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include "hardware/adc.h"
@@ -14,6 +15,7 @@
 #include <pico_fota_bootloader/core.h>
 #include "pressure_sensor.h"
 #include "pyro.h"
+#include <string.h>
 
 /* ── External dependencies ────────────────────────────────────────── */
 
@@ -208,6 +210,65 @@ void hal_fs_close(hal_file_t *f) {
     lfs_file_close(&f->lfs, &f->file);
     lfs_unmount(&f->lfs);
     f->open = false;
+}
+
+/* ── Config (v2) ──────────────────────────────────────────────────── */
+
+int hal_config_load(config_t *cfg) {
+    config_set_defaults(cfg);
+    char buf[512];
+    int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = '\0';
+        config_parse_ini(buf, cfg);
+        return 0;
+    }
+    /* No config file — write defaults for next boot */
+    const char *def = config_default_ini();
+    hal_fs_write_file("config.ini", def, (int)strlen(def));
+    return -1;
+}
+
+int hal_config_save(const config_t *cfg) {
+    char buf[512];
+    int n = config_serialize_ini(cfg, buf, (int)sizeof(buf));
+    if (n <= 0)
+        return -1;
+    return hal_fs_write_file("config.ini", buf, n);
+}
+
+/* ── Serial readline (v2, TRRS jack RX = uart0 RX) ───────────────── */
+
+bool hal_serial_readline(char *buf, int max_len) {
+    static char rx_buf[64];
+    static int rx_len = 0;
+
+    while (uart_is_readable(uart0) && rx_len < (int)(sizeof(rx_buf) - 1)) {
+        char c = (char)uart_getc(uart0);
+        if (c == '\n' || c == '\r') {
+            if (rx_len > 0) {
+                int n = (rx_len < max_len - 1) ? rx_len : max_len - 1;
+                memcpy(buf, rx_buf, n);
+                buf[n] = '\0';
+                rx_len = 0;
+                return true;
+            }
+            /* empty line — skip */
+        } else {
+            rx_buf[rx_len++] = c;
+        }
+    }
+    return false;
+}
+
+/* ── Sleep (v2, WFE until event) ─────────────────────────────────── */
+
+void hal_sleep_until_event(void) {
+    /* WFE: sleep until any interrupt or event (UART RX, timer, etc.).
+     * With the pressure FIFO on Core1 (v2 Task 7), Core1 sends a SEV
+     * when the batch buffer is full.  Until then, interrupts from UART
+     * RX and the SysTick timer wake Core0 on every relevant event. */
+    __wfe();
 }
 
 /* ── Platform ─────────────────────────────────────────────────────── */

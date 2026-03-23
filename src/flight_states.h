@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "config.h"
+#include "ground_test.h" /* ground_test_ctx_t embedded in flight_context_t */
 
 // System states
 typedef enum {
@@ -139,6 +140,10 @@ typedef struct flight_context_t {
     uint16_t csv_pending;   // samples waiting to be flushed
     bool csv_header_written;
     bool csv_file_open;
+    // Last continuity status beep code [GND-TEST-01]
+    uint8_t last_status_code;
+    // Ground test state machine [GND-TEST-01..04, DD-011]
+    ground_test_ctx_t gt;
 } flight_context_t;
 
 // Flight init and dispatch
