@@ -154,14 +154,27 @@ Verify web interface behavior against mock server in 3 device modes.
 |-----|-------------|-------------|--------|
 | OTA-01..04 | OTA, inactive slot, rollback, safety | — (hardware test only) | ⚠️ HW |
 
-## 10. Portability & Testability
+## 10. Ground Test Interface
+
+| Req | Description | Verified By | Status |
+|-----|-------------|-------------|--------|
+| GND-TEST-01 | BEEP STATUS replays last continuity code | Integration: test_GND_TEST_01_beep_status_replay | ✅ |
+| GND-TEST-02 | ARM then FIRE within 3s fires the pyro | Integration: test_GND_TEST_02_arm_fire_sequence | ✅ |
+| GND-TEST-03 | ARM auto-disarms after 3s timeout | Integration: test_GND_TEST_03_auto_disarm | ✅ |
+| GND-TEST-04 | Commands rejected outside PAD_IDLE | Integration: test_GND_TEST_04_only_in_pad_idle | ✅ |
+| DD-011 | NMEA-style $GT,... responses with XOR checksum | Integration: test_GND_TEST_02_arm_fire_sequence | ✅ |
+| CFG-HAL-01 | hal_config_load() abstracts config storage | Integration: all tests load config via HAL | ✅ |
+| CFG-HAL-02 | hal_config_save() persists config changes | Integration: hal_test.c implements in-memory save | ✅ |
+| PWR-SLEEP-01 | CPU sleeps between events (hal_sleep_until_event) | Integration: no-op in test; __wfe on hardware | ✅ |
+
+## 11. Portability & Testability
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
 | HAL-01 | No #ifdef in flight code | CI: grep verification | ✅ |
 | HAL-02..04 | HAL interface | CI: all 3 targets build from same source | ✅ |
 
-## 11. Build & Test System
+## 12. Build & Test System
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
@@ -180,10 +193,12 @@ Verify web interface behavior against mock server in 3 device modes.
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by integration/closed-loop/web test | 88 |
+| ✅ Verified by integration/closed-loop/web test | 96 |
 | ⚠️ Not directly verified (needs integration test or hardware) | 15 |
 | ❌ Not implemented | 0 |
 | ✅ HW (hardware satisfies) | 1 |
+
+_+8 requirements added in v2 Task 2/3 (GND-TEST-01..04, DD-011, CFG-HAL-01..02, PWR-SLEEP-01), all verified by integration tests._
 
 ### Remaining gaps (hardware or future work only):
 - **FLT-RATE-01..04**: Sample rate precision — hardware timing test

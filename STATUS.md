@@ -1,5 +1,7 @@
 # Pyro MK1B Firmware - Current Status
 
+_Last updated: 2026-03-22 after commit `1928b58`_
+
 ## ✅ Completed
 
 ### Event-Driven State Machine
@@ -49,8 +51,25 @@
 - Fault events logged to flight buffer (EVT_PYRO1_FAULT, EVT_PYRO2_FAULT, EVT_PYRO1_NOPEN, EVT_PYRO2_NOPEN)
 - Beep codes 2-3/2-4 (P1 fault/verify) and 3-3/3-4 (P2 fault/verify)
 
-### Testing (64 C + 22 web)
-- 39 unit, 12 integration, 13 closed-loop (32+ flights)
+### Ground Test Commands (v2 Task 2) ✅ New
+- Serial commands via TRRS jack (UART0 RX): `BEEP STATUS`, `BEEP ALT <n>`, `ARM <1|2>`, `FIRE <1|2>`, `STATUS`
+- 3-second ARM→FIRE window with automatic disarm timeout
+- All commands rejected outside PAD_IDLE state
+- NMEA-style `$GT,...` responses with XOR checksum (DD-011)
+- `last_status_code` stored on each continuity check for BEEP replay
+
+### HAL Config API (v2 Task 1 subset) ✅ New
+- `hal_config_load()` / `hal_config_save()` abstract all config I/O
+- Flight software no longer calls `hal_fs_*()` for config
+- All three HAL implementations updated (hardware, sim, test)
+
+### CPU Sleep (v2 Task 3) ✅ New
+- `hal_sleep_until_event()` added to all HAL implementations
+- Hardware: `__wfe()` — CPU sleeps between events (UART RX, timer, Core1 SEV)
+- Main loop calls it at end of each iteration
+
+### Testing (74 C + 22 web)
+- 39 unit, 20 integration (+4 GND-TEST-01..04), 15 closed-loop (35+ flights)
 - 4 safety-critical closed-loop tests (no-fire-without-continuity, no-simultaneous-fire, no-fire-during-ascent, overcurrent-fault-detection)
 - 22 Playwright web UI tests (3 mock server modes)
 - cppcheck/MISRA, clang-format, pmccabe in CI
@@ -65,6 +84,24 @@
 - [ ] Playwright reboot cycle test skipped (needs CI log access)
 - [ ] Parallel HTTP connections (6+) can drop
 
+## 🚧 In Progress — v2 Architecture
+v2 refactors the firmware to autonomous hardware I/O with CPU sleep between 100ms windows.
+
+| Task | Description | Status |
+|------|-------------|--------|
+| v2-1 | X-macro config system (`config_fields.h`) | ✅ Done |
+| v2-2 | HAL config API (`hal_config_load/save`) | ✅ Done |
+| v2-2 | Ground test commands (`ground_test.c`) | ✅ Done |
+| v2-3 | CPU sleep (`hal_sleep_until_event`) | ✅ Done |
+| v2-4 | Serial readline HAL (`hal_serial_readline`) | ✅ Done |
+| v2-5 | Autonomous pressure (batch buffers, Core1/DMA) | ❌ Not started |
+| v2-6 | Telemetry formatter module | ❌ Not started |
+| v2-7 | Buzzer pattern player (timer ISR) | ❌ Not started |
+| v2-8 | Batch flight_process_samples() | ❌ Not started |
+| v2-9 | Fire-and-forget hal_log_sample() | ❌ Not started |
+| v2-10 | DMA UART TX, USB on Core1/timer ISR | ❌ Not started |
+
+See ARCHITECTURE_V2.md for full task descriptions.
+
 ## ❌ Not Implemented
-- [ ] Progressive in-flight CSV logging
-- [ ] Test mode (GPIO 8 jumper ground test sequence)
+- [ ] Progressive in-flight CSV logging (superseded by v2-9 hal_log_sample)

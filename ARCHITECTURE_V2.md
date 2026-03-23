@@ -174,60 +174,63 @@ while (1) {
 
 ## Implementation Tasks
 
-### Task 1: X-macro config system
-- Create `config_fields.h` with X-macro table
-- Generate: `config_t` struct, `config_set_defaults()`, `config_parse()`, `config_serialize()`
-- Round-trip test: serialize → parse → compare every field
-- Move INI parser out of flight_states.c into config module
+### ✅ Task 1: X-macro config system — DONE
+- `config_fields.h` with X-macro table
+- `config_t` struct, `config_set_defaults()`, `config_parse_ini()`, `config_serialize_ini()`
+- 12 config round-trip/parser tests pass
+- INI parser is a standalone `config.c` module
 
-### Task 2: Refactor HAL interface
-- Update `hal.h` with new API
-- Remove: `hal_pressure_read()`, `hal_fs_*`, `hal_buzzer_tone_on/off()`
-- Add: `hal_pressure_get_buffer()`, `hal_log_sample()`, `hal_config_load/save()`, `hal_buzzer_play()`, `hal_sleep_until_event()`
+### ✅ Task 2a: HAL config API — DONE (commit `1928b58`)
+- `hal_config_load()` / `hal_config_save()` in `hal.h`
+- Flight software (`detect_boot_init`) uses `hal_config_load()` — no raw `hal_fs_*` calls
+- All three HAL implementations updated
 
-### Task 3: Telemetry formatter module
-- Create `telemetry.h` with event functions
-- Formatter reads `config.telem_format` to select protocol
-- Calls `hal_telemetry_send(bytes, len)`
+### ✅ Task 2b: Ground test serial commands — DONE (commit `1928b58`)
+- `src/ground_test.h` + `src/ground_test.c` — new module
+- Commands: `BEEP STATUS`, `BEEP ALT <n>`, `ARM <1|2>`, `FIRE <1|2>`, `STATUS`
+- 3-second auto-disarm timeout; commands rejected outside PAD_IDLE
+- NMEA-style `$GT,...*XX` responses; `hal_serial_readline()` added to HAL
+- 4 integration tests: GND-TEST-01..04, all passing
 
-### Task 4: Buzzer pattern generator
-- Refactor `buzzer.c` to generate pattern arrays
-- `buzzer_make_startup(code)` → pattern
-- `buzzer_make_altitude(altitude)` → pattern
+### ✅ Task 3: CPU sleep — DONE (commit `1928b58`)
+- `hal_sleep_until_event()` in `hal.h`
+- Hardware: `__wfe()` — wakes on UART RX, timer, or Core1 SEV
+- `main_hardware.c` calls it at end of each loop iteration
 
-### Task 5: Refactor flight_states.c for batch processing
-- `flight_process_samples(ctx, samples, timestamps, count)`
-- Remove ring buffer from context
+### ❌ Task 4: Autonomous pressure sampling (Core1 / DMA)
+- Add `hal_pressure_start()`, `hal_pressure_get_buffer()`, `hal_pressure_release_buffer()`
+- Hardware: timer ISR fills ping-pong buffers at 50Hz; flight software pulls 5-sample batches
+- Update test HAL to push mock samples into buffers
+- Update sim HAL to fill buffers from physics engine
+
+### ❌ Task 5: Telemetry formatter module
+- Create standalone `telemetry_formatter.c` with event functions
+- Reads `config.telem_format` to select protocol (NMEA, binary, Eggtimer)
+- Calls `hal_telemetry_send(data, len)` — raw async transport
+
+### ❌ Task 6: Buzzer pattern player (timer ISR)
+- Refactor `buzzer.c` to generate `buzzer_pattern_t[]` arrays
+- `hal_buzzer_play(pattern)` — timer ISR walks pattern autonomously
+- Remove `buzzer_update()` from main loop
+
+### ❌ Task 7: Batch flight_process_samples()
+- Replace `dispatch_state()` with `flight_process_samples(ctx, samples, timestamps, count)`
+- Remove ring buffer from `flight_context_t`
 - Events call telemetry formatter and `hal_log_sample()` directly
 
-### Task 6: Test HAL (hal_test.c)
-- Pressure: fill buffer from mock data
-- Log: capture samples in memory
-- Config: in-memory storage
-- Buzzer: capture pattern
+### ❌ Task 8: Fire-and-forget hal_log_sample()
+- `hal_log_sample(time_ms, pressure, altitude, state, thrust, event)` — non-blocking
+- HAL buffers samples in RAM, flushes to littlefs when CPU sleeps or buffer full
+- Replaces 65KB ring buffer with ~512-byte HAL write buffer
 
-### Task 7: Hardware HAL (hal_hardware.c)
-- Pressure: timer ISR into ping-pong buffers
-- Telemetry: DMA UART TX
-- Buzzer: timer ISR pattern player
-- Log: RAM buffer, flush to littlefs
-- Config: littlefs INI via X-macro
-- USB: 1ms timer ISR
-- Sleep: WFE
+### ❌ Task 9: DMA UART TX / USB on Core1
+- DMA-driven UART TX queue for telemetry (no CPU stall)
+- USB (`tud_task`) on 1ms timer ISR or Core1
+- Core1 sends SEV to wake Core0 when pressure buffer is ready
 
-### Task 8: Simulation HAL (hal_sim.c)
-- Pressure: physics engine fills buffers
-- Telemetry/Log/Config: in-memory
-- Buzzer: export pattern for Web Audio
-
-### Task 9: Update tests
-- Batch processing API in integration/closed-loop tests
-- Config round-trip test
-- Telemetry formatter tests
-- Buzzer pattern tests
-
-### Task 10: Update documentation
-- REQUIREMENTS.md: autonomous I/O, sleep, config system requirements
-- TRACEABILITY.md: update test mappings
-- IMPLEMENTATION.md: new architecture
-- README.md: battery-optimized, autonomous I/O features
+### ❌ Task 10: Update all tests and documentation
+- Integration/closed-loop tests use batch API
+- Telemetry formatter unit tests
+- Buzzer pattern unit tests
+- REQUIREMENTS.md: add autonomous I/O, sleep, and config requirements
+- TRACEABILITY.md: map new tests to requirements

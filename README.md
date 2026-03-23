@@ -7,7 +7,7 @@ Firmware for the Pyro MK1B Rocket Flight Computer
 - **Dual Pyrotechnic Control** - AP2192 power switches with overcurrent detection
 - **Four Firing Modes** - Fallen distance, AGL altitude, descent speed, timed delay
 - **Fault Detection** - Overcurrent monitoring and post-fire verification
-- **Flight Data Logging** - 10Hz ring buffer (4096 samples)
+- **Flight Data Logging** - 10Hz ring buffer (4096 samples) + CSV export
 - **Real-time Telemetry** - $PYRO NMEA format via UART, 10Hz in flight
 - **Pressure Sensing** - MS5607-02BA03 or BMP280 (auto-detected)
 - **Altitude Calculation** - Integer-only barometric formula
@@ -18,6 +18,7 @@ Firmware for the Pyro MK1B Rocket Flight Computer
 - **Status Beep Codes** - Field-diagnosable error reporting
 - **Altitude Beep-out** - Max altitude announced after landing (m/ft/ft100)
 - **Configurable Deployment** - INI file configuration via USB or web
+- **Ground Test Interface** - Safe pre-launch pyro test via serial jack
 
 ## Hardware
 - **MCU:** Raspberry Pi Pico (RP2040)
@@ -124,7 +125,7 @@ Flight data stored in a 4096-sample ring buffer (16 bytes/sample):
 - **Events:** Tagged on existing samples (LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING)
 - **Capacity:** ~6.8 minutes at 10Hz
 
-CSV flight data export to littlefs is planned but not yet implemented.
+CSV flight data is written to littlefs and served at `/api/flight.csv`.
 
 ## Telemetry (UART0)
 **Format:** $PYRO NMEA sentences, 115200 baud
@@ -143,13 +144,34 @@ $PYRO,seq,state,thrust,alt_cm,vel_cms,maxalt_cm,press_pa,time_ms,flags_hex,p1adc
 $PYRO,42,1,1,150000,-200,150000,95000,8500,13,48,52,0,0*4A
 ```
 
+## Ground Test Interface
+
+From a PC or handset connected to UART0 RX (TRRS jack, 115200 baud), send plain-text commands while the device is in PAD_IDLE:
+
+| Command | Description |
+|---------|-------------|
+| `STATUS` | Report continuity state for both channels |
+| `BEEP STATUS` | Replay last continuity beep code from buzzer |
+| `BEEP ALT <n>` | Beep a specific altitude value (cm, for field calibration) |
+| `ARM 1` or `ARM 2` | Arm the selected pyro channel for 3 seconds |
+| `FIRE 1` or `FIRE 2` | Fire the armed channel (must ARM first within 3s) |
+
+Responses are NMEA-style `$GT,...*XX` sentences with XOR checksum:
+```
+$GT,ARMED,1*3A
+$GT,FIRED,1*38
+$GT,ERR,not_pad_idle*XX
+```
+
+All commands are silently ignored if the device is not in PAD_IDLE (ASCENT/DESCENT/LANDED). The ARM→FIRE sequence has a 3-second auto-disarm timeout for safety.
+
 ## Safety Features
 1. **Pre-flight Continuity Check** - ADC oversampling (256 samples, 16-bit effective)
 2. **Two-part Pyro Safety** - Common enable + channel enable
 3. **AP2192 Protection** - Hardware current limiting, thermal shutdown, short circuit protection
 4. **Fault Monitoring** - FLAG pins monitored during fire
 5. **Post-fire Verification** - ADC confirms pyro opened successfully
-6. **Manual Test Mode** - Safe input for ground testing
+6. **Ground Test Safety** - 3-second ARM→FIRE window, commands rejected in flight states
 
 ## Continuity Detection
 - **Circuit:** 100kΩ pull-up to 3.3V on each pyro output
@@ -363,6 +385,16 @@ The tool checks the device's current version, compares with GitHub releases, dow
 7. **Retrieve** - Download flight data from web interface
 
 ## Development Status
+
+**74 C tests, 22 web UI tests — all passing.**
+
+The firmware is feature-complete for v1.5 and is actively being refactored toward v2 autonomous I/O architecture. Key v2 milestones completed:
+- HAL config API (`hal_config_load/save`)
+- Ground test serial command interface
+- CPU sleep (`hal_sleep_until_event` / `__wfe`)
+
+Next v2 tasks: autonomous pressure sampling (Core1/DMA), telemetry formatter module, buzzer pattern ISR. See [ARCHITECTURE_V2.md](ARCHITECTURE_V2.md) and [STATUS.md](STATUS.md) for the full roadmap.
+
 See [SPECIFICATION.md](SPECIFICATION.md) for detailed requirements and implementation notes.
 
 ## License
