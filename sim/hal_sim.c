@@ -249,6 +249,12 @@ bool hal_serial_readline(char *buf, int max_len) {
     return false; /* simulation has no serial input */
 }
 
+/* ── Async task runner (sim: no-op) ──────────────────────────────── */
+
+void hal_tasks_tick(uint32_t now_ms) {
+    (void)now_ms; /* sim uses polled pressure — no async tasks */
+}
+
 /* ── Sleep (sim: no-op) ───────────────────────────────────────────── */
 
 void hal_sleep_until_event(void) {

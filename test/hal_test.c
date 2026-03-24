@@ -229,6 +229,10 @@ bool hal_serial_readline(char *buf, int max_len) {
 
 /* ── Sleep (v2, no-op in test) ────────────────────────────────────── */
 
+void hal_tasks_tick(uint32_t now_ms) {
+    (void)now_ms; /* test HAL uses polled pressure — no async tasks */
+}
+
 void hal_sleep_until_event(void) {
     /* No-op: test loop is tick-driven */
 }

@@ -4,6 +4,9 @@
  */
 #include "hal.h"
 #include "config.h"
+#include "async_task.h"
+#include "ms5607_driver.h"
+#include "bmp280_driver.h"
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include "hardware/adc.h"
@@ -31,6 +34,152 @@ void http_server_init(void);
 
 #define BUZZER_PIN 16
 
+/* ── Async task runner ────────────────────────────────────────────── */
+
+#define HW_MAX_TASKS 8
+static async_task_t *hw_tasks[HW_MAX_TASKS];
+static int hw_task_count = 0;
+
+static void hw_task_register(async_task_t *task) {
+    if (hw_task_count < HW_MAX_TASKS)
+        hw_tasks[hw_task_count++] = task;
+}
+
+/* Run all tasks whose deadline has arrived. */
+void hal_tasks_tick(uint32_t now_ms) {
+    for (int i = 0; i < hw_task_count; i++) {
+        async_task_t *t = hw_tasks[i];
+        if (t->tick && (int32_t)(now_ms - t->next_due_ms) >= 0)
+            t->tick(t, now_ms);
+    }
+}
+
+/* Return the earliest next_due_ms across all registered tasks.
+ * Returns 0 if no tasks are registered. */
+static uint32_t hw_tasks_next_due(void) {
+    if (hw_task_count == 0)
+        return 0;
+    uint32_t min = hw_tasks[0]->next_due_ms;
+    for (int i = 1; i < hw_task_count; i++)
+        if ((int32_t)(hw_tasks[i]->next_due_ms - min) < 0)
+            min = hw_tasks[i]->next_due_ms;
+    return min;
+}
+
+/* ── Pressure sensor async state machine [v2 Task 4] ─────────────── */
+
+typedef enum { PRES_IDLE, PRES_D1_CONV, PRES_D2_CONV } pres_phase_t;
+
+/*
+ * Pressure async task.  struct async_task MUST be the first member so
+ * a pointer cast between pres_task_t * and async_task_t * is safe.
+ */
+typedef struct {
+    async_task_t base; /* MUST be first */
+    pres_phase_t phase;
+    int sensor_type;             /* 1=MS5607  2=BMP280 */
+    uint32_t sample_interval_ms; /* 1000/rate_hz */
+    uint32_t d1_raw;             /* MS5607: saved D1 between phases */
+
+    /* Ping-pong batch buffers.  back is filled by the tick function;
+     * front is promoted atomically when full and read by the consumer. */
+    hal_pressure_batch_t back;
+    hal_pressure_batch_t front;
+    volatile bool front_ready; /* true when front is valid for consumer */
+
+    /* Latest sample for hal_pressure_read() bridge (transparent mode). */
+    hal_pressure_t last;
+    bool has_last;
+} pres_task_t;
+
+static pres_task_t pres;
+
+/* Append a completed reading to the batch and update the bridge sample. */
+static void pres_append(pres_task_t *p, const pressure_reading_t *r, uint32_t now_ms) {
+    p->last.pressure_pa = r->pressure_pa;
+    p->last.temperature_c = r->temperature_c;
+    p->has_last = true;
+
+    int idx = p->back.count;
+    if (idx < HAL_PRESSURE_BATCH_SIZE) {
+        p->back.samples[idx].pressure_pa = r->pressure_pa;
+        p->back.samples[idx].temperature_c = r->temperature_c;
+        p->back.timestamps_ms[idx] = now_ms;
+        p->back.count++;
+    }
+
+    /* Promote back → front when the batch is full and the consumer has
+     * released the previous front.  If the consumer is slow we keep
+     * overwriting back; the flight filter handles repeated readings. */
+    if (p->back.count >= HAL_PRESSURE_BATCH_SIZE && !p->front_ready) {
+        p->front = p->back;
+        p->front_ready = true;
+        p->back.count = 0;
+    }
+}
+
+/*
+ * Pressure state machine tick.
+ *
+ * MS5607 (sensor_type == 1): three phases per sample
+ *   IDLE      → write D1 command (~25µs) → PRES_D1_CONV, due +10ms
+ *   D1_CONV   → read D1 + write D2 (~400µs) → PRES_D2_CONV, due +10ms
+ *   D2_CONV   → read D2 + compensate → IDLE, due +idle_time
+ *
+ * BMP280 (sensor_type == 2): single phase — read output registers.
+ *   No conversion wait needed (normal/continuous mode).
+ */
+static void pres_tick(async_task_t *base, uint32_t now_ms) {
+    pres_task_t *p = (pres_task_t *)base;
+
+    if (p->sensor_type == 1) {
+        /* ── MS5607 ── */
+        switch (p->phase) {
+        case PRES_IDLE:
+            if (ms5607_start_d1()) {
+                p->phase = PRES_D1_CONV;
+                p->base.next_due_ms = now_ms + MS5607_CONV_MS;
+            } else {
+                p->base.next_due_ms = now_ms + 50; /* back-off on I2C error */
+            }
+            break;
+
+        case PRES_D1_CONV:
+            if (ms5607_read_raw(&p->d1_raw) && ms5607_start_d2()) {
+                p->phase = PRES_D2_CONV;
+                p->base.next_due_ms = now_ms + MS5607_CONV_MS;
+            } else {
+                p->phase = PRES_IDLE;
+                p->base.next_due_ms = now_ms + 50;
+            }
+            break;
+
+        case PRES_D2_CONV: {
+            uint32_t d2;
+            if (ms5607_read_raw(&d2)) {
+                pressure_reading_t r;
+                ms5607_compensate(p->d1_raw, d2, &r);
+                pres_append(p, &r, now_ms);
+            }
+            p->phase = PRES_IDLE;
+            /* Total cycle = 2 * MS5607_CONV_MS (phases) + idle remainder.
+             * At 50 Hz sample_interval = 20 ms → idle = 0 (continuous).
+             * At 10 Hz sample_interval = 100 ms → idle = 80 ms sleep. */
+            uint32_t idle = p->sample_interval_ms - 2u * MS5607_CONV_MS;
+            p->base.next_due_ms = now_ms + idle;
+            break;
+        }
+        }
+
+    } else if (p->sensor_type == 2) {
+        /* ── BMP280 (normal/continuous mode) ── */
+        pressure_reading_t r;
+        if (bmp280_read(&r))
+            pres_append(p, &r, now_ms);
+        p->base.next_due_ms = now_ms + p->sample_interval_ms;
+    }
+}
+
 /* ── Time ─────────────────────────────────────────────────────────── */
 
 uint32_t hal_time_ms(void) {
@@ -39,11 +188,22 @@ uint32_t hal_time_ms(void) {
 
 /* ── Pressure sensor ──────────────────────────────────────────────── */
 
+static int hw_sensor_type = 0;
+
 int hal_pressure_init(void) {
-    return (int)pressure_sensor_init();
+    hw_sensor_type = (int)pressure_sensor_init();
+    if (hw_sensor_type > 0)
+        hal_pressure_fifo_start(50); /* auto-start async sampling at 50 Hz */
+    return hw_sensor_type;
 }
 
+/* Bridge: returns the most recent async sample when available.
+ * Falls back to a synchronous read before the state machine has run. */
 bool hal_pressure_read(hal_pressure_t *out) {
+    if (pres.has_last) {
+        *out = pres.last;
+        return true;
+    }
     pressure_reading_t r;
     if (!pressure_sensor_read(&r))
         return false;
@@ -52,19 +212,38 @@ bool hal_pressure_read(hal_pressure_t *out) {
     return true;
 }
 
-/* ── Pressure FIFO (polled for now — V2 will use Core1) ───────────── */
+/* ── Pressure FIFO (v2 async batch API) ───────────────────────────── */
 
 bool hal_pressure_fifo_start(uint8_t rate_hz) {
-    (void)rate_hz;
-    return false; /* RP2040 V2: will use Core1 autonomous sampling */
+    if (hw_sensor_type == 0)
+        return false;
+    memset(&pres, 0, sizeof(pres));
+    pres.base.tick = pres_tick;
+    pres.base.next_due_ms = hal_time_ms(); /* run on first tick */
+    pres.sensor_type = hw_sensor_type;
+    pres.sample_interval_ms = (rate_hz > 0) ? (1000u / (uint32_t)rate_hz) : 100u;
+    pres.phase = PRES_IDLE;
+    /* Register once (idempotent — re-calling changes rate but not slot). */
+    for (int i = 0; i < hw_task_count; i++)
+        if (hw_tasks[i] == &pres.base)
+            return true;
+    hw_task_register(&pres.base);
+    return true;
 }
+
 bool hal_pressure_fifo_get(hal_pressure_batch_t *batch) {
-    (void)batch;
-    return false;
+    if (!pres.front_ready)
+        return false;
+    *batch = pres.front;
+    return true;
 }
-void hal_pressure_fifo_release(void) {}
+
+void hal_pressure_fifo_release(void) {
+    pres.front_ready = false;
+}
+
 bool hal_pressure_fifo_active(void) {
-    return false;
+    return pres.base.tick != NULL;
 }
 
 /* ── Pyro ─────────────────────────────────────────────────────────── */
@@ -261,14 +440,21 @@ bool hal_serial_readline(char *buf, int max_len) {
     return false;
 }
 
-/* ── Sleep (v2, WFE until event) ─────────────────────────────────── */
+/* ── Sleep (v2, alarm-timer until earliest task deadline) ─────────── */
 
 void hal_sleep_until_event(void) {
-    /* WFE: sleep until any interrupt or event (UART RX, timer, etc.).
-     * With the pressure FIFO on Core1 (v2 Task 7), Core1 sends a SEV
-     * when the batch buffer is full.  Until then, interrupts from UART
-     * RX and the SysTick timer wake Core0 on every relevant event. */
-    __wfe();
+    uint32_t due = hw_tasks_next_due();
+    uint32_t now = hal_time_ms();
+    /* If no tasks are registered or the deadline is already past,
+     * fall back to a plain WFE (wakes on any interrupt). */
+    if (due == 0 || (int32_t)(due - now) <= 1) {
+        __wfe();
+        return;
+    }
+    /* sleep_until programs TIMER_ALARM0 and enters WFE.
+     * Any interrupt (USB, UART RX, etc.) wakes the CPU earlier.
+     * The alarm fires at the exact deadline if nothing else wakes us. */
+    sleep_until(from_us_since_boot((uint64_t)due * 1000u));
 }
 
 /* ── Platform ─────────────────────────────────────────────────────── */

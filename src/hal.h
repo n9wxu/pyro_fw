@@ -126,11 +126,20 @@ int hal_config_save(const config_t *cfg);
  * trailing CR/LF stripped.  Returns false if no complete line available. */
 bool hal_serial_readline(char *buf, int max_len);
 
+/* ── Async task runner [v2] ───────────────────────────────────────── */
+
+/* Advance all registered async HAL state machines.
+ * Call once per main loop iteration before dispatch_state().
+ * Hardware HAL: runs due pressure/telemetry/log tasks.
+ * Test and sim HALs implement this as a no-op. */
+void hal_tasks_tick(uint32_t now_ms);
+
 /* ── Power / sleep [v2, PWR-SLEEP-01] ────────────────────────────── */
 
-/* Sleep the CPU until the next pressure buffer, timer expiry, or serial
- * input event.  Polled-mode HALs (test, sim, v1 hw) may implement this
- * as a no-op; the CPU simply loops.  Full v2 hardware uses WFE/WFI. */
+/* Sleep the CPU until the next async task is due, a serial input event,
+ * or any hardware interrupt (USB, timer).
+ * Hardware HAL: sleep_until(earliest task next_due_ms) via alarm timer.
+ * Test and sim HALs implement this as a no-op. */
 void hal_sleep_until_event(void);
 
 /* ── Platform (called from main, not flight code) ─────────────────── */

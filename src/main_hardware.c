@@ -60,6 +60,9 @@ int main() {
         if (pending_reset == 2)
             watchdog_reboot(0, 0, 100);
 
+        /* Advance async HAL state machines (pressure, future tasks) */
+        hal_tasks_tick(now);
+
         /* Flight software */
         ctx.current_state = dispatch_state(&ctx, now);
 
