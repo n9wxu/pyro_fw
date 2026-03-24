@@ -31,7 +31,7 @@ typedef struct {
     uint8_t last_fire_channel;
 } mock_pyro_t;
 
-#define MOCK_UART_BUF_SIZE 4096
+#define MOCK_UART_BUF_SIZE 32768
 
 extern mock_pressure_t mock_pressure;
 extern mock_pyro_t mock_pyro;

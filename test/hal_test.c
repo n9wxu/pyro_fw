@@ -11,8 +11,6 @@
 
 /* ── Mock state (shared with test files via mocks.h) ─────────────── */
 
-#define MOCK_UART_BUF_SIZE 4096
-
 mock_pressure_t mock_pressure = {0};
 mock_pyro_t mock_pyro = {0};
 char mock_uart_buf[MOCK_UART_BUF_SIZE];

@@ -96,7 +96,7 @@ add_executable(pyro_fw_c
     src/flight_states.c
     src/ground_test.c
     src/config.c
-    src/telemetry.c
+    src/telemetry_formatter.c
     src/buzzer.c
     src/pressure_sensor.c
     src/pyro.c
@@ -211,7 +211,7 @@ add_custom_target(host_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_flight_states
@@ -231,7 +231,7 @@ add_custom_target(integration_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
                ${unity_SOURCE_DIR}/src/unity.c
                -lm
                -o ${CMAKE_BINARY_DIR}/test_integration
@@ -251,7 +251,7 @@ add_custom_target(closedloop_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
                ${unity_SOURCE_DIR}/src/unity.c
                -lm
                -o ${CMAKE_BINARY_DIR}/test_closedloop
@@ -270,7 +270,7 @@ add_custom_target(sim
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
                -lm
                -o ${CMAKE_BINARY_DIR}/pyro_sim

@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <math.h>
 #include "../src/flight_states.h"
+#include "../src/telemetry_formatter.h"
 #include "../src/hal.h"
 #include "../src/buzzer.h"
 
@@ -173,6 +174,7 @@ static sim_result_t run_sim(config_t cfg, flight_profile_t prof, bool enable_pyr
 
     flight_context_t ctx = {0};
     ctx.config = cfg;
+    telemetry_init(&ctx.config); /* must be called before any telemetry_state() */
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = (int32_t)GROUND_PA;
 
@@ -237,15 +239,8 @@ static sim_result_t run_sim(config_t cfg, flight_profile_t prof, bool enable_pyr
             break;
         }
 
-        /* Telemetry in loop */
-        if (ctx.current_state >= PAD_IDLE) {
-            uint32_t iv = (ctx.current_state == ASCENT || ctx.current_state == DESCENT) ? 100 : 1000;
-            if (t - ctx.last_telemetry >= iv) {
-                uint32_t ft = (ctx.current_state != PAD_IDLE) ? (t - ctx.launch_time) : 0;
-                send_telemetry(&ctx, ft, ctx.last_altitude, ctx.current_state);
-                ctx.last_telemetry = t;
-            }
-        }
+        /* Telemetry + pyro update + buzzer via flight_update_outputs() */
+        flight_update_outputs(&ctx, t);
     }
 
     res.sample_count = ctx.buf_count;

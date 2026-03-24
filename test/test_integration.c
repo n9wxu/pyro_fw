@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "../src/flight_states.h"
+#include "../src/telemetry_formatter.h"
 #include "../src/hal.h"
 #include "../src/buzzer.h"
 
@@ -149,6 +150,7 @@ static void reset_sim(void) {
     buzzer_altitude_count = 0;
     buzzer_active_flag = true; /* startup beep active */
     mock_uart_len = 0;
+    telemetry_init(&ctx.config); /* formatter must know format before first send */
 }
 
 /* Run the full application loop for one millisecond tick */
@@ -167,15 +169,9 @@ static void app_tick(uint32_t now_ms) {
         csv_flush_step(&ctx, 4);
     }
 
-    /* Telemetry: 10Hz ASCENT/DESCENT, 1Hz otherwise */
-    if (ctx.current_state >= PAD_IDLE) {
-        uint32_t interval = (ctx.current_state == ASCENT || ctx.current_state == DESCENT) ? 100 : 1000;
-        if (now_ms - ctx.last_telemetry >= interval) {
-            uint32_t ft = (ctx.current_state != PAD_IDLE) ? (now_ms - ctx.launch_time) : 0;
-            send_telemetry(&ctx, ft, ctx.last_altitude, ctx.current_state);
-            ctx.last_telemetry = now_ms;
-        }
-    }
+    /* Telemetry + buzzer + pyro update via flight_update_outputs()
+     * (same call path as real firmware main_hardware.c). */
+    flight_update_outputs(&ctx, now_ms);
 }
 
 /* Run full simulation from t=0 to end of sim data + 2s settling */
@@ -289,6 +285,33 @@ void test_DAT_04_events(void) {
     TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "LANDING") != NULL, "Expected LANDING event");
     TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "PYRO1") != NULL || strstr(buf, "PYRO2") != NULL, "Expected pyro event");
     TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "ARMED") != NULL, "Expected ARMED event");
+}
+
+/* [TEL-03] NMEA event sentences are emitted at apogee, fire, and landing */
+void test_TEL_03_event_sentences(void) {
+    load_sim_data("test_data/open_rocket_export.csv");
+    reset_sim();
+    run_full_sim();
+
+    TEST_ASSERT_TRUE_MESSAGE(strstr(mock_uart_buf, "$PYRO_APO,") != NULL, "Missing $PYRO_APO event sentence");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(mock_uart_buf, "$PYRO_FIRE,") != NULL, "Missing $PYRO_FIRE event sentence");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(mock_uart_buf, "$PYRO_LAND,") != NULL, "Missing $PYRO_LAND event sentence");
+}
+
+/* [TEL-04] JSON format (telem_format=1) emits JSON objects; no NMEA sentences */
+void test_TEL_04_json_format(void) {
+    load_sim_data("test_data/open_rocket_export.csv");
+    reset_sim();
+    /* Switch to JSON before running — s_cfg pointer already points to ctx.config */
+    ctx.config.telem_format = TELEM_FORMAT_JSON;
+    telemetry_init(&ctx.config);
+    run_full_sim();
+
+    TEST_ASSERT_TRUE_MESSAGE(strstr(mock_uart_buf, "{\"t\":\"state\"") != NULL, "Missing JSON state objects");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(mock_uart_buf, "{\"t\":\"apogee\"") != NULL, "Missing JSON apogee event");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(mock_uart_buf, "{\"t\":\"fire\"") != NULL, "Missing JSON fire event");
+    TEST_ASSERT_TRUE_MESSAGE(strstr(mock_uart_buf, "{\"t\":\"landing\"") != NULL, "Missing JSON landing event");
+    TEST_ASSERT_NULL_MESSAGE(strstr(mock_uart_buf, "$PYRO"), "NMEA sentences present in JSON mode");
 }
 
 void test_TEL_01_output(void) {
@@ -634,6 +657,8 @@ int main(void) {
     RUN_TEST(test_PYR_MODE_01_fires);
     RUN_TEST(test_BUZ_07_03_lifecycle);
     RUN_TEST(test_DAT_04_events);
+    RUN_TEST(test_TEL_03_event_sentences);
+    RUN_TEST(test_TEL_04_json_format);
     RUN_TEST(test_TEL_01_output);
     RUN_TEST(test_FLT_LAUNCH_01_timing);
     RUN_TEST(test_FLT_LAND_04_duration);

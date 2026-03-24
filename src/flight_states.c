@@ -6,6 +6,7 @@
  */
 #include "hal.h"
 #include "flight_states.h"
+#include "telemetry_formatter.h"
 #include "ground_test.h"
 #include "buzzer.h"
 #include <stdio.h>
@@ -123,6 +124,7 @@ static void try_fire_pyros(flight_context_t *ctx, uint32_t now) {
         ctx->pyro1_fired = true;
         ctx->pyro1_fire_time = now;
         buf_tag_event(ctx, EVT_PYRO1_FIRE);
+        telemetry_pyro_fire(1, ctx->last_altitude, now - ctx->launch_time);
     }
     if (!ctx->pyro2_fired && !hal_pyro_is_firing() && ctx->pyro2_continuity_good &&
         should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
@@ -130,6 +132,7 @@ static void try_fire_pyros(flight_context_t *ctx, uint32_t now) {
         ctx->pyro2_fired = true;
         ctx->pyro2_fire_time = now;
         buf_tag_event(ctx, EVT_PYRO2_FIRE);
+        telemetry_pyro_fire(2, ctx->last_altitude, now - ctx->launch_time);
     }
 }
 
@@ -199,6 +202,7 @@ static void check_refire(flight_context_t *ctx, uint32_t now) {
 static state_event_t detect_boot_init(flight_context_t *ctx, uint32_t now) {
     (void)now;
     hal_config_load(&ctx->config); /* [v2] replaces direct hal_fs_read/write_file */
+    telemetry_init(&ctx->config);  /* formatter reads telem_format from config */
     hal_buzzer_init();
     hal_pressure_init();
     hal_pyro_init();
@@ -470,6 +474,7 @@ static void action_apogee(flight_context_t *ctx, uint32_t now) {
     ctx->apogee_time = now;
     ctx->descent_start_time = now; /* [DD-015] start landing timeout */
     buf_tag_event(ctx, EVT_APOGEE);
+    telemetry_apogee(ctx->max_altitude, now - ctx->launch_time);
     try_fire_pyros(ctx, now);
     /* [DD-014] Force flush at apogee — if rocket lawn-darts, this
      * ensures altitude and apogee event are on flash before impact. */
@@ -481,8 +486,8 @@ static void action_apogee(flight_context_t *ctx, uint32_t now) {
 
 /* [FLT-LAND-05, BUZ-03, DAT-06] */
 static void action_landing(flight_context_t *ctx, uint32_t now) {
-    (void)now;
     buf_tag_event(ctx, EVT_LANDING);
+    telemetry_landing(ctx->max_altitude, now - ctx->launch_time);
     buzzer_set_altitude(cm_to_units(ctx->max_altitude, ctx->config.units));
     ctx->landed_beep_started = true;
     ctx->csv_saved = true;
@@ -692,6 +697,22 @@ void flight_init(flight_context_t *ctx) {
     ground_test_init(&ctx->gt);
 }
 
+/* Map flight_state_t to the 0-3 telemetry state_id */
+static uint8_t state_to_telem_id(flight_state_t state) {
+    switch (state) {
+    case PAD_IDLE:
+        return 0;
+    case ASCENT:
+        return 1;
+    case DESCENT:
+        return 2;
+    case LANDED:
+        return 3;
+    default:
+        return 0;
+    }
+}
+
 void flight_update_outputs(flight_context_t *ctx, uint32_t now) {
     hal_pyro_update(now);
     buzzer_update(now);
@@ -700,7 +721,33 @@ void flight_update_outputs(flight_context_t *ctx, uint32_t now) {
         uint32_t interval = (ctx->current_state == ASCENT || ctx->current_state == DESCENT) ? 100 : 1000;
         if (now - ctx->last_telemetry >= interval) {
             uint32_t flight_time = (ctx->current_state != PAD_IDLE) ? (now - ctx->launch_time) : 0;
-            send_telemetry(ctx, flight_time, ctx->last_altitude, ctx->current_state);
+            telemetry_snapshot_t snap = {
+                .seq = ctx->telemetry_seq,
+                .state_id = state_to_telem_id(ctx->current_state),
+                .thrust = (ctx->current_state == ASCENT && ctx->under_thrust) ? 1u : 0u,
+                .alt_cm = ctx->last_altitude,
+                .max_alt_cm = ctx->max_altitude,
+                .speed_cms = ctx->vertical_speed_cms,
+                .press_pa = ctx->filtered_pressure,
+                .p1_adc = ctx->pyro1_adc,
+                .p2_adc = ctx->pyro2_adc,
+                .time_ms = flight_time,
+                .flags = 0,
+            };
+            if (ctx->pyro1_continuity_good)
+                snap.flags |= TELEM_FLAG_P1_CONT;
+            if (ctx->pyro2_continuity_good)
+                snap.flags |= TELEM_FLAG_P2_CONT;
+            if (ctx->pyro1_fired)
+                snap.flags |= TELEM_FLAG_P1_FIRED;
+            if (ctx->pyro2_fired)
+                snap.flags |= TELEM_FLAG_P2_FIRED;
+            if (ctx->pyros_armed)
+                snap.flags |= TELEM_FLAG_ARMED;
+            if (ctx->apogee_detected)
+                snap.flags |= TELEM_FLAG_APOGEE;
+            telemetry_state(&snap);
+            ctx->telemetry_seq++;
             ctx->last_telemetry = now;
         }
     }
