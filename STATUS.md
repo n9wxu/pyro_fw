@@ -1,6 +1,6 @@
 # Pyro MK1B Firmware - Current Status
 
-_Last updated: 2026-03-23 after commit `6fb554a`_
+_Last updated: 2026-03-24 after buzzer async task (v2-7)_
 
 ## ✅ Completed
 
@@ -29,9 +29,15 @@ _Last updated: 2026-03-23 after commit `6fb554a`_
 - 10Hz ASCENT/DESCENT, 1Hz PAD_IDLE/LANDED
 - `telemetry_formatter.c` — standalone protocol-independent module
 
-### Buzzer
-- GPIO on/off, startup chirps + status code × 2
-- Altitude beep-out after landing in configured units
+### Buzzer (v2 Task 7) ✅ Done
+- `async_task_t`-based pattern player — runs as a parallel state machine alongside pressure sampling
+- Three states: BZ_IDLE → BZ_ENCODE_CODE/ALTITUDE → BZ_PLAYING
+- Step table built at request time; `hal_tasks_tick()` fires each step at its deadline
+- `buzzer_play_code(code, repeat)` / `buzzer_play_altitude(altitude)` — v2 API
+- `buzzer_set_code()` / `buzzer_set_altitude()` kept as inline shims for existing callers
+- `hal_buzzer_task_register()` added to all three HALs; hardware HAL registers into `hw_tasks[]`
+- Test and sim HALs drive the task via `hal_tasks_tick()` for full pattern testing
+- 8 new unit tests: BUZ-PAT-01..05 (tone counts per code), BUZ-ACT-01..03 (lifecycle, stop, repeat)
 
 ### Data Logging
 - 4096-sample ring buffer, events tagged on samples
@@ -113,7 +119,7 @@ v2 refactors the firmware to autonomous hardware I/O with CPU sleep between 100m
 | v2-4 | Serial readline HAL (`hal_serial_readline`) | ✅ Done |
 | v2-5 | Autonomous pressure (batch buffers, Core1/DMA) | ✅ Done |
 | v2-6 | Telemetry formatter module | ✅ Done |
-| v2-7 | Buzzer pattern player (timer ISR) | ❌ Not started |
+| v2-7 | Buzzer pattern player (async task) | ✅ Done |
 | v2-8 | Batch flight_process_samples() | ❌ Not started |
 | v2-9 | Fire-and-forget hal_log_sample() | ❌ Not started |
 | v2-10 | DMA UART TX, USB on Core1/timer ISR | ❌ Not started |
@@ -122,7 +128,6 @@ See ARCHITECTURE_V2.md for full task descriptions.
 
 ## ❌ Not Implemented
 - [ ] Progressive in-flight CSV logging (superseded by v2-9 `hal_log_sample`)
-- [ ] Buzzer pattern player (timer ISR) — v2 Task 7
 - [ ] Batch `flight_process_samples()` — v2 Task 8
 - [ ] `hal_log_sample()` fire-and-forget — v2 Task 9
 - [ ] DMA UART TX + USB on Core1 — v2 Task 10

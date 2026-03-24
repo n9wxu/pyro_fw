@@ -68,6 +68,12 @@ extern int mock_serial_queue_count;
 /* Enqueue a command string (NUL-terminated, no CR/LF needed) */
 void mock_serial_enqueue(const char *cmd);
 
+/* ── Buzzer tone tracking ──────────────────────────────────────────── */
+/* Counts hal_buzzer_tone_on/off calls so buzzer pattern tests can verify
+ * the correct number of transitions without real hardware. */
+extern int mock_buzzer_tone_on_count;
+extern int mock_buzzer_tone_off_count;
+
 void mock_reset_all(void);
 
 #endif

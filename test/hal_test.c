@@ -61,6 +61,8 @@ void mock_reset_all(void) {
     mock_xip_total_stall_ms = 0;
     mock_xip_stall_count = 0;
     mock_serial_queue_count = 0;
+    mock_buzzer_tone_on_count = 0;
+    mock_buzzer_tone_off_count = 0;
     memset(sim_files, 0, sizeof(sim_files));
 }
 
@@ -136,9 +138,27 @@ bool hal_pyro_fault(uint8_t channel) {
     return mock_pyro.fault;
 }
 
+int mock_buzzer_tone_on_count = 0;
+int mock_buzzer_tone_off_count = 0;
+
 void hal_buzzer_init(void) {}
-void hal_buzzer_tone_on(void) {}
-void hal_buzzer_tone_off(void) {}
+void hal_buzzer_tone_on(void) {
+    mock_buzzer_tone_on_count++;
+}
+void hal_buzzer_tone_off(void) {
+    mock_buzzer_tone_off_count++;
+}
+
+/* ── Buzzer async task (test) ─────────────────────────────────────── */
+/* Store the buzzer task pointer so hal_tasks_tick() can drive it.
+ * This allows integration tests to advance mock_time_ms and verify
+ * the complete tone-on/off sequence without any main-loop involvement. */
+
+static async_task_t *test_buzzer_task = NULL;
+
+void hal_buzzer_task_register(async_task_t *task) {
+    test_buzzer_task = task;
+}
 
 void hal_telemetry_send(const char *sentence) {
     int len = strlen(sentence);
@@ -228,7 +248,11 @@ bool hal_serial_readline(char *buf, int max_len) {
 /* ── Sleep (v2, no-op in test) ────────────────────────────────────── */
 
 void hal_tasks_tick(uint32_t now_ms) {
-    (void)now_ms; /* test HAL uses polled pressure — no async tasks */
+    /* Drive the buzzer async task so integration tests can step through
+     * tone-on/off sequences by advancing mock_time_ms. */
+    if (test_buzzer_task && test_buzzer_task->tick && (int32_t)(now_ms - test_buzzer_task->next_due_ms) >= 0) {
+        test_buzzer_task->tick(test_buzzer_task, now_ms);
+    }
 }
 
 void hal_sleep_until_event(void) {

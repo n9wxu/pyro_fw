@@ -17,7 +17,8 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "config.h" /* config_t for hal_config_load/save */
+#include "config.h"     /* config_t for hal_config_load/save */
+#include "async_task.h" /* async_task_t for hal_buzzer_task_register */
 
 /* ── Time ─────────────────────────────────────────────────────────── */
 
@@ -89,6 +90,13 @@ bool hal_pyro_fault(uint8_t channel); /* FLAG pin: true = fault during fire */
 void hal_buzzer_init(void);
 void hal_buzzer_tone_on(void);
 void hal_buzzer_tone_off(void);
+
+/* Register the buzzer async task with the platform task runner.
+ * Called once from buzzer_init().  The task pointer must remain valid
+ * for the lifetime of the program (it is a static in buzzer.c).
+ * Hardware: delegates to hw_task_register() in hal_hardware.c.
+ * Test/sim: stores the pointer; hal_tasks_tick() will drive it. */
+void hal_buzzer_task_register(struct async_task *task);
 
 /* ── Telemetry output ─────────────────────────────────────────────── */
 

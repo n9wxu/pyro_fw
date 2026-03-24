@@ -1,195 +1,311 @@
 /*
- * Buzzer driver: non-blocking beep sequencer.
+ * Buzzer driver — autonomous async task (v2).
  *
- * Two modes:
- *   1. Status code: 10 chirps → pause → code × 2 → stop
- *   2. Altitude beep-out: long pause → long beep → digits → repeat forever
+ * Architecture: one async_task_t handles both encoding and playback.
  *
- * Uses hal_buzzer_tone_on/off() for hardware abstraction.
+ *   Flight software calls buzzer_play_code() or buzzer_play_altitude().
+ *   That stores the request and arms the task for immediate execution.
+ *
+ *   On the first tick the task encodes the request into a flat
+ *   buzzer_pattern_t[] array (BZ_ENCODE phase) and immediately
+ *   transitions to BZ_PLAYING.
+ *
+ *   Subsequent ticks step through the pattern, toggling the GPIO via
+ *   hal_buzzer_tone_on/off() on the exact schedule, with no main-loop
+ *   involvement.
+ *
+ *   The task is registered with the platform task runner via
+ *   hal_buzzer_task_register() so it runs alongside the pressure task.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "hal.h"
 #include "buzzer.h"
+#include "async_task.h"
+#include <string.h>
+
+/* ── Timing constants ─────────────────────────────────────────────── */
 
 /* Status code timing */
-#define CHIRP_ON_MS       30
-#define CHIRP_GAP_MS      30
-#define CHIRP_COUNT       10
-#define STARTUP_PAUSE_MS  500
-#define BEEP_ON_MS        100
-#define BEEP_GAP_MS       200
-#define DIGIT_GAP_MS      300
-#define CODE_GAP_MS       500
+#define CHIRP_ON_MS 30
+#define CHIRP_GAP_MS 30
+#define CHIRP_COUNT 10
+#define STARTUP_PAUSE_MS 500
+#define BEEP_ON_MS 100
+#define BEEP_GAP_MS 200
+#define DIGIT_GAP_MS 300
+#define CODE_GAP_MS 500
 
 /* Altitude beep-out timing */
 #define ALT_LONG_PAUSE_MS 2000
-#define ALT_LONG_BEEP_MS  500
+#define ALT_LONG_BEEP_MS 500
 #define ALT_SHORT_PAUSE_MS 300
-#define ALT_BEEP_ON_MS    100
-#define ALT_BEEP_GAP_MS   200
-#define ALT_DIGIT_GAP_MS  400
+#define ALT_BEEP_ON_MS 100
+#define ALT_BEEP_GAP_MS 200
+#define ALT_DIGIT_GAP_MS 400
+
+/* ── Pattern builder helpers ──────────────────────────────────────── */
+
+/*
+ * Append a single step to the pattern buffer.
+ * Returns the new write index, or -1 if the buffer is full.
+ */
+static int pat_append(buzzer_pattern_t *buf, int idx, uint16_t dur, bool on) {
+    if (idx >= BUZZER_MAX_PATTERN - 1)
+        return idx; /* silently truncate — pattern is too long */
+    buf[idx].duration_ms = dur;
+    buf[idx].tone_on = on;
+    return idx + 1;
+}
+
+/*
+ * Append N on/off beep pairs separated by GAP_MS, followed by a
+ * final TAIL_MS pause (used for digit gaps or end-of-code gaps).
+ */
+static int pat_append_beeps(buzzer_pattern_t *buf, int idx, int count, uint16_t on_ms, uint16_t gap_ms) {
+    for (int i = 0; i < count; i++) {
+        idx = pat_append(buf, idx, on_ms, true);
+        if (i < count - 1)
+            idx = pat_append(buf, idx, gap_ms, false);
+    }
+    return idx;
+}
+
+/*
+ * Build the status-code pattern into buf[].
+ * Layout:
+ *   10x chirp on/off → startup pause
+ *   → digit1 beeps → digit gap
+ *   → digit2 beeps → code gap
+ *   (sentinel appended at index returned)
+ *
+ * If repeat == true the sentinel is omitted and the caller wraps
+ * around by resetting index to 0 at the sentinel position.
+ * We instead place a 0-duration entry as the loop marker.
+ */
+static int build_code_pattern(uint8_t code, bool repeat, buzzer_pattern_t *buf) {
+    int idx = 0;
+
+    /* 10 startup chirps */
+    for (int i = 0; i < CHIRP_COUNT; i++) {
+        idx = pat_append(buf, idx, CHIRP_ON_MS, true);
+        idx = pat_append(buf, idx, CHIRP_GAP_MS, false);
+    }
+
+    /* Startup pause */
+    idx = pat_append(buf, idx, STARTUP_PAUSE_MS, false);
+
+    /* Digit 1 */
+    int d1 = BEEP_DIGIT1(code);
+    if (d1 < 1)
+        d1 = 1;
+    idx = pat_append_beeps(buf, idx, d1, BEEP_ON_MS, BEEP_GAP_MS);
+
+    /* Inter-digit gap */
+    idx = pat_append(buf, idx, DIGIT_GAP_MS, false);
+
+    /* Digit 2 */
+    int d2 = BEEP_DIGIT2(code);
+    if (d2 < 1)
+        d2 = 1;
+    idx = pat_append_beeps(buf, idx, d2, BEEP_ON_MS, BEEP_GAP_MS);
+
+    /* End-of-code gap then loop or sentinel */
+    idx = pat_append(buf, idx, CODE_GAP_MS, false);
+
+    if (repeat) {
+        /* A zero-duration step signals loop-back */
+        buf[idx].duration_ms = 0;
+        buf[idx].tone_on = false;
+        idx++;
+    } else {
+        buf[idx].duration_ms = 0;
+        buf[idx].tone_on = false;
+        idx++;
+    }
+    return idx;
+}
+
+/*
+ * Build the altitude beep-out pattern into buf[].
+ * Layout:
+ *   long pause → long beep → short pause
+ *   → for each digit: digit beeps → digit gap
+ *   → loop (zero-duration sentinel with repeat=true implied)
+ */
+static int build_alt_pattern(int32_t value, buzzer_pattern_t *buf) {
+    /* Extract decimal digits, most-significant first */
+    if (value < 0)
+        value = -value;
+
+    uint8_t digits[6];
+    int num_digits = 0;
+
+    if (value == 0) {
+        digits[0] = 0;
+        num_digits = 1;
+    } else {
+        uint8_t tmp[6];
+        int32_t v = value;
+        while (v > 0 && num_digits < 6) {
+            tmp[num_digits++] = (uint8_t)(v % 10);
+            v /= 10;
+        }
+        /* Reverse to get MSD first */
+        for (int i = 0; i < num_digits; i++)
+            digits[i] = tmp[num_digits - 1 - i];
+    }
+
+    int idx = 0;
+
+    /* Long pause → long header beep → short pause */
+    idx = pat_append(buf, idx, ALT_LONG_PAUSE_MS, false);
+    idx = pat_append(buf, idx, ALT_LONG_BEEP_MS, true);
+    idx = pat_append(buf, idx, ALT_SHORT_PAUSE_MS, false);
+
+    /* Each digit: a digit value of 0 beeps 10 times */
+    for (int d = 0; d < num_digits; d++) {
+        int count = (digits[d] == 0) ? 10 : digits[d];
+        idx = pat_append_beeps(buf, idx, count, ALT_BEEP_ON_MS, ALT_BEEP_GAP_MS);
+        idx = pat_append(buf, idx, ALT_DIGIT_GAP_MS, false);
+    }
+
+    /* Loop sentinel (zero duration) — always repeats */
+    buf[idx].duration_ms = 0;
+    buf[idx].tone_on = false;
+    idx++;
+    return idx;
+}
+
+/* ── Async task ───────────────────────────────────────────────────── */
 
 typedef enum {
     BZ_IDLE,
-    BZ_CHIRP_ON, BZ_CHIRP_GAP, BZ_STARTUP_PAUSE,
-    BZ_BEEP_ON, BZ_BEEP_GAP, BZ_DIGIT_GAP, BZ_CODE_GAP,
-    BZ_ALT_LONG_PAUSE, BZ_ALT_LONG_BEEP, BZ_ALT_SHORT_PAUSE,
-    BZ_ALT_BEEP_ON, BZ_ALT_BEEP_GAP, BZ_ALT_DIGIT_GAP,
-} buzzer_phase_t;
+    BZ_ENCODE_CODE,
+    BZ_ENCODE_ALT,
+    BZ_PLAYING,
+} bz_state_t;
 
-static buzzer_phase_t phase = BZ_IDLE;
-static uint32_t phase_start = 0;
+typedef struct {
+    async_task_t base; /* MUST be first */
+    bz_state_t state;
 
-static uint8_t current_code = 0;
-static uint8_t current_digit = 0;
-static uint8_t beeps_remaining = 0;
-static uint8_t chirps_remaining = 0;
-static uint8_t repeats_remaining = 0;
+    /* Request fields — set by buzzer_play_code/altitude before arming */
+    uint8_t req_code;
+    int32_t req_altitude;
+    bool req_repeat;
 
-static uint8_t alt_digits[6];
-static uint8_t alt_num_digits = 0;
-static uint8_t alt_digit_idx = 0;
-static uint8_t alt_beeps_remaining = 0;
+    /* Encoded pattern */
+    buzzer_pattern_t pattern[BUZZER_MAX_PATTERN];
+    int pattern_len;
+    int index;
+    bool looping; /* true = sentinel means restart from 0 */
+} buzzer_task_t;
+
+static buzzer_task_t bz;
+
+/* ── Task tick function ───────────────────────────────────────────── */
+
+static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
+    buzzer_task_t *t = (buzzer_task_t *)self;
+
+    switch (t->state) {
+    case BZ_IDLE:
+        /* Nothing to do — tick should not fire, but be safe */
+        t->base.tick = NULL;
+        return;
+
+    case BZ_ENCODE_CODE:
+        t->pattern_len = build_code_pattern(t->req_code, t->req_repeat, t->pattern);
+        t->looping = t->req_repeat;
+        t->index = 0;
+        t->state = BZ_PLAYING;
+        t->base.next_due_ms = now_ms; /* play first step immediately */
+        return;
+
+    case BZ_ENCODE_ALT:
+        t->pattern_len = build_alt_pattern(t->req_altitude, t->pattern);
+        t->looping = true; /* altitude always repeats */
+        t->index = 0;
+        t->state = BZ_PLAYING;
+        t->base.next_due_ms = now_ms; /* play first step immediately */
+        return;
+
+    case BZ_PLAYING: {
+        /* Bounds check */
+        if (t->index >= t->pattern_len) {
+            /* Should not happen — sentinel should stop us first */
+            hal_buzzer_tone_off();
+            t->state = BZ_IDLE;
+            t->base.tick = NULL;
+            return;
+        }
+
+        const buzzer_pattern_t *step = &t->pattern[t->index];
+
+        /* Sentinel: zero-duration entry */
+        if (step->duration_ms == 0) {
+            if (t->looping) {
+                t->index = 0; /* restart */
+                t->base.next_due_ms = now_ms;
+                return;
+            } else {
+                hal_buzzer_tone_off();
+                t->state = BZ_IDLE;
+                t->base.tick = NULL;
+                return;
+            }
+        }
+
+        /* Apply the step */
+        if (step->tone_on)
+            hal_buzzer_tone_on();
+        else
+            hal_buzzer_tone_off();
+
+        t->base.next_due_ms = now_ms + step->duration_ms;
+        t->index++;
+        return;
+    }
+    }
+}
+
+/* ── Public API ───────────────────────────────────────────────────── */
 
 void buzzer_init(void) {
+    memset(&bz, 0, sizeof(bz));
+    bz.base.tick = NULL; /* inactive until first play */
+    bz.base.next_due_ms = 0;
+    bz.state = BZ_IDLE;
     hal_buzzer_init();
+    hal_buzzer_task_register(&bz.base);
 }
 
-void buzzer_tone_on(void)  { hal_buzzer_tone_on(); }
-void buzzer_tone_off(void) { hal_buzzer_tone_off(); }
-
-/* ── Status code mode ─────────────────────────────────────────────── */
-
-static void start_code_play(uint32_t now_ms) {
-    current_digit = 0;
-    beeps_remaining = BEEP_DIGIT1(current_code);
-    buzzer_tone_on();
-    phase = BZ_BEEP_ON;
-    phase_start = now_ms;
+void buzzer_play_code(uint8_t code, bool repeat) {
+    hal_buzzer_tone_off(); /* silence immediately */
+    bz.req_code = code;
+    bz.req_repeat = repeat;
+    bz.index = 0;
+    bz.state = BZ_ENCODE_CODE;
+    bz.base.next_due_ms = 0; /* run on next hal_tasks_tick() */
+    bz.base.tick = buzzer_tick;
 }
 
-void buzzer_set_code(uint8_t code, bool repeat) {
-    current_code = code;
-    repeats_remaining = repeat ? 1 : 0;
-    chirps_remaining = CHIRP_COUNT;
-    buzzer_tone_on();
-    phase = BZ_CHIRP_ON;
-    phase_start = 0;
+void buzzer_play_altitude(int32_t value_in_units) {
+    hal_buzzer_tone_off();
+    bz.req_altitude = value_in_units;
+    bz.index = 0;
+    bz.state = BZ_ENCODE_ALT;
+    bz.base.next_due_ms = 0;
+    bz.base.tick = buzzer_tick;
 }
-
-/* ── Altitude beep-out mode ───────────────────────────────────────── */
-
-void buzzer_set_altitude(int32_t altitude) {
-    if (altitude < 0) altitude = -altitude;
-    if (altitude == 0) {
-        alt_digits[0] = 0;
-        alt_num_digits = 1;
-    } else {
-        uint8_t tmp[6];
-        int n = 0;
-        int32_t v = altitude;
-        while (v > 0 && n < 6) { tmp[n++] = v % 10; v /= 10; }
-        alt_num_digits = n;
-        for (int i = 0; i < n; i++) alt_digits[i] = tmp[n - 1 - i];
-    }
-    alt_digit_idx = 0;
-    phase = BZ_ALT_LONG_PAUSE;
-    phase_start = 0;
-}
-
-static void start_alt_digit(uint32_t now_ms) {
-    uint8_t d = alt_digits[alt_digit_idx];
-    alt_beeps_remaining = (d == 0) ? 10 : d;
-    buzzer_tone_on();
-    phase = BZ_ALT_BEEP_ON;
-    phase_start = now_ms;
-}
-
-/* ── Common ───────────────────────────────────────────────────────── */
 
 void buzzer_stop(void) {
-    buzzer_tone_off();
-    phase = BZ_IDLE;
+    hal_buzzer_tone_off();
+    bz.state = BZ_IDLE;
+    bz.base.tick = NULL;
 }
 
 bool buzzer_is_active(void) {
-    return phase != BZ_IDLE;
-}
-
-static void update_status_code(uint32_t now_ms, uint32_t elapsed) {
-    switch (phase) {
-    case BZ_CHIRP_ON:
-        if (elapsed >= CHIRP_ON_MS) {
-            buzzer_tone_off(); chirps_remaining--;
-            phase = (chirps_remaining > 0) ? BZ_CHIRP_GAP : BZ_STARTUP_PAUSE;
-            phase_start = now_ms;
-        } break;
-    case BZ_CHIRP_GAP:
-        if (elapsed >= CHIRP_GAP_MS) { buzzer_tone_on(); phase = BZ_CHIRP_ON; phase_start = now_ms; }
-        break;
-    case BZ_STARTUP_PAUSE:
-        if (elapsed >= STARTUP_PAUSE_MS) start_code_play(now_ms);
-        break;
-    case BZ_BEEP_ON:
-        if (elapsed >= BEEP_ON_MS) {
-            buzzer_tone_off(); beeps_remaining--;
-            if (beeps_remaining > 0) phase = BZ_BEEP_GAP;
-            else if (current_digit == 0) phase = BZ_DIGIT_GAP;
-            else if (repeats_remaining > 0) { repeats_remaining--; phase = BZ_CODE_GAP; }
-            else phase = BZ_IDLE;
-            phase_start = now_ms;
-        } break;
-    case BZ_BEEP_GAP:
-        if (elapsed >= BEEP_GAP_MS) { buzzer_tone_on(); phase = BZ_BEEP_ON; phase_start = now_ms; }
-        break;
-    case BZ_DIGIT_GAP:
-        if (elapsed >= DIGIT_GAP_MS) {
-            current_digit = 1; beeps_remaining = BEEP_DIGIT2(current_code);
-            buzzer_tone_on(); phase = BZ_BEEP_ON; phase_start = now_ms;
-        } break;
-    case BZ_CODE_GAP:
-        if (elapsed >= CODE_GAP_MS) start_code_play(now_ms);
-        break;
-    default: break;
-    }
-}
-
-static void update_altitude_beepout(uint32_t now_ms, uint32_t elapsed) {
-    switch (phase) {
-    case BZ_ALT_LONG_PAUSE:
-        if (elapsed >= ALT_LONG_PAUSE_MS) { buzzer_tone_on(); phase = BZ_ALT_LONG_BEEP; phase_start = now_ms; }
-        break;
-    case BZ_ALT_LONG_BEEP:
-        if (elapsed >= ALT_LONG_BEEP_MS) { buzzer_tone_off(); alt_digit_idx = 0; phase = BZ_ALT_SHORT_PAUSE; phase_start = now_ms; }
-        break;
-    case BZ_ALT_SHORT_PAUSE:
-        if (elapsed >= ALT_SHORT_PAUSE_MS) start_alt_digit(now_ms);
-        break;
-    case BZ_ALT_BEEP_ON:
-        if (elapsed >= ALT_BEEP_ON_MS) {
-            buzzer_tone_off(); alt_beeps_remaining--;
-            if (alt_beeps_remaining > 0) phase = BZ_ALT_BEEP_GAP;
-            else { alt_digit_idx++; phase = (alt_digit_idx < alt_num_digits) ? BZ_ALT_DIGIT_GAP : BZ_ALT_LONG_PAUSE; }
-            phase_start = now_ms;
-        } break;
-    case BZ_ALT_BEEP_GAP:
-        if (elapsed >= ALT_BEEP_GAP_MS) { buzzer_tone_on(); phase = BZ_ALT_BEEP_ON; phase_start = now_ms; }
-        break;
-    case BZ_ALT_DIGIT_GAP:
-        if (elapsed >= ALT_DIGIT_GAP_MS) start_alt_digit(now_ms);
-        break;
-    default: break;
-    }
-}
-
-void buzzer_update(uint32_t now_ms) {
-    if (phase == BZ_IDLE) return;
-    if (phase_start == 0) phase_start = now_ms;
-    uint32_t elapsed = now_ms - phase_start;
-
-    if (phase >= BZ_ALT_LONG_PAUSE)
-        update_altitude_beepout(now_ms, elapsed);
-    else
-        update_status_code(now_ms, elapsed);
+    return bz.state != BZ_IDLE;
 }

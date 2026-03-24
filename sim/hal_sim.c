@@ -172,6 +172,17 @@ void hal_buzzer_tone_off(void) {
     sim_buzzer_on = false;
 }
 
+/* ── Buzzer async task (sim) ──────────────────────────────────────── */
+/* Store the buzzer task pointer so hal_tasks_tick() can drive it.
+ * sim_get_buzzer_state() reads the GPIO state set by tone_on/off,
+ * which is correct because the buzzer task calls those directly. */
+
+static async_task_t *sim_buzzer_task = NULL;
+
+void hal_buzzer_task_register(async_task_t *task) {
+    sim_buzzer_task = task;
+}
+
 void hal_telemetry_send(const char *sentence) {
     int len = strlen(sentence);
     if (sim_telem_len + len < SIM_TELEM_BUF) {
@@ -249,10 +260,13 @@ bool hal_serial_readline(char *buf, int max_len) {
     return false; /* simulation has no serial input */
 }
 
-/* ── Async task runner (sim: no-op) ──────────────────────────────── */
+/* ── Async task runner (sim) ─────────────────────────────────────── */
 
 void hal_tasks_tick(uint32_t now_ms) {
-    (void)now_ms; /* sim uses polled pressure — no async tasks */
+    /* Drive the buzzer task so the sim produces correct buzzer audio. */
+    if (sim_buzzer_task && sim_buzzer_task->tick && (int32_t)(now_ms - sim_buzzer_task->next_due_ms) >= 0) {
+        sim_buzzer_task->tick(sim_buzzer_task, now_ms);
+    }
 }
 
 /* ── Sleep (sim: no-op) ───────────────────────────────────────────── */

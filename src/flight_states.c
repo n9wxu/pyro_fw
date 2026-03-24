@@ -203,7 +203,7 @@ static state_event_t detect_boot_init(flight_context_t *ctx, uint32_t now) {
     (void)now;
     hal_config_load(&ctx->config); /* [v2] replaces direct hal_fs_read/write_file */
     telemetry_init(&ctx->config);  /* formatter reads telem_format from config */
-    hal_buzzer_init();
+    buzzer_init();                 /* [v2] registers buzzer as async task */
     hal_pressure_init();
     hal_pyro_init();
     ctx->boot_timer = hal_time_ms();
@@ -715,7 +715,7 @@ static uint8_t state_to_telem_id(flight_state_t state) {
 
 void flight_update_outputs(flight_context_t *ctx, uint32_t now) {
     hal_pyro_update(now);
-    buzzer_update(now);
+    /* Buzzer is now autonomous — driven by hal_tasks_tick(), no call needed here. */
 
     if (ctx->current_state >= PAD_IDLE) {
         uint32_t interval = (ctx->current_state == ASCENT || ctx->current_state == DESCENT) ? 100 : 1000;

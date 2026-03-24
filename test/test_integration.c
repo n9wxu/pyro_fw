@@ -93,6 +93,10 @@ static void update_mock_pressure(uint32_t now_ms) {
 }
 
 /* ── Buzzer mock ──────────────────────────────────────────────────── */
+/* The integration test does not compile src/buzzer.c, so we provide
+ * lightweight stubs here.  buzzer_set_code/set_altitude are now static
+ * inline shims in buzzer.h that call buzzer_play_code/play_altitude,
+ * so we only need to define the real functions. */
 
 static int buzzer_code_count = 0;
 static uint8_t last_buzzer_code = 0;
@@ -102,13 +106,13 @@ static int32_t last_buzzer_altitude = 0;
 static bool buzzer_active_flag = false;
 
 void buzzer_init(void) {}
-void buzzer_set_code(uint8_t code, bool repeat) {
+void buzzer_play_code(uint8_t code, bool repeat) {
     (void)repeat;
     buzzer_code_count++;
     last_buzzer_code = code;
     buzzer_active_flag = true;
 }
-void buzzer_set_altitude(int32_t altitude) {
+void buzzer_play_altitude(int32_t altitude) {
     buzzer_altitude_count++;
     last_buzzer_altitude = altitude;
     buzzer_active_flag = true;
@@ -119,9 +123,6 @@ void buzzer_stop(void) {
 }
 bool buzzer_is_active(void) {
     return buzzer_active_flag;
-}
-void buzzer_update(uint32_t now_ms) {
-    (void)now_ms;
 }
 
 /* ── Simulation runner ────────────────────────────────────────────── */

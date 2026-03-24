@@ -293,6 +293,13 @@ void hal_buzzer_tone_off(void) {
     gpio_put(BUZZER_PIN, 0);
 }
 
+/* Register the buzzer async task with the hardware task runner.
+ * buzzer_init() calls this so the buzzer task runs alongside the
+ * pressure task without any main-loop involvement. */
+void hal_buzzer_task_register(async_task_t *task) {
+    hw_task_register(task);
+}
+
 /* ── Telemetry ────────────────────────────────────────────────────── */
 
 void hal_telemetry_send(const char *sentence) {

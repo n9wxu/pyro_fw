@@ -279,6 +279,23 @@ add_custom_target(sim
     COMMENT "Flight simulator"
 )
 
+add_custom_target(buzzer_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building buzzer pattern tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/test
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_buzzer.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_buzzer
+    COMMAND ${CMAKE_COMMAND} -E echo "Running buzzer tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_buzzer
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Buzzer pattern player unit tests"
+)
+
 add_custom_target(config_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building config tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
