@@ -8,7 +8,7 @@ Firmware for the Pyro MK1B Rocket Flight Computer
 - **Four Firing Modes** - Fallen distance, AGL altitude, descent speed, timed delay
 - **Fault Detection** - Overcurrent monitoring and post-fire verification
 - **Flight Data Logging** - 10Hz ring buffer (4096 samples) + CSV export
-- **Real-time Telemetry** - $PYRO NMEA format via UART, 10Hz in flight
+- **Real-time Telemetry** - `$PYRO` NMEA or JSON format via UART, 10Hz in flight; event sentences at apogee, fire, landing
 - **Pressure Sensing** - MS5607-02BA03 or BMP280 (auto-detected)
 - **Altitude Calculation** - Integer-only barometric formula
 - **Continuity Checking** - ADC oversampling for pre-flight verification
@@ -128,7 +128,7 @@ Flight data stored in a 4096-sample ring buffer (16 bytes/sample):
 CSV flight data is written to littlefs and served at `/api/flight.csv`.
 
 ## Telemetry (UART0)
-**Format:** $PYRO NMEA sentences, 115200 baud
+**Format:** `$PYRO` NMEA sentences (default) or JSON (set `telem_format=1` in config.ini), 115200 baud
 
 ```
 $PYRO,seq,state,thrust,alt_cm,vel_cms,maxalt_cm,press_pa,time_ms,flags_hex,p1adc,p2adc,batt,temp*XX\r\n
@@ -139,7 +139,21 @@ $PYRO,seq,state,thrust,alt_cm,vel_cms,maxalt_cm,press_pa,time_ms,flags_hex,p1adc
 - **Flags:** bit0=P1_CONT, bit1=P2_CONT, bit2=P1_FIRED, bit3=P2_FIRED, bit4=ARMED, bit5=APOGEE
 - **Checksum:** XOR of all bytes between `$` and `*`
 
-**Example:**
+**Event sentences (NMEA format):**
+```
+$PYRO_APO,flight_time_ms,max_alt_cm*XX\r\n
+$PYRO_FIRE,channel,flight_time_ms,alt_cm*XX\r\n
+$PYRO_LAND,flight_time_ms,max_alt_cm*XX\r\n
+```
+
+**JSON format** (set `telem_format=1` in config.ini):
+```json
+{"t":"state","seq":42,"state":1,"alt":1500,"vel":-200,"press":95000}
+{"t":"apogee","alt":15240,"time":8500}
+{"t":"fire","ch":1,"alt":15240,"time":8501}
+```
+
+**Example (NMEA):**
 ```
 $PYRO,42,1,1,150000,-200,150000,95000,8500,13,48,52,0,0*4A
 ```
@@ -234,7 +248,7 @@ console.log("Apogee:", sim.physics.apogeeM.toFixed(0), "m");
 The simulation also works as a plain C library:
 ```bash
 cc -I sim/ -I src/ sim/physics.c sim/main_sim.c sim/hal_sim.c \
-   src/flight_states.c src/telemetry.c src/buzzer.c src/config.c \
+   src/flight_states.c src/telemetry_formatter.c src/buzzer.c src/config.c \
    my_test.c -lm -o my_test
 ```
 
@@ -386,14 +400,16 @@ The tool checks the device's current version, compares with GitHub releases, dow
 
 ## Development Status
 
-**74 C tests, 22 web UI tests — all passing.**
+**76 C tests, 22 web UI tests — all passing.**
 
-The firmware is feature-complete for v1.5 and is actively being refactored toward v2 autonomous I/O architecture. Key v2 milestones completed:
+The firmware is feature-complete for v1.5 and is actively being refactored toward v2 autonomous I/O architecture. v2 milestones completed so far:
 - HAL config API (`hal_config_load/save`)
 - Ground test serial command interface
 - CPU sleep (`hal_sleep_until_event` / `__wfe`)
+- Autonomous pressure sampling (`async_task.h` + `hal_pressure_fifo_*`)
+- Telemetry formatter module (`telemetry_formatter.c`, dual NMEA/JSON, event sentences)
 
-Next v2 tasks: autonomous pressure sampling (Core1/DMA), telemetry formatter module, buzzer pattern ISR. See [ARCHITECTURE_V2.md](ARCHITECTURE_V2.md) and [STATUS.md](STATUS.md) for the full roadmap.
+Next v2 tasks: buzzer pattern ISR, batch `flight_process_samples()`, `hal_log_sample()` fire-and-forget. See [ARCHITECTURE_V2.md](ARCHITECTURE_V2.md) and [STATUS.md](STATUS.md) for the full roadmap.
 
 See [SPECIFICATION.md](SPECIFICATION.md) for detailed requirements and implementation notes.
 

@@ -197,16 +197,18 @@ while (1) {
 - Hardware: `__wfe()` — wakes on UART RX, timer, or Core1 SEV
 - `main_hardware.c` calls it at end of each loop iteration
 
-### ❌ Task 4: Autonomous pressure sampling (Core1 / DMA)
-- Add `hal_pressure_start()`, `hal_pressure_get_buffer()`, `hal_pressure_release_buffer()`
-- Hardware: timer ISR fills ping-pong buffers at 50Hz; flight software pulls 5-sample batches
-- Update test HAL to push mock samples into buffers
-- Update sim HAL to fill buffers from physics engine
+### ✅ Task 4: Autonomous pressure sampling — DONE (commit `30c277d`)
+- `hal_pressure_fifo_start()`, `hal_pressure_fifo_get()`, `hal_pressure_fifo_release()` in hal.h
+- Hardware: BMP280 FIFO at 50Hz; MS5607 timer-driven polling via `async_task.h` state machine
+- Test/sim HAL returns `false` from `hal_pressure_fifo_get()` (polled mode fallback)
 
-### ❌ Task 5: Telemetry formatter module
-- Create standalone `telemetry_formatter.c` with event functions
-- Reads `config.telem_format` to select protocol (NMEA, binary, Eggtimer)
-- Calls `hal_telemetry_send(data, len)` — raw async transport
+### ✅ Task 5: Telemetry formatter module — DONE (commit `6fb554a`)
+- `src/telemetry_formatter.h` / `.c` — protocol-independent event API
+- Format 0 (NMEA, default): `$PYRO` sentences + event sentences (`$PYRO_APO`, `$PYRO_FIRE`, `$PYRO_LAND`)
+- Format 1 (JSON): newline-delimited `{"t":"state",...}` objects; selectable via `telem_format=1`
+- `flight_states.c` wired: `telemetry_init()` at boot; `flight_update_outputs()` builds snapshot
+- `src/telemetry.c` emptied and removed from all CMake targets
+- 2 new integration tests: TEL-03 (NMEA event sentences), TEL-04 (JSON format)
 
 ### ❌ Task 6: Buzzer pattern player (timer ISR)
 - Refactor `buzzer.c` to generate `buzzer_pattern_t[]` arrays

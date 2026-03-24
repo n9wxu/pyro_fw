@@ -120,6 +120,8 @@ Verify web interface behavior against mock server in 3 device modes.
 |-----|-------------|-------------|--------|
 | SYS-TEL-01 | Serial telemetry | Integration: test_TEL_01_output | ✅ |
 | TEL-01..02 | NMEA format + checksum | Integration: test_TEL_01_output (checksum verified) | ✅ |
+| TEL-03 | NMEA event sentences ($PYRO_APO, $PYRO_FIRE, $PYRO_LAND) | Integration: test_TEL_03_event_sentences | ✅ |
+| TEL-04 | JSON format (telem_format=1) | Integration: test_TEL_04_json_format | ✅ |
 | TEL-03..05 | Telemetry rates | Integration: ≥10 sentences during flight | ✅ |
 | TEL-06..10 | Field contents | Integration: test_TEL_01_output | ✅ |
 
@@ -193,12 +195,13 @@ Verify web interface behavior against mock server in 3 device modes.
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by integration/closed-loop/web test | 96 |
+| ✅ Verified by integration/closed-loop/web test | 98 |
 | ⚠️ Not directly verified (needs integration test or hardware) | 15 |
 | ❌ Not implemented | 0 |
 | ✅ HW (hardware satisfies) | 1 |
 
 _+8 requirements added in v2 Task 2/3 (GND-TEST-01..04, DD-011, CFG-HAL-01..02, PWR-SLEEP-01), all verified by integration tests._
+_+2 requirements added in v2 Task 5 (TEL-03 event sentences, TEL-04 JSON format), both verified by integration tests._
 
 ### Remaining gaps (hardware or future work only):
 - **FLT-RATE-01..04**: Sample rate precision — hardware timing test
