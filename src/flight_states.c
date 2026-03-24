@@ -18,6 +18,10 @@
 static void csv_track_sample(flight_context_t *ctx);
 
 void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t altitude, uint8_t st) {
+    /* v2-9: log every in-flight sample; events tagged later by buf_tag_event */
+    if ((flight_state_t)st >= ASCENT) {
+        hal_log_sample(time_ms, pressure, altitude, st, ctx->under_thrust, EVT_NONE);
+    }
     if (ctx->buf_count == FLIGHT_BUF_SIZE) {
         ctx->buf_tail = (ctx->buf_tail + 1) % FLIGHT_BUF_SIZE;
         ctx->buf_count--;
@@ -32,11 +36,17 @@ void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t 
     s->event_data = 0;
     ctx->buf_head = (ctx->buf_head + 1) % FLIGHT_BUF_SIZE;
     ctx->buf_count++;
-    csv_track_sample(ctx);
+    /* csv_track_sample() removed: incremental logger retired, hal_log owns flight record [v2-9] */
 }
 
 static void buf_tag_event(flight_context_t *ctx, uint8_t event) { /* [DAT-03] */
     ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE].event = event;
+    /* v2-9: also emit a timestamped event line to the HAL log */
+    if (hal_log_active()) {
+        const flight_sample_t *s = &ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE];
+        if ((flight_state_t)s->state >= ASCENT)
+            hal_log_sample(s->time_ms, s->pressure_pa, s->altitude_cm, s->state, s->under_thrust, event);
+    }
 }
 
 /* ── Pressure processing ──────────────────────────────────────────── */
@@ -327,7 +337,7 @@ static bool backup_apogee_expired(const flight_context_t *ctx, uint32_t now) {
 }
 
 static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_sample < 100)
+    if (now - ctx->last_sample < 20) /* v2-8: 50Hz = 20ms intervals */
         return SEVT_NONE;
 
     int32_t altitude;
@@ -371,7 +381,7 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
 #define LANDING_SPEED_CMS 500 /* 5 m/s — slow enough to be "landed" */
 
 static state_event_t detect_descent(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_sample < 50)
+    if (now - ctx->last_sample < 20) /* v2-8: 50Hz = 20ms intervals */
         return SEVT_NONE;
 
     int32_t altitude;
@@ -458,7 +468,12 @@ static void action_launch(flight_context_t *ctx, uint32_t now) {
             break;
         }
     }
-    buf_tag_event(ctx, EVT_LAUNCH);
+    /* v2-9: start log BEFORE tagging — LAUNCH sample is PAD_IDLE state
+     * (below the >= ASCENT guard in buf_tag_event), so emit it directly.
+     * time_ms = 0 = T+0 relative to launch. */
+    hal_log_start(&ctx->config, ctx->ground_pressure);
+    hal_log_sample(0, ctx->filtered_pressure, ctx->last_altitude, ASCENT, 0, EVT_LAUNCH);
+    buf_tag_event(ctx, EVT_LAUNCH); /* tags ring buffer for flight_save_csv() */
 }
 
 /* [FLT-ASC-05, DD-017] Record armed_time for backup timer */
@@ -476,12 +491,9 @@ static void action_apogee(flight_context_t *ctx, uint32_t now) {
     buf_tag_event(ctx, EVT_APOGEE);
     telemetry_apogee(ctx->max_altitude, now - ctx->launch_time);
     try_fire_pyros(ctx, now);
-    /* [DD-014] Force flush at apogee — if rocket lawn-darts, this
-     * ensures altitude and apogee event are on flash before impact. */
-    if (!ctx->csv_header_written && ctx->buf_count > 0)
-        csv_flush_step(ctx, ctx->buf_count);
-    else if (ctx->csv_pending > 0)
-        csv_flush_step(ctx, ctx->csv_pending);
+    /* [DD-014] hal_log async task flushes to flash every 200ms — no
+     * explicit apogee flush needed. hal_log_sample() already wrote the
+     * APOGEE event line immediately above. */
 }
 
 /* [FLT-LAND-05, BUZ-03, DAT-06] */
@@ -491,6 +503,8 @@ static void action_landing(flight_context_t *ctx, uint32_t now) {
     buzzer_set_altitude(cm_to_units(ctx->max_altitude, ctx->config.units));
     ctx->landed_beep_started = true;
     ctx->csv_saved = true;
+    /* v2-9: finalize flight log — flush remaining buffer to flash */
+    hal_log_stop();
 }
 
 /* ── State machine ────────────────────────────────────────────────── */
@@ -711,6 +725,20 @@ static uint8_t state_to_telem_id(flight_state_t state) {
     default:
         return 0;
     }
+}
+
+/* v2-8: process a batch of pressure samples at 50Hz.
+ * Feeds each sample into dispatch_state() via hal_pressure_push_sample().
+ * Handles hal_log_start() / hal_log_stop() at state transitions.
+ * Falls through to polled mode if batch is NULL (test/sim compatibility). */
+void flight_process_samples(flight_context_t *ctx, const hal_pressure_batch_t *batch) {
+    if (!batch || batch->count == 0)
+        return;
+    for (int i = 0; i < batch->count; i++) {
+        hal_pressure_push_sample(&batch->samples[i]);
+        ctx->current_state = dispatch_state(ctx, batch->timestamps_ms[i]);
+    }
+    hal_pressure_push_sample(NULL); /* clear override */
 }
 
 void flight_update_outputs(flight_context_t *ctx, uint32_t now) {

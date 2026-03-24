@@ -163,13 +163,6 @@ static void app_tick(uint32_t now_ms) {
     /* This is what main() does each iteration */
     ctx.current_state = dispatch_state(&ctx, now_ms);
 
-    /* Incremental CSV flush — same as real firmware main loop.
-     * Without this, the 64-entry ring buffer wraps and early events
-     * (LAUNCH, ARMED) are lost before flight_save_csv() is called. */
-    if (csv_flush_safe(&ctx) && ctx.csv_pending > 0) {
-        csv_flush_step(&ctx, 4);
-    }
-
     /* Telemetry + buzzer + pyro update via flight_update_outputs()
      * (same call path as real firmware main_hardware.c). */
     flight_update_outputs(&ctx, now_ms);
@@ -272,13 +265,10 @@ void test_DAT_04_events(void) {
     reset_sim();
     run_full_sim();
 
-    /* Flush any remaining pending samples (incremental logger already
-     * wrote early events including LAUNCH during the flight) */
-    if (ctx.csv_pending > 0)
-        csv_flush_step(&ctx, ctx.csv_pending);
-
+    /* hal_log_stop() was called at landing; flight_log.csv is complete.
+     * The incremental ring-buffer CSV logger is retired (v2-9). */
     char buf[32768];
-    int n = hal_fs_read_file("flight.csv", buf, sizeof(buf) - 1);
+    int n = hal_fs_read_file("flight_log.csv", buf, sizeof(buf) - 1);
     TEST_ASSERT_TRUE(n > 0);
     buf[n] = '\0';
 

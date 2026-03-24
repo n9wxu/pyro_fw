@@ -44,12 +44,12 @@ static int buzzer_stop_count, buzzer_altitude_count;
 static int32_t last_buzzer_altitude;
 static bool buzzer_active_flag;
 void buzzer_init(void) {}
-void buzzer_set_code(uint8_t c, bool r) {
+void buzzer_play_code(uint8_t c, bool r) {
     (void)c;
     (void)r;
     buzzer_active_flag = true;
 }
-void buzzer_set_altitude(int32_t a) {
+void buzzer_play_altitude(int32_t a) {
     buzzer_altitude_count++;
     last_buzzer_altitude = a;
 }
@@ -59,9 +59,6 @@ void buzzer_stop(void) {
 }
 bool buzzer_is_active(void) {
     return buzzer_active_flag;
-}
-void buzzer_update(uint32_t n) {
-    (void)n;
 }
 
 static float alt_m_to_pa(float alt_m) {
@@ -620,6 +617,11 @@ void test_PYR_FAULT_02_overcurrent_detection(void) {
         mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
         mock_pyro.firing = false;
         ctx.current_state = dispatch_state(&ctx, t);
+
+        /* Break as soon as both faults are confirmed — no need to wait for
+         * landing (main chute at 1400m, 2 m/s descent takes ~700s). */
+        if (ctx.pyro1_fault && ctx.pyro2_fault)
+            break;
         if (ctx.current_state == LANDED)
             break;
     }
@@ -627,7 +629,9 @@ void test_PYR_FAULT_02_overcurrent_detection(void) {
     TEST_ASSERT_TRUE_MESSAGE(ctx.pyro1_fault, "Pyro1 fault not detected");
     TEST_ASSERT_TRUE_MESSAGE(ctx.pyro2_fault, "Pyro2 fault not detected");
 
-    /* Verify fault events via CSV (buffer may have wrapped) */
+    /* Verify fault events via CSV.  Close the streaming log first (the test
+     * may not have reached LANDED, so hal_log_stop() may not have fired). */
+    hal_log_stop();
     flight_save_csv(&ctx);
     char buf[4096];
     int n = hal_fs_read_file("flight.csv", buf, sizeof(buf) - 1);
@@ -731,12 +735,7 @@ void test_XIP_stall_pyro_timing(void) {
         if (mock_time_ms > t)
             t = mock_time_ms;
 
-        /* CSV flush when safe (this triggers XIP stalls) */
-        if (csv_flush_safe(&ctx) && (ctx.buf_count > 0) && (!ctx.csv_header_written || ctx.csv_pending > 0)) {
-            csv_flush_step(&ctx, 4);
-            if (mock_time_ms > t)
-                t = mock_time_ms;
-        }
+        /* csv_flush_safe/step removed: hal_log async task owns the flight record [v2-9] */
 
         if (ctx.current_state == DESCENT)
             stall_during_descent += (mock_xip_total_stall_ms - stall_before);

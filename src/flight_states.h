@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "config.h"
+#include "hal.h"         /* hal_pressure_batch_t for flight_process_samples */
 #include "ground_test.h" /* ground_test_ctx_t embedded in flight_context_t */
 
 // System states
@@ -142,6 +143,8 @@ typedef struct flight_context_t {
     bool csv_file_open;
     // Last continuity status beep code [GND-TEST-01]
     uint8_t last_status_code;
+    // Pending event for hal_log_sample [v2-9]: set before buf_add, cleared after
+    uint8_t pending_log_event;
     // Ground test state machine [GND-TEST-01..04, DD-011]
     ground_test_ctx_t gt;
 } flight_context_t;
@@ -150,11 +153,17 @@ typedef struct flight_context_t {
 void flight_init(flight_context_t *ctx);
 flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now);
 void flight_update_outputs(flight_context_t *ctx, uint32_t now);
+/* v2-8: batch processing — call once per 100ms pressure FIFO batch.
+ * Iterates the batch at 50Hz (20ms spacing), feeds each sample into
+ * dispatch_state(), and logs via hal_log_sample().
+ * Triggers hal_log_start() on LAUNCH and hal_log_stop() on LANDED. */
+void flight_process_samples(flight_context_t *ctx, const hal_pressure_batch_t *batch);
 /* Legacy compat — redirects to config module */
 #define parse_config_ini(buf, cfg) config_parse_ini(buf, cfg)
+/* [DAT-06] One-shot ring-buffer dump — debug / HTTP endpoint use only.
+ * The primary in-flight record is written by hal_log_sample() [v2-9]. */
 int flight_save_csv(flight_context_t *ctx);
-bool csv_flush_safe(flight_context_t *ctx);
-int csv_flush_step(flight_context_t *ctx, int max_lines);
+/* csv_flush_safe() / csv_flush_step() retired: hal_log owns the flight record [v2-9] */
 
 // Telemetry
 void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm, flight_state_t state);

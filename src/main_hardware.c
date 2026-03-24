@@ -60,16 +60,21 @@ int main() {
         if (pending_reset == 2)
             watchdog_reboot(0, 0, 100);
 
-        /* Advance async HAL state machines (pressure, future tasks) */
+        /* Advance async HAL state machines (pressure, buzzer, log flush) */
         hal_tasks_tick(now);
 
-        /* Flight software */
-        ctx.current_state = dispatch_state(&ctx, now);
+        /* Flight software — batch mode when FIFO ready, polled fallback */
+        hal_pressure_batch_t batch;
+        if (hal_pressure_fifo_get(&batch)) {
+            flight_process_samples(&ctx, &batch);
+            hal_pressure_fifo_release();
+        } else {
+            ctx.current_state = dispatch_state(&ctx, now);
+        }
 
-        /* Outputs */
+        /* Outputs (telemetry, pyro update) */
         flight_update_outputs(&ctx, now);
-        if (csv_flush_safe(&ctx))
-            csv_flush_step(&ctx, 5);
+        /* csv_flush_safe/step removed: hal_log async task owns the flight record [v2-9] */
         update_status(&ctx, now);
 
         /* [v2, PWR-SLEEP-01] Sleep until the next pressure batch, serial
