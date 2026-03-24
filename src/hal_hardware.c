@@ -494,6 +494,160 @@ void hal_platform_service(void) {
     net_mdns_poll();
 }
 
+/* ── Pressure sample override [v2-8] ─────────────────────────────── */
+
+void hal_pressure_push_sample(const hal_pressure_t *sample) {
+    if (sample) {
+        pres.last = *sample;
+        pres.has_last = true;
+    } else {
+        /* clear override — next read comes from the async task as normal */
+        pres.has_last = false;
+    }
+}
+
+/* ── In-flight data logging [v2-9] ───────────────────────────────── */
+/*
+ * Architecture: hal_log_sample() places formatted CSV lines into a 512-byte
+ * RAM ring.  A registered async_task_t (log_task) flushes the ring to
+ * littlefs every 200ms.  The flight software never blocks on flash I/O.
+ * hal_log_start()/hal_log_stop() bookend one flight log file.
+ */
+
+#define LOG_BUF_SIZE 512
+
+typedef struct {
+    async_task_t base;
+    hal_file_t *file;
+    char buf[LOG_BUF_SIZE];
+    int head; /* write cursor */
+    bool active;
+    bool stopping;
+} log_task_t;
+
+static log_task_t log_task;
+
+static void log_task_tick(async_task_t *self, uint32_t now_ms) {
+    log_task_t *t = (log_task_t *)self;
+    if (!t->active) {
+        t->base.next_due_ms = now_ms + 200;
+        return;
+    }
+    if (t->head > 0 && t->file) {
+        hal_fs_write(t->file, t->buf, t->head);
+        t->head = 0;
+    }
+    if (t->stopping && t->head == 0) {
+        if (t->file) {
+            hal_fs_close(t->file);
+            t->file = NULL;
+        }
+        t->active = false;
+        t->stopping = false;
+        t->base.next_due_ms = now_ms + 200;
+        return;
+    }
+    t->base.next_due_ms = now_ms + 200;
+}
+
+static const char *hw_mode_name(uint8_t mode) {
+    switch (mode) {
+    case 1:
+        return "agl";
+    case 2:
+        return "fallen";
+    case 3:
+        return "speed";
+    case 4:
+        return "delay";
+    default:
+        return "none";
+    }
+}
+
+void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
+    if (log_task.active)
+        return;
+    log_task.file = hal_fs_open("flight_log.csv", false);
+    if (!log_task.file)
+        return;
+    /* write header directly — first call is not time-critical */
+    char hdr[256];
+    int n = snprintf(hdr, sizeof(hdr),
+                     "# Pyro MK1B Flight Data\n# ID: %.8s\n# Name: %.8s\n"
+                     "# Pyro1: %s %u\n# Pyro2: %s %u\n"
+                     "# Units: %s\n# Ground Pa: %ld\n"
+                     "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",
+                     cfg->id, cfg->name, hw_mode_name(cfg->pyro1_mode), cfg->pyro1_value, hw_mode_name(cfg->pyro2_mode),
+                     cfg->pyro2_value,
+                     cfg->units == 2   ? "ft"
+                     : cfg->units == 1 ? "m"
+                                       : "cm",
+                     (long)ground_pressure_pa);
+    hal_fs_write(log_task.file, hdr, n);
+    log_task.head = 0;
+    log_task.active = true;
+    log_task.stopping = false;
+    log_task.base.tick = log_task_tick;
+    log_task.base.next_due_ms = hal_time_ms() + 200;
+    /* Register idempotently — only once in the task table */
+    bool already = false;
+    for (int i = 0; i < hw_task_count; i++)
+        if (hw_tasks[i] == &log_task.base) {
+            already = true;
+            break;
+        }
+    if (!already)
+        hw_task_register(&log_task.base);
+}
+
+static const char *hw_evt_name(uint8_t evt) {
+    switch (evt) {
+    case 1:
+        return "LAUNCH";
+    case 2:
+        return "APOGEE";
+    case 3:
+        return "PYRO1";
+    case 4:
+        return "PYRO2";
+    case 7:
+        return "LANDING";
+    case 9:
+        return "ARMED";
+    default:
+        return "";
+    }
+}
+
+void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
+                    uint8_t event) {
+    if (!log_task.active)
+        return;
+    char line[80];
+    int n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%s\n", (unsigned long)time_ms, (long)pressure_pa,
+                     (long)altitude_cm, state, under_thrust, hw_evt_name(event));
+    /* if line doesn't fit flush synchronously to avoid dropping data */
+    if (log_task.head + n > LOG_BUF_SIZE && log_task.file) {
+        hal_fs_write(log_task.file, log_task.buf, log_task.head);
+        log_task.head = 0;
+    }
+    if (n > 0 && n <= LOG_BUF_SIZE) {
+        memcpy(log_task.buf + log_task.head, line, n);
+        log_task.head += n;
+    }
+}
+
+void hal_log_stop(void) {
+    if (!log_task.active)
+        return;
+    log_task.stopping = true;
+}
+
+bool hal_log_active(void) {
+    return log_task.active;
+}
+
 void hal_firmware_commit(void) {
     pfb_firmware_commit();
 }

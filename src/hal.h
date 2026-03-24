@@ -134,6 +134,26 @@ int hal_config_save(const config_t *cfg);
  * trailing CR/LF stripped.  Returns false if no complete line available. */
 bool hal_serial_readline(char *buf, int max_len);
 
+/* ── Pressure sample override (batch processing) [v2-8] ─────────── */
+/* Push a specific sample so the next hal_pressure_read() returns it.
+ * Used by flight_process_samples() to feed batch samples into the
+ * existing detector functions without changing their signatures.
+ * Pass NULL to clear the override (revert to async/polled mode). */
+void hal_pressure_push_sample(const hal_pressure_t *sample);
+
+/* ── In-flight data logging [v2-9] ───────────────────────────────── */
+/* Fire-and-forget logging — not called during PAD_IDLE.
+ * hal_log_start() called at LAUNCH: opens flight.csv, writes header.
+ * hal_log_sample() called for every ASCENT/DESCENT/LANDED sample.
+ * hal_log_stop() called at end of flight (LANDED + finalize).
+ * The HAL buffers samples in RAM; flushes asynchronously during
+ * hal_tasks_tick() so the call never blocks the flight software. */
+void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa);
+void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
+                    uint8_t event);
+void hal_log_stop(void);
+bool hal_log_active(void);
+
 /* ── Async task runner [v2] ───────────────────────────────────────── */
 
 /* Advance all registered async HAL state machines.

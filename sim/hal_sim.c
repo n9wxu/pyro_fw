@@ -34,6 +34,10 @@ static hal_continuity_t sim_cont2 = {50, true, false, false};
 /* Buzzer */
 static bool sim_buzzer_on = false;
 
+/* Pressure sample override [v2-8] — declared early, used in hal_pressure_read() */
+static bool sim_pressure_override_active = false;
+static hal_pressure_t sim_pressure_override;
+
 /* Telemetry capture */
 #define SIM_TELEM_BUF 8192
 static char sim_telem_buf[SIM_TELEM_BUF];
@@ -117,6 +121,10 @@ int hal_pressure_init(void) {
 }
 
 bool hal_pressure_read(hal_pressure_t *out) {
+    if (sim_pressure_override_active) {
+        *out = sim_pressure_override;
+        return true;
+    }
     if (sim_sensor_type == 0)
         return false;
     out->pressure_pa = sim_pressure_pa;
@@ -278,6 +286,98 @@ void hal_sleep_until_event(void) {
 void hal_platform_init(void) {}
 void hal_platform_service(void) {}
 void hal_firmware_commit(void) {}
+
+/* ── Pressure sample override [v2-8] ─────────────────────────────── */
+
+void hal_pressure_push_sample(const hal_pressure_t *sample) {
+    if (sample) {
+        sim_pressure_override = *sample;
+        sim_pressure_override_active = true;
+    } else {
+        sim_pressure_override_active = false;
+    }
+}
+
+/* ── In-flight data logging [v2-9] (sim: write to flight_sim.csv) ── */
+
+static FILE *sim_log_file = NULL;
+static bool sim_log_running = false;
+
+static const char *sim_mode_name(uint8_t mode) {
+    switch (mode) {
+    case 1:
+        return "agl";
+    case 2:
+        return "fallen";
+    case 3:
+        return "speed";
+    case 4:
+        return "delay";
+    default:
+        return "none";
+    }
+}
+
+void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
+    if (sim_log_running)
+        return;
+    sim_log_file = fopen("flight_sim.csv", "w");
+    if (!sim_log_file)
+        return;
+    fprintf(sim_log_file,
+            "# Pyro MK1B Flight Data\n# ID: %.8s\n# Name: %.8s\n"
+            "# Pyro1: %s %u\n# Pyro2: %s %u\n"
+            "# Units: %s\n# Ground Pa: %ld\n"
+            "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",
+            cfg->id, cfg->name, sim_mode_name(cfg->pyro1_mode), cfg->pyro1_value, sim_mode_name(cfg->pyro2_mode),
+            cfg->pyro2_value,
+            cfg->units == 2   ? "ft"
+            : cfg->units == 1 ? "m"
+                              : "cm",
+            (long)ground_pressure_pa);
+    sim_log_running = true;
+}
+
+static const char *sim_evt_name(uint8_t evt) {
+    switch (evt) {
+    case 1:
+        return "LAUNCH";
+    case 2:
+        return "APOGEE";
+    case 3:
+        return "PYRO1";
+    case 4:
+        return "PYRO2";
+    case 7:
+        return "LANDING";
+    case 9:
+        return "ARMED";
+    default:
+        return "";
+    }
+}
+
+void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
+                    uint8_t event) {
+    if (!sim_log_running || !sim_log_file)
+        return;
+    fprintf(sim_log_file, "%lu,%ld,%ld,%u,%u,%s\n", (unsigned long)time_ms, (long)pressure_pa, (long)altitude_cm, state,
+            under_thrust, sim_evt_name(event));
+}
+
+void hal_log_stop(void) {
+    if (!sim_log_running)
+        return;
+    if (sim_log_file) {
+        fclose(sim_log_file);
+        sim_log_file = NULL;
+    }
+    sim_log_running = false;
+}
+
+bool hal_log_active(void) {
+    return sim_log_running;
+}
 
 /* ── Streaming file writes ────────────────────────────────────────── */
 
