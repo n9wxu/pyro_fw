@@ -11,6 +11,7 @@
 #include "hardware/gpio.h"
 #include "hardware/adc.h"
 #include "hardware/uart.h"
+#include "hardware/irq.h"
 #include "hardware/i2c.h"
 #include "tusb.h"
 #include "bsp/board_api.h"
@@ -300,10 +301,81 @@ void hal_buzzer_task_register(async_task_t *task) {
     hw_task_register(task);
 }
 
+/* ── UART TX ring buffer (v2-10) ──────────────────────────────────── */
+/*
+ * hal_telemetry_send() is now non-blocking: bytes are placed into a
+ * 512-byte ring buffer, and the UART0 TX ISR drains them into the
+ * PL011 8-entry TX FIFO without stalling the main loop.
+ *
+ * Telemetry is best-effort: if the ring is full when called, the
+ * remainder of the sentence is silently dropped.  The ring can hold
+ * ~44 full NMEA sentences; a drop only happens if the caller is
+ * substantially faster than 115200 baud (~11.5 kB/s).
+ *
+ * RX is unchanged: hal_serial_readline() continues to poll the RX FIFO
+ * directly; no RX ISR is installed.
+ */
+
+#define UART_TX_BUF_SIZE 512 /* must be a power of 2 */
+#define UART_TX_BUF_MASK (UART_TX_BUF_SIZE - 1)
+
+static volatile uint8_t uart_tx_buf[UART_TX_BUF_SIZE];
+static volatile int uart_tx_head = 0; /* producer write cursor (main loop) */
+static volatile int uart_tx_tail = 0; /* consumer read cursor (ISR only) */
+
+/*
+ * Drain the ring buffer into the PL011 TX FIFO.
+ * Called exclusively from the UART0 ISR — no locking needed
+ * (SPSC ring: ISR owns tail, main loop owns head).
+ */
+static void uart_tx_drain_isr(void) {
+    while (uart_is_writable(uart0)) {
+        int t = uart_tx_tail;
+        if (t == uart_tx_head)
+            break; /* ring empty */
+        uart_get_hw(uart0)->dr = uart_tx_buf[t];
+        uart_tx_tail = (t + 1) & UART_TX_BUF_MASK;
+    }
+    /* Disable TX interrupt when ring is empty to avoid spurious re-entry */
+    if (uart_tx_tail == uart_tx_head)
+        hw_clear_bits(&uart_get_hw(uart0)->imsc, UART_UARTIMSC_TXIM_BITS);
+}
+
+static void uart0_irq_handler(void) {
+    /* TX FIFO ≤ 1/2 full — drain ring into FIFO */
+    if (uart_get_hw(uart0)->mis & UART_UARTMIS_TXMIS_BITS)
+        uart_tx_drain_isr();
+    /* RX: polled by hal_serial_readline() — no ISR action needed */
+}
+
+/*
+ * Install the UART0 IRQ handler and leave TX interrupt disabled.
+ * The interrupt is enabled on demand by hal_telemetry_send().
+ * Must be called after uart_init().
+ */
+static void uart_tx_ring_init(void) {
+    irq_set_exclusive_handler(UART0_IRQ, uart0_irq_handler);
+    irq_set_enabled(UART0_IRQ, true);
+    /* TX interrupt starts disabled — enabled when ring has data */
+    hw_clear_bits(&uart_get_hw(uart0)->imsc, UART_UARTIMSC_TXIM_BITS);
+}
+
 /* ── Telemetry ────────────────────────────────────────────────────── */
 
 void hal_telemetry_send(const char *sentence) {
-    uart_puts(uart0, sentence);
+    if (!sentence)
+        return;
+    /* Copy bytes into ring; drop tail of sentence if ring fills up */
+    for (const char *p = sentence; *p; p++) {
+        int next = (uart_tx_head + 1) & UART_TX_BUF_MASK;
+        if (next == uart_tx_tail)
+            break; /* ring full — drop remainder (best-effort telemetry) */
+        uart_tx_buf[uart_tx_head] = (uint8_t)*p;
+        uart_tx_head = next;
+    }
+    /* Arm TX interrupt — ISR will drain the ring into the FIFO */
+    if (uart_tx_head != uart_tx_tail)
+        hw_set_bits(&uart_get_hw(uart0)->imsc, UART_UARTIMSC_TXIM_BITS);
 }
 
 /* ── Filesystem ───────────────────────────────────────────────────── */
@@ -475,6 +547,7 @@ void hal_platform_init(void) {
     uart_init(uart0, 115200);
     gpio_set_function(0, GPIO_FUNC_UART);
     gpio_set_function(1, GPIO_FUNC_UART);
+    uart_tx_ring_init(); /* v2-10: non-blocking TX via ISR ring buffer */
 
     adc_gpio_init(26);
     adc_gpio_init(27);
