@@ -1,48 +1,216 @@
 /*
  * Closed-loop flight simulation tests.
  *
- * Physics: thrust → coast → drogue descent → main descent → landing.
- * Pyro fires feed back into physics (chute deployment slows descent).
- * Tests every pyro config mode × 4 altitude profiles.
+ * Rocket profiles are loaded from test_data/rockets.json at startup.
+ * Each profile describes a real motor (standard NAR/NFPA nomenclature: A8-3,
+ * D12-5, H73-8, …) together with the rocket's dry mass and aerodynamic
+ * parameters.  The physics engine converts those into force-based kinematics
+ * with a variable-mass propellant model.
+ *
+ * Physics: rectangular-average thrust → coast → drogue descent → main descent.
+ * Pyro fires feed back into physics (chute deployment changes descent rate).
+ *
+ * Motor nomenclature: X##-D
+ *   X  = impulse class (A=2.5 N·s, B=5, C=10, D=20, E=40, F=80, G=160, H=320 N·s)
+ *   ## = average thrust (N)
+ *   D  = ejection-charge delay after burnout (s)  [not used in physics]
+ *
+ * Data sources:
+ *   Motor specs – thrustcurve.org
+ *   Rocket kits – Estes, AeroTech, apogeerockets.com product listings
  */
 #include "unity.h"
 #include "mocks.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
 #include "../src/flight_states.h"
 #include "../src/telemetry_formatter.h"
 #include "../src/hal.h"
 #include "../src/buzzer.h"
 
-/* ── Physics ──────────────────────────────────────────────────────── */
+/* ── Constants ────────────────────────────────────────────────────── */
 
 #define G 9.81f
-#define DT 0.001f
+#define DT 0.001f /* physics step (s) = 1 ms */
 #define GROUND_PA 101325.0f
-#define PAD_DWELL_MS 2000 /* sit on pad before launch */
+#define PAD_DWELL_MS 2000 /* sit on pad before ignition */
 
-#define DROGUE_DRAG 0.8f /* ~8 m/s terminal */
-#define MAIN_DRAG 4.0f   /* ~2 m/s terminal */
+/* Parachute drag-deceleration coefficients (empirical, not physical Cd·A)
+ * Terminal velocity: v_term = G / CHUTE_DRAG
+ * DROGUE_DRAG = 9.81/12 ≈ 0.82  → ~12 m/s drogue terminal
+ * MAIN_DRAG   = 9.81/2  ≈ 4.9   → ~2 m/s main terminal          */
+#define DROGUE_DRAG 0.8f
+#define MAIN_DRAG 4.0f
+
+/* JSON loader limits */
+#define MAX_ROCKETS 8
+#define MAX_NAME_LEN 80
+#define MAX_MOTOR_LEN 16
+#define JSON_BUF_SIZE 8192
+
+/* ── Rocket profile ───────────────────────────────────────────────── */
 
 typedef struct {
-    float target_alt_m;
-    float thrust_accel;
-    float burn_time;
-} flight_profile_t;
+    char name[MAX_NAME_LEN];   /* "Estes Alpha III on A8-3" */
+    char motor[MAX_MOTOR_LEN]; /* "A8-3" */
+    float dry_mass_kg;         /* airframe + avionics, no propellant */
+    float prop_mass_kg;        /* propellant consumed during burn */
+    float avg_thrust_n;        /* average thrust over burn (rectangular approx) */
+    float burn_time_s;         /* motor burn duration */
+    float cd;                  /* rocket drag coefficient */
+    float ref_area_m2;         /* cross-sectional reference area */
+    float expected_apogee_m;   /* nominal apogee (used for threshold scaling) */
+    float apogee_tol;          /* fractional tolerance, e.g. 0.50 = ±50 % */
+} rocket_profile_t;
 
-typedef struct {
-    float alt_m;
-    float vel_ms; /* positive = up */
-    bool drogue_deployed;
-    bool main_deployed;
-    bool on_ground;
-} physics_state_t;
+/* Convenience indices — must match rockets.json order */
+#define ROCKET_IDX_LOW 0  /* low power, A8-3  ~65 m  */
+#define ROCKET_IDX_MID1 1 /* low-mid,   C6-5  ~175 m */
+#define ROCKET_IDX_MID2 2 /* mid,       D12-5 ~420 m */
+#define ROCKET_IDX_L1 3   /* HPR L1,    H73-8 ~950 m */
 
-/* Buzzer mock */
-static int buzzer_stop_count, buzzer_altitude_count;
+static rocket_profile_t g_rockets[MAX_ROCKETS];
+static int g_num_rockets = 0;
+
+/* ── Minimal JSON field extractor ─────────────────────────────────── */
+/* Operates on a bounded substring [obj, obj+len) so field names in    */
+/* one array element don't accidentally match in a different element.  */
+
+static int json_float(const char *obj, size_t len, const char *key, float *out) {
+    char token[MAX_NAME_LEN + 4];
+    snprintf(token, sizeof(token), "\"%s\"", key);
+    const char *end = obj + len;
+    const char *p = obj;
+    while (p < end) {
+        const char *hit = strstr(p, token);
+        if (!hit || hit >= end)
+            return 0;
+        p = hit + strlen(token);
+        while (p < end && (*p == ' ' || *p == ':' || *p == '\t' || *p == '\n' || *p == '\r'))
+            p++;
+        char *ep = NULL;
+        float val = strtof(p, &ep);
+        if (ep != p) {
+            *out = val;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int json_str(const char *obj, size_t len, const char *key, char *out, size_t outlen) {
+    char token[MAX_NAME_LEN + 4];
+    snprintf(token, sizeof(token), "\"%s\"", key);
+    const char *end = obj + len;
+    const char *hit = strstr(obj, token);
+    if (!hit || hit >= end)
+        return 0;
+    const char *p = hit + strlen(token);
+    while (p < end && (*p == ' ' || *p == ':' || *p == '\t'))
+        p++;
+    if (*p != '"')
+        return 0;
+    p++;
+    size_t i = 0;
+    while (p < end && *p != '"' && i < outlen - 1)
+        out[i++] = *p++;
+    out[i] = '\0';
+    return 1;
+}
+
+/* Parse the "rockets" array from a JSON buffer.
+ * Returns the number of rockets successfully loaded. */
+static int load_rockets_json(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        printf("  [rockets.json] cannot open '%s'\n", path);
+        return 0;
+    }
+    char buf[JSON_BUF_SIZE];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+
+    /* Locate the "rockets" array */
+    const char *arr = strstr(buf, "\"rockets\"");
+    if (!arr) {
+        printf("  [rockets.json] no 'rockets' key\n");
+        return 0;
+    }
+    arr = strchr(arr, '[');
+    if (!arr) {
+        printf("  [rockets.json] no '[' after rockets\n");
+        return 0;
+    }
+    arr++;
+
+    g_num_rockets = 0;
+    const char *p = arr;
+    while (*p && *p != ']' && g_num_rockets < MAX_ROCKETS) {
+        /* Advance to next object */
+        while (*p && *p != '{' && *p != ']')
+            p++;
+        if (*p != '{')
+            break;
+        const char *obj_start = p + 1;
+
+        /* Find matching '}' (single-level — our schema is flat) */
+        const char *q = obj_start;
+        int depth = 1;
+        while (*q && depth > 0) {
+            if (*q == '{')
+                depth++;
+            else if (*q == '}')
+                depth--;
+            q++;
+        }
+        if (depth != 0)
+            break;
+        size_t obj_len = (size_t)(q - obj_start - 1);
+
+        rocket_profile_t *r = &g_rockets[g_num_rockets];
+        memset(r, 0, sizeof(*r));
+
+        json_str(obj_start, obj_len, "name", r->name, sizeof(r->name));
+        json_str(obj_start, obj_len, "motor", r->motor, sizeof(r->motor));
+
+        float dry_g = 0, prop_g = 0, diam_mm = 0, tol_pct = 50.0f;
+        json_float(obj_start, obj_len, "dry_mass_g", &dry_g);
+        json_float(obj_start, obj_len, "prop_mass_g", &prop_g);
+        json_float(obj_start, obj_len, "avg_thrust_n", &r->avg_thrust_n);
+        json_float(obj_start, obj_len, "burn_time_s", &r->burn_time_s);
+        json_float(obj_start, obj_len, "cd", &r->cd);
+        json_float(obj_start, obj_len, "diameter_mm", &diam_mm);
+        json_float(obj_start, obj_len, "expected_apogee_m", &r->expected_apogee_m);
+        json_float(obj_start, obj_len, "apogee_tolerance_pct", &tol_pct);
+
+        r->dry_mass_kg = dry_g / 1000.0f;
+        r->prop_mass_kg = prop_g / 1000.0f;
+        float radius_m = (diam_mm / 2.0f) / 1000.0f;
+        r->ref_area_m2 = 3.14159f * radius_m * radius_m;
+        r->apogee_tol = tol_pct / 100.0f;
+
+        if (r->name[0] && r->avg_thrust_n > 0.0f && r->burn_time_s > 0.0f && r->dry_mass_kg > 0.0f) {
+            printf(
+                "  [rocket %d] %-45s  motor=%-8s  m=%.0fg+%.0fg  T=%.1fN  t=%.2fs  Cd=%.2f  d=%.0fmm  apogee~%.0fm\n",
+                g_num_rockets, r->name, r->motor, dry_g, prop_g, r->avg_thrust_n, r->burn_time_s, r->cd, diam_mm,
+                r->expected_apogee_m);
+            g_num_rockets++;
+        }
+        p = q;
+    }
+    return g_num_rockets;
+}
+
+/* ── Buzzer mock ──────────────────────────────────────────────────── */
+
+static int buzzer_stop_count;
+static int buzzer_altitude_count;
 static int32_t last_buzzer_altitude;
 static bool buzzer_active_flag;
+
 void buzzer_init(void) {}
 void buzzer_play_code(uint8_t c, bool r) {
     (void)c;
@@ -61,71 +229,76 @@ bool buzzer_is_active(void) {
     return buzzer_active_flag;
 }
 
+/* ── Atmosphere ───────────────────────────────────────────────────── */
+
 static float alt_m_to_pa(float alt_m) {
-    /* Standard atmosphere: P = P0 * (1 - L*h/T0)^(g*M/(R*L))
-     * Below 11km (troposphere). Above 11km, use stratosphere model. */
-    if (alt_m < 11000.0f) {
+    /* ISA troposphere (0–11 km) */
+    if (alt_m < 11000.0f)
         return GROUND_PA * powf(1.0f - 0.0065f * alt_m / 288.15f, 5.2561f);
-    }
-    /* Stratosphere (11-47km): isothermal at 216.65K */
-    float p11 = GROUND_PA * powf(1.0f - 0.0065f * 11000.0f / 288.15f, 5.2561f); /* ~22632 Pa */
-    if (alt_m < 47000.0f) {
+    /* Stratosphere (11–47 km): isothermal 216.65 K */
+    float p11 = GROUND_PA * powf(1.0f - 0.0065f * 11000.0f / 288.15f, 5.2561f);
+    if (alt_m < 47000.0f)
         return p11 * expf(-9.81f * (alt_m - 11000.0f) / (287.05f * 216.65f));
-    }
-    /* Above 47km: very low pressure */
     float p47 = p11 * expf(-9.81f * 36000.0f / (287.05f * 216.65f));
     return p47 * expf(-9.81f * (alt_m - 47000.0f) / (287.05f * 270.65f));
 }
 
-static flight_profile_t make_profile(float target_m) {
-    flight_profile_t p = {.target_alt_m = target_m};
-    /* Solve for burn time: h = 0.5*(a-g)*t² + ((a-g)*t)²/(2g)
-     * Simplify: pick thrust, iterate burn time */
-    if (target_m > 50000.0f) {
-        p.thrust_accel = 5.0f * G; /* 5g for Karman */
-    } else if (target_m > 500.0f) {
-        p.thrust_accel = 10.0f * G;
-    } else {
-        p.thrust_accel = 20.0f * G;
-    }
-    /* Binary search for burn time that reaches target apogee */
-    float lo = 0.0f, hi = 200.0f;
-    for (int i = 0; i < 50; i++) {
-        float t = (lo + hi) / 2.0f;
-        float a_net = p.thrust_accel - G;
-        float v_bo = a_net * t;
-        float h_burn = 0.5f * a_net * t * t;
-        float h_coast = v_bo * v_bo / (2.0f * G);
-        if (h_burn + h_coast < target_m)
-            lo = t;
-        else
-            hi = t;
-    }
-    p.burn_time = (lo + hi) / 2.0f;
-    return p;
-}
+/* ── Physics ──────────────────────────────────────────────────────── */
 
-static void physics_step(physics_state_t *ps, float flight_t, const flight_profile_t *p) {
+typedef struct {
+    float alt_m;
+    float vel_ms; /* positive = up */
+    bool drogue_deployed;
+    bool main_deployed;
+    bool on_ground;
+} physics_state_t;
+
+/*
+ * Integrate one 1-ms physics step using the rocket motor data.
+ *
+ * During burn:
+ *   mass(t) = dry + prop * (1 - t/burn_time)   — linear propellant consumption
+ *   F_thrust = avg_thrust_n
+ *   F_drag   = ½·ρ(h)·v|v|·Cd·A                — opposes motion both ways
+ *   a = (F_thrust - F_drag - mass·g) / mass
+ *
+ * After burnout (coast / descent without chute):
+ *   same model with F_thrust = 0, mass = dry_mass
+ *
+ * With parachute (drogue or main):
+ *   empirical chute drag: a = -g + DRAG·(ρ/ρ₀)·(-v)
+ *   terminal velocity = g/DRAG  ≈ 12 m/s drogue, 2.5 m/s main
+ */
+static void physics_step(physics_state_t *ps, float flight_t, const rocket_profile_t *r) {
     if (ps->on_ground)
         return;
-    float a = -G;
-    if (flight_t < p->burn_time)
-        a += p->thrust_accel;
-    if (ps->vel_ms < 0.0f) {
-        float drag = 0.05f;
-        if (ps->main_deployed)
-            drag = MAIN_DRAG;
-        else if (ps->drogue_deployed)
-            drag = DROGUE_DRAG;
-        /* Scale drag by atmospheric density (exponential decay, scale height 8.5km) */
-        float density_frac = expf(-ps->alt_m / 8500.0f);
-        a += drag * density_frac * (-ps->vel_ms);
+
+    float rho = 1.225f * expf(-ps->alt_m / 8500.0f); /* ISA density */
+    float density_frac = rho / 1.225f;
+
+    float a;
+    if (ps->main_deployed || ps->drogue_deployed) {
+        /* ── Parachute descent ── */
+        float chute_drag = ps->main_deployed ? MAIN_DRAG : DROGUE_DRAG;
+        a = -G + chute_drag * density_frac * (-ps->vel_ms);
+    } else {
+        /* ── Powered or ballistic flight ── */
+        float prop_frac = (flight_t < r->burn_time_s) ? (1.0f - flight_t / r->burn_time_s) : 0.0f;
+        float mass_kg = r->dry_mass_kg + r->prop_mass_kg * prop_frac;
+        float thrust_n = (flight_t < r->burn_time_s) ? r->avg_thrust_n : 0.0f;
+
+        /* Drag: v·|v| preserves sign so drag always opposes motion */
+        float v_signed = ps->vel_ms;
+        float f_drag = 0.5f * rho * v_signed * fabsf(v_signed) * r->cd * r->ref_area_m2;
+
+        a = (thrust_n - f_drag - mass_kg * G) / mass_kg;
     }
+
     ps->vel_ms += a * DT;
     ps->alt_m += ps->vel_ms * DT;
     if (ps->alt_m <= 0.0f) {
-        ps->alt_m = 0;
-        ps->vel_ms = 0;
+        ps->alt_m = 0.0f;
+        ps->vel_ms = 0.0f;
         ps->on_ground = true;
     }
 }
@@ -143,8 +316,8 @@ typedef struct {
     int sample_count, telemetry_count;
 } sim_result_t;
 
-static void print_summary(const char *label, sim_result_t *r) {
-    printf("  %-20s apogee=%6.0fm  ", label, r->apogee_m);
+static void print_summary(const char *label, const sim_result_t *r) {
+    printf("  %-28s apogee=%6.0fm  ", label, r->apogee_m);
     if (r->reached_ascent)
         printf("launch=%.1fs ", r->launch_ms / 1000.0);
     if (r->reached_descent)
@@ -158,7 +331,7 @@ static void print_summary(const char *label, sim_result_t *r) {
     printf("samples=%d telem=%d\n", r->sample_count, r->telemetry_count);
 }
 
-static sim_result_t run_sim(config_t cfg, flight_profile_t prof, bool enable_pyros) {
+static sim_result_t run_sim(config_t cfg, const rocket_profile_t *r, bool enable_pyros) {
     mock_reset_all();
     mock_pyro.p1_good = enable_pyros;
     mock_pyro.p2_good = enable_pyros;
@@ -171,20 +344,19 @@ static sim_result_t run_sim(config_t cfg, flight_profile_t prof, bool enable_pyr
 
     flight_context_t ctx = {0};
     ctx.config = cfg;
-    telemetry_init(&ctx.config); /* must be called before any telemetry_state() */
+    telemetry_init(&ctx.config);
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = (int32_t)GROUND_PA;
 
     physics_state_t ps = {0};
     sim_result_t res = {0};
 
-    /* Scale sim: 1ms steps for normal, 50ms for Karman */
-    uint32_t step = (prof.target_alt_m > 50000.0f) ? 50 : 1;
-    uint32_t max_ms = (prof.target_alt_m > 50000.0f) ? 15000000 : (prof.target_alt_m > 500.0f) ? 600000 : 120000;
+    /* Time budget: 2 min for tiny low-power rockets, 10 min otherwise */
+    uint32_t max_ms = (r->expected_apogee_m < 100.0f) ? 120000u : 600000u;
     uint8_t prev_fires = 0;
 
-    for (uint32_t t = 0; t <= max_ms; t += step) {
-        /* Closed-loop: check pyro fires, update physics */
+    for (uint32_t t = 0; t <= max_ms; t++) {
+        /* Closed-loop: check pyro fires, update physics accordingly */
         if (mock_pyro.fire_count > prev_fires) {
             uint8_t ch = mock_pyro.last_fire_channel;
             if (ch == 1 && !ps.drogue_deployed) {
@@ -202,17 +374,15 @@ static sim_result_t run_sim(config_t cfg, flight_profile_t prof, bool enable_pyr
             prev_fires = mock_pyro.fire_count;
         }
 
-        /* Physics: pad dwell then flight */
+        /* Physics: pad dwell, then ignition */
         if (t >= PAD_DWELL_MS) {
             float flight_t = (float)(t - PAD_DWELL_MS) / 1000.0f;
-            for (uint32_t s = 0; s < step; s++) {
-                physics_step(&ps, flight_t + (float)s * DT, &prof);
-            }
+            physics_step(&ps, flight_t, r);
         }
         if (ps.alt_m > res.apogee_m)
             res.apogee_m = ps.alt_m;
 
-        /* Feed firmware */
+        /* Feed pressure sensor to firmware */
         mock_time_ms = t;
         mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
         mock_pyro.firing = false;
@@ -236,22 +406,20 @@ static sim_result_t run_sim(config_t cfg, flight_profile_t prof, bool enable_pyr
             break;
         }
 
-        /* Telemetry + pyro update + buzzer via flight_update_outputs() */
         flight_update_outputs(&ctx, t);
     }
 
     res.sample_count = ctx.buf_count;
-    char *p = mock_uart_buf;
-    while ((p = strstr(p, "$PYRO,")) != NULL) {
+    char *cp = mock_uart_buf;
+    while ((cp = strstr(cp, "$PYRO,")) != NULL) {
         res.telemetry_count++;
-        p++;
+        cp++;
     }
     return res;
 }
 
 /* ── Configs ──────────────────────────────────────────────────────── */
 
-/* Pyro1 = drogue, Pyro2 = main */
 static config_t cfg_delay_delay(void) {
     return (config_t){.id = "DD",
                       .name = "DlyDly",
@@ -316,15 +484,9 @@ static config_t cfg_speed_agl(void) {
                       .units = 2};
 }
 
-/* Altitudes */
-static const float ALT_LOW = 30.48f;       /* 100 ft */
-static const float ALT_MED = 152.4f;       /* 500 ft */
-static const float ALT_HIGH = 1524.0f;     /* 5000 ft */
-static const float ALT_KARMAN = 100000.0f; /* 100 km */
-
 /* ── Assertions ───────────────────────────────────────────────────── */
 
-static void assert_flight(sim_result_t *r, const char *l) {
+static void assert_flight(const sim_result_t *r, const char *l) {
     char m[128];
     snprintf(m, sizeof(m), "%s: no ASCENT", l);
     TEST_ASSERT_TRUE_MESSAGE(r->reached_ascent, m);
@@ -333,26 +495,22 @@ static void assert_flight(sim_result_t *r, const char *l) {
     snprintf(m, sizeof(m), "%s: no LANDED", l);
     TEST_ASSERT_TRUE_MESSAGE(r->reached_landed, m);
 }
-
-static void assert_p1(sim_result_t *r, const char *l) {
+static void assert_p1(const sim_result_t *r, const char *l) {
     char m[128];
     snprintf(m, sizeof(m), "%s: P1 didn't fire", l);
     TEST_ASSERT_TRUE_MESSAGE(r->pyro1_fired, m);
 }
-
-static void assert_p2(sim_result_t *r, const char *l) {
+static void assert_p2(const sim_result_t *r, const char *l) {
     char m[128];
     snprintf(m, sizeof(m), "%s: P2 didn't fire", l);
     TEST_ASSERT_TRUE_MESSAGE(r->pyro2_fired, m);
 }
-
-static void assert_order(sim_result_t *r, const char *l) {
+static void assert_order(const sim_result_t *r, const char *l) {
     char m[128];
     snprintf(m, sizeof(m), "%s: main higher than drogue (P1=%.0f P2=%.0f)", l, r->pyro1_alt_m, r->pyro2_alt_m);
     TEST_ASSERT_TRUE_MESSAGE(r->pyro1_alt_m >= r->pyro2_alt_m, m);
 }
-
-static void assert_data(sim_result_t *r, const char *l) {
+static void assert_data(const sim_result_t *r, const char *l) {
     char m[128];
     snprintf(m, sizeof(m), "%s: samples=%d", l, r->sample_count);
     TEST_ASSERT_TRUE_MESSAGE(r->sample_count > 10, m);
@@ -364,15 +522,21 @@ static void assert_data(sim_result_t *r, const char *l) {
 
 typedef config_t (*cfg_fn)(void);
 
-static void run_suite(cfg_fn make, const char *name) {
-    float alts[] = {ALT_LOW, ALT_MED, ALT_HIGH, ALT_KARMAN};
-    const char *names[] = {"100ft", "500ft", "5000ft", "Karman"};
+/*
+ * Run one pyro-config mode against every loaded rocket profile.
+ *
+ * Pyro thresholds that exceed the rocket's expected apogee are scaled down
+ * proportionally so that every trigger mode is exercisable on small rockets.
+ */
+static void run_suite(cfg_fn make, const char *suite_name) {
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, g_num_rockets, "No rocket profiles loaded — check test_data/rockets.json");
 
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < g_num_rockets; i++) {
+        const rocket_profile_t *r = &g_rockets[i];
         config_t c = make();
 
-        /* Scale thresholds for low flights so they're achievable */
-        float apogee_ft = alts[i] * 3.281f;
+        /* Scale AGL / FALLEN thresholds that would exceed the apogee */
+        float apogee_ft = r->expected_apogee_m * 3.281f;
         if (c.pyro1_mode == PYRO_MODE_AGL && c.pyro1_value > (uint16_t)(apogee_ft * 0.9f))
             c.pyro1_value = (uint16_t)(apogee_ft * 0.5f);
         if (c.pyro2_mode == PYRO_MODE_AGL && c.pyro2_value > (uint16_t)(apogee_ft * 0.9f))
@@ -382,28 +546,25 @@ static void run_suite(cfg_fn make, const char *name) {
         if (c.pyro2_mode == PYRO_MODE_FALLEN && c.pyro2_value > (uint16_t)(apogee_ft * 0.5f))
             c.pyro2_value = (uint16_t)(apogee_ft * 0.3f);
 
-        flight_profile_t prof = make_profile(alts[i]);
-        char label[64];
-        snprintf(label, sizeof(label), "%s@%s", name, names[i]);
+        char label[72];
+        snprintf(label, sizeof(label), "%s@%s", suite_name, r->motor);
 
-        sim_result_t r = run_sim(c, prof, true);
+        sim_result_t res = run_sim(c, r, true);
+        print_summary(label, &res);
 
-        print_summary(label, &r);
-        assert_flight(&r, label);
-        assert_p1(&r, label);
-        assert_data(&r, label);
+        assert_flight(&res, label);
+        assert_p1(&res, label);
+        assert_data(&res, label);
 
-        /* Main chute: expect fire on medium+ flights (low flights may land before trigger) */
-        if (alts[i] >= ALT_MED) {
-            assert_p2(&r, label);
-            /* Skip order check for Karman — both pyros fire near apogee */
-            if (alts[i] < ALT_KARMAN)
-                assert_order(&r, label);
+        /* Main chute required for rockets that fly above ~100 m */
+        if (r->expected_apogee_m >= 100.0f) {
+            assert_p2(&res, label);
+            assert_order(&res, label);
         }
     }
 }
 
-/* ── Tests ────────────────────────────────────────────────────────── */
+/* ── Test functions ───────────────────────────────────────────────── */
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -430,13 +591,15 @@ void test_PYR_MODE_04_speed_agl(void) {
     run_suite(cfg_speed_agl, "Spd+AGL");
 }
 
+/* [TST-06] Chute effect: with chutes flight is longer than ballistic */
 void test_TST_06_chute_effect(void) {
-    flight_profile_t prof = make_profile(ALT_HIGH);
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need at least 4 rockets for chute_effect test");
+    const rocket_profile_t *r = &g_rockets[ROCKET_IDX_L1];
     config_t cfg = cfg_delay_agl();
 
-    sim_result_t with = run_sim(cfg, prof, true);
+    sim_result_t with = run_sim(cfg, r, true);
+    sim_result_t without = run_sim(cfg, r, false);
     print_summary("chute: with", &with);
-    sim_result_t without = run_sim(cfg, prof, false);
     print_summary("chute: without", &without);
 
     char msg[128];
@@ -445,14 +608,12 @@ void test_TST_06_chute_effect(void) {
     TEST_ASSERT_TRUE_MESSAGE(with.flight_time_ms > without.flight_time_ms, msg);
 }
 
-/* ── Safety-critical tests ────────────────────────────────────────── */
-
-/* [PYR-SAFE-01] No fire without continuity: pyro1 open → should not fire */
+/* [PYR-SAFE-01] No fire without continuity: pyro1 open → must not fire */
 void test_PYR_SAFE_01_no_fire_without_continuity(void) {
-    flight_profile_t prof = make_profile(ALT_HIGH);
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket for safety test");
+    const rocket_profile_t *r = &g_rockets[ROCKET_IDX_L1];
     config_t cfg = cfg_delay_agl();
 
-    /* Run with pyro1 open (no continuity), pyro2 good */
     mock_reset_all();
     mock_pyro.p1_good = false;
     mock_pyro.p1_open = true;
@@ -472,8 +633,9 @@ void test_PYR_SAFE_01_no_fire_without_continuity(void) {
     physics_state_t ps = {0};
     sim_result_t res = {0};
     uint8_t prev_fires = 0;
+    uint32_t max_ms = (r->expected_apogee_m < 100.0f) ? 120000u : 600000u;
 
-    for (uint32_t t = 0; t <= 120000; t++) {
+    for (uint32_t t = 0; t <= max_ms; t++) {
         if (mock_pyro.fire_count > prev_fires) {
             uint8_t ch = mock_pyro.last_fire_channel;
             if (ch == 1) {
@@ -489,7 +651,7 @@ void test_PYR_SAFE_01_no_fire_without_continuity(void) {
         }
         if (t >= PAD_DWELL_MS) {
             float ft = (float)(t - PAD_DWELL_MS) / 1000.0f;
-            physics_step(&ps, ft, &prof);
+            physics_step(&ps, ft, r);
         }
         if (ps.alt_m > res.apogee_m)
             res.apogee_m = ps.alt_m;
@@ -508,8 +670,8 @@ void test_PYR_SAFE_01_no_fire_without_continuity(void) {
 
 /* [PYR-SAFE-02] No simultaneous fire: pyros fire sequentially */
 void test_PYR_SAFE_02_no_simultaneous_fire(void) {
-    flight_profile_t prof = make_profile(ALT_HIGH);
-    /* Both set to delay=0 so both want to fire at apogee */
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket for simultaneous-fire test");
+    const rocket_profile_t *r = &g_rockets[ROCKET_IDX_L1];
     config_t cfg = (config_t){.id = "SS",
                               .name = "SimFir",
                               .pyro1_mode = PYRO_MODE_DELAY,
@@ -518,22 +680,22 @@ void test_PYR_SAFE_02_no_simultaneous_fire(void) {
                               .pyro2_value = 0,
                               .units = 2};
 
-    sim_result_t r = run_sim(cfg, prof, true);
-    print_summary("NoSimulFire", &r);
+    sim_result_t res = run_sim(cfg, r, true);
+    print_summary("NoSimulFire", &res);
 
-    assert_flight(&r, "NoSimulFire");
-    assert_p1(&r, "NoSimulFire");
-    assert_p2(&r, "NoSimulFire");
+    assert_flight(&res, "NoSimulFire");
+    assert_p1(&res, "NoSimulFire");
+    assert_p2(&res, "NoSimulFire");
 
-    /* The two pyros must fire on different ticks (P2 waits for P1 to finish) */
     char msg[128];
-    snprintf(msg, sizeof(msg), "P1 and P2 fired at same time: P1=%u P2=%u", r.p1_fire_ms, r.p2_fire_ms);
-    TEST_ASSERT_TRUE_MESSAGE(r.p1_fire_ms != r.p2_fire_ms, msg);
+    snprintf(msg, sizeof(msg), "P1 and P2 fired at same time: P1=%u P2=%u", res.p1_fire_ms, res.p2_fire_ms);
+    TEST_ASSERT_TRUE_MESSAGE(res.p1_fire_ms != res.p2_fire_ms, msg);
 }
 
-/* [SYS-DEPLOY-03] No firing during ascent (before apogee) */
+/* [SYS-DEPLOY-03] No firing during ascent */
 void test_SYS_DEPLOY_03_no_fire_during_ascent(void) {
-    flight_profile_t prof = make_profile(ALT_HIGH);
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket for ascent-fire test");
+    const rocket_profile_t *r = &g_rockets[ROCKET_IDX_L1];
     config_t cfg = cfg_delay_agl();
 
     mock_reset_all();
@@ -553,21 +715,20 @@ void test_SYS_DEPLOY_03_no_fire_during_ascent(void) {
 
     physics_state_t ps = {0};
     bool pyro_during_ascent = false;
+    uint32_t max_ms = (r->expected_apogee_m < 100.0f) ? 120000u : 600000u;
 
-    for (uint32_t t = 0; t <= 120000; t++) {
+    for (uint32_t t = 0; t <= max_ms; t++) {
         if (t >= PAD_DWELL_MS) {
             float ft = (float)(t - PAD_DWELL_MS) / 1000.0f;
-            physics_step(&ps, ft, &prof);
+            physics_step(&ps, ft, r);
         }
         mock_time_ms = t;
         mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
         mock_pyro.firing = false;
         ctx.current_state = dispatch_state(&ctx, t);
 
-        /* Check: any pyro fire during ASCENT is a safety violation */
-        if (ctx.current_state == ASCENT && mock_pyro.fire_count > 0) {
+        if (ctx.current_state == ASCENT && mock_pyro.fire_count > 0)
             pyro_during_ascent = true;
-        }
         if (ctx.current_state == LANDED)
             break;
     }
@@ -577,16 +738,16 @@ void test_SYS_DEPLOY_03_no_fire_during_ascent(void) {
 
 /* [PYR-FAULT-02] Overcurrent fault detection via FLAG pin */
 void test_PYR_FAULT_02_overcurrent_detection(void) {
-    flight_profile_t prof = make_profile(ALT_HIGH);
-    /* Use delay+delay so both fire quickly at apogee, within 120s budget */
-    config_t cfg = cfg_delay_delay();
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket for fault test");
+    const rocket_profile_t *r = &g_rockets[ROCKET_IDX_L1];
+    config_t cfg = cfg_delay_delay(); /* fires quickly at apogee */
 
     mock_reset_all();
     mock_pyro.p1_good = true;
     mock_pyro.p2_good = true;
     mock_pyro.p1_adc = 50;
     mock_pyro.p2_adc = 50;
-    mock_pyro.fault = true; /* Inject fault on all channels */
+    mock_pyro.fault = true;
     mock_uart_len = 0;
     buzzer_stop_count = 0;
     buzzer_altitude_count = 0;
@@ -599,8 +760,9 @@ void test_PYR_FAULT_02_overcurrent_detection(void) {
 
     physics_state_t ps = {0};
     uint8_t prev_fires = 0;
+    uint32_t max_ms = (r->expected_apogee_m < 100.0f) ? 120000u : 600000u;
 
-    for (uint32_t t = 0; t <= 120000; t++) {
+    for (uint32_t t = 0; t <= max_ms; t++) {
         if (mock_pyro.fire_count > prev_fires) {
             uint8_t ch = mock_pyro.last_fire_channel;
             if (ch == 1 && !ps.drogue_deployed)
@@ -611,15 +773,13 @@ void test_PYR_FAULT_02_overcurrent_detection(void) {
         }
         if (t >= PAD_DWELL_MS) {
             float ft = (float)(t - PAD_DWELL_MS) / 1000.0f;
-            physics_step(&ps, ft, &prof);
+            physics_step(&ps, ft, r);
         }
         mock_time_ms = t;
         mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
         mock_pyro.firing = false;
         ctx.current_state = dispatch_state(&ctx, t);
 
-        /* Break as soon as both faults are confirmed — no need to wait for
-         * landing (main chute at 1400m, 2 m/s descent takes ~700s). */
         if (ctx.pyro1_fault && ctx.pyro2_fault)
             break;
         if (ctx.current_state == LANDED)
@@ -629,45 +789,44 @@ void test_PYR_FAULT_02_overcurrent_detection(void) {
     TEST_ASSERT_TRUE_MESSAGE(ctx.pyro1_fault, "Pyro1 fault not detected");
     TEST_ASSERT_TRUE_MESSAGE(ctx.pyro2_fault, "Pyro2 fault not detected");
 
-    /* Verify fault events via CSV.  Close the streaming log first (the test
-     * may not have reached LANDED, so hal_log_stop() may not have fired). */
     hal_log_stop();
     flight_save_csv(&ctx);
     char buf[4096];
     int n = hal_fs_read_file("flight.csv", buf, sizeof(buf) - 1);
     TEST_ASSERT_TRUE_MESSAGE(n > 0, "No CSV data");
     buf[n] = '\0';
-    /* EVT_PYRO1_FAULT and EVT_PYRO2_FAULT don't have named strings in CSV yet,
-     * but the fault flags on ctx are the primary verification */
 }
 
-void test_TST_05_karman_apogee(void) {
-    flight_profile_t prof = make_profile(ALT_KARMAN);
-    config_t cfg = cfg_delay_delay();
-    sim_result_t r = run_sim(cfg, prof, true);
-    print_summary("Karman", &r);
+/* [TST-05] All four rocket profiles reach sensible apogees */
+void test_TST_05_rocket_profiles(void) {
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, g_num_rockets, "No rockets loaded");
 
-    assert_flight(&r, "Karman");
-    TEST_ASSERT_INT_WITHIN(20000, 100000, (int)r.apogee_m);
+    for (int i = 0; i < g_num_rockets; i++) {
+        const rocket_profile_t *r = &g_rockets[i];
+        config_t cfg = cfg_delay_delay();
+        sim_result_t res = run_sim(cfg, r, true);
+
+        char label[72];
+        snprintf(label, sizeof(label), "profile@%s", r->motor);
+        print_summary(label, &res);
+
+        assert_flight(&res, label);
+
+        /* Apogee within ±tolerance of expected (very loose — physics is approximate) */
+        float lo = r->expected_apogee_m * (1.0f - r->apogee_tol);
+        float hi = r->expected_apogee_m * (1.0f + r->apogee_tol);
+        char msg[128];
+        snprintf(msg, sizeof(msg), "%s: apogee %.0fm not in [%.0f, %.0f]m", label, res.apogee_m, lo, hi);
+        TEST_ASSERT_TRUE_MESSAGE(res.apogee_m >= lo && res.apogee_m <= hi, msg);
+    }
 }
 
 /* ── XIP stall robustness test ────────────────────────────────────── */
-/* Simulates RP2040 flash write stalls (XIP disabled during erase+write).
- * Each hal_fs_write / hal_fs_close advances mock_time_ms by stall_ms.
- * The sim loop accounts for time jumps just like real hardware:
- * the CPU stalls, misses sample windows, then resumes.
- *
- * This verifies that:
- * - Pyros still fire correctly despite time jumps from flash writes
- * - No flight state machine lockup from unexpected time advances
- * - csv_flush_safe() correctly gates flash writes away from pyro timing
- */
 void test_XIP_stall_pyro_timing(void) {
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket for XIP stall test");
+    const rocket_profile_t *r = &g_rockets[ROCKET_IDX_L1];
+
     mock_reset_all();
-    /* Realistic RP2040 flash timing: page program ~2-5ms,
-     * sector erase + program ~50ms. Use 10ms as pessimistic
-     * per-operation average (write = page program, close = metadata
-     * commit which may trigger erase). */
     mock_xip_stall_ms = 10;
     mock_pyro.p1_good = true;
     mock_pyro.p2_good = true;
@@ -680,19 +839,15 @@ void test_XIP_stall_pyro_timing(void) {
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = (int32_t)GROUND_PA;
 
-    flight_profile_t prof = make_profile(ALT_HIGH);
     physics_state_t ps = {0};
-    uint32_t step = 1;
-    uint32_t max_ms = 600000;
+    uint32_t max_ms = 600000u;
     uint8_t prev_fires = 0;
     bool p1_fired = false, p2_fired = false;
     float p1_alt = 0, p2_alt = 0;
     uint32_t stall_during_descent = 0;
+    uint32_t phys_t = 0;
 
-    uint32_t phys_t = 0; /* last physics time — tracks real elapsed time */
-
-    for (uint32_t t = 0; t <= max_ms; t += step) {
-        /* Check pyro fires */
+    for (uint32_t t = 0; t <= max_ms; t++) {
         if (mock_pyro.fire_count > prev_fires) {
             uint8_t ch = mock_pyro.last_fire_channel;
             if (ch == 1 && !ps.drogue_deployed) {
@@ -708,21 +863,16 @@ void test_XIP_stall_pyro_timing(void) {
             prev_fires = mock_pyro.fire_count;
         }
 
-        /* Physics: advance all missed ms since last step.
-         * On real hardware, the rocket keeps flying during XIP stalls —
-         * only the CPU stalls. When it resumes, the pressure sensor
-         * reads the current physical state. */
         if (t >= PAD_DWELL_MS) {
             uint32_t phys_start = (phys_t >= PAD_DWELL_MS) ? phys_t : PAD_DWELL_MS;
             uint32_t steps_needed = t - phys_start;
             for (uint32_t s = 0; s < steps_needed; s++) {
                 float ft = (float)(phys_start + s - PAD_DWELL_MS) / 1000.0f;
-                physics_step(&ps, ft, &prof);
+                physics_step(&ps, ft, r);
             }
         }
         phys_t = t;
 
-        /* Feed firmware — it sees the post-stall time and current physics */
         mock_time_ms = t;
         mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
         mock_pyro.firing = false;
@@ -730,12 +880,8 @@ void test_XIP_stall_pyro_timing(void) {
         uint32_t stall_before = mock_xip_total_stall_ms;
         ctx.current_state = dispatch_state(&ctx, mock_time_ms);
 
-        /* Account for XIP stall: if flash write advanced time, skip ahead.
-         * Physics will catch up on the next iteration. */
         if (mock_time_ms > t)
             t = mock_time_ms;
-
-        /* csv_flush_safe/step removed: hal_log async task owns the flight record [v2-9] */
 
         if (ctx.current_state == DESCENT)
             stall_during_descent += (mock_xip_total_stall_ms - stall_before);
@@ -744,32 +890,24 @@ void test_XIP_stall_pyro_timing(void) {
             break;
     }
 
-    printf("  XIP stall: %ums total, %d events, stall_per_op=%ums\n", mock_xip_total_stall_ms, mock_xip_stall_count,
+    printf("  XIP stall: %ums total, %d events, per_op=%ums\n", mock_xip_total_stall_ms, mock_xip_stall_count,
            mock_xip_stall_ms);
-    printf("  XIP descent stall: %ums (should be small until pyros resolve)\n", stall_during_descent);
-    printf("  XIP result: P1=%s@%.0fm P2=%s@%.0fm landed=%s\n", p1_fired ? "FIRED" : "MISSED", p1_alt,
+    printf("  XIP descent stall: %ums\n", stall_during_descent);
+    printf("  XIP result: P1=%s@%.0fm  P2=%s@%.0fm  landed=%s\n", p1_fired ? "FIRED" : "MISSED", p1_alt,
            p2_fired ? "FIRED" : "MISSED", p2_alt, ctx.current_state == LANDED ? "yes" : "no");
 
-    /* Both pyros must still fire despite XIP stalls */
     TEST_ASSERT_TRUE_MESSAGE(p1_fired, "Pyro1 failed to fire with XIP stalls");
     TEST_ASSERT_TRUE_MESSAGE(p2_fired, "Pyro2 failed to fire with XIP stalls");
     TEST_ASSERT_EQUAL_MESSAGE(LANDED, ctx.current_state, "Did not reach LANDED with XIP stalls");
-
-    /* Verify stalls actually occurred */
-    TEST_ASSERT_GREATER_THAN_MESSAGE(0, mock_xip_stall_count, "No XIP stalls occurred — test didn't exercise flash");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, mock_xip_stall_count, "No XIP stalls occurred");
     TEST_ASSERT_GREATER_THAN_MESSAGE(0, mock_xip_total_stall_ms, "No XIP stall time accumulated");
 }
 
-/* [PYR-REFIRE-01] Re-fire a channel if descent speed exceeds 30 m/s between
- * 1.0 and 1.5 seconds after initial fire and continuity is still present.
- *
- * Scenario: 1000m apogee, pyro1 = FALLEN 100m (fires ~4.5s after apogee when
- * falling at ~44 m/s). Failed deployment is simulated by keeping mock_pyro
- * p1_good=true and p1_open=false — the circuit is intact, the e-match didn't
- * fire the charge. The rocket stays ballistic (ps.drogue_deployed stays false).
- * check_refire() in detect_descent() detects ballistic + continuity + timing
- * and fires pyro1 a second time within the 1.0-1.5s window. */
+/* [PYR-REFIRE-01] Re-fire when ballistic descent detected */
 void test_PYR_REFIRE_01_refire_ballistic(void) {
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket for refire test");
+    const rocket_profile_t *r = &g_rockets[ROCKET_IDX_L1];
+
     mock_reset_all();
     mock_pyro.p1_good = true;
     mock_pyro.p2_good = true;
@@ -779,40 +917,29 @@ void test_PYR_REFIRE_01_refire_ballistic(void) {
     buzzer_altitude_count = 0;
     buzzer_active_flag = true;
 
-    /* 1000m apogee: ballistic speed ~44 m/s when fallen 100m from peak.
-     * FALLEN 100m fires while descending fast — re-fire window at T+1.0-1.5s
-     * still has speed >> 30 m/s (ballistic = ctx->vertical_speed_cms < -3000). */
-    flight_profile_t prof = make_profile(1000.0f);
-
     flight_context_t ctx = {0};
     config_set_defaults(&ctx.config);
     ctx.config.pyro1_mode = PYRO_MODE_FALLEN;
-    ctx.config.pyro1_value = 100; /* 100m below apogee — fires while descending fast */
+    ctx.config.pyro1_value = 100; /* 100 m below apogee — fast ballistic descent */
     ctx.config.pyro2_mode = PYRO_MODE_DELAY;
-    ctx.config.pyro2_value = 60; /* 60s delay — won't fire in test window */
+    ctx.config.pyro2_value = 60; /* 60 s delay — won't fire in test window */
     ctx.config.units = 1;        /* meters */
-    ctx.config.backup_timer = 0; /* disable backup apogee timer */
+    ctx.config.backup_timer = 0;
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = (int32_t)GROUND_PA;
 
     physics_state_t ps = {0};
     uint8_t prev_fires = 0;
-    bool initial_fired = false;
-    bool refire_detected = false;
-    uint32_t first_fire_time = 0;
-    uint32_t second_fire_time = 0;
+    bool initial_fired = false, refire_detected = false;
+    uint32_t first_fire_time = 0, second_fire_time = 0;
 
-    for (uint32_t t = 0; t <= 120000; t++) {
-        /* Detect pyro fires from mock */
+    for (uint32_t t = 0; t <= 600000u; t++) {
         if (mock_pyro.fire_count > prev_fires) {
             uint8_t ch = mock_pyro.last_fire_channel;
             if (ch == 1) {
                 if (!initial_fired) {
                     initial_fired = true;
                     first_fire_time = t;
-                    /* Failed deployment: do NOT set ps.drogue_deployed.
-                     * mock_pyro.p1_good and p1_open stay at their defaults
-                     * (good=true, open=false) — circuit intact, charge failed. */
                 } else if (!refire_detected) {
                     refire_detected = true;
                     second_fire_time = t;
@@ -821,10 +948,10 @@ void test_PYR_REFIRE_01_refire_ballistic(void) {
             prev_fires = mock_pyro.fire_count;
         }
 
-        /* Physics: pad dwell then flight. Without drogue, rocket is ballistic. */
+        /* Failed deployment: drogue never deploys → rocket stays ballistic */
         if (t >= PAD_DWELL_MS) {
             float ft = (float)(t - PAD_DWELL_MS) / 1000.0f;
-            physics_step(&ps, ft, &prof);
+            physics_step(&ps, ft, r);
         }
 
         mock_time_ms = t;
@@ -839,20 +966,30 @@ void test_PYR_REFIRE_01_refire_ballistic(void) {
     }
 
     char msg[128];
-    snprintf(msg, sizeof(msg), "Pyro1 never fired initially (FALLEN threshold vs apogee height)");
+    snprintf(msg, sizeof(msg), "Pyro1 never fired (FALLEN %dm, apogee~%.0fm)", ctx.config.pyro1_value,
+             g_rockets[ROCKET_IDX_L1].expected_apogee_m);
     TEST_ASSERT_TRUE_MESSAGE(initial_fired, msg);
 
-    snprintf(msg, sizeof(msg), "Re-fire not detected: initial_fire=%ums speed_cms=%d (need < -3000)", first_fire_time,
+    snprintf(msg, sizeof(msg), "Re-fire not detected: initial=%ums  speed=%d cm/s (need < -3000)", first_fire_time,
              ctx.vertical_speed_cms);
     TEST_ASSERT_TRUE_MESSAGE(refire_detected, msg);
 
-    /* Re-fire must occur within the 1000-1500ms window after initial fire */
     uint32_t window_ms = second_fire_time - first_fire_time;
-    snprintf(msg, sizeof(msg), "Re-fire window %ums not in [1000,1500]ms", window_ms);
+    snprintf(msg, sizeof(msg), "Re-fire window %ums not in [1000, 1500] ms", window_ms);
     TEST_ASSERT_TRUE_MESSAGE(window_ms >= 1000 && window_ms <= 1500, msg);
 }
 
+/* ── Main ─────────────────────────────────────────────────────────── */
+
 int main(void) {
+    printf("\n=== Loading rocket profiles ===\n");
+    int n = load_rockets_json("test_data/rockets.json");
+    if (n <= 0) {
+        printf("FATAL: could not load test_data/rockets.json — aborting\n");
+        return 1;
+    }
+    printf("Loaded %d rocket profile%s\n\n", n, n == 1 ? "" : "s");
+
     UNITY_BEGIN();
     RUN_TEST(test_PYR_MODE_01_delay_delay);
     RUN_TEST(test_PYR_MODE_02_delay_agl);
@@ -866,7 +1003,7 @@ int main(void) {
     RUN_TEST(test_PYR_SAFE_02_no_simultaneous_fire);
     RUN_TEST(test_SYS_DEPLOY_03_no_fire_during_ascent);
     RUN_TEST(test_PYR_FAULT_02_overcurrent_detection);
-    RUN_TEST(test_TST_05_karman_apogee);
+    RUN_TEST(test_TST_05_rocket_profiles);
     RUN_TEST(test_XIP_stall_pyro_timing);
     RUN_TEST(test_PYR_REFIRE_01_refire_ballistic);
     return UNITY_END();

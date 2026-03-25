@@ -1,0 +1,71 @@
+{
+    "_comment": "Rocket profiles for closed-loop simulation testing.",
+    "_motor_format": "X##-D  X=impulse class  ##=average thrust (N)  D=ejection delay (s)",
+    "_impulse_classes": "A=2.5 B=5 C=10 D=20 E=40 F=80 G=160 H=320 I=640 J=2560 N-s",
+    "_sources": [
+        "Motor data: thrustcurve.org (Estes A8, B6, C6, D12, E12)",
+        "Rocket kits: Estes product line, AeroTech Arreaux, Public Missiles Ltd"
+    ],
+    "rockets": [
+        {
+            "name": "Estes Alpha III on A8-3",
+            "kit": "Estes Alpha III",
+            "motor": "A8-3",
+            "power_class": "low",
+            "_note": "18mm beginner sport rocket with altimeter payload. ~60-80m typical.",
+            "dry_mass_g": 55,
+            "prop_mass_g": 3,
+            "avg_thrust_n": 3.2,
+            "burn_time_s": 0.70,
+            "cd": 0.65,
+            "diameter_mm": 18,
+            "expected_apogee_m": 65,
+            "apogee_tolerance_pct": 50
+        },
+        {
+            "name": "Estes Big Bertha on C6-5",
+            "kit": "Estes Big Bertha",
+            "motor": "C6-5",
+            "power_class": "low-mid",
+            "_note": "Fat 29mm sport rocket. Wide body increases drag, moderate altitude. ~150-200m.",
+            "dry_mass_g": 100,
+            "prop_mass_g": 11,
+            "avg_thrust_n": 4.7,
+            "burn_time_s": 1.90,
+            "cd": 0.75,
+            "diameter_mm": 29,
+            "expected_apogee_m": 175,
+            "apogee_tolerance_pct": 50
+        },
+        {
+            "name": "Estes Pro Series II Ventris on D12-5",
+            "kit": "Estes Pro Series II Ventris",
+            "motor": "D12-5",
+            "power_class": "mid",
+            "_note": "29mm mid-power rocket. D12 in 140g airframe gives 350-500m flight.",
+            "dry_mass_g": 140,
+            "prop_mass_g": 21,
+            "avg_thrust_n": 10.2,
+            "burn_time_s": 1.70,
+            "cd": 0.55,
+            "diameter_mm": 29,
+            "expected_apogee_m": 420,
+            "apogee_tolerance_pct": 50
+        },
+        {
+            "name": "AeroTech Arreaux on H73-8",
+            "kit": "AeroTech Arreaux (29mm HPR)",
+            "motor": "H73-8",
+            "power_class": "high-L1",
+            "_note": "Level 1 certification rocket. H73 in 480g 38mm airframe. 700-1200m expected.",
+            "dry_mass_g": 480,
+            "prop_mass_g": 68,
+            "avg_thrust_n": 73.0,
+            "burn_time_s": 1.70,
+            "cd": 0.50,
+            "diameter_mm": 38,
+            "expected_apogee_m": 950,
+            "apogee_tolerance_pct": 60
+        }
+    ]
+}
