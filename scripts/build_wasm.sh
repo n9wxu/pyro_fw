@@ -46,7 +46,10 @@ emcc -O2 -s WASM=1 \
   "$ROOT/sim/physics.c" \
   "$ROOT/src/flight_states.c" \
   "$ROOT/src/telemetry.c" \
+  "$ROOT/src/telemetry_formatter.c" \
   "$ROOT/src/buzzer.c" \
+  "$ROOT/src/config.c" \
+  "$ROOT/src/ground_test.c" \
   -o "$OUT/pyro.js"
 
 echo "Built: $OUT/pyro.js + $OUT/pyro.wasm"
