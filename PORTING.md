@@ -66,7 +66,7 @@ and v2.0 autonomous I/O architecture (see ARCHITECTURE_V2.md).
 |---|---|---|
 | Flight context | 200 bytes | State variables, no ring buffer (v2.0) |
 | Pressure ping-pong | 120 bytes | 2 × 5 samples |
-| Telemetry TX queue | 256 bytes | Async UART output |
+| Telemetry TX queue | 512 bytes | Async UART TX ring (ISR-drained, v2-10) |
 | CSV write buffer | 512 bytes | HAL-internal flash buffer |
 | Buzzer pattern | 64 bytes | Loaded once per mode |
 | Stack | 512 bytes | Interrupt + main |
@@ -244,11 +244,13 @@ and maps each HAL function to the platform-specific implementation.
 | `hal_pyro_fire()` | `gpio_set_level()` on EN pin |
 | `hal_pyro_is_firing()` | Check fire timer state |
 | `hal_pyro_fault()` | `gpio_get_level()` on FLAG pin |
-| `hal_buzzer_play()` | Load pattern, `gptimer` ISR walks it |
-| `hal_buzzer_stop()` | Stop timer, GPIO low |
-| `hal_telemetry_send()` | `uart_write_bytes()` with TX DMA, priority queue |
-| `hal_log_header()` | Format header, write to SPIFFS/LittleFS |
-| `hal_log_sample()` | Append to RAM buffer, flush to flash when idle |
+| `hal_buzzer_tone_on/off()` | `gpio_set_level()` on buzzer pin |
+| `hal_buzzer_task_register()` | Register buzzer async_task_t with task runner |
+| `hal_telemetry_send()` | `uart_write_bytes()` with TX DMA, ISR-drained ring |
+| `hal_log_start()` | Open LittleFS file, write header, register flush task |
+| `hal_log_sample()` | Append formatted CSV line to RAM buffer (non-blocking) |
+| `hal_log_stop()` | Signal flush task to finalize and close log file |
+| `hal_log_active()` | Return true while log file is open |
 | `hal_config_load()` | Read from NVS or SPIFFS, X-macro parser |
 | `hal_config_save()` | X-macro serializer, write to NVS or SPIFFS |
 | `hal_platform_init()` | WiFi AP init, HTTP server, USB init, UART init |
@@ -274,11 +276,13 @@ and maps each HAL function to the platform-specific implementation.
 | `hal_pyro_fire()` | `HAL_GPIO_WritePin()` on EN pin |
 | `hal_pyro_is_firing()` | Check fire timer state |
 | `hal_pyro_fault()` | `HAL_GPIO_ReadPin()` on FLAG pin |
-| `hal_buzzer_play()` | Load pattern, `TIM` ISR walks it |
-| `hal_buzzer_stop()` | Stop timer, GPIO low |
-| `hal_telemetry_send()` | `HAL_UART_Transmit_DMA()`, priority queue |
-| `hal_log_header()` | Format header, write to flash page |
-| `hal_log_sample()` | Append to RAM buffer, flush to flash page when idle |
+| `hal_buzzer_tone_on/off()` | `HAL_GPIO_WritePin()` on buzzer pin |
+| `hal_buzzer_task_register()` | Register buzzer async_task_t with task runner |
+| `hal_telemetry_send()` | `HAL_UART_Transmit_DMA()`, ISR-drained ring |
+| `hal_log_start()` | Open flash file, write header, register flush task |
+| `hal_log_sample()` | Append formatted CSV line to RAM buffer (non-blocking) |
+| `hal_log_stop()` | Signal flush task to finalize and close log file |
+| `hal_log_active()` | Return true while log file is open |
 | `hal_config_load()` | Read from last flash page, X-macro parser |
 | `hal_config_save()` | X-macro serializer, erase + write flash page |
 | `hal_platform_init()` | UART init (CH340E provides USB-serial to PC) |
@@ -305,9 +309,9 @@ telemetry identically on all three.
 | Pressure filter | ✅ | ✅ | ✅ |
 | Apogee detection | ✅ | ✅ | ✅ |
 | Pyro firing (all 4 modes) | ✅ | ✅ | ✅ |
-| Telemetry events | ✅ sent | ✅ sent | ✅ sent |
-| Data logging | ✅ to flash | ✅ to flash | ✅ to flash |
-| Buzzer patterns | ✅ | ✅ | ✅ |
+| Telemetry events | ✅ async ISR TX | ✅ async ISR TX | ✅ async ISR TX |
+| Data logging | ✅ hal_log_sample() | ✅ hal_log_sample() | ✅ hal_log_sample() |
+| Buzzer patterns | ✅ async task | ✅ async task | ✅ async task |
 | Config loading | WiFi web | USB web | Serial tool |
 
 Tests run against `hal_test.c` which mocks all HAL functions. Since the
@@ -324,7 +328,7 @@ only the HAL implementation on real hardware.
 7. **Buzzer:** Timer ISR walks pattern buffer
 8. **Config storage:** EEPROM, flash sector, or external storage
 9. **Flight data:** Flash filesystem or external SPI flash
-10. **Test:** All 64 C tests pass with new HAL (host-compiled)
+10. **Test:** All 99 C tests pass with new HAL (host-compiled)
 11. **Verify:** Closed-loop simulation produces correct flight behavior
 
 ## Summary

@@ -7,8 +7,8 @@ Firmware for the Pyro MK1B Rocket Flight Computer
 - **Dual Pyrotechnic Control** - AP2192 power switches with overcurrent detection
 - **Four Firing Modes** - Fallen distance, AGL altitude, descent speed, timed delay
 - **Fault Detection** - Overcurrent monitoring and post-fire verification
-- **Flight Data Logging** - 10Hz ring buffer (4096 samples) + CSV export
-- **Real-time Telemetry** - `$PYRO` NMEA or JSON format via UART, 10Hz in flight; event sentences at apogee, fire, landing
+- **Fire-and-Forget Flight Log** - 50Hz streaming CSV to LittleFS via `hal_log_sample()`; ISR-driven async flush; non-blocking
+- **Real-time Telemetry** - `$PYRO` NMEA or JSON format via UART (non-blocking ISR TX ring), 10Hz in flight; event sentences at apogee, fire, landing
 - **Pressure Sensing** - MS5607-02BA03 or BMP280 (auto-detected)
 - **Altitude Calculation** - Integer-only barometric formula
 - **Continuity Checking** - ADC oversampling for pre-flight verification
@@ -29,9 +29,9 @@ Firmware for the Pyro MK1B Rocket Flight Computer
 
 ## Flight States
 1. **PAD_IDLE** - Ground calibration, ascent detection (+10m in <1s)
-2. **ASCENT** - Boost/coast phase, 10Hz logging, apogee detection
-3. **DESCENT** - Pyro deployment, 20Hz logging, landing detection
-4. **LANDED** - Post-flight data write, altitude beep-out
+2. **ASCENT** - Boost/coast phase, 50Hz logging, apogee detection
+3. **DESCENT** - Pyro deployment, 50Hz logging, landing detection
+4. **LANDED** - Post-flight altitude beep-out; flight log finalized
 
 Apogee is an event within ASCENT, not a separate state. Pyros arm only after vertical speed drops below 10 m/s.
 
@@ -119,13 +119,13 @@ Two-digit codes (1-5 beeps per digit):
 - **GPIO 16:** Buzzer (GPIO on/off, external circuit produces tone)
 
 ## Data Logging
-Flight data stored in a 4096-sample ring buffer (16 bytes/sample):
-- **Sample rate:** 10Hz PAD_IDLE, 100ms ASCENT, 50ms DESCENT, 1Hz LANDED
-- **Fields:** time_ms, pressure_pa, altitude_cm, state, event, event_data
-- **Events:** Tagged on existing samples (LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING)
-- **Capacity:** ~6.8 minutes at 10Hz
+The primary in-flight record is written by `hal_log_sample()` (v2-9) to `flight_log.csv` in LittleFS — one CSV line per pressure sample from launch to landing.
 
-CSV flight data is written to littlefs and served at `/api/flight.csv`.
+- **Primary log:** `flight_log.csv` in LittleFS, 50Hz during ASCENT/DESCENT, streaming append (ISR-flushed every 200ms)
+- **Events:** LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING tagged inline as an extra CSV column
+- **Fields:** `time_ms, pressure_pa, altitude_cm, state, thrust, event`
+- **RAM ring buffer:** 64 entries × 16 bytes = 1KB (retained for launch-backdate and `/api/flight.csv` HTTP endpoint)
+- **CSV export:** `/api/flight.csv` serves `flight_log.csv` directly from LittleFS
 
 ## Telemetry (UART0)
 **Format:** `$PYRO` NMEA sentences (default) or JSON (set `telem_format=1` in config.ini), 115200 baud
@@ -400,16 +400,21 @@ The tool checks the device's current version, compares with GitHub releases, dow
 
 ## Development Status
 
-**76 C tests, 22 web UI tests — all passing.**
+**99 C tests, 22 web UI tests — all passing.**
 
-The firmware is feature-complete for v1.5 and is actively being refactored toward v2 autonomous I/O architecture. v2 milestones completed so far:
-- HAL config API (`hal_config_load/save`)
-- Ground test serial command interface
-- CPU sleep (`hal_sleep_until_event` / `__wfe`)
-- Autonomous pressure sampling (`async_task.h` + `hal_pressure_fifo_*`)
-- Telemetry formatter module (`telemetry_formatter.c`, dual NMEA/JSON, event sentences)
+The firmware is feature-complete and fully implements the v2 autonomous I/O architecture. All v2 milestones are complete:
 
-Next v2 tasks: buzzer pattern ISR, batch `flight_process_samples()`, `hal_log_sample()` fire-and-forget. See [ARCHITECTURE_V2.md](ARCHITECTURE_V2.md) and [STATUS.md](STATUS.md) for the full roadmap.
+- **v2-1/2:** X-macro config system; `hal_config_load/save`
+- **v2-2b:** Ground test serial command interface (`ground_test.c`)
+- **v2-3:** CPU sleep (`hal_sleep_until_event` / `__wfe`)
+- **v2-4:** Autonomous 50Hz pressure sampling (`async_task.h` + `hal_pressure_fifo_*`)
+- **v2-5:** Telemetry formatter module (dual NMEA/JSON, event sentences)
+- **v2-7:** Buzzer parallel state machine (`buzzer_play_code/altitude`, `async_task_t`-driven, no main-loop involvement)
+- **v2-8:** Batch `flight_process_samples()` at 50Hz
+- **v2-9:** Fire-and-forget `hal_log_sample()` with ISR-flushed streaming LittleFS writer
+- **v2-10:** Non-blocking UART TX ring buffer (UART0 ISR, 512-byte SPSC queue)
+
+See [ARCHITECTURE_V2.md](ARCHITECTURE_V2.md) and [STATUS.md](STATUS.md) for implementation details.
 
 See [SPECIFICATION.md](SPECIFICATION.md) for detailed requirements and implementation notes.
 

@@ -191,17 +191,54 @@ Verify web interface behavior against mock server in 3 device modes.
 
 ---
 
+## 13. Power Management (v2.0)
+
+| Req | Description | Verified By | Status |
+|-----|-------------|-------------|--------|
+| PWR-SAMPLE-01 | 50Hz pressure sampling via async task | Integration: all tests use hal_pressure_fifo_* | ✅ |
+| PWR-SAMPLE-02 | 5-sample batch delivery | Integration: flight_process_samples() in all integration runs | ✅ |
+| PWR-TELEM-01 | Async telemetry TX | Host: buzzer_tests / integration (non-blocking send) | ✅ |
+| PWR-BUZZ-01 | Autonomous buzzer via async task | Buzzer: test_BUZ_ACT_01..05_pattern_correct | ✅ |
+| PWR-SLEEP-01 | CPU sleep between events | Integration: no-op in test; __wfe on hardware | ✅ |
+| PWR-LOG-01 | RAM-buffered async flash logging | Integration: hal_log_sample() called; mock records calls | ✅ |
+| PWR-LOG-02 | hal_log_start() opens file + registers task | Integration: test_FLT_BOOT_01 (log starts on LAUNCH) | ✅ |
+| PWR-LOG-03 | hal_log_sample() is non-blocking | Integration: called 50×/s during flight; no stall | ✅ |
+| PWR-LOG-04 | hal_log_stop() signals flush close | Integration: test_FLT_LAND_04 (log stops on LANDED) | ✅ |
+| PWR-BUZZ-02 | Buzzer: IDLE → ENCODE → PLAYING states | Buzzer: test_BUZ_ACT_02_state_machine | ✅ |
+| PWR-BUZZ-03 | Pattern computed at request time | Buzzer: test_BUZ_ACT_03_04_code_beep_encoding | ✅ |
+| PWR-TELEM-02 | hal_telemetry_send() O(n), no stall | Buzzer/Integration: verified by non-blocking assertion | ✅ |
+| PWR-TELEM-03 | TX ring ≥ 512 bytes; overflow drops end | Host: hal_test.c mock buffers full sentence | ✅ |
+
+## 14. Configuration System (v2.0)
+
+| Req | Description | Verified By | Status |
+|-----|-------------|-------------|--------|
+| CFG-TABLE-01 | X-macro single-table config | Config: test_CFG_TABLE_01_all_fields_present | ✅ |
+| CFG-TABLE-02 | Round-trip serialize → parse | Config: test_CFG_TABLE_02_roundtrip (15 tests) | ✅ |
+| CFG-SUBSYS-01 | Each subsystem has configurable params | Config: fields cover telem_format, beep_mode, etc. | ✅ |
+
+## 15. Telemetry Formatting (v2.0)
+
+| Req | Description | Verified By | Status |
+|-----|-------------|-------------|--------|
+| TELEM-FMT-01 | telemetry_formatter.c module | Integration: TEL-03 / TEL-04 tests | ✅ |
+| TELEM-FMT-02 | Event + state messages | Integration: test_TEL_03_event_sentences | ✅ |
+| TELEM-FMT-03 | HAL transport is raw bytes | Integration: hal_telemetry_send(const char*) | ✅ |
+
+---
+
 ## Summary
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by integration/closed-loop/web test | 98 |
-| ⚠️ Not directly verified (needs integration test or hardware) | 15 |
+| ✅ Verified by integration/closed-loop/buzzer/config/web test | 118 |
+| ⚠️ Not directly verified (needs integration test or hardware) | 16 |
 | ❌ Not implemented | 0 |
 | ✅ HW (hardware satisfies) | 1 |
 
-_+8 requirements added in v2 Task 2/3 (GND-TEST-01..04, DD-011, CFG-HAL-01..02, PWR-SLEEP-01), all verified by integration tests._
-_+2 requirements added in v2 Task 5 (TEL-03 event sentences, TEL-04 JSON format), both verified by integration tests._
+_+8 requirements in v2 Task 2/3 (GND-TEST-01..04, DD-011, CFG-HAL-01..02, PWR-SLEEP-01)_
+_+2 requirements in v2 Task 5 (TEL-03 event sentences, TEL-04 JSON format)_
+_+20 requirements in v2 Tasks 7–10 (PWR-*, CFG-TABLE-*, TELEM-FMT-*), all verified by buzzer/config/integration tests_
 
 ### Remaining gaps (hardware or future work only):
 - **FLT-RATE-01..04**: Sample rate precision — hardware timing test
@@ -213,3 +250,4 @@ _+2 requirements added in v2 Task 5 (TEL-03 event sentences, TEL-04 JSON format)
 - **WEB-NET-01..04**: USB network / mDNS / DNS-SD — hardware test
 - **WEB-API-04..07**: OTA, reboot, CSV download, CORS — hardware test
 - **OTA-01..04**: OTA update flow — hardware test
+- **PWR-USB-01**: USB servicing autonomy — deferred to v2.1

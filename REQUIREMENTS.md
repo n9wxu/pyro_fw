@@ -321,7 +321,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 
 ---
 
-## 13. Power Management (v2.0 — planned)
+## 13. Power Management (v2.0) ✅ Done
 
 ### L1 User Need
 - **UN-11**: The user needs the flight computer to operate on battery for extended pad time.
@@ -331,35 +331,44 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **SYS-PWR-02**: The system shall perform all I/O autonomously without CPU involvement. ← SYS-PWR-01
 
 ### L3 Subsystem Requirements
-- **PWR-SAMPLE-01**: Pressure sampling shall run autonomously at 50Hz via ISR, DMA, or second core. ← SYS-PWR-02
-- **PWR-SAMPLE-02**: Pressure data shall be delivered to the flight software in batches of 5 samples (100ms). ← PWR-SAMPLE-01
-- **PWR-TELEM-01**: Telemetry transmission shall be asynchronous via ISR or DMA. ← SYS-PWR-02
-- **PWR-BUZZ-01**: Buzzer patterns shall be played autonomously by a timer ISR. ← SYS-PWR-02
-- **PWR-USB-01**: USB servicing shall run autonomously via timer ISR or second core. ← SYS-PWR-02
-- **PWR-SLEEP-01**: The CPU shall sleep between pressure buffer delivery events. ← SYS-PWR-01
-- **PWR-LOG-01**: Data logging shall buffer in RAM and flush to flash only when the CPU is awake. ← SYS-PWR-02
+- **PWR-SAMPLE-01**: Pressure sampling shall run autonomously at 50Hz via ISR, DMA, or second core. ← SYS-PWR-02 ✅ async_task.h + hal_pressure_fifo_*
+- **PWR-SAMPLE-02**: Pressure data shall be delivered to the flight software in batches of 5 samples (100ms). ← PWR-SAMPLE-01 ✅ hal_pressure_batch_t + flight_process_samples()
+- **PWR-TELEM-01**: Telemetry transmission shall be asynchronous via ISR or DMA. ← SYS-PWR-02 ✅ v2-10 UART0 TX ring buffer + ISR
+- **PWR-BUZZ-01**: Buzzer patterns shall be played autonomously via async task runner. ← SYS-PWR-02 ✅ v2-7 buzzer async state machine
+- **PWR-USB-01**: USB servicing shall run autonomously via timer ISR or second core. ← SYS-PWR-02 (deferred to v2.1)
+- **PWR-SLEEP-01**: The CPU shall sleep between pressure buffer delivery events. ← SYS-PWR-01 ✅ hal_sleep_until_event() / __wfe()
+- **PWR-LOG-01**: Data logging shall buffer in RAM and flush to flash asynchronously. ← SYS-PWR-02 ✅ v2-9 hal_log_sample() 512-byte ring, 200ms flush task
 
-## 14. Telemetry Formatting (v2.0 — planned)
+### L4 Implementation Requirements
+- **PWR-LOG-02**: `hal_log_start()` shall open the flight log file and register a flush task. ← PWR-LOG-01
+- **PWR-LOG-03**: `hal_log_sample()` shall be non-blocking: it copies one formatted line into a RAM buffer. ← PWR-LOG-01
+- **PWR-LOG-04**: `hal_log_stop()` shall signal the flush task to finalize and close the log file. ← PWR-LOG-01
+- **PWR-BUZZ-02**: The buzzer pattern player shall use three states: IDLE → ENCODE → PLAYING. ← PWR-BUZZ-01
+- **PWR-BUZZ-03**: Pattern steps shall be computed at request time from the beep code or altitude value. ← PWR-BUZZ-01
+- **PWR-TELEM-02**: `hal_telemetry_send()` shall complete in O(n) time with no UART stall. ← PWR-TELEM-01
+- **PWR-TELEM-03**: The UART TX ring shall be at least 512 bytes; overflow shall drop the end of the sentence. ← PWR-TELEM-01
+
+## 14. Telemetry Formatting (v2.0) ✅ Done
 
 ### L2 System Requirements
 - **SYS-TELEM-FMT-01**: The telemetry format shall be configurable without changing flight software. ← UN-4
 
 ### L3 Subsystem Requirements
-- **TELEM-FMT-01**: A telemetry formatter module shall convert flight events to protocol-specific messages. ← SYS-TELEM-FMT-01
-- **TELEM-FMT-02**: The formatter shall support event messages (apogee, pyro fire, landing) and periodic state messages. ← TELEM-FMT-01
-- **TELEM-FMT-03**: The HAL telemetry transport shall be a raw byte interface with no protocol knowledge. ← TELEM-FMT-01
+- **TELEM-FMT-01**: A telemetry formatter module shall convert flight events to protocol-specific messages. ← SYS-TELEM-FMT-01 ✅ telemetry_formatter.c
+- **TELEM-FMT-02**: The formatter shall support event messages (apogee, pyro fire, landing) and periodic state messages. ← TELEM-FMT-01 ✅
+- **TELEM-FMT-03**: The HAL telemetry transport shall be a raw byte interface with no protocol knowledge. ← TELEM-FMT-01 ✅ hal_telemetry_send(const char*)
 
-## 15. Configuration System (v2.0 — planned)
+## 15. Configuration System (v2.0) ✅ Done
 
 ### L2 System Requirements
 - **SYS-CFG-04**: Adding a configuration field shall require changes to a single location. ← UN-4
 
 ### L3 Subsystem Requirements
-- **CFG-TABLE-01**: All configuration fields shall be defined in a single table that generates the struct, parser, serializer, and defaults. ← SYS-CFG-04
-- **CFG-TABLE-02**: A round-trip test shall automatically verify every field survives serialize → parse. ← CFG-TABLE-01
-- **CFG-SUBSYS-01**: Each subsystem (telemetry, logging, buzzer) shall have configurable parameters. ← UN-4
+- **CFG-TABLE-01**: All configuration fields shall be defined in a single table that generates the struct, parser, serializer, and defaults. ← SYS-CFG-04 ✅ config_fields.h X-macro
+- **CFG-TABLE-02**: A round-trip test shall automatically verify every field survives serialize → parse. ← CFG-TABLE-01 ✅ test_config.c (15 tests)
+- **CFG-SUBSYS-01**: Each subsystem (telemetry, logging, buzzer) shall have configurable parameters. ← UN-4 ✅
 
-## 16. Ground Test (v2.0 — planned)
+## 16. Ground Test (v2.0) ✅ Done
 
 ### L1 User Need
 - **UN-12**: The user needs to verify pyro circuits and system behavior on the ground without a computer.
@@ -368,7 +377,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **SYS-TEST-01**: The system shall support ground test operations via serial commands. ← UN-12, DD-011
 
 ### L3 Subsystem Requirements
-- **GND-TEST-01**: The system shall accept serial commands to replay status and altitude beep codes. ← SYS-TEST-01
-- **GND-TEST-02**: The system shall accept serial commands to arm and fire individual pyro channels for ground testing. ← SYS-TEST-01
-- **GND-TEST-03**: Ground test arm shall require a multi-step confirmation and auto-disarm after 3 seconds. ← SYS-TEST-01
-- **GND-TEST-04**: Ground test shall be available only during PAD_IDLE state. ← PYR-SAFE-04
+- **GND-TEST-01**: The system shall accept serial commands to replay status and altitude beep codes. ← SYS-TEST-01 ✅
+- **GND-TEST-02**: The system shall accept serial commands to arm and fire individual pyro channels for ground testing. ← SYS-TEST-01 ✅
+- **GND-TEST-03**: Ground test arm shall require a multi-step confirmation and auto-disarm after 3 seconds. ← SYS-TEST-01 ✅
+- **GND-TEST-04**: Ground test shall be available only during PAD_IDLE state. ← PYR-SAFE-04 ✅
