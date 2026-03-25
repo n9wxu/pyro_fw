@@ -214,6 +214,7 @@ add_custom_target(host_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
                ${unity_SOURCE_DIR}/src/unity.c
+               -lm
                -o ${CMAKE_BINARY_DIR}/test_flight_states
     COMMAND ${CMAKE_COMMAND} -E echo "Running tests..."
     COMMAND ${CMAKE_BINARY_DIR}/test_flight_states
