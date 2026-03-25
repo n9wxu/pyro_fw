@@ -81,10 +81,4 @@ static inline void buzzer_set_altitude(int32_t alt) {
     buzzer_play_altitude(alt);
 }
 
-/* buzzer_update() is a no-op — kept for call sites that haven't been
- * cleaned up yet.  Will be removed once flight_states.c is updated. */
-static inline void buzzer_update(uint32_t now_ms) {
-    (void)now_ms;
-}
-
 #endif

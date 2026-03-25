@@ -103,6 +103,35 @@
 - Flash → test → OTA → config cycle
 - Execute next week
 
+## March 24 (v2-7 through v2-9 session)
+
+### Buzzer Parallel State Machine (v2-7) ✅
+- `async_task_t`-based pattern player in `buzzer.c`
+- `BZ_IDLE → BZ_ENCODE_CODE/ALT → BZ_PLAYING` states
+- Encodes `buzzer_pattern_t[]` at request time; `hal_tasks_tick()` fires each step
+- `buzzer_play_code(code, repeat)` / `buzzer_play_altitude(value)` non-blocking API
+- `buzzer_update()` becomes a no-op shim (no main-loop involvement)
+- `hal_buzzer_task_register()` added to all 3 HAL implementations
+- 8 new unit tests: BUZ-PAT-01..05, BUZ-ACT-01..03 — all pass
+
+### Batch Pressure Processing (v2-8) ✅
+- `flight_process_samples(ctx, batch)` — processes 5-sample 50Hz batch in one call
+- `detect_ascent()` / `detect_descent()` gates at 20ms; `detect_pad_idle()` at 10ms
+- `main_hardware.c` uses `hal_pressure_fifo_get()` → `flight_process_samples()` loop
+- `hal_pressure_push_sample()` + `hal_pressure_batch_t` added to HAL
+
+### Fire-and-Forget Flight Log (v2-9) ✅
+- `hal_log_start()` / `hal_log_sample()` / `hal_log_stop()` / `hal_log_active()` in hal.h
+- Three implementations: hardware (LittleFS streaming), sim (host FS), test (in-memory)
+- `hal_log_sample()` called from `buf_add()` (ASCENT+) and `buf_tag_event()` for events
+- LAUNCH event emitted explicitly (PAD_IDLE sample is below the >= ASCENT guard)
+- Incremental ring-buffer logger (`csv_flush_safe/step/track`) retired from all call sites
+- `mock_reset_all()` now resets streaming handle state between tests
+- `test_DAT_04_events` updated to read `flight_log.csv`
+- `test_PYR_FAULT_02` fixed: breaks early on fault flags, calls `hal_log_stop()` before `flight_save_csv()`
+- All 5 test suites: **99 Tests, 0 Failures**
+- Commits: `6cab391` (hal_log implementations), `6224112` (CSV logger retirement)
+
 ## March 9-17 (v1.5.0 work, separate session)
 
 ### Safety Tests Added

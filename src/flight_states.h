@@ -79,10 +79,9 @@ typedef struct {
 /* config_t is defined in config.h */
 
 // Flight context
-/* Ring buffer size — only needs to hold samples during ASCENT/pre-pyro
- * when flash writes are blocked. The incremental CSV logger drains to
- * flash during PAD_IDLE and post-pyro DESCENT.
- * 64 entries × 16 bytes = 1KB. Holds ~6s at 10Hz ASCENT rate. */
+/* Ring buffer size — holds samples for /api/flight.csv HTTP endpoint and
+ * apogee-window replay (launch backdating). 64 entries × 16 bytes = 1KB.
+ * In-flight record is owned by hal_log_sample() [v2-9]. */
 #define FLIGHT_BUF_SIZE 64
 
 typedef struct flight_context_t {
@@ -136,15 +135,8 @@ typedef struct flight_context_t {
     uint32_t armed_time;         // when pyros were armed (for backup timer)
     uint32_t descent_start_time; // when DESCENT started (for landing timeout)
     int32_t pad_speed_cms;       // vertical speed during PAD_IDLE (for launch confirm)
-    // Incremental CSV logger
-    uint16_t csv_write_idx; // ring buffer index of next sample to write
-    uint16_t csv_pending;   // samples waiting to be flushed
-    bool csv_header_written;
-    bool csv_file_open;
     // Last continuity status beep code [GND-TEST-01]
     uint8_t last_status_code;
-    // Pending event for hal_log_sample [v2-9]: set before buf_add, cleared after
-    uint8_t pending_log_event;
     // Ground test state machine [GND-TEST-01..04, DD-011]
     ground_test_ctx_t gt;
 } flight_context_t;

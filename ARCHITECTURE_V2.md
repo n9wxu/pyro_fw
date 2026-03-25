@@ -210,29 +210,35 @@ while (1) {
 - `src/telemetry.c` emptied and removed from all CMake targets
 - 2 new integration tests: TEL-03 (NMEA event sentences), TEL-04 (JSON format)
 
-### ❌ Task 6: Buzzer pattern player (timer ISR)
-- Refactor `buzzer.c` to generate `buzzer_pattern_t[]` arrays
-- `hal_buzzer_play(pattern)` — timer ISR walks pattern autonomously
-- Remove `buzzer_update()` from main loop
+### ✅ Task 6+7: Buzzer parallel state machine — DONE (commit `3bd614b`)
+- `buzzer.c` encodes `buzzer_pattern_t[]` arrays at request time (no pre-built tables)
+- `async_task_t` drives pattern playback via `hal_tasks_tick()` — no `buzzer_update()` in main loop
+- Three states: `BZ_IDLE → BZ_ENCODE_CODE/ALT → BZ_PLAYING`
+- `buzzer_play_code(code, repeat)` / `buzzer_play_altitude(value)` — non-blocking, ISR-safe
+- `hal_buzzer_task_register()` added to all three HAL implementations
+- 8 unit tests: BUZ-PAT-01..05 (tone counts), BUZ-ACT-01..03 (lifecycle, stop, repeat)
 
-### ❌ Task 7: Batch flight_process_samples()
-- Replace `dispatch_state()` with `flight_process_samples(ctx, samples, timestamps, count)`
-- Remove ring buffer from `flight_context_t`
-- Events call telemetry formatter and `hal_log_sample()` directly
+### ✅ Task 8 (renumbered): Batch flight_process_samples() — DONE (commit `3bd614b`)
+- `flight_process_samples(ctx, batch)` iterates 5-sample batch at 50Hz
+- `detect_ascent()` / `detect_descent()` gate at 20ms; `detect_pad_idle()` at 10ms
+- `main_hardware.c`: `hal_pressure_fifo_get()` → `flight_process_samples()` each loop
+- `dispatch_state()` polled fallback retained for test/sim compatibility
+- `hal_pressure_push_sample()` + `hal_pressure_batch_t` added to HAL
 
-### ❌ Task 8: Fire-and-forget hal_log_sample()
-- `hal_log_sample(time_ms, pressure, altitude, state, thrust, event)` — non-blocking
-- HAL buffers samples in RAM, flushes to littlefs when CPU sleeps or buffer full
-- Replaces 65KB ring buffer with ~512-byte HAL write buffer
+### ✅ Task 9 (renumbered): Fire-and-forget hal_log_sample() — DONE (commits `6cab391`, `6224112`)
+- `hal_log_start(cfg, ground_pa)` opens `flight_log.csv`; `hal_log_stop()` closes at landing
+- `hal_log_sample(time_ms, pa, alt, state, thrust, event)` appends one CSV line per call
+- Three implementations: hardware (LittleFS), sim (host FS), test (in-memory sim_files[])
+- Incremental ring-buffer logger (`csv_flush_safe/step/track`) retired from all call sites
+- `mock_reset_all()` now resets streaming handle state between tests
 
-### ❌ Task 9: DMA UART TX / USB on Core1
-- DMA-driven UART TX queue for telemetry (no CPU stall)
-- USB (`tud_task`) on 1ms timer ISR or Core1
-- Core1 sends SEV to wake Core0 when pressure buffer is ready
+### 🔨 Task 10 (renumbered): DMA UART TX — IN PROGRESS
+- Replace blocking `uart_puts()` in `hal_telemetry_send()` with ISR/DMA-driven ring queue
+- 512-byte circular TX buffer; UART TX interrupt drains byte-by-byte (or DMA burst)
+- No changes to flight software or tests (isolated to `hal_hardware.c`)
+- USB (`tud_task`) on Core1 / 1ms timer ISR — deferred to v2.1
 
-### ❌ Task 10: Update all tests and documentation
-- Integration/closed-loop tests use batch API
-- Telemetry formatter unit tests
-- Buzzer pattern unit tests
-- REQUIREMENTS.md: add autonomous I/O, sleep, and config requirements
-- TRACEABILITY.md: map new tests to requirements
+### ✅ Task 10 (docs+tests): Update documentation — DONE (this commit)
+- STATUS.md: v2-7..9 marked done, task table updated, test counts updated (99 C tests)
+- ARCHITECTURE_V2.md: tasks 6..9 flipped to ✅ Done with commit hashes
+- SESSION_NOTES.md: March 24 session added

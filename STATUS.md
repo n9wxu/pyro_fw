@@ -1,6 +1,6 @@
 # Pyro MK1B Firmware - Current Status
 
-_Last updated: 2026-03-24 after buzzer async task (v2-7)_
+_Last updated: 2026-03-24 after v2-9 CSV logger retirement_
 
 ## ✅ Completed
 
@@ -29,7 +29,7 @@ _Last updated: 2026-03-24 after buzzer async task (v2-7)_
 - 10Hz ASCENT/DESCENT, 1Hz PAD_IDLE/LANDED
 - `telemetry_formatter.c` — standalone protocol-independent module
 
-### Buzzer (v2 Task 7) ✅ Done
+### Buzzer (v2 Task 7) ✅ Done — commit `3bd614b`
 - `async_task_t`-based pattern player — runs as a parallel state machine alongside pressure sampling
 - Three states: BZ_IDLE → BZ_ENCODE_CODE/ALTITUDE → BZ_PLAYING
 - Step table built at request time; `hal_tasks_tick()` fires each step at its deadline
@@ -38,6 +38,20 @@ _Last updated: 2026-03-24 after buzzer async task (v2-7)_
 - `hal_buzzer_task_register()` added to all three HALs; hardware HAL registers into `hw_tasks[]`
 - Test and sim HALs drive the task via `hal_tasks_tick()` for full pattern testing
 - 8 new unit tests: BUZ-PAT-01..05 (tone counts per code), BUZ-ACT-01..03 (lifecycle, stop, repeat)
+
+### Batch Pressure Processing (v2 Task 8) ✅ Done — commit `3bd614b`
+- `flight_process_samples(ctx, batch)` — processes a 5-sample 50Hz batch in one call
+- `detect_ascent()` / `detect_descent()` gate at 20ms (50Hz); `detect_pad_idle()` gates at 10ms
+- `main_hardware.c` calls `hal_pressure_fifo_get()` then `flight_process_samples()` each loop
+- Polled fallback (`dispatch_state()`) retained for test/sim compatibility
+
+### Fire-and-Forget Flight Log (v2 Task 9) ✅ Done — commits `6cab391`, `6224112`
+- `hal_log_start(cfg, ground_pa)` opens `flight_log.csv` at launch; `hal_log_stop()` closes at landing
+- `hal_log_sample(time_ms, pa, alt, state, thrust, event)` appends one CSV line — non-blocking
+- Three implementations: hardware (LittleFS streaming), sim (host filesystem), test (in-memory)
+- Incremental ring-buffer CSV logger (`csv_flush_safe/step/track`) retired from all call sites
+- `flight_save_csv()` retained for HTTP `/api/flight.csv` endpoint (ring-buffer snapshot)
+- `test_DAT_04_events` updated to read `flight_log.csv`; `mock_reset_all()` resets log handle
 
 ### Data Logging
 - 4096-sample ring buffer, events tagged on samples
@@ -91,8 +105,9 @@ _Last updated: 2026-03-24 after buzzer async task (v2-7)_
 - `flight_states.c` wired: `telemetry_init()` at boot, `flight_update_outputs()` builds snapshot
 - `src/telemetry.c` emptied and removed from all build targets
 
-### Testing (76 C + 22 web)
-- 39 unit, 22 integration (+4 GND-TEST-01..04, +2 TEL-03..04), 15 closed-loop (35+ flights)
+### Testing (99 C + 22 web)
+- 39 unit, 22 integration (+4 GND-TEST-01..04, +2 TEL-03..04), 15 closed-loop (+1 buzzer suite = 8 buzzer), 15 config
+- Total host test suites: host_tests (39), integration_tests (22), buzzer_tests (8), closedloop_tests (15), config_tests (15)
 - 4 safety-critical closed-loop tests (no-fire-without-continuity, no-simultaneous-fire, no-fire-during-ascent, overcurrent-fault-detection)
 - 22 Playwright web UI tests (3 mock server modes)
 - cppcheck/MISRA, clang-format, pmccabe in CI
@@ -120,14 +135,14 @@ v2 refactors the firmware to autonomous hardware I/O with CPU sleep between 100m
 | v2-5 | Autonomous pressure (batch buffers, Core1/DMA) | ✅ Done |
 | v2-6 | Telemetry formatter module | ✅ Done |
 | v2-7 | Buzzer pattern player (async task) | ✅ Done |
-| v2-8 | Batch flight_process_samples() | ❌ Not started |
-| v2-9 | Fire-and-forget hal_log_sample() | ❌ Not started |
-| v2-10 | DMA UART TX, USB on Core1/timer ISR | ❌ Not started |
+| v2-8 | Batch flight_process_samples() | ✅ Done `3bd614b` |
+| v2-9 | Fire-and-forget hal_log_sample() | ✅ Done `6cab391`/`6224112` |
+| v2-10 | DMA UART TX ring buffer (hal_hardware.c) | 🔨 In progress |
 
 See ARCHITECTURE_V2.md for full task descriptions.
 
-## ❌ Not Implemented
-- [ ] Progressive in-flight CSV logging (superseded by v2-9 `hal_log_sample`)
-- [ ] Batch `flight_process_samples()` — v2 Task 8
-- [ ] `hal_log_sample()` fire-and-forget — v2 Task 9
-- [ ] DMA UART TX + USB on Core1 — v2 Task 10
+## 🔨 In Progress
+- [ ] v2-10: DMA UART TX ring buffer (`hal_hardware.c`) — replace blocking `uart_puts` with ISR/DMA-driven queue
+
+## ✅ Superseded
+- Progressive in-flight CSV logging — superseded by v2-9 `hal_log_sample()`; ring-buffer functions retained for HTTP endpoint only
