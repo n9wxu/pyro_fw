@@ -43,10 +43,19 @@ void tearDown(void) {}
 void test_SNS_ALT_01_pressure_to_altitude(void) {
     /* Sea level: 0 altitude */
     TEST_ASSERT_EQUAL(0, pressure_to_altitude_cm(101325, 101325));
-    /* Lower pressure = higher altitude */
+    /* Lower pressure = higher altitude — hypsometric formula, ~8330 cm for 1000 Pa drop */
     int32_t alt = pressure_to_altitude_cm(100325, 101325);
     TEST_ASSERT_TRUE(alt > 0);
-    TEST_ASSERT_INT_WITHIN(1000, 8300, alt); /* ~8.3 cm/Pa * 1000 Pa ≈ 8300 cm */
+    TEST_ASSERT_INT_WITHIN(1000, 8330, alt);
+}
+
+/* 5000 ft = 1524 m target — hypsometric formula must be within 0.5% */
+void test_SNS_ALT_02_altitude_accuracy_5000ft(void) {
+    /* ISA pressure at 1524 m: P = 101325 × (1 − 0.0065×1524/288.15)^5.2561 ≈ 84262 Pa */
+    int32_t alt_cm = pressure_to_altitude_cm(84262, 101325);
+    int32_t expected_cm = 152400; /* 1524 m in cm */
+    /* Allow ≤ 0.5 % = ±762 cm */
+    TEST_ASSERT_INT_WITHIN(762, expected_cm, alt_cm);
 }
 
 void test_SNS_PRES_03_filter_init(void) {
@@ -211,8 +220,11 @@ void test_FLT_ASC_04_arms_pyros(void) {
     ctx.vertical_speed_cms = 500; /* 5 m/s — below 10 m/s threshold, coasting */
     ctx.max_speed_cms = 5000;     /* [DD-017] peak was 50 m/s — motor burn confirmed */
 
-    /* Altitude slightly higher than last — positive but slow speed */
-    mock_pressure.pressure_pa = 101325.0f - 620.0f; /* ~5146 cm */
+    /* Altitude slightly higher than last — positive but slow speed.
+     * Pressure chosen so hypsometric formula gives ~5100 cm, yielding
+     * speed = (5100-5000)*1000/200 = 500 cm/s < 1000 cm/s arming gate. */
+    ctx.filtered_pressure = 100714;        /* pre-converged to match mock */
+    mock_pressure.pressure_pa = 100714.0f; /* → ~5100 cm with hypsometric formula */
     mock_time_ms = 200;
     ctx.current_state = dispatch_state(&ctx, mock_time_ms);
 
@@ -566,6 +578,7 @@ int main(void) {
 
     /* Helpers */
     RUN_TEST(test_SNS_ALT_01_pressure_to_altitude);
+    RUN_TEST(test_SNS_ALT_02_altitude_accuracy_5000ft);
     RUN_TEST(test_SNS_PRES_03_filter_init);
     RUN_TEST(test_SNS_PRES_02_filter_smoothing);
     RUN_TEST(test_buf_add);

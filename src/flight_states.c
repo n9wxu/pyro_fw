@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 /* ── Ring buffer ──────────────────────────────────────────────────── */
 
@@ -68,15 +69,30 @@ int32_t filter_pressure(flight_context_t *ctx, int32_t raw_pressure, uint32_t dt
 
 #define MAX_ALTITUDE_CM 800000
 
-/* [SNS-ALT-01..03] Linear barometric approximation, clamped.
- * See IMPLEMENTATION.md "Altitude Limitations" for accuracy vs altitude. */
+/* [SNS-ALT-01..03] Hypsometric formula — exact inverse of the ISA troposphere
+ * pressure model used by the physics engine.
+ *
+ *   h = (T₀/L) × (1 − (P/P₀)^(R×L/(g×M)))
+ *   h = 44330 × (1 − (P/P₀)^(1/5.2561))
+ *
+ * Constants (ISA / physics.c):
+ *   T₀ = 288.15 K, L = 0.0065 K/m → T₀/L = 44330 m
+ *   Exponent = R×L/(g×M) = 8.31446×0.0065 / (9.80665×0.028964) = 1/5.2561
+ *
+ * Error vs pure ISA: < 0.1 % across 0–8000 m.
+ * Replaces linear 8.3 cm/Pa approximation which was −7 % at 5000 ft.
+ */
 int32_t pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa) {
-    int32_t alt = ((ground_pressure_pa - pressure_pa) * 83) / 10;
-    if (alt > MAX_ALTITUDE_CM)
-        alt = MAX_ALTITUDE_CM;
-    if (alt < 0)
-        alt = 0;
-    return alt;
+    if (pressure_pa <= 0 || ground_pressure_pa <= 0)
+        return 0;
+    float ratio = (float)pressure_pa / (float)ground_pressure_pa;
+    float alt_m = 44330.0f * (1.0f - powf(ratio, 1.0f / 5.2561f));
+    int32_t alt_cm = (int32_t)(alt_m * 100.0f);
+    if (alt_cm > MAX_ALTITUDE_CM)
+        alt_cm = MAX_ALTITUDE_CM;
+    if (alt_cm < 0)
+        alt_cm = 0;
+    return alt_cm;
 }
 
 static int32_t cm_to_units(int32_t cm, uint8_t units) {
