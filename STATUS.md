@@ -1,6 +1,6 @@
 # Pyro MK1B Firmware - Current Status
 
-_Last updated: 2026-04-04 — v2.1.27 MAC mismatch fix, network fully working_
+_Last updated: 2026-04-04 — v2.1.28 DMA UART TX, all blocking UART writes eliminated_
 
 ## 🔬 Hardware Serial Log Analysis (2026-04-04)
 
@@ -96,7 +96,7 @@ This affects ARP replies, DHCP, and TCP SYN-ACK — meaning HTTP can never be es
 - See IMPLEMENTATION.md for transition table
 
 ### Hardware Abstraction Layer
-- hal.h: 15 functions covering all hardware interaction
+- hal.h: 15 functions covering all hardware interactionded
 - Zero #ifdef in flight code (flight_states.c, telemetry_formatter.c, buzzer.c)
 - Three implementations: hardware, test, simulation
 - Same source compiles for Pico, host tests, and WASM
@@ -232,11 +232,13 @@ This affects ARP replies, DHCP, and TCP SYN-ACK — meaning HTTP can never be es
 | v2-7 | Buzzer pattern player (async task) | ✅ Done + HW verified |
 | v2-8 | Batch flight_process_samples() | ✅ Done |
 | v2-9 | Fire-and-forget hal_log_sample() | ✅ Done |
-| v2-10 | ISR UART TX ring buffer | ✅ Done |
+| v2-10 | ISR UART TX ring buffer | 🔄 Replaced by v2-13 |
 | v2-11 | Network diagnostics + conn_alloc fix | ✅ Done |
 | v2-12 | Fix HTTP TX failures (MAC mismatch) | ✅ Done v2.1.27 |
+| v2-13 | DMA UART TX (replaces v2-10 ring buffer) | ✅ Done v2.1.28 |
 
 ## 🔨 Next Priority
-1. **Re-enable WFE sleep** — MAC mismatch was the real root cause, not `__wfe()`; re-enable for power savings
-2. Run Playwright web tests against live hardware to verify full stack
-3. Long-duration soak test (network stability over hours)
+1. **Flash v2.1.28** — device needs manual BOOTSEL recovery (unplug, hold BOOTSEL, replug)
+2. **Re-enable WFE sleep** — MAC mismatch was the real root cause, not `__wfe()`; re-enable for power savings
+3. Run Playwright web tests against live hardware to verify full stack
+4. Long-duration soak test (network + UART stability over hours)

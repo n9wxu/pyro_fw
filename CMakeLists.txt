@@ -153,6 +153,7 @@ add_executable(pyro_fw_c
         hardware_i2c
         hardware_adc
         hardware_uart
+        hardware_dma
         hardware_watchdog
         tinyusb_device
         tinyusb_board

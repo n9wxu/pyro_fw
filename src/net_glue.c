@@ -2,6 +2,7 @@
  * USB network glue: TinyUSB ECM/RNDIS ↔ lwIP bridge + DHCP server.
  * Adapted from TinyUSB net_lwip_webserver example.
  */
+#include "hal.h"
 #include "tusb.h"
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
@@ -205,5 +206,5 @@ void lwip_uart_printf(const char *fmt, ...) {
     int n = vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     if (n > 0)
-        uart_write_blocking(uart0, (const uint8_t *)buf, n);
+        hal_telemetry_send(buf); /* v2-11: non-blocking DMA path */
 }
