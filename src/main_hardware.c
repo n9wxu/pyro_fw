@@ -4,15 +4,36 @@
  */
 #include <string.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
 #include "hardware/watchdog.h"
+#include "hardware/uart.h"
 
 #include "hal.h"
 #include "flight_states.h"
 #include "device_status.h"
 #include "buzzer.h"
 #include "version.h"
+#include "tusb.h"
+
+/* Network diagnostic counters (defined in net_glue.c / http_server.c) */
+extern volatile uint32_t net_rx_count;
+extern volatile uint32_t net_rx_drop;
+extern volatile uint32_t net_tx_fail;
+extern volatile uint32_t net_tx_ok;
+volatile uint32_t net_http_accept;
+volatile uint32_t net_http_err;
+volatile uint32_t net_conn_full;
+
+/* Debug print helper — writes directly to uart0.
+ * Safe at low frequency; avoids conflict with telemetry ring buffer
+ * since debug prints are infrequent and blocking is brief. */
+static void dbg(const char *msg) {
+    uart_puts(uart0, msg);
+}
+
+static const char *state_label[] = {"BOOT_SETTLE", "BOOT_CONT", "BOOT_CAL", "PAD_IDLE", "ASCENT", "DESCENT", "LANDED"};
 
 volatile device_status_t g_status = {0};
 
@@ -44,9 +65,26 @@ static void update_status(flight_context_t *ctx, uint32_t now) {
 
 int main() {
     hal_platform_init();
+    dbg("\r\n\r\n=== PYRO MK1B BOOT ===\r\n");
+    {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "FW: %s  uptime: %lu ms\r\n", FW_VERSION, (unsigned long)hal_time_ms());
+        dbg(buf);
+    }
 
+    dbg("flight_init()...\r\n");
     flight_context_t ctx;
     flight_init(&ctx); /* [v2] detect_boot_init() → hal_config_load() */
+    {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "flight_init done. state=%s  t=%lu\r\n", state_label[ctx.current_state],
+                 (unsigned long)hal_time_ms());
+        dbg(buf);
+    }
+
+    uint32_t last_dbg_ms = 0;
+    uint32_t last_net_ms = 0;
+    flight_state_t prev_state = ctx.current_state;
 
     while (1) {
         uint32_t now = hal_time_ms();
@@ -63,19 +101,42 @@ int main() {
         /* Advance async HAL state machines (pressure, buzzer, log flush) */
         hal_tasks_tick(now);
 
-        /* Flight software — batch mode when FIFO ready, polled fallback */
-        hal_pressure_batch_t batch;
-        if (hal_pressure_fifo_get(&batch)) {
-            flight_process_samples(&ctx, &batch);
-            hal_pressure_fifo_release();
-        } else {
-            ctx.current_state = dispatch_state(&ctx, now);
-        }
+        /* Flight software — single code path via pressure_processing ring.
+         * dispatch_state() internally reads altitude samples via pp_read(). */
+        ctx.current_state = dispatch_state(&ctx, now);
 
         /* Outputs (telemetry, pyro update) */
         flight_update_outputs(&ctx, now);
         /* csv_flush_safe/step removed: hal_log async task owns the flight record [v2-9] */
         update_status(&ctx, now);
+
+        /* Debug: log state transitions immediately */
+        if (ctx.current_state != prev_state) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "[%lu] STATE: %s -> %s\r\n", (unsigned long)now, state_label[prev_state],
+                     state_label[ctx.current_state]);
+            dbg(buf);
+            prev_state = ctx.current_state;
+        }
+
+        /* Debug: periodic heartbeat every 2 seconds */
+        if (now - last_dbg_ms >= 2000) {
+            char buf[80];
+            snprintf(buf, sizeof(buf), "[%lu] %s alt=%ld spd=%ld\r\n", (unsigned long)now,
+                     state_label[ctx.current_state], (long)ctx.last_altitude, (long)ctx.vertical_speed_cms);
+            dbg(buf);
+            last_dbg_ms = now;
+        }
+
+        /* Network health: every 10 seconds */
+        if (now - last_net_ms >= 10000) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "[%lu] NET: tud=%d rx=%lu drop=%lu tx=%lu txf=%lu http=%lu\r\n",
+                     (unsigned long)now, tud_ready() ? 1 : 0, (unsigned long)net_rx_count, (unsigned long)net_rx_drop,
+                     (unsigned long)net_tx_ok, (unsigned long)net_tx_fail, (unsigned long)net_http_accept);
+            dbg(buf);
+            last_net_ms = now;
+        }
 
         /* [v2, PWR-SLEEP-01] Sleep until the next pressure batch, serial
          * input, or timer event.  On RP2040 this calls __wfe(); the USB

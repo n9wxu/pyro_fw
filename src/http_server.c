@@ -41,7 +41,7 @@ typedef struct {
 static conn_state_t conn_pool[8];
 
 static conn_state_t *conn_alloc(void) {
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 8; i++)
         if (conn_pool[i].phase == CONN_IDLE) {
             memset(&conn_pool[i], 0, sizeof(conn_state_t));
             return &conn_pool[i];
@@ -149,12 +149,12 @@ static err_t on_sent(void *arg, struct tcp_pcb *pcb, u16_t len);
 
 /* ── API handlers ─────────────────────────────────────────────────── */
 
-static const char *state_names[] = {"BOOT_INIT", "BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALIBRATE",
-                                    "PAD_IDLE",  "ASCENT",      "DESCENT",         "LANDED"};
+static const char *state_names[] = {"BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALIBRATE", "PAD_IDLE",
+                                    "ASCENT",      "DESCENT",         "LANDED"};
 
 static void serve_api_status(struct tcp_pcb *pcb) {
     char buf[768];
-    const char *sn = (g_status.state < 8) ? state_names[g_status.state] : "UNKNOWN";
+    const char *sn = (g_status.state < 7) ? state_names[g_status.state] : "UNKNOWN";
     static const char *mode_names[] = {"none", "fallen", "agl", "speed", "delay"};
     const char *p1m = (g_status.pyro1_mode < 5) ? mode_names[g_status.pyro1_mode] : "?";
     const char *p2m = (g_status.pyro2_mode < 5) ? mode_names[g_status.pyro2_mode] : "?";
@@ -589,9 +589,14 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
     return ERR_OK;
 }
 
+extern volatile uint32_t net_http_accept;
+extern volatile uint32_t net_http_err;
+extern volatile uint32_t net_conn_full;
+
 static err_t on_accept(void *arg, struct tcp_pcb *pcb, err_t err) {
     (void)arg;
     (void)err;
+    net_http_accept++;
     tcp_nagle_disable(pcb); /* Fix 2: disable Nagle for snappy HTTP */
     tcp_recv(pcb, on_recv);
     tcp_err(pcb, on_err);

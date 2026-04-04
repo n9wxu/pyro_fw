@@ -18,6 +18,12 @@
 static struct netif netif_data;
 static struct pbuf *received_frame;
 
+/* ── Network diagnostic counters (read by main_hardware.c) ────────── */
+volatile uint32_t net_rx_count;
+volatile uint32_t net_rx_drop;
+volatile uint32_t net_tx_fail;
+volatile uint32_t net_tx_ok;
+
 /* Derived from board unique ID at init time */
 uint8_t tud_network_mac_address[6] = {0x02, 0x02, 0x84, 0x6A, 0x96, 0x00};
 static char mdns_hostname[16];
@@ -51,14 +57,18 @@ void net_mac_init(void) {}
 static err_t linkoutput_fn(struct netif *netif, struct pbuf *p) {
     (void)netif;
     for (int tries = 0; tries < 20; tries++) {
-        if (!tud_ready())
+        if (!tud_ready()) {
+            net_tx_fail++;
             return ERR_USE;
+        }
         if (tud_network_can_xmit(p->tot_len)) {
             tud_network_xmit(p, 0);
+            net_tx_ok++;
             return ERR_OK;
         }
         tud_task();
     }
+    net_tx_fail++;
     return ERR_WOULDBLOCK; /* lwIP will retry via TCP retransmission */
 }
 
@@ -86,13 +96,18 @@ bool dns_query_proc(const char *name, ip4_addr_t *addr) {
 }
 
 bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
-    if (received_frame)
+    if (received_frame) {
+        net_rx_drop++;
         return false;
+    }
     if (size) {
         struct pbuf *p = pbuf_alloc(PBUF_RAW, size, PBUF_POOL);
         if (p) {
             memcpy(p->payload, src, size);
             received_frame = p;
+            net_rx_count++;
+        } else {
+            net_rx_drop++;
         }
     }
     return true;
@@ -105,6 +120,7 @@ uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg) {
 }
 
 void tud_network_init_cb(void) {
+    lwip_uart_printf("!NET init_cb\r\n");
     if (received_frame) {
         pbuf_free(received_frame);
         received_frame = NULL;

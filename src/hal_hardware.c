@@ -18,6 +18,7 @@
 #include <lfs.h>
 #include <pico_fota_bootloader/core.h>
 #include "pressure_sensor.h"
+#include "pressure_processing.h"
 #include "pyro.h"
 #include <string.h>
 
@@ -34,6 +35,26 @@ void net_service(void);
 void http_server_init(void);
 
 #define BUZZER_PIN 16
+
+/* ── Hardware-internal pressure types ─────────────────────────────── */
+/* These are implementation details of the hardware HAL, not exposed
+ * in hal.h.  Flight software reads altitude via pp_read(). */
+
+typedef struct {
+    float pressure_pa;
+    float temperature_c;
+} hal_pressure_t;
+
+#define HAL_PRESSURE_BATCH_SIZE 5
+
+typedef struct {
+    struct {
+        float pressure_pa;
+        float temperature_c;
+    } samples[HAL_PRESSURE_BATCH_SIZE];
+    uint32_t timestamps_ms[HAL_PRESSURE_BATCH_SIZE];
+    int count;
+} hal_pressure_batch_t;
 
 /* ── Async task runner ────────────────────────────────────────────── */
 
@@ -67,6 +88,9 @@ static uint32_t hw_tasks_next_due(void) {
     return min;
 }
 
+/* Forward declarations for internal functions */
+static bool hal_pressure_fifo_start(uint8_t rate_hz);
+
 /* ── Pressure sensor async state machine [v2 Task 4] ─────────────── */
 
 typedef enum { PRES_IDLE, PRES_D1_CONV, PRES_D2_CONV } pres_phase_t;
@@ -95,11 +119,16 @@ typedef struct {
 
 static pres_task_t pres;
 
-/* Append a completed reading to the batch and update the bridge sample. */
+/* Append a completed reading to the batch, update the bridge sample,
+ * and feed the pressure_processing pipeline (IIR + altitude ring). */
 static void pres_append(pres_task_t *p, const pressure_reading_t *r, uint32_t now_ms) {
     p->last.pressure_pa = r->pressure_pa;
     p->last.temperature_c = r->temperature_c;
     p->has_last = true;
+
+    /* Feed the pressure_processing ring so detectors can read altitude
+     * samples via pp_read() — single data path from sensor to FSM. */
+    pp_feed((int32_t)r->pressure_pa, now_ms);
 
     int idx = p->back.count;
     if (idx < HAL_PRESSURE_BATCH_SIZE) {
@@ -160,6 +189,14 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
             if (ms5607_read_raw(&d2)) {
                 pressure_reading_t r;
                 ms5607_compensate(p->d1_raw, d2, &r);
+                /* Anomaly log: dump raw ADC values when compensated
+                 * pressure is outside plausible atmosphere (30–120 kPa) */
+                if (r.pressure_pa < 30000.0f || r.pressure_pa > 120000.0f) {
+                    char dbuf[80];
+                    snprintf(dbuf, sizeof(dbuf), "!PRES d1=%lu d2=%lu pa=%.0f t=%lu\r\n", (unsigned long)p->d1_raw,
+                             (unsigned long)d2, (double)r.pressure_pa, (unsigned long)now_ms);
+                    uart_puts(uart0, dbuf);
+                }
                 pres_append(p, &r, now_ms);
             }
             p->phase = PRES_IDLE;
@@ -212,7 +249,7 @@ bool hal_pressure_read(hal_pressure_t *out) {
 
 /* ── Pressure FIFO (v2 async batch API) ───────────────────────────── */
 
-bool hal_pressure_fifo_start(uint8_t rate_hz) {
+static bool hal_pressure_fifo_start(uint8_t rate_hz) {
     if (hw_sensor_type == 0)
         return false;
     memset(&pres, 0, sizeof(pres));
@@ -362,6 +399,11 @@ static void uart_tx_ring_init(void) {
 void hal_telemetry_send(const char *sentence) {
     if (!sentence)
         return;
+    /* Suppress periodic $PYRO state sentences on UART to free bandwidth
+     * for network diagnostics.  Event sentences ($PYRO_APO, $PYRO_FIRE,
+     * $PYRO_LAND) still pass through.  Web UI gets live data via HTTP. */
+    if (sentence[0] == '$' && sentence[1] == 'P' && sentence[5] == ',')
+        return; /* periodic $PYRO,... — suppressed */
     /* Copy bytes into ring; drop tail of sentence if ring fills up */
     for (const char *p = sentence; *p; p++) {
         int next = (uart_tx_head + 1) & UART_TX_BUF_MASK;
@@ -536,6 +578,11 @@ void hal_sleep_until_event(void) {
 /* ── Platform ─────────────────────────────────────────────────────── */
 
 void hal_platform_init(void) {
+    /* Silence buzzer GPIO immediately — before any slow init (board, USB,
+     * network) that could leave the pin floating and produce a spurious
+     * tone at power-on. */
+    hal_buzzer_init();
+
     board_init();
     net_mac_init();
     tud_init(BOARD_TUD_RHPORT);
