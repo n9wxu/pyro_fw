@@ -106,8 +106,8 @@ static int32_t last_buzzer_altitude = 0;
 static bool buzzer_active_flag = false;
 
 void buzzer_init(void) {}
-void buzzer_play_code(uint8_t code, bool repeat) {
-    (void)repeat;
+void buzzer_play_code(uint8_t code, uint8_t repeat_count) {
+    (void)repeat_count;
     buzzer_code_count++;
     last_buzzer_code = code;
     buzzer_active_flag = true;

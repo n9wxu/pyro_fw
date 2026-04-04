@@ -212,7 +212,7 @@ static int32_t last_buzzer_altitude;
 static bool buzzer_active_flag;
 
 void buzzer_init(void) {}
-void buzzer_play_code(uint8_t c, bool r) {
+void buzzer_play_code(uint8_t c, uint8_t r) {
     (void)c;
     (void)r;
     buzzer_active_flag = true;

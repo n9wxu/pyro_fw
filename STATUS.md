@@ -29,15 +29,18 @@ _Last updated: 2026-03-24 after v2-9 CSV logger retirement_
 - 10Hz ASCENT/DESCENT, 1Hz PAD_IDLE/LANDED
 - `telemetry_formatter.c` — standalone protocol-independent module
 
-### Buzzer (v2 Task 7) ✅ Done — commit `3bd614b`
+### Buzzer (v2 Task 7) ✅ Done — commit `3bd614b` + BUZ-02 compliance update
 - `async_task_t`-based pattern player — runs as a parallel state machine alongside pressure sampling
 - Three states: BZ_IDLE → BZ_ENCODE_CODE/ALTITUDE → BZ_PLAYING
 - Step table built at request time; `hal_tasks_tick()` fires each step at its deadline
-- `buzzer_play_code(code, repeat)` / `buzzer_play_altitude(altitude)` — v2 API
+- `buzzer_play_code(code, uint8_t repeat_count)` — v2 API with strict repeat semantics:
+  `0`=infinite, `1`=play once, `N`=play N times (strict BUZ-02 compliance)
+- `loop_start` field: chirps (×10) play only on the FIRST pass; subsequent loops restart at digits
+- `flight_states.c` calls `buzzer_play_code(code, 2)` — plays status code twice then stops [BUZ-02]
 - `buzzer_set_code()` / `buzzer_set_altitude()` kept as inline shims for existing callers
 - `hal_buzzer_task_register()` added to all three HALs; hardware HAL registers into `hw_tasks[]`
 - Test and sim HALs drive the task via `hal_tasks_tick()` for full pattern testing
-- 8 new unit tests: BUZ-PAT-01..05 (tone counts per code), BUZ-ACT-01..03 (lifecycle, stop, repeat)
+- **10 unit tests**: BUZ-PAT-01..07 (tone counts, BUZ-02 repeat, chirp-once), BUZ-ACT-01..03 (lifecycle, stop, repeat)
 
 ### Batch Pressure Processing (v2 Task 8) ✅ Done — commit `3bd614b`
 - `flight_process_samples(ctx, batch)` — processes a 5-sample 50Hz batch in one call

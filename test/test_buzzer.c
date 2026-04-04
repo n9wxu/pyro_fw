@@ -63,7 +63,7 @@ void test_BUZ_ACT_01_lifecycle(void) {
     /* Before play: inactive */
     TEST_ASSERT_FALSE_MESSAGE(buzzer_is_active(), "Buzzer should be inactive before play");
 
-    buzzer_play_code(BEEP_ALL_GOOD, false);
+    buzzer_play_code(BEEP_ALL_GOOD, 1); /* play once */
 
     /* After request: active (encoding pending) */
     TEST_ASSERT_TRUE_MESSAGE(buzzer_is_active(), "Buzzer should be active after play_code");
@@ -80,7 +80,7 @@ void test_BUZ_ACT_01_lifecycle(void) {
 /* ── BUZ-ACT-02: buzzer_stop() immediately silences ──────────────── */
 
 void test_BUZ_ACT_02_stop(void) {
-    buzzer_play_code(BEEP_ALL_GOOD, true); /* repeating */
+    buzzer_play_code(BEEP_ALL_GOOD, 0); /* repeat_count=0 → infinite */
     TEST_ASSERT_TRUE(buzzer_is_active());
 
     /* Let it run a few ticks so it's in BZ_PLAYING */
@@ -111,7 +111,7 @@ void test_BUZ_PAT_01_all_good_tone_count(void) {
     mock_buzzer_tone_off_count = 0;
     mock_buzzer_tone_on_count = 0;
 
-    buzzer_play_code(BEEP_ALL_GOOD, false);
+    buzzer_play_code(BEEP_ALL_GOOD, 1); /* play once */
     drive_until_idle(5000);
 
     /* 10 chirps on + digit1(1 beep) on + digit2(1 beep) on = 12 */
@@ -130,7 +130,7 @@ void test_BUZ_PAT_02_fault_code_digit_counts(void) {
     mock_buzzer_tone_on_count = 0;
     mock_buzzer_tone_off_count = 0;
 
-    buzzer_play_code(BEEP_P1_FAULT, false);
+    buzzer_play_code(BEEP_P1_FAULT, 1); /* play once */
     drive_until_idle(6000);
 
     TEST_ASSERT_EQUAL_MESSAGE(15, mock_buzzer_tone_on_count,
@@ -173,13 +173,13 @@ void test_BUZ_PAT_03_altitude_165_digits(void) {
 /* ── BUZ-ACT-03: repeat flag causes restart at sentinel ──────────── */
 
 void test_BUZ_ACT_03_repeat_restarts(void) {
-    buzzer_play_code(BEEP_ALL_GOOD, true); /* repeat = true */
+    buzzer_play_code(BEEP_ALL_GOOD, 0); /* repeat_count=0 → infinite */
 
     /* Drive for two full code periods (2 × ~2100ms) */
     drive_for(5000);
 
-    /* With repeat, we should still be active after 5 seconds */
-    TEST_ASSERT_TRUE_MESSAGE(buzzer_is_active(), "Repeating buzzer should still be active after 5s");
+    /* With infinite repeat, we should still be active after 5 seconds */
+    TEST_ASSERT_TRUE_MESSAGE(buzzer_is_active(), "Infinite-repeat buzzer should still be active after 5s");
 
     /* And tone_on count should be > 12 (more than one pass) */
     TEST_ASSERT_TRUE_MESSAGE(mock_buzzer_tone_on_count > 12,
@@ -192,15 +192,13 @@ void test_BUZ_PAT_04_task_armed_on_play(void) {
     /* Before: no tone events */
     TEST_ASSERT_EQUAL(0, mock_buzzer_tone_on_count);
 
-    buzzer_play_code(BEEP_ALL_GOOD, false);
+    buzzer_play_code(BEEP_ALL_GOOD, 1); /* play once */
 
     /* Single tick at t=0 triggers encode + first play step */
     mock_time_ms = 0;
     hal_tasks_tick(0);
 
-    /* After encode tick: state transitions to BZ_PLAYING, next tick plays step 0.
-     * Depending on next_due_ms=0 and the two ticks, we may see tone action.
-     * The key assertion: is_active() is true immediately after play_code. */
+    /* The key assertion: is_active() is true immediately after play_code. */
     TEST_ASSERT_TRUE_MESSAGE(buzzer_is_active(), "Task should be active after buzzer_play_code");
 }
 
@@ -211,11 +209,111 @@ void test_BUZ_PAT_04_task_armed_on_play(void) {
 void test_BUZ_PAT_05_p2_no_open(void) {
     mock_buzzer_tone_on_count = 0;
 
-    buzzer_play_code(BEEP_P2_NO_OPEN, false);
+    buzzer_play_code(BEEP_P2_NO_OPEN, 1); /* play once */
     drive_until_idle(7000);
 
     TEST_ASSERT_EQUAL_MESSAGE(17, mock_buzzer_tone_on_count,
                               "BEEP_P2_NO_OPEN (3,4) should produce 17 tone_on events (10+3+4)");
+}
+
+/* ── BUZ-PAT-06: repeat_count=2 plays exactly twice then stops [BUZ-02] ── */
+/* With BEEP_ALL_GOOD (1,1) and repeat_count=2:
+ *   Pass 1 (from idx 0): 10 chirps + 1 beep(d1) + 1 beep(d2) = 12 tone_on
+ *   Pass 2 (from loop_start): 1 beep(d1) + 1 beep(d2)        =  2 tone_on
+ *   Total: 14 tone_on, then stop.                                            */
+
+void test_BUZ_PAT_06_repeat_count_2_buz02(void) {
+    mock_buzzer_tone_on_count = 0;
+
+    buzzer_play_code(BEEP_ALL_GOOD, 2); /* BUZ-02: play twice */
+
+    /* Max time: pass1(2101ms) + pass2(1000ms) + margin = 4000ms */
+    uint32_t elapsed = drive_until_idle(4000);
+
+    TEST_ASSERT_TRUE_MESSAGE(elapsed < 4000, "repeat_count=2 should stop; buzzer never became idle");
+    TEST_ASSERT_FALSE_MESSAGE(buzzer_is_active(), "buzzer should be idle after 2 passes");
+
+    /* 10 chirps(pass1) + 1+1(pass1 digits) + 1+1(pass2 digits) = 14 */
+    TEST_ASSERT_EQUAL_MESSAGE(14, mock_buzzer_tone_on_count,
+                              "repeat_count=2 BEEP_ALL_GOOD: expected 14 tone_on (10+1+1 pass1 + 1+1 pass2)");
+}
+
+/* ── BUZ-PAT-07: loop_start fix — chirps play only once per sequence ── */
+/* With infinite repeat and BEEP_ALL_GOOD (1,1):
+ *   Pass 1 (idx 0):          10 chirps + 1(d1) + 1(d2) = 12, ends at ~2101ms
+ *   Pass 2 (loop_start):     1(d1) + 1(d2)             =  2, ends at ~3101ms
+ *
+ * Driving for 3099ms puts us inside the CODE_GAP of pass 2, after all
+ * digit beeps but before the sentinel restarts pass 3.
+ * Expected tone_on = 14 (12 + 2), NOT 22+ (which would indicate chirps
+ * replayed on each loop restart).                                         */
+
+void test_BUZ_PAT_07_chirps_once_on_loop(void) {
+    mock_buzzer_tone_on_count = 0;
+
+    buzzer_play_code(BEEP_ALL_GOOD, 0); /* infinite */
+
+    /* Drive to inside the CODE_GAP of pass 2 — all beeps done, no sentinel yet.
+     * Pass 1: 10*(30+30)+500+100+300+100+500 = 2100ms; encoding uses 1ms → ~2101ms.
+     * Pass 2 digits: 100+300+100 = 500ms beeps done by ~2601ms.
+     * We stop at ~3099ms (499ms into CODE_GAP, before sentinel at ~3101ms). */
+    drive_for(3099);
+    buzzer_stop();
+
+    /* chirps only on first pass: 10+1+1 (pass1) + 1+1 (pass2) = 14
+     * if chirps repeat (old bug): 10+1+1 (pass1) + 10+... (pass2) ≥ 22 */
+    TEST_ASSERT_EQUAL_MESSAGE(14, mock_buzzer_tone_on_count,
+                              "chirps must play only once: 14 expected (not 22+ from chirp-replay bug)");
+}
+
+/* ── BUZ-PAT-08: altitude 1000 — zero digits need 10 beeps each ──── */
+/* Digits of 1000: 1, 0, 0, 0
+ * Expected tone_on events:
+ *   header long beep = 1 on
+ *   digit 1 (=1)     = 1 on
+ *   digit 0 (=10)    = 10 on
+ *   digit 0 (=10)    = 10 on
+ *   digit 0 (=10)    = 10 on
+ *   Total: 32 on events before first loop-back
+ *
+ * With BUZZER_MAX_PATTERN=64 this pattern needs 66 entries and would
+ * overflow, producing only 31 tone_on events.  The fix (128 entries)
+ * ensures all 32 are emitted.
+ */
+void test_BUZ_PAT_08_altitude_1000_overflow(void) {
+    mock_buzzer_tone_on_count = 0;
+    mock_buzzer_tone_off_count = 0;
+
+    buzzer_play_altitude(1000);
+
+    /* Pattern timing for altitude 1000 (digits 1,0,0,0):
+     *   2000(pause) + 500(beep) + 300(pause)
+     *   + digit 1: 100+400 = 500ms
+     *   + digit 0: 10*(100+200)-200+400 = 3200ms  (×3)
+     *   Total before sentinel: ~12900ms
+     * Drive to 12800ms — within the last digit gap, before sentinel loops. */
+    drive_for(12800);
+    buzzer_stop();
+
+    /* 1 (header long beep) + 1 + 10 + 10 + 10 = 32 */
+    TEST_ASSERT_EQUAL_MESSAGE(32, mock_buzzer_tone_on_count,
+                              "altitude 1000 should produce 32 tone_on events (1+1+10+10+10)");
+}
+
+/* ── BUZ-PAT-09: altitude 10000 — five digits with four zeros ─────── */
+/* Digits of 10000: 1, 0, 0, 0, 0
+ * Expected tone_on: 1 + 1 + 10 + 10 + 10 + 10 = 42
+ * Pattern needs 86 entries — verifies 128-entry buffer handles it.
+ * Pattern total time: ~16100ms; stop at 16000 before sentinel loops. */
+void test_BUZ_PAT_09_altitude_10000(void) {
+    mock_buzzer_tone_on_count = 0;
+
+    buzzer_play_altitude(10000);
+    drive_for(16000);
+    buzzer_stop();
+
+    TEST_ASSERT_EQUAL_MESSAGE(42, mock_buzzer_tone_on_count,
+                              "altitude 10000 should produce 42 tone_on events (1+1+10+10+10+10)");
 }
 
 /* ── Main ─────────────────────────────────────────────────────────── */
@@ -231,6 +329,10 @@ int main(void) {
     RUN_TEST(test_BUZ_ACT_03_repeat_restarts);
     RUN_TEST(test_BUZ_PAT_04_task_armed_on_play);
     RUN_TEST(test_BUZ_PAT_05_p2_no_open);
+    RUN_TEST(test_BUZ_PAT_06_repeat_count_2_buz02);
+    RUN_TEST(test_BUZ_PAT_07_chirps_once_on_loop);
+    RUN_TEST(test_BUZ_PAT_08_altitude_1000_overflow);
+    RUN_TEST(test_BUZ_PAT_09_altitude_10000);
 
     return UNITY_END();
 }

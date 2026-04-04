@@ -16,7 +16,12 @@ typedef struct {
 } buzzer_pattern_t;
 
 #define BUZZER_PATTERN_END {0, false}
-#define BUZZER_MAX_PATTERN 64 /* max steps in one encoded pattern */
+#define BUZZER_MAX_PATTERN                                                                                             \
+    128 /* max steps in one encoded pattern                                                                            \
+         * Altitude beep-out with zero digits (10 beeps each)                                                          \
+         * needs up to 120 entries for 6-digit cm values.                                                              \
+         * 64 was too small — caused silent truncation and                                                           \
+         * garbled infinite-loop patterns (BUZ-OVERFLOW fix). */
 
 /* ── Beep codes: two digits, each 1-5 beeps ──────────────────────── */
 
@@ -50,11 +55,17 @@ void buzzer_init(void);
 
 /*
  * buzzer_play_code() — encode and play a two-digit beep code.
- * Sequence: 10 startup chirps → pause → digit1 beeps → gap → digit2 beeps.
- * If repeat=true the sequence restarts forever after the last digit.
+ * Sequence: 10 startup chirps (once) → pause → digit1 beeps → gap → digit2 beeps.
+ *
+ * repeat_count controls how many complete passes through the digit section play:
+ *   0  — repeat indefinitely (chirps once at start, digits loop forever)
+ *   1  — play once then stop (chirps + digits once)
+ *   2  — play twice then stop [BUZ-02] (chirps once + digits twice)
+ *   N  — play N times then stop (chirps once + digits N times)
+ *
  * Non-blocking: encoding and playback run in the async task runner.
  */
-void buzzer_play_code(uint8_t code, bool repeat);
+void buzzer_play_code(uint8_t code, uint8_t repeat_count);
 
 /*
  * buzzer_play_altitude() — encode and play an altitude digit beep-out.
@@ -75,7 +86,8 @@ bool buzzer_is_active(void);
 /* These redirect to the new API so existing call sites continue to
  * compile without modification during the migration. */
 static inline void buzzer_set_code(uint8_t code, bool repeat) {
-    buzzer_play_code(code, repeat);
+    /* repeat=true → 0 (infinite), repeat=false → 1 (play once) */
+    buzzer_play_code(code, repeat ? 0 : 1);
 }
 static inline void buzzer_set_altitude(int32_t alt) {
     buzzer_play_altitude(alt);

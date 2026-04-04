@@ -74,19 +74,18 @@ static int pat_append_beeps(buzzer_pattern_t *buf, int idx, int count, uint16_t 
 /*
  * Build the status-code pattern into buf[].
  * Layout:
- *   10x chirp on/off → startup pause
- *   → digit1 beeps → digit gap
+ *   10x chirp on/off → startup pause  ← played only on the FIRST pass
+ *   → digit1 beeps → digit gap        ← loop_start points here
  *   → digit2 beeps → code gap
- *   (sentinel appended at index returned)
+ *   → zero-duration sentinel (loop/stop decision is in the task handler)
  *
- * If repeat == true the sentinel is omitted and the caller wraps
- * around by resetting index to 0 at the sentinel position.
- * We instead place a 0-duration entry as the loop marker.
+ * *p_loop_start is set to the index of the first digit step so that
+ * subsequent passes skip the startup chirps (fixing BUZ-01: chirps once).
  */
-static int build_code_pattern(uint8_t code, bool repeat, buzzer_pattern_t *buf) {
+static int build_code_pattern(uint8_t code, buzzer_pattern_t *buf, int *p_loop_start) {
     int idx = 0;
 
-    /* 10 startup chirps */
+    /* 10 startup chirps — played once; subsequent loops restart after here */
     for (int i = 0; i < CHIRP_COUNT; i++) {
         idx = pat_append(buf, idx, CHIRP_ON_MS, true);
         idx = pat_append(buf, idx, CHIRP_GAP_MS, false);
@@ -94,6 +93,9 @@ static int build_code_pattern(uint8_t code, bool repeat, buzzer_pattern_t *buf) 
 
     /* Startup pause */
     idx = pat_append(buf, idx, STARTUP_PAUSE_MS, false);
+
+    /* Record where the digit section starts — this is the loop restart point */
+    *p_loop_start = idx;
 
     /* Digit 1 */
     int d1 = BEEP_DIGIT1(code);
@@ -110,19 +112,11 @@ static int build_code_pattern(uint8_t code, bool repeat, buzzer_pattern_t *buf) 
         d2 = 1;
     idx = pat_append_beeps(buf, idx, d2, BEEP_ON_MS, BEEP_GAP_MS);
 
-    /* End-of-code gap then loop or sentinel */
+    /* End-of-code gap, then zero-duration sentinel */
     idx = pat_append(buf, idx, CODE_GAP_MS, false);
-
-    if (repeat) {
-        /* A zero-duration step signals loop-back */
-        buf[idx].duration_ms = 0;
-        buf[idx].tone_on = false;
-        idx++;
-    } else {
-        buf[idx].duration_ms = 0;
-        buf[idx].tone_on = false;
-        idx++;
-    }
+    buf[idx].duration_ms = 0;
+    buf[idx].tone_on = false;
+    idx++;
     return idx;
 }
 
@@ -193,13 +187,15 @@ typedef struct {
     /* Request fields — set by buzzer_play_code/altitude before arming */
     uint8_t req_code;
     int32_t req_altitude;
-    bool req_repeat;
+    uint8_t req_repeat_count; /* 0=infinite, N=play N times */
 
     /* Encoded pattern */
     buzzer_pattern_t pattern[BUZZER_MAX_PATTERN];
     int pattern_len;
     int index;
-    bool looping; /* true = sentinel means restart from 0 */
+    int loop_start;       /* index to restart from when looping (after chirps) */
+    uint8_t repeat_count; /* 0=infinite, N=play N times */
+    uint8_t loops_done;   /* complete passes so far */
 } buzzer_task_t;
 
 static buzzer_task_t bz;
@@ -216,8 +212,9 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
         return;
 
     case BZ_ENCODE_CODE:
-        t->pattern_len = build_code_pattern(t->req_code, t->req_repeat, t->pattern);
-        t->looping = t->req_repeat;
+        t->pattern_len = build_code_pattern(t->req_code, t->pattern, &t->loop_start);
+        t->repeat_count = t->req_repeat_count;
+        t->loops_done = 0;
         t->index = 0;
         t->state = BZ_PLAYING;
         t->base.next_due_ms = now_ms; /* play first step immediately */
@@ -225,7 +222,9 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
 
     case BZ_ENCODE_ALT:
         t->pattern_len = build_alt_pattern(t->req_altitude, t->pattern);
-        t->looping = true; /* altitude always repeats */
+        t->loop_start = 0;   /* altitude loops from the beginning */
+        t->repeat_count = 0; /* infinite — BUZ-06 */
+        t->loops_done = 0;
         t->index = 0;
         t->state = BZ_PLAYING;
         t->base.next_due_ms = now_ms; /* play first step immediately */
@@ -243,18 +242,19 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
 
         const buzzer_pattern_t *step = &t->pattern[t->index];
 
-        /* Sentinel: zero-duration entry */
+        /* Sentinel: zero-duration entry — one complete pass finished */
         if (step->duration_ms == 0) {
-            if (t->looping) {
-                t->index = 0; /* restart */
+            t->loops_done++;
+            /* repeat_count==0 means infinite; otherwise stop when done */
+            if (t->repeat_count == 0 || t->loops_done < t->repeat_count) {
+                t->index = t->loop_start; /* restart from digits (chirps skipped) */
                 t->base.next_due_ms = now_ms;
                 return;
-            } else {
-                hal_buzzer_tone_off();
-                t->state = BZ_IDLE;
-                t->base.tick = NULL;
-                return;
             }
+            hal_buzzer_tone_off();
+            t->state = BZ_IDLE;
+            t->base.tick = NULL;
+            return;
         }
 
         /* Apply the step */
@@ -281,10 +281,11 @@ void buzzer_init(void) {
     hal_buzzer_task_register(&bz.base);
 }
 
-void buzzer_play_code(uint8_t code, bool repeat) {
+void buzzer_play_code(uint8_t code, uint8_t repeat_count) {
     hal_buzzer_tone_off(); /* silence immediately */
     bz.req_code = code;
-    bz.req_repeat = repeat;
+    bz.req_repeat_count = repeat_count;
+    bz.loops_done = 0;
     bz.index = 0;
     bz.state = BZ_ENCODE_CODE;
     bz.base.next_due_ms = 0; /* run on next hal_tasks_tick() */

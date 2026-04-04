@@ -571,6 +571,57 @@ void test_CFG_08_comment_lines(void) {
     TEST_ASSERT_EQUAL(77, cfg.pyro1_value);
 }
 
+/* ── False launch regression ──────────────────────────────────────── */
+
+/* [FLT-BOOT-10] Sensor drift at boot must NOT trigger a false launch.
+ *
+ * Scenario: the pressure sensor drifts 200 Pa between the calibration
+ * phase (where ground_pressure is set) and the first PAD_IDLE reading.
+ * 200 Pa ≈ 1660 cm altitude — above the 1000 cm launch gate.
+ *
+ * Without the fix in action_ground_cal() (priming filter + last_sample),
+ * the first PAD_IDLE iteration computes:
+ *   altitude ≈ 1660 cm  (> 1000 cm threshold)
+ *   speed    = (1660 - 0) * 1000 / 10 = 166000 cm/s  (> 500 cm/s)
+ * → false SEVT_LAUNCH!
+ *
+ * With the fix, the IIR filter is primed to ground_pressure, so the
+ * 200 Pa drift only produces a small filtered altitude step, and
+ * last_sample is set so dt is realistic (not defaulted to 10ms). */
+void test_FLT_BOOT_10_no_false_launch_on_drift(void) {
+    flight_context_t ctx = {0};
+    config_set_defaults(&ctx.config);
+    ctx.current_state = BOOT_INIT;
+    mock_time_ms = 0;
+
+    /* Calibration pressure: 101325 Pa (stable during boot) */
+    mock_pressure.pressure_pa = 101325.0f;
+
+    /* Run through boot: BOOT_INIT → BOOT_SETTLE → BOOT_CONTINUITY → BOOT_CALIBRATE → PAD_IDLE */
+    ctx.current_state = dispatch_state(&ctx, mock_time_ms); /* BOOT_INIT → BOOT_SETTLE */
+    mock_time_ms = 2600;
+    ctx.current_state = dispatch_state(&ctx, mock_time_ms); /* BOOT_SETTLE → BOOT_CONTINUITY */
+    ctx.current_state = dispatch_state(&ctx, mock_time_ms); /* BOOT_CONTINUITY → BOOT_CALIBRATE */
+    for (int i = 0; i < 10; i++) {
+        mock_time_ms += 110;
+        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+    }
+    TEST_ASSERT_EQUAL_MESSAGE(PAD_IDLE, ctx.current_state, "Should reach PAD_IDLE");
+    TEST_ASSERT_INT_WITHIN(100, 101325, ctx.ground_pressure);
+
+    /* NOW simulate sensor drift: pressure drops 200 Pa after calibration.
+     * On real hardware this can happen from thermal settling or sensor
+     * startup transient. 200 Pa ≈ 16.6 m = 1660 cm AGL. */
+    mock_pressure.pressure_pa = 101325.0f - 200.0f;
+
+    /* Run several PAD_IDLE iterations — must NOT trigger launch */
+    for (int i = 0; i < 20; i++) {
+        mock_time_ms += 15;
+        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+        TEST_ASSERT_EQUAL_MESSAGE(PAD_IDLE, ctx.current_state, "Sensor drift must NOT trigger false launch");
+    }
+}
+
 /* ── Main ─────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -631,6 +682,9 @@ int main(void) {
     RUN_TEST(test_CFG_07_id_truncated);
     RUN_TEST(test_CFG_06_preserves_unset);
     RUN_TEST(test_CFG_08_comment_lines);
+
+    /* False launch regression */
+    RUN_TEST(test_FLT_BOOT_10_no_false_launch_on_drift);
 
     return UNITY_END();
 }

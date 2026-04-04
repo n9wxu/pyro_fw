@@ -287,7 +287,7 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
     else if (!c2.good)
         code = c2.open ? BEEP_P2_OPEN : BEEP_P2_SHORT;
     ctx->last_status_code = code; /* [GND-TEST-01] remember for BEEP STATUS replay */
-    buzzer_set_code(code, true);
+    buzzer_play_code(code, 2);    /* [BUZ-02] play status code twice then stop */
 }
 
 /* [FLT-LAUNCH-01, FLT-LAUNCH-02, FLT-RATE-01, DD-016]
@@ -467,8 +467,20 @@ static void action_cal_init(flight_context_t *ctx, uint32_t now) {
 }
 
 static void action_ground_cal(flight_context_t *ctx, uint32_t now) {
-    (void)now;
     ctx->ground_pressure = ctx->cal_sum / 10;
+
+    /* Prime the pressure filter and altitude tracking so the first
+     * PAD_IDLE sample doesn't see a phantom altitude jump from the
+     * uninitialized last_altitude=0 / filter_initialized=false baseline.
+     *
+     * Without this, a sensor that drifts even ~125 Pa between calibration
+     * and the first PAD_IDLE reading computes altitude >10m AND a phantom
+     * speed of thousands of cm/s (from last_altitude=0, dt=10ms), which
+     * passes both launch gates and triggers a false flight at power-on. */
+    ctx->filtered_pressure = ctx->ground_pressure;
+    ctx->filter_initialized = true;
+    ctx->last_sample = now;
+    /* last_altitude is already 0 from flight_init() — correct for ground */
 }
 
 /* [FLT-LAUNCH-03..05] Backdate launch time to first sample above 50cm */
