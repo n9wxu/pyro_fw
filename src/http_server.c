@@ -30,12 +30,12 @@ typedef enum {
 
 typedef struct {
     conn_phase_t phase;
-    lfs_t        lfs;
-    lfs_file_t   file;
-    bool         lfs_mounted;
-    bool         file_open;
-    uint32_t     remaining;     /* bytes left to receive */
-    char         path[64];
+    lfs_t lfs;
+    lfs_file_t file;
+    bool lfs_mounted;
+    bool file_open;
+    uint32_t remaining; /* bytes left to receive */
+    char path[64];
 } conn_state_t;
 
 static conn_state_t conn_pool[8];
@@ -50,8 +50,14 @@ static conn_state_t *conn_alloc(void) {
 }
 
 static void conn_free(conn_state_t *cs) {
-    if (cs->file_open) { lfs_file_close(&cs->lfs, &cs->file); cs->file_open = false; }
-    if (cs->lfs_mounted) { lfs_unmount(&cs->lfs); cs->lfs_mounted = false; }
+    if (cs->file_open) {
+        lfs_file_close(&cs->lfs, &cs->file);
+        cs->file_open = false;
+    }
+    if (cs->lfs_mounted) {
+        lfs_unmount(&cs->lfs);
+        cs->lfs_mounted = false;
+    }
     cs->phase = CONN_IDLE;
 }
 
@@ -61,12 +67,13 @@ static void conn_free(conn_state_t *cs) {
 extern uint32_t __FLASH_DOWNLOAD_SLOT_START;
 #define OTA_SLOT_OFF ((uint32_t)&__FLASH_DOWNLOAD_SLOT_START - XIP_BASE)
 
-static uint8_t  ota_buf[FLASH_SECTOR_SIZE] __attribute__((aligned(FLASH_PAGE_SIZE)));
-static uint32_t ota_offset;      /* bytes written so far */
+static uint8_t ota_buf[FLASH_SECTOR_SIZE] __attribute__((aligned(FLASH_PAGE_SIZE)));
+static uint32_t ota_offset; /* bytes written so far */
 static uint16_t ota_buf_fill;
 
 static void ota_flush(void) {
-    if (ota_buf_fill == 0) return;
+    if (ota_buf_fill == 0)
+        return;
     /* pad to page alignment */
     while (ota_buf_fill & (FLASH_PAGE_SIZE - 1))
         ota_buf[ota_buf_fill++] = 0xFF;
@@ -97,12 +104,18 @@ static void ota_write(const void *data, uint16_t len) {
 
 static const char *content_type_hdr(const char *path) {
     const char *ext = strrchr(path, '.');
-    if (!ext) return "application/octet-stream";
-    if (strcmp(ext, ".html") == 0 || strcmp(ext, ".htm") == 0) return "text/html";
-    if (strcmp(ext, ".js") == 0) return "application/javascript";
-    if (strcmp(ext, ".css") == 0) return "text/css";
-    if (strcmp(ext, ".json") == 0) return "application/json";
-    if (strcmp(ext, ".csv") == 0) return "text/csv";
+    if (!ext)
+        return "application/octet-stream";
+    if (strcmp(ext, ".html") == 0 || strcmp(ext, ".htm") == 0)
+        return "text/html";
+    if (strcmp(ext, ".js") == 0)
+        return "application/javascript";
+    if (strcmp(ext, ".css") == 0)
+        return "text/css";
+    if (strcmp(ext, ".json") == 0)
+        return "application/json";
+    if (strcmp(ext, ".csv") == 0)
+        return "text/csv";
     return "application/octet-stream";
 }
 
@@ -130,20 +143,23 @@ static void send_next_chunk(struct tcp_pcb *pcb, conn_state_t *cs) {
     tcp_output(pcb);
 }
 
+/* Forward declaration — on_sent is defined after the API handlers but
+ * serve_lfs_file_streaming() needs it to set up the sent callback. */
+static err_t on_sent(void *arg, struct tcp_pcb *pcb, u16_t len);
+
 /* ── API handlers ─────────────────────────────────────────────────── */
 
-static const char *state_names[] = {
-    "BOOT_INIT", "BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALIBRATE",
-    "PAD_IDLE", "ASCENT", "DESCENT", "LANDED"
-};
+static const char *state_names[] = {"BOOT_INIT", "BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALIBRATE",
+                                    "PAD_IDLE",  "ASCENT",      "DESCENT",         "LANDED"};
 
 static void serve_api_status(struct tcp_pcb *pcb) {
     char buf[768];
     const char *sn = (g_status.state < 8) ? state_names[g_status.state] : "UNKNOWN";
-    static const char *mode_names[] = {"none","fallen","agl","speed","delay"};
+    static const char *mode_names[] = {"none", "fallen", "agl", "speed", "delay"};
     const char *p1m = (g_status.pyro1_mode < 5) ? mode_names[g_status.pyro1_mode] : "?";
     const char *p2m = (g_status.pyro2_mode < 5) ? mode_names[g_status.pyro2_mode] : "?";
-    int pos = snprintf(buf, sizeof(buf),
+    int pos = snprintf(
+        buf, sizeof(buf),
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" CORS_HDR "Connection: close\r\n\r\n"
         "{\"state\":\"%s\",\"alt_cm\":%ld,\"max_alt_cm\":%ld,"
         "\"vspeed_cms\":%ld,\"pressure_pa\":%ld,"
@@ -154,100 +170,85 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         "\"pyro1_mode\":\"%s\",\"pyro1_value\":%u,"
         "\"pyro2_mode\":\"%s\",\"pyro2_value\":%u,"
         "\"units\":%u,\"rocket_id\":\"%.8s\",\"rocket_name\":\"%.8s\"}",
-        sn,
-        (long)g_status.altitude_cm, (long)g_status.max_altitude_cm,
-        (long)g_status.vertical_speed_cms, (long)g_status.pressure_pa,
-        g_status.pyro1_continuity ? "true" : "false",
-        g_status.pyro2_continuity ? "true" : "false",
-        (unsigned)g_status.pyro1_adc, (unsigned)g_status.pyro2_adc,
-        g_status.pyro1_fired ? "true" : "false",
-        g_status.pyro2_fired ? "true" : "false",
-        g_status.pyros_armed ? "true" : "false",
-        (unsigned long)g_status.flight_time_ms,
-        (unsigned long)to_ms_since_boot(get_absolute_time()),
-        FW_VERSION,
-        p1m, (unsigned)g_status.pyro1_value,
-        p2m, (unsigned)g_status.pyro2_value,
-        (unsigned)g_status.units,
-        g_status.rocket_id, g_status.rocket_name);
+        sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
+        (long)g_status.pressure_pa, g_status.pyro1_continuity ? "true" : "false",
+        g_status.pyro2_continuity ? "true" : "false", (unsigned)g_status.pyro1_adc, (unsigned)g_status.pyro2_adc,
+        g_status.pyro1_fired ? "true" : "false", g_status.pyro2_fired ? "true" : "false",
+        g_status.pyros_armed ? "true" : "false", (unsigned long)g_status.flight_time_ms,
+        (unsigned long)to_ms_since_boot(get_absolute_time()), FW_VERSION, p1m, (unsigned)g_status.pyro1_value, p2m,
+        (unsigned)g_status.pyro2_value, (unsigned)g_status.units, g_status.rocket_id, g_status.rocket_name);
     tcp_write(pcb, buf, pos, TCP_WRITE_FLAG_COPY);
 }
 
-static void serve_api_config(struct tcp_pcb *pcb) {
-    lfs_t lfs;
-    lfs_file_t file;
-    if (lfs_mount(&lfs, &lfs_pico_flash_config) != LFS_ERR_OK) goto fallback;
-    if (lfs_file_open(&lfs, &file, "config.ini", LFS_O_RDONLY) != LFS_ERR_OK) {
-        lfs_unmount(&lfs);
-        goto fallback;
+/* Streaming API file serve — uses conn_state_t so the main loop keeps
+ * running between chunks (no blocking read-all-then-send pattern).
+ * Returns the allocated conn_state_t, or NULL if it fell back to a
+ * one-shot response (error / not-found). */
+static conn_state_t *serve_lfs_file_streaming(struct tcp_pcb *pcb, const char *lfs_path, const char *http_hdr,
+                                              const char *fallback_resp) {
+    conn_state_t *cs = conn_alloc();
+    if (!cs) {
+        tcp_write(pcb, fallback_resp, strlen(fallback_resp), TCP_WRITE_FLAG_COPY);
+        return NULL;
     }
-    {
-        const char *hdr = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n" CORS_HDR "Connection: close\r\n\r\n";
-        tcp_write(pcb, hdr, strlen(hdr), TCP_WRITE_FLAG_COPY);
-        char buf[256];
-        lfs_ssize_t n;
-        while ((n = lfs_file_read(&lfs, &file, buf, sizeof(buf))) > 0)
-            tcp_write(pcb, buf, n, TCP_WRITE_FLAG_COPY);
-        lfs_file_close(&lfs, &file);
-        lfs_unmount(&lfs);
-        return;
+    if (lfs_mount(&cs->lfs, &lfs_pico_flash_config) != LFS_ERR_OK) {
+        conn_free(cs);
+        tcp_write(pcb, fallback_resp, strlen(fallback_resp), TCP_WRITE_FLAG_COPY);
+        return NULL;
     }
-fallback:;
-    const char *resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\nNo config.ini";
-    tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
+    cs->lfs_mounted = true;
+    if (lfs_file_open(&cs->lfs, &cs->file, lfs_path, LFS_O_RDONLY) != LFS_ERR_OK) {
+        conn_free(cs);
+        tcp_write(pcb, fallback_resp, strlen(fallback_resp), TCP_WRITE_FLAG_COPY);
+        return NULL;
+    }
+    cs->file_open = true;
+    cs->phase = CONN_SENDING_FILE;
+    tcp_arg(pcb, cs);
+    tcp_write(pcb, http_hdr, strlen(http_hdr), TCP_WRITE_FLAG_COPY);
+    send_next_chunk(pcb, cs);
+    tcp_sent(pcb, on_sent);
+    return cs;
 }
 
-static void serve_api_flight_csv(struct tcp_pcb *pcb) {
-    lfs_t lfs;
-    lfs_file_t file;
-    if (lfs_mount(&lfs, &lfs_pico_flash_config) != LFS_ERR_OK) goto no_data;
-    if (lfs_file_open(&lfs, &file, "flight.csv", LFS_O_RDONLY) != LFS_ERR_OK) {
-        lfs_unmount(&lfs);
-        goto no_data;
-    }
-    {
-        const char *hdr = "HTTP/1.1 200 OK\r\nContent-Type: text/csv\r\n"
-            "Content-Disposition: attachment; filename=\"flight.csv\"\r\n"
-            CORS_HDR "Connection: close\r\n\r\n";
-        tcp_write(pcb, hdr, strlen(hdr), TCP_WRITE_FLAG_COPY);
-        char buf[256];
-        lfs_ssize_t n;
-        while ((n = lfs_file_read(&lfs, &file, buf, sizeof(buf))) > 0)
-            tcp_write(pcb, buf, n, TCP_WRITE_FLAG_COPY);
-        lfs_file_close(&lfs, &file);
-        lfs_unmount(&lfs);
-        return;
-    }
-no_data:;
-    const char *resp = "HTTP/1.1 200 OK\r\nContent-Type: text/csv\r\n"
-        CORS_HDR "Connection: close\r\n\r\n"
-        "time_ms,pressure_pa,altitude_cm,state,thrust,event\r\n";
-    tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
+static conn_state_t *serve_api_config(struct tcp_pcb *pcb) {
+    return serve_lfs_file_streaming(
+        pcb, "config.ini", "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n" CORS_HDR "Connection: close\r\n\r\n",
+        "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\nNo config.ini");
+}
+
+static conn_state_t *serve_api_flight_csv(struct tcp_pcb *pcb) {
+    return serve_lfs_file_streaming(pcb, "flight_log.csv",
+                                    "HTTP/1.1 200 OK\r\nContent-Type: text/csv\r\n"
+                                    "Content-Disposition: attachment; filename=\"flight.csv\"\r\n" CORS_HDR
+                                    "Connection: close\r\n\r\n",
+                                    "HTTP/1.1 200 OK\r\nContent-Type: text/csv\r\n" CORS_HDR "Connection: close\r\n\r\n"
+                                    "time_ms,pressure_pa,altitude_cm,state,thrust,event\r\n");
 }
 
 /* ── Default page if /www/index.html missing ──────────────────────── */
 
-static const char *DEFAULT_PAGE =
-    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n"
-    "<!DOCTYPE html><html><body><h2>Pyro MK1B</h2>"
-    "<p>No web files uploaded. POST files to /www/ to set up the UI.</p>"
-    "<p><a href=\"/api/status\">Status JSON</a></p></body></html>";
+static const char *DEFAULT_PAGE = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n"
+                                  "<!DOCTYPE html><html><body><h2>Pyro MK1B</h2>"
+                                  "<p>No web files uploaded. POST files to /www/ to set up the UI.</p>"
+                                  "<p><a href=\"/api/status\">Status JSON</a></p></body></html>";
 
 /* ── TCP callbacks ────────────────────────────────────────────────── */
 
 static void on_err(void *arg, err_t err) {
     (void)err;
     conn_state_t *cs = (conn_state_t *)arg;
-    if (cs) conn_free(cs);
+    if (cs)
+        conn_free(cs);
 }
 
 static err_t on_sent(void *arg, struct tcp_pcb *pcb, u16_t len) {
     (void)len;
     conn_state_t *cs = (conn_state_t *)arg;
     if (cs && cs->phase == CONN_SENDING_FILE) {
-        send_next_chunk(pcb, cs);  /* may close connection on EOF */
+        send_next_chunk(pcb, cs); /* may close connection on EOF */
     } else if (!cs) {
-        tcp_close(pcb);  /* non-file response fully sent */
+        tcp_close(pcb); /* non-file response fully sent */
     } else {
         conn_free(cs);
         tcp_close(pcb);
@@ -260,7 +261,8 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
     conn_state_t *cs = (conn_state_t *)arg;
 
     if (!p) {
-        if (cs) conn_free(cs);
+        if (cs)
+            conn_free(cs);
         tcp_close(pcb);
         return ERR_OK;
     }
@@ -271,8 +273,10 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
         uint16_t off = 0;
         while (off < p->tot_len && cs->remaining > 0) {
             uint16_t chunk = p->tot_len - off;
-            if (chunk > CHUNK_SIZE) chunk = CHUNK_SIZE;
-            if (chunk > cs->remaining) chunk = cs->remaining;
+            if (chunk > CHUNK_SIZE)
+                chunk = CHUNK_SIZE;
+            if (chunk > cs->remaining)
+                chunk = cs->remaining;
             pbuf_copy_partial(p, buf, chunk, off);
             lfs_file_write(&cs->lfs, &cs->file, buf, chunk);
             off += chunk;
@@ -297,8 +301,10 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
         uint16_t off = 0;
         while (off < p->tot_len && cs->remaining > 0) {
             uint16_t chunk = p->tot_len - off;
-            if (chunk > CHUNK_SIZE) chunk = CHUNK_SIZE;
-            if (chunk > cs->remaining) chunk = cs->remaining;
+            if (chunk > CHUNK_SIZE)
+                chunk = CHUNK_SIZE;
+            if (chunk > cs->remaining)
+                chunk = cs->remaining;
             pbuf_copy_partial(p, buf, chunk, off);
             ota_write(buf, chunk);
             off += chunk;
@@ -315,7 +321,7 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
             tcp_output(pcb);
             tcp_sent(pcb, on_sent);
-            pfb_perform_update();  /* reboots via watchdog */
+            pfb_perform_update(); /* reboots via watchdog */
         }
         return ERR_OK;
     }
@@ -329,12 +335,16 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
     char method[8] = {0}, path[64] = {0};
     char *sp1 = memchr(hdr, ' ', hdr_len);
     if (sp1) {
-        int mlen = sp1 - hdr; if (mlen > 7) mlen = 7;
+        int mlen = sp1 - hdr;
+        if (mlen > 7)
+            mlen = 7;
         memcpy(method, hdr, mlen);
         sp1++;
         char *sp2 = memchr(sp1, ' ', hdr_len - (sp1 - hdr));
         if (sp2) {
-            int plen = sp2 - sp1; if (plen > 63) plen = 63;
+            int plen = sp2 - sp1;
+            if (plen > 63)
+                plen = 63;
             memcpy(path, sp1, plen);
         }
     }
@@ -342,8 +352,10 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
     /* Parse Content-Length */
     uint32_t content_length = 0;
     const char *cl = strstr(hdr, "Content-Length: ");
-    if (!cl) cl = strstr(hdr, "content-length: ");
-    if (cl) content_length = atoi(cl + 16);
+    if (!cl)
+        cl = strstr(hdr, "content-length: ");
+    if (cl)
+        content_length = atoi(cl + 16);
 
     /* Find body start */
     const char *body_start = strstr(hdr, "\r\n\r\n");
@@ -359,21 +371,27 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
         if (strcmp(path, "/api/status") == 0) {
             serve_api_status(pcb);
         } else if (strcmp(path, "/api/config") == 0) {
-            serve_api_config(pcb);
+            cs = serve_api_config(pcb);
         } else if (strcmp(path, "/api/flight.csv") == 0) {
-            serve_api_flight_csv(pcb);
+            cs = serve_api_flight_csv(pcb);
         } else {
             /* Serve file from /www/ */
             const char *fpath = path;
-            if (strcmp(path, "/") == 0) fpath = "/www/index.html";
+            if (strcmp(path, "/") == 0)
+                fpath = "/www/index.html";
 
             cs = conn_alloc();
-            if (!cs) { tcp_close(pcb); return ERR_OK; }
+            if (!cs) {
+                tcp_close(pcb);
+                return ERR_OK;
+            }
 
             if (lfs_mount(&cs->lfs, &lfs_pico_flash_config) != LFS_ERR_OK) {
                 conn_free(cs);
                 tcp_write(pcb, DEFAULT_PAGE, strlen(DEFAULT_PAGE), TCP_WRITE_FLAG_COPY);
-                tcp_output(pcb); tcp_sent(pcb, on_sent); tcp_arg(pcb, NULL);
+                tcp_output(pcb);
+                tcp_sent(pcb, on_sent);
+                tcp_arg(pcb, NULL);
                 return ERR_OK;
             }
             cs->lfs_mounted = true;
@@ -386,7 +404,9 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                     const char *r404 = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\nNot found";
                     tcp_write(pcb, r404, strlen(r404), TCP_WRITE_FLAG_COPY);
                 }
-                tcp_output(pcb); tcp_sent(pcb, on_sent); tcp_arg(pcb, NULL);
+                tcp_output(pcb);
+                tcp_sent(pcb, on_sent);
+                tcp_arg(pcb, NULL);
                 return ERR_OK;
             }
             cs->file_open = true;
@@ -395,9 +415,9 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
 
             /* Send header */
             char resp_hdr[128];
-            int hlen = snprintf(resp_hdr, sizeof(resp_hdr),
-                "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nConnection: close\r\n\r\n",
-                content_type_hdr(fpath));
+            int hlen =
+                snprintf(resp_hdr, sizeof(resp_hdr), "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nConnection: close\r\n\r\n",
+                         content_type_hdr(fpath));
             tcp_write(pcb, resp_hdr, hlen, TCP_WRITE_FLAG_COPY);
 
             /* Send first chunk */
@@ -418,7 +438,11 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
         if (strcmp(path, "/api/ota") == 0 && content_length > 0) {
             /* ── OTA firmware upload via A/B bootloader ────────── */
             cs = conn_alloc();
-            if (!cs) { pbuf_free(p); tcp_close(pcb); return ERR_OK; }
+            if (!cs) {
+                pbuf_free(p);
+                tcp_close(pcb);
+                return ERR_OK;
+            }
 
             cs->phase = CONN_RECEIVING_OTA;
             cs->remaining = content_length;
@@ -433,8 +457,10 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 uint16_t off = body_offset;
                 while (off < p->tot_len && cs->remaining > 0) {
                     uint16_t chunk = p->tot_len - off;
-                    if (chunk > CHUNK_SIZE) chunk = CHUNK_SIZE;
-                    if (chunk > cs->remaining) chunk = cs->remaining;
+                    if (chunk > CHUNK_SIZE)
+                        chunk = CHUNK_SIZE;
+                    if (chunk > cs->remaining)
+                        chunk = cs->remaining;
                     pbuf_copy_partial(p, buf, chunk, off);
                     ota_write(buf, chunk);
                     off += chunk;
@@ -449,23 +475,35 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 pfb_mark_download_slot_as_valid();
                 const char *resp = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nOTA OK, rebooting...";
                 tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
-                tcp_output(pcb); tcp_sent(pcb, on_sent); tcp_arg(pcb, NULL);
+                tcp_output(pcb);
+                tcp_sent(pcb, on_sent);
+                tcp_arg(pcb, NULL);
                 pfb_perform_update();
             }
             return ERR_OK;
 
         } else if (strncmp(path, "/www/", 5) == 0 && content_length > 0) {
             cs = conn_alloc();
-            if (!cs) { pbuf_free(p); tcp_close(pcb); return ERR_OK; }
+            if (!cs) {
+                pbuf_free(p);
+                tcp_close(pcb);
+                return ERR_OK;
+            }
 
             if (lfs_mount(&cs->lfs, &lfs_pico_flash_config) != LFS_ERR_OK) {
-                conn_free(cs); pbuf_free(p); tcp_close(pcb); return ERR_OK;
+                conn_free(cs);
+                pbuf_free(p);
+                tcp_close(pcb);
+                return ERR_OK;
             }
             cs->lfs_mounted = true;
             lfs_mkdir(&cs->lfs, "/www");
 
             if (lfs_file_open(&cs->lfs, &cs->file, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) != LFS_ERR_OK) {
-                conn_free(cs); pbuf_free(p); tcp_close(pcb); return ERR_OK;
+                conn_free(cs);
+                pbuf_free(p);
+                tcp_close(pcb);
+                return ERR_OK;
             }
             cs->file_open = true;
             cs->phase = CONN_RECEIVING_FILE;
@@ -478,8 +516,10 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 uint16_t off = body_offset;
                 while (off < p->tot_len && cs->remaining > 0) {
                     uint16_t chunk = p->tot_len - off;
-                    if (chunk > CHUNK_SIZE) chunk = CHUNK_SIZE;
-                    if (chunk > cs->remaining) chunk = cs->remaining;
+                    if (chunk > CHUNK_SIZE)
+                        chunk = CHUNK_SIZE;
+                    if (chunk > cs->remaining)
+                        chunk = cs->remaining;
                     pbuf_copy_partial(p, buf, chunk, off);
                     lfs_file_write(&cs->lfs, &cs->file, buf, chunk);
                     off += chunk;
@@ -492,7 +532,9 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 conn_free(cs);
                 const char *resp = "HTTP/1.1 201 Created\r\nConnection: close\r\n\r\nOK";
                 tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
-                tcp_output(pcb); tcp_sent(pcb, on_sent); tcp_arg(pcb, NULL);
+                tcp_output(pcb);
+                tcp_sent(pcb, on_sent);
+                tcp_arg(pcb, NULL);
             }
             return ERR_OK;
 
@@ -532,19 +574,25 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
         }
 
-        tcp_output(pcb); tcp_sent(pcb, on_sent); tcp_arg(pcb, NULL);
+        tcp_output(pcb);
+        tcp_sent(pcb, on_sent);
+        tcp_arg(pcb, NULL);
         return ERR_OK;
     }
 
     pbuf_free(p);
     const char *resp = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nBad request";
     tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
-    tcp_output(pcb); tcp_sent(pcb, on_sent); tcp_arg(pcb, NULL);
+    tcp_output(pcb);
+    tcp_sent(pcb, on_sent);
+    tcp_arg(pcb, NULL);
     return ERR_OK;
 }
 
 static err_t on_accept(void *arg, struct tcp_pcb *pcb, err_t err) {
-    (void)arg; (void)err;
+    (void)arg;
+    (void)err;
+    tcp_nagle_disable(pcb); /* Fix 2: disable Nagle for snappy HTTP */
     tcp_recv(pcb, on_recv);
     tcp_err(pcb, on_err);
     return ERR_OK;
