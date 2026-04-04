@@ -399,11 +399,6 @@ static void uart_tx_ring_init(void) {
 void hal_telemetry_send(const char *sentence) {
     if (!sentence)
         return;
-    /* Suppress periodic $PYRO state sentences on UART to free bandwidth
-     * for network diagnostics.  Event sentences ($PYRO_APO, $PYRO_FIRE,
-     * $PYRO_LAND) still pass through.  Web UI gets live data via HTTP. */
-    if (sentence[0] == '$' && sentence[1] == 'P' && sentence[5] == ',')
-        return; /* periodic $PYRO,... — suppressed */
     /* Copy bytes into ring; drop tail of sentence if ring fills up */
     for (const char *p = sentence; *p; p++) {
         int next = (uart_tx_head + 1) & UART_TX_BUF_MASK;
