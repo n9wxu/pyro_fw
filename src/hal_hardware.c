@@ -199,12 +199,18 @@ int hal_pressure_init(void) {
 }
 
 /* Bridge: returns the most recent async sample when available.
- * Falls back to a synchronous read before the state machine has run. */
+ * Falls back to a synchronous read ONLY before the async task starts.
+ * Once the FIFO is active, synchronous reads are forbidden — they would
+ * send D1/D2 conversion commands that corrupt the MS5607 async state
+ * machine's pending conversion, producing garbage pressure values. */
 bool hal_pressure_read(hal_pressure_t *out) {
     if (pres.has_last) {
         *out = pres.last;
         return true;
     }
+    /* Async task running → never fall back to synchronous read. */
+    if (hal_pressure_fifo_active())
+        return false;
     pressure_reading_t r;
     if (!pressure_sensor_read(&r))
         return false;

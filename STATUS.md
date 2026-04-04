@@ -1,6 +1,6 @@
 # Pyro MK1B Firmware - Current Status
 
-_Last updated: 2026-03-24 after v2-9 CSV logger retirement_
+_Last updated: 2026-04-03 — v2.1.4 pressure oscillation fix_
 
 ## ✅ Completed
 

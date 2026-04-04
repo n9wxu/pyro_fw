@@ -108,7 +108,14 @@ static int32_t cm_to_units(int32_t cm, uint8_t units) {
 
 static void read_and_filter_pressure(flight_context_t *ctx, uint32_t now, int32_t *altitude_out) {
     hal_pressure_t pdata;
-    hal_pressure_read(&pdata);
+    if (!hal_pressure_read(&pdata)) {
+        /* No sample available — keep the previous altitude unchanged.
+         * This avoids feeding uninitialized stack data into the IIR filter
+         * when the async task hasn't produced a sample yet (e.g. MS5607
+         * between D1/D2 conversion phases after push_sample(NULL)). */
+        *altitude_out = ctx->last_altitude;
+        return;
+    }
     uint32_t dt = (ctx->last_sample > 0) ? (now - ctx->last_sample) : 10;
     *altitude_out = pressure_to_altitude_cm(filter_pressure(ctx, (int32_t)pdata.pressure_pa, dt), ctx->ground_pressure);
 }
@@ -256,7 +263,8 @@ static state_event_t detect_boot_calibrate(flight_context_t *ctx, uint32_t now) 
         return SEVT_NONE;
     ctx->boot_timer = now;
     hal_pressure_t data;
-    hal_pressure_read(&data);
+    if (!hal_pressure_read(&data))
+        return SEVT_NONE; /* no sample yet — retry next tick */
     ctx->cal_sum += data.pressure_pa;
     ctx->cal_count++;
     return (ctx->cal_count >= 10) ? SEVT_CAL_DONE : SEVT_NONE;

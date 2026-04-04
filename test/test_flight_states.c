@@ -108,12 +108,32 @@ void test_FLT_BOOT_08_calibrates_ground(void) {
     TEST_ASSERT_INT_WITHIN(100, 101000, ctx.ground_pressure);
 }
 
+/* With no sensor, hal_pressure_read() returns false.
+ * detect_boot_calibrate() skips those readings, so the device
+ * stays in BOOT_CALIBRATE — safer than feeding uninitialized data. */
 void test_SNS_PRES_01_boot_no_sensor(void) {
     flight_context_t ctx = {0};
     ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
+    ctx.current_state = BOOT_INIT;
+    mock_time_ms = 0;
     mock_pressure.sensor_type = 0;
-    boot_to_pad_idle(&ctx);
-    TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
+
+    /* BOOT_INIT → BOOT_SETTLE */
+    ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+    TEST_ASSERT_EQUAL(BOOT_SETTLE, ctx.current_state);
+
+    /* BOOT_SETTLE → BOOT_CONTINUITY → BOOT_CALIBRATE */
+    mock_time_ms = 2600;
+    ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+    ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+
+    /* Run 10 calibration attempts — no sensor returns false every time,
+     * so the device stays stuck in BOOT_CALIBRATE (correct behavior). */
+    for (int i = 0; i < 10; i++) {
+        mock_time_ms += 110;
+        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+    }
+    TEST_ASSERT_EQUAL(BOOT_CALIBRATE, ctx.current_state);
     TEST_ASSERT_EQUAL(0, ctx.ground_pressure);
 }
 
