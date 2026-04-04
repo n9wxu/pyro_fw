@@ -13,9 +13,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "../src/flight_states.h"
+#include "pressure_processing.h"
 #include "../src/telemetry_formatter.h"
 #include "../src/hal.h"
 #include "../src/buzzer.h"
+
+/* Wrapper: feed pressure into pp, then dispatch */
+static flight_state_t step(flight_context_t *ctx, uint32_t now) {
+    hal_tasks_tick(now);
+    return dispatch_state(ctx, now);
+}
 
 /* ── OpenRocket data ──────────────────────────────────────────────── */
 
@@ -131,6 +138,8 @@ static flight_context_t ctx;
 
 static void reset_sim(void) {
     mock_reset_all();
+    pp_init();
+    pp_test_prime(101325); /* skip boot calibration — start in PP_RUNNING */
     memset(&ctx, 0, sizeof(ctx));
     /* pyro1: delay 0s (fire at apogee), pyro2: AGL 50ft, units=ft */
     ctx.config = (config_t){.id = "SIM",
@@ -161,7 +170,7 @@ static void app_tick(uint32_t now_ms) {
     mock_pyro.firing = false;
 
     /* This is what main() does each iteration */
-    ctx.current_state = dispatch_state(&ctx, now_ms);
+    ctx.current_state = step(&ctx, now_ms);
 
     /* Telemetry + buzzer + pyro update via flight_update_outputs()
      * (same call path as real firmware main_hardware.c). */
@@ -180,7 +189,9 @@ static void run_full_sim(void) {
 
 /* ── Tests ────────────────────────────────────────────────────────── */
 
-void setUp(void) {}
+void setUp(void) {
+    pp_init();
+}
 void tearDown(void) {}
 
 void test_TST_02_sim_data_loads(void) {
@@ -201,7 +212,7 @@ void test_TST_02_interpolation(void) {
 void test_SNS_ALT_01_roundtrip(void) {
     /* 100 ft -> pressure -> altitude should round-trip */
     float pa = altitude_ft_to_pressure_pa(100.0f, 101325.0f);
-    int32_t alt_cm = pressure_to_altitude_cm((int32_t)pa, 101325);
+    int32_t alt_cm = pp_pressure_to_altitude_cm((int32_t)pa, 101325);
     /* 100 ft = 3048 cm */
     TEST_ASSERT_INT_WITHIN(50, 3048, alt_cm);
 }
@@ -509,7 +520,7 @@ void test_PYR_ALT_02_cfg_range_beep(void) {
     for (uint32_t t = 0; t < 1500; t++) {
         mock_time_ms = t;
         update_mock_pressure(t);
-        ctx.current_state = dispatch_state(&ctx, t);
+        ctx.current_state = step(&ctx, t);
         if (ctx.current_state != PAD_IDLE)
             break;
     }
@@ -534,7 +545,7 @@ static void setup_pad_idle_with_continuity(void) {
     for (uint32_t t = 0; t <= 1200; t += 10) {
         mock_time_ms = t;
         mock_pressure.pressure_pa = 101325.0f;
-        ctx.current_state = dispatch_state(&ctx, t);
+        ctx.current_state = step(&ctx, t);
         if (ctx.current_state != PAD_IDLE)
             break; /* should stay PAD_IDLE throughout */
     }
@@ -552,7 +563,7 @@ void test_GND_TEST_01_beep_status_replay(void) {
     mock_serial_enqueue("BEEP STATUS");
     mock_time_ms = 1210;
     mock_pressure.pressure_pa = 101325.0f;
-    ctx.current_state = dispatch_state(&ctx, 1210);
+    ctx.current_state = step(&ctx, 1210);
 
     TEST_ASSERT_EQUAL_MESSAGE(code_before + 1, buzzer_code_count, "BEEP STATUS did not trigger buzzer_set_code()");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(BEEP_ALL_GOOD, last_buzzer_code, "Replayed wrong beep code");
@@ -567,7 +578,7 @@ void test_GND_TEST_02_arm_fire_sequence(void) {
     mock_serial_enqueue("ARM 1");
     mock_time_ms = 1210;
     mock_pressure.pressure_pa = 101325.0f;
-    ctx.current_state = dispatch_state(&ctx, 1210);
+    ctx.current_state = step(&ctx, 1210);
 
     TEST_ASSERT_TRUE_MESSAGE(strstr(mock_uart_buf, "GT,ARMED,1") != NULL, "Expected $GT,ARMED,1 response");
     TEST_ASSERT_EQUAL_MESSAGE(GT_ARMED_1, ctx.gt.arm_state, "GT arm state should be GT_ARMED_1");
@@ -578,7 +589,7 @@ void test_GND_TEST_02_arm_fire_sequence(void) {
     mock_serial_enqueue("FIRE 1");
     mock_time_ms = 1310;
     mock_pressure.pressure_pa = 101325.0f;
-    ctx.current_state = dispatch_state(&ctx, 1310);
+    ctx.current_state = step(&ctx, 1310);
 
     TEST_ASSERT_EQUAL_MESSAGE(fire_before + 1, mock_pyro.fire_count, "Pyro 1 should fire after ARM 1 + FIRE 1");
     TEST_ASSERT_TRUE_MESSAGE(strstr(mock_uart_buf, "GT,FIRED,1") != NULL, "Expected $GT,FIRED,1 response");
@@ -593,13 +604,13 @@ void test_GND_TEST_03_auto_disarm(void) {
     mock_serial_enqueue("ARM 1");
     mock_time_ms = 1210;
     mock_pressure.pressure_pa = 101325.0f;
-    ctx.current_state = dispatch_state(&ctx, 1210);
+    ctx.current_state = step(&ctx, 1210);
     TEST_ASSERT_EQUAL(GT_ARMED_1, ctx.gt.arm_state);
 
     /* Advance 3001ms past the arm time — auto-disarm fires */
     mock_time_ms = 1210 + GT_ARM_TIMEOUT_MS + 10; /* = 4220ms */
     mock_pressure.pressure_pa = 101325.0f;
-    ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+    ctx.current_state = step(&ctx, mock_time_ms);
     TEST_ASSERT_EQUAL_MESSAGE(GT_IDLE, ctx.gt.arm_state, "GT should auto-disarm after timeout");
 
     /* Now FIRE should fail — pyro must NOT fire */
@@ -607,7 +618,7 @@ void test_GND_TEST_03_auto_disarm(void) {
     mock_uart_len = 0;
     mock_serial_enqueue("FIRE 1");
     mock_time_ms += 10;
-    ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+    ctx.current_state = step(&ctx, mock_time_ms);
     TEST_ASSERT_EQUAL_MESSAGE(fire_before, mock_pyro.fire_count, "Pyro must NOT fire after auto-disarm timeout");
     TEST_ASSERT_TRUE_MESSAGE(strstr(mock_uart_buf, "GT,ERR") != NULL,
                              "Expected GT error response for fire after disarm");

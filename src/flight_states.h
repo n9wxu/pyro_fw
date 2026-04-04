@@ -4,13 +4,12 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "config.h"
-#include "hal.h"         /* hal_pressure_batch_t for flight_process_samples */
+#include "hal.h"
 #include "ground_test.h" /* ground_test_ctx_t embedded in flight_context_t */
 
 // System states
 typedef enum {
-    BOOT_INIT,       // load config, init buzzer
-    BOOT_SETTLE,     // wait for sensors to stabilize
+    BOOT_SETTLE = 0, // wait for sensors to stabilize
     BOOT_CONTINUITY, // check pyro circuits
     BOOT_CALIBRATE,  // establish ground reference
     PAD_IDLE,
@@ -135,6 +134,7 @@ typedef struct flight_context_t {
     uint32_t armed_time;         // when pyros were armed (for backup timer)
     uint32_t descent_start_time; // when DESCENT started (for landing timeout)
     int32_t pad_speed_cms;       // vertical speed during PAD_IDLE (for launch confirm)
+    int32_t last_raw_pressure;   // raw sensor Pa before IIR filter (for debug)
     // Last continuity status beep code [GND-TEST-01]
     uint8_t last_status_code;
     // Ground test state machine [GND-TEST-01..04, DD-011]
@@ -145,11 +145,6 @@ typedef struct flight_context_t {
 void flight_init(flight_context_t *ctx);
 flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now);
 void flight_update_outputs(flight_context_t *ctx, uint32_t now);
-/* v2-8: batch processing — call once per 100ms pressure FIFO batch.
- * Iterates the batch at 50Hz (20ms spacing), feeds each sample into
- * dispatch_state(), and logs via hal_log_sample().
- * Triggers hal_log_start() on LAUNCH and hal_log_stop() on LANDED. */
-void flight_process_samples(flight_context_t *ctx, const hal_pressure_batch_t *batch);
 /* Legacy compat — redirects to config module */
 #define parse_config_ini(buf, cfg) config_parse_ini(buf, cfg)
 /* [DAT-06] One-shot ring-buffer dump — debug / HTTP endpoint use only.
@@ -162,7 +157,5 @@ void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm
 
 // Helpers used by state functions
 void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t altitude, uint8_t st);
-int32_t filter_pressure(flight_context_t *ctx, int32_t raw_pressure, uint32_t dt_ms);
-int32_t pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa);
 
 #endif

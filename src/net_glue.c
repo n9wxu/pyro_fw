@@ -25,7 +25,10 @@ volatile uint32_t net_tx_fail;
 volatile uint32_t net_tx_ok;
 
 /* Derived from board unique ID at init time */
-uint8_t tud_network_mac_address[6] = {0x02, 0x02, 0x84, 0x6A, 0x96, 0x00};
+/* Device-side MAC — must match STRID_MAC in usb_descriptors.c.
+ * STRID_MAC = "020284006A00" → 02:02:84:00:6A:00.
+ * lwIP netif gets byte[5] XOR 0x01 = 02:02:84:00:6A:01 (host side). */
+uint8_t tud_network_mac_address[6] = {0x02, 0x02, 0x84, 0x00, 0x6A, 0x00};
 static char mdns_hostname[16];
 static uint8_t mdns_suffix;
 

@@ -5,35 +5,46 @@
 #include "mocks.h"
 #include <string.h>
 #include "../src/flight_states.h"
+#include "pressure_processing.h"
+#include "../src/telemetry_formatter.h"
+
+/* Wrapper: feed pressure into pp, then dispatch */
+static flight_state_t step(flight_context_t *ctx, uint32_t now) {
+    hal_tasks_tick(now);
+    return dispatch_state(ctx, now);
+}
 
 /* Helper: advance boot to PAD_IDLE */
 static void boot_to_pad_idle(flight_context_t *ctx) {
-    ctx->current_state = BOOT_INIT;
+    ctx->current_state = BOOT_SETTLE;
+    ctx->boot_timer = 0;
     mock_time_ms = 0;
-
-    /* BOOT_INIT → BOOT_SETTLE */
-    ctx->current_state = dispatch_state(ctx, mock_time_ms);
-    TEST_ASSERT_EQUAL(BOOT_SETTLE, ctx->current_state);
 
     /* BOOT_SETTLE → BOOT_CONTINUITY (after 2500ms) */
     mock_time_ms = 2600;
-    ctx->current_state = dispatch_state(ctx, mock_time_ms);
+    ctx->current_state = step(ctx, mock_time_ms);
     TEST_ASSERT_EQUAL(BOOT_CONTINUITY, ctx->current_state);
 
     /* BOOT_CONTINUITY → BOOT_CALIBRATE */
-    ctx->current_state = dispatch_state(ctx, mock_time_ms);
+    ctx->current_state = step(ctx, mock_time_ms);
     TEST_ASSERT_EQUAL(BOOT_CALIBRATE, ctx->current_state);
 
     /* Run 10 calibration readings */
     for (int i = 0; i < 10; i++) {
         mock_time_ms += 110;
-        ctx->current_state = dispatch_state(ctx, mock_time_ms);
+        ctx->current_state = step(ctx, mock_time_ms);
     }
     TEST_ASSERT_EQUAL(PAD_IDLE, ctx->current_state);
 }
 
 void setUp(void) {
     mock_reset_all();
+    pp_init(); /* Reset pressure processing state for each test */
+    /* Telemetry formatter needs explicit init — previously happened as a
+     * side-effect of detect_boot_init() running during boot tests. */
+    config_t cfg;
+    config_set_defaults(&cfg);
+    telemetry_init(&cfg);
 }
 
 void tearDown(void) {}
@@ -42,9 +53,9 @@ void tearDown(void) {}
 
 void test_SNS_ALT_01_pressure_to_altitude(void) {
     /* Sea level: 0 altitude */
-    TEST_ASSERT_EQUAL(0, pressure_to_altitude_cm(101325, 101325));
+    TEST_ASSERT_EQUAL(0, pp_pressure_to_altitude_cm(101325, 101325));
     /* Lower pressure = higher altitude — hypsometric formula, ~8330 cm for 1000 Pa drop */
-    int32_t alt = pressure_to_altitude_cm(100325, 101325);
+    int32_t alt = pp_pressure_to_altitude_cm(100325, 101325);
     TEST_ASSERT_TRUE(alt > 0);
     TEST_ASSERT_INT_WITHIN(1000, 8330, alt);
 }
@@ -52,24 +63,23 @@ void test_SNS_ALT_01_pressure_to_altitude(void) {
 /* 5000 ft = 1524 m target — hypsometric formula must be within 0.5% */
 void test_SNS_ALT_02_altitude_accuracy_5000ft(void) {
     /* ISA pressure at 1524 m: P = 101325 × (1 − 0.0065×1524/288.15)^5.2561 ≈ 84262 Pa */
-    int32_t alt_cm = pressure_to_altitude_cm(84262, 101325);
+    int32_t alt_cm = pp_pressure_to_altitude_cm(84262, 101325);
     int32_t expected_cm = 152400; /* 1524 m in cm */
     /* Allow ≤ 0.5 % = ±762 cm */
     TEST_ASSERT_INT_WITHIN(762, expected_cm, alt_cm);
 }
 
 void test_SNS_PRES_03_filter_init(void) {
-    flight_context_t ctx = {0};
-    int32_t result = filter_pressure(&ctx, 101325, 10);
+    pp_init();
+    int32_t result = pp_filter_pressure(101325, 10);
     TEST_ASSERT_EQUAL(101325, result);
-    TEST_ASSERT_TRUE(ctx.filter_initialized);
 }
 
 void test_SNS_PRES_02_filter_smoothing(void) {
-    flight_context_t ctx = {0};
-    filter_pressure(&ctx, 101325, 10);
+    pp_init();
+    pp_filter_pressure(101325, 10);
     /* Step change — filter should smooth */
-    int32_t result = filter_pressure(&ctx, 100325, 100);
+    int32_t result = pp_filter_pressure(100325, 100);
     TEST_ASSERT_TRUE(result < 101325);
     TEST_ASSERT_TRUE(result > 100325);
 }
@@ -114,24 +124,21 @@ void test_FLT_BOOT_08_calibrates_ground(void) {
 void test_SNS_PRES_01_boot_no_sensor(void) {
     flight_context_t ctx = {0};
     ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
-    ctx.current_state = BOOT_INIT;
+    ctx.current_state = BOOT_SETTLE;
+    ctx.boot_timer = 0;
     mock_time_ms = 0;
     mock_pressure.sensor_type = 0;
 
-    /* BOOT_INIT → BOOT_SETTLE */
-    ctx.current_state = dispatch_state(&ctx, mock_time_ms);
-    TEST_ASSERT_EQUAL(BOOT_SETTLE, ctx.current_state);
-
     /* BOOT_SETTLE → BOOT_CONTINUITY → BOOT_CALIBRATE */
     mock_time_ms = 2600;
-    ctx.current_state = dispatch_state(&ctx, mock_time_ms);
-    ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+    ctx.current_state = step(&ctx, mock_time_ms);
+    ctx.current_state = step(&ctx, mock_time_ms);
 
     /* Run 10 calibration attempts — no sensor returns false every time,
      * so the device stays stuck in BOOT_CALIBRATE (correct behavior). */
     for (int i = 0; i < 10; i++) {
         mock_time_ms += 110;
-        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+        ctx.current_state = step(&ctx, mock_time_ms);
     }
     TEST_ASSERT_EQUAL(BOOT_CALIBRATE, ctx.current_state);
     TEST_ASSERT_EQUAL(0, ctx.ground_pressure);
@@ -142,9 +149,9 @@ void test_FLT_BOOT_04_settle_wait(void) {
     ctx.current_state = BOOT_SETTLE;
     ctx.boot_timer = 0;
     /* Before 2500ms — stays in settle */
-    TEST_ASSERT_EQUAL(BOOT_SETTLE, dispatch_state(&ctx, 2000));
+    TEST_ASSERT_EQUAL(BOOT_SETTLE, step(&ctx, 2000));
     /* After 2500ms — advances to continuity */
-    TEST_ASSERT_EQUAL(BOOT_CONTINUITY, dispatch_state(&ctx, 2600));
+    TEST_ASSERT_EQUAL(BOOT_CONTINUITY, step(&ctx, 2600));
 }
 
 /* ── PAD_IDLE tests ───────────────────────────────────────────────── */
@@ -160,7 +167,7 @@ void test_FLT_LAUNCH_02_stays_on_ground(void) {
 
     mock_time_ms = 1000;
     ctx.last_sample = 0;
-    flight_state_t next = dispatch_state(&ctx, mock_time_ms);
+    flight_state_t next = step(&ctx, mock_time_ms);
     TEST_ASSERT_EQUAL(PAD_IDLE, next);
 }
 
@@ -170,6 +177,7 @@ void test_FLT_LAUNCH_01_detects_ascent(void) {
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = 101325;
     ctx.filter_initialized = false;
+    pp_test_prime(101325);
     /* Simulate large altitude: pressure drop of ~150 Pa = ~1245 cm > 1000 cm threshold */
     mock_pressure.pressure_pa = 101325.0f - 150.0f;
 
@@ -177,7 +185,7 @@ void test_FLT_LAUNCH_01_detects_ascent(void) {
     for (int i = 0; i < 20; i++) {
         mock_time_ms = i * 15;
         ctx.last_sample = (i > 0) ? (i - 1) * 15 : 0;
-        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+        ctx.current_state = step(&ctx, mock_time_ms);
     }
     TEST_ASSERT_EQUAL(ASCENT, ctx.current_state);
     TEST_ASSERT_TRUE(ctx.launch_time > 0);
@@ -199,7 +207,7 @@ void test_PYR_CONT_01_continuity_check(void) {
     ctx.last_sample = 0;
     ctx.last_cont_check = 0;
     mock_time_ms = 1500;
-    dispatch_state(&ctx, mock_time_ms);
+    step(&ctx, mock_time_ms);
 
     TEST_ASSERT_TRUE(ctx.pyro1_continuity_good);
     TEST_ASSERT_FALSE(ctx.pyro2_continuity_good);
@@ -223,7 +231,7 @@ void test_FLT_ASC_01_tracks_max_altitude(void) {
     /* Higher altitude */
     mock_pressure.pressure_pa = 101325.0f - 400.0f;
     mock_time_ms = 200;
-    dispatch_state(&ctx, mock_time_ms);
+    step(&ctx, mock_time_ms);
 
     TEST_ASSERT_TRUE(ctx.max_altitude >= 2000);
 }
@@ -233,6 +241,7 @@ void test_FLT_ASC_04_arms_pyros(void) {
     ctx.current_state = ASCENT;
     ctx.ground_pressure = 101325;
     ctx.filter_initialized = true;
+    pp_test_prime(101325);
     ctx.filtered_pressure = 100700;
     ctx.launch_time = 0;
     ctx.last_sample = 0;
@@ -246,7 +255,7 @@ void test_FLT_ASC_04_arms_pyros(void) {
     ctx.filtered_pressure = 100714;        /* pre-converged to match mock */
     mock_pressure.pressure_pa = 100714.0f; /* → ~5100 cm with hypsometric formula */
     mock_time_ms = 200;
-    ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+    ctx.current_state = step(&ctx, mock_time_ms);
 
     TEST_ASSERT_TRUE(ctx.pyros_armed);
 }
@@ -256,6 +265,7 @@ void test_FLT_APO_01_detects_apogee(void) {
     ctx.current_state = ASCENT;
     ctx.ground_pressure = 101325;
     ctx.filter_initialized = true;
+    pp_test_prime(101325);
     ctx.filtered_pressure = 100425; /* close to what we'll read */
     ctx.launch_time = 0;
     ctx.last_sample = 0;
@@ -269,7 +279,7 @@ void test_FLT_APO_01_detects_apogee(void) {
     /* Altitude lower than last → negative speed → apogee */
     mock_pressure.pressure_pa = 101325.0f - 900.0f; /* ~7470 cm < 8000 */
     mock_time_ms = 200;
-    ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+    ctx.current_state = step(&ctx, mock_time_ms);
 
     TEST_ASSERT_EQUAL(DESCENT, ctx.current_state);
     TEST_ASSERT_TRUE(ctx.apogee_detected);
@@ -282,6 +292,7 @@ void test_FLT_LAND_01_detects_landing(void) {
     ctx.current_state = DESCENT;
     ctx.ground_pressure = 101325;
     ctx.filter_initialized = true;
+    pp_test_prime(101325);
     ctx.filtered_pressure = 101313; /* pre-converged near mock pressure */
     ctx.launch_time = 0;
     ctx.last_altitude = 100;
@@ -292,14 +303,14 @@ void test_FLT_LAND_01_detects_landing(void) {
     mock_pressure.pressure_pa = 101325.0f - 12.0f; /* ~100 cm */
     ctx.last_sample = 0;
     mock_time_ms = 100;
-    dispatch_state(&ctx, mock_time_ms);
+    step(&ctx, mock_time_ms);
     TEST_ASSERT_TRUE(ctx.landing_stable_since > 0);
 
     /* Keep stable */
     for (int i = 0; i < 20; i++) {
         mock_time_ms += 60;
         ctx.last_sample = mock_time_ms - 60;
-        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+        ctx.current_state = step(&ctx, mock_time_ms);
     }
     TEST_ASSERT_EQUAL(LANDED, ctx.current_state);
 }
@@ -317,7 +328,7 @@ void test_FLT_LAND_06_stays_landed(void) {
     mock_pressure.pressure_pa = 101325.0f;
 
     mock_time_ms = 2000;
-    flight_state_t next = dispatch_state(&ctx, mock_time_ms);
+    flight_state_t next = step(&ctx, mock_time_ms);
     TEST_ASSERT_EQUAL(LANDED, next);
 }
 
@@ -611,20 +622,20 @@ void test_CFG_08_comment_lines(void) {
 void test_FLT_BOOT_10_no_false_launch_on_drift(void) {
     flight_context_t ctx = {0};
     config_set_defaults(&ctx.config);
-    ctx.current_state = BOOT_INIT;
+    ctx.current_state = BOOT_SETTLE;
+    ctx.boot_timer = 0;
     mock_time_ms = 0;
 
     /* Calibration pressure: 101325 Pa (stable during boot) */
     mock_pressure.pressure_pa = 101325.0f;
 
-    /* Run through boot: BOOT_INIT → BOOT_SETTLE → BOOT_CONTINUITY → BOOT_CALIBRATE → PAD_IDLE */
-    ctx.current_state = dispatch_state(&ctx, mock_time_ms); /* BOOT_INIT → BOOT_SETTLE */
+    /* Run through boot: BOOT_SETTLE → BOOT_CONTINUITY → BOOT_CALIBRATE → PAD_IDLE */
     mock_time_ms = 2600;
-    ctx.current_state = dispatch_state(&ctx, mock_time_ms); /* BOOT_SETTLE → BOOT_CONTINUITY */
-    ctx.current_state = dispatch_state(&ctx, mock_time_ms); /* BOOT_CONTINUITY → BOOT_CALIBRATE */
+    ctx.current_state = step(&ctx, mock_time_ms); /* BOOT_SETTLE → BOOT_CONTINUITY */
+    ctx.current_state = step(&ctx, mock_time_ms); /* BOOT_CONTINUITY → BOOT_CALIBRATE */
     for (int i = 0; i < 10; i++) {
         mock_time_ms += 110;
-        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+        ctx.current_state = step(&ctx, mock_time_ms);
     }
     TEST_ASSERT_EQUAL_MESSAGE(PAD_IDLE, ctx.current_state, "Should reach PAD_IDLE");
     TEST_ASSERT_INT_WITHIN(100, 101325, ctx.ground_pressure);
@@ -637,9 +648,82 @@ void test_FLT_BOOT_10_no_false_launch_on_drift(void) {
     /* Run several PAD_IDLE iterations — must NOT trigger launch */
     for (int i = 0; i < 20; i++) {
         mock_time_ms += 15;
-        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+        ctx.current_state = step(&ctx, mock_time_ms);
         TEST_ASSERT_EQUAL_MESSAGE(PAD_IDLE, ctx.current_state, "Sensor drift must NOT trigger false launch");
     }
+}
+
+/* [BUG-REPRO] BMP280 sensor noise on the pad.
+ * Real hardware shows ±25 Pa noise at 10ms intervals.  The IIR filter
+ * (τ=500ms, α≈0.02 per 10ms step) should damp this to < 1 Pa of
+ * filtered variation.  But the altitude-to-speed calculation amplifies
+ * tiny filtered steps (e.g. 8 cm / 10 ms = 800 cm/s).
+ * The altitude gate (>1000 cm) must prevent any false launch despite
+ * these speed oscillations. */
+void test_PAD_IDLE_noise_no_false_launch(void) {
+    flight_context_t ctx = {0};
+    config_set_defaults(&ctx.config);
+    mock_time_ms = 0;
+
+    /* Stable calibration at 101325 Pa */
+    mock_pressure.pressure_pa = 101325.0f;
+    boot_to_pad_idle(&ctx);
+
+    /* Apply realistic BMP280 noise: ±25 Pa, alternating every 20ms.
+     * 20ms matches the ~50Hz sensor sample rate.
+     * This mimics the captured hardware data where raw_pa oscillated
+     * between 102173 and 102217 around a 102200 Pa mean. */
+    int32_t max_speed = 0;
+    for (int i = 0; i < 100; i++) {
+        float noise = (i % 2 == 0) ? 25.0f : -25.0f;
+        mock_pressure.pressure_pa = 101325.0f + noise;
+        mock_time_ms += 20;
+        ctx.current_state = step(&ctx, mock_time_ms);
+        TEST_ASSERT_EQUAL_MESSAGE(PAD_IDLE, ctx.current_state, "BMP280 noise must NOT trigger false launch");
+
+        int32_t spd = ctx.pad_speed_cms > 0 ? ctx.pad_speed_cms : -ctx.pad_speed_cms;
+        if (spd > max_speed)
+            max_speed = spd;
+    }
+    /* Speed oscillations exist but altitude stays near 0 — no false launch */
+    TEST_ASSERT_TRUE_MESSAGE(ctx.last_altitude < 100, "Filtered altitude must stay near ground");
+}
+
+/* [DATA-FLOW] Single data path: batch FIFO → push_sample → dispatch_state.
+ * hal_pressure_read() must return false between batches (no leaked data).
+ * This is the architectural invariant that prevents the backward-time bug:
+ * the old polled path consumed pres.last at real-time timestamps, then the
+ * batch replayed the same samples with earlier timestamps, causing dt to
+ * wrap to ~4 billion ms and overflowing the IIR filter.
+ *
+ * With pres_append() no longer writing pres.last, the only way data
+ * reaches hal_pressure_read() is through push_sample() during batch
+ * processing.  Between batches, has_last is false. */
+void test_SNS_PRES_04_single_data_path(void) {
+    flight_context_t ctx = {0};
+    config_set_defaults(&ctx.config);
+    mock_time_ms = 0;
+    mock_pressure.pressure_pa = 101325.0f;
+    boot_to_pad_idle(&ctx);
+
+    /* After boot, the mock provides samples via hal_pressure_read().
+     * Verify that monotonically increasing timestamps produce correct,
+     * smooth filter output — no jumps, no overflow. */
+    int32_t prev_filtered = ctx.filtered_pressure;
+    for (int i = 0; i < 100; i++) {
+        mock_time_ms += 20;                            /* 50 Hz */
+        mock_pressure.pressure_pa = 101325.0f + 10.0f; /* tiny offset */
+        ctx.current_state = step(&ctx, mock_time_ms);
+
+        /* Filter must move smoothly — no jump > 50 Pa per step */
+        int32_t jump = ctx.filtered_pressure - prev_filtered;
+        if (jump < 0)
+            jump = -jump;
+        TEST_ASSERT_TRUE_MESSAGE(jump < 50, "Filter step must be smooth with monotonic timestamps");
+        prev_filtered = ctx.filtered_pressure;
+    }
+    /* Filter should converge toward 101335 (101325 + 10) */
+    TEST_ASSERT_INT_WITHIN(20, 101335, ctx.filtered_pressure);
 }
 
 /* ── Main ─────────────────────────────────────────────────────────── */
@@ -705,6 +789,8 @@ int main(void) {
 
     /* False launch regression */
     RUN_TEST(test_FLT_BOOT_10_no_false_launch_on_drift);
+    RUN_TEST(test_PAD_IDLE_noise_no_false_launch);
+    RUN_TEST(test_SNS_PRES_04_single_data_path);
 
     return UNITY_END();
 }

@@ -6,13 +6,13 @@
  */
 #include "hal.h"
 #include "flight_states.h"
+#include "pressure_processing.h"
 #include "telemetry_formatter.h"
 #include "ground_test.h"
 #include "buzzer.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 
 /* ── Ring buffer ──────────────────────────────────────────────────── */
 
@@ -48,52 +48,7 @@ static void buf_tag_event(flight_context_t *ctx, uint8_t event) { /* [DAT-03] */
     }
 }
 
-/* ── Pressure processing ──────────────────────────────────────────── */
-
-/* [SNS-PRES-02..04] First-order IIR with minimum step to prevent stall.
- * Time constant τ = 500ms. See IMPLEMENTATION.md "Pressure Filter". */
-int32_t filter_pressure(flight_context_t *ctx, int32_t raw_pressure, uint32_t dt_ms) {
-    if (!ctx->filter_initialized) {
-        ctx->filtered_pressure = raw_pressure;
-        ctx->filter_initialized = true;
-        return raw_pressure;
-    }
-    int32_t diff = raw_pressure - ctx->filtered_pressure;
-    int32_t alpha = (dt_ms * 1000) / (500 + dt_ms);
-    int32_t step = (diff * alpha) / 1000;
-    if (step == 0 && diff != 0)
-        step = (diff > 0) ? 1 : -1;
-    ctx->filtered_pressure += step;
-    return ctx->filtered_pressure;
-}
-
 #define MAX_ALTITUDE_CM 800000
-
-/* [SNS-ALT-01..03] Hypsometric formula — exact inverse of the ISA troposphere
- * pressure model used by the physics engine.
- *
- *   h = (T₀/L) × (1 − (P/P₀)^(R×L/(g×M)))
- *   h = 44330 × (1 − (P/P₀)^(1/5.2561))
- *
- * Constants (ISA / physics.c):
- *   T₀ = 288.15 K, L = 0.0065 K/m → T₀/L = 44330 m
- *   Exponent = R×L/(g×M) = 8.31446×0.0065 / (9.80665×0.028964) = 1/5.2561
- *
- * Error vs pure ISA: < 0.1 % across 0–8000 m.
- * Replaces linear 8.3 cm/Pa approximation which was −7 % at 5000 ft.
- */
-int32_t pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa) {
-    if (pressure_pa <= 0 || ground_pressure_pa <= 0)
-        return 0;
-    float ratio = (float)pressure_pa / (float)ground_pressure_pa;
-    float alt_m = 44330.0f * (1.0f - powf(ratio, 1.0f / 5.2561f));
-    int32_t alt_cm = (int32_t)(alt_m * 100.0f);
-    if (alt_cm > MAX_ALTITUDE_CM)
-        alt_cm = MAX_ALTITUDE_CM;
-    if (alt_cm < 0)
-        alt_cm = 0;
-    return alt_cm;
-}
 
 static int32_t cm_to_units(int32_t cm, uint8_t units) {
     switch (units) {
@@ -104,20 +59,6 @@ static int32_t cm_to_units(int32_t cm, uint8_t units) {
     default:
         return cm;
     }
-}
-
-static void read_and_filter_pressure(flight_context_t *ctx, uint32_t now, int32_t *altitude_out) {
-    hal_pressure_t pdata;
-    if (!hal_pressure_read(&pdata)) {
-        /* No sample available — keep the previous altitude unchanged.
-         * This avoids feeding uninitialized stack data into the IIR filter
-         * when the async task hasn't produced a sample yet (e.g. MS5607
-         * between D1/D2 conversion phases after push_sample(NULL)). */
-        *altitude_out = ctx->last_altitude;
-        return;
-    }
-    uint32_t dt = (ctx->last_sample > 0) ? (now - ctx->last_sample) : 10;
-    *altitude_out = pressure_to_altitude_cm(filter_pressure(ctx, (int32_t)pdata.pressure_pa, dt), ctx->ground_pressure);
 }
 
 /* ── Pyro firing logic ────────────────────────────────────────────── */
@@ -228,19 +169,6 @@ static void check_refire(flight_context_t *ctx, uint32_t now) {
 
 /* ── Event detectors ──────────────────────────────────────────────── */
 
-/* [FLT-BOOT-02, FLT-BOOT-03, CFG-05]
- * [v2] Config load delegated to HAL — flight software has no file I/O knowledge. */
-static state_event_t detect_boot_init(flight_context_t *ctx, uint32_t now) {
-    (void)now;
-    hal_config_load(&ctx->config); /* [v2] replaces direct hal_fs_read/write_file */
-    telemetry_init(&ctx->config);  /* formatter reads telem_format from config */
-    buzzer_init();                 /* [v2] registers buzzer as async task */
-    hal_pressure_init();
-    hal_pyro_init();
-    ctx->boot_timer = hal_time_ms();
-    return SEVT_DONE;
-}
-
 /* [FLT-BOOT-04, FLT-BOOT-09] */
 static state_event_t detect_boot_settle(flight_context_t *ctx, uint32_t now) {
     return (now - ctx->boot_timer >= 2500) ? SEVT_TIMER : SEVT_NONE;
@@ -257,17 +185,12 @@ static state_event_t detect_boot_continuity(flight_context_t *ctx, uint32_t now)
     return SEVT_DONE;
 }
 
-/* [FLT-BOOT-08] */
+/* [FLT-BOOT-08] Calibration is handled by pressure_processing layer.
+ * pp_start_cal() was called in action_cal_init(); we just poll pp_cal_done(). */
 static state_event_t detect_boot_calibrate(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->boot_timer < 100)
-        return SEVT_NONE;
-    ctx->boot_timer = now;
-    hal_pressure_t data;
-    if (!hal_pressure_read(&data))
-        return SEVT_NONE; /* no sample yet — retry next tick */
-    ctx->cal_sum += data.pressure_pa;
-    ctx->cal_count++;
-    return (ctx->cal_count >= 10) ? SEVT_CAL_DONE : SEVT_NONE;
+    (void)ctx;
+    (void)now;
+    return pp_cal_done() ? SEVT_CAL_DONE : SEVT_NONE;
 }
 
 static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { /* [PYR-CONT-01, PYR-ALT-02] */
@@ -319,17 +242,21 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
 
     update_continuity_and_buzzer(ctx, now);
 
-    int32_t altitude;
-    read_and_filter_pressure(ctx, now, &altitude);
+    altitude_sample_t sample;
+    if (!pp_read(&sample))
+        return SEVT_NONE; /* no altitude sample available yet */
+    int32_t altitude = sample.altitude_cm;
+    uint32_t ts = sample.timestamp_ms;
 
     /* Track speed on the pad for launch confirmation [DD-016] */
-    uint32_t dt = (ctx->last_sample > 0) ? (now - ctx->last_sample) : 10;
+    uint32_t dt = (ctx->last_sample > 0) ? (ts - ctx->last_sample) : 10;
     if (dt > 0)
         ctx->pad_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
 
+    ctx->filtered_pressure = pp_last_filtered_pa(); /* for telemetry/debug */
     buf_add(ctx, 0, ctx->filtered_pressure, altitude, PAD_IDLE);
     ctx->last_altitude = altitude;
-    ctx->last_sample = now;
+    ctx->last_sample = ts;
 
     bool alt_ok = altitude > LAUNCH_ALT_CM;
     bool speed_ok = ctx->pad_speed_cms > LAUNCH_SPEED_CMS;
@@ -359,12 +286,13 @@ static bool backup_apogee_expired(const flight_context_t *ctx, uint32_t now) {
 }
 
 static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_sample < 20) /* v2-8: 50Hz = 20ms intervals */
+    altitude_sample_t sample;
+    if (!pp_read(&sample))
         return SEVT_NONE;
-
-    int32_t altitude;
-    read_and_filter_pressure(ctx, now, &altitude);
-    uint32_t dt = now - ctx->last_sample;
+    int32_t altitude = sample.altitude_cm;
+    uint32_t ts = sample.timestamp_ms;
+    uint32_t dt = ts - ctx->last_sample;
+    ctx->filtered_pressure = pp_last_filtered_pa();
 
     ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
     if (dt > 0)
@@ -403,12 +331,13 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
 #define LANDING_SPEED_CMS 500 /* 5 m/s — slow enough to be "landed" */
 
 static state_event_t detect_descent(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_sample < 20) /* v2-8: 50Hz = 20ms intervals */
+    altitude_sample_t sample;
+    if (!pp_read(&sample))
         return SEVT_NONE;
-
-    int32_t altitude;
-    read_and_filter_pressure(ctx, now, &altitude);
-    uint32_t dt = now - ctx->last_sample;
+    int32_t altitude = sample.altitude_cm;
+    uint32_t ts = sample.timestamp_ms;
+    uint32_t dt = ts - ctx->last_sample;
+    ctx->filtered_pressure = pp_last_filtered_pa();
 
     ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
     if (dt > 0)
@@ -455,40 +384,32 @@ static state_event_t detect_descent(flight_context_t *ctx, uint32_t now) {
 
 /* [FLT-LAND-06, FLT-RATE-04] */
 static state_event_t detect_landed(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_sample < 1000)
+    altitude_sample_t sample;
+    if (!pp_read(&sample))
         return SEVT_NONE;
-
-    int32_t altitude;
-    read_and_filter_pressure(ctx, now, &altitude);
-    buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, altitude, LANDED);
-    ctx->last_altitude = altitude;
-    ctx->last_sample = now;
+    /* Landed: just log occasional samples for telemetry */
+    ctx->filtered_pressure = pp_last_filtered_pa();
+    buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, sample.altitude_cm, LANDED);
+    ctx->last_altitude = sample.altitude_cm;
+    ctx->last_sample = sample.timestamp_ms;
     return SEVT_NONE;
 }
 
 /* ── Transition actions ───────────────────────────────────────────── */
 
 static void action_cal_init(flight_context_t *ctx, uint32_t now) {
-    ctx->cal_count = 0;
-    ctx->cal_sum = 0;
-    ctx->boot_timer = now;
+    (void)now;
+    pp_start_cal(); /* pressure_processing layer handles calibration */
 }
 
 static void action_ground_cal(flight_context_t *ctx, uint32_t now) {
-    ctx->ground_pressure = ctx->cal_sum / 10;
-
-    /* Prime the pressure filter and altitude tracking so the first
-     * PAD_IDLE sample doesn't see a phantom altitude jump from the
-     * uninitialized last_altitude=0 / filter_initialized=false baseline.
-     *
-     * Without this, a sensor that drifts even ~125 Pa between calibration
-     * and the first PAD_IDLE reading computes altitude >10m AND a phantom
-     * speed of thousands of cm/s (from last_altitude=0, dt=10ms), which
-     * passes both launch gates and triggers a false flight at power-on. */
+    (void)now;
+    ctx->ground_pressure = pp_ground_pressure();
     ctx->filtered_pressure = ctx->ground_pressure;
-    ctx->filter_initialized = true;
-    ctx->last_sample = now;
-    /* last_altitude is already 0 from flight_init() — correct for ground */
+    /* last_altitude is already 0 from flight_init() — correct for ground.
+     * No need to set last_sample or filter state — pressure_processing
+     * owns the filter and ring buffer now. Altitude samples will arrive
+     * in chronological order via pp_read(). */
 }
 
 /* [FLT-LAUNCH-03..05] Backdate launch time to first sample above 50cm */
@@ -544,7 +465,6 @@ static void action_landing(flight_context_t *ctx, uint32_t now) {
 /* ── State machine ────────────────────────────────────────────────── */
 
 static const detect_fn detectors[STATE_COUNT] = {
-    [BOOT_INIT] = detect_boot_init,
     [BOOT_SETTLE] = detect_boot_settle,
     [BOOT_CONTINUITY] = detect_boot_continuity,
     [BOOT_CALIBRATE] = detect_boot_calibrate,
@@ -555,7 +475,6 @@ static const detect_fn detectors[STATE_COUNT] = {
 };
 
 static const transition_t transitions[] = {
-    {BOOT_INIT, SEVT_DONE, BOOT_SETTLE, NULL},
     {BOOT_SETTLE, SEVT_TIMER, BOOT_CONTINUITY, NULL},
     {BOOT_CONTINUITY, SEVT_DONE, BOOT_CALIBRATE, action_cal_init},
     {BOOT_CALIBRATE, SEVT_CAL_DONE, PAD_IDLE, action_ground_cal},
@@ -664,7 +583,18 @@ int flight_save_csv(flight_context_t *ctx) {
 void flight_init(flight_context_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     config_set_defaults(&ctx->config);
-    ctx->current_state = BOOT_INIT;
+
+    /* Hardware init formerly in detect_boot_init() — runs once before
+     * the main loop so there is no separate BOOT_INIT state. */
+    hal_config_load(&ctx->config);
+    telemetry_init(&ctx->config);
+    buzzer_init();
+    pp_init();
+    hal_pressure_init();
+    hal_pyro_init();
+    ctx->boot_timer = hal_time_ms();
+
+    ctx->current_state = BOOT_SETTLE;
     ground_test_init(&ctx->gt);
 }
 
@@ -682,20 +612,6 @@ static uint8_t state_to_telem_id(flight_state_t state) {
     default:
         return 0;
     }
-}
-
-/* v2-8: process a batch of pressure samples at 50Hz.
- * Feeds each sample into dispatch_state() via hal_pressure_push_sample().
- * Handles hal_log_start() / hal_log_stop() at state transitions.
- * Falls through to polled mode if batch is NULL (test/sim compatibility). */
-void flight_process_samples(flight_context_t *ctx, const hal_pressure_batch_t *batch) {
-    if (!batch || batch->count == 0)
-        return;
-    for (int i = 0; i < batch->count; i++) {
-        hal_pressure_push_sample(&batch->samples[i]);
-        ctx->current_state = dispatch_state(ctx, batch->timestamps_ms[i]);
-    }
-    hal_pressure_push_sample(NULL); /* clear override */
 }
 
 void flight_update_outputs(flight_context_t *ctx, uint32_t now) {

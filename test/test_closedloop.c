@@ -26,9 +26,16 @@
 #include <stdlib.h>
 #include <math.h>
 #include "../src/flight_states.h"
+#include "pressure_processing.h"
 #include "../src/telemetry_formatter.h"
 #include "../src/hal.h"
 #include "../src/buzzer.h"
+
+/* Wrapper: feed pressure into pp, then dispatch */
+static flight_state_t step(flight_context_t *ctx, uint32_t now) {
+    hal_tasks_tick(now);
+    return dispatch_state(ctx, now);
+}
 
 /* ── Constants ────────────────────────────────────────────────────── */
 
@@ -347,6 +354,7 @@ static sim_result_t run_sim(config_t cfg, const rocket_profile_t *r, bool enable
     telemetry_init(&ctx.config);
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = (int32_t)GROUND_PA;
+    pp_test_prime((int32_t)GROUND_PA);
 
     physics_state_t ps = {0};
     sim_result_t res = {0};
@@ -386,7 +394,7 @@ static sim_result_t run_sim(config_t cfg, const rocket_profile_t *r, bool enable
         mock_time_ms = t;
         mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
         mock_pyro.firing = false;
-        ctx.current_state = dispatch_state(&ctx, t);
+        ctx.current_state = step(&ctx, t);
 
         if (ctx.current_state == ASCENT && !res.reached_ascent) {
             res.reached_ascent = true;
@@ -566,7 +574,7 @@ static void run_suite(cfg_fn make, const char *suite_name) {
 
 /* ── Test functions ───────────────────────────────────────────────── */
 
-void setUp(void) {}
+void setUp(void) { pp_init(); }
 void tearDown(void) {}
 
 void test_PYR_MODE_01_delay_delay(void) {
@@ -629,6 +637,7 @@ void test_PYR_SAFE_01_no_fire_without_continuity(void) {
     ctx.config = cfg;
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = (int32_t)GROUND_PA;
+    pp_test_prime((int32_t)GROUND_PA);
 
     physics_state_t ps = {0};
     sim_result_t res = {0};
@@ -658,7 +667,7 @@ void test_PYR_SAFE_01_no_fire_without_continuity(void) {
         mock_time_ms = t;
         mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
         mock_pyro.firing = false;
-        ctx.current_state = dispatch_state(&ctx, t);
+        ctx.current_state = step(&ctx, t);
         if (ctx.current_state == LANDED)
             break;
     }
@@ -712,6 +721,7 @@ void test_SYS_DEPLOY_03_no_fire_during_ascent(void) {
     ctx.config = cfg;
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = (int32_t)GROUND_PA;
+    pp_test_prime((int32_t)GROUND_PA);
 
     physics_state_t ps = {0};
     bool pyro_during_ascent = false;
@@ -725,7 +735,7 @@ void test_SYS_DEPLOY_03_no_fire_during_ascent(void) {
         mock_time_ms = t;
         mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
         mock_pyro.firing = false;
-        ctx.current_state = dispatch_state(&ctx, t);
+        ctx.current_state = step(&ctx, t);
 
         if (ctx.current_state == ASCENT && mock_pyro.fire_count > 0)
             pyro_during_ascent = true;
@@ -757,6 +767,7 @@ void test_PYR_FAULT_02_overcurrent_detection(void) {
     ctx.config = cfg;
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = (int32_t)GROUND_PA;
+    pp_test_prime((int32_t)GROUND_PA);
 
     physics_state_t ps = {0};
     uint8_t prev_fires = 0;
@@ -778,7 +789,7 @@ void test_PYR_FAULT_02_overcurrent_detection(void) {
         mock_time_ms = t;
         mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
         mock_pyro.firing = false;
-        ctx.current_state = dispatch_state(&ctx, t);
+        ctx.current_state = step(&ctx, t);
 
         if (ctx.pyro1_fault && ctx.pyro2_fault)
             break;
@@ -838,6 +849,7 @@ void test_XIP_stall_pyro_timing(void) {
     ctx.config = cfg;
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = (int32_t)GROUND_PA;
+    pp_test_prime((int32_t)GROUND_PA);
 
     physics_state_t ps = {0};
     uint32_t max_ms = 600000u;
@@ -878,7 +890,7 @@ void test_XIP_stall_pyro_timing(void) {
         mock_pyro.firing = false;
 
         uint32_t stall_before = mock_xip_total_stall_ms;
-        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
+        ctx.current_state = step(&ctx, mock_time_ms);
 
         if (mock_time_ms > t)
             t = mock_time_ms;
@@ -927,6 +939,7 @@ void test_PYR_REFIRE_01_refire_ballistic(void) {
     ctx.config.backup_timer = 0;
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = (int32_t)GROUND_PA;
+    pp_test_prime((int32_t)GROUND_PA);
 
     physics_state_t ps = {0};
     uint8_t prev_fires = 0;
@@ -957,7 +970,7 @@ void test_PYR_REFIRE_01_refire_ballistic(void) {
         mock_time_ms = t;
         mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
         mock_pyro.firing = false;
-        ctx.current_state = dispatch_state(&ctx, t);
+        ctx.current_state = step(&ctx, t);
 
         if (refire_detected)
             break;

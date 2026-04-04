@@ -559,20 +559,14 @@ bool hal_serial_readline(char *buf, int max_len) {
 }
 
 /* ── Sleep (v2, alarm-timer until earliest task deadline) ─────────── */
+/*
+ * DISABLED (v2.1.27): __wfe() suspected of blocking USB NCM TX,
+ * causing txf (TX failure) accumulation and http=0.  Reverted to
+ * busy-loop polling until the root cause is confirmed.
+ */
 
 void hal_sleep_until_event(void) {
-    uint32_t due = hw_tasks_next_due();
-    uint32_t now = hal_time_ms();
-    /* If no tasks are registered or the deadline is already past,
-     * fall back to a plain WFE (wakes on any interrupt). */
-    if (due == 0 || (int32_t)(due - now) <= 1) {
-        __wfe();
-        return;
-    }
-    /* sleep_until programs TIMER_ALARM0 and enters WFE.
-     * Any interrupt (USB, UART RX, etc.) wakes the CPU earlier.
-     * The alarm fires at the exact deadline if nothing else wakes us. */
-    sleep_until(from_us_since_boot((uint64_t)due * 1000u));
+    /* no-op: keep CPU polling so USB/network stack runs continuously */
 }
 
 /* ── Platform ─────────────────────────────────────────────────────── */

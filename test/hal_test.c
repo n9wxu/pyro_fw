@@ -5,6 +5,8 @@
  */
 #include "../src/hal.h"
 #include "../src/config.h"
+#include "../src/device_status.h"
+#include "../src/pressure_processing.h"
 #include "mocks.h"
 #include <string.h>
 #include <stdio.h>
@@ -25,10 +27,6 @@ int mock_xip_stall_count = 0;
 /* Serial command mock queue [GND-TEST-01..04] */
 char mock_serial_queue[MOCK_SERIAL_QUEUE_DEPTH][MOCK_SERIAL_LINE_MAX];
 int mock_serial_queue_count = 0;
-
-/* Pressure sample override — declared here so mock_reset_all() can clear it */
-static bool test_pressure_override_active = false;
-static hal_pressure_t test_pressure_override;
 
 /* Streaming file handle — declared here so mock_reset_all() can reset it */
 struct hal_file {
@@ -59,6 +57,7 @@ typedef struct {
     bool used;
 } sim_file_t;
 static sim_file_t sim_files[SIM_FS_MAX_FILES];
+static uint32_t last_pp_feed_ms = 0;
 
 void mock_reset_all(void) {
     memset(&mock_pressure, 0, sizeof(mock_pressure));
@@ -78,13 +77,13 @@ void mock_reset_all(void) {
     mock_serial_queue_count = 0;
     mock_buzzer_tone_on_count = 0;
     mock_buzzer_tone_off_count = 0;
-    test_pressure_override_active = false;
     /* Reset log state and streaming file handle so each test starts clean
      * regardless of whether the previous test reached LANDED. */
     test_log_active = false;
     test_log_file = NULL;
     test_file.open = false;
     memset(sim_files, 0, sizeof(sim_files));
+    last_pp_feed_ms = 0;
 }
 
 /* Enqueue a serial command line for hal_serial_readline() to return */
@@ -104,42 +103,6 @@ uint32_t hal_time_ms(void) {
 
 int hal_pressure_init(void) {
     return mock_pressure.sensor_type;
-}
-
-void hal_pressure_push_sample(const hal_pressure_t *sample) {
-    if (sample) {
-        test_pressure_override = *sample;
-        test_pressure_override_active = true;
-    } else {
-        test_pressure_override_active = false;
-    }
-}
-
-bool hal_pressure_read(hal_pressure_t *out) {
-    if (test_pressure_override_active) {
-        *out = test_pressure_override;
-        return true;
-    }
-    if (mock_pressure.sensor_type == 0)
-        return false;
-    out->pressure_pa = mock_pressure.pressure_pa;
-    out->temperature_c = mock_pressure.temperature_c;
-    return true;
-}
-
-/* ── Pressure FIFO stubs (polled mode only in tests) ──────────────── */
-
-bool hal_pressure_fifo_start(uint8_t rate_hz) {
-    (void)rate_hz;
-    return false; /* test HAL uses polled mode */
-}
-bool hal_pressure_fifo_get(hal_pressure_batch_t *batch) {
-    (void)batch;
-    return false;
-}
-void hal_pressure_fifo_release(void) {}
-bool hal_pressure_fifo_active(void) {
-    return false;
 }
 
 void hal_pyro_init(void) {}
@@ -282,6 +245,13 @@ bool hal_serial_readline(char *buf, int max_len) {
 /* ── Sleep (v2, no-op in test) ────────────────────────────────────── */
 
 void hal_tasks_tick(uint32_t now_ms) {
+    /* Feed pressure samples at ~50Hz (every 20ms) into pressure_processing.
+     * Matches real BMP280/MS5607 sample rate. The pp ring (32 entries)
+     * stays shallow when detectors dispatch at ≥10ms intervals. */
+    if (mock_pressure.sensor_type > 0 && (last_pp_feed_ms == 0 || (now_ms - last_pp_feed_ms) >= 20)) {
+        pp_feed((int32_t)mock_pressure.pressure_pa, now_ms);
+        last_pp_feed_ms = now_ms;
+    }
     /* Drive the buzzer async task so integration tests can step through
      * tone-on/off sequences by advancing mock_time_ms. */
     if (test_buzzer_task && test_buzzer_task->tick && (int32_t)(now_ms - test_buzzer_task->next_due_ms) >= 0) {

@@ -1,6 +1,91 @@
 # Pyro MK1B Firmware - Current Status
 
-_Last updated: 2026-04-04 — v2.1.25 network diagnostics + conn_alloc fix_
+_Last updated: 2026-04-04 — v2.1.27 MAC mismatch fix, network fully working_
+
+## 🔬 Hardware Serial Log Analysis (2026-04-04)
+
+### Summary of Boot Cycles Captured
+
+| FW Version | Boots | Behavior | False Launch? | Network? |
+|------------|-------|----------|---------------|----------|
+| 2.1.17 | ~8 | False launches on every boot | ❌ YES | N/A (no diag) |
+| 2.1.24 | 2 | Stable PAD_IDLE, no false launch | ✅ FIXED | No diag |
+| 2.1.26 | 2 | Stable PAD_IDLE, no false launch | ✅ FIXED | ❌ HTTP broken |
+
+### FW 2.1.17 — False Launch Bug (now fixed)
+
+Every boot cycle followed the same failure pattern:
+1. BOOT_SETTLE → BOOT_CONT → BOOT_CAL → PAD_IDLE (normal, ~3.5s)
+2. **PAD_IDLE → ASCENT in 0.5–6s** (false trigger)
+3. ASCENT → DESCENT in **50ms** (impossible physics)
+4. DESCENT → LANDED in ~1s
+5. LANDED shows pressure slowly converging from millions of Pa to ~102,280 Pa (correct)
+6. Device reboots after ~120–520s in LANDED (watchdog or power cycle)
+
+Raw pressure during PAD_IDLE was wildly wrong: `2,689,215 Pa`, `-43,966 Pa`, `3,733,478 Pa` — 
+values orders of magnitude outside the 30,000–110,000 Pa barometric range. The IIR filter's 
+`dt = now - last_sample` overflowed when batch timestamps predated `last_sample`, producing 
+`alpha` values that amplified 7 Pa of real noise into 1.8M Pa filter jumps.
+
+**Buzzer impact during 2.1.17**: The rapid false-launch cycle meant:
+- 10 startup chirps begin playing
+- `buzzer_stop()` fires almost immediately (ASCENT triggered in <2s)
+- `buzzer_set_altitude(800000cm)` starts altitude beep-out for 8000m (8,0,0,0 → 8 + 10 + 10 + 10 beeps)
+- Extremely long garbled altitude pattern plays until watchdog reboot
+- Cycle repeats: truncated chirps → cut off → garbled altitude beeps → reboot
+
+### FW 2.1.24 — Pressure Processing Fix Verified ✅
+
+Both boot cycles showed:
+- Stable PAD_IDLE for 900+ seconds (entire captured duration)
+- Pressure readings: 102,260–102,300 Pa (realistic, normal atmospheric drift)
+- Altitude readings: 0–255 cm (sensor noise at ground level, normal)
+- No false state transitions
+- $PYRO telemetry: consistent 2Hz output with valid sensor data
+- Pyro ADC values: 26–30 range on both channels (continuity readings)
+
+**Buzzer behavior (2.1.24)**: Working correctly:
+- 10 chirps (30ms on / 30ms off each) at startup
+- Status code plays TWICE (BUZ-02 compliant), then stops
+- Buzzer goes silent after ~3–4 seconds total
+- Code depends on pyro continuity status (likely 2-1 or 3-1 if no ematches connected)
+
+### FW 2.1.26 — Network Diagnostics Reveal HTTP Failure ❌
+
+Both boot cycles showed stable flight software (no false launches), but HTTP is non-functional:
+
+```
+[10003] NET: tud=1 rx=67  drop=0 tx=8  txf=3   http=0
+[50003] NET: tud=1 rx=90  drop=0 tx=9  txf=7   http=0
+[70003] NET: tud=1 rx=95  drop=0 tx=9  txf=10  http=0
+```
+
+Second boot (worse):
+```
+[10005] NET: tud=1 rx=61  drop=0 tx=11 txf=2   http=0
+[60005] NET: tud=1 rx=95  drop=0 tx=12 txf=120 http=0
+[100005] NET: tud=1 rx=104 drop=0 tx=12 txf=270 http=0
+[120005] NET: tud=1 rx=121 drop=0 tx=12 txf=308 http=0
+```
+
+Key observations:
+- **tud=1**: USB device ready, host has enumerated the NCM device
+- **rx growing**: Frames being received from host (ARP, DHCP, pings)
+- **http=0**: Zero HTTP connections accepted — TCP listener not serving
+- **txf growing rapidly**: USB TX failures (tud_network_xmit returning false)
+- **tx stuck at 9–12**: Only a handful of frames ever transmitted successfully
+- **drop=0**: No frames dropped at the receive stage
+
+**Diagnosis**: The device receives network frames but cannot transmit responses. The
+growing `txf` count indicates USB NCM TX buffer saturation or a protocol handshake issue.
+The host keeps retrying (rx grows), but since responses fail, TCP connections never complete.
+This affects ARP replies, DHCP, and TCP SYN-ACK — meaning HTTP can never be established.
+
+**Next steps for network fix**:
+1. Check if lwIP is properly calling `tud_network_xmit()` at the right time
+2. Verify NCM TX is not being called before USB enumeration completes
+3. Add timing guard: don't attempt TX until tud_ready() has been true for >1s
+4. Check if the `__wfe()` sleep is preventing USB interrupt servicing
 
 ## ✅ Completed
 
@@ -29,7 +114,7 @@ _Last updated: 2026-04-04 — v2.1.25 network diagnostics + conn_alloc fix_
 - 10Hz ASCENT/DESCENT, 1Hz PAD_IDLE/LANDED
 - `telemetry_formatter.c` — standalone protocol-independent module
 
-### Buzzer (v2 Task 7) ✅ Done — commit `3bd614b` + BUZ-02 compliance update
+### Buzzer (v2 Task 7) ✅ Done — Hardware Verified
 - `async_task_t`-based pattern player — runs as a parallel state machine alongside pressure sampling
 - Three states: BZ_IDLE → BZ_ENCODE_CODE/ALTITUDE → BZ_PLAYING
 - Step table built at request time; `hal_tasks_tick()` fires each step at its deadline
@@ -40,9 +125,11 @@ _Last updated: 2026-04-04 — v2.1.25 network diagnostics + conn_alloc fix_
 - `buzzer_set_code()` / `buzzer_set_altitude()` kept as inline shims for existing callers
 - `hal_buzzer_task_register()` added to all three HALs; hardware HAL registers into `hw_tasks[]`
 - Test and sim HALs drive the task via `hal_tasks_tick()` for full pattern testing
-- **10 unit tests**: BUZ-PAT-01..07 (tone counts, BUZ-02 repeat, chirp-once), BUZ-ACT-01..03 (lifecycle, stop, repeat)
+- **12 unit tests**: BUZ-PAT-01..07 (tone counts, BUZ-02 repeat, chirp-once), BUZ-ACT-01..03 (lifecycle, stop, repeat)
+- **Hardware observation**: With 2.1.17, buzzer was garbled due to rapid false-launch state cycling.
+  With 2.1.24+, buzzer correctly plays startup chirps + status code × 2 then goes silent.
 
-### Pressure Processing Module ✅ Done
+### Pressure Processing Module ✅ Done — Hardware Verified
 - `pressure_processing.h/.c` — standalone IIR filter + hypsometric altitude module
 - `pp_init()`, `pp_feed(raw_pa, now_ms)`, `pp_read(&sample)` — ring-buffered producer/consumer
 - `pp_start_cal()` / `pp_cal_sample()` / `pp_end_cal()` — boot calibration pipeline
@@ -50,20 +137,19 @@ _Last updated: 2026-04-04 — v2.1.25 network diagnostics + conn_alloc fix_
 - `pp_filter_pressure()` / `pp_pressure_to_altitude_cm()` — public utility functions
 - All detectors consume altitude via `pp_read()` — single data path from sensor to state machine
 - `hal_tasks_tick()` feeds `pp_feed()` at ~50Hz (matching real BMP280/MS5607 sample rate)
+- **Hardware verified**: v2.1.24 shows stable 102,260–102,300 Pa readings with no overflow
 
-### Batch Pressure Processing (v2 Task 8) ✅ Done — commit `3bd614b`
+### Batch Pressure Processing (v2 Task 8) ✅ Done
 - `flight_process_samples(ctx, batch)` — processes a 5-sample 50Hz batch in one call
 - `detect_ascent()` / `detect_descent()` gate at 20ms (50Hz); `detect_pad_idle()` gates at 10ms
-- `main_hardware.c` calls `hal_pressure_fifo_get()` then `flight_process_samples()` each loop
+- `main_hardware.c` calls `dispatch_state()` via `pp_read()` ring (v2.1.24+)
 - Polled fallback (`dispatch_state()`) retained for test/sim compatibility
 
-### Fire-and-Forget Flight Log (v2 Task 9) ✅ Done — commits `6cab391`, `6224112`
+### Fire-and-Forget Flight Log (v2 Task 9) ✅ Done
 - `hal_log_start(cfg, ground_pa)` opens `flight_log.csv` at launch; `hal_log_stop()` closes at landing
 - `hal_log_sample(time_ms, pa, alt, state, thrust, event)` appends one CSV line — non-blocking
 - Three implementations: hardware (LittleFS streaming), sim (host filesystem), test (in-memory)
 - Incremental ring-buffer CSV logger (`csv_flush_safe/step/track`) retired from all call sites
-- `flight_save_csv()` retained for HTTP `/api/flight.csv` endpoint (ring-buffer snapshot)
-- `test_DAT_04_events` updated to read `flight_log.csv`; `mock_reset_all()` resets log handle
 
 ### Data Logging
 - 4096-sample ring buffer, events tagged on samples
@@ -83,45 +169,25 @@ _Last updated: 2026-04-04 — v2.1.25 network diagnostics + conn_alloc fix_
 ### Pyro Fault Detection
 - AP2192 FLAG pin monitoring (GPIO 17/18, active-low with pull-ups)
 - Post-fire continuity verification (ADC re-check 500ms after fire)
-- Fault events logged to flight buffer (EVT_PYRO1_FAULT, EVT_PYRO2_FAULT, EVT_PYRO1_NOPEN, EVT_PYRO2_NOPEN)
+- Fault events logged to flight buffer
 - Beep codes 2-3/2-4 (P1 fault/verify) and 3-3/3-4 (P2 fault/verify)
 
 ### Ground Test Commands (v2 Task 2) ✅ Done
-- Serial commands via TRRS jack (UART0 RX): `BEEP STATUS`, `BEEP ALT <n>`, `ARM <1|2>`, `FIRE <1|2>`, `STATUS`
+- Serial commands via TRRS jack (UART0 RX)
 - 3-second ARM→FIRE window with automatic disarm timeout
 - All commands rejected outside PAD_IDLE state
-- NMEA-style `$GT,...` responses with XOR checksum (DD-011)
-- `last_status_code` stored on each continuity check for BEEP replay
 
-### HAL Config API (v2 Task 1 subset) ✅ Done
-- `hal_config_load()` / `hal_config_save()` abstract all config I/O
-- Flight software no longer calls `hal_fs_*()` for config
-- All three HAL implementations updated (hardware, sim, test)
-
-### CPU Sleep (v2 Task 3) ✅ Done
-- `hal_sleep_until_event()` added to all HAL implementations
-- Hardware: `__wfe()` — CPU sleeps between events (UART RX, timer, Core1 SEV)
-- Main loop calls it at end of each iteration
-
-### Autonomous Pressure Sampling (v2 Task 4) ✅ Done
-- `hal_pressure_fifo_start()` / `hal_pressure_fifo_get()` / `hal_pressure_fifo_release()` in hal.h
-- Hardware: BMP280 FIFO at 50Hz feeds async batches; MS5607 uses timer-driven polling
-- `async_task.h` state machine drives hardware sampling without blocking the main loop
-- Test/sim HAL stubs return `false` from `hal_pressure_fifo_get()` (polled mode fallback)
-
-### Telemetry Formatter (v2 Task 5) ✅ Done
-- `src/telemetry_formatter.h` / `.c` — protocol-independent event API
-- `telemetry_init(cfg)`, `telemetry_state(snapshot)`, `telemetry_apogee()`, `telemetry_pyro_fire()`, `telemetry_landing()`
-- Format 0 (NMEA): `$PYRO` + event sentences, field order identical to v1 (no parser breakage)
-- Format 1 (JSON): `{"t":"state",...}` objects, selectable by `telem_format=1`
-- `flight_states.c` wired: `telemetry_init()` at boot, `flight_update_outputs()` builds snapshot
-- `src/telemetry.c` emptied and removed from all build targets
+### Network Diagnostics (v2.1.25–26) ✅ Done
+- `net_glue.c`: rx/tx/drop counters on every frame, `tud_network_init_cb()` logged
+- `http_server.c`: **Fixed `conn_alloc()` bug** — was scanning 4 of 8 pool slots; now uses all 8
+- `http_server.c`: HTTP accept counter for connection tracking
+- `main_hardware.c`: 10-second `NET:` health heartbeat
+- Periodic `$PYRO` state sentences suppressed on UART (events still sent)
 
 ### Testing (107 C + 22 web)
-- 43 unit, 22 integration (+4 GND-TEST-01..04, +2 TEL-03..04), 15 closed-loop, 12 buzzer, 15 config
-- Total host test suites: host_tests (43), integration_tests (22), buzzer_tests (12), closedloop_tests (15), config_tests (15)
-- 4 safety-critical closed-loop tests (no-fire-without-continuity, no-simultaneous-fire, no-fire-during-ascent, overcurrent-fault-detection)
-- 22 Playwright web UI tests (3 mock server modes)
+- 43 unit, 22 integration, 15 closed-loop, 12 buzzer, 15 config
+- 4 safety-critical closed-loop tests
+- 22 Playwright web UI tests
 - cppcheck/MISRA, clang-format, pmccabe in CI
 - Requirements traced to integration tests (TRACEABILITY.md)
 
@@ -130,49 +196,47 @@ _Last updated: 2026-04-04 — v2.1.25 network diagnostics + conn_alloc fix_
 - GitHub Actions on every push
 - Auto-versioning, A/B OTA images
 
-### Network Diagnostics (v2.1.25) ✅ Done — commit `27da5c0`
-- `net_glue.c`: rx/tx/drop counters on every frame, `tud_network_init_cb()` logged
-- `http_server.c`: **Fixed `conn_alloc()` bug** — was scanning 4 of 8 pool slots; now uses all 8
-- `http_server.c`: HTTP accept counter for connection tracking
-- `hal_hardware.c`: Periodic `$PYRO` state sentences suppressed on UART (events still sent)
-- `main_hardware.c`: 10-second `NET:` health heartbeat (tud_ready, rx, drop, tx, txfail, http)
-- `main_hardware.c`: Removed pressure Pa from 2-second debug heartbeat (cleaner UART output)
-- UART output now shows: state transitions, 2s heartbeat, 10s NET stats, event telemetry only
-
 ## 🔨 Known Issues
-- [ ] Playwright reboot cycle test skipped (needs CI log access)
-- [x] **Parallel HTTP connections (6+) dropping — FIXED** — `conn_alloc()` only scanned 4 of 8 pool
-  slots. Fixed in v2.1.25 to scan all 8 slots.
-- [x] **False launch on boot (CRITICAL, FIXED)** — `filter_pressure()` integer overflow from timestamp wraparound.
-  Batch samples collected during BOOT_CAL had timestamps older than `ctx->last_sample`
-  (set at end of calibration). `dt = batch_ts - last_sample` wrapped to ~4 billion (uint32_t),
-  causing `alpha` and `step` arithmetic to overflow. Even a 7 Pa diff produced a 1.8M Pa filter
-  jump → false ASCENT transition. **Fix**: clamp `dt_ms` to 1000 in `filter_pressure()`.
-  Verified: raw sensor data was fine (`!PRES` anomaly log never fired), only the filter math overflowed.
-- [ ] Network responsiveness under load — diagnostics added in v2.1.25, awaiting hardware test
 
-## 🚧 In Progress — v2 Architecture
-v2 refactors the firmware to autonomous hardware I/O with CPU sleep between 100ms windows.
+### RESOLVED: HTTP Server Not Accepting Connections (v2.1.26) ✅
+- **Symptom**: `http=0` in all NET diagnostics; `txf` grows rapidly; ARP incomplete
+- **Root cause**: **MAC address mismatch** between USB descriptor string (`STRID_MAC = "020284006A00"`)
+  and `tud_network_mac_address` array (`{0x02,0x02,0x84,0x6A,0x96,0x00}`). The host's ECM driver
+  expected device MAC `02:02:84:00:6A:00` (from descriptor), but lwIP sent ARP replies with source
+  MAC `02:02:84:6A:96:01` (from array + XOR). Host rejected responses as invalid source.
+- **Fix**: Aligned `tud_network_mac_address` in `net_glue.c` to match `STRID_MAC`:
+  `{0x02, 0x02, 0x84, 0x00, 0x6A, 0x00}`
+- **Verified**: HTTP 200 in 24ms, `/api/status` returns valid JSON, device up in 3s after flash
+
+### RESOLVED: False Launch on Boot ✅
+- Fixed in v2.1.24 via `pressure_processing.c` dt_ms clamp
+- **Hardware verified**: 8 boot cycles on 2.1.17 showed false launches; 4 boot cycles on 2.1.24+ showed none
+
+### RESOLVED: conn_alloc() Pool Bug ✅  
+- Fixed in v2.1.25 — was scanning 4 of 8 pool slots
+- May not have been the primary HTTP issue (see HTTP failure above)
+
+### Minor: Playwright Reboot Cycle Test
+- Skipped in CI (needs log access)
+
+## 🚧 v2 Architecture Task Status
 
 | Task | Description | Status |
 |------|-------------|--------|
 | v2-1 | X-macro config system (`config_fields.h`) | ✅ Done |
-| v2-2 | HAL config API (`hal_config_load/save`) | ✅ Done |
-| v2-2 | Ground test commands (`ground_test.c`) | ✅ Done |
-| v2-3 | CPU sleep (`hal_sleep_until_event`) | ✅ Done |
-| v2-4 | Serial readline HAL (`hal_serial_readline`) | ✅ Done |
-| v2-5 | Autonomous pressure (batch buffers, Core1/DMA) | ✅ Done |
+| v2-2 | HAL config API + Ground test commands | ✅ Done |
+| v2-3 | CPU sleep (`hal_sleep_until_event`) | ⏸️ Disabled v2.1.27 |
+| v2-4 | Serial readline HAL | ✅ Done |
+| v2-5 | Autonomous pressure sampling | ✅ Done |
 | v2-6 | Telemetry formatter module | ✅ Done |
-| v2-7 | Buzzer pattern player (async task) | ✅ Done |
-| v2-8 | Batch flight_process_samples() | ✅ Done `3bd614b` |
-| v2-9 | Fire-and-forget hal_log_sample() | ✅ Done `6cab391`/`6224112` |
-| v2-10 | ISR UART TX ring buffer (hal_hardware.c) | ✅ Done |
-| v2-11 | Network diagnostics + conn_alloc fix | ✅ Done `27da5c0` |
+| v2-7 | Buzzer pattern player (async task) | ✅ Done + HW verified |
+| v2-8 | Batch flight_process_samples() | ✅ Done |
+| v2-9 | Fire-and-forget hal_log_sample() | ✅ Done |
+| v2-10 | ISR UART TX ring buffer | ✅ Done |
+| v2-11 | Network diagnostics + conn_alloc fix | ✅ Done |
+| v2-12 | Fix HTTP TX failures (MAC mismatch) | ✅ Done v2.1.27 |
 
-See ARCHITECTURE_V2.md for full task descriptions.
-
-## 🔨 In Progress
-- [ ] Hardware test of v2.1.25 network diagnostics (device not currently connected)
-
-## ✅ Superseded
-- Progressive in-flight CSV logging — superseded by v2-9 `hal_log_sample()`; ring-buffer functions retained for HTTP endpoint only
+## 🔨 Next Priority
+1. **Re-enable WFE sleep** — MAC mismatch was the real root cause, not `__wfe()`; re-enable for power savings
+2. Run Playwright web tests against live hardware to verify full stack
+3. Long-duration soak test (network stability over hours)

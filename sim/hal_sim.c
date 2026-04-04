@@ -8,6 +8,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "../src/hal.h"
+#include "../src/pressure_processing.h"
 #include "../src/config.h"
 #include <string.h>
 #include <stdio.h>
@@ -33,10 +34,6 @@ static hal_continuity_t sim_cont2 = {50, true, false, false};
 
 /* Buzzer */
 static bool sim_buzzer_on = false;
-
-/* Pressure sample override [v2-8] — declared early, used in hal_pressure_read() */
-static bool sim_pressure_override_active = false;
-static hal_pressure_t sim_pressure_override;
 
 /* Telemetry capture */
 #define SIM_TELEM_BUF 8192
@@ -118,32 +115,6 @@ uint32_t hal_time_ms(void) {
 
 int hal_pressure_init(void) {
     return sim_sensor_type;
-}
-
-bool hal_pressure_read(hal_pressure_t *out) {
-    if (sim_pressure_override_active) {
-        *out = sim_pressure_override;
-        return true;
-    }
-    if (sim_sensor_type == 0)
-        return false;
-    out->pressure_pa = sim_pressure_pa;
-    out->temperature_c = 25.0f;
-    return true;
-}
-
-/* Pressure FIFO stubs (sim uses polled mode) */
-bool hal_pressure_fifo_start(uint8_t rate_hz) {
-    (void)rate_hz;
-    return false;
-}
-bool hal_pressure_fifo_get(hal_pressure_batch_t *batch) {
-    (void)batch;
-    return false;
-}
-void hal_pressure_fifo_release(void) {}
-bool hal_pressure_fifo_active(void) {
-    return false;
 }
 
 void hal_pyro_init(void) {}
@@ -271,6 +242,10 @@ bool hal_serial_readline(char *buf, int max_len) {
 /* ── Async task runner (sim) ─────────────────────────────────────── */
 
 void hal_tasks_tick(uint32_t now_ms) {
+    /* Feed pressure_processing so detectors read altitude via pp_read(). */
+    if (sim_sensor_type > 0)
+        pp_feed((int32_t)sim_pressure_pa, now_ms);
+
     /* Drive the buzzer task so the sim produces correct buzzer audio. */
     if (sim_buzzer_task && sim_buzzer_task->tick && (int32_t)(now_ms - sim_buzzer_task->next_due_ms) >= 0) {
         sim_buzzer_task->tick(sim_buzzer_task, now_ms);
@@ -286,17 +261,6 @@ void hal_sleep_until_event(void) {
 void hal_platform_init(void) {}
 void hal_platform_service(void) {}
 void hal_firmware_commit(void) {}
-
-/* ── Pressure sample override [v2-8] ─────────────────────────────── */
-
-void hal_pressure_push_sample(const hal_pressure_t *sample) {
-    if (sample) {
-        sim_pressure_override = *sample;
-        sim_pressure_override_active = true;
-    } else {
-        sim_pressure_override_active = false;
-    }
-}
 
 /* ── In-flight data logging [v2-9] (sim: write to flight_sim.csv) ── */
 

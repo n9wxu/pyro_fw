@@ -67,7 +67,7 @@ void sim_reset(void);
 
 /* ── Outputs (read after calling sim_flight_tick) ─────────────────── */
 
-/** Current flight state: 0=BOOT_INIT..7=LANDED (see flight_states.h) */
+/** Current flight state: 0=BOOT_SETTLE..6=LANDED (see flight_states.h) */
 int sim_flight_state(void);
 
 /** Current altitude in centimeters (filtered, above ground) */

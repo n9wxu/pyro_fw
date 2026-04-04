@@ -138,12 +138,8 @@ int main() {
             last_net_ms = now;
         }
 
-        /* [v2, PWR-SLEEP-01] Sleep until the next pressure batch, serial
-         * input, or timer event.  On RP2040 this calls __wfe(); the USB
-         * and network service interrupts wake the CPU as needed.
-         * When Core1 pressure FIFO is implemented (Task 7) Core1 will
-         * send a SEV on batch-ready, keeping the CPU in WFE ~97% of
-         * the time. */
-        hal_sleep_until_event();
+        /* [v2.1.27] WFE sleep removed — suspected of starving USB NCM TX.
+         * CPU busy-loops until root cause of txf accumulation is confirmed.
+         * See STATUS.md network diagnostics section. */
     }
 }
