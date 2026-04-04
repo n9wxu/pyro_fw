@@ -1,6 +1,6 @@
 # Pyro MK1B Firmware - Current Status
 
-_Last updated: 2026-04-03 — v2.1.4 pressure oscillation fix_
+_Last updated: 2026-04-04 — v2.1.25 network diagnostics + conn_alloc fix_
 
 ## ✅ Completed
 
@@ -41,6 +41,15 @@ _Last updated: 2026-04-03 — v2.1.4 pressure oscillation fix_
 - `hal_buzzer_task_register()` added to all three HALs; hardware HAL registers into `hw_tasks[]`
 - Test and sim HALs drive the task via `hal_tasks_tick()` for full pattern testing
 - **10 unit tests**: BUZ-PAT-01..07 (tone counts, BUZ-02 repeat, chirp-once), BUZ-ACT-01..03 (lifecycle, stop, repeat)
+
+### Pressure Processing Module ✅ Done
+- `pressure_processing.h/.c` — standalone IIR filter + hypsometric altitude module
+- `pp_init()`, `pp_feed(raw_pa, now_ms)`, `pp_read(&sample)` — ring-buffered producer/consumer
+- `pp_start_cal()` / `pp_cal_sample()` / `pp_end_cal()` — boot calibration pipeline
+- `pp_test_prime(ground_pa)` — test-only helper to skip calibration
+- `pp_filter_pressure()` / `pp_pressure_to_altitude_cm()` — public utility functions
+- All detectors consume altitude via `pp_read()` — single data path from sensor to state machine
+- `hal_tasks_tick()` feeds `pp_feed()` at ~50Hz (matching real BMP280/MS5607 sample rate)
 
 ### Batch Pressure Processing (v2 Task 8) ✅ Done — commit `3bd614b`
 - `flight_process_samples(ctx, batch)` — processes a 5-sample 50Hz batch in one call
@@ -108,9 +117,9 @@ _Last updated: 2026-04-03 — v2.1.4 pressure oscillation fix_
 - `flight_states.c` wired: `telemetry_init()` at boot, `flight_update_outputs()` builds snapshot
 - `src/telemetry.c` emptied and removed from all build targets
 
-### Testing (99 C + 22 web)
-- 39 unit, 22 integration (+4 GND-TEST-01..04, +2 TEL-03..04), 15 closed-loop (+1 buzzer suite = 8 buzzer), 15 config
-- Total host test suites: host_tests (39), integration_tests (22), buzzer_tests (8), closedloop_tests (15), config_tests (15)
+### Testing (107 C + 22 web)
+- 43 unit, 22 integration (+4 GND-TEST-01..04, +2 TEL-03..04), 15 closed-loop, 12 buzzer, 15 config
+- Total host test suites: host_tests (43), integration_tests (22), buzzer_tests (12), closedloop_tests (15), config_tests (15)
 - 4 safety-critical closed-loop tests (no-fire-without-continuity, no-simultaneous-fire, no-fire-during-ascent, overcurrent-fault-detection)
 - 22 Playwright web UI tests (3 mock server modes)
 - cppcheck/MISRA, clang-format, pmccabe in CI
@@ -121,9 +130,26 @@ _Last updated: 2026-04-03 — v2.1.4 pressure oscillation fix_
 - GitHub Actions on every push
 - Auto-versioning, A/B OTA images
 
+### Network Diagnostics (v2.1.25) ✅ Done — commit `27da5c0`
+- `net_glue.c`: rx/tx/drop counters on every frame, `tud_network_init_cb()` logged
+- `http_server.c`: **Fixed `conn_alloc()` bug** — was scanning 4 of 8 pool slots; now uses all 8
+- `http_server.c`: HTTP accept counter for connection tracking
+- `hal_hardware.c`: Periodic `$PYRO` state sentences suppressed on UART (events still sent)
+- `main_hardware.c`: 10-second `NET:` health heartbeat (tud_ready, rx, drop, tx, txfail, http)
+- `main_hardware.c`: Removed pressure Pa from 2-second debug heartbeat (cleaner UART output)
+- UART output now shows: state transitions, 2s heartbeat, 10s NET stats, event telemetry only
+
 ## 🔨 Known Issues
 - [ ] Playwright reboot cycle test skipped (needs CI log access)
-- [ ] Parallel HTTP connections (6+) can drop
+- [x] **Parallel HTTP connections (6+) dropping — FIXED** — `conn_alloc()` only scanned 4 of 8 pool
+  slots. Fixed in v2.1.25 to scan all 8 slots.
+- [x] **False launch on boot (CRITICAL, FIXED)** — `filter_pressure()` integer overflow from timestamp wraparound.
+  Batch samples collected during BOOT_CAL had timestamps older than `ctx->last_sample`
+  (set at end of calibration). `dt = batch_ts - last_sample` wrapped to ~4 billion (uint32_t),
+  causing `alpha` and `step` arithmetic to overflow. Even a 7 Pa diff produced a 1.8M Pa filter
+  jump → false ASCENT transition. **Fix**: clamp `dt_ms` to 1000 in `filter_pressure()`.
+  Verified: raw sensor data was fine (`!PRES` anomaly log never fired), only the filter math overflowed.
+- [ ] Network responsiveness under load — diagnostics added in v2.1.25, awaiting hardware test
 
 ## 🚧 In Progress — v2 Architecture
 v2 refactors the firmware to autonomous hardware I/O with CPU sleep between 100ms windows.
@@ -140,12 +166,13 @@ v2 refactors the firmware to autonomous hardware I/O with CPU sleep between 100m
 | v2-7 | Buzzer pattern player (async task) | ✅ Done |
 | v2-8 | Batch flight_process_samples() | ✅ Done `3bd614b` |
 | v2-9 | Fire-and-forget hal_log_sample() | ✅ Done `6cab391`/`6224112` |
-| v2-10 | DMA UART TX ring buffer (hal_hardware.c) | 🔨 In progress |
+| v2-10 | ISR UART TX ring buffer (hal_hardware.c) | ✅ Done |
+| v2-11 | Network diagnostics + conn_alloc fix | ✅ Done `27da5c0` |
 
 See ARCHITECTURE_V2.md for full task descriptions.
 
 ## 🔨 In Progress
-- [ ] v2-10: DMA UART TX ring buffer (`hal_hardware.c`) — replace blocking `uart_puts` with ISR/DMA-driven queue
+- [ ] Hardware test of v2.1.25 network diagnostics (device not currently connected)
 
 ## ✅ Superseded
 - Progressive in-flight CSV logging — superseded by v2-9 `hal_log_sample()`; ring-buffer functions retained for HTTP endpoint only
