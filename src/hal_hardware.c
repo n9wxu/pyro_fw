@@ -147,6 +147,14 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r, uint32_t no
         p->front_ready = true;
         p->back.count = 0;
     }
+
+    /* Proof-of-life heartbeat: toggle LED every HAL_PRESSURE_BATCH_SIZE
+     * samples (50 Hz / 5 = 10 Hz toggle = ~5 Hz visible blink). */
+    static uint8_t led_n = 0;
+    if (++led_n >= HAL_PRESSURE_BATCH_SIZE) {
+        led_n = 0;
+        gpio_xor_mask(1u << 25);
+    }
 }
 
 /*
@@ -578,6 +586,14 @@ void hal_platform_init(void) {
     hal_buzzer_init();
 
     board_init();
+
+    /* Proof-of-life LED — GPIO 25 (onboard LED on Pico).
+     * Must be after board_init() which reinitializes this pin.
+     * Start ON so a lit LED confirms correct GPIO at boot. */
+    gpio_init(25);
+    gpio_set_dir(25, GPIO_OUT);
+    gpio_put(25, 1);
+
     net_mac_init();
     tud_init(BOARD_TUD_RHPORT);
     /* stdio_init_all() removed — we own uart0 exclusively for DMA-driven
