@@ -9,10 +9,14 @@ import subprocess, sys, os, time, glob
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SCRIPT_DIR)  # parent of support/
 
-# Find files relative to base directory
+# Find files relative to base directory — return the newest match by mtime
+# so that stale build_test/ or build/host/ artifacts are not picked up over
+# a freshly-built build/.
 def find(pattern):
     matches = glob.glob(os.path.join(BASE_DIR, "**", pattern), recursive=True)
-    return matches[0] if matches else None
+    if not matches:
+        return None
+    return max(matches, key=os.path.getmtime)
 
 BOOTLOADER = find("pico_fota_bootloader.uf2")
 APP_UF2 = find("pyro_fw_c.uf2")
