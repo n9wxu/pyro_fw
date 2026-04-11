@@ -55,6 +55,10 @@ bool pp_cal_done(void);
 /* Returns the ground pressure computed during calibration. */
 int32_t pp_ground_pressure(void);
 
+/* Overwrite the ground pressure reference (PAD_IDLE tracking and launch snap).
+ * Only valid while PP_RUNNING; ignored otherwise. */
+void pp_set_ground_pressure(int32_t pa);
+
 /* ── Producer: called by HAL or test code ────────────────────────── */
 
 /* Feed a raw pressure sample.  During calibration this accumulates for

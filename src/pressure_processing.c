@@ -128,6 +128,11 @@ int32_t pp_ground_pressure(void) {
     return pp.ground_pressure;
 }
 
+void pp_set_ground_pressure(int32_t pa) {
+    if (pp.state == PP_RUNNING)
+        pp.ground_pressure = pa;
+}
+
 void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
     pp.last_raw = raw_pressure_pa;
 

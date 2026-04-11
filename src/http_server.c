@@ -13,6 +13,11 @@
 #include "device_status.h"
 #include "version.h"
 
+extern void hal_telemetry_send(const char *sentence);
+#define DBG(fmt, ...) do { char _b[128]; snprintf(_b, sizeof(_b), "HTTP: " fmt "\r\n", ##__VA_ARGS__); hal_telemetry_send(_b); } while(0)
+
+extern const char *pressure_sensor_name(void);
+
 #define CORS_HDR "Access-Control-Allow-Origin: *\r\n"
 
 extern const struct lfs_config lfs_pico_flash_config;
@@ -169,14 +174,16 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         "\"armed\":%s,\"flight_ms\":%lu,\"uptime\":%lu,\"fw_version\":\"%s\","
         "\"pyro1_mode\":\"%s\",\"pyro1_value\":%u,"
         "\"pyro2_mode\":\"%s\",\"pyro2_value\":%u,"
-        "\"units\":%u,\"rocket_id\":\"%.8s\",\"rocket_name\":\"%.8s\"}",
+        "\"units\":%u,\"rocket_id\":\"%.8s\",\"rocket_name\":\"%.8s\","
+        "\"sensor\":\"%s\"}",
         sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
         (long)g_status.pressure_pa, g_status.pyro1_continuity ? "true" : "false",
         g_status.pyro2_continuity ? "true" : "false", (unsigned)g_status.pyro1_adc, (unsigned)g_status.pyro2_adc,
         g_status.pyro1_fired ? "true" : "false", g_status.pyro2_fired ? "true" : "false",
         g_status.pyros_armed ? "true" : "false", (unsigned long)g_status.flight_time_ms,
         (unsigned long)to_ms_since_boot(get_absolute_time()), FW_VERSION, p1m, (unsigned)g_status.pyro1_value, p2m,
-        (unsigned)g_status.pyro2_value, (unsigned)g_status.units, g_status.rocket_id, g_status.rocket_name);
+        (unsigned)g_status.pyro2_value, (unsigned)g_status.units, g_status.rocket_id, g_status.rocket_name,
+        pressure_sensor_name());
     tcp_write(pcb, buf, pos, TCP_WRITE_FLAG_COPY);
 }
 
@@ -286,6 +293,7 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
         pbuf_free(p);
 
         if (cs->remaining == 0) {
+            DBG("POST %s done (multi pkt)", cs->path);
             conn_free(cs);
             const char *resp = "HTTP/1.1 201 Created\r\nConnection: close\r\n\r\nOK";
             tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
@@ -483,14 +491,18 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             return ERR_OK;
 
         } else if (strncmp(path, "/www/", 5) == 0 && content_length > 0) {
+            DBG("POST %s cl=%lu body_in_first=%u", path, (unsigned long)content_length, (unsigned)body_in_first);
             cs = conn_alloc();
             if (!cs) {
+                DBG("POST %s FAIL conn_alloc (pool full)", path);
                 pbuf_free(p);
                 tcp_close(pcb);
                 return ERR_OK;
             }
 
-            if (lfs_mount(&cs->lfs, &lfs_pico_flash_config) != LFS_ERR_OK) {
+            int mnt_err = lfs_mount(&cs->lfs, &lfs_pico_flash_config);
+            if (mnt_err != LFS_ERR_OK) {
+                DBG("POST %s FAIL lfs_mount err=%d", path, mnt_err);
                 conn_free(cs);
                 pbuf_free(p);
                 tcp_close(pcb);
@@ -499,7 +511,9 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             cs->lfs_mounted = true;
             lfs_mkdir(&cs->lfs, "/www");
 
-            if (lfs_file_open(&cs->lfs, &cs->file, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) != LFS_ERR_OK) {
+            int open_err = lfs_file_open(&cs->lfs, &cs->file, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
+            if (open_err != LFS_ERR_OK) {
+                DBG("POST %s FAIL lfs_file_open err=%d", path, open_err);
                 conn_free(cs);
                 pbuf_free(p);
                 tcp_close(pcb);
@@ -508,7 +522,10 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             cs->file_open = true;
             cs->phase = CONN_RECEIVING_FILE;
             cs->remaining = content_length;
+            strncpy(cs->path, path, sizeof(cs->path) - 1);
+            cs->path[sizeof(cs->path) - 1] = '\0';
             tcp_arg(pcb, cs);
+            DBG("POST %s open ok remaining=%lu", path, (unsigned long)cs->remaining);
 
             /* Write body data from first packet */
             if (body_in_first > 0) {
@@ -529,6 +546,7 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             pbuf_free(p);
 
             if (cs->remaining == 0) {
+                DBG("POST %s done (single pkt)", path);
                 conn_free(cs);
                 const char *resp = "HTTP/1.1 201 Created\r\nConnection: close\r\n\r\nOK";
                 tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);

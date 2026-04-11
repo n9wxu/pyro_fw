@@ -254,6 +254,30 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
         ctx->pad_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
 
     ctx->filtered_pressure = pp_last_filtered_pa(); /* for telemetry/debug */
+
+    /* [GND-CAL-01] Continuously track atmospheric drift so altitude stays
+     * near zero during extended pad time.  Uses a first-order IIR with
+     * τ = 60 s.  A sub-Pa accumulator (units: Pa × 1000) prevents the
+     * integer step from rounding to zero on each 20 ms tick.
+     *
+     *   α = dt_ms / (60000 + dt_ms)   ≈ 3.33 × 10⁻⁴ at 50 Hz
+     *   step_acc += diff × α × 1000   (diff in Pa, acc in mPa)
+     *   ground_pressure += acc / 1000  when ≥ 1 Pa accumulated */
+    {
+        int32_t gnd = pp_ground_pressure();
+        int32_t gnd_diff = ctx->filtered_pressure - gnd;
+        /* alpha scaled by 1,000,000: α×1e6 = dt×1e6 / (60000+dt) */
+        int32_t alpha_ppm = ((int32_t)dt * 1000000) / (60000 + (int32_t)dt);
+        /* Accumulate in mPa (Pa × 1000) */
+        ctx->gnd_track_acc += (gnd_diff * alpha_ppm) / 1000;
+        int32_t apply = ctx->gnd_track_acc / 1000;
+        if (apply != 0) {
+            pp_set_ground_pressure(gnd + apply);
+            ctx->ground_pressure = pp_ground_pressure();
+            ctx->gnd_track_acc -= apply * 1000;
+        }
+    }
+
     buf_add(ctx, 0, ctx->filtered_pressure, altitude, PAD_IDLE);
     ctx->last_altitude = altitude;
     ctx->last_sample = ts;
@@ -423,11 +447,19 @@ static void action_launch(flight_context_t *ctx, uint32_t now) {
             break;
         }
     }
+    /* [GND-CAL-02] Snap ground pressure to the current filtered pressure so
+     * T+0 altitude is exactly 0 cm regardless of any residual tracker error.
+     * ctx->ground_pressure (written to the log header) now records the true
+     * atmospheric pressure at the moment of launch. */
+    pp_set_ground_pressure(ctx->filtered_pressure);
+    ctx->ground_pressure = ctx->filtered_pressure;
+    ctx->last_altitude = 0;
+
     /* v2-9: start log BEFORE tagging — LAUNCH sample is PAD_IDLE state
      * (below the >= ASCENT guard in buf_tag_event), so emit it directly.
      * time_ms = 0 = T+0 relative to launch. */
     hal_log_start(&ctx->config, ctx->ground_pressure);
-    hal_log_sample(0, ctx->filtered_pressure, ctx->last_altitude, ASCENT, 0, EVT_LAUNCH);
+    hal_log_sample(0, ctx->filtered_pressure, 0, ASCENT, 0, EVT_LAUNCH);
     buf_tag_event(ctx, EVT_LAUNCH); /* tags ring buffer for flight_save_csv() */
 }
 

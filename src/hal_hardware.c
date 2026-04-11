@@ -12,7 +12,6 @@
 #include "hardware/adc.h"
 #include "hardware/uart.h"
 #include "hardware/irq.h"
-#include "hardware/dma.h"
 #include "hardware/i2c.h"
 #include "tusb.h"
 #include "bsp/board_api.h"
@@ -344,63 +343,45 @@ void hal_buzzer_task_register(async_task_t *task) {
     hw_task_register(task);
 }
 
-/* ── UART TX DMA (v2-11) ─────────────────────────────────────────── */
+/* ── UART TX ring buffer (v2-10) ──────────────────────────────────── */
 /*
- * DMA-driven UART0 TX.  hal_telemetry_send() copies a complete message
- * into the next free slot in a circular pool of 256-byte buffers.  The
- * DMA channel transfers one buffer at a time to the PL011 TX FIFO via
- * DREQ_UART0_TX pacing.  Zero CPU during transfer; a trivial DMA-done
- * IRQ advances the tail pointer and kicks the next queued message.
+ * ISR-driven UART0 TX.  hal_telemetry_send() copies bytes into a 512-byte
+ * circular buffer and re-arms the UART0 TX interrupt.  The ISR drains the
+ * ring into the PL011 TX FIFO on each TX-FIFO-half-empty event.
  *
- * Telemetry is best-effort: if all 8 slots are occupied the message is
- * silently dropped.
+ * Telemetry is best-effort: if the ring is full, remaining bytes are dropped.
  *
  * RX is unchanged: hal_serial_readline() polls the RX FIFO directly.
  */
 
-#define TX_MSG_SIZE 256 /* max formatted sentence (lwip_uart_printf) */
-#define TX_MSG_COUNT 8  /* 8 × 256 = 2 KB total pool               */
-#define TX_MSG_MASK (TX_MSG_COUNT - 1)
+#define UART_TX_BUF_SIZE 512
+#define UART_TX_BUF_MASK (UART_TX_BUF_SIZE - 1)
 
-typedef struct {
-    char data[TX_MSG_SIZE];
-    uint16_t len;
-} tx_msg_t;
+static volatile uint8_t uart_tx_buf[UART_TX_BUF_SIZE];
+static volatile int uart_tx_head = 0;
+static volatile int uart_tx_tail = 0;
 
-static tx_msg_t tx_pool[TX_MSG_COUNT];
-static volatile int tx_q_head = 0; /* producer (main loop) */
-static volatile int tx_q_tail = 0; /* consumer (DMA IRQ)   */
-static int dma_uart_chan = -1;
-
-/* Start DMA transfer for the front message in the queue. */
-static void uart_dma_kick(void) {
-    if (tx_q_tail == tx_q_head)
-        return; /* queue empty */
-    tx_msg_t *m = &tx_pool[tx_q_tail & TX_MSG_MASK];
-    dma_channel_set_read_addr(dma_uart_chan, m->data, false);
-    dma_channel_set_trans_count(dma_uart_chan, m->len, true); /* start */
+static void uart_tx_drain_isr(void) {
+    while (uart_is_writable(uart0)) {
+        int t = uart_tx_tail;
+        if (t == uart_tx_head)
+            break;
+        uart_get_hw(uart0)->dr = uart_tx_buf[t];
+        uart_tx_tail = (t + 1) & UART_TX_BUF_MASK;
+    }
+    if (uart_tx_tail == uart_tx_head)
+        hw_clear_bits(&uart_get_hw(uart0)->imsc, UART_UARTIMSC_TXIM_BITS);
 }
 
-/* DMA IRQ: message transfer complete — advance tail, kick next. */
-static void uart_dma_irq(void) {
-    dma_hw->ints0 = 1u << dma_uart_chan; /* ack interrupt   */
-    tx_q_tail++;                         /* release buffer  */
-    uart_dma_kick();                     /* next message    */
+static void uart0_irq_handler(void) {
+    if (uart_get_hw(uart0)->mis & UART_UARTMIS_TXMIS_BITS)
+        uart_tx_drain_isr();
 }
 
-/* One-time DMA channel setup.  Called from hal_platform_init(). */
-static void uart_dma_init(void) {
-    dma_uart_chan = dma_claim_unused_channel(true);
-    dma_channel_config c = dma_channel_get_default_config(dma_uart_chan);
-    channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
-    channel_config_set_dreq(&c, DREQ_UART0_TX);
-    channel_config_set_read_increment(&c, true);
-    channel_config_set_write_increment(&c, false);
-    dma_channel_configure(dma_uart_chan, &c, &uart_get_hw(uart0)->dr, /* write: PL011 DR */
-                          NULL, 0, false);                            /* read/count per-transfer */
-    irq_set_exclusive_handler(DMA_IRQ_0, uart_dma_irq);
-    irq_set_enabled(DMA_IRQ_0, true);
-    dma_channel_set_irq0_enabled(dma_uart_chan, true);
+static void uart_tx_ring_init(void) {
+    irq_set_exclusive_handler(UART0_IRQ, uart0_irq_handler);
+    irq_set_enabled(UART0_IRQ, true);
+    hw_clear_bits(&uart_get_hw(uart0)->imsc, UART_UARTIMSC_TXIM_BITS);
 }
 
 /* ── Telemetry ────────────────────────────────────────────────────── */
@@ -408,21 +389,29 @@ static void uart_dma_init(void) {
 void hal_telemetry_send(const char *sentence) {
     if (!sentence)
         return;
-    int next = (tx_q_head + 1);
-    if ((next & TX_MSG_MASK) == (tx_q_tail & TX_MSG_MASK))
-        return; /* queue full — drop message */
 
-    tx_msg_t *m = &tx_pool[tx_q_head & TX_MSG_MASK];
-    int n = (int)strlen(sentence);
-    if (n > TX_MSG_SIZE)
-        n = TX_MSG_SIZE;
-    memcpy(m->data, sentence, n);
-    m->len = (uint16_t)n;
-    tx_q_head = next;
+    /* Check if ring was empty before adding new data */
+    bool was_empty = (uart_tx_head == uart_tx_tail);
 
-    /* If DMA is idle, kick the transfer now. */
-    if (!dma_channel_is_busy(dma_uart_chan))
-        uart_dma_kick();
+    for (const char *p = sentence; *p; p++) {
+        int next = (uart_tx_head + 1) & UART_TX_BUF_MASK;
+        if (next == uart_tx_tail)
+            break; /* ring full — drop */
+        uart_tx_buf[uart_tx_head] = (uint8_t)*p;
+        uart_tx_head = next;
+    }
+
+    /* If ring was empty, manually prime the UART FIFO to trigger first interrupt */
+    if (was_empty && uart_tx_head != uart_tx_tail) {
+        while (uart_is_writable(uart0) && uart_tx_tail != uart_tx_head) {
+            uart_get_hw(uart0)->dr = uart_tx_buf[uart_tx_tail];
+            uart_tx_tail = (uart_tx_tail + 1) & UART_TX_BUF_MASK;
+        }
+    }
+
+    /* Enable TX interrupt to continue draining ring buffer */
+    if (uart_tx_head != uart_tx_tail)
+        hw_set_bits(&uart_get_hw(uart0)->imsc, UART_UARTIMSC_TXIM_BITS);
 }
 
 /* ── Filesystem ───────────────────────────────────────────────────── */
@@ -596,13 +585,13 @@ void hal_platform_init(void) {
 
     net_mac_init();
     tud_init(BOARD_TUD_RHPORT);
-    /* stdio_init_all() removed — we own uart0 exclusively for DMA-driven
+    /* stdio_init_all() removed — we own uart0 exclusively for ISR-driven
      * telemetry TX and ground-test RX.  No SDK stdio drivers needed. */
 
     uart_init(uart0, 115200);
     gpio_set_function(0, GPIO_FUNC_UART);
     gpio_set_function(1, GPIO_FUNC_UART);
-    uart_dma_init(); /* v2-11: DMA-driven TX via DREQ_UART0_TX */
+    uart_tx_ring_init(); /* v2-10: non-blocking TX via ISR ring buffer */
 
     adc_gpio_init(26);
     adc_gpio_init(27);
@@ -610,6 +599,9 @@ void hal_platform_init(void) {
     net_init();
     net_start();
     http_server_init();
+
+    /* Format/mount littlefs once at boot so HTTP file uploads work */
+    hal_fs_mount();
 
     pfb_firmware_commit();
 

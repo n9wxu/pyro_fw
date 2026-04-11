@@ -149,10 +149,15 @@ def main():
             shutil.copy2(APP_UF2, pico_drive)
             print("   Done. Device will reboot.")
 
-            if wait_for_device(HOST) and WWW_DIR:
+            came_up = wait_for_device(HOST, timeout=60)
+            if came_up and WWW_DIR:
                 print("\n5. Uploading web files...")
                 upload_www(HOST, WWW_DIR)
-            print("\n✓ Installation complete!")
+                print("\n✓ Installation complete!")
+            elif came_up:
+                print("\n✓ Firmware installed (no web files found).")
+            else:
+                print("\n  Web files NOT uploaded — run option 2 once the device is reachable.")
             return
 
         # choice == "2" falls through to picotool below
@@ -166,10 +171,15 @@ def main():
         curl_post(f"http://{HOST}/api/ota", FOTA_BIN)
         print("  Firmware uploaded, device rebooting...")
         time.sleep(3)
-        if wait_for_device(HOST) and WWW_DIR:
+        came_up = wait_for_device(HOST, timeout=60)
+        if came_up and WWW_DIR:
             print("\nUploading web files...")
             upload_www(HOST, WWW_DIR)
-        print("\n✓ Update complete!")
+            print("\n✓ Update complete!")
+        elif came_up:
+            print("\n✓ Firmware updated (no web files found).")
+        else:
+            print("\n  Web files NOT uploaded — run option 2 once the device is reachable.")
         return
 
     # Web files only
@@ -195,9 +205,11 @@ def main():
             print("Error: UF2 files not found"); return
 
         print(f"\nFlashing via picotool...")
-        if device_up:
-            print("  Forcing BOOTSEL...")
-            run([picotool, "reboot", "-u", "-f", "--vid", "0x2E8A", "--pid", "0x4002"])
+        print("  Forcing BOOTSEL...")
+        out, rc = run([picotool, "reboot", "-u", "-f", "--vid", "0x2E8A", "--pid", "0x4002"])
+        if rc != 0:
+            input("  picotool couldn't reach device — hold BOOTSEL, plug in USB, then press Enter...")
+        else:
             time.sleep(2)
 
         print("  Loading bootloader...")
@@ -213,10 +225,15 @@ def main():
         print("  Rebooting...")
         run([picotool, "reboot"])
 
-        if wait_for_device(HOST) and WWW_DIR:
+        came_up = wait_for_device(HOST, timeout=60)
+        if came_up and WWW_DIR:
             print("\nUploading web files...")
             upload_www(HOST, WWW_DIR)
-        print("\n✓ Installation complete!")
+            print("\n✓ Installation complete!")
+        elif came_up:
+            print("\n✓ Firmware installed (no web files found).")
+        else:
+            print("\n  Web files NOT uploaded — run option 2 once the device is reachable.")
         return
 
     if choice == "4":

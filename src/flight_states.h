@@ -134,6 +134,7 @@ typedef struct flight_context_t {
     uint32_t armed_time;         // when pyros were armed (for backup timer)
     uint32_t descent_start_time; // when DESCENT started (for landing timeout)
     int32_t pad_speed_cms;       // vertical speed during PAD_IDLE (for launch confirm)
+    int32_t gnd_track_acc;      // sub-Pa accumulator for PAD_IDLE ground pressure tracking
     int32_t last_raw_pressure;   // raw sensor Pa before IIR filter (for debug)
     // Last continuity status beep code [GND-TEST-01]
     uint8_t last_status_code;

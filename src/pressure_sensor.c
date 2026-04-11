@@ -26,7 +26,7 @@ static void release_i2c_pin(uint pin) {
 }
 
 pressure_sensor_type_t pressure_sensor_init(void) {
-    i2c_init(i2c1, 400000);
+    i2c_init(i2c1, 100000);
 
     configure_i2c_pins(BMP280_SDA);
     if (bmp280_detect()) {
