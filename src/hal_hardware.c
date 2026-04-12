@@ -605,7 +605,9 @@ void hal_platform_init(void) {
 
     pfb_firmware_commit();
 
-    i2c_deinit(i2c1);
+    /* i2c_deinit(i2c1); — REMOVED: this was disabling I2C before
+     * pressure_sensor_init() could detect sensors. I2C is initialized
+     * later in pressure_sensor_init() when the sensor type is detected. */
 }
 
 void hal_platform_service(void) {
