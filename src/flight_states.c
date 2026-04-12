@@ -413,7 +413,9 @@ static state_event_t detect_landed(flight_context_t *ctx, uint32_t now) {
         return SEVT_NONE;
     /* Landed: just log occasional samples for telemetry */
     ctx->filtered_pressure = pp_last_filtered_pa();
-    buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, sample.altitude_cm, LANDED);
+    /* Only add to ring buffer every 1 second to prevent overwriting events */
+    if (now - ctx->last_sample >= 1000)
+        buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, sample.altitude_cm, LANDED);
     ctx->last_altitude = sample.altitude_cm;
     ctx->last_sample = sample.timestamp_ms;
     return SEVT_NONE;
