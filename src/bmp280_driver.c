@@ -63,14 +63,24 @@ static bool bmp280_read_calibration(void) {
 }
 
 bool bmp280_detect(void) {
+    /* Instrumentation: log I2C attempt to detect early hangs */
+    extern void hal_telemetry_send(const char *sentence);
+    char buf[64];
+
     // Try both possible addresses
     for (uint8_t addr = BMP280_ADDR_SDO_LOW; addr <= BMP280_ADDR_SDO_HIGH; addr++) {
         bmp280_addr = addr;
+        snprintf(buf, sizeof(buf), "!BMP280 try addr=0x%02X\r\n", addr);
+        hal_telemetry_send(buf);
 
         uint8_t chip_id;
         if (bmp280_read_reg(BMP280_REG_ID, &chip_id, 1)) {
+            snprintf(buf, sizeof(buf), "!BMP280 id=0x%02X (expect 0x58)\r\n", chip_id);
+            hal_telemetry_send(buf);
+
             if (chip_id == BMP280_CHIP_ID) {
                 // Read calibration data
+                hal_telemetry_send("!BMP280 reading calibration\r\n");
                 if (bmp280_read_calibration()) {
                     /* Configure: normal mode, osrs_t=x1(001), osrs_p=x4(011)
                      * 0x2F = 001_011_11 → T_meas ≈ 13.3ms → ~72Hz
@@ -78,12 +88,19 @@ bool bmp280_detect(void) {
                      * (0xB7 / x16 oversampling gives only ~13Hz — stale on 3/4 reads) */
                     bmp280_write_reg(BMP280_REG_CTRL_MEAS, 0x2F);
                     bmp280_write_reg(BMP280_REG_CONFIG, 0x00);
+                    hal_telemetry_send("!BMP280 detect OK\r\n");
                     return true;
+                } else {
+                    hal_telemetry_send("!BMP280 calib fail\r\n");
                 }
             }
+        } else {
+            snprintf(buf, sizeof(buf), "!BMP280 no response at 0x%02X\r\n", addr);
+            hal_telemetry_send(buf);
         }
     }
 
+    hal_telemetry_send("!BMP280 detect FAIL\r\n");
     return false;
 }
 

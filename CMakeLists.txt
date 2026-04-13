@@ -317,3 +317,25 @@ add_custom_target(config_tests
     COMMENT "Config module tests (round-trip, parser, serializer)"
 )
 
+add_custom_target(config_persistence_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building config persistence tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/test
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_config_persistence.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -lm
+               -o ${CMAKE_BINARY_DIR}/test_config_persistence
+    COMMAND ${CMAKE_COMMAND} -E echo "Running config persistence tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_config_persistence
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Config persistence and runtime reload tests"
+)
+

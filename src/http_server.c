@@ -12,9 +12,15 @@
 #include <pico_fota_bootloader/core.h>
 #include "device_status.h"
 #include "version.h"
+#include "flight_states.h"
 
 extern void hal_telemetry_send(const char *sentence);
-#define DBG(fmt, ...) do { char _b[128]; snprintf(_b, sizeof(_b), "HTTP: " fmt "\r\n", ##__VA_ARGS__); hal_telemetry_send(_b); } while(0)
+#define DBG(fmt, ...)                                                                                                  \
+    do {                                                                                                               \
+        char _b[128];                                                                                                  \
+        snprintf(_b, sizeof(_b), "HTTP: " fmt "\r\n", ##__VA_ARGS__);                                                  \
+        hal_telemetry_send(_b);                                                                                        \
+    } while (0)
 
 extern const char *pressure_sensor_name(void);
 
@@ -163,27 +169,27 @@ static void serve_api_status(struct tcp_pcb *pcb) {
     static const char *mode_names[] = {"none", "fallen", "agl", "speed", "delay"};
     const char *p1m = (g_status.pyro1_mode < 5) ? mode_names[g_status.pyro1_mode] : "?";
     const char *p2m = (g_status.pyro2_mode < 5) ? mode_names[g_status.pyro2_mode] : "?";
-    int pos = snprintf(
-        buf, sizeof(buf),
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" CORS_HDR "Connection: close\r\n\r\n"
-        "{\"state\":\"%s\",\"alt_cm\":%ld,\"max_alt_cm\":%ld,"
-        "\"vspeed_cms\":%ld,\"pressure_pa\":%ld,"
-        "\"pyro1_cont\":%s,\"pyro2_cont\":%s,"
-        "\"pyro1_adc\":%u,\"pyro2_adc\":%u,"
-        "\"pyro1_fired\":%s,\"pyro2_fired\":%s,"
-        "\"armed\":%s,\"flight_ms\":%lu,\"uptime\":%lu,\"fw_version\":\"%s\","
-        "\"pyro1_mode\":\"%s\",\"pyro1_value\":%u,"
-        "\"pyro2_mode\":\"%s\",\"pyro2_value\":%u,"
-        "\"units\":%u,\"rocket_id\":\"%.8s\",\"rocket_name\":\"%.8s\","
-        "\"sensor\":\"%s\"}",
-        sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
-        (long)g_status.pressure_pa, g_status.pyro1_continuity ? "true" : "false",
-        g_status.pyro2_continuity ? "true" : "false", (unsigned)g_status.pyro1_adc, (unsigned)g_status.pyro2_adc,
-        g_status.pyro1_fired ? "true" : "false", g_status.pyro2_fired ? "true" : "false",
-        g_status.pyros_armed ? "true" : "false", (unsigned long)g_status.flight_time_ms,
-        (unsigned long)to_ms_since_boot(get_absolute_time()), FW_VERSION, p1m, (unsigned)g_status.pyro1_value, p2m,
-        (unsigned)g_status.pyro2_value, (unsigned)g_status.units, g_status.rocket_id, g_status.rocket_name,
-        pressure_sensor_name());
+    int pos =
+        snprintf(buf, sizeof(buf),
+                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" CORS_HDR "Connection: close\r\n\r\n"
+                 "{\"state\":\"%s\",\"alt_cm\":%ld,\"max_alt_cm\":%ld,"
+                 "\"vspeed_cms\":%ld,\"pressure_pa\":%ld,"
+                 "\"pyro1_cont\":%s,\"pyro2_cont\":%s,"
+                 "\"pyro1_adc\":%u,\"pyro2_adc\":%u,"
+                 "\"pyro1_fired\":%s,\"pyro2_fired\":%s,"
+                 "\"armed\":%s,\"flight_ms\":%lu,\"uptime\":%lu,\"fw_version\":\"%s\","
+                 "\"pyro1_mode\":\"%s\",\"pyro1_value\":%u,"
+                 "\"pyro2_mode\":\"%s\",\"pyro2_value\":%u,"
+                 "\"units\":%u,\"rocket_id\":\"%.8s\",\"rocket_name\":\"%.8s\","
+                 "\"sensor\":\"%s\"}",
+                 sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
+                 (long)g_status.pressure_pa, g_status.pyro1_continuity ? "true" : "false",
+                 g_status.pyro2_continuity ? "true" : "false", (unsigned)g_status.pyro1_adc,
+                 (unsigned)g_status.pyro2_adc, g_status.pyro1_fired ? "true" : "false",
+                 g_status.pyro2_fired ? "true" : "false", g_status.pyros_armed ? "true" : "false",
+                 (unsigned long)g_status.flight_time_ms, (unsigned long)to_ms_since_boot(get_absolute_time()),
+                 FW_VERSION, p1m, (unsigned)g_status.pyro1_value, p2m, (unsigned)g_status.pyro2_value,
+                 (unsigned)g_status.units, g_status.rocket_id, g_status.rocket_name, pressure_sensor_name());
     tcp_write(pcb, buf, pos, TCP_WRITE_FLAG_COPY);
 }
 
@@ -557,27 +563,57 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             return ERR_OK;
 
         } else if (strcmp(path, "/api/config") == 0 && content_length > 0 && content_length < 512) {
-            /* Write config.ini to littlefs */
+            /* Config update with state-based safety check */
             char cfgbuf[512];
             uint16_t len = (body_in_first < content_length) ? body_in_first : content_length;
             pbuf_copy_partial(p, cfgbuf, len, body_offset);
             pbuf_free(p);
             cfgbuf[len] = '\0';
 
-            lfs_t lfs;
+            /* Check if we're in a safe state for config changes */
+            extern flight_state_t flight_get_state(void);
+            extern flight_context_t *flight_get_context(void);
+            extern int flight_config_reload(flight_context_t *);
+            flight_state_t state = flight_get_state();
+
             const char *resp;
-            if (lfs_mount(&lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
-                lfs_file_t f;
-                if (lfs_file_open(&lfs, &f, "config.ini", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) == LFS_ERR_OK) {
-                    lfs_file_write(&lfs, &f, cfgbuf, len);
-                    lfs_file_close(&lfs, &f);
-                    resp = "HTTP/1.1 201 Created\r\n" CORS_HDR "Connection: close\r\n\r\nOK";
-                } else {
-                    resp = "HTTP/1.1 500 Error\r\nConnection: close\r\n\r\nFile open failed";
-                }
-                lfs_unmount(&lfs);
+            if (state != PAD_IDLE) {
+                /* Reject config changes during flight */
+                resp = "HTTP/1.1 409 Conflict\r\n" CORS_HDR "Connection: close\r\n"
+                       "Content-Type: application/json\r\n\r\n"
+                       "{\"error\":\"Cannot change config during flight\","
+                       "\"state\":\"in_flight\",\"reboot_required\":true}";
             } else {
-                resp = "HTTP/1.1 500 Error\r\nConnection: close\r\n\r\nMount failed";
+                /* Safe to update: write to flash and reload */
+                lfs_t lfs;
+                if (lfs_mount(&lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
+                    lfs_file_t f;
+                    if (lfs_file_open(&lfs, &f, "config.ini", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) == LFS_ERR_OK) {
+                        lfs_file_write(&lfs, &f, cfgbuf, len);
+                        lfs_file_close(&lfs, &f);
+                        lfs_unmount(&lfs);
+
+                        /* Reload config into running system */
+                        flight_context_t *ctx = flight_get_context();
+                        int reload_result = flight_config_reload(ctx);
+
+                        if (reload_result == 0) {
+                            resp = "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
+                                   "Content-Type: application/json\r\n\r\n"
+                                   "{\"status\":\"ok\",\"applied\":true}";
+                        } else {
+                            resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n"
+                                   "Content-Type: application/json\r\n\r\n"
+                                   "{\"error\":\"Config saved but reload failed\","
+                                   "\"reboot_required\":true}";
+                        }
+                    } else {
+                        lfs_unmount(&lfs);
+                        resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n\r\nFile open failed";
+                    }
+                } else {
+                    resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n\r\nMount failed";
+                }
             }
             tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
         } else if (strcmp(path, "/api/reboot") == 0) {

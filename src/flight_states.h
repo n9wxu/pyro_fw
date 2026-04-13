@@ -134,7 +134,7 @@ typedef struct flight_context_t {
     uint32_t armed_time;         // when pyros were armed (for backup timer)
     uint32_t descent_start_time; // when DESCENT started (for landing timeout)
     int32_t pad_speed_cms;       // vertical speed during PAD_IDLE (for launch confirm)
-    int32_t gnd_track_acc;      // sub-Pa accumulator for PAD_IDLE ground pressure tracking
+    int32_t gnd_track_acc;       // sub-Pa accumulator for PAD_IDLE ground pressure tracking
     int32_t last_raw_pressure;   // raw sensor Pa before IIR filter (for debug)
     // Last continuity status beep code [GND-TEST-01]
     uint8_t last_status_code;
@@ -158,5 +158,25 @@ void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm
 
 // Helpers used by state functions
 void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t altitude, uint8_t st);
+
+/* ── Config reload (runtime config update) ────────────────────────── */
+
+/* Reload configuration from persistent storage into the flight context.
+ * Only allowed in PAD_IDLE state for safety.
+ * Returns:
+ *   0 on success (config reloaded and applied)
+ *  -1 if not in PAD_IDLE state (rejected for safety)
+ *  -2 if config load failed (file missing or corrupted)
+ *  -3 if config validation failed (invalid field values)
+ */
+int flight_config_reload(flight_context_t *ctx);
+
+/* Get the global flight context pointer (for HTTP server access).
+ * Returns NULL if flight_init() hasn't been called yet. */
+flight_context_t *flight_get_context(void);
+
+/* Get the current flight state (for HTTP server safety checks).
+ * Returns BOOT_SETTLE if flight_init() hasn't been called yet. */
+flight_state_t flight_get_state(void);
 
 #endif

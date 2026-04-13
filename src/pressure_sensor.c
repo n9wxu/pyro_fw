@@ -1,6 +1,7 @@
 #include "pressure_sensor.h"
 #include "hardware/i2c.h"
 #include "hardware/gpio.h"
+#include "hardware/resets.h"
 #include "pico/stdlib.h"
 #include <stdio.h>
 
@@ -30,12 +31,77 @@ pressure_sensor_type_t pressure_sensor_init(void) {
     extern void hal_telemetry_send(const char *sentence);
 
     hal_telemetry_send("!PRES sensor init start\r\n");
-    i2c_init(i2c1, 100000);
-    sleep_ms(10); /* Allow I2C bus to stabilize after init */
 
+    /* I2C bus recovery: manually clock out any stuck transactions.
+     * After CPU reset, sensor chips remain powered and may be stuck
+     * mid-transaction with SDA held low. Standard recovery is to
+     * clock out 9 SCL pulses to reset the slave device's I2C state. */
+
+    /* Hard reset I2C1 peripheral using RP2040 reset controller */
+    reset_block(RESETS_RESET_I2C1_BITS);
+    unreset_block_wait(RESETS_RESET_I2C1_BITS);
+
+    /* Configure SCL as GPIO output to manually clock the bus */
+    gpio_init(I2C_SCL_PIN);
+    gpio_set_dir(I2C_SCL_PIN, GPIO_OUT);
+    gpio_put(I2C_SCL_PIN, 1);
+
+    /* Configure both SDA pins as GPIO inputs with pull-ups */
+    gpio_init(BMP280_SDA);
+    gpio_set_dir(BMP280_SDA, GPIO_IN);
+    gpio_pull_up(BMP280_SDA);
+
+    gpio_init(MS5607_SDA);
+    gpio_set_dir(MS5607_SDA, GPIO_IN);
+    gpio_pull_up(MS5607_SDA);
+
+    sleep_ms(1);
+
+    /* Clock out 9 pulses on SCL to reset any stuck I2C slave state */
+    for (int i = 0; i < 9; i++) {
+        gpio_put(I2C_SCL_PIN, 0);
+        sleep_us(10);
+        gpio_put(I2C_SCL_PIN, 1);
+        sleep_us(10);
+    }
+
+    /* Send I2C STOP condition (SDA low->high while SCL is high) */
+    gpio_init(BMP280_SDA);
+    gpio_set_dir(BMP280_SDA, GPIO_OUT);
+    gpio_put(BMP280_SDA, 0);
+    sleep_us(10);
+    gpio_put(BMP280_SDA, 1);
+    sleep_us(10);
+
+    /* Reset SCL back to input mode to avoid glitches during I2C init */
+    gpio_set_dir(I2C_SCL_PIN, GPIO_IN);
+    gpio_pull_up(I2C_SCL_PIN);
+
+    /* Reset SDA back to input mode */
+    gpio_set_dir(BMP280_SDA, GPIO_IN);
+    gpio_pull_up(BMP280_SDA);
+
+    sleep_ms(1);
+
+    hal_telemetry_send("!PRES bus recovery done\r\n");
+
+    /* Now initialize I2C peripheral normally */
+    i2c_init(i2c1, 100000);
+    sleep_ms(10);
+
+    /* Try to send software reset to BMP280 before detection.
+     * Write 0xB6 to register 0xE0 triggers complete power-on-reset.
+     * This resets the sensor's internal state machine. */
     hal_telemetry_send("!PRES trying BMP280 (SDA=6)\r\n");
     configure_i2c_pins(BMP280_SDA);
     sleep_ms(10); /* Allow GPIO/pull-ups to stabilize */
+
+    /* Attempt BMP280 software reset (may fail if sensor not present) */
+    uint8_t reset_cmd[2] = {0xE0, 0xB6};                 /* Register 0xE0, reset value 0xB6 */
+    i2c_write_blocking(i2c1, 0x76, reset_cmd, 2, false); /* Try addr 0x76 */
+    i2c_write_blocking(i2c1, 0x77, reset_cmd, 2, false); /* Try addr 0x77 */
+    sleep_ms(10);                                        /* Wait for reset to complete (datasheet: 2ms typical) */
+    hal_telemetry_send("!PRES sent BMP280 reset command\r\n");
     if (bmp280_detect()) {
         detected_sensor = PRESSURE_SENSOR_BMP280;
         hal_telemetry_send("!PRES init OK: BMP280\r\n");

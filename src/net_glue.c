@@ -19,6 +19,9 @@
 static struct netif netif_data;
 static struct pbuf *received_frame;
 
+/* USB mount delay - give host time to configure ECM interface */
+static volatile uint32_t mount_delay_until_ms = 0;
+
 /* ── Network diagnostic counters (read by main_hardware.c) ────────── */
 volatile uint32_t net_rx_count;
 volatile uint32_t net_rx_drop;
@@ -60,19 +63,38 @@ void net_mac_init(void) {}
  * the common case. */
 static err_t linkoutput_fn(struct netif *netif, struct pbuf *p) {
     (void)netif;
+
+    /* Block transmission during initial mount delay to give host time to configure ECM interface */
+    if (mount_delay_until_ms != 0) {
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        if ((int32_t)(now - mount_delay_until_ms) < 0) {
+            /* Still in delay period - drop packet silently */
+            return ERR_WOULDBLOCK;
+        }
+        /* Delay expired - clear flag and allow transmission */
+        mount_delay_until_ms = 0;
+        lwip_uart_printf("!NET tx ready\r\n");
+    }
+
     for (int tries = 0; tries < 20; tries++) {
         if (!tud_ready()) {
             net_tx_fail++;
+            lwip_uart_printf("!NET tx fail (not ready) cnt=%lu\r\n", (unsigned long)net_tx_fail);
             return ERR_USE;
         }
         if (tud_network_can_xmit(p->tot_len)) {
             tud_network_xmit(p, 0);
             net_tx_ok++;
+            /* Log every 10th successful TX to avoid flooding */
+            if ((net_tx_ok % 10) == 0) {
+                lwip_uart_printf("!NET tx ok cnt=%lu\r\n", (unsigned long)net_tx_ok);
+            }
             return ERR_OK;
         }
         tud_task();
     }
     net_tx_fail++;
+    lwip_uart_printf("!NET tx fail (retry exhaust) cnt=%lu len=%u\r\n", (unsigned long)net_tx_fail, p->tot_len);
     return ERR_WOULDBLOCK; /* lwIP will retry via TCP retransmission */
 }
 
@@ -102,6 +124,7 @@ bool dns_query_proc(const char *name, ip4_addr_t *addr) {
 bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
     if (received_frame) {
         net_rx_drop++;
+        lwip_uart_printf("!NET rx drop (slot busy) sz=%u\r\n", size);
         return false;
     }
     if (size) {
@@ -110,8 +133,13 @@ bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
             memcpy(p->payload, src, size);
             received_frame = p;
             net_rx_count++;
+            /* Reduced verbosity: only log every 10th packet to avoid UART flooding */
+            if ((net_rx_count % 10) == 0) {
+                lwip_uart_printf("!NET rx ok cnt=%lu\r\n", (unsigned long)net_rx_count);
+            }
         } else {
             net_rx_drop++;
+            lwip_uart_printf("!NET rx drop (no pbuf) sz=%u\r\n", size);
         }
     }
     return true;
@@ -129,6 +157,29 @@ void tud_network_init_cb(void) {
         pbuf_free(received_frame);
         received_frame = NULL;
     }
+}
+
+/* ── TinyUSB device lifecycle callbacks (instrumentation) ────────────── */
+
+void tud_mount_cb(void) {
+    lwip_uart_printf("!USB mount\r\n");
+    /* Give host 500ms to configure ECM interface before sending packets */
+    mount_delay_until_ms = to_ms_since_boot(get_absolute_time()) + 500;
+}
+
+void tud_umount_cb(void) {
+    lwip_uart_printf("!USB unmount\r\n");
+}
+
+void tud_suspend_cb(bool remote_wakeup_en) {
+    (void)remote_wakeup_en;
+    lwip_uart_printf("!USB suspend\r\n");
+}
+
+void tud_resume_cb(void) {
+    lwip_uart_printf("!USB resume\r\n");
+    /* Give host time to reconfigure ECM interface after resume */
+    mount_delay_until_ms = to_ms_since_boot(get_absolute_time()) + 500;
 }
 
 void net_init(void) {
@@ -175,6 +226,7 @@ void net_mdns_poll(void) {
 }
 
 void net_service(void) {
+    /* Process received frames - RX always works */
     if (received_frame) {
         if (ethernet_input(received_frame, &netif_data) != ERR_OK)
             pbuf_free(received_frame);

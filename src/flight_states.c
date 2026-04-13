@@ -614,6 +614,9 @@ int flight_save_csv(flight_context_t *ctx) {
 
 /* ── Init and output ──────────────────────────────────────────────── */
 
+/* Global flight context pointer for runtime config reload and HTTP server access */
+static flight_context_t *g_flight_ctx = NULL;
+
 void flight_init(flight_context_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     config_set_defaults(&ctx->config);
@@ -630,6 +633,49 @@ void flight_init(flight_context_t *ctx) {
 
     ctx->current_state = BOOT_SETTLE;
     ground_test_init(&ctx->gt);
+
+    /* Store global reference for config reload and HTTP server access */
+    g_flight_ctx = ctx;
+}
+
+/* ── Config reload (runtime config update) ────────────────────────── */
+
+int flight_config_reload(flight_context_t *ctx) {
+    /* Safety check: only allow reload in PAD_IDLE state */
+    if (ctx->current_state != PAD_IDLE) {
+        return -1; /* Rejected: not in safe state */
+    }
+
+    /* Load config from persistent storage */
+    config_t new_config;
+    config_set_defaults(&new_config);
+    if (hal_config_load(&new_config) < 0) {
+        return -2; /* Rejected: load failed */
+    }
+
+    /* Validate critical fields to prevent invalid configurations */
+    if (new_config.pyro1_mode > PYRO_MODE_DELAY || new_config.pyro2_mode > PYRO_MODE_DELAY) {
+        return -3; /* Rejected: invalid pyro mode */
+    }
+    if (new_config.units > 2) {
+        return -3; /* Rejected: invalid units */
+    }
+
+    /* Apply new configuration */
+    ctx->config = new_config;
+
+    /* Reinitialize telemetry with new config (updates headers, format, etc.) */
+    telemetry_init(&ctx->config);
+
+    return 0; /* Success */
+}
+
+flight_context_t *flight_get_context(void) {
+    return g_flight_ctx;
+}
+
+flight_state_t flight_get_state(void) {
+    return g_flight_ctx ? g_flight_ctx->current_state : BOOT_SETTLE;
 }
 
 /* Map flight_state_t to the 0-3 telemetry state_id */
