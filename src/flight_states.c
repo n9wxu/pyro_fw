@@ -560,27 +560,27 @@ static void action_landing(flight_context_t *ctx, uint32_t now) {
 /* ── State machine ────────────────────────────────────────────────── */
 
 static const detect_fn detectors[STATE_COUNT] = {
-    [BOOT_SETTLE]     = detect_boot_settle,
+    [BOOT_SETTLE] = detect_boot_settle,
     [BOOT_CONTINUITY] = detect_boot_continuity,
-    [BOOT_CALIBRATE]  = detect_boot_calibrate,
-    [PAD_IDLE]        = detect_pad_idle,
-    [ASCENT]          = detect_ascent,
-    [FALLING]         = detect_falling,
-    [DROGUE_DESCENT]  = detect_drogue_descent,
-    [CHUTE_DESCENT]   = detect_chute_descent,
-    [LANDED]          = detect_landed,
+    [BOOT_CALIBRATE] = detect_boot_calibrate,
+    [PAD_IDLE] = detect_pad_idle,
+    [ASCENT] = detect_ascent,
+    [FALLING] = detect_falling,
+    [DROGUE_DESCENT] = detect_drogue_descent,
+    [CHUTE_DESCENT] = detect_chute_descent,
+    [LANDED] = detect_landed,
 };
 
 static const transition_t transitions[] = {
-    {BOOT_SETTLE,    SEVT_TIMER,    BOOT_CONTINUITY, NULL},
-    {BOOT_CONTINUITY,SEVT_DONE,     BOOT_CALIBRATE,  action_cal_init},
-    {BOOT_CALIBRATE, SEVT_CAL_DONE, PAD_IDLE,        action_ground_cal},
-    {PAD_IDLE,       SEVT_LAUNCH,   ASCENT,          action_launch},
-    {ASCENT,         SEVT_ARMED,    ASCENT,          action_armed},
-    {ASCENT,         SEVT_APOGEE,   FALLING,         action_apogee},
-    {FALLING,        SEVT_DROGUE,   DROGUE_DESCENT,  NULL},
-    {DROGUE_DESCENT, SEVT_CHUTE,    CHUTE_DESCENT,   NULL},
-    {CHUTE_DESCENT,  SEVT_LANDING,  LANDED,          action_landing},
+    {BOOT_SETTLE, SEVT_TIMER, BOOT_CONTINUITY, NULL},
+    {BOOT_CONTINUITY, SEVT_DONE, BOOT_CALIBRATE, action_cal_init},
+    {BOOT_CALIBRATE, SEVT_CAL_DONE, PAD_IDLE, action_ground_cal},
+    {PAD_IDLE, SEVT_LAUNCH, ASCENT, action_launch},
+    {ASCENT, SEVT_ARMED, ASCENT, action_armed},
+    {ASCENT, SEVT_APOGEE, FALLING, action_apogee},
+    {FALLING, SEVT_DROGUE, DROGUE_DESCENT, NULL},
+    {DROGUE_DESCENT, SEVT_CHUTE, CHUTE_DESCENT, NULL},
+    {CHUTE_DESCENT, SEVT_LANDING, LANDED, action_landing},
 };
 
 #define NUM_TRANSITIONS (sizeof(transitions) / sizeof(transitions[0]))
@@ -768,11 +768,8 @@ void flight_update_outputs(flight_context_t *ctx, uint32_t now) {
     /* Buzzer is now autonomous — driven by hal_tasks_tick(), no call needed here. */
 
     if (ctx->current_state >= PAD_IDLE) {
-        bool high_rate_state = (ctx->current_state == ASCENT ||
-                                ctx->current_state == FALLING ||
-                                ctx->current_state == DROGUE_DESCENT ||
-                                ctx->current_state == CHUTE_DESCENT);
-        uint32_t interval = high_rate_state ? 100 : 1000;
+        /* ASCENT..CHUTE_DESCENT are contiguous — all high-rate states */
+        uint32_t interval = (ctx->current_state >= ASCENT && ctx->current_state <= CHUTE_DESCENT) ? 100 : 1000;
         if (now - ctx->last_telemetry >= interval) {
             uint32_t flight_time = (ctx->current_state != PAD_IDLE) ? (now - ctx->launch_time) : 0;
             telemetry_snapshot_t snap = {
