@@ -206,14 +206,33 @@ function cfgSave() {
   fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:ini})
     .then(function(r) {
       if (r.ok) {
-        pendingConfig = c;
-        msg.style.color = 'green';
-        msg.textContent = ' Saved — reboot to apply';
-        document.getElementById('cfgDirty').style.display = 'block';
+        return r.json().then(function(data) {
+          if (data.applied) {
+            msg.style.color = 'green';
+            msg.textContent = ' ✓ Config applied successfully!';
+            deviceConfig = c;
+            pendingConfig = null;
+            document.getElementById('cfgDirty').style.display = 'none';
+          } else {
+            msg.style.color = 'orange';
+            msg.textContent = ' Saved — reboot to apply';
+            pendingConfig = c;
+            document.getElementById('cfgDirty').style.display = 'block';
+          }
+        });
       } else {
-        msg.style.color = 'red';
-        msg.textContent = ' Error saving';
+        return r.json().catch(function() { return {error: 'Save failed'}; });
       }
+    })
+    .then(function(err) {
+      if (err) {
+        msg.style.color = 'red';
+        msg.textContent = ' ' + (err.error || 'Error saving');
+      }
+    })
+    .catch(function() {
+      msg.style.color = 'red';
+      msg.textContent = ' Connection error';
     });
 }
 

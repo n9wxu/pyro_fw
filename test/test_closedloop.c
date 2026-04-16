@@ -401,7 +401,7 @@ static sim_result_t run_sim(config_t cfg, const rocket_profile_t *r, bool enable
             res.launch_ms = t;
             res.launch_alt_m = ps.alt_m;
         }
-        if (ctx.current_state == DESCENT && !res.reached_descent) {
+        if (ctx.current_state == FALLING && !res.reached_descent) {
             res.reached_descent = true;
             res.apogee_ms = t;
             res.apogee_alt_m = ps.alt_m;
@@ -498,7 +498,7 @@ static void assert_flight(const sim_result_t *r, const char *l) {
     char m[128];
     snprintf(m, sizeof(m), "%s: no ASCENT", l);
     TEST_ASSERT_TRUE_MESSAGE(r->reached_ascent, m);
-    snprintf(m, sizeof(m), "%s: no DESCENT", l);
+    snprintf(m, sizeof(m), "%s: no FALLING/DROGUE/CHUTE", l);
     TEST_ASSERT_TRUE_MESSAGE(r->reached_descent, m);
     snprintf(m, sizeof(m), "%s: no LANDED", l);
     TEST_ASSERT_TRUE_MESSAGE(r->reached_landed, m);
@@ -895,7 +895,9 @@ void test_XIP_stall_pyro_timing(void) {
         if (mock_time_ms > t)
             t = mock_time_ms;
 
-        if (ctx.current_state == DESCENT)
+        if (ctx.current_state == FALLING ||
+            ctx.current_state == DROGUE_DESCENT ||
+            ctx.current_state == CHUTE_DESCENT)
             stall_during_descent += (mock_xip_total_stall_ms - stall_before);
 
         if (ctx.current_state == LANDED)

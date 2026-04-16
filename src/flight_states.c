@@ -186,11 +186,20 @@ static state_event_t detect_boot_continuity(flight_context_t *ctx, uint32_t now)
 }
 
 /* [FLT-BOOT-08] Calibration is handled by pressure_processing layer.
- * pp_start_cal() was called in action_cal_init(); we just poll pp_cal_done(). */
+ * pp_start_cal() was called in action_cal_init(); we just poll pp_cal_done().
+ * Timeout after 10s if sensor fails to provide samples. */
 static state_event_t detect_boot_calibrate(flight_context_t *ctx, uint32_t now) {
-    (void)ctx;
-    (void)now;
-    return pp_cal_done() ? SEVT_CAL_DONE : SEVT_NONE;
+    if (pp_cal_done())
+        return SEVT_CAL_DONE;
+
+    /* Timeout if calibration takes too long (sensor failure) */
+    if (now - ctx->boot_timer >= 10000) {
+        extern void hal_telemetry_send(const char *sentence);
+        hal_telemetry_send("!CAL TIMEOUT - sensor failed, forcing PAD_IDLE\r\n");
+        return SEVT_CAL_DONE; /* Force transition to PAD_IDLE */
+    }
+
+    return SEVT_NONE;
 }
 
 static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { /* [PYR-CONT-01, PYR-ALT-02] */
@@ -348,13 +357,8 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
     return SEVT_NONE;
 }
 
-/* [FLT-LAND-01..03, FLT-RATE-03, DD-015]
- * DD-015: Landing timeout — if descent has lasted landing_timeout seconds
- * and speed is below 5 m/s, force landing regardless of AGL altitude.
- * Handles landing at elevations above the launch pad (mesa, hillside). */
-#define LANDING_SPEED_CMS 500 /* 5 m/s — slow enough to be "landed" */
-
-static state_event_t detect_descent(flight_context_t *ctx, uint32_t now) {
+/* [FLT-APO→FALL] Free-fall phase: fires drogue (pyro1), transitions on pyro1_fired */
+static state_event_t detect_falling(flight_context_t *ctx, uint32_t now) {
     altitude_sample_t sample;
     if (!pp_read(&sample))
         return SEVT_NONE;
@@ -367,11 +371,68 @@ static state_event_t detect_descent(flight_context_t *ctx, uint32_t now) {
     if (dt > 0)
         ctx->vertical_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
 
-    buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, altitude, DESCENT);
+    buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, altitude, FALLING);
     try_fire_pyros(ctx, now);
     check_pyro_fault(ctx);
     check_post_fire_verify(ctx, now);
     check_refire(ctx, now);
+
+    ctx->last_altitude = altitude;
+    ctx->last_sample = now;
+
+    if (ctx->pyro1_fired)
+        return SEVT_DROGUE;
+    return SEVT_NONE;
+}
+
+/* [FALL→DROGUE] Drogue descent: fires main chute (pyro2), transitions on pyro2_fired */
+static state_event_t detect_drogue_descent(flight_context_t *ctx, uint32_t now) {
+    altitude_sample_t sample;
+    if (!pp_read(&sample))
+        return SEVT_NONE;
+    int32_t altitude = sample.altitude_cm;
+    uint32_t ts = sample.timestamp_ms;
+    uint32_t dt = ts - ctx->last_sample;
+    ctx->filtered_pressure = pp_last_filtered_pa();
+
+    ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
+    if (dt > 0)
+        ctx->vertical_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
+
+    buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, altitude, DROGUE_DESCENT);
+    try_fire_pyros(ctx, now);
+    check_pyro_fault(ctx);
+    check_post_fire_verify(ctx, now);
+    check_refire(ctx, now);
+
+    ctx->last_altitude = altitude;
+    ctx->last_sample = now;
+
+    if (ctx->pyro2_fired)
+        return SEVT_CHUTE;
+    return SEVT_NONE;
+}
+
+/* [DROGUE→CHUTE] Main-chute descent: landing detection only, no more pyro firing.
+ * DD-015: Landing timeout — if descent has lasted landing_timeout seconds
+ * and speed is below 5 m/s, force landing regardless of AGL altitude.
+ * Handles landing at elevations above the launch pad (mesa, hillside). */
+#define LANDING_SPEED_CMS 500 /* 5 m/s — slow enough to be "landed" */
+
+static state_event_t detect_chute_descent(flight_context_t *ctx, uint32_t now) {
+    altitude_sample_t sample;
+    if (!pp_read(&sample))
+        return SEVT_NONE;
+    int32_t altitude = sample.altitude_cm;
+    uint32_t ts = sample.timestamp_ms;
+    uint32_t dt = ts - ctx->last_sample;
+    ctx->filtered_pressure = pp_last_filtered_pa();
+
+    ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
+    if (dt > 0)
+        ctx->vertical_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
+
+    buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, altitude, CHUTE_DESCENT);
 
     /* Normal landing: stable altitude + low speed + near ground */
     bool altitude_stable = abs(altitude - ctx->last_altitude) < 100;
@@ -479,7 +540,7 @@ static void action_apogee(flight_context_t *ctx, uint32_t now) {
     ctx->descent_start_time = now; /* [DD-015] start landing timeout */
     buf_tag_event(ctx, EVT_APOGEE);
     telemetry_apogee(ctx->max_altitude, now - ctx->launch_time);
-    try_fire_pyros(ctx, now);
+    /* pyro firing handled by detect_falling() on first tick in FALLING state */
     /* [DD-014] hal_log async task flushes to flash every 200ms — no
      * explicit apogee flush needed. hal_log_sample() already wrote the
      * APOGEE event line immediately above. */
@@ -499,23 +560,27 @@ static void action_landing(flight_context_t *ctx, uint32_t now) {
 /* ── State machine ────────────────────────────────────────────────── */
 
 static const detect_fn detectors[STATE_COUNT] = {
-    [BOOT_SETTLE] = detect_boot_settle,
+    [BOOT_SETTLE]     = detect_boot_settle,
     [BOOT_CONTINUITY] = detect_boot_continuity,
-    [BOOT_CALIBRATE] = detect_boot_calibrate,
-    [PAD_IDLE] = detect_pad_idle,
-    [ASCENT] = detect_ascent,
-    [DESCENT] = detect_descent,
-    [LANDED] = detect_landed,
+    [BOOT_CALIBRATE]  = detect_boot_calibrate,
+    [PAD_IDLE]        = detect_pad_idle,
+    [ASCENT]          = detect_ascent,
+    [FALLING]         = detect_falling,
+    [DROGUE_DESCENT]  = detect_drogue_descent,
+    [CHUTE_DESCENT]   = detect_chute_descent,
+    [LANDED]          = detect_landed,
 };
 
 static const transition_t transitions[] = {
-    {BOOT_SETTLE, SEVT_TIMER, BOOT_CONTINUITY, NULL},
-    {BOOT_CONTINUITY, SEVT_DONE, BOOT_CALIBRATE, action_cal_init},
-    {BOOT_CALIBRATE, SEVT_CAL_DONE, PAD_IDLE, action_ground_cal},
-    {PAD_IDLE, SEVT_LAUNCH, ASCENT, action_launch},
-    {ASCENT, SEVT_ARMED, ASCENT, action_armed},
-    {ASCENT, SEVT_APOGEE, DESCENT, action_apogee},
-    {DESCENT, SEVT_LANDING, LANDED, action_landing},
+    {BOOT_SETTLE,    SEVT_TIMER,    BOOT_CONTINUITY, NULL},
+    {BOOT_CONTINUITY,SEVT_DONE,     BOOT_CALIBRATE,  action_cal_init},
+    {BOOT_CALIBRATE, SEVT_CAL_DONE, PAD_IDLE,        action_ground_cal},
+    {PAD_IDLE,       SEVT_LAUNCH,   ASCENT,          action_launch},
+    {ASCENT,         SEVT_ARMED,    ASCENT,          action_armed},
+    {ASCENT,         SEVT_APOGEE,   FALLING,         action_apogee},
+    {FALLING,        SEVT_DROGUE,   DROGUE_DESCENT,  NULL},
+    {DROGUE_DESCENT, SEVT_CHUTE,    CHUTE_DESCENT,   NULL},
+    {CHUTE_DESCENT,  SEVT_LANDING,  LANDED,          action_landing},
 };
 
 #define NUM_TRANSITIONS (sizeof(transitions) / sizeof(transitions[0]))
@@ -678,17 +743,21 @@ flight_state_t flight_get_state(void) {
     return g_flight_ctx ? g_flight_ctx->current_state : BOOT_SETTLE;
 }
 
-/* Map flight_state_t to the 0-3 telemetry state_id */
+/* Map flight_state_t to the 0-5 telemetry state_id (spec v1.2) */
 static uint8_t state_to_telem_id(flight_state_t state) {
     switch (state) {
     case PAD_IDLE:
         return 0;
     case ASCENT:
         return 1;
-    case DESCENT:
+    case FALLING:
         return 2;
-    case LANDED:
+    case DROGUE_DESCENT:
         return 3;
+    case CHUTE_DESCENT:
+        return 4;
+    case LANDED:
+        return 5;
     default:
         return 0;
     }
@@ -699,7 +768,11 @@ void flight_update_outputs(flight_context_t *ctx, uint32_t now) {
     /* Buzzer is now autonomous — driven by hal_tasks_tick(), no call needed here. */
 
     if (ctx->current_state >= PAD_IDLE) {
-        uint32_t interval = (ctx->current_state == ASCENT || ctx->current_state == DESCENT) ? 100 : 1000;
+        bool high_rate_state = (ctx->current_state == ASCENT ||
+                                ctx->current_state == FALLING ||
+                                ctx->current_state == DROGUE_DESCENT ||
+                                ctx->current_state == CHUTE_DESCENT);
+        uint32_t interval = high_rate_state ? 100 : 1000;
         if (now - ctx->last_telemetry >= interval) {
             uint32_t flight_time = (ctx->current_state != PAD_IDLE) ? (now - ctx->launch_time) : 0;
             telemetry_snapshot_t snap = {

@@ -1,0 +1,493 @@
+-----------------------------
+--- A series of replug's
+-----------------------------
+
+***********************************************************
+*                                                         *
+*           Raspberry Pi Pico W FOTA Bootloader           *
+*             Copyright (c) 2024 Jakub Zimnol             *
+*                                                         *
+***********************************************************
+
+[BOOTLOADER] Maximum code length: 512K
+[BOOTLOADER] Nothing to swap
+[BOOTLOADER] End of execution, executing the application...
+
+!PRES sensor init start
+!PRES trying BMP280 (SDA=6)
+!BMP280 try addr=0x76
+!BMP280 no response at 0x76
+!BMP280 try addr=0x77
+!BMP280 id=0x58 (expect 0x58)
+!BMP280 reading calibration
+!BMP280 detect OK
+!PRES init OK: BMP280
+!NET tx fail (not ready) cnt=1
+!NET tx fail (not ready) cnt=2
+!USB mount
+!NET init_cb
+!NET tx ready
+!NET rx ok cnt=10
+$PYRO,0,0,0,0,0,0,100077,0,00,0,0,0,0*09
+$PYRO,1,0,0,0,0,0,100083,0,00,17,18,0,0*0C
+!NET tx fail (retry exhaust) cnt=3 len=558
+!NET rx ok cnt=20
+$PYRO,2,0,0,0,0,0,100084,0,00,13,17,0,0*03
+$PYRO,3,0,0,0,0,0,100078,0,00,15,18,0,0*08
+!NET tx fail (retry exhaust) cnt=4 len=558
+$PYRO,4,0,0,0,0,0,100083,0,00,16,18,0,0*08
+!NET rx ok cnt=30
+$PYRO,5,0,0,0,0,0,100084,0,00,17,17,0,0*00
+$PYRO,6,0,0,0,0,0,100085,0,00,16,18,0,0*0C
+$PYRO,7,0,0,0,0,0,100084,0,00,14,18,0,0*0E
+!NET tx fail (retry exhaust) cnt=5 len=558
+$PYRO,8,0,0,0,0,0,100081,0,00,18,16,0,0*06
+$PYRO,9,0,0,0,0,0,100081,0,00,17,19,0,0*07
+$PYRO,10,0,0,25,0,0,100074,0,00,17,18,0,0*03
+!NET rx ok cnt=40
+$PYRO,11,0,0,8,0,0,100076,0,00,14,18,0,0*3C
+$PYRO,12,0,0,0,0,0,100082,0,00,16,16,0,0*30
+
+***********************************************************
+*                                                         *
+*           Raspberry Pi Pico W FOTA Bootloader           *
+*             Copyright (c) 2024 Jakub Zimnol             *
+*                                                         *
+***********************************************************
+
+[BOOTLOADER] Maximum code length: 512K
+[BOOTLOADER] Nothing to swap
+[BOOTLOADER] End of execution, executing the application...
+
+!PRES sensor init start
+!PRES trying BMP280 (SDA=6)
+!BMP280 try addr=0x76
+!BMP280 no response at 0x76
+!BMP280 try addr=0x77
+!BMP280 id=0x58 (expect 0x58)
+!BMP280 reading calibration
+!BMP280 detect OK
+!PRES init OK: BMP280
+!NET tx fail (not ready) cnt=1
+!NET tx fail (not ready) cnt=2
+!USB mount
+!NET init_cb
+!NET tx ready
+!NET rx ok cnt=10
+$PYRO,0,0,0,0,0,0,100077,0,00,0,0,0,0*09
+!NET rx ok cnt=20
+$PYRO,1,0,0,0,0,0,100078,0,00,16,18,0,0*09
+!NET tx fail (retry exhaust) cnt=3 len=80
+!NET tx fail (retry exhaust) cnt=4 len=42
+!NET rx ok cnt=30
+$PYRO,2,0,0,0,0,0,100077,0,00,18,17,0,0*04
+!NET rx ok cnt=40
+!NET tx fail (retry exhaust) cnt=5 len=42
+!NET rx ok cnt=50
+!NET tx fail (retry exhaust) cnt=6 len=42
+$PYRO,3,0,0,0,0,0,100079,0,00,18,17,0,0*0B
+!NET tx fail (retry exhaust) cnt=7 len=42
+!NET tx fail (retry exhaust) cnt=8 len=42
+$PYRO,4,0,0,16,0,0,100075,0,00,13,19,0,0*32
+!NET tx fail (retry exhaust) cnt=9 len=42
+!NET tx fail (retry exhaust) cnt=10 len=42
+!NET rx ok cnt=60
+$PYRO,5,0,0,0,0,0,100082,0,00,14,18,0,0*0A
+!NET tx fail (retry exhaust) cnt=11 len=42
+!NET tx fail (retry exhaust) cnt=12 len=42
+$PYRO,6,0,0,0,0,0,100079,0,00,17,17,0,0*01
+!NET tx fail (retry exhaust) cnt=13 len=42
+$PYRO,7,0,0,0,0,0,100077,0,00,19,20,0,0*04
+!NET tx fail (retry exhaust) cnt=14 len=42
+!NET rx ok cnt=70
+$PYRO,8,0,0,0,0,0,100078,0,00,18,17,0,0*01
+!NET tx fail (retry exhaust) cnt=15 len=42
+$PYRO,9,0,0,25,0,0,100074,0,00,15,17,0,0*36
+!NET tx fail (retry exhaust) cnt=16 len=42
+!NET rx ok cnt=80
+$PYRO,10,0,0,33,0,0,100073,0,00,18,19,0,0*0D
+
+***********************************************************
+*                                                         *
+*           Raspberry Pi Pico W FOTA Bootloader           *
+*             Copyright (c) 2024 Jakub Zimnol             *
+*                                                         *
+***********************************************************
+
+[BOOTLOADER] Maximum code length: 512K
+[BOOTLOADER] Nothing to swap
+[BOOTLOADER] End of execution, executing the application...
+
+!PRES sensor init start
+!PRES trying BMP280 (SDA=6)
+!BMP280 try addr=0x76
+!BMP280 no response at 0x76
+!BMP280 try addr=0x77
+!BMP280 id=0x58 (expect 0x58)
+!BMP280 reading calibration
+!BMP280 detect OK
+!PRES init OK: BMP280
+!NET tx fail (not ready) cnt=1
+!NET tx fail (not ready) cnt=2
+!NET tx fail (not ready) cnt=3
+!USB mount
+!NET init_cb
+!NET tx ready
+!NET rx ok cnt=10
+$PYRO,0,0,0,0,0,0,100078,0,00,0,0,0,0*06
+!NET rx ok cnt=20
+$PYRO,1,0,0,42,0,0,100073,0,00,16,17,0,0*3B
+$PYRO,2,0,0,8,0,0,100077,0,00,16,17,0,0*02
+!NET rx ok cnt=30
+!NET tx fail (retry exhaust) cnt=4 len=42
+!NET rx ok cnt=40
+!NET tx fail (retry exhaust) cnt=5 len=42
+$PYRO,3,0,0,33,0,0,100074,0,00,17,17,0,0*39
+!NET rx ok cnt=50
+!NET tx fail (retry exhaust) cnt=6 len=42
+$PYRO,4,0,0,0,0,0,100079,0,00,10,19,0,0*0A
+!NET tx fail (retry exhaust) cnt=7 len=42
+!NET tx fail (retry exhaust) cnt=8 len=42
+$PYRO,5,0,0,25,0,0,100075,0,00,18,18,0,0*39
+!NET rx ok cnt=60
+!NET tx fail (retry exhaust) cnt=9 len=42
+!NET tx fail (retry exhaust) cnt=10 len=42
+$PYRO,6,0,0,8,0,0,100077,0,00,17,16,0,0*06
+!NET tx fail (retry exhaust) cnt=11 len=42
+!NET tx fail (retry exhaust) cnt=12 len=42
+$PYRO,7,0,0,50,0,0,100072,0,00,17,17,0,0*3E
+!NET rx ok cnt=70
+!NET tx fail (retry exhaust) cnt=13 len=42
+$PYRO,8,0,0,0,0,0,100080,0,00,18,17,0,0*06
+!NET tx fail (retry exhaust) cnt=14 len=42
+$PYRO,9,0,0,0,0,0,100080,0,00,18,16,0,0*06
+!NET tx fail (retry exhaust) cnt=15 len=42
+!NET rx ok cnt=80
+$PYRO,10,0,0,0,0,0,100081,0,00,17,16,0,0*30
+!NET tx fail (retry exhaust) cnt=16 len=42
+$PYRO,11,0,0,8,0,0,100077,0,00,16,17,0,0*30
+!NET tx fail (retry exhaust) cnt=17 len=42
+$PYRO,12,0,0,8,0,0,100077,0,00,19,16,0,0*3D
+!NET rx ok cnt=90
+!NET tx fail (retry exhaust) cnt=18 len=42
+$PYRO,13,0,0,33,0,0,100074,0,00,19,18,0,0*09
+!NET tx fail (retry exhaust) cnt=19 len=42
+$PYRO,14,0,0,8,0,0,100077,0,00,18,18,0,0*34
+!NET tx fail (retry exhaust) cnt=20 len=42
+!NET rx ok cnt=100
+$PYRO,15,0,0,0,0,0,100082,0,00,18,16,0,0*39
+!NET tx fail (retry exhaust) cnt=21 len=42
+$PYRO,16,0,0,0,0,0,100078,0,00,18,19,0,0*30
+!NET tx fail (retry exhaust) cnt=22 len=42
+!NET rx ok cnt=110
+$PYRO,17,0,0,25,0,0,100075,0,00,14,16,0,0*08
+!NET tx fail (retry exhaust) cnt=23 len=42
+$PYRO,18,0,0,0,0,0,100079,0,00,19,19,0,0*3E
+!NET tx fail (retry exhaust) cnt=24 len=42
+!NET rx ok cnt=120
+
+***********************************************************
+*                                                         *
+*           Raspberry Pi Pico W FOTA Bootloader           *
+*             Copyright (c) 2024 Jakub Zimnol             *
+*                                                         *
+***********************************************************
+
+[BOOTLOADER] Maximum code length: 512K
+[BOOTLOADER] Nothing to swap
+[BOOTLOADER] End of execution, executing the application...
+
+!PRES sensor init start
+!PRES trying BMP280 (SDA=6)
+!BMP280 try addr=0x76
+!BMP280 no response at 0x76
+!BMP280 try addr=0x77
+!BMP280 id=0x58 (expect 0x58)
+!BMP280 reading calibration
+!BMP280 detect OK
+!PRES init OK: BMP280
+!NET tx fail (not ready) cnt=1
+!NET tx fail (not ready) cnt=2
+!USB mount
+!NET init_cb
+!NET tx ready
+!NET rx ok cnt=10
+$PYRO,0,0,0,0,0,0,100076,0,00,0,0,0,0*08
+!NET rx ok cnt=20
+$PYRO,1,0,0,0,0,0,100077,0,00,16,16,0,0*08
+!NET tx fail (retry exhaust) cnt=3 len=80
+$PYRO,2,0,0,25,0,0,100073,0,00,17,17,0,0*38
+!NET rx ok cnt=30
+!NET tx fail (retry exhaust) cnt=4 len=42
+!NET rx ok cnt=40
+!NET tx fail (retry exhaust) cnt=5 len=80
+$PYRO,3,0,0,0,0,0,100077,0,00,14,20,0,0*0D
+!NET tx fail (retry exhaust) cnt=6 len=42
+$PYRO,4,0,0,0,0,0,100077,0,00,21,18,0,0*07
+!NET rx ok cnt=50
+!NET tx fail (retry exhaust) cnt=7 len=42
+$PYRO,5,0,0,0,0,0,100082,0,00,13,18,0,0*0D
+!NET tx fail (retry exhaust) cnt=8 len=42
+$PYRO,6,0,0,0,0,0,100081,0,00,17,18,0,0*09
+!NET rx ok cnt=60
+!NET tx fail (retry exhaust) cnt=9 len=42
+!NET tx fail (retry exhaust) cnt=10 len=42
+$PYRO,7,0,0,0,0,0,100082,0,00,18,17,0,0*0B
+!NET tx fail (retry exhaust) cnt=11 len=42
+!NET tx fail (retry exhaust) cnt=12 len=42
+!NET rx ok cnt=70
+$PYRO,8,0,0,0,0,0,100082,0,00,18,19,0,0*0A
+!NET tx fail (retry exhaust) cnt=13 len=42
+!NET tx fail (retry exhaust) cnt=14 len=42
+$PYRO,9,0,0,0,0,0,100077,0,00,16,19,0,0*0F
+!NET tx fail (retry exhaust) cnt=15 len=42
+!NET tx fail (retry exhaust) cnt=16 len=42
+$PYRO,10,0,0,0,0,0,100076,0,00,16,18,0,0*37
+!NET tx fail (retry exhaust) cnt=17 len=42
+!NET tx fail (retry exhaust) cnt=18 len=42
+$PYRO,11,0,0,0,0,0,100077,0,00,16,16,0,0*39
+!NET tx fail (retry exhaust) cnt=19 len=42
+$PYRO,12,0,0,0,0,0,100078,0,00,16,15,0,0*36
+!NET rx ok cnt=80
+!NET tx fail (retry exhaust) cnt=20 len=42
+$PYRO,13,0,0,8,0,0,100075,0,00,16,16,0,0*31
+!NET tx fail (retry exhaust) cnt=21 len=42
+$PYRO,14,0,0,0,0,0,100078,0,00,19,16,0,0*3C
+!NET tx fail (retry exhaust) cnt=22 len=42
+$PYRO,15,0,0,0,0,0,100079,0,00,17,17,0,0*33
+!NET tx fail (retry exhaust) cnt=23 len=42
+$PYRO,16,0,0,0,0,0,100079,0,00,18,18,0,0*30
+!NET tx fail (retry exhaust) cnt=24 len=42
+$PYRO,17,0,0,0,0,0,100081,0,00,16,16,0,0*36
+!NET tx fail (retry exhaust) cnt=25 len=42
+$PYRO,18,0,0,0,0,0,100081,0,00,17,17,0,0*39
+!NET tx fail (retry exhaust) cnt=26 len=42
+$PYRO,19,0,0,16,0,0,100074,0,00,17,17,0,0*05
+!NET tx fail (retry exhaust) cnt=27 len=42
+!USB 3
+***********************************************************
+*                                                         *
+*           Raspberry Pi Pico W FOTA Bootloader           *
+*             Copyright (c) 2024 Jakub Zimnol             *
+*                                                         *
+***********************************************************
+
+[BOOTLOADER] Maximum code length: 512K
+[BOOTLOADER] Nothing to swap
+[BOOTLOADER] End of execution, executing the application...
+
+!PRES sensor init start
+!PRES trying BMP280 (SDA=6)
+!BMP280 try addr=0x76
+!BMP280 no response at 0x76
+!BMP280 try addr=0x77
+!BMP280 id=0x58 (expect 0x58)
+!BMP280 reading calibration
+!BMP280 detect OK
+!PRES init OK: BMP280
+!NET tx fail (not ready) cnt=1
+!NET tx fail (not ready) cnt=2
+!USB mount
+!NET init_cb
+!NET tx ready
+!NET rx ok cnt=10
+$PYRO,0,0,0,0,0,0,100080,0,00,0,0,0,0*01
+!NET rx ok cnt=20
+$PYRO,1,0,0,8,0,0,100079,0,00,13,18,0,0*05
+!NET rx ok cnt=30
+!NET tx fail (retry exhaust) cnt=3 len=80
+!NET rx ok cnt=40
+$PYRO,2,0,0,0,0,0,100081,0,00,18,17,0,0*0D
+!NET tx fail (retry exhaust) cnt=4 len=42
+!NET tx fail (retry exhaust) cnt=5 len=80
+!NET rx ok cnt=50
+$PYRO,3,0,0,25,0,0,100077,0,00,18,13,0,0*36
+!NET tx fail (retry exhaust) cnt=6 len=42
+$PYRO,4,0,0,42,0,0,100075,0,00,14,16,0,0*3B
+!NET tx fail (retry exhaust) cnt=7 len=42
+$PYRO,5,0,0,42,0,0,100075,0,00,18,18,0,0*38
+!NET tx fail (retry exhaust) cnt=8 len=42
+!NET rx ok cnt=60
+$PYRO,6,0,0,25,0,0,100077,0,00,22,19,0,0*30
+!NET tx fail (retry exhaust) cnt=9 len=42
+!NET tx fail (retry exhaust) cnt=10 len=42
+!NET rx ok cnt=70
+$PYRO,7,0,0,0,0,0,100080,0,00,16,19,0,0*09
+!NET tx fail (retry exhaust) cnt=11 len=42
+!NET tx fail (retry exhaust) cnt=12 len=42
+$PYRO,8,0,0,0,0,0,100081,0,00,18,19,0,0*09
+!NET tx fail (retry exhaust) cnt=13 len=42
+!NET tx fail (retry exhaust) cnt=14 len=42
+$PYRO,9,0,0,0,0,0,100081,0,00,18,19,0,0*08
+!NET tx fail (retry exhaust) cnt=15 len=42
+!NET rx ok cnt=80
+!NET tx fail (retry exhaust) cnt=16 len=42
+$PYRO,10,0,0,42,0,0,100075,0,00,18,17,0,0*03
+!NET tx fail (retry exhaust) cnt=17 len=42
+!NET tx fail (retry exhaust) cnt=18 len=42
+$PYRO,11,0,0,50,0,0,100074,0,00,18,16,0,0*01
+!NET tx fail (retry exhaust) cnt=19 len=42
+$PYRO,12,0,0,0,0,0,100081,0,00,20,18,0,0*38
+!NET tx fail (retry exhaust) cnt=20 len=42
+$PYRO,13,0,0,16,0,0,100078,0,00,16,18,0,0*0D
+!NET tx fail (retry exhaust) cnt=21 len=42
+$PYRO,14,0,0,0,0,0,100080,0,00,16,15,0,0*37
+!NET tx fail (retry exhaust) cnt=22 len=42
+$PYRO,15,0,0,16,0,0,100078,0,00,18,20,0,0*0E
+!NET tx fail (retry exhaust) cnt=23 len=42
+$PYRO,16,0,0,0,0,0,100081,0,00,16,19,0,0*38
+!NET rx ok cnt=90
+!NET tx fail (retry exhaust) cnt=24 len=42
+$PYRO,17,0,0,0,0,0,100080,0,00,18,17,0,0*38
+!NET tx fail (retry exhaust) cnt=25 len=42
+$PYRO,18,0,0,0,0,0,100080,0,00,20,19,0,0*32
+!NET tx fail (retry exhaust) cnt=26 len=42
+$PYRO,19,0,0,8,0,0,100079,0,00,15,17,0,0*35
+!NET tx fail (retry exhaust) cnt=27 len=42
+$PYRO,20,0,0,25,0,0,100077,0,00,17,19,0,0*02
+!NET tx fail (retry exhaust) cnt=28 len=42
+$PYRO,21,0,0,50,0,0,100074,0,00,17,17,0,0*0C
+!NET tx fail (retry exhaust) cnt=29 len=42
+$PYRO,22,0,0,50,0,0,100074,0,00,17,17,0,0*0F
+!NET tx fail (retry exhaust) cnt=30 len=42
+$PYRO,23,0,0,50,0,0,100074,0,00,18,18,0,0*0E
+!NET tx fail (retry exhaust) cnt=31 len=42
+$PYRO,24,0,0,50,0,0,100074,0,00,18,17,0,0*06
+!NET rx ok cnt=100
+!NET tx fail (retry exhaust) cnt=32 len=42
+$PYRO,25,0,0,50,0,0,100074,0,00,16,18,0,0*06
+!NET tx fail (retry exhaust) cnt=33 len=42
+$PYRO,26,0,0,50,0,0,100074,0,00,17,19,0,0*05
+!NET tx fail (retry exhaust) cnt=34 len=42
+$PYRO,27,0,0,50,0,0,100074,0,00,16,16,0,0*0A
+!NET tx fail (retry exhaust) cnt=35 len=42
+$PYRO,28,0,0,50,0,0,100074,0,00,18,17,0,0*0A
+!NET tx fail (retry exhaust) cnt=36 len=42
+$PYRO,29,0,0,50,0,0,100074,0,00,17,17,0,0*04
+!NET tx fail (retry exhaust) cnt=37 len=42
+$PYRO,30,0,0,50,0,0,100074,0,00,17,16,0,0*0D
+!NET tx fail (retry exhaust) cnt=38 len=42
+$PYRO,31,0,0,50,0,0,100074,0,00,18,18,0,0*0D
+!NET tx fail (retry exhaust) cnt=39 len=42
+$PYRO,32,0,0,50,0,0,100074,0,00,15,16,0,0*0D
+!NET tx fail (retry exhaust) cnt=40 len=42
+$PYRO,33,0,0,50,0,0,100074,0,00,16,15,0,0*0C
+!NET tx fail (retry exhaust) cnt=41 len=42
+$PYRO,34,0,0,50,0,0,100074,0,00,16,18,0,0*06
+!NET rx ok cnt=110
+!NET tx fail (retry exhaust) cnt=42 len=42
+$PYRO,35,0,0,50,0,0,100074,0,00,17,17,0,0*09
+!NET tx fail (retry exhaust) cnt=43 len=42
+$PYRO,36,0,0,50,0,0,100074,0,00,16,17,0,0*0B
+!NET tx fail (retry exhaust) cnt=44 len=42
+$PYRO,37,0,0,50,0,0,100074,0,00,17,17,0,0*0B
+!NET tx fail (retry exhaust) cnt=45 len=42
+$PYRO,38,0,0,50,0,0,100074,0,00,16,16,0,0*04
+!NET tx fail (retry exhaust) cnt=46 len=42
+$PYRO,39,0,0,50,0,0,100074,0,00,19,18,0,0*04
+!NET tx fail (retry exhaust) cnt=47 len=42
+$PYRO,40,0,0,50,0,0,100074,0,00,18,17,0,0*04
+!NET tx fail (retry exhaust) cnt=48 len=42
+$PYRO,41,0,0,50,0,0,100074,0,00,15,18,0,0*07
+!NET tx fail (retry exhaust) cnt=49 len=42
+!NET tx fail (retry exhaust) cnt=50 len=42
+!NET rx ok cnt=120
+$PYRO,42,0,0,50,0,0,100074,0,00,17,17,0,0*09
+!NET tx fail (retry exhaust) cnt=51 len=42
+$PYRO,43,0,0,50,0,0,100074,0,00,17,17,0,0*08
+!NET tx fail (retry exhaust) cnt=52 len=42
+$PYRO,44,0,0,50,0,0,100074,0,00,18,18,0,0*0F
+!NET tx fail (retry exhaust) cnt=53 len=42
+$PYRO,45,0,0,50,0,0,100074,0,00,16,18,0,0*00
+!NET tx fail (retry exhaust) cnt=54 len=42
+$PYRO,46,0,0,50,0,0,100074,0,00,19,19,0,0*0D
+!NET tx fail (retry exhaust) cnt=55 len=42
+$PYRO,47,0,0,50,0,0,100074,0,00,17,18,0,0*03
+!NET tx fail (retry exhaust) cnt=56 len=42
+$PYRO,48,0,0,50,0,0,100074,0,00,16,18,0,0*0D
+!NET tx fail (retry exhaust) cnt=57 len=42
+$PYRO,49,0,0,50,0,0,100074,0,00,16,16,0,0*02
+!NET tx fail (retry exhaust) cnt=58 len=42
+$PYRO,50,0,0,50,0,0,100074,0,00,16,18,0,0*04
+!NET tx fail (retry exhaust) cnt=59 len=42
+$PYRO,51,0,0,50,0,0,100074,0,00,18,16,0,0*05
+!NET rx ok cnt=130
+!NET tx fail (retry exhaust) cnt=60 len=42
+$PYRO,52,0,0,50,0,0,100074,0,00,17,16,0,0*09
+!NET tx fail (retry exhaust) cnt=61 len=42
+$PYRO,53,0,0,50,0,0,100074,0,00,15,17,0,0*0B
+!NET tx fail (retry exhaust) cnt=62 len=42
+
+---------------------
+------ I pressed the RUN button (reset)
+---------------------
+
+
+***********************************************************
+*                                                         *
+*           Raspberry Pi Pico W FOTA Bootloader           *
+*             Copyright (c) 2024 Jakub Zimnol             *
+*                                                         *
+***********************************************************
+
+[BOOTLOADER] Maximum code length: 512K
+[BOOTLOADER] Nothing to swap
+[BOOTLOADER] End of execution, executing the application...
+
+!PRES sensor init start
+!PRES trying BMP280 (SDA=6)
+!BMP280 try addr=0x76
+!BMP280 no response at 0x76
+!BMP280 try addr=0x77
+!BMP280 no response at 0x77
+!BMP280 detect FAIL
+!PRES trying MS5607 (SDA=10)
+!PRES init FAIL: no sensor found
+!NET tx fail (not ready) cnt=1
+!NET tx fail (not ready) cnt=2
+!USB mount
+!NET init_cb
+!NET tx ready
+!NET rx ok cnt=10
+!NET rx ok cnt=20
+!NET rx ok cnt=30
+!NET rx ok cnt=40
+!NET rx ok cnt=50
+!NET tx ok cnt=10
+!NET rx ok cnt=60
+!NET rx ok cnt=70
+!NET tx fail (retry exhaust) cnt=3 len=1514
+!NET tx fail (retry exhaust) cnt=4 len=1514
+!NET tx fail (retry exhaust) cnt=5 len=1514
+!NET tx fail (retry exhaust) cnt=6 len=192
+!NET tx fail (retry exhaust) cnt=7 len=1514
+!NET tx ok cnt=20
+!NET tx fail (retry exhaust) cnt=8 len=1514
+!NET rx ok cnt=80
+!NET tx fail (retry exhaust) cnt=9 len=348
+!NET tx fail (retry exhaust) cnt=10 len=1514
+!NET tx fail (retry exhaust) cnt=11 len=1514
+!NET rx ok cnt=90
+!NET tx fail (retry exhaust) cnt=12 len=1514
+!NET tx fail (retry exhaust) cnt=13 len=1514
+!NET tx fail (retry exhaust) cnt=14 len=1514
+!NET tx ok cnt=30
+!NET tx fail (retry exhaust) cnt=15 len=1514
+!NET tx fail (retry exhaust) cnt=16 len=1514
+!NET tx fail (retry exhaust) cnt=17 len=1514
+!NET tx fail (retry exhaust) cnt=18 len=1514
+!NET tx fail (retry exhaust) cnt=19 len=1514
+!NET tx fail (retry exhaust) cnt=20 len=1514
+!NET tx fail (retry exhaust) cnt=21 len=1514
+!NET rx ok cnt=100
+!NET tx fail (retry exhaust) cnt=22 len=309
+!NET tx ok cnt=40
+!NET rx ok cnt=110
+!NET rx ok cnt=120
+!NET tx ok cnt=50
+!NET rx ok cnt=130
+!NET rx ok cnt=140
+!NET tx ok cnt=60
+!NET rx ok cnt=150
+!NET rx ok cnt=160
+!NET tx ok cnt=70

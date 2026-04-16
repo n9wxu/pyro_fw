@@ -1,0 +1,2100 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2868
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Arial-BoldMT;\f1\fnil\fcharset0 HelveticaNeue;\f2\fswiss\fcharset0 ArialMT;
+\f3\fmodern\fcharset0 CourierNewPS-BoldMT;\f4\fswiss\fcharset0 Helvetica;\f5\fmodern\fcharset0 CourierNewPSMT;
+\f6\froman\fcharset0 TimesNewRomanPSMT;}
+{\colortbl;\red255\green255\blue255;\red25\green60\blue102;\red0\green0\blue0;\red67\green67\blue67;
+\red117\green117\blue117;\red255\green255\blue255;\red173\green173\blue173;\red239\green239\blue239;\red205\green221\blue236;
+\red38\green108\blue38;}
+{\*\expandedcolortbl;;\cssrgb\c12157\c30588\c47451;\cssrgb\c0\c0\c0;\cssrgb\c33333\c33333\c33333;
+\cssrgb\c53333\c53333\c53333;\cssrgb\c100000\c100000\c100000;\cssrgb\c73333\c73333\c73333;\cssrgb\c94902\c94902\c94902;\cssrgb\c83922\c89412\c94118;
+\cssrgb\c18039\c49020\c19608;}
+{\*\listtable{\list\listtemplateid1\listhybrid{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{disc\}}{\leveltext\leveltemplateid1\'01\uc0\u8226 ;}{\levelnumbers;}\fi-360\li720\lin720 }{\listname ;}\listid1}
+{\list\listtemplateid2\listhybrid{\listlevel\levelnfc0\levelnfcn0\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{decimal\}.}{\leveltext\leveltemplateid101\'02\'00.;}{\levelnumbers\'01;}\fi-360\li720\lin720 }{\listname ;}\listid2}}
+{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}{\listoverride\listid2\listoverridecount0\ls2}}
+\margl1440\margr1440
+\deftab720
+\pard\pardeftab720\partightenfactor0
+
+\f0\b\fs44 \cf2 \up0 \nosupersub \ulnone Ground Station Interface Specification
+\f1\b0\fs22 \cf3 \
+\pard\pardeftab720\partightenfactor0
+
+\f2\fs28 \cf4 Altimeter Serial Telemetry Protocol
+\f1\fs22 \cf3 \
+\pard\pardeftab720\sa360\partightenfactor0
+
+\f2\fs20 \cf5 April 2026  |  Revision 1.1
+\f1\fs22 \cf3 \
+\pard\sa360\partightenfactor0
+
+\f0\b\fs32 \cf2 1. Purpose\
+\pard\sa360\partightenfactor0
+
+\fs22 \cf3 This document specifies the serial telemetry interface between the altimeter board and the LoRa tracker board. It is the single reference for the $PYRO NMEA protocol: the state numbering scheme, the event sentences, and the flags bitfield. Any Claude session working on the altimeter firmware should read this document before making changes to the telemetry output.
+\fs32 \cf2 \
+
+\fs22 \cf3 The tracker firmware, the Data Source Manager (DSM), and the ground station web application all depend on this interface. Changes to the altimeter must preserve compatibility with these downstream consumers.
+\fs32 \cf2 \
+2. Background: The State Mismatch Problem\
+
+\fs22 \cf3 During a pressure chamber test (flight 4), the ground station displayed incorrect flight phase labels and then triggered a false signal-loss alert while the tracker was still transmitting normally. Root cause analysis traced the problem to a mismatch between the flight state numbers the altimeter was transmitting and the numbers the ground station expects.
+\fs32 \cf2 \
+
+\fs22 \cf3 The ground station uses a 5-state scheme (codes 0 through 4). The altimeter was transmitting a different set of state codes. When the altimeter entered its descent phase, the ground station interpreted the state code as LANDED. Unknown state codes for subsequent phases caused the display to show no recognized state, which the health monitoring interpreted as signal loss.
+\fs32 \cf2 \
+
+\fs22 \cf3 The fix: The altimeter must transmit the state_id values defined in Section 3 below, using the thrust flag to differentiate boost from coast. This is a change to the 
+\f3\fs20 state_to_telem_id()
+\f0\fs22  mapping function, not to the altimeter's internal state machine.
+\fs32 \cf2 \
+3. Architecture: Two-Layer State Model\
+
+\fs22 \cf3 This is the most important concept in this document. The altimeter has two independent layers for flight states, and they must not be confused:
+\fs32 \cf2 \
+
+\fs22 \cf3 Layer 1 \'97 Internal State Machine: The altimeter's own flight logic. This can have any number of states \'97 boot sequences, calibration phases, apogee detection, separate drogue and main descent, error recovery, etc. This is the altimeter developer's domain and the ground station has no opinion on it. The more granular it is, the better the altimeter's flight logic can be.
+\fs32 \cf2 \
+
+\fs22 \cf3 Layer 2 \'97 Reported Telemetry State (state_id): The single integer in the $PYRO sentence (field 2) that the tracker, DSM, and ground station all parse. This is a fixed contract with exactly 4 valid values (0, 1, 2, 3). These values must not change \'97 they are baked into the tracker firmware, the DSM parsers, and the ground station.
+\fs32 \cf2 \
+\pard\sa240\partightenfactor0
+
+\fs22 \cf3 The mapping function 
+\f3\fs20 state_to_telem_id()
+\f0\fs22  is the bridge between these two layers. It takes any internal state and returns one of the 4 telemetry codes. Every internal state must have a mapping. Any unmapped state that leaks to the serial output will break the ground station.
+\fs32 \cf2 \
+\pard\sa240\partightenfactor0
+
+\fs26 \cf2 3.1 Example: A Richer Internal State Machine\
+\pard\sa240\partightenfactor0
+
+\fs22 \cf3 To illustrate, here is a hypothetical example of how a more granular internal state machine could map to the 4 telemetry codes. The internal states listed here are just examples \'97 the altimeter developer is free to define whatever internal states make sense for the flight logic.
+\fs26 \cf2 \
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrt\brdrnil \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat2 \clwWidth2620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat2 \clwWidth3780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat2 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat2 \clwWidth1220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\fs20 \cf6 Internal State (example)
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Description
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone state_id
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Thrust
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2620\clftsWidth3 \clheight500 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth3780\clftsWidth3 \clheight500 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight500 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth1220\clftsWidth3 \clheight500 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone BOOT_SETTLE
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Sensor warm-up, not ready
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs22 \cf3 \up0 \nosupersub \ulnone Don't send 
+\f0\b or
+\f2\b0  0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2620\clftsWidth3 \clheight500 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth3780\clftsWidth3 \clheight500 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight500 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth1220\clftsWidth3 \clheight500 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone BOOT_CALIBRATE
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Sampling ground pressure baseline
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs22 \cf3 \up0 \nosupersub \ulnone Don't send 
+\f0\b or
+\f2\b0  0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth3780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth1220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone PAD_IDLE
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Ready on pad, waiting for launch
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat9 \clwWidth3780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat9 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat9 \clwWidth1220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone BOOST
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Motor burning, accelerating
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 1
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 1
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2620\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth3780\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth1220\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone COAST
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Motor burned out, still ascending
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 1
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat9 \clwWidth3780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat9 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat9 \clwWidth1220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone APOGEE_DETECT
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Peak detected, firing drogue
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 2
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth3780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth1220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone DROGUE_DESCENT
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Descending on drogue chute
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 2
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat9 \clwWidth3780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat9 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat9 \clwWidth1220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone MAIN_DESCENT
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Main chute deployed, slow descent
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 2
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth3780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth1220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone LANDED
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone On the ground, velocity near zero
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 3
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrt\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2620\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat9 \clwWidth3780\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat9 \clwWidth1020\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat9 \clwWidth1220\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone LANDED_LOWPOWER
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Landed, reduced telemetry rate
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 3
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone 
+\f0\b\fs26 \cf2 \up0 \nosupersub \ulnone \cell \lastrow\row
+\pard\sa240\partightenfactor0
+\cf2 \
+\pard\sa240\partightenfactor0
+
+\fs22 \cf3 Key takeaway: The number of internal states can grow freely \'97 add STAGING, BALLISTIC_DESCENT, ERROR_RECOVERY, or whatever the flight logic needs. The only constraint is that 
+\f3\fs20 state_to_telem_id()
+\f0\fs22  must map every internal state to one of the 4 telemetry codes (0, 1, 2, 3). The ground station never sees the internal states; it only sees what comes out of this mapping function.
+\fs26 \cf2 \
+\pard\sa360\partightenfactor0
+
+\fs22 \cf3 What went wrong in flight 4: The altimeter transmitted its raw internal state codes directly on serial, bypassing the mapping. Internal states beyond the original four appeared as unrecognized numbers on the ground station, causing incorrect display and broken lifecycle logic.
+\fs26 \cf2 \
+\pard\sa360\partightenfactor0
+
+\fs32 \cf2 4. Telemetry State Codes (the Fixed Contract)\
+\pard\sa360\partightenfactor0
+
+\fs22 \cf3 The $PYRO sentence state field (field 2) must use these exact integer codes. The ground station, the DSM parsers, and the tracker firmware all key on these numbers. These 4 codes are the output of the mapping function described in Section 3.
+\fs32 \cf2 \
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrt\brdrnil \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat2 \clwWidth720\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx1728
+\clvertalt \clcbpat2 \clwWidth1620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx3456
+\clvertalt \clcbpat2 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx5184
+\clvertalt \clcbpat2 \clwWidth4280\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6912
+\clvertalt \clcbpat2 \clwWidth820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\fs20 \cf6 Code
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Name
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Thrust
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Description
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Rate
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth720\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx1728
+\clvertalt \clshdrawnil \clwWidth1620\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx3456
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx5184
+\clvertalt \clshdrawnil \clwWidth4280\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6912
+\clvertalt \clshdrawnil \clwWidth820\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone PAD
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone On the pad, pre-launch. Altimeter is idle, tracking ground pressure.
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 1 Hz
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat9 \clwWidth720\clftsWidth3 \clheight780 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx1728
+\clvertalt \clcbpat9 \clwWidth1620\clftsWidth3 \clheight780 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx3456
+\clvertalt \clcbpat9 \clwWidth1020\clftsWidth3 \clheight780 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx5184
+\clvertalt \clcbpat9 \clwWidth4280\clftsWidth3 \clheight780 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6912
+\clvertalt \clcbpat9 \clwWidth820\clftsWidth3 \clheight780 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 1
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone ASCENT
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 1
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs22 \cf3 \up0 \nosupersub \ulnone Boost phase. 
+\f2\b0 Motor burning, thrust detected. GS displays this as BOOST. The thrust flag (field 3) must be 1.
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 10 Hz
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth720\clftsWidth3 \clheight800 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx1728
+\clvertalt \clshdrawnil \clwWidth1620\clftsWidth3 \clheight800 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx3456
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight800 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx5184
+\clvertalt \clshdrawnil \clwWidth4280\clftsWidth3 \clheight800 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6912
+\clvertalt \clshdrawnil \clwWidth820\clftsWidth3 \clheight800 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 1
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone ASCENT
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs22 \cf3 \up0 \nosupersub \ulnone Coast phase. 
+\f2\b0 Motor burned out, still ascending. GS displays this as COAST. The thrust flag (field 3) must be 0.
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 10 Hz
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat9 \clwWidth720\clftsWidth3 \clheight720 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx1728
+\clvertalt \clcbpat9 \clwWidth1620\clftsWidth3 \clheight720 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx3456
+\clvertalt \clcbpat9 \clwWidth1020\clftsWidth3 \clheight720 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx5184
+\clvertalt \clcbpat9 \clwWidth4280\clftsWidth3 \clheight720 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6912
+\clvertalt \clcbpat9 \clwWidth820\clftsWidth3 \clheight720 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 2
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone DESCENT
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Descending under drogue or main chute. GS displays this as DESCENT. Covers the entire descent from apogee to touchdown.
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 10 Hz
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrt\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth720\clftsWidth3 \clheight720 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx1728
+\clvertalt \clshdrawnil \clwWidth1620\clftsWidth3 \clheight720 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx3456
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight720 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx5184
+\clvertalt \clshdrawnil \clwWidth4280\clftsWidth3 \clheight720 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6912
+\clvertalt \clshdrawnil \clwWidth820\clftsWidth3 \clheight720 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 3
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone LANDED
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone On the ground after flight. GS displays this as LANDED and begins the landing timeout (5 minutes to auto-complete the flight).
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 1 Hz
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone 
+\f0\b\fs32 \cf2 \up0 \nosupersub \ulnone \cell \lastrow\row
+\pard\sa360\partightenfactor0
+\cf2 \
+\pard\sa360\partightenfactor0
+
+\fs22 \cf3 Key point: State code 1 (ASCENT) serves double duty. The thrust flag distinguishes boost (thrust=1) from coast (thrust=0). The ground station maps this to two separate display states: BOOST and COAST. The altimeter must set the thrust flag correctly for this mapping to work.
+\fs32 \cf2 \
+
+\fs22 \cf3 As discussed in Section 3, the altimeter's internal state machine can have as many states as it needs. Only the 
+\f3\fs20 state_id
+\f0\fs22  field output by 
+\f3\fs20 state_to_telem_id()
+\f0\fs22  must use these 4 codes.
+\fs32 \cf2 \
+5. $PYRO Sentence Format\
+
+\fs22 \cf3 The primary telemetry sentence. Sent at the rate specified in the state table above. NMEA-style with XOR checksum.
+\fs32 \cf2 \
+\pard\sa360\partightenfactor0
+
+\f3\fs18 \cf3 $PYRO,seq,state,thrust,alt_cm,vel_cms,max_alt_cm,press_pa,time_ms,flags,p1_adc,p2_adc,batt,temp*XX
+\f0\fs32 \cf2 \
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrt\brdrnil \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat2 \clwWidth420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat2 \clwWidth1420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat2 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat2 \clwWidth5780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\fs20 \cf6 #
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Field
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Type
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Description
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth5780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 1
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone seq
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone uint16
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Sequence counter, increments each sentence
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth420\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1420\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth5780\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 2
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone state
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone uint8
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Flight state code (0-3, see Section 4)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth5780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 3
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone thrust
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone uint8
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Thrust flag: 1 = motor burning, 0 = no thrust
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth5780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 4
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone alt_cm
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone int32
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Altitude above ground level in centimeters
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth5780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 5
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone vel_cms
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone int32
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Vertical velocity in centimeters/second (positive = up)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth5780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 6
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone max_alt_cm
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone int32
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Maximum altitude reached during this flight (cm)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth420\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1420\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth5780\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 7
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone press_pa
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone int32
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Raw barometric pressure in Pascals
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth5780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 8
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone time_ms
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone uint32
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Flight time in milliseconds since launch detection (0 on pad)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth5780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 9
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone flags
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone hex
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Status flags as 2-character hex (see Section 7)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth5780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 10
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone p1_adc
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone uint16
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Pyro channel 1 ADC reading (continuity sense)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth5780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 11
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone p2_adc
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone uint16
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Pyro channel 2 ADC reading (continuity sense)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth420\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1420\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth5780\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 12
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone batt
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone uint16
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Battery ADC reading (0 if not implemented)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrt\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1420\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth5780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 13
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone temp
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone int16
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Temperature in deci-degrees C (0 if not implemented)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone 
+\f0\b\fs32 \cf2 \up0 \nosupersub \ulnone \cell \lastrow\row
+\pard\sa360\partightenfactor0
+\cf2 \
+\pard\sa360\partightenfactor0
+
+\fs22 \cf3 Checksum: Standard NMEA XOR checksum over all characters between $ and * (exclusive), formatted as two uppercase hex digits after the asterisk.
+\fs32 \cf2 \
+
+\fs22 \cf3 Example (pad idle): 
+\f3\fs20 $PYRO,0001,0,0,0,0,0,101325,0,03,0350,0348,0,0*5A
+\f0\fs32 \cf2 \
+
+\fs22 \cf3 Example (boost): 
+\f3\fs20 $PYRO,0042,1,1,15000,28000,15000,84200,2100,13,0350,0348,0,0*7B
+\f0\fs32 \cf2 \
+
+\fs22 \cf3 Example (descent): 
+\f3\fs20 $PYRO,0100,2,0,120000,-800,240000,78500,18500,3F,0350,0348,0,0*4C
+\f0\fs32 \cf2 \
+6. Event Sentences\
+\pard\sa240\partightenfactor0
+
+\fs22 \cf3 One-shot sentences emitted at key flight events. These are in addition to the periodic $PYRO sentence. Each event sentence is sent exactly once when the event occurs. The tracker uses these to generate LoRa event packets with precise altimeter-measured values.
+\fs32 \cf2 \
+\pard\sa240\partightenfactor0
+
+\fs26 \cf2 6.1 $PYRO_APO (Apogee)\
+\pard\sa240\partightenfactor0
+
+\fs22 \cf3 Sent when the altimeter detects apogee (peak altitude, transition from ascent to descent).
+\fs26 \cf2 \
+\pard\sa240\partightenfactor0
+
+\f3\fs18 \cf3 $PYRO_APO,max_alt_cm,flight_time_ms*XX
+\f0\fs26 \cf2 \
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrt\brdrnil \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat2 \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat2 \clwWidth6780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\fs20 \cf6 Field
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Description
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth6780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone max_alt_cm
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Peak altitude at apogee in centimeters
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrt\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth6780\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone flight_time_ms
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Flight time at apogee in milliseconds since launch
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone 
+\f0\b\fs26 \cf2 \up0 \nosupersub \ulnone \cell \lastrow\row
+\pard\sa240\partightenfactor0
+\cf2 6.2 $PYRO_FIRE (Pyro Channel Fired)\
+\pard\sa240\partightenfactor0
+
+\fs22 \cf3 Sent when a pyro channel fires. One sentence per channel.
+\fs26 \cf2 \
+\pard\sa240\partightenfactor0
+
+\f3\fs18 \cf3 $PYRO_FIRE,channel,alt_cm,flight_time_ms*XX
+\f0\fs26 \cf2 \
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrt\brdrnil \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat2 \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat2 \clwWidth6780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\fs20 \cf6 Field
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Description
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth6780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone channel
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 1 = pyro channel 1, 2 = pyro channel 2
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth6780\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone alt_cm
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Altitude at firing in centimeters
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrt\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth6780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone flight_time_ms
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Flight time at firing in milliseconds since launch
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone 
+\f0\b\fs26 \cf2 \up0 \nosupersub \ulnone \cell \lastrow\row
+\pard\sa240\partightenfactor0
+\cf2 6.3 $PYRO_LAND (Landing)\
+\pard\sa240\partightenfactor0
+
+\fs22 \cf3 Sent when the altimeter detects landing (vertical velocity near zero after descent).
+\fs26 \cf2 \
+\pard\sa240\partightenfactor0
+
+\f3\fs18 \cf3 $PYRO_LAND,max_alt_cm,flight_time_ms*XX
+\f0\fs26 \cf2 \
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrt\brdrnil \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat2 \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat2 \clwWidth6780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\fs20 \cf6 Field
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Description
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth6780\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone max_alt_cm
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Maximum altitude from the flight in centimeters
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrt\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth6780\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone flight_time_ms
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Total flight time at landing in milliseconds since launch
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone 
+\f0\b\fs26 \cf2 \up0 \nosupersub \ulnone \cell \lastrow\row
+\pard\sa240\partightenfactor0
+\cf2 \
+\pard\sa240\partightenfactor0
+
+\fs22 \cf3 All event sentences use the same NMEA XOR checksum as $PYRO. The tracker parses these independently from the periodic $PYRO sentence. Event sentences provide the authoritative altimeter-measured values for the event timeline; the periodic $PYRO sentence continues at its normal rate.
+\fs26 \cf2 \
+
+\fs22 \cf3 Field orders are specified in Sections 6.1-6.3 above. Verify your altimeter code matches these, not the altimeter README (see Section 10.3).
+\fs26 \cf2 \
+\pard\sa360\partightenfactor0
+\cf3 \page \pard\sa360\partightenfactor0
+
+\fs32 \cf2 7. Flags Bitfield\
+\pard\sa240\partightenfactor0
+
+\fs22 \cf3 The flags field (field 9) is a hex-encoded bitfield. The altimeter currently uses bits 0 through 5 (transmitted as 2-character hex, e.g. 3F). The tracker has infrastructure to receive and forward 16-bit extended flags (4-character hex), but the altimeter does not set bits 6-11 yet.
+\fs32 \cf2 \
+\pard\sa240\partightenfactor0
+
+\fs26 \cf2 7.1 Base Flags (bits 0-5) \'97 Currently Implemented\
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrt\brdrnil \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat2 \clwWidth620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat2 \clwWidth1820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat2 \clwWidth1920\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat2 \clwWidth4280\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\fs20 \cf6 Bit
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Name
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Hex Mask
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Meaning
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth620\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1820\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1920\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth4280\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone P1_CONT
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 0x01
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Pyro channel 1 continuity detected (e-match connected)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1920\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth4280\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 1
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone P2_CONT
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 0x02
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Pyro channel 2 continuity detected
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth620\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1820\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1920\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth4280\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 2
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone P1_FIRED
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 0x04
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Pyro channel 1 has fired
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1920\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth4280\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 3
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone P2_FIRED
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 0x08
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Pyro channel 2 has fired
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1920\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth4280\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 4
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone ARMED
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 0x10
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Pyro system is armed
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrt\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1920\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth4280\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 5
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone APOGEE
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 0x20
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Apogee has been detected
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone 
+\f0\b\fs26 \cf2 \up0 \nosupersub \ulnone \cell \lastrow\row
+\pard\sa240\partightenfactor0
+\cf2 7.2 Extended Flags (bits 6-11) \'97 Future / Optional\
+\pard\sa240\partightenfactor0
+
+\fs22 \cf3 The tracker firmware has infrastructure to detect and relay these extended flags. They are not currently set by the altimeter but are defined here for future implementation. If the altimeter sets any of these bits, the flags field should be transmitted as 4-character hex (e.g. 023F) instead of 2-character.
+\fs26 \cf2 \
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrt\brdrnil \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat2 \clwWidth620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat2 \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat2 \clwWidth1920\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat2 \clwWidth3880\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\fs20 \cf6 Bit
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Name
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Hex Mask
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Meaning
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1920\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth3880\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 6
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone P1_FAIL
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 0x0040
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Pyro 1 failure declared by altimeter
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth620\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1920\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth3880\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 7
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone P2_FAIL
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 0x0080
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Pyro 2 failure declared
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1920\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth3880\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 8
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone DROGUE_OK
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 0x0100
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Drogue deployment confirmed
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1920\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth3880\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 9
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone DROGUE_FAIL
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 0x0200
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Drogue deployment failed
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1920\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth3880\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 10
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone MAIN_OK
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 0x0400
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Main chute deployment confirmed
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrt\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth1920\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth3880\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 11
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone MAIN_FAIL
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 0x0800
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Main chute deployment failed
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone 
+\f0\b\fs26 \cf2 \up0 \nosupersub \ulnone \cell \lastrow\row
+\pard\sa240\partightenfactor0
+\cf2 \
+\pard\sa360\partightenfactor0
+
+\fs22 \cf3 The tracker's 
+\f3\fs20 parse_hex_word()
+\f0\fs22  function already handles both 2-character and 4-character hex. No tracker changes are needed to support extended flags.
+\fs26 \cf2 \
+\pard\sa360\partightenfactor0
+
+\fs32 \cf2 8. Serial Interface\
+\pard\sa360\partightenfactor0
+
+\fs22 \cf3 The altimeter board connects to the tracker board over a wired UART link.
+\fs32 \cf2 \
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrt\brdrnil \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat2 \clwWidth2820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat2 \clwWidth6180\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\fs20 \cf6 Parameter
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Value
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth2820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth6180\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Baud rate
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 115200
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2820\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth6180\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Format
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 8N1 (8 data bits, no parity, 1 stop bit)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth2820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth6180\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Line termination
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone CR+LF or LF
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth6180\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Protocol
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone NMEA-style sentences ($ prefix, * checksum delimiter)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrt\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth2820\clftsWidth3 \clheight1360 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth6180\clftsWidth3 \clheight1360 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Output format
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs22 \cf3 \up0 \nosupersub \ulnone Must be NMEA (telem_format=0).
+\f2\b0  The tracker cannot parse JSON. If the altimeter is configured for JSON output (telem_format=1), the tracker will detect JSON lines and print a warning to its serial console, but no telemetry data will be forwarded over LoRa.
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone 
+\f0\b\fs32 \cf2 \up0 \nosupersub \ulnone \cell \lastrow\row
+\pard\sa360\partightenfactor0
+\cf2 9. Current Altimeter State Mapping\
+\pard\sa360\partightenfactor0
+
+\fs22 \cf3 The altimeter's internal state machine uses an enum (
+\f3\fs20 flight_state_t
+\f0\fs22 ) with values PAD_IDLE, ASCENT, DESCENT, LANDED. The function 
+\f3\fs20 state_to_telem_id()
+\f0\fs22  in 
+\f3\fs20 flight_states.c
+\f0\fs22  maps these to the $PYRO state_id field:
+\fs32 \cf2 \
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrt\brdrnil \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat2 \clwWidth2620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat2 \clwWidth1220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat2 \clwWidth2400\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat2 \clwWidth2400\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\fs20 \cf6 Internal State
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone state_id
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone GS Interprets As
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Status
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth1220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth2400\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth2400\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone PAD_IDLE
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone PAD
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf10 \up0 \nosupersub \ulnone Correct
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2620\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1220\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth2400\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth2400\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone ASCENT
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 1
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone BOOST or COAST
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf10 \up0 \nosupersub \ulnone Correct (uses thrust flag)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth1220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth2400\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth2400\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone DESCENT
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 2
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone DESCENT
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf10 \up0 \nosupersub \ulnone Correct
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrt\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth2620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth2400\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth2400\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone LANDED
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 3
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone LANDED
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf10 \up0 \nosupersub \ulnone Correct
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone 
+\f0\b\fs32 \cf2 \up0 \nosupersub \ulnone \cell \lastrow\row
+\pard\sa360\partightenfactor0
+\cf2 \
+\pard\sa360\partightenfactor0
+
+\fs22 \cf3 This mapping is correct and compatible with the ground station. If the altimeter's internal state machine gains additional states (e.g., separate DROGUE_DESCENT and MAIN_DESCENT), the 
+\f3\fs20 state_to_telem_id()
+\f0\fs22  function must map them to the appropriate $PYRO code (see Section 3 for the two-layer architecture and examples). Both drogue and main descent should map to state_id 2 (DESCENT). An apogee state, if added, should also map to state_id 2 since the rocket is beginning to descend.
+\fs32 \cf2 \
+10. Required Changes for Compatibility\
+\pard\sa240\partightenfactor0
+
+\fs22 \cf3 Based on the flight 4 analysis, the following items need verification and possible changes:
+\fs32 \cf2 \
+\pard\sa240\partightenfactor0
+
+\fs26 \cf2 10.1 Verify state_to_telem_id() Mapping\
+\pard\sa240\partightenfactor0
+
+\fs22 \cf3 If the altimeter firmware has added internal flight states beyond the original four (PAD_IDLE, ASCENT, DESCENT, LANDED), the 
+\f3\fs20 state_to_telem_id()
+\f0\fs22  function must map ALL internal states to the 4 valid $PYRO codes (0-3), as described in Section 3. Any unmapped state that leaks to the serial output will break the ground station display.
+\fs26 \cf2 \
+\pard\sa120\partightenfactor0
+
+\fs22 \cf3 Mapping rules for new internal states:
+\fs26 \cf2 \
+\pard\tx360\tx720\li720\fi-720\partightenfactor0
+\ls1\ilvl0
+\f6\b0\fs20\fsmilli10000 \cf3 \up0 \nosupersub \ulnone {\listtext	\uc0\u8226 	}
+\f2\fs22 \up0 \nosupersub \ulnone Any boot/calibration state \uc0\u8594  Do not send telemetry (or send state_id 0)
+\f6\fs20 \
+\ls1\ilvl0
+\fs20\fsmilli10000 \up0 \nosupersub \ulnone {\listtext	\uc0\u8226 	}
+\f2\fs22 \up0 \nosupersub \ulnone Any ascending/coasting state \uc0\u8594  state_id 1 (ASCENT), with thrust flag set appropriately
+\f6\fs20 \
+\ls1\ilvl0
+\fs20\fsmilli10000 \up0 \nosupersub \ulnone {\listtext	\uc0\u8226 	}
+\f2\fs22 \up0 \nosupersub \ulnone Any descending state (drogue, main, ballistic) \uc0\u8594  state_id 2 (DESCENT)
+\f6\fs20 \
+\pard\tx360\tx720\li720\fi-720\sa240\partightenfactor0
+\ls1\ilvl0
+\fs20\fsmilli10000 \cf3 \up0 \nosupersub \ulnone {\listtext	\uc0\u8226 	}
+\f2\fs22 \up0 \nosupersub \ulnone Any post-landing state \uc0\u8594  state_id 3 (LANDED)
+\f6\fs20 \
+\pard\sa240\partightenfactor0
+
+\f0\b\fs26 \cf2 10.2 Verify Thrust Flag Transitions\
+\pard\sa240\partightenfactor0
+
+\fs22 \cf3 The thrust flag must transition from 1 to 0 during ascent when motor burnout is detected. This transition generates the BURNOUT event on the tracker. If the thrust flag is always 0, the ground station will never show a BOOST phase and the burnout event will not fire.
+\fs26 \cf2 \
+10.3 Verify Event Sentence Field Order\
+
+\fs22 \cf3 Known documentation error: The altimeter README documents the event sentence field orders differently from the actual code. The tracker firmware parses the fields in the order specified in this document (Sections 6.1-6.3). Verify that the altimeter's code matches these field orders, not the README.
+\fs26 \cf2 \
+10.4 Default Telemetry Format\
+\pard\sa360\partightenfactor0
+
+\fs22 \cf3 The 
+\f3\fs20 telem_format
+\f0\fs22  configuration field must default to 0 (NMEA). If the default is JSON (1), the tracker will not receive any telemetry data. The tracker now detects JSON output and prints a warning, but it cannot parse JSON.
+\fs26 \cf2 \
+\pard\sa360\partightenfactor0
+
+\fs32 \cf2 11. Ground Station Flight Lifecycle\
+\pard\sa360\partightenfactor0
+
+\fs22 \cf3 For context, the ground station manages flights through this state machine. The altimeter does not need to implement this, but understanding it helps explain why correct state_id values matter.
+\fs32 \cf2 \
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrt\brdrnil \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat2 \clwWidth1620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat2 \clwWidth1620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat2 \clwWidth3180\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat2 \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\fs20 \cf6 From
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone To
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Trigger
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Timeout
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth1620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth1620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth3180\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone PREFLIGHT
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone ACTIVE
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Non-PAD telemetry received
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone \'97
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth1620\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1620\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth3180\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone ACTIVE
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone RECOVERY
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone No telemetry for 60 seconds
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 60s
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth1620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth1620\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth3180\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth2220\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone RECOVERY
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone ACTIVE
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Telemetry resumes
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone \'97
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth1620\clftsWidth3 \clheight800 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1620\clftsWidth3 \clheight800 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth3180\clftsWidth3 \clheight800 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth2220\clftsWidth3 \clheight800 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone ACTIVE/RECOVERY
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone COMPLETE
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs22 \cf3 \up0 \nosupersub \ulnone Telemetry shows state_id=3 (LANDED) for 
+\f0\b 5 continuous minutes
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 300s
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrt\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clshdrawnil \clwWidth1620\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth1620\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth3180\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth2220\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone ACTIVE/RECOVERY
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone COMPLETE
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Operator manually marks complete
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone \'97
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone 
+\f0\b\fs32 \cf2 \up0 \nosupersub \ulnone \cell \lastrow\row
+\pard\sa360\partightenfactor0
+\cf2 \
+\pard\sa360\partightenfactor0
+
+\fs22 \cf3 Why LANDED state_id matters: The ground station's auto-complete logic checks specifically for 
+\f3\fs20 flightState === 3
+\f0\fs22  (after DSM mapping to GS code 4). If the altimeter sends an unrecognized state code when landed, the flight will never auto-complete. It will eventually transition to RECOVERY (no telemetry for 60s) and stay stuck there until an operator manually completes it.
+\fs32 \cf2 \
+12. Tracker Event Code Reference\
+
+\fs22 \cf3 The tracker generates LoRa event packets when it detects state or flag transitions from the altimeter. These events populate the flight timeline on the ground station. This section documents the event codes so the altimeter developer understands what downstream effects each flag/state transition produces.
+\fs32 \cf2 \
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrt\brdrnil \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat2 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat2 \clwWidth1820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat2 \clwWidth4980\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat2 \clwWidth820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\fs20 \cf6 Code
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Name
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Triggered By
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf6 \up0 \nosupersub \ulnone Source
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth1820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth4980\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 'B'
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf3 \up0 \nosupersub \ulnone BURNOUT
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Thrust flag transitions from 1 to 0
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone $PYRO
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1820\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth4980\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth820\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 'A'
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf3 \up0 \nosupersub \ulnone APOGEE
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone $PYRO_APO sentence, or FLAG_APOGEE (bit 5) newly set
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Both
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight440 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth1820\clftsWidth3 \clheight440 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth4980\clftsWidth3 \clheight440 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth820\clftsWidth3 \clheight440 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 1
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf3 \up0 \nosupersub \ulnone P1_FIRE
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone $PYRO_FIRE (ch=1), or FLAG_P1_FIRED (bit 2) newly set
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Both
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth4980\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 2
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf3 \up0 \nosupersub \ulnone P1_FAIL
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone EFLAG_P1_FAIL (bit 6) newly set
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Flags
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth1820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth4980\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 3
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf3 \up0 \nosupersub \ulnone DROGUE_OK
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone EFLAG_DROGUE_OK (bit 8) newly set
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Flags
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth4980\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 4
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf3 \up0 \nosupersub \ulnone DROGUE_FAIL
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone EFLAG_DROGUE_FAIL (bit 9) newly set
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Flags
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth1820\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth4980\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth820\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 5
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf3 \up0 \nosupersub \ulnone P2_FIRE
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone $PYRO_FIRE (ch=2), or FLAG_P2_FIRED (bit 3) newly set
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Both
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth4980\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 6
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf3 \up0 \nosupersub \ulnone P2_FAIL
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone EFLAG_P2_FAIL (bit 7) newly set
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Flags
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth1820\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth4980\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth820\clftsWidth3 \clheight180 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 7
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf3 \up0 \nosupersub \ulnone MAIN_OK
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone EFLAG_MAIN_OK (bit 10) newly set
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Flags
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth4980\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth820\clftsWidth3 \clheight200 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 8
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf3 \up0 \nosupersub \ulnone MAIN_FAIL
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone EFLAG_MAIN_FAIL (bit 11) newly set
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Flags
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clshdrawnil \clwWidth1820\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clshdrawnil \clwWidth4980\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clshdrawnil \clwWidth820\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 'L'
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf3 \up0 \nosupersub \ulnone LANDED
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone $PYRO_LAND sentence, or state transitions to LANDED (3)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone Both
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell \row
+
+\itap1\trowd \taflags1 \trgaph108\trleft-108 \trbrdrl\brdrnil \trbrdrt\brdrnil \trbrdrr\brdrnil 
+\clvertalt \clcbpat8 \clwWidth1020\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx2160
+\clvertalt \clcbpat8 \clwWidth1820\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx4320
+\clvertalt \clcbpat8 \clwWidth4980\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx6480
+\clvertalt \clcbpat8 \clwWidth820\clftsWidth3 \clheight460 \clbrdrt\brdrs\brdrw20\brdrcf7 \clbrdrl\brdrs\brdrw20\brdrcf7 \clbrdrb\brdrs\brdrw20\brdrcf7 \clbrdrr\brdrs\brdrw20\brdrcf7 \clpadt80 \clpadl80 \clpadb80 \clpadr80 \gaph\cellx8640
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f5\fs18 \cf3 \up0 \nosupersub \ulnone 'R'
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f0\b\fs20 \cf3 \up0 \nosupersub \ulnone REPORT
+\f4\b0\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone 5 seconds after landing (max altitude, max velocity, errors)
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone \cell 
+\pard\intbl\itap1\pardeftab720\sl288\slmult1\partightenfactor0
+
+\f2\fs20 \cf3 \up0 \nosupersub \ulnone $PYRO
+\f4\fs24 \cf0 \up0 \nosupersub \ulnone 
+\f0\b\fs32 \cf2 \up0 \nosupersub \ulnone \cell \lastrow\row
+\pard\sa360\partightenfactor0
+\cf2 \
+\pard\sa360\partightenfactor0
+
+\fs22 \cf3 Events marked Both can be triggered by either an event sentence or a flag transition. The tracker deduplicates: if a $PYRO_APO sentence fires the APOGEE event, the subsequent FLAG_APOGEE transition is suppressed (and vice versa). The altimeter should send event sentences for the most accurate timing; the flag-based detection serves as a fallback.
+\fs32 \cf2 \
+\pard\sa120\partightenfactor0
+\cf2 13. Quick Reference for Altimeter Developers\
+\pard\tx360\tx720\li720\fi-720\sa80\partightenfactor0
+\ls2\ilvl0
+\f6\b0\fs20\fsmilli10000 \cf3 \up0 \nosupersub \ulnone {\listtext	1.	}
+\f2\fs22 \up0 \nosupersub \ulnone The $PYRO state_id field must be 0, 1, 2, or 3. No other values.
+\f6\fs20 \
+\ls2\ilvl0
+\fs20\fsmilli10000 \up0 \nosupersub \ulnone {\listtext	2.	}
+\f2\fs22 \up0 \nosupersub \ulnone Thrust flag = 1 during motor burn, 0 otherwise. This creates the BOOST vs COAST distinction.
+\f6\fs20 \
+\ls2\ilvl0
+\fs20\fsmilli10000 \up0 \nosupersub \ulnone {\listtext	3.	}
+\f2\fs22 \up0 \nosupersub \ulnone All descent phases (drogue, main, ballistic) = state_id 2.
+\f6\fs20 \
+\ls2\ilvl0
+\fs20\fsmilli10000 \up0 \nosupersub \ulnone {\listtext	4.	}
+\f2\fs22 \up0 \nosupersub \ulnone Landed = state_id 3. The ground station auto-completes after 5 minutes of continuous state_id 3.
+\f6\fs20 \
+\ls2\ilvl0
+\fs20\fsmilli10000 \up0 \nosupersub \ulnone {\listtext	5.	}
+\f2\fs22 \up0 \nosupersub \ulnone Emit $PYRO_APO, $PYRO_FIRE, $PYRO_LAND event sentences at the appropriate moments.
+\f6\fs20 \
+\ls2\ilvl0
+\fs20\fsmilli10000 \up0 \nosupersub \ulnone {\listtext	6.	}
+\f2\fs22 \up0 \nosupersub \ulnone Flags bits 0-5 must be maintained correctly. The tracker watches for 0\uc0\u8594 1 transitions.
+\f6\fs20 \
+\ls2\ilvl0
+\fs20\fsmilli10000 \up0 \nosupersub \ulnone {\listtext	7.	}
+\f2\fs22 \up0 \nosupersub \ulnone telem_format must default to 0 (NMEA). The tracker cannot parse JSON.
+\f6\fs20 \
+\ls2\ilvl0
+\fs20\fsmilli10000 \up0 \nosupersub \ulnone {\listtext	8.	}
+\f2\fs22 \up0 \nosupersub \ulnone 10 Hz during ASCENT and DESCENT, 1 Hz during PAD and LANDED.}

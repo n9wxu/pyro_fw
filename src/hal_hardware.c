@@ -13,6 +13,7 @@
 #include "hardware/uart.h"
 #include "hardware/irq.h"
 #include "hardware/i2c.h"
+#include "hardware/watchdog.h"
 #include "tusb.h"
 #include "bsp/board_api.h"
 #include <lfs.h>
@@ -573,6 +574,9 @@ void hal_platform_init(void) {
      * network) that could leave the pin floating and produce a spurious
      * tone at power-on. */
     hal_buzzer_init();
+
+    /* Watchdog initialization removed - watchdog_reboot() handles enabling
+     * internally when needed. The 1ms timeout was causing boot loops. */
 
     board_init();
 

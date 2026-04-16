@@ -161,11 +161,14 @@ static err_t on_sent(void *arg, struct tcp_pcb *pcb, u16_t len);
 /* ── API handlers ─────────────────────────────────────────────────── */
 
 static const char *state_names[] = {"BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALIBRATE", "PAD_IDLE",
-                                    "ASCENT",      "DESCENT",         "LANDED"};
+                                    "ASCENT",      "FALLING",         "DROGUE_DESCENT",
+                                    "CHUTE_DESCENT","LANDED"};
 
 static void serve_api_status(struct tcp_pcb *pcb) {
     char buf[768];
-    const char *sn = (g_status.state < 7) ? state_names[g_status.state] : "UNKNOWN";
+    const char *sn = (g_status.state < (int)(sizeof(state_names) / sizeof(state_names[0])))
+                         ? state_names[g_status.state]
+                         : "UNKNOWN";
     static const char *mode_names[] = {"none", "fallen", "agl", "speed", "delay"};
     const char *p1m = (g_status.pyro1_mode < 5) ? mode_names[g_status.pyro1_mode] : "?";
     const char *p2m = (g_status.pyro2_mode < 5) ? mode_names[g_status.pyro2_mode] : "?";
@@ -564,6 +567,7 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
 
         } else if (strcmp(path, "/api/config") == 0 && content_length > 0 && content_length < 512) {
             /* Config update with state-based safety check */
+            DBG("POST /api/config cl=%lu", (unsigned long)content_length);
             char cfgbuf[512];
             uint16_t len = (body_in_first < content_length) ? body_in_first : content_length;
             pbuf_copy_partial(p, cfgbuf, len, body_offset);
@@ -578,45 +582,61 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
 
             const char *resp;
             if (state != PAD_IDLE) {
-                /* Reject config changes during flight */
-                resp = "HTTP/1.1 409 Conflict\r\n" CORS_HDR "Connection: close\r\n"
-                       "Content-Type: application/json\r\n\r\n"
-                       "{\"error\":\"Cannot change config during flight\","
-                       "\"state\":\"in_flight\",\"reboot_required\":true}";
+                /* Reject config changes - device not ready */
+                DBG("POST /api/config REJECT state=%u (need PAD_IDLE=3)", (unsigned)state);
+                char err_msg[256];
+                snprintf(err_msg, sizeof(err_msg),
+                         "HTTP/1.1 409 Conflict\r\n" CORS_HDR "Connection: close\r\n"
+                         "Content-Type: application/json\r\n\r\n"
+                         "{\"error\":\"Device not ready (state=%s)\","
+                         "\"state\":\"%s\",\"reboot_required\":true}",
+                         state_names[state < 7 ? state : 0], state_names[state < 7 ? state : 0]);
+                tcp_write(pcb, err_msg, strlen(err_msg), TCP_WRITE_FLAG_COPY);
+                tcp_output(pcb);
+                tcp_sent(pcb, on_sent);
+                tcp_arg(pcb, NULL);
+                return ERR_OK;
             } else {
                 /* Safe to update: write to flash and reload */
                 lfs_t lfs;
                 if (lfs_mount(&lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
                     lfs_file_t f;
                     if (lfs_file_open(&lfs, &f, "config.ini", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) == LFS_ERR_OK) {
-                        lfs_file_write(&lfs, &f, cfgbuf, len);
-                        lfs_file_close(&lfs, &f);
-                        lfs_unmount(&lfs);
+                        lfs_ssize_t written = lfs_file_write(&lfs, &f, cfgbuf, len);
+                        int close_err = lfs_file_close(&lfs, &f);
+                        int unmount_err = lfs_unmount(&lfs);
+
+                        DBG("POST /api/config write=%d close=%d unmount=%d", (int)written, close_err, unmount_err);
 
                         /* Reload config into running system */
                         flight_context_t *ctx = flight_get_context();
                         int reload_result = flight_config_reload(ctx);
 
                         if (reload_result == 0) {
+                            DBG("POST /api/config OK (applied)");
                             resp = "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
                                    "Content-Type: application/json\r\n\r\n"
                                    "{\"status\":\"ok\",\"applied\":true}";
                         } else {
+                            DBG("POST /api/config WARN reload_result=%d", reload_result);
                             resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n"
                                    "Content-Type: application/json\r\n\r\n"
                                    "{\"error\":\"Config saved but reload failed\","
                                    "\"reboot_required\":true}";
                         }
                     } else {
+                        DBG("POST /api/config FAIL file_open");
                         lfs_unmount(&lfs);
                         resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n\r\nFile open failed";
                     }
                 } else {
+                    DBG("POST /api/config FAIL lfs_mount");
                     resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n\r\nMount failed";
                 }
             }
             tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
         } else if (strcmp(path, "/api/reboot") == 0) {
+            DBG("POST /api/reboot");
             pbuf_free(p);
             extern volatile uint8_t pending_reset;
             pending_reset = 2;

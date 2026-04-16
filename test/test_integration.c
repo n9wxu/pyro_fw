@@ -231,7 +231,9 @@ void test_FLT_BOOT_01_all_states(void) {
             saw_pad = true;
         if (ctx.current_state == ASCENT)
             saw_ascent = true;
-        if (ctx.current_state == DESCENT)
+        if (ctx.current_state == FALLING ||
+            ctx.current_state == DROGUE_DESCENT ||
+            ctx.current_state == CHUTE_DESCENT)
             saw_descent = true;
         if (ctx.current_state == LANDED)
             saw_landed = true;
@@ -239,7 +241,7 @@ void test_FLT_BOOT_01_all_states(void) {
 
     TEST_ASSERT_TRUE_MESSAGE(saw_pad, "Never in PAD_IDLE");
     TEST_ASSERT_TRUE_MESSAGE(saw_ascent, "Never in ASCENT");
-    TEST_ASSERT_TRUE_MESSAGE(saw_descent, "Never in DESCENT");
+    TEST_ASSERT_TRUE_MESSAGE(saw_descent, "Never in FALLING/DROGUE/CHUTE");
     TEST_ASSERT_TRUE_MESSAGE(saw_landed, "Never in LANDED");
 }
 
@@ -357,7 +359,8 @@ void test_FLT_LAUNCH_01_timing(void) {
         app_tick(t);
         if (ctx.current_state == ASCENT && ascent_start == 0)
             ascent_start = t;
-        if (ctx.current_state == DESCENT && descent_start == 0)
+        if ((ctx.current_state == FALLING || ctx.current_state == DROGUE_DESCENT ||
+             ctx.current_state == CHUTE_DESCENT) && descent_start == 0)
             descent_start = t;
         if (ctx.current_state == LANDED && landed_start == 0)
             landed_start = t;

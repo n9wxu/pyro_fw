@@ -157,10 +157,14 @@ static uint8_t compat_state_id(flight_state_t state) {
         return 0;
     case ASCENT:
         return 1;
-    case DESCENT:
+    case FALLING:
         return 2;
-    case LANDED:
+    case DROGUE_DESCENT:
         return 3;
+    case CHUTE_DESCENT:
+        return 4;
+    case LANDED:
+        return 5;
     default:
         return 0;
     }

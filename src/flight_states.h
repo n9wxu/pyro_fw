@@ -14,7 +14,9 @@ typedef enum {
     BOOT_CALIBRATE,  // establish ground reference
     PAD_IDLE,
     ASCENT,
-    DESCENT,
+    FALLING,         /* free-fall before drogue fires */
+    DROGUE_DESCENT,  /* drogue deployed, before main chute fires */
+    CHUTE_DESCENT,   /* main chute deployed, descending to landing */
     LANDED,
     STATE_COUNT
 } flight_state_t;
@@ -28,6 +30,8 @@ typedef enum {
     SEVT_LAUNCH,
     SEVT_ARMED,
     SEVT_APOGEE,
+    SEVT_DROGUE,   /* pyro1 (drogue) fired — transition FALLING→DROGUE_DESCENT */
+    SEVT_CHUTE,    /* pyro2 (main) fired — transition DROGUE_DESCENT→CHUTE_DESCENT */
     SEVT_LANDING,
 } state_event_t;
 

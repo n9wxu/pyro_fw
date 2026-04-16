@@ -281,15 +281,68 @@ void test_FLT_APO_01_detects_apogee(void) {
     mock_time_ms = 200;
     ctx.current_state = step(&ctx, mock_time_ms);
 
-    TEST_ASSERT_EQUAL(DESCENT, ctx.current_state);
+    TEST_ASSERT_EQUAL(FALLING, ctx.current_state);
     TEST_ASSERT_TRUE(ctx.apogee_detected);
 }
 
-/* ── DESCENT tests ────────────────────────────────────────────────── */
+/* ── FALLING / DROGUE / CHUTE tests ──────────────────────────────── */
+
+/* Verify pyro1 fire → FALLING→DROGUE_DESCENT transition */
+void test_FLT_DROGUE_01_transitions_on_pyro1_fire(void) {
+    flight_context_t ctx = {0};
+    ctx.current_state = FALLING;
+    ctx.ground_pressure = 101325;
+    ctx.filter_initialized = true;
+    ctx.apogee_detected = true;
+    ctx.pyro1_continuity_good = true;
+    pp_test_prime(101325);
+    ctx.filtered_pressure = 101325;
+    ctx.last_altitude = 5000;
+    ctx.vertical_speed_cms = -500;
+    ctx.launch_time = 0;
+    ctx.last_sample = 0;
+
+    /* pyro1 already fired */
+    ctx.pyro1_fired = true;
+
+    mock_pressure.pressure_pa = 101325.0f - 600.0f; /* ~5000 cm */
+    mock_time_ms = 100;
+    ctx.current_state = step(&ctx, mock_time_ms);
+
+    TEST_ASSERT_EQUAL(DROGUE_DESCENT, ctx.current_state);
+}
+
+/* Verify pyro2 fire → DROGUE_DESCENT→CHUTE_DESCENT transition */
+void test_FLT_CHUTE_01_transitions_on_pyro2_fire(void) {
+    flight_context_t ctx = {0};
+    ctx.current_state = DROGUE_DESCENT;
+    ctx.ground_pressure = 101325;
+    ctx.filter_initialized = true;
+    ctx.apogee_detected = true;
+    ctx.pyro1_fired = true;
+    ctx.pyro2_continuity_good = true;
+    pp_test_prime(101325);
+    ctx.filtered_pressure = 101325;
+    ctx.last_altitude = 3000;
+    ctx.vertical_speed_cms = -300;
+    ctx.launch_time = 0;
+    ctx.last_sample = 0;
+
+    /* pyro2 already fired */
+    ctx.pyro2_fired = true;
+
+    mock_pressure.pressure_pa = 101325.0f - 360.0f; /* ~3000 cm */
+    mock_time_ms = 100;
+    ctx.current_state = step(&ctx, mock_time_ms);
+
+    TEST_ASSERT_EQUAL(CHUTE_DESCENT, ctx.current_state);
+}
 
 void test_FLT_LAND_01_detects_landing(void) {
     flight_context_t ctx = {0};
-    ctx.current_state = DESCENT;
+    ctx.current_state = CHUTE_DESCENT;
+    ctx.pyro1_fired = true; /* drogue already deployed */
+    ctx.pyro2_fired = true; /* main already deployed */
     ctx.ground_pressure = 101325;
     ctx.filter_initialized = true;
     pp_test_prime(101325);
@@ -391,15 +444,39 @@ void test_TEL_02_checksum(void) {
 void test_TEL_07_state_mapping(void) {
     flight_context_t ctx = {0};
 
-    /* PAD_IDLE should output state=0 */
+    /* PAD_IDLE → state_id 0 */
     mock_uart_len = 0;
     send_telemetry(&ctx, 0, 0, PAD_IDLE);
     TEST_ASSERT_TRUE(strstr(mock_uart_buf, "PYRO,0,0,") != NULL);
 
-    /* ASCENT should output state=1 */
+    /* ASCENT → state_id 1 */
     mock_uart_len = 0;
     send_telemetry(&ctx, 0, 0, ASCENT);
     TEST_ASSERT_TRUE(strstr(mock_uart_buf, ",1,") != NULL);
+
+    /* FALLING → state_id 2 */
+    mock_uart_len = 0;
+    ctx.telemetry_seq = 0;
+    send_telemetry(&ctx, 0, 0, FALLING);
+    TEST_ASSERT_TRUE(strstr(mock_uart_buf, ",2,") != NULL);
+
+    /* DROGUE_DESCENT → state_id 3 */
+    mock_uart_len = 0;
+    ctx.telemetry_seq = 0;
+    send_telemetry(&ctx, 0, 0, DROGUE_DESCENT);
+    TEST_ASSERT_TRUE(strstr(mock_uart_buf, ",3,") != NULL);
+
+    /* CHUTE_DESCENT → state_id 4 */
+    mock_uart_len = 0;
+    ctx.telemetry_seq = 0;
+    send_telemetry(&ctx, 0, 0, CHUTE_DESCENT);
+    TEST_ASSERT_TRUE(strstr(mock_uart_buf, ",4,") != NULL);
+
+    /* LANDED → state_id 5 */
+    mock_uart_len = 0;
+    ctx.telemetry_seq = 0;
+    send_telemetry(&ctx, 0, 0, LANDED);
+    TEST_ASSERT_TRUE(strstr(mock_uart_buf, ",5,") != NULL);
 }
 
 void test_telemetry_flags(void) {
@@ -420,7 +497,7 @@ void test_TEL_06_altitude_and_speed(void) {
     ctx.filtered_pressure = 98000;
 
     mock_uart_len = 0;
-    send_telemetry(&ctx, 5000, 25000, DESCENT);
+    send_telemetry(&ctx, 5000, 25000, FALLING);
 
     int seq, st, thr;
     long alt, vel, maxalt, press;
@@ -755,7 +832,9 @@ int main(void) {
     RUN_TEST(test_FLT_ASC_04_arms_pyros);
     RUN_TEST(test_FLT_APO_01_detects_apogee);
 
-    /* DESCENT */
+    /* FALLING / DROGUE / CHUTE */
+    RUN_TEST(test_FLT_DROGUE_01_transitions_on_pyro1_fire);
+    RUN_TEST(test_FLT_CHUTE_01_transitions_on_pyro2_fire);
     RUN_TEST(test_FLT_LAND_01_detects_landing);
 
     /* LANDED */
