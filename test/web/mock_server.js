@@ -133,8 +133,8 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       configIni = body;
       pendingConfig = body;
-      res.writeHead(201, cors);
-      res.end('OK');
+      res.writeHead(200, {...cors, 'Content-Type': 'application/json'});
+      res.end(JSON.stringify({applied: false}));
     });
     return;
   }
