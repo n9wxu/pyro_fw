@@ -124,6 +124,15 @@ FetchContent_Declare(
     GIT_TAG v2.11.2
 )
 
+# Lua 5.4 for user programs on core1. Only fetched for boards that want it.
+if(PYRO_HAS_LUA)
+    FetchContent_Declare(
+        lua
+        GIT_REPOSITORY https://github.com/lua/lua.git
+        GIT_TAG v5.4.6
+    )
+endif()
+
 FetchContent_Declare(
     unity
     GIT_REPOSITORY https://github.com/ThrowTheSwitch/Unity.git
@@ -145,6 +154,52 @@ if(PYRO_BOARD_KIND STREQUAL "pico")
     FetchContent_MakeAvailable(littlefs unity pico_fota_bootloader)
 else()
     FetchContent_MakeAvailable(littlefs unity) # no bootloader on a host build
+endif()
+if(PYRO_HAS_LUA)
+    FetchContent_MakeAvailable(lua)
+endif()
+
+# ====================================================================================
+# Lua 5.4 static library
+#
+# Upstream ships no CMakeLists, so the source set is listed here. Four
+# libraries are deliberately excluded rather than sandboxed later:
+#
+#   lua.c, luac.c   standalone interpreter and compiler mains
+#   loslib.c        os.execute, os.tmpname, os.exit -- no place on a flight computer
+#   liolib.c        FILE* I/O; scripts reach the filesystem through our own API
+#   loadlib.c       dynamic library loading
+#   linit.c         its loadedlibs table would pull the above back in
+#
+# LUA_32BITS makes numbers 32-bit float and 32-bit int. That halves the size
+# of every Lua value, which matters against a fixed arena, and keeps the
+# simulator numerically identical to the target rather than subtly better.
+# ====================================================================================
+if(PYRO_HAS_LUA)
+    set(PYRO_LUA_SOURCES
+        lapi.c lcode.c lctype.c ldebug.c ldo.c ldump.c lfunc.c lgc.c llex.c
+        lmem.c lobject.c lopcodes.c lparser.c lstate.c lstring.c ltable.c
+        ltm.c lundump.c lvm.c lzio.c
+        lauxlib.c lbaselib.c lcorolib.c ldblib.c lmathlib.c lstrlib.c
+        ltablib.c lutf8lib.c
+    )
+    list(TRANSFORM PYRO_LUA_SOURCES PREPEND ${lua_SOURCE_DIR}/)
+    add_library(lua_lib STATIC ${PYRO_LUA_SOURCES})
+    target_include_directories(lua_lib PUBLIC ${lua_SOURCE_DIR} ${CMAKE_CURRENT_LIST_DIR}/src/lua)
+    # luaconf.h defines LUA_32BITS unconditionally, so -DLUA_32BITS=1 collides
+    # and loses. Force it through the one hook upstream provides for this.
+    target_compile_definitions(lua_lib PUBLIC LUA_USER_H="pyro_luaconf.h")
+    target_compile_options(lua_lib PRIVATE -Wno-unused-but-set-variable -Wno-implicit-fallthrough)
+    set(PYRO_LUA_INCLUDE ${lua_SOURCE_DIR})
+
+    # VM host: arena, limits, sandbox and bindings. Board-independent; the
+    # platform half lives in boards/<name>/lua_platform_*.c
+    add_library(pyro_lua STATIC
+        src/lua/pyro_lua.c
+        src/lua/lua_arena.c
+    )
+    target_include_directories(pyro_lua PUBLIC ${CMAKE_CURRENT_LIST_DIR}/src/lua ${CMAKE_CURRENT_LIST_DIR}/src)
+    target_link_libraries(pyro_lua PUBLIC lua_lib)
 endif()
 message("littlefs is here: ${littlefs_SOURCE_DIR}")
 
@@ -415,6 +470,30 @@ add_custom_target(sim
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Flight simulator"
 )
+
+# Lua sandbox and limit tests. Only when the selected board provides Lua.
+if(PYRO_HAS_LUA)
+add_custom_target(lua_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building Lua tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/src/lua
+               -I${lua_SOURCE_DIR}
+               -I${CMAKE_CURRENT_LIST_DIR}/test
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_lua.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/lua/pyro_lua.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_arena.c
+               ${PYRO_BOARD_DIR}/lua_platform_sim.c
+               ${PYRO_LUA_SOURCES}
+               ${unity_SOURCE_DIR}/src/unity.c
+               -lm
+               -o ${CMAKE_BINARY_DIR}/test_lua
+    COMMAND ${CMAKE_COMMAND} -E echo "Running Lua tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_lua
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Lua sandbox and resource-limit tests"
+)
+endif()
 
 add_custom_target(buzzer_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building buzzer pattern tests..."

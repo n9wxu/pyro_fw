@@ -1,0 +1,227 @@
+/*
+ * Lua platform — simulator.
+ *
+ * Implements src/lua/lua_platform.h against simulated hardware, so the API,
+ * the sandbox and user scripts can be developed and tested with no board
+ * attached. Pin states and the UART buffers are exported for the WASM host to
+ * render, which is what makes a script's effect visible.
+ *
+ * Deliberately mirrors the MK1C resource set — three outputs, one input, one
+ * serial — so a script written here runs unchanged on hardware.
+ *
+ * SPDX-License-Identifier: MIT
+ */
+#include "lua_platform.h"
+#include <string.h>
+
+/* ── Simulated resources ──────────────────────────────────────────── */
+
+static const lua_output_desc_t outputs[] = {
+    {"beacon", true}, /* J3 pin, PWM-capable: night-launch LED */
+    {"strobe", true}, /* J3 pin, PWM-capable                   */
+    {"aux", false},   /* J1.6, digital only                    */
+};
+static int output_val[sizeof(outputs) / sizeof(outputs[0])];
+
+static const lua_input_desc_t inputs[] = {
+    {"sense"}, /* J3 pin configured as an input */
+};
+static int input_val[sizeof(inputs) / sizeof(inputs[0])];
+
+static const lua_serial_desc_t serials[] = {
+    {"radio"}, /* uart1 on the J3 pads */
+};
+
+/* ── Simulated UART ───────────────────────────────────────────────── */
+
+#define SIM_UART_BUF 2048
+
+static char tx_buf[SIM_UART_BUF]; /* script -> outside world */
+static int tx_len;
+static char rx_buf[SIM_UART_BUF]; /* outside world -> script */
+static int rx_head, rx_tail;
+
+#define SIM_CONSOLE_BUF 4096
+static char console_buf[SIM_CONSOLE_BUF];
+static int console_len;
+
+/* ── Flight state, injected by the simulation ─────────────────────── */
+
+static int32_t sim_pressure_pa = 101325;
+static int32_t sim_altitude_cm;
+static int32_t sim_speed_cms;
+static int32_t sim_max_alt_cm;
+static int sim_flight_state;
+static uint32_t sim_time_ms;
+static int sim_pyro_status[2];
+
+/* ── lua_platform.h implementation ────────────────────────────────── */
+
+int lua_plat_output_count(void) {
+    return (int)(sizeof(outputs) / sizeof(outputs[0]));
+}
+const lua_output_desc_t *lua_plat_output_desc(int idx) {
+    return &outputs[idx];
+}
+void lua_plat_output_set(int idx, int value) {
+    output_val[idx] = value;
+}
+int lua_plat_output_get(int idx) {
+    return output_val[idx];
+}
+
+int lua_plat_input_count(void) {
+    return (int)(sizeof(inputs) / sizeof(inputs[0]));
+}
+const lua_input_desc_t *lua_plat_input_desc(int idx) {
+    return &inputs[idx];
+}
+int lua_plat_input_get(int idx) {
+    return input_val[idx];
+}
+
+int lua_plat_serial_count(void) {
+    return (int)(sizeof(serials) / sizeof(serials[0]));
+}
+const lua_serial_desc_t *lua_plat_serial_desc(int idx) {
+    return &serials[idx];
+}
+
+int lua_plat_serial_write(int idx, const char *s, int len) {
+    (void)idx;
+    int room = SIM_UART_BUF - tx_len;
+    if (len > room)
+        len = room;
+    if (len > 0) {
+        memcpy(tx_buf + tx_len, s, (size_t)len);
+        tx_len += len;
+    }
+    return len;
+}
+
+int lua_plat_serial_read(int idx, char *buf, int max) {
+    (void)idx;
+    int n = 0;
+    while (n < max && rx_tail != rx_head) {
+        buf[n++] = rx_buf[rx_tail];
+        rx_tail = (rx_tail + 1) % SIM_UART_BUF;
+    }
+    return n;
+}
+
+int32_t lua_plat_pressure_pa(void) {
+    return sim_pressure_pa;
+}
+int32_t lua_plat_altitude_cm(void) {
+    return sim_altitude_cm;
+}
+int32_t lua_plat_speed_cms(void) {
+    return sim_speed_cms;
+}
+int32_t lua_plat_max_altitude_cm(void) {
+    return sim_max_alt_cm;
+}
+int lua_plat_flight_state(void) {
+    return sim_flight_state;
+}
+uint32_t lua_plat_time_ms(void) {
+    return sim_time_ms;
+}
+int lua_plat_pyro_status(int channel) {
+    return sim_pyro_status[(channel == 2) ? 1 : 0];
+}
+
+void lua_plat_console_out(const char *s, int len) {
+    int room = SIM_CONSOLE_BUF - 1 - console_len;
+    if (len > room) {
+        /* Drop the oldest half rather than the newest output: when a script
+         * is spewing, the recent lines are the ones being debugged. */
+        int keep = console_len / 2;
+        memmove(console_buf, console_buf + console_len - keep, (size_t)keep);
+        console_len = keep;
+        room = SIM_CONSOLE_BUF - 1 - console_len;
+        if (len > room)
+            len = room;
+    }
+    if (len > 0) {
+        memcpy(console_buf + console_len, s, (size_t)len);
+        console_len += len;
+        console_buf[console_len] = '\0';
+    }
+}
+
+/* ── Simulation-side hooks (exported to the WASM host) ────────────── */
+
+void sim_lua_set_flight(int state, int32_t alt_cm, int32_t speed_cms, int32_t pressure_pa, int32_t max_alt_cm,
+                        uint32_t time_ms) {
+    sim_flight_state = state;
+    sim_altitude_cm = alt_cm;
+    sim_speed_cms = speed_cms;
+    sim_pressure_pa = pressure_pa;
+    sim_max_alt_cm = max_alt_cm;
+    sim_time_ms = time_ms;
+}
+
+void sim_lua_set_pyro(int channel, int status) {
+    sim_pyro_status[(channel == 2) ? 1 : 0] = status;
+}
+
+void sim_lua_set_input(int idx, int value) {
+    if (idx >= 0 && idx < lua_plat_input_count())
+        input_val[idx] = value ? 1 : 0;
+}
+
+int sim_lua_output_count(void) {
+    return lua_plat_output_count();
+}
+const char *sim_lua_output_name(int idx) {
+    return (idx >= 0 && idx < lua_plat_output_count()) ? outputs[idx].name : "";
+}
+int sim_lua_output_value(int idx) {
+    return (idx >= 0 && idx < lua_plat_output_count()) ? output_val[idx] : 0;
+}
+int sim_lua_output_dimmable(int idx) {
+    return (idx >= 0 && idx < lua_plat_output_count()) ? outputs[idx].dimmable : 0;
+}
+
+int sim_lua_input_count(void) {
+    return lua_plat_input_count();
+}
+const char *sim_lua_input_name(int idx) {
+    return (idx >= 0 && idx < lua_plat_input_count()) ? inputs[idx].name : "";
+}
+
+int sim_lua_serial_count(void) {
+    return lua_plat_serial_count();
+}
+const char *sim_lua_serial_name(int idx) {
+    return (idx >= 0 && idx < lua_plat_serial_count()) ? serials[idx].name : "";
+}
+
+/* Drain what the script transmitted, for the terminal pane. */
+const char *sim_lua_uart_tx(void) {
+    tx_buf[tx_len < SIM_UART_BUF ? tx_len : SIM_UART_BUF - 1] = '\0';
+    return tx_buf;
+}
+void sim_lua_uart_tx_clear(void) {
+    tx_len = 0;
+}
+
+/* Feed the script's serial.read() from the terminal pane. */
+void sim_lua_uart_rx_push(const char *s) {
+    while (*s) {
+        int next = (rx_head + 1) % SIM_UART_BUF;
+        if (next == rx_tail)
+            break; /* full: drop, as a real UART would */
+        rx_buf[rx_head] = *s++;
+        rx_head = next;
+    }
+}
+
+const char *sim_lua_console(void) {
+    return console_buf;
+}
+void sim_lua_console_clear(void) {
+    console_len = 0;
+    console_buf[0] = '\0';
+}

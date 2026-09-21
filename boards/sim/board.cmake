@@ -11,6 +11,7 @@
 # The sim is the degenerate case -- it links no common HAL at all.
 
 set(PYRO_BOARD_KIND host)              # not "pico": skip the SDK entirely
+set(PYRO_HAS_LUA 1)                    # Lua runs here with no multicore or flash
 set(BOARD_DISPLAY_NAME "Pyro SIM")
 
 # Sources the host/WASM targets compile in place of the board support
