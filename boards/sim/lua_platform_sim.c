@@ -45,6 +45,32 @@ static int rx_head, rx_tail;
 static char console_buf[SIM_CONSOLE_BUF];
 static int console_len;
 
+/* ── Simulated LED string ─────────────────────────────────────────
+ *
+ * On hardware this buffer is DMA'd to a PIO state machine clocking WS2812
+ * timing. Here it is just memory, with a counter so the UI can show that
+ * show() -- and only show() -- reaches the wire. */
+
+#define SIM_PIXELS 16
+static uint8_t pixel_buf[SIM_PIXELS * 3]; /* R,G,B per LED */
+static uint8_t pixel_wire[SIM_PIXELS * 3];
+static uint32_t pixel_shows;
+
+int lua_plat_pixel_count(void) {
+    return SIM_PIXELS;
+}
+
+void lua_plat_pixel_set(int idx, uint8_t r, uint8_t g, uint8_t b) {
+    pixel_buf[idx * 3 + 0] = r;
+    pixel_buf[idx * 3 + 1] = g;
+    pixel_buf[idx * 3 + 2] = b;
+}
+
+void lua_plat_pixel_show(void) {
+    memcpy(pixel_wire, pixel_buf, sizeof(pixel_wire));
+    pixel_shows++;
+}
+
 /* ── Flight state, injected by the simulation ─────────────────────── */
 
 static int32_t sim_pressure_pa = 101325;
@@ -216,6 +242,24 @@ void sim_lua_uart_rx_push(const char *s) {
         rx_buf[rx_head] = *s++;
         rx_head = next;
     }
+}
+
+/* What is actually on the wire -- the last show(), not the working buffer,
+ * so the UI shows a script that forgets show() as a string that never lights. */
+int sim_lua_pixel_count(void) {
+    return SIM_PIXELS;
+}
+int sim_lua_pixel_r(int i) {
+    return (i >= 0 && i < SIM_PIXELS) ? pixel_wire[i * 3 + 0] : 0;
+}
+int sim_lua_pixel_g(int i) {
+    return (i >= 0 && i < SIM_PIXELS) ? pixel_wire[i * 3 + 1] : 0;
+}
+int sim_lua_pixel_b(int i) {
+    return (i >= 0 && i < SIM_PIXELS) ? pixel_wire[i * 3 + 2] : 0;
+}
+uint32_t sim_lua_pixel_shows(void) {
+    return pixel_shows;
 }
 
 const char *sim_lua_console(void) {

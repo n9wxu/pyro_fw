@@ -36,8 +36,35 @@ Measured on the current tree, not assumed:
   pins. GPIO2,3,4,5,9,10,13,14,15 have no pad at all, and GPIO0/1 stay with
   telemetry on J1.4/J1.5.
 
-- **The allowlist must cover pin FUNCTION, not just pin number.** This is the
-  sharpest trap in the whole design:
+- **Everything Lua touches goes through PIO, which deletes the trap below.**
+  PIO state machines can drive any pin, so Lua never needs a hardware
+  peripheral and the (pin, role) matrix collapses to a single rule:
+
+  > **A Lua pin is only ever set to `GPIO_FUNC_PIO1` or SIO. Never a hardware
+  > peripheral function.**
+
+  That is stronger than the allowlist it replaces, because it removes the
+  reachability rather than checking for it: there is no argument a script can
+  pass that reaches `i2c1` or `uart0`, since those peripherals are not in the
+  path at all. Core0 keeps `pio0` (the ARM_TOGGLE pump already uses it); Lua
+  gets `pio1`.
+
+  The cost is instruction memory. `pio1` holds 32 instructions across 4 state
+  machines, and core0 already spends some of `pio0`:
+
+  | program | instructions |
+  |---|---|
+  | WS2812 | ~4 |
+  | UART TX | ~4 |
+  | UART RX | ~8 |
+  | I2C | ~16 |
+
+  All four will not fit at once. Programs are therefore loaded on demand from
+  what configuration enables, which is the "ALLOWED and ENABLED" model applied
+  to a resource that genuinely runs out. A config asking for more than `pio1`
+  holds is refused at load time with which capability did not fit.
+
+- **The old pin-function trap, kept for the record.** It is what PIO removes:
 
   | pin | I2C function | UART function |
   |---|---|---|
@@ -434,18 +461,43 @@ for the writer.
 
 ---
 
-## Phase 5: Serial and bus, driven by core1 directly
+## Phase 5: PIO peripherals — LED string, serial, bus
 
-Core1 drives `uart1` and `i2c0` itself — no round trip through core0. What
-keeps that safe is L2, not avoidance:
+Everything here is a PIO program on `pio1`, loaded only for capabilities
+configuration enabled (L3). `pio1` holds 32 instructions, so a config asking
+for more than fits is refused at load time naming the capability that did not.
 
-- Core0 calls `uart_init`/`i2c_init` and claims any DMA channel **before**
-  launching core1. Core1 never claims anything.
-- Core1 uses timeout variants only: `uart_write_blocking` is permitted because
-  it polls a FIFO and takes no lock, but `i2c_write_timeout_us` is required
-  over `i2c_write_blocking` so a stuck slave cannot hold the VM forever.
-- No transfer allocates. Buffers come from the Lua arena or a preallocated
-  static.
+### Addressable LEDs (WS2811/WS2812)
+
+A PIO state machine clocking 800 kHz NRZ, fed by DMA from a buffer sized to
+the string. The API separates the buffer from the wire because the protocol
+does: every transmission reclocks the whole string, so batching is how the
+part works rather than an optimisation.
+
+```lua
+pixel.count()
+pixel.set(i, r, g, b)   -- 1-based, buffer only
+pixel.fill(r, g, b)
+pixel.clear()
+pixel.show()            -- LED_OUT: DMA the buffer to the string
+```
+
+A script that forgets `show()` lights nothing, which the simulator makes
+visible and the test suite asserts.
+
+### Serial and bus
+
+
+
+Core1 drives its PIO state machines itself — no round trip through core0.
+What keeps that safe is L2, not avoidance:
+
+- Core0 loads the PIO programs, claims the state machines and the DMA
+  channels, and configures the pins **before** launching core1. Core1 never
+  claims anything (`pio_claim_unused_sm` takes a shared spinlock).
+- Core1 only pushes and pops FIFOs, which takes no lock.
+- A PIO transfer cannot wedge the VM the way a stuck hardware-I2C slave can:
+  the state machine stalls, the FIFO fills, and the binding returns an error.
 
 ```lua
 serial.write(name, str)

@@ -205,6 +205,53 @@ static int l_serial_read(lua_State *Ls) {
     return 1;
 }
 
+/* ── pixel.*  (addressable LED string) ────────────────────────────── */
+
+static int l_pixel_count(lua_State *Ls) {
+    lua_pushinteger(Ls, lua_plat_pixel_count());
+    return 1;
+}
+
+static int check_channel(lua_State *Ls, int arg) {
+    lua_Integer v = luaL_checkinteger(Ls, arg);
+    if (v < 0)
+        v = 0;
+    if (v > 255)
+        v = 255;
+    return (int)v;
+}
+
+static int l_pixel_set(lua_State *Ls) {
+    /* 1-based, matching Lua table convention rather than C. */
+    lua_Integer i = luaL_checkinteger(Ls, 1);
+    int n = lua_plat_pixel_count();
+    if (i < 1 || i > n)
+        return luaL_error(Ls, "pixel %d out of range (1..%d)", (int)i, n);
+    lua_plat_pixel_set((int)i - 1, (uint8_t)check_channel(Ls, 2), (uint8_t)check_channel(Ls, 3),
+                       (uint8_t)check_channel(Ls, 4));
+    return 0;
+}
+
+static int l_pixel_fill(lua_State *Ls) {
+    int r = check_channel(Ls, 1), g = check_channel(Ls, 2), b = check_channel(Ls, 3);
+    for (int i = 0; i < lua_plat_pixel_count(); i++)
+        lua_plat_pixel_set(i, (uint8_t)r, (uint8_t)g, (uint8_t)b);
+    return 0;
+}
+
+static int l_pixel_clear(lua_State *Ls) {
+    (void)Ls;
+    for (int i = 0; i < lua_plat_pixel_count(); i++)
+        lua_plat_pixel_set(i, 0, 0, 0);
+    return 0;
+}
+
+static int l_pixel_show(lua_State *Ls) {
+    (void)Ls;
+    lua_plat_pixel_show();
+    return 0;
+}
+
 /* ── sensor.* / flight.* / pyro.*  (all read-only, L11) ───────────── */
 
 static int l_sensor_pressure(lua_State *Ls) {
@@ -278,6 +325,8 @@ static void build_env(lua_State *Ls) {
     static const luaL_Reg flight_fns[] = {
         {"state", l_flight_state}, {"time_ms", l_flight_time}, {"max_altitude_cm", l_flight_max_alt}, {NULL, NULL}};
     static const luaL_Reg pyro_fns[] = {{"status", l_pyro_status}, {NULL, NULL}};
+    static const luaL_Reg pixel_fns[] = {{"count", l_pixel_count}, {"set", l_pixel_set},   {"fill", l_pixel_fill},
+                                         {"clear", l_pixel_clear}, {"show", l_pixel_show}, {NULL, NULL}};
 
     if (lua_plat_output_count() > 0)
         reg_table(Ls, "output", output_fns);
@@ -285,6 +334,8 @@ static void build_env(lua_State *Ls) {
         reg_table(Ls, "input", input_fns);
     if (lua_plat_serial_count() > 0)
         reg_table(Ls, "serial", serial_fns);
+    if (lua_plat_pixel_count() > 0)
+        reg_table(Ls, "pixel", pixel_fns);
 
     /* Always present: reading state grants nothing and costs nothing. */
     reg_table(Ls, "sensor", sensor_fns);

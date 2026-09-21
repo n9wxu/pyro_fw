@@ -52,6 +52,21 @@ const lua_serial_desc_t *lua_plat_serial_desc(int idx);
 int lua_plat_serial_write(int idx, const char *s, int len);
 int lua_plat_serial_read(int idx, char *buf, int max);
 
+/* ── Addressable LED string (WS2811/WS2812) ───────────────────────
+ *
+ * A buffer plus an explicit transmit, rather than a per-pixel write that
+ * goes to the wire. The wire protocol has no addressing: every show()
+ * reclocks the entire string, so batching is not an optimisation, it is how
+ * the part works.
+ *
+ * On hardware this is a PIO state machine fed by DMA. lua_plat_pixel_show()
+ * starts the transfer and returns; the next show() waits for the previous
+ * one if it is somehow still running, which at 800 kHz is 30 us per pixel. */
+
+int lua_plat_pixel_count(void); /* 0 when not configured */
+void lua_plat_pixel_set(int idx, uint8_t r, uint8_t g, uint8_t b);
+void lua_plat_pixel_show(void);
+
 /* ── Read-only flight state ───────────────────────────────────────── */
 
 int32_t lua_plat_pressure_pa(void);

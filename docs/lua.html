@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pyro Lua Simulator</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f26; --line: #2b303a;
+    --text: #e6e8ec; --dim: #9aa3b2; --accent: #6ea8fe;
+    --on: #ffd166; --off: #3a3f4b; --ok: #4ade80; --err: #f87171;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, sans-serif;
+  }
+  header {
+    padding: 12px 16px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--dim); font-size: 13px; }
+  main {
+    display: grid; grid-template-columns: minmax(0,1.1fr) minmax(0,1fr);
+    gap: 16px; padding: 16px; align-items: start;
+  }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 12px; min-width: 0;
+  }
+  .panel h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--dim); margin: 0 0 10px; font-weight: 600;
+  }
+  textarea, .term {
+    width: 100%; background: #0f1115; color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px;
+    font-family: var(--mono); font-size: 13px; padding: 10px;
+  }
+  textarea { height: 260px; resize: vertical; }
+  .term { height: 150px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .row + .row { margin-top: 8px; }
+  button {
+    background: var(--accent); color: #0d1017; border: 0; border-radius: 6px;
+    padding: 7px 14px; font-weight: 600; cursor: pointer; font-size: 13px;
+  }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: .45; cursor: default; }
+  select, input[type=text], input[type=number] {
+    background: #0f1115; color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px;
+  }
+  input[type=text] { font-family: var(--mono); }
+  .pin { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+  .pin + .pin { border-top: 1px solid var(--line); }
+  .lamp {
+    width: 22px; height: 22px; border-radius: 50%; background: var(--off);
+    border: 1px solid #00000066; flex: 0 0 auto;
+  }
+  .pin .name { font-family: var(--mono); min-width: 74px; }
+  .pin .val { color: var(--dim); font-family: var(--mono); font-size: 12px; margin-left: auto; }
+  .bar { flex: 1; height: 6px; background: var(--off); border-radius: 3px; overflow: hidden; min-width: 40px; }
+  .bar > i { display: block; height: 100%; background: var(--on); width: 0; }
+  .status { font-family: var(--mono); font-size: 12px; }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+  .hint { color: var(--dim); font-size: 12px; margin-top: 8px; }
+  .strip { display: flex; gap: 3px; flex-wrap: wrap; padding: 8px; background: #0b0d11; border-radius: 6px; }
+  .px { width: 20px; height: 20px; border-radius: 4px; background: #000; border: 1px solid #2b303a; }
+  code { font-family: var(--mono); background: #0f1115; padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pyro Lua Simulator</h1>
+  <span class="sub">The real VM, sandbox and API &mdash; compiled to WASM. Same script runs on hardware.</span>
+</header>
+
+<main>
+  <!-- ── Script ──────────────────────────────────────────────── -->
+  <section class="panel">
+    <h2>User program</h2>
+    <textarea id="src" spellcheck="false">-- Night-launch beacon.
+-- Named resources only: no pin numbers, no SDK.
+
+local t = 0
+
+function init()
+  print("beacon armed, state =", flight.state())
+  output.set("aux", true)
+end
+
+function tick()
+  t = t + 1
+  -- breathe the beacon, flash the strobe
+  output.set("beacon", math.floor(50 + 50 * math.sin(t / 8)))
+  output.set("strobe", (t % 10) < 2)
+  tick_pixels()
+
+  if t % 20 == 0 then
+    serial.write("radio", string.format("ALT %d SPD %d\n",
+      sensor.altitude_cm(), sensor.speed_cms()))
+  end
+end
+
+function on_event(e)
+  print("event:", e)
+  if e == "APOGEE" then output.set("strobe", true) end
+end
+
+-- Addressable string: write the buffer, then show() to clock it out.
+-- Without show() the wire never changes.
+function tick_pixels()
+  for i = 1, pixel.count() do
+    local phase = (t + i * 4) % 60
+    pixel.set(i, phase < 20 and 180 or 0, 0, phase >= 20 and 60 or 0)
+  end
+  pixel.show()
+end</textarea>
+    <div class="row" style="margin-top:10px">
+      <button id="load">Load &amp; run init()</button>
+      <button id="run" class="ghost">Run tick() &times;1</button>
+      <button id="auto" class="ghost">Auto-tick</button>
+      <button id="stop" class="ghost">Reset VM</button>
+      <span id="status" class="status"></span>
+    </div>
+
+    <h2 style="margin-top:16px">Console &mdash; print() output</h2>
+    <div id="console" class="term"></div>
+    <div class="row">
+      <input type="text" id="evalLine" placeholder="lua expression, e.g. output.set('beacon', 100)" style="flex:1">
+      <button id="evalBtn" class="ghost">Eval</button>
+    </div>
+    <p class="hint">Errors here do not kill the loaded program &mdash; try <code>output.set('pyro1', true)</code>.</p>
+  </section>
+
+  <!-- ── Hardware ────────────────────────────────────────────── -->
+  <section class="panel">
+    <h2>Outputs</h2>
+    <div id="outputs"></div>
+
+    <h2 style="margin-top:16px">LED string &mdash; WS2812 via PIO</h2>
+    <div id="strip" class="strip"></div>
+    <div class="row"><span class="hint" id="shows">show() count: 0 &mdash; only show() reaches the wire</span></div>
+
+    <h2 style="margin-top:16px">Inputs &mdash; click to toggle</h2>
+    <div id="inputs"></div>
+
+    <h2 style="margin-top:16px">Flight state &mdash; injected</h2>
+    <div class="row">
+      <select id="fstate">
+        <option value="0">BOOT</option><option value="1" selected>PAD_IDLE</option>
+        <option value="2">ASCENT</option><option value="3">FALLING</option>
+        <option value="4">DROGUE</option><option value="5">CHUTE</option>
+        <option value="6">LANDED</option>
+      </select>
+      <label>alt cm <input type="number" id="alt" value="0" style="width:90px"></label>
+      <label>spd cm/s <input type="number" id="spd" value="0" style="width:90px"></label>
+    </div>
+    <div class="row">
+      <button class="ghost" data-evt="LAUNCH">LAUNCH</button>
+      <button class="ghost" data-evt="ARMED">ARMED</button>
+      <button class="ghost" data-evt="APOGEE">APOGEE</button>
+      <button class="ghost" data-evt="LANDING">LANDING</button>
+    </div>
+
+    <h2 style="margin-top:16px">UART &mdash; "radio"</h2>
+    <div id="uart" class="term"></div>
+    <div class="row">
+      <input type="text" id="rxLine" placeholder="send to the script's serial.read()" style="flex:1">
+      <button id="rxBtn" class="ghost">Send</button>
+      <button id="uartClear" class="ghost">Clear</button>
+    </div>
+  </section>
+</main>
+
+<script src="wasm/pyro.js"></script>
+<script>
+(function () {
+  "use strict";
+  let M = null, autoTimer = null, outs = [], ins = [], inState = [], pixels = [];
+
+  const $ = (id) => document.getElementById(id);
+  const setStatus = (msg, cls) => {
+    const el = $("status");
+    el.textContent = msg;
+    el.className = "status" + (cls ? " " + cls : "");
+  };
+
+  // ── WASM call wrappers ───────────────────────────────────────
+  const C = {
+    init:      () => M.ccall("pyro_lua_init", null, [], []),
+    shutdown:  () => M.ccall("pyro_lua_shutdown", null, [], []),
+    load:      (name, src) => M.ccall("pyro_lua_load", "number",
+                  ["string", "string", "number"], [name, src, src.length]),
+    tick:      () => M.ccall("pyro_lua_tick", "number", [], []),
+    event:     (e) => M.ccall("pyro_lua_event", "number", ["string"], [e]),
+    evalLine:  (s) => M.ccall("pyro_lua_eval", "number", ["string"], [s]),
+    lastError: () => M.ccall("pyro_lua_last_error", "string", [], []),
+
+    outCount:  () => M.ccall("sim_lua_output_count", "number", [], []),
+    outName:   (i) => M.ccall("sim_lua_output_name", "string", ["number"], [i]),
+    outValue:  (i) => M.ccall("sim_lua_output_value", "number", ["number"], [i]),
+    outDim:    (i) => M.ccall("sim_lua_output_dimmable", "number", ["number"], [i]),
+    inCount:   () => M.ccall("sim_lua_input_count", "number", [], []),
+    inName:    (i) => M.ccall("sim_lua_input_name", "string", ["number"], [i]),
+    setInput:  (i, v) => M.ccall("sim_lua_set_input", null, ["number", "number"], [i, v]),
+
+    setFlight: (st, alt, spd, pa, max, ms) => M.ccall("sim_lua_set_flight", null,
+                  ["number","number","number","number","number","number"],
+                  [st, alt, spd, pa, max, ms]),
+
+    uartTx:      () => M.ccall("sim_lua_uart_tx", "string", [], []),
+    uartTxClear: () => M.ccall("sim_lua_uart_tx_clear", null, [], []),
+    uartRxPush:  (s) => M.ccall("sim_lua_uart_rx_push", null, ["string"], [s]),
+    console:     () => M.ccall("sim_lua_console", "string", [], []),
+    pxCount:  () => M.ccall("sim_lua_pixel_count", "number", [], []),
+    pxR:      (i) => M.ccall("sim_lua_pixel_r", "number", ["number"], [i]),
+    pxG:      (i) => M.ccall("sim_lua_pixel_g", "number", ["number"], [i]),
+    pxB:      (i) => M.ccall("sim_lua_pixel_b", "number", ["number"], [i]),
+    pxShows:  () => M.ccall("sim_lua_pixel_shows", "number", [], []),
+    consoleClear:() => M.ccall("sim_lua_console_clear", null, [], []),
+  };
+
+  // ── Hardware panes ───────────────────────────────────────────
+  function buildPins() {
+    const oc = C.outCount(), ic = C.inCount();
+    outs = []; ins = []; inState = [];
+
+    const ohost = $("outputs"); ohost.textContent = "";
+    for (let i = 0; i < oc; i++) {
+      const dim = C.outDim(i) === 1;
+      const row = document.createElement("div");
+      row.className = "pin";
+      row.innerHTML =
+        '<span class="lamp"></span><span class="name">' + C.outName(i) + "</span>" +
+        (dim ? '<span class="bar"><i></i></span>' : '<span class="bar" style="visibility:hidden"><i></i></span>') +
+        '<span class="val">0</span>';
+      ohost.appendChild(row);
+      outs.push({ lamp: row.querySelector(".lamp"), bar: row.querySelector(".bar > i"),
+                  val: row.querySelector(".val"), dim: dim });
+    }
+
+    const shost = $("strip"); shost.textContent = "";
+    pixels = [];
+    for (let i = 0; i < C.pxCount(); i++) {
+      const d = document.createElement("div");
+      d.className = "px";
+      d.title = "pixel " + (i + 1);
+      shost.appendChild(d);
+      pixels.push(d);
+    }
+
+    const ihost = $("inputs"); ihost.textContent = "";
+    for (let i = 0; i < ic; i++) {
+      const row = document.createElement("div");
+      row.className = "pin";
+      row.style.cursor = "pointer";
+      row.innerHTML = '<span class="lamp"></span><span class="name">' + C.inName(i) +
+                      '</span><span class="val">low</span>';
+      const idx = i;
+      row.addEventListener("click", function () {
+        inState[idx] = !inState[idx];
+        C.setInput(idx, inState[idx] ? 1 : 0);
+        refresh();
+      });
+      ihost.appendChild(row);
+      ins.push({ lamp: row.querySelector(".lamp"), val: row.querySelector(".val") });
+      inState.push(false);
+    }
+  }
+
+  function refresh() {
+    for (let i = 0; i < outs.length; i++) {
+      const v = C.outValue(i), o = outs[i];
+      // brightness tracks duty so a dimmed output reads as dimmed, not just "on"
+      o.lamp.style.background = v > 0
+        ? "color-mix(in srgb, var(--on) " + Math.max(v, 12) + "%, var(--off))"
+        : "var(--off)";
+      if (o.dim) o.bar.style.width = v + "%";
+      o.val.textContent = o.dim ? v + "%" : (v > 0 ? "high" : "low");
+    }
+    for (let i = 0; i < ins.length; i++) {
+      ins[i].lamp.style.background = inState[i] ? "var(--ok)" : "var(--off)";
+      ins[i].val.textContent = inState[i] ? "high" : "low";
+    }
+    for (let i = 0; i < pixels.length; i++) {
+      pixels[i].style.background =
+        "rgb(" + C.pxR(i) + "," + C.pxG(i) + "," + C.pxB(i) + ")";
+    }
+    $("shows").textContent = "show() count: " + C.pxShows() +
+      " \u2014 only show() reaches the wire";
+
+    const con = $("console"); const text = C.console();
+    if (con.textContent !== text) { con.textContent = text; con.scrollTop = con.scrollHeight; }
+    const u = $("uart"); const tx = C.uartTx();
+    if (u.textContent !== tx) { u.textContent = tx; u.scrollTop = u.scrollHeight; }
+  }
+
+  function pushFlight() {
+    const st = parseInt($("fstate").value, 10);
+    const alt = parseInt($("alt").value, 10) || 0;
+    const spd = parseInt($("spd").value, 10) || 0;
+    // Rough ISA pressure so sensor.pressure_pa() moves with altitude.
+    const pa = Math.round(101325 * Math.pow(1 - 2.25577e-5 * (alt / 100), 5.25588));
+    C.setFlight(st, alt, spd, pa, Math.max(alt, 0), Date.now() % 1000000);
+  }
+
+  function report(ok, what) {
+    if (ok) setStatus(what + " ok", "ok");
+    else setStatus(C.lastError() || (what + " failed"), "err");
+    refresh();
+  }
+
+  // ── Wiring ───────────────────────────────────────────────────
+  function wire() {
+    $("load").addEventListener("click", function () {
+      C.init(); buildPins(); pushFlight();
+      report(C.load("=user", $("src").value) === 1, "load");
+    });
+    $("run").addEventListener("click", function () {
+      pushFlight(); report(C.tick() === 1, "tick");
+    });
+    $("auto").addEventListener("click", function () {
+      if (autoTimer) {
+        clearInterval(autoTimer); autoTimer = null;
+        $("auto").textContent = "Auto-tick"; return;
+      }
+      $("auto").textContent = "Stop auto-tick";
+      autoTimer = setInterval(function () {
+        pushFlight();
+        if (C.tick() !== 1) {
+          clearInterval(autoTimer); autoTimer = null;
+          $("auto").textContent = "Auto-tick";
+          setStatus(C.lastError(), "err");
+        }
+        refresh();
+      }, 100);
+    });
+    $("stop").addEventListener("click", function () {
+      if (autoTimer) { clearInterval(autoTimer); autoTimer = null; $("auto").textContent = "Auto-tick"; }
+      C.shutdown(); C.init(); C.consoleClear(); C.uartTxClear();
+      buildPins(); setStatus("VM reset", ""); refresh();
+    });
+    $("evalBtn").addEventListener("click", function () {
+      const line = $("evalLine").value.trim();
+      if (!line) return;
+      C.evalLine(line); $("evalLine").value = ""; refresh();
+    });
+    $("evalLine").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") $("evalBtn").click();
+    });
+    $("rxBtn").addEventListener("click", function () {
+      const line = $("rxLine").value;
+      if (!line) return;
+      C.uartRxPush(line + "\n"); $("rxLine").value = "";
+      setStatus("queued " + (line.length + 1) + " bytes to serial.read()", "");
+    });
+    $("rxLine").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") $("rxBtn").click();
+    });
+    $("uartClear").addEventListener("click", function () { C.uartTxClear(); refresh(); });
+    document.querySelectorAll("[data-evt]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        pushFlight(); report(C.event(b.dataset.evt) === 1, b.dataset.evt);
+      });
+    });
+    ["fstate", "alt", "spd"].forEach(function (id) {
+      $(id).addEventListener("change", function () { pushFlight(); refresh(); });
+    });
+  }
+
+  // Module is the emscripten global from wasm/pyro.js
+  Module.onRuntimeInitialized = function () {
+    M = Module;
+    C.init(); buildPins(); pushFlight(); wire(); refresh();
+    setStatus("ready — load the program to begin", "");
+  };
+})();
+</script>
+</body>
+</html>

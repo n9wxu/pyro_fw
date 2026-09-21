@@ -58,3 +58,4 @@ src/version.h
 node_modules/
 test-results/
 playwright-report/
+build-wasm-lua/

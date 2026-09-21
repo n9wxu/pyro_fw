@@ -19,6 +19,9 @@ void sim_lua_set_flight(int state, int32_t alt_cm, int32_t speed_cms, int32_t pr
 void sim_lua_set_pyro(int channel, int status);
 void sim_lua_set_input(int idx, int value);
 int sim_lua_output_value(int idx);
+int sim_lua_pixel_r(int i);
+int sim_lua_pixel_g(int i);
+int sim_lua_pixel_b(int i);
 const char *sim_lua_uart_tx(void);
 void sim_lua_uart_tx_clear(void);
 void sim_lua_uart_rx_push(const char *s);
@@ -179,6 +182,43 @@ static void test_unknown_serial_name_refused(void) {
     TEST_ASSERT_FALSE(run("serial.write('uart0', 'x')"));
 }
 
+/* ── Addressable LEDs ─────────────────────────────────────────────── */
+
+static void test_pixel_buffer_needs_show_to_reach_the_wire(void) {
+    /* The wire protocol reclocks the whole string, so writes are buffered and
+     * only show() transmits. A script that forgets show() must light nothing,
+     * and the test says so rather than leaving it to be discovered at night. */
+    TEST_ASSERT_TRUE(run("pixel.set(1, 255, 128, 64)"));
+    TEST_ASSERT_EQUAL_INT(0, sim_lua_pixel_r(0));
+    TEST_ASSERT_TRUE(run("pixel.set(1, 255, 128, 64) pixel.show()"));
+    TEST_ASSERT_EQUAL_INT(255, sim_lua_pixel_r(0));
+    TEST_ASSERT_EQUAL_INT(128, sim_lua_pixel_g(0));
+    TEST_ASSERT_EQUAL_INT(64, sim_lua_pixel_b(0));
+}
+
+static void test_pixel_index_is_one_based_and_bounded(void) {
+    TEST_ASSERT_FALSE(run("pixel.set(0, 1, 1, 1)"));
+    TEST_ASSERT_NOT_NULL(strstr(pyro_lua_last_error(), "out of range"));
+    TEST_ASSERT_FALSE(run("pixel.set(9999, 1, 1, 1)"));
+    TEST_ASSERT_TRUE(run("pixel.set(pixel.count(), 1, 1, 1)"));
+}
+
+static void test_pixel_channels_clamped(void) {
+    TEST_ASSERT_TRUE(run("pixel.set(1, 999, -50, 300) pixel.show()"));
+    TEST_ASSERT_EQUAL_INT(255, sim_lua_pixel_r(0));
+    TEST_ASSERT_EQUAL_INT(0, sim_lua_pixel_g(0));
+    TEST_ASSERT_EQUAL_INT(255, sim_lua_pixel_b(0));
+}
+
+static void test_pixel_fill_and_clear(void) {
+    TEST_ASSERT_TRUE(run("pixel.fill(10, 20, 30) pixel.show()"));
+    TEST_ASSERT_EQUAL_INT(10, sim_lua_pixel_r(0));
+    TEST_ASSERT_EQUAL_INT(30, sim_lua_pixel_b(5));
+    TEST_ASSERT_TRUE(run("pixel.clear() pixel.show()"));
+    TEST_ASSERT_EQUAL_INT(0, sim_lua_pixel_r(0));
+    TEST_ASSERT_EQUAL_INT(0, sim_lua_pixel_b(5));
+}
+
 /* ── Lifecycle ────────────────────────────────────────────────────── */
 
 static void test_init_and_tick_are_called(void) {
@@ -236,6 +276,10 @@ int main(void) {
     RUN_TEST(test_serial_read_returns_nil_when_idle);
     RUN_TEST(test_serial_read_receives);
     RUN_TEST(test_unknown_serial_name_refused);
+    RUN_TEST(test_pixel_buffer_needs_show_to_reach_the_wire);
+    RUN_TEST(test_pixel_index_is_one_based_and_bounded);
+    RUN_TEST(test_pixel_channels_clamped);
+    RUN_TEST(test_pixel_fill_and_clear);
     RUN_TEST(test_init_and_tick_are_called);
     RUN_TEST(test_event_dispatch);
     RUN_TEST(test_script_without_hooks_is_fine);
