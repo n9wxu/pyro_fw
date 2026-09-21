@@ -45,6 +45,7 @@ emcc -O2 -s WASM=1 \
   -s TOTAL_MEMORY=1048576 \
   -I "$ROOT/src" \
   -I "$ROOT/sim" \
+  -I "$ROOT/boards/sim" \
   "$ROOT/sim/main_sim.c" \
   "$ROOT/boards/sim/hal_sim.c" \
   "$ROOT/sim/physics.c" \
