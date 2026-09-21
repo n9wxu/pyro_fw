@@ -16,6 +16,16 @@
 #include "version.h"
 #include "flight_states.h"
 
+/* Defined by src/lua/lua_core1.c; weak no-ops in littlefs_driver.c when
+ * Lua is not linked. */
+#if PYRO_HAS_LUA
+#include "lua_app.h"
+#include "lua_core1.h"
+#endif
+
+extern bool lua_core1_park(uint32_t timeout_us);
+extern void lua_core1_unpark(void);
+
 extern void hal_telemetry_send(const char *sentence);
 #define DBG(fmt, ...)                                                                                                  \
     do {                                                                                                               \
@@ -29,6 +39,7 @@ extern const char *pressure_sensor_name(void);
 #define CORS_HDR "Access-Control-Allow-Origin: *\r\n"
 
 extern const struct lfs_config lfs_pico_flash_config;
+extern const struct lfs_file_config lfs_pico_file_config;
 
 #define CHUNK_SIZE 512
 
@@ -49,15 +60,33 @@ typedef struct {
     bool file_open;
     uint32_t remaining; /* bytes left to receive */
     char path[64];
+    /* Under LFS_NO_MALLOC the caller owns the per-file cache. It cannot be
+     * one shared buffer: up to CONN_POOL_SIZE connections can hold a file
+     * open at once, and they would corrupt each other's cache. One per
+     * connection is the correct granularity -- the same granularity littlefs
+     * would have malloc'd at, just statically and without the cross-core
+     * mutex that makes malloc unsafe here (docs/core1_hazard.md). */
+    uint8_t file_buf[FLASH_SECTOR_SIZE];
+    struct lfs_file_config file_cfg;
 } conn_state_t;
 
-static conn_state_t conn_pool[8];
+#define CONN_POOL_SIZE 4
+
+static conn_state_t conn_pool[CONN_POOL_SIZE];
 
 static conn_state_t *conn_alloc(void) {
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i < CONN_POOL_SIZE; i++)
         if (conn_pool[i].phase == CONN_IDLE) {
-            memset(&conn_pool[i], 0, sizeof(conn_state_t));
-            return &conn_pool[i];
+            /* Clear the bookkeeping but not the 4 kB cache: memset of the
+             * whole struct would now cost a sector-sized wipe per accept. */
+            conn_state_t *cs = &conn_pool[i];
+            cs->phase = CONN_IDLE;
+            cs->lfs_mounted = false;
+            cs->file_open = false;
+            cs->remaining = 0;
+            cs->path[0] = '\0';
+            cs->file_cfg.buffer = cs->file_buf;
+            return cs;
         }
     return NULL;
 }
@@ -78,7 +107,7 @@ static void conn_free(conn_state_t *cs) {
 
 /* Download slot flash offset (from linker symbols) */
 extern uint32_t __FLASH_DOWNLOAD_SLOT_START;
-#define OTA_SLOT_OFF ((uint32_t)&__FLASH_DOWNLOAD_SLOT_START - XIP_BASE)
+#define OTA_SLOT_OFF ((uint32_t) & __FLASH_DOWNLOAD_SLOT_START - XIP_BASE)
 
 static uint8_t ota_buf[FLASH_SECTOR_SIZE] __attribute__((aligned(FLASH_PAGE_SIZE)));
 static uint32_t ota_offset; /* bytes written so far */
@@ -91,10 +120,14 @@ static void ota_flush(void) {
     while (ota_buf_fill & (FLASH_PAGE_SIZE - 1))
         ota_buf[ota_buf_fill++] = 0xFF;
     uint32_t addr = OTA_SLOT_OFF + ota_offset;
+    /* OTA writes flash too; core1 must be out of XIP first. See
+     * docs/core1_hazard.md and the note in littlefs_driver.c. */
+    lua_core1_park(5000u);
     uint32_t ints = save_and_disable_interrupts();
     flash_range_erase(addr, FLASH_SECTOR_SIZE);
     flash_range_program(addr, ota_buf, ota_buf_fill);
     restore_interrupts(ints);
+    lua_core1_unpark();
     ota_offset += FLASH_SECTOR_SIZE;
     ota_buf_fill = 0;
 }
@@ -162,9 +195,8 @@ static err_t on_sent(void *arg, struct tcp_pcb *pcb, u16_t len);
 
 /* ── API handlers ─────────────────────────────────────────────────── */
 
-static const char *state_names[] = {"BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALIBRATE", "PAD_IDLE",
-                                    "ASCENT",      "FALLING",         "DROGUE_DESCENT",
-                                    "CHUTE_DESCENT","LANDED"};
+static const char *state_names[] = {"BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALIBRATE", "PAD_IDLE", "ASCENT",
+                                    "FALLING",     "DROGUE_DESCENT",  "CHUTE_DESCENT",  "LANDED"};
 
 static void serve_api_status(struct tcp_pcb *pcb) {
     char buf[768];
@@ -231,7 +263,7 @@ static conn_state_t *serve_lfs_file_streaming(struct tcp_pcb *pcb, const char *l
         return NULL;
     }
     cs->lfs_mounted = true;
-    if (lfs_file_open(&cs->lfs, &cs->file, lfs_path, LFS_O_RDONLY) != LFS_ERR_OK) {
+    if (lfs_file_opencfg(&cs->lfs, &cs->file, lfs_path, LFS_O_RDONLY, &cs->file_cfg) != LFS_ERR_OK) {
         conn_free(cs);
         tcp_write(pcb, fallback_resp, strlen(fallback_resp), TCP_WRITE_FLAG_COPY);
         return NULL;
@@ -430,6 +462,47 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
 
         if (strcmp(path, "/api/status") == 0) {
             serve_api_status(pcb);
+#if PYRO_HAS_LUA
+        } else if (strcmp(path, "/api/lua/script") == 0) {
+            cs = serve_lfs_file_streaming(pcb, "/" LUA_SCRIPT_PATH,
+                                          "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
+                                          "Content-Type: text/plain\r\n",
+                                          "");
+        } else if (strcmp(path, "/api/lua/console") == 0) {
+            /* Drains core1's console ring and reports its liveness. The
+             * heartbeat is what tells the operator core1 is still turning
+             * over; a frozen number with a "running" status means the VM is
+             * stuck somewhere the instruction hook cannot reach, and core0
+             * will kill it shortly. */
+            static char body[1200];
+            char text[900];
+            int n = lua_app_console_read(text, sizeof(text) - 1);
+            text[n] = '\0';
+            int j = 0;
+            char esc[1024];
+            for (int i = 0; i < n && j < (int)sizeof(esc) - 8; i++) {
+                char ch = text[i];
+                if (ch == '"' || ch == '\\') {
+                    esc[j++] = '\\';
+                    esc[j++] = ch;
+                } else if (ch == '\n') {
+                    esc[j++] = '\\';
+                    esc[j++] = 'n';
+                } else if ((unsigned char)ch >= 0x20) {
+                    esc[j++] = ch;
+                }
+            }
+            esc[j] = '\0';
+            int blen = snprintf(body, sizeof(body),
+                                "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
+                                "Content-Type: application/json\r\n\r\n"
+                                "{\"status\":\"%s\",\"heartbeat\":%lu,\"text\":\"%s\"}",
+                                lua_app_status(), (unsigned long)lua_core1_heartbeat(), esc);
+            tcp_write(pcb, body, blen, TCP_WRITE_FLAG_COPY);
+            tcp_output(pcb);
+            tcp_sent(pcb, on_sent);
+            tcp_arg(pcb, NULL);
+#endif
         } else if (strcmp(path, "/api/config") == 0) {
             cs = serve_api_config(pcb);
         } else if (strcmp(path, "/api/flight.csv") == 0) {
@@ -456,7 +529,7 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             }
             cs->lfs_mounted = true;
 
-            if (lfs_file_open(&cs->lfs, &cs->file, fpath, LFS_O_RDONLY) != LFS_ERR_OK) {
+            if (lfs_file_opencfg(&cs->lfs, &cs->file, fpath, LFS_O_RDONLY, &cs->file_cfg) != LFS_ERR_OK) {
                 conn_free(cs);
                 if (strcmp(path, "/") == 0) {
                     tcp_write(pcb, DEFAULT_PAGE, strlen(DEFAULT_PAGE), TCP_WRITE_FLAG_COPY);
@@ -477,9 +550,9 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             char resp_hdr[128];
             int hlen =
                 /* no-store: the UI is re-uploaded whenever the firmware or web files
- * change, and without this browsers heuristically cache it and keep
- * showing the previous build. The whole UI is ~29KB over USB, so
- * revalidating every load costs nothing. */
+                 * change, and without this browsers heuristically cache it and keep
+                 * showing the previous build. The whole UI is ~29KB over USB, so
+                 * revalidating every load costs nothing. */
                 snprintf(resp_hdr, sizeof(resp_hdr),
                          "HTTP/1.1 200 OK\r\nContent-Type: %s\r\n"
                          "Cache-Control: no-store, must-revalidate\r\nConnection: close\r\n\r\n",
@@ -548,7 +621,18 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             }
             return ERR_OK;
 
+#if PYRO_HAS_LUA
+        } else if ((strncmp(path, "/www/", 5) == 0 || strcmp(path, "/api/lua/script") == 0) && content_length > 0) {
+            /* The Lua program rides the same streaming write as a web file: a
+             * script can be several kB, which is more than one TCP segment,
+             * and this path already handles that correctly. Only the
+             * destination differs. */
+            if (strcmp(path, "/api/lua/script") == 0) {
+                snprintf(path, sizeof(path), "/%s", LUA_SCRIPT_PATH);
+            }
+#else
         } else if (strncmp(path, "/www/", 5) == 0 && content_length > 0) {
+#endif
             DBG("POST %s cl=%lu body_in_first=%u", path, (unsigned long)content_length, (unsigned)body_in_first);
             cs = conn_alloc();
             if (!cs) {
@@ -567,9 +651,11 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 return ERR_OK;
             }
             cs->lfs_mounted = true;
-            lfs_mkdir(&cs->lfs, "/www");
+            if (strncmp(path, "/www/", 5) == 0)
+                lfs_mkdir(&cs->lfs, "/www");
 
-            int open_err = lfs_file_open(&cs->lfs, &cs->file, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
+            int open_err =
+                lfs_file_opencfg(&cs->lfs, &cs->file, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC, &cs->file_cfg);
             if (open_err != LFS_ERR_OK) {
                 DBG("POST %s FAIL lfs_file_open err=%d", path, open_err);
                 conn_free(cs);
@@ -614,6 +700,37 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             }
             return ERR_OK;
 
+#if PYRO_HAS_LUA
+        } else if (strcmp(path, "/api/lua/check") == 0 && content_length > 0 && content_length < 2048) {
+            /* Validate a script against the LIVE resource set without running
+             * a line of it. Bounded at one packet on purpose: this is the
+             * editor's as-you-go check, and the authoritative one runs on the
+             * stored file at boot. */
+            static char src[2048];
+            uint16_t len = (body_in_first < content_length) ? body_in_first : (uint16_t)content_length;
+            pbuf_copy_partial(p, src, len, body_offset);
+            pbuf_free(p);
+            src[len] = '\0';
+
+            lua_chk_result_t chk;
+            lua_app_check(src, len, &chk);
+            static char body[1400];
+            int blen = snprintf(body, sizeof(body),
+                                "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
+                                "Content-Type: application/json\r\n\r\n"
+                                "{\"green\":%s,\"items\":[",
+                                chk.green ? "true" : "false");
+            for (int i = 0; i < chk.count; i++) {
+                blen += snprintf(body + blen, sizeof(body) - (size_t)blen, "%s{\"kind\":%d,\"detail\":\"%s\"}",
+                                 i ? "," : "", (int)chk.items[i].kind, chk.items[i].detail);
+            }
+            blen += snprintf(body + blen, sizeof(body) - (size_t)blen, "]}");
+            tcp_write(pcb, body, blen, TCP_WRITE_FLAG_COPY);
+            tcp_output(pcb);
+            tcp_sent(pcb, on_sent);
+            tcp_arg(pcb, NULL);
+            return ERR_OK;
+#endif
         } else if (strcmp(path, "/api/config") == 0 && content_length > 0 && content_length < 512) {
             /* Config update with state-based safety check */
             DBG("POST /api/config cl=%lu", (unsigned long)content_length);
@@ -650,7 +767,8 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 lfs_t lfs;
                 if (lfs_mount(&lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
                     lfs_file_t f;
-                    if (lfs_file_open(&lfs, &f, "config.ini", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) == LFS_ERR_OK) {
+                    if (lfs_file_opencfg(&lfs, &f, "config.ini", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC,
+                                         &lfs_pico_file_config) == LFS_ERR_OK) {
                         lfs_ssize_t written = lfs_file_write(&lfs, &f, cfgbuf, len);
                         int close_err = lfs_file_close(&lfs, &f);
                         int unmount_err = lfs_unmount(&lfs);

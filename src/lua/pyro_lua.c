@@ -51,8 +51,17 @@ static bool have_tick;
 
 /* ── Limits ───────────────────────────────────────────────────────── */
 
+/* Provided by lua_core1.c on the target, where it parks the VM outside flash
+ * so core0 can erase. Weak and empty everywhere else, so this file stays
+ * board-independent and the host tests link without multicore. */
+__attribute__((weak)) void lua_core1_park_check(void) {}
+
 static void count_hook(lua_State *Ls, lua_Debug *ar) {
     (void)ar;
+    /* Before the budget check, so a script that is about to be killed still
+     * answers a pending park first: core0's flash write must not have to wait
+     * for the VM to finish dying. */
+    lua_core1_park_check();
     if (budget_left == 0) {
         /* Not an error the script can catch: pcall will surface it, but the
          * budget stays at zero so a pcall-wrapped infinite loop cannot simply

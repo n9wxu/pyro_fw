@@ -191,7 +191,52 @@ def analyse(elf, roots):
     return findings, xip, spins, callers
 
 
-def report(elf, roots):
+# Anything core1 must never call. A core that acquires nothing can be killed
+# at any instant with PSM frce_off and strand nothing, which is what makes the
+# unilateral kill in src/lua/lua_core1.c safe. Spin lock acquires are inlined
+# and invisible to a call graph, so the functions that contain them are named
+# here directly.
+CORE1_FORBIDDEN = {
+    "__wrap_malloc": "system heap: enters malloc_mutex, which core0 also takes",
+    "__wrap_calloc": "system heap",
+    "__wrap_realloc": "system heap",
+    "__wrap_free": "system heap",
+    "mutex_enter_blocking": "shared mutex",
+    "hw_claim_lock": "spin lock 11; a kill here strands it and hangs core0's next claim",
+    "hw_claim_unused_from_range": "spin lock 11",
+    "hw_claim_or_assert": "spin lock 11",
+    "hw_claim_clear": "spin lock 11",
+    "irq_set_exclusive_handler": "spin lock 9",
+    "irq_add_shared_handler": "spin lock 9",
+    "flash_range_erase": "core1 must never touch flash",
+    "flash_range_program": "core1 must never touch flash",
+    "multicore_fifo_pop_blocking": "unbounded wait on core0",
+    "multicore_fifo_push_blocking": "unbounded wait on core0",
+}
+
+
+def check_core1(elf, entry, callers):
+    """core1 receives resources; it never acquires them."""
+    bad = []
+    for prim, why in sorted(CORE1_FORBIDDEN.items()):
+        path = shortest_path(callers, prim, entry)
+        if path:
+            bad.append((prim, why, path))
+    print(f"core1 entry point       : {entry}")
+    if entry not in callers and not any(entry in v for v in callers.values()):
+        print(f"WARN  {entry} not found in this binary; core1 rule NOT checked")
+        return 1
+    if not bad:
+        print(f"PASS  {entry} acquires nothing: killable at any instant")
+        return 0
+    for prim, why, path in bad:
+        print(f"\nFAIL  core1 can call {prim}")
+        print(f"      {why}")
+        print("      " + "\n        -> ".join(path))
+    return 1
+
+
+def report(elf, roots, core1_entry=None):
     findings, xip, spins, callers = analyse(elf, roots)
     print(f"=== {elf} ===")
     present = [p for p in UNBOUNDED if p in callers]
@@ -219,19 +264,24 @@ def report(elf, roots):
         print("\nnote: these disable XIP; core1 must not be fetching from flash meanwhile")
         for root, op, path in xip:
             print(f"      {root} -> ... -> {op}  ({len(path)} frames)")
+    rc = 0 if not findings else 1
+    if core1_entry:
+        print()
+        rc |= check_core1(elf, core1_entry, callers)
     print()
-    return 0 if not findings else 1
+    return rc
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("elf", nargs="+")
     ap.add_argument("--root", action="append", default=[], help="extra flight-critical entry point")
+    ap.add_argument("--core1", metavar="SYM", help="core1 entry point; fails if it acquires anything")
     args = ap.parse_args()
     roots = FLIGHT_ROOTS + args.root
     rc = 0
     for e in args.elf:
-        rc |= report(e, roots)
+        rc |= report(e, roots, args.core1)
     return rc
 
 

@@ -20,6 +20,7 @@ function showTab(name) {
   document.getElementById('tab-' + name).style.display = 'block';
   event.target.classList.add('active');
   if (name === 'data') { loadFlightData(); drawGraph(); }
+  if (name === 'lua') { luaInit(); }
 }
 
 /* ── Unit conversion ───────────────────────────────────────────── */
@@ -444,6 +445,132 @@ function waitForReboot(msg) {
     }).catch(function(){});
   }, 2000);
 }
+
+
+/* ── Lua ───────────────────────────────────────────────────────── */
+
+var LUA_ROLES = [
+  ['off',   'unused'],
+  ['out',   'digital out'],
+  ['pwm',   'dimmable out'],
+  ['in',    'digital in'],
+  ['tx',    'serial TX'],
+  ['rx',    'serial RX'],
+  ['pixel', 'LED string']
+];
+var LUA_PINS = ['18','19','20','21'];
+var luaReady = false;
+var luaConTimer = null;
+
+function luaInit() {
+  if (!luaReady) {
+    LUA_PINS.forEach(function(p) {
+      var sel = document.getElementById('lu' + p + 'r');
+      LUA_ROLES.forEach(function(r) {
+        var o = document.createElement('option');
+        o.value = r[0]; o.textContent = r[1];
+        sel.appendChild(o);
+      });
+    });
+    luaReady = true;
+    luaLoad();
+  }
+  if (!luaConTimer) luaConTimer = setInterval(luaConPoll, 1000);
+}
+
+function luaLoad() {
+  fetch('/api/config').then(function(r){return r.text()}).then(function(t) {
+    var kv = {};
+    t.split('\n').forEach(function(line) {
+      var i = line.indexOf('=');
+      if (i > 0) kv[line.slice(0,i).trim()] = line.slice(i+1).trim();
+    });
+    document.getElementById('luEn').checked = (kv.lua_enabled === 'true');
+    document.getElementById('luBaud').value = kv.lua_baud || '9600';
+    document.getElementById('luPx').value   = kv.lua_pixels || '0';
+    LUA_PINS.forEach(function(p) {
+      document.getElementById('lu'+p+'r').value = kv['lua_p'+p+'_role'] || 'off';
+      document.getElementById('lu'+p+'n').value = kv['lua_p'+p+'_name'] || '';
+    });
+  });
+  fetch('/api/lua/script').then(function(r){return r.ok?r.text():''}).then(function(t) {
+    document.getElementById('luSrc').value = t;
+  });
+}
+
+function luaCfgIni() {
+  var ini = '[pyro]\r\nlua_enabled=' + (document.getElementById('luEn').checked ? 'true':'false') +
+            '\r\nlua_baud='   + (parseInt(document.getElementById('luBaud').value) || 9600) +
+            '\r\nlua_pixels=' + (parseInt(document.getElementById('luPx').value) || 0) + '\r\n';
+  LUA_PINS.forEach(function(p) {
+    ini += 'lua_p'+p+'_role=' + document.getElementById('lu'+p+'r').value + '\r\n';
+    ini += 'lua_p'+p+'_name=' + document.getElementById('lu'+p+'n').value + '\r\n';
+  });
+  return ini;
+}
+
+function luaShowResult(d) {
+  var box = document.getElementById('luChk');
+  if (!d || !d.items) { box.innerHTML = ''; return; }
+  var html = '<div class="' + (d.green ? 'ok' : 'warn') + '">' +
+             (d.green ? '✓ ready for flight' : '✗ not ready') + '</div><ul>';
+  d.items.forEach(function(it) {
+    var tag = {0:'ok', 1:'syntax', 2:'missing', 3:'warning'}[it.kind] || '?';
+    html += '<li><b>' + tag + ':</b> ' + it.detail.replace(/</g,'&lt;') + '</li>';
+  });
+  box.innerHTML = html + '</ul>';
+}
+
+function luaCheck() {
+  fetch('/api/lua/check', {method:'POST', headers:{'Content-Type':'text/plain'},
+                           body: document.getElementById('luSrc').value})
+    .then(function(r){return r.json()}).then(luaShowResult)
+    .catch(function(){ document.getElementById('luChk').textContent = 'check failed'; });
+}
+
+function luaSave() {
+  var box = document.getElementById('luChk');
+  box.textContent = 'saving…';
+  /* Config first, so the check on the device runs against the resource set
+     the operator just chose rather than the previous one. */
+  fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body: luaCfgIni()})
+    .then(function() {
+      return fetch('/api/lua/script', {method:'POST', headers:{'Content-Type':'text/plain'},
+                                       body: document.getElementById('luSrc').value});
+    })
+    .then(function(r) {
+      if (!r.ok) throw new Error('upload rejected');
+      /* The upload replies 201 Created, not JSON. Ask for the verdict
+         separately so it is computed against what is now stored. */
+      return fetch('/api/lua/check', {method:'POST', headers:{'Content-Type':'text/plain'},
+                                      body: document.getElementById('luSrc').value});
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      luaShowResult(d);
+      box.innerHTML += d.green
+        ? '<div class="warn">Saved. Reboot to load it on core 1.</div>'
+        : '<div class="warn">Saved, but it will not be started until this is green.</div>';
+    })
+    .catch(function(){ box.textContent = 'save failed'; });
+}
+
+function luaConPoll() {
+  if (document.getElementById('tab-lua').style.display === 'none') return;
+  fetch('/api/lua/console').then(function(r){return r.ok?r.json():null}).then(function(d) {
+    if (!d) return;
+    document.getElementById('luState').textContent = d.status || '—';
+    document.getElementById('luHb').textContent = d.heartbeat;
+    if (d.text) {
+      var pre = document.getElementById('luCon');
+      pre.textContent += d.text;
+      if (pre.textContent.length > 8000) pre.textContent = pre.textContent.slice(-6000);
+      if (document.getElementById('luFollow').checked) pre.scrollTop = pre.scrollHeight;
+    }
+  }).catch(function(){});
+}
+
+function luaConClear() { document.getElementById('luCon').textContent = ''; }
 
 /* ── Init ──────────────────────────────────────────────────────── */
 update();

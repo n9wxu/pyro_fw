@@ -34,6 +34,7 @@
 /* ── External dependencies ────────────────────────────────────────── */
 
 extern const struct lfs_config lfs_pico_flash_config;
+extern const struct lfs_file_config lfs_pico_file_config;
 
 /* Network (net_glue.c / http_server.c) */
 void net_init(void);
@@ -455,7 +456,7 @@ int hal_fs_read_file(const char *path, char *buf, int max_len) {
     if (lfs_mount(&lfs, &lfs_pico_flash_config) != LFS_ERR_OK)
         return -1;
     lfs_file_t f;
-    int err = lfs_file_open(&lfs, &f, path, LFS_O_RDONLY);
+    int err = lfs_file_opencfg(&lfs, &f, path, LFS_O_RDONLY, &lfs_pico_file_config);
     if (err == LFS_ERR_NOENT) {
         lfs_unmount(&lfs);
         return -2;
@@ -475,7 +476,8 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
     if (lfs_mount(&lfs, &lfs_pico_flash_config) != LFS_ERR_OK)
         return -1;
     lfs_file_t f;
-    if (lfs_file_open(&lfs, &f, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) != LFS_ERR_OK) {
+    if (lfs_file_opencfg(&lfs, &f, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC, &lfs_pico_file_config) !=
+        LFS_ERR_OK) {
         lfs_unmount(&lfs);
         return -1;
     }
@@ -502,7 +504,7 @@ hal_file_t *hal_fs_open(const char *path, bool append) {
         return NULL;
     int flags = LFS_O_WRONLY | LFS_O_CREAT;
     flags |= append ? LFS_O_APPEND : LFS_O_TRUNC;
-    if (lfs_file_open(&hw_file.lfs, &hw_file.file, path, flags) != LFS_ERR_OK) {
+    if (lfs_file_opencfg(&hw_file.lfs, &hw_file.file, path, flags, &lfs_pico_file_config) != LFS_ERR_OK) {
         lfs_unmount(&hw_file.lfs);
         return NULL;
     }

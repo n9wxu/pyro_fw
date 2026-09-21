@@ -37,12 +37,15 @@ jobs:
       - name: Run unit tests
         run: cd build && ninja host_tests
 
+      - name: Run Lua sandbox tests
+        run: cd build && ninja lua_tests
+
       # Standing guard on the core1 safety rule: core0 must never wait on
       # anything core1 can hold. See docs/core1_hazard.md -- the rule is a
       # property of the linked binary, not of the source, because the SDK
       # introduces the blocking waits underneath us.
       - name: Prove core0 cannot be hung by core1
-        run: python3 support/prove_core0.py build/pyro_fw_*.elf
+        run: python3 support/prove_core0.py --core1 core1_main build/pyro_fw_*.elf
 
       - name: Static analysis (cppcheck)
         run: |

@@ -9,6 +9,8 @@
  * SPDX-License-Identifier: MIT
  */
 #include "unity.h"
+#include "lua_check.h"
+#include "lua_platform_cfg.h"
 #include "pyro_lua.h"
 #include "lua_platform.h"
 #include <string.h>
@@ -255,6 +257,100 @@ static void test_eval_error_does_not_kill_the_program(void) {
     TEST_ASSERT_EQUAL_INT(3, sim_lua_output_value(0));
 }
 
+/* ── Static config check (src/lua/lua_check.c) ───────────────────
+ *
+ * The checker answers "are this script and this configuration a matched
+ * pair?" before flight. It is not a security boundary -- the sandbox is --
+ * so it is allowed to over-approximate, and these tests pin down which
+ * direction it errs in. */
+
+static lua_chk_result_t chk;
+
+static bool chk_has(lua_chk_kind_t kind) {
+    for (int i = 0; i < chk.count; i++)
+        if (chk.items[i].kind == kind)
+            return true;
+    return false;
+}
+
+static void test_check_accepts_a_matching_script(void) {
+    const char *src = "function tick()\n"
+                      "  output.set('beacon', 50)\n"
+                      "  if input.get('sense') then serial.write('radio','hi') end\n"
+                      "end\n";
+    lua_check(src, strlen(src), &chk);
+    TEST_ASSERT_TRUE(chk.green);
+    TEST_ASSERT_FALSE(chk_has(LUA_CHK_MISSING));
+    TEST_ASSERT_FALSE(chk_has(LUA_CHK_UNKNOWN));
+}
+
+static void test_check_reports_syntax_without_running(void) {
+    const char *src = "function tick( end";
+    lua_check(src, strlen(src), &chk);
+    TEST_ASSERT_FALSE(chk.green);
+    TEST_ASSERT_TRUE(chk_has(LUA_CHK_SYNTAX));
+}
+
+static void test_check_flags_a_typo_as_unknown(void) {
+    /* 'beacn' is identifier-shaped and names nothing. A warning, not a red:
+     * the shape test is a heuristic. */
+    const char *src = "function tick() output.set('beacn', 1) end";
+    lua_check(src, strlen(src), &chk);
+    TEST_ASSERT_TRUE(chk_has(LUA_CHK_UNKNOWN));
+}
+
+static void test_check_does_not_flag_message_text(void) {
+    /* A sentence sent over the radio must not be mistaken for a resource
+     * name, or every script that reports anything would go yellow. */
+    const char *src = "function tick() serial.write('radio', 'apogee reached ok') end";
+    lua_check(src, strlen(src), &chk);
+    TEST_ASSERT_FALSE(chk_has(LUA_CHK_UNKNOWN));
+}
+
+static void test_check_finds_nested_function_constants(void) {
+    /* The walk must recurse through Proto->p, or a name used inside a nested
+     * function is invisible and the check silently passes everything.
+     * 'beacom' is one edit from 'beacon', so it is exactly the near-miss the
+     * checker reports -- and it only reports it if the recursion works. */
+    const char *src = "function tick()\n"
+                      "  local function inner() output.set('beacom', 1) end\n"
+                      "  inner()\n"
+                      "end\n";
+    lua_check(src, strlen(src), &chk);
+    TEST_ASSERT_TRUE(chk_has(LUA_CHK_UNKNOWN));
+}
+
+static void test_check_catches_the_unassigned_resource(void) {
+    /* The gap this exists to find: the script uses the LED string, but no pin
+     * was assigned one. This is a red, not a warning. */
+    const lua_pin_cfg_t pins[4] = {
+        {LUA_ROLE_PWM, "beacon"},
+        {LUA_ROLE_IN, "sense"},
+        {LUA_ROLE_TX, "radio"},
+        {LUA_ROLE_OFF, ""},
+    };
+    lua_plat_configure(pins, 4, 9600, 0); /* no LED string */
+
+    const char *src = "function tick() pixel.set(1,255,0,0) pixel.show() end";
+    lua_check(src, strlen(src), &chk);
+    TEST_ASSERT_FALSE(chk.green);
+    TEST_ASSERT_TRUE(chk_has(LUA_CHK_MISSING));
+
+    lua_plat_configure(NULL, 0, 9600, 16); /* restore the demo set */
+}
+
+static void test_check_does_not_execute_the_script(void) {
+    /* Validation must be static. If the checker ran this, the output would
+     * move and the UART would receive. */
+    sim_lua_uart_tx_clear();
+    lua_plat_output_set(0, 0);
+    const char *src = "output.set('beacon', 99) serial.write('radio','x')\n"
+                      "function tick() end\n";
+    lua_check(src, strlen(src), &chk);
+    TEST_ASSERT_EQUAL_INT(0, sim_lua_output_value(0));
+    TEST_ASSERT_EQUAL_STRING("", sim_lua_uart_tx());
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_output_set_and_get);
@@ -285,5 +381,13 @@ int main(void) {
     RUN_TEST(test_script_without_hooks_is_fine);
     RUN_TEST(test_print_goes_to_console);
     RUN_TEST(test_eval_error_does_not_kill_the_program);
+
+    RUN_TEST(test_check_accepts_a_matching_script);
+    RUN_TEST(test_check_reports_syntax_without_running);
+    RUN_TEST(test_check_flags_a_typo_as_unknown);
+    RUN_TEST(test_check_does_not_flag_message_text);
+    RUN_TEST(test_check_finds_nested_function_constants);
+    RUN_TEST(test_check_catches_the_unassigned_resource);
+    RUN_TEST(test_check_does_not_execute_the_script);
     return UNITY_END();
 }

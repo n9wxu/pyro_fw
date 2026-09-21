@@ -16,3 +16,6 @@ list(APPEND PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_LIST_DIR}/sdk)
 
 set(PYRO_FLASH_SIZE_KB 16384) # XT25F128FWOIGT-W, 128 Mbit
 set(PYRO_PFB_FS_KB     8192)  # littlefs; see the geometry guard in the top level
+
+# Lua user programs on core1, on the four J3 pads (GPIO18-21).
+set(PYRO_HAS_LUA 1)

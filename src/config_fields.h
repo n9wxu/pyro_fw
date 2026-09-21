@@ -38,6 +38,17 @@
     X(BOOL, log_enabled, "log_enabled", true)                                                                          \
     X(BOOL, buzzer_startup, "buzzer_startup", true)                                                                    \
     X(U8, backup_timer, "backup_timer", 30)                                                                            \
-    X(U8, landing_timeout, "landing_timeout", 60)
+    X(U8, landing_timeout, "landing_timeout", 60)                                                                      \
+    X(BOOL, lua_enabled, "lua_enabled", false)                                                                         \
+    X(STR, lua_p18_role, "lua_p18_role", "off")                                                                        \
+    X(STR, lua_p18_name, "lua_p18_name", "")                                                                           \
+    X(STR, lua_p19_role, "lua_p19_role", "off")                                                                        \
+    X(STR, lua_p19_name, "lua_p19_name", "")                                                                           \
+    X(STR, lua_p20_role, "lua_p20_role", "off")                                                                        \
+    X(STR, lua_p20_name, "lua_p20_name", "")                                                                           \
+    X(STR, lua_p21_role, "lua_p21_role", "off")                                                                        \
+    X(STR, lua_p21_name, "lua_p21_name", "")                                                                           \
+    X(U16, lua_baud, "lua_baud", 9600)                                                                                 \
+    X(U16, lua_pixels, "lua_pixels", 0)
 
 #endif

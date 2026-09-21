@@ -1,0 +1,117 @@
+;
+; PIO programs for Lua user pins — Pyro MK1C (J3: GPIO18/19/20/21)
+;
+; Every Lua-reachable pin is either plain SIO or GPIO_FUNC_PIO1. It is never
+; set to a peripheral function. That is not a stylistic choice: on RP2040 the
+; peripheral function of a pin is fixed by the pin number, and J3 carries
+; GPIO18/19, whose I2C function is *i2c1* -- the same instance as the MS5607
+; pressure sensor on GPIO6/7. A Lua pin placed in GPIO_FUNC_I2C would join the
+; flight sensor's bus.
+;
+; Routing everything through PIO removes that reachability rather than
+; checking for it. There is no code path from a Lua binding to
+; gpio_set_function(..., GPIO_FUNC_I2C | GPIO_FUNC_UART | GPIO_FUNC_SPI).
+;
+; pio0 belongs to core0 (the ARM_TOGGLE charge pump). Lua gets pio1, all of
+; it, and every state machine and program offset is claimed at boot on core0
+; before core1 exists -- see LUA_PIO_INSTRUCTION_BUDGET in lua_platform_mk1c.c
+; for why acquisition cannot fail.
+;
+; SPDX-License-Identifier: MIT
+;
+
+; ── WS2812/WS2811 addressable LEDs ────────────────────────────────────
+;
+; 800 kHz NRZ. Bit period is T1+T2+T3 = 10 SM cycles, so the clock divider
+; is sys_clk / (800000 * 10). 24 bits per pixel, MSB first, GRB order.
+.program lua_ws2812
+.side_set 1
+
+.define public T1 2
+.define public T2 5
+.define public T3 3
+
+.wrap_target
+bitloop:
+    out x, 1       side 0 [T3 - 1]
+    jmp !x do_zero side 1 [T1 - 1]
+    jmp bitloop    side 1 [T2 - 1]
+do_zero:
+    nop            side 0 [T2 - 1]
+.wrap
+
+; ── UART TX ───────────────────────────────────────────────────────────
+;
+; 8N1, 8 SM cycles per bit, so clkdiv = sys_clk / (8 * baud).
+.program lua_uart_tx
+.side_set 1 opt
+
+    pull       side 1 [7]  ; idle high; stall here when nothing to send
+    set x, 7   side 0 [7]  ; start bit
+bitloop:
+    out pins, 1
+    jmp x-- bitloop   [6]
+
+; ── UART RX ───────────────────────────────────────────────────────────
+;
+; 8N1, 8 SM cycles per bit. A framing error pushes nothing and resynchronises
+; on the next idle period, so a noisy line cannot wedge the state machine.
+.program lua_uart_rx
+
+start:
+    wait 0 pin 0        ; wait for the start bit
+    set x, 7    [10]    ; 8 bits; delay to the middle of bit 0
+bitloop:
+    in pins, 1
+    jmp x-- bitloop [6]
+    jmp pin good_stop   ; stop bit must be high
+    wait 1 pin 0        ; framing error: resynchronise on idle
+    jmp start
+good_stop:
+    push
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void lua_ws2812_program_init(PIO pio, uint sm, uint offset, uint pin) {
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    pio_sm_config c = lua_ws2812_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&c, pin);
+    /* 24 bits per pixel, shifted out MSB first, autopull at 24. */
+    sm_config_set_out_shift(&c, false, true, 24);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    const int cycles_per_bit = lua_ws2812_T1 + lua_ws2812_T2 + lua_ws2812_T3;
+    sm_config_set_clkdiv(&c, (float)clock_get_hz(clk_sys) / (800000.0f * cycles_per_bit));
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+static inline void lua_uart_tx_program_init(PIO pio, uint sm, uint offset, uint pin, uint baud) {
+    pio_sm_set_pins_with_mask(pio, sm, 1u << pin, 1u << pin); /* idle high */
+    pio_sm_set_pindirs_with_mask(pio, sm, 1u << pin, 1u << pin);
+    pio_gpio_init(pio, pin);
+    pio_sm_config c = lua_uart_tx_program_get_default_config(offset);
+    sm_config_set_out_shift(&c, true, false, 32); /* shift right, no autopull */
+    sm_config_set_out_pins(&c, pin, 1);
+    sm_config_set_sideset_pins(&c, pin);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    sm_config_set_clkdiv(&c, (float)clock_get_hz(clk_sys) / (8.0f * baud));
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+static inline void lua_uart_rx_program_init(PIO pio, uint sm, uint offset, uint pin, uint baud) {
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, false);
+    pio_gpio_init(pio, pin);
+    gpio_pull_up(pin);
+    pio_sm_config c = lua_uart_rx_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, pin);  /* for WAIT and IN  */
+    sm_config_set_jmp_pin(&c, pin);  /* for the stop-bit check */
+    sm_config_set_in_shift(&c, true, false, 32); /* shift right, no autopush */
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+    sm_config_set_clkdiv(&c, (float)clock_get_hz(clk_sys) / (8.0f * baud));
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

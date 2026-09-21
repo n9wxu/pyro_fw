@@ -14,6 +14,9 @@
 #include "device_status.h"
 #include "buzzer.h"
 #include "tusb.h"
+#if PYRO_HAS_LUA
+#include "lua_app.h"
+#endif
 
 /* Network diagnostic counters (defined in net_glue.c / http_server.c) */
 extern volatile uint32_t net_rx_count;
@@ -58,6 +61,13 @@ int main() {
     flight_context_t ctx;
     flight_init(&ctx);
 
+#if PYRO_HAS_LUA
+    /* Core1 is launched here, once, after the filesystem is mounted and the
+     * config is loaded, and before the flight loop. There is deliberately no
+     * relaunch path: see src/lua/lua_core1.h. */
+    lua_app_init(&ctx.config);
+#endif
+
     bool reset_armed = false; /* see the pending_reset handling below */
 
     while (1) {
@@ -92,5 +102,9 @@ int main() {
         /* Outputs (telemetry, pyro update) */
         flight_update_outputs(&ctx, now);
         update_status(&ctx, now);
+
+#if PYRO_HAS_LUA
+        lua_app_service(&ctx, now);
+#endif
     }
 }

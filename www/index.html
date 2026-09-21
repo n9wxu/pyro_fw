@@ -13,6 +13,7 @@
   <button class="tab active" onclick="showTab('status')">Status</button>
   <button class="tab" onclick="showTab('config')">Config</button>
   <button class="tab" onclick="showTab('data')">Flight Data</button>
+  <button class="tab" onclick="showTab('lua')">Lua</button>
   <button class="tab" onclick="showTab('update')">Update</button>
 </div>
 
@@ -114,6 +115,58 @@
   <button onclick="dlFlight()">⬇ Download Flight CSV</button>
   <h3>Altitude Profile</h3>
   <canvas id="flightGraph" width="660" height="300" style="border:1px solid #ccc;width:100%;max-width:660px"></canvas>
+</div>
+
+
+<!-- ── Tab 5: Lua ─────────────────────────────────────────────── -->
+<div id="tab-lua" class="tabpanel" style="display:none">
+  <table class="info">
+    <tr><td class="lbl">Status</td><td id="luState" class="val">—</td></tr>
+    <tr><td class="lbl">Heartbeat</td><td id="luHb" class="val">—</td></tr>
+  </table>
+
+  <h3>User pins — J3</h3>
+  <p class="hint">J3.1 is 3V3 and J3.2 is GND. The four signal pads are below.
+     A pad is only ever plain GPIO or a PIO state machine, never a peripheral
+     function, so nothing here can reach the pyro bus, the pressure sensor
+     or the buzzer.</p>
+  <table class="info" id="luaPins">
+    <tr><th>Pad</th><th>GPIO</th><th>Role</th><th>Name in Lua</th></tr>
+    <tr><td class="lbl">J3.3</td><td>18</td>
+        <td><select id="lu18r"></select></td>
+        <td><input id="lu18n" maxlength="8" size="9"></td></tr>
+    <tr><td class="lbl">J3.4</td><td>19</td>
+        <td><select id="lu19r"></select></td>
+        <td><input id="lu19n" maxlength="8" size="9"></td></tr>
+    <tr><td class="lbl">J3.5</td><td>20</td>
+        <td><select id="lu20r"></select></td>
+        <td><input id="lu20n" maxlength="8" size="9"></td></tr>
+    <tr><td class="lbl">J3.6</td><td>21</td>
+        <td><select id="lu21r"></select></td>
+        <td><input id="lu21n" maxlength="8" size="9"></td></tr>
+  </table>
+  <table class="info">
+    <tr><td class="lbl">Enabled</td><td><input type="checkbox" id="luEn"></td></tr>
+    <tr><td class="lbl">Serial baud</td><td><input id="luBaud" size="8" value="9600"></td></tr>
+    <tr><td class="lbl">LED string length</td><td><input id="luPx" size="8" value="0"></td></tr>
+  </table>
+
+  <h3>Program</h3>
+  <textarea id="luSrc" rows="16" spellcheck="false"
+            style="width:100%;font-family:ui-monospace,Menlo,monospace;font-size:13px"></textarea>
+  <div class="btnrow">
+    <button onclick="luaCheck()">✓ Check</button>
+    <button onclick="luaSave()">💾 Save &amp; Apply</button>
+    <button onclick="luaLoad()">↻ Reload</button>
+  </div>
+  <div id="luChk"></div>
+
+  <h3>Console</h3>
+  <pre id="luCon" style="height:160px;overflow:auto;background:#111;color:#0f0;padding:6px;font-size:12px"></pre>
+  <div class="btnrow">
+    <button onclick="luaConClear()">Clear</button>
+    <label><input type="checkbox" id="luFollow" checked> follow</label>
+  </div>
 </div>
 
 <!-- ── Tab 4: Update ──────────────────────────────────────────── -->

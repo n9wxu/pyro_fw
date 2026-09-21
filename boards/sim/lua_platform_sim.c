@@ -12,25 +12,82 @@
  * SPDX-License-Identifier: MIT
  */
 #include "lua_platform.h"
+#include "lua_platform_cfg.h"
 #include <string.h>
 
 /* ── Simulated resources ──────────────────────────────────────────── */
 
-static const lua_output_desc_t outputs[] = {
-    {"beacon", true}, /* J3 pin, PWM-capable: night-launch LED */
-    {"strobe", true}, /* J3 pin, PWM-capable                   */
-    {"aux", false},   /* J1.6, digital only                    */
+/* The default set, which is also what the WASM UI renders. lua_plat_configure()
+ * can replace it, so the simulator honours the same contract the board does
+ * and a script written here meets the same resource rules. */
+static lua_output_desc_t outputs[] = {
+    {"beacon", true}, /* J3 pad, dimmable: night-launch LED */
+    {"strobe", true}, /* J3 pad, dimmable                   */
+    {"aux", false},   /* J3 pad, digital only               */
 };
-static int output_val[sizeof(outputs) / sizeof(outputs[0])];
+static int n_outputs = 3;
+static int output_val[4];
 
-static const lua_input_desc_t inputs[] = {
-    {"sense"}, /* J3 pin configured as an input */
+static lua_input_desc_t inputs[] = {
+    {"sense"}, /* J3 pad configured as an input */
 };
-static int input_val[sizeof(inputs) / sizeof(inputs[0])];
+static int n_inputs = 1;
+static int input_val[4];
 
-static const lua_serial_desc_t serials[] = {
-    {"radio"}, /* uart1 on the J3 pads */
+static lua_serial_desc_t serials[] = {
+    {"radio"}, /* PIO UART on a J3 pad */
 };
+static int n_serials = 1;
+
+#define SIM_PIXELS 16
+static int px_configured = SIM_PIXELS;
+
+static char cfg_names[4][LUA_NAME_MAX];
+
+int lua_plat_pin_count(void) {
+    return 4;
+}
+
+void lua_plat_pin_service(void) {
+    /* Software PWM is a hardware concern; the simulator shows the duty value
+     * directly, which is what the UI renders as brightness. */
+}
+
+int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixels) {
+    (void)baud;
+    if (!cfg || n <= 0) {
+        return 0; /* keep the built-in demo set */
+    }
+    n_outputs = n_inputs = n_serials = 0;
+    for (int i = 0; i < n && i < 4; i++) {
+        strncpy(cfg_names[i], cfg[i].name ? cfg[i].name : "", LUA_NAME_MAX - 1);
+        cfg_names[i][LUA_NAME_MAX - 1] = '\0';
+        switch (cfg[i].role) {
+        case LUA_ROLE_OUT:
+        case LUA_ROLE_PWM:
+            outputs[n_outputs].name = cfg_names[i];
+            outputs[n_outputs].dimmable = (cfg[i].role == LUA_ROLE_PWM);
+            output_val[n_outputs] = 0;
+            n_outputs++;
+            break;
+        case LUA_ROLE_IN:
+            inputs[n_inputs].name = cfg_names[i];
+            n_inputs++;
+            break;
+        case LUA_ROLE_TX:
+        case LUA_ROLE_RX:
+            if (n_serials == 0) {
+                serials[0].name = cfg_names[i];
+                n_serials = 1;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+    px_configured = (pixels > SIM_PIXELS) ? SIM_PIXELS : pixels;
+    return 0;
+}
 
 /* ── Simulated UART ───────────────────────────────────────────────── */
 
@@ -51,13 +108,12 @@ static int console_len;
  * timing. Here it is just memory, with a counter so the UI can show that
  * show() -- and only show() -- reaches the wire. */
 
-#define SIM_PIXELS 16
 static uint8_t pixel_buf[SIM_PIXELS * 3]; /* R,G,B per LED */
 static uint8_t pixel_wire[SIM_PIXELS * 3];
 static uint32_t pixel_shows;
 
 int lua_plat_pixel_count(void) {
-    return SIM_PIXELS;
+    return px_configured;
 }
 
 void lua_plat_pixel_set(int idx, uint8_t r, uint8_t g, uint8_t b) {
@@ -84,7 +140,7 @@ static int sim_pyro_status[2];
 /* ── lua_platform.h implementation ────────────────────────────────── */
 
 int lua_plat_output_count(void) {
-    return (int)(sizeof(outputs) / sizeof(outputs[0]));
+    return n_outputs;
 }
 const lua_output_desc_t *lua_plat_output_desc(int idx) {
     return &outputs[idx];
@@ -97,7 +153,7 @@ int lua_plat_output_get(int idx) {
 }
 
 int lua_plat_input_count(void) {
-    return (int)(sizeof(inputs) / sizeof(inputs[0]));
+    return n_inputs;
 }
 const lua_input_desc_t *lua_plat_input_desc(int idx) {
     return &inputs[idx];
@@ -107,7 +163,7 @@ int lua_plat_input_get(int idx) {
 }
 
 int lua_plat_serial_count(void) {
-    return (int)(sizeof(serials) / sizeof(serials[0]));
+    return n_serials;
 }
 const lua_serial_desc_t *lua_plat_serial_desc(int idx) {
     return &serials[idx];

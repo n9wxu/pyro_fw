@@ -197,6 +197,7 @@ if(PYRO_HAS_LUA)
     add_library(pyro_lua STATIC
         src/lua/pyro_lua.c
         src/lua/lua_arena.c
+        src/lua/lua_check.c
     )
     target_include_directories(pyro_lua PUBLIC ${CMAKE_CURRENT_LIST_DIR}/src/lua ${CMAKE_CURRENT_LIST_DIR}/src)
     target_link_libraries(pyro_lua PUBLIC lua_lib)
@@ -218,6 +219,12 @@ target_include_directories(littlefs_lib PUBLIC
 )
 target_compile_options(littlefs_lib INTERFACE -Wno-unused-function -Wno-null-dereference)
 target_link_libraries(littlefs_lib INTERFACE hardware_flash)
+
+# littlefs is the only malloc caller in the firmware, and linking
+# pico_multicore turns every malloc/free into a blocking cross-core mutex
+# acquire on core0's liftoff path. Static buffers remove the call entirely;
+# src/littlefs_driver.c supplies them. See docs/core1_hazard.md.
+target_compile_definitions(littlefs_lib PUBLIC LFS_NO_MALLOC)
 
 # ====================================================================================
 
@@ -320,8 +327,14 @@ add_executable(pyro_fw_c
 # no timeout parameter and no failure return. Off by default so the A/B is
 # measurable; Phase 1 turns it on for real.
 option(PYRO_LINK_MULTICORE "Link pico_multicore (enables core1)" OFF)
-if(PYRO_LINK_MULTICORE)
+if(PYRO_HAS_LUA OR PYRO_LINK_MULTICORE)
     target_link_libraries(pyro_fw_c pico_multicore)
+endif()
+
+if(PYRO_HAS_LUA)
+    target_sources(pyro_fw_c PRIVATE src/lua/lua_core1.c src/lua/lua_app.c)
+    target_link_libraries(pyro_fw_c pyro_lua hardware_pio hardware_dma)
+    target_compile_definitions(pyro_fw_c PRIVATE PYRO_HAS_LUA=1)
 endif()
 
 add_dependencies(pyro_fw_c generate_version)
@@ -486,6 +499,10 @@ add_custom_target(sim
 
 # Lua sandbox and limit tests. Only when the selected board provides Lua.
 if(PYRO_HAS_LUA)
+# The sandbox tests always build against the SIMULATOR platform, whatever
+# board is selected: they assert properties of the sandbox and the arena,
+# which are board-independent, and pinning them to one platform keeps the
+# assertions about resource names stable.
 add_custom_target(lua_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building Lua tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
@@ -496,7 +513,8 @@ add_custom_target(lua_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_lua.c
                ${CMAKE_CURRENT_LIST_DIR}/src/lua/pyro_lua.c
                ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_arena.c
-               ${PYRO_BOARD_DIR}/lua_platform_sim.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_check.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/sim/lua_platform_sim.c
                ${PYRO_LUA_SOURCES}
                ${unity_SOURCE_DIR}/src/unity.c
                -lm
