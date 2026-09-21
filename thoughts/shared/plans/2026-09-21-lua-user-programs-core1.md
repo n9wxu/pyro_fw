@@ -30,11 +30,27 @@ Measured on the current tree, not assumed:
   3948 KB. This becomes a board capability (`BOARD_HAS_LUA`), which the
   `boards/<name>/` structure already supports.
 
-- **MK1C as built has one reachable spare pin.** GPIO2,3,4,5,9,10,13,14,15 are
-  unconnected on the PCB — no pad. GPIO18–21 land on J3, which is not fitted.
-  GPIO22 goes to J1.6. GPIO0/1 are the telemetry UART on J1.4/J1.5.
-  **Decision: J3 gets populated**, giving Lua GPIO18–22, where GPIO20/21 can be
-  `uart1` or `i2c0`. Telemetry keeps `uart0`.
+- **Lua's pins are J3 plus J1.6.** J3 is a user breakout present on all MK1C
+  hardware: castellated pads carrying GPIO18–21 with 3.3 V and GND, meant to be
+  soldered straight into the flyer's av-bay. With GPIO22 on J1.6 that is five
+  pins. GPIO2,3,4,5,9,10,13,14,15 have no pad at all, and GPIO0/1 stay with
+  telemetry on J1.4/J1.5.
+
+- **The allowlist must cover pin FUNCTION, not just pin number.** This is the
+  sharpest trap in the whole design:
+
+  | pin | I2C function | UART function |
+  |---|---|---|
+  | GPIO18 | **I2C1 SDA** | — |
+  | GPIO19 | **I2C1 SCL** | — |
+  | GPIO20 | I2C0 SDA | UART1 TX |
+  | GPIO21 | I2C0 SCL | UART1 RX |
+
+  `i2c1` is the pressure sensor bus. `gpio_set_function(18, GPIO_FUNC_I2C)`
+  would put GPIO18/19 on the *same peripheral instance* as the MS5607 on
+  GPIO6/7, electrically joining them and corrupting the primary bus — using
+  only pins that are legitimately on Lua's allowlist. A pin-number allowlist
+  does not catch this. See invariant L3.
 
 - **Core1 cannot execute while core0 writes flash.** XIP must be disabled for
   `flash_range_erase`/`flash_range_program`, and Lua's interpreter is far too
@@ -81,9 +97,12 @@ banned; only the `_timeout_us` variant is used.
 **L2. Lua can never name a forbidden pin.** The allowlist is declared by the
 board and statically asserted to exclude every pyro, sensor and buzzer pin.
 
-**L3. Peripheral instances are partitioned, not just pins.** Lua may touch
+**L3. The allowlist is (pin, function) pairs, not pins.** Lua may touch
 `uart1` and `i2c0` only. `uart0` (telemetry) and `i2c1` (pressure) are never
-reachable, even if a pin number were to slip through L2.
+reachable. Concretely, GPIO18/19 are permitted as SIO and PWM but **never as
+`GPIO_FUNC_I2C`**, because their I2C instance is `i2c1` — putting them in I2C
+mode would join the pressure sensor's bus from pins that pass a naive
+pin-number check. Bindings take a role, never a raw function number.
 
 **L4. Lua never writes flash.** All filesystem writes are requests to core0.
 
@@ -176,24 +195,44 @@ Prove the priority rule before adding a language to the problem.
 The board declares what Lua may touch, and the compiler proves it is safe:
 
 ```c
-/* boards/mk1c/board_pins.h */
+/* boards/mk1c/board_pins.h
+ * J3 castellated user pads (18-21) plus J1.6 (22). Each entry is a pin and
+ * the roles Lua may put it in -- never a raw GPIO function number. */
 #define BOARD_HAS_LUA 1
-#define BOARD_LUA_GPIO_ALLOW {18, 19, 20, 21, 22}
-#define BOARD_LUA_UART      uart1   /* never uart0: telemetry */
-#define BOARD_LUA_I2C       i2c0    /* never i2c1: pressure   */
+#define BOARD_LUA_PINS                                                        \
+    /*  pin  SIO   PWM   UART   I2C   */                                      \
+    X(18,    1,    1,    0,     0)  /* I2C would be i2c1: pressure bus */     \
+    X(19,    1,    1,    0,     0)  /* likewise                        */     \
+    X(20,    1,    1,    1,     1)  /* uart1 TX / i2c0 SDA             */     \
+    X(21,    1,    1,    1,     1)  /* uart1 RX / i2c0 SCL             */     \
+    X(22,    1,    1,    0,     0)  /* J1.6                            */
+#define BOARD_LUA_UART uart1 /* never uart0: telemetry */
+#define BOARD_LUA_I2C  i2c0  /* never i2c1: pressure   */
 ```
 
-A static assertion in the binding layer checks the allowlist against the board's
-forbidden set — pyro, sensor and buzzer pins — so a board that tries to expose
-GPIO17 fails to compile (L2). Every API entry point re-validates at runtime,
-because a compile-time check does not cover a pin number computed in Lua.
+Two compile-time checks, both in the binding layer so no board can opt out:
 
-API: `gpio.setup(pin, mode)`, `gpio.write(pin, v)`, `gpio.read(pin)`.
+1. No pin in `BOARD_LUA_PINS` appears in the board's pyro, sensor or buzzer
+   set — a board exposing GPIO17 fails to build (L2).
+2. No pin whose I2C instance is `BOARD_I2C_INST` may have its I2C role set —
+   this is what makes the GPIO18/19 trap a build error rather than a field
+   failure (L3).
+
+Every entry point re-validates at runtime, because a compile-time check cannot
+cover a pin number computed in Lua.
+
+API: `gpio.setup(pin, mode)`, `gpio.write(pin, v)`, `gpio.read(pin)`, and
+`pwm.setup(pin, hz)` / `pwm.duty(pin, pct)` — all five pins have PWM, and
+dimming is the obvious want for night-launch LEDs.
 
 ### Success Criteria
 - [ ] Host tests for the allowlist: every forbidden pin rejected, every allowed pin accepted
 - [ ] A board header exposing a pyro pin fails the build
+- [ ] A board header granting the I2C role to GPIO18 or 19 fails the build
 - [ ] `gpio.write(17, 1)` from Lua returns an error and changes no pin state
+- [ ] No Lua path can put GPIO18/19 into I2C mode — verified by scoping SDA1/SCL1
+      while a script tries every role on every allowed pin, with the MS5607
+      still reading correctly throughout
 - [ ] Scope FIRE_A/FIRE_B/ARM_TOGGLE while a script hammers `gpio.write` across all 30 pin numbers — no activity
 
 ---
@@ -319,16 +358,14 @@ The phase that decides whether this ships.
 
 ## Open Questions
 
-1. **Does J3 get populated on serial #1, or only on later boards?** Phases 5
-   onward need those pins on real hardware; earlier phases do not.
-2. **Instruction budget per invocation** — an event handler and a `tick()` want
+1. **Instruction budget per invocation** — an event handler and a `tick()` want
    different budgets. Start generous and tune once the soak test runs?
-3. **Arena size.** 32 KB is a guess against 194 KB headroom. Worth deciding
+2. **Arena size.** 32 KB is a guess against 194 KB headroom. Worth deciding
    whether Lua may grow into the flight-log buffer's reserve, or must not.
-4. **Should the default script keep running through ASCENT/DESCENT?** Night-launch
+3. **Should the default script keep running through ASCENT/DESCENT?** Night-launch
    LEDs say yes. If any script ever proves capable of disturbing timing, a
    config option to suspend Lua in flight is the escape hatch.
-5. **Script provenance.** Nothing authenticates an uploaded script. Same trust
+4. **Script provenance.** Nothing authenticates an uploaded script. Same trust
    level as the OTA path, which is also unauthenticated — worth deciding once,
    for both.
 
