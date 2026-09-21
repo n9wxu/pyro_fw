@@ -311,6 +311,19 @@ add_executable(pyro_fw_c
         pico_fota_bootloader_lib
         )
 
+# Core1 hazard experiment (see docs/core1_hazard.md).
+#
+# Linking pico_multicore does more than make multicore_launch_core1() available:
+# pico/malloc.h turns PICO_USE_MALLOC_MUTEX on automatically when
+# LIB_PICO_MULTICORE is defined, which rewrites every malloc/calloc/realloc/free
+# on BOTH cores to take a shared mutex via mutex_enter_blocking() -- a call with
+# no timeout parameter and no failure return. Off by default so the A/B is
+# measurable; Phase 1 turns it on for real.
+option(PYRO_LINK_MULTICORE "Link pico_multicore (enables core1)" OFF)
+if(PYRO_LINK_MULTICORE)
+    target_link_libraries(pyro_fw_c pico_multicore)
+endif()
+
 add_dependencies(pyro_fw_c generate_version)
 
 pico_set_program_name(pyro_fw_c "${BOARD_DISPLAY_NAME}")
