@@ -808,6 +808,35 @@ decision a later reader will try to "fix".
 | F9 DRAIN | Async: watch `SNS_BUS` fall below the indicator threshold. **Skip if the next event is the other channel** |
 | F10 VERIFY | Post-fire tracking test; result feeds `pyro_fault()` and the next `pyro_check_continuity()` |
 
+**Keep flash out of the firing window, and put the sequence in RAM.** Two
+separate changes that are often conflated:
+
+*RAM-residency does not prevent a flash collision.* On a single core a flash
+erase and the firing sequence cannot overlap — if core0 is inside
+`flash_range_erase` it is not executing F0-F10, wherever that code lives. Mark
+the sequence `__not_in_flash_func` anyway, for a different reason: F2 samples
+`SNS_BUS` every 50 us against 0.90 x `SNS_VBAT`, and XIP cache misses put
+jitter on that loop. RAM makes it deterministic. Same for the pump loop.
+
+*Removing the collision is a scheduling change.* `LOG_BUF_SIZE` is 512 bytes,
+so at ~40 bytes a line and 10 Hz in flight the log flushes about every 1.2 s,
+and `hal_common.c:766` flushes synchronously when a line will not fit. Options,
+cheapest first:
+
+| approach | worst-case stall | cost |
+|---|---|---|
+| pre-allocate and pre-erase the log file at LAUNCH | 45 ms -> ~3 ms (page program only) | none |
+| grow LOG_BUF_SIZE and flush on state entry, not when full | fewer, schedulable | a few KB |
+| buffer the whole flight, flush at LANDED | zero in flight | 24 KB for 60 s, 59 KB for 150 s |
+
+Flushing immediately *before* a fire does not help: it puts the erase on the
+critical path instead of removing it. The flush has to happen at a predictable
+earlier moment, or the erase has to already be done.
+
+By the numbers in the Lua plan none of this is strictly required -- 45 ms is
+1 cm at apogee. Pre-erasing is worth it anyway because it also removes the
+400 ms worst-spec erase, which is 78 cm at apogee and 26 ft under drogue.
+
 **The armed-window watchdog must outlast the whole sequence.** `wave_capture_arm`
 enables a 50 ms watchdog and feeds it from the pump loop. That is safe for the
 bench capture, which disables it immediately after, but it does NOT transfer to
