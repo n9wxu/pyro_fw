@@ -19,7 +19,7 @@ def find(pattern):
     return max(matches, key=os.path.getmtime)
 
 BOOTLOADER = find("pico_fota_bootloader.uf2")
-APP_UF2 = find("pyro_fw_c.uf2")
+APP_UF2 = find("pyro_fw_mk1c.uf2") or find("pyro_fw_mk1b.uf2") or find("pyro_fw_c.uf2")
 FOTA_BIN = find("pyro_fw_c_fota_image.bin")
 WWW_DIR = os.path.join(BASE_DIR, "www") if os.path.isdir(os.path.join(BASE_DIR, "www")) else None
 

@@ -1,5 +1,6 @@
-# Build directory
+# Build directories (one per board: build-mk1c, build-sim, ...)
 build/
+build-*/
 
 # Generated
 src/version.h

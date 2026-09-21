@@ -2,6 +2,7 @@
  * USB descriptors for composite device: ECM/RNDIS network + vendor reset.
  */
 #include "tusb.h"
+#include "board_id.h"
 #include "pico/usb_reset_interface.h"
 
 #define USB_VID   0x2E8A
@@ -86,7 +87,7 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
 static char const *string_desc_arr[] = {
     [STRID_LANGID]    = (const char[]){0x09, 0x04},
     [STRID_MFG]       = "Pyro",
-    [STRID_PRODUCT]   = "Pyro MK1B",
+    [STRID_PRODUCT]   = PYRO_BOARD_NAME,
     [STRID_SERIAL]    = "000001",
     [STRID_IF_NET]    = "Pyro Network",
     [STRID_MAC]       = "020284006A00",

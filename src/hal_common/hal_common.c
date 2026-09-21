@@ -1,12 +1,20 @@
 /*
- * HAL implementation for real Pico hardware.
+ * Board-independent HAL implementation for RP2040 targets.
+ *
+ * Implements hal.h in terms of src/board_if.h. Contains no pin numbers and
+ * no board names; everything board-specific lives in boards/<name>/.
  * SPDX-License-Identifier: MIT
  */
 #include "hal.h"
+#include "board_id.h"
 #include "config.h"
 #include "async_task.h"
 #include "ms5607_driver.h"
+#include "board_if.h"   /* the contract every boards/<name>/ implements */
+#include "board_pins.h" /* board-supplied capability macros */
+#if BOARD_HAS_BMP280
 #include "bmp280_driver.h"
+#endif
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include "hardware/adc.h"
@@ -35,7 +43,6 @@ void net_mac_init(void);
 void net_service(void);
 void http_server_init(void);
 
-#define BUZZER_PIN 16
 
 /* ── Hardware-internal pressure types ─────────────────────────────── */
 /* These are implementation details of the hardware HAL, not exposed
@@ -153,7 +160,7 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r, uint32_t no
     static uint8_t led_n = 0;
     if (++led_n >= HAL_PRESSURE_BATCH_SIZE) {
         led_n = 0;
-        gpio_xor_mask(1u << 25);
+        board_led_toggle();
     }
 }
 
@@ -218,12 +225,16 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
         }
         }
 
+#if BOARD_HAS_BMP280
     } else if (p->sensor_type == 2) {
-        /* ── BMP280 (normal/continuous mode) ── */
+        /* ── BMP280 (normal/continuous mode) ──
+         * Only reachable on boards that declare BOARD_HAS_BMP280; elsewhere
+         * pressure_sensor_init() can never report type 2. */
         pressure_reading_t r;
         if (bmp280_read(&r))
             pres_append(p, &r, now_ms);
         p->base.next_due_ms = now_ms + p->sample_interval_ms;
+#endif
     }
 }
 
@@ -325,16 +336,14 @@ bool hal_pyro_fault(uint8_t channel) {
 /* ── Buzzer ───────────────────────────────────────────────────────── */
 
 void hal_buzzer_init(void) {
-    gpio_init(BUZZER_PIN);
-    gpio_set_dir(BUZZER_PIN, GPIO_OUT);
-    gpio_put(BUZZER_PIN, 0);
+    board_buzzer_init();
 }
 
 void hal_buzzer_tone_on(void) {
-    gpio_put(BUZZER_PIN, 1);
+    board_buzzer_on();
 }
 void hal_buzzer_tone_off(void) {
-    gpio_put(BUZZER_PIN, 0);
+    board_buzzer_off();
 }
 
 /* Register the buzzer async task with the hardware task runner.
@@ -358,31 +367,40 @@ void hal_buzzer_task_register(async_task_t *task) {
 #define UART_TX_BUF_SIZE 512
 #define UART_TX_BUF_MASK (UART_TX_BUF_SIZE - 1)
 
+/* Telemetry UART instance, supplied by the board. Cached on first use so
+ * the TX ISR does not make a cross-module call on every byte. */
+static uart_inst_t *s_uart;
+static inline uart_inst_t *tuart(void) {
+    if (!s_uart)
+        s_uart = board_uart();
+    return s_uart;
+}
+
 static volatile uint8_t uart_tx_buf[UART_TX_BUF_SIZE];
 static volatile int uart_tx_head = 0;
 static volatile int uart_tx_tail = 0;
 
 static void uart_tx_drain_isr(void) {
-    while (uart_is_writable(uart0)) {
+    while (uart_is_writable(tuart())) {
         int t = uart_tx_tail;
         if (t == uart_tx_head)
             break;
-        uart_get_hw(uart0)->dr = uart_tx_buf[t];
+        uart_get_hw(tuart())->dr = uart_tx_buf[t];
         uart_tx_tail = (t + 1) & UART_TX_BUF_MASK;
     }
     if (uart_tx_tail == uart_tx_head)
-        hw_clear_bits(&uart_get_hw(uart0)->imsc, UART_UARTIMSC_TXIM_BITS);
+        hw_clear_bits(&uart_get_hw(tuart())->imsc, UART_UARTIMSC_TXIM_BITS);
 }
 
-static void uart0_irq_handler(void) {
-    if (uart_get_hw(uart0)->mis & UART_UARTMIS_TXMIS_BITS)
+static void telem_uart_irq_handler(void) {
+    if (uart_get_hw(tuart())->mis & UART_UARTMIS_TXMIS_BITS)
         uart_tx_drain_isr();
 }
 
 static void uart_tx_ring_init(void) {
-    irq_set_exclusive_handler(UART0_IRQ, uart0_irq_handler);
-    irq_set_enabled(UART0_IRQ, true);
-    hw_clear_bits(&uart_get_hw(uart0)->imsc, UART_UARTIMSC_TXIM_BITS);
+    irq_set_exclusive_handler(board_uart_irq(), telem_uart_irq_handler);
+    irq_set_enabled(board_uart_irq(), true);
+    hw_clear_bits(&uart_get_hw(tuart())->imsc, UART_UARTIMSC_TXIM_BITS);
 }
 
 /* ── Telemetry ────────────────────────────────────────────────────── */
@@ -404,15 +422,15 @@ void hal_telemetry_send(const char *sentence) {
 
     /* If ring was empty, manually prime the UART FIFO to trigger first interrupt */
     if (was_empty && uart_tx_head != uart_tx_tail) {
-        while (uart_is_writable(uart0) && uart_tx_tail != uart_tx_head) {
-            uart_get_hw(uart0)->dr = uart_tx_buf[uart_tx_tail];
+        while (uart_is_writable(tuart()) && uart_tx_tail != uart_tx_head) {
+            uart_get_hw(tuart())->dr = uart_tx_buf[uart_tx_tail];
             uart_tx_tail = (uart_tx_tail + 1) & UART_TX_BUF_MASK;
         }
     }
 
     /* Enable TX interrupt to continue draining ring buffer */
     if (uart_tx_head != uart_tx_tail)
-        hw_set_bits(&uart_get_hw(uart0)->imsc, UART_UARTIMSC_TXIM_BITS);
+        hw_set_bits(&uart_get_hw(tuart())->imsc, UART_UARTIMSC_TXIM_BITS);
 }
 
 /* ── Filesystem ───────────────────────────────────────────────────── */
@@ -532,14 +550,14 @@ int hal_config_save(const config_t *cfg) {
     return hal_fs_write_file("config.ini", buf, n);
 }
 
-/* ── Serial readline (v2, TRRS jack RX = uart0 RX) ───────────────── */
+/* ── Serial readline (v2, telemetry UART RX) ──────────────────────── */
 
 bool hal_serial_readline(char *buf, int max_len) {
     static char rx_buf[64];
     static int rx_len = 0;
 
-    while (uart_is_readable(uart0) && rx_len < (int)(sizeof(rx_buf) - 1)) {
-        char c = (char)uart_getc(uart0);
+    while (uart_is_readable(tuart()) && rx_len < (int)(sizeof(rx_buf) - 1)) {
+        char c = (char)uart_getc(tuart());
         if (c == '\n' || c == '\r') {
             if (rx_len > 0) {
                 int n = (rx_len < max_len - 1) ? rx_len : max_len - 1;
@@ -580,25 +598,19 @@ void hal_platform_init(void) {
 
     board_init();
 
-    /* Proof-of-life LED — GPIO 25 (onboard LED on Pico).
-     * Must be after board_init() which reinitializes this pin.
-     * Start ON so a lit LED confirms correct GPIO at boot. */
-    gpio_init(25);
-    gpio_set_dir(25, GPIO_OUT);
-    gpio_put(25, 1);
+    /* Board half of init: LED, telemetry UART pins, ADC inputs.
+     * Must be after the BSP's board_init(), which reinitialises any pin the
+     * board header named via PICO_DEFAULT_LED_PIN. */
+    board_hw_init();
 
     net_mac_init();
     tud_init(BOARD_TUD_RHPORT);
-    /* stdio_init_all() removed — we own uart0 exclusively for ISR-driven
+    /* stdio_init_all() removed — we own the telemetry UART exclusively for ISR-driven
      * telemetry TX and ground-test RX.  No SDK stdio drivers needed. */
 
-    uart_init(uart0, 115200);
-    gpio_set_function(0, GPIO_FUNC_UART);
-    gpio_set_function(1, GPIO_FUNC_UART);
+    uart_init(tuart(), 115200); /* pins were assigned by board_hw_init() */
     uart_tx_ring_init(); /* v2-10: non-blocking TX via ISR ring buffer */
 
-    adc_gpio_init(26);
-    adc_gpio_init(27);
 
     net_init();
     net_start();
@@ -700,7 +712,7 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     /* write header directly — first call is not time-critical */
     char hdr[256];
     int n = snprintf(hdr, sizeof(hdr),
-                     "# Pyro MK1B Flight Data\n# ID: %.8s\n# Name: %.8s\n"
+                     "# " PYRO_BOARD_NAME " Flight Data\n# ID: %.8s\n# Name: %.8s\n"
                      "# Pyro1: %s %u\n# Pyro2: %s %u\n"
                      "# Units: %s\n# Ground Pa: %ld\n"
                      "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",

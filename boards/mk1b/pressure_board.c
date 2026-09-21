@@ -10,9 +10,11 @@ extern bool ms5607_read(pressure_reading_t *reading);
 extern bool bmp280_detect(void);
 extern bool bmp280_read(pressure_reading_t *reading);
 
-#define I2C_SCL_PIN 7
-#define BMP280_SDA 6
-#define MS5607_SDA 10
+#include "board_pins.h"
+
+#define I2C_SCL_PIN BOARD_PIN_I2C_SCL
+#define BMP280_SDA BOARD_PIN_BMP280_SDA
+#define MS5607_SDA BOARD_PIN_MS5607_SDA
 
 static pressure_sensor_type_t detected_sensor = PRESSURE_SENSOR_NONE;
 

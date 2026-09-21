@@ -58,6 +58,8 @@ int main() {
     flight_context_t ctx;
     flight_init(&ctx);
 
+    bool reset_armed = false; /* see the pending_reset handling below */
+
     while (1) {
         uint32_t now = hal_time_ms();
 
@@ -66,9 +68,19 @@ int main() {
 
         extern volatile uint8_t pending_reset;
         if (pending_reset == 1)
-            rom_reset_usb_boot(0, 0);
-        if (pending_reset == 2)
+            rom_reset_usb_boot(0, 0); /* never returns */
+
+        /* watchdog_reboot() ARMS the watchdog with a timeout; it does not
+         * schedule a one-shot. pending_reset stays set, so calling it every
+         * iteration reloaded the 100 ms countdown faster than it could ever
+         * expire and the device never rebooted -- which also silently broke
+         * OTA, since pfb_perform_update() reboots through this same path.
+         * Arm exactly once, then let the loop keep servicing USB and lwIP so
+         * the in-flight HTTP response still flushes before the reset lands. */
+        if (pending_reset == 2 && !reset_armed) {
+            reset_armed = true;
             watchdog_reboot(0, 0, 100);
+        }
 
         /* Advance async HAL state machines (pressure, buzzer, log flush) */
         hal_tasks_tick(now);

@@ -5,6 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hal.h"
+#include "board_id.h"
 #include "flight_states.h"
 #include "pressure_processing.h"
 #include "telemetry_formatter.h"
@@ -653,7 +654,7 @@ int flight_save_csv(flight_context_t *ctx) {
 
     char line[256];
     int n = snprintf(line, sizeof(line),
-                     "# Pyro MK1B Flight Data\n# ID: %.8s\n# Name: %.8s\n"
+                     "# " PYRO_BOARD_NAME " Flight Data\n# ID: %.8s\n# Name: %.8s\n"
                      "# Pyro1: %s %u\n# Pyro2: %s %u\n"
                      "# Units: %s\n# Ground Pa: %ld\n# Max Alt cm: %ld\n"
                      "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",

@@ -45,7 +45,7 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
           files: |
-            build/pyro_fw_c.uf2
+            build/pyro_fw_mk1b.uf2
             build/pyro_fw_c_fota_image.bin
             build/_deps/pico_fota_bootloader-build/pico_fota_bootloader.uf2
             pyro-mk1b-support.zip

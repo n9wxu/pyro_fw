@@ -1,5 +1,9 @@
 #!/bin/bash
 # Build the pyro flight computer as a WASM module.
+#
+# The WASM/host HAL is a board like any other: boards/sim/. Select it with
+#     cmake -B build-sim -DPYRO_BOARD=sim
+# for the native simulator; this script drives emcc directly.
 # Requires: emsdk (https://emscripten.org/docs/getting_started/downloads.html)
 set -e
 
@@ -42,7 +46,7 @@ emcc -O2 -s WASM=1 \
   -I "$ROOT/src" \
   -I "$ROOT/sim" \
   "$ROOT/sim/main_sim.c" \
-  "$ROOT/sim/hal_sim.c" \
+  "$ROOT/boards/sim/hal_sim.c" \
   "$ROOT/sim/physics.c" \
   "$ROOT/src/flight_states.c" \
   "$ROOT/src/telemetry.c" \

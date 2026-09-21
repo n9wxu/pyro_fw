@@ -1,0 +1,57 @@
+;
+; ARM_TOGGLE charge pump — Pyro MK1C
+;
+; Emits a burst of square-wave cycles for each word the CPU pushes, then
+; STALLS on an empty TX FIFO.
+;
+; This is what lets the pump be a hardware peripheral without breaking
+; DESIGN.md invariant 5. A free-running PWM or timer keeps a dead processor
+; armed; this state machine cannot, because it only ever runs as far as the
+; words the CPU has pushed. Stop pushing and the toggle stops, which is
+; exactly the property the passive-disarm argument depends on:
+;
+;   firmware stops -> FIFO drains -> SM stalls at `pull block`
+;                  -> C_HOLD bleeds through R_BLEED_EN
+;                  -> U9 disables in about 9.6 ms
+;
+; The watchdog covers the harder case where the processor is still running
+; but wedged: PSM_WDSEL resets the PIO block, which stops the SM and returns
+; the pad to its reset state (input, pull-down).
+;
+; Timing: 25 cycles high, 25 cycles low = 50 PIO clocks per period. At a
+; clock divider of 250 from 125 MHz that is 500 kHz, giving a 10 kHz toggle,
+; the bottom of the 10-50 kHz band in DESIGN.md 5.1 where the pump still has
+; about 10x margin over the bleed.
+;
+; SPDX-License-Identifier: MIT
+;
+
+.program arm_pump
+
+.wrap_target
+    pull block              ; stall here whenever the CPU stops feeding us
+    mov x, osr              ; x = number of toggle cycles in this burst
+cycle:
+    set pins, 1     [24]    ; 25 clocks high
+    set pins, 0     [23]    ; 24 clocks, +1 for the jmp = 25 low
+    jmp x-- cycle
+.wrap
+
+% c-sdk {
+static inline void arm_pump_program_init(PIO pio, uint sm, uint offset, uint pin, float clkdiv) {
+    pio_sm_config c = arm_pump_program_get_default_config(offset);
+
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    sm_config_set_set_pins(&c, pin, 1);
+    sm_config_set_clkdiv(&c, clkdiv);
+
+    /* Deepen the TX FIFO would LENGTHEN the coast after the CPU stops, so
+     * leave it at the default 4 entries. With a burst of 10 cycles (1 ms)
+     * that bounds the coast at about 4 ms, after which C_HOLD still needs
+     * its 9.6 ms to bleed. */
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_clear_fifos(pio, sm);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

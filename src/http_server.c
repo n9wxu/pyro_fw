@@ -3,6 +3,8 @@
  * Handles any file size via chunked read/write with per-connection state.
  */
 #include "lwip/tcp.h"
+#include "board_id.h"
+#include "board_if.h"
 #include <string.h>
 #include <stdio.h>
 #include <lfs.h>
@@ -172,6 +174,19 @@ static void serve_api_status(struct tcp_pcb *pcb) {
     static const char *mode_names[] = {"none", "fallen", "agl", "speed", "delay"};
     const char *p1m = (g_status.pyro1_mode < 5) ? mode_names[g_status.pyro1_mode] : "?";
     const char *p2m = (g_status.pyro2_mode < 5) ? mode_names[g_status.pyro2_mode] : "?";
+
+    /* Raw pyro sense counts; -1 on a board that has none. Reported as raw
+     * ADC counts rather than volts so a marginal reading stays visible. */
+    board_pyro_raw_t praw = {0};
+    int raw_busq = -1, raw_bus = -1, raw_vbat = -1, raw_a = -1, raw_b = -1, raw_tau = -1;
+    if (board_pyro_raw(&praw)) {
+        raw_busq = (int)praw.bus_quiescent;
+        raw_bus = (int)praw.bus_biased;
+        raw_vbat = (int)praw.vbat;
+        raw_a = (int)praw.ch_a_biased;
+        raw_b = (int)praw.ch_b_biased;
+        raw_tau = (int)praw.bus_decay_tau_us;
+    }
     int pos =
         snprintf(buf, sizeof(buf),
                  "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" CORS_HDR "Connection: close\r\n\r\n"
@@ -184,7 +199,9 @@ static void serve_api_status(struct tcp_pcb *pcb) {
                  "\"pyro1_mode\":\"%s\",\"pyro1_value\":%u,"
                  "\"pyro2_mode\":\"%s\",\"pyro2_value\":%u,"
                  "\"units\":%u,\"rocket_id\":\"%.8s\",\"rocket_name\":\"%.8s\","
-                 "\"sensor\":\"%s\"}",
+                 "\"sensor\":\"%s\",\"board\":\"%s\","
+                 "\"pyro_bus_q\":%d,\"pyro_bus_adc\":%d,\"pyro_vbat_adc\":%d,"
+                 "\"bias_a\":%d,\"bias_b\":%d,\"decay_tau_us\":%d,\"wave_state\":%d}",
                  sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
                  (long)g_status.pressure_pa, g_status.pyro1_continuity ? "true" : "false",
                  g_status.pyro2_continuity ? "true" : "false", (unsigned)g_status.pyro1_adc,
@@ -192,7 +209,8 @@ static void serve_api_status(struct tcp_pcb *pcb) {
                  g_status.pyro2_fired ? "true" : "false", g_status.pyros_armed ? "true" : "false",
                  (unsigned long)g_status.flight_time_ms, (unsigned long)to_ms_since_boot(get_absolute_time()),
                  FW_VERSION, p1m, (unsigned)g_status.pyro1_value, p2m, (unsigned)g_status.pyro2_value,
-                 (unsigned)g_status.units, g_status.rocket_id, g_status.rocket_name, pressure_sensor_name());
+                 (unsigned)g_status.units, g_status.rocket_id, g_status.rocket_name, pressure_sensor_name(),
+                 PYRO_BOARD_NAME, raw_busq, raw_bus, raw_vbat, raw_a, raw_b, raw_tau, board_pyro_wave_state());
     tcp_write(pcb, buf, pos, TCP_WRITE_FLAG_COPY);
 }
 
@@ -244,8 +262,9 @@ static conn_state_t *serve_api_flight_csv(struct tcp_pcb *pcb) {
 
 /* ── Default page if /www/index.html missing ──────────────────────── */
 
-static const char *DEFAULT_PAGE = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n"
-                                  "<!DOCTYPE html><html><body><h2>Pyro MK1B</h2>"
+static const char *DEFAULT_PAGE = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                                  "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+                                  "<!DOCTYPE html><html><body><h2>" PYRO_BOARD_NAME "</h2>"
                                   "<p>No web files uploaded. POST files to /www/ to set up the UI.</p>"
                                   "<p><a href=\"/api/status\">Status JSON</a></p></body></html>";
 
@@ -385,6 +404,30 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
     if (strcmp(method, "GET") == 0) {
         pbuf_free(p);
 
+        if (strncmp(path, "/api/capture", 12) == 0) {
+            /* Bench: queue a high-speed bus capture. The work happens in the
+             * main loop; poll wave_state in /api/status until it reads 2,
+             * then GET /wave_c.csv or /wave_d.csv. */
+            int mode = 0; /* charge */
+            if (strstr(path, "m=d"))
+                mode = 1;
+            else if (strstr(path, "m=a"))
+                mode = 2; /* arm: runs the arm element, interlock applies */
+            const char *resp;
+            if (board_pyro_wave_request(mode))
+                resp = (mode == 2)   ? "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n\r\nqueued /wave_a.csv"
+                       : (mode == 1) ? "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n\r\nqueued /wave_d.csv"
+                                     : "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n\r\nqueued /wave_c.csv";
+            else
+                resp = "HTTP/1.1 503 Service Unavailable\r\n" CORS_HDR
+                       "Connection: close\r\n\r\nrefused: busy, unsupported, or arm interlock";
+            tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
+            tcp_output(pcb);
+            tcp_sent(pcb, on_sent);
+            tcp_arg(pcb, NULL);
+            return ERR_OK;
+        }
+
         if (strcmp(path, "/api/status") == 0) {
             serve_api_status(pcb);
         } else if (strcmp(path, "/api/config") == 0) {
@@ -433,7 +476,13 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             /* Send header */
             char resp_hdr[128];
             int hlen =
-                snprintf(resp_hdr, sizeof(resp_hdr), "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nConnection: close\r\n\r\n",
+                /* no-store: the UI is re-uploaded whenever the firmware or web files
+ * change, and without this browsers heuristically cache it and keep
+ * showing the previous build. The whole UI is ~29KB over USB, so
+ * revalidating every load costs nothing. */
+                snprintf(resp_hdr, sizeof(resp_hdr),
+                         "HTTP/1.1 200 OK\r\nContent-Type: %s\r\n"
+                         "Cache-Control: no-store, must-revalidate\r\nConnection: close\r\n\r\n",
                          content_type_hdr(fpath));
             tcp_write(pcb, resp_hdr, hlen, TCP_WRITE_FLAG_COPY);
 

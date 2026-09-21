@@ -1,15 +1,16 @@
 #include "pyro.h"
+#include "board_pins.h"
 #include "hardware/gpio.h"
 #include "hardware/adc.h"
 #include "pico/stdlib.h"
 
-#define PYRO_COMMON_EN 15
-#define PYRO1_EN 21
-#define PYRO2_EN 22
-#define PYRO1_ADC_CH 0    /* GPIO 26 */
-#define PYRO2_ADC_CH 1    /* GPIO 27 */
-#define PYRO1_FLAG_PIN 17 /* AP2192 FLAG1, active-low */
-#define PYRO2_FLAG_PIN 18 /* AP2192 FLAG2, active-low */
+#define PYRO_COMMON_EN BOARD_PIN_PYRO_COMMON_EN
+#define PYRO1_EN BOARD_PIN_PYRO1_EN
+#define PYRO2_EN BOARD_PIN_PYRO2_EN
+#define PYRO1_ADC_CH 0 /* GPIO 26 */
+#define PYRO2_ADC_CH 1 /* GPIO 27 */
+#define PYRO1_FLAG_PIN BOARD_PIN_PYRO1_FLAG
+#define PYRO2_FLAG_PIN BOARD_PIN_PYRO2_FLAG
 
 #define FIRE_DURATION_MS 500
 
@@ -22,8 +23,8 @@ static uint32_t fire_start_ms;
 
 void pyro_init(void) {
     adc_init();
-    adc_gpio_init(26);
-    adc_gpio_init(27);
+    adc_gpio_init(BOARD_PIN_PYRO1_SENSE);
+    adc_gpio_init(BOARD_PIN_PYRO2_SENSE);
 
     gpio_init(PYRO_COMMON_EN);
     gpio_init(PYRO1_EN);

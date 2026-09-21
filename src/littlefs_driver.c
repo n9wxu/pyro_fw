@@ -10,7 +10,20 @@
 #include <lfs.h>
 
 
-#define FS_SIZE (984 * 1024)  // 984KB reserved by pico_fota_bootloader
+/* Must match PFB_RESERVED_FILESYSTEM_SIZE_KB exactly: pico_fota_bootloader
+ * carves the filesystem out of the top of flash and sizes its A/B slots
+ * around it, while fs_base() below places littlefs at the top of flash by
+ * working down from PICO_FLASH_SIZE_BYTES. If the two disagree, littlefs
+ * either strands reserved space or -- worse -- runs down into the download
+ * slot. CMake passes the single source of truth. */
+#ifndef PYRO_FS_SIZE_KB
+#error "PYRO_FS_SIZE_KB not defined - CMake must pass PFB_RESERVED_FILESYSTEM_SIZE_KB"
+#endif
+
+#define FS_SIZE (PYRO_FS_SIZE_KB * 1024)
+
+_Static_assert(FS_SIZE % FLASH_SECTOR_SIZE == 0, "filesystem size must be a whole number of flash sectors");
+_Static_assert(FS_SIZE < PICO_FLASH_SIZE_BYTES, "filesystem does not fit in flash");
 
 
 static uint32_t fs_base(const struct lfs_config *c) {

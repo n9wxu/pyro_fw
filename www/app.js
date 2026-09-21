@@ -46,6 +46,10 @@ function update() {
     var u = d.units || 0;
     var ul = unitLabel(u);
 
+    if (d.board) {
+      document.getElementById('sBoard').textContent = d.board;
+      document.title = d.board;
+    }
     document.getElementById('sState').textContent = d.state;
     document.getElementById('sAlt').textContent = cmToUnit(d.alt_cm, u) + ' ' + ul;
     document.getElementById('sMax').textContent = cmToUnit(d.max_alt_cm, u) + ' ' + ul;
