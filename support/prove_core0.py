@@ -28,6 +28,13 @@ Usage:
 
 Exit status is 1 if any flight-critical root can reach an unbounded wait,
 so this runs in CI as the standing guard on the rule above.
+
+LIMITS. A pass means "no flight-critical root CALLS an unbounded wait". It does
+not mean "core0 cannot be blocked". Hardware spin lock acquires are
+__force_inline and emit no symbol, so they are reported separately and by
+address, never failed. Indirect calls through function pointers are invisible
+to this analysis entirely. Treat a pass as one obligation discharged, not as a
+safety case.
 """
 import argparse
 import collections
@@ -78,6 +85,17 @@ FLIGHT_ROOTS = [
 # property, so they are reported rather than failed.
 XIP_DISABLERS = ["flash_range_erase", "flash_range_program"]
 
+# Hardware spin locks live at SIO_BASE+0x100..0x17c (32 locks, one word each).
+# spin_lock_unsafe_blocking() is __force_inline and compiles to
+#
+#     while (__builtin_expect(!*lock, 0)) { tight_loop_contents(); }
+#
+# so it emits NO call and NO symbol -- a call-graph analysis cannot see it at
+# all. The only trace left in the binary is the lock's address in a literal
+# pool, which is what this matches. Without it, a clean call-graph result is
+# not evidence of anything.
+SPINLOCK_LIT_RE = re.compile(r"\bd00001[0-7][0-9a-f]\b")
+
 FN_RE = re.compile(r"^[0-9a-f]+ <(.+)>:$")
 BL_RE = re.compile(r"\sbl(?:x)?\s+[0-9a-f]+ <([^>+]+)")
 
@@ -104,12 +122,15 @@ def build_graph(elf):
     quietly turns into a rubber stamp."""
     out = subprocess.run([find_objdump(), "-d", elf], capture_output=True, text=True, check=True).stdout
     callers = collections.defaultdict(set)
+    spin_sites = set()
     fn = None
     for line in out.splitlines():
         m = FN_RE.match(line)
         if m:
             fn = m.group(1)
             continue
+        if fn and SPINLOCK_LIT_RE.search(line):
+            spin_sites.add(fn)
         m = BL_RE.search(line)
         if m and fn:
             callee = m.group(1)
@@ -118,7 +139,8 @@ def build_graph(elf):
             if fn.startswith("__") and fn.endswith("_veneer"):
                 continue  # the veneer's own body is a jump, not a call site
             callers[callee].add(fn)
-    return callers
+    spin_sites.discard("spin_locks_reset")  # the recovery, not a hazard
+    return callers, spin_sites
 
 
 def shortest_path(callers, target, root):
@@ -143,7 +165,7 @@ def shortest_path(callers, target, root):
 
 
 def analyse(elf, roots):
-    callers = build_graph(elf)
+    callers, spin_sites = build_graph(elf)
     findings = []
     for prim, why in sorted(UNBOUNDED.items()):
         if prim not in callers:
@@ -159,11 +181,18 @@ def analyse(elf, roots):
             if path:
                 xip.append((root, op, path))
                 break
-    return findings, xip, callers
+    spins = []
+    for site in sorted(spin_sites):
+        for root in roots:
+            path = shortest_path(callers, site, root)
+            if path:
+                spins.append((root, site, path))
+                break
+    return findings, xip, spins, callers
 
 
 def report(elf, roots):
-    findings, xip, callers = analyse(elf, roots)
+    findings, xip, spins, callers = analyse(elf, roots)
     print(f"=== {elf} ===")
     present = [p for p in UNBOUNDED if p in callers]
     print(f"unbounded primitives linked in : {', '.join(sorted(present)) or '(none)'}")
@@ -178,6 +207,14 @@ def report(elf, roots):
             print(f"\nFAIL  {root} can wait forever on {prim}")
             print(f"      {why}")
             print("      " + "\n        -> ".join(path))
+    if spins:
+        print("\nnote: these take a hardware spin lock, which this tool cannot check by")
+        print("      call graph -- the acquire is inlined and emits no symbol. The SDK's")
+        print("      safety argument is that such sections are short and never block, so")
+        print("      the other core always finishes. Killing core1 mid-section breaks that")
+        print("      argument, and spin_locks_reset() must follow any unilateral kill.")
+        for root, site, path in spins:
+            print(f"      {root} -> ... -> {site}  ({len(path)} frames)")
     if xip:
         print("\nnote: these disable XIP; core1 must not be fetching from flash meanwhile")
         for root, op, path in xip:

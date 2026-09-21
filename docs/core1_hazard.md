@@ -141,6 +141,58 @@ The practical consequence is unchanged but the reason differs: with the timeout
 variant core0 escapes, it just cannot write flash. That is a degraded-mode
 problem, not a hang.
 
+## Is the whole thing just malloc?
+
+The *demonstrated* deadlock is, yes — and it is narrow. Two call sites in
+littlefs, removable with `LFS_NO_MALLOC` and four static buffers. If that were
+the entire hazard, the honest conclusion would be "fix the malloc path and stop
+worrying about core1."
+
+It is not the entire hazard, and the proof above has a blind spot worth stating
+plainly, because a green check that cannot fail is worse than no check.
+
+`spin_lock_unsafe_blocking()` is `__force_inline`:
+
+```c
+while (__builtin_expect(!*lock, 0)) {
+    tight_loop_contents();
+}
+```
+
+No call, no symbol, nothing for a call-graph analysis to find. It is an
+unbounded wait that `prove_core0.py` structurally cannot see. The tool now
+finds these by matching the spin lock addresses (`SIO_BASE+0x100..0x17c`) in
+literal pools and reports them separately — it never fails on them, because
+taking a spin lock is normal and correct.
+
+The SDK states its own safety argument in a comment next to that loop:
+
+> by convention these spin_locks are VERY SHORT LIVED and NEVER BLOCK and run
+> with INTERRUPTS disabled ... therefore nothing on our core could be blocking
+> us, so we just need to wait on another core anyway which should be finished
+> soon
+
+The convention holds only while the other core *finishes*. Today the users are
+`hw_claim_*` (spin lock 11) and `irq_*` (spin lock 9), and both run only at
+boot, so nothing is at risk yet. That changes when core1 loads PIO programs for
+Lua: `pio_claim_unused_sm()` and friends take spin lock 11 at runtime, on core1.
+
+Which produces a deadlock that has nothing to do with malloc, and that **our own
+remedy creates**: core0 decides core1 is wedged and does a unilateral PSM
+`frce_off`. If core1 was inside `hw_claim_lock` at that instant, spin lock 11 is
+now held by a core that no longer exists. Core0's next claim — relaunching
+core1, allocating a DMA channel — spins forever, interrupts disabled, no
+watchdog feed.
+
+`spin_locks_reset()` unlocks all 32 and is the escape, so the kill sequence has
+to be kill, *then reset*, then relaunch — never kill and relaunch. That
+ordering is not obvious, and getting it wrong converts the recovery path into
+the failure.
+
+So: the malloc mutex is the one hazard proven today and it is cheap to remove.
+The class it belongs to — shared SDK state with an unbounded acquire — grows
+with every capability core1 gains, and is not something a call graph can settle.
+
 ## What this implies for the design
 
 1. **core0 must not allocate.** littlefs has a supported switch for exactly
@@ -163,6 +215,12 @@ problem, not a hang.
    core1, so the fallback must be unilateral: PSM `frce_off` on core1, then
    erase, then relaunch. Core0 never waits for consent it might not get.
 
-4. `support/prove_core0.py` is the standing check. It fails the build if any
-   flight-critical root can reach an unbounded wait, so the rule stays proven
-   as the code changes rather than being re-argued.
+4. **The core1 kill sequence is `frce_off` -> `spin_locks_reset()` ->
+   relaunch.** Killing a core mid-critical-section strands whatever spin lock
+   it held; the reset is what makes a unilateral kill survivable.
+
+5. `support/prove_core0.py` is the standing check. It fails the build if any
+   flight-critical root can reach an unbounded wait, so that one obligation
+   stays proven as the code changes rather than being re-argued. It is not a
+   safety case: inlined spin lock acquires and indirect calls are outside what
+   it can see, and it says so in its own output.
