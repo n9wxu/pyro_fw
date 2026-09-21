@@ -50,6 +50,7 @@ emcc -O2 -s WASM=1 \
   "$ROOT/boards/sim/hal_sim.c" \
   "$ROOT/sim/physics.c" \
   "$ROOT/src/flight_states.c" \
+  "$ROOT/src/pressure_processing.c" \
   "$ROOT/src/telemetry.c" \
   "$ROOT/src/telemetry_formatter.c" \
   "$ROOT/src/buzzer.c" \
