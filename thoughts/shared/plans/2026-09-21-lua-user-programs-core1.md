@@ -86,6 +86,40 @@ browser console — while the flight computer behaves exactly as it does today.
 OOM, wild pin writes, filesystem hammering) and a full simulated flight runs to
 completion with correct pyro timing and an intact flight log.
 
+## What "must not interfere" actually means
+
+Delay to the firing code is not the risk. At apogee the vehicle is nearly
+stationary, so even a pathological stall costs centimetres:
+
+| stall | duration | at apogee | under drogue (20 m/s) | ballistic (111 m/s) |
+|---|---|---|---|---|
+| flash page program | 0.7 ms | 0.0 cm | 0.05 ft | 0.3 ft |
+| page program, max spec | 3 ms | 0.0 cm | 0.20 ft | 1.1 ft |
+| sector erase, typical | 45 ms | 1.0 cm | 2.95 ft | 16.4 ft |
+| sector erase, worst spec | 400 ms | 78 cm | 26 ft | 146 ft |
+
+Those stalls are **pre-existing and not caused by Lua** — core0 already erases a
+sector roughly once a second while logging at 100 Hz, and has always done so.
+Lua adds essentially nothing to them, because core0 never waits for core1.
+
+The risk is **not firing at all, or freezing part-way through a fire.** Every
+invariant below exists for that, not for jitter. The enumerated ways it could
+happen, and what structurally prevents each:
+
+| failure | mechanism | prevented by |
+|---|---|---|
+| core0 hangs on a lock a dead core1 holds | `mutex_enter_blocking()` never times out | L2 + the CI `nm` gate |
+| core0 waits for core1 to park, forever | blocking lockout variants | L3 poll-and-defer, PSM force-off |
+| XIP left disabled by a crashed writer | core0 cannot fetch instructions | core0 is the only flash writer |
+| core1 corrupts core0 state | no MPU on RP2040 | fixed arena, bounds-checked allocator — **accepted risk, not eliminated** |
+| watchdog resets mid-fire | armed-window watchdog not fed during F7/F8 | see the note in the MK1C plan |
+
+The last row is not hypothetical and is tracked separately: the arm-window
+watchdog added for the pump must have a timeout exceeding the *whole* F0–F10
+sequence, because the pump stops at F6 and nothing feeds it through the misfire
+hold in F7. A reset there would both fail to deploy and open the gate with
+current still flowing.
+
 ## Safety Invariants
 
 These are to Lua what `DESIGN.md` §9 is to the pyro circuit. Numbered for
@@ -294,9 +328,11 @@ the whole safety argument; if it does not hold, nothing later matters.
       `mutex_enter_*`, `spin_lock_*`, `*_claim_*`, `add_alarm_*`, `queue_*`
       or stdio symbol
 - [ ] Map file confirms the park routine and its spin are in RAM
-- [ ] **A stub that deadlocks with interrupts disabled does not delay the flight
-      loop at all** — measured against a core1-idle baseline, not merely
-      "still runs". This is the phase's real acceptance test.
+- [ ] **A stub that deadlocks with interrupts disabled never prevents a fire.**
+      The acceptance test is "the fire always happens", not "the fire is
+      prompt": run a simulated flight with core1 deadlocked and confirm every
+      deployment occurs. Timing jitter of tens of ms is explicitly acceptable
+      and is not a failure.
 - [ ] With that stub deadlocked, pyro continuity checks, state transitions and
       a simulated fire all keep correct timing; only log flushes stall
 - [ ] After the deadline, core1 is forced off, the write completes, core1 relaunches

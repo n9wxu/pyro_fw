@@ -808,6 +808,16 @@ decision a later reader will try to "fix".
 | F9 DRAIN | Async: watch `SNS_BUS` fall below the indicator threshold. **Skip if the next event is the other channel** |
 | F10 VERIFY | Post-fire tracking test; result feeds `pyro_fault()` and the next `pyro_check_continuity()` |
 
+**The armed-window watchdog must outlast the whole sequence.** `wave_capture_arm`
+enables a 50 ms watchdog and feeds it from the pump loop. That is safe for the
+bench capture, which disables it immediately after, but it does NOT transfer to
+F0-F10 unchanged: the pump stops at F6, so nothing feeds the watchdog through
+F7's misfire hold, which alone runs up to 30 ms. With F1-F6 taking ~20 ms the
+total reaches the 50 ms timeout, and a reset there would both fail to deploy and
+open the gate with current still flowing -- violating the F6-before-F8 ordering
+the whole shutdown argument rests on. Either size the timeout above the worst
+case F0-F10 duration, or feed it from the sequence rather than the pump.
+
 **F6 must precede F8.** Encode the ordering so it cannot be reordered by accident —
 separate functions with the dependency in the signature, plus an assertion in F8 that the
 toggle is already stopped.
