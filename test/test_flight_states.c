@@ -41,8 +41,15 @@ void setUp(void) {
     mock_reset_all();
     pp_init(); /* Reset pressure processing state for each test */
     /* Telemetry formatter needs explicit init — previously happened as a
-     * side-effect of detect_boot_init() running during boot tests. */
-    config_t cfg;
+     * side-effect of detect_boot_init() running during boot tests.
+     *
+     * MUST be static: telemetry_init() borrows the pointer rather than
+     * copying, so a stack local here leaves s_cfg dangling the moment
+     * setUp() returns. telemetry_state() then early-returns on a garbage
+     * telem_format and every $PYRO test fails -- but only when the dead
+     * stack happens to read wrong, so it alternated between passing and
+     * failing on identical code and flaked CI at random. */
+    static config_t cfg;
     config_set_defaults(&cfg);
     telemetry_init(&cfg);
 }

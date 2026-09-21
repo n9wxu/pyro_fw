@@ -94,11 +94,11 @@ _Static_assert((3469u * NODE_UV_PER_COUNT) / 1000u >= 8390 && (3469u * NODE_UV_P
 
 /* ── Expected levels, in ADC counts (DESIGN.md 4) ─────────────────── */
 
-#define CNT_QUIESCENT_MAX 50   /* a cold, unbiased node                     */
-#define CNT_TRACK_PRESENT 400  /* S3 present/open split; ~10:1 margin either side */
-#define CNT_BUS_BIASED 1058    /* bus under its own bias, no match          */
-#define CNT_CH_ISOLATED 1214   /* channel under its own bias, match off     */
-#define CNT_CH_LOADED 1037     /* channel tied to the bus pull-down         */
+#define CNT_QUIESCENT_MAX 50  /* a cold, unbiased node                     */
+#define CNT_TRACK_PRESENT 400 /* S3 present/open split; ~10:1 margin either side */
+#define CNT_BUS_BIASED 1058   /* bus under its own bias, no match          */
+#define CNT_CH_ISOLATED 1214  /* channel under its own bias, match off     */
+#define CNT_CH_LOADED 1037    /* channel tied to the bus pull-down         */
 
 /* ── Tracking test timing (DESIGN.md S3) ─────────────────────────── */
 
@@ -115,9 +115,9 @@ typedef enum {
     PF_BUS_SHORT_GND = 1u << 1 /* bus will not rise under its own bias      */
 } pyro_fault_bits_t;
 
-static uint8_t fault_latch;    /* pyro_fault_bits_t, latched (invariant 4) */
-static uint8_t bus_hot_run;    /* consecutive agreeing samples */
-static uint8_t bus_short_run;  /* consecutive agreeing samples */
+static uint8_t fault_latch;   /* pyro_fault_bits_t, latched (invariant 4) */
+static uint8_t bus_hot_run;   /* consecutive agreeing samples */
+static uint8_t bus_short_run; /* consecutive agreeing samples */
 
 /* ── Sense state ──────────────────────────────────────────────────── */
 
@@ -503,7 +503,7 @@ static void wave_capture_arm(uint16_t dt_us, uint32_t pump_ms) {
 }
 
 /* Deferred request, serviced from pyro_update() in the main loop. */
-static volatile int wave_state;    /* 0 idle, 1 busy, 2 ready */
+static volatile int wave_state; /* 0 idle, 1 busy, 2 ready */
 static volatile bool wave_pending;
 static volatile int wave_pending_mode; /* 0 charge, 1 decay, 2 arm */
 static const char *wave_refusal;
@@ -555,8 +555,7 @@ static void wave_write_csv(int mode) {
     } while (0)
 
     WCSV("# capture,pyro bus %s\n", (mode == 2) ? "arm" : (charge ? "charge" : "decay"));
-    WCSV("# stimulus_detail,%s\n",
-         (mode == 2) ? "ARM_TOGGLE pumped 10kHz for 10ms then stopped" : "BIAS_BUS step");
+    WCSV("# stimulus_detail,%s\n", (mode == 2) ? "ARM_TOGGLE pumped 10kHz for 10ms then stopped" : "BIAS_BUS step");
     WCSV("# design_slew_mv_per_ms,890\n");
     WCSV("# board,%s\n", BOARD_NAME_STR);
     WCSV("# fw_version,%s\n", FW_VERSION);
@@ -683,9 +682,9 @@ static void evaluate_faults(void) {
  * the number that says whether the bias injector and the bleed network are
  * behaving: ~1058 counts healthy, ~1214 with R_BLEED open, <50 shorted. */
 bool pyro_raw_sense(board_pyro_raw_t *out) {
-    out->bus_quiescent = sns_bus;                 /* T1: no stimulus  */
-    out->bus_biased = trk_valid ? trk_bus : 0;    /* T2: bus bias     */
-    out->ch_a_biased = bias_a_counts;             /* T3: channel bias */
+    out->bus_quiescent = sns_bus;              /* T1: no stimulus  */
+    out->bus_biased = trk_valid ? trk_bus : 0; /* T2: bus bias     */
+    out->ch_a_biased = bias_a_counts;          /* T3: channel bias */
     out->ch_b_biased = bias_b_counts;
     out->vbat = sns_vbat;
     out->bus_decay_tau_us = decay_tau_us;
@@ -778,9 +777,8 @@ void pyro_update(uint32_t now_ms) {
     last_report_ms = now_ms;
 
     char line[160];
-    snprintf(line, sizeof(line),
-             "!PYRO q[vbat=%u bus=%u a=%u b=%u] trk[bus=%u a=%u b=%u] vbat=%lumV flt=0x%02x\r\n", sns_vbat, sns_bus,
-             sns_a, sns_b, trk_bus, trk_a, trk_b, (unsigned long)pyro_counts_to_node_mv(sns_vbat),
+    snprintf(line, sizeof(line), "!PYRO q[vbat=%u bus=%u a=%u b=%u] trk[bus=%u a=%u b=%u] vbat=%lumV flt=0x%02x\r\n",
+             sns_vbat, sns_bus, sns_a, sns_b, trk_bus, trk_a, trk_b, (unsigned long)pyro_counts_to_node_mv(sns_vbat),
              (unsigned)fault_latch);
     hal_telemetry_send(line);
 }

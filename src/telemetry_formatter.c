@@ -28,6 +28,11 @@
 
 static const config_t *s_cfg = NULL;
 
+/* Borrows cfg; it is NOT copied. The caller must keep the object alive for
+ * as long as telemetry is used. flight_states.c passes &ctx->config, and ctx
+ * lives for the duration of main(), which is what makes that safe. A caller
+ * passing a stack local leaves this dangling -- see the note in the test
+ * harness setUp(). */
 void telemetry_init(const config_t *cfg) {
     s_cfg = cfg;
 }

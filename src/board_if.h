@@ -78,11 +78,11 @@ void board_buzzer_off(void);
  * Fill in whatever the board actually has and return true. A board with no
  * analog pyro sensing returns false and the fields are omitted. */
 typedef struct {
-    uint16_t bus_quiescent; /* T1: firing bus with NO stimulus applied */
-    uint16_t bus_biased;    /* T2: firing bus during the bus-bias pulse */
-    uint16_t ch_a_biased;   /* T3: channel A during its own bias pulse  */
-    uint16_t ch_b_biased;   /* T3: channel B during its own bias pulse  */
-    uint16_t vbat;          /* pack voltage                             */
+    uint16_t bus_quiescent;    /* T1: firing bus with NO stimulus applied */
+    uint16_t bus_biased;       /* T2: firing bus during the bus-bias pulse */
+    uint16_t ch_a_biased;      /* T3: channel A during its own bias pulse  */
+    uint16_t ch_b_biased;      /* T3: channel B during its own bias pulse  */
+    uint16_t vbat;             /* pack voltage                             */
     uint16_t bus_decay_tau_us; /* bus decay time constant after bias release,
                                 * 0 if the board does not measure it       */
 } board_pyro_raw_t;

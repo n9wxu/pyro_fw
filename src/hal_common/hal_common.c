@@ -43,7 +43,6 @@ void net_mac_init(void);
 void net_service(void);
 void http_server_init(void);
 
-
 /* ── Hardware-internal pressure types ─────────────────────────────── */
 /* These are implementation details of the hardware HAL, not exposed
  * in hal.h.  Flight software reads altitude via pp_read(). */
@@ -609,8 +608,7 @@ void hal_platform_init(void) {
      * telemetry TX and ground-test RX.  No SDK stdio drivers needed. */
 
     uart_init(tuart(), 115200); /* pins were assigned by board_hw_init() */
-    uart_tx_ring_init(); /* v2-10: non-blocking TX via ISR ring buffer */
-
+    uart_tx_ring_init();        /* v2-10: non-blocking TX via ISR ring buffer */
 
     net_init();
     net_start();

@@ -54,9 +54,15 @@ jobs:
 
       - name: Format check (clang-format)
         run: |
+          # hal_hardware.c became src/hal_common/hal_common.c when board
+          # support moved under boards/. Naming a file that no longer exists
+          # made this step error out and check nothing.
           clang-format --dry-run --Werror \
             src/flight_states.c src/telemetry.c src/buzzer.c \
-            src/hal.h src/hal_hardware.c src/main_hardware.c \
+            src/hal.h src/main_hardware.c \
+            src/board_if.h src/board_id.h \
+            src/hal_common/hal_common.c \
+            boards/*/hal_board.c boards/*/pyro_board.c boards/*/pressure_board.c \
             2>&1 || echo "::warning::Code formatting differences found. Run: clang-format -i src/*.c src/*.h"
 
       - name: Cyclomatic complexity (pmccabe)

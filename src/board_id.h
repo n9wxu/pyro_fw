@@ -19,7 +19,7 @@
 #error "board_pins.h must define BOARD_SHORT_STR (see boards/reference/)"
 #endif
 
-#define PYRO_BOARD_NAME  BOARD_NAME_STR
+#define PYRO_BOARD_NAME BOARD_NAME_STR
 #define PYRO_BOARD_SHORT BOARD_SHORT_STR
 
 #endif
