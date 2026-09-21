@@ -58,9 +58,10 @@ Measured on the current tree, not assumed:
   stalls up to ~45 ms on a sector erase. This is the single largest behavioural
   caveat and every timing-sensitive Lua API must tolerate it.
 
-- **`multicore_lockout_start_blocking()` can hang core0 forever** if core1 is
-  wedged with interrupts disabled. That directly violates the priority rule, so
-  the timeout variant is mandatory — see invariant L1.
+- **Neither lockout variant is usable.** `multicore_lockout_start_blocking()`
+  hangs core0 forever on a wedged core1; `_timeout_us()` still blocks core0 for
+  the timeout. Both let core1 delay pyro. Core0 must poll and defer instead,
+  with PSM force-off as the unilateral fallback — see invariant L3.
 
 - **Core1 can read flash but not write it.** littlefs reads are memory-mapped
   through XIP and are safe from either core; writes are not. But `lfs_t` is not
@@ -97,9 +98,14 @@ core0 resets core1 and continues.
 channel, no peripheral register of any kind. Core1 runs Lua and nothing else.
 All I/O is performed by core0, which already owns the hardware.
 
-**L3. Core1 runs with no interrupt sources.** No IRQ handlers are installed on
-core1 and its NVIC stays empty. This removes interrupt latency, shared-IRQ
-hazards and re-entrancy from the Lua core entirely.
+**L3. Core1 can never block a flash write, and core0 never waits for it.**
+Core1 executes from flash, so it must be out of flash before XIP is disabled.
+Core0 obtains that by *polling*, never by waiting: if core1 is not already
+parked, the write is deferred to a later main-loop iteration. A core1 that
+never parks costs flight-log latency and nothing else. See *Parking* below.
+
+Interrupts on core1 are permitted and are used for exactly this — an IRQ gets
+core1 to a safe point promptly even if it is inside a long C call.
 
 **L4. The Lua environment is built from configuration at startup.** A capability
 that is not enabled is not merely refused — its table is absent from the
@@ -137,7 +143,9 @@ change a pyro mode, or alter the flight state machine.
 - Not making Lua real-time. This is explicit, not a regret: flash activity
   parks core1 for tens of ms and core0 serves I/O on a bounded budget, so Lua
   timing is best-effort by design.
-- Not letting core1 touch a peripheral, a DMA channel, or an interrupt.
+- Not letting core1 touch a peripheral or a DMA channel. Its only interrupt is
+  the park IRQ; no peripheral interrupt is routed to it.
+- Not letting core0 wait on core1 for any reason, including flash access.
 - Not exposing the Pico SDK — no pin numbers, no instances, no SDK constants
   or types anywhere in the Lua-visible surface.
 - Not sharing `lfs_t` across cores.
@@ -147,8 +155,10 @@ change a pyro mode, or alter the flight state machine.
 
 ## Architecture
 
-Core1 is a pure computation engine. It has no interrupts, no peripherals, and
-no way to name hardware. Everything it wants done, core0 does.
+Core1 is a pure computation engine. It has no peripherals and no way to name
+hardware; everything it wants done, core0 does. Its only interrupt is the park
+IRQ, which exists so core0 can get it out of flash promptly — and even that is
+something core0 requests rather than waits for.
 
 ```
   CORE 0  (pyro application, priority)   CORE 1  (Lua, compute only)
@@ -156,34 +166,50 @@ no way to name hardware. Everything it wants done, core0 does.
   flight state machine                   Lua 5.4 VM
   ALL peripheral I/O                     fixed-arena allocator
   littlefs (sole owner)                  instruction-budget hook
-  DMA for bulk transfers                 NO interrupts
+  DMA for bulk transfers                 park IRQ only, no peripheral IRQ
   services the Lua I/O ring,             NO peripheral access
     bounded work per iteration           NO SDK symbols linked
 
         |  state snapshot (seqlock, lock-free)  -->  |
         |  <--  I/O request ring                     |
         |  I/O completion ring                  -->  |
-        |  park request flag                    -->  | checked in the Lua hook
+        |  park request (IRQ)                   -->  | parks in RAM; core0 POLLS
+        |                                            | and defers, never waits
 ```
 
-### Parking without interrupts
+### Parking: core0 polls, never waits
 
-The SDK's `multicore_lockout_victim_init()` cannot be used: it installs a SIO
-FIFO IRQ handler on core1, and L3 forbids interrupts there. The replacement is
-cooperative and is a deliberate deviation from the SDK mechanism:
+This is the sharpest constraint in the design. Core1 runs from flash, so core0
+cannot disable XIP while core1 is executing. Every obvious mechanism gets this
+wrong by making core0 wait:
 
-1. Core0 needs to write flash. It sets `park_request` and waits.
-2. Core1's instruction-count hook — already present for the budget in L8 —
-   sees the flag, calls a `__not_in_flash_func` park routine, sets
-   `park_acked`, and spins in RAM until released.
-3. Core0 sees the ack, disables XIP, writes flash, re-enables, clears the flag.
-4. If the ack does not arrive within the timeout, core0 resets core1 and
-   proceeds (L1). Core0 is never stuck.
+| approach | why it fails |
+|---|---|
+| `multicore_lockout_start_blocking()` | hangs core0 forever on a wedged core1 |
+| `multicore_lockout_start_timeout_us()` | still blocks core0 for the timeout |
+| Lua entirely in RAM | ~150 KB of Lua against ~194 KB free — no margin |
 
-Response latency is bounded by the hook interval rather than by interrupt
-latency, which is acceptable because real-time behaviour is not a requirement.
-Bindings must not loop, so the hook is always reached — which holds naturally
-here, since no binding does I/O; they only post to a ring.
+The protocol therefore never blocks:
+
+1. `multicore_lockout_victim_init()` on core1, so an IRQ parks it promptly in a
+   RAM routine even mid-C-call. Only that routine and its spin need to be
+   `__not_in_flash_func`; the rest of Lua stays in flash.
+2. Core0 wanting to write flash raises the park request and **returns**.
+3. On a later main-loop iteration core0 checks whether core1 has parked. If it
+   has, core0 disables XIP, writes, re-enables, releases. If not, core0 does
+   nothing and tries again next iteration.
+4. If core1 has not parked within the deadline, core0 forces it off through
+   PSM (`frce_off`), which needs no cooperation from core1 at all, completes in
+   a bounded number of cycles, and is then followed by the write. Core1 is
+   relaunched afterwards and Lua restarts.
+
+What this buys, stated as the failure case: **a deadlocked core1 delays flight
+log flushes and is then reset. It cannot delay the flight state machine, pyro
+timing, or sensor sampling, because none of those touch flash.**
+
+That is the whole reason this shape was chosen over a timeout. Flash is needed
+for log flushes, config saves, OTA and file uploads — none of which are on the
+pyro critical path. Firing is RAM and GPIO only.
 
 ### The API names resources, not hardware
 
@@ -224,27 +250,34 @@ can ask for a role, only for a name that config already bound to a vetted role.
 
 ---
 
-## Phase 1: Core1 bring-up, cooperative parking, no Lua
+## Phase 1: Core1 bring-up and the non-blocking park, no Lua
 
-Prove the priority rule before adding a language to the problem.
+Prove the priority rule before adding a language to the problem. This phase is
+the whole safety argument; if it does not hold, nothing later matters.
 
-- `multicore_launch_core1()` running a stub loop that bumps a heartbeat and
-  polls `park_request` at a fixed interval, standing in for the Lua hook.
-- Park routine and the spin it parks in are both `__not_in_flash_func`.
-- Core1 starts with its NVIC empty; assert no IRQ is enabled on core1 (L3).
-- Core0 wraps the littlefs write path (`littlefs_driver.c` prog/erase) and the
-  OTA path in park-request / release, with a timeout.
-- On timeout: reset core1, log it, continue. Never retry forever (L1).
-- Heartbeat monitor: if core1's counter stops advancing, reset core1 (L10).
+- `multicore_launch_core1()` running a stub that bumps a heartbeat.
+- `multicore_lockout_victim_init()` on core1 for prompt IRQ parking.
+- Park routine and its spin are `__not_in_flash_func`; verify via the map file
+  that both land in RAM.
+- Core0's flash write path becomes **try-write**: request park, poll, and defer
+  if core1 is not parked. No blocking call anywhere on that path (L3).
+- Deadline exceeded: force core1 off through PSM `frce_off`, complete the
+  write, relaunch core1.
+- Heartbeat monitor resets core1 independently of any flash activity (L10).
 
 ### Success Criteria
 - [ ] Host/CI unaffected; MK1B build unchanged
-- [ ] A stub that stops polling does **not** hang core0 — core0 times out,
-      resets core1, and the flight loop keeps running
-- [ ] Core1's NVIC verified empty at runtime
-- [ ] Flight log writes complete correctly with core1 running
-- [ ] Measured: worst-case park latency, and worst-case core0 delay
-      attributable to core1 (target: the timeout, and only on a fault)
+- [ ] Grep gate: no `_blocking` or `_timeout_us` lockout call exists in the tree
+- [ ] Map file confirms the park routine and its spin are in RAM
+- [ ] **A stub that deadlocks with interrupts disabled does not delay the flight
+      loop at all** — measured against a core1-idle baseline, not merely
+      "still runs". This is the phase's real acceptance test.
+- [ ] With that stub deadlocked, pyro continuity checks, state transitions and
+      a simulated fire all keep correct timing; only log flushes stall
+- [ ] After the deadline, core1 is forced off, the write completes, core1 relaunches
+- [ ] Flight log writes complete correctly with core1 running normally
+- [ ] Measured: park latency, deferral count under load, worst-case core0 delay
+      attributable to core1 (target: zero)
 
 ---
 
@@ -335,7 +368,7 @@ for the writer.
 - [ ] Core1 reading during a publish gets a consistent snapshot, never a torn one
 - [ ] No pyro-mutating API exists anywhere in the binding table — grep gate
 - [ ] Snapshot is published by core0 and read by core1 with no peripheral
-      access and no interrupt on core1
+      access on core1
 
 ---
 
@@ -445,8 +478,11 @@ The phase that decides whether this ships.
 - [ ] Infinite loop in the default script — full simulated flight still correct
 - [ ] Script OOMs repeatedly — core0 unaffected, log intact
 - [ ] Script writes every pin number 0–29 continuously — scope confirms no pyro activity
-- [ ] Core1 stops polling the park flag — core0 times out, resets it, flight continues
-- [ ] Core1 verified to have raised zero interrupts for the whole soak
+- [ ] Core1 deadlocked with interrupts off for a whole simulated flight — pyro
+      timing identical to the core1-idle baseline, log flushes resume after the
+      forced reset
+- [ ] Flash write attempted while core1 is mid-script, repeatedly, for a whole
+      flight — no missed log data once core1 parks normally
 - [ ] A script tries every capability name while every capability is disabled —
       all tables nil, no crash, default script unaffected
 - [ ] Console spammed during ascent — pyro timing unaffected
@@ -460,9 +496,10 @@ The phase that decides whether this ships.
    different budgets. Start generous and tune once the soak test runs?
 2. **Arena size.** 32 KB is a guess against 194 KB headroom. Worth deciding
    whether Lua may grow into the flight-log buffer's reserve, or must not.
-3. **Hook interval.** It sets both the instruction budget granularity and the
-   park latency. Too coarse and core0 waits longer for a park ack; too fine and
-   Lua throughput suffers. Measure in Phase 1 before fixing it.
+3. **Park deadline.** How long core0 tolerates deferred flash writes before
+   forcing core1 off. Too short and a busy script loses its VM needlessly; too
+   long and the flight log falls behind. Measure the normal park latency in
+   Phase 1 and set the deadline well above it.
 4. **Should the default script keep running through ASCENT/DESCENT?** Night-launch
    LEDs say yes, and with core1 unable to touch hardware the risk is mostly
    core0's I/O service budget. A config option to suspend Lua in flight remains
