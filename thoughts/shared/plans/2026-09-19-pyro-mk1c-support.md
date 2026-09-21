@@ -818,24 +818,48 @@ the sequence `__not_in_flash_func` anyway, for a different reason: F2 samples
 `SNS_BUS` every 50 us against 0.90 x `SNS_VBAT`, and XIP cache misses put
 jitter on that loop. RAM makes it deterministic. Same for the pump loop.
 
-*Removing the collision is a scheduling change.* `LOG_BUF_SIZE` is 512 bytes,
-so at ~40 bytes a line and 10 Hz in flight the log flushes about every 1.2 s,
-and `hal_common.c:766` flushes synchronously when a line will not fit. Options,
-cheapest first:
+*Removing the collision costs flash, not RAM.* `LOG_BUF_SIZE` is 512 bytes --
+not the 64 KB `SPECIFICATION.md` implies -- so at ~40 bytes a line and 10 Hz in
+flight the log flushes about every 1.2 s, and `hal_common.c:766` flushes
+synchronously when a line will not fit.
 
-| approach | worst-case stall | cost |
+Buffering a whole flight in RAM is rejected: it costs 24 KB for 60 s and 59 KB
+for 150 s, and worse, it converts RAM into a **hard flight-time limit**. 150 s
+is short for 8000 ft, where a realistic profile is ~25 s of ascent, ~114 s under
+drogue and ~30 s under main. Recovery drift makes the tail unbounded in
+practice, so no fixed buffer is the right shape.
+
+Instead, erase ahead on the pad and never erase in flight:
+
+| pre-erased region | covers | erase time during PAD_IDLE |
 |---|---|---|
-| pre-allocate and pre-erase the log file at LAUNCH | 45 ms -> ~3 ms (page program only) | none |
-| grow LOG_BUF_SIZE and flush on state entry, not when full | fewer, schedulable | a few KB |
-| buffer the whole flight, flush at LANDED | zero in flight | 24 KB for 60 s, 59 KB for 150 s |
+| 64 KB | 164 s | 0.7 s |
+| 256 KB | 655 s | 2.9 s |
+| **1 MB** | **2621 s** | **11.5 s** |
+| 2 MB | 5243 s | 23 s |
+
+1 MB out of MK1C's 8 MB filesystem covers 43 minutes of logging for 11.5 s of
+erasing while sitting on the pad, and costs no RAM at all. Past the end of the
+region erases simply resume at 45 ms -- degradation, not a cliff, so there is
+still no maximum flight time.
+
+**Log to a raw pre-erased region, not through littlefs.** littlefs updates
+metadata as a file grows, so appends are not purely page programs and can
+trigger erases of their own at unpredictable moments. A reserved run of sectors
+written sequentially gives page programs only, deterministic addresses, and no
+allocator in the flight path. Convert or serve it at LANDED. Size it per board:
+MK1B's 984 KB filesystem cannot spare 1 MB, so it gets a smaller region and a
+correspondingly shorter erase-free window.
 
 Flushing immediately *before* a fire does not help: it puts the erase on the
 critical path instead of removing it. The flush has to happen at a predictable
 earlier moment, or the erase has to already be done.
 
 By the numbers in the Lua plan none of this is strictly required -- 45 ms is
-1 cm at apogee. Pre-erasing is worth it anyway because it also removes the
-400 ms worst-spec erase, which is 78 cm at apogee and 26 ft under drogue.
+1 cm at apogee. It is worth doing anyway because it removes the 400 ms
+worst-spec erase (78 cm at apogee, 26 ft under drogue) and, more usefully,
+removes littlefs metadata writes from the flight path entirely, which are the
+part nobody can put a bound on.
 
 **The armed-window watchdog must outlast the whole sequence.** `wave_capture_arm`
 enables a 50 ms watchdog and feeds it from the pump loop. That is safe for the
