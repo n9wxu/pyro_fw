@@ -31,15 +31,21 @@ void pyro_init(void) {
     hal_telemetry_send("!PYRO reference stub: firing not implemented\r\n");
 }
 
-void pyro_check_continuity(pyro_continuity_t *p1, pyro_continuity_t *p2) {
-    /* TODO: measure. Report the RAW reading in raw_adc as well as the
-     * booleans -- a degraded match sits between the thresholds and only
-     * the raw number shows it. */
-    p1->raw_adc = 0;
-    p1->good = false;
-    p1->open = true;
-    p1->shorted = false;
-    *p2 = *p1;
+/* TODO: perform ONE stimulus event here and latch both channels. The
+ * stimulus is shared on both existing boards, so doing it per channel would
+ * double the current through the bridgewire on every routine check. */
+void pyro_sample(void) {}
+
+void pyro_get(uint8_t channel, pyro_continuity_t *out) {
+    /* TODO: report the RAW reading in raw_adc as well as the booleans -- a
+     * degraded match sits between the thresholds and only the raw number
+     * shows it. Report good == false until continuity is genuinely proven. */
+    if (channel != 1 && channel != 2)
+        return;
+    out->raw_adc = 0;
+    out->good = false;
+    out->open = true;
+    out->shorted = false;
 }
 
 void pyro_fire(uint8_t channel) {

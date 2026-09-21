@@ -306,17 +306,17 @@ void hal_pyro_init(void) {
     pyro_init();
 }
 
-void hal_pyro_check(hal_continuity_t *p1, hal_continuity_t *p2) {
-    pyro_continuity_t c1, c2;
-    pyro_check_continuity(&c1, &c2);
-    p1->raw_adc = c1.raw_adc;
-    p1->good = c1.good;
-    p1->open = c1.open;
-    p1->shorted = c1.shorted;
-    p2->raw_adc = c2.raw_adc;
-    p2->good = c2.good;
-    p2->open = c2.open;
-    p2->shorted = c2.shorted;
+void hal_pyro_sample(void) {
+    pyro_sample();
+}
+
+void hal_pyro_get(uint8_t channel, hal_continuity_t *out) {
+    pyro_continuity_t c;
+    pyro_get(channel, &c);
+    out->raw_adc = c.raw_adc;
+    out->good = c.good;
+    out->open = c.open;
+    out->shorted = c.shorted;
 }
 
 void hal_pyro_fire(uint8_t channel) {

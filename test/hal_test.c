@@ -107,15 +107,22 @@ int hal_pressure_init(void) {
 
 void hal_pyro_init(void) {}
 
-void hal_pyro_check(hal_continuity_t *p1, hal_continuity_t *p2) {
-    p1->raw_adc = mock_pyro.p1_adc;
-    p1->good = mock_pyro.p1_good;
-    p1->open = mock_pyro.p1_open;
-    p1->shorted = false;
-    p2->raw_adc = mock_pyro.p2_adc;
-    p2->good = mock_pyro.p2_good;
-    p2->open = mock_pyro.p2_open;
-    p2->shorted = false;
+void hal_pyro_sample(void) {
+    mock_pyro.sample_count++;
+}
+
+void hal_pyro_get(uint8_t channel, hal_continuity_t *out) {
+    if (channel == 1) {
+        out->raw_adc = mock_pyro.p1_adc;
+        out->good = mock_pyro.p1_good;
+        out->open = mock_pyro.p1_open;
+        out->shorted = false;
+    } else if (channel == 2) {
+        out->raw_adc = mock_pyro.p2_adc;
+        out->good = mock_pyro.p2_good;
+        out->open = mock_pyro.p2_open;
+        out->shorted = false;
+    }
 }
 
 void hal_pyro_fire(uint8_t channel) {

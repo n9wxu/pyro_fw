@@ -52,24 +52,36 @@ static uint16_t adc_read_channel(uint8_t channel) {
     return adc_read(); /* raw 12-bit, 0-4095 */
 }
 
-void pyro_check_continuity(pyro_continuity_t *p1, pyro_continuity_t *p2) {
+/* Latched by pyro_sample(), read back by pyro_get(). */
+static pyro_continuity_t cont[2];
+
+static void classify(pyro_continuity_t *c) {
+    c->open = c->raw_adc > ADC_OPEN_THRESHOLD;
+    c->shorted = c->raw_adc < ADC_SHORT_THRESHOLD;
+    c->good = !c->open && !c->shorted;
+}
+
+/* One stimulus event for BOTH channels: PYRO_COMMON_EN is shared, so the
+ * 10 ms settle and the bridgewire current are paid once regardless of how
+ * many channels the caller goes on to read. */
+void pyro_sample(void) {
     gpio_put(PYRO1_EN, 0);
     gpio_put(PYRO2_EN, 0);
     gpio_put(PYRO_COMMON_EN, 1);
     sleep_ms(10);
 
-    p1->raw_adc = adc_read_channel(PYRO1_ADC_CH);
-    p2->raw_adc = adc_read_channel(PYRO2_ADC_CH);
+    cont[0].raw_adc = adc_read_channel(PYRO1_ADC_CH);
+    cont[1].raw_adc = adc_read_channel(PYRO2_ADC_CH);
 
     gpio_put(PYRO_COMMON_EN, 0);
 
-    p1->open = p1->raw_adc > ADC_OPEN_THRESHOLD;
-    p1->shorted = p1->raw_adc < ADC_SHORT_THRESHOLD;
-    p1->good = !p1->open && !p1->shorted;
+    classify(&cont[0]);
+    classify(&cont[1]);
+}
 
-    p2->open = p2->raw_adc > ADC_OPEN_THRESHOLD;
-    p2->shorted = p2->raw_adc < ADC_SHORT_THRESHOLD;
-    p2->good = !p2->open && !p2->shorted;
+void pyro_get(uint8_t channel, pyro_continuity_t *out) {
+    if (channel == 1 || channel == 2)
+        *out = cont[channel - 1];
 }
 
 void pyro_fire(uint8_t channel) {

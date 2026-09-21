@@ -6,7 +6,7 @@
 #include "ground_test.h"
 #include "flight_states.h" /* flight_context_t, PAD_IDLE, send_telemetry */
 #include "buzzer.h"        /* buzzer_set_code, buzzer_set_altitude         */
-#include "hal.h"           /* hal_pyro_fire, hal_pyro_check, hal_telemetry_send */
+#include "hal.h"           /* hal_pyro_fire, hal_pyro_sample, hal_telemetry_send */
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>

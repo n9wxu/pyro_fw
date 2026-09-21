@@ -29,6 +29,7 @@ typedef struct {
     bool fault; /* injectable fault state */
     int fire_count;
     uint8_t last_fire_channel;
+    int sample_count; /* hal_pyro_sample() calls; one shared stimulus each */
 } mock_pyro_t;
 
 #define MOCK_UART_BUF_SIZE 32768

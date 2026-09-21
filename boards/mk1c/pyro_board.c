@@ -712,22 +712,26 @@ void pyro_init(void) {
     hal_telemetry_send("!PYRO MK1C sense-only build: firing not implemented\r\n");
 }
 
-void pyro_check_continuity(pyro_continuity_t *p1, pyro_continuity_t *p2) {
-    /* Returns the most recent duty-cycled tracking result rather than
-     * blocking. Every caller already tolerates a slightly stale reading --
-     * the flight-side continuity poll runs at 1 Hz. */
-    uint16_t a = trk_valid ? trk_a : 0;
-    uint16_t b = trk_valid ? trk_b : 0;
+/* The bus-bias tracking test (T2) is duty-cycled from pyro_update(), so the
+ * stimulus has usually already happened. Sampling on demand just refreshes
+ * it; the bus stays cold either way. */
+void pyro_sample(void) {
+    t2_tracking();
+}
 
-    p1->raw_adc = a;
-    p1->open = a < CNT_TRACK_PRESENT;
-    p1->good = !p1->open;
-    p1->shorted = false; /* needs T3; not attributed from the bus-bias test */
+void pyro_get(uint8_t channel, pyro_continuity_t *out) {
+    uint16_t counts = 0;
+    if (channel == 1)
+        counts = trk_valid ? trk_a : 0;
+    else if (channel == 2)
+        counts = trk_valid ? trk_b : 0;
+    else
+        return;
 
-    p2->raw_adc = b;
-    p2->open = b < CNT_TRACK_PRESENT;
-    p2->good = !p2->open;
-    p2->shorted = false;
+    out->raw_adc = counts;
+    out->open = counts < CNT_TRACK_PRESENT;
+    out->good = !out->open;
+    out->shorted = false; /* needs T3; not attributable from the bus-bias test */
 }
 
 void pyro_fire(uint8_t channel) {

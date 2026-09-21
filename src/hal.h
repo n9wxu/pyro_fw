@@ -42,7 +42,28 @@ typedef struct {
 } hal_continuity_t;
 
 void hal_pyro_init(void);
-void hal_pyro_check(hal_continuity_t *p1, hal_continuity_t *p2);
+
+/* Continuity is measured with a stimulus that is SHARED between channels --
+ * MK1B asserts the common enable, MK1C biases the firing bus -- so one
+ * measurement yields both channels. Taking a sample and reading a channel
+ * are therefore separate operations:
+ *
+ *   hal_pyro_sample()  performs one stimulus event and latches both results
+ *   hal_pyro_get(ch)   returns the latched result for one channel
+ *
+ * Callers that want both channels at one instant sample once and get twice.
+ * Callers that care about a single channel at a particular moment -- the
+ * post-fire verify and re-fire windows, which open per channel -- sample
+ * once and get only the channel whose window is open.
+ *
+ * A single combined call cannot serve both: it forced the per-channel sites
+ * to sample twice and discard half of each result. A per-channel API cannot
+ * either, because it would hide that the stimulus is shared and double the
+ * current through the bridgewire on every routine check.
+ *
+ * channel is 1 or 2; any other value leaves *out unmodified. */
+void hal_pyro_sample(void);
+void hal_pyro_get(uint8_t channel, hal_continuity_t *out);
 void hal_pyro_fire(uint8_t channel);
 void hal_pyro_update(uint32_t now_ms);
 bool hal_pyro_is_firing(void);

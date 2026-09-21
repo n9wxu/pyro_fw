@@ -122,21 +122,33 @@ static void check_pyro_fault(flight_context_t *ctx) {
 }
 
 /* [PYR-VERIFY-01] Post-fire continuity check: if pyro didn't open, it failed */
+
+/* Each channel's verify window opens 500-600 ms after THAT channel fired, so
+ * the two windows generally do not coincide. */
+static bool verify_window_open(bool fired, bool already_failed, uint32_t fire_time, uint32_t now) {
+    return fired && !already_failed && fire_time > 0 && now - fire_time > 500 && now - fire_time < 600;
+}
+
 static void check_post_fire_verify(flight_context_t *ctx, uint32_t now) {
-    if (ctx->pyro1_fired && !ctx->pyro1_verify_fail && ctx->pyro1_fire_time > 0 && now - ctx->pyro1_fire_time > 500 &&
-        now - ctx->pyro1_fire_time < 600) {
-        hal_continuity_t c1, c2;
-        hal_pyro_check(&c1, &c2);
-        if (c1.good && !c1.open) {
+    bool w1 = verify_window_open(ctx->pyro1_fired, ctx->pyro1_verify_fail, ctx->pyro1_fire_time, now);
+    bool w2 = verify_window_open(ctx->pyro2_fired, ctx->pyro2_verify_fail, ctx->pyro2_fire_time, now);
+    if (!w1 && !w2)
+        return;
+
+    /* One stimulus event serves whichever windows are open. */
+    hal_pyro_sample();
+    hal_continuity_t c;
+
+    if (w1) {
+        hal_pyro_get(1, &c);
+        if (c.good && !c.open) {
             ctx->pyro1_verify_fail = true;
             buf_tag_event(ctx, EVT_PYRO1_NOPEN);
         }
     }
-    if (ctx->pyro2_fired && !ctx->pyro2_verify_fail && ctx->pyro2_fire_time > 0 && now - ctx->pyro2_fire_time > 500 &&
-        now - ctx->pyro2_fire_time < 600) {
-        hal_continuity_t c1, c2;
-        hal_pyro_check(&c1, &c2);
-        if (c2.good && !c2.open) {
+    if (w2) {
+        hal_pyro_get(2, &c);
+        if (c.good && !c.open) {
             ctx->pyro2_verify_fail = true;
             buf_tag_event(ctx, EVT_PYRO2_NOPEN);
         }
@@ -144,22 +156,31 @@ static void check_post_fire_verify(flight_context_t *ctx, uint32_t now) {
 }
 
 /* [PYR-REFIRE-01] Re-attempt if still ballistic 1-1.5s after first fire */
+static bool refire_window_open(bool fired, uint32_t fire_time, uint32_t now) {
+    return fired && fire_time > 0 && now - fire_time > 1000 && now - fire_time < 1500;
+}
+
 static void check_refire(flight_context_t *ctx, uint32_t now) {
-    bool ballistic = ctx->vertical_speed_cms < -3000;
-    if (ctx->pyro1_fired && ctx->pyro1_fire_time > 0 && now - ctx->pyro1_fire_time > 1000 &&
-        now - ctx->pyro1_fire_time < 1500) {
-        hal_continuity_t c1, c2;
-        hal_pyro_check(&c1, &c2);
-        if (ballistic && !c1.open) {
+    bool w1 = refire_window_open(ctx->pyro1_fired, ctx->pyro1_fire_time, now);
+    bool w2 = refire_window_open(ctx->pyro2_fired, ctx->pyro2_fire_time, now);
+    if (!w1 && !w2)
+        return;
+    if (ctx->vertical_speed_cms >= -3000)
+        return; /* not ballistic */
+
+    hal_pyro_sample();
+    hal_continuity_t c;
+
+    if (w1) {
+        hal_pyro_get(1, &c);
+        if (!c.open) {
             hal_pyro_fire(1);
             ctx->pyro1_fire_time = now;
         }
     }
-    if (ctx->pyro2_fired && ctx->pyro2_fire_time > 0 && now - ctx->pyro2_fire_time > 1000 &&
-        now - ctx->pyro2_fire_time < 1500) {
-        hal_continuity_t c1, c2;
-        hal_pyro_check(&c1, &c2);
-        if (ballistic && !c2.open) {
+    if (w2) {
+        hal_pyro_get(2, &c);
+        if (!c.open) {
             hal_pyro_fire(2);
             ctx->pyro2_fire_time = now;
         }
@@ -179,7 +200,9 @@ static state_event_t detect_boot_settle(flight_context_t *ctx, uint32_t now) {
 static state_event_t detect_boot_continuity(flight_context_t *ctx, uint32_t now) {
     (void)now;
     hal_continuity_t c1, c2;
-    hal_pyro_check(&c1, &c2);
+    hal_pyro_sample();
+    hal_pyro_get(1, &c1);
+    hal_pyro_get(2, &c2);
     ctx->pyro1_continuity_good = c1.good;
     ctx->pyro2_continuity_good = c2.good;
     ctx->boot_timer = now;
@@ -207,7 +230,9 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
     if (now - ctx->last_cont_check <= 1000)
         return;
     hal_continuity_t c1, c2;
-    hal_pyro_check(&c1, &c2);
+    hal_pyro_sample();
+    hal_pyro_get(1, &c1);
+    hal_pyro_get(2, &c2);
     ctx->pyro1_continuity_good = c1.good;
     ctx->pyro2_continuity_good = c2.good;
     ctx->pyro1_adc = c1.raw_adc;
