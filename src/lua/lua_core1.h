@@ -94,4 +94,20 @@ int lua_core1_console_read(char *buf, int max);
  * Called from the main loop; never blocks. */
 void lua_core1_service(uint32_t now_ms);
 
+/* Stack guard. core1 runs on its own stack in bss rather than the SDK's
+ * 2 kB default in SCRATCH_X, because that one overflows downward into
+ * core0's stack -- a core1 fault that takes out core0 is precisely what this
+ * module exists to prevent. */
+bool lua_core1_stack_ok(void);
+uint32_t lua_core1_stack_free(void);
+void lua_core1_check_stack(void);
+
+/* Park accounting, for diagnosing a kill: how many parks succeeded, and the
+ * request/ack/heartbeat values at the one that did not. */
+void lua_core1_park_stats(uint32_t *ok, uint32_t *req, uint32_t *ack, uint32_t *hb);
+
+/* Packed: byte 0 = where core1 is now, byte 1 = where it was when a park
+ * went unanswered, byte 2 = the live park request counter. */
+uint32_t lua_core1_loc(void);
+
 #endif

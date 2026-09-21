@@ -34,8 +34,10 @@ void lua_app_event(const char *name);
 int lua_app_script_read(char *buf, int max);
 bool lua_app_script_write(const char *src, int len);
 
-/* Validate a script against the live resource set without running it. */
-void lua_app_check(const char *src, int len, lua_chk_result_t *out);
+/* Validate a script against the resource set a given configuration would
+ * grant -- not against what is currently bound, which is the previous
+ * configuration until the next reboot. */
+void lua_app_check(const char *src, int len, const config_t *cfg, lua_chk_result_t *out);
 
 /* For the web console. */
 int lua_app_console_read(char *buf, int max);

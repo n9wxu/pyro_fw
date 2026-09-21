@@ -212,6 +212,16 @@ CORE1_FORBIDDEN = {
     "flash_range_program": "core1 must never touch flash",
     "multicore_fifo_pop_blocking": "unbounded wait on core0",
     "multicore_fifo_push_blocking": "unbounded wait on core0",
+    # A core1 that blocks here stops answering park requests, so core0 kills
+    # it and every flash write pays the full park timeout first. Found the
+    # hard way: pixel.show() waited on a WS2812 DMA that stopped completing.
+    "dma_channel_wait_for_finish_blocking": "unbounded wait on a peripheral",
+    "pio_sm_put_blocking": "unbounded wait on a PIO FIFO",
+    "pio_sm_get_blocking": "unbounded wait on a PIO FIFO",
+    "i2c_read_blocking": "unbounded wait on a peripheral",
+    "i2c_write_blocking": "unbounded wait on a peripheral",
+    "sleep_ms": "a delay loop on core1 delays every park answer",
+    "sleep_us": "a delay loop on core1 delays every park answer",
 }
 
 

@@ -17,8 +17,32 @@
 #ifndef LUA_CHECK_H
 #define LUA_CHECK_H
 
+#include "lua_platform_cfg.h"
 #include <stdbool.h>
 #include <stddef.h>
+
+/* The resource set to validate against.
+ *
+ * Passed in rather than read from the platform, because the two differ at
+ * exactly the moment the check matters most: between saving a configuration
+ * and rebooting into it. Resources bind once at boot, so the live platform
+ * still reflects the PREVIOUS configuration, and a checker that read it would
+ * tell the operator their new pin assignment was missing. The question is
+ * "will this script and this configuration work together", so configuration
+ * is the input. */
+#define LUA_CHK_MAX_NAMES 8
+
+typedef struct {
+    char names[LUA_CHK_MAX_NAMES][LUA_NAME_MAX];
+    int n;
+    bool has_output;
+    bool has_input;
+    bool has_serial;
+    bool has_pixel;
+} lua_chk_env_t;
+
+/* Describe what the platform has actually bound (used at boot). */
+void lua_chk_env_from_platform(lua_chk_env_t *env);
 
 typedef enum {
     LUA_CHK_OK = 0,
@@ -42,6 +66,6 @@ typedef struct {
 
 /* Compile the chunk and compare its string constants against the resources
  * the platform currently exposes. Does not execute a single line of it. */
-void lua_check(const char *src, size_t len, lua_chk_result_t *out);
+void lua_check(const char *src, size_t len, const lua_chk_env_t *env, lua_chk_result_t *out);
 
 #endif

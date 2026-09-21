@@ -278,7 +278,11 @@ static void test_check_accepts_a_matching_script(void) {
                       "  output.set('beacon', 50)\n"
                       "  if input.get('sense') then serial.write('radio','hi') end\n"
                       "end\n";
-    lua_check(src, strlen(src), &chk);
+    do {
+        lua_chk_env_t env;
+        lua_chk_env_from_platform(&env);
+        lua_check(src, strlen(src), &env, &chk);
+    } while (0);
     TEST_ASSERT_TRUE(chk.green);
     TEST_ASSERT_FALSE(chk_has(LUA_CHK_MISSING));
     TEST_ASSERT_FALSE(chk_has(LUA_CHK_UNKNOWN));
@@ -286,7 +290,11 @@ static void test_check_accepts_a_matching_script(void) {
 
 static void test_check_reports_syntax_without_running(void) {
     const char *src = "function tick( end";
-    lua_check(src, strlen(src), &chk);
+    do {
+        lua_chk_env_t env;
+        lua_chk_env_from_platform(&env);
+        lua_check(src, strlen(src), &env, &chk);
+    } while (0);
     TEST_ASSERT_FALSE(chk.green);
     TEST_ASSERT_TRUE(chk_has(LUA_CHK_SYNTAX));
 }
@@ -295,7 +303,11 @@ static void test_check_flags_a_typo_as_unknown(void) {
     /* 'beacn' is identifier-shaped and names nothing. A warning, not a red:
      * the shape test is a heuristic. */
     const char *src = "function tick() output.set('beacn', 1) end";
-    lua_check(src, strlen(src), &chk);
+    do {
+        lua_chk_env_t env;
+        lua_chk_env_from_platform(&env);
+        lua_check(src, strlen(src), &env, &chk);
+    } while (0);
     TEST_ASSERT_TRUE(chk_has(LUA_CHK_UNKNOWN));
 }
 
@@ -303,7 +315,11 @@ static void test_check_does_not_flag_message_text(void) {
     /* A sentence sent over the radio must not be mistaken for a resource
      * name, or every script that reports anything would go yellow. */
     const char *src = "function tick() serial.write('radio', 'apogee reached ok') end";
-    lua_check(src, strlen(src), &chk);
+    do {
+        lua_chk_env_t env;
+        lua_chk_env_from_platform(&env);
+        lua_check(src, strlen(src), &env, &chk);
+    } while (0);
     TEST_ASSERT_FALSE(chk_has(LUA_CHK_UNKNOWN));
 }
 
@@ -316,7 +332,11 @@ static void test_check_finds_nested_function_constants(void) {
                       "  local function inner() output.set('beacom', 1) end\n"
                       "  inner()\n"
                       "end\n";
-    lua_check(src, strlen(src), &chk);
+    do {
+        lua_chk_env_t env;
+        lua_chk_env_from_platform(&env);
+        lua_check(src, strlen(src), &env, &chk);
+    } while (0);
     TEST_ASSERT_TRUE(chk_has(LUA_CHK_UNKNOWN));
 }
 
@@ -332,7 +352,11 @@ static void test_check_catches_the_unassigned_resource(void) {
     lua_plat_configure(pins, 4, 9600, 0); /* no LED string */
 
     const char *src = "function tick() pixel.set(1,255,0,0) pixel.show() end";
-    lua_check(src, strlen(src), &chk);
+    do {
+        lua_chk_env_t env;
+        lua_chk_env_from_platform(&env);
+        lua_check(src, strlen(src), &env, &chk);
+    } while (0);
     TEST_ASSERT_FALSE(chk.green);
     TEST_ASSERT_TRUE(chk_has(LUA_CHK_MISSING));
 
@@ -346,7 +370,11 @@ static void test_check_does_not_execute_the_script(void) {
     lua_plat_output_set(0, 0);
     const char *src = "output.set('beacon', 99) serial.write('radio','x')\n"
                       "function tick() end\n";
-    lua_check(src, strlen(src), &chk);
+    do {
+        lua_chk_env_t env;
+        lua_chk_env_from_platform(&env);
+        lua_check(src, strlen(src), &env, &chk);
+    } while (0);
     TEST_ASSERT_EQUAL_INT(0, sim_lua_output_value(0));
     TEST_ASSERT_EQUAL_STRING("", sim_lua_uart_tx());
 }

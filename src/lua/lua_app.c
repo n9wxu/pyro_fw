@@ -9,12 +9,60 @@
 #include "lua_core1.h"
 #include "lua_platform.h"
 #include "lua_platform_cfg.h"
+#include "hardware/watchdog.h"
+#include "hardware/structs/watchdog.h"
 #include <stdio.h>
 #include <string.h>
 
 static char script_buf[LUA_SCRIPT_MAX];
 static int script_len;
 static char status_line[96] = "off";
+static bool launch_pending;
+static uint32_t launch_at_ms;
+
+/* ── Safe boot ────────────────────────────────────────────────────
+ *
+ * A user program that takes the whole board down must not take it down
+ * twice. Before core1 is launched a marker goes into a watchdog scratch
+ * register; it is cleared once the system has proven it survives with core1
+ * running. The registers survive a watchdog reset but not a power cycle or a
+ * RUN reset, which is exactly the semantics wanted:
+ *
+ *   board wedges -> watchdog reboots -> marker still set -> Lua skipped,
+ *   device comes up reachable and says why -> operator fixes the script.
+ *
+ * Power-cycling or pressing RUN clears it and lets the program try again, so
+ * the latch never becomes something an operator has to remember to reset.
+ *
+ * This pairs with the boot watchdog in main_hardware.c. Without a watchdog
+ * the board would simply hang and the marker would never be read, which is
+ * how the first bench run needed the BOOTSEL button. */
+#define LUA_BOOT_MARK 0x4C554131u /* "LUA1" */
+#define LUA_BOOT_SCRATCH                                                                                               \
+    3 /* 4..7 belong to the SDK: watchdog_enable() writes                                                              \
+       * WATCHDOG_NON_REBOOT_MAGIC to scratch[4] and                                                                   \
+       * watchdog_reboot() puts its vector in 4..7, so a                                                               \
+       * marker there is overwritten or misread. 0..3 are                                                              \
+       * unused by both the SDK and the bootloader. */
+#define LUA_PHASE_SCRATCH 2
+#define LUA_SETTLE_MS 15000u
+
+/* Breadcrumb: where core0 was when it last stopped. Survives a watchdog
+ * reboot, so the next boot can say what it was doing instead of leaving it to
+ * be guessed at. */
+#define PH_NO_LUA 1u
+#define PH_PRELAUNCH 2u
+#define PH_LAUNCHED 3u
+#define PH_SETTLED 4u
+#define PH_KILLED 5u
+
+static uint32_t boot_phase;
+static uint32_t last_stage;
+static uint32_t last_stage_ms;
+
+static void phase(uint32_t p) {
+    watchdog_hw->scratch[LUA_PHASE_SCRATCH] = 0x50480000u | p;
+}
 
 /* ── Config -> platform ───────────────────────────────────────────── */
 
@@ -40,8 +88,11 @@ static lua_role_t role_of(const char *s) {
     return LUA_ROLE_OFF;
 }
 
+static int script_read_err;
+
 int lua_app_script_read(char *buf, int max) {
     int n = hal_fs_read_file(LUA_SCRIPT_PATH, buf, max - 1);
+    script_read_err = n;
     if (n < 0) {
         n = 0;
     }
@@ -56,8 +107,59 @@ bool lua_app_script_write(const char *src, int len) {
     return hal_fs_write_file(LUA_SCRIPT_PATH, src, len) == 0;
 }
 
-void lua_app_check(const char *src, int len, lua_chk_result_t *out) {
-    lua_check(src, (size_t)len, out);
+/* Build the resource set a configuration WOULD grant, without binding
+ * anything. This is what the web check validates against, so an operator sees
+ * a truthful verdict for the configuration they just saved rather than for
+ * the one still running. */
+static void env_from_config(const config_t *cfg, lua_chk_env_t *env) {
+    memset(env, 0, sizeof(*env));
+    const struct {
+        const char *role;
+        const char *name;
+    } pins[4] = {
+        {cfg->lua_p18_role, cfg->lua_p18_name},
+        {cfg->lua_p19_role, cfg->lua_p19_name},
+        {cfg->lua_p20_role, cfg->lua_p20_name},
+        {cfg->lua_p21_role, cfg->lua_p21_name},
+    };
+    for (int i = 0; i < 4; i++) {
+        lua_role_t r = role_of(pins[i].role);
+        if (r == LUA_ROLE_OFF) {
+            continue;
+        }
+        if (r == LUA_ROLE_PIXEL) {
+            env->has_pixel = cfg->lua_pixels > 0;
+            continue;
+        }
+        if (env->n < LUA_CHK_MAX_NAMES) {
+            strncpy(env->names[env->n++], pins[i].name, LUA_NAME_MAX - 1);
+        }
+        switch (r) {
+        case LUA_ROLE_OUT:
+        case LUA_ROLE_PWM:
+            env->has_output = true;
+            break;
+        case LUA_ROLE_IN:
+            env->has_input = true;
+            break;
+        case LUA_ROLE_TX:
+        case LUA_ROLE_RX:
+            env->has_serial = true;
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+void lua_app_check(const char *src, int len, const config_t *cfg, lua_chk_result_t *out) {
+    lua_chk_env_t env;
+    if (cfg) {
+        env_from_config(cfg, &env);
+    } else {
+        lua_chk_env_from_platform(&env);
+    }
+    lua_check(src, (size_t)len, &env, out);
 }
 
 int lua_app_console_read(char *buf, int max) {
@@ -91,7 +193,8 @@ void lua_app_init(const config_t *cfg) {
 
     script_len = lua_app_script_read(script_buf, sizeof(script_buf));
     if (script_len == 0) {
-        snprintf(status_line, sizeof(status_line), "enabled, no script");
+        snprintf(status_line, sizeof(status_line), "enabled, no script (read %s = %d)", LUA_SCRIPT_PATH,
+                 script_read_err);
         return;
     }
 
@@ -99,23 +202,72 @@ void lua_app_init(const config_t *cfg) {
      * is not started at all, so its first failure is on the bench rather than
      * in the air. */
     lua_chk_result_t chk;
-    lua_check(script_buf, (size_t)script_len, &chk);
+    lua_chk_env_t env;
+    lua_chk_env_from_platform(&env); /* at boot the two agree, by definition */
+    lua_check(script_buf, (size_t)script_len, &env, &chk);
     if (!chk.green) {
         snprintf(status_line, sizeof(status_line), "not started: %s", chk.items[0].detail);
         return;
     }
 
-    lua_core1_start(script_buf, script_len);
-    snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)", lua_plat_output_count(),
-             lua_plat_input_count(), lua_plat_serial_count(), lua_plat_pixel_count());
+    uint32_t prev = watchdog_hw->scratch[LUA_PHASE_SCRATCH];
+    boot_phase = ((prev & 0xffff0000u) == 0x50480000u) ? (prev & 0xffffu) : 0u;
+    uint32_t st = watchdog_hw->scratch[0];
+    last_stage = ((st & 0xffff0000u) == 0x53540000u) ? (st & 0xffffu) : 0u;
+    last_stage_ms = watchdog_hw->scratch[1];
+
+    if (watchdog_hw->scratch[LUA_BOOT_SCRATCH] == LUA_BOOT_MARK) {
+        /* Last boot set this and never got far enough to clear it. */
+        watchdog_hw->scratch[LUA_BOOT_SCRATCH] = 0;
+        snprintf(status_line, sizeof(status_line), "disabled: last boot died in stage %lu at %lu ms (phase %lu)",
+                 (unsigned long)last_stage, (unsigned long)last_stage_ms, (unsigned long)boot_phase);
+        phase(PH_NO_LUA);
+        return;
+    }
+
+    /* Deferred on purpose. Launching core1 inside init would put a user
+     * program between power-on and the first HTTP response, so a program that
+     * wedges the board would also block the only route in to replace it.
+     * Starting it a couple of seconds into the main loop means the web
+     * interface is already answering before any user code exists. */
+    launch_pending = true;
+    launch_at_ms = 0;
+    phase(PH_PRELAUNCH);
+    snprintf(status_line, sizeof(status_line), "starting");
 }
 
 /* ── Main loop ────────────────────────────────────────────────────── */
 
 void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
+    if (launch_pending) {
+        if (launch_at_ms == 0) {
+            launch_at_ms = now_ms + 2000u;
+            return;
+        }
+        if ((int32_t)(now_ms - launch_at_ms) < 0) {
+            return;
+        }
+        launch_pending = false;
+        watchdog_hw->scratch[LUA_BOOT_SCRATCH] = LUA_BOOT_MARK;
+        phase(PH_LAUNCHED);
+        lua_core1_start(script_buf, script_len);
+        snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)", lua_plat_output_count(),
+                 lua_plat_input_count(), lua_plat_serial_count(), lua_plat_pixel_count());
+        return;
+    }
+
     if (lua_core1_state() == LUA_C1_OFF) {
         return;
     }
+
+    /* Clear the safe-boot marker once the board has demonstrably survived
+     * with core1 running. A later crash is then a crash, not a bad boot. */
+    if (now_ms > LUA_SETTLE_MS && watchdog_hw->scratch[LUA_BOOT_SCRATCH] == LUA_BOOT_MARK) {
+        watchdog_hw->scratch[LUA_BOOT_SCRATCH] = 0;
+        phase(PH_SETTLED);
+    }
+
+    lua_core1_check_stack();
 
     /* Publish flight state for the script to read. The seqlock write never
      * waits, so this costs core0 a fixed handful of stores whatever core1 is
@@ -136,7 +288,15 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     lua_core1_service(now_ms);
 
     if (lua_core1_state() == LUA_C1_DEAD && strncmp(status_line, "stopped", 7) != 0) {
-        snprintf(status_line, sizeof(status_line), "stopped: %s", lua_core1_error());
+        phase(PH_KILLED);
+        uint32_t ok, rq, ak, hb;
+        lua_core1_park_stats(&ok, &rq, &ak, &hb);
+        uint32_t loc = lua_core1_loc();
+        snprintf(status_line, sizeof(status_line),
+                 "stopped: %s [ok=%lu req=%lu ack=%lu hb=%lu loc=%lu failloc=%lu preq=%lu stack=%lu]",
+                 lua_core1_error(), (unsigned long)ok, (unsigned long)rq, (unsigned long)ak, (unsigned long)hb,
+                 (unsigned long)(loc & 0xff), (unsigned long)((loc >> 8) & 0xff), (unsigned long)((loc >> 16) & 0xff),
+                 (unsigned long)lua_core1_stack_free());
     }
 }
 

@@ -163,7 +163,24 @@ static bool identifier_shaped(const char *s) {
     return true;
 }
 
-void lua_check(const char *src, size_t len, lua_chk_result_t *out) {
+void lua_chk_env_from_platform(lua_chk_env_t *env) {
+    memset(env, 0, sizeof(*env));
+    for (int i = 0; i < lua_plat_output_count() && env->n < LUA_CHK_MAX_NAMES; i++) {
+        strncpy(env->names[env->n++], lua_plat_output_desc(i)->name, LUA_NAME_MAX - 1);
+    }
+    for (int i = 0; i < lua_plat_input_count() && env->n < LUA_CHK_MAX_NAMES; i++) {
+        strncpy(env->names[env->n++], lua_plat_input_desc(i)->name, LUA_NAME_MAX - 1);
+    }
+    for (int i = 0; i < lua_plat_serial_count() && env->n < LUA_CHK_MAX_NAMES; i++) {
+        strncpy(env->names[env->n++], lua_plat_serial_desc(i)->name, LUA_NAME_MAX - 1);
+    }
+    env->has_output = lua_plat_output_count() > 0;
+    env->has_input = lua_plat_input_count() > 0;
+    env->has_serial = lua_plat_serial_count() > 0;
+    env->has_pixel = lua_plat_pixel_count() > 0;
+}
+
+void lua_check(const char *src, size_t len, const lua_chk_env_t *env, lua_chk_result_t *out) {
     memset(out, 0, sizeof(*out));
     out->green = true;
 
@@ -185,17 +202,13 @@ void lua_check(const char *src, size_t len, lua_chk_result_t *out) {
     walk(cl->p, &sn);
     lua_close(L);
 
-    /* Direction 1: every name the platform offers. This is the exact check. */
+    /* Direction 1: every name the configuration grants. Exact, no heuristic. */
     seen_t provided;
     provided.n = 0;
-    for (int i = 0; i < lua_plat_output_count(); i++) {
-        seen_add(&provided, lua_plat_output_desc(i)->name);
-    }
-    for (int i = 0; i < lua_plat_input_count(); i++) {
-        seen_add(&provided, lua_plat_input_desc(i)->name);
-    }
-    for (int i = 0; i < lua_plat_serial_count(); i++) {
-        seen_add(&provided, lua_plat_serial_desc(i)->name);
+    for (int i = 0; i < env->n; i++) {
+        if (env->names[i][0]) {
+            seen_add(&provided, env->names[i]);
+        }
     }
 
     /* Direction 2: identifier-shaped constants that name nothing. A typo like
@@ -218,16 +231,16 @@ void lua_check(const char *src, size_t len, lua_chk_result_t *out) {
 
     /* The gap that matters: the script uses the API but configuration granted
      * nothing of that kind. */
-    if (seen_has(&sn, "serial") && lua_plat_serial_count() == 0) {
+    if (seen_has(&sn, "serial") && !env->has_serial) {
         add(out, LUA_CHK_MISSING, "script uses serial.*, but no pin is assigned TX or RX");
     }
-    if (seen_has(&sn, "pixel") && lua_plat_pixel_count() == 0) {
+    if (seen_has(&sn, "pixel") && !env->has_pixel) {
         add(out, LUA_CHK_MISSING, "script uses pixel.*, but no pin is assigned the LED string");
     }
-    if (seen_has(&sn, "output") && lua_plat_output_count() == 0) {
+    if (seen_has(&sn, "output") && !env->has_output) {
         add(out, LUA_CHK_MISSING, "script uses output.*, but no pin is assigned an output");
     }
-    if (seen_has(&sn, "input") && lua_plat_input_count() == 0) {
+    if (seen_has(&sn, "input") && !env->has_input) {
         add(out, LUA_CHK_MISSING, "script uses input.*, but no pin is assigned an input");
     }
 

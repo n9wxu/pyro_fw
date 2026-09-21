@@ -14,6 +14,27 @@
 #include "device_status.h"
 #include "buzzer.h"
 #include "tusb.h"
+#include "hardware/structs/watchdog.h"
+
+/* Long enough that no normal iteration can trip it -- an OTA sector write,
+ * a log flush and a full lwIP service all fit inside it with room to spare --
+ * and short enough that a wedged board comes back while someone is still
+ * standing at the pad. */
+#define WATCHDOG_BOOT_MS 4000
+
+/* Main-loop breadcrumb.
+ *
+ * scratch[0] is the stage core0 was last in, scratch[1] the millisecond it
+ * entered it. Both survive a watchdog reset, so after a hang the next boot
+ * can say exactly which call stopped returning instead of leaving it to be
+ * inferred. Two register writes per stage; scratch 0..3 are untouched by the
+ * SDK and the bootloader. */
+#define STAGE(n)                                                                                                       \
+    do {                                                                                                               \
+        watchdog_hw->scratch[0] = 0x53540000u | (n);                                                                   \
+        watchdog_hw->scratch[1] = now;                                                                                 \
+    } while (0)
+
 #if PYRO_HAS_LUA
 #include "lua_app.h"
 #endif
@@ -70,10 +91,44 @@ int main() {
 
     bool reset_armed = false; /* see the pending_reset handling below */
 
+    /* Boot watchdog.
+     *
+     * hal_platform_init() used to arm one with a 1 ms timeout, which caused
+     * boot loops, and the fix at the time was to remove it entirely. That
+     * left a hang in the main loop as a hard brick recoverable only with the
+     * BOOTSEL button -- which is what a bad Lua program on core1 produced on
+     * the bench.
+     *
+     * A generous timeout gets the useful half back. It is armed here rather
+     * than in platform init so everything slow (USB enumeration, lwIP, the
+     * filesystem mount) is already finished, and it is what makes the
+     * safe-boot latch in lua_app.c able to fire at all. */
+    watchdog_enable(WATCHDOG_BOOT_MS, true);
+
     while (1) {
         uint32_t now = hal_time_ms();
 
+        /* Feed the watchdog -- but NOT once a deliberate reset is armed.
+         *
+         * watchdog_reboot() works by loading a short timeout and letting it
+         * expire. Feeding the watchdog afterwards reloads that countdown, so
+         * the reset never lands. That is the same trap the pending_reset
+         * comment below describes, and re-arming here walked straight back
+         * into it: /api/reboot answered "Rebooting" and the board carried on
+         * running, which also silently breaks OTA.
+         *
+         * The pyro arm window enables the watchdog with its own short timeout
+         * and disables it afterwards, so re-arm if it went away rather than
+         * running unprotected from then on. */
+        if (!reset_armed) {
+            if (!(watchdog_hw->ctrl & WATCHDOG_CTRL_ENABLE_BITS)) {
+                watchdog_enable(WATCHDOG_BOOT_MS, true);
+            }
+            watchdog_update();
+        }
+
         /* Platform services */
+        STAGE(1);
         hal_platform_service();
 
         extern volatile uint8_t pending_reset;
@@ -93,18 +148,24 @@ int main() {
         }
 
         /* Advance async HAL state machines (pressure, buzzer, log flush) */
+        STAGE(2);
         hal_tasks_tick(now);
 
         /* Flight software — single code path via pressure_processing ring.
          * dispatch_state() internally reads altitude samples via pp_read(). */
+        STAGE(3);
         ctx.current_state = dispatch_state(&ctx, now);
 
         /* Outputs (telemetry, pyro update) */
+        STAGE(4);
         flight_update_outputs(&ctx, now);
+        STAGE(5);
         update_status(&ctx, now);
 
 #if PYRO_HAS_LUA
+        STAGE(6);
         lua_app_service(&ctx, now);
+        STAGE(7);
 #endif
     }
 }

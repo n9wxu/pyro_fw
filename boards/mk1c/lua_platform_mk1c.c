@@ -348,10 +348,22 @@ void lua_plat_pixel_show(void) {
     if (px_sm < 0 || px_count == 0) {
         return;
     }
-    /* Bounded by the previous transfer: 30 us per pixel. core1 waits here,
-     * never core0, and the park check runs between VM slices rather than
-     * inside this loop. */
-    dma_channel_wait_for_finish_blocking((uint)px_dma);
+    /* Drop the frame if the previous transfer has not finished.
+     *
+     * This used to be dma_channel_wait_for_finish_blocking(), justified as
+     * "bounded by 30 us per pixel". That reasoning holds only while the state
+     * machine keeps draining the FIFO; if it ever stops, the wait is
+     * unbounded -- and on the bench it was. core1 froze inside it, stopped
+     * answering park requests, and core0 killed it (parks ok=1, fail req=3
+     * ack=1).
+     *
+     * The rule this file opens with says nothing here blocks, and an
+     * unbounded wait on core1 is exactly what prove_core0.py now refuses.
+     * A dropped frame on an LED string costs nothing; the next show() sends
+     * the current buffer anyway. */
+    if (dma_channel_is_busy((uint)px_dma)) {
+        return;
+    }
     memcpy(px_wire, px_buf, sizeof(uint32_t) * (size_t)px_count);
     dma_channel_set_read_addr((uint)px_dma, px_wire, false);
     dma_channel_set_trans_count((uint)px_dma, (uint32_t)px_count, true);

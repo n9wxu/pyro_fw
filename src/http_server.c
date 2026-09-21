@@ -464,10 +464,15 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             serve_api_status(pcb);
 #if PYRO_HAS_LUA
         } else if (strcmp(path, "/api/lua/script") == 0) {
+            /* No script yet is a normal state, not an error: the editor
+             * should open empty rather than show a 404. Both strings must
+             * end the header block, or the client waits for headers that
+             * never come. */
             cs = serve_lfs_file_streaming(pcb, "/" LUA_SCRIPT_PATH,
                                           "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
-                                          "Content-Type: text/plain\r\n",
-                                          "");
+                                          "Content-Type: text/plain\r\n\r\n",
+                                          "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
+                                          "Content-Type: text/plain\r\n\r\n");
         } else if (strcmp(path, "/api/lua/console") == 0) {
             /* Drains core1's console ring and reports its liveness. The
              * heartbeat is what tells the operator core1 is still turning
@@ -713,7 +718,8 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             src[len] = '\0';
 
             lua_chk_result_t chk;
-            lua_app_check(src, len, &chk);
+            extern flight_context_t *flight_get_context(void);
+            lua_app_check(src, len, &flight_get_context()->config, &chk);
             static char body[1400];
             int blen = snprintf(body, sizeof(body),
                                 "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
