@@ -94,9 +94,27 @@ reference in code comments.
 **L1. Core0 never blocks on core1.** Every handshake uses a timeout. On expiry
 core0 resets core1 and continues.
 
-**L2. Core1 touches no peripheral, ever.** No GPIO, no UART, no I2C, no DMA
-channel, no peripheral register of any kind. Core1 runs Lua and nothing else.
-All I/O is performed by core0, which already owns the hardware.
+**L2. Core1 never takes a shared lock and never allocates.** This — not the
+length of a peripheral operation — is how core1 could block core0. A busy-wait
+on core1 costs core1 only. Holding a lock core0 wants is what hangs core0, and
+`mutex_enter_blocking()` has no timeout:
+
+| forbidden on core1 | why |
+|---|---|
+| `malloc` / `free` / anything calling them | `malloc_mutex`, `mutex_enter_blocking()` spins forever |
+| `dma_claim_*`, `pio_claim_*`, any `hardware_claim` | `PICO_SPINLOCK_ID_HARDWARE_CLAIM` |
+| `add_alarm_*`, alarm pools, `critical_section_*` | `PICO_SPINLOCK_ID_TIMER`, striped locks |
+| `queue_t`, `mutex_t`, `semaphore_t` | striped spinlocks |
+| `printf` / stdio | allocates and locks |
+| runtime `irq_set_*` | `PICO_SPINLOCK_ID_IRQ` |
+
+Core1 may drive peripherals it exclusively owns, because that path takes no
+lock: `gpio_put` is a SIO register write, and the UART/I2C/PWM transfer
+functions only poll FIFO status. Core0 initialises and claims every resource
+before launching core1; core1 only *uses* what is already claimed.
+
+Enforced by an `nm` gate over the core1 translation units in CI, not by
+convention.
 
 **L3. Core1 can never block a flash write, and core0 never waits for it.**
 Core1 executes from flash, so it must be out of flash before XIP is disabled.
@@ -143,8 +161,10 @@ change a pyro mode, or alter the flight state machine.
 - Not making Lua real-time. This is explicit, not a regret: flash activity
   parks core1 for tens of ms and core0 serves I/O on a bounded budget, so Lua
   timing is best-effort by design.
-- Not letting core1 touch a peripheral or a DMA channel. Its only interrupt is
-  the park IRQ; no peripheral interrupt is routed to it.
+- Not letting core1 allocate, claim, or take any shared lock — see L2 for the
+  enumerated list and the CI gate.
+- Not using blocking peripheral calls on core1; timeout variants only, so a
+  stuck slave cannot hold the VM indefinitely.
 - Not letting core0 wait on core1 for any reason, including flash access.
 - Not exposing the Pico SDK — no pin numbers, no instances, no SDK constants
   or types anywhere in the Lua-visible surface.
@@ -155,24 +175,26 @@ change a pyro mode, or alter the flight state machine.
 
 ## Architecture
 
-Core1 is a pure computation engine. It has no peripherals and no way to name
-hardware; everything it wants done, core0 does. Its only interrupt is the park
-IRQ, which exists so core0 can get it out of flash promptly — and even that is
-something core0 requests rather than waits for.
+Core1 drives the peripherals configuration granted it, and nothing else. What
+makes that safe is not avoiding peripherals — it is that core1 never touches a
+shared lock, never allocates, and never claims a resource (L2). Core0 sets
+everything up before core1 launches; core1 only uses it.
+
+Core1 still cannot name hardware: the Lua API is symbolic, so a script asks for
+"beacon", not GPIO18.
 
 ```
   CORE 0  (pyro application, priority)   CORE 1  (Lua, compute only)
   -----------------------------------    ----------------------------
   flight state machine                   Lua 5.4 VM
-  ALL peripheral I/O                     fixed-arena allocator
+  initialises + claims ALL resources     fixed-arena allocator, no malloc
   littlefs (sole owner)                  instruction-budget hook
-  DMA for bulk transfers                 park IRQ only, no peripheral IRQ
-  services the Lua I/O ring,             NO peripheral access
-    bounded work per iteration           NO SDK symbols linked
+  owns flash, pressure, pyro, telemetry  drives ONLY its own peripherals
+  never waits on core1                   no locks, no claims, no alloc
+                                         timeout variants only
 
         |  state snapshot (seqlock, lock-free)  -->  |
-        |  <--  I/O request ring                     |
-        |  I/O completion ring                  -->  |
+        |  lock-free SPSC rings (never queue_t) <->  |
         |  park request (IRQ)                   -->  | parks in RAM; core0 POLLS
         |                                            | and defers, never waits
 ```
@@ -268,6 +290,9 @@ the whole safety argument; if it does not hold, nothing later matters.
 ### Success Criteria
 - [ ] Host/CI unaffected; MK1B build unchanged
 - [ ] Grep gate: no `_blocking` or `_timeout_us` lockout call exists in the tree
+- [ ] `nm` gate wired into CI: core1 units reference no `malloc`, `free`,
+      `mutex_enter_*`, `spin_lock_*`, `*_claim_*`, `add_alarm_*`, `queue_*`
+      or stdio symbol
 - [ ] Map file confirms the park routine and its spin are in RAM
 - [ ] **A stub that deadlocks with interrupts disabled does not delay the flight
       loop at all** — measured against a core1-idle baseline, not merely
@@ -335,7 +360,8 @@ output.get(name)
 output.list()              -- what this script is actually allowed to touch
 ```
 
-Every call is a post to the I/O ring; core0 performs the pin write (L2).
+`gpio_put` is a single SIO register write taking no lock, so core1 performs it
+directly. The name-to-pin resolution happened once, on core0, at config load.
 
 ### Success Criteria
 - [ ] Host tests: a name bound to a forbidden pin is rejected at config load
@@ -372,33 +398,41 @@ for the writer.
 
 ---
 
-## Phase 5: Serial and bus, mediated by core0 and DMA
+## Phase 5: Serial and bus, driven by core1 directly
 
-Still no peripheral access from core1 (L2). Lua posts a request; core0 runs the
-transfer, using DMA for anything bulky so wire time is not core0's problem (L9).
+Core1 drives `uart1` and `i2c0` itself — no round trip through core0. What
+keeps that safe is L2, not avoidance:
+
+- Core0 calls `uart_init`/`i2c_init` and claims any DMA channel **before**
+  launching core1. Core1 never claims anything.
+- Core1 uses timeout variants only: `uart_write_blocking` is permitted because
+  it polls a FIFO and takes no lock, but `i2c_write_timeout_us` is required
+  over `i2c_write_blocking` so a stuck slave cannot hold the VM forever.
+- No transfer allocates. Buffers come from the Lua arena or a preallocated
+  static.
 
 ```lua
-serial.write(name, str)          -- queued; returns bytes accepted
-serial.read(name, max)           -- from a core0-side receive buffer
+serial.write(name, str)
+serial.read(name, max)
 bus.write(name, addr, str)
-bus.read(name, addr, n)
+bus.read(name, addr, n)          -- returns nil, "timeout" rather than hanging
 ```
 
 Both tables are absent unless configuration enables them (L4). `uart0` and
 `i2c1` are not addressable by any name, because no board table grants those
 roles on their pins.
 
-Core0 services the ring with a bounded per-iteration budget. A script asking
-for more than the budget simply waits — the flight loop does not.
+A stuck peripheral is now a core1 problem only: the VM stalls, the watchdog
+notices, core1 is reset. Core0 never waited on it.
 
 ### Success Criteria
-- [ ] Transfers run on core0/DMA; core1 never touches a peripheral register
-- [ ] Per-iteration service budget enforced and measured
+- [ ] `nm` gate: no forbidden symbol reachable from the core1 units (L2)
+- [ ] Every peripheral resource is claimed by core0 before `multicore_launch_core1`
+- [ ] A deliberately stuck I2C slave stalls only core1; pyro timing matches the
+      core1-idle baseline, and core1 is reset by the heartbeat
 - [ ] A script issuing back-to-back large writes does not measurably delay the
-      flight loop (compare pyro timing against a Lua-idle baseline)
+      flight loop
 - [ ] With the capability disabled, the table is nil rather than erroring
-- [ ] A transfer spanning a flash-write park completes or reports an error,
-      never hangs
 
 ---
 
@@ -485,6 +519,10 @@ The phase that decides whether this ships.
       flight — no missed log data once core1 parks normally
 - [ ] A script tries every capability name while every capability is disabled —
       all tables nil, no crash, default script unaffected
+- [ ] Core1 spins in a peripheral delay loop for a whole flight — pyro timing
+      matches the core1-idle baseline
+- [ ] Core1 killed at a random point 100 times; core0 never observed blocked,
+      and no run leaves a lock held
 - [ ] Console spammed during ascent — pyro timing unaffected
 - [ ] Measured: worst-case core1 stall, worst-case core0 delay attributable to Lua (target: zero)
 
@@ -504,7 +542,12 @@ The phase that decides whether this ships.
    LEDs say yes, and with core1 unable to touch hardware the risk is mostly
    core0's I/O service budget. A config option to suspend Lua in flight remains
    the escape hatch.
-5. **Script provenance.** Nothing authenticates an uploaded script. Same trust
+5. **How far to take the `nm` gate.** Checking direct references is easy;
+   proving nothing in the transitive call graph allocates is harder, since a
+   Lua binding could reach a library that mallocs. A link-time call-graph dump
+   would be thorough but fragile. Start with direct references plus a reviewed
+   binding list?
+6. **Script provenance.** Nothing authenticates an uploaded script. Same trust
    level as the OTA path, which is also unauthenticated — worth deciding once,
    for both.
 
