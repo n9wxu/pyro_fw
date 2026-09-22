@@ -25,17 +25,40 @@ __attribute__((weak)) bool lua_core1_flash_ok(void) {
 }
 
 /* An erase while core1 is mid-unit would stall it on a flash fetch and, on
- * the bench, took core0 with it. This is the assertion that cannot happen --
- * the caller only reaches flash through lfs, and lfs only runs where core0
- * has already established that core1 is idle. */
-static void assert_core1_idle(void) {
+ * the bench, took core0 with it. Callers are expected to have checked
+ * lua_core1_flash_ok() first; this is the backstop for one that did not.
+ *
+ * It is a BOUNDED wait that REFUSES, and both halves matter.
+ *
+ * Bounded, because core0 is the safety core: "core0 must never wait on
+ * anything core1 can hold" (lua_core1.h). The unbounded spin this replaces
+ * deadlocked for real -- core1 is gated on c1_ready through its whole
+ * startup, and c1_ready is only cleared by core0 reaching lua_app_service(),
+ * which core0 cannot do while it is spinning in here. The watchdog then reset
+ * the board every boot, reporting "died in stage 6 at 5279 ms".
+ *
+ * Refuses rather than kills, because this runs inside an lfs callback.
+ * Killing core1 from here would tear down PIO and pads underneath whatever
+ * core0 was in the middle of writing, to rescue a write that can simply
+ * happen later. LFS_ERR_IO propagates out as a failed file operation, which
+ * the callers already handle -- the log line is dropped, the upload answers
+ * an error -- and the flight loop carries on. Killing core1 is core0's call
+ * to make in lua_app_service(), where there is context for it, not the flash
+ * driver's. */
+#define CORE1_IDLE_WAIT_US 20000u
+
+static bool wait_core1_idle(void) {
+    if (lua_core1_flash_ok()) {
+        return true;
+    }
+    absolute_time_t deadline = make_timeout_time_us(CORE1_IDLE_WAIT_US);
     while (!lua_core1_flash_ok()) {
-        /* Deliberately not a wait for core1's cooperation: reaching here at
-         * all means a flash write was started from somewhere that did not
-         * check, which is a bug in the caller rather than a race to ride out.
-         * Spinning makes it obvious instead of silently corrupting. */
+        if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0) {
+            return false;
+        }
         tight_loop_contents();
     }
+    return true;
 }
 
 /* Must match PFB_RESERVED_FILESYSTEM_SIZE_KB exactly: pico_fota_bootloader
@@ -70,7 +93,9 @@ static int pico_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t of
                      lfs_size_t size) {
     (void)c;
     uint32_t p = (block * FLASH_SECTOR_SIZE) + off;
-    assert_core1_idle();
+    if (!wait_core1_idle()) {
+        return LFS_ERR_IO;
+    }
     uint32_t ints = save_and_disable_interrupts();
     flash_range_program(fs_base(c) + p, buffer, size);
     restore_interrupts(ints);
@@ -80,7 +105,9 @@ static int pico_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t of
 static int pico_erase(const struct lfs_config *c, lfs_block_t block) {
     (void)c;
     uint32_t off = block * FLASH_SECTOR_SIZE;
-    assert_core1_idle();
+    if (!wait_core1_idle()) {
+        return LFS_ERR_IO;
+    }
     uint32_t ints = save_and_disable_interrupts();
     flash_range_erase(fs_base(c) + off, FLASH_SECTOR_SIZE);
     restore_interrupts(ints);

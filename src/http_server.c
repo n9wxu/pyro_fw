@@ -660,6 +660,24 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             if (strcmp(path, "/api/lua/script") == 0) {
                 snprintf(path, sizeof(path), "/%s", LUA_SCRIPT_PATH);
             }
+
+            /* This path writes littlefs directly rather than through
+             * hal_fs_*, so the gate there does not cover it. Without this an
+             * upload lands while core1 is still in startup, and core0 stalls
+             * in the driver waiting for a core1 only core0 can release.
+             * Refusing is the honest answer: the operator retries in a
+             * second, and nothing half-writes the script file. */
+            if (!lua_core1_flash_ok()) {
+                const char *busy =
+                    "HTTP/1.1 503 Service Unavailable\r\n" CORS_HDR "Connection: close\r\nRetry-After: 1\r\n\r\n"
+                    "core1 is starting; flash is not writable yet";
+                tcp_write(pcb, busy, strlen(busy), TCP_WRITE_FLAG_COPY);
+                tcp_output(pcb);
+                tcp_sent(pcb, on_sent);
+                tcp_arg(pcb, NULL);
+                pbuf_free(p);
+                return ERR_OK;
+            }
 #else
         } else if (strncmp(path, "/www/", 5) == 0 && content_length > 0) {
 #endif
