@@ -17,6 +17,7 @@
 #include "hardware/sync.h"
 #include "pico/multicore.h"
 #include "pico/time.h"
+#include "hardware/structs/watchdog.h"
 #include <string.h>
 
 /* ── Shared state ─────────────────────────────────────────────────── */
@@ -316,11 +317,23 @@ void lua_core1_kill(void) {
     __dmb();
 }
 
+/* Sub-phase breadcrumb inside the launch. Same scratch register and tag
+ * lua_app.c uses, so a watchdog reboot reports it as "(phase N)" with no new
+ * plumbing. RAM does not survive the reset -- PSM_WDSEL covers sram0-5 -- but
+ * the watchdog scratch registers do, which is why the breadcrumbs live there. */
+#define LAUNCH_PHASE(n) (watchdog_hw->scratch[2] = 0x50480000u | (uint32_t)(n))
+
 /* ── core1 entry ──────────────────────────────────────────────────── */
 
 static void core1_main(void) {
+    /* Breadcrumbs from CORE1, into the same watchdog scratch register core0
+     * uses. RAM does not survive a watchdog reset but the scratch registers
+     * do, so this is the only way to see how far core1 got before it took the
+     * board down. 20+ to stay clear of core0's phases. */
+    LAUNCH_PHASE(20);
     c1_loc = C1_LOC_INIT;
     pyro_lua_init();
+    LAUNCH_PHASE(21);
     c1_loc = C1_LOC_LOAD;
     if (!pyro_lua_load("user", script_src, (size_t)script_len)) {
         /* A bad script is not a system failure: core1 stays alive so the
@@ -330,6 +343,7 @@ static void core1_main(void) {
         lua_plat_console_out(e, (int)strlen(e));
         lua_plat_console_out("\n", 1);
     }
+    LAUNCH_PHASE(22);
     c1_state = LUA_C1_RUNNING;
 
     uint8_t seen = evt_seq;
@@ -390,6 +404,7 @@ uint32_t lua_core1_stack_free(void) {
 }
 
 bool lua_core1_start(const char *script, int len) {
+    LAUNCH_PHASE(10);
     script_src = script;
     script_len = len;
     ring_console.head = ring_console.tail = 0;
@@ -417,18 +432,60 @@ bool lua_core1_start(const char *script, int len) {
      * So do the PSM half by hand -- both loops below read back our own write
      * and cannot hang -- and let the launch handshake, which already drains
      * the FIFO before its first command, provide the synchronisation. */
+    LAUNCH_PHASE(11);
     hw_set_bits(&psm_hw->frce_off, PSM_FRCE_OFF_PROC1_BITS);
     while (!(psm_hw->frce_off & PSM_FRCE_OFF_PROC1_BITS)) {
         tight_loop_contents();
     }
+    LAUNCH_PHASE(12);
     hw_clear_bits(&psm_hw->frce_off, PSM_FRCE_OFF_PROC1_BITS);
     while (psm_hw->frce_off & PSM_FRCE_OFF_PROC1_BITS) {
         tight_loop_contents();
     }
+
+    /* Wait for core1 to announce itself, and CONSUME the announcement.
+     *
+     * This step is why the hand-rolled reset above is not simply the PSM half
+     * of multicore_reset_core1(). Out of reset, core1's bootrom drains its own
+     * mailbox and then pushes a 0 to say it is ready -- the SDK's reset pops
+     * that token explicitly.
+     *
+     * Draining instead, as this did, races it: the drain runs before core1 has
+     * pushed, the stray 0 arrives during multicore_launch_core1_raw()'s
+     * handshake, and that handshake desynchronises. Its loop is
+     * push_blocking/pop_blocking with no timeout, so core0 then spins there
+     * forever. On the bench that was the whole board dying about 100 ms after
+     * the launch, on every board, with the safe-boot latch reporting "died in
+     * stage 6 (phase 3)".
+     *
+     * The pop is bounded, because an unbounded wait on core1 is the one thing
+     * this module may not do. If the token never comes, core1 is not in the
+     * bootrom and launching would hang -- so do not launch. */
+    LAUNCH_PHASE(13);
+    uint32_t token = 0;
+    if (!multicore_fifo_pop_timeout_us(10000, &token) || token != 0u) {
+        start_err = "core1 did not announce itself after reset";
+        c1_state = LUA_C1_DEAD;
+        return false;
+    }
+    LAUNCH_PHASE(14);
     multicore_fifo_drain();
     multicore_fifo_clear_irq();
 
+    /* Published BEFORE the launch, not from core1 once it is running.
+     *
+     * lua_core1_park() returns true immediately for LUA_C1_OFF, so while
+     * core1 was still in pyro_lua_init()/pyro_lua_load() -- executing the Lua
+     * parser from XIP -- core0 believed there was nothing to park and was free
+     * to erase flash underneath it. Marking it RUNNING here closes that
+     * window: a park during the load now waits for an ack, times out, and
+     * kills core1. A lost script, rather than a corrupted filesystem. */
+    c1_state = LUA_C1_RUNNING;
+    __dmb();
+
+    LAUNCH_PHASE(15);
     multicore_launch_core1_with_stack(core1_main, c1_stack, sizeof(c1_stack));
+    LAUNCH_PHASE(16);
     return true;
 }
 

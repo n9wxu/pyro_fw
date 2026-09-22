@@ -52,7 +52,10 @@
 #define PYRO_LUA_BUDGET 2000
 #endif
 
-static uint8_t arena_buf[PYRO_LUA_ARENA_BYTES];
+/* Aligned because lua_arena.c declares ALIGN 8 and aligns every block
+ * relative to this base -- a 4-aligned base makes every "8-aligned" block a
+ * lie. Observed at 0x2000A5A4 before this attribute. */
+static uint8_t arena_buf[PYRO_LUA_ARENA_BYTES] __attribute__((aligned(8)));
 static lua_State *L;
 static char last_error[160];
 static uint32_t budget_left;

@@ -19,6 +19,11 @@ static int script_len;
 static char status_line[96] = "off";
 static bool launch_pending;
 static uint32_t launch_at_ms;
+/* Distinguishes "core1 was started and has not reported RUNNING" from "core1
+ * was never started" -- the safe-boot latch, no script, or Lua disabled. Both
+ * leave the state at LUA_C1_OFF, and conflating them overwrites the message
+ * that says which. */
+static bool launched;
 
 /* ── Safe boot ────────────────────────────────────────────────────
  *
@@ -304,13 +309,25 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
         launch_pending = false;
         watchdog_hw->scratch[LUA_BOOT_SCRATCH] = LUA_BOOT_MARK;
         phase(PH_LAUNCHED);
+        launched = true;
         lua_core1_start(script_buf, script_len);
+        phase(17);
         snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)", lua_plat_output_count(),
                  lua_plat_input_count(), lua_plat_serial_count(), lua_plat_pixel_count());
+        phase(18);
         return;
     }
 
     if (lua_core1_state() == LUA_C1_OFF) {
+        /* Core1 was launched but has not reported RUNNING. It is wedged in
+         * pyro_lua_init() or pyro_lua_load(), and the old early-return hid
+         * every diagnostic for exactly that case. Say where it stopped. */
+        if (launched && strncmp(status_line, "stuck", 5) != 0) {
+            uint32_t loc = lua_core1_loc();
+            snprintf(status_line, sizeof(status_line), "stuck before RUNNING [loc=%lu hb=%lu stackfree=%lu]",
+                     (unsigned long)(loc & 0xff), (unsigned long)lua_core1_heartbeat(),
+                     (unsigned long)lua_core1_stack_free());
+        }
         return;
     }
 
