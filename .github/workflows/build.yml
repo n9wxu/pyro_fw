@@ -48,6 +48,14 @@ jobs:
         env:
           CI_BUILD: 1
 
+      - name: Build (mk1a)
+        run: |
+          mkdir build-mk1a && cd build-mk1a
+          cmake -G Ninja -DPICO_SDK_PATH=/tmp/pico-sdk -DPYRO_BOARD=mk1a ..
+          ninja
+        env:
+          CI_BUILD: 1
+
       # Every board declares PYRO_LOOP_WORST_MS; the reference template is what
       # a new board is copied from, so it has to keep building as shipped.
       - name: Build (reference template)
@@ -118,6 +126,7 @@ jobs:
         run: |
           cd build && ninja integration_tests
           cd ../build-mk1c && ninja integration_tests
+          cd ../build-mk1a && ninja integration_tests
 
       - name: Run closed-loop tests
         run: cd build && ninja closedloop_tests
