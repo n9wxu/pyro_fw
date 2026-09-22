@@ -7,6 +7,7 @@
 #include "../src/config.h"
 #include "../src/device_status.h"
 #include "../src/pressure_processing.h"
+#include "../src/board_id.h"
 #include "mocks.h"
 #include <string.h>
 #include <stdio.h>
@@ -345,7 +346,7 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
         return;
     char hdr[256];
     int n = snprintf(hdr, sizeof(hdr),
-                     "# Pyro MK1B Flight Data\n# ID: %.8s\n# Name: %.8s\n"
+                     "# " PYRO_BOARD_NAME " Flight Data\n# ID: %.8s\n# Name: %.8s\n"
                      "# Pyro1: %s %u\n# Pyro2: %s %u\n"
                      "# Units: %s\n# Ground Pa: %ld\n"
                      "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",

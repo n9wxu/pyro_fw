@@ -17,6 +17,7 @@
 #include "../src/telemetry_formatter.h"
 #include "../src/hal.h"
 #include "../src/buzzer.h"
+#include "../src/board_id.h"
 
 /* Wrapper: feed pressure into pp, then dispatch */
 static flight_state_t step(flight_context_t *ctx, uint32_t now) {
@@ -400,7 +401,10 @@ void test_DAT_06_csv_export(void) {
     buf[n] = '\0';
 
     /* Header must contain all metadata fields without truncation */
-    TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "# Pyro MK1B") != NULL, "Missing header start");
+    /* The board names itself via boards/<name>/board_pins.h, so asserting a
+     * literal here passed only for MK1B and failed every other board. */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, strncmp(buf, "# " PYRO_BOARD_NAME, strlen("# " PYRO_BOARD_NAME)),
+                                  "Missing header start");
     TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "# ID:") != NULL, "Missing ID");
     TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "# Pyro1:") != NULL, "Missing Pyro1 config");
     TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "# Pyro2:") != NULL, "Missing Pyro2 config");
