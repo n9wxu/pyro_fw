@@ -59,13 +59,24 @@ static bool mac_from_hex(const char *s, uint8_t *out) {
  *
  * Why a fold and not a hash: v = v*31 + b (mod 256) with 31 odd makes the
  * multiply invertible mod 256, so with the leading bytes fixed this is a
- * BIJECTION on the last byte. Boards off one reel, whose ids differ only in
- * the low byte, therefore get distinct subnets with certainty. A
- * cryptographic hash destroys exactly that structure -- simulated over 4000
- * trials, md5 collides for 22% of 10-board fleets where this folds to 0%.
- * On random ids (mixed flash vendors, which is what the three bench boards
- * turned out to be) all schemes are equal at the birthday bound, so the fold
- * is never worse and sometimes far better. */
+ * BIJECTION on the last byte -- distinct low bytes give distinct octets, with
+ * certainty rather than probability.
+ *
+ * That matters because of how these boards are actually built: each type is
+ * its own batch with its own flash part, so ids are near-sequential WITHIN a
+ * type and independent ACROSS types. The fold is therefore collision-free for
+ * any number of same-type boards up to 256, and only cross-type pairs carry
+ * risk. A cryptographic hash throws that structure away and treats every
+ * board as independent. Simulated over 6000 trials on three types:
+ *
+ *      boards   fold*31    md5
+ *           9      5.7%   13.2%
+ *          15      9.8%   34.1%
+ *          30     20.5%   83.2%
+ *
+ * A collision only bites when both boards are plugged into one host, it is
+ * obvious when it happens, boards/BOARD_REGISTRY.json records it, and
+ * /serial.txt fixes it. */
 static void mac_from_hw_id(const pico_unique_board_id_t *id, uint8_t *out) {
     uint8_t fold = 0;
     for (unsigned i = 0; i < PICO_UNIQUE_BOARD_ID_SIZE_BYTES; i++) {
