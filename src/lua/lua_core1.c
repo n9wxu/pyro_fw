@@ -253,6 +253,17 @@ void lua_core1_kill(void) {
      * a striped spin lock at that instant would have it yanked out from under
      * it. Rescuing a hazard that cannot happen, by creating one that can, is
      * a bad trade. */
+    /* Core1 is off and cannot write a register again, so core0 is now the only
+     * writer and can put its outputs down without coordinating with anything.
+     *
+     * Stopping the VM is not the same as stopping what it was driving. A pin
+     * left high stays high, and Lua's PIO state machines are free-running by
+     * design, so they keep clocking a pad after the core that started them is
+     * gone. On a board where a Lua pin is a logic-level header that is a stuck
+     * LED; on one where it drives a power FET it is a solenoid held for the
+     * rest of the flight. Core0 is the safety core, so core0 clears it. */
+    lua_plat_safe_outputs();
+
     c1_state = LUA_C1_DEAD;
     park_req = park_ack; /* no outstanding request against a core that is gone */
     __dmb();

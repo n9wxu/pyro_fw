@@ -41,4 +41,20 @@ int lua_plat_pin_count(void);
  * block: it runs on the core that has to stay able to answer a park. */
 void lua_plat_pin_service(void);
 
+/* Drive every Lua-owned output to its inactive state and stop anything that
+ * would keep driving one.
+ *
+ * Called from core0 AFTER core1 has been forced off, which is why it lives
+ * here and not in lua_platform.h: that header is the surface a script can
+ * reach, and nothing a script can call should be able to do this.
+ *
+ * Killing core1 stops the VM, but it does not put anything down. A pin left
+ * high stays high, and a PIO state machine is worse -- Lua's PWM is
+ * free-running by design (pull noblock never stalls), so it keeps clocking
+ * the pad after the core that started it is gone. Both have to be undone by
+ * the surviving core.
+ *
+ * Safe to call more than once, and safe to call when Lua was never started. */
+void lua_plat_safe_outputs(void);
+
 #endif

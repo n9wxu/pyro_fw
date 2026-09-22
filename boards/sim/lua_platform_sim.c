@@ -325,3 +325,12 @@ void sim_lua_console_clear(void) {
     console_len = 0;
     console_buf[0] = '\0';
 }
+
+/* Core0 kills core1 and then puts its outputs down. On the simulator there is
+ * no second core and no hardware, but the visible state has to match the
+ * target's or the sim stops being a faithful bench for the failure. */
+void lua_plat_safe_outputs(void) {
+    for (int i = 0; i < n_outputs; i++) {
+        output_val[i] = 0;
+    }
+}

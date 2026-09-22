@@ -392,3 +392,50 @@ uint32_t lua_plat_time_ms(void) {
 int lua_plat_pyro_status(int channel) {
     return lua_flight_snapshot()->pyro[(channel == 2) ? 1 : 0];
 }
+
+/* ── Safing, from core0 ───────────────────────────────────────────── */
+
+void lua_plat_safe_outputs(void) {
+    /* The pixel DMA is deliberately NOT aborted.
+     *
+     * dma_channel_abort() spins until the abort bit self-clears, and an
+     * in-flight transfer into a PIO TX FIFO cannot complete while that FIFO is
+     * full and the state machine has stopped draining it -- which is exactly
+     * the state a wedged core1 leaves behind. That would put an unbounded wait
+     * on core0, on the path whose whole purpose is that core0 never waits for
+     * core1.
+     *
+     * It is also unnecessary. The safety property here is "no pad is driven",
+     * and that is achieved below by handing every pad back to SIO: once the
+     * function select is SIO, neither PIO nor its DMA reaches a pin, whatever
+     * they go on doing. A pending transfer on a channel nothing will claim
+     * again costs nothing -- there is deliberately no relaunch of core1.
+     *
+     * Disabling the state machines is belt and braces for the same reason. */
+    if (px_sm >= 0) {
+        pio_sm_set_enabled(LUA_PIO, (uint)px_sm, false);
+    }
+    if (tx_sm >= 0) {
+        pio_sm_set_enabled(LUA_PIO, (uint)tx_sm, false);
+    }
+    if (rx_sm >= 0) {
+        pio_sm_set_enabled(LUA_PIO, (uint)rx_sm, false);
+    }
+
+    /* Hand every Lua pad back to SIO and drive it low. gpio_init() clears the
+     * function select, so a pad that a state machine was driving stops being
+     * the PIO's regardless of what the program left behind -- the same move
+     * arm_pump_stop() makes in boards/mk1c/pyro_board.c. */
+    for (int i = 0; i < LUA_PIN_COUNT; i++) {
+        gpio_init(lua_pins[i]);
+        gpio_put(lua_pins[i], 0);
+        gpio_set_dir(lua_pins[i], GPIO_OUT);
+        gpio_put(lua_pins[i], 0);
+    }
+
+    /* So a later lua_plat_output_get() reports what the pin is actually
+     * doing rather than what the dead script last asked for. */
+    for (int i = 0; i < n_out; i++) {
+        outs[i].value = 0;
+    }
+}
