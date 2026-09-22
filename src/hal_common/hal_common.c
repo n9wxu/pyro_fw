@@ -22,6 +22,7 @@
 #include "hardware/irq.h"
 #include "hardware/i2c.h"
 #include "hardware/watchdog.h"
+#include "board_identity.h"
 #include "tusb.h"
 #include "bsp/board_api.h"
 #include <lfs.h>
@@ -604,6 +605,15 @@ void hal_platform_init(void) {
      * board header named via PICO_DEFAULT_LED_PIN. */
     board_hw_init();
 
+    /* Before net_mac_init() and tud_init(), both of which consume it: the MAC
+     * goes into the ECM descriptor and the subnet into the DHCP server, and
+     * the host reads each exactly once, at enumeration.
+     *
+     * Reads /serial.txt via hal_fs_read_file(), which mounts read-only and
+     * does NOT format on failure -- so a board with no filesystem yet falls
+     * back to its hardware id and enumerates normally, instead of waiting out
+     * an 8 MB format before USB appears. */
+    board_identity_init();
     net_mac_init();
     tud_init(BOARD_TUD_RHPORT);
     /* stdio_init_all() removed — we own the telemetry UART exclusively for ISR-driven

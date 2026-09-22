@@ -204,8 +204,10 @@ static const char *state_names[] = {"BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALI
 extern volatile uint32_t loop_count, loop_max_us, loop_overruns, loop_late_max_us;
 extern volatile uint32_t stage_max_us[];
 
+#include "board_identity.h"
+
 static void serve_api_status(struct tcp_pcb *pcb) {
-    char buf[1024];
+    char buf[1280];
     const char *sn = (g_status.state < (int)(sizeof(state_names) / sizeof(state_names[0])))
                          ? state_names[g_status.state]
                          : "UNKNOWN";
@@ -225,36 +227,38 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         raw_b = (int)praw.ch_b_biased;
         raw_tau = (int)praw.bus_decay_tau_us;
     }
-    int pos = snprintf(buf, sizeof(buf),
-                       "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" CORS_HDR "Connection: close\r\n\r\n"
-                       "{\"state\":\"%s\",\"alt_cm\":%ld,\"max_alt_cm\":%ld,"
-                       "\"vspeed_cms\":%ld,\"pressure_pa\":%ld,"
-                       "\"pyro1_cont\":%s,\"pyro2_cont\":%s,"
-                       "\"pyro1_adc\":%u,\"pyro2_adc\":%u,"
-                       "\"pyro1_fired\":%s,\"pyro2_fired\":%s,"
-                       "\"armed\":%s,\"flight_ms\":%lu,\"uptime\":%lu,\"fw_version\":\"%s\","
-                       "\"pyro1_mode\":\"%s\",\"pyro1_value\":%u,"
-                       "\"pyro2_mode\":\"%s\",\"pyro2_value\":%u,"
-                       "\"units\":%u,\"rocket_id\":\"%.8s\",\"rocket_name\":\"%.8s\","
-                       "\"sensor\":\"%s\",\"board\":\"%s\","
-                       "\"pyro_bus_q\":%d,\"pyro_bus_adc\":%d,\"pyro_vbat_adc\":%d,"
-                       "\"bias_a\":%d,\"bias_b\":%d,\"decay_tau_us\":%d,\"wave_state\":%d,"
-                       "\"loop_max_us\":%lu,\"loop_overruns\":%lu,\"loop_late_max_us\":%lu,"
-                       "\"loop_count\":%lu,\"stage_max_us\":[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu]}",
-                       sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm,
-                       (long)g_status.vertical_speed_cms, (long)g_status.pressure_pa,
-                       g_status.pyro1_continuity ? "true" : "false", g_status.pyro2_continuity ? "true" : "false",
-                       (unsigned)g_status.pyro1_adc, (unsigned)g_status.pyro2_adc,
-                       g_status.pyro1_fired ? "true" : "false", g_status.pyro2_fired ? "true" : "false",
-                       g_status.pyros_armed ? "true" : "false", (unsigned long)g_status.flight_time_ms,
-                       (unsigned long)to_ms_since_boot(get_absolute_time()), FW_VERSION, p1m,
-                       (unsigned)g_status.pyro1_value, p2m, (unsigned)g_status.pyro2_value, (unsigned)g_status.units,
-                       g_status.rocket_id, g_status.rocket_name, pressure_sensor_name(), PYRO_BOARD_NAME, raw_busq,
-                       raw_bus, raw_vbat, raw_a, raw_b, raw_tau, board_pyro_wave_state(), (unsigned long)loop_max_us,
-                       (unsigned long)loop_overruns, (unsigned long)loop_late_max_us, (unsigned long)loop_count,
-                       (unsigned long)stage_max_us[0], (unsigned long)stage_max_us[1], (unsigned long)stage_max_us[2],
-                       (unsigned long)stage_max_us[3], (unsigned long)stage_max_us[4], (unsigned long)stage_max_us[5],
-                       (unsigned long)stage_max_us[6], (unsigned long)stage_max_us[7], (unsigned long)stage_max_us[8]);
+    int pos = snprintf(
+        buf, sizeof(buf),
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" CORS_HDR "Connection: close\r\n\r\n"
+        "{\"state\":\"%s\",\"alt_cm\":%ld,\"max_alt_cm\":%ld,"
+        "\"vspeed_cms\":%ld,\"pressure_pa\":%ld,"
+        "\"pyro1_cont\":%s,\"pyro2_cont\":%s,"
+        "\"pyro1_adc\":%u,\"pyro2_adc\":%u,"
+        "\"pyro1_fired\":%s,\"pyro2_fired\":%s,"
+        "\"armed\":%s,\"flight_ms\":%lu,\"uptime\":%lu,\"fw_version\":\"%s\","
+        "\"pyro1_mode\":\"%s\",\"pyro1_value\":%u,"
+        "\"pyro2_mode\":\"%s\",\"pyro2_value\":%u,"
+        "\"units\":%u,\"rocket_id\":\"%.8s\",\"rocket_name\":\"%.8s\","
+        "\"sensor\":\"%s\",\"board\":\"%s\","
+        "\"pyro_bus_q\":%d,\"pyro_bus_adc\":%d,\"pyro_vbat_adc\":%d,"
+        "\"bias_a\":%d,\"bias_b\":%d,\"decay_tau_us\":%d,\"wave_state\":%d,"
+        "\"loop_max_us\":%lu,\"loop_overruns\":%lu,\"loop_late_max_us\":%lu,"
+        "\"loop_count\":%lu,\"stage_max_us\":[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu],"
+        "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u}",
+        sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
+        (long)g_status.pressure_pa, g_status.pyro1_continuity ? "true" : "false",
+        g_status.pyro2_continuity ? "true" : "false", (unsigned)g_status.pyro1_adc, (unsigned)g_status.pyro2_adc,
+        g_status.pyro1_fired ? "true" : "false", g_status.pyro2_fired ? "true" : "false",
+        g_status.pyros_armed ? "true" : "false", (unsigned long)g_status.flight_time_ms,
+        (unsigned long)to_ms_since_boot(get_absolute_time()), FW_VERSION, p1m, (unsigned)g_status.pyro1_value, p2m,
+        (unsigned)g_status.pyro2_value, (unsigned)g_status.units, g_status.rocket_id, g_status.rocket_name,
+        pressure_sensor_name(), PYRO_BOARD_NAME, raw_busq, raw_bus, raw_vbat, raw_a, raw_b, raw_tau,
+        board_pyro_wave_state(), (unsigned long)loop_max_us, (unsigned long)loop_overruns,
+        (unsigned long)loop_late_max_us, (unsigned long)loop_count, (unsigned long)stage_max_us[0],
+        (unsigned long)stage_max_us[1], (unsigned long)stage_max_us[2], (unsigned long)stage_max_us[3],
+        (unsigned long)stage_max_us[4], (unsigned long)stage_max_us[5], (unsigned long)stage_max_us[6],
+        (unsigned long)stage_max_us[7], (unsigned long)stage_max_us[8], board_serial(),
+        board_serial_assigned() ? "true" : "false", board_hw_id(), (unsigned)board_subnet_octet());
     if (pos < 0)
         return;
     if ((size_t)pos >= sizeof(buf))
@@ -753,6 +757,53 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             tcp_arg(pcb, NULL);
             return ERR_OK;
 #endif
+        } else if (strcmp(path, "/api/serial") == 0 && content_length == 12) {
+            /* Provisioning: write the board's assigned MAC to /serial.txt.
+             *
+             * Exactly 12 characters, validated here as hex and as a unicast,
+             * locally-administered address before anything touches flash. A
+             * board that accepts a bad identity is one that will not enumerate
+             * usefully and cannot be reached to fix it -- so this refuses
+             * rather than writes and hopes.
+             *
+             * Takes effect at the next boot: the MAC goes into the ECM
+             * descriptor and the subnet into the DHCP server, both of which
+             * the host reads once, at enumeration. */
+            char sbuf[16];
+            uint16_t len = (body_in_first < content_length) ? body_in_first : content_length;
+            pbuf_copy_partial(p, sbuf, len, body_offset);
+            pbuf_free(p);
+            sbuf[len] = '\0';
+
+            bool ok = (len == 12);
+            for (int i = 0; ok && i < 12; i++) {
+                char c = sbuf[i];
+                ok = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
+            }
+            if (ok) {
+                /* Bit 0 of the first octet is the multicast bit. A NIC that
+                 * sources frames from a multicast address is not something to
+                 * debug later. */
+                int hi = (sbuf[0] >= '0' && sbuf[0] <= '9') ? sbuf[0] - '0' : (sbuf[0] | 32) - 'a' + 10;
+                int lo = (sbuf[1] >= '0' && sbuf[1] <= '9') ? sbuf[1] - '0' : (sbuf[1] | 32) - 'a' + 10;
+                ok = ((((hi << 4) | lo) & 0x01) == 0);
+            }
+
+            const char *resp;
+            if (!ok) {
+                resp = "HTTP/1.1 400 Bad Request\r\n" CORS_HDR
+                       "Connection: close\r\n\r\nexpected 12 hex digits, unicast (first octet even)";
+            } else if (hal_fs_write_file("serial.txt", sbuf, 12) != 0) {
+                resp = "HTTP/1.1 500 Internal Server Error\r\n" CORS_HDR "Connection: close\r\n\r\nwrite failed";
+            } else {
+                resp = "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n\r\nOK, reboot to apply";
+            }
+            tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
+            tcp_output(pcb);
+            tcp_sent(pcb, on_sent);
+            tcp_arg(pcb, NULL);
+            return ERR_OK;
+
         } else if (strcmp(path, "/api/config") == 0 && content_length > 0 && content_length < 512) {
             /* Config update with state-based safety check */
             DBG("POST /api/config cl=%lu", (unsigned long)content_length);

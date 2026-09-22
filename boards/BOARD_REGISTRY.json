@@ -1,0 +1,34 @@
+{
+  "boards": [
+    {
+      "board": "Pyro MK1A",
+      "first_seen": "2026-09-21",
+      "fw_version": "2.1.243",
+      "hw_id": "E46214B0632D472F",
+      "last_seen": "2026-09-21",
+      "mac": "02632D472F0C",
+      "mac_source": "derived",
+      "subnet": 12
+    },
+    {
+      "board": "Pyro MK1B",
+      "first_seen": "2026-09-21",
+      "fw_version": "2.1.244",
+      "hw_id": "E66364D1E7253A34",
+      "last_seen": "2026-09-21",
+      "mac": "02E7253A34C2",
+      "mac_source": "derived",
+      "subnet": 194
+    },
+    {
+      "board": "Pyro MK1C",
+      "first_seen": "2026-09-21",
+      "fw_version": "2.1.245",
+      "hw_id": "41503459373331FF",
+      "last_seen": "2026-09-21",
+      "mac": "02373331FFDE",
+      "mac_source": "derived",
+      "subnet": 222
+    }
+  ]
+}

@@ -275,6 +275,7 @@ target_link_libraries(pyro_hal_common PUBLIC pyro_board)
 add_executable(pyro_fw_c 
     src/main_hardware.c
     src/board_binary_info.c
+    src/board_identity.c
     src/flight_states.c
     src/pressure_processing.c
     src/ground_test.c
@@ -331,6 +332,7 @@ add_executable(pyro_fw_c
         pyro_board        # boards/${PYRO_BOARD}: pins, pyro, pressure, board_if
         pyro_hal_common   # src/hal_common: hal.h implemented via board_if.h
         pico_stdlib
+        pico_unique_id   # board_identity.c: per-board MAC and subnet
         hardware_i2c
         hardware_adc
         hardware_uart

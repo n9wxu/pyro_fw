@@ -9,12 +9,14 @@
 #include "dhserver.h"
 #include "dnserver.h"
 #include "lwip/init.h"
+#include "board_identity.h"
 #include "lwip/timeouts.h"
 #include "lwip/ethip6.h"
 #include "lwip/igmp.h"
 #include "lwip/apps/mdns.h"
 
-#define INIT_IP4(a, b, c, d) {PP_HTONL(LWIP_MAKEU32(a, b, c, d))}
+#define INIT_IP4(a, b, c, d)                                                                                           \
+    { PP_HTONL(LWIP_MAKEU32(a, b, c, d)) }
 
 static struct netif netif_data;
 static struct pbuf *received_frame;
@@ -28,15 +30,27 @@ volatile uint32_t net_rx_drop;
 volatile uint32_t net_tx_fail;
 volatile uint32_t net_tx_ok;
 
-/* Derived from board unique ID at init time */
-/* Device-side MAC — must match STRID_MAC in usb_descriptors.c.
- * STRID_MAC = "020284006A00" → 02:02:84:00:6A:00.
- * lwIP netif gets byte[5] XOR 0x01 = 02:02:84:00:6A:01 (host side). */
+/* Device-side MAC. Filled by net_mac_init() from board_identity, which must
+ * run before tud_init() because the ECM descriptor carries this as a string
+ * and the host reads it once, at enumeration.
+ *
+ * The compiled-in value is a placeholder only; every board overwrites it. It
+ * used to be the shipped value on every unit, which is why three boards on
+ * one host gave one usable board.
+ *
+ * lwIP's netif takes the same address with bit 0 of byte 5 flipped, so the
+ * two ends of the link differ. */
 uint8_t tud_network_mac_address[6] = {0x02, 0x02, 0x84, 0x00, 0x6A, 0x00};
 static char mdns_hostname[16];
 static uint8_t mdns_suffix;
 
-static const ip4_addr_t ipaddr = INIT_IP4(192, 168, 7, 1);
+/* The third octet comes from the board's MAC, so each board is its own /24.
+ * They cannot share one: every board is a point-to-point USB link running its
+ * own DHCP server, so two boards on 192.168.7.0/24 hand the host the same
+ * lease twice and the host can only route to one of them.
+ *
+ * Not const, and not compile-time: net_mac_init() fills them in. */
+static ip4_addr_t ipaddr = INIT_IP4(192, 168, 7, 1);
 static const ip4_addr_t netmask = INIT_IP4(255, 255, 255, 0);
 static const ip4_addr_t gateway = INIT_IP4(0, 0, 0, 0);
 
@@ -45,15 +59,27 @@ static dhcp_entry_t entries[] = {
     {{0}, INIT_IP4(192, 168, 7, 3), 24 * 60 * 60},
 };
 
-static const dhcp_config_t dhcp_config = {.router = INIT_IP4(0, 0, 0, 0),
-                                          .port = 67,
-                                          .dns = INIT_IP4(192, 168, 7, 1),
-                                          "pyro",
-                                          TU_ARRAY_SIZE(entries),
-                                          entries};
+static dhcp_config_t dhcp_config = {.router = INIT_IP4(0, 0, 0, 0),
+                                    .port = 67,
+                                    .dns = INIT_IP4(192, 168, 7, 1),
+                                    "pyro",
+                                    TU_ARRAY_SIZE(entries),
+                                    entries};
 
-/* Must be called BEFORE tud_init() — currently a no-op with hardcoded MAC */
-void net_mac_init(void) {}
+/* MUST be called before tud_init(): the MAC goes into the ECM descriptor,
+ * which the host reads once at enumeration, and the addresses go into the
+ * DHCP server, which hands out a lease the host will not renegotiate.
+ * Re-addressing afterwards does not work -- there is no shared segment to
+ * announce on and no way to force the host to renew. */
+void net_mac_init(void) {
+    memcpy(tud_network_mac_address, board_mac(), sizeof(tud_network_mac_address));
+
+    const uint8_t n = board_subnet_octet();
+    IP4_ADDR(&ipaddr, 192, 168, n, 1);
+    IP4_ADDR(&entries[0].addr, 192, 168, n, 2);
+    IP4_ADDR(&entries[1].addr, 192, 168, n, 3);
+    IP4_ADDR(&dhcp_config.dns, 192, 168, n, 1);
+}
 
 /* Non-blocking link output — try briefly, then let lwIP retry via TCP
  * retransmit.  The old for(;;) spin loop blocked the entire system
