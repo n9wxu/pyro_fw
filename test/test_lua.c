@@ -38,6 +38,12 @@ static bool run(const char *src) {
     return pyro_lua_load("=test", src, strlen(src));
 }
 
+/* Assert against globals a yielded tick() left behind, without disturbing the
+ * coroutine: pyro_lua_eval runs on L, not on the work-unit thread. */
+static bool run_eval_ok(const char *src) {
+    return pyro_lua_eval(src);
+}
+
 void setUp(void) {
     pyro_lua_init();
     sim_lua_console_clear();
@@ -259,6 +265,66 @@ static void test_eval_error_does_not_kill_the_program(void) {
     TEST_ASSERT_FALSE(pyro_lua_eval("this is garbage"));
     TEST_ASSERT_TRUE(pyro_lua_tick());
     TEST_ASSERT_EQUAL_INT(3, sim_lua_output_value(0));
+}
+
+/* ── Time-boxed work units ────────────────────────────────────────
+ *
+ * The dispatch model: core0 grants core1 a slice of the loop period, the VM
+ * runs until the box expires, yields, and RESUMES there on the next grant.
+ * A script that never returns is a legitimate program under this model, not
+ * a runaway -- which is the behaviour these pin down. */
+
+static void test_tick_yields_when_the_time_box_expires(void) {
+    TEST_ASSERT_TRUE(run("n = 0 function tick() while true do n = n + 1 end end"));
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_YIELD, pyro_lua_tick_slice(2000));
+}
+
+static void test_a_yielded_tick_resumes_rather_than_restarts(void) {
+    /* The point of yielding over aborting: work already done is kept. If the
+     * script restarted each grant, n would never climb past one slice. */
+    TEST_ASSERT_TRUE(run("n = 0 function tick() while true do n = n + 1 end end"));
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_YIELD, pyro_lua_tick_slice(2000));
+    TEST_ASSERT_TRUE(run_eval_ok("first = n"));
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_YIELD, pyro_lua_tick_slice(2000));
+    TEST_ASSERT_TRUE(run_eval_ok("assert(n > first, 'tick restarted instead of resuming')"));
+}
+
+static void test_a_short_tick_completes_within_its_box(void) {
+    TEST_ASSERT_TRUE(run("done = 0 function tick() done = done + 1 end"));
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_DONE, pyro_lua_tick_slice(5000));
+    TEST_ASSERT_TRUE(run_eval_ok("assert(done == 1)"));
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_DONE, pyro_lua_tick_slice(5000));
+    TEST_ASSERT_TRUE(run_eval_ok("assert(done == 2)"));
+}
+
+static void test_the_box_is_actually_honoured(void) {
+    /* Generous bounds: a host machine is not a flight computer. The claim is
+     * that the grant bounds the call at all, not that it is precise. */
+    TEST_ASSERT_TRUE(run("function tick() while true do end end"));
+    uint32_t t0 = lua_plat_now_us();
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_YIELD, pyro_lua_tick_slice(5000));
+    uint32_t took = lua_plat_now_us() - t0;
+    TEST_ASSERT_TRUE_MESSAGE(took < 200000u, "a 5 ms grant ran for over 200 ms");
+}
+
+static void test_an_error_in_tick_is_reported_and_recoverable(void) {
+    /* A coroutine that raised is dead and cannot be resumed. If the host did
+     * not build a fresh one, a single fault would break tick() forever. */
+    TEST_ASSERT_TRUE(run("function tick() error('boom') end"));
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_ERROR, pyro_lua_tick_slice(5000));
+    TEST_ASSERT_NOT_NULL(strstr(pyro_lua_last_error(), "boom"));
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_ERROR, pyro_lua_tick_slice(5000));
+    TEST_ASSERT_TRUE(run("ok = 0 function tick() ok = 1 end"));
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_DONE, pyro_lua_tick_slice(5000));
+    TEST_ASSERT_TRUE(run_eval_ok("assert(ok == 1)"));
+}
+
+static void test_tick_defined_inside_init_is_found(void) {
+    /* The old have_tick cache was set before init() ran, so a tick() that
+     * init() defined was never called. */
+    TEST_ASSERT_TRUE(run("ran = 0 function init() function tick() ran = ran + 1 end end"));
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_DONE, pyro_lua_tick_slice(5000));
+    TEST_ASSERT_TRUE(run_eval_ok("assert(ran == 1, 'tick defined in init was not called')"));
 }
 
 /* ── Bytecode is refused ──────────────────────────────────────────
@@ -539,6 +605,12 @@ int main(void) {
     RUN_TEST(test_print_goes_to_console);
     RUN_TEST(test_eval_error_does_not_kill_the_program);
 
+    RUN_TEST(test_tick_yields_when_the_time_box_expires);
+    RUN_TEST(test_a_yielded_tick_resumes_rather_than_restarts);
+    RUN_TEST(test_a_short_tick_completes_within_its_box);
+    RUN_TEST(test_the_box_is_actually_honoured);
+    RUN_TEST(test_an_error_in_tick_is_reported_and_recoverable);
+    RUN_TEST(test_tick_defined_inside_init_is_found);
     RUN_TEST(test_precompiled_bytecode_is_refused);
     RUN_TEST(test_text_chunks_still_load);
     RUN_TEST(test_flight_exposes_thrust_and_apogee);

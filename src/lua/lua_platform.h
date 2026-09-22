@@ -94,6 +94,14 @@ int lua_plat_pyro_status(int channel); /* channel 1 or 2 */
  * "good"; only the count shows it, which is why telemetry carries it. */
 int lua_plat_pyro_adc(int channel);
 
+/* ── Host clock ───────────────────────────────────────────────────
+ *
+ * Microseconds, free-running, wrap-safe when compared with a signed delta.
+ * Not a binding -- nothing in the Lua API exposes it. It is how the VM host
+ * time-boxes a work unit, and it lives here so pyro_lua.c stays free of SDK
+ * headers and the host tests can supply their own clock. */
+uint32_t lua_plat_now_us(void);
+
 /* ── Console ──────────────────────────────────────────────────────── */
 
 /* Where print() goes. On the simulator this is the terminal pane; on the

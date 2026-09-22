@@ -58,8 +58,28 @@
 static uint8_t arena_buf[PYRO_LUA_ARENA_BYTES] __attribute__((aligned(8)));
 static lua_State *L;
 static char last_error[160];
+
+/* The work-unit coroutine.
+ *
+ * tick() runs here rather than under lua_pcall() because a C-call boundary is
+ * not yieldable -- lua_pcall gives "attempt to yield from outside a
+ * coroutine" -- and yielding is the whole mechanism: the hook stops the
+ * script when its time box expires and the next grant resumes it mid-loop.
+ *
+ * Anchored at index 1 of L's stack so the collector cannot take it. */
+static lua_State *co;
+static bool slice_running; /* a tick() is mid-flight, awaiting its next grant */
+static uint32_t slice_deadline_us;
+static bool slice_boxed; /* false for a grant of 0: run to completion */
+
+/* Instruction budget, still used for the paths that CANNOT yield.
+ *
+ * Loading a chunk, running init() and the console eval all go through
+ * lua_pcall, which is a non-yieldable C-call boundary. They cannot be time
+ * boxed, so a runaway in one of them is still stopped the old way: the hook
+ * raises once the budget is gone. tick() does not use this -- a long tick is
+ * a legitimate program that simply spans several grants. */
 static uint32_t budget_left;
-static bool have_tick;
 
 /* ── Limits ───────────────────────────────────────────────────────── */
 
@@ -68,19 +88,34 @@ static bool have_tick;
  * board-independent and the host tests link without multicore. */
 __attribute__((weak)) void lua_core1_park_check(void) {}
 
+/* Fires every PYRO_LUA_HOOK_COUNT VM instructions. The hook must stay a COUNT
+ * hook -- Lua permits yielding only from count and line hooks -- but the
+ * decision is time, not instructions, because the thing being bounded is how
+ * long core0 waits, and instructions are a poor proxy for that.
+ *
+ * PYRO_LUA_HOOK_COUNT therefore sets how finely the deadline is honoured, not
+ * how much work is allowed. */
 static void count_hook(lua_State *Ls, lua_Debug *ar) {
     (void)ar;
-    /* Before the budget check, so a script that is about to be killed still
-     * answers a pending park first: core0's flash write must not have to wait
-     * for the VM to finish dying. */
+    /* First, so a script about to be stopped still answers a pending park:
+     * core0's flash write must not wait for the VM to finish anything. */
     lua_core1_park_check();
-    if (budget_left == 0) {
-        /* Not an error the script can catch: pcall will surface it, but the
-         * budget stays at zero so a pcall-wrapped infinite loop cannot simply
-         * carry on. Reset happens only when the host starts a new call. */
-        luaL_error(Ls, "instruction budget exhausted");
+
+    if (!slice_boxed) {
+        /* Non-yieldable path (load, init, eval), or a grant of 0. Fall back to
+         * the instruction budget: it is the only stop available when the call
+         * cannot be suspended and resumed. */
+        if (budget_left == 0) {
+            luaL_error(Ls, "instruction budget exhausted");
+        }
+        budget_left--;
+        return;
     }
-    budget_left--;
+    if ((int32_t)(lua_plat_now_us() - slice_deadline_us) >= 0) {
+        /* Does not return -- longjmps out to lua_resume, which reports
+         * LUA_YIELD. Nothing after this line runs. */
+        lua_yield(Ls, 0);
+    }
 }
 
 static int on_panic(lua_State *Ls) {
@@ -435,7 +470,6 @@ static void strip_globals(lua_State *Ls) {
 void pyro_lua_init(void) {
     lua_arena_init(arena_buf, sizeof(arena_buf));
     last_error[0] = '\0';
-    have_tick = false;
 
     L = lua_newstate(lua_arena_alloc, NULL);
     if (!L) {
@@ -468,7 +502,22 @@ void pyro_lua_shutdown(void) {
     }
 }
 
+/* Fresh coroutine, anchored on L's stack so the collector keeps it.
+ *
+ * Called at load and again after an error, because a coroutine that raised is
+ * dead and cannot be resumed -- resuming one returns an error forever, which
+ * would turn a single script fault into a permanently broken tick. */
+static void make_coroutine(void) {
+    slice_running = false;
+    lua_settop(L, 0); /* drops the previous thread, if any */
+    co = lua_newthread(L);
+    if (co) {
+        lua_sethook(co, count_hook, LUA_MASKCOUNT, PYRO_LUA_HOOK_COUNT);
+    }
+}
+
 static bool run_protected(int nargs) {
+    slice_boxed = false; /* cannot yield across lua_pcall; use the budget */
     budget_left = PYRO_LUA_BUDGET;
     int rc = lua_pcall(L, nargs, 0, 0);
     if (rc != LUA_OK) {
@@ -493,22 +542,68 @@ bool pyro_lua_load(const char *chunkname, const char *src, size_t len) {
     if (!run_protected(0))
         return false;
 
-    lua_getglobal(L, "tick");
-    have_tick = lua_isfunction(L, -1);
-    lua_pop(L, 1);
-
     lua_getglobal(L, "init");
-    if (lua_isfunction(L, -1))
-        return run_protected(0);
-    lua_pop(L, 1);
-    return true;
+    if (lua_isfunction(L, -1)) {
+        if (!run_protected(0)) {
+            make_coroutine();
+            return false;
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+
+    /* After init(), so a tick() that init() defined is visible. */
+    make_coroutine();
+    return co != NULL;
+}
+
+pyro_lua_status_t pyro_lua_tick_slice(uint32_t budget_us) {
+    if (!L || !co) {
+        return PYRO_LUA_DONE;
+    }
+
+    slice_boxed = (budget_us != 0u);
+    slice_deadline_us = lua_plat_now_us() + budget_us;
+
+    if (!slice_running) {
+        /* Looked up per call rather than cached: a script may define tick()
+         * from inside init(), and a stale "no tick" flag would silently never
+         * run it. */
+        lua_getglobal(co, "tick");
+        if (!lua_isfunction(co, -1)) {
+            lua_pop(co, 1);
+            return PYRO_LUA_DONE;
+        }
+        slice_running = true;
+    }
+
+    int nres = 0;
+    int rc = lua_resume(co, L, 0, &nres);
+
+    if (rc == LUA_YIELD) {
+        return PYRO_LUA_YIELD; /* time box expired; resume on the next grant */
+    }
+
+    slice_running = false;
+    if (rc != LUA_OK) {
+        const char *m = lua_tostring(co, -1);
+        snprintf(last_error, sizeof(last_error), "%s", m ? m : "error");
+        make_coroutine(); /* the old one is dead; a fault must not be permanent */
+        return PYRO_LUA_ERROR;
+    }
+    lua_settop(co, 0); /* drop tick()'s results, if it returned any */
+    return PYRO_LUA_DONE;
 }
 
 bool pyro_lua_tick(void) {
-    if (!L || !have_tick)
-        return true;
-    lua_getglobal(L, "tick");
-    return run_protected(0);
+    /* No time box, so the instruction budget is what stops a runaway -- the
+     * same bound an un-dispatched caller had before slicing existed. */
+    budget_left = PYRO_LUA_BUDGET;
+    pyro_lua_status_t st;
+    do {
+        st = pyro_lua_tick_slice(0);
+    } while (st == PYRO_LUA_YIELD);
+    return st != PYRO_LUA_ERROR;
 }
 
 bool pyro_lua_event(const char *event_name) {

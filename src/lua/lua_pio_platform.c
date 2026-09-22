@@ -37,6 +37,7 @@
 #include "lua_core1.h"
 #include "lua_platform_cfg.h"
 #include "hardware/clocks.h"
+#include "pico/time.h"
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/pio.h"
@@ -390,6 +391,13 @@ uint32_t lua_plat_time_ms(void) {
 int lua_plat_pyro_status(int channel) {
     return lua_flight_snapshot()->pyro[(channel == 2) ? 1 : 0];
 }
+/* Free-running microseconds. One timer register read, no lock, safe from
+ * either core -- which matters because this is called from the VM's
+ * instruction hook on core1. */
+uint32_t lua_plat_now_us(void) {
+    return time_us_32();
+}
+
 int lua_plat_pyro_adc(int channel) {
     return lua_flight_snapshot()->pyro_adc[(channel == 2) ? 1 : 0];
 }

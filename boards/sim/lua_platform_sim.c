@@ -12,6 +12,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "lua_platform.h"
+#include <time.h>
 #include "lua_platform_cfg.h"
 #include <string.h>
 
@@ -221,6 +222,15 @@ uint32_t lua_plat_time_ms(void) {
 int lua_plat_pyro_status(int channel) {
     return sim_pyro_status[(channel == 2) ? 1 : 0];
 }
+/* The simulator has no timer peripheral, so a monotonic host clock. Must be
+ * real time rather than a counter: the VM host time-boxes work units with it,
+ * and a fake clock would make every slice either instant or infinite. */
+uint32_t lua_plat_now_us(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint32_t)((uint64_t)t.tv_sec * 1000000u + (uint64_t)(t.tv_nsec / 1000));
+}
+
 int lua_plat_pyro_adc(int channel) {
     return sim_pyro_adc[(channel == 2) ? 1 : 0];
 }
