@@ -10,6 +10,7 @@
 #include "board_pins.h"
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
+#include "pico/binary_info.h"
 
 extern void pyro_safe_all_outputs(void); /* boards/mk1a/pyro_board.c */
 
@@ -80,3 +81,17 @@ uart_inst_t *board_uart(void) {
 uint board_uart_irq(void) {
     return BOARD_UART_IRQ_NUM;
 }
+
+/* ── Identification for picotool ──────────────────────────────────
+ *
+ * `picotool info -a` prints these, so an attached board says what it is
+ * before anyone reaches for `picotool load`. The pyro pins are the useful
+ * part: they are what actually differs between boards, and getting them
+ * wrong is how an image ends up driving a bias injector as an LED. */
+bi_decl(bi_1pin_with_name(BOARD_PIN_LED, "LED (D3/D4)"));
+bi_decl(bi_2pins_with_names(BOARD_PIN_UART_TX, "UART0 TX -> J6", BOARD_PIN_UART_RX, "UART0 RX <- J6"));
+bi_decl(bi_2pins_with_names(BOARD_PIN_I2C_SDA, "I2C0 SDA (BMP280)", BOARD_PIN_I2C_SCL, "I2C0 SCL (BMP280)"));
+bi_decl(bi_3pins_with_names(BOARD_PIN_FIRE1, "PYRO FIRE1 (Q6 high side)", BOARD_PIN_PYRO_LOW,
+                            "PYRO shared low side (Q2)", BOARD_PIN_FIRE2, "PYRO FIRE2 (Q1 high side)"));
+bi_decl(bi_2pins_with_names(BOARD_PIN_PYRO1_SENSE, "PYRO sense 1 (ADC0)", BOARD_PIN_PYRO2_SENSE,
+                            "PYRO sense 2 (ADC1)"));

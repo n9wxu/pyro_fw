@@ -206,6 +206,26 @@ if(PYRO_HAS_LUA)
 endif()
 message("littlefs is here: ${littlefs_SOURCE_DIR}")
 
+# ── Board identification in the bootloader ───────────────────────────
+#
+# picotool reads the image at XIP_BASE, which with pico_fota_bootloader is the
+# BOOTLOADER -- the application sits in an A/B slot further up and its
+# .binary_info is never scanned. Verified on hardware: an app whose strings are
+# provably in flash still reports "Program Information: none". So the board
+# identity has to live here, or `picotool info` says pico_fota_bootloader /
+# pico_board=pico for every board alike.
+#
+# Added to the dependency's target rather than by patching its sources. The
+# file emits binary_info data and no code, so it cannot change what the
+# bootloader does.
+if(PYRO_BOARD_KIND STREQUAL "pico" AND TARGET pico_fota_bootloader)
+    target_sources(pico_fota_bootloader PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/bootloader_binary_info.c)
+    target_include_directories(pico_fota_bootloader PRIVATE
+        ${PYRO_BOARD_DIR} ${CMAKE_CURRENT_LIST_DIR}/src)
+    pico_set_program_name(pico_fota_bootloader "${BOARD_DISPLAY_NAME} bootloader")
+endif()
+
+
 if(PYRO_BOARD_KIND STREQUAL "pico")
 # ---- RP2040 firmware image ----------------------------------------
 # Suppress warnings in third-party pico_fota_bootloader
@@ -254,6 +274,7 @@ target_link_libraries(pyro_hal_common PUBLIC pyro_board)
 
 add_executable(pyro_fw_c 
     src/main_hardware.c
+    src/board_binary_info.c
     src/flight_states.c
     src/pressure_processing.c
     src/ground_test.c
@@ -342,7 +363,10 @@ endif()
 add_dependencies(pyro_fw_c generate_version)
 
 pico_set_program_name(pyro_fw_c "${BOARD_DISPLAY_NAME}")
-pico_set_program_version(pyro_fw_c "0.1")
+# The version is NOT set here. scripts/gen_version.sh rewrites src/version.h
+# on every local build, so the number does not exist at configure time --
+# this line used to carry a hardcoded "0.1" that never matched a shipped
+# build. src/board_binary_info.c emits it from FW_VERSION instead.
 
 # Board identity comes from boards/<name>/board_pins.h via src/board_id.h,
 # so no board name is passed on the command line.
