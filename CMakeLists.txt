@@ -200,6 +200,12 @@ if(PYRO_HAS_LUA)
     # and loses. Force it through the one hook upstream provides for this.
     target_compile_definitions(lua_lib PUBLIC LUA_USER_H="pyro_luaconf.h")
     target_compile_options(lua_lib PRIVATE -Wno-unused-but-set-variable -Wno-implicit-fallthrough)
+    # The interpreter is built for size, not speed, while the flight code stays
+    # at -O3. A work unit is bounded by a deadline the hook checks, so a slower
+    # VM executes fewer Lua instructions in its 9 ms and nothing else changes --
+    # whereas the ~14KB -O3 costs is the difference between fitting in MK1B's
+    # 384KB A/B slot and not fitting.
+    target_compile_options(lua_lib PRIVATE -Os)
     set(PYRO_LUA_INCLUDE ${lua_SOURCE_DIR})
 
     # VM host: arena, limits, sandbox and bindings. Board-independent; the

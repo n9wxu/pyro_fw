@@ -5,6 +5,14 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hal.h"
+
+/* Overridden by src/lua/lua_app.c where Lua is linked. Weak and defined here
+ * rather than in the HAL so that every build resolves it -- the host test
+ * binaries link this file without hal_common.c. A board with no Lua is ready
+ * the moment the flight code asks. */
+__attribute__((weak)) bool lua_app_ready_or_absent(void) {
+    return true;
+}
 #include "board_id.h"
 #include "flight_states.h"
 #include "pressure_processing.h"
@@ -241,6 +249,20 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
 
     if (ctx->buzzer_started)
         return;
+
+    /* Hold the startup beep until the board is genuinely up.
+     *
+     * Core1's startup -- compiling the script and running init() -- is
+     * unbounded, and core0 writes no flash for its duration. So a beeping,
+     * blinking board should mean "a script is running", not "a script is
+     * still compiling": the beep is the only indication an operator has at
+     * the pad without a console.
+     *
+     * Always true when Lua is not in play, so boards without it are
+     * unaffected. */
+    if (!lua_app_ready_or_absent())
+        return;
+
     ctx->buzzer_started = true;
     int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
     bool p1_over = (ctx->config.pyro1_mode != PYRO_MODE_DELAY && ctx->config.pyro1_value > max_units);

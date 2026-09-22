@@ -59,6 +59,15 @@ static bool launched;
  * core0 comes back round and starts touching flash again. */
 #define LUA_GRANT_US 9000u
 
+/* How long core1's unbounded startup may take before core0 gives up on it.
+ *
+ * Generous, because it covers compiling the script and running init(), and a
+ * script is allowed to do real work there. But not unlimited: core0 writes no
+ * flash for the whole window, so a core1 that never finishes would silently
+ * cost logging and uploads for the rest of the flight. Killing it instead
+ * leaves a board that works without Lua and says why. */
+#define LUA_BOOT_LIMIT_MS 5000u
+
 /* Breadcrumb: where core0 was when it last stopped. Survives a watchdog
  * reboot, so the next boot can say what it was doing instead of leaving it to
  * be guessed at. */
@@ -236,6 +245,24 @@ const char *lua_app_status(void) {
     return status_line;
 }
 
+/* True when the board is fully up: either Lua is running its script, or Lua
+ * is not in play at all. What the heartbeat and the startup beep wait for, so
+ * a blinking, beeping board has a running script rather than a compiling one. */
+/* The name flight_states.c links against. Separate from lua_app_ready() so
+ * the flight code does not need a Lua header, and so the weak default in
+ * hal_common.c can satisfy a board built without Lua. */
+bool lua_app_ready_or_absent(void) {
+    return lua_app_ready();
+}
+
+bool lua_app_ready(void) {
+    lua_c1_state_t st = lua_core1_state();
+    if (st == LUA_C1_OFF || st == LUA_C1_DEAD) {
+        return true; /* nothing to wait for */
+    }
+    return lua_core1_ready();
+}
+
 void lua_app_init(const config_t *cfg) {
     if (!cfg->lua_enabled) {
         snprintf(status_line, sizeof(status_line), "disabled");
@@ -383,7 +410,17 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
      * overruns costs a skipped dispatch on the next pass, not a stall, and
      * lua_core1_dispatch() counts those so a script that consistently
      * overruns is visible rather than merely slow. */
-    lua_core1_dispatch(LUA_GRANT_US);
+    /* Not while core1 is still in startup: it is already running, unbounded,
+     * and a grant would mean nothing. */
+    if (lua_core1_ready()) {
+        lua_core1_dispatch(LUA_GRANT_US);
+    } else if (launched && (int32_t)(now_ms - (launch_at_ms + LUA_BOOT_LIMIT_MS)) >= 0 &&
+               lua_core1_state() == LUA_C1_RUNNING) {
+        /* Startup overran. Core0 has been withholding flash the whole time,
+         * so this is not something to wait out. */
+        snprintf(status_line, sizeof(status_line), "killed: startup exceeded %lums", (unsigned long)LUA_BOOT_LIMIT_MS);
+        lua_core1_kill();
+    }
 
     if (lua_core1_state() == LUA_C1_DEAD && strncmp(status_line, "stopped", 7) != 0) {
         phase(PH_KILLED);

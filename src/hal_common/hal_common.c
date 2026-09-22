@@ -436,6 +436,23 @@ void hal_telemetry_send(const char *sentence) {
 
 /* ── Filesystem ───────────────────────────────────────────────────── */
 
+/* Weak so a board without Lua links unchanged: no second core, nothing to
+ * collide with. Defined in src/lua/lua_core1.c when Lua is present. */
+__attribute__((weak)) bool lua_core1_flash_ok(void) {
+    return true;
+}
+
+/* Checked at the door rather than inside the lfs driver.
+ *
+ * Refusing partway through an lfs operation would leave its metadata
+ * half-written; refusing before it starts is a clean failure the caller can
+ * retry. Core1 executes from flash throughout its startup and for the
+ * duration of each dispatched unit, and an erase during either stalls it on a
+ * fetch -- which on the bench took core0 down with it. */
+static bool flash_writable(void) {
+    return lua_core1_flash_ok();
+}
+
 int hal_fs_mount(void) {
     lfs_t lfs;
     int err = lfs_mount(&lfs, &lfs_pico_flash_config);
@@ -473,6 +490,9 @@ int hal_fs_read_file(const char *path, char *buf, int max_len) {
 }
 
 int hal_fs_write_file(const char *path, const char *data, int len) {
+    if (!flash_writable())
+        return -1;
+
     lfs_t lfs;
     if (lfs_mount(&lfs, &lfs_pico_flash_config) != LFS_ERR_OK)
         return -1;
@@ -499,6 +519,10 @@ struct hal_file {
 static struct hal_file hw_file;
 
 hal_file_t *hal_fs_open(const char *path, bool append) {
+    /* Opening for write reaches flash; opening to read does not. */
+    if (append && !flash_writable())
+        return NULL;
+
     if (hw_file.open)
         return NULL;
     if (lfs_mount(&hw_file.lfs, &lfs_pico_flash_config) != LFS_ERR_OK)

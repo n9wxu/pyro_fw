@@ -23,7 +23,7 @@
 #include "lua_core1.h"
 #endif
 
-extern bool lua_core1_idle(void);
+extern bool lua_core1_flash_ok(void);
 
 extern void hal_telemetry_send(const char *sentence);
 #define DBG(fmt, ...)                                                                                                  \
@@ -123,7 +123,7 @@ static void ota_flush(void) {
      * dispatched worker, so core0 waits for it to finish the unit it handed
      * out rather than asking it to stop. Bounded by the grant, which is a
      * fraction of the loop period. See docs/core1_hazard.md. */
-    while (!lua_core1_idle()) {
+    while (!lua_core1_flash_ok()) {
         tight_loop_contents();
     }
     uint32_t ints = save_and_disable_interrupts();

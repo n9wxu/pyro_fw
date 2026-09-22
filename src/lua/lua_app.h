@@ -49,4 +49,8 @@ uint32_t lua_app_log_written(void);
 /* One-line status for /api/status. */
 const char *lua_app_status(void);
 
+/* True when the board is fully up -- Lua running, or Lua not in play. The
+ * startup indication waits for this. */
+bool lua_app_ready(void);
+
 #endif

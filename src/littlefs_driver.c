@@ -20,7 +20,7 @@
  *
  * Weak, and true, when Lua is not linked: there is no second core to collide
  * with. See docs/core1_hazard.md. */
-__attribute__((weak)) bool lua_core1_idle(void) {
+__attribute__((weak)) bool lua_core1_flash_ok(void) {
     return true;
 }
 
@@ -29,7 +29,7 @@ __attribute__((weak)) bool lua_core1_idle(void) {
  * the caller only reaches flash through lfs, and lfs only runs where core0
  * has already established that core1 is idle. */
 static void assert_core1_idle(void) {
-    while (!lua_core1_idle()) {
+    while (!lua_core1_flash_ok()) {
         /* Deliberately not a wait for core1's cooperation: reaching here at
          * all means a flash write was started from somewhere that did not
          * check, which is a bug in the caller rather than a race to ride out.

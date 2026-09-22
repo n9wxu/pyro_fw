@@ -274,6 +274,21 @@ static void test_eval_error_does_not_kill_the_program(void) {
  * bounded by the arena (matching allocates nothing). Backtracking is
  * quadratic, so a few KB of subject is seconds of un-interruptible work. */
 
+static void test_gsub_and_gmatch_are_bounded(void) {
+    /* Not restartable, so capped whether or not the caller could yield --
+     * they are the same quadratic hazard as find, and leaving them unbounded
+     * because they are awkward would be the wrong way round. */
+    TEST_ASSERT_FALSE(run("local s = ('a'):rep(500) s:gsub('a', 'b')"));
+    TEST_ASSERT_NOT_NULL(strstr(pyro_lua_last_error(), "gsub"));
+    TEST_ASSERT_FALSE(run("local s = ('a'):rep(500) for w in s:gmatch('%a') do end"));
+    TEST_ASSERT_NOT_NULL(strstr(pyro_lua_last_error(), "gmatch"));
+}
+
+static void test_gsub_and_gmatch_work_below_the_cap(void) {
+    TEST_ASSERT_TRUE(run("assert(('a,b'):gsub(',', ';') == 'a;b')"));
+    TEST_ASSERT_TRUE(run("local n = 0 for w in ('x y'):gmatch('%a') do n = n + 1 end assert(n == 2)"));
+}
+
 static void test_pattern_on_a_long_subject_is_refused(void) {
     TEST_ASSERT_FALSE(run("local s = ('a'):rep(3000) string.match(s, '(a-)*$')"));
     TEST_ASSERT_NOT_NULL(strstr(pyro_lua_last_error(), "exceeds"));
@@ -298,6 +313,78 @@ static void test_non_pattern_string_ops_are_untouched(void) {
     TEST_ASSERT_TRUE(run("local s = ('ab'):rep(1000) assert(#s:upper() == 2000)"));
     TEST_ASSERT_TRUE(run("local s = ('ab'):rep(1000) assert(#s:sub(1, 500) == 500)"));
     TEST_ASSERT_TRUE(run("assert(string.format('%d-%s', 7, 'x') == '7-x')"));
+}
+
+/* ── Restartable pattern matching ─────────────────────────────────
+ *
+ * Above the direct-call threshold the search loops over start positions in C
+ * and suspends between them via lua_yieldk. These check that it produces the
+ * same answers as the builtin, and that a long search actually yields and
+ * resumes rather than running to completion in one grant. */
+
+static void test_long_pattern_gives_the_same_answer(void) {
+    /* 400-byte subject, well past the direct-call threshold. Run inside a
+     * work unit, which is where the restartable path is reachable. */
+    TEST_ASSERT_TRUE_MESSAGE(run("res = nil\n"
+                         "function tick()\n"
+                         "  local s = ('a'):rep(400) .. 'needle' .. ('b'):rep(50)\n"
+                         "  res = { s:find('needle') }\n"
+                         "end\n"),
+                             pyro_lua_last_error());
+    pyro_lua_status_t st;
+    int guard = 0;
+    do {
+        st = pyro_lua_tick_slice(2000);
+    } while (st == PYRO_LUA_YIELD && ++guard < 1000);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(PYRO_LUA_DONE, st, pyro_lua_last_error());
+    TEST_ASSERT_TRUE_MESSAGE(pyro_lua_eval("assert(res[1] == 401, 'start '..tostring(res[1]))"),
+                             pyro_lua_last_error());
+    TEST_ASSERT_TRUE(pyro_lua_eval("assert(res[2] == 406, 'end '..tostring(res[2]))"));
+}
+
+static void test_long_pattern_with_captures(void) {
+    TEST_ASSERT_TRUE(run("a, b = nil, nil\n"
+                         "function tick()\n"
+                         "  local s = ('x'):rep(300) .. 'temp=42C'\n"
+                         "  a, b = s:match('(%a+)=(%d+)')\n"
+                         "end\n"));
+    pyro_lua_status_t st;
+    int guard = 0;
+    do {
+        st = pyro_lua_tick_slice(2000);
+    } while (st == PYRO_LUA_YIELD && ++guard < 1000);
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_DONE, st);
+    TEST_ASSERT_TRUE(pyro_lua_eval("assert(b == '42', tostring(b))"));
+}
+
+static void test_a_pathological_pattern_yields_instead_of_blocking(void) {
+    /* The case that used to be unstoppable: quadratic backtracking over a
+     * subject that fits the arena. It must now suspend. */
+    TEST_ASSERT_TRUE(run("function tick()\n"
+                         "  local s = ('a'):rep(1200)\n"
+                         "  s:match('(a-)*$')\n"
+                         "end\n"));
+    TEST_ASSERT_EQUAL_INT_MESSAGE(PYRO_LUA_YIELD, pyro_lua_tick_slice(1000),
+                                  "a quadratic match must suspend, not run to completion");
+    /* And it finishes if given enough grants, rather than looping forever. */
+    pyro_lua_status_t st;
+    int grants = 0;
+    do {
+        st = pyro_lua_tick_slice(2000);
+    } while (st == PYRO_LUA_YIELD && ++grants < 5000);
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_DONE, st);
+}
+
+static void test_no_match_on_a_long_subject_returns_nil(void) {
+    TEST_ASSERT_TRUE(run("got = 'unset'\n"
+                         "function tick() got = ('a'):rep(500):find('zzz') end\n"));
+    pyro_lua_status_t st;
+    int guard = 0;
+    do {
+        st = pyro_lua_tick_slice(2000);
+    } while (st == PYRO_LUA_YIELD && ++guard < 1000);
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_DONE, st);
+    TEST_ASSERT_TRUE(pyro_lua_eval("assert(got == nil, tostring(got))"));
 }
 
 /* ── Time-boxed work units ────────────────────────────────────────
@@ -638,6 +725,12 @@ int main(void) {
     RUN_TEST(test_print_goes_to_console);
     RUN_TEST(test_eval_error_does_not_kill_the_program);
 
+    RUN_TEST(test_long_pattern_gives_the_same_answer);
+    RUN_TEST(test_long_pattern_with_captures);
+    RUN_TEST(test_a_pathological_pattern_yields_instead_of_blocking);
+    RUN_TEST(test_no_match_on_a_long_subject_returns_nil);
+    RUN_TEST(test_gsub_and_gmatch_are_bounded);
+    RUN_TEST(test_gsub_and_gmatch_work_below_the_cap);
     RUN_TEST(test_pattern_on_a_long_subject_is_refused);
     RUN_TEST(test_pattern_on_a_short_subject_still_works);
     RUN_TEST(test_plain_find_is_not_capped);

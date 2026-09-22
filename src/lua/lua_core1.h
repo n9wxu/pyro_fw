@@ -109,6 +109,29 @@ uint32_t lua_core1_dispatch_skipped(void);
  * Also true when core1 is off or dead -- there is nothing to collide with. */
 bool lua_core1_idle(void);
 
+/* ── Startup ──────────────────────────────────────────────────────
+ *
+ * Core1's one-time startup -- creating the VM, compiling the script, running
+ * init() -- runs UNBOUNDED. It has to: init() is user code, it may parse
+ * strings or build tables, and the alternatives are a limit that is arbitrary
+ * or a script that half-runs.
+ *
+ * Unbounded is safe here only because core0 writes no flash until core1 is
+ * ready. That is the whole trade: the startup window is the one time core1
+ * executes from flash for an unpredictable duration, so core0 gives up flash
+ * for the same window rather than trying to interrupt it.
+ *
+ * Nothing needs flash in that window. Logging starts at launch, uploads and
+ * OTA are operator-initiated, and the filesystem is already mounted. */
+
+/* False while core1 is in startup or mid-unit: core0 must not touch flash. */
+bool lua_core1_flash_ok(void);
+
+/* True once core1 has finished startup and reached the dispatch loop. This is
+ * what the heartbeat and the startup beep wait for, so a board that is
+ * blinking and has beeped has a running script rather than a compiling one. */
+bool lua_core1_ready(void);
+
 /* Unilateral, terminal. Safe to call at any time from core0. */
 void lua_core1_kill(void);
 

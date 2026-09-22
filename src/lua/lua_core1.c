@@ -224,6 +224,24 @@ void lua_core1_dispatch(uint32_t budget_us) {
     c1_go++;
 }
 
+/* Set by core1 the first time it reaches the dispatch loop, i.e. once
+ * pyro_lua_init(), the chunk body and init() have all finished. */
+static volatile uint8_t c1_ready;
+
+bool lua_core1_ready(void) {
+    return c1_ready != 0u;
+}
+
+bool lua_core1_flash_ok(void) {
+    if (c1_state == LUA_C1_OFF || c1_state == LUA_C1_DEAD) {
+        return true; /* nothing running to collide with */
+    }
+    if (!c1_ready) {
+        return false; /* startup: core1 is in flash for an unbounded stretch */
+    }
+    return c1_busy == 0u;
+}
+
 bool lua_core1_idle(void) {
     if (c1_state == LUA_C1_OFF || c1_state == LUA_C1_DEAD) {
         return true; /* nothing running to collide with */
@@ -304,6 +322,11 @@ static void core1_main(void) {
     }
     LAUNCH_PHASE(22);
     c1_state = LUA_C1_RUNNING;
+
+    /* Startup is over: the VM exists, the chunk has run and init() has
+     * returned. Core0 may write flash again from here. */
+    c1_ready = 1;
+    __dmb();
 
     uint8_t seen = evt_seq;
     while (1) {
