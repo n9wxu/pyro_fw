@@ -83,7 +83,7 @@ endif()
 
 set(_required BOARD_DISPLAY_NAME)
 if(PYRO_BOARD_KIND STREQUAL "pico")
-    list(APPEND _required PYRO_FLASH_SIZE_KB PYRO_PFB_FS_KB)
+    list(APPEND _required PYRO_FLASH_SIZE_KB PYRO_PFB_FS_KB PYRO_LOOP_WORST_MS)
 elseif(PYRO_BOARD_KIND STREQUAL "host")
     list(APPEND _required PYRO_HOST_HAL_SOURCES)
 else()
@@ -98,6 +98,8 @@ endforeach()
 if(PYRO_BOARD_KIND STREQUAL "pico")
     message(STATUS "Pyro target board: ${PYRO_BOARD} (${BOARD_DISPLAY_NAME}), kind=pico, "
                    "flash ${PYRO_FLASH_SIZE_KB}KB, littlefs ${PYRO_PFB_FS_KB}KB")
+    math(EXPR _pyro_wdog_ms "2 * ${PYRO_LOOP_WORST_MS}")
+    message(STATUS "  loop budget: ${PYRO_LOOP_WORST_MS}ms worst case, watchdog ${_pyro_wdog_ms}ms")
 else()
     message(STATUS "Pyro target board: ${PYRO_BOARD} (${BOARD_DISPLAY_NAME}), kind=host "
                    "-- no firmware image is produced; build the 'sim' target")
@@ -345,6 +347,9 @@ pico_set_program_version(pyro_fw_c "0.1")
 # Board identity comes from boards/<name>/board_pins.h via src/board_id.h,
 # so no board name is passed on the command line.
 target_compile_definitions(pyro_fw_c PRIVATE PYRO_FS_SIZE_KB=${PYRO_PFB_FS_KB})
+# Main-loop budget; the watchdog timeout is derived from it. See the block in
+# boards/<name>/board.cmake for what the number means and how to check it.
+target_compile_definitions(pyro_fw_c PRIVATE PYRO_LOOP_WORST_MS=${PYRO_LOOP_WORST_MS})
 
 # Flash geometry guard.
 #

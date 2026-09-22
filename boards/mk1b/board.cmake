@@ -14,3 +14,17 @@ set(PICO_BOARD pico CACHE STRING "Board type" FORCE)
 
 set(PYRO_FLASH_SIZE_KB 2048)  # must match PICO_FLASH_SIZE_BYTES for this board
 set(PYRO_PFB_FS_KB     984)   # littlefs; see the geometry guard in the top level
+
+# ── Main-loop budget ─────────────────────────────────────────────────
+#
+# Worst-case duration of one core0 iteration, in milliseconds. The shared
+# main loop derives the watchdog timeout from this (2x) and counts every
+# iteration that misses the deadline, so the number is checkable rather
+# than asserted: /api/status reports loop_max_us and loop_overruns.
+#
+# Currently dominated by a 4 KB flash sector erase on the log/OTA path
+# (45 ms typical, but this class of part specifies up to 400 ms) and by the
+# 10 ms settle in pyro_board.c's pyro_sample(). Deliberately generous: this
+# board flies as it is, and a declared budget is how it keeps its current
+# behaviour without its sources being touched.
+set(PYRO_LOOP_WORST_MS 500)

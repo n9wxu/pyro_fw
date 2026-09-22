@@ -29,3 +29,15 @@ set(PYRO_FLASH_SIZE_KB 2048)
 # bootloader's A/B slots land on a 4k boundary. A bad value fails the
 # configure with the arithmetic shown.
 set(PYRO_PFB_FS_KB 984)
+
+# ── Main-loop budget ─────────────────────────────────────────────────
+#
+# Worst-case duration of one core0 iteration, in milliseconds. The shared
+# main loop derives the watchdog timeout from this (2x) and counts every
+# iteration that misses the deadline, so the number is checkable rather
+# than asserted: /api/status reports loop_max_us and loop_overruns.
+#
+# Conservative placeholder. Measure your board with /api/status
+# (loop_max_us) under the worst case you can provoke -- a log flush during
+# an OTA upload is usually it -- and set this to that, rounded up.
+set(PYRO_LOOP_WORST_MS 500)

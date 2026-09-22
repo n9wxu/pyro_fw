@@ -8,6 +8,7 @@
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
 #include "hardware/watchdog.h"
+#include "ms5607_driver.h"
 
 #include "hal.h"
 #include "flight_states.h"
@@ -16,24 +17,82 @@
 #include "tusb.h"
 #include "hardware/structs/watchdog.h"
 
-/* Long enough that no normal iteration can trip it -- an OTA sector write,
- * a log flush and a full lwIP service all fit inside it with room to spare --
- * and short enough that a wedged board comes back while someone is still
- * standing at the pad. */
-#define WATCHDOG_BOOT_MS 4000
+/* ── Main-loop period ─────────────────────────────────────────────
+ *
+ * The loop runs on a fixed period instead of free-running. Three things
+ * need one to exist:
+ *
+ *   - the watchdog timeout, which is now derived from a board's declared
+ *     worst case rather than being a round number nobody can justify;
+ *   - a board replacing a blocking settle (sleep_ms) with "sample on the
+ *     next tick", which is only expressible once the tick is a known
+ *     interval;
+ *   - work handed to a second core, which can then be sized as "whatever
+ *     is left before the deadline".
+ *
+ * The period is one MS5607 conversion phase, which is not arbitrary: the
+ * pressure task is a three-phase state machine clocked at MS5607_CONV_MS,
+ * so one iteration advances it by exactly one phase.
+ *
+ * Slack is spent servicing USB and lwIP rather than sleeping. That keeps
+ * network throughput at what the free-running loop used to deliver, and it
+ * is why this change is behaviour-neutral for a board that does not yet
+ * care about the period. */
+#define LOOP_PERIOD_MS MS5607_CONV_MS
+#define LOOP_PERIOD_US (LOOP_PERIOD_MS * 1000u)
+
+/* Watchdog: twice the board's declared worst-case iteration, from
+ * boards/<name>/board.cmake. A board that blocks longer than its own budget
+ * is reported by loop_overruns below rather than being reset for it, so the
+ * number can be corrected from evidence instead of by guessing lower. */
+#ifndef PYRO_LOOP_WORST_MS
+#error "PYRO_LOOP_WORST_MS not defined - boards/<name>/board.cmake must set it"
+#endif
+#define WATCHDOG_MS (2u * PYRO_LOOP_WORST_MS)
+
+/* ── Loop instrumentation ─────────────────────────────────────────
+ *
+ * High-water marks, not averages: a budget is a statement about the worst
+ * iteration, and nothing here measured that before. Reported by
+ * /api/status, so PYRO_LOOP_WORST_MS can be set from evidence.
+ *
+ * loop_overruns > 0 means the declared budget is optimistic or the period
+ * is too short; stage_max_us says which stage to look at. */
+#define STAGE_COUNT 9
+#define STAGE_SLACK 8
+
+volatile uint32_t loop_count;
+volatile uint32_t loop_max_us;      /* longest iteration of work, slack excluded */
+volatile uint32_t loop_overruns;    /* iterations that missed the deadline       */
+volatile uint32_t loop_late_max_us; /* worst overshoot past the deadline         */
+volatile uint32_t stage_max_us[STAGE_COUNT];
+
+static uint32_t stage_mark_us;
+static uint8_t stage_cur;
 
 /* Main-loop breadcrumb.
  *
  * scratch[0] is the stage core0 was last in, scratch[1] the millisecond it
  * entered it. Both survive a watchdog reset, so after a hang the next boot
  * can say exactly which call stopped returning instead of leaving it to be
- * inferred. Two register writes per stage; scratch 0..3 are untouched by the
- * SDK and the bootloader. */
-#define STAGE(n)                                                                                                       \
-    do {                                                                                                               \
-        watchdog_hw->scratch[0] = 0x53540000u | (n);                                                                   \
-        watchdog_hw->scratch[1] = now;                                                                                 \
-    } while (0)
+ * inferred. scratch 0..3 are untouched by the SDK and the bootloader.
+ *
+ * Also where each stage is timed, because the breadcrumb already marks every
+ * boundary the timing would need: a stage ends exactly where the next one is
+ * recorded, so the high-water marks cost one timer read per stage and no new
+ * call sites. */
+static inline void stage_enter(uint8_t n, uint32_t now) {
+    uint32_t t = time_us_32();
+    uint32_t d = t - stage_mark_us;
+    if (stage_cur < STAGE_COUNT && d > stage_max_us[stage_cur])
+        stage_max_us[stage_cur] = d;
+    stage_mark_us = t;
+    stage_cur = (n < STAGE_COUNT) ? n : (uint8_t)(STAGE_COUNT - 1);
+    watchdog_hw->scratch[0] = 0x53540000u | (uint32_t)n;
+    watchdog_hw->scratch[1] = now;
+}
+
+#define STAGE(n) stage_enter((n), now)
 
 #if PYRO_HAS_LUA
 #include "lua_app.h"
@@ -51,6 +110,7 @@ volatile uint32_t net_conn_full;
 volatile device_status_t g_status = {0};
 
 void net_mdns_poll(void);
+void net_service(void); /* net_glue.c; serviced again in the loop's slack */
 
 static void update_status(flight_context_t *ctx, uint32_t now) {
     g_status.state = ctx->current_state;
@@ -103,10 +163,17 @@ int main() {
      * than in platform init so everything slow (USB enumeration, lwIP, the
      * filesystem mount) is already finished, and it is what makes the
      * safe-boot latch in lua_app.c able to fire at all. */
-    watchdog_enable(WATCHDOG_BOOT_MS, true);
+    watchdog_enable(WATCHDOG_MS, true);
+
+    /* Prime the pacing and the stage timer together, so the first iteration
+     * measures a real interval rather than time since power-on. */
+    absolute_time_t deadline = make_timeout_time_us(LOOP_PERIOD_US);
+    stage_mark_us = time_us_32();
+    stage_cur = STAGE_SLACK;
 
     while (1) {
         uint32_t now = hal_time_ms();
+        uint32_t iter_t0 = time_us_32();
 
         /* Feed the watchdog -- but NOT once a deliberate reset is armed.
          *
@@ -122,7 +189,7 @@ int main() {
          * running unprotected from then on. */
         if (!reset_armed) {
             if (!(watchdog_hw->ctrl & WATCHDOG_CTRL_ENABLE_BITS)) {
-                watchdog_enable(WATCHDOG_BOOT_MS, true);
+                watchdog_enable(WATCHDOG_MS, true);
             }
             watchdog_update();
         }
@@ -167,5 +234,44 @@ int main() {
         lua_app_service(&ctx, now);
         STAGE(7);
 #endif
+
+        /* ── Pace to the period ──
+         *
+         * Everything past here is slack. It is spent servicing USB and lwIP
+         * rather than sleeping: those are what the free-running loop used to
+         * call as fast as it could, and throttling them to the period rate
+         * would cost HTTP and OTA throughput for nothing.
+         *
+         * Note for whoever adds the second core's dispatch: it belongs at the
+         * end of the work above, NOT in this slack loop, and anything that
+         * writes flash has to stay ahead of it. */
+        STAGE(STAGE_SLACK);
+        uint32_t work_us = time_us_32() - iter_t0;
+        if (work_us > loop_max_us)
+            loop_max_us = work_us;
+        loop_count++;
+
+        /* An overrun is "the work left no slack at all", tested BEFORE the
+         * slack loop. Testing after would count every iteration, because the
+         * slack loop by definition exits at the deadline. */
+        if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0) {
+            loop_overruns++;
+        } else {
+            while (absolute_time_diff_us(get_absolute_time(), deadline) > 0) {
+                tud_task();
+                net_service();
+            }
+        }
+
+        /* How late the next iteration actually starts, whatever the cause:
+         * work that did not fit, or a final USB/lwIP pass that overshot. */
+        int64_t late_us = absolute_time_diff_us(deadline, get_absolute_time());
+        if (late_us > 0 && (uint32_t)late_us > loop_late_max_us)
+            loop_late_max_us = (uint32_t)late_us;
+
+        /* Skip, never catch up. Adding a period to the old deadline would
+         * compress the iterations after an overrun and turn one late pass
+         * into several. */
+        deadline = make_timeout_time_us(LOOP_PERIOD_US);
     }
 }

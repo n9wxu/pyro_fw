@@ -19,3 +19,17 @@ set(PYRO_PFB_FS_KB     8192)  # littlefs; see the geometry guard in the top leve
 
 # Lua user programs on core1, on the four J3 pads (GPIO18-21).
 set(PYRO_HAS_LUA 1)
+
+# ── Main-loop budget ─────────────────────────────────────────────────
+#
+# Worst-case duration of one core0 iteration, in milliseconds. The shared
+# main loop derives the watchdog timeout from this (2x) and counts every
+# iteration that misses the deadline, so the number is checkable rather
+# than asserted: /api/status reports loop_max_us and loop_overruns.
+#
+# Currently dominated by a 4 KB flash sector erase on the log/OTA path
+# (45 ms typical, but this class of part specifies up to 400 ms) and by the
+# ~42 ms of blocking bias probes in pyro_board.c's pyro_update(). Once the
+# log region is pre-erased on the pad and those probes sample on the next
+# tick instead of sleeping, this drops to roughly the loop period.
+set(PYRO_LOOP_WORST_MS 500)
