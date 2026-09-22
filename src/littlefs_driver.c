@@ -8,23 +8,35 @@
 #include <hardware/sync.h>
 #include <hardware/regs/addressmap.h>
 #include <lfs.h>
+#include "pico/stdlib.h"
 
 /* Core1 must not be fetching instructions from flash while XIP is off, and
- * save_and_disable_interrupts() below acts on the calling core only. These
- * two calls park core1 in a RAM-resident spin first. Both are weak no-ops
- * when Lua is not linked, and lua_core1_park() has a deadline it enforces by
- * killing core1 -- so core0 reaches the erase either way.
- * See docs/core1_hazard.md. */
-__attribute__((weak)) bool lua_core1_park(uint32_t timeout_us) {
-    (void)timeout_us;
+ * save_and_disable_interrupts() below acts on the calling core only.
+ *
+ * Core1 is a dispatched worker: it idles in a RAM-resident spin and executes
+ * only the units core0 hands it. So core0 does not ask permission -- it
+ * checks a flag core1 publishes from inside that RAM loop, which means
+ * "core1's program counter is in RAM", not "core1 has promised to go there".
+ *
+ * Weak, and true, when Lua is not linked: there is no second core to collide
+ * with. See docs/core1_hazard.md. */
+__attribute__((weak)) bool lua_core1_idle(void) {
     return true;
 }
-__attribute__((weak)) void lua_core1_unpark(void) {}
 
-/* Generous: the VM checks for a park request every PYRO_LUA_HOOK_COUNT
- * instructions, and a long C function inside Lua can delay that. Still two
- * orders of magnitude below the point where a flight would notice. */
-#define FLASH_PARK_US 5000u
+/* An erase while core1 is mid-unit would stall it on a flash fetch and, on
+ * the bench, took core0 with it. This is the assertion that cannot happen --
+ * the caller only reaches flash through lfs, and lfs only runs where core0
+ * has already established that core1 is idle. */
+static void assert_core1_idle(void) {
+    while (!lua_core1_idle()) {
+        /* Deliberately not a wait for core1's cooperation: reaching here at
+         * all means a flash write was started from somewhere that did not
+         * check, which is a bug in the caller rather than a race to ride out.
+         * Spinning makes it obvious instead of silently corrupting. */
+        tight_loop_contents();
+    }
+}
 
 /* Must match PFB_RESERVED_FILESYSTEM_SIZE_KB exactly: pico_fota_bootloader
  * carves the filesystem out of the top of flash and sizes its A/B slots
@@ -58,22 +70,20 @@ static int pico_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t of
                      lfs_size_t size) {
     (void)c;
     uint32_t p = (block * FLASH_SECTOR_SIZE) + off;
-    lua_core1_park(FLASH_PARK_US);
+    assert_core1_idle();
     uint32_t ints = save_and_disable_interrupts();
     flash_range_program(fs_base(c) + p, buffer, size);
     restore_interrupts(ints);
-    lua_core1_unpark();
     return 0;
 }
 
 static int pico_erase(const struct lfs_config *c, lfs_block_t block) {
     (void)c;
     uint32_t off = block * FLASH_SECTOR_SIZE;
-    lua_core1_park(FLASH_PARK_US);
+    assert_core1_idle();
     uint32_t ints = save_and_disable_interrupts();
     flash_range_erase(fs_base(c) + off, FLASH_SECTOR_SIZE);
     restore_interrupts(ints);
-    lua_core1_unpark();
     return 0;
 }
 

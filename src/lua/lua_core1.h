@@ -82,11 +82,32 @@ lua_c1_state_t lua_core1_state(void);
 const char *lua_core1_error(void);
 uint32_t lua_core1_heartbeat(void);
 
-/* Park core1 outside flash. Returns true if core1 is parked (or was never
- * running); false if it had to be killed to meet the deadline. Either way
- * the caller may proceed to touch flash. */
-bool lua_core1_park(uint32_t timeout_us);
-void lua_core1_unpark(void);
+/* ── Dispatch ─────────────────────────────────────────────────────
+ *
+ * Core1 is a worker, not a free-running loop. It idles in a RAM-resident spin
+ * and executes only the work core0 hands it, one time-boxed unit per grant.
+ *
+ * That is what makes flash safe, and it replaces asking. Core1 executes from
+ * flash only while it is working, core0 is the one that started that work, so
+ * "is core1 in flash right now" is a question core0 can answer from a flag it
+ * can see -- no request, no ack, no deadline, no kill on timeout.
+ *
+ * The one ordering rule that survives from the old park protocol: core1
+ * publishes "idle" from INSIDE the RAM-resident function. Once core0 observes
+ * it, core1's program counter is already in RAM, so there is no window where
+ * core0 believes core1 is idle while it is still fetching from XIP. */
+
+/* Hand core1 one work unit of at most budget_us. Never blocks. Does nothing
+ * if core1 is still working, which is why the grant should leave slack: a
+ * unit that overruns costs a skipped dispatch, not a stall. */
+void lua_core1_dispatch(uint32_t budget_us);
+
+/* Grants dropped because core1 was still on the previous unit. */
+uint32_t lua_core1_dispatch_skipped(void);
+
+/* True when core1 is idling in RAM and flash is safe to erase or program.
+ * Also true when core1 is off or dead -- there is nothing to collide with. */
+bool lua_core1_idle(void);
 
 /* Unilateral, terminal. Safe to call at any time from core0. */
 void lua_core1_kill(void);
@@ -122,12 +143,12 @@ bool lua_core1_stack_ok(void);
 uint32_t lua_core1_stack_free(void);
 void lua_core1_check_stack(void);
 
-/* Park accounting, for diagnosing a kill: how many parks succeeded, and the
- * request/ack/heartbeat values at the one that did not. */
+/* Dispatch accounting, for diagnosing a kill: units handed out, units taken,
+ * grants skipped because core1 had not finished, and the heartbeat. */
 void lua_core1_park_stats(uint32_t *ok, uint32_t *req, uint32_t *ack, uint32_t *hb);
 
-/* Packed: byte 0 = where core1 is now, byte 1 = where it was when a park
- * went unanswered, byte 2 = the live park request counter. */
+/* Packed: byte 0 = where core1 is now, byte 1 = whether it is executing from
+ * flash, byte 2 = the low bits of the dispatch counter. */
 uint32_t lua_core1_loc(void);
 
 #endif

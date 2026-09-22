@@ -52,6 +52,13 @@ static bool launched;
 #define LUA_PHASE_SCRATCH 2
 #define LUA_SETTLE_MS 15000u
 
+/* How much of each loop period core1 gets.
+ *
+ * Under the 10 ms period this leaves core0 a millisecond of headroom before
+ * the next iteration, so a unit that runs its full box still finishes before
+ * core0 comes back round and starts touching flash again. */
+#define LUA_GRANT_US 9000u
+
 /* Breadcrumb: where core0 was when it last stopped. Survives a watchdog
  * reboot, so the next boot can say what it was doing instead of leaving it to
  * be guessed at. */
@@ -363,6 +370,20 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
 
     lua_core1_service(now_ms);
     log_service(now_ms);
+
+    /* Dispatch LAST.
+     *
+     * Everything core0 does after this point may touch flash -- the slack
+     * loop services lwIP, and an HTTP upload or OTA writes from there -- and
+     * core1 executes from flash for the duration of the grant. Handing out
+     * the unit here gives core1 the rest of the period, which is exactly the
+     * window in which core0 has no flash work of its own scheduled.
+     *
+     * The grant is a fraction of the loop period on purpose. A unit that
+     * overruns costs a skipped dispatch on the next pass, not a stall, and
+     * lua_core1_dispatch() counts those so a script that consistently
+     * overruns is visible rather than merely slow. */
+    lua_core1_dispatch(LUA_GRANT_US);
 
     if (lua_core1_state() == LUA_C1_DEAD && strncmp(status_line, "stopped", 7) != 0) {
         phase(PH_KILLED);

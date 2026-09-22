@@ -389,6 +389,86 @@ static int l_log_line(lua_State *Ls) {
     return 0;
 }
 
+/* ── Pattern-matching guard ───────────────────────────────────────
+ *
+ * Lua's pattern matcher is the one C function a script can reach that is
+ * neither preemptible nor bounded by the arena.
+ *
+ * It is not preemptible because no VM instructions execute inside it, so the
+ * count hook never fires and the time box cannot stop it. It escapes the
+ * arena because matching allocates nothing -- it is pure CPU over a string
+ * that already fits. And backtracking is quadratic. Measured on a host, with
+ * `string.match(("a"):rep(N), "(a-)*$")`:
+ *
+ *      N=400   1.0 ms      N=1600  13.7 ms
+ *      N=800   4.0 ms      N=3200  39.6 ms
+ *
+ * all with zero hook calls. A 3 KB string sits comfortably inside a 32 KB
+ * arena, and an RP2040 is far slower than the machine that produced those
+ * numbers.
+ *
+ * MAXCCALLS does not save this. It bounds recursion DEPTH, which catches
+ * `(a*)*` but not the lazy `(a-)*`: that backtracks iteratively, never
+ * recurses deeply, and simply grinds.
+ *
+ * So the subject is capped instead. The originals are wrapped rather than
+ * replaced -- Lua's own implementation still does the work -- and the cap
+ * applies only where a pattern is actually interpreted: string.find with
+ * plain=true is a memchr and is left alone.
+ *
+ * The original is called through its C function pointer rather than with
+ * lua_call(), so no extra Lua call frame is created and the arguments the
+ * caller pushed are used exactly as they are. */
+#ifndef PYRO_LUA_PATTERN_MAX
+#define PYRO_LUA_PATTERN_MAX 128
+#endif
+
+static int l_pattern_guard(lua_State *Ls) {
+    lua_CFunction orig = (lua_CFunction)lua_touserdata(Ls, lua_upvalueindex(1));
+    const int plain_arg = (int)lua_tointeger(Ls, lua_upvalueindex(2));
+
+    size_t len = 0;
+    if (lua_isstring(Ls, 1)) {
+        (void)lua_tolstring(Ls, 1, &len);
+    }
+
+    /* string.find(s, p, init, true) does no pattern interpretation. */
+    bool plain = plain_arg && lua_toboolean(Ls, plain_arg);
+
+    if (!plain && len > (size_t)PYRO_LUA_PATTERN_MAX) {
+        return luaL_error(Ls,
+                          "pattern match on %d bytes exceeds the %d byte limit "
+                          "(matching cannot be interrupted; use a shorter string)",
+                          (int)len, PYRO_LUA_PATTERN_MAX);
+    }
+    return orig(Ls);
+}
+
+/* Replace string.<name> with a guarded version of itself. plain_arg is the
+ * argument index that disables pattern interpretation, or 0 if none. */
+static void guard_pattern_fn(lua_State *Ls, const char *name, int plain_arg) {
+    lua_getglobal(Ls, "string");
+    lua_getfield(Ls, -1, name);
+    lua_CFunction orig = lua_tocfunction(Ls, -1);
+    lua_pop(Ls, 1);
+    if (!orig) {
+        lua_pop(Ls, 1);
+        return; /* not a C function: leave it alone rather than break it */
+    }
+    lua_pushlightuserdata(Ls, (void *)orig);
+    lua_pushinteger(Ls, plain_arg);
+    lua_pushcclosure(Ls, l_pattern_guard, 2);
+    lua_setfield(Ls, -2, name);
+    lua_pop(Ls, 1);
+}
+
+static void guard_patterns(lua_State *Ls) {
+    guard_pattern_fn(Ls, "find", 4); /* find(s, p, init, plain) */
+    guard_pattern_fn(Ls, "match", 0);
+    guard_pattern_fn(Ls, "gmatch", 0);
+    guard_pattern_fn(Ls, "gsub", 0);
+}
+
 /* ── Environment construction ─────────────────────────────────────── */
 
 /* luaL_newlib() cannot be used here: it expands to sizeof(array)/sizeof(elem),
@@ -487,6 +567,7 @@ void pyro_lua_init(void) {
     luaL_requiref(L, LUA_TABLIBNAME, luaopen_table, 1);
     lua_pop(L, 1);
 
+    guard_patterns(L);
     strip_globals(L);
     lua_pushcfunction(L, l_print);
     lua_setglobal(L, "print");

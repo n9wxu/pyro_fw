@@ -267,6 +267,39 @@ static void test_eval_error_does_not_kill_the_program(void) {
     TEST_ASSERT_EQUAL_INT(3, sim_lua_output_value(0));
 }
 
+/* ── Pattern matching is bounded ──────────────────────────────────
+ *
+ * The matcher is the one reachable C function that is neither preemptible
+ * (no VM instructions run inside it, so the count hook never fires) nor
+ * bounded by the arena (matching allocates nothing). Backtracking is
+ * quadratic, so a few KB of subject is seconds of un-interruptible work. */
+
+static void test_pattern_on_a_long_subject_is_refused(void) {
+    TEST_ASSERT_FALSE(run("local s = ('a'):rep(3000) string.match(s, '(a-)*$')"));
+    TEST_ASSERT_NOT_NULL(strstr(pyro_lua_last_error(), "exceeds"));
+}
+
+static void test_pattern_on_a_short_subject_still_works(void) {
+    TEST_ASSERT_TRUE(run("assert(string.match('temp=42', '(%d+)') == '42')"));
+    TEST_ASSERT_TRUE(run("assert(('a,b,c'):gsub(',', ';') == 'a;b;c')"));
+    TEST_ASSERT_TRUE(run("local n = 0 for w in ('x y z'):gmatch('%a') do n = n + 1 end assert(n == 3)"));
+    TEST_ASSERT_TRUE(run("assert(('hello'):find('ell') == 2)"));
+}
+
+static void test_plain_find_is_not_capped(void) {
+    /* find(s, p, init, true) is a substring search, not pattern
+     * interpretation, so length is not a hazard and must not be refused. */
+    TEST_ASSERT_TRUE_MESSAGE(run("local s = ('a'):rep(500) .. 'b' assert(s:find('b', 1, true) == 501)"),
+                             pyro_lua_last_error());
+}
+
+static void test_non_pattern_string_ops_are_untouched(void) {
+    /* The cap applies to matching only. These are linear and arena-bounded. */
+    TEST_ASSERT_TRUE(run("local s = ('ab'):rep(1000) assert(#s:upper() == 2000)"));
+    TEST_ASSERT_TRUE(run("local s = ('ab'):rep(1000) assert(#s:sub(1, 500) == 500)"));
+    TEST_ASSERT_TRUE(run("assert(string.format('%d-%s', 7, 'x') == '7-x')"));
+}
+
 /* ── Time-boxed work units ────────────────────────────────────────
  *
  * The dispatch model: core0 grants core1 a slice of the loop period, the VM
@@ -605,6 +638,10 @@ int main(void) {
     RUN_TEST(test_print_goes_to_console);
     RUN_TEST(test_eval_error_does_not_kill_the_program);
 
+    RUN_TEST(test_pattern_on_a_long_subject_is_refused);
+    RUN_TEST(test_pattern_on_a_short_subject_still_works);
+    RUN_TEST(test_plain_find_is_not_capped);
+    RUN_TEST(test_non_pattern_string_ops_are_untouched);
     RUN_TEST(test_tick_yields_when_the_time_box_expires);
     RUN_TEST(test_a_yielded_tick_resumes_rather_than_restarts);
     RUN_TEST(test_a_short_tick_completes_within_its_box);

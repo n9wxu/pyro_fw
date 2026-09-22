@@ -23,19 +23,6 @@
 /* ── Shared state ─────────────────────────────────────────────────── */
 
 static volatile uint32_t heartbeat; /* core1 writes */
-/* Park handshake, as a pair of counters rather than a pair of flags.
- *
- * The flag version had a race that bit on the bench. core0 set park_req,
- * waited for park_ack, did its flash write and cleared park_req. core1, on
- * leaving its spin, cleared park_ack -- but not atomically with leaving. So
- * core0's NEXT park could observe the stale park_ack still set, conclude
- * core1 was parked, and erase flash while core1 was on its way back into XIP.
- *
- * With counters there is no stale value to misread: core0 waits for the ack
- * to equal the exact request number it just issued. Odd means "park", even
- * means "released"; core0 owns park_req and core1 owns park_ack. */
-static volatile uint32_t park_req; /* core0 writes; odd = park requested */
-static volatile uint32_t park_ack; /* core1 writes; mirrors park_req      */
 static volatile uint8_t c1_state = LUA_C1_OFF;
 
 /* Where core1 last was. Same idea as the main-loop breadcrumb on core0: when
@@ -183,96 +170,69 @@ uint32_t lua_core1_log_dropped(void) {
     return ring_log.dropped;
 }
 
-/* ── The park protocol ────────────────────────────────────────────
+/* ── Dispatch ─────────────────────────────────────────────────────
  *
- * Core1 must not fetch from flash while core0 erases or programs it. The
- * check runs from core1's VM instruction hook; the wait itself is a
- * RAM-resident function, and the ack is published from inside it. That
- * ordering matters: once core0 observes the ack, core1's program counter is
- * already inside RAM, so there is no window where core0 believes core1 is
- * parked while core1 is still executing from XIP. */
-void __not_in_flash_func(lua_core1_park_check)(void) {
-    /* Re-evaluate in a loop; do NOT acknowledge whatever park_req happens to
-     * hold on the way out.
-     *
-     * The earlier version left the spin and then did park_ack = park_req. If
-     * core0 had already issued the NEXT park by that moment -- and littlefs
-     * parks once per sector, back to back -- core1 published an ack for a
-     * request it was not honouring, while it was on its way back into flash.
-     * core0 took that ack at face value and erased with core1 live in XIP,
-     * which hangs both cores on the stalled fetch. On the bench that showed
-     * up as core0 dying in hal_tasks_tick and core1 frozen with ack stuck at
-     * the previous request.
-     *
-     * Here core1 returns to flash only after observing an EVEN park_req and
-     * acknowledging that. A new odd request arriving at any point is seen on
-     * the next turn of this loop and keeps core1 in RAM, so an odd ack means
-     * core1 is parked, always. */
-    for (;;) {
-        uint32_t req = park_req;
-        if (!(req & 1u)) {
-            if (park_ack != req) {
-                __dmb();
-                park_ack = req;
-            }
-            c1_state = LUA_C1_RUNNING;
-            c1_loc = C1_LOC_UNPARKED;
-            __dmb();
-            return; /* released, and only now is flash safe to touch */
-        }
-        c1_state = LUA_C1_PARKED;
-        c1_loc = C1_LOC_PARKED;
-        __dmb();
-        park_ack = req;
-        while (park_req == req) {
-            tight_loop_contents();
-        }
-    }
-}
+ * core0 owns go and grant_us; core1 owns seen and busy. One writer each, so
+ * no lock and nothing to contend.
+ *
+ * busy is the whole flash interlock. It is set from RAM before core1 returns
+ * to flash and cleared from RAM after it comes back, so core0 observing
+ * busy == 0 means core1's program counter is genuinely in RAM -- not merely
+ * that it promised to go there. */
+static volatile uint32_t c1_go;       /* core0 bumps to hand out a unit  */
+static volatile uint32_t c1_seen;     /* core1 mirrors when it takes one */
+static volatile uint32_t c1_grant_us; /* core0 writes before bumping go  */
+static volatile uint8_t c1_busy;      /* core1: 1 = executing from flash */
+static uint32_t dispatch_skipped;     /* grants dropped: core1 overran   */
 
-bool lua_core1_park(uint32_t timeout_us) {
-    if (c1_state == LUA_C1_OFF || c1_state == LUA_C1_DEAD) {
-        return true; /* nothing running to park */
-    }
-    uint32_t req = (park_req + 1u) | 1u; /* next odd number */
-    park_req = req;
+/* core1's idle: publish idle, wait for work, claim it, declare busy.
+ *
+ * RAM-resident, and the ordering is the point. Clearing busy happens here,
+ * after core1 has left flash; setting it happens here too, before it goes
+ * back. Neither transition is visible to core0 while core1 is somewhere it
+ * should not be. */
+void __not_in_flash_func(lua_core1_idle_wait)(void) {
+    c1_busy = 0;
+    c1_state = LUA_C1_PARKED;
+    c1_loc = C1_LOC_PARKED;
     __dmb();
-    absolute_time_t deadline = make_timeout_time_us(timeout_us);
-    while (park_ack != req) {
-        if (absolute_time_diff_us(get_absolute_time(), deadline) < 0) {
-            /* Core1 did not answer. It may be in a long C function, stuck in
-             * a peripheral loop, or gone. Core0 does not investigate and does
-             * not wait: it removes core1 and carries on. */
-            park_fail_req = req;
-            park_fail_ack = park_ack;
-            park_fail_hb = heartbeat;
-            park_fail_loc = c1_loc;
-            start_err = "no answer to a park request";
-            lua_core1_kill();
-            return false;
-        }
+
+    while (c1_go == c1_seen) {
         tight_loop_contents();
     }
-    park_ok_count++;
-    return true;
+
+    c1_seen = c1_go;
+    c1_busy = 1;
+    c1_state = LUA_C1_RUNNING;
+    c1_loc = C1_LOC_UNPARKED;
+    __dmb();
 }
 
-void lua_core1_park_stats(uint32_t *ok, uint32_t *req, uint32_t *ack, uint32_t *hb) {
-    *ok = park_ok_count;
-    *req = park_fail_req;
-    *ack = park_fail_ack;
-    *hb = park_fail_hb;
-}
-
-uint32_t lua_core1_loc(void) {
-    return c1_loc | ((uint32_t)park_fail_loc << 8) | ((uint32_t)park_req << 16);
-}
-
-void lua_core1_unpark(void) {
-    if (park_req & 1u) {
-        park_req = park_req + 1u; /* even: released */
-        __dmb();
+void lua_core1_dispatch(uint32_t budget_us) {
+    if (c1_state == LUA_C1_OFF || c1_state == LUA_C1_DEAD) {
+        return;
     }
+    if (c1_busy) {
+        /* Still on the previous unit. Skip rather than queue: a grant that
+         * piles up is a core1 running further and further behind core0, and
+         * the counter says so out loud. */
+        dispatch_skipped++;
+        return;
+    }
+    c1_grant_us = budget_us;
+    __dmb();
+    c1_go++;
+}
+
+bool lua_core1_idle(void) {
+    if (c1_state == LUA_C1_OFF || c1_state == LUA_C1_DEAD) {
+        return true; /* nothing running to collide with */
+    }
+    return c1_busy == 0u;
+}
+
+uint32_t lua_core1_dispatch_skipped(void) {
+    return dispatch_skipped;
 }
 
 /* ── The kill ─────────────────────────────────────────────────────
@@ -313,7 +273,6 @@ void lua_core1_kill(void) {
     lua_plat_safe_outputs();
 
     c1_state = LUA_C1_DEAD;
-    park_req = park_ack; /* no outstanding request against a core that is gone */
     __dmb();
 }
 
@@ -348,9 +307,12 @@ static void core1_main(void) {
 
     uint8_t seen = evt_seq;
     while (1) {
+        /* Idle in RAM until core0 hands out a unit. EVERYTHING BELOW THIS
+         * LINE runs from flash, and core0 knows it because core0 started it --
+         * which is what makes core0's own flash writes safe without asking. */
+        lua_core1_idle_wait();
+
         heartbeat++;
-        c1_loc = C1_LOC_PARKCHK;
-        lua_core1_park_check();
         c1_loc = C1_LOC_PINSVC;
         lua_plat_pin_service();
 
@@ -361,7 +323,7 @@ static void core1_main(void) {
             evt_ack = seen;
         }
         c1_loc = C1_LOC_TICK;
-        pyro_lua_tick();
+        pyro_lua_tick_slice(c1_grant_us);
         c1_loc = C1_LOC_TOP;
     }
 }
@@ -518,6 +480,20 @@ void lua_core1_event(const char *name) {
  * somewhere the instruction hook cannot reach -- a C function in a long loop,
  * or a peripheral wait. Core0 kills it rather than waiting to find out. */
 #define C1_STALL_MS 2000u
+
+/* Kept for the status line's shape. The park protocol is gone, so these
+ * report the dispatch counters: units handed out, units taken, and grants
+ * skipped because core1 was still working on the previous one. */
+void lua_core1_park_stats(uint32_t *ok, uint32_t *req, uint32_t *ack, uint32_t *hb) {
+    *ok = c1_go;
+    *req = c1_seen;
+    *ack = dispatch_skipped;
+    *hb = heartbeat;
+}
+
+uint32_t lua_core1_loc(void) {
+    return c1_loc | ((uint32_t)c1_busy << 8) | ((uint32_t)(c1_go & 0xffu) << 16);
+}
 
 void lua_core1_service(uint32_t now_ms) {
     static uint32_t last_hb;

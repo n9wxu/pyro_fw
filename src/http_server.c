@@ -23,8 +23,7 @@
 #include "lua_core1.h"
 #endif
 
-extern bool lua_core1_park(uint32_t timeout_us);
-extern void lua_core1_unpark(void);
+extern bool lua_core1_idle(void);
 
 extern void hal_telemetry_send(const char *sentence);
 #define DBG(fmt, ...)                                                                                                  \
@@ -120,14 +119,17 @@ static void ota_flush(void) {
     while (ota_buf_fill & (FLASH_PAGE_SIZE - 1))
         ota_buf[ota_buf_fill++] = 0xFF;
     uint32_t addr = OTA_SLOT_OFF + ota_offset;
-    /* OTA writes flash too; core1 must be out of XIP first. See
-     * docs/core1_hazard.md and the note in littlefs_driver.c. */
-    lua_core1_park(5000u);
+    /* OTA writes flash too; core1 must be out of XIP first. It is a
+     * dispatched worker, so core0 waits for it to finish the unit it handed
+     * out rather than asking it to stop. Bounded by the grant, which is a
+     * fraction of the loop period. See docs/core1_hazard.md. */
+    while (!lua_core1_idle()) {
+        tight_loop_contents();
+    }
     uint32_t ints = save_and_disable_interrupts();
     flash_range_erase(addr, FLASH_SECTOR_SIZE);
     flash_range_program(addr, ota_buf, ota_buf_fill);
     restore_interrupts(ints);
-    lua_core1_unpark();
     ota_offset += FLASH_SECTOR_SIZE;
     ota_buf_fill = 0;
 }
