@@ -257,6 +257,74 @@ static void test_eval_error_does_not_kill_the_program(void) {
     TEST_ASSERT_EQUAL_INT(3, sim_lua_output_value(0));
 }
 
+/* ── Telemetry data and the log outlet ────────────────────────────
+ *
+ * A script is meant to be able to format the same telemetry the built-in
+ * formatter does. These pin down that it can see everything that sentence
+ * carries, not a subset -- the raw ADC counts especially, since the booleans
+ * round a degraded connector to "good". */
+
+void sim_lua_set_pyro_adc(int channel, int counts);
+void sim_lua_set_thrust(int under_thrust, int apogee_detected);
+const char *sim_lua_log(void);
+void sim_lua_log_clear(void);
+uint32_t sim_lua_log_dropped(void);
+
+static void test_flight_exposes_thrust_and_apogee(void) {
+    sim_lua_set_thrust(1, 0);
+    TEST_ASSERT_TRUE(run("assert(flight.under_thrust() == true)"));
+    TEST_ASSERT_TRUE(run("assert(flight.apogee() == false)"));
+    sim_lua_set_thrust(0, 1);
+    TEST_ASSERT_TRUE(run("assert(flight.under_thrust() == false)"));
+    TEST_ASSERT_TRUE(run("assert(flight.apogee() == true)"));
+}
+
+static void test_pyro_status_carries_the_raw_count(void) {
+    /* The number is the point: a dirty connector sits between the thresholds
+     * and only the count shows it, which is why telemetry carries it. */
+    sim_lua_set_pyro_adc(1, 1873);
+    sim_lua_set_pyro_adc(2, 42);
+    TEST_ASSERT_TRUE(run("assert(pyro.status(1).adc == 1873)"));
+    TEST_ASSERT_TRUE(run("assert(pyro.status(2).adc == 42)"));
+}
+
+static void test_pyro_is_still_read_only_with_adc_added(void) {
+    /* Invariant L11 -- adding a field must not have added a setter. */
+    TEST_ASSERT_TRUE(run("assert(pyro.fire == nil)"));
+    TEST_ASSERT_TRUE(run("assert(pyro.arm == nil)"));
+    TEST_ASSERT_TRUE(run("assert(pyro.set == nil)"));
+    TEST_ASSERT_TRUE(run("assert(pyro.write == nil)"));
+}
+
+static void test_log_write_and_line(void) {
+    sim_lua_log_clear();
+    TEST_ASSERT_TRUE(run("log.write('abc')"));
+    TEST_ASSERT_EQUAL_STRING("abc", sim_lua_log());
+    sim_lua_log_clear();
+    TEST_ASSERT_TRUE(run("log.line('hello')"));
+    TEST_ASSERT_EQUAL_STRING("hello\n", sim_lua_log());
+}
+
+static void test_log_never_blocks_when_flooded(void) {
+    /* A script that outruns the consumer must lose output, not stall: on the
+     * target this ring is the only thing between core1 and a core0 it must
+     * never wait for. */
+    sim_lua_log_clear();
+    uint32_t before = sim_lua_log_dropped();
+    TEST_ASSERT_TRUE(run("for i = 1, 400 do log.line('flooding the ring') end"));
+    TEST_ASSERT_TRUE_MESSAGE(sim_lua_log_dropped() > before, "flood should have dropped, not blocked");
+    TEST_ASSERT_TRUE(run("log.line('still alive')"));
+}
+
+static void test_script_cannot_reach_the_filesystem(void) {
+    /* log.* is the ONLY route to a file, and it is one-way. A script that
+     * could open or read one would be reaching past core0, which owns flash. */
+    TEST_ASSERT_TRUE(run("assert(log.read == nil)"));
+    TEST_ASSERT_TRUE(run("assert(log.open == nil)"));
+    TEST_ASSERT_TRUE(run("assert(io == nil)"));
+    TEST_ASSERT_TRUE(run("assert(os == nil)"));
+}
+
 /* ── Static config check (src/lua/lua_check.c) ───────────────────
  *
  * The checker answers "are this script and this configuration a matched
@@ -409,6 +477,13 @@ int main(void) {
     RUN_TEST(test_script_without_hooks_is_fine);
     RUN_TEST(test_print_goes_to_console);
     RUN_TEST(test_eval_error_does_not_kill_the_program);
+
+    RUN_TEST(test_flight_exposes_thrust_and_apogee);
+    RUN_TEST(test_pyro_status_carries_the_raw_count);
+    RUN_TEST(test_pyro_is_still_read_only_with_adc_added);
+    RUN_TEST(test_log_write_and_line);
+    RUN_TEST(test_log_never_blocks_when_flooded);
+    RUN_TEST(test_script_cannot_reach_the_filesystem);
 
     RUN_TEST(test_check_accepts_a_matching_script);
     RUN_TEST(test_check_reports_syntax_without_running);

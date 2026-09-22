@@ -42,6 +42,10 @@ void lua_app_check(const char *src, int len, const config_t *cfg, lua_chk_result
 /* For the web console. */
 int lua_app_console_read(char *buf, int max);
 
+/* Bytes a script has had written to lua_log.txt. Paired with the ring's drop
+ * counter on /api/lua/console so "my log has holes" is answerable. */
+uint32_t lua_app_log_written(void);
+
 /* One-line status for /api/status. */
 const char *lua_app_status(void);
 

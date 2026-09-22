@@ -166,6 +166,60 @@ int lua_app_console_read(char *buf, int max) {
     return lua_core1_console_read(buf, max);
 }
 
+/* ── Script log ───────────────────────────────────────────────────
+ *
+ * Core1 hands bytes over; core0 owns the file. A separate file rather than
+ * the flight CSV because hal.h's event field is a uint8_t enum code, not a
+ * string -- routing free-form text through it would mean widening a contract
+ * every board implements, for one caller.
+ *
+ * Buffered and flushed on a watermark or a deadline, never per call. A
+ * per-call write would put a flash erase wherever a script happened to call
+ * log(), which is the same mistake hal_log_sample() makes today at
+ * hal_common.c and the reason its flush needs moving. */
+#define LUA_LOG_PATH "lua_log.txt"
+#define LUA_LOG_BUF 512
+#define LUA_LOG_FLUSH_MS 1000u
+
+static char log_buf[LUA_LOG_BUF];
+static int log_len;
+static uint32_t log_due_ms;
+static uint32_t log_written;
+
+static void log_flush(void) {
+    if (log_len <= 0) {
+        return;
+    }
+    hal_file_t *f = hal_fs_open(LUA_LOG_PATH, true /* append */);
+    if (f) {
+        hal_fs_write(f, log_buf, log_len);
+        hal_fs_close(f);
+        log_written += (uint32_t)log_len;
+    }
+    /* Dropped either way. A filesystem that will not take the line is not
+     * something to retry from the flight loop. */
+    log_len = 0;
+}
+
+static void log_service(uint32_t now_ms) {
+    int n = lua_core1_log_read(log_buf + log_len, LUA_LOG_BUF - log_len);
+    log_len += n;
+
+    if (log_len >= LUA_LOG_BUF - 64) {
+        log_flush();
+        log_due_ms = now_ms + LUA_LOG_FLUSH_MS;
+        return;
+    }
+    if (log_len > 0 && (int32_t)(now_ms - log_due_ms) >= 0) {
+        log_flush();
+        log_due_ms = now_ms + LUA_LOG_FLUSH_MS;
+    }
+}
+
+uint32_t lua_app_log_written(void) {
+    return log_written;
+}
+
 const char *lua_app_status(void) {
     return status_line;
 }
@@ -283,9 +337,15 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
                 (ctx->pyro1_fault ? LUA_PYRO_FAULT : 0) | (ctx->pyros_armed ? LUA_PYRO_ARMED : 0);
     f.pyro[1] = (ctx->pyro2_continuity_good ? LUA_PYRO_CONTINUITY : 0) | (ctx->pyro2_fired ? LUA_PYRO_FIRED : 0) |
                 (ctx->pyro2_fault ? LUA_PYRO_FAULT : 0) | (ctx->pyros_armed ? LUA_PYRO_ARMED : 0);
+    f.pyro_adc[0] = ctx->pyro1_adc;
+    f.pyro_adc[1] = ctx->pyro2_adc;
+    f.under_thrust = ctx->under_thrust ? 1 : 0;
+    f.apogee_detected = ctx->apogee_detected ? 1 : 0;
+    f.telem_seq = ctx->telemetry_seq;
     lua_core1_publish(&f);
 
     lua_core1_service(now_ms);
+    log_service(now_ms);
 
     if (lua_core1_state() == LUA_C1_DEAD && strncmp(status_line, "stopped", 7) != 0) {
         phase(PH_KILLED);

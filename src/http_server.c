@@ -499,7 +499,7 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
              * over; a frozen number with a "running" status means the VM is
              * stuck somewhere the instruction hook cannot reach, and core0
              * will kill it shortly. */
-            static char body[1200];
+            static char body[1300];
             char text[900];
             int n = lua_app_console_read(text, sizeof(text) - 1);
             text[n] = '\0';
@@ -518,11 +518,14 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 }
             }
             esc[j] = '\0';
-            int blen = snprintf(body, sizeof(body),
-                                "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
-                                "Content-Type: application/json\r\n\r\n"
-                                "{\"status\":\"%s\",\"heartbeat\":%lu,\"text\":\"%s\"}",
-                                lua_app_status(), (unsigned long)lua_core1_heartbeat(), esc);
+            int blen =
+                snprintf(body, sizeof(body),
+                         "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
+                         "Content-Type: application/json\r\n\r\n"
+                         "{\"status\":\"%s\",\"heartbeat\":%lu,\"log_written\":%lu,"
+                         "\"console_dropped\":%lu,\"log_dropped\":%lu,\"text\":\"%s\"}",
+                         lua_app_status(), (unsigned long)lua_core1_heartbeat(), (unsigned long)lua_app_log_written(),
+                         (unsigned long)lua_core1_console_dropped(), (unsigned long)lua_core1_log_dropped(), esc);
             tcp_write(pcb, body, blen, TCP_WRITE_FLAG_COPY);
             tcp_output(pcb);
             tcp_sent(pcb, on_sent);

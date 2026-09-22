@@ -95,6 +95,7 @@ static const char *api_words[] = {
     "read",     "show",   "fill",   "clear", "count",  "state",    "alt",   "speed",  "maxalt", "pressure",
     "time",     "status", "print",  "tick",  "init",   "on_event", "math",  "string", "table",  "tostring",
     "tonumber", "pairs",  "ipairs", "type",  "select", "error",    "pcall", "assert", "len",    "format",
+    "log",      "line",   "adc",    "seq",   "apogee", "thrust",
 };
 
 static bool is_api_word(const char *s) {

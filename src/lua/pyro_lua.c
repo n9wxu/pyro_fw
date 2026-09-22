@@ -287,6 +287,18 @@ static int l_flight_max_alt(lua_State *Ls) {
     lua_pushinteger(Ls, lua_plat_max_altitude_cm());
     return 1;
 }
+static int l_flight_under_thrust(lua_State *Ls) {
+    lua_pushboolean(Ls, lua_plat_under_thrust());
+    return 1;
+}
+static int l_flight_apogee(lua_State *Ls) {
+    lua_pushboolean(Ls, lua_plat_apogee_detected());
+    return 1;
+}
+static int l_flight_seq(lua_State *Ls) {
+    lua_pushinteger(Ls, (lua_Integer)lua_plat_telem_seq());
+    return 1;
+}
 static int l_pyro_status(lua_State *Ls) {
     int ch = (int)luaL_checkinteger(Ls, 1);
     if (ch != 1 && ch != 2)
@@ -301,7 +313,33 @@ static int l_pyro_status(lua_State *Ls) {
     lua_setfield(Ls, -2, "fault");
     lua_pushboolean(Ls, st & LUA_PYRO_ARMED);
     lua_setfield(Ls, -2, "armed");
+    /* The raw count belongs with the booleans, not in a separate call: a
+     * script deciding whether a channel is trustworthy wants both, and
+     * splitting them invites reading one without the other. */
+    lua_pushinteger(Ls, lua_plat_pyro_adc(ch));
+    lua_setfield(Ls, -2, "adc");
     return 1;
+}
+
+/* ── log.* ────────────────────────────────────────────────────────
+ *
+ * Hands bytes to the application, which owns the file. A script never writes
+ * flash: on the target it runs on core1, and core1 touching flash is the
+ * hazard the whole design exists to prevent. Never blocks -- a flooding
+ * script loses output rather than stalling the core. */
+static int l_log_write(lua_State *Ls) {
+    size_t len;
+    const char *s = luaL_checklstring(Ls, 1, &len);
+    lua_plat_log_write(s, (int)len);
+    return 0;
+}
+
+static int l_log_line(lua_State *Ls) {
+    size_t len;
+    const char *s = luaL_checklstring(Ls, 1, &len);
+    lua_plat_log_write(s, (int)len);
+    lua_plat_log_write("\n", 1);
+    return 0;
 }
 
 /* ── Environment construction ─────────────────────────────────────── */
@@ -331,8 +369,14 @@ static void build_env(lua_State *Ls) {
                                           {"altitude_cm", l_sensor_altitude},
                                           {"speed_cms", l_sensor_speed},
                                           {NULL, NULL}};
-    static const luaL_Reg flight_fns[] = {
-        {"state", l_flight_state}, {"time_ms", l_flight_time}, {"max_altitude_cm", l_flight_max_alt}, {NULL, NULL}};
+    static const luaL_Reg flight_fns[] = {{"state", l_flight_state},
+                                          {"time_ms", l_flight_time},
+                                          {"max_altitude_cm", l_flight_max_alt},
+                                          {"under_thrust", l_flight_under_thrust},
+                                          {"apogee", l_flight_apogee},
+                                          {"seq", l_flight_seq},
+                                          {NULL, NULL}};
+    static const luaL_Reg log_fns[] = {{"write", l_log_write}, {"line", l_log_line}, {NULL, NULL}};
     static const luaL_Reg pyro_fns[] = {{"status", l_pyro_status}, {NULL, NULL}};
     static const luaL_Reg pixel_fns[] = {{"count", l_pixel_count}, {"set", l_pixel_set},   {"fill", l_pixel_fill},
                                          {"clear", l_pixel_clear}, {"show", l_pixel_show}, {NULL, NULL}};
@@ -350,6 +394,7 @@ static void build_env(lua_State *Ls) {
     reg_table(Ls, "sensor", sensor_fns);
     reg_table(Ls, "flight", flight_fns);
     reg_table(Ls, "pyro", pyro_fns);
+    reg_table(Ls, "log", log_fns);
 
     /* Flight state constants, so scripts compare against names. Values match
      * flight_state_t; see flight_states.h. */

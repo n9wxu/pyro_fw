@@ -136,6 +136,15 @@ static int32_t sim_max_alt_cm;
 static int sim_flight_state;
 static uint32_t sim_time_ms;
 static int sim_pyro_status[2];
+static int sim_pyro_adc[2];
+static int sim_under_thrust;
+static int sim_apogee_detected;
+static uint32_t sim_telem_seq;
+
+#define SIM_LOG_BUF 4096
+static char sim_log_buf[SIM_LOG_BUF];
+static int sim_log_len;
+static uint32_t sim_log_dropped;
 
 /* ── lua_platform.h implementation ────────────────────────────────── */
 
@@ -212,6 +221,35 @@ uint32_t lua_plat_time_ms(void) {
 int lua_plat_pyro_status(int channel) {
     return sim_pyro_status[(channel == 2) ? 1 : 0];
 }
+int lua_plat_pyro_adc(int channel) {
+    return sim_pyro_adc[(channel == 2) ? 1 : 0];
+}
+int lua_plat_under_thrust(void) {
+    return sim_under_thrust;
+}
+int lua_plat_apogee_detected(void) {
+    return sim_apogee_detected;
+}
+uint32_t lua_plat_telem_seq(void) {
+    return sim_telem_seq;
+}
+
+/* On the target this hands bytes to core0, which owns the log file. Here
+ * there is one core and no flash, but the buffer keeps the simulator a
+ * faithful bench: a script that floods the log drops output in both places
+ * rather than only on hardware. */
+void lua_plat_log_write(const char *s, int len) {
+    int room = SIM_LOG_BUF - 1 - sim_log_len;
+    if (len > room) {
+        len = room;
+        sim_log_dropped++;
+    }
+    if (len > 0) {
+        memcpy(sim_log_buf + sim_log_len, s, (size_t)len);
+        sim_log_len += len;
+        sim_log_buf[sim_log_len] = '\0';
+    }
+}
 
 void lua_plat_console_out(const char *s, int len) {
     int room = SIM_CONSOLE_BUF - 1 - console_len;
@@ -246,6 +284,28 @@ void sim_lua_set_flight(int state, int32_t alt_cm, int32_t speed_cms, int32_t pr
 
 void sim_lua_set_pyro(int channel, int status) {
     sim_pyro_status[(channel == 2) ? 1 : 0] = status;
+}
+
+void sim_lua_set_pyro_adc(int channel, int counts) {
+    sim_pyro_adc[(channel == 2) ? 1 : 0] = counts;
+}
+
+void sim_lua_set_thrust(int under_thrust, int apogee_detected) {
+    sim_under_thrust = under_thrust;
+    sim_apogee_detected = apogee_detected;
+}
+
+const char *sim_lua_log(void) {
+    return sim_log_buf;
+}
+
+void sim_lua_log_clear(void) {
+    sim_log_len = 0;
+    sim_log_buf[0] = '\0';
+}
+
+uint32_t sim_lua_log_dropped(void) {
+    return sim_log_dropped;
 }
 
 void sim_lua_set_input(int idx, int value) {

@@ -47,6 +47,14 @@ typedef struct {
     int state;
     uint32_t time_ms;
     int pyro[2];
+    /* Everything the built-in telemetry formatter emits, so a script can
+     * produce the same sentences rather than a subset of them. The raw ADC
+     * counts are the point: the booleans in pyro[] round a degraded connector
+     * to "good", and only the count shows it. */
+    int pyro_adc[2];
+    int under_thrust;
+    int apogee_detected;
+    uint32_t telem_seq;
 } lua_flight_t;
 
 /* core1 side: a stable snapshot. */
@@ -89,6 +97,18 @@ void lua_core1_event(const char *name);
 
 /* Drain whatever core1 printed, for the web console. Returns bytes copied. */
 int lua_core1_console_read(char *buf, int max);
+
+/* Drain whatever core1 asked to be logged, for core0 to put in a file.
+ * Core1 must never touch flash, so it hands bytes over and core0 owns the
+ * write; this is the same single-producer ring as the console, pointed at a
+ * different consumer. Returns bytes copied. */
+int lua_core1_log_read(char *buf, int max);
+
+/* Bytes the two rings had to drop because core0 was not draining fast enough.
+ * Dropping is correct -- core1 must never block -- but silent dropping is
+ * not, so these are reported on /api/lua/console. */
+uint32_t lua_core1_console_dropped(void);
+uint32_t lua_core1_log_dropped(void);
 
 /* core0 housekeeping: watches the heartbeat and kills a wedged core1.
  * Called from the main loop; never blocks. */

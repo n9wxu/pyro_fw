@@ -392,6 +392,18 @@ uint32_t lua_plat_time_ms(void) {
 int lua_plat_pyro_status(int channel) {
     return lua_flight_snapshot()->pyro[(channel == 2) ? 1 : 0];
 }
+int lua_plat_pyro_adc(int channel) {
+    return lua_flight_snapshot()->pyro_adc[(channel == 2) ? 1 : 0];
+}
+int lua_plat_under_thrust(void) {
+    return lua_flight_snapshot()->under_thrust;
+}
+int lua_plat_apogee_detected(void) {
+    return lua_flight_snapshot()->apogee_detected;
+}
+uint32_t lua_plat_telem_seq(void) {
+    return lua_flight_snapshot()->telem_seq;
+}
 
 /* ── Safing, from core0 ───────────────────────────────────────────── */
 

@@ -98,41 +98,88 @@ const lua_flight_t *lua_flight_snapshot(void) {
     return &flight_copy;
 }
 
-/* ── Console ring, core1 -> core0 ─────────────────────────────────
+/* ── Byte rings, core1 -> core0 ───────────────────────────────────
  *
  * Single producer (core1), single consumer (core0), power-of-two size, so
- * head and tail are each written by one core only and no lock is needed. */
+ * head and tail are each written by one core only and no lock is needed.
+ *
+ * Two of them: the console, which core0 serves to the web UI, and the log,
+ * which core0 appends to a file. They are the same structure because they are
+ * the same problem -- core1 produces bytes it must not block on and must not
+ * write to flash itself.
+ *
+ * Full means drop. That is deliberate: the alternative is core1 waiting on
+ * core0, which is the one thing this whole module exists to prevent. Silent
+ * dropping is not acceptable though, so each ring counts what it lost and
+ * /api/status reports it. */
 
-#define CON_SIZE 2048u
-#define CON_MASK (CON_SIZE - 1u)
-static char con_buf[CON_SIZE];
-static volatile uint32_t con_head; /* core1 writes */
-static volatile uint32_t con_tail; /* core0 writes */
+#define RING_SIZE 2048u
+#define RING_MASK (RING_SIZE - 1u)
 
-void lua_plat_console_out(const char *s, int len) {
-    uint32_t h = con_head;
-    for (int i = 0; i < len; i++) {
-        uint32_t next = (h + 1u) & CON_MASK;
-        if (next == (con_tail & CON_MASK)) {
-            break; /* full: drop, never block */
+typedef struct {
+    char buf[RING_SIZE];
+    volatile uint32_t head;    /* core1 writes */
+    volatile uint32_t tail;    /* core0 writes */
+    volatile uint32_t dropped; /* core1 writes */
+} c1_ring_t;
+
+static c1_ring_t ring_console;
+static c1_ring_t ring_log;
+
+static void ring_put(c1_ring_t *r, const char *s, int len) {
+    uint32_t h = r->head;
+    int i = 0;
+    for (; i < len; i++) {
+        uint32_t next = (h + 1u) & RING_MASK;
+        if (next == (r->tail & RING_MASK)) {
+            break; /* full: drop the rest, never block */
         }
-        con_buf[h] = s[i];
+        r->buf[h] = s[i];
         h = next;
     }
     __dmb();
-    con_head = h;
+    r->head = h;
+    if (i < len) {
+        r->dropped += (uint32_t)(len - i);
+    }
+}
+
+static int ring_get(c1_ring_t *r, char *out, int max) {
+    int n = 0;
+    uint32_t t = r->tail;
+    while (n < max && t != r->head) {
+        out[n++] = r->buf[t];
+        t = (t + 1u) & RING_MASK;
+    }
+    __dmb();
+    r->tail = t;
+    return n;
+}
+
+void lua_plat_console_out(const char *s, int len) {
+    ring_put(&ring_console, s, len);
 }
 
 int lua_core1_console_read(char *buf, int max) {
-    int n = 0;
-    uint32_t t = con_tail;
-    while (n < max && t != con_head) {
-        buf[n++] = con_buf[t];
-        t = (t + 1u) & CON_MASK;
-    }
-    __dmb();
-    con_tail = t;
-    return n;
+    return ring_get(&ring_console, buf, max);
+}
+
+/* Core1 hands log bytes over; core0 owns the file. Core1 never touches
+ * flash, so this is the only way a script can reach the log. */
+void lua_plat_log_write(const char *s, int len) {
+    ring_put(&ring_log, s, len);
+}
+
+int lua_core1_log_read(char *buf, int max) {
+    return ring_get(&ring_log, buf, max);
+}
+
+uint32_t lua_core1_console_dropped(void) {
+    return ring_console.dropped;
+}
+
+uint32_t lua_core1_log_dropped(void) {
+    return ring_log.dropped;
 }
 
 /* ── The park protocol ────────────────────────────────────────────
@@ -345,7 +392,8 @@ uint32_t lua_core1_stack_free(void) {
 bool lua_core1_start(const char *script, int len) {
     script_src = script;
     script_len = len;
-    con_head = con_tail = 0;
+    ring_console.head = ring_console.tail = 0;
+    ring_log.head = ring_log.tail = 0;
 
     for (uint32_t i = 0; i < C1_STACK_WORDS; i++) {
         c1_stack[i] = C1_GUARD;
