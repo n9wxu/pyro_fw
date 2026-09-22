@@ -172,6 +172,15 @@ endif()
 #   liolib.c        FILE* I/O; scripts reach the filesystem through our own API
 #   loadlib.c       dynamic library loading
 #   linit.c         its loadedlibs table would pull the above back in
+#   lcorolib.c      coroutine table; pyro_lua.c never requiref's it, and the
+#                   coroutine machinery ldo.c/lstate.c provides is separate
+#   ldblib.c        debug table -- debug.sethook() would defeat the instruction
+#                   budget outright, so its absence is load-bearing, not tidy
+#   lutf8lib.c      utf8 table; never requiref'd
+#
+# The last three were compiled and linked but never opened: dead weight in
+# every image, and on MK1B dead weight it could not afford -- its A/B slot is
+# 384KB and the image with Lua landed within 1KB of it.
 #
 # LUA_32BITS makes numbers 32-bit float and 32-bit int. That halves the size
 # of every Lua value, which matters against a fixed arena, and keeps the
@@ -182,8 +191,7 @@ if(PYRO_HAS_LUA)
         lapi.c lcode.c lctype.c ldebug.c ldo.c ldump.c lfunc.c lgc.c llex.c
         lmem.c lobject.c lopcodes.c lparser.c lstate.c lstring.c ltable.c
         ltm.c lundump.c lvm.c lzio.c
-        lauxlib.c lbaselib.c lcorolib.c ldblib.c lmathlib.c lstrlib.c
-        ltablib.c lutf8lib.c
+        lauxlib.c lbaselib.c lmathlib.c lstrlib.c ltablib.c
     )
     list(TRANSFORM PYRO_LUA_SOURCES PREPEND ${lua_SOURCE_DIR}/)
     add_library(lua_lib STATIC ${PYRO_LUA_SOURCES})

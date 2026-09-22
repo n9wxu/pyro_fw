@@ -190,7 +190,7 @@ void lua_check(const char *src, size_t len, const lua_chk_env_t *env, lua_chk_re
         add(out, LUA_CHK_SYNTAX, "no memory to compile");
         return;
     }
-    if (luaL_loadbuffer(L, src, len, "check") != LUA_OK) {
+    if (luaL_loadbufferx(L, src, len, "check", "t") != LUA_OK) {
         const char *e = lua_tostring(L, -1);
         add(out, LUA_CHK_SYNTAX, "%s", e ? e : "syntax error");
         lua_close(L);

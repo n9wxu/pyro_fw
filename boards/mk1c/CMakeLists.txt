@@ -17,15 +17,17 @@ target_include_directories(pyro_board PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 # PWM slice.
 pico_generate_pio_header(pyro_board ${CMAKE_CURRENT_LIST_DIR}/arm_pump.pio)
 
-# Lua user pins on J3 (GPIO18-21). Everything Lua can reach goes through
-# pio1; see the header comment in lua_pio.pio for why a peripheral function
-# is never used on those pins.
+# Lua user pins. The implementation is shared (src/lua/lua_pio_platform.c);
+# this board contributes only its pin list, in lua_pins.h. Everything Lua can
+# reach goes through PIO or plain SIO -- see the header comment in
+# src/lua/lua_pio.pio for why a peripheral function is never used.
 if(PYRO_HAS_LUA)
-    target_sources(pyro_board PRIVATE lua_platform_mk1c.c)
-    pico_generate_pio_header(pyro_board ${CMAKE_CURRENT_LIST_DIR}/lua_pio.pio)
+    target_sources(pyro_board PRIVATE ${CMAKE_SOURCE_DIR}/src/lua/lua_pio_platform.c)
+    pico_generate_pio_header(pyro_board ${CMAKE_SOURCE_DIR}/src/lua/lua_pio.pio)
     target_include_directories(pyro_board PRIVATE
         ${CMAKE_SOURCE_DIR}/src/lua
         ${lua_SOURCE_DIR})
+    target_link_libraries(pyro_board PUBLIC hardware_pio hardware_dma)
 endif()
 
 target_link_libraries(pyro_board PUBLIC

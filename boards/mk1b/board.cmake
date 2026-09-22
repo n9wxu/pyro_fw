@@ -15,6 +15,9 @@ set(PICO_BOARD pico CACHE STRING "Board type" FORCE)
 set(PYRO_FLASH_SIZE_KB 2048)  # must match PICO_FLASH_SIZE_BYTES for this board
 set(PYRO_PFB_FS_KB     984)   # littlefs; see the geometry guard in the top level
 
+# Lua user programs on the one plain J1 pad (GPIO8). See lua_pins.h.
+set(PYRO_HAS_LUA 1)
+
 # ── Main-loop budget ─────────────────────────────────────────────────
 #
 # Worst-case duration of one core0 iteration, in milliseconds. The shared

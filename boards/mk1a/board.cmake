@@ -16,6 +16,9 @@ set(PYRO_PFB_FS_KB     8192)  # littlefs; see the geometry guard in the top leve
 # No Lua: J3/J4 are pyro terminals and J6 is the serial expansion header, so
 # this board has no free user pins to grant a script.
 
+# Lua user programs on the two plain J6 pads (GPIO18/19). See lua_pins.h.
+set(PYRO_HAS_LUA 1)
+
 # ── Main-loop budget ─────────────────────────────────────────────────
 #
 # Worst-case duration of one core0 iteration, in milliseconds. The shared

@@ -6,6 +6,15 @@
  * boundary — RP2040 has no MPU, so nothing below this line is enforced by
  * hardware. Read them as you would read a syscall table.
  *
+ * TEXT CHUNKS ONLY. Every load below passes mode "t" rather than using
+ * luaL_loadbuffer(), whose NULL mode means "bt" -- text or precompiled
+ * bytecode. Lua 5.4 does not verify bytecode: lundump.c checks a header and
+ * trusts the rest, and the manual says so. A crafted blob POSTed to
+ * /api/lua/script would therefore execute with arbitrary load/store over the
+ * whole address space, which on this board includes the pyro GPIO registers
+ * and core0's stack -- every invariant below is a property of the BINDINGS,
+ * and bytecode never reaches them.
+ *
  * Invariants implemented here (see the plan for the full list):
  *   L4  a capability that configuration did not enable has no table at all,
  *       so a script referencing it fails immediately and legibly
@@ -472,7 +481,7 @@ bool pyro_lua_load(const char *chunkname, const char *src, size_t len) {
     if (!L)
         return false;
     budget_left = PYRO_LUA_BUDGET;
-    if (luaL_loadbuffer(L, src, len, chunkname) != LUA_OK) {
+    if (luaL_loadbufferx(L, src, len, chunkname, "t") != LUA_OK) {
         const char *m = lua_tostring(L, -1);
         snprintf(last_error, sizeof(last_error), "%s", m ? m : "syntax error");
         lua_pop(L, 1);
@@ -515,7 +524,7 @@ bool pyro_lua_eval(const char *src) {
     if (!L)
         return false;
     budget_left = PYRO_LUA_BUDGET;
-    if (luaL_loadbuffer(L, src, strlen(src), "=console") != LUA_OK) {
+    if (luaL_loadbufferx(L, src, strlen(src), "=console", "t") != LUA_OK) {
         const char *m = lua_tostring(L, -1);
         snprintf(last_error, sizeof(last_error), "%s", m ? m : "syntax error");
         lua_plat_console_out(last_error, (int)strlen(last_error));

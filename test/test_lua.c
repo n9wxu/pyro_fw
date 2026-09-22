@@ -13,6 +13,10 @@
 #include "lua_platform_cfg.h"
 #include "pyro_lua.h"
 #include "lua_platform.h"
+/* For the bytecode test: it compiles a chunk with a throwaway plain state,
+ * exactly the way an attacker would produce one. */
+#include "lua.h"
+#include "lauxlib.h"
 #include <string.h>
 
 /* Simulator-side hooks */
@@ -257,6 +261,63 @@ static void test_eval_error_does_not_kill_the_program(void) {
     TEST_ASSERT_EQUAL_INT(3, sim_lua_output_value(0));
 }
 
+/* ── Bytecode is refused ──────────────────────────────────────────
+ *
+ * luaL_loadbuffer()'s NULL mode means "bt" -- text OR precompiled bytecode --
+ * and Lua 5.4 does not verify bytecode: lundump.c checks a header and trusts
+ * the rest. A crafted blob would run with arbitrary load/store over the whole
+ * address space, which on this board includes the pyro GPIO registers and
+ * core0's stack. Every other sandbox test in this file is a property of the
+ * BINDINGS, and bytecode never reaches them, so this one guards all of them.
+ *
+ * The chunk is compiled by a throwaway plain state, exactly the way an
+ * attacker would produce one -- no fixture, no hand-written header. */
+typedef struct {
+    char buf[4096];
+    size_t len;
+} dump_sink_t;
+
+/* Plain C sink, deliberately not luaL_Buffer: that pushes onto the Lua stack
+ * and moves the function off the top, where lua_dump() expects to find it. */
+static int dump_writer(lua_State *Ls, const void *p, size_t sz, void *ud) {
+    (void)Ls;
+    dump_sink_t *d = (dump_sink_t *)ud;
+    if (d->len + sz > sizeof(d->buf))
+        return 1;
+    memcpy(d->buf + d->len, p, sz);
+    d->len += sz;
+    return 0;
+}
+
+static void test_precompiled_bytecode_is_refused(void) {
+    lua_State *T = luaL_newstate();
+    TEST_ASSERT_NOT_NULL(T);
+    const char *src = "beacon_fired = true";
+    TEST_ASSERT_EQUAL_INT(LUA_OK, luaL_loadstring(T, src));
+
+    static dump_sink_t d;
+    d.len = 0;
+    TEST_ASSERT_EQUAL_INT(0, lua_dump(T, dump_writer, &d, 0));
+    lua_close(T);
+
+    TEST_ASSERT_TRUE_MESSAGE(d.len > 0, "nothing dumped");
+    char *copy = d.buf;
+    size_t blen = d.len;
+
+    /* LUA_SIGNATURE is "\x1bLua"; a text chunk can never start with it. */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0x1b, (unsigned char)copy[0], "not a binary chunk");
+
+    TEST_ASSERT_FALSE_MESSAGE(pyro_lua_load("=bc", copy, blen), "binary chunk must be refused");
+    TEST_ASSERT_FALSE_MESSAGE(pyro_lua_eval(copy), "binary chunk must be refused by eval too");
+
+    /* And the VM is still usable afterwards -- a refusal, not a wedge. */
+    TEST_ASSERT_TRUE(run("output.set('beacon', 1)"));
+}
+
+static void test_text_chunks_still_load(void) {
+    TEST_ASSERT_TRUE(run("x = 1 + 1 assert(x == 2)"));
+}
+
 /* ── Telemetry data and the log outlet ────────────────────────────
  *
  * A script is meant to be able to format the same telemetry the built-in
@@ -478,6 +539,8 @@ int main(void) {
     RUN_TEST(test_print_goes_to_console);
     RUN_TEST(test_eval_error_does_not_kill_the_program);
 
+    RUN_TEST(test_precompiled_bytecode_is_refused);
+    RUN_TEST(test_text_chunks_still_load);
     RUN_TEST(test_flight_exposes_thrust_and_apogee);
     RUN_TEST(test_pyro_status_carries_the_raw_count);
     RUN_TEST(test_pyro_is_still_read_only_with_adc_added);

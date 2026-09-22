@@ -21,3 +21,16 @@ target_link_libraries(pyro_board PUBLIC
     hardware_i2c
     hardware_uart
 )
+
+# Lua user pins. The implementation is shared (src/lua/lua_pio_platform.c);
+# this board contributes only its pin list, in lua_pins.h. Everything Lua can
+# reach goes through PIO or plain SIO -- see the header comment in
+# src/lua/lua_pio.pio for why a peripheral function is never used.
+if(PYRO_HAS_LUA)
+    target_sources(pyro_board PRIVATE ${CMAKE_SOURCE_DIR}/src/lua/lua_pio_platform.c)
+    pico_generate_pio_header(pyro_board ${CMAKE_SOURCE_DIR}/src/lua/lua_pio.pio)
+    target_include_directories(pyro_board PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/lua
+        ${lua_SOURCE_DIR})
+    target_link_libraries(pyro_board PUBLIC hardware_pio hardware_dma)
+endif()

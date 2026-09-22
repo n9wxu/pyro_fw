@@ -1,39 +1,38 @@
 /*
- * Lua platform — Pyro MK1C.
+ * Lua platform for RP2040 boards — shared implementation.
  *
- * Implements src/lua/lua_platform.h against the four user pads on J3:
+ * Board-independent. Everything that differs between boards is the pin list,
+ * which each board states in its own lua_pins.h:
  *
- *      J3.1  +3.3V        J3.2  GND
- *      J3.3  GPIO18       J3.4  GPIO19
- *      J3.5  GPIO20       J3.6  GPIO21
- *
- * (verified by netlist export from pyro_mk1c.kicad_sch, not by reading the
- * schematic: J3 pins 3-6 map to U3 QFN pins 29/30/31/32.)
+ *      boards/mk1a/lua_pins.h   J6   GPIO18, GPIO19
+ *      boards/mk1b/lua_pins.h   J1   GPIO8
+ *      boards/mk1c/lua_pins.h   J3   GPIO18-21
  *
  * Three rules shape this file.
  *
- * 1. A Lua pin is only ever SIO or GPIO_FUNC_PIO1, never a peripheral
- *    function. GPIO18/19 carry i2c1 in the RP2040 function table -- the same
- *    instance as the MS5607 on GPIO6/7 -- so a Lua pin in GPIO_FUNC_I2C would
- *    join the flight sensor's bus. There is no call to gpio_set_function with
- *    a peripheral argument anywhere below, which removes the reachability
- *    instead of checking for it.
+ * 1. A Lua pin is only ever SIO or a PIO function, never a peripheral one.
+ *    That is not stylistic: on RP2040 a pin's peripheral function is fixed by
+ *    pin number, and on every one of these boards at least one Lua-reachable
+ *    pin shares an I2C instance with the flight pressure sensor --
+ *    GPIO18/19 are i2c1 on MK1C, whose MS5607 is on GPIO6/7. A Lua pin in
+ *    GPIO_FUNC_I2C would join the flight sensor's bus. There is no call to
+ *    gpio_set_function with a peripheral argument anywhere below, which
+ *    removes the reachability instead of checking for it.
  *
  * 2. Every PIO state machine, program offset and DMA channel is claimed here,
  *    at boot, on core0, before core1 exists. hw_claim_lock() takes spin lock
  *    11; a core1 killed inside it would strand that lock and hang core0's next
  *    claim. Claiming everything up front means core1 never calls hw_claim at
- *    all -- it only writes registers on resources it was handed. See
- *    LUA_PIO_BUDGET below for why the claim cannot fail.
+ *    all -- it only writes registers on resources it was handed.
  *
- * 3. Nothing here blocks. The only unbounded-looking operation, a pixel
- *    show() while DMA is still running, is bounded by the previous transfer:
- *    30 us per pixel at 800 kHz, and it is core1 that waits, never core0.
+ * 3. Nothing here blocks. core1 must stay able to answer a park request, so a
+ *    full FIFO drops rather than waits and a busy DMA skips a frame.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "lua_platform.h"
 #include "board_pins.h"
+#include "lua_pins.h"
 #include "lua_pio.pio.h"
 #include "lua_core1.h"
 #include "lua_platform_cfg.h"
@@ -72,11 +71,10 @@
     (LUA_PIO_PROG_LEN(lua_ws2812) + LUA_PIO_PROG_LEN(lua_uart_tx) + LUA_PIO_PROG_LEN(lua_uart_rx))
 #define LUA_PIO_BUDGET_SMS 3
 
-/* pio1: pio0 is core0's ARM_TOGGLE charge pump and is not shared. */
-#define LUA_PIO pio1
-
-#define LUA_PIN_COUNT 4
-static const uint8_t lua_pins[LUA_PIN_COUNT] = {18, 19, 20, 21};
+/* Which PIO block and which pads -- the board says, because the board is the
+ * only thing that knows. See boards/<name>/lua_pins.h. */
+#define LUA_PIO LUA_PIO_INST
+static const uint8_t lua_pins[LUA_PIN_COUNT] = LUA_PIN_LIST;
 
 /* ── Configuration, resolved once at boot ─────────────────────────
  *
@@ -84,8 +82,8 @@ static const uint8_t lua_pins[LUA_PIN_COUNT] = {18, 19, 20, 21};
  * addresses them by index through name lookup in pyro_lua.c, so a resource
  * that configuration did not create cannot be named, let alone reached. */
 
-#define LUA_MAX_OUT 4
-#define LUA_MAX_IN 4
+#define LUA_MAX_OUT LUA_PIN_COUNT
+#define LUA_MAX_IN LUA_PIN_COUNT
 #define LUA_MAX_SERIAL 1
 #define LUA_MAX_PIXELS 256
 

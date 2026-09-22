@@ -91,6 +91,6 @@ bi_decl(bi_3pins_with_names(BOARD_PIN_I2C_SCL, "I2C1 SCL", BOARD_PIN_BMP280_SDA,
                             BOARD_PIN_MS5607_SDA, "I2C1 SDA (MS5607)"));
 bi_decl(bi_3pins_with_names(BOARD_PIN_PYRO_COMMON_EN, "PYRO shared enable (high side)", BOARD_PIN_PYRO1_EN,
                             "PYRO1 enable", BOARD_PIN_PYRO2_EN, "PYRO2 enable"));
-bi_decl(bi_4pins_with_names(BOARD_PIN_PYRO1_FLAG, "PYRO1 FLAG (AP2192)", BOARD_PIN_PYRO2_FLAG,
-                            "PYRO2 FLAG (AP2192)", BOARD_PIN_PYRO1_SENSE, "PYRO sense 1 (ADC0)",
-                            BOARD_PIN_PYRO2_SENSE, "PYRO sense 2 (ADC1)"));
+bi_decl(bi_4pins_with_names(BOARD_PIN_PYRO1_FLAG, "PYRO1 FLAG (AP2192)", BOARD_PIN_PYRO2_FLAG, "PYRO2 FLAG (AP2192)",
+                            BOARD_PIN_PYRO1_SENSE, "PYRO sense 1 (ADC0)", BOARD_PIN_PYRO2_SENSE,
+                            "PYRO sense 2 (ADC1)"));
