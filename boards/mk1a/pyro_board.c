@@ -1,55 +1,61 @@
 /*
  * Pyro backend — Pyro MK1A.
  *
- * Implements src/pyro.h for the MK1A firing architecture: a per-channel
- * high-side MOSFET (Q6, Q1 DMC2053UVT) and ONE shared low-side MOSFET
- * (Q2 AO3400A) behind an 8 A fuse, with a filtered sense tap on each
- * igniter's low end.
+ * Implements src/pyro.h. Per-channel high-side MOSFET (Q6, Q1 DMC2053UVT)
+ * and ONE shared low-side MOSFET (Q2 AO3400A) behind an 8 A fuse:
  *
- * ===========================================================================
- * STAGE: quiescent sense only. Continuity and firing are NOT implemented.
- * ===========================================================================
+ *   VBATT -> Q6 [FIRE1] -> J3 igniter -.
+ *   VBATT -> Q1 [FIRE2] -> J4 igniter -+-> Initiator_ground
+ *                    Initiator_ground -> F1 8A -> Q2 [PYRO_LOW] -> GND
  *
- * Two things must be settled on the bench before either can be written, and
- * neither can be read off the schematic with the confidence a pyro path
- * needs. Both are stated here rather than guessed at, because a wrong guess
- * is not a bug that shows up as a failed test -- it is an igniter that fires
- * during a self-check, or a continuity reading whose polarity is inverted so
- * an open channel reports good.
+ * Current through an igniter needs BOTH its own high side and the shared low
+ * side, so either one off breaks the circuit.
  *
- *   1. WHICH STIMULUS PROVES CONTINUITY WITHOUT RISKING IGNITION.
+ * ---------------------------------------------------------------------------
+ * SAFETY INVARIANT
  *
- *      Current through an igniter needs its own high side AND the shared low
- *      side, so exactly one of them may be asserted at a time. But the two
- *      choices are not equivalent:
+ *   FIRE1 and FIRE2 are asserted ONLY by pyro_fire(), and only together with
+ *   PYRO_LOW. No diagnostic, self-check, boot path or continuity test asserts
+ *   either, ever. pyro_fire() is the only function below that writes them
+ *   high, which is what makes the sense cycle safe to run continuously.
  *
- *        - low side alone (PYRO_LOW): pulls Initiator_ground to GND with
- *          both igniter tops floating. Safe, but the sense node then says
- *          nothing about whether a bridgewire is present.
- *        - high side alone (FIRE1/FIRE2): puts VBATT across the igniter into
- *          the sense tap's impedance. This does distinguish present from
- *          open -- but it means asserting a FIRE line outside a firing
- *          sequence, and its safety rests entirely on Q2 being genuinely off
- *          rather than leaking.
+ * ---------------------------------------------------------------------------
+ * CONTINUITY SENSE
  *
- *      MK1B answers this by asserting only its shared element, because on
- *      that board the shared element is the HIGH side. Moving the shared
- *      element to the low side does not carry that answer across.
+ * R9/R10 (100k) weakly pull each igniter\'s high node to +3V3, and that node
+ * is what SENSE1/SENSE2 tap through a 1k series resistor. Both high sides stay
+ * off throughout, so no current reaches a bridgewire from VBATT.
  *
- *   2. THE SENSE SCALING.
+ *   Phase 1, PYRO_LOW ASSERTED -- Initiator_ground is pulled to GND, so a
+ *   connected igniter ties the sense node down against the 100k pull-up:
+ *       low  -> a conducting path exists (igniter present)
+ *       high -> open
  *
- *      SENSE1/SENSE2 reach the ADC through a 1k series resistor with a 100nF
- *      filter to ground (R5/C6, R14/C5). No divider is visible on the
- *      schematic. If VBATT can exceed 3.3 V -- a 2S pack is 8.4 V -- then
- *      whatever stimulus is chosen must not present VBATT to an ADC pin, and
- *      the counts-to-volts relation is unknown until that is resolved.
+ *   Phase 2, PYRO_LOW DEASSERTED -- Initiator_ground floats, so the pull-up
+ *   should win on both channels:
+ *       low  -> short to ground
  *
- * Until both are answered, pyro_sample() applies NO stimulus and pyro_get()
- * reports good == false. That is the reference template's rule -- report
- * good == false until continuity is genuinely proven -- and the flight logic
- * gates firing on it, so a board in this state cannot deploy. The raw
- * quiescent counts ARE reported, because they are what the bench needs to
- * answer question 2.
+ * The discrimination is wide because the pull-up is weak. Against 100k, at
+ * 12 bits: a 2 ohm igniter reads 0 counts, a 1k bad joint 41, a 10k leakage
+ * path 372, and a genuine open 4095. So the thresholds below are nowhere near
+ * anything, and a degraded connection lands in the gap between them rather
+ * than being rounded to "good" -- which is the reading that matters, because
+ * a dirty connector is what a boolean hides.
+ *
+ * TIMING, and why this is a state machine rather than two sleeps:
+ *
+ *   The node going OPEN has to charge C6/C5 (100nF) through R9+R5 (101k).
+ *   That is a 10.1 ms time constant, so an open channel needs about 50 ms to
+ *   read as open. Going LOW is fast -- 1k into 100nF, 100 us -- but the slow
+ *   edge is the one that decides open, and it cannot be a sleep_ms() inside a
+ *   10 ms main loop. Each phase therefore parks on a deadline and samples on
+ *   a later iteration; the loop period is the settle timer. See the block
+ *   comment in src/main_hardware.c.
+ *
+ *   One full cycle is 2 x SETTLE_MS = 100 ms, and pyro_get() returns the last
+ *   completed one. Continuity does not change except by firing, so the
+ *   staleness costs nothing: the post-fire verify window opens 500 ms after
+ *   the pulse, by which point every cycle reflects the fired state.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -62,14 +68,52 @@
 
 extern void hal_telemetry_send(const char *sentence);
 
-static uint16_t sns1, sns2;
-static uint32_t last_report_ms;
+/* ── Thresholds, in raw 12-bit counts ─────────────────────────────
+ *
+ * Against the 100k pull-up: 0 counts for a real igniter, 41 for a 1k bad
+ * joint, 372 for a 10k leakage path, 4095 open. Both thresholds sit in empty
+ * space, and the gap between them is reported as neither good nor open. */
+#define CNT_PATH_MAX 500  /* below: a conducting path to ground exists */
+#define CNT_OPEN_MIN 3000 /* above: no path at all                     */
+
+/* 5 time constants of 101k x 100nF. The slow edge decides "open". */
+#define SETTLE_MS 50
+
+/* Idle between cycles, with PYRO_LOW released.
+ *
+ * Continuity does not change except by firing, so measuring it continuously
+ * buys nothing and holds the shared low side on half the time. With an idle
+ * the duty drops to 50 ms in 500, which is less exposure if a high side is
+ * ever leaking, and less average current through the pull-up path. */
+#define IDLE_MS 400
+
+#define FIRE_DURATION_MS 500
+
+/* ── Firing ───────────────────────────────────────────────────────── */
+
+static uint8_t firing_channel;
+static uint32_t fire_start_ms;
+
+/* ── Sense cycle ──────────────────────────────────────────────────── */
+
+typedef enum {
+    SNS_LOW_ON,  /* PYRO_LOW asserted, settling; sample decides present/open */
+    SNS_LOW_OFF, /* PYRO_LOW released, settling; sample decides short        */
+    SNS_IDLE,    /* PYRO_LOW released, nothing driven                        */
+} sns_phase_t;
+
+static sns_phase_t sns_phase;
+static uint32_t sns_due_ms;
+static uint16_t cont_counts[2];  /* phase 1 */
+static uint16_t short_counts[2]; /* phase 2 */
+static bool sns_valid;
+static pyro_continuity_t cont[2];
 
 /* Drive every pyro output inactive. Called from board_early_init() before
  * any slow initialisation, and again from pyro_init().
  *
- * This is the ONLY function in the tree that writes FIRE1, FIRE2 or
- * PYRO_LOW at this stage, and it only ever writes them low. */
+ * pyro_fire() is the only other function that writes FIRE1 or FIRE2, and
+ * only ever high; this is the only one that writes them low. */
 void pyro_safe_all_outputs(void) {
     static const uint8_t outputs[] = {
         BOARD_PIN_FIRE1,
@@ -89,8 +133,8 @@ static uint16_t adc_sample(uint8_t channel) {
     return (uint16_t)adc_read(); /* raw 12-bit, 0-4095 */
 }
 
-/* Median of 3: cheap, and the sense taps are RC-filtered but not immune to
- * a switching transient elsewhere on the board. */
+/* Median of 3. The taps are RC-filtered, but the filter does nothing about a
+ * conversion that lands on a switching transient elsewhere on the board. */
 static uint16_t adc_median3(uint8_t channel) {
     uint16_t x = adc_sample(channel);
     uint16_t y = adc_sample(channel);
@@ -105,6 +149,51 @@ static uint16_t adc_median3(uint8_t channel) {
     return y;
 }
 
+/* Report the raw count alongside the booleans: a degraded connection sits
+ * between the thresholds and only the number shows it. */
+static void classify(int i) {
+    cont[i].raw_adc = cont_counts[i];
+    cont[i].shorted = short_counts[i] < CNT_PATH_MAX;
+    cont[i].open = cont_counts[i] > CNT_OPEN_MIN;
+    cont[i].good = (cont_counts[i] < CNT_PATH_MAX) && !cont[i].shorted;
+}
+
+/* Advance one step. Never blocks: each phase parks on a deadline and the
+ * next main-loop iteration picks it up. */
+static void sense_service(uint32_t now_ms) {
+    if ((int32_t)(now_ms - sns_due_ms) < 0)
+        return;
+
+    switch (sns_phase) {
+    case SNS_LOW_ON:
+        cont_counts[0] = adc_median3(BOARD_ADC_CH_SENSE1);
+        cont_counts[1] = adc_median3(BOARD_ADC_CH_SENSE2);
+        gpio_put(BOARD_PIN_PYRO_LOW, 0);
+        sns_phase = SNS_LOW_OFF;
+        sns_due_ms = now_ms + SETTLE_MS;
+        break;
+
+    case SNS_LOW_OFF:
+        short_counts[0] = adc_median3(BOARD_ADC_CH_SENSE1);
+        short_counts[1] = adc_median3(BOARD_ADC_CH_SENSE2);
+        classify(0);
+        classify(1);
+        sns_valid = true;
+        sns_phase = SNS_IDLE;
+        sns_due_ms = now_ms + IDLE_MS;
+        break;
+
+    case SNS_IDLE:
+    default:
+        gpio_put(BOARD_PIN_PYRO_LOW, 1);
+        sns_phase = SNS_LOW_ON;
+        sns_due_ms = now_ms + SETTLE_MS;
+        break;
+    }
+}
+
+/* ── pyro.h implementation ────────────────────────────────────────── */
+
 void pyro_init(void) {
     pyro_safe_all_outputs();
 
@@ -112,62 +201,83 @@ void pyro_init(void) {
     adc_gpio_init(BOARD_PIN_PYRO1_SENSE);
     adc_gpio_init(BOARD_PIN_PYRO2_SENSE);
 
-    last_report_ms = 0;
-    hal_telemetry_send("!PYRO MK1A quiescent-sense build: continuity and firing not implemented\r\n");
+    firing_channel = 0;
+    sns_valid = false;
+
+    /* Start phase 1 settling now. The deadline has to be a real timestamp:
+     * leaving it at 0 would make the first pyro_update() sample immediately,
+     * before the node had settled at all. */
+    sns_phase = SNS_LOW_ON;
+    sns_due_ms = to_ms_since_boot(get_absolute_time()) + SETTLE_MS;
+    gpio_put(BOARD_PIN_PYRO_LOW, 1);
 }
 
-/* No stimulus: both high sides and the shared low side stay low, so no
- * current can reach either bridgewire. Non-blocking, unlike MK1B's version,
- * because there is no settle to wait for when nothing is driven. */
-void pyro_sample(void) {
-    sns1 = adc_median3(BOARD_ADC_CH_SENSE1);
-    sns2 = adc_median3(BOARD_ADC_CH_SENSE2);
-}
+/* The cycle runs continuously from pyro_update(), so there is no stimulus to
+ * start here and nothing to wait for. Deliberately non-blocking, unlike
+ * MK1B's version: the settle this board needs is 50 ms, five main-loop
+ * periods, which is not something to spend inside the flight loop. */
+void pyro_sample(void) {}
 
 void pyro_get(uint8_t channel, pyro_continuity_t *out) {
     if (channel != 1 && channel != 2)
         return;
-
-    out->raw_adc = (channel == 1) ? sns1 : sns2;
-
-    /* Deliberately not classified. See question 1 in the header: without a
-     * stimulus these counts carry no continuity information, and reporting
-     * anything other than "not good" here would let the flight logic deploy
-     * on a number that means nothing. */
-    out->good = false;
-    out->open = true;
-    out->shorted = false;
+    if (!sns_valid) {
+        /* No complete cycle yet. Report not-good rather than a default-
+         * initialised struct that reads as healthy. */
+        out->raw_adc = 0;
+        out->good = false;
+        out->open = true;
+        out->shorted = false;
+        return;
+    }
+    *out = cont[channel - 1];
 }
 
+/* The ONLY place FIRE1 or FIRE2 goes high, and only with PYRO_LOW. */
 void pyro_fire(uint8_t channel) {
-    /* Not implemented. Refuse loudly rather than silently doing nothing, so
-     * a bench operator sees why. */
-    (void)channel;
-    hal_telemetry_send("!PYRO FIRE REFUSED: firing not implemented on MK1A\r\n");
+    if (channel != 1 && channel != 2)
+        return;
+    gpio_put(BOARD_PIN_PYRO_LOW, 1);
+    gpio_put(channel == 1 ? BOARD_PIN_FIRE1 : BOARD_PIN_FIRE2, 1);
+    firing_channel = channel;
+    fire_start_ms = to_ms_since_boot(get_absolute_time());
 }
 
 void pyro_update(uint32_t now_ms) {
-    pyro_sample();
+    if (firing_channel) {
+        /* The sense cycle is suspended while firing: it owns PYRO_LOW, which
+         * the pulse also needs. Ending the pulse is the only thing that
+         * matters here, and it is the only path that lowers FIRE1/FIRE2. */
+        if ((int32_t)(now_ms - (fire_start_ms + FIRE_DURATION_MS)) >= 0) {
+            gpio_put(firing_channel == 1 ? BOARD_PIN_FIRE1 : BOARD_PIN_FIRE2, 0);
+            gpio_put(BOARD_PIN_PYRO_LOW, 0);
+            firing_channel = 0;
 
-    /* Bring-up telemetry. These are the numbers that answer question 2 in
-     * the header comment: what the sense taps read with nothing driven. */
-    if ((int32_t)(now_ms - last_report_ms) < 5000)
+            /* Restart at phase 1, not at the idle, and re-assert PYRO_LOW
+             * straight away. The post-fire verify window opens 500 ms after
+             * the pulse started -- which is the instant the pulse ends -- and
+             * checks that continuity has gone open. Resuming anywhere else
+             * would leave the PRE-fire reading latched through that window,
+             * and flight_states.c reads a still-good channel as a verify
+             * failure. Settling from here lands a fresh reading ~50 ms in,
+             * inside the window. */
+            gpio_put(BOARD_PIN_PYRO_LOW, 1);
+            sns_phase = SNS_LOW_ON;
+            sns_due_ms = now_ms + SETTLE_MS;
+        }
         return;
-    last_report_ms = now_ms;
-
-    char line[96];
-    snprintf(line, sizeof(line), "!PYRO q[s1=%u s2=%u]\r\n", sns1, sns2);
-    hal_telemetry_send(line);
+    }
+    sense_service(now_ms);
 }
 
 bool pyro_is_firing(void) {
-    return false;
+    return firing_channel != 0;
 }
 
 bool pyro_fault(uint8_t channel) {
-    /* Q6/Q1 are plain dual MOSFETs and Q2 is a plain AO3400A -- no FLAG or
-     * fault output exists anywhere on this board, so there is nothing to
-     * report. Compare MK1B, whose AP2192 does provide one. */
+    /* Q6/Q1 are plain dual MOSFETs and Q2 a plain AO3400A -- no FLAG or fault
+     * output exists anywhere on this board, so there is nothing to report.
+     * Compare MK1B, whose AP2192 does provide one. */
     (void)channel;
     return false;
 }

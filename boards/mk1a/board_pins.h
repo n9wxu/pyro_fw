@@ -53,8 +53,16 @@
  * property MK1B gets from PYRO_COMMON_EN, with the shared element moved to
  * the low side.
  *
- * SENSE1/SENSE2 tap each igniter's low end through a 1k series resistor with
- * a 100nF filter to ground. */
+ * R9/R10 (100k) weakly pull each igniter's HIGH node to +3V3, and SENSE1/
+ * SENSE2 tap that same node through a 1k series resistor with a 100nF filter.
+ * Asserting PYRO_LOW alone therefore reads continuity without any current
+ * from VBATT: a connected igniter ties the node down against the pull-up.
+ * See boards/mk1a/pyro_board.c for the two-phase cycle and its timing.
+ *
+ * NOTE, hardware: during a fire pulse the high side puts VBATT on that node,
+ * so SENSE_n sees the pack voltage through R5/R14 (1k). On a 2S pack that is
+ * about 5 mA into the RP2040's ADC clamp for the 500 ms of the pulse. It is
+ * survivable and firmware cannot change it, but it is worth knowing. */
 #define BOARD_PIN_FIRE1    9  /* -> R4 100R -> Q6A gate  */
 #define BOARD_PIN_PYRO_LOW 10 /* -> R6 1k -> Q2 gate     */
 #define BOARD_PIN_FIRE2    11 /* -> R8 1k -> Q1A gate    */
