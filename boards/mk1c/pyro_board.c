@@ -82,6 +82,7 @@ _Static_assert((3469u * NODE_UV_PER_COUNT) / 1000u >= 8390 && (3469u * NODE_UV_P
 /* ── Tracking test timing (DESIGN.md S3) ─────────────────────────── */
 
 #define TRACK_BIAS_MS 8     /* 5-10 ms of bias per measurement */
+#define TRACK_GAP_MS 2      /* channel A relaxes before B is biased */
 #define TRACK_PERIOD_MS 500 /* duty-cycled: one test per few hundred ms */
 
 /* ── Fault latch ──────────────────────────────────────────────────── */
@@ -105,6 +106,27 @@ static uint16_t trk_bus, trk_a, trk_b;           /* latest tracking (T2)  */
 static bool trk_valid;
 static uint32_t next_track_ms;
 static uint32_t last_report_ms;
+
+/* ── Tracking cycle: deadline-parked, never blocking ──────────────
+ *
+ * Every probe below asserts a bias, waits for the node to settle, then reads
+ * the ADC. The wait is a deadline rather than a sleep: a phase arms the next
+ * one and returns, and a later main-loop iteration picks it up.
+ *
+ * Blocking here costs the flight loop TRACK_BIAS_MS three times plus the 2 ms
+ * gap -- 26 ms against a 10 ms period, which is what put stage 4 at 35 ms and
+ * produced the loop overruns. Same shape as MK1A's sense_service(). */
+typedef enum {
+    TRK_IDLE = 0,  /* waiting out TRACK_PERIOD_MS                    */
+    TRK_T2,        /* BIAS_BUS settling; then sample bus, A and B    */
+    TRK_T3A,       /* BIAS_A settling; then sample A                 */
+    TRK_T3GAP,     /* every bias off, letting A relax before B       */
+    TRK_T3B,       /* BIAS_B settling; then sample B                 */
+    TRK_DECAY,     /* BIAS_BUS settling; then measure the decay      */
+} trk_phase_t;
+
+static trk_phase_t trk_phase;
+static uint32_t trk_due_ms;
 
 static uint16_t adc_sample(uint8_t channel) {
     adc_select_input(channel);
@@ -164,10 +186,8 @@ static void t1_quiescent(void) {
  * zero (<50) is open or absent. Report the raw counts rather than the
  * boolean: a dirty connector at 5 kohm reads ~190 counts and would pass a
  * naive threshold. */
-static void t2_tracking(void) {
-    gpio_put(BOARD_PIN_BIAS_BUS, 1);
-    sleep_ms(TRACK_BIAS_MS);
-
+/* Called once BIAS_BUS has settled, from TRK_T2. */
+static void t2_sample(void) {
     trk_bus = adc_median3(BOARD_ADC_CH_BUS);
     trk_a = adc_median3(BOARD_ADC_CH_A);
     trk_b = adc_median3(BOARD_ADC_CH_B);
@@ -222,9 +242,14 @@ static void t2_tracking(void) {
 static uint16_t decay_tau_us;
 
 #if PYRO_MK1C_BRINGUP_T3
-static void bus_decay_probe(void) {
-    gpio_put(BOARD_PIN_BIAS_BUS, 1);
-    sleep_ms(TRACK_BIAS_MS);
+/* Called once the bias has already settled, from TRK_DECAY.
+ *
+ * The poll below stays, because it is an active measurement of a transient
+ * that lasts about a millisecond rather than an idle wait -- there is nothing
+ * to park on. It is bounded by the iteration count: 4000 conversions at 96
+ * ADC clocks each is 8 ms worst case, and the measured tau is near 1 ms, so
+ * it exits in roughly 500. */
+static void bus_decay_measure(void) {
     adc_select_input(BOARD_ADC_CH_BUS);
     uint16_t peak = (uint16_t)adc_read();
     if (peak < 100) { /* nothing to decay from */
@@ -246,7 +271,7 @@ static void bus_decay_probe(void) {
     decay_tau_us = (us > 65535u) ? 65535u : (uint16_t)us;
 }
 #else
-static void bus_decay_probe(void) {
+static void bus_decay_measure(void) {
     decay_tau_us = 0;
 }
 #endif
@@ -592,22 +617,21 @@ static void wave_service(void) {
  * comparing this against the bus reading separates a weak bias source
  * (common to all three) from a wrong value in the bus network alone. */
 #if PYRO_MK1C_BRINGUP_T3
-static void t3_channel_bias(void) {
-    gpio_put(BOARD_PIN_BIAS_A, 1);
-    sleep_ms(TRACK_BIAS_MS);
+/* Each called once its own bias has settled, from TRK_T3A and TRK_T3B. */
+static void t3_sample_a(void) {
     bias_a_counts = adc_median3(BOARD_ADC_CH_A);
     gpio_put(BOARD_PIN_BIAS_A, 0);
-
-    sleep_ms(2);
-
-    gpio_put(BOARD_PIN_BIAS_B, 1);
-    sleep_ms(TRACK_BIAS_MS);
+}
+static void t3_sample_b(void) {
     bias_b_counts = adc_median3(BOARD_ADC_CH_B);
     gpio_put(BOARD_PIN_BIAS_B, 0);
 }
 #else
-static void t3_channel_bias(void) {
-    bias_a_counts = bias_b_counts = 0;
+static void t3_sample_a(void) {
+    bias_a_counts = 0;
+}
+static void t3_sample_b(void) {
+    bias_b_counts = 0;
 }
 #endif
 
@@ -617,6 +641,64 @@ static void t3_channel_bias(void) {
  * classify. Only the two rows of 8.1 that are safety decisions rather than
  * diagnoses are acted on here -- why a reading is out of band is bench work,
  * done from the logged raw counts. */
+/* Advance the tracking cycle by at most one phase. Never blocks: each phase
+ * arms a deadline and returns.
+ *
+ * A phase that has not come due costs one comparison, so this is safe to call
+ * from every iteration of the flight loop. */
+static void track_service(uint32_t now_ms) {
+    if ((int32_t)(now_ms - trk_due_ms) < 0) {
+        return;
+    }
+
+    switch (trk_phase) {
+    case TRK_IDLE:
+        if ((int32_t)(now_ms - next_track_ms) < 0) {
+            return;
+        }
+        next_track_ms = now_ms + TRACK_PERIOD_MS;
+        gpio_put(BOARD_PIN_BIAS_BUS, 1);
+        trk_phase = TRK_T2;
+        trk_due_ms = now_ms + TRACK_BIAS_MS;
+        break;
+
+    case TRK_T2:
+        t2_sample();
+#if PYRO_MK1C_BRINGUP_T3
+        gpio_put(BOARD_PIN_BIAS_A, 1);
+        trk_phase = TRK_T3A;
+        trk_due_ms = now_ms + TRACK_BIAS_MS;
+#else
+        trk_phase = TRK_IDLE;
+#endif
+        break;
+
+    case TRK_T3A:
+        t3_sample_a();
+        trk_phase = TRK_T3GAP;
+        trk_due_ms = now_ms + TRACK_GAP_MS;
+        break;
+
+    case TRK_T3GAP:
+        gpio_put(BOARD_PIN_BIAS_B, 1);
+        trk_phase = TRK_T3B;
+        trk_due_ms = now_ms + TRACK_BIAS_MS;
+        break;
+
+    case TRK_T3B:
+        t3_sample_b();
+        gpio_put(BOARD_PIN_BIAS_BUS, 1);
+        trk_phase = TRK_DECAY;
+        trk_due_ms = now_ms + TRACK_BIAS_MS;
+        break;
+
+    case TRK_DECAY:
+        bus_decay_measure();
+        trk_phase = TRK_IDLE;
+        break;
+    }
+}
+
 static void evaluate_faults(void) {
     /* Bus sitting at pack voltage with the pump stopped: the high side is
      * shorted to the battery. Do not arm. */
@@ -669,16 +751,19 @@ void pyro_init(void) {
     trk_valid = false;
     next_track_ms = 0;
     last_report_ms = 0;
+    trk_phase = TRK_IDLE;
+    trk_due_ms = 0;
 
     t1_quiescent();
     hal_telemetry_send("!PYRO MK1C sense-only build: firing not implemented\r\n");
 }
 
-/* T2 is duty-cycled from pyro_update(), so the stimulus has usually already
- * happened and this only refreshes it. The bus stays cold either way. */
-void pyro_sample(void) {
-    t2_tracking();
-}
+/* Nothing to do: track_service() runs the stimulus continuously from
+ * pyro_update(), so trk_* is never more than TRACK_PERIOD_MS old. Forcing a
+ * cycle here would mean blocking for TRACK_BIAS_MS inside the flight loop,
+ * which is what the phase machine exists to avoid. MK1A's is empty for the
+ * same reason. */
+void pyro_sample(void) {}
 
 void pyro_get(uint8_t channel, pyro_continuity_t *out) {
     uint16_t counts = 0;
@@ -734,12 +819,7 @@ void pyro_update(uint32_t now_ms) {
     return;
 #endif
 
-    if ((int32_t)(now_ms - next_track_ms) >= 0) {
-        next_track_ms = now_ms + TRACK_PERIOD_MS;
-        t2_tracking();
-        t3_channel_bias();
-        bus_decay_probe();
-    }
+    track_service(now_ms);
 
     evaluate_faults();
 

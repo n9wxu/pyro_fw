@@ -1,6 +1,55 @@
 # Pyro MK1B Firmware - Current Status
 
-_Last updated: 2026-04-04 — v2.1.28 DMA UART TX, all blocking UART writes eliminated_
+_Last updated: 2026-09-22 — v2.1.391, MK1C pyro tracking is deadline-parked_
+
+## 🚧 Configurable pin assignment — in progress
+
+Plan: pyro functions become movable or disableable, freed pins become
+available to Lua, and the two web tabs assign them. Phase 0 shipped the
+defects the feature would otherwise have been built on.
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 0 | `board_early_init()` caller, CFG-06 config merge, `/api/lua/check` escaping, two `snprintf` overflows | ✅ Done, HW verified |
+| 0b | MK1C pyro tracking converted to MK1A's deadline-parked pattern | ✅ Done, HW verified |
+| 1 | `boards/<board>/pin_caps.h` capability table + build-time assertions | 🔨 Next |
+| 2 | `pins.ini` storage, `/api/pins`, power-group validation | ⬜ Planned |
+| 3 | Half-bridge Lua role (MK1A/MK1B), free-running sense getter | ⬜ Planned |
+| 4 | `GET /api/pins/caps`, Config and Lua tab pin UI | ⬜ Planned |
+
+Release model: a pyro channel releases independently; the common low side
+releases only once both channels are released. One channel released yields one
+digital pin; both released yields three digital pins, or one half-bridge plus
+one digital. MK1C's high side is the `ARM_TOGGLE` charge pump, so the bridge
+role is refused there.
+
+### Loop budget, measured 2026-09-22
+
+`loop_max_us` is work only, slack excluded. All three boards pace to 10 ms.
+
+| Board | per iteration | work max | stage 4 | overruns |
+|-------|---------------|----------|---------|----------|
+| MK1A | 10.01 ms | 1.7 ms | 0.3 ms | 0 |
+| MK1B | 10.01 ms | 11.0 ms | 0.3 ms | 242 |
+| MK1C | 10.04 ms | 2.7 ms | 1.2 ms | 0 |
+
+MK1C was 36.2 ms work / 35.4 ms stage 4 / 3462 overruns before its bias tests
+stopped calling `sleep_ms()` inside the flight loop. MK1B's remaining 11 ms is
+`ms5607_read()`'s two `sleep_ms(MS5607_CONV_MS)` on the synchronous fallback
+path — not yet converted.
+
+### OTA transfer rate, measured 2026-09-22
+
+MK1A transfers at roughly a third of the other boards and this follows the
+board, not the cable or the host port (both swapped, timings unchanged).
+Round-trip latency is identical, so it is the bulk flash-write path.
+
+| Board | OTA (333 KB) | per 4 KB sector | 40 GETs |
+|-------|--------------|-----------------|---------|
+| MK1A | 81.4 s | 1.00 s | 12.6 ms each |
+| MK1B | 27.3 s | 0.34 s | 12.8 ms each |
+| MK1C | 34.1 s | 0.43 s | 20.1 ms each |
+
 
 ## 🔬 Hardware Serial Log Analysis (2026-04-04)
 
@@ -238,7 +287,8 @@ This affects ARP replies, DHCP, and TCP SYN-ACK — meaning HTTP can never be es
 | v2-13 | DMA UART TX (replaces v2-10 ring buffer) | ✅ Done v2.1.28 |
 
 ## 🔨 Next Priority
-1. **Flash v2.1.28** — device needs manual BOOTSEL recovery (unplug, hold BOOTSEL, replug)
-2. **Re-enable WFE sleep** — MAC mismatch was the real root cause, not `__wfe()`; re-enable for power savings
-3. Run Playwright web tests against live hardware to verify full stack
-4. Long-duration soak test (network + UART stability over hours)
+1. **Phase 1** — `pin_caps.h` capability table with build-time assertions
+2. **Convert MK1B's `ms5607_read()` fallback** — the last `sleep_ms()` on a flight path, 11 ms in stage 3
+3. **Instrument `ota_flush()`** — separate erase from program timing to explain MK1A's 1.0 s/sector
+4. **Re-enable WFE sleep** — MAC mismatch was the real root cause, not `__wfe()`
+5. Long-duration soak test (network + UART stability over hours)

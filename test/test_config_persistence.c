@@ -138,7 +138,7 @@ void test_config_reload_rejected_during_landed(void) {
 }
 
 /* ── Test 6: Invalid config rejected on reload ── */
-void test_config_reload_rejects_invalid_pyro_mode(void) {
+void test_config_reload_normalises_invalid_pyro_mode(void) {
     flight_context_t ctx;
     flight_init(&ctx);
 
@@ -149,18 +149,25 @@ void test_config_reload_rejects_invalid_pyro_mode(void) {
         mock_time_ms += 100;
     }
 
-    /* Write config with invalid pyro mode */
+    /* An out-of-range mode cannot reach flight_config_reload()'s validation
+     * through a file, because both ends of the round trip normalise it:
+     * config_serialize_ini() writes mode_to_str(99), whose default arm is
+     * "delay", and parse_mode() maps any unrecognised string to 0. The
+     * -3 branch is a backstop against a corrupt in-memory config, not
+     * something this path can trigger.
+     *
+     * So the property to hold is stronger than rejection: the board ends up
+     * with a VALID config rather than refusing to reload. */
     config_t bad_cfg;
     config_set_defaults(&bad_cfg);
-    bad_cfg.pyro1_mode = 99; /* Invalid mode */
+    bad_cfg.pyro1_mode = 99;
     hal_config_save(&bad_cfg);
 
-    /* Reload should fail validation */
     int reload_result = flight_config_reload(&ctx);
-    TEST_ASSERT_EQUAL(-3, reload_result); /* Validation error */
+    TEST_ASSERT_EQUAL(0, reload_result);
 
-    /* Old config unchanged */
-    TEST_ASSERT_EQUAL(PYRO_MODE_DELAY, ctx.config.pyro1_mode);
+    TEST_ASSERT_LESS_OR_EQUAL(PYRO_MODE_DELAY, ctx.config.pyro1_mode);
+    TEST_ASSERT_EQUAL(PYRO_MODE_DELAY, ctx.config.pyro1_mode); /* mode_to_str's default */
 }
 
 /* ── Test 7: Config reload fails if file missing ── */
@@ -244,7 +251,7 @@ void test_config_survives_flight_cycle(void) {
 }
 
 /* ── Test 10: Invalid units rejected on reload ── */
-void test_config_reload_rejects_invalid_units(void) {
+void test_config_reload_normalises_invalid_units(void) {
     flight_context_t ctx;
     flight_init(&ctx);
 
@@ -255,18 +262,18 @@ void test_config_reload_rejects_invalid_units(void) {
         mock_time_ms += 100;
     }
 
-    /* Write config with invalid units */
+    /* Same normalisation as the pyro-mode case above: units_to_str(5) writes
+     * "m" and parse_units() maps anything unrecognised to 1. */
     config_t bad_cfg;
     config_set_defaults(&bad_cfg);
-    bad_cfg.units = 5; /* Invalid - only 0, 1, 2 are valid */
+    bad_cfg.units = 5; /* only 0, 1, 2 are valid */
     hal_config_save(&bad_cfg);
 
-    /* Reload should fail validation */
     int reload_result = flight_config_reload(&ctx);
-    TEST_ASSERT_EQUAL(-3, reload_result); /* Validation error */
+    TEST_ASSERT_EQUAL(0, reload_result);
 
-    /* Old config unchanged */
-    TEST_ASSERT_EQUAL(1, ctx.config.units); /* default is meters */
+    TEST_ASSERT_LESS_OR_EQUAL(2, ctx.config.units);
+    TEST_ASSERT_EQUAL(1, ctx.config.units); /* units_to_str's default: meters */
 }
 
 /* ── Test 11: flight_get_context returns correct pointer ── */
@@ -305,11 +312,11 @@ int main(void) {
     RUN_TEST(test_config_reload_rejected_during_ascent);
     RUN_TEST(test_config_reload_rejected_during_descent);
     RUN_TEST(test_config_reload_rejected_during_landed);
-    RUN_TEST(test_config_reload_rejects_invalid_pyro_mode);
+    RUN_TEST(test_config_reload_normalises_invalid_pyro_mode);
     RUN_TEST(test_config_reload_fails_if_file_missing);
     RUN_TEST(test_multiple_config_changes_persist);
     RUN_TEST(test_config_survives_flight_cycle);
-    RUN_TEST(test_config_reload_rejects_invalid_units);
+    RUN_TEST(test_config_reload_normalises_invalid_units);
     RUN_TEST(test_flight_get_context_returns_correct_pointer);
     RUN_TEST(test_flight_get_state_returns_correct_state);
 

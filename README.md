@@ -401,7 +401,7 @@ The tool checks the device's current version, compares with GitHub releases, dow
 
 ## Development Status
 
-**99 C tests, 22 web UI tests — all passing.**
+**184 C tests across seven suites, 22 web UI tests — all passing.**
 
 The firmware is feature-complete and fully implements the v2 autonomous I/O architecture. All v2 milestones are complete:
 
