@@ -175,6 +175,25 @@ static bool post_writes_flash(const char *path) {
            strcmp(path, "/api/lua/script") == 0 || strncmp(path, "/www/", 5) == 0;
 }
 
+/* Minimal JSON string escaping: quote, backslash and newline, dropping the
+ * rest of the control range. Truncates rather than overflowing. */
+static void json_escape(char *out, int out_sz, const char *in, int len) {
+    int j = 0;
+    for (int i = 0; i < len && j < out_sz - 8; i++) {
+        char ch = in[i];
+        if (ch == '"' || ch == '\\') {
+            out[j++] = '\\';
+            out[j++] = ch;
+        } else if (ch == '\n') {
+            out[j++] = '\\';
+            out[j++] = 'n';
+        } else if ((unsigned char)ch >= 0x20) {
+            out[j++] = ch;
+        }
+    }
+    out[j] = '\0';
+}
+
 /* ── Content type ─────────────────────────────────────────────────── */
 
 static const char *content_type_hdr(const char *path) {
@@ -611,21 +630,16 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             char text[900];
             int n = lua_app_console_read(text, sizeof(text) - 1);
             text[n] = '\0';
-            int j = 0;
             char esc[1024];
-            for (int i = 0; i < n && j < (int)sizeof(esc) - 8; i++) {
-                char ch = text[i];
-                if (ch == '"' || ch == '\\') {
-                    esc[j++] = '\\';
-                    esc[j++] = ch;
-                } else if (ch == '\n') {
-                    esc[j++] = '\\';
-                    esc[j++] = 'n';
-                } else if ((unsigned char)ch >= 0x20) {
-                    esc[j++] = ch;
-                }
-            }
-            esc[j] = '\0';
+            json_escape(esc, sizeof(esc), text, n);
+
+            /* The status line carries pyro_lua_last_error() verbatim, and a
+             * Lua error names its chunk: [string "check"]:128: ... Unescaped,
+             * those quotes end the JSON string, so the response stops parsing
+             * at exactly the moment it has something to report. */
+            char esc_status[192];
+            const char *st = lua_app_status();
+            json_escape(esc_status, sizeof(esc_status), st, (int)strlen(st));
             /* "running" with a frozen heartbeat and c1_go ahead of c1_seen
              * means core0 handed out a unit core1 never claimed. Without
              * these, that and a VM stuck mid-tick look identical. */
@@ -642,7 +656,7 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                          "\"c1_state\":%d,\"c1_loc\":%lu,\"c1_busy\":%lu,\"c1_go\":%lu,\"c1_seen\":%lu,"
                          "\"c1_skipped\":%lu,\"c1_ready\":%s,\"c1_flash_ok\":%s,\"stack_free\":%lu,"
                          "\"text\":\"%s\"}",
-                         lua_app_status(), (unsigned long)lua_core1_heartbeat(), (unsigned long)lua_app_log_written(),
+                         esc_status, (unsigned long)lua_core1_heartbeat(), (unsigned long)lua_app_log_written(),
                          (unsigned long)lua_core1_console_dropped(), (unsigned long)lua_core1_log_dropped(),
                          (unsigned long)hal_log_text_dropped(), hal_log_active() ? "true" : "false",
                          (int)lua_core1_state(), (unsigned long)(dbg_loc & 0xffu),
