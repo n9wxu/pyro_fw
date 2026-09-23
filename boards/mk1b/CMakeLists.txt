@@ -23,7 +23,7 @@ target_link_libraries(pyro_board PUBLIC
 )
 
 # Lua user pins. The implementation is shared (src/lua/lua_pio_platform.c);
-# this board contributes only its pin list, in lua_pins.h. Everything Lua can
+# this board contributes only its pin list, in pin_caps.h. Everything Lua can
 # reach goes through PIO or plain SIO -- see the header comment in
 # src/lua/lua_pio.pio for why a peripheral function is never used.
 if(PYRO_HAS_LUA)

@@ -323,6 +323,7 @@ add_executable(pyro_fw_c
     src/reset_interface.c
     src/littlefs_driver.c
     src/flash_window.c
+    src/pin_caps.c
     # TinyUSB networking helpers
     ${TINYUSB_DIR}/lib/networking/dhserver.c
     ${TINYUSB_DIR}/lib/networking/dnserver.c
@@ -624,6 +625,26 @@ add_custom_target(lua_tests
     COMMENT "Lua sandbox and resource-limit tests"
 )
 endif()
+
+# Pin capability table. Built against MK1A's real table whatever board is
+# selected: the structural invariants are _Static_assert and already fail the
+# build, so what is left to test is the runtime surface, and pinning it to one
+# board keeps the assertions about specific pins stable.
+add_custom_target(pin_caps_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building pin capability tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra
+               -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1a
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_pin_caps.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pin_caps.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_pin_caps
+    COMMAND ${CMAKE_COMMAND} -E echo "Running pin capability tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_pin_caps
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Pin capability table tests"
+)
 
 add_custom_target(buzzer_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building buzzer pattern tests..."

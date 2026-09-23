@@ -1,6 +1,6 @@
 # Pyro MK1B Firmware - Current Status
 
-_Last updated: 2026-09-22 — v2.1.391, MK1C pyro tracking is deadline-parked_
+_Last updated: 2026-09-23 — v2.1.407, pin capability tables land_
 
 ## 🚧 Configurable pin assignment — in progress
 
@@ -12,8 +12,8 @@ defects the feature would otherwise have been built on.
 |-------|-------------|--------|
 | 0 | `board_early_init()` caller, CFG-06 config merge, `/api/lua/check` escaping, two `snprintf` overflows | ✅ Done, HW verified |
 | 0b | MK1C pyro tracking converted to MK1A's deadline-parked pattern | ✅ Done, HW verified |
-| 1 | `boards/<board>/pin_caps.h` capability table + build-time assertions | 🔨 Next |
-| 2 | `pins.ini` storage, `/api/pins`, power-group validation | ⬜ Planned |
+| 1 | `boards/<board>/pin_caps.h` capability table + build-time assertions | ✅ Done, HW verified |
+| 2 | `pins.ini` storage, `/api/pins`, power-group validation | 🔨 Next |
 | 3 | Half-bridge Lua role (MK1A/MK1B), free-running sense getter | ⬜ Planned |
 | 4 | `GET /api/pins/caps`, Config and Lua tab pin UI | ⬜ Planned |
 
@@ -32,6 +32,25 @@ role is refused there.
 | MK1A | 10.01 ms | 1.7 ms | 0.3 ms | 0 |
 | MK1B | 10.01 ms | 11.0 ms | 0.3 ms | 242 |
 | MK1C | 10.04 ms | 2.7 ms | 1.2 ms | 0 |
+
+### Pin capability tables (phase 1)
+
+Each board declares one row per assignable pin in `pin_caps.h`: the functions
+the hardware supports, and the pin's place in the pyro power group. A pyro pad
+lists `FN_PYRO_*` together with what it may become once its channel is
+released — holding both at once is an assignment-time rule (phase 2), not a
+property of the hardware. A pin with no row is not assignable at all, which is
+how MK1C's bias injectors stay unreachable.
+
+| Board | Topology | Protection | Bridge |
+|-------|----------|------------|--------|
+| MK1A | high switched, common low | 8 A one-shot fuse | yes |
+| MK1B | high switched, common low | 1.5 A PTC + AP2192 limit | yes |
+| MK1C | low switched, common high | TPS259570 eFuse | no — the common is a charge pump |
+
+`src/pin_model.h` holds the vocabulary and the `_Static_assert`s; a wrong row
+fails the build. Both assertion families were negative-tested by deliberately
+breaking a row.
 
 MK1C was 36.2 ms work / 35.4 ms stage 4 / 3462 overruns before its bias tests
 stopped calling `sleep_ms()` inside the flight loop. MK1B's remaining 11 ms is

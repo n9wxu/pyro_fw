@@ -2,11 +2,12 @@
  * Lua platform for RP2040 boards — shared implementation.
  *
  * Board-independent. Everything that differs between boards is the pin list,
- * which each board states in its own lua_pins.h:
+ * which each board states in its own pin_caps.h alongside what every other
+ * pin may become:
  *
- *      boards/mk1a/lua_pins.h   J6   GPIO18, GPIO19
- *      boards/mk1b/lua_pins.h   J1   GPIO8
- *      boards/mk1c/lua_pins.h   J3   GPIO18-21
+ *      boards/mk1a/pin_caps.h   J6   GPIO18, GPIO19
+ *      boards/mk1b/pin_caps.h   J1   GPIO8
+ *      boards/mk1c/pin_caps.h   J3   GPIO18-21
  *
  * Three rules shape this file.
  *
@@ -28,7 +29,8 @@
  */
 #include "lua_platform.h"
 #include "board_pins.h"
-#include "lua_pins.h"
+#include "pin_caps.h"
+#include "pin_model.h"
 #include "lua_pio.pio.h"
 #include "lua_core1.h"
 #include "lua_platform_cfg.h"
@@ -66,7 +68,7 @@
     (LUA_PIO_PROG_LEN(lua_ws2812) + LUA_PIO_PROG_LEN(lua_uart_tx) + LUA_PIO_PROG_LEN(lua_uart_rx))
 #define LUA_PIO_BUDGET_SMS 3
 
-/* From boards/<name>/lua_pins.h. */
+/* From boards/<name>/pin_caps.h. */
 #define LUA_PIO LUA_PIO_INST
 static const uint8_t lua_pins[LUA_PIN_COUNT] = LUA_PIN_LIST;
 
@@ -133,6 +135,15 @@ static uint px_offset, tx_offset, rx_offset;
 int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixels) {
     static_assert(LUA_PIO_BUDGET_INSTR <= 32, "Lua PIO programs exceed pio1 instruction memory");
     static_assert(LUA_PIO_BUDGET_SMS <= 4, "Lua PIO roles exceed pio1 state machines");
+
+    /* LUA_PIN_LIST and the capability table are two hand-written statements of
+     * the same fact. A pin listed here but reserved in the table would hand a
+     * script something the flight software owns, which no later check would
+     * catch -- the roles below are indexed by position, not by capability. */
+    int bad = pin_caps_check_lua_list();
+    if (bad >= 0) {
+        return bad; /* reported as a firmware bug by the caller */
+    }
 
     n_out = n_in = n_serial = px_count = 0;
     tx_sm = rx_sm = px_sm = px_dma = -1;

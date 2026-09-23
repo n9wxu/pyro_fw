@@ -35,6 +35,7 @@ targets. `boards/sim` is the worked example.
 | File | Implements | Notes |
 |---|---|---|
 | `board_pins.h` | identity, capabilities, pin map | `BOARD_NAME_STR`, `BOARD_SHORT_STR`, `BOARD_HAS_*` |
+| `pin_caps.h` | what each pin MAY become | `BOARD_PIN_CAPS`, topology, protection class, `LUA_PIN_LIST` |
 | `hal_board.c` | `src/board_if.h` | 9 functions: lifecycle, LED, buzzer, UART |
 | `pyro_board.c` | `src/pyro.h` | 6 functions |
 | `pressure_board.c` | `src/pressure_sensor.h` | 3 functions |
@@ -45,6 +46,26 @@ targets. `boards/sim` is the worked example.
 Everything else — the UART ISR ring buffer, littlefs, config persistence, the
 async task runner, flight logging, USB and networking — lives in
 `src/hal_common/` and is shared. A board never copies it.
+
+### pin_caps.h
+
+`board_pins.h` says where a function *is*. `pin_caps.h` says what each pin
+*may become*, which is what lets configuration retask one without the pin map
+leaving the board package — the split that keeps DD-012 substantially intact.
+
+One row per assignable pin: the functions the hardware supports, and the pin's
+place in the pyro power group. A pyro pad lists `FN_PYRO_*` **together with**
+what it may become once its channel is released; holding both at once is an
+assignment-time rule, not a property of the hardware. A pin with no row is not
+assignable to anything, which is the right state for anything the flight
+software must keep to itself.
+
+`src/pin_model.h` holds the vocabulary and the `_Static_assert`s. A wrong row
+fails the build: the sensor's I2C pads can never be Lua-assignable, an analog
+function must be on an RP2040 ADC pad, a power-group role needs a pyro element
+behind it, and each of `PG_CH1`, `PG_CH2` and `PG_COMMON` may appear once.
+
+Copy `boards/reference/pin_caps.h` and replace every TODO.
 
 `src/hal.h` and `src/pyro.h` are frozen contracts. If a board seems to need a
 new HAL function, the behaviour probably belongs in the flight layer, which
