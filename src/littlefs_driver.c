@@ -13,53 +13,26 @@
 /* Core1 must not be fetching instructions from flash while XIP is off, and
  * save_and_disable_interrupts() below acts on the calling core only.
  *
- * Core1 is a dispatched worker: it idles in a RAM-resident spin and executes
- * only the units core0 hands it. So core0 does not ask permission -- it
- * checks a flag core1 publishes from inside that RAM loop, which means
- * "core1's program counter is in RAM", not "core1 has promised to go there".
+ * This driver does not arrange that and does not wait for it. Core0's exec
+ * loop schedules a window in which core1 is already idle in RAM, and every
+ * write lands inside one. All this layer does is refuse a write that arrived
+ * outside the window, because a driver is the wrong place to make the
+ * decision: it runs several levels down inside an lfs operation, with no idea
+ * whether the caller is the flight log, an upload or a config save, and no
+ * way to do anything useful except stall.
  *
- * Weak, and true, when Lua is not linked: there is no second core to collide
- * with. See docs/core1_hazard.md. */
-__attribute__((weak)) bool lua_core1_flash_ok(void) {
-    return true;
-}
-
-/* An erase while core1 is mid-unit would stall it on a flash fetch and, on
- * the bench, took core0 with it. Callers are expected to have checked
- * lua_core1_flash_ok() first; this is the backstop for one that did not.
+ * Stalling is what the previous two versions did, and both were bugs. An
+ * unbounded spin deadlocked outright -- core1 is gated for its whole startup
+ * on a flag only core0 clears, and core0 cannot clear it from inside here. A
+ * 20 ms bounded spin replaced that with an aggregate one: a single
+ * lfs_file_write touches dozens of blocks, each one paying the 20 ms, which
+ * overran the 1000 ms watchdog and took the board down in stage 2 or stage 6.
  *
- * It is a BOUNDED wait that REFUSES, and both halves matter.
- *
- * Bounded, because core0 is the safety core: "core0 must never wait on
- * anything core1 can hold" (lua_core1.h). The unbounded spin this replaces
- * deadlocked for real -- core1 is gated on c1_ready through its whole
- * startup, and c1_ready is only cleared by core0 reaching lua_app_service(),
- * which core0 cannot do while it is spinning in here. The watchdog then reset
- * the board every boot, reporting "died in stage 6 at 5279 ms".
- *
- * Refuses rather than kills, because this runs inside an lfs callback.
- * Killing core1 from here would tear down PIO and pads underneath whatever
- * core0 was in the middle of writing, to rescue a write that can simply
- * happen later. LFS_ERR_IO propagates out as a failed file operation, which
- * the callers already handle -- the log line is dropped, the upload answers
- * an error -- and the flight loop carries on. Killing core1 is core0's call
- * to make in lua_app_service(), where there is context for it, not the flash
- * driver's. */
-#define CORE1_IDLE_WAIT_US 20000u
-
-static bool wait_core1_idle(void) {
-    if (lua_core1_flash_ok()) {
-        return true;
-    }
-    absolute_time_t deadline = make_timeout_time_us(CORE1_IDLE_WAIT_US);
-    while (!lua_core1_flash_ok()) {
-        if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0) {
-            return false;
-        }
-        tight_loop_contents();
-    }
-    return true;
-}
+ * LFS_ERR_IO propagates out as a failed file operation. Callers already
+ * handle it -- the log line stays in its buffer, the upload pushes back on
+ * the TCP connection -- and every one of them retries a period later, when
+ * the window is open. */
+#include "flash_window.h"
 
 /* Must match PFB_RESERVED_FILESYSTEM_SIZE_KB exactly: pico_fota_bootloader
  * carves the filesystem out of the top of flash and sizes its A/B slots
@@ -93,24 +66,32 @@ static int pico_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t of
                      lfs_size_t size) {
     (void)c;
     uint32_t p = (block * FLASH_SECTOR_SIZE) + off;
-    if (!wait_core1_idle()) {
+    if (!flash_window_is_open()) {
+        flash_window_refused();
         return LFS_ERR_IO;
     }
+    flash_window_crumb(97);
     uint32_t ints = save_and_disable_interrupts();
     flash_range_program(fs_base(c) + p, buffer, size);
     restore_interrupts(ints);
+    flash_window_programmed();
+    flash_window_crumb(98);
     return 0;
 }
 
 static int pico_erase(const struct lfs_config *c, lfs_block_t block) {
     (void)c;
     uint32_t off = block * FLASH_SECTOR_SIZE;
-    if (!wait_core1_idle()) {
+    if (!flash_window_is_open()) {
+        flash_window_refused();
         return LFS_ERR_IO;
     }
+    flash_window_crumb(95);
     uint32_t ints = save_and_disable_interrupts();
     flash_range_erase(fs_base(c) + off, FLASH_SECTOR_SIZE);
     restore_interrupts(ints);
+    flash_window_erased();
+    flash_window_crumb(96);
     return 0;
 }
 

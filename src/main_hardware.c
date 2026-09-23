@@ -11,6 +11,7 @@
 #include "ms5607_driver.h"
 
 #include "hal.h"
+#include "flash_window.h"
 #include "flight_states.h"
 #include "device_status.h"
 #include "buzzer.h"
@@ -93,6 +94,26 @@ static inline void stage_enter(uint8_t n, uint32_t now) {
 }
 
 #define STAGE(n) stage_enter((n), now)
+
+/* A breadcrumb WITHOUT the timing side effects, for sub-steps inside a stage.
+ *
+ * Same encoding as stage_enter's, so the safe-boot latch decodes one with no
+ * new plumbing and reports it as "stage N"; the numbers sit above the stage
+ * range so the two cannot be confused. It does not touch stage_mark_us, so
+ * adding one does not distort a stage's high-water mark.
+ *
+ * These are here because a stage number alone was not enough to find the
+ * deadlock. "Died in stage 6" covered the launch, the log flush and the
+ * dispatch; the crumbs narrowed the same failure to a single line inside
+ * flash_range_program(), which is what identified it. The map:
+ *
+ *   70-74  core0 in the flash window (see below)
+ *   60-61  around lua_core1_start()          (lua_app.c)
+ *   90-93  around one log flush              (lua_app.c)
+ *   95-98  around one sector erase / program (littlefs_driver.c)
+ *
+ * flash_window_crumb() is the same store, callable from those files. */
+#define CRUMB(n) (watchdog_hw->scratch[0] = 0x53540000u | (uint32_t)(n))
 
 #if PYRO_HAS_LUA
 #include "lua_app.h"
@@ -232,8 +253,44 @@ int main() {
 #if PYRO_HAS_LUA
         STAGE(6);
         lua_app_service(&ctx, now);
-        STAGE(7);
 #endif
+
+        /* ── The flash window ─────────────────────────────────────
+         *
+         * The one point in the period where this firmware erases or programs
+         * flash, and it is a point core0 CHOOSES rather than one it waits
+         * for. Core1 is idle here because core0 has not handed it work since
+         * the previous period's dispatch, and that grant was sized to expire
+         * before this line -- not because core1 was asked to stop and
+         * answered.
+         *
+         * Everything above queued its bytes in RAM. hal_flash_service()
+         * writes the flight log, lua_app_flash_service() the script log, and
+         * the slack loop below writes uploads and OTA sectors when a hold is
+         * live. Outside the window every one of those fails cleanly and
+         * retries a period later; nothing anywhere spins.
+         *
+         * If core1 is still executing -- an overrunning unit, or its
+         * unbounded startup -- the window does not open at all. That is a
+         * skipped period, counted and reported, not a stall: core0 carries
+         * straight on and lua_core1_service() above kills a core1 that keeps
+         * doing it. */
+        STAGE(7);
+        CRUMB(70);
+        bool window = lua_core1_flash_ok();
+        if (window) {
+            CRUMB(71);
+            flash_window_open();
+            hal_flash_service(now);
+            CRUMB(72);
+#if PYRO_HAS_LUA
+            lua_app_flash_service(now);
+#endif
+            CRUMB(73);
+        } else {
+            CRUMB(74);
+            flash_window_skipped();
+        }
 
         /* ── Pace to the period ──
          *
@@ -242,14 +299,31 @@ int main() {
          * call as fast as it could, and throttling them to the period rate
          * would cost HTTP and OTA throughput for nothing.
          *
-         * Note for whoever adds the second core's dispatch: it belongs at the
-         * end of the work above, NOT in this slack loop, and anything that
-         * writes flash has to stay ahead of it. */
+         * Two things can happen with core1 here, and the choice is the whole
+         * flash policy:
+         *
+         *   - no hold: the window closes, core1 gets the slack as a bounded
+         *     unit, and an HTTP handler that wants flash pushes back on its
+         *     TCP connection and arms a hold for next period.
+         *   - hold live: core1 gets NOTHING this period. It stays parked in
+         *     RAM, the window stays open across the whole slack, and the
+         *     upload or OTA writes as many sectors as it can. One sector
+         *     erase is tens of milliseconds, which is several periods' worth
+         *     of Lua -- there is no version of this where an upload runs
+         *     concurrently with core1, so core0 makes the trade explicitly
+         *     and briefly rather than colliding with it. */
         STAGE(STAGE_SLACK);
         uint32_t work_us = time_us_32() - iter_t0;
         if (work_us > loop_max_us)
             loop_max_us = work_us;
         loop_count++;
+
+#if PYRO_HAS_LUA
+        if (window && !flash_window_holding(now)) {
+            flash_window_close();
+            lua_app_dispatch(absolute_time_diff_us(get_absolute_time(), deadline));
+        }
+#endif
 
         /* An overrun is "the work left no slack at all", tested BEFORE the
          * slack loop. Testing after would count every iteration, because the
@@ -259,9 +333,30 @@ int main() {
         } else {
             while (absolute_time_diff_us(get_absolute_time(), deadline) > 0) {
                 tud_task();
+                /* Reopen the window the moment core1 finishes early.
+                 *
+                 * Core0 hands out no more work until the next period, so an
+                 * idle core1 observed here STAYS idle for the rest of the
+                 * slack -- which makes the rest of the slack a genuine
+                 * window, not a guess. A tick() that returns in 200 us
+                 * leaves milliseconds core0 can write flash in, and this is
+                 * what lets an upload or a config save land on its first
+                 * packet rather than being handed back to lwIP and waiting
+                 * out a 250 ms tcp_fasttmr before it is redelivered.
+                 *
+                 * Still a read and never a wait: if core1 is working, the
+                 * window simply does not open this period. */
+                if (!flash_window_is_open() && lua_core1_flash_ok()) {
+                    flash_window_open();
+                }
                 net_service();
             }
         }
+
+        /* Shut unconditionally. A flash write that arrives outside this loop
+         * -- from a USB callback, an interrupt, anything that is not core0
+         * here -- must fail rather than land while core1 is running. */
+        flash_window_close();
 
         /* How late the next iteration actually starts, whatever the cause:
          * work that did not fit, or a final USB/lwIP pass that overshot. */

@@ -246,6 +246,60 @@ def check_core1(elf, entry, callers):
     return 1
 
 
+# Functions that MUST be resident in RAM, and the addresses that prove it.
+#
+# __not_in_flash_func() attaches a section attribute and nothing else. It does
+# not stop the compiler inlining the body into a caller that lives in flash,
+# and when that happens the out-of-line copy is discarded, the symbol
+# disappears, and the code that was supposed to run from RAM runs from XIP --
+# silently, with the source still saying __not_in_flash_func.
+#
+# That is not a theoretical failure. lua_core1_idle_wait() is core1's idle
+# spin, and core0's whole flash policy rests on it being in RAM: core0 erases
+# flash while core1 sits in that loop. Inlined into core1_main() it became a
+# tight loop of XIP reads, and an erase that overlapped it never returned --
+# the bootrom polls a status register it cannot read while another master is
+# hammering the QSPI bus. Core0 stopped inside flash_range_program() and the
+# watchdog took the board down, only ever with Lua running.
+#
+# So the placement is checked here rather than trusted. Each entry is
+# (symbol, why it has to be in RAM).
+RAM_RESIDENT = [
+    ("lua_core1_idle_wait", "core1's idle spin; core0 erases flash while core1 is in it"),
+]
+
+# RP2040 SRAM. Anything at 0x10xxxxxx is XIP.
+RAM_LO, RAM_HI = 0x20000000, 0x20042000
+
+
+def check_ram_resident(elf, objdump):
+    """Fail if a function that must live in RAM was placed in, or inlined into, flash."""
+    out = subprocess.run([objdump, "-t", elf], capture_output=True, text=True).stdout
+    addrs = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[-1] and not parts[-1].endswith("_veneer"):
+            try:
+                addrs.setdefault(parts[-1], int(parts[0], 16))
+            except ValueError:
+                pass
+    rc = 0
+    for sym, why in RAM_RESIDENT:
+        addr = addrs.get(sym)
+        if addr is None:
+            print(f"\nFAIL  {sym} has no out-of-line copy -- it was inlined into its caller")
+            print(f"      {why}")
+            print("      __not_in_flash_func() does not imply noinline; add __noinline.")
+            rc = 1
+        elif not (RAM_LO <= addr < RAM_HI):
+            print(f"\nFAIL  {sym} is at 0x{addr:08x}, which is flash, not RAM")
+            print(f"      {why}")
+            rc = 1
+        else:
+            print(f"PASS  {sym} is in RAM at 0x{addr:08x}")
+    return rc
+
+
 def report(elf, roots, core1_entry=None):
     findings, xip, spins, callers = analyse(elf, roots)
     print(f"=== {elf} ===")
@@ -275,6 +329,7 @@ def report(elf, roots, core1_entry=None):
         for root, op, path in xip:
             print(f"      {root} -> ... -> {op}  ({len(path)} frames)")
     rc = 0 if not findings else 1
+    rc |= check_ram_resident(elf, find_objdump())
     if core1_entry:
         print()
         rc |= check_core1(elf, core1_entry, callers)

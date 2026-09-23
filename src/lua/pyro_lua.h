@@ -48,7 +48,7 @@ bool pyro_lua_tick(void);
 
 /* Call on_event(name) if the loaded chunk defined one. Event names match the
  * flight EVT_* set: "LAUNCH", "ARMED", "APOGEE", "PYRO1_FIRE", "LANDING". */
-bool pyro_lua_event(const char *event_name);
+bool pyro_lua_event(const char *event_name, uint32_t budget_us);
 
 /* Evaluate one console line in the live VM. Errors go to the console rather
  * than killing the loaded program. */

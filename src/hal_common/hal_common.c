@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hal.h"
+#include "flash_window.h"
 #include "board_id.h"
 #include "config.h"
 #include "async_task.h"
@@ -436,21 +437,14 @@ void hal_telemetry_send(const char *sentence) {
 
 /* ── Filesystem ───────────────────────────────────────────────────── */
 
-/* Weak so a board without Lua links unchanged: no second core, nothing to
- * collide with. Defined in src/lua/lua_core1.c when Lua is present. */
-__attribute__((weak)) bool lua_core1_flash_ok(void) {
-    return true;
-}
-
-/* Checked at the door rather than inside the lfs driver.
+/* Checked at the door as well as inside the lfs driver.
  *
  * Refusing partway through an lfs operation would leave its metadata
  * half-written; refusing before it starts is a clean failure the caller can
- * retry. Core1 executes from flash throughout its startup and for the
- * duration of each dispatched unit, and an erase during either stalls it on a
- * fetch -- which on the bench took core0 down with it. */
+ * retry. The driver's check is the backstop -- this one is what keeps a
+ * multi-block operation from being started at all outside the window. */
 static bool flash_writable(void) {
-    return lua_core1_flash_ok();
+    return flash_window_is_open();
 }
 
 int hal_fs_mount(void) {
@@ -680,46 +674,44 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
 
 /* ── In-flight data logging [v2-9] ───────────────────────────────── */
 /*
- * Architecture: hal_log_sample() places formatted CSV lines into a 512-byte
- * RAM ring.  A registered async_task_t (log_task) flushes the ring to
- * littlefs every 200ms.  The flight software never blocks on flash I/O.
- * hal_log_start()/hal_log_stop() bookend one flight log file.
+ * Architecture: hal_log_sample() formats a CSV line into a RAM buffer and
+ * returns. Nothing on the flight path reaches flash -- not the first sample,
+ * not a full buffer, and not the file's own creation.
+ *
+ * hal_flash_service() is the other half, and core0's exec loop calls it from
+ * inside the flash window, where core1 is idle in RAM. That is the only place
+ * in this file that erases or programs anything.
+ *
+ * It used to be an async_task_t on the 200 ms tick list, which ran at STAGE 2
+ * -- two stages before core1's grant was even checked, and typically while
+ * core1 was still mid-unit from the previous period. The cadence was right
+ * and the placement was wrong; keeping the cadence and moving the placement
+ * is the whole change.
  */
 
 #define LOG_BUF_SIZE 512
+#define LOG_FLUSH_MS 200u
+
+/* Flush early at the watermark rather than waiting out the period: at 100 Hz
+ * with ~40-byte lines the buffer fills in about 130 ms, so the deadline alone
+ * would drop samples. */
+#define LOG_WATERMARK (LOG_BUF_SIZE - 96)
 
 typedef struct {
-    async_task_t base;
     hal_file_t *file;
     char buf[LOG_BUF_SIZE];
     int head; /* write cursor */
     bool active;
     bool stopping;
+    bool pending_open; /* the file still has to be created, inside a window */
+    uint32_t next_due_ms;
+    uint32_t dropped; /* bytes the buffer could not hold */
 } log_task_t;
 
 static log_task_t log_task;
 
-static void log_task_tick(async_task_t *self, uint32_t now_ms) {
-    log_task_t *t = (log_task_t *)self;
-    if (!t->active) {
-        t->base.next_due_ms = now_ms + 200;
-        return;
-    }
-    if (t->head > 0 && t->file) {
-        hal_fs_write(t->file, t->buf, t->head);
-        t->head = 0;
-    }
-    if (t->stopping && t->head == 0) {
-        if (t->file) {
-            hal_fs_close(t->file);
-            t->file = NULL;
-        }
-        t->active = false;
-        t->stopping = false;
-        t->base.next_due_ms = now_ms + 200;
-        return;
-    }
-    t->base.next_due_ms = now_ms + 200;
+uint32_t hal_log_dropped(void) {
+    return log_task.dropped;
 }
 
 static const char *hw_mode_name(uint8_t mode) {
@@ -740,12 +732,14 @@ static const char *hw_mode_name(uint8_t mode) {
 void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     if (log_task.active)
         return;
-    log_task.file = hal_fs_open("flight_log.csv", false);
-    if (!log_task.file)
-        return;
-    /* write header directly — first call is not time-critical */
-    char hdr[256];
-    int n = snprintf(hdr, sizeof(hdr),
+
+    /* Called from action_launch, at liftoff. It opens no file and writes no
+     * flash: the header goes into the same buffer the samples use, and
+     * hal_flash_service() creates the file in the next window. A launch that
+     * had to wait for a flash erase would be a launch detected late. */
+    log_task.head = 0;
+    log_task.dropped = 0;
+    int n = snprintf(log_task.buf, LOG_BUF_SIZE,
                      "# " PYRO_BOARD_NAME " Flight Data\n# ID: %.8s\n# Name: %.8s\n"
                      "# Pyro1: %s %u\n# Pyro2: %s %u\n"
                      "# Units: %s\n# Ground Pa: %ld\n"
@@ -756,21 +750,63 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
                      : cfg->units == 1 ? "m"
                                        : "cm",
                      (long)ground_pressure_pa);
-    hal_fs_write(log_task.file, hdr, n);
-    log_task.head = 0;
+    if (n > 0 && n < LOG_BUF_SIZE)
+        log_task.head = n;
+
+    log_task.file = NULL;
+    log_task.pending_open = true;
     log_task.active = true;
     log_task.stopping = false;
-    log_task.base.tick = log_task_tick;
-    log_task.base.next_due_ms = hal_time_ms() + 200;
-    /* Register idempotently — only once in the task table */
-    bool already = false;
-    for (int i = 0; i < hw_task_count; i++)
-        if (hw_tasks[i] == &log_task.base) {
-            already = true;
-            break;
+    log_task.next_due_ms = hal_time_ms() + LOG_FLUSH_MS;
+}
+
+/* The flight log's half of the flash window.
+ *
+ * Every branch here can fail without consequence beyond a delay: the open is
+ * retried next window, and the buffer keeps its bytes until a write actually
+ * takes them. Nothing waits, and nothing is dropped by a refusal -- only by a
+ * buffer that filled faster than the windows could drain it, which is counted
+ * and reported. */
+static void log_flash_service(uint32_t now_ms) {
+    if (!log_task.active)
+        return;
+
+    if (log_task.pending_open) {
+        log_task.file = hal_fs_open("flight_log.csv", false);
+        if (!log_task.file)
+            return; /* window refused or the fs is busy: try the next one */
+        log_task.pending_open = false;
+    }
+
+    bool due = (int32_t)(now_ms - log_task.next_due_ms) >= 0;
+    if (log_task.head >= LOG_WATERMARK || log_task.stopping)
+        due = true;
+    if (!due)
+        return;
+
+    if (log_task.head > 0 && log_task.file) {
+        int n = hal_fs_write(log_task.file, log_task.buf, log_task.head);
+        if (n == log_task.head)
+            log_task.head = 0;
+        /* A short or failed write keeps the bytes: the next window retries. */
+    }
+    log_task.next_due_ms = now_ms + LOG_FLUSH_MS;
+
+    if (log_task.stopping && log_task.head == 0) {
+        if (log_task.file) {
+            hal_fs_close(log_task.file);
+            log_task.file = NULL;
         }
-    if (!already)
-        hw_task_register(&log_task.base);
+        log_task.active = false;
+        log_task.stopping = false;
+    }
+}
+
+/* Everything core0 has queued for flash, drained in one place because there
+ * is one place it is safe to drain it. Called only from inside the window. */
+void hal_flash_service(uint32_t now_ms) {
+    log_flash_service(now_ms);
+    board_flash_service(now_ms);
 }
 
 static const char *hw_evt_name(uint8_t evt) {
@@ -799,15 +835,20 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
     char line[80];
     int n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%s\n", (unsigned long)time_ms, (long)pressure_pa,
                      (long)altitude_cm, state, under_thrust, hw_evt_name(event));
-    /* if line doesn't fit flush synchronously to avoid dropping data */
-    if (log_task.head + n > LOG_BUF_SIZE && log_task.file) {
-        hal_fs_write(log_task.file, log_task.buf, log_task.head);
-        log_task.head = 0;
+    if (n <= 0)
+        return;
+    /* No synchronous flush. This runs on the flight path, and the old
+     * fallback put a flash erase wherever a sample happened to overflow the
+     * buffer -- at an arbitrary point in the period, with core1 mid-unit.
+     * Dropping a line and counting it is the honest failure: it means the
+     * windows are not draining fast enough, which is a number an operator can
+     * see rather than a stall they cannot. */
+    if (log_task.head + n > LOG_BUF_SIZE) {
+        log_task.dropped += (uint32_t)n;
+        return;
     }
-    if (n > 0 && n <= LOG_BUF_SIZE) {
-        memcpy(log_task.buf + log_task.head, line, n);
-        log_task.head += n;
-    }
+    memcpy(log_task.buf + log_task.head, line, n);
+    log_task.head += n;
 }
 
 void hal_log_stop(void) {

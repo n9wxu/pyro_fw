@@ -243,14 +243,14 @@ static void test_init_and_tick_are_called(void) {
 
 static void test_event_dispatch(void) {
     TEST_ASSERT_TRUE(run("got = nil function on_event(e) got = e end"));
-    TEST_ASSERT_TRUE(pyro_lua_event("APOGEE"));
+    TEST_ASSERT_TRUE(pyro_lua_event("APOGEE", 0));
     TEST_ASSERT_TRUE(run("assert(got == 'APOGEE')"));
 }
 
 static void test_script_without_hooks_is_fine(void) {
     TEST_ASSERT_TRUE(run("x = 1"));
     TEST_ASSERT_TRUE(pyro_lua_tick());
-    TEST_ASSERT_TRUE(pyro_lua_event("LAUNCH"));
+    TEST_ASSERT_TRUE(pyro_lua_event("LAUNCH", 0));
 }
 
 /* ── Console ──────────────────────────────────────────────────────── */

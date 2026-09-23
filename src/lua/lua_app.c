@@ -5,6 +5,7 @@
  */
 #include "lua_app.h"
 #include "hal.h"
+#include "flash_window.h"
 #include "flight_states.h"
 #include "lua_core1.h"
 #include "lua_platform.h"
@@ -54,10 +55,21 @@ static bool launched;
 
 /* How much of each loop period core1 gets.
  *
- * Under the 10 ms period this leaves core0 a millisecond of headroom before
- * the next iteration, so a unit that runs its full box still finishes before
- * core0 comes back round and starts touching flash again. */
-#define LUA_GRANT_US 9000u
+ * Not a constant any more, and that was the bug. A fixed 9 ms grant handed
+ * out at the end of stage 6 of a 10 ms period runs PAST the end of the
+ * period and into stages 1 and 2 of the next one -- which is exactly where
+ * core0 used to flush the flight log. The two were scheduled to collide.
+ *
+ * The grant is now whatever is left of the period after core0 keeps back a
+ * reserve for its own flash window, so it expires with the period rather
+ * than across it. Core1 gets less time and core0 gets a window that is
+ * guaranteed rather than hoped for.
+ *
+ * LUA_GRANT_MAX_US caps it so a period whose work stages happened to be
+ * quick does not hand out a unit that then overruns into the window. */
+#define LUA_FLASH_RESERVE_US 3000u
+#define LUA_GRANT_MAX_US 5000u
+#define LUA_GRANT_MIN_US 500u
 
 /* How long core1's unbounded startup may take before core0 gives up on it.
  *
@@ -211,30 +223,42 @@ static void log_flush(void) {
     if (log_len <= 0) {
         return;
     }
+    flash_window_crumb(90);
     hal_file_t *f = hal_fs_open(LUA_LOG_PATH, true /* append */);
-    if (f) {
-        hal_fs_write(f, log_buf, log_len);
-        hal_fs_close(f);
-        log_written += (uint32_t)log_len;
-    }
-    /* Dropped either way. A filesystem that will not take the line is not
-     * something to retry from the flight loop. */
-    log_len = 0;
-}
-
-static void log_service(uint32_t now_ms) {
-    int n = lua_core1_log_read(log_buf + log_len, LUA_LOG_BUF - log_len);
-    log_len += n;
-
-    if (log_len >= LUA_LOG_BUF - 64) {
-        log_flush();
-        log_due_ms = now_ms + LUA_LOG_FLUSH_MS;
+    flash_window_crumb(91);
+    if (!f) {
+        /* The window is shut or the single streaming file is in use. Keep the
+         * bytes: the next window retries. They are only dropped when the
+         * buffer itself fills, which core1 already counts. */
         return;
     }
-    if (log_len > 0 && (int32_t)(now_ms - log_due_ms) >= 0) {
-        log_flush();
-        log_due_ms = now_ms + LUA_LOG_FLUSH_MS;
+    int n = hal_fs_write(f, log_buf, log_len);
+    flash_window_crumb(92);
+    hal_fs_close(f);
+    flash_window_crumb(93);
+    if (n == log_len) {
+        log_written += (uint32_t)log_len;
+        log_len = 0;
     }
+}
+
+/* Drain core1's ring into core0's buffer. No flash: this runs in stage 6,
+ * with core1 still holding the previous grant. */
+static void log_drain(void) {
+    int n = lua_core1_log_read(log_buf + log_len, LUA_LOG_BUF - log_len);
+    log_len += n;
+}
+
+/* The flash half, called only from inside the window. */
+void lua_app_flash_service(uint32_t now_ms) {
+    if (log_len <= 0) {
+        return;
+    }
+    if (log_len < LUA_LOG_BUF - 64 && (int32_t)(now_ms - log_due_ms) < 0) {
+        return;
+    }
+    log_flush();
+    log_due_ms = now_ms + LUA_LOG_FLUSH_MS;
 }
 
 uint32_t lua_app_log_written(void) {
@@ -344,7 +368,12 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
         watchdog_hw->scratch[LUA_BOOT_SCRATCH] = LUA_BOOT_MARK;
         phase(PH_LAUNCHED);
         launched = true;
+        /* Bracketed: lua_core1_start() is the one call on this path that
+         * touches the FIFO, and a hang inside it looks identical to a hang
+         * after it without these. */
+        flash_window_crumb(60);
         lua_core1_start(script_buf, script_len);
+        flash_window_crumb(61);
         phase(17);
         snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)", lua_plat_output_count(),
                  lua_plat_input_count(), lua_plat_serial_count(), lua_plat_pixel_count());
@@ -396,28 +425,13 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     lua_core1_publish(&f);
 
     lua_core1_service(now_ms);
-    log_service(now_ms);
+    log_drain();
 
-    /* Dispatch LAST.
-     *
-     * Everything core0 does after this point may touch flash -- the slack
-     * loop services lwIP, and an HTTP upload or OTA writes from there -- and
-     * core1 executes from flash for the duration of the grant. Handing out
-     * the unit here gives core1 the rest of the period, which is exactly the
-     * window in which core0 has no flash work of its own scheduled.
-     *
-     * The grant is a fraction of the loop period on purpose. A unit that
-     * overruns costs a skipped dispatch on the next pass, not a stall, and
-     * lua_core1_dispatch() counts those so a script that consistently
-     * overruns is visible rather than merely slow. */
-    /* Not while core1 is still in startup: it is already running, unbounded,
-     * and a grant would mean nothing. */
-    if (lua_core1_ready()) {
-        lua_core1_dispatch(LUA_GRANT_US);
-    } else if (launched && (int32_t)(now_ms - (launch_at_ms + LUA_BOOT_LIMIT_MS)) >= 0 &&
-               lua_core1_state() == LUA_C1_RUNNING) {
-        /* Startup overran. Core0 has been withholding flash the whole time,
-         * so this is not something to wait out. */
+    /* Startup overran. Core0 has been withholding flash the whole time, so
+     * this is not something to wait out. The dispatch itself has moved to
+     * lua_app_dispatch(), which core0 calls after the flash window. */
+    if (!lua_core1_ready() && launched && (int32_t)(now_ms - (launch_at_ms + LUA_BOOT_LIMIT_MS)) >= 0 &&
+        lua_core1_state() == LUA_C1_RUNNING) {
         snprintf(status_line, sizeof(status_line), "killed: startup exceeded %lums", (unsigned long)LUA_BOOT_LIMIT_MS);
         lua_core1_kill();
     }
@@ -433,6 +447,39 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
                  (unsigned long)(loc & 0xff), (unsigned long)((loc >> 8) & 0xff), (unsigned long)((loc >> 16) & 0xff),
                  (unsigned long)lua_core1_stack_free());
     }
+}
+
+/* Hand core1 its unit for this period.
+ *
+ * Called by core0's exec loop AFTER the flash window has closed, with the
+ * microseconds left before the period's deadline. Everything about the
+ * ordering is deliberate:
+ *
+ *   - after the window, because the window is the only place core0 writes
+ *     flash and core1 must be idle for all of it;
+ *   - sized from the time actually left rather than a constant, so the unit
+ *     ends inside this period instead of running into the next one's window;
+ *   - a reserve held back on top of that, because a unit is allowed to
+ *     overrun its box slightly and the window must not pay for it.
+ *
+ * Returning without dispatching is a normal outcome, not a failure: core1
+ * simply stays parked in RAM for a period, which is exactly what a long
+ * flash write needs. */
+void lua_app_dispatch(int64_t slack_us) {
+    if (!lua_core1_ready()) {
+        return; /* still in startup; a grant would mean nothing */
+    }
+    if (slack_us <= (int64_t)LUA_FLASH_RESERVE_US) {
+        return;
+    }
+    uint32_t grant = (uint32_t)(slack_us - (int64_t)LUA_FLASH_RESERVE_US);
+    if (grant > LUA_GRANT_MAX_US) {
+        grant = LUA_GRANT_MAX_US;
+    }
+    if (grant < LUA_GRANT_MIN_US) {
+        return;
+    }
+    lua_core1_dispatch(grant);
 }
 
 void lua_app_event(const char *name) {

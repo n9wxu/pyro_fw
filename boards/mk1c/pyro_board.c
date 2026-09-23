@@ -742,11 +742,21 @@ void pyro_fire(uint8_t channel) {
     hal_telemetry_send("!PYRO FIRE REFUSED: firing not implemented on MK1C\r\n");
 }
 
-void pyro_update(uint32_t now_ms) {
-    /* Serviced here, in the main loop, so the flash write stays out of the
-     * network callback path (DECISIONS.md #2). */
+/* The capture's flash write, run from inside core0's flash window.
+ *
+ * It used to sit at the top of pyro_update(), which is the main loop's
+ * STAGE 4 -- in the loop rather than in the network callback (DECISIONS.md
+ * #2), which was the right half of the problem to solve at the time, but
+ * still a point in the period where core1 is executing from flash. The
+ * window is where that write belongs now; the capture itself still runs in
+ * pyro_update(), because it is ADC work with its own timing and has nothing
+ * to do with flash. */
+void board_flash_service(uint32_t now_ms) {
+    (void)now_ms;
     wave_service();
+}
 
+void pyro_update(uint32_t now_ms) {
     t1_quiescent();
 
 #if PYRO_MK1C_BIAS_HOLD

@@ -15,14 +15,25 @@
 #include "flight_states.h"
 #include "lua_check.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Resolve config into platform resources, load the stored script and launch
  * core1. Call once at boot, on core0, before the flight loop. A failure here
  * is reported and never fatal: the flight computer runs without Lua. */
 void lua_app_init(const config_t *cfg);
 
-/* Main-loop service: publish flight state, watch core1, nothing blocking. */
+/* Main-loop service: publish flight state, watch core1, drain core1's log
+ * ring. Touches no flash and never blocks. */
 void lua_app_service(const flight_context_t *ctx, uint32_t now_ms);
+
+/* The flash half of the above, called by core0 from inside the flash window
+ * -- the one point in the period where core1 is idle in RAM. */
+void lua_app_flash_service(uint32_t now_ms);
+
+/* Hand core1 its unit for this period, sized from the microseconds left
+ * before the deadline. Call AFTER the flash window has closed; core0 skips
+ * it entirely when a flash hold is live, which parks core1 for the period. */
+void lua_app_dispatch(int64_t slack_us);
 
 /* Flight events, forwarded to the script's on_event(). */
 void lua_app_event(const char *name);

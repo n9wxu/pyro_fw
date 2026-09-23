@@ -302,6 +302,7 @@ add_executable(pyro_fw_c
     src/http_server.c
     src/reset_interface.c
     src/littlefs_driver.c
+    src/flash_window.c
     # TinyUSB networking helpers
     ${TINYUSB_DIR}/lib/networking/dhserver.c
     ${TINYUSB_DIR}/lib/networking/dnserver.c

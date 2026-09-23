@@ -183,7 +183,13 @@ static volatile uint32_t c1_go;       /* core0 bumps to hand out a unit  */
 static volatile uint32_t c1_seen;     /* core1 mirrors when it takes one */
 static volatile uint32_t c1_grant_us; /* core0 writes before bumping go  */
 static volatile uint8_t c1_busy;      /* core1: 1 = executing from flash */
-static uint32_t dispatch_skipped;     /* grants dropped: core1 overran   */
+
+/* Set by core1 the first time it reaches the RAM-resident dispatch loop,
+ * i.e. once pyro_lua_init(), the chunk body and init() have all finished AND
+ * its program counter has actually left flash. Declared here because
+ * lua_core1_idle_wait() below is where it is published. */
+static volatile uint8_t c1_ready;
+static uint32_t dispatch_skipped; /* grants dropped: core1 overran   */
 
 /* core1's idle: publish idle, wait for work, claim it, declare busy.
  *
@@ -191,10 +197,43 @@ static uint32_t dispatch_skipped;     /* grants dropped: core1 overran   */
  * after core1 has left flash; setting it happens here too, before it goes
  * back. Neither transition is visible to core0 while core1 is somewhere it
  * should not be. */
-void __not_in_flash_func(lua_core1_idle_wait)(void) {
+/* __noinline is load-bearing, not a hint.
+ *
+ * __not_in_flash_func() only attaches a section attribute. It does NOT stop
+ * the compiler inlining the body into its caller, and core1_main() -- the
+ * single call site -- lives in .text, in flash. GCC duly inlined this, the
+ * out-of-line copy was elided entirely, and the symbol vanished from the
+ * binary: core1's "RAM-resident" idle spin was executing from XIP.
+ *
+ * Which is the whole deadlock. Core1 sat in a tight loop issuing flash reads
+ * while core0 took XIP down and drove the SSI directly; the bootrom's
+ * flash_wait_ready() then polled a status register it could never read
+ * correctly and never returned. On the bench that is core0 stopped inside
+ * flash_range_program(), watchdog at 1000 ms, "died in stage 97" -- and it
+ * reproduced only with Lua running, because core1 is the only thing that
+ * fetches from flash while core0 is erasing.
+ *
+ * support/prove_core0.py fails the build if the symbol goes missing again. */
+void __noinline __not_in_flash_func(lua_core1_idle_wait)(void) {
     c1_busy = 0;
     c1_state = LUA_C1_PARKED;
     c1_loc = C1_LOC_PARKED;
+    /* Startup is over, published from RAM.
+     *
+     * It used to be published at the end of core1_main's prologue, right
+     * after pyro_lua_load() returned -- from FLASH, with the store itself,
+     * the barrier, the evt_seq read and the call into this function all
+     * still to be fetched over XIP. Core0 reads c1_ready as "core1 is out of
+     * flash and the window may open", so for those few instructions core0
+     * believed something core1 could not yet back, opened the window and
+     * started an erase into a core1 that was mid-fetch. On the bench that
+     * was the board dying in the flash window at 2097 ms, every boot.
+     *
+     * c1_busy already followed this rule; c1_ready did not, and it is the
+     * same rule for the same reason. The whole point of a RAM-resident
+     * function is that a flag set inside it is a fact about core1's program
+     * counter rather than a promise about where it is going. */
+    c1_ready = 1;
     __dmb();
 
     while (c1_go == c1_seen) {
@@ -224,12 +263,27 @@ void lua_core1_dispatch(uint32_t budget_us) {
     c1_go++;
 }
 
-/* Set by core1 the first time it reaches the dispatch loop, i.e. once
- * pyro_lua_init(), the chunk body and init() have all finished. */
-static volatile uint8_t c1_ready;
-
 bool lua_core1_ready(void) {
     return c1_ready != 0u;
+}
+
+/* c1_busy alone is not enough, and the gap is small but real.
+ *
+ * lua_core1_dispatch() bumps c1_go; core1 notices, claims the unit by
+ * mirroring it into c1_seen, and only then sets c1_busy. Between those two
+ * points a grant is outstanding and core1 is about to enter flash, while
+ * c1_busy still reads 0. Core0 asking "is core1 idle" in that gap would get
+ * yes, open the window, and start an erase into a core1 that is a handful of
+ * instructions away from fetching.
+ *
+ * In practice core1's idle spin closes the gap in nanoseconds and core0 does
+ * not come back round for a whole period. But "the race is narrow" is not
+ * the same as "there is no race", and an outstanding grant is something
+ * core0 can see for free: it is the one that issued it.
+ *
+ * So: idle means no grant outstanding AND not executing. */
+static inline bool c1_quiet(void) {
+    return c1_go == c1_seen && c1_busy == 0u;
 }
 
 bool lua_core1_flash_ok(void) {
@@ -239,14 +293,16 @@ bool lua_core1_flash_ok(void) {
     if (!c1_ready) {
         return false; /* startup: core1 is in flash for an unbounded stretch */
     }
-    return c1_busy == 0u;
+    return c1_quiet();
 }
 
+/* Same question, same answer. Kept as a separate name because the header
+ * asks it two ways -- "is flash safe" and "is core1 idle" -- and they must
+ * never drift apart: core1's unbounded startup is a stretch where it is not
+ * idle, so a version of this without the c1_ready check would say yes while
+ * core1 was running the Lua parser out of XIP. */
 bool lua_core1_idle(void) {
-    if (c1_state == LUA_C1_OFF || c1_state == LUA_C1_DEAD) {
-        return true; /* nothing running to collide with */
-    }
-    return c1_busy == 0u;
+    return lua_core1_flash_ok();
 }
 
 uint32_t lua_core1_dispatch_skipped(void) {
@@ -323,11 +379,10 @@ static void core1_main(void) {
     LAUNCH_PHASE(22);
     c1_state = LUA_C1_RUNNING;
 
-    /* Startup is over: the VM exists, the chunk has run and init() has
-     * returned. Core0 may write flash again from here. */
-    c1_ready = 1;
-    __dmb();
-
+    /* c1_ready is NOT set here. Everything between this point and the first
+     * instruction of lua_core1_idle_wait() is still fetched from flash, and
+     * core0 treats c1_ready as permission to erase. It is published from
+     * inside that RAM-resident function instead. */
     uint8_t seen = evt_seq;
     while (1) {
         /* Idle in RAM until core0 hands out a unit. EVERYTHING BELOW THIS
@@ -339,14 +394,21 @@ static void core1_main(void) {
         c1_loc = C1_LOC_PINSVC;
         lua_plat_pin_service();
 
+        /* The event handler shares the unit's box with tick(). It cannot
+         * yield, so it is bounded by raising rather than by suspending, and
+         * whatever it spends comes out of what tick() gets -- which is the
+         * correct accounting: the grant is a statement about how long core1
+         * holds c1_busy, not about how it divides the time up. */
+        uint32_t unit_start_us = lua_plat_now_us();
         if (evt_seq != seen) {
             seen = evt_seq;
             c1_loc = C1_LOC_EVENT;
-            pyro_lua_event(evt_name);
+            pyro_lua_event(evt_name, c1_grant_us);
             evt_ack = seen;
         }
         c1_loc = C1_LOC_TICK;
-        pyro_lua_tick_slice(c1_grant_us);
+        uint32_t spent = lua_plat_now_us() - unit_start_us;
+        pyro_lua_tick_slice((spent < c1_grant_us) ? (c1_grant_us - spent) : 1u);
         c1_loc = C1_LOC_TOP;
     }
 }
@@ -523,7 +585,28 @@ void lua_core1_service(uint32_t now_ms) {
     static uint32_t last_ms;
     static bool init;
 
-    if (c1_state != LUA_C1_RUNNING) {
+    if (c1_state == LUA_C1_OFF || c1_state == LUA_C1_DEAD) {
+        return;
+    }
+
+    /* Parked is the normal state for a core1 core0 has deliberately not fed:
+     * the flash window parks it for a whole period routinely and an upload
+     * parks it for as long as the transfer lasts. So a parked core1 with no
+     * grant outstanding is not late -- it is waiting, correctly, and the
+     * clock has to keep moving or the first observation after a hold would
+     * see a two-second-old timestamp and kill a core1 that did nothing.
+     *
+     * A grant OUTSTANDING is the opposite. Core0 bumped c1_go and core1 has
+     * not mirrored it into c1_seen, so core1 is not spinning in the idle
+     * loop where it would have noticed within nanoseconds. It is wedged, and
+     * the window can never open again while it is -- c1_go != c1_seen makes
+     * lua_core1_flash_ok() false forever. That is a silent, permanent loss
+     * of flash, and it is exactly what the bench showed: heartbeat frozen at
+     * zero, skips climbing, opens stuck, and nothing reporting why. */
+    if (c1_state == LUA_C1_PARKED && c1_go == c1_seen) {
+        last_hb = heartbeat;
+        last_ms = now_ms;
+        init = true;
         return;
     }
     if (!init) {
@@ -539,7 +622,7 @@ void lua_core1_service(uint32_t now_ms) {
         return;
     }
     if ((uint32_t)(now_ms - last_ms) > C1_STALL_MS) {
-        start_err = "core1 stalled";
+        start_err = (c1_go != c1_seen) ? "core1 never took its unit" : "core1 stalled";
         lua_core1_kill();
     }
 }

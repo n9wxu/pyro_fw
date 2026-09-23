@@ -81,6 +81,23 @@ static bool slice_boxed; /* false for a grant of 0: run to completion */
  * a legitimate program that simply spans several grants. */
 static uint32_t budget_left;
 
+/* A wall-clock bound for those same non-yieldable paths.
+ *
+ * The instruction budget alone is not a time box, and on core1 that matters:
+ * c1_busy stays set for the whole call, and c1_busy is what tells core0 that
+ * core1 is executing from flash. Two million VM instructions is a fraction of
+ * a second, which is tens of core0 periods -- so an on_event() handler could
+ * hold the flash window shut long past the grant that started it, and core0's
+ * whole schedule is built on a unit ending when its grant says it will.
+ *
+ * It cannot yield (lua_pcall is a C-call boundary), so the only stop available
+ * is to raise. That aborts the handler, which is the right trade: a script
+ * that blows its box loses the handler, not the board. Zero disables it, for
+ * the paths that are deliberately unbounded -- load and init at startup, where
+ * core0 is withholding flash anyway. */
+static uint32_t hard_deadline_us;
+static bool hard_boxed;
+
 /* ── Limits ───────────────────────────────────────────────────────── */
 
 /* Provided by lua_core1.c on the target, where it parks the VM outside flash
@@ -102,13 +119,16 @@ static void count_hook(lua_State *Ls, lua_Debug *ar) {
     lua_core1_park_check();
 
     if (!slice_boxed) {
-        /* Non-yieldable path (load, init, eval), or a grant of 0. Fall back to
-         * the instruction budget: it is the only stop available when the call
-         * cannot be suspended and resumed. */
+        /* Non-yieldable path (load, init, eval, on_event), or a grant of 0.
+         * The call cannot be suspended and resumed, so the only stop
+         * available is to raise -- on whichever bound runs out first. */
         if (budget_left == 0) {
             luaL_error(Ls, "instruction budget exhausted");
         }
         budget_left--;
+        if (hard_boxed && (int32_t)(lua_plat_now_us() - hard_deadline_us) >= 0) {
+            luaL_error(Ls, "time box exhausted");
+        }
         return;
     }
     if ((int32_t)(lua_plat_now_us() - slice_deadline_us) >= 0) {
@@ -737,10 +757,13 @@ static void make_coroutine(void) {
     }
 }
 
-static bool run_protected(int nargs) {
+static bool run_protected(int nargs, uint32_t budget_us) {
     slice_boxed = false; /* cannot yield across lua_pcall; use the budget */
     budget_left = PYRO_LUA_BUDGET;
+    hard_boxed = (budget_us != 0u);
+    hard_deadline_us = lua_plat_now_us() + budget_us;
     int rc = lua_pcall(L, nargs, 0, 0);
+    hard_boxed = false;
     if (rc != LUA_OK) {
         const char *m = lua_tostring(L, -1);
         snprintf(last_error, sizeof(last_error), "%s", m ? m : "error");
@@ -760,12 +783,12 @@ bool pyro_lua_load(const char *chunkname, const char *src, size_t len) {
         lua_pop(L, 1);
         return false;
     }
-    if (!run_protected(0))
+    if (!run_protected(0, 0))
         return false;
 
     lua_getglobal(L, "init");
     if (lua_isfunction(L, -1)) {
-        if (!run_protected(0)) {
+        if (!run_protected(0, 0)) {
             make_coroutine();
             return false;
         }
@@ -785,6 +808,7 @@ pyro_lua_status_t pyro_lua_tick_slice(uint32_t budget_us) {
 
     slice_boxed = (budget_us != 0u);
     slice_deadline_us = lua_plat_now_us() + budget_us;
+    hard_boxed = false;
 
     if (!slice_running) {
         /* Looked up per call rather than cached: a script may define tick()
@@ -827,7 +851,7 @@ bool pyro_lua_tick(void) {
     return st != PYRO_LUA_ERROR;
 }
 
-bool pyro_lua_event(const char *event_name) {
+bool pyro_lua_event(const char *event_name, uint32_t budget_us) {
     if (!L)
         return true;
     lua_getglobal(L, "on_event");
@@ -836,7 +860,7 @@ bool pyro_lua_event(const char *event_name) {
         return true;
     }
     lua_pushstring(L, event_name);
-    return run_protected(1);
+    return run_protected(1, budget_us);
 }
 
 bool pyro_lua_eval(const char *src) {
@@ -851,7 +875,7 @@ bool pyro_lua_eval(const char *src) {
         lua_pop(L, 1);
         return false;
     }
-    if (!run_protected(0)) {
+    if (!run_protected(0, 0)) {
         lua_plat_console_out(last_error, (int)strlen(last_error));
         lua_plat_console_out("\n", 1);
         return false;
