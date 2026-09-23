@@ -35,6 +35,7 @@ defects the feature would otherwise have been built on.
 | 3b | Released pads wired as GPIO; safing covers them | ✅ Done, HW verified |
 | 3c | Generic Lua interface table; `prove_core0.py` follows vtables | ✅ Done |
 | 4 | `GET /api/pins/caps`, Config and Lua tab pin UI | ✅ Done, HW verified |
+| 4b | Released channels mocked at the HAL, logged and counted | ✅ Done, HW verified |
 | 5 | Dead-time tuning against real FETs | 🔨 Next |
 
 Release model: a pyro channel releases independently; the common low side
@@ -224,16 +225,46 @@ removing the capability filter produces 19 failures. It needs node, which is
 not a build dependency, so `web_tests` skips with a message rather than
 failing when node is absent.
 
-### Known gap: the flight layer does not see a release
+### Released channels are mocked, and say so (phase 4b)
 
-`pyro_sample()` still asserts the common for 10 ms every iteration,
-`pyro_get()` still reports continuity, and `pyro_fire()` would still try to
-fire a released channel — it silently fails, because the pad belongs to the
-PIO. The release is honoured by Lua and invisible to the flight software.
-Not yet fixed.
+The flight layer no longer reaches a released channel's hardware. Each
+channel carries a table of operations — `fire`, `get`, `fault` — installed
+once at boot from the assignment (`src/pyro_release.c`). A released channel
+gets the mocked table, so firing it is not refused, it reaches a function that
+touches nothing, because the real one was never installed for it. Same
+argument as `lua_iface.h`.
 
-(This is also MK1B's 10 ms stage-3 blocking, not `ms5607_read()` as recorded
-earlier.)
+**Nothing is silent.** Every mocked operation is reported three ways, each for
+a different audience: a `MOCK` row in the flight log next to the event that
+commanded it, a `!MOCK` line on the telemetry downlink at the time, and
+`pyro_mocked` on `/api/status` afterwards. A flight log showing `PYRO1` with
+nothing beside it would be a record of an ignition that did not happen.
+
+A released channel reports **open**, not good. There is no igniter circuit the
+flight software controls there any more, and reporting continuity would let it
+arm and then "fire" a channel that cannot.
+
+Two things a per-channel table cannot express, handled separately:
+
+- **The shared stimulus.** `hal_pyro_sample()` and `hal_pyro_update()` drive
+  the *common*, which is Lua's exactly when both channels are released, so
+  both return early then. This is what took MK1B's loop overruns from about
+  one per second to zero: its 10 ms stimulus is skipped entirely.
+- **A per-channel pad under partial release.** MK1B's `pyro_sample()` drives
+  both channel enables low as a precondition. On a released channel that pad
+  is a Lua output, so core0 was stamping it low on every sample. It now asks
+  `pin_store_owns()` first.
+
+Measured across the three boards, which happened to be in three different
+states:
+
+| Board | Released | `pyro_mocked` | `pyro1_adc` / `pyro2_adc` | Overruns |
+|---|---|---|---|---|
+| MK1B | both | climbing | 0 / 0 — both mocked | **0** (was ~1/s) |
+| MK1C | pyro 1 | climbing | 0 / 10 — one mocked, one real | 0 |
+| MK1A | neither | **0** | 4081 / 4082 — both real | 0 |
+
+MK1A is the regression check: with nothing released, nothing changes.
 
 MK1C was 36.2 ms work / 35.4 ms stage 4 / 3462 overruns before its bias tests
 stopped calling `sleep_ms()` inside the flight loop. MK1B's remaining 11 ms is

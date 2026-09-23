@@ -65,6 +65,15 @@ void hal_pyro_init(void) {
     pyro_init();
 }
 
+/* The board model has no pin assignment to release from, so both channels
+ * are always the flight software's. Present because hal.h asks for it:
+ * a HAL that silently omits an entry point is one that links until
+ * something calls it. */
+void hal_pyro_release_apply(bool ch1_released, bool ch2_released) {
+    (void)ch1_released;
+    (void)ch2_released;
+}
+
 void hal_pyro_sample(void) {
     pyro_sample();
 }

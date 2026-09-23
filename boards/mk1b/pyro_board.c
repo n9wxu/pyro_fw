@@ -1,4 +1,5 @@
 #include "pyro.h"
+#include "pin_store.h"
 #include "board_pins.h"
 #include "hardware/gpio.h"
 #include "hardware/adc.h"
@@ -65,8 +66,18 @@ static void classify(pyro_continuity_t *c) {
  * 10 ms settle and the bridgewire current are paid once regardless of how
  * many channels the caller goes on to read. */
 void pyro_sample(void) {
-    gpio_put(PYRO1_EN, 0);
-    gpio_put(PYRO2_EN, 0);
+    /* Only pads this board still owns. Driving the enables low is a
+     * precondition for the measurement -- neither channel may be firing --
+     * and on a RELEASED channel that pad is a Lua output, where the same
+     * write would stamp it low on every sample. The common is never released
+     * while either channel is retained, so it needs no guard; hal_pyro_sample()
+     * skips this entirely once both are. */
+    if (pin_store_owns(PYRO1_EN)) {
+        gpio_put(PYRO1_EN, 0);
+    }
+    if (pin_store_owns(PYRO2_EN)) {
+        gpio_put(PYRO2_EN, 0);
+    }
     gpio_put(PYRO_COMMON_EN, 1);
     sleep_ms(10);
 

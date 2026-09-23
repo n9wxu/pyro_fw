@@ -31,6 +31,7 @@
 #include "pressure_sensor.h"
 #include "pressure_processing.h"
 #include "pyro.h"
+#include "pyro_release.h"
 #include <string.h>
 
 /* ── External dependencies ────────────────────────────────────────── */
@@ -305,15 +306,21 @@ bool hal_pressure_fifo_active(void) {
 
 /* ── Pyro ─────────────────────────────────────────────────────────── */
 
-void hal_pyro_init(void) {
-    pyro_init();
+/* ── The real channel operations ──────────────────────────────────
+ *
+ * Installed per channel by pyro_release_apply(); a released channel gets the
+ * mocked table instead, and these are then simply not reachable for it. See
+ * pyro_release.h.
+ *
+ * Not named *_vt on purpose. That suffix means "core1 can reach this" and
+ * prove_core0.py folds those into the core1 proof -- these run on core0, and
+ * MK1B's pyro_sample() sleeps, so folding them in would fail the proof over a
+ * call core1 never makes. */
+static void real_fire(uint8_t channel) {
+    pyro_fire(channel);
 }
 
-void hal_pyro_sample(void) {
-    pyro_sample();
-}
-
-void hal_pyro_get(uint8_t channel, hal_continuity_t *out) {
+static void real_get(uint8_t channel, hal_continuity_t *out) {
     pyro_continuity_t c;
     pyro_get(channel, &c);
     out->raw_adc = c.raw_adc;
@@ -322,17 +329,68 @@ void hal_pyro_get(uint8_t channel, hal_continuity_t *out) {
     out->shorted = c.shorted;
 }
 
+static bool real_fault(uint8_t channel) {
+    return pyro_fault(channel);
+}
+
+static const pyro_ch_ops_t real_pyro_ops = {real_fire, real_get, real_fault};
+
+/* Said in three places, because each reaches a different audience: the flight
+ * log during the flight, the telemetry downlink at the time, and the counter
+ * on /api/status afterwards. The log row is the one that matters -- a flight
+ * log showing PYRO1 with nothing beside it is a record of an ignition that
+ * did not happen. */
+static void report_mock(uint8_t channel, const char *what) {
+    char note[48];
+    snprintf(note, sizeof(note), "pyro%u %s: released to Lua", (unsigned)channel, what);
+    hal_log_mock(to_ms_since_boot(get_absolute_time()), note);
+
+    char line[64];
+    snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
+    hal_telemetry_send(line);
+}
+
+void hal_pyro_init(void) {
+    pyro_release_init(&real_pyro_ops, report_mock);
+    pyro_init();
+}
+
+void hal_pyro_release_apply(bool ch1_released, bool ch2_released) {
+    pyro_release_apply(ch1_released, ch2_released);
+}
+
+void hal_pyro_sample(void) {
+    /* The continuity stimulus drives the COMMON element, which is Lua's
+     * exactly when both channels are released. Sampling then would put core0
+     * and core1 on the same pad, and there would be nothing left to measure
+     * anyway. */
+    if (pyro_release_all()) {
+        return;
+    }
+    pyro_sample();
+}
+
+void hal_pyro_get(uint8_t channel, hal_continuity_t *out) {
+    pyro_ch(channel)->get(channel, out);
+}
+
 void hal_pyro_fire(uint8_t channel) {
-    pyro_fire(channel);
+    pyro_ch(channel)->fire(channel);
 }
 void hal_pyro_update(uint32_t now_ms) {
+    /* Same argument as hal_pyro_sample(): MK1A's background sense cycle and
+     * MK1C's arm pump both drive the common, and with both channels released
+     * there is nothing to arm and nothing to sense. */
+    if (pyro_release_all()) {
+        return;
+    }
     pyro_update(now_ms);
 }
 bool hal_pyro_is_firing(void) {
     return pyro_is_firing();
 }
 bool hal_pyro_fault(uint8_t channel) {
-    return pyro_fault(channel);
+    return pyro_ch(channel)->fault(channel);
 }
 
 /* ── Buzzer ───────────────────────────────────────────────────────── */
@@ -838,29 +896,29 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
     log_task.head += n;
 }
 
-/* One line of script output, as a flight-log event row. See flash_window.h
- * for what a false return means.
+/* A text row: script output, or a note about something the firmware did not
+ * do. See flash_window.h for what a false return means.
  *
- * The numeric columns are left empty rather than zeroed: this row is not a
- * sample, and a zero in the altitude column is a reading a plot will draw. */
-bool hal_log_text(uint32_t time_ms, const char *text, int len) {
-    if (!log_task.active || len <= 0)
-        return false;
-    if (log_task.head >= LOG_TEXT_CEILING) {
-        log_task.text_dropped += (uint32_t)len;
+ * The numeric columns are left empty rather than zeroed: neither row is a
+ * sample, and a zero in the altitude column is a reading a plot will draw.
+ *
+ * Stripped rather than quoted, because every consumer of this file -- the web
+ * UI, the CSV export, a spreadsheet -- splits on commas with no quoting
+ * rules. */
+static bool log_tagged(uint32_t time_ms, const char *tag, const char *text, int len) {
+    if (!log_task.active || len <= 0) {
         return false;
     }
 
-    /* Stripped rather than quoted: every consumer of this file -- the web
-     * UI, the CSV export, a spreadsheet -- splits on commas with no quoting
-     * rules. */
     char line[80];
-    int n = snprintf(line, sizeof(line), "%lu,,,,,LUA ", (unsigned long)time_ms);
-    if (n <= 0 || n >= (int)sizeof(line) - 2)
+    int n = snprintf(line, sizeof(line), "%lu,,,,,%s ", (unsigned long)time_ms, tag);
+    if (n <= 0 || n >= (int)sizeof(line) - 2) {
         return false;
+    }
     int room = (int)sizeof(line) - n - 2; /* the newline and the terminator */
-    if (len > room)
+    if (len > room) {
         len = room;
+    }
     for (int i = 0; i < len; i++) {
         /* unsigned deliberately: plain char is signed on the host and
          * unsigned on ARM, so a byte above 0x7f takes a different branch on
@@ -878,6 +936,26 @@ bool hal_log_text(uint32_t time_ms, const char *text, int len) {
     log_task.head += n;
     return true;
 }
+
+bool hal_log_text(uint32_t time_ms, const char *text, int len) {
+    /* Rationed: a script can flood, and script output must not crowd out the
+     * flight samples it is annotating. */
+    if (log_task.head >= LOG_TEXT_CEILING) {
+        log_task.text_dropped += (uint32_t)(len > 0 ? len : 0);
+        return false;
+    }
+    return log_tagged(time_ms, "LUA", text, len);
+}
+
+bool hal_log_mock(uint32_t time_ms, const char *what) {
+    /* Not rationed. A mocked fire happens a handful of times in a flight and
+     * is the reason the flight looks wrong afterwards; dropping it to make
+     * room for samples would hide exactly the row that explains them. */
+    return log_tagged(time_ms, "MOCK", what, (int)strlen(what));
+}
+
+
+
 
 uint32_t hal_log_text_dropped(void) {
     return log_task.text_dropped;

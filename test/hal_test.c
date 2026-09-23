@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "../src/hal.h"
+#include "../src/pyro_release.h"
 #include "../src/config.h"
 #include "../src/device_status.h"
 #include "../src/pressure_processing.h"
@@ -85,6 +86,10 @@ void mock_reset_all(void) {
     test_file.open = false;
     memset(sim_files, 0, sizeof(sim_files));
     last_pp_feed_ms = 0;
+    /* Every test starts with both channels the flight software's; a test that
+     * wants a release says so. Re-init rather than just apply, so the mock
+     * counter and the last note reset too. */
+    hal_pyro_init();
 }
 
 /* Enqueue a serial command line for hal_serial_readline() to return */
@@ -106,13 +111,16 @@ int hal_pressure_init(void) {
     return mock_pressure.sensor_type;
 }
 
-void hal_pyro_init(void) {}
-
-void hal_pyro_sample(void) {
-    mock_pyro.sample_count++;
+/* Routed through pyro_release.c rather than around it, so the release
+ * behaviour the hardware HAL gets is the behaviour these tests exercise. The
+ * mocked table is the module's own; what follows is the "real" one. */
+static void test_fire(uint8_t channel) {
+    mock_pyro.fire_count++;
+    mock_pyro.last_fire_channel = channel;
+    mock_pyro.firing = true;
 }
 
-void hal_pyro_get(uint8_t channel, hal_continuity_t *out) {
+static void test_get(uint8_t channel, hal_continuity_t *out) {
     if (channel == 1) {
         out->raw_adc = mock_pyro.p1_adc;
         out->good = mock_pyro.p1_good;
@@ -126,10 +134,44 @@ void hal_pyro_get(uint8_t channel, hal_continuity_t *out) {
     }
 }
 
+static bool test_fault(uint8_t channel) {
+    (void)channel;
+    return mock_pyro.fault;
+}
+
+static const pyro_ch_ops_t test_pyro_ops = {test_fire, test_get, test_fault};
+
+char mock_pyro_last_note[64];
+int mock_pyro_notes;
+
+static void test_report(uint8_t channel, const char *what) {
+    mock_pyro_notes++;
+    snprintf(mock_pyro_last_note, sizeof(mock_pyro_last_note), "pyro%u %s: released to Lua", (unsigned)channel, what);
+}
+
+void hal_pyro_init(void) {
+    pyro_release_init(&test_pyro_ops, test_report);
+    mock_pyro_notes = 0;
+    mock_pyro_last_note[0] = '\0';
+}
+
+void hal_pyro_release_apply(bool ch1_released, bool ch2_released) {
+    pyro_release_apply(ch1_released, ch2_released);
+}
+
+void hal_pyro_sample(void) {
+    if (pyro_release_all()) {
+        return;
+    }
+    mock_pyro.sample_count++;
+}
+
+void hal_pyro_get(uint8_t channel, hal_continuity_t *out) {
+    pyro_ch(channel)->get(channel, out);
+}
+
 void hal_pyro_fire(uint8_t channel) {
-    mock_pyro.fire_count++;
-    mock_pyro.last_fire_channel = channel;
-    mock_pyro.firing = true;
+    pyro_ch(channel)->fire(channel);
 }
 
 void hal_pyro_update(uint32_t now_ms) {
@@ -139,8 +181,7 @@ bool hal_pyro_is_firing(void) {
     return mock_pyro.firing;
 }
 bool hal_pyro_fault(uint8_t channel) {
-    (void)channel;
-    return mock_pyro.fault;
+    return pyro_ch(channel)->fault(channel);
 }
 
 int mock_buzzer_tone_on_count = 0;

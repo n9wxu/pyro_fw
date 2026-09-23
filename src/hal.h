@@ -69,6 +69,16 @@ void hal_pyro_update(uint32_t now_ms);
 bool hal_pyro_is_firing(void);
 bool hal_pyro_fault(uint8_t channel); /* FLAG pin: true = fault during fire */
 
+/* Point each channel at the real hardware or at a mocked no-op, from the pin
+ * assignment. Call once at boot, after the assignment is loaded and before
+ * the flight loop.
+ *
+ * A released channel's pad belongs to Lua, so the calls above must not reach
+ * it -- and that is arranged by what is installed here rather than by a test
+ * at each call site. Every mocked operation is logged and counted; see
+ * pyro_release.h. */
+void hal_pyro_release_apply(bool ch1_released, bool ch2_released);
+
 /* ── Buzzer ───────────────────────────────────────────────────────── */
 
 void hal_buzzer_init(void);

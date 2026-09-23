@@ -8,6 +8,7 @@
  * with tud_task/net_service simulated as no-ops.
  */
 #include "unity.h"
+#include "../src/pyro_release.h"
 #include "mocks.h"
 #include <string.h>
 #include <stdio.h>
@@ -262,6 +263,91 @@ void test_PYR_MODE_01_fires(void) {
     run_full_sim();
 
     TEST_ASSERT_TRUE_MESSAGE(mock_pyro.fire_count > 0, "No pyro fired");
+}
+
+/* ── Released pyro channels ───────────────────────────────────────
+ *
+ * A released channel's pad belongs to Lua. The flight software must reach a
+ * mocked no-op for it rather than the hardware, and must say so -- these are
+ * the tests for src/pyro_release.c through the whole flight path rather than
+ * through the module's own API. */
+
+extern char mock_pyro_last_note[64];
+extern int mock_pyro_notes;
+
+void test_PYR_REL_01_released_channel_never_fires(void) {
+    load_sim_data("test_data/open_rocket_export.csv");
+    reset_sim();
+    hal_pyro_release_apply(true, false); /* pyro 1 is Lua's */
+    run_full_sim();
+
+    TEST_ASSERT_TRUE_MESSAGE(mock_pyro.fire_count > 0, "the retained channel must still fire");
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_pyro.last_fire_channel, "only the retained channel may reach the hardware");
+}
+
+void test_PYR_REL_02_both_released_fires_nothing(void) {
+    load_sim_data("test_data/open_rocket_export.csv");
+    reset_sim();
+    hal_pyro_release_apply(true, true);
+    run_full_sim();
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_pyro.fire_count, "a full flight must not reach the hardware at all");
+    TEST_ASSERT_TRUE_MESSAGE(pyro_release_mocks() > 0, "and the flight software must have tried");
+}
+
+void test_PYR_REL_03_mocked_operations_are_reported(void) {
+    reset_sim();
+    hal_pyro_release_apply(true, false);
+    TEST_ASSERT_EQUAL(0, mock_pyro_notes);
+
+    hal_pyro_fire(1);
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_pyro_notes, "a mocked fire is reported, not swallowed");
+    TEST_ASSERT_EQUAL_STRING("pyro1 fire: released to Lua", mock_pyro_last_note);
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_pyro.fire_count, "and reaches no hardware");
+
+    hal_pyro_fire(2);
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_pyro_notes, "the retained channel is not reported");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_pyro.fire_count, "and does reach the hardware");
+}
+
+void test_PYR_REL_04_released_reports_open_not_good(void) {
+    reset_sim();
+    mock_pyro.p1_good = true; /* the hardware would say good */
+    hal_pyro_release_apply(true, false);
+
+    hal_continuity_t c;
+    hal_pyro_get(1, &c);
+    /* Open rather than good: there is no igniter circuit the flight software
+       controls here any more. Reporting continuity would let it arm and then
+       "fire" a channel that cannot. */
+    TEST_ASSERT_FALSE_MESSAGE(c.good, "a released channel has no continuity to report");
+    TEST_ASSERT_TRUE(c.open);
+    TEST_ASSERT_EQUAL(0, c.raw_adc);
+
+    hal_pyro_get(2, &c);
+    TEST_ASSERT_TRUE_MESSAGE(c.good, "the retained channel still reports the hardware");
+}
+
+void test_PYR_REL_05_shared_stimulus_stops_when_both_released(void) {
+    reset_sim();
+    hal_pyro_release_apply(true, false);
+    hal_pyro_sample();
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_pyro.sample_count, "one channel retained still needs the stimulus");
+
+    hal_pyro_release_apply(true, true);
+    hal_pyro_sample();
+    /* The stimulus drives the COMMON, which is Lua's exactly when both are
+       released -- core0 must not drive a pad core1 owns. */
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_pyro.sample_count, "with both released there is nothing to stimulate");
+}
+
+void test_PYR_REL_06_fault_is_clear_for_a_released_channel(void) {
+    reset_sim();
+    mock_pyro.fault = true;
+    hal_pyro_release_apply(true, false);
+
+    TEST_ASSERT_FALSE_MESSAGE(hal_pyro_fault(1), "a released channel has no fault line to report");
+    TEST_ASSERT_TRUE_MESSAGE(hal_pyro_fault(2), "the retained channel still reports the hardware");
 }
 
 void test_BUZ_07_03_lifecycle(void) {
@@ -664,6 +750,12 @@ int main(void) {
     RUN_TEST(test_FLT_BOOT_01_all_states);
     RUN_TEST(test_FLT_APO_01_detected);
     RUN_TEST(test_PYR_MODE_01_fires);
+    RUN_TEST(test_PYR_REL_01_released_channel_never_fires);
+    RUN_TEST(test_PYR_REL_02_both_released_fires_nothing);
+    RUN_TEST(test_PYR_REL_03_mocked_operations_are_reported);
+    RUN_TEST(test_PYR_REL_04_released_reports_open_not_good);
+    RUN_TEST(test_PYR_REL_05_shared_stimulus_stops_when_both_released);
+    RUN_TEST(test_PYR_REL_06_fault_is_clear_for_a_released_channel);
     RUN_TEST(test_BUZ_07_03_lifecycle);
     RUN_TEST(test_DAT_04_events);
     RUN_TEST(test_TEL_03_event_sentences);

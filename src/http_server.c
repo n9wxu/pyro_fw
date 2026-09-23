@@ -25,6 +25,7 @@
 
 #include "flash_window.h"
 #include "pin_store.h"
+#include "pyro_release.h"
 
 extern uint32_t hal_time_ms(void);
 
@@ -410,6 +411,7 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         "\"flash_opens\":%lu,\"flash_skips\":%lu,\"flash_refusals\":%lu,\"log_dropped\":%lu,"
         "\"flash_erases\":%lu,\"flash_programs\":%lu,\"flash_deferrals\":%lu,"
         "\"pins_reason\":\"%s\",\"pyro1_released\":%s,\"pyro2_released\":%s,\"bridge\":\"%s\","
+        "\"pyro_mocked\":%lu,"
         "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u}",
         sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
         (long)g_status.pressure_pa, g_status.pyro1_continuity ? "true" : "false",
@@ -427,7 +429,7 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         (unsigned long)flash_window_skips(), (unsigned long)flash_window_refusals(), (unsigned long)hal_log_dropped(),
         (unsigned long)flash_window_erases(), (unsigned long)flash_window_programs(),
         (unsigned long)flash_window_deferrals(), pins_reason_esc, pa->pyro1_released ? "true" : "false",
-        pa->pyro2_released ? "true" : "false", bridge_desc, board_serial(),
+        pa->pyro2_released ? "true" : "false", bridge_desc, (unsigned long)pyro_release_mocks(), board_serial(),
         board_serial_assigned() ? "true" : "false", board_hw_id(), (unsigned)board_subnet_octet());
     if (pos < 0)
         return;

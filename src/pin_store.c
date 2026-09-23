@@ -126,6 +126,10 @@ pin_verdict_t pin_store_save(const pin_assign_t *a) {
     return v;
 }
 
+bool pin_store_owns(uint8_t pin) {
+    return pin_assign_is_reserved(&live, pin);
+}
+
 bool pin_store_bridge(uint8_t *channel_pin, uint8_t *common_pin, const char **name) {
     int ch = -1, common = -1;
     for (uint8_t pin = 0; pin < PIN_ASSIGN_MAX_GPIO; pin++) {

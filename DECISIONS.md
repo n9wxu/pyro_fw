@@ -153,3 +153,24 @@ rationale and the alternatives considered.
   strictly less. The checker now folds `*_vt` entries in as reachable from
   core1, and fails an image that links `lua_iface_publish` with no `*_vt`
   symbol.
+
+### DD-019: A Released Pyro Channel Is Mocked, Not Guarded
+- **Decision:** The flight software's per-channel pyro operations (`fire`,
+  `get`, `fault`) are a table installed once at boot from the pin assignment.
+  A released channel gets a mocked table that touches no hardware; the real
+  operations are not reachable for it. The two shared entry points
+  (`hal_pyro_sample`, `hal_pyro_update`) return early once BOTH channels are
+  released, because they drive the common.
+- **Rationale:** A released pad belongs to Lua on core1, and core0 writing it
+  fights for the same SIO register — MK1B was stamping a released output low
+  on every sample. Making that a check at each call site means every future
+  call site has to remember it; making it a pointer that does not go there
+  means none of them can get it wrong. Same argument as DD-018.
+- **Nothing is silent:** every mocked operation is written to the flight log
+  as a `MOCK` row beside the event that commanded it, sent on the telemetry
+  downlink, and counted on `/api/status`. A log showing `PYRO1` with no note
+  beside it would record an ignition that did not occur.
+- **A released channel reports open, not good.** There is no igniter circuit
+  the flight software controls there; reporting continuity would let it arm
+  and then "fire" a channel that cannot.
+

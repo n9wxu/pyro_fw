@@ -100,4 +100,11 @@ uint32_t hal_log_dropped(void);
 bool hal_log_text(uint32_t time_ms, const char *text, int len);
 uint32_t hal_log_text_dropped(void);
 
+/* A flight-log row for something the firmware was told to do and did NOT.
+ *
+ * Written next to the event that commanded it, so a log showing PYRO1 also
+ * shows that nothing happened -- a fire event with no note beside it is a
+ * record of an ignition that did not occur. See pyro_release.h. */
+bool hal_log_mock(uint32_t time_ms, const char *what);
+
 #endif

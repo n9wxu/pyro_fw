@@ -244,6 +244,52 @@ void test_serialize_refuses_to_overflow(void) {
     }
 }
 
+/* ── Ownership ────────────────────────────────────────────────────
+ *
+ * pin_assign_is_reserved() is what a board asks before driving a pad that a
+ * release may have handed to Lua -- MK1B's pyro_sample() guards its enables
+ * with it, because writing a released pad would fight core1 for the same SIO
+ * register. The common is the case a per-channel rule gets wrong.
+ *
+ * Also reached as pin_store_owns(), which is this against the live
+ * assignment. */
+
+void test_nothing_released_means_the_board_owns_every_pyro_pad(void) {
+    pin_assign_t a = base();
+    TEST_ASSERT_TRUE(pin_assign_is_reserved(&a, FIRE1));
+    TEST_ASSERT_TRUE(pin_assign_is_reserved(&a, FIRE2));
+    TEST_ASSERT_TRUE(pin_assign_is_reserved(&a, PYRO_LOW));
+}
+
+void test_releasing_one_channel_gives_up_only_that_pad(void) {
+    pin_assign_t a = base();
+    a.pyro1_released = true;
+    TEST_ASSERT_FALSE_MESSAGE(pin_assign_is_reserved(&a, FIRE1), "the released channel's pad is Lua's");
+    TEST_ASSERT_TRUE_MESSAGE(pin_assign_is_reserved(&a, FIRE2), "the retained channel keeps its pad");
+    TEST_ASSERT_TRUE_MESSAGE(pin_assign_is_reserved(&a, PYRO_LOW),
+                             "the common is still half of the retained channel's firing path");
+}
+
+void test_the_common_is_given_up_only_when_both_channels_are(void) {
+    pin_assign_t a = base();
+    a.pyro1_released = true;
+    a.pyro2_released = true;
+    TEST_ASSERT_FALSE(pin_assign_is_reserved(&a, FIRE1));
+    TEST_ASSERT_FALSE(pin_assign_is_reserved(&a, FIRE2));
+    TEST_ASSERT_FALSE_MESSAGE(pin_assign_is_reserved(&a, PYRO_LOW), "with both released the common is Lua's too");
+}
+
+void test_a_pad_the_board_reserves_for_something_else_is_never_given_up(void) {
+    pin_assign_t a = base();
+    a.pyro1_released = true;
+    a.pyro2_released = true;
+    /* A sense pad is the flight software's whatever the release state: it is
+       sampled for the getter and carries no role. */
+    TEST_ASSERT_TRUE(pin_assign_is_reserved(&a, SENSE1));
+    /* And a plain user pad was never the board's to begin with. */
+    TEST_ASSERT_FALSE(pin_assign_is_reserved(&a, USER_PAD));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_defaults_are_valid_and_release_nothing);
@@ -272,5 +318,9 @@ int main(void) {
     RUN_TEST(test_round_trip_preserves_the_assignment);
     RUN_TEST(test_unknown_keys_are_ignored);
     RUN_TEST(test_serialize_refuses_to_overflow);
+    RUN_TEST(test_nothing_released_means_the_board_owns_every_pyro_pad);
+    RUN_TEST(test_releasing_one_channel_gives_up_only_that_pad);
+    RUN_TEST(test_the_common_is_given_up_only_when_both_channels_are);
+    RUN_TEST(test_a_pad_the_board_reserves_for_something_else_is_never_given_up);
     return UNITY_END();
 }

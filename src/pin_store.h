@@ -41,6 +41,15 @@ pin_verdict_t pin_store_save(const pin_assign_t *a);
 /* Why the last load fell back, or "" when it did not. */
 const char *pin_store_reason(void);
 
+/* True when this pad is still the flight software's to drive.
+ *
+ * For a board whose continuity stimulus touches a per-channel pad: the pad
+ * belongs to Lua once its channel is released, and core0 writing it would
+ * fight core1 for the same SIO register. Asking is cheaper than the
+ * alternative, which is the flight loop stamping a released output low ten
+ * times a second. */
+bool pin_store_owns(uint8_t pin);
+
 /* Fill cfg-shaped Lua pin roles from the live assignment, in the positional
  * order lua_plat_configure() expects. Returns how many entries were filled. */
 int pin_store_lua_pins(lua_pin_cfg_t *out, int max);

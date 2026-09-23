@@ -129,6 +129,15 @@ int main() {
      * /api/status. */
     pin_store_load(&ctx.config, NULL, 0);
 
+    /* Before the flight loop, and before core1 exists. A channel the
+     * assignment released is Lua's pad now, so the flight software's
+     * operations on it are replaced with mocked ones that do nothing and say
+     * so -- rather than left to reach a pad another core is driving. */
+    {
+        const pin_assign_t *pa = pin_store_current();
+        hal_pyro_release_apply(pa->pyro1_released, pa->pyro2_released);
+    }
+
 #if PYRO_HAS_LUA
     /* Core1 is launched here, once, after the filesystem is mounted and the
      * config is loaded, and before the flight loop. There is deliberately no
