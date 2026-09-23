@@ -170,11 +170,18 @@ void config_parse_ini(char *buf, config_t *cfg) {
 int config_serialize_ini(const config_t *cfg, char *buf, int max_len) {
     int pos = 0;
 
+/* snprintf returns what it WOULD have written, so `pos += n` can run past
+ * max_len and hand the next call a negative size -- which converts to an
+ * enormous size_t and writes past the buffer. Overflow returns -1 instead;
+ * every caller already treats a non-positive return as failure. */
 #define APPEND(fmt, ...)                                                                                               \
     do {                                                                                                               \
-        int n = snprintf(buf + pos, max_len - pos, fmt, ##__VA_ARGS__);                                                \
-        if (n > 0)                                                                                                     \
-            pos += n;                                                                                                  \
+        if (pos >= max_len)                                                                                            \
+            return -1;                                                                                                 \
+        int n = snprintf(buf + pos, (size_t)(max_len - pos), fmt, ##__VA_ARGS__);                                      \
+        if (n < 0 || n >= max_len - pos)                                                                               \
+            return -1;                                                                                                 \
+        pos += n;                                                                                                      \
     } while (0)
 
     APPEND("[pyro]\r\n");

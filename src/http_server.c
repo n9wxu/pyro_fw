@@ -920,11 +920,27 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                                 "Content-Type: application/json\r\n\r\n"
                                 "{\"green\":%s,\"items\":[",
                                 chk.green ? "true" : "false");
-            for (int i = 0; i < chk.count; i++) {
-                blen += snprintf(body + blen, sizeof(body) - (size_t)blen, "%s{\"kind\":%d,\"detail\":\"%s\"}",
-                                 i ? "," : "", (int)chk.items[i].kind, chk.items[i].detail);
+            /* detail carries a Lua error verbatim, and a Lua error names its
+             * chunk: [string "check"]:128: ... Unescaped, those quotes end the
+             * JSON string and the Check button reports "check failed" instead
+             * of the error it was asked to show.
+             *
+             * blen is bounded on every append because snprintf returns what it
+             * WOULD have written: letting it run past sizeof(body) hands the
+             * next call a negative size. */
+            for (int i = 0; i < chk.count && blen > 0 && blen < (int)sizeof(body) - 2; i++) {
+                char esc_detail[sizeof(chk.items[i].detail) * 2 + 8];
+                json_escape(esc_detail, (int)sizeof(esc_detail), chk.items[i].detail,
+                            (int)strlen(chk.items[i].detail));
+                int n = snprintf(body + blen, sizeof(body) - (size_t)blen, "%s{\"kind\":%d,\"detail\":\"%s\"}",
+                                 i ? "," : "", (int)chk.items[i].kind, esc_detail);
+                if (n < 0 || n >= (int)sizeof(body) - blen)
+                    break;
+                blen += n;
             }
-            blen += snprintf(body + blen, sizeof(body) - (size_t)blen, "]}");
+            if (blen > 0 && blen < (int)sizeof(body) - 3) {
+                blen += snprintf(body + blen, sizeof(body) - (size_t)blen, "]}");
+            }
             tcp_write(pcb, body, blen, TCP_WRITE_FLAG_COPY);
             tcp_output(pcb);
             tcp_sent(pcb, on_sent);
@@ -1013,13 +1029,43 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 tcp_arg(pcb, NULL);
                 return ERR_OK;
             } else {
+                /* Merge, never replace (REQUIREMENTS.md CFG-06).
+                 *
+                 * The body is a PARTIAL config: the Config tab posts eight keys
+                 * and the Lua tab posts only the lua_* ones. Writing it verbatim
+                 * left config.ini holding just those keys, and hal_config_load()
+                 * starts from config_set_defaults(), so every field the other tab
+                 * owns reverted. Saving config wiped the Lua pin roles and saving
+                 * Lua reset the rocket id, name and both pyro modes.
+                 *
+                 * Parsing over the running config and re-serialising also gives
+                 * CFG-08 for free: config_parse_ini() ignores keys it does not
+                 * know, so an unknown key neither lands nor destroys anything. */
+                config_t merged = flight_get_context()->config;
+                config_parse_ini(cfgbuf, &merged);
+                char cfgout[512];
+                int cfgn = config_serialize_ini(&merged, cfgout, (int)sizeof(cfgout));
+                if (cfgn <= 0) {
+                    /* Does not fit what hal_config_load() can read back, so
+                     * writing it would produce a file the board cannot parse. */
+                    flash_window_release();
+                    resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n"
+                           "Content-Type: application/json\r\n\r\n"
+                           "{\"error\":\"Merged config exceeds the 512-byte budget\"}";
+                    tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
+                    tcp_output(pcb);
+                    tcp_sent(pcb, on_sent);
+                    tcp_arg(pcb, NULL);
+                    return ERR_OK;
+                }
+
                 /* Safe to update: write to flash and reload */
                 lfs_t lfs;
                 if (lfs_mount(&lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
                     lfs_file_t f;
                     if (lfs_file_opencfg(&lfs, &f, "config.ini", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC,
                                          &lfs_pico_file_config) == LFS_ERR_OK) {
-                        lfs_ssize_t written = lfs_file_write(&lfs, &f, cfgbuf, len);
+                        lfs_ssize_t written = lfs_file_write(&lfs, &f, cfgout, cfgn);
                         int close_err = lfs_file_close(&lfs, &f);
                         int unmount_err = lfs_unmount(&lfs);
 

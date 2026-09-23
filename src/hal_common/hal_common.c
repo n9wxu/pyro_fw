@@ -606,6 +606,12 @@ void hal_platform_init(void) {
      * tone at power-on. */
     hal_buzzer_init();
 
+    /* Puts the pyro outputs down before anything slow runs. On MK1A and MK1C
+     * this is the only early call to pyro_safe_all_outputs(); without it the
+     * firing pins keep their reset state until pyro_init(), which is after
+     * USB enumeration, lwIP and the filesystem mount. */
+    board_early_init();
+
     /* Watchdog initialization removed - watchdog_reboot() handles enabling
      * internally when needed. The 1ms timeout was causing boot loops. */
 

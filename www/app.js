@@ -11,6 +11,10 @@ var MAX_ALT = {0:800000, 1:8000, 2:26247};
 var UNIT_LABELS = {0:'cm', 1:'m', 2:'ft'};
 var UNIT_NAMES = ['cm','m','ft'];
 var MODE_LABELS = {delay:'Delay',agl:'AGL',fallen:'Fallen',speed:'Speed',none:'None'};
+/* beep_mode is a U8 in config_fields.h, so sending the name made atoi() read 0
+ * on every save. Nothing in the firmware consumes the field yet. */
+var BEEP_CODES = {digits:0, hundreds:1};
+function beepCode(n) { return BEEP_CODES[n] !== undefined ? BEEP_CODES[n] : 0; }
 var WEB_VERSION = '2.0.0';
 
 /* ── Tabs ──────────────────────────────────────────────────────── */
@@ -206,7 +210,7 @@ function cfgSave() {
   var ini = '[pyro]\r\nid=' + c.id + '\r\nname=' + c.name +
     '\r\npyro1_mode=' + c.p1mode + '\r\npyro1_value=' + c.p1val +
     '\r\npyro2_mode=' + c.p2mode + '\r\npyro2_value=' + c.p2val +
-    '\r\nunits=' + uname + '\r\nbeep_mode=' + c.beep + '\r\n';
+    '\r\nunits=' + uname + '\r\nbeep_mode=' + beepCode(c.beep) + '\r\n';
   var msg = document.getElementById('cfgMsg');
   fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:ini})
     .then(function(r) {

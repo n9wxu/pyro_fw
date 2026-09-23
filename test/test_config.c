@@ -251,6 +251,85 @@ void test_config_default_ini_string(void) {
 
 /* ── Test runner ──────────────────────────────────────────────────── */
 
+
+/* ── CFG-06: a partial file must not reset what it omits ──────────── */
+
+/* This is the composition POST /api/config performs: take the running config,
+ * parse the partial body over it, re-serialise the result. Writing the body
+ * verbatim instead is what let the Config tab wipe the Lua pin roles and the
+ * Lua tab reset the rocket id and both pyro modes. */
+static void merge_partial(const config_t *running, const char *partial, config_t *out) {
+    char buf[512];
+    char ser[512];
+    *out = *running;
+    strncpy(buf, partial, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    config_parse_ini(buf, out);
+    int n = config_serialize_ini(out, ser, (int)sizeof(ser));
+    TEST_ASSERT_GREATER_THAN(0, n);
+    /* And the serialised form must parse back to the same thing. */
+    config_t back;
+    config_set_defaults(&back);
+    config_parse_ini(ser, &back);
+    *out = back;
+}
+
+void test_config_merge_keeps_omitted_fields(void) {
+    config_t running;
+    config_set_defaults(&running);
+    strncpy(running.id, "ROCKET7", sizeof(running.id) - 1);
+    strncpy(running.lua_p18_role, "out", sizeof(running.lua_p18_role) - 1);
+    strncpy(running.lua_p18_name, "led", sizeof(running.lua_p18_name) - 1);
+    running.pyro2_value = 250;
+
+    /* What the Config tab posts: its own keys only, no lua_*. */
+    config_t merged;
+    merge_partial(&running, "[pyro]\r\nid=ROCKET9\r\npyro1_value=7\r\n", &merged);
+
+    TEST_ASSERT_EQUAL_STRING("ROCKET9", merged.id);   /* changed  */
+    TEST_ASSERT_EQUAL(7, merged.pyro1_value);         /* changed  */
+    TEST_ASSERT_EQUAL_STRING("out", merged.lua_p18_role); /* survived */
+    TEST_ASSERT_EQUAL_STRING("led", merged.lua_p18_name); /* survived */
+    TEST_ASSERT_EQUAL(250, merged.pyro2_value);           /* survived */
+}
+
+void test_config_merge_lua_tab_keeps_flight_fields(void) {
+    config_t running;
+    config_set_defaults(&running);
+    strncpy(running.id, "ROCKET7", sizeof(running.id) - 1);
+    running.pyro1_mode = PYRO_MODE_SPEED;
+    running.pyro1_value = 42;
+
+    /* What the Lua tab posts: lua_* only. */
+    config_t merged;
+    merge_partial(&running, "[pyro]\r\nlua_enabled=true\r\nlua_p19_role=pwm\r\n", &merged);
+
+    TEST_ASSERT_TRUE(merged.lua_enabled);                  /* changed  */
+    TEST_ASSERT_EQUAL_STRING("pwm", merged.lua_p19_role);  /* changed  */
+    TEST_ASSERT_EQUAL_STRING("ROCKET7", merged.id);        /* survived */
+    TEST_ASSERT_EQUAL(PYRO_MODE_SPEED, merged.pyro1_mode); /* survived */
+    TEST_ASSERT_EQUAL(42, merged.pyro1_value);             /* survived */
+}
+
+/* ── Serializer overflow ──────────────────────────────────────────── */
+
+/* snprintf reports what it would have written, so an unguarded `pos += n`
+ * runs past the buffer and hands the next call a negative size. */
+void test_config_serialize_refuses_to_overflow(void) {
+    config_t cfg;
+    config_set_defaults(&cfg);
+    /* A guard region after the buffer the serialiser is allowed to use.
+     * snprintf may write a terminator anywhere inside its own size, so the
+     * property under test is that nothing lands beyond it. */
+    char arena[96];
+    const int usable = 32;
+    memset(arena, 0x7f, sizeof(arena));
+    TEST_ASSERT_LESS_OR_EQUAL(0, config_serialize_ini(&cfg, arena, usable));
+    for (size_t i = (size_t)usable; i < sizeof(arena); i++) {
+        TEST_ASSERT_EQUAL_HEX8(0x7f, (unsigned char)arena[i]);
+    }
+}
+
 int main(void) {
     UNITY_BEGIN();
 
@@ -273,6 +352,11 @@ int main(void) {
     RUN_TEST(test_config_parse_new_fields);
     RUN_TEST(test_config_parse_all_modes);
     RUN_TEST(test_config_parse_all_units);
+
+    /* Merge semantics [CFG-06] */
+    RUN_TEST(test_config_merge_keeps_omitted_fields);
+    RUN_TEST(test_config_merge_lua_tab_keeps_flight_fields);
+    RUN_TEST(test_config_serialize_refuses_to_overflow);
 
     /* Default INI string */
     RUN_TEST(test_config_default_ini_string);

@@ -51,8 +51,13 @@ void flash_window_deferred(void);
 uint32_t flash_window_deferrals(void);
 
 /* An erase costs tens of milliseconds and the datasheet worst case is
- * hundreds, so what a window costs is measured rather than assumed. Duration
- * is stage_max_us[7]. */
+ * hundreds, so what a window costs is measured rather than assumed.
+ *
+ * Duration lands in one of two stages. A window opened at STAGE 7 and drained
+ * there is stage_max_us[7]. A write driven from an HTTP callback under a hold
+ * runs in the slack loop, so its cost is stage_max_us[8] -- measured at 52-64
+ * ms for two erases across MK1A, MK1B and MK1C, against 22-41 us for a window
+ * that only programs a page. */
 void flash_window_erased(void);
 void flash_window_programmed(void);
 uint32_t flash_window_erases(void);
