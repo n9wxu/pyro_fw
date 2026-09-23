@@ -11,22 +11,18 @@
  * Three rules shape this file.
  *
  * 1. A Lua pin is only ever SIO or a PIO function, never a peripheral one.
- *    That is not stylistic: on RP2040 a pin's peripheral function is fixed by
- *    pin number, and on every one of these boards at least one Lua-reachable
- *    pin shares an I2C instance with the flight pressure sensor --
- *    GPIO18/19 are i2c1 on MK1C, whose MS5607 is on GPIO6/7. A Lua pin in
- *    GPIO_FUNC_I2C would join the flight sensor's bus. There is no call to
- *    gpio_set_function with a peripheral argument anywhere below, which
- *    removes the reachability instead of checking for it.
+ *    RP2040 fixes a pin's peripheral function by pin number, and on every one
+ *    of these boards a Lua-reachable pin shares an I2C instance with the
+ *    flight pressure sensor: GPIO18/19 are i2c1 on MK1C, whose MS5607 is on
+ *    GPIO6/7. Do not call gpio_set_function with a peripheral argument
+ *    anywhere below.
  *
- * 2. Every PIO state machine, program offset and DMA channel is claimed here,
- *    at boot, on core0, before core1 exists. hw_claim_lock() takes spin lock
- *    11; a core1 killed inside it would strand that lock and hang core0's next
- *    claim. Claiming everything up front means core1 never calls hw_claim at
- *    all -- it only writes registers on resources it was handed.
+ * 2. Core0 claims every PIO state machine, program offset and DMA channel
+ *    here, at boot, before core1 exists. hw_claim_lock() takes spin lock 11,
+ *    and a core1 killed inside it would strand that lock and hang core0's
+ *    next claim.
  *
- * 3. Nothing here blocks. core1 must stay able to answer a park request, so a
- *    full FIFO drops rather than waits and a busy DMA skips a frame.
+ * 3. Nothing here blocks: a full FIFO drops and a busy DMA skips a frame.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -45,12 +41,12 @@
 
 /* ── Resource budget ──────────────────────────────────────────────
  *
- * The point of this block is that acquisition failure is not a runtime
- * outcome to be handled, it is a state the build refuses to produce.
+ * Acquisition failure is not a runtime outcome to handle; it is a state the
+ * build refuses to produce.
  *
- * pio1 has 32 instruction slots and 4 state machines. J3 has four pins, and
- * a pin holds exactly one role. The worst case an operator can configure is
- * therefore all four pins in the three PIO-backed roles:
+ * pio1 has 32 instruction slots and 4 state machines, a pin holds one role,
+ * and J3 has four pins, so the worst case an operator can configure is all
+ * four in the three PIO-backed roles:
  *
  *      ws2812   4 instructions   1 SM
  *      uart_tx  4 instructions   1 SM
@@ -58,30 +54,25 @@
  *      ------------------------------
  *               16 instructions  3 SMs      (out of 32 and 4)
  *
- * Digital outputs and inputs are plain SIO and cost neither. So every
- * configuration fits, with the fourth SM and half the instruction memory to
- * spare, and the static_asserts below fail the BUILD if a program ever grows
- * past that -- which is the point. An operator cannot produce a
- * configuration this firmware will refuse to start.
+ * Digital outputs and inputs are plain SIO and cost neither, so every
+ * configuration fits with a state machine and half the instruction memory to
+ * spare. The static_asserts below fail the build if a program outgrows that.
  *
  * Counted from the generated instruction arrays rather than the pio_program
- * structs, because a struct member is not a constant expression and a
- * static_assert that cannot see the number is not a check. */
+ * structs: a struct member is not a constant expression, and a static_assert
+ * that cannot see the number is not a check. */
 #define LUA_PIO_PROG_LEN(p) (sizeof(p##_program_instructions) / sizeof(uint16_t))
 #define LUA_PIO_BUDGET_INSTR                                                                                           \
     (LUA_PIO_PROG_LEN(lua_ws2812) + LUA_PIO_PROG_LEN(lua_uart_tx) + LUA_PIO_PROG_LEN(lua_uart_rx))
 #define LUA_PIO_BUDGET_SMS 3
 
-/* Which PIO block and which pads -- the board says, because the board is the
- * only thing that knows. See boards/<name>/lua_pins.h. */
+/* From boards/<name>/lua_pins.h. */
 #define LUA_PIO LUA_PIO_INST
 static const uint8_t lua_pins[LUA_PIN_COUNT] = LUA_PIN_LIST;
 
-/* ── Configuration, resolved once at boot ─────────────────────────
- *
- * lua_plat_configure() turns the operator's config into these tables. Lua
- * addresses them by index through name lookup in pyro_lua.c, so a resource
- * that configuration did not create cannot be named, let alone reached. */
+/* Lua addresses these by index through name lookup in pyro_lua.c, so a
+ * resource configuration did not create cannot be named, let alone
+ * reached. */
 
 #define LUA_MAX_OUT LUA_PIN_COUNT
 #define LUA_MAX_IN LUA_PIN_COUNT
@@ -119,12 +110,9 @@ static uint32_t px_wire[LUA_MAX_PIXELS]; /* what show() handed to DMA */
 
 /* ── PWM by software, on core1 ────────────────────────────────────
  *
- * Dimmable outputs use a 256-step software PWM driven from
- * lua_plat_pin_service(), which core1 calls between VM slices. The hardware
- * PWM slices are deliberately not used: a PWM slice keeps running after the
- * processor that set it stops, and "the output stops when the program stops"
- * is a property worth keeping for anything wired into an av-bay. It is the
- * same argument that shaped the ARM_TOGGLE pump. */
+ * Do not use the hardware PWM slices: a slice keeps running after the
+ * processor that set it stops, and an av-bay output must stop when the
+ * program does. Same argument as the ARM_TOGGLE pump. */
 static uint8_t pwm_phase;
 
 void lua_plat_pin_service(void) {
@@ -166,10 +154,8 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
         }
     }
 
-    /* Claim first, wire second. Every claim below is on core0 at boot, and
-     * by the budget above none of them can fail; the SDK's asserting
-     * variants would be the wrong tool anyway, so the non-asserting ones are
-     * used and a failure is reported rather than panicking. */
+    /* Claim first, wire second. By the budget above none of these can fail,
+     * so the non-asserting variants report rather than panic. */
     if (want_px) {
         px_sm = pio_claim_unused_sm(LUA_PIO, false);
         px_dma = dma_claim_unused_channel(false);
@@ -306,9 +292,7 @@ int lua_plat_serial_write(int idx, const char *s, int len) {
     if (tx_sm < 0) {
         return 0;
     }
-    /* Drop rather than block when the FIFO is full. A script that outruns
-     * 9600 baud must not be able to stall the core it runs on, and a stalled
-     * core1 is a core1 that cannot answer a park request. */
+    /* A script that outruns 9600 baud must not stall the core it runs on. */
     int n = 0;
     while (n < len && !pio_sm_is_tx_fifo_full(LUA_PIO, (uint)tx_sm)) {
         pio_sm_put(LUA_PIO, (uint)tx_sm, (uint32_t)(uint8_t)s[n]);
@@ -347,19 +331,10 @@ void lua_plat_pixel_show(void) {
     if (px_sm < 0 || px_count == 0) {
         return;
     }
-    /* Drop the frame if the previous transfer has not finished.
-     *
-     * This used to be dma_channel_wait_for_finish_blocking(), justified as
-     * "bounded by 30 us per pixel". That reasoning holds only while the state
-     * machine keeps draining the FIFO; if it ever stops, the wait is
-     * unbounded -- and on the bench it was. core1 froze inside it, stopped
-     * answering park requests, and core0 killed it (parks ok=1, fail req=3
-     * ack=1).
-     *
-     * The rule this file opens with says nothing here blocks, and an
-     * unbounded wait on core1 is exactly what prove_core0.py now refuses.
-     * A dropped frame on an LED string costs nothing; the next show() sends
-     * the current buffer anyway. */
+    /* Do not call dma_channel_wait_for_finish_blocking() here. It looks
+     * bounded at 30 us per pixel, but that holds only while the state machine
+     * keeps draining the FIFO, and prove_core0.py refuses an unbounded wait
+     * on core1. The next show() sends the current buffer anyway. */
     if (dma_channel_is_busy((uint)px_dma)) {
         return;
     }
@@ -391,9 +366,8 @@ uint32_t lua_plat_time_ms(void) {
 int lua_plat_pyro_status(int channel) {
     return lua_flight_snapshot()->pyro[(channel == 2) ? 1 : 0];
 }
-/* Free-running microseconds. One timer register read, no lock, safe from
- * either core -- which matters because this is called from the VM's
- * instruction hook on core1. */
+/* One timer register read, no lock, safe from either core: the VM's
+ * instruction hook calls this on core1. */
 uint32_t lua_plat_now_us(void) {
     return time_us_32();
 }
@@ -414,22 +388,16 @@ uint32_t lua_plat_telem_seq(void) {
 /* ── Safing, from core0 ───────────────────────────────────────────── */
 
 void lua_plat_safe_outputs(void) {
-    /* The pixel DMA is deliberately NOT aborted.
+    /* Do not abort the pixel DMA. dma_channel_abort() spins until the abort
+     * bit self-clears, and an in-flight transfer into a PIO TX FIFO cannot
+     * complete while that FIFO is full and the state machine has stopped
+     * draining it -- the state a wedged core1 leaves behind. That is an
+     * unbounded wait on core0, on the path that exists so core0 never waits.
      *
-     * dma_channel_abort() spins until the abort bit self-clears, and an
-     * in-flight transfer into a PIO TX FIFO cannot complete while that FIFO is
-     * full and the state machine has stopped draining it -- which is exactly
-     * the state a wedged core1 leaves behind. That would put an unbounded wait
-     * on core0, on the path whose whole purpose is that core0 never waits for
-     * core1.
-     *
-     * It is also unnecessary. The safety property here is "no pad is driven",
-     * and that is achieved below by handing every pad back to SIO: once the
-     * function select is SIO, neither PIO nor its DMA reaches a pin, whatever
-     * they go on doing. A pending transfer on a channel nothing will claim
-     * again costs nothing -- there is deliberately no relaunch of core1.
-     *
-     * Disabling the state machines is belt and braces for the same reason. */
+     * Handing the pads back to SIO below is what makes the pin safe: once the
+     * function select is SIO, neither PIO nor its DMA reaches a pin. A
+     * pending transfer on a channel nothing will claim again costs nothing,
+     * since core1 is never relaunched. */
     if (px_sm >= 0) {
         pio_sm_set_enabled(LUA_PIO, (uint)px_sm, false);
     }

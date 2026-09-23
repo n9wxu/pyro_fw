@@ -38,7 +38,7 @@ After recovery, plug in and download your CSV with one click. View it in Excel, 
 
 ---
 
-### Why Web Instead of USB Drive?
+### Web interface compared with a USB drive
 
 | | USB Drive (traditional) | Web Interface (Pyro MK1B) |
 |---|---|---|

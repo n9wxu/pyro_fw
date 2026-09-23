@@ -1,21 +1,13 @@
 /*
- * Buzzer driver — autonomous async task (v2).
+ * Buzzer driver — one autonomous async task that encodes and then plays.
  *
- * Architecture: one async_task_t handles both encoding and playback.
+ * buzzer_play_code() and buzzer_play_altitude() store a request and arm the
+ * task. The task encodes that request into a flat buzzer_pattern_t[] on its
+ * first tick, then steps through the pattern on later ticks, toggling the
+ * GPIO through hal_buzzer_tone_on() and hal_buzzer_tone_off().
  *
- *   Flight software calls buzzer_play_code() or buzzer_play_altitude().
- *   That stores the request and arms the task for immediate execution.
- *
- *   On the first tick the task encodes the request into a flat
- *   buzzer_pattern_t[] array (BZ_ENCODE phase) and immediately
- *   transitions to BZ_PLAYING.
- *
- *   Subsequent ticks step through the pattern, toggling the GPIO via
- *   hal_buzzer_tone_on/off() on the exact schedule, with no main-loop
- *   involvement.
- *
- *   The task is registered with the platform task runner via
- *   hal_buzzer_task_register() so it runs alongside the pressure task.
+ * The flight software never waits for a pattern: hal_buzzer_task_register()
+ * puts the task on the platform runner alongside the pressure task.
  *
  * SPDX-License-Identifier: MIT
  */

@@ -94,9 +94,8 @@ static conn_state_t *conn_alloc(void) {
     return NULL;
 }
 
-/* Returns false if closing the file could not be completed -- lfs_file_close
- * flushes the last partial block, so a refusal there loses the tail of the
- * file just as surely as a refused write does, and just as quietly. */
+/* lfs_file_close() flushes the last partial block, so a refusal there loses
+ * the tail of the file as quietly as a refused write does. */
 static bool conn_free(conn_state_t *cs) {
     bool ok = true;
     if (cs->file_open) {
@@ -124,20 +123,13 @@ static uint32_t ota_offset; /* bytes written so far */
 static uint16_t ota_buf_fill;
 static bool ota_failed;
 
-/* Program one sector of the OTA image.
+/* Returns false with nothing written when the window is shut; lwIP
+ * redelivers the same bytes, so a refusal costs latency and never data.
  *
- * Returns false when the flash window is shut, having written nothing. The
- * caller pushes back on the TCP connection and lwIP redelivers the same
- * bytes once the window is open, so a refusal costs latency and never data.
- *
- * This used to be `while (!lua_core1_flash_ok()) tight_loop_contents();` and
- * that spin is the deadlock. It runs inside an lwIP callback, which runs in
- * core0's slack loop, which is inside the period whose grant core1 is still
- * executing. If core1 overran its unit -- or was still in its unbounded
- * startup, where flash_ok is false for up to five seconds -- core0 could
- * only be released by reaching lua_app_service(), which is the very thing
- * the spin prevents. The board hung until the watchdog reset it, which is
- * what stalled OTA at 39%. */
+ * Do not wait for the window here. This runs inside an lwIP callback, itself
+ * inside core0's slack loop, so only lua_app_service() can release core0 and
+ * a spin here stops core0 reaching it. Core1's unbounded startup holds
+ * flash_ok false for up to five seconds. */
 static bool ota_flush(void) {
     if (ota_buf_fill == 0)
         return true;
@@ -158,9 +150,7 @@ static bool ota_flush(void) {
     return true;
 }
 
-/* Returns bytes consumed, which is less than len when the sector filled and
- * the window would not take it. The caller stops there and leaves the rest
- * with lwIP. */
+/* Short when the sector filled and the window would not take it. */
 static uint16_t ota_write(const void *data, uint16_t len) {
     const uint8_t *src = (const uint8_t *)data;
     uint16_t done = 0;
@@ -178,9 +168,8 @@ static uint16_t ota_write(const void *data, uint16_t len) {
     return done;
 }
 
-/* POST paths that erase or program flash. They are the only requests that
- * have to be scheduled into core0's flash window; everything else answers
- * from RAM and can be served in the slack whatever core1 is doing. */
+/* Only these need scheduling into core0's flash window; every other request
+ * answers from RAM whatever core1 is doing. */
 static bool post_writes_flash(const char *path) {
     return strcmp(path, "/api/ota") == 0 || strcmp(path, "/api/config") == 0 || strcmp(path, "/api/serial") == 0 ||
            strcmp(path, "/api/lua/script") == 0 || strncmp(path, "/www/", 5) == 0;
@@ -401,11 +390,8 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
 
     /* ── Receiving file upload (continuation packets) ──────────── */
     if (cs && cs->phase == CONN_RECEIVING_FILE) {
-        /* Same gate as the first packet, for the same reason: this is the
-         * only place the body reaches littlefs, and it must be inside the
-         * window. All-or-nothing per segment -- consuming half of one and
-         * then refusing would have lwIP redeliver the whole thing and
-         * duplicate what was already written. */
+        /* All-or-nothing per segment: consuming half and then refusing makes
+         * lwIP redeliver the whole segment, duplicating what was written. */
         flash_window_hold(hal_time_ms());
         if (!flash_window_is_open()) {
             flash_window_deferred();
@@ -430,14 +416,9 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
         pbuf_free(p);
 
         if (cs->write_failed) {
-            /* A short write means littlefs could not reach the flash, which
-             * now has one cause: the operation started outside the window.
-             * The old driver could not fail here -- it spun until it could
-             * write -- so the return value had never needed checking, and
-             * leaving it unchecked once it can fail turned a refused sector
-             * into a file that is the right length and wrong in the middle.
-             * Silently. Fail the upload instead; the operator retries and
-             * gets a whole file rather than a plausible one. */
+            /* Check every write: an unchecked refusal leaves a file of the
+             * right length that is wrong in the middle, with nothing
+             * reported. */
             DBG("POST %s FAIL write refused", cs->path);
             conn_free(cs);
             flash_window_release();
@@ -488,12 +469,10 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 chunk = cs->remaining;
             pbuf_copy_partial(p, buf, chunk, off);
             if (ota_write(buf, chunk) != chunk) {
-                /* Unreachable: the window was checked above and only core0's
-                 * exec loop can close it, which it cannot do while this
-                 * callback is running. Handled rather than asserted because
-                 * the alternative to noticing is a silently truncated image.
-                 * Consume the whole segment either way -- the bytes are gone
-                 * and the transfer is over. */
+                /* Unreachable behind the gate above, since only core0's
+                 * exec loop closes the window and cannot while this callback
+                 * runs. Handled anyway: the alternative to noticing is a
+                 * truncated image. */
                 ota_failed = true;
             }
             off += chunk;
@@ -566,22 +545,11 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
 
     /* ── The flash gate, before the ack ────────────────────────
      *
-     * Every POST below that reaches littlefs or the OTA slot has to land
-     * inside core0's flash window, and this connection's callback is running
-     * in the exec loop's slack -- which is the window only when a hold is
-     * live. So: arm the hold, and if the window is shut right now, hand the
-     * whole packet back to lwIP untouched.
-     *
-     * Untouched is the point. Returning before tcp_recved() and before
-     * pbuf_free() makes lwIP keep the segment as pcb->refused_data and
-     * redeliver it (tcp_in.c: "keep incoming packet, because pcb is full").
-     * Nothing is parsed twice, no connection slot is allocated and freed, and
-     * no byte is lost -- the request simply happens a period later, with
-     * core1 parked and the window open.
-     *
-     * This replaces refusing with a 503, which made an upload the operator's
-     * problem to retry, and it replaces spinning, which made it the
-     * watchdog's. */
+     * Return before tcp_recved() and before pbuf_free(). lwIP then keeps the
+     * segment as pcb->refused_data and redelivers it a period later (tcp_in.c:
+     * "keep incoming packet, because pcb is full"), so nothing is parsed
+     * twice, no connection slot is allocated and freed, and no byte is
+     * lost. */
     if (strcmp(method, "POST") == 0 && post_writes_flash(path) && content_length > 0) {
         flash_window_hold(hal_time_ms());
         if (!flash_window_is_open()) {
@@ -658,25 +626,25 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 }
             }
             esc[j] = '\0';
-            /* The dispatch handshake, live rather than only on the death
-             * report. "running" with a frozen heartbeat and c1_go ahead of
-             * c1_seen means core0 handed out a unit core1 never claimed --
-             * which is a different failure from a VM stuck mid-tick, and the
-             * two are indistinguishable without these. */
+            /* "running" with a frozen heartbeat and c1_go ahead of c1_seen
+             * means core0 handed out a unit core1 never claimed. Without
+             * these, that and a VM stuck mid-tick look identical. */
             uint32_t dbg_go, dbg_seen, dbg_skipped, dbg_hb;
-            lua_core1_park_stats(&dbg_go, &dbg_seen, &dbg_skipped, &dbg_hb);
+            lua_core1_dispatch_stats(&dbg_go, &dbg_seen, &dbg_skipped, &dbg_hb);
             uint32_t dbg_loc = lua_core1_loc();
             int blen =
                 snprintf(body, sizeof(body),
                          "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
                          "Content-Type: application/json\r\n\r\n"
                          "{\"status\":\"%s\",\"heartbeat\":%lu,\"log_written\":%lu,"
-                         "\"console_dropped\":%lu,\"log_dropped\":%lu,"
+                         "\"console_dropped\":%lu,\"log_dropped\":%lu,\"log_refused\":%lu,"
+                         "\"log_active\":%s,"
                          "\"c1_state\":%d,\"c1_loc\":%lu,\"c1_busy\":%lu,\"c1_go\":%lu,\"c1_seen\":%lu,"
                          "\"c1_skipped\":%lu,\"c1_ready\":%s,\"c1_flash_ok\":%s,\"stack_free\":%lu,"
                          "\"text\":\"%s\"}",
                          lua_app_status(), (unsigned long)lua_core1_heartbeat(), (unsigned long)lua_app_log_written(),
                          (unsigned long)lua_core1_console_dropped(), (unsigned long)lua_core1_log_dropped(),
+                         (unsigned long)hal_log_text_dropped(), hal_log_active() ? "true" : "false",
                          (int)lua_core1_state(), (unsigned long)(dbg_loc & 0xffu),
                          (unsigned long)((dbg_loc >> 8) & 0xffu), (unsigned long)dbg_go, (unsigned long)dbg_seen,
                          (unsigned long)dbg_skipped, lua_core1_ready() ? "true" : "false",
@@ -773,6 +741,10 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             pfb_firmware_commit();
             ota_offset = 0;
             ota_buf_fill = 0;
+            /* Per transfer, like the two above. Left latched, it would abort
+             * every later upload at its first continuation packet, reporting
+             * a window that is wide open, with only BOOTSEL to clear it. */
+            ota_failed = false;
 
             if (body_in_first > 0) {
                 char buf[CHUNK_SIZE];
@@ -784,12 +756,29 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                     if (chunk > cs->remaining)
                         chunk = cs->remaining;
                     pbuf_copy_partial(p, buf, chunk, off);
-                    ota_write(buf, chunk);
+                    /* Unreachable behind the gate, and a truncated image if
+                     * that reasoning is wrong. */
+                    if (ota_write(buf, chunk) != chunk)
+                        ota_failed = true;
                     off += chunk;
                     cs->remaining -= chunk;
                 }
             }
             pbuf_free(p);
+
+            /* The body is already consumed, so no later packet can carry the
+             * failure and the client would wait on a finished transfer. */
+            if (ota_failed) {
+                conn_free(cs);
+                flash_window_release();
+                const char *fail = "HTTP/1.1 500 Internal Server Error\r\n" CORS_HDR
+                                   "Connection: close\r\n\r\nOTA aborted: flash window closed mid-image";
+                tcp_write(pcb, fail, strlen(fail), TCP_WRITE_FLAG_COPY);
+                tcp_output(pcb);
+                tcp_sent(pcb, on_sent);
+                tcp_arg(pcb, NULL);
+                return ERR_OK;
+            }
 
             if (cs->remaining == 0) {
                 ota_flush();
@@ -814,12 +803,8 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 snprintf(path, sizeof(path), "/%s", LUA_SCRIPT_PATH);
             }
 
-            /* No 503 here any more. This path writes littlefs directly
-             * rather than through hal_fs_*, and the gate before the ack
-             * covers it: the request was either admitted into an open window
-             * or handed straight back to lwIP, unparsed, to be redelivered a
-             * period later. Making the operator retry was only ever
-             * necessary because core0 had no way to arrange a window. */
+            /* No 503 needed: this path writes littlefs directly rather than
+             * through hal_fs_*, and the gate before the ack covers it. */
 #else
         } else if (strncmp(path, "/www/", 5) == 0 && content_length > 0) {
 #endif
@@ -887,10 +872,8 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 if (!conn_free(cs)) {
                     ok = false;
                 }
-                /* Give core1 its slack back now rather than letting the hold
-                 * time out: a small file fits in one packet, and two seconds
-                 * of parked Lua for a 700-byte script is a cost with nothing
-                 * buying it. */
+                /* A small file fits in one packet, so two seconds of parked
+                 * Lua buys nothing. */
                 flash_window_release();
                 const char *resp = ok ? "HTTP/1.1 201 Created\r\nConnection: close\r\n\r\nOK"
                                       : "HTTP/1.1 500 Internal Server Error\r\n" CORS_HDR
@@ -975,8 +958,8 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             } else {
                 resp = "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n\r\nOK, reboot to apply";
             }
-            /* One packet, one write, done -- core1 gets its slack back on the
-             * next period instead of waiting out the hold's two seconds. */
+            /* One packet and one write, so do not make core1 wait out the
+             * hold's two seconds. */
             flash_window_release();
             tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
             tcp_output(pcb);

@@ -14,10 +14,10 @@
  * ---------------------------------------------------------------------------
  * SAFETY INVARIANT
  *
- *   FIRE1 and FIRE2 are asserted ONLY by pyro_fire(), and only together with
- *   PYRO_LOW. No diagnostic, self-check, boot path or continuity test asserts
- *   either, ever. pyro_fire() is the only function below that writes them
- *   high, which is what makes the sense cycle safe to run continuously.
+ *   pyro_fire() is the only function below that writes FIRE1 or FIRE2 high,
+ *   and only together with PYRO_LOW. No diagnostic, self-check, boot path or
+ *   continuity test asserts either. That absence is what makes the sense
+ *   cycle safe to run continuously.
  *
  * ---------------------------------------------------------------------------
  * CONTINUITY SENSE
@@ -35,22 +35,20 @@
  *   should win on both channels:
  *       low  -> short to ground
  *
- * The discrimination is wide because the pull-up is weak. Against 100k, at
- * 12 bits: a 2 ohm igniter reads 0 counts, a 1k bad joint 41, a 10k leakage
- * path 372, and a genuine open 4095. So the thresholds below are nowhere near
- * anything, and a degraded connection lands in the gap between them rather
- * than being rounded to "good" -- which is the reading that matters, because
- * a dirty connector is what a boolean hides.
+ * The weak pull-up makes the discrimination wide. Against 100k at 12 bits, a
+ * 2 ohm igniter reads 0 counts, a 1k bad joint 41, a 10k leakage path 372,
+ * and a genuine open 4095. A degraded connection therefore lands in the gap
+ * between the two thresholds rather than being rounded up to "good", which is
+ * what a boolean alone would hide.
  *
- * TIMING, and why this is a state machine rather than two sleeps:
+ * TIMING
  *
- *   The node going OPEN has to charge C6/C5 (100nF) through R9+R5 (101k).
- *   That is a 10.1 ms time constant, so an open channel needs about 50 ms to
- *   read as open. Going LOW is fast -- 1k into 100nF, 100 us -- but the slow
- *   edge is the one that decides open, and it cannot be a sleep_ms() inside a
- *   10 ms main loop. Each phase therefore parks on a deadline and samples on
- *   a later iteration; the loop period is the settle timer. See the block
- *   comment in src/main_hardware.c.
+ *   The node going open has to charge C6/C5 (100nF) through R9+R5 (101k), a
+ *   10.1 ms time constant, so an open channel needs about 50 ms to read as
+ *   open. Going low is fast -- 1k into 100nF, 100 us -- but the slow edge is
+ *   the one that decides open, and it cannot be a sleep_ms() inside a 10 ms
+ *   main loop. Each phase parks on a deadline and samples on a later
+ *   iteration, so the loop period is the settle timer.
  *
  *   One full cycle is 2 x SETTLE_MS = 100 ms, and pyro_get() returns the last
  *   completed one. Continuity does not change except by firing, so the
@@ -109,11 +107,8 @@ static uint16_t short_counts[2]; /* phase 2 */
 static bool sns_valid;
 static pyro_continuity_t cont[2];
 
-/* Drive every pyro output inactive. Called from board_early_init() before
- * any slow initialisation, and again from pyro_init().
- *
- * pyro_fire() is the only other function that writes FIRE1 or FIRE2, and
- * only ever high; this is the only one that writes them low. */
+/* Called from board_early_init() before any slow initialisation, and again
+ * from pyro_init(). The only function that writes FIRE1 or FIRE2 low. */
 void pyro_safe_all_outputs(void) {
     static const uint8_t outputs[] = {
         BOARD_PIN_FIRE1,
@@ -213,9 +208,8 @@ void pyro_init(void) {
 }
 
 /* The cycle runs continuously from pyro_update(), so there is no stimulus to
- * start here and nothing to wait for. Deliberately non-blocking, unlike
- * MK1B's version: the settle this board needs is 50 ms, five main-loop
- * periods, which is not something to spend inside the flight loop. */
+ * start and nothing to wait for. This board settles in 50 ms, five main-loop
+ * periods, which is not time to spend inside the flight loop. */
 void pyro_sample(void) {}
 
 void pyro_get(uint8_t channel, pyro_continuity_t *out) {
@@ -233,7 +227,7 @@ void pyro_get(uint8_t channel, pyro_continuity_t *out) {
     *out = cont[channel - 1];
 }
 
-/* The ONLY place FIRE1 or FIRE2 goes high, and only with PYRO_LOW. */
+/* The only place FIRE1 or FIRE2 goes high, and only with PYRO_LOW. */
 void pyro_fire(uint8_t channel) {
     if (channel != 1 && channel != 2)
         return;

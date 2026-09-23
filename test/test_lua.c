@@ -358,8 +358,8 @@ static void test_long_pattern_with_captures(void) {
 }
 
 static void test_a_pathological_pattern_yields_instead_of_blocking(void) {
-    /* The case that used to be unstoppable: quadratic backtracking over a
-     * subject that fits the arena. It must now suspend. */
+    /* Quadratic backtracking over a subject that fits the arena. Nothing in
+     * the VM can interrupt the matcher, so this must suspend. */
     TEST_ASSERT_TRUE(run("function tick()\n"
                          "  local s = ('a'):rep(1200)\n"
                          "  s:match('(a-)*$')\n"
@@ -373,6 +373,42 @@ static void test_a_pathological_pattern_yields_instead_of_blocking(void) {
         st = pyro_lua_tick_slice(2000);
     } while (st == PYRO_LUA_YIELD && ++grants < 5000);
     TEST_ASSERT_EQUAL_INT(PYRO_LUA_DONE, st);
+}
+
+/* A suspended search must survive anything that runs while it is suspended.
+ *
+ * The restartable path must keep its anchored pattern in the activation. An
+ * upvalue of the string.find closure is one object shared by every caller,
+ * however the call stack is arranged, and core1 runs on_event() before it
+ * resumes tick(): a handler matching on a 65..128 byte subject would
+ * overwrite the pattern the suspended search is using. The search then
+ * finishes against the wrong pattern and reports a match, with no error
+ * anywhere. */
+static void test_a_suspended_search_survives_an_event_handler(void) {
+    TEST_ASSERT_TRUE_MESSAGE(run("hit = nil\n"
+                                 "S = ('a'):rep(2000) .. 'zz'\n"
+                                 "function tick() hit = S:find('zz') end\n"
+                                 "function on_event(e)\n"
+                                 "  local t = ('a'):rep(100)\n" /* over the direct-call threshold */
+                                 "  t:find('aa')\n"
+                                 "end\n"),
+                             pyro_lua_last_error());
+
+    /* A one-microsecond grant: the search cannot finish, so it suspends
+     * somewhere in the middle of its 2000 start positions. */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(PYRO_LUA_YIELD, pyro_lua_tick_slice(1),
+                                  "the search must suspend for this test to mean anything");
+
+    pyro_lua_event("apogee", 0);
+
+    pyro_lua_status_t st;
+    int guard = 0;
+    do {
+        st = pyro_lua_tick_slice(2000);
+    } while (st == PYRO_LUA_YIELD && ++guard < 10000);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(PYRO_LUA_DONE, st, pyro_lua_last_error());
+    TEST_ASSERT_TRUE_MESSAGE(pyro_lua_eval("assert(hit == 2001, 'found at '..tostring(hit))"),
+                             pyro_lua_last_error());
 }
 
 static void test_no_match_on_a_long_subject_returns_nil(void) {
@@ -400,8 +436,8 @@ static void test_tick_yields_when_the_time_box_expires(void) {
 }
 
 static void test_a_yielded_tick_resumes_rather_than_restarts(void) {
-    /* The point of yielding over aborting: work already done is kept. If the
-     * script restarted each grant, n would never climb past one slice. */
+    /* Yielding keeps the work already done. A script that restarted each
+     * grant would never climb n past one slice. */
     TEST_ASSERT_TRUE(run("n = 0 function tick() while true do n = n + 1 end end"));
     TEST_ASSERT_EQUAL_INT(PYRO_LUA_YIELD, pyro_lua_tick_slice(2000));
     TEST_ASSERT_TRUE(run_eval_ok("first = n"));
@@ -440,8 +476,8 @@ static void test_an_error_in_tick_is_reported_and_recoverable(void) {
 }
 
 static void test_tick_defined_inside_init_is_found(void) {
-    /* The old have_tick cache was set before init() ran, so a tick() that
-     * init() defined was never called. */
+    /* Do not cache the tick() lookup from before init() runs, or a tick()
+     * that init() defined never gets called. */
     TEST_ASSERT_TRUE(run("ran = 0 function init() function tick() ran = ran + 1 end end"));
     TEST_ASSERT_EQUAL_INT(PYRO_LUA_DONE, pyro_lua_tick_slice(5000));
     TEST_ASSERT_TRUE(run_eval_ok("assert(ran == 1, 'tick defined in init was not called')"));
@@ -728,6 +764,7 @@ int main(void) {
     RUN_TEST(test_long_pattern_gives_the_same_answer);
     RUN_TEST(test_long_pattern_with_captures);
     RUN_TEST(test_a_pathological_pattern_yields_instead_of_blocking);
+    RUN_TEST(test_a_suspended_search_survives_an_event_handler);
     RUN_TEST(test_no_match_on_a_long_subject_returns_nil);
     RUN_TEST(test_gsub_and_gmatch_are_bounded);
     RUN_TEST(test_gsub_and_gmatch_work_below_the_cap);

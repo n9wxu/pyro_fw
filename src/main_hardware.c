@@ -18,47 +18,22 @@
 #include "tusb.h"
 #include "hardware/structs/watchdog.h"
 
-/* ── Main-loop period ─────────────────────────────────────────────
- *
- * The loop runs on a fixed period instead of free-running. Three things
- * need one to exist:
- *
- *   - the watchdog timeout, which is now derived from a board's declared
- *     worst case rather than being a round number nobody can justify;
- *   - a board replacing a blocking settle (sleep_ms) with "sample on the
- *     next tick", which is only expressible once the tick is a known
- *     interval;
- *   - work handed to a second core, which can then be sized as "whatever
- *     is left before the deadline".
- *
- * The period is one MS5607 conversion phase, which is not arbitrary: the
- * pressure task is a three-phase state machine clocked at MS5607_CONV_MS,
- * so one iteration advances it by exactly one phase.
- *
- * Slack is spent servicing USB and lwIP rather than sleeping. That keeps
- * network throughput at what the free-running loop used to deliver, and it
- * is why this change is behaviour-neutral for a board that does not yet
- * care about the period. */
+/* The period is one MS5607 conversion phase: the pressure task is a
+ * three-phase state machine clocked at MS5607_CONV_MS, so one iteration
+ * advances it by one phase. */
 #define LOOP_PERIOD_MS MS5607_CONV_MS
 #define LOOP_PERIOD_US (LOOP_PERIOD_MS * 1000u)
 
-/* Watchdog: twice the board's declared worst-case iteration, from
- * boards/<name>/board.cmake. A board that blocks longer than its own budget
- * is reported by loop_overruns below rather than being reset for it, so the
- * number can be corrected from evidence instead of by guessing lower. */
+/* Twice the board's declared worst case, so a board that exceeds its own
+ * budget shows up in loop_overruns rather than being reset for it. */
 #ifndef PYRO_LOOP_WORST_MS
 #error "PYRO_LOOP_WORST_MS not defined - boards/<name>/board.cmake must set it"
 #endif
 #define WATCHDOG_MS (2u * PYRO_LOOP_WORST_MS)
 
-/* ── Loop instrumentation ─────────────────────────────────────────
- *
- * High-water marks, not averages: a budget is a statement about the worst
- * iteration, and nothing here measured that before. Reported by
- * /api/status, so PYRO_LOOP_WORST_MS can be set from evidence.
- *
- * loop_overruns > 0 means the declared budget is optimistic or the period
- * is too short; stage_max_us says which stage to look at. */
+/* High-water marks, reported by /api/status, so PYRO_LOOP_WORST_MS can be set
+ * from measurement. loop_overruns above zero means the budget is optimistic
+ * or the period is too short; stage_max_us says which stage to look at. */
 #define STAGE_COUNT 9
 #define STAGE_SLACK 8
 
@@ -71,17 +46,9 @@ volatile uint32_t stage_max_us[STAGE_COUNT];
 static uint32_t stage_mark_us;
 static uint8_t stage_cur;
 
-/* Main-loop breadcrumb.
- *
- * scratch[0] is the stage core0 was last in, scratch[1] the millisecond it
- * entered it. Both survive a watchdog reset, so after a hang the next boot
- * can say exactly which call stopped returning instead of leaving it to be
- * inferred. scratch 0..3 are untouched by the SDK and the bootloader.
- *
- * Also where each stage is timed, because the breadcrumb already marks every
- * boundary the timing would need: a stage ends exactly where the next one is
- * recorded, so the high-water marks cost one timer read per stage and no new
- * call sites. */
+/* Watchdog scratch 0..3 survive a reset and neither the SDK nor the
+ * bootloader touches them, so after a hang the next boot can name the call
+ * that stopped returning. */
 static inline void stage_enter(uint8_t n, uint32_t now) {
     uint32_t t = time_us_32();
     uint32_t d = t - stage_mark_us;
@@ -95,21 +62,14 @@ static inline void stage_enter(uint8_t n, uint32_t now) {
 
 #define STAGE(n) stage_enter((n), now)
 
-/* A breadcrumb WITHOUT the timing side effects, for sub-steps inside a stage.
- *
- * Same encoding as stage_enter's, so the safe-boot latch decodes one with no
- * new plumbing and reports it as "stage N"; the numbers sit above the stage
- * range so the two cannot be confused. It does not touch stage_mark_us, so
- * adding one does not distort a stage's high-water mark.
- *
- * These are here because a stage number alone was not enough to find the
- * deadlock. "Died in stage 6" covered the launch, the log flush and the
- * dispatch; the crumbs narrowed the same failure to a single line inside
- * flash_range_program(), which is what identified it. The map:
+/* Sub-steps inside a stage, where a stage number is too coarse: one stage
+ * covers several calls that can each stop returning. Same encoding as
+ * stage_enter, numbered above the stage range so the two cannot be confused,
+ * and without stage_mark_us so a crumb does not distort a high-water mark.
+ * The map:
  *
  *   70-74  core0 in the flash window (see below)
  *   60-61  around lua_core1_start()          (lua_app.c)
- *   90-93  around one log flush              (lua_app.c)
  *   95-98  around one sector erase / program (littlefs_driver.c)
  *
  * flash_window_crumb() is the same store, callable from those files. */
@@ -172,22 +132,12 @@ int main() {
 
     bool reset_armed = false; /* see the pending_reset handling below */
 
-    /* Boot watchdog.
-     *
-     * hal_platform_init() used to arm one with a 1 ms timeout, which caused
-     * boot loops, and the fix at the time was to remove it entirely. That
-     * left a hang in the main loop as a hard brick recoverable only with the
-     * BOOTSEL button -- which is what a bad Lua program on core1 produced on
-     * the bench.
-     *
-     * A generous timeout gets the useful half back. It is armed here rather
-     * than in platform init so everything slow (USB enumeration, lwIP, the
-     * filesystem mount) is already finished, and it is what makes the
-     * safe-boot latch in lua_app.c able to fire at all. */
+    /* After USB enumeration, lwIP and the filesystem mount, which are slow
+     * enough to trip a watchdog armed in hal_platform_init(). The safe-boot
+     * latch in lua_app.c cannot fire without this. */
     watchdog_enable(WATCHDOG_MS, true);
 
-    /* Prime the pacing and the stage timer together, so the first iteration
-     * measures a real interval rather than time since power-on. */
+    /* Prime both, or the first iteration measures time since power-on. */
     absolute_time_t deadline = make_timeout_time_us(LOOP_PERIOD_US);
     stage_mark_us = time_us_32();
     stage_cur = STAGE_SLACK;
@@ -196,18 +146,11 @@ int main() {
         uint32_t now = hal_time_ms();
         uint32_t iter_t0 = time_us_32();
 
-        /* Feed the watchdog -- but NOT once a deliberate reset is armed.
+        /* watchdog_reboot() works by loading a short timeout and letting it
+         * expire, so feeding afterwards cancels the reboot.
          *
-         * watchdog_reboot() works by loading a short timeout and letting it
-         * expire. Feeding the watchdog afterwards reloads that countdown, so
-         * the reset never lands. That is the same trap the pending_reset
-         * comment below describes, and re-arming here walked straight back
-         * into it: /api/reboot answered "Rebooting" and the board carried on
-         * running, which also silently breaks OTA.
-         *
-         * The pyro arm window enables the watchdog with its own short timeout
-         * and disables it afterwards, so re-arm if it went away rather than
-         * running unprotected from then on. */
+         * The pyro arm window disables the watchdog when it finishes, hence
+         * the re-arm. */
         if (!reset_armed) {
             if (!(watchdog_hw->ctrl & WATCHDOG_CTRL_ENABLE_BITS)) {
                 watchdog_enable(WATCHDOG_MS, true);
@@ -223,13 +166,10 @@ int main() {
         if (pending_reset == 1)
             rom_reset_usb_boot(0, 0); /* never returns */
 
-        /* watchdog_reboot() ARMS the watchdog with a timeout; it does not
-         * schedule a one-shot. pending_reset stays set, so calling it every
-         * iteration reloaded the 100 ms countdown faster than it could ever
-         * expire and the device never rebooted -- which also silently broke
-         * OTA, since pfb_perform_update() reboots through this same path.
-         * Arm exactly once, then let the loop keep servicing USB and lwIP so
-         * the in-flight HTTP response still flushes before the reset lands. */
+        /* Arm once: pending_reset stays set, and re-arming every iteration
+         * would reload the countdown faster than it can expire. The loop
+         * keeps running so the in-flight HTTP response flushes first.
+         * pfb_perform_update() reboots through here too. */
         if (pending_reset == 2 && !reset_armed) {
             reset_armed = true;
             watchdog_reboot(0, 0, 100);
@@ -255,26 +195,11 @@ int main() {
         lua_app_service(&ctx, now);
 #endif
 
-        /* ── The flash window ─────────────────────────────────────
-         *
-         * The one point in the period where this firmware erases or programs
-         * flash, and it is a point core0 CHOOSES rather than one it waits
-         * for. Core1 is idle here because core0 has not handed it work since
-         * the previous period's dispatch, and that grant was sized to expire
-         * before this line -- not because core1 was asked to stop and
-         * answered.
-         *
-         * Everything above queued its bytes in RAM. hal_flash_service()
-         * writes the flight log, lua_app_flash_service() the script log, and
-         * the slack loop below writes uploads and OTA sectors when a hold is
-         * live. Outside the window every one of those fails cleanly and
-         * retries a period later; nothing anywhere spins.
-         *
-         * If core1 is still executing -- an overrunning unit, or its
-         * unbounded startup -- the window does not open at all. That is a
-         * skipped period, counted and reported, not a stall: core0 carries
-         * straight on and lua_core1_service() above kills a core1 that keeps
-         * doing it. */
+        /* Core1 is idle here because core0 handed it no work since the
+         * previous period's dispatch, and sized that grant to expire before
+         * this line. A core1 still executing -- an overrunning unit, or its
+         * unbounded startup -- leaves the window shut for the period rather
+         * than stalling core0. See flash_window.h. */
         STAGE(7);
         CRUMB(70);
         bool window = lua_core1_flash_ok();
@@ -283,35 +208,19 @@ int main() {
             flash_window_open();
             hal_flash_service(now);
             CRUMB(72);
-#if PYRO_HAS_LUA
-            lua_app_flash_service(now);
-#endif
-            CRUMB(73);
         } else {
             CRUMB(74);
             flash_window_skipped();
         }
 
-        /* ── Pace to the period ──
+        /* Slack from here, spent servicing USB and lwIP rather than
+         * sleeping: throttling those to the period rate costs HTTP and OTA
+         * throughput.
          *
-         * Everything past here is slack. It is spent servicing USB and lwIP
-         * rather than sleeping: those are what the free-running loop used to
-         * call as fast as it could, and throttling them to the period rate
-         * would cost HTTP and OTA throughput for nothing.
-         *
-         * Two things can happen with core1 here, and the choice is the whole
-         * flash policy:
-         *
-         *   - no hold: the window closes, core1 gets the slack as a bounded
-         *     unit, and an HTTP handler that wants flash pushes back on its
-         *     TCP connection and arms a hold for next period.
-         *   - hold live: core1 gets NOTHING this period. It stays parked in
-         *     RAM, the window stays open across the whole slack, and the
-         *     upload or OTA writes as many sectors as it can. One sector
-         *     erase is tens of milliseconds, which is several periods' worth
-         *     of Lua -- there is no version of this where an upload runs
-         *     concurrently with core1, so core0 makes the trade explicitly
-         *     and briefly rather than colliding with it. */
+         * A live hold gives core1 nothing for the whole period. One sector
+         * erase takes tens of milliseconds, so an upload cannot run
+         * concurrently with core1 on any schedule; core0 makes that trade
+         * explicitly and briefly. */
         STAGE(STAGE_SLACK);
         uint32_t work_us = time_us_32() - iter_t0;
         if (work_us > loop_max_us)
@@ -325,27 +234,17 @@ int main() {
         }
 #endif
 
-        /* An overrun is "the work left no slack at all", tested BEFORE the
-         * slack loop. Testing after would count every iteration, because the
-         * slack loop by definition exits at the deadline. */
+        /* Tested before the slack loop, which by definition exits at the
+         * deadline and would make every iteration an overrun. */
         if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0) {
             loop_overruns++;
         } else {
             while (absolute_time_diff_us(get_absolute_time(), deadline) > 0) {
                 tud_task();
-                /* Reopen the window the moment core1 finishes early.
-                 *
-                 * Core0 hands out no more work until the next period, so an
-                 * idle core1 observed here STAYS idle for the rest of the
-                 * slack -- which makes the rest of the slack a genuine
-                 * window, not a guess. A tick() that returns in 200 us
-                 * leaves milliseconds core0 can write flash in, and this is
-                 * what lets an upload or a config save land on its first
-                 * packet rather than being handed back to lwIP and waiting
-                 * out a 250 ms tcp_fasttmr before it is redelivered.
-                 *
-                 * Still a read and never a wait: if core1 is working, the
-                 * window simply does not open this period. */
+                /* Core0 hands out no more work until the next period, so a
+                 * core1 observed idle here stays idle for the rest of the
+                 * slack. Without this, a config save waits out a 250 ms
+                 * tcp_fasttmr before lwIP redelivers it. */
                 if (!flash_window_is_open() && lua_core1_flash_ok()) {
                     flash_window_open();
                 }
@@ -353,20 +252,18 @@ int main() {
             }
         }
 
-        /* Shut unconditionally. A flash write that arrives outside this loop
-         * -- from a USB callback, an interrupt, anything that is not core0
-         * here -- must fail rather than land while core1 is running. */
+        /* Unconditional: a flash write from a USB callback or an interrupt
+         * must fail rather than land while core1 is running. */
         flash_window_close();
 
-        /* How late the next iteration actually starts, whatever the cause:
-         * work that did not fit, or a final USB/lwIP pass that overshot. */
+        /* Counts both causes: work that did not fit, and a final USB/lwIP
+         * pass that overshot. */
         int64_t late_us = absolute_time_diff_us(deadline, get_absolute_time());
         if (late_us > 0 && (uint32_t)late_us > loop_late_max_us)
             loop_late_max_us = (uint32_t)late_us;
 
-        /* Skip, never catch up. Adding a period to the old deadline would
-         * compress the iterations after an overrun and turn one late pass
-         * into several. */
+        /* Skip rather than catch up: adding a period to the previous
+         * deadline compresses the iterations after an overrun. */
         deadline = make_timeout_time_us(LOOP_PERIOD_US);
     }
 }

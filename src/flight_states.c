@@ -734,8 +734,8 @@ void flight_init(flight_context_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     config_set_defaults(&ctx->config);
 
-    /* Hardware init formerly in detect_boot_init() — runs once before
-     * the main loop so there is no separate BOOT_INIT state. */
+    /* Runs once before the main loop, so there is no separate BOOT_INIT
+     * state. */
     hal_config_load(&ctx->config);
     telemetry_init(&ctx->config);
     buzzer_init();
@@ -813,7 +813,7 @@ static uint8_t state_to_telem_id(flight_state_t state) {
 
 void flight_update_outputs(flight_context_t *ctx, uint32_t now) {
     hal_pyro_update(now);
-    /* Buzzer is now autonomous — driven by hal_tasks_tick(), no call needed here. */
+    /* The buzzer is autonomous: hal_tasks_tick() drives it. */
 
     if (ctx->current_state >= PAD_IDLE) {
         /* ASCENT..CHUTE_DESCENT are contiguous — all high-rate states */

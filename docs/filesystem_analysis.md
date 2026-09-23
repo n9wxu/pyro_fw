@@ -41,7 +41,7 @@
 ## Key Findings
 
 ### FAT32 is impossible
-Our volume (~700KB) is far below FAT32's minimum (~32MB).
+This volume (~700KB) is far below FAT32's minimum (~32MB).
 FAT12 is the only option. No FAT variant has wear leveling.
 Flash concerns must be solved in the disk I/O layer.
 

@@ -1,50 +1,30 @@
 /*
  * Pyro backend — Pyro MK1C.
  *
- * Implements src/pyro.h for the MK1C firing architecture: a TPS259570
- * eFuse armed by a software charge pump, bias-injection continuity
- * sensing, and four divided analog sense channels.
+ * Implements src/pyro.h for the MK1C firing architecture: a TPS259570 eFuse
+ * armed by a software charge pump, bias-injection continuity sensing, and
+ * four divided analog sense channels.
  *
  * Specifications live with the board design, not in this repo:
  *   ~/Documents/pyro_mk1c/DESIGN.md            hardware, levels, FMEA, invariants
  *   ~/Documents/pyro_mk1c/IGNITER_OPERATION.md S0-S8 and F0-F10 state machines
  *
- * ===========================================================================
- * STAGE: sense only (plan phase 3). Firing is NOT implemented.
- * ===========================================================================
+ * This file implements T1 (quiescent read) and T2 (bus-bias tracking), both
+ * with U9 off and the firing bus at 0 V. Firing is not implemented.
  *
- * Implemented here: T1 (quiescent read) and T2 (bus-bias tracking test).
- * Both run with U9 off and the firing bus at 0 V.
- *
- * NOT implemented yet: T3 (per-channel bias, which localises a shorted
- * low-side FET and identifies a shorted TVS), the arm pump, precharge, the
- * pad test and F0-F10. T3 arrives with the pad test, because its readings
- * are only unambiguous in that sequence's ordering -- a connected match and
- * a shorted TVS both read ~1037 counts, and only measuring with the match
+ * T3 (per-channel bias) waits for the pad test, because its readings are
+ * unambiguous only in that sequence's ordering: a connected match and a
+ * shorted TVS both read about 1037 counts, and only measuring with the match
  * isolated separates them.
  *
- * ---------------------------------------------------------------------------
- * SAFETY INVARIANTS (DESIGN.md 9, plus 13a/13b added for MK1C)
+ * SAFETY: pyro_safe_all_outputs() drives ARM_TOGGLE, FIRE_A and FIRE_B low,
+ * and no code path here raises them again. That absence is what makes T2 and
+ * T3 safe to run continuously, and it is what DESIGN.md invariants 13a and
+ * 13b require; invariant 5 additionally forbids generating ARM_TOGGLE from
+ * any timer, PWM slice, PIO program or DMA pacer, since a peripheral outlives
+ * the firmware that started it.
  *
- *   13a. FIRE_A and FIRE_B are asserted ONLY by the F0-F10 firing sequence,
- *        on a real fire command from a valid authority. No diagnostic, test,
- *        self-check, boot path or operator command asserts either, ever.
- *   13b. ARM_TOGGLE is asserted ONLY by the F0-F10 firing sequence or by the
- *        optional bus precharge test, behind its full interlock.
- *
- * At this stage all three signals are driven low by pyro_safe_all_outputs()
- * and never written again. There is deliberately no code path that raises
- * them, which is what makes T2 and T3 safe to run continuously.
- *
- *    5.  ARM_TOGGLE must be software-generated, from the code path that has
- *        just re-checked every arm condition. NEVER from a hardware timer,
- *        a PWM slice, a PIO program or a DMA pacer: a peripheral keeps
- *        running after the firmware stops, and would keep a dead processor
- *        armed.
- *
- * DESIGN.md 9 invariants 8 and 9 govern the fault latch below: require N
- * consecutive agreeing samples before latching, and never apply outlier
- * rejection when CLEARING a fault.
+ * The fault latch below implements DESIGN.md invariants 8 and 9.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -73,16 +53,15 @@ extern void hal_telemetry_send(const char *sentence);
  *     3300mV / 4095 counts / 0.3329 = 2.421 mV of NODE voltage per count,
  * i.e. 413 counts per volt at the node.
  *
- * This reproduces every level in DESIGN.md 4 and is the single most
- * error-prone constant in the port -- see the anchors asserted below. */
+ * Reproduces every level in DESIGN.md 4. The anchors below fail the build if
+ * a divider value or the reference changes. */
 #define NODE_UV_PER_COUNT 2421
 
 uint32_t pyro_counts_to_node_mv(uint16_t counts) {
     return ((uint32_t)counts * NODE_UV_PER_COUNT) / 1000u;
 }
 
-/* Anchors from DESIGN.md 4. If a divider value or the reference changes,
- * these fail at compile time rather than silently shifting every threshold. */
+/* DESIGN.md 4. */
 _Static_assert((1058u * NODE_UV_PER_COUNT) / 1000u >= 2550 && (1058u * NODE_UV_PER_COUNT) / 1000u <= 2570,
                "bus bias, no match: 1058 counts should be ~2.56 V");
 _Static_assert((1214u * NODE_UV_PER_COUNT) / 1000u >= 2930 && (1214u * NODE_UV_PER_COUNT) / 1000u <= 2950,
@@ -149,11 +128,9 @@ static uint16_t adc_median3(uint8_t channel) {
 
 /* ── Output safing ────────────────────────────────────────────────── */
 
-/* Drive every pyro output inactive. Called from board_early_init() before
- * any slow initialisation, and again from pyro_init().
- *
- * This is the ONLY function in the tree that writes FIRE_A, FIRE_B or
- * ARM_TOGGLE at this stage, and it only ever writes them low. */
+/* Called from board_early_init() before any slow initialisation, and again
+ * from pyro_init(). At this stage nothing else in the tree writes FIRE_A,
+ * FIRE_B or ARM_TOGGLE. */
 void pyro_safe_all_outputs(void) {
     static const uint8_t outputs[] = {
         BOARD_PIN_ARM_TOGGLE, BOARD_PIN_FIRE_A, BOARD_PIN_FIRE_B,
@@ -169,8 +146,8 @@ void pyro_safe_all_outputs(void) {
 
 /* ── T1: quiescent read ───────────────────────────────────────────
  *
- * Applies no stimulus at all: every bias GPIO stays low and nothing is
- * energised. Free, so it runs on every update. */
+ * No stimulus: every bias GPIO stays low. Free, so it runs on every
+ * update. */
 static void t1_quiescent(void) {
     sns_vbat = adc_median3(BOARD_ADC_CH_VBAT);
     sns_bus = adc_median3(BOARD_ADC_CH_BUS);
@@ -180,14 +157,13 @@ static void t1_quiescent(void) {
 
 /* ── T2: bus-bias tracking test (DESIGN.md S3) ────────────────────
  *
- * Asserts BIAS_BUS only; BIAS_A and BIAS_B stay low. Bridgewire current is
- * about 0.2 mA, 500x below a 100 mA no-fire current. The bus is never
- * armed, so no firing energy exists regardless of the result.
+ * Asserts BIAS_BUS only. Bridgewire current is about 0.2 mA, 500x below a
+ * 100 mA no-fire current, and the bus is never armed.
  *
- * A channel that follows the bus (~1030 counts) has a match across it; one
- * that stays near zero (<50) is open or absent. The raw counts are what get
- * reported, not the boolean: a dirty connector at 5 kohm reads ~190 counts
- * and would pass a naive threshold. */
+ * A channel following the bus (~1030 counts) has a match across it; one near
+ * zero (<50) is open or absent. Report the raw counts rather than the
+ * boolean: a dirty connector at 5 kohm reads ~190 counts and would pass a
+ * naive threshold. */
 static void t2_tracking(void) {
     gpio_put(BOARD_PIN_BIAS_BUS, 1);
     sleep_ms(TRACK_BIAS_MS);
@@ -200,43 +176,35 @@ static void t2_tracking(void) {
     trk_valid = true;
 }
 
-/* BRING-UP ONLY. T3 puts about 1.4 mA through a connected match -- 7x the
- * routine tracking current of T2, though still 70x below a 100 mA no-fire
- * current. DESIGN.md S3 specifies BIAS_BUS only for routine presence
- * tracking, so T3 does not belong in the flight loop: it moves into the
- * operator-commanded pad test (plan phase 4.4), where its readings are also
- * unambiguous because the match is isolated at that point.
+/* BRING-UP ONLY; set to 0 before flight.
  *
- * Set to 0 before flight. Left on now because it is what localises a fault
- * to a channel during board bring-up. */
+ * T3 puts about 1.4 mA through a connected match, 7x the routine tracking
+ * current of T2 and still 70x below a 100 mA no-fire current. DESIGN.md S3
+ * specifies BIAS_BUS alone for routine tracking, so T3 belongs in the
+ * operator-commanded pad test (plan phase 4.4), where the match is isolated
+ * and its readings are unambiguous. */
 #ifndef PYRO_MK1C_BRINGUP_T3
 #define PYRO_MK1C_BRINGUP_T3 1
 #endif
 
-/* BENCH MODE. Holds BIAS_BUS continuously high so the bus reaches a steady
- * DC level a multimeter can read, instead of the ~3% duty pulse train the
- * routine tracking test uses. Suppresses every other probe so nothing
- * disturbs the node.
+/* BENCH MODE (-DPYRO_MK1C_BIAS_HOLD=1); must be 0 for flight.
  *
- * Still completely cold on the firing side: FIRE_A, FIRE_B and ARM_TOGGLE
- * are untouched (invariants 13a/13b), U9 is off, and the bus can only reach
- * the ~1.7 V the bias divider allows. Bridgewire current is about 0.9 mA,
- * over 100x below a no-fire current.
+ * Holds BIAS_BUS high so the bus reaches a steady DC level a multimeter can
+ * read, rather than the ~3% duty pulse train of the routine test, and
+ * suppresses every other probe.
  *
- * Build with -DPYRO_MK1C_BIAS_HOLD=1. Must be 0 for flight. */
+ * Cold on the firing side: U9 is off, the bias divider caps the bus at about
+ * 1.7 V, and bridgewire current is about 0.9 mA. */
 #ifndef PYRO_MK1C_BIAS_HOLD
 #define PYRO_MK1C_BIAS_HOLD 0
 #endif
 
 /* ── Bring-up probe: bus decay time constant ──────────────────────
  *
- * A charge-time-constant probe lived here too, deriving R120 from
- * tau_decay/tau_charge. It was WRONG: it reported 221 us where bench DC
- * measurements imply 428 us, so its derived R120 (526 ohm) disagreed with
- * the measured 1375 ohm by 2.6x. Removed rather than left reporting a
- * number that looks authoritative. tau_decay itself is consistent with the
- * bench results and is kept.
- *
+ * Do not derive R120 from tau_decay/tau_charge. That reports 221 us where
+ * bench DC measurements imply 428 us, putting the derived R120 at 526 ohm
+ * against a measured 1375 ohm -- authoritative-looking and wrong by 2.6x.
+ * tau_decay alone agrees with the bench results.
  *
  * The bus level under bias is set by the DIVIDER Rpd/(R120+Rpd), so a wrong
  * R120 and a wrong R103 produce an identical reading. The decay after the
@@ -289,9 +257,9 @@ static uint16_t bias_a_counts, bias_b_counts;
 /* ── High-speed waveform capture ──────────────────────────────────
  *
  * Streams the ADC FIFO into RAM by DMA so the full charge and discharge
- * curves can be fitted off-board, rather than inferring a time constant
- * from a single threshold crossing. The threshold approach that lived here
- * before was wrong by 1.94x and nothing in the firmware could tell.
+ * curves can be fitted off-board. Do not infer a time constant from a single
+ * threshold crossing: that is wrong by 1.94x here, and nothing in the
+ * firmware can tell.
  *
  * The edge is placed WAVE_PRE_US into the capture so there is a baseline to
  * fit against. Sample interval is set per mode, because the charge constant
@@ -355,16 +323,14 @@ static void wave_capture(bool charge, uint16_t dt_us) {
 
 /* ── ARM interlock (DESIGN.md S1 interlock, plan phase 4.4) ───────
  *
- * The ONLY gate on asserting ARM_TOGGLE outside the firing sequence
- * (invariant 13b). Every condition must hold; the reason for a refusal is
- * reported so a failed interlock is never silent.
+ * The only gate on asserting ARM_TOGGLE outside the firing sequence
+ * (invariant 13b). Every condition must hold, and a refusal reports why.
  *
- * Note what the channel checks are for. T2 reading open says no match is in
- * circuit. T3 reading ~1214 says the bias injector on that channel actually
- * works, which is what makes the T2 reading trustworthy: an open injector
- * would make a live, firable channel read open too. T3 also proves neither
- * low-side FET is shorted, which is the single failure that would make an
- * energised bus dangerous. */
+ * T2 reading open says no match is in circuit. T3 reading ~1214 says that
+ * channel's bias injector works, which is what makes the T2 reading
+ * trustworthy: an open injector makes a live, firable channel read open too.
+ * T3 also proves neither low-side FET is shorted, the single failure that
+ * would make an energised bus dangerous. */
 #define ARM_UVLO_COUNTS 400 /* ~0.97 V at the pack; below this, do not arm */
 
 static const char *arm_interlock_refusal(void) {
@@ -383,9 +349,9 @@ static const char *arm_interlock_refusal(void) {
     return NULL; /* clear to arm */
 }
 
-/* Re-evaluated on every pump cycle. Invariant 5: the toggle must be a
- * byproduct of the safety checks, so that failing a check stops the pump by
- * construction rather than by a separate action. */
+/* Re-evaluated on every pump cycle. Invariant 5 requires the toggle to be a
+ * byproduct of the checks, so a failed check stops the pump by construction
+ * rather than by a separate action. */
 static inline bool arm_conditions_still_ok(void) {
     return fault_latch == PF_NONE;
 }
@@ -422,9 +388,9 @@ static void arm_pump_stop(void) {
     gpio_put(BOARD_PIN_ARM_TOGGLE, 0);
 }
 
-/* The SDK has no watchdog_disable(); setting a long load and not feeding it
- * is not the same thing. Push the deadline far out so the scoped window does
- * not reboot us later, and leave normal operation as it was. */
+/* The SDK has no watchdog_disable(), and a long load without feeding is not
+ * the same thing. Push the deadline out so the scoped window below cannot
+ * reboot the board later. */
 static void watchdog_disable_after_arm(void) {
     hw_clear_bits(&watchdog_hw->ctrl, WATCHDOG_CTRL_ENABLE_BITS);
 }
@@ -432,12 +398,12 @@ static void watchdog_disable_after_arm(void) {
 /* ── Arm / precharge capture ──────────────────────────────────────
  *
  * Runs the charge pump so U9 turns on and the bus ramps at the dVdT slew
- * rate, captures the ramp, then STOPS pumping and captures the passive
+ * rate, captures the ramp, then stops pumping and captures the passive
  * disarm and decay in the same window.
  *
- * FIRE_A and FIRE_B are never written here (invariant 13a). With no match
+ * Nothing writes FIRE_A or FIRE_B here (invariant 13a). With no match
  * connected, both low-side switches open and the mechanical disconnect out,
- * there is no circuit through any bridgewire regardless of bus voltage. */
+ * no circuit exists through any bridgewire at any bus voltage. */
 static void wave_capture_arm(uint16_t dt_us, uint32_t pump_ms) {
     wave_dt_us = dt_us;
     wave_pre_n = (uint16_t)(WAVE_PRE_US / dt_us);
@@ -466,15 +432,13 @@ static void wave_capture_arm(uint16_t dt_us, uint32_t pump_ms) {
      * FIFO-paced PIO: each pushed word buys ARM_PUMP_BURST toggle cycles and
      * then the state machine stalls. Two independent things stop it:
      *
-     *   1. The CPU stops pushing -- because it hung, crashed, or an arm
+     *   1. The CPU stops pushing, because it hung, crashed, or an arm
      *      condition went false. The FIFO drains and the SM stalls.
-     *   2. The watchdog fires. PSM_WDSEL resets the PIO block, which stops
-     *      the SM and returns the pad to input with a pull-down.
+     *   2. The watchdog fires. PSM_WDSEL resets the PIO block, stopping the
+     *      SM and returning the pad to input with a pull-down.
      *
-     * The watchdog is enabled only for the armed window. hal_platform_init
-     * deliberately leaves it off in normal operation, and a short timeout
-     * there caused boot loops, so it is scoped to exactly the interval where
-     * a wedged processor would otherwise hold the bus up. */
+     * The watchdog is scoped to the armed window: a short timeout across
+     * normal operation causes boot loops. */
     arm_pump_start();
     watchdog_enable(ARM_WATCHDOG_MS, true);
 
@@ -542,9 +506,8 @@ static void wave_write_csv(int mode) {
         wave_state = 0;
         return;
     }
-    /* Self-describing header: everything the analysis needs, so the host
-     * tool hardcodes no constants and a capture file stays interpretable on
-     * its own. Comment lines start with '#', then a normal CSV header row. */
+    /* Self-describing, so the host tool hardcodes no constants and a capture
+     * file stays interpretable alone. */
     char line[128];
     int n;
 
@@ -650,10 +613,10 @@ static void t3_channel_bias(void) {
 
 /* ── Fault evaluation (DESIGN.md 8.1) ─────────────────────────────
  *
- * The firmware does not classify faults; it bounds-checks each measurement
- * and latches. Only the two rows of 8.1 that are safety decisions rather
- * than diagnoses are acted on here. Working out WHY a reading is out of
- * band is bench work, done from the logged raw counts. */
+ * The firmware bounds-checks each measurement and latches; it does not
+ * classify. Only the two rows of 8.1 that are safety decisions rather than
+ * diagnoses are acted on here -- why a reading is out of band is bench work,
+ * done from the logged raw counts. */
 static void evaluate_faults(void) {
     /* Bus sitting at pack voltage with the pump stopped: the high side is
      * shorted to the battery. Do not arm. */
@@ -677,10 +640,9 @@ static void evaluate_faults(void) {
     /* Faults latch. Nothing clears them but a reset (invariants 4 and 6). */
 }
 
-/* Raw sense readout for /api/status, via board_pyro_raw() in hal_board.c.
- * Reports the bus level measured DURING the bus-bias pulse (T2), which is
- * the number that says whether the bias injector and the bleed network are
- * behaving: ~1058 counts healthy, ~1214 with R_BLEED open, <50 shorted. */
+/* The bus level measured during the T2 pulse, which is what says whether the
+ * bias injector and the bleed network are behaving: ~1058 counts healthy,
+ * ~1214 with R_BLEED open, <50 shorted. */
 bool pyro_raw_sense(board_pyro_raw_t *out) {
     out->bus_quiescent = sns_bus;              /* T1: no stimulus  */
     out->bus_biased = trk_valid ? trk_bus : 0; /* T2: bus bias     */
@@ -712,9 +674,8 @@ void pyro_init(void) {
     hal_telemetry_send("!PYRO MK1C sense-only build: firing not implemented\r\n");
 }
 
-/* The bus-bias tracking test (T2) is duty-cycled from pyro_update(), so the
- * stimulus has usually already happened. Sampling on demand just refreshes
- * it; the bus stays cold either way. */
+/* T2 is duty-cycled from pyro_update(), so the stimulus has usually already
+ * happened and this only refreshes it. The bus stays cold either way. */
 void pyro_sample(void) {
     t2_tracking();
 }
@@ -735,22 +696,18 @@ void pyro_get(uint8_t channel, pyro_continuity_t *out) {
 }
 
 void pyro_fire(uint8_t channel) {
-    /* Not implemented. Asserting FIRE_x is reserved to the F0-F10 sequence
-     * (invariant 13a), which does not exist in this build. Refuse loudly
-     * rather than silently doing nothing. */
+    /* Asserting FIRE_x is reserved to the F0-F10 sequence (invariant 13a),
+     * which does not exist in this build. Refuse loudly. */
     (void)channel;
     hal_telemetry_send("!PYRO FIRE REFUSED: firing not implemented on MK1C\r\n");
 }
 
-/* The capture's flash write, run from inside core0's flash window.
+/* The window is the only point in the period where core1 is idle in RAM. Do
+ * not move this into the network callback (DECISIONS.md #2) or into
+ * pyro_update(), which runs at STAGE 4 while core1 executes from flash.
  *
- * It used to sit at the top of pyro_update(), which is the main loop's
- * STAGE 4 -- in the loop rather than in the network callback (DECISIONS.md
- * #2), which was the right half of the problem to solve at the time, but
- * still a point in the period where core1 is executing from flash. The
- * window is where that write belongs now; the capture itself still runs in
- * pyro_update(), because it is ADC work with its own timing and has nothing
- * to do with flash. */
+ * The longest thing core0 does: a 25 ms capture plus roughly 20 kB of CSV,
+ * against a watchdog of PYRO_LOOP_WORST_MS x 2. */
 void board_flash_service(uint32_t now_ms) {
     (void)now_ms;
     wave_service();

@@ -437,12 +437,9 @@ void hal_telemetry_send(const char *sentence) {
 
 /* ── Filesystem ───────────────────────────────────────────────────── */
 
-/* Checked at the door as well as inside the lfs driver.
- *
- * Refusing partway through an lfs operation would leave its metadata
- * half-written; refusing before it starts is a clean failure the caller can
- * retry. The driver's check is the backstop -- this one is what keeps a
- * multi-block operation from being started at all outside the window. */
+/* Refusing partway through an lfs operation leaves its metadata half
+ * written, so this stops a multi-block operation from starting at all. The
+ * driver's own check is the backstop. */
 static bool flash_writable(void) {
     return flash_window_is_open();
 }
@@ -513,8 +510,9 @@ struct hal_file {
 static struct hal_file hw_file;
 
 hal_file_t *hal_fs_open(const char *path, bool append) {
-    /* Opening for write reaches flash; opening to read does not. */
-    if (append && !flash_writable())
+    /* There is no read mode here: both paths are LFS_O_WRONLY | LFS_O_CREAT,
+     * and creating the file commits a dirent. */
+    if (!flash_writable())
         return NULL;
 
     if (hw_file.open)
@@ -594,15 +592,10 @@ bool hal_serial_readline(char *buf, int max_len) {
     return false;
 }
 
-/* ── Sleep (v2, alarm-timer until earliest task deadline) ─────────── */
-/*
- * DISABLED (v2.1.27): __wfe() suspected of blocking USB NCM TX,
- * causing txf (TX failure) accumulation and http=0.  Reverted to
- * busy-loop polling until the root cause is confirmed.
- */
+/* Deliberately a no-op: __wfe() is suspected of blocking USB NCM TX, which
+ * shows up as the txf counter climbing and http stuck at zero. */
 
 void hal_sleep_until_event(void) {
-    /* no-op: keep CPU polling so USB/network stack runs continuously */
 }
 
 /* ── Platform ─────────────────────────────────────────────────────── */
@@ -672,30 +665,27 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
     }
 }
 
-/* ── In-flight data logging [v2-9] ───────────────────────────────── */
-/*
- * Architecture: hal_log_sample() formats a CSV line into a RAM buffer and
- * returns. Nothing on the flight path reaches flash -- not the first sample,
- * not a full buffer, and not the file's own creation.
+/* ── In-flight data logging (REQUIREMENTS.md v2-9) ───────────────
  *
- * hal_flash_service() is the other half, and core0's exec loop calls it from
- * inside the flash window, where core1 is idle in RAM. That is the only place
- * in this file that erases or programs anything.
+ * Nothing on the flight path reaches flash: not the first sample, not a full
+ * buffer, not the file's own creation. hal_flash_service() is the other
+ * half, and is the only thing in this file that erases or programs.
  *
- * It used to be an async_task_t on the 200 ms tick list, which ran at STAGE 2
- * -- two stages before core1's grant was even checked, and typically while
- * core1 was still mid-unit from the previous period. The cadence was right
- * and the placement was wrong; keeping the cadence and moving the placement
- * is the whole change.
+ * Do not move it onto the async task list: those run at STAGE 2, before
+ * core0 has checked core1's grant and usually while core1 is mid-unit.
  */
 
 #define LOG_BUF_SIZE 512
 #define LOG_FLUSH_MS 200u
 
-/* Flush early at the watermark rather than waiting out the period: at 100 Hz
- * with ~40-byte lines the buffer fills in about 130 ms, so the deadline alone
- * would drop samples. */
+/* At 100 Hz with 40-byte lines the buffer fills in about 130 ms, so the
+ * flush deadline alone would drop samples. */
 #define LOG_WATERMARK (LOG_BUF_SIZE - 96)
+
+/* Script text shares this buffer with the flight samples and ranks below
+ * them, so it is admitted only in the lower half: a chatty script loses its
+ * own lines rather than a single altitude reading. */
+#define LOG_TEXT_CEILING (LOG_BUF_SIZE / 2)
 
 typedef struct {
     hal_file_t *file;
@@ -705,7 +695,8 @@ typedef struct {
     bool stopping;
     bool pending_open; /* the file still has to be created, inside a window */
     uint32_t next_due_ms;
-    uint32_t dropped; /* bytes the buffer could not hold */
+    uint32_t dropped;      /* sample bytes the buffer could not hold */
+    uint32_t text_dropped; /* script bytes refused: not a lost sample */
 } log_task_t;
 
 static log_task_t log_task;
@@ -733,10 +724,8 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     if (log_task.active)
         return;
 
-    /* Called from action_launch, at liftoff. It opens no file and writes no
-     * flash: the header goes into the same buffer the samples use, and
-     * hal_flash_service() creates the file in the next window. A launch that
-     * had to wait for a flash erase would be a launch detected late. */
+    /* Called at liftoff, so it opens no file and writes no flash: a launch
+     * that waited for an erase would be a launch detected late. */
     log_task.head = 0;
     log_task.dropped = 0;
     int n = snprintf(log_task.buf, LOG_BUF_SIZE,
@@ -760,13 +749,9 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     log_task.next_due_ms = hal_time_ms() + LOG_FLUSH_MS;
 }
 
-/* The flight log's half of the flash window.
- *
- * Every branch here can fail without consequence beyond a delay: the open is
- * retried next window, and the buffer keeps its bytes until a write actually
- * takes them. Nothing waits, and nothing is dropped by a refusal -- only by a
- * buffer that filled faster than the windows could drain it, which is counted
- * and reported. */
+/* Every branch here can fail costing only a delay: the next window retries,
+ * and the buffer keeps its bytes until a write takes them. Only a buffer
+ * that filled faster than the windows drained it loses anything. */
 static void log_flash_service(uint32_t now_ms) {
     if (!log_task.active)
         return;
@@ -802,8 +787,7 @@ static void log_flash_service(uint32_t now_ms) {
     }
 }
 
-/* Everything core0 has queued for flash, drained in one place because there
- * is one place it is safe to drain it. Called only from inside the window. */
+/* Call only from inside the window. */
 void hal_flash_service(uint32_t now_ms) {
     log_flash_service(now_ms);
     board_flash_service(now_ms);
@@ -837,18 +821,60 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
                      (long)altitude_cm, state, under_thrust, hw_evt_name(event));
     if (n <= 0)
         return;
-    /* No synchronous flush. This runs on the flight path, and the old
-     * fallback put a flash erase wherever a sample happened to overflow the
-     * buffer -- at an arbitrary point in the period, with core1 mid-unit.
-     * Dropping a line and counting it is the honest failure: it means the
-     * windows are not draining fast enough, which is a number an operator can
-     * see rather than a stall they cannot. */
+    /* Do not flush synchronously here: this runs on the flight path, and a
+     * flush would put an erase wherever a sample happened to overflow the
+     * buffer -- an arbitrary point in the period, with core1 mid-unit. */
     if (log_task.head + n > LOG_BUF_SIZE) {
         log_task.dropped += (uint32_t)n;
         return;
     }
     memcpy(log_task.buf + log_task.head, line, n);
     log_task.head += n;
+}
+
+/* One line of script output, as a flight-log event row. See flash_window.h
+ * for what a false return means.
+ *
+ * The numeric columns are left empty rather than zeroed: this row is not a
+ * sample, and a zero in the altitude column is a reading a plot will draw. */
+bool hal_log_text(uint32_t time_ms, const char *text, int len) {
+    if (!log_task.active || len <= 0)
+        return false;
+    if (log_task.head >= LOG_TEXT_CEILING) {
+        log_task.text_dropped += (uint32_t)len;
+        return false;
+    }
+
+    /* Stripped rather than quoted: every consumer of this file -- the web
+     * UI, the CSV export, a spreadsheet -- splits on commas with no quoting
+     * rules. */
+    char line[80];
+    int n = snprintf(line, sizeof(line), "%lu,,,,,LUA ", (unsigned long)time_ms);
+    if (n <= 0 || n >= (int)sizeof(line) - 2)
+        return false;
+    int room = (int)sizeof(line) - n - 2; /* the newline and the terminator */
+    if (len > room)
+        len = room;
+    for (int i = 0; i < len; i++) {
+        /* unsigned deliberately: plain char is signed on the host and
+         * unsigned on ARM, so a byte above 0x7f takes a different branch on
+         * each. */
+        unsigned char c = (unsigned char)text[i];
+        line[n++] = (c == ',' || c < 0x20u || c >= 0x7fu) ? ' ' : (char)c;
+    }
+    line[n++] = '\n';
+
+    if (log_task.head + n > LOG_BUF_SIZE) {
+        log_task.text_dropped += (uint32_t)n;
+        return false;
+    }
+    memcpy(log_task.buf + log_task.head, line, (size_t)n);
+    log_task.head += n;
+    return true;
+}
+
+uint32_t hal_log_text_dropped(void) {
+    return log_task.text_dropped;
 }
 
 void hal_log_stop(void) {

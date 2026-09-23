@@ -5,10 +5,9 @@
  * continuity and refuses to fire, so a board brought up from this template
  * cannot energise anything before you have written the real driver.
  *
- * Compare boards/mk1b/pyro_board.c (AP2192 high-side switches, a simple
- * common-enable design) against boards/mk1c/pyro_board.c (TPS259570 eFuse
- * with a software charge-pump arm) -- the two share nothing but this
- * interface, which is the point.
+ * boards/mk1b/pyro_board.c (AP2192 high-side switches, common enable) and
+ * boards/mk1c/pyro_board.c (TPS259570 eFuse, software charge-pump arm) share
+ * nothing but this interface.
  *
  * SAFETY, if your board can fire a pyrotechnic device:
  *   - Drive every output inactive in pyro_init(), and from

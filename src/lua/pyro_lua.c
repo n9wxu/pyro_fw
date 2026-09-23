@@ -1,28 +1,17 @@
 /*
  * Lua VM host for user programs.
  *
- * Owns the VM lifecycle, the resource limits that keep a bad script from
- * mattering, and the sandbox. The bindings themselves are the security
- * boundary — RP2040 has no MPU, so nothing below this line is enforced by
- * hardware. Read them as you would read a syscall table.
+ * The bindings are the security boundary: RP2040 has no MPU, so no hardware
+ * enforces anything below this line. Read them as a syscall table.
  *
- * TEXT CHUNKS ONLY. Every load below passes mode "t" rather than using
- * luaL_loadbuffer(), whose NULL mode means "bt" -- text or precompiled
- * bytecode. Lua 5.4 does not verify bytecode: lundump.c checks a header and
- * trusts the rest, and the manual says so. A crafted blob POSTed to
- * /api/lua/script would therefore execute with arbitrary load/store over the
- * whole address space, which on this board includes the pyro GPIO registers
- * and core0's stack -- every invariant below is a property of the BINDINGS,
- * and bytecode never reaches them.
+ * Every load must pass mode "t". luaL_loadbuffer() passes NULL, meaning
+ * "bt", and Lua 5.4 does not verify bytecode -- lundump.c checks a header and
+ * trusts the rest -- so a crafted blob POSTed to /api/lua/script would
+ * execute arbitrary loads and stores over the whole address space, including
+ * the pyro GPIO registers and core0's stack. Every invariant below is a
+ * property of the bindings, which bytecode never reaches.
  *
- * Invariants implemented here (see the plan for the full list):
- *   L4  a capability that configuration did not enable has no table at all,
- *       so a script referencing it fails immediately and legibly
- *   L5  nothing in the API names hardware; resources are addressed by the
- *       names configuration gave them
- *   L7  the heap is a fixed arena; exhaustion kills the script, not the host
- *   L8  every invocation has an instruction budget
- *   L11 no binding can arm, fire, disarm or alter flight state
+ * Implements L4, L5, L7, L8 and L11 from REQUIREMENTS.md.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -41,8 +30,8 @@
 #define PYRO_LUA_ARENA_BYTES (32 * 1024)
 #endif
 
-/* Instructions between hook calls. Also bounds how long the VM can go
- * without noticing a park request on the target. */
+/* Instructions between hook calls, which sets how finely the VM honours its
+ * deadline. */
 #ifndef PYRO_LUA_HOOK_COUNT
 #define PYRO_LUA_HOOK_COUNT 1000
 #endif
@@ -52,76 +41,48 @@
 #define PYRO_LUA_BUDGET 2000
 #endif
 
-/* Aligned because lua_arena.c declares ALIGN 8 and aligns every block
- * relative to this base -- a 4-aligned base makes every "8-aligned" block a
- * lie. Observed at 0x2000A5A4 before this attribute. */
+/* lua_arena.c aligns every block relative to this base, so a 4-aligned base
+ * makes every "8-aligned" block a lie. */
 static uint8_t arena_buf[PYRO_LUA_ARENA_BYTES] __attribute__((aligned(8)));
 static lua_State *L;
 static char last_error[160];
 
-/* The work-unit coroutine.
- *
- * tick() runs here rather than under lua_pcall() because a C-call boundary is
- * not yieldable -- lua_pcall gives "attempt to yield from outside a
- * coroutine" -- and yielding is the whole mechanism: the hook stops the
- * script when its time box expires and the next grant resumes it mid-loop.
- *
- * Anchored at index 1 of L's stack so the collector cannot take it. */
+/* tick() runs on a coroutine rather than under lua_pcall(), which cannot
+ * yield: "attempt to yield from outside a coroutine". Yielding is the whole
+ * mechanism -- the hook suspends the script when its box expires and the next
+ * grant resumes it mid-loop. Anchored at index 1 of L's stack, against the
+ * collector. */
 static lua_State *co;
 static bool slice_running; /* a tick() is mid-flight, awaiting its next grant */
 static uint32_t slice_deadline_us;
 static bool slice_boxed; /* false for a grant of 0: run to completion */
 
-/* Instruction budget, still used for the paths that CANNOT yield.
- *
- * Loading a chunk, running init() and the console eval all go through
- * lua_pcall, which is a non-yieldable C-call boundary. They cannot be time
- * boxed, so a runaway in one of them is still stopped the old way: the hook
- * raises once the budget is gone. tick() does not use this -- a long tick is
- * a legitimate program that simply spans several grants. */
+/* For the paths that cannot yield: load, init() and the console eval all go
+ * through lua_pcall. tick() does not use this, because a long tick is a
+ * legitimate program spanning several grants. */
 static uint32_t budget_left;
 
-/* A wall-clock bound for those same non-yieldable paths.
+/* An instruction budget is not a time box, and c1_busy stays set for the
+ * whole call: two million VM instructions is tens of core0 periods, so an
+ * on_event() handler could hold the flash window shut long past its grant.
  *
- * The instruction budget alone is not a time box, and on core1 that matters:
- * c1_busy stays set for the whole call, and c1_busy is what tells core0 that
- * core1 is executing from flash. Two million VM instructions is a fraction of
- * a second, which is tens of core0 periods -- so an on_event() handler could
- * hold the flash window shut long past the grant that started it, and core0's
- * whole schedule is built on a unit ending when its grant says it will.
- *
- * It cannot yield (lua_pcall is a C-call boundary), so the only stop available
- * is to raise. That aborts the handler, which is the right trade: a script
- * that blows its box loses the handler, not the board. Zero disables it, for
- * the paths that are deliberately unbounded -- load and init at startup, where
- * core0 is withholding flash anyway. */
+ * lua_pcall cannot yield, so the only stop is to raise, which costs the
+ * handler rather than the board. Zero disables the bound, for load and init
+ * at startup where core0 withholds flash anyway. */
 static uint32_t hard_deadline_us;
 static bool hard_boxed;
 
 /* ── Limits ───────────────────────────────────────────────────────── */
 
-/* Provided by lua_core1.c on the target, where it parks the VM outside flash
- * so core0 can erase. Weak and empty everywhere else, so this file stays
- * board-independent and the host tests link without multicore. */
-__attribute__((weak)) void lua_core1_park_check(void) {}
-
-/* Fires every PYRO_LUA_HOOK_COUNT VM instructions. The hook must stay a COUNT
- * hook -- Lua permits yielding only from count and line hooks -- but the
- * decision is time, not instructions, because the thing being bounded is how
- * long core0 waits, and instructions are a poor proxy for that.
- *
- * PYRO_LUA_HOOK_COUNT therefore sets how finely the deadline is honoured, not
- * how much work is allowed. */
+/* Keep this a count hook: Lua permits yielding only from count and line
+ * hooks. It decides on time rather than instructions, because what needs
+ * bounding is how long core1 holds c1_busy. */
 static void count_hook(lua_State *Ls, lua_Debug *ar) {
     (void)ar;
-    /* First, so a script about to be stopped still answers a pending park:
-     * core0's flash write must not wait for the VM to finish anything. */
-    lua_core1_park_check();
 
     if (!slice_boxed) {
-        /* Non-yieldable path (load, init, eval, on_event), or a grant of 0.
-         * The call cannot be suspended and resumed, so the only stop
-         * available is to raise -- on whichever bound runs out first. */
+        /* Cannot be suspended and resumed, so raise on whichever bound runs
+         * out first. */
         if (budget_left == 0) {
             luaL_error(Ls, "instruction budget exhausted");
         }
@@ -162,9 +123,8 @@ static int l_print(lua_State *Ls) {
 
 /* ── Name lookup ──────────────────────────────────────────────────── */
 
-/* Resolve a Lua-supplied name to a platform index. Returns -1 if the name is
- * not one configuration granted. This is where L5 is actually enforced: the
- * only thing a script can say is a name, and only names in this list resolve. */
+/* Enforces L5: a script can say only a name, and only a name configuration
+ * granted resolves. */
 static int find_output(const char *name) {
     for (int i = 0; i < lua_plat_output_count(); i++)
         if (strcmp(lua_plat_output_desc(i)->name, name) == 0)
@@ -412,41 +372,31 @@ static int l_log_line(lua_State *Ls) {
 /* ── Restartable pattern matching ─────────────────────────────────
  *
  * Lua's matcher is the one C function a script can reach that is neither
- * preemptible nor bounded by the arena. No VM instructions run inside it, so
- * the count hook never fires and the time box cannot stop it; and matching
- * allocates nothing, so the arena never refuses. Backtracking is quadratic.
- * Measured with string.match(("a"):rep(N), "(a-)*$"), zero hook calls:
+ * preemptible nor bounded by the arena: no VM instructions run inside it, so
+ * the count hook never fires, and it allocates nothing, so the arena never
+ * refuses. Measured with string.match(("a"):rep(N), "(a-)*$"), zero hook
+ * calls:
  *
  *      N=400   1.0 ms        N=1600  13.7 ms
  *      N=800   4.0 ms        N=3200  39.6 ms
  *
- * MAXCCALLS does not save this. It bounds recursion DEPTH, which catches
- * `(a*)*` but not the lazy `(a-)*`: that backtracks iteratively, never
- * recurses deeply, and simply grinds.
+ * MAXCCALLS does not help: it bounds recursion depth, which catches `(a*)*`
+ * but not the lazy `(a-)*`, which backtracks iteratively and grinds.
  *
- * THE FIX: that cost is N start positions times O(N) per attempt, not one
- * unbounded attempt. Anchoring the pattern makes each attempt independent, so
- * the search becomes a loop over positions that can be suspended between
- * them. Verified equivalent to string.find across 20 cases covering anchors,
- * captures, character classes, %b, %f and init offsets.
+ * That cost is N start positions times O(N) per attempt rather than one
+ * unbounded attempt, so anchoring the pattern makes each attempt independent
+ * and the search becomes a suspendable loop. Checked against string.find
+ * across 20 cases covering anchors, captures, character classes, %b, %f and
+ * init offsets. The longest un-interruptible span drops from 37 ms to
+ * 0.02 ms at N=3200; total work stays quadratic.
  *
- * The loop stays in C. lua_yieldk() suspends it -- unwinding with longjmp --
- * and Lua calls the continuation to resume at the saved position. Measured:
- * the longest un-interruptible span drops from the whole search to one
- * attempt, 37 ms to ~0.02 ms at N=3200.
+ * State must live in the activation, never in a static or an upvalue. A gsub
+ * replacement can call gsub again, gmatch iterators interleave, and a
+ * suspended search resumes after other code has run.
  *
- * State lives in the activation, never in a static. gsub replacements can be
- * functions that call gsub again, and gmatch iterators interleave, so a
- * single shared state store would be clobbered by nesting.
- *
- * This does NOT make matching cheaper -- total work is still quadratic. It
- * makes it interruptible, which converts "core1 unstoppable and core0 dead"
- * into "the script starves itself and the skip counter says so".
- *
- * Not everything is yieldable: load, init() and the console eval run under
- * lua_pcall, a non-yieldable C-call boundary. Those keep a length cap, which
- * costs nothing real -- the firmware never calls a pattern function itself,
- * and core0 withholds flash for the whole of core1's startup anyway. */
+ * Load, init() and the console eval cannot yield, so they take a length cap
+ * instead. It costs nothing: the firmware calls no pattern function itself,
+ * and core0 withholds flash for the whole of core1's startup. */
 #ifndef PYRO_LUA_PATTERN_MAX
 #define PYRO_LUA_PATTERN_MAX 128
 #endif
@@ -456,16 +406,17 @@ static int l_log_line(lua_State *Ls) {
 #define PATTERN_DIRECT_MAX 64
 
 /* Upvalues on every wrapper. */
-#define PU_ORIG 1     /* the original C function, as light userdata */
-#define PU_PLAIN 2    /* arg index that disables patterns, or 0     */
-#define PU_ANCHORED 3 /* the "^"-prefixed pattern, built once       */
+#define PU_ORIG 1  /* the original C function, as light userdata */
+#define PU_PLAIN 2 /* arg index that disables patterns, or 0     */
+#define PU_NAME 3  /* the function's name, for the cap's message  */
 
 static int pattern_loop(lua_State *Ls, lua_Integer pos);
 
 static int pattern_k(lua_State *Ls, int status, lua_KContext ctx) {
     (void)status;
-    /* Resumed. The activation's stack -- subject, pattern, upvalues -- is
-     * exactly as it was, so only the position needs carrying in ctx. */
+    /* Resumed. The activation's own stack is exactly as it was -- subject at
+     * 1, anchored pattern at 2 -- so only the position needs carrying in
+     * ctx. Nothing here reads shared state; see l_pattern_guard. */
     return pattern_loop(Ls, (lua_Integer)ctx);
 }
 
@@ -482,13 +433,13 @@ static int pattern_loop(lua_State *Ls, lua_Integer pos) {
 
         /* One anchored attempt at exactly this position.
          *
-         * The subject stays at index 1 untouched; only the pattern and the
-         * init offset are rewritten, so a resumed call sees the same stack
-         * shape as a fresh one. Top is left at 3 so the original sees no
+         * Index 1 holds the subject and index 2 the anchored pattern, both
+         * installed by l_pattern_guard before the first iteration and neither
+         * touched here -- settop(3) trims above them, it does not clear them.
+         * Only the init offset is rewritten, so a resumed call sees the same
+         * stack shape as a fresh one. Top is left at 3 so the original sees no
          * fourth argument and does not read a stale `plain` flag. */
         lua_settop(Ls, 3);
-        lua_pushvalue(Ls, lua_upvalueindex(PU_ANCHORED));
-        lua_replace(Ls, 2);
         lua_pushinteger(Ls, pos);
         lua_replace(Ls, 3);
 
@@ -550,18 +501,28 @@ static int l_pattern_guard(lua_State *Ls) {
         init = 1;
     }
 
-    /* Built once and kept as an upvalue: doing it per position would
-     * allocate a string for every character of the subject. */
+    /* Built once -- doing it per position would allocate a string for every
+     * character of the subject -- and installed at argument 2, in THIS
+     * activation.
+     *
+     * Not an upvalue. string.find is one closure shared by every caller, so an
+     * upvalue is per-closure state however the call stack is arranged, and
+     * pattern_loop suspends: a tick() yielded mid-search, then an on_event()
+     * handler or a console eval calling string.find on a 65..128 byte subject,
+     * overwrote it and the resumed loop finished against the wrong pattern --
+     * silently, returning a position that matched something the script never
+     * asked about. The activation's stack survives lua_yieldk and belongs to
+     * one call, which is what this needs. */
     lua_pushliteral(Ls, "^");
     lua_pushvalue(Ls, 2);
     lua_concat(Ls, 2);
-    lua_replace(Ls, lua_upvalueindex(PU_ANCHORED));
+    lua_replace(Ls, 2);
 
     return pattern_loop(Ls, init);
 }
 
-/* Replace string.<name> with a restartable version of itself. Lua's own
- * matcher still does the work; only the loop over start positions moves. */
+/* Lua's own matcher still does the work; only the loop over start positions
+ * moves here. */
 static void guard_pattern_fn(lua_State *Ls, const char *name, int plain_arg) {
     lua_getglobal(Ls, "string");
     lua_getfield(Ls, -1, name);
@@ -573,23 +534,19 @@ static void guard_pattern_fn(lua_State *Ls, const char *name, int plain_arg) {
     }
     lua_pushlightuserdata(Ls, (void *)orig);
     lua_pushinteger(Ls, plain_arg);
-    lua_pushnil(Ls); /* PU_ANCHORED, filled per call */
+    lua_pushnil(Ls); /* PU_NAME: unused here, kept so both wrappers share a shape */
     lua_pushcclosure(Ls, l_pattern_guard, 3);
     lua_setfield(Ls, -2, name);
     lua_pop(Ls, 1);
 }
 
-/* gsub and gmatch are capped rather than made restartable.
+/* Capped rather than made restartable. Suspending gsub means carrying
+ * partial output across yields, and a function replacement can itself yield,
+ * needing a second continuation nested in the first; gmatch keeps its state
+ * inside an iterator closure the matcher owns.
  *
- * gsub scans AND builds output, with string, table and function
- * replacements and %1 back-references, so suspending it means carrying
- * partial output across yields -- and a function replacement can itself
- * yield, which needs a second continuation nested inside the first.
- * gmatch's state lives inside an iterator closure the matcher owns.
- *
- * Both are reachable hazards, so neither is left unbounded: the cap applies
- * whether or not the caller could yield. A script that needs to scan a long
- * string can do it with find, which is restartable. */
+ * The cap applies whether or not the caller could yield. A script scanning a
+ * long string uses find, which is restartable. */
 static int l_pattern_cap(lua_State *Ls) {
     lua_CFunction orig = (lua_CFunction)lua_touserdata(Ls, lua_upvalueindex(PU_ORIG));
     size_t len = 0;
@@ -600,7 +557,7 @@ static int l_pattern_cap(lua_State *Ls) {
         return luaL_error(Ls,
                           "%s on %d bytes exceeds the %d byte limit "
                           "(not restartable; use string.find to scan)",
-                          lua_tostring(Ls, lua_upvalueindex(PU_ANCHORED)), (int)len, PYRO_LUA_PATTERN_MAX);
+                          lua_tostring(Ls, lua_upvalueindex(PU_NAME)), (int)len, PYRO_LUA_PATTERN_MAX);
     }
     return orig(Ls);
 }
@@ -616,7 +573,7 @@ static void cap_pattern_fn(lua_State *Ls, const char *name) {
     }
     lua_pushlightuserdata(Ls, (void *)orig);
     lua_pushinteger(Ls, 0);
-    lua_pushstring(Ls, name); /* reused as the name in the error message */
+    lua_pushstring(Ls, name); /* PU_NAME: the name in the error message */
     lua_pushcclosure(Ls, l_pattern_cap, 3);
     lua_setfield(Ls, -2, name);
     lua_pop(Ls, 1);
@@ -631,9 +588,8 @@ static void guard_patterns(lua_State *Ls) {
 
 /* ── Environment construction ─────────────────────────────────────── */
 
-/* luaL_newlib() cannot be used here: it expands to sizeof(array)/sizeof(elem),
- * which silently computes a pointer size when the table arrives as a
- * parameter. Count the entries and size the table explicitly instead. */
+/* Not luaL_newlib(): it expands to sizeof(array)/sizeof(elem), which
+ * computes a pointer size when the table arrives as a parameter. */
 static void reg_table(lua_State *Ls, const char *name, const luaL_Reg *fns) {
     int n = 0;
     while (fns[n].name)
@@ -743,11 +699,8 @@ void pyro_lua_shutdown(void) {
     }
 }
 
-/* Fresh coroutine, anchored on L's stack so the collector keeps it.
- *
- * Called at load and again after an error, because a coroutine that raised is
- * dead and cannot be resumed -- resuming one returns an error forever, which
- * would turn a single script fault into a permanently broken tick. */
+/* Called at load and again after an error: a coroutine that raised is dead,
+ * and resuming it returns an error forever. */
 static void make_coroutine(void) {
     slice_running = false;
     lua_settop(L, 0); /* drops the previous thread, if any */
@@ -811,9 +764,7 @@ pyro_lua_status_t pyro_lua_tick_slice(uint32_t budget_us) {
     hard_boxed = false;
 
     if (!slice_running) {
-        /* Looked up per call rather than cached: a script may define tick()
-         * from inside init(), and a stale "no tick" flag would silently never
-         * run it. */
+        /* Not cached: a script may define tick() from inside init(). */
         lua_getglobal(co, "tick");
         if (!lua_isfunction(co, -1)) {
             lua_pop(co, 1);

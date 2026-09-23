@@ -105,14 +105,13 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
         if (index >= sizeof(string_desc_arr) / sizeof(string_desc_arr[0]))
             return NULL;
         const char *str = string_desc_arr[index];
-        /* Both of these used to be compile-time constants, identical on every
-         * board: serial "000001" and MAC "020284006A00". The host then saw
-         * three indistinguishable devices and used one. They now come from
-         * board_identity, which is why board_identity_init() has to run before
-         * tud_init() -- the host reads these once, at enumeration.
+        /* The serial and the MAC come from board_identity, so
+         * board_identity_init() must run before tud_init(): the host reads
+         * these once, at enumeration. Boards sharing either string leave the
+         * host with indistinguishable devices and one usable board.
          *
-         * The serial is the MAC, deliberately: one identity, and it makes
-         * `picotool --ser <mac>` able to target a specific board. */
+         * The serial is the MAC, deliberately: one identity, and
+         * `picotool --ser <mac>` can then target a specific board. */
         if (index == STRID_SERIAL || index == STRID_MAC)
             str = board_serial();
         chr_count = (uint8_t)strlen(str);

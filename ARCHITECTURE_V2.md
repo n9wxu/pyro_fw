@@ -226,7 +226,7 @@ while (1) {
 - `hal_pressure_push_sample()` + `hal_pressure_batch_t` added to HAL
 
 ### ✅ Task 9 (renumbered): Fire-and-forget hal_log_sample() — DONE (commits `6cab391`, `6224112`)
-- `hal_log_start(cfg, ground_pa)` opens `flight_log.csv`; `hal_log_stop()` closes at landing
+- `hal_log_start(cfg, ground_pa)` arms the log at launch and `hal_log_stop()` closes it at landing; core0 creates and writes `flight_log.csv` inside its flash window
 - `hal_log_sample(time_ms, pa, alt, state, thrust, event)` appends one CSV line per call
 - Three implementations: hardware (LittleFS), sim (host FS), test (in-memory sim_files[])
 - Incremental ring-buffer logger (`csv_flush_safe/step/track`) retired from all call sites

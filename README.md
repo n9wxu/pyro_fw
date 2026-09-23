@@ -119,10 +119,11 @@ Two-digit codes (1-5 beeps per digit):
 - **GPIO 16:** Buzzer (GPIO on/off, external circuit produces tone)
 
 ## Data Logging
-The primary in-flight record is written by `hal_log_sample()` (v2-9) to `flight_log.csv` in LittleFS — one CSV line per pressure sample from launch to landing.
+`hal_log_sample()` writes the primary in-flight record to `flight_log.csv` in LittleFS — one CSV line per pressure sample from launch to landing. Samples go into a RAM buffer; core0 writes that buffer to flash inside its scheduled flash window, so no call on the flight path touches flash. See [src/flash_window.h](src/flash_window.h).
 
-- **Primary log:** `flight_log.csv` in LittleFS, 50Hz during ASCENT/DESCENT, streaming append (ISR-flushed every 200ms)
+- **Primary log:** `flight_log.csv` in LittleFS, 50Hz during ASCENT/DESCENT, streaming append
 - **Events:** LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING tagged inline as an extra CSV column
+- **Lua:** a script's `log()` output lands in the same file as `LUA` event rows, during flight only; on the ground it goes to `/api/lua/console`
 - **Fields:** `time_ms, pressure_pa, altitude_cm, state, thrust, event`
 - **RAM ring buffer:** 64 entries × 16 bytes = 1KB (retained for launch-backdate and `/api/flight.csv` HTTP endpoint)
 - **CSV export:** `/api/flight.csv` serves `flight_log.csv` directly from LittleFS
@@ -411,7 +412,7 @@ The firmware is feature-complete and fully implements the v2 autonomous I/O arch
 - **v2-5:** Telemetry formatter module (dual NMEA/JSON, event sentences)
 - **v2-7:** Buzzer parallel state machine (`buzzer_play_code/altitude`, `async_task_t`-driven, no main-loop involvement)
 - **v2-8:** Batch `flight_process_samples()` at 50Hz
-- **v2-9:** Fire-and-forget `hal_log_sample()` with ISR-flushed streaming LittleFS writer
+- **v2-9:** Fire-and-forget `hal_log_sample()` buffering into RAM, drained by core0 inside the flash window
 - **v2-10:** Non-blocking UART TX ring buffer (UART0 ISR, 512-byte SPSC queue)
 
 See [ARCHITECTURE_V2.md](ARCHITECTURE_V2.md) and [STATUS.md](STATUS.md) for implementation details.

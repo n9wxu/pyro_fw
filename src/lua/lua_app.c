@@ -20,29 +20,21 @@ static int script_len;
 static char status_line[96] = "off";
 static bool launch_pending;
 static uint32_t launch_at_ms;
-/* Distinguishes "core1 was started and has not reported RUNNING" from "core1
- * was never started" -- the safe-boot latch, no script, or Lua disabled. Both
- * leave the state at LUA_C1_OFF, and conflating them overwrites the message
- * that says which. */
+/* Both "started, not yet RUNNING" and "never started" leave the state at
+ * LUA_C1_OFF, and conflating them overwrites the message saying which. */
 static bool launched;
 
 /* ── Safe boot ────────────────────────────────────────────────────
  *
- * A user program that takes the whole board down must not take it down
- * twice. Before core1 is launched a marker goes into a watchdog scratch
- * register; it is cleared once the system has proven it survives with core1
- * running. The registers survive a watchdog reset but not a power cycle or a
- * RUN reset, which is exactly the semantics wanted:
+ * A user program that takes the board down must not take it down twice:
  *
  *   board wedges -> watchdog reboots -> marker still set -> Lua skipped,
  *   device comes up reachable and says why -> operator fixes the script.
  *
- * Power-cycling or pressing RUN clears it and lets the program try again, so
- * the latch never becomes something an operator has to remember to reset.
- *
- * This pairs with the boot watchdog in main_hardware.c. Without a watchdog
- * the board would simply hang and the marker would never be read, which is
- * how the first bench run needed the BOOTSEL button. */
+ * Scratch registers survive a watchdog reset but not a power cycle or a RUN
+ * reset, so either one clears the latch and no operator has to remember to.
+ * Needs the boot watchdog in main_hardware.c, or the board hangs and nothing
+ * reads the marker. */
 #define LUA_BOOT_MARK 0x4C554131u /* "LUA1" */
 #define LUA_BOOT_SCRATCH                                                                                               \
     3 /* 4..7 belong to the SDK: watchdog_enable() writes                                                              \
@@ -53,36 +45,21 @@ static bool launched;
 #define LUA_PHASE_SCRATCH 2
 #define LUA_SETTLE_MS 15000u
 
-/* How much of each loop period core1 gets.
- *
- * Not a constant any more, and that was the bug. A fixed 9 ms grant handed
- * out at the end of stage 6 of a 10 ms period runs PAST the end of the
- * period and into stages 1 and 2 of the next one -- which is exactly where
- * core0 used to flush the flight log. The two were scheduled to collide.
- *
- * The grant is now whatever is left of the period after core0 keeps back a
- * reserve for its own flash window, so it expires with the period rather
- * than across it. Core1 gets less time and core0 gets a window that is
- * guaranteed rather than hoped for.
- *
- * LUA_GRANT_MAX_US caps it so a period whose work stages happened to be
- * quick does not hand out a unit that then overruns into the window. */
+/* Never a constant: a fixed grant handed out near the end of a 10 ms period
+ * runs into the next period, where core0 wants its window. The grant is
+ * what remains after the reserve, capped so a period whose work stages ran
+ * quickly does not hand out a unit long enough to overrun anyway. */
 #define LUA_FLASH_RESERVE_US 3000u
 #define LUA_GRANT_MAX_US 5000u
 #define LUA_GRANT_MIN_US 500u
 
-/* How long core1's unbounded startup may take before core0 gives up on it.
- *
- * Generous, because it covers compiling the script and running init(), and a
- * script is allowed to do real work there. But not unlimited: core0 writes no
- * flash for the whole window, so a core1 that never finishes would silently
- * cost logging and uploads for the rest of the flight. Killing it instead
- * leaves a board that works without Lua and says why. */
+/* Covers compiling the script and running init(), where a script may do real
+ * work. Not unlimited: core0 writes no flash for the whole of startup, so a
+ * core1 that never finishes costs logging and uploads for the flight. */
 #define LUA_BOOT_LIMIT_MS 5000u
 
-/* Breadcrumb: where core0 was when it last stopped. Survives a watchdog
- * reboot, so the next boot can say what it was doing instead of leaving it to
- * be guessed at. */
+/* Survives a watchdog reboot, so the next boot can report what core0 was
+ * doing. */
 #define PH_NO_LUA 1u
 #define PH_PRELAUNCH 2u
 #define PH_LAUNCHED 3u
@@ -140,10 +117,8 @@ bool lua_app_script_write(const char *src, int len) {
     return hal_fs_write_file(LUA_SCRIPT_PATH, src, len) == 0;
 }
 
-/* Build the resource set a configuration WOULD grant, without binding
- * anything. This is what the web check validates against, so an operator sees
- * a truthful verdict for the configuration they just saved rather than for
- * the one still running. */
+/* Binds nothing, so the web check reports a verdict for the configuration
+ * just saved rather than for the one still running. */
 static void env_from_config(const config_t *cfg, lua_chk_env_t *env) {
     memset(env, 0, sizeof(*env));
     const struct {
@@ -201,66 +176,57 @@ int lua_app_console_read(char *buf, int max) {
 
 /* ── Script log ───────────────────────────────────────────────────
  *
- * Core1 hands bytes over; core0 owns the file. A separate file rather than
- * the flight CSV because hal.h's event field is a uint8_t enum code, not a
- * string -- routing free-form text through it would mean widening a contract
- * every board implements, for one caller.
+ * A script's log() output goes into the flight log as event rows, so it is
+ * written through the window the samples already need.
  *
- * Buffered and flushed on a watermark or a deadline, never per call. A
- * per-call write would put a flash erase wherever a script happened to call
- * log(), which is the same mistake hal_log_sample() makes today at
- * hal_common.c and the reason its flush needs moving. */
-#define LUA_LOG_PATH "lua_log.txt"
-#define LUA_LOG_BUF 512
-#define LUA_LOG_FLUSH_MS 1000u
+ * Do not open a file here. A second file contends with the flight log for
+ * hal_fs_open()'s single streaming handle, which the flight log holds for
+ * the whole of a flight.
+ *
+ * Logging therefore happens only during a flight. On the ground a script's
+ * output goes to /api/lua/console, which needs no flash. */
 
-static char log_buf[LUA_LOG_BUF];
-static int log_len;
-static uint32_t log_due_ms;
+/* Sized to fit inside hal_log_text()'s 80-byte row, of which the widest
+ * timestamp plus the ",,,,,LUA " prefix take 19 and the newline one. Anything
+ * over 59 is truncated there, and only once uptime reaches ten digits of
+ * milliseconds -- a bug that appears after 27 hours and not before. */
+#define LUA_LINE_MAX 56
+
+static char line_buf[LUA_LINE_MAX];
+static int line_len;
 static uint32_t log_written;
 
-static void log_flush(void) {
-    if (log_len <= 0) {
-        return;
+static void line_emit(uint32_t now_ms) {
+    if (line_len > 0 && hal_log_text(now_ms, line_buf, line_len)) {
+        log_written += (uint32_t)line_len;
     }
-    flash_window_crumb(90);
-    hal_file_t *f = hal_fs_open(LUA_LOG_PATH, true /* append */);
-    flash_window_crumb(91);
-    if (!f) {
-        /* The window is shut or the single streaming file is in use. Keep the
-         * bytes: the next window retries. They are only dropped when the
-         * buffer itself fills, which core1 already counts. */
-        return;
-    }
-    int n = hal_fs_write(f, log_buf, log_len);
-    flash_window_crumb(92);
-    hal_fs_close(f);
-    flash_window_crumb(93);
-    if (n == log_len) {
-        log_written += (uint32_t)log_len;
-        log_len = 0;
+    line_len = 0;
+}
+
+/* A carriage return ends a line as a newline does, so a script written for a
+ * serial terminal does not produce one row per flight. */
+static void log_drain(uint32_t now_ms) {
+    char buf[128];
+    int n;
+    while ((n = lua_core1_log_read(buf, (int)sizeof(buf))) > 0) {
+        for (int i = 0; i < n; i++) {
+            char c = buf[i];
+            if (c == '\n' || c == '\r') {
+                line_emit(now_ms);
+            } else {
+                line_buf[line_len++] = c;
+                if (line_len == LUA_LINE_MAX) {
+                    line_emit(now_ms);
+                }
+            }
+        }
+        if (n < (int)sizeof(buf)) {
+            break;
+        }
     }
 }
 
-/* Drain core1's ring into core0's buffer. No flash: this runs in stage 6,
- * with core1 still holding the previous grant. */
-static void log_drain(void) {
-    int n = lua_core1_log_read(log_buf + log_len, LUA_LOG_BUF - log_len);
-    log_len += n;
-}
-
-/* The flash half, called only from inside the window. */
-void lua_app_flash_service(uint32_t now_ms) {
-    if (log_len <= 0) {
-        return;
-    }
-    if (log_len < LUA_LOG_BUF - 64 && (int32_t)(now_ms - log_due_ms) < 0) {
-        return;
-    }
-    log_flush();
-    log_due_ms = now_ms + LUA_LOG_FLUSH_MS;
-}
-
+/* Bytes of script output the flight log actually took. */
 uint32_t lua_app_log_written(void) {
     return log_written;
 }
@@ -269,12 +235,8 @@ const char *lua_app_status(void) {
     return status_line;
 }
 
-/* True when the board is fully up: either Lua is running its script, or Lua
- * is not in play at all. What the heartbeat and the startup beep wait for, so
- * a blinking, beeping board has a running script rather than a compiling one. */
-/* The name flight_states.c links against. Separate from lua_app_ready() so
- * the flight code does not need a Lua header, and so the weak default in
- * hal_common.c can satisfy a board built without Lua. */
+/* Separate from lua_app_ready() so flight_states.c needs no Lua header and a
+ * board built without Lua resolves the weak default instead. */
 bool lua_app_ready_or_absent(void) {
     return lua_app_ready();
 }
@@ -315,9 +277,8 @@ void lua_app_init(const config_t *cfg) {
         return;
     }
 
-    /* Validate before launching. A script that cannot match the configuration
-     * is not started at all, so its first failure is on the bench rather than
-     * in the air. */
+    /* So a script that cannot match the configuration fails on the bench
+     * rather than in the air. */
     lua_chk_result_t chk;
     lua_chk_env_t env;
     lua_chk_env_from_platform(&env); /* at boot the two agree, by definition */
@@ -342,11 +303,9 @@ void lua_app_init(const config_t *cfg) {
         return;
     }
 
-    /* Deferred on purpose. Launching core1 inside init would put a user
-     * program between power-on and the first HTTP response, so a program that
-     * wedges the board would also block the only route in to replace it.
-     * Starting it a couple of seconds into the main loop means the web
-     * interface is already answering before any user code exists. */
+    /* Launching inside init would put a user program between power-on and
+     * the first HTTP response, so a program that wedges the board would also
+     * block the only route in to replace it. */
     launch_pending = true;
     launch_at_ms = 0;
     phase(PH_PRELAUNCH);
@@ -368,9 +327,8 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
         watchdog_hw->scratch[LUA_BOOT_SCRATCH] = LUA_BOOT_MARK;
         phase(PH_LAUNCHED);
         launched = true;
-        /* Bracketed: lua_core1_start() is the one call on this path that
-         * touches the FIFO, and a hang inside it looks identical to a hang
-         * after it without these. */
+        /* The one call on this path that touches the FIFO; without the
+         * crumbs a hang inside it and after it look identical. */
         flash_window_crumb(60);
         lua_core1_start(script_buf, script_len);
         flash_window_crumb(61);
@@ -382,9 +340,8 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     }
 
     if (lua_core1_state() == LUA_C1_OFF) {
-        /* Core1 was launched but has not reported RUNNING. It is wedged in
-         * pyro_lua_init() or pyro_lua_load(), and the old early-return hid
-         * every diagnostic for exactly that case. Say where it stopped. */
+        /* Launched and not RUNNING means wedged in pyro_lua_init() or
+         * pyro_lua_load(). */
         if (launched && strncmp(status_line, "stuck", 5) != 0) {
             uint32_t loc = lua_core1_loc();
             snprintf(status_line, sizeof(status_line), "stuck before RUNNING [loc=%lu hb=%lu stackfree=%lu]",
@@ -403,9 +360,8 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
 
     lua_core1_check_stack();
 
-    /* Publish flight state for the script to read. The seqlock write never
-     * waits, so this costs core0 a fixed handful of stores whatever core1 is
-     * doing -- including nothing at all. */
+    /* The seqlock write never waits, so this costs a fixed handful of stores
+     * whatever core1 is doing. */
     lua_flight_t f;
     f.pressure_pa = ctx->filtered_pressure;
     f.altitude_cm = ctx->last_altitude;
@@ -425,11 +381,10 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     lua_core1_publish(&f);
 
     lua_core1_service(now_ms);
-    log_drain();
+    log_drain(now_ms);
 
-    /* Startup overran. Core0 has been withholding flash the whole time, so
-     * this is not something to wait out. The dispatch itself has moved to
-     * lua_app_dispatch(), which core0 calls after the flash window. */
+    /* Core0 has withheld flash for the whole of startup, so waiting longer
+     * costs more than killing core1. */
     if (!lua_core1_ready() && launched && (int32_t)(now_ms - (launch_at_ms + LUA_BOOT_LIMIT_MS)) >= 0 &&
         lua_core1_state() == LUA_C1_RUNNING) {
         snprintf(status_line, sizeof(status_line), "killed: startup exceeded %lums", (unsigned long)LUA_BOOT_LIMIT_MS);
@@ -439,7 +394,7 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     if (lua_core1_state() == LUA_C1_DEAD && strncmp(status_line, "stopped", 7) != 0) {
         phase(PH_KILLED);
         uint32_t ok, rq, ak, hb;
-        lua_core1_park_stats(&ok, &rq, &ak, &hb);
+        lua_core1_dispatch_stats(&ok, &rq, &ak, &hb);
         uint32_t loc = lua_core1_loc();
         snprintf(status_line, sizeof(status_line),
                  "stopped: %s [ok=%lu req=%lu ack=%lu hb=%lu loc=%lu failloc=%lu preq=%lu stack=%lu]",
@@ -449,22 +404,11 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     }
 }
 
-/* Hand core1 its unit for this period.
+/* Call after the flash window has closed, with the microseconds left before
+ * the deadline. A unit may overrun its box slightly, hence the reserve.
  *
- * Called by core0's exec loop AFTER the flash window has closed, with the
- * microseconds left before the period's deadline. Everything about the
- * ordering is deliberate:
- *
- *   - after the window, because the window is the only place core0 writes
- *     flash and core1 must be idle for all of it;
- *   - sized from the time actually left rather than a constant, so the unit
- *     ends inside this period instead of running into the next one's window;
- *   - a reserve held back on top of that, because a unit is allowed to
- *     overrun its box slightly and the window must not pay for it.
- *
- * Returning without dispatching is a normal outcome, not a failure: core1
- * simply stays parked in RAM for a period, which is exactly what a long
- * flash write needs. */
+ * Returning without dispatching is normal: core1 stays in RAM for a period,
+ * which is what a long flash write needs. */
 void lua_app_dispatch(int64_t slack_us) {
     if (!lua_core1_ready()) {
         return; /* still in startup; a grant would mean nothing */

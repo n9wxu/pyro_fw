@@ -107,16 +107,16 @@ static bool is_api_word(const char *s) {
     return false;
 }
 
-/* Levenshtein distance, capped. Used to decide whether an unrecognised
- * string is a near-miss of a real resource name.
+/* Levenshtein distance, capped. Decides whether an unrecognised string is a
+ * near-miss of a real resource name.
  *
- * An earlier version flagged any identifier-shaped constant that matched
- * nothing, which made serial.write('radio', 'hi') report 'hi' as a possible
- * typo. A checker that cries wolf on message text is a checker operators
- * learn to ignore, so the test is now "close to something real" rather than
- * "looks like a word". That trades some recall for precision, which is the
- * right trade here: the sandbox is what makes a genuinely wrong name safe,
- * and this only has to catch the plausible mistake. */
+ * The test is "close to something real" rather than "looks like a word".
+ * Flagging any identifier-shaped constant that matches nothing reports the
+ * 'hi' in serial.write('radio', 'hi') as a possible typo, and a checker that
+ * cries wolf on message text is one operators learn to ignore.
+ *
+ * That trades recall for precision. The sandbox is what makes a genuinely
+ * wrong name safe, so this only has to catch the plausible mistake. */
 static int edit_distance(const char *a, const char *b, int cap) {
     int la = (int)strlen(a), lb = (int)strlen(b);
     if (la - lb > cap || lb - la > cap) {

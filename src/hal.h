@@ -112,19 +112,25 @@ int hal_config_save(const config_t *cfg);
 
 /* ── Serial commands (ground test, DD-011) ────────────────────────── */
 
-/* Non-blocking serial line read from the TRRS telemetry jack (same UART
- * as telemetry TX, but the RX side).
- * Returns true if a complete line was read; buf is NUL-terminated with
- * trailing CR/LF stripped.  Returns false if no complete line available. */
+/* Non-blocking line read from the TRRS telemetry jack, on the RX side of the
+ * UART that carries telemetry TX.
+ *
+ * Returns true when a complete line was read, leaving buf NUL-terminated with
+ * any trailing CR or LF stripped. Returns false when no complete line is
+ * available yet. */
 bool hal_serial_readline(char *buf, int max_len);
 
-/* ── In-flight data logging [v2-9] ───────────────────────────────── */
-/* Fire-and-forget logging — not called during PAD_IDLE.
- * hal_log_start() called at LAUNCH: opens flight.csv, writes header.
- * hal_log_sample() called for every ASCENT/DESCENT/LANDED sample.
- * hal_log_stop() called at end of flight (LANDED + finalize).
- * The HAL buffers samples in RAM; flushes asynchronously during
- * hal_tasks_tick() so the call never blocks the flight software. */
+/* ── In-flight data logging ──────────────────────────────────────
+ *
+ * Fire and forget: every call below buffers into RAM and returns, so none of
+ * them blocks the flight software or reaches flash. The platform decides
+ * when the buffer is written.
+ *
+ * The flight code calls hal_log_start() at LAUNCH, hal_log_sample() for each
+ * ASCENT, DESCENT and LANDED sample, and hal_log_stop() once LANDED has
+ * finalised. Nothing calls these during PAD_IDLE.
+ *
+ * See REQUIREMENTS.md v2-9. */
 void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa);
 void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
                     uint8_t event);
@@ -133,10 +139,11 @@ bool hal_log_active(void);
 
 /* ── Async task runner [v2] ───────────────────────────────────────── */
 
-/* Advance all registered async HAL state machines.
- * Call once per main loop iteration before dispatch_state().
- * Hardware HAL: runs due pressure/telemetry/log tasks.
- * Test and sim HALs implement this as a no-op. */
+/* Advance every registered async HAL state machine. Call once per main-loop
+ * iteration, before dispatch_state().
+ *
+ * The hardware HAL runs the pressure and telemetry tasks that are due. The
+ * test and sim HALs implement this as a no-op. */
 void hal_tasks_tick(uint32_t now_ms);
 
 /* ── Power / sleep [v2, PWR-SLEEP-01] ────────────────────────────── */

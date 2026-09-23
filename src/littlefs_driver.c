@@ -10,28 +10,18 @@
 #include <lfs.h>
 #include "pico/stdlib.h"
 
-/* Core1 must not be fetching instructions from flash while XIP is off, and
- * save_and_disable_interrupts() below acts on the calling core only.
+/* Core1 must not be fetching from flash while XIP is off, and
+ * save_and_disable_interrupts() below acts on the calling core only. Core0's
+ * exec loop arranges that by scheduling a window; this layer only refuses a
+ * write that arrived outside one.
  *
- * This driver does not arrange that and does not wait for it. Core0's exec
- * loop schedules a window in which core1 is already idle in RAM, and every
- * write lands inside one. All this layer does is refuse a write that arrived
- * outside the window, because a driver is the wrong place to make the
- * decision: it runs several levels down inside an lfs operation, with no idea
- * whether the caller is the flight log, an upload or a config save, and no
- * way to do anything useful except stall.
+ * Do not stall here instead. Core1 is gated for the whole of its startup on a
+ * flag only core0 clears, and core0 cannot clear it from in here. A bounded
+ * spin is no better: one lfs_file_write touches dozens of blocks, and each
+ * block pays the bound.
  *
- * Stalling is what the previous two versions did, and both were bugs. An
- * unbounded spin deadlocked outright -- core1 is gated for its whole startup
- * on a flag only core0 clears, and core0 cannot clear it from inside here. A
- * 20 ms bounded spin replaced that with an aggregate one: a single
- * lfs_file_write touches dozens of blocks, each one paying the 20 ms, which
- * overran the 1000 ms watchdog and took the board down in stage 2 or stage 6.
- *
- * LFS_ERR_IO propagates out as a failed file operation. Callers already
- * handle it -- the log line stays in its buffer, the upload pushes back on
- * the TCP connection -- and every one of them retries a period later, when
- * the window is open. */
+ * LFS_ERR_IO propagates out as a failed file operation, which every caller
+ * already retries a period later. */
 #include "flash_window.h"
 
 /* Must match PFB_RESERVED_FILESYSTEM_SIZE_KB exactly: pico_fota_bootloader

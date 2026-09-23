@@ -22,13 +22,13 @@
  * is reported and never fatal: the flight computer runs without Lua. */
 void lua_app_init(const config_t *cfg);
 
-/* Main-loop service: publish flight state, watch core1, drain core1's log
- * ring. Touches no flash and never blocks. */
+/* Main-loop service: publish flight state, watch core1, and drain core1's log
+ * ring into the flight log. Touches no flash and never blocks.
+ *
+ * There is no flash half. A script's log() output is appended to the flight
+ * log as event rows, in the same RAM buffer as the samples, so core0 writes
+ * it in the window it was already opening for them. */
 void lua_app_service(const flight_context_t *ctx, uint32_t now_ms);
-
-/* The flash half of the above, called by core0 from inside the flash window
- * -- the one point in the period where core1 is idle in RAM. */
-void lua_app_flash_service(uint32_t now_ms);
 
 /* Hand core1 its unit for this period, sized from the microseconds left
  * before the deadline. Call AFTER the flash window has closed; core0 skips
@@ -53,8 +53,10 @@ void lua_app_check(const char *src, int len, const config_t *cfg, lua_chk_result
 /* For the web console. */
 int lua_app_console_read(char *buf, int max);
 
-/* Bytes a script has had written to lua_log.txt. Paired with the ring's drop
- * counter on /api/lua/console so "my log has holes" is answerable. */
+/* Bytes of script output the flight log took. Paired on /api/lua/console with
+ * the ring's drop counter and the log buffer's, so "my log has holes" is
+ * answerable -- and with the reminder that there is no log at all until
+ * launch, because on the ground the console IS the log. */
 uint32_t lua_app_log_written(void);
 
 /* One-line status for /api/status. */

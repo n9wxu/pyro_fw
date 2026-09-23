@@ -34,9 +34,9 @@ volatile uint32_t net_tx_ok;
  * run before tud_init() because the ECM descriptor carries this as a string
  * and the host reads it once, at enumeration.
  *
- * The compiled-in value is a placeholder only; every board overwrites it. It
- * used to be the shipped value on every unit, which is why three boards on
- * one host gave one usable board.
+ * The compiled-in value is a placeholder that every board overwrites. Boards
+ * sharing one MAC leave a host with one usable board: the rest enumerate and
+ * are ignored.
  *
  * lwIP's netif takes the same address with bit 0 of byte 5 flipped, so the
  * two ends of the link differ. */
@@ -81,12 +81,13 @@ void net_mac_init(void) {
     IP4_ADDR(&dhcp_config.dns, 192, 168, n, 1);
 }
 
-/* Non-blocking link output — try briefly, then let lwIP retry via TCP
- * retransmit.  The old for(;;) spin loop blocked the entire system
- * (pressure tasks, buzzer, incoming USB frames) while waiting for the
- * USB host to drain its FIFO.  A bounded retry keeps worst-case
- * latency under ~2 ms while still succeeding on the first attempt in
- * the common case. */
+/* Non-blocking link output: try briefly, then let lwIP retry via TCP
+ * retransmit.
+ *
+ * Do not spin waiting for the USB host to drain its FIFO. That blocks the
+ * pressure tasks, the buzzer and incoming USB frames for as long as the host
+ * takes. A bounded retry holds worst-case latency under 2 ms and still
+ * succeeds on the first attempt in the common case. */
 static err_t linkoutput_fn(struct netif *netif, struct pbuf *p) {
     (void)netif;
 

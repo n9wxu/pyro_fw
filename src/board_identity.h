@@ -1,12 +1,11 @@
 /*
  * Board identity: MAC, serial number, USB serial string and IP subnet.
  *
- * Every board used to ship the same MAC (02:02:84:00:6A:00), the same USB
- * serial ("000001") and the same address (192.168.7.1). Three boards on one
- * host meant one usable board: the others enumerated and were ignored, and
- * `picotool --ser` could not target any of them.
+ * Boards must not share a MAC, a USB serial or an address. Three identical
+ * boards on one host leave one usable board: the rest enumerate and are
+ * ignored, and `picotool --ser` cannot target any of them.
  *
- * DERIVED, NOT ASSIGNED. Everything here comes from the flash chip's 64-bit
+ * Derived, not assigned. Everything here comes from the flash chip's 64-bit
  * unique id, so there is no allocation to perform and no registry to keep in
  * step with the hardware. The RP2040 itself has no factory MAC and no on-die
  * GUID -- pico_get_unique_board_id() reads the QSPI flash over JEDEC 0x4B, and

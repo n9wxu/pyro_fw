@@ -1,29 +1,29 @@
 /*
- * Lua on core1 — lifecycle, the park protocol, and the flight snapshot.
+ * Lua on core1 — lifecycle, dispatch, and the flight snapshot.
  *
- * The whole of this module exists to make one sentence true:
+ * This module exists to make one sentence true:
  *
  *     core0 must never wait on anything core1 can hold.
  *
- * docs/core1_hazard.md proves why that is not free. Three mechanisms here
+ * docs/core1_hazard.md shows why that is not free. Three mechanisms
  * discharge it:
  *
- *   1. core1 never acquires a shared resource. Every PIO state machine,
- *      program offset and DMA channel is claimed on core0 at boot; core1 only
- *      writes registers it was handed. It never calls hw_claim, never
- *      allocates from the system heap (Lua has its own arena), and never
- *      touches the flash.
+ *   1. Core1 acquires no shared resource. Core0 claims every PIO state
+ *      machine, program offset and DMA channel at boot, and core1 writes
+ *      only the registers core0 handed it. Core1 calls no hw_claim,
+ *      allocates nothing from the system heap -- Lua has its own arena --
+ *      and never touches flash.
  *
- *   2. Flash writes park core1 first, with a deadline. Core0 asks; core1
- *      answers from a RAM-resident spin loop. If the answer does not come in
- *      time core0 kills core1 and proceeds. Core0's wait is bounded by the
- *      deadline, not by core1's cooperation.
+ *   2. Core0 dispatches work rather than asking permission. Core1 idles in
+ *      a RAM-resident loop and executes only what core0 hands it, one
+ *      time-boxed unit per grant. Core0 answers "is core1 in flash" from a
+ *      flag it owns, so there is no request, ack or deadline to wait on.
  *
  *   3. The kill is unilateral and terminal. PSM frce_off needs no consent.
- *      The SDK's own multicore_reset_core1() is NOT used: it ends in
- *      multicore_fifo_pop_blocking(), so the SDK's recovery path would itself
- *      hang core0 if the resurrected core1 failed to answer. Core1 is left in
- *      reset until the next power cycle.
+ *      Do not use the SDK's multicore_reset_core1(): it ends in
+ *      multicore_fifo_pop_blocking(), so the recovery path would itself hang
+ *      core0 when a resurrected core1 failed to answer. Core1 stays in reset
+ *      until the next power cycle.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -33,12 +33,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* ── Flight state handed to core1 ─────────────────────────────────
- *
- * Core0 publishes; core1 reads. Written with a seqlock so core1 never sees a
- * half-updated snapshot, and core0 never waits: the writer increments a
- * counter before and after, and the reader retries. A reader that keeps
- * losing the race is core1's problem, not core0's. */
+/* Core0 publishes and core1 reads, through a seqlock, so core0 never waits
+ * and a core1 that keeps losing the race pays for it alone. */
 typedef struct {
     int32_t pressure_pa;
     int32_t altitude_cm;
@@ -47,10 +43,8 @@ typedef struct {
     int state;
     uint32_t time_ms;
     int pyro[2];
-    /* Everything the built-in telemetry formatter emits, so a script can
-     * produce the same sentences rather than a subset of them. The raw ADC
-     * counts are the point: the booleans in pyro[] round a degraded connector
-     * to "good", and only the count shows it. */
+    /* The booleans in pyro[] round a degraded connector up to "good"; only
+     * the raw count shows the difference. */
     int pyro_adc[2];
     int under_thrust;
     int apogee_detected;
@@ -72,10 +66,9 @@ typedef enum {
     LUA_C1_DEAD,    /* killed; stays dead until reboot             */
 } lua_c1_state_t;
 
-/* Launch core1 with the VM. Call once, at boot, before the flight loop.
- * Launching uses a FIFO handshake that has no timeout, which is acceptable
- * exactly once from a cold core1 in the bootrom and never again -- there is
- * deliberately no relaunch. */
+/* Call once, at boot, before the flight loop. The launch uses a FIFO
+ * handshake with no timeout, which is acceptable only against a cold core1
+ * in the bootrom. Do not add a relaunch path. */
 bool lua_core1_start(const char *script, int len);
 
 lua_c1_state_t lua_core1_state(void);
@@ -84,94 +77,67 @@ uint32_t lua_core1_heartbeat(void);
 
 /* ── Dispatch ─────────────────────────────────────────────────────
  *
- * Core1 is a worker, not a free-running loop. It idles in a RAM-resident spin
- * and executes only the work core0 hands it, one time-boxed unit per grant.
+ * Core1 idles in a RAM-resident spin and executes only what core0 hands it,
+ * one time-boxed unit per grant. That is what makes flash safe: core1
+ * executes from flash only while working, and core0 started that work.
  *
- * That is what makes flash safe, and it replaces asking. Core1 executes from
- * flash only while it is working, core0 is the one that started that work, so
- * "is core1 in flash right now" is a question core0 can answer from a flag it
- * can see -- no request, no ack, no deadline, no kill on timeout.
- *
- * The one ordering rule that survives from the old park protocol: core1
- * publishes "idle" from INSIDE the RAM-resident function. Once core0 observes
- * it, core1's program counter is already in RAM, so there is no window where
- * core0 believes core1 is idle while it is still fetching from XIP. */
+ * One ordering rule holds it up. Core1 publishes "idle" from inside the
+ * RAM-resident function, so by the time core0 observes it core1's program
+ * counter is already in RAM. */
 
-/* Hand core1 one work unit of at most budget_us. Never blocks. Does nothing
- * if core1 is still working, which is why the grant should leave slack: a
- * unit that overruns costs a skipped dispatch, not a stall. */
+/* Never blocks, and does nothing while core1 is still working. Size the
+ * grant to leave slack: an overrun costs a skipped dispatch, not a stall. */
 void lua_core1_dispatch(uint32_t budget_us);
-
-/* Grants dropped because core1 was still on the previous unit. */
-uint32_t lua_core1_dispatch_skipped(void);
-
-/* True when core1 is idling in RAM and flash is safe to erase or program.
- * Also true when core1 is off or dead -- there is nothing to collide with. */
-bool lua_core1_idle(void);
 
 /* ── Startup ──────────────────────────────────────────────────────
  *
- * Core1's one-time startup -- creating the VM, compiling the script, running
- * init() -- runs UNBOUNDED. It has to: init() is user code, it may parse
- * strings or build tables, and the alternatives are a limit that is arbitrary
- * or a script that half-runs.
+ * Core1's startup -- creating the VM, compiling the script, running init() --
+ * runs unbounded, because init() is user code and any limit would be
+ * arbitrary or leave a script half-run.
  *
- * Unbounded is safe here only because core0 writes no flash until core1 is
- * ready. That is the whole trade: the startup window is the one time core1
- * executes from flash for an unpredictable duration, so core0 gives up flash
- * for the same window rather than trying to interrupt it.
- *
- * Nothing needs flash in that window. Logging starts at launch, uploads and
- * OTA are operator-initiated, and the filesystem is already mounted. */
+ * That is safe only because core0 writes no flash for the same stretch, and
+ * nothing needs flash there: logging starts at launch, an operator initiates
+ * uploads and OTA, and the filesystem is already mounted. */
 
 /* False while core1 is in startup or mid-unit: core0 must not touch flash. */
 bool lua_core1_flash_ok(void);
 
-/* True once core1 has finished startup and reached the dispatch loop. This is
- * what the heartbeat and the startup beep wait for, so a board that is
- * blinking and has beeped has a running script rather than a compiling one. */
+/* The startup beep waits on this, so a board that beeps is running a script
+ * rather than compiling one. */
 bool lua_core1_ready(void);
 
 /* Unilateral, terminal. Safe to call at any time from core0. */
 void lua_core1_kill(void);
 
-/* Deliver a flight event. Non-blocking: drops if core1 has not consumed the
- * previous one. */
+/* Never blocks; drops the event while core1 holds an unconsumed one. */
 void lua_core1_event(const char *name);
 
 /* Drain whatever core1 printed, for the web console. Returns bytes copied. */
 int lua_core1_console_read(char *buf, int max);
 
-/* Drain whatever core1 asked to be logged, for core0 to put in a file.
- * Core1 must never touch flash, so it hands bytes over and core0 owns the
- * write; this is the same single-producer ring as the console, pointed at a
- * different consumer. Returns bytes copied. */
+/* Core1 must never touch flash, so it hands log bytes over and core0 owns
+ * the write. Returns bytes copied. */
 int lua_core1_log_read(char *buf, int max);
 
-/* Bytes the two rings had to drop because core0 was not draining fast enough.
- * Dropping is correct -- core1 must never block -- but silent dropping is
- * not, so these are reported on /api/lua/console. */
+/* Core0 not draining fast enough. Core1 must never block, so dropping is
+ * correct; /api/lua/console reports these so it is not silent. */
 uint32_t lua_core1_console_dropped(void);
 uint32_t lua_core1_log_dropped(void);
 
-/* core0 housekeeping: watches the heartbeat and kills a wedged core1.
- * Called from the main loop; never blocks. */
+/* Watches the heartbeat and kills a wedged core1. Never blocks. */
 void lua_core1_service(uint32_t now_ms);
 
-/* Stack guard. core1 runs on its own stack in bss rather than the SDK's
- * 2 kB default in SCRATCH_X, because that one overflows downward into
- * core0's stack -- a core1 fault that takes out core0 is precisely what this
- * module exists to prevent. */
+/* Core1 runs on its own stack in bss, not the SDK's 2 kB default in
+ * SCRATCH_X, which overflows downward into core0's stack. */
 bool lua_core1_stack_ok(void);
 uint32_t lua_core1_stack_free(void);
 void lua_core1_check_stack(void);
 
-/* Dispatch accounting, for diagnosing a kill: units handed out, units taken,
- * grants skipped because core1 had not finished, and the heartbeat. */
-void lua_core1_park_stats(uint32_t *ok, uint32_t *req, uint32_t *ack, uint32_t *hb);
+/* For diagnosing a kill. */
+void lua_core1_dispatch_stats(uint32_t *handed, uint32_t *taken, uint32_t *skipped, uint32_t *heartbeat);
 
-/* Packed: byte 0 = where core1 is now, byte 1 = whether it is executing from
- * flash, byte 2 = the low bits of the dispatch counter. */
+/* Byte 0 = where core1 is, byte 1 = executing from flash, byte 2 = low bits
+ * of the dispatch counter. */
 uint32_t lua_core1_loc(void);
 
 #endif

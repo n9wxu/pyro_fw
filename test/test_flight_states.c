@@ -40,7 +40,7 @@ static void boot_to_pad_idle(flight_context_t *ctx) {
 void setUp(void) {
     mock_reset_all();
     pp_init(); /* Reset pressure processing state for each test */
-    /* Telemetry formatter needs explicit init — previously happened as a
+    /* The telemetry formatter needs an explicit init here, rather than as a
      * side-effect of detect_boot_init() running during boot tests.
      *
      * MUST be static: telemetry_init() borrows the pointer rather than
@@ -775,14 +775,14 @@ void test_PAD_IDLE_noise_no_false_launch(void) {
 
 /* [DATA-FLOW] Single data path: batch FIFO → push_sample → dispatch_state.
  * hal_pressure_read() must return false between batches (no leaked data).
- * This is the architectural invariant that prevents the backward-time bug:
- * the old polled path consumed pres.last at real-time timestamps, then the
- * batch replayed the same samples with earlier timestamps, causing dt to
- * wrap to ~4 billion ms and overflowing the IIR filter.
+ * This invariant is what keeps timestamps moving forward. Two paths
+ * consuming pres.last would let the batch replay samples the polled path had
+ * already taken at real-time timestamps, so dt would wrap to about 4 billion
+ * ms and overflow the IIR filter.
  *
- * With pres_append() no longer writing pres.last, the only way data
- * reaches hal_pressure_read() is through push_sample() during batch
- * processing.  Between batches, has_last is false. */
+ * pres_append() must not write pres.last. Data then reaches
+ * hal_pressure_read() only through push_sample() during batch processing,
+ * and has_last is false between batches. */
 void test_SNS_PRES_04_single_data_path(void) {
     flight_context_t ctx = {0};
     config_set_defaults(&ctx.config);

@@ -34,12 +34,11 @@ jobs:
         env:
           CI_BUILD: 1
 
-      # A second board, for two reasons. It is the only one with Lua, so the
-      # lua_tests and prove_core0 steps below have a target to run against at
-      # all -- pointing them at the mk1b build made them invoke things that do
-      # not exist there. And building exactly one board is how a hardcoded
-      # board name in a test survived the move to boards/<name>/: whatever is
-      # board-specific is only checked by building more than one.
+      # A second board. Building exactly one board is how a hardcoded board
+      # name in a test survived the move to boards/<name>/: whatever is
+      # board-specific is only checked by building more than one. mk1c is also
+      # where lua_tests runs, since the sandbox assertions are
+      # board-independent and pinning them to one board keeps them stable.
       - name: Build (mk1c)
         run: |
           mkdir build-mk1c && cd build-mk1c
@@ -76,8 +75,19 @@ jobs:
       # anything core1 can hold. See docs/core1_hazard.md -- the rule is a
       # property of the linked binary, not of the source, because the SDK
       # introduces the blocking waits underneath us.
+      #
+      # EVERY board with Lua, not just one. Both things this checks are
+      # decided by the linker and the inliner per image: whether an unbounded
+      # primitive got pulled in, and whether a __not_in_flash_func() kept an
+      # out-of-line copy. mk1b is the default board and the one whose 384KB
+      # A/B slot forced lua_lib to -Os, so it is the build most likely to
+      # inline differently -- and it was the one not being checked.
       - name: Prove core0 cannot be hung by core1
-        run: python3 support/prove_core0.py --core1 core1_main build-mk1c/pyro_fw_*.elf
+        run: |
+          for elf in build/pyro_fw_*.elf build-mk1c/pyro_fw_*.elf build-mk1a/pyro_fw_*.elf; do
+            echo "--- $elf"
+            python3 support/prove_core0.py --core1 core1_main "$elf"
+          done
 
       - name: Static analysis (cppcheck)
         run: |
