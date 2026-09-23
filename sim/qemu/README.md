@@ -14,17 +14,31 @@ from it. `support/prove_core0.py` proves statically that those hazards
 
 ## Setup
 
-QEMU has no RP2040 machine upstream; the work is an out-of-tree RFC series.
+QEMU has no RP2040 machine upstream. The machine is an out-of-tree RFC
+series, and the pyro devices are out of tree on top of that, so there are
+two layers of "not upstream" here and it is worth knowing which is which:
+
+| | |
+|---|---|
+| `2xs/qemu-rp2040-pico` | the RP2040 machine itself, continuing Alex Bennee's 2022 RFC. Someone else's work, still an RFC on qemu-devel. |
+| `n9wxu/qemu-rp2040-pico`, branch `pyro-plant` | that, plus the four pyro devices below. Ours. |
 
 ```sh
-git clone https://github.com/2xs/qemu-rp2040-pico.git ~/src/qemu-rp2040-pico
+git clone -b pyro-plant https://github.com/n9wxu/qemu-rp2040-pico.git ~/src/qemu-rp2040-pico
 cd ~/src/qemu-rp2040-pico
-# apply the pyro device patches (see "What the fork needs" below)
 mkdir build && cd build
 ../configure --target-list=arm-softmmu --disable-werror --disable-docs \
              --disable-tools --disable-guest-agent --disable-capstone --disable-slirp
 ninja
 ```
+
+The build takes a couple of minutes and needs the usual QEMU dependencies;
+on macOS that is `brew install ninja pkg-config glib pixman` (meson is
+fetched into QEMU's own venv by `configure`).
+
+To follow the RFC as it is rebased, the fork keeps `upstream` pointing at
+`2xs` and `pyro-plant` is a single commit on top of its
+`rp2040-pico-v4-validation`, so rebasing forward stays a one-commit job.
 
 Then, after any change under `sim/plant/`:
 
@@ -57,9 +71,9 @@ The plant device takes `board`, `match1`, `match2` (`present` / `absent` /
 `verbose=true` and `-D <file>` every pin edge is logged with its timestamp,
 which is how the sense cadence below was read off.
 
-## What the fork needs
+## What the `pyro-plant` branch adds
 
-Four changes, none upstream:
+Four devices on top of the RFC machine, all in commit `b33e355`:
 
 | | |
 |---|---|
