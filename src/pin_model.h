@@ -143,6 +143,17 @@ const pin_cap_t *pin_caps_find(uint8_t pin);
 /* True when this board can offer a half-bridge. */
 bool pin_caps_bridge_possible(void);
 
+/* "high_switched" or "low_switched": which side of the pyro path each channel
+ * switches. Lets the UI label a released pad correctly without the HTTP layer
+ * including a board header. */
+const char *pin_caps_topology_name(void);
+
+/* What happens on THIS board if both sides of a bridge conduct at once, as a
+ * sentence for the operator. Served to the web UI rather than written there,
+ * because the consequence is not the same on every board and a UI holding its
+ * own copy is a UI that will be wrong about one of them. */
+const char *pin_caps_protection_note(void);
+
 /* True when the pin is Lua's before any configuration releases anything:
  * Lua-capable and reserved for nothing. */
 bool pin_caps_is_default_lua(const pin_cap_t *c);

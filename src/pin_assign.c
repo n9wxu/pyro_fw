@@ -14,8 +14,8 @@
 
 /* ── Role names, one place ────────────────────────────────────────
  *
- * The web UI has its own copy of this list in app.js and they have drifted
- * before. Phase 4 serves it from here instead. */
+ * Served to the web UI through /api/pins/caps, so app.js renders the roles
+ * this firmware understands rather than a copy that drifts from them. */
 static const struct {
     const char *name;
     uint8_t role;
@@ -57,6 +57,22 @@ static uint32_t role_needs(uint8_t r) {
         }
     }
     return 0;
+}
+
+const char *pin_assign_role_name_of(uint8_t role) {
+    return role_to_name(role);
+}
+
+int pin_assign_role_count(void) {
+    return ROLE_COUNT;
+}
+
+const char *pin_assign_role_name(int idx) {
+    return (idx >= 0 && idx < ROLE_COUNT) ? role_table[idx].name : "off";
+}
+
+uint32_t pin_assign_role_needs(int idx) {
+    return (idx >= 0 && idx < ROLE_COUNT) ? role_table[idx].needs : 0;
 }
 
 const char *pin_assign_strerror(pin_err_t e) {

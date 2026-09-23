@@ -34,8 +34,8 @@ defects the feature would otherwise have been built on.
 | 3 | Half-bridge Lua role (MK1A/MK1B), free-running sense getter | ✅ Done, HW verified |
 | 3b | Released pads wired as GPIO; safing covers them | ✅ Done, HW verified |
 | 3c | Generic Lua interface table; `prove_core0.py` follows vtables | ✅ Done |
-| 4 | `GET /api/pins/caps`, Config and Lua tab pin UI | 🔨 Next |
-| 5 | Dead-time tuning against real FETs | ⬜ Planned |
+| 4 | `GET /api/pins/caps`, Config and Lua tab pin UI | ✅ Done, HW verified |
+| 5 | Dead-time tuning against real FETs | 🔨 Next |
 
 Release model: a pyro channel releases independently; the common low side
 releases only once both channels are released. One channel released yields one
@@ -177,6 +177,52 @@ a vtable out of coverage is caught rather than silent.
 Verified negatively: a `sleep_ms()` planted in a vtable entry — reachable from
 core1 only through the pointer — is reported as `FAIL core1 can call
 sleep_ms`. Before the change it passed.
+
+### The web interface (phase 4)
+
+`GET /api/pins/caps` serves the board's capability table, the live assignment,
+**and the vocabulary to read both in**: `fn` names every capability bit and
+`roles` names each role with the bit it requires. The browser had never
+learned anything board-specific beyond the board name, which is why the Lua
+tab rendered MK1C's four J3 pads on every board and offered roles no pin
+there can take.
+
+So `app.js` no longer keeps its own list of either. It filters each pin's menu
+by the same rule `pin_assign_validate()` enforces — a capability bit tested
+against the pin's mask — applied to the firmware's own table. What each board
+now renders:
+
+| Board | Pads offered | Bridge |
+|---|---|---|
+| MK1A | GPIO9, 10, 11 (pyro, held until released), 18, 19 | offered |
+| MK1B | GPIO8, 15, 21, 22 | offered |
+| MK1C | GPIO17, 18–22, 24 | not offered — no pad to pair with |
+
+Nothing in the page needs changing when a board, a role or a capability bit is
+added. A role this page has not been taught a friendly label for shows under
+its firmware name rather than dropping out of the menu.
+
+The shoot-through warning comes from `pin_caps_protection_note()`, so MK1A
+says its one-shot fuse takes the pyros with it and MK1B says its PTC trips and
+recovers. The one-channel-released warning is stated plainly, because the
+firmware genuinely cannot prevent it: firing the retained channel asserts the
+shared element for 500 ms and the released pad has a return path for that
+window.
+
+Each tab posts only what it owns — the Config tab the release flags, the Lua
+tab the roles and names — and the firmware merges over the live assignment.
+Un-releasing a channel also clears the Lua roles on its pads, since a role
+left on a re-retained pad fails validation and gets the **whole file**
+rejected, which is a confusing way to learn you unticked a box.
+
+**`test/test_web_pins.js`** renders both tabs against `/api/pins/caps`
+fixtures captured from all three boards: 316 checks that the pads rendered are
+exactly the pads with a Lua capability, that no menu offers a role the pin
+lacks the bit for, that the post round-trips the device's own assignment, and
+that a lone bridge half and a duplicate name are caught. Verified negatively —
+removing the capability filter produces 19 failures. It needs node, which is
+not a build dependency, so `web_tests` skips with a message rather than
+failing when node is absent.
 
 ### Known gap: the flight layer does not see a release
 

@@ -62,6 +62,29 @@ bool pin_caps_bridge_possible(void) {
     return have_channel && have_common;
 }
 
+const char *pin_caps_topology_name(void) {
+    return BOARD_PYRO_TOPOLOGY == PYRO_TOPO_HIGH_SWITCHED ? "high_switched" : "low_switched";
+}
+
+const char *pin_caps_protection_note(void) {
+#if BOARD_PYRO_PROTECTION == PYRO_PROT_FUSE_ONESHOT
+    return "This board's common path is protected by a one-shot fuse. Driving "
+           "both sides of the bridge at once blows it and takes the pyro "
+           "channels with it -- the board needs rework to fire again.";
+#elif BOARD_PYRO_PROTECTION == PYRO_PROT_PTC_LIMITED
+    return "This board's common path is a self-resetting PTC and the high-side "
+           "switch current-limits with its fault line wired back. A "
+           "shoot-through trips and recovers, and shows up as a pyro fault. "
+           "The PTC is also the real ceiling on a servo or LED string.";
+#elif BOARD_PYRO_PROTECTION == PYRO_PROT_EFUSE
+    return "This board's high side is an eFuse, which latches off on "
+           "overcurrent and recovers when re-armed.";
+#else
+    return "This board declares no protection class, so treat a shoot-through "
+           "as destructive.";
+#endif
+}
+
 /* LUA_PIN_LIST and the table are two hand-written statements of the same
  * fact, in the same file. This is the cheap check that they agree.
  *

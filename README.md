@@ -312,7 +312,9 @@ Connect the Pico via USB. It appears as a network adapter with DHCP.
 - **Config tab:** Guided pyro editor with range warnings and tips
 - **Flight Data tab:** Summary, CSV download, altitude graph
 - **Update tab:** Firmware/web upload, GitHub release checker
-- **APIs:** /api/status, /api/config, /api/reboot, /api/ota, /api/flight.csv (all CORS enabled)
+- **APIs:** /api/status, /api/config, /api/pins, /api/pins/caps, /api/reboot, /api/ota,
+  /api/flight.csv (all CORS enabled). `/api/pins/caps` carries the board's capability
+  table together with the vocabulary to read it, so the UI holds no board knowledge.
 
 ### Network Architecture
 Each tracker advertises a `_pyro._tcp` DNS-SD service via mDNS.

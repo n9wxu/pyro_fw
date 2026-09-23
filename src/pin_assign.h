@@ -93,4 +93,27 @@ int pin_assign_serialize_ini(const pin_assign_t *a, char *buf, int max_len);
 /* A human phrase for a verdict, for the HTTP response and the UI. */
 const char *pin_assign_strerror(pin_err_t e);
 
+/* ── The role vocabulary ──────────────────────────────────────────
+ *
+ * Served to the web UI rather than copied into it. app.js kept its own list
+ * and the two drifted: it offered MK1C's four J3 pads on every board and
+ * never learned `bridge` at all. A UI that asks which roles exist, and which
+ * capability bit each one needs, filters its own menus by the same rule
+ * pin_assign_validate() enforces -- so an option it offers is one the
+ * firmware will accept.
+ *
+ * Index 0 is always "off". */
+int pin_assign_role_count(void);
+const char *pin_assign_role_name(int idx);
+
+/* The capability bit a pin must carry to take this role; 0 for "off", which
+ * every pin can take. */
+uint32_t pin_assign_role_needs(int idx);
+
+/* The name of a role VALUE (a LUA_ROLE_*), as stored in pin_assign_t.role[].
+ * Distinct from the index form above: the vocabulary is enumerated by index,
+ * an assignment is read by value, and tying the two together would make the
+ * enum's numbering load-bearing. */
+const char *pin_assign_role_name_of(uint8_t role);
+
 #endif

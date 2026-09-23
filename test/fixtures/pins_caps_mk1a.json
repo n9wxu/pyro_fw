@@ -1,0 +1,158 @@
+{
+    "board": "Pyro MK1A",
+    "topology": "high_switched",
+    "bridge_possible": true,
+    "protection_note": "This board's common path is protected by a one-shot fuse. Driving both sides of the bridge at once blows it and takes the pyro channels with it -- the board needs rework to fire again.",
+    "pyro1_released": false,
+    "pyro2_released": false,
+    "reserved_mask": 511,
+    "fn": {
+        "pyro_fire": 1,
+        "pyro_common": 2,
+        "pyro_sense": 4,
+        "buzzer": 8,
+        "uart_tx": 16,
+        "uart_rx": 32,
+        "i2c_sda": 64,
+        "i2c_scl": 128,
+        "led": 256,
+        "digital": 65536,
+        "pwm": 131072,
+        "serial": 262144,
+        "pixel": 524288,
+        "bridge": 1048576,
+        "analog": 2097152
+    },
+    "roles": [
+        {
+            "r": "off",
+            "needs": 0
+        },
+        {
+            "r": "out",
+            "needs": 65536
+        },
+        {
+            "r": "pwm",
+            "needs": 131072
+        },
+        {
+            "r": "in",
+            "needs": 65536
+        },
+        {
+            "r": "tx",
+            "needs": 262144
+        },
+        {
+            "r": "rx",
+            "needs": 262144
+        },
+        {
+            "r": "pixel",
+            "needs": 524288
+        },
+        {
+            "r": "bridge",
+            "needs": 1048576
+        }
+    ],
+    "pins": [
+        {
+            "p": 0,
+            "f": 16,
+            "g": "none",
+            "role": "off",
+            "name": "",
+            "held": true
+        },
+        {
+            "p": 1,
+            "f": 32,
+            "g": "none",
+            "role": "off",
+            "name": "",
+            "held": true
+        },
+        {
+            "p": 9,
+            "f": 1245185,
+            "g": "ch1",
+            "role": "off",
+            "name": "",
+            "held": true
+        },
+        {
+            "p": 10,
+            "f": 1114114,
+            "g": "common",
+            "role": "off",
+            "name": "",
+            "held": true
+        },
+        {
+            "p": 11,
+            "f": 1245185,
+            "g": "ch2",
+            "role": "off",
+            "name": "",
+            "held": true
+        },
+        {
+            "p": 18,
+            "f": 983040,
+            "g": "none",
+            "role": "out",
+            "name": "led",
+            "held": false
+        },
+        {
+            "p": 19,
+            "f": 983040,
+            "g": "none",
+            "role": "off",
+            "name": "",
+            "held": false
+        },
+        {
+            "p": 20,
+            "f": 64,
+            "g": "none",
+            "role": "off",
+            "name": "",
+            "held": true
+        },
+        {
+            "p": 21,
+            "f": 128,
+            "g": "none",
+            "role": "off",
+            "name": "",
+            "held": true
+        },
+        {
+            "p": 25,
+            "f": 256,
+            "g": "none",
+            "role": "off",
+            "name": "",
+            "held": true
+        },
+        {
+            "p": 26,
+            "f": 2097156,
+            "g": "none",
+            "role": "off",
+            "name": "",
+            "held": true
+        },
+        {
+            "p": 27,
+            "f": 2097156,
+            "g": "none",
+            "role": "off",
+            "name": "",
+            "held": true
+        }
+    ]
+}

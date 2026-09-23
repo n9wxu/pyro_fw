@@ -25,6 +25,7 @@ function showTab(name) {
   event.target.classList.add('active');
   if (name === 'data') { loadFlightData(); drawGraph(); }
   if (name === 'lua') { luaInit(); }
+  if (name === 'config') { relInit(); }
 }
 
 /* ── Unit conversion ───────────────────────────────────────────── */
@@ -453,29 +454,268 @@ function waitForReboot(msg) {
 
 /* ── Lua ───────────────────────────────────────────────────────── */
 
-var LUA_ROLES = [
-  ['off',   'unused'],
-  ['out',   'digital out'],
-  ['pwm',   'dimmable out'],
-  ['in',    'digital in'],
-  ['tx',    'serial TX'],
-  ['rx',    'serial RX'],
-  ['pixel', 'LED string']
-];
-var LUA_PINS = ['18','19','20','21'];
+/* ── Pin capabilities ──────────────────────────────────────────
+ *
+ * Everything board-specific this page knows comes from /api/pins/caps. It
+ * used to hardcode MK1C's four J3 pads and keep its own role list, so on
+ * MK1A and MK1B the Lua tab rendered four pads that are not there and offered
+ * roles no pin on those boards can take.
+ *
+ * The rule for "may this pin take this role" is the firmware's own -- a
+ * capability bit, tested against the same mask pin_assign_validate() uses --
+ * applied to the firmware's own table. Nothing here needs changing when a
+ * board, a role or a capability is added. */
+var pinCaps = null;
+
+/* Presentation only, with a fallback: a role this page has not been taught
+ * shows under its firmware name rather than disappearing from the menu. */
+var ROLE_LABEL = {
+  off: 'unused', out: 'digital out', pwm: 'dimmable out', in: 'digital in',
+  tx: 'serial TX', rx: 'serial RX', pixel: 'LED string', bridge: 'half-bridge'
+};
+function roleLabel(r) { return ROLE_LABEL[r] || r; }
+
+function esc(s) {
+  return String(s === undefined || s === null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function pinsFetch() {
+  return fetch('/api/pins/caps')
+    .then(function(r) { if (!r.ok) throw new Error('caps ' + r.status); return r.json(); })
+    .then(function(d) { pinCaps = d; return d; });
+}
+
+function rolesFor(pin) {
+  return pinCaps.roles.filter(function(r) {
+    if (r.needs !== 0 && (pin.f & r.needs) === 0) return false;
+    /* A pad can carry FN_BRIDGE while the board has no second half to pair it
+       with -- the capability is per pin, the pairing is per board. Offering
+       the role there would be offering something validation must refuse. */
+    if (r.r === 'bridge' && !pinCaps.bridge_possible) return false;
+    return true;
+  });
+}
+
+/* Every bit any role requires: a pin with none of them is not assignable to
+ * Lua at all and does not belong in the table. */
+function luaAnyMask() {
+  var m = 0;
+  pinCaps.roles.forEach(function(r) { m |= r.needs; });
+  return m;
+}
+
+/* What the board uses a pin for, for the "why can I not have this" text. */
+function boardFnNames(pin) {
+  var names = [];
+  Object.keys(pinCaps.fn).forEach(function(k) {
+    var bit = pinCaps.fn[k];
+    if ((pin.f & bit) && (pinCaps.reserved_mask & bit)) names.push(k.replace(/_/g, ' '));
+  });
+  return names.join(', ');
+}
+
+function pinByGroup(g) {
+  return pinCaps.pins.filter(function(p) { return p.g === g; });
+}
+
+/* ── Lua tab: the pin table ────────────────────────────────────── */
+
+function renderLuaPins() {
+  var mask = luaAnyMask();
+  var rows = pinCaps.pins.filter(function(p) { return (p.f & mask) !== 0; });
+  var html = '<tr><th>GPIO</th><th>On the board</th><th>Role</th><th>Name in Lua</th></tr>';
+
+  rows.forEach(function(p) {
+    var what = boardFnNames(p) || 'user pad';
+    if (p.g !== 'none') what += ' (' + p.g + ')';
+    html += '<tr><td class="lbl">GPIO' + p.p + '</td><td class="val">' + esc(what) + '</td>';
+    if (p.held) {
+      html += '<td colspan="2" class="warn-inline">held by the flight software' +
+              ' — release it on the Config tab</td>';
+    } else {
+      html += '<td><select id="pr' + p.p + '" onchange="luaPinsCheck()">';
+      rolesFor(p).forEach(function(r) {
+        html += '<option value="' + esc(r.r) + '"' + (r.r === p.role ? ' selected' : '') +
+                '>' + esc(roleLabel(r.r)) + '</option>';
+      });
+      html += '</select></td><td><input id="pn' + p.p + '" maxlength="8" size="9" value="' +
+              esc(p.name) + '" oninput="luaPinsCheck()"></td>';
+    }
+    html += '</tr>';
+  });
+
+  document.getElementById('luaPins').innerHTML = html;
+  document.getElementById('luaPinsHint').innerHTML =
+    esc(pinCaps.board) + ': ' + rows.length + ' assignable pad' + (rows.length === 1 ? '' : 's') +
+    '. A pad is only ever plain GPIO or a PIO state machine, never a peripheral function, so' +
+    ' nothing here can reach the pressure sensor or the buzzer.';
+  luaPinsCheck();
+}
+
+/* The firmware validates the whole assignment on POST and is authoritative.
+ * This catches the two mistakes that are easy to make and annoying to make
+ * twice, before the round trip. */
+function luaPinsCheck() {
+  if (!pinCaps) return;
+  var msgs = [], halves = [], names = {}, dupes = [];
+
+  pinCaps.pins.forEach(function(p) {
+    var sel = document.getElementById('pr' + p.p);
+    if (!sel) return;
+    if (sel.value === 'bridge') halves.push(p);
+    if (sel.value !== 'off') {
+      var n = (document.getElementById('pn' + p.p).value || '').trim();
+      if (n) {
+        if (names[n]) dupes.push(n); else names[n] = true;
+      }
+    }
+  });
+
+  if (halves.length) {
+    var ch = halves.filter(function(p) { return p.g === 'ch1' || p.g === 'ch2'; }).length;
+    var cm = halves.filter(function(p) { return p.g === 'common'; }).length;
+    if (ch !== 1 || cm !== 1) {
+      msgs.push('<div class="warn">A half-bridge is one channel element plus the common. ' +
+                'Selected: ' + ch + ' channel, ' + cm + ' common.</div>');
+    } else {
+      msgs.push('<div class="tips"><b>Half-bridge selected.</b> ' +
+                esc(pinCaps.protection_note) + '</div>');
+    }
+  }
+  if (dupes.length) {
+    msgs.push('<div class="warn">Two pads share the name &ldquo;' + esc(dupes[0]) +
+              '&rdquo;. A script resolves the first one and never reaches the second.</div>');
+  }
+  document.getElementById('luaPinsWarn').innerHTML = msgs.join('');
+}
+
+/* Posts only the roles and names. The release flags belong to the Config tab
+ * and the firmware merges this over the live assignment, so each tab writes
+ * what it owns and leaves the rest alone. */
+function pinsSave() {
+  var ini = '[pins]\r\n';
+  pinCaps.pins.forEach(function(p) {
+    var sel = document.getElementById('pr' + p.p);
+    if (!sel) return;
+    ini += 'p' + p.p + '_role=' + sel.value + '\r\n';
+    ini += 'p' + p.p + '_name=' + (document.getElementById('pn' + p.p).value || '').trim() + '\r\n';
+  });
+  postPins(ini, 'luaPinsMsg', renderLuaPins);
+}
+
+function postPins(ini, msgId, after) {
+  var msg = document.getElementById(msgId);
+  msg.style.color = ''; msg.textContent = ' saving…';
+  fetch('/api/pins', {method:'POST', headers:{'Content-Type':'text/plain'}, body: ini})
+    .then(function(r) { return r.json().catch(function(){ return {error:'HTTP ' + r.status}; }); })
+    .then(function(d) {
+      if (d.error) {
+        msg.style.color = 'red';
+        msg.textContent = ' ✗ ' + d.error + (d.pin !== undefined ? ' (GPIO' + d.pin + ')' : '');
+        return;
+      }
+      msg.style.color = 'green';
+      msg.textContent = d.reboot_required ? ' ✓ saved — reboot to apply' : ' ✓ saved';
+      return pinsFetch().then(function() { if (after) after(); });
+    })
+    .catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ✗ ' + e.message; });
+}
+
+/* ── Config tab: releasing pyro pins ───────────────────────────── */
+
+function renderRelease() {
+  var hint = document.getElementById('relHint');
+  var ch1 = pinByGroup('ch1'), ch2 = pinByGroup('ch2'), common = pinByGroup('common');
+  if (!ch1.length && !ch2.length) {
+    hint.textContent = esc(pinCaps.board) + ' declares no releasable pyro pins.';
+    return;
+  }
+
+  var side = pinCaps.topology === 'high_switched' ? 'high side' : 'low side';
+  var other = pinCaps.topology === 'high_switched' ? 'low side' : 'high side';
+  hint.innerHTML = esc(pinCaps.board) + ' switches a per-channel ' + side +
+    ' and shares one ' + other + '. A channel releases on its own; the shared element' +
+    ' releases only once both are, because until then it is still half of the' +
+    ' retained channel’s firing path.';
+
+  document.getElementById('rel1').checked = !!pinCaps.pyro1_released;
+  document.getElementById('rel2').checked = !!pinCaps.pyro2_released;
+  document.getElementById('rel1pins').textContent = ch1.map(function(p){return 'GPIO'+p.p;}).join(', ');
+  document.getElementById('rel2pins').textContent = ch2.map(function(p){return 'GPIO'+p.p;}).join(', ');
+  document.getElementById('relCommon').textContent = common.length
+    ? common.map(function(p){return 'GPIO'+p.p;}).join(', ') +
+      (common[0].held ? ' — held' : ' — released')
+    : 'none';
+  document.getElementById('relTable').style.display = '';
+  document.getElementById('relBtns').style.display = '';
+  relChanged();
+}
+
+function relChanged() {
+  if (!pinCaps) return;
+  var r1 = document.getElementById('rel1').checked;
+  var r2 = document.getElementById('rel2').checked;
+  var msgs = [];
+
+  if (r1 !== r2) {
+    /* The firmware cannot prevent this one, so it has to be said plainly. */
+    msgs.push('<div class="warn"><b>One channel released, one retained.</b> Firing the' +
+      ' retained channel asserts the shared element for 500 ms, and for that window the' +
+      ' released pad has a return path — whatever is wired to it will carry current.' +
+      ' The released side is a plain digital pin and nothing in the firmware knows what' +
+      ' you connected.</div>');
+  }
+  if ((r1 || r2) && !(r1 && r2)) {
+    msgs.push('<div class="tips">The shared element stays with the flight software until' +
+      ' both channels are released, so this gives Lua one pad.</div>');
+  }
+  if (r1 && r2 && pinCaps.bridge_possible) {
+    msgs.push('<div class="tips">With both released you get three digital pads, or a' +
+      ' half-bridge plus one digital pad. ' + esc(pinCaps.protection_note) + '</div>');
+  }
+  if ((!r1 && pinCaps.pyro1_released) || (!r2 && pinCaps.pyro2_released)) {
+    msgs.push('<div class="tips">Taking a channel back clears any Lua role on its pads.</div>');
+  }
+  document.getElementById('relWarn').innerHTML = msgs.join('');
+}
+
+/* Posts the release flags, and clears the Lua role off any pad being taken
+ * back -- a role left on a re-retained pad fails validation, and the whole
+ * file is then rejected, which is a confusing way to learn you unticked a
+ * box. */
+function relSave() {
+  var r1 = document.getElementById('rel1').checked;
+  var r2 = document.getElementById('rel2').checked;
+  var ini = '[pins]\r\npyro1_released=' + r1 + '\r\npyro2_released=' + r2 + '\r\n';
+
+  var retaking = [];
+  if (!r1) retaking = retaking.concat(pinByGroup('ch1'));
+  if (!r2) retaking = retaking.concat(pinByGroup('ch2'));
+  if (!r1 || !r2) retaking = retaking.concat(pinByGroup('common'));
+  retaking.forEach(function(p) {
+    ini += 'p' + p.p + '_role=off\r\np' + p.p + '_name=\r\n';
+  });
+
+  postPins(ini, 'relMsg', function() { renderRelease(); renderLuaPins(); });
+}
+
+var relReady = false;
+
+function relInit() {
+  if (relReady) return;
+  relReady = true;
+  pinsFetch().then(renderRelease).catch(function(e) {
+    document.getElementById('relHint').textContent =
+      'could not read the capability table: ' + e.message;
+  });
+}
+
 var luaReady = false;
 var luaConTimer = null;
 
 function luaInit() {
   if (!luaReady) {
-    LUA_PINS.forEach(function(p) {
-      var sel = document.getElementById('lu' + p + 'r');
-      LUA_ROLES.forEach(function(r) {
-        var o = document.createElement('option');
-        o.value = r[0]; o.textContent = r[1];
-        sel.appendChild(o);
-      });
-    });
     luaReady = true;
     luaLoad();
   }
@@ -492,10 +732,13 @@ function luaLoad() {
     document.getElementById('luEn').checked = (kv.lua_enabled === 'true');
     document.getElementById('luBaud').value = kv.lua_baud || '9600';
     document.getElementById('luPx').value   = kv.lua_pixels || '0';
-    LUA_PINS.forEach(function(p) {
-      document.getElementById('lu'+p+'r').value = kv['lua_p'+p+'_role'] || 'off';
-      document.getElementById('lu'+p+'n').value = kv['lua_p'+p+'_name'] || '';
-    });
+  });
+  /* Pin roles live in pins.ini, not here. The lua_p18..p21 keys this used to
+     read are migration-only now: the firmware consults them once, when a
+     board has no pins.ini yet. */
+  pinsFetch().then(renderLuaPins).catch(function(e) {
+    document.getElementById('luaPinsHint').textContent =
+      'could not read the capability table: ' + e.message;
   });
   fetch('/api/lua/script').then(function(r){return r.ok?r.text():''}).then(function(t) {
     document.getElementById('luSrc').value = t;
@@ -506,10 +749,6 @@ function luaCfgIni() {
   var ini = '[pyro]\r\nlua_enabled=' + (document.getElementById('luEn').checked ? 'true':'false') +
             '\r\nlua_baud='   + (parseInt(document.getElementById('luBaud').value) || 9600) +
             '\r\nlua_pixels=' + (parseInt(document.getElementById('luPx').value) || 0) + '\r\n';
-  LUA_PINS.forEach(function(p) {
-    ini += 'lua_p'+p+'_role=' + document.getElementById('lu'+p+'r').value + '\r\n';
-    ini += 'lua_p'+p+'_name=' + document.getElementById('lu'+p+'n').value + '\r\n';
-  });
   return ini;
 }
 

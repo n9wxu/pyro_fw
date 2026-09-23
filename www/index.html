@@ -90,6 +90,23 @@
       <span id="p2unit"></span>
       <span id="p2warn" class="warn-inline"></span></td></tr>
   </table>
+  <h3>Release pyro pins to Lua</h3>
+  <p class="hint" id="relHint">Loading the board's capability table…</p>
+  <table class="info" id="relTable" style="display:none">
+    <tr><td class="lbl">Pyro 1</td>
+        <td><label><input type="checkbox" id="rel1" onchange="relChanged()">
+            release to Lua</label> <span id="rel1pins" class="val"></span></td></tr>
+    <tr><td class="lbl">Pyro 2</td>
+        <td><label><input type="checkbox" id="rel2" onchange="relChanged()">
+            release to Lua</label> <span id="rel2pins" class="val"></span></td></tr>
+    <tr><td class="lbl">Common</td><td id="relCommon" class="val"></td></tr>
+  </table>
+  <div id="relWarn"></div>
+  <div class="btnrow" id="relBtns" style="display:none">
+    <button onclick="relSave()">💾 Save release</button>
+    <span id="relMsg"></span>
+  </div>
+
   <div id="cfgTips" class="tips" style="display:none"></div>
   <div id="cfgDirty" class="warn" style="display:none">⚠ Changes not applied — press Reboot after saving</div>
   <div class="btnrow">
@@ -125,26 +142,15 @@
     <tr><td class="lbl">Heartbeat</td><td id="luHb" class="val">—</td></tr>
   </table>
 
-  <h3>User pins — J3</h3>
-  <p class="hint">J3.1 is 3V3 and J3.2 is GND. The four signal pads are below.
-     A pad is only ever plain GPIO or a PIO state machine, never a peripheral
-     function, so nothing here can reach the pyro bus, the pressure sensor
-     or the buzzer.</p>
-  <table class="info" id="luaPins">
-    <tr><th>Pad</th><th>GPIO</th><th>Role</th><th>Name in Lua</th></tr>
-    <tr><td class="lbl">J3.3</td><td>18</td>
-        <td><select id="lu18r"></select></td>
-        <td><input id="lu18n" maxlength="8" size="9"></td></tr>
-    <tr><td class="lbl">J3.4</td><td>19</td>
-        <td><select id="lu19r"></select></td>
-        <td><input id="lu19n" maxlength="8" size="9"></td></tr>
-    <tr><td class="lbl">J3.5</td><td>20</td>
-        <td><select id="lu20r"></select></td>
-        <td><input id="lu20n" maxlength="8" size="9"></td></tr>
-    <tr><td class="lbl">J3.6</td><td>21</td>
-        <td><select id="lu21r"></select></td>
-        <td><input id="lu21n" maxlength="8" size="9"></td></tr>
-  </table>
+  <h3>Pins assigned to Lua</h3>
+  <p class="hint" id="luaPinsHint">Loading the board's capability table…</p>
+  <table class="info" id="luaPins"></table>
+  <div id="luaPinsWarn"></div>
+  <div class="btnrow">
+    <button onclick="pinsSave()">💾 Save pin assignment</button>
+    <span id="luaPinsMsg"></span>
+  </div>
+
   <table class="info">
     <tr><td class="lbl">Enabled</td><td><input type="checkbox" id="luEn"></td></tr>
     <tr><td class="lbl">Serial baud</td><td><input id="luBaud" size="8" value="9600"></td></tr>

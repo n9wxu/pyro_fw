@@ -255,6 +255,105 @@ extern volatile uint32_t stage_max_us[];
 
 #include "board_identity.h"
 
+/* ── GET /api/pins/caps ───────────────────────────────────────────
+ *
+ * What this board offers, what is assigned to it now, and the vocabulary to
+ * read both in. The browser has never learned anything board-specific beyond
+ * the board name, which is why the Lua tab rendered MK1C's four J3 pads on
+ * every board and offered roles no pin here can take.
+ *
+ * The vocabulary travels WITH the data: `fn` names the capability bits and
+ * `roles` names each role together with the bit it requires. A UI that reads
+ * both filters its menus by the same rule pin_assign_validate() enforces,
+ * rather than by a copy of it that drifts. Nothing here needs updating when a
+ * bit or a role is added -- only the tables they come from. */
+static void serve_api_pin_caps(struct tcp_pcb *pcb) {
+    /* Static because this is the largest response the server builds and the
+     * lwIP callbacks that reach it are not reentrant -- the same argument the
+     * POST /api/pins merge buffer makes.
+     *
+     * Sized from the worst case rather than from today's boards. A pin row is
+     * at most ~85 bytes with every field at its longest, and RP2040 has 30
+     * GPIOs, so the rows can reach ~2550; the fn map, the role list, the
+     * header and the protection sentence add ~1000. MK1C already serves 1878
+     * with most names empty, which is what ruled out 2048. */
+    static char buf[4096];
+
+    int n_caps = 0;
+    const pin_cap_t *caps = pin_caps_table(&n_caps);
+    const pin_assign_t *pa = pin_store_current();
+
+    /* One row per bit, from pin_model.h. Listed rather than derived because a
+     * bit's NAME is the one thing the macro cannot supply. */
+    static const struct {
+        const char *name;
+        uint32_t bit;
+    } fn_bits[] = {
+        {"pyro_fire", FN_PYRO_FIRE}, {"pyro_common", FN_PYRO_COMMON}, {"pyro_sense", FN_PYRO_SENSE},
+        {"buzzer", FN_BUZZER},       {"uart_tx", FN_UART_TX},         {"uart_rx", FN_UART_RX},
+        {"i2c_sda", FN_I2C_SDA},     {"i2c_scl", FN_I2C_SCL},         {"led", FN_LED},
+        {"digital", FN_DIGITAL},     {"pwm", FN_PWM},                 {"serial", FN_SERIAL},
+        {"pixel", FN_PIXEL},         {"bridge", FN_BRIDGE},           {"analog", FN_ANALOG},
+    };
+    static const char *group_names[] = {"none", "ch1", "ch2", "common"};
+
+    char note[320];
+    json_escape(note, (int)sizeof(note), pin_caps_protection_note(), (int)strlen(pin_caps_protection_note()));
+
+    int pos = snprintf(buf, sizeof(buf),
+                       "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" CORS_HDR "Connection: close\r\n\r\n"
+                       "{\"board\":\"%s\",\"topology\":\"%s\",\"bridge_possible\":%s,"
+                       "\"protection_note\":\"%s\","
+                       "\"pyro1_released\":%s,\"pyro2_released\":%s,\"reserved_mask\":%u,\"fn\":{",
+                       PYRO_BOARD_NAME, pin_caps_topology_name(),
+                       pin_caps_bridge_possible() ? "true" : "false", note,
+                       pa->pyro1_released ? "true" : "false", pa->pyro2_released ? "true" : "false",
+                       (unsigned)FN_BOARD_RESERVED);
+
+    for (unsigned i = 0; i < sizeof(fn_bits) / sizeof(fn_bits[0]) && pos > 0 && pos < (int)sizeof(buf); i++) {
+        pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "%s\"%s\":%u", i ? "," : "", fn_bits[i].name,
+                        (unsigned)fn_bits[i].bit);
+    }
+
+    if (pos > 0 && pos < (int)sizeof(buf)) {
+        pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "},\"roles\":[");
+    }
+    for (int i = 0; i < pin_assign_role_count() && pos > 0 && pos < (int)sizeof(buf); i++) {
+        pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "%s{\"r\":\"%s\",\"needs\":%u}", i ? "," : "",
+                        pin_assign_role_name(i), (unsigned)pin_assign_role_needs(i));
+    }
+
+    if (pos > 0 && pos < (int)sizeof(buf)) {
+        pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "],\"pins\":[");
+    }
+    for (int i = 0; i < n_caps && pos > 0 && pos < (int)sizeof(buf); i++) {
+        uint8_t pin = caps[i].pin;
+        uint8_t role = (pin < PIN_ASSIGN_MAX_GPIO) ? pa->role[pin] : LUA_ROLE_OFF;
+        const char *nm = (pin < PIN_ASSIGN_MAX_GPIO) ? pa->name[pin] : "";
+        char nesc[LUA_NAME_MAX * 2 + 2];
+        json_escape(nesc, (int)sizeof(nesc), nm, (int)strlen(nm));
+        pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos,
+                        "%s{\"p\":%u,\"f\":%u,\"g\":\"%s\",\"role\":\"%s\",\"name\":\"%s\",\"held\":%s}", i ? "," : "",
+                        (unsigned)pin, (unsigned)caps[i].functions, group_names[caps[i].group],
+                        pin_assign_role_name_of(role), nesc,
+                        pin_assign_is_reserved(pa, pin) ? "true" : "false");
+    }
+    if (pos > 0 && pos < (int)sizeof(buf)) {
+        pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "]}");
+    }
+
+    /* Truncated JSON parses as nothing and would leave the tab silently
+     * empty, so say so instead. The buffer is sized for the largest board's
+     * table with room to spare; reaching here means one outgrew it. */
+    if (pos < 0 || pos >= (int)sizeof(buf)) {
+        static const char *err = "HTTP/1.1 500 Internal Server Error\r\n" CORS_HDR "Connection: close\r\n\r\n"
+                                 "{\"error\":\"capability table exceeds the response buffer\"}";
+        tcp_write(pcb, err, (u16_t)strlen(err), 0);
+        return;
+    }
+    tcp_write(pcb, buf, (u16_t)pos, TCP_WRITE_FLAG_COPY);
+}
+
 static void serve_api_status(struct tcp_pcb *pcb) {
     char pins_reason_esc[128];
     const char *pr = pin_store_reason();
@@ -686,6 +785,8 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             tcp_sent(pcb, on_sent);
             tcp_arg(pcb, NULL);
 #endif
+        } else if (strcmp(path, "/api/pins/caps") == 0) {
+            serve_api_pin_caps(pcb);
         } else if (strcmp(path, "/api/pins") == 0) {
             cs = serve_lfs_file_streaming(pcb, "/" PIN_STORE_PATH,
                                           "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
