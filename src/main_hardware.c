@@ -12,6 +12,7 @@
 
 #include "hal.h"
 #include "flash_window.h"
+#include "pin_store.h"
 #include "flight_states.h"
 #include "device_status.h"
 #include "buzzer.h"
@@ -122,6 +123,11 @@ int main() {
 
     flight_context_t ctx;
     flight_init(&ctx);
+
+    /* Before lua_app_init(), which configures Lua from the assignment. A
+     * rejected pins.ini falls back to the migrated legacy one and says so on
+     * /api/status. */
+    pin_store_load(&ctx.config, NULL, 0);
 
 #if PYRO_HAS_LUA
     /* Core1 is launched here, once, after the filesystem is mounted and the

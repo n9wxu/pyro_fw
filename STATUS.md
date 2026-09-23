@@ -1,6 +1,6 @@
 # Pyro MK1B Firmware - Current Status
 
-_Last updated: 2026-09-23 — v2.1.407, pin capability tables land_
+_Last updated: 2026-09-23 — v2.1.423, pin assignment storage and validation_
 
 ## 🚧 Configurable pin assignment — in progress
 
@@ -13,8 +13,8 @@ defects the feature would otherwise have been built on.
 | 0 | `board_early_init()` caller, CFG-06 config merge, `/api/lua/check` escaping, two `snprintf` overflows | ✅ Done, HW verified |
 | 0b | MK1C pyro tracking converted to MK1A's deadline-parked pattern | ✅ Done, HW verified |
 | 1 | `boards/<board>/pin_caps.h` capability table + build-time assertions | ✅ Done, HW verified |
-| 2 | `pins.ini` storage, `/api/pins`, power-group validation | 🔨 Next |
-| 3 | Half-bridge Lua role (MK1A/MK1B), free-running sense getter | ⬜ Planned |
+| 2 | `pins.ini` storage, `/api/pins`, power-group validation | ✅ Done, HW verified |
+| 3 | Half-bridge Lua role (MK1A/MK1B), free-running sense getter | 🔨 Next |
 | 4 | `GET /api/pins/caps`, Config and Lua tab pin UI | ⬜ Planned |
 
 Release model: a pyro channel releases independently; the common low side
@@ -51,6 +51,28 @@ how MK1C's bias injectors stay unreachable.
 `src/pin_model.h` holds the vocabulary and the `_Static_assert`s; a wrong row
 fails the build. Both assertion families were negative-tested by deliberately
 breaking a row.
+
+### Assignment storage (phase 2)
+
+`pins.ini`, served and accepted at `/api/pins`, merged over the live
+assignment on POST for the same reason `/api/config` merges — a partial post
+must not silently release a channel by omitting its key. Behind the PAD_IDLE
+interlock and the flash window, like every other flash-writing POST.
+
+A file that fails validation is **rejected whole** and the board falls back to
+the migrated legacy assignment, with the reason on `/api/status` as
+`pins_reason`. Half a release would leave the flight software and a script
+each believing they own a pin.
+
+With no `pins.ini`, the assignment is migrated from the `lua_p18..p21` keys
+**positionally** against `LUA_PIN_LIST` — which is what those keys always
+meant, since `lua_plat_configure()` indexed them by position. On MK1B
+`lua_p18_role` configured GPIO8. Migrating by pin number instead would move
+every existing board's Lua pins.
+
+Verified on MK1C: release accepted and round-tripped; assigning the common
+with one channel retained, a retained channel's pin, and a bridge on a board
+that cannot make one were all refused with the file left unchanged.
 
 MK1C was 36.2 ms work / 35.4 ms stage 4 / 3462 overruns before its bias tests
 stopped calling `sleep_ms()` inside the flight loop. MK1B's remaining 11 ms is

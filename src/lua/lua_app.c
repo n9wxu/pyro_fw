@@ -10,6 +10,8 @@
 #include "lua_core1.h"
 #include "lua_platform.h"
 #include "lua_platform_cfg.h"
+#include "pin_caps.h"
+#include "pin_store.h"
 #include "hardware/watchdog.h"
 #include "hardware/structs/watchdog.h"
 #include <stdio.h>
@@ -255,14 +257,13 @@ void lua_app_init(const config_t *cfg) {
         return;
     }
 
-    const lua_pin_cfg_t pins[4] = {
-        {role_of(cfg->lua_p18_role), cfg->lua_p18_name},
-        {role_of(cfg->lua_p19_role), cfg->lua_p19_name},
-        {role_of(cfg->lua_p20_role), cfg->lua_p20_name},
-        {role_of(cfg->lua_p21_role), cfg->lua_p21_name},
-    };
+    /* From the live pin assignment rather than the lua_p* config keys. With
+     * no pins.ini those keys are what the assignment was migrated FROM, so a
+     * board that has never seen this feature keeps the pins it had. */
+    lua_pin_cfg_t pins[LUA_PIN_COUNT];
+    int n_pins = pin_store_lua_pins(pins, LUA_PIN_COUNT);
 
-    if (lua_plat_configure(pins, 4, cfg->lua_baud, cfg->lua_pixels) != 0) {
+    if (lua_plat_configure(pins, n_pins, cfg->lua_baud, cfg->lua_pixels) != 0) {
         /* Unreachable by the budget in the board platform file. If it ever
          * happens it is a build-time mistake, not an operating condition, so
          * say so plainly rather than degrading quietly. */

@@ -20,7 +20,8 @@ typedef enum {
     LUA_ROLE_IN,    /* digital input, pulled down         */
     LUA_ROLE_TX,    /* PIO UART transmit                  */
     LUA_ROLE_RX,    /* PIO UART receive                   */
-    LUA_ROLE_PIXEL, /* WS2812/WS2811 string               */
+    LUA_ROLE_PIXEL,  /* WS2812/WS2811 string               */
+    LUA_ROLE_BRIDGE, /* one half of a half-bridge pair      */
 } lua_role_t;
 
 typedef struct {

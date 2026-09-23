@@ -24,6 +24,7 @@
 #endif
 
 #include "flash_window.h"
+#include "pin_store.h"
 
 extern uint32_t hal_time_ms(void);
 
@@ -172,7 +173,7 @@ static uint16_t ota_write(const void *data, uint16_t len) {
  * answers from RAM whatever core1 is doing. */
 static bool post_writes_flash(const char *path) {
     return strcmp(path, "/api/ota") == 0 || strcmp(path, "/api/config") == 0 || strcmp(path, "/api/serial") == 0 ||
-           strcmp(path, "/api/lua/script") == 0 || strncmp(path, "/www/", 5) == 0;
+           strcmp(path, "/api/lua/script") == 0 || strcmp(path, "/api/pins") == 0 || strncmp(path, "/www/", 5) == 0;
 }
 
 /* Minimal JSON string escaping: quote, backslash and newline, dropping the
@@ -255,6 +256,9 @@ extern volatile uint32_t stage_max_us[];
 #include "board_identity.h"
 
 static void serve_api_status(struct tcp_pcb *pcb) {
+    char pins_reason_esc[128];
+    const char *pr = pin_store_reason();
+    json_escape(pins_reason_esc, (int)sizeof(pins_reason_esc), pr, (int)strlen(pr));
     char buf[1280];
     const char *sn = (g_status.state < (int)(sizeof(state_names) / sizeof(state_names[0])))
                          ? state_names[g_status.state]
@@ -294,6 +298,7 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         "\"loop_count\":%lu,\"stage_max_us\":[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu],"
         "\"flash_opens\":%lu,\"flash_skips\":%lu,\"flash_refusals\":%lu,\"log_dropped\":%lu,"
         "\"flash_erases\":%lu,\"flash_programs\":%lu,\"flash_deferrals\":%lu,"
+        "\"pins_reason\":\"%s\","
         "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u}",
         sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
         (long)g_status.pressure_pa, g_status.pyro1_continuity ? "true" : "false",
@@ -310,8 +315,8 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         (unsigned long)stage_max_us[7], (unsigned long)stage_max_us[8], (unsigned long)flash_window_opens(),
         (unsigned long)flash_window_skips(), (unsigned long)flash_window_refusals(), (unsigned long)hal_log_dropped(),
         (unsigned long)flash_window_erases(), (unsigned long)flash_window_programs(),
-        (unsigned long)flash_window_deferrals(), board_serial(), board_serial_assigned() ? "true" : "false",
-        board_hw_id(), (unsigned)board_subnet_octet());
+        (unsigned long)flash_window_deferrals(), pins_reason_esc, board_serial(),
+        board_serial_assigned() ? "true" : "false", board_hw_id(), (unsigned)board_subnet_octet());
     if (pos < 0)
         return;
     if ((size_t)pos >= sizeof(buf))
@@ -668,6 +673,11 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             tcp_sent(pcb, on_sent);
             tcp_arg(pcb, NULL);
 #endif
+        } else if (strcmp(path, "/api/pins") == 0) {
+            cs = serve_lfs_file_streaming(pcb, "/" PIN_STORE_PATH,
+                                          "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
+                                          "Content-Type: text/plain\r\n\r\n",
+                                          "No pins.ini");
         } else if (strcmp(path, "/api/config") == 0) {
             cs = serve_api_config(pcb);
         } else if (strcmp(path, "/api/flight.csv") == 0) {
@@ -1099,6 +1109,55 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             }
             flash_window_release(); /* the config write is one packet and done */
             tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
+        } else if (strcmp(path, "/api/pins") == 0 && content_length > 0 && content_length < PIN_STORE_MAX) {
+            DBG("POST /api/pins cl=%lu", (unsigned long)content_length);
+            static char pinbuf[PIN_STORE_MAX];
+            uint16_t len = (body_in_first < content_length) ? body_in_first : (uint16_t)content_length;
+            pbuf_copy_partial(p, pinbuf, len, body_offset);
+            pbuf_free(p);
+            pinbuf[len] = '\0';
+
+            extern flight_state_t flight_get_state(void);
+            flight_state_t st = flight_get_state();
+
+            char resp[320];
+            if (st != PAD_IDLE) {
+                /* Same interlock as /api/config: a pin map that changes under
+                 * a flying board would move the pyro pins mid-flight. */
+                snprintf(resp, sizeof(resp),
+                         "HTTP/1.1 409 Conflict\r\n" CORS_HDR "Connection: close\r\n"
+                         "Content-Type: application/json\r\n\r\n"
+                         "{\"error\":\"Device not ready (state=%s)\",\"reboot_required\":true}",
+                         state_names[st < 7 ? st : 0]);
+            } else {
+                /* Merged over the live assignment for the same reason
+                 * /api/config merges (CFG-06): a partial post must not
+                 * silently release a channel by omitting its key. */
+                pin_assign_t merged = *pin_store_current();
+                pin_assign_parse_ini(pinbuf, &merged);
+
+                pin_verdict_t v = pin_store_save(&merged);
+                if (v.err == PIN_OK) {
+                    snprintf(resp, sizeof(resp),
+                             "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
+                             "Content-Type: application/json\r\n\r\n"
+                             "{\"status\":\"ok\",\"reboot_required\":true}");
+                } else {
+                    char esc[160];
+                    json_escape(esc, (int)sizeof(esc), v.what, (int)strlen(v.what));
+                    snprintf(resp, sizeof(resp),
+                             "HTTP/1.1 400 Bad Request\r\n" CORS_HDR "Connection: close\r\n"
+                             "Content-Type: application/json\r\n\r\n"
+                             "{\"error\":\"%s\",\"pin\":%u,\"code\":%d}",
+                             esc, (unsigned)v.pin, (int)v.err);
+                }
+            }
+            flash_window_release();
+            tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
+            tcp_output(pcb);
+            tcp_sent(pcb, on_sent);
+            tcp_arg(pcb, NULL);
+            return ERR_OK;
         } else if (strcmp(path, "/api/reboot") == 0) {
             DBG("POST /api/reboot");
             pbuf_free(p);

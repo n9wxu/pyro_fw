@@ -324,6 +324,8 @@ add_executable(pyro_fw_c
     src/littlefs_driver.c
     src/flash_window.c
     src/pin_caps.c
+    src/pin_assign.c
+    src/pin_store.c
     # TinyUSB networking helpers
     ${TINYUSB_DIR}/lib/networking/dhserver.c
     ${TINYUSB_DIR}/lib/networking/dnserver.c
@@ -450,6 +452,10 @@ pico_enable_stdio_usb(pyro_fw_c 0)
 target_include_directories(pyro_fw_c PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
         ${CMAKE_CURRENT_LIST_DIR}/src
+        # src/lua/lua_platform_cfg.h holds the pin-role vocabulary, which
+        # pin_assign.h needs. It pulls in no Lua headers, so a board built
+        # without Lua can still see it.
+        ${CMAKE_CURRENT_LIST_DIR}/src/lua
         ${LWIP_DIR}/src/include
         ${TINYUSB_DIR}/lib/networking
         ${PICO_SDK_PATH}/src/common/pico_usb_reset_interface_headers/include
@@ -644,6 +650,26 @@ add_custom_target(pin_caps_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_pin_caps
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Pin capability table tests"
+)
+
+# Pin assignment rules. Same reason as pin_caps_tests for pinning to MK1A:
+# the release matrix needs a real table with two channels and a common.
+add_custom_target(pin_assign_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building pin assignment tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra
+               -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/src/lua
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1a
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_pin_assign.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pin_assign.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pin_caps.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_pin_assign
+    COMMAND ${CMAKE_COMMAND} -E echo "Running pin assignment tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_pin_assign
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Pin assignment rule tests"
 )
 
 add_custom_target(buzzer_tests
