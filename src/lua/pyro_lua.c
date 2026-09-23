@@ -124,33 +124,37 @@ static int l_print(lua_State *Ls) {
 /* ── Name lookup ──────────────────────────────────────────────────── */
 
 /* Enforces L5: a script can say only a name, and only a name configuration
- * granted resolves. */
-static int find_output(const char *name) {
-    for (int i = 0; i < lua_plat_output_count(); i++)
-        if (strcmp(lua_plat_output_desc(i)->name, name) == 0)
-            return i;
-    return -1;
+ * granted resolves.
+ *
+ * The kind is part of the lookup, which is what keeps a wrong combination
+ * unreachable rather than merely refused -- output.set() on a pad published
+ * as an input finds nothing, because no output vtable was ever installed for
+ * it. See lua_iface.h. */
+static const lua_resource_t *need(lua_State *Ls, lua_iface_kind_t kind, const char *what, const char *name) {
+    int idx = lua_iface_find(name, kind);
+    if (idx < 0) {
+        luaL_error(Ls, "no %s named '%s'", what, name);
+    }
+    return lua_iface_at(idx);
 }
-static int find_input(const char *name) {
-    for (int i = 0; i < lua_plat_input_count(); i++)
-        if (strcmp(lua_plat_input_desc(i)->name, name) == 0)
-            return i;
-    return -1;
-}
-static int find_serial(const char *name) {
-    for (int i = 0; i < lua_plat_serial_count(); i++)
-        if (strcmp(lua_plat_serial_desc(i)->name, name) == 0)
-            return i;
-    return -1;
+
+/* Every list() binding is the same loop over one kind. */
+static int push_names(lua_State *Ls, lua_iface_kind_t kind) {
+    int n = lua_iface_count_kind(kind);
+    lua_createtable(Ls, n, 0);
+    for (int i = 0; i < n; i++) {
+        lua_pushstring(Ls, lua_iface_nth_of_kind(kind, i)->name);
+        lua_rawseti(Ls, -2, i + 1);
+    }
+    return 1;
 }
 
 /* ── output.* ─────────────────────────────────────────────────────── */
 
 static int l_output_set(lua_State *Ls) {
     const char *name = luaL_checkstring(Ls, 1);
-    int idx = find_output(name);
-    if (idx < 0)
-        return luaL_error(Ls, "no output named '%s'", name);
+    const lua_resource_t *r = need(Ls, LUA_IF_OUTPUT, "output", name);
+    const lua_if_output_t *vt = r->vt;
 
     int v;
     if (lua_isboolean(Ls, 2)) {
@@ -161,51 +165,35 @@ static int l_output_set(lua_State *Ls) {
             v = 0;
         if (v > 100)
             v = 100;
-        if (v != 0 && v != 100 && !lua_plat_output_desc(idx)->dimmable)
+        if (v != 0 && v != 100 && !vt->dimmable)
             return luaL_error(Ls, "output '%s' is not dimmable", name);
     }
-    lua_plat_output_set(idx, v);
+    vt->set(r->ctx, v);
     return 0;
 }
 
 static int l_output_get(lua_State *Ls) {
     const char *name = luaL_checkstring(Ls, 1);
-    int idx = find_output(name);
-    if (idx < 0)
-        return luaL_error(Ls, "no output named '%s'", name);
-    lua_pushinteger(Ls, lua_plat_output_get(idx));
+    const lua_resource_t *r = need(Ls, LUA_IF_OUTPUT, "output", name);
+    lua_pushinteger(Ls, ((const lua_if_output_t *)r->vt)->get(r->ctx));
     return 1;
 }
 
 static int l_output_list(lua_State *Ls) {
-    int n = lua_plat_output_count();
-    lua_createtable(Ls, n, 0);
-    for (int i = 0; i < n; i++) {
-        lua_pushstring(Ls, lua_plat_output_desc(i)->name);
-        lua_rawseti(Ls, -2, i + 1);
-    }
-    return 1;
+    return push_names(Ls, LUA_IF_OUTPUT);
 }
 
 /* ── input.* ──────────────────────────────────────────────────────── */
 
 static int l_input_get(lua_State *Ls) {
     const char *name = luaL_checkstring(Ls, 1);
-    int idx = find_input(name);
-    if (idx < 0)
-        return luaL_error(Ls, "no input named '%s'", name);
-    lua_pushboolean(Ls, lua_plat_input_get(idx));
+    const lua_resource_t *r = need(Ls, LUA_IF_INPUT, "input", name);
+    lua_pushboolean(Ls, ((const lua_if_input_t *)r->vt)->get(r->ctx));
     return 1;
 }
 
 static int l_input_list(lua_State *Ls) {
-    int n = lua_plat_input_count();
-    lua_createtable(Ls, n, 0);
-    for (int i = 0; i < n; i++) {
-        lua_pushstring(Ls, lua_plat_input_desc(i)->name);
-        lua_rawseti(Ls, -2, i + 1);
-    }
-    return 1;
+    return push_names(Ls, LUA_IF_INPUT);
 }
 
 /* ── serial.* ─────────────────────────────────────────────────────── */
@@ -214,25 +202,21 @@ static int l_serial_write(lua_State *Ls) {
     const char *name = luaL_checkstring(Ls, 1);
     size_t len;
     const char *s = luaL_checklstring(Ls, 2, &len);
-    int idx = find_serial(name);
-    if (idx < 0)
-        return luaL_error(Ls, "no serial named '%s'", name);
-    lua_pushinteger(Ls, lua_plat_serial_write(idx, s, (int)len));
+    const lua_resource_t *r = need(Ls, LUA_IF_SERIAL, "serial", name);
+    lua_pushinteger(Ls, ((const lua_if_serial_t *)r->vt)->write(r->ctx, s, (int)len));
     return 1;
 }
 
 static int l_serial_read(lua_State *Ls) {
     const char *name = luaL_checkstring(Ls, 1);
     int max = (int)luaL_optinteger(Ls, 2, 64);
-    int idx = find_serial(name);
-    if (idx < 0)
-        return luaL_error(Ls, "no serial named '%s'", name);
+    const lua_resource_t *r = need(Ls, LUA_IF_SERIAL, "serial", name);
     if (max < 1)
         max = 1;
     if (max > 256)
         max = 256;
     char buf[256];
-    int n = lua_plat_serial_read(idx, buf, max);
+    int n = ((const lua_if_serial_t *)r->vt)->read(r->ctx, buf, max);
     if (n <= 0) {
         lua_pushnil(Ls);
         return 1;
@@ -243,8 +227,21 @@ static int l_serial_read(lua_State *Ls) {
 
 /* ── pixel.*  (addressable LED string) ────────────────────────────── */
 
+/* The pixel bindings address the string positionally rather than by name,
+ * because a script says pixel.set(3, ...) and never says which string. The
+ * first published one is it; a board that publishes two makes the second
+ * unreachable, which is why nothing does. */
+static const lua_resource_t *the_string(void) {
+    return lua_iface_nth_of_kind(LUA_IF_PIXEL, 0);
+}
+
+static int px_len(void) {
+    const lua_resource_t *r = the_string();
+    return r ? ((const lua_if_pixel_t *)r->vt)->count(r->ctx) : 0;
+}
+
 static int l_pixel_count(lua_State *Ls) {
-    lua_pushinteger(Ls, lua_plat_pixel_count());
+    lua_pushinteger(Ls, px_len());
     return 1;
 }
 
@@ -260,31 +257,41 @@ static int check_channel(lua_State *Ls, int arg) {
 static int l_pixel_set(lua_State *Ls) {
     /* 1-based, matching Lua table convention rather than C. */
     lua_Integer i = luaL_checkinteger(Ls, 1);
-    int n = lua_plat_pixel_count();
+    int n = px_len();
     if (i < 1 || i > n)
         return luaL_error(Ls, "pixel %d out of range (1..%d)", (int)i, n);
-    lua_plat_pixel_set((int)i - 1, (uint8_t)check_channel(Ls, 2), (uint8_t)check_channel(Ls, 3),
-                       (uint8_t)check_channel(Ls, 4));
+    const lua_resource_t *r = the_string();
+    ((const lua_if_pixel_t *)r->vt)
+        ->set(r->ctx, (int)i - 1, (uint8_t)check_channel(Ls, 2), (uint8_t)check_channel(Ls, 3),
+              (uint8_t)check_channel(Ls, 4));
     return 0;
 }
 
+static void fill(int r_, int g, int b) {
+    const lua_resource_t *r = the_string();
+    if (!r)
+        return;
+    const lua_if_pixel_t *vt = r->vt;
+    for (int i = 0, n = vt->count(r->ctx); i < n; i++)
+        vt->set(r->ctx, i, (uint8_t)r_, (uint8_t)g, (uint8_t)b);
+}
+
 static int l_pixel_fill(lua_State *Ls) {
-    int r = check_channel(Ls, 1), g = check_channel(Ls, 2), b = check_channel(Ls, 3);
-    for (int i = 0; i < lua_plat_pixel_count(); i++)
-        lua_plat_pixel_set(i, (uint8_t)r, (uint8_t)g, (uint8_t)b);
+    fill(check_channel(Ls, 1), check_channel(Ls, 2), check_channel(Ls, 3));
     return 0;
 }
 
 static int l_pixel_clear(lua_State *Ls) {
     (void)Ls;
-    for (int i = 0; i < lua_plat_pixel_count(); i++)
-        lua_plat_pixel_set(i, 0, 0, 0);
+    fill(0, 0, 0);
     return 0;
 }
 
 static int l_pixel_show(lua_State *Ls) {
     (void)Ls;
-    lua_plat_pixel_show();
+    const lua_resource_t *r = the_string();
+    if (r)
+        ((const lua_if_pixel_t *)r->vt)->show(r->ctx);
     return 0;
 }
 
@@ -633,13 +640,13 @@ static void build_env(lua_State *Ls) {
     static const luaL_Reg pixel_fns[] = {{"count", l_pixel_count}, {"set", l_pixel_set},   {"fill", l_pixel_fill},
                                          {"clear", l_pixel_clear}, {"show", l_pixel_show}, {NULL, NULL}};
 
-    if (lua_plat_output_count() > 0)
+    if (lua_iface_count_kind(LUA_IF_OUTPUT) > 0)
         reg_table(Ls, "output", output_fns);
-    if (lua_plat_input_count() > 0)
+    if (lua_iface_count_kind(LUA_IF_INPUT) > 0)
         reg_table(Ls, "input", input_fns);
-    if (lua_plat_serial_count() > 0)
+    if (lua_iface_count_kind(LUA_IF_SERIAL) > 0)
         reg_table(Ls, "serial", serial_fns);
-    if (lua_plat_pixel_count() > 0)
+    if (lua_iface_count_kind(LUA_IF_PIXEL) > 0)
         reg_table(Ls, "pixel", pixel_fns);
 
     /* Always present: reading state grants nothing and costs nothing. */

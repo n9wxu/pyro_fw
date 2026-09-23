@@ -12,6 +12,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "lua_platform.h"
+#include <stdint.h>
 #include <time.h>
 #include "lua_platform_cfg.h"
 #include <string.h>
@@ -21,29 +22,65 @@
 /* The default set, which is also what the WASM UI renders. lua_plat_configure()
  * can replace it, so the simulator honours the same contract the board does
  * and a script written here meets the same resource rules. */
-static lua_output_desc_t outputs[] = {
-    {"beacon", true}, /* J3 pad, dimmable: night-launch LED */
-    {"strobe", true}, /* J3 pad, dimmable                   */
-    {"aux", false},   /* J3 pad, digital only               */
-};
-static int n_outputs = 3;
+/* The index into these is the ctx a vtable receives. */
 static int output_val[4];
-
-static lua_input_desc_t inputs[] = {
-    {"sense"}, /* J3 pad configured as an input */
-};
-static int n_inputs = 1;
 static int input_val[4];
-
-static lua_serial_desc_t serials[] = {
-    {"radio"}, /* PIO UART on a J3 pad */
-};
-static int n_serials = 1;
 
 #define SIM_PIXELS 16
 static int px_configured = SIM_PIXELS;
 
 static char cfg_names[4][LUA_NAME_MAX];
+
+/* ── The interfaces ───────────────────────────────────────────────
+ *
+ * ctx is the slot index, passed as a value rather than a pointer, because
+ * here a resource is nothing but its index. Named *_vt: prove_core0.py folds
+ * exactly that suffix into the call graph, and the simulator holding to the
+ * convention is what keeps the two implementations checkable the same way. */
+
+#define SLOT(ctx) ((int)(intptr_t)(ctx))
+#define CTX(i) ((void *)(intptr_t)(i))
+
+static void sim_out_set(void *ctx, int value) {
+    output_val[SLOT(ctx)] = value;
+}
+static int sim_out_get(void *ctx) {
+    return output_val[SLOT(ctx)];
+}
+static int sim_in_get(void *ctx) {
+    return input_val[SLOT(ctx)];
+}
+static int sim_serial_write(void *ctx, const char *s, int len);
+static int sim_serial_read(void *ctx, char *buf, int max);
+static int sim_px_count(void *ctx);
+static void sim_px_set(void *ctx, int idx, uint8_t r, uint8_t g, uint8_t b);
+static void sim_px_show(void *ctx);
+
+static const lua_if_output_t sim_out_vt = {sim_out_set, sim_out_get, false};
+static const lua_if_output_t sim_pwm_vt = {sim_out_set, sim_out_get, true};
+static const lua_if_input_t sim_in_vt = {sim_in_get};
+static const lua_if_serial_t sim_serial_vt = {sim_serial_write, sim_serial_read};
+static const lua_if_pixel_t sim_pixel_vt = {sim_px_count, sim_px_set, sim_px_show};
+
+/* The default set, which is also what the WASM UI renders.
+ * lua_plat_configure() replaces it, so the simulator honours the same
+ * contract the board does and a script written here meets the same resource
+ * rules.
+ *
+ * A constructor because on a board the resources exist before anything asks:
+ * lua_plat_configure() runs at boot, long before pyro_lua_init(). The WASM
+ * host and the host tests start the VM without configuring anything, and a
+ * simulated board that came up with an empty table would make them exercise a
+ * state the target never has. */
+__attribute__((constructor)) static void publish_demo_set(void) {
+    lua_iface_reset();
+    lua_iface_publish("beacon", LUA_IF_OUTPUT, &sim_pwm_vt, CTX(0)); /* night-launch LED */
+    lua_iface_publish("strobe", LUA_IF_OUTPUT, &sim_pwm_vt, CTX(1));
+    lua_iface_publish("aux", LUA_IF_OUTPUT, &sim_out_vt, CTX(2)); /* digital only */
+    lua_iface_publish("sense", LUA_IF_INPUT, &sim_in_vt, CTX(0));
+    lua_iface_publish("radio", LUA_IF_SERIAL, &sim_serial_vt, NULL);
+    lua_iface_publish("string", LUA_IF_PIXEL, &sim_pixel_vt, NULL);
+}
 
 int lua_plat_pin_count(void) {
     return 4;
@@ -57,29 +94,33 @@ void lua_plat_pin_service(void) {
 int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixels) {
     (void)baud;
     if (!cfg || n <= 0) {
-        return 0; /* keep the built-in demo set */
+        publish_demo_set();
+        return 0;
     }
-    n_outputs = n_inputs = n_serials = 0;
+
+    lua_iface_reset();
+    int n_out = 0, n_in = 0;
+    bool serial_published = false;
     for (int i = 0; i < n && i < 4; i++) {
         strncpy(cfg_names[i], cfg[i].name ? cfg[i].name : "", LUA_NAME_MAX - 1);
         cfg_names[i][LUA_NAME_MAX - 1] = '\0';
         switch (cfg[i].role) {
         case LUA_ROLE_OUT:
         case LUA_ROLE_PWM:
-            outputs[n_outputs].name = cfg_names[i];
-            outputs[n_outputs].dimmable = (cfg[i].role == LUA_ROLE_PWM);
-            output_val[n_outputs] = 0;
-            n_outputs++;
+            output_val[n_out] = 0;
+            lua_iface_publish(cfg_names[i], LUA_IF_OUTPUT,
+                              cfg[i].role == LUA_ROLE_PWM ? &sim_pwm_vt : &sim_out_vt, CTX(n_out));
+            n_out++;
             break;
         case LUA_ROLE_IN:
-            inputs[n_inputs].name = cfg_names[i];
-            n_inputs++;
+            lua_iface_publish(cfg_names[i], LUA_IF_INPUT, &sim_in_vt, CTX(n_in));
+            n_in++;
             break;
         case LUA_ROLE_TX:
         case LUA_ROLE_RX:
-            if (n_serials == 0) {
-                serials[0].name = cfg_names[i];
-                n_serials = 1;
+            if (!serial_published) {
+                lua_iface_publish(cfg_names[i], LUA_IF_SERIAL, &sim_serial_vt, NULL);
+                serial_published = true;
             }
             break;
         default:
@@ -87,6 +128,10 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
         }
     }
     px_configured = (pixels > SIM_PIXELS) ? SIM_PIXELS : pixels;
+    if (px_configured > 0) {
+        lua_iface_publish("string", LUA_IF_PIXEL, &sim_pixel_vt, NULL);
+    }
+    board_lua_publish();
     return 0;
 }
 
@@ -113,17 +158,20 @@ static uint8_t pixel_buf[SIM_PIXELS * 3]; /* R,G,B per LED */
 static uint8_t pixel_wire[SIM_PIXELS * 3];
 static uint32_t pixel_shows;
 
-int lua_plat_pixel_count(void) {
+static int sim_px_count(void *ctx) {
+    (void)ctx;
     return px_configured;
 }
 
-void lua_plat_pixel_set(int idx, uint8_t r, uint8_t g, uint8_t b) {
+static void sim_px_set(void *ctx, int idx, uint8_t r, uint8_t g, uint8_t b) {
+    (void)ctx;
     pixel_buf[idx * 3 + 0] = r;
     pixel_buf[idx * 3 + 1] = g;
     pixel_buf[idx * 3 + 2] = b;
 }
 
-void lua_plat_pixel_show(void) {
+static void sim_px_show(void *ctx) {
+    (void)ctx;
     memcpy(pixel_wire, pixel_buf, sizeof(pixel_wire));
     pixel_shows++;
 }
@@ -149,38 +197,8 @@ static uint32_t sim_log_dropped;
 
 /* ── lua_platform.h implementation ────────────────────────────────── */
 
-int lua_plat_output_count(void) {
-    return n_outputs;
-}
-const lua_output_desc_t *lua_plat_output_desc(int idx) {
-    return &outputs[idx];
-}
-void lua_plat_output_set(int idx, int value) {
-    output_val[idx] = value;
-}
-int lua_plat_output_get(int idx) {
-    return output_val[idx];
-}
-
-int lua_plat_input_count(void) {
-    return n_inputs;
-}
-const lua_input_desc_t *lua_plat_input_desc(int idx) {
-    return &inputs[idx];
-}
-int lua_plat_input_get(int idx) {
-    return input_val[idx];
-}
-
-int lua_plat_serial_count(void) {
-    return n_serials;
-}
-const lua_serial_desc_t *lua_plat_serial_desc(int idx) {
-    return &serials[idx];
-}
-
-int lua_plat_serial_write(int idx, const char *s, int len) {
-    (void)idx;
+static int sim_serial_write(void *ctx, const char *s, int len) {
+    (void)ctx;
     int room = SIM_UART_BUF - tx_len;
     if (len > room)
         len = room;
@@ -191,8 +209,8 @@ int lua_plat_serial_write(int idx, const char *s, int len) {
     return len;
 }
 
-int lua_plat_serial_read(int idx, char *buf, int max) {
-    (void)idx;
+static int sim_serial_read(void *ctx, char *buf, int max) {
+    (void)ctx;
     int n = 0;
     while (n < max && rx_tail != rx_head) {
         buf[n++] = rx_buf[rx_tail];
@@ -324,36 +342,48 @@ uint32_t sim_lua_log_dropped(void) {
     return sim_log_dropped;
 }
 
+/* The UI panes read the resource table, the same way a script does, so what
+ * they render cannot drift from what the script can reach. */
+static const lua_resource_t *nth(lua_iface_kind_t kind, int idx) {
+    return idx < 0 ? NULL : lua_iface_nth_of_kind(kind, idx);
+}
+
 void sim_lua_set_input(int idx, int value) {
-    if (idx >= 0 && idx < lua_plat_input_count())
-        input_val[idx] = value ? 1 : 0;
+    const lua_resource_t *r = nth(LUA_IF_INPUT, idx);
+    if (r)
+        input_val[SLOT(r->ctx)] = value ? 1 : 0;
 }
 
 int sim_lua_output_count(void) {
-    return lua_plat_output_count();
+    return lua_iface_count_kind(LUA_IF_OUTPUT);
 }
 const char *sim_lua_output_name(int idx) {
-    return (idx >= 0 && idx < lua_plat_output_count()) ? outputs[idx].name : "";
+    const lua_resource_t *r = nth(LUA_IF_OUTPUT, idx);
+    return r ? r->name : "";
 }
 int sim_lua_output_value(int idx) {
-    return (idx >= 0 && idx < lua_plat_output_count()) ? output_val[idx] : 0;
+    const lua_resource_t *r = nth(LUA_IF_OUTPUT, idx);
+    return r ? ((const lua_if_output_t *)r->vt)->get(r->ctx) : 0;
 }
 int sim_lua_output_dimmable(int idx) {
-    return (idx >= 0 && idx < lua_plat_output_count()) ? outputs[idx].dimmable : 0;
+    const lua_resource_t *r = nth(LUA_IF_OUTPUT, idx);
+    return r ? ((const lua_if_output_t *)r->vt)->dimmable : 0;
 }
 
 int sim_lua_input_count(void) {
-    return lua_plat_input_count();
+    return lua_iface_count_kind(LUA_IF_INPUT);
 }
 const char *sim_lua_input_name(int idx) {
-    return (idx >= 0 && idx < lua_plat_input_count()) ? inputs[idx].name : "";
+    const lua_resource_t *r = nth(LUA_IF_INPUT, idx);
+    return r ? r->name : "";
 }
 
 int sim_lua_serial_count(void) {
-    return lua_plat_serial_count();
+    return lua_iface_count_kind(LUA_IF_SERIAL);
 }
 const char *sim_lua_serial_name(int idx) {
-    return (idx >= 0 && idx < lua_plat_serial_count()) ? serials[idx].name : "";
+    const lua_resource_t *r = nth(LUA_IF_SERIAL, idx);
+    return r ? r->name : "";
 }
 
 /* Drain what the script transmitted, for the terminal pane. */
@@ -406,7 +436,7 @@ void sim_lua_console_clear(void) {
  * no second core and no hardware, but the visible state has to match the
  * target's or the sim stops being a faithful bench for the failure. */
 void lua_plat_safe_outputs(void) {
-    for (int i = 0; i < n_outputs; i++) {
+    for (unsigned i = 0; i < sizeof(output_val) / sizeof(output_val[0]); i++) {
         output_val[i] = 0;
     }
 }

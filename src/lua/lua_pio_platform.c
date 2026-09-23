@@ -105,16 +105,12 @@ static const uint8_t lua_pins[LUA_PIN_COUNT] = LUA_PIN_LIST;
 #define LUA_MAX_PIXELS 256
 
 typedef struct {
-    lua_output_desc_t desc;
-    char name[LUA_NAME_MAX];
     uint8_t pin;
     int value;
-    bool bridge; /* driven by pushing a level to the pyro PIO, not gpio_put */
+    bool dimmable;
 } out_t;
 
 typedef struct {
-    lua_input_desc_t desc;
-    char name[LUA_NAME_MAX];
     uint8_t pin;
 } in_t;
 
@@ -139,9 +135,7 @@ static int n_out;
 static in_t ins[LUA_MAX_IN];
 static int n_in;
 
-static lua_serial_desc_t serial_desc;
-static char serial_name[LUA_NAME_MAX];
-static int n_serial;
+static bool serial_published;
 static int tx_sm = -1, rx_sm = -1;
 
 /* ── The half-bridge, on the pyro PIO ─────────────────────────────
@@ -169,13 +163,123 @@ static uint8_t pwm_phase;
 void lua_plat_pin_service(void) {
     pwm_phase++;
     for (int i = 0; i < n_out; i++) {
-        if (!outs[i].desc.dimmable) {
+        if (!outs[i].dimmable) {
             continue;
         }
         int v = outs[i].value;
         gpio_put(outs[i].pin, (v > 0) && (pwm_phase < (uint8_t)v));
     }
 }
+
+/* ── The interfaces ───────────────────────────────────────────────
+ *
+ * ctx is the entry itself, so dispatch needs no index and nothing has to stay
+ * in step with an array. Dimmability lives in the vtable rather than in the
+ * instance, which is what makes "PWM on a pin that cannot do it" a table that
+ * was never installed instead of a check that could be forgotten.
+ *
+ * Named *_vt because prove_core0.py folds exactly these symbols into the call
+ * graph -- an indirect call is invisible to it otherwise. Renaming one drops
+ * whatever it points at out of the core1 proof. */
+
+static void out_set(void *ctx, int value) {
+    out_t *o = ctx;
+    o->value = value;
+    if (!o->dimmable) {
+        gpio_put(o->pin, value > 0);
+    }
+    /* dimmable pins are driven by lua_plat_pin_service() */
+}
+
+static int out_get(void *ctx) {
+    return ((out_t *)ctx)->value;
+}
+
+static void bridge_set(void *ctx, int value) {
+    out_t *o = ctx;
+    o->value = value;
+    if (bridge_sm < 0) {
+        return;
+    }
+    /* Never pio_sm_put_blocking() here: this runs on core1, and core1
+     * blocking on a FIFO core0 does not drain is the one thing the whole
+     * module forbids. A full FIFO means the script is pushing levels faster
+     * than the dead band lets them out, so the level is dropped and
+     * counted. */
+    if (pio_sm_is_tx_fifo_full(PYRO_PIO_INST, (uint)bridge_sm)) {
+        bridge_dropped++;
+    } else {
+        pio_sm_put(PYRO_PIO_INST, (uint)bridge_sm, (value > 0) ? 1u : 0u);
+    }
+}
+
+static int in_get(void *ctx) {
+    return gpio_get(((in_t *)ctx)->pin) ? 1 : 0;
+}
+
+static int serial_write(void *ctx, const char *s, int len) {
+    (void)ctx;
+    if (tx_sm < 0) {
+        return 0;
+    }
+    /* A script that outruns 9600 baud must not stall the core it runs on. */
+    int n = 0;
+    while (n < len && !pio_sm_is_tx_fifo_full(LUA_PIO, (uint)tx_sm)) {
+        pio_sm_put(LUA_PIO, (uint)tx_sm, (uint32_t)(uint8_t)s[n]);
+        n++;
+    }
+    return n;
+}
+
+static int serial_read(void *ctx, char *buf, int max) {
+    (void)ctx;
+    if (rx_sm < 0) {
+        return 0;
+    }
+    int n = 0;
+    while (n < max && !pio_sm_is_rx_fifo_empty(LUA_PIO, (uint)rx_sm)) {
+        /* The RX program shifts right into a 32-bit register, so the byte
+         * lands in the top 8 bits. */
+        buf[n++] = (char)(pio_sm_get(LUA_PIO, (uint)rx_sm) >> 24);
+    }
+    return n;
+}
+
+static int px_len(void *ctx) {
+    (void)ctx;
+    return px_count;
+}
+
+static void px_set(void *ctx, int idx, uint8_t r, uint8_t g, uint8_t b) {
+    (void)ctx;
+    /* WS2812 wants GRB, MSB first, and the SM autopulls 24 bits from the top
+     * of the word. */
+    px_buf[idx] = ((uint32_t)g << 24) | ((uint32_t)r << 16) | ((uint32_t)b << 8);
+}
+
+static void px_show(void *ctx) {
+    (void)ctx;
+    if (px_sm < 0 || px_count == 0) {
+        return;
+    }
+    /* Do not call dma_channel_wait_for_finish_blocking() here. It looks
+     * bounded at 30 us per pixel, but that holds only while the state machine
+     * keeps draining the FIFO, and prove_core0.py refuses an unbounded wait
+     * on core1. The next show() sends the current buffer anyway. */
+    if (dma_channel_is_busy((uint)px_dma)) {
+        return;
+    }
+    memcpy(px_wire, px_buf, sizeof(uint32_t) * (size_t)px_count);
+    dma_channel_set_read_addr((uint)px_dma, px_wire, false);
+    dma_channel_set_trans_count((uint)px_dma, (uint32_t)px_count, true);
+}
+
+static const lua_if_output_t gpio_out_vt = {out_set, out_get, false};
+static const lua_if_output_t gpio_pwm_vt = {out_set, out_get, true};
+static const lua_if_output_t bridge_vt = {bridge_set, out_get, false};
+static const lua_if_input_t gpio_in_vt = {in_get};
+static const lua_if_serial_t pio_uart_vt = {serial_write, serial_read};
+static const lua_if_pixel_t ws2812_vt = {px_len, px_set, px_show};
 
 /* ── Boot-time configuration ──────────────────────────────────────── */
 
@@ -197,7 +301,9 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
         return bad; /* reported as a firmware bug by the caller */
     }
 
-    n_out = n_in = n_serial = px_count = n_claimed = 0;
+    n_out = n_in = px_count = n_claimed = 0;
+    serial_published = false;
+    lua_iface_reset();
     tx_sm = rx_sm = px_sm = px_dma = -1;
 
     bool want_px = false, want_tx = false, want_rx = false;
@@ -254,12 +360,11 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
                 gpio_init(pin);
                 gpio_set_dir(pin, GPIO_OUT);
                 gpio_put(pin, 0);
-                strncpy(outs[n_out].name, cfg[i].name, LUA_NAME_MAX - 1);
-                outs[n_out].desc.name = outs[n_out].name;
-                outs[n_out].desc.dimmable = (cfg[i].role == LUA_ROLE_PWM);
-                outs[n_out].pin = pin;
-                outs[n_out].value = 0;
-                n_out++;
+                out_t *o = &outs[n_out++];
+                o->pin = pin;
+                o->value = 0;
+                o->dimmable = (cfg[i].role == LUA_ROLE_PWM);
+                lua_iface_publish(cfg[i].name, LUA_IF_OUTPUT, o->dimmable ? &gpio_pwm_vt : &gpio_out_vt, o);
             }
             break;
         case LUA_ROLE_IN:
@@ -267,26 +372,23 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
                 gpio_init(pin);
                 gpio_set_dir(pin, GPIO_IN);
                 gpio_pull_down(pin);
-                strncpy(ins[n_in].name, cfg[i].name, LUA_NAME_MAX - 1);
-                ins[n_in].desc.name = ins[n_in].name;
-                ins[n_in].pin = pin;
-                n_in++;
+                in_t *in = &ins[n_in++];
+                in->pin = pin;
+                lua_iface_publish(cfg[i].name, LUA_IF_INPUT, &gpio_in_vt, in);
             }
             break;
         case LUA_ROLE_TX:
             lua_uart_tx_program_init(LUA_PIO, (uint)tx_sm, tx_offset, pin, baud);
-            if (n_serial == 0) {
-                strncpy(serial_name, cfg[i].name, LUA_NAME_MAX - 1);
-                serial_desc.name = serial_name;
-                n_serial = 1;
+            if (!serial_published) {
+                lua_iface_publish(cfg[i].name, LUA_IF_SERIAL, &pio_uart_vt, NULL);
+                serial_published = true;
             }
             break;
         case LUA_ROLE_RX:
             lua_uart_rx_program_init(LUA_PIO, (uint)rx_sm, rx_offset, pin, baud);
-            if (n_serial == 0) {
-                strncpy(serial_name, cfg[i].name, LUA_NAME_MAX - 1);
-                serial_desc.name = serial_name;
-                n_serial = 1;
+            if (!serial_published) {
+                lua_iface_publish(cfg[i].name, LUA_IF_SERIAL, &pio_uart_vt, NULL);
+                serial_published = true;
             }
             break;
         case LUA_ROLE_PIXEL:
@@ -300,11 +402,16 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
                 channel_config_set_dreq(&dc, pio_get_dreq(LUA_PIO, (uint)px_sm, true));
                 dma_channel_configure((uint)px_dma, &dc, &LUA_PIO->txf[px_sm], px_wire, (uint)px_count, false);
             }
+            lua_iface_publish(cfg[i].name, LUA_IF_PIXEL, &ws2812_vt, NULL);
             break;
         default:
             break;
         }
     }
+
+    /* Last, so a board sees the generic roles already in place and adds to
+     * them rather than racing them for a name. */
+    board_lua_publish();
     return 0;
 }
 
@@ -312,37 +419,6 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
 
 int lua_plat_pin_count(void) {
     return LUA_PIN_COUNT;
-}
-
-int lua_plat_output_count(void) {
-    return n_out;
-}
-const lua_output_desc_t *lua_plat_output_desc(int idx) {
-    return &outs[idx].desc;
-}
-void lua_plat_output_set(int idx, int value) {
-    outs[idx].value = value;
-
-    if (outs[idx].bridge) {
-        /* Never pio_sm_put_blocking() here: this runs on core1, and core1
-         * blocking on a FIFO core0 does not drain is the one thing the whole
-         * module forbids. A full FIFO means the script is pushing levels
-         * faster than the dead band lets them out, so the level is dropped
-         * and counted. */
-        if (bridge_sm >= 0) {
-            if (pio_sm_is_tx_fifo_full(PYRO_PIO_INST, (uint)bridge_sm)) {
-                bridge_dropped++;
-            } else {
-                pio_sm_put(PYRO_PIO_INST, (uint)bridge_sm, (value > 0) ? 1u : 0u);
-            }
-        }
-        return;
-    }
-
-    if (!outs[idx].desc.dimmable) {
-        gpio_put(outs[idx].pin, value > 0);
-    }
-    /* dimmable pins are driven by lua_plat_pin_service() */
 }
 
 uint32_t lua_plat_bridge_dropped(void) {
@@ -374,96 +450,12 @@ int lua_plat_configure_bridge(uint8_t channel_pin, uint8_t common_pin, const cha
     claim_pad(channel_pin);
     claim_pad(common_pin);
 
+    /* An output like any other as far as a script is concerned -- what
+     * differs is the vtable, and with it the only way to drive the pad. */
     out_t *o = &outs[n_out++];
     memset(o, 0, sizeof(*o));
-    strncpy(o->name, name, LUA_NAME_MAX - 1);
-    o->desc.name = o->name;
-    o->desc.dimmable = false;
     o->pin = channel_pin;
-    o->bridge = true;
-    o->value = 0;
-    return 0;
-}
-int lua_plat_output_get(int idx) {
-    return outs[idx].value;
-}
-
-/* ── Inputs ───────────────────────────────────────────────────────── */
-
-int lua_plat_input_count(void) {
-    return n_in;
-}
-const lua_input_desc_t *lua_plat_input_desc(int idx) {
-    return &ins[idx].desc;
-}
-int lua_plat_input_get(int idx) {
-    return gpio_get(ins[idx].pin) ? 1 : 0;
-}
-
-/* ── Serial ───────────────────────────────────────────────────────── */
-
-int lua_plat_serial_count(void) {
-    return n_serial;
-}
-const lua_serial_desc_t *lua_plat_serial_desc(int idx) {
-    (void)idx;
-    return &serial_desc;
-}
-
-int lua_plat_serial_write(int idx, const char *s, int len) {
-    (void)idx;
-    if (tx_sm < 0) {
-        return 0;
-    }
-    /* A script that outruns 9600 baud must not stall the core it runs on. */
-    int n = 0;
-    while (n < len && !pio_sm_is_tx_fifo_full(LUA_PIO, (uint)tx_sm)) {
-        pio_sm_put(LUA_PIO, (uint)tx_sm, (uint32_t)(uint8_t)s[n]);
-        n++;
-    }
-    return n;
-}
-
-int lua_plat_serial_read(int idx, char *buf, int max) {
-    (void)idx;
-    if (rx_sm < 0) {
-        return 0;
-    }
-    int n = 0;
-    while (n < max && !pio_sm_is_rx_fifo_empty(LUA_PIO, (uint)rx_sm)) {
-        /* The RX program shifts right into a 32-bit register, so the byte
-         * lands in the top 8 bits. */
-        buf[n++] = (char)(pio_sm_get(LUA_PIO, (uint)rx_sm) >> 24);
-    }
-    return n;
-}
-
-/* ── Pixels ───────────────────────────────────────────────────────── */
-
-int lua_plat_pixel_count(void) {
-    return px_count;
-}
-
-void lua_plat_pixel_set(int idx, uint8_t r, uint8_t g, uint8_t b) {
-    /* WS2812 wants GRB, MSB first, and the SM autopulls 24 bits from the top
-     * of the word. */
-    px_buf[idx] = ((uint32_t)g << 24) | ((uint32_t)r << 16) | ((uint32_t)b << 8);
-}
-
-void lua_plat_pixel_show(void) {
-    if (px_sm < 0 || px_count == 0) {
-        return;
-    }
-    /* Do not call dma_channel_wait_for_finish_blocking() here. It looks
-     * bounded at 30 us per pixel, but that holds only while the state machine
-     * keeps draining the FIFO, and prove_core0.py refuses an unbounded wait
-     * on core1. The next show() sends the current buffer anyway. */
-    if (dma_channel_is_busy((uint)px_dma)) {
-        return;
-    }
-    memcpy(px_wire, px_buf, sizeof(uint32_t) * (size_t)px_count);
-    dma_channel_set_read_addr((uint)px_dma, px_wire, false);
-    dma_channel_set_trans_count((uint)px_dma, (uint32_t)px_count, true);
+    return lua_iface_publish(name, LUA_IF_OUTPUT, &bridge_vt, o) < 0 ? -1 : 0;
 }
 
 /* ── Flight state (read-only; see invariant L11) ──────────────────── */
@@ -551,7 +543,7 @@ void lua_plat_safe_outputs(void) {
         gpio_put(claimed[i], 0);
     }
 
-    /* So a later lua_plat_output_get() reports what the pin is actually
+    /* So a later output.get() reports what the pin is actually
      * doing rather than what the dead script last asked for. */
     for (int i = 0; i < n_out; i++) {
         outs[i].value = 0;

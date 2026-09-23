@@ -715,11 +715,18 @@ static void test_check_catches_the_unassigned_resource(void) {
     lua_plat_configure(NULL, 0, 9600, 16); /* restore the demo set */
 }
 
+/* Drive a published output the way a binding does, through its vtable. */
+static void set_output(const char *name, int value) {
+    const lua_resource_t *r = lua_iface_at(lua_iface_find(name, LUA_IF_OUTPUT));
+    TEST_ASSERT_NOT_NULL(r);
+    ((const lua_if_output_t *)r->vt)->set(r->ctx, value);
+}
+
 static void test_check_does_not_execute_the_script(void) {
     /* Validation must be static. If the checker ran this, the output would
      * move and the UART would receive. */
     sim_lua_uart_tx_clear();
-    lua_plat_output_set(0, 0);
+    set_output("beacon", 0);
     const char *src = "output.set('beacon', 99) serial.write('radio','x')\n"
                       "function tick() end\n";
     do {

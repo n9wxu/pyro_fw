@@ -225,8 +225,90 @@ CORE1_FORBIDDEN = {
 }
 
 
+SYM_FUNC_RE = re.compile(r"^([0-9a-f]+)\s+.*\sF\s+\S+\s+([0-9a-f]+)\s+(\S+)\s*$")
+SYM_OBJ_RE = re.compile(r"^([0-9a-f]+)\s+.*\sO\s+\S+\s+([0-9a-f]+)\s+(\S+)\s*$")
+
+# A vtable published to Lua must be named with this suffix. See vtable_targets().
+VTABLE_SUFFIX = "_vt"
+
+
+def section_bytes(elf, objdump):
+    """address -> byte, for the read-only data sections."""
+    dump = subprocess.run([objdump, "-s", "-j", ".rodata", "-j", ".data", elf],
+                          capture_output=True, text=True).stdout
+    mem = {}
+    for line in dump.splitlines():
+        # objdump separates the hex from its ASCII gutter by two spaces, and
+        # the gutter can hold characters that read as hex. Cut there first.
+        parts = line.split("  ")[0].split()
+        if len(parts) < 2 or not re.fullmatch(r"[0-9a-f]+", parts[0]):
+            continue
+        addr = int(parts[0], 16)
+        for word in parts[1:]:
+            if len(word) % 2 or not re.fullmatch(r"[0-9a-f]{2,8}", word):
+                break
+            for b in bytes.fromhex(word):
+                mem[addr] = b
+                addr += 1
+    return mem
+
+
+def vtable_targets(elf, objdump):
+    """Functions reachable through a vtable core1 dispatches on.
+
+    The call graph above is built from `bl` instructions, so a call through a
+    function pointer is invisible to it. That was harmless while core1 reached
+    hardware only through direct calls; lua_iface.c dispatches on stored
+    pointers, and a graph that cannot see past the cut keeps passing while
+    covering less -- which is how a check becomes a rubber stamp.
+
+    Scoped to symbols named *_vt rather than to every address-taken function.
+    The broad reading folds in core0's HTTP route table and the littlefs
+    callbacks, which reach flash legitimately, and the check then fails on
+    everything and means nothing. So the naming is load-bearing, and enforced
+    below: an image that links lua_iface_publish and exposes no *_vt has
+    renamed its way out of coverage, and that fails."""
+    syms = subprocess.run([objdump, "-t", elf], capture_output=True, text=True).stdout
+    funcs, tables, have_publish = {}, [], False
+    for line in syms.splitlines():
+        m = SYM_FUNC_RE.match(line)
+        if m:
+            # Thumb function pointers carry the low bit set.
+            funcs[int(m.group(1), 16) | 1] = m.group(3)
+            if m.group(3) == "lua_iface_publish":
+                have_publish = True
+            continue
+        m = SYM_OBJ_RE.match(line)
+        if m and m.group(3).endswith(VTABLE_SUFFIX):
+            tables.append((int(m.group(1), 16), int(m.group(2), 16), m.group(3)))
+
+    if have_publish and not tables:
+        return None, []
+
+    mem = section_bytes(elf, objdump)
+    found = set()
+    for addr, size, _name in tables:
+        for off in range(0, size - 3, 4):
+            word = bytes(mem.get(addr + off + i, 0) for i in range(4))
+            name = funcs.get(int.from_bytes(word, "little"))
+            if name:
+                found.add(name)
+    return found, [t[2] for t in tables]
+
+
 def check_core1(elf, entry, callers):
     """core1 receives resources; it never acquires them."""
+    # A vtable entry is reached through a pointer, and the `bl` graph cannot
+    # see that. Add the edge explicitly so the search below covers dispatch
+    # rather than stopping at the cut.
+    indirect, tables = vtable_targets(elf, find_objdump())
+    if indirect is None:
+        print("FAIL  image publishes Lua interfaces but exposes no "
+              f"'*{VTABLE_SUFFIX}' symbol: vtable dispatch is uncovered")
+        return 1
+    for fn in indirect:
+        callers[fn].add(entry)
+
     bad = []
     for prim, why in sorted(CORE1_FORBIDDEN.items()):
         path = shortest_path(callers, prim, entry)
@@ -238,6 +320,8 @@ def check_core1(elf, entry, callers):
         return 1
     if not bad:
         print(f"PASS  {entry} acquires nothing: killable at any instant")
+        print(f"      ({len(tables)} vtables, {len(indirect)} entries folded "
+              f"in as indirectly reachable)")
         return 0
     for prim, why, path in bad:
         print(f"\nFAIL  core1 can call {prim}")

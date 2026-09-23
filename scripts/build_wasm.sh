@@ -130,13 +130,13 @@ emcc -O2 -s WASM=1 \
   "$ROOT/sim/physics.c" \
   "$ROOT/src/flight_states.c" \
   "$ROOT/src/pressure_processing.c" \
-  "$ROOT/src/telemetry.c" \
   "$ROOT/src/telemetry_formatter.c" \
   "$ROOT/src/buzzer.c" \
   "$ROOT/src/config.c" \
   "$ROOT/src/ground_test.c" \
   "$ROOT/src/lua/pyro_lua.c" \
   "$ROOT/src/lua/lua_arena.c" \
+  "$ROOT/src/lua/lua_iface.c" \
   "$ROOT/boards/sim/lua_platform_sim.c" \
   $BOARD_SRC \
   $LUA_SRC \

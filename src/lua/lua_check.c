@@ -166,19 +166,16 @@ static bool identifier_shaped(const char *s) {
 
 void lua_chk_env_from_platform(lua_chk_env_t *env) {
     memset(env, 0, sizeof(*env));
-    for (int i = 0; i < lua_plat_output_count() && env->n < LUA_CHK_MAX_NAMES; i++) {
-        strncpy(env->names[env->n++], lua_plat_output_desc(i)->name, LUA_NAME_MAX - 1);
+    static const lua_iface_kind_t named[] = {LUA_IF_OUTPUT, LUA_IF_INPUT, LUA_IF_SERIAL};
+    for (unsigned k = 0; k < sizeof(named) / sizeof(named[0]); k++) {
+        for (int i = 0; i < lua_iface_count_kind(named[k]) && env->n < LUA_CHK_MAX_NAMES; i++) {
+            strncpy(env->names[env->n++], lua_iface_nth_of_kind(named[k], i)->name, LUA_NAME_MAX - 1);
+        }
     }
-    for (int i = 0; i < lua_plat_input_count() && env->n < LUA_CHK_MAX_NAMES; i++) {
-        strncpy(env->names[env->n++], lua_plat_input_desc(i)->name, LUA_NAME_MAX - 1);
-    }
-    for (int i = 0; i < lua_plat_serial_count() && env->n < LUA_CHK_MAX_NAMES; i++) {
-        strncpy(env->names[env->n++], lua_plat_serial_desc(i)->name, LUA_NAME_MAX - 1);
-    }
-    env->has_output = lua_plat_output_count() > 0;
-    env->has_input = lua_plat_input_count() > 0;
-    env->has_serial = lua_plat_serial_count() > 0;
-    env->has_pixel = lua_plat_pixel_count() > 0;
+    env->has_output = lua_iface_count_kind(LUA_IF_OUTPUT) > 0;
+    env->has_input = lua_iface_count_kind(LUA_IF_INPUT) > 0;
+    env->has_serial = lua_iface_count_kind(LUA_IF_SERIAL) > 0;
+    env->has_pixel = lua_iface_count_kind(LUA_IF_PIXEL) > 0;
 }
 
 void lua_check(const char *src, size_t len, const lua_chk_env_t *env, lua_chk_result_t *out) {

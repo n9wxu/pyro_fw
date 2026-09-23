@@ -134,3 +134,22 @@ rationale and the alternatives considered.
 - **Rationale:** Works on all 3 MCU platforms. Supports sequenced multi-device
   testing via bus master. More features than the jumper approach. Frees GPIO 8
   from dual-use complexity.
+
+### DD-018: Lua Resources Are One Interface Table, Not Four APIs
+- **Decision:** `lua_platform.h` no longer declares output, input, serial and
+  pixel families. Whoever configures the hardware publishes
+  `{name, kind, vtable, ctx}` entries into `lua_iface.h`'s table, and Lua
+  resolves by name **and kind**. Boards add their own features through the
+  weak `board_lua_publish()` hook rather than by widening the header.
+- **Rationale:** The kind is part of the lookup, so a wrong combination is
+  unreachable rather than refused — `output.set()` on an input-published pad
+  finds nothing, because no output vtable was ever installed. Dimmability
+  lives in the vtable for the same reason. This is the argument already made
+  by the half-bridge PIO program, where shoot-through is unencodable rather
+  than avoided: a check can be forgotten, a missing pointer cannot be called.
+- **Cost:** Indirect calls are invisible to `prove_core0.py`, which builds its
+  graph from `bl` instructions. Taken alone the refactor would have severed
+  the graph and left `core1_main acquires nothing` passing while proving
+  strictly less. The checker now folds `*_vt` entries in as reachable from
+  core1, and fails an image that links `lua_iface_publish` with no `*_vt`
+  symbol.

@@ -7,10 +7,6 @@
  * and Lua addresses them by name. A script therefore cannot express access to
  * something configuration did not grant it.
  *
- * Two implementations:
- *   boards/sim/lua_platform_sim.c    simulated pins and a UART buffer
- *   boards/mk1c/lua_platform_mk1c.c  real GPIO and uart1/i2c0   (not yet)
- *
  * SPDX-License-Identifier: MIT
  */
 #ifndef LUA_PLATFORM_H
@@ -18,54 +14,14 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "lua_iface.h"
 
-/* ── Outputs ──────────────────────────────────────────────────────── */
-
-typedef struct {
-    const char *name;
-    bool dimmable; /* true if the underlying pin can do PWM */
-} lua_output_desc_t;
-
-int lua_plat_output_count(void);
-const lua_output_desc_t *lua_plat_output_desc(int idx);
-void lua_plat_output_set(int idx, int value); /* 0-100; 0/100 for digital */
-int lua_plat_output_get(int idx);
-
-/* ── Inputs ───────────────────────────────────────────────────────── */
-
-typedef struct {
-    const char *name;
-} lua_input_desc_t;
-
-int lua_plat_input_count(void);
-const lua_input_desc_t *lua_plat_input_desc(int idx);
-int lua_plat_input_get(int idx);
-
-/* ── Serial ───────────────────────────────────────────────────────── */
-
-typedef struct {
-    const char *name;
-} lua_serial_desc_t;
-
-int lua_plat_serial_count(void);
-const lua_serial_desc_t *lua_plat_serial_desc(int idx);
-int lua_plat_serial_write(int idx, const char *s, int len);
-int lua_plat_serial_read(int idx, char *buf, int max);
-
-/* ── Addressable LED string (WS2811/WS2812) ───────────────────────
+/* ── Resources ────────────────────────────────────────────────────
  *
- * A buffer plus an explicit transmit, rather than a per-pixel write that
- * goes to the wire. The wire protocol has no addressing: every show()
- * reclocks the entire string, so batching is not an optimisation, it is how
- * the part works.
- *
- * On hardware this is a PIO state machine fed by DMA. lua_plat_pixel_show()
- * starts the transfer and returns; the next show() waits for the previous
- * one if it is somehow still running, which at 800 kHz is 30 us per pixel. */
-
-int lua_plat_pixel_count(void); /* 0 when not configured */
-void lua_plat_pixel_set(int idx, uint8_t r, uint8_t g, uint8_t b);
-void lua_plat_pixel_show(void);
+ * Outputs, inputs, serial ports and LED strings are not four APIs here. They
+ * are entries in the interface table, published by whoever configured the
+ * hardware and reached by name and kind. See lua_iface.h; a board adds a
+ * feature by publishing a vtable, not by growing this header. */
 
 /* ── Read-only flight state ───────────────────────────────────────── */
 

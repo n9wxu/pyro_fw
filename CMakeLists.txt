@@ -234,6 +234,7 @@ if(PYRO_HAS_LUA)
         src/lua/pyro_lua.c
         src/lua/lua_arena.c
         src/lua/lua_check.c
+        src/lua/lua_iface.c
     )
     target_include_directories(pyro_lua PUBLIC ${CMAKE_CURRENT_LIST_DIR}/src/lua ${CMAKE_CURRENT_LIST_DIR}/src)
     target_link_libraries(pyro_lua PUBLIC lua_lib)
@@ -620,6 +621,7 @@ add_custom_target(lua_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/lua/pyro_lua.c
                ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_arena.c
                ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_check.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_iface.c
                ${CMAKE_CURRENT_LIST_DIR}/boards/sim/lua_platform_sim.c
                ${PYRO_LUA_SOURCES}
                ${unity_SOURCE_DIR}/src/unity.c

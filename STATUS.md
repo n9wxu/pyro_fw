@@ -33,6 +33,7 @@ defects the feature would otherwise have been built on.
 | 2 | `pins.ini` storage, `/api/pins`, power-group validation | ✅ Done, HW verified |
 | 3 | Half-bridge Lua role (MK1A/MK1B), free-running sense getter | ✅ Done, HW verified |
 | 3b | Released pads wired as GPIO; safing covers them | ✅ Done, HW verified |
+| 3c | Generic Lua interface table; `prove_core0.py` follows vtables | ✅ Done |
 | 4 | `GET /api/pins/caps`, Config and Lua tab pin UI | 🔨 Next |
 | 5 | Dead-time tuning against real FETs | ⬜ Planned |
 
@@ -141,6 +142,41 @@ released pyro pad was validated, stored and then silently ignored.
 `lua_plat_safe_outputs()` now walks every pad actually claimed rather than
 `LUA_PIN_LIST`, so a released pad — including the bridge's two — is handed
 back to SIO and driven low when core0 kills core1.
+
+### The generic interface table (phase 3c)
+
+`src/lua/lua_iface.h` replaces four parallel resource APIs — output, input,
+serial, pixel — with one table of `{name, kind, vtable, ctx}`. Whoever
+configures the hardware publishes into it; Lua resolves by name **and kind**.
+
+That pairing is the safety property: `output.set()` on a pad published as an
+input finds nothing, because no output vtable was ever installed for it. A
+wrong combination is unreachable rather than refused, which is the same
+argument as the half-bridge PIO program, where shoot-through is unencodable.
+Dimmability lives in the vtable, not the instance, so "PWM on a pin that
+cannot do it" is likewise a table that was never installed.
+
+A board publishes a feature the shared platform knows nothing about by
+implementing the weak `board_lua_publish()` hook, called at the end of
+`lua_plat_configure()`. No board uses it yet; adding a board-unique interface
+now costs a vtable rather than a new array, a new count, a new `find_` and a
+new binding across four files.
+
+**`prove_core0.py` had to grow with it.** The call graph is built from `bl`
+instructions, so dispatch through a function pointer is invisible to it —
+routing core1's hardware access through vtables would have severed the graph
+and left the check passing while proving strictly less. It now reads the
+`*_vt` symbols out of `.rodata`, resolves the stored addresses back to
+function names, and folds those in as reachable from `core1_main`. Scoped to
+that suffix on purpose: folding in *every* address-taken function pulls in
+core0's HTTP route table and the littlefs callbacks, which reach flash
+legitimately, and the check then fails on everything and means nothing. An
+image that links `lua_iface_publish` and exposes no `*_vt` fails, so renaming
+a vtable out of coverage is caught rather than silent.
+
+Verified negatively: a `sleep_ms()` planted in a vtable entry — reachable from
+core1 only through the pointer — is reported as `FAIL core1 can call
+sleep_ms`. Before the change it passed.
 
 ### Known gap: the flight layer does not see a release
 

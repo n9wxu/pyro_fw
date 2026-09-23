@@ -355,8 +355,9 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
         lua_core1_start(script_buf, script_len);
         flash_window_crumb(61);
         phase(17);
-        snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)", lua_plat_output_count(),
-                 lua_plat_input_count(), lua_plat_serial_count(), lua_plat_pixel_count());
+        snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)", lua_iface_count_kind(LUA_IF_OUTPUT),
+                 lua_iface_count_kind(LUA_IF_INPUT), lua_iface_count_kind(LUA_IF_SERIAL),
+                 lua_iface_count_kind(LUA_IF_PIXEL));
         phase(18);
         return;
     }
