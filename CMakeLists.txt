@@ -105,6 +105,26 @@ else()
                    "-- no firmware image is produced; build the 'sim' target")
 endif()
 
+# ── Extra flags a host board may ask for ─────────────────────────────
+#
+# A host board that models real hardware needs more than boards/sim does:
+# the simulated-board packages (boards/sim_mk1a, sim_mk1b, sim_mk1c) compile
+# the REAL board file from boards/<name>/pyro_board.c against the Pico SDK
+# stand-in in sim/hw/ and the plant in sim/plant/, so they need those
+# directories on the include path and two defines to select the wiring.
+#
+# A board declares them as PYRO_HOST_INCLUDE_DIRS and PYRO_HOST_DEFINES in
+# its board.cmake; both default to empty, so boards/sim and every pico board
+# are unaffected. Adding another modelled board needs no edit here.
+set(PYRO_HOST_INC_FLAGS "")
+foreach(_d ${PYRO_HOST_INCLUDE_DIRS})
+    list(APPEND PYRO_HOST_INC_FLAGS -I${_d})
+endforeach()
+set(PYRO_HOST_DEF_FLAGS "")
+foreach(_d ${PYRO_HOST_DEFINES})
+    list(APPEND PYRO_HOST_DEF_FLAGS -D${_d})
+endforeach()
+
 # Pull in Raspberry Pi Pico SDK (must be before project)
 if(PYRO_BOARD_KIND STREQUAL "pico")
     include(pico_sdk_import.cmake)
@@ -524,9 +544,42 @@ add_custom_target(closedloop_tests
     COMMENT "Closed-loop simulation tests"
 )
 
+# Plant tests. Each board model includes its own board's board_pins.h, so
+# the three cannot share one include path -- they are compiled separately
+# and linked together, which is also the only build that has all three
+# models in one binary.
+add_custom_target(plant_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building plant tests..."
+    COMMAND ${HOST_CC} -c -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/sim/plant
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1a
+               ${CMAKE_CURRENT_LIST_DIR}/sim/plant/plant_mk1a.c -o ${CMAKE_BINARY_DIR}/plant_mk1a.o
+    COMMAND ${HOST_CC} -c -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/sim/plant
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1b
+               ${CMAKE_CURRENT_LIST_DIR}/sim/plant/plant_mk1b.c -o ${CMAKE_BINARY_DIR}/plant_mk1b.o
+    COMMAND ${HOST_CC} -c -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/sim/plant
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1c
+               ${CMAKE_CURRENT_LIST_DIR}/sim/plant/plant_mk1c.c -o ${CMAKE_BINARY_DIR}/plant_mk1c.o
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/sim/plant
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_plant.c
+               ${CMAKE_CURRENT_LIST_DIR}/sim/plant/net_solve.c
+               ${CMAKE_CURRENT_LIST_DIR}/sim/plant/plant.c
+               ${CMAKE_BINARY_DIR}/plant_mk1a.o
+               ${CMAKE_BINARY_DIR}/plant_mk1b.o
+               ${CMAKE_BINARY_DIR}/plant_mk1c.o
+               ${unity_SOURCE_DIR}/src/unity.c
+               -lm
+               -o ${CMAKE_BINARY_DIR}/test_plant
+    COMMAND ${CMAKE_COMMAND} -E echo "Running plant tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_plant
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Board plant model tests"
+)
+
 add_custom_target(sim
     COMMAND ${CMAKE_COMMAND} -E echo "Building simulator..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
+               ${PYRO_HOST_INC_FLAGS} ${PYRO_HOST_DEF_FLAGS}
                ${CMAKE_CURRENT_LIST_DIR}/sim/sim_cli.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/main_sim.c
                ${PYRO_HOST_HAL_SOURCES}

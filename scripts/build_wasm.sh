@@ -12,6 +12,49 @@ ROOT="$SCRIPT_DIR/.."
 OUT="$ROOT/docs/wasm"
 mkdir -p "$OUT"
 
+# Which board the module models.
+#
+#   sim        (default) the flight software with a pyro FIXTURE: continuity
+#              is whatever the page sets with sim.setContinuity(), and a fire
+#              is a counter. Smallest module; right for flight-logic work.
+#
+#   sim_mk1a   the flight software with a MODELLED BOARD: the real
+#   sim_mk1b   boards/<board>/pyro_board.c runs against sim/plant/, so
+#   sim_mk1c   continuity comes out of an electrical network and a fire only
+#              counts when the match actually takes its ignition energy.
+#
+#     PYRO_BOARD=sim_mk1c ./scripts/build_wasm.sh
+#
+# The output name carries the board so the variants can sit side by side.
+PYRO_BOARD="${PYRO_BOARD:-sim}"
+
+BOARD_SRC=""
+BOARD_INC=""
+BOARD_DEF=""
+OUT_NAME="pyro"
+
+case "$PYRO_BOARD" in
+  sim)
+    ;;
+  sim_mk1a|sim_mk1b|sim_mk1c)
+    REAL_BOARD="${PYRO_BOARD#sim_}"
+    UPPER=$(echo "$REAL_BOARD" | tr 'a-z' 'A-Z')
+    BOARD_SRC="$ROOT/boards/$REAL_BOARD/pyro_board.c
+               $ROOT/sim/hw/rp2040_shim.c
+               $ROOT/sim/hw/pyro_sim_glue.c
+               $ROOT/sim/plant/net_solve.c
+               $ROOT/sim/plant/plant.c
+               $ROOT/sim/plant/plant_$REAL_BOARD.c"
+    BOARD_INC="-I $ROOT/sim/hw -I $ROOT/sim/plant -I $ROOT/boards/$REAL_BOARD"
+    BOARD_DEF="-DPYRO_SIM_BOARD_PYRO -DPYRO_SIM_PLANT_$UPPER"
+    OUT_NAME="pyro_$PYRO_BOARD"
+    ;;
+  *)
+    echo "unknown PYRO_BOARD '$PYRO_BOARD' (want sim, sim_mk1a, sim_mk1b or sim_mk1c)" >&2
+    exit 1
+    ;;
+esac
+
 # Flight computer exports
 FLIGHT_EXPORTS='
   "_sim_flight_init","_sim_flight_tick","_sim_flight_state",
@@ -78,6 +121,8 @@ emcc -O2 -s WASM=1 \
   -I "$ROOT/src" \
   -I "$ROOT/sim" \
   -I "$ROOT/boards/sim" \
+  $BOARD_INC \
+  $BOARD_DEF \
   -I "$ROOT/src/lua" \
   -I "$ROOT/build-wasm-lua/lua" \
   "$ROOT/sim/main_sim.c" \
@@ -93,8 +138,13 @@ emcc -O2 -s WASM=1 \
   "$ROOT/src/lua/pyro_lua.c" \
   "$ROOT/src/lua/lua_arena.c" \
   "$ROOT/boards/sim/lua_platform_sim.c" \
+  $BOARD_SRC \
   $LUA_SRC \
-  -o "$OUT/pyro.js"
+  -o "$OUT/$OUT_NAME.js"
 
-echo "Built: $OUT/pyro.js + $OUT/pyro.wasm"
-echo "Includes: flight computer + physics engine"
+echo "Built: $OUT/$OUT_NAME.js + $OUT/$OUT_NAME.wasm"
+if [ "$PYRO_BOARD" = "sim" ]; then
+    echo "Includes: flight computer + physics engine (pyro fixture)"
+else
+    echo "Includes: flight computer + physics engine + $PYRO_BOARD board model"
+fi

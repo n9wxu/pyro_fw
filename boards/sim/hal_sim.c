@@ -117,6 +117,24 @@ int hal_pressure_init(void) {
     return sim_sensor_type;
 }
 
+/* ── Pyro ─────────────────────────────────────────────────────────
+ *
+ * Two implementations, chosen at build time.
+ *
+ * By default the pyro side is a FIXTURE: continuity is whatever a test
+ * last wrote with sim_set_continuity(), and a fire is a counter. That is
+ * the right thing for the flight-logic tests, which care about when the
+ * state machine decides to fire and not about what the board does when it
+ * does.
+ *
+ * The boards/sim_mk1a, sim_mk1b and sim_mk1c packages define
+ * PYRO_SIM_BOARD_PYRO instead. They compile the REAL board file from
+ * boards/<name>/pyro_board.c against sim/hw/ and sim/plant/, so the sense
+ * thresholds, the settle timing and the firing sequence all run against a
+ * modelled board. Their glue supplies hal_pyro_* from pyro.h, so the
+ * fixture below must not also define it. */
+#ifndef PYRO_SIM_BOARD_PYRO
+
 void hal_pyro_init(void) {}
 
 void hal_pyro_sample(void) {
@@ -144,6 +162,23 @@ bool hal_pyro_is_firing(void) {
 bool hal_pyro_fault(uint8_t channel) {
     (void)channel;
     return false;
+}
+
+#endif /* !PYRO_SIM_BOARD_PYRO */
+
+/* Record a fire for the simulation's own bookkeeping, which is what the
+ * JS wrapper reads as sim.pyroFireCount and sim.lastFireChannel.
+ *
+ * With the fixture above, hal_pyro_fire() calls this directly and the
+ * count means "the flight software commanded a fire". With a modelled
+ * board it is called from the plant's ignition latch instead, so the
+ * count means "a match actually took its ignition energy" -- which is
+ * the event a chute deployment should follow, and not always the same
+ * one. A commanded fire into an open channel does not deploy anything. */
+void sim_note_pyro_fire(uint8_t channel) {
+    sim_pyro_fire_count++;
+    sim_pyro_last_channel = channel;
+    sim_pyro_firing = true;
 }
 
 void hal_buzzer_init(void) {
