@@ -694,11 +694,12 @@ static void test_check_finds_nested_function_constants(void) {
 static void test_check_catches_the_unassigned_resource(void) {
     /* The gap this exists to find: the script uses the LED string, but no pin
      * was assigned one. This is a red, not a warning. */
+    /* Each entry carries its own pin now, so the array is not positional. */
     const lua_pin_cfg_t pins[4] = {
-        {LUA_ROLE_PWM, "beacon"},
-        {LUA_ROLE_IN, "sense"},
-        {LUA_ROLE_TX, "radio"},
-        {LUA_ROLE_OFF, ""},
+        {18, LUA_ROLE_PWM, "beacon"},
+        {19, LUA_ROLE_IN, "sense"},
+        {20, LUA_ROLE_TX, "radio"},
+        {21, LUA_ROLE_OFF, ""},
     };
     lua_plat_configure(pins, 4, 9600, 0); /* no LED string */
 

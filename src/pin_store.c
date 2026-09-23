@@ -153,17 +153,40 @@ bool pin_store_bridge(uint8_t *channel_pin, uint8_t *common_pin, const char **na
     return true;
 }
 
-/* lua_plat_configure() indexes positionally against LUA_PIN_LIST, so this has
- * to walk the same list in the same order.
+/* Every pad Lua drives as plain GPIO: the board's own, plus any pyro pad the
+ * configuration released.
  *
- * Only the board's default Lua pads appear here. A released pyro pad reaches
- * the platform through its own entry point -- lua_plat_configure_bridge() for
- * a bridge -- because it has no slot in LUA_PIN_LIST. */
+ * A released pad is an ordinary output or input -- one released high side is
+ * a single high-side switch, and with both channels released all three
+ * elements are available. Only LUA_ROLE_BRIDGE is excluded, because a bridge
+ * is not a GPIO: it consumes two pads and goes through
+ * lua_plat_configure_bridge() and the pyro PIO instead.
+ *
+ * Each entry carries its own pin, so nothing here is positional. */
 int pin_store_lua_pins(lua_pin_cfg_t *out, int max) {
     static const uint8_t lua_pins[] = LUA_PIN_LIST;
     int n = 0;
+
     for (unsigned i = 0; i < sizeof(lua_pins) / sizeof(lua_pins[0]) && n < max; i++) {
         uint8_t pin = lua_pins[i];
+        out[n].pin = pin;
+        out[n].role = (lua_role_t)live.role[pin];
+        out[n].name = live.name[pin];
+        n++;
+    }
+
+    for (uint8_t pin = 0; pin < PIN_ASSIGN_MAX_GPIO && n < max; pin++) {
+        if (live.role[pin] == LUA_ROLE_OFF || live.role[pin] == LUA_ROLE_BRIDGE) {
+            continue;
+        }
+        if (pin_assign_is_reserved(&live, pin)) {
+            continue; /* still the flight software's */
+        }
+        const pin_cap_t *c = pin_caps_find(pin);
+        if (!c || !(c->functions & FN_BOARD_RESERVED)) {
+            continue; /* a default pad, already added above */
+        }
+        out[n].pin = pin;
         out[n].role = (lua_role_t)live.role[pin];
         out[n].name = live.name[pin];
         n++;

@@ -26,7 +26,14 @@ typedef enum {
     LUA_ROLE_BRIDGE, /* one half of a half-bridge pair      */
 } lua_role_t;
 
+/* Self-describing rather than positional.
+ *
+ * This used to be an array indexed against the board's LUA_PIN_LIST, so entry
+ * i meant pin LUA_PIN_LIST[i] and nothing said so. That is what made the
+ * lua_p18..p21 config keys MK1C-shaped, and it left no way to configure a pad
+ * that is not in the list -- which is every released pyro pad. */
 typedef struct {
+    uint8_t pin;
     lua_role_t role;
     const char *name; /* what Lua calls it; "" when role is OFF */
 } lua_pin_cfg_t;
@@ -35,6 +42,14 @@ typedef struct {
  * claimed -- which the budget in the board's platform file makes
  * unreachable, so a -1 is a bug rather than an operating condition.
  * Safe to call only before core1 is launched. */
+/* Upper bound on configurable pads: a board's own, plus the three a fully
+ * released pyro block frees (two per-channel elements and the common).
+ *
+ * A fixed number rather than LUA_PIN_COUNT + 3, because this header is shared
+ * with the simulator and the host tests, which have no board pin table.
+ * lua_pio_platform.c asserts the real board fits. */
+#define LUA_CFG_MAX 8
+
 int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixels);
 
 /* Wire a half-bridge across a released pyro channel. Call after

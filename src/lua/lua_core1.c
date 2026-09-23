@@ -191,8 +191,23 @@ void __noinline __not_in_flash_func(lua_core1_idle_wait)(void) {
         tight_loop_contents();
     }
 
-    c1_seen = c1_go;
+    /* busy BEFORE seen, and the barrier between them is load-bearing.
+     *
+     * Core0 calls core1 idle when no grant is outstanding AND core1 is not
+     * executing: c1_go == c1_seen && c1_busy == 0. Mirroring c1_go first
+     * clears the first condition before the second is set, leaving a
+     * two-instruction window where NEITHER holds. Core0 sampling there opens
+     * the flash window and starts an erase into a core1 that is about to
+     * fetch from XIP -- the deadlock in docs/core1_hazard.md, arriving as a
+     * watchdog reset in the slack loop, which is where HTTP-driven flash
+     * writes run.
+     *
+     * This way round one of the two always holds: before the second store the
+     * grant is still outstanding, and from the first store onward core1 is
+     * marked executing. */
     c1_busy = 1;
+    __dmb();
+    c1_seen = c1_go;
     c1_state = LUA_C1_RUNNING;
     c1_loc = C1_LOC_UNPARKED;
     __dmb();
@@ -217,13 +232,11 @@ bool lua_core1_ready(void) {
     return c1_ready != 0u;
 }
 
-/* c1_busy alone leaves a gap. Core1 mirrors c1_go into c1_seen to claim a
- * unit and only then sets c1_busy, so in between a grant is outstanding and
- * core1 is about to enter flash while c1_busy still reads zero.
- *
- * The gap closes in nanoseconds and core0 returns only a period later, so the
- * race is narrow rather than absent. Core0 issued the grant, so checking for
- * one costs it nothing. */
+/* Idle means no grant outstanding AND not executing. Both are needed, and
+ * they only cover the handover because lua_core1_idle_wait() sets c1_busy
+ * before it mirrors c1_go -- see the comment there. Reversing those two
+ * stores leaves a window where neither holds, and core0 sampling it erases
+ * flash into a core1 about to fetch from XIP. */
 static inline bool c1_quiet(void) {
     return c1_go == c1_seen && c1_busy == 0u;
 }

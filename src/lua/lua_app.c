@@ -269,8 +269,8 @@ void lua_app_init(const config_t *cfg) {
     /* From the live pin assignment rather than the lua_p* config keys. With
      * no pins.ini those keys are what the assignment was migrated FROM, so a
      * board that has never seen this feature keeps the pins it had. */
-    lua_pin_cfg_t pins[LUA_PIN_COUNT];
-    int n_pins = pin_store_lua_pins(pins, LUA_PIN_COUNT);
+    lua_pin_cfg_t pins[LUA_CFG_MAX];
+    int n_pins = pin_store_lua_pins(pins, LUA_CFG_MAX);
 
     /* The bridge is wired after the board's own pads, because its two pins
      * are not in LUA_PIN_LIST -- they only became available when

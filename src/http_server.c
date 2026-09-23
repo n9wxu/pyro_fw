@@ -1146,7 +1146,12 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 /* Merged over the live assignment for the same reason
                  * /api/config merges (CFG-06): a partial post must not
                  * silently release a channel by omitting its key. */
-                pin_assign_t merged = *pin_store_current();
+                /* static, not a local: pin_assign_t is about 300 bytes and this
+                 * runs in an lwIP callback, several frames deep in the slack
+                 * loop. lwIP serialises these callbacks on core0, so there is
+                 * no reentrancy to worry about. */
+                static pin_assign_t merged;
+                merged = *pin_store_current();
                 pin_assign_parse_ini(pinbuf, &merged);
 
                 pin_verdict_t v = pin_store_save(&merged);

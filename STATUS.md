@@ -1,6 +1,23 @@
 # Pyro MK1B Firmware - Current Status
 
-_Last updated: 2026-09-23 — v2.1.447, half-bridge on the pyro PIO_
+_Last updated: 2026-09-23 — v2.1.466, dispatch handshake race closed_
+
+## 🐞 Dispatch handshake race (fixed 2026-09-23)
+
+`lua_core1_idle_wait()` mirrored `c1_go` into `c1_seen` **before** setting
+`c1_busy`. Core0 calls core1 idle when `c1_go == c1_seen && c1_busy == 0`, so
+between those two stores neither condition held and core0 would open the flash
+window and erase into a core1 about to fetch from XIP — the deadlock in
+`docs/core1_hazard.md`.
+
+It lands as an intermittent watchdog reset reported as "died in stage 8",
+because the slack loop is where HTTP-driven flash writes run. Seen twice while
+POSTing during a Lua run; a 259 s soak did not reproduce it, which fits a
+two-instruction window.
+
+Setting `c1_busy` first, with a barrier, makes the two conditions overlap so
+one always holds. Affects every board and every configuration, not just the
+bridge.
 
 ## 🚧 Configurable pin assignment — in progress
 
@@ -15,6 +32,7 @@ defects the feature would otherwise have been built on.
 | 1 | `boards/<board>/pin_caps.h` capability table + build-time assertions | ✅ Done, HW verified |
 | 2 | `pins.ini` storage, `/api/pins`, power-group validation | ✅ Done, HW verified |
 | 3 | Half-bridge Lua role (MK1A/MK1B), free-running sense getter | ✅ Done, HW verified |
+| 3b | Released pads wired as GPIO; safing covers them | ✅ Done, HW verified |
 | 4 | `GET /api/pins/caps`, Config and Lua tab pin UI | 🔨 Next |
 | 5 | Dead-time tuning against real FETs | ⬜ Planned |
 
@@ -104,6 +122,36 @@ release while the raw count keeps being sampled.
 
 Not verified: power delivery into a real load. The bench has nothing wired to
 the bridge, so this confirms the control path, not the drive.
+
+### Released pads as GPIO (phase 3b)
+
+The release model, confirmed on MK1B:
+
+| Released | Lua gets | Verified |
+|----------|----------|----------|
+| one channel | its own high side as a GPIO | `outs: led,winch` |
+| both | all three elements as GPIO | `outs: led,lo,hi1,hi2` |
+| both | a half-bridge plus the third as GPIO | `outs: led,fan,motor` |
+
+`lua_pin_cfg_t` now carries its own pin. It used to be indexed positionally
+against `LUA_PIN_LIST`, which is what made the old `lua_p18..p21` keys
+MK1C-shaped and left no way to configure a pad outside that list — so a
+released pyro pad was validated, stored and then silently ignored.
+
+`lua_plat_safe_outputs()` now walks every pad actually claimed rather than
+`LUA_PIN_LIST`, so a released pad — including the bridge's two — is handed
+back to SIO and driven low when core0 kills core1.
+
+### Known gap: the flight layer does not see a release
+
+`pyro_sample()` still asserts the common for 10 ms every iteration,
+`pyro_get()` still reports continuity, and `pyro_fire()` would still try to
+fire a released channel — it silently fails, because the pad belongs to the
+PIO. The release is honoured by Lua and invisible to the flight software.
+Not yet fixed.
+
+(This is also MK1B's 10 ms stage-3 blocking, not `ms5607_read()` as recorded
+earlier.)
 
 MK1C was 36.2 ms work / 35.4 ms stage 4 / 3462 overruns before its bias tests
 stopped calling `sleep_ms()` inside the flight loop. MK1B's remaining 11 ms is

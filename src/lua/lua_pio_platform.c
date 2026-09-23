@@ -99,8 +99,8 @@ static const uint8_t lua_pins[LUA_PIN_COUNT] = LUA_PIN_LIST;
  * resource configuration did not create cannot be named, let alone
  * reached. */
 
-#define LUA_MAX_OUT LUA_PIN_COUNT
-#define LUA_MAX_IN LUA_PIN_COUNT
+#define LUA_MAX_OUT LUA_CFG_MAX
+#define LUA_MAX_IN LUA_CFG_MAX
 #define LUA_MAX_SERIAL 1
 #define LUA_MAX_PIXELS 256
 
@@ -121,6 +121,20 @@ typedef struct {
 /* One more than the board's pads: a bridge is an output too, and it consumes
  * two released pyro pads rather than one entry in LUA_PIN_LIST. */
 static out_t outs[LUA_MAX_OUT + 1];
+
+/* Every pad lua_plat_configure() or lua_plat_configure_bridge() took over.
+ *
+ * Not LUA_PIN_LIST: that is only the board's DEFAULT pads, and safing just
+ * those left a released pyro pad -- a FET gate -- driven by whatever the PIO
+ * or the dead script last set it to. */
+static uint8_t claimed[LUA_CFG_MAX + 1];
+static int n_claimed;
+
+static void claim_pad(uint8_t pin) {
+    if (n_claimed < (int)(sizeof(claimed) / sizeof(claimed[0]))) {
+        claimed[n_claimed++] = pin;
+    }
+}
 static int n_out;
 static in_t ins[LUA_MAX_IN];
 static int n_in;
@@ -172,6 +186,7 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
     static_assert(LUA_PIO_BUDGET_SMS <= 4, "Lua PIO roles exceed pio1 state machines");
     static_assert(PYRO_PIO_BUDGET_INSTR <= 32, "pyro PIO programs exceed pio0 instruction memory");
     static_assert(PYRO_PIO_BUDGET_SMS <= 4, "pyro PIO roles exceed pio0 state machines");
+    static_assert(LUA_PIN_COUNT + 3 <= LUA_CFG_MAX, "this board's pads plus a released pyro block exceed LUA_CFG_MAX");
 
     /* LUA_PIN_LIST and the capability table are two hand-written statements of
      * the same fact. A pin listed here but reserved in the table would hand a
@@ -182,7 +197,7 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
         return bad; /* reported as a firmware bug by the caller */
     }
 
-    n_out = n_in = n_serial = px_count = 0;
+    n_out = n_in = n_serial = px_count = n_claimed = 0;
     tx_sm = rx_sm = px_sm = px_dma = -1;
 
     bool want_px = false, want_tx = false, want_rx = false;
@@ -227,8 +242,11 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
         rx_offset = pio_add_program(LUA_PIO, &lua_uart_rx_program);
     }
 
-    for (int i = 0; i < n && i < LUA_PIN_COUNT; i++) {
-        uint8_t pin = lua_pins[i];
+    for (int i = 0; i < n && i < LUA_CFG_MAX; i++) {
+        uint8_t pin = cfg[i].pin;
+        if (cfg[i].role != LUA_ROLE_OFF) {
+            claim_pad(pin);
+        }
         switch (cfg[i].role) {
         case LUA_ROLE_OUT:
         case LUA_ROLE_PWM:
@@ -352,6 +370,9 @@ int lua_plat_configure_bridge(uint8_t channel_pin, uint8_t common_pin, const cha
     /* The first word is the dead time; the program keeps it in Y. Pushed
      * from core0 before core1 runs, so blocking here cannot deadlock. */
     pio_sm_put_blocking(PYRO_PIO_INST, (uint)sm, deadtime_cycles);
+
+    claim_pad(channel_pin);
+    claim_pad(common_pin);
 
     out_t *o = &outs[n_out++];
     memset(o, 0, sizeof(*o));
@@ -519,11 +540,15 @@ void lua_plat_safe_outputs(void) {
      * function select, so a pad that a state machine was driving stops being
      * the PIO's regardless of what the program left behind -- the same move
      * arm_pump_stop() makes in boards/mk1c/pyro_board.c. */
-    for (int i = 0; i < LUA_PIN_COUNT; i++) {
-        gpio_init(lua_pins[i]);
-        gpio_put(lua_pins[i], 0);
-        gpio_set_dir(lua_pins[i], GPIO_OUT);
-        gpio_put(lua_pins[i], 0);
+    if (bridge_sm >= 0) {
+        pio_sm_set_enabled(PYRO_PIO_INST, (uint)bridge_sm, false);
+    }
+
+    for (int i = 0; i < n_claimed; i++) {
+        gpio_init(claimed[i]);
+        gpio_put(claimed[i], 0);
+        gpio_set_dir(claimed[i], GPIO_OUT);
+        gpio_put(claimed[i], 0);
     }
 
     /* So a later lua_plat_output_get() reports what the pin is actually
