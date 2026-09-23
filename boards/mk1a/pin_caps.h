@@ -25,7 +25,13 @@
 #define BOARD_PYRO_TOPOLOGY PYRO_TOPO_HIGH_SWITCHED
 #define BOARD_PYRO_PROTECTION PYRO_PROT_FUSE_ONESHOT
 
-/* Lua's PIO block. Claimed on core0 at boot; see lua_pio_platform.c. */
+/* ── PIO allocation ───────────────────────────────────────────────
+ *
+ * PIO0 is the pyro block and PIO1 is Lua's. A released pyro pad is still pyro
+ * hardware, so a half-bridge on it runs on PIO0 under pyro rules whoever is
+ * commanding it -- which also keeps Lua's four state machines free for Lua's
+ * own roles. */
+#define PYRO_PIO_INST pio0
 #define LUA_PIO_INST pio1
 
 /* J6.3 is deliberately absent: it is half-duplex and needs a role of its own

@@ -45,4 +45,12 @@ const char *pin_store_reason(void);
  * order lua_plat_configure() expects. Returns how many entries were filled. */
 int pin_store_lua_pins(lua_pin_cfg_t *out, int max);
 
+/* The assigned bridge pair, if any. Returns true and fills the pins and the
+ * name; false when nothing is assigned to a bridge.
+ *
+ * channel_pin is the per-channel element and common_pin the shared one, which
+ * is the order pyro_bridge_program_init() wants -- SET drives the first and
+ * side-set the second. */
+bool pin_store_bridge(uint8_t *channel_pin, uint8_t *common_pin, const char **name);
+
 #endif

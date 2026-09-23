@@ -24,6 +24,8 @@ pico_generate_pio_header(pyro_board ${CMAKE_CURRENT_LIST_DIR}/arm_pump.pio)
 if(PYRO_HAS_LUA)
     target_sources(pyro_board PRIVATE ${CMAKE_SOURCE_DIR}/src/lua/lua_pio_platform.c)
     pico_generate_pio_header(pyro_board ${CMAKE_SOURCE_DIR}/src/lua/lua_pio.pio)
+    # The half-bridge runs on the PYRO PIO, not Lua's. See pyro_bridge.pio.
+    pico_generate_pio_header(pyro_board ${CMAKE_SOURCE_DIR}/src/pyro_bridge.pio)
     target_include_directories(pyro_board PRIVATE
         ${CMAKE_SOURCE_DIR}/src/lua
         ${lua_SOURCE_DIR})

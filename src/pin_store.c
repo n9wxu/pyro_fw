@@ -76,8 +76,11 @@ void pin_store_load(const config_t *cfg, char *reason, int reason_len) {
     char buf[PIN_STORE_MAX];
     int n = hal_fs_read_file(PIN_STORE_PATH, buf, (int)sizeof(buf) - 1);
     if (n <= 0) {
-        /* No file yet: the board keeps the Lua pins it already had. */
+        /* No file yet: the board keeps the Lua pins it already had. Said out
+         * loud, because an empty reason otherwise reads as "loaded cleanly"
+         * and makes a file that was never found look like one that was. */
         live = migrated;
+        snprintf(load_reason, sizeof(load_reason), "no %s; using legacy config keys", PIN_STORE_PATH);
     } else {
         buf[n] = '\0';
         pin_assign_t from_file;
@@ -123,13 +126,39 @@ pin_verdict_t pin_store_save(const pin_assign_t *a) {
     return v;
 }
 
+bool pin_store_bridge(uint8_t *channel_pin, uint8_t *common_pin, const char **name) {
+    int ch = -1, common = -1;
+    for (uint8_t pin = 0; pin < PIN_ASSIGN_MAX_GPIO; pin++) {
+        if (live.role[pin] != LUA_ROLE_BRIDGE) {
+            continue;
+        }
+        const pin_cap_t *c = pin_caps_find(pin);
+        if (!c) {
+            continue;
+        }
+        if (c->group == PG_COMMON) {
+            common = pin;
+        } else {
+            ch = pin;
+        }
+    }
+    /* Validation already rejects a half-configured bridge, so this is a
+     * belt-and-braces check on a path that drives a FET gate. */
+    if (ch < 0 || common < 0) {
+        return false;
+    }
+    *channel_pin = (uint8_t)ch;
+    *common_pin = (uint8_t)common;
+    *name = live.name[ch];
+    return true;
+}
+
 /* lua_plat_configure() indexes positionally against LUA_PIN_LIST, so this has
  * to walk the same list in the same order.
  *
- * Only the board's default Lua pads appear here. A released pyro pad is
- * assigned but not yet wired: that is phase 3, where the bridge role and the
- * PIO program arrive together. Filling it in now would hand lua_plat_configure
- * a pin it has no slot for. */
+ * Only the board's default Lua pads appear here. A released pyro pad reaches
+ * the platform through its own entry point -- lua_plat_configure_bridge() for
+ * a bridge -- because it has no slot in LUA_PIN_LIST. */
 int pin_store_lua_pins(lua_pin_cfg_t *out, int max) {
     static const uint8_t lua_pins[] = LUA_PIN_LIST;
     int n = 0;

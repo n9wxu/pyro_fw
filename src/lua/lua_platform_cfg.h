@@ -11,6 +11,8 @@
 #ifndef LUA_PLATFORM_CFG_H
 #define LUA_PLATFORM_CFG_H
 
+#include <stdint.h>
+
 #define LUA_NAME_MAX 9 /* matches config.h STR fields: 8 chars + NUL */
 
 typedef enum {
@@ -34,6 +36,24 @@ typedef struct {
  * unreachable, so a -1 is a bug rather than an operating condition.
  * Safe to call only before core1 is launched. */
 int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixels);
+
+/* Wire a half-bridge across a released pyro channel. Call after
+ * lua_plat_configure(), on core0, at boot.
+ *
+ * Separate from the call above because the bridge pads are not in
+ * LUA_PIN_LIST -- that list is the board's DEFAULT Lua pads, and these two
+ * only became available when configuration released the channel.
+ *
+ * The bridge appears to a script as one output named `name`: 0 drives the
+ * midpoint low, anything else drives it high.
+ *
+ * deadtime_cycles is how long both sides are held off between transitions,
+ * in PIO cycles. Returns 0 on success. */
+int lua_plat_configure_bridge(uint8_t channel_pin, uint8_t common_pin, const char *name, unsigned deadtime_cycles);
+
+/* Level commands the bridge FIFO could not take because core1 must never
+ * block on it. Reported alongside the other drop counters. */
+uint32_t lua_plat_bridge_dropped(void);
 
 /* Number of configurable pins this board exposes to Lua. */
 int lua_plat_pin_count(void);

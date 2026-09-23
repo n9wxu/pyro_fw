@@ -91,8 +91,20 @@ uint32_t lua_plat_telem_seq(void);
 int lua_plat_pyro_status(int channel); /* channel 1 or 2 */
 
 /* Raw continuity counts. The booleans above round a degraded connector to
- * "good"; only the count shows it, which is why telemetry carries it. */
+ * "good"; only the count shows it, which is why telemetry carries it.
+ *
+ * What a count is worth differs by board and the API does not pretend
+ * otherwise. MK1A's sense node swings nearly full scale. MK1B's AP2192 has an
+ * internal ~100 ohm output bleed which, against the 100k pull-up, holds the
+ * node near 4 counts with the high side off -- so there the count reports the
+ * driven state rather than load presence. Raw either way: a boolean would
+ * round MK1B's four counts into a confident lie. */
 int lua_plat_pyro_adc(int channel);
+
+/* True when configuration has released this channel to Lua. The continuity
+ * and armed flags describe a pyro channel, so they stop meaning anything once
+ * one is released; the raw count keeps being sampled either way. */
+int lua_plat_pyro_released(int channel);
 
 /* ── Host clock ───────────────────────────────────────────────────
  *

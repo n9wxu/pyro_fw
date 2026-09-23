@@ -1,6 +1,6 @@
 # Pyro MK1B Firmware - Current Status
 
-_Last updated: 2026-09-23 — v2.1.423, pin assignment storage and validation_
+_Last updated: 2026-09-23 — v2.1.447, half-bridge on the pyro PIO_
 
 ## 🚧 Configurable pin assignment — in progress
 
@@ -14,8 +14,9 @@ defects the feature would otherwise have been built on.
 | 0b | MK1C pyro tracking converted to MK1A's deadline-parked pattern | ✅ Done, HW verified |
 | 1 | `boards/<board>/pin_caps.h` capability table + build-time assertions | ✅ Done, HW verified |
 | 2 | `pins.ini` storage, `/api/pins`, power-group validation | ✅ Done, HW verified |
-| 3 | Half-bridge Lua role (MK1A/MK1B), free-running sense getter | 🔨 Next |
-| 4 | `GET /api/pins/caps`, Config and Lua tab pin UI | ⬜ Planned |
+| 3 | Half-bridge Lua role (MK1A/MK1B), free-running sense getter | ✅ Done, HW verified |
+| 4 | `GET /api/pins/caps`, Config and Lua tab pin UI | 🔨 Next |
+| 5 | Dead-time tuning against real FETs | ⬜ Planned |
 
 Release model: a pyro channel releases independently; the common low side
 releases only once both channels are released. One channel released yields one
@@ -73,6 +74,36 @@ every existing board's Lua pins.
 Verified on MK1C: release accepted and round-tripped; assigning the common
 with one channel retained, a retained channel's pin, and a bridge on a board
 that cannot make one were all refused with the file left unchanged.
+
+### The half-bridge (phase 3)
+
+PIO0 is the pyro block and PIO1 is Lua's. A released pyro pad is still a FET
+gate behind a fuse, so whatever drives it runs on PIO0 under pyro rules
+whoever is commanding it — which also leaves Lua's four state machines for
+Lua's own roles. The assigned role picks the program; today that is one entry,
+and general-purpose programs join it as roles need them.
+
+Shoot-through is unencodable rather than merely avoided, which the assembled
+program shows directly:
+
+    8: set pins, 1  side 0    channel ON  => common OFF
+   10: set pins, 0  side 1    common  ON  => channel OFF
+    5: pull block   side 0    stall point, after both-off + dead band
+
+The FIFO carries one bit choosing which single side turns on, so no value
+encodes "both". Dead time is a count in Y, loaded from the first pushed word
+and copied to X per transition, so it is tunable — phase 5 measures it against
+the FETs each board fits. An empty FIFO stalls at instruction 5 with both
+sides off, so a dead core1 stops the bridge rather than freezing it mid-drive.
+
+Verified on MK1B: both channels released, bridge assigned across GPIO21 and
+GPIO15, and a script toggling the midpoint every tick with the sense getter
+reading it back. `pyro.status(n).released` distinguishes a released channel
+from a pyro one, because continuity and armed stop meaning anything after a
+release while the raw count keeps being sampled.
+
+Not verified: power delivery into a real load. The bench has nothing wired to
+the bridge, so this confirms the control path, not the drive.
 
 MK1C was 36.2 ms work / 35.4 ms stage 4 / 3462 overruns before its bias tests
 stopped calling `sleep_ms()` inside the flight loop. MK1B's remaining 11 ms is

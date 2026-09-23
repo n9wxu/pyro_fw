@@ -26,9 +26,13 @@
 #define BOARD_PYRO_TOPOLOGY PYRO_TOPO_HIGH_SWITCHED /* TODO */
 #define BOARD_PYRO_PROTECTION PYRO_PROT_FUSE_ONESHOT /* TODO */
 
-/* Lua's PIO block, and the pads granted to Lua before any configuration
- * releases anything. Every pin listed must carry FN_LUA_ANY and no
- * FN_BOARD_RESERVED; pin_caps_check_lua_list() checks that at boot. */
+/* ── PIO allocation ───────────────────────────────────────────────
+ *
+ * PIO0 is the pyro block and PIO1 is Lua's. A released pyro pad is still pyro
+ * hardware, so a half-bridge on it runs on PIO0 under pyro rules whoever is
+ * commanding it -- which also keeps Lua's four state machines free for Lua's
+ * own roles. */
+#define PYRO_PIO_INST pio0
 #define LUA_PIO_INST pio1
 #define LUA_PIN_COUNT 0
 #define LUA_PIN_LIST                                                                                                   \

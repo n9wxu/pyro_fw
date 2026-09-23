@@ -234,6 +234,12 @@ uint32_t lua_plat_now_us(void) {
 int lua_plat_pyro_adc(int channel) {
     return sim_pyro_adc[(channel == 2) ? 1 : 0];
 }
+
+/* The simulator has no pin assignment, so nothing is ever released here. */
+int lua_plat_pyro_released(int channel) {
+    (void)channel;
+    return 0;
+}
 int lua_plat_under_thrust(void) {
     return sim_under_thrust;
 }

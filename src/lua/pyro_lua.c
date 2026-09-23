@@ -342,9 +342,18 @@ static int l_pyro_status(lua_State *Ls) {
     lua_setfield(Ls, -2, "armed");
     /* The raw count belongs with the booleans, not in a separate call: a
      * script deciding whether a channel is trustworthy wants both, and
-     * splitting them invites reading one without the other. */
+     * splitting them invites reading one without the other.
+     *
+     * adc keeps being sampled after a channel is released -- the sense cycle
+     * does not know or care -- so on MK1A it reads the bridge midpoint a
+     * script is driving. The booleans do NOT survive the release: continuity
+     * and armed describe a pyro channel that no longer exists. `released`
+     * says which case the caller is in rather than leaving them to infer it
+     * from a number. */
     lua_pushinteger(Ls, lua_plat_pyro_adc(ch));
     lua_setfield(Ls, -2, "adc");
+    lua_pushboolean(Ls, lua_plat_pyro_released(ch));
+    lua_setfield(Ls, -2, "released");
     return 1;
 }
 

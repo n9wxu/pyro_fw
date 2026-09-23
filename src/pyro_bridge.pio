@@ -1,0 +1,95 @@
+;
+; Half-bridge on a released pyro channel.
+;
+; A released pyro pad is still pyro hardware: a FET gate, a fuse and a common
+; return. So it keeps running under pyro rules, on the pyro PIO, whoever is
+; commanding it. PIO0 is that PIO; PIO1 is Lua's.
+;
+; With the igniter terminals shorted as the midpoint, the per-channel element
+; and the common form a half-bridge that can drive a WS2812 string or a servo
+; at VBAT. Turning both on at once shorts VBAT to ground through the pyro
+; fuse, so the program is built so that no data can ask for it.
+;
+; SHOOT-THROUGH IS UNREPRESENTABLE
+;
+; The only thing the FIFO carries is one bit choosing WHICH SINGLE SIDE turns
+; on. The program never copies a two-bit field to the pins, so there is no
+; value -- no Lua mistake, no corrupt word, no partially shifted OSR -- that
+; encodes "both". Every transition also passes through the dead band below,
+; so the two sides are never commanded on within the same instruction.
+;
+; DEAD TIME
+;
+; Y holds the count, loaded once from the first word the CPU pushes, and X is
+; the working copy so Y survives. A FET turns off in finite time, so the gap
+; between one side releasing and the other engaging is what keeps a
+; momentarily-conducting pair from becoming a shoot-through. Tunable rather
+; than fixed: the right value depends on the FETs a board fits.
+;
+; STALLING IS SAFE
+;
+; `pull block` sits immediately after the dead band, so an empty FIFO stalls
+; the state machine with BOTH SIDES OFF. A dead core1 therefore stops the
+; bridge rather than freezing it mid-drive, which is the same property
+; arm_pump.pio depends on, and PSM_WDSEL resets the PIO block if the
+; processor wedges instead.
+;
+; PIN MAPPING
+;
+; SET drives the per-channel element and side-set drives the common. Two
+; separate bases rather than one consecutive pair, because they are not
+; adjacent on every board -- MK1B has PYRO1_EN on GPIO21 and the common on
+; GPIO15.
+;
+; SPDX-License-Identifier: MIT
+;
+
+.program pyro_bridge
+.side_set 1
+
+; First word is the dead-time count. Both sides stay off while we wait for it.
+    pull block              side 0
+    mov  y, osr             side 0
+
+.wrap_target
+both_off:
+    set  pins, 0            side 0      ; channel off, common off
+    mov  x, y               side 0
+deadband:
+    jmp  x--, deadband      side 0      ; hold both off for y+1 cycles
+
+    pull block              side 0      ; STALL POINT: both sides off
+    out  x, 1               side 0      ; 0 = drive low, 1 = drive high
+    jmp  !x, drive_low      side 0
+
+    set  pins, 1            side 0      ; channel on, common off -> midpoint high
+    jmp  both_off           side 0
+drive_low:
+    set  pins, 0            side 1      ; channel off, common on -> midpoint low
+.wrap                                   ; the low branch is last, so it wraps
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+/* channel_pin is the per-channel element, common_pin the shared one.
+ *
+ * Both are driven low and claimed as outputs BEFORE the state machine is
+ * enabled, so the pads never float through the handover. */
+static inline void pyro_bridge_program_init(PIO pio, uint sm, uint offset, uint channel_pin, uint common_pin,
+                                            float clkdiv) {
+    pio_sm_config c = pyro_bridge_program_get_default_config(offset);
+
+    sm_config_set_set_pins(&c, channel_pin, 1);
+    sm_config_set_sideset_pins(&c, common_pin);
+    sm_config_set_out_shift(&c, true /* shift right */, false /* no autopull */, 32);
+    sm_config_set_clkdiv(&c, clkdiv);
+
+    pio_sm_set_pins_with_mask(pio, sm, 0, (1u << channel_pin) | (1u << common_pin));
+    pio_sm_set_pindirs_with_mask(pio, sm, (1u << channel_pin) | (1u << common_pin),
+                                 (1u << channel_pin) | (1u << common_pin));
+    pio_gpio_init(pio, channel_pin);
+    pio_gpio_init(pio, common_pin);
+
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

@@ -30,6 +30,13 @@
 #define BOARD_PYRO_TOPOLOGY PYRO_TOPO_HIGH_SWITCHED
 #define BOARD_PYRO_PROTECTION PYRO_PROT_PTC_LIMITED
 
+/* ── PIO allocation ───────────────────────────────────────────────
+ *
+ * PIO0 is the pyro block and PIO1 is Lua's. A released pyro pad is still pyro
+ * hardware, so a half-bridge on it runs on PIO0 under pyro rules whoever is
+ * commanding it -- which also keeps Lua's four state machines free for Lua's
+ * own roles. */
+#define PYRO_PIO_INST pio0
 #define LUA_PIO_INST pio1
 
 /* Only GPIO8. GPIO0/GPIO1 are the telemetry UART: they can be moved to Lua,

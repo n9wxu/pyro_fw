@@ -30,8 +30,10 @@
 #include "lua_platform.h"
 #include "board_pins.h"
 #include "pin_caps.h"
+#include "pin_store.h"
 #include "pin_model.h"
 #include "lua_pio.pio.h"
+#include "pyro_bridge.pio.h"
 #include "lua_core1.h"
 #include "lua_platform_cfg.h"
 #include "hardware/clocks.h"
@@ -68,6 +70,27 @@
     (LUA_PIO_PROG_LEN(lua_ws2812) + LUA_PIO_PROG_LEN(lua_uart_tx) + LUA_PIO_PROG_LEN(lua_uart_rx))
 #define LUA_PIO_BUDGET_SMS 3
 
+/* ── The pyro PIO ─────────────────────────────────────────────────
+ *
+ * PIO0 belongs to the pyro hardware and PIO1 to Lua. A released pyro pad is
+ * still a FET gate behind a fuse, so whatever drives it runs here, under pyro
+ * rules, whoever is commanding it. Keeping it off PIO1 also leaves Lua's four
+ * state machines for Lua's own roles -- with the bridge on PIO1 the worst
+ * case was 4 of 4, exactly at the limit with nothing spare.
+ *
+ * The assigned role picks the program. Today that is one entry:
+ *
+ *      bridge   pyro_bridge   9 instructions   1 SM
+ *
+ * General-purpose programs join this table as roles need them; a digital out
+ * on a released pad is plain SIO and needs none. MK1C additionally puts its
+ * ARM_TOGGLE charge pump here, and has no bridge, so the two never coexist --
+ * the budget below counts the larger of the two rather than their sum.
+ *
+ * Counted the same way as Lua's, and for the same reason. */
+#define PYRO_PIO_BUDGET_INSTR LUA_PIO_PROG_LEN(pyro_bridge)
+#define PYRO_PIO_BUDGET_SMS 1
+
 /* From boards/<name>/pin_caps.h. */
 #define LUA_PIO LUA_PIO_INST
 static const uint8_t lua_pins[LUA_PIN_COUNT] = LUA_PIN_LIST;
@@ -86,6 +109,7 @@ typedef struct {
     char name[LUA_NAME_MAX];
     uint8_t pin;
     int value;
+    bool bridge; /* driven by pushing a level to the pyro PIO, not gpio_put */
 } out_t;
 
 typedef struct {
@@ -94,7 +118,9 @@ typedef struct {
     uint8_t pin;
 } in_t;
 
-static out_t outs[LUA_MAX_OUT];
+/* One more than the board's pads: a bridge is an output too, and it consumes
+ * two released pyro pads rather than one entry in LUA_PIN_LIST. */
+static out_t outs[LUA_MAX_OUT + 1];
 static int n_out;
 static in_t ins[LUA_MAX_IN];
 static int n_in;
@@ -103,6 +129,15 @@ static lua_serial_desc_t serial_desc;
 static char serial_name[LUA_NAME_MAX];
 static int n_serial;
 static int tx_sm = -1, rx_sm = -1;
+
+/* ── The half-bridge, on the pyro PIO ─────────────────────────────
+ *
+ * PIO0 is the pyro block and PIO1 is Lua's. A released pyro pad is still pyro
+ * hardware -- a FET gate, a fuse, a common return -- so it keeps running
+ * under pyro rules on the pyro PIO whoever is commanding it. That also leaves
+ * Lua's four state machines for Lua's own roles. */
+static int bridge_sm = -1;
+static uint32_t bridge_dropped;
 
 static int px_count;
 static int px_sm = -1;
@@ -135,6 +170,8 @@ static uint px_offset, tx_offset, rx_offset;
 int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixels) {
     static_assert(LUA_PIO_BUDGET_INSTR <= 32, "Lua PIO programs exceed pio1 instruction memory");
     static_assert(LUA_PIO_BUDGET_SMS <= 4, "Lua PIO roles exceed pio1 state machines");
+    static_assert(PYRO_PIO_BUDGET_INSTR <= 32, "pyro PIO programs exceed pio0 instruction memory");
+    static_assert(PYRO_PIO_BUDGET_SMS <= 4, "pyro PIO roles exceed pio0 state machines");
 
     /* LUA_PIN_LIST and the capability table are two hand-written statements of
      * the same fact. A pin listed here but reserved in the table would hand a
@@ -267,10 +304,64 @@ const lua_output_desc_t *lua_plat_output_desc(int idx) {
 }
 void lua_plat_output_set(int idx, int value) {
     outs[idx].value = value;
+
+    if (outs[idx].bridge) {
+        /* Never pio_sm_put_blocking() here: this runs on core1, and core1
+         * blocking on a FIFO core0 does not drain is the one thing the whole
+         * module forbids. A full FIFO means the script is pushing levels
+         * faster than the dead band lets them out, so the level is dropped
+         * and counted. */
+        if (bridge_sm >= 0) {
+            if (pio_sm_is_tx_fifo_full(PYRO_PIO_INST, (uint)bridge_sm)) {
+                bridge_dropped++;
+            } else {
+                pio_sm_put(PYRO_PIO_INST, (uint)bridge_sm, (value > 0) ? 1u : 0u);
+            }
+        }
+        return;
+    }
+
     if (!outs[idx].desc.dimmable) {
         gpio_put(outs[idx].pin, value > 0);
     }
     /* dimmable pins are driven by lua_plat_pin_service() */
+}
+
+uint32_t lua_plat_bridge_dropped(void) {
+    return bridge_dropped;
+}
+
+int lua_plat_configure_bridge(uint8_t channel_pin, uint8_t common_pin, const char *name, unsigned deadtime_cycles) {
+    if (n_out >= (int)(sizeof(outs) / sizeof(outs[0]))) {
+        return -1;
+    }
+
+    /* Claimed on core0 at boot, before core1 exists, like every other PIO
+     * resource -- hw_claim_lock() takes spin lock 11 and a core1 killed
+     * inside it would strand that lock. */
+    uint offset = pio_add_program(PYRO_PIO_INST, &pyro_bridge_program);
+    int sm = pio_claim_unused_sm(PYRO_PIO_INST, false);
+    if (sm < 0) {
+        return -1;
+    }
+    bridge_sm = sm;
+
+    pyro_bridge_program_init(PYRO_PIO_INST, (uint)sm, offset, channel_pin, common_pin, 1.0f);
+    pio_sm_set_enabled(PYRO_PIO_INST, (uint)sm, true);
+
+    /* The first word is the dead time; the program keeps it in Y. Pushed
+     * from core0 before core1 runs, so blocking here cannot deadlock. */
+    pio_sm_put_blocking(PYRO_PIO_INST, (uint)sm, deadtime_cycles);
+
+    out_t *o = &outs[n_out++];
+    memset(o, 0, sizeof(*o));
+    strncpy(o->name, name, LUA_NAME_MAX - 1);
+    o->desc.name = o->name;
+    o->desc.dimmable = false;
+    o->pin = channel_pin;
+    o->bridge = true;
+    o->value = 0;
+    return 0;
 }
 int lua_plat_output_get(int idx) {
     return outs[idx].value;
@@ -385,6 +476,11 @@ uint32_t lua_plat_now_us(void) {
 
 int lua_plat_pyro_adc(int channel) {
     return lua_flight_snapshot()->pyro_adc[(channel == 2) ? 1 : 0];
+}
+
+int lua_plat_pyro_released(int channel) {
+    const pin_assign_t *a = pin_store_current();
+    return (channel == 2) ? a->pyro2_released : a->pyro1_released;
 }
 int lua_plat_under_thrust(void) {
     return lua_flight_snapshot()->under_thrust;

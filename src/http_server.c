@@ -259,6 +259,18 @@ static void serve_api_status(struct tcp_pcb *pcb) {
     char pins_reason_esc[128];
     const char *pr = pin_store_reason();
     json_escape(pins_reason_esc, (int)sizeof(pins_reason_esc), pr, (int)strlen(pr));
+
+    /* The live assignment, which phase 4's Config tab renders and which makes
+     * "did my pins.ini actually take effect" answerable without a debugger. */
+    const pin_assign_t *pa = pin_store_current();
+    char bridge_desc[24];
+    uint8_t br_ch, br_common;
+    const char *br_name;
+    if (pin_store_bridge(&br_ch, &br_common, &br_name)) {
+        snprintf(bridge_desc, sizeof(bridge_desc), "%u+%u", (unsigned)br_ch, (unsigned)br_common);
+    } else {
+        snprintf(bridge_desc, sizeof(bridge_desc), "none");
+    }
     char buf[1280];
     const char *sn = (g_status.state < (int)(sizeof(state_names) / sizeof(state_names[0])))
                          ? state_names[g_status.state]
@@ -298,7 +310,7 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         "\"loop_count\":%lu,\"stage_max_us\":[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu],"
         "\"flash_opens\":%lu,\"flash_skips\":%lu,\"flash_refusals\":%lu,\"log_dropped\":%lu,"
         "\"flash_erases\":%lu,\"flash_programs\":%lu,\"flash_deferrals\":%lu,"
-        "\"pins_reason\":\"%s\","
+        "\"pins_reason\":\"%s\",\"pyro1_released\":%s,\"pyro2_released\":%s,\"bridge\":\"%s\","
         "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u}",
         sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
         (long)g_status.pressure_pa, g_status.pyro1_continuity ? "true" : "false",
@@ -315,7 +327,8 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         (unsigned long)stage_max_us[7], (unsigned long)stage_max_us[8], (unsigned long)flash_window_opens(),
         (unsigned long)flash_window_skips(), (unsigned long)flash_window_refusals(), (unsigned long)hal_log_dropped(),
         (unsigned long)flash_window_erases(), (unsigned long)flash_window_programs(),
-        (unsigned long)flash_window_deferrals(), pins_reason_esc, board_serial(),
+        (unsigned long)flash_window_deferrals(), pins_reason_esc, pa->pyro1_released ? "true" : "false",
+        pa->pyro2_released ? "true" : "false", bridge_desc, board_serial(),
         board_serial_assigned() ? "true" : "false", board_hw_id(), (unsigned)board_subnet_octet());
     if (pos < 0)
         return;

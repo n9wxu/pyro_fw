@@ -60,6 +60,15 @@ static bool launched;
  * core1 that never finishes costs logging and uploads for the flight. */
 #define LUA_BOOT_LIMIT_MS 5000u
 
+/* How long both sides of a half-bridge are held off between transitions, in
+ * PIO cycles at 125 MHz -- 250 cycles is 2 us.
+ *
+ * A FET turns off in finite time, so this gap is what keeps a momentarily
+ * conducting pair from becoming a shoot-through across VBAT. Generous for the
+ * parts these boards fit, and tunable because the right value depends on
+ * them: phase 5 measures it. */
+#define PYRO_BRIDGE_DEADTIME_CYCLES 250u
+
 /* Survives a watchdog reboot, so the next boot can report what core0 was
  * doing. */
 #define PH_NO_LUA 1u
@@ -263,11 +272,23 @@ void lua_app_init(const config_t *cfg) {
     lua_pin_cfg_t pins[LUA_PIN_COUNT];
     int n_pins = pin_store_lua_pins(pins, LUA_PIN_COUNT);
 
+    /* The bridge is wired after the board's own pads, because its two pins
+     * are not in LUA_PIN_LIST -- they only became available when
+     * configuration released the channel. */
+    uint8_t br_ch = 0, br_common = 0;
+    const char *br_name = NULL;
+    bool want_bridge = pin_store_bridge(&br_ch, &br_common, &br_name);
+
     if (lua_plat_configure(pins, n_pins, cfg->lua_baud, cfg->lua_pixels) != 0) {
         /* Unreachable by the budget in the board platform file. If it ever
          * happens it is a build-time mistake, not an operating condition, so
          * say so plainly rather than degrading quietly. */
         snprintf(status_line, sizeof(status_line), "resource claim failed (firmware bug)");
+        return;
+    }
+
+    if (want_bridge && lua_plat_configure_bridge(br_ch, br_common, br_name, PYRO_BRIDGE_DEADTIME_CYCLES) != 0) {
+        snprintf(status_line, sizeof(status_line), "bridge claim failed (firmware bug)");
         return;
     }
 
