@@ -53,6 +53,11 @@ typedef enum {
     CONN_SENDING_FILE,
     CONN_RECEIVING_FILE,
     CONN_RECEIVING_OTA,
+    /* A small POST body being gathered in RAM across TCP segments. A browser
+     * sends the header block and the body separately, and the endpoints that
+     * take a whole document -- pins.ini, config.ini -- cannot act on half of
+     * one. See CONN_RECEIVING_FILE for the flash-streaming equivalent. */
+    CONN_RECEIVING_BODY,
 } conn_phase_t;
 
 typedef struct {
@@ -62,6 +67,7 @@ typedef struct {
     bool lfs_mounted;
     bool file_open;
     uint32_t remaining; /* bytes left to receive */
+    uint32_t body_len;  /* CONN_RECEIVING_BODY: bytes gathered so far */
     bool write_failed;  /* an lfs write was refused: the file is a hole */
     char path[64];
     /* Under LFS_NO_MALLOC the caller owns the per-file cache. It cannot be
@@ -88,6 +94,7 @@ static conn_state_t *conn_alloc(void) {
             cs->lfs_mounted = false;
             cs->file_open = false;
             cs->remaining = 0;
+            cs->body_len = 0;
             cs->write_failed = false;
             cs->path[0] = '\0';
             cs->file_cfg.buffer = cs->file_buf;
@@ -268,6 +275,160 @@ extern volatile uint32_t stage_max_us[];
  * both filters its menus by the same rule pin_assign_validate() enforces,
  * rather than by a copy of it that drifts. Nothing here needs updating when a
  * bit or a role is added -- only the tables they come from. */
+/* Apply a complete config.ini body and answer. Split out for the same reason
+ * apply_api_pins() is: the body may have taken several TCP segments to
+ * arrive. The caller owns the flash window and releases it, except on the
+ * early-return paths here which release it themselves.
+ *
+ * Returns with the response already written. */
+static void apply_api_config(struct tcp_pcb *pcb, char *cfgbuf) {
+    extern flight_state_t flight_get_state(void);
+    extern flight_context_t *flight_get_context(void);
+    extern int flight_config_reload(flight_context_t *);
+    flight_state_t state = flight_get_state();
+
+    const char *resp;
+    if (state != PAD_IDLE) {
+        /* Reject config changes - device not ready */
+        DBG("POST /api/config REJECT state=%u (need PAD_IDLE=3)", (unsigned)state);
+        char err_msg[256];
+        snprintf(err_msg, sizeof(err_msg),
+                 "HTTP/1.1 409 Conflict\r\n" CORS_HDR "Connection: close\r\n"
+                 "Content-Type: application/json\r\n\r\n"
+                 "{\"error\":\"Device not ready (state=%s)\","
+                 "\"state\":\"%s\",\"reboot_required\":true}",
+                 state_names[state < 7 ? state : 0], state_names[state < 7 ? state : 0]);
+        tcp_write(pcb, err_msg, strlen(err_msg), TCP_WRITE_FLAG_COPY);
+        return;
+    } else {
+        /* Merge, never replace (REQUIREMENTS.md CFG-06).
+         *
+         * The body is a PARTIAL config: the Config tab posts eight keys
+         * and the Lua tab posts only the lua_* ones. Writing it verbatim
+         * left config.ini holding just those keys, and hal_config_load()
+         * starts from config_set_defaults(), so every field the other tab
+         * owns reverted. Saving config wiped the Lua pin roles and saving
+         * Lua reset the rocket id, name and both pyro modes.
+         *
+         * Parsing over the running config and re-serialising also gives
+         * CFG-08 for free: config_parse_ini() ignores keys it does not
+         * know, so an unknown key neither lands nor destroys anything. */
+        config_t merged = flight_get_context()->config;
+        config_parse_ini(cfgbuf, &merged);
+        char cfgout[512];
+        int cfgn = config_serialize_ini(&merged, cfgout, (int)sizeof(cfgout));
+        if (cfgn <= 0) {
+            /* Does not fit what hal_config_load() can read back, so
+             * writing it would produce a file the board cannot parse. */
+            flash_window_release();
+            resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n"
+                   "Content-Type: application/json\r\n\r\n"
+                   "{\"error\":\"Merged config exceeds the 512-byte budget\"}";
+            tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
+            return;
+        }
+
+        /* Safe to update: write to flash and reload */
+        lfs_t lfs;
+        if (lfs_mount(&lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
+            lfs_file_t f;
+            if (lfs_file_opencfg(&lfs, &f, "config.ini", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC,
+                                 &lfs_pico_file_config) == LFS_ERR_OK) {
+                lfs_ssize_t written = lfs_file_write(&lfs, &f, cfgout, cfgn);
+                int close_err = lfs_file_close(&lfs, &f);
+                int unmount_err = lfs_unmount(&lfs);
+
+                DBG("POST /api/config write=%d close=%d unmount=%d", (int)written, close_err, unmount_err);
+
+                /* Reload config into running system */
+                flight_context_t *ctx = flight_get_context();
+                int reload_result = flight_config_reload(ctx);
+
+                if (reload_result == 0) {
+                    DBG("POST /api/config OK (applied)");
+                    resp = "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
+                           "Content-Type: application/json\r\n\r\n"
+                           "{\"status\":\"ok\",\"applied\":true}";
+                } else {
+                    DBG("POST /api/config WARN reload_result=%d", reload_result);
+                    resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n"
+                           "Content-Type: application/json\r\n\r\n"
+                           "{\"error\":\"Config saved but reload failed\","
+                           "\"reboot_required\":true}";
+                }
+            } else {
+                DBG("POST /api/config FAIL file_open");
+                lfs_unmount(&lfs);
+                resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n\r\nFile open failed";
+            }
+        } else {
+            DBG("POST /api/config FAIL lfs_mount");
+            resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n\r\nMount failed";
+        }
+    }
+    tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
+}
+
+/* Apply a complete pins.ini body and answer.
+ *
+ * Split out because a browser sends the header block and the body in separate
+ * TCP segments, so the caller may have had to accumulate across several
+ * callbacks before there was a whole body to apply. See CONN_RECEIVING_BODY.
+ *
+ * The caller owns the flash window and releases it. */
+static void apply_api_pins(struct tcp_pcb *pcb, char *body) {
+    extern flight_state_t flight_get_state(void);
+    flight_state_t st = flight_get_state();
+
+    char resp[384];
+    if (st != PAD_IDLE) {
+        /* Same interlock as /api/config: a pin map that changes under a flying
+         * board would move the pyro pins mid-flight. */
+        char jb[160];
+        int jn = snprintf(jb, sizeof(jb), "{\"error\":\"Device not ready (state=%s)\",\"reboot_required\":true}",
+                          state_names[st < 7 ? st : 0]);
+        snprintf(resp, sizeof(resp),
+                 "HTTP/1.1 409 Conflict\r\n" CORS_HDR "Connection: close\r\n"
+                 "Content-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+                 jn, jb);
+    } else {
+        /* Merged over the live assignment for the same reason /api/config
+         * merges (CFG-06): a partial post must not silently release a channel
+         * by omitting its key.
+         *
+         * static, not a local: pin_assign_t is about 300 bytes and this runs
+         * in an lwIP callback, several frames deep in the slack loop. lwIP
+         * serialises these callbacks on core0, so there is no reentrancy. */
+        static pin_assign_t merged;
+        merged = *pin_store_current();
+        pin_assign_parse_ini(body, &merged);
+
+        pin_verdict_t v = pin_store_save(&merged);
+        char jb[224];
+        int jn;
+        const char *line;
+        if (v.err == PIN_OK) {
+            jn = snprintf(jb, sizeof(jb), "{\"status\":\"ok\",\"reboot_required\":true}");
+            line = "HTTP/1.1 200 OK\r\n";
+        } else {
+            char esc[160];
+            json_escape(esc, (int)sizeof(esc), v.what, (int)strlen(v.what));
+            jn =
+                snprintf(jb, sizeof(jb), "{\"error\":\"%s\",\"pin\":%u,\"code\":%d}", esc, (unsigned)v.pin, (int)v.err);
+            line = "HTTP/1.1 400 Bad Request\r\n";
+        }
+        /* Content-Length, not connection-close framing. Without it a stray
+         * write onto the same pcb -- an orphaned body segment parsed as a
+         * fresh request -- is appended to this body and the client's JSON
+         * parse fails on a response that was otherwise fine. */
+        snprintf(resp, sizeof(resp),
+                 "%s" CORS_HDR "Connection: close\r\n"
+                 "Content-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+                 line, jn, jb);
+    }
+    tcp_write(pcb, resp, (u16_t)strlen(resp), TCP_WRITE_FLAG_COPY);
+}
+
 static void serve_api_pin_caps(struct tcp_pcb *pcb) {
     /* Static because this is the largest response the server builds and the
      * lwIP callbacks that reach it are not reentrant -- the same argument the
@@ -290,11 +451,21 @@ static void serve_api_pin_caps(struct tcp_pcb *pcb) {
         const char *name;
         uint32_t bit;
     } fn_bits[] = {
-        {"pyro_fire", FN_PYRO_FIRE}, {"pyro_common", FN_PYRO_COMMON}, {"pyro_sense", FN_PYRO_SENSE},
-        {"buzzer", FN_BUZZER},       {"uart_tx", FN_UART_TX},         {"uart_rx", FN_UART_RX},
-        {"i2c_sda", FN_I2C_SDA},     {"i2c_scl", FN_I2C_SCL},         {"led", FN_LED},
-        {"digital", FN_DIGITAL},     {"pwm", FN_PWM},                 {"serial", FN_SERIAL},
-        {"pixel", FN_PIXEL},         {"bridge", FN_BRIDGE},           {"analog", FN_ANALOG},
+        {"pyro_fire", FN_PYRO_FIRE},
+        {"pyro_common", FN_PYRO_COMMON},
+        {"pyro_sense", FN_PYRO_SENSE},
+        {"buzzer", FN_BUZZER},
+        {"uart_tx", FN_UART_TX},
+        {"uart_rx", FN_UART_RX},
+        {"i2c_sda", FN_I2C_SDA},
+        {"i2c_scl", FN_I2C_SCL},
+        {"led", FN_LED},
+        {"digital", FN_DIGITAL},
+        {"pwm", FN_PWM},
+        {"serial", FN_SERIAL},
+        {"pixel", FN_PIXEL},
+        {"bridge", FN_BRIDGE},
+        {"analog", FN_ANALOG},
     };
     static const char *group_names[] = {"none", "ch1", "ch2", "common"};
 
@@ -306,8 +477,7 @@ static void serve_api_pin_caps(struct tcp_pcb *pcb) {
                        "{\"board\":\"%s\",\"topology\":\"%s\",\"bridge_possible\":%s,"
                        "\"protection_note\":\"%s\","
                        "\"pyro1_released\":%s,\"pyro2_released\":%s,\"reserved_mask\":%u,\"fn\":{",
-                       PYRO_BOARD_NAME, pin_caps_topology_name(),
-                       pin_caps_bridge_possible() ? "true" : "false", note,
+                       PYRO_BOARD_NAME, pin_caps_topology_name(), pin_caps_bridge_possible() ? "true" : "false", note,
                        pa->pyro1_released ? "true" : "false", pa->pyro2_released ? "true" : "false",
                        (unsigned)FN_BOARD_RESERVED);
 
@@ -336,8 +506,7 @@ static void serve_api_pin_caps(struct tcp_pcb *pcb) {
         pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos,
                         "%s{\"p\":%u,\"f\":%u,\"g\":\"%s\",\"role\":\"%s\",\"name\":\"%s\",\"held\":%s}", i ? "," : "",
                         (unsigned)pin, (unsigned)caps[i].functions, group_names[caps[i].group],
-                        pin_assign_role_name_of(role), nesc,
-                        pin_assign_is_reserved(pa, pin) ? "true" : "false");
+                        pin_assign_role_name_of(role), nesc, pin_assign_is_reserved(pa, pin) ? "true" : "false");
     }
     if (pos > 0 && pos < (int)sizeof(buf)) {
         pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "]}");
@@ -520,6 +689,20 @@ static err_t on_sent(void *arg, struct tcp_pcb *pcb, u16_t len) {
     return ERR_OK;
 }
 
+/* A gathered body is complete: apply it. One place, so the single-segment and
+ * multi-segment paths cannot drift. */
+static void apply_gathered_body(struct tcp_pcb *pcb, conn_state_t *cs) {
+    cs->file_buf[cs->body_len] = '\0';
+    if (strcmp(cs->path, "/api/pins") == 0) {
+        apply_api_pins(pcb, (char *)cs->file_buf);
+    } else if (strcmp(cs->path, "/api/config") == 0) {
+        apply_api_config(pcb, (char *)cs->file_buf);
+    } else {
+        const char *r = "HTTP/1.1 400 Bad Request\r\n" CORS_HDR "Connection: close\r\n\r\nBad request";
+        tcp_write(pcb, r, (u16_t)strlen(r), TCP_WRITE_FLAG_COPY);
+    }
+}
+
 static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) {
     (void)err;
     conn_state_t *cs = (conn_state_t *)arg;
@@ -528,6 +711,44 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
         if (cs)
             conn_free(cs);
         tcp_close(pcb);
+        return ERR_OK;
+    }
+
+    /* ── Gathering a small POST body (continuation packets) ───── */
+    if (cs && cs->phase == CONN_RECEIVING_BODY) {
+        /* Re-arm the hold every segment, as the upload path does: the hold
+         * lapses after FLASH_HOLD_MS so a dead connection cannot park core1,
+         * and the body may span more than that. Refusing here before
+         * tcp_recved() makes lwIP redeliver the segment intact. */
+        flash_window_hold(hal_time_ms());
+        if (!flash_window_is_open()) {
+            flash_window_deferred();
+            return ERR_MEM;
+        }
+        uint16_t take = p->tot_len;
+        if (take > cs->remaining) {
+            take = (uint16_t)cs->remaining;
+        }
+        /* file_buf is the per-connection 4 kB cache. Nothing has a file open
+         * on this connection -- this phase never touches littlefs -- so it is
+         * free, and it is already larger than any body that reaches here. */
+        if (cs->body_len + take < sizeof(cs->file_buf)) {
+            pbuf_copy_partial(p, cs->file_buf + cs->body_len, take, 0);
+            cs->body_len += take;
+        }
+        cs->remaining -= take;
+        tcp_recved(pcb, p->tot_len);
+        pbuf_free(p);
+
+        if (cs->remaining == 0) {
+            DBG("POST %s done (%lu bytes, multi pkt)", cs->path, (unsigned long)cs->body_len);
+            apply_gathered_body(pcb, cs);
+            conn_free(cs);
+            flash_window_release();
+            tcp_output(pcb);
+            tcp_sent(pcb, on_sent);
+            tcp_arg(pcb, NULL);
+        }
         return ERR_OK;
     }
 
@@ -673,17 +894,34 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
         }
     }
 
-    /* Parse Content-Length */
+    /* ── Content-Length and body offset, from the WHOLE segment ──
+     *
+     * Not from hdr[] above. That is a 512-byte copy, and a browser's POST
+     * header block routinely exceeds it -- Chrome sends Host, Connection,
+     * Content-Length, three sec-ch-ua, Content-Type, User-Agent, Accept,
+     * Origin, four Sec-Fetch-*, Referer, Accept-Encoding and Accept-Language.
+     * When it does, strstr() over the copy finds no "\r\n\r\n", body_offset
+     * becomes tot_len, body_in_first becomes 0, and a POST handler reads an
+     * empty body, saves nothing, and answers 200. The failure is a green
+     * "saved" that did not save.
+     *
+     * pbuf_memfind() searches the pbuf chain itself, so neither the
+     * terminator nor the Content-Length header can hide past a copy
+     * boundary. */
     uint32_t content_length = 0;
-    const char *cl = strstr(hdr, "Content-Length: ");
-    if (!cl)
-        cl = strstr(hdr, "content-length: ");
-    if (cl)
-        content_length = atoi(cl + 16);
+    u16_t cl_at = pbuf_memfind(p, "Content-Length: ", 16, 0);
+    if (cl_at == 0xFFFF) {
+        cl_at = pbuf_memfind(p, "content-length: ", 16, 0);
+    }
+    if (cl_at != 0xFFFF) {
+        char digits[12] = {0};
+        u16_t room = (u16_t)(p->tot_len - (cl_at + 16));
+        pbuf_copy_partial(p, digits, room < sizeof(digits) - 1 ? room : sizeof(digits) - 1, (u16_t)(cl_at + 16));
+        content_length = (uint32_t)atoi(digits);
+    }
 
-    /* Find body start */
-    const char *body_start = strstr(hdr, "\r\n\r\n");
-    uint16_t body_offset = body_start ? (body_start + 4 - hdr) : p->tot_len;
+    u16_t term_at = pbuf_memfind(p, "\r\n\r\n", 4, 0);
+    uint16_t body_offset = (term_at != 0xFFFF) ? (uint16_t)(term_at + 4) : p->tot_len;
     uint16_t body_in_first = (p->tot_len > body_offset) ? p->tot_len - body_offset : 0;
 
     /* ── The flash gate, before the ack ────────────────────────
@@ -770,23 +1008,22 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             uint32_t dbg_go, dbg_seen, dbg_skipped, dbg_hb;
             lua_core1_dispatch_stats(&dbg_go, &dbg_seen, &dbg_skipped, &dbg_hb);
             uint32_t dbg_loc = lua_core1_loc();
-            int blen =
-                snprintf(body, sizeof(body),
-                         "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
-                         "Content-Type: application/json\r\n\r\n"
-                         "{\"status\":\"%s\",\"heartbeat\":%lu,\"log_written\":%lu,"
-                         "\"console_dropped\":%lu,\"log_dropped\":%lu,\"log_refused\":%lu,"
-                         "\"log_active\":%s,"
-                         "\"c1_state\":%d,\"c1_loc\":%lu,\"c1_busy\":%lu,\"c1_go\":%lu,\"c1_seen\":%lu,"
-                         "\"c1_skipped\":%lu,\"c1_ready\":%s,\"c1_flash_ok\":%s,\"stack_free\":%lu,"
-                         "\"text\":\"%s\"}",
-                         esc_status, (unsigned long)lua_core1_heartbeat(), (unsigned long)lua_app_log_written(),
-                         (unsigned long)lua_core1_console_dropped(), (unsigned long)lua_core1_log_dropped(),
-                         (unsigned long)hal_log_text_dropped(), hal_log_active() ? "true" : "false",
-                         (int)lua_core1_state(), (unsigned long)(dbg_loc & 0xffu),
-                         (unsigned long)((dbg_loc >> 8) & 0xffu), (unsigned long)dbg_go, (unsigned long)dbg_seen,
-                         (unsigned long)dbg_skipped, lua_core1_ready() ? "true" : "false",
-                         lua_core1_flash_ok() ? "true" : "false", (unsigned long)lua_core1_stack_free(), esc);
+            int blen = snprintf(body, sizeof(body),
+                                "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
+                                "Content-Type: application/json\r\n\r\n"
+                                "{\"status\":\"%s\",\"heartbeat\":%lu,\"log_written\":%lu,"
+                                "\"console_dropped\":%lu,\"log_dropped\":%lu,\"log_refused\":%lu,"
+                                "\"log_active\":%s,"
+                                "\"c1_state\":%d,\"c1_loc\":%lu,\"c1_busy\":%lu,\"c1_go\":%lu,\"c1_seen\":%lu,"
+                                "\"c1_skipped\":%lu,\"c1_ready\":%s,\"c1_flash_ok\":%s,\"stack_free\":%lu,"
+                                "\"text\":\"%s\"}",
+                                esc_status, (unsigned long)lua_core1_heartbeat(), (unsigned long)lua_app_log_written(),
+                                (unsigned long)lua_core1_console_dropped(), (unsigned long)lua_core1_log_dropped(),
+                                (unsigned long)hal_log_text_dropped(), hal_log_active() ? "true" : "false",
+                                (int)lua_core1_state(), (unsigned long)(dbg_loc & 0xffu),
+                                (unsigned long)((dbg_loc >> 8) & 0xffu), (unsigned long)dbg_go, (unsigned long)dbg_seen,
+                                (unsigned long)dbg_skipped, lua_core1_ready() ? "true" : "false",
+                                lua_core1_flash_ok() ? "true" : "false", (unsigned long)lua_core1_stack_free(), esc);
             tcp_write(pcb, body, blen, TCP_WRITE_FLAG_COPY);
             tcp_output(pcb);
             tcp_sent(pcb, on_sent);
@@ -1061,8 +1298,7 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
              * next call a negative size. */
             for (int i = 0; i < chk.count && blen > 0 && blen < (int)sizeof(body) - 2; i++) {
                 char esc_detail[sizeof(chk.items[i].detail) * 2 + 8];
-                json_escape(esc_detail, (int)sizeof(esc_detail), chk.items[i].detail,
-                            (int)strlen(chk.items[i].detail));
+                json_escape(esc_detail, (int)sizeof(esc_detail), chk.items[i].detail, (int)strlen(chk.items[i].detail));
                 int n = snprintf(body + blen, sizeof(body) - (size_t)blen, "%s{\"kind\":%d,\"detail\":\"%s\"}",
                                  i ? "," : "", (int)chk.items[i].kind, esc_detail);
                 if (n < 0 || n >= (int)sizeof(body) - blen)
@@ -1129,157 +1365,86 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             return ERR_OK;
 
         } else if (strcmp(path, "/api/config") == 0 && content_length > 0 && content_length < 512) {
-            /* Config update with state-based safety check */
-            DBG("POST /api/config cl=%lu", (unsigned long)content_length);
-            char cfgbuf[512];
-            uint16_t len = (body_in_first < content_length) ? body_in_first : content_length;
-            pbuf_copy_partial(p, cfgbuf, len, body_offset);
-            pbuf_free(p);
-            cfgbuf[len] = '\0';
-
-            /* Check if we're in a safe state for config changes */
-            extern flight_state_t flight_get_state(void);
-            extern flight_context_t *flight_get_context(void);
-            extern int flight_config_reload(flight_context_t *);
-            flight_state_t state = flight_get_state();
-
-            const char *resp;
-            if (state != PAD_IDLE) {
-                /* Reject config changes - device not ready */
-                DBG("POST /api/config REJECT state=%u (need PAD_IDLE=3)", (unsigned)state);
-                char err_msg[256];
-                snprintf(err_msg, sizeof(err_msg),
-                         "HTTP/1.1 409 Conflict\r\n" CORS_HDR "Connection: close\r\n"
-                         "Content-Type: application/json\r\n\r\n"
-                         "{\"error\":\"Device not ready (state=%s)\","
-                         "\"state\":\"%s\",\"reboot_required\":true}",
-                         state_names[state < 7 ? state : 0], state_names[state < 7 ? state : 0]);
-                tcp_write(pcb, err_msg, strlen(err_msg), TCP_WRITE_FLAG_COPY);
-                tcp_output(pcb);
-                tcp_sent(pcb, on_sent);
-                tcp_arg(pcb, NULL);
-                return ERR_OK;
+            DBG("POST /api/config cl=%lu in_first=%u", (unsigned long)content_length, (unsigned)body_in_first);
+            if (body_in_first >= content_length) {
+                char cfgbuf[512];
+                pbuf_copy_partial(p, cfgbuf, (uint16_t)content_length, body_offset);
+                pbuf_free(p);
+                cfgbuf[content_length] = '\0';
+                apply_api_config(pcb, cfgbuf);
+                flash_window_release();
             } else {
-                /* Merge, never replace (REQUIREMENTS.md CFG-06).
-                 *
-                 * The body is a PARTIAL config: the Config tab posts eight keys
-                 * and the Lua tab posts only the lua_* ones. Writing it verbatim
-                 * left config.ini holding just those keys, and hal_config_load()
-                 * starts from config_set_defaults(), so every field the other tab
-                 * owns reverted. Saving config wiped the Lua pin roles and saving
-                 * Lua reset the rocket id, name and both pyro modes.
-                 *
-                 * Parsing over the running config and re-serialising also gives
-                 * CFG-08 for free: config_parse_ini() ignores keys it does not
-                 * know, so an unknown key neither lands nor destroys anything. */
-                config_t merged = flight_get_context()->config;
-                config_parse_ini(cfgbuf, &merged);
-                char cfgout[512];
-                int cfgn = config_serialize_ini(&merged, cfgout, (int)sizeof(cfgout));
-                if (cfgn <= 0) {
-                    /* Does not fit what hal_config_load() can read back, so
-                     * writing it would produce a file the board cannot parse. */
+                /* Gather it. Acting on half a config.ini merges half the keys
+                 * and reports success -- and CFG-06 merging makes that look
+                 * exactly like a save that worked. */
+                cs = conn_alloc();
+                if (!cs) {
+                    pbuf_free(p);
                     flash_window_release();
-                    resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n"
-                           "Content-Type: application/json\r\n\r\n"
-                           "{\"error\":\"Merged config exceeds the 512-byte budget\"}";
-                    tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
+                    const char *full =
+                        "HTTP/1.1 503 Service Unavailable\r\n" CORS_HDR "Connection: close\r\n\r\nNo connection slot";
+                    tcp_write(pcb, full, strlen(full), TCP_WRITE_FLAG_COPY);
                     tcp_output(pcb);
                     tcp_sent(pcb, on_sent);
                     tcp_arg(pcb, NULL);
                     return ERR_OK;
                 }
-
-                /* Safe to update: write to flash and reload */
-                lfs_t lfs;
-                if (lfs_mount(&lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
-                    lfs_file_t f;
-                    if (lfs_file_opencfg(&lfs, &f, "config.ini", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC,
-                                         &lfs_pico_file_config) == LFS_ERR_OK) {
-                        lfs_ssize_t written = lfs_file_write(&lfs, &f, cfgout, cfgn);
-                        int close_err = lfs_file_close(&lfs, &f);
-                        int unmount_err = lfs_unmount(&lfs);
-
-                        DBG("POST /api/config write=%d close=%d unmount=%d", (int)written, close_err, unmount_err);
-
-                        /* Reload config into running system */
-                        flight_context_t *ctx = flight_get_context();
-                        int reload_result = flight_config_reload(ctx);
-
-                        if (reload_result == 0) {
-                            DBG("POST /api/config OK (applied)");
-                            resp = "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
-                                   "Content-Type: application/json\r\n\r\n"
-                                   "{\"status\":\"ok\",\"applied\":true}";
-                        } else {
-                            DBG("POST /api/config WARN reload_result=%d", reload_result);
-                            resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n"
-                                   "Content-Type: application/json\r\n\r\n"
-                                   "{\"error\":\"Config saved but reload failed\","
-                                   "\"reboot_required\":true}";
-                        }
-                    } else {
-                        DBG("POST /api/config FAIL file_open");
-                        lfs_unmount(&lfs);
-                        resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n\r\nFile open failed";
-                    }
-                } else {
-                    DBG("POST /api/config FAIL lfs_mount");
-                    resp = "HTTP/1.1 500 Error\r\n" CORS_HDR "Connection: close\r\n\r\nMount failed";
+                cs->phase = CONN_RECEIVING_BODY;
+                snprintf(cs->path, sizeof(cs->path), "%s", path);
+                cs->body_len = body_in_first;
+                cs->remaining = content_length - body_in_first;
+                if (body_in_first > 0) {
+                    pbuf_copy_partial(p, cs->file_buf, body_in_first, body_offset);
                 }
+                pbuf_free(p);
+                tcp_arg(pcb, cs);
+                return ERR_OK;
             }
-            flash_window_release(); /* the config write is one packet and done */
-            tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
+            tcp_output(pcb);
+            tcp_sent(pcb, on_sent);
+            tcp_arg(pcb, NULL);
+            return ERR_OK;
         } else if (strcmp(path, "/api/pins") == 0 && content_length > 0 && content_length < PIN_STORE_MAX) {
-            DBG("POST /api/pins cl=%lu", (unsigned long)content_length);
-            static char pinbuf[PIN_STORE_MAX];
-            uint16_t len = (body_in_first < content_length) ? body_in_first : (uint16_t)content_length;
-            pbuf_copy_partial(p, pinbuf, len, body_offset);
-            pbuf_free(p);
-            pinbuf[len] = '\0';
+            DBG("POST /api/pins cl=%lu in_first=%u", (unsigned long)content_length, (unsigned)body_in_first);
 
-            extern flight_state_t flight_get_state(void);
-            flight_state_t st = flight_get_state();
-
-            char resp[320];
-            if (st != PAD_IDLE) {
-                /* Same interlock as /api/config: a pin map that changes under
-                 * a flying board would move the pyro pins mid-flight. */
-                snprintf(resp, sizeof(resp),
-                         "HTTP/1.1 409 Conflict\r\n" CORS_HDR "Connection: close\r\n"
-                         "Content-Type: application/json\r\n\r\n"
-                         "{\"error\":\"Device not ready (state=%s)\",\"reboot_required\":true}",
-                         state_names[st < 7 ? st : 0]);
+            if (body_in_first >= content_length) {
+                /* Whole body in this segment: apply it and answer now. */
+                static char pinbuf[PIN_STORE_MAX];
+                pbuf_copy_partial(p, pinbuf, (uint16_t)content_length, body_offset);
+                pbuf_free(p);
+                pinbuf[content_length] = '\0';
+                apply_api_pins(pcb, pinbuf);
+                flash_window_release();
             } else {
-                /* Merged over the live assignment for the same reason
-                 * /api/config merges (CFG-06): a partial post must not
-                 * silently release a channel by omitting its key. */
-                /* static, not a local: pin_assign_t is about 300 bytes and this
-                 * runs in an lwIP callback, several frames deep in the slack
-                 * loop. lwIP serialises these callbacks on core0, so there is
-                 * no reentrancy to worry about. */
-                static pin_assign_t merged;
-                merged = *pin_store_current();
-                pin_assign_parse_ini(pinbuf, &merged);
-
-                pin_verdict_t v = pin_store_save(&merged);
-                if (v.err == PIN_OK) {
-                    snprintf(resp, sizeof(resp),
-                             "HTTP/1.1 200 OK\r\n" CORS_HDR "Connection: close\r\n"
-                             "Content-Type: application/json\r\n\r\n"
-                             "{\"status\":\"ok\",\"reboot_required\":true}");
-                } else {
-                    char esc[160];
-                    json_escape(esc, (int)sizeof(esc), v.what, (int)strlen(v.what));
-                    snprintf(resp, sizeof(resp),
-                             "HTTP/1.1 400 Bad Request\r\n" CORS_HDR "Connection: close\r\n"
-                             "Content-Type: application/json\r\n\r\n"
-                             "{\"error\":\"%s\",\"pin\":%u,\"code\":%d}",
-                             esc, (unsigned)v.pin, (int)v.err);
+                /* The body is still arriving. Gather it rather than acting on
+                 * the part that came -- parsing half a pins.ini merges half an
+                 * assignment and answers 200, which is a save that did not
+                 * save, and leaves the rest of the body to be parsed as a
+                 * fresh request line. */
+                cs = conn_alloc();
+                if (!cs) {
+                    pbuf_free(p);
+                    flash_window_release();
+                    const char *full =
+                        "HTTP/1.1 503 Service Unavailable\r\n" CORS_HDR "Connection: close\r\n\r\nNo connection slot";
+                    tcp_write(pcb, full, strlen(full), TCP_WRITE_FLAG_COPY);
+                    tcp_output(pcb);
+                    tcp_sent(pcb, on_sent);
+                    tcp_arg(pcb, NULL);
+                    return ERR_OK;
                 }
+                cs->phase = CONN_RECEIVING_BODY;
+                snprintf(cs->path, sizeof(cs->path), "%s", path);
+                cs->body_len = body_in_first;
+                cs->remaining = content_length - body_in_first;
+                if (body_in_first > 0) {
+                    pbuf_copy_partial(p, cs->file_buf, body_in_first, body_offset);
+                }
+                pbuf_free(p);
+                tcp_arg(pcb, cs);
+                /* The flash window stays held; the continuation releases it. */
+                return ERR_OK;
             }
-            flash_window_release();
-            tcp_write(pcb, resp, strlen(resp), TCP_WRITE_FLAG_COPY);
             tcp_output(pcb);
             tcp_sent(pcb, on_sent);
             tcp_arg(pcb, NULL);
