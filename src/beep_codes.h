@@ -22,30 +22,35 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* ── The reasons ──────────────────────────────────────────────────
+/* ── The three outcomes ───────────────────────────────────────────
  *
- * X(enum_name, ini_key, "what it means")
+ * X(enum_name, ini_key, d1, d2, "what it means")
  *
- * Order is report order: the first matching reason is the one the buzzer
- * plays when several are true at once. Adding a reason is one line here.
+ * A beep says what to DO, not what is wrong. There are only three things an
+ * operator can do at the pad, so there are only three beeps:
  *
- * The keys are what beep.ini carries, so they are part of the file format and
- * do not change once shipped. The sentences are served to the web UI, so the
- * meaning of a code lives in one place rather than in a wiki. */
+ *   OK to fly        proceed
+ *   Check the pyro   an igniter can be reached and adjusted without safing
+ *   System failure   safe the system and leave the pad
+ *
+ * Thirteen codes distinguished p1_open from p2_short from fs_fail, which is a
+ * distinction that changes nothing an operator does standing at the rocket --
+ * and asked them to count two groups of beeps in the wind and then look the
+ * pair up. The diagnosis still exists and is still reported: it goes to
+ * /api/status, which is read on a screen where detail helps.
+ *
+ * Order is priority. A board with a dead sensor AND an open igniter must send
+ * the operator away, so SYSTEM_FAILURE outranks CHECK_PYRO.
+ *
+ * The keys are what beep.ini carries, so they are part of the file format.
+ * The sentences are served to the web UI, so a code's meaning lives in one
+ * place. */
 #define BEEP_REASONS(X)                                                                                                \
-    X(BR_ALL_GOOD, "all_good", 1, 1, "Self-test passed: sensor, filesystem and both pyro channels are good")           \
-    X(BR_SENSOR_FAIL, "sensor_fail", 4, 1, "No pressure sensor answered. The board cannot detect a launch")            \
-    X(BR_FS_FAIL, "fs_fail", 4, 2, "The filesystem did not mount. Config and flight logs are unavailable")             \
-    X(BR_CFG_RANGE, "cfg_range", 4, 3, "A pyro altitude setting is above what the sensor can measure")                 \
-    X(BR_P1_OPEN, "p1_open", 2, 1, "Pyro 1 reads open: no igniter, or a broken lead")                                  \
-    X(BR_P1_SHORT, "p1_short", 2, 2, "Pyro 1 reads shorted")                                                           \
-    X(BR_P1_FAULT, "p1_fault", 2, 3, "Pyro 1 reported an overcurrent fault while firing")                              \
-    X(BR_P1_NO_OPEN, "p1_no_open", 2, 4, "Pyro 1 did not go open after firing: the charge may not have gone")          \
-    X(BR_P2_OPEN, "p2_open", 3, 1, "Pyro 2 reads open: no igniter, or a broken lead")                                  \
-    X(BR_P2_SHORT, "p2_short", 3, 2, "Pyro 2 reads shorted")                                                           \
-    X(BR_P2_FAULT, "p2_fault", 3, 3, "Pyro 2 reported an overcurrent fault while firing")                              \
-    X(BR_P2_NO_OPEN, "p2_no_open", 3, 4, "Pyro 2 did not go open after firing: the charge may not have gone")          \
-    X(BR_CRITICAL, "critical", 5, 5, "A failure the firmware could not classify")
+    X(BR_SYSTEM_FAILURE, "system_failure", 3, 3,                                                                       \
+      "System failure. Safe the system and leave the pad -- this cannot be fixed at the rocket")                       \
+    X(BR_CHECK_PYRO, "check_pyro", 2, 2,                                                                               \
+      "Check the pyro. An igniter or its leads need attention; the rest of the board is good")                         \
+    X(BR_OK_TO_FLY, "ok_to_fly", 1, 1, "OK to fly. Sensor, filesystem and both pyro channels are good")
 
 #define X_ENUM(name, key, d1, d2, desc) name,
 typedef enum { BEEP_REASONS(X_ENUM) BEEP_REASON_COUNT } beep_reason_t;

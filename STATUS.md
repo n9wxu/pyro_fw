@@ -19,58 +19,46 @@ Setting `c1_busy` first, with a barrier, makes the two conditions overlap so
 one always holds. Affects every board and every configuration, not just the
 bridge.
 
-## ✅ beep.ini: the codes mean something now (2026-09-24)
+## ✅ Three beeps, because three actions exist at the pad (2026-09-24)
 
-Thirteen beep codes were `#define`s in `buzzer.h` whose meaning lived only in
-the macro name. Nothing served them, the web UI never showed them, and an
-operator at the pad had a two-digit number and nowhere to look it up. Seven of
-the thirteen were emitted from nowhere at all.
+Thirteen beep codes distinguished `p1_open` from `p2_short` from `fs_fail`.
+That is a distinction which changes nothing an operator does standing at a
+rocket, and it asked them to count two groups of beeps in the wind and then
+look the pair up.
 
-`src/beep_codes.h` is now the vocabulary: one X-macro row per REASON with a
-stable key, a sentence an operator can read, and a shipped code. The firmware
-asks `beep_for(BR_SENSOR_FAIL)` and gets whatever is currently assigned, so
-remapping a beep never touches the site that emits it.
+**A beep says what to DO.** There are three things an operator can do at the
+pad, so there are three beeps:
 
-Same split as `pin_assign`/`pin_store`: rules in `beep_codes.c` with no I/O,
-file in `beep_store.c`. Whole-table rejection with fallback to the shipped
-codes, PAD_IDLE-free (a beep map cannot hurt a flight), registered in
-`post_writes_flash()`, and `beep.ini` written out when absent so there is a
-file to edit.
+| Code | Means | Action |
+|---|---|---|
+| 1–1 | OK to fly | proceed |
+| 2–2 | Check the pyro | an igniter can be reached and adjusted without safing |
+| 3–3 | System failure | safe the system and leave the pad |
 
-Two ways a change can make a board lie, both refused:
+Priority is strict: anything unfixable outranks anything fixable, so a board
+with a dead sensor *and* an open igniter sends the operator away — adjusting
+the igniter would not help, the board still cannot fly. A pyro altitude
+setting beyond the sensor counts as unfixable, because correcting it needs a
+laptop.
 
-- **A digit outside 1–9.** Zero beeps cannot be heard and nobody counts
-  fifteen.
-- **Two reasons sharing a code.** The operator hears 2-1, looks it up, and
-  gets the wrong answer half the time.
+**The diagnosis did not go away, it moved to where it is useful.**
+`flight_context_t` carries a `DIAG_*` bitmask and `/api/status` names every
+finding — `"faults":["pyro1_open","pyro2_open"]` — on a screen, where detail
+helps and nobody counts beeps. `/api/status` also carries `beep`, `beep_d1`
+and `beep_d2`, so which of the three the board is saying can be read rather
+than heard.
 
-`GET /api/beeps` carries the reasons, their meanings, their current codes and
-their shipped ones — the same vocabulary-travels-with-the-data shape as
-`/api/pins/caps`, so `app.js` holds no copy and adding a reason grows a row.
+`beep.ini` and the editor are unchanged in shape, with three rows instead of
+thirteen. An existing thirteen-key file is not rejected: the old keys are
+unknown and ignored (CFG-08), the shipped codes take effect, and the file is
+rewritten on the first save.
 
-**The editor lets you hear a code.** A form of numbers asks an operator to
-choose sounds they will identify by ear at a launch site. `POST
-/api/beeps/play` plays what is in the row — including an unsaved change — so a
-code can be auditioned before it is committed. PAD_IDLE only: the buzzer is
-the flight software's voice and a browser must not talk over a launch.
+Measured on hardware:
 
-**And it will not pretend.** MK1A fits no buzzer — `board_buzzer_*()` are
-no-ops and `board_pins.h` deliberately declares no pin — so `/api/beeps`
-reports `has_buzzer: false`, the play button is not rendered, and the endpoint
-answers 409 rather than "playing". Derived from `FN_BUZZER` in the capability
-table, which already said so.
-
-The "Shipped codes" button restores from the `def1`/`def2` the firmware sends
-rather than pretending.
-
-`beep_codes_get()` falls back to the shipped code when an entry is 0. Zero is
-never a valid assignment, so it means "not loaded" — which matters because a
-board beeps its self-test result early.
-
-Verified on hardware: `beep.ini` created on first boot; a zero digit and a
-duplicate each refused by name with the table untouched; a remap of `p1_open`
-from 2-1 to 7-4 changed MK1C's reported faults from `[0x21, 0x31]` to
-`[0x74, 0x31]` — the board beeps the new code.
+| Board | State | Beep | Diagnosis |
+|---|---|---|---|
+| MK1B | both pyros released to Lua | 1–1 ok_to_fly | none |
+| MK1C | pyros retained, no igniters | 2–2 check_pyro | pyro1_open, pyro2_open |
 
 ## ✅ config.ini fits again — and no longer migrates (2026-09-24)
 

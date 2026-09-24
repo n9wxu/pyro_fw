@@ -24,7 +24,7 @@ void beep_codes_defaults(beep_table_t *t) {
 }
 
 uint8_t beep_codes_default(beep_reason_t r) {
-    return (r >= 0 && r < BEEP_REASON_COUNT) ? rows[r].def : rows[BR_CRITICAL].def;
+    return (r >= 0 && r < BEEP_REASON_COUNT) ? rows[r].def : rows[BR_SYSTEM_FAILURE].def;
 }
 
 const char *beep_codes_key(beep_reason_t r) {
@@ -38,7 +38,9 @@ const char *beep_codes_description(beep_reason_t r) {
 uint8_t beep_codes_get(const beep_table_t *t, beep_reason_t r) {
     if (r < 0 || r >= BEEP_REASON_COUNT) {
         /* A caller with a bad reason still has something to report. */
-        return rows[BR_CRITICAL].def;
+        /* A caller with a bad reason still has something to say, and the
+         * safe thing to say is "leave the pad". */
+        return rows[BR_SYSTEM_FAILURE].def;
     }
     /* Zero is never a valid code -- validation requires both digits in 1..9
      * -- so it unambiguously means "not set yet". Falling back to the shipped

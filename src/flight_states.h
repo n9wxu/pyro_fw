@@ -7,6 +7,20 @@
 #include "hal.h"
 #include "ground_test.h" /* ground_test_ctx_t embedded in flight_context_t */
 
+/* What the power-up self-test found. Several can be true at once. */
+#define DIAG_SENSOR_FAIL (1u << 0)
+#define DIAG_FS_FAIL (1u << 1)
+#define DIAG_CFG_RANGE (1u << 2) /* a pyro altitude setting is beyond the sensor */
+#define DIAG_P1_OPEN (1u << 3)
+#define DIAG_P1_SHORT (1u << 4)
+#define DIAG_P2_OPEN (1u << 5)
+#define DIAG_P2_SHORT (1u << 6)
+
+/* The pyro ones can be fixed standing at the rocket; everything else means
+ * safe it and walk away. This split is what picks the beep. */
+#define DIAG_PYRO_ANY (DIAG_P1_OPEN | DIAG_P1_SHORT | DIAG_P2_OPEN | DIAG_P2_SHORT)
+#define DIAG_FATAL_ANY (DIAG_SENSOR_FAIL | DIAG_FS_FAIL | DIAG_CFG_RANGE)
+
 // System states
 typedef enum {
     BOOT_SETTLE = 0, // wait for sensors to stabilize
@@ -156,10 +170,14 @@ typedef struct flight_context_t {
     bool fs_ok;
     uint8_t fault_code; /* the beep code FAULT repeats; 0 until set */
 
-    /* Every pad fault found, not just the one being beeped. The buzzer can
-     * only say one code at a time; /api/status can say all of them. */
-    uint8_t fault_codes[3];
-    uint8_t fault_count;
+    /* ── What is wrong, as distinct from what to do ──────────────
+     *
+     * The buzzer says one of three things, because three is the number of
+     * actions available at the pad. The diagnosis is finer than that and is
+     * still worth having, so it lives here as a bitmask and goes out on
+     * /api/status -- which is read on a screen, where detail helps and
+     * nobody has to count beeps in the wind. */
+    uint16_t diag; /* DIAG_* bits */
     // Ground test state machine [GND-TEST-01..04, DD-011]
     ground_test_ctx_t gt;
 } flight_context_t;

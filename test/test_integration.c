@@ -376,6 +376,38 @@ void test_PYR_REL_06_fault_is_clear_for_a_released_channel(void) {
     TEST_ASSERT_TRUE_MESSAGE(hal_pyro_fault(2), "the retained channel still reports the hardware");
 }
 
+/* ── Which of the three the pad check says ────────────────────────
+ *
+ * Three beeps because three actions exist at the pad. A pyro fault can be
+ * fixed standing at the rocket; anything else means safe it and walk away, so
+ * a board with both must send the operator away. */
+
+uint8_t beep_for_diag(uint16_t diag);
+
+void test_BEEP_01_clean_board_says_ok_to_fly(void) {
+    TEST_ASSERT_EQUAL_HEX8(beep_for(BR_OK_TO_FLY), beep_for_diag(0));
+}
+
+void test_BEEP_02_a_pyro_fault_says_check_the_pyro(void) {
+    TEST_ASSERT_EQUAL_HEX8(beep_for(BR_CHECK_PYRO), beep_for_diag(DIAG_P1_OPEN));
+    TEST_ASSERT_EQUAL_HEX8(beep_for(BR_CHECK_PYRO), beep_for_diag(DIAG_P2_SHORT));
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(beep_for(BR_CHECK_PYRO), beep_for_diag(DIAG_P1_OPEN | DIAG_P2_OPEN),
+                                   "both channels bad is still one trip to the rocket");
+}
+
+void test_BEEP_03_anything_unfixable_says_system_failure(void) {
+    TEST_ASSERT_EQUAL_HEX8(beep_for(BR_SYSTEM_FAILURE), beep_for_diag(DIAG_SENSOR_FAIL));
+    TEST_ASSERT_EQUAL_HEX8(beep_for(BR_SYSTEM_FAILURE), beep_for_diag(DIAG_FS_FAIL));
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(beep_for(BR_SYSTEM_FAILURE), beep_for_diag(DIAG_CFG_RANGE),
+                                   "a bad config value needs a laptop, so it means leave the pad");
+}
+
+void test_BEEP_04_unfixable_outranks_fixable(void) {
+    /* Adjusting the igniter would not help: the board still cannot fly. */
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(beep_for(BR_SYSTEM_FAILURE), beep_for_diag(DIAG_SENSOR_FAIL | DIAG_P1_OPEN),
+                                   "a dead sensor must send the operator away even with a pyro fault too");
+}
+
 /* ── The exclusion itself ─────────────────────────────────────────
  *
  * The property these exist for: there is no way for a pad to be in the pyro
@@ -703,9 +735,9 @@ void test_PYR_ALT_02_cfg_range_beep(void) {
 
     TEST_ASSERT_TRUE_MESSAGE(buzzer_code_count > 0, "Buzzer code never set — update_continuity_and_buzzer not reached");
     char msg[64];
-    snprintf(msg, sizeof(msg), "Expected the cfg-range code (0x%02X), got 0x%02X", beep_for(BR_CFG_RANGE),
+    snprintf(msg, sizeof(msg), "Expected the system-failure code (0x%02X), got 0x%02X", beep_for(BR_SYSTEM_FAILURE),
              last_buzzer_code);
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(beep_for(BR_CFG_RANGE), last_buzzer_code, msg);
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(beep_for(BR_SYSTEM_FAILURE), last_buzzer_code, msg);
 }
 
 /* ── Ground test command tests [GND-TEST-01..04, DD-011] ──────────── */
@@ -734,8 +766,8 @@ void test_GND_TEST_01_beep_status_replay(void) {
 
     /* Continuity check must have set last_status_code by now */
     TEST_ASSERT_TRUE_MESSAGE(ctx.last_status_code != 0, "last_status_code not set — continuity check not reached");
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(beep_for(BR_ALL_GOOD), ctx.last_status_code,
-                                   "Expected the all-good code for good continuity");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(beep_for(BR_OK_TO_FLY), ctx.last_status_code,
+                                   "Expected OK-to-fly for good continuity");
 
     int code_before = buzzer_code_count;
     mock_serial_enqueue("BEEP STATUS");
@@ -744,7 +776,7 @@ void test_GND_TEST_01_beep_status_replay(void) {
     ctx.current_state = step(&ctx, 1210);
 
     TEST_ASSERT_EQUAL_MESSAGE(code_before + 1, buzzer_code_count, "BEEP STATUS did not trigger buzzer_set_code()");
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(beep_for(BR_ALL_GOOD), last_buzzer_code, "Replayed wrong beep code");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(beep_for(BR_OK_TO_FLY), last_buzzer_code, "Replayed wrong beep code");
 }
 
 /* [GND-TEST-02] ARM then FIRE within the 3s window fires the pyro */
@@ -841,6 +873,10 @@ int main(void) {
     RUN_TEST(test_PYR_REL_04_released_reports_open_not_good);
     RUN_TEST(test_PYR_REL_05_shared_stimulus_stops_when_both_released);
     RUN_TEST(test_PYR_REL_06_fault_is_clear_for_a_released_channel);
+    RUN_TEST(test_BEEP_01_clean_board_says_ok_to_fly);
+    RUN_TEST(test_BEEP_02_a_pyro_fault_says_check_the_pyro);
+    RUN_TEST(test_BEEP_03_anything_unfixable_says_system_failure);
+    RUN_TEST(test_BEEP_04_unfixable_outranks_fixable);
     RUN_TEST(test_PAD_EXCL_01_pyro_cannot_take_a_pad_lua_holds);
     RUN_TEST(test_PAD_EXCL_02_lua_cannot_take_a_pad_pyro_holds);
     RUN_TEST(test_PAD_EXCL_03_a_claim_is_all_or_nothing);

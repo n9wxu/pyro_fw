@@ -105,13 +105,12 @@ function generateFlightCSV() {
 
 let beepReason = '';
 let beepRows = [
-  {key:'all_good',    d1:1, d2:1, def1:1, def2:1, what:'Self-test passed: sensor, filesystem and both pyro channels are good'},
-  {key:'sensor_fail', d1:4, d2:1, def1:4, def2:1, what:'No pressure sensor answered. The board cannot detect a launch'},
-  {key:'fs_fail',     d1:4, d2:2, def1:4, def2:2, what:'The filesystem did not mount'},
-  {key:'cfg_range',   d1:4, d2:3, def1:4, def2:3, what:'A pyro altitude setting is above what the sensor can measure'},
-  {key:'p1_open',     d1:2, d2:1, def1:2, def2:1, what:'Pyro 1 reads open: no igniter, or a broken lead'},
-  {key:'p2_open',     d1:3, d2:1, def1:3, def2:1, what:'Pyro 2 reads open: no igniter, or a broken lead'},
-  {key:'critical',    d1:5, d2:5, def1:5, def2:5, what:'A failure the firmware could not classify'}
+  {key:'system_failure', d1:3, d2:3, def1:3, def2:3,
+   what:'System failure. Safe the system and leave the pad -- this cannot be fixed at the rocket'},
+  {key:'check_pyro',     d1:2, d2:2, def1:2, def2:2,
+   what:'Check the pyro. An igniter or its leads need attention; the rest of the board is good'},
+  {key:'ok_to_fly',      d1:1, d2:1, def1:1, def2:1,
+   what:'OK to fly. Sensor, filesystem and both pyro channels are good'}
 ];
 
 let pinsIni = '[pins]\r\npyro1_released=true\r\npyro2_released=true\r\n';

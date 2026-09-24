@@ -157,7 +157,9 @@ void test_SNS_PRES_01_boot_no_sensor(void) {
     ctx.fs_ok = true;
     ctx.current_state = step(&ctx, mock_time_ms);
     TEST_ASSERT_EQUAL_MESSAGE(FAULT, ctx.current_state, "a board with no sensor must fault, not idle");
-    TEST_ASSERT_EQUAL_MESSAGE(beep_for(BR_SENSOR_FAIL), ctx.fault_code, "and must beep the sensor code");
+    TEST_ASSERT_EQUAL_MESSAGE(beep_for(BR_SYSTEM_FAILURE), ctx.fault_code,
+                              "a dead sensor means safe it and leave the pad");
+    TEST_ASSERT_TRUE_MESSAGE(ctx.diag & DIAG_SENSOR_FAIL, "and the diagnosis says which");
 
     /* Terminal: nothing recovers from it. */
     for (int i = 0; i < 10; i++) {

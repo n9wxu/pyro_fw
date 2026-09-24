@@ -52,33 +52,35 @@ void test_no_two_shipped_reasons_share_a_code(void) {
 
 void test_a_zero_digit_is_refused(void) {
     beep_table_t t = base();
-    t.code[BR_ALL_GOOD] = BEEP_CODE(1, 0); /* zero beeps cannot be heard */
+    t.code[BR_OK_TO_FLY] = BEEP_CODE(1, 0); /* zero beeps cannot be heard */
     beep_verdict_t v = beep_codes_validate(&t);
     TEST_ASSERT_EQUAL(BEEP_ERR_DIGIT_RANGE, v.err);
-    TEST_ASSERT_EQUAL(BR_ALL_GOOD, v.reason);
+    TEST_ASSERT_EQUAL(BR_OK_TO_FLY, v.reason);
 }
 
 void test_a_digit_above_nine_is_refused(void) {
     /* A nibble holds up to 15, but nobody counts 15 beeps correctly. */
     beep_table_t t = base();
-    t.code[BR_P1_OPEN] = BEEP_CODE(2, 12);
+    t.code[BR_CHECK_PYRO] = BEEP_CODE(2, 12);
     TEST_ASSERT_EQUAL(BEEP_ERR_DIGIT_RANGE, beep_codes_validate(&t).err);
 }
 
 void test_a_duplicate_code_is_refused(void) {
     beep_table_t t = base();
-    t.code[BR_P2_OPEN] = t.code[BR_P1_OPEN];
+    /* "Check the pyro" and "OK to fly" sounding the same is the worst case
+       this rule exists for. */
+    t.code[BR_OK_TO_FLY] = t.code[BR_CHECK_PYRO];
     beep_verdict_t v = beep_codes_validate(&t);
     TEST_ASSERT_EQUAL(BEEP_ERR_DUPLICATE, v.err);
-    TEST_ASSERT_EQUAL_MESSAGE(BR_P2_OPEN, v.reason, "the verdict names the second of the pair");
+    TEST_ASSERT_EQUAL_MESSAGE(BR_OK_TO_FLY, v.reason, "the verdict names the later of the pair");
 }
 
 /* ── Lookup ───────────────────────────────────────────────────────── */
 
 void test_get_returns_the_assigned_code(void) {
     beep_table_t t = base();
-    t.code[BR_SENSOR_FAIL] = BEEP_CODE(7, 7);
-    TEST_ASSERT_EQUAL_HEX8(BEEP_CODE(7, 7), beep_codes_get(&t, BR_SENSOR_FAIL));
+    t.code[BR_SYSTEM_FAILURE] = BEEP_CODE(7, 7);
+    TEST_ASSERT_EQUAL_HEX8(BEEP_CODE(7, 7), beep_codes_get(&t, BR_SYSTEM_FAILURE));
 }
 
 void test_an_unset_entry_falls_back_to_the_shipped_code(void) {
@@ -86,9 +88,9 @@ void test_an_unset_entry_falls_back_to_the_shipped_code(void) {
        been read. Zero is not a valid code, so it means "not loaded". */
     beep_table_t t;
     memset(&t, 0, sizeof(t));
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(BEEP_CODE(4, 1), beep_codes_get(&t, BR_SENSOR_FAIL),
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(BEEP_CODE(3, 3), beep_codes_get(&t, BR_SYSTEM_FAILURE),
                                    "an unloaded table must still answer");
-    TEST_ASSERT_NOT_EQUAL(0, beep_codes_get(NULL, BR_ALL_GOOD));
+    TEST_ASSERT_NOT_EQUAL(0, beep_codes_get(NULL, BR_OK_TO_FLY));
 }
 
 void test_an_unknown_reason_still_reports_something(void) {
@@ -101,8 +103,8 @@ void test_an_unknown_reason_still_reports_something(void) {
 
 void test_round_trip_preserves_the_table(void) {
     beep_table_t t = base();
-    t.code[BR_ALL_GOOD] = BEEP_CODE(9, 9);
-    t.code[BR_CRITICAL] = BEEP_CODE(8, 7);
+    t.code[BR_OK_TO_FLY] = BEEP_CODE(9, 9);
+    t.code[BR_SYSTEM_FAILURE] = BEEP_CODE(8, 7);
 
     char buf[BEEP_REASON_COUNT * 32];
     int n = beep_codes_serialize_ini(&t, buf, (int)sizeof(buf));
@@ -111,8 +113,8 @@ void test_round_trip_preserves_the_table(void) {
     beep_table_t back;
     beep_codes_defaults(&back);
     beep_codes_parse_ini(buf, &back);
-    TEST_ASSERT_EQUAL_HEX8(BEEP_CODE(9, 9), back.code[BR_ALL_GOOD]);
-    TEST_ASSERT_EQUAL_HEX8(BEEP_CODE(8, 7), back.code[BR_CRITICAL]);
+    TEST_ASSERT_EQUAL_HEX8(BEEP_CODE(9, 9), back.code[BR_OK_TO_FLY]);
+    TEST_ASSERT_EQUAL_HEX8(BEEP_CODE(8, 7), back.code[BR_SYSTEM_FAILURE]);
     for (int i = 0; i < BEEP_REASON_COUNT; i++) {
         TEST_ASSERT_EQUAL_HEX8(t.code[i], back.code[i]);
     }
@@ -123,15 +125,15 @@ void test_the_file_carries_digits_not_the_packed_byte(void) {
     beep_table_t t = base();
     char buf[BEEP_REASON_COUNT * 32];
     TEST_ASSERT_GREATER_THAN(0, beep_codes_serialize_ini(&t, buf, (int)sizeof(buf)));
-    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(buf, "sensor_fail=41"), "the sensor code should read as its digits");
-    TEST_ASSERT_NOT_NULL(strstr(buf, "all_good=11"));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(buf, "system_failure=33"), "a code should read as its digits");
+    TEST_ASSERT_NOT_NULL(strstr(buf, "ok_to_fly=11"));
 }
 
 void test_unknown_keys_are_ignored(void) {
     beep_table_t t = base();
-    char in[] = "[beeps]\r\nnot_a_reason=99\r\nall_good=77\r\n";
+    char in[] = "[beeps]\r\nnot_a_reason=99\r\nok_to_fly=77\r\n";
     beep_codes_parse_ini(in, &t);
-    TEST_ASSERT_EQUAL_HEX8(BEEP_CODE(7, 7), t.code[BR_ALL_GOOD]);
+    TEST_ASSERT_EQUAL_HEX8(BEEP_CODE(7, 7), t.code[BR_OK_TO_FLY]);
     TEST_ASSERT_EQUAL(BEEP_OK, beep_codes_validate(&t).err);
 }
 
@@ -139,22 +141,43 @@ void test_a_malformed_value_leaves_the_entry_alone(void) {
     /* Not three digits, not one, not letters. The whole-table validate is
        what refuses a bad map; a garbled line must not silently zero a code. */
     beep_table_t t = base();
-    uint8_t before = t.code[BR_ALL_GOOD];
-    char in[] = "[beeps]\r\nall_good=123\r\np1_open=x\r\np2_open=4\r\n";
+    uint8_t before = t.code[BR_OK_TO_FLY];
+    char in[] = "[beeps]\r\nok_to_fly=123\r\ncheck_pyro=x\r\nsystem_failure=4\r\n";
     beep_codes_parse_ini(in, &t);
-    TEST_ASSERT_EQUAL_HEX8(before, t.code[BR_ALL_GOOD]);
+    TEST_ASSERT_EQUAL_HEX8(before, t.code[BR_OK_TO_FLY]);
     TEST_ASSERT_EQUAL(BEEP_OK, beep_codes_validate(&t).err);
 }
 
 void test_serialize_refuses_to_overflow(void) {
     beep_table_t t = base();
-    char small[16];
+    char small[8];
     TEST_ASSERT_EQUAL(-1, beep_codes_serialize_ini(&t, small, (int)sizeof(small)));
+}
+
+/* ── Which of the three ───────────────────────────────────────────
+ *
+ * The whole point of collapsing thirteen codes to three: the beep says what
+ * to DO. These are the priorities that decision rests on. */
+
+void test_the_three_outcomes_are_distinct(void) {
+    beep_table_t t = base();
+    TEST_ASSERT_NOT_EQUAL(t.code[BR_OK_TO_FLY], t.code[BR_CHECK_PYRO]);
+    TEST_ASSERT_NOT_EQUAL(t.code[BR_OK_TO_FLY], t.code[BR_SYSTEM_FAILURE]);
+    TEST_ASSERT_NOT_EQUAL(t.code[BR_CHECK_PYRO], t.code[BR_SYSTEM_FAILURE]);
+}
+
+void test_there_are_exactly_three_reasons(void) {
+    /* Three actions are available at the pad, so three is the whole
+       vocabulary. A fourth would be a distinction that changes nothing an
+       operator standing at the rocket can do. */
+    TEST_ASSERT_EQUAL_MESSAGE(3, BEEP_REASON_COUNT, "the vocabulary is the set of available actions");
 }
 
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_shipped_codes_are_valid);
+    RUN_TEST(test_there_are_exactly_three_reasons);
+    RUN_TEST(test_the_three_outcomes_are_distinct);
     RUN_TEST(test_every_reason_has_a_key_and_a_description);
     RUN_TEST(test_no_two_shipped_reasons_share_a_code);
     RUN_TEST(test_a_zero_digit_is_refused);

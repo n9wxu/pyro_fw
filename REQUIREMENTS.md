@@ -69,6 +69,9 @@ Each derived requirement traces to its parent with `← parent_id`.
 
 #### Landing Detection
 ### Beep Codes
+- **BUZ-CODE-00**: The beep vocabulary shall be the set of actions available at the pad: OK to fly, check the pyro, system failure. ← SYS-STATUS-02
+- **BUZ-CODE-07**: Any condition that cannot be corrected at the rocket shall beep system failure, outranking a pyro fault. ← BUZ-CODE-00
+- **BUZ-CODE-08**: The diagnosis shall be reported by name on /api/status, not encoded in the beep. ← BUZ-CODE-00
 - **BUZ-CODE-01**: Each beep reason shall carry a stable key, a human-readable meaning, and a configurable two-digit code. ← SYS-STATUS-02
 - **BUZ-CODE-02**: Each digit shall be 1 to 9; a zero cannot be heard and a long count cannot be counted. ← BUZ-CODE-01
 - **BUZ-CODE-03**: Two reasons shall not share a code. ← BUZ-CODE-01

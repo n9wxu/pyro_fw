@@ -675,17 +675,39 @@ static void serve_api_status(struct tcp_pcb *pcb) {
     } else {
         snprintf(bridge_desc, sizeof(bridge_desc), "none");
     }
-    /* Every pad fault found, not just the one the buzzer is playing. */
+    /* What is wrong, named, as distinct from what the buzzer says about it.
+     *
+     * The beep is one of three, because three is the number of actions
+     * available at the pad. This is the screen, so it carries the diagnosis:
+     * nobody has to count beeps to read it. */
     extern flight_context_t *flight_get_context(void);
     const flight_context_t *fctx = flight_get_context();
-    char fault_list[32] = {0};
+    static const struct {
+        uint16_t bit;
+        const char *name;
+    } diag_names[] = {
+        {DIAG_SENSOR_FAIL, "sensor_fail"}, {DIAG_FS_FAIL, "fs_fail"},      {DIAG_CFG_RANGE, "cfg_range"},
+        {DIAG_P1_OPEN, "pyro1_open"},      {DIAG_P1_SHORT, "pyro1_short"}, {DIAG_P2_OPEN, "pyro2_open"},
+        {DIAG_P2_SHORT, "pyro2_short"},
+    };
+    char fault_list[128] = {0};
     if (fctx) {
         int fl = 0;
-        for (int i = 0; i < fctx->fault_count && i < 3 && fl < (int)sizeof(fault_list) - 6; i++) {
-            fl += snprintf(fault_list + fl, sizeof(fault_list) - (size_t)fl, "%s%u", i ? "," : "",
-                           (unsigned)fctx->fault_codes[i]);
+        for (unsigned i = 0; i < sizeof(diag_names) / sizeof(diag_names[0]); i++) {
+            if ((fctx->diag & diag_names[i].bit) && fl < (int)sizeof(fault_list) - 20) {
+                fl += snprintf(fault_list + fl, sizeof(fault_list) - (size_t)fl, "%s\"%s\"", fl ? "," : "",
+                               diag_names[i].name);
+            }
         }
     }
+
+    /* One of three, derived from the diagnosis above. */
+    extern uint8_t beep_for_diag(uint16_t diag);
+    uint16_t diag_now = fctx ? fctx->diag : 0;
+    uint8_t beep_now = beep_for_diag(diag_now);
+    const char *beep_outcome_key = (diag_now & DIAG_FATAL_ANY)  ? beep_codes_key(BR_SYSTEM_FAILURE)
+                                   : (diag_now & DIAG_PYRO_ANY) ? beep_codes_key(BR_CHECK_PYRO)
+                                                                : beep_codes_key(BR_OK_TO_FLY);
 
     char buf[1280];
     const char *sn = (g_status.state < (int)(sizeof(state_names) / sizeof(state_names[0])))
@@ -729,6 +751,7 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         "\"pins_reason\":\"%s\",\"pyro1_released\":%s,\"pyro2_released\":%s,\"bridge\":\"%s\","
         "\"pyro_mocked\":%lu,\"pyro1_real\":%s,\"pyro2_real\":%s,"
         "\"sensor_ok\":%s,\"fs_ok\":%s,\"fault_code\":%u,\"faults\":[%s],"
+        "\"beep\":\"%s\",\"beep_d1\":%u,\"beep_d2\":%u,"
         "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u}",
         sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
         (long)g_status.pressure_pa, g_status.pyro1_continuity ? "true" : "false",
@@ -755,8 +778,11 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         /* The power-up self-test, said out loud. A board that cannot measure
          * altitude used to report itself healthy here and beep "all good". */
         fctx && fctx->sensor_type ? "true" : "false", fctx && fctx->fs_ok ? "true" : "false",
-        (unsigned)(fctx ? fctx->fault_code : 0), fault_list, board_serial(), board_serial_assigned() ? "true" : "false",
-        board_hw_id(), (unsigned)board_subnet_octet());
+        (unsigned)(fctx ? fctx->fault_code : 0), fault_list,
+        /* Which of the three the buzzer is saying, so it can be read rather
+         * than counted. */
+        beep_outcome_key, (unsigned)BEEP_DIGIT1(beep_now), (unsigned)BEEP_DIGIT2(beep_now), board_serial(),
+        board_serial_assigned() ? "true" : "false", board_hw_id(), (unsigned)board_subnet_octet());
     if (pos < 0)
         return;
     if ((size_t)pos >= sizeof(buf))

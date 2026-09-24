@@ -271,20 +271,21 @@ test.describe('Beep codes', () => {
     await clickTab(page, 'Beep Codes');
     const table = page.locator('#bpTable');
     /* The meaning comes from the firmware, not from a copy in app.js. */
-    await expect(table).toContainText('No pressure sensor answered');
-    await expect(table).toContainText('Pyro 1 reads open');
-    await expect(page.locator('#bd1sensor_fail')).toHaveValue('4');
-    await expect(page.locator('#bd2sensor_fail')).toHaveValue('1');
+    await expect(table).toContainText('Safe the system and leave the pad');
+    await expect(table).toContainText('Check the pyro');
+    await expect(table).toContainText('OK to fly');
+    await expect(page.locator('#bd1system_failure')).toHaveValue('3');
+    await expect(page.locator('#bd2system_failure')).toHaveValue('3');
   });
 
   test('a duplicate code is flagged before saving', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Beep Codes');
-    await expect(page.locator('#bd1p1_open')).toBeVisible();
-    /* Make p1_open read the same as all_good (1-1). */
-    await page.fill('#bd1p1_open', '1');
-    await page.fill('#bd2p1_open', '1');
+    await expect(page.locator('#bd1check_pyro')).toBeVisible();
+    /* Make check_pyro read the same as all_good (1-1). */
+    await page.fill('#bd1check_pyro', '1');
+    await page.fill('#bd2check_pyro', '1');
     await expect(page.locator('#bpWarn')).toContainText('share the code');
   });
 
@@ -292,8 +293,8 @@ test.describe('Beep codes', () => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Beep Codes');
-    await expect(page.locator('#bd2p1_open')).toBeVisible();
-    await page.fill('#bd2p1_open', '0');
+    await expect(page.locator('#bd2check_pyro')).toBeVisible();
+    await page.fill('#bd2check_pyro', '0');
     await expect(page.locator('#bpWarn')).toContainText('cannot be heard');
   });
 
@@ -301,22 +302,22 @@ test.describe('Beep codes', () => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Beep Codes');
-    await expect(page.locator('#bd1p1_open')).toBeVisible();
-    await page.fill('#bd1p1_open', '9');
+    await expect(page.locator('#bd1check_pyro')).toBeVisible();
+    await page.fill('#bd1check_pyro', '9');
     await page.click('button:has-text("Shipped codes")');
-    await expect(page.locator('#bd1p1_open')).toHaveValue('2');
+    await expect(page.locator('#bd1check_pyro')).toHaveValue('2');
   });
 
   test('a code can be auditioned before saving', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Beep Codes');
-    await expect(page.locator('#bd1p1_open')).toBeVisible();
+    await expect(page.locator('#bd1check_pyro')).toBeVisible();
     /* Change it, then play it: the board plays what is in the form, so an
        unsaved code can be heard before committing to it. */
-    await page.fill('#bd1p1_open', '6');
-    await page.fill('#bd2p1_open', '4');
-    await page.locator('#browp1_open button').click();
+    await page.fill('#bd1check_pyro', '6');
+    await page.fill('#bd2check_pyro', '4');
+    await page.locator('#browcheck_pyro button').click();
     await expect(page.locator('#bpMsg')).toContainText('playing 6–4', { timeout: 5000 });
   });
 
@@ -324,16 +325,16 @@ test.describe('Beep codes', () => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Beep Codes');
-    await expect(page.locator('#btp1_open')).toHaveText('2–1');
-    await page.fill('#bd1p1_open', '8');
-    await expect(page.locator('#btp1_open')).toHaveText('8–1');
+    await expect(page.locator('#btcheck_pyro')).toHaveText('2–2');
+    await page.fill('#bd1check_pyro', '8');
+    await expect(page.locator('#btcheck_pyro')).toHaveText('8–2');
   });
 
   test('saving a valid table reports success', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Beep Codes');
-    await expect(page.locator('#bd1p1_open')).toBeVisible();
+    await expect(page.locator('#bd1check_pyro')).toBeVisible();
     await page.click('#btnSaveBeeps');
     await expect(page.locator('#bpMsg')).toContainText('saved', { timeout: 5000 });
   });

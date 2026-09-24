@@ -217,12 +217,14 @@ static state_event_t detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
     extern void hal_telemetry_send(const char *sentence);
     if (ctx->sensor_type == 0) {
         hal_telemetry_send("!SENSOR FAIL - no pressure sensor answered\r\n");
-        ctx->fault_code = beep_for(BR_SENSOR_FAIL);
+        ctx->diag |= DIAG_SENSOR_FAIL;
+        ctx->fault_code = beep_for(BR_SYSTEM_FAILURE);
         return SEVT_FAULT;
     }
     if (!ctx->fs_ok) {
         hal_telemetry_send("!FS FAIL - filesystem did not mount\r\n");
-        ctx->fault_code = beep_for(BR_FS_FAIL);
+        ctx->diag |= DIAG_FS_FAIL;
+        ctx->fault_code = beep_for(BR_SYSTEM_FAILURE);
         return SEVT_FAULT;
     }
     return SEVT_DONE;
@@ -265,41 +267,50 @@ static state_event_t detect_boot_calibrate(flight_context_t *ctx, uint32_t now) 
     if (now - ctx->boot_timer >= 10000) {
         extern void hal_telemetry_send(const char *sentence);
         hal_telemetry_send("!CAL TIMEOUT - sensor produced no samples\r\n");
-        ctx->fault_code = beep_for(BR_SENSOR_FAIL);
+        ctx->diag |= DIAG_SENSOR_FAIL;
+        ctx->fault_code = beep_for(BR_SYSTEM_FAILURE);
         return SEVT_FAULT;
     }
 
     return SEVT_NONE;
 }
 
-/* Every fault present on the pad, in report order, into ctx->fault_codes.
+/* What the pad check found, as DIAG_* bits. Several can be true at once.
  *
- * Separate from the caller because it is the part with the conditions in it,
- * and the caller was over the complexity limit CI enforces once this stopped
- * being an else-if chain.
- *
- * It WAS an else-if chain, so a board with both channels open reported only
- * channel 1: the operator fixed it, heard the next code, and learned about the
- * second fault on a second trip to the pad. */
+ * Separate from the beep because they are different questions: this is what
+ * is wrong, and beep_for_diag() below is what to do about it. */
 static void collect_pad_faults(flight_context_t *ctx, const hal_continuity_t *c1, const hal_continuity_t *c2) {
     int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
-    bool over = (ctx->config.pyro1_mode != PYRO_MODE_DELAY && ctx->config.pyro1_value > max_units) ||
-                (ctx->config.pyro2_mode != PYRO_MODE_DELAY && ctx->config.pyro2_value > max_units);
-
-    int n = 0;
-    if (over) {
-        ctx->fault_codes[n++] = beep_for(BR_CFG_RANGE);
+    if ((ctx->config.pyro1_mode != PYRO_MODE_DELAY && ctx->config.pyro1_value > max_units) ||
+        (ctx->config.pyro2_mode != PYRO_MODE_DELAY && ctx->config.pyro2_value > max_units)) {
+        ctx->diag |= DIAG_CFG_RANGE;
     }
     /* A released channel is a Lua output, not a firing path. Its mocked
-     * continuity reads open by design, and beeping "pyro 1 open" for a pad the
-     * operator deliberately gave away is a false alarm they cannot clear. */
+     * continuity reads open by design, and reporting "check the pyro" for a
+     * pad the operator deliberately gave away is a false alarm they cannot
+     * clear. */
     if (!c1->good && !pyro_release_is_released(1)) {
-        ctx->fault_codes[n++] = beep_for(c1->open ? BR_P1_OPEN : BR_P1_SHORT);
+        ctx->diag |= c1->open ? DIAG_P1_OPEN : DIAG_P1_SHORT;
     }
     if (!c2->good && !pyro_release_is_released(2)) {
-        ctx->fault_codes[n++] = beep_for(c2->open ? BR_P2_OPEN : BR_P2_SHORT);
+        ctx->diag |= c2->open ? DIAG_P2_OPEN : DIAG_P2_SHORT;
     }
-    ctx->fault_count = (uint8_t)n;
+}
+
+/* Which of the three things to say.
+ *
+ * There are three beeps because there are three actions available standing at
+ * a rocket: fly it, adjust an igniter, or safe it and walk away. Anything
+ * that cannot be fixed at the pad outranks anything that can, so a board with
+ * both a dead sensor and an open igniter sends the operator away. */
+uint8_t beep_for_diag(uint16_t diag) {
+    if (diag & DIAG_FATAL_ANY) {
+        return beep_for(BR_SYSTEM_FAILURE);
+    }
+    if (diag & DIAG_PYRO_ANY) {
+        return beep_for(BR_CHECK_PYRO);
+    }
+    return beep_for(BR_OK_TO_FLY);
 }
 
 static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { /* [PYR-CONT-01, PYR-ALT-02] */
@@ -334,7 +345,7 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
     ctx->buzzer_started = true;
     collect_pad_faults(ctx, &c1, &c2);
 
-    uint8_t code = ctx->fault_count ? ctx->fault_codes[0] : beep_for(BR_ALL_GOOD);
+    uint8_t code = beep_for_diag(ctx->diag);
     ctx->last_status_code = code; /* [GND-TEST-01] remember for BEEP STATUS replay */
     buzzer_play_code(code, 2);    /* [BUZ-02] play status code twice then stop */
 }
