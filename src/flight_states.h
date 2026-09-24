@@ -18,6 +18,11 @@ typedef enum {
     DROGUE_DESCENT, /* drogue deployed, before main chute fires */
     CHUTE_DESCENT,  /* main chute deployed, descending to landing */
     LANDED,
+    /* Appended, not inserted. State numbers reach the flight log, the CSV,
+     * the telemetry sentences and /api/status, so renumbering PAD_IDLE would
+     * make every previously recorded flight read wrong. */
+    BOOT_SENSOR, /* the pressure sensor is tested BEFORE the pyros */
+    FAULT,       /* terminal: the board cannot fly and says so */
     STATE_COUNT
 } flight_state_t;
 
@@ -33,6 +38,7 @@ typedef enum {
     SEVT_DROGUE, /* pyro1 (drogue) fired — transition FALLING→DROGUE_DESCENT */
     SEVT_CHUTE,  /* pyro2 (main) fired — transition DROGUE_DESCENT→CHUTE_DESCENT */
     SEVT_LANDING,
+    SEVT_FAULT, /* a power-up test failed; nothing recovers from this */
 } state_event_t;
 
 // Forward declare for function pointer types
@@ -142,6 +148,18 @@ typedef struct flight_context_t {
     int32_t last_raw_pressure;   // raw sensor Pa before IIR filter (for debug)
     // Last continuity status beep code [GND-TEST-01]
     uint8_t last_status_code;
+
+    /* Power-up self-test results. sensor_type is what hal_pressure_init()
+     * returned; 0 means no sensor answered. A board that cannot measure
+     * altitude cannot fly, so it must not report itself ready. */
+    uint8_t sensor_type;
+    bool fs_ok;
+    uint8_t fault_code; /* the beep code FAULT repeats; 0 until set */
+
+    /* Every pad fault found, not just the one being beeped. The buzzer can
+     * only say one code at a time; /api/status can say all of them. */
+    uint8_t fault_codes[3];
+    uint8_t fault_count;
     // Ground test state machine [GND-TEST-01..04, DD-011]
     ground_test_ctx_t gt;
 } flight_context_t;

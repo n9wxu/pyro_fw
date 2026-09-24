@@ -252,8 +252,13 @@ static err_t on_sent(void *arg, struct tcp_pcb *pcb, u16_t len);
 
 /* ── API handlers ─────────────────────────────────────────────────── */
 
-static const char *state_names[] = {"BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALIBRATE", "PAD_IDLE", "ASCENT",
-                                    "FALLING",     "DROGUE_DESCENT",  "CHUTE_DESCENT",  "LANDED"};
+/* Indexed by flight_state_t, so the order here follows the enum -- including
+ * BOOT_SENSOR and FAULT, which are appended there to keep the numbers that
+ * reach the flight log and telemetry stable. */
+static const char *state_names[] = {"BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALIBRATE", "PAD_IDLE",
+                                    "ASCENT",      "FALLING",         "DROGUE_DESCENT", "CHUTE_DESCENT",
+                                    "LANDED",      "BOOT_SENSOR",     "FAULT"};
+#define STATE_NAME_COUNT ((int)(sizeof(state_names) / sizeof(state_names[0])))
 
 /* Main-loop pacing counters (main_hardware.c). Reported so the budget a
  * board declares in board.cmake can be checked against what it actually
@@ -297,7 +302,7 @@ static void apply_api_config(struct tcp_pcb *pcb, char *cfgbuf) {
                  "Content-Type: application/json\r\n\r\n"
                  "{\"error\":\"Device not ready (state=%s)\","
                  "\"state\":\"%s\",\"reboot_required\":true}",
-                 state_names[state < 7 ? state : 0], state_names[state < 7 ? state : 0]);
+                 state_names[state < STATE_NAME_COUNT ? state : 0], state_names[state < STATE_NAME_COUNT ? state : 0]);
         tcp_write(pcb, err_msg, strlen(err_msg), TCP_WRITE_FLAG_COPY);
         return;
     } else {
@@ -386,7 +391,7 @@ static void apply_api_pins(struct tcp_pcb *pcb, char *body) {
          * board would move the pyro pins mid-flight. */
         char jb[160];
         int jn = snprintf(jb, sizeof(jb), "{\"error\":\"Device not ready (state=%s)\",\"reboot_required\":true}",
-                          state_names[st < 7 ? st : 0]);
+                          state_names[st < STATE_NAME_COUNT ? st : 0]);
         snprintf(resp, sizeof(resp),
                  "HTTP/1.1 409 Conflict\r\n" CORS_HDR "Connection: close\r\n"
                  "Content-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
@@ -540,6 +545,18 @@ static void serve_api_status(struct tcp_pcb *pcb) {
     } else {
         snprintf(bridge_desc, sizeof(bridge_desc), "none");
     }
+    /* Every pad fault found, not just the one the buzzer is playing. */
+    extern flight_context_t *flight_get_context(void);
+    const flight_context_t *fctx = flight_get_context();
+    char fault_list[32] = {0};
+    if (fctx) {
+        int fl = 0;
+        for (int i = 0; i < fctx->fault_count && i < 3 && fl < (int)sizeof(fault_list) - 6; i++) {
+            fl += snprintf(fault_list + fl, sizeof(fault_list) - (size_t)fl, "%s%u", i ? "," : "",
+                           (unsigned)fctx->fault_codes[i]);
+        }
+    }
+
     char buf[1280];
     const char *sn = (g_status.state < (int)(sizeof(state_names) / sizeof(state_names[0])))
                          ? state_names[g_status.state]
@@ -581,6 +598,7 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         "\"flash_erases\":%lu,\"flash_programs\":%lu,\"flash_deferrals\":%lu,"
         "\"pins_reason\":\"%s\",\"pyro1_released\":%s,\"pyro2_released\":%s,\"bridge\":\"%s\","
         "\"pyro_mocked\":%lu,\"pyro1_real\":%s,\"pyro2_real\":%s,"
+        "\"sensor_ok\":%s,\"fs_ok\":%s,\"fault_code\":%u,\"faults\":[%s],"
         "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u}",
         sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
         (long)g_status.pressure_pa, g_status.pyro1_continuity ? "true" : "false",
@@ -603,8 +621,12 @@ static void serve_api_status(struct tcp_pcb *pcb) {
          * agree in every normal case; showing both is how a disagreement --
          * a channel that could not take its pads -- becomes visible rather
          * than being read off the intent. */
-        pyro_release_is_released(1) ? "false" : "true", pyro_release_is_released(2) ? "false" : "true", board_serial(),
-        board_serial_assigned() ? "true" : "false", board_hw_id(), (unsigned)board_subnet_octet());
+        pyro_release_is_released(1) ? "false" : "true", pyro_release_is_released(2) ? "false" : "true",
+        /* The power-up self-test, said out loud. A board that cannot measure
+         * altitude used to report itself healthy here and beep "all good". */
+        fctx && fctx->sensor_type ? "true" : "false", fctx && fctx->fs_ok ? "true" : "false",
+        (unsigned)(fctx ? fctx->fault_code : 0), fault_list, board_serial(), board_serial_assigned() ? "true" : "false",
+        board_hw_id(), (unsigned)board_subnet_octet());
     if (pos < 0)
         return;
     if ((size_t)pos >= sizeof(buf))

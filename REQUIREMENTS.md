@@ -68,6 +68,14 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-ASC-07**: The system shall not arm pyrotechnics unless maximum vertical speed during ASCENT exceeded 20 m/s. ← PYR-SAFE-04
 
 #### Landing Detection
+### Power-up Self-Test
+- **FLT-BOOT-11**: The system shall test the pressure sensor before the pyro channels. ← FLT-PHASE-01
+- **FLT-BOOT-12**: The system shall enter a terminal FAULT state, and beep the sensor failure code, when no pressure sensor answers. ← FLT-BOOT-11
+- **FLT-BOOT-13**: The system shall enter FAULT when calibration produces no samples within 10 seconds, rather than proceeding to PAD_IDLE. ← FLT-BOOT-11
+- **FLT-BOOT-14**: The system shall enter FAULT, and beep the filesystem failure code, when the filesystem does not mount. ← FLT-BOOT-11
+- **FLT-BOOT-15**: The system shall report every pad fault found, not only the first. ← SYS-STATUS-02
+- **FLT-BOOT-16**: The system shall not report a continuity fault for a pyro channel released to Lua. ← FLT-BOOT-15
+
 - **FLT-LAND-01**: The system shall detect landing when altitude change is less than 1 meter between consecutive samples for at least 1 second. ← FLT-PHASE-03
 - **FLT-LAND-02**: The system shall require vertical speed below 2 m/s for landing detection. ← FLT-PHASE-03
 - **FLT-LAND-03**: The system shall require altitude below 30 meters AGL for landing detection. ← FLT-PHASE-03

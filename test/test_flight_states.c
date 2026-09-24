@@ -2,6 +2,7 @@
  * Unit tests for flight state machine and telemetry.
  */
 #include "unity.h"
+#include "../src/buzzer.h"
 #include "mocks.h"
 #include <string.h>
 #include "../src/flight_states.h"
@@ -20,8 +21,15 @@ static void boot_to_pad_idle(flight_context_t *ctx) {
     ctx->boot_timer = 0;
     mock_time_ms = 0;
 
-    /* BOOT_SETTLE → BOOT_CONTINUITY (after 2500ms) */
+    /* BOOT_SETTLE → BOOT_SENSOR (after 2500ms) */
     mock_time_ms = 2600;
+    ctx->current_state = step(ctx, mock_time_ms);
+    TEST_ASSERT_EQUAL(BOOT_SENSOR, ctx->current_state);
+
+    /* BOOT_SENSOR → BOOT_CONTINUITY. The sensor is tested before the pyros,
+       so a board with no sensor never reaches the continuity beep. */
+    ctx->sensor_type = 2;
+    ctx->fs_ok = true;
     ctx->current_state = step(ctx, mock_time_ms);
     TEST_ASSERT_EQUAL(BOOT_CONTINUITY, ctx->current_state);
 
@@ -139,15 +147,23 @@ void test_SNS_PRES_01_boot_no_sensor(void) {
     /* BOOT_SETTLE → BOOT_CONTINUITY → BOOT_CALIBRATE */
     mock_time_ms = 2600;
     ctx.current_state = step(&ctx, mock_time_ms);
-    ctx.current_state = step(&ctx, mock_time_ms);
+    TEST_ASSERT_EQUAL(BOOT_SENSOR, ctx.current_state);
 
-    /* Run 10 calibration attempts — no sensor returns false every time,
-     * so the device stays stuck in BOOT_CALIBRATE (correct behavior). */
+    /* No sensor answered at init. The board must NOT proceed to the pyro
+       test and beep "all good" -- it cannot measure altitude, so it can
+       never detect a launch. It goes to FAULT and says so. */
+    ctx.sensor_type = 0;
+    ctx.fs_ok = true;
+    ctx.current_state = step(&ctx, mock_time_ms);
+    TEST_ASSERT_EQUAL_MESSAGE(FAULT, ctx.current_state, "a board with no sensor must fault, not idle");
+    TEST_ASSERT_EQUAL_MESSAGE(BEEP_SENSOR_FAIL, ctx.fault_code, "and must beep the sensor code");
+
+    /* Terminal: nothing recovers from it. */
     for (int i = 0; i < 10; i++) {
         mock_time_ms += 110;
         ctx.current_state = step(&ctx, mock_time_ms);
     }
-    TEST_ASSERT_EQUAL(BOOT_CALIBRATE, ctx.current_state);
+    TEST_ASSERT_EQUAL(FAULT, ctx.current_state);
     TEST_ASSERT_EQUAL(0, ctx.ground_pressure);
 }
 
@@ -157,8 +173,8 @@ void test_FLT_BOOT_04_settle_wait(void) {
     ctx.boot_timer = 0;
     /* Before 2500ms — stays in settle */
     TEST_ASSERT_EQUAL(BOOT_SETTLE, step(&ctx, 2000));
-    /* After 2500ms — advances to continuity */
-    TEST_ASSERT_EQUAL(BOOT_CONTINUITY, step(&ctx, 2600));
+    /* After 2500ms — advances to the sensor test */
+    TEST_ASSERT_EQUAL(BOOT_SENSOR, step(&ctx, 2600));
 }
 
 /* ── PAD_IDLE tests ───────────────────────────────────────────────── */
@@ -713,10 +729,13 @@ void test_FLT_BOOT_10_no_false_launch_on_drift(void) {
     /* Calibration pressure: 101325 Pa (stable during boot) */
     mock_pressure.pressure_pa = 101325.0f;
 
-    /* Run through boot: BOOT_SETTLE → BOOT_CONTINUITY → BOOT_CALIBRATE → PAD_IDLE */
+    /* Boot: SETTLE → SENSOR → CONTINUITY → CALIBRATE → PAD_IDLE */
+    ctx.sensor_type = 2;
+    ctx.fs_ok = true;
     mock_time_ms = 2600;
-    ctx.current_state = step(&ctx, mock_time_ms); /* BOOT_SETTLE → BOOT_CONTINUITY */
-    ctx.current_state = step(&ctx, mock_time_ms); /* BOOT_CONTINUITY → BOOT_CALIBRATE */
+    ctx.current_state = step(&ctx, mock_time_ms); /* SETTLE → SENSOR     */
+    ctx.current_state = step(&ctx, mock_time_ms); /* SENSOR → CONTINUITY */
+    ctx.current_state = step(&ctx, mock_time_ms); /* CONTINUITY → CALIBRATE */
     for (int i = 0; i < 10; i++) {
         mock_time_ms += 110;
         ctx.current_state = step(&ctx, mock_time_ms);

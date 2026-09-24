@@ -104,6 +104,14 @@ void hal_telemetry_send(const char *sentence);
 /* ── Filesystem ───────────────────────────────────────────────────── */
 
 int hal_fs_mount(void); /* returns 0 on success, <0 on error */
+
+/* Whether the last hal_fs_mount() succeeded.
+ *
+ * hal_platform_init() mounts before the flight software exists, and its
+ * return was discarded, so a board whose filesystem would not mount reported
+ * itself healthy. BEEP_FS_FAIL has been defined since the beginning and was
+ * emitted from nowhere. */
+bool hal_fs_healthy(void);
 void hal_fs_unmount(void);
 int hal_fs_read_file(const char *path, char *buf, int max_len);     /* returns bytes read, <0 on error */
 int hal_fs_write_file(const char *path, const char *data, int len); /* returns 0 on success */

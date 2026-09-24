@@ -502,6 +502,12 @@ static bool flash_writable(void) {
     return flash_window_is_open();
 }
 
+static bool fs_ok;
+
+bool hal_fs_healthy(void) {
+    return fs_ok;
+}
+
 int hal_fs_mount(void) {
     lfs_t lfs;
     int err = lfs_mount(&lfs, &lfs_pico_flash_config);
@@ -511,6 +517,7 @@ int hal_fs_mount(void) {
     }
     if (err == 0)
         lfs_unmount(&lfs);
+    fs_ok = (err == 0);
     return err;
 }
 

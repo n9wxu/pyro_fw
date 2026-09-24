@@ -19,6 +19,7 @@ __attribute__((weak)) bool lua_app_ready_or_absent(void) {
 #include "telemetry_formatter.h"
 #include "ground_test.h"
 #include "buzzer.h"
+#include "pyro_release.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -204,6 +205,37 @@ static state_event_t detect_boot_settle(flight_context_t *ctx, uint32_t now) {
     return (now - ctx->boot_timer >= 2500) ? SEVT_TIMER : SEVT_NONE;
 }
 
+/* The first power-up test is the sensor.
+ *
+ * Testing the pyros first and beeping "all good" leaves an operator on the pad
+ * with a board that cannot measure altitude -- it will never detect launch,
+ * never arm and never deploy. The continuity verdict is worth nothing until
+ * this one has passed, so it comes first and a failure is terminal. */
+static state_event_t detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
+    (void)now;
+    extern void hal_telemetry_send(const char *sentence);
+    if (ctx->sensor_type == 0) {
+        hal_telemetry_send("!SENSOR FAIL - no pressure sensor answered\r\n");
+        ctx->fault_code = BEEP_SENSOR_FAIL;
+        return SEVT_FAULT;
+    }
+    if (!ctx->fs_ok) {
+        hal_telemetry_send("!FS FAIL - filesystem did not mount\r\n");
+        ctx->fault_code = BEEP_FS_FAIL;
+        return SEVT_FAULT;
+    }
+    return SEVT_DONE;
+}
+
+/* Terminal. The board keeps serving HTTP and telemetry so the failure can be
+ * diagnosed, but the flight machine goes no further and the buzzer repeats the
+ * code until power is removed -- an operator at the pad has no console. */
+static state_event_t detect_fault(flight_context_t *ctx, uint32_t now) {
+    (void)ctx;
+    (void)now;
+    return SEVT_NONE;
+}
+
 /* [SYS-STATUS-02] */
 static state_event_t detect_boot_continuity(flight_context_t *ctx, uint32_t now) {
     (void)now;
@@ -224,11 +256,16 @@ static state_event_t detect_boot_calibrate(flight_context_t *ctx, uint32_t now) 
     if (pp_cal_done())
         return SEVT_CAL_DONE;
 
-    /* Timeout if calibration takes too long (sensor failure) */
+    /* A sensor that answered at init but produces no samples.
+     *
+     * This used to force PAD_IDLE, which left pp stuck in PP_CALIBRATING so
+     * pp_read() never yielded a sample: the board sat on the pad looking
+     * healthy, beeped "all good", and could not have detected a launch. */
     if (now - ctx->boot_timer >= 10000) {
         extern void hal_telemetry_send(const char *sentence);
-        hal_telemetry_send("!CAL TIMEOUT - sensor failed, forcing PAD_IDLE\r\n");
-        return SEVT_CAL_DONE; /* Force transition to PAD_IDLE */
+        hal_telemetry_send("!CAL TIMEOUT - sensor produced no samples\r\n");
+        ctx->fault_code = BEEP_SENSOR_FAIL;
+        return SEVT_FAULT;
     }
 
     return SEVT_NONE;
@@ -267,13 +304,29 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
     int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
     bool p1_over = (ctx->config.pyro1_mode != PYRO_MODE_DELAY && ctx->config.pyro1_value > max_units);
     bool p2_over = (ctx->config.pyro2_mode != PYRO_MODE_DELAY && ctx->config.pyro2_value > max_units);
-    uint8_t code = BEEP_ALL_GOOD;
+    /* Every fault that is present, in order, rather than only the first.
+     *
+     * This was an else-if chain, so a board with both channels open reported
+     * only channel 1 -- the operator fixed it, heard the next code, and
+     * learned about the second fault on the second trip to the pad. */
+    uint8_t codes[3];
+    int n = 0;
     if (p1_over || p2_over)
-        code = BEEP_CFG_RANGE;
-    else if (!c1.good)
-        code = c1.open ? BEEP_P1_OPEN : BEEP_P1_SHORT;
-    else if (!c2.good)
-        code = c2.open ? BEEP_P2_OPEN : BEEP_P2_SHORT;
+        codes[n++] = BEEP_CFG_RANGE;
+    /* A released channel is a Lua output, not a firing path. Its mocked
+     * continuity reads open by design, and beeping "pyro 1 open" for a pad
+     * the operator deliberately gave away is a false alarm they cannot
+     * clear. */
+    if (!c1.good && !pyro_release_is_released(1))
+        codes[n++] = c1.open ? BEEP_P1_OPEN : BEEP_P1_SHORT;
+    if (!c2.good && !pyro_release_is_released(2))
+        codes[n++] = c2.open ? BEEP_P2_OPEN : BEEP_P2_SHORT;
+
+    ctx->fault_count = (uint8_t)n;
+    for (int i = 0; i < n && i < (int)(sizeof(ctx->fault_codes) / sizeof(ctx->fault_codes[0])); i++)
+        ctx->fault_codes[i] = codes[i];
+
+    uint8_t code = n ? codes[0] : BEEP_ALL_GOOD;
     ctx->last_status_code = code; /* [GND-TEST-01] remember for BEEP STATUS replay */
     buzzer_play_code(code, 2);    /* [BUZ-02] play status code twice then stop */
 }
@@ -532,6 +585,15 @@ static state_event_t detect_landed(flight_context_t *ctx, uint32_t now) {
 
 /* ── Transition actions ───────────────────────────────────────────── */
 
+/* Repeat forever: a repeat count of 0 is infinite and nothing clears it. There
+ * is no recovery from a failed power-up test, so the board must not fall silent
+ * and look like it passed. */
+static void action_fault(flight_context_t *ctx, uint32_t now) {
+    (void)now;
+    ctx->last_status_code = ctx->fault_code;
+    buzzer_play_code(ctx->fault_code, 0);
+}
+
 static void action_cal_init(flight_context_t *ctx, uint32_t now) {
     (void)now;
     pp_start_cal(); /* pressure_processing layer handles calibration */
@@ -617,10 +679,15 @@ static const detect_fn detectors[STATE_COUNT] = {
     [DROGUE_DESCENT] = detect_drogue_descent,
     [CHUTE_DESCENT] = detect_chute_descent,
     [LANDED] = detect_landed,
+    [BOOT_SENSOR] = detect_boot_sensor,
+    [FAULT] = detect_fault,
 };
 
 static const transition_t transitions[] = {
-    {BOOT_SETTLE, SEVT_TIMER, BOOT_CONTINUITY, NULL},
+    {BOOT_SETTLE, SEVT_TIMER, BOOT_SENSOR, NULL},
+    {BOOT_SENSOR, SEVT_DONE, BOOT_CONTINUITY, NULL},
+    {BOOT_SENSOR, SEVT_FAULT, FAULT, action_fault},
+    {BOOT_CALIBRATE, SEVT_FAULT, FAULT, action_fault},
     {BOOT_CONTINUITY, SEVT_DONE, BOOT_CALIBRATE, action_cal_init},
     {BOOT_CALIBRATE, SEVT_CAL_DONE, PAD_IDLE, action_ground_cal},
     {PAD_IDLE, SEVT_LAUNCH, ASCENT, action_launch},
@@ -740,7 +807,11 @@ void flight_init(flight_context_t *ctx) {
     telemetry_init(&ctx->config);
     buzzer_init();
     pp_init();
-    hal_pressure_init();
+    /* Captured, not discarded. 0 means no sensor answered, and BOOT_SENSOR
+     * turns that into a terminal fault rather than a board that beeps "all
+     * good" and then never detects a launch. */
+    ctx->sensor_type = (uint8_t)hal_pressure_init();
+    ctx->fs_ok = hal_fs_healthy();
     hal_pyro_init();
     ctx->boot_timer = hal_time_ms();
 

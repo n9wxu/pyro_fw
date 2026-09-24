@@ -19,6 +19,44 @@ Setting `c1_busy` first, with a barrier, makes the two conditions overlap so
 one always holds. Affects every board and every configuration, not just the
 bridge.
 
+## ✅ Power-up self-test: the sensor is tested first (item 10)
+
+A board with a dead barometer used to beep `BEEP_ALL_GOOD` and sit on the pad.
+`hal_pressure_init()` returns a sensor type and `flight_init()` discarded it;
+`BOOT_CALIBRATE` then timed out after 10 s, sent a `!CAL TIMEOUT` line out the
+telemetry UART only, and **returned `SEVT_CAL_DONE` anyway**, entering PAD_IDLE
+as if healthy. `pp` stayed in `PP_CALIBRATING` forever, so `pp_read()` never
+yielded a sample and the board could never have detected a launch.
+
+Now: a new `BOOT_SENSOR` state runs **before** `BOOT_CONTINUITY`, so the
+continuity verdict is never beeped on a board that cannot measure altitude.
+A missing sensor, a calibration that produces no samples, or a filesystem that
+will not mount each go to a terminal `FAULT` state which repeats the
+corresponding code — `BEEP_SENSOR_FAIL` (4-1) or `BEEP_FS_FAIL` (4-2), both
+defined since the beginning and emitted from nowhere until now.
+
+`BOOT_SENSOR` and `FAULT` are **appended** to `flight_state_t`, not inserted:
+state numbers reach the flight log, the CSV, the telemetry sentences and
+`/api/status`, so renumbering PAD_IDLE would make every recorded flight read
+wrong. The hardcoded `state < 7` bounds in `http_server.c` are gone.
+
+Two related fixes:
+
+- **Every fault is reported, not just the first.** The `else if` chain meant a
+  board with both channels open reported only channel 1; the operator fixed it,
+  heard the next code, and learned about the second fault on a second trip to
+  the pad. `/api/status` now carries `faults[]`.
+- **A released channel no longer false-alarms.** Its mocked continuity reads
+  open by design, so the board was beeping "pyro 1 open" for a pad the operator
+  deliberately gave to Lua.
+
+`/api/status` gained `sensor_ok`, `fs_ok`, `fault_code` and `faults[]`.
+
+Verified on MK1B by injecting a sensor failure: `state=FAULT`,
+`fault_code=65` (beeps 4-1), terminal across 75 s, and still serving HTTP so
+OTA can recover it. Healthy boot unchanged: `PAD_IDLE`, `sensor_ok=true`,
+`faults=[]`.
+
 ## 🚧 Configurable pin assignment — in progress
 
 Plan: pyro functions become movable or disableable, freed pins become

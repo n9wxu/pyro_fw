@@ -220,6 +220,12 @@ void hal_telemetry_send(const char *sentence) {
     }
 }
 
+/* The simulator's filesystem is memory, so the mount cannot fail. Present because
+ * hal.h asks for it. */
+bool hal_fs_healthy(void) {
+    return true;
+}
+
 int hal_fs_mount(void) {
     return 0;
 }
