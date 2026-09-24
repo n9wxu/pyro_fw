@@ -103,6 +103,17 @@ function generateFlightCSV() {
 
 /* ── HTTP Server ──────────────────────────────────────────────────── */
 
+let beepReason = '';
+let beepRows = [
+  {key:'all_good',    d1:1, d2:1, def1:1, def2:1, what:'Self-test passed: sensor, filesystem and both pyro channels are good'},
+  {key:'sensor_fail', d1:4, d2:1, def1:4, def2:1, what:'No pressure sensor answered. The board cannot detect a launch'},
+  {key:'fs_fail',     d1:4, d2:2, def1:4, def2:2, what:'The filesystem did not mount'},
+  {key:'cfg_range',   d1:4, d2:3, def1:4, def2:3, what:'A pyro altitude setting is above what the sensor can measure'},
+  {key:'p1_open',     d1:2, d2:1, def1:2, def2:1, what:'Pyro 1 reads open: no igniter, or a broken lead'},
+  {key:'p2_open',     d1:3, d2:1, def1:3, def2:1, what:'Pyro 2 reads open: no igniter, or a broken lead'},
+  {key:'critical',    d1:5, d2:5, def1:5, def2:5, what:'A failure the firmware could not classify'}
+];
+
 let pinsIni = '[pins]\r\npyro1_released=true\r\npyro2_released=true\r\n';
 
 const MIME = {'.html':'text/html','.js':'application/javascript','.css':'text/css'};
@@ -137,6 +148,52 @@ const server = http.createServer((req, res) => {
       pendingConfig = body;
       res.writeHead(200, {...cors, 'Content-Type': 'application/json'});
       res.end(JSON.stringify({applied: false}));
+    });
+    return;
+  }
+
+  /* ── Beep codes ────────────────────────────────────────────────
+   *
+   * Shape follows the firmware: reasons with their meaning, their current
+   * code and the shipped one, so the tab holds no copy of the vocabulary. */
+  if (req.url === '/api/beeps' && req.method === 'GET') {
+    res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+    res.end(JSON.stringify({
+      digit_min: 1, digit_max: 9, reason: beepReason,
+      beeps: beepRows.map(r => ({
+        key: r.key, d1: r.d1, d2: r.d2, def1: r.def1, def2: r.def2, what: r.what
+      }))
+    }));
+    return;
+  }
+
+  if (req.url === '/api/beeps' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      const seen = {};
+      let bad = null, dup = null;
+      body.split('\n').forEach(l => {
+        const m = l.trim().match(/^([a-z0-9_]+)=(\d\d)$/);
+        if (!m) return;
+        const row = beepRows.find(r => r.key === m[1]);
+        if (!row) return;
+        const d1 = +m[2][0], d2 = +m[2][1];
+        if (d1 < 1 || d1 > 9 || d2 < 1 || d2 > 9) { bad = m[1]; return; }
+        const k = m[2];
+        if (seen[k]) dup = m[1];
+        seen[k] = m[1];
+        row.d1 = d1; row.d2 = d2;
+      });
+      if (bad || dup) {
+        res.writeHead(400, {...cors, 'Content-Type':'application/json'});
+        res.end(JSON.stringify({error: bad ? 'each digit must be 1 to 9' :
+                                             'two reasons share a code', reason: bad || dup}));
+        return;
+      }
+      beepReason = '';
+      res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+      res.end(JSON.stringify({status:'ok', reboot_required:false}));
     });
     return;
   }

@@ -3,6 +3,7 @@
  */
 #include "unity.h"
 #include "../src/buzzer.h"
+#include "../src/beep_store.h"
 #include "mocks.h"
 #include <string.h>
 #include "../src/flight_states.h"
@@ -156,7 +157,7 @@ void test_SNS_PRES_01_boot_no_sensor(void) {
     ctx.fs_ok = true;
     ctx.current_state = step(&ctx, mock_time_ms);
     TEST_ASSERT_EQUAL_MESSAGE(FAULT, ctx.current_state, "a board with no sensor must fault, not idle");
-    TEST_ASSERT_EQUAL_MESSAGE(BEEP_SENSOR_FAIL, ctx.fault_code, "and must beep the sensor code");
+    TEST_ASSERT_EQUAL_MESSAGE(beep_for(BR_SENSOR_FAIL), ctx.fault_code, "and must beep the sensor code");
 
     /* Terminal: nothing recovers from it. */
     for (int i = 0; i < 10; i++) {

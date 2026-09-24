@@ -29,20 +29,15 @@ typedef struct {
 #define BEEP_DIGIT1(code) (((code) >> 4) & 0x0F)
 #define BEEP_DIGIT2(code) ((code) & 0x0F)
 
-/* Status codes */
+/* The codes themselves live in beep_codes.h, one row per REASON, and are
+ * configurable through beep.ini. The firmware asks beep_for(BR_...) and gets
+ * whatever is assigned; nothing outside beep_store.c should hold a raw code.
+ *
+ * These names remain only for the tests, which exercise the PATTERN a given
+ * code produces and therefore need a literal one. */
 #define BEEP_ALL_GOOD BEEP_CODE(1, 1)
-#define BEEP_P1_OPEN BEEP_CODE(2, 1)
-#define BEEP_P1_SHORT BEEP_CODE(2, 2)
 #define BEEP_P1_FAULT BEEP_CODE(2, 3)
-#define BEEP_P1_NO_OPEN BEEP_CODE(2, 4)
-#define BEEP_P2_OPEN BEEP_CODE(3, 1)
-#define BEEP_P2_SHORT BEEP_CODE(3, 2)
-#define BEEP_P2_FAULT BEEP_CODE(3, 3)
 #define BEEP_P2_NO_OPEN BEEP_CODE(3, 4)
-#define BEEP_SENSOR_FAIL BEEP_CODE(4, 1)
-#define BEEP_FS_FAIL BEEP_CODE(4, 2)
-#define BEEP_CFG_RANGE BEEP_CODE(4, 3) /* pyro altitude setting out of range */
-#define BEEP_CRITICAL BEEP_CODE(5, 5)
 
 /* ── Public API ───────────────────────────────────────────────────── */
 

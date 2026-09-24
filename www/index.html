@@ -13,6 +13,7 @@
   <button class="tab active" onclick="showTab('status')">Status</button>
   <button class="tab" onclick="showTab('config')">Config</button>
   <button class="tab" onclick="showTab('data')">Flight Data</button>
+  <button class="tab" onclick="showTab('beeps')">Beep Codes</button>
   <button class="tab" onclick="showTab('lua')">Lua</button>
   <button class="tab" onclick="showTab('update')">Update</button>
 </div>
@@ -134,6 +135,21 @@
   <canvas id="flightGraph" width="660" height="300" style="border:1px solid #ccc;width:100%;max-width:660px"></canvas>
 </div>
 
+
+<!-- ── Beep Codes ──────────────────────────────────────────────── -->
+<div id="tab-beeps" class="tabpanel" style="display:none">
+  <p class="hint" id="bpHint">Loading the beep table…</p>
+  <p class="hint">Each code is two digits, heard as two groups of beeps after
+     ten short chirps. A digit is 1 to 9 — zero beeps cannot be heard, and
+     nobody counts fifteen. Two reasons may not share a code.</p>
+  <table class="info" id="bpTable"></table>
+  <div id="bpWarn"></div>
+  <div class="btnrow">
+    <button id="btnSaveBeeps" onclick="beepsSave()">💾 Save beep codes</button>
+    <button onclick="beepsDefaults()">🏭 Shipped codes</button>
+    <span id="bpMsg"></span>
+  </div>
+</div>
 
 <!-- ── Tab 5: Lua ─────────────────────────────────────────────── -->
 <div id="tab-lua" class="tabpanel" style="display:none">

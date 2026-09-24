@@ -328,6 +328,8 @@ add_executable(pyro_fw_c
     src/pin_caps.c
     src/pin_assign.c
     src/pin_store.c
+    src/beep_codes.c
+    src/beep_store.c
     # TinyUSB networking helpers
     ${TINYUSB_DIR}/lib/networking/dhserver.c
     ${TINYUSB_DIR}/lib/networking/dnserver.c
@@ -499,6 +501,8 @@ add_custom_target(host_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
@@ -523,6 +527,8 @@ add_custom_target(integration_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
@@ -546,6 +552,8 @@ add_custom_target(closedloop_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
@@ -599,6 +607,8 @@ add_custom_target(sim
                ${CMAKE_CURRENT_LIST_DIR}/sim/main_sim.c
                ${PYRO_HOST_HAL_SOURCES}
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
@@ -662,6 +672,21 @@ add_custom_target(pin_caps_tests
     COMMENT "Pin capability table tests"
 )
 
+# The beep vocabulary: the rules half, with no file I/O, like pin_assign.
+add_custom_target(beep_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building beep code tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_beep_codes.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_beep_codes
+    COMMAND ${CMAKE_COMMAND} -E echo "Running beep code tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_beep_codes
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Beep code vocabulary tests"
+)
+
 # Pin assignment rules. Same reason as pin_caps_tests for pinning to MK1A:
 # the release matrix needs a real table with two channels and a common.
 add_custom_target(pin_assign_tests
@@ -692,6 +717,8 @@ add_custom_target(buzzer_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${unity_SOURCE_DIR}/src/unity.c
@@ -726,6 +753,8 @@ add_custom_target(config_persistence_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c

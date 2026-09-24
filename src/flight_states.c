@@ -19,6 +19,7 @@ __attribute__((weak)) bool lua_app_ready_or_absent(void) {
 #include "telemetry_formatter.h"
 #include "ground_test.h"
 #include "buzzer.h"
+#include "beep_store.h"
 #include "pyro_release.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -216,12 +217,12 @@ static state_event_t detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
     extern void hal_telemetry_send(const char *sentence);
     if (ctx->sensor_type == 0) {
         hal_telemetry_send("!SENSOR FAIL - no pressure sensor answered\r\n");
-        ctx->fault_code = BEEP_SENSOR_FAIL;
+        ctx->fault_code = beep_for(BR_SENSOR_FAIL);
         return SEVT_FAULT;
     }
     if (!ctx->fs_ok) {
         hal_telemetry_send("!FS FAIL - filesystem did not mount\r\n");
-        ctx->fault_code = BEEP_FS_FAIL;
+        ctx->fault_code = beep_for(BR_FS_FAIL);
         return SEVT_FAULT;
     }
     return SEVT_DONE;
@@ -264,7 +265,7 @@ static state_event_t detect_boot_calibrate(flight_context_t *ctx, uint32_t now) 
     if (now - ctx->boot_timer >= 10000) {
         extern void hal_telemetry_send(const char *sentence);
         hal_telemetry_send("!CAL TIMEOUT - sensor produced no samples\r\n");
-        ctx->fault_code = BEEP_SENSOR_FAIL;
+        ctx->fault_code = beep_for(BR_SENSOR_FAIL);
         return SEVT_FAULT;
     }
 
@@ -287,16 +288,16 @@ static void collect_pad_faults(flight_context_t *ctx, const hal_continuity_t *c1
 
     int n = 0;
     if (over) {
-        ctx->fault_codes[n++] = BEEP_CFG_RANGE;
+        ctx->fault_codes[n++] = beep_for(BR_CFG_RANGE);
     }
     /* A released channel is a Lua output, not a firing path. Its mocked
      * continuity reads open by design, and beeping "pyro 1 open" for a pad the
      * operator deliberately gave away is a false alarm they cannot clear. */
     if (!c1->good && !pyro_release_is_released(1)) {
-        ctx->fault_codes[n++] = c1->open ? BEEP_P1_OPEN : BEEP_P1_SHORT;
+        ctx->fault_codes[n++] = beep_for(c1->open ? BR_P1_OPEN : BR_P1_SHORT);
     }
     if (!c2->good && !pyro_release_is_released(2)) {
-        ctx->fault_codes[n++] = c2->open ? BEEP_P2_OPEN : BEEP_P2_SHORT;
+        ctx->fault_codes[n++] = beep_for(c2->open ? BR_P2_OPEN : BR_P2_SHORT);
     }
     ctx->fault_count = (uint8_t)n;
 }
@@ -333,7 +334,7 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
     ctx->buzzer_started = true;
     collect_pad_faults(ctx, &c1, &c2);
 
-    uint8_t code = ctx->fault_count ? ctx->fault_codes[0] : BEEP_ALL_GOOD;
+    uint8_t code = ctx->fault_count ? ctx->fault_codes[0] : beep_for(BR_ALL_GOOD);
     ctx->last_status_code = code; /* [GND-TEST-01] remember for BEEP STATUS replay */
     buzzer_play_code(code, 2);    /* [BUZ-02] play status code twice then stop */
 }
@@ -813,6 +814,9 @@ void flight_init(flight_context_t *ctx) {
     hal_config_load(&ctx->config);
     telemetry_init(&ctx->config);
     buzzer_init();
+    /* Before anything can ask for a code. On the host and the simulator there
+     * is no file, so this publishes the shipped table. */
+    beep_store_load(NULL, 0);
     pp_init();
     /* Captured, not discarded. 0 means no sensor answered, and BOOT_SENSOR
      * turns that into a terminal fault rather than a board that beeps "all

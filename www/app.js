@@ -26,6 +26,7 @@ function showTab(name) {
   if (name === 'data') { loadFlightData(); drawGraph(); }
   if (name === 'lua') { luaInit(); }
   if (name === 'config') { relInit(); }
+  if (name === 'beeps') { beepsInit(); }
 }
 
 /* ── Unit conversion ───────────────────────────────────────────── */
@@ -453,6 +454,117 @@ function waitForReboot(msg) {
 
 
 /* ── Lua ───────────────────────────────────────────────────────── */
+
+/* ── Beep codes ────────────────────────────────────────────────
+ *
+ * The reasons, their meanings and their codes all come from /api/beeps. The
+ * firmware is the only place the vocabulary is written down: a code used to
+ * be a two-digit number an operator heard at the pad with nothing to look it
+ * up in, and seven of the thirteen were never emitted at all.
+ *
+ * Nothing board-specific or reason-specific is hardcoded here, so adding a
+ * reason in beep_codes.h grows a row without touching this file. */
+var beepCaps = null;
+var beepsReady = false;
+
+function beepsInit() {
+  if (beepsReady) return;
+  beepsReady = true;
+  beepsFetch().then(renderBeeps).catch(function(e) {
+    document.getElementById('bpHint').textContent = 'could not read the beep table: ' + e.message;
+  });
+}
+
+function beepsFetch() {
+  return fetch('/api/beeps')
+    .then(function(r) { if (!r.ok) throw new Error('beeps ' + r.status); return r.json(); })
+    .then(function(d) { beepCaps = d; return d; });
+}
+
+function renderBeeps() {
+  var html = '<tr><th>Beeps</th><th>Means</th></tr>';
+  beepCaps.beeps.forEach(function(b) {
+    html += '<tr><td class="lbl">' +
+            '<input id="bd1' + esc(b.key) + '" type="number" min="' + beepCaps.digit_min +
+            '" max="' + beepCaps.digit_max + '" value="' + b.d1 + '" size="2" style="width:3em"' +
+            ' oninput="beepsCheck()"> – ' +
+            '<input id="bd2' + esc(b.key) + '" type="number" min="' + beepCaps.digit_min +
+            '" max="' + beepCaps.digit_max + '" value="' + b.d2 + '" size="2" style="width:3em"' +
+            ' oninput="beepsCheck()">' +
+            '</td><td class="val">' + esc(b.what) + '</td></tr>';
+  });
+  document.getElementById('bpTable').innerHTML = html;
+  document.getElementById('bpHint').innerHTML = beepCaps.beeps.length + ' beep codes.' +
+    (beepCaps.reason ? ' <b>' + esc(beepCaps.reason) + '</b>' : '');
+  beepsCheck();
+}
+
+/* The firmware validates and is authoritative; this catches the mistake that
+   is easy to make and annoying to make twice. */
+function beepsCheck() {
+  if (!beepCaps) return;
+  var seen = {}, dupes = [], bad = [];
+  beepCaps.beeps.forEach(function(b) {
+    var d1 = parseInt(document.getElementById('bd1' + b.key).value, 10);
+    var d2 = parseInt(document.getElementById('bd2' + b.key).value, 10);
+    if (!(d1 >= beepCaps.digit_min && d1 <= beepCaps.digit_max) ||
+        !(d2 >= beepCaps.digit_min && d2 <= beepCaps.digit_max)) {
+      bad.push(b.key);
+      return;
+    }
+    var k = d1 + '-' + d2;
+    if (seen[k]) dupes.push(k); else seen[k] = b.key;
+  });
+
+  var msgs = [];
+  if (bad.length) {
+    msgs.push('<div class="warn">Each digit must be ' + beepCaps.digit_min + ' to ' + beepCaps.digit_max +
+              '. A zero cannot be heard.</div>');
+  }
+  if (dupes.length) {
+    msgs.push('<div class="warn">Two reasons share the code ' + esc(dupes[0]) +
+              '. An operator hearing it would get the wrong answer half the time.</div>');
+  }
+  document.getElementById('bpWarn').innerHTML = msgs.join('');
+}
+
+function beepsSave() {
+  var ini = '[beeps]\r\n';
+  beepCaps.beeps.forEach(function(b) {
+    ini += b.key + '=' + document.getElementById('bd1' + b.key).value +
+           document.getElementById('bd2' + b.key).value + '\r\n';
+  });
+  var msg = document.getElementById('bpMsg');
+  msg.style.color = ''; msg.textContent = ' saving…';
+  fetch('/api/beeps', {method:'POST', headers:{'Content-Type':'text/plain'}, body: ini})
+    .then(function(r) { return r.json().catch(function(){ return {error:'HTTP ' + r.status}; }); })
+    .then(function(d) {
+      if (d.error) {
+        msg.style.color = 'red';
+        msg.textContent = ' ✗ ' + d.error + (d.reason ? ' (' + d.reason + ')' : '');
+        return;
+      }
+      msg.style.color = 'green';
+      msg.textContent = ' ✓ saved';
+      return beepsFetch().then(renderBeeps);
+    })
+    .catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ✗ ' + e.message; });
+}
+
+/* Put the shipped codes back in the form. The firmware sends them alongside
+   the current ones, so this restores rather than pretends; the operator still
+   has to press Save. */
+function beepsDefaults() {
+  if (!beepCaps) return;
+  beepCaps.beeps.forEach(function(b) {
+    document.getElementById('bd1' + b.key).value = b.def1;
+    document.getElementById('bd2' + b.key).value = b.def2;
+  });
+  beepsCheck();
+  var msg = document.getElementById('bpMsg');
+  msg.style.color = '';
+  msg.textContent = ' shipped codes loaded — press Save to apply';
+}
 
 /* ── Pin capabilities ──────────────────────────────────────────
  *

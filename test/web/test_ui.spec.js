@@ -254,6 +254,69 @@ test.describe('Pin assignment', () => {
   });
 });
 
+/* ══════════════════════════════════════════════════════════════════
+ * Beep codes
+ *
+ * A code was a two-digit number an operator heard at the pad with nothing to
+ * look it up in, and seven of thirteen were never emitted. The tab exists so
+ * the meaning is reachable and the code is changeable.
+ * ══════════════════════════════════════════════════════════════════ */
+
+test.describe('Beep codes', () => {
+  test.skip(process.env.PYRO_MODE !== 'configured', 'configured mode only');
+
+  test('every code shows what it means', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Beep Codes');
+    const table = page.locator('#bpTable');
+    /* The meaning comes from the firmware, not from a copy in app.js. */
+    await expect(table).toContainText('No pressure sensor answered');
+    await expect(table).toContainText('Pyro 1 reads open');
+    await expect(page.locator('#bd1sensor_fail')).toHaveValue('4');
+    await expect(page.locator('#bd2sensor_fail')).toHaveValue('1');
+  });
+
+  test('a duplicate code is flagged before saving', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Beep Codes');
+    await expect(page.locator('#bd1p1_open')).toBeVisible();
+    /* Make p1_open read the same as all_good (1-1). */
+    await page.fill('#bd1p1_open', '1');
+    await page.fill('#bd2p1_open', '1');
+    await expect(page.locator('#bpWarn')).toContainText('share the code');
+  });
+
+  test('a zero digit is flagged', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Beep Codes');
+    await expect(page.locator('#bd2p1_open')).toBeVisible();
+    await page.fill('#bd2p1_open', '0');
+    await expect(page.locator('#bpWarn')).toContainText('cannot be heard');
+  });
+
+  test('shipped codes restore into the form', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Beep Codes');
+    await expect(page.locator('#bd1p1_open')).toBeVisible();
+    await page.fill('#bd1p1_open', '9');
+    await page.click('button:has-text("Shipped codes")');
+    await expect(page.locator('#bd1p1_open')).toHaveValue('2');
+  });
+
+  test('saving a valid table reports success', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Beep Codes');
+    await expect(page.locator('#bd1p1_open')).toBeVisible();
+    await page.click('#btnSaveBeeps');
+    await expect(page.locator('#bpMsg')).toContainText('saved', { timeout: 5000 });
+  });
+});
+
 test.describe('Flown device', () => {
   test.skip(process.env.PYRO_MODE !== 'flown', 'Skipped: not flown mode');
 

@@ -19,6 +19,46 @@ Setting `c1_busy` first, with a barrier, makes the two conditions overlap so
 one always holds. Affects every board and every configuration, not just the
 bridge.
 
+## ✅ beep.ini: the codes mean something now (2026-09-24)
+
+Thirteen beep codes were `#define`s in `buzzer.h` whose meaning lived only in
+the macro name. Nothing served them, the web UI never showed them, and an
+operator at the pad had a two-digit number and nowhere to look it up. Seven of
+the thirteen were emitted from nowhere at all.
+
+`src/beep_codes.h` is now the vocabulary: one X-macro row per REASON with a
+stable key, a sentence an operator can read, and a shipped code. The firmware
+asks `beep_for(BR_SENSOR_FAIL)` and gets whatever is currently assigned, so
+remapping a beep never touches the site that emits it.
+
+Same split as `pin_assign`/`pin_store`: rules in `beep_codes.c` with no I/O,
+file in `beep_store.c`. Whole-table rejection with fallback to the shipped
+codes, PAD_IDLE-free (a beep map cannot hurt a flight), registered in
+`post_writes_flash()`, and `beep.ini` written out when absent so there is a
+file to edit.
+
+Two ways a change can make a board lie, both refused:
+
+- **A digit outside 1–9.** Zero beeps cannot be heard and nobody counts
+  fifteen.
+- **Two reasons sharing a code.** The operator hears 2-1, looks it up, and
+  gets the wrong answer half the time.
+
+`GET /api/beeps` carries the reasons, their meanings, their current codes and
+their shipped ones — the same vocabulary-travels-with-the-data shape as
+`/api/pins/caps`, so `app.js` holds no copy and adding a reason grows a row.
+The Beep Codes tab edits them; its "Shipped codes" button restores from the
+`def1`/`def2` the firmware sends rather than pretending.
+
+`beep_codes_get()` falls back to the shipped code when an entry is 0. Zero is
+never a valid assignment, so it means "not loaded" — which matters because a
+board beeps its self-test result early.
+
+Verified on hardware: `beep.ini` created on first boot; a zero digit and a
+duplicate each refused by name with the table untouched; a remap of `p1_open`
+from 2-1 to 7-4 changed MK1C's reported faults from `[0x21, 0x31]` to
+`[0x74, 0x31]` — the board beeps the new code.
+
 ## ✅ config.ini fits again — and no longer migrates (2026-09-24)
 
 `hal_config_load()` reads into `char[512]` and `http_server.c` refuses a merged
@@ -625,16 +665,13 @@ This affects ARP replies, DHCP, and TCP SYN-ACK — meaning HTTP can never be es
 | v2-13 | DMA UART TX (replaces v2-10 ring buffer) | ✅ Done v2.1.28 |
 
 ## 🔨 Next Priority
-1. **`beep.ini`** — a beep-code table on the `pins.ini` pattern, plus a Beep Codes
-   tab. 7 of 13 codes are defined and never emitted; the code→meaning map exists
-   nowhere a user can reach.
-2. **Flight machine rework** — phase-based descent, emergency deploy, mach gate,
+1. **Flight machine rework** — phase-based descent, emergency deploy, mach gate,
    5 s rolling ground level, remove the backup apogee timer. Design in hand,
    not yet started.
-3. **Export / import Lua programs** — no way to get a script off a board or onto
+2. **Export / import Lua programs** — no way to get a script off a board or onto
    another one today. `/api/lua/script` serves the raw text, so this is mostly a
    UI affordance plus a sensible filename.
-4. **Convert MK1B's `ms5607_read()` fallback** — the last `sleep_ms()` on a flight path, 11 ms in stage 3
-5. **Instrument `ota_flush()`** — separate erase from program timing to explain MK1A's 1.0 s/sector
-6. **Re-enable WFE sleep** — MAC mismatch was the real root cause, not `__wfe()`
-7. Long-duration soak test (network + UART stability over hours)
+3. **Convert MK1B's `ms5607_read()` fallback** — the last `sleep_ms()` on a flight path, 11 ms in stage 3
+4. **Instrument `ota_flush()`** — separate erase from program timing to explain MK1A's 1.0 s/sector
+5. **Re-enable WFE sleep** — MAC mismatch was the real root cause, not `__wfe()`
+6. Long-duration soak test (network + UART stability over hours)

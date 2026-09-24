@@ -25,6 +25,8 @@
 
 #include "flash_window.h"
 #include "pin_store.h"
+#include "beep_store.h"
+#include "buzzer.h"
 #include "pyro_release.h"
 
 extern uint32_t hal_time_ms(void);
@@ -181,7 +183,8 @@ static uint16_t ota_write(const void *data, uint16_t len) {
  * answers from RAM whatever core1 is doing. */
 static bool post_writes_flash(const char *path) {
     return strcmp(path, "/api/ota") == 0 || strcmp(path, "/api/config") == 0 || strcmp(path, "/api/serial") == 0 ||
-           strcmp(path, "/api/lua/script") == 0 || strcmp(path, "/api/pins") == 0 || strncmp(path, "/www/", 5) == 0;
+           strcmp(path, "/api/lua/script") == 0 || strcmp(path, "/api/pins") == 0 || strcmp(path, "/api/beeps") == 0 ||
+           strncmp(path, "/www/", 5) == 0;
 }
 
 /* Minimal JSON string escaping: quote, backslash and newline, dropping the
@@ -267,6 +270,80 @@ extern volatile uint32_t loop_count, loop_max_us, loop_overruns, loop_late_max_u
 extern volatile uint32_t stage_max_us[];
 
 #include "board_identity.h"
+
+/* ── GET /api/beeps ───────────────────────────────────────────────
+ *
+ * The reasons, their meanings and their current codes, in one response. Same
+ * argument as /api/pins/caps: the browser holds no copy of the vocabulary, so
+ * adding a reason is one line in beep_codes.h and the tab grows a row.
+ *
+ * The meaning is the point. A code was previously a two-digit number an
+ * operator heard at the pad with nothing to look it up in. */
+static void serve_api_beeps(struct tcp_pcb *pcb) {
+    static char buf[2048];
+
+    const beep_table_t *t = beep_store_current();
+    char reason_esc[128];
+    const char *br = beep_store_reason();
+    json_escape(reason_esc, (int)sizeof(reason_esc), br, (int)strlen(br));
+
+    int pos = snprintf(buf, sizeof(buf),
+                       "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" CORS_HDR "Connection: close\r\n\r\n"
+                       "{\"digit_min\":%d,\"digit_max\":%d,\"reason\":\"%s\",\"beeps\":[",
+                       BEEP_DIGIT_MIN, BEEP_DIGIT_MAX, reason_esc);
+
+    for (int i = 0; i < BEEP_REASON_COUNT && pos > 0 && pos < (int)sizeof(buf); i++) {
+        uint8_t code = beep_codes_get(t, (beep_reason_t)i);
+        char desc[160];
+        const char *d = beep_codes_description((beep_reason_t)i);
+        json_escape(desc, (int)sizeof(desc), d, (int)strlen(d));
+        uint8_t def = beep_codes_default((beep_reason_t)i);
+        pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos,
+                        "%s{\"key\":\"%s\",\"d1\":%u,\"d2\":%u,\"def1\":%u,\"def2\":%u,\"what\":\"%s\"}", i ? "," : "",
+                        beep_codes_key((beep_reason_t)i), (unsigned)BEEP_DIGIT1(code), (unsigned)BEEP_DIGIT2(code),
+                        (unsigned)BEEP_DIGIT1(def), (unsigned)BEEP_DIGIT2(def), desc);
+    }
+    if (pos > 0 && pos < (int)sizeof(buf)) {
+        pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "]}");
+    }
+
+    if (pos < 0 || pos >= (int)sizeof(buf)) {
+        static const char *err = "HTTP/1.1 500 Internal Server Error\r\n" CORS_HDR "Connection: close\r\n\r\n"
+                                 "{\"error\":\"beep table exceeds the response buffer\"}";
+        tcp_write(pcb, err, (u16_t)strlen(err), 0);
+        return;
+    }
+    tcp_write(pcb, buf, (u16_t)pos, TCP_WRITE_FLAG_COPY);
+}
+
+/* Apply a complete beep.ini body and answer. Split out for the same reason
+ * apply_api_pins() is: the body may take several TCP segments to arrive. */
+static void apply_api_beeps(struct tcp_pcb *pcb, char *body) {
+    static beep_table_t merged;
+    merged = *beep_store_current();
+    beep_codes_parse_ini(body, &merged);
+
+    beep_verdict_t v = beep_store_save(&merged);
+    char jb[224];
+    int jn;
+    const char *line;
+    if (v.err == BEEP_OK) {
+        jn = snprintf(jb, sizeof(jb), "{\"status\":\"ok\",\"reboot_required\":false}");
+        line = "HTTP/1.1 200 OK\r\n";
+    } else {
+        char esc[160];
+        json_escape(esc, (int)sizeof(esc), v.what, (int)strlen(v.what));
+        jn = snprintf(jb, sizeof(jb), "{\"error\":\"%s\",\"reason\":\"%s\",\"code\":%d}", esc,
+                      beep_codes_key((beep_reason_t)v.reason), (int)v.err);
+        line = "HTTP/1.1 400 Bad Request\r\n";
+    }
+    char resp[384];
+    snprintf(resp, sizeof(resp),
+             "%s" CORS_HDR "Connection: close\r\n"
+             "Content-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+             line, jn, jb);
+    tcp_write(pcb, resp, (u16_t)strlen(resp), TCP_WRITE_FLAG_COPY);
+}
 
 /* ── GET /api/pins/caps ───────────────────────────────────────────
  *
@@ -719,6 +796,8 @@ static void apply_gathered_body(struct tcp_pcb *pcb, conn_state_t *cs) {
         apply_api_pins(pcb, (char *)cs->file_buf);
     } else if (strcmp(cs->path, "/api/config") == 0) {
         apply_api_config(pcb, (char *)cs->file_buf);
+    } else if (strcmp(cs->path, "/api/beeps") == 0) {
+        apply_api_beeps(pcb, (char *)cs->file_buf);
     } else {
         const char *r = "HTTP/1.1 400 Bad Request\r\n" CORS_HDR "Connection: close\r\n\r\nBad request";
         tcp_write(pcb, r, (u16_t)strlen(r), TCP_WRITE_FLAG_COPY);
@@ -1051,6 +1130,8 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             tcp_sent(pcb, on_sent);
             tcp_arg(pcb, NULL);
 #endif
+        } else if (strcmp(path, "/api/beeps") == 0) {
+            serve_api_beeps(pcb);
         } else if (strcmp(path, "/api/pins/caps") == 0) {
             serve_api_pin_caps(pcb);
         } else if (strcmp(path, "/api/pins") == 0) {
@@ -1399,6 +1480,43 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 /* Gather it. Acting on half a config.ini merges half the keys
                  * and reports success -- and CFG-06 merging makes that look
                  * exactly like a save that worked. */
+                cs = conn_alloc();
+                if (!cs) {
+                    pbuf_free(p);
+                    flash_window_release();
+                    const char *full =
+                        "HTTP/1.1 503 Service Unavailable\r\n" CORS_HDR "Connection: close\r\n\r\nNo connection slot";
+                    tcp_write(pcb, full, strlen(full), TCP_WRITE_FLAG_COPY);
+                    tcp_output(pcb);
+                    tcp_sent(pcb, on_sent);
+                    tcp_arg(pcb, NULL);
+                    return ERR_OK;
+                }
+                cs->phase = CONN_RECEIVING_BODY;
+                snprintf(cs->path, sizeof(cs->path), "%s", path);
+                cs->body_len = body_in_first;
+                cs->remaining = content_length - body_in_first;
+                if (body_in_first > 0) {
+                    pbuf_copy_partial(p, cs->file_buf, body_in_first, body_offset);
+                }
+                pbuf_free(p);
+                tcp_arg(pcb, cs);
+                return ERR_OK;
+            }
+            tcp_output(pcb);
+            tcp_sent(pcb, on_sent);
+            tcp_arg(pcb, NULL);
+            return ERR_OK;
+        } else if (strcmp(path, "/api/beeps") == 0 && content_length > 0 && content_length < BEEP_STORE_MAX) {
+            DBG("POST /api/beeps cl=%lu in_first=%u", (unsigned long)content_length, (unsigned)body_in_first);
+            if (body_in_first >= content_length) {
+                static char beepbuf[BEEP_STORE_MAX];
+                pbuf_copy_partial(p, beepbuf, (uint16_t)content_length, body_offset);
+                pbuf_free(p);
+                beepbuf[content_length] = '\0';
+                apply_api_beeps(pcb, beepbuf);
+                flash_window_release();
+            } else {
                 cs = conn_alloc();
                 if (!cs) {
                     pbuf_free(p);

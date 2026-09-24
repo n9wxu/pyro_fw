@@ -68,6 +68,14 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-ASC-07**: The system shall not arm pyrotechnics unless maximum vertical speed during ASCENT exceeded 20 m/s. ← PYR-SAFE-04
 
 #### Landing Detection
+### Beep Codes
+- **BUZ-CODE-01**: Each beep reason shall carry a stable key, a human-readable meaning, and a configurable two-digit code. ← SYS-STATUS-02
+- **BUZ-CODE-02**: Each digit shall be 1 to 9; a zero cannot be heard and a long count cannot be counted. ← BUZ-CODE-01
+- **BUZ-CODE-03**: Two reasons shall not share a code. ← BUZ-CODE-01
+- **BUZ-CODE-04**: A beep table that fails validation shall be rejected whole and the shipped codes used. ← BUZ-CODE-01
+- **BUZ-CODE-05**: The reasons, their meanings and their codes shall be served to the web interface so the firmware is the only place the vocabulary is written down. ← BUZ-CODE-01
+- **BUZ-CODE-06**: A board with no beep.ini shall write the shipped codes out. ← BUZ-CODE-01
+
 ### Power-up Self-Test
 - **FLT-BOOT-11**: The system shall test the pressure sensor before the pyro channels. ← FLT-PHASE-01
 - **FLT-BOOT-12**: The system shall enter a terminal FAULT state, and beep the sensor failure code, when no pressure sensor answers. ← FLT-BOOT-11

@@ -9,6 +9,7 @@
  */
 #include "unity.h"
 #include "../src/pyro_release.h"
+#include "../src/beep_store.h"
 #include "../src/pad_claim.h"
 #include "mocks.h"
 #include <string.h>
@@ -702,8 +703,9 @@ void test_PYR_ALT_02_cfg_range_beep(void) {
 
     TEST_ASSERT_TRUE_MESSAGE(buzzer_code_count > 0, "Buzzer code never set — update_continuity_and_buzzer not reached");
     char msg[64];
-    snprintf(msg, sizeof(msg), "Expected BEEP_CFG_RANGE (0x%02X), got 0x%02X", BEEP_CFG_RANGE, last_buzzer_code);
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(BEEP_CFG_RANGE, last_buzzer_code, msg);
+    snprintf(msg, sizeof(msg), "Expected the cfg-range code (0x%02X), got 0x%02X", beep_for(BR_CFG_RANGE),
+             last_buzzer_code);
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(beep_for(BR_CFG_RANGE), last_buzzer_code, msg);
 }
 
 /* ── Ground test command tests [GND-TEST-01..04, DD-011] ──────────── */
@@ -732,7 +734,8 @@ void test_GND_TEST_01_beep_status_replay(void) {
 
     /* Continuity check must have set last_status_code by now */
     TEST_ASSERT_TRUE_MESSAGE(ctx.last_status_code != 0, "last_status_code not set — continuity check not reached");
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(BEEP_ALL_GOOD, ctx.last_status_code, "Expected BEEP_ALL_GOOD for good continuity");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(beep_for(BR_ALL_GOOD), ctx.last_status_code,
+                                   "Expected the all-good code for good continuity");
 
     int code_before = buzzer_code_count;
     mock_serial_enqueue("BEEP STATUS");
@@ -741,7 +744,7 @@ void test_GND_TEST_01_beep_status_replay(void) {
     ctx.current_state = step(&ctx, 1210);
 
     TEST_ASSERT_EQUAL_MESSAGE(code_before + 1, buzzer_code_count, "BEEP STATUS did not trigger buzzer_set_code()");
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(BEEP_ALL_GOOD, last_buzzer_code, "Replayed wrong beep code");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(beep_for(BR_ALL_GOOD), last_buzzer_code, "Replayed wrong beep code");
 }
 
 /* [GND-TEST-02] ARM then FIRE within the 3s window fires the pyro */
