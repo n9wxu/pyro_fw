@@ -47,8 +47,21 @@ Two ways a change can make a board lie, both refused:
 `GET /api/beeps` carries the reasons, their meanings, their current codes and
 their shipped ones — the same vocabulary-travels-with-the-data shape as
 `/api/pins/caps`, so `app.js` holds no copy and adding a reason grows a row.
-The Beep Codes tab edits them; its "Shipped codes" button restores from the
-`def1`/`def2` the firmware sends rather than pretending.
+
+**The editor lets you hear a code.** A form of numbers asks an operator to
+choose sounds they will identify by ear at a launch site. `POST
+/api/beeps/play` plays what is in the row — including an unsaved change — so a
+code can be auditioned before it is committed. PAD_IDLE only: the buzzer is
+the flight software's voice and a browser must not talk over a launch.
+
+**And it will not pretend.** MK1A fits no buzzer — `board_buzzer_*()` are
+no-ops and `board_pins.h` deliberately declares no pin — so `/api/beeps`
+reports `has_buzzer: false`, the play button is not rendered, and the endpoint
+answers 409 rather than "playing". Derived from `FN_BUZZER` in the capability
+table, which already said so.
+
+The "Shipped codes" button restores from the `def1`/`def2` the firmware sends
+rather than pretending.
 
 `beep_codes_get()` falls back to the shipped code when an entry is 0. Zero is
 never a valid assignment, so it means "not loaded" — which matters because a

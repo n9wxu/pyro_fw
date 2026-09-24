@@ -26,6 +26,7 @@
 #include "flash_window.h"
 #include "pin_store.h"
 #include "beep_store.h"
+#include "pin_caps.h"
 #include "buzzer.h"
 #include "pyro_release.h"
 
@@ -289,8 +290,8 @@ static void serve_api_beeps(struct tcp_pcb *pcb) {
 
     int pos = snprintf(buf, sizeof(buf),
                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" CORS_HDR "Connection: close\r\n\r\n"
-                       "{\"digit_min\":%d,\"digit_max\":%d,\"reason\":\"%s\",\"beeps\":[",
-                       BEEP_DIGIT_MIN, BEEP_DIGIT_MAX, reason_esc);
+                       "{\"digit_min\":%d,\"digit_max\":%d,\"has_buzzer\":%s,\"reason\":\"%s\",\"beeps\":[",
+                       BEEP_DIGIT_MIN, BEEP_DIGIT_MAX, pin_caps_has_buzzer() ? "true" : "false", reason_esc);
 
     for (int i = 0; i < BEEP_REASON_COUNT && pos > 0 && pos < (int)sizeof(buf); i++) {
         uint8_t code = beep_codes_get(t, (beep_reason_t)i);
@@ -314,6 +315,58 @@ static void serve_api_beeps(struct tcp_pcb *pcb) {
         return;
     }
     tcp_write(pcb, buf, (u16_t)pos, TCP_WRITE_FLAG_COPY);
+}
+
+/* POST /api/beeps/play : play one code, once.
+ *
+ * A beep editor that only shows numbers is asking an operator to choose
+ * sounds they will identify by ear, from a form. This is how they hear one
+ * before committing to it.
+ *
+ * Writes no flash, so it needs no window and no gather path -- the body is a
+ * pair of digits and always arrives whole.
+ *
+ * PAD_IDLE only. The buzzer is the flight software's voice; a browser must
+ * not be able to talk over a launch. */
+static void apply_api_beep_play(struct tcp_pcb *pcb, const char *body) {
+    extern flight_state_t flight_get_state(void);
+
+    char jb[160];
+    int jn;
+    const char *line;
+
+    int d1 = -1, d2 = -1;
+    const char *p1 = strstr(body, "\"d1\"");
+    const char *p2 = strstr(body, "\"d2\"");
+    if (p1 && p2) {
+        d1 = atoi(strchr(p1, ':') ? strchr(p1, ':') + 1 : "");
+        d2 = atoi(strchr(p2, ':') ? strchr(p2, ':') + 1 : "");
+    }
+
+    if (flight_get_state() != PAD_IDLE) {
+        jn = snprintf(jb, sizeof(jb), "{\"error\":\"Device not ready (state=%s)\"}",
+                      state_names[flight_get_state() < STATE_NAME_COUNT ? flight_get_state() : 0]);
+        line = "HTTP/1.1 409 Conflict\r\n";
+    } else if (d1 < BEEP_DIGIT_MIN || d1 > BEEP_DIGIT_MAX || d2 < BEEP_DIGIT_MIN || d2 > BEEP_DIGIT_MAX) {
+        jn = snprintf(jb, sizeof(jb), "{\"error\":\"each digit must be %d to %d\"}", BEEP_DIGIT_MIN, BEEP_DIGIT_MAX);
+        line = "HTTP/1.1 400 Bad Request\r\n";
+    } else if (!pin_caps_has_buzzer()) {
+        /* MK1A fits none. Answering "playing" would be a lie the operator
+         * could only detect by listening to silence. */
+        jn = snprintf(jb, sizeof(jb), "{\"error\":\"this board has no buzzer fitted\"}");
+        line = "HTTP/1.1 409 Conflict\r\n";
+    } else {
+        buzzer_play_code(BEEP_CODE(d1, d2), 1); /* once, not repeating */
+        jn = snprintf(jb, sizeof(jb), "{\"status\":\"playing\",\"d1\":%d,\"d2\":%d}", d1, d2);
+        line = "HTTP/1.1 200 OK\r\n";
+    }
+
+    char resp[320];
+    snprintf(resp, sizeof(resp),
+             "%s" CORS_HDR "Connection: close\r\n"
+             "Content-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+             line, jn, jb);
+    tcp_write(pcb, resp, (u16_t)strlen(resp), TCP_WRITE_FLAG_COPY);
 }
 
 /* Apply a complete beep.ini body and answer. Split out for the same reason
@@ -1503,6 +1556,17 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
                 tcp_arg(pcb, cs);
                 return ERR_OK;
             }
+            tcp_output(pcb);
+            tcp_sent(pcb, on_sent);
+            tcp_arg(pcb, NULL);
+            return ERR_OK;
+        } else if (strcmp(path, "/api/beeps/play") == 0 && content_length > 0 && content_length < 64) {
+            char pb[64];
+            uint16_t plen = (body_in_first < content_length) ? body_in_first : (uint16_t)content_length;
+            pbuf_copy_partial(p, pb, plen, body_offset);
+            pbuf_free(p);
+            pb[plen] = '\0';
+            apply_api_beep_play(pcb, pb);
             tcp_output(pcb);
             tcp_sent(pcb, on_sent);
             tcp_arg(pcb, NULL);

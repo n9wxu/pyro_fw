@@ -482,21 +482,44 @@ function beepsFetch() {
 }
 
 function renderBeeps() {
-  var html = '<tr><th>Beeps</th><th>Means</th></tr>';
+  var html = '<tr><th>Code</th><th>Beeps</th><th></th><th>Means</th></tr>';
   beepCaps.beeps.forEach(function(b) {
-    html += '<tr><td class="lbl">' +
-            '<input id="bd1' + esc(b.key) + '" type="number" min="' + beepCaps.digit_min +
-            '" max="' + beepCaps.digit_max + '" value="' + b.d1 + '" size="2" style="width:3em"' +
-            ' oninput="beepsCheck()"> – ' +
-            '<input id="bd2' + esc(b.key) + '" type="number" min="' + beepCaps.digit_min +
-            '" max="' + beepCaps.digit_max + '" value="' + b.d2 + '" size="2" style="width:3em"' +
-            ' oninput="beepsCheck()">' +
-            '</td><td class="val">' + esc(b.what) + '</td></tr>';
+    var k = esc(b.key);
+    html += '<tr id="brow' + k + '">' +
+            '<td class="lbl"><span id="bt' + k + '">' + b.d1 + '–' + b.d2 + '</span></td>' +
+            '<td><input id="bd1' + k + '" type="number" min="' + beepCaps.digit_min +
+            '" max="' + beepCaps.digit_max + '" value="' + b.d1 + '" style="width:3.2em"' +
+            ' oninput="beepsCheck()"> ' +
+            '<input id="bd2' + k + '" type="number" min="' + beepCaps.digit_min +
+            '" max="' + beepCaps.digit_max + '" value="' + b.d2 + '" style="width:3.2em"' +
+            ' oninput="beepsCheck()"></td>' +
+            '<td>' + (beepCaps.has_buzzer
+              ? '<button onclick="beepsPlay(\'' + k + '\')" title="Play this code on the buzzer">▶</button>'
+              : '') + '</td>' +
+            '<td class="val">' + esc(b.what) + '</td></tr>';
   });
   document.getElementById('bpTable').innerHTML = html;
   document.getElementById('bpHint').innerHTML = beepCaps.beeps.length + ' beep codes.' +
+    (beepCaps.has_buzzer ? '' : ' <b>This board has no buzzer fitted</b>, so nothing here can be heard on it.') +
     (beepCaps.reason ? ' <b>' + esc(beepCaps.reason) + '</b>' : '');
   beepsCheck();
+}
+
+/* Hear it before committing to it. The board plays the digits currently in
+   the form, not the ones it has stored, so an unsaved change can be
+   auditioned. */
+function beepsPlay(key) {
+  var d1 = document.getElementById('bd1' + key).value;
+  var d2 = document.getElementById('bd2' + key).value;
+  var msg = document.getElementById('bpMsg');
+  fetch('/api/beeps/play', {method:'POST', headers:{'Content-Type':'text/plain'},
+                            body: '{"d1":' + d1 + ',"d2":' + d2 + '}'})
+    .then(function(r) { return r.json().catch(function(){ return {error:'HTTP ' + r.status}; }); })
+    .then(function(d) {
+      msg.style.color = d.error ? 'red' : '';
+      msg.textContent = d.error ? ' ✗ ' + d.error : ' ♪ playing ' + d.d1 + '–' + d.d2;
+    })
+    .catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ✗ ' + e.message; });
 }
 
 /* The firmware validates and is authoritative; this catches the mistake that
@@ -526,6 +549,15 @@ function beepsCheck() {
               '. An operator hearing it would get the wrong answer half the time.</div>');
   }
   document.getElementById('bpWarn').innerHTML = msgs.join('');
+
+  /* The label reads the way the code is spoken, and follows the inputs. */
+  beepCaps.beeps.forEach(function(b) {
+    var t = document.getElementById('bt' + b.key);
+    if (t) {
+      t.textContent = document.getElementById('bd1' + b.key).value + '–' +
+                      document.getElementById('bd2' + b.key).value;
+    }
+  });
 }
 
 function beepsSave() {

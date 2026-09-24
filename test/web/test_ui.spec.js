@@ -307,6 +307,28 @@ test.describe('Beep codes', () => {
     await expect(page.locator('#bd1p1_open')).toHaveValue('2');
   });
 
+  test('a code can be auditioned before saving', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Beep Codes');
+    await expect(page.locator('#bd1p1_open')).toBeVisible();
+    /* Change it, then play it: the board plays what is in the form, so an
+       unsaved code can be heard before committing to it. */
+    await page.fill('#bd1p1_open', '6');
+    await page.fill('#bd2p1_open', '4');
+    await page.locator('#browp1_open button').click();
+    await expect(page.locator('#bpMsg')).toContainText('playing 6–4', { timeout: 5000 });
+  });
+
+  test('the spoken label follows the inputs', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Beep Codes');
+    await expect(page.locator('#btp1_open')).toHaveText('2–1');
+    await page.fill('#bd1p1_open', '8');
+    await expect(page.locator('#btp1_open')).toHaveText('8–1');
+  });
+
   test('saving a valid table reports success', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);

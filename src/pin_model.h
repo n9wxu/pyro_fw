@@ -140,6 +140,15 @@ const pin_cap_t *pin_caps_table(int *count);
 /* The row for a pin, or NULL when the board declares none. */
 const pin_cap_t *pin_caps_find(uint8_t pin);
 
+/* True when this board has a buzzer pad at all.
+ *
+ * MK1A fits none: boards/mk1a/hal_board.c's board_buzzer_*() are no-ops and
+ * board_pins.h deliberately declares no pin. Without asking, the web UI
+ * offers a "play this code" button there that returns 200 and makes no
+ * sound. Derived from the capability table rather than a new board macro,
+ * because FN_BUZZER already says it. */
+bool pin_caps_has_buzzer(void);
+
 /* True when this board can offer a half-bridge. */
 bool pin_caps_bridge_possible(void);
 

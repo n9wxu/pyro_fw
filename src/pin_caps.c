@@ -46,6 +46,15 @@ bool pin_caps_is_default_lua(const pin_cap_t *c) {
  * able to sit at a level. MK1C fails here rather than by topology: its common
  * is the ARM_TOGGLE charge pump, which carries no FN_BRIDGE because holding
  * it at a level does not hold the eFuse on. */
+bool pin_caps_has_buzzer(void) {
+    for (int i = 0; i < CAP_COUNT; i++) {
+        if (caps[i].functions & FN_BUZZER) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool pin_caps_bridge_possible(void) {
     bool have_channel = false;
     bool have_common = false;

@@ -159,11 +159,28 @@ const server = http.createServer((req, res) => {
   if (req.url === '/api/beeps' && req.method === 'GET') {
     res.writeHead(200, {...cors, 'Content-Type':'application/json'});
     res.end(JSON.stringify({
-      digit_min: 1, digit_max: 9, reason: beepReason,
+      digit_min: 1, digit_max: 9, has_buzzer: true, reason: beepReason,
       beeps: beepRows.map(r => ({
         key: r.key, d1: r.d1, d2: r.d2, def1: r.def1, def2: r.def2, what: r.what
       }))
     }));
+    return;
+  }
+
+  if (req.url === '/api/beeps/play' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      const m = body.match(/"d1"\s*:\s*(\d+).*"d2"\s*:\s*(\d+)/);
+      const d1 = m ? +m[1] : -1, d2 = m ? +m[2] : -1;
+      if (d1 < 1 || d1 > 9 || d2 < 1 || d2 > 9) {
+        res.writeHead(400, {...cors, 'Content-Type':'application/json'});
+        res.end(JSON.stringify({error: 'each digit must be 1 to 9'}));
+        return;
+      }
+      res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+      res.end(JSON.stringify({status:'playing', d1: d1, d2: d2}));
+    });
     return;
   }
 
