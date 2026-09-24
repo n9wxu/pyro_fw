@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "unity.h"
+#include "../src/pressure_processing.h"
 #include "../src/flight_states.h"
 #include "../src/hal.h"
 #include "../src/config.h"
@@ -48,10 +49,17 @@ void test_config_reload_succeeds_in_pad_idle(void) {
     /* Initialize flight context in PAD_IDLE */
     flight_context_t ctx;
     flight_init(&ctx);
-
     /* Advance to PAD_IDLE state */
     mock_time_ms = 0;
     while (ctx.current_state != PAD_IDLE && mock_time_ms < 30000) {
+        /* Tick the HAL, not just the state machine.
+         *
+         * The mock sensor feeds pp from hal_tasks_tick(); without it no
+         * sample is ever produced and calibration cannot finish. These
+         * loops used to reach PAD_IDLE anyway because BOOT_CALIBRATE timed
+         * out after 10 s and forced it -- on a board that had measured
+         * nothing. That path is a FAULT now, so the sensor has to work. */
+        hal_tasks_tick(mock_time_ms);
         ctx.current_state = dispatch_state(&ctx, mock_time_ms);
         mock_time_ms += 100;
     }
@@ -145,6 +153,14 @@ void test_config_reload_normalises_invalid_pyro_mode(void) {
     /* Advance to PAD_IDLE */
     mock_time_ms = 0;
     while (ctx.current_state != PAD_IDLE && mock_time_ms < 30000) {
+        /* Tick the HAL, not just the state machine.
+         *
+         * The mock sensor feeds pp from hal_tasks_tick(); without it no
+         * sample is ever produced and calibration cannot finish. These
+         * loops used to reach PAD_IDLE anyway because BOOT_CALIBRATE timed
+         * out after 10 s and forced it -- on a board that had measured
+         * nothing. That path is a FAULT now, so the sensor has to work. */
+        hal_tasks_tick(mock_time_ms);
         ctx.current_state = dispatch_state(&ctx, mock_time_ms);
         mock_time_ms += 100;
     }
@@ -178,6 +194,14 @@ void test_config_reload_fails_if_file_missing(void) {
     /* Advance to PAD_IDLE */
     mock_time_ms = 0;
     while (ctx.current_state != PAD_IDLE && mock_time_ms < 30000) {
+        /* Tick the HAL, not just the state machine.
+         *
+         * The mock sensor feeds pp from hal_tasks_tick(); without it no
+         * sample is ever produced and calibration cannot finish. These
+         * loops used to reach PAD_IDLE anyway because BOOT_CALIBRATE timed
+         * out after 10 s and forced it -- on a board that had measured
+         * nothing. That path is a FAULT now, so the sensor has to work. */
+        hal_tasks_tick(mock_time_ms);
         ctx.current_state = dispatch_state(&ctx, mock_time_ms);
         mock_time_ms += 100;
     }
@@ -258,6 +282,14 @@ void test_config_reload_normalises_invalid_units(void) {
     /* Advance to PAD_IDLE */
     mock_time_ms = 0;
     while (ctx.current_state != PAD_IDLE && mock_time_ms < 30000) {
+        /* Tick the HAL, not just the state machine.
+         *
+         * The mock sensor feeds pp from hal_tasks_tick(); without it no
+         * sample is ever produced and calibration cannot finish. These
+         * loops used to reach PAD_IDLE anyway because BOOT_CALIBRATE timed
+         * out after 10 s and forced it -- on a board that had measured
+         * nothing. That path is a FAULT now, so the sensor has to work. */
+        hal_tasks_tick(mock_time_ms);
         ctx.current_state = dispatch_state(&ctx, mock_time_ms);
         mock_time_ms += 100;
     }
@@ -296,6 +328,14 @@ void test_flight_get_state_returns_correct_state(void) {
     /* Advance to PAD_IDLE */
     mock_time_ms = 0;
     while (ctx.current_state != PAD_IDLE && mock_time_ms < 30000) {
+        /* Tick the HAL, not just the state machine.
+         *
+         * The mock sensor feeds pp from hal_tasks_tick(); without it no
+         * sample is ever produced and calibration cannot finish. These
+         * loops used to reach PAD_IDLE anyway because BOOT_CALIBRATE timed
+         * out after 10 s and forced it -- on a board that had measured
+         * nothing. That path is a FAULT now, so the sensor has to work. */
+        hal_tasks_tick(mock_time_ms);
         ctx.current_state = dispatch_state(&ctx, mock_time_ms);
         mock_time_ms += 100;
     }

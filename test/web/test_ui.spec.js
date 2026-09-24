@@ -127,7 +127,7 @@ test.describe('Configured device', () => {
     await waitForStatus(page);
     await clickTab(page, 'Config');
     await page.fill('#p2val', '400');
-    await page.click('button:has-text("Save")');
+    await page.click('#btnSaveCfg');
     await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 5000 });
   });
 
@@ -173,6 +173,86 @@ test.describe('Configured device', () => {
 /* ══════════════════════════════════════════════════════════════════
    Mode: FLOWN — post-flight with data
    ══════════════════════════════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════════════════════════════
+ * Pin assignment
+ *
+ * The Config tab's release section and the Lua tab's pin table are both
+ * rendered from /api/pins/caps. They shipped with no coverage here, against a
+ * mock server that did not serve the endpoint -- so the tabs silently fell
+ * back to their error text and nothing noticed.
+ * ══════════════════════════════════════════════════════════════════ */
+
+test.describe('Pin assignment', () => {
+  test.skip(process.env.PYRO_MODE !== 'configured', 'configured mode only');
+
+  test('release section renders from the board capability table', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await expect(page.locator('#relTable')).toBeVisible();
+    /* The board's own topology, not a string baked into app.js. */
+    await expect(page.locator('#relHint')).toContainText('high side');
+    await expect(page.locator('#rel1pins')).toContainText('GPIO21');
+    await expect(page.locator('#rel2pins')).toContainText('GPIO22');
+    await expect(page.locator('#relCommon')).toContainText('GPIO15');
+  });
+
+  test('releasing one channel warns about the shared element', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await page.uncheck('#rel2');
+    /* The firmware cannot prevent this one, so the UI has to say it. */
+    await expect(page.locator('#relWarn')).toContainText('One channel released, one retained');
+  });
+
+  test('lua tab lists only pads with a lua capability', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Lua');
+    const table = page.locator('#luaPins');
+    await expect(table).toContainText('GPIO8');
+    await expect(table).toContainText('GPIO21');
+    /* GPIO16 is buzzer-only and GPIO26 is analog-only: neither can take a
+       role, so neither belongs in the table. */
+    await expect(table).not.toContainText('GPIO16');
+    await expect(table).not.toContainText('GPIO26');
+  });
+
+  test('a role menu offers only what the pin is capable of', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Lua');
+    /* The table is rendered after /api/pins/caps resolves, and
+       allTextContents() does not auto-retry the way expect() does -- so wait
+       for the row to exist before reading its options. */
+    await expect(page.locator('#pr15')).toBeVisible();
+    /* GPIO15 is the common: digital and bridge, but no pwm and no serial. */
+    const opts = await page.locator('#pr15 option').allTextContents();
+    expect(opts.join(',')).toContain('half-bridge');
+    expect(opts.join(',')).not.toContain('serial');
+    expect(opts.join(',')).not.toContain('dimmable');
+  });
+
+  test('an incomplete half-bridge is flagged before saving', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Lua');
+    await expect(page.locator('#pr15')).toBeVisible();
+    await page.selectOption('#pr15', 'off');
+    await expect(page.locator('#luaPinsWarn')).toContainText('one channel element plus the common');
+  });
+
+  test('saving the pin assignment reports success', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Lua');
+    await expect(page.locator('#pr15')).toBeVisible();
+    await page.click('#btnSavePins');
+    await expect(page.locator('#luaPinsMsg')).toContainText('saved', { timeout: 5000 });
+  });
+});
 
 test.describe('Flown device', () => {
   test.skip(process.env.PYRO_MODE !== 'flown', 'Skipped: not flown mode');

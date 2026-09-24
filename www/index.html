@@ -103,7 +103,7 @@
   </table>
   <div id="relWarn"></div>
   <div class="btnrow" id="relBtns" style="display:none">
-    <button onclick="relSave()">💾 Save release</button>
+    <button id="btnSaveRel" onclick="relSave()">💾 Save release</button>
     <span id="relMsg"></span>
   </div>
 
@@ -112,7 +112,7 @@
   <div class="btnrow">
     <button onclick="cfgDefault()">🏭 Default</button>
     <button onclick="cfgCurrent()">↩ Current</button>
-    <button onclick="cfgSave()">💾 Save</button>
+    <button id="btnSaveCfg" onclick="cfgSave()">💾 Save</button>
     <button onclick="cfgUpload()">⬆ Upload File</button>
     <button onclick="cfgReboot()" id="btnReboot">🔄 Reboot</button>
   </div>
@@ -147,7 +147,7 @@
   <table class="info" id="luaPins"></table>
   <div id="luaPinsWarn"></div>
   <div class="btnrow">
-    <button onclick="pinsSave()">💾 Save pin assignment</button>
+    <button id="btnSavePins" onclick="pinsSave()">💾 Save pin assignment</button>
     <span id="luaPinsMsg"></span>
   </div>
 

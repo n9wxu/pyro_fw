@@ -36,6 +36,7 @@ typedef enum {
 
 typedef struct {
     CONFIG_FIELDS(X_STRUCT)
+    CONFIG_LEGACY_FIELDS(X_STRUCT)
 } config_t;
 
 #undef X_STRUCT

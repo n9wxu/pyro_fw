@@ -103,6 +103,8 @@ function generateFlightCSV() {
 
 /* ── HTTP Server ──────────────────────────────────────────────────── */
 
+let pinsIni = '[pins]\r\npyro1_released=true\r\npyro2_released=true\r\n';
+
 const MIME = {'.html':'text/html','.js':'application/javascript','.css':'text/css'};
 
 const server = http.createServer((req, res) => {
@@ -135,6 +137,56 @@ const server = http.createServer((req, res) => {
       pendingConfig = body;
       res.writeHead(200, {...cors, 'Content-Type': 'application/json'});
       res.end(JSON.stringify({applied: false}));
+    });
+    return;
+  }
+
+  /* ── Pin assignment ────────────────────────────────────────────
+   *
+   * Added because the Config and Lua tabs now render from the firmware's
+   * capability table. Without these the release UI never appears, so nothing
+   * exercised it -- which is the same drift the endpoint exists to prevent.
+   * Shaped like MK1B: one user pad, two pyro channels and a common, all
+   * released. */
+  if (req.url === '/api/pins/caps' && req.method === 'GET') {
+    const FN = {pyro_fire:1, pyro_common:2, pyro_sense:4, buzzer:8, uart_tx:16, uart_rx:32,
+                i2c_sda:64, i2c_scl:128, led:256, digital:65536, pwm:131072, serial:262144,
+                pixel:524288, bridge:1048576, analog:2097152};
+    res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+    res.end(JSON.stringify({
+      board: 'Pyro MK1B', topology: 'high_switched', bridge_possible: true,
+      protection_note: "This board's common path is a self-resetting PTC and the high-side " +
+                       'switch current-limits with its fault line wired back.',
+      pyro1_released: true, pyro2_released: true, reserved_mask: 511, fn: FN,
+      roles: [{r:'off',needs:0},{r:'out',needs:FN.digital},{r:'pwm',needs:FN.pwm},
+              {r:'in',needs:FN.digital},{r:'tx',needs:FN.serial},{r:'rx',needs:FN.serial},
+              {r:'pixel',needs:FN.pixel},{r:'bridge',needs:FN.bridge}],
+      pins: [
+        {p:0,  f:FN.uart_tx, g:'none',   role:'off',    name:'',      held:true},
+        {p:8,  f:FN.digital|FN.pwm|FN.serial|FN.pixel, g:'none', role:'out', name:'led', held:false},
+        {p:15, f:FN.pyro_common|FN.digital|FN.bridge,  g:'common', role:'bridge', name:'motor_lo', held:false},
+        {p:16, f:FN.buzzer,  g:'none',   role:'off',    name:'',      held:true},
+        {p:21, f:FN.pyro_fire|FN.digital|FN.pwm|FN.bridge, g:'ch1', role:'bridge', name:'motor', held:false},
+        {p:22, f:FN.pyro_fire|FN.digital|FN.pwm|FN.bridge, g:'ch2', role:'in', name:'probe', held:false},
+        {p:26, f:FN.pyro_sense|FN.analog, g:'none', role:'off', name:'', held:true}
+      ]
+    }));
+    return;
+  }
+
+  if (req.url === '/api/pins' && req.method === 'GET') {
+    res.writeHead(200, {...cors, 'Content-Type':'text/plain'});
+    res.end(pinsIni);
+    return;
+  }
+
+  if (req.url === '/api/pins' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      pinsIni = body;
+      res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+      res.end(JSON.stringify({status:'ok', reboot_required:true}));
     });
     return;
   }

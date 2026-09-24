@@ -660,8 +660,7 @@ bool hal_serial_readline(char *buf, int max_len) {
 /* Deliberately a no-op: __wfe() is suspected of blocking USB NCM TX, which
  * shows up as the txf counter climbing and http stuck at zero. */
 
-void hal_sleep_until_event(void) {
-}
+void hal_sleep_until_event(void) {}
 
 /* ── Platform ─────────────────────────────────────────────────────── */
 
@@ -960,9 +959,6 @@ bool hal_log_mock(uint32_t time_ms, const char *what) {
      * room for samples would hide exactly the row that explains them. */
     return log_tagged(time_ms, "MOCK", what, (int)strlen(what));
 }
-
-
-
 
 uint32_t hal_log_text_dropped(void) {
     return log_task.text_dropped;

@@ -662,22 +662,6 @@ add_custom_target(pin_caps_tests
     COMMENT "Pin capability table tests"
 )
 
-# The web UI, rendered against captured /api/pins/caps responses.
-#
-# Needs node, which is not a build dependency, so a machine without it skips
-# rather than fails -- but the skip says so, because a test that quietly does
-# not run is worse than no test. This is the drift check: app.js used to keep
-# its own copy of the pin list and the role vocabulary.
-find_program(NODE_EXECUTABLE NAMES node nodejs)
-add_custom_target(web_tests
-    COMMAND ${CMAKE_COMMAND}
-            -DNODE=${NODE_EXECUTABLE}
-            -DTEST=${CMAKE_CURRENT_LIST_DIR}/test/test_web_pins.js
-            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/run_web_tests.cmake
-    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    COMMENT "Web pin-assignment UI tests"
-)
-
 # Pin assignment rules. Same reason as pin_caps_tests for pinning to MK1A:
 # the release matrix needs a real table with two channels and a common.
 add_custom_target(pin_assign_tests

@@ -271,6 +271,36 @@ static state_event_t detect_boot_calibrate(flight_context_t *ctx, uint32_t now) 
     return SEVT_NONE;
 }
 
+/* Every fault present on the pad, in report order, into ctx->fault_codes.
+ *
+ * Separate from the caller because it is the part with the conditions in it,
+ * and the caller was over the complexity limit CI enforces once this stopped
+ * being an else-if chain.
+ *
+ * It WAS an else-if chain, so a board with both channels open reported only
+ * channel 1: the operator fixed it, heard the next code, and learned about the
+ * second fault on a second trip to the pad. */
+static void collect_pad_faults(flight_context_t *ctx, const hal_continuity_t *c1, const hal_continuity_t *c2) {
+    int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
+    bool over = (ctx->config.pyro1_mode != PYRO_MODE_DELAY && ctx->config.pyro1_value > max_units) ||
+                (ctx->config.pyro2_mode != PYRO_MODE_DELAY && ctx->config.pyro2_value > max_units);
+
+    int n = 0;
+    if (over) {
+        ctx->fault_codes[n++] = BEEP_CFG_RANGE;
+    }
+    /* A released channel is a Lua output, not a firing path. Its mocked
+     * continuity reads open by design, and beeping "pyro 1 open" for a pad the
+     * operator deliberately gave away is a false alarm they cannot clear. */
+    if (!c1->good && !pyro_release_is_released(1)) {
+        ctx->fault_codes[n++] = c1->open ? BEEP_P1_OPEN : BEEP_P1_SHORT;
+    }
+    if (!c2->good && !pyro_release_is_released(2)) {
+        ctx->fault_codes[n++] = c2->open ? BEEP_P2_OPEN : BEEP_P2_SHORT;
+    }
+    ctx->fault_count = (uint8_t)n;
+}
+
 static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { /* [PYR-CONT-01, PYR-ALT-02] */
     if (now - ctx->last_cont_check <= 1000)
         return;
@@ -301,32 +331,9 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
         return;
 
     ctx->buzzer_started = true;
-    int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
-    bool p1_over = (ctx->config.pyro1_mode != PYRO_MODE_DELAY && ctx->config.pyro1_value > max_units);
-    bool p2_over = (ctx->config.pyro2_mode != PYRO_MODE_DELAY && ctx->config.pyro2_value > max_units);
-    /* Every fault that is present, in order, rather than only the first.
-     *
-     * This was an else-if chain, so a board with both channels open reported
-     * only channel 1 -- the operator fixed it, heard the next code, and
-     * learned about the second fault on the second trip to the pad. */
-    uint8_t codes[3];
-    int n = 0;
-    if (p1_over || p2_over)
-        codes[n++] = BEEP_CFG_RANGE;
-    /* A released channel is a Lua output, not a firing path. Its mocked
-     * continuity reads open by design, and beeping "pyro 1 open" for a pad
-     * the operator deliberately gave away is a false alarm they cannot
-     * clear. */
-    if (!c1.good && !pyro_release_is_released(1))
-        codes[n++] = c1.open ? BEEP_P1_OPEN : BEEP_P1_SHORT;
-    if (!c2.good && !pyro_release_is_released(2))
-        codes[n++] = c2.open ? BEEP_P2_OPEN : BEEP_P2_SHORT;
+    collect_pad_faults(ctx, &c1, &c2);
 
-    ctx->fault_count = (uint8_t)n;
-    for (int i = 0; i < n && i < (int)(sizeof(ctx->fault_codes) / sizeof(ctx->fault_codes[0])); i++)
-        ctx->fault_codes[i] = codes[i];
-
-    uint8_t code = n ? codes[0] : BEEP_ALL_GOOD;
+    uint8_t code = ctx->fault_count ? ctx->fault_codes[0] : BEEP_ALL_GOOD;
     ctx->last_status_code = code; /* [GND-TEST-01] remember for BEEP STATUS replay */
     buzzer_play_code(code, 2);    /* [BUZ-02] play status code twice then stop */
 }
