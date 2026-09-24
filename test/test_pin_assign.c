@@ -244,6 +244,41 @@ void test_serialize_refuses_to_overflow(void) {
     }
 }
 
+/* ── The as-designed default ──────────────────────────────────────
+ *
+ * A board that has never been configured must come up doing what its
+ * schematic says: every pyro function retained, nothing on Lua. This is a
+ * contract, not an accident of the struct being zeroed. */
+
+void test_defaults_are_the_board_as_designed(void) {
+    pin_assign_t a = base();
+
+    TEST_ASSERT_FALSE_MESSAGE(a.pyro1_released, "pyro 1 stays with the flight software");
+    TEST_ASSERT_FALSE_MESSAGE(a.pyro2_released, "pyro 2 stays with the flight software");
+    for (int pin = 0; pin < PIN_ASSIGN_MAX_GPIO; pin++) {
+        TEST_ASSERT_EQUAL_MESSAGE(LUA_ROLE_OFF, a.role[pin], "no pin is assigned to Lua by default");
+        TEST_ASSERT_EQUAL_MESSAGE(0, a.name[pin][0], "and none carries a name");
+    }
+    TEST_ASSERT_EQUAL(PIN_OK, pin_assign_validate(&a).err);
+}
+
+void test_defaults_round_trip_through_the_file(void) {
+    /* The default file is what pin_store_load() writes when none exists, so
+       it has to parse back to the same thing. */
+    pin_assign_t a = base();
+    char buf[1024];
+    int n = pin_assign_serialize_ini(&a, buf, (int)sizeof(buf));
+    TEST_ASSERT_GREATER_THAN(0, n);
+
+    pin_assign_t back;
+    pin_assign_defaults(&back);
+    back.pyro1_released = true; /* dirty it, so a no-op parse would show */
+    pin_assign_parse_ini(buf, &back);
+    TEST_ASSERT_FALSE(back.pyro1_released);
+    TEST_ASSERT_FALSE(back.pyro2_released);
+    TEST_ASSERT_EQUAL(PIN_OK, pin_assign_validate(&back).err);
+}
+
 /* ── Ownership ────────────────────────────────────────────────────
  *
  * pin_assign_is_reserved() is what a board asks before driving a pad that a
@@ -318,6 +353,8 @@ int main(void) {
     RUN_TEST(test_round_trip_preserves_the_assignment);
     RUN_TEST(test_unknown_keys_are_ignored);
     RUN_TEST(test_serialize_refuses_to_overflow);
+    RUN_TEST(test_defaults_are_the_board_as_designed);
+    RUN_TEST(test_defaults_round_trip_through_the_file);
     RUN_TEST(test_nothing_released_means_the_board_owns_every_pyro_pad);
     RUN_TEST(test_releasing_one_channel_gives_up_only_that_pad);
     RUN_TEST(test_the_common_is_given_up_only_when_both_channels_are);

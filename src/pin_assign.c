@@ -97,6 +97,13 @@ const char *pin_assign_strerror(pin_err_t e) {
     return "invalid";
 }
 
+/* The board as designed: every pyro function retained, no pin assigned to Lua.
+ *
+ * Zero IS that configuration -- pyro1_released and pyro2_released are false
+ * and every role is LUA_ROLE_OFF -- and saying so here is the point, because
+ * it is a contract rather than an accident of the struct layout. A board that
+ * has never been configured must come up doing what its schematic says it
+ * does, with nothing handed to a script. */
 void pin_assign_defaults(pin_assign_t *a) {
     memset(a, 0, sizeof(*a));
 }

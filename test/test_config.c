@@ -285,8 +285,8 @@ void test_config_merge_keeps_omitted_fields(void) {
     config_t running;
     config_set_defaults(&running);
     strncpy(running.id, "ROCKET7", sizeof(running.id) - 1);
-    strncpy(running.lua_p18_role, "out", sizeof(running.lua_p18_role) - 1);
-    strncpy(running.lua_p18_name, "led", sizeof(running.lua_p18_name) - 1);
+    running.lua_enabled = true;
+    running.lua_baud = 19200;
     running.pyro2_value = 250;
 
     /* What the Config tab posts: its own keys only, no lua_*. */
@@ -295,10 +295,9 @@ void test_config_merge_keeps_omitted_fields(void) {
 
     TEST_ASSERT_EQUAL_STRING("ROCKET9", merged.id);   /* changed  */
     TEST_ASSERT_EQUAL(7, merged.pyro1_value);         /* changed  */
-    /* In memory the legacy keys survive the merge, which is what keeps
-       pin_store_load()'s migration working on a board that still has them. */
-    TEST_ASSERT_EQUAL_STRING("out", merged.lua_p18_role);
-    TEST_ASSERT_EQUAL_STRING("led", merged.lua_p18_name);
+    /* The keys the Lua tab owns survive a Config-tab save. */
+    TEST_ASSERT_TRUE(merged.lua_enabled);
+    TEST_ASSERT_EQUAL(19200, merged.lua_baud);
     TEST_ASSERT_EQUAL(250, merged.pyro2_value);           /* survived */
 }
 
@@ -311,10 +310,10 @@ void test_config_merge_lua_tab_keeps_flight_fields(void) {
 
     /* What the Lua tab posts: lua_* only. */
     config_t merged;
-    merge_partial(&running, "[pyro]\r\nlua_enabled=true\r\nlua_p19_role=pwm\r\n", &merged);
+    merge_partial(&running, "[pyro]\r\nlua_enabled=true\r\nlua_baud=57600\r\n", &merged);
 
-    TEST_ASSERT_TRUE(merged.lua_enabled);                 /* changed  */
-    TEST_ASSERT_EQUAL_STRING("pwm", merged.lua_p19_role); /* changed, in memory */
+    TEST_ASSERT_TRUE(merged.lua_enabled);      /* changed */
+    TEST_ASSERT_EQUAL(57600, merged.lua_baud); /* changed */
     TEST_ASSERT_EQUAL_STRING("ROCKET7", merged.id);        /* survived */
     TEST_ASSERT_EQUAL(PYRO_MODE_SPEED, merged.pyro1_mode); /* survived */
     TEST_ASSERT_EQUAL(42, merged.pyro1_value);             /* survived */
@@ -350,19 +349,6 @@ void test_config_worst_case_fits_the_budget(void) {
     cfg.landing_timeout = 255;
     cfg.lua_baud = 65535;
     cfg.lua_pixels = 65535;
-    /* Every legacy string too. They are not serialised today, so filling them
-       changes nothing -- which is exactly what this asserts. Fill them anyway,
-       so that putting CONFIG_LEGACY_FIELDS back into the serializer makes this
-       test fail rather than pass by accident. */
-    strncpy(cfg.lua_p18_role, "88888888", sizeof(cfg.lua_p18_role) - 1);
-    strncpy(cfg.lua_p18_name, "88888888", sizeof(cfg.lua_p18_name) - 1);
-    strncpy(cfg.lua_p19_role, "88888888", sizeof(cfg.lua_p19_role) - 1);
-    strncpy(cfg.lua_p19_name, "88888888", sizeof(cfg.lua_p19_name) - 1);
-    strncpy(cfg.lua_p20_role, "88888888", sizeof(cfg.lua_p20_role) - 1);
-    strncpy(cfg.lua_p20_name, "88888888", sizeof(cfg.lua_p20_name) - 1);
-    strncpy(cfg.lua_p21_role, "88888888", sizeof(cfg.lua_p21_role) - 1);
-    strncpy(cfg.lua_p21_name, "88888888", sizeof(cfg.lua_p21_name) - 1);
-
     char buf[512];
     int n = config_serialize_ini(&cfg, buf, (int)sizeof(buf));
     TEST_ASSERT_GREATER_THAN_MESSAGE(0, n, "a fully populated config must still serialise");
@@ -370,27 +356,6 @@ void test_config_worst_case_fits_the_budget(void) {
     /* Headroom, so the next field added does not silently land on the limit.
        341 bytes today; this fires well before 512. */
     TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(440, n, "config.ini is running out of headroom");
-}
-
-void test_legacy_keys_are_read_but_not_written(void) {
-    config_t cfg;
-    config_set_defaults(&cfg);
-
-    char in[] = "[pyro]\r\nid=OLDBOARD\r\nlua_p18_role=pwm\r\nlua_p18_name=beacon\r\n";
-    config_parse_ini(in, &cfg);
-
-    /* Read: pin_store_load() migrates from these when there is no pins.ini. */
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("pwm", cfg.lua_p18_role, "a legacy key must still parse");
-    TEST_ASSERT_EQUAL_STRING("beacon", cfg.lua_p18_name);
-
-    /* Not written: they cost ~160 bytes of a 512-byte budget and pins.ini
-       superseded them. */
-    char out[512];
-    int n = config_serialize_ini(&cfg, out, (int)sizeof(out));
-    TEST_ASSERT_GREATER_THAN(0, n);
-    TEST_ASSERT_NULL_MESSAGE(strstr(out, "lua_p18_role"), "a legacy key must not be written back");
-    TEST_ASSERT_NULL(strstr(out, "lua_p21_name"));
-    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(out, "id=OLDBOARD"), "but the rest of the config still is");
 }
 
 /* ── Serializer overflow ──────────────────────────────────────────── */
@@ -438,7 +403,6 @@ int main(void) {
     /* Merge semantics [CFG-06] */
     RUN_TEST(test_config_merge_keeps_omitted_fields);
     RUN_TEST(test_config_worst_case_fits_the_budget);
-    RUN_TEST(test_legacy_keys_are_read_but_not_written);
     RUN_TEST(test_config_merge_lua_tab_keeps_flight_fields);
     RUN_TEST(test_config_serialize_refuses_to_overflow);
 

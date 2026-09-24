@@ -87,28 +87,6 @@ static void phase(uint32_t p) {
 
 /* ── Config -> platform ───────────────────────────────────────────── */
 
-static lua_role_t role_of(const char *s) {
-    if (strcmp(s, "out") == 0) {
-        return LUA_ROLE_OUT;
-    }
-    if (strcmp(s, "pwm") == 0) {
-        return LUA_ROLE_PWM;
-    }
-    if (strcmp(s, "in") == 0) {
-        return LUA_ROLE_IN;
-    }
-    if (strcmp(s, "tx") == 0) {
-        return LUA_ROLE_TX;
-    }
-    if (strcmp(s, "rx") == 0) {
-        return LUA_ROLE_RX;
-    }
-    if (strcmp(s, "pixel") == 0) {
-        return LUA_ROLE_PIXEL;
-    }
-    return LUA_ROLE_OFF;
-}
-
 static int script_read_err;
 
 int lua_app_script_read(char *buf, int max) {
@@ -128,32 +106,30 @@ bool lua_app_script_write(const char *src, int len) {
     return hal_fs_write_file(LUA_SCRIPT_PATH, src, len) == 0;
 }
 
-/* Binds nothing, so the web check reports a verdict for the configuration
- * just saved rather than for the one still running. */
-static void env_from_config(const config_t *cfg, lua_chk_env_t *env) {
+/* The environment a script will actually get, built from the live pin
+ * assignment rather than from config.ini.
+ *
+ * This used to read the lua_p18..p21 config keys. Those are gone -- pins.ini
+ * superseded them -- and reading them was already wrong for two reasons: they
+ * were MK1C-shaped four-entry positional slots, so on MK1B they described
+ * pads that do not exist, and they could not describe a released pyro pad at
+ * all.
+ *
+ * Binds nothing, so the check reports a verdict for the assignment as stored
+ * rather than for whatever the running VM happens to hold. */
+static void env_from_assignment(const config_t *cfg, lua_chk_env_t *env) {
     memset(env, 0, sizeof(*env));
-    const struct {
-        const char *role;
-        const char *name;
-    } pins[4] = {
-        {cfg->lua_p18_role, cfg->lua_p18_name},
-        {cfg->lua_p19_role, cfg->lua_p19_name},
-        {cfg->lua_p20_role, cfg->lua_p20_name},
-        {cfg->lua_p21_role, cfg->lua_p21_name},
-    };
-    for (int i = 0; i < 4; i++) {
-        lua_role_t r = role_of(pins[i].role);
-        if (r == LUA_ROLE_OFF) {
+
+    lua_pin_cfg_t pins[LUA_CFG_MAX];
+    int n = pin_store_lua_pins(pins, LUA_CFG_MAX);
+
+    for (int i = 0; i < n; i++) {
+        switch (pins[i].role) {
+        case LUA_ROLE_OFF:
             continue;
-        }
-        if (r == LUA_ROLE_PIXEL) {
-            env->has_pixel = cfg->lua_pixels > 0;
+        case LUA_ROLE_PIXEL:
+            env->has_pixel = cfg && cfg->lua_pixels > 0;
             continue;
-        }
-        if (env->n < LUA_CHK_MAX_NAMES) {
-            strncpy(env->names[env->n++], pins[i].name, LUA_NAME_MAX - 1);
-        }
-        switch (r) {
         case LUA_ROLE_OUT:
         case LUA_ROLE_PWM:
             env->has_output = true;
@@ -165,8 +141,26 @@ static void env_from_config(const config_t *cfg, lua_chk_env_t *env) {
         case LUA_ROLE_RX:
             env->has_serial = true;
             break;
+        case LUA_ROLE_BRIDGE:
+            /* A bridge is one output to a script; the pair is named once. */
+            env->has_output = true;
+            break;
         default:
             break;
+        }
+        if (pins[i].name && pins[i].name[0] && env->n < LUA_CHK_MAX_NAMES) {
+            strncpy(env->names[env->n++], pins[i].name, LUA_NAME_MAX - 1);
+        }
+    }
+
+    /* The bridge is not in the pad list -- it consumes two released pyro pads
+     * and is configured separately. Its name still has to resolve. */
+    uint8_t br_ch, br_common;
+    const char *br_name;
+    if (pin_store_bridge(&br_ch, &br_common, &br_name) && br_name && br_name[0]) {
+        env->has_output = true;
+        if (env->n < LUA_CHK_MAX_NAMES) {
+            strncpy(env->names[env->n++], br_name, LUA_NAME_MAX - 1);
         }
     }
 }
@@ -174,7 +168,7 @@ static void env_from_config(const config_t *cfg, lua_chk_env_t *env) {
 void lua_app_check(const char *src, int len, const config_t *cfg, lua_chk_result_t *out) {
     lua_chk_env_t env;
     if (cfg) {
-        env_from_config(cfg, &env);
+        env_from_assignment(cfg, &env);
     } else {
         lua_chk_env_from_platform(&env);
     }
@@ -355,9 +349,9 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
         lua_core1_start(script_buf, script_len);
         flash_window_crumb(61);
         phase(17);
-        snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)", lua_iface_count_kind(LUA_IF_OUTPUT),
-                 lua_iface_count_kind(LUA_IF_INPUT), lua_iface_count_kind(LUA_IF_SERIAL),
-                 lua_iface_count_kind(LUA_IF_PIXEL));
+        snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)",
+                 lua_iface_count_kind(LUA_IF_OUTPUT), lua_iface_count_kind(LUA_IF_INPUT),
+                 lua_iface_count_kind(LUA_IF_SERIAL), lua_iface_count_kind(LUA_IF_PIXEL));
         phase(18);
         return;
     }

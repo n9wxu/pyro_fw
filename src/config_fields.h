@@ -43,28 +43,4 @@
     X(U16, lua_baud, "lua_baud", 9600)                                                                                 \
     X(U16, lua_pixels, "lua_pixels", 0)
 
-/* ── Legacy fields: parsed, never written ─────────────────────────
- *
- * pins.ini superseded these. They are still READ, because a board that
- * predates pins.ini has them in its config.ini and pin_store_load() migrates
- * from them when no pins.ini exists -- deleting them outright would move
- * every such board's Lua pins on the next boot.
- *
- * They are no longer SERIALIZED. Eight STR fields cost about 160 bytes, and
- * config.ini serialised to 525 bytes worst case against a 512-byte budget: a
- * legitimately populated config could not be written back at all, and the
- * board answered HTTP 500. Dropping them from the output fixes that, and the
- * keys disappear from a board's config.ini the first time it saves.
- *
- * Nothing new belongs here. */
-#define CONFIG_LEGACY_FIELDS(X)                                                                                        \
-    X(STR, lua_p18_role, "lua_p18_role", "off")                                                                        \
-    X(STR, lua_p18_name, "lua_p18_name", "")                                                                           \
-    X(STR, lua_p19_role, "lua_p19_role", "off")                                                                        \
-    X(STR, lua_p19_name, "lua_p19_name", "")                                                                           \
-    X(STR, lua_p20_role, "lua_p20_role", "off")                                                                        \
-    X(STR, lua_p20_name, "lua_p20_name", "")                                                                           \
-    X(STR, lua_p21_role, "lua_p21_role", "off")                                                                        \
-    X(STR, lua_p21_name, "lua_p21_name", "")
-
 #endif

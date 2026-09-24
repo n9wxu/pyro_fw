@@ -19,6 +19,35 @@ Setting `c1_busy` first, with a barrier, makes the two conditions overlap so
 one always holds. Affects every board and every configuration, not just the
 bridge.
 
+## ✅ config.ini fits again — and no longer migrates (2026-09-24)
+
+`hal_config_load()` reads into `char[512]` and `http_server.c` refuses a merged
+config that does not fit, but a fully populated config serialised to **525
+bytes**: a board with its Lua pin names filled in could not save at all and
+answered HTTP 500. Nothing tested the worst case, only the defaults.
+
+The eight `lua_p18..p21_role/name` keys are **deleted**, not deprecated —
+`pins.ini` superseded them and a clean wipe was chosen over migration. Gone
+with them: `migrate_from_config()` in `pin_store.c`, the `role_of_legacy()`
+helper, and `pin_store_load()`'s `config_t *` parameter. A board without
+`pins.ini` now takes the board defaults — nothing released, every pyro pad
+retained — and says so on `/api/status`.
+
+| | Before | After | Budget |
+|---|---|---|---|
+| defaults | 445 | **313** | 512 |
+| worst case | **525** | **341** | 512 |
+
+`lua_app.c`'s `/api/lua/check` environment was also built from those keys. It
+now reads the live assignment through `pin_store_lua_pins()` and
+`pin_store_bridge()` — which fixes two things the old path got wrong anyway:
+the keys were MK1C-shaped four-entry positional slots, so on MK1B they
+described pads that do not exist, and they could not describe a released pyro
+pad at all.
+
+`test_config_worst_case_fits_the_budget` fills every string field, so the
+budget is now checked rather than assumed.
+
 ## ✅ Power-up self-test: the sensor is tested first (item 10)
 
 A board with a dead barometer used to beep `BEEP_ALL_GOOD` and sit on the pad.
@@ -596,8 +625,16 @@ This affects ARP replies, DHCP, and TCP SYN-ACK — meaning HTTP can never be es
 | v2-13 | DMA UART TX (replaces v2-10 ring buffer) | ✅ Done v2.1.28 |
 
 ## 🔨 Next Priority
-1. **Phase 1** — `pin_caps.h` capability table with build-time assertions
-2. **Convert MK1B's `ms5607_read()` fallback** — the last `sleep_ms()` on a flight path, 11 ms in stage 3
-3. **Instrument `ota_flush()`** — separate erase from program timing to explain MK1A's 1.0 s/sector
-4. **Re-enable WFE sleep** — MAC mismatch was the real root cause, not `__wfe()`
-5. Long-duration soak test (network + UART stability over hours)
+1. **`beep.ini`** — a beep-code table on the `pins.ini` pattern, plus a Beep Codes
+   tab. 7 of 13 codes are defined and never emitted; the code→meaning map exists
+   nowhere a user can reach.
+2. **Flight machine rework** — phase-based descent, emergency deploy, mach gate,
+   5 s rolling ground level, remove the backup apogee timer. Design in hand,
+   not yet started.
+3. **Export / import Lua programs** — no way to get a script off a board or onto
+   another one today. `/api/lua/script` serves the raw text, so this is mostly a
+   UI affordance plus a sensible filename.
+4. **Convert MK1B's `ms5607_read()` fallback** — the last `sleep_ms()` on a flight path, 11 ms in stage 3
+5. **Instrument `ota_flush()`** — separate erase from program timing to explain MK1A's 1.0 s/sector
+6. **Re-enable WFE sleep** — MAC mismatch was the real root cause, not `__wfe()`
+7. Long-duration soak test (network + UART stability over hours)

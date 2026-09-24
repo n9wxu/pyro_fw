@@ -77,7 +77,6 @@ void config_set_defaults(config_t *cfg) {
 
 #define X_DEFAULTS(type, field, key, def) X_DEF_##type(type, field, key, def)
     CONFIG_FIELDS(X_DEFAULTS)
-    CONFIG_LEGACY_FIELDS(X_DEFAULTS)
 #undef X_DEFAULTS
 #undef X_DEF_STR
 #undef X_DEF_U8
@@ -126,7 +125,6 @@ static void config_parse_line(const char *key, const char *val, config_t *cfg) {
 
 #define X_PARSE(type, field, key_str, def) X_PARSE_##type(type, field, key_str, def)
     CONFIG_FIELDS(X_PARSE)
-    CONFIG_LEGACY_FIELDS(X_PARSE)
 #undef X_PARSE
 #undef X_PARSE_STR
 #undef X_PARSE_U8
@@ -196,8 +194,6 @@ int config_serialize_ini(const config_t *cfg, char *buf, int max_len) {
 #define X_SER_BOOL(type, field, key, def) APPEND("%s=%s\r\n", key, cfg->field ? "true" : "false");
 
 #define X_SERIALIZE(type, field, key, def) X_SER_##type(type, field, key, def)
-    /* CONFIG_LEGACY_FIELDS is deliberately absent: read, never written.
-     * See config_fields.h. */
     CONFIG_FIELDS(X_SERIALIZE)
 #undef X_SERIALIZE
 #undef X_SER_STR

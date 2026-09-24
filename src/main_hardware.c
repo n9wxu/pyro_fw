@@ -125,9 +125,9 @@ int main() {
     flight_init(&ctx);
 
     /* Before lua_app_init(), which configures Lua from the assignment. A
-     * rejected pins.ini falls back to the migrated legacy one and says so on
+     * rejected pins.ini falls back to the board defaults and says so on
      * /api/status. */
-    pin_store_load(&ctx.config, NULL, 0);
+    pin_store_load(NULL, 0);
 
     /* The single pass that gives every pad one owner, then the flight
      * software spending its claims. Both before core1 exists, and in this
