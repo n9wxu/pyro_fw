@@ -138,6 +138,7 @@ emcc -O2 -s WASM=1 \
   "$ROOT/src/lua/lua_arena.c" \
   "$ROOT/src/lua/lua_iface.c" \
   "$ROOT/src/pad_claim.c" \
+  "$ROOT/src/pyro_release.c" \
   "$ROOT/boards/sim/lua_platform_sim.c" \
   $BOARD_SRC \
   $LUA_SRC \
