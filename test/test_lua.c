@@ -13,6 +13,7 @@
 #include "lua_platform_cfg.h"
 #include "pyro_lua.h"
 #include "lua_platform.h"
+#include "pad_claim.h"
 /* For the bytecode test: it compiles a chunk with a throwaway plain state,
  * exactly the way an attacker would produce one. */
 #include "lua.h"
@@ -738,8 +739,60 @@ static void test_check_does_not_execute_the_script(void) {
     TEST_ASSERT_EQUAL_STRING("", sim_lua_uart_tx());
 }
 
+/* ── The exclusion, from the interface table's side ───────────────
+ *
+ * lua_iface_publish() spends a claim, so a resource on a pad the flight
+ * software kept cannot be created. This is the half that keeps a script from
+ * reaching a live pyro pad. */
+
+static const lua_if_output_t probe_vt = {NULL, NULL, false};
+
+/* These three drive the table directly, so each starts from an empty one and
+ * puts the demo set back -- the other tests resolve names against it. */
+static void iface_scratch(void) {
+    lua_iface_reset();
+    pad_claim_reset();
+}
+static void iface_restore(void) {
+    pad_claim_reset();
+    lua_plat_configure(NULL, 0, 9600, 16);
+}
+
+static void test_publish_refused_on_a_pad_the_flight_software_holds(void) {
+    iface_scratch();
+    TEST_ASSERT_TRUE(pad_claim_take(PAD(9), PAD_FLIGHT));
+
+    TEST_ASSERT_LESS_THAN_MESSAGE(0, lua_iface_publish(PAD(9), "winch", LUA_IF_OUTPUT, &probe_vt, NULL),
+                                  "a pad the flight software holds must not become a Lua resource");
+    TEST_ASSERT_EQUAL_MESSAGE(-1, lua_iface_find("winch", LUA_IF_OUTPUT), "and no entry may exist for it");
+    iface_restore();
+}
+
+static void test_publish_of_a_pair_is_all_or_nothing(void) {
+    iface_scratch();
+    TEST_ASSERT_TRUE(pad_claim_take(PAD(10), PAD_FLIGHT));
+
+    /* A bridge across a free pad and a held one. Publishing the half that is
+       available would leave a resource driving one gate it owns and one it
+       does not. */
+    TEST_ASSERT_LESS_THAN(0, lua_iface_publish(PAD(9) | PAD(10), "motor", LUA_IF_OUTPUT, &probe_vt, NULL));
+    TEST_ASSERT_EQUAL_MESSAGE(PAD_FREE, pad_claim_owner(9), "the free half must not have been claimed");
+    iface_restore();
+}
+
+static void test_publish_claims_the_pad_it_takes(void) {
+    iface_scratch();
+    TEST_ASSERT_GREATER_OR_EQUAL(0, lua_iface_publish(PAD(9), "winch", LUA_IF_OUTPUT, &probe_vt, NULL));
+    TEST_ASSERT_EQUAL_MESSAGE(PAD_LUA, pad_claim_owner(9), "publishing is what claims it");
+    TEST_ASSERT_FALSE_MESSAGE(pad_claim_take(PAD(9), PAD_FLIGHT), "so the flight software can no longer have it");
+    iface_restore();
+}
+
 int main(void) {
     UNITY_BEGIN();
+    RUN_TEST(test_publish_refused_on_a_pad_the_flight_software_holds);
+    RUN_TEST(test_publish_of_a_pair_is_all_or_nothing);
+    RUN_TEST(test_publish_claims_the_pad_it_takes);
     RUN_TEST(test_output_set_and_get);
     RUN_TEST(test_output_list_is_exactly_configured);
     RUN_TEST(test_non_dimmable_rejects_partial);

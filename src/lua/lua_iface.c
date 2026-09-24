@@ -21,8 +21,14 @@ void lua_iface_reset(void) {
     n_res = 0;
 }
 
-int lua_iface_publish(const char *name, lua_iface_kind_t kind, const void *vt, void *ctx) {
+int lua_iface_publish(uint32_t pads, const char *name, lua_iface_kind_t kind, const void *vt, void *ctx) {
     if (n_res >= LUA_IFACE_MAX || kind == LUA_IF_NONE || !vt) {
+        return -1;
+    }
+
+    /* The claim is the permission. A pad the flight software kept cannot be
+     * taken here, so no entry for it can be created -- see lua_iface.h. */
+    if (!pad_claim_take(pads, PAD_LUA)) {
         return -1;
     }
 
@@ -42,6 +48,7 @@ int lua_iface_publish(const char *name, lua_iface_kind_t kind, const void *vt, v
     r->kind = kind;
     r->vt = vt;
     r->ctx = ctx;
+    r->pads = pads;
     return n_res++;
 }
 
@@ -55,6 +62,9 @@ void lua_iface_blank(int idx) {
     table[idx].vt = NULL;
     table[idx].ctx = NULL;
     table[idx].name[0] = '\0';
+    /* The pads stay claimed. Blanking makes a resource unreachable from a
+     * script; it does not hand a FET gate back to the flight software while
+     * core1 may still be running. */
 }
 
 int lua_iface_find(const char *name, lua_iface_kind_t kind) {

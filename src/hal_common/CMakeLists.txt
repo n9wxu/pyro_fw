@@ -9,6 +9,7 @@
 add_library(pyro_hal_common STATIC
     hal_common.c
     ../pyro_release.c
+    ../pad_claim.c
 )
 
 # The selected board's headers (board_pins.h, consumed via src/board_id.h).

@@ -36,6 +36,15 @@ typedef struct {
 
 extern mock_pressure_t mock_pressure;
 extern mock_pyro_t mock_pyro;
+
+/* Which pads a pyro channel switches, in the host tests: MK1A's numbering,
+ * the channel's own element plus the common. The flight software claims these
+ * at reset; a test that wants a release gives them to Lua first. */
+uint32_t mock_pyro_pads(uint8_t channel);
+
+/* The last mocked operation reported, and how many there have been. */
+extern char mock_pyro_last_note[64];
+extern int mock_pyro_notes;
 extern char mock_uart_buf[MOCK_UART_BUF_SIZE];
 extern int mock_uart_len;
 extern uint32_t mock_time_ms;

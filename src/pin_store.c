@@ -126,6 +126,46 @@ pin_verdict_t pin_store_save(const pin_assign_t *a) {
     return v;
 }
 
+uint32_t pin_store_pyro_pads(uint8_t channel) {
+    pin_group_t want = (channel == 1) ? PG_CH1 : (channel == 2) ? PG_CH2 : PG_NONE;
+    if (want == PG_NONE) {
+        return PAD_NONE;
+    }
+
+    int n = 0;
+    const pin_cap_t *caps = pin_caps_table(&n);
+    uint32_t pads = PAD_NONE, common = PAD_NONE;
+    for (int i = 0; i < n; i++) {
+        if (caps[i].pin >= PAD_CLAIM_MAX_GPIO) {
+            continue;
+        }
+        if (caps[i].group == want) {
+            pads |= PAD(caps[i].pin);
+        } else if (caps[i].group == PG_COMMON) {
+            common |= PAD(caps[i].pin);
+        }
+    }
+    /* The common only counts as this channel's while the channel exists --
+     * an empty channel must not claim it and lock the other one out. */
+    return pads ? (pads | common) : PAD_NONE;
+}
+
+/* One write per pad. Nothing here compares an owner against another; the
+ * exclusivity is that there is one slot and one assignment to it. */
+void pin_store_claim_pads(void) {
+    pad_claim_reset();
+
+    int n = 0;
+    const pin_cap_t *caps = pin_caps_table(&n);
+    for (int i = 0; i < n; i++) {
+        uint8_t pin = caps[i].pin;
+        if (pin >= PAD_CLAIM_MAX_GPIO) {
+            continue;
+        }
+        pad_claim_take(PAD(pin), pin_assign_is_reserved(&live, pin) ? PAD_FLIGHT : PAD_LUA);
+    }
+}
+
 bool pin_store_owns(uint8_t pin) {
     return pin_assign_is_reserved(&live, pin);
 }

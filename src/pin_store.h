@@ -11,6 +11,7 @@
 #define PIN_STORE_H
 
 #include "config.h"
+#include "pad_claim.h"
 #include "pin_assign.h"
 
 #define PIN_STORE_PATH "pins.ini"
@@ -49,6 +50,25 @@ const char *pin_store_reason(void);
  * alternative, which is the flight loop stamping a released output low ten
  * times a second. */
 bool pin_store_owns(uint8_t pin);
+
+/* Give every pad exactly one owner, from the live assignment.
+ *
+ * The single pass that decides. One array, one write per pad, so there is no
+ * code path that can make a pad both the flight software's and a script's --
+ * not because anything compares them, but because there is nowhere for the
+ * second answer to go. Everything downstream spends the claims this makes and
+ * cannot invent one. See pad_claim.h.
+ *
+ * Call once at boot, after pin_store_load() and before either table is
+ * populated. */
+void pin_store_claim_pads(void);
+
+/* The pads one pyro channel switches, as a claim mask: its own element plus
+ * the common. Empty when the board declares no such channel.
+ *
+ * From the board's capability table -- PG_CH1, PG_CH2, PG_COMMON -- so it is
+ * the board that says which pad is which channel's, not this file. */
+uint32_t pin_store_pyro_pads(uint8_t channel);
 
 /* Fill cfg-shaped Lua pin roles from the live assignment, in the positional
  * order lua_plat_configure() expects. Returns how many entries were filled. */

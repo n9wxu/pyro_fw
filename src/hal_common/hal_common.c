@@ -308,9 +308,9 @@ bool hal_pressure_fifo_active(void) {
 
 /* ── The real channel operations ──────────────────────────────────
  *
- * Installed per channel by pyro_release_apply(); a released channel gets the
- * mocked table instead, and these are then simply not reachable for it. See
- * pyro_release.h.
+ * Installed per channel by pyro_release_claim(), and only for a channel whose
+ * pads it could claim. A channel Lua already holds gets the mocked table, and
+ * these are then simply not reachable for it. See pad_claim.h.
  *
  * Not named *_vt on purpose. That suffix means "core1 can reach this" and
  * prove_core0.py folds those into the core1 proof -- these run on core0, and
@@ -355,8 +355,8 @@ void hal_pyro_init(void) {
     pyro_init();
 }
 
-void hal_pyro_release_apply(bool ch1_released, bool ch2_released) {
-    pyro_release_apply(ch1_released, ch2_released);
+int hal_pyro_claim_channels(uint32_t (*pads_of)(uint8_t channel)) {
+    return pyro_release_claim(pads_of);
 }
 
 void hal_pyro_sample(void) {

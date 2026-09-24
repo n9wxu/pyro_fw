@@ -36,6 +36,7 @@ defects the feature would otherwise have been built on.
 | 3c | Generic Lua interface table; `prove_core0.py` follows vtables | ✅ Done |
 | 4 | `GET /api/pins/caps`, Config and Lua tab pin UI | ✅ Done, HW verified |
 | 4b | Released channels mocked at the HAL, logged and counted | ✅ Done, HW verified |
+| 4c | One pad, one owner: the claim is what yields either vtable | ✅ Done, HW verified |
 | 5 | Dead-time tuning against real FETs | 🔨 Next |
 
 Release model: a pyro channel releases independently; the common low side
@@ -225,6 +226,40 @@ removing the capability filter produces 19 failures. It needs node, which is
 not a build dependency, so `web_tests` skips with a message rather than
 failing when node is absent.
 
+### One pad, one owner (phase 4c)
+
+The pyro table and the Lua interface table were independent. Nothing
+structural stopped a pad from being in both — only `pin_assign_validate()`
+and the order of two calls at boot, which is to say a check and a convention.
+Get either wrong and two cores drive one FET gate.
+
+`src/pad_claim.c` is now the single arbiter. `pin_store_claim_pads()` walks
+the assignment **once** and gives every pad exactly one owner: there is one
+array and one write per pad, so no code path can produce two answers. It
+compares nothing.
+
+After that, a claim is the only currency either table accepts:
+
+- `pyro_release_claim()` installs a channel's real methods **only if it can
+  claim that channel's pads** — its own element and the common, together.
+  A channel whose pads went to Lua cannot take them, so it gets the mocked
+  table. There is no branch there that could be written the other way.
+- `lua_iface_publish()` takes the pads its resource drives and **fails unless
+  Lua can claim all of them**, claiming them when it can.
+
+So a pad cannot be in both tables: the second claimant's entry cannot be
+created, because the claim it needed was already spent. Claims are all or
+nothing, which is also what stops a half-claimed bridge — one FET gate owned
+and one not.
+
+`/api/status` now reports what the claim decided (`pyro1_real`, `pyro2_real`)
+next to what the assignment asked for (`pyro1_released`, `pyro2_released`), so
+a disagreement is visible rather than inferred from intent.
+
+Verified negatively: removing the claim gate from `lua_iface_publish()`
+produces 21 test failures; ignoring the claim in `pyro_release_claim()`
+produces 8.
+
 ### Released channels are mocked, and say so (phase 4b)
 
 The flight layer no longer reaches a released channel's hardware. Each
@@ -258,11 +293,14 @@ Two things a per-channel table cannot express, handled separately:
 Measured across the three boards, which happened to be in three different
 states:
 
-| Board | Released | `pyro_mocked` | `pyro1_adc` / `pyro2_adc` | Overruns |
-|---|---|---|---|---|
-| MK1B | both | climbing | 0 / 0 — both mocked | **0** (was ~1/s) |
-| MK1C | pyro 1 | climbing | 0 / 10 — one mocked, one real | 0 |
-| MK1A | neither | **0** | 4081 / 4082 — both real | 0 |
+| Board | Released | Claim kept | `pyro_mocked` | `pyro1_adc` / `pyro2_adc` | Overruns |
+|---|---|---|---|---|---|
+| MK1B | both | neither | climbing | 0 / 0 — both mocked | **0** (was ~1/s) |
+| MK1C | pyro 1 | pyro 2 | climbing | 0 / 11 — one mocked, one real | 0 |
+| MK1A | neither | both | **0** | 4081 / 4083 — both real | 0 |
+
+`rel` and `real` are exact complements on every board: what the assignment
+released is what the claim denied.
 
 MK1A is the regression check: with nothing released, nothing changes.
 

@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "pyro_release.h"
+#include "pad_claim.h"
 
 static const pyro_ch_ops_t *real_ops;
 static pyro_mock_report_fn reporter;
@@ -59,11 +60,20 @@ void pyro_release_init(const pyro_ch_ops_t *real, pyro_mock_report_fn rep) {
     mocks = 0;
 }
 
-void pyro_release_apply(bool ch1_released, bool ch2_released) {
-    released[0] = ch1_released;
-    released[1] = ch2_released;
-    ch_ops[0] = ch1_released ? &mock_ops : real_ops;
-    ch_ops[1] = ch2_released ? &mock_ops : real_ops;
+int pyro_release_claim(pyro_pads_fn pads_of) {
+    int kept = 0;
+    for (uint8_t ch = 1; ch <= 2; ch++) {
+        uint32_t pads = pads_of ? pads_of(ch) : PAD_NONE;
+
+        /* Spending the claim is the install. A channel whose pads Lua already
+         * holds cannot take them, so it cannot be given the real methods --
+         * there is no branch here that could be written the other way. */
+        bool mine = (pads != PAD_NONE) && pad_claim_take(pads, PAD_FLIGHT);
+        ch_ops[ch - 1] = mine ? real_ops : &mock_ops;
+        released[ch - 1] = !mine;
+        kept += mine ? 1 : 0;
+    }
+    return kept;
 }
 
 const pyro_ch_ops_t *pyro_ch(uint8_t channel) {

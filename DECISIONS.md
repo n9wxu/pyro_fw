@@ -174,3 +174,23 @@ rationale and the alternatives considered.
   the flight software controls there; reporting continuity would let it arm
   and then "fire" a channel that cannot.
 
+### DD-020: A Pad Has One Owner, and the Claim Is What Yields the vtable
+- **Decision:** `src/pad_claim.c` holds one owner per pad. `pin_store_claim_pads()`
+  walks the assignment once and writes each pad's owner — one array, one write
+  per pad. Afterwards, `pyro_release_claim()` installs a channel's real methods
+  only if it can claim that channel's pads, and `lua_iface_publish()` refuses a
+  resource unless Lua can claim every pad it drives. Claims are all or nothing.
+- **Rationale:** The pyro table and the Lua interface table were independent, and
+  only `pin_assign_validate()` plus the order of two boot calls kept them
+  disjoint — a check and a convention. A pad in both means two cores driving one
+  FET gate. Making the claim the currency means the second table's entry cannot
+  be created at all: nothing compares the tables, there is simply one pad and one
+  owner, and the claim was already spent. Same argument as DD-018 and DD-019,
+  applied to the thing those two tables share.
+- **All or nothing** is what stops a half-claimed bridge: a resource driving a
+  free pad and a held one gets neither, rather than one gate it owns and one it
+  does not.
+- **Reported:** `/api/status` carries what the claim decided (`pyro1_real`,
+  `pyro2_real`) beside what the assignment asked for, so a disagreement is
+  visible rather than inferred.
+

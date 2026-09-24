@@ -45,10 +45,15 @@ typedef void (*pyro_mock_report_fn)(uint8_t channel, const char *what);
  * pyro_release_apply(). */
 void pyro_release_init(const pyro_ch_ops_t *real, pyro_mock_report_fn report);
 
-/* Point each channel at the real operations or the mocked ones. Call at boot
- * once the assignment is loaded, and again only if it changes -- which it
- * does not without a reboot. */
-void pyro_release_apply(bool ch1_released, bool ch2_released);
+/* Claim each channel's pads and install accordingly: the real methods for a
+ * channel the flight software owns, the mocked ones for a channel it does
+ * not. Call at boot once the pads have owners and before core1 exists.
+ *
+ * pads_of(channel) is how this asks which pads a channel switches -- the
+ * board's capability table answers, through pin_store_pyro_pads(), so nothing
+ * here knows a pin number. Returns how many channels got the real methods. */
+typedef uint32_t (*pyro_pads_fn)(uint8_t channel);
+int pyro_release_claim(pyro_pads_fn pads_of);
 
 /* What the flight software reaches. Never NULL once initialised; an
  * out-of-range channel gets the mocked table rather than a null pointer,

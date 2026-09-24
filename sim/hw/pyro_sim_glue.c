@@ -69,9 +69,9 @@ void hal_pyro_init(void) {
  * are always the flight software's. Present because hal.h asks for it:
  * a HAL that silently omits an entry point is one that links until
  * something calls it. */
-void hal_pyro_release_apply(bool ch1_released, bool ch2_released) {
-    (void)ch1_released;
-    (void)ch2_released;
+int hal_pyro_claim_channels(uint32_t (*pads_of)(uint8_t channel)) {
+    (void)pads_of;
+    return 2; /* both channels */
 }
 
 void hal_pyro_sample(void) {

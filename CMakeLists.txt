@@ -235,6 +235,7 @@ if(PYRO_HAS_LUA)
         src/lua/lua_arena.c
         src/lua/lua_check.c
         src/lua/lua_iface.c
+        src/pad_claim.c
     )
     target_include_directories(pyro_lua PUBLIC ${CMAKE_CURRENT_LIST_DIR}/src/lua ${CMAKE_CURRENT_LIST_DIR}/src)
     target_link_libraries(pyro_lua PUBLIC lua_lib)
@@ -496,6 +497,7 @@ add_custom_target(host_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
@@ -519,6 +521,7 @@ add_custom_target(integration_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_integration.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
@@ -541,6 +544,7 @@ add_custom_target(closedloop_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_closedloop.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
@@ -625,6 +629,7 @@ add_custom_target(lua_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_arena.c
                ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_check.c
                ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_iface.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/boards/sim/lua_platform_sim.c
                ${PYRO_LUA_SOURCES}
                ${unity_SOURCE_DIR}/src/unity.c
@@ -701,6 +706,7 @@ add_custom_target(buzzer_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_buzzer.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
@@ -734,6 +740,7 @@ add_custom_target(config_persistence_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_config_persistence.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c

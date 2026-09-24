@@ -27,6 +27,7 @@
 #define LUA_IFACE_H
 
 #include "lua_platform_cfg.h" /* LUA_NAME_MAX */
+#include "pad_claim.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -79,6 +80,7 @@ typedef struct {
     lua_iface_kind_t kind;
     const void *vt; /* one of the structs above; NULL when blank */
     void *ctx;
+    uint32_t pads; /* the pads it drives; see the publish rule below */
 } lua_resource_t;
 
 /* ── Publishing ───────────────────────────────────────────────────
@@ -87,8 +89,22 @@ typedef struct {
  * Lua resource follows, because claiming hardware later means taking a spin
  * lock on a core that must never hold one.
  *
+ * pads is every pad the resource drives, as a pad_claim.h mask. The publish
+ * FAILS unless Lua can claim all of them, and claims them when it can.
+ *
+ * That is what makes it impossible for a pad to be here and in the pyro table
+ * at once: the flight software spends its claims first, so a pad it kept
+ * cannot be claimed here, and the entry cannot exist without the claim.
+ * Nothing compares the two tables -- there is one pad and one owner.
+ *
+ * All or nothing, which is what stops a half-claimed bridge existing: a
+ * resource driving two pads takes both or neither.
+ *
+ * PAD_NONE is allowed, for a resource that drives no pad of its own; it
+ * cannot conflict over one.
+ *
  * vt must have static storage: the table keeps the pointer, not a copy. */
-int lua_iface_publish(const char *name, lua_iface_kind_t kind, const void *vt, void *ctx);
+int lua_iface_publish(uint32_t pads, const char *name, lua_iface_kind_t kind, const void *vt, void *ctx);
 
 /* Drop every published resource. */
 void lua_iface_reset(void);

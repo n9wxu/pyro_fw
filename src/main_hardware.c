@@ -129,14 +129,13 @@ int main() {
      * /api/status. */
     pin_store_load(&ctx.config, NULL, 0);
 
-    /* Before the flight loop, and before core1 exists. A channel the
-     * assignment released is Lua's pad now, so the flight software's
-     * operations on it are replaced with mocked ones that do nothing and say
-     * so -- rather than left to reach a pad another core is driving. */
-    {
-        const pin_assign_t *pa = pin_store_current();
-        hal_pyro_release_apply(pa->pyro1_released, pa->pyro2_released);
-    }
+    /* The single pass that gives every pad one owner, then the flight
+     * software spending its claims. Both before core1 exists, and in this
+     * order: whatever the flight software claims here, lua_plat_configure()
+     * can no longer publish, and the pads it could not claim are Lua's. See
+     * pad_claim.h. */
+    pin_store_claim_pads();
+    hal_pyro_claim_channels(pin_store_pyro_pads);
 
 #if PYRO_HAS_LUA
     /* Core1 is launched here, once, after the filesystem is mounted and the

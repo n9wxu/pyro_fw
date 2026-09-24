@@ -5,6 +5,7 @@
  */
 #include "../src/hal.h"
 #include "../src/pyro_release.h"
+#include "../src/pad_claim.h"
 #include "../src/config.h"
 #include "../src/device_status.h"
 #include "../src/pressure_processing.h"
@@ -86,10 +87,11 @@ void mock_reset_all(void) {
     test_file.open = false;
     memset(sim_files, 0, sizeof(sim_files));
     last_pp_feed_ms = 0;
-    /* Every test starts with both channels the flight software's; a test that
-     * wants a release says so. Re-init rather than just apply, so the mock
-     * counter and the last note reset too. */
+    /* Every test starts with no pad claimed and both channels the flight
+     * software's; a test that wants a release gives Lua the pads first. */
+    pad_claim_reset();
     hal_pyro_init();
+    hal_pyro_claim_channels(mock_pyro_pads);
 }
 
 /* Enqueue a serial command line for hal_serial_readline() to return */
@@ -155,8 +157,19 @@ void hal_pyro_init(void) {
     mock_pyro_last_note[0] = '\0';
 }
 
-void hal_pyro_release_apply(bool ch1_released, bool ch2_released) {
-    pyro_release_apply(ch1_released, ch2_released);
+/* The host tests have no board capability table, so they say which pads a
+ * channel switches: MK1A's numbering, its own element plus the common. The
+ * point is that the claim decides, not the numbers. */
+uint32_t mock_pyro_pads(uint8_t channel) {
+    if (channel == 1)
+        return PAD(9) | PAD(10);
+    if (channel == 2)
+        return PAD(11) | PAD(10);
+    return PAD_NONE;
+}
+
+int hal_pyro_claim_channels(uint32_t (*pads_of)(uint8_t channel)) {
+    return pyro_release_claim(pads_of);
 }
 
 void hal_pyro_sample(void) {

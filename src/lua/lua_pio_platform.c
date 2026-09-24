@@ -135,7 +135,11 @@ static int n_out;
 static in_t ins[LUA_MAX_IN];
 static int n_in;
 
-static bool serial_published;
+/* TX and RX are one resource to a script, and it can straddle two pads. The
+ * mask is accumulated across the loop and the claim taken once, whole --
+ * publishing on the first pad seen would leave the second unclaimed. */
+static uint32_t serial_pads;
+static char serial_name[LUA_NAME_MAX];
 static int tx_sm = -1, rx_sm = -1;
 
 /* ── The half-bridge, on the pyro PIO ─────────────────────────────
@@ -302,7 +306,8 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
     }
 
     n_out = n_in = px_count = n_claimed = 0;
-    serial_published = false;
+    serial_pads = PAD_NONE;
+    serial_name[0] = '\0';
     lua_iface_reset();
     tx_sm = rx_sm = px_sm = px_dma = -1;
 
@@ -364,7 +369,7 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
                 o->pin = pin;
                 o->value = 0;
                 o->dimmable = (cfg[i].role == LUA_ROLE_PWM);
-                lua_iface_publish(cfg[i].name, LUA_IF_OUTPUT, o->dimmable ? &gpio_pwm_vt : &gpio_out_vt, o);
+                lua_iface_publish(PAD(pin), cfg[i].name, LUA_IF_OUTPUT, o->dimmable ? &gpio_pwm_vt : &gpio_out_vt, o);
             }
             break;
         case LUA_ROLE_IN:
@@ -374,21 +379,21 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
                 gpio_pull_down(pin);
                 in_t *in = &ins[n_in++];
                 in->pin = pin;
-                lua_iface_publish(cfg[i].name, LUA_IF_INPUT, &gpio_in_vt, in);
+                lua_iface_publish(PAD(pin), cfg[i].name, LUA_IF_INPUT, &gpio_in_vt, in);
             }
             break;
         case LUA_ROLE_TX:
             lua_uart_tx_program_init(LUA_PIO, (uint)tx_sm, tx_offset, pin, baud);
-            if (!serial_published) {
-                lua_iface_publish(cfg[i].name, LUA_IF_SERIAL, &pio_uart_vt, NULL);
-                serial_published = true;
+            serial_pads |= PAD(pin);
+            if (!serial_name[0]) {
+                strncpy(serial_name, cfg[i].name, LUA_NAME_MAX - 1);
             }
             break;
         case LUA_ROLE_RX:
             lua_uart_rx_program_init(LUA_PIO, (uint)rx_sm, rx_offset, pin, baud);
-            if (!serial_published) {
-                lua_iface_publish(cfg[i].name, LUA_IF_SERIAL, &pio_uart_vt, NULL);
-                serial_published = true;
+            serial_pads |= PAD(pin);
+            if (!serial_name[0]) {
+                strncpy(serial_name, cfg[i].name, LUA_NAME_MAX - 1);
             }
             break;
         case LUA_ROLE_PIXEL:
@@ -402,11 +407,15 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
                 channel_config_set_dreq(&dc, pio_get_dreq(LUA_PIO, (uint)px_sm, true));
                 dma_channel_configure((uint)px_dma, &dc, &LUA_PIO->txf[px_sm], px_wire, (uint)px_count, false);
             }
-            lua_iface_publish(cfg[i].name, LUA_IF_PIXEL, &ws2812_vt, NULL);
+            lua_iface_publish(PAD(pin), cfg[i].name, LUA_IF_PIXEL, &ws2812_vt, NULL);
             break;
         default:
             break;
         }
+    }
+
+    if (serial_pads != PAD_NONE) {
+        lua_iface_publish(serial_pads, serial_name, LUA_IF_SERIAL, &pio_uart_vt, NULL);
     }
 
     /* Last, so a board sees the generic roles already in place and adds to
@@ -455,7 +464,9 @@ int lua_plat_configure_bridge(uint8_t channel_pin, uint8_t common_pin, const cha
     out_t *o = &outs[n_out++];
     memset(o, 0, sizeof(*o));
     o->pin = channel_pin;
-    return lua_iface_publish(name, LUA_IF_OUTPUT, &bridge_vt, o) < 0 ? -1 : 0;
+    /* Both pads or neither: a half-claimed bridge would be one FET gate this
+     * side owns and one it does not. */
+    return lua_iface_publish(PAD(channel_pin) | PAD(common_pin), name, LUA_IF_OUTPUT, &bridge_vt, o) < 0 ? -1 : 0;
 }
 
 /* ── Flight state (read-only; see invariant L11) ──────────────────── */

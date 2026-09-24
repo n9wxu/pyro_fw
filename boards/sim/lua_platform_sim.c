@@ -62,6 +62,13 @@ static const lua_if_input_t sim_in_vt = {sim_in_get};
 static const lua_if_serial_t sim_serial_vt = {sim_serial_write, sim_serial_read};
 static const lua_if_pixel_t sim_pixel_vt = {sim_px_count, sim_px_set, sim_px_show};
 
+/* A configured entry carries its own pin; the demo set has none, so the
+ * simulator numbers its notional pads from 18 the way MK1C's J3 does. */
+static uint32_t sim_pad(const lua_pin_cfg_t *cfg, int i) {
+    uint8_t pin = cfg[i].pin ? cfg[i].pin : (uint8_t)(18 + i);
+    return (pin < PAD_CLAIM_MAX_GPIO) ? PAD(pin) : PAD_NONE;
+}
+
 /* The default set, which is also what the WASM UI renders.
  * lua_plat_configure() replaces it, so the simulator honours the same
  * contract the board does and a script written here meets the same resource
@@ -74,12 +81,14 @@ static const lua_if_pixel_t sim_pixel_vt = {sim_px_count, sim_px_set, sim_px_sho
  * state the target never has. */
 __attribute__((constructor)) static void publish_demo_set(void) {
     lua_iface_reset();
-    lua_iface_publish("beacon", LUA_IF_OUTPUT, &sim_pwm_vt, CTX(0)); /* night-launch LED */
-    lua_iface_publish("strobe", LUA_IF_OUTPUT, &sim_pwm_vt, CTX(1));
-    lua_iface_publish("aux", LUA_IF_OUTPUT, &sim_out_vt, CTX(2)); /* digital only */
-    lua_iface_publish("sense", LUA_IF_INPUT, &sim_in_vt, CTX(0));
-    lua_iface_publish("radio", LUA_IF_SERIAL, &sim_serial_vt, NULL);
-    lua_iface_publish("string", LUA_IF_PIXEL, &sim_pixel_vt, NULL);
+    /* Notional pads, so the simulator spends claims the way the board does
+     * and a resource that could not be claimed does not appear here either. */
+    lua_iface_publish(PAD(18), "beacon", LUA_IF_OUTPUT, &sim_pwm_vt, CTX(0)); /* night-launch LED */
+    lua_iface_publish(PAD(19), "strobe", LUA_IF_OUTPUT, &sim_pwm_vt, CTX(1));
+    lua_iface_publish(PAD(20), "aux", LUA_IF_OUTPUT, &sim_out_vt, CTX(2)); /* digital only */
+    lua_iface_publish(PAD(21), "sense", LUA_IF_INPUT, &sim_in_vt, CTX(0));
+    lua_iface_publish(PAD(22), "radio", LUA_IF_SERIAL, &sim_serial_vt, NULL);
+    lua_iface_publish(PAD(23), "string", LUA_IF_PIXEL, &sim_pixel_vt, NULL);
 }
 
 int lua_plat_pin_count(void) {
@@ -108,18 +117,18 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
         case LUA_ROLE_OUT:
         case LUA_ROLE_PWM:
             output_val[n_out] = 0;
-            lua_iface_publish(cfg_names[i], LUA_IF_OUTPUT,
+            lua_iface_publish(sim_pad(cfg, i), cfg_names[i], LUA_IF_OUTPUT,
                               cfg[i].role == LUA_ROLE_PWM ? &sim_pwm_vt : &sim_out_vt, CTX(n_out));
             n_out++;
             break;
         case LUA_ROLE_IN:
-            lua_iface_publish(cfg_names[i], LUA_IF_INPUT, &sim_in_vt, CTX(n_in));
+            lua_iface_publish(sim_pad(cfg, i), cfg_names[i], LUA_IF_INPUT, &sim_in_vt, CTX(n_in));
             n_in++;
             break;
         case LUA_ROLE_TX:
         case LUA_ROLE_RX:
             if (!serial_published) {
-                lua_iface_publish(cfg_names[i], LUA_IF_SERIAL, &sim_serial_vt, NULL);
+                lua_iface_publish(sim_pad(cfg, i), cfg_names[i], LUA_IF_SERIAL, &sim_serial_vt, NULL);
                 serial_published = true;
             }
             break;
@@ -129,7 +138,7 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
     }
     px_configured = (pixels > SIM_PIXELS) ? SIM_PIXELS : pixels;
     if (px_configured > 0) {
-        lua_iface_publish("string", LUA_IF_PIXEL, &sim_pixel_vt, NULL);
+        lua_iface_publish(PAD(23), "string", LUA_IF_PIXEL, &sim_pixel_vt, NULL);
     }
     board_lua_publish();
     return 0;

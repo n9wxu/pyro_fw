@@ -9,6 +9,7 @@
  */
 #include "unity.h"
 #include "../src/pyro_release.h"
+#include "../src/pad_claim.h"
 #include "mocks.h"
 #include <string.h>
 #include <stdio.h>
@@ -272,13 +273,37 @@ void test_PYR_MODE_01_fires(void) {
  * the tests for src/pyro_release.c through the whole flight path rather than
  * through the module's own API. */
 
-extern char mock_pyro_last_note[64];
-extern int mock_pyro_notes;
+/* MK1A's numbering, which test/hal_test.c also uses: FIRE1 on 9, FIRE2 on 11,
+ * the common on 10. */
+#define PAD_FIRE1 PAD(9)
+#define PAD_FIRE2 PAD(11)
+#define PAD_COMMON PAD(10)
+
+/* What a release IS. Lua claims the pads first, so the flight software cannot
+ * claim them and cannot be given the real methods for that channel. No
+ * boolean is passed anywhere: the claim decides, and a pad has one owner.
+ *
+ * The common goes to Lua only when BOTH channels do -- until then it is still
+ * half of the retained channel's firing path, which is the rule
+ * pin_assign_is_reserved() enforces on the target. */
+static void set_released(bool ch1, bool ch2) {
+    pad_claim_reset();
+    if (ch1) {
+        TEST_ASSERT_TRUE(pad_claim_take(PAD_FIRE1, PAD_LUA));
+    }
+    if (ch2) {
+        TEST_ASSERT_TRUE(pad_claim_take(PAD_FIRE2, PAD_LUA));
+    }
+    if (ch1 && ch2) {
+        TEST_ASSERT_TRUE(pad_claim_take(PAD_COMMON, PAD_LUA));
+    }
+    hal_pyro_claim_channels(mock_pyro_pads);
+}
 
 void test_PYR_REL_01_released_channel_never_fires(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     reset_sim();
-    hal_pyro_release_apply(true, false); /* pyro 1 is Lua's */
+    set_released(true, false);
     run_full_sim();
 
     TEST_ASSERT_TRUE_MESSAGE(mock_pyro.fire_count > 0, "the retained channel must still fire");
@@ -288,7 +313,7 @@ void test_PYR_REL_01_released_channel_never_fires(void) {
 void test_PYR_REL_02_both_released_fires_nothing(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     reset_sim();
-    hal_pyro_release_apply(true, true);
+    set_released(true, true);
     run_full_sim();
 
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_pyro.fire_count, "a full flight must not reach the hardware at all");
@@ -297,7 +322,7 @@ void test_PYR_REL_02_both_released_fires_nothing(void) {
 
 void test_PYR_REL_03_mocked_operations_are_reported(void) {
     reset_sim();
-    hal_pyro_release_apply(true, false);
+    set_released(true, false);
     TEST_ASSERT_EQUAL(0, mock_pyro_notes);
 
     hal_pyro_fire(1);
@@ -313,7 +338,7 @@ void test_PYR_REL_03_mocked_operations_are_reported(void) {
 void test_PYR_REL_04_released_reports_open_not_good(void) {
     reset_sim();
     mock_pyro.p1_good = true; /* the hardware would say good */
-    hal_pyro_release_apply(true, false);
+    set_released(true, false);
 
     hal_continuity_t c;
     hal_pyro_get(1, &c);
@@ -330,11 +355,11 @@ void test_PYR_REL_04_released_reports_open_not_good(void) {
 
 void test_PYR_REL_05_shared_stimulus_stops_when_both_released(void) {
     reset_sim();
-    hal_pyro_release_apply(true, false);
+    set_released(true, false);
     hal_pyro_sample();
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_pyro.sample_count, "one channel retained still needs the stimulus");
 
-    hal_pyro_release_apply(true, true);
+    set_released(true, true);
     hal_pyro_sample();
     /* The stimulus drives the COMMON, which is Lua's exactly when both are
        released -- core0 must not drive a pad core1 owns. */
@@ -344,10 +369,67 @@ void test_PYR_REL_05_shared_stimulus_stops_when_both_released(void) {
 void test_PYR_REL_06_fault_is_clear_for_a_released_channel(void) {
     reset_sim();
     mock_pyro.fault = true;
-    hal_pyro_release_apply(true, false);
+    set_released(true, false);
 
     TEST_ASSERT_FALSE_MESSAGE(hal_pyro_fault(1), "a released channel has no fault line to report");
     TEST_ASSERT_TRUE_MESSAGE(hal_pyro_fault(2), "the retained channel still reports the hardware");
+}
+
+/* ── The exclusion itself ─────────────────────────────────────────
+ *
+ * The property these exist for: there is no way for a pad to be in the pyro
+ * table and in Lua's interface table at the same time. Not "it is checked" --
+ * the second claimant cannot create its entry, because the claim it needs was
+ * spent. */
+
+void test_PAD_EXCL_01_pyro_cannot_take_a_pad_lua_holds(void) {
+    pad_claim_reset();
+    TEST_ASSERT_TRUE(pad_claim_take(PAD_FIRE1, PAD_LUA));
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, hal_pyro_claim_channels(mock_pyro_pads), "only the channel whose pads were free may be kept");
+    TEST_ASSERT_TRUE_MESSAGE(pyro_release_is_released(1), "the channel Lua holds got the mocked methods");
+    TEST_ASSERT_FALSE(pyro_release_is_released(2));
+    TEST_ASSERT_EQUAL_MESSAGE(PAD_LUA, pad_claim_owner(9), "and the pad is still Lua's");
+}
+
+void test_PAD_EXCL_02_lua_cannot_take_a_pad_pyro_holds(void) {
+    pad_claim_reset();
+    TEST_ASSERT_EQUAL_MESSAGE(2, hal_pyro_claim_channels(mock_pyro_pads), "with every pad free the flight software keeps both");
+
+    TEST_ASSERT_FALSE_MESSAGE(pad_claim_take(PAD_FIRE1, PAD_LUA), "a pad the flight software kept is not available");
+    TEST_ASSERT_FALSE_MESSAGE(pad_claim_take(PAD_COMMON, PAD_LUA), "nor is the common");
+    TEST_ASSERT_EQUAL(PAD_FLIGHT, pad_claim_owner(9));
+}
+
+void test_PAD_EXCL_03_a_claim_is_all_or_nothing(void) {
+    pad_claim_reset();
+    TEST_ASSERT_TRUE(pad_claim_take(PAD_COMMON, PAD_LUA));
+
+    /* A bridge wants a channel element and the common. Half of it is
+       available and half is not, so it gets neither -- a half-claimed bridge
+       would be one FET gate this side owns and one it does not. */
+    TEST_ASSERT_FALSE(pad_claim_take(PAD_FIRE1 | PAD_COMMON, PAD_FLIGHT));
+    TEST_ASSERT_EQUAL_MESSAGE(PAD_FREE, pad_claim_owner(9), "the half that was free must not have been taken");
+}
+
+void test_PAD_EXCL_04_the_common_blocks_the_retained_channel_too(void) {
+    /* Releasing ONE channel must not hand over the common: the retained
+       channel still needs it, and pyro_release_claim() asks for both. */
+    pad_claim_reset();
+    TEST_ASSERT_TRUE(pad_claim_take(PAD_COMMON, PAD_LUA));
+    TEST_ASSERT_EQUAL_MESSAGE(0, hal_pyro_claim_channels(mock_pyro_pads), "neither channel can fire without the common");
+    TEST_ASSERT_TRUE(pyro_release_is_released(1));
+    TEST_ASSERT_TRUE(pyro_release_is_released(2));
+}
+
+void test_PAD_EXCL_05_reclaiming_your_own_pad_succeeds(void) {
+    /* Configuration runs the publish path more than once on the simulator,
+       and a resource re-published on the pad it already owns must not be
+       refused -- the duplicate-name rule is what catches a real collision. */
+    pad_claim_reset();
+    TEST_ASSERT_TRUE(pad_claim_take(PAD_FIRE1, PAD_LUA));
+    TEST_ASSERT_TRUE(pad_claim_take(PAD_FIRE1, PAD_LUA));
+    TEST_ASSERT_TRUE(pad_claim_take(PAD_FIRE1 | PAD_FIRE2, PAD_LUA));
 }
 
 void test_BUZ_07_03_lifecycle(void) {
@@ -756,6 +838,11 @@ int main(void) {
     RUN_TEST(test_PYR_REL_04_released_reports_open_not_good);
     RUN_TEST(test_PYR_REL_05_shared_stimulus_stops_when_both_released);
     RUN_TEST(test_PYR_REL_06_fault_is_clear_for_a_released_channel);
+    RUN_TEST(test_PAD_EXCL_01_pyro_cannot_take_a_pad_lua_holds);
+    RUN_TEST(test_PAD_EXCL_02_lua_cannot_take_a_pad_pyro_holds);
+    RUN_TEST(test_PAD_EXCL_03_a_claim_is_all_or_nothing);
+    RUN_TEST(test_PAD_EXCL_04_the_common_blocks_the_retained_channel_too);
+    RUN_TEST(test_PAD_EXCL_05_reclaiming_your_own_pad_succeeds);
     RUN_TEST(test_BUZ_07_03_lifecycle);
     RUN_TEST(test_DAT_04_events);
     RUN_TEST(test_TEL_03_event_sentences);
