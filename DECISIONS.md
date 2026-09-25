@@ -194,3 +194,26 @@ rationale and the alternatives considered.
   `pyro2_real`) beside what the assignment asked for, so a disagreement is
   visible rather than inferred.
 
+### DD-021: PYR-SAFE-02 Dropped; Both Channels May Deploy on One Event
+- **Decision:** Remove PYR-SAFE-02 ("shall not fire two channels
+  simultaneously"). A low flight may need drogue and main out together, and a
+  requirement forbidding it made the one configuration that handles that case
+  non-compliant.
+- **Replaced by PYR-DEPLOY-01:** both channels may deploy on a single flight
+  event.
+- **And by PYR-DEPLOY-02, which is not the same rule wearing a new name.** The
+  two channels must still not be *energised at the same instant*, because they
+  share one common element: two igniters in parallel draw through one FET and
+  one fuse. On MK1B that path is a 1.5 A self-resetting PTC, and the combined
+  draw can trip it and fire **neither**. On MK1A it is an 8 A one-shot fuse
+  with more headroom but no recovery.
+- **So `hal_pyro_is_firing()` stays, and its reason has changed.** It was
+  incidentally enforcing a safety requirement; it is now deliberately enforcing
+  a current limit. Anyone tempted to simplify it away should read this first.
+- **The old test was proving almost nothing.**
+  `test_PYR_SAFE_02_no_simultaneous_fire` asserted the two fire times differ,
+  but `run_sim()` clears `mock_pyro.firing` before every step, so the 500 ms
+  hardware separation it measured was one simulation step. It is now
+  `test_PYR_DEPLOY_01_low_flight_fires_both` and asserts what the requirement
+  actually says: both deploy, close enough together to be one event.
+

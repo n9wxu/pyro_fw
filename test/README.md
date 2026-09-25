@@ -138,7 +138,7 @@ Altitudes: 100ft, 500ft, 5000ft, 100km (Karman line)
 | Test | Requirement | Verifies |
 |------|-------------|----------|
 | test_PYR_SAFE_01_no_fire_without_continuity | PYR-SAFE-01 | No fire when continuity open |
-| test_PYR_SAFE_02_no_simultaneous_fire | PYR-SAFE-02 | Channels never fire at same time |
+| test_PYR_DEPLOY_01_low_flight_fires_both | PYR-DEPLOY-01 | Both channels deploy on one event, close together |
 | test_SYS_DEPLOY_03_no_fire_during_ascent | SYS-DEPLOY-03 | No fire before apogee |
 | test_PYR_FAULT_02_overcurrent_detection | PYR-FAULT-02 | FLAG pin fault logged |
 

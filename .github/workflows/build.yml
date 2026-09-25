@@ -99,18 +99,21 @@ jobs:
             --error-exitcode=0 \
             --inline-suppr \
             -I src/ \
-            src/flight_states.c src/telemetry.c src/buzzer.c src/hal.h \
+            src/flight_states.c src/telemetry_formatter.c src/buzzer.c src/hal.h \
             2>&1 | tee cppcheck-report.txt
           echo "=== Cppcheck summary ==="
           grep -c "error\|warning\|style\|performance\|portability" cppcheck-report.txt || echo "Clean"
 
       - name: Format check (clang-format)
         run: |
-          # hal_hardware.c became src/hal_common/hal_common.c when board
-          # support moved under boards/. Naming a file that no longer exists
-          # made this step error out and check nothing.
+          # Two renames have silently emptied this list before:
+          # hal_hardware.c -> src/hal_common/hal_common.c, and
+          # telemetry.c -> src/telemetry_formatter.c. A missing file makes
+          # clang-format error out and check nothing, and the step ends in
+          # `|| echo ::warning::`, so it stays green while checking nothing.
+          # Rename a file and you must fix it here, in cppcheck and in pmccabe.
           clang-format --dry-run --Werror \
-            src/flight_states.c src/telemetry.c src/buzzer.c \
+            src/flight_states.c src/telemetry_formatter.c src/buzzer.c \
             src/hal.h src/main_hardware.c \
             src/board_if.h src/board_id.h \
             src/hal_common/hal_common.c \
@@ -120,9 +123,9 @@ jobs:
       - name: Cyclomatic complexity (pmccabe)
         run: |
           echo "=== Functions with complexity > 10 ==="
-          pmccabe src/flight_states.c src/telemetry.c src/buzzer.c | sort -rn | head -20
+          pmccabe src/flight_states.c src/telemetry_formatter.c src/buzzer.c | sort -rn | head -20
           echo ""
-          OVER=$(pmccabe src/flight_states.c src/telemetry.c src/buzzer.c | awk '$1 > 15 {print}')
+          OVER=$(pmccabe src/flight_states.c src/telemetry_formatter.c src/buzzer.c | awk '$1 > 15 {print}')
           if [ -n "$OVER" ]; then
             echo "::error::Functions exceed complexity threshold of 15:"
             echo "$OVER"

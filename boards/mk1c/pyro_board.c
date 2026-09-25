@@ -117,12 +117,12 @@ static uint32_t last_report_ms;
  * gap -- 26 ms against a 10 ms period, which is what put stage 4 at 35 ms and
  * produced the loop overruns. Same shape as MK1A's sense_service(). */
 typedef enum {
-    TRK_IDLE = 0,  /* waiting out TRACK_PERIOD_MS                    */
-    TRK_T2,        /* BIAS_BUS settling; then sample bus, A and B    */
-    TRK_T3A,       /* BIAS_A settling; then sample A                 */
-    TRK_T3GAP,     /* every bias off, letting A relax before B       */
-    TRK_T3B,       /* BIAS_B settling; then sample B                 */
-    TRK_DECAY,     /* BIAS_BUS settling; then measure the decay      */
+    TRK_IDLE = 0, /* waiting out TRACK_PERIOD_MS                    */
+    TRK_T2,       /* BIAS_BUS settling; then sample bus, A and B    */
+    TRK_T3A,      /* BIAS_A settling; then sample A                 */
+    TRK_T3GAP,    /* every bias off, letting A relax before B       */
+    TRK_T3B,      /* BIAS_B settling; then sample B                 */
+    TRK_DECAY,    /* BIAS_BUS settling; then measure the decay      */
 } trk_phase_t;
 
 static trk_phase_t trk_phase;

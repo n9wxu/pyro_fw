@@ -686,12 +686,27 @@ void test_PYR_SAFE_01_no_fire_without_continuity(void) {
     TEST_ASSERT_TRUE_MESSAGE(res.pyro2_fired, "Pyro2 should fire with good continuity");
 }
 
-/* [PYR-SAFE-02] No simultaneous fire: pyros fire sequentially */
-void test_PYR_SAFE_02_no_simultaneous_fire(void) {
-    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket for simultaneous-fire test");
+/* [PYR-DEPLOY-01] A low flight puts both out on one event.
+ *
+ * This was test_PYR_SAFE_02_no_simultaneous_fire, which asserted the two fire
+ * times DIFFER. That forbade exactly the case this exists to allow -- and it
+ * was proving almost nothing anyway, because run_sim() clears
+ * mock_pyro.firing before every step, so the 500 ms hardware separation it
+ * was measuring is 1 ms here.
+ *
+ * What matters now: with both channels set to fire at apogee, both actually
+ * deploy, and close enough together to be one event rather than two.
+ *
+ * The gap this measures is the SIMULATION's, not the hardware's. run_sim()
+ * clears mock_pyro.firing each step, so the separation here is one step; on a
+ * board it is FIRE_DURATION_MS, about 500 ms, because the two channels share a
+ * common element and must not be energised together (PYR-DEPLOY-02). The
+ * bound below is generous enough to cover both. */
+void test_PYR_DEPLOY_01_low_flight_fires_both(void) {
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket for the both-on-one-event test");
     const rocket_profile_t *r = &g_rockets[ROCKET_IDX_L1];
     config_t cfg = (config_t){.id = "SS",
-                              .name = "SimFir",
+                              .name = "LowFly",
                               .pyro1_mode = PYRO_MODE_DELAY,
                               .pyro1_value = 0,
                               .pyro2_mode = PYRO_MODE_DELAY,
@@ -699,15 +714,19 @@ void test_PYR_SAFE_02_no_simultaneous_fire(void) {
                               .units = 2};
 
     sim_result_t res = run_sim(cfg, r, true);
-    print_summary("NoSimulFire", &res);
+    print_summary("BothOnOneEvent", &res);
 
-    assert_flight(&res, "NoSimulFire");
-    assert_p1(&res, "NoSimulFire");
-    assert_p2(&res, "NoSimulFire");
+    assert_flight(&res, "BothOnOneEvent");
+    assert_p1(&res, "BothOnOneEvent");
+    assert_p2(&res, "BothOnOneEvent");
 
-    char msg[128];
-    snprintf(msg, sizeof(msg), "P1 and P2 fired at same time: P1=%u P2=%u", res.p1_fire_ms, res.p2_fire_ms);
-    TEST_ASSERT_TRUE_MESSAGE(res.p1_fire_ms != res.p2_fire_ms, msg);
+    char msg[160];
+    uint32_t gap = (res.p1_fire_ms > res.p2_fire_ms) ? res.p1_fire_ms - res.p2_fire_ms
+                                                     : res.p2_fire_ms - res.p1_fire_ms;
+    snprintf(msg, sizeof(msg), "both should deploy on one event: P1=%u P2=%u gap=%u ms", res.p1_fire_ms,
+             res.p2_fire_ms, gap);
+    TEST_ASSERT_TRUE_MESSAGE(res.pyro1_fired && res.pyro2_fired, msg);
+    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(1000, gap, msg);
 }
 
 /* [SYS-DEPLOY-03] No firing during ascent */
@@ -1024,7 +1043,7 @@ int main(void) {
     RUN_TEST(test_PYR_MODE_04_speed_agl);
     RUN_TEST(test_TST_06_chute_effect);
     RUN_TEST(test_PYR_SAFE_01_no_fire_without_continuity);
-    RUN_TEST(test_PYR_SAFE_02_no_simultaneous_fire);
+    RUN_TEST(test_PYR_DEPLOY_01_low_flight_fires_both);
     RUN_TEST(test_SYS_DEPLOY_03_no_fire_during_ascent);
     RUN_TEST(test_PYR_FAULT_02_overcurrent_detection);
     RUN_TEST(test_TST_05_rocket_profiles);

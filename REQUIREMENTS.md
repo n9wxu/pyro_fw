@@ -35,7 +35,8 @@ Each derived requirement traces to its parent with `← parent_id`.
 
 #### Firing Safety
 - **PYR-SAFE-01**: The system shall not fire a channel that has no continuity. ← SYS-DEPLOY-03
-- **PYR-SAFE-02**: The system shall not fire two channels simultaneously. ← SYS-DEPLOY-02
+- **PYR-DEPLOY-01**: The system shall allow both channels to deploy on a single flight event, so that a low flight can put out drogue and main together. ← SYS-DEPLOY-02
+- **PYR-DEPLOY-02**: The system shall not energise both channels at the same instant. This is a current limit, not a sequencing rule: both igniters share one common element, and on a PTC-protected board the combined draw can trip it and fire neither. ← SYS-DEPLOY-02
 - **PYR-SAFE-03**: The system shall fire each channel at most once per flight (except re-fire). ← SYS-DEPLOY-02
 - **PYR-SAFE-04**: The system shall not fire any pyro before apogee is detected. ← SYS-DEPLOY-03
 

@@ -33,7 +33,8 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-MODE-03 | FALLEN mode | Closed-loop: test_PYR_MODE_03_delay_fallen, test_PYR_MODE_03_fallen_agl | ✅ |
 | PYR-MODE-04 | SPEED mode | Closed-loop: test_PYR_MODE_04_delay_speed, test_PYR_MODE_04_speed_agl | ✅ |
 | PYR-SAFE-01 | No fire without continuity | Closed-loop: test_PYR_SAFE_01_no_fire_without_continuity | ✅ |
-| PYR-SAFE-02 | No simultaneous fire | Closed-loop: test_PYR_SAFE_02_no_simultaneous_fire | ✅ |
+| PYR-DEPLOY-01 | Both channels may deploy on one event | Closed-loop: test_PYR_DEPLOY_01_low_flight_fires_both | ✅ |
+| PYR-DEPLOY-02 | Not energised at the same instant | Enforced by `hal_pyro_is_firing()`; see DD-021 | ✅ |
 | PYR-SAFE-03 | Single fire per channel | Closed-loop: verified by fire_count | ✅ |
 | PYR-SAFE-04 | No fire before apogee | Closed-loop: drogue fires at/after apogee | ✅ |
 | FLT-LAUNCH-01 | Transition at >10m | Integration: test_FLT_BOOT_01_all_states | ✅ |

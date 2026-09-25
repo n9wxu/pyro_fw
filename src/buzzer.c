@@ -208,8 +208,8 @@ static buzzer_task_t bz;
  * pause -- and with a chirp now meaning "ready", a chirp preamble in front of
  * a fault would have said the opposite of the code behind it. */
 
-#define CHIRP_CYCLES 25   /* one pass of the ready-to-fly warble */
-#define TONE_ON_MS 2000   /* an unbroken tone, in one long step   */
+#define CHIRP_CYCLES 25 /* one pass of the ready-to-fly warble */
+#define TONE_ON_MS 2000 /* an unbroken tone, in one long step   */
 
 static int build_spec_pattern(const beep_spec_t *sp, uint16_t gap_ms, buzzer_pattern_t *buf, int *p_loop_start) {
     int idx = 0;
