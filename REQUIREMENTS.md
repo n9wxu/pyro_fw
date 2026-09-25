@@ -87,6 +87,9 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **PYR-REFIRE-02**: The system shall not re-fire a channel whose post-fire continuity check shows it opened. An opened channel fired its charge, so the canopy failed mechanically and a second attempt cannot help. ← SYS-DEPLOY-01
 - **FLT-EMRG-01**: When the drogue has been commanded and the descent rate has not steadied under a canopy, the system shall deploy the main early, overriding its configured trigger. ← SYS-DEPLOY-01
 - **FLT-EMRG-02**: The emergency ladder shall not act on a descent rate alone. A rocket in free fall toward a trigger it has not yet reached is following the flight plan, however fast it is descending. ← SYS-DEPLOY-01
+- **PIN-LABEL-01**: Every assignable pin shall carry the connector designator silkscreened on the board, and the web UI shall show it beside the GPIO number. ← SYS-CFG-01
+- **PIN-BUZZ-01**: The buzzer shall be assignable to any pad the board declares capable of driving one, defaulting to the board's own buzzer pad where it fits one. ← SYS-CFG-01
+- **PIN-BUZZ-02**: A pad driving the buzzer shall be reserved against Lua, and a pad holding a Lua role shall not be assignable as the buzzer. ← SYS-CFG-01
 - **FLT-MACH-01**: The system shall not declare apogee while ascending faster than 100 ft/s, nor until it has been slower than that for 1 second. A flight that never exceeds 100 ft/s shall not be gated. ← FLT-PHASE-02
 - **FLT-DESC-01**: The system shall determine the descent phase from the measured descent rate holding steady, not from which channel has been commanded. ← FLT-PHASE-02
 - **FLT-DESC-02**: The system shall detect landing in every descent phase, so that a flight which deployed nothing still closes its flight log. ← FLT-PHASE-02

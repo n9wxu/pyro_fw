@@ -15,11 +15,11 @@
 /* Fires every check in PIN_CAPS_ASSERT against this board's rows. */
 PIN_CAPS_ASSERT(BOARD_PIN_CAPS)
 
-#define X_ROW(pin, fn, pg) {(pin), (fn), (pg)},
+#define X_ROW(pin, fn, pg, lbl) {(pin), (fn), (pg), (lbl)},
 static const pin_cap_t caps[] = {BOARD_PIN_CAPS(X_ROW)};
 #undef X_ROW
 
-#define X_COUNT(pin, fn, pg) +1
+#define X_COUNT(pin, fn, pg, lbl) +1
 #define CAP_COUNT (0 BOARD_PIN_CAPS(X_COUNT))
 
 const pin_cap_t *pin_caps_table(int *count) {
@@ -36,6 +36,11 @@ const pin_cap_t *pin_caps_find(uint8_t pin) {
         }
     }
     return NULL;
+}
+
+const char *pin_caps_label(uint8_t pin) {
+    const pin_cap_t *c = pin_caps_find(pin);
+    return c ? c->label : "";
 }
 
 bool pin_caps_is_default_lua(const pin_cap_t *c) {

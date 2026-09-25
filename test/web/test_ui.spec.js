@@ -198,6 +198,38 @@ test.describe('Pin assignment', () => {
     await expect(page.locator('#relCommon')).toContainText('GPIO15');
   });
 
+  /* Item 3: an operator wiring a rocket is holding a connector, not a GPIO. */
+  test('pin tables name the connector, not just the GPIO', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await expect(page.locator('#rel1pins')).toContainText('CN1.1 drogue');
+    await expect(page.locator('#rel2pins')).toContainText('CN1.4 main');
+    await expect(page.locator('#relCommon')).toContainText('CN1.2-3 common');
+
+    await clickTab(page, 'Lua');
+    await expect(page.locator('#luaPins')).toContainText('J1 user pad');
+  });
+
+  /* Item 1: the buzzer pad is assignable. The board's own pad is the default
+     and every digital pad is on offer; a buzzer-only pad is not, because
+     moving the buzzer onto the pad it is already on means nothing. */
+  test('buzzer can be moved to another pad', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    const sel = page.locator('#bzPin');
+    await expect(sel).toBeVisible();
+    await expect(sel.locator('option[value="board"]')).toHaveCount(1);
+    await expect(sel.locator('option[value="8"]')).toHaveCount(1);
+    await expect(sel.locator('option[value="16"]')).toHaveCount(0);
+    await expect(page.locator('#bzHint')).toContainText('frees GPIO16');
+
+    await sel.selectOption('8');
+    await page.click('#btnSaveRel');
+    await expect(page.locator('#relMsg')).toContainText('saved', { timeout: 5000 });
+  });
+
   test('releasing one channel warns about the shared element', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);

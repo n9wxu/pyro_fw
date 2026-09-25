@@ -731,12 +731,15 @@ function pinByGroup(g) {
 function renderLuaPins() {
   var mask = luaAnyMask();
   var rows = pinCaps.pins.filter(function(p) { return (p.f & mask) !== 0; });
-  var html = '<tr><th>GPIO</th><th>On the board</th><th>Role</th><th>Name in Lua</th></tr>';
+  var html = '<tr><th>GPIO</th><th>Connector</th><th>On the board</th><th>Role</th>' +
+             '<th>Name in Lua</th></tr>';
 
   rows.forEach(function(p) {
     var what = boardFnNames(p) || 'user pad';
     if (p.g !== 'none') what += ' (' + p.g + ')';
-    html += '<tr><td class="lbl">GPIO' + p.p + '</td><td class="val">' + esc(what) + '</td>';
+    /* The connector designator is what the operator is actually holding. */
+    html += '<tr><td class="lbl">GPIO' + p.p + '</td><td class="val">' + esc(p.lbl || '—') +
+            '</td><td class="val">' + esc(what) + '</td>';
     if (p.held) {
       html += '<td colspan="2" class="warn-inline">held by the flight software' +
               ' — release it on the Config tab</td>';
@@ -834,8 +837,13 @@ function postPins(ini, msgId, after) {
 function renderRelease() {
   var hint = document.getElementById('relHint');
   var ch1 = pinByGroup('ch1'), ch2 = pinByGroup('ch2'), common = pinByGroup('common');
+  /* Before the early return: the buzzer lives on this panel too, and a board
+   * with no releasable pyro pads still has a buzzer to place. */
+  renderBuzzerPins();
   if (!ch1.length && !ch2.length) {
     hint.textContent = esc(pinCaps.board) + ' declares no releasable pyro pins.';
+    document.getElementById('relTable').style.display = '';
+    document.getElementById('relBtns').style.display = '';
     return;
   }
 
@@ -848,10 +856,11 @@ function renderRelease() {
 
   document.getElementById('rel1').checked = !!pinCaps.pyro1_released;
   document.getElementById('rel2').checked = !!pinCaps.pyro2_released;
-  document.getElementById('rel1pins').textContent = ch1.map(function(p){return 'GPIO'+p.p;}).join(', ');
-  document.getElementById('rel2pins').textContent = ch2.map(function(p){return 'GPIO'+p.p;}).join(', ');
+  function pinLabel(p) { return p.lbl ? 'GPIO' + p.p + ' (' + p.lbl + ')' : 'GPIO' + p.p; }
+  document.getElementById('rel1pins').textContent = ch1.map(pinLabel).join(', ');
+  document.getElementById('rel2pins').textContent = ch2.map(pinLabel).join(', ');
   document.getElementById('relCommon').textContent = common.length
-    ? common.map(function(p){return 'GPIO'+p.p;}).join(', ') +
+    ? common.map(pinLabel).join(', ') +
       (common[0].held ? ' — held' : ' — released')
     : 'none';
   document.getElementById('relTable').style.display = '';
@@ -887,6 +896,32 @@ function relChanged() {
   document.getElementById('relWarn').innerHTML = msgs.join('');
 }
 
+/* Which pads could drive a buzzer: anything digital, plus whichever pad the
+ * board already wired one to. Filtered by the same capability rule
+ * check_buzzer() enforces, so an option offered here is one the firmware
+ * will take. */
+function renderBuzzerPins() {
+  var sel = document.getElementById('bzPin');
+  if (!sel || !pinCaps.fn) return;
+  var digital = pinCaps.fn.digital || 0, buzzer = pinCaps.fn.buzzer || 0;
+  var boardPad = pinCaps.pins.filter(function(p) { return (p.f & buzzer) !== 0; })[0];
+
+  var html = '<option value="board"' + (pinCaps.buzzer_pin === -1 ? ' selected' : '') + '>' +
+             (boardPad ? 'the board\'s own (GPIO' + boardPad.p + ')' : 'none — this board fits no buzzer') +
+             '</option>';
+  pinCaps.pins.forEach(function(p) {
+    if ((p.f & (digital | buzzer)) === 0) return;
+    if (boardPad && p.p === boardPad.p) return;
+    html += '<option value="' + p.p + '"' + (pinCaps.buzzer_pin === p.p ? ' selected' : '') +
+            '>GPIO' + p.p + (p.lbl ? ' — ' + esc(p.lbl) : '') + '</option>';
+  });
+  sel.innerHTML = html;
+
+  document.getElementById('bzHint').textContent = boardPad
+    ? 'Moving it frees GPIO' + boardPad.p + ' for Lua.'
+    : 'Wire a buzzer to a user pad and name it here.';
+}
+
 /* Posts the release flags, and clears the Lua role off any pad being taken
  * back -- a role left on a re-retained pad fails validation, and the whole
  * file is then rejected, which is a confusing way to learn you unticked a
@@ -894,7 +929,9 @@ function relChanged() {
 function relSave() {
   var r1 = document.getElementById('rel1').checked;
   var r2 = document.getElementById('rel2').checked;
-  var ini = '[pins]\r\npyro1_released=' + r1 + '\r\npyro2_released=' + r2 + '\r\n';
+  var bz = document.getElementById('bzPin');
+  var ini = '[pins]\r\npyro1_released=' + r1 + '\r\npyro2_released=' + r2 + '\r\n' +
+            'buzzer_pin=' + (bz ? bz.value : 'board') + '\r\n';
 
   var retaking = [];
   if (!r1) retaking = retaking.concat(pinByGroup('ch1'));

@@ -322,7 +322,7 @@ static void apply_api_beep_play(struct tcp_pcb *pcb, const char *body) {
         jn = snprintf(jb, sizeof(jb), "{\"error\":\"each beep count must be %d to %d\"}", BEEP_DIGIT_MIN,
                       BEEP_DIGIT_MAX);
         line = "HTTP/1.1 400 Bad Request\r\n";
-    } else if (!pin_caps_has_buzzer()) {
+    } else if (!pin_store_has_buzzer()) {
         /* MK1A fits none. Answering "playing" would be a lie the operator
          * could only detect by listening to silence. */
         jn = snprintf(jb, sizeof(jb), "{\"error\":\"this board has no buzzer fitted\"}");
@@ -361,7 +361,7 @@ static void serve_api_beeps(struct tcp_pcb *pcb) {
                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" CORS_HDR "Connection: close\r\n\r\n"
                        "{\"digit_min\":%d,\"digit_max\":%d,\"has_buzzer\":%s,\"active\":%u,\"reason\":\"%s\","
                        "\"kinds\":[\"silent\",\"chirp\",\"tone\",\"code\"],\"outcomes\":[",
-                       BEEP_DIGIT_MIN, BEEP_DIGIT_MAX, pin_caps_has_buzzer() ? "true" : "false", (unsigned)t->active,
+                       BEEP_DIGIT_MIN, BEEP_DIGIT_MAX, pin_store_has_buzzer() ? "true" : "false", (unsigned)t->active,
                        reason_esc);
 
     for (int i = 0; i < BEEP_REASON_COUNT && pos > 0 && pos < (int)sizeof(buf); i++) {
@@ -608,11 +608,12 @@ static void serve_api_pin_caps(struct tcp_pcb *pcb) {
      * POST /api/pins merge buffer makes.
      *
      * Sized from the worst case rather than from today's boards. A pin row is
-     * at most ~85 bytes with every field at its longest, and RP2040 has 30
-     * GPIOs, so the rows can reach ~2550; the fn map, the role list, the
-     * header and the protection sentence add ~1000. MK1C already serves 1878
-     * with most names empty, which is what ruled out 2048. */
-    static char buf[4096];
+     * at most ~110 bytes with every field at its longest -- the connector
+     * label added ~25 -- and RP2040 has 30 GPIOs, so the rows can reach
+     * ~3300; the fn map, the role list, the header and the protection
+     * sentence add ~1000. MK1C already serves 1878 with most names empty,
+     * which is what ruled out 2048. */
+    static char buf[5120];
 
     int n_caps = 0;
     const pin_cap_t *caps = pin_caps_table(&n_caps);
@@ -649,10 +650,16 @@ static void serve_api_pin_caps(struct tcp_pcb *pcb) {
                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" CORS_HDR "Connection: close\r\n\r\n"
                        "{\"board\":\"%s\",\"topology\":\"%s\",\"bridge_possible\":%s,"
                        "\"protection_note\":\"%s\","
-                       "\"pyro1_released\":%s,\"pyro2_released\":%s,\"reserved_mask\":%u,\"fn\":{",
+                       "\"pyro1_released\":%s,\"pyro2_released\":%s,\"reserved_mask\":%u,"
+                       "\"buzzer_pin\":%d,\"buzzer_on\":%d,\"fn\":{",
                        PYRO_BOARD_NAME, pin_caps_topology_name(), pin_caps_bridge_possible() ? "true" : "false", note,
                        pa->pyro1_released ? "true" : "false", pa->pyro2_released ? "true" : "false",
-                       (unsigned)FN_BOARD_RESERVED);
+                       (unsigned)FN_BOARD_RESERVED,
+                       /* buzzer_pin is the SETTING (-1 = leave it where the
+                        * board put it); buzzer_on is where it actually is, so
+                        * the UI can show the default without resolving it. */
+                       pa->buzzer_pin == PIN_BUZZER_BOARD ? -1 : (int)pa->buzzer_pin,
+                       pin_assign_buzzer_pin(pa) == PIN_BUZZER_BOARD ? -1 : (int)pin_assign_buzzer_pin(pa));
 
     for (unsigned i = 0; i < sizeof(fn_bits) / sizeof(fn_bits[0]) && pos > 0 && pos < (int)sizeof(buf); i++) {
         pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "%s\"%s\":%u", i ? "," : "", fn_bits[i].name,
@@ -676,9 +683,12 @@ static void serve_api_pin_caps(struct tcp_pcb *pcb) {
         const char *nm = (pin < PIN_ASSIGN_MAX_GPIO) ? pa->name[pin] : "";
         char nesc[LUA_NAME_MAX * 2 + 2];
         json_escape(nesc, (int)sizeof(nesc), nm, (int)strlen(nm));
+        char lesc[64];
+        json_escape(lesc, (int)sizeof(lesc), caps[i].label, (int)strlen(caps[i].label));
         pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos,
-                        "%s{\"p\":%u,\"f\":%u,\"g\":\"%s\",\"role\":\"%s\",\"name\":\"%s\",\"held\":%s}", i ? "," : "",
-                        (unsigned)pin, (unsigned)caps[i].functions, group_names[caps[i].group],
+                        "%s{\"p\":%u,\"f\":%u,\"g\":\"%s\",\"lbl\":\"%s\",\"role\":\"%s\",\"name\":\"%s\","
+                        "\"held\":%s}",
+                        i ? "," : "", (unsigned)pin, (unsigned)caps[i].functions, group_names[caps[i].group], lesc,
                         pin_assign_role_name_of(role), nesc, pin_assign_is_reserved(pa, pin) ? "true" : "false");
     }
     if (pos > 0 && pos < (int)sizeof(buf)) {

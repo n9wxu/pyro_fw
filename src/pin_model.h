@@ -86,6 +86,13 @@ typedef struct {
     uint8_t pin;
     uint32_t functions;
     pin_group_t group;
+    /* Where this pin comes out on the board, in the designators silkscreened
+     * on it: "J3.3", "CN1.1", "J6.4". An operator wiring a rocket is holding
+     * a connector, not a GPIO number, and until this existed the two could
+     * only be matched by reading the board header. Boards with no designator
+     * for a pad say what it is instead ("match A terminal"); inventing a
+     * J-number that is not printed on the board would be worse than either. */
+    const char *label;
 } pin_cap_t;
 
 /* RP2040 ADC pads. FN_PYRO_SENSE and FN_ANALOG are meaningful only here. */
@@ -102,29 +109,34 @@ typedef struct {
  * a Lua-reachable pad shares an I2C instance with the flight pressure sensor
  * -- GPIO18/19 are i2c1 on MK1C, whose MS5607 is on GPIO6/7. Barometric
  * pressure is a fixed function, so the pads carrying it never move. */
-#define PIN_CAP_X_I2C_NEVER_LUA(pin, fn, pg)                                                                           \
+#define PIN_CAP_X_I2C_NEVER_LUA(pin, fn, pg, lbl)                                                                           \
     _Static_assert(!((fn) & (FN_I2C_SDA | FN_I2C_SCL)) || !((fn) & FN_LUA_ANY),                                        \
                    "pin " #pin " carries the sensor bus and must never be Lua-assignable");
 
 /* A bridge half is one element of a power group, so a pad offering FN_BRIDGE
  * has to say which element it is. */
-#define PIN_CAP_X_BRIDGE_HAS_GROUP(pin, fn, pg)                                                                        \
+#define PIN_CAP_X_BRIDGE_HAS_GROUP(pin, fn, pg, lbl)                                                                        \
     _Static_assert(!((fn) & FN_BRIDGE) || (pg) != PG_NONE,                                                             \
                    "pin " #pin " offers FN_BRIDGE but declares no power-group role");
 
-#define PIN_CAP_X_ANALOG_IS_ADC(pin, fn, pg)                                                                           \
+#define PIN_CAP_X_ANALOG_IS_ADC(pin, fn, pg, lbl)                                                                           \
     _Static_assert(!((fn) & (FN_PYRO_SENSE | FN_ANALOG)) || PIN_IS_ADC_CAPABLE(pin),                                   \
                    "pin " #pin " is declared analog but is not an RP2040 ADC pad");
 
-#define PIN_CAP_X_GROUP_NEEDS_PYRO(pin, fn, pg)                                                                        \
+#define PIN_CAP_X_GROUP_NEEDS_PYRO(pin, fn, pg, lbl)                                                                        \
     _Static_assert((pg) == PG_NONE || ((fn) & (FN_PYRO_FIRE | FN_PYRO_COMMON)),                                        \
                    "pin " #pin " has a power-group role but switches no pyro element");
 
-#define PIN_CAP_X_COUNT_COMMON(pin, fn, pg) +((pg) == PG_COMMON ? 1 : 0)
-#define PIN_CAP_X_COUNT_CH1(pin, fn, pg) +((pg) == PG_CH1 ? 1 : 0)
-#define PIN_CAP_X_COUNT_CH2(pin, fn, pg) +((pg) == PG_CH2 ? 1 : 0)
+#define PIN_CAP_X_COUNT_COMMON(pin, fn, pg, lbl) +((pg) == PG_COMMON ? 1 : 0)
+#define PIN_CAP_X_COUNT_CH1(pin, fn, pg, lbl) +((pg) == PG_CH1 ? 1 : 0)
+#define PIN_CAP_X_COUNT_CH2(pin, fn, pg, lbl) +((pg) == PG_CH2 ? 1 : 0)
+
+/* An unlabelled row is a pin the operator cannot find on the board. */
+#define PIN_CAP_X_HAS_LABEL(pin, fn, pg, lbl)                                                                          \
+    _Static_assert(sizeof(lbl) > 1, "pin " #pin " declares no connector label");
 
 #define PIN_CAPS_ASSERT(TABLE)                                                                                         \
+    TABLE(PIN_CAP_X_HAS_LABEL)                                                                                         \
     TABLE(PIN_CAP_X_I2C_NEVER_LUA)                                                                                     \
     TABLE(PIN_CAP_X_BRIDGE_HAS_GROUP)                                                                                  \
     TABLE(PIN_CAP_X_ANALOG_IS_ADC)                                                                                     \
@@ -139,6 +151,10 @@ const pin_cap_t *pin_caps_table(int *count);
 
 /* The row for a pin, or NULL when the board declares none. */
 const pin_cap_t *pin_caps_find(uint8_t pin);
+
+/* This pin's connector designator, or "" when the board declares no row for
+ * it. Never NULL, so callers can print it without a guard. */
+const char *pin_caps_label(uint8_t pin);
 
 /* True when this board has a buzzer pad at all.
  *

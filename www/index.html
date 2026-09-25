@@ -101,6 +101,9 @@
         <td><label><input type="checkbox" id="rel2" onchange="relChanged()">
             release to Lua</label> <span id="rel2pins" class="val"></span></td></tr>
     <tr><td class="lbl">Common</td><td id="relCommon" class="val"></td></tr>
+    <tr><td class="lbl">Buzzer</td>
+        <td><select id="bzPin" onchange="relChanged()"></select>
+            <span id="bzHint" class="hint"></span></td></tr>
   </table>
   <div id="relWarn"></div>
   <div class="btnrow" id="relBtns" style="display:none">

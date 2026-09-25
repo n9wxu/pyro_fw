@@ -137,6 +137,10 @@ void pin_store_claim_pads(void) {
     }
 }
 
+bool pin_store_has_buzzer(void) {
+    return pin_assign_buzzer_pin(&live) != PIN_BUZZER_BOARD;
+}
+
 bool pin_store_owns(uint8_t pin) {
     return pin_assign_is_reserved(&live, pin);
 }

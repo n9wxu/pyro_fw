@@ -46,20 +46,20 @@
 #define LUA_PIN_LIST                                                                                                   \
     { 8 }
 
-/*        pin  functions                                              group     */
+/*        pin  functions                                       group      connector   */
 #define BOARD_PIN_CAPS(X)                                                                                              \
-    X(0, FN_UART_TX, PG_NONE)                                                                                          \
-    X(1, FN_UART_RX, PG_NONE)                                                                                          \
-    X(6, FN_I2C_SDA, PG_NONE)  /* BMP280 SDA                          */                                               \
-    X(7, FN_I2C_SCL, PG_NONE)                                                                                          \
-    X(8, FN_DIGITAL | FN_PWM | FN_SERIAL | FN_PIXEL, PG_NONE) /* J1 user pad */                                        \
-    X(10, FN_I2C_SDA, PG_NONE) /* MS5607 SDA                          */                                               \
-    X(15, FN_PYRO_COMMON | FN_DIGITAL | FN_BRIDGE, PG_COMMON) /* Q1B, common low */                                               \
-    X(16, FN_BUZZER, PG_NONE)                                                                                          \
-    X(21, FN_PYRO_FIRE | FN_DIGITAL | FN_PWM | FN_BRIDGE, PG_CH1) /* AP2192 EN   */                                               \
-    X(22, FN_PYRO_FIRE | FN_DIGITAL | FN_PWM | FN_BRIDGE, PG_CH2) /* AP2192 EN   */                                               \
-    X(25, FN_LED, PG_NONE)                                                                                             \
-    X(26, FN_PYRO_SENSE | FN_ANALOG, PG_NONE) /* ADC0                 */                                               \
-    X(27, FN_PYRO_SENSE | FN_ANALOG, PG_NONE) /* ADC1                 */
+    X(0, FN_UART_TX, PG_NONE, "J1 TX")                                                                                 \
+    X(1, FN_UART_RX, PG_NONE, "J1 RX")                                                                                 \
+    X(6, FN_I2C_SDA, PG_NONE, "BMP280 SDA")                                                                            \
+    X(7, FN_I2C_SCL, PG_NONE, "BMP280 SCL")                                                                            \
+    X(8, FN_DIGITAL | FN_PWM | FN_SERIAL | FN_PIXEL, PG_NONE, "J1 user pad")                                           \
+    X(10, FN_I2C_SDA, PG_NONE, "MS5607 SDA")                                                                           \
+    X(15, FN_PYRO_COMMON | FN_DIGITAL | FN_BRIDGE, PG_COMMON, "CN1.2-3 common")                                        \
+    X(16, FN_BUZZER, PG_NONE, "LS1 buzzer")                                                                            \
+    X(21, FN_PYRO_FIRE | FN_DIGITAL | FN_PWM | FN_BRIDGE, PG_CH1, "CN1.1 drogue")                                      \
+    X(22, FN_PYRO_FIRE | FN_DIGITAL | FN_PWM | FN_BRIDGE, PG_CH2, "CN1.4 main")                                        \
+    X(25, FN_LED, PG_NONE, "D1 status LED")                                                                            \
+    X(26, FN_PYRO_SENSE | FN_ANALOG, PG_NONE, "ADC0 sense 1")                                                          \
+    X(27, FN_PYRO_SENSE | FN_ANALOG, PG_NONE, "ADC1 sense 2")
 
 #endif

@@ -41,19 +41,19 @@
 #define LUA_PIN_LIST                                                                                                   \
     { 18, 19 }
 
-/*        pin  functions                                              group     */
+/*        pin  functions                                       group      connector   */
 #define BOARD_PIN_CAPS(X)                                                                                              \
-    X(0, FN_UART_TX, PG_NONE)                       /* -> R19 -> J6.4          */                                      \
-    X(1, FN_UART_RX, PG_NONE)                       /* -> J6.5                 */                                      \
-    X(9, FN_PYRO_FIRE | FN_DIGITAL | FN_PWM | FN_BRIDGE, PG_CH1)  /* Q6A, high side  */                                      \
-    X(10, FN_PYRO_COMMON | FN_DIGITAL | FN_BRIDGE, PG_COMMON)     /* Q2, common low  */                                     \
-    X(11, FN_PYRO_FIRE | FN_DIGITAL | FN_PWM | FN_BRIDGE, PG_CH2) /* Q1A, high side  */                                      \
-    X(18, FN_DIGITAL | FN_PWM | FN_SERIAL | FN_PIXEL, PG_NONE) /* J6 user pad  */                                      \
-    X(19, FN_DIGITAL | FN_PWM | FN_SERIAL | FN_PIXEL, PG_NONE) /* J6 user pad  */                                      \
-    X(20, FN_I2C_SDA, PG_NONE)                                                                                         \
-    X(21, FN_I2C_SCL, PG_NONE)                                                                                         \
-    X(25, FN_LED, PG_NONE)                                                                                             \
-    X(26, FN_PYRO_SENSE | FN_ANALOG, PG_NONE)                     /* ADC0, sense 1   */                                      \
-    X(27, FN_PYRO_SENSE | FN_ANALOG, PG_NONE)                     /* ADC1, sense 2   */
+    X(0, FN_UART_TX, PG_NONE, "J6.4 TX")                                                                               \
+    X(1, FN_UART_RX, PG_NONE, "J6.5 RX")                                                                               \
+    X(9, FN_PYRO_FIRE | FN_DIGITAL | FN_PWM | FN_BRIDGE, PG_CH1, "J3 drogue")                                          \
+    X(10, FN_PYRO_COMMON | FN_DIGITAL | FN_BRIDGE, PG_COMMON, "igniter common")                                        \
+    X(11, FN_PYRO_FIRE | FN_DIGITAL | FN_PWM | FN_BRIDGE, PG_CH2, "J4 main")                                           \
+    X(18, FN_DIGITAL | FN_PWM | FN_SERIAL | FN_PIXEL, PG_NONE, "J6 user pad")                                          \
+    X(19, FN_DIGITAL | FN_PWM | FN_SERIAL | FN_PIXEL, PG_NONE, "J6 user pad")                                          \
+    X(20, FN_I2C_SDA, PG_NONE, "BMP280 SDA")                                                                           \
+    X(21, FN_I2C_SCL, PG_NONE, "BMP280 SCL")                                                                           \
+    X(25, FN_LED, PG_NONE, "status LED")                                                                               \
+    X(26, FN_PYRO_SENSE | FN_ANALOG, PG_NONE, "ADC0 sense 1")                                                          \
+    X(27, FN_PYRO_SENSE | FN_ANALOG, PG_NONE, "ADC1 sense 2")
 
 #endif

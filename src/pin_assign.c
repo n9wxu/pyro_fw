@@ -91,6 +91,10 @@ const char *pin_assign_strerror(pin_err_t e) {
         return "this board cannot make a half-bridge";
     case PIN_ERR_BRIDGE_INCOMPLETE:
         return "a bridge needs one channel side and the common";
+    case PIN_ERR_BUZZER_NOT_CAPABLE:
+        return "that pad cannot drive a buzzer";
+    case PIN_ERR_BUZZER_BUSY:
+        return "that pad is already doing something else";
     case PIN_ERR_DUPLICATE_NAME:
         return "two resources share one name";
     }
@@ -106,6 +110,28 @@ const char *pin_assign_strerror(pin_err_t e) {
  * does, with nothing handed to a script. */
 void pin_assign_defaults(pin_assign_t *a) {
     memset(a, 0, sizeof(*a));
+    /* Not memset's 0, which is GPIO0 -- the telemetry UART on every board
+     * here. The default has to mean "wherever the board put it". */
+    a->buzzer_pin = PIN_BUZZER_BOARD;
+}
+
+/* The board's own buzzer pad, or PIN_BUZZER_BOARD when it fits none. */
+static uint8_t board_buzzer_pad(void) {
+    int n = 0;
+    const pin_cap_t *t = pin_caps_table(&n);
+    for (int i = 0; i < n; i++) {
+        if (t[i].functions & FN_BUZZER) {
+            return t[i].pin;
+        }
+    }
+    return PIN_BUZZER_BOARD;
+}
+
+uint8_t pin_assign_buzzer_pin(const pin_assign_t *a) {
+    if (a && a->buzzer_pin != PIN_BUZZER_BOARD) {
+        return a->buzzer_pin;
+    }
+    return board_buzzer_pad();
 }
 
 /* Is the flight software still holding this pin?
@@ -117,6 +143,18 @@ void pin_assign_defaults(pin_assign_t *a) {
  * unconditionally at this phase. */
 bool pin_assign_is_reserved(const pin_assign_t *a, uint8_t pin) {
     const pin_cap_t *c = pin_caps_find(pin);
+
+    /* Whatever is currently driving the buzzer is the flight software's,
+     * whether that is the board's own pad or a user pad the operator moved it
+     * to. The converse matters just as much: once the buzzer has moved, the
+     * board's original pad is no longer reserved and Lua may have it. */
+    if (pin_assign_buzzer_pin(a) == pin) {
+        return true;
+    }
+    if (c && (c->functions & FN_BUZZER) && a && a->buzzer_pin != PIN_BUZZER_BOARD) {
+        return false;
+    }
+
     if (!c || !(c->functions & FN_BOARD_RESERVED)) {
         return false;
     }
@@ -143,9 +181,51 @@ static pin_verdict_t fail(pin_err_t e, uint8_t pin) {
     return v;
 }
 
+/* A buzzer is a square wave on a plain output, so FN_DIGITAL is the real
+ * requirement; FN_BUZZER additionally means the board already wired one. */
+static pin_verdict_t check_buzzer(const pin_assign_t *a) {
+    if (a->buzzer_pin == PIN_BUZZER_BOARD) {
+        return ok();
+    }
+    const pin_cap_t *c = pin_caps_find(a->buzzer_pin);
+    if (!c) {
+        return fail(PIN_ERR_UNKNOWN_PIN, a->buzzer_pin);
+    }
+    if (!(c->functions & (FN_BUZZER | FN_DIGITAL))) {
+        return fail(PIN_ERR_BUZZER_NOT_CAPABLE, a->buzzer_pin);
+    }
+    /* A pad the pyro channels still hold, or one already given a Lua role,
+     * cannot also be the buzzer. Checking the role here rather than relying on
+     * is_reserved() is deliberate: is_reserved() now answers true FOR the
+     * buzzer pad, so it cannot be the test for whether the pad was free. */
+    if (a->buzzer_pin < PIN_ASSIGN_MAX_GPIO && a->role[a->buzzer_pin] != LUA_ROLE_OFF) {
+        return fail(PIN_ERR_BUZZER_BUSY, a->buzzer_pin);
+    }
+    if (c->group != PG_NONE) {
+        bool released = (c->group == PG_CH1)   ? a->pyro1_released
+                        : (c->group == PG_CH2) ? a->pyro2_released
+                                               : (a->pyro1_released && a->pyro2_released);
+        if (!released) {
+            return fail(PIN_ERR_PYRO_RETAINED, a->buzzer_pin);
+        }
+    }
+    /* Everything else the board reserves -- the sensor bus, the UART, the LED
+     * -- stays reserved. Only a pad carrying FN_BUZZER is exempt, because that
+     * pad IS a buzzer pad. */
+    if ((c->functions & FN_BOARD_RESERVED) && !(c->functions & FN_BUZZER) && c->group == PG_NONE) {
+        return fail(PIN_ERR_BUZZER_BUSY, a->buzzer_pin);
+    }
+    return ok();
+}
+
 pin_verdict_t pin_assign_validate(const pin_assign_t *a) {
     int bridge_channel = 0;
     int bridge_common = 0;
+
+    pin_verdict_t bz = check_buzzer(a);
+    if (bz.err != PIN_OK) {
+        return bz;
+    }
 
     for (uint8_t pin = 0; pin < PIN_ASSIGN_MAX_GPIO; pin++) {
         uint8_t role = a->role[pin];
@@ -247,7 +327,12 @@ void pin_assign_parse_ini(char *buf, pin_assign_t *a) {
                 const char *key = line;
                 const char *val = eq + 1;
 
-                if (strcmp(key, "pyro1_released") == 0) {
+                if (strcmp(key, "buzzer_pin") == 0) {
+                    /* "board" is the default and the only non-numeric value;
+                     * anything unparseable falls back to it rather than to
+                     * atoi()'s 0, which is the telemetry UART. */
+                    a->buzzer_pin = (val[0] >= '0' && val[0] <= '9') ? (uint8_t)atoi(val) : (uint8_t)PIN_BUZZER_BOARD;
+                } else if (strcmp(key, "pyro1_released") == 0) {
                     a->pyro1_released = parse_bool(val);
                 } else if (strcmp(key, "pyro2_released") == 0) {
                     a->pyro2_released = parse_bool(val);
@@ -293,6 +378,11 @@ int pin_assign_serialize_ini(const pin_assign_t *a, char *buf, int max_len) {
     APPEND("[pins]\r\n");
     APPEND("pyro1_released=%s\r\n", a->pyro1_released ? "true" : "false");
     APPEND("pyro2_released=%s\r\n", a->pyro2_released ? "true" : "false");
+    if (a->buzzer_pin == PIN_BUZZER_BOARD) {
+        APPEND("buzzer_pin=board\r\n");
+    } else {
+        APPEND("buzzer_pin=%u\r\n", (unsigned)a->buzzer_pin);
+    }
 
     /* Only assigned pins, so the file stays about as long as the
      * configuration is complicated. */

@@ -13,6 +13,7 @@
 #include "hal.h"
 #include "flash_window.h"
 #include "pin_store.h"
+#include "board_if.h"
 #include "flight_states.h"
 #include "device_status.h"
 #include "buzzer.h"
@@ -136,6 +137,12 @@ int main() {
      * pad_claim.h. */
     pin_store_claim_pads();
     hal_pyro_claim_channels(pin_store_pyro_pads);
+
+    /* Move the buzzer to whatever pad the assignment names. After the claim
+     * pass, because that is what reserved the pad; a saved pins.ini reports
+     * reboot_required, so this is the only place it needs applying. On MK1A
+     * this is how the board gets a buzzer at all. */
+    board_buzzer_set_pin(pin_assign_buzzer_pin(pin_store_current()));
 
 #if PYRO_HAS_LUA
     /* Core1 is launched here, once, after the filesystem is mounted and the

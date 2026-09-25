@@ -52,9 +52,46 @@ void board_led_toggle(void) {
 
 /* No buzzer is fitted. These are no-ops rather than absent, because
  * board_if.h is a contract a board implements as-is. */
-void board_buzzer_init(void) {}
-void board_buzzer_on(void) {}
-void board_buzzer_off(void) {}
+/* The buzzer pad, runtime rather than compile-time: an operator may move it.
+ * MK1A fits no buzzer and board_pins.h deliberately declares no pin, so
+ * this board is silent until pins.ini assigns a pad. */
+static uint8_t buzz_pin = BOARD_BUZZER_NO_PIN;
+
+void board_buzzer_set_pin(uint8_t pin) {
+    if (pin == buzz_pin) {
+        return;
+    }
+    /* Hand the old pad back as an input first. Leaving it an output would
+     * keep it driven after a reassignment, and on a released pyro pad that is
+     * a driven pin nobody believes is driven. */
+    if (buzz_pin != BOARD_BUZZER_NO_PIN) {
+        gpio_put(buzz_pin, 0);
+        gpio_set_dir(buzz_pin, GPIO_IN);
+    }
+    buzz_pin = pin;
+    board_buzzer_init();
+}
+
+void board_buzzer_init(void) {
+    if (buzz_pin == BOARD_BUZZER_NO_PIN) {
+        return;
+    }
+    gpio_init(buzz_pin);
+    gpio_set_dir(buzz_pin, GPIO_OUT);
+    gpio_put(buzz_pin, 0);
+}
+
+void board_buzzer_on(void) {
+    if (buzz_pin != BOARD_BUZZER_NO_PIN) {
+        gpio_put(buzz_pin, 1);
+    }
+}
+
+void board_buzzer_off(void) {
+    if (buzz_pin != BOARD_BUZZER_NO_PIN) {
+        gpio_put(buzz_pin, 0);
+    }
+}
 
 bool board_pyro_raw(board_pyro_raw_t *out) {
     /* MK1A has no bus-level analog sensing -- only the two per-channel sense

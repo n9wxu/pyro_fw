@@ -49,18 +49,44 @@ void board_led_toggle(void) {
     gpio_xor_mask(1u << BOARD_PIN_LED);
 }
 
+/* The buzzer pad, runtime rather than compile-time: an operator may move it.
+ * A buzzer is fitted, so that is where it starts. */
+static uint8_t buzz_pin = BOARD_PIN_BUZZER;
+
+void board_buzzer_set_pin(uint8_t pin) {
+    if (pin == buzz_pin) {
+        return;
+    }
+    /* Hand the old pad back as an input first. Leaving it an output would
+     * keep it driven after a reassignment, and on a released pyro pad that is
+     * a driven pin nobody believes is driven. */
+    if (buzz_pin != BOARD_BUZZER_NO_PIN) {
+        gpio_put(buzz_pin, 0);
+        gpio_set_dir(buzz_pin, GPIO_IN);
+    }
+    buzz_pin = pin;
+    board_buzzer_init();
+}
+
 void board_buzzer_init(void) {
-    gpio_init(BOARD_PIN_BUZZER);
-    gpio_set_dir(BOARD_PIN_BUZZER, GPIO_OUT);
-    gpio_put(BOARD_PIN_BUZZER, 0);
+    if (buzz_pin == BOARD_BUZZER_NO_PIN) {
+        return;
+    }
+    gpio_init(buzz_pin);
+    gpio_set_dir(buzz_pin, GPIO_OUT);
+    gpio_put(buzz_pin, 0);
 }
 
 void board_buzzer_on(void) {
-    gpio_put(BOARD_PIN_BUZZER, 1);
+    if (buzz_pin != BOARD_BUZZER_NO_PIN) {
+        gpio_put(buzz_pin, 1);
+    }
 }
 
 void board_buzzer_off(void) {
-    gpio_put(BOARD_PIN_BUZZER, 0);
+    if (buzz_pin != BOARD_BUZZER_NO_PIN) {
+        gpio_put(buzz_pin, 0);
+    }
 }
 
 bool board_pyro_raw(board_pyro_raw_t *out) {

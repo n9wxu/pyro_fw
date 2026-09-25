@@ -33,6 +33,13 @@ void pin_store_load(char *reason, int reason_len);
 /* The live assignment. Never NULL. */
 const pin_assign_t *pin_store_current(void);
 
+/* True when a pad is actually driving the buzzer -- the board's own, or one
+ * the operator assigned. Replaces pin_caps_has_buzzer() at every call site
+ * that was really asking "can this board beep", because since the buzzer pad
+ * became assignable the capability table is no longer the whole answer: MK1A
+ * has no FN_BUZZER row and can still beep. */
+bool pin_store_has_buzzer(void);
+
 /* Validate and write. Returns the verdict; nothing is written unless it is
  * PIN_OK. Must be called inside the flash window. */
 pin_verdict_t pin_store_save(const pin_assign_t *a);

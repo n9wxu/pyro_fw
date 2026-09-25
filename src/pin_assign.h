@@ -38,9 +38,24 @@
  * firmware cannot prevent: pyro_fire() on the retained channel asserts the
  * common for 500 ms, and for that window the released side has a return path.
  * The UI warns; the released side genuinely is just a digital pin. */
+/* "leave the buzzer where the board put it". Not 0, which is a real GPIO. */
+#define PIN_BUZZER_BOARD 255u
+
 typedef struct {
     bool pyro1_released;
     bool pyro2_released;
+
+    /* Which pad drives the buzzer, or PIN_BUZZER_BOARD for the board's own.
+     *
+     * The buzzer is a square wave on a plain GPIO, so any digital pad can
+     * drive one -- which is how MK1A gets a buzzer at all. It fits none, and
+     * rather than invent an FN_BUZZER row for a pad that goes nowhere, the
+     * operator wires a buzzer to a J6 user pad and says which one here.
+     *
+     * This is a flight-software assignment, not a Lua role: the buzzer
+     * belongs to the firmware, and a pad carrying it is reserved against Lua
+     * by pin_assign_is_reserved() exactly as the board's own pad is. */
+    uint8_t buzzer_pin;
 
     /* Indexed by GPIO. LUA_ROLE_OFF where nothing is assigned. */
     uint8_t role[PIN_ASSIGN_MAX_GPIO];
@@ -58,6 +73,8 @@ typedef enum {
     PIN_ERR_BRIDGE_UNSUPPORTED, /* this board offers no bridge         */
     PIN_ERR_BRIDGE_INCOMPLETE,  /* a bridge needs a channel and the common */
     PIN_ERR_DUPLICATE_NAME, /* two resources share one Lua name        */
+    PIN_ERR_BUZZER_NOT_CAPABLE, /* the pad cannot drive a buzzer       */
+    PIN_ERR_BUZZER_BUSY,        /* the pad is already doing something  */
 } pin_err_t;
 
 typedef struct {
@@ -79,8 +96,14 @@ void pin_assign_defaults(pin_assign_t *a);
 pin_verdict_t pin_assign_validate(const pin_assign_t *a);
 
 /* True when this pin is currently the flight software's. A retained pyro pin
- * and the common while either channel is retained both answer true. */
+ * and the common while either channel is retained both answer true, as does
+ * whichever pad is currently driving the buzzer. */
 bool pin_assign_is_reserved(const pin_assign_t *a, uint8_t pin);
+
+/* The pad the buzzer is actually on: the assignment if there is one, else the
+ * board's own FN_BUZZER pad, else PIN_BUZZER_BOARD when the board fits none
+ * and nothing has been assigned -- i.e. this board currently has no buzzer. */
+uint8_t pin_assign_buzzer_pin(const pin_assign_t *a);
 
 /* Parse pins.ini over an existing assignment. Unknown keys are ignored, for
  * the same forward-compatibility reason config.ini ignores them (CFG-08).

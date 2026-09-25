@@ -325,6 +325,100 @@ void test_a_pad_the_board_reserves_for_something_else_is_never_given_up(void) {
     TEST_ASSERT_FALSE(pin_assign_is_reserved(&a, USER_PAD));
 }
 
+/* ── Item 1: the buzzer is assignable ─────────────────────────────── */
+
+/* [PIN-BUZZ-01] The default means "wherever the board put it", and must not
+ * be memset's zero -- GPIO0 is the telemetry UART on every board here. */
+void test_PIN_BUZZ_01_default_is_board_not_gpio0(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_BUZZER_BOARD, a.buzzer_pin, "the default buzzer pin must not be a real GPIO");
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_OK, pin_assign_validate(&a).err, "board defaults must validate");
+}
+
+/* [PIN-BUZZ-02] A user pad that can drive an output can drive a buzzer.
+ * MK1A depends on this: it fits none, so its J6 pads are the only way it
+ * ever beeps. */
+void test_PIN_BUZZ_02_digital_user_pad_accepted(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    a.buzzer_pin = 18; /* J6 user pad, FN_DIGITAL */
+    pin_verdict_t v = pin_assign_validate(&a);
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_OK, v.err, v.what);
+    TEST_ASSERT_EQUAL_MESSAGE(18, pin_assign_buzzer_pin(&a), "the assignment must win over the board default");
+}
+
+/* [PIN-BUZZ-03] The buzzer pad is the flight software's, so Lua cannot have
+ * it -- the same rule that protects the board's own pad. */
+void test_PIN_BUZZ_03_buzzer_pad_is_reserved(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    a.buzzer_pin = 18;
+    TEST_ASSERT_TRUE_MESSAGE(pin_assign_is_reserved(&a, 18), "the assigned buzzer pad must be reserved against Lua");
+}
+
+/* [PIN-BUZZ-04] ...and a pad already given a Lua role cannot become the
+ * buzzer. Both directions, or the two owners collide. */
+void test_PIN_BUZZ_04_cannot_take_a_pad_lua_holds(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    a.role[18] = LUA_ROLE_OUT;
+    a.buzzer_pin = 18;
+    pin_verdict_t v = pin_assign_validate(&a);
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_ERR_BUZZER_BUSY, v.err, "a pad with a Lua role must not also be the buzzer");
+    TEST_ASSERT_EQUAL(18, v.pin);
+}
+
+/* [PIN-BUZZ-05] The sensor bus and the telemetry UART stay out of reach. */
+void test_PIN_BUZZ_05_reserved_pads_refused(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    /* NOT_CAPABLE rather than BUSY: the board declares GPIO0 as FN_UART_TX
+     * and nothing else, so it is refused for want of a digital capability
+     * before the reservation rule is even reached. Either answer keeps the
+     * pad safe; this is the one the operator can act on. */
+    a.buzzer_pin = 0; /* UART TX on every board here */
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_ERR_BUZZER_NOT_CAPABLE, pin_assign_validate(&a).err,
+                              "the telemetry UART must not be usable as a buzzer");
+    a.buzzer_pin = 2; /* no row on this board */
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_ERR_UNKNOWN_PIN, pin_assign_validate(&a).err, "a pin with no row must be refused");
+}
+
+/* [PIN-BUZZ-06] A retained pyro pad cannot be stolen for the buzzer, and
+ * becomes available once its channel is released. */
+void test_PIN_BUZZ_06_pyro_pad_needs_release_first(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    a.buzzer_pin = 9; /* FIRE1, PG_CH1 */
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_ERR_PYRO_RETAINED, pin_assign_validate(&a).err,
+                              "a retained firing pad must not become the buzzer");
+    a.pyro1_released = true;
+    pin_verdict_t v = pin_assign_validate(&a);
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_OK, v.err, v.what);
+}
+
+/* [PIN-BUZZ-07] The setting survives a round trip through pins.ini, and an
+ * unparseable value falls back to the board default rather than atoi()'s 0. */
+void test_PIN_BUZZ_07_ini_round_trip(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    a.buzzer_pin = 19;
+    char buf[1024];
+    int n = pin_assign_serialize_ini(&a, buf, (int)sizeof(buf));
+    TEST_ASSERT_GREATER_THAN(0, n);
+
+    pin_assign_t b;
+    pin_assign_defaults(&b);
+    pin_assign_parse_ini(buf, &b);
+    TEST_ASSERT_EQUAL_MESSAGE(19, b.buzzer_pin, "buzzer_pin must survive a serialise/parse round trip");
+
+    char junk[] = "[pins]\nbuzzer_pin=nonsense\n";
+    pin_assign_t c;
+    pin_assign_defaults(&c);
+    pin_assign_parse_ini(junk, &c);
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_BUZZER_BOARD, c.buzzer_pin, "an unparseable value must fall back to the board pad");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_defaults_are_valid_and_release_nothing);
@@ -359,5 +453,12 @@ int main(void) {
     RUN_TEST(test_releasing_one_channel_gives_up_only_that_pad);
     RUN_TEST(test_the_common_is_given_up_only_when_both_channels_are);
     RUN_TEST(test_a_pad_the_board_reserves_for_something_else_is_never_given_up);
+    RUN_TEST(test_PIN_BUZZ_01_default_is_board_not_gpio0);
+    RUN_TEST(test_PIN_BUZZ_02_digital_user_pad_accepted);
+    RUN_TEST(test_PIN_BUZZ_03_buzzer_pad_is_reserved);
+    RUN_TEST(test_PIN_BUZZ_04_cannot_take_a_pad_lua_holds);
+    RUN_TEST(test_PIN_BUZZ_05_reserved_pads_refused);
+    RUN_TEST(test_PIN_BUZZ_06_pyro_pad_needs_release_first);
+    RUN_TEST(test_PIN_BUZZ_07_ini_round_trip);
     return UNITY_END();
 }

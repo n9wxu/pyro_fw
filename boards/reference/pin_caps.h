@@ -38,13 +38,13 @@
 #define LUA_PIN_LIST                                                                                                   \
     { 0 }
 
-/*        pin  functions                                    group     */
+/*        pin  functions                                       group      connector   */
 #define BOARD_PIN_CAPS(X)                                                                                              \
-    X(0, FN_UART_TX, PG_NONE)  /* TODO */                                                                              \
-    X(1, FN_UART_RX, PG_NONE)  /* TODO */                                                                              \
-    X(6, FN_I2C_SDA, PG_NONE)  /* TODO */                                                                              \
-    X(7, FN_I2C_SCL, PG_NONE)  /* TODO */                                                                              \
-    X(16, FN_BUZZER, PG_NONE)  /* TODO */                                                                              \
-    X(25, FN_LED, PG_NONE)     /* TODO */
+    X(0, FN_UART_TX, PG_NONE, "TODO: silkscreen name")                                                                 \
+    X(1, FN_UART_RX, PG_NONE, "TODO: silkscreen name")                                                                 \
+    X(6, FN_I2C_SDA, PG_NONE, "TODO: silkscreen name")                                                                 \
+    X(7, FN_I2C_SCL, PG_NONE, "TODO: silkscreen name")                                                                 \
+    X(16, FN_BUZZER, PG_NONE, "TODO: silkscreen name")                                                                 \
+    X(25, FN_LED, PG_NONE, "TODO: silkscreen name")
 
 #endif

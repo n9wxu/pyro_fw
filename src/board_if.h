@@ -57,6 +57,23 @@ void board_led_toggle(void);
 
 /* ── Buzzer ───────────────────────────────────────────────────────── */
 
+/* No pad is driving the buzzer. MK1A boots like this: it fits no buzzer, and
+ * declares no pin rather than invite someone to drive a pad that goes
+ * nowhere. Assigning one in pins.ini is how that board gets a buzzer. */
+#define BOARD_BUZZER_NO_PIN 255u
+
+/* Move the buzzer to another pad, or BOARD_BUZZER_NO_PIN to silence it.
+ *
+ * The pin is runtime rather than compile-time because an operator may wire a
+ * buzzer to a user pad -- the only way MK1A can have one at all. The old pad
+ * is returned to input so a reassignment does not leave two pads driven.
+ *
+ * Still a board function rather than common code: the drive is a plain GPIO
+ * on every board here, but a board with a piezo driver or a PWM slice behind
+ * its buzzer needs to do something else, and that is what this interface is
+ * for. pin_assign_validate() has already checked the pad can take it. */
+void board_buzzer_set_pin(uint8_t pin);
+
 void board_buzzer_init(void);
 void board_buzzer_on(void);
 void board_buzzer_off(void);
