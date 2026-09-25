@@ -109,6 +109,13 @@ void sim_reset(void) {
 
 /* ── HAL implementation ───────────────────────────────────────────── */
 
+/* The simulator is always a fresh start: there is no power event to recover
+ * from, so brownout recovery never engages here. A sim that reported a power
+ * event would go looking for a flight in a marker file that does not exist. */
+reset_cause_t hal_reset_cause(void) {
+    return RESET_SOFTWARE;
+}
+
 uint32_t hal_time_ms(void) {
     return sim_time;
 }

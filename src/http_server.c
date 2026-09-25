@@ -25,6 +25,7 @@
 
 #include "flash_window.h"
 #include "pin_store.h"
+#include "brownout.h"
 #include "beep_store.h"
 #include "pin_caps.h"
 #include "buzzer.h"
@@ -736,7 +737,7 @@ static void serve_api_status(struct tcp_pcb *pcb) {
     } diag_names[] = {
         {DIAG_SENSOR_FAIL, "sensor_fail"}, {DIAG_FS_FAIL, "fs_fail"},      {DIAG_CFG_RANGE, "cfg_range"},
         {DIAG_P1_OPEN, "pyro1_open"},      {DIAG_P1_SHORT, "pyro1_short"}, {DIAG_P2_OPEN, "pyro2_open"},
-        {DIAG_P2_SHORT, "pyro2_short"},
+        {DIAG_P2_SHORT, "pyro2_short"},   {DIAG_BROWNOUT, "brownout_recovered"},
     };
     char fault_list[128] = {0};
     if (fctx) {
@@ -809,6 +810,7 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         "\"pins_reason\":\"%s\",\"pyro1_released\":%s,\"pyro2_released\":%s,\"bridge\":\"%s\","
         "\"pyro_mocked\":%lu,\"pyro1_real\":%s,\"pyro2_real\":%s,"
         "\"sensor_ok\":%s,\"fs_ok\":%s,\"faults\":[%s],"
+        "\"reset_cause\":%u,\"recovery\":\"%s\","
         "\"beep\":\"%s\",\"beep_sound\":\"%s\","
         "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u}",
         sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
@@ -836,6 +838,10 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         /* The power-up self-test, said out loud. A board that cannot measure
          * altitude used to report itself healthy here and beep "all good". */
         fctx && fctx->sensor_type ? "true" : "false", fctx && fctx->fs_ok ? "true" : "false", fault_list,
+        /* Why this boot happened and what was made of it. A brownout reads as
+         * a power event, so the phrase is the part worth reading. */
+        fctx ? (unsigned)fctx->reset_cause : 0u,
+        brownout_recovery_name(fctx ? (recovery_t)fctx->recovery : RECOVER_COLD),
         /* What the buzzer is saying and how it sounds, so it can be read
          * rather than counted. */
         beep_codes_key(beep_r), beep_sound, board_serial(), board_serial_assigned() ? "true" : "false", board_hw_id(),

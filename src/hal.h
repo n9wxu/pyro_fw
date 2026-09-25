@@ -24,6 +24,11 @@
 
 uint32_t hal_time_ms(void);
 
+/* Why the processor started this time. A brownout reads as a power event and
+ * cannot be told from someone connecting the battery -- see brownout.h. */
+#include "brownout.h"
+reset_cause_t hal_reset_cause(void);
+
 /* ── Pressure sensor ──────────────────────────────────────────────── */
 
 /* Initialize the pressure sensor hardware.

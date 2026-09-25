@@ -871,6 +871,136 @@ void test_GND_TEST_04_only_in_pad_idle(void) {
 
 /* ── Main ─────────────────────────────────────────────────────────── */
 
+/* ── Item 6: brownout recovery, through the real machine ──────────── */
+
+extern reset_cause_t mock_reset_cause; /* test/hal_test.c */
+
+/* Sitting on the pad at a steady pressure. app_tick() drives the sensor from
+ * the OpenRocket export, which these tests deliberately do not load: a marker
+ * test wants a board that is not going anywhere. */
+static void pad_tick_range(uint32_t from_ms, uint32_t to_ms) {
+    for (uint32_t t = from_ms; t < to_ms; t++) {
+        mock_time_ms = t;
+        mock_pressure.pressure_pa = 101325.0f;
+        mock_pyro.firing = false;
+        ctx.current_state = step(&ctx, t);
+        flight_update_outputs(&ctx, t);
+    }
+}
+
+/* [FLT-BOOT-11] The marker is written after ten seconds of PAD_IDLE and not
+ * before, because the whole point is to have it on disk long before the
+ * moment it protects against. */
+void test_BRN_INT_01_marker_written_after_pad_dwell(void) {
+    reset_sim();
+    ctx.boot_timer = 0;
+
+    pad_tick_range(0, PAD_MARKER_DWELL_MS - 500);
+    pad_marker_t m;
+    int n = hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m));
+    TEST_ASSERT_TRUE_MESSAGE(n < (int)sizeof(m), "the marker must not be written before the dwell has elapsed");
+
+    pad_tick_range(PAD_MARKER_DWELL_MS - 500, PAD_MARKER_DWELL_MS + 1500);
+    n = hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m));
+    TEST_ASSERT_EQUAL_MESSAGE((int)sizeof(m), n, "the marker must exist after ten seconds on the pad");
+    TEST_ASSERT_TRUE_MESSAGE(pad_marker_valid(&m), "the marker written on the pad must validate");
+    TEST_ASSERT_INT32_WITHIN_MESSAGE(300, 101325, m.ground_pressure_pa,
+                                     "the marker must record the ground pressure it was sitting at");
+}
+
+/* Written once. A marker rewritten every tick would be flash wear on the pad
+ * and a write in progress at an arbitrary moment. */
+void test_BRN_INT_02_marker_written_only_once(void) {
+    reset_sim();
+    ctx.boot_timer = 0;
+    pad_tick_range(0, PAD_MARKER_DWELL_MS + 3000);
+    TEST_ASSERT_TRUE_MESSAGE(ctx.marker_written, "the marker should have been written");
+    /* The flag is the guard; if it were not honoured the write would repeat
+       for every tick after the dwell. */
+    uint32_t before = mock_fs_write_count;
+    pad_tick_range(PAD_MARKER_DWELL_MS + 3000, PAD_MARKER_DWELL_MS + 5000);
+    TEST_ASSERT_EQUAL_MESSAGE(before, mock_fs_write_count, "the marker must be written once, not every tick");
+}
+
+/* The case the mechanism exists for. A marker on disk, a power event, and a
+ * barometer that says the board is high and descending: the machine must
+ * rejoin the flight rather than calibrate a new zero at altitude. */
+void test_BRN_INT_03_descending_recovery_rejoins_flight(void) {
+    reset_sim();
+    /* A marker recorded at sea-level ground pressure... */
+    pad_marker_t m;
+    pad_marker_fill(&m, 101325);
+    TEST_ASSERT_EQUAL(0, hal_fs_write_file(PAD_MARKER_PATH, (const char *)&m, (int)sizeof(m)));
+
+    /* ...and a board that wakes up 600 m above it, coming down. */
+    mock_reset_cause = RESET_POWER_EVENT;
+    ctx.current_state = BOOT_SETTLE;
+    ctx.boot_timer = 0;
+    ctx.sensor_type = 1;
+    ctx.fs_ok = true;
+    ctx.last_sample = 0;
+    ctx.last_altitude = 0;
+
+    /* Continuous, not stepped: the sensor is fed faster than 20 ms, so a
+     * stepped altitude lets a sample pair land inside one step and read as
+     * stationary. */
+    for (uint32_t t = 0; t < 6000; t++) {
+        float alt_m = 600.0f - 20.0f * ((float)t / 1000.0f); /* 20 m/s down */
+        mock_pressure.pressure_pa = 101325.0f - alt_m * 12.0f;
+        mock_time_ms = t;
+        mock_pyro.firing = false;
+        ctx.current_state = step(&ctx, t);
+        flight_update_outputs(&ctx, t);
+        if (ctx.current_state == FALLING || ctx.current_state == DROGUE_DESCENT ||
+            ctx.current_state == CHUTE_DESCENT) {
+            break;
+        }
+    }
+
+    char msg[160];
+    snprintf(msg, sizeof(msg), "state=%d recovery=%d diag=0x%x", (int)ctx.current_state, (int)ctx.recovery,
+             (unsigned)ctx.diag);
+    TEST_ASSERT_TRUE_MESSAGE(ctx.current_state == FALLING || ctx.current_state == DROGUE_DESCENT ||
+                                 ctx.current_state == CHUTE_DESCENT,
+                             msg);
+    TEST_ASSERT_TRUE_MESSAGE((ctx.diag & DIAG_BROWNOUT) != 0, "a recovered flight must say so in the diagnosis");
+    TEST_ASSERT_TRUE_MESSAGE(ctx.pyros_armed, "a rocket already descending has passed apogee: arm it");
+    TEST_ASSERT_TRUE_MESSAGE(ctx.apogee_detected, "apogee is behind a descending rocket by definition");
+    /* The recovered ground reference, NOT a fresh calibration at altitude. */
+    TEST_ASSERT_INT32_WITHIN_MESSAGE(50, 101325, ctx.ground_pressure,
+                                     "the ground reference must come from the marker, not from where it woke up");
+}
+
+/* A board switched on at the pad must calibrate normally, marker or no
+ * marker. This is the common case and it must not go hunting for a flight. */
+void test_BRN_INT_04_pad_power_on_calibrates_normally(void) {
+    reset_sim();
+    pad_marker_t m;
+    pad_marker_fill(&m, 101325);
+    hal_fs_write_file(PAD_MARKER_PATH, (const char *)&m, (int)sizeof(m));
+
+    mock_reset_cause = RESET_POWER_EVENT;
+    ctx.current_state = BOOT_SETTLE;
+    ctx.boot_timer = 0;
+    ctx.sensor_type = 1;
+    ctx.fs_ok = true;
+
+    for (uint32_t t = 0; t < 20000; t++) {
+        mock_pressure.pressure_pa = 101325.0f; /* sitting still at the pad */
+        mock_time_ms = t;
+        mock_pyro.firing = false;
+        ctx.current_state = step(&ctx, t);
+        flight_update_outputs(&ctx, t);
+        if (ctx.current_state == PAD_IDLE) {
+            break;
+        }
+    }
+    char msg[96];
+    snprintf(msg, sizeof(msg), "state=%d recovery=%d", (int)ctx.current_state, (int)ctx.recovery);
+    TEST_ASSERT_EQUAL_MESSAGE(PAD_IDLE, ctx.current_state, msg);
+    TEST_ASSERT_TRUE_MESSAGE((ctx.diag & DIAG_BROWNOUT) == 0, "a pad power-on must not be reported as a brownout");
+}
+
 int main(void) {
     UNITY_BEGIN();
 
@@ -914,5 +1044,9 @@ int main(void) {
     RUN_TEST(test_GND_TEST_03_auto_disarm);
     RUN_TEST(test_GND_TEST_04_only_in_pad_idle);
 
+    RUN_TEST(test_BRN_INT_01_marker_written_after_pad_dwell);
+    RUN_TEST(test_BRN_INT_02_marker_written_only_once);
+    RUN_TEST(test_BRN_INT_03_descending_recovery_rejoins_flight);
+    RUN_TEST(test_BRN_INT_04_pad_power_on_calibrates_normally);
     return UNITY_END();
 }

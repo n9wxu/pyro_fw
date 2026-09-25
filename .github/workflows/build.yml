@@ -144,6 +144,11 @@ jobs:
       - name: Run closed-loop tests
         run: cd build && ninja closedloop_tests
 
+      # Brownout recovery: a pure decision function, so every case that would
+      # otherwise need a rocket and a loose battery connector runs here.
+      - name: Run brownout recovery tests
+        run: cd build && ninja brownout_tests
+
       - name: Validate web JS syntax
         run: node --check www/app.js
 

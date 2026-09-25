@@ -15,6 +15,7 @@
 #define DIAG_P1_SHORT (1u << 4)
 #define DIAG_P2_OPEN (1u << 5)
 #define DIAG_P2_SHORT (1u << 6)
+#define DIAG_BROWNOUT (1u << 7) /* came back mid-flight after a power event */
 
 /* The pyro ones can be fixed standing at the rocket; everything else means
  * safe it and walk away. This split is what picks the beep. */
@@ -57,6 +58,11 @@ typedef enum {
     SEVT_FREEFALL, /* a canopy that was working has stopped working */
     SEVT_LANDING,
     SEVT_FAULT, /* a power-up test failed; nothing recovers from this */
+    /* A power event happened in flight and the board came back. The marker
+     * written on the pad says where the ground was; the barometer says which
+     * way the rocket is going. See brownout.h. */
+    SEVT_RECOVER_ASCENT,
+    SEVT_RECOVER_DESCENT,
 } state_event_t;
 
 // Forward declare for function pointer types
@@ -173,6 +179,20 @@ typedef struct flight_context_t {
      * altitude cannot fly, so it must not report itself ready. */
     uint8_t sensor_type;
     bool fs_ok;
+
+    /* ── Brownout recovery [FLT-BOOT-11] ──────────────────────────
+     * What the reset registers and the pad marker said at boot, kept so
+     * /api/status and the flight log can report it. A recovered flight is
+     * not the same flight -- the log restarts at the moment of recovery --
+     * and nothing downstream should have to guess that from the data. */
+    uint8_t reset_cause;
+    uint8_t recovery;
+    /* Samples taken for the recovery verdict. Two are needed for a speed, and
+     * an explicit count is what makes the priming pass legible -- an earlier
+     * version inferred it from boot_timer, which is legitimately zero. */
+    uint8_t recovery_samples;
+    bool marker_written;
+    int32_t marker_ground_pa;
 
     /* ── What is wrong, as distinct from what to do ──────────────
      *

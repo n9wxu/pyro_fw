@@ -86,4 +86,7 @@ extern int mock_buzzer_tone_off_count;
 
 void mock_reset_all(void);
 
+/* Whole-file writes, so a test can prove something is written once. */
+extern uint32_t mock_fs_write_count;
+
 #endif

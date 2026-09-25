@@ -61,8 +61,11 @@ typedef struct {
 } sim_file_t;
 static sim_file_t sim_files[SIM_FS_MAX_FILES];
 static uint32_t last_pp_feed_ms = 0;
+uint32_t mock_fs_write_count = 0;
 
 void mock_reset_all(void) {
+    mock_fs_write_count = 0;
+    memset(&sim_files, 0, sizeof(sim_files));
     memset(&mock_pressure, 0, sizeof(mock_pressure));
     mock_pressure.sensor_type = 2;
     mock_pressure.pressure_pa = 101325.0f;
@@ -190,6 +193,13 @@ void hal_pyro_fire(uint8_t channel) {
 void hal_pyro_update(uint32_t now_ms) {
     (void)now_ms;
 }
+/* Host tests drive the recovery matrix through brownout_assess() directly;
+ * this only has to exist and be settable. */
+reset_cause_t mock_reset_cause = RESET_POWER_EVENT;
+reset_cause_t hal_reset_cause(void) {
+    return mock_reset_cause;
+}
+
 bool hal_pyro_is_firing(void) {
     return mock_pyro.firing;
 }
@@ -252,6 +262,7 @@ int hal_fs_read_file(const char *path, char *buf, int max_len) {
 
 int hal_fs_write_file(const char *path, const char *data, int len) {
     xip_stall(); /* simulate flash erase+write XIP stall */
+    mock_fs_write_count++;
     int slot = -1;
     for (int i = 0; i < SIM_FS_MAX_FILES; i++) {
         if (sim_files[i].used && strcmp(sim_files[i].path, path) == 0) {

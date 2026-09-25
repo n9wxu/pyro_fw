@@ -62,6 +62,10 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-REFIRE-02 | No retry on an opened channel | Closed-loop: test_PYR_REFIRE_02_no_retry_when_opened | ✅ |
 | FLT-EMRG-01 | Main early when the drogue fails | Closed-loop: test_FLT_EMRG_01_shredded_drogue_fires_main | ✅ |
 | FLT-EMRG-02 | No bare descent-rate trigger | Closed-loop: test_FLT_EMRG_02_freefall_to_trigger_not_overridden | ✅ |
+| FLT-BOOT-11 | Pad marker at 10 s PAD_IDLE | Integration: test_BRN_INT_01/02 | ✅ |
+| FLT-BOOT-12 | Recover the ground reference | Brownout: test_BRN_01..08; Integration: test_BRN_INT_03/04 | ✅ |
+| FLT-BOOT-13 | A stationary board is never airborne | Brownout: test_BRN_06/07 | ✅ |
+| FLT-LOG-05 | No flash write through the shock window | Code review: log_flash_service() holdoff | ⚠ untested |
 | PIN-LABEL-01 | Connector designator per pin | Host: test_PIN_LABEL_01..03; Playwright: pin tables name the connector | ✅ |
 | PIN-BUZZ-01 | Buzzer assignable to a pad | Host: test_PIN_BUZZ_01/02/06/07; Playwright: buzzer can be moved | ✅ |
 | PIN-BUZZ-02 | Buzzer pad exclusive against Lua | Host: test_PIN_BUZZ_03/04/05 | ✅ |

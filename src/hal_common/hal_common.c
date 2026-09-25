@@ -23,6 +23,7 @@
 #include "hardware/irq.h"
 #include "hardware/i2c.h"
 #include "hardware/watchdog.h"
+#include "hardware/structs/vreg_and_chip_reset.h"
 #include "board_identity.h"
 #include "tusb.h"
 #include "bsp/board_api.h"
@@ -245,6 +246,27 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
 
 uint32_t hal_time_ms(void) {
     return to_ms_since_boot(get_absolute_time());
+}
+
+/* The RP2040 records what reset it: a POR (which a brownout also drives), the
+ * RUN pin, a debugger's PSM restart. The watchdog is asked first because the
+ * OTA path and the web UI's reboot button both go through watchdog_reboot(),
+ * and those must not look like power events -- a deliberate reboot on the pad
+ * should recalibrate, not go hunting for a flight to rejoin. */
+reset_cause_t hal_reset_cause(void) {
+    if (watchdog_caused_reboot()) {
+        return RESET_SOFTWARE;
+    }
+    uint32_t r = vreg_and_chip_reset_hw->chip_reset;
+    if (r & VREG_AND_CHIP_RESET_CHIP_RESET_HAD_RUN_BITS) {
+        return RESET_RUN_PIN;
+    }
+    if (r & VREG_AND_CHIP_RESET_CHIP_RESET_HAD_PSM_RESTART_BITS) {
+        return RESET_DEBUG;
+    }
+    /* HAD_POR, or none of them: treat an unreadable cause as a power event,
+     * which is the answer that keeps the recovery path available. */
+    return RESET_POWER_EVENT;
 }
 
 /* ── Pressure sensor ──────────────────────────────────────────────── */
@@ -745,7 +767,14 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
  * core0 has checked core1's grant and usually while core1 is mid-unit.
  */
 
-#define LOG_BUF_SIZE 512
+/* Sized to span the launch shock window, not to be small.
+ *
+ * At the 50 Hz default a sample line is about 30 bytes, so 4 KB is roughly
+ * 2.7 seconds of flight held in RAM -- which is what makes the holdoff below
+ * worth having. At the old 512 bytes the buffer filled in under a third of a
+ * second and "wait until it is full" would have bought about 80 ms over the
+ * flush timer it replaced. */
+#define LOG_BUF_SIZE 4096
 #define LOG_FLUSH_MS 200u
 
 /* At 100 Hz with 40-byte lines the buffer fills in about 130 ms, so the
@@ -767,6 +796,13 @@ typedef struct {
     uint32_t next_due_ms;
     uint32_t dropped;      /* sample bytes the buffer could not hold */
     uint32_t text_dropped; /* script bytes refused: not a lost sample */
+    /* No flash write until the buffer has filled once. Launch shock is the
+     * likeliest cause of a brownout -- a battery connector bouncing -- and a
+     * flash write in progress is the worst moment to lose power, so the first
+     * seconds of the flight live in RAM. Cleared on the first watermark hit,
+     * after which flushing is periodic as before: this delays the first write
+     * past the shock, it does not make the whole flight write-once. */
+    bool launch_holdoff;
 } log_task_t;
 
 static log_task_t log_task;
@@ -817,6 +853,7 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     log_task.active = true;
     log_task.stopping = false;
     log_task.next_due_ms = hal_time_ms() + LOG_FLUSH_MS;
+    log_task.launch_holdoff = true;
 }
 
 /* Every branch here can fail costing only a delay: the next window retries,
@@ -833,8 +870,14 @@ static void log_flash_service(uint32_t now_ms) {
         log_task.pending_open = false;
     }
 
-    bool due = (int32_t)(now_ms - log_task.next_due_ms) >= 0;
-    if (log_task.head >= LOG_WATERMARK || log_task.stopping)
+    bool full = log_task.head >= LOG_WATERMARK;
+    if (full) {
+        log_task.launch_holdoff = false;
+    }
+    /* The timer does not fire during the holdoff; a full buffer and a stop
+     * always do, so nothing is ever dropped to keep the flash quiet. */
+    bool due = !log_task.launch_holdoff && (int32_t)(now_ms - log_task.next_due_ms) >= 0;
+    if (full || log_task.stopping)
         due = true;
     if (!due)
         return;

@@ -313,6 +313,7 @@ add_executable(pyro_fw_c
     src/board_binary_info.c
     src/board_identity.c
     src/flight_states.c
+    src/brownout.c
     src/pressure_processing.c
     src/ground_test.c
     src/config.c
@@ -500,6 +501,7 @@ add_custom_target(host_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
@@ -526,6 +528,7 @@ add_custom_target(integration_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
@@ -551,6 +554,7 @@ add_custom_target(closedloop_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
@@ -640,6 +644,7 @@ add_custom_target(lua_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_check.c
                ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_iface.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
                ${CMAKE_CURRENT_LIST_DIR}/boards/sim/lua_platform_sim.c
                ${PYRO_LUA_SOURCES}
                ${unity_SOURCE_DIR}/src/unity.c
@@ -670,6 +675,24 @@ add_custom_target(pin_caps_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_pin_caps
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Pin capability table tests"
+)
+
+# Brownout recovery: the decision matrix. Pure, like pin_assign's rules and
+# beep_codes -- every case here would otherwise need a rocket and a loose
+# battery connector to reproduce.
+add_custom_target(brownout_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building brownout recovery tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra
+               -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_brownout.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_brownout
+    COMMAND ${CMAKE_COMMAND} -E echo "Running brownout recovery tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_brownout
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Brownout recovery decision tests"
 )
 
 # The beep vocabulary: the rules half, with no file I/O, like pin_assign.
@@ -716,6 +739,7 @@ add_custom_target(buzzer_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
@@ -752,6 +776,7 @@ add_custom_target(config_persistence_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c

@@ -15,6 +15,7 @@ __attribute__((weak)) bool lua_app_ready_or_absent(void) {
 }
 #include "board_id.h"
 #include "flight_states.h"
+#include "brownout.h"
 #include "pressure_processing.h"
 #include "telemetry_formatter.h"
 #include "ground_test.h"
@@ -197,8 +198,9 @@ static state_event_t detect_boot_settle(flight_context_t *ctx, uint32_t now) {
  * with a board that cannot measure altitude -- it will never detect launch,
  * never arm and never deploy. The continuity verdict is worth nothing until
  * this one has passed, so it comes first and a failure is terminal. */
+static bool assess_recovery(flight_context_t *ctx, uint32_t now, state_event_t *evt);
+
 static state_event_t detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
-    (void)now;
     extern void hal_telemetry_send(const char *sentence);
     if (ctx->sensor_type == 0) {
         hal_telemetry_send("!SENSOR FAIL - no pressure sensor answered\r\n");
@@ -210,6 +212,18 @@ static state_event_t detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
         ctx->diag |= DIAG_FS_FAIL;
         return SEVT_FAULT;
     }
+    /* The sensor is good, so the barometer may now be believed about whether
+     * this board is airborne. The verdict needs two samples for a speed, so
+     * this state lingers until it has them -- returning SEVT_DONE on the first
+     * tick is what made an earlier version decide on one sample, which is to
+     * say on no speed at all, which is to say never. */
+    state_event_t rec = SEVT_NONE;
+    if (!assess_recovery(ctx, now, &rec)) {
+        return SEVT_NONE;
+    }
+    if (rec != SEVT_NONE) {
+        return rec;
+    }
     return SEVT_DONE;
 }
 
@@ -220,6 +234,93 @@ static state_event_t detect_fault(flight_context_t *ctx, uint32_t now) {
     (void)ctx;
     (void)now;
     return SEVT_NONE;
+}
+
+/* ── Brownout recovery [FLT-BOOT-11] ──────────────────────────────
+ *
+ * Runs once the sensor has been proved, because every question here is asked
+ * of the barometer and an unproved barometer can answer anything.
+ *
+ * The altitude is measured against the marker's ground pressure, not against
+ * a fresh calibration -- calibrating is exactly what must not happen while
+ * airborne, since it would define the current altitude as zero and take the
+ * rocket's remaining height with it. */
+/* However long the sensor takes, the boot path may not hang here: a board that
+ * cannot answer within this gets the cold-boot verdict and carries on. */
+#define RECOVERY_DEADLINE_MS 4000u
+
+static bool assess_recovery(flight_context_t *ctx, uint32_t now, state_event_t *evt) {
+    *evt = SEVT_NONE;
+    pad_marker_t m;
+    int n = hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m));
+    bool ok = (n == (int)sizeof(m)) && pad_marker_valid(&m);
+    if (!ok) {
+        ctx->recovery = (uint8_t)RECOVER_COLD;
+        return true; /* nothing to recover: decided, and decided now */
+    }
+    if (now - ctx->boot_timer >= RECOVERY_DEADLINE_MS) {
+        ctx->recovery = (uint8_t)RECOVER_COLD;
+        return true;
+    }
+    ctx->marker_ground_pa = m.ground_pressure_pa;
+
+    altitude_sample_t sample;
+    if (!pp_read(&sample)) {
+        return false; /* no sample yet; asked again next tick */
+    }
+
+    /* Two references, deliberately.
+     *
+     * The RATE comes from the queued sample's own altitude, measured against
+     * whatever reference pp happens to be using before calibration -- that
+     * reference is constant, and a constant cancels in a difference. The
+     * LEVEL has to come from the marker's ground pressure, because that is
+     * the only ground this board still knows about.
+     *
+     * Mixing them is what an earlier version did: it took the level from the
+     * newest filtered pressure and the timestamp from an older queued sample,
+     * so the two disagreed about which instant they described and the speed
+     * came out as zero. */
+    int32_t alt_pp = sample.altitude_cm;
+    int32_t alt_agl = pp_pressure_to_altitude_cm(pp_last_filtered_pa(), m.ground_pressure_pa);
+
+    bool have_pair = ctx->recovery_samples > 0 && sample.timestamp_ms > ctx->last_sample;
+    int32_t speed = 0;
+    if (have_pair) {
+        speed = (alt_pp - ctx->last_altitude) * 1000 / (int32_t)(sample.timestamp_ms - ctx->last_sample);
+    }
+    ctx->last_altitude = alt_pp;
+    ctx->last_sample = sample.timestamp_ms;
+    if (ctx->recovery_samples < UINT8_MAX) {
+        ctx->recovery_samples++;
+    }
+    /* One sample is not a speed. The deadline above is what stops this state
+     * waiting forever for a second one. */
+    if (!have_pair) {
+        return false;
+    }
+
+    recovery_t r = brownout_assess((reset_cause_t)ctx->reset_cause, true, alt_agl, speed);
+    ctx->recovery = (uint8_t)r;
+    if (r != RECOVER_ASCENT && r != RECOVER_DESCENT) {
+        return true;
+    }
+
+    /* The flight the log was recording is gone with the RAM that held it, so
+     * this is a new log opened mid-air. T+0 is the moment of recovery, which
+     * is the only launch time this board can still honestly claim. */
+    ctx->diag |= DIAG_BROWNOUT;
+    ctx->ground_pressure = m.ground_pressure_pa;
+    pp_ground_track(false);
+    ctx->filtered_pressure = pp_last_filtered_pa();
+    ctx->launch_time = now;
+    ctx->max_altitude = alt_agl;
+    ctx->last_altitude = alt_agl;
+    ctx->vertical_speed_cms = speed;
+    hal_log_start(&ctx->config, ctx->ground_pressure);
+    hal_log_sample(0, ctx->filtered_pressure, alt_agl, ASCENT, 0, EVT_LAUNCH);
+    *evt = (r == RECOVER_ASCENT) ? SEVT_RECOVER_ASCENT : SEVT_RECOVER_DESCENT;
+    return true;
 }
 
 /* [SYS-STATUS-02] */
@@ -351,6 +452,27 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
 #define LAUNCH_ALT_CM 3048 /* 100 ft above the frozen ground reference */
 #define LAUNCH_SPEED_CMS 500
 
+/* [FLT-BOOT-11] The pad marker, written once and only here.
+ *
+ * Ten seconds of PAD_IDLE, because the point is to have written it long
+ * before the moment it protects against. Launch shock -- a battery connector
+ * bouncing -- is the likeliest cause of the brownout this exists to survive,
+ * and a flash write in progress is the worst possible moment to lose power.
+ * So nothing writes flash at launch, and this is what makes that affordable:
+ * the ground reference is already safe on disk before the motor lights.
+ *
+ * A failure costs the recovery path and nothing else, so it is not retried
+ * and not reported as an error -- the flight is unaffected either way. */
+static void write_pad_marker(flight_context_t *ctx, uint32_t now) {
+    if (ctx->marker_written || now - ctx->boot_timer < PAD_MARKER_DWELL_MS) {
+        return;
+    }
+    ctx->marker_written = true; /* once, whatever the write does */
+    pad_marker_t m;
+    pad_marker_fill(&m, pp_ground_pressure());
+    (void)hal_fs_write_file(PAD_MARKER_PATH, (const char *)&m, (int)sizeof(m));
+}
+
 static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     /* [GND-TEST-01..04, DD-011] Poll serial for ground test commands.
      * Processed before the sample-rate gate so commands drain promptly. */
@@ -363,6 +485,7 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
         return SEVT_NONE;
 
     update_continuity_and_buzzer(ctx, now);
+    write_pad_marker(ctx, now);
 
     altitude_sample_t sample;
     if (!pp_read(&sample))
@@ -781,7 +904,10 @@ static void action_cal_init(flight_context_t *ctx, uint32_t now) {
 }
 
 static void action_ground_cal(flight_context_t *ctx, uint32_t now) {
-    (void)now;
+    /* Restarted here so the pad marker's dwell measures time sat on the pad,
+     * not time since boot -- calibration's own duration should not count
+     * toward it. */
+    ctx->boot_timer = now;
     ctx->ground_pressure = pp_ground_pressure();
     ctx->filtered_pressure = ctx->ground_pressure;
     /* last_altitude is already 0 from flight_init() — correct for ground.
@@ -826,6 +952,18 @@ static void action_launch(flight_context_t *ctx, uint32_t now) {
     hal_log_start(&ctx->config, ctx->ground_pressure);
     hal_log_sample(0, ctx->filtered_pressure, 0, ASCENT, 0, EVT_LAUNCH);
     buf_tag_event(ctx, EVT_LAUNCH); /* tags ring buffer for flight_save_csv() */
+}
+
+/* Rejoining a flight already on its way down. Apogee is behind us by
+ * definition -- the rocket is descending -- so the pyros are armed and the
+ * descent machine takes it from here, emergency ladder and all. */
+static void action_recovered_descent(flight_context_t *ctx, uint32_t now) {
+    ctx->apogee_detected = true;
+    ctx->apogee_time = now;
+    ctx->descent_start_time = now;
+    ctx->pyros_armed = true;
+    ctx->armed_time = now;
+    buf_tag_event(ctx, EVT_APOGEE);
 }
 
 /* [FLT-ASC-05, DD-017] */
@@ -878,6 +1016,13 @@ static const detect_fn detectors[STATE_COUNT] = {
 static const transition_t transitions[] = {
     {BOOT_SETTLE, SEVT_TIMER, BOOT_SENSOR, NULL},
     {BOOT_SENSOR, SEVT_DONE, BOOT_CONTINUITY, NULL},
+    /* Straight into the flight machine, skipping calibration -- calibrating
+     * is what must not happen while airborne. Armed on the descent path only:
+     * a rocket already coming down has passed apogee whatever the lost RAM
+     * used to think, while one still climbing goes through the normal arming
+     * gate and apogee detection like any other flight. */
+    {BOOT_SENSOR, SEVT_RECOVER_ASCENT, ASCENT, NULL},
+    {BOOT_SENSOR, SEVT_RECOVER_DESCENT, FALLING, action_recovered_descent},
     {BOOT_SENSOR, SEVT_FAULT, FAULT, action_fault},
     {BOOT_CALIBRATE, SEVT_FAULT, FAULT, action_fault},
     {BOOT_CONTINUITY, SEVT_DONE, BOOT_CALIBRATE, action_cal_init},
@@ -1014,6 +1159,10 @@ void flight_init(flight_context_t *ctx) {
      * is no file, so this publishes the shipped table. */
     beep_store_load(NULL, 0);
     pp_init();
+    /* Why this boot happened, read before anything can reset the registers.
+     * A brownout reads the same as someone connecting the battery, which is
+     * what the pad marker is for. */
+    ctx->reset_cause = (uint8_t)hal_reset_cause();
     /* Captured, not discarded. 0 means no sensor answered, and BOOT_SENSOR
      * turns that into a terminal fault rather than a board that beeps "all
      * good" and then never detects a launch. */

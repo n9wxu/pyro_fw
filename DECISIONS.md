@@ -298,3 +298,58 @@ rationale and the alternatives considered.
   breaking the gate deliberately changed no test result, which is what exposed
   that it was never engaging.
 
+### DD-026: Brownout Recovery Needs A Marker, Because The Silicon Cannot Help
+- **Decision:** Write a pad marker holding the ground pressure after 10 s of
+  PAD_IDLE. On a power-event reset, recover the ground reference from it rather
+  than recalibrating -- but only when the barometer shows the board is both
+  above the recorded ground and moving.
+- **Why a marker at all:** a brownout is electrically a power cycle. The
+  RP2040's brown-out detector drives POR, so `HAD_POR` is set exactly as it is
+  when somebody connects the battery, and every RAM contents and watchdog
+  scratch register is gone. The reset cause can only narrow the question to
+  "this was a power event"; the marker and the barometer answer the rest.
+- **Why not calibrate:** calibrating defines the current altitude as zero. Do
+  that at 600 m and the rocket has no altitude left to deploy against.
+- **The motion test is the safety-critical part.** Weather can move the
+  pressure by more than the 30 m altitude threshold between the marker being
+  written and the board being switched on again. Without requiring measured
+  motion, a drifting barometer on the pad would read as airborne -- and the
+  descent path arms the pyros. A high-but-still board is reported
+  `RECOVER_AMBIGUOUS` and treated as a cold boot: a stationary board does not
+  need a parachute.
+- **Armed only on the descent path.** A rocket already coming down has passed
+  apogee whatever the lost RAM used to think. One still climbing goes through
+  the normal arming gate and apogee detection like any other flight.
+- **The log restarts.** The flight the log was recording went with the RAM that
+  held it, so recovery opens a new log whose T+0 is the moment of recovery.
+  That is the only launch time this board can still honestly claim.
+- **Two bugs found while building it, both by tests:**
+  (a) `BOOT_SENSOR` was a single-tick state, so the verdict was reached on one
+  sample -- which is to say on no speed at all. It now lingers, with a 4 s
+  deadline so a stuttering sensor cannot hang the boot.
+  (b) The level was taken from the newest filtered pressure while the timestamp
+  came from an older queued sample, so the two described different instants and
+  the speed came out zero. The rate now comes from the queued sample's own
+  altitude (whose reference is constant, and cancels in a difference) and the
+  level from the marker's ground pressure.
+
+### DD-027: The Flight Log Holds Off Flash Through The Launch Shock
+- **Decision:** `hal_log_start()` sets a holdoff; the flush timer does not fire
+  until the RAM buffer has filled once. A full buffer and a stop always flush,
+  so nothing is dropped to keep the flash quiet.
+- **Why:** launch shock -- a battery connector bouncing -- is the likeliest
+  cause of the brownout DD-026 exists to survive, and a flash write in progress
+  is the worst moment to lose power.
+- **LOG_BUF_SIZE went from 512 to 4096, and that is the load-bearing part.**
+  At 512 bytes the buffer filled in under a third of a second at the 50 Hz
+  default, so "wait until it is full" would have bought about 80 ms over the
+  200 ms timer it replaced -- the mechanism would have looked implemented
+  without doing anything. At 4 KB it is roughly 2.7 s of flight, which spans
+  the shock. Costs 3.5 KB of RAM against about 86 KB free.
+- **The trade:** a brownout that never recovers now loses up to a buffer of
+  flight data instead of 200 ms. That is the intended direction -- the data is
+  worth less than the flight -- but it is a real loss and worth knowing about.
+- **Not verified by test.** The holdoff is a timing property of the flash
+  service and the host harness does not model flash write windows; it is marked
+  as such in TRACEABILITY.md rather than claimed.
+
