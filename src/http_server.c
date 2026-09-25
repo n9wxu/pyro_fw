@@ -272,16 +272,85 @@ extern volatile uint32_t stage_max_us[];
 
 #include "board_identity.h"
 
+/* POST /api/beeps/play : play one sound, once.
+ *
+ * A beep editor that only shows numbers asks an operator to choose sounds they
+ * will identify by ear, from a form. This is how they hear one first.
+ *
+ * Takes a kind and, for a counted code, its beeps -- because a chirp is not a
+ * number. Writes no flash, so it needs no window. PAD_IDLE only: the buzzer is
+ * the flight software's voice and a browser must not talk over a launch. */
+static void apply_api_beep_play(struct tcp_pcb *pcb, const char *body) {
+    extern flight_state_t flight_get_state(void);
+
+    char jb[192];
+    int jn;
+    const char *line;
+
+    beep_spec_t sp = {BK_CODE, 0, 0};
+    const char *pk = strstr(body, "\"kind\"");
+    if (pk) {
+        const char *q = strchr(pk + 6, '"');
+        const char *q2 = q ? strchr(q + 1, '"') : NULL;
+        if (q && q2) {
+            for (int k = 0; k <= BK_CODE; k++) {
+                const char *kn = beep_codes_kind_name((beep_kind_t)k);
+                if ((size_t)(q2 - q - 1) == strlen(kn) && strncmp(q + 1, kn, strlen(kn)) == 0) {
+                    sp.kind = (uint8_t)k;
+                    break;
+                }
+            }
+        }
+    }
+    const char *p1 = strstr(body, "\"d1\"");
+    const char *p2 = strstr(body, "\"d2\"");
+    if (p1 && strchr(p1, ':')) {
+        sp.d1 = (uint8_t)atoi(strchr(p1, ':') + 1);
+    }
+    if (p2 && strchr(p2, ':')) {
+        sp.d2 = (uint8_t)atoi(strchr(p2, ':') + 1);
+    }
+
+    bool code_ok =
+        sp.kind != BK_CODE || (sp.d1 >= BEEP_DIGIT_MIN && sp.d1 <= BEEP_DIGIT_MAX && sp.d2 <= BEEP_DIGIT_MAX);
+
+    if (flight_get_state() != PAD_IDLE) {
+        jn = snprintf(jb, sizeof(jb), "{\"error\":\"Device not ready (state=%s)\"}",
+                      state_names[flight_get_state() < STATE_NAME_COUNT ? flight_get_state() : 0]);
+        line = "HTTP/1.1 409 Conflict\r\n";
+    } else if (!code_ok) {
+        jn = snprintf(jb, sizeof(jb), "{\"error\":\"each beep count must be %d to %d\"}", BEEP_DIGIT_MIN,
+                      BEEP_DIGIT_MAX);
+        line = "HTTP/1.1 400 Bad Request\r\n";
+    } else if (!pin_caps_has_buzzer()) {
+        /* MK1A fits none. Answering "playing" would be a lie the operator
+         * could only detect by listening to silence. */
+        jn = snprintf(jb, sizeof(jb), "{\"error\":\"this board has no buzzer fitted\"}");
+        line = "HTTP/1.1 409 Conflict\r\n";
+    } else {
+        /* Once, with no gap: an audition is a sample, not a state. */
+        buzzer_play_spec(&sp, 0, 1);
+        jn = snprintf(jb, sizeof(jb), "{\"status\":\"playing\",\"kind\":\"%s\",\"d1\":%u,\"d2\":%u}",
+                      beep_codes_kind_name((beep_kind_t)sp.kind), (unsigned)sp.d1, (unsigned)sp.d2);
+        line = "HTTP/1.1 200 OK\r\n";
+    }
+
+    char resp[320];
+    snprintf(resp, sizeof(resp),
+             "%s" CORS_HDR "Connection: close\r\n"
+             "Content-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+             line, jn, jb);
+    tcp_write(pcb, resp, (u16_t)strlen(resp), TCP_WRITE_FLAG_COPY);
+}
+
 /* ── GET /api/beeps ───────────────────────────────────────────────
  *
- * The reasons, their meanings and their current codes, in one response. Same
- * argument as /api/pins/caps: the browser holds no copy of the vocabulary, so
- * adding a reason is one line in beep_codes.h and the tab grows a row.
- *
- * The meaning is the point. A code was previously a two-digit number an
- * operator heard at the pad with nothing to look it up in. */
+ * The outcomes, their meanings, the three personalities and which is active.
+ * Same vocabulary-travels-with-the-data shape as /api/pins/caps, so app.js
+ * holds no copy: adding an outcome or a pattern kind grows a row without
+ * touching the UI. */
 static void serve_api_beeps(struct tcp_pcb *pcb) {
-    static char buf[2048];
+    static char buf[3072];
 
     const beep_table_t *t = beep_store_current();
     char reason_esc[128];
@@ -290,19 +359,38 @@ static void serve_api_beeps(struct tcp_pcb *pcb) {
 
     int pos = snprintf(buf, sizeof(buf),
                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" CORS_HDR "Connection: close\r\n\r\n"
-                       "{\"digit_min\":%d,\"digit_max\":%d,\"has_buzzer\":%s,\"reason\":\"%s\",\"beeps\":[",
-                       BEEP_DIGIT_MIN, BEEP_DIGIT_MAX, pin_caps_has_buzzer() ? "true" : "false", reason_esc);
+                       "{\"digit_min\":%d,\"digit_max\":%d,\"has_buzzer\":%s,\"active\":%u,\"reason\":\"%s\","
+                       "\"kinds\":[\"silent\",\"chirp\",\"tone\",\"code\"],\"outcomes\":[",
+                       BEEP_DIGIT_MIN, BEEP_DIGIT_MAX, pin_caps_has_buzzer() ? "true" : "false", (unsigned)t->active,
+                       reason_esc);
 
     for (int i = 0; i < BEEP_REASON_COUNT && pos > 0 && pos < (int)sizeof(buf); i++) {
-        uint8_t code = beep_codes_get(t, (beep_reason_t)i);
-        char desc[160];
+        char desc[192];
         const char *d = beep_codes_description((beep_reason_t)i);
         json_escape(desc, (int)sizeof(desc), d, (int)strlen(d));
-        uint8_t def = beep_codes_default((beep_reason_t)i);
+        pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "%s{\"key\":\"%s\",\"what\":\"%s\"}", i ? "," : "",
+                        beep_codes_key((beep_reason_t)i), desc);
+    }
+
+    if (pos > 0 && pos < (int)sizeof(buf)) {
+        pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "],\"personalities\":[");
+    }
+    for (int i = 0; i < BEEP_PERSONALITY_COUNT && pos > 0 && pos < (int)sizeof(buf); i++) {
+        const beep_personality_t *p = &t->p[i];
+        char nm[BEEP_NAME_MAX * 2 + 2];
+        json_escape(nm, (int)sizeof(nm), p->name, (int)strlen(p->name));
         pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos,
-                        "%s{\"key\":\"%s\",\"d1\":%u,\"d2\":%u,\"def1\":%u,\"def2\":%u,\"what\":\"%s\"}", i ? "," : "",
-                        beep_codes_key((beep_reason_t)i), (unsigned)BEEP_DIGIT1(code), (unsigned)BEEP_DIGIT2(code),
-                        (unsigned)BEEP_DIGIT1(def), (unsigned)BEEP_DIGIT2(def), desc);
+                        "%s{\"name\":\"%s\",\"gap\":%u,\"repeat\":%u,\"split\":%s,\"spec\":{", i ? "," : "", nm,
+                        (unsigned)p->gap_ms, (unsigned)p->repeat, p->split_pyro ? "true" : "false");
+        for (int r = 0; r < BEEP_REASON_COUNT && pos > 0 && pos < (int)sizeof(buf); r++) {
+            pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "%s\"%s\":{\"kind\":\"%s\",\"d1\":%u,\"d2\":%u}",
+                            r ? "," : "", beep_codes_key((beep_reason_t)r),
+                            beep_codes_kind_name((beep_kind_t)p->spec[r].kind), (unsigned)p->spec[r].d1,
+                            (unsigned)p->spec[r].d2);
+        }
+        if (pos > 0 && pos < (int)sizeof(buf)) {
+            pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "}}");
+        }
     }
     if (pos > 0 && pos < (int)sizeof(buf)) {
         pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "]}");
@@ -315,58 +403,6 @@ static void serve_api_beeps(struct tcp_pcb *pcb) {
         return;
     }
     tcp_write(pcb, buf, (u16_t)pos, TCP_WRITE_FLAG_COPY);
-}
-
-/* POST /api/beeps/play : play one code, once.
- *
- * A beep editor that only shows numbers is asking an operator to choose
- * sounds they will identify by ear, from a form. This is how they hear one
- * before committing to it.
- *
- * Writes no flash, so it needs no window and no gather path -- the body is a
- * pair of digits and always arrives whole.
- *
- * PAD_IDLE only. The buzzer is the flight software's voice; a browser must
- * not be able to talk over a launch. */
-static void apply_api_beep_play(struct tcp_pcb *pcb, const char *body) {
-    extern flight_state_t flight_get_state(void);
-
-    char jb[160];
-    int jn;
-    const char *line;
-
-    int d1 = -1, d2 = -1;
-    const char *p1 = strstr(body, "\"d1\"");
-    const char *p2 = strstr(body, "\"d2\"");
-    if (p1 && p2) {
-        d1 = atoi(strchr(p1, ':') ? strchr(p1, ':') + 1 : "");
-        d2 = atoi(strchr(p2, ':') ? strchr(p2, ':') + 1 : "");
-    }
-
-    if (flight_get_state() != PAD_IDLE) {
-        jn = snprintf(jb, sizeof(jb), "{\"error\":\"Device not ready (state=%s)\"}",
-                      state_names[flight_get_state() < STATE_NAME_COUNT ? flight_get_state() : 0]);
-        line = "HTTP/1.1 409 Conflict\r\n";
-    } else if (d1 < BEEP_DIGIT_MIN || d1 > BEEP_DIGIT_MAX || d2 < BEEP_DIGIT_MIN || d2 > BEEP_DIGIT_MAX) {
-        jn = snprintf(jb, sizeof(jb), "{\"error\":\"each digit must be %d to %d\"}", BEEP_DIGIT_MIN, BEEP_DIGIT_MAX);
-        line = "HTTP/1.1 400 Bad Request\r\n";
-    } else if (!pin_caps_has_buzzer()) {
-        /* MK1A fits none. Answering "playing" would be a lie the operator
-         * could only detect by listening to silence. */
-        jn = snprintf(jb, sizeof(jb), "{\"error\":\"this board has no buzzer fitted\"}");
-        line = "HTTP/1.1 409 Conflict\r\n";
-    } else {
-        buzzer_play_code(BEEP_CODE(d1, d2), 1); /* once, not repeating */
-        jn = snprintf(jb, sizeof(jb), "{\"status\":\"playing\",\"d1\":%d,\"d2\":%d}", d1, d2);
-        line = "HTTP/1.1 200 OK\r\n";
-    }
-
-    char resp[320];
-    snprintf(resp, sizeof(resp),
-             "%s" CORS_HDR "Connection: close\r\n"
-             "Content-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
-             line, jn, jb);
-    tcp_write(pcb, resp, (u16_t)strlen(resp), TCP_WRITE_FLAG_COPY);
 }
 
 /* Apply a complete beep.ini body and answer. Split out for the same reason
@@ -386,8 +422,10 @@ static void apply_api_beeps(struct tcp_pcb *pcb, char *body) {
     } else {
         char esc[160];
         json_escape(esc, (int)sizeof(esc), v.what, (int)strlen(v.what));
-        jn = snprintf(jb, sizeof(jb), "{\"error\":\"%s\",\"reason\":\"%s\",\"code\":%d}", esc,
-                      beep_codes_key((beep_reason_t)v.reason), (int)v.err);
+        /* Which personality, as well as which outcome: with three slots, "two
+         * outcomes sound the same" is not actionable without knowing where. */
+        jn = snprintf(jb, sizeof(jb), "{\"error\":\"%s\",\"personality\":%d,\"reason\":\"%s\",\"code\":%d}", esc,
+                      v.personality, v.reason >= 0 ? beep_codes_key((beep_reason_t)v.reason) : "", (int)v.err);
         line = "HTTP/1.1 400 Bad Request\r\n";
     }
     char resp[384];
@@ -701,15 +739,25 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         }
     }
 
-    /* One of three, derived from the diagnosis above. */
-    extern uint8_t beep_for_diag(uint16_t diag);
+    /* Which outcome, and how it sounds under the active personality, so it can
+     * be read rather than counted. */
+    extern beep_reason_t beep_reason_for_diag(uint16_t diag);
     uint16_t diag_now = fctx ? fctx->diag : 0;
-    uint8_t beep_now = beep_for_diag(diag_now);
-    const char *beep_outcome_key = (diag_now & DIAG_FATAL_ANY)  ? beep_codes_key(BR_SYSTEM_FAILURE)
-                                   : (diag_now & DIAG_PYRO_ANY) ? beep_codes_key(BR_CHECK_PYRO)
-                                                                : beep_codes_key(BR_OK_TO_FLY);
+    beep_reason_t beep_r = beep_reason_for_diag(diag_now);
+    beep_spec_t beep_sp = beep_for(beep_r);
+    char beep_sound[16];
+    if (beep_sp.kind != BK_CODE) {
+        snprintf(beep_sound, sizeof(beep_sound), "%s", beep_codes_kind_name((beep_kind_t)beep_sp.kind));
+    } else if (beep_sp.d2 == 0) {
+        snprintf(beep_sound, sizeof(beep_sound), "%u", (unsigned)beep_sp.d1);
+    } else {
+        snprintf(beep_sound, sizeof(beep_sound), "%u-%u", (unsigned)beep_sp.d1, (unsigned)beep_sp.d2);
+    }
 
-    char buf[1280];
+    /* Headers and body together. MK1C carries the most fields -- the bias
+     * probes, pack voltage and wave state on top of everything shared -- and
+     * at 1280 it had begun truncating mid-word. */
+    char buf[2048];
     const char *sn = (g_status.state < (int)(sizeof(state_names) / sizeof(state_names[0])))
                          ? state_names[g_status.state]
                          : "UNKNOWN";
@@ -750,8 +798,8 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         "\"flash_erases\":%lu,\"flash_programs\":%lu,\"flash_deferrals\":%lu,"
         "\"pins_reason\":\"%s\",\"pyro1_released\":%s,\"pyro2_released\":%s,\"bridge\":\"%s\","
         "\"pyro_mocked\":%lu,\"pyro1_real\":%s,\"pyro2_real\":%s,"
-        "\"sensor_ok\":%s,\"fs_ok\":%s,\"fault_code\":%u,\"faults\":[%s],"
-        "\"beep\":\"%s\",\"beep_d1\":%u,\"beep_d2\":%u,"
+        "\"sensor_ok\":%s,\"fs_ok\":%s,\"faults\":[%s],"
+        "\"beep\":\"%s\",\"beep_sound\":\"%s\","
         "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u}",
         sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
         (long)g_status.pressure_pa, g_status.pyro1_continuity ? "true" : "false",
@@ -777,17 +825,21 @@ static void serve_api_status(struct tcp_pcb *pcb) {
         pyro_release_is_released(1) ? "false" : "true", pyro_release_is_released(2) ? "false" : "true",
         /* The power-up self-test, said out loud. A board that cannot measure
          * altitude used to report itself healthy here and beep "all good". */
-        fctx && fctx->sensor_type ? "true" : "false", fctx && fctx->fs_ok ? "true" : "false",
-        (unsigned)(fctx ? fctx->fault_code : 0), fault_list,
-        /* Which of the three the buzzer is saying, so it can be read rather
-         * than counted. */
-        beep_outcome_key, (unsigned)BEEP_DIGIT1(beep_now), (unsigned)BEEP_DIGIT2(beep_now), board_serial(),
-        board_serial_assigned() ? "true" : "false", board_hw_id(), (unsigned)board_subnet_octet());
-    if (pos < 0)
+        fctx && fctx->sensor_type ? "true" : "false", fctx && fctx->fs_ok ? "true" : "false", fault_list,
+        /* What the buzzer is saying and how it sounds, so it can be read
+         * rather than counted. */
+        beep_codes_key(beep_r), beep_sound, board_serial(), board_serial_assigned() ? "true" : "false", board_hw_id(),
+        (unsigned)board_subnet_octet());
+    /* Truncated JSON parses as nothing, so "send what fits" showed the web UI
+     * a connection failure and told nobody why. Say so instead -- the same
+     * rule /api/pins/caps follows. */
+    if (pos < 0 || (size_t)pos >= sizeof(buf)) {
+        static const char *err = "HTTP/1.1 500 Internal Server Error\r\n" CORS_HDR "Connection: close\r\n\r\n"
+                                 "{\"error\":\"status exceeds the response buffer\"}";
+        tcp_write(pcb, err, (u16_t)strlen(err), 0);
         return;
-    if ((size_t)pos >= sizeof(buf))
-        pos = (int)sizeof(buf) - 1; /* truncated: send what fits, never past it */
-    tcp_write(pcb, buf, pos, TCP_WRITE_FLAG_COPY);
+    }
+    tcp_write(pcb, buf, (u16_t)pos, TCP_WRITE_FLAG_COPY);
 }
 
 /* Streaming API file serve — uses conn_state_t so the main loop keeps

@@ -13,6 +13,7 @@
  */
 #include "hal.h"
 #include "buzzer.h"
+#include "beep_codes.h"
 #include "async_task.h"
 #include <string.h>
 
@@ -168,6 +169,7 @@ static int build_alt_pattern(int32_t value, buzzer_pattern_t *buf) {
 typedef enum {
     BZ_IDLE,
     BZ_ENCODE_CODE,
+    BZ_ENCODE_SPEC,
     BZ_ENCODE_ALT,
     BZ_PLAYING,
 } bz_state_t;
@@ -176,8 +178,10 @@ typedef struct {
     async_task_t base; /* MUST be first */
     bz_state_t state;
 
-    /* Request fields — set by buzzer_play_code/altitude before arming */
+    /* Request fields — set by buzzer_play_* before arming */
     uint8_t req_code;
+    beep_spec_t req_spec;
+    uint16_t req_gap_ms;
     int32_t req_altitude;
     uint8_t req_repeat_count; /* 0=infinite, N=play N times */
 
@@ -192,6 +196,64 @@ typedef struct {
 
 static buzzer_task_t bz;
 
+/* ── Pattern from a spec ──────────────────────────────────────────
+ *
+ * The status beep now follows a beep_spec_t rather than a packed two-digit
+ * code, because Eggtimer's ready-to-fly is a rapid chirp and a chirp is not
+ * expressible as a pair of counts. That is the whole point of it: the case
+ * meaning "everything is fine" should be recognised, not counted.
+ *
+ * The ten-chirp preamble the old status beep carried is gone. It is not part
+ * of the convention -- Eggtimer's counted fault codes simply repeat with a
+ * pause -- and with a chirp now meaning "ready", a chirp preamble in front of
+ * a fault would have said the opposite of the code behind it. */
+
+#define CHIRP_CYCLES 25   /* one pass of the ready-to-fly warble */
+#define TONE_ON_MS 2000   /* an unbroken tone, in one long step   */
+
+static int build_spec_pattern(const beep_spec_t *sp, uint16_t gap_ms, buzzer_pattern_t *buf, int *p_loop_start) {
+    int idx = 0;
+    *p_loop_start = 0;
+
+    switch (sp->kind) {
+    case BK_CHIRP:
+        for (int i = 0; i < CHIRP_CYCLES; i++) {
+            idx = pat_append(buf, idx, CHIRP_ON_MS, true);
+            idx = pat_append(buf, idx, CHIRP_GAP_MS, false);
+        }
+        break;
+
+    case BK_TONE:
+        idx = pat_append(buf, idx, TONE_ON_MS, true);
+        break;
+
+    case BK_CODE: {
+        int d1 = sp->d1 < 1 ? 1 : sp->d1;
+        idx = pat_append_beeps(buf, idx, d1, BEEP_ON_MS, BEEP_GAP_MS);
+        if (sp->d2 > 0) {
+            idx = pat_append(buf, idx, DIGIT_GAP_MS, false);
+            idx = pat_append_beeps(buf, idx, sp->d2, BEEP_ON_MS, BEEP_GAP_MS);
+        }
+        break;
+    }
+
+    case BK_SILENT:
+    default:
+        /* Still a pattern, so the task has something to schedule; it just
+         * makes no sound. */
+        idx = pat_append(buf, idx, gap_ms ? gap_ms : CODE_GAP_MS, false);
+        break;
+    }
+
+    if (gap_ms > 0) {
+        idx = pat_append(buf, idx, gap_ms, false);
+    }
+    buf[idx].duration_ms = 0;
+    buf[idx].tone_on = false;
+    idx++;
+    return idx;
+}
+
 /* ── Task tick function ───────────────────────────────────────────── */
 
 static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
@@ -202,6 +264,15 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
         /* Nothing to do — tick should not fire, but be safe */
         t->base.tick = NULL;
         return;
+
+    case BZ_ENCODE_SPEC:
+        t->pattern_len = build_spec_pattern(&t->req_spec, t->req_gap_ms, t->pattern, &t->loop_start);
+        t->index = 0;
+        t->repeat_count = t->req_repeat_count;
+        t->loops_done = 0;
+        t->state = BZ_PLAYING;
+        t->base.next_due_ms = now_ms;
+        break;
 
     case BZ_ENCODE_CODE:
         t->pattern_len = build_code_pattern(t->req_code, t->pattern, &t->loop_start);
@@ -271,6 +342,20 @@ void buzzer_init(void) {
     bz.state = BZ_IDLE;
     hal_buzzer_init();
     hal_buzzer_task_register(&bz.base);
+}
+
+/* Play an outcome. gap_ms is the silence between re-announcements, so that a
+ * board which has gone quiet has gone wrong rather than merely finished. */
+void buzzer_play_spec(const beep_spec_t *spec, uint16_t gap_ms, uint8_t repeat_count) {
+    if (!spec) {
+        return;
+    }
+    bz.req_spec = *spec;
+    bz.req_gap_ms = gap_ms;
+    bz.req_repeat_count = repeat_count;
+    bz.state = BZ_ENCODE_SPEC;
+    bz.base.next_due_ms = 0;
+    bz.base.tick = buzzer_tick;
 }
 
 void buzzer_play_code(uint8_t code, uint8_t repeat_count) {

@@ -5,6 +5,7 @@
  */
 #include "beep_store.h"
 #include "hal.h"
+#include "buzzer.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -19,8 +20,14 @@ const char *beep_store_reason(void) {
     return load_reason;
 }
 
-uint8_t beep_for(beep_reason_t r) {
-    return beep_codes_get(&live, r);
+beep_spec_t beep_for(beep_reason_t r) {
+    return beep_codes_spec(&live, r);
+}
+
+void beep_say(beep_reason_t r) {
+    const beep_personality_t *p = beep_codes_active(&live);
+    beep_spec_t sp = beep_codes_spec(&live, r);
+    buzzer_play_spec(&sp, p->gap_ms, p->repeat);
 }
 
 void beep_store_load(char *reason, int reason_len) {
@@ -54,7 +61,7 @@ void beep_store_load(char *reason, int reason_len) {
     } else {
         live = defaults;
         snprintf(load_reason, sizeof(load_reason), "beep.ini rejected: %s (%s)", beep_codes_strerror(v.err),
-                 beep_codes_key((beep_reason_t)v.reason));
+                 v.reason >= 0 ? beep_codes_key((beep_reason_t)v.reason) : "table");
     }
 
     if (reason && reason_len > 0) {
@@ -71,11 +78,11 @@ beep_verdict_t beep_store_save(const beep_table_t *t) {
     char buf[BEEP_STORE_MAX];
     int n = beep_codes_serialize_ini(t, buf, (int)sizeof(buf));
     if (n <= 0) {
-        beep_verdict_t bad = {BEEP_ERR_DIGIT_RANGE, -1, "table does not fit beep.ini"};
+        beep_verdict_t bad = {BEEP_ERR_DIGIT_RANGE, -1, -1, "table does not fit beep.ini"};
         return bad;
     }
     if (hal_fs_write_file(BEEP_STORE_PATH, buf, n) != 0) {
-        beep_verdict_t bad = {BEEP_ERR_DIGIT_RANGE, -1, "could not write beep.ini"};
+        beep_verdict_t bad = {BEEP_ERR_DIGIT_RANGE, -1, -1, "could not write beep.ini"};
         return bad;
     }
 

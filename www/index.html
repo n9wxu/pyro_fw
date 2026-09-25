@@ -139,16 +139,34 @@
 <!-- ── Beep Codes ──────────────────────────────────────────────── -->
 <div id="tab-beeps" class="tabpanel" style="display:none">
   <p class="hint" id="bpHint">Loading the beep table…</p>
-  <p class="hint">Each code is two digits, heard as two groups of beeps after
-     ten short chirps. A digit is 1 to 9 — zero beeps cannot be heard, and
-     nobody counts fifteen. Two reasons may not share a code.
-     <b>▶</b> plays what is in the row, so you can hear a code before saving it;
-     the board must be on the pad.</p>
+  <p class="hint">Defaults follow <b>Eggtimer</b>, which is what most fliers already
+     have in their ear: ready-to-fly is a rapid chirp you never count, and a fault
+     is a repeating beep count. <b>▶</b> plays a row so you can hear it before
+     saving; the board must be on the pad.</p>
+
+  <table class="info">
+    <tr><td class="lbl">Personality</td>
+        <td><select id="bpSel" onchange="beepsSelect()"></select>
+            <input id="bpName" maxlength="12" size="13" oninput="beepsCheck()"></td></tr>
+    <tr><td class="lbl">Repeat</td>
+        <td><select id="bpRepeat" onchange="beepsCheck()">
+              <option value="0">until launch</option>
+              <option value="1">once</option>
+              <option value="2">twice</option>
+              <option value="3">three times</option>
+            </select>
+            every <input id="bpGap" type="number" min="0" max="60000" step="500"
+                         style="width:5.5em" oninput="beepsCheck()"> ms</td></tr>
+    <tr><td class="lbl">Pyro faults</td>
+        <td><label><input type="checkbox" id="bpSplit" onchange="beepsSelect(true)">
+            tell the channels apart</label></td></tr>
+  </table>
+
   <table class="info" id="bpTable"></table>
   <div id="bpWarn"></div>
   <div class="btnrow">
     <button id="btnSaveBeeps" onclick="beepsSave()">💾 Save beep codes</button>
-    <button onclick="beepsDefaults()">🏭 Shipped codes</button>
+    <button onclick="beepsDefaults()">🏭 Eggtimer defaults</button>
     <span id="bpMsg"></span>
   </div>
 </div>

@@ -104,14 +104,22 @@ function generateFlightCSV() {
 /* ── HTTP Server ──────────────────────────────────────────────────── */
 
 let beepReason = '';
-let beepRows = [
-  {key:'system_failure', d1:3, d2:3, def1:3, def2:3,
-   what:'System failure. Safe the system and leave the pad -- this cannot be fixed at the rocket'},
-  {key:'check_pyro',     d1:2, d2:2, def1:2, def2:2,
-   what:'Check the pyro. An igniter or its leads need attention; the rest of the board is good'},
-  {key:'ok_to_fly',      d1:1, d2:1, def1:1, def2:1,
-   what:'OK to fly. Sensor, filesystem and both pyro channels are good'}
+const BEEP_OUTCOMES = [
+  {key:'system_failure', what:'System failure. Safe the system and leave the pad -- this cannot be fixed at the rocket'},
+  {key:'check_pyro_1',   what:'Check pyro 1. Its igniter or leads need attention'},
+  {key:'check_pyro_2',   what:'Check pyro 2. Its igniter or leads need attention'},
+  {key:'ok_to_fly',      what:'OK to fly. Sensor, filesystem and both pyro channels are good'}
 ];
+function shippedPersonality(name) {
+  return {name: name, gap: 5000, repeat: 0, split: true, spec: {
+    system_failure: {kind:'code', d1:2, d2:0},
+    check_pyro_1:   {kind:'code', d1:5, d2:0},
+    check_pyro_2:   {kind:'code', d1:4, d2:0},
+    ok_to_fly:      {kind:'chirp', d1:0, d2:0}
+  }};
+}
+let beepActive = 0;
+let beepPersonalities = [shippedPersonality('Default'), shippedPersonality('Custom 1'), shippedPersonality('Custom 2')];
 
 let pinsIni = '[pins]\r\npyro1_released=true\r\npyro2_released=true\r\n';
 
@@ -158,10 +166,10 @@ const server = http.createServer((req, res) => {
   if (req.url === '/api/beeps' && req.method === 'GET') {
     res.writeHead(200, {...cors, 'Content-Type':'application/json'});
     res.end(JSON.stringify({
-      digit_min: 1, digit_max: 9, has_buzzer: true, reason: beepReason,
-      beeps: beepRows.map(r => ({
-        key: r.key, d1: r.d1, d2: r.d2, def1: r.def1, def2: r.def2, what: r.what
-      }))
+      digit_min: 1, digit_max: 9, has_buzzer: true, active: beepActive, reason: beepReason,
+      kinds: ['silent','chirp','tone','code'],
+      outcomes: BEEP_OUTCOMES,
+      personalities: beepPersonalities
     }));
     return;
   }
@@ -170,15 +178,15 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
-      const m = body.match(/"d1"\s*:\s*(\d+).*"d2"\s*:\s*(\d+)/);
-      const d1 = m ? +m[1] : -1, d2 = m ? +m[2] : -1;
-      if (d1 < 1 || d1 > 9 || d2 < 1 || d2 > 9) {
+      let sp;
+      try { sp = JSON.parse(body); } catch (e) { sp = {}; }
+      if (sp.kind === 'code' && (sp.d1 < 1 || sp.d1 > 9 || sp.d2 > 9)) {
         res.writeHead(400, {...cors, 'Content-Type':'application/json'});
-        res.end(JSON.stringify({error: 'each digit must be 1 to 9'}));
+        res.end(JSON.stringify({error: 'each beep count must be 1 to 9'}));
         return;
       }
       res.writeHead(200, {...cors, 'Content-Type':'application/json'});
-      res.end(JSON.stringify({status:'playing', d1: d1, d2: d2}));
+      res.end(JSON.stringify({status:'playing', kind: sp.kind, d1: sp.d1 || 0, d2: sp.d2 || 0}));
     });
     return;
   }
@@ -187,24 +195,35 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
-      const seen = {};
-      let bad = null, dup = null;
+      let bad = null;
       body.split('\n').forEach(l => {
-        const m = l.trim().match(/^([a-z0-9_]+)=(\d\d)$/);
-        if (!m) return;
-        const row = beepRows.find(r => r.key === m[1]);
-        if (!row) return;
-        const d1 = +m[2][0], d2 = +m[2][1];
-        if (d1 < 1 || d1 > 9 || d2 < 1 || d2 > 9) { bad = m[1]; return; }
-        const k = m[2];
-        if (seen[k]) dup = m[1];
-        seen[k] = m[1];
-        row.d1 = d1; row.d2 = d2;
+        const m = l.trim().match(/^p(\d)_([a-z0-9_]+)=(.*)$/);
+        if (!m) {
+          const a = l.trim().match(/^active=(\d)$/);
+          if (a) beepActive = +a[1];
+          return;
+        }
+        const p = beepPersonalities[+m[1]];
+        if (!p) return;
+        const field = m[2], val = m[3];
+        if (field === 'name') p.name = val;
+        else if (field === 'gap') p.gap = +val;
+        else if (field === 'repeat') p.repeat = +val;
+        else if (field === 'split') p.split = val === 'true';
+        else if (p.spec[field]) {
+          const c = val.match(/^code:(\d)(?:-(\d))?$/);
+          if (c) {
+            const d1 = +c[1], d2 = c[2] ? +c[2] : 0;
+            if (d1 < 1 || d1 > 9 || d2 > 9) { bad = field; return; }
+            p.spec[field] = {kind:'code', d1: d1, d2: d2};
+          } else if (['silent','chirp','tone'].indexOf(val) >= 0) {
+            p.spec[field] = {kind: val, d1: 0, d2: 0};
+          }
+        }
       });
-      if (bad || dup) {
+      if (bad) {
         res.writeHead(400, {...cors, 'Content-Type':'application/json'});
-        res.end(JSON.stringify({error: bad ? 'each digit must be 1 to 9' :
-                                             'two reasons share a code', reason: bad || dup}));
+        res.end(JSON.stringify({error:'each beep count must be 1 to 9', reason: bad}));
         return;
       }
       beepReason = '';

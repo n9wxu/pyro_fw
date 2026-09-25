@@ -218,13 +218,11 @@ static state_event_t detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
     if (ctx->sensor_type == 0) {
         hal_telemetry_send("!SENSOR FAIL - no pressure sensor answered\r\n");
         ctx->diag |= DIAG_SENSOR_FAIL;
-        ctx->fault_code = beep_for(BR_SYSTEM_FAILURE);
         return SEVT_FAULT;
     }
     if (!ctx->fs_ok) {
         hal_telemetry_send("!FS FAIL - filesystem did not mount\r\n");
         ctx->diag |= DIAG_FS_FAIL;
-        ctx->fault_code = beep_for(BR_SYSTEM_FAILURE);
         return SEVT_FAULT;
     }
     return SEVT_DONE;
@@ -268,7 +266,6 @@ static state_event_t detect_boot_calibrate(flight_context_t *ctx, uint32_t now) 
         extern void hal_telemetry_send(const char *sentence);
         hal_telemetry_send("!CAL TIMEOUT - sensor produced no samples\r\n");
         ctx->diag |= DIAG_SENSOR_FAIL;
-        ctx->fault_code = beep_for(BR_SYSTEM_FAILURE);
         return SEVT_FAULT;
     }
 
@@ -278,7 +275,7 @@ static state_event_t detect_boot_calibrate(flight_context_t *ctx, uint32_t now) 
 /* What the pad check found, as DIAG_* bits. Several can be true at once.
  *
  * Separate from the beep because they are different questions: this is what
- * is wrong, and beep_for_diag() below is what to do about it. */
+ * is wrong, and beep_reason_for_diag() below is what to do about it. */
 static void collect_pad_faults(flight_context_t *ctx, const hal_continuity_t *c1, const hal_continuity_t *c2) {
     int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
     if ((ctx->config.pyro1_mode != PYRO_MODE_DELAY && ctx->config.pyro1_value > max_units) ||
@@ -297,20 +294,27 @@ static void collect_pad_faults(flight_context_t *ctx, const hal_continuity_t *c1
     }
 }
 
-/* Which of the three things to say.
+/* Which outcome to say.
  *
- * There are three beeps because there are three actions available standing at
- * a rocket: fly it, adjust an igniter, or safe it and walk away. Anything
- * that cannot be fixed at the pad outranks anything that can, so a board with
- * both a dead sensor and an open igniter sends the operator away. */
-uint8_t beep_for_diag(uint16_t diag) {
+ * Four, because four is the number of things an operator can do standing at a
+ * rocket: fly it, check igniter 1, check igniter 2, or safe it and walk away.
+ * Anything that cannot be fixed at the pad outranks anything that can -- a
+ * board with both a dead sensor and an open igniter sends the operator away,
+ * because adjusting the igniter would not help.
+ *
+ * Channel 1 is named before channel 2 when both are bad. One trip to the
+ * rocket covers both, and the screen names both. */
+beep_reason_t beep_reason_for_diag(uint16_t diag) {
     if (diag & DIAG_FATAL_ANY) {
-        return beep_for(BR_SYSTEM_FAILURE);
+        return BR_SYSTEM_FAILURE;
     }
-    if (diag & DIAG_PYRO_ANY) {
-        return beep_for(BR_CHECK_PYRO);
+    if (diag & (DIAG_P1_OPEN | DIAG_P1_SHORT)) {
+        return BR_CHECK_PYRO_1;
     }
-    return beep_for(BR_OK_TO_FLY);
+    if (diag & (DIAG_P2_OPEN | DIAG_P2_SHORT)) {
+        return BR_CHECK_PYRO_2;
+    }
+    return BR_OK_TO_FLY;
 }
 
 static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { /* [PYR-CONT-01, PYR-ALT-02] */
@@ -345,9 +349,11 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
     ctx->buzzer_started = true;
     collect_pad_faults(ctx, &c1, &c2);
 
-    uint8_t code = beep_for_diag(ctx->diag);
-    ctx->last_status_code = code; /* [GND-TEST-01] remember for BEEP STATUS replay */
-    buzzer_play_code(code, 2);    /* [BUZ-02] play status code twice then stop */
+    /* Say it on the active personality's cadence, which by default keeps
+     * saying it until launch. A board that speaks once and falls silent is
+     * indistinguishable from one whose battery died a second later. */
+    ctx->last_reason = (uint8_t)beep_reason_for_diag(ctx->diag);
+    beep_say((beep_reason_t)ctx->last_reason);
 }
 
 /* [FLT-LAUNCH-01, FLT-LAUNCH-02, FLT-RATE-01, DD-016]
@@ -609,8 +615,12 @@ static state_event_t detect_landed(flight_context_t *ctx, uint32_t now) {
  * and look like it passed. */
 static void action_fault(flight_context_t *ctx, uint32_t now) {
     (void)now;
-    ctx->last_status_code = ctx->fault_code;
-    buzzer_play_code(ctx->fault_code, 0);
+    /* Until power is removed: there is no recovery from a failed power-up
+     * test, so the board must not fall silent and look like it passed. */
+    ctx->last_reason = (uint8_t)BR_SYSTEM_FAILURE;
+    beep_spec_t sp = beep_for(BR_SYSTEM_FAILURE);
+    const beep_personality_t *p = beep_codes_active(beep_store_current());
+    buzzer_play_spec(&sp, p->gap_ms, 0);
 }
 
 static void action_cal_init(flight_context_t *ctx, uint32_t now) {

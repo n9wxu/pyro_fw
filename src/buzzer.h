@@ -2,6 +2,7 @@
 #define BUZZER_H
 
 #include <stdint.h>
+#include "beep_codes.h"
 #include <stdbool.h>
 
 /* ── Buzzer pattern types ─────────────────────────────────────────── */
@@ -61,6 +62,13 @@ void buzzer_init(void);
  * Non-blocking: encoding and playback run in the async task runner.
  */
 void buzzer_play_code(uint8_t code, uint8_t repeat_count);
+
+/* Play one outcome under the active personality. gap_ms is the silence
+ * between re-announcements; repeat_count 0 runs until stopped.
+ *
+ * Takes a spec rather than a code because a chirp -- Eggtimer's ready-to-fly
+ * -- cannot be written as a pair of beep counts. See beep_codes.h. */
+void buzzer_play_spec(const beep_spec_t *spec, uint16_t gap_ms, uint8_t repeat_count);
 
 /*
  * buzzer_play_altitude() — encode and play an altitude digit beep-out.

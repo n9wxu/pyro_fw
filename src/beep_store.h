@@ -16,7 +16,8 @@
 #include "beep_codes.h"
 
 #define BEEP_STORE_PATH "beep.ini"
-#define BEEP_STORE_MAX 512
+/* Three personalities of nine keys each, plus the header. */
+#define BEEP_STORE_MAX 1024
 
 /* Load beep.ini, validate it, and publish it as the live table.
  *
@@ -41,8 +42,11 @@ beep_verdict_t beep_store_save(const beep_table_t *t);
 /* Why the last load fell back, or "" when it did not. */
 const char *beep_store_reason(void);
 
-/* The code for a reason, from the live table. This is what the firmware
- * calls; nothing outside this module should reach for a raw code. */
-uint8_t beep_for(beep_reason_t r);
+/* How an outcome sounds under the live, active personality. This is what the
+ * firmware calls; nothing outside this module should reach for a raw spec. */
+beep_spec_t beep_for(beep_reason_t r);
+
+/* Play an outcome, with the active personality's cadence. */
+void beep_say(beep_reason_t r);
 
 #endif

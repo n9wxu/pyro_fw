@@ -265,76 +265,109 @@ test.describe('Pin assignment', () => {
 test.describe('Beep codes', () => {
   test.skip(process.env.PYRO_MODE !== 'configured', 'configured mode only');
 
-  test('every code shows what it means', async ({ page }) => {
+  test('the shipped personality is the Eggtimer convention', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Beep Codes');
+    await expect(page.locator('#bpSel')).toHaveValue('0');
+    await expect(page.locator('#bpName')).toHaveValue('Default');
+    /* Ready to fly is a chirp you never count -- the whole point of matching
+       Eggtimer rather than inventing a code for the good case. */
+    await expect(page.locator('#bkok_to_fly')).toHaveValue('chirp');
+    await expect(page.locator('#bkcheck_pyro_1')).toHaveValue('code');
+    await expect(page.locator('#bd1check_pyro_1')).toHaveValue('5');
+  });
+
+  test('every outcome shows what it means', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Beep Codes');
     const table = page.locator('#bpTable');
-    /* The meaning comes from the firmware, not from a copy in app.js. */
     await expect(table).toContainText('Safe the system and leave the pad');
-    await expect(table).toContainText('Check the pyro');
+    await expect(table).toContainText('Check pyro 1');
     await expect(table).toContainText('OK to fly');
-    await expect(page.locator('#bd1system_failure')).toHaveValue('3');
-    await expect(page.locator('#bd2system_failure')).toHaveValue('3');
   });
 
-  test('a duplicate code is flagged before saving', async ({ page }) => {
+  test('the beep counts hide when the sound is not a count', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Beep Codes');
-    await expect(page.locator('#bd1check_pyro')).toBeVisible();
-    /* Make check_pyro read the same as all_good (1-1). */
-    await page.fill('#bd1check_pyro', '1');
-    await page.fill('#bd2check_pyro', '1');
-    await expect(page.locator('#bpWarn')).toContainText('share the code');
+    /* A chirp has no number, so offering one would be offering nonsense. */
+    await expect(page.locator('#bd1ok_to_fly')).toBeHidden();
+    await page.selectOption('#bkok_to_fly', 'code');
+    await expect(page.locator('#bd1ok_to_fly')).toBeVisible();
   });
 
-  test('a zero digit is flagged', async ({ page }) => {
+  test('merging the pyro channels removes the second row', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Beep Codes');
-    await expect(page.locator('#bd2check_pyro')).toBeVisible();
-    await page.fill('#bd2check_pyro', '0');
+    await expect(page.locator('#browcheck_pyro_2')).toBeVisible();
+    await page.uncheck('#bpSplit');
+    /* Channel 2 is never played when merged, so a sound for it would be one
+       the board cannot say. */
+    await expect(page.locator('#browcheck_pyro_2')).toHaveCount(0);
+  });
+
+  test('two outcomes that sound alike are flagged', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Beep Codes');
+    await page.fill('#bd1check_pyro_1', '2');
+    await expect(page.locator('#bpWarn')).toContainText('sound the same');
+  });
+
+  test('a zero beep count is flagged', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Beep Codes');
+    await page.fill('#bd1check_pyro_1', '0');
     await expect(page.locator('#bpWarn')).toContainText('cannot be heard');
   });
 
-  test('shipped codes restore into the form', async ({ page }) => {
+  test('switching personality loads its own settings', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Beep Codes');
-    await expect(page.locator('#bd1check_pyro')).toBeVisible();
-    await page.fill('#bd1check_pyro', '9');
-    await page.click('button:has-text("Shipped codes")');
-    await expect(page.locator('#bd1check_pyro')).toHaveValue('2');
+    await page.fill('#bpName', 'Loud');
+    await expect(page.locator('#bpSel')).toContainText('Loud');
+    await page.selectOption('#bpSel', '1');
+    await expect(page.locator('#bpName')).toHaveValue('Custom 1');
+    await page.selectOption('#bpSel', '0');
+    await expect(page.locator('#bpName')).toHaveValue('Loud');
   });
 
-  test('a code can be auditioned before saving', async ({ page }) => {
+  test('a row can be auditioned before saving', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Beep Codes');
-    await expect(page.locator('#bd1check_pyro')).toBeVisible();
-    /* Change it, then play it: the board plays what is in the form, so an
-       unsaved code can be heard before committing to it. */
-    await page.fill('#bd1check_pyro', '6');
-    await page.fill('#bd2check_pyro', '4');
-    await page.locator('#browcheck_pyro button').click();
-    await expect(page.locator('#bpMsg')).toContainText('playing 6–4', { timeout: 5000 });
+    await page.fill('#bd1check_pyro_1', '7');
+    await page.locator('#browcheck_pyro_1 button').click();
+    await expect(page.locator('#bpMsg')).toContainText('7 beeps', { timeout: 5000 });
   });
 
-  test('the spoken label follows the inputs', async ({ page }) => {
+  test('the chirp can be auditioned too', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Beep Codes');
-    await expect(page.locator('#btcheck_pyro')).toHaveText('2–2');
-    await page.fill('#bd1check_pyro', '8');
-    await expect(page.locator('#btcheck_pyro')).toHaveText('8–2');
+    await page.locator('#browok_to_fly button').click();
+    await expect(page.locator('#bpMsg')).toContainText('chirp', { timeout: 5000 });
+  });
+
+  test('Eggtimer defaults restore into the form', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Beep Codes');
+    await page.selectOption('#bpSel', '1');
+    await page.selectOption('#bkok_to_fly', 'tone');
+    await page.click('button:has-text("Eggtimer defaults")');
+    await expect(page.locator('#bkok_to_fly')).toHaveValue('chirp');
   });
 
   test('saving a valid table reports success', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Beep Codes');
-    await expect(page.locator('#bd1check_pyro')).toBeVisible();
     await page.click('#btnSaveBeeps');
     await expect(page.locator('#bpMsg')).toContainText('saved', { timeout: 5000 });
   });

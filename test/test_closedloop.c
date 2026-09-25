@@ -219,6 +219,15 @@ static int32_t last_buzzer_altitude;
 static bool buzzer_active_flag;
 
 void buzzer_init(void) {}
+/* beep_say() plays a spec now, because a chirp is not a code. Records the
+ * outcome's sound the same way the code fake does. */
+void buzzer_play_spec(const beep_spec_t *spec, uint16_t gap_ms, uint8_t repeat_count) {
+    (void)spec;
+    (void)gap_ms;
+    (void)repeat_count;
+    buzzer_active_flag = true;
+}
+
 void buzzer_play_code(uint8_t c, uint8_t r) {
     (void)c;
     (void)r;

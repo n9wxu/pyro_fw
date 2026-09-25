@@ -125,8 +125,12 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **BUZ-STATUS-01**: The system shall emit distinct beep codes for each fault condition. ← SYS-STATUS-01
 
 ### L4 Implementation Requirements
-- **BUZ-01**: The system shall play a startup sequence of 10 chirps followed by a status code. ← BUZ-STATUS-01
-- **BUZ-02**: The system shall play the status code twice then stop. ← BUZ-STATUS-01
+- **BUZ-01**: The system shall announce one of four outcomes: OK to fly, check pyro 1, check pyro 2, system failure. ← BUZ-STATUS-01
+- **BUZ-02**: The announcement shall repeat on a configurable cadence, defaulting to every 5 s until launch, so that silence means a fault rather than a finished message. ← BUZ-STATUS-01
+- **BUZ-08**: The OK-to-fly outcome shall default to a continuous chirp, not a counted code. ← BUZ-01
+- **BUZ-09**: The shipped defaults shall follow the Eggtimer Rocketry convention. ← BUZ-01
+- **BUZ-10**: The system shall hold three named beep personalities, one active. ← BUZ-01
+- **BUZ-11**: No two audible outcomes within a personality shall sound alike. ← BUZ-01
 - **FLT-BOOT-01**: The system shall complete a non-blocking boot sequence before entering PAD_IDLE. ← SYS-STATUS-01
 - **FLT-BOOT-04**: The system shall wait at least 500ms after power-on before sensor communication. ← FLT-BOOT-01
 - **FLT-BOOT-05**: The system shall detect and initialize the pressure sensor during boot. ← FLT-BOOT-01

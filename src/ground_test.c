@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "ground_test.h"
+#include "beep_store.h"
 #include "flight_states.h" /* flight_context_t, PAD_IDLE, send_telemetry */
 #include "buzzer.h"        /* buzzer_set_code, buzzer_set_altitude         */
 #include "hal.h"           /* hal_pyro_fire, hal_pyro_sample, hal_telemetry_send */
@@ -50,12 +51,12 @@ void ground_test_handle_command(ground_test_ctx_t *gt, const char *cmd, struct f
 
     /* ── BEEP STATUS: replay last continuity beep code [GND-TEST-01] ── */
     if (strcmp(cmd, "BEEP") == 0 || strcmp(cmd, "BEEP STATUS") == 0) {
-        if (ctx->last_status_code != 0) {
-            buzzer_set_code(ctx->last_status_code, false);
-            gt_respond("GT,BEEP,status");
-        } else {
-            gt_respond("GT,ERR,no_status_yet");
-        }
+        /* Replay whatever the pad check last said, on the active personality.
+         * There is always an answer now: the outcomes include "OK to fly", so
+         * a healthy board has something to replay rather than nothing.
+         * [GND-TEST-01] */
+        beep_say((beep_reason_t)ctx->last_reason);
+        gt_respond("GT,BEEP,status");
         return;
     }
 

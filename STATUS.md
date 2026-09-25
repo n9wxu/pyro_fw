@@ -19,46 +19,67 @@ Setting `c1_busy` first, with a barrier, makes the two conditions overlap so
 one always holds. Affects every board and every configuration, not just the
 bridge.
 
-## ✅ Three beeps, because three actions exist at the pad (2026-09-24)
+## ✅ Beep personalities, defaulting to Eggtimer (2026-09-24)
 
-Thirteen beep codes distinguished `p1_open` from `p2_short` from `fs_fail`.
-That is a distinction which changes nothing an operator does standing at a
-rocket, and it asked them to count two groups of beeps in the wind and then
-look the pair up.
+A beep tells an operator what to DO. There are four things they can do standing
+at a rocket, so there are four outcomes — and the diagnosis, which is finer
+than that, is named on `/api/status` where it can be read instead of counted.
 
-**A beep says what to DO.** There are three things an operator can do at the
-pad, so there are three beeps:
+**The shipped personality follows Eggtimer Rocketry**, whose convention most
+fliers already have in their ear ([Quantum
+1.09G](https://eggtimerrocketry.com/wp-content/uploads/2024/02/Eggtimer-Quantum-1_09G.pdf),
+[Quark
+D3](https://eggtimerrocketry.com/wp-content/uploads/2021/04/Eggtimer-Quark-Manual-D3.pdf),
+[Classic 1.48b](https://www.manualslib.com/manual/733694/Eggtimer-Rocketry-Eggtimer.html)):
 
-| Code | Means | Action |
+| Outcome | Sound | Eggtimer source |
 |---|---|---|
-| 1–1 | OK to fly | proceed |
-| 2–2 | Check the pyro | an igniter can be reached and adjusted without safing |
-| 3–3 | System failure | safe the system and leave the pad |
+| OK to fly | rapid chirp, never counted | Quantum/Quark "ready to fly" |
+| Check pyro 1 | 5 beeps | Quark: 5 = no Drogue continuity |
+| Check pyro 2 | 4 beeps | Quark: 4 = no Main continuity |
+| System failure | 2 beeps | Classic/TRS: 2 = sensor/hardware error |
 
-Priority is strict: anything unfixable outranks anything fixable, so a board
-with a dead sensor *and* an open igniter sends the operator away — adjusting
-the igniter would not help, the board still cannot fly. A pyro altitude
-setting beyond the sensor counts as unfixable, because correcting it needs a
-laptop.
+The good case is a **texture, not a number**. Asking someone to count the case
+meaning "everything is fine" is how it gets misheard in the wind — a vendor
+thread shows a flier misreading Eggtimer's own counted codes badly enough that
+an audio recording was needed to diagnose it.
 
-**The diagnosis did not go away, it moved to where it is useful.**
-`flight_context_t` carries a `DIAG_*` bitmask and `/api/status` names every
-finding — `"faults":["pyro1_open","pyro2_open"]` — on a screen, where detail
-helps and nobody counts beeps. `/api/status` also carries `beep`, `beep_d1`
-and `beep_d2`, so which of the three the board is saying can be read rather
-than heard.
+**Three personality slots.** Slot 0 ships as the Eggtimer convention; the other
+two are the operator's to name and shape. A personality is a complete
+configuration — pattern per outcome (chirp / steady tone / beep count /
+silent), cadence, and whether pyro faults are split per channel — because
+those choices only make sense together.
 
-`beep.ini` and the editor are unchanged in shape, with three rows instead of
-thirteen. An existing thirteen-key file is not rejected: the old keys are
-unknown and ignored (CFG-08), the shipped codes take effect, and the file is
-rewritten on the first save.
+**`BUZ-02` is gone.** It made the board say its state twice and fall silent,
+which is indistinguishable from a board whose battery died a second later. The
+default now re-announces every 5 s until launch, and the cadence is
+configurable.
+
+Refused, with the slot and outcome named: a beep count outside 1–9, two
+outcomes that sound alike (including two chirps), an active slot that does not
+exist, and a personality that says nothing at all.
+
+Our altitude beep-out already matched Eggtimer Quantum exactly — long pause,
+long beep, digit groups MSB-first, 10 beeps for zero — and is unchanged. That
+is the closest thing to a real cross-brand convention; the *zero*
+representation is not standard (RRC3 uses one long beep, Raven a short one).
+Neither NAR nor Tripoli specifies anything about audible status.
 
 Measured on hardware:
 
-| Board | State | Beep | Diagnosis |
+| Board | State | Says | Diagnosis |
 |---|---|---|---|
-| MK1B | both pyros released to Lua | 1–1 ok_to_fly | none |
-| MK1C | pyros retained, no igniters | 2–2 check_pyro | pyro1_open, pyro2_open |
+| MK1B | pyros released to Lua | chirp — ok_to_fly | none |
+| MK1C | pyros retained, no igniters | 5 beeps — check_pyro_1 | pyro1_open, pyro2_open |
+| MK1A | pyros retained, no igniters | 5 beeps — check_pyro_1 | pyro1_open, pyro2_open |
+
+### Also fixed: /api/status was truncating on MK1C
+
+`char buf[1280]` holds headers *and* body, and MK1C carries the most fields —
+the bias probes, pack voltage and wave state on top of everything shared. It
+had begun cutting the body mid-word, and the handler's "send what fits" path
+meant the browser got JSON that parses as nothing and no explanation. Now 2048,
+and an overflow answers 500 saying so.
 
 ## ✅ config.ini fits again — and no longer migrates (2026-09-24)
 

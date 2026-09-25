@@ -455,17 +455,21 @@ function waitForReboot(msg) {
 
 /* ── Lua ───────────────────────────────────────────────────────── */
 
-/* ── Beep codes ────────────────────────────────────────────────
+/* ── Beep personalities ────────────────────────────────────────
  *
- * The reasons, their meanings and their codes all come from /api/beeps. The
- * firmware is the only place the vocabulary is written down: a code used to
- * be a two-digit number an operator heard at the pad with nothing to look it
- * up in, and seven of the thirteen were never emitted at all.
+ * Everything here comes from /api/beeps: the outcomes, their meanings, the
+ * pattern kinds and the three personalities. The firmware is the only place
+ * the vocabulary is written down, so adding an outcome or a kind grows the
+ * table without touching this file.
  *
- * Nothing board-specific or reason-specific is hardcoded here, so adding a
- * reason in beep_codes.h grows a row without touching this file. */
+ * Defaults follow Eggtimer Rocketry, whose convention most fliers already
+ * know: a rapid chirp means ready, a repeating beep count means a fault. */
 var beepCaps = null;
+var beepEdit = null;   /* the personality being edited, as a working copy */
 var beepsReady = false;
+
+var KIND_LABEL = {silent: 'silent', chirp: 'chirp (ready)', tone: 'steady tone', code: 'beep count'};
+function kindLabel(k) { return KIND_LABEL[k] || k; }
 
 function beepsInit() {
   if (beepsReady) return;
@@ -478,94 +482,152 @@ function beepsInit() {
 function beepsFetch() {
   return fetch('/api/beeps')
     .then(function(r) { if (!r.ok) throw new Error('beeps ' + r.status); return r.json(); })
-    .then(function(d) { beepCaps = d; return d; });
+    .then(function(d) { beepCaps = d; beepEdit = JSON.parse(JSON.stringify(d.personalities)); return d; });
 }
 
 function renderBeeps() {
-  var html = '<tr><th>Code</th><th>Beeps</th><th></th><th>Means</th></tr>';
-  beepCaps.beeps.forEach(function(b) {
-    var k = esc(b.key);
-    html += '<tr id="brow' + k + '">' +
-            '<td class="lbl"><span id="bt' + k + '">' + b.d1 + '–' + b.d2 + '</span></td>' +
-            '<td><input id="bd1' + k + '" type="number" min="' + beepCaps.digit_min +
-            '" max="' + beepCaps.digit_max + '" value="' + b.d1 + '" style="width:3.2em"' +
-            ' oninput="beepsCheck()"> ' +
-            '<input id="bd2' + k + '" type="number" min="' + beepCaps.digit_min +
-            '" max="' + beepCaps.digit_max + '" value="' + b.d2 + '" style="width:3.2em"' +
-            ' oninput="beepsCheck()"></td>' +
-            '<td>' + (beepCaps.has_buzzer
-              ? '<button onclick="beepsPlay(\'' + k + '\')" title="Play this code on the buzzer">▶</button>'
-              : '') + '</td>' +
-            '<td class="val">' + esc(b.what) + '</td></tr>';
+  var sel = document.getElementById('bpSel');
+  sel.innerHTML = '';
+  beepEdit.forEach(function(p, i) {
+    var o = document.createElement('option');
+    o.value = i; o.textContent = p.name || ('Slot ' + i);
+    sel.appendChild(o);
+  });
+  sel.value = beepCaps.active;
+  document.getElementById('bpHint').innerHTML =
+    (beepCaps.has_buzzer ? '' : '<b>This board has no buzzer fitted</b>, so nothing here can be heard on it. ') +
+    (beepCaps.reason ? '<b>' + esc(beepCaps.reason) + '</b>' : '');
+  beepsSelect();
+}
+
+/* Switch to a personality, or re-render the current one after a change that
+   alters which rows apply. */
+function beepsSelect(keep) {
+  var i = +document.getElementById('bpSel').value;
+  var p = beepEdit[i];
+  if (!keep) {
+    document.getElementById('bpName').value = p.name;
+    document.getElementById('bpGap').value = p.gap;
+    document.getElementById('bpRepeat').value = p.repeat;
+    document.getElementById('bpSplit').checked = p.split;
+  }
+  p.split = document.getElementById('bpSplit').checked;
+
+  var html = '<tr><th>Sounds like</th><th></th><th></th><th>Means</th></tr>';
+  beepCaps.outcomes.forEach(function(o) {
+    /* With the channels merged, channel 2 is never played, so offering a
+       sound for it would be offering something the board cannot say. */
+    if (o.key === 'check_pyro_2' && !p.split) return;
+    var sp = p.spec[o.key];
+    var k = esc(o.key);
+    html += '<tr id="brow' + k + '"><td class="lbl">' +
+            '<select id="bk' + k + '" onchange="beepsCheck()">';
+    beepCaps.kinds.forEach(function(kind) {
+      html += '<option value="' + esc(kind) + '"' + (kind === sp.kind ? ' selected' : '') +
+              '>' + esc(kindLabel(kind)) + '</option>';
+    });
+    html += '</select></td><td>' +
+            '<input id="bd1' + k + '" type="number" min="' + beepCaps.digit_min + '" max="' + beepCaps.digit_max +
+            '" value="' + (sp.d1 || 1) + '" style="width:3.2em" oninput="beepsCheck()">' +
+            '<input id="bd2' + k + '" type="number" min="0" max="' + beepCaps.digit_max +
+            '" value="' + sp.d2 + '" style="width:3.2em" oninput="beepsCheck()" title="0 = one group">' +
+            '</td><td>' + (beepCaps.has_buzzer
+              ? '<button onclick="beepsPlay(\'' + k + '\')" title="Play this row">▶</button>' : '') +
+            '</td><td class="val">' + esc(o.what) + '</td></tr>';
   });
   document.getElementById('bpTable').innerHTML = html;
-  document.getElementById('bpHint').innerHTML = beepCaps.beeps.length + ' beep codes.' +
-    (beepCaps.has_buzzer ? '' : ' <b>This board has no buzzer fitted</b>, so nothing here can be heard on it.') +
-    (beepCaps.reason ? ' <b>' + esc(beepCaps.reason) + '</b>' : '');
   beepsCheck();
 }
 
-/* Hear it before committing to it. The board plays the digits currently in
-   the form, not the ones it has stored, so an unsaved change can be
-   auditioned. */
+/* Read the form back into the working copy, and flag the two mistakes that
+   are easy to make. The firmware validates and is authoritative. */
+function beepsCheck() {
+  if (!beepCaps) return;
+  var i = +document.getElementById('bpSel').value;
+  var p = beepEdit[i];
+  p.name = document.getElementById('bpName').value;
+  p.gap = parseInt(document.getElementById('bpGap').value, 10) || 0;
+  p.repeat = parseInt(document.getElementById('bpRepeat').value, 10) || 0;
+  p.split = document.getElementById('bpSplit').checked;
+
+  var seen = {}, dupe = null, bad = null, audible = 0;
+  beepCaps.outcomes.forEach(function(o) {
+    var ke = document.getElementById('bk' + o.key);
+    if (!ke) return;               /* hidden because the channels are merged */
+    var sp = p.spec[o.key];
+    sp.kind = ke.value;
+    sp.d1 = parseInt(document.getElementById('bd1' + o.key).value, 10) || 0;
+    sp.d2 = parseInt(document.getElementById('bd2' + o.key).value, 10) || 0;
+
+    /* The counts only mean anything for a beep count. */
+    var isCode = sp.kind === 'code';
+    document.getElementById('bd1' + o.key).style.visibility = isCode ? '' : 'hidden';
+    document.getElementById('bd2' + o.key).style.visibility = isCode ? '' : 'hidden';
+
+    if (isCode && (sp.d1 < beepCaps.digit_min || sp.d1 > beepCaps.digit_max || sp.d2 > beepCaps.digit_max)) {
+      bad = o.key;
+      return;
+    }
+    if (sp.kind === 'silent') return;
+    audible++;
+    var sig = isCode ? 'code:' + sp.d1 + '-' + sp.d2 : sp.kind;
+    if (seen[sig]) dupe = sig; else seen[sig] = o.key;
+  });
+
+  var msgs = [];
+  if (bad) {
+    msgs.push('<div class="warn">A beep count must be ' + beepCaps.digit_min + ' to ' + beepCaps.digit_max +
+              '. A zero cannot be heard.</div>');
+  }
+  if (dupe) {
+    msgs.push('<div class="warn">Two outcomes sound the same. An operator hearing it would get the wrong ' +
+              'answer half the time.</div>');
+  }
+  if (!audible) {
+    msgs.push('<div class="warn">This personality says nothing at all, which tells an operator nothing.</div>');
+  }
+  document.getElementById('bpWarn').innerHTML = msgs.join('');
+
+  /* Keep the menu label in step with the name box. */
+  var opt = document.getElementById('bpSel').options[i];
+  if (opt) opt.textContent = p.name || ('Slot ' + i);
+}
+
+/* Hear it before committing to it. The board plays what is in the row,
+   including an unsaved change. */
 function beepsPlay(key) {
-  var d1 = document.getElementById('bd1' + key).value;
-  var d2 = document.getElementById('bd2' + key).value;
+  var i = +document.getElementById('bpSel').value;
+  var sp = beepEdit[i].spec[key];
   var msg = document.getElementById('bpMsg');
   fetch('/api/beeps/play', {method:'POST', headers:{'Content-Type':'text/plain'},
-                            body: '{"d1":' + d1 + ',"d2":' + d2 + '}'})
+        body: JSON.stringify({kind: sp.kind, d1: sp.d1, d2: sp.d2})})
     .then(function(r) { return r.json().catch(function(){ return {error:'HTTP ' + r.status}; }); })
     .then(function(d) {
       msg.style.color = d.error ? 'red' : '';
-      msg.textContent = d.error ? ' ✗ ' + d.error : ' ♪ playing ' + d.d1 + '–' + d.d2;
+      msg.textContent = d.error ? ' ✗ ' + d.error
+        : ' ♪ ' + (d.kind === 'code' ? d.d1 + (d.d2 ? '–' + d.d2 : '') + ' beeps' : d.kind);
     })
     .catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ✗ ' + e.message; });
 }
 
-/* The firmware validates and is authoritative; this catches the mistake that
-   is easy to make and annoying to make twice. */
-function beepsCheck() {
-  if (!beepCaps) return;
-  var seen = {}, dupes = [], bad = [];
-  beepCaps.beeps.forEach(function(b) {
-    var d1 = parseInt(document.getElementById('bd1' + b.key).value, 10);
-    var d2 = parseInt(document.getElementById('bd2' + b.key).value, 10);
-    if (!(d1 >= beepCaps.digit_min && d1 <= beepCaps.digit_max) ||
-        !(d2 >= beepCaps.digit_min && d2 <= beepCaps.digit_max)) {
-      bad.push(b.key);
-      return;
-    }
-    var k = d1 + '-' + d2;
-    if (seen[k]) dupes.push(k); else seen[k] = b.key;
-  });
-
-  var msgs = [];
-  if (bad.length) {
-    msgs.push('<div class="warn">Each digit must be ' + beepCaps.digit_min + ' to ' + beepCaps.digit_max +
-              '. A zero cannot be heard.</div>');
-  }
-  if (dupes.length) {
-    msgs.push('<div class="warn">Two reasons share the code ' + esc(dupes[0]) +
-              '. An operator hearing it would get the wrong answer half the time.</div>');
-  }
-  document.getElementById('bpWarn').innerHTML = msgs.join('');
-
-  /* The label reads the way the code is spoken, and follows the inputs. */
-  beepCaps.beeps.forEach(function(b) {
-    var t = document.getElementById('bt' + b.key);
-    if (t) {
-      t.textContent = document.getElementById('bd1' + b.key).value + '–' +
-                      document.getElementById('bd2' + b.key).value;
-    }
-  });
+function specToIni(sp) {
+  if (sp.kind !== 'code') return sp.kind;
+  return 'code:' + sp.d1 + (sp.d2 ? '-' + sp.d2 : '');
 }
 
 function beepsSave() {
-  var ini = '[beeps]\r\n';
-  beepCaps.beeps.forEach(function(b) {
-    ini += b.key + '=' + document.getElementById('bd1' + b.key).value +
-           document.getElementById('bd2' + b.key).value + '\r\n';
+  var active = +document.getElementById('bpSel').value;
+  var ini = '[beeps]\r\nactive=' + active + '\r\n';
+  beepEdit.forEach(function(p, i) {
+    ini += 'p' + i + '_name=' + p.name + '\r\n';
+    ini += 'p' + i + '_gap=' + p.gap + '\r\n';
+    ini += 'p' + i + '_repeat=' + p.repeat + '\r\n';
+    ini += 'p' + i + '_split=' + (p.split ? 'true' : 'false') + '\r\n';
+    beepCaps.outcomes.forEach(function(o) {
+      ini += 'p' + i + '_' + o.key + '=' + specToIni(p.spec[o.key]) + '\r\n';
+    });
   });
+
   var msg = document.getElementById('bpMsg');
   msg.style.color = ''; msg.textContent = ' saving…';
   fetch('/api/beeps', {method:'POST', headers:{'Content-Type':'text/plain'}, body: ini})
@@ -573,7 +635,9 @@ function beepsSave() {
     .then(function(d) {
       if (d.error) {
         msg.style.color = 'red';
-        msg.textContent = ' ✗ ' + d.error + (d.reason ? ' (' + d.reason + ')' : '');
+        msg.textContent = ' ✗ ' + d.error +
+          (d.personality !== undefined && d.personality >= 0 ? ' in ' + beepEdit[d.personality].name : '') +
+          (d.reason ? ' (' + d.reason + ')' : '');
         return;
       }
       msg.style.color = 'green';
@@ -583,19 +647,18 @@ function beepsSave() {
     .catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ✗ ' + e.message; });
 }
 
-/* Put the shipped codes back in the form. The firmware sends them alongside
-   the current ones, so this restores rather than pretends; the operator still
-   has to press Save. */
+/* Put the Eggtimer convention back into the personality being edited. It is
+   slot 0's shipped content, which the firmware sends; the operator still has
+   to press Save. */
 function beepsDefaults() {
   if (!beepCaps) return;
-  beepCaps.beeps.forEach(function(b) {
-    document.getElementById('bd1' + b.key).value = b.def1;
-    document.getElementById('bd2' + b.key).value = b.def2;
-  });
-  beepsCheck();
+  var i = +document.getElementById('bpSel').value;
+  beepEdit[i] = JSON.parse(JSON.stringify(beepCaps.personalities[0]));
+  beepEdit[i].name = document.getElementById('bpName').value || beepEdit[i].name;
+  beepsSelect();
   var msg = document.getElementById('bpMsg');
   msg.style.color = '';
-  msg.textContent = ' shipped codes loaded — press Save to apply';
+  msg.textContent = ' Eggtimer defaults loaded — press Save to apply';
 }
 
 /* ── Pin capabilities ──────────────────────────────────────────
