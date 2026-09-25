@@ -91,6 +91,8 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-BOOT-12**: After a power event, the system shall recover the ground reference from the pad marker rather than recalibrating, if and only if the barometer shows it is above the recorded ground AND moving. ← FLT-BOOT-11
 - **FLT-BOOT-13**: The system shall not treat a stationary board as airborne, whatever its apparent altitude. ← FLT-BOOT-12
 - **FLT-LOG-05**: The flight log shall not write flash until its RAM buffer has filled once, so that the launch shock window passes without a write in progress. ← FLT-BOOT-11
+- **LUA-IO-01**: The web UI shall export the Lua program to a local file and import one back, so a program survives the filesystem wipe a firmware update performs. ← SYS-CFG-01
+- **LUA-IO-02**: An imported program shall land in the editor and not on the device, so a mis-picked file costs nothing until it is saved. ← LUA-IO-01
 - **PIN-LABEL-01**: Every assignable pin shall carry the connector designator silkscreened on the board, and the web UI shall show it beside the GPIO number. ← SYS-CFG-01
 - **PIN-BUZZ-01**: The buzzer shall be assignable to any pad the board declares capable of driving one, defaulting to the board's own buzzer pad where it fits one. ← SYS-CFG-01
 - **PIN-BUZZ-02**: A pad driving the buzzer shall be reserved against Lua, and a pad holding a Lua role shall not be assignable as the buzzer. ← SYS-CFG-01

@@ -230,6 +230,53 @@ test.describe('Pin assignment', () => {
     await expect(page.locator('#relMsg')).toContainText('saved', { timeout: 5000 });
   });
 
+  /* TODO from the clean-wipe decision: a firmware update wipes the
+     filesystem, so a program that lives only on the device is one the next
+     update destroys. Import must land in the editor and not on the device,
+     so a mis-picked file costs nothing until Save. */
+  test('lua program exports to a file', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Lua');
+    await page.fill('#luSrc', '-- exported by a test\nfunction tick() end\n');
+
+    const dl = page.waitForEvent('download');
+    await page.click('text=Export .lua');
+    const download = await dl;
+    expect(download.suggestedFilename()).toMatch(/\.lua$/);
+    await expect(page.locator('#luIoMsg')).toContainText('exported');
+  });
+
+  test('lua program imports into the editor without saving', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Lua');
+    await page.fill('#luSrc', 'about to be replaced');
+
+    await page.setInputFiles('#luFile', {
+      name: 'rocket.lua',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('-- imported\nfunction tick() end\n'),
+    });
+    await expect(page.locator('#luSrc')).toHaveValue(/imported/);
+    await expect(page.locator('#luIoMsg')).toContainText('press Save');
+  });
+
+  test('an oversized import is refused before it is read', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Lua');
+    await page.fill('#luSrc', 'untouched');
+
+    await page.setInputFiles('#luFile', {
+      name: 'huge.lua',
+      mimeType: 'text/plain',
+      buffer: Buffer.alloc(70000, 0x20),
+    });
+    await expect(page.locator('#luIoMsg')).toContainText('the limit is 65536');
+    await expect(page.locator('#luSrc')).toHaveValue('untouched');
+  });
+
   test('releasing one channel warns about the shared element', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);

@@ -989,6 +989,62 @@ function luaLoad() {
   });
 }
 
+/* ── Export / import the program ───────────────────────────────────
+ *
+ * A firmware update wipes the filesystem, so a program that exists only on
+ * the device is a program the next update destroys. Both directions work on
+ * the editor's contents rather than the stored file: export gives you what
+ * you are looking at, and import does not touch the device until you press
+ * Save, so a mis-picked file costs nothing.
+ *
+ * The export runs entirely in the browser -- no endpoint is needed, and it
+ * works even when the device has already been wiped and the editor still
+ * holds the text. */
+function luaExport() {
+  var text = document.getElementById('luSrc').value;
+  var msg = document.getElementById('luIoMsg');
+  if (!text) { msg.textContent = 'nothing to export'; return; }
+
+  /* Named from the board id when there is one, so several boards' programs
+     do not all land in Downloads as the same file. */
+  var cfg = deviceConfig || {};
+  var id = cfg.id ? String(cfg.id).replace(/[^A-Za-z0-9_-]/g, '') : 'pyro';
+  if (!id) id = 'pyro';
+  var a = document.createElement('a');
+  var url = URL.createObjectURL(new Blob([text], {type: 'text/plain'}));
+  a.href = url;
+  a.download = id + '.lua';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  msg.textContent = 'exported ' + a.download + ' (' + text.length + ' bytes)';
+}
+
+function luaImport(input) {
+  var f = input.files && input.files[0];
+  var msg = document.getElementById('luIoMsg');
+  input.value = ''; /* so re-picking the same file fires onchange again */
+  if (!f) return;
+  /* Bounded before reading: the device's script store is finite and a huge
+     file would be rejected on save anyway, with less to say about why. */
+  if (f.size > 65536) {
+    msg.textContent = 'that file is ' + f.size + ' bytes; the limit is 65536';
+    return;
+  }
+  var r = new FileReader();
+  r.onerror = function() { msg.textContent = 'could not read that file'; };
+  r.onload = function() {
+    document.getElementById('luSrc').value = r.result;
+    /* Loaded into the editor, NOT onto the device: nothing is written until
+       Save, and Check runs first so a bad import is visible before it is
+       stored. */
+    msg.textContent = 'loaded ' + f.name + ' into the editor — press Save & Apply to store it';
+    luaCheck();
+  };
+  r.readAsText(f);
+}
+
 function luaCfgIni() {
   var ini = '[pyro]\r\nlua_enabled=' + (document.getElementById('luEn').checked ? 'true':'false') +
             '\r\nlua_baud='   + (parseInt(document.getElementById('luBaud').value) || 9600) +

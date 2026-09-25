@@ -203,6 +203,13 @@
     <button onclick="luaCheck()">✓ Check</button>
     <button onclick="luaSave()">💾 Save &amp; Apply</button>
     <button onclick="luaLoad()">↻ Reload</button>
+    <!-- A firmware update wipes the filesystem, so a program that exists only
+         on the device is a program you are about to lose. -->
+    <button onclick="luaExport()">⬇ Export .lua</button>
+    <button onclick="document.getElementById('luFile').click()">⬆ Import .lua</button>
+    <input type="file" id="luFile" accept=".lua,.txt,text/plain"
+           style="display:none" onchange="luaImport(this)">
+    <span id="luIoMsg"></span>
   </div>
   <div id="luChk"></div>
 

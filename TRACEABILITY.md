@@ -66,6 +66,8 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-BOOT-12 | Recover the ground reference | Brownout: test_BRN_01..08; Integration: test_BRN_INT_03/04 | ✅ |
 | FLT-BOOT-13 | A stationary board is never airborne | Brownout: test_BRN_06/07 | ✅ |
 | FLT-LOG-05 | No flash write through the shock window | Code review: log_flash_service() holdoff | ⚠ untested |
+| LUA-IO-01 | Export / import the Lua program | Playwright: lua program exports to a file; imports into the editor | ✅ |
+| LUA-IO-02 | Import does not touch the device | Playwright: imports into the editor without saving; oversized import refused | ✅ |
 | PIN-LABEL-01 | Connector designator per pin | Host: test_PIN_LABEL_01..03; Playwright: pin tables name the connector | ✅ |
 | PIN-BUZZ-01 | Buzzer assignable to a pad | Host: test_PIN_BUZZ_01/02/06/07; Playwright: buzzer can be moved | ✅ |
 | PIN-BUZZ-02 | Buzzer pad exclusive against Lua | Host: test_PIN_BUZZ_03/04/05 | ✅ |
