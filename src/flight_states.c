@@ -100,23 +100,38 @@ bool should_fire_pyro(flight_context_t *ctx, uint8_t mode, uint16_t value) {
 }
 
 /* [PYR-SAFE-01..03] */
-static void try_fire_pyros(flight_context_t *ctx, uint32_t now) {
-    if (!ctx->pyro1_fired && !hal_pyro_is_firing() && ctx->pyro1_continuity_good &&
-        should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value)) {
-        hal_pyro_fire(1);
+/* [PYR-DEPLOY-02] The one place a channel is energised.
+ *
+ * Both igniters draw through one common FET and one fuse, so only one may be
+ * live at a time -- on MK1B that path is a 1.5 A self-resetting PTC and the
+ * combined draw can trip it and fire neither. A refusal here is not a failure:
+ * the caller runs again next tick and the other channel will have finished.
+ * That is also why every fire site goes through this function rather than
+ * calling hal_pyro_fire() directly. */
+static bool fire_channel(flight_context_t *ctx, int ch, uint32_t now) {
+    if (hal_pyro_is_firing())
+        return false;
+    hal_pyro_fire(ch);
+    if (ch == 1) {
         ctx->pyro1_fired = true;
         ctx->pyro1_fire_time = now;
         buf_tag_event(ctx, EVT_PYRO1_FIRE);
-        telemetry_pyro_fire(1, ctx->last_altitude, now - ctx->launch_time);
-    }
-    if (!ctx->pyro2_fired && !hal_pyro_is_firing() && ctx->pyro2_continuity_good &&
-        should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value)) {
-        hal_pyro_fire(2);
+    } else {
         ctx->pyro2_fired = true;
         ctx->pyro2_fire_time = now;
         buf_tag_event(ctx, EVT_PYRO2_FIRE);
-        telemetry_pyro_fire(2, ctx->last_altitude, now - ctx->launch_time);
     }
+    telemetry_pyro_fire(ch, ctx->last_altitude, now - ctx->launch_time);
+    return true;
+}
+
+static void try_fire_pyros(flight_context_t *ctx, uint32_t now) {
+    if (!ctx->pyro1_fired && ctx->pyro1_continuity_good &&
+        should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value))
+        (void)fire_channel(ctx, 1, now);
+    if (!ctx->pyro2_fired && ctx->pyro2_continuity_good &&
+        should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value))
+        (void)fire_channel(ctx, 2, now);
 }
 
 /* [PYR-FAULT-02/03] Check FLAG pin after fire for overcurrent */
@@ -165,37 +180,7 @@ static void check_post_fire_verify(flight_context_t *ctx, uint32_t now) {
     }
 }
 
-/* [PYR-REFIRE-01] Re-attempt if still ballistic 1-1.5s after first fire */
-static bool refire_window_open(bool fired, uint32_t fire_time, uint32_t now) {
-    return fired && fire_time > 0 && now - fire_time > 1000 && now - fire_time < 1500;
-}
-
-static void check_refire(flight_context_t *ctx, uint32_t now) {
-    bool w1 = refire_window_open(ctx->pyro1_fired, ctx->pyro1_fire_time, now);
-    bool w2 = refire_window_open(ctx->pyro2_fired, ctx->pyro2_fire_time, now);
-    if (!w1 && !w2)
-        return;
-    if (ctx->vertical_speed_cms >= -3000)
-        return; /* not ballistic */
-
-    hal_pyro_sample();
-    hal_continuity_t c;
-
-    if (w1) {
-        hal_pyro_get(1, &c);
-        if (!c.open) {
-            hal_pyro_fire(1);
-            ctx->pyro1_fire_time = now;
-        }
-    }
-    if (w2) {
-        hal_pyro_get(2, &c);
-        if (!c.open) {
-            hal_pyro_fire(2);
-            ctx->pyro2_fire_time = now;
-        }
-    }
-}
+/* check_refire() retired -- the bounded ladder below does this [DD-023] */
 
 /* Config parser moved to config.c — X-macro generated [CFG-TABLE-01] */
 
@@ -409,26 +394,50 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     return (alt_ok && speed_ok) ? SEVT_LAUNCH : SEVT_NONE;
 }
 
-/* [FLT-ASC-01..06, FLT-APO-01..04, FLT-RATE-02, DD-013, DD-017]
+/* [FLT-ASC-01..06, FLT-APO-01..04, FLT-RATE-02, DD-017]
  * DD-017: Arming gate — pyros arm only after max filtered speed exceeds
  *         threshold. The IIR filter (τ=500ms) attenuates measured speed
  *         by ~50% for short flights, so 10 m/s filtered ≈ 20 m/s true.
- *         Prevents false arming from barometric drift (~0 m/s filtered).
- * DD-013: Backup apogee timer — force apogee if not detected within
- *         backup_timer seconds after arming. Safety net for sensor failure. */
+ *         Prevents false arming from barometric drift (~0 m/s filtered). */
 #define ARM_SPEED_CMS 1000 /* 10 m/s filtered ≈ 20 m/s true [DD-017] */
+
+/* [FLT-MACH-01] Apogee is not declared while the rocket is fast.
+ *
+ * Only an upward rush latches the gate. Testing the magnitude instead would
+ * re-latch on the way down -- where speed climbs past the threshold again --
+ * and lock apogee detection out for the rest of the flight, which is the
+ * deadlock this gate would otherwise introduce. Descending fast is not a
+ * reason to doubt that apogee happened; it is proof that it did. */
+#define MACH_GATE_CMS 3048  /* 100 ft/s */
+#define MACH_SETTLE_MS 1000 /* slow for this long before the sensor is believed */
+
+/* The latch has to be fed from every ascent sample, not from the gate test.
+ * The gate is only consulted once the pyros are armed, and arming already
+ * requires the rocket to have slowed below 10 m/s -- so a latch that lived in
+ * here could never see a speed above the threshold, and the gate would be
+ * permanently open on exactly the flights it exists for. */
+static void mach_gate_feed(flight_context_t *ctx) {
+    if (ctx->vertical_speed_cms > MACH_GATE_CMS) {
+        ctx->mach_exceeded = true;
+        ctx->subsonic_since = 0;
+    }
+}
+
+static bool mach_gate_clear(flight_context_t *ctx, uint32_t now) {
+    if (!ctx->mach_exceeded)
+        return true; /* never went fast, so nothing to wait out */
+    if (ctx->vertical_speed_cms > MACH_GATE_CMS)
+        return false;
+    if (ctx->subsonic_since == 0)
+        ctx->subsonic_since = now;
+    return now - ctx->subsonic_since >= MACH_SETTLE_MS;
+}
 
 /* [DD-017] Arming requires confirmed motor burn: peak speed > threshold,
  * coast phase entered (speed decreasing but still positive). */
 static bool arming_gate_met(const flight_context_t *ctx) {
     return !ctx->pyros_armed && ctx->max_speed_cms >= ARM_SPEED_CMS && ctx->vertical_speed_cms < 1000 &&
            ctx->vertical_speed_cms >= 0;
-}
-
-/* [DD-013] Backup apogee timer: force apogee after configurable timeout. */
-static bool backup_apogee_expired(const flight_context_t *ctx, uint32_t now) {
-    uint32_t timer_s = ctx->config.backup_timer;
-    return timer_s > 0 && ctx->armed_time > 0 && (now - ctx->armed_time) >= timer_s * 1000;
 }
 
 static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
@@ -448,6 +457,7 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
     /* Track peak speed for arming gate [DD-017] */
     if (ctx->vertical_speed_cms > ctx->max_speed_cms)
         ctx->max_speed_cms = ctx->vertical_speed_cms;
+    mach_gate_feed(ctx);
 
     buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, altitude, ASCENT);
     ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE].under_thrust =
@@ -456,98 +466,164 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
     if (altitude > ctx->max_altitude)
         ctx->max_altitude = altitude;
     ctx->last_altitude = altitude;
-    ctx->last_sample = now;
+    /* The sample clock, not the loop clock. dt above is measured between
+     * sample timestamps, so storing `now` here made every speed wrong by
+     * however late the loop was running. */
+    ctx->last_sample = ts;
 
     if (arming_gate_met(ctx))
         return SEVT_ARMED;
 
-    if (ctx->pyros_armed && !ctx->apogee_detected) {
-        if (ctx->vertical_speed_cms <= 0)
-            return SEVT_APOGEE;
-        if (backup_apogee_expired(ctx, now))
-            return SEVT_APOGEE;
+    /* [FLT-APO-01] Apogee is the sensor saying the rocket has stopped going
+     * up, and nothing else. The backup timer that used to force it here was
+     * removed [DD-022]: a wrong timer value fires during ascent, which is
+     * worse than the sensor failure it was meant to cover. */
+    if (ctx->pyros_armed && !ctx->apogee_detected && mach_gate_clear(ctx, now) && ctx->vertical_speed_cms <= 0)
+        return SEVT_APOGEE;
+    return SEVT_NONE;
+}
+
+/* ── Descent ──────────────────────────────────────────────────────────
+ *
+ * The phase is read from the rocket, not from the firing log. The old machine
+ * left FALLING only on pyro1_fired and DROGUE_DESCENT only on pyro2_fired,
+ * which meant a channel with no continuity, a channel set to NONE, or the two
+ * firing out of order each parked the machine in a descent state for the rest
+ * of the flight -- and since LANDED was reachable only from CHUTE_DESCENT,
+ * hal_log_stop() was never called on exactly the flights whose log matters.
+ *
+ * What a working canopy looks like is a descent rate that has stopped
+ * changing. What a failed one looks like is a rate that has not. So the phase
+ * advances on a rate holding steady inside a band, and never on a command. */
+
+#define DESC_DROGUE_CMS 3500 /* at or under 35 m/s, something is slowing us */
+#define DESC_MAIN_CMS 1000   /* at or under 10 m/s, the main is out */
+
+/* The dwell is what keeps free fall from being mistaken for a canopy. A
+ * rocket in free fall gains ~11.8 m/s over this window, which breaks the
+ * tolerance at every rate a canopy could explain. The tolerance is a fraction
+ * of the rate, with a floor, because a drogue at 25 m/s breathes several m/s
+ * while a main at 5 m/s does not. */
+#define DESC_DWELL_MS 1200
+#define DESC_TOL_MIN_CMS 250
+#define DESC_TOL_FRAC 4
+#define DESC_FAIL_MS 1000 /* a rate the phase cannot explain, held this long */
+
+typedef enum { BAND_FAST = 0, BAND_DROGUE, BAND_MAIN } desc_band_t;
+
+static int32_t descent_rate(const flight_context_t *ctx) {
+    return ctx->vertical_speed_cms < 0 ? -ctx->vertical_speed_cms : ctx->vertical_speed_cms;
+}
+
+static desc_band_t descent_band(int32_t rate) {
+    if (rate <= DESC_MAIN_CMS)
+        return BAND_MAIN;
+    if (rate <= DESC_DROGUE_CMS)
+        return BAND_DROGUE;
+    return BAND_FAST;
+}
+
+/* True once the rate has stayed in one band, and near one value, for the
+ * dwell. Climbing does not count: just after apogee the rate passes through
+ * the main band on its way to ballistic, and only the stability test keeps
+ * that from reading as a deployed main. */
+static bool descent_settled(flight_context_t *ctx, uint32_t now, desc_band_t *out) {
+    int32_t v = ctx->vertical_speed_cms;
+    if (v >= 0) {
+        ctx->desc_band_since = 0;
+        return false;
     }
-    return SEVT_NONE;
+    int32_t rate = descent_rate(ctx);
+    desc_band_t b = descent_band(rate);
+    int32_t tol = rate / DESC_TOL_FRAC;
+    if (tol < DESC_TOL_MIN_CMS)
+        tol = DESC_TOL_MIN_CMS;
+    int32_t drift = v - ctx->desc_ref_cms;
+    if (drift < 0)
+        drift = -drift;
+
+    if (b != (desc_band_t)ctx->desc_band || drift > tol || ctx->desc_band_since == 0) {
+        ctx->desc_band = (uint8_t)b;
+        ctx->desc_ref_cms = v;
+        ctx->desc_band_since = now;
+        return false;
+    }
+    *out = b;
+    return now - ctx->desc_band_since >= DESC_DWELL_MS;
 }
 
-/* [FLT-APO→FALL] Free-fall phase: fires drogue (pyro1), transitions on pyro1_fired */
-static state_event_t detect_falling(flight_context_t *ctx, uint32_t now) {
-    altitude_sample_t sample;
-    if (!pp_read(&sample))
-        return SEVT_NONE;
-    int32_t altitude = sample.altitude_cm;
-    uint32_t ts = sample.timestamp_ms;
-    uint32_t dt = ts - ctx->last_sample;
-    ctx->filtered_pressure = pp_last_filtered_pa();
-
-    ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
-    if (dt > 0)
-        ctx->vertical_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
-
-    buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, altitude, FALLING);
-    try_fire_pyros(ctx, now);
-    check_pyro_fault(ctx);
-    check_post_fire_verify(ctx, now);
-    check_refire(ctx, now);
-
-    ctx->last_altitude = altitude;
-    ctx->last_sample = now;
-
-    if (ctx->pyro1_fired)
-        return SEVT_DROGUE;
-    return SEVT_NONE;
+/* A canopy that has failed shows as a rate its phase cannot explain, held
+ * long enough not to be a gust. Stability is deliberately not required: a
+ * shredded drogue is accelerating, which is the whole point. */
+static bool band_exceeded(flight_context_t *ctx, uint32_t now, int32_t ceiling) {
+    if (descent_rate(ctx) <= ceiling) {
+        ctx->desc_fail_since = 0;
+        return false;
+    }
+    if (ctx->desc_fail_since == 0) {
+        ctx->desc_fail_since = now;
+        return false;
+    }
+    return now - ctx->desc_fail_since >= DESC_FAIL_MS;
 }
 
-/* [FALL→DROGUE] Drogue descent: fires main chute (pyro2), transitions on pyro2_fired */
-static state_event_t detect_drogue_descent(flight_context_t *ctx, uint32_t now) {
-    altitude_sample_t sample;
-    if (!pp_read(&sample))
-        return SEVT_NONE;
-    int32_t altitude = sample.altitude_cm;
-    uint32_t ts = sample.timestamp_ms;
-    uint32_t dt = ts - ctx->last_sample;
-    ctx->filtered_pressure = pp_last_filtered_pa();
+/* [FLT-EMRG-01] What to do when a canopy does not answer.
+ *
+ * The drogue gets a grace period to bite, then one more attempt, then the
+ * main goes out early whatever its configured trigger said. A main opened
+ * high costs drift; a main that arrives too fast to open costs the rocket.
+ * The budget is what makes this terminate -- the retired check_refire()
+ * rewrote fire_time on every attempt and could retry for the whole descent. */
+#define EMRG_DROGUE_GRACE_MS 2000
+#define EMRG_MAX_REFIRE 1
+/* A last resort, not a deployment policy. It only shortens the grace the
+ * drogue is given; it never skips the retry and never fires over the top of a
+ * trigger the flight has not reached yet. Set high deliberately: an ordinary
+ * failed-drogue descent must reach the retry on the grace, not on this. */
+#define EMRG_MAIN_PANIC_CMS 9000 /* 90 m/s */
 
-    ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
-    if (dt > 0)
-        ctx->vertical_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
+/* canopy_working is deliberately not "settled": a rocket at terminal velocity
+ * in free fall has a perfectly steady descent rate, and that steadiness is the
+ * shredded-drogue case, not a success. Only settling inside a band a canopy
+ * could explain counts. */
+static void emergency_ladder(flight_context_t *ctx, uint32_t now, bool canopy_working) {
+    /* The ladder answers a canopy that was commanded and did not work.
+     *
+     * It deliberately has no bare descent-rate trigger. A rocket in free fall
+     * toward a trigger it has not reached yet is not failing, however fast it
+     * is going -- free fall IS fast, and a rate trigger here would fire the
+     * main over the top of any config whose drogue is set below apogee. */
+    if (canopy_working || !ctx->pyro1_fired || ctx->pyro2_fired || !ctx->pyro2_continuity_good)
+        return;
 
-    buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, altitude, DROGUE_DESCENT);
-    try_fire_pyros(ctx, now);
-    check_pyro_fault(ctx);
-    check_post_fire_verify(ctx, now);
-    check_refire(ctx, now);
+    /* Descending so fast that waiting out the rest of the grace cannot help. */
+    bool panic = ctx->vertical_speed_cms < 0 && descent_rate(ctx) >= EMRG_MAIN_PANIC_CMS;
+    if (!panic && now - ctx->pyro1_fire_time < EMRG_DROGUE_GRACE_MS)
+        return; /* the canopy is still being given its chance to bite */
 
-    ctx->last_altitude = altitude;
-    ctx->last_sample = now;
+    /* Retry only where a retry can work: pyro1_verify_fail means the channel
+     * never opened, so the charge did not light. A channel that opened fired
+     * its charge and the canopy failed mechanically -- a second attempt on an
+     * empty channel just spends altitude the main still needs. That flag was
+     * previously collected and used for nothing but suppressing its own
+     * re-check. */
+    if (ctx->pyro1_verify_fail && ctx->pyro1_refires < EMRG_MAX_REFIRE) {
+        if (fire_channel(ctx, 1, now))
+            ctx->pyro1_refires++;
+        return;
+    }
 
-    if (ctx->pyro2_fired)
-        return SEVT_CHUTE;
-    return SEVT_NONE;
+    /* Out of drogue options and still not slowing: the main goes out early. */
+    if (fire_channel(ctx, 2, now))
+        ctx->main_forced = true;
 }
 
-/* [DROGUE→CHUTE] Main-chute descent: landing detection only, no more pyro firing.
- * DD-015: Landing timeout — if descent has lasted landing_timeout seconds
- * and speed is below 5 m/s, force landing regardless of AGL altitude.
- * Handles landing at elevations above the launch pad (mesa, hillside). */
+/* [DD-015] Landing, checked in every descent state rather than only under the
+ * main. A flight whose drogue never opened still lands, and the log has to be
+ * closed on that flight too. */
 #define LANDING_SPEED_CMS 500 /* 5 m/s — slow enough to be "landed" */
 
-static state_event_t detect_chute_descent(flight_context_t *ctx, uint32_t now) {
-    altitude_sample_t sample;
-    if (!pp_read(&sample))
-        return SEVT_NONE;
-    int32_t altitude = sample.altitude_cm;
-    uint32_t ts = sample.timestamp_ms;
-    uint32_t dt = ts - ctx->last_sample;
-    ctx->filtered_pressure = pp_last_filtered_pa();
-
-    ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
-    if (dt > 0)
-        ctx->vertical_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
-
-    buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, altitude, CHUTE_DESCENT);
-
-    /* Normal landing: stable altitude + low speed + near ground */
+static bool landing_detected(flight_context_t *ctx, uint32_t now, int32_t altitude) {
     bool altitude_stable = abs(altitude - ctx->last_altitude) < 100;
     bool speed_low = abs(ctx->vertical_speed_cms) < 200;
     bool near_ground = altitude < 3000;
@@ -555,29 +631,117 @@ static state_event_t detect_chute_descent(flight_context_t *ctx, uint32_t now) {
     if (altitude_stable && speed_low && near_ground) {
         if (ctx->landing_stable_since == 0)
             ctx->landing_stable_since = now;
-        if (now - ctx->landing_stable_since >= 1000) {
-            ctx->last_altitude = altitude;
-            ctx->last_sample = now;
-            return SEVT_LANDING;
-        }
+        if (now - ctx->landing_stable_since >= 1000)
+            return true;
     } else {
         ctx->landing_stable_since = 0;
     }
 
-    /* [DD-015] Landing timeout: force landing if descent > N seconds
-     * and speed is low enough to be on the ground. Handles elevation
-     * mismatch (landed at higher altitude than launch site). */
+    /* Force landing if descent has run long and the rocket is slow: handles
+     * landing above the pad elevation, where AGL never returns near zero. */
     uint32_t timeout_s = ctx->config.landing_timeout;
-    if (timeout_s > 0 && ctx->descent_start_time > 0 && (now - ctx->descent_start_time) >= timeout_s * 1000 &&
-        abs(ctx->vertical_speed_cms) < LANDING_SPEED_CMS) {
-        ctx->last_altitude = altitude;
-        ctx->last_sample = now;
-        return SEVT_LANDING;
-    }
+    return timeout_s > 0 && ctx->descent_start_time > 0 && (now - ctx->descent_start_time) >= timeout_s * 1000 &&
+           abs(ctx->vertical_speed_cms) < LANDING_SPEED_CMS;
+}
+
+/* Every descent state reads the same sample and derives the same speed; only
+ * the verdict differs. dt is taken between sample timestamps -- mixing the
+ * sample clock with the loop clock, as this did, made the speed wrong by
+ * whatever the loop was running late by. last_altitude is left for the caller
+ * because landing detection needs the previous value. */
+static bool descent_sample(flight_context_t *ctx, uint32_t now, flight_state_t st, int32_t *alt_out) {
+    altitude_sample_t sample;
+    if (!pp_read(&sample))
+        return false;
+    uint32_t dt = sample.timestamp_ms - ctx->last_sample;
+    ctx->filtered_pressure = pp_last_filtered_pa();
+    ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
+    if (dt > 0)
+        ctx->vertical_speed_cms = (sample.altitude_cm - ctx->last_altitude) * 1000 / (int32_t)dt;
+    buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, sample.altitude_cm, st);
+    ctx->last_sample = sample.timestamp_ms;
+    *alt_out = sample.altitude_cm;
+    return true;
+}
+
+/* Free fall: no canopy is working yet. Both channels may still fire here --
+ * a low flight puts drogue and main out on the same event. */
+static state_event_t detect_falling(flight_context_t *ctx, uint32_t now) {
+    int32_t altitude;
+    if (!descent_sample(ctx, now, FALLING, &altitude))
+        return SEVT_NONE;
+
+    desc_band_t band = BAND_FAST;
+    bool settled = descent_settled(ctx, now, &band);
+
+    try_fire_pyros(ctx, now);
+    check_pyro_fault(ctx);
+    check_post_fire_verify(ctx, now);
+    emergency_ladder(ctx, now, settled && band != BAND_FAST);
+
+    state_event_t evt = SEVT_NONE;
+    if (landing_detected(ctx, now, altitude))
+        evt = SEVT_LANDING;
+    else if (settled && band == BAND_MAIN)
+        evt = SEVT_CHUTE;
+    else if (settled && band == BAND_DROGUE)
+        evt = SEVT_DROGUE;
 
     ctx->last_altitude = altitude;
-    ctx->last_sample = now;
-    return SEVT_NONE;
+    return evt;
+}
+
+/* Under drogue. The main may still be pending, and the drogue may still fail:
+ * a rate above the drogue band, held, sends the machine back to free fall
+ * where the ladder can escalate. */
+static state_event_t detect_drogue_descent(flight_context_t *ctx, uint32_t now) {
+    int32_t altitude;
+    if (!descent_sample(ctx, now, DROGUE_DESCENT, &altitude))
+        return SEVT_NONE;
+
+    desc_band_t band = BAND_FAST;
+    bool settled = descent_settled(ctx, now, &band);
+
+    try_fire_pyros(ctx, now);
+    check_pyro_fault(ctx);
+    check_post_fire_verify(ctx, now);
+    emergency_ladder(ctx, now, settled && band != BAND_FAST);
+
+    state_event_t evt = SEVT_NONE;
+    if (landing_detected(ctx, now, altitude))
+        evt = SEVT_LANDING;
+    else if (settled && band == BAND_MAIN)
+        evt = SEVT_CHUTE;
+    else if (band_exceeded(ctx, now, DESC_DROGUE_CMS))
+        evt = SEVT_FREEFALL;
+
+    ctx->last_altitude = altitude;
+    return evt;
+}
+
+/* Under the main.
+ *
+ * try_fire_pyros() runs here too, and must. The phase is a diagnosis, not a
+ * licence to cancel the flight plan: a rocket already descending slowly still
+ * gets the deployment its config asked for. Leaving it out meant a flight
+ * whose descent merely looked main-like -- a big drogue, a light airframe --
+ * silently skipped a configured main, which is the firmware overriding the
+ * operator on the strength of an inference. */
+static state_event_t detect_chute_descent(flight_context_t *ctx, uint32_t now) {
+    int32_t altitude;
+    if (!descent_sample(ctx, now, CHUTE_DESCENT, &altitude))
+        return SEVT_NONE;
+
+    desc_band_t band = BAND_FAST;
+    bool settled = descent_settled(ctx, now, &band);
+    try_fire_pyros(ctx, now);
+    check_pyro_fault(ctx);
+    check_post_fire_verify(ctx, now);
+    emergency_ladder(ctx, now, settled && band != BAND_FAST);
+
+    state_event_t evt = landing_detected(ctx, now, altitude) ? SEVT_LANDING : SEVT_NONE;
+    ctx->last_altitude = altitude;
+    return evt;
 }
 
 /* [FLT-LAND-06, FLT-RATE-04] */
@@ -611,6 +775,7 @@ static void action_fault(flight_context_t *ctx, uint32_t now) {
 }
 
 static void action_cal_init(flight_context_t *ctx, uint32_t now) {
+    (void)ctx;
     (void)now;
     pp_start_cal(); /* pressure_processing layer handles calibration */
 }
@@ -663,10 +828,10 @@ static void action_launch(flight_context_t *ctx, uint32_t now) {
     buf_tag_event(ctx, EVT_LAUNCH); /* tags ring buffer for flight_save_csv() */
 }
 
-/* [FLT-ASC-05, DD-017] Record armed_time for backup timer */
+/* [FLT-ASC-05, DD-017] */
 static void action_armed(flight_context_t *ctx, uint32_t now) {
     ctx->pyros_armed = true;
-    ctx->armed_time = now; /* [DD-013] start backup timer */
+    ctx->armed_time = now;
     buf_tag_event(ctx, EVT_ARMED);
 }
 
@@ -721,7 +886,19 @@ static const transition_t transitions[] = {
     {ASCENT, SEVT_ARMED, ASCENT, action_armed},
     {ASCENT, SEVT_APOGEE, FALLING, action_apogee},
     {FALLING, SEVT_DROGUE, DROGUE_DESCENT, NULL},
+    /* A low flight puts both canopies out on one event and never shows a
+     * drogue-rate phase, so free fall must be able to reach the main. */
+    {FALLING, SEVT_CHUTE, CHUTE_DESCENT, NULL},
     {DROGUE_DESCENT, SEVT_CHUTE, CHUTE_DESCENT, NULL},
+    /* A drogue that shreds sends the machine back to free fall, where the
+     * ladder can escalate. Without this the phase would be a one-way ratchet
+     * that claimed a canopy was working long after it had gone. */
+    {DROGUE_DESCENT, SEVT_FREEFALL, FALLING, NULL},
+    /* Landing from every descent state. When only CHUTE_DESCENT could reach
+     * LANDED, a flight that never deployed anything never called
+     * hal_log_stop() and lost the record of why. */
+    {FALLING, SEVT_LANDING, LANDED, action_landing},
+    {DROGUE_DESCENT, SEVT_LANDING, LANDED, action_landing},
     {CHUTE_DESCENT, SEVT_LANDING, LANDED, action_landing},
 };
 

@@ -63,8 +63,6 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-APO-02**: The system shall transition from ASCENT to DESCENT upon apogee detection. ← FLT-PHASE-02
 - **FLT-APO-03**: The system shall log an APOGEE event at the transition. ← FLT-PHASE-02
 - **FLT-APO-04**: The system shall not detect apogee before pyros are armed. ← FLT-PHASE-02, PYR-SAFE-04
-- **FLT-APO-05**: The system shall force apogee detection if no apogee is detected within a configurable time (default 30s, range 10-120s) after pyros are armed. ← FLT-PHASE-02
-- **FLT-APO-06**: The backup apogee timer shall only start after the system has detected launch AND armed pyros. ← FLT-APO-05, PYR-SAFE-04
 
 #### Pyro Arming
 - **FLT-ASC-01**: The system shall track maximum altitude during ascent. ← FLT-PHASE-02
@@ -85,7 +83,13 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-LAND-07**: The system shall detect landing if descent has lasted 60 seconds and vertical speed is below 5 m/s, regardless of AGL altitude. ← FLT-PHASE-03
 
 #### Pyro Re-fire
-- **PYR-REFIRE-01**: The system shall re-fire a channel if descent speed exceeds 30 m/s between 1 and 1.5 seconds after initial fire and continuity is still present. ← SYS-DEPLOY-01
+- **PYR-REFIRE-01**: The system shall re-fire the drogue channel once, 2 seconds after the initial fire, if the descent rate has not steadied under a canopy and the channel's post-fire continuity check shows it never opened. The retry is limited to one attempt per flight. ← SYS-DEPLOY-01
+- **PYR-REFIRE-02**: The system shall not re-fire a channel whose post-fire continuity check shows it opened. An opened channel fired its charge, so the canopy failed mechanically and a second attempt cannot help. ← SYS-DEPLOY-01
+- **FLT-EMRG-01**: When the drogue has been commanded and the descent rate has not steadied under a canopy, the system shall deploy the main early, overriding its configured trigger. ← SYS-DEPLOY-01
+- **FLT-EMRG-02**: The emergency ladder shall not act on a descent rate alone. A rocket in free fall toward a trigger it has not yet reached is following the flight plan, however fast it is descending. ← SYS-DEPLOY-01
+- **FLT-MACH-01**: The system shall not declare apogee while ascending faster than 100 ft/s, nor until it has been slower than that for 1 second. A flight that never exceeds 100 ft/s shall not be gated. ← FLT-PHASE-02
+- **FLT-DESC-01**: The system shall determine the descent phase from the measured descent rate holding steady, not from which channel has been commanded. ← FLT-PHASE-02
+- **FLT-DESC-02**: The system shall detect landing in every descent phase, so that a flight which deployed nothing still closes its flight log. ← FLT-PHASE-02
 
 #### Altitude Clamping
 - **PYR-ALT-01**: The system shall clamp altitude-based pyro settings to the barometric sensor ceiling. ← PYR-MODE-02, PYR-MODE-03, PYR-MODE-04

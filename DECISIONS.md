@@ -217,3 +217,84 @@ rationale and the alternatives considered.
   `test_PYR_DEPLOY_01_low_flight_fires_both` and asserts what the requirement
   actually says: both deploy, close enough together to be one event.
 
+### DD-022: The Backup Apogee Timer Is Removed
+- **Decision:** Delete `backup_apogee_expired()`, the `backup_timer` config
+  field, and requirements FLT-APO-05/06. DD-013 is superseded.
+- **Why:** It only helps when the timer value is right, and a wrong value fires
+  during ascent. A backup that can destroy the rocket it is backing up is worse
+  than no backup.
+- **It could not help in the case it was written for anyway.** It was keyed on
+  `armed_time` and evaluated only inside `detect_ascent`, so a board whose
+  sensor failed before arming never ran it -- and a failed sensor is precisely
+  why a board would not arm.
+- **Nothing replaces it, deliberately.** There is now no timeout on ASCENT: if
+  the sensor dies mid-flight, the machine stays there. That costs the log, not
+  the rocket. Any replacement would need the sensor to notice that the sensor
+  has failed.
+- **`armed_time` stays.** It is the only record that arming preceded apogee,
+  which `test_integration.c` asserts as an ordering guarantee.
+- **`max_coast_s` remains dead.** It is parsed, stored and read by nothing. It
+  was not pressed into service as a substitute timeout here, because that would
+  reintroduce exactly what this decision removes.
+
+### DD-023: Descent Phase Comes From The Rocket, Not The Firing Log
+- **Decision:** `FALLING` / `DROGUE_DESCENT` / `CHUTE_DESCENT` advance on the
+  measured descent rate holding steady, never on which channel was commanded.
+  Landing is detected in all three. The state numbers are unchanged, so old
+  flight logs still read correctly.
+- **The bug this kills:** `detect_falling` exited only on `pyro1_fired` and
+  `detect_drogue_descent` only on `pyro2_fired`. A channel with no continuity,
+  a channel set to `NONE`, or the two firing out of order each parked the
+  machine for the rest of the flight, and since `LANDED` was reachable only
+  from `CHUTE_DESCENT`, `hal_log_stop()` was never called. **Observed live on
+  MK1C**, where it also blocked its own OTA.
+- **Why a rate and a dwell:** a working canopy is a descent rate that has
+  stopped changing; a failed one is a rate that has not. Free fall gains about
+  11.8 m/s over the 1.2 s dwell, which breaks the stability tolerance at every
+  rate a canopy could explain -- that is what stops the descent through the
+  main band just after apogee from reading as a deployed main.
+- **Settling in the fast band is not success.** A rocket at terminal velocity
+  has a perfectly steady rate. An earlier draft treated "settled" as "a canopy
+  is working" and so disabled the emergency ladder in exactly the shredded-
+  drogue case it exists for. The ladder is keyed on the band, not on steadiness.
+- **A phase never cancels a configured deployment.** `try_fire_pyros()` runs in
+  all three descent states. Leaving it out of `CHUTE_DESCENT` meant a rocket
+  whose descent merely *looked* main-like -- a big drogue, a light airframe --
+  silently skipped the main its config asked for. That is the firmware
+  overriding the operator on the strength of an inference.
+
+### DD-024: The Emergency Ladder Has No Bare Descent-Rate Trigger
+- **Decision:** The ladder acts only when the drogue has been commanded and the
+  rocket has not steadied under a canopy. Free fall alone never triggers it.
+- **Why:** a drogue configured below apogee means a deliberate free fall down
+  to it, and free fall is fast. A rate trigger would fire the main over the top
+  of any such config. An earlier draft did exactly that and broke
+  `test_PYR_MODE_02_agl_agl`; `test_FLT_EMRG_02` now guards against its return.
+- **The rungs:** 2 s grace, then one retry, then the main early. The retry is
+  conditioned on `pyro1_verify_fail` -- the channel never opened, so the charge
+  did not light, which is the single failure a second attempt can fix. A
+  channel that opened fired its charge and the canopy failed mechanically;
+  re-firing an empty channel spends altitude the main still needs. That flag
+  had previously been collected and used for nothing but suppressing its own
+  re-check.
+- **Above 90 m/s the grace is skipped**, since waiting cannot help from there.
+  It is set high on purpose: an ordinary failed-drogue descent must reach the
+  retry on the grace, not on this.
+
+### DD-025: The Mach Gate Latches On Upward Speed Only
+- **Decision:** Apogee is not declared while ascending faster than 100 ft/s,
+  nor until the rocket has been slower than that for 1 s. A flight that never
+  exceeds it is never gated.
+- **Signed, not magnitude.** Testing the magnitude would re-latch on the way
+  down, where the rate climbs past the threshold again, and lock apogee
+  detection out for the rest of the flight -- a new deadlock in place of the
+  one being fixed. Descending fast is not a reason to doubt that apogee
+  happened; it is proof that it did.
+- **The latch is fed from every ascent sample, not from the gate test.** The
+  gate is consulted only once the pyros are armed, and arming already requires
+  the rocket to have slowed below 10 m/s. A latch living inside the gate could
+  never see a speed above the threshold, so the gate was permanently open on
+  exactly the flights it exists for. This was caught by negative-testing --
+  breaking the gate deliberately changed no test result, which is what exposed
+  that it was never engaging.
+

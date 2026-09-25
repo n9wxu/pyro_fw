@@ -58,7 +58,13 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-LAND-04 | Transition to LANDED | Integration: test_FLT_LAND_04_duration | ✅ |
 | FLT-LAND-05 | Log LANDING event | Integration: test_DAT_04_events | ✅ |
 | FLT-LAND-06 | Stay in LANDED | Integration: state remains LANDED after detection | ✅ |
-| PYR-REFIRE-01 | Re-fire if ballistic | Closed-loop: test_PYR_REFIRE_01_refire_ballistic | ✅ |
+| PYR-REFIRE-01 | One drogue retry at 2 s, only if unopened | Closed-loop: test_PYR_REFIRE_01_refire_ballistic | ✅ |
+| PYR-REFIRE-02 | No retry on an opened channel | Closed-loop: test_PYR_REFIRE_02_no_retry_when_opened | ✅ |
+| FLT-EMRG-01 | Main early when the drogue fails | Closed-loop: test_FLT_EMRG_01_shredded_drogue_fires_main | ✅ |
+| FLT-EMRG-02 | No bare descent-rate trigger | Closed-loop: test_FLT_EMRG_02_freefall_to_trigger_not_overridden | ✅ |
+| FLT-MACH-01 | No apogee above 100 ft/s | Closed-loop: test_FLT_MACH_01_supersonic_apogee_gated | ✅ |
+| FLT-DESC-01 | Phase from rate, not from command | Closed-loop: test_FLT_DESC_01_phase_without_pyros | ✅ |
+| FLT-DESC-02 | Landing from every descent phase | Closed-loop: test_FLT_DESC_02_ballistic_reaches_landed | ✅ |
 | PYR-ALT-01 | Clamp altitude settings | Closed-loop: Karman suite (AGL > 8000m clamped, pyro still fires) | ✅ |
 | PYR-ALT-02 | Warning beep for range | Integration: test_PYR_ALT_02_cfg_range_beep | ✅ |
 | FLT-RATE-01..04 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds) | ⚠️ |

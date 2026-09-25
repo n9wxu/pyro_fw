@@ -345,7 +345,6 @@ void test_config_worst_case_fits_the_budget(void) {
     cfg.telem_format = 255;
     cfg.telem_rate_hz = 255;
     cfg.log_rate_hz = 255;
-    cfg.backup_timer = 255;
     cfg.landing_timeout = 255;
     cfg.lua_baud = 65535;
     cfg.lua_pixels = 65535;

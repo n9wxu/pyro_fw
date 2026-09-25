@@ -49,8 +49,12 @@ typedef enum {
     SEVT_LAUNCH,
     SEVT_ARMED,
     SEVT_APOGEE,
-    SEVT_DROGUE, /* pyro1 (drogue) fired — transition FALLING→DROGUE_DESCENT */
-    SEVT_CHUTE,  /* pyro2 (main) fired — transition DROGUE_DESCENT→CHUTE_DESCENT */
+    /* The descent events name what the rocket is DOING, not which pyro was
+     * commanded. A pyro that fired into a shredded canopy must not advance
+     * the machine, and a canopy that opens late must not leave it behind. */
+    SEVT_DROGUE,   /* descent has steadied at a drogue-like rate */
+    SEVT_CHUTE,    /* descent has steadied at a main-like rate */
+    SEVT_FREEFALL, /* a canopy that was working has stopped working */
     SEVT_LANDING,
     SEVT_FAULT, /* a power-up test failed; nothing recovers from this */
 } state_event_t;
@@ -153,9 +157,11 @@ typedef struct flight_context_t {
     bool buzzer_started;
     bool landed_beep_started;
     bool csv_saved;
-    // Safety features [DD-013, DD-016, DD-017]
-    int32_t max_speed_cms;       // peak speed during ASCENT (for arming gate)
-    uint32_t armed_time;         // when pyros were armed (for backup timer)
+    // Safety features [DD-016, DD-017]
+    int32_t max_speed_cms; // peak speed during ASCENT (for arming gate)
+    /* Kept after the backup timer was removed [DD-022]: it is the only record
+     * that arming preceded apogee, which is a real ordering guarantee. */
+    uint32_t armed_time;
     uint32_t descent_start_time; // when DESCENT started (for landing timeout)
     int32_t pad_speed_cms;       // vertical speed during PAD_IDLE (for launch confirm)
     int32_t last_raw_pressure;   // raw sensor Pa before IIR filter (for debug)
@@ -176,6 +182,31 @@ typedef struct flight_context_t {
      * /api/status -- which is read on a screen, where detail helps and
      * nobody has to count beeps in the wind. */
     uint16_t diag; /* DIAG_* bits */
+
+    /* ── Mach gate [FLT-MACH-01] ──────────────────────────────────
+     * The barometric sensor cannot be believed through the transonic
+     * region, so apogee is not declared until the rocket has been slow
+     * for a while. Only a fast ASCENT arms this; a flight that never
+     * gets there is never gated, which is most of them. */
+    bool mach_exceeded;
+    uint32_t subsonic_since;
+
+    /* ── Descent phase [FLT-DESC-01] ──────────────────────────────
+     * The phase is read from the descent rate holding steady, because a
+     * steady rate is what a working canopy looks like and an accelerating
+     * one is what a failed canopy looks like. desc_ref_cms is the rate
+     * when the current dwell window opened. */
+    uint8_t desc_band;
+    uint32_t desc_band_since;
+    int32_t desc_ref_cms;
+    uint32_t desc_fail_since;
+
+    /* ── Emergency deploy [FLT-EMRG-01] ───────────────────────────
+     * The retry budget is what makes the ladder terminate; check_refire
+     * used to rewrite fire_time and could retry for the whole descent. */
+    uint8_t pyro1_refires;
+    uint8_t pyro2_refires;
+    bool main_forced; /* the ladder overrode pyro2's configured trigger */
     // Ground test state machine [GND-TEST-01..04, DD-011]
     ground_test_ctx_t gt;
 } flight_context_t;

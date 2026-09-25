@@ -408,55 +408,63 @@ void test_FLT_APO_01_detects_apogee(void) {
 
 /* ── FALLING / DROGUE / CHUTE tests ──────────────────────────────── */
 
-/* Verify pyro1 fire → FALLING→DROGUE_DESCENT transition */
-void test_FLT_DROGUE_01_transitions_on_pyro1_fire(void) {
+/* [FLT-DESC-01] The descent phase comes from the rate, so these two can no
+ * longer be single-step tests: a phase needs its dwell. Feeding a steady rate
+ * is the point -- under the old contract merely setting pyro1_fired advanced
+ * the machine, which is what let a commanded-but-dead canopy look deployed. */
+#define PA_PER_CM 0.12f
+
+static void descend_steady(flight_context_t *ctx, int32_t start_cm, int32_t rate_cms, uint32_t ms) {
+    for (uint32_t t = 0; t <= ms; t += 20) {
+        int32_t alt_cm = start_cm - (int32_t)((int64_t)rate_cms * (int64_t)t / 1000);
+        mock_pressure.pressure_pa = 101325.0f - (float)alt_cm * PA_PER_CM;
+        mock_time_ms += 20;
+        ctx->current_state = step(ctx, mock_time_ms);
+    }
+}
+
+/* A steady 20 m/s is a drogue, and says so without any pyro having fired. */
+void test_FLT_DESC_03_drogue_phase_from_rate(void) {
     flight_context_t ctx = {0};
     ctx.current_state = FALLING;
     ctx.ground_pressure = 101325;
     ctx.filter_initialized = true;
     ctx.apogee_detected = true;
-    ctx.pyro1_continuity_good = true;
+    ctx.config.landing_timeout = 0; /* under test here: phase, not landing */
     pp_test_prime(101325);
     ctx.filtered_pressure = 101325;
-    ctx.last_altitude = 5000;
-    ctx.vertical_speed_cms = -500;
+    ctx.last_altitude = 50000;
     ctx.launch_time = 0;
     ctx.last_sample = 0;
+    mock_time_ms = 0;
 
-    /* pyro1 already fired */
-    ctx.pyro1_fired = true;
+    descend_steady(&ctx, 50000, 2000, 4000);
 
-    mock_pressure.pressure_pa = 101325.0f - 600.0f; /* ~5000 cm */
-    mock_time_ms = 100;
-    ctx.current_state = step(&ctx, mock_time_ms);
-
-    TEST_ASSERT_EQUAL(DROGUE_DESCENT, ctx.current_state);
+    TEST_ASSERT_EQUAL_MESSAGE(DROGUE_DESCENT, ctx.current_state,
+                              "a steady 20 m/s descent is a drogue, whatever the firing log says");
+    TEST_ASSERT_FALSE_MESSAGE(ctx.pyro1_fired, "the phase must not depend on a pyro having fired");
 }
 
-/* Verify pyro2 fire → DROGUE_DESCENT→CHUTE_DESCENT transition */
-void test_FLT_CHUTE_01_transitions_on_pyro2_fire(void) {
+/* And a steady 5 m/s is the main. */
+void test_FLT_DESC_04_chute_phase_from_rate(void) {
     flight_context_t ctx = {0};
     ctx.current_state = DROGUE_DESCENT;
     ctx.ground_pressure = 101325;
     ctx.filter_initialized = true;
     ctx.apogee_detected = true;
-    ctx.pyro1_fired = true;
-    ctx.pyro2_continuity_good = true;
+    ctx.config.landing_timeout = 0;
     pp_test_prime(101325);
     ctx.filtered_pressure = 101325;
-    ctx.last_altitude = 3000;
-    ctx.vertical_speed_cms = -300;
+    ctx.last_altitude = 30000;
     ctx.launch_time = 0;
     ctx.last_sample = 0;
+    mock_time_ms = 0;
 
-    /* pyro2 already fired */
-    ctx.pyro2_fired = true;
+    descend_steady(&ctx, 30000, 500, 4000);
 
-    mock_pressure.pressure_pa = 101325.0f - 360.0f; /* ~3000 cm */
-    mock_time_ms = 100;
-    ctx.current_state = step(&ctx, mock_time_ms);
-
-    TEST_ASSERT_EQUAL(CHUTE_DESCENT, ctx.current_state);
+    TEST_ASSERT_EQUAL_MESSAGE(CHUTE_DESCENT, ctx.current_state,
+                              "a steady 5 m/s descent is the main, whatever the firing log says");
+    TEST_ASSERT_FALSE_MESSAGE(ctx.pyro2_fired, "the phase must not depend on a pyro having fired");
 }
 
 void test_FLT_LAND_01_detects_landing(void) {
@@ -964,8 +972,8 @@ int main(void) {
     RUN_TEST(test_FLT_APO_01_detects_apogee);
 
     /* FALLING / DROGUE / CHUTE */
-    RUN_TEST(test_FLT_DROGUE_01_transitions_on_pyro1_fire);
-    RUN_TEST(test_FLT_CHUTE_01_transitions_on_pyro2_fire);
+    RUN_TEST(test_FLT_DESC_03_drogue_phase_from_rate);
+    RUN_TEST(test_FLT_DESC_04_chute_phase_from_rate);
     RUN_TEST(test_FLT_LAND_01_detects_landing);
 
     /* LANDED */

@@ -1,11 +1,21 @@
-# The flight state machine, as it is
+# The flight state machine
 
-This is the machine in `src/flight_states.c` today, written down so it can be
-reviewed before it is changed. It is not a description of what the machine
-should do.
+This is the machine in `src/flight_states.c`. It was first written down as it
+stood, so it could be reviewed before being changed; the descent half has since
+been rebuilt and this document now describes what is there.
 
 `SPECIFICATION.md` documents four states. The code has eleven. That gap is why
 this document exists.
+
+**What changed in the descent rebuild.** The phase used to advance on *which
+pyro had been commanded*: `FALLING` exited only on `pyro1_fired`, and
+`DROGUE_DESCENT` only on `pyro2_fired`. A channel with no continuity, a channel
+set to `NONE`, or the two firing out of order each parked the machine in a
+descent state for the rest of the flight -- and because `LANDED` was reachable
+only from `CHUTE_DESCENT`, `hal_log_stop()` was never called on exactly the
+flights whose log mattered most. The phase now comes from the measured descent
+rate holding steady, landing is detected in every descent state, and an
+emergency ladder answers a canopy that was commanded and did not work.
 
 Read with `src/flight_states.h` (the enum and the context) and
 `src/flight_states.c` (the detectors, the transition table and the actions)
@@ -54,30 +64,38 @@ stateDiagram-v2
     ASCENT --> ASCENT: SEVT_ARMED<br/>self-loop, arms the pyros
     ASCENT --> FALLING: SEVT_APOGEE<br/>armed AND speed <= 0
 
-    FALLING --> DROGUE_DESCENT: SEVT_DROGUE<br/>pyro1_fired
-    DROGUE_DESCENT --> CHUTE_DESCENT: SEVT_CHUTE<br/>pyro2_fired
+    FALLING --> DROGUE_DESCENT: SEVT_DROGUE<br/>rate steady in 10-35 m/s for 1.2 s
+    FALLING --> CHUTE_DESCENT: SEVT_CHUTE<br/>rate steady at <= 10 m/s for 1.2 s
+    DROGUE_DESCENT --> CHUTE_DESCENT: SEVT_CHUTE<br/>rate steady at <= 10 m/s for 1.2 s
+    DROGUE_DESCENT --> FALLING: SEVT_FREEFALL<br/>rate above 35 m/s held 1 s
+
+    FALLING --> LANDED: SEVT_LANDING<br/>stable 1 s, or descent timeout
+    DROGUE_DESCENT --> LANDED: SEVT_LANDING<br/>stable 1 s, or descent timeout
     CHUTE_DESCENT --> LANDED: SEVT_LANDING<br/>stable 1 s, or descent timeout
 
     FAULT --> FAULT: terminal
     LANDED --> LANDED: terminal
 
-    note right of FALLING
-        DEAD END: exits only on pyro1_fired.
-        Observed live on MK1C.
-    end note
     note right of ASCENT
         DEAD END: no exit unless armed.
+        Apogee is also gated above 100 ft/s.
+    end note
+    note right of DROGUE_DESCENT
+        The one back edge: a drogue that
+        shreds returns to free fall, where
+        the ladder can escalate.
     end note
 ```
 
-Every edge is strictly forward. **No state has a back edge.** Nothing leaves
-`LANDED` or `FAULT`.
+Every descent state can reach `LANDED`, so a flight that deployed nothing still
+closes its log. `DROGUE_DESCENT --> FALLING` is the only back edge in the
+machine. Nothing leaves `LANDED` or `FAULT`.
 
 ---
 
 ## Transition table
 
-Complete. `transitions[]` has twelve rows and this is all of them.
+Complete. `transitions[]` has seventeen rows and this is all of them.
 
 | From | Event | To | Action | Condition |
 |---|---|---|---|---|
@@ -89,13 +107,80 @@ Complete. `transitions[]` has twelve rows and this is all of them.
 | BOOT_CALIBRATE | SEVT_FAULT | FAULT | `action_fault` | `now - boot_timer >= 10000` |
 | PAD_IDLE | SEVT_LAUNCH | ASCENT | `action_launch` | `alt > 1000 cm && pad_speed > 500 cm/s` |
 | ASCENT | SEVT_ARMED | **ASCENT** | `action_armed` | see arming gate below |
-| ASCENT | SEVT_APOGEE | FALLING | `action_apogee` | `pyros_armed && speed <= 0` |
-| FALLING | SEVT_DROGUE | DROGUE_DESCENT | — | `pyro1_fired` |
-| DROGUE_DESCENT | SEVT_CHUTE | CHUTE_DESCENT | — | `pyro2_fired` |
+| ASCENT | SEVT_APOGEE | FALLING | `action_apogee` | `pyros_armed && mach gate clear && speed <= 0` |
+| FALLING | SEVT_DROGUE | DROGUE_DESCENT | — | rate settled in the drogue band |
+| FALLING | SEVT_CHUTE | CHUTE_DESCENT | — | rate settled in the main band |
+| DROGUE_DESCENT | SEVT_CHUTE | CHUTE_DESCENT | — | rate settled in the main band |
+| DROGUE_DESCENT | SEVT_FREEFALL | FALLING | — | rate above the drogue band, held 1 s |
+| FALLING | SEVT_LANDING | LANDED | `action_landing` | stable 1 s, or DD-015 timeout |
+| DROGUE_DESCENT | SEVT_LANDING | LANDED | `action_landing` | stable 1 s, or DD-015 timeout |
 | CHUTE_DESCENT | SEVT_LANDING | LANDED | `action_landing` | stable 1 s, or DD-015 timeout |
 
 Events declared and **never emitted**: none. Events emitted with **no matching
 row**: none. The table is complete with respect to the detectors.
+
+---
+
+## How a descent phase is decided
+
+A working canopy is a descent rate that has stopped changing; a failed one is a
+rate that has not. So the phase is a band plus a dwell, and never a command.
+
+| | Band | Meaning |
+|---|---|---|
+| `BAND_MAIN` | <= 10 m/s | something big is out |
+| `BAND_DROGUE` | 10-35 m/s | something is slowing the rocket |
+| `BAND_FAST` | > 35 m/s | nothing is |
+
+A band counts only once the rate has stayed inside it, and within a tolerance
+of one value, for 1.2 s. The tolerance is a quarter of the rate with a floor of
+2.5 m/s, because a drogue at 25 m/s breathes several m/s while a main at 5 m/s
+does not. Free fall gains about 11.8 m/s over the dwell, which breaks that
+tolerance at every rate a canopy could explain -- that is what stops the
+descent through the main band just after apogee from reading as a deployed
+main.
+
+Settling in `BAND_FAST` is **not** success. A rocket at terminal velocity has a
+perfectly steady rate, and that steadiness is the shredded-drogue case.
+
+## The emergency ladder
+
+Runs in every descent state. It answers a canopy that was **commanded and did
+not work**, and deliberately has no bare descent-rate trigger: a rocket in free
+fall toward a trigger it has not reached yet is following the flight plan,
+however fast it is going.
+
+1. Nothing happens unless `pyro1_fired` and the rate has not settled under a
+   canopy.
+2. The drogue gets 2 s to bite.
+3. One retry, and only if `pyro1_verify_fail` says the channel never opened --
+   that means the charge did not light, the single failure a second attempt can
+   fix. A channel that opened fired its charge, so the canopy failed
+   mechanically and re-firing an empty channel just spends altitude.
+4. Otherwise the main goes out early, overriding its configured trigger.
+
+Above 90 m/s the grace is skipped, since waiting cannot help from there.
+
+`try_fire_pyros()` still runs in all three descent states. The phase is a
+diagnosis, not a licence to cancel the flight plan: a rocket already descending
+slowly still gets the deployment its config asked for.
+
+## The mach gate
+
+Apogee is not declared while the rocket is ascending faster than 100 ft/s, nor
+until it has been slower than that for 1 s. A flight that never exceeds it is
+never gated, which is most of them.
+
+Only an *upward* rush latches the gate. Testing the magnitude would re-latch on
+the way down, where the rate climbs past the threshold again, and lock apogee
+detection out for the rest of the flight. Descending fast is not a reason to
+doubt that apogee happened; it is proof that it did.
+
+The latch is fed from every ascent sample rather than from the gate test. The
+gate is only consulted once the pyros are armed, and arming already requires
+the rocket to have slowed below 10 m/s -- so a latch living inside the gate
+could never see a speed above the threshold, and the gate would be permanently
+open on exactly the flights it exists for.
 
 ---
 
@@ -170,9 +255,10 @@ Terminal. FAULT keeps serving HTTP and telemetry and repeats its announcement.
 
 ## Dead ends and defects
 
-These are properties of the machine as written, not speculation.
+These are properties of the machine as written, not speculation. Each one is
+marked with whether the descent rebuild closed it.
 
-### 1. FALLING never exits if pyro1 cannot fire — **observed live**
+### 1. FALLING never exits if pyro1 cannot fire — **observed live** — FIXED
 
 `detect_falling` exits only on `ctx->pyro1_fired`. Three ways that never
 becomes true:
@@ -190,6 +276,10 @@ it through ASCENT and apogee into FALLING, where neither channel had continuity
 because no igniters were connected. It sat there until power was removed, and
 it blocked its own OTA while stuck.
 
+**Fixed.** The phase comes from the rate, and every descent state can reach
+`LANDED`. Covered by `test_FLT_DESC_02_ballistic_reaches_landed`, which flies
+with no continuity on either channel and asserts the machine still lands.
+
 ### 2. ASCENT never exits if the arming gate is never met
 
 `max_speed_cms` must reach 1000 cm/s. A flight that never does stays in ASCENT
@@ -201,7 +291,7 @@ forever — no apogee, no deployment, no landing.
 updated during flight**. A channel that read bad at T−1 s can never fire for
 the whole flight, which is also dead end 1.
 
-### 4. Nothing sequences the two channels
+### 4. Nothing sequences the two channels — FIXED
 
 `try_fire_pyros` gates each channel on its own `!pyroN_fired` — one-shot per
 channel — but there is **no ordering constraint** between them. The only thing
@@ -212,7 +302,11 @@ at apogee**: main chute at apogee, at full speed.
 For the 500 ms that one channel is firing, the other's condition is not
 deferred — it is **not evaluated at all**.
 
-### 5. `check_refire` is unbounded
+**Fixed.** Every fire site goes through `fire_channel()`, the one place a
+channel is energised, which refuses while the shared element is busy
+(PYR-DEPLOY-02, DD-021).
+
+### 5. `check_refire` is unbounded — FIXED
 
 Window 1000–1500 ms after a fire, requires `vertical_speed_cms < -3000`
 (30 m/s). It **rewrites `fire_time`**, so the window reopens each time and it
@@ -226,7 +320,11 @@ cached `pyroN_continuity_good` that `try_fire_pyros` uses.
 Called from FALLING (`:504`) and DROGUE_DESCENT (`:532`) only. **A failed main
 has no recovery at all.**
 
-### 6. Faults and verify failures are recorded and acted on by nothing
+**Fixed.** `check_refire()` is retired. The retry is now the first rung of the
+emergency ladder, bounded by `EMRG_MAX_REFIRE` and conditioned on evidence that
+a retry can help.
+
+### 6. Faults and verify failures are recorded and acted on by nothing — PARTLY FIXED
 
 `check_pyro_fault` latches `pyro1/2_fault`; nothing reads it.
 
@@ -239,7 +337,11 @@ outside the log event.
 So the board detects "the charge probably did not fire" and does nothing with
 the knowledge.
 
-### 7. The `dt` bug, in all four flight detectors
+**Partly fixed.** `pyro1_verify_fail` now decides whether the drogue retry is
+worth attempting. `pyro1_fault` / `pyro2_fault` are still recorded and acted on
+by nothing.
+
+### 7. The `dt` bug, in all four flight detectors — FIXED
 
 ```c
 uint32_t dt = ts - ctx->last_sample;   /* ts is the SAMPLE timestamp */
@@ -252,6 +354,9 @@ CHUTE_DESCENT store `now`. They are equal for a freshly produced sample, so the
 error is usually zero — and becomes non-zero exactly when a sample was queued
 (a loop overrun, a flash window), silently skewing every speed calculation at
 the moments the timing is already disturbed.
+
+**Fixed.** Every detector now stores the sample timestamp in `last_sample`
+rather than the loop clock, so `dt` is measured between samples throughout.
 
 ### 8. The launch backdate is out by about half
 
@@ -283,14 +388,18 @@ half the dither amplitude.
 Declared in `config_fields.h`, parsed, serialised, round-trip tested, and read
 by no flight code whatsoever.
 
-### 12. The backup apogee timer cannot help in the case it was written for
+### 12. The backup apogee timer cannot help in the case it was written for — REMOVED
 
 `backup_apogee_expired` is keyed on `armed_time` and evaluated **only inside
 `detect_ascent`**. A board that never arms never runs it — which is precisely
 the sensor-failure case DD-013 describes. Its `backup_timer` field is a
 `uint8_t` with no range validation, despite DECISIONS.md claiming 10–120 s.
 
-### 13. No mach or plausibility gate
+**Removed** along with the `backup_timer` config field. See DD-022: a wrong
+timer value fires during ascent, which is worse than the sensor failure it was
+meant to cover.
+
+### 13. No mach or plausibility gate — FIXED
 
 Nothing rejects an implausible sample. `hal_common.c:210` logs pressure outside
 30–120 kPa to the telemetry UART and **then feeds it to `pp_feed()` anyway**.
@@ -298,6 +407,8 @@ The only mitigation is the 500 ms IIR, which has a min-step anti-stall
 guaranteeing it always moves at least 1 Pa toward a bad reading.
 
 ---
+
+**Fixed.** See "The mach gate" above.
 
 ## What is not in the machine
 

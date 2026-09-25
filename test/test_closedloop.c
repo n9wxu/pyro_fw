@@ -330,7 +330,24 @@ typedef struct {
     uint32_t launch_ms, apogee_ms, p1_fire_ms, p2_fire_ms, landed_ms;
     float launch_alt_m, apogee_alt_m;
     int sample_count, telemetry_count;
+    /* For the emergency-ladder and phase tests: how many times each channel
+     * was commanded, when the true apogee was (as against when the firmware
+     * decided it was), the peak speed, and which phases were visited. */
+    int p1_fires, p2_fires;
+    uint32_t p1_refire_ms, apogee_true_ms;
+    float max_speed_ms;
+    bool saw_drogue_phase, saw_chute_phase;
 } sim_result_t;
+
+/* What the airframe does with a command. A canopy that is commanded and does
+ * not open is the whole subject of the emergency ladder, so the sim has to be
+ * able to refuse one. */
+typedef struct {
+    bool enable_pyros;     /* continuity present on both channels */
+    bool drogue_works;     /* a commanded drogue actually opens */
+    bool main_works;       /* a commanded main actually opens */
+    bool p1_opens_on_fire; /* channel goes open-circuit, i.e. the charge lit */
+} sim_opts_t;
 
 static void print_summary(const char *label, const sim_result_t *r) {
     printf("  %-28s apogee=%6.0fm  ", label, r->apogee_m);
@@ -347,12 +364,12 @@ static void print_summary(const char *label, const sim_result_t *r) {
     printf("samples=%d telem=%d\n", r->sample_count, r->telemetry_count);
 }
 
-static sim_result_t run_sim(config_t cfg, const rocket_profile_t *r, bool enable_pyros) {
+static sim_result_t run_sim_opts(config_t cfg, const rocket_profile_t *r, sim_opts_t o) {
     mock_reset_all();
-    mock_pyro.p1_good = enable_pyros;
-    mock_pyro.p2_good = enable_pyros;
-    mock_pyro.p1_adc = enable_pyros ? 50 : 0;
-    mock_pyro.p2_adc = enable_pyros ? 50 : 0;
+    mock_pyro.p1_good = o.enable_pyros;
+    mock_pyro.p2_good = o.enable_pyros;
+    mock_pyro.p1_adc = o.enable_pyros ? 50 : 0;
+    mock_pyro.p2_adc = o.enable_pyros ? 50 : 0;
     mock_uart_len = 0;
     buzzer_stop_count = 0;
     buzzer_altitude_count = 0;
@@ -376,17 +393,29 @@ static sim_result_t run_sim(config_t cfg, const rocket_profile_t *r, bool enable
         /* Closed-loop: check pyro fires, update physics accordingly */
         if (mock_pyro.fire_count > prev_fires) {
             uint8_t ch = mock_pyro.last_fire_channel;
-            if (ch == 1 && !ps.drogue_deployed) {
-                ps.drogue_deployed = true;
-                res.pyro1_fired = true;
-                res.pyro1_alt_m = ps.alt_m;
-                res.p1_fire_ms = t;
+            if (ch == 1) {
+                res.p1_fires++;
+                if (res.p1_fires == 1) {
+                    res.pyro1_fired = true;
+                    res.pyro1_alt_m = ps.alt_m;
+                    res.p1_fire_ms = t;
+                    if (o.p1_opens_on_fire)
+                        mock_pyro.p1_open = true;
+                } else if (res.p1_refire_ms == 0) {
+                    res.p1_refire_ms = t;
+                }
+                if (o.drogue_works)
+                    ps.drogue_deployed = true;
             }
-            if (ch == 2 && !ps.main_deployed) {
-                ps.main_deployed = true;
-                res.pyro2_fired = true;
-                res.pyro2_alt_m = ps.alt_m;
-                res.p2_fire_ms = t;
+            if (ch == 2) {
+                res.p2_fires++;
+                if (res.p2_fires == 1) {
+                    res.pyro2_fired = true;
+                    res.pyro2_alt_m = ps.alt_m;
+                    res.p2_fire_ms = t;
+                }
+                if (o.main_works)
+                    ps.main_deployed = true;
             }
             prev_fires = mock_pyro.fire_count;
         }
@@ -396,8 +425,12 @@ static sim_result_t run_sim(config_t cfg, const rocket_profile_t *r, bool enable
             float flight_t = (float)(t - PAD_DWELL_MS) / 1000.0f;
             physics_step(&ps, flight_t, r);
         }
-        if (ps.alt_m > res.apogee_m)
+        if (ps.alt_m > res.apogee_m) {
             res.apogee_m = ps.alt_m;
+            res.apogee_true_ms = t;
+        }
+        if (fabsf(ps.vel_ms) > res.max_speed_ms)
+            res.max_speed_ms = fabsf(ps.vel_ms);
 
         /* Feed pressure sensor to firmware */
         mock_time_ms = t;
@@ -415,6 +448,10 @@ static sim_result_t run_sim(config_t cfg, const rocket_profile_t *r, bool enable
             res.apogee_ms = t;
             res.apogee_alt_m = ps.alt_m;
         }
+        if (ctx.current_state == DROGUE_DESCENT)
+            res.saw_drogue_phase = true;
+        if (ctx.current_state == CHUTE_DESCENT)
+            res.saw_chute_phase = true;
         if (ctx.current_state == LANDED && !res.reached_landed) {
             res.reached_landed = true;
             res.flight_time_ms = t - ctx.launch_time;
@@ -433,6 +470,11 @@ static sim_result_t run_sim(config_t cfg, const rocket_profile_t *r, bool enable
         cp++;
     }
     return res;
+}
+
+static sim_result_t run_sim(config_t cfg, const rocket_profile_t *r, bool enable_pyros) {
+    sim_opts_t o = {.enable_pyros = enable_pyros, .drogue_works = true, .main_works = true};
+    return run_sim_opts(cfg, r, o);
 }
 
 /* ── Configs ──────────────────────────────────────────────────────── */
@@ -966,7 +1008,6 @@ void test_PYR_REFIRE_01_refire_ballistic(void) {
     ctx.config.pyro2_mode = PYRO_MODE_DELAY;
     ctx.config.pyro2_value = 60; /* 60 s delay — won't fire in test window */
     ctx.config.units = 1;        /* meters */
-    ctx.config.backup_timer = 0;
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = (int32_t)GROUND_PA;
     pp_test_prime((int32_t)GROUND_PA);
@@ -1017,9 +1058,140 @@ void test_PYR_REFIRE_01_refire_ballistic(void) {
              ctx.vertical_speed_cms);
     TEST_ASSERT_TRUE_MESSAGE(refire_detected, msg);
 
+    /* The retry is now the first rung of the emergency ladder rather than the
+     * old free-standing check_refire() window. It lands one grace period after
+     * the initial fire, deterministically, instead of inside a 1-1.5 s window
+     * that the descent rate happened to fall through. */
     uint32_t window_ms = second_fire_time - first_fire_time;
-    snprintf(msg, sizeof(msg), "Re-fire window %ums not in [1000, 1500] ms", window_ms);
-    TEST_ASSERT_TRUE_MESSAGE(window_ms >= 1000 && window_ms <= 1500, msg);
+    snprintf(msg, sizeof(msg), "Re-fire window %ums not at the 2000 ms grace", window_ms);
+    TEST_ASSERT_TRUE_MESSAGE(window_ms >= 1900 && window_ms <= 2300, msg);
+}
+
+
+/* ── Items 7, 8, 9: descent phase, emergency deploy, mach gate ─────── */
+
+/* [PYR-REFIRE-02] A channel that opened fired its charge. Re-firing it cannot
+ * help, so the ladder must skip straight to the main. */
+void test_PYR_REFIRE_02_no_retry_when_opened(void) {
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket");
+    config_t cfg = cfg_delay_agl();
+    cfg.pyro2_value = 20; /* 20 m AGL: low enough that only the ladder beats it */
+    sim_opts_t o = {.enable_pyros = true, .drogue_works = false, .main_works = true, .p1_opens_on_fire = true};
+    sim_result_t res = run_sim_opts(cfg, &g_rockets[ROCKET_IDX_L1], o);
+    print_summary("OpenedNoRetry", &res);
+
+    char m[160];
+    snprintf(m, sizeof(m), "drogue was commanded %d times; an opened channel must not be retried", res.p1_fires);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, res.p1_fires, m);
+    TEST_ASSERT_TRUE_MESSAGE(res.pyro2_fired, "the main must go out once the drogue is spent");
+    snprintf(m, sizeof(m), "main fired at %.0f m, below its 20 m trigger -- the ladder did not act",
+             (double)res.pyro2_alt_m);
+    TEST_ASSERT_TRUE_MESSAGE(res.pyro2_alt_m > 50.0f, m);
+}
+
+/* [FLT-EMRG-01] Drogue commanded, canopy never opens: the rocket keeps
+ * accelerating, so the main must be brought forward over its own trigger. */
+void test_FLT_EMRG_01_shredded_drogue_fires_main(void) {
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket");
+    config_t cfg = cfg_delay_agl();
+    cfg.pyro2_value = 20;
+    sim_opts_t o = {.enable_pyros = true, .drogue_works = false, .main_works = true, .p1_opens_on_fire = false};
+    sim_result_t res = run_sim_opts(cfg, &g_rockets[ROCKET_IDX_L1], o);
+    print_summary("ShreddedDrogue", &res);
+
+    char m[160];
+    TEST_ASSERT_TRUE_MESSAGE(res.pyro1_fired, "drogue should have been commanded at apogee");
+    snprintf(m, sizeof(m), "the charge never lit, so exactly one retry was due; got %d fires", res.p1_fires);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, res.p1_fires, m);
+    TEST_ASSERT_TRUE_MESSAGE(res.pyro2_fired, "the main must go out after the retry is spent");
+    snprintf(m, sizeof(m), "main fired at %.0f m; its configured trigger was 20 m, so it was NOT brought forward",
+             (double)res.pyro2_alt_m);
+    TEST_ASSERT_TRUE_MESSAGE(res.pyro2_alt_m > 50.0f, m);
+    TEST_ASSERT_TRUE_MESSAGE(res.reached_landed, "a failed drogue must still reach LANDED");
+}
+
+/* [FLT-EMRG-02] The ladder must not act on speed alone. A drogue set below
+ * apogee means a deliberate free fall down to it, and free fall is fast; a
+ * bare descent-rate trigger would fire the main over the top of that plan. */
+void test_FLT_EMRG_02_freefall_to_trigger_not_overridden(void) {
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket");
+    config_t cfg = cfg_agl_agl(); /* drogue 400 m, main 200 m */
+    sim_result_t res = run_sim(cfg, &g_rockets[ROCKET_IDX_L1], true);
+    print_summary("FreefallToTrigger", &res);
+
+    char m[176];
+    TEST_ASSERT_TRUE_MESSAGE(res.pyro1_fired, "drogue must fire at its 400 m trigger");
+    TEST_ASSERT_TRUE_MESSAGE(res.pyro2_fired, "main must fire at its 200 m trigger");
+    snprintf(m, sizeof(m), "main fired at %.0f m before the drogue at %.0f m: a rate trigger pre-empted the plan",
+             (double)res.pyro2_alt_m, (double)res.pyro1_alt_m);
+    TEST_ASSERT_TRUE_MESSAGE(res.p2_fire_ms > res.p1_fire_ms, m);
+    /* The real question is whether the ladder pre-empted the plan. Had it
+     * done so the main would have gone out near apogee, as it does in
+     * test_FLT_EMRG_01 (1098 m). Staying down at its own trigger is the
+     * proof that free fall alone did not trigger anything. */
+    snprintf(m, sizeof(m), "main fired at %.0f m off a %.0f m apogee: the ladder pre-empted its trigger",
+             (double)res.pyro2_alt_m, (double)res.apogee_m);
+    TEST_ASSERT_TRUE_MESSAGE(res.pyro2_alt_m < 300.0f, m);
+}
+
+/* [FLT-MACH-01] The gate must not break apogee detection on a fast flight.
+ * Every profile here passes 100 ft/s, so the gate is armed on all of them;
+ * what matters is that apogee is still found, and found close to the truth. */
+void test_FLT_MACH_01_supersonic_apogee_gated(void) {
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket");
+    sim_result_t res = run_sim(cfg_delay_agl(), &g_rockets[ROCKET_IDX_L1], true);
+    print_summary("MachGate", &res);
+
+    char m[176];
+    snprintf(m, sizeof(m), "peak speed %.0f m/s never reached the 30.5 m/s gate, so this proves nothing",
+             (double)res.max_speed_ms);
+    TEST_ASSERT_TRUE_MESSAGE(res.max_speed_ms > 30.5f, m);
+    TEST_ASSERT_TRUE_MESSAGE(res.reached_descent, "apogee was never declared: the gate locked it out");
+
+    /* The gate costs at most its settle time. Anything beyond that means it
+     * is holding apogee shut rather than just waiting out the fast part. */
+    int32_t lag_ms = (int32_t)res.apogee_ms - (int32_t)res.apogee_true_ms;
+    snprintf(m, sizeof(m), "apogee declared %d ms after the real one (true=%u firmware=%u)", lag_ms,
+             res.apogee_true_ms, res.apogee_ms);
+    TEST_ASSERT_TRUE_MESSAGE(lag_ms > -2000 && lag_ms < 3000, m);
+}
+
+/* [FLT-DESC-01] Phase comes from the rate. With no drogue configured at all,
+ * the old machine sat in FALLING for the rest of the flight because its only
+ * exit was pyro1_fired. The main opens, the rate steadies, and the phase must
+ * follow the rocket. */
+void test_FLT_DESC_01_phase_without_pyros(void) {
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket");
+    config_t cfg = cfg_agl_agl();
+    cfg.pyro1_mode = PYRO_MODE_NONE; /* single deploy: nothing on channel 1 */
+    cfg.pyro1_value = 0;
+    cfg.units = 1;         /* metres: cfg_agl_agl is in feet */
+    cfg.pyro2_value = 400; /* high enough that a descent phase can establish */
+    sim_result_t res = run_sim(cfg, &g_rockets[ROCKET_IDX_L1], true);
+    print_summary("SingleDeploy", &res);
+
+    char m[176];
+    TEST_ASSERT_FALSE_MESSAGE(res.pyro1_fired, "channel 1 is NONE and must never fire");
+    TEST_ASSERT_TRUE_MESSAGE(res.pyro2_fired, "the main must still fire at its own trigger");
+    snprintf(m, sizeof(m), "never reached a canopy phase though the main opened at %.0f m",
+             (double)res.pyro2_alt_m);
+    TEST_ASSERT_TRUE_MESSAGE(res.saw_chute_phase || res.saw_drogue_phase, m);
+    TEST_ASSERT_TRUE_MESSAGE(res.reached_landed, "a single-deploy flight must reach LANDED");
+}
+
+/* [FLT-DESC-02] The deadlock this pass exists to kill. No continuity on
+ * either channel, so nothing deploys and the rocket comes in ballistic. It
+ * must still reach LANDED, because that is what calls hal_log_stop() and the
+ * log of a flight that failed is the log that matters. */
+void test_FLT_DESC_02_ballistic_reaches_landed(void) {
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket");
+    sim_result_t res = run_sim(cfg_delay_agl(), &g_rockets[ROCKET_IDX_L1], false);
+    print_summary("BallisticNoPyros", &res);
+
+    TEST_ASSERT_FALSE_MESSAGE(res.pyro1_fired, "no continuity: nothing may fire");
+    TEST_ASSERT_FALSE_MESSAGE(res.pyro2_fired, "no continuity: nothing may fire");
+    TEST_ASSERT_TRUE_MESSAGE(res.reached_descent, "must still detect apogee");
+    TEST_ASSERT_TRUE_MESSAGE(res.reached_landed, "ballistic flight never reached LANDED: the log is lost");
 }
 
 /* ── Main ─────────────────────────────────────────────────────────── */
@@ -1049,5 +1221,11 @@ int main(void) {
     RUN_TEST(test_TST_05_rocket_profiles);
     RUN_TEST(test_XIP_stall_pyro_timing);
     RUN_TEST(test_PYR_REFIRE_01_refire_ballistic);
+    RUN_TEST(test_PYR_REFIRE_02_no_retry_when_opened);
+    RUN_TEST(test_FLT_EMRG_01_shredded_drogue_fires_main);
+    RUN_TEST(test_FLT_EMRG_02_freefall_to_trigger_not_overridden);
+    RUN_TEST(test_FLT_MACH_01_supersonic_apogee_gated);
+    RUN_TEST(test_FLT_DESC_01_phase_without_pyros);
+    RUN_TEST(test_FLT_DESC_02_ballistic_reaches_landed);
     return UNITY_END();
 }
