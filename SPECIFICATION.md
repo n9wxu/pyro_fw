@@ -5,7 +5,7 @@
 This section contains everything needed to resume development with a new AI session.
 
 ### Project Overview
-Dual-deployment rocket flight computer on Raspberry Pi Pico (RP2040). Logs flight data to littlefs flash, serves web dashboard via USB network (RNDIS/ECM), fires two pyrotechnic channels for parachute deployment, outputs Eggtimer-compatible telemetry via UART. OTA firmware updates via A/B bootloader.
+Dual-deployment rocket flight computer on Raspberry Pi Pico (RP2040). Logs flight data to littlefs flash, serves web dashboard via USB network (RNDIS/ECM), fires two pyrotechnic channels for parachute deployment, outputs $PYRO NMEA or JSON telemetry via UART (see docs/ground-station-interface-spec.md). OTA firmware updates via A/B bootloader.
 
 ### Current Implementation Status (v1.5.0)
 - **Event-driven state machine**: `src/flight_states.c` — Transition table, detectors, actions
@@ -39,7 +39,7 @@ Dependencies: Pico SDK 2.2.0, littlefs v2.11.2, Unity v2.6.0, pico_fota_bootload
 ### Key Design Decisions
 1. Integer-only math everywhere
 2. No flash I/O in USB callbacks (prevents RP2040 XIP/DMA panics)
-3. Apogee is an event, not a state (4 states total)
+3. Apogee is an event, not a state (11 states total; see docs/flight_states.md)
 4. T=0 backdated to first motion, not detection threshold
 5. GPIO 8 dual-use: jumper check at boot before I2C init
 6. All pyro modes available on both channels
@@ -74,13 +74,26 @@ RAM: 264KB (flight buffer 64KB, fat_mimic 35KB, stack/heap 165KB)
 ## Flight States
 
 ```
-STARTUP → TEST_MODE (if GPIO 8 jumper present)
-        → PAD_IDLE (normal boot)
+BOOT_SETTLE ──[2.5s]──→ BOOT_SENSOR ──[sensor+fs ok]──→ BOOT_CONTINUITY
+BOOT_SENSOR ──[no sensor or no fs]──→ FAULT (terminal)
+BOOT_CONTINUITY ──→ BOOT_CALIBRATE ──[10 samples]──→ PAD_IDLE
+BOOT_CALIBRATE ──[10s, no samples]──→ FAULT (terminal)
 
-PAD_IDLE ──[+10m in <1s]──→ ASCENT
-ASCENT ──[apogee event]──→ DESCENT
-DESCENT ──[altitude stable <1m for 1s]──→ LANDED
+PAD_IDLE ──[alt>10m AND pad speed>5m/s]──→ ASCENT
+ASCENT ──[arming gate]──→ ASCENT (self-loop, arms pyros)
+ASCENT ──[armed AND speed<=0]──→ FALLING
+FALLING ──[pyro1_fired]──→ DROGUE_DESCENT
+DROGUE_DESCENT ──[pyro2_fired]──→ CHUTE_DESCENT
+CHUTE_DESCENT ──[stable 1s, or descent timeout]──→ LANDED (terminal)
 ```
+
+Eleven states, not four. **`docs/flight_states.md` is the authority** — it
+carries the complete transition table, the exact thresholds, and the dead ends
+this machine has (FALLING does not exit unless pyro1 fires; ASCENT does not
+exit unless the arming gate is met). This summary is a sketch.
+
+The GPIO 8 jumper test mode described below is historical: see DD-011, which
+replaced it with serial ground-test commands.
 
 ### Test Mode
 - Entry: GPIO 8 test input LOW at boot (jumper to ground)

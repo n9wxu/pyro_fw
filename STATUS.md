@@ -686,6 +686,40 @@ This affects ARP replies, DHCP, and TCP SYN-ACK — meaning HTTP can never be es
 | v2-12 | Fix HTTP TX failures (MAC mismatch) | ✅ Done v2.1.27 |
 | v2-13 | DMA UART TX (replaces v2-10 ring buffer) | ✅ Done v2.1.28 |
 
+## 📋 The flight state machine, written down (item 12)
+
+`docs/flight_states.md` documents the machine **as it is**, for review before it
+is changed: a mermaid diagram, the complete twelve-row transition table, every
+threshold, and thirteen dead ends and defects.
+
+`SPECIFICATION.md` documented four states against the code's eleven and is
+corrected to point at the new document as the authority. Its "Eggtimer-compatible
+telemetry" claim is also gone — `git log -S Eggtimer -- src/` is empty and the
+only formats implemented are $PYRO NMEA and JSON.
+
+The three that matter most:
+
+- **FALLING does not exit unless pyro1 fires.** With pyro1 on `NONE`, bad
+  continuity, or pyro2 having fired first, the machine stays there forever:
+  `action_landing` never runs and the flight log is never finalised. **Observed
+  live on MK1C** — a false launch from bench pressure drift left it stuck, and
+  it blocked its own OTA until power-cycled.
+- **ASCENT does not exit unless the arming gate is met.** A flight whose peak
+  filtered speed never reaches 10 m/s never arms, never detects apogee and never
+  deploys.
+- **Nothing sequences the two channels.** Each is one-shot for itself, but there
+  is no ordering constraint. With pyro1 unable to fire, **pyro2 fires first and
+  alone at apogee** — main chute at apogee, at full speed.
+
+Two findings that constrain the rework:
+
+- **Altitude is clamped to ≥ 0** (`pressure_processing.c:83`). A rolling mean of
+  a quantity clamped at zero that dithers around zero is biased upward by about
+  half the dither, so the 5 s ground average needs that clamp gone.
+- **`test_PYR_SAFE_02_no_simultaneous_fire` proves almost nothing** —
+  `test_closedloop.c` clears `mock_pyro.firing` before every step, so the 500 ms
+  separation it checks is 1 ms in the test.
+
 ## 🔨 Next Priority
 1. **Flight machine rework** — phase-based descent, emergency deploy, mach gate,
    5 s rolling ground level, remove the backup apogee timer. Design in hand,
