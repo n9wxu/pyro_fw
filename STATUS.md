@@ -686,6 +686,55 @@ This affects ARP replies, DHCP, and TCP SYN-ACK — meaning HTTP can never be es
 | v2-12 | Fix HTTP TX failures (MAC mismatch) | ✅ Done v2.1.27 |
 | v2-13 | DMA UART TX (replaces v2-10 ring buffer) | ✅ Done v2.1.28 |
 
+## ✅ Ground reference and launch detection (item 4)
+
+The reference is a **5-second rolling mean of the filtered pressure**, kept in
+`pressure_processing.c` where the pressure lives. It replaces a 60-second IIR
+computed up in the flight layer.
+
+**Pressure, not altitude.** Pressure sits around 101 kPa, nowhere near the zero
+that altitude is clamped at, so the mean carries no clamp bias. A boxcar rather
+than an exponential, because a boxcar forgets: the value frozen at launch is
+the mean of the last five seconds with nothing older leaking in. 20 blocks of
+250 ms — 240 bytes rather than the 1 kB a per-sample ring would need.
+
+**It stops tracking the moment the rocket moves.** A sample more than 50 Pa
+(~14 ft) from the reference is not the pad and is not averaged in. Without
+this the mean chases a climbing rocket: reaching the trigger takes about a
+second, a fifth of the window, so the reference would drift a fifth of the way
+up — delaying detection and biasing the frozen value toward flight pressure,
+under-reporting every altitude afterwards.
+
+**Launch is 100 ft (3048 cm)**, replacing 10 m. MK1C reached the old threshold
+on a bench from weather drift, twice, and the second time wedged itself in
+FALLING.
+
+**Frozen, not snapped.** The reference used to be snapped to the instantaneous
+reading at launch, making T+0 altitude zero by definition — which discarded the
+100 ft the rocket had already climbed to trip the detector. Freezing keeps it,
+so apogee and every AGL threshold are that much truer. `last_altitude` now
+starts from the real height instead of zero, which also removes the one
+enormous first speed sample that produced.
+
+Also fixed while here: the launch backdate assumed 10 ms per buffered sample
+when PAD_IDLE samples arrive at the sensor's ~20 ms, so `launch_time` was
+backdated about half the true elapsed time.
+
+Verified negatively — removing the deviation gate costs 4 tests, snapping
+instead of freezing costs 1, and returning to the 10 m trigger costs 1. The
+threshold test was rewritten after the first attempt passed for the wrong
+reason: it sat on the old boundary and could not discriminate.
+
+Measured on the bench, all three boards, two minutes:
+
+| Board | State | Altitude |
+|---|---|---|
+| MK1B | PAD_IDLE throughout | 0–117 cm |
+| MK1C | PAD_IDLE throughout | 0–50 cm |
+| MK1A | PAD_IDLE throughout | 0–16 cm |
+
+Against a 3048 cm trigger, that is a margin of more than 25×.
+
 ## 📋 The flight state machine, written down (item 12)
 
 `docs/flight_states.md` documents the machine **as it is**, for review before it
@@ -721,9 +770,9 @@ Two findings that constrain the rework:
   separation it checks is 1 ms in the test.
 
 ## 🔨 Next Priority
-1. **Flight machine rework** — phase-based descent, emergency deploy, mach gate,
-   5 s rolling ground level, remove the backup apogee timer. Design in hand,
-   not yet started.
+1. **Flight machine rework** — phase-based descent (7), emergency deploy (8),
+   mach gate (9), remove the backup apogee timer (11). Ground level and launch
+   detection (4) are done; the rest share `flight_states.c` and want one pass.
 2. **Export / import Lua programs** — no way to get a script off a board or onto
    another one today. `/api/lua/script` serves the raw text, so this is mostly a
    UI affordance plus a sensible filename.

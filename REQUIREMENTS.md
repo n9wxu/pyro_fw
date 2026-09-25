@@ -42,13 +42,20 @@ Each derived requirement traces to its parent with `← parent_id`.
 ### L4 Implementation Requirements
 
 #### Launch Detection
-- **FLT-LAUNCH-01**: The system shall transition to ASCENT when filtered altitude exceeds 10 meters. ← FLT-PHASE-01
-- **FLT-LAUNCH-02**: The system shall remain in PAD_IDLE when altitude is at or below 10 meters. ← FLT-PHASE-01
-- **FLT-LAUNCH-03**: The system shall record launch time by backdating to the first sample above 50cm. ← FLT-PHASE-01
+- **FLT-LAUNCH-01**: The system shall transition to ASCENT when filtered altitude exceeds 100 feet (3048 cm) above the ground reference. ← FLT-PHASE-01
+- **FLT-LAUNCH-02**: The system shall remain in PAD_IDLE when altitude is at or below 100 feet. ← FLT-PHASE-01
+- **FLT-LAUNCH-03**: The system shall record launch time by backdating to the first sample above 50cm, at the sensor's sample interval. ← FLT-PHASE-01
 - **FLT-LAUNCH-04**: The system shall log a LAUNCH event at the transition. ← FLT-PHASE-01
 - **FLT-LAUNCH-05**: The system shall stop the buzzer upon launch detection. ← FLT-PHASE-01
 - **FLT-LAUNCH-06**: The system shall require altitude gain exceeding 10 meters within 2 seconds to confirm launch. ← FLT-PHASE-01
 - **FLT-LAUNCH-07**: The system shall require vertical speed exceeding 5 m/s at the time altitude exceeds 10 meters. ← FLT-PHASE-01
+
+#### Ground Reference
+- **GND-CAL-01**: The ground reference shall be a 5-second rolling mean of the filtered pressure. ← FLT-PHASE-01
+- **GND-CAL-02**: The reference shall average PRESSURE, not altitude, so that the altitude clamp at zero introduces no bias. ← GND-CAL-01
+- **GND-CAL-03**: A sample more than 50 Pa from the reference shall not be averaged into it, so a climbing rocket cannot drag it upward. ← GND-CAL-01
+- **GND-CAL-04**: The reference shall freeze at launch and hold its last value, rather than being snapped to the pressure at detection. ← GND-CAL-01
+- **GND-CAL-05**: Altitude at launch detection shall report the height actually reached, not zero. ← GND-CAL-04
 
 #### Apogee Detection
 - **FLT-APO-01**: The system shall detect apogee when vertical speed crosses zero while pyros are armed. ← FLT-PHASE-02

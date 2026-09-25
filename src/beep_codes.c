@@ -131,37 +131,26 @@ static bool reason_live(const beep_personality_t *p, int r) {
     return !(r == BR_CHECK_PYRO_2 && !p->split_pyro);
 }
 
-static beep_verdict_t check_personality(const beep_personality_t *p, int idx) {
-    beep_verdict_t v = {BEEP_OK, idx, -1, "ok"};
-
-    int audible = 0;
+/* A beep count that cannot be heard or cannot be counted. Returns the
+ * offending outcome, or -1. */
+static int find_bad_count(const beep_personality_t *p) {
     for (int i = 0; i < BEEP_REASON_COUNT; i++) {
-        if (!reason_live(p, i)) {
+        if (!reason_live(p, i) || p->spec[i].kind != BK_CODE) {
             continue;
         }
-        if (p->spec[i].kind == BK_CODE) {
-            uint8_t d1 = p->spec[i].d1, d2 = p->spec[i].d2;
-            if (d1 < BEEP_DIGIT_MIN || d1 > BEEP_DIGIT_MAX || d2 > BEEP_DIGIT_MAX) {
-                v.err = BEEP_ERR_DIGIT_RANGE;
-                v.reason = i;
-                v.what = beep_codes_strerror(v.err);
-                return v;
-            }
-        }
-        if (p->spec[i].kind != BK_SILENT) {
-            audible++;
+        uint8_t d1 = p->spec[i].d1, d2 = p->spec[i].d2;
+        if (d1 < BEEP_DIGIT_MIN || d1 > BEEP_DIGIT_MAX || d2 > BEEP_DIGIT_MAX) {
+            return i;
         }
     }
+    return -1;
+}
 
-    if (audible == 0) {
-        v.err = BEEP_ERR_ALL_SILENT;
-        v.what = beep_codes_strerror(v.err);
-        return v;
-    }
-
-    /* Two outcomes on one sound is the failure that matters: the operator
-     * hears it, looks it up, and gets the wrong answer half the time. Silence
-     * is exempt -- an outcome deliberately muted is not a collision. */
+/* Two outcomes on one sound is the failure that matters: the operator hears
+ * it, looks it up, and gets the wrong answer half the time. Silence is exempt
+ * -- an outcome deliberately muted is not a collision. Returns the later of
+ * the pair, or -1. */
+static int find_duplicate(const beep_personality_t *p) {
     for (int i = 0; i < BEEP_REASON_COUNT; i++) {
         if (!reason_live(p, i) || p->spec[i].kind == BK_SILENT) {
             continue;
@@ -171,13 +160,45 @@ static beep_verdict_t check_personality(const beep_personality_t *p, int idx) {
                 continue;
             }
             if (spec_same(&p->spec[i], &p->spec[j])) {
-                v.err = BEEP_ERR_DUPLICATE;
-                v.reason = j;
-                v.what = beep_codes_strerror(v.err);
-                return v;
+                return j;
             }
         }
     }
+    return -1;
+}
+
+static int count_audible(const beep_personality_t *p) {
+    int n = 0;
+    for (int i = 0; i < BEEP_REASON_COUNT; i++) {
+        if (reason_live(p, i) && p->spec[i].kind != BK_SILENT) {
+            n++;
+        }
+    }
+    return n;
+}
+
+static beep_verdict_t check_personality(const beep_personality_t *p, int idx) {
+    beep_verdict_t v = {BEEP_OK, idx, -1, "ok"};
+
+    v.reason = find_bad_count(p);
+    if (v.reason >= 0) {
+        v.err = BEEP_ERR_DIGIT_RANGE;
+        v.what = beep_codes_strerror(v.err);
+        return v;
+    }
+    if (count_audible(p) == 0) {
+        v.reason = -1;
+        v.err = BEEP_ERR_ALL_SILENT;
+        v.what = beep_codes_strerror(v.err);
+        return v;
+    }
+    v.reason = find_duplicate(p);
+    if (v.reason >= 0) {
+        v.err = BEEP_ERR_DUPLICATE;
+        v.what = beep_codes_strerror(v.err);
+        return v;
+    }
+    v.reason = -1;
     return v;
 }
 
@@ -255,6 +276,36 @@ static bool parse_bool(const char *s) {
     return strcmp(s, "true") == 0 || strcmp(s, "1") == 0;
 }
 
+/* One field of one personality. Split from the line parser, which was over
+ * the complexity limit the project enforces. */
+static void apply_personality_field(beep_personality_t *p, const char *field, const char *val) {
+    if (strcmp(field, "name") == 0) {
+        snprintf(p->name, sizeof(p->name), "%s", val);
+        return;
+    }
+    if (strcmp(field, "gap") == 0) {
+        p->gap_ms = (uint16_t)atoi(val);
+        return;
+    }
+    if (strcmp(field, "repeat") == 0) {
+        p->repeat = (uint8_t)atoi(val);
+        return;
+    }
+    if (strcmp(field, "split") == 0) {
+        p->split_pyro = parse_bool(val);
+        return;
+    }
+    for (int i = 0; i < BEEP_REASON_COUNT; i++) {
+        if (strcmp(field, rows[i].key) == 0) {
+            beep_spec_t sp;
+            if (parse_spec(val, &sp)) {
+                p->spec[i] = sp;
+            }
+            return;
+        }
+    }
+}
+
 /* One "key=value" line. Unrecognised keys and unparsable values both leave
  * the table alone, so a garbled line cannot silently mute an outcome. */
 static void apply_line(char *line, beep_table_t *t) {
@@ -275,27 +326,7 @@ static void apply_line(char *line, beep_table_t *t) {
             t->active = (uint8_t)a;
         }
     } else if (key[0] == 'p' && key[1] >= '0' && key[1] < ('0' + BEEP_PERSONALITY_COUNT) && key[2] == '_') {
-        beep_personality_t *p = &t->p[key[1] - '0'];
-        const char *field = key + 3;
-        if (strcmp(field, "name") == 0) {
-            snprintf(p->name, sizeof(p->name), "%s", val);
-        } else if (strcmp(field, "gap") == 0) {
-            p->gap_ms = (uint16_t)atoi(val);
-        } else if (strcmp(field, "repeat") == 0) {
-            p->repeat = (uint8_t)atoi(val);
-        } else if (strcmp(field, "split") == 0) {
-            p->split_pyro = parse_bool(val);
-        } else {
-            for (int i = 0; i < BEEP_REASON_COUNT; i++) {
-                if (strcmp(field, rows[i].key) == 0) {
-                    beep_spec_t sp;
-                    if (parse_spec(val, &sp)) {
-                        p->spec[i] = sp;
-                    }
-                    break;
-                }
-            }
-        }
+        apply_personality_field(&t->p[key[1] - '0'], key + 3, val);
     }
     *eq = '=';
 }

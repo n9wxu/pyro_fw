@@ -5,6 +5,9 @@
 #include "../src/buzzer.h"
 #include "../src/beep_store.h"
 
+/* The launch trigger, for the assertion below. Mirrors flight_states.c. */
+#define LAUNCH_ALT_CM_FOR_TEST 3048
+
 beep_reason_t beep_reason_for_diag(uint16_t diag);
 #include "mocks.h"
 #include <string.h>
@@ -206,8 +209,10 @@ void test_FLT_LAUNCH_01_detects_ascent(void) {
     ctx.ground_pressure = 101325;
     ctx.filter_initialized = false;
     pp_test_prime(101325);
-    /* Simulate large altitude: pressure drop of ~150 Pa = ~1245 cm > 1000 cm threshold */
-    mock_pressure.pressure_pa = 101325.0f - 150.0f;
+    /* Launch is now 100 ft (3048 cm) above the ground reference, not 10 m.
+       ~12 Pa per metre near sea level, so 30.5 m needs about 370 Pa; 600 Pa
+       (~5000 cm) clears it without depending on the exact lapse rate. */
+    mock_pressure.pressure_pa = 101325.0f - 600.0f;
 
     /* Run several samples so filter converges */
     for (int i = 0; i < 20; i++) {
@@ -217,6 +222,94 @@ void test_FLT_LAUNCH_01_detects_ascent(void) {
     }
     TEST_ASSERT_EQUAL(ASCENT, ctx.current_state);
     TEST_ASSERT_TRUE(ctx.launch_time > 0);
+}
+
+/* ── The ground reference ─────────────────────────────────────────
+ *
+ * A 5-second rolling mean of the filtered PRESSURE, frozen at launch. MK1C
+ * false-launched on a bench from weather drift under the old 10 m trigger, so
+ * these hold the two properties that prevent it: the reference follows slow
+ * drift, and the trigger is 100 ft above wherever the reference has got to. */
+
+static void feed_pad(flight_context_t *ctx, float pa, uint32_t from_ms, uint32_t to_ms, uint32_t step_ms) {
+    for (uint32_t t = from_ms; t <= to_ms; t += step_ms) {
+        mock_time_ms = t;
+        mock_pressure.pressure_pa = pa;
+        ctx->current_state = step(ctx, t);
+    }
+}
+
+void test_GND_CAL_01_reference_follows_slow_drift(void) {
+    flight_context_t ctx = {0};
+    ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
+    ctx.current_state = PAD_IDLE;
+    pp_test_prime(101325);
+    mock_time_ms = 0;
+
+    /* A weather front: 30 Pa over ten seconds, well inside the band a real
+       launch leaves immediately. The reference should have followed it. */
+    for (int i = 0; i <= 500; i++) {
+        feed_pad(&ctx, 101325.0f - (float)i * 0.06f, (uint32_t)i * 20, (uint32_t)i * 20, 20);
+    }
+    TEST_ASSERT_EQUAL_MESSAGE(PAD_IDLE, ctx.current_state, "slow drift must not read as a launch");
+    TEST_ASSERT_INT_WITHIN_MESSAGE(15, 101295, pp_ground_pressure(), "the reference should have tracked the drift");
+}
+
+void test_GND_CAL_02_reference_stops_tracking_when_the_rocket_moves(void) {
+    flight_context_t ctx = {0};
+    ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
+    ctx.current_state = PAD_IDLE;
+    pp_test_prime(101325);
+    mock_time_ms = 0;
+    feed_pad(&ctx, 101325.0f, 0, 400, 20);
+    int32_t before = pp_ground_pressure();
+
+    /* A launch: far outside the band, immediately. The reference must hold
+       still rather than climb with the rocket. */
+    feed_pad(&ctx, 101325.0f - 600.0f, 420, 800, 20);
+    TEST_ASSERT_INT_WITHIN_MESSAGE(3, before, pp_ground_pressure(),
+                                   "the reference must not follow a climbing rocket");
+}
+
+void test_FLT_LAUNCH_08_ten_metres_is_no_longer_enough(void) {
+    /* The old trigger. MK1C reached it on a bench from pressure drift. */
+    flight_context_t ctx = {0};
+    ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
+    ctx.current_state = PAD_IDLE;
+    pp_test_prime(101325);
+    mock_time_ms = 0;
+
+    /* ~250 Pa is about 21 m (69 ft): comfortably past the old 10 m trigger
+       and comfortably short of 100 ft, so this discriminates between them
+       rather than sitting on either boundary. Run long enough for the IIR to
+       settle, and for the speed condition to have been satisfied on the way
+       -- otherwise this would pass merely because nothing moved. */
+    feed_pad(&ctx, 101325.0f - 250.0f, 0, 2000, 20);
+    TEST_ASSERT_GREATER_THAN_MESSAGE(1000, ctx.last_altitude, "the climb must clear the OLD 10 m threshold");
+    TEST_ASSERT_LESS_THAN_MESSAGE(LAUNCH_ALT_CM_FOR_TEST, ctx.last_altitude, "and stay under the new one");
+    TEST_ASSERT_EQUAL_MESSAGE(PAD_IDLE, ctx.current_state, "10 m must no longer trip the launch detector");
+}
+
+void test_FLT_LAUNCH_09_freezing_keeps_the_hundred_feet(void) {
+    flight_context_t ctx = {0};
+    ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
+    ctx.current_state = PAD_IDLE;
+    pp_test_prime(101325);
+    mock_time_ms = 0;
+    feed_pad(&ctx, 101325.0f, 0, 400, 20);
+    int32_t pad_ref = pp_ground_pressure();
+
+    /* The 500 ms IIR reaches only ~63% of a step in its first time constant,
+       so give it long enough to clear 100 ft rather than graze it. */
+    feed_pad(&ctx, 101325.0f - 900.0f, 420, 1600, 20);
+    TEST_ASSERT_EQUAL_MESSAGE(ASCENT, ctx.current_state, "900 Pa is well past 100 ft");
+
+    /* Frozen, not snapped: the reference is still the pad's, so the altitude
+       the rocket had already gained is not thrown away. */
+    TEST_ASSERT_FALSE_MESSAGE(pp_ground_tracking(), "launch must freeze the reference");
+    TEST_ASSERT_INT_WITHIN_MESSAGE(3, pad_ref, pp_ground_pressure(), "and freeze it at the PAD value");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(LAUNCH_ALT_CM_FOR_TEST, ctx.last_altitude,
+                                     "altitude at launch should read the height actually reached, not zero");
 }
 
 void test_PYR_CONT_01_continuity_check(void) {
@@ -374,6 +467,9 @@ void test_FLT_LAND_01_detects_landing(void) {
     ctx.ground_pressure = 101325;
     ctx.filter_initialized = true;
     pp_test_prime(101325);
+    /* This board is descending, so its ground reference froze at launch.
+       Leaving it tracking would have the reference chase the rocket down. */
+    pp_ground_track(false);
     ctx.filtered_pressure = 101313; /* pre-converged near mock pressure */
     ctx.launch_time = 0;
     ctx.last_altitude = 100;
@@ -856,6 +952,10 @@ int main(void) {
     /* PAD_IDLE */
     RUN_TEST(test_FLT_LAUNCH_02_stays_on_ground);
     RUN_TEST(test_FLT_LAUNCH_01_detects_ascent);
+    RUN_TEST(test_GND_CAL_01_reference_follows_slow_drift);
+    RUN_TEST(test_GND_CAL_02_reference_stops_tracking_when_the_rocket_moves);
+    RUN_TEST(test_FLT_LAUNCH_08_ten_metres_is_no_longer_enough);
+    RUN_TEST(test_FLT_LAUNCH_09_freezing_keeps_the_hundred_feet);
     RUN_TEST(test_PYR_CONT_01_continuity_check);
 
     /* ASCENT */
