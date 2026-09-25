@@ -68,25 +68,6 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-ASC-07**: The system shall not arm pyrotechnics unless maximum vertical speed during ASCENT exceeded 20 m/s. ← PYR-SAFE-04
 
 #### Landing Detection
-### Beep Codes
-- **BUZ-CODE-00**: The beep vocabulary shall be the set of actions available at the pad: OK to fly, check the pyro, system failure. ← SYS-STATUS-02
-- **BUZ-CODE-07**: Any condition that cannot be corrected at the rocket shall beep system failure, outranking a pyro fault. ← BUZ-CODE-00
-- **BUZ-CODE-08**: The diagnosis shall be reported by name on /api/status, not encoded in the beep. ← BUZ-CODE-00
-- **BUZ-CODE-01**: Each beep reason shall carry a stable key, a human-readable meaning, and a configurable two-digit code. ← SYS-STATUS-02
-- **BUZ-CODE-02**: Each digit shall be 1 to 9; a zero cannot be heard and a long count cannot be counted. ← BUZ-CODE-01
-- **BUZ-CODE-03**: Two reasons shall not share a code. ← BUZ-CODE-01
-- **BUZ-CODE-04**: A beep table that fails validation shall be rejected whole and the shipped codes used. ← BUZ-CODE-01
-- **BUZ-CODE-05**: The reasons, their meanings and their codes shall be served to the web interface so the firmware is the only place the vocabulary is written down. ← BUZ-CODE-01
-- **BUZ-CODE-06**: A board with no beep.ini shall write the shipped codes out. ← BUZ-CODE-01
-
-### Power-up Self-Test
-- **FLT-BOOT-11**: The system shall test the pressure sensor before the pyro channels. ← FLT-PHASE-01
-- **FLT-BOOT-12**: The system shall enter a terminal FAULT state, and beep the sensor failure code, when no pressure sensor answers. ← FLT-BOOT-11
-- **FLT-BOOT-13**: The system shall enter FAULT when calibration produces no samples within 10 seconds, rather than proceeding to PAD_IDLE. ← FLT-BOOT-11
-- **FLT-BOOT-14**: The system shall enter FAULT, and beep the filesystem failure code, when the filesystem does not mount. ← FLT-BOOT-11
-- **FLT-BOOT-15**: The system shall report every pad fault found, not only the first. ← SYS-STATUS-02
-- **FLT-BOOT-16**: The system shall not report a continuity fault for a pyro channel released to Lua. ← FLT-BOOT-15
-
 - **FLT-LAND-01**: The system shall detect landing when altitude change is less than 1 meter between consecutive samples for at least 1 second. ← FLT-PHASE-03
 - **FLT-LAND-02**: The system shall require vertical speed below 2 m/s for landing detection. ← FLT-PHASE-03
 - **FLT-LAND-03**: The system shall require altitude below 30 meters AGL for landing detection. ← FLT-PHASE-03
@@ -101,6 +82,29 @@ Each derived requirement traces to its parent with `← parent_id`.
 #### Altitude Clamping
 - **PYR-ALT-01**: The system shall clamp altitude-based pyro settings to the barometric sensor ceiling. ← PYR-MODE-02, PYR-MODE-03, PYR-MODE-04
 - **PYR-ALT-02**: The system shall emit a warning beep code when any altitude-based pyro setting exceeds the sensor ceiling. ← PYR-ALT-01
+
+### Beep Codes
+- **BUZ-CODE-01**: The beep vocabulary shall be the set of actions available at the pad: OK to fly, check pyro 1, check pyro 2, system failure. ← SYS-STATUS-02
+- **BUZ-CODE-02**: Any condition that cannot be corrected at the rocket shall announce system failure, outranking a pyro fault. ← BUZ-CODE-01
+- **BUZ-CODE-03**: The diagnosis shall be reported by name on /api/status, not encoded in the announcement. ← BUZ-CODE-01
+- **BUZ-CODE-04**: Each outcome shall carry a stable key, a human-readable meaning, and a configurable sound. ← BUZ-CODE-01
+- **BUZ-CODE-05**: A sound shall be a chirp, a steady tone, a beep count, or silence. ← BUZ-CODE-04
+- **BUZ-CODE-06**: A beep count shall be 1 to 9 per group; a zero cannot be heard and a long count cannot be counted. ← BUZ-CODE-05
+- **BUZ-CODE-07**: No two audible outcomes within a personality shall sound alike. ← BUZ-CODE-04
+- **BUZ-CODE-08**: A personality that is wholly silent shall be refused. ← BUZ-CODE-04
+- **BUZ-CODE-09**: The system shall hold three named personalities, one active. ← BUZ-CODE-04
+- **BUZ-CODE-10**: A beep table that fails validation shall be rejected whole and the shipped personalities used. ← BUZ-CODE-04
+- **BUZ-CODE-11**: The outcomes, their meanings and the personalities shall be served to the web interface so the firmware is the only place the vocabulary is written down. ← BUZ-CODE-04
+- **BUZ-CODE-12**: A board with no beep.ini shall write the shipped personalities out. ← BUZ-CODE-04
+- **BUZ-CODE-13**: The shipped defaults shall follow the Eggtimer Rocketry convention: a rapid chirp for OK to fly, 5 beeps for a drogue-channel fault, 4 for a main-channel fault, 2 for a hardware fault. ← BUZ-CODE-01
+
+### Power-up Self-Test
+- **FLT-BOOT-11**: The system shall test the pressure sensor before the pyro channels. ← FLT-PHASE-01
+- **FLT-BOOT-12**: The system shall enter a terminal FAULT state, and announce system failure, when no pressure sensor answers. ← FLT-BOOT-11
+- **FLT-BOOT-13**: The system shall enter FAULT when calibration produces no samples within 10 seconds, rather than proceeding to PAD_IDLE. ← FLT-BOOT-11
+- **FLT-BOOT-14**: The system shall enter FAULT, and announce system failure, when the filesystem does not mount. ← FLT-BOOT-11
+- **FLT-BOOT-15**: The system shall report every pad fault found, not only the first. ← SYS-STATUS-02
+- **FLT-BOOT-16**: The system shall not report a continuity fault for a pyro channel released to Lua. ← FLT-BOOT-15
 
 #### Sampling Rates (v2.0)
 - **FLT-RATE-01**: The system shall sample pressure at 50Hz (20ms) during PAD_IDLE, ASCENT, and DESCENT. ← FLT-PHASE-01, DD-001
@@ -127,10 +131,6 @@ Each derived requirement traces to its parent with `← parent_id`.
 ### L4 Implementation Requirements
 - **BUZ-01**: The system shall announce one of four outcomes: OK to fly, check pyro 1, check pyro 2, system failure. ← BUZ-STATUS-01
 - **BUZ-02**: The announcement shall repeat on a configurable cadence, defaulting to every 5 s until launch, so that silence means a fault rather than a finished message. ← BUZ-STATUS-01
-- **BUZ-08**: The OK-to-fly outcome shall default to a continuous chirp, not a counted code. ← BUZ-01
-- **BUZ-09**: The shipped defaults shall follow the Eggtimer Rocketry convention. ← BUZ-01
-- **BUZ-10**: The system shall hold three named beep personalities, one active. ← BUZ-01
-- **BUZ-11**: No two audible outcomes within a personality shall sound alike. ← BUZ-01
 - **FLT-BOOT-01**: The system shall complete a non-blocking boot sequence before entering PAD_IDLE. ← SYS-STATUS-01
 - **FLT-BOOT-04**: The system shall wait at least 500ms after power-on before sensor communication. ← FLT-BOOT-01
 - **FLT-BOOT-05**: The system shall detect and initialize the pressure sensor during boot. ← FLT-BOOT-01
