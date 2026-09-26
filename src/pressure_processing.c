@@ -21,9 +21,16 @@ static struct {
     pp_state_t state;
 
     /* Calibration */
-    int64_t cal_sum;
+    int32_t cal[PP_CAL_SAMPLES];
     int cal_count;
     int32_t ground_pressure;
+
+    /* The newest three readings, oldest first [SNS-PRES-07]. */
+    struct {
+        int32_t pa[3];
+        uint32_t ts[3];
+        uint8_t n;
+    } med;
 
     /* IIR filter state */
     int32_t filtered_pressure;
@@ -119,6 +126,52 @@ uint32_t pp_ground_window_ms(void) {
     return (uint32_t)pp.gnd.filled * PP_GROUND_BLOCK_MS;
 }
 
+/* ── Spike rejection [SNS-PRES-07] ──────────────────────────────────
+ *
+ * A median of three, between the range check and the filter. A single bad
+ * reading -- a flipped bit, a bus glitch -- is a launch on the pad or an
+ * apogee in coast if it reaches the filter.
+ *
+ * The median goes out with the MIDDLE reading's time. On a monotonic signal the
+ * median is exactly the middle reading, so the stage costs one sample of
+ * latency and distorts nothing: stamping it with the newest reading's time
+ * would shift every altitude a sample early. */
+
+static void med_push(int32_t pa, uint32_t ts) {
+    pp.med.pa[0] = pp.med.pa[1];
+    pp.med.ts[0] = pp.med.ts[1];
+    pp.med.pa[1] = pp.med.pa[2];
+    pp.med.ts[1] = pp.med.ts[2];
+    pp.med.pa[2] = pa;
+    pp.med.ts[2] = ts;
+    if (pp.med.n < 3)
+        pp.med.n++;
+}
+
+static int32_t median3(int32_t a, int32_t b, int32_t c) {
+    int32_t lo = a < b ? a : b;
+    int32_t hi = a < b ? b : a;
+    return c < lo ? lo : (c > hi ? hi : c);
+}
+
+/* The ground reference from calibration's readings: their median, so one bad
+ * reading cannot bias it -- and a biased reference stays biased, because the
+ * tracker rejects everything 50 Pa from it [GND-CAL-03]. */
+static int32_t cal_median(void) {
+    int32_t v[PP_CAL_SAMPLES];
+    memcpy(v, pp.cal, sizeof(v));
+    for (int i = 1; i < PP_CAL_SAMPLES; i++) {
+        int32_t x = v[i];
+        int j = i - 1;
+        while (j >= 0 && v[j] > x) {
+            v[j + 1] = v[j];
+            j--;
+        }
+        v[j + 1] = x;
+    }
+    return (v[PP_CAL_SAMPLES / 2 - 1] + v[PP_CAL_SAMPLES / 2]) / 2;
+}
+
 /* ── IIR pressure filter ─────────────────────────────────────────── */
 
 /* [SNS-PRES-02..04] First-order IIR with minimum step to prevent stall.
@@ -190,13 +243,15 @@ void pp_test_prime(int32_t ground_pressure_pa) {
     pp.state = PP_RUNNING;
     pp.ground_pressure = ground_pressure_pa;
     pp.filter_initialized = false; /* first pp_feed will prime the IIR */
+    /* A previous test's readings, and their times, are not this one's. */
+    memset(&pp.med, 0, sizeof(pp.med));
+    pp.last_timestamp = 0;
     /* And the ground reference, which otherwise starts empty and would climb
      * out of zero on the first sample. */
     gnd_reset(ground_pressure_pa);
 }
 
 void pp_start_cal(void) {
-    pp.cal_sum = 0;
     pp.cal_count = 0;
     pp.state = PP_CALIBRATING;
 }
@@ -216,6 +271,7 @@ void pp_set_ground_pressure(int32_t pa) {
 
 void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
     pp.last_raw = raw_pressure_pa;
+    med_push(raw_pressure_pa, timestamp_ms);
 
     switch (pp.state) {
     case PP_IDLE:
@@ -223,35 +279,47 @@ void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
         return;
 
     case PP_CALIBRATING:
-        pp.cal_sum += raw_pressure_pa;
-        pp.cal_count++;
+        pp.cal[pp.cal_count++] = raw_pressure_pa;
         if (pp.cal_count >= PP_CAL_SAMPLES) {
-            pp.ground_pressure = (int32_t)(pp.cal_sum / PP_CAL_SAMPLES);
+            pp.ground_pressure = cal_median();
             pp.filtered_pressure = pp.ground_pressure;
             pp.filter_initialized = true;
-            pp.last_timestamp = timestamp_ms;
+            /* The first median out carries the newest reading's time, one
+             * sample after the middle one here. */
+            pp.last_timestamp = pp.med.ts[1];
             gnd_reset(pp.ground_pressure);
             pp.state = PP_RUNNING;
         }
         return;
 
     case PP_RUNNING: {
-        /* Compute dt from previous sample */
-        uint32_t dt = timestamp_ms - pp.last_timestamp;
-        pp.last_timestamp = timestamp_ms;
+        /* Short of three readings -- only after a test primes the layer, since
+         * calibration fills the window -- the newest goes straight through.
+         * Either way no time goes out twice. */
+        int32_t pa = pp.med.pa[2];
+        uint32_t ts = pp.med.ts[2];
+        if (pp.med.n == 3) {
+            pa = median3(pp.med.pa[0], pp.med.pa[1], pp.med.pa[2]);
+            ts = pp.med.ts[1];
+        }
+        if (pp.filter_initialized && (int32_t)(ts - pp.last_timestamp) <= 0)
+            return;
+
+        uint32_t dt = ts - pp.last_timestamp;
+        pp.last_timestamp = ts;
 
         /* IIR filter */
-        int32_t filtered = pp_filter_pressure(raw_pressure_pa, dt);
+        int32_t filtered = pp_filter_pressure(pa, dt);
         pp.last_filtered = filtered;
 
         /* Before the altitude, so the reference is this sample's own. */
-        gnd_feed(filtered, timestamp_ms);
+        gnd_feed(filtered, ts);
 
         /* Convert to altitude */
         int32_t alt_cm = pp_pressure_to_altitude_cm(filtered, pp.ground_pressure);
 
         /* Push to ring */
-        ring_push(alt_cm, timestamp_ms);
+        ring_push(alt_cm, ts);
         return;
     }
     }

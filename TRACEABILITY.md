@@ -109,7 +109,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-BOOT-05 | Detect and initialise the sensor | Unit: test_FLT_BOOT_01_reaches_pad_idle | ✅ |
 | FLT-BOOT-06 | Initialise the pyro subsystem | Unit: test_FLT_BOOT_01_reaches_pad_idle | ✅ |
 | FLT-BOOT-07 | Initial continuity check | Integration: test_FLT_BOOT_01_all_states (BOOT_CONTINUITY on the way to PAD_IDLE) | ✅ |
-| FLT-BOOT-08 | Calibrate from 10 readings | Integration: ground pressure established | ✅ |
+| FLT-BOOT-08 | Calibrate from the median of 10 readings | Unit: test_FLT_BOOT_08_calibrates_ground; Chain: test_T2_calibration_glitch | ✅ |
 | FLT-BOOT-09 | 2s stabilization | — | ⚠️ |
 | FLT-BOOT-11 | The sensor is tested before the pyros | Unit: test_SNS_PRES_01_boot_no_sensor (BOOT_SENSOR first; a failure never reaches the pyro test) | ✅ |
 | FLT-BOOT-12 | No sensor: FAULT and system failure | Unit: test_SNS_PRES_01_boot_no_sensor | ✅ |
@@ -168,6 +168,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | SNS-PRES-01 | Auto-detect sensor | — (hardware test only) | ⚠️ |
 | SNS-PRES-02..04 | Pressure filter | Integration: altitude converges correctly | ✅ |
 | SNS-PRES-05 | Conversion read after its worst case | Hardware (MK1C, MK1B): pres_rejects 0 under HTTP load, 18 in 60 s without the timing | ✅ HW |
+| SNS-PRES-07 | A single outlier never reaches the filter | Chain: test_T2_pad_glitch_sweep, test_T2_coast_glitch, test_T2_median_timing | ✅ |
 | SNS-PRES-06 | Impossible readings discarded and counted | Hardware: pres_rejects on /api/status; the false launch they caused did not recur | ✅ HW |
 | SNS-ALT-01..03 | Altitude computation | Integration: max altitude within expected range | ✅ |
 
@@ -345,7 +346,7 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 186 |
+| ✅ Verified by a host, web or closed-loop test | 187 |
 | ⚠️ Not directly verified (needs a test or hardware) | 32 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 12 |

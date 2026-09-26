@@ -538,6 +538,32 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-040: A Median Of Three Before The Filter
+- **Decision:** The pressure layer passes the median of the newest three
+  readings to the filter, stamped with the middle reading's time
+  (SNS-PRES-07). Calibration takes the median of its 10 readings instead of
+  their mean (FLT-BOOT-08).
+- **Why:** a single reading inside the sensor's range but 11 kPa or more low
+  declared a launch (N24), and one high reading in the last second of coast
+  declared apogee up to 0.4 s early on a flight too slow to latch the Mach
+  gate. A flipped high bit in the raw value is enough. One glitch during
+  calibration left the ground reference 2 kPa off, and GND-CAL-03's 50 Pa
+  gate then rejected every sample after it, so it stayed off.
+- **Stamped at the middle reading.** On a monotonic signal the median is the
+  middle reading exactly, so with its own time the stage costs one sample of
+  latency and moves no altitude. Stamped with the newest reading's time,
+  every altitude would be reported 20 ms early. Measured in the closed-loop
+  suite: launch, apogee and the first deployment each move +20 ms in all 36
+  flights, altitudes at most 2 m.
+- **Rejected:** a median of five, which also stops two bad readings in a row
+  but costs 40 ms everywhere; T3's held triggers stop those instead. A
+  rate-of-change gate, whose limit would have to be tuned to the fastest real
+  rocket. A Hampel filter, which needs a noise estimate the pad has not
+  measured yet.
+- **After priming.** `pp_test_prime()` starts the window empty, and until it
+  holds three readings the newest goes straight through. No time is emitted
+  twice. On the hardware calibration always fills the window first.
+
 ### DD-039: HTTP Is A Byte Stream, Between Two Rings
 - **Decision:** Each connection owns an rx ring and a tx ring (`net_ring.c`)
   and an HTTP engine (`http_conn.c`). The engine parses the request from rx a

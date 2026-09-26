@@ -173,7 +173,7 @@ ground bias, and the stall figure, where they used a different stall model.
 | Apogee after the true apogee | +0.56 s mean (+0.54 to +0.58) | never early; about +0.4 s | T5 |
 | Ground pressure frozen at launch | reads 0.17 m (30 g) to 0.42 m (2 g) low | ≤ 0.1 m | T7 |
 | Ground tracker after a >50 Pa step | frozen for good (N9) | re-seeds | T6 |
-| Sample timestamps | loop ms at the temperature read, 16 ms after the conversion, up to 127 ms after it through a stall; stalls raise the worst speed error at 100 m/s from 8.3 to 10.3 m/s | hardware timer at the pressure conversion | T11 |
+| Sample timestamps | loop ms at the temperature read, 16 ms after the conversion, up to 127 ms after it through a stall; stalls raise the worst speed error at 100 m/s from 8.3 to 9.3 m/s | hardware timer at the pressure conversion | T11 |
 | Fit-based speed and acceleration through flash stalls | worst −294 m/s and 441 m/s² with today's stamps (earlier experiments; T11 re-measures) | RMS 1.2 m/s and 3.5 m/s², stalls or not | T11 |
 | A flight above 8 km AGL | apogee fires about 1 s after passing 8 km (N26) | apogee at the real apogee | T5 |
 | Supersonic flight with a static-port error | the Mach gate trusts any 1 s below 100 ft/s, which the error can fake | no drogue before the true apogee, on every M0 profile | M1 |
@@ -263,6 +263,14 @@ column; each board has a measured noise figure. Where a figure differs from
 ---
 
 ### T2. Reject single-sample glitches (N24)
+
+**Done 2026-09-26** (DD-040). The coast test first passed on today's code
+because the Mach gate held apogee off on its flight; it now also flies one too
+slow to latch the gate, where a glitch fired apogee up to 0.4 s early. The
+guard measured launch, apogee and the first deployment moving exactly +20 ms
+in all 36 closed-loop flights. Second deployments moved −40 to +40 ms,
+because the first one's 20 ms changed the canopy's trajectory in the closed
+loop. Altitudes moved at most 2 m.
 
 **Why:** a single reading 12 kPa or more low passes the range check (DD-036)
 and declares a launch. A flipped high bit in the sensor's raw value could
@@ -453,7 +461,7 @@ from when the pressure was converted in three ways:
 Every dt downstream inherits that error: the filter's step, every speed, and
 the flight log's time column, which is `now - launch_time` on the loop clock.
 Under T0's stall model, stalls raise today's worst speed error at 100 m/s from
-8.3 to 10.3 m/s. The earlier experiments put a fit-based estimator, which T5
+8.3 to 9.3 m/s. The earlier experiments put a fit-based estimator, which T5
 brings in, 294 m/s wrong through a stall; T11's tests measure that again.
 
 **Tests first:**

@@ -476,17 +476,19 @@ PP_IDLE produces no samples. Every recovery waits out `RECOVERY_DEADLINE_MS`
 and boots cold. The integration tests prime the layer with `pp_test_prime()`
 first, which hides it. Planned as T1 in `docs/outstanding_tasks.md` (section 4).
 
-### 17. One sample can declare a launch or an apogee — OPEN (N24)
+### 17. One sample can declare a launch or an apogee — PARTLY FIXED (N24)
 
-Nothing between the 1–120 kPa range check and the detectors rejects a single
-outlier, and both PAD_IDLE's launch test and ASCENT's apogee test fire on one
-sample. Measured: a single reading 12 kPa low declares a launch. Planned as
-T2 (median of 3) and T3 (held triggers).
+A single reading 11 kPa or more low declared a launch, and one high reading
+in the last second of coast declared apogee early. A median of three now
+stands between the range check and the filter (DD-040), so no single reading
+reaches the detectors. Two bad readings in a row still can, because both
+tests fire on one sample; T3 holds them for a duration.
 
 ## What is not in the machine
 
 - No filter on speed. It is a raw two-point difference of the filtered
   altitude, so at ~20 ms sampling the quantisation floor is about ±4 m/s per
   pascal step.
-- No plausibility check on a sample beyond the sensor's own range (DD-036):
-  a reading inside 1-120 kPa is believed, however far it is from the last.
+- No plausibility check on a sample beyond the sensor's own range (DD-036)
+  and the median of three (DD-040): two readings in a row inside 1-120 kPa
+  are believed, however far they are from the last.

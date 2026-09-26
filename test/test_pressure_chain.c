@@ -138,6 +138,13 @@ typedef struct {
     int speed_err_n;
 } result_t;
 
+/* One glitch during the next fly(), at a flight time; cleared by each fly(). */
+static struct {
+    float at_s;
+    int32_t pa;
+    int samples;
+} glitch;
+
 /* A flight from power-on to LANDED, or to until_ms. */
 static result_t fly(const flight_t *f, uint32_t seed, uint32_t pad_s, uint32_t until_ms, bool stalls) {
     result_t r;
@@ -149,8 +156,14 @@ static result_t fly(const flight_t *f, uint32_t seed, uint32_t pad_s, uint32_t u
     r.ignition_ms = pad + pad_s * 1000u;
     truth_t tr = {0};
     uint32_t last_sample = ctx.last_sample;
+    bool glitched = false;
     for (; t < until_ms; t++) {
         float tf = ((float)t - (float)r.ignition_ms) / 1000.0f;
+        if (glitch.samples > 0 && !glitched && tf >= glitch.at_s) {
+            mock_glitch_pa = glitch.pa;
+            mock_glitch_samples = glitch.samples;
+            glitched = true;
+        }
         float v_before = tr.v;
         truth_step(&tr, f, tf);
         if (!tr.apogee && tf > f->burn_s && v_before > 0.0f && tr.v <= 0.0f) {
@@ -180,6 +193,7 @@ static result_t fly(const flight_t *f, uint32_t seed, uint32_t pad_s, uint32_t u
             break;
         }
     }
+    memset(&glitch, 0, sizeof(glitch));
     return r;
 }
 
@@ -465,6 +479,142 @@ void test_T0_baseline_landing_under_main(void) {
         printf("  BASELINE main at 5 m/s: never LANDED\n");
 }
 
+/* ── T2: a single-sample glitch never reaches the filter ──────────── */
+
+/* The sizes a flipped high bit in the raw reading could produce, both ways. */
+static const int32_t GLITCHES[] = {-60000, -40000, -20000, -15000, -12000, -11000, -8000,
+                                   -5000,  -2000,  2000,   5000,   10000,  15000,  18000};
+#define N_GLITCHES (sizeof(GLITCHES) / sizeof(GLITCHES[0]))
+
+void test_T2_pad_glitch_sweep(void) {
+    char launched[256] = "";
+    for (unsigned i = 0; i < N_GLITCHES; i++) {
+        for (uint32_t seed = 1; seed <= 3; seed++) {
+            boot_like_hardware(seed);
+            uint32_t t = 0;
+            run_to_pad(&t);
+            uint32_t end = t + 5000u + 7u * seed;
+            for (; t < end; t++)
+                tick(t);
+            mock_glitch_pa = GLITCHES[i];
+            mock_glitch_samples = 1;
+            end = t + 3000u;
+            for (; t < end; t++)
+                tick(t);
+            if (ctx.current_state != PAD_IDLE) {
+                char item[24];
+                snprintf(item, sizeof(item), " %+ld(seed %u)", (long)(GLITCHES[i] / 1000), (unsigned)seed);
+                strncat(launched, item, sizeof(launched) - 1 - strlen(launched));
+            }
+        }
+    }
+    if (launched[0])
+        printf("  one glitch on the pad launched at (kPa):%s\n", launched);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("", launched, "one glitch must never declare a launch");
+}
+
+/* A glitch high in pressure reads as a sudden drop: in coast, once armed, an
+ * apogee. The glitch is swept across the last second before the true apogee,
+ * on a flight that latches the Mach gate and one that stays under it: the
+ * gate holds apogee off until 1 s after arming, which on the first flight is
+ * after the true apogee anyway. */
+void test_T2_coast_glitch(void) {
+    const flight_t flights[] = {
+        {5.0f, 2.0f, 20.0f, 0.0f},  /* 98 m/s at burnout, apogee 588 m at 12.0 s */
+        {5.0f, 0.55f, 20.0f, 0.0f}, /* 27 m/s, under the gate's 30.5 m/s; apogee 45 m at 3.3 s */
+    };
+    const int32_t sizes[] = {2000, 5000, 10000, 20000};
+    char early[512] = "";
+    for (unsigned fi = 0; fi < 2; fi++) {
+        const flight_t *f = &flights[fi];
+        float t_ap = f->burn_s + f->g_net * f->burn_s;
+        for (unsigned i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+            for (int k = 1; k <= 20; k++) {
+                glitch.at_s = t_ap - 0.05f * (float)k;
+                glitch.pa = sizes[i];
+                glitch.samples = 1;
+                result_t r = fly(f, 4, 3, 40000, false);
+                if (r.apogee_ms != 0 && r.apogee_ms < r.apogee_true_ms) {
+                    char item[64];
+                    snprintf(item, sizeof(item), " [flight %u, +%ld kPa, %.2f s before: %ld ms early]", fi,
+                             (long)(sizes[i] / 1000), 0.05 * k, (long)r.apogee_true_ms - (long)r.apogee_ms);
+                    strncat(early, item, sizeof(early) - 1 - strlen(early));
+                }
+            }
+        }
+    }
+    if (early[0])
+        printf("  early apogees:%s\n", early);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("", early, "one glitch in coast must never declare apogee early");
+}
+
+void test_T2_calibration_glitch(void) {
+    boot_like_hardware(6);
+    uint32_t t = 0;
+    bool glitched = false;
+    for (; t < 20000 && ctx.current_state != PAD_IDLE; t++) {
+        if (ctx.current_state == BOOT_CALIBRATE && !glitched) {
+            mock_glitch_pa = -20000;
+            mock_glitch_samples = 1;
+            glitched = true;
+        }
+        tick(t);
+    }
+    TEST_ASSERT_TRUE(glitched);
+    TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
+    uint32_t end = t + 10000u;
+    for (; t < end; t++)
+        tick(t);
+    int32_t err = pp_ground_pressure() - (int32_t)PAD_PA;
+    char msg[64];
+    snprintf(msg, sizeof(msg), "ground %ld Pa from the pad's pressure", (long)err);
+    TEST_ASSERT_TRUE_MESSAGE(err >= -1 && err <= 1, msg);
+}
+
+/* A straight ramp is monotonic, so its median is always the middle sample:
+ * the stage costs one sample of latency and changes nothing else. Delivered
+ * with the middle sample's own time, the altitudes come out exactly as the
+ * ramp without the spike gives them. */
+typedef struct {
+    int32_t alt;
+    uint32_t ts;
+} out_t;
+
+static int ramp_through_pp(bool spike, out_t *out, int cap, uint32_t *newest_ts_after_k20) {
+    pp_init();
+    pp_test_prime(101325);
+    int n = 0;
+    for (int k = 1; k <= 50; k++) {
+        int32_t p = 101325 - 10 * k;
+        if (spike && k == 25)
+            p -= 5000;
+        pp_feed(p, (uint32_t)k * 20u);
+        altitude_sample_t a;
+        while (pp_read(&a) && n < cap) {
+            out[n].alt = a.altitude_cm;
+            out[n].ts = a.timestamp_ms;
+            n++;
+        }
+        if (k == 20)
+            *newest_ts_after_k20 = n ? out[n - 1].ts : 0;
+    }
+    return n;
+}
+
+void test_T2_median_timing(void) {
+    static out_t clean[64], spiked[64];
+    uint32_t newest_clean = 0, newest_spiked = 0;
+    int nc = ramp_through_pp(false, clean, 64, &newest_clean);
+    int ns = ramp_through_pp(true, spiked, 64, &newest_spiked);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(19u * 20u, newest_clean,
+                                     "after the 20th sample, the newest out is the 19th: one sample late");
+    TEST_ASSERT_EQUAL_INT(nc, ns);
+    for (int i = 0; i < nc; i++) {
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(clean[i].ts, spiked[i].ts, "the spike moved a timestamp");
+        TEST_ASSERT_EQUAL_INT32_MESSAGE(clean[i].alt, spiked[i].alt, "the spike reached the filter");
+    }
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -480,5 +630,9 @@ int main(void) {
     RUN_TEST(test_T0_baseline_recovery_unprimed);
     RUN_TEST(test_T0_baseline_stall_speed_error);
     RUN_TEST(test_T0_baseline_landing_under_main);
+    RUN_TEST(test_T2_pad_glitch_sweep);
+    RUN_TEST(test_T2_coast_glitch);
+    RUN_TEST(test_T2_calibration_glitch);
+    RUN_TEST(test_T2_median_timing);
     return UNITY_END();
 }

@@ -167,7 +167,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-BOOT-05**: The system shall detect and initialize the pressure sensor during boot. ← FLT-BOOT-01
 - **FLT-BOOT-06**: The system shall initialize the pyrotechnic subsystem during boot. ← FLT-BOOT-01
 - **FLT-BOOT-07**: The system shall perform an initial continuity check during boot. ← SYS-STATUS-02
-- **FLT-BOOT-08**: The system shall calibrate ground pressure by averaging at least 10 readings. ← FLT-BOOT-01
+- **FLT-BOOT-08**: The system shall calibrate ground pressure from the median of at least 10 readings, so one bad reading cannot bias it. ← FLT-BOOT-01
 - **FLT-BOOT-09**: The system shall wait at least 2 seconds for sensor stabilization before calibration. ← FLT-BOOT-08
 
 ---
@@ -245,6 +245,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **SNS-PRES-04**: The pressure filter shall advance by at least 1 Pa per sample when the raw value differs from the filtered value. ← SNS-PRES-02
 - **SNS-PRES-05**: A sensor conversion shall be read no sooner than its worst-case conversion time after the command that started it. ← SNS-PRES-01
 - **SNS-PRES-06**: A reading the sensor cannot produce -- a zero conversion, or a pressure outside its rated range -- shall be discarded and counted, not filtered. ← SNS-PRES-02
+- **SNS-PRES-07**: A single-sample outlier shall not reach the pressure filter. The median of the newest three readings stands between the range check and the filter, carrying the middle reading's time. ← SNS-PRES-02
 - **SNS-ALT-02**: The system shall clamp computed altitude to a maximum of 8000 meters. ← SNS-ALT-01
 - **SNS-ALT-03**: The system shall clamp computed altitude to a minimum of 0 meters. ← SNS-ALT-01
 
