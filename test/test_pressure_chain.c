@@ -243,9 +243,11 @@ void test_T0_stall_model(void) {
            (unsigned)mock_stamp_lag_max_ms);
     TEST_ASSERT_TRUE_MESSAGE(per_s > 1.15 && per_s < 1.45, "about 1.3 stalls a second");
     TEST_ASSERT_TRUE(mock_stall_min_ms >= 40 && mock_stall_max_ms <= 73);
-    TEST_ASSERT_EQUAL_UINT32_MESSAGE(16, mock_stamp_lag_min_ms, "normally stamped 16 ms after the conversion");
-    TEST_ASSERT_TRUE_MESSAGE(mock_stamp_lag_max_ms >= 16 + 40,
-                             "a conversion commanded before a stall is read, and stamped, after it");
+    /* DD-051: taken at the loop after its command, 10 ms on, stamped at the
+     * middle of its conversion, 4.5 ms in. */
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(5, mock_stamp_lag_min_ms, "normally taken 5.5 ms after the conversion");
+    TEST_ASSERT_TRUE_MESSAGE(mock_stamp_lag_max_ms >= 5 + 40,
+                             "a conversion commanded before a stall is taken after it");
 }
 
 void test_T0_off_by_default(void) {
@@ -1958,16 +1960,6 @@ void test_M1_minimum_altitude_arm(void) {
 /* With D2 once in ten cycles the MS5607 gives a sample every 11 ms or so. */
 #define T9_INTERVAL_MS 11u
 
-/* [FLT-RATE-01] The idle time after a sample's conversions: none when they
- * fill the interval. Unsigned, it wrapped to 49 days. */
-void test_T9_short_interval(void) {
-    TEST_ASSERT_EQUAL_UINT32(0u, ms5607_idle_ms(20u, 2u));
-    TEST_ASSERT_EQUAL_UINT32(80u, ms5607_idle_ms(100u, 2u));
-    TEST_ASSERT_EQUAL_UINT32(0u, ms5607_idle_ms(11u, 2u));
-    TEST_ASSERT_EQUAL_UINT32(1u, ms5607_idle_ms(11u, 1u));
-    TEST_ASSERT_EQUAL_UINT32(0u, ms5607_idle_ms(9u, 1u));
-}
-
 static double pad_speed_rms(uint32_t interval_ms) {
     boot_like_hardware(12);
     mock_sample_interval_ms = interval_ms;
@@ -2114,6 +2106,114 @@ void test_N7_no_landing_under_main(void) {
     TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
 }
 
+/* ── T9, DD-051: the MS5607 converted by a one-shot each loop ─────── */
+
+/* The datasheet's worked example: page 8 of
+ * docs/datasheets/MS5607-02BA03_2017-06.pdf. */
+static const uint16_t DS_PROM[8] = {0, 46372, 43981, 29059, 27842, 31553, 28165, 0};
+
+void test_T9_datasheet_example(void) {
+    pressure_reading_t r;
+    ms5607_compensate_prom(DS_PROM, 6465444u, 8077636u, &r);
+    TEST_ASSERT_EQUAL_FLOAT(110002.0f, r.pressure_pa);
+    TEST_ASSERT_EQUAL_FLOAT(20.00f, r.temperature_c);
+}
+
+/* The datasheet's equations run backwards: the D2 its example sensor gives at
+ * a temperature, and the D1 at a pressure and a D2. */
+static uint32_t ds_d2(double temp_c) {
+    return (uint32_t)llround(31553.0 * 256.0 + (temp_c * 100.0 - 2000.0) * 8388608.0 / 28165.0);
+}
+
+static uint32_t ds_d1(double pa, uint32_t d2) {
+    double dt = (double)d2 - 31553.0 * 256.0;
+    double off = 43981.0 * 131072.0 + 27842.0 * dt / 64.0;
+    double sens = 46372.0 * 65536.0 + 29059.0 * dt / 128.0;
+    return (uint32_t)llround((pa * 32768.0 + off) * 2097152.0 / sens);
+}
+
+/* With these coefficients a temperature 1 °C stale moves the pressure about
+ * 240 Pa: the bridge's own temperature coefficient, which is what the
+ * compensation is for. So a D2 read once in ten conversions must be carried
+ * forward along its trend, not reused. A die warming at 1 °C/s, each
+ * temperature reading with the datasheet's 0.002 °C RMS: within 1 Pa RMS of a
+ * fresh temperature. */
+void test_T9_temperature_reuse(void) {
+    ms5607_temps_t tt;
+    memset(&tt, 0, sizeof(tt));
+    uint32_t rng = 7;
+    uint32_t last_d2 = 0;
+    double sq = 0.0, worst = 0.0, stale_sq = 0.0;
+    int n = 0;
+    for (int k = 0; k < 3000; k++) {
+        uint64_t at = 1000000ull + 10000ull * (uint64_t)k + MS5607_HALF_CONV_US;
+        double temp = 20.0 + (double)(at - 1000000ull) / 1e6;
+        bool temperature = ms5607_temperature_due(&tt);
+        ms5607_conversion_started(&tt, temperature);
+        if (temperature) {
+            rng = rng * 1103515245u + 12345u;
+            double u1 = ((rng >> 8) + 0.5) / 16777216.0;
+            rng = rng * 1103515245u + 12345u;
+            double u2 = ((rng >> 8) + 0.5) / 16777216.0;
+            double g = sqrt(-2.0 * log(u1)) * cos(6.283185307 * u2);
+            last_d2 = ds_d2(temp + 0.002 * g);
+            ms5607_temps_note(&tt, last_d2, at);
+            continue;
+        }
+        if (tt.n < MS5607_TEMPS)
+            continue; /* the line needs its readings: boot and calibration outlast this */
+        uint32_t d2 = ds_d2(temp);
+        uint32_t d1 = ds_d1(101325.0, d2);
+        pressure_reading_t full, est, stale;
+        ms5607_compensate_prom(DS_PROM, d1, d2, &full);
+        ms5607_compensate_prom(DS_PROM, d1, ms5607_temps_at(&tt, at), &est);
+        ms5607_compensate_prom(DS_PROM, d1, last_d2, &stale);
+        double e = est.pressure_pa - full.pressure_pa, s = stale.pressure_pa - full.pressure_pa;
+        sq += e * e;
+        stale_sq += s * s;
+        worst = fabs(e) > worst ? fabs(e) : worst;
+        n++;
+    }
+    printf("  temperature once in %d at 1 C/s: %.2f Pa RMS, %.2f worst; reused as read it would be %.1f Pa RMS\n",
+           MS5607_D2_EVERY, sqrt(sq / n), worst, sqrt(stale_sq / n));
+    TEST_ASSERT_TRUE(sqrt(sq / n) <= 1.0);
+    TEST_ASSERT_TRUE(worst <= 3.0);
+}
+
+/* The test HAL's model of the hardware (DD-051): each 10 ms loop takes the
+ * conversion its one-shot finished and commands the next; the temperature
+ * once in ten. Nine samples every 100 ms, each stamped at the middle of its
+ * conversion and taken 5.5 ms after it. */
+void test_T9_one_shot_cadence(void) {
+    mock_reset_all();
+    pp_init();
+    pp_test_prime((int32_t)PAD_PA);
+    mock_one_shot = true;
+    mock_pressure.pressure_pa = PAD_PA;
+    int n = 0, gaps20 = 0, other = 0;
+    uint32_t last_us = 0;
+    for (uint32_t t = 1; t <= 10000; t++) {
+        hal_tasks_tick(t);
+        altitude_sample_t s;
+        while (pp_read(&s)) {
+            if (n > 0) {
+                uint32_t d = s.timestamp_us - last_us;
+                gaps20 += d == 20000u;
+                other += d != 10000u && d != 20000u;
+            }
+            last_us = s.timestamp_us;
+            n++;
+        }
+    }
+    printf("  one-shot schedule: %d samples in 10 s, %d 20 ms gaps, stamp lag %u-%u ms\n", n, gaps20,
+           (unsigned)mock_stamp_lag_min_ms, (unsigned)mock_stamp_lag_max_ms);
+    TEST_ASSERT_INT_WITHIN(2, 900, n);
+    TEST_ASSERT_INT_WITHIN(2, 100, gaps20);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, other, "every interval is one loop, or two across a temperature");
+    TEST_ASSERT_EQUAL_UINT32(5, mock_stamp_lag_min_ms);
+    TEST_ASSERT_EQUAL_UINT32(5, mock_stamp_lag_max_ms);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -2157,6 +2257,9 @@ int main(void) {
     RUN_TEST(test_N18_landed_logs_once_a_second);
     RUN_TEST(test_T11_stalls_change_nothing);
     RUN_TEST(test_T11_d1_stamp);
+    RUN_TEST(test_T9_datasheet_example);
+    RUN_TEST(test_T9_temperature_reuse);
+    RUN_TEST(test_T9_one_shot_cadence);
     RUN_TEST(test_T11_loop_clock_independent);
     RUN_TEST(test_T11_log_rows_at_sample_time);
     RUN_TEST(test_T11_landing_holds_a_second);
@@ -2176,7 +2279,6 @@ int main(void) {
     RUN_TEST(test_M1_minimum_altitude_arm);
     RUN_TEST(test_N12_drogue_from_below);
     RUN_TEST(test_N7_no_landing_under_main);
-    RUN_TEST(test_T9_short_interval);
     RUN_TEST(test_T9_same_outcomes);
     return UNITY_END();
 }

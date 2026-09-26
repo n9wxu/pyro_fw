@@ -19,7 +19,7 @@ recorded.
 | 1 | [Commit the work](#1-commit-the-work) | done, except G4 |
 | 2 | [Decisions](#2-decisions) | you |
 | 3 | [Safety fixes](#3-safety-fixes) | done |
-| 4 | [The pressure chain and the Mach lockout](#4-the-pressure-chain-and-the-mach-lockout) | done, except T9's switch to ~90 Hz (the T8 logging-rate decision) and every task's G4 |
+| 4 | [The pressure chain and the Mach lockout](#4-the-pressure-chain-and-the-mach-lockout) | done, except every task's G4 |
 | 5 | [Other code defects](#5-other-code-defects) | done, except C10, C6 and U6 (their decisions) |
 | 6 | [Bench checks](#6-bench-checks) | a person or equipment |
 | 7 | [Board changes](#7-board-changes) | hardware design |
@@ -134,7 +134,7 @@ are still yours; their tasks wait.
 | T5-W | The fit's window | **Adopted: 1.0 s.** At 50 Hz it gives 0.19 m/s of speed noise on the pad and 4.4 Pa/s² of p̈ noise. The Mach prompt's example of 0.5 s gives 23.8 Pa/s² at 50 Hz (17.5 at 100 Hz). At 9 km, with no drag, 1 g of deceleration would then sit only 0.7σ (1.0σ at 100 Hz) above the release threshold, and the release would keep resetting. The cost of 1 s: a Mach step or an ejection keeps fits unclean for 1 s instead of 0.5 s, and so does the ignition step, which M1 handles by setting the flag on any fit. | T5 |
 | T5-A | How far below the peak apogee needs | **Adopted: p ≥ 1.0001·p_min**, 0.6–0.9 m, about +0.4 s. The Mach prompt's 1.0005 means 3–5 m and puts the drogue 0.8–1.0 s after apogee; today it is +0.56 s. The fit's pressure noise is about 0.5 Pa. At 9 km, 1.0001 is 3 Pa, so noise cannot fake the drop, and an early apogee becomes impossible. | T5 |
 | T6 | How long the ground tracker waits before re-seeding | **Adopted:** 5 s. The pressure-filter prompt's 30 s leaves the pad reference wrong for half a minute after the rocket is set down. | T6 |
-| T8 | Flight logging rate | **Open; now blocks T9's switch to ~90 Hz.** Full rate makes flights replayable, at a cost in flash wear. T8 adds the columns and the replay tool at today's default rate, which is every sample at 50 Hz; at 90 Hz the default of 50 would thin the log, and a thinned log cannot be replayed. | T9 |
+| T8 | Flight logging rate | **Open.** Full rate makes flights replayable, at a cost in flash wear. The default logs every sample, which since T9 (DD-051) is about 90 rows a second on the MS5607 boards: nearly twice the flash per flight. A thinned log cannot be replayed. | T9 |
 | M1-D | Accept M1's deviations from the Mach prompt | **Adopted.** They are listed in M1. The largest: the fit is solved against each sample's own time, in floating point, not with precomputed integer coefficients. Flash stalls make the sample spacing uneven (T11), and precomputed coefficients assume even spacing. | M1 |
 | N20 | Shared littlefs buffers | **Adopted:** refuse file GETs while the flight log is open. It can be tested on the host, the log can be read after landing, and WEB-API-08 already refuses every writer in flight. | N20 task |
 
@@ -184,7 +184,7 @@ ground bias, and the stall figure, where they used a different stall model.
 | Supersonic flight with a static-port error | a port error that makes the boost read as a descent fired the low-drag flight's drogue 39 s before apogee, at Mach 1.27 | no drogue before the true apogee, on every M0 profile, by a lockout: done, every drogue 0.38-0.50 s after apogee; flagged by Mach 0.82, released at Mach 0.34-0.49 | M1 |
 | A sensor stuck or lost in flight | a stuck value may read as apogee | never causes a deployment: done, and a stuck, gapped or lost sensor holds every decision until a whole window of new samples | M2 |
 | Real flights replayable offline | no (raw pressure not logged) | yes | T8 |
-| MS5607 sample rate | 50 Hz | ~90 Hz | T9 |
+| MS5607 sample rate | 50 Hz assumed; 27-35 ms measured | ~90 Hz: done in code, one conversion a loop (DD-051); the bench is owed | T9 |
 
 ### Order
 
@@ -973,9 +973,21 @@ trigger, and T5's 2 s limit on waiting for a clean fit does not apply.
 
 ### T9. Read MS5607 temperature less often
 
-**Partly done 2026-09-26.** Done: everything that holds at any rate.
-- `test_T9_short_interval`: the idle time is `ms5607_idle_ms()`, which
-  cannot wrap.
+**Done 2026-09-26 (DD-051), except the bench.** At the user's direction the
+MS5607 converts once a loop: each loop takes the conversion the last one
+commanded, whose one-shot alarm read it from RAM, and commands the next.
+Temperature once in ten, carried to each pressure along its line.
+- `test_T9_one_shot_cadence`: 900 pressures in 10 s under `mock_one_shot`, a
+  20 ms gap only where the temperature was read, each taken 5 ms after its
+  stamp.
+- `test_T9_temperature_reuse`: 0.71 Pa RMS, 2.00 Pa worst, for a sensor
+  warming at 1 °C/s; reusing the last reading as read, 12.1 Pa RMS.
+- `test_T9_datasheet_example`: the compensation reproduces the datasheet's
+  worked example (docs/datasheets/, page 8).
+- `test_T9_drains` is not needed: one conversion finishes per loop, and the
+  detectors read it in the same iteration.
+- `support/prove_core0.py` proves the alarm handler RAM-closed, and fails on a
+  planted flash call.
 - The history is 128 samples and the ring 64, so the fit keeps its whole
   second at ~90 Hz. At 90 Hz with the old 64 it held 0.7 s, and the pad
   speed was noisier than at 50 Hz (0.252 m/s against 0.192).
@@ -985,14 +997,16 @@ trigger, and T5's 2 s limit on waiting for a clean fit does not apply.
 - `test_T9_mach_at_90hz`: every fast profile, both pads, flagged before
   Mach 0.85 and released before apogee.
 
-**Waits** on the T8 logging-rate decision (section 2) and on the bench (G4):
-the D2 cadence in `hal_common.c`, the switch to ~90 Hz, `SENSOR_RATE_HZ`,
-FLT-RATE-01/02, `test_T9_temperature_reuse` and `test_T9_drains`. At 90 Hz the
-default `log_rate_hz` of 50 would thin the log, and a thinned log cannot be
-replayed (DAT-08). Logging every sample instead nearly doubles the flash
-written per flight. Which to pay is the user's call. The cadence itself can
-only be checked on a board: `pres_waits`, `pres_rejects`, loop overruns and
-`stage_max_us[2]`.
+**Owed on the bench (G4):** `sample_interval_us` near 10 ms, 20 ms where the
+temperature was read; `stamp_lag_max_us` near 5.5 ms; `pres_waits` and
+`pres_rejects` at 0; 0 loop overruns; `stage_max_us[2]`, and
+`stage_max_us[7]` with the log at 90 rows a second; `flash_refusals` 0 with
+Lua running on MK1C.
+
+**The T8 logging-rate decision is still the user's.** `log_rate_hz`'s default
+of 50 is at or above `SENSOR_RATE_HZ`, so every sample is logged, about 90
+rows a second: the log still replays (DAT-08), at nearly twice the flash
+written per flight. Thinning it would stop the replay.
 
 **Why:** every sample converts both pressure (D1) and temperature (D2), at
 10 ms each. Temperature moves slowly. Converting it every tenth cycle nearly
@@ -1004,8 +1018,8 @@ margin.
   `mach_tests`, at 50 Hz and 90 Hz, give the same outcomes within the new
   timing.
 - `test_T9_short_interval`: the pressure task schedules correctly with an
-  interval under 20 ms. Fails today: its idle time,
-  `sample_interval_ms - 2 * MS5607_CONV_MS`, is unsigned and wraps.
+  interval under 20 ms. Written, then retired with the idle time it tested:
+  the one-shot has none (DD-051).
 - `test_T9_temperature_reuse`: compensating D1 with a D2 up to 10 cycles old
   stays within 1 Pa of full compensation, for a sensor warming at 1 °C/s.
 - `test_T9_drains`: the detectors drain every waiting sample each tick.

@@ -82,12 +82,14 @@ extern int32_t mock_glitch_pa;           /* added to each of the next ... */
 extern int mock_glitch_samples;          /* ... this many readings */
 extern uint32_t mock_pres_rejects;
 
-/* The MS5607's timing on the hardware, with core0 stalls. A reading is the
- * pressure at the middle of its D1 conversion, stamped when the loop reads it
- * after D2 -- about 16 ms later, or later still by any stall in between.
- * Stalls last 40-73 ms and come about 1.3 times a second (DD-035). While one
- * lasts nothing on core0 runs: a driver checks mock_core0_stalled() before
- * dispatching. */
+/* The MS5607's schedule on the hardware (DD-051): each 10 ms loop takes the
+ * conversion its one-shot finished and commands the next, the temperature
+ * once in ten. A reading is the pressure at the middle of its conversion,
+ * 4.5 ms in, taken 5.5 ms later -- or later still if a stall holds the loop.
+ * mock_one_shot runs the schedule alone; mock_stall_model adds core0's stalls,
+ * 40-73 ms, about 1.3 times a second (DD-035). While one lasts nothing on core0
+ * runs: a driver checks mock_core0_stalled() before dispatching. */
+extern bool mock_one_shot;
 extern bool mock_stall_model;
 /* true: stamped at the read, as hal_common.c stamped before T11; false: at the
  * conversion, as it does since. */

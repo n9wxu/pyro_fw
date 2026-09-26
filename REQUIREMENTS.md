@@ -149,8 +149,8 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-BOOT-16**: The system shall not report a continuity fault for a pyro channel released to Lua or configured as disabled. ← FLT-BOOT-15
 
 #### Sampling Rates (v2.0)
-- **FLT-RATE-01**: The system shall sample pressure at 50Hz (20ms) during PAD_IDLE, ASCENT, and DESCENT. ← FLT-PHASE-01, DD-001
-- **FLT-RATE-02**: The system shall deliver pressure samples to the flight software in batches of 5 (100ms). ← FLT-RATE-01, PWR-SAMPLE-02
+- **FLT-RATE-01**: The system shall sample pressure continuously during PAD_IDLE, ASCENT, and DESCENT: on an MS5607 board one conversion every 10 ms loop, temperature once in ten, about 90 pressures a second; on a BMP280 board 50Hz (20ms). ← FLT-PHASE-01, DD-001, DD-051
+- **FLT-RATE-02**: The system shall deliver pressure samples to the flight software in batches of 5. ← FLT-RATE-01, PWR-SAMPLE-02
 - **FLT-RATE-03**: The system shall reduce sampling to 1Hz during LANDED for power conservation. ← FLT-PHASE-03, SYS-PWR-01
 - **FLT-RATE-04**: The sampling rate shall be a HAL responsibility; flight software processes whatever buffer it receives. ← HAL-02
 - **FLT-RATE-05**: Every detector hold and dwell that measures the sensor shall run in sample time, so that the loop's lateness changes no decision. ← SNS-PRES-08
@@ -264,6 +264,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **SNS-PRES-09**: Each sample shall carry a least-squares quadratic fit through the median's output over the last second, against each sample's own time, evaluated at the newest sample: its pressure, rate and acceleration, and whether it is clean -- residual RMS within 2σ and every residual within 4σ. σ is the fit's residual noise measured on the pad, no less than 1.2 Pa and no more than 5 Pa, frozen at launch to its value from a second before T+0, and a recovered flight takes it from the pad marker. ← SNS-PRES-07, SNS-PRES-08
 - **SNS-PRES-10**: A whole window of one reading, to the pascal, shall be taken as a stuck sensor: a DIAG bit, a SENSOR_STUCK event and a telemetry line. While its window holds a stuck run, and for a window after, no fit shall be clean, set the Mach flag, arm the pyrotechnics or feed the emergency ladder, and pressure triggers shall wait with no time limit. ← SNS-PRES-09, SYS-DEPLOY-01
 - **SNS-PRES-11**: A gap of more than 250 ms between samples shall make every fit suspect, as SNS-PRES-10, until a whole window of new samples exists. No sample for 0.5 s in flight shall be taken as a lost sensor: a DIAG bit, a SENSOR_LOST event and a telemetry line. The flight carries on when samples return. ← SNS-PRES-09, SYS-DEPLOY-01
+- **SNS-PRES-12**: Each MS5607 pressure shall be compensated with the temperature at its own time, from the least-squares line through the last four temperature conversions, carried no more than 200 ms past the newest. ← SNS-PRES-08, DD-051
 - **SNS-ALT-02**: The system shall clamp computed altitude to a maximum of 8000 meters. ← SNS-ALT-01
 - **SNS-ALT-03**: The system shall clamp computed altitude to a minimum of 0 meters. ← SNS-ALT-01
 - **SNS-ALT-04**: Vertical speed shall be taken from altitude that is not clamped; SNS-ALT-02 and SNS-ALT-03 clamp only the altitude that is reported. ← SNS-ALT-01

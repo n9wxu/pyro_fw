@@ -21,9 +21,8 @@
 #include "hardware/structs/watchdog.h"
 #include "hardware/structs/usb.h"
 
-/* The period is one MS5607 conversion phase: the pressure task is a
- * three-phase state machine clocked at MS5607_CONV_MS, so one iteration
- * advances it by one phase. */
+/* The period is one MS5607 conversion: each iteration takes the conversion
+ * the last one commanded and commands the next [DD-051]. */
 #define LOOP_PERIOD_MS MS5607_CONV_MS
 #define LOOP_PERIOD_US (LOOP_PERIOD_MS * 1000u)
 
@@ -201,6 +200,13 @@ int main() {
             watchdog_update();
         }
 
+        /* First, before STAGE 1's USB and lwIP work, which runs for
+         * milliseconds on no fixed schedule: the MS5607 is commanded at a
+         * steady offset from the period, so the conversion's one-shot has
+         * read it before the next iteration comes to take it. */
+        STAGE(2);
+        hal_tasks_tick(now);
+
         /* Platform services */
         STAGE(1);
         hal_platform_service();
@@ -217,10 +223,6 @@ int main() {
             reset_armed = true;
             watchdog_reboot(0, 0, 100);
         }
-
-        /* Advance async HAL state machines (pressure, buzzer, log flush) */
-        STAGE(2);
-        hal_tasks_tick(now);
 
         /* Flight software — single code path via pressure_processing ring.
          * dispatch_state() internally reads altitude samples via pp_read(). */

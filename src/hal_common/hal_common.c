@@ -107,18 +107,15 @@ static bool hal_pressure_fifo_start(uint8_t rate_hz);
 
 /* ── Pressure sensor async state machine [v2 Task 4] ─────────────── */
 
-typedef enum { PRES_IDLE, PRES_D1_CONV, PRES_D2_CONV } pres_phase_t;
-
 /*
  * Pressure async task.  struct async_task MUST be the first member so
  * a pointer cast between pres_task_t * and async_task_t * is safe.
  */
 typedef struct {
-    async_task_t base; /* MUST be first */
-    pres_phase_t phase;
+    async_task_t base;           /* MUST be first */
     int sensor_type;             /* 1=MS5607  2=BMP280 */
-    uint32_t sample_interval_ms; /* 1000/rate_hz */
-    uint32_t d1_raw;             /* MS5607: saved D1 between phases */
+    uint32_t sample_interval_ms; /* 1000/rate_hz; the BMP280's. The MS5607 converts every loop. */
+    ms5607_temps_t temps;        /* MS5607: the temperature, carried to each pressure [DD-051] */
 
     /* Ping-pong batch buffers.  back is filled by the tick function;
      * front is promoted atomically when full and read by the consumer. */
@@ -130,11 +127,9 @@ typedef struct {
     hal_pressure_t last;
     bool has_last;
 
-    uint32_t conv_start_us; /* MS5607: when the pending conversion was commanded */
-    uint64_t d1_us;         /* MS5607: when the pressure conversion was commanded */
     uint64_t last_stamp_us; /* the previous sample's time, for the interval */
     uint32_t interval_min_us, interval_max_us, stamp_lag_max_us;
-    uint32_t waits;   /* reads put off because the conversion was not done */
+    uint32_t waits;   /* MS5607: loops that found the last conversion still in flight */
     uint32_t rejects; /* readings no atmosphere can produce, not fed on */
 } pres_task_t;
 
@@ -167,19 +162,9 @@ uint32_t hal_pressure_stamp_lag_max_us(void) {
 #define PRES_MIN_PA 1000.0f
 #define PRES_MAX_PA 120000.0f
 
-/* The datasheet's worst case at OSR 4096 is 9.04 ms, and a read issued before
- * then returns 0. Timed from the command itself: the task's millisecond
- * deadline is taken from the top of the loop, before STAGE 1's USB and lwIP
- * work, which can run for milliseconds and so eat the whole margin. */
-#define MS5607_CONV_DONE_US 9100u
-
 /* Half the BMP280's normal-mode cycle at x4 pressure, x1 temperature and a
  * 0.5 ms standby: 11.5 ms typical, 13.8 ms worst. */
 #define BMP280_HALF_CYCLE_US 6000u
-
-static bool conv_done(const pres_task_t *p) {
-    return time_us_32() - p->conv_start_us >= MS5607_CONV_DONE_US;
-}
 
 static bool pres_plausible(const pressure_reading_t *r) {
     return r->pressure_pa >= PRES_MIN_PA && r->pressure_pa <= PRES_MAX_PA;
@@ -240,13 +225,66 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r, uint64_t st
     }
 }
 
+static void pres_reject(pres_task_t *p, const char *why, uint32_t raw, float pa, uint32_t now_ms) {
+    p->rejects++;
+    char dbuf[80];
+    snprintf(dbuf, sizeof(dbuf), "!PRES %s raw=%lu pa=%.0f t=%lu\r\n", why, (unsigned long)raw, (double)pa,
+             (unsigned long)now_ms);
+    hal_telemetry_send(dbuf);
+}
+
+/* [DD-051] The conversion the last loop commanded, which its one-shot has
+ * read: a temperature joins the line the pressures are compensated along; a
+ * pressure is compensated at its own time and fed on. */
+static void ms5607_take(pres_task_t *p, uint32_t now_ms) {
+    ms5607_conversion_t c;
+    if (!ms5607_async_take(&c))
+        return;
+    /* A zero is what the sensor answers to a read during a conversion. */
+    if (!c.ok || c.raw == 0) {
+        pres_reject(p, c.ok ? "zero" : "bus", c.raw, 0.0f, now_ms);
+        return;
+    }
+    uint64_t at = ms5607_sample_time_us(c.command_us);
+    if (c.temperature) {
+        ms5607_temps_note(&p->temps, c.raw, at);
+        return;
+    }
+    if (p->temps.n == 0)
+        return;
+    pressure_reading_t r;
+    ms5607_compensate(c.raw, ms5607_temps_at(&p->temps, at), &r);
+    if (!pres_plausible(&r)) {
+        pres_reject(p, "range", c.raw, r.pressure_pa, now_ms);
+        return;
+    }
+    pres_append(p, &r, at);
+}
+
+static void ms5607_command(pres_task_t *p, uint32_t now_ms) {
+    bool temperature = ms5607_temperature_due(&p->temps);
+    switch (ms5607_async_start(temperature)) {
+    case MS5607_STARTED:
+        ms5607_conversion_started(&p->temps, temperature);
+        p->base.next_due_ms = now_ms;
+        break;
+    case MS5607_BUSY:
+        p->waits++;
+        p->base.next_due_ms = now_ms;
+        break;
+    default:
+        p->base.next_due_ms = now_ms + 50; /* back off on I2C error */
+        break;
+    }
+}
+
 /*
- * Pressure state machine tick.
+ * Pressure tick, once a loop.
  *
- * MS5607 (sensor_type == 1): three phases per sample
- *   IDLE      → write D1 command (~25µs) → PRES_D1_CONV, due +10ms
- *   D1_CONV   → read D1 + write D2 (~400µs) → PRES_D2_CONV, due +10ms
- *   D2_CONV   → read D2 + compensate → IDLE, due +idle_time
+ * MS5607 (sensor_type == 1) [DD-051]: take the conversion the last loop
+ *   commanded, then command the next and arm its one-shot. One conversion a
+ *   loop, the temperature once in MS5607_D2_EVERY: 90 pressures a second at
+ *   the 10 ms loop.
  *
  * BMP280 (sensor_type == 2): single phase — read output registers.
  *   No conversion wait needed (normal/continuous mode).
@@ -255,63 +293,8 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
     pres_task_t *p = (pres_task_t *)base;
 
     if (p->sensor_type == 1) {
-        /* ── MS5607 ── */
-        switch (p->phase) {
-        case PRES_IDLE:
-            if (ms5607_start_d1()) {
-                p->conv_start_us = time_us_32();
-                p->d1_us = time_us_64();
-                p->phase = PRES_D1_CONV;
-                p->base.next_due_ms = now_ms + MS5607_CONV_MS;
-            } else {
-                p->base.next_due_ms = now_ms + 50; /* back-off on I2C error */
-            }
-            break;
-
-        case PRES_D1_CONV:
-            if (!conv_done(p)) {
-                p->waits++;
-                break; /* still due: tried again next iteration */
-            }
-            if (ms5607_read_raw(&p->d1_raw) && ms5607_start_d2()) {
-                p->conv_start_us = time_us_32();
-                p->phase = PRES_D2_CONV;
-                p->base.next_due_ms = now_ms + MS5607_CONV_MS;
-            } else {
-                p->phase = PRES_IDLE;
-                p->base.next_due_ms = now_ms + 50;
-            }
-            break;
-
-        case PRES_D2_CONV: {
-            if (!conv_done(p)) {
-                p->waits++;
-                break;
-            }
-            uint32_t d2;
-            if (ms5607_read_raw(&d2)) {
-                pressure_reading_t r;
-                ms5607_compensate(p->d1_raw, d2, &r);
-                /* A zero is what the sensor answers to a read issued during a
-                 * conversion; either one makes the compensated value noise. */
-                if (p->d1_raw == 0 || d2 == 0 || !pres_plausible(&r)) {
-                    p->rejects++;
-                    char dbuf[80];
-                    snprintf(dbuf, sizeof(dbuf), "!PRES d1=%lu d2=%lu pa=%.0f t=%lu\r\n", (unsigned long)p->d1_raw,
-                             (unsigned long)d2, (double)r.pressure_pa, (unsigned long)now_ms);
-                    hal_telemetry_send(dbuf);
-                } else {
-                    pres_append(p, &r, ms5607_sample_time_us(p->d1_us));
-                }
-            }
-            p->phase = PRES_IDLE;
-            /* Total cycle = 2 * MS5607_CONV_MS (phases) + idle remainder.
-             * At 50 Hz sample_interval = 20 ms → idle = 0 (continuous).
-             * At 10 Hz sample_interval = 100 ms → idle = 80 ms sleep. */
-            p->base.next_due_ms = now_ms + ms5607_idle_ms(p->sample_interval_ms, 2u);
-            break;
-        }
-        }
+        ms5607_take(p, now_ms);
+        ms5607_command(p, now_ms);
 
 #if BOARD_HAS_BMP280
     } else if (p->sensor_type == 2) {
@@ -367,14 +350,14 @@ static int hw_sensor_type = 0;
 int hal_pressure_init(void) {
     hw_sensor_type = (int)pressure_sensor_init();
     if (hw_sensor_type > 0)
-        hal_pressure_fifo_start(50); /* auto-start async sampling at 50 Hz */
+        hal_pressure_fifo_start(50); /* the BMP280 at 50 Hz; the MS5607 every loop */
     return hw_sensor_type;
 }
 
 /* Returns the most recent async sample.  In the v2 architecture all
  * pressure reads come from the async task — there is no synchronous
  * fallback.  Returns false when the async task hasn't produced a
- * sample yet (e.g. between D1/D2 conversion phases). */
+ * sample yet (the MS5607's first pressure waits on its first temperature). */
 bool hal_pressure_read(hal_pressure_t *out) {
     if (pres.has_last) {
         *out = pres.last;
@@ -393,7 +376,10 @@ static bool hal_pressure_fifo_start(uint8_t rate_hz) {
     pres.base.next_due_ms = hal_time_ms(); /* run on first tick */
     pres.sensor_type = hw_sensor_type;
     pres.sample_interval_ms = (rate_hz > 0) ? (1000u / (uint32_t)rate_hz) : 100u;
-    pres.phase = PRES_IDLE;
+    if (pres.sensor_type == 1 && !ms5607_async_begin()) {
+        hal_telemetry_send("!PRES no hardware alarm free for the MS5607\r\n");
+        return false;
+    }
     /* Register once (idempotent — re-calling changes rate but not slot). */
     for (int i = 0; i < hw_task_count; i++)
         if (hw_tasks[i] == &pres.base)

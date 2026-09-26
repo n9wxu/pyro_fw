@@ -479,6 +479,9 @@ rationale and the alternatives considered.
   maximum at OSR 4096 is 9.04 ms). A reading of zero, or a pressure outside the
   sensor's 1-120 kPa range, is not fed to the filter. Both events are counted on
   `/api/status` as `pres_waits` and `pres_rejects`.
+- **Amended by DD-051:** the read is a one-shot alarm's, still 9.1 ms after
+  the command, and `pres_waits` counts loops that found the conversion still
+  in flight.
 - **Why:** the task's millisecond deadline was taken from the top of the loop,
   before STAGE 1's USB and lwIP work, so a long STAGE 1 ate the ~1 ms margin
   and the read came back 0 -- which compensates to a large negative pressure,
@@ -553,6 +556,45 @@ rationale and the alternatives considered.
 - **Chirp:** switching test mode off while attached is an attach, so it
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
+
+### DD-051: The MS5607 Converts Once A Loop, Read By A One-Shot In RAM
+- **Decision:** each loop takes the conversion the last loop commanded and
+  commands the next. A hardware alarm 9.1 ms after the command (DD-036's
+  margin) runs a handler that reads the ADC and leaves the result for the
+  next loop. Temperature is converted once in ten; each pressure is
+  compensated with the temperature at its own time, on the least-squares line
+  through the last four temperature readings, carried no more than 200 ms past
+  the newest (SNS-PRES-12). At the 10 ms loop that is 90 pressures a second,
+  each stamped at the middle of its conversion (SNS-PRES-08). The pressure
+  task runs first in the loop, before STAGE 1's USB and lwIP work, so the
+  command sits at a steady offset from the period.
+- **Why:** the loop clocked a three-phase state machine, one phase an
+  iteration: D1, then D2, then back to idle, 30 ms a sample and more when a
+  read came early. Measured on MK1B and MK1C, a new pressure every 27-35 ms,
+  where the code, the docs and the host tests assumed 20. The loop now only
+  schedules, and a conversion never waits on the loop's work.
+- **Why a line through the temperature:** a temperature reused as read is up
+  to ten conversions old. For a sensor warming at 1 °C/s that costs 12.1 Pa
+  RMS; carried along its line, 0.71 Pa RMS and 2.00 Pa at worst
+  (`test_T9_temperature_reuse`), under the datasheet's 2.4 Pa of noise at OSR
+  4096.
+- **Why the handler is in RAM:** it can come due while core0 is erasing
+  flash. Interrupts are held off across every erase and program, so it waits
+  for the erase, and from RAM it could not fault even were that ever not so.
+  The SDK's i2c functions are in flash, so the handler drives i2c1's
+  registers itself. `support/prove_core0.py` fails the build if the handler,
+  anything it branches to, through a veneer or not, or any address it loads
+  is in flash; a `time_us_64()` planted in the handler fails it.
+- **The budget:** at 100 kHz the command takes about 0.2 ms and the read about
+  0.6 ms, so a conversion is ready about 9.9 ms after the top of the loop that
+  commanded it, and the next top is never sooner than 10 ms. A loop that finds
+  it still in flight counts a `pres_waits` and skips that loop's sample; it
+  never reads early. 400 kHz, the sensor's maximum, would widen the margin to
+  about 0.7 ms, if the boards' pull-ups allow it.
+- **The cost:** the handler holds core0 for the read, about 0.6 ms in every
+  10. `log_rate_hz`'s default of 50 is at or above `SENSOR_RATE_HZ`, so every
+  sample is logged: about 90 rows a second, nearly twice the flash written per
+  flight, until the T8 logging-rate decision is made.
 
 ### DD-050: A Failed Sensor Never Deploys Anything
 - **Decision:** the pressure layer marks a fit suspect while its window holds

@@ -384,6 +384,87 @@ def check_ram_resident(elf, objdump):
     return rc
 
 
+# A handler that runs while core0 may be inside a flash erase must not touch
+# flash at all: not its own code, not a callee's, not a constant. Each entry is
+# a root whose whole closure -- every function it branches to, directly or
+# through a veneer -- must be in RAM and load no XIP address. An indirect call
+# cannot be followed, so one fails the check.
+RAM_CLOSED = [
+    ("ms5607_alarm_isr", "the MS5607 one-shot's alarm handler [DD-051]"),
+]
+
+XIP_LO, XIP_HI = 0x10000000, 0x20000000
+FN_ADDR_RE = re.compile(r"^([0-9a-f]+) <(.+)>:$")
+BRANCH_RE = re.compile(r"\s(bl|blx|b|b\.n|b\.w)\s+([0-9a-f]+) <([^>]+)>")
+INDIRECT_RE = re.compile(r"\s(?:blx|bx)\s+(?:r\d+|ip|sl|fp)\b|\smov\s+pc,")
+WORD_RE = re.compile(r"\.word\s+0x([0-9a-f]+)")
+
+
+def disassembly_by_function(elf, objdump):
+    out = subprocess.run([objdump, "-d", elf], capture_output=True, text=True, check=True).stdout
+    fns, cur = {}, None
+    for line in out.splitlines():
+        m = FN_ADDR_RE.match(line)
+        if m:
+            cur = m.group(2)
+            fns[cur] = (int(m.group(1), 16), [])
+        elif cur and line.strip():
+            fns[cur][1].append(line)
+    return fns
+
+
+def ram_closure_faults(fns, root):
+    """(closure, faults): every function the root can reach, and each way it touches flash."""
+    faults, seen, todo = [], set(), [root]
+    while todo:
+        fn = todo.pop()
+        if fn in seen:
+            continue
+        seen.add(fn)
+        if fn not in fns:
+            faults.append(f"{fn} is not in the disassembly")
+            continue
+        addr, lines = fns[fn]
+        if not (RAM_LO <= addr < RAM_HI):
+            faults.append(f"{fn} is at 0x{addr:08x}, which is flash")
+            continue
+        for line in lines:
+            m = BRANCH_RE.search(line)
+            if m:
+                target = m.group(3)
+                if "+" in target and target.split("+")[0] == fn:
+                    continue  # a branch inside the function
+                target = target.split("+")[0]
+                if target.startswith("__") and target.endswith("_veneer"):
+                    target = target[2:-len("_veneer")]  # judged by where it lands
+                todo.append(target)
+                continue
+            if INDIRECT_RE.search(line):
+                faults.append(f"{fn} makes an indirect branch, which this cannot follow: {line.strip()}")
+                continue
+            m = WORD_RE.search(line)
+            if m and XIP_LO <= int(m.group(1), 16) < XIP_HI:
+                faults.append(f"{fn} loads 0x{m.group(1)}, a flash address: {line.strip()}")
+    return seen, faults
+
+
+def check_ram_closed(elf, objdump):
+    """Fail if a handler that must run with flash busy can reach flash."""
+    fns = disassembly_by_function(elf, objdump)
+    rc = 0
+    for sym, why in RAM_CLOSED:
+        closure, faults = ram_closure_faults(fns, sym)
+        if faults:
+            print(f"\nFAIL  {sym} can reach flash")
+            print(f"      {why}")
+            for f in faults:
+                print(f"      {f}")
+            rc = 1
+        else:
+            print(f"PASS  {sym} and everything it calls are in RAM: {', '.join(sorted(closure))}")
+    return rc
+
+
 def report(elf, roots, core1_entry=None):
     findings, xip, spins, callers = analyse(elf, roots)
     print(f"=== {elf} ===")
@@ -414,6 +495,7 @@ def report(elf, roots, core1_entry=None):
             print(f"      {root} -> ... -> {op}  ({len(path)} frames)")
     rc = 0 if not findings else 1
     rc |= check_ram_resident(elf, find_objdump())
+    rc |= check_ram_closed(elf, find_objdump())
     if core1_entry:
         print()
         rc |= check_core1(elf, core1_entry, callers)

@@ -45,7 +45,11 @@ the firmware's pressure altitude is the true height.
 
 `test_T9_same_outcomes` flies the key scenarios with the sensor sampled every
 11 ms, the MS5607's rate once its temperature is read less often, and holds
-them to the 50 Hz outcomes.
+them to the 50 Hz outcomes. `mock_one_shot` models DD-051's schedule, one
+conversion a loop with the temperature once in ten, and
+`test_T9_one_shot_cadence` holds the HAL to it; `test_T9_temperature_reuse`
+compensates each pressure with the temperature carried along its line, for a
+sensor warming at 1 °C/s.
 
 `test_T8_replay` flies a flight, reads back its log, and replays the log's
 readings through `sim/replay.c`; every event must land on the sample the

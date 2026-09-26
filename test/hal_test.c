@@ -52,6 +52,7 @@ float mock_noise_rms_pa = 0.0f;
 uint32_t mock_noise_seed = 1;
 int32_t mock_glitch_pa = 0;
 int mock_glitch_samples = 0;
+bool mock_one_shot = false;
 bool mock_stall_model = false;
 bool mock_stamp_at_read = false;
 uint32_t mock_stall_seed = 1;
@@ -72,8 +73,11 @@ static struct {
     } hist[256];
     unsigned hist_n, hist_head;
     uint32_t stall_until, next_stall_at;
-    int phase;
-    uint32_t d1_ms, due_ms;
+    /* The one-shot schedule: the loop's next top, and the conversion in
+     * flight since the last. */
+    bool started, pending, pending_temp;
+    uint32_t next_top, cmd_ms;
+    unsigned since_temp;
 } sm;
 
 static uint32_t xorshift32(uint32_t *s) {
@@ -107,10 +111,10 @@ static float gaussian(void) {
 
 /* What the HAL does with a reading: truncate to whole pascals, and discard one
  * no atmosphere can produce [SNS-PRES-06]. */
-static void feed_reading(float true_pa, uint32_t stamp_ms) {
+static void feed_reading_us(float true_pa, uint64_t stamp_us) {
     /* A stuck sensor answers with its last reading, to the pascal. */
     if (mock_sensor_stuck) {
-        pp_feed(pp_last_raw_pa(), stamp_ms);
+        pp_feed_us(pp_last_raw_pa(), stamp_us);
         return;
     }
     float p = true_pa;
@@ -124,7 +128,11 @@ static void feed_reading(float true_pa, uint32_t stamp_ms) {
         mock_pres_rejects++;
         return;
     }
-    pp_feed((int32_t)p, stamp_ms);
+    pp_feed_us((int32_t)p, stamp_us);
+}
+
+static void feed_reading(float true_pa, uint32_t stamp_ms) {
+    feed_reading_us(true_pa, (uint64_t)stamp_ms * 1000u);
 }
 
 static void hist_push(uint32_t t, float pa) {
@@ -161,11 +169,34 @@ bool mock_core0_stalled(uint32_t now_ms) {
     return mock_stall_model && (int32_t)(now_ms - sm.stall_until) < 0;
 }
 
-/* MS5607 at 50 Hz: D1 commanded, D2 commanded 10 ms later, D2 read 10 ms after
- * that. The reading is the pressure at the middle of D1's conversion and is
- * stamped with the loop time of the read, as hal_common.c stamps it. */
+/* One loop of the hardware's (DD-051): take the conversion commanded at the
+ * last loop -- its one-shot read it 9.1 ms in, before this loop, or at the end
+ * of any stall that held interrupts off -- and command the next, the
+ * temperature once in ten. A pressure is the reading at the middle of its
+ * conversion, 4.5 ms in. */
+#define ONE_SHOT_LOOP_MS 10u
+
+static void one_shot_loop(uint32_t now) {
+    if (sm.pending && !sm.pending_temp) {
+        uint64_t conv_us = (uint64_t)sm.cmd_ms * 1000u + 4500u;
+        uint32_t lag = (uint32_t)(((uint64_t)now * 1000u - conv_us) / 1000u);
+        if (mock_stamp_lag_min_ms == 0 || lag < mock_stamp_lag_min_ms)
+            mock_stamp_lag_min_ms = lag;
+        if (lag > mock_stamp_lag_max_ms)
+            mock_stamp_lag_max_ms = lag;
+        feed_reading_us(hist_at(sm.cmd_ms + 4u), mock_stamp_at_read ? (uint64_t)now * 1000u : conv_us);
+    }
+    sm.pending = true;
+    sm.cmd_ms = now;
+    sm.pending_temp = !sm.started || sm.since_temp + 1u >= 10u;
+    sm.since_temp = sm.pending_temp ? 0u : sm.since_temp + 1u;
+    sm.started = true;
+}
+
 static void stall_model_tick(uint32_t now) {
     hist_push(now, mock_pressure.pressure_pa);
+    if (!mock_stall_model)
+        goto loop;
     if (!sm.stall_seeded) {
         sm.stall_rng = mock_stall_seed;
         sm.stall_seeded = true;
@@ -185,31 +216,12 @@ static void stall_model_tick(uint32_t now) {
             mock_stall_max_ms = len;
         return;
     }
-    switch (sm.phase) {
-    case 0:
-        sm.d1_ms = now;
-        sm.due_ms = now + 10u;
-        sm.phase = 1;
-        break;
-    case 1:
-        if ((int32_t)(now - sm.due_ms) >= 0) {
-            sm.due_ms = now + 10u;
-            sm.phase = 2;
-        }
-        break;
-    default:
-        if ((int32_t)(now - sm.due_ms) >= 0) {
-            uint32_t conv = sm.d1_ms + 4u;
-            uint32_t lag = now - conv;
-            if (mock_stamp_lag_min_ms == 0 || lag < mock_stamp_lag_min_ms)
-                mock_stamp_lag_min_ms = lag;
-            if (lag > mock_stamp_lag_max_ms)
-                mock_stamp_lag_max_ms = lag;
-            feed_reading(hist_at(conv), mock_stamp_at_read ? now : conv);
-            sm.phase = 0;
-        }
-        break;
-    }
+loop:
+    /* A stall holds the loop, so the next top is the stall's end. */
+    if (sm.started && (int32_t)(now - sm.next_top) < 0)
+        return;
+    sm.next_top = now + ONE_SHOT_LOOP_MS;
+    one_shot_loop(now);
 }
 
 static void xip_stall(void) {
@@ -266,6 +278,7 @@ void mock_reset_all(void) {
     mock_noise_seed = 1;
     mock_glitch_pa = 0;
     mock_glitch_samples = 0;
+    mock_one_shot = false;
     mock_stall_model = false;
     mock_stamp_at_read = false;
     mock_stall_seed = 1;
@@ -514,7 +527,7 @@ void hal_tasks_tick(uint32_t now_ms) {
     /* Feed pressure samples at ~50Hz (every 20ms) into pressure_processing.
      * Matches real BMP280/MS5607 sample rate. The pp ring (32 entries)
      * stays shallow when detectors dispatch at ≥10ms intervals. */
-    if (mock_stall_model) {
+    if (mock_stall_model || mock_one_shot) {
         if (mock_pressure.sensor_type > 0)
             stall_model_tick(now_ms);
         if (mock_core0_stalled(now_ms))

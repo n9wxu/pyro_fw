@@ -222,6 +222,7 @@ every capability core1 gains, and a call graph cannot settle it.
 5. `support/prove_core0.py` is the standing check, run in CI over every board
    that builds Lua. It fails if a flight-critical root can reach an unbounded
    wait, if core1's call graph reaches an acquire, or if a function marked
-   `__not_in_flash_func` has no out-of-line copy in RAM. It is not a safety
+   `__not_in_flash_func` has no out-of-line copy in RAM, or if the MS5607's
+   alarm handler can reach flash through a callee or a constant (DD-051). It is not a safety
    case: inlined spin lock acquires and indirect calls are outside what it can
    see, and it says so in its own output.
