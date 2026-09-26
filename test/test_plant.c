@@ -39,11 +39,13 @@ enum { C_ADC_VBAT = 0, C_ADC_BUS = 1, C_ADC_A = 2, C_ADC_B = 3 };
 /* Firmware constants, from the board files. Repeated here so a test failure
  * names the number the firmware actually uses. */
 #define MK1C_CNT_QUIESCENT_MAX 50
-#define MK1C_CNT_TRACK_PRESENT 400
-#define MK1C_CNT_BUS_BIASED   1058
-#define MK1C_CNT_CH_ISOLATED  1214
-#define MK1C_CNT_CH_LOADED    1037
 #define MK1C_TRACK_BIAS_MS       8
+
+/* The bench MK1C, 2026-09-26: its ADC and a scope at CN1 (DD-054). U9's OUT
+ * conducts back into the part above about 0.72 V, so the bus sits far below
+ * DESIGN.md 4's 1058 counts, and the model is held to the board. */
+#define MK1C_BENCH_BUS_BIASED   688  /* ADC 685 and 690                    */
+#define MK1C_BENCH_CH_ISOLATED 1262  /* ADC 1258 (A) and 1266 (B)          */
 
 #define MK1A_CNT_PATH_MAX      500
 #define MK1A_CNT_OPEN_MIN     3000
@@ -67,7 +69,17 @@ static void assert_counts_near(int expect, int got, const char *what) {
 void setUp(void) {}
 void tearDown(void) {}
 
-/* ══════════════════ MK1C: the DESIGN.md 4 levels ══════════════════ */
+/* ══════════════════ MK1C: the board as measured ═══════════════════ */
+
+#include "../boards/mk1c/pyro_sense.h"
+
+/* Measured levels scatter by a few counts between reads and boards. */
+static void assert_bench_near(int expect, int got, int pct, const char *what) {
+    int tol = expect * pct / 100;
+    char msg[160];
+    snprintf(msg, sizeof(msg), "%s: the bench read about %d counts, model gives %d", what, expect, got);
+    TEST_ASSERT_INT_WITHIN_MESSAGE(tol, expect, got, msg);
+}
 
 static void mk1c_start(void) {
     plant_init(PLANT_MK1C);
@@ -94,16 +106,44 @@ static void test_mk1c_bus_bias_no_match(void) {
     mk1c_start();
     plant_set_gpio(C_BIAS_BUS, 1);
     ms(MK1C_TRACK_BIAS_MS);
-    assert_counts_near(MK1C_CNT_BUS_BIASED, plant_adc_counts(C_ADC_BUS), "T2 bus bias, no match");
+    assert_bench_near(MK1C_BENCH_BUS_BIASED, plant_adc_counts(C_ADC_BUS), 3, "T2 bus bias, no match");
 }
 
 static void test_mk1c_channel_bias_match_off(void) {
     mk1c_start();
     plant_set_gpio(C_BIAS_A, 1);
     ms(MK1C_TRACK_BIAS_MS);
-    assert_counts_near(MK1C_CNT_CH_ISOLATED, plant_adc_counts(C_ADC_A), "T3 channel bias, match off");
+    assert_bench_near(MK1C_BENCH_CH_ISOLATED, plant_adc_counts(C_ADC_A), 2, "T3 channel bias, match off");
 }
 
+/* The scope's fall after the bias lets go, 2026-09-26: fast above U9's knee,
+ * then the designed pull-down's time constant below it. A linear bus, as
+ * DESIGN.md 4 drew it, takes about 2 ms just to reach 0.9 V. */
+static void test_mk1c_bus_fall_as_measured(void) {
+    mk1c_start();
+    plant_set_gpio(C_BIAS_BUS, 1);
+    ms(MK1C_TRACK_BIAS_MS);
+    plant_set_gpio(C_BIAS_BUS, 0);
+    plant_probe_t pr;
+    double t = 0.0, t09 = -1.0, t06 = -1.0, t02 = -1.0;
+    while (t < 8e-3) {
+        plant_step(5e-6);
+        t += 5e-6;
+        plant_probe(&pr);
+        if (t09 < 0 && pr.bus_v <= 0.9) t09 = t;
+        if (t06 < 0 && pr.bus_v <= 0.6) t06 = t;
+        if (t02 < 0 && pr.bus_v <= 0.2) t02 = t;
+    }
+    char msg[128];
+    snprintf(msg, sizeof(msg), "plateau to 0.9 V in %.0f us; the scope saw about 420", t09 * 1e6);
+    TEST_ASSERT_TRUE_MESSAGE(t09 > 300e-6 && t09 < 600e-6, msg);
+    snprintf(msg, sizeof(msg), "0.6 V to 0.2 V in %.2f ms; the scope saw 2.32", (t02 - t06) * 1e3);
+    TEST_ASSERT_TRUE_MESSAGE(t02 - t06 > 1.9e-3 && t02 - t06 < 2.7e-3, msg);
+}
+
+/* T3 cannot tell a connected match from a shorted TVS (DESIGN.md 4), and on
+ * this board both tie the channel to a bus U9 holds low, far below the
+ * isolated level: the separation T3's check relies on. */
 static void test_mk1c_channel_bias_match_fitted(void) {
     mk1c_start();
     plant_match(1)->state = MATCH_PRESENT;
@@ -111,23 +151,28 @@ static void test_mk1c_channel_bias_match_fitted(void) {
     ms(10);
     plant_set_gpio(C_BIAS_A, 1);
     ms(MK1C_TRACK_BIAS_MS);
-    assert_counts_near(MK1C_CNT_CH_LOADED, plant_adc_counts(C_ADC_A), "T3 channel bias, match fitted");
+    uint16_t loaded = plant_adc_counts(C_ADC_A);
+    TEST_ASSERT_TRUE_MESSAGE(loaded + 300 < MK1C_BENCH_CH_ISOLATED, "a fitted match must pull the channel well down");
+    TEST_ASSERT_TRUE_MESSAGE(loaded < 1000, "and below the T3 threshold that refuses to arm");
 }
 
 static void test_mk1c_shorted_tvs_reads_like_a_match(void) {
-    /* DESIGN.md 4: "the same node with a shorted TVS -- 2.51 V, about 1040
-     * counts". The point of the row is that T3 alone cannot tell a shorted
-     * TVS from a connected match, and the model has to agree or it would
-     * make a diagnostic look better than it is. */
+    mk1c_start();
+    plant_match(1)->state = MATCH_PRESENT;
+    plant_match(1)->r_ohm = 1.0;
+    ms(10);
+    plant_set_gpio(C_BIAS_A, 1);
+    ms(MK1C_TRACK_BIAS_MS);
+    uint16_t match = plant_adc_counts(C_ADC_A);
     mk1c_start();
     plant_set_fault(PF_TVS_A_SHORT, true);
     plant_set_gpio(C_BIAS_A, 1);
     ms(MK1C_TRACK_BIAS_MS);
-    assert_counts_near(MK1C_CNT_CH_LOADED, plant_adc_counts(C_ADC_A), "T3 with a shorted TVS");
+    assert_counts_near(match, plant_adc_counts(C_ADC_A), "T3 with a shorted TVS against a fitted match");
 }
 
+/* [DESIGN.md S3] A present channel follows the bus; an open one stays cold. */
 static void test_mk1c_tracking_separates_present_from_open(void) {
-    /* DESIGN.md 4: "about 1030 counts against less than 50". */
     mk1c_start();
     plant_match(1)->state = MATCH_PRESENT;
     plant_match(1)->r_ohm = 1.0;
@@ -135,21 +180,48 @@ static void test_mk1c_tracking_separates_present_from_open(void) {
     ms(10);
     plant_set_gpio(C_BIAS_BUS, 1);
     ms(MK1C_TRACK_BIAS_MS);
-    TEST_ASSERT_GREATER_THAN_UINT16(MK1C_CNT_TRACK_PRESENT, plant_adc_counts(C_ADC_A));
-    TEST_ASSERT_LESS_THAN_UINT16(MK1C_CNT_QUIESCENT_MAX, plant_adc_counts(C_ADC_B));
+    uint16_t bus = plant_adc_counts(C_ADC_BUS);
+    TEST_ASSERT_EQUAL(TRACK_PRESENT, track_channel(plant_adc_counts(C_ADC_A), bus));
+    TEST_ASSERT_EQUAL(TRACK_OPEN, track_channel(plant_adc_counts(C_ADC_B), bus));
 }
 
+/* Two matches load the bus by another 7.5k, which U9's path dwarfs. */
 static void test_mk1c_bus_bias_two_matches(void) {
-    /* DESIGN.md 4: "bias on the bus, two matches present -- about 2.47 V,
-     * about 1020 counts". The third row of the same family, and the one
-     * that catches a model that gets the parallel load wrong. */
     mk1c_start();
     plant_match(1)->state = MATCH_PRESENT; plant_match(1)->r_ohm = 1.0;
     plant_match(2)->state = MATCH_PRESENT; plant_match(2)->r_ohm = 1.0;
     ms(10);
     plant_set_gpio(C_BIAS_BUS, 1);
     ms(MK1C_TRACK_BIAS_MS);
-    assert_counts_near(1020, plant_adc_counts(C_ADC_BUS), "T2 bus bias, two matches");
+    uint16_t bus = plant_adc_counts(C_ADC_BUS);
+    assert_bench_near(MK1C_BENCH_BUS_BIASED, bus, 5, "T2 bus bias, two matches");
+    TEST_ASSERT_EQUAL(TRACK_PRESENT, track_channel(plant_adc_counts(C_ADC_A), bus));
+    TEST_ASSERT_EQUAL(TRACK_PRESENT, track_channel(plant_adc_counts(C_ADC_B), bus));
+}
+
+/* A bus that will not rise says nothing about the channels. */
+static void test_mk1c_tracking_needs_the_bus_to_rise(void) {
+    mk1c_start();
+    plant_set_fault(PF_BUS_SHORT_GND, true);
+    plant_set_gpio(C_BIAS_BUS, 1);
+    ms(MK1C_TRACK_BIAS_MS);
+    TEST_ASSERT_EQUAL(TRACK_INVALID, track_channel(plant_adc_counts(C_ADC_A), plant_adc_counts(C_ADC_BUS)));
+}
+
+/* Presence is a ratio to the bus read in the same test, so it holds wherever
+ * the bus sits: DESIGN's 1058, the bench's 688, and half that, which the
+ * absolute 400-count threshold it replaces would read as open. */
+static void test_mk1c_presence_is_a_ratio(void) {
+    const uint16_t buses[] = {1058, 688, 344, 250};
+    for (unsigned i = 0; i < sizeof(buses) / sizeof(buses[0]); i++) {
+        uint16_t bus = buses[i];
+        char msg[64];
+        snprintf(msg, sizeof(msg), "bus at %u counts", bus);
+        TEST_ASSERT_EQUAL_MESSAGE(TRACK_PRESENT, track_channel(bus - 3, bus), msg);             /* a match */
+        TEST_ASSERT_EQUAL_MESSAGE(TRACK_PRESENT, track_channel(bus * 3 / 4, bus), msg);         /* 5k in the leads */
+        TEST_ASSERT_EQUAL_MESSAGE(TRACK_OPEN, track_channel(MK1C_CNT_QUIESCENT_MAX - 1, bus), msg);
+    }
+    TEST_ASSERT_EQUAL(TRACK_INVALID, track_channel(10, TRACK_BUS_MIN_COUNTS - 1));
 }
 
 static void test_mk1c_tracking_current_is_far_below_no_fire(void) {
@@ -392,11 +464,10 @@ static void report_present_match_classification(void) {
     plant_match(2)->state = MATCH_ABSENT;   /* one match, not two */
     ms(10);
     plant_set_gpio(C_BIAS_BUS, 1); ms(MK1C_TRACK_BIAS_MS);
-    uint16_t c = plant_adc_counts(C_ADC_A);
-    printf("    MK1C  %4u counts   CNT_TRACK_PRESENT %d -> open=%s good=%s\n",
-           c, MK1C_CNT_TRACK_PRESENT,
-           (c < MK1C_CNT_TRACK_PRESENT) ? "true" : "false",
-           (c >= MK1C_CNT_TRACK_PRESENT) ? "true" : "false");
+    uint16_t c = plant_adc_counts(C_ADC_A), cbus = plant_adc_counts(C_ADC_BUS);
+    bool present = track_channel(c, cbus) == TRACK_PRESENT;
+    printf("    MK1C  %4u counts   against the bus's %u -> open=%s good=%s\n",
+           c, cbus, present ? "false" : "true", present ? "true" : "false");
 }
 
 /* Every fault the model can inject, against what MK1C's own quiescent and
@@ -457,10 +528,13 @@ int main(void) {
     RUN_TEST(test_mk1c_vbat_divider);
     RUN_TEST(test_mk1c_bus_bias_no_match);
     RUN_TEST(test_mk1c_channel_bias_match_off);
+    RUN_TEST(test_mk1c_bus_fall_as_measured);
     RUN_TEST(test_mk1c_channel_bias_match_fitted);
     RUN_TEST(test_mk1c_shorted_tvs_reads_like_a_match);
     RUN_TEST(test_mk1c_tracking_separates_present_from_open);
     RUN_TEST(test_mk1c_bus_bias_two_matches);
+    RUN_TEST(test_mk1c_tracking_needs_the_bus_to_rise);
+    RUN_TEST(test_mk1c_presence_is_a_ratio);
     RUN_TEST(test_mk1c_tracking_current_is_far_below_no_fire);
     RUN_TEST(test_mk1c_precharge_follows_the_dvdt_slew);
     RUN_TEST(test_mk1c_stopping_the_pump_disarms);

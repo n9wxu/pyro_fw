@@ -29,6 +29,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "pyro.h"
+#include "pyro_sense.h"
 #include "board_if.h"
 #include "board_pins.h"
 #include "hal.h"
@@ -71,13 +72,22 @@ _Static_assert((1037u * NODE_UV_PER_COUNT) / 1000u >= 2500 && (1037u * NODE_UV_P
 _Static_assert((3469u * NODE_UV_PER_COUNT) / 1000u >= 8390 && (3469u * NODE_UV_PER_COUNT) / 1000u <= 8410,
                "full 2S bus: 3469 counts should be ~8.4 V");
 
-/* ── Expected levels, in ADC counts (DESIGN.md 4) ─────────────────── */
-
+/* ── Levels, in ADC counts (DD-054) ──────────────────────────────
+ *
+ * The bench MK1C, not DESIGN.md 4. U9's OUT conducts back into the part
+ * above about 0.72 V, so the bus sits far lower under bias than the divider
+ * algebra says, and moves with the part and its temperature:
+ *
+ *                                      bench   DESIGN.md 4
+ *     bus under its bias, no match       688      1058
+ *     channel under its bias, no match  1262      1214
+ *     the same with a match fitted      ~680      1037   (a shorted TVS alike)
+ *
+ * So nothing decides on the bus's level. Presence is the channel against
+ * the bus in the same test (pyro_sense.h), and T3's threshold sits midway
+ * between an injector that works and one a match or a TVS ties to the bus. */
 #define CNT_QUIESCENT_MAX 50  /* a cold, unbiased node                     */
-#define CNT_TRACK_PRESENT 400 /* S3 present/open split; ~10:1 margin either side */
-#define CNT_BUS_BIASED 1058   /* bus under its own bias, no match          */
-#define CNT_CH_ISOLATED 1214  /* channel under its own bias, match off     */
-#define CNT_CH_LOADED 1037    /* channel tied to the bus pull-down         */
+#define CNT_CH_BIAS_MIN 1000  /* T3: 1262 healthy; ~680 tied to the bus    */
 
 /* ── Tracking test timing (DESIGN.md S3) ─────────────────────────── */
 
@@ -350,8 +360,8 @@ static void wave_capture(bool charge, uint16_t dt_us) {
  * The only gate on asserting ARM_TOGGLE outside the firing sequence
  * (invariant 13b). Every condition must hold, and a refusal reports why.
  *
- * T2 reading open says no match is in circuit. T3 reading ~1214 says that
- * channel's bias injector works, which is what makes the T2 reading
+ * T2 reading open says no match is in circuit. T3 reading about 1262, at
+ * least CNT_CH_BIAS_MIN, says that channel's bias injector works, which is what makes the T2 reading
  * trustworthy: an open injector makes a live, firable channel read open too.
  * T3 also proves neither low-side FET is shorted, the single failure that
  * would make an energised bus dangerous. */
@@ -362,9 +372,12 @@ static const char *arm_interlock_refusal(void) {
         return "latched fault";
     if (!trk_valid)
         return "no tracking result yet";
-    if (trk_a >= CNT_TRACK_PRESENT || trk_b >= CNT_TRACK_PRESENT)
+    track_t ta = track_channel(trk_a, trk_bus), tb = track_channel(trk_b, trk_bus);
+    if (ta == TRACK_INVALID)
+        return "the bus did not rise under its bias";
+    if (ta == TRACK_PRESENT || tb == TRACK_PRESENT)
         return "a match is present -- disconnect it";
-    if (bias_a_counts < 1000 || bias_b_counts < 1000)
+    if (bias_a_counts < CNT_CH_BIAS_MIN || bias_b_counts < CNT_CH_BIAS_MIN)
         return "channel bias low: shorted FET, drain short, or open injector";
     if (sns_vbat < ARM_UVLO_COUNTS)
         return "pack below UVLO";
@@ -611,10 +624,10 @@ static void wave_service(void) {
  * never touched. About 1.4 mA, 70x below a 100 mA no-fire current.
  *
  * With the match disconnected the channel node is isolated from the bus, so
- * it floats up to 3.0 x 14.99k/(330 + 14.99k) = 2.94 V (1214 counts). The
- * divider values and the bias resistor are identical to the bus network, so
- * comparing this against the bus reading separates a weak bias source
- * (common to all three) from a wrong value in the bus network alone. */
+ * it floats up to about 3.05 V, 1262 counts on the bench (DD-054): at the
+ * 0.2 mA a channel draws, its bias diode drops less than DESIGN.md 4's
+ * 0.3 V. A fitted match or a shorted TVS ties it to the bus, which U9 holds
+ * near 680. */
 #if PYRO_MK1C_BRINGUP_T3
 /* Each called once its own bias has settled, from TRK_T3A and TRK_T3B. */
 static void t3_sample_a(void) {
@@ -721,9 +734,9 @@ static void evaluate_faults(void) {
     /* Faults latch. Nothing clears them but a reset (invariants 4 and 6). */
 }
 
-/* The bus level measured during the T2 pulse, which is what says whether the
- * bias injector and the bleed network are behaving: ~1058 counts healthy,
- * ~1214 with R_BLEED open, <50 shorted. */
+/* The bus level measured during the T2 pulse: about 688 counts on the bench
+ * (DD-054), under 50 shorted. It cannot find an open R_BLEED: U9's reverse
+ * path carries the bus either way, and the level moves only to about 730. */
 bool pyro_raw_sense(board_pyro_raw_t *out) {
     out->bus_quiescent = sns_bus;              /* T1: no stimulus  */
     out->bus_biased = trk_valid ? trk_bus : 0; /* T2: bus bias     */
@@ -773,9 +786,12 @@ void pyro_get(uint8_t channel, pyro_continuity_t *out) {
     else
         return;
 
+    /* A test whose bus never rose is no reading: not good, as with no
+     * result yet. The raw count is reported either way. */
+    track_t t = trk_valid ? track_channel(counts, trk_bus) : TRACK_INVALID;
     out->raw_adc = counts;
-    out->open = counts < CNT_TRACK_PRESENT;
-    out->good = !out->open;
+    out->open = t != TRACK_PRESENT;
+    out->good = t == TRACK_PRESENT;
     out->shorted = false; /* needs T3; not attributable from the bus-bias test */
 }
 

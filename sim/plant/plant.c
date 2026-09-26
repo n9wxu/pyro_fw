@@ -260,7 +260,7 @@ void plant_reset(void) {
     p->pack_sag_v = 0.0;
     p->bus_pulldown_override = 0.0;
     p->highside_leak_ohms = 0.0;
-    p->c_bulk_f = 1e-6;   /* C115 alone, no THT part fitted */
+    p->c_bulk_f = 1.1e-6; /* C115 and the bus's strays, no THT part: the bench decay (DD-054) */
 
     plant_match_defaults(&p->match[0]);
     plant_match_defaults(&p->match[1]);

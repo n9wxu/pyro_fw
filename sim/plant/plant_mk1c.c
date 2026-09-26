@@ -56,25 +56,23 @@
  * instance and no 12k/150R pair anywhere in the reference map -- so the S9
  * indicator load does not exist on this revision and 1.92 kohm is right.
  *
- * BIAS_SRC_V: a 3.3 V GPIO through a BAT54WS (D104/D106/D107). The 3.0 V
- * that reproduces every tabulated level implies about 0.3 V of forward
- * drop at these currents, which is right for a BAT54 well below its rated
- * current. Modelled as a fixed source rather than a diode curve, because
- * at 0.2-1.4 mA the drop moves by a few tens of millivolts and the
- * tabulated levels were computed with it fixed.
+ * ── The board as measured (DD-054) ──────────────────────────────
  *
- * ── What the model does NOT explain ──────────────────────────────
+ * The bench MK1C, 2026-09-26, its ADC and a scope at CN1: the bus sits at
+ * about 688 counts under bias, not the 1058 the divider algebra above gives.
+ * R120, R103 and C115 are as designed -- the rise starts at 9 mA into about
+ * 1 uF, and below 0.72 V the bus decays with the designed pull-down's time
+ * constant -- but above about 0.72 V U9's OUT conducts back into the part,
+ * a junction with about 250 ohm behind it, 2.4 mA at 1.5 V. It is expected
+ * of the part and is modelled, not fixed. U9_REV_* fits the scope's points
+ * within about 10 mV.
  *
- * With C_bus = C115 (1 uF) and Rpd = 1918 ohm the bus decay constant is
- * about 1.9 ms. The bench figure quoted in pyro_board.c's bring-up notes
- * is 428 us, which implies a pull-down of about 430 ohm -- four and a half
- * times stiffer than anything on the schematic accounts for. The model
- * deliberately does not fudge a resistor to match it: if the as-built
- * board really pulls the bus down that hard, every bias level on real
- * hardware sits far below the tabulated one (T2 would read about 700
- * counts rather than 1058), and that is a hardware question to settle on
- * the bench, not a constant to tune here. plant_set_bus_pulldown_ohms()
- * exists so a test can ask what the firmware does under the bench value.
+ * The bias sources are a 3.3 V GPIO through a BAT54WS (D104/D106/D107), not
+ * a fixed 3.0 V: 3.12 V at a channel's 0.2 mA and 2.99 V at the bus's 4 mA,
+ * which is what puts the isolated channel at 1262 counts rather than 1212.
+ *
+ * Both are nonlinear and the network is solved linearly, so each step
+ * stamps them linearized about the previous step's node voltage.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -97,7 +95,14 @@
 #define R_BLEED_OHM      2200.0   /* see the note above                   */
 #define R_VBAT_DIV_OHM 149900.0   /* 100k + 49.9k                         */
 #define R_VBAT_RATIO    (49900.0 / 149900.0)
-#define BIAS_SRC_V          3.0
+#define GPIO_HIGH_V         3.3
+/* BAT54WS, fitted to the bench: 3.12 V at 0.2 mA, 2.99 V at 4 mA. */
+#define BIAS_DIODE_IS_A    3.7e-6
+#define BIAS_DIODE_NVT_V   0.045
+/* U9's OUT, off, conducting back into the part: fitted to the scope. */
+#define U9_REV_IS_A        1.2e-12
+#define U9_REV_NVT_V       0.040
+#define U9_REV_OHM         250.0
 #define C_ADC_F           10e-9
 #define C_NODE_F           1e-9   /* drain node strays: TVS, FET, track    */
 
@@ -133,6 +138,43 @@
  * DESIGN.md 5.3 budgets 0.2 ohm for the whole firing loop, of which the
  * switch and the harness are most; 0.1 ohm here leaves room for the leads. */
 #define R_ARM_CLOSED_OHM 0.10
+
+/* A junction in series with a resistance: V = nvt ln(1 + I/is) + r I. The
+ * current at v, by bisection on the monotonic inverse, and dI/dV there. */
+static double junction_i(double v, double is, double nvt, double r, double *g) {
+    if (v <= 0.0) {
+        *g = is / nvt; /* reverse: its leakage, near enough nothing */
+        return 0.0;
+    }
+    double lo = 0.0, hi = v / r;
+    for (int k = 0; k < 60; k++) {
+        double mid = 0.5 * (lo + hi);
+        if (nvt * log1p(mid / is) + r * mid < v)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    double i = 0.5 * (lo + hi);
+    *g = 1.0 / (nvt / (i + is) + r);
+    return i;
+}
+
+/* A bias GPIO, high, through its Schottky and 330 ohm into a node: the
+ * current it drives, linearized about the node's last voltage. */
+static void stamp_bias(net_t *n, int node) {
+    double v0 = n->v[node], g;
+    double i0 = junction_i(GPIO_HIGH_V - v0, BIAS_DIODE_IS_A, BIAS_DIODE_NVT_V, R_BIAS_OHM, &g);
+    net_res_to_gnd(n, node, 1.0 / g);
+    n->i[node] += i0 + g * v0;
+}
+
+/* U9's reverse path from the bus to ground, linearized the same way. */
+static void stamp_u9_reverse(net_t *n) {
+    double v0 = n->v[N_BUS], g;
+    double i0 = junction_i(v0, U9_REV_IS_A, U9_REV_NVT_V, U9_REV_OHM, &g);
+    net_res_to_gnd(n, N_BUS, 1.0 / g);
+    n->i[N_BUS] -= i0 - g * v0;
+}
 
 static double arm_path_ohms(const plant_t *p) {
     return p->faults[PF_ARM_SWITCH_OPEN] ? 1e11 : R_ARM_CLOSED_OHM;
@@ -251,7 +293,9 @@ static void mk1c_build(plant_t *p, double dt_s) {
     }
     net_cap_to_gnd(n, N_BUS, p->c_bulk_f);
     if (plant_gpio(p, BOARD_PIN_BIAS_BUS) && !p->faults[PF_BIAS_BUS_OPEN])
-        net_src_through_res(n, N_BUS, BIAS_SRC_V, R_BIAS_OHM);
+        stamp_bias(n, N_BUS);
+    if (!p->efuse_on && !p->faults[PF_HIGH_SIDE_SHORT])
+        stamp_u9_reverse(n);
     if (p->faults[PF_BUS_SHORT_GND])
         net_res_to_gnd(n, N_BUS, 0.5);
 
@@ -280,7 +324,7 @@ static void mk1c_build(plant_t *p, double dt_s) {
         net_res_to_gnd(n, node[i],
                        plant_fet_ohms(p, plant_gpio(p, fire_pin[i]), fet_short[i]));
         if (plant_gpio(p, bias_pin[i]) && !p->faults[bias_open[i]])
-            net_src_through_res(n, node[i], BIAS_SRC_V, R_BIAS_OHM);
+            stamp_bias(n, node[i]);
         net_res(n, N_BUS, node[i], channel_path_ohms(p, i));
     }
 }

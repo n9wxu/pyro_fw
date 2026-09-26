@@ -557,6 +557,36 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-054: MK1C's Firing Bus Is Designed Around The Board As Measured
+- **Decision:** at the user's direction, the firmware and its model follow
+  the bench MK1C, not DESIGN.md 4's algebra. Scoped at CN1 and read by the
+  board's ADC on 2026-09-26: R120 330 ohm (metered), R103 and C115 as
+  designed, but U9's OUT, off, conducts back into the part above about
+  0.72 V, a junction with about 250 ohm behind it, 2.4 mA at 1.5 V. The
+  user: "an internal reverse bias is to be expected". So under bias the bus
+  sits at about 688 counts (1.66 V), not 1058, drawing about 4 mA from
+  GPIO23 at its 4 mA default drive; the channels under their own bias read
+  about 1262, not 1214, because their bias diodes drop less at 0.2 mA.
+- **Presence is a ratio** (`boards/mk1c/pyro_sense.h`): a channel is
+  present when it reads at least half the bus in the same tracking test,
+  and the test says nothing when the bus did not rise (under 200 counts).
+  DESIGN.md S3 already says presence "does not use absolute levels"; the
+  absolute 400 counts it replaces kept 1.7x of margin on this bus, which
+  moves with U9 and its temperature, where the ratio keeps 2x whatever the
+  bus does. `pyro_get()` and the arm interlock use it.
+- **The model is the board** (`sim/plant/plant_mk1c.c`): U9's reverse path
+  and the GPIO-and-Schottky bias sources, fitted to the bench, and the
+  bus's 1.1 uF. It reproduces the ADC's 685-690 on the bus, 1258-1266 on
+  the channels, and the scope's fall: 415 us to 0.9 V, 2.32 ms from 0.6 to
+  0.2 V, where DESIGN.md's linear bus took 2 ms to reach 0.9 V.
+  `plant_tests` holds it there.
+- **What it costs:** an open R_BLEED no longer shows in the bus level --
+  U9's path carries the bus either way, 685 against 730 counts -- where on
+  paper it moved 1058 to 1214. Below the knee the bus decays through the
+  pull-down alone, so the decay there still shows it (about 2.3 ms against
+  16 ms); nothing checks that yet. The tracking current falls to about
+  0.11 mA, safer than the 0.2 mA designed.
+
 ### DD-053: No Sleeps: The Exec Loop Is The Only Clock
 - **Decision:** at the user's direction, no code sleeps or busy-waits
   (PWR-WAIT-01). The exec loop sets the time; anything that has to wait parks
