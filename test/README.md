@@ -18,6 +18,22 @@ The other host suites (`config_tests`, `config_persistence_tests`,
 `test/web/run_web_tests.sh` runs the Playwright suite against the mock server
 in all three modes.
 
+## The pressure chain under noise (T0)
+
+`test_pressure_chain.c` (target `pressure_chain_tests`) is the one suite where
+the sensor is not perfect. The test HAL's sensor model (`mocks.h`) adds seeded
+Gaussian noise (the MS5607's 1.2 Pa at OSR 4096), truncates to whole pascals
+and range-checks as `hal_common.c` does, can inject glitches, and can
+reproduce the MS5607's conversion timing with core0's flash stalls. Every model
+is off unless a test turns it on, so the other suites see the smooth signal
+they always have. The board boots from BOOT_SETTLE with nothing primed, and
+each flight's truth is integrated beside the firmware so detections can be
+timed against it. The `BASELINE` lines it prints are the "Now" column of
+`docs/outstanding_tasks.md`'s baseline table.
+
+`support/noise_baseline.py <board-ip>` measures a board's real noise from
+`raw_pa` and `pad_speed_cms` on `/api/status`.
+
 ## Code review 2026-09-24 regressions
 
 Each finding the review proved, or that was found while fixing it, has a test

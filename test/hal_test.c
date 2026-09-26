@@ -14,6 +14,7 @@
 #include "mocks.h"
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 /* ── Mock state (shared with test files via mocks.h) ─────────────── */
 
@@ -42,6 +43,166 @@ static struct hal_file test_file;
 /* In-flight log state — declared here so mock_reset_all() can reset it */
 static hal_file_t *test_log_file = NULL;
 static bool test_log_active = false;
+
+/* ── Sensor model ─────────────────────────────────────────────────── */
+
+float mock_noise_rms_pa = 0.0f;
+uint32_t mock_noise_seed = 1;
+int32_t mock_glitch_pa = 0;
+int mock_glitch_samples = 0;
+bool mock_stall_model = false;
+uint32_t mock_stall_seed = 1;
+uint32_t mock_stall_count, mock_stall_total_ms, mock_stall_min_ms, mock_stall_max_ms;
+uint32_t mock_stamp_lag_min_ms, mock_stamp_lag_max_ms;
+uint32_t mock_pres_rejects;
+
+static struct {
+    uint32_t noise_rng, stall_rng;
+    bool noise_seeded, stall_seeded;
+    bool spare_valid;
+    float spare;
+    /* The true pressure at each tick, so a reading can be taken at its
+     * conversion and handed over later, as the hardware does. */
+    struct {
+        uint32_t t;
+        float pa;
+    } hist[256];
+    unsigned hist_n, hist_head;
+    uint32_t stall_until, next_stall_at;
+    int phase;
+    uint32_t d1_ms, due_ms;
+} sm;
+
+static uint32_t xorshift32(uint32_t *s) {
+    uint32_t x = *s ? *s : 0x9E3779B9u;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *s = x;
+    return x;
+}
+
+static float uniform01(uint32_t *s) {
+    return ((float)(xorshift32(s) >> 8) + 0.5f) / 16777216.0f;
+}
+
+static float gaussian(void) {
+    if (!sm.noise_seeded) {
+        sm.noise_rng = mock_noise_seed;
+        sm.noise_seeded = true;
+    }
+    if (sm.spare_valid) {
+        sm.spare_valid = false;
+        return sm.spare;
+    }
+    float r = sqrtf(-2.0f * logf(uniform01(&sm.noise_rng)));
+    float th = 6.2831853f * uniform01(&sm.noise_rng);
+    sm.spare = r * sinf(th);
+    sm.spare_valid = true;
+    return r * cosf(th);
+}
+
+/* What the HAL does with a reading: truncate to whole pascals, and discard one
+ * no atmosphere can produce [SNS-PRES-06]. */
+static void feed_reading(float true_pa, uint32_t stamp_ms) {
+    float p = true_pa;
+    if (mock_noise_rms_pa > 0.0f)
+        p += mock_noise_rms_pa * gaussian();
+    if (mock_glitch_samples > 0) {
+        p += (float)mock_glitch_pa;
+        mock_glitch_samples--;
+    }
+    if (p < 1000.0f || p > 120000.0f) {
+        mock_pres_rejects++;
+        return;
+    }
+    pp_feed((int32_t)p, stamp_ms);
+}
+
+static void hist_push(uint32_t t, float pa) {
+    unsigned last = (sm.hist_head + 255u) % 256u;
+    if (sm.hist_n > 0 && sm.hist[last].t == t) {
+        sm.hist[last].pa = pa;
+        return;
+    }
+    sm.hist[sm.hist_head].t = t;
+    sm.hist[sm.hist_head].pa = pa;
+    sm.hist_head = (sm.hist_head + 1u) % 256u;
+    if (sm.hist_n < 256u)
+        sm.hist_n++;
+}
+
+/* The newest pressure at or before t. */
+static float hist_at(uint32_t t) {
+    float pa = mock_pressure.pressure_pa;
+    for (unsigned i = 0; i < sm.hist_n; i++) {
+        unsigned k = (sm.hist_head + 255u - i) % 256u;
+        pa = sm.hist[k].pa;
+        if ((int32_t)(t - sm.hist[k].t) >= 0)
+            break;
+    }
+    return pa;
+}
+
+/* 1.3 stalls a second, each about 56 ms long, leaves about 713 ms between them. */
+static uint32_t stall_gap_ms(void) {
+    return (uint32_t)(-713.0f * logf(uniform01(&sm.stall_rng)));
+}
+
+bool mock_core0_stalled(uint32_t now_ms) {
+    return mock_stall_model && (int32_t)(now_ms - sm.stall_until) < 0;
+}
+
+/* MS5607 at 50 Hz: D1 commanded, D2 commanded 10 ms later, D2 read 10 ms after
+ * that. The reading is the pressure at the middle of D1's conversion and is
+ * stamped with the loop time of the read, as hal_common.c stamps it. */
+static void stall_model_tick(uint32_t now) {
+    hist_push(now, mock_pressure.pressure_pa);
+    if (!sm.stall_seeded) {
+        sm.stall_rng = mock_stall_seed;
+        sm.stall_seeded = true;
+        sm.next_stall_at = now + stall_gap_ms();
+    }
+    if (mock_core0_stalled(now))
+        return;
+    if ((int32_t)(now - sm.next_stall_at) >= 0) {
+        uint32_t len = 40u + xorshift32(&sm.stall_rng) % 34u;
+        sm.stall_until = now + len;
+        sm.next_stall_at = sm.stall_until + stall_gap_ms();
+        mock_stall_count++;
+        mock_stall_total_ms += len;
+        if (mock_stall_min_ms == 0 || len < mock_stall_min_ms)
+            mock_stall_min_ms = len;
+        if (len > mock_stall_max_ms)
+            mock_stall_max_ms = len;
+        return;
+    }
+    switch (sm.phase) {
+    case 0:
+        sm.d1_ms = now;
+        sm.due_ms = now + 10u;
+        sm.phase = 1;
+        break;
+    case 1:
+        if ((int32_t)(now - sm.due_ms) >= 0) {
+            sm.due_ms = now + 10u;
+            sm.phase = 2;
+        }
+        break;
+    default:
+        if ((int32_t)(now - sm.due_ms) >= 0) {
+            uint32_t conv = sm.d1_ms + 4u;
+            uint32_t lag = now - conv;
+            if (mock_stamp_lag_min_ms == 0 || lag < mock_stamp_lag_min_ms)
+                mock_stamp_lag_min_ms = lag;
+            if (lag > mock_stamp_lag_max_ms)
+                mock_stamp_lag_max_ms = lag;
+            feed_reading(hist_at(conv), now);
+            sm.phase = 0;
+        }
+        break;
+    }
+}
 
 static void xip_stall(void) {
     if (mock_xip_stall_ms > 0) {
@@ -91,6 +252,16 @@ void mock_reset_all(void) {
     test_file.open = false;
     memset(sim_files, 0, sizeof(sim_files));
     last_pp_feed_ms = 0;
+    mock_noise_rms_pa = 0.0f;
+    mock_noise_seed = 1;
+    mock_glitch_pa = 0;
+    mock_glitch_samples = 0;
+    mock_stall_model = false;
+    mock_stall_seed = 1;
+    mock_stall_count = mock_stall_total_ms = mock_stall_min_ms = mock_stall_max_ms = 0;
+    mock_stamp_lag_min_ms = mock_stamp_lag_max_ms = 0;
+    mock_pres_rejects = 0;
+    memset(&sm, 0, sizeof(sm));
     /* Every test starts with no pad claimed and both channels the flight
      * software's; a test that wants a release gives Lua the pads first. */
     pad_claim_reset();
@@ -332,8 +503,13 @@ void hal_tasks_tick(uint32_t now_ms) {
     /* Feed pressure samples at ~50Hz (every 20ms) into pressure_processing.
      * Matches real BMP280/MS5607 sample rate. The pp ring (32 entries)
      * stays shallow when detectors dispatch at ≥10ms intervals. */
-    if (mock_pressure.sensor_type > 0 && (last_pp_feed_ms == 0 || (now_ms - last_pp_feed_ms) >= 20)) {
-        pp_feed((int32_t)mock_pressure.pressure_pa, now_ms);
+    if (mock_stall_model) {
+        if (mock_pressure.sensor_type > 0)
+            stall_model_tick(now_ms);
+        if (mock_core0_stalled(now_ms))
+            return;
+    } else if (mock_pressure.sensor_type > 0 && (last_pp_feed_ms == 0 || (now_ms - last_pp_feed_ms) >= 20)) {
+        feed_reading(mock_pressure.pressure_pa, now_ms);
         last_pp_feed_ms = now_ms;
     }
     /* Drive the buzzer async task so integration tests can step through

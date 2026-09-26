@@ -144,6 +144,11 @@ jobs:
       - name: Run closed-loop tests
         run: cd build && ninja closedloop_tests
 
+      # The pressure chain under a real sensor's noise, booted as the hardware
+      # boots: the only suite where the test HAL is not a perfect sensor.
+      - name: Run pressure chain tests
+        run: cd build && ninja pressure_chain_tests
+
       # Brownout recovery: a pure decision function, so every case that would
       # otherwise need a rocket and a loose battery connector runs here.
       - name: Run brownout recovery tests

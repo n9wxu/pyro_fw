@@ -22,6 +22,7 @@
 #include "device_status.h"
 #include "version.h"
 #include "flight_states.h"
+#include "pressure_processing.h"
 
 /* Defined by src/lua/lua_core1.c; weak no-ops in littlefs_driver.c when
  * Lua is not linked. */
@@ -767,7 +768,8 @@ static void serve_api_status(http_conn_t *hc) {
         "\"sensor_ok\":%s,\"fs_ok\":%s,\"faults\":[%s],"
         "\"reset_cause\":%u,\"recovery\":\"%s\","
         "\"pyro1_refused\":%s,\"pyro2_refused\":%s,\"pyro1_refires\":%u,\"main_forced\":%s,"
-        "\"pres_waits\":%lu,\"pres_rejects\":%lu,\"usb_attached\":%s,\"test_mode\":%s,\"buzzer_active\":%s,"
+        "\"pres_waits\":%lu,\"pres_rejects\":%lu,\"raw_pa\":%ld,\"pad_speed_cms\":%ld,\"usb_attached\":%s,\"test_"
+        "mode\":%s,\"buzzer_active\":%s,"
         "\"beep\":\"%s\",\"beep_sound\":\"%s\","
         "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u}",
         sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
@@ -805,6 +807,9 @@ static void serve_api_status(http_conn_t *hc) {
         fctx && fctx->pyro1_refused ? "true" : "false", fctx && fctx->pyro2_refused ? "true" : "false",
         fctx ? (unsigned)fctx->pyro1_refires : 0u, fctx && fctx->main_forced ? "true" : "false",
         (unsigned long)hal_pressure_waits(), (unsigned long)hal_pressure_rejects(),
+        /* The newest reading before any filtering, and the speed the launch
+         * detector reads: together, the sensor's noise and what it costs. */
+        (long)pp_last_raw_pa(), fctx ? (long)fctx->pad_speed_cms : 0L,
         /* A board on USB detects no launch and says nothing, unless it is in
          * test mode [USB-01..03, USB-08]. */
         fctx && fctx->usb_attached ? "true" : "false", fctx && fctx->test_mode ? "true" : "false",

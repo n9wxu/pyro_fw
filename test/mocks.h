@@ -70,6 +70,28 @@ extern uint32_t mock_xip_stall_ms;       /* time added per flash write op */
 extern uint32_t mock_xip_total_stall_ms; /* cumulative stall time */
 extern int mock_xip_stall_count;         /* number of stall events */
 
+/* ── Sensor model ─────────────────────────────────────────────────── */
+/* Off by default: a test that sets none of these sees the smooth signal it
+ * always has. Every reading passes the HAL's own range check, and is
+ * truncated to whole pascals as hal_common.c does. */
+extern float mock_noise_rms_pa;  /* Gaussian noise on every reading */
+extern uint32_t mock_noise_seed; /* the same seed gives the same noise */
+extern int32_t mock_glitch_pa;   /* added to each of the next ... */
+extern int mock_glitch_samples;  /* ... this many readings */
+extern uint32_t mock_pres_rejects;
+
+/* The MS5607's timing on the hardware, with core0 stalls. A reading is the
+ * pressure at the middle of its D1 conversion, stamped when the loop reads it
+ * after D2 -- about 16 ms later, or later still by any stall in between.
+ * Stalls last 40-73 ms and come about 1.3 times a second (DD-035). While one
+ * lasts nothing on core0 runs: a driver checks mock_core0_stalled() before
+ * dispatching. */
+extern bool mock_stall_model;
+extern uint32_t mock_stall_seed;
+extern uint32_t mock_stall_count, mock_stall_total_ms, mock_stall_min_ms, mock_stall_max_ms;
+extern uint32_t mock_stamp_lag_min_ms, mock_stamp_lag_max_ms; /* stamp minus conversion */
+bool mock_core0_stalled(uint32_t now_ms);
+
 /* ── Serial command mock [GND-TEST-01..04, DD-011] ─────────────────── */
 /* Queue serial command strings to be returned by hal_serial_readline().
  * Each enqueued line is returned once on the next hal_serial_readline()

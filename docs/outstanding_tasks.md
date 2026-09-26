@@ -155,8 +155,11 @@ Planned from reviews of `docs/pressure-filter-prompt.md` and
 `docs/mach-lockout-prompt.md` against the code. The measurements come from host
 experiments that run the real `pressure_processing.c` and `flight_states.c`
 with datasheet sensor noise (MS5607 at OSR 4096: 1.2 Pa RMS, truncated to
-whole pascals as `hal_common.c` does). No repo test models noise or flies
-faster than an H73, which is why none of this showed up there.
+whole pascals as `hal_common.c` does). No repo test modelled noise or flew
+faster than an H73, which is why none of this showed up there. Since T0, the
+"Now" column is what `pressure_chain_tests` prints; the earlier experiments
+agreed with it except for touchdown, where they had not included the launch's
+ground bias, and the stall figure, where they used a different stall model.
 
 ### Baseline
 
@@ -164,14 +167,14 @@ faster than an H73, which is why none of this showed up there.
 |---|---|---|---|
 | Brownout recovery, booted as the hardware boots | never engages (N23) | engages | T1 |
 | Recovery on the pad with one glitch in its history | unreachable today (N23) | never resumes | T1 |
-| One plausible glitch on the pad | ≥12 kPa low declares a launch (N24) | no launch at any size | T2, T3 |
-| Speed noise on the pad (RMS) | 1.68 m/s | ≤ 0.3 m/s | T4, T5 |
-| Touchdown to LANDED | 18 s mean, 72 s worst | ≤ 3 s | T4, T5 |
-| Apogee after the true apogee | +0.56 s mean | never early; about +0.4 s | T5 |
-| Ground pressure frozen at launch | reads 0.2–0.5 m low | ≤ 0.1 m | T7 |
+| One plausible glitch on the pad | ≥11 kPa low declares a launch (N24) | no launch at any size | T2, T3 |
+| Speed noise on the pad (RMS) | 1.58 m/s | ≤ 0.3 m/s | T4, T5 |
+| Touchdown to LANDED, by the stillness test | on the pad's level 1.9 s, because the zero clamp hides the noise there; 5 m above it, never within 400 s, so only the 60 s timeout lands it | ≤ 3 s, at any landing height | T4, T5 |
+| Apogee after the true apogee | +0.56 s mean (+0.54 to +0.58) | never early; about +0.4 s | T5 |
+| Ground pressure frozen at launch | reads 0.17 m (30 g) to 0.42 m (2 g) low | ≤ 0.1 m | T7 |
 | Ground tracker after a >50 Pa step | frozen for good (N9) | re-seeds | T6 |
-| Sample timestamps | loop ms at the temperature read; a flash stall doubles the worst speed error (8 to 18 m/s at 100 m/s) | hardware timer at the pressure conversion | T11 |
-| Fit-based speed and acceleration through flash stalls | worst −294 m/s and 441 m/s² with today's stamps | RMS 1.2 m/s and 3.5 m/s², stalls or not | T11 |
+| Sample timestamps | loop ms at the temperature read, 16 ms after the conversion, up to 127 ms after it through a stall; stalls raise the worst speed error at 100 m/s from 8.3 to 10.3 m/s | hardware timer at the pressure conversion | T11 |
+| Fit-based speed and acceleration through flash stalls | worst −294 m/s and 441 m/s² with today's stamps (earlier experiments; T11 re-measures) | RMS 1.2 m/s and 3.5 m/s², stalls or not | T11 |
 | A flight above 8 km AGL | apogee fires about 1 s after passing 8 km (N26) | apogee at the real apogee | T5 |
 | Supersonic flight with a static-port error | the Mach gate trusts any 1 s below 100 ft/s, which the error can fake | no drogue before the true apogee, on every M0 profile | M1 |
 | A sensor stuck or lost in flight | a stuck value may read as apogee | never causes a deployment | M2 |
@@ -222,6 +225,9 @@ is safe only once T5's fit and M0's supersonic profiles exist.
 ---
 
 ### T0. Noise and stall test support, and a real noise baseline
+
+**Done 2026-09-26**, except its bench test: `noise_baseline.py` needs firmware
+with the new status fields on the boards (G4).
 
 **Why:** every finding here was invisible, because the test HAL feeds a
 perfectly smooth signal, primes the pressure layer before booting, and never
@@ -446,8 +452,9 @@ from when the pressure was converted in three ways:
 
 Every dt downstream inherits that error: the filter's step, every speed, and
 the flight log's time column, which is `now - launch_time` on the loop clock.
-With today's stamps, stalls double the worst speed error at 100 m/s, and a
-fit-based estimator can be 294 m/s wrong.
+Under T0's stall model, stalls raise today's worst speed error at 100 m/s from
+8.3 to 10.3 m/s. The earlier experiments put a fit-based estimator, which T5
+brings in, 294 m/s wrong through a stall; T11's tests measure that again.
 
 **Tests first:**
 - `test_T11_stalls_change_nothing`: under T0's stall model, speed and
@@ -515,7 +522,9 @@ speed.
   noise is ≤ 0.25 Pa RMS. (A first-order filter at τ = 500 ms and 50 Hz gives
   about 0.17 Pa.) Fails today.
 - `test_T4_pad_speed`: speed noise on the pad ≤ 0.3 m/s RMS. Fails today.
-- `test_T4_touchdown`: touchdown to LANDED ≤ 3 s under noise. Fails today.
+- `test_T4_touchdown`: touchdown to LANDED ≤ 3 s under noise, on a landing
+  site 5 m above the pad, where the zero clamp can't hide the noise. Fails
+  today: it never lands by stillness.
 - *guard*: the AGL accuracy tests (REV-05) and the closed-loop suites.
 - Bench: `noise_baseline.py`'s pad-speed RMS on all three boards is ≤ 0.3 m/s.
 
@@ -600,7 +609,8 @@ too.
   lies more than 4σ from it. A 10σ step makes every fit that contains it
   unclean, for one window and no longer.
 - `test_T5_pad_speed`: ≤ 0.3 m/s RMS.
-- `test_T5_touchdown`: LANDED within 3 s of touchdown.
+- `test_T5_touchdown`: LANDED within 3 s of touchdown, 5 m above the pad and
+  on its level.
 - `test_T5_apogee`: over 1000 seeds and apogees from 100 m to 9 km: never
   before the true apogee, and a mean delay within 0.1 s of what the 1.0001
   drop implies.

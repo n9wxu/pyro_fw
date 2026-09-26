@@ -71,9 +71,13 @@ if st0["state"] != "PAD_IDLE":
 board = st0["board"]
 print(f"== {board} {st0['fw_version']} at {HOST}, state {st0['state']}")
 NEW_FIELDS = ("pyro1_refused", "pyro2_refused", "pyro1_refires", "main_forced", "usb_attached", "test_mode",
-              "buzzer_active")
+              "buzzer_active", "raw_pa", "pad_speed_cms")
 check("status: new fields present", all(k in st0 for k in NEW_FIELDS),
       ",".join(k for k in NEW_FIELDS if k not in st0))
+# T0: the sensor's own reading, and the speed the launch detector reads.
+check("status: raw_pa is a pressure", 30000 <= st0.get("raw_pa", 0) <= 110000, str(st0.get("raw_pa")))
+check("status: pad_speed_cms is a pad's speed", abs(st0.get("pad_speed_cms", 99999)) < 2000,
+      str(st0.get("pad_speed_cms")))
 check("status: PAD_IDLE flight time is 0", st0["state"] != "PAD_IDLE" or st0["flight_ms"] == 0, str(st0["flight_ms"]))
 # USB is the only way to reach the API, so this board has a host on its port.
 check("status: usb_attached is true", st0.get("usb_attached") is True, str(st0.get("usb_attached")))
