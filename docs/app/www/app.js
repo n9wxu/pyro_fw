@@ -11,6 +11,8 @@ var MAX_ALT = {0:800000, 1:8000, 2:26247};
 var UNIT_LABELS = {0:'cm', 1:'m', 2:'ft'};
 var UNIT_NAMES = ['cm','m','ft'];
 var MODE_LABELS = {delay:'Delay',agl:'AGL',fallen:'Fallen',speed:'Speed',none:'None'};
+/* Centimetres per unit, the pivot for converting a value between units. */
+var CM_PER_UNIT = {0:1, 1:100, 2:30.48};
 var WEB_VERSION = '2.0.0';
 
 /* ── Tabs ──────────────────────────────────────────────────────── */
@@ -19,7 +21,10 @@ function showTab(name) {
   document.querySelectorAll('.tab').forEach(function(el) { el.classList.remove('active'); });
   document.getElementById('tab-' + name).style.display = 'block';
   event.target.classList.add('active');
-  if (name === 'data') { loadFlightData(); drawGraph(); }
+  if (name === 'data') { loadFlightData(); }
+  if (name === 'lua') { luaInit(); }
+  if (name === 'config') { relInit(); }
+  if (name === 'beeps') { beepsInit(); }
 }
 
 /* ── Unit conversion ───────────────────────────────────────────── */
@@ -39,13 +44,41 @@ function fmtMode(mode, val, u) {
   return (MODE_LABELS[mode]||mode) + ' ' + val + ' ' + unitLabel(u);
 }
 
+/* ── Test mode [USB-08] ───────────────────────────────────────────
+ * The board holds it in RAM; the checkbox follows /api/status except while a
+ * request is out. */
+var testBusy = false;
+function setTestMode(on) {
+  var box = document.getElementById('testMode');
+  var msg = document.getElementById('testMsg');
+  if (on && !confirm('Test mode: on USB this board will detect a launch and fire its pyros. ' +
+                     'Disconnect any igniter you do not mean to fire. Turn test mode on?')) {
+    box.checked = false;
+    return;
+  }
+  testBusy = true;
+  msg.textContent = '';
+  fetch('api/test_mode/' + (on ? 'on' : 'off'), {method:'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (j.error) msg.textContent = j.error;
+      box.checked = !!j.test_mode;
+    })
+    .catch(function(){ msg.textContent = 'no answer from the board'; })
+    .then(function(){ testBusy = false; });
+}
+
 /* ── Status polling ────────────────────────────────────────────── */
 function update() {
-  fetch('/api/status').then(function(r){return r.json()}).then(function(d) {
+  fetch('api/status').then(function(r){return r.json()}).then(function(d) {
     missCount = 0;
     var u = d.units || 0;
     var ul = unitLabel(u);
 
+    if (d.board) {
+      document.getElementById('sBoard').textContent = d.board;
+      document.title = d.board;
+    }
     document.getElementById('sState').textContent = d.state;
     document.getElementById('sAlt').textContent = cmToUnit(d.alt_cm, u) + ' ' + ul;
     document.getElementById('sMax').textContent = cmToUnit(d.max_alt_cm, u) + ' ' + ul;
@@ -54,15 +87,26 @@ function update() {
     document.getElementById('sFt').textContent = (d.flight_ms/1000).toFixed(1) + 's';
     document.getElementById('sUp').textContent = (d.uptime/1000).toFixed(0) + 's';
 
-    /* Pyro status */
-    function pyroStr(fired, cont, adc) {
-      if (fired) return '<span class="pyro-fired">FIRED</span> (ADC:' + adc + ')';
+    /* Pyro status. A refusal is the board declining to energise a channel it
+       was told to fire, which is not the same thing as firing it. */
+    function pyroStr(fired, refused, cont, adc, note) {
+      if (fired) return '<span class="pyro-fired">FIRED</span>' + (note || '') + ' (ADC:' + adc + ')';
+      if (refused) return '<span class="pyro-open">REFUSED by the board</span> (ADC:' + adc + ')';
       if (cont) return '<span class="pyro-ok">OK</span> (ADC:' + adc + ')';
       return '<span class="pyro-open">OPEN</span> (ADC:' + adc + ')';
     }
-    document.getElementById('sP1').innerHTML = pyroStr(d.pyro1_fired, d.pyro1_cont, d.pyro1_adc);
-    document.getElementById('sP2').innerHTML = pyroStr(d.pyro2_fired, d.pyro2_cont, d.pyro2_adc);
+    document.getElementById('sP1').innerHTML = pyroStr(d.pyro1_fired, d.pyro1_refused, d.pyro1_cont, d.pyro1_adc,
+      d.pyro1_refires ? ' (retried)' : '');
+    document.getElementById('sP2').innerHTML = pyroStr(d.pyro2_fired, d.pyro2_refused, d.pyro2_cont, d.pyro2_adc,
+      d.main_forced ? ' <span class="warn-inline">emergency: brought forward</span>' : '');
     document.getElementById('sArm').textContent = d.armed ? 'YES' : 'No';
+
+    /* A board on USB is grounded unless it is in test mode [USB-01, USB-08]. */
+    var tm = !!d.test_mode;
+    document.getElementById('sUsb').textContent = !d.usb_attached ? 'not attached'
+      : tm ? 'attached, test mode: flying as on battery' : 'attached: launch detection and beeps off';
+    if (!testBusy) document.getElementById('testMode').checked = tm;
+    document.getElementById('testWarn').style.display = tm ? 'block' : 'none';
 
     /* Config display */
     document.getElementById('sCfgId').textContent = d.rocket_id || '—';
@@ -78,25 +122,13 @@ function update() {
     document.getElementById('sCfgP2').innerHTML = p2Str + (pendingConfig ? ' <span class="warn-inline">not yet applied</span>' : '');
     document.getElementById('pendingWarn').style.display = pendingConfig ? 'block' : 'none';
 
-    /* Flight summary */
-    document.getElementById('dDur').textContent = (d.flight_ms/1000).toFixed(1) + 's';
-    document.getElementById('dApogee').textContent = cmToUnit(d.max_alt_cm, u) + ' ' + ul;
-    var p1Txt = 'Not fired';
-    if (d.pyro1_mode === 'none') p1Txt = 'Disabled';
-    else if (d.pyro1_fired) p1Txt = 'Fired';
-    var p2Txt = 'Not fired';
-    if (d.pyro2_mode === 'none') p2Txt = 'Disabled';
-    else if (d.pyro2_fired) p2Txt = 'Fired';
-    document.getElementById('dP1').innerHTML = p1Txt;
-    document.getElementById('dP2').innerHTML = p2Txt;
-
     /* Version info */
     currentVersion = d.fw_version;
     document.getElementById('uFwVer').textContent = d.fw_version;
     document.getElementById('uWebVer').textContent = WEB_VERSION;
 
     /* Store device config — update every poll */
-    var newCfg = {id:d.rocket_id, name:d.rocket_name, units:u, beep:'digits',
+    var newCfg = {id:d.rocket_id, name:d.rocket_name, units:u,
       p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value};
     if (!deviceConfig) {
       deviceConfig = newCfg;
@@ -158,11 +190,41 @@ function cfgChanged() {
   document.getElementById('cfgDirty').style.display = 'block';
 }
 
+/* The firmware keeps 8 characters of the id and the name (CFG-07); say so
+   while typing rather than letting the operator find the ninth missing on the
+   Status tab. */
+function cfgLenHint(id) {
+  var v = document.getElementById(id).value;
+  document.getElementById(id + 'Len').textContent = v.length + ' of 8 characters';
+}
+
+/* The units the pyro values on screen are written in. */
+var cfgShownUnits = 1;
+
+/* A value is a distance or a speed in the chosen units, so changing units
+   converts it; leaving the number alone would turn 500 ft into 500 m. */
+function unitsChanged() {
+  var to = getUnits(), from = cfgShownUnits;
+  if (to !== from) {
+    [1,2].forEach(function(ch) {
+      var mode = document.getElementById('p'+ch+'mode').value;
+      if (mode === 'none' || mode === 'delay') return;
+      var el = document.getElementById('p'+ch+'val');
+      var v = parseInt(el.value) || 0;
+      el.value = Math.round(v * CM_PER_UNIT[from] / CM_PER_UNIT[to]);
+    });
+  }
+  cfgShownUnits = to;
+  cfgChanged();
+}
+
 function cfgLoadFromObj(c) {
   document.getElementById('cfgId').value = c.id || '';
   document.getElementById('cfgName').value = c.name || '';
+  cfgLenHint('cfgId');
+  cfgLenHint('cfgName');
   document.getElementById('cfgUnits').value = c.units || 0;
-  document.getElementById('cfgBeep').value = c.beep || 'digits';
+  cfgShownUnits = parseInt(c.units) || 0;
   document.getElementById('p1mode').value = c.p1mode || 'delay';
   document.getElementById('p1val').value = c.p1val || 0;
   document.getElementById('p2mode').value = c.p2mode || 'agl';
@@ -173,7 +235,7 @@ function cfgLoadFromObj(c) {
 }
 
 function cfgDefault() {
-  cfgLoadFromObj({id:'PYRO001', name:'My Rocke', units:1, beep:'digits', p1mode:'delay', p1val:0, p2mode:'agl', p2val:300});
+  cfgLoadFromObj({id:'PYRO001', name:'MyRocket', units:1, p1mode:'delay', p1val:0, p2mode:'agl', p2val:300});
   document.getElementById('cfgDirty').style.display = 'block';
   document.getElementById('cfgDirty').innerHTML = '⚠ Defaults loaded — press <b>Save</b> then <b>Reboot</b> to apply';
 }
@@ -187,7 +249,6 @@ function cfgGetObj() {
     id: document.getElementById('cfgId').value,
     name: document.getElementById('cfgName').value,
     units: getUnits(),
-    beep: document.getElementById('cfgBeep').value,
     p1mode: document.getElementById('p1mode').value,
     p1val: parseInt(document.getElementById('p1val').value) || 0,
     p2mode: document.getElementById('p2mode').value,
@@ -195,25 +256,48 @@ function cfgGetObj() {
   };
 }
 
+/* One Save for the whole tab. The flight settings go to config.ini and apply
+   at once; the pin release and the buzzer pad go to pins.ini and apply at the
+   next reboot -- two stores, but one decision for the operator. */
 function cfgSave() {
+  if (relDirty) relSave();
   var c = cfgGetObj();
   var uname = UNIT_NAMES[c.units];
   var ini = '[pyro]\r\nid=' + c.id + '\r\nname=' + c.name +
     '\r\npyro1_mode=' + c.p1mode + '\r\npyro1_value=' + c.p1val +
     '\r\npyro2_mode=' + c.p2mode + '\r\npyro2_value=' + c.p2val +
-    '\r\nunits=' + uname + '\r\nbeep_mode=' + c.beep + '\r\n';
+    '\r\nunits=' + uname + '\r\n';
   var msg = document.getElementById('cfgMsg');
-  fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:ini})
+  fetch('api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:ini})
     .then(function(r) {
       if (r.ok) {
-        pendingConfig = c;
-        msg.style.color = 'green';
-        msg.textContent = ' Saved — reboot to apply';
-        document.getElementById('cfgDirty').style.display = 'block';
+        return r.json().then(function(data) {
+          if (data.applied) {
+            msg.style.color = 'green';
+            msg.textContent = ' ✓ Config applied successfully!';
+            deviceConfig = c;
+            pendingConfig = null;
+            document.getElementById('cfgDirty').style.display = 'none';
+          } else {
+            msg.style.color = 'orange';
+            msg.textContent = ' Saved — reboot to apply';
+            pendingConfig = c;
+            document.getElementById('cfgDirty').style.display = 'block';
+          }
+        });
       } else {
-        msg.style.color = 'red';
-        msg.textContent = ' Error saving';
+        return r.json().catch(function() { return {error: 'Save failed'}; });
       }
+    })
+    .then(function(err) {
+      if (err) {
+        msg.style.color = 'red';
+        msg.textContent = ' ' + (err.error || 'Error saving');
+      }
+    })
+    .catch(function() {
+      msg.style.color = 'red';
+      msg.textContent = ' Connection error';
     });
 }
 
@@ -223,7 +307,7 @@ function cfgFileSelected() {
   if (!file) return;
   var msg = document.getElementById('cfgMsg');
   file.text().then(function(txt) {
-    fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:txt})
+    fetch('api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:txt})
       .then(function(r) {
         msg.style.color = r.ok ? 'green' : 'red';
         msg.textContent = r.ok ? ' Uploaded — reboot to apply' : ' Error';
@@ -239,49 +323,117 @@ function cfgReboot() {
   msg.textContent = ' Rebooting...';
   pendingConfig = null;
   deviceConfig = null;
-  fetch('/api/reboot', {method:'POST'}).catch(function(){});
+  fetch('api/reboot', {method:'POST'}).catch(function(){});
   waitForReboot(msg);
 }
 
-/* ── Flight data ───────────────────────────────────────────────── */
-function dlFlight() { window.location = '/api/flight.csv'; }
+/* ── Flight data ───────────────────────────────────────────────
+ *
+ * Everything on this tab comes from the one flight log, read fresh each time
+ * the tab is shown: mixing it with live /api/status would put two flights on
+ * the screen at once. The log names its columns in its header row, so the
+ * parse goes by name -- text rows (MOCK, LUA) carry no numbers and are
+ * skipped. */
+function dlFlight() { window.location = 'api/flight.csv'; }
 
 var flightData = [];
 var flightEvents = {};
-var flightLoaded = false;
+var flightMeta = {};
+
+function parseFlightCsv(csv) {
+  var data = [], events = {}, meta = {}, col = null;
+  csv.split('\n').forEach(function(line) {
+    line = line.replace(/\r$/, '');
+    if (!line) return;
+    if (line.charAt(0) === '#') {
+      var m = /^#\s*([^:]+):\s*(.*)$/.exec(line);
+      if (m) meta[m[1].trim()] = m[2].trim();
+      return;
+    }
+    var parts = line.split(',');
+    if (!col) {
+      col = {};
+      parts.forEach(function(name, i) { col[name.trim()] = i; });
+      return;
+    }
+    var t = parseInt(parts[col.time_ms]), alt = parseInt(parts[col.altitude_cm]);
+    var evt = (parts[col.event] || '').trim();
+    if (isNaN(t) || isNaN(alt)) return;
+    data.push({t:t, a:alt});
+    if (evt && !events[evt]) events[evt] = {t:t, alt:alt};
+  });
+  return {data:data, events:events, meta:meta};
+}
 
 function loadFlightData() {
-  fetch('/api/flight.csv').then(function(r){return r.text()}).then(function(csv) {
-    flightData = [];
-    flightEvents = {};
-    csv.split('\n').forEach(function(line) {
-      if (!line || line.startsWith('time')) return;
-      var parts = line.split(',');
-      if (parts.length < 4) return;
-      var t = parseInt(parts[0]), alt = parseInt(parts[2]), evt = (parts[4]||'').trim();
-      if (!isNaN(t) && !isNaN(alt)) flightData.push({t:t, a:alt});
-      if (evt) flightEvents[evt] = {t:t, alt:alt};
-    });
-    flightLoaded = true;
-    updateFlightEvents();
+  var which = document.getElementById('dWhich');
+  return fetch('api/flight.csv').then(function(r){return r.text()}).then(function(csv) {
+    var f = parseFlightCsv(csv);
+    flightData = f.data;
+    flightEvents = f.events;
+    flightMeta = f.meta;
+    which.textContent = flightData.length
+      ? 'Flight of ' + (flightMeta.Name || '?') + ' (' + (flightMeta.ID || '?') + '), the one flight log on the board'
+      : 'No flight recorded. The next launch writes the log.';
+    updateFlightSummary();
     drawGraph();
-  }).catch(function(){});
+  }).catch(function() { which.textContent = 'Could not read the flight log.'; });
 }
 
-function updateFlightEvents() {
+function updateFlightSummary() {
   var u = deviceConfig ? deviceConfig.units : 0;
   var ul = unitLabel(u);
-  var p1 = document.getElementById('dP1');
-  var p2 = document.getElementById('dP2');
-  if (flightEvents.PYRO1) {
-    p1.innerHTML = 'Fired at ' + (flightEvents.PYRO1.t/1000).toFixed(1) + 's, ' +
-      cmToUnit(flightEvents.PYRO1.alt, u) + ' ' + ul;
+  var ev = flightEvents;
+  function at(e) { return (e.t/1000).toFixed(1) + 's, ' + cmToUnit(e.alt, u) + ' ' + ul; }
+
+  var dur = '—', apo = '—';
+  if (flightData.length) {
+    var end = ev.LANDING ? ev.LANDING : flightData[flightData.length - 1];
+    dur = (end.t/1000).toFixed(1) + 's' + (ev.LANDING ? '' : ' (no landing recorded)');
+    /* FLT-MACH-07: while the Mach lock stands the ports' altitude is not the
+       rocket's, so the apogee comes from the rows outside it; a lock let go
+       within 2 s of apogee, or never, may have hidden the top. */
+    var lock = ev.LOCK, unlock = ev.UNLOCK || ev.LOCK_FALLBACK;
+    var maxA = 0;
+    flightData.forEach(function(p) {
+      var locked = lock && p.t >= lock.t && (!unlock || p.t < unlock.t);
+      if (!locked && p.a > maxA) maxA = p.a;
+    });
+    var bound = ev.LOCK_FALLBACK || (ev.UNLOCK && ev.APOGEE && ev.APOGEE.t - ev.UNLOCK.t < 2000);
+    apo = (bound ? 'at least ' : '') + cmToUnit(maxA, u) + ' ' + ul;
   }
-  if (flightEvents.PYRO2) {
-    p2.innerHTML = 'Fired at ' + (flightEvents.PYRO2.t/1000).toFixed(1) + 's, ' +
-      cmToUnit(flightEvents.PYRO2.alt, u) + ' ' + ul;
+  document.getElementById('dDur').textContent = dur;
+  document.getElementById('dApogee').textContent = apo;
+
+  function pyroLine(n) {
+    if (!flightData.length) return '—';
+    if (ev['PYRO' + n]) {
+      var s = 'Fired at ' + at(ev['PYRO' + n]);
+      if (n === 2 && ev.MAIN_FORCED) s += ' — <span class="warn-inline">emergency: the drogue failed</span>';
+      return s;
+    }
+    if (ev['PYRO' + n + '_REFUSED']) return 'Refused by the board at ' + at(ev['PYRO' + n + '_REFUSED']);
+    return 'Not fired';
   }
+  document.getElementById('dP1').innerHTML = pyroLine(1);
+  document.getElementById('dP2').innerHTML = pyroLine(2);
 }
+
+/* The board keeps one flight log and the next launch overwrites it, so this
+   is only ever a choice about the flight on screen. */
+function eraseFlight() {
+  var msg = document.getElementById('dMsg');
+  if (!confirm('Erase the flight log on the board? Download it first if you want to keep it.')) return;
+  fetch('api/flight/erase', {method:'POST'})
+    .then(function(r) { return r.json().catch(function(){ return {error:'HTTP ' + r.status}; }); })
+    .then(function(d) {
+      msg.style.color = d.error ? 'red' : 'green';
+      msg.textContent = d.error ? ' ✗ ' + d.error : ' ✓ erased';
+      return loadFlightData();
+    })
+    .catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ✗ ' + e.message; });
+}
+
 function drawGraph() {
   var canvas = document.getElementById('flightGraph');
   var ctx = canvas.getContext('2d');
@@ -387,7 +539,7 @@ function uploadFW() {
   var msg = document.getElementById('fwmsg');
   msg.style.color = 'orange'; msg.textContent = ' Uploading...';
   file.arrayBuffer().then(function(buf) {
-    fetch('/api/ota', {method:'POST', body:new Uint8Array(buf)})
+    fetch('api/ota', {method:'POST', body:new Uint8Array(buf)})
       .then(function() { msg.textContent = ' Rebooting...'; deviceConfig = null; waitForReboot(msg); })
       .catch(function() { msg.textContent = ' Rebooting...'; deviceConfig = null; waitForReboot(msg); });
   });
@@ -408,7 +560,7 @@ function waitForReboot(msg) {
   var attempts = 0;
   var poll = setInterval(function() {
     if (++attempts > 30) { clearInterval(poll); msg.style.color='red'; msg.textContent=' Device not responding'; return; }
-    fetch('/api/status').then(function(r){return r.json()}).then(function(d) {
+    fetch('api/status').then(function(r){return r.json()}).then(function(d) {
       clearInterval(poll);
       msg.style.color = 'green';
       msg.textContent = ' Online — v' + d.fw_version;
@@ -420,6 +572,681 @@ function waitForReboot(msg) {
     }).catch(function(){});
   }, 2000);
 }
+
+
+/* ── Lua ───────────────────────────────────────────────────────── */
+
+/* ── Beep personalities ────────────────────────────────────────
+ *
+ * Everything here comes from /api/beeps: the outcomes, their meanings, the
+ * pattern kinds and the three personalities. The firmware is the only place
+ * the vocabulary is written down, so adding an outcome or a kind grows the
+ * table without touching this file.
+ *
+ * Defaults follow Eggtimer Rocketry, whose convention most fliers already
+ * know: a rapid chirp means ready, a repeating beep count means a fault. */
+var beepCaps = null;
+var beepEdit = null;   /* the personality being edited, as a working copy */
+var beepsReady = false;
+
+var KIND_LABEL = {silent: 'silent', chirp: 'chirp (ready)', tone: 'steady tone', code: 'beep count'};
+function kindLabel(k) { return KIND_LABEL[k] || k; }
+
+function beepsInit() {
+  if (beepsReady) return;
+  beepsReady = true;
+  beepsFetch().then(renderBeeps).catch(function(e) {
+    document.getElementById('bpHint').textContent = 'could not read the beep table: ' + e.message;
+  });
+}
+
+function beepsFetch() {
+  return fetch('api/beeps')
+    .then(function(r) { if (!r.ok) throw new Error('beeps ' + r.status); return r.json(); })
+    .then(function(d) { beepCaps = d; beepEdit = JSON.parse(JSON.stringify(d.personalities)); return d; });
+}
+
+function renderBeeps() {
+  var sel = document.getElementById('bpSel');
+  sel.innerHTML = '';
+  beepEdit.forEach(function(p, i) {
+    var o = document.createElement('option');
+    o.value = i; o.textContent = p.name || ('Slot ' + i);
+    sel.appendChild(o);
+  });
+  sel.value = beepCaps.active;
+  document.getElementById('bpHint').innerHTML =
+    (beepCaps.has_buzzer ? '' : '<b>This board has no buzzer fitted</b>, so nothing here can be heard on it. ') +
+    (beepCaps.reason ? '<b>' + esc(beepCaps.reason) + '</b>' : '');
+  beepsSelect();
+}
+
+/* Switch to a personality, or re-render the current one after a change that
+   alters which rows apply. */
+function beepsSelect(keep) {
+  var i = +document.getElementById('bpSel').value;
+  var p = beepEdit[i];
+  if (!keep) {
+    document.getElementById('bpName').value = p.name;
+    document.getElementById('bpGap').value = p.gap;
+    document.getElementById('bpRepeat').value = p.repeat;
+    document.getElementById('bpSplit').checked = p.split;
+  }
+  p.split = document.getElementById('bpSplit').checked;
+
+  var html = '<tr><th>Sounds like</th><th></th><th></th><th>Means</th></tr>';
+  beepCaps.outcomes.forEach(function(o) {
+    /* With the channels merged, channel 2 is never played, so offering a
+       sound for it would be offering something the board cannot say. */
+    if (o.key === 'check_pyro_2' && !p.split) return;
+    var sp = p.spec[o.key];
+    var k = esc(o.key);
+    html += '<tr id="brow' + k + '"><td class="lbl">' +
+            '<select id="bk' + k + '" onchange="beepsCheck()">';
+    beepCaps.kinds.forEach(function(kind) {
+      html += '<option value="' + esc(kind) + '"' + (kind === sp.kind ? ' selected' : '') +
+              '>' + esc(kindLabel(kind)) + '</option>';
+    });
+    html += '</select></td><td>' +
+            '<input id="bd1' + k + '" type="number" min="' + beepCaps.digit_min + '" max="' + beepCaps.digit_max +
+            '" value="' + (sp.d1 || 1) + '" style="width:3.2em" oninput="beepsCheck()">' +
+            '<input id="bd2' + k + '" type="number" min="0" max="' + beepCaps.digit_max +
+            '" value="' + sp.d2 + '" style="width:3.2em" oninput="beepsCheck()" title="0 = one group">' +
+            '</td><td>' + (beepCaps.has_buzzer
+              ? '<button onclick="beepsPlay(\'' + k + '\')" title="Play this row">▶</button>' : '') +
+            '</td><td class="val">' + esc(o.what) + '</td></tr>';
+  });
+  document.getElementById('bpTable').innerHTML = html;
+  beepsCheck();
+}
+
+/* Read the form back into the working copy, and flag the two mistakes that
+   are easy to make. The firmware validates and is authoritative. */
+function beepsCheck() {
+  if (!beepCaps) return;
+  var i = +document.getElementById('bpSel').value;
+  var p = beepEdit[i];
+  p.name = document.getElementById('bpName').value;
+  p.gap = parseInt(document.getElementById('bpGap').value, 10) || 0;
+  p.repeat = parseInt(document.getElementById('bpRepeat').value, 10) || 0;
+  p.split = document.getElementById('bpSplit').checked;
+
+  var seen = {}, dupe = null, bad = null, audible = 0;
+  beepCaps.outcomes.forEach(function(o) {
+    var ke = document.getElementById('bk' + o.key);
+    if (!ke) return;               /* hidden because the channels are merged */
+    var sp = p.spec[o.key];
+    sp.kind = ke.value;
+    sp.d1 = parseInt(document.getElementById('bd1' + o.key).value, 10) || 0;
+    sp.d2 = parseInt(document.getElementById('bd2' + o.key).value, 10) || 0;
+
+    /* The counts only mean anything for a beep count. */
+    var isCode = sp.kind === 'code';
+    document.getElementById('bd1' + o.key).style.visibility = isCode ? '' : 'hidden';
+    document.getElementById('bd2' + o.key).style.visibility = isCode ? '' : 'hidden';
+
+    if (isCode && (sp.d1 < beepCaps.digit_min || sp.d1 > beepCaps.digit_max || sp.d2 > beepCaps.digit_max)) {
+      bad = o.key;
+      return;
+    }
+    if (sp.kind === 'silent') return;
+    audible++;
+    var sig = isCode ? 'code:' + sp.d1 + '-' + sp.d2 : sp.kind;
+    if (seen[sig]) dupe = sig; else seen[sig] = o.key;
+  });
+
+  var msgs = [];
+  if (bad) {
+    msgs.push('<div class="warn">A beep count must be ' + beepCaps.digit_min + ' to ' + beepCaps.digit_max +
+              '. A zero cannot be heard.</div>');
+  }
+  if (dupe) {
+    msgs.push('<div class="warn">Two outcomes sound the same. An operator hearing it would get the wrong ' +
+              'answer half the time.</div>');
+  }
+  if (!audible) {
+    msgs.push('<div class="warn">This personality says nothing at all, which tells an operator nothing.</div>');
+  }
+  document.getElementById('bpWarn').innerHTML = msgs.join('');
+
+  /* Keep the menu label in step with the name box. */
+  var opt = document.getElementById('bpSel').options[i];
+  if (opt) opt.textContent = p.name || ('Slot ' + i);
+}
+
+/* Hear it before committing to it. The board plays what is in the row,
+   including an unsaved change. */
+function beepsPlay(key) {
+  var i = +document.getElementById('bpSel').value;
+  var sp = beepEdit[i].spec[key];
+  var msg = document.getElementById('bpMsg');
+  fetch('api/beeps/play', {method:'POST', headers:{'Content-Type':'text/plain'},
+        body: JSON.stringify({kind: sp.kind, d1: sp.d1, d2: sp.d2})})
+    .then(function(r) { return r.json().catch(function(){ return {error:'HTTP ' + r.status}; }); })
+    .then(function(d) {
+      msg.style.color = d.error ? 'red' : '';
+      msg.textContent = d.error ? ' ✗ ' + d.error
+        : ' ♪ ' + (d.kind === 'code' ? d.d1 + (d.d2 ? '–' + d.d2 : '') + ' beeps' : d.kind);
+    })
+    .catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ✗ ' + e.message; });
+}
+
+function specToIni(sp) {
+  if (sp.kind !== 'code') return sp.kind;
+  return 'code:' + sp.d1 + (sp.d2 ? '-' + sp.d2 : '');
+}
+
+function beepsSave() {
+  var active = +document.getElementById('bpSel').value;
+  var ini = '[beeps]\r\nactive=' + active + '\r\n';
+  beepEdit.forEach(function(p, i) {
+    ini += 'p' + i + '_name=' + p.name + '\r\n';
+    ini += 'p' + i + '_gap=' + p.gap + '\r\n';
+    ini += 'p' + i + '_repeat=' + p.repeat + '\r\n';
+    ini += 'p' + i + '_split=' + (p.split ? 'true' : 'false') + '\r\n';
+    beepCaps.outcomes.forEach(function(o) {
+      ini += 'p' + i + '_' + o.key + '=' + specToIni(p.spec[o.key]) + '\r\n';
+    });
+  });
+
+  var msg = document.getElementById('bpMsg');
+  msg.style.color = ''; msg.textContent = ' saving…';
+  fetch('api/beeps', {method:'POST', headers:{'Content-Type':'text/plain'}, body: ini})
+    .then(function(r) { return r.json().catch(function(){ return {error:'HTTP ' + r.status}; }); })
+    .then(function(d) {
+      if (d.error) {
+        msg.style.color = 'red';
+        msg.textContent = ' ✗ ' + d.error +
+          (d.personality !== undefined && d.personality >= 0 ? ' in ' + beepEdit[d.personality].name : '') +
+          (d.reason ? ' (' + d.reason + ')' : '');
+        return;
+      }
+      msg.style.color = 'green';
+      msg.textContent = ' ✓ saved';
+      return beepsFetch().then(renderBeeps);
+    })
+    .catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ✗ ' + e.message; });
+}
+
+/* Put the Eggtimer convention back into the personality being edited. It is
+   slot 0's shipped content, which the firmware sends; the operator still has
+   to press Save. */
+function beepsDefaults() {
+  if (!beepCaps) return;
+  var i = +document.getElementById('bpSel').value;
+  beepEdit[i] = JSON.parse(JSON.stringify(beepCaps.personalities[0]));
+  beepEdit[i].name = document.getElementById('bpName').value || beepEdit[i].name;
+  beepsSelect();
+  var msg = document.getElementById('bpMsg');
+  msg.style.color = '';
+  msg.textContent = ' Eggtimer defaults loaded — press Save to apply';
+}
+
+/* ── Pin capabilities ──────────────────────────────────────────
+ *
+ * Everything board-specific this page knows comes from /api/pins/caps. It
+ * used to hardcode MK1C's four J3 pads and keep its own role list, so on
+ * MK1A and MK1B the Lua tab rendered four pads that are not there and offered
+ * roles no pin on those boards can take.
+ *
+ * The rule for "may this pin take this role" is the firmware's own -- a
+ * capability bit, tested against the same mask pin_assign_validate() uses --
+ * applied to the firmware's own table. Nothing here needs changing when a
+ * board, a role or a capability is added. */
+var pinCaps = null;
+
+/* Presentation only, with a fallback: a role this page has not been taught
+ * shows under its firmware name rather than disappearing from the menu. */
+var ROLE_LABEL = {
+  off: 'unused', out: 'digital out', pwm: 'dimmable out', in: 'digital in',
+  tx: 'serial TX', rx: 'serial RX', pixel: 'LED string', bridge: 'half-bridge'
+};
+function roleLabel(r) { return ROLE_LABEL[r] || r; }
+
+function esc(s) {
+  return String(s === undefined || s === null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function pinsFetch() {
+  return fetch('api/pins/caps')
+    .then(function(r) { if (!r.ok) throw new Error('caps ' + r.status); return r.json(); })
+    .then(function(d) { pinCaps = d; return d; });
+}
+
+function rolesFor(pin) {
+  return pinCaps.roles.filter(function(r) {
+    if (r.needs !== 0 && (pin.f & r.needs) === 0) return false;
+    /* A pad can carry FN_BRIDGE while the board has no second half to pair it
+       with -- the capability is per pin, the pairing is per board. Offering
+       the role there would be offering something validation must refuse. */
+    if (r.r === 'bridge' && !pinCaps.bridge_possible) return false;
+    return true;
+  });
+}
+
+/* Every bit any role requires: a pin with none of them is not assignable to
+ * Lua at all and does not belong in the table. */
+function luaAnyMask() {
+  var m = 0;
+  pinCaps.roles.forEach(function(r) { m |= r.needs; });
+  return m;
+}
+
+/* What the board uses a pin for, for the "why can I not have this" text. */
+function boardFnNames(pin) {
+  var names = [];
+  Object.keys(pinCaps.fn).forEach(function(k) {
+    var bit = pinCaps.fn[k];
+    if ((pin.f & bit) && (pinCaps.reserved_mask & bit)) names.push(k.replace(/_/g, ' '));
+  });
+  return names.join(', ');
+}
+
+function pinByGroup(g) {
+  return pinCaps.pins.filter(function(p) { return p.g === g; });
+}
+
+/* ── Lua tab: the pin table ────────────────────────────────────── */
+
+function renderLuaPins() {
+  var mask = luaAnyMask();
+  var rows = pinCaps.pins.filter(function(p) { return (p.f & mask) !== 0; });
+  var html = '<tr><th>GPIO</th><th>Connector</th><th>On the board</th><th>Role</th>' +
+             '<th>Name in Lua</th></tr>';
+
+  rows.forEach(function(p) {
+    var what = boardFnNames(p) || 'user pad';
+    if (p.g !== 'none') what += ' (' + p.g + ')';
+    /* The connector designator is what the operator is actually holding. */
+    html += '<tr><td class="lbl">GPIO' + p.p + '</td><td class="val">' + esc(p.lbl || '—') +
+            '</td><td class="val">' + esc(what) + '</td>';
+    if (p.held) {
+      html += '<td colspan="2" class="warn-inline">held by the flight software' +
+              ' — release it on the Config tab</td>';
+    } else {
+      html += '<td><select id="pr' + p.p + '" onchange="luaPinsCheck()">';
+      rolesFor(p).forEach(function(r) {
+        html += '<option value="' + esc(r.r) + '"' + (r.r === p.role ? ' selected' : '') +
+                '>' + esc(roleLabel(r.r)) + '</option>';
+      });
+      html += '</select></td><td><input id="pn' + p.p + '" maxlength="8" size="9" value="' +
+              esc(p.name) + '" oninput="luaPinsCheck()"></td>';
+    }
+    html += '</tr>';
+  });
+
+  document.getElementById('luaPins').innerHTML = html;
+  document.getElementById('luaPinsHint').innerHTML =
+    esc(pinCaps.board) + ': ' + rows.length + ' assignable pad' + (rows.length === 1 ? '' : 's') +
+    '. A pad is only ever plain GPIO or a PIO state machine, never a peripheral function, so' +
+    ' nothing here can reach the pressure sensor or the buzzer.';
+  luaPinsCheck();
+}
+
+/* The firmware validates the whole assignment on POST and is authoritative.
+ * This catches the two mistakes that are easy to make and annoying to make
+ * twice, before the round trip. */
+function luaPinsCheck() {
+  if (!pinCaps) return;
+  var msgs = [], halves = [], names = {}, dupes = [];
+
+  pinCaps.pins.forEach(function(p) {
+    var sel = document.getElementById('pr' + p.p);
+    if (!sel) return;
+    if (sel.value === 'bridge') halves.push(p);
+    if (sel.value !== 'off') {
+      var n = (document.getElementById('pn' + p.p).value || '').trim();
+      if (n) {
+        if (names[n]) dupes.push(n); else names[n] = true;
+      }
+    }
+  });
+
+  if (halves.length) {
+    var ch = halves.filter(function(p) { return p.g === 'ch1' || p.g === 'ch2'; }).length;
+    var cm = halves.filter(function(p) { return p.g === 'common'; }).length;
+    if (ch !== 1 || cm !== 1) {
+      msgs.push('<div class="warn">A half-bridge is one channel element plus the common. ' +
+                'Selected: ' + ch + ' channel, ' + cm + ' common.</div>');
+    } else {
+      msgs.push('<div class="tips"><b>Half-bridge selected.</b> ' +
+                esc(pinCaps.protection_note) + '</div>');
+    }
+  }
+  if (dupes.length) {
+    msgs.push('<div class="warn">Two pads share the name &ldquo;' + esc(dupes[0]) +
+              '&rdquo;. A script resolves the first one and never reaches the second.</div>');
+  }
+  document.getElementById('luaPinsWarn').innerHTML = msgs.join('');
+}
+
+/* Posts only the roles and names. The release flags belong to the Config tab
+ * and the firmware merges this over the live assignment, so each tab writes
+ * what it owns and leaves the rest alone. */
+function pinsSave() {
+  var ini = '[pins]\r\n';
+  pinCaps.pins.forEach(function(p) {
+    var sel = document.getElementById('pr' + p.p);
+    if (!sel) return;
+    ini += 'p' + p.p + '_role=' + sel.value + '\r\n';
+    ini += 'p' + p.p + '_name=' + (document.getElementById('pn' + p.p).value || '').trim() + '\r\n';
+  });
+  postPins(ini, 'luaPinsMsg', renderLuaPins);
+}
+
+function postPins(ini, msgId, after) {
+  var msg = document.getElementById(msgId);
+  msg.style.color = ''; msg.textContent = ' saving…';
+  fetch('api/pins', {method:'POST', headers:{'Content-Type':'text/plain'}, body: ini})
+    .then(function(r) { return r.json().catch(function(){ return {error:'HTTP ' + r.status}; }); })
+    .then(function(d) {
+      if (d.error) {
+        msg.style.color = 'red';
+        msg.textContent = ' ✗ ' + d.error + (d.pin !== undefined ? ' (GPIO' + d.pin + ')' : '');
+        return;
+      }
+      msg.style.color = 'green';
+      msg.textContent = d.reboot_required ? ' ✓ saved — reboot to apply' : ' ✓ saved';
+      return pinsFetch().then(function() { if (after) after(); });
+    })
+    .catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ✗ ' + e.message; });
+}
+
+/* ── Config tab: releasing pyro pins ───────────────────────────── */
+
+function renderRelease() {
+  var hint = document.getElementById('relHint');
+  var ch1 = pinByGroup('ch1'), ch2 = pinByGroup('ch2'), common = pinByGroup('common');
+  /* Before the early return: the buzzer lives on this panel too, and a board
+   * with no releasable pyro pads still has a buzzer to place. */
+  renderBuzzerPins();
+  if (!ch1.length && !ch2.length) {
+    hint.textContent = esc(pinCaps.board) + ' declares no releasable pyro pins.';
+    document.getElementById('relTable').style.display = '';
+    document.getElementById('relBtns').style.display = '';
+    return;
+  }
+
+  var side = pinCaps.topology === 'high_switched' ? 'high side' : 'low side';
+  var other = pinCaps.topology === 'high_switched' ? 'low side' : 'high side';
+  hint.innerHTML = esc(pinCaps.board) + ' switches a per-channel ' + side +
+    ' and shares one ' + other + '. A channel releases on its own; the shared element' +
+    ' releases only once both are, because until then it is still half of the' +
+    ' retained channel’s firing path.';
+
+  document.getElementById('rel1').checked = !!pinCaps.pyro1_released;
+  document.getElementById('rel2').checked = !!pinCaps.pyro2_released;
+  function pinLabel(p) { return p.lbl ? 'GPIO' + p.p + ' (' + p.lbl + ')' : 'GPIO' + p.p; }
+  document.getElementById('rel1pins').textContent = ch1.map(pinLabel).join(', ');
+  document.getElementById('rel2pins').textContent = ch2.map(pinLabel).join(', ');
+  document.getElementById('relCommon').textContent = common.length
+    ? common.map(pinLabel).join(', ') +
+      (common[0].held ? ' — held' : ' — released')
+    : 'none';
+  document.getElementById('relTable').style.display = '';
+  document.getElementById('relBtns').style.display = '';
+  relWarnings();
+}
+
+/* The release and buzzer controls are saved by the tab's one Save button. */
+var relDirty = false;
+
+function relChanged() {
+  relDirty = true;
+  document.getElementById('cfgDirty').style.display = 'block';
+  relWarnings();
+}
+
+function relWarnings() {
+  if (!pinCaps) return;
+  var r1 = document.getElementById('rel1').checked;
+  var r2 = document.getElementById('rel2').checked;
+  var msgs = [];
+
+  if (r1 !== r2) {
+    /* The firmware cannot prevent this one, so it has to be said plainly. */
+    msgs.push('<div class="warn"><b>One channel released, one retained.</b> Firing the' +
+      ' retained channel asserts the shared element for 500 ms, and for that window the' +
+      ' released pad has a return path — whatever is wired to it will carry current.' +
+      ' The released side is a plain digital pin and nothing in the firmware knows what' +
+      ' you connected.</div>');
+  }
+  if ((r1 || r2) && !(r1 && r2)) {
+    msgs.push('<div class="tips">The shared element stays with the flight software until' +
+      ' both channels are released, so this gives Lua one pad.</div>');
+  }
+  if (r1 && r2 && pinCaps.bridge_possible) {
+    msgs.push('<div class="tips">With both released you get three digital pads, or a' +
+      ' half-bridge plus one digital pad. ' + esc(pinCaps.protection_note) + '</div>');
+  }
+  if ((!r1 && pinCaps.pyro1_released) || (!r2 && pinCaps.pyro2_released)) {
+    msgs.push('<div class="tips">Taking a channel back clears any Lua role on its pads.</div>');
+  }
+  document.getElementById('relWarn').innerHTML = msgs.join('');
+}
+
+/* Which pads could drive a buzzer: anything digital, plus whichever pad the
+ * board already wired one to. Filtered by the same capability rule
+ * check_buzzer() enforces, so an option offered here is one the firmware
+ * will take. */
+function renderBuzzerPins() {
+  var sel = document.getElementById('bzPin');
+  if (!sel || !pinCaps.fn) return;
+  var digital = pinCaps.fn.digital || 0, buzzer = pinCaps.fn.buzzer || 0;
+  var boardPad = pinCaps.pins.filter(function(p) { return (p.f & buzzer) !== 0; })[0];
+
+  var html = '<option value="board"' + (pinCaps.buzzer_pin === -1 ? ' selected' : '') + '>' +
+             (boardPad ? 'the board\'s own (GPIO' + boardPad.p + ')' : 'none — this board fits no buzzer') +
+             '</option>';
+  pinCaps.pins.forEach(function(p) {
+    if ((p.f & (digital | buzzer)) === 0) return;
+    if (boardPad && p.p === boardPad.p) return;
+    html += '<option value="' + p.p + '"' + (pinCaps.buzzer_pin === p.p ? ' selected' : '') +
+            '>GPIO' + p.p + (p.lbl ? ' — ' + esc(p.lbl) : '') + '</option>';
+  });
+  sel.innerHTML = html;
+
+  document.getElementById('bzHint').textContent = boardPad
+    ? 'Moving it frees GPIO' + boardPad.p + ' for Lua.'
+    : 'Wire a buzzer to a user pad and name it here.';
+}
+
+/* Posts the release flags, and clears the Lua role off any pad being taken
+ * back -- a role left on a re-retained pad fails validation, and the whole
+ * file is then rejected, which is a confusing way to learn you unticked a
+ * box. */
+function relSave() {
+  var r1 = document.getElementById('rel1').checked;
+  var r2 = document.getElementById('rel2').checked;
+  var bz = document.getElementById('bzPin');
+  var ini = '[pins]\r\npyro1_released=' + r1 + '\r\npyro2_released=' + r2 + '\r\n' +
+            'buzzer_pin=' + (bz ? bz.value : 'board') + '\r\n';
+
+  var retaking = [];
+  if (!r1) retaking = retaking.concat(pinByGroup('ch1'));
+  if (!r2) retaking = retaking.concat(pinByGroup('ch2'));
+  if (!r1 || !r2) retaking = retaking.concat(pinByGroup('common'));
+  retaking.forEach(function(p) {
+    ini += 'p' + p.p + '_role=off\r\np' + p.p + '_name=\r\n';
+  });
+
+  relDirty = false;
+  postPins(ini, 'relMsg', function() { renderRelease(); renderLuaPins(); });
+}
+
+var relReady = false;
+
+function relInit() {
+  if (relReady) return;
+  relReady = true;
+  pinsFetch().then(renderRelease).catch(function(e) {
+    document.getElementById('relHint').textContent =
+      'could not read the capability table: ' + e.message;
+  });
+}
+
+var luaReady = false;
+var luaConTimer = null;
+
+function luaInit() {
+  if (!luaReady) {
+    luaReady = true;
+    luaLoad();
+  }
+  if (!luaConTimer) luaConTimer = setInterval(luaConPoll, 1000);
+}
+
+function luaLoad() {
+  fetch('api/config').then(function(r){return r.text()}).then(function(t) {
+    var kv = {};
+    t.split('\n').forEach(function(line) {
+      var i = line.indexOf('=');
+      if (i > 0) kv[line.slice(0,i).trim()] = line.slice(i+1).trim();
+    });
+    document.getElementById('luEn').checked = (kv.lua_enabled === 'true');
+    document.getElementById('luBaud').value = kv.lua_baud || '9600';
+    document.getElementById('luPx').value   = kv.lua_pixels || '0';
+  });
+  /* Pin roles live in pins.ini, not here. The lua_p18..p21 keys this used to
+     read are migration-only now: the firmware consults them once, when a
+     board has no pins.ini yet. */
+  pinsFetch().then(renderLuaPins).catch(function(e) {
+    document.getElementById('luaPinsHint').textContent =
+      'could not read the capability table: ' + e.message;
+  });
+  fetch('api/lua/script').then(function(r){return r.ok?r.text():''}).then(function(t) {
+    document.getElementById('luSrc').value = t;
+  });
+}
+
+/* ── Export / import the program ───────────────────────────────────
+ *
+ * An OTA update leaves the filesystem in place, but a failed mount formats
+ * it, a change of flash geometry moves it, and stored formats change without
+ * migration -- a program that exists only on the device is one of those away
+ * from being lost. Both directions work on the editor's contents rather than
+ * the stored file: export gives you what you are looking at, and import does
+ * not touch the device until you press Save, so a mis-picked file costs
+ * nothing.
+ *
+ * The export runs entirely in the browser -- no endpoint is needed, and it
+ * works even when the device has lost the file and the editor still holds
+ * the text. */
+function luaExport() {
+  var text = document.getElementById('luSrc').value;
+  var msg = document.getElementById('luIoMsg');
+  if (!text) { msg.textContent = 'nothing to export'; return; }
+
+  /* Named from the board id when there is one, so several boards' programs
+     do not all land in Downloads as the same file. */
+  var cfg = deviceConfig || {};
+  var id = cfg.id ? String(cfg.id).replace(/[^A-Za-z0-9_-]/g, '') : 'pyro';
+  if (!id) id = 'pyro';
+  var a = document.createElement('a');
+  var url = URL.createObjectURL(new Blob([text], {type: 'text/plain'}));
+  a.href = url;
+  a.download = id + '.lua';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  msg.textContent = 'exported ' + a.download + ' (' + text.length + ' bytes)';
+}
+
+function luaImport(input) {
+  var f = input.files && input.files[0];
+  var msg = document.getElementById('luIoMsg');
+  input.value = ''; /* so re-picking the same file fires onchange again */
+  if (!f) return;
+  /* Bounded before reading: the device's script store is finite and a huge
+     file would be rejected on save anyway, with less to say about why. */
+  if (f.size > 65536) {
+    msg.textContent = 'that file is ' + f.size + ' bytes; the limit is 65536';
+    return;
+  }
+  var r = new FileReader();
+  r.onerror = function() { msg.textContent = 'could not read that file'; };
+  r.onload = function() {
+    document.getElementById('luSrc').value = r.result;
+    /* Loaded into the editor, NOT onto the device: nothing is written until
+       Save, and Check runs first so a bad import is visible before it is
+       stored. */
+    msg.textContent = 'loaded ' + f.name + ' into the editor — press Save & Apply to store it';
+    luaCheck();
+  };
+  r.readAsText(f);
+}
+
+function luaCfgIni() {
+  var ini = '[pyro]\r\nlua_enabled=' + (document.getElementById('luEn').checked ? 'true':'false') +
+            '\r\nlua_baud='   + (parseInt(document.getElementById('luBaud').value) || 9600) +
+            '\r\nlua_pixels=' + (parseInt(document.getElementById('luPx').value) || 0) + '\r\n';
+  return ini;
+}
+
+function luaShowResult(d) {
+  var box = document.getElementById('luChk');
+  if (!d || !d.items) { box.innerHTML = ''; return; }
+  var html = '<div class="' + (d.green ? 'ok' : 'warn') + '">' +
+             (d.green ? '✓ ready for flight' : '✗ not ready') + '</div><ul>';
+  d.items.forEach(function(it) {
+    var tag = {0:'ok', 1:'syntax', 2:'missing', 3:'warning'}[it.kind] || '?';
+    html += '<li><b>' + tag + ':</b> ' + it.detail.replace(/</g,'&lt;') + '</li>';
+  });
+  box.innerHTML = html + '</ul>';
+}
+
+function luaCheck() {
+  fetch('api/lua/check', {method:'POST', headers:{'Content-Type':'text/plain'},
+                           body: document.getElementById('luSrc').value})
+    .then(function(r){return r.json()}).then(luaShowResult)
+    .catch(function(){ document.getElementById('luChk').textContent = 'check failed'; });
+}
+
+function luaSave() {
+  var box = document.getElementById('luChk');
+  box.textContent = 'saving…';
+  /* Config first, so the check on the device runs against the resource set
+     the operator just chose rather than the previous one. */
+  fetch('api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body: luaCfgIni()})
+    .then(function() {
+      return fetch('api/lua/script', {method:'POST', headers:{'Content-Type':'text/plain'},
+                                       body: document.getElementById('luSrc').value});
+    })
+    .then(function(r) {
+      if (!r.ok) throw new Error('upload rejected');
+      /* The upload replies 201 Created, not JSON. Ask for the verdict
+         separately so it is computed against what is now stored. */
+      return fetch('api/lua/check', {method:'POST', headers:{'Content-Type':'text/plain'},
+                                      body: document.getElementById('luSrc').value});
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      luaShowResult(d);
+      box.innerHTML += d.green
+        ? '<div class="warn">Saved. Reboot to load it on core 1.</div>'
+        : '<div class="warn">Saved, but it will not be started until this is green.</div>';
+    })
+    .catch(function(){ box.textContent = 'save failed'; });
+}
+
+function luaConPoll() {
+  if (document.getElementById('tab-lua').style.display === 'none') return;
+  fetch('api/lua/console').then(function(r){return r.ok?r.json():null}).then(function(d) {
+    if (!d) return;
+    document.getElementById('luState').textContent = d.status || '—';
+    document.getElementById('luHb').textContent = d.heartbeat;
+    if (d.text) {
+      var pre = document.getElementById('luCon');
+      pre.textContent += d.text;
+      if (pre.textContent.length > 8000) pre.textContent = pre.textContent.slice(-6000);
+      if (document.getElementById('luFollow').checked) pre.scrollTop = pre.scrollHeight;
+    }
+  }).catch(function(){});
+}
+
+function luaConClear() { document.getElementById('luCon').textContent = ''; }
 
 /* ── Init ──────────────────────────────────────────────────────── */
 update();

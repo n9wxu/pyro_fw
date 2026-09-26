@@ -16,7 +16,9 @@ The other host suites (`config_tests`, `config_persistence_tests`,
 `buzzer_tests`, `beep_tests`, `brownout_tests`, `pin_assign_tests`,
 `pin_caps_tests`, `plant_tests`, `lua_tests`) build and run the same way, and
 `test/web/run_web_tests.sh` runs the Playwright suite against the mock server
-in all three modes.
+in all three modes, then `test_sim.spec.js` against `docs/` served as GitHub
+Pages serves it (`static_server.js`): the browser demo's WASM build, flown from
+power-on to LANDED.
 
 ## The pressure chain under noise (T0)
 

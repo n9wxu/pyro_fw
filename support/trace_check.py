@@ -46,7 +46,7 @@ ID_RE = re.compile(r"\b([A-Z]{2,6}(?:-[A-Z]{2,7})?)-(\d{1,3})(?:\.\.(\d{1,3}))?\
 DEF_RE = re.compile(r"^- \*\*([A-Z]{2,6}(?:-[A-Z]{2,7})?-\d{1,3})\*\*:\s*(.*)$")
 DD_DEF_RE = re.compile(r"^###\s+(DD-\d{3})\b")
 TEST_DEF_RE = re.compile(r"\bvoid\s+(test_[A-Za-z0-9_]+)\s*\(")
-TEST_REF_RE = re.compile(r"(?<![/\w.])(test_[A-Za-z0-9_]*[A-Za-z0-9])(?!\.[a-z])(\*)?((?:(?:/|\.\.|, )\d{1,3})*)")
+TEST_REF_RE = re.compile(r"(?<![/\w.])(test_[A-Za-z0-9_]*[A-Za-z0-9])(?![A-Za-z0-9_]|\.[a-z])(\*)?((?:(?:/|\.\.|, )\d{1,3})*)")
 FUNC_REF_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*)\(\)`")
 SECTION_REF_RE = re.compile(r"See ([A-Z_]+\.md) \"([^\"]+)\"")
 

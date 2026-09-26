@@ -406,8 +406,14 @@
                 ', P2=' + (map.pyro2_mode || '?') + ' ' + (map.pyro2_value || '0'));
         }
 
-        var STATE_NAMES = ['BOOT_INIT', 'BOOT_SETTLE', 'BOOT_CONT', 'BOOT_CAL', 'PAD_IDLE', 'ASCENT', 'DESCENT', 'LANDED'];
-        var STATE_CLASSES = ['state-boot', 'state-boot', 'state-boot', 'state-boot', 'state-pad', 'state-ascent', 'state-descent', 'state-landed'];
+        /* flight_state_t in its own order (src/flight_states.h). The firmware
+           appends states and never renumbers them, since the numbers reach the
+           flight log and /api/status. */
+        var STATE_NAMES = ['BOOT_SETTLE', 'BOOT_CONTINUITY', 'BOOT_CALIBRATE', 'PAD_IDLE', 'ASCENT', 'FALLING',
+                           'DROGUE_DESCENT', 'CHUTE_DESCENT', 'LANDED', 'BOOT_SENSOR', 'FAULT'];
+        var STATE_CLASSES = ['state-boot', 'state-boot', 'state-boot', 'state-pad', 'state-ascent', 'state-descent',
+                             'state-descent', 'state-descent', 'state-landed', 'state-boot', 'state-boot'];
+        var ST_PAD_IDLE = 3, ST_ASCENT = 4, ST_LANDED = 8;
 
         /* ---- Simulated flight state for physics-only mode ---- */
         var physState = 'PAD_IDLE';
@@ -420,7 +426,7 @@
             if (path === '/api/status' && method === 'GET') {
                 if (hasWasm()) {
                     var s = pyro._sim_flight_state();
-                    var stateName = (s >= 4) ? STATE_NAMES[s] : 'BOOT';
+                    var stateName = STATE_NAMES[s] || 'BOOT';
                     return {
                         body: JSON.stringify({
                             state: stateName,
@@ -499,7 +505,7 @@
                     var alt_cm = Math.round(p.alt * 100);
                     var pa = Math.round(standardAtmospherePa(p.alt));
                     var st = 0;
-                    if (p.alt > 1 && p.t > (launchTime || 0)) st = 5;
+                    if (p.alt > 1 && p.t > (launchTime || 0)) st = ST_ASCENT;
                     csv += p.t + ',' + pa + ',' + alt_cm + ',' + st + ',0,\n';
                 });
                 return { body: csv, contentType: 'text/csv' };
@@ -655,7 +661,7 @@
                 var name = STATE_NAMES[state] || '?';
                 setState(name, STATE_CLASSES[state] || 'state-boot');
                 log('State → ' + name);
-                if (state === 4) document.getElementById('btnLaunch').disabled = false;
+                if (state === ST_PAD_IDLE) document.getElementById('btnLaunch').disabled = false;
                 prevState = state;
             }
 
@@ -674,7 +680,7 @@
                 drawGraph();
             }
 
-            if (state === 7 && landedTime === 0) {
+            if (state === ST_LANDED && landedTime === 0) {
                 landedTime = simTime;
             }
             if (landedTime > 0 && (simTime - landedTime) >= POST_LAND_DWELL_MS) {

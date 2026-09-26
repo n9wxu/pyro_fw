@@ -173,6 +173,9 @@ jobs:
       - name: Validate web JS syntax
         run: node --check www/app.js
 
+      - name: Demo matches www
+        run: scripts/sync_demo.sh --check
+
       - name: Install Playwright
         run: |
           cd test/web
@@ -196,6 +199,17 @@ jobs:
             sleep 1
             if [ $RESULT -ne 0 ]; then exit $RESULT; fi
           done
+
+      - name: Browser simulator
+        run: |
+          cd test/web
+          node static_server.js ../../docs 3457 &
+          PID=$!
+          sleep 1
+          SIM_URL=http://localhost:3457 npx playwright test test_sim.spec.js --reporter=list 2>&1
+          RESULT=$?
+          kill $PID 2>/dev/null; wait $PID 2>/dev/null || true
+          exit $RESULT
 
       - name: Upload Playwright results
         if: failure()

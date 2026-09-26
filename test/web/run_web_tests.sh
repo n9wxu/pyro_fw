@@ -31,6 +31,23 @@ for MODE in new configured flown; do
   wait $SERVER_PID 2>/dev/null || true
 done
 
+# H2: the browser demo, served as GitHub Pages serves docs/.
+echo "══════════════════════════════════════════"
+echo "  Testing: browser simulator"
+echo "══════════════════════════════════════════"
+SIM_PORT=3457
+node "$SCRIPT_DIR/static_server.js" "$SCRIPT_DIR/../../docs" "$SIM_PORT" &
+SERVER_PID=$!
+sleep 1
+if SIM_URL="http://localhost:$SIM_PORT" \
+   npx playwright test --config="$SCRIPT_DIR/playwright.config.js" test_sim.spec.js 2>&1; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+fi
+kill $SERVER_PID 2>/dev/null || true
+wait $SERVER_PID 2>/dev/null || true
+
 echo ""
 echo "══════════════════════════════════════════"
 echo "  Results: $PASS passed, $FAIL failed"

@@ -355,7 +355,7 @@ A user need is verified through the system requirements under it, and is marked 
 | SYS-FAULT-02 | Detect pyro faults | Closed-loop: test_PYR_FAULT_02_overcurrent_detection | ✅ |
 | SYS-FAULT-03 | Notify pyro faults | Through PYR-FAULT-03 | ✅ |
 | SYS-PORT-01 | Testable on a host | Every host suite, in CI | ✅ |
-| SYS-PORT-02 | Runnable in a browser | The WASM build (CI, allowed to fail); not rebuilt since the simulator fixes (N6) | ⚠️ |
+| SYS-PORT-02 | Runnable in a browser | Web: test_sim.spec.js flies docs/sim.html's WASM build from power-on to LANDED; CI checks docs/app against www/ (`scripts/sync_demo.sh --check`) | ✅ |
 | SYS-PWR-01 | Minimise CPU active time | Through PWR-SLEEP-01; no test measures CPU active time | ⚠️ |
 | SYS-PWR-02 | I/O without the CPU | Through PWR-SAMPLE-01/02, PWR-TELEM-01..03, PWR-BUZZ-01, PWR-LOG-01..04 | ✅ |
 | PWR-USB-01 | USB serviced autonomously | — (deferred to v2.1; USB is serviced from the main loop) | ⚠️ |
@@ -367,8 +367,8 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 206 |
-| ⚠️ Not directly verified (needs a test or hardware) | 34 |
+| ✅ Verified by a host, web or closed-loop test | 207 |
+| ⚠️ Not directly verified (needs a test or hardware) | 33 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 12 |
 

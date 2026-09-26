@@ -1211,6 +1211,17 @@ Found by reading rather than by the check, and fixed with it:
 
 ### H2. The browser demo
 
+**Done 2026-09-26.** Both tests failed first. `scripts/sync_demo.sh --check`
+found `docs/app/` months behind `www/`. The headless run found the demo
+unflyable: `docs/sim.html` still numbered the states as they were before the
+descent phases and BOOT_SENSOR, so it enabled Launch at ASCENT (4) and
+waited for LANDED at CHUTE_DESCENT (7), and a visitor could never launch. The
+page now names `flight_state_t` in its order, the WASM module is rebuilt from
+today's source, and `docs/app/` is resynced. CI runs both checks: "Demo
+matches www" and "Browser simulator". The rebuilt module is still one a
+person has to remember to rebuild; nothing checks that it matches the
+source.
+
 `docs/app/` was last synced in March (N19), and the WASM simulator was never
 rebuilt after the simulator fixes (N6). `emcc` is now installed.
 - **Tests first:** after `scripts/sync_demo.sh`, `docs/app/www` matches
