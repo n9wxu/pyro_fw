@@ -32,6 +32,16 @@ typedef struct {
     uint32_t timestamp_ms;
     uint32_t timestamp_us; /* the same instant, to the microsecond; wraps, so differences only */
     int32_t raw_pa;        /* the reading this sample is centred on, before the median [DAT-02] */
+    /* The fit through the last second, at this sample [DD-048]: its pressure
+     * and rates, and the height, speed and acceleration they give through the
+     * altitude formula's slope at that pressure. None clamped. All zero while
+     * fit_valid is false: too few samples in the window. */
+    float fit_pa, fit_pdot, fit_pddot; /* Pa, Pa/s, Pa/s^2; pdot < 0 climbing */
+    int32_t fit_height_cm;
+    int32_t speed_cms; /* up is positive */
+    int32_t accel_cms2;
+    bool fit_valid;
+    bool fit_clean; /* residuals no bigger than pp_sigma_pa() explains */
 } altitude_sample_t;
 
 /* ── Ring buffer sizing ──────────────────────────────────────────── */
@@ -129,6 +139,18 @@ bool pp_ground_degraded(void);
 uint32_t pp_ground_rejecting_ms(uint32_t now_ms);
 void pp_ground_reseed(void);
 uint32_t pp_ground_reseeds(void);
+
+/* ── The fit's noise [DD-048] ─────────────────────────────────────
+ *
+ * σ, which decides whether a fit is clean, is the fit's own residual RMS on
+ * the pad, measured over about five seconds. Floored at the MS5607's datasheet
+ * figure, so the median's quieter output does not make every flight fit look
+ * dirty; capped, so a gusty pad cannot loosen the test. A recovered flight
+ * takes it from the pad marker. */
+#define PP_SIGMA_FLOOR_PA 1.2f
+#define PP_SIGMA_CEIL_PA 5.0f
+float pp_sigma_pa(void);
+void pp_set_sigma(float sigma_pa);
 
 /* ── Recent history [FLT-BROWN-02] ────────────────────────────────
  *

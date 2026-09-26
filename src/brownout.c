@@ -7,17 +7,18 @@
  */
 #include "brownout.h"
 
-/* Not a CRC. The marker is four words written by this firmware and read by
+/* Not a CRC. The marker is five words written by this firmware and read by
  * this firmware; the failure it has to catch is a half-written or erased
  * sector reading back as plausible values, and a sum catches that. */
 static uint32_t marker_sum(const pad_marker_t *m) {
-    return m->magic ^ (m->version * 2654435761u) ^ (uint32_t)m->ground_pressure_pa;
+    return m->magic ^ (m->version * 2654435761u) ^ (uint32_t)m->ground_pressure_pa ^ (m->sigma_mpa * 40503u);
 }
 
-void pad_marker_fill(pad_marker_t *m, int32_t ground_pressure_pa) {
+void pad_marker_fill(pad_marker_t *m, int32_t ground_pressure_pa, uint32_t sigma_mpa) {
     m->magic = PAD_MARKER_MAGIC;
     m->version = PAD_MARKER_VERSION;
     m->ground_pressure_pa = ground_pressure_pa;
+    m->sigma_mpa = sigma_mpa;
     m->sum = marker_sum(m);
 }
 
@@ -28,6 +29,9 @@ bool pad_marker_valid(const pad_marker_t *m) {
     /* A ground pressure outside the range the sensor can see is a marker that
      * did not survive, whatever its sum says. */
     if (m->ground_pressure_pa < 50000 || m->ground_pressure_pa > 110000) {
+        return false;
+    }
+    if (m->sigma_mpa == 0 || m->sigma_mpa > 100000) {
         return false;
     }
     return m->sum == marker_sum(m);

@@ -107,7 +107,11 @@ rationale and the alternatives considered.
   slow pressure changes while sitting on the pad for hours.
 
 ### DD-017: Arming Requires Confirmed Motor Burn
-- **Decision:** Pyro arming requires max vertical speed during ASCENT exceeded 20 m/s.
+- **Decision:** Pyro arming requires max vertical speed during ASCENT exceeded 10 m/s.
+- **Amended by DD-048:** 10 m/s of true speed, the fit's. This read 20 m/s
+  while the speed was the filter's, on the assumption that the filter halved
+  it. A rocket still climbing at 10 m/s at the launch detector's 100 ft
+  reaches 35 m.
 - **Rationale:** After a false launch (from drift), speed is ~0 m/s. Without this
   gate, arming happens immediately (speed < 10 m/s), then apogee fires (speed ≈ 0).
   This gate blocks the entire false-launch → ground-fire chain.
@@ -379,6 +383,8 @@ rationale and the alternatives considered.
   drogue has no drogue, and the main rung applies.
 
 ### DD-029: AGL And FALLEN Triggers Are Corrected For The Filter Lag
+- **Superseded by DD-048:** AGL and FALLEN compare the fit's height, which
+  does not lag, so the lead is gone.
 - **Decision:** `should_fire_pyro()` compares `altitude + speed x 500 ms` (on
   the way down) rather than the filtered altitude.
 - **Why:** the 500 ms IIR makes the filtered altitude trail a descending rocket
@@ -537,6 +543,93 @@ rationale and the alternatives considered.
 - **Chirp:** switching test mode off while attached is an attach, so it
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
+
+### DD-048: One Estimator, A Quadratic Fit To The Last Second Of Pressure
+- **Decision:** the pressure layer fits a least-squares quadratic through the
+  median's output over the last second at every sample (`src/pressure_fit.c`,
+  SNS-PRES-09), against each sample's own time, and evaluates it at the newest
+  sample. The fitted pressure, rate and acceleration become a height, a speed
+  and an acceleration through the altitude formula's slope at the fitted
+  pressure, none of them clamped. From them:
+  - every detector's speed (FLT-ASC-02);
+  - the height AGL and FALLEN compare, and FALLEN's peak, the lowest pressure
+    a clean fit showed (PYR-MODE-05);
+  - `under_thrust`, from the acceleration (FLT-ASC-03).
+
+  A fit is clean when its residual RMS is within 2σ and every residual within
+  4σ. σ is the fit's own residual noise, measured on the pad over about five
+  seconds, floored at the MS5607's 1.2 Pa and capped at 5 Pa. The pad marker
+  (version 2) carries it to a recovered flight, and `/api/status` shows it as
+  `fit_sigma_mpa`.
+- **Why:** speed was a two-point difference of the filtered height, computed
+  in three places. It trailed the rocket by the filter's time constant, so
+  apogee came late, a SPEED channel fired 4.7 m/s past its setting in free
+  fall, and AGL needed DD-029's lead. The Mach lockout (M1) needs the rate,
+  its change, and a test of whether the samples can be believed. Only a fit
+  gives all three.
+- **Apogee (FLT-APO-01, T5-A):** clean fits show the pressure rising for
+  60 ms, and the fitted pressure has risen to 1.0001 times the lowest a clean
+  fit showed in ASCENT. Over 1000 flights from 100 m to 9 km, half of them
+  through core0's stalls, the decision's sample is +0.004 s from the moment
+  the true pressure first stands 1.0001 above its minimum (-0.17 to +0.08 s),
+  0.41 s after the true apogee on average, and never before it. It was +0.21 s
+  from the drop and 0.61 s after the apogee.
+- **DELAY (PYR-MODE-05)** counts from where the fit's rate crossed zero, pdot
+  over pddot before the decision: within 0.05 s of the true apogee plus the
+  delay. It was 0.71 s late.
+- **The pressure triggers wait out an unclean fit (PYR-MODE-06).** AGL, FALLEN
+  and SPEED act on a clean fit. An unclean run is waited out for at most 2 s,
+  then believed, and the wait restarts at each charge. A run ends only once
+  fits have stayed clean for a whole window, so a lone clean fit under a
+  swinging canopy does not start the wait again; two mains fired 25-32 m late
+  before that. `test_T5_descent_glitch` found a defect older than the fit:
+  two bad readings in a row under the drogue fired the main up to 236 m
+  early, through the filter and DD-029's lead. Now within 0.4 m. A 5 kPa bay
+  charge at the drogue fired the main at apogee; now within 0.6 m of its
+  setting, and within 1.0 m under 6 Pa of canopy swing.
+- **The launch reads the two-point speed while the fit is unclean
+  (FLT-LAUNCH-07).** A burst of bad readings that passes the median spoils
+  every fit holding it for a second, far longer than the 100 ms hold. The
+  two-point speed spikes only for as long as the burst.
+- **Deviations from the task as written:**
+  - `under_thrust` ends 0.56-0.84 s after burnout, not within 100 ms. At a
+    step in acceleration, the endpoint of a one-second fit crosses zero only
+    once the thrust's share of the window has shrunk to 1/(1 + g) of it. A
+    100 ms answer needs a window of 0.1-0.2 s, whose acceleration noise at
+    9 km exceeds 1 g. `test_T5_under_thrust` holds it to 1 s, with one
+    change of state.
+  - `ARM_SPEED_CMS` stays at 10 m/s, now of true speed (DD-017). At 20 m/s the
+    integration suite's A8-3, 19 m/s at 100 ft, never armed.
+  - Floating point, not the Mach prompt's integers. The sums are float, the
+    3x3 solve double, on the RP2040's ROM routines. The cost is a bench check
+    still owed: at most 500 µs a sample.
+  - Pressure triggers wait on any unclean fit, not only after a charge.
+- **The Mach report on the fit:** every drogue fires 0.38-0.50 s after
+  apogee. The low-drag "fakes descent" flight no longer fires at Mach 1.27:
+  its fits are unclean through the port error, and its speed swings from
+  -2271 to +1377 m/s without resting in the arming band. That is this port
+  model's error changing faster than a quadratic, not a lockout. M1 is still
+  needed.
+- **Also:** pad speed noise 0.19 m/s RMS (was 0.22); speed error at 100 m/s,
+  against the truth at the sample's own time, 0.8 m/s worst (was 6.1), 0.7
+  through stalls (was 6.5).
+- **Tests adapted.** `test_T11_stalls_change_nothing` set a sample's speed
+  against the truth at the later tick that read it. The lag was invisible
+  beside the filter's 6 m/s, but not beside the fit's 0.8 m/s. In
+  `test_T11_loop_clock_independent` the igniters now burn through: the
+  drogue retry it had been timing runs its grace on the loop clock by design
+  (PYR-REFIRE-01). `test_REV03_refused_retry_is_asked_once` was "not settling"
+  at 15 m/s only because the old filter took over 2 s to settle; it now falls
+  at 40 m/s, faster than any canopy. The unit apogee test flies a parabola
+  through the peak. The integration thrust test flies an A8-3 that burns out
+  before the launch is declared.
+- **Rejected:**
+  - Precomputed coefficients: a stall leaves a gap and moves every later
+    sample.
+  - A Kalman filter or an alpha-beta tracker: each needs tuning to the
+    vehicle.
+  - A refit that drops outliers: at 100 Hz, a burst the median lets through
+    can be six readings.
 
 ### DD-047: The Flight Log Carries Each Sample's Reading
 - **Decision:** the flight log gains two columns before `event`: `raw_pa`,

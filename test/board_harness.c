@@ -10,6 +10,7 @@
 #include "../src/brownout.h"
 #include "../src/buzzer.h"
 #include "../src/hal.h"
+#include "pressure_processing.h"
 
 /* The announcements are not under test here. */
 void buzzer_init(void) {}
@@ -82,7 +83,7 @@ bool booting(void) {
 
 void write_marker(int32_t ground_pa) {
     pad_marker_t m;
-    pad_marker_fill(&m, ground_pa);
+    pad_marker_fill(&m, ground_pa, (uint32_t)(PP_SIGMA_FLOOR_PA * 1000.0f));
     TEST_ASSERT_EQUAL(0, hal_fs_write_file(PAD_MARKER_PATH, (const char *)&m, (int)sizeof(m)));
 }
 

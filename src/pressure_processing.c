@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "pressure_processing.h"
+#include "pressure_fit.h"
 #include <string.h>
 #include <math.h>
 
@@ -40,9 +41,12 @@ static struct {
     struct {
         int32_t pa[PP_HIST_SIZE];
         uint32_t ts[PP_HIST_SIZE];
+        uint32_t us[PP_HIST_SIZE];
         uint8_t head;
         uint8_t n;
     } hist;
+
+    float sigma_sq; /* 0: not measured */
 
     /* IIR filter state */
     int32_t filtered_q8; /* pascals x 256 [SNS-PRES-02] */
@@ -239,9 +243,10 @@ static bool med_out(int32_t *pa, uint32_t *ts, uint32_t *us, int32_t *raw) {
     return true;
 }
 
-static void hist_push(int32_t pa, uint32_t ts) {
+static void hist_push(int32_t pa, uint32_t ts, uint32_t us) {
     pp.hist.pa[pp.hist.head] = pa;
     pp.hist.ts[pp.hist.head] = ts;
+    pp.hist.us[pp.hist.head] = us;
     pp.hist.head = (uint8_t)((pp.hist.head + 1u) & (PP_HIST_SIZE - 1u));
     if (pp.hist.n < PP_HIST_SIZE)
         pp.hist.n++;
@@ -366,6 +371,7 @@ int32_t pp_pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_
 
 static void ring_push(int32_t altitude_cm, int32_t height_cm, int32_t rise_cm, uint32_t timestamp_ms,
                       uint32_t timestamp_us, int32_t raw_pa) {
+    memset(&pp.ring[pp.head], 0, sizeof(pp.ring[pp.head])); /* the fit's fields come after */
     pp.ring[pp.head].timestamp_us = timestamp_us;
     pp.ring[pp.head].raw_pa = raw_pa;
     pp.ring[pp.head].altitude_cm = altitude_cm;
@@ -381,6 +387,70 @@ static void ring_push(int32_t altitude_cm, int32_t height_cm, int32_t rise_cm, u
     }
 }
 
+/* ── The fit [DD-048] ─────────────────────────────────────────────── */
+
+float pp_sigma_pa(void) {
+    if (pp.sigma_sq <= 0.0f)
+        return PP_SIGMA_FLOOR_PA;
+    float s = sqrtf(pp.sigma_sq);
+    return s < PP_SIGMA_FLOOR_PA ? PP_SIGMA_FLOOR_PA : (s > PP_SIGMA_CEIL_PA ? PP_SIGMA_CEIL_PA : s);
+}
+
+void pp_set_sigma(float sigma_pa) {
+    pp.sigma_sq = sigma_pa * sigma_pa;
+}
+
+/* The history's last second, oldest first. */
+static pfit_t fit_history(void) {
+    static uint32_t t[PP_HIST_SIZE];
+    static int32_t p[PP_HIST_SIZE];
+    unsigned newest = (pp.hist.head + PP_HIST_SIZE - 1u) & (PP_HIST_SIZE - 1u);
+    int n = 0;
+    for (unsigned i = pp.hist.n; i-- > 0;) {
+        unsigned k = (pp.hist.head + PP_HIST_SIZE - 1u - i) & (PP_HIST_SIZE - 1u);
+        if (pp.hist.us[newest] - pp.hist.us[k] > PFIT_WINDOW_US)
+            continue;
+        t[n] = pp.hist.us[k];
+        p[n] = pp.hist.pa[k];
+        n++;
+    }
+    return pfit_quadratic(t, p, n);
+}
+
+/* On the pad the residuals are the sensor: their variance, with the three
+ * fitted parameters allowed for, averaged over about five seconds. Not while
+ * the ground reference rejects -- the board is being carried. */
+#define SIGMA_AVG_MS 5000.0f
+
+static void measure_sigma(const pfit_t *f, uint32_t dt_ms) {
+    if (!pp.gnd.tracking || pp.gnd.reject_since != 0 || !f->valid || f->n < 2 * PFIT_MIN_SAMPLES)
+        return;
+    float var = f->rms * f->rms * (float)f->n / (float)(f->n - 3);
+    float a = (float)dt_ms / SIGMA_AVG_MS;
+    pp.sigma_sq = pp.sigma_sq <= 0.0f ? var : pp.sigma_sq + (var - pp.sigma_sq) * (a > 1.0f ? 1.0f : a);
+}
+
+/* h = 44330 (1 - r^n), r = p/p0: dh/dp = -44330 n r^n / p, and
+ * d2h/dp2 = -44330 n (n - 1) r^n / p^2. Metres and pascals. */
+static void fit_sample(altitude_sample_t *s, uint32_t dt_ms) {
+    pfit_t f = fit_history();
+    measure_sigma(&f, dt_ms);
+    s->fit_valid = f.valid;
+    s->fit_clean = pfit_clean(&f, pp_sigma_pa());
+    if (!f.valid || f.p <= 0.0f || pp.ground_pressure <= 0)
+        return;
+    const float n = 1.0f / 5.2561f;
+    float rn = powf(f.p / (float)pp.ground_pressure, n);
+    float d1 = -44330.0f * n * rn / f.p;
+    float d2 = d1 * (n - 1.0f) / f.p;
+    s->fit_pa = f.p;
+    s->fit_pdot = f.pdot;
+    s->fit_pddot = f.pddot;
+    s->fit_height_cm = (int32_t)(44330.0f * (1.0f - rn) * 100.0f);
+    s->speed_cms = (int32_t)(d1 * f.pdot * 100.0f);
+    s->accel_cms2 = (int32_t)((d1 * f.pddot + d2 * f.pdot * f.pdot) * 100.0f);
+}
+
 /* ── Public API ───────────────────────────────────────────────────── */
 
 void pp_init(void) {
@@ -394,6 +464,7 @@ void pp_test_prime(int32_t ground_pressure_pa) {
     pp.filter_initialized = false; /* first pp_feed will prime the IIR */
     /* A previous test's readings, and their times, are not this one's. */
     memset(&pp.med, 0, sizeof(pp.med));
+    memset(&pp.hist, 0, sizeof(pp.hist));
     pp.last_timestamp = 0;
     /* And the ground reference, which otherwise starts empty and would climb
      * out of zero on the first sample. */
@@ -441,7 +512,7 @@ void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us) {
     int32_t raw;
     bool fresh = med_out(&pa, &ts, &us, &raw);
     if (fresh)
-        hist_push(pa, ts);
+        hist_push(pa, ts, us);
 
     switch (pp.state) {
     case PP_IDLE:
@@ -487,6 +558,7 @@ void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us) {
 
         /* Push to ring */
         ring_push(alt_cm, height_cm, rise_cm, ts, us, raw);
+        fit_sample(&pp.ring[(pp.head + PP_RING_SIZE - 1u) & PP_RING_MASK], dt);
         return;
     }
     }

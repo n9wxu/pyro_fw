@@ -773,7 +773,7 @@ static void serve_api_status(http_conn_t *hc) {
         "\"pyro1_refused\":%s,\"pyro2_refused\":%s,\"pyro1_refires\":%u,\"main_forced\":%s,"
         "\"pres_waits\":%lu,\"pres_rejects\":%lu,\"raw_pa\":%ld,\"pad_speed_cms\":%ld,"
         "\"ground_degraded\":%s,\"ground_reseeds\":%lu,"
-        "\"sample_interval_us\":[%lu,%lu],\"stamp_lag_max_us\":%lu,"
+        "\"sample_interval_us\":[%lu,%lu],\"stamp_lag_max_us\":%lu,\"fit_sigma_mpa\":%lu,"
         "\"usb_attached\":%s,\"test_mode\":%s,\"buzzer_active\":%s,"
         "\"beep\":\"%s\",\"beep_sound\":\"%s\","
         "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u}",
@@ -821,6 +821,9 @@ static void serve_api_status(http_conn_t *hc) {
          * reading waited to be read: a stall shows as a gap, not a late stamp. */
         (unsigned long)hal_pressure_interval_min_us(), (unsigned long)hal_pressure_interval_max_us(),
         (unsigned long)hal_pressure_stamp_lag_max_us(),
+        /* [SNS-PRES-09] The noise the fit's clean test is judged against, as
+         * this board's sensor measured it on the pad. */
+        (unsigned long)(pp_sigma_pa() * 1000.0f),
         /* A board on USB detects no launch and says nothing, unless it is in
          * test mode [USB-01..03, USB-08]. */
         fctx && fctx->usb_attached ? "true" : "false", fctx && fctx->test_mode ? "true" : "false",

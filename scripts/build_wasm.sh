@@ -131,6 +131,7 @@ emcc -O2 -s WASM=1 \
   "$ROOT/src/flight_states.c" \
   "$ROOT/src/brownout.c" \
   "$ROOT/src/pressure_processing.c" \
+  "$ROOT/src/pressure_fit.c" \
   "$ROOT/src/telemetry_formatter.c" \
   "$ROOT/src/buzzer.c" \
   "$ROOT/src/config.c" \

@@ -18,20 +18,25 @@ void tearDown(void) {}
 
 void test_BRN_MARK_01_round_trip(void) {
     pad_marker_t m;
-    pad_marker_fill(&m, 101325);
+    pad_marker_fill(&m, 101325, 1200u);
     TEST_ASSERT_TRUE_MESSAGE(pad_marker_valid(&m), "a marker this firmware just wrote must validate");
     TEST_ASSERT_EQUAL_INT32(101325, m.ground_pressure_pa);
+    TEST_ASSERT_EQUAL_UINT32(1200u, m.sigma_mpa);
 }
 
 /* A half-written or erased sector must not read back as a plausible ground
  * reference -- restoring a wrong one is worse than not recovering at all. */
 void test_BRN_MARK_02_corruption_rejected(void) {
     pad_marker_t m;
-    pad_marker_fill(&m, 101325);
+    pad_marker_fill(&m, 101325, 1200u);
 
     pad_marker_t bad = m;
     bad.ground_pressure_pa = 90000; /* changed without re-summing */
     TEST_ASSERT_FALSE_MESSAGE(pad_marker_valid(&bad), "a tampered pressure must fail the sum");
+
+    bad = m;
+    bad.sigma_mpa = 5000; /* [DD-048] the fit's noise, restored to a recovered flight */
+    TEST_ASSERT_FALSE_MESSAGE(pad_marker_valid(&bad), "a tampered sigma must fail the sum");
 
     bad = m;
     bad.magic = 0;
@@ -49,10 +54,12 @@ void test_BRN_MARK_02_corruption_rejected(void) {
  * whatever its sum says about itself. */
 void test_BRN_MARK_03_implausible_pressure_rejected(void) {
     pad_marker_t m;
-    pad_marker_fill(&m, 5);
+    pad_marker_fill(&m, 5, 1200u);
     TEST_ASSERT_FALSE_MESSAGE(pad_marker_valid(&m), "5 Pa is not a ground pressure");
-    pad_marker_fill(&m, 200000);
+    pad_marker_fill(&m, 200000, 1200u);
     TEST_ASSERT_FALSE_MESSAGE(pad_marker_valid(&m), "200 kPa is not a ground pressure");
+    pad_marker_fill(&m, 101325, 0u);
+    TEST_ASSERT_FALSE_MESSAGE(pad_marker_valid(&m), "a sensor with no noise was never measured");
 }
 
 /* ── The verdict ──────────────────────────────────────────────────── */

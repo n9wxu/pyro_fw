@@ -115,7 +115,7 @@ typedef struct flight_context_t {
     int32_t ground_pressure;
     int32_t max_altitude;
     int32_t last_altitude;
-    int32_t last_height; /* unclamped: speeds are taken from this [SNS-ALT-04] */
+    int32_t last_height; /* unclamped: the speed short of a fit [SNS-ALT-04] */
     int32_t vertical_speed_cms;
     int32_t prev_vertical_speed_cms;
     uint32_t launch_time;
@@ -230,6 +230,23 @@ typedef struct flight_context_t {
     bool main_forced; /* the ladder overrode pyro2's configured trigger */
     uint32_t emrg_fail_since;
     int32_t emrg_fail_ref_cms;
+    /* ── The fit [DD-048] ─────────────────────────────────────────
+     * What the triggers read of the newest sample's fit. The trigger height
+     * is the fit's, unclamped, or the filtered height short of a fit. The
+     * peak is the lowest pressure a clean fit showed in ASCENT; 0: none. */
+    int32_t trigger_height_cm;
+    bool fit_clean;
+    /* Sample time + 1 of the first unclean fit in a run, and of the first
+     * clean one since; 0: none. A run ends only when clean has lasted the
+     * fit's window: a lone clean fit in a swinging canopy does not end it. */
+    uint32_t unclean_since;
+    uint32_t clean_since;
+    float p_min_pa;
+    int32_t peak_height_cm;
+    uint32_t apogee_fit_ms; /* where the fit put the apogee, in sample time */
+    bool pyro1_due;         /* its trigger was met; fired once the other's pulse ends */
+    bool pyro2_due;
+
     // Ground test state machine [GND-TEST-01..04, DD-011]
     ground_test_ctx_t gt;
 } flight_context_t;

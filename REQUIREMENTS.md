@@ -32,7 +32,8 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **PYR-MODE-02**: The system shall support an AGL mode that fires when altitude drops below a threshold. ← SYS-DEPLOY-01
 - **PYR-MODE-03**: The system shall support a FALLEN mode that fires when altitude drops a specified distance from maximum. ← SYS-DEPLOY-01
 - **PYR-MODE-04**: The system shall support a SPEED mode that fires when descent speed exceeds a threshold. ← SYS-DEPLOY-01
-- **PYR-MODE-05**: AGL and FALLEN triggers shall compare the altitude corrected for the pressure filter's lag (rate × time constant), so that a trigger fires at its configured altitude on a fast descent. ← PYR-MODE-02, PYR-MODE-03
+- **PYR-MODE-05**: AGL and FALLEN triggers shall compare the height of the pressure fit (SNS-PRES-09), which does not lag, and FALLEN shall measure from the peak a clean fit showed. SPEED shall compare the fit's speed. DELAY shall count from where the fit's rate crossed zero. ← PYR-MODE-01, PYR-MODE-02, PYR-MODE-03, PYR-MODE-04
+- **PYR-MODE-06**: AGL, FALLEN and SPEED triggers shall act on a clean fit. An unclean run, from a charge pressurising the bay or from bad readings the median let through, shall be waited out for at most 2 s, the wait restarting at each charge; then the trigger shall act regardless. ← PYR-MODE-05
 
 #### Firing Safety
 - **PYR-SAFE-01**: The system shall not fire a channel that has no continuity. ← SYS-DEPLOY-03
@@ -52,7 +53,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-LAUNCH-04**: The system shall log a LAUNCH event at the transition. ← FLT-PHASE-01
 - **FLT-LAUNCH-05**: The system shall stop the buzzer upon launch detection. ← FLT-PHASE-01
 - **FLT-LAUNCH-06**: Withdrawn. The launch height is FLT-LAUNCH-01's 100 feet; there is no separate gain-within-a-window test (DD-016).
-- **FLT-LAUNCH-07**: The system shall declare launch only when altitude above 100 feet and vertical speed above 5 m/s have held together for 100 ms of sample time, so that two bad readings in a row cannot. ← FLT-PHASE-01
+- **FLT-LAUNCH-07**: The system shall declare launch only when altitude above 100 feet and vertical speed above 5 m/s have held together for 100 ms of sample time, so that two bad readings in a row cannot. The speed is the fit's while it is clean, and the two-point speed of the filtered height while it is not, so that a burst the median lets through, which spoils every fit for a second, cannot hold it up. ← FLT-PHASE-01
 
 #### Ground Reference
 - **GND-CAL-01**: The ground reference shall be a 5-second rolling mean of the filtered pressure. ← FLT-PHASE-01
@@ -64,7 +65,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **GND-CAL-07**: A reference frozen on less than a second of the pad shall be reported as degraded on /api/status. ← GND-CAL-04
 
 #### Apogee Detection
-- **FLT-APO-01**: The system shall detect apogee when vertical speed has been at or below zero for 60 ms of sample time while pyros are armed. ← FLT-PHASE-02
+- **FLT-APO-01**: The system shall detect apogee while pyros are armed when clean fits have shown the pressure rising for 60 ms of sample time, and the fitted pressure has risen to 1.0001 times the lowest a clean fit showed in ASCENT (DD-048). ← FLT-PHASE-02
 - **FLT-APO-02**: The system shall transition from ASCENT to DESCENT upon apogee detection. ← FLT-PHASE-02
 - **FLT-APO-03**: The system shall log an APOGEE event at the transition. ← FLT-PHASE-02
 - **FLT-APO-04**: The system shall not detect apogee before pyros are armed. ← FLT-PHASE-02, PYR-SAFE-04
@@ -73,12 +74,12 @@ Each derived requirement traces to its parent with `← parent_id`.
 
 #### Pyro Arming
 - **FLT-ASC-01**: The system shall track maximum altitude during ascent. ← FLT-PHASE-02
-- **FLT-ASC-02**: The system shall compute vertical speed from consecutive altitude samples. ← FLT-PHASE-02
-- **FLT-ASC-03**: The system shall detect thrust phase when vertical speed is increasing. ← FLT-PHASE-01
+- **FLT-ASC-02**: Every detector shall take its vertical speed from the pressure fit (SNS-PRES-09), through the slope of the altitude formula at the fitted pressure; short of a fit, from consecutive altitude samples. ← FLT-PHASE-02
+- **FLT-ASC-03**: The system shall report the thrust phase while the fit's acceleration is upward. The report ends within 1 s of burnout (DD-048). ← FLT-PHASE-01
 - **FLT-ASC-04**: The system shall arm pyrotechnics when vertical speed drops below 10 m/s. ← PYR-SAFE-04
 - **FLT-ASC-05**: The system shall log an ARMED event when pyrotechnics are armed. ← PYR-SAFE-04
 - **FLT-ASC-06**: The system shall not arm pyrotechnics while vertical speed exceeds 10 m/s. ← PYR-SAFE-04
-- **FLT-ASC-07**: The system shall not arm pyrotechnics unless maximum vertical speed during ASCENT exceeded 20 m/s. ← PYR-SAFE-04
+- **FLT-ASC-07**: The system shall not arm pyrotechnics unless maximum vertical speed during ASCENT exceeded 10 m/s. ← PYR-SAFE-04
 
 #### Landing Detection
 - **FLT-LAND-01**: The system shall detect landing when altitude change is less than 1 meter between consecutive samples for at least 1 second. ← FLT-PHASE-03
@@ -96,7 +97,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-EMRG-02**: The emergency ladder shall not act on a descent rate alone. A rocket in free fall toward a trigger it has not yet reached is following the flight plan, however fast it is descending. ← SYS-DEPLOY-01
 - **FLT-EMRG-03**: The emergency ladder shall not act on the absence of a settled descent. A drogue opened at apogee is still accelerating toward its terminal rate for seconds, so "not yet settled" is true of a working drogue. ← FLT-EMRG-01
 - **FLT-EMRG-04**: An emergency deployment shall be recorded as one: a MAIN_FORCED event in the flight log, and `main_forced` and the retry count on `/api/status`. ← FLT-EMRG-01, DAT-04
-- **FLT-BROWN-01**: The system shall write a pad marker recording the ground pressure after 10 seconds of PAD_IDLE with no USB host attached (USB-01, USB-04), so that nothing needs to be written at launch. ← SYS-DEPLOY-01
+- **FLT-BROWN-01**: The system shall write a pad marker recording the ground pressure, and the fit's noise σ measured on the pad (SNS-PRES-09), after 10 seconds of PAD_IDLE with no USB host attached (USB-01, USB-04), so that nothing needs to be written at launch. ← SYS-DEPLOY-01
 - **FLT-BROWN-02**: After a power event, the system shall recover the ground reference from the pad marker rather than recalibrating, if and only if the barometer shows it is above the recorded ground AND moving, AND no USB host is attached (USB-01). The level and the speed shall be medians of the readings since power-on, the speed measured across at least 0.5 s, so that two bad readings cannot decide it. ← FLT-BROWN-01
 - **FLT-BROWN-03**: The system shall not treat a stationary board as airborne, whatever its apparent altitude. ← FLT-BROWN-02
 - **FLT-BROWN-04**: The pad marker shall be invalidated when the flight lands, so that no later power-up recovers against it. ← FLT-BROWN-02
@@ -254,6 +255,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **SNS-PRES-06**: A reading the sensor cannot produce -- a zero conversion, or a pressure outside its rated range -- shall be discarded and counted, not filtered. ← SNS-PRES-02
 - **SNS-PRES-07**: A single-sample outlier shall not reach the pressure filter. The median of the newest three readings stands between the range check and the filter, carrying the middle reading's time. ← SNS-PRES-02
 - **SNS-PRES-08**: Each sample shall carry the time its reading was taken, from the hardware timer to the microsecond: the middle of the MS5607's D1 conversion, or for the free-running BMP280 half a conversion before the read. ← SNS-PRES-02
+- **SNS-PRES-09**: Each sample shall carry a least-squares quadratic fit through the median's output over the last second, against each sample's own time, evaluated at the newest sample: its pressure, rate and acceleration, and whether it is clean -- residual RMS within 2σ and every residual within 4σ. σ is the fit's residual noise measured on the pad, no less than 1.2 Pa and no more than 5 Pa, and a recovered flight takes it from the pad marker. ← SNS-PRES-07, SNS-PRES-08
 - **SNS-ALT-02**: The system shall clamp computed altitude to a maximum of 8000 meters. ← SNS-ALT-01
 - **SNS-ALT-03**: The system shall clamp computed altitude to a minimum of 0 meters. ← SNS-ALT-01
 - **SNS-ALT-04**: Vertical speed shall be taken from altitude that is not clamped; SNS-ALT-02 and SNS-ALT-03 clamp only the altitude that is reported. ← SNS-ALT-01

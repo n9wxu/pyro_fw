@@ -35,17 +35,18 @@ typedef enum {
  * in progress is the worst moment to lose power. */
 #define PAD_MARKER_MAGIC 0x50594d31u /* "PYM1" */
 #define PAD_MARKER_PATH "pad.mkr"
-#define PAD_MARKER_VERSION 1u
+#define PAD_MARKER_VERSION 2u /* 2: the fit's sigma [DD-048] */
 #define PAD_MARKER_DWELL_MS 10000u
 
 typedef struct {
     uint32_t magic;
     uint32_t version;
     int32_t ground_pressure_pa;
-    uint32_t sum; /* over the three fields above */
+    uint32_t sigma_mpa; /* the pad's measured noise, pp_sigma_pa(), in mPa */
+    uint32_t sum;       /* over the fields above */
 } pad_marker_t;
 
-void pad_marker_fill(pad_marker_t *m, int32_t ground_pressure_pa);
+void pad_marker_fill(pad_marker_t *m, int32_t ground_pressure_pa, uint32_t sigma_mpa);
 bool pad_marker_valid(const pad_marker_t *m);
 
 /* ── The verdict ──────────────────────────────────────────────────── */

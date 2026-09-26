@@ -17,6 +17,7 @@ __attribute__((weak)) bool lua_app_ready_or_absent(void) {
 #include "flight_states.h"
 #include "brownout.h"
 #include "pressure_processing.h"
+#include "pressure_fit.h"
 #include "telemetry_formatter.h"
 #include "ground_test.h"
 #include "buzzer.h"
@@ -113,25 +114,18 @@ static int32_t cm_to_units(int32_t cm, uint8_t units) {
 
 /* ── Pyro firing logic ────────────────────────────────────────────── */
 
-/* [PYR-MODE-02/03] The filtered altitude trails a descending rocket by its
- * rate times the filter's time constant: 56 m at a ballistic 100 m/s. Put that
- * back, so an AGL or FALLEN trigger fires at the altitude it names. */
-static int32_t lag_corrected_altitude(const flight_context_t *ctx) {
-    int32_t lead = ctx->vertical_speed_cms < 0 ? ctx->vertical_speed_cms * PP_FILTER_TAU_MS / 1000 : 0;
-    int32_t alt = ctx->last_altitude + lead;
-    return alt > 0 ? alt : 0;
-}
-
-/* [PYR-MODE-01..04, PYR-ALT-01] See IMPLEMENTATION.md "Altitude Limitations"
- * for behavior above 8000m. */
+/* [PYR-MODE-01..05, PYR-ALT-01] See IMPLEMENTATION.md "Altitude Limitations"
+ * for behavior above 8000m. AGL and FALLEN read the fit's height, which does
+ * not lag; DELAY counts from where the fit put the apogee. */
 bool should_fire_pyro(flight_context_t *ctx, uint8_t mode, uint16_t value) {
     if (!ctx->apogee_detected)
         return false; /* [PYR-SAFE-04] */
     int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
     int32_t clamped = ((int32_t)value > max_units) ? max_units : (int32_t)value;
-    int32_t alt_cm = lag_corrected_altitude(ctx);
-    int32_t fallen = cm_to_units(ctx->max_altitude - alt_cm, ctx->config.units);
-    int32_t agl = cm_to_units(alt_cm, ctx->config.units);
+    int32_t h = ctx->trigger_height_cm;
+    int32_t peak = ctx->peak_height_cm > 0 ? ctx->peak_height_cm : ctx->max_altitude;
+    int32_t fallen = cm_to_units(peak - h, ctx->config.units);
+    int32_t agl = cm_to_units(h > 0 ? h : 0, ctx->config.units);
     int32_t speed = cm_to_units(-ctx->vertical_speed_cms, ctx->config.units);
     uint32_t delay_s = (hal_time_ms() - ctx->apogee_time) / 1000;
     switch (mode) {
@@ -194,13 +188,38 @@ static bool channel_waiting(bool fired, bool refused, bool continuity) {
     return !fired && !refused && continuity;
 }
 
+/* [DD-048] The pressure triggers act on a clean fit. An unclean one is a bad
+ * reading or two the median let through, a charge pressurising the bay -- for
+ * a moment the rocket reads hundreds of metres lower -- or a canopy swinging:
+ * waited out for at most this long, then believed, so a swing that spoils
+ * every fit cannot hold back the main. The wait restarts at each charge. */
+#define UNCLEAN_WAIT_MS 2000u
+
+static bool pressure_believed(const flight_context_t *ctx, uint32_t now) {
+    if (ctx->fit_clean)
+        return true;
+    if ((ctx->pyro1_fired && now - ctx->pyro1_fire_time < UNCLEAN_WAIT_MS) ||
+        (ctx->pyro2_fired && now - ctx->pyro2_fire_time < UNCLEAN_WAIT_MS))
+        return false;
+    return ctx->last_sample + 1u - ctx->unclean_since >= UNCLEAN_WAIT_MS;
+}
+
+static bool trigger_met(flight_context_t *ctx, uint8_t mode, uint16_t value, uint32_t now) {
+    if (mode != PYRO_MODE_DELAY && !pressure_believed(ctx, now))
+        return false;
+    return should_fire_pyro(ctx, mode, value);
+}
+
+/* A channel whose trigger was met stays due while the other's pulse holds
+ * the common path [PYR-DEPLOY-02]: by the time it ends, that channel's charge
+ * has spoiled the fit, and the trigger must not be asked again. */
 static void try_fire_pyros(flight_context_t *ctx, uint32_t now) {
     if (channel_waiting(ctx->pyro1_fired, ctx->pyro1_refused, ctx->pyro1_continuity_good) &&
-        should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value))
-        (void)fire_channel(ctx, 1, now);
+        (ctx->pyro1_due || trigger_met(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value, now)))
+        ctx->pyro1_due = !fire_channel(ctx, 1, now) && !ctx->pyro1_refused;
     if (channel_waiting(ctx->pyro2_fired, ctx->pyro2_refused, ctx->pyro2_continuity_good) &&
-        should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value))
-        (void)fire_channel(ctx, 2, now);
+        (ctx->pyro2_due || trigger_met(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value, now)))
+        ctx->pyro2_due = !fire_channel(ctx, 2, now) && !ctx->pyro2_refused;
 }
 
 /* [PYR-FAULT-02/03] Check FLAG pin after fire for overcurrent */
@@ -367,6 +386,7 @@ static bool assess_recovery(flight_context_t *ctx, uint32_t now, state_event_t *
      * pressure layer starts here, against the marker's ground, never
      * calibrated: calibrating would call this height zero. */
     pp_resume_flight(m.ground_pressure_pa, level);
+    pp_set_sigma((float)m.sigma_mpa / 1000.0f);
     /* BOOT_CONTINUITY is skipped on this path, and a channel whose continuity
      * was never read is never fired [PYR-SAFE-01]. */
     read_continuity(ctx);
@@ -377,6 +397,7 @@ static bool assess_recovery(flight_context_t *ctx, uint32_t now, state_event_t *
     ctx->max_altitude = alt_agl;
     ctx->last_altitude = alt_agl;
     ctx->last_height = pp_pressure_to_height_cm(level, m.ground_pressure_pa);
+    ctx->trigger_height_cm = ctx->last_height;
     ctx->last_sample = newest;
     ctx->vertical_speed_cms = speed;
     hal_log_start(&ctx->config, ctx->ground_pressure);
@@ -592,8 +613,44 @@ void flight_flash_service(flight_context_t *ctx, uint32_t now) {
     }
     ctx->marker_written = true; /* once, whatever the write does */
     pad_marker_t m;
-    pad_marker_fill(&m, pp_ground_pressure());
+    pad_marker_fill(&m, pp_ground_pressure(), (uint32_t)(pp_sigma_pa() * 1000.0f));
     (void)hal_fs_write_file(PAD_MARKER_PATH, (const char *)&m, (int)sizeof(m));
+}
+
+/* The change in the unclamped filtered height since the last sample. */
+static int32_t two_point_speed(const flight_context_t *ctx, const altitude_sample_t *s) {
+    uint32_t dt = s->timestamp_ms - ctx->last_sample;
+    if (dt == 0 || ctx->last_sample == 0)
+        return ctx->vertical_speed_cms;
+    return (s->height_cm - ctx->last_height) * 1000 / (int32_t)dt;
+}
+
+/* [DD-048] Every detector's speed: the fit's, through the altitude formula's
+ * slope at the fitted pressure. Short of a fit -- the first second after
+ * power-on -- the two-point speed. */
+static int32_t sample_speed(const flight_context_t *ctx, const altitude_sample_t *s) {
+    return s->fit_valid ? s->speed_cms : two_point_speed(ctx, s);
+}
+
+/* [FLT-LAUNCH-07] Except the launch's. A burst of bad readings the median
+ * lets through spoils every fit that holds it, for a second -- far longer
+ * than the launch hold -- while the two-point speed spikes only for as long
+ * as the burst. A real launch shows either. */
+static int32_t launch_speed(const flight_context_t *ctx, const altitude_sample_t *s) {
+    return s->fit_clean ? s->speed_cms : two_point_speed(ctx, s);
+}
+
+static void take_fit(flight_context_t *ctx, const altitude_sample_t *s) {
+    uint32_t ts = s->timestamp_ms;
+    ctx->fit_clean = s->fit_clean;
+    if (!s->fit_clean) {
+        ctx->clean_since = 0;
+        if (ctx->unclean_since == 0)
+            ctx->unclean_since = ts + 1u;
+    } else if (held(true, &ctx->clean_since, ts, PFIT_WINDOW_US / 1000u)) {
+        ctx->unclean_since = 0;
+    }
+    ctx->trigger_height_cm = s->fit_valid ? s->fit_height_cm : s->height_cm;
 }
 
 static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
@@ -613,9 +670,8 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     uint32_t ts = sample.timestamp_ms;
 
     /* Track speed on the pad for launch confirmation [DD-016] */
-    uint32_t dt = (ctx->last_sample > 0) ? (ts - ctx->last_sample) : 10;
-    if (dt > 0)
-        ctx->pad_speed_cms = (sample.height_cm - ctx->last_height) * 1000 / (int32_t)dt;
+    ctx->pad_speed_cms = launch_speed(ctx, &sample);
+    take_fit(ctx, &sample);
 
     if (sample.rise_cm <= LAUNCH_RISE_CM) {
         ctx->pad_rising = false;
@@ -652,11 +708,18 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
 }
 
 /* [FLT-ASC-01..06, FLT-APO-01..04, FLT-RATE-02, DD-017]
- * DD-017: Arming gate — pyros arm only after max filtered speed exceeds
- *         threshold. The IIR filter (τ=500ms) attenuates measured speed
- *         by ~50% for short flights, so 10 m/s filtered ≈ 20 m/s true.
- *         Prevents false arming from barometric drift (~0 m/s filtered). */
-#define ARM_SPEED_CMS 1000 /* 10 m/s filtered ≈ 20 m/s true [DD-017] */
+ * DD-017: Arming gate — pyros arm once the rocket has been faster than this
+ *         and has slowed below it again, climbing: a burn, then a coast.
+ *         The fit's speed is the true speed, and no drift reaches it. Still
+ *         climbing at 10 m/s at the launch detector's 100 ft, a rocket
+ *         reaches 35 m: every flight that can trip the detector arms. */
+#define ARM_SPEED_CMS 1000 /* 10 m/s [DD-017] */
+
+/* [FLT-APO-01, T5-A] Apogee needs the fitted pressure this far above the
+ * lowest a clean fit showed: 0.6-0.9 m below the peak from sea level to 9 km,
+ * about 0.4 s of fall. The fit's pressure noise is about half a pascal; at
+ * 9 km the drop is 3 Pa, so noise cannot fake it. */
+#define APOGEE_DROP 1.0001f
 
 /* [FLT-MACH-01] Apogee is not declared while the rocket is fast.
  *
@@ -694,8 +757,27 @@ static bool mach_gate_clear(flight_context_t *ctx, uint32_t ts) {
 /* [DD-017] Arming requires confirmed motor burn: peak speed > threshold,
  * coast phase entered (speed decreasing but still positive). */
 static bool arming_gate_met(const flight_context_t *ctx) {
-    return !ctx->pyros_armed && ctx->max_speed_cms >= ARM_SPEED_CMS && ctx->vertical_speed_cms < 1000 &&
+    return !ctx->pyros_armed && ctx->max_speed_cms >= ARM_SPEED_CMS && ctx->vertical_speed_cms < ARM_SPEED_CMS &&
            ctx->vertical_speed_cms >= 0;
+}
+
+/* The peak is the lowest pressure a clean fit has shown. */
+static void track_peak(flight_context_t *ctx, const altitude_sample_t *s) {
+    if (s->fit_clean && (ctx->p_min_pa <= 0.0f || s->fit_pa < ctx->p_min_pa)) {
+        ctx->p_min_pa = s->fit_pa;
+        ctx->peak_height_cm = s->fit_height_cm;
+    }
+}
+
+/* [PYR-MODE-05] Where the fit's rate crossed zero: pdot/pddot before this
+ * sample, if that lies within the fit's window. */
+static uint32_t apogee_back(uint32_t ts, const altitude_sample_t *s) {
+    if (s->fit_pddot <= 0.0f)
+        return ts;
+    float back_ms = s->fit_pdot / s->fit_pddot * 1000.0f;
+    if (back_ms < 0.0f || back_ms > (float)(PFIT_WINDOW_US / 1000u))
+        return ts;
+    return ts - (uint32_t)back_ms;
 }
 
 static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
@@ -705,13 +787,13 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
         return SEVT_NONE;
     int32_t altitude = sample.altitude_cm;
     uint32_t ts = sample.timestamp_ms;
-    uint32_t dt = ts - ctx->last_sample;
     ctx->filtered_pressure = pp_last_filtered_pa();
 
     ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
-    if (dt > 0)
-        ctx->vertical_speed_cms = (sample.height_cm - ctx->last_height) * 1000 / (int32_t)dt;
-    ctx->under_thrust = ctx->vertical_speed_cms > ctx->prev_vertical_speed_cms;
+    ctx->vertical_speed_cms = sample_speed(ctx, &sample);
+    take_fit(ctx, &sample);
+    track_peak(ctx, &sample);
+    ctx->under_thrust = sample.fit_valid ? sample.accel_cms2 > 0 : ctx->vertical_speed_cms > ctx->prev_vertical_speed_cms;
 
     /* Track peak speed for arming gate [DD-017] */
     if (ctx->vertical_speed_cms > ctx->max_speed_cms)
@@ -737,9 +819,14 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
     /* [FLT-APO-01] Apogee is the sensor saying the rocket has stopped going
      * up, and nothing else. No timer may force it [DD-022]: a wrong value
      * fires during ascent, which is worse than the sensor failure it would
-     * cover. */
-    bool cond = ctx->pyros_armed && !ctx->apogee_detected && mach_gate_clear(ctx, ts) && ctx->vertical_speed_cms <= 0;
-    return held(cond, &ctx->apogee_held_since, ts, APOGEE_HOLD_MS) ? SEVT_APOGEE : SEVT_NONE;
+     * cover. Said by clean fits whose pressure is rising, and has risen past
+     * the drop. */
+    bool cond = ctx->pyros_armed && !ctx->apogee_detected && mach_gate_clear(ctx, ts) && sample.fit_clean &&
+                sample.fit_pdot > 0.0f;
+    if (!held(cond, &ctx->apogee_held_since, ts, APOGEE_HOLD_MS) || sample.fit_pa < APOGEE_DROP * ctx->p_min_pa)
+        return SEVT_NONE;
+    ctx->apogee_fit_ms = apogee_back(ts, &sample);
+    return SEVT_APOGEE;
 }
 
 /* ── Descent ──────────────────────────────────────────────────────────
@@ -938,11 +1025,10 @@ static bool descent_sample(flight_context_t *ctx, uint32_t now, flight_state_t s
     altitude_sample_t sample;
     if (!pp_read(&sample))
         return false;
-    uint32_t dt = sample.timestamp_ms - ctx->last_sample;
     ctx->filtered_pressure = pp_last_filtered_pa();
     ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
-    if (dt > 0)
-        ctx->vertical_speed_cms = (sample.height_cm - ctx->last_height) * 1000 / (int32_t)dt;
+    ctx->vertical_speed_cms = sample_speed(ctx, &sample);
+    take_fit(ctx, &sample);
     buf_add(ctx, sample.timestamp_ms - ctx->launch_time, ctx->filtered_pressure, sample.altitude_cm, st);
     ctx->last_sample = sample.timestamp_ms;
     *prev_out = ctx->last_altitude;
@@ -1127,7 +1213,7 @@ static void action_armed(flight_context_t *ctx, uint32_t now) {
 /* [FLT-APO-02/03] */
 static void action_apogee(flight_context_t *ctx, uint32_t now) {
     ctx->apogee_detected = true;
-    ctx->apogee_time = now;
+    ctx->apogee_time = ctx->apogee_fit_ms ? ctx->apogee_fit_ms : now; /* [PYR-MODE-05] */
     ctx->descent_start_time = now; /* [DD-015] start landing timeout */
     buf_tag_event(ctx, EVT_APOGEE);
     telemetry_apogee(ctx->max_altitude, now - ctx->launch_time);

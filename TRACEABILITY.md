@@ -36,7 +36,8 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-DEPLOY-01 | Both channels may deploy on one event | Closed-loop: test_PYR_DEPLOY_01_low_flight_fires_both | ✅ |
 | PYR-DEPLOY-02 | Not energised at the same instant, flight or ground test | `flight_pyro_energise()`, DD-021; Integration: test_REV06_ground_test_waits_for_the_other_channel | ✅ |
 | PYR-FIRE-01 | Fired only when energised; a refusal is recorded once | Unit: test_REV03_refused_fire_is_not_recorded_as_fired; Hardware: `pyro1_refused` on /api/status | ✅ |
-| PYR-MODE-05 | AGL / FALLEN corrected for filter lag | Closed-loop: test_REV05_agl_drogue_fires_at_its_altitude; every AGL channel in the mode suites within 8 m | ✅ |
+| PYR-MODE-05 | AGL / FALLEN on the fit's height, SPEED on its speed, DELAY from its apogee | Chain: test_T5_speed_and_delay_triggers (SPEED within 1 m/s, DELAY within 0.1 s); Mach: test_T5_ejection (AGL within 8 m); Closed-loop: test_REV05_agl_drogue_fires_at_its_altitude; every AGL channel in the mode suites within 8 m | ✅ |
+| PYR-MODE-06 | Pressure triggers wait out an unclean fit, 2 s at most | Mach: test_T5_ejection (5 kPa bay charge), test_T5_canopy_swing; Chain: test_T5_descent_glitch | ✅ |
 | PYR-SAFE-03 | Single fire per channel | Closed-loop: verified by fire_count | ✅ |
 | PYR-SAFE-04 | No fire before apogee | Closed-loop: drogue fires at/after apogee | ✅ |
 | FLT-LAUNCH-01 | Transition at >100 ft | Unit: test_FLT_LAUNCH_08/09; Integration: test_FLT_BOOT_01_all_states | ✅ |
@@ -52,17 +53,17 @@ Verify web interface behavior against mock server in 3 device modes.
 | GND-CAL-05 | LAUNCH reports the height reached | Integration: test_REV11_launch_row_reports_the_height_reached | ✅ |
 | FLT-LAUNCH-04 | Log LAUNCH event | Integration: test_DAT_04_events | ✅ |
 | FLT-LAUNCH-05 | Stop buzzer on launch | Integration: test_BUZ_07_03_lifecycle | ✅ |
-| FLT-APO-01 | Apogee when speed ≤ 0 for 60 ms | Integration: test_FLT_APO_01_detected; Unit: test_FLT_APO_01_detects_apogee; Chain: test_T3_coast_two_sample_glitch, test_T3_latency | ✅ |
+| FLT-APO-01 | Apogee on clean fits, rising for 60 ms, 1.0001 above the lowest | Chain: test_T5_apogee (1000 flights, 100 m to 9 km), test_T3_coast_two_sample_glitch, test_T3_latency; Unit: test_FLT_APO_01_detects_apogee; Integration: test_FLT_APO_01_detected | ✅ |
 | FLT-APO-02 | Transition to DESCENT | Integration: test_FLT_BOOT_01_all_states | ✅ |
 | FLT-APO-03 | Log APOGEE event | Integration: test_DAT_04_events | ✅ |
 | FLT-APO-04 | No apogee before armed | Integration: test_FLT_APO_04_no_apogee_before_armed | ✅ |
 | FLT-ASC-01 | Track max altitude | Integration: test_FLT_APO_01_detected (max_altitude > 0) | ✅ |
-| FLT-ASC-02 | Compute vertical speed | Integration: apogee detection depends on speed | ✅ |
-| FLT-ASC-03 | Detect thrust phase | Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
+| FLT-ASC-02 | Every speed from the fit | Chain: test_T4_pad_speed, test_T11_stalls_change_nothing, test_T5_through_the_clamp, test_T5_speed_and_delay_triggers | ✅ |
+| FLT-ASC-03 | Thrust from the fit's acceleration | Chain: test_T5_under_thrust (ends within 1 s of burnout, one change); Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
 | FLT-ASC-04 | Arm at <10 m/s | Closed-loop: pyros arm and fire in all flights | ✅ |
 | FLT-ASC-05 | Log ARMED event | Integration: test_DAT_04_events | ✅ |
 | FLT-ASC-06 | No arm above 10 m/s | Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
-| FLT-ASC-07 | No arming unless the peak speed passed 20 m/s | Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
+| FLT-ASC-07 | No arming unless the peak speed passed 10 m/s | Unit: test_FLT_ASC_07_arms_after_ten_metres_a_second; Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
 | FLT-LAND-01 | Stable <1m for 1s | Integration: test_FLT_BOOT_01_all_states reaches LANDED; Chain: test_T4_touchdown (within 3 s, under noise, on the pad's level and 5 m above), test_T11_landing_holds_a_second (the full second, on odd and even sample times) | ✅ |
 | FLT-LAND-02 | Speed <2 m/s | Integration: landing detected at correct time | ✅ |
 | FLT-LAND-03 | Altitude <30m | Integration: landing detected at correct time | ✅ |
@@ -76,7 +77,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-EMRG-02 | No bare descent-rate trigger | Closed-loop: test_FLT_EMRG_02_freefall_to_trigger_not_overridden | ✅ |
 | FLT-EMRG-03 | Not on the absence of a settled descent | Closed-loop: test_REV01_working_drogue_main_at_its_trigger; `main_forced` false in every mode suite | ✅ |
 | FLT-EMRG-04 | An emergency deployment is recorded | Closed-loop: test_REV16_forced_main_is_in_the_log; Hardware: `main_forced` on /api/status | ✅ |
-| FLT-BROWN-01 | Pad marker at 10 s PAD_IDLE | Integration: test_BRN_INT_01/02/05; Hardware: `pad.mkr` present on MK1A/B/C | ✅ |
+| FLT-BROWN-01 | Pad marker at 10 s PAD_IDLE, with σ | Integration: test_BRN_INT_01/02/05; Chain: test_T5_sigma; Brownout: test_BRN_MARK_01/02/03; Hardware: `pad.mkr` present on MK1A/B/C | ✅ |
 | FLT-BROWN-02 | Recover the ground reference, from medians since power-on | Brownout: test_BRN_01..08; Integration: test_BRN_INT_03/04; Chain: test_T1_rejoins_descent, test_T1_rejoins_ascent, test_T1_glitch_on_the_pad | ✅ |
 | FLT-BROWN-03 | A stationary board is never airborne | Brownout: test_BRN_06/07; Chain: test_T1_still_board_stays_cold | ✅ |
 | FLT-BROWN-04 | The marker is spent at landing | Chain: test_T1_marker_invalid_after_landing | ✅ |
@@ -179,6 +180,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | SNS-PRES-05 | Conversion read after its worst case | Hardware (MK1C, MK1B): pres_rejects 0 under HTTP load, 18 in 60 s without the timing | ✅ HW |
 | SNS-PRES-07 | A single outlier never reaches the filter | Chain: test_T2_pad_glitch_sweep, test_T2_coast_glitch, test_T2_median_timing | ✅ |
 | SNS-PRES-08 | Each sample stamped at its reading | Chain: test_T11_d1_stamp (the MS5607 stamp), test_T11_stalls_change_nothing (under the test HAL's model of the stamping); `hal_common.c` by inspection; bench check owed | ⚠️ |
+| SNS-PRES-09 | A quadratic fit over the last second, and whether it is clean | Chain: test_T5_fit_reference, test_T5_fit_noise, test_T5_clean, test_T5_sigma; the fit's cost on the RP2040 is a bench check owed | ✅ |
 | SNS-PRES-06 | Impossible readings discarded and counted | Hardware: pres_rejects on /api/status; the false launch they caused did not recur | ✅ HW |
 | SNS-ALT-01..03 | Altitude computation | Integration: max altitude within expected range | ✅ |
 | SNS-ALT-04 | Speed from the unclamped height | Chain: test_N26_apogee_above_8km, test_T3_coast_two_sample_glitch (a glitch's decay below the pad) | ✅ |
@@ -358,7 +360,7 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 196 |
+| ✅ Verified by a host, web or closed-loop test | 198 |
 | ⚠️ Not directly verified (needs a test or hardware) | 35 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 12 |

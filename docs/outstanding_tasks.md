@@ -168,15 +168,15 @@ ground bias, and the stall figure, where they used a different stall model.
 | Brownout recovery, booted as the hardware boots | never engages (N23) | engages | T1 |
 | Recovery on the pad with one glitch in its history | unreachable today (N23) | never resumes | T1 |
 | One plausible glitch on the pad | ≥11 kPa low declares a launch (N24) | no launch at any size | T2, T3 |
-| Speed noise on the pad (RMS) | 1.58 m/s | ≤ 0.3 m/s: done, 0.22 m/s | T4, T5 |
-| Touchdown to LANDED, by the stillness test | on the pad's level 1.9 s, because the zero clamp hides the noise there; 5 m above it, never within 400 s, so only the 60 s timeout lands it | ≤ 3 s, at any landing height: done, 1.6 s | T4, T5 |
-| Apogee after the true apogee | +0.56 s mean (+0.54 to +0.58) | never early; about +0.4 s | T5 |
+| Speed noise on the pad (RMS) | 1.58 m/s | ≤ 0.3 m/s: done, 0.22 m/s (T4), 0.19 m/s on the fit | T4, T5 |
+| Touchdown to LANDED, by the stillness test | on the pad's level 1.9 s, because the zero clamp hides the noise there; 5 m above it, never within 400 s, so only the 60 s timeout lands it | ≤ 3 s, at any landing height: done, 1.6 s (T4), 1.8 s on the fit | T4, T5 |
+| Apogee after the true apogee | +0.56 s mean (+0.54 to +0.58) | never early; about +0.4 s: done, +0.41 s, none early in 1000 flights to 9 km | T5 |
 | Ground pressure frozen at launch | reads 0.17 m (30 g) to 0.42 m (2 g) low | ≤ 0.1 m: done, 0.08 m | T7 |
 | Ground tracker after a >50 Pa step | frozen for good (N9) | re-seeds: done, within 5 s | T6 |
 | Sample timestamps | loop ms at the temperature read, 16 ms after the conversion, up to 127 ms after it through a stall; stalls raise the worst speed error at 100 m/s from 8.3 to 9.3 m/s | hardware timer at the pressure conversion: done (through stalls 6.5 m/s against 6.1) | T11 |
-| Fit-based speed and acceleration through flash stalls | worst −294 m/s and 441 m/s² with today's stamps (earlier experiments; T11 re-measures) | RMS 1.2 m/s and 3.5 m/s², stalls or not | T11 |
+| Fit-based speed and acceleration through flash stalls | worst −294 m/s and 441 m/s² with today's stamps (earlier experiments; T11 re-measures) | RMS 1.2 m/s and 3.5 m/s², stalls or not: speed done, 0.2 m/s RMS at 100 m/s, 0.8 m/s worst calm and 0.7 through stalls | T11, T5 |
 | A flight above 8 km AGL | apogee fired 14.9 s early, at the clamp (N26) | apogee at the real apogee: done | T3 |
-| Supersonic flight with a static-port error | a port error that makes the boost read as a descent fires the low-drag flight's drogue 39 s before apogee, at Mach 1.27 | no drogue before the true apogee, on every M0 profile | M1 |
+| Supersonic flight with a static-port error | a port error that makes the boost read as a descent fired the low-drag flight's drogue 39 s before apogee, at Mach 1.27. On T5's fit every drogue fires 0.38-0.50 s after apogee, but only because this port model's error spoils every fit and keeps the speed out of the arming band | no drogue before the true apogee, on every M0 profile, by a lockout | M1 |
 | A sensor stuck or lost in flight | a stuck value may read as apogee | never causes a deployment | M2 |
 | Real flights replayable offline | no (raw pressure not logged) | yes | T8 |
 | MS5607 sample rate | 50 Hz | ~90 Hz | T9 |
@@ -685,6 +685,37 @@ too.
 
 ### T5. One estimator: a fit to the pressure
 
+**Done 2026-09-26** (DD-048), except its bench checks (G4): the fit's cost and
+`stage_max_us[2]`, and `fit_sigma_mpa` on each board. Before the change the
+new tests failed as they should. Apogee came +0.21 s after the drop (now
++0.004 s). SPEED fired 4.7 m/s past its setting (now 0.98) and DELAY 0.71 s
+late (now 0.048). The thrust flag changed 120-185 times per ascent (now once).
+A 5 kPa bay charge fired the main at apogee (now within 0.6 m). Differences
+from the plan:
+- `test_T5_pad_speed` and `test_T5_touchdown` were already met by T4
+  (`test_T4_pad_speed`, `test_T4_touchdown`), which now run on the fit: 0.19
+  m/s, and 1.8 s.
+- `test_T5_through_the_clamp` and `test_T5_canopy_swing` passed on the old
+  code (T3 took the unclamped speed), so they are guards.
+- `test_T5_under_thrust` allows 1 s, not 100 ms: a one-second fit's
+  acceleration crosses zero 0.56-0.84 s after burnout (DD-048).
+- `ARM_SPEED_CMS` stays at 10 m/s, now of true speed. At 20 m/s the integration
+  suite's A8-3, doing 19 m/s at 100 ft, never armed. FLT-ASC-07 read 20 m/s.
+- The first wiring broke T3's two-glitch tests. A burst the median lets
+  through spoils every fit for a second, longer than the launch hold, so the
+  launch reads the two-point speed while the fit is unclean. The same burst
+  under the drogue had always fired the main early, by up to 236 m, before T5
+  and through DD-029's lead. The new `test_T5_descent_glitch` found it. The
+  2 s wait now covers any unclean run (PYR-MODE-06), not only one after a
+  charge.
+- The ejection and swing tests fly from a 15 °C sea-level pad: at the 10 °C
+  pad every AGL main was 11 m low on the ISA formula's temperature error,
+  whatever the estimator did.
+- New: `test_T5_sigma` (σ, the marker's version 2, a recovered flight's σ),
+  `test_FLT_ASC_07_arms_after_ten_metres_a_second`, and `fit_sigma_mpa` on
+  `/api/status` for the bench.
+- Four existing tests were adapted; DD-048 lists why.
+
 **Why:**
 - Speed is recomputed in three places (pad, ascent, descent) as the
   difference of two filtered altitudes 20 ms apart. It is noisy, and apogee
@@ -1016,6 +1047,7 @@ resolution doc.
 | T1 | Recovery reads samples on the hardware | a board with a marker, booted on battery with USB plugged in afterwards, reads "cold: at ground level" | a battery |
 | T1 | Brownout recovery on the real path | a power cut during a chamber descent rejoins in FALLING; a power cut on the pad stays cold | a battery, the chamber, telemetry over serial or radio (USB forces a cold boot, and a reset ends test mode) |
 | N11 | LUA and MOCK rows on the flight clock | in test mode, a script that calls `log()` once a second through a chamber flight writes LUA rows whose times fall among the sample rows', not near the board's uptime | test mode, the chamber, MK1C with Lua |
+| T5 | The fit's cost, and the pad's σ, on each board | `stage_max_us[2]` no more than 500 µs above its value before T5, 0 loop overruns, with Lua running on MK1C; `fit_sigma_mpa` between 1200 and 5000, and on the BMP280 (MK1A) recorded, since its noise is not the MS5607's | G4's flash |
 | N20 | No file served while the log is written | in test mode, once a chamber pump-down declares a launch, `GET /www/app.js` answers 409 and `/api/status` 200; after LANDED the log reads back whole | test mode, the chamber |
 | — | The arming path independent of software | with the mechanical disconnect in, a commanded ground-test FIRE puts no current through a dummy load, on each board | a dummy load and a meter. The Mach prompt asks for this path; the operator narrative uses a mechanical disconnect, but no document says what it breaks |
 

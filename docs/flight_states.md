@@ -72,7 +72,7 @@ stateDiagram-v2
 
     PAD_IDLE --> ASCENT: SEVT_LAUNCH<br/>alt > 100 ft AND pad speed > 5 m/s
     ASCENT --> ASCENT: SEVT_ARMED<br/>self-loop, arms the pyros
-    ASCENT --> FALLING: SEVT_APOGEE<br/>armed AND speed <= 0
+    ASCENT --> FALLING: SEVT_APOGEE<br/>armed AND clean fits rising 60 ms<br/>AND p >= 1.0001 p_min
 
     FALLING --> DROGUE_DESCENT: SEVT_DROGUE<br/>rate steady in 10-35 m/s for 1.2 s
     FALLING --> CHUTE_DESCENT: SEVT_CHUTE<br/>rate steady at <= 10 m/s for 1.2 s
@@ -117,7 +117,7 @@ Complete. `transitions[]` has seventeen rows and this is all of them.
 | BOOT_CALIBRATE | SEVT_FAULT | FAULT | `action_fault` | `now - boot_timer >= 10000` |
 | PAD_IDLE | SEVT_LAUNCH | ASCENT | `action_launch` | `alt > 3048 cm && pad_speed > 500 cm/s` |
 | ASCENT | SEVT_ARMED | **ASCENT** | `action_armed` | see arming gate below |
-| ASCENT | SEVT_APOGEE | FALLING | `action_apogee` | `pyros_armed && mach gate clear && speed <= 0` |
+| ASCENT | SEVT_APOGEE | FALLING | `action_apogee` | `pyros_armed && mach gate clear && fit_clean && fit_pdot > 0`, held 60 ms, and `fit_pa >= 1.0001 * p_min_pa` |
 | FALLING | SEVT_DROGUE | DROGUE_DESCENT | — | rate settled in the drogue band |
 | FALLING | SEVT_CHUTE | CHUTE_DESCENT | — | rate settled in the main band |
 | DROGUE_DESCENT | SEVT_CHUTE | CHUTE_DESCENT | — | rate settled in the main band |
@@ -234,8 +234,12 @@ gate, 1 Hz continuity resample, then a sample.
 - **Ground reference:** the pressure layer's 5-second rolling mean of the
   filtered pressure, frozen at launch (GND-CAL-01..04).
 - **Launch:** `altitude > 3048 cm && pad_speed_cms > 500`, both on the same
-  filtered sample, **no debounce**. T+0 is backdated to the first sample above
-  50 cm (`pad_rise_ms`), and the LAUNCH row carries the altitude at detection.
+  sample, held for 100 ms of sample time (FLT-LAUNCH-07). The pad speed is the
+  fit's while it is clean and the two-point speed of the filtered height while
+  it is not: a burst the median lets through spoils every fit for a second,
+  and the two-point speed spikes only for the burst. T+0 is backdated to the
+  first sample above 50 cm (`pad_rise_ms`), and the LAUNCH row carries the
+  altitude at detection.
 - **Pad marker:** after 10 s, written by `flight_flash_service()` inside the
   flash window -- never from the detector, which runs with the window shut.
   Not on USB; the 10 s restart when the host goes.
@@ -243,17 +247,21 @@ gate, 1 Hz continuity resample, then a sample.
   nothing, and the launch test is never raised.
 
 ### ASCENT (4)
-Computes speed, tracks `under_thrust` and `max_speed_cms` and `max_altitude`.
+Takes the speed from the sample's fit (DD-048), `under_thrust` from the fit's
+acceleration, and tracks `max_speed_cms`, `max_altitude` and the peak: the
+lowest pressure a clean fit showed (`p_min_pa`, `peak_height_cm`).
 
 **Arming gate** (`arming_gate_met`):
 ```
 !pyros_armed && max_speed_cms >= 1000 && vertical_speed_cms < 1000 && vertical_speed_cms >= 0
 ```
-So: peak filtered speed reached 10 m/s, current speed has fallen back below
-10 m/s, and is still non-negative. A narrow window late in coast.
+So: peak speed reached 10 m/s, current speed has fallen back below 10 m/s,
+and is still non-negative. A narrow window late in coast.
 
-**Apogee:** one sample with `vertical_speed_cms <= 0` while armed. No
-hysteresis, no confirmation, no minimum time since launch.
+**Apogee:** clean fits showing the pressure rising (`fit_pdot > 0`) for 60 ms
+of sample time, and the fitted pressure at least 1.0001 times `p_min_pa`:
+0.6-0.9 m below the peak, about 0.4 s after it. `apogee_time` is dated back
+to where the fit's rate crossed zero, which is what DELAY counts from.
 
 Arming is checked **first and returns immediately**, so arming and apogee can
 never happen on the same tick — the earliest apogee is one sample (~20 ms)
@@ -266,9 +274,12 @@ tested), then runs `try_fire_pyros`, `check_pyro_fault`,
 exits: FALLING to either canopy phase, DROGUE_DESCENT to the main phase or back
 to FALLING, CHUTE_DESCENT to nothing but LANDED.
 
-AGL and FALLEN triggers compare the altitude corrected for the filter's lag
-(`altitude + speed x 500 ms` on the way down), so they fire at the altitude
-they name rather than ~56 m low on a ballistic descent (DD-029).
+AGL and FALLEN triggers compare the fit's height, which does not lag; FALLEN
+measures from the peak. SPEED compares the fit's speed (PYR-MODE-05). The three
+act on a clean fit, and wait out an unclean run for at most 2 s, restarting at
+each charge (PYR-MODE-06): a charge pressurising the bay, or two bad readings
+in a row, reads for a moment as hundreds of metres lower. A channel whose
+trigger was met while the other's pulse held the common path stays due.
 
 Landing needs all three for a continuous 1000 ms:
 `|Δalt| < 100 cm`, `|speed| < 200 cm/s`, `altitude < 3000 cm`.
@@ -489,9 +500,7 @@ hold for 100 ms and 60 ms of sample time (DD-042).
 
 ## What is not in the machine
 
-- No filter on speed. It is a two-point difference of the filtered height,
-  about 0.2 m/s RMS on the pad since the filter keeps fractions (DD-044); T5
-  replaces it with a fit.
+- No filter on speed beyond the fit (DD-048): 0.19 m/s RMS on the pad.
 - No plausibility check on a sample beyond the sensor's own range (DD-036)
   and the median of three (DD-040): two readings in a row inside 1-120 kPa
   are believed, however far they are from the last.

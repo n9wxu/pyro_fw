@@ -196,7 +196,7 @@ keeps it for. `main_forced` is now read.
 | Item | Why |
 |---|---|
 | **REV-03**: MK1C cannot fire | The F0–F10 firing sequence is unimplemented hardware bring-up, out of scope. The firmware now reports the refusal honestly. |
-| **REV-05**: SPEED and DELAY lag | A SPEED trigger compares a filtered speed that also trails by about τ; DELAY counts from an apogee declared a little late. Neither is a height, and the review asked only about AGL. Compensating SPEED needs an acceleration estimate from a noisy two-point speed. |
+| **REV-05**: SPEED and DELAY lag | **Fixed 2026-09-26 (T5, DD-048).** SPEED compares the pressure fit's speed and fires within 1 m/s of its setting (was 4.7 m/s past it); DELAY counts from where the fit's rate crossed zero and fires within 0.05 s of the true apogee plus its delay (was 0.71 s late). `test_T5_speed_and_delay_triggers`. |
 | **REV-10**: numbered logs | Conflict C6: creating a new file at launch commits a directory entry, a flash write in the launch-shock window. |
 | **REV-13**: which threshold | Conflict C2: yours to decide. |
 | **REV-18**: in-flight refusal on hardware | The predicate is unit-tested, but a bench board cannot be put in flight to exercise the route. |

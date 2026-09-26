@@ -36,7 +36,7 @@ FALLING / DROGUE_DESCENT / CHUTE_DESCENT → LANDED on SEVT_LANDING
 
 **PAD_IDLE → ASCENT:** Filtered altitude above 100 ft with vertical speed above 5 m/s, held together for 100 ms (FLT-LAUNCH-01, FLT-LAUNCH-07). T+0 is backdated to the first sample above 50 cm (FLT-LAUNCH-03).
 
-**ASCENT → FALLING:** Vertical speed ≤ 0 for 60 ms while the pyros are armed and the Mach gate is clear (FLT-APO-01, FLT-MACH-01). The pyros arm once the peak speed has passed 10 m/s filtered (about 20 m/s true) and the speed has fallen back below it (DD-017).
+**ASCENT → FALLING:** Clean fits show the pressure rising for 60 ms, and the fitted pressure has risen to 1.0001 times the lowest a clean fit showed, while the pyros are armed and the Mach gate is clear (FLT-APO-01, FLT-MACH-01, DD-048). The pyros arm once the peak speed has passed 10 m/s and the speed has fallen back below it (DD-017).
 
 **Descent:** the phase is read from the descent rate settling in a band, never from a firing command (DD-023).
 
@@ -128,8 +128,10 @@ Each reading is stamped by the HAL from the hardware timer at the moment it desc
 
 Altitude is the hypsometric formula against the ground reference (SNS-ALT-01), clamped to 0-8000 m (SNS-ALT-02, SNS-ALT-03). The ground reference is a 5 s mean of the filtered pressure. Launch freezes it to the part of that mean from before T+0 (GND-CAL-01..05, GND-CAL-07).
 
+The filter gives what is reported and logged. The detectors read a least-squares quadratic fitted at every sample through the median's output over the last second, against each sample's own time (`src/pressure_fit.c`, SNS-PRES-09, DD-048). Evaluated at the newest sample, it has no lag on a constant acceleration. Its pressure, rate and acceleration become a height, speed and acceleration through the altitude formula's slope at the fitted pressure. A fit is clean when its residuals are what the sensor's noise explains, σ measured on the pad.
+
 ### Altitude Limitations
-Altitude is clamped at 8000 m (SNS-ALT-02) and at 0 (SNS-ALT-03) where it is reported. Speed is taken from the unclamped height (SNS-ALT-04), so neither clamp reads as a stopped rocket.
+Altitude is clamped at 8000 m (SNS-ALT-02) and at 0 (SNS-ALT-03) where it is reported. Speed and the trigger heights come from the fit, unclamped (SNS-ALT-04), so neither clamp reads as a stopped rocket.
 
 ### Simulation
 The `sim/` directory contains a WASM-compilable flight computer black box and a shared physics engine. See `sim/README.md` for architecture and integration guide.

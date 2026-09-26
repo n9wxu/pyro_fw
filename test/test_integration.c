@@ -687,30 +687,34 @@ void test_FLT_APO_04_no_apogee_before_armed(void) {
     TEST_ASSERT_TRUE_MESSAGE(ctx.armed_time < ctx.apogee_time, msg);
 }
 
-/* [FLT-ASC-03] ctx.under_thrust must be set while speed is increasing
- * during the ASCENT burn phase.
+/* [FLT-ASC-03] This A8-3 burns out at 0.73 s, before the launch is declared
+ * at 100 ft: under_thrust may linger into ASCENT for the fit's lag, and never
+ * past a second after burnout. The chain suite's test_T5_under_thrust flies
+ * burns that outlast the detector.
  * [FLT-ASC-06] Pyros must not arm while vertical_speed_cms > 1000 (10 m/s).
  * arming_gate_met() requires vertical_speed_cms < 1000 AND >= 0. */
+#define A8_BURNOUT_MS 730u
+
 void test_FLT_ASC_03_06_thrust_and_arming(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     reset_sim();
 
-    bool saw_thrust = false;
+    uint32_t thrust_late = 0;
     bool armed_while_fast = false;
     float end_s = sim_data[sim_count - 1].time_s + 2.0f;
     uint32_t end_ms = (uint32_t)(end_s * 1000.0f);
 
     for (uint32_t t = 0; t <= end_ms; t++) {
         app_tick(t);
-        /* [FLT-ASC-03] under_thrust: set when speed increases tick-over-tick */
-        if (ctx.current_state == ASCENT && ctx.under_thrust)
-            saw_thrust = true;
+        if (ctx.current_state == ASCENT && ctx.under_thrust && ctx.last_sample > A8_BURNOUT_MS + 1000u)
+            thrust_late = ctx.last_sample;
         /* [FLT-ASC-06] arming gate must require speed < 10 m/s */
         if (ctx.pyros_armed && ctx.vertical_speed_cms > 1000)
             armed_while_fast = true;
     }
 
-    TEST_ASSERT_TRUE_MESSAGE(saw_thrust, "under_thrust never set during ASCENT (FLT-ASC-03)");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, thrust_late, "under_thrust a second after burnout (FLT-ASC-03)");
+    TEST_ASSERT_TRUE_MESSAGE(ctx.pyros_armed, "the flight armed");
     TEST_ASSERT_FALSE_MESSAGE(armed_while_fast, "Pyros armed while speed > 10 m/s (FLT-ASC-06)");
 }
 
@@ -1100,7 +1104,7 @@ void test_USB_INT_03_test_mode_writes_the_marker_on_usb(void) {
 void test_USB_INT_02_no_flight_recovery_on_usb(void) {
     reset_sim();
     pad_marker_t m;
-    pad_marker_fill(&m, 101325);
+    pad_marker_fill(&m, 101325, 1200u);
     TEST_ASSERT_EQUAL(0, hal_fs_write_file(PAD_MARKER_PATH, (const char *)&m, (int)sizeof(m)));
     mock_reset_cause = RESET_POWER_EVENT;
     ctx.current_state = BOOT_SETTLE;
@@ -1129,7 +1133,7 @@ void test_BRN_INT_03_descending_recovery_rejoins_flight(void) {
     reset_sim();
     /* A marker recorded at sea-level ground pressure... */
     pad_marker_t m;
-    pad_marker_fill(&m, 101325);
+    pad_marker_fill(&m, 101325, 1200u);
     TEST_ASSERT_EQUAL(0, hal_fs_write_file(PAD_MARKER_PATH, (const char *)&m, (int)sizeof(m)));
 
     /* ...and a board that wakes up 600 m above it, coming down. */
@@ -1174,7 +1178,7 @@ void test_BRN_INT_03_descending_recovery_rejoins_flight(void) {
 void test_BRN_INT_04_pad_power_on_calibrates_normally(void) {
     reset_sim();
     pad_marker_t m;
-    pad_marker_fill(&m, 101325);
+    pad_marker_fill(&m, 101325, 1200u);
     hal_fs_write_file(PAD_MARKER_PATH, (const char *)&m, (int)sizeof(m));
 
     mock_reset_cause = RESET_POWER_EVENT;

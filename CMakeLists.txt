@@ -315,6 +315,7 @@ add_executable(pyro_fw_c
     src/flight_states.c
     src/brownout.c
     src/pressure_processing.c
+    src/pressure_fit.c
     src/ground_test.c
     src/config.c
     src/telemetry_formatter.c
@@ -508,6 +509,7 @@ add_custom_target(host_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
@@ -535,6 +537,7 @@ add_custom_target(integration_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
@@ -561,6 +564,7 @@ add_custom_target(closedloop_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
@@ -589,6 +593,7 @@ add_custom_target(pressure_chain_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
@@ -618,6 +623,7 @@ add_custom_target(mach_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
@@ -677,6 +683,7 @@ add_custom_target(sim
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
@@ -823,6 +830,7 @@ add_custom_target(buzzer_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${unity_SOURCE_DIR}/src/unity.c
                -lm
@@ -861,6 +869,7 @@ add_custom_target(config_persistence_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c

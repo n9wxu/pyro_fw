@@ -26,6 +26,7 @@
 #include "pressure_processing.h"
 #include "board_harness.h"
 #include "../sim/replay.h"
+#include "../src/pressure_fit.h"
 #include "../src/ms5607_driver.h"
 
 extern reset_cause_t mock_reset_cause; /* test/hal_test.c */
@@ -77,6 +78,10 @@ static void truth_step(truth_t *tr, const flight_t *f, float t_flight_s) {
 
 typedef struct {
     uint32_t ignition_ms, launch_ms, apogee_true_ms, apogee_ms, touchdown_ms, landed_ms;
+    uint32_t apogee_sample_ms; /* the time of the sample apogee was declared on */
+    uint32_t drop_ms;          /* when the true pressure first stood 1.0001 above its minimum */
+    uint32_t pyro_ms[3];       /* when each channel fired, and the truth then */
+    float pyro_v[3], pyro_h[3];
     int32_t ground_frozen_pa;
     double speed_err_max, speed_err_sq;
     int speed_err_n;
@@ -89,6 +94,15 @@ static struct {
     int samples;
 } glitch;
 
+/* Options for the next fly(), cleared by each fly(). */
+static struct {
+    bool channels; /* the four settings below replace the defaults */
+    uint8_t p1_mode, p2_mode;
+    uint16_t p1_value, p2_value;
+    bool stop_after_apogee; /* 2 s after the true apogee */
+    void (*on_sample)(const truth_t *tr);
+} fly_opts;
+
 /* A flight from power-on to LANDED, or to until_ms. */
 static result_t fly(const flight_t *f, uint32_t seed, uint32_t pad_s, uint32_t until_ms, bool stalls) {
     result_t r;
@@ -98,9 +112,19 @@ static result_t fly(const flight_t *f, uint32_t seed, uint32_t pad_s, uint32_t u
     uint32_t t = 0;
     uint32_t pad = run_to_pad(&t);
     r.ignition_ms = pad + pad_s * 1000u;
+    if (fly_opts.channels) {
+        ctx.config.pyro1_mode = fly_opts.p1_mode;
+        ctx.config.pyro1_value = fly_opts.p1_value;
+        ctx.config.pyro2_mode = fly_opts.p2_mode;
+        ctx.config.pyro2_value = fly_opts.p2_value;
+    }
     truth_t tr = {0};
     uint32_t last_sample = ctx.last_sample;
     bool glitched = false;
+    float p_min = PAD_PA;
+    /* The truth's speed by the millisecond, to set a sample's speed against
+     * the truth at the sample's own time, not at the later tick that reads it. */
+    static float v_at[512];
     for (; t < until_ms; t++) {
         float tf = ((float)t - (float)r.ignition_ms) / 1000.0f;
         if (glitch.samples > 0 && !glitched && tf >= glitch.at_s) {
@@ -110,34 +134,57 @@ static result_t fly(const flight_t *f, uint32_t seed, uint32_t pad_s, uint32_t u
         }
         float v_before = tr.v;
         truth_step(&tr, f, tf);
+        v_at[t & 511u] = tr.v;
         if (!tr.apogee && tf > f->burn_s && v_before > 0.0f && tr.v <= 0.0f) {
             tr.apogee = true;
             r.apogee_true_ms = t;
         }
         if (tr.down && r.touchdown_ms == 0)
             r.touchdown_ms = t;
-        mock_pressure.pressure_pa = isa_pa(tr.h);
+        float p = isa_pa(tr.h);
+        if (!tr.apogee || p < p_min)
+            p_min = p;
+        else if (r.drop_ms == 0 && p >= 1.0001f * p_min)
+            r.drop_ms = t;
+        mock_pressure.pressure_pa = p;
         tick(t);
+        const bool fired[3] = {false, ctx.pyro1_fired, ctx.pyro2_fired};
+        for (int ch = 1; ch <= 2; ch++) {
+            if (fired[ch] && r.pyro_ms[ch] == 0) {
+                r.pyro_ms[ch] = t;
+                r.pyro_v[ch] = tr.v;
+                r.pyro_h[ch] = tr.h;
+            }
+        }
         if (ctx.current_state == ASCENT && r.launch_ms == 0) {
             r.launch_ms = t;
             r.ground_frozen_pa = ctx.ground_pressure;
         }
-        if (ctx.current_state == ASCENT && ctx.last_sample != last_sample && tr.v >= 90.0f && tr.v <= 110.0f) {
-            double e = fabs(ctx.vertical_speed_cms / 100.0 - tr.v);
+        float v_sample = v_at[ctx.last_sample & 511u];
+        if (ctx.current_state == ASCENT && ctx.last_sample != last_sample && t - ctx.last_sample < 512u &&
+            v_sample >= 90.0f && v_sample <= 110.0f) {
+            double e = fabs(ctx.vertical_speed_cms / 100.0 - v_sample);
             r.speed_err_sq += e * e;
             r.speed_err_n++;
             if (e > r.speed_err_max)
                 r.speed_err_max = e;
         }
+        if (fly_opts.on_sample && ctx.last_sample != last_sample)
+            fly_opts.on_sample(&tr);
         last_sample = ctx.last_sample;
-        if (ctx.apogee_detected && r.apogee_ms == 0)
+        if (ctx.apogee_detected && r.apogee_ms == 0) {
             r.apogee_ms = t;
+            r.apogee_sample_ms = ctx.last_sample;
+        }
         if (ctx.current_state == LANDED) {
             r.landed_ms = t;
             break;
         }
+        if (fly_opts.stop_after_apogee && r.apogee_true_ms != 0 && t > r.apogee_true_ms + 2000u)
+            break;
     }
     memset(&glitch, 0, sizeof(glitch));
+    memset(&fly_opts, 0, sizeof(fly_opts));
     return r;
 }
 
@@ -385,7 +432,7 @@ void test_T0_baseline_pad_glitch(void) {
 void test_T0_baseline_recovery_unprimed(void) {
     boot_like_hardware(3);
     pad_marker_t m;
-    pad_marker_fill(&m, (int32_t)PAD_PA);
+    pad_marker_fill(&m, (int32_t)PAD_PA, 1200u);
     TEST_ASSERT_EQUAL(0, hal_fs_write_file(PAD_MARKER_PATH, (const char *)&m, (int)sizeof(m)));
     mock_reset_cause = RESET_POWER_EVENT;
     for (uint32_t t = 0; t < 8000; t++) {
@@ -1233,6 +1280,15 @@ static decisions_t decisions(bool lag) {
         if (ctx.current_state != last_state || mock_pyro.fire_count != fires) {
             d.at[d.n++] = ctx.last_sample;
             last_state = ctx.current_state;
+            /* The igniter burns through, as a real one does. One that did
+             * not would be retried after a grace on the loop clock, by design
+             * [PYR-REFIRE-01], and that retry is not a decision on samples. */
+            if (mock_pyro.fire_count != fires) {
+                bool *good = mock_pyro.last_fire_channel == 1 ? &mock_pyro.p1_good : &mock_pyro.p2_good;
+                bool *open = mock_pyro.last_fire_channel == 1 ? &mock_pyro.p1_open : &mock_pyro.p2_open;
+                *good = false;
+                *open = true;
+            }
             fires = mock_pyro.fire_count;
         }
         /* A row added this tick belongs to the sample just taken. */
@@ -1403,6 +1459,375 @@ void test_T8_replay(void) {
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, decided.diverged_ms, msg);
 }
 
+/* ── T5: one estimator, a fit to the pressure ─────────────────────── */
+
+/* The endpoint of a least-squares quadratic, in double precision: the
+ * reference the float fit is held to. */
+static void ref_fit(const uint32_t *t_us, const int32_t *p, int n, double *p0, double *d1, double *d2) {
+    double S[5] = {0}, T[3] = {0};
+    for (int i = 0; i < n; i++) {
+        double t = (double)(int32_t)(t_us[i] - t_us[n - 1]) / 1e6, y = (double)p[i], tk = 1.0;
+        for (int k = 0; k < 5; k++) {
+            S[k] += tk;
+            if (k < 3)
+                T[k] += y * tk;
+            tk *= t;
+        }
+    }
+    double A[3][4] = {{S[0], S[1], S[2], T[0]}, {S[1], S[2], S[3], T[1]}, {S[2], S[3], S[4], T[2]}};
+    for (int c = 0; c < 3; c++)
+        for (int r = 0; r < 3; r++)
+            if (r != c) {
+                double f = A[r][c] / A[c][c];
+                for (int k = c; k < 4; k++)
+                    A[r][k] -= f * A[c][k];
+            }
+    *p0 = A[0][3] / A[0][0];
+    *d1 = A[1][3] / A[1][1];
+    *d2 = 2.0 * A[2][3] / A[2][2];
+}
+
+/* 20 ms apart with up to 3 ms of jitter, a 60 ms stall, and a start that
+ * carries the microsecond clock across its wrap (T11's wrap test). */
+static int jittered_times(uint32_t *t_us, uint32_t start, uint32_t seed) {
+    int n = 0;
+    uint32_t t = start;
+    for (int i = 0; i < 52 && n < 50; i++) {
+        seed = seed * 1103515245u + 12345u;
+        t += 20000u + (seed >> 16) % 6000u - 3000u;
+        if (i == 20)
+            continue; /* the stall's missing sample */
+        t_us[n++] = t;
+    }
+    return n;
+}
+
+void test_T5_fit_reference(void) {
+    uint32_t t_us[50];
+    int32_t p[50];
+    for (uint32_t trial = 0; trial < 200; trial++) {
+        uint32_t start = trial < 100 ? 1000000u : 0xFFFFFFFFu - 400000u;
+        int n = jittered_times(t_us, start, trial + 1);
+        double b = -3000.0 + 30.0 * trial, c = 400.0 - 4.0 * trial;
+        for (int i = 0; i < n; i++) {
+            double t = (double)(int32_t)(t_us[i] - t_us[n - 1]) / 1e6;
+            p[i] = (int32_t)lround(90000.0 + b * t + c * t * t);
+        }
+        double rp, r1, r2;
+        ref_fit(t_us, p, n, &rp, &r1, &r2);
+        pfit_t f = pfit_quadratic(t_us, p, n);
+        char msg[128];
+        snprintf(msg, sizeof(msg), "trial %u: p %.3f/%.3f pdot %.3f/%.3f pddot %.3f/%.3f", (unsigned)trial, f.p, rp,
+                 f.pdot, r1, f.pddot, r2);
+        TEST_ASSERT_TRUE_MESSAGE(f.valid && f.n == n, msg);
+        TEST_ASSERT_TRUE_MESSAGE(fabs(f.p - rp) < 0.05 && fabs(f.pdot - r1) < 0.1 && fabs(f.pddot - r2) < 0.5, msg);
+    }
+}
+
+/* 50 samples 20 ms apart, noise sigma: the estimates' spread matches what
+ * the fit's coefficients predict, sigma times the root of their squares. */
+void test_T5_fit_noise(void) {
+    uint32_t t_us[50];
+    int32_t p[50];
+    for (int i = 0; i < 50; i++)
+        t_us[i] = 1000000u + 20000u * (uint32_t)i;
+    /* The prediction, from the reference fit's response to a unit impulse. */
+    double c1 = 0.0, c2 = 0.0;
+    for (int k = 0; k < 50; k++) {
+        for (int i = 0; i < 50; i++)
+            p[i] = i == k ? 1000000 : 0;
+        double rp, r1, r2;
+        ref_fit(t_us, p, 50, &rp, &r1, &r2);
+        c1 += (r1 / 1e6) * (r1 / 1e6);
+        c2 += (r2 / 1e6) * (r2 / 1e6);
+    }
+    const double sigma = SENSOR_RMS_PA;
+    double want1 = sigma * sqrt(c1), want2 = sigma * sqrt(c2);
+    double sq1 = 0.0, sq2 = 0.0;
+    uint32_t rng = 99;
+    const int trials = 4000;
+    for (int trial = 0; trial < trials; trial++) {
+        for (int i = 0; i < 50; i++) {
+            rng = rng * 1103515245u + 12345u;
+            double u1 = ((rng >> 8) + 0.5) / 16777216.0;
+            rng = rng * 1103515245u + 12345u;
+            double u2 = ((rng >> 8) + 0.5) / 16777216.0;
+            double g = sqrt(-2.0 * log(u1)) * cos(6.283185307 * u2);
+            /* Scaled up so whole pascals do not add their own quantisation. */
+            p[i] = (int32_t)lround(100000.0 + 100.0 * sigma * g);
+        }
+        pfit_t f = pfit_quadratic(t_us, p, 50);
+        sq1 += (f.pdot / 100.0) * (f.pdot / 100.0);
+        sq2 += (f.pddot / 100.0) * (f.pddot / 100.0);
+    }
+    double got1 = sqrt(sq1 / trials), got2 = sqrt(sq2 / trials);
+    printf("  fit noise at 1.2 Pa: pdot %.2f Pa/s (predicted %.2f), pddot %.2f Pa/s^2 (predicted %.2f)\n", got1, want1,
+           got2, want2);
+    TEST_ASSERT_TRUE(fabs(got1 - want1) <= 0.1 * want1);
+    TEST_ASSERT_TRUE(fabs(got2 - want2) <= 0.1 * want2);
+}
+
+void test_T5_clean(void) {
+    int32_t series[200];
+    uint32_t times[200];
+    uint32_t rng = 5;
+    for (int i = 0; i < 200; i++) {
+        rng = rng * 1103515245u + 12345u;
+        double u1 = ((rng >> 8) + 0.5) / 16777216.0;
+        rng = rng * 1103515245u + 12345u;
+        double u2 = ((rng >> 8) + 0.5) / 16777216.0;
+        double g = sqrt(-2.0 * log(u1)) * cos(6.283185307 * u2);
+        times[i] = 1000000u + 20000u * (uint32_t)i;
+        series[i] = (int32_t)lround(100000.0 - 0.5 * i + SENSOR_RMS_PA * g) + (i >= 100 ? 12 : 0); /* a 10 sigma step */
+    }
+    int unclean_before = 0, clean_across = 0, unclean_after = 0;
+    for (int end = 49; end < 200; end++) {
+        pfit_t f = pfit_quadratic(times + end - 49, series + end - 49, 50);
+        bool clean = pfit_clean(&f, SENSOR_RMS_PA);
+        if (end < 100)
+            unclean_before += !clean;
+        else if (end - 49 < 100) /* the window holds samples from both sides */
+            clean_across += clean;
+        else
+            unclean_after += !clean;
+    }
+    char msg[96];
+    snprintf(msg, sizeof(msg), "unclean before the step %d, clean across it %d, unclean after %d", unclean_before,
+             clean_across, unclean_after);
+    TEST_ASSERT_TRUE_MESSAGE(unclean_before <= 2 && clean_across == 0 && unclean_after <= 2, msg);
+}
+
+/* ── T5: the detectors on the fit ─────────────────────────────────── */
+
+/* σ is the fit's residual noise on the pad, floored at the datasheet's figure
+ * and capped, and a brownout brings it back from the marker [FLT-BROWN-02]. */
+void test_T5_sigma(void) {
+    const struct {
+        float noise, lo, hi;
+    } cases[] = {
+        /* The median leaves 0.67 of the noise: under the floor. */
+        {SENSOR_RMS_PA, PP_SIGMA_FLOOR_PA, PP_SIGMA_FLOOR_PA},
+        {3.0f, 1.7f, 2.4f},
+        {12.0f, PP_SIGMA_CEIL_PA, PP_SIGMA_CEIL_PA},
+    };
+    for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        boot_like_hardware(4);
+        mock_noise_rms_pa = cases[i].noise;
+        uint32_t t = 0;
+        run_to_pad(&t);
+        for (uint32_t end = t + 12000u; t < end; t++)
+            tick(t);
+        float s = pp_sigma_pa();
+        pad_marker_t m;
+        memset(&m, 0, sizeof(m));
+        (void)hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m));
+        char msg[96];
+        snprintf(msg, sizeof(msg), "%.1f Pa of noise: sigma %.2f Pa, marker %.2f Pa", (double)cases[i].noise,
+                 (double)s, m.sigma_mpa / 1000.0);
+        TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
+        TEST_ASSERT_TRUE_MESSAGE(s >= cases[i].lo - 1e-3f && s <= cases[i].hi + 1e-3f, msg);
+        TEST_ASSERT_TRUE_MESSAGE(pad_marker_valid(&m) && fabsf(m.sigma_mpa / 1000.0f - s) <= 0.1f * s, msg);
+    }
+
+    boot_like_hardware(5);
+    pad_marker_t m;
+    pad_marker_fill(&m, (int32_t)PAD_PA, 2500u);
+    TEST_ASSERT_EQUAL(0, hal_fs_write_file(PAD_MARKER_PATH, (const char *)&m, (int)sizeof(m)));
+    mock_reset_cause = RESET_POWER_EVENT;
+    uint32_t t = 0;
+    for (; t < 8000u && (booting() || t == 0); t++) {
+        mock_pressure.pressure_pa = isa_pa(600.0f - 20.0f * (float)t / 1000.0f);
+        tick(t);
+    }
+    TEST_ASSERT_EQUAL_MESSAGE(RECOVER_DESCENT, ctx.recovery, "recovered in descent");
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 2.5f, pp_sigma_pa());
+}
+
+/* [FLT-APO-01] Apogee on the fit: never before the true apogee, and as soon
+ * after it as the 1.0001 drop allows. Timed by the decision's own sample,
+ * against the moment the true pressure first stood 1.0001 above its minimum:
+ * the pipeline's latency is not the estimator's. Half the flights have core0's
+ * stalls. */
+void test_T5_apogee(void) {
+    const float gs[] = {3.0f, 5.0f, 10.0f, 15.0f};
+    const int N = 1000;
+    double sum = 0.0, lo = 1e9, hi = -1e9, after = 0.0;
+    int early = 0, missed = 0, n = 0;
+    for (int i = 0; i < N; i++) {
+        float h = 100.0f * powf(90.0f, (float)i / (float)(N - 1)); /* 100 m to 9 km */
+        float g = gs[i % 4];
+        flight_t f = {g, sqrtf(2.0f * h / (g * G * (1.0f + g))), 20.0f, 0.0f};
+        fly_opts.stop_after_apogee = true;
+        result_t r = fly(&f, (uint32_t)i + 1u, 6, 200000u, (i & 1) != 0);
+        if (r.apogee_ms == 0 || r.drop_ms == 0) {
+            missed++;
+            continue;
+        }
+        if ((int32_t)(r.apogee_sample_ms - r.apogee_true_ms) < 0)
+            early++;
+        double d = ((double)r.apogee_sample_ms - (double)r.drop_ms) / 1000.0;
+        sum += d;
+        lo = d < lo ? d : lo;
+        hi = d > hi ? d : hi;
+        after += ((double)r.apogee_sample_ms - (double)r.apogee_true_ms) / 1000.0;
+        n++;
+    }
+    double mean = n ? sum / n : 0.0;
+    printf("  apogee over %d flights, 100 m to 9 km: %+.3f s from the 1.0001 drop (%+.3f to %+.3f), %.2f s after "
+           "the true apogee; %d early, %d missed\n",
+           n, mean, lo, hi, n ? after / n : 0.0, early, missed);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, missed, "every flight's apogee is found");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, early, "never before the true apogee");
+    TEST_ASSERT_TRUE_MESSAGE(fabs(mean) <= 0.1, "on average within 0.1 s of the 1.0001 drop");
+}
+
+/* [PYR-MODE-04, PYR-MODE-05, REV-05] A SPEED channel reads the fit's speed,
+ * which does not lag; a DELAY channel counts from the fit's apogee, which the
+ * fit dates back to where its rate crossed zero. */
+void test_T5_speed_and_delay_triggers(void) {
+    const flight_t f = {5.0f, 2.0f, 60.0f, 0.0f}; /* about 590 m; nearly free fall after apogee */
+    double worst_v = 0.0, worst_d = 0.0;
+    for (uint32_t seed = 1; seed <= 20; seed++) {
+        fly_opts.channels = true;
+        fly_opts.p1_mode = PYRO_MODE_DELAY;
+        fly_opts.p1_value = 3;
+        fly_opts.p2_mode = PYRO_MODE_SPEED;
+        fly_opts.p2_value = 20;
+        result_t r = fly(&f, seed, 6, 60000u, (seed & 1) != 0);
+        TEST_ASSERT_TRUE_MESSAGE(r.pyro_ms[1] != 0 && r.pyro_ms[2] != 0, "both channels fired");
+        double dv = fabs(-(double)r.pyro_v[2] - 20.0);
+        double dd = fabs(((double)r.pyro_ms[1] - (double)r.apogee_true_ms) / 1000.0 - 3.0);
+        worst_v = dv > worst_v ? dv : worst_v;
+        worst_d = dd > worst_d ? dd : worst_d;
+    }
+    printf("  SPEED 20 m/s fired within %.2f m/s; DELAY 3 s within %.3f s of the true apogee plus 3 s\n", worst_v,
+           worst_d);
+    TEST_ASSERT_TRUE_MESSAGE(worst_v <= 1.0, "a SPEED channel fires within 1 m/s of its setting");
+    TEST_ASSERT_TRUE_MESSAGE(worst_d <= 0.1, "a DELAY channel fires within 0.1 s of the true apogee plus its delay");
+}
+
+/* [DD-048] Two bad readings in a row under the drogue: the median passes one
+ * or both, and every fit that holds them is unclean for a second. The main
+ * waits them out: an early main is the flight's whole descent under it. */
+void test_T5_descent_glitch(void) {
+    const flight_t f = {5.0f, 2.0f, 20.0f, 0.0f}; /* about 590 m; the default main is at 300 m */
+    const int32_t sizes[] = {2000, 5000, 10000, 18000};
+    char bad[512] = "";
+    float worst = 0.0f;
+    for (unsigned i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+        for (int k = 0; k < 8; k++) {
+            float t_ap = f.burn_s + f.g_net * f.burn_s;
+            float at_s = t_ap + 4.0f + 1.5f * (float)k; /* from 530 m down to 330 m */
+            glitch.at_s = at_s;
+            glitch.pa = sizes[i];
+            glitch.samples = 2;
+            result_t r = fly(&f, (uint32_t)k + 1u, 6, 60000u, false);
+            float err = r.pyro_ms[2] ? r.pyro_h[2] - 300.0f : 1e6f;
+            worst = fabsf(err) > worst ? fabsf(err) : worst;
+            if (fabsf(err) > 8.0f) {
+                char item[48];
+                snprintf(item, sizeof(item), " +%ld kPa at %.1f s: %+.0f m;", (long)(sizes[i] / 1000),
+                         (double)at_s, (double)err);
+                strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+            }
+        }
+    }
+    printf("  two glitches under the drogue: main within %.1f m of 300 m%s%s\n", (double)worst, bad[0] ? "; wrong:" : "",
+           bad);
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
+/* [SNS-ALT-04] Below the pad the reported altitude stays at zero while the
+ * speed goes on reading the truth. The reported altitude is filtered, and
+ * trails a 5 m/s descent by 2.5 m: it is checked from 5 m down. */
+static struct {
+    double err;
+    int n, unclamped;
+} below;
+
+static void note_below(const truth_t *tr) {
+    if (ctx.current_state == LANDED || tr->down || tr->h > -5.0f || tr->v >= 0.0f)
+        return;
+    below.err += ctx.vertical_speed_cms / 100.0 - tr->v;
+    below.n++;
+    if (ctx.last_altitude != 0)
+        below.unclamped++;
+}
+
+void test_T5_through_the_clamp(void) {
+    const flight_t f = {5.0f, 1.0f, 5.0f, -20.0f};
+    memset(&below, 0, sizeof(below));
+    for (uint32_t seed = 1; seed <= 10; seed++) {
+        fly_opts.on_sample = note_below;
+        (void)fly(&f, seed, 6, 200000u, false);
+    }
+    double mean = below.n ? below.err / below.n : 0.0;
+    printf("  below the pad: speed error %+.2f m/s mean over %d samples; altitude off zero on %d\n", mean, below.n,
+           below.unclamped);
+    TEST_ASSERT_TRUE(below.n > 300);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, below.unclamped, "the reported altitude stays clamped at zero");
+    TEST_ASSERT_TRUE_MESSAGE(fabs(mean) <= 0.3, "the speed stays unbiased through the clamp");
+}
+
+/* under_thrust from the fit's acceleration: on through the burn, off through
+ * the coast, one change between. A one-second fit's acceleration crosses zero
+ * 0.6-0.9 s after burnout, from 2 g to 30 g boosts (DD-048). */
+#define THRUST_LAG_MAX_MS 1000u
+
+static struct {
+    bool launched, seen, first_on, prev;
+    int changes;
+    uint32_t last_on_ms;
+} thrust;
+
+static void note_thrust(const truth_t *tr) {
+    (void)tr;
+    if (ctx.current_state != ASCENT)
+        return;
+    if (!thrust.launched) {
+        thrust.launched = true; /* the pad's sample that declared the launch */
+        return;
+    }
+    bool on = ctx.under_thrust;
+    if (!thrust.seen) {
+        thrust.seen = true;
+        thrust.first_on = on;
+    } else if (on != thrust.prev) {
+        thrust.changes++;
+    }
+    if (on)
+        thrust.last_on_ms = ctx.last_sample;
+    thrust.prev = on;
+}
+
+void test_T5_under_thrust(void) {
+    const flight_t boosts[] = {{2.0f, 3.0f, 20.0f, 0.0f},
+                               {5.0f, 2.0f, 20.0f, 0.0f},
+                               {15.0f, 1.2f, 20.0f, 0.0f},
+                               {30.0f, 1.0f, 20.0f, 0.0f}};
+    char bad[256] = "";
+    int worst_lag = 0;
+    for (unsigned i = 0; i < sizeof(boosts) / sizeof(boosts[0]); i++) {
+        for (uint32_t seed = 1; seed <= 5; seed++) {
+            memset(&thrust, 0, sizeof(thrust));
+            fly_opts.on_sample = note_thrust;
+            fly_opts.stop_after_apogee = true;
+            result_t r = fly(&boosts[i], seed, 6, 200000u, false);
+            uint32_t burnout = r.ignition_ms + (uint32_t)(boosts[i].burn_s * 1000.0f);
+            int lag = (int)thrust.last_on_ms - (int)burnout;
+            worst_lag = lag > worst_lag ? lag : worst_lag;
+            if (!thrust.first_on || thrust.changes != 1 || lag < -20 || lag > (int)THRUST_LAG_MAX_MS) {
+                char item[64];
+                snprintf(item, sizeof(item), " %.0fg/%u: %d changes, off %+d ms;", (double)boosts[i].g_net,
+                         (unsigned)seed, thrust.changes, lag);
+                strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+            }
+        }
+    }
+    printf("  under_thrust ends at most %d ms after burnout%s%s\n", worst_lag, bad[0] ? "; wrong:" : "", bad);
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -1451,5 +1876,14 @@ int main(void) {
     RUN_TEST(test_T11_landing_holds_a_second);
     RUN_TEST(test_T8_columns);
     RUN_TEST(test_T8_replay);
+    RUN_TEST(test_T5_fit_reference);
+    RUN_TEST(test_T5_fit_noise);
+    RUN_TEST(test_T5_clean);
+    RUN_TEST(test_T5_sigma);
+    RUN_TEST(test_T5_apogee);
+    RUN_TEST(test_T5_speed_and_delay_triggers);
+    RUN_TEST(test_T5_descent_glitch);
+    RUN_TEST(test_T5_through_the_clamp);
+    RUN_TEST(test_T5_under_thrust);
     return UNITY_END();
 }

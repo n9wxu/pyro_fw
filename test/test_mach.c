@@ -25,6 +25,10 @@ void tearDown(void) {}
 
 static const mp_site_t COLD = {10.0f, 0.0f};   /* 10 °C at sea level */
 static const mp_site_t HOT = {45.0f, 2000.0f}; /* 45 °C at 2000 m */
+/* The standard atmosphere's own pad, where the firmware's pressure altitude is
+ * the true height: elsewhere an AGL setting is off by the air's temperature,
+ * 1.8 % at the cold pad, whatever the estimator does. */
+static const mp_site_t ISA = {15.0f, 0.0f};
 
 typedef struct {
     const char *name;
@@ -57,7 +61,10 @@ typedef struct {
     mp_charge_t charge; /* all zero: no pressure in the bay */
     float dropout_at_s, dropout_s;
     float stuck_at_s; /* 0: never */
-    float swing_rms_pa;
+    float swing_rms_pa; /* under a canopy, until touchdown */
+    uint16_t main_m;    /* an AGL main at this height; 0: the default channels */
+    float main_ms;      /* the main's descent rate; 0: the main changes nothing */
+    bool to_landed;     /* on past touchdown to LANDED, with the landing timeout off */
 } conditions_t;
 
 typedef struct {
@@ -66,6 +73,9 @@ typedef struct {
     float drogue_t, apogee_t, apogee_h, max_mach;
     bool gate_latched, released;
     float release_t, release_mach;
+    bool main;
+    float main_t, main_h;
+    float touchdown_t, landed_t; /* 0: not reached */
 } mach_result_t;
 
 static mach_result_t fly_mach(const mp_rocket_t *r, const mp_site_t *s, const conditions_t *c, uint32_t seed,
@@ -73,11 +83,18 @@ static mach_result_t fly_mach(const mp_rocket_t *r, const mp_site_t *s, const co
     mach_result_t res;
     memset(&res, 0, sizeof(res));
     boot_like_hardware(seed);
+    if (c->to_landed)
+        power.landing_timeout = 0;
     float pad_pa = mp_pad_pa(s);
     mock_pressure.pressure_pa = pad_pa;
     uint32_t t = 0;
     uint32_t pad = run_to_pad(&t);
+    if (c->main_m) {
+        ctx.config.pyro2_mode = PYRO_MODE_AGL;
+        ctx.config.pyro2_value = c->main_m;
+    }
     uint32_t ign = pad + 10000u;
+    mp_rocket_t rk = *r;
     mp_state_t st;
     mp_launch(&st);
     int fires = 0;
@@ -85,7 +102,7 @@ static mach_result_t fly_mach(const mp_rocket_t *r, const mp_site_t *s, const co
     for (; t < ign + (uint32_t)(until_s * 1000.0f); t++) {
         float tf = ((float)t - (float)ign) / 1000.0f;
         if (tf >= 0.0f)
-            mp_step(&st, s, r, 0.001f);
+            mp_step(&st, s, &rk, 0.001f);
         float static_pa = mp_pressure_pa(s, st.h);
         float sensed = static_pa + mp_port_error_pa(&c->port, st.mach, static_pa);
         if (charge_at >= 0.0f)
@@ -94,8 +111,8 @@ static mach_result_t fly_mach(const mp_rocket_t *r, const mp_site_t *s, const co
         bool out = c->dropout_s > 0.0f && tf >= c->dropout_at_s && tf < c->dropout_at_s + c->dropout_s;
         mock_pressure.sensor_type = out ? 0 : 2;
         mock_sensor_stuck = c->stuck_at_s > 0.0f && tf >= c->stuck_at_s;
-        if (st.canopy && c->swing_rms_pa > 0.0f)
-            mock_noise_rms_pa = c->swing_rms_pa;
+        if (c->swing_rms_pa > 0.0f)
+            mock_noise_rms_pa = st.canopy && !st.landed ? c->swing_rms_pa : SENSOR_RMS_PA;
         tick(t);
         res.launched |= ctx.current_state == ASCENT;
         while (fires < mock_pyro.fire_count) {
@@ -106,6 +123,12 @@ static mach_result_t fly_mach(const mp_rocket_t *r, const mp_site_t *s, const co
                 st.canopy = true;
                 if (c->charge.peak_pa > 0.0f)
                     charge_at = tf;
+            } else if (mock_pyro.last_fire_channel == 2 && !res.main) {
+                res.main = true;
+                res.main_t = tf;
+                res.main_h = st.h;
+                if (c->main_ms > 0.0f)
+                    rk.canopy_ms = c->main_ms;
             }
         }
         res.gate_latched |= ctx.mach_exceeded;
@@ -115,7 +138,13 @@ static mach_result_t fly_mach(const mp_rocket_t *r, const mp_site_t *s, const co
             res.release_t = tf;
             res.release_mach = st.mach;
         }
-        if (st.landed)
+        if (c->to_landed && ctx.current_state == LANDED) {
+            res.landed_t = tf;
+            break;
+        }
+        if (st.landed && res.touchdown_t == 0.0f)
+            res.touchdown_t = tf;
+        if (st.landed && (!c->to_landed || tf - res.touchdown_t > 10.0f))
             break;
     }
     res.apogee_t = st.apogee_t;
@@ -317,6 +346,83 @@ void test_M0_report(void) {
     }
 }
 
+/* ── T5: the fit through a charge and a swinging canopy ───────────── */
+
+static float plant_apogee(const mp_rocket_t *r, const mp_site_t *s) {
+    mp_state_t st;
+    mp_launch(&st);
+    while (!st.apogee && st.t < 200.0f)
+        mp_step(&st, s, r, 0.001f);
+    return st.apogee_h;
+}
+
+#define MAIN_TOL_M 8.0f
+
+/* The drogue's charge pressurises the bay at apogee: to the pressure layer the
+ * rocket has dropped hundreds of metres in an instant. Pressure triggers wait
+ * for a clean fit, up to 2 s, so the main 100 m below still fires where it is
+ * set. */
+void test_T5_ejection(void) {
+    const mp_rocket_t *r = &PROFILES[SUBSONIC].r;
+    uint16_t main_m = (uint16_t)(plant_apogee(r, &ISA) - 100.0f);
+    const mp_charge_t charges[] = {{0.0f, 0.0f}, {1000.0f, 0.1f}, {5000.0f, 0.3f}};
+    char bad[256] = "";
+    float worst = 0.0f;
+    for (unsigned k = 0; k < sizeof(charges) / sizeof(charges[0]); k++) {
+        for (uint32_t seed = 1; seed <= 10; seed++) {
+            conditions_t c;
+            memset(&c, 0, sizeof(c));
+            c.charge = charges[k];
+            c.main_m = main_m;
+            mach_result_t res = fly_mach(r, &ISA, &c, seed, 120.0f);
+            float err = res.main ? res.main_h - (float)main_m : 1e6f;
+            if (fabsf(err) > worst)
+                worst = fabsf(err);
+            if (!res.drogue || fabsf(err) > MAIN_TOL_M) {
+                char item[64];
+                snprintf(item, sizeof(item), " %.0f Pa/%u: %+.0f m;", (double)charges[k].peak_pa, (unsigned)seed,
+                         (double)err);
+                strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+            }
+        }
+    }
+    printf("  main at %u m, through charges of up to 5 kPa: within %.1f m%s%s\n", (unsigned)main_m, (double)worst,
+           bad[0] ? "; wrong:" : "", bad);
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
+/* Under a swinging canopy the pressure noise is several times the pad's, and
+ * no fit is clean: the triggers act once their 2 s wait is up, and the
+ * landing, once the swing stops at touchdown, is found as quickly as ever. */
+void test_T5_canopy_swing(void) {
+    const mp_rocket_t *r = &PROFILES[SUBSONIC].r;
+    uint16_t main_m = (uint16_t)(plant_apogee(r, &ISA) - 100.0f);
+    char bad[256] = "";
+    float worst_main = 0.0f, worst_land = 0.0f;
+    for (uint32_t seed = 1; seed <= 10; seed++) {
+        conditions_t c;
+        memset(&c, 0, sizeof(c));
+        c.swing_rms_pa = 5.0f * SENSOR_RMS_PA;
+        c.main_m = main_m;
+        c.main_ms = 6.0f;
+        c.to_landed = true;
+        mach_result_t res = fly_mach(r, &ISA, &c, seed, 400.0f);
+        float err = res.main ? res.main_h - (float)main_m : 1e6f;
+        float land = res.landed_t > 0.0f && res.touchdown_t > 0.0f ? res.landed_t - res.touchdown_t : 1e6f;
+        worst_main = fabsf(err) > worst_main ? fabsf(err) : worst_main;
+        worst_land = fabsf(land) > worst_land ? fabsf(land) : worst_land;
+        if (fabsf(err) > MAIN_TOL_M || land < 0.0f || land > 3.0f) {
+            char item[64];
+            snprintf(item, sizeof(item), " %u: main %+.0f m, LANDED %+.1f s;", (unsigned)seed, (double)err,
+                     (double)land);
+            strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+        }
+    }
+    printf("  canopy swing at %.0f Pa: main within %.1f m, LANDED within %.1f s of touchdown%s%s\n",
+           (double)(5.0f * SENSOR_RMS_PA), (double)worst_main, (double)worst_land, bad[0] ? "; wrong:" : "", bad);
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_M0_atmosphere);
@@ -326,5 +432,7 @@ int main(void) {
     RUN_TEST(test_M0_failures);
     RUN_TEST(test_M0_profiles);
     RUN_TEST(test_M0_report);
+    RUN_TEST(test_T5_ejection);
+    RUN_TEST(test_T5_canopy_swing);
     return UNITY_END();
 }

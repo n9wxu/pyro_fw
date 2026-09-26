@@ -378,6 +378,33 @@ void test_FLT_ASC_04_arms_pyros(void) {
     TEST_ASSERT_TRUE(ctx.pyros_armed);
 }
 
+/* [FLT-ASC-07, DD-017] The burn is confirmed by a peak over 10 m/s of true
+ * speed: the fit's speed is not the filtered one DD-017 once halved. */
+static bool arms_after_peak(int32_t peak_cms) {
+    setUp();
+    flight_context_t ctx = {0};
+    ctx.current_state = ASCENT;
+    ctx.ground_pressure = 101325;
+    pp_test_prime(101325);
+    ctx.filtered_pressure = 100714;
+    ctx.last_altitude = 5000;
+    ctx.last_height = 5000;
+    ctx.vertical_speed_cms = 500;
+    ctx.max_speed_cms = peak_cms;
+    mock_pressure.pressure_pa = 100714.0f; /* 5 m/s up, as in test_FLT_ASC_04_arms_pyros */
+    mock_time_ms = 200;
+    ctx.current_state = step(&ctx, mock_time_ms);
+    return ctx.pyros_armed;
+}
+
+void test_FLT_ASC_07_arms_after_ten_metres_a_second(void) {
+    TEST_ASSERT_FALSE_MESSAGE(arms_after_peak(900), "a 9 m/s peak is no burn");
+    TEST_ASSERT_TRUE_MESSAGE(arms_after_peak(1100), "an 11 m/s peak is");
+}
+
+/* Over the top in free fall, about 75 m up: apogee once clean fits show the
+ * pressure rising and it has risen 1.0001 above its lowest, 10 Pa -- 0.41 s
+ * after the peak, 0.84 m below it [FLT-APO-01, DD-048]. */
 void test_FLT_APO_01_detects_apogee(void) {
     flight_context_t ctx = {0};
     ctx.current_state = ASCENT;
@@ -386,24 +413,30 @@ void test_FLT_APO_01_detects_apogee(void) {
     ctx.filtered_pressure = 100425; /* close to what we'll read */
     ctx.launch_time = 0;
     ctx.last_sample = 0;
-    ctx.last_altitude = 8000;
-    ctx.last_height = 8000;
-    ctx.max_altitude = 8000;
+    ctx.last_altitude = 7500;
+    ctx.last_height = 7500;
+    ctx.max_altitude = 7500;
     ctx.pyros_armed = true;
     ctx.vertical_speed_cms = 100;
     ctx.pyro1_continuity_good = true;
     ctx.pyro2_continuity_good = true;
 
-    /* Altitude lower than last, and still falling: a negative speed held for
-     * APOGEE_HOLD_MS is apogee. */
-    for (uint32_t t = 200; t <= 340 && ctx.current_state == ASCENT; t += 20) {
-        mock_pressure.pressure_pa = 101325.0f - 900.0f + 1.2f * (float)(t - 200); /* ~7470 cm, down 5 m/s */
+    const uint32_t peak = 1200;
+    uint32_t apogee = 0;
+    for (uint32_t t = 200; t <= 2400 && ctx.current_state == ASCENT; t += 20) {
+        float s = ((float)t - (float)peak) / 1000.0f;
+        mock_pressure.pressure_pa = 100425.0f + 0.5f * 117.7f * s * s; /* rho g g at 75 m */
         mock_time_ms = t;
         ctx.current_state = step(&ctx, mock_time_ms);
+        if (ctx.apogee_detected && apogee == 0)
+            apogee = ctx.last_sample;
     }
 
     TEST_ASSERT_EQUAL(FALLING, ctx.current_state);
     TEST_ASSERT_TRUE(ctx.apogee_detected);
+    char msg[64];
+    snprintf(msg, sizeof(msg), "apogee on the sample of %u ms", (unsigned)apogee);
+    TEST_ASSERT_TRUE_MESSAGE(apogee >= peak + 350u && apogee <= peak + 480u, msg);
 }
 
 /* ── FALLING / DROGUE / CHUTE tests ──────────────────────────────── */
@@ -1157,7 +1190,7 @@ void test_REV03_refused_retry_is_asked_once(void) {
     ctx.pyro1_fire_time = 1;
     mock_pyro.refuse_fire = true;
 
-    descend_steady(&ctx, 50000, 1500, 4000); /* past the 2 s grace, not settling */
+    descend_steady(&ctx, 50000, 4000, 4000); /* past the 2 s grace; faster than any canopy */
 
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_pyro.refused_count, "the refused retry must be asked once");
     TEST_ASSERT_EQUAL(1, ctx.pyro1_refires);
@@ -1459,6 +1492,7 @@ int main(void) {
     /* ASCENT */
     RUN_TEST(test_FLT_ASC_01_tracks_max_altitude);
     RUN_TEST(test_FLT_ASC_04_arms_pyros);
+    RUN_TEST(test_FLT_ASC_07_arms_after_ten_metres_a_second);
     RUN_TEST(test_FLT_APO_01_detects_apogee);
 
     /* FALLING / DROGUE / CHUTE */

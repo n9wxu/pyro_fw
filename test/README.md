@@ -34,6 +34,13 @@ timed against it. The `BASELINE` lines it prints are the "Now" column of
 `support/noise_baseline.py <board-ip>` measures a board's real noise from
 `raw_pa` and `pad_speed_cms` on `/api/status`.
 
+The `test_T5_*` tests fly the detectors on the pressure fit (DD-048): apogee
+over 1000 flights from 100 m to 9 km, SPEED and DELAY channels, two bad
+readings under the drogue, the thrust flag, and σ through a brownout.
+`mach_tests` adds `test_T5_ejection` (a bay charge of up to 5 kPa at the
+drogue) and `test_T5_canopy_swing`, flown on a standard-atmosphere pad, where
+the firmware's pressure altitude is the true height.
+
 `test_T8_replay` flies a flight, reads back its log, and replays the log's
 readings through `sim/replay.c`; every event must land on the sample the
 flight decided it on. The same code is `pyro_sim --replay <flight_log.csv>`
@@ -140,7 +147,8 @@ test_data/
 | test_PYR_CONT_01_continuity_check | PYR-CONT-01 | Continuity checked, ADC stored |
 | test_FLT_ASC_01_tracks_max_altitude | FLT-ASC-01 | Max altitude updated |
 | test_FLT_ASC_04_arms_pyros | FLT-ASC-04 | Arm when speed < 10 m/s |
-| test_FLT_APO_01_detects_apogee | FLT-APO-01 | Transition when speed ≤ 0 |
+| test_FLT_ASC_07_arms_after_ten_metres_a_second | FLT-ASC-07 | A 9 m/s peak never arms; 11 m/s does |
+| test_FLT_APO_01_detects_apogee | FLT-APO-01 | Over a free-fall peak: apogee between the peak and the 1.0001 drop |
 | test_FLT_LAND_01_detects_landing | FLT-LAND-01..03 | Stable + slow + low for 1s |
 | test_FLT_LAND_06_stays_landed | FLT-LAND-06 | No state change after landing |
 
