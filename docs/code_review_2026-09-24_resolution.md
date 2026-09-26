@@ -277,12 +277,12 @@ Found while fixing the above, most by running the code or the hardware.
 | N4 | The Flight Data tab read the event from column 5, which on a real log is the thrust flag; the mock server's CSV had no thrust column, so the web tests passed. On hardware, PYRO1 and PYRO2 were never found. | **Fixed**: columns found by name, text rows skipped, mock serves the real format. |
 | N5 | A channel set to Disabled was reported as an open igniter, so a single-deploy rocket said "check pyro 1" forever. | **Fixed**: FLT-BOOT-16 now covers disabled channels; unit test and bench. |
 | N6 | The simulator never flew. `sim_flight_tick()` never fed the pressure layer, so calibration timed out into FAULT. The sim HAL fed pressure every tick (1 kHz), not at the sensor's 50 Hz, so speed was quantisation noise. The CMake `sim` target did not link brownout.c, pad_claim.c or pyro_release.c. The CLI ignited during boot. Affects the browser demo (SYS-PORT-02) too. | **Fixed**; the CLI now flies boot to landing. The WASM build is not rebuilt here (no emcc). |
-| N7 | **The landing timeout declares LANDED under a main.** See C8. The simulator's own log of a 5000 ft flight shows `PYRO2` at 67 m and `LANDING` 0.7 s later at 61 m. It hits any flight whose main opens more than 60 s after apogee: a 5000 ft flight with a drogue, or any main the ladder forces high. | **Not fixed**: requirement change needed (C8). |
+| N7 | **The landing timeout declares LANDED under a main.** See C8. The simulator's own log of a 5000 ft flight shows `PYRO2` at 67 m and `LANDING` 0.7 s later at 61 m. It hits any flight whose main opens more than 60 s after apogee: a 5000 ft flight with a drogue, or any main the ladder forces high. | **Fixed** (2026-09-26, C8 adopted): the timeout needs stillness, under 2 m/s for a second (FLT-LAND-07); a 5 m/s main lands 1.7 s after touchdown. `test_N7_no_landing_under_main`. |
 | N8 | The OTA success reply never reached the client. `pfb_perform_update()` armed a 1 ms watchdog and spun inside the lwIP callback. | **Fixed** with the stream server (DD-039): the OTA now reboots through `pending_reset` once its reply is with lwIP. On all three boards curl receives `200 OTA OK, rebooting...`, and the update takes 2.9–5.6 s instead of 28–81 s. |
 | N9 | The ground reference locks out after a step of more than 50 Pa. GND-CAL-03 then rejects every later sample, so the reference freezes and weather drift accumulates against it. This happens when a board is powered at the prep table and carried to a pad about 4 m higher. | **Fixed** (T6, DD-045): the reference re-seeds after 5 s of rejection with the board still. |
 | N10 | On the old firmware an OTA to MK1C stalled for 180 s against its active flight log (786 deferrals) and needed a reboot first. | Moot now: WEB-API-08 refuses OTA in flight, and C5 applies. |
 | N11 | Text rows in the log (LUA, MOCK) carry uptime; sample rows carry flight time. One column, two clocks. | **Fixed** (2026-09-26): LUA and MOCK rows carry `flight_elapsed_ms()`, since T+0, like the sample rows. Hardware code only: checked on a bench board. |
-| N12 | A canopy that approaches its terminal rate from below can settle in the main band, reporting CHUTE_DESCENT under a drogue (seen in the simulator). | **Not fixed**: phase report only; the triggers and the ladder's main rung do not read it. Documented in flight_states.md. |
+| N12 | A canopy that approaches its terminal rate from below can settle in the main band, reporting CHUTE_DESCENT under a drogue (seen in the simulator). | **Fixed** by T5 (DD-048): the band test reads the fit's speed, which does not trail the rate. `test_N12_drogue_from_below`. |
 | N13 | After the drogue retry, the ladder forced the main on the next tick. | **Fixed** with REV-01. |
 | N14 | `DIAG_CFG_RANGE` flagged a disabled channel carrying a large value. | **Fixed**: altitude modes only. |
 | N15 | The 201-Created and OTA-OK replies left a freed connection slot as the pcb's arg. | **Fixed** with REV-23. |
@@ -424,14 +424,20 @@ started, in `docs/outstanding_tasks.md` (section 4).
 | # | Finding | Status |
 |---|---|---|
 | N23 | **Brownout recovery never engages on hardware.** `assess_recovery()` asks the pressure layer for samples in BOOT_SENSOR, but the layer only starts at BOOT_CALIBRATE, so recovery always waits out its 4 s deadline and boots cold. The level it compares also reads a filtered value that is still zero. The integration tests prime the pressure layer before booting, which hides it. Measured: 600 m up and descending with a valid marker rejoins the flight when primed, and boots cold when booted as the hardware boots. | **Fixed** (T1, DD-041), with two gaps behind it: a rejoined flight never started the pressure layer, and never read continuity, so it would have deployed nothing. |
-| N24 | **One plausible glitch declares a launch.** A single reading 12 kPa or more low passes the 1–120 kPa range check (DD-036). There is no spike rejection, and launch fires on one sample. The arming gate then stops any pyro firing, but the board sits in ASCENT until power-cycled: flight log open, the in-flight lock refusing reboot and OTA, and the pad announcement stopped. A glitch during coast can declare apogee the same way. | **Fixed in part** (T2, DD-040): a median of three stops a single reading. Two in a row still reach the detectors until T3. |
+| N24 | **One plausible glitch declares a launch.** A single reading 12 kPa or more low passes the 1–120 kPa range check (DD-036). There is no spike rejection, and launch fires on one sample. The arming gate then stops any pyro firing, but the board sits in ASCENT until power-cycled: flight log open, the in-flight lock refusing reboot and OTA, and the pad announcement stopped. A glitch during coast can declare apogee the same way. | **Fixed** (T2, T3; DD-040, DD-042): a median of three stops a single reading, and launch and apogee hold for 100 ms and 60 ms. On T5's fit the launch reads the two-point speed while the fit is unclean, so the hold still stops two in a row (DD-048). |
 
-Also measured, and planned in the same document:
-- speed noise on the pad is 8× what the filter should give, because its
-  whole-pascal state is forced to step (SNS-PRES-04);
-- landing takes 18–72 s after touchdown;
-- apogee is detected 0.56 s late;
-- the frozen ground pressure reads 0.2–0.5 m low.
+Also measured, and since fixed (2026-09-26):
+- speed noise on the pad was 8× what the filter should give, because its
+  whole-pascal state was forced to step (SNS-PRES-04): 0.19 m/s now (T4, T5);
+- landing took 18–72 s after touchdown: 1.8 s now (T4, T5);
+- apogee was detected 0.56 s late: 0.41 s now, 0.6-0.9 m below the peak,
+  never early (T5);
+- the frozen ground pressure read 0.2–0.5 m low: 0.08 m now (T7).
+
+N25 (the pad marker outliving its flight) and N26 (the 8 km clamp read as a
+stopped rocket) are fixed too: T1 invalidates the marker at LANDED, and T3
+took speed from the unclamped height. `docs/outstanding_tasks.md` section 3
+records all four.
 
 **Recorded, not scheduled:** a false-launch reversion, which would return a
 board that was never armed, and is back on the ground, from ASCENT to

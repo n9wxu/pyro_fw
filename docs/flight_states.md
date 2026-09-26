@@ -236,13 +236,14 @@ Samples both channels once, stores `pyro1/2_continuity_good`, resets
 **Measures continuity but announces nothing** — that happens in PAD_IDLE.
 
 ### BOOT_CALIBRATE (2)
-Polls `pp_cal_done()`. Calibration is a plain mean of **10 raw samples**
-(~200 ms at 50 Hz) with no outlier rejection and no plausibility check on the
-result. A 10 s timeout goes to FAULT.
+Polls `pp_cal_done()`. Calibration is the median of **10 raw samples**
+(~200 ms at 50 Hz), so one bad reading cannot bias it (GND-CAL-03). A 10 s
+timeout goes to FAULT (FLT-BOOT-13).
 
 ### PAD_IDLE (3)
-Per iteration: ground-test serial poll (before the rate gate), 100 Hz rate
-gate, 1 Hz continuity resample, then a sample.
+Per iteration: ground-test serial poll, 1 Hz continuity resample, then a
+sample if one is waiting. Every decision runs on the sample's own time
+(FLT-RATE-05).
 
 - **Pad check:** every continuity resample re-derives the pad faults
   (`DIAG_PAD_ANY`) and, when the outcome changes, says the new one -- a lead
@@ -343,13 +344,17 @@ with no continuity on either channel and asserts the machine still lands.
 
 ### 2. ASCENT never exits if the arming gate is never met
 
-`max_speed_cms` must reach 1000 cm/s. A flight that never does stays in ASCENT
-forever — no apogee, no deployment, no landing.
+`max_speed_cms` must reach 1000 cm/s (10 m/s, now of true speed). A flight
+that never does stays in ASCENT forever — no apogee, no deployment, no
+landing. Any flight that can trip the 100 ft launch detector climbing at
+10 m/s or more passes it; the arming window no longer closes at apogee,
+since descending counts (DD-050). Only a launch that barely clears 100 ft,
+peaking under 35 m, is left here, and it is too low for a canopy to matter.
 
-A false launch ends up here too. The spike that trips the detector is spent
-in PAD_IDLE, so ASCENT never sees an arming speed, and the board stays until
-power-cycled (N24). A reversion to PAD_IDLE for a board that was never armed
-and is back on the ground is recorded but not scheduled:
+A false launch no longer gets here from one or two bad readings (N24: the
+median, the holds, and the launch's two-point speed while the fit is
+unclean). A reversion to PAD_IDLE for a board that was never armed and is
+back on the ground is recorded but not scheduled:
 `docs/outstanding_tasks.md`, section 9.
 
 ### 3. Continuity is frozen after the pad
@@ -449,8 +454,9 @@ roughly half the dither amplitude.
 
 Speed used to be taken from the clamped altitude, so a clamp read as a speed
 of zero: a glitch's decay below the pad as apogee, and the 8000 m clamp as
-apogee on the way up (N26). Speed now comes from the unclamped height
-(SNS-ALT-04, DD-042).
+apogee on the way up (N26). Speed and the trigger heights now come from the
+pressure fit, unclamped (SNS-ALT-04, DD-042, DD-048); only what is reported
+is clamped.
 
 ### 11. `max_coast_s` was dead — REMOVED
 
@@ -523,7 +529,10 @@ against the marker's ground and reads continuity first.
 A single reading 11 kPa or more low declared a launch, and one high reading
 in the last second of coast declared apogee early. A median of three stands
 between the range check and the filter (DD-040), and launch and apogee must
-hold for 100 ms and 60 ms of sample time (DD-042).
+hold for 100 ms and 60 ms of sample time (DD-042). On the fit (DD-048) two bad
+readings in a row spoil every fit for a second: the launch reads the
+two-point speed while the fit is unclean, apogee wants clean fits, and the
+pressure triggers wait an unclean run out.
 
 ## What is not in the machine
 

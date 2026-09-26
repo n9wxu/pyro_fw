@@ -80,7 +80,7 @@ impossible readings, and an hour of real noise that must never read as stuck.
 `sim/physics.c` drives the browser simulator and is untouched. The report
 `test_M0_report` prints, for every profile at a 10 °C sea-level pad and a
 45 °C pad at 2000 m, when the drogue fired against the true apogee and where
-the Mach gate let go.
+the Mach lock let go.
 
 ## Code review 2026-09-24 regressions
 

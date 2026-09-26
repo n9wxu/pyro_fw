@@ -102,7 +102,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-ALT-02 | Warning beep for range | Integration: test_PYR_ALT_02_cfg_range_beep | ✅ |
 | FLT-RATE-01..02 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds); Chain: test_T9_short_interval (the idle time never wraps) | ⚠️ |
 | FLT-RATE-03 | 1 Hz while LANDED | Chain: test_N18_landed_logs_once_a_second | ✅ |
-| FLT-RATE-04 | The rate is the HAL's | Integration: test_FLT_LAUNCH_01_timing | ⚠️ |
+| FLT-RATE-04 | The rate is the HAL's | Chain: test_T9_same_outcomes (the same outcomes at 11 ms and 20 ms), test_T3_durations_not_counts (at 10 ms) | ✅ |
 | FLT-RATE-05 | Holds and dwells in sample time | Chain: test_T11_loop_clock_independent (a loop clock lagging 0-70 ms changes no decision's sample) | ✅ |
 
 ## 2. Pre-Flight Status
@@ -115,20 +115,20 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-CONT-03 | Diagnosis and announcement follow each check | Unit: test_REV04_pad_fault_after_boot_is_announced; Hardware: bench smoke test | ✅ |
 | FLT-BOOT-16 | No fault for a released or disabled channel | Unit: test_REV_NEW_disabled_channel_is_not_a_fault; Hardware: bench smoke test | ✅ |
 | PYR-CONT-02 | Report good/open/short | Web UI: pyro channels show OK/OPEN/FIRED | ✅ |
-| BUZ-STATUS-01 | Distinct beep codes | — | ⚠️ |
-| BUZ-01..02 | Startup chirps + code | — | ⚠️ |
+| BUZ-STATUS-01 | Distinct beep codes | Beep: test_shipped_table_is_valid, test_two_outcomes_that_sound_alike_are_refused | ✅ |
+| BUZ-01..02 | Four outcomes, said again on a cadence | Integration: test_BEEP_01_clean_board_says_ok_to_fly, test_BEEP_02_a_pyro_fault_names_its_channel, test_BEEP_03_anything_unfixable_says_system_failure, test_BEEP_04_unfixable_outranks_fixable; Beep: test_shipped_cadence_keeps_talking; Buzzer: test_BUZ_PAT_07_gap_between_passes | ✅ |
 | FLT-BOOT-01 | Non-blocking boot | Integration: test_FLT_BOOT_01_all_states | ✅ |
-| FLT-BOOT-02..03 | Config read/create | — | ⚠️ |
+| FLT-BOOT-02..03 | Config read, and written when absent | Unit: test_FLT_BOOT_02_reads_config_at_boot, test_FLT_BOOT_03_writes_default_config (the RP2040's hal_config_load() is the same code as the host's) | ✅ |
 | FLT-BOOT-04 | Settle wait | Integration: boot completes in expected time | ✅ |
 | FLT-BOOT-05 | Detect and initialise the sensor | Unit: test_FLT_BOOT_01_reaches_pad_idle | ✅ |
 | FLT-BOOT-06 | Initialise the pyro subsystem | Unit: test_FLT_BOOT_01_reaches_pad_idle | ✅ |
 | FLT-BOOT-07 | Initial continuity check | Integration: test_FLT_BOOT_01_all_states (BOOT_CONTINUITY on the way to PAD_IDLE) | ✅ |
 | FLT-BOOT-08 | Calibrate from the median of 10 readings | Unit: test_FLT_BOOT_08_calibrates_ground; Chain: test_T2_calibration_glitch | ✅ |
-| FLT-BOOT-09 | 2s stabilization | — | ⚠️ |
+| FLT-BOOT-09 | 2s stabilization | Unit: test_FLT_BOOT_04_settle_wait (2.5 s) | ✅ |
 | FLT-BOOT-11 | The sensor is tested before the pyros | Unit: test_SNS_PRES_01_boot_no_sensor (BOOT_SENSOR first; a failure never reaches the pyro test) | ✅ |
 | FLT-BOOT-12 | No sensor: FAULT and system failure | Unit: test_SNS_PRES_01_boot_no_sensor | ✅ |
-| FLT-BOOT-13 | No calibration samples in 10 s: FAULT | — | ⚠️ |
-| FLT-BOOT-14 | No filesystem: FAULT and system failure | Integration: test_BEEP_03_anything_unfixable_says_system_failure (the announcement); the transition to FAULT is untested | ⚠️ |
+| FLT-BOOT-13 | No calibration samples in 10 s: FAULT | Unit: test_FLT_BOOT_13_no_calibration_samples_is_fault | ✅ |
+| FLT-BOOT-14 | No filesystem: FAULT and system failure | Unit: test_FLT_BOOT_14_no_filesystem_is_fault; Integration: test_BEEP_03_anything_unfixable_says_system_failure (the announcement) | ✅ |
 | FLT-BOOT-15 | Every pad fault reported | Unit: test_REV04_pad_fault_after_boot_is_announced | ✅ |
 | BUZ-CODE-01 | The vocabulary is the pad's actions | Integration: test_BEEP_01..04 | ✅ |
 | BUZ-CODE-02 | Unfixable outranks a pyro fault | Integration: test_BEEP_03_anything_unfixable_says_system_failure, test_BEEP_04_unfixable_outranks_fixable | ✅ |
@@ -141,7 +141,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | BUZ-CODE-09 | Three named personalities, one active | Beep: test_three_personalities_all_named, test_the_active_personality_is_the_one_used | ✅ |
 | BUZ-CODE-10 | An invalid table is rejected whole | Beep: test_an_unreadable_table_still_answers; Buzzer: test_BEEP_STORE_01/02 | ✅ |
 | BUZ-CODE-11 | The vocabulary is served to the web UI | Hardware: GET /api/beeps (`support/api_check.py`) | ✅ HW |
-| BUZ-CODE-12 | No beep.ini: the shipped table is written | — | ⚠️ |
+| BUZ-CODE-12 | No beep.ini: the shipped table is written | Buzzer: test_BUZ_CODE_12_missing_table_is_written | ✅ |
 | BUZ-CODE-13 | Eggtimer defaults | Beep: test_shipped_pyro_codes_follow_eggtimer | ✅ |
 
 ## 3. Flight Data Recovery
@@ -149,15 +149,15 @@ Verify web interface behavior against mock server in 3 device modes.
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
 | SYS-DATA-01 | Record flight data | Integration: test_DAT_04_events (samples > 100) | ✅ |
-| SYS-DATA-02 | Export standard format | — | ⚠️ |
+| SYS-DATA-02 | Export standard format | Integration: test_DAT_06_csv_export; Chain: test_T8_columns, test_T8_replay | ✅ |
 | SYS-DATA-03 | Announce max altitude | Integration: test_BUZ_07_03_lifecycle | ✅ |
 | DAT-01 | 4096-entry ring buffer | Integration: samples recorded throughout flight | ✅ |
 | DAT-02 | Sample fields, at the sample's time | Integration: events have correct fields; Chain: test_T11_log_rows_at_sample_time, test_T8_columns | ✅ |
 | DAT-08 | A log replays through the firmware | Chain: test_T8_replay (every event to the sample, no state diverging) | ✅ |
 | DAT-03 | Events tag samples | Integration: test_DAT_04_events | ✅ |
 | DAT-04 | Log all event types | Integration: test_DAT_04_events; Closed-loop: test_REV16_forced_main_is_in_the_log | ✅ |
-| DAT-06 | CSV export | — | ⚠️ |
-| DAT-07 | CSV metadata header | — | ⚠️ |
+| DAT-06 | CSV export | Integration: test_DAT_06_csv_export (flight.csv); Chain: test_T8_columns (flight_log.csv, closed at landing) | ✅ |
+| DAT-07 | CSV metadata header | Integration: test_DAT_06_csv_export (ID, both channels, max altitude); Chain: test_T8_replay (reads the log's own header) | ✅ |
 | BUZ-03..07 | Altitude beep-out | Integration: test_BUZ_07_03_lifecycle | ✅ |
 
 ## 4. Configuration
@@ -337,14 +337,14 @@ A user need is verified through the system requirements under it, and is marked 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
 | UN-2 | Know it is ready before the pad | Through SYS-STATUS-01, SYS-STATUS-02 | ✅ |
-| UN-3 | Flight data after recovery | Through SYS-DATA-01..03; SYS-DATA-02 is not directly verified | ⚠️ |
+| UN-3 | Flight data after recovery | Through SYS-DATA-01..03 | ✅ |
 | UN-4 | Configure for different rockets | Through SYS-CFG-01..04, CFG-SUBSYS-01 | ✅ |
 | UN-5 | Accurate altitude | Through SYS-ALT-01, SYS-ALT-02; SYS-ALT-02 is hardware only | ⚠️ |
 | UN-6 | Real-time telemetry | Through SYS-TEL-01 | ✅ |
 | UN-7 | Protection against pyro faults | Through SYS-FAULT-01..03 | ✅ |
 | UN-8 | Monitor, configure and update without special software | Through SYS-WEB-01, SYS-WEB-02; SYS-WEB-02 is hardware only | ⚠️ |
 | UN-9 | Update without bricking | Through SYS-OTA-01, SYS-OTA-02; SYS-OTA-02 is hardware only | ⚠️ |
-| UN-10 | Develop without flight hardware | Through SYS-PORT-01, SYS-PORT-02 | ⚠️ |
+| UN-10 | Develop without flight hardware | Through SYS-PORT-01, SYS-PORT-02 | ✅ |
 | UN-11 | Long pad time on battery | Through SYS-PWR-01, SYS-PWR-02 | ⚠️ |
 | UN-12 | Ground checks without a computer | Through SYS-TEST-01 | ✅ |
 | SYS-WEB-01 | Web interface over USB | Web UI: the Playwright suite; Hardware: `test/web/hw_ui_check.js` on MK1A/B/C | ✅ |
@@ -367,8 +367,8 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 207 |
-| ⚠️ Not directly verified (needs a test or hardware) | 33 |
+| ✅ Verified by a host, web or closed-loop test | 220 |
+| ⚠️ Not directly verified (needs a test or hardware) | 20 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 12 |
 

@@ -256,6 +256,15 @@ void test_BEEP_STORE_02_missing_file_reason_reaches_the_caller(void) {
     TEST_ASSERT_EQUAL_STRING(beep_store_reason(), reason);
 }
 
+/* [BUZ-CODE-12] A board with no beep.ini writes the shipped codes out, so the
+ * operator has a file to edit rather than an absence to guess at. */
+void test_BUZ_CODE_12_missing_table_is_written(void) {
+    char buf[64];
+    TEST_ASSERT_TRUE(hal_fs_read_file("beep.ini", buf, (int)sizeof(buf)) <= 0);
+    beep_store_load(NULL, 0);
+    TEST_ASSERT_TRUE_MESSAGE(hal_fs_read_file("beep.ini", buf, (int)sizeof(buf)) > 0, "beep.ini was written");
+}
+
 /* ── Main ─────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -276,6 +285,7 @@ int main(void) {
     RUN_TEST(test_BUZ_PAT_10_usb_ok_is_one_double_chirp);
     RUN_TEST(test_BEEP_STORE_01_write_failure_is_not_a_digit_error);
     RUN_TEST(test_BEEP_STORE_02_missing_file_reason_reaches_the_caller);
+    RUN_TEST(test_BUZ_CODE_12_missing_table_is_written);
 
     return UNITY_END();
 }

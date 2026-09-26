@@ -187,6 +187,50 @@ void test_FLT_BOOT_04_settle_wait(void) {
     TEST_ASSERT_EQUAL(BOOT_SENSOR, step(&ctx, 2600));
 }
 
+/* [FLT-BOOT-13] A sensor that answered at power-up but gives calibration no
+ * samples: FAULT after 10 s, not a board that beeps "all good" and can never
+ * see a launch. */
+void test_FLT_BOOT_13_no_calibration_samples_is_fault(void) {
+    flight_context_t ctx = {0};
+    ctx.current_state = BOOT_CALIBRATE;
+    ctx.boot_timer = 0;
+    pp_start_cal();
+    mock_pressure.sensor_type = 0; /* nothing is fed */
+    TEST_ASSERT_EQUAL(BOOT_CALIBRATE, step(&ctx, 9900));
+    TEST_ASSERT_EQUAL(FAULT, step(&ctx, 10000));
+    TEST_ASSERT_TRUE(ctx.diag & DIAG_SENSOR_FAIL);
+}
+
+/* [FLT-BOOT-14] No filesystem: no log, no config, no marker. FAULT. */
+void test_FLT_BOOT_14_no_filesystem_is_fault(void) {
+    flight_context_t ctx = {0};
+    ctx.current_state = BOOT_SENSOR;
+    ctx.sensor_type = 2;
+    ctx.fs_ok = false;
+    TEST_ASSERT_EQUAL(FAULT, step(&ctx, 100));
+    TEST_ASSERT_TRUE(ctx.diag & DIAG_FS_FAIL);
+}
+
+/* [FLT-BOOT-02, FLT-BOOT-03] The configuration is read at power-up, and a
+ * board with none gets the defaults written out. The RP2040's
+ * hal_config_load() is the same code as the host's. */
+void test_FLT_BOOT_02_reads_config_at_boot(void) {
+    const char *ini = "[pyro]\r\npyro2_mode=agl\r\npyro2_value=123\r\n";
+    TEST_ASSERT_EQUAL(0, hal_fs_write_file("config.ini", ini, (int)strlen(ini)));
+    static flight_context_t ctx;
+    flight_init(&ctx);
+    TEST_ASSERT_EQUAL_UINT16(123, ctx.config.pyro2_value);
+}
+
+void test_FLT_BOOT_03_writes_default_config(void) {
+    char buf[64];
+    TEST_ASSERT_TRUE(hal_fs_read_file("config.ini", buf, (int)sizeof(buf)) <= 0);
+    static flight_context_t ctx;
+    flight_init(&ctx);
+    TEST_ASSERT_TRUE_MESSAGE(hal_fs_read_file("config.ini", buf, (int)sizeof(buf)) > 0,
+                             "a board with no config.ini gets one");
+}
+
 /* ── PAD_IDLE tests ───────────────────────────────────────────────── */
 
 void test_FLT_LAUNCH_02_stays_on_ground(void) {
@@ -1479,6 +1523,10 @@ int main(void) {
     RUN_TEST(test_FLT_BOOT_08_calibrates_ground);
     RUN_TEST(test_SNS_PRES_01_boot_no_sensor);
     RUN_TEST(test_FLT_BOOT_04_settle_wait);
+    RUN_TEST(test_FLT_BOOT_13_no_calibration_samples_is_fault);
+    RUN_TEST(test_FLT_BOOT_14_no_filesystem_is_fault);
+    RUN_TEST(test_FLT_BOOT_02_reads_config_at_boot);
+    RUN_TEST(test_FLT_BOOT_03_writes_default_config);
 
     /* PAD_IDLE */
     RUN_TEST(test_FLT_LAUNCH_02_stays_on_ground);

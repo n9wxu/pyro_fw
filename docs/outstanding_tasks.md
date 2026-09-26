@@ -1019,6 +1019,22 @@ samples. The BMP280 path (MK1A) is unchanged.
 
 ### T10. Documentation sweep
 
+**Done 2026-09-26.** G5 passes with the summary table matching its counts:
+220 verified, 12 on hardware, 20 not directly verified, 1 not implemented
+(was 196, 12, 35, 1 when this list was written). Thirteen rows marked "—"
+had tests that were never linked, or gained one:
+`test_FLT_BOOT_02_reads_config_at_boot`, `test_FLT_BOOT_03_writes_default_config`,
+`test_FLT_BOOT_13_no_calibration_samples_is_fault`,
+`test_FLT_BOOT_14_no_filesystem_is_fault` and
+`test_BUZ_CODE_12_missing_table_is_written` are new; they pass, since what they
+check already worked. The 20 left are hardware only (the sensors, the HAL's
+stamping and sample rate, the HTTP routes, USB and power), measured only on a
+board (CPU time), or deferred (PWR-USB-01), and PWR-BUZZ-02's ENCODE state,
+which the buzzer keeps private. N7, N9, N12, N23-N26 and REV-05 are marked
+fixed in the resolution doc and here; `docs/flight_states.md` defects 2, 10,
+14-17 and its Mach, sensor-failure, calibration and pad sections,
+IMPLEMENTATION.md and `test/README.md` are brought up to date.
+
 **Tests first:**
 - G5 passes, with no requirement left without a test.
 - `support/trace_check.py --counts` matches TRACEABILITY's summary table.
