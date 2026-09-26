@@ -149,6 +149,11 @@ jobs:
       - name: Run pressure chain tests
         run: cd build && ninja pressure_chain_tests
 
+      # Supersonic flights from a cold sea-level pad and a hot high one, with
+      # static ports that misreport while the rocket is fast.
+      - name: Run Mach lockout tests
+        run: cd build && ninja mach_tests
+
       # Brownout recovery: a pure decision function, so every case that would
       # otherwise need a rocket and a loose battery connector runs here.
       - name: Run brownout recovery tests

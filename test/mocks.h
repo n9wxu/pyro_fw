@@ -75,6 +75,7 @@ extern int mock_xip_stall_count;         /* number of stall events */
  * always has. Every reading passes the HAL's own range check, and is
  * truncated to whole pascals as hal_common.c does. */
 extern uint32_t mock_sample_interval_ms; /* 20: the MS5607 at 50 Hz */
+extern bool mock_sensor_stuck;           /* every reading repeats the last, exactly */
 extern float mock_noise_rms_pa;          /* Gaussian noise on every reading */
 extern uint32_t mock_noise_seed;         /* the same seed gives the same noise */
 extern int32_t mock_glitch_pa;           /* added to each of the next ... */

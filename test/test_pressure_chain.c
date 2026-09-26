@@ -23,23 +23,9 @@
 #include "../src/hal.h"
 #include "../src/telemetry_formatter.h"
 #include "pressure_processing.h"
+#include "board_harness.h"
 
-/* ── Buzzer stand-in: the announcements are not under test here ──── */
-
-void buzzer_init(void) {}
-void buzzer_play_spec(const beep_spec_t *spec, uint16_t gap_ms, uint8_t repeat_count) {
-    (void)spec;
-    (void)gap_ms;
-    (void)repeat_count;
-}
-void buzzer_play_altitude(int32_t altitude) {
-    (void)altitude;
-}
-void buzzer_play_usb_ok(void) {}
-void buzzer_stop(void) {}
-bool buzzer_is_active(void) {
-    return false;
-}
+extern reset_cause_t mock_reset_cause; /* test/hal_test.c */
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -47,7 +33,6 @@ void tearDown(void) {}
 /* ── The truth ────────────────────────────────────────────────────── */
 
 #define G 9.80665f
-#define SENSOR_RMS_PA 1.2f /* MS5607 at OSR 4096 */
 #define PAD_PA 101325.0f
 /* Pascals per metre at the pad: ρg with the ISA's 1.225 kg/m³. */
 #define PA_PER_M 12.01f
@@ -85,68 +70,6 @@ static void truth_step(truth_t *tr, const flight_t *f, float t_flight_s) {
         tr->v = 0.0f;
         tr->down = true;
     }
-}
-
-/* ── The board ────────────────────────────────────────────────────── */
-
-static flight_context_t ctx;
-extern reset_cause_t mock_reset_cause; /* test/hal_test.c */
-
-/* What a test sets before power-on, applied after flight_init() as the
- * hardware's main loop would find it. */
-static struct {
-    bool powered;
-    bool usb;
-    int landing_timeout; /* -1: the default */
-} power;
-
-/* Boots the way the hardware does: nothing primed, from BOOT_SETTLE. The
- * first tick runs flight_init(), which reads the reset cause and the sensor,
- * so anything a test sets up before it -- a marker, a reset cause -- is what
- * the board finds at power-on. */
-static void boot_like_hardware(uint32_t seed) {
-    mock_reset_all();
-    memset(&ctx, 0, sizeof(ctx));
-    memset(&power, 0, sizeof(power));
-    power.landing_timeout = -1;
-    mock_pressure.pressure_pa = PAD_PA;
-    mock_noise_rms_pa = SENSOR_RMS_PA;
-    mock_noise_seed = seed;
-    mock_stall_seed = seed * 7919u + 1u;
-}
-
-static void power_on(void) {
-    flight_init(&ctx);
-    hal_pyro_claim_channels(mock_pyro_pads);
-    if (power.landing_timeout >= 0)
-        ctx.config.landing_timeout = (uint8_t)power.landing_timeout;
-    ctx.usb_attached = power.usb;
-    power.powered = true;
-}
-
-/* One pass of the main loop, in its order (main_hardware.c). */
-static void tick(uint32_t t) {
-    if (!power.powered)
-        power_on();
-    mock_time_ms = t;
-    mock_pyro.firing = false;
-    hal_tasks_tick(t);
-    if (mock_core0_stalled(t))
-        return;
-    ctx.current_state = dispatch_state(&ctx, t);
-    flight_update_outputs(&ctx, t);
-    flight_flash_service(&ctx, t);
-}
-
-/* Runs the loop until PAD_IDLE; returns the time it got there. */
-static uint32_t run_to_pad(uint32_t *t) {
-    for (; *t < 20000; (*t)++) {
-        tick(*t);
-        if (ctx.current_state == PAD_IDLE)
-            return *t;
-    }
-    TEST_FAIL_MESSAGE("never reached PAD_IDLE");
-    return 0;
 }
 
 typedef struct {
@@ -634,26 +557,6 @@ void test_T2_median_timing(void) {
 }
 
 /* ── T1: brownout recovery from real samples (N23, N25) ───────────── */
-
-static void write_marker(int32_t ground_pa) {
-    pad_marker_t m;
-    pad_marker_fill(&m, ground_pa);
-    TEST_ASSERT_EQUAL(0, hal_fs_write_file(PAD_MARKER_PATH, (const char *)&m, (int)sizeof(m)));
-}
-
-static bool marker_valid(void) {
-    pad_marker_t m;
-    int n = hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m));
-    return n == (int)sizeof(m) && pad_marker_valid(&m);
-}
-
-static bool booting(void) {
-    return ctx.current_state == BOOT_SETTLE || ctx.current_state == BOOT_SENSOR;
-}
-
-static bool descending_state(void) {
-    return ctx.current_state == FALLING || ctx.current_state == DROGUE_DESCENT || ctx.current_state == CHUTE_DESCENT;
-}
 
 /* A board that powers up in the air, against a marker from the pad. The truth
  * starts at h0 moving at v0, coasts ballistic, and falls under a 20 m/s canopy

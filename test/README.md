@@ -34,6 +34,25 @@ timed against it. The `BASELINE` lines it prints are the "Now" column of
 `support/noise_baseline.py <board-ip>` measures a board's real noise from
 `raw_pa` and `pad_speed_cms` on `/api/status`.
 
+## The Mach lockout's test ground (M0)
+
+`test_mach.c` (target `mach_tests`) flies supersonic rockets through the board
+harness (`board_harness.c`, shared with `pressure_chain_tests`) against a
+plant, `sim/mach_plant.c`:
+- an atmosphere set by the pad's temperature and elevation, through the
+  tropopause;
+- the speed of sound, and a rocket whose drag rises through Mach 1;
+- static ports whose error is a Mach-dependent fraction of the dynamic
+  pressure, stepping at Mach 1, of either sign, including one that makes a
+  boost read as a descent;
+- an ejection charge's bay pressure, and a sensor that drops out or sticks
+  (`mock_sensor_stuck`).
+
+`sim/physics.c` drives the browser simulator and is untouched. The report
+`test_M0_report` prints, for every profile at a 10 °C sea-level pad and a
+45 °C pad at 2000 m, when the drogue fired against the true apogee and where
+the Mach gate let go.
+
 ## Code review 2026-09-24 regressions
 
 Each finding the review proved, or that was found while fixing it, has a test

@@ -47,6 +47,7 @@ static bool test_log_active = false;
 /* ── Sensor model ─────────────────────────────────────────────────── */
 
 uint32_t mock_sample_interval_ms = 20;
+bool mock_sensor_stuck = false;
 float mock_noise_rms_pa = 0.0f;
 uint32_t mock_noise_seed = 1;
 int32_t mock_glitch_pa = 0;
@@ -106,6 +107,11 @@ static float gaussian(void) {
 /* What the HAL does with a reading: truncate to whole pascals, and discard one
  * no atmosphere can produce [SNS-PRES-06]. */
 static void feed_reading(float true_pa, uint32_t stamp_ms) {
+    /* A stuck sensor answers with its last reading, to the pascal. */
+    if (mock_sensor_stuck) {
+        pp_feed(pp_last_raw_pa(), stamp_ms);
+        return;
+    }
     float p = true_pa;
     if (mock_noise_rms_pa > 0.0f)
         p += mock_noise_rms_pa * gaussian();
@@ -254,6 +260,7 @@ void mock_reset_all(void) {
     memset(sim_files, 0, sizeof(sim_files));
     last_pp_feed_ms = 0;
     mock_sample_interval_ms = 20;
+    mock_sensor_stuck = false;
     mock_noise_rms_pa = 0.0f;
     mock_noise_seed = 1;
     mock_glitch_pa = 0;

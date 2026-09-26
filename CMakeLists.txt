@@ -579,6 +579,7 @@ add_custom_target(pressure_chain_tests
                -I${CMAKE_CURRENT_LIST_DIR}/test
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_pressure_chain.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/board_harness.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
@@ -597,6 +598,35 @@ add_custom_target(pressure_chain_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_pressure_chain
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "The pressure chain under sensor noise, booted as the hardware boots"
+)
+
+add_custom_target(mach_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building Mach lockout tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/test
+               -I${CMAKE_CURRENT_LIST_DIR}/sim
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_mach.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/board_harness.c
+               ${CMAKE_CURRENT_LIST_DIR}/sim/mach_plant.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -lm
+               -o ${CMAKE_BINARY_DIR}/test_mach
+    COMMAND ${CMAKE_COMMAND} -E echo "Running Mach lockout tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_mach
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "The Mach lockout against supersonic flights and failed sensors"
 )
 
 # Plant tests. Each board model includes its own board's board_pins.h, so

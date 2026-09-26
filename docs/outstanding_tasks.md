@@ -176,7 +176,7 @@ ground bias, and the stall figure, where they used a different stall model.
 | Sample timestamps | loop ms at the temperature read, 16 ms after the conversion, up to 127 ms after it through a stall; stalls raise the worst speed error at 100 m/s from 8.3 to 9.3 m/s | hardware timer at the pressure conversion | T11 |
 | Fit-based speed and acceleration through flash stalls | worst −294 m/s and 441 m/s² with today's stamps (earlier experiments; T11 re-measures) | RMS 1.2 m/s and 3.5 m/s², stalls or not | T11 |
 | A flight above 8 km AGL | apogee fired 14.9 s early, at the clamp (N26) | apogee at the real apogee: done | T3 |
-| Supersonic flight with a static-port error | the Mach gate trusts any 1 s below 100 ft/s, which the error can fake | no drogue before the true apogee, on every M0 profile | M1 |
+| Supersonic flight with a static-port error | a port error that makes the boost read as a descent fires the low-drag flight's drogue 39 s before apogee, at Mach 1.27 | no drogue before the true apogee, on every M0 profile | M1 |
 | A sensor stuck or lost in flight | a stuck value may read as apogee | never causes a deployment | M2 |
 | Real flights replayable offline | no (raw pressure not logged) | yes | T8 |
 | MS5607 sample rate | 50 Hz | ~90 Hz | T9 |
@@ -432,6 +432,17 @@ value reads 0.2–0.5 m low.
 
 ### M0. Supersonic and failure test support
 
+**Done 2026-09-26.** The plant is `sim/mach_plant.c`, not `sim/physics.c`,
+because physics.c drives the browser simulator. The board side of the chain
+suite moved to `test/board_harness.c` so both suites fly the board the same
+way. The low-drag profile reaches 9.5 km from the cold pad and 10.7 km from
+the hot one: ten seconds above Mach 1 against gravity alone needs about
+440 m/s at burnout, which carries past 9 km. The report on today's code: a
+port error that makes the boost read as a descent fires the low-drag flight's
+drogue 39 s before apogee, at Mach 1.27, from either pad. The gate latched on
+every flight, even at Mach 0.5, and delayed clean supersonic drogues by up to
+1.5 s.
+
 **Why:** the lockout can't be tested with what exists:
 - the closed-loop profiles top out at an H73;
 - the physics engine's atmosphere is standard, with the pad at sea level;
@@ -455,7 +466,7 @@ value reads 0.2–0.5 m low.
   - subsonic, never past Mach 0.6;
   - a peak between Mach 0.65 and 0.85;
   - draggy, reaching Mach 1.5, with fast deceleration after burnout;
-  - low-drag, coasting supersonic for 10 s or more, apogee near 9 km;
+  - low-drag, coasting supersonic for 10 s or more, apogee 9.5-10.7 km;
   - a 30 g boost;
   - an ejection charge at apogee that pressurises the bay (size and decay are
     parameters);
@@ -467,9 +478,10 @@ value reads 0.2–0.5 m low.
   extremes: whether the drogue fired, the true Mach and time to apogee at
   release, and the delay from true apogee to the drogue, as the prompt asks.
 
-**Change:** `sim/physics.c` gains a pad temperature and elevation, the speed
-of sound, the port error, the ejection pulse and the failure modes. A new
-suite, `test/test_mach.c` (target `mach_tests`), is added to CI.
+**Change:** a new plant, `sim/mach_plant.c`, with a pad temperature and
+elevation, the speed of sound, the port error, the ejection pulse; the test
+HAL's stuck sensor; a new suite, `test/test_mach.c` (target `mach_tests`),
+added to CI.
 
 **Pass:** the tests pass, and `mach_tests` prints its report for today's code.
 That report is the baseline M1 and M2 must change.
