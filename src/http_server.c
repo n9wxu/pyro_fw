@@ -841,6 +841,14 @@ static void serve_api_status(http_conn_t *hc) {
 static void serve_file(conn_t *c, const char *lfs_path, const char *ctype, const char *extra, uint16_t fb_status,
                        const char *fb_ctype, const char *fb_body) {
     http_conn_t *hc = &c->h;
+    /* [WEB-API-10, N20] Every littlefs mount shares one set of read, program
+     * and lookahead buffers, and the flight log holds its mount from launch
+     * until its tail is flushed after landing. A second mount meanwhile would
+     * reset the caches the log's instance believes it holds. */
+    if (hal_log_active()) {
+        http_respond_str(hc, 409, JSON, "{\"error\":\"the flight log is still being written\"}");
+        return;
+    }
     c->file_cfg = (struct lfs_file_config){.buffer = hc->work};
     if (lfs_mount(&c->lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
         c->lfs_mounted = true;

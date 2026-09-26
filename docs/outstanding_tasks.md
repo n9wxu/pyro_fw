@@ -926,11 +926,16 @@ sample.
 
 ### N20. All littlefs mounts share one set of buffers
 
+**Done 2026-09-26** (WEB-API-10), except its bench check. `http_tests`
+covers only the HTTP engine; the routes in `http_server.c` need lwIP, so the
+refusal can only be checked on a board. That check is in section 6.
+
 A file download while the flight log is open can disturb the log (not
 observed).
-- **Tests first:** `http_tests`: a file GET while `hal_log_active()` answers
-  409 and never mounts. Fails today. *guard*: `/api/status` still answers.
-- **Change:** refuse file GETs while the log is open.
+- **Tests first:** on a bench board in test mode with the log open, a file
+  GET answers 409, `/api/status` still answers, and the log is intact after
+  landing.
+- **Change:** `serve_file()` refuses while `hal_log_active()`.
 
 ### N12. A canopy approaching its rate from below can settle in the main band
 
@@ -977,6 +982,7 @@ resolution doc.
 | — | Chamber runs for T1–T7 | pump-down, hold and vent in test mode give launch, apogee and landing as the host tests predict, with no false launch during the hold | the chamber |
 | T1 | Recovery reads samples on the hardware | a board with a marker, booted on battery with USB plugged in afterwards, reads "cold: at ground level" | a battery |
 | T1 | Brownout recovery on the real path | a power cut during a chamber descent rejoins in FALLING; a power cut on the pad stays cold | a battery, the chamber, telemetry over serial or radio (USB forces a cold boot, and a reset ends test mode) |
+| N20 | No file served while the log is written | in test mode, once a chamber pump-down declares a launch, `GET /www/app.js` answers 409 and `/api/status` 200; after LANDED the log reads back whole | test mode, the chamber |
 | — | The arming path independent of software | with the mechanical disconnect in, a commanded ground-test FIRE puts no current through a dummy load, on each board | a dummy load and a meter. The Mach prompt asks for this path; the operator narrative uses a mechanical disconnect, but no document says what it breaks |
 
 The Mach lockout can't be checked in a chamber, because it needs supersonic

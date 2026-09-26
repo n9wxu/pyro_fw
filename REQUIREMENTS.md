@@ -322,6 +322,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **WEB-API-07**: All API responses shall include CORS headers. ← SYS-WEB-01
 - **WEB-API-08**: The system shall refuse every POST, and the bench capture, while the rocket is in flight (ASCENT through CHUTE_DESCENT). ← PYR-SAFE-04, SYS-WEB-01
 - **WEB-API-09**: The system shall erase the flight log on request at `/api/flight/erase` (POST), unless the log is being written. ← DAT-06
+- **WEB-API-10**: A request for a file shall be refused with 409 while the flight log is being written, since every filesystem mount shares the buffers the log's mount holds. ← WEB-API-08
 - **WEB-HTTP-01**: The HTTP server shall treat each connection as a byte stream: a request shall be answered the same however TCP divides it into segments, including a header block or body split at any byte and more than one request in a single segment. ← SYS-WEB-01
 - **WEB-HTTP-02**: Every response shall be framed by Content-Length and carry Connection: close; one request is served per connection. ← SYS-WEB-01
 - **WEB-HTTP-03**: The server shall read a request body only as fast as it consumes it, so that TCP flow control, not a refused segment, holds back a sender while the body waits for the flash window. ← SYS-WEB-01, DD-035

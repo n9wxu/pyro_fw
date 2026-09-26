@@ -215,6 +215,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | WEB-API-07 | CORS headers | Hardware: bench smoke test, every route | ✅ HW |
 | WEB-API-08 | No state-changing request in flight | Unit: test_REV18_flight_in_progress_is_launch_to_landing (the predicate); route wiring by inspection | ⚠️ |
 | WEB-API-09 | Erase the flight log | Web UI: the flight log can be erased; Hardware: bench smoke test | ✅ |
+| WEB-API-10 | No file served while the log is written | `serve_file()` refuses on `hal_log_active()`, by inspection; bench check owed (section 6 of docs/outstanding_tasks.md) | ⚠️ |
 | WEB-HTTP-01 | A request is a byte stream | HTTP: test_HTTP_02 (split at every byte), test_HTTP_03 (byte by byte, random), test_HTTP_04, test_HTTP_07; Hardware: `support/http_stream_check.py` 16/16 on MK1A/B/C (4/16 on the old server) | ✅ |
 | WEB-HTTP-02 | Content-Length and Connection: close on every response | HTTP: body_of() asserts both on every test; Hardware: http_stream_check framing checks | ✅ |
 | WEB-HTTP-03 | Flow control, not refusal | HTTP: test_HTTP_12 (a 10 kB body through a 2 kB ring into a sink that refuses 50 times); Hardware: uploads round-trip byte-exact, flash_refusals 0, Lua heartbeat unbroken on MK1C | ✅ |
@@ -355,7 +356,7 @@ A user need is verified through the system requirements under it, and is marked 
 | Status | Count |
 |--------|-------|
 | ✅ Verified by a host, web or closed-loop test | 194 |
-| ⚠️ Not directly verified (needs a test or hardware) | 33 |
+| ⚠️ Not directly verified (needs a test or hardware) | 34 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 12 |
 
