@@ -158,8 +158,8 @@ pyro_fire_result_t flight_pyro_energise(uint8_t channel) {
 /* [PYR-SAFE-01..03, SYS-DEPLOY-01] Every in-flight fire goes through here.
  *
  * A channel is recorded as fired only when the board energised it. A refusal
- * -- MK1C before its firing sequence exists, or a channel released to Lua --
- * is recorded as one, and the channel is not asked again. */
+ * -- MK1C's preconditions failing, or a channel released to Lua -- is
+ * recorded as one, and the channel is not asked again. */
 static bool fire_channel(flight_context_t *ctx, int ch, uint32_t now) {
     pyro_fire_result_t r = flight_pyro_energise((uint8_t)ch);
     if (r == PYRO_BUSY)

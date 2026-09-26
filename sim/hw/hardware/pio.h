@@ -23,6 +23,7 @@ int  pio_claim_unused_sm(PIO pio, bool required);
 void pio_sm_set_enabled(PIO pio, uint sm, bool enabled);
 void pio_sm_clear_fifos(PIO pio, uint sm);
 void pio_sm_put_blocking(PIO pio, uint sm, uint32_t data);
+void pio_sm_put(PIO pio, uint sm, uint32_t data);
 bool pio_sm_is_tx_fifo_full(PIO pio, uint sm);
 void pio_sm_init(PIO pio, uint sm, uint initial_pc, const pio_sm_config *config);
 void pio_gpio_init(PIO pio, uint pin);

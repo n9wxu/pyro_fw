@@ -237,6 +237,13 @@ void pio_sm_put_blocking(PIO pio, uint sm, uint32_t data) {
         pump.fifo[pump.fifo_count++] = data;
 }
 
+/* As the SDK's: a word pushed into a full FIFO is lost. */
+void pio_sm_put(PIO pio, uint sm, uint32_t data) {
+    (void)pio; (void)sm;
+    if (pump.fifo_count < PIO_FIFO_DEPTH)
+        pump.fifo[pump.fifo_count++] = data;
+}
+
 /* Driven from the time advance. When the FIFO empties the SM stalls at
  * `pull block` with the pin low, which is the disarm. */
 static void pump_service(double us) {

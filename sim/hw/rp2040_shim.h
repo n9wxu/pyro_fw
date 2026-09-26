@@ -56,9 +56,9 @@ void shim_reset(void);
 void shim_tick(uint32_t ms);
 
 /* Bring the shim clock up to the flight software's millisecond clock.
- * Advances only when behind: board code that blocks -- MK1C's 8 ms bias
- * pulses, MK1A's medians -- has already moved the shim clock past the
- * tick, and the model must not be rewound to meet it. */
+ * Advances only when behind: board code that takes time -- an ADC
+ * conversion is 2 us -- has already moved the shim clock past the tick,
+ * and the model must not be rewound to meet it. */
 void shim_advance_to_ms(uint32_t ms);
 
 /* Did anything arm the watchdog and then miss its deadline? The shim does

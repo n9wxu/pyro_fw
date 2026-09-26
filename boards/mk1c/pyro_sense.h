@@ -32,7 +32,8 @@
 #define MK1C_BIAS_DIODE_NVT_V 0.045
 
 /* A bus below this never rose: shorted, or its bias open. The test then
- * says nothing about the channels. Every healthy bias puts it above 600. */
+ * says nothing about the channels. A healthy bus settles above 600; with
+ * C_BULK fitted the bias is held until the bus passes this (pyro_board.c). */
 #define TRACK_BUS_MIN_COUNTS 200u
 
 typedef enum { TRACK_OPEN, TRACK_PRESENT, TRACK_INVALID } track_t;

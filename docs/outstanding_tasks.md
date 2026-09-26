@@ -22,7 +22,7 @@ recorded.
 | 4 | [The pressure chain and the Mach lockout](#4-the-pressure-chain-and-the-mach-lockout) | done, except every task's G4 |
 | 5 | [Other code defects](#5-other-code-defects) | done, except C10, C6 and U6 (their decisions) |
 | 5a | [No sleeps](#5a-no-sleeps-dd-053) | done |
-| 5b | [MK1C firing path](#5b-mk1c-firing-path) | your go-ahead, then a supervised bench test |
+| 5b | [MK1C firing path](#5b-mk1c-firing-path) | **done in code** (DD-056); a flash, then a supervised bench fire into a dummy load |
 | 6 | [Bench checks](#6-bench-checks) | a person or equipment |
 | 7 | [Board changes](#7-board-changes) | hardware design |
 | 8 | [Documentation and housekeeping](#8-documentation-and-housekeeping) | done |
@@ -1204,7 +1204,7 @@ without lowering the list.
 | W2 | `src/lua/lua_pio_platform.c` | the bridge's first word | **done**: the FIFO is empty, so a plain put |
 | W3 | `boards/*/pressure_board.c`, `ms5607_detect()` | bus recovery clocks, pull-up settle, sensor resets | **done**: steps the loop runs during BOOT_SETTLE (`sensor_bringup_tests`, every board) |
 | W4 | `ms5607_read()`, `pressure_sensor_read()` | two conversions | **done**: removed; nothing called them |
-| W5 | MK1C `pyro_board.c` waveform capture | bias settle, the edge's lead-in, the DMA capture, the arm pump's FIFO | **done**: the capture is gone with the hardware checks (DD-055). The arm pump stays for firing; feeding it from the loop is F1's |
+| W5 | MK1C `pyro_board.c` waveform capture | bias settle, the edge's lead-in, the DMA capture, the arm pump's FIFO | **done**: the capture is gone with the hardware checks (DD-055); the loop feeds the pump (F1, DD-056) |
 
 Outside the check, recorded so they are not forgotten: the MS5607 one-shot's
 wait for STOP inside its handler (at most 0.15 ms at 400 kHz), which an I2C
@@ -1218,52 +1218,44 @@ keeps it asserted until Lua reconfigures the pad.
 
 ### F1. Arm the firing bus and fire, on MK1C
 
-**Open, not started.** Added 2026-09-26 at the user's request.
+**Done in code, 2026-09-26 (DD-056).** Added and finished the same day at the
+user's request; one watchdog, the loop's, at the user's choice.
 
-**Why:** MK1C cannot fire. `pyro_fire()` refuses ("firing not implemented on
-MK1C"), and the board announces a sense-only build. The firing bus is
-energised only while U9 is enabled, and U9's enable stays up only while the
-ARM_TOGGLE charge pump keeps toggling (DESIGN.md 5.1, invariant 5). The pump
-had only ever run inside the bench arm test, which went with the hardware
-checks (DD-055); its start and stop are kept in `boards/mk1c/arm_pump.c`,
-uncalled.
+`pyro_fire()` runs DESIGN.md 7.1 and IGNITER_OPERATION.md F0-F10 as loop
+steps in `boards/mk1c/pyro_board.c`, feeding the pump in
+`boards/mk1c/arm_pump.c` once a loop:
+1. Preconditions: the channel present on a tracking test since it last
+   fired, no latched fault, the pack above 3.0 V, the bus not hot. A failure
+   is a refusal with its reason.
+2. Arm: the pump starts; each loop re-checks and tops the FIFO up. Five
+   2 ms bursts carry it across one loop, and bound how far it runs past the
+   last check.
+3. Fire when the bus reaches 90 % of the measured pack; not there within
+   1.5 times the ramp's time, abort and latch.
+4. The pump stops with the gate; U9's enable bleeds in 9.6 ms.
+5. The gate opens once the bus is flat after U9 is off, or at 30 ms.
+6. The bus drains; the first tracking test after it reports the channel
+   fired (open) or a misfire (still present, live). A misfire latches nothing,
+   and the other channel may fire on the charged bus meanwhile.
 
-**The sequence** (`~/Documents/pyro_mk1c/IGNITER_OPERATION.md` F0-F10,
-DESIGN.md 7.1), every step a loop step, nothing waiting [DD-053]:
-1. Preconditions: a valid tracking test with the channel present, no
-   latched short, the pack above UVLO, the bus cold.
-2. Arm: start the pump and feed it from the loop, a burst per word, only
-   while the FIFO has room. The FIFO's depth times the burst bounds how far
-   the pump can run past the last check; the old bench code blocked on a
-   full FIFO instead, which DD-053 rules out.
-3. Wait for the bus to reach the pack: the dVdT slew brings it to 90 % in
-   about 8.5 ms on 2S (DESIGN.md 4).
-4. Fire: FIRE_x on for the pulse, then off.
-5. Disarm: stop feeding and stop the pump; C_HOLD bleeds and U9 turns off in
-   about 9.6 ms, then R_BLEED drains the bus.
-6. Verify (S6): the tracking test must read the fired channel open.
+Found while testing it: DESIGN.md S3's 5-10 ms bias cannot lift a bus
+carrying C_BULK (6 ms at 100 uF, 130 ms at 2200 uF to become readable), so
+every production board would have read its bus as shorted. The tracking test
+now holds its bias until the bus rises, 400 ms at most. **DESIGN.md S3
+should say so**; it lives outside this repo, so it is yours to change.
 
-Any latched short, or a failed precondition at any step, stops the feed and
-drops FIRE_x at once. To settle in the design: the old bench code scoped a
-50 ms watchdog to the armed window, against the loop's own watchdog of twice
-`PYRO_LOOP_WORST_MS`.
+Also: no flash write during a fire (`board_flash_ok()`), and the bus-short
+latch counts tracking tests, not loops (invariant 8).
 
-**Tests first**, in `board_pyro_mk1c_tests` (the real `pyro_board.c` against
-the plant, which models U9, the pump, the slew and a match's ignition):
-- a fitted channel fires: the plant's ignition latch sets, the other
-  channel's does not;
-- the bus reaches the pack within the slew's time, and not before the pump
-  runs;
-- the loop stopping mid-arm disarms U9 within about 20 ms;
-- a short latched mid-arm stops the pump and never drives FIRE_x;
-- a channel reading open, or no valid tracking test, is refused;
-- after a fire the channel reads open;
-- nothing blocks, and ARM_TOGGLE never toggles except inside a fire.
+`board_pyro_mk1c_tests`: 24 tests against the plant, on the bench board and
+variants A and B. Requirements PYR-ARM-01..06 and PYR-CONT-04.
 
-**Records:** a DD; MK1C's firing requirements and their trace rows.
-
-**Bench:** a flash (G4), then a supervised test with a dummy load on CN1 and
-the scope on the firing bus, before any real match.
+**Owed, on the bench:** a flash (G4), then a supervised fire with a 1 ohm
+pulse resistor on CN1 and the scope on the firing bus, before any real match.
+Pass: `!PYRO FIRE` with the bus at 90 % of the pack or more, the gate held
+no more than 30 ms, `!PYRO F10 ch=1 still present` (a resistor does not
+open), and `pyro1_fired` on `/api/status`. Then the same with a stopped loop
+(a debugger halt mid-arm): U9 off within 20 ms.
 
 ---
 
@@ -1299,7 +1291,7 @@ flow. `mach_tests` is its only check short of a flight.
 | ID | What | Tests first |
 |---|---|---|
 | U1 | Detect a charger on USB (USB-06). VBUS reaches only the TP4057 on MK1A, MK1B and MK1C. The options are a VBUS divider to a spare GPIO (MK1C has GPIO2–5, 9, 10 and 13–15 free; GPIO24 on MK1A/B), or routing the charger's CHRG/STDBY pins to GPIOs. Firmware would OR either with the USB frame check. | Host, with a mocked VBUS input: a charger alone counts as attached; a sleeping PC (VBUS, no frames) counts as attached (U3); no input counts as detached. Bench, on the new board: a charger stops launch detection. |
-| REV-03 | MK1C cannot fire: the F0–F10 firing sequence is unbuilt. | From the MK1C specs in `~/Documents/pyro_mk1c/`: host tests for the sequence, and a bench fire into a dummy load that sets `pyro1_fired` and shows the pulse on a scope. |
+| REV-03 | MK1C cannot fire. **Done in code (F1, DD-056).** | The bench fire into a dummy load that sets `pyro1_fired` and shows the pulse on a scope (F1's bench check). |
 | — | An arming path independent of software, if section 6's check finds a board without one | That check. |
 
 ---

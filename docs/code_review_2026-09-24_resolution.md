@@ -27,7 +27,7 @@ be flown.
 |----|-----|--------|--------------------|----------|
 | REV-01 | Crit | **Fixed** (requirement rewritten) | `test_REV01_working_drogue_main_at_its_trigger`, `test_REV01_failed_drogue_brings_the_main_forward`; every mode suite asserts `!main_forced` | flight only |
 | REV-02 | Crit | **Fixed** | `test_config_mode_none_round_trips`, `test_config_unknown_mode_serialises_as_none`, updated `test_config_reload_normalises_invalid_pyro_mode` | ✅ all three: `none` survives the POST merge |
-| REV-03 | Crit | **Fixed in part**: the flight no longer claims a fire; MK1C still cannot fire | `test_REV03_refused_fire_is_not_recorded_as_fired`, `test_REV03_refused_retry_is_asked_once` | ✅ `pyro1/2_refused` on /api/status |
+| REV-03 | Crit | **Fixed**: the flight no longer claims a fire; MK1C fires (DD-056), bench fire owed | `test_REV03_refused_fire_is_not_recorded_as_fired`, `test_REV03_refused_retry_is_asked_once` | ✅ `pyro1/2_refused` on /api/status |
 | REV-04 | High | **Fixed** | `test_REV04_pad_fault_after_boot_is_announced`, `test_BUZ_ACT_04_new_outcome_silences_the_old_one` | ✅ diagnosis and `beep` follow a live change, no power cycle |
 | REV-05 | High | **Fixed** for AGL and FALLEN | `test_REV05_agl_drogue_fires_at_its_altitude`; every AGL channel in the mode suites within 8 m | flight only |
 | REV-06 | High | **Fixed** | `test_REV06_ground_test_waits_for_the_other_channel` | no serial adapter on the bench |
@@ -83,8 +83,8 @@ straight after `hal_pyro_fire()` as the board's acknowledgement (DD-032). A
 refusal sets `pyroN_refused`, logs `PYROn_REFUSED` once, sends no `$PYRO_FIRE`,
 and is not retried every tick. No HAL function was added; the semantics were
 already true of every implementation except MK1C and are now written in
-`hal.h` and `pyro.h`. **Not fixed:** MK1C still cannot fire, because the
-F0–F10 sequence does not exist. That is hardware bring-up, not a review fix.
+`hal.h` and `pyro.h`. MK1C fires since DD-056: the F0–F10 sequence as loop
+steps, tested against the plant; the bench fire into a dummy load is owed.
 
 **REV-04.** Pad faults (`DIAG_PAD_ANY`) are re-derived at every continuity
 check, and the announcement changes whenever the outcome does.
@@ -195,7 +195,7 @@ keeps it for. `main_forced` is now read.
 
 | Item | Why |
 |---|---|
-| **REV-03**: MK1C cannot fire | The F0–F10 firing sequence is unimplemented hardware bring-up, out of scope. The firmware now reports the refusal honestly. |
+| **REV-03**: MK1C cannot fire | **Fixed 2026-09-26 (F1, DD-056).** The F0–F10 sequence runs as loop steps; `board_pyro_mk1c_tests` fires the modelled board. The bench fire into a dummy load is owed. |
 | **REV-05**: SPEED and DELAY lag | **Fixed 2026-09-26 (T5, DD-048).** SPEED compares the pressure fit's speed and fires within 1 m/s of its setting (was 4.7 m/s past it); DELAY counts from where the fit's rate crossed zero and fires within 0.05 s of the true apogee plus its delay (was 0.71 s late). `test_T5_speed_and_delay_triggers`. |
 | **REV-10**: numbered logs | Conflict C6: creating a new file at launch commits a directory entry, a flash write in the launch-shock window. |
 | **REV-13**: which threshold | Conflict C2: yours to decide. |

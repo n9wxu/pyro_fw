@@ -26,6 +26,11 @@
  * a board built without Lua. */
 bool lua_core1_flash_ok(void);
 
+/* Weak and always true in flash_window.c. A board whose pyro sequence is
+ * paced by the loop says no while it runs: an erase stalls the loop for tens
+ * of milliseconds, longer than MK1C's arm pump coasts [DD-056]. */
+bool board_flash_ok(void);
+
 /* ── The window itself. core0 only. ───────────────────────────────── */
 
 bool flash_window_is_open(void);

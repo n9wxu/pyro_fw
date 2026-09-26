@@ -72,14 +72,22 @@ them. `board_pyro_tests` runs MK1B's `pyro_board.c` against it; and
 against its own package, with fake sensors that refuse a transfer during
 their reset.
 
-## MK1C's firing bus as measured (DD-054, DD-055)
+## MK1C's firing bus as measured (DD-054, DD-055, DD-056)
 
 `plant_tests` holds `sim/plant/plant_mk1c.c` to the bench MK1C: U9's reverse
 path and the bias sources' Schottky, fitted to the board's ADC and a scope,
 from `boards/mk1c/pyro_sense.h`. `board_pyro_mk1c_tests` runs the real
-`boards/mk1c/pyro_board.c` against that model through `sim/hw/`: a fitted
-match reads present, an absent one open, a shorted bus or high side
-latches, and the only stimulus is the tracking test's bus bias.
+`boards/mk1c/pyro_board.c` and `arm_pump.c` against that model through
+`sim/hw/`, whose PIO stand-in runs the pump's FIFO and bursts:
+- between fires, a fitted match reads present and an absent one open with
+  any C_BULK, a shorted bus or high side latches, one bad tracking reading
+  does not, and the only stimulus is the tracking test's bus bias;
+- a fire arms the bus, fires on the measured bus, stops the pump at the
+  gate, and verifies with the next tracking test, on the bench board and on
+  variants A and B; each refusal, an aborted precharge, a stopped loop, a
+  misfire, both channels in turn and a high side stuck on;
+- the test watches the plant every 25 us between loops, so a gate, a pump
+  edge or U9 conducting is seen when it happens, not only at a loop.
 
 ## The Mach lockout's test ground (M0)
 

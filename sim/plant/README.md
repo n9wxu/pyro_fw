@@ -86,9 +86,9 @@ variant A fires by the second and never by the first.
   TVS is either absent or a short, and a FET is either 30 mΩ or open.
 - **The RP2040 itself.** `sim/hw/` is about thirty functions, not an
   emulator. There is no interrupt model and no core 1.
-- **MK1C firing.** The plant supports it, but `boards/mk1c/pyro_board.c`
-  is a sense-only build whose `pyro_fire()` refuses, so nothing exercises
-  it yet. That is the firmware's state, not a gap in the model.
+- **U9's latch-off clears only at a plant reset.** The part clears it when
+  its enable is cycled (DESIGN.md 5.0), which the next arm does; the model
+  keeps it, so a test that trips it cannot fire again.
 
 ## Validating it
 

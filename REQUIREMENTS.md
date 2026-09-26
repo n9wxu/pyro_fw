@@ -170,6 +170,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **PYR-CONT-01**: The system shall check pyro continuity at least once per second during PAD_IDLE. ← SYS-STATUS-02
 - **PYR-CONT-03**: The pad diagnosis and announcement shall be re-derived at every continuity check, so that a fault which appears or clears on the pad changes the announcement without a power cycle. On USB the verdict is re-derived but not said (USB-02). ← PYR-CONT-01, FLT-BOOT-15
 - **PYR-CONT-02**: The system shall report continuity status (good, open, short) for each channel. ← SYS-STATUS-02
+- **PYR-CONT-04**: On MK1C the tracking test shall hold its bias until the bus has risen to a readable level, at most 400 ms, so that presence reads the same whatever bulk capacitance is fitted. A bus not risen by then is shorted, judged on three consecutive tests. ← PYR-CONT-02, DD-056
 - **BUZ-STATUS-01**: The system shall emit distinct beep codes for each fault condition. ← SYS-STATUS-01
 
 ### L4 Implementation Requirements
@@ -310,6 +311,14 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **PYR-FAULT-02**: The system shall detect when pyro drive has exceeded the current limit. ← SYS-FAULT-02
 - **PYR-FAULT-03**: The system shall indicate to the user that an overcurrent condition occurred during pyro firing. ← SYS-FAULT-03
 - **PYR-VERIFY-01**: The system shall verify pyro circuit opened after firing by reading continuity. ← SYS-FAULT-02
+
+#### Armed Firing Bus (MK1C, DD-056)
+- **PYR-ARM-01**: On a board whose firing bus is armed by a charge pump, the pump shall run only inside a fire, fed once a loop by the code that has just re-checked the fire's conditions, so that a loop that stops leaves the bus disarmed within 20 ms. ← SYS-FAULT-01
+- **PYR-ARM-02**: A fire shall be refused, with its reason, unless the channel read present on a tracking test since it last fired, no fault is latched, and the pack is above 3.0 V. ← PYR-SAFE-01
+- **PYR-ARM-03**: The gate shall be driven when the measured bus reaches 90 % of the measured pack, never on elapsed time. A bus not there within 1.5 times the arming and the ramp's time shall abort the fire, drive no gate, and latch a fault. ← SYS-DEPLOY-01, SYS-FAULT-02
+- **PYR-ARM-04**: The pump shall stop when the gate is driven, and the gate shall be released only once the high side has turned off and the bus is flat, or 30 ms after the fire. ← SYS-FAULT-01
+- **PYR-ARM-05**: No flash write shall run while a fire is in its sequence. ← PWR-WAIT-01
+- **PYR-ARM-06**: A misfire shall latch no fault, and the other channel shall fire on the bus the first left charged. ← PYR-DEPLOY-01
 
 ---
 

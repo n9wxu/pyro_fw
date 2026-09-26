@@ -16,6 +16,11 @@ __attribute__((weak)) bool lua_core1_flash_ok(void) {
     return true;
 }
 
+/* Weak: most boards' pyro outputs do not depend on the loop's pace. */
+__attribute__((weak)) bool board_flash_ok(void) {
+    return true;
+}
+
 /* Weak and empty: most boards queue no flash work of their own. */
 __attribute__((weak)) void board_flash_service(uint32_t now_ms) {
     (void)now_ms;

@@ -34,7 +34,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-MODE-04 | SPEED mode | Closed-loop: test_PYR_MODE_04_delay_speed, test_PYR_MODE_04_speed_agl | ✅ |
 | PYR-SAFE-01 | No fire without continuity | Closed-loop: test_PYR_SAFE_01_no_fire_without_continuity | ✅ |
 | PYR-DEPLOY-01 | Both channels may deploy on one event | Closed-loop: test_PYR_DEPLOY_01_low_flight_fires_both | ✅ |
-| PYR-DEPLOY-02 | Not energised at the same instant, flight or ground test | `flight_pyro_energise()`, DD-021; Integration: test_REV06_ground_test_waits_for_the_other_channel | ✅ |
+| PYR-DEPLOY-02 | Not energised at the same instant, flight or ground test | `flight_pyro_energise()`, DD-021; Integration: test_REV06_ground_test_waits_for_the_other_channel; Board pyro (MK1C): test_mk1c_both_channels_one_after_the_other (never both gates) | ✅ |
 | PYR-FIRE-01 | Fired only when energised; a refusal is recorded once | Unit: test_REV03_refused_fire_is_not_recorded_as_fired; Hardware: `pyro1_refused` on /api/status | ✅ |
 | PYR-MODE-05 | AGL / FALLEN on the fit's height, SPEED on its speed, DELAY from its apogee | Chain: test_T5_speed_and_delay_triggers (SPEED within 1 m/s, DELAY within 0.1 s); Mach: test_T5_ejection (AGL within 8 m); Closed-loop: test_REV05_agl_drogue_fires_at_its_altitude; every AGL channel in the mode suites within 8 m | ✅ |
 | PYR-MODE-06 | Pressure triggers wait out an unclean fit, 2 s at most; believed after a charge if no lower than ballistic | Mach: test_T5_ejection (5 kPa bay charge), test_T5_canopy_swing; Chain: test_T5_descent_glitch; Closed-loop: test_PYR_MODE_02_agl_agl (a main 60 m below a drogue opening at 105 m/s) | ✅ |
@@ -115,6 +115,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-CONT-03 | Diagnosis and announcement follow each check | Unit: test_REV04_pad_fault_after_boot_is_announced; Hardware: bench smoke test | ✅ |
 | FLT-BOOT-16 | No fault for a released or disabled channel | Unit: test_REV_NEW_disabled_channel_is_not_a_fault; Hardware: bench smoke test | ✅ |
 | PYR-CONT-02 | Report good/open/short | Web UI: pyro channels show OK/OPEN/FIRED | ✅ |
+| PYR-CONT-04 | MK1C: the tracking bias held until the bus rises; a short judged on three tests | Board pyro (MK1C): test_mk1c_presence_with_c_bulk (100, 1000 and 2200 uF), test_mk1c_one_bad_tracking_reading_does_not_latch, test_mk1c_bus_short_latches | ✅ |
 | BUZ-STATUS-01 | Distinct beep codes | Beep: test_shipped_table_is_valid, test_two_outcomes_that_sound_alike_are_refused | ✅ |
 | BUZ-01..02 | Four outcomes, said again on a cadence | Integration: test_BEEP_01_clean_board_says_ok_to_fly, test_BEEP_02_a_pyro_fault_names_its_channel, test_BEEP_03_anything_unfixable_says_system_failure, test_BEEP_04_unfixable_outranks_fixable; Beep: test_shipped_cadence_keeps_talking; Buzzer: test_BUZ_PAT_07_gap_between_passes | ✅ |
 | FLT-BOOT-01 | Non-blocking boot | Integration: test_FLT_BOOT_01_all_states | ✅ |
@@ -212,7 +213,13 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-FAULT-01 | Disable at >1.5A | N/A (hardware — AP2192) | ✅ HW |
 | PYR-FAULT-02 | Detect overcurrent | Closed-loop: test_PYR_FAULT_02_overcurrent_detection | ✅ |
 | PYR-FAULT-03 | Indicate overcurrent | Beep codes 2-3/3-3 + flight buffer events | ✅ |
-| PYR-VERIFY-01 | Post-fire verification | check_post_fire_verify() + beep codes 2-4/3-4 | ✅ |
+| PYR-VERIFY-01 | Post-fire verification | check_post_fire_verify() + beep codes 2-4/3-4; Board pyro (MK1C): test_mk1c_fired_channel_reads_open_after (the first tracking test on the drained bus reports the fired channel open) | ✅ |
+| PYR-ARM-01 | The pump only inside a fire; a stopped loop disarms | Board pyro (MK1C): test_mk1c_pump_runs_only_inside_a_fire, test_mk1c_a_stopped_loop_disarms (U9 off within 20 ms), test_mk1c_only_the_tracking_test_runs | ✅ |
+| PYR-ARM-02 | Refused without presence, with a fault, or below UVLO | Board pyro (MK1C): test_mk1c_refuses_an_open_channel, test_mk1c_refuses_before_a_tracking_test, test_mk1c_refuses_with_a_latched_fault, test_mk1c_refuses_below_uvlo | ✅ |
+| PYR-ARM-03 | Fire on the measured bus; a precharge timeout aborts and latches | Board pyro (MK1C): test_mk1c_fires_on_the_measured_bus, test_mk1c_a_short_during_precharge_aborts, test_mk1c_fires_a_present_channel, test_mk1c_fires_on_one_cell, test_mk1c_fires_on_the_bench_board; the bench fire into a dummy load is owed | ✅ |
+| PYR-ARM-04 | The pump stops at the gate; the gate held until U9 is off | Board pyro (MK1C): test_mk1c_pump_runs_only_inside_a_fire | ✅ |
+| PYR-ARM-05 | No flash write during a fire | Board pyro (MK1C): test_mk1c_flash_waits_out_a_fire (`board_flash_ok()`); `main_hardware.c` shuts the window on it, by inspection | ✅ |
+| PYR-ARM-06 | A misfire latches nothing; the other channel fires | Board pyro (MK1C): test_mk1c_misfire_leaves_the_other_channel, test_mk1c_both_channels_one_after_the_other | ✅ |
 
 ## 8. Web Interface & Network
 
@@ -369,7 +376,7 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 222 |
+| ✅ Verified by a host, web or closed-loop test | 229 |
 | ⚠️ Not directly verified (needs a test or hardware) | 21 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 11 |

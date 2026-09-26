@@ -882,6 +882,7 @@ add_custom_target(board_pyro_mk1c_tests
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_board_pyro_mk1c.c
                ${CMAKE_CURRENT_LIST_DIR}/boards/mk1c/pyro_board.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1c/arm_pump.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/hw/rp2040_shim.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/plant/net_solve.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/plant/plant.c

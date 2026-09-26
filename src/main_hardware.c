@@ -189,14 +189,8 @@ int main() {
         uint32_t iter_t0 = time_us_32();
 
         /* watchdog_reboot() works by loading a short timeout and letting it
-         * expire, so feeding afterwards cancels the reboot.
-         *
-         * The pyro arm window disables the watchdog when it finishes, hence
-         * the re-arm. */
+         * expire, so feeding afterwards cancels the reboot. */
         if (!reset_armed) {
-            if (!(watchdog_hw->ctrl & WATCHDOG_CTRL_ENABLE_BITS)) {
-                watchdog_enable(WATCHDOG_MS, true);
-            }
             watchdog_update();
         }
 
@@ -245,10 +239,13 @@ int main() {
          * previous period's dispatch, and sized that grant to expire before
          * this line. A core1 still executing -- an overrunning unit, or its
          * unbounded startup -- leaves the window shut for the period rather
-         * than stalling core0. See flash_window.h. */
+         * than stalling core0. See flash_window.h.
+         *
+         * A fire in its sequence shuts it too: an erase would stall the loop
+         * that paces it [DD-056]. */
         STAGE(7);
         CRUMB(70);
-        bool window = lua_core1_flash_ok();
+        bool window = lua_core1_flash_ok() && board_flash_ok();
         if (window) {
             CRUMB(71);
             flash_window_open();
@@ -292,7 +289,7 @@ int main() {
                  * core1 observed idle here stays idle for the rest of the
                  * slack. Without this, a flash-writing request waits for the
                  * next period's STAGE 7. */
-                if (!flash_window_is_open() && lua_core1_flash_ok()) {
+                if (!flash_window_is_open() && lua_core1_flash_ok() && board_flash_ok()) {
                     flash_window_open();
                 }
                 net_service();
