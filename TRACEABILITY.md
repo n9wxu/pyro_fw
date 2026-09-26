@@ -90,7 +90,12 @@ Verify web interface behavior against mock server in 3 device modes.
 | PIN-LABEL-01 | Connector designator per pin | Host: test_PIN_LABEL_01..03; Playwright: pin tables name the connector | ✅ |
 | PIN-BUZZ-01 | Buzzer assignable to a pad | Host: test_PIN_BUZZ_01/02/05/06/07; Playwright: buzzer can be moved | ✅ |
 | PIN-BUZZ-02 | Buzzer pad exclusive against Lua | Host: test_PIN_BUZZ_03/04 | ✅ |
-| FLT-MACH-01 | No apogee above 100 ft/s | Closed-loop: test_FLT_MACH_01_supersonic_apogee_gated | ✅ |
+| FLT-MACH-02 | The flag, set while the data is clean | Mach: test_M1_flag_before_mach_085 (by Mach 0.82), test_M1_subsonic_never_locks; Closed-loop: test_FLT_MACH_02_fast_subsonic_flight_not_locked | ✅ |
+| FLT-MACH-03 | Released on a second of a coast's signature | Mach: test_M1_mid_mach_releases, test_M1_release_at_altitude (1000 seeds), test_M1_port_error_margin, test_M1_integer_forms, test_M1_design_note | ✅ |
+| FLT-MACH-04 | The fallback | Mach: test_M1_fallback | ✅ |
+| FLT-MACH-05 | No apogee while flagged | Mach: test_M1_no_drogue_before_apogee (both pads, both port signs), test_M0_report | ✅ |
+| FLT-MACH-06 | No arming below 30 m; a recovered ascent starts flagged | Chain: test_M1_minimum_altitude_arm, test_M1_recovered_ascent_locked | ✅ |
+| FLT-MACH-07 | The peak from outside the lock | Mach: test_M1_peak_outside_lock | ✅ |
 | FLT-DESC-01 | Phase from rate, not from command | Closed-loop: test_FLT_DESC_01_phase_without_pyros | ✅ |
 | FLT-DESC-02 | Landing from every descent phase | Closed-loop: test_FLT_DESC_02_ballistic_reaches_landed | ✅ |
 | PYR-ALT-01 | Clamp altitude settings | Closed-loop: Karman suite (AGL > 8000m clamped, pyro still fires) | ✅ |
@@ -360,7 +365,7 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 198 |
+| ✅ Verified by a host, web or closed-loop test | 203 |
 | ⚠️ Not directly verified (needs a test or hardware) | 35 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 12 |

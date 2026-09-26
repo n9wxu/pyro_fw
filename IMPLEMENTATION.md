@@ -36,7 +36,7 @@ FALLING / DROGUE_DESCENT / CHUTE_DESCENT → LANDED on SEVT_LANDING
 
 **PAD_IDLE → ASCENT:** Filtered altitude above 100 ft with vertical speed above 5 m/s, held together for 100 ms (FLT-LAUNCH-01, FLT-LAUNCH-07). T+0 is backdated to the first sample above 50 cm (FLT-LAUNCH-03).
 
-**ASCENT → FALLING:** Clean fits show the pressure rising for 60 ms, and the fitted pressure has risen to 1.0001 times the lowest a clean fit showed, while the pyros are armed and the Mach gate is clear (FLT-APO-01, FLT-MACH-01, DD-048). The pyros arm once the peak speed has passed 10 m/s and the speed has fallen back below it (DD-017).
+**ASCENT → FALLING:** Clean fits show the pressure rising for 60 ms, and the fitted pressure has risen to 1.0001 times the lowest a clean fit showed, while the pyros are armed and no Mach lock stands (FLT-APO-01, FLT-MACH-05, DD-048); or the lock's fallback, once clean fits show the rocket falling back past where the lock went up (FLT-MACH-04). The pyros arm once the peak speed has passed 10 m/s and the speed has fallen back below it, above about 30 m (DD-017, FLT-MACH-06). The Mach lockout is described in `docs/mach_lockout.md` (DD-049).
 
 **Descent:** the phase is read from the descent rate settling in a band, never from a firing command (DD-023).
 

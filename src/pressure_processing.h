@@ -42,6 +42,10 @@ typedef struct {
     int32_t accel_cms2;
     bool fit_valid;
     bool fit_clean; /* residuals no bigger than pp_sigma_pa() explains */
+    /* The rate over the newest two intervals, Pa/s: far noisier than the
+     * fit's, but through a hard boost's first second the fit still holds the
+     * pad and under-reads the climb. For the Mach flag only [FLT-MACH-02]. */
+    float short_pdot;
 } altitude_sample_t;
 
 /* ── Ring buffer sizing ──────────────────────────────────────────── */

@@ -417,6 +417,15 @@ static pfit_t fit_history(void) {
     return pfit_quadratic(t, p, n);
 }
 
+static float short_rate(void) {
+    if (pp.hist.n < 3)
+        return 0.0f;
+    unsigned newest = (pp.hist.head + PP_HIST_SIZE - 1u) & (PP_HIST_SIZE - 1u);
+    unsigned third = (pp.hist.head + PP_HIST_SIZE - 3u) & (PP_HIST_SIZE - 1u);
+    int32_t dt_us = (int32_t)(pp.hist.us[newest] - pp.hist.us[third]);
+    return dt_us > 0 ? (float)(pp.hist.pa[newest] - pp.hist.pa[third]) * 1e6f / (float)dt_us : 0.0f;
+}
+
 /* On the pad the residuals are the sensor: their variance, with the three
  * fitted parameters allowed for, averaged over about five seconds. Not while
  * the ground reference rejects -- the board is being carried. */
@@ -435,6 +444,7 @@ static void measure_sigma(const pfit_t *f, uint32_t dt_ms) {
 static void fit_sample(altitude_sample_t *s, uint32_t dt_ms) {
     pfit_t f = fit_history();
     measure_sigma(&f, dt_ms);
+    s->short_pdot = short_rate();
     s->fit_valid = f.valid;
     s->fit_clean = pfit_clean(&f, pp_sigma_pa());
     if (!f.valid || f.p <= 0.0f || pp.ground_pressure <= 0)

@@ -18,6 +18,7 @@ __attribute__((weak)) bool lua_app_ready_or_absent(void) {
 #include "brownout.h"
 #include "pressure_processing.h"
 #include "pressure_fit.h"
+#include "mach_lockout.h"
 #include "telemetry_formatter.h"
 #include "ground_test.h"
 #include "buzzer.h"
@@ -341,6 +342,18 @@ static state_event_t detect_fault(flight_context_t *ctx, uint32_t now) {
 #define RECOVERY_SPAN_MS 600u
 #define RECOVERY_MIN_READINGS 8
 
+static void mach_flag(flight_context_t *ctx, int32_t p, uint32_t ts);
+
+/* [FLT-MACH-06] A recovered ascent has lost its speed history and cannot
+ * know whether the rocket is supersonic, so it starts locked, flagged at the
+ * pressure it rejoined at. */
+static void recover_locked(flight_context_t *ctx, int32_t level, uint32_t ts, int32_t alt_cm) {
+    extern void hal_telemetry_send(const char *sentence);
+    mach_flag(ctx, level, ts);
+    hal_log_sample(0, level, alt_cm, ASCENT, 0, EVT_MACH_LOCK);
+    hal_telemetry_send("!MACH LOCK\r\n");
+}
+
 static bool recovery_cold(flight_context_t *ctx, cold_reason_t why) {
     ctx->recovery = (uint8_t)RECOVER_COLD;
     ctx->recovery_why = (uint8_t)why;
@@ -402,6 +415,8 @@ static bool assess_recovery(flight_context_t *ctx, uint32_t now, state_event_t *
     ctx->vertical_speed_cms = speed;
     hal_log_start(&ctx->config, ctx->ground_pressure);
     hal_log_sample(0, ctx->filtered_pressure, alt_agl, ASCENT, 0, EVT_LAUNCH);
+    if (r == RECOVER_ASCENT)
+        recover_locked(ctx, level, newest, alt_agl);
     *evt = (r == RECOVER_ASCENT) ? SEVT_RECOVER_ASCENT : SEVT_RECOVER_DESCENT;
     return true;
 }
@@ -653,6 +668,8 @@ static void take_fit(flight_context_t *ctx, const altitude_sample_t *s) {
     ctx->trigger_height_cm = s->fit_valid ? s->fit_height_cm : s->height_cm;
 }
 
+static void pad_mach_flag(flight_context_t *ctx, const altitude_sample_t *s, uint32_t ts);
+
 static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     /* [GND-TEST-01..04, DD-011] Poll serial for ground test commands.
      * Processed before the sample-rate gate so commands drain promptly. */
@@ -679,6 +696,7 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
         ctx->pad_rising = true;
         ctx->pad_rise_ms = ts;
     }
+    pad_mach_flag(ctx, &sample, ts);
 
     ctx->filtered_pressure = pp_last_filtered_pa(); /* for telemetry/debug */
 
@@ -721,44 +739,115 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
  * 9 km the drop is 3 Pa, so noise cannot fake it. */
 #define APOGEE_DROP 1.0001f
 
-/* [FLT-MACH-01] Apogee is not declared while the rocket is fast.
+/* ── The Mach lockout [FLT-MACH-02..07, DD-049] ──────────────────────
  *
- * Only an upward rush latches the gate. Testing the magnitude instead would
- * re-latch on the way down -- where speed climbs past the threshold again --
- * and lock apogee detection out for the rest of the flight, which is the
- * deadlock this gate would otherwise introduce. Descending fast is not a
- * reason to doubt that apogee happened; it is proof that it did. */
-#define MACH_GATE_CMS 3048  /* 100 ft/s */
-#define MACH_SETTLE_MS 1000 /* slow for this long before the sensor is believed */
+ * Past Mach 0.85 the static ports sit in disturbed flow, and until the
+ * rocket is subsonic again their pressure is not the air's: it can make a
+ * climbing rocket look slow, stopped or falling. So the flag goes up while
+ * the data is still clean, and the data is not believed again until it has
+ * shown, for a whole second, what only a subsonic coast shows: smooth,
+ * climbing, slow, and slowing by gravity or more. The thresholds are pressure
+ * ratios (mach_lockout.h); docs/mach_lockout.md derives each one. */
+#define MACH_RELEASE_MS 1000u /* a design constant: the signature, held */
+#define MACH_LOWER_BOUND_MS 2000u
 
-/* The latch has to be fed from every ascent sample, not from the gate test.
- * The gate is only consulted once the pyros are armed, and arming already
- * requires the rocket to have slowed below 10 m/s -- so a latch that lived in
- * here could never see a speed above the threshold, and the gate would be
- * permanently open on exactly the flights it exists for. */
-static void mach_gate_feed(flight_context_t *ctx) {
-    if (ctx->vertical_speed_cms > MACH_GATE_CMS) {
-        ctx->mach_exceeded = true;
-        ctx->subsonic_since = 0;
-    }
+static void mach_note(flight_context_t *ctx, uint8_t evt, const char *line) {
+    extern void hal_telemetry_send(const char *sentence);
+    buf_tag_event(ctx, evt);
+    hal_telemetry_send(line);
 }
 
-/* ts is sample time [SNS-PRES-08]: how long the sensor has said "slow". */
-static bool mach_gate_clear(flight_context_t *ctx, uint32_t ts) {
-    if (!ctx->mach_exceeded)
-        return true; /* never went fast, so nothing to wait out */
-    if (ctx->vertical_speed_cms > MACH_GATE_CMS)
-        return false;
-    if (ctx->subsonic_since == 0)
-        ctx->subsonic_since = ts + 1u;
-    return ts + 1u - ctx->subsonic_since >= MACH_SETTLE_MS;
+static void mach_flag(flight_context_t *ctx, int32_t p, uint32_t ts) {
+    ctx->mach_lock = true;
+    ctx->p_flag_pa = p;
+    ctx->mach_flag_ms = ts;
+    ctx->release_since = 0;
+    ctx->fallback_since = 0;
+}
+
+/* The peak starts again here: nothing from the locked interval may be it. */
+static void mach_release(flight_context_t *ctx, const altitude_sample_t *s, uint32_t ts) {
+    ctx->mach_lock = false;
+    ctx->mach_released = true;
+    ctx->mach_release_ms = ts;
+    ctx->p_min_pa = s->fit_pa;
+    ctx->peak_height_cm = s->fit_height_cm;
+    mach_note(ctx, EVT_MACH_UNLOCK, "!MACH UNLOCK\r\n");
+}
+
+/* Never let the lock prevent a deployment: a flagged flight was a real one,
+ * so the fallback arms what arming missed. */
+static void mach_fall_back(flight_context_t *ctx, uint32_t ts) {
+    ctx->mach_lock = false;
+    ctx->mach_fallback = true;
+    if (!ctx->pyros_armed) {
+        ctx->pyros_armed = true;
+        ctx->armed_time = ts;
+    }
+    ctx->apogee_fit_ms = ts;
+    mach_note(ctx, EVT_MACH_FALLBACK, "!MACH FALLBACK\r\n");
+}
+
+/* Before any release the flag takes any fit, and the rate over the newest
+ * 40 ms besides: setting it is the safe direction, and through a 66 g boost's
+ * first second a one-second fit still holds the pad and reads the climb
+ * 120 m/s slow. After a release, only a clean fit: the coast has been seen,
+ * and a bad reading must not lock out the apogee just ahead. */
+static bool mach_flag_due(const flight_context_t *ctx, const altitude_sample_t *s, int32_t p) {
+    if (ctx->mach_released)
+        return s->fit_clean && mach_too_fast(p, s->fit_pdot);
+    return mach_too_fast(p, s->fit_pdot) || mach_too_fast(p, s->short_pdot);
+}
+
+/* The flag is the climb's, from T+0: the launch detector wants 100 ft and
+ * 100 ms, and a 66 g boost is past Mach 0.85 by then. It outlives a rise that
+ * falls back, because a port faking a descent is one: supersonic, the rocket
+ * can read below the pad. A flag that no launch follows for this long was a
+ * bad reading. */
+#define PAD_FLAG_FORGET_MS 10000u
+
+static void pad_mach_flag(flight_context_t *ctx, const altitude_sample_t *s, uint32_t ts) {
+    if (ctx->mach_lock && !ctx->pad_rising && ts - ctx->mach_flag_ms >= PAD_FLAG_FORGET_MS) {
+        ctx->mach_lock = false;
+        ctx->mach_flag_ms = 0;
+        ctx->p_flag_pa = 0;
+    }
+    if (ctx->mach_lock || !ctx->pad_rising || !s->fit_valid)
+        return;
+    int32_t p = mach_round_clamp(s->fit_pa, MACH_RATE_CLAMP);
+    if (mach_flag_due(ctx, s, p))
+        mach_flag(ctx, p, ts);
+}
+
+static state_event_t mach_lockout(flight_context_t *ctx, const altitude_sample_t *s, uint32_t ts) {
+    if (!s->fit_valid)
+        return SEVT_NONE;
+    int32_t p = mach_round_clamp(s->fit_pa, MACH_RATE_CLAMP);
+    if (!ctx->mach_lock) {
+        if (mach_flag_due(ctx, s, p)) {
+            mach_flag(ctx, p, ts);
+            mach_note(ctx, EVT_MACH_LOCK, "!MACH LOCK\r\n");
+        }
+        return SEVT_NONE;
+    }
+    bool coasting = s->fit_clean && mach_slow_ascent(p, s->fit_pdot) && mach_decelerating(p, s->fit_pddot);
+    if (held(coasting, &ctx->release_since, ts, MACH_RELEASE_MS)) {
+        mach_release(ctx, s, ts);
+        return SEVT_NONE;
+    }
+    bool back = s->fit_clean && s->fit_pdot > 0.0f && p > ctx->p_flag_pa;
+    if (!held(back, &ctx->fallback_since, ts, MACH_RELEASE_MS))
+        return SEVT_NONE;
+    mach_fall_back(ctx, ts);
+    return SEVT_APOGEE;
 }
 
 /* [DD-017] Arming requires confirmed motor burn: peak speed > threshold,
- * coast phase entered (speed decreasing but still positive). */
+ * coast phase entered (speed decreasing but still positive), and about 30 m
+ * climbed [FLT-MACH-06]. */
 static bool arming_gate_met(const flight_context_t *ctx) {
-    return !ctx->pyros_armed && ctx->max_speed_cms >= ARM_SPEED_CMS && ctx->vertical_speed_cms < ARM_SPEED_CMS &&
-           ctx->vertical_speed_cms >= 0;
+    return !ctx->pyros_armed && ctx->arm_height && ctx->max_speed_cms >= ARM_SPEED_CMS &&
+           ctx->vertical_speed_cms < ARM_SPEED_CMS && ctx->vertical_speed_cms >= 0;
 }
 
 /* The peak is the lowest pressure a clean fit has shown. */
@@ -780,53 +869,72 @@ static uint32_t apogee_back(uint32_t ts, const altitude_sample_t *s) {
     return ts - (uint32_t)back_ms;
 }
 
+/* The sample's speed, thrust and row, and the arming height. */
+static void ascent_take(flight_context_t *ctx, const altitude_sample_t *s) {
+    ctx->filtered_pressure = pp_last_filtered_pa();
+    ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
+    ctx->vertical_speed_cms = sample_speed(ctx, s);
+    take_fit(ctx, s);
+    ctx->under_thrust = s->fit_valid ? s->accel_cms2 > 0 : ctx->vertical_speed_cms > ctx->prev_vertical_speed_cms;
+    /* Track peak speed for arming gate [DD-017] */
+    if (ctx->vertical_speed_cms > ctx->max_speed_cms)
+        ctx->max_speed_cms = ctx->vertical_speed_cms;
+    int32_t p = s->fit_valid ? mach_round_clamp(s->fit_pa, MACH_RATE_CLAMP) : ctx->filtered_pressure;
+    if (mach_above_arm_height(p, ctx->ground_pressure))
+        ctx->arm_height = true;
+
+    buf_add(ctx, s->timestamp_ms - ctx->launch_time, ctx->filtered_pressure, s->altitude_cm, ASCENT);
+    ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE].under_thrust =
+        ctx->under_thrust ? 1 : 0;
+    ctx->last_altitude = s->altitude_cm;
+    ctx->last_height = s->height_cm;
+    /* The sample clock, not the loop clock: a speed short of a fit is taken
+     * between sample timestamps, and `now` would put the loop's lateness into
+     * it. */
+    ctx->last_sample = s->timestamp_ms;
+}
+
+/* [FLT-MACH-07] The reported peak is the lowest pressure a clean fit showed
+ * outside the lock; the filtered altitude's only until a clean fit exists. */
+static void ascent_peak(flight_context_t *ctx, int32_t altitude) {
+    if (ctx->p_min_pa > 0.0f) {
+        int32_t h = ctx->peak_height_cm;
+        ctx->max_altitude = h < 0 ? 0 : (h > MAX_ALTITUDE_CM ? MAX_ALTITUDE_CM : h);
+    } else if (altitude > ctx->max_altitude) {
+        ctx->max_altitude = altitude;
+    }
+}
+
+/* [FLT-APO-01, FLT-MACH-05] Apogee is the sensor saying the rocket has
+ * stopped going up, and nothing else. No timer may force it [DD-022]: a wrong
+ * value fires during ascent, which is worse than the sensor failure it would
+ * cover. Said by clean fits whose pressure is rising, and has risen past the
+ * drop, while no lock stands. */
+static bool apogee_seen(flight_context_t *ctx, const altitude_sample_t *s, uint32_t ts) {
+    bool cond = ctx->pyros_armed && !ctx->apogee_detected && !ctx->mach_lock && s->fit_clean && s->fit_pdot > 0.0f;
+    if (!held(cond, &ctx->apogee_held_since, ts, APOGEE_HOLD_MS) || s->fit_pa < APOGEE_DROP * ctx->p_min_pa)
+        return false;
+    ctx->apogee_fit_ms = apogee_back(ts, s);
+    return true;
+}
+
 static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
     (void)now; /* every decision here is on sample time [FLT-RATE-05] */
     altitude_sample_t sample;
     if (!pp_read(&sample))
         return SEVT_NONE;
-    int32_t altitude = sample.altitude_cm;
     uint32_t ts = sample.timestamp_ms;
-    ctx->filtered_pressure = pp_last_filtered_pa();
+    ascent_take(ctx, &sample);
+    state_event_t lock_evt = mach_lockout(ctx, &sample, ts);
+    if (!ctx->mach_lock)
+        track_peak(ctx, &sample);
+    ascent_peak(ctx, sample.altitude_cm);
 
-    ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
-    ctx->vertical_speed_cms = sample_speed(ctx, &sample);
-    take_fit(ctx, &sample);
-    track_peak(ctx, &sample);
-    ctx->under_thrust = sample.fit_valid ? sample.accel_cms2 > 0 : ctx->vertical_speed_cms > ctx->prev_vertical_speed_cms;
-
-    /* Track peak speed for arming gate [DD-017] */
-    if (ctx->vertical_speed_cms > ctx->max_speed_cms)
-        ctx->max_speed_cms = ctx->vertical_speed_cms;
-    mach_gate_feed(ctx);
-
-    buf_add(ctx, ts - ctx->launch_time, ctx->filtered_pressure, altitude, ASCENT);
-    ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE].under_thrust =
-        ctx->under_thrust ? 1 : 0;
-
-    if (altitude > ctx->max_altitude)
-        ctx->max_altitude = altitude;
-    ctx->last_altitude = altitude;
-    ctx->last_height = sample.height_cm;
-    /* The sample clock, not the loop clock: dt above is measured between
-     * sample timestamps, and `now` would put the loop's lateness into every
-     * speed. */
-    ctx->last_sample = ts;
-
+    if (lock_evt != SEVT_NONE)
+        return lock_evt;
     if (arming_gate_met(ctx))
         return SEVT_ARMED;
-
-    /* [FLT-APO-01] Apogee is the sensor saying the rocket has stopped going
-     * up, and nothing else. No timer may force it [DD-022]: a wrong value
-     * fires during ascent, which is worse than the sensor failure it would
-     * cover. Said by clean fits whose pressure is rising, and has risen past
-     * the drop. */
-    bool cond = ctx->pyros_armed && !ctx->apogee_detected && mach_gate_clear(ctx, ts) && sample.fit_clean &&
-                sample.fit_pdot > 0.0f;
-    if (!held(cond, &ctx->apogee_held_since, ts, APOGEE_HOLD_MS) || sample.fit_pa < APOGEE_DROP * ctx->p_min_pa)
-        return SEVT_NONE;
-    ctx->apogee_fit_ms = apogee_back(ts, &sample);
-    return SEVT_APOGEE;
+    return apogee_seen(ctx, &sample, ts) ? SEVT_APOGEE : SEVT_NONE;
 }
 
 /* ── Descent ──────────────────────────────────────────────────────────
@@ -1189,6 +1297,13 @@ static void action_launch(flight_context_t *ctx, uint32_t now) {
     hal_log_sample(ctx->last_sample - ctx->launch_time, ctx->filtered_pressure, ctx->last_altitude, ASCENT, 0,
                    EVT_LAUNCH);
     buf_tag_event(ctx, EVT_LAUNCH);
+    /* Flagged on the climb before the launch was sure [FLT-MACH-02]. */
+    if (ctx->mach_lock) {
+        extern void hal_telemetry_send(const char *sentence);
+        hal_log_sample(ctx->last_sample - ctx->launch_time, ctx->filtered_pressure, ctx->last_altitude, ASCENT, 0,
+                       EVT_MACH_LOCK);
+        hal_telemetry_send("!MACH LOCK\r\n");
+    }
 }
 
 /* Rejoining a flight already on its way down. Apogee is behind us by
@@ -1214,6 +1329,9 @@ static void action_armed(flight_context_t *ctx, uint32_t now) {
 static void action_apogee(flight_context_t *ctx, uint32_t now) {
     ctx->apogee_detected = true;
     ctx->apogee_time = ctx->apogee_fit_ms ? ctx->apogee_fit_ms : now; /* [PYR-MODE-05] */
+    /* [FLT-MACH-07] A lock let go this close to apogee may have hidden the
+     * top of the climb from the peak. */
+    ctx->peak_lower_bound = ctx->mach_released && ctx->apogee_time - ctx->mach_release_ms < MACH_LOWER_BOUND_MS;
     ctx->descent_start_time = now; /* [DD-015] start landing timeout */
     buf_tag_event(ctx, EVT_APOGEE);
     telemetry_apogee(ctx->max_altitude, now - ctx->launch_time);

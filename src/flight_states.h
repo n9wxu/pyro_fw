@@ -204,13 +204,21 @@ typedef struct flight_context_t {
      * nobody has to count beeps in the wind. */
     uint16_t diag; /* DIAG_* bits */
 
-    /* ── Mach gate [FLT-MACH-01] ──────────────────────────────────
-     * The barometric sensor cannot be believed through the transonic
-     * region, so apogee is not declared until the rocket has been slow
-     * for a while. Only a fast ASCENT arms this; a flight that never
-     * gets there is never gated, which is most of them. */
-    bool mach_exceeded;
-    uint32_t subsonic_since;
+    /* ── Mach lockout [FLT-MACH-02..07, DD-049] ────────────────────
+     * A latch inside ASCENT: set while the data is still clean, released
+     * only on a second of the signature of a subsonic coast. p_flag_pa is
+     * the fitted pressure the flag was set at; the fallback fires once clean
+     * fits show the rocket falling back past it. Times are sample times. */
+    bool mach_lock;
+    bool mach_released; /* released once: the flag now needs a clean fit */
+    bool mach_fallback; /* the fallback declared apogee */
+    bool arm_height;    /* p < 0.9965 p0 has been seen */
+    bool peak_lower_bound;
+    int32_t p_flag_pa;
+    uint32_t mach_flag_ms; /* 0: never flagged */
+    uint32_t mach_release_ms;
+    uint32_t release_since; /* ts + 1 form, as held() keeps it */
+    uint32_t fallback_since;
 
     /* ── Descent phase [FLT-DESC-01] ──────────────────────────────
      * The phase is read from the descent rate holding steady, because a

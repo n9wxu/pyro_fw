@@ -1168,26 +1168,22 @@ void test_FLT_EMRG_02_freefall_to_trigger_not_overridden(void) {
     TEST_ASSERT_TRUE_MESSAGE(res.pyro2_alt_m < 300.0f, m);
 }
 
-/* [FLT-MACH-01] The gate must not break apogee detection on a fast flight.
- * Every profile here passes 100 ft/s, so the gate is armed on all of them;
- * what matters is that apogee is still found, and found close to the truth. */
-void test_FLT_MACH_01_supersonic_apogee_gated(void) {
+/* [FLT-MACH-02] A fast subsonic flight is never locked: past 100 ft/s but far
+ * from the flag, it finds apogee as a plain altimeter would. */
+void test_FLT_MACH_02_fast_subsonic_flight_not_locked(void) {
     TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket");
     sim_result_t res = run_sim(cfg_delay_agl(), &g_rockets[ROCKET_IDX_L1], true);
     print_summary("MachGate", &res);
 
     char m[176];
-    snprintf(m, sizeof(m), "peak speed %.0f m/s never reached the 30.5 m/s gate, so this proves nothing",
-             (double)res.max_speed_ms);
+    snprintf(m, sizeof(m), "peak speed %.0f m/s is not a fast flight, so this proves nothing", (double)res.max_speed_ms);
     TEST_ASSERT_TRUE_MESSAGE(res.max_speed_ms > 30.5f, m);
-    TEST_ASSERT_TRUE_MESSAGE(res.reached_descent, "apogee was never declared: the gate locked it out");
+    TEST_ASSERT_TRUE_MESSAGE(res.reached_descent, "apogee was never declared");
 
-    /* The gate costs at most its settle time. Anything beyond that means it
-     * is holding apogee shut rather than just waiting out the fast part. */
     int32_t lag_ms = (int32_t)res.apogee_ms - (int32_t)res.apogee_true_ms;
     snprintf(m, sizeof(m), "apogee declared %d ms after the real one (true=%u firmware=%u)", lag_ms,
              res.apogee_true_ms, res.apogee_ms);
-    TEST_ASSERT_TRUE_MESSAGE(lag_ms > -2000 && lag_ms < 3000, m);
+    TEST_ASSERT_TRUE_MESSAGE(lag_ms >= 0 && lag_ms < 1000, m);
 }
 
 /* [FLT-DESC-01] Phase comes from the rate. With no drogue configured at all,
@@ -1338,7 +1334,7 @@ int main(void) {
     RUN_TEST(test_PYR_REFIRE_02_no_retry_when_opened);
     RUN_TEST(test_FLT_EMRG_01_shredded_drogue_fires_main);
     RUN_TEST(test_FLT_EMRG_02_freefall_to_trigger_not_overridden);
-    RUN_TEST(test_FLT_MACH_01_supersonic_apogee_gated);
+    RUN_TEST(test_FLT_MACH_02_fast_subsonic_flight_not_locked);
     RUN_TEST(test_FLT_DESC_01_phase_without_pyros);
     RUN_TEST(test_FLT_DESC_02_ballistic_reaches_landed);
 

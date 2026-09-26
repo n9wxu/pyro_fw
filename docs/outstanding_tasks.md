@@ -176,7 +176,7 @@ ground bias, and the stall figure, where they used a different stall model.
 | Sample timestamps | loop ms at the temperature read, 16 ms after the conversion, up to 127 ms after it through a stall; stalls raise the worst speed error at 100 m/s from 8.3 to 9.3 m/s | hardware timer at the pressure conversion: done (through stalls 6.5 m/s against 6.1) | T11 |
 | Fit-based speed and acceleration through flash stalls | worst −294 m/s and 441 m/s² with today's stamps (earlier experiments; T11 re-measures) | RMS 1.2 m/s and 3.5 m/s², stalls or not: speed done, 0.2 m/s RMS at 100 m/s, 0.8 m/s worst calm and 0.7 through stalls | T11, T5 |
 | A flight above 8 km AGL | apogee fired 14.9 s early, at the clamp (N26) | apogee at the real apogee: done | T3 |
-| Supersonic flight with a static-port error | a port error that makes the boost read as a descent fired the low-drag flight's drogue 39 s before apogee, at Mach 1.27. On T5's fit every drogue fires 0.38-0.50 s after apogee, but only because this port model's error spoils every fit and keeps the speed out of the arming band | no drogue before the true apogee, on every M0 profile, by a lockout | M1 |
+| Supersonic flight with a static-port error | a port error that makes the boost read as a descent fired the low-drag flight's drogue 39 s before apogee, at Mach 1.27 | no drogue before the true apogee, on every M0 profile, by a lockout: done, every drogue 0.38-0.50 s after apogee; flagged by Mach 0.82, released at Mach 0.41-0.49 | M1 |
 | A sensor stuck or lost in flight | a stuck value may read as apogee | never causes a deployment | M2 |
 | Real flights replayable offline | no (raw pressure not logged) | yes | T8 |
 | MS5607 sample rate | 50 Hz | ~90 Hz | T9 |
@@ -794,6 +794,32 @@ REV-05 fixed.
 
 ### M1. The Mach lockout
 
+**Done 2026-09-26** (DD-049, `docs/mach_lockout.md`), except `api_check.py`'s
+new fields on a board (G4). Before the change, on T5's code, seven of the new
+tests failed as they should. Five passed as guards: T5's clean-fit apogee had
+already kept every drogue after apogee, the integer forms were a new header,
+and the 100 ft launch already keeps arming above 30 m. Differences from the
+plan:
+- The flag is evaluated from T+0 on the pad's samples, and before the first
+  release it also reads the rate over the newest 40 ms. At 66 g the launch is
+  declared past Mach 1, and the first flag came at Mach 1.04-1.09. Every
+  profile is now flagged by Mach 0.82, judged at the flag's own sample.
+- A pad flag outlives a rise that falls back, for 10 s. The port-error sweep
+  caught the first version clearing it mid-boost, at Mach 0.92, when a port
+  faking a descent read the climb below the pad.
+- `test_M1_mid_mach_releases` checks the flights that pass the flag. At the
+  hot pad Mach 0.76 barely does, and a peak of 0.65 never would. Both pads'
+  flights released within 2 s of burnout.
+- `test_M1_fallback` forces the release off with ports too noisy for any
+  clean fit through the coast, not with a switch in the code.
+- `test_M1_minimum_altitude_arm` and `test_M1_recovered_ascent_locked` are in
+  `pressure_chain_tests`, which has the in-air boot.
+- New: `test_M1_port_error_margin`, the sweep the design note's risks quote.
+- The closed-loop gate test is now `test_FLT_MACH_02_fast_subsonic_flight_not_locked`,
+  with its apogee held to within 1 s after the true one (was -2 to +3 s).
+- The web UI's Flight Data summary still takes the log's highest row as the
+  apogee, which on a locked flight can include the port error (N27).
+
 **Why:**
 - The Mach gate (FLT-MACH-01, DD-025) latches above 100 ft/s of filtered
   speed, which almost every flight exceeds. It then trusts the data after 1 s
@@ -1008,6 +1034,16 @@ observed).
   terminal rate from below is reported as DROGUE_DESCENT. Fails today in the
   simulator.
 - **Change:** revisit the band test on T5's speed.
+
+### N27. The Flight Data summary's apogee includes the locked interval
+
+**Needs:** M1. The web UI takes the highest altitude row in the flight log as
+the apogee. On a locked flight that row can be the port's error: M0's draggy
+flight with a port reading 15 % of q low logs 1976 m for a 1526 m apogee.
+- **Tests first:** a web test on a mock log with LOCK and UNLOCK rows: the
+  summary's apogee skips the rows between them, and says "at least" when
+  UNLOCK falls within 2 s of APOGEE (FLT-MACH-07).
+- **Change:** `updateFlightSummary()` in `www/app.js`.
 
 ### N7 / C8. The landing timeout declares LANDED under a main
 

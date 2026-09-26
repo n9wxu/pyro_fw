@@ -110,7 +110,13 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **PIN-LABEL-01**: Every assignable pin shall carry the connector designator silkscreened on the board, and the web UI shall show it beside the GPIO number. ← SYS-CFG-01
 - **PIN-BUZZ-01**: The buzzer shall be assignable to any pad the board declares capable of driving one, defaulting to the board's own buzzer pad where it fits one. ← SYS-CFG-01
 - **PIN-BUZZ-02**: A pad driving the buzzer shall be reserved against Lua, and a pad holding a Lua role shall not be assignable as the buzzer. ← SYS-CFG-01
-- **FLT-MACH-01**: The system shall not declare apogee while ascending faster than 100 ft/s, nor until it has been slower than that for 1 second. A flight that never exceeds 100 ft/s shall not be gated. ← FLT-PHASE-02
+- **FLT-MACH-01**: Withdrawn (DD-049). The gate latched above 100 ft/s and believed the data after 1 s below it, which a supersonic port error can fake; FLT-MACH-02..07 replace it.
+- **FLT-MACH-02**: The system shall set the Mach flag when -ṗ > 0.029·p (true Mach 0.62-0.76), from the first sample of the rise, on any fit or on the rate over the newest two intervals, until the flag has once been released; after that, on a clean fit only. ← FLT-PHASE-02
+- **FLT-MACH-03**: The system shall release the flag only after every fit, for 1 s continuously, has been clean, climbing with -ṗ < 0.022·p, and decelerating with p̈ ≥ 0.0009·p. The peak shall then restart at the current pressure. ← FLT-MACH-02
+- **FLT-MACH-04**: If the flag is never released, the system shall declare apogee once clean fits have shown the pressure rising, and above the pressure the flag was set at, for 1 s, and shall arm the pyrotechnics if they are not armed. ← FLT-MACH-02
+- **FLT-MACH-05**: The system shall not declare apogee from FLT-APO-01 while the flag stands. ← FLT-MACH-02
+- **FLT-MACH-06**: No channel shall arm before the fitted pressure has been below 0.9965·p0 (about 30 m). A flight recovered into ASCENT shall start flagged, at the pressure it rejoined at. ← PYR-SAFE-04, FLT-MACH-02
+- **FLT-MACH-07**: The reported peak shall be the height of the lowest pressure a clean fit showed outside the flag, marked a lower bound if the flag was released within 2 s of apogee. ← FLT-MACH-02
 - **FLT-DESC-01**: The system shall determine the descent phase from the measured descent rate holding steady, not from which channel has been commanded. ← FLT-PHASE-02
 - **FLT-DESC-02**: The system shall detect landing in every descent phase, so that a flight which deployed nothing still closes its flight log. ← FLT-PHASE-02
 

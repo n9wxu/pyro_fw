@@ -60,6 +60,13 @@ plant, `sim/mach_plant.c`:
 - an ejection charge's bay pressure, and a sensor that drops out or sticks
   (`mock_sensor_stuck`).
 
+The `test_M1_*` tests fly the Mach lockout (DD-049) on those profiles: the
+flag before Mach 0.85, the release on every seed of the low-drag flight to
+10 km, the fallback under ports too noisy to release, the peak from outside
+the lock, and a sweep of the port error from 0.1 to 4 times either way.
+`test_M1_design_note` recomputes `docs/mach_lockout.md`'s tables and fails if
+the document's rows differ.
+
 `sim/physics.c` drives the browser simulator and is untouched. The report
 `test_M0_report` prints, for every profile at a 10 °C sea-level pad and a
 45 °C pad at 2000 m, when the drogue fired against the true apogee and where

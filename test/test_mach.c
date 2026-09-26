@@ -17,6 +17,7 @@
 #include "pressure_processing.h"
 #include "board_harness.h"
 #include "mach_plant.h"
+#include "../src/mach_lockout.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -65,14 +66,23 @@ typedef struct {
     uint16_t main_m;    /* an AGL main at this height; 0: the default channels */
     float main_ms;      /* the main's descent rate; 0: the main changes nothing */
     bool to_landed;     /* on past touchdown to LANDED, with the landing timeout off */
+    float coast_noise_pa;   /* ports this noisy from burnout: no fit is clean */
+    float coast_noise_to_s; /* until this flight time; 0: until the true apogee */
+    bool stop_after_apogee; /* 2 s after the true apogee */
 } conditions_t;
 
 typedef struct {
     bool launched;
     bool drogue;
     float drogue_t, apogee_t, apogee_h, max_mach;
-    bool gate_latched, released;
+    bool locked; /* the Mach lockout's flag was ever set */
+    float flag_t, flag_mach, flag_h;
+    bool released; /* the lock let go on the signature of a coast */
     float release_t, release_mach;
+    bool fallback;   /* the lock's fallback fired the drogue */
+    float return_t;  /* the truth first back below the flag's pressure, after apogee */
+    int32_t peak_cm; /* the reported peak */
+    bool peak_lower_bound;
     bool main;
     float main_t, main_h;
     float touchdown_t, landed_t; /* 0: not reached */
@@ -95,6 +105,9 @@ static mach_result_t fly_mach(const mp_rocket_t *r, const mp_site_t *s, const co
     }
     uint32_t ign = pad + 10000u;
     mp_rocket_t rk = *r;
+    /* The plant's Mach by the millisecond: the flag is judged by the Mach at
+     * its own sample's time, which is the data it used. */
+    static float mach_at[1024], h_at[1024];
     mp_state_t st;
     mp_launch(&st);
     int fires = 0;
@@ -103,6 +116,8 @@ static mach_result_t fly_mach(const mp_rocket_t *r, const mp_site_t *s, const co
         float tf = ((float)t - (float)ign) / 1000.0f;
         if (tf >= 0.0f)
             mp_step(&st, s, &rk, 0.001f);
+        mach_at[t & 1023u] = st.mach;
+        h_at[t & 1023u] = st.h;
         float static_pa = mp_pressure_pa(s, st.h);
         float sensed = static_pa + mp_port_error_pa(&c->port, st.mach, static_pa);
         if (charge_at >= 0.0f)
@@ -113,6 +128,10 @@ static mach_result_t fly_mach(const mp_rocket_t *r, const mp_site_t *s, const co
         mock_sensor_stuck = c->stuck_at_s > 0.0f && tf >= c->stuck_at_s;
         if (c->swing_rms_pa > 0.0f)
             mock_noise_rms_pa = st.canopy && !st.landed ? c->swing_rms_pa : SENSOR_RMS_PA;
+        if (c->coast_noise_pa > 0.0f) {
+            bool noisy = tf > r->burn_s && !st.apogee && (c->coast_noise_to_s <= 0.0f || tf < c->coast_noise_to_s);
+            mock_noise_rms_pa = noisy ? c->coast_noise_pa : SENSOR_RMS_PA;
+        }
         tick(t);
         res.launched |= ctx.current_state == ASCENT;
         while (fires < mock_pyro.fire_count) {
@@ -131,17 +150,27 @@ static mach_result_t fly_mach(const mp_rocket_t *r, const mp_site_t *s, const co
                     rk.canopy_ms = c->main_ms;
             }
         }
-        res.gate_latched |= ctx.mach_exceeded;
-        if (!res.released && ctx.mach_exceeded && ctx.pyros_armed && ctx.subsonic_since != 0 &&
-            t - ctx.subsonic_since >= 1000u) {
+        if (ctx.mach_lock && !res.locked) {
+            res.locked = true;
+            bool recent = t - ctx.mach_flag_ms < 1024u;
+            res.flag_t = recent ? ((float)ctx.mach_flag_ms - (float)ign) / 1000.0f : tf;
+            res.flag_mach = recent ? mach_at[ctx.mach_flag_ms & 1023u] : st.mach;
+            res.flag_h = recent ? h_at[ctx.mach_flag_ms & 1023u] : st.h;
+        }
+        if (res.locked && !ctx.mach_lock && !ctx.mach_fallback && !res.released) {
             res.released = true;
             res.release_t = tf;
             res.release_mach = st.mach;
         }
+        res.fallback |= ctx.mach_fallback;
+        if (res.locked && st.apogee && res.return_t == 0.0f && static_pa > (float)ctx.p_flag_pa)
+            res.return_t = tf;
         if (c->to_landed && ctx.current_state == LANDED) {
             res.landed_t = tf;
             break;
         }
+        if (c->stop_after_apogee && st.apogee && tf > st.apogee_t + 2.0f)
+            break;
         if (st.landed && res.touchdown_t == 0.0f)
             res.touchdown_t = tf;
         if (st.landed && (!c->to_landed || tf - res.touchdown_t > 10.0f))
@@ -150,6 +179,8 @@ static mach_result_t fly_mach(const mp_rocket_t *r, const mp_site_t *s, const co
     res.apogee_t = st.apogee_t;
     res.apogee_h = st.apogee_h;
     res.max_mach = st.max_mach;
+    res.peak_cm = ctx.max_altitude;
+    res.peak_lower_bound = ctx.peak_lower_bound;
     return res;
 }
 
@@ -315,7 +346,7 @@ void test_M0_report(void) {
                  {"reads high", &PORT_READS_HIGH},
                  {"reads low", &PORT_READS_LOW},
                  {"fakes descent", &PORT_FAKES_DESCENT}};
-    printf("  %-9s %-5s %-13s %-9s %-17s %s\n", "profile", "pad", "ports", "max Mach", "drogue", "gate release");
+    printf("  %-9s %-5s %-13s %-9s %-17s %s\n", "profile", "pad", "ports", "max Mach", "drogue", "lock release");
     for (unsigned i = 0; i < N_PROFILES; i++) {
         for (int si = 0; si < 2; si++) {
             for (unsigned pi = 0; pi < 4; pi++) {
@@ -332,11 +363,13 @@ void test_M0_report(void) {
                     snprintf(drogue, sizeof(drogue), "%+.2f s at apogee", r.drogue_t - r.apogee_t);
                 else
                     snprintf(drogue, sizeof(drogue), "never");
-                if (!r.gate_latched)
-                    snprintf(release, sizeof(release), "never latched");
+                if (!r.locked)
+                    snprintf(release, sizeof(release), "never locked");
                 else if (r.released)
                     snprintf(release, sizeof(release), "Mach %.2f, %.1f s before apogee", r.release_mach,
                              r.apogee_t - r.release_t);
+                else if (r.fallback)
+                    snprintf(release, sizeof(release), "fallback");
                 else
                     snprintf(release, sizeof(release), "never released");
                 printf("  %-9s %2.0f C  %-13s %-9.2f %-17s %s\n", PROFILES[i].name, sites[si]->temp_c, ports[pi].name,
@@ -423,6 +456,350 @@ void test_T5_canopy_swing(void) {
     TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
 }
 
+/* ── M1: the Mach lockout ─────────────────────────────────────────── */
+
+static const mp_site_t *const SITES[] = {&COLD, &HOT};
+
+static float plant_apogee_t(const mp_rocket_t *r, const mp_site_t *s) {
+    mp_state_t st;
+    mp_launch(&st);
+    while (!st.apogee && st.t < 200.0f)
+        mp_step(&st, s, r, 0.001f);
+    return st.apogee_t;
+}
+
+static void drogue_after_apogee(const mach_result_t *r, const char *what, char *bad, size_t cap) {
+    if (r->drogue && r->drogue_t >= r->apogee_t && r->drogue_t - r->apogee_t <= 1.5f)
+        return;
+    char item[96];
+    if (r->drogue)
+        snprintf(item, sizeof(item), " %s: drogue %+.2f s from apogee;", what, (double)(r->drogue_t - r->apogee_t));
+    else
+        snprintf(item, sizeof(item), " %s: no drogue;", what);
+    strncat(bad, item, cap - 1 - strlen(bad));
+}
+
+/* [FLT-MACH-02] A flight that never nears Mach 1 is never locked, and deploys
+ * as a plain altimeter would. */
+void test_M1_subsonic_never_locks(void) {
+    char bad[256] = "";
+    for (int si = 0; si < 2; si++) {
+        conditions_t c;
+        memset(&c, 0, sizeof(c));
+        c.stop_after_apogee = true;
+        mach_result_t r = fly_mach(&PROFILES[SUBSONIC].r, SITES[si], &c, 3, 120.0f);
+        if (r.locked)
+            strncat(bad, si ? " locked at the hot pad;" : " locked at the cold pad;", sizeof(bad) - 1 - strlen(bad));
+        drogue_after_apogee(&r, si ? "hot" : "cold", bad, sizeof(bad));
+    }
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
+/* [FLT-MACH-02] The flag is set while the data is still clean: before Mach
+ * 0.85, where a port's error begins -- on a 30 g boost too, whose ignition
+ * step spoils the fits for the first second. */
+void test_M1_flag_before_mach_085(void) {
+    const unsigned fast[] = {DRAGGY, LOW_DRAG, BOOST_30G};
+    char bad[256] = "";
+    float worst = 0.0f;
+    for (unsigned i = 0; i < 3; i++) {
+        for (int si = 0; si < 2; si++) {
+            conditions_t c;
+            memset(&c, 0, sizeof(c));
+            mach_result_t r = fly_mach(&PROFILES[fast[i]].r, SITES[si], &c, 4, PROFILES[fast[i]].r.burn_s + 2.0f);
+            worst = r.locked && r.flag_mach > worst ? r.flag_mach : worst;
+            if (!r.locked || r.flag_mach >= 0.85f) {
+                char item[64];
+                snprintf(item, sizeof(item), " %s %s: %s Mach %.2f;", PROFILES[fast[i]].name, si ? "hot" : "cold",
+                         r.locked ? "flagged at" : "never flagged, peak", (double)(r.locked ? r.flag_mach : r.max_mach));
+                strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+            }
+        }
+    }
+    printf("  flagged by Mach %.2f at the latest\n", (double)worst);
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
+/* [FLT-MACH-03] A peak between the flag and Mach 0.85 is locked for nothing,
+ * and let go within the release window plus 1.5 s of burnout. */
+void test_M1_mid_mach_releases(void) {
+    const mp_rocket_t *rk = &PROFILES[MID_MACH].r;
+    char bad[256] = "";
+    int flagged = 0;
+    for (int si = 0; si < 2; si++) {
+        conditions_t c;
+        memset(&c, 0, sizeof(c));
+        c.stop_after_apogee = true;
+        mach_result_t r = fly_mach(rk, SITES[si], &c, 5, 120.0f);
+        drogue_after_apogee(&r, si ? "hot" : "cold", bad, sizeof(bad));
+        if (!r.locked)
+            continue;
+        flagged++;
+        printf("  mid-Mach %s: flagged at Mach %.2f, released %.2f s after burnout at Mach %.2f\n", si ? "hot" : "cold",
+               (double)r.flag_mach, (double)(r.release_t - rk->burn_s), (double)r.release_mach);
+        if (!r.released || r.release_t - rk->burn_s > 2.5f) {
+            char item[64];
+            snprintf(item, sizeof(item), " %s: released %s;", si ? "hot" : "cold", r.released ? "late" : "never");
+            strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(flagged > 0, "the cold pad's Mach 0.76 passes the flag");
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
+/* [FLT-MACH-05] Supersonic, with the port's error either way or none, the
+ * drogue never fires before the true apogee, and fires within 1.5 s of it. */
+void test_M1_no_drogue_before_apogee(void) {
+    const unsigned fast[] = {DRAGGY, LOW_DRAG, BOOST_30G};
+    const mp_port_t *ports[] = {NULL, &PORT_READS_HIGH, &PORT_READS_LOW, &PORT_FAKES_DESCENT};
+    const char *names[] = {"clean", "high", "low", "fakes descent"};
+    char bad[512] = "";
+    for (unsigned i = 0; i < 3; i++) {
+        for (int si = 0; si < 2; si++) {
+            for (unsigned pi = 0; pi < 4; pi++) {
+                conditions_t c;
+                memset(&c, 0, sizeof(c));
+                if (ports[pi])
+                    c.port = *ports[pi];
+                c.stop_after_apogee = true;
+                mach_result_t r = fly_mach(&PROFILES[fast[i]].r, SITES[si], &c, 6, 120.0f);
+                char what[48];
+                snprintf(what, sizeof(what), "%s %s %s", PROFILES[fast[i]].name, si ? "hot" : "cold", names[pi]);
+                drogue_after_apogee(&r, what, bad, sizeof(bad));
+            }
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
+/* [FLT-MACH-03] At altitude the release margin is thinnest: the low-drag
+ * flight to 10 km from the hot, high pad releases before apogee on every
+ * seed. */
+void test_M1_release_at_altitude(void) {
+    int late = 0, never = 0;
+    float least = 1e9f;
+    for (uint32_t seed = 1; seed <= 1000; seed++) {
+        conditions_t c;
+        memset(&c, 0, sizeof(c));
+        c.stop_after_apogee = true;
+        mach_result_t r = fly_mach(&PROFILES[LOW_DRAG].r, &HOT, &c, seed, 120.0f);
+        if (!r.released) {
+            never++;
+            continue;
+        }
+        float margin = r.apogee_t - r.release_t;
+        least = margin < least ? margin : least;
+        late += margin <= 0.0f;
+    }
+    printf("  low-drag from the hot pad: released at least %.1f s before apogee over 1000 seeds; %d late, %d never\n",
+           (double)least, late, never);
+    TEST_ASSERT_EQUAL_INT(0, never);
+    TEST_ASSERT_EQUAL_INT(0, late);
+}
+
+/* [FLT-MACH-04] Ports too noisy for any clean fit through the coast: the lock
+ * can never release. Once clean fits show the rocket back below the pressure
+ * the flag was set at, falling for a second, the drogue fires -- late, never
+ * early. */
+void test_M1_fallback(void) {
+    conditions_t c;
+    memset(&c, 0, sizeof(c));
+    c.coast_noise_pa = 10.0f * SENSOR_RMS_PA;
+    mach_result_t r = fly_mach(&PROFILES[MID_MACH].r, &COLD, &c, 8, 200.0f);
+    char msg[160];
+    snprintf(msg, sizeof(msg), "locked %d released %d fallback %d; back past the flag at %.2f s, drogue at %.2f s", r.locked,
+             r.released, r.fallback, (double)r.return_t, (double)r.drogue_t);
+    printf("  fallback: flagged %.0f m up; drogue %.2f s after the rocket fell back past it\n", (double)r.flag_h,
+           (double)(r.drogue_t - r.return_t));
+    TEST_ASSERT_TRUE_MESSAGE(r.locked && !r.released && r.fallback, msg);
+    TEST_ASSERT_TRUE_MESSAGE(r.return_t > 0.0f && r.drogue && r.drogue_t >= r.return_t, msg);
+    TEST_ASSERT_TRUE_MESSAGE(r.drogue_t - r.return_t <= 1.5f, msg);
+}
+
+/* [FLT-MACH-07] The reported peak is the lowest pressure a clean fit showed
+ * outside the lock: a port that reads low while supersonic reads the rocket
+ * kilometres high, and none of it may reach the report. A lock that let go
+ * within 2 s of apogee marks the peak a lower bound. On the standard
+ * atmosphere's pad, where pressure altitude is the true height. */
+void test_M1_peak_outside_lock(void) {
+    const mp_port_t reads_very_low = {-1.0f, 0.06f, 0.15f, 0.09f};
+    conditions_t c;
+    memset(&c, 0, sizeof(c));
+    c.port = reads_very_low;
+    c.stop_after_apogee = true;
+    mach_result_t r = fly_mach(&PROFILES[DRAGGY].r, &ISA, &c, 9, 120.0f);
+    char msg[128];
+    snprintf(msg, sizeof(msg), "reported %.0f m, true apogee %.0f m, lower bound %d", r.peak_cm / 100.0,
+             (double)r.apogee_h, r.peak_lower_bound);
+    printf("  draggy, a port reading 15%% of q low: %s\n", msg);
+    TEST_ASSERT_TRUE_MESSAGE(fabs(r.peak_cm / 100.0 - (double)r.apogee_h) <= 5.0, msg);
+    TEST_ASSERT_FALSE_MESSAGE(r.peak_lower_bound, msg);
+
+    /* Noisy ports until 2.5 s before apogee: the release comes inside the
+     * last 2 s. */
+    const mp_rocket_t *mm = &PROFILES[MID_MACH].r;
+    memset(&c, 0, sizeof(c));
+    c.coast_noise_pa = 10.0f * SENSOR_RMS_PA;
+    c.coast_noise_to_s = plant_apogee_t(mm, &ISA) - 2.5f;
+    c.stop_after_apogee = true;
+    r = fly_mach(mm, &ISA, &c, 10, 120.0f);
+    snprintf(msg, sizeof(msg), "released %.2f s before apogee, lower bound %d", (double)(r.apogee_t - r.release_t),
+             r.peak_lower_bound);
+    TEST_ASSERT_TRUE_MESSAGE(r.released && r.apogee_t - r.release_t < 2.0f, msg);
+    TEST_ASSERT_TRUE_MESSAGE(r.peak_lower_bound, msg);
+}
+
+/* [FLT-MACH-02..06] Each integer comparison is its real threshold exactly,
+ * from 1 to 120 kPa, whatever the fit says: rates and accelerations far past
+ * any flight are clamped, not overflowed. */
+void test_M1_integer_forms(void) {
+    const int32_t rates[] = {-2000000000, -5000000, -100000, -4000, -3000, -2900, -2200, -1, 0, 1, 90, 4000, 2000000000};
+    int wrong = 0, cases = 0;
+    for (int32_t p = 1000; p <= 120000; p += 997) {
+        for (unsigned k = 0; k < sizeof(rates) / sizeof(rates[0]); k++) {
+            /* The thresholds themselves, and a pascal either side. */
+            int32_t near[] = {rates[k], -(29 * p) / 1000, -(29 * p) / 1000 - 1, -(22 * p) / 1000, -(22 * p) / 1000 + 1,
+                              (9 * p) / 10000, (9 * p) / 10000 - 1};
+            for (unsigned j = 0; j < sizeof(near) / sizeof(near[0]); j++) {
+                int64_t r = near[j];
+                cases++;
+                wrong += mach_too_fast(p, (float)r) != (-r * 1000 > (int64_t)29 * p);
+                wrong += mach_slow_ascent(p, (float)r) != (r < 0 && -r * 1000 < (int64_t)22 * p);
+                wrong += mach_decelerating(p, (float)r) != (r * 10000 >= (int64_t)9 * p);
+            }
+        }
+        cases++;
+        wrong += mach_above_arm_height(p, 101325) != ((int64_t)p * 10000 < (int64_t)9965 * 101325);
+        wrong += mach_above_arm_height(p, p + 1) != ((int64_t)p * 10000 < (int64_t)9965 * (p + 1));
+    }
+    char msg[64];
+    snprintf(msg, sizeof(msg), "%d of %d comparisons differ from the threshold", wrong, cases);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, wrong, msg);
+}
+
+/* docs/mach_lockout.md's tables are this program's output: each threshold
+ * over the envelope's air, 216 K at the tropopause to a 45 degree pad, and the
+ * fit's noise. */
+static double mach_per_rate(double t_k) {
+    return MP_G * sqrt(MP_GAMMA / (MP_R * t_k)); /* -pdot/p of Mach 1 */
+}
+
+static double g_per_pddot(double t_k) {
+    return MP_G * MP_G / (MP_R * t_k); /* pddot/p of 1 g */
+}
+
+static int doc_has(const char *doc, const char *row, char *missing, size_t cap) {
+    if (strstr(doc, row))
+        return 0;
+    strncat(missing, "\n    ", cap - 1 - strlen(missing));
+    strncat(missing, row, cap - 1 - strlen(missing));
+    return 1;
+}
+
+void test_M1_design_note(void) {
+    static char doc[65536];
+    FILE *f = fopen("docs/mach_lockout.md", "r");
+    TEST_ASSERT_NOT_NULL_MESSAGE(f, "docs/mach_lockout.md");
+    size_t n = fread(doc, 1, sizeof(doc) - 1, f);
+    fclose(f);
+    doc[n] = '\0';
+    const double cold = 216.65, hot = 318.15, pad_lo = 283.15;
+    char row[160], missing[2048] = "";
+    int absent = 0;
+    snprintf(row, sizeof(row), "| Set flag | `1000*(-pdot) > 29*p` | Mach %.2f to %.2f |", 0.029 / mach_per_rate(cold),
+             0.029 / mach_per_rate(hot));
+    absent += doc_has(doc, row, missing, sizeof(missing));
+    snprintf(row, sizeof(row), "| Release: slow | `pdot < 0 && 1000*(-pdot) < 22*p` | Mach %.2f to %.2f |",
+             0.022 / mach_per_rate(cold), 0.022 / mach_per_rate(hot));
+    absent += doc_has(doc, row, missing, sizeof(missing));
+    snprintf(row, sizeof(row), "| Release: decelerating | `10000*pddot >= 9*p` | %.2f g to %.2f g |",
+             0.0009 / g_per_pddot(cold), 0.0009 / g_per_pddot(hot));
+    absent += doc_has(doc, row, missing, sizeof(missing));
+    snprintf(row, sizeof(row), "| Minimum-altitude arm | `10000*p < 9965*p0` | %.1f m to %.1f m |",
+             -log(0.9965) * MP_R * pad_lo / MP_G, -log(0.9965) * MP_R * hot / MP_G);
+    absent += doc_has(doc, row, missing, sizeof(missing));
+    snprintf(row, sizeof(row), "| Apogee | `p >= 1.0001*p_min` | %.2f m to %.2f m |", -log(1.0 / 1.0001) * MP_R * cold / MP_G,
+             -log(1.0 / 1.0001) * MP_R * hot / MP_G);
+    absent += doc_has(doc, row, missing, sizeof(missing));
+
+    /* The fit's noise, sigma times the root of the sum of its coefficients'
+     * squares: one second of samples at 50 Hz, evaluated at the newest. */
+    double s2 = 0.0, s3 = 0.0, s4 = 0.0, tm = 0.0;
+    const int N = 51;
+    for (int i = 0; i < N; i++)
+        tm += -1.0 + i / 50.0;
+    tm /= N;
+    for (int i = 0; i < N; i++) {
+        double u = -1.0 + i / 50.0 - tm;
+        s2 += u * u;
+        s3 += u * u * u;
+        s4 += u * u * u * u;
+    }
+    double det = N * (s2 * s4 - s3 * s3) - s2 * s2 * s2, u0 = -tm, c1 = 0.0, c2 = 0.0;
+    for (int i = 0; i < N; i++) {
+        double u = -1.0 + i / 50.0 - tm;
+        double b = (N * (u * s4 - s3 * u * u) + s2 * (s3 - s2 * u)) / det;
+        double c = (N * (s2 * u * u - s3 * u) - s2 * s2) / det;
+        c1 += (b + 2.0 * c * u0) * (b + 2.0 * c * u0);
+        c2 += (2.0 * c) * (2.0 * c);
+    }
+    const double sigma = SENSOR_RMS_PA;
+    double rho_g_sea = 101325.0 / (MP_R * 288.15) * MP_G, rho_g_9k = 30742.0 / (MP_R * 229.65) * MP_G;
+    snprintf(row, sizeof(row), "| pdot | %.2f Pa/s | %.2f m/s | %.2f m/s |", sigma * sqrt(c1), sigma * sqrt(c1) / rho_g_sea,
+             sigma * sqrt(c1) / rho_g_9k);
+    absent += doc_has(doc, row, missing, sizeof(missing));
+    snprintf(row, sizeof(row), "| pddot | %.2f Pa/s^2 | %.3f g | %.3f g |", sigma * sqrt(c2),
+             sigma * sqrt(c2) / rho_g_sea / MP_G, sigma * sqrt(c2) / rho_g_9k / MP_G);
+    absent += doc_has(doc, row, missing, sizeof(missing));
+    if (absent)
+        printf("  rows docs/mach_lockout.md lacks:%s\n", missing);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, absent, "docs/mach_lockout.md's tables must be this program's output");
+}
+
+/* What a port's error must do to fake the release: the fakes-descent shape
+ * scaled, both signs, on the fast profiles. Reported for
+ * docs/mach_lockout.md's risks. The lock must never let go before burnout or
+ * while the port's error is live, and the drogue must never come early. */
+void test_M1_port_error_margin(void) {
+    const unsigned fast[] = {DRAGGY, LOW_DRAG, BOOST_30G};
+    const float scales[] = {0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
+    char bad[512] = "";
+    float worst = 0.0f;
+    printf("  release Mach, by port error (x fakes-descent), cold pad:\n");
+    for (unsigned i = 0; i < 3; i++) {
+        char line[200];
+        snprintf(line, sizeof(line), "    %-9s", PROFILES[fast[i]].name);
+        for (int sign = -1; sign <= 1; sign += 2) {
+            for (unsigned k = 0; k < sizeof(scales) / sizeof(scales[0]); k++) {
+                conditions_t c;
+                memset(&c, 0, sizeof(c));
+                c.port = PORT_FAKES_DESCENT;
+                c.port.sign = (float)sign;
+                c.port.below *= scales[k];
+                c.port.above *= scales[k];
+                c.port.slope *= scales[k];
+                c.stop_after_apogee = true;
+                mach_result_t r = fly_mach(&PROFILES[fast[i]].r, &COLD, &c, 11, 120.0f);
+                float m = fabsf(r.release_mach);
+                worst = r.released && m > worst ? m : worst;
+                size_t l = strlen(line);
+                snprintf(line + l, sizeof(line) - l, " %+.2g:%.2f", (double)(sign * scales[k]), (double)m);
+                char what[48];
+                snprintf(what, sizeof(what), "%s x%+.2g", PROFILES[fast[i]].name, (double)(sign * scales[k]));
+                if (r.released && (r.release_t < PROFILES[fast[i]].r.burn_s || m >= 0.85f)) {
+                    strncat(bad, " ", sizeof(bad) - 1 - strlen(bad));
+                    strncat(bad, what, sizeof(bad) - 1 - strlen(bad));
+                    strncat(bad, ": released in the error;", sizeof(bad) - 1 - strlen(bad));
+                }
+                drogue_after_apogee(&r, what, bad, sizeof(bad));
+            }
+        }
+        printf("%s\n", line);
+    }
+    printf("  released by Mach %.2f at the latest\n", (double)worst);
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_M0_atmosphere);
@@ -434,5 +811,15 @@ int main(void) {
     RUN_TEST(test_M0_report);
     RUN_TEST(test_T5_ejection);
     RUN_TEST(test_T5_canopy_swing);
+    RUN_TEST(test_M1_subsonic_never_locks);
+    RUN_TEST(test_M1_flag_before_mach_085);
+    RUN_TEST(test_M1_mid_mach_releases);
+    RUN_TEST(test_M1_no_drogue_before_apogee);
+    RUN_TEST(test_M1_release_at_altitude);
+    RUN_TEST(test_M1_fallback);
+    RUN_TEST(test_M1_peak_outside_lock);
+    RUN_TEST(test_M1_integer_forms);
+    RUN_TEST(test_M1_design_note);
+    RUN_TEST(test_M1_port_error_margin);
     return UNITY_END();
 }

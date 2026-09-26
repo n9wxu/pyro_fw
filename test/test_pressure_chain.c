@@ -1828,6 +1828,80 @@ void test_T5_under_thrust(void) {
     TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
 }
 
+/* ── M1: the lockout's pieces that need a pad's truth ──────────────── */
+
+/* [FLT-MACH-06] A recovered ascent has lost its speed history, so it starts
+ * locked, flagged at the pressure it rejoined at. It must still release and
+ * find apogee; a recovered descent is past all that. */
+void test_M1_recovered_ascent_locked(void) {
+    boot_like_hardware(2);
+    write_marker((int32_t)PAD_PA);
+    mock_reset_cause = RESET_POWER_EVENT;
+    bool was_locked = false;
+    int32_t p_flag = 0;
+    float h = 300.0f, v = 50.0f, h_rejoin = 0.0f;
+    for (uint32_t t = 0; t < 8000u; t++) {
+        v -= G * 0.001f;
+        h += v * 0.001f;
+        mock_pressure.pressure_pa = isa_pa(h);
+        bool was_booting = booting();
+        tick(t);
+        if (was_booting && !booting()) {
+            was_locked = ctx.mach_lock;
+            p_flag = ctx.p_flag_pa;
+            h_rejoin = h;
+        }
+    }
+    char msg[96];
+    snprintf(msg, sizeof(msg), "rejoined locked %d, flagged at %ld Pa", was_locked, (long)p_flag);
+    TEST_ASSERT_TRUE_MESSAGE(was_locked, msg);
+    /* The level is the median of the newest 250 ms: at 50 m/s, 12 m below. */
+    TEST_ASSERT_INT_WITHIN_MESSAGE(150, (int32_t)isa_pa(h_rejoin), p_flag, msg);
+
+    air_boot_t a = boot_in_the_air(300.0f, 50.0f, 2, 60000);
+    snprintf(msg, sizeof(msg), "drogue %ld ms after the true apogee", (long)a.fire_ms[1] - (long)a.apogee_ms);
+    TEST_ASSERT_TRUE_MESSAGE(a.fire_ms[1] != 0 && a.fire_ms[1] >= a.apogee_ms && a.fire_ms[1] - a.apogee_ms < 1500,
+                             msg);
+
+    (void)boot_in_the_air(600.0f, -20.0f, 1, 3000);
+    TEST_ASSERT_FALSE_MESSAGE(ctx.mach_lock, "a recovered descent is not locked");
+}
+
+/* [FLT-MACH-06] No channel arms below 0.9965 of the ground pressure, about
+ * 30 m, and a flight that peaks at 25 m arms nothing. */
+static struct {
+    float armed_h;
+    bool armed;
+} arm_note;
+
+static void note_arm(const truth_t *tr) {
+    if (ctx.pyros_armed && !arm_note.armed) {
+        arm_note.armed = true;
+        arm_note.armed_h = tr->h;
+    }
+}
+
+void test_M1_minimum_altitude_arm(void) {
+    const float peaks[] = {25.0f, 40.0f, 60.0f, 150.0f};
+    const float arm_h = 287.05f * 288.15f / G * -logf(0.9965f); /* 29.6 m on this pad */
+    char bad[256] = "";
+    for (unsigned i = 0; i < sizeof(peaks) / sizeof(peaks[0]); i++) {
+        float g = 5.0f;
+        flight_t f = {g, sqrtf(2.0f * peaks[i] / (g * G * (1.0f + g))), 20.0f, 0.0f};
+        memset(&arm_note, 0, sizeof(arm_note));
+        fly_opts.on_sample = note_arm;
+        (void)fly(&f, 3, 6, 60000u, false);
+        bool wrong = peaks[i] < arm_h ? arm_note.armed || mock_pyro.fire_count > 0
+                                      : arm_note.armed && arm_note.armed_h < arm_h;
+        if (wrong) {
+            char item[64];
+            snprintf(item, sizeof(item), " %.0f m peak: armed at %.1f m;", (double)peaks[i], (double)arm_note.armed_h);
+            strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -1885,5 +1959,7 @@ int main(void) {
     RUN_TEST(test_T5_descent_glitch);
     RUN_TEST(test_T5_through_the_clamp);
     RUN_TEST(test_T5_under_thrust);
+    RUN_TEST(test_M1_recovered_ascent_locked);
+    RUN_TEST(test_M1_minimum_altitude_arm);
     return UNITY_END();
 }

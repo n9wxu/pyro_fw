@@ -108,6 +108,7 @@ rationale and the alternatives considered.
 
 ### DD-017: Arming Requires Confirmed Motor Burn
 - **Decision:** Pyro arming requires max vertical speed during ASCENT exceeded 10 m/s.
+- **Amended by DD-049:** and not before p < 0.9965·p0, about 30 m climbed.
 - **Amended by DD-048:** 10 m/s of true speed, the fit's. This read 20 m/s
   while the speed was the filter's, on the assumption that the filter halved
   it. A rocket still climbing at 10 m/s at the launch detector's 100 ft
@@ -289,6 +290,7 @@ rationale and the alternatives considered.
   retry on the grace, not on this.
 
 ### DD-025: The Mach Gate Latches On Upward Speed Only
+- **Superseded by DD-049:** the Mach lockout replaced the gate.
 - **Decision:** Apogee is not declared while ascending faster than 100 ft/s,
   nor until the rocket has been slower than that for 1 s. A flight that never
   exceeds it is never gated.
@@ -543,6 +545,52 @@ rationale and the alternatives considered.
 - **Chirp:** switching test mode off while attached is an attach, so it
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
+
+### DD-049: The Mach Lockout
+- **Decision:** the Mach gate goes, and the prompt's lockout replaces it
+  (`docs/mach_lockout.md`, FLT-MACH-02..07). A latch inside ASCENT:
+  - **flag** when -ṗ > 0.029·p, from T+0;
+  - **release** after a second of clean fits climbing slower than
+    -ṗ < 0.022·p and decelerating at p̈ ≥ 0.0009·p, with p_min restarting
+    there;
+  - **fallback**, if it never releases: a second of clean fits showing the
+    rocket falling back past the pressure it was flagged at. That declares
+    apogee and arms what arming missed.
+
+  While locked there is no apogee and no p_min. No channel arms before
+  p < 0.9965·p0. A recovered ascent starts locked. The reported peak is the
+  height at p_min, marked a lower bound if the lock let go within 2 s of
+  apogee. The thresholds compare in integers (`src/mach_lockout.h`).
+- **Why:** the gate latched above 100 ft/s, which nearly every flight passes,
+  and believed the data after one second below it. A port's supersonic error
+  can fake exactly that: on M0's low-drag flight a port that made the boost
+  read as a descent fired the drogue 39 s before apogee, at Mach 1.27.
+- **What M0's harness shows now:**
+  - every profile is flagged by Mach 0.82, before its port error can begin;
+  - every lock lets go at Mach 0.41-0.49 after burnout, 9-16 s before apogee,
+    and at least 15.5 s before it on the low-drag flight to 10 km from the hot
+    pad, over 1000 seeds;
+  - every drogue comes 0.38-0.50 s after apogee, with the port error of
+    either sign or none;
+  - M0's fakes-descent port, scaled from 0.1 to 4 times either way, never
+    moves the release into the error;
+  - a port reading 15 % of q low read the draggy flight's peak as 1976 m for
+    a 1526 m apogee; it now reports 1526 m.
+- **Deviations beyond M1-D** (`docs/mach_lockout.md` lists them all):
+  - **The flag is evaluated from T+0,** on the pad's samples. At 66 g the
+    launch detector's 100 ft and 100 ms come after Mach 1, and the first
+    flag was at Mach 1.04-1.09. A pad flag outlives a rise that falls back,
+    because a port faking a descent reads the climb below the pad. It is
+    forgotten after 10 s with no launch.
+  - **Before the first release the flag also reads the rate over the newest
+    two intervals.** Through a 66 g boost's first second the one-second fit
+    still holds the pad and reads the climb 120 m/s slow.
+  - **The fallback needs both conditions for the whole second,** not the
+    rise alone: a later drogue, never an earlier one.
+- **Found on the way:** the first pad flag cleared when the rise fell back.
+  The port-error sweep caught the fakes-descent port "releasing" the lock at
+  Mach 0.92, mid-boost, by pushing the sensed height below the pad.
+- **Supersedes DD-025.**
 
 ### DD-048: One Estimator, A Quadratic Fit To The Last Second Of Pressure
 - **Decision:** the pressure layer fits a least-squares quadratic through the

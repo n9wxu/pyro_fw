@@ -18,8 +18,11 @@
 #define EVT_APOGEE 2
 #define EVT_PYRO1_FIRE 3
 #define EVT_PYRO2_FIRE 4
-/* 5, 6, 8 and 10 are unassigned. */
+#define EVT_MACH_LOCK 5     /* the Mach lockout's flag [FLT-MACH-02] */
+#define EVT_MACH_UNLOCK 6   /* released on a coast's signature [FLT-MACH-03] */
 #define EVT_LANDING 7
+#define EVT_MACH_FALLBACK 8 /* the lock never released; apogee from the fallback [FLT-MACH-04] */
+/* 10 is unassigned. */
 #define EVT_ARMED 9
 #define EVT_PYRO1_FAULT 11
 #define EVT_PYRO2_FAULT 12
@@ -41,6 +44,12 @@ static inline const char *flight_event_name(uint8_t evt) {
         return "PYRO2";
     case EVT_LANDING:
         return "LANDING";
+    case EVT_MACH_LOCK:
+        return "LOCK";
+    case EVT_MACH_UNLOCK:
+        return "UNLOCK";
+    case EVT_MACH_FALLBACK:
+        return "LOCK_FALLBACK";
     case EVT_ARMED:
         return "ARMED";
     case EVT_PYRO1_FAULT:

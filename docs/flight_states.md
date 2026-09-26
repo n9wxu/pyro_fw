@@ -87,8 +87,9 @@ stateDiagram-v2
     LANDED --> LANDED: terminal
 
     note right of ASCENT
-        DEAD END: no exit unless armed.
-        Apogee is also gated above 100 ft/s.
+        DEAD END: no exit unless armed,
+        or the Mach lock's fallback.
+        No apogee while the Mach lock stands.
     end note
     note right of DROGUE_DESCENT
         The one back edge: a drogue that
@@ -117,7 +118,7 @@ Complete. `transitions[]` has seventeen rows and this is all of them.
 | BOOT_CALIBRATE | SEVT_FAULT | FAULT | `action_fault` | `now - boot_timer >= 10000` |
 | PAD_IDLE | SEVT_LAUNCH | ASCENT | `action_launch` | `alt > 3048 cm && pad_speed > 500 cm/s` |
 | ASCENT | SEVT_ARMED | **ASCENT** | `action_armed` | see arming gate below |
-| ASCENT | SEVT_APOGEE | FALLING | `action_apogee` | `pyros_armed && mach gate clear && fit_clean && fit_pdot > 0`, held 60 ms, and `fit_pa >= 1.0001 * p_min_pa` |
+| ASCENT | SEVT_APOGEE | FALLING | `action_apogee` | `pyros_armed && !mach_lock && fit_clean && fit_pdot > 0`, held 60 ms, and `fit_pa >= 1.0001 * p_min_pa`; or the lock's fallback |
 | FALLING | SEVT_DROGUE | DROGUE_DESCENT | — | rate settled in the drogue band |
 | FALLING | SEVT_CHUTE | CHUTE_DESCENT | — | rate settled in the main band |
 | DROGUE_DESCENT | SEVT_CHUTE | CHUTE_DESCENT | — | rate settled in the main band |
@@ -184,22 +185,26 @@ brings the main forward 4.6 s later at 1071 m.
 diagnosis, not a licence to cancel the flight plan: a rocket already descending
 slowly still gets the deployment its config asked for.
 
-## The mach gate
+## The Mach lockout
 
-Apogee is not declared while the rocket is ascending faster than 100 ft/s, nor
-until it has been slower than that for 1 s. A flight that never exceeds it is
-never gated, which is most of them.
+A latch, not a state (`mach_lock`; DD-049, `docs/mach_lockout.md`):
 
-Only an *upward* rush latches the gate. Testing the magnitude would re-latch on
-the way down, where the rate climbs past the threshold again, and lock apogee
-detection out for the rest of the flight. Descending fast is not a reason to
-doubt that apogee happened; it is proof that it did.
+- **Flag** when `-pdot > 0.029 p`, from the first sample of the rise, on the
+  pad as well as in ASCENT: at 66 g the launch is declared past Mach 1. Any
+  fit, or the rate over the newest 40 ms, until the first release; then a
+  clean fit only. A pad flag outlives a rise that falls back, and is
+  forgotten after 10 s with no launch.
+- **Release** after 1 s of clean fits with `0 < -pdot < 0.022 p` and
+  `pddot >= 0.0009 p`. p_min restarts at the current pressure.
+- **While locked,** no apogee and no p_min.
+- **Fallback:** 1 s of clean fits with `pdot > 0` and `p > p_flag` declares
+  apogee (SEVT_APOGEE), and arms the pyros if arming never came.
+- **Recovery** into ASCENT starts locked, flagged where it rejoined.
 
-The latch is fed from every ascent sample rather than from the gate test. The
-gate is only consulted once the pyros are armed, and arming already requires
-the rocket to have slowed below 10 m/s -- so a latch living inside the gate
-could never see a speed above the threshold, and the gate would be permanently
-open on exactly the flights it exists for.
+Each change is a flight-log event (LOCK, UNLOCK, LOCK_FALLBACK) and a
+telemetry line. Arming also needs `p < 0.9965 p0` to have been seen. The
+reported peak (`max_altitude`) is the height at p_min, so the locked interval
+never reaches it.
 
 ---
 
@@ -459,7 +464,7 @@ guaranteeing it always moves at least 1 Pa toward a bad reading.
 
 ---
 
-**Fixed.** See "The mach gate" above.
+**Fixed.** See "The Mach lockout" above.
 
 ### 14. The landing timeout declares LANDED under a main — OPEN
 
