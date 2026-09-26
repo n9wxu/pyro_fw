@@ -44,7 +44,7 @@ static struct {
     } hist;
 
     /* IIR filter state */
-    int32_t filtered_pressure;
+    int32_t filtered_q8; /* pascals x 256 [SNS-PRES-02] */
     bool filter_initialized;
     uint32_t last_timestamp;
 
@@ -272,26 +272,32 @@ static int32_t cal_median(void) {
 
 /* ── IIR pressure filter ─────────────────────────────────────────── */
 
-/* [SNS-PRES-02..04] First-order IIR with minimum step to prevent stall.
- * Time constant τ = 500ms. See IMPLEMENTATION.md "Pressure Filter".
+/* [SNS-PRES-02, SNS-PRES-03] First-order IIR, τ = 500 ms, its state in Q8.
+ * See IMPLEMENTATION.md "Pressure Filter".
  *
- * Correct operation requires monotonically increasing timestamps.
- * The data flow (HAL pres_tick → pp_feed → ring) guarantees this
- * because the HAL produces samples in chronological order and
- * pp_feed() is called once per raw sample. */
-int32_t pp_filter_pressure(int32_t raw_pressure, uint32_t dt_ms) {
+ * Whole pascals would not do: at 20 ms the step is 3.8 % of the difference,
+ * which rounds to nothing under 26 Pa, and forcing a 1 Pa step instead made
+ * the filter a rate limiter that passed the noise straight through. In Q8 the
+ * dead band is a tenth of a pascal. 101 325 Pa x 256 fits in an int32; the
+ * product is taken in int64. */
+static int32_t filter_q8(int32_t raw_pressure, uint32_t dt_ms) {
     if (!pp.filter_initialized) {
-        pp.filtered_pressure = raw_pressure;
+        pp.filtered_q8 = raw_pressure * 256;
         pp.filter_initialized = true;
-        return raw_pressure;
+        return pp.filtered_q8;
     }
-    int32_t diff = raw_pressure - pp.filtered_pressure;
-    int32_t alpha = (dt_ms * 1000) / (PP_FILTER_TAU_MS + dt_ms);
-    int32_t step = (diff * alpha) / 1000;
-    if (step == 0 && diff != 0)
-        step = (diff > 0) ? 1 : -1;
-    pp.filtered_pressure += step;
-    return pp.filtered_pressure;
+    int64_t diff_q8 = (int64_t)raw_pressure * 256 - pp.filtered_q8;
+    int64_t alpha_q16 = ((int64_t)dt_ms << 16) / (PP_FILTER_TAU_MS + dt_ms);
+    pp.filtered_q8 += (int32_t)((diff_q8 * alpha_q16) / 65536);
+    return pp.filtered_q8;
+}
+
+static int32_t q8_round(int32_t q8) {
+    return (q8 >= 0 ? q8 + 128 : q8 - 128) / 256;
+}
+
+int32_t pp_filter_pressure(int32_t raw_pressure, uint32_t dt_ms) {
+    return q8_round(filter_q8(raw_pressure, dt_ms));
 }
 
 /* ── Altitude conversion ──────────────────────────────────────────── */
@@ -314,6 +320,14 @@ int32_t pp_pressure_to_height_cm(int32_t pressure_pa, int32_t ground_pressure_pa
     return (int32_t)(alt_m * 100.0f);
 }
 
+static int32_t height_from_q8(int32_t pressure_q8, int32_t ground_pressure_pa) {
+    if (pressure_q8 <= 0 || ground_pressure_pa <= 0)
+        return 0;
+    float ratio = (float)pressure_q8 / (256.0f * (float)ground_pressure_pa);
+    float alt_m = 44330.0f * (1.0f - powf(ratio, 1.0f / 5.2561f));
+    return (int32_t)(alt_m * 100.0f);
+}
+
 int32_t pp_pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa) {
     int32_t alt_cm = pp_pressure_to_height_cm(pressure_pa, ground_pressure_pa);
     if (alt_cm > MAX_ALTITUDE_CM)
@@ -325,9 +339,10 @@ int32_t pp_pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_
 
 /* ── Ring buffer helpers ──────────────────────────────────────────── */
 
-static void ring_push(int32_t altitude_cm, int32_t height_cm, uint32_t timestamp_ms) {
+static void ring_push(int32_t altitude_cm, int32_t height_cm, int32_t rise_cm, uint32_t timestamp_ms) {
     pp.ring[pp.head].altitude_cm = altitude_cm;
     pp.ring[pp.head].height_cm = height_cm;
+    pp.ring[pp.head].rise_cm = rise_cm;
     pp.ring[pp.head].timestamp_ms = timestamp_ms;
     pp.head = (pp.head + 1) & PP_RING_MASK;
     if (pp.count < PP_RING_SIZE) {
@@ -360,7 +375,7 @@ void pp_test_prime(int32_t ground_pressure_pa) {
 void pp_resume_flight(int32_t ground_pa, int32_t start_pa) {
     pp.state = PP_RUNNING;
     pp.ground_pressure = ground_pa;
-    pp.filtered_pressure = start_pa;
+    pp.filtered_q8 = start_pa * 256;
     pp.last_filtered = start_pa;
     pp.filter_initialized = true;
     pp.last_timestamp = pp.med.last_ts;
@@ -403,7 +418,7 @@ void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
         pp.cal[pp.cal_count++] = raw_pressure_pa;
         if (pp.cal_count >= PP_CAL_SAMPLES) {
             pp.ground_pressure = cal_median();
-            pp.filtered_pressure = pp.ground_pressure;
+            pp.filtered_q8 = pp.ground_pressure * 256;
             pp.filter_initialized = true;
             pp.last_timestamp = pp.med.last_ts;
             gnd_reset(pp.ground_pressure);
@@ -419,18 +434,25 @@ void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
         pp.last_timestamp = ts;
 
         /* IIR filter */
-        int32_t filtered = pp_filter_pressure(pa, dt);
+        int32_t q8 = filter_q8(pa, dt);
+        int32_t filtered = q8_round(q8);
         pp.last_filtered = filtered;
 
         /* Before the altitude, so the reference is this sample's own. */
         gnd_feed(filtered, ts);
 
-        /* Convert to altitude */
-        int32_t height_cm = pp_pressure_to_height_cm(filtered, pp.ground_pressure);
-        int32_t alt_cm = pp_pressure_to_altitude_cm(filtered, pp.ground_pressure);
+        /* The altitude from the fractional pressure: from the rounded one a
+         * whole pascal is 8 cm, and the speed would step in 4 m/s. */
+        int32_t height_cm = height_from_q8(q8, pp.ground_pressure);
+        int32_t alt_cm = height_cm < 0 ? 0 : (height_cm > MAX_ALTITUDE_CM ? MAX_ALTITUDE_CM : height_cm);
+
+        /* T+0 is read from the reading itself, not the filter: the filter
+         * lags the first half metre by its time constant, and the median's
+         * noise is a tenth of it. */
+        int32_t rise_cm = pp_pressure_to_height_cm(pa, pp.ground_pressure);
 
         /* Push to ring */
-        ring_push(alt_cm, height_cm, ts);
+        ring_push(alt_cm, height_cm, rise_cm, ts);
         return;
     }
     }

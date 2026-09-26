@@ -168,8 +168,8 @@ ground bias, and the stall figure, where they used a different stall model.
 | Brownout recovery, booted as the hardware boots | never engages (N23) | engages | T1 |
 | Recovery on the pad with one glitch in its history | unreachable today (N23) | never resumes | T1 |
 | One plausible glitch on the pad | ≥11 kPa low declares a launch (N24) | no launch at any size | T2, T3 |
-| Speed noise on the pad (RMS) | 1.58 m/s | ≤ 0.3 m/s | T4, T5 |
-| Touchdown to LANDED, by the stillness test | on the pad's level 1.9 s, because the zero clamp hides the noise there; 5 m above it, never within 400 s, so only the 60 s timeout lands it | ≤ 3 s, at any landing height | T4, T5 |
+| Speed noise on the pad (RMS) | 1.58 m/s | ≤ 0.3 m/s: done, 0.22 m/s | T4, T5 |
+| Touchdown to LANDED, by the stillness test | on the pad's level 1.9 s, because the zero clamp hides the noise there; 5 m above it, never within 400 s, so only the 60 s timeout lands it | ≤ 3 s, at any landing height: done, 1.6 s | T4, T5 |
 | Apogee after the true apogee | +0.56 s mean (+0.54 to +0.58) | never early; about +0.4 s | T5 |
 | Ground pressure frozen at launch | reads 0.17 m (30 g) to 0.42 m (2 g) low | ≤ 0.1 m: done, 0.08 m | T7 |
 | Ground tracker after a >50 Pa step | frozen for good (N9) | re-seeds | T6 |
@@ -557,6 +557,19 @@ conversion was made, from the hardware timer"; amend FLT-RATE-04 and DAT-02
 ---
 
 ### T4. Keep fractional precision in the filter
+
+**Done 2026-09-26** (DD-044), before T11: it needed nothing from it. Filtered
+noise 0.17 Pa, pad speed 0.22 m/s, touchdown to LANDED 1.6 s at both
+landing heights. Two earlier tests caught side effects:
+- T3's latency guard: the quiet filter delayed T+0 by its time constant,
+  260 ms at 2 g. T+0 now comes from the median's unfiltered reading, within
+  one sample of the truth. The guard and both backdate tests now compare with
+  the truth rather than with the old code.
+- T2's median test claimed a spike changes nothing. It swaps in a
+  neighbouring reading, one ramp step away, which the whole-pascal filter
+  had rounded off.
+
+The pad-speed bench check is owed (G4).
 
 **Why:** the filter state is in whole pascals, and SNS-PRES-04 forces a ±1 Pa
 step whenever raw and filtered differ. With α ≈ 0.038 at 20 ms, every

@@ -46,7 +46,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | GND-CAL-03 | A sample 50 Pa away is not averaged in | Unit: test_GND_CAL_02_reference_stops_tracking_when_the_rocket_moves | ✅ |
 | GND-CAL-04 | Frozen from before T+0, not snapped | Unit: test_FLT_LAUNCH_09_freezing_keeps_the_hundred_feet; Chain: test_T7_ground_error (within 0.1 m at 2, 5, 15 and 30 g) | ✅ |
 | GND-CAL-07 | A reference on under a second of pad is flagged | Chain: test_T7_early_launch_degraded | ✅ |
-| FLT-LAUNCH-03 | T+0 at the first sample above 50 cm | Unit: test_REV07_launch_backdates_to_first_rise; Integration: test_FLT_LAUNCH_03_backdate (exact) | ✅ |
+| FLT-LAUNCH-03 | T+0 at the first reading above 50 cm | Unit: test_REV07_launch_backdates_to_first_rise; Integration: test_FLT_LAUNCH_03_backdate; Chain: test_T3_latency (within 40 ms of the truth at 2-30 g) | ✅ |
 | FLT-LAUNCH-07 | 100 ft and 5 m/s, held for 100 ms | Unit: test_FLT_LAUNCH_08_ten_metres_is_no_longer_enough, test_FLT_LAUNCH_01_detects_ascent; Chain: test_T3_pad_two_sample_glitch, test_T3_latency, test_T3_durations_not_counts | ✅ |
 | GND-CAL-05 | LAUNCH reports the height reached | Integration: test_REV11_launch_row_reports_the_height_reached | ✅ |
 | FLT-LAUNCH-04 | Log LAUNCH event | Integration: test_DAT_04_events | ✅ |
@@ -62,7 +62,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-ASC-05 | Log ARMED event | Integration: test_DAT_04_events | ✅ |
 | FLT-ASC-06 | No arm above 10 m/s | Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
 | FLT-ASC-07 | No arming unless the peak speed passed 20 m/s | Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
-| FLT-LAND-01 | Stable <1m for 1s | Integration: test_FLT_BOOT_01_all_states reaches LANDED | ✅ |
+| FLT-LAND-01 | Stable <1m for 1s | Integration: test_FLT_BOOT_01_all_states reaches LANDED; Chain: test_T4_touchdown (within 3 s, under noise, on the pad's level and 5 m above) | ✅ |
 | FLT-LAND-02 | Speed <2 m/s | Integration: landing detected at correct time | ✅ |
 | FLT-LAND-03 | Altitude <30m | Integration: landing detected at correct time | ✅ |
 | FLT-LAND-04 | Transition to LANDED | Integration: test_FLT_LAND_04_duration | ✅ |
@@ -170,7 +170,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | SYS-ALT-01 | Barometric altitude | Integration: altitude tracks trajectory | ✅ |
 | SYS-ALT-02 | Multiple sensors | — (hardware test only) | ⚠️ |
 | SNS-PRES-01 | Auto-detect sensor | — (hardware test only) | ⚠️ |
-| SNS-PRES-02..04 | Pressure filter | Integration: altitude converges correctly | ✅ |
+| SNS-PRES-02..03 | Pressure filter, fractional | Unit: test_SNS_PRES_02_filter_smoothing, test_SNS_PRES_03_filter_init; Chain: test_T4_filter_noise (0.17 Pa of 1.2), test_T4_pad_speed (0.22 m/s) | ✅ |
 | SNS-PRES-05 | Conversion read after its worst case | Hardware (MK1C, MK1B): pres_rejects 0 under HTTP load, 18 in 60 s without the timing | ✅ HW |
 | SNS-PRES-07 | A single outlier never reaches the filter | Chain: test_T2_pad_glitch_sweep, test_T2_coast_glitch, test_T2_median_timing | ✅ |
 | SNS-PRES-06 | Impossible readings discarded and counted | Hardware: pres_rejects on /api/status; the false launch they caused did not recur | ✅ HW |

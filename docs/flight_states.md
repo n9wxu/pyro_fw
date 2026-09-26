@@ -493,9 +493,9 @@ hold for 100 ms and 60 ms of sample time (DD-042).
 
 ## What is not in the machine
 
-- No filter on speed. It is a raw two-point difference of the filtered
-  altitude, so at ~20 ms sampling the quantisation floor is about ±4 m/s per
-  pascal step.
+- No filter on speed. It is a two-point difference of the filtered height,
+  about 0.2 m/s RMS on the pad since the filter keeps fractions (DD-044); T5
+  replaces it with a fit.
 - No plausibility check on a sample beyond the sensor's own range (DD-036)
   and the median of three (DD-040): two readings in a row inside 1-120 kPa
   are believed, however far they are from the last.

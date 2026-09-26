@@ -243,7 +243,12 @@ void test_T0_baseline_pad_speed_noise(void) {
  * the pad's own level and 5 m above it. The launch freezes a ground reference a
  * little low (T7), so on the pad's level the altitude sits at the zero clamp,
  * where the noise cannot reach it. */
-static void touchdown_to_landed(float land_m) {
+typedef struct {
+    double mean_s, worst_s;
+    int landed, never;
+} touchdown_t;
+
+static touchdown_t touchdown_to_landed(float land_m) {
     const flight_t f = {5.0f, 1.0f, 5.0f, land_m};
     double sum = 0.0, worst = 0.0;
     int n = 0, never = 0;
@@ -284,11 +289,13 @@ static void touchdown_to_landed(float land_m) {
     printf("  BASELINE touchdown to LANDED, %2.0f m above the pad: %.1f s mean, %.1f s worst, %d flights (%d not "
            "landed within 400 s, or before touchdown)\n",
            land_m, n ? sum / n : 0.0, worst, n, never);
+    touchdown_t td = {n ? sum / n : 0.0, worst, n, never};
+    return td;
 }
 
 void test_T0_baseline_touchdown_to_landed(void) {
-    touchdown_to_landed(0.0f);
-    touchdown_to_landed(5.0f);
+    (void)touchdown_to_landed(0.0f);
+    (void)touchdown_to_landed(5.0f);
 }
 
 /* Apogee declared after the true apogee. */
@@ -513,9 +520,12 @@ void test_T2_calibration_glitch(void) {
 }
 
 /* A straight ramp is monotonic, so its median is always the middle sample:
- * the stage costs one sample of latency and changes nothing else. Delivered
- * with the middle sample's own time, the altitudes come out exactly as the
- * ramp without the spike gives them. */
+ * the stage costs one sample of latency. Delivered with the middle sample's
+ * own time, the times come out exactly as the ramp without the spike gives
+ * them. The spike itself never reaches the filter: in the two windows that
+ * hold it, the median is a neighbouring reading instead, one ramp step (10 Pa)
+ * away, which moves the filtered altitude by centimetres, not the 400 m the
+ * spike is worth. */
 typedef struct {
     int32_t alt;
     uint32_t ts;
@@ -552,7 +562,7 @@ void test_T2_median_timing(void) {
     TEST_ASSERT_EQUAL_INT(nc, ns);
     for (int i = 0; i < nc; i++) {
         TEST_ASSERT_EQUAL_UINT32_MESSAGE(clean[i].ts, spiked[i].ts, "the spike moved a timestamp");
-        TEST_ASSERT_EQUAL_INT32_MESSAGE(clean[i].alt, spiked[i].alt, "the spike reached the filter");
+        TEST_ASSERT_INT32_WITHIN_MESSAGE(10, clean[i].alt, spiked[i].alt, "the spike reached the filter");
     }
 }
 
@@ -758,11 +768,11 @@ static launch_times_t launch_times(float g) {
     return lt;
 }
 
-/* Before T3, with T2's median in place: detection and T+0 after ignition. */
+/* Before T3, with T2's median in place: detection after ignition. */
 static const struct {
     float g;
-    double detect_ms, t0_ms;
-} BEFORE_T3[] = {{2.0f, 2260.0, 264.0}, {5.0f, 1560.0, 204.0}, {15.0f, 1020.0, 176.0}, {30.0f, 800.0, 156.0}};
+    double detect_ms;
+} BEFORE_T3[] = {{2.0f, 2260.0}, {5.0f, 1560.0}, {15.0f, 1020.0}, {30.0f, 800.0}};
 #define BEFORE_T3_APOGEE_S 0.59
 
 #define LAUNCH_HOLD_TEST_MS 100.0
@@ -833,11 +843,13 @@ void test_T3_coast_two_sample_glitch(void) {
 void test_T3_latency(void) {
     for (unsigned i = 0; i < sizeof(BEFORE_T3) / sizeof(BEFORE_T3[0]); i++) {
         launch_times_t lt = launch_times(BEFORE_T3[i].g);
+        /* T+0 is the first half metre, which the truth reaches here. */
+        double true_rise_ms = 1000.0 * sqrt(2.0 * 0.5 / (BEFORE_T3[i].g * G));
         char msg[128];
-        snprintf(msg, sizeof(msg), "%.0f g: detected %.1f ms after ignition (was %.1f), T+0 %.1f ms (was %.1f)",
-                 BEFORE_T3[i].g, lt.detect_ms, BEFORE_T3[i].detect_ms, lt.t0_ms, BEFORE_T3[i].t0_ms);
+        snprintf(msg, sizeof(msg), "%.0f g: detected %.1f ms after ignition (was %.1f), T+0 %.1f ms (truth %.1f)",
+                 BEFORE_T3[i].g, lt.detect_ms, BEFORE_T3[i].detect_ms, lt.t0_ms, true_rise_ms);
         TEST_ASSERT_TRUE_MESSAGE(lt.detect_ms <= BEFORE_T3[i].detect_ms + LAUNCH_HOLD_TEST_MS + 20.0, msg);
-        TEST_ASSERT_TRUE_MESSAGE(lt.t0_ms == BEFORE_T3[i].t0_ms, msg);
+        TEST_ASSERT_TRUE_MESSAGE(lt.t0_ms >= true_rise_ms && lt.t0_ms <= true_rise_ms + 40.0, msg);
     }
     const flight_t f = {5.0f, 2.0f, 20.0f, 0.0f};
     double sum = 0.0;
@@ -947,6 +959,61 @@ void test_T7_early_launch_degraded(void) {
     TEST_ASSERT_FALSE_MESSAGE(pp_ground_degraded(), "one with ten seconds is not");
 }
 
+/* ── T4: fractional precision in the filter ───────────────────────── */
+
+/* 60 s on the pad: the filtered height's spread, in pascals, and the pad
+ * speed's, as the detectors read them. */
+static void pad_quiet(double *height_rms_pa, double *speed_rms_ms) {
+    boot_like_hardware(12);
+    uint32_t t = 0;
+    run_to_pad(&t);
+    for (uint32_t end = t + 5000u; t < end; t++)
+        tick(t);
+    double sum = 0.0, sq = 0.0, vsq = 0.0;
+    int n = 0;
+    uint32_t last = ctx.last_sample;
+    for (uint32_t end = t + 60000u; t < end; t++) {
+        tick(t);
+        if (ctx.last_sample != last) {
+            double pa = ctx.last_height * (PA_PER_M / 100.0);
+            sum += pa;
+            sq += pa * pa;
+            double v = ctx.pad_speed_cms / 100.0;
+            vsq += v * v;
+            n++;
+            last = ctx.last_sample;
+        }
+    }
+    double mean = sum / n;
+    *height_rms_pa = sqrt(sq / n - mean * mean);
+    *speed_rms_ms = sqrt(vsq / n);
+}
+
+void test_T4_filter_noise(void) {
+    double h, v;
+    pad_quiet(&h, &v);
+    printf("  filtered pressure on the pad: %.3f Pa RMS\n", h);
+    TEST_ASSERT_TRUE_MESSAGE(h <= 0.25, "the filter must pass no more than 0.25 Pa of 1.2 Pa noise");
+}
+
+void test_T4_pad_speed(void) {
+    double h, v;
+    pad_quiet(&h, &v);
+    printf("  pad speed: %.2f m/s RMS\n", v);
+    TEST_ASSERT_TRUE_MESSAGE(v <= 0.3, "speed noise on the pad must be 0.3 m/s RMS or less");
+}
+
+void test_T4_touchdown(void) {
+    const float sites[] = {0.0f, 5.0f};
+    for (int i = 0; i < 2; i++) {
+        touchdown_t td = touchdown_to_landed(sites[i]);
+        char msg[96];
+        snprintf(msg, sizeof(msg), "%.0f m above the pad: %d of 20 landed, worst %.1f s", sites[i], td.landed,
+                 td.worst_s);
+        TEST_ASSERT_TRUE_MESSAGE(td.landed == 20 && td.worst_s <= 3.0, msg);
+    }
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -979,5 +1046,8 @@ int main(void) {
     RUN_TEST(test_N26_apogee_above_8km);
     RUN_TEST(test_T7_ground_error);
     RUN_TEST(test_T7_early_launch_degraded);
+    RUN_TEST(test_T4_filter_noise);
+    RUN_TEST(test_T4_pad_speed);
+    RUN_TEST(test_T4_touchdown);
     return UNITY_END();
 }

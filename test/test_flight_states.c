@@ -1023,6 +1023,8 @@ void test_REV07_launch_backdates_to_first_rise(void) {
     mock_time_ms = 0;
     pad_run(&ctx, 2000);
 
+    /* T+0 is the first reading above 50 cm [FLT-LAUNCH-03]: the truth passes
+     * it here, and readings come every 20 ms. */
     uint32_t first_rise_ms = 0, detected_ms = 0;
     for (uint32_t t = 1; t <= 6000 && ctx.current_state == PAD_IDLE; t++) {
         float s = (float)t / 1000.0f;
@@ -1030,9 +1032,8 @@ void test_REV07_launch_backdates_to_first_rise(void) {
         mock_time_ms += 1;
         mock_pressure.pressure_pa = 101325.0f * powf(1.0f - 0.0065f * alt_m / 288.15f, 5.2561f);
         ctx.current_state = step(&ctx, mock_time_ms);
-        if (ctx.current_state == PAD_IDLE && first_rise_ms == 0 && ctx.last_altitude > 50) {
-            first_rise_ms = ctx.last_sample;
-        }
+        if (first_rise_ms == 0 && alt_m > 0.5f)
+            first_rise_ms = mock_time_ms;
         if (ctx.current_state == ASCENT) {
             detected_ms = mock_time_ms;
         }
@@ -1042,7 +1043,7 @@ void test_REV07_launch_backdates_to_first_rise(void) {
     char m[128];
     snprintf(m, sizeof(m), "first rise %u, detected %u, launch_time %u", first_rise_ms, detected_ms, ctx.launch_time);
     TEST_ASSERT_GREATER_THAN_MESSAGE(300, detected_ms - first_rise_ms, m);
-    TEST_ASSERT_EQUAL_UINT32_MESSAGE(first_rise_ms, ctx.launch_time, m);
+    TEST_ASSERT_TRUE_MESSAGE(ctx.launch_time >= first_rise_ms && ctx.launch_time <= first_rise_ms + 20u, m);
 }
 
 /* [TEL-05, REV-08] A board that failed its power-up test is not on the pad

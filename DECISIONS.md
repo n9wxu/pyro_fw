@@ -538,6 +538,26 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-044: The Filter Keeps Fractions, And T+0 Comes From The Reading
+- **Decision:** The pressure filter's state is Q8 fixed point, with its step
+  computed exactly (SNS-PRES-02), and SNS-PRES-04's forced 1 Pa step is gone.
+  Heights come from the fractional pressure. T+0 is read from the median of
+  three's own reading, unfiltered (FLT-LAUNCH-03).
+- **Why the filter:** at 20 ms its step is 3.8 % of the difference, which in
+  whole pascals rounds to nothing under 26 Pa. The forced 1 Pa step that
+  broke the stall made it a rate limiter that passed the noise through. On
+  the pad, 1.2 Pa of sensor noise left 0.74 Pa in the filter and 2.6 m/s of
+  speed noise. Every speed stepped by 4 m/s, a whole pascal in 20 ms. Now:
+  0.17 Pa, 0.22 m/s, and touchdown to LANDED in 1.6 s at any landing height,
+  where before it never landed by stillness.
+- **Why T+0 moved:** a quiet filter lags the first half metre by its time
+  constant; at 2 g, T+0 came 260 ms after the truth. The old filter was only
+  40-100 ms late, and by accident: its forced steps reacted to the first
+  pascals early. The median's reading carries its own time and 7 cm of noise
+  against a 50 cm threshold, so T+0 is now within one sample of the truth.
+- **Rejected:** float state. Q8 needs no FPU work in the per-sample path, and
+  101 325 Pa x 256 fits an int32.
+
 ### DD-043: The Launch's Ground Pressure Comes From Before The Rise
 - **Decision:** At launch the reference freezes to the mean of the blocks of
   GND-CAL-01's 5 s mean that ended before T+0, the first sample of the rise

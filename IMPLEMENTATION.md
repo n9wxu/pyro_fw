@@ -124,7 +124,7 @@ The flight log (`flight_log.csv` in littlefs) opens at launch and closes at LAND
 The flight context also keeps a 4096-entry ring of samples and events (DAT-01); `flight_save_csv()` exports it for the simulator.
 
 ### Pressure Filter
-Each reading first passes a median of three, stamped with the middle reading's time, so no single outlier reaches the filter (SNS-PRES-07, DD-040). `pp_filter_pressure()` in `src/pressure_processing.c` is then a first-order IIR with a 500 ms time constant (SNS-PRES-02), initialised to the first raw reading (SNS-PRES-03). The state is whole pascals. At 20 ms the step is 3.8 % of the difference, which rounds to zero for any difference under about 26 Pa, so SNS-PRES-04 forces a 1 Pa step instead. Near steady state that makes the filter a rate limiter that passes noise through; T4 in `docs/outstanding_tasks.md` replaces it with a fractional state.
+Each reading first passes a median of three, stamped with the middle reading's time, so no single outlier reaches the filter (SNS-PRES-07, DD-040). `pp_filter_pressure()` in `src/pressure_processing.c` is then a first-order IIR with a 500 ms time constant (SNS-PRES-02), its state in Q8 fixed point so it has no dead band (DD-044), initialised to the first reading (SNS-PRES-03). Heights come from the fractional pressure. T+0 is read from the median's own reading, which the filter would delay by its time constant (FLT-LAUNCH-03).
 
 Altitude is the hypsometric formula against the ground reference (SNS-ALT-01), clamped to 0-8000 m (SNS-ALT-02, SNS-ALT-03). The ground reference is a 5 s mean of the filtered pressure. Launch freezes it to the part of that mean from before T+0 (GND-CAL-01..05, GND-CAL-07).
 

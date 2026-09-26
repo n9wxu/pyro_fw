@@ -243,9 +243,7 @@ void test_FLT_BOOT_01_all_states(void) {
             saw_pad = true;
         if (ctx.current_state == ASCENT)
             saw_ascent = true;
-        if (ctx.current_state == FALLING ||
-            ctx.current_state == DROGUE_DESCENT ||
-            ctx.current_state == CHUTE_DESCENT)
+        if (ctx.current_state == FALLING || ctx.current_state == DROGUE_DESCENT || ctx.current_state == CHUTE_DESCENT)
             saw_descent = true;
         if (ctx.current_state == LANDED)
             saw_landed = true;
@@ -430,7 +428,8 @@ void test_PAD_EXCL_01_pyro_cannot_take_a_pad_lua_holds(void) {
     pad_claim_reset();
     TEST_ASSERT_TRUE(pad_claim_take(PAD_FIRE1, PAD_LUA));
 
-    TEST_ASSERT_EQUAL_MESSAGE(1, hal_pyro_claim_channels(mock_pyro_pads), "only the channel whose pads were free may be kept");
+    TEST_ASSERT_EQUAL_MESSAGE(1, hal_pyro_claim_channels(mock_pyro_pads),
+                              "only the channel whose pads were free may be kept");
     TEST_ASSERT_TRUE_MESSAGE(pyro_release_is_released(1), "the channel Lua holds got the mocked methods");
     TEST_ASSERT_FALSE(pyro_release_is_released(2));
     TEST_ASSERT_EQUAL_MESSAGE(PAD_LUA, pad_claim_owner(9), "and the pad is still Lua's");
@@ -438,7 +437,8 @@ void test_PAD_EXCL_01_pyro_cannot_take_a_pad_lua_holds(void) {
 
 void test_PAD_EXCL_02_lua_cannot_take_a_pad_pyro_holds(void) {
     pad_claim_reset();
-    TEST_ASSERT_EQUAL_MESSAGE(2, hal_pyro_claim_channels(mock_pyro_pads), "with every pad free the flight software keeps both");
+    TEST_ASSERT_EQUAL_MESSAGE(2, hal_pyro_claim_channels(mock_pyro_pads),
+                              "with every pad free the flight software keeps both");
 
     TEST_ASSERT_FALSE_MESSAGE(pad_claim_take(PAD_FIRE1, PAD_LUA), "a pad the flight software kept is not available");
     TEST_ASSERT_FALSE_MESSAGE(pad_claim_take(PAD_COMMON, PAD_LUA), "nor is the common");
@@ -461,7 +461,8 @@ void test_PAD_EXCL_04_the_common_blocks_the_retained_channel_too(void) {
        channel still needs it, and pyro_release_claim() asks for both. */
     pad_claim_reset();
     TEST_ASSERT_TRUE(pad_claim_take(PAD_COMMON, PAD_LUA));
-    TEST_ASSERT_EQUAL_MESSAGE(0, hal_pyro_claim_channels(mock_pyro_pads), "neither channel can fire without the common");
+    TEST_ASSERT_EQUAL_MESSAGE(0, hal_pyro_claim_channels(mock_pyro_pads),
+                              "neither channel can fire without the common");
     TEST_ASSERT_TRUE(pyro_release_is_released(1));
     TEST_ASSERT_TRUE(pyro_release_is_released(2));
 }
@@ -573,7 +574,8 @@ void test_FLT_LAUNCH_01_timing(void) {
         if (ctx.current_state == ASCENT && ascent_start == 0)
             ascent_start = t;
         if ((ctx.current_state == FALLING || ctx.current_state == DROGUE_DESCENT ||
-             ctx.current_state == CHUTE_DESCENT) && descent_start == 0)
+             ctx.current_state == CHUTE_DESCENT) &&
+            descent_start == 0)
             descent_start = t;
         if (ctx.current_state == LANDED && landed_start == 0)
             landed_start = t;
@@ -642,8 +644,10 @@ void test_FLT_LAUNCH_03_backdate(void) {
 
     for (uint32_t t = 0; t <= end_ms; t++) {
         app_tick(t);
-        if (ctx.current_state == PAD_IDLE && first_rise_ms == 0 && ctx.last_altitude > 50)
-            first_rise_ms = ctx.last_sample;
+        /* T+0 is the first reading above 50 cm [FLT-LAUNCH-03]: here is
+         * where the trajectory itself passes it. */
+        if (first_rise_ms == 0 && interpolate_altitude_ft((float)t / 1000.0f) * 0.3048f > 0.5f)
+            first_rise_ms = t;
         if (ctx.current_state == ASCENT && ascent_start_ms == 0)
             ascent_start_ms = t;
     }
@@ -654,7 +658,7 @@ void test_FLT_LAUNCH_03_backdate(void) {
     snprintf(msg, sizeof(msg), "first rise %u, detected %u, launch_time %u", first_rise_ms, ascent_start_ms,
              ctx.launch_time);
     TEST_ASSERT_GREATER_THAN_MESSAGE(300, ascent_start_ms - first_rise_ms, msg);
-    TEST_ASSERT_EQUAL_UINT32_MESSAGE(first_rise_ms, ctx.launch_time, msg);
+    TEST_ASSERT_TRUE_MESSAGE(ctx.launch_time >= first_rise_ms && ctx.launch_time <= first_rise_ms + 20u, msg);
 }
 
 /* [FLT-APO-04] Apogee must never be detected before pyros are armed.
@@ -1147,8 +1151,7 @@ void test_BRN_INT_03_descending_recovery_rejoins_flight(void) {
         mock_pyro.firing = false;
         ctx.current_state = step(&ctx, t);
         flight_update_outputs(&ctx, t);
-        if (ctx.current_state == FALLING || ctx.current_state == DROGUE_DESCENT ||
-            ctx.current_state == CHUTE_DESCENT) {
+        if (ctx.current_state == FALLING || ctx.current_state == DROGUE_DESCENT || ctx.current_state == CHUTE_DESCENT) {
             break;
         }
     }
@@ -1156,9 +1159,8 @@ void test_BRN_INT_03_descending_recovery_rejoins_flight(void) {
     char msg[160];
     snprintf(msg, sizeof(msg), "state=%d recovery=%d diag=0x%x", (int)ctx.current_state, (int)ctx.recovery,
              (unsigned)ctx.diag);
-    TEST_ASSERT_TRUE_MESSAGE(ctx.current_state == FALLING || ctx.current_state == DROGUE_DESCENT ||
-                                 ctx.current_state == CHUTE_DESCENT,
-                             msg);
+    TEST_ASSERT_TRUE_MESSAGE(
+        ctx.current_state == FALLING || ctx.current_state == DROGUE_DESCENT || ctx.current_state == CHUTE_DESCENT, msg);
     TEST_ASSERT_TRUE_MESSAGE((ctx.diag & DIAG_BROWNOUT) != 0, "a recovered flight must say so in the diagnosis");
     TEST_ASSERT_TRUE_MESSAGE(ctx.pyros_armed, "a rocket already descending has passed apogee: arm it");
     TEST_ASSERT_TRUE_MESSAGE(ctx.apogee_detected, "apogee is behind a descending rocket by definition");

@@ -48,7 +48,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 #### Launch Detection
 - **FLT-LAUNCH-01**: The system shall transition to ASCENT when filtered altitude exceeds 100 feet (3048 cm) above the ground reference, and never while a USB host is attached (USB-01). ← FLT-PHASE-01
 - **FLT-LAUNCH-02**: The system shall remain in PAD_IDLE when altitude is at or below 100 feet. ← FLT-PHASE-01
-- **FLT-LAUNCH-03**: The system shall record launch time as the timestamp of the first sample above 50 cm since the last sample at or below it. ← FLT-PHASE-01
+- **FLT-LAUNCH-03**: T+0 shall be the time of the first reading -- the median of three, unfiltered -- above 50 cm since the last one at or below it, not the moment of detection. ← FLT-PHASE-01
 - **FLT-LAUNCH-04**: The system shall log a LAUNCH event at the transition. ← FLT-PHASE-01
 - **FLT-LAUNCH-05**: The system shall stop the buzzer upon launch detection. ← FLT-PHASE-01
 - **FLT-LAUNCH-06**: Withdrawn. The launch height is FLT-LAUNCH-01's 100 feet; there is no separate gain-within-a-window test (DD-016).
@@ -241,12 +241,12 @@ Each derived requirement traces to its parent with `← parent_id`.
 
 ### L3 Subsystem Requirements
 - **SNS-PRES-01**: The system shall auto-detect the installed pressure sensor type. ← SYS-ALT-02
-- **SNS-PRES-02**: The system shall apply a low-pass filter to pressure readings. ← SYS-ALT-01
+- **SNS-PRES-02**: The system shall apply a first-order low-pass filter to pressure readings, with a 500 ms time constant and a fractional state, so that it has no dead band. ← SYS-ALT-01
 - **SNS-ALT-01**: The system shall compute altitude from the difference between ground pressure and current pressure. ← SYS-ALT-01
 
 ### L4 Implementation Requirements
 - **SNS-PRES-03**: The pressure filter shall initialize to the first raw reading without smoothing. ← SNS-PRES-02
-- **SNS-PRES-04**: The pressure filter shall advance by at least 1 Pa per sample when the raw value differs from the filtered value. ← SNS-PRES-02
+- **SNS-PRES-04**: Withdrawn (DD-044). It forced a 1 Pa step across the whole-pascal filter's dead band, and passed the noise through; the fractional state has no dead band.
 - **SNS-PRES-05**: A sensor conversion shall be read no sooner than its worst-case conversion time after the command that started it. ← SNS-PRES-01
 - **SNS-PRES-06**: A reading the sensor cannot produce -- a zero conversion, or a pressure outside its rated range -- shall be discarded and counted, not filtered. ← SNS-PRES-02
 - **SNS-PRES-07**: A single-sample outlier shall not reach the pressure filter. The median of the newest three readings stands between the range check and the filter, carrying the middle reading's time. ← SNS-PRES-02

@@ -614,7 +614,7 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     if (dt > 0)
         ctx->pad_speed_cms = (sample.height_cm - ctx->last_height) * 1000 / (int32_t)dt;
 
-    if (altitude <= LAUNCH_RISE_CM) {
+    if (sample.rise_cm <= LAUNCH_RISE_CM) {
         ctx->pad_rising = false;
     } else if (!ctx->pad_rising) {
         ctx->pad_rising = true;

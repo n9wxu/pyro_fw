@@ -28,6 +28,7 @@
 typedef struct {
     int32_t altitude_cm; /* clamped to 0-8000 m [SNS-ALT-02, SNS-ALT-03]: what is reported */
     int32_t height_cm;   /* not clamped: what speed is taken from [SNS-ALT-04] */
+    int32_t rise_cm;     /* the median reading's own height, unfiltered: T+0 [FLT-LAUNCH-03] */
     uint32_t timestamp_ms;
 } altitude_sample_t;
 
