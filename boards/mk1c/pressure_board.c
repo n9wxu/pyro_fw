@@ -14,15 +14,16 @@
  * SPDX-License-Identifier: MIT
  */
 #include "pressure_sensor.h"
+#include "ms5607_driver.h"
 #include "hardware/i2c.h"
 #include "hardware/gpio.h"
 #include "hardware/resets.h"
 #include "pico/stdlib.h"
 
-extern bool ms5607_detect(void);
-extern bool ms5607_read(pressure_reading_t *reading);
 
 #include "board_pins.h"
+
+_Static_assert(BOARD_MS5607_I2C_HZ <= MS5607_I2C_MAX_HZ, "faster than the MS5607 allows");
 
 /* MK1C: one I2C bus, one sensor, no pin switching. */
 #define I2C_SDA_PIN BOARD_PIN_I2C_SDA
@@ -78,7 +79,7 @@ pressure_sensor_type_t pressure_sensor_init(void) {
     i2c_bus_recover();
     hal_telemetry_send("!PRES bus recovery done\r\n");
 
-    i2c_init(i2c1, 100000);
+    i2c_init(i2c1, BOARD_MS5607_I2C_HZ);
     gpio_set_function(I2C_SDA_PIN, GPIO_FUNC_I2C);
     gpio_set_function(I2C_SCL_PIN, GPIO_FUNC_I2C);
     gpio_pull_up(I2C_SDA_PIN);

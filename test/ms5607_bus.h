@@ -8,6 +8,8 @@
 #ifndef MS5607_BUS_H
 #define MS5607_BUS_H
 
+#include "board_pins.h"
+#include "ms5607_driver.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -15,8 +17,14 @@
 #define __noinline __attribute__((noinline))
 #define __dmb() __sync_synchronize()
 
-#define FAKE_BUS_COMMAND_US 200u /* a byte and a STOP */
-#define FAKE_BUS_READ_US 600u    /* 0x00, a restart and three bytes back */
+#ifndef BOARD_MS5607_I2C_HZ
+#error "ms5607_tests runs on a board with an MS5607"
+#endif
+
+/* Bit periods at the board's bus rate: START, address and command, STOP;
+ * then START, address and 0x00, RESTART, address and three bytes, STOP. */
+#define FAKE_BUS_COMMAND_US (20u * 1000000u / BOARD_MS5607_I2C_HZ)
+#define FAKE_BUS_READ_US (57u * 1000000u / BOARD_MS5607_I2C_HZ)
 
 extern uint64_t fake_bus_now;
 extern uint32_t fake_bus_adc; /* what the next ADC read returns */

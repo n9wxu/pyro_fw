@@ -557,6 +557,39 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-052: Each Board Runs Its Sensor Bus As Fast As Its Device And Its PCB Allow
+- **Decision:** at the user's direction, the I2C speeds are part of each
+  board support package: `BOARD_MS5607_I2C_HZ` and `BOARD_BMP280_I2C_HZ` in
+  `boards/<name>/board_pins.h`. Each is the device's fastest, or slower where
+  that board's PCB cannot carry it; a reliable connection comes first. The
+  device limits stay with the drivers (`MS5607_I2C_MAX_HZ`,
+  `BMP280_I2C_MAX_HZ`), and `pressure_board.c` fails the build if a board
+  asks for more.
+- **The devices** (docs/datasheets/): the MS5607's I2C clock is 400 kHz at
+  most (page 5). The BMP280 lists standard, fast and high-speed modes (pages
+  27 and 31), not fast-mode plus; high-speed runs to 3.4 MHz, but the RP2040
+  has no high-speed mode (section 4.3.2). Both are 400 kHz, fast mode.
+- **The boards,** read from their design files: fast mode allows a 300 ns
+  rise (UM10204 page 44), which 4k7 holds to about 75 pF of bus (page 50),
+  several times what one sensor and a short trace present.
+  - MK1A: the BMP280 on GPIO20/21 with R1 and R2, 4k7 (its schematic PDF):
+    400 kHz.
+  - MK1B: the MS5607 on GPIO10 with GPIO7's SCL, R11 and R10, 4k7 (its KiCad
+    board): 400 kHz. The BMP280's SDA, GPIO6, has no pull-up but the
+    RP2040's own 50-80k, too slow an edge for fast mode; no BMP280 is fitted
+    on this board, but the probe there runs first, at 100 kHz, and the rate
+    goes up before the MS5607's probe, which then exercises it.
+  - MK1C: the MS5607 on GPIO6/7 with R3 and R5, 4k7 (its KiCad board):
+    400 kHz.
+  - The reference template: 100 kHz until a new board's pull-ups are read.
+- **Why faster:** the one-shot's budget (DD-051). At 100 kHz a conversion
+  started at the top of a loop was ready 9.87 ms into its 10; at 400 kHz,
+  9.29 ms. `ms5607_tests` runs at each MS5607 board's own rate and asks for
+  0.5 ms to spare. The handler's time on core0 falls from about 0.8 ms a loop
+  to 0.2 ms.
+- **Owed on the bench:** at the new rate on each board, `pres_rejects` 0, no
+  bus errors on the telemetry, and `sample_interval_us` without `pres_waits`.
+
 ### DD-051: The MS5607 Converts Once A Loop, Read By A One-Shot In RAM
 - **Decision:** each loop takes the conversion the last loop started and
   starts the next. From the start to the take, an interrupt state machine
@@ -601,16 +634,18 @@ rationale and the alternatives considered.
   `ms5607_tests` builds it against a fake bus and clock (`test/ms5607_bus.h`):
   the stamp, a read held 60 ms, a loop 50 ms late, the 9.04 ms wait, one
   conversion at a time, NACKs on the command and on the read.
-- **The budget:** at 100 kHz the command takes about 0.2 ms and the read about
-  0.6 ms, both in the handler, so a conversion is ready about 9.9 ms after the
-  top of the loop that started it, and the next top is never sooner than 10 ms. A loop that finds
-  it still in flight counts a `pres_waits` and skips that loop's sample; it
-  never reads early. 400 kHz, the sensor's maximum, would widen the margin to
-  about 0.7 ms, if the boards' pull-ups allow it.
+- **The budget:** at 400 kHz (DD-052) the command takes about 50 µs and the
+  read about 0.15 ms, both in the handler, so a conversion is ready about
+  9.3 ms after the top of the loop that started it, and the next top is never
+  sooner than 10 ms (`test_ms5607_ready_before_the_next_loop` asks for 0.5 ms
+  to spare; at 100 kHz it was ready at 9.87 ms). A loop that finds it still in
+  flight counts a `pres_waits` and skips that loop's sample; it never reads
+  early.
 - **The cost:** the handler holds core0 for the command and the read, about
-  0.8 ms in every 10. `log_rate_hz`'s default of 50 is at or above `SENSOR_RATE_HZ`, so every
-  sample is logged: about 90 rows a second, nearly twice the flash written per
-  flight, until the T8 logging-rate decision is made.
+  0.2 ms in every 10. `log_rate_hz`'s default of 50 is at or above
+  `SENSOR_RATE_HZ`, so every sample is logged: about 90 rows a second, nearly
+  twice the flash written per flight, until the T8 logging-rate decision is
+  made.
 
 ### DD-050: A Failed Sensor Never Deploys Anything
 - **Decision:** the pressure layer marks a fit suspect while its window holds

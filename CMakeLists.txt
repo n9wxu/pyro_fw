@@ -782,13 +782,13 @@ add_custom_target(http_tests
     COMMENT "HTTP stream parser and framing tests"
 )
 
-# The MS5607 one-shot's interrupt state machine, on a fake bus and clock:
-# test/ms5607_bus.h stands in for src/hal_common/ms5607_bus.h, so -I test
-# comes first.
+# The MS5607 one-shot's interrupt state machine, on a fake bus and clock at
+# the board's own bus rate: test/ms5607_bus.h stands in for
+# src/hal_common/ms5607_bus.h, so -I test comes first. Boards with an MS5607.
 add_custom_target(ms5607_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building MS5607 one-shot tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/test
-               -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_ms5607.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_oneshot.c

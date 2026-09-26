@@ -100,7 +100,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-DESC-02 | Landing from every descent phase | Closed-loop: test_FLT_DESC_02_ballistic_reaches_landed | ✅ |
 | PYR-ALT-01 | Clamp altitude settings | Closed-loop: Karman suite (AGL > 8000m clamped, pyro still fires) | ✅ |
 | PYR-ALT-02 | Warning beep for range | Integration: test_PYR_ALT_02_cfg_range_beep | ✅ |
-| FLT-RATE-01..02 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds); Chain: test_T9_one_shot_cadence (the one-shot schedule: 900 pressures in 10 s, a 20 ms gap only where the temperature was read); the rate on a board is a bench check owed (DD-051) | ⚠️ |
+| FLT-RATE-01..02 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds); Chain: test_T9_one_shot_cadence (the one-shot schedule: 900 pressures in 10 s, a 20 ms gap only where the temperature was read); test_ms5607_ready_before_the_next_loop (at each MS5607 board's own bus rate, 400 kHz on MK1B and MK1C, each conversion is ready 0.7 ms before the next loop, DD-052); the rate on a board is a bench check owed (DD-051) | ⚠️ |
 | FLT-RATE-03 | 1 Hz while LANDED | Chain: test_N18_landed_logs_once_a_second | ✅ |
 | FLT-RATE-04 | The rate is the HAL's | Chain: test_T9_same_outcomes (the same outcomes at 11 ms and 20 ms), test_T3_durations_not_counts (at 10 ms) | ✅ |
 | FLT-RATE-05 | Holds and dwells in sample time | Chain: test_T11_loop_clock_independent (a loop clock lagging 0-70 ms changes no decision's sample) | ✅ |

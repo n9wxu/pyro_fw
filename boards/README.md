@@ -34,7 +34,7 @@ targets. `boards/sim` is the worked example.
 
 | File | Implements | Notes |
 |---|---|---|
-| `board_pins.h` | identity, capabilities, pin map | `BOARD_NAME_STR`, `BOARD_SHORT_STR`, `BOARD_HAS_*` |
+| `board_pins.h` | identity, capabilities, pin map, bus speeds | `BOARD_NAME_STR`, `BOARD_SHORT_STR`, `BOARD_HAS_*`, `BOARD_MS5607_I2C_HZ` / `BOARD_BMP280_I2C_HZ` |
 | `pin_caps.h` | what each pin MAY become | `BOARD_PIN_CAPS`, topology, protection class, `LUA_PIN_LIST` |
 | `hal_board.c` | `src/board_if.h` | 9 functions: lifecycle, LED, buzzer, UART |
 | `pyro_board.c` | `src/pyro.h` | 6 functions |
@@ -46,6 +46,16 @@ targets. `boards/sim` is the worked example.
 Everything else — the UART ISR ring buffer, littlefs, config persistence, the
 async task runner, flight logging, USB and networking — lives in
 `src/hal_common/` and is shared. A board never copies it.
+
+### Sensor bus speeds
+
+Each board sets its own I2C speed per sensor (DD-052): the device's fastest
+(`MS5607_I2C_MAX_HZ`, `BMP280_I2C_MAX_HZ`), or slower where the PCB cannot
+carry it. Fast mode's 300 ns rise needs pull-ups of at most
+300 ns / (0.8473 x Cb), 4k7 to about 75 pF (docs/datasheets/, UM10204 pages 44
+and 50); the RP2040's own 50-80k pull-ups are too weak for it. Read the
+pull-ups from the board's design files, not from memory. `pressure_board.c`
+fails the build if a speed exceeds its device's.
 
 ### pin_caps.h
 

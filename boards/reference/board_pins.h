@@ -39,6 +39,12 @@
 #define BOARD_PIN_I2C_SDA 6    /* TODO */
 #define BOARD_PIN_I2C_SCL 7    /* TODO */
 
+/* TODO [DD-052]: as fast as the sensor allows (MS5607_I2C_MAX_HZ) if this
+ * PCB's pull-ups allow it: fast mode's 300 ns rise needs Rp <= 300 ns /
+ * (0.8473 * Cb), 4k7 to about 75 pF. Standard mode until that is checked;
+ * the one-shot's budget wants fast mode (ms5607_tests). */
+#define BOARD_MS5607_I2C_HZ 100000u
+
 /* ── Pyro ────────────────────────────────────────────────────────────
  * Entirely board-specific: MK1B uses AP2192 high-side switches, MK1C a
  * TPS259570 eFuse with a charge-pump arm. Declare whatever pyro_board.c

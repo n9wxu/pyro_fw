@@ -10,13 +10,14 @@
  * SPDX-License-Identifier: MIT
  */
 #include "pressure_sensor.h"
+#include "ms5607_driver.h"
 #include "board_pins.h"
 #include "hardware/i2c.h"
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
 
-extern bool ms5607_detect(void);
-extern bool ms5607_read(pressure_reading_t *reading);
+_Static_assert(BOARD_MS5607_I2C_HZ <= MS5607_I2C_MAX_HZ, "faster than the MS5607 allows");
+
 
 static pressure_sensor_type_t detected = PRESSURE_SENSOR_NONE;
 
@@ -28,7 +29,7 @@ pressure_sensor_type_t pressure_sensor_init(void) {
      * touching the I2C peripheral -- see boards/mk1c/pressure_board.c for
      * the short version and boards/mk1b for the dual-SDA case. */
 
-    i2c_init(BOARD_I2C_INST, 100000);
+    i2c_init(BOARD_I2C_INST, BOARD_MS5607_I2C_HZ);
     gpio_set_function(BOARD_PIN_I2C_SDA, GPIO_FUNC_I2C);
     gpio_set_function(BOARD_PIN_I2C_SCL, GPIO_FUNC_I2C);
     gpio_pull_up(BOARD_PIN_I2C_SDA);

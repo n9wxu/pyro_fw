@@ -31,6 +31,10 @@
 #define BOARD_PIN_I2C_SDA  6
 #define BOARD_PIN_I2C_SCL  7
 
+/* [DD-052] The MS5607's fastest. R3 and R5, 4k7, hold fast mode's 300 ns rise
+ * to about 75 pF of bus. */
+#define BOARD_MS5607_I2C_HZ 400000u
+
 /* ── Spare ───────────────────────────────────────────────────────── */
 #define BOARD_PIN_SPARE_GPIO 22 /* -> J1.6 */
 

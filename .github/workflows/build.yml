@@ -164,10 +164,13 @@ jobs:
       - name: Run HTTP stream tests
         run: cd build && ninja http_tests
 
-      # The MS5607's interrupt state machine on a fake bus: the stamp is the
-      # handler's, through a held read and a late loop.
+      # The MS5607's interrupt state machine on a fake bus at each board's
+      # own bus rate: the stamp is the handler's, through a held read and a
+      # late loop, and each conversion is ready before the next loop.
       - name: Run MS5607 one-shot tests
-        run: cd build && ninja ms5607_tests
+        run: |
+          cd build && ninja ms5607_tests
+          cd ../build-mk1c && ninja ms5607_tests
 
       # The records against each other and the code: every cited requirement
       # and DD exists, every requirement has a traceability row, every test a

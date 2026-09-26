@@ -19,6 +19,8 @@
 #include "hardware/resets.h"
 #include "pico/stdlib.h"
 
+_Static_assert(BOARD_BMP280_I2C_HZ <= BMP280_I2C_MAX_HZ, "faster than the BMP280 allows");
+
 #define I2C_SDA_PIN BOARD_PIN_I2C_SDA
 #define I2C_SCL_PIN BOARD_PIN_I2C_SCL
 
@@ -71,7 +73,7 @@ pressure_sensor_type_t pressure_sensor_init(void) {
     i2c_bus_recover();
     hal_telemetry_send("!PRES bus recovery done\r\n");
 
-    i2c_init(BOARD_I2C_INST, 100000);
+    i2c_init(BOARD_I2C_INST, BOARD_BMP280_I2C_HZ);
     gpio_set_function(I2C_SDA_PIN, GPIO_FUNC_I2C);
     gpio_set_function(I2C_SCL_PIN, GPIO_FUNC_I2C);
     gpio_pull_up(I2C_SDA_PIN);

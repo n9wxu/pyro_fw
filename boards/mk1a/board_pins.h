@@ -39,6 +39,10 @@
 #define BOARD_PIN_I2C_SDA 20
 #define BOARD_PIN_I2C_SCL 21
 
+/* [DD-052] The BMP280's fastest. R1 and R2, 4k7, hold fast mode's 300 ns rise
+ * to about 75 pF of bus. */
+#define BOARD_BMP280_I2C_HZ 400000u
+
 /* ── Pyro: per-channel high side, ONE shared low side ────────────
  *
  * Both igniters return through a single node:

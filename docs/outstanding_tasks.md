@@ -1002,7 +1002,14 @@ Temperature once in ten, carried to each pressure along its line.
 - `test_T9_mach_at_90hz`: every fast profile, both pads, flagged before
   Mach 0.85 and released before apogee.
 
-**Owed on the bench (G4):** `sample_interval_us` near 10 ms, 20 ms where the
+Each board runs its sensor bus as fast as its device and its PCB allow, set in
+its board package (DD-052): 400 kHz on MK1A, MK1B's MS5607 and MK1C, whose
+pull-ups were read from their design files; 100 kHz for MK1B's BMP280 probe,
+whose SDA has none. `test_ms5607_ready_before_the_next_loop` fails at
+100 kHz (ready 9.87 ms into a 10 ms loop) and passes at 400 kHz (9.29 ms).
+
+**Owed on the bench (G4):** bus errors and `pres_rejects` at 0 at 400 kHz on
+every board; `sample_interval_us` near 10 ms, 20 ms where the
 temperature was read; `stamp_lag_max_us` near 5.5 ms; `pres_waits` and
 `pres_rejects` at 0; 0 loop overruns; `stage_max_us[2]`, and
 `stage_max_us[7]` with the log at 90 rows a second; `flash_refusals` 0 with

@@ -6,6 +6,7 @@
 #include "unity.h"
 #include "ms5607_driver.h"
 #include "ms5607_bus.h"
+#include <stdio.h>
 
 uint64_t fake_bus_now;
 uint32_t fake_bus_adc;
@@ -177,6 +178,21 @@ void test_ms5607_taken_once(void) {
     TEST_ASSERT_FALSE(ms5607_async_take(&c));
 }
 
+/* Started at the top of a loop, a conversion is ready with half a millisecond
+ * to spare before the next top, which is never sooner than a period on. The
+ * spare is for the interrupt latency and the work ahead of the pressure task
+ * at the top of the loop; a conversion not ready is a loop without a sample. */
+void test_ms5607_ready_before_the_next_loop(void) {
+    ms5607_async_start(false);
+    run_to(1000000u + MS5607_CONV_MS * 1000u);
+    TEST_ASSERT_EQUAL(1, fake_bus_reads);
+    uint64_t ready = fake_bus_alarm_at + FAKE_BUS_READ_US;
+    char msg[80];
+    snprintf(msg, sizeof(msg), "ready %llu us into a %u us loop", (unsigned long long)(ready - 1000000u),
+             MS5607_CONV_MS * 1000u);
+    TEST_ASSERT_TRUE_MESSAGE(ready + 500u <= 1000000u + MS5607_CONV_MS * 1000u, msg);
+}
+
 void test_ms5607_begin_addresses_the_sensor(void) {
     TEST_ASSERT_EQUAL_HEX8(0x77, fake_bus_address);
 }
@@ -192,6 +208,7 @@ int main(void) {
     RUN_TEST(test_ms5607_command_nack);
     RUN_TEST(test_ms5607_read_nack);
     RUN_TEST(test_ms5607_taken_once);
+    RUN_TEST(test_ms5607_ready_before_the_next_loop);
     RUN_TEST(test_ms5607_begin_addresses_the_sensor);
     return UNITY_END();
 }

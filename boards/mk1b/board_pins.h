@@ -27,6 +27,14 @@
 #define BOARD_PIN_BMP280_SDA 6
 #define BOARD_PIN_MS5607_SDA 10
 
+/* [DD-052] Read from the KiCad board: SCL and the MS5607's SDA have 4k7 (R10,
+ * R11), which hold fast mode's 300 ns rise to about 75 pF, so the MS5607
+ * runs at its fastest. The BMP280's SDA has no pull-up but the RP2040's own
+ * 50-80k, too slow an edge for fast mode, so its probe stays in standard
+ * mode. */
+#define BOARD_MS5607_I2C_HZ 400000u
+#define BOARD_BMP280_I2C_HZ 100000u
+
 /* ── Pyro (AP2192 high-side switches) ────────────────────────────── */
 #define BOARD_PIN_PYRO_COMMON_EN 15
 #define BOARD_PIN_PYRO1_EN       21

@@ -15,7 +15,7 @@
 #include "hardware/sync.h"
 #include "hardware/timer.h"
 
-#define MS5607_BUS_TIMEOUT_US 2000u /* the longest transfer is about 0.6 ms at 100 kHz */
+#define MS5607_BUS_TIMEOUT_US 2000u /* the longest transfer is about 0.15 ms at 400 kHz */
 
 __force_inline static uint64_t ms5607_bus_now_us(void) {
     uint32_t hi = timer_hw->timerawh;

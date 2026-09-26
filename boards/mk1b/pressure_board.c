@@ -1,16 +1,17 @@
 #include "pressure_sensor.h"
+#include "ms5607_driver.h"
 #include "hardware/i2c.h"
 #include "hardware/gpio.h"
 #include "hardware/resets.h"
 #include "pico/stdlib.h"
 #include <stdio.h>
 
-extern bool ms5607_detect(void);
-extern bool ms5607_read(pressure_reading_t *reading);
-extern bool bmp280_detect(void);
-extern bool bmp280_read(pressure_reading_t *reading);
+#include "bmp280_driver.h"
 
 #include "board_pins.h"
+
+_Static_assert(BOARD_MS5607_I2C_HZ <= MS5607_I2C_MAX_HZ, "faster than the MS5607 allows");
+_Static_assert(BOARD_BMP280_I2C_HZ <= BMP280_I2C_MAX_HZ, "faster than the BMP280 allows");
 
 #define I2C_SCL_PIN BOARD_PIN_I2C_SCL
 #define BMP280_SDA BOARD_PIN_BMP280_SDA
@@ -88,7 +89,7 @@ pressure_sensor_type_t pressure_sensor_init(void) {
     hal_telemetry_send("!PRES bus recovery done\r\n");
 
     /* Now initialize I2C peripheral normally */
-    i2c_init(i2c1, 100000);
+    i2c_init(i2c1, BOARD_BMP280_I2C_HZ);
     sleep_ms(10);
 
     /* Try to send software reset to BMP280 before detection.
@@ -112,6 +113,7 @@ pressure_sensor_type_t pressure_sensor_init(void) {
     release_i2c_pin(BMP280_SDA);
 
     hal_telemetry_send("!PRES trying MS5607 (SDA=10)\r\n");
+    i2c_set_baudrate(i2c1, BOARD_MS5607_I2C_HZ);
     configure_i2c_pins(MS5607_SDA);
     if (ms5607_detect()) {
         detected_sensor = PRESSURE_SENSOR_MS5607;

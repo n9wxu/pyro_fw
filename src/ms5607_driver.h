@@ -23,6 +23,10 @@
 /* One conversion at OSR 4096 and its read: the main loop's period [DD-051]. */
 #define MS5607_CONV_MS 10
 
+/* The fastest SCLK its I2C allows (datasheet page 5). A board runs its bus at
+ * this or, where its PCB cannot, slower: BOARD_MS5607_I2C_HZ [DD-052]. */
+#define MS5607_I2C_MAX_HZ 400000u
+
 /* OSR 4096's worst case is 9.04 ms (datasheet page 3); a read issued earlier
  * answers 0. Timed from the end of the command. */
 #define MS5607_CONV_DONE_US 9100u
