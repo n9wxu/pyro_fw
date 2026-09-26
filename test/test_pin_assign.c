@@ -336,7 +336,7 @@ void test_PIN_BUZZ_01_default_is_board_not_gpio0(void) {
     TEST_ASSERT_EQUAL_MESSAGE(PIN_OK, pin_assign_validate(&a).err, "board defaults must validate");
 }
 
-/* [PIN-BUZZ-02] A user pad that can drive an output can drive a buzzer.
+/* [PIN-BUZZ-01] A user pad that can drive an output can drive a buzzer.
  * MK1A depends on this: it fits none, so its J6 pads are the only way it
  * ever beeps. */
 void test_PIN_BUZZ_02_digital_user_pad_accepted(void) {
@@ -348,7 +348,7 @@ void test_PIN_BUZZ_02_digital_user_pad_accepted(void) {
     TEST_ASSERT_EQUAL_MESSAGE(18, pin_assign_buzzer_pin(&a), "the assignment must win over the board default");
 }
 
-/* [PIN-BUZZ-03] The buzzer pad is the flight software's, so Lua cannot have
+/* [PIN-BUZZ-02] The buzzer pad is the flight software's, so Lua cannot have
  * it -- the same rule that protects the board's own pad. */
 void test_PIN_BUZZ_03_buzzer_pad_is_reserved(void) {
     pin_assign_t a;
@@ -357,7 +357,7 @@ void test_PIN_BUZZ_03_buzzer_pad_is_reserved(void) {
     TEST_ASSERT_TRUE_MESSAGE(pin_assign_is_reserved(&a, 18), "the assigned buzzer pad must be reserved against Lua");
 }
 
-/* [PIN-BUZZ-04] ...and a pad already given a Lua role cannot become the
+/* [PIN-BUZZ-02] ...and a pad already given a Lua role cannot become the
  * buzzer. Both directions, or the two owners collide. */
 void test_PIN_BUZZ_04_cannot_take_a_pad_lua_holds(void) {
     pin_assign_t a;
@@ -369,7 +369,7 @@ void test_PIN_BUZZ_04_cannot_take_a_pad_lua_holds(void) {
     TEST_ASSERT_EQUAL(18, v.pin);
 }
 
-/* [PIN-BUZZ-05] The sensor bus and the telemetry UART stay out of reach. */
+/* [PIN-BUZZ-01] The sensor bus and the telemetry UART stay out of reach. */
 void test_PIN_BUZZ_05_reserved_pads_refused(void) {
     pin_assign_t a;
     pin_assign_defaults(&a);
@@ -384,7 +384,7 @@ void test_PIN_BUZZ_05_reserved_pads_refused(void) {
     TEST_ASSERT_EQUAL_MESSAGE(PIN_ERR_UNKNOWN_PIN, pin_assign_validate(&a).err, "a pin with no row must be refused");
 }
 
-/* [PIN-BUZZ-06] A retained pyro pad cannot be stolen for the buzzer, and
+/* [PIN-BUZZ-01] A retained pyro pad cannot be stolen for the buzzer, and
  * becomes available once its channel is released. */
 void test_PIN_BUZZ_06_pyro_pad_needs_release_first(void) {
     pin_assign_t a;
@@ -397,7 +397,7 @@ void test_PIN_BUZZ_06_pyro_pad_needs_release_first(void) {
     TEST_ASSERT_EQUAL_MESSAGE(PIN_OK, v.err, v.what);
 }
 
-/* [PIN-BUZZ-07] The setting survives a round trip through pins.ini, and an
+/* [PIN-BUZZ-01] The setting survives a round trip through pins.ini, and an
  * unparseable value falls back to the board default rather than atoi()'s 0. */
 void test_PIN_BUZZ_07_ini_round_trip(void) {
     pin_assign_t a;

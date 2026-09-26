@@ -36,6 +36,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 
 #### Firing Safety
 - **PYR-SAFE-01**: The system shall not fire a channel that has no continuity. ← SYS-DEPLOY-03
+- **PYR-SAFE-02**: Withdrawn (DD-021). Both channels may deploy on one event (PYR-DEPLOY-01).
 - **PYR-DEPLOY-01**: The system shall allow both channels to deploy on a single flight event, so that a low flight can put out drogue and main together. ← SYS-DEPLOY-02
 - **PYR-DEPLOY-02**: The system shall not energise both channels at the same instant, whether the fire comes from the flight or from a ground test. This is a current limit, not a sequencing rule: both igniters share one common element, and on a PTC-protected board the combined draw can trip it and fire neither. ← SYS-DEPLOY-02
 - **PYR-FIRE-01**: The system shall record a channel as fired only when the board energised it. A fire command the board refuses shall be recorded as a refusal, in the flight log and on `/api/status`, and shall not be repeated. ← SYS-DEPLOY-01, DAT-04
@@ -65,6 +66,8 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-APO-02**: The system shall transition from ASCENT to DESCENT upon apogee detection. ← FLT-PHASE-02
 - **FLT-APO-03**: The system shall log an APOGEE event at the transition. ← FLT-PHASE-02
 - **FLT-APO-04**: The system shall not detect apogee before pyros are armed. ← FLT-PHASE-02, PYR-SAFE-04
+- **FLT-APO-05**: Withdrawn (DD-022). No timer may force apogee.
+- **FLT-APO-06**: Withdrawn (DD-022).
 
 #### Pyro Arming
 - **FLT-ASC-01**: The system shall track maximum altitude during ascent. ← FLT-PHASE-02

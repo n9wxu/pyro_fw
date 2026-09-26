@@ -806,7 +806,7 @@ void test_CFG_08_comment_lines(void) {
 
 /* ── False launch regression ──────────────────────────────────────── */
 
-/* [FLT-BOOT-10] Sensor drift at boot must NOT trigger a false launch.
+/* [FLT-LAUNCH-02] Sensor drift at boot must NOT trigger a false launch.
  *
  * Scenario: the pressure sensor drifts 200 Pa between the calibration
  * phase (where ground_pressure is set) and the first PAD_IDLE reading.

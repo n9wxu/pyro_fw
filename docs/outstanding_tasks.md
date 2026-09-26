@@ -16,7 +16,7 @@ recorded.
 | # | Section | Needs |
 |---|---|---|
 | — | [How every task runs](#how-every-task-runs) | read first |
-| 1 | [Commit the work](#1-commit-the-work) | nothing more |
+| 1 | [Commit the work](#1-commit-the-work) | done, except G4 |
 | 2 | [Decisions](#2-decisions) | you |
 | 3 | [Safety fixes](#3-safety-fixes) | code |
 | 4 | [The pressure chain and the Mach lockout](#4-the-pressure-chain-and-the-mach-lockout) | code |
@@ -71,9 +71,17 @@ documents runs G5.
 Every flash write runs in core0's STAGE 7 window. G4's 0 flash refusals on
 MK1C with Lua running is what checks it.
 
+**G4 is pending.** On 2026-09-26 the session's permission rules refused the
+OTA flash as a production deploy. Until you allow it, tasks close on G1, G2,
+G3 and G5, and each task's G4 and bench tests are listed as owed here.
+
 ---
 
 ## 1. Commit the work
+
+**Done 2026-09-26:** e8de13c and 44d3735, pushed; CI passed. G1–G3 passed
+from a clean worktree. G4 has not run: flashing the bench boards needs your
+permission (see [The gate](#the-gate)).
 
 Nothing since 2026-09-24 is committed. The working tree holds:
 - the 2026-09-24 code review fixes, with their tests and docs;
@@ -913,6 +921,8 @@ flow. `mach_tests` is its only check short of a flight.
 
 ### H1. A traceability check
 
+**Done 2026-09-26.** Its first run found 72 problems; each is fixed below.
+
 Do this first, so every task's records are tested (G5).
 - **Tests first:** `support/trace_check.py`, run on today's tree. It checks
   that:
@@ -927,14 +937,27 @@ Do this first, so every task's records are tested (G5).
   It will find today's mismatches, and that is its failing run.
 - **Change:** fix what it finds, and add it to CI.
 
-Known stale entries it should find:
-- The resolution doc lists REV-23's route table as not done, but the stream
-  server dispatches through a route table (DD-039). Its REV-18 row still names
-  `on_recv()`.
-- `pressure_processing.c` points to an IMPLEMENTATION.md "Pressure Filter"
-  section that doesn't exist. IMPLEMENTATION.md also still says launch is at
-  10 m, calls the altitude formula linear, and gives test counts from long
-  ago.
+What its first run found, and what was done:
+- 52 requirements had no traceability row, including every user need and
+  BUZ-CODE-01..13. Each now has a row naming the tests that check it, or
+  "—" and ⚠️ where none does: FLT-BOOT-13, FLT-BOOT-14's transition to FAULT,
+  FLT-LAND-07 (N7), BUZ-CODE-12, PWR-BUZZ-02's ENCODE state, SYS-PWR-01 and
+  SYS-PORT-02.
+- Five rows named tests that had since been renamed or removed.
+- Test comments cited PIN-BUZZ-03..07 and FLT-BOOT-10, which were test
+  numbers, not requirements. They now cite the requirement each test checks.
+- DECISIONS.md cites PYR-SAFE-02 and FLT-APO-05/06, which DD-021 and DD-022
+  removed. They are back in REQUIREMENTS.md, marked withdrawn.
+- The summary said 130/18/1/1; the tables have 186/32/1/12.
+- `pressure_processing.c` pointed to an IMPLEMENTATION.md "Pressure Filter"
+  section that didn't exist. It does now.
+
+Found by reading rather than by the check, and fixed with it:
+- IMPLEMENTATION.md's transition table, launch criterion (10 m), file names,
+  flight-log policy (it said nothing is written in ascent), altitude formula
+  and test counts were stale.
+- The resolution doc called REV-23's route table not done. POSTs route through
+  a table since the stream server; GETs still don't.
 
 ### H2. The browser demo
 

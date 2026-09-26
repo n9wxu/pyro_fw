@@ -41,6 +41,10 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-SAFE-04 | No fire before apogee | Closed-loop: drogue fires at/after apogee | ✅ |
 | FLT-LAUNCH-01 | Transition at >100 ft | Unit: test_FLT_LAUNCH_08/09; Integration: test_FLT_BOOT_01_all_states | ✅ |
 | FLT-LAUNCH-02 | Stay at ground level | Integration: PAD_IDLE persists before launch | ✅ |
+| GND-CAL-01 | Ground reference: a 5 s rolling mean | Unit: test_GND_CAL_01_reference_follows_slow_drift | ✅ |
+| GND-CAL-02 | The reference averages pressure, not altitude | Unit: test_GND_CAL_01_reference_follows_slow_drift (the reference is in pascals) | ✅ |
+| GND-CAL-03 | A sample 50 Pa away is not averaged in | Unit: test_GND_CAL_02_reference_stops_tracking_when_the_rocket_moves | ✅ |
+| GND-CAL-04 | Frozen at launch, not snapped | Unit: test_FLT_LAUNCH_09_freezing_keeps_the_hundred_feet | ✅ |
 | FLT-LAUNCH-03 | T+0 at the first sample above 50 cm | Unit: test_REV07_launch_backdates_to_first_rise; Integration: test_FLT_LAUNCH_03_backdate (exact) | ✅ |
 | FLT-LAUNCH-07 | Speed > 5 m/s at the 100 ft sample | Unit: test_FLT_LAUNCH_08_ten_metres_is_no_longer_enough | ✅ |
 | GND-CAL-05 | LAUNCH reports the height reached | Integration: test_REV11_launch_row_reports_the_height_reached | ✅ |
@@ -56,12 +60,14 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-ASC-04 | Arm at <10 m/s | Closed-loop: pyros arm and fire in all flights | ✅ |
 | FLT-ASC-05 | Log ARMED event | Integration: test_DAT_04_events | ✅ |
 | FLT-ASC-06 | No arm above 10 m/s | Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
+| FLT-ASC-07 | No arming unless the peak speed passed 20 m/s | Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
 | FLT-LAND-01 | Stable <1m for 1s | Integration: test_FLT_BOOT_01_all_states reaches LANDED | ✅ |
 | FLT-LAND-02 | Speed <2 m/s | Integration: landing detected at correct time | ✅ |
 | FLT-LAND-03 | Altitude <30m | Integration: landing detected at correct time | ✅ |
 | FLT-LAND-04 | Transition to LANDED | Integration: test_FLT_LAND_04_duration | ✅ |
 | FLT-LAND-05 | Log LANDING event | Integration: test_DAT_04_events | ✅ |
 | FLT-LAND-06 | Stay in LANDED | Integration: state remains LANDED after detection | ✅ |
+| FLT-LAND-07 | Landing timeout | — (N7: it declares LANDED under a main; `docs/outstanding_tasks.md` section 5) | ⚠️ |
 | PYR-REFIRE-01 | One drogue retry at 2 s, only if unopened | Closed-loop: test_PYR_REFIRE_01_refire_ballistic | ✅ |
 | PYR-REFIRE-02 | No retry on an opened channel | Closed-loop: test_PYR_REFIRE_02_no_retry_when_opened | ✅ |
 | FLT-EMRG-01 | Main early on evidence the drogue failed | Closed-loop: test_FLT_EMRG_01, test_REV01_failed_drogue_brings_the_main_forward | ✅ |
@@ -76,8 +82,8 @@ Verify web interface behavior against mock server in 3 device modes.
 | LUA-IO-01 | Export / import the Lua program | Playwright: lua program exports to a file; imports into the editor | ✅ |
 | LUA-IO-02 | Import does not touch the device | Playwright: imports into the editor without saving; oversized import refused | ✅ |
 | PIN-LABEL-01 | Connector designator per pin | Host: test_PIN_LABEL_01..03; Playwright: pin tables name the connector | ✅ |
-| PIN-BUZZ-01 | Buzzer assignable to a pad | Host: test_PIN_BUZZ_01/02/06/07; Playwright: buzzer can be moved | ✅ |
-| PIN-BUZZ-02 | Buzzer pad exclusive against Lua | Host: test_PIN_BUZZ_03/04/05 | ✅ |
+| PIN-BUZZ-01 | Buzzer assignable to a pad | Host: test_PIN_BUZZ_01/02/05/06/07; Playwright: buzzer can be moved | ✅ |
+| PIN-BUZZ-02 | Buzzer pad exclusive against Lua | Host: test_PIN_BUZZ_03/04 | ✅ |
 | FLT-MACH-01 | No apogee above 100 ft/s | Closed-loop: test_FLT_MACH_01_supersonic_apogee_gated | ✅ |
 | FLT-DESC-01 | Phase from rate, not from command | Closed-loop: test_FLT_DESC_01_phase_without_pyros | ✅ |
 | FLT-DESC-02 | Landing from every descent phase | Closed-loop: test_FLT_DESC_02_ballistic_reaches_landed | ✅ |
@@ -100,8 +106,29 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-BOOT-01 | Non-blocking boot | Integration: test_FLT_BOOT_01_all_states | ✅ |
 | FLT-BOOT-02..03 | Config read/create | — | ⚠️ |
 | FLT-BOOT-04 | Settle wait | Integration: boot completes in expected time | ✅ |
+| FLT-BOOT-05 | Detect and initialise the sensor | Unit: test_FLT_BOOT_01_reaches_pad_idle | ✅ |
+| FLT-BOOT-06 | Initialise the pyro subsystem | Unit: test_FLT_BOOT_01_reaches_pad_idle | ✅ |
+| FLT-BOOT-07 | Initial continuity check | Integration: test_FLT_BOOT_01_all_states (BOOT_CONTINUITY on the way to PAD_IDLE) | ✅ |
 | FLT-BOOT-08 | Calibrate from 10 readings | Integration: ground pressure established | ✅ |
 | FLT-BOOT-09 | 2s stabilization | — | ⚠️ |
+| FLT-BOOT-11 | The sensor is tested before the pyros | Unit: test_SNS_PRES_01_boot_no_sensor (BOOT_SENSOR first; a failure never reaches the pyro test) | ✅ |
+| FLT-BOOT-12 | No sensor: FAULT and system failure | Unit: test_SNS_PRES_01_boot_no_sensor | ✅ |
+| FLT-BOOT-13 | No calibration samples in 10 s: FAULT | — | ⚠️ |
+| FLT-BOOT-14 | No filesystem: FAULT and system failure | Integration: test_BEEP_03_anything_unfixable_says_system_failure (the announcement); the transition to FAULT is untested | ⚠️ |
+| FLT-BOOT-15 | Every pad fault reported | Unit: test_REV04_pad_fault_after_boot_is_announced | ✅ |
+| BUZ-CODE-01 | The vocabulary is the pad's actions | Integration: test_BEEP_01..04 | ✅ |
+| BUZ-CODE-02 | Unfixable outranks a pyro fault | Integration: test_BEEP_03_anything_unfixable_says_system_failure, test_BEEP_04_unfixable_outranks_fixable | ✅ |
+| BUZ-CODE-03 | The diagnosis by name on /api/status | Hardware: `faults` on /api/status (`support/api_check.py`) | ✅ HW |
+| BUZ-CODE-04 | Key, meaning and sound per outcome | Beep: test_shipped_table_is_valid, test_three_personalities_all_named | ✅ |
+| BUZ-CODE-05 | Chirp, tone, count or silence | Beep: test_ok_to_fly_is_a_chirp_not_a_count, test_silence_is_not_a_duplicate | ✅ |
+| BUZ-CODE-06 | Counts of 1 to 9 | Beep: test_a_zero_beep_count_is_refused, test_a_count_above_nine_is_refused | ✅ |
+| BUZ-CODE-07 | No two outcomes sound alike | Beep: test_two_outcomes_that_sound_alike_are_refused, test_two_chirps_are_a_duplicate | ✅ |
+| BUZ-CODE-08 | A wholly silent personality is refused | Beep: test_a_wholly_silent_personality_is_refused | ✅ |
+| BUZ-CODE-09 | Three named personalities, one active | Beep: test_three_personalities_all_named, test_the_active_personality_is_the_one_used | ✅ |
+| BUZ-CODE-10 | An invalid table is rejected whole | Beep: test_an_unreadable_table_still_answers; Buzzer: test_BEEP_STORE_01/02 | ✅ |
+| BUZ-CODE-11 | The vocabulary is served to the web UI | Hardware: GET /api/beeps (`support/api_check.py`) | ✅ HW |
+| BUZ-CODE-12 | No beep.ini: the shipped table is written | — | ⚠️ |
+| BUZ-CODE-13 | Eggtimer defaults | Beep: test_shipped_pyro_codes_follow_eggtimer | ✅ |
 
 ## 3. Flight Data Recovery
 
@@ -128,6 +155,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | CFG-01..09 | INI parsing | Closed-loop: all configs parsed and applied correctly | ✅ |
 | CFG-04 | `none` survives the round trip; unknown modes stored as none | Config: test_config_mode_none_round_trips, test_config_unknown_mode_serialises_as_none; Hardware: bench smoke test | ✅ |
 | CFG-07 | Shipped defaults fit their fields | Config: test_config_default_name_is_not_truncated; compile-time check in config.c | ✅ |
+| SYS-CFG-04 | A new field changes one place | Config: test_config_roundtrip_defaults, test_config_roundtrip_custom run over every field of `config_fields.h` | ✅ |
 | WEB-UI-02 | Guided editor; units convert; limits stated | Web UI: config tab tests, changing units converts the pyro values, the rocket name shows its 8-character limit | ✅ |
 | WEB-UI-03 | Warn if not applied | Web UI: save shows confirmation | ✅ |
 
@@ -235,15 +263,15 @@ Verify web interface behavior against mock server in 3 device modes.
 | PWR-SAMPLE-01 | 50Hz pressure sampling via async task | Integration: all tests use hal_pressure_fifo_* | ✅ |
 | PWR-SAMPLE-02 | 5-sample batch delivery | Integration: flight_process_samples() in all integration runs | ✅ |
 | PWR-TELEM-01 | Async telemetry TX | Host: buzzer_tests / integration (non-blocking send) | ✅ |
-| PWR-BUZZ-01 | Autonomous buzzer via async task | Buzzer: test_BUZ_ACT_01..04, test_BUZ_PAT_01..09 | ✅ |
+| PWR-BUZZ-01 | Autonomous buzzer via async task | Buzzer: test_BUZ_ACT_01..04, test_BUZ_PAT_01..04, test_BUZ_PAT_06..10 | ✅ |
 | BUZ-CODE-14 | A storage failure is not a validation failure | Buzzer: test_BEEP_STORE_01/02 | ✅ |
 | PWR-SLEEP-01 | CPU sleep between events | Integration: no-op in test; __wfe on hardware | ✅ |
 | PWR-LOG-01 | RAM-buffered async flash logging | Integration: hal_log_sample() called; mock records calls | ✅ |
 | PWR-LOG-02 | hal_log_start() opens file + registers task | Integration: test_FLT_BOOT_01 (log starts on LAUNCH) | ✅ |
 | PWR-LOG-03 | hal_log_sample() is non-blocking | Integration: called 50×/s during flight; no stall | ✅ |
 | PWR-LOG-04 | hal_log_stop() signals flush close | Integration: test_FLT_LAND_04 (log stops on LANDED) | ✅ |
-| PWR-BUZZ-02 | Buzzer: IDLE → ENCODE → PLAYING states | Buzzer: test_BUZ_ACT_02_state_machine | ✅ |
-| PWR-BUZZ-03 | Pattern computed at request time | Buzzer: test_BUZ_ACT_03_04_code_beep_encoding | ✅ |
+| PWR-BUZZ-02 | Buzzer: IDLE → ENCODE → PLAYING states | Buzzer: test_BUZ_ACT_01_lifecycle, test_BUZ_ACT_02_stop (active and idle; no test observes ENCODE) | ⚠️ |
+| PWR-BUZZ-03 | Pattern computed at request time | Buzzer: test_BUZ_PAT_02_counted_codes, test_BUZ_PAT_03_altitude_165_digits | ✅ |
 | PWR-TELEM-02 | hal_telemetry_send() O(n), no stall | Buzzer/Integration: verified by non-blocking assertion | ✅ |
 | PWR-TELEM-03 | TX ring ≥ 512 bytes; overflow drops end | Host: hal_test.c mock buffers full sentence | ✅ |
 
@@ -251,8 +279,8 @@ Verify web interface behavior against mock server in 3 device modes.
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| CFG-TABLE-01 | X-macro single-table config | Config: test_CFG_TABLE_01_all_fields_present | ✅ |
-| CFG-TABLE-02 | Round-trip serialize → parse | Config: test_CFG_TABLE_02_roundtrip (15 tests) | ✅ |
+| CFG-TABLE-01 | X-macro single-table config | Config: test_config_defaults, test_config_roundtrip_defaults (every field from `config_fields.h`) | ✅ |
+| CFG-TABLE-02 | Round-trip serialize → parse | Config: test_config_roundtrip_defaults, test_config_roundtrip_custom | ✅ |
 | CFG-SUBSYS-01 | Each subsystem has configurable params, every key read | Config: test_config_writes_no_inert_keys; Unit: telem_rate_hz; Integration: test_REV12_log_rate_hz_thins_samples_not_events | ✅ |
 
 ## 15. Telemetry Formatting (v2.0)
@@ -280,14 +308,49 @@ Verify web interface behavior against mock server in 3 device modes.
 
 ---
 
+## 17. User Needs and System Requirements
+
+A user need is verified through the system requirements under it, and is marked ⚠️ if any of them is.
+
+| Req | Description | Verified By | Status |
+|-----|-------------|-------------|--------|
+| UN-2 | Know it is ready before the pad | Through SYS-STATUS-01, SYS-STATUS-02 | ✅ |
+| UN-3 | Flight data after recovery | Through SYS-DATA-01..03; SYS-DATA-02 is not directly verified | ⚠️ |
+| UN-4 | Configure for different rockets | Through SYS-CFG-01..04, CFG-SUBSYS-01 | ✅ |
+| UN-5 | Accurate altitude | Through SYS-ALT-01, SYS-ALT-02; SYS-ALT-02 is hardware only | ⚠️ |
+| UN-6 | Real-time telemetry | Through SYS-TEL-01 | ✅ |
+| UN-7 | Protection against pyro faults | Through SYS-FAULT-01..03 | ✅ |
+| UN-8 | Monitor, configure and update without special software | Through SYS-WEB-01, SYS-WEB-02; SYS-WEB-02 is hardware only | ⚠️ |
+| UN-9 | Update without bricking | Through SYS-OTA-01, SYS-OTA-02; SYS-OTA-02 is hardware only | ⚠️ |
+| UN-10 | Develop without flight hardware | Through SYS-PORT-01, SYS-PORT-02 | ⚠️ |
+| UN-11 | Long pad time on battery | Through SYS-PWR-01, SYS-PWR-02 | ⚠️ |
+| UN-12 | Ground checks without a computer | Through SYS-TEST-01 | ✅ |
+| SYS-WEB-01 | Web interface over USB | Web UI: the Playwright suite; Hardware: `test/web/hw_ui_check.js` on MK1A/B/C | ✅ |
+| SYS-WEB-02 | Discoverable without configuration | Through WEB-NET-01..04 (hardware only) | ⚠️ HW |
+| SYS-OTA-01 | Update without physical access | Through WEB-API-04 | ✅ HW |
+| SYS-OTA-02 | Recover from a failed update | Through OTA-01..04 (hardware only) | ⚠️ HW |
+| SYS-FAULT-01 | Limit pyro current | Through PYR-FAULT-01 | ✅ HW |
+| SYS-FAULT-02 | Detect pyro faults | Closed-loop: test_PYR_FAULT_02_overcurrent_detection | ✅ |
+| SYS-FAULT-03 | Notify pyro faults | Through PYR-FAULT-03 | ✅ |
+| SYS-PORT-01 | Testable on a host | Every host suite, in CI | ✅ |
+| SYS-PORT-02 | Runnable in a browser | The WASM build (CI, allowed to fail); not rebuilt since the simulator fixes (N6) | ⚠️ |
+| SYS-PWR-01 | Minimise CPU active time | Through PWR-SLEEP-01; no test measures CPU active time | ⚠️ |
+| SYS-PWR-02 | I/O without the CPU | Through PWR-SAMPLE-01/02, PWR-TELEM-01..03, PWR-BUZZ-01, PWR-LOG-01..04 | ✅ |
+| PWR-USB-01 | USB serviced autonomously | — (deferred to v2.1; USB is serviced from the main loop) | ⚠️ |
+| SYS-TEST-01 | Ground test over serial | Integration: test_GND_TEST_01..04 | ✅ |
+
+---
+
 ## Summary
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by integration/closed-loop/buzzer/config/web test | 130 |
-| ⚠️ Not directly verified (needs integration test or hardware) | 18 |
+| ✅ Verified by a host, web or closed-loop test | 186 |
+| ⚠️ Not directly verified (needs a test or hardware) | 32 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
-| ✅ HW (hardware satisfies) | 1 |
+| ✅ HW (hardware satisfies) | 12 |
+
+Rows of the tables above. `support/trace_check.py --counts` computes them, and CI fails when this table disagrees.
 
 _+8 requirements in v2 Task 2/3 (GND-TEST-01..04, DD-011, CFG-HAL-01..02, PWR-SLEEP-01)_
 _+2 requirements in v2 Task 5 (TEL-03 event sentences, TEL-04 JSON format)_

@@ -47,7 +47,7 @@ be flown.
 | REV-20 | Low | **Fixed** | web: *shows its 8-character limit* | ✅ |
 | REV-21 | Low | **Fixed**: one Save on the Config tab | web: *one save button*, *buzzer can be moved* | ✅ |
 | REV-22 | Low | **Fixed** | `test_BEEP_STORE_01/02` | — |
-| REV-23 | Low | **Fixed in part**: `respond()` / `finish()`; no route table | covered by the web and bench suites | ✅ every route: status, CORS, Content-Length |
+| REV-23 | Low | **Fixed in part**: framed responses; POSTs route through a table since the stream server (DD-039), GETs through a chain of comparisons | covered by the web and bench suites | ✅ every route: status, CORS, Content-Length |
 | REV-24 | Low | **Confirmed false on hardware and corrected** | — | ✅ every littlefs file byte-identical across OTA, three boards |
 | REV-25 | Low | **Fixed** | — | — |
 | REV-26 | Low | **Fixed** | — | — |
@@ -153,8 +153,10 @@ from 25 copies to 2, the streaming EOF path and `finish()` itself. `/api/pins`
 without a pins.ini now answers `404` with headers. Two latent bugs went with
 it: the 201 and OTA-OK replies left the freed connection slot as the pcb's arg,
 so `on_sent` could free a slot another connection had since been given; and
-several error replies had no CORS header. **Not done:** a route table.
-`on_recv()` is shorter but still one function.
+several error replies had no CORS header. The stream server (DD-039) later
+replaced `respond()` and `finish()` with `http_conn.c`'s framing, and now
+routes POSTs through `post_routes[]`; `on_recv()` only queues. GETs are still
+a chain of comparisons.
 
 **REV-18.** `refused_in_flight()` answers 409 to every POST, and to the bench
 capture, from launch to landing (WEB-API-08, DD-034). That covers what the
@@ -198,7 +200,7 @@ keeps it for. `main_forced` is now read.
 | **REV-10**: numbered logs | Conflict C6: creating a new file at launch commits a directory entry, a flash write in the launch-shock window. |
 | **REV-13**: which threshold | Conflict C2: yours to decide. |
 | **REV-18**: in-flight refusal on hardware | The predicate is unit-tested, but a bench board cannot be put in flight to exercise the route. |
-| **REV-23**: route table | The helper removed the duplication that hid REV-17. A route table rewrites `on_recv()`'s control flow, which is lwIP-callback code with subtle redelivery rules, for no behaviour change. Worth doing as its own change. |
+| **REV-23**: route table | Done for POSTs by the stream server (DD-039), which moved request handling out of the lwIP callbacks. GETs are still a chain of comparisons. |
 | **REV-06 / REV-08** on hardware | No USB-serial adapter is on the TRRS jack, and no board is in FAULT. Host-verified only. |
 
 ## Requirement conflicts

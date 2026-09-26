@@ -154,6 +154,12 @@ jobs:
       - name: Run HTTP stream tests
         run: cd build && ninja http_tests
 
+      # The records against each other and the code: every cited requirement
+      # and DD exists, every requirement has a traceability row, every test a
+      # row names exists, and the summary counts the rows.
+      - name: Traceability check
+        run: python3 support/trace_check.py --counts
+
       - name: Validate web JS syntax
         run: node --check www/app.js
 
