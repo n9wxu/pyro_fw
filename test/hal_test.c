@@ -53,6 +53,7 @@ uint32_t mock_noise_seed = 1;
 int32_t mock_glitch_pa = 0;
 int mock_glitch_samples = 0;
 bool mock_stall_model = false;
+bool mock_stamp_at_read = false;
 uint32_t mock_stall_seed = 1;
 uint32_t mock_stall_count, mock_stall_total_ms, mock_stall_min_ms, mock_stall_max_ms;
 uint32_t mock_stamp_lag_min_ms, mock_stamp_lag_max_ms;
@@ -204,7 +205,7 @@ static void stall_model_tick(uint32_t now) {
                 mock_stamp_lag_min_ms = lag;
             if (lag > mock_stamp_lag_max_ms)
                 mock_stamp_lag_max_ms = lag;
-            feed_reading(hist_at(conv), now);
+            feed_reading(hist_at(conv), mock_stamp_at_read ? now : conv);
             sm.phase = 0;
         }
         break;
@@ -266,6 +267,7 @@ void mock_reset_all(void) {
     mock_glitch_pa = 0;
     mock_glitch_samples = 0;
     mock_stall_model = false;
+    mock_stamp_at_read = false;
     mock_stall_seed = 1;
     mock_stall_count = mock_stall_total_ms = mock_stall_min_ms = mock_stall_max_ms = 0;
     mock_stamp_lag_min_ms = mock_stamp_lag_max_ms = 0;

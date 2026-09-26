@@ -146,6 +146,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-RATE-02**: The system shall deliver pressure samples to the flight software in batches of 5 (100ms). ← FLT-RATE-01, PWR-SAMPLE-02
 - **FLT-RATE-03**: The system shall reduce sampling to 1Hz during LANDED for power conservation. ← FLT-PHASE-03, SYS-PWR-01
 - **FLT-RATE-04**: The sampling rate shall be a HAL responsibility; flight software processes whatever buffer it receives. ← HAL-02
+- **FLT-RATE-05**: Every detector hold and dwell that measures the sensor shall run in sample time, so that the loop's lateness changes no decision. ← SNS-PRES-08
 
 ---
 
@@ -189,7 +190,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 
 ### L3 Subsystem Requirements
 - **DAT-01**: The system shall store flight samples in a ring buffer of at least 4096 entries. ← SYS-DATA-01
-- **DAT-02**: Each sample shall include: time, pressure, altitude, state, thrust flag, event. ← SYS-DATA-01
+- **DAT-02**: Each sample shall include: time, pressure, altitude, state, thrust flag, event. The time is the sample's own, from its reading, since T+0 (SNS-PRES-08). ← SYS-DATA-01
 - **DAT-03**: Events shall be tagged on existing data samples, not stored as separate records. ← SYS-DATA-01
 - **DAT-04**: The system shall log events: LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING, and when they occur PYRO1/2_REFUSED, PYRO1/2_NOPEN, PYRO1/2_FAULT and MAIN_FORCED. ← SYS-DATA-01
 - **DAT-06**: The system shall export flight data as CSV to persistent storage after landing. ← SYS-DATA-02
@@ -251,6 +252,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **SNS-PRES-05**: A sensor conversion shall be read no sooner than its worst-case conversion time after the command that started it. ← SNS-PRES-01
 - **SNS-PRES-06**: A reading the sensor cannot produce -- a zero conversion, or a pressure outside its rated range -- shall be discarded and counted, not filtered. ← SNS-PRES-02
 - **SNS-PRES-07**: A single-sample outlier shall not reach the pressure filter. The median of the newest three readings stands between the range check and the filter, carrying the middle reading's time. ← SNS-PRES-02
+- **SNS-PRES-08**: Each sample shall carry the time its reading was taken, from the hardware timer to the microsecond: the middle of the MS5607's D1 conversion, or for the free-running BMP280 half a conversion before the read. ← SNS-PRES-02
 - **SNS-ALT-02**: The system shall clamp computed altitude to a maximum of 8000 meters. ← SNS-ALT-01
 - **SNS-ALT-03**: The system shall clamp computed altitude to a minimum of 0 meters. ← SNS-ALT-01
 - **SNS-ALT-04**: Vertical speed shall be taken from altitude that is not clamped; SNS-ALT-02 and SNS-ALT-03 clamp only the altitude that is reported. ← SNS-ALT-01

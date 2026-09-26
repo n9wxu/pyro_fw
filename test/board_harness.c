@@ -29,12 +29,14 @@ bool buzzer_is_active(void) {
 
 flight_context_t ctx;
 board_power_t power;
+uint32_t (*loop_lag_ms)(uint32_t t);
 
 void boot_like_hardware(uint32_t seed) {
     mock_reset_all();
     memset(&ctx, 0, sizeof(ctx));
     memset(&power, 0, sizeof(power));
     power.landing_timeout = -1;
+    loop_lag_ms = NULL;
     mock_pressure.pressure_pa = 101325.0f;
     mock_noise_rms_pa = SENSOR_RMS_PA;
     mock_noise_seed = seed;
@@ -58,9 +60,10 @@ void tick(uint32_t t) {
     hal_tasks_tick(t);
     if (mock_core0_stalled(t))
         return;
-    ctx.current_state = dispatch_state(&ctx, t);
-    flight_update_outputs(&ctx, t);
-    flight_flash_service(&ctx, t);
+    uint32_t now = t + (loop_lag_ms ? loop_lag_ms(t) : 0u);
+    ctx.current_state = dispatch_state(&ctx, now);
+    flight_update_outputs(&ctx, now);
+    flight_flash_service(&ctx, now);
 }
 
 uint32_t run_to_pad(uint32_t *t) {

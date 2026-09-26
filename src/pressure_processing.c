@@ -30,6 +30,7 @@ static struct {
     struct {
         int32_t pa[3];
         uint32_t ts[3];
+        uint32_t us[3];
         uint8_t n;
         bool emitted;
         uint32_t last_ts;
@@ -197,13 +198,16 @@ uint32_t pp_ground_window_ms(void) {
  * latency and distorts nothing: stamping it with the newest reading's time
  * would shift every altitude a sample early. */
 
-static void med_push(int32_t pa, uint32_t ts) {
+static void med_push(int32_t pa, uint32_t ts, uint32_t us) {
     pp.med.pa[0] = pp.med.pa[1];
     pp.med.ts[0] = pp.med.ts[1];
+    pp.med.us[0] = pp.med.us[1];
     pp.med.pa[1] = pp.med.pa[2];
     pp.med.ts[1] = pp.med.ts[2];
+    pp.med.us[1] = pp.med.us[2];
     pp.med.pa[2] = pa;
     pp.med.ts[2] = ts;
+    pp.med.us[2] = us;
     if (pp.med.n < 3)
         pp.med.n++;
 }
@@ -217,21 +221,19 @@ static int32_t median3(int32_t a, int32_t b, int32_t c) {
 /* The median out of the window, if it has one not yet given. Short of three
  * readings -- at power-on, or after a test primes the layer -- the newest
  * goes straight through. */
-static bool med_out(int32_t *pa, uint32_t *ts) {
+static bool med_out(int32_t *pa, uint32_t *ts, uint32_t *us) {
     if (pp.med.n == 0)
         return false;
-    int32_t p = pp.med.pa[2];
-    uint32_t t = pp.med.ts[2];
-    if (pp.med.n == 3) {
-        p = median3(pp.med.pa[0], pp.med.pa[1], pp.med.pa[2]);
-        t = pp.med.ts[1];
-    }
+    int i = pp.med.n == 3 ? 1 : 2;
+    int32_t p = pp.med.n == 3 ? median3(pp.med.pa[0], pp.med.pa[1], pp.med.pa[2]) : pp.med.pa[2];
+    uint32_t t = pp.med.ts[i];
     if (pp.med.emitted && (int32_t)(t - pp.med.last_ts) <= 0)
         return false;
     pp.med.emitted = true;
     pp.med.last_ts = t;
     *pa = p;
     *ts = t;
+    *us = pp.med.us[i];
     return true;
 }
 
@@ -360,7 +362,9 @@ int32_t pp_pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_
 
 /* ── Ring buffer helpers ──────────────────────────────────────────── */
 
-static void ring_push(int32_t altitude_cm, int32_t height_cm, int32_t rise_cm, uint32_t timestamp_ms) {
+static void ring_push(int32_t altitude_cm, int32_t height_cm, int32_t rise_cm, uint32_t timestamp_ms,
+                      uint32_t timestamp_us) {
+    pp.ring[pp.head].timestamp_us = timestamp_us;
     pp.ring[pp.head].altitude_cm = altitude_cm;
     pp.ring[pp.head].height_cm = height_cm;
     pp.ring[pp.head].rise_cm = rise_cm;
@@ -422,11 +426,16 @@ void pp_set_ground_pressure(int32_t pa) {
 }
 
 void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
+    pp_feed_us(raw_pressure_pa, (uint64_t)timestamp_ms * 1000u);
+}
+
+void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us) {
+    uint32_t timestamp_ms = (uint32_t)(timestamp_us / 1000u);
     pp.last_raw = raw_pressure_pa;
-    med_push(raw_pressure_pa, timestamp_ms);
+    med_push(raw_pressure_pa, timestamp_ms, (uint32_t)timestamp_us);
     int32_t pa;
-    uint32_t ts;
-    bool fresh = med_out(&pa, &ts);
+    uint32_t ts, us;
+    bool fresh = med_out(&pa, &ts, &us);
     if (fresh)
         hist_push(pa, ts);
 
@@ -473,7 +482,7 @@ void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
         int32_t rise_cm = pp_pressure_to_height_cm(pa, pp.ground_pressure);
 
         /* Push to ring */
-        ring_push(alt_cm, height_cm, rise_cm, ts);
+        ring_push(alt_cm, height_cm, rise_cm, ts, us);
         return;
     }
     }

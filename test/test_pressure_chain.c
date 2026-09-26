@@ -25,6 +25,7 @@
 #include "../src/telemetry_formatter.h"
 #include "pressure_processing.h"
 #include "board_harness.h"
+#include "../src/ms5607_driver.h"
 
 extern reset_cause_t mock_reset_cause; /* test/hal_test.c */
 
@@ -1151,6 +1152,122 @@ void test_N18_landed_logs_once_a_second(void) {
     TEST_ASSERT_TRUE_MESSAGE(rows >= 9 && rows <= 11, msg);
 }
 
+/* ── T11: every sample stamped at its conversion ───────────────────── */
+
+/* Speed error at 90-110 m/s, as the baseline measures it. */
+static double worst_speed_error(bool stalls) {
+    const flight_t f = {15.0f, 1.2f, 20.0f, 0.0f};
+    double worst = 0.0;
+    for (uint32_t seed = 1; seed <= 10; seed++) {
+        result_t r = fly(&f, seed, 3, 30000, stalls);
+        if (r.speed_err_max > worst)
+            worst = r.speed_err_max;
+    }
+    return worst;
+}
+
+/* The HAL's stamping, as the test HAL models it: with stalls, a speed no worse
+ * than without, within 10 %. */
+void test_T11_stalls_change_nothing(void) {
+    double calm = worst_speed_error(false), stalled = worst_speed_error(true);
+    char msg[96];
+    snprintf(msg, sizeof(msg), "worst speed error %.1f m/s calm, %.1f m/s through stalls", calm, stalled);
+    TEST_ASSERT_TRUE_MESSAGE(stalled <= 1.1 * calm, msg);
+}
+
+/* The MS5607 is stamped at the middle of its D1 conversion, from the hardware
+ * timer: not at D2's command, which overwrites conv_start_us, and not at the
+ * loop's read. */
+void test_T11_d1_stamp(void) {
+    uint64_t d1 = 123456789ull;
+    TEST_ASSERT_EQUAL_UINT64(d1 + 4500u, ms5607_sample_time_us(d1));
+}
+
+/* Decisions are functions of the samples: a loop clock that runs late, by an
+ * amount that wanders, changes which sample decided nothing. */
+static uint32_t lag_state;
+static uint32_t wandering_lag(uint32_t t) {
+    (void)t;
+    lag_state = lag_state * 1103515245u + 12345u;
+    static uint32_t lag = 0;
+    uint32_t r = (lag_state >> 16) % 3u;
+    if (r == 0 && lag > 0)
+        lag--; /* at most one back per tick: the loop clock never runs backwards */
+    else if (r == 2 && lag < 70)
+        lag++;
+    return lag;
+}
+
+typedef struct {
+    uint32_t at[12]; /* the sample time of each decision, in order */
+    int n;
+    uint32_t row_err_max; /* logged row time against its sample's */
+} decisions_t;
+
+static decisions_t decisions(bool lag) {
+    const flight_t f = {5.0f, 2.0f, 20.0f, 0.0f};
+    decisions_t d;
+    memset(&d, 0, sizeof(d));
+    boot_like_hardware(41);
+    lag_state = 7;
+    loop_lag_ms = lag ? wandering_lag : NULL;
+    uint32_t t = 0;
+    run_to_pad(&t);
+    /* Ignition at a fixed sample time: the boot's own timers run on the loop
+     * clock, so a lagged loop reaches PAD_IDLE sooner. */
+    uint32_t ign = 12000u;
+    truth_t tr = {0};
+    flight_state_t last_state = ctx.current_state;
+    int fires = 0;
+    for (; t < 300000u && d.n < 12; t++) {
+        float tf = ((float)t - (float)ign) / 1000.0f;
+        float vb = tr.v;
+        truth_step(&tr, &f, tf);
+        if (!tr.apogee && tf > f.burn_s && vb > 0.0f && tr.v <= 0.0f)
+            tr.apogee = true;
+        mock_pressure.pressure_pa = isa_pa(tr.h);
+        uint16_t head = ctx.buf_head;
+        tick(t);
+        if (ctx.current_state != last_state || mock_pyro.fire_count != fires) {
+            d.at[d.n++] = ctx.last_sample;
+            last_state = ctx.current_state;
+            fires = mock_pyro.fire_count;
+        }
+        /* A row added this tick belongs to the sample just taken. */
+        if (ctx.buf_head != head && ctx.launch_time != 0) {
+            const flight_sample_t *row = &ctx.flight_buffer[(ctx.buf_head + FLIGHT_BUF_SIZE - 1) % FLIGHT_BUF_SIZE];
+            if (row->event == EVT_NONE) {
+                uint32_t want = ctx.last_sample - ctx.launch_time;
+                uint32_t err = row->time_ms > want ? row->time_ms - want : want - row->time_ms;
+                if (err > d.row_err_max)
+                    d.row_err_max = err;
+            }
+        }
+        if (ctx.current_state == LANDED)
+            break;
+    }
+    loop_lag_ms = NULL;
+    return d;
+}
+
+void test_T11_loop_clock_independent(void) {
+    decisions_t calm = decisions(false), lagged = decisions(true);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(calm.n, lagged.n, "the same decisions, lag or not");
+    for (int i = 0; i < calm.n; i++) {
+        char msg[80];
+        snprintf(msg, sizeof(msg), "decision %d: sample %u calm, %u lagged", i, (unsigned)calm.at[i],
+                 (unsigned)lagged.at[i]);
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(calm.at[i], lagged.at[i], msg);
+    }
+}
+
+void test_T11_log_rows_at_sample_time(void) {
+    decisions_t lagged = decisions(true);
+    char msg[64];
+    snprintf(msg, sizeof(msg), "a row up to %u ms from its sample's time", (unsigned)lagged.row_err_max);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, lagged.row_err_max, msg);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -1191,5 +1308,9 @@ int main(void) {
     RUN_TEST(test_T6_gusts_never_reseed);
     RUN_TEST(test_T6_drift);
     RUN_TEST(test_N18_landed_logs_once_a_second);
+    RUN_TEST(test_T11_stalls_change_nothing);
+    RUN_TEST(test_T11_d1_stamp);
+    RUN_TEST(test_T11_loop_clock_independent);
+    RUN_TEST(test_T11_log_rows_at_sample_time);
     return UNITY_END();
 }

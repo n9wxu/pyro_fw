@@ -173,7 +173,7 @@ ground bias, and the stall figure, where they used a different stall model.
 | Apogee after the true apogee | +0.56 s mean (+0.54 to +0.58) | never early; about +0.4 s | T5 |
 | Ground pressure frozen at launch | reads 0.17 m (30 g) to 0.42 m (2 g) low | ≤ 0.1 m: done, 0.08 m | T7 |
 | Ground tracker after a >50 Pa step | frozen for good (N9) | re-seeds: done, within 5 s | T6 |
-| Sample timestamps | loop ms at the temperature read, 16 ms after the conversion, up to 127 ms after it through a stall; stalls raise the worst speed error at 100 m/s from 8.3 to 9.3 m/s | hardware timer at the pressure conversion | T11 |
+| Sample timestamps | loop ms at the temperature read, 16 ms after the conversion, up to 127 ms after it through a stall; stalls raise the worst speed error at 100 m/s from 8.3 to 9.3 m/s | hardware timer at the pressure conversion: done (through stalls 6.5 m/s against 6.1) | T11 |
 | Fit-based speed and acceleration through flash stalls | worst −294 m/s and 441 m/s² with today's stamps (earlier experiments; T11 re-measures) | RMS 1.2 m/s and 3.5 m/s², stalls or not | T11 |
 | A flight above 8 km AGL | apogee fired 14.9 s early, at the clamp (N26) | apogee at the real apogee: done | T3 |
 | Supersonic flight with a static-port error | a port error that makes the boost read as a descent fires the low-drag flight's drogue 39 s before apogee, at Mach 1.27 | no drogue before the true apogee, on every M0 profile | M1 |
@@ -489,6 +489,23 @@ That report is the baseline M1 and M2 must change.
 ---
 
 ### T11. Stamp every sample with the hardware timer, at its conversion
+
+**Done 2026-09-26** (DD-046), except the bench check (G4). Differences from
+the plan:
+- The BMP280 stays in normal mode. Forced mode would change the driver files
+  of MK1A and MK1B, which can't be checked without the boards. A free-running
+  BMP280 reading is never more than one conversion old, so stamping half a
+  conversion before the read bounds the error at ±7 ms through any stall.
+- `hal_common.c` runs only on the RP2040. Its stamping arithmetic is a
+  tested helper, and the test HAL's model of the stamping now stamps at the
+  conversion too. `test_T11_stalls_change_nothing` failed under the old
+  model and passes under the new.
+- `test_T11_wrap` moves to T5, the first code that does microsecond
+  arithmetic across samples.
+- The loop-clock test first anchored ignition to PAD_IDLE. Since the boot
+  timers run on the loop clock, that let a lagged loop fly a different
+  flight; it now anchors ignition to a fixed sample time. It fails on the
+  committed code and passes on the new.
 
 **Why:** a sample is stamped with the loop's millisecond clock at the top of
 the iteration in which its temperature read completes. That instant differs

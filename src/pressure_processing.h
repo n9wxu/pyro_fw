@@ -30,6 +30,7 @@ typedef struct {
     int32_t height_cm;   /* not clamped: what speed is taken from [SNS-ALT-04] */
     int32_t rise_cm;     /* the median reading's own height, unfiltered: T+0 [FLT-LAUNCH-03] */
     uint32_t timestamp_ms;
+    uint32_t timestamp_us; /* the same instant, to the microsecond; wraps, so differences only */
 } altitude_sample_t;
 
 /* ── Ring buffer sizing ──────────────────────────────────────────── */
@@ -153,6 +154,11 @@ void pp_resume_flight(int32_t ground_pa, int32_t start_pa);
  * the ground average.  After calibration, it filters, converts to
  * altitude, and pushes to the ring buffer. */
 void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms);
+
+/* [SNS-PRES-08] The same, stamped to the microsecond by the hardware timer at
+ * the reading's conversion. Milliseconds are this over 1000, the clock
+ * hal_time_ms() reads. */
+void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us);
 
 /* ── Consumer: called by flight software ─────────────────────────── */
 

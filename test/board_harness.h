@@ -33,6 +33,11 @@ extern board_power_t power;
  * noise seeded by seed. */
 void boot_like_hardware(uint32_t seed);
 void tick(uint32_t t);
+
+/* The loop clock, late against the sample clock by what this returns for
+ * each tick: STAGE 1's USB and lwIP work, a stall. It must not let the loop
+ * clock run backwards. NULL, the default: no lag. */
+extern uint32_t (*loop_lag_ms)(uint32_t t);
 uint32_t run_to_pad(uint32_t *t); /* returns the time PAD_IDLE began */
 bool booting(void);
 

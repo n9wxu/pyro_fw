@@ -97,6 +97,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-RATE-01..02 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds) | ⚠️ |
 | FLT-RATE-03 | 1 Hz while LANDED | Chain: test_N18_landed_logs_once_a_second | ✅ |
 | FLT-RATE-04 | The rate is the HAL's | Integration: test_FLT_LAUNCH_01_timing | ⚠️ |
+| FLT-RATE-05 | Holds and dwells in sample time | Chain: test_T11_loop_clock_independent (a loop clock lagging 0-70 ms changes no decision's sample) | ✅ |
 
 ## 2. Pre-Flight Status
 
@@ -145,7 +146,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | SYS-DATA-02 | Export standard format | — | ⚠️ |
 | SYS-DATA-03 | Announce max altitude | Integration: test_BUZ_07_03_lifecycle | ✅ |
 | DAT-01 | 4096-entry ring buffer | Integration: samples recorded throughout flight | ✅ |
-| DAT-02 | Sample fields | Integration: events have correct fields | ✅ |
+| DAT-02 | Sample fields, at the sample's time | Integration: events have correct fields; Chain: test_T11_log_rows_at_sample_time | ✅ |
 | DAT-03 | Events tag samples | Integration: test_DAT_04_events | ✅ |
 | DAT-04 | Log all event types | Integration: test_DAT_04_events; Closed-loop: test_REV16_forced_main_is_in_the_log | ✅ |
 | DAT-06 | CSV export | — | ⚠️ |
@@ -176,6 +177,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | SNS-PRES-02..03 | Pressure filter, fractional | Unit: test_SNS_PRES_02_filter_smoothing, test_SNS_PRES_03_filter_init; Chain: test_T4_filter_noise (0.17 Pa of 1.2), test_T4_pad_speed (0.22 m/s) | ✅ |
 | SNS-PRES-05 | Conversion read after its worst case | Hardware (MK1C, MK1B): pres_rejects 0 under HTTP load, 18 in 60 s without the timing | ✅ HW |
 | SNS-PRES-07 | A single outlier never reaches the filter | Chain: test_T2_pad_glitch_sweep, test_T2_coast_glitch, test_T2_median_timing | ✅ |
+| SNS-PRES-08 | Each sample stamped at its reading | Chain: test_T11_d1_stamp (the MS5607 stamp), test_T11_stalls_change_nothing (under the test HAL's model of the stamping); `hal_common.c` by inspection; bench check owed | ⚠️ |
 | SNS-PRES-06 | Impossible readings discarded and counted | Hardware: pres_rejects on /api/status; the false launch they caused did not recur | ✅ HW |
 | SNS-ALT-01..03 | Altitude computation | Integration: max altitude within expected range | ✅ |
 | SNS-ALT-04 | Speed from the unclamped height | Chain: test_N26_apogee_above_8km, test_T3_coast_two_sample_glitch (a glitch's decay below the pad) | ✅ |
@@ -355,8 +357,8 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 194 |
-| ⚠️ Not directly verified (needs a test or hardware) | 34 |
+| ✅ Verified by a host, web or closed-loop test | 195 |
+| ⚠️ Not directly verified (needs a test or hardware) | 35 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 12 |
 

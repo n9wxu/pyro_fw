@@ -538,6 +538,40 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-046: Every Sample Carries The Time Of Its Reading
+- **Decision:** the HAL stamps each reading from the hardware timer, to the
+  microsecond, at the moment it describes (SNS-PRES-08):
+  - the MS5607 at the middle of its D1 conversion, from a time saved when D1
+    is commanded. `conv_start_us` could not serve, because D2's command
+    overwrites it;
+  - the BMP280 half a conversion before the read.
+
+  The pressure layer takes the stamp (`pp_feed_us()`) and carries the
+  microseconds to its samples beside the milliseconds. Every detector hold
+  and dwell that measures the sensor, and every logged sample row, uses the
+  sample's time (FLT-RATE-05, DAT-02). The PAD_IDLE gate that compared the
+  loop's time with a sample's is gone.
+- **Why:** a reading was stamped with the loop's millisecond at the top of the
+  iteration that read it: 16 ms after the conversion normally, and later by
+  the whole of any flash stall in between. Every dt inherited it. Through T0's
+  stall model the worst speed error at 100 m/s went from 6.1 to 8.3 m/s; now
+  6.5. The holds on the loop clock let the loop's lateness choose which
+  sample decided the launch.
+- **The BMP280 stays in normal mode.** Forced mode, as planned, would change
+  the driver in `boards/mk1a/` and `boards/mk1b/`, which cannot be checked
+  without the bench boards. A free-running BMP280 keeps converting through a
+  stall, so what is read is never more than one conversion (13.8 ms) old.
+  Stamped at half of that before the read, it is within ±7 ms whatever the
+  loop did.
+- **What the host can test:** `hal_common.c` runs only on the RP2040. The
+  stamping arithmetic is a tested helper, and the test HAL models the
+  stamping, stalls included, so everything downstream is tested under it.
+  `/api/status` shows `sample_interval_us` and `stamp_lag_max_us` for the
+  bench check.
+- **Timer-driven sampling rejected:** a hardware alarm starting conversions
+  would not keep sampling uniform through a stall, because a flash erase runs
+  with interrupts off. True stamps make uniform sampling unnecessary.
+
 ### DD-045: The Ground Reference Re-Seeds After A Step
 - **Decision:** When every sample has been rejected by GND-CAL-03's 50 Pa gate
   for 5 s, and the board is still (under 1 m/s), the reference restarts from

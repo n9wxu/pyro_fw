@@ -373,7 +373,7 @@ static bool assess_recovery(flight_context_t *ctx, uint32_t now, state_event_t *
     ctx->diag |= DIAG_BROWNOUT;
     ctx->ground_pressure = m.ground_pressure_pa;
     ctx->filtered_pressure = level;
-    ctx->launch_time = now;
+    ctx->launch_time = newest;
     ctx->max_altitude = alt_agl;
     ctx->last_altitude = alt_agl;
     ctx->last_height = pp_pressure_to_height_cm(level, m.ground_pressure_pa);
@@ -604,9 +604,6 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
         ground_test_handle_command(&ctx->gt, cmd_buf, ctx, now);
     ground_test_update(&ctx->gt, now);
 
-    if (now - ctx->last_sample < 10)
-        return SEVT_NONE;
-
     update_continuity_and_buzzer(ctx, now);
 
     altitude_sample_t sample;
@@ -683,14 +680,15 @@ static void mach_gate_feed(flight_context_t *ctx) {
     }
 }
 
-static bool mach_gate_clear(flight_context_t *ctx, uint32_t now) {
+/* ts is sample time [SNS-PRES-08]: how long the sensor has said "slow". */
+static bool mach_gate_clear(flight_context_t *ctx, uint32_t ts) {
     if (!ctx->mach_exceeded)
         return true; /* never went fast, so nothing to wait out */
     if (ctx->vertical_speed_cms > MACH_GATE_CMS)
         return false;
     if (ctx->subsonic_since == 0)
-        ctx->subsonic_since = now;
-    return now - ctx->subsonic_since >= MACH_SETTLE_MS;
+        ctx->subsonic_since = ts + 1u;
+    return ts + 1u - ctx->subsonic_since >= MACH_SETTLE_MS;
 }
 
 /* [DD-017] Arming requires confirmed motor burn: peak speed > threshold,
@@ -719,7 +717,7 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
         ctx->max_speed_cms = ctx->vertical_speed_cms;
     mach_gate_feed(ctx);
 
-    buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, altitude, ASCENT);
+    buf_add(ctx, ts - ctx->launch_time, ctx->filtered_pressure, altitude, ASCENT);
     ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE].under_thrust =
         ctx->under_thrust ? 1 : 0;
 
@@ -739,7 +737,7 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
      * up, and nothing else. No timer may force it [DD-022]: a wrong value
      * fires during ascent, which is worse than the sensor failure it would
      * cover. */
-    bool cond = ctx->pyros_armed && !ctx->apogee_detected && mach_gate_clear(ctx, now) && ctx->vertical_speed_cms <= 0;
+    bool cond = ctx->pyros_armed && !ctx->apogee_detected && mach_gate_clear(ctx, ts) && ctx->vertical_speed_cms <= 0;
     return held(cond, &ctx->apogee_held_since, ts, APOGEE_HOLD_MS) ? SEVT_APOGEE : SEVT_NONE;
 }
 
@@ -790,7 +788,8 @@ static int32_t desc_tolerance(int32_t rate) {
  * dwell. Climbing does not count: just after apogee the rate passes through
  * the main band on its way to ballistic, and only the stability test keeps
  * that from reading as a deployed main. */
-static bool descent_settled(flight_context_t *ctx, uint32_t now, desc_band_t *out) {
+/* ts is sample time: the dwell is how long the samples have held steady. */
+static bool descent_settled(flight_context_t *ctx, uint32_t ts, desc_band_t *out) {
     int32_t v = ctx->vertical_speed_cms;
     if (v >= 0) {
         ctx->desc_band_since = 0;
@@ -806,26 +805,26 @@ static bool descent_settled(flight_context_t *ctx, uint32_t now, desc_band_t *ou
     if (b != (desc_band_t)ctx->desc_band || drift > tol || ctx->desc_band_since == 0) {
         ctx->desc_band = (uint8_t)b;
         ctx->desc_ref_cms = v;
-        ctx->desc_band_since = now;
+        ctx->desc_band_since = ts | 1u;
         return false;
     }
     *out = b;
-    return now - ctx->desc_band_since >= DESC_DWELL_MS;
+    return ts - ctx->desc_band_since >= DESC_DWELL_MS;
 }
 
 /* A canopy that has failed shows as a rate its phase cannot explain, held
  * long enough not to be a gust. Stability is deliberately not required: a
  * shredded drogue is accelerating, which is the whole point. */
-static bool band_exceeded(flight_context_t *ctx, uint32_t now, int32_t ceiling) {
+static bool band_exceeded(flight_context_t *ctx, uint32_t ts, int32_t ceiling) {
     if (descent_rate(ctx) <= ceiling) {
         ctx->desc_fail_since = 0;
         return false;
     }
     if (ctx->desc_fail_since == 0) {
-        ctx->desc_fail_since = now;
+        ctx->desc_fail_since = ts | 1u;
         return false;
     }
-    return now - ctx->desc_fail_since >= DESC_FAIL_MS;
+    return ts - ctx->desc_fail_since >= DESC_FAIL_MS;
 }
 
 /* [FLT-EMRG-01, PYR-REFIRE-01] What to do when a canopy does not answer.
@@ -849,18 +848,21 @@ static bool band_exceeded(flight_context_t *ctx, uint32_t now, int32_t ceiling) 
  * apogee is fast by design [FLT-EMRG-02], and one whose drogue has just opened
  * is still being slowed. A rate that falls by more than the tolerance is a
  * canopy biting, and starts the window again. */
+/* The grace runs on the loop clock, from the fire; the hold on sample time,
+ * because it is the samples that must keep showing the rate. */
 static bool drogue_failing(flight_context_t *ctx, uint32_t now, uint32_t drogue_cmd_ms) {
+    uint32_t ts = ctx->last_sample;
     int32_t rate = ctx->vertical_speed_cms < 0 ? -ctx->vertical_speed_cms : 0;
     if (rate <= DESC_DROGUE_CMS || now - drogue_cmd_ms < EMRG_DROGUE_GRACE_MS) {
         ctx->emrg_fail_since = 0;
         return false;
     }
     if (ctx->emrg_fail_since == 0 || rate < ctx->emrg_fail_ref_cms - desc_tolerance(ctx->emrg_fail_ref_cms)) {
-        ctx->emrg_fail_since = now;
+        ctx->emrg_fail_since = ts | 1u;
         ctx->emrg_fail_ref_cms = rate;
         return false;
     }
-    return now - ctx->emrg_fail_since >= DESC_FAIL_MS;
+    return ts - ctx->emrg_fail_since >= DESC_FAIL_MS;
 }
 
 /* The retry rung. Its evidence is the channel's own post-fire continuity; a
@@ -909,9 +911,10 @@ static bool landing_detected(flight_context_t *ctx, uint32_t now, int32_t prev_a
     bool near_ground = altitude < 3000;
 
     if (altitude_stable && speed_low && near_ground) {
+        uint32_t ts = ctx->last_sample;
         if (ctx->landing_stable_since == 0)
-            ctx->landing_stable_since = now;
-        if (now - ctx->landing_stable_since >= 1000)
+            ctx->landing_stable_since = ts | 1u;
+        if (ts - ctx->landing_stable_since >= 1000)
             return true;
     } else {
         ctx->landing_stable_since = 0;
@@ -938,7 +941,7 @@ static bool descent_sample(flight_context_t *ctx, uint32_t now, flight_state_t s
     ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
     if (dt > 0)
         ctx->vertical_speed_cms = (sample.height_cm - ctx->last_height) * 1000 / (int32_t)dt;
-    buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, sample.altitude_cm, st);
+    buf_add(ctx, sample.timestamp_ms - ctx->launch_time, ctx->filtered_pressure, sample.altitude_cm, st);
     ctx->last_sample = sample.timestamp_ms;
     *prev_out = ctx->last_altitude;
     ctx->last_altitude = sample.altitude_cm;
@@ -954,7 +957,7 @@ static state_event_t detect_falling(flight_context_t *ctx, uint32_t now) {
         return SEVT_NONE;
 
     desc_band_t band = BAND_FAST;
-    bool settled = descent_settled(ctx, now, &band);
+    bool settled = descent_settled(ctx, ctx->last_sample, &band);
 
     try_fire_pyros(ctx, now);
     check_pyro_fault(ctx);
@@ -979,7 +982,7 @@ static state_event_t detect_drogue_descent(flight_context_t *ctx, uint32_t now) 
         return SEVT_NONE;
 
     desc_band_t band = BAND_FAST;
-    bool settled = descent_settled(ctx, now, &band);
+    bool settled = descent_settled(ctx, ctx->last_sample, &band);
 
     try_fire_pyros(ctx, now);
     check_pyro_fault(ctx);
@@ -990,7 +993,7 @@ static state_event_t detect_drogue_descent(flight_context_t *ctx, uint32_t now) 
         return SEVT_LANDING;
     if (settled && band == BAND_MAIN)
         return SEVT_CHUTE;
-    if (band_exceeded(ctx, now, DESC_DROGUE_CMS))
+    if (band_exceeded(ctx, ctx->last_sample, DESC_DROGUE_CMS))
         return SEVT_FREEFALL;
     return SEVT_NONE;
 }
@@ -1008,7 +1011,7 @@ static state_event_t detect_chute_descent(flight_context_t *ctx, uint32_t now) {
         return SEVT_NONE;
 
     desc_band_t band = BAND_FAST;
-    bool settled = descent_settled(ctx, now, &band);
+    bool settled = descent_settled(ctx, ctx->last_sample, &band);
     try_fire_pyros(ctx, now);
     check_pyro_fault(ctx);
     check_post_fire_verify(ctx, now);
@@ -1027,7 +1030,7 @@ static state_event_t detect_landed(flight_context_t *ctx, uint32_t now) {
     /* Once a second, so the ring keeps the flight's events. Timed apart from
      * last_sample, which every sample moves. */
     if (ctx->landed_row_ms == 0 || sample.timestamp_ms - ctx->landed_row_ms >= 1000u) {
-        buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, sample.altitude_cm, LANDED);
+        buf_add(ctx, sample.timestamp_ms - ctx->launch_time, ctx->filtered_pressure, sample.altitude_cm, LANDED);
         ctx->landed_row_ms = sample.timestamp_ms;
     }
     ctx->last_altitude = sample.altitude_cm;
@@ -1088,13 +1091,14 @@ static void action_launch(flight_context_t *ctx, uint32_t now) {
      * enormous sample. */
     ctx->last_altitude = pp_pressure_to_altitude_cm(ctx->filtered_pressure, ctx->ground_pressure);
     ctx->last_height = pp_pressure_to_height_cm(ctx->filtered_pressure, ctx->ground_pressure);
-    ctx->last_logged_ms = now - ctx->launch_time;
+    ctx->last_logged_ms = ctx->last_sample - ctx->launch_time;
 
     /* The ring's newest sample is a PAD_IDLE one, which the log does not
      * take, so the LAUNCH row is written here: the moment of detection and
      * the height reached by then. */
     hal_log_start(&ctx->config, ctx->ground_pressure);
-    hal_log_sample(now - ctx->launch_time, ctx->filtered_pressure, ctx->last_altitude, ASCENT, 0, EVT_LAUNCH);
+    hal_log_sample(ctx->last_sample - ctx->launch_time, ctx->filtered_pressure, ctx->last_altitude, ASCENT, 0,
+                   EVT_LAUNCH);
     buf_tag_event(ctx, EVT_LAUNCH);
 }
 

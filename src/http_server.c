@@ -53,6 +53,9 @@ extern void hal_telemetry_send(const char *sentence);
 extern const char *pressure_sensor_name(void);
 /* hal_common.c: sensor reads deferred for an unfinished conversion, and
  * readings refused as impossible. The second must stay at zero. */
+extern uint32_t hal_pressure_interval_min_us(void);
+extern uint32_t hal_pressure_interval_max_us(void);
+extern uint32_t hal_pressure_stamp_lag_max_us(void);
 extern uint32_t hal_pressure_waits(void);
 extern uint32_t hal_pressure_rejects(void);
 
@@ -768,10 +771,10 @@ static void serve_api_status(http_conn_t *hc) {
         "\"sensor_ok\":%s,\"fs_ok\":%s,\"faults\":[%s],"
         "\"reset_cause\":%u,\"recovery\":\"%s\","
         "\"pyro1_refused\":%s,\"pyro2_refused\":%s,\"pyro1_refires\":%u,\"main_forced\":%s,"
-        "\"pres_waits\":%lu,\"pres_rejects\":%lu,\"raw_pa\":%ld,\"pad_speed_cms\":%ld,\"ground_degraded\":%s,\"ground_"
-        "reseeds\":%lu,\"usb_"
-        "attached\":%s,\"test_"
-        "mode\":%s,\"buzzer_active\":%s,"
+        "\"pres_waits\":%lu,\"pres_rejects\":%lu,\"raw_pa\":%ld,\"pad_speed_cms\":%ld,"
+        "\"ground_degraded\":%s,\"ground_reseeds\":%lu,"
+        "\"sample_interval_us\":[%lu,%lu],\"stamp_lag_max_us\":%lu,"
+        "\"usb_attached\":%s,\"test_mode\":%s,\"buzzer_active\":%s,"
         "\"beep\":\"%s\",\"beep_sound\":\"%s\","
         "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u}",
         sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
@@ -814,6 +817,10 @@ static void serve_api_status(http_conn_t *hc) {
         (long)pp_last_raw_pa(), fctx ? (long)fctx->pad_speed_cms : 0L,
         /* The launch froze a reference on under a second of pad [GND-CAL-07]. */
         pp_ground_degraded() ? "true" : "false", (unsigned long)pp_ground_reseeds(),
+        /* [SNS-PRES-08] The spread of the true intervals, and the longest any
+         * reading waited to be read: a stall shows as a gap, not a late stamp. */
+        (unsigned long)hal_pressure_interval_min_us(), (unsigned long)hal_pressure_interval_max_us(),
+        (unsigned long)hal_pressure_stamp_lag_max_us(),
         /* A board on USB detects no launch and says nothing, unless it is in
          * test mode [USB-01..03, USB-08]. */
         fctx && fctx->usb_attached ? "true" : "false", fctx && fctx->test_mode ? "true" : "false",

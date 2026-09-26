@@ -71,7 +71,8 @@ if st0["state"] != "PAD_IDLE":
 board = st0["board"]
 print(f"== {board} {st0['fw_version']} at {HOST}, state {st0['state']}")
 NEW_FIELDS = ("pyro1_refused", "pyro2_refused", "pyro1_refires", "main_forced", "usb_attached", "test_mode",
-              "buzzer_active", "raw_pa", "pad_speed_cms", "ground_degraded", "ground_reseeds")
+              "buzzer_active", "raw_pa", "pad_speed_cms", "ground_degraded", "ground_reseeds",
+              "sample_interval_us", "stamp_lag_max_us")
 check("status: new fields present", all(k in st0 for k in NEW_FIELDS),
       ",".join(k for k in NEW_FIELDS if k not in st0))
 # T0: the sensor's own reading, and the speed the launch detector reads.

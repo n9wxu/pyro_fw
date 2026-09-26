@@ -89,6 +89,9 @@ extern uint32_t mock_pres_rejects;
  * lasts nothing on core0 runs: a driver checks mock_core0_stalled() before
  * dispatching. */
 extern bool mock_stall_model;
+/* true: stamped at the read, as hal_common.c stamped before T11; false: at the
+ * conversion, as it does since. */
+extern bool mock_stamp_at_read;
 extern uint32_t mock_stall_seed;
 extern uint32_t mock_stall_count, mock_stall_total_ms, mock_stall_min_ms, mock_stall_max_ms;
 extern uint32_t mock_stamp_lag_min_ms, mock_stamp_lag_max_ms; /* stamp minus conversion */

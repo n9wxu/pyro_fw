@@ -130,8 +130,11 @@ typedef struct {
     bool has_last;
 
     uint32_t conv_start_us; /* MS5607: when the pending conversion was commanded */
-    uint32_t waits;         /* reads put off because the conversion was not done */
-    uint32_t rejects;       /* readings no atmosphere can produce, not fed on */
+    uint64_t d1_us;         /* MS5607: when the pressure conversion was commanded */
+    uint64_t last_stamp_us; /* the previous sample's time, for the interval */
+    uint32_t interval_min_us, interval_max_us, stamp_lag_max_us;
+    uint32_t waits;   /* reads put off because the conversion was not done */
+    uint32_t rejects; /* readings no atmosphere can produce, not fed on */
 } pres_task_t;
 
 static pres_task_t pres;
@@ -142,6 +145,18 @@ uint32_t hal_pressure_waits(void) {
 
 uint32_t hal_pressure_rejects(void) {
     return pres.rejects;
+}
+
+/* [SNS-PRES-08] The spread of the intervals between samples, and the longest
+ * any sample waited between its conversion and the loop reading it. */
+uint32_t hal_pressure_interval_min_us(void) {
+    return pres.interval_min_us;
+}
+uint32_t hal_pressure_interval_max_us(void) {
+    return pres.interval_max_us;
+}
+uint32_t hal_pressure_stamp_lag_max_us(void) {
+    return pres.stamp_lag_max_us;
 }
 
 /* The sensor's own range, 10-1200 mbar. Inside it nothing is judged: a real
@@ -157,6 +172,10 @@ uint32_t hal_pressure_rejects(void) {
  * work, which can run for milliseconds and so eat the whole margin. */
 #define MS5607_CONV_DONE_US 9100u
 
+/* Half the BMP280's normal-mode cycle at x4 pressure, x1 temperature and a
+ * 0.5 ms standby: 11.5 ms typical, 13.8 ms worst. */
+#define BMP280_HALF_CYCLE_US 6000u
+
 static bool conv_done(const pres_task_t *p) {
     return time_us_32() - p->conv_start_us >= MS5607_CONV_DONE_US;
 }
@@ -166,15 +185,33 @@ static bool pres_plausible(const pressure_reading_t *r) {
 }
 
 /* Append a completed reading to the batch, update the bridge sample,
- * and feed the pressure_processing pipeline (IIR + altitude ring). */
-static void pres_append(pres_task_t *p, const pressure_reading_t *r, uint32_t now_ms) {
+ * and feed the pressure_processing pipeline (IIR + altitude ring).
+ *
+ * [SNS-PRES-08] stamp_us is when the reading was taken, from the hardware
+ * timer: never the loop's time, which a flash stall between the conversion
+ * and the read would make late by the whole stall. */
+static void pres_append(pres_task_t *p, const pressure_reading_t *r, uint64_t stamp_us) {
+    uint32_t now_ms = (uint32_t)(stamp_us / 1000u);
     p->last.pressure_pa = r->pressure_pa;
     p->last.temperature_c = r->temperature_c;
     p->has_last = true;
 
+    uint64_t read_us = time_us_64();
+    uint32_t lag = (uint32_t)(read_us - stamp_us);
+    if (lag > p->stamp_lag_max_us)
+        p->stamp_lag_max_us = lag;
+    if (p->last_stamp_us != 0) {
+        uint32_t iv = (uint32_t)(stamp_us - p->last_stamp_us);
+        if (p->interval_min_us == 0 || iv < p->interval_min_us)
+            p->interval_min_us = iv;
+        if (iv > p->interval_max_us)
+            p->interval_max_us = iv;
+    }
+    p->last_stamp_us = stamp_us;
+
     /* Feed the pressure_processing ring so detectors can read altitude
      * samples via pp_read() — single data path from sensor to FSM. */
-    pp_feed((int32_t)r->pressure_pa, now_ms);
+    pp_feed_us((int32_t)r->pressure_pa, stamp_us);
 
     int idx = p->back.count;
     if (idx < HAL_PRESSURE_BATCH_SIZE) {
@@ -222,6 +259,7 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
         case PRES_IDLE:
             if (ms5607_start_d1()) {
                 p->conv_start_us = time_us_32();
+                p->d1_us = time_us_64();
                 p->phase = PRES_D1_CONV;
                 p->base.next_due_ms = now_ms + MS5607_CONV_MS;
             } else {
@@ -262,7 +300,7 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
                              (unsigned long)d2, (double)r.pressure_pa, (unsigned long)now_ms);
                     hal_telemetry_send(dbuf);
                 } else {
-                    pres_append(p, &r, now_ms);
+                    pres_append(p, &r, ms5607_sample_time_us(p->d1_us));
                 }
             }
             p->phase = PRES_IDLE;
@@ -282,8 +320,11 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
          * pressure_sensor_init() can never report type 2. */
         pressure_reading_t r;
         if (bmp280_read(&r)) {
+            /* Normal mode converts on its own, through any stall, so what is
+             * read is at most one conversion old (13.8 ms at x4/x1 with a
+             * 0.5 ms standby): stamped half of that before the read. */
             if (pres_plausible(&r))
-                pres_append(p, &r, now_ms);
+                pres_append(p, &r, time_us_64() - BMP280_HALF_CYCLE_US);
             else
                 p->rejects++;
         }

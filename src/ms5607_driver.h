@@ -28,6 +28,14 @@
 /* Minimum conversion time (ms) at OSR 4096 — use in state machine */
 #define MS5607_CONV_MS 10
 
+/* [SNS-PRES-08] A reading describes the middle of its D1 conversion (OSR 4096
+ * takes up to 9.04 ms), not the moment it is read. From the hardware timer,
+ * which keeps counting while a flash erase stalls the loop. */
+#define MS5607_HALF_CONV_US 4500u
+static inline uint64_t ms5607_sample_time_us(uint64_t d1_command_us) {
+    return d1_command_us + MS5607_HALF_CONV_US;
+}
+
 /* ── Synchronous API (blocking, init time only) ─────────────────── */
 
 bool ms5607_detect(void);
