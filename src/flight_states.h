@@ -16,6 +16,8 @@
 #define DIAG_P2_OPEN (1u << 5)
 #define DIAG_P2_SHORT (1u << 6)
 #define DIAG_BROWNOUT (1u << 7) /* came back mid-flight after a power event */
+#define DIAG_SENSOR_STUCK (1u << 8) /* a full window of identical readings [SNS-PRES-10] */
+#define DIAG_SENSOR_LOST (1u << 9)  /* no sample for 0.5 s in flight [SNS-PRES-11] */
 
 /* The pyro ones can be fixed standing at the rocket; everything else means
  * safe it and walk away. This split is what picks the beep. */
@@ -244,6 +246,13 @@ typedef struct flight_context_t {
      * peak is the lowest pressure a clean fit showed in ASCENT; 0: none. */
     int32_t trigger_height_cm;
     bool fit_clean;
+    bool fit_suspect; /* a gap or a stuck run in the window [SNS-PRES-10/11] */
+    float fit_pa;     /* this sample's fitted pressure */
+    /* The last clean fit, for what a charge can and cannot do [PYR-MODE-06]. */
+    float clean_pa, clean_pdot, clean_pddot;
+    uint32_t clean_ms; /* 0: none yet */
+    bool sensor_stuck;
+    bool sensor_lost;
     /* Sample time + 1 of the first unclean fit in a run, and of the first
      * clean one since; 0: none. A run ends only when clean has lasted the
      * fit's window: a lone clean fit in a swinging canopy does not end it. */

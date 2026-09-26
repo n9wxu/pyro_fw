@@ -67,6 +67,10 @@ the lock, and a sweep of the port error from 0.1 to 4 times either way.
 `test_M1_design_note` recomputes `docs/mach_lockout.md`'s tables and fails if
 the document's rows differ.
 
+The `test_M2_*` tests fail the sensor in flight: stuck in coast, a 0.5 s
+dropout across the apogee, a 2 s loss under the drogue, half a second of
+impossible readings, and an hour of real noise that must never read as stuck.
+
 `sim/physics.c` drives the browser simulator and is untouched. The report
 `test_M0_report` prints, for every profile at a 10 °C sea-level pad and a
 45 °C pad at 2000 m, when the drogue fired against the true apogee and where

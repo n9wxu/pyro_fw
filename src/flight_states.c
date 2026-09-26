@@ -196,12 +196,30 @@ static bool channel_waiting(bool fired, bool refused, bool continuity) {
  * every fit cannot hold back the main. The wait restarts at each charge. */
 #define UNCLEAN_WAIT_MS 2000u
 
+/* A charge pressurises the bay, which reads the rocket lower than it is; a
+ * canopy opening reads it higher than a ballistic fall would. So after a
+ * charge an unclean fit that reads no lower than the last clean fit carried on
+ * ballistically is believed: a charge cannot make the rocket fall faster, and
+ * a main set just below a fast drogue must not wait two seconds for the
+ * opening's shock to leave the window. */
+static bool below_ballistic(const flight_context_t *ctx) {
+    if (ctx->clean_ms == 0)
+        return true;
+    float dt = (float)(ctx->last_sample - ctx->clean_ms) / 1000.0f;
+    float p = ctx->clean_pa + ctx->clean_pdot * dt + 0.5f * ctx->clean_pddot * dt * dt;
+    return ctx->fit_pa > p;
+}
+
 static bool pressure_believed(const flight_context_t *ctx, uint32_t now) {
     if (ctx->fit_clean)
         return true;
+    /* A failed sensor is waited out for as long as it takes: it must never
+     * cause a deployment [SNS-PRES-10, SNS-PRES-11]. */
+    if (ctx->fit_suspect)
+        return false;
     if ((ctx->pyro1_fired && now - ctx->pyro1_fire_time < UNCLEAN_WAIT_MS) ||
         (ctx->pyro2_fired && now - ctx->pyro2_fire_time < UNCLEAN_WAIT_MS))
-        return false;
+        return !below_ballistic(ctx);
     return ctx->last_sample + 1u - ctx->unclean_since >= UNCLEAN_WAIT_MS;
 }
 
@@ -658,6 +676,14 @@ static int32_t launch_speed(const flight_context_t *ctx, const altitude_sample_t
 static void take_fit(flight_context_t *ctx, const altitude_sample_t *s) {
     uint32_t ts = s->timestamp_ms;
     ctx->fit_clean = s->fit_clean;
+    ctx->fit_suspect = s->fit_suspect;
+    ctx->fit_pa = s->fit_pa;
+    if (s->fit_clean) {
+        ctx->clean_pa = s->fit_pa;
+        ctx->clean_pdot = s->fit_pdot;
+        ctx->clean_pddot = s->fit_pddot;
+        ctx->clean_ms = ts;
+    }
     if (!s->fit_clean) {
         ctx->clean_since = 0;
         if (ctx->unclean_since == 0)
@@ -669,6 +695,38 @@ static void take_fit(flight_context_t *ctx, const altitude_sample_t *s) {
 }
 
 static void pad_mach_flag(flight_context_t *ctx, const altitude_sample_t *s, uint32_t ts);
+
+/* [SNS-PRES-10] A stuck sensor, said once each time it sticks; after the
+ * sample's row, so the event carries its time. The DIAG bit stays: it is the
+ * record that the flight had one. */
+static void note_stuck(flight_context_t *ctx, const altitude_sample_t *s) {
+    extern void hal_telemetry_send(const char *sentence);
+    if (!s->sensor_stuck) {
+        ctx->sensor_stuck = false;
+        return;
+    }
+    if (ctx->sensor_stuck)
+        return;
+    ctx->sensor_stuck = true;
+    ctx->diag |= DIAG_SENSOR_STUCK;
+    buf_tag_event(ctx, EVT_SENSOR_STUCK);
+    hal_telemetry_send("!SENSOR STUCK\r\n");
+}
+
+/* [SNS-PRES-11] No sample for this long in flight is a lost sensor. Nothing
+ * is decided meanwhile, since every decision waits for a sample, and the
+ * first fits after it are suspect until a whole window of new samples. */
+#define SENSOR_LOST_MS 500u
+
+static void watch_sensor(flight_context_t *ctx, uint32_t now) {
+    extern void hal_telemetry_send(const char *sentence);
+    if (ctx->sensor_lost || now - ctx->last_sample < SENSOR_LOST_MS)
+        return;
+    ctx->sensor_lost = true;
+    ctx->diag |= DIAG_SENSOR_LOST;
+    buf_tag_event(ctx, EVT_SENSOR_LOST);
+    hal_telemetry_send("!SENSOR LOST\r\n");
+}
 
 static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     /* [GND-TEST-01..04, DD-011] Poll serial for ground test commands.
@@ -715,6 +773,7 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     ctx->ground_pressure = pp_ground_pressure();
 
     buf_add(ctx, 0, ctx->filtered_pressure, altitude, PAD_IDLE);
+    note_stuck(ctx, &sample);
     ctx->last_altitude = altitude;
     ctx->last_height = sample.height_cm;
     ctx->last_sample = ts;
@@ -794,6 +853,8 @@ static void mach_fall_back(flight_context_t *ctx, uint32_t ts) {
  * 120 m/s slow. After a release, only a clean fit: the coast has been seen,
  * and a bad reading must not lock out the apogee just ahead. */
 static bool mach_flag_due(const flight_context_t *ctx, const altitude_sample_t *s, int32_t p) {
+    if (s->fit_suspect)
+        return false; /* a sensor coming back jumps: that is no climb [SNS-PRES-10] */
     if (ctx->mach_released)
         return s->fit_clean && mach_too_fast(p, s->fit_pdot);
     return mach_too_fast(p, s->fit_pdot) || mach_too_fast(p, s->short_pdot);
@@ -816,7 +877,7 @@ static void pad_mach_flag(flight_context_t *ctx, const altitude_sample_t *s, uin
         return;
     int32_t p = mach_round_clamp(s->fit_pa, MACH_RATE_CLAMP);
     if (mach_flag_due(ctx, s, p))
-        mach_flag(ctx, p, ts);
+        mach_flag(ctx, s->fit_clean ? p : s->raw_pa, ts);
 }
 
 static state_event_t mach_lockout(flight_context_t *ctx, const altitude_sample_t *s, uint32_t ts) {
@@ -825,7 +886,8 @@ static state_event_t mach_lockout(flight_context_t *ctx, const altitude_sample_t
     int32_t p = mach_round_clamp(s->fit_pa, MACH_RATE_CLAMP);
     if (!ctx->mach_lock) {
         if (mach_flag_due(ctx, s, p)) {
-            mach_flag(ctx, p, ts);
+            /* A spoiled fit's pressure is not where the rocket was. */
+            mach_flag(ctx, s->fit_clean ? p : s->raw_pa, ts);
             mach_note(ctx, EVT_MACH_LOCK, "!MACH LOCK\r\n");
         }
         return SEVT_NONE;
@@ -843,11 +905,12 @@ static state_event_t mach_lockout(flight_context_t *ctx, const altitude_sample_t
 }
 
 /* [DD-017] Arming requires confirmed motor burn: peak speed > threshold,
- * coast phase entered (speed decreasing but still positive), and about 30 m
- * climbed [FLT-MACH-06]. */
+ * then slower than it, about 30 m up [FLT-MACH-06], on a sensor that has not
+ * failed. Descending counts: a failed sensor near apogee must not close the
+ * window for good, and arming late is safe -- apogee has its own tests. */
 static bool arming_gate_met(const flight_context_t *ctx) {
-    return !ctx->pyros_armed && ctx->arm_height && ctx->max_speed_cms >= ARM_SPEED_CMS &&
-           ctx->vertical_speed_cms < ARM_SPEED_CMS && ctx->vertical_speed_cms >= 0;
+    return !ctx->pyros_armed && ctx->arm_height && !ctx->fit_suspect && ctx->max_speed_cms >= ARM_SPEED_CMS &&
+           ctx->vertical_speed_cms < ARM_SPEED_CMS;
 }
 
 /* The peak is the lowest pressure a clean fit has shown. */
@@ -918,13 +981,17 @@ static bool apogee_seen(flight_context_t *ctx, const altitude_sample_t *s, uint3
     return true;
 }
 
+/* Every decision here is on sample time [FLT-RATE-05]; `now` only watches for
+ * samples that stop coming. */
 static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
-    (void)now; /* every decision here is on sample time [FLT-RATE-05] */
+    watch_sensor(ctx, now);
     altitude_sample_t sample;
     if (!pp_read(&sample))
         return SEVT_NONE;
     uint32_t ts = sample.timestamp_ms;
     ascent_take(ctx, &sample);
+    ctx->sensor_lost = false;
+    note_stuck(ctx, &sample);
     state_event_t lock_evt = mach_lockout(ctx, &sample, ts);
     if (!ctx->mach_lock)
         track_peak(ctx, &sample);
@@ -1049,7 +1116,8 @@ static bool band_exceeded(flight_context_t *ctx, uint32_t ts, int32_t ceiling) {
 static bool drogue_failing(flight_context_t *ctx, uint32_t now, uint32_t drogue_cmd_ms) {
     uint32_t ts = ctx->last_sample;
     int32_t rate = ctx->vertical_speed_cms < 0 ? -ctx->vertical_speed_cms : 0;
-    if (rate <= DESC_DROGUE_CMS || now - drogue_cmd_ms < EMRG_DROGUE_GRACE_MS) {
+    /* A failed sensor's speed is no evidence [SNS-PRES-10, SNS-PRES-11]. */
+    if (rate <= DESC_DROGUE_CMS || ctx->fit_suspect || now - drogue_cmd_ms < EMRG_DROGUE_GRACE_MS) {
         ctx->emrg_fail_since = 0;
         return false;
     }
@@ -1066,7 +1134,7 @@ static bool drogue_failing(flight_context_t *ctx, uint32_t now, uint32_t drogue_
  * re-firing an empty channel spends altitude the main still needs
  * [PYR-REFIRE-02]. */
 static void retry_drogue(flight_context_t *ctx, uint32_t now, bool canopy_working) {
-    bool panic = ctx->vertical_speed_cms < 0 && descent_rate(ctx) >= EMRG_MAIN_PANIC_CMS;
+    bool panic = ctx->vertical_speed_cms < 0 && descent_rate(ctx) >= EMRG_MAIN_PANIC_CMS && !ctx->fit_suspect;
     if (canopy_working || (!panic && now - ctx->pyro1_fire_time < EMRG_DROGUE_GRACE_MS))
         return;
     /* A refused retry is spent too: asked again it would only be refused, and
@@ -1129,15 +1197,17 @@ static bool landing_detected(flight_context_t *ctx, uint32_t now, int32_t prev_a
  * tested, so a trigger sees this sample and not the one before it; the
  * previous altitude is handed back for landing detection. */
 static bool descent_sample(flight_context_t *ctx, uint32_t now, flight_state_t st, int32_t *prev_out) {
-    (void)now; /* the row is logged at the sample's time [DAT-02] */
+    watch_sensor(ctx, now); /* the row is logged at the sample's time [DAT-02] */
     altitude_sample_t sample;
     if (!pp_read(&sample))
         return false;
+    ctx->sensor_lost = false;
     ctx->filtered_pressure = pp_last_filtered_pa();
     ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
     ctx->vertical_speed_cms = sample_speed(ctx, &sample);
     take_fit(ctx, &sample);
     buf_add(ctx, sample.timestamp_ms - ctx->launch_time, ctx->filtered_pressure, sample.altitude_cm, st);
+    note_stuck(ctx, &sample);
     ctx->last_sample = sample.timestamp_ms;
     *prev_out = ctx->last_altitude;
     ctx->last_altitude = sample.altitude_cm;
@@ -1633,6 +1703,10 @@ const char *flight_diag_name(uint16_t bit) {
         return "pyro2_short";
     case DIAG_BROWNOUT:
         return "brownout_recovered";
+    case DIAG_SENSOR_STUCK:
+        return "sensor_stuck";
+    case DIAG_SENSOR_LOST:
+        return "sensor_lost";
     default:
         return "";
     }

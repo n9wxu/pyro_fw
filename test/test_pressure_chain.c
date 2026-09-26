@@ -1643,6 +1643,54 @@ void test_T5_sigma(void) {
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 2.5f, pp_sigma_pa());
 }
 
+/* [SNS-PRES-09] σ is the pad's, not the launch's: the first 50 Pa of a climb
+ * pass the ground gate, and a fit through the ignition is no measure of the
+ * sensor. */
+static float sigma_before_ignition;
+static uint32_t sigma_ignition_ms;
+
+static void note_sigma(const truth_t *tr) {
+    (void)tr;
+    if (ctx.last_sample < sigma_ignition_ms)
+        sigma_before_ignition = pp_sigma_pa();
+}
+
+void test_T5_sigma_ignores_the_launch(void) {
+    const flight_t boosts[] = {{2.0f, 3.0f, 20.0f, 0.0f},
+                               {5.0f, 2.0f, 20.0f, 0.0f},
+                               {15.0f, 1.2f, 20.0f, 0.0f},
+                               {30.0f, 1.0f, 20.0f, 0.0f}};
+    char bad[256] = "";
+    for (unsigned i = 0; i < sizeof(boosts) / sizeof(boosts[0]); i++) {
+        const flight_t f = boosts[i];
+        /* Noisier than the floor, so the pad's measurement shows. */
+        boot_like_hardware(19);
+        mock_noise_rms_pa = 3.0f;
+        uint32_t t = 0;
+        uint32_t pad = run_to_pad(&t);
+        sigma_ignition_ms = pad + 12000u;
+        truth_t tr = {0};
+        uint32_t last = ctx.last_sample;
+        for (; t < pad + 20000u; t++) {
+            truth_step(&tr, &f, ((float)t - (float)sigma_ignition_ms) / 1000.0f);
+            mock_pressure.pressure_pa = isa_pa(tr.h);
+            tick(t);
+            if (ctx.last_sample != last)
+                note_sigma(&tr);
+            last = ctx.last_sample;
+        }
+        /* Within what a five-second mean wanders in a second or so. */
+        float after = pp_sigma_pa();
+        if (ctx.current_state == PAD_IDLE || fabsf(after - sigma_before_ignition) > 0.05f * sigma_before_ignition) {
+            char item[64];
+            snprintf(item, sizeof(item), " %.0f g: %.2f Pa before, %.2f after;", (double)boosts[i].g_net,
+                     (double)sigma_before_ignition, (double)after);
+            strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
 /* [FLT-APO-01] Apogee on the fit: never before the true apogee, and as soon
  * after it as the 1.0001 drop allows. Timed by the decision's own sample,
  * against the moment the true pressure first stood 1.0001 above its minimum:
@@ -1954,6 +2002,7 @@ int main(void) {
     RUN_TEST(test_T5_fit_noise);
     RUN_TEST(test_T5_clean);
     RUN_TEST(test_T5_sigma);
+    RUN_TEST(test_T5_sigma_ignores_the_launch);
     RUN_TEST(test_T5_apogee);
     RUN_TEST(test_T5_speed_and_delay_triggers);
     RUN_TEST(test_T5_descent_glitch);

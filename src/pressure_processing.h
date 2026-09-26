@@ -41,7 +41,11 @@ typedef struct {
     int32_t speed_cms; /* up is positive */
     int32_t accel_cms2;
     bool fit_valid;
-    bool fit_clean; /* residuals no bigger than pp_sigma_pa() explains */
+    bool fit_clean; /* residuals no bigger than pp_sigma_pa() explains, and not suspect */
+    /* The window holds a gap or a stuck run [SNS-PRES-10, SNS-PRES-11]: no
+     * fit is clean until a whole window of new samples exists. */
+    bool fit_suspect;
+    bool sensor_stuck; /* the whole window is one reading, to the pascal */
     /* The rate over the newest two intervals, Pa/s: far noisier than the
      * fit's, but through a hard boost's first second the fit still holds the
      * pad and under-reads the climb. For the Mach flag only [FLT-MACH-02]. */
@@ -155,6 +159,10 @@ uint32_t pp_ground_reseeds(void);
 #define PP_SIGMA_CEIL_PA 5.0f
 float pp_sigma_pa(void);
 void pp_set_sigma(float sigma_pa);
+
+/* [SNS-PRES-11] An interval this long is a gap: longer than a flash stall
+ * (73 ms) and a sample together, so a stall is never one. A design constant. */
+#define PP_GAP_US 250000u
 
 /* ── Recent history [FLT-BROWN-02] ────────────────────────────────
  *

@@ -108,6 +108,9 @@ rationale and the alternatives considered.
 
 ### DD-017: Arming Requires Confirmed Motor Burn
 - **Decision:** Pyro arming requires max vertical speed during ASCENT exceeded 10 m/s.
+- **Amended by DD-050:** "slowed below it" is all: arming descending counts,
+  so a failed sensor near apogee cannot close the window for good. And not on
+  a suspect fit.
 - **Amended by DD-049:** and not before p < 0.9965·p0, about 30 m climbed.
 - **Amended by DD-048:** 10 m/s of true speed, the fit's. This read 20 m/s
   while the speed was the filter's, on the assumption that the filter halved
@@ -546,6 +549,53 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-050: A Failed Sensor Never Deploys Anything
+- **Decision:** the pressure layer marks a fit suspect while its window holds
+  a gap longer than 250 ms, or a whole window of one reading, and for a whole
+  window after either (SNS-PRES-10, SNS-PRES-11). A suspect fit is never
+  clean. It holds the Mach lock and every pressure trigger with no time limit,
+  and cannot set the Mach flag, arm the pyros or feed the emergency ladder. A
+  whole window of one reading is a stuck sensor. No sample for 0.5 s in
+  flight is a lost one. Each sets a DIAG bit, which `/api/status` lists by
+  name, and logs SENSOR_STUCK or SENSOR_LOST, with a telemetry line. The
+  flight carries on once the sensor answers again.
+- **Why:** the Mach prompt requires that a failed sensor never cause a
+  deployment, and so does DD-022. Out-of-range readings were already
+  discarded (DD-036); nothing noticed the other failures. A stuck value reads
+  as a rocket that has stopped.
+- **250 ms** is longer than a flash stall (73 ms) and a sample together, so a
+  stall is never a gap. A real sensor with the MS5607's noise never reads as
+  stuck in an hour on the pad.
+- **What the tests found on the way:**
+  - A gap longer than the window left only new samples in it, too few to
+    see the gap: the main fired 0.16 s after a 2 s loss. A gap ending at the
+    window's edge now counts.
+  - A stuck sensor coming back jumps by the climb it missed. The 40 ms rate
+    read that as a supersonic climb and set the Mach flag, which then could
+    neither release nor fall back: a flight that never deployed. Suspect fits
+    no longer flag, and a flag from an unclean fit takes the sample's reading
+    as p_flag, not the spoiled fit's pressure.
+  - Arming needed the speed between 0 and 10 m/s, a window about a second
+    wide just before apogee. Half a second of rejected readings there closed
+    it for good. Arming now needs only "below 10 m/s", since arming late is
+    safe and apogee has its own tests (DD-017).
+- **Two corrections to T5 (DD-048), found through M2's closed-loop guards:**
+  - σ was measured through the first 50 Pa of every launch, which pass the
+    ground's gate. A fit through the ignition inflated it by 15-90 %, and a
+    loose σ let spoiled fits count as clean. σ is now frozen at launch to its
+    value from a second before T+0 (`test_T5_sigma_ignores_the_launch`).
+  - With σ honest, a main set 60 m below a drogue that opens at 105 m/s
+    waited out the opening's shock and fired 9 m low. After a charge, an
+    unclean fit is now believed if it reads no lower than the last clean fit
+    carried on ballistically (PYR-MODE-06). A bay charge reads the rocket
+    lower than it is; a canopy opening reads it higher than a ballistic
+    fall. The 5 kPa ejection test still holds the main to 0.6 m.
+- **The honest σ moved the lockout's figures** (DD-049): the locks now let go
+  at Mach 0.34-0.49, 8.5-16 s before apogee, and the mid-Mach flights 2.2-2.6 s
+  after burnout. `test_M1_mid_mach_releases` allows 3 s: the burnout's step
+  leaving the window, slowing below the release speed, then the release's
+  second.
+
 ### DD-049: The Mach Lockout
 - **Decision:** the Mach gate goes, and the prompt's lockout replaces it
   (`docs/mach_lockout.md`, FLT-MACH-02..07). A latch inside ASCENT:
@@ -567,9 +617,9 @@ rationale and the alternatives considered.
   read as a descent fired the drogue 39 s before apogee, at Mach 1.27.
 - **What M0's harness shows now:**
   - every profile is flagged by Mach 0.82, before its port error can begin;
-  - every lock lets go at Mach 0.41-0.49 after burnout, 9-16 s before apogee,
-    and at least 15.5 s before it on the low-drag flight to 10 km from the hot
-    pad, over 1000 seeds;
+  - every lock lets go at Mach 0.34-0.49 after burnout, 8.5-16 s before
+    apogee, and at least 14.3 s before it on the low-drag flight to 10 km from
+    the hot pad, over 1000 seeds (after DD-050's correction to σ);
   - every drogue comes 0.38-0.50 s after apogee, with the port error of
     either sign or none;
   - M0's fakes-descent port, scaled from 0.1 to 4 times either way, never
@@ -606,7 +656,8 @@ rationale and the alternatives considered.
 
   A fit is clean when its residual RMS is within 2σ and every residual within
   4σ. σ is the fit's own residual noise, measured on the pad over about five
-  seconds, floored at the MS5607's 1.2 Pa and capped at 5 Pa. The pad marker
+  seconds, floored at the MS5607's 1.2 Pa and capped at 5 Pa, and frozen at
+  launch to its value from a second before T+0 (DD-050). The pad marker
   (version 2) carries it to a recovered flight, and `/api/status` shows it as
   `fit_sigma_mpa`.
 - **Why:** speed was a two-point difference of the filtered height, computed

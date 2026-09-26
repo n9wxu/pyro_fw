@@ -176,8 +176,8 @@ ground bias, and the stall figure, where they used a different stall model.
 | Sample timestamps | loop ms at the temperature read, 16 ms after the conversion, up to 127 ms after it through a stall; stalls raise the worst speed error at 100 m/s from 8.3 to 9.3 m/s | hardware timer at the pressure conversion: done (through stalls 6.5 m/s against 6.1) | T11 |
 | Fit-based speed and acceleration through flash stalls | worst −294 m/s and 441 m/s² with today's stamps (earlier experiments; T11 re-measures) | RMS 1.2 m/s and 3.5 m/s², stalls or not: speed done, 0.2 m/s RMS at 100 m/s, 0.8 m/s worst calm and 0.7 through stalls | T11, T5 |
 | A flight above 8 km AGL | apogee fired 14.9 s early, at the clamp (N26) | apogee at the real apogee: done | T3 |
-| Supersonic flight with a static-port error | a port error that makes the boost read as a descent fired the low-drag flight's drogue 39 s before apogee, at Mach 1.27 | no drogue before the true apogee, on every M0 profile, by a lockout: done, every drogue 0.38-0.50 s after apogee; flagged by Mach 0.82, released at Mach 0.41-0.49 | M1 |
-| A sensor stuck or lost in flight | a stuck value may read as apogee | never causes a deployment | M2 |
+| Supersonic flight with a static-port error | a port error that makes the boost read as a descent fired the low-drag flight's drogue 39 s before apogee, at Mach 1.27 | no drogue before the true apogee, on every M0 profile, by a lockout: done, every drogue 0.38-0.50 s after apogee; flagged by Mach 0.82, released at Mach 0.34-0.49 | M1 |
+| A sensor stuck or lost in flight | a stuck value may read as apogee | never causes a deployment: done, and a stuck, gapped or lost sensor holds every decision until a whole window of new samples | M2 |
 | Real flights replayable offline | no (raw pressure not logged) | yes | T8 |
 | MS5607 sample rate | 50 Hz | ~90 Hz | T9 |
 
@@ -809,7 +809,8 @@ plan:
   faking a descent read the climb below the pad.
 - `test_M1_mid_mach_releases` checks the flights that pass the flag. At the
   hot pad Mach 0.76 barely does, and a peak of 0.65 never would. Both pads'
-  flights released within 2 s of burnout.
+  flights released within 2 s of burnout; after M2 corrected σ, 2.2-2.6 s,
+  and the test allows 3 s.
 - `test_M1_fallback` forces the release off with ports too noisy for any
   clean fit through the coast, not with a switch in the code.
 - `test_M1_minimum_altitude_arm` and `test_M1_recovered_ascent_locked` are in
@@ -911,6 +912,28 @@ amend DD-017; rewrite `docs/flight_states.md`'s Mach gate section.
 ---
 
 ### M2. Sensor failure in flight
+
+**Done 2026-09-26** (DD-050), except the bench's `faults` list on a board
+(G4). Before the change `test_M2_dropout_in_coast`, `test_M2_lost` and
+`test_M2_reported` failed as they should. `test_M2_stuck_in_coast` passed as a
+guard: T5's fit reads a stuck value as flat, and apogee wants the pressure
+rising. `test_M2_out_of_range` and `test_M2_real_sensor_never_stuck` are
+guards by design. Differences from the plan:
+- The requirements are SNS-PRES-10 and SNS-PRES-11: T5 took SNS-PRES-09.
+- A gap is an interval over 250 ms: longer than a flash stall and a sample,
+  shorter than the 0.5 s dropout. One ending at the window's edge counts,
+  because after a long gap the window holds only new samples.
+- A suspect fit also cannot set the Mach flag, arm, or feed the emergency
+  ladder. A stuck sensor coming back had flagged a supersonic climb, and the
+  flight never deployed.
+- Arming needs only "below 10 m/s": the 0-10 m/s window just before apogee
+  closed for good after half a second of rejected readings (DD-017).
+- Two corrections to T5 came with it, found by the closed-loop guard. σ is
+  frozen at launch to its value from a second before T+0; the launch had
+  inflated it by 15-90 % (`test_T5_sigma_ignores_the_launch`). After a
+  charge, an unclean fit reading no lower than a ballistic continuation of
+  the last clean fit is believed (PYR-MODE-06). The honest σ moved M1's
+  release figures; `test_M1_mid_mach_releases` now allows 3 s after burnout.
 
 **Why:** the Mach prompt requires a defined response to a stuck, out-of-range
 or lost sensor, and that a failed sensor never cause a deployment. That is

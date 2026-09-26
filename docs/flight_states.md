@@ -206,6 +206,18 @@ telemetry line. Arming also needs `p < 0.9965 p0` to have been seen. The
 reported peak (`max_altitude`) is the height at p_min, so the locked interval
 never reaches it.
 
+## A failed sensor
+
+The pressure layer marks a sample's fit suspect while its window holds a gap
+over 250 ms or a whole window of one reading, and for a window after either
+(`fit_suspect`; DD-050, SNS-PRES-10, SNS-PRES-11). A suspect fit is not clean,
+and more: it cannot set the Mach flag, arm the pyros or feed the emergency
+ladder, and the pressure triggers wait on it with no time limit. A window of
+one reading is a stuck sensor (`sensor_stuck`, DIAG `sensor_stuck`,
+SENSOR_STUCK), in any state. No sample for 0.5 s in ASCENT or a descent state
+is a lost one (`sensor_lost`, DIAG `sensor_lost`, SENSOR_LOST). The DIAG bits
+stay; the flight carries on when the sensor answers again.
+
 ---
 
 ## Per state

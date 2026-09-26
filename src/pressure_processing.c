@@ -47,6 +47,8 @@ static struct {
     } hist;
 
     float sigma_sq; /* 0: not measured */
+    uint32_t suspect_until_us; /* fits are suspect before this [SNS-PRES-10/11] */
+    bool suspect;
 
     /* IIR filter state */
     int32_t filtered_q8; /* pascals x 256 [SNS-PRES-02] */
@@ -66,6 +68,7 @@ static struct {
         int64_t sum[PP_GROUND_BLOCKS]; /* filtered Pa summed within a block */
         uint16_t n[PP_GROUND_BLOCKS];
         uint32_t start[PP_GROUND_BLOCKS]; /* when each block began */
+        float sigma_sq[PP_GROUND_BLOCKS]; /* the fit's noise as each block closed */
         uint8_t cur;                      /* block being filled */
         uint32_t block_start_ms;
         uint8_t filled;        /* blocks that have ever been written */
@@ -119,6 +122,7 @@ static void gnd_feed(int32_t filtered_pa, uint32_t now_ms) {
         pp.gnd.start[pp.gnd.cur] = now_ms;
     }
     if (now_ms - pp.gnd.block_start_ms >= PP_GROUND_BLOCK_MS) {
+        pp.gnd.sigma_sq[pp.gnd.cur] = pp.sigma_sq;
         pp.gnd.cur = (uint8_t)((pp.gnd.cur + 1) % PP_GROUND_BLOCKS);
         pp.gnd.sum[pp.gnd.cur] = 0;
         pp.gnd.n[pp.gnd.cur] = 0;
@@ -150,8 +154,29 @@ bool pp_ground_tracking(void) {
     return pp.gnd.tracking;
 }
 
+/* [SNS-PRES-09] σ as it stood a second before t_ms: the first 50 Pa of the
+ * climb pass the ground's gate, and a fit through the ignition measures the
+ * boost, not the sensor. A second of margin, because a slow rise through
+ * the noise can cross T+0's half metre, fall back and cross it again well
+ * after the ignition; σ averages over five, so it costs nothing. */
+#define SIGMA_FREEZE_MARGIN_MS 1000u
+
+static void sigma_freeze_before(uint32_t t_ms) {
+    int best = -1;
+    for (int i = 0; i < PP_GROUND_BLOCKS; i++) {
+        if (i == pp.gnd.cur || pp.gnd.n[i] == 0 || pp.gnd.sigma_sq[i] <= 0.0f ||
+            (int32_t)(t_ms - (pp.gnd.start[i] + PP_GROUND_BLOCK_MS + SIGMA_FREEZE_MARGIN_MS)) < 0)
+            continue;
+        if (best < 0 || (int32_t)(pp.gnd.start[i] - pp.gnd.start[best]) > 0)
+            best = i;
+    }
+    if (best >= 0)
+        pp.sigma_sq = pp.gnd.sigma_sq[best];
+}
+
 bool pp_ground_freeze_before(uint32_t t_ms) {
     pp.gnd.tracking = false;
+    sigma_freeze_before(t_ms);
     int64_t total = 0;
     uint32_t count = 0;
     uint32_t span_ms = 0;
@@ -400,21 +425,61 @@ void pp_set_sigma(float sigma_pa) {
     pp.sigma_sq = sigma_pa * sigma_pa;
 }
 
-/* The history's last second, oldest first. */
-static pfit_t fit_history(void) {
+/* The history's last second, oldest first, and what it says of the sensor:
+ * the end of the newest gap in it (0: none), and whether it is all one
+ * reading. */
+typedef struct {
+    pfit_t fit;
+    uint32_t gap_end_us;
+    bool stuck;
+} window_t;
+
+static window_t fit_history(void) {
     static uint32_t t[PP_HIST_SIZE];
     static int32_t p[PP_HIST_SIZE];
+    window_t w = {.gap_end_us = 0, .stuck = true};
     unsigned newest = (pp.hist.head + PP_HIST_SIZE - 1u) & (PP_HIST_SIZE - 1u);
     int n = 0;
+    uint32_t prev_us = 0;
+    bool have_prev = false;
     for (unsigned i = pp.hist.n; i-- > 0;) {
         unsigned k = (pp.hist.head + PP_HIST_SIZE - 1u - i) & (PP_HIST_SIZE - 1u);
-        if (pp.hist.us[newest] - pp.hist.us[k] > PFIT_WINDOW_US)
+        uint32_t us = pp.hist.us[k];
+        /* A gap ending inside the window counts, the one from the last
+         * sample before it too: after a long one the window holds only new
+         * samples, and too few of them. */
+        bool gap = have_prev && us - prev_us > PP_GAP_US;
+        prev_us = us;
+        have_prev = true;
+        if (pp.hist.us[newest] - us > PFIT_WINDOW_US)
             continue;
-        t[n] = pp.hist.us[k];
+        if (gap)
+            w.gap_end_us = us;
+        t[n] = us;
         p[n] = pp.hist.pa[k];
+        w.stuck &= n == 0 || p[n] == p[0];
         n++;
     }
-    return pfit_quadratic(t, p, n);
+    w.fit = pfit_quadratic(t, p, n);
+    /* A whole window of it, give or take the sampling's jitter. */
+    w.stuck &= n >= PFIT_MIN_SAMPLES && t[n - 1] - t[0] >= PFIT_WINDOW_US - 50000u;
+    return w;
+}
+
+/* [SNS-PRES-10, SNS-PRES-11] A gap, or a stuck run, keeps every fit suspect
+ * until a whole window of new samples exists: its end plus a window. */
+static bool suspect_after(const window_t *w, uint32_t newest_us) {
+    if (w->gap_end_us && (!pp.suspect || (int32_t)(w->gap_end_us + PFIT_WINDOW_US - pp.suspect_until_us) > 0)) {
+        pp.suspect_until_us = w->gap_end_us + PFIT_WINDOW_US;
+        pp.suspect = true;
+    }
+    if (w->stuck) {
+        pp.suspect_until_us = newest_us + PFIT_WINDOW_US;
+        pp.suspect = true;
+    }
+    if (pp.suspect && (int32_t)(newest_us - pp.suspect_until_us) >= 0)
+        pp.suspect = false;
+    return pp.suspect;
 }
 
 static float short_rate(void) {
@@ -442,11 +507,15 @@ static void measure_sigma(const pfit_t *f, uint32_t dt_ms) {
 /* h = 44330 (1 - r^n), r = p/p0: dh/dp = -44330 n r^n / p, and
  * d2h/dp2 = -44330 n (n - 1) r^n / p^2. Metres and pascals. */
 static void fit_sample(altitude_sample_t *s, uint32_t dt_ms) {
-    pfit_t f = fit_history();
-    measure_sigma(&f, dt_ms);
+    window_t w = fit_history();
+    pfit_t f = w.fit;
+    s->fit_suspect = suspect_after(&w, s->timestamp_us);
+    s->sensor_stuck = w.stuck;
+    if (!s->fit_suspect)
+        measure_sigma(&f, dt_ms);
     s->short_pdot = short_rate();
     s->fit_valid = f.valid;
-    s->fit_clean = pfit_clean(&f, pp_sigma_pa());
+    s->fit_clean = !s->fit_suspect && pfit_clean(&f, pp_sigma_pa());
     if (!f.valid || f.p <= 0.0f || pp.ground_pressure <= 0)
         return;
     const float n = 1.0f / 5.2561f;

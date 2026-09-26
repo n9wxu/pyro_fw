@@ -22,7 +22,7 @@
 #define EVT_MACH_UNLOCK 6   /* released on a coast's signature [FLT-MACH-03] */
 #define EVT_LANDING 7
 #define EVT_MACH_FALLBACK 8 /* the lock never released; apogee from the fallback [FLT-MACH-04] */
-/* 10 is unassigned. */
+#define EVT_SENSOR_STUCK 10 /* a whole window of one reading [SNS-PRES-10] */
 #define EVT_ARMED 9
 #define EVT_PYRO1_FAULT 11
 #define EVT_PYRO2_FAULT 12
@@ -31,6 +31,7 @@
 #define EVT_PYRO1_REFUSED 15 /* commanded, and the board energised nothing */
 #define EVT_PYRO2_REFUSED 16
 #define EVT_MAIN_FORCED 17 /* the emergency ladder overrode pyro2's trigger */
+#define EVT_SENSOR_LOST 18 /* no sample for 0.5 s in flight [SNS-PRES-11] */
 
 static inline const char *flight_event_name(uint8_t evt) {
     switch (evt) {
@@ -66,6 +67,10 @@ static inline const char *flight_event_name(uint8_t evt) {
         return "PYRO2_REFUSED";
     case EVT_MAIN_FORCED:
         return "MAIN_FORCED";
+    case EVT_SENSOR_STUCK:
+        return "SENSOR_STUCK";
+    case EVT_SENSOR_LOST:
+        return "SENSOR_LOST";
     default:
         return "";
     }

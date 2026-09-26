@@ -62,8 +62,8 @@ rocket's terminal velocity: about 3 s even for v_t = 20 m/s, and a rocket that
 draggy cannot reach Mach 1. The release takes at most about 2 s once the data
 is clean (one fit window, then the one-second release). The data is clean
 again from Mach 0.85, above the release speed, so the release's latency does
-not eat into the coast. On M0's profiles the lock lets go 9-16 s before
-apogee, and on the low-drag flight to 10 km from the hot pad at least 15.5 s
+not eat into the coast. On M0's profiles the lock lets go 8.5-16 s before
+apogee, and on the low-drag flight to 10 km from the hot pad at least 14.3 s
 before it, over 1000 seeds.
 
 ## Physics in raw pressure
@@ -104,8 +104,9 @@ arm height:
 - **Set flag** (physical). The hottest air has the smallest rate per Mach, so
   in any air the flag goes up before Mach 0.85. Colder air flags earlier,
   which is the safe direction. A rocket whose peak falls between the flag and
-  Mach 0.85 is flagged for nothing, and released within about 2 s of burnout
-  (`test_M1_mid_mach_releases`: 1.9 s).
+  Mach 0.85 is flagged for nothing, and released within 3 s of burnout: the
+  burnout's step leaves the window, the rocket slows below the release speed,
+  then the release's second (`test_M1_mid_mach_releases`: 2.2-2.6 s).
 - **Release: slow** (physical). Also taken in the hottest air, so the true
   Mach at release never exceeds 0.57. It also requires climbing: the release
   must witness an upward coast, and apparent descent while locked is exactly
@@ -123,7 +124,8 @@ arm height:
   outside the lock (T5-A, DD-048). The prompt's 1.0005 is 3-5 m, and would put
   the drogue 0.8-1.0 s after apogee; this is about 0.4 s.
 - **Fallback**: locked, fitted ṗ > 0 on clean fits, and p > p_flag, both for
-  1 s (physical). p_flag is the fitted pressure when the flag went up. A
+  1 s (physical). p_flag is the fitted pressure when the flag went up, or the
+  sample's own reading if that fit was not clean (DD-050). A
   pressure error bigger than the whole climb since then is not credible, so a
   clean, sustained descent past that level is real. This deployment is late,
   never early.
@@ -211,7 +213,7 @@ flag; 0: never) and `peak_lower_bound`.
   `test_M1_port_error_margin` scales M0's fakes-descent port, which turns a
   boost into an apparent descent, from 0.1 to 4 times, both signs, on the
   draggy, low-drag and 30 g profiles. The lock held through every one. It let
-  go at Mach 0.41-0.45 after burnout, never in the error, and every drogue
+  go at Mach 0.34-0.45 after burnout, never in the error, and every drogue
   came after apogee. M0's port is one shape: an error that grows with Mach and
   steps at Mach 1. An airframe whose error in the supersonic coast happened to
   fall as a smooth quadratic, cancelling most of the true rate, is the case
@@ -228,9 +230,14 @@ flag; 0: never) and `peak_lower_bound`.
   40 ms rate. It is the safe direction: the lock releases after a second of
   clean coast. Within about 2 s of apogee it cannot, and the fallback deploys
   a second or two late.
-- **σ is the pad's.** A sensor noisier in flight than on the pad makes more
-  fits unclean. That delays the release and the apogee; it never releases
-  early.
+- **σ is the pad's,** frozen from a second before T+0. A sensor noisier in
+  flight than on the pad makes more fits unclean. That delays the release and
+  the apogee; it never releases early.
+- **A failed sensor holds everything** (DD-050): a stuck run or a gap in the
+  window makes every fit suspect until a whole window of new samples exists.
+  The lock can neither be set nor released by it, and no pressure trigger
+  acts on it, however long it lasts. A sensor that sticks before apogee and
+  never recovers deploys nothing.
 - **The air's temperature is not measured.** Every threshold is taken at the
   envelope's worst end, so colder air only flags earlier and releases later.
 

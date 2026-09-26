@@ -62,6 +62,10 @@ typedef struct {
     mp_charge_t charge; /* all zero: no pressure in the bay */
     float dropout_at_s, dropout_s;
     float stuck_at_s; /* 0: never */
+    float stuck_s;    /* 0: for good */
+    float glitch_at_s; /* mock_glitch_pa for glitch_n readings from here; 0: none */
+    int32_t glitch_pa;
+    int glitch_n;
     float swing_rms_pa; /* under a canopy, until touchdown */
     uint16_t main_m;    /* an AGL main at this height; 0: the default channels */
     float main_ms;      /* the main's descent rate; 0: the main changes nothing */
@@ -112,6 +116,7 @@ static mach_result_t fly_mach(const mp_rocket_t *r, const mp_site_t *s, const co
     mp_launch(&st);
     int fires = 0;
     float charge_at = -1.0f;
+    bool glitched = false;
     for (; t < ign + (uint32_t)(until_s * 1000.0f); t++) {
         float tf = ((float)t - (float)ign) / 1000.0f;
         if (tf >= 0.0f)
@@ -125,7 +130,12 @@ static mach_result_t fly_mach(const mp_rocket_t *r, const mp_site_t *s, const co
         mock_pressure.pressure_pa = sensed;
         bool out = c->dropout_s > 0.0f && tf >= c->dropout_at_s && tf < c->dropout_at_s + c->dropout_s;
         mock_pressure.sensor_type = out ? 0 : 2;
-        mock_sensor_stuck = c->stuck_at_s > 0.0f && tf >= c->stuck_at_s;
+        mock_sensor_stuck = c->stuck_at_s > 0.0f && tf >= c->stuck_at_s && (c->stuck_s <= 0.0f || tf < c->stuck_at_s + c->stuck_s);
+        if (c->glitch_n > 0 && tf >= c->glitch_at_s && !glitched) {
+            mock_glitch_pa = c->glitch_pa;
+            mock_glitch_samples = c->glitch_n;
+            glitched = true;
+        }
         if (c->swing_rms_pa > 0.0f)
             mock_noise_rms_pa = st.canopy && !st.landed ? c->swing_rms_pa : SENSOR_RMS_PA;
         if (c->coast_noise_pa > 0.0f) {
@@ -521,7 +531,9 @@ void test_M1_flag_before_mach_085(void) {
 }
 
 /* [FLT-MACH-03] A peak between the flag and Mach 0.85 is locked for nothing,
- * and let go within the release window plus 1.5 s of burnout. */
+ * and let go soon after burnout: once the burnout's step has left the fit's
+ * window (1 s) and the rocket has slowed below the release speed, a second of
+ * the coast's signature. Within 3 s, and well before apogee. */
 void test_M1_mid_mach_releases(void) {
     const mp_rocket_t *rk = &PROFILES[MID_MACH].r;
     char bad[256] = "";
@@ -537,7 +549,7 @@ void test_M1_mid_mach_releases(void) {
         flagged++;
         printf("  mid-Mach %s: flagged at Mach %.2f, released %.2f s after burnout at Mach %.2f\n", si ? "hot" : "cold",
                (double)r.flag_mach, (double)(r.release_t - rk->burn_s), (double)r.release_mach);
-        if (!r.released || r.release_t - rk->burn_s > 2.5f) {
+        if (!r.released || r.release_t - rk->burn_s > 3.0f || r.apogee_t - r.release_t < 5.0f) {
             char item[64];
             snprintf(item, sizeof(item), " %s: released %s;", si ? "hot" : "cold", r.released ? "late" : "never");
             strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
@@ -800,6 +812,145 @@ void test_M1_port_error_margin(void) {
     TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
 }
 
+/* ── M2: sensor failure in flight ─────────────────────────────────── */
+
+static bool log_has(const char *event) {
+    static char log[65536];
+    int n = hal_fs_read_file("flight_log.csv", log, (int)sizeof(log) - 1);
+    if (n <= 0)
+        return false;
+    log[n] = '\0';
+    char field[40];
+    snprintf(field, sizeof(field), ",%s", event);
+    return strstr(log, field) != NULL;
+}
+
+/* [SNS-PRES-10] A sensor that sticks in coast, and stays stuck, deploys
+ * nothing: armed on the subsonic flight, locked on the mid-Mach one. */
+void test_M2_stuck_in_coast(void) {
+    const struct {
+        unsigned prof;
+        bool locked;
+    } cases[] = {{SUBSONIC, false}, {MID_MACH, true}};
+    char bad[256] = "";
+    for (unsigned i = 0; i < 2; i++) {
+        const mp_rocket_t *rk = &PROFILES[cases[i].prof].r;
+        conditions_t c;
+        memset(&c, 0, sizeof(c));
+        c.stuck_at_s = cases[i].locked ? rk->burn_s + 0.5f : plant_apogee_t(rk, &COLD) - 0.5f;
+        mach_result_t r = fly_mach(rk, &COLD, &c, 12, 120.0f);
+        bool state_ok = cases[i].locked ? ctx.mach_lock || !r.released : ctx.pyros_armed;
+        if (mock_pyro.fire_count != 0 || !state_ok) {
+            char item[96];
+            snprintf(item, sizeof(item), " %s: %d fires, %s;", PROFILES[cases[i].prof].name, mock_pyro.fire_count,
+                     state_ok ? "as it should be" : (cases[i].locked ? "not locked" : "not armed"));
+            strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
+/* [SNS-PRES-11] Half a second without samples, across the apogee: no fit is
+ * clean until a whole window of new samples exists, so the apogee waits for
+ * it. */
+void test_M2_dropout_in_coast(void) {
+    const mp_rocket_t *rk = &PROFILES[SUBSONIC].r;
+    conditions_t c;
+    memset(&c, 0, sizeof(c));
+    c.dropout_at_s = plant_apogee_t(rk, &COLD) - 0.3f;
+    c.dropout_s = 0.5f;
+    c.stop_after_apogee = true;
+    mach_result_t r = fly_mach(rk, &COLD, &c, 13, 120.0f);
+    float back = c.dropout_at_s + c.dropout_s;
+    char msg[128];
+    snprintf(msg, sizeof(msg), "samples back at %.2f s, drogue at %.2f s, apogee at %.2f s", (double)back,
+             (double)r.drogue_t, (double)r.apogee_t);
+    TEST_ASSERT_TRUE_MESSAGE(r.drogue && r.drogue_t >= r.apogee_t, msg);
+    TEST_ASSERT_TRUE_MESSAGE(r.drogue_t >= back + 1.0f, msg);
+}
+
+/* [SNS-PRES-11] Two seconds without samples under the drogue, the main set
+ * where the rocket falls meanwhile: the loss is flagged, and the main waits
+ * for a whole window of new samples rather than fire on the old ones. */
+void test_M2_lost(void) {
+    const mp_rocket_t *rk = &PROFILES[SUBSONIC].r;
+    float ap_t = plant_apogee_t(rk, &ISA);
+    conditions_t c;
+    memset(&c, 0, sizeof(c));
+    c.main_m = (uint16_t)(plant_apogee(rk, &ISA) - 100.0f);
+    c.dropout_at_s = ap_t + 4.5f;
+    c.dropout_s = 2.0f;
+    mach_result_t r = fly_mach(rk, &ISA, &c, 14, 120.0f);
+    float back = c.dropout_at_s + c.dropout_s;
+    char msg[160];
+    snprintf(msg, sizeof(msg), "lost %.2f-%.2f s; main at %.2f s, %.0f m (set %u m); diag 0x%x", (double)c.dropout_at_s,
+             (double)back, (double)r.main_t, (double)r.main_h, (unsigned)c.main_m, (unsigned)ctx.diag);
+    TEST_ASSERT_TRUE_MESSAGE((ctx.diag & DIAG_SENSOR_LOST) != 0, msg);
+    TEST_ASSERT_TRUE_MESSAGE(log_has("SENSOR_LOST"), msg);
+    TEST_ASSERT_TRUE_MESSAGE(r.main && r.main_t >= back + 1.0f, msg);
+}
+
+/* [SNS-PRES-06] guard: readings no atmosphere can produce, half a second of
+ * them in coast, are discarded and counted, and deploy nothing early. */
+void test_M2_out_of_range(void) {
+    const mp_rocket_t *rk = &PROFILES[SUBSONIC].r;
+    conditions_t c;
+    memset(&c, 0, sizeof(c));
+    c.glitch_at_s = plant_apogee_t(rk, &COLD) - 1.0f;
+    c.glitch_pa = 150000;
+    c.glitch_n = 25;
+    c.stop_after_apogee = true;
+    mach_result_t r = fly_mach(rk, &COLD, &c, 15, 120.0f);
+    char msg[96];
+    snprintf(msg, sizeof(msg), "%u rejected; drogue %+.2f s from apogee", (unsigned)mock_pres_rejects,
+             (double)(r.drogue_t - r.apogee_t));
+    TEST_ASSERT_TRUE_MESSAGE(mock_pres_rejects >= 25, msg);
+    TEST_ASSERT_TRUE_MESSAGE(r.drogue && r.drogue_t >= r.apogee_t, msg);
+}
+
+/* [SNS-PRES-10, SNS-PRES-11] Each failure is a DIAG bit, which /api/status
+ * lists by name, and an event in the log. A sensor that comes back flies on:
+ * stuck for 2 s, or gone for 1, a second or more before apogee. */
+void test_M2_reported(void) {
+    const mp_rocket_t *rk = &PROFILES[SUBSONIC].r;
+    float ap_t = plant_apogee_t(rk, &COLD);
+    conditions_t c;
+    memset(&c, 0, sizeof(c));
+    c.stuck_at_s = ap_t - 4.0f;
+    c.stuck_s = 2.0f;
+    c.stop_after_apogee = true;
+    mach_result_t r = fly_mach(rk, &COLD, &c, 16, 120.0f);
+    TEST_ASSERT_TRUE_MESSAGE((ctx.diag & DIAG_SENSOR_STUCK) != 0, "a stuck sensor sets its DIAG bit");
+    TEST_ASSERT_EQUAL_STRING("sensor_stuck", flight_diag_name(DIAG_SENSOR_STUCK));
+    TEST_ASSERT_TRUE_MESSAGE(log_has("SENSOR_STUCK"), "and logs it");
+    char msg[96];
+    snprintf(msg, sizeof(msg), "stuck: drogue %d, %+.2f s from apogee", r.drogue, (double)(r.drogue_t - r.apogee_t));
+    TEST_ASSERT_TRUE_MESSAGE(r.drogue && r.drogue_t >= r.apogee_t && r.drogue_t - r.apogee_t <= 1.5f, msg);
+
+    memset(&c, 0, sizeof(c));
+    c.dropout_at_s = ap_t - 4.0f;
+    c.dropout_s = 1.0f;
+    c.stop_after_apogee = true;
+    r = fly_mach(rk, &COLD, &c, 17, 120.0f);
+    TEST_ASSERT_TRUE_MESSAGE((ctx.diag & DIAG_SENSOR_LOST) != 0, "a lost sensor sets its DIAG bit");
+    TEST_ASSERT_EQUAL_STRING("sensor_lost", flight_diag_name(DIAG_SENSOR_LOST));
+    TEST_ASSERT_TRUE_MESSAGE(log_has("SENSOR_LOST"), "and logs it");
+    snprintf(msg, sizeof(msg), "lost: drogue %d, %+.2f s from apogee", r.drogue, (double)(r.drogue_t - r.apogee_t));
+    TEST_ASSERT_TRUE_MESSAGE(r.drogue && r.drogue_t >= r.apogee_t && r.drogue_t - r.apogee_t <= 1.5f, msg);
+}
+
+/* [SNS-PRES-10] guard: a sensor with the MS5607's noise never reads as stuck,
+ * over an hour on the pad. */
+void test_M2_real_sensor_never_stuck(void) {
+    boot_like_hardware(18);
+    uint32_t t = 0;
+    run_to_pad(&t);
+    for (uint32_t end = t + 3600000u; t < end; t++)
+        tick(t);
+    TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, ctx.diag & DIAG_SENSOR_STUCK, "an hour of real noise read as a stuck sensor");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_M0_atmosphere);
@@ -821,5 +972,11 @@ int main(void) {
     RUN_TEST(test_M1_integer_forms);
     RUN_TEST(test_M1_design_note);
     RUN_TEST(test_M1_port_error_margin);
+    RUN_TEST(test_M2_stuck_in_coast);
+    RUN_TEST(test_M2_dropout_in_coast);
+    RUN_TEST(test_M2_lost);
+    RUN_TEST(test_M2_out_of_range);
+    RUN_TEST(test_M2_reported);
+    RUN_TEST(test_M2_real_sensor_never_stuck);
     return UNITY_END();
 }
