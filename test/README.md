@@ -34,6 +34,11 @@ timed against it. The `BASELINE` lines it prints are the "Now" column of
 `support/noise_baseline.py <board-ip>` measures a board's real noise from
 `raw_pa` and `pad_speed_cms` on `/api/status`.
 
+`test_T8_replay` flies a flight, reads back its log, and replays the log's
+readings through `sim/replay.c`; every event must land on the sample the
+flight decided it on. The same code is `pyro_sim --replay <flight_log.csv>`
+(build `sim` with `PYRO_BOARD=sim`), for real flights.
+
 ## The Mach lockout's test ground (M0)
 
 `test_mach.c` (target `mach_tests`) flies supersonic rockets through the board

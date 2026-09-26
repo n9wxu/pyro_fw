@@ -31,6 +31,7 @@ typedef struct {
     int32_t rise_cm;     /* the median reading's own height, unfiltered: T+0 [FLT-LAUNCH-03] */
     uint32_t timestamp_ms;
     uint32_t timestamp_us; /* the same instant, to the microsecond; wraps, so differences only */
+    int32_t raw_pa;        /* the reading this sample is centred on, before the median [DAT-02] */
 } altitude_sample_t;
 
 /* ── Ring buffer sizing ──────────────────────────────────────────── */
@@ -172,6 +173,10 @@ bool pp_read(altitude_sample_t *out);
 /* ── Debug accessors (for telemetry / status display) ────────────── */
 
 int32_t pp_last_raw_pa(void);
+
+/* The raw reading of the sample pp_read() last returned: what the flight log
+ * records beside it, so a log can be replayed through this layer. */
+int32_t pp_last_read_raw_pa(void);
 int32_t pp_last_filtered_pa(void);
 
 /* ── Unit-testable internals (exposed for test_flight_states) ────── */

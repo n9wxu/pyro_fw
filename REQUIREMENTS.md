@@ -190,7 +190,8 @@ Each derived requirement traces to its parent with `← parent_id`.
 
 ### L3 Subsystem Requirements
 - **DAT-01**: The system shall store flight samples in a ring buffer of at least 4096 entries. ← SYS-DATA-01
-- **DAT-02**: Each sample shall include: time, pressure, altitude, state, thrust flag, event. The time is the sample's own, from its reading, since T+0 (SNS-PRES-08). ← SYS-DATA-01
+- **DAT-02**: Each sample shall include: time, pressure, altitude, state, thrust flag, the raw reading it is centred on, the sensor temperature, and event. The time is the sample's own, from its reading, since T+0 (SNS-PRES-08). ← SYS-DATA-01
+- **DAT-08**: A flight log shall carry what is needed to replay the flight through the pressure layer and the detectors, and `pyro_sim --replay` shall do so and set the replay's events against the log's. ← DAT-02
 - **DAT-03**: Events shall be tagged on existing data samples, not stored as separate records. ← SYS-DATA-01
 - **DAT-04**: The system shall log events: LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING, and when they occur PYRO1/2_REFUSED, PYRO1/2_NOPEN, PYRO1/2_FAULT and MAIN_FORCED. ← SYS-DATA-01
 - **DAT-06**: The system shall export flight data as CSV to persistent storage after landing. ← SYS-DATA-02

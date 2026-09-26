@@ -538,6 +538,31 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-047: The Flight Log Carries Each Sample's Reading
+- **Decision:** the flight log gains two columns before `event`: `raw_pa`,
+  the reading the sample is centred on, after the range check and before the
+  median, and `temp_c`, the sensor's temperature (DAT-02). Text rows gain two
+  empty fields. `sim/replay.c` feeds a log's readings back through the
+  pressure layer and detectors and sets the decisions against the log's own
+  event rows, as `pyro_sim --replay <log>` (DAT-08).
+- **Why:** the log carried only the filtered pressure, so a change to the
+  filter or the detectors could not be checked against a real flight.
+- **Why the centred reading:** each sample is the median of three readings,
+  stamped with the middle one's time, so the middle readings, one per row,
+  are the flight's whole reading sequence in order. Fed back, they reproduce
+  the same medians and the same filter. The replay matches every event of the
+  host's test flight and of three simulated flights (300, 1000 and 3000 m) to
+  the millisecond.
+- **Before `event`**, not after: a text row's last field is free text, and the
+  web UI finds columns by name.
+- **The HALs fill the columns themselves** from `pp_last_read_raw_pa()` and
+  their own temperature, so `hal_log_sample()` keeps its signature.
+- **The logging rate stays open** (T8): its default is already the sensor's
+  rate, so a default log replays.
+- **What building it found:** the replay started its filter with a stale time
+  and needed one more reading to drain the median's last sample. It also
+  showed the hold bug in DD-046's first version.
+
 ### DD-046: Every Sample Carries The Time Of Its Reading
 - **Decision:** the HAL stamps each reading from the hardware timer, to the
   microsecond, at the moment it describes (SNS-PRES-08):

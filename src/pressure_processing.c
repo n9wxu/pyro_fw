@@ -52,6 +52,7 @@ static struct {
     /* Debug copies */
     int32_t last_raw;
     int32_t last_filtered;
+    int32_t last_read_raw;
 
     /* Ground reference: a rolling mean of the filtered pressure, in blocks so
      * the window slides without keeping every sample. 20 blocks of 250 ms is
@@ -221,7 +222,7 @@ static int32_t median3(int32_t a, int32_t b, int32_t c) {
 /* The median out of the window, if it has one not yet given. Short of three
  * readings -- at power-on, or after a test primes the layer -- the newest
  * goes straight through. */
-static bool med_out(int32_t *pa, uint32_t *ts, uint32_t *us) {
+static bool med_out(int32_t *pa, uint32_t *ts, uint32_t *us, int32_t *raw) {
     if (pp.med.n == 0)
         return false;
     int i = pp.med.n == 3 ? 1 : 2;
@@ -234,6 +235,7 @@ static bool med_out(int32_t *pa, uint32_t *ts, uint32_t *us) {
     *pa = p;
     *ts = t;
     *us = pp.med.us[i];
+    *raw = pp.med.pa[i];
     return true;
 }
 
@@ -363,8 +365,9 @@ int32_t pp_pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_
 /* ── Ring buffer helpers ──────────────────────────────────────────── */
 
 static void ring_push(int32_t altitude_cm, int32_t height_cm, int32_t rise_cm, uint32_t timestamp_ms,
-                      uint32_t timestamp_us) {
+                      uint32_t timestamp_us, int32_t raw_pa) {
     pp.ring[pp.head].timestamp_us = timestamp_us;
+    pp.ring[pp.head].raw_pa = raw_pa;
     pp.ring[pp.head].altitude_cm = altitude_cm;
     pp.ring[pp.head].height_cm = height_cm;
     pp.ring[pp.head].rise_cm = rise_cm;
@@ -435,7 +438,8 @@ void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us) {
     med_push(raw_pressure_pa, timestamp_ms, (uint32_t)timestamp_us);
     int32_t pa;
     uint32_t ts, us;
-    bool fresh = med_out(&pa, &ts, &us);
+    int32_t raw;
+    bool fresh = med_out(&pa, &ts, &us, &raw);
     if (fresh)
         hist_push(pa, ts);
 
@@ -482,7 +486,7 @@ void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us) {
         int32_t rise_cm = pp_pressure_to_height_cm(pa, pp.ground_pressure);
 
         /* Push to ring */
-        ring_push(alt_cm, height_cm, rise_cm, ts, us);
+        ring_push(alt_cm, height_cm, rise_cm, ts, us, raw);
         return;
     }
     }
@@ -496,6 +500,7 @@ bool pp_read(altitude_sample_t *out) {
     if (pp.count == 0)
         return false;
     *out = pp.ring[pp.tail];
+    pp.last_read_raw = out->raw_pa;
     pp.tail = (pp.tail + 1) & PP_RING_MASK;
     pp.count--;
     return true;
@@ -503,6 +508,10 @@ bool pp_read(altitude_sample_t *out) {
 
 int32_t pp_last_raw_pa(void) {
     return pp.last_raw;
+}
+
+int32_t pp_last_read_raw_pa(void) {
+    return pp.last_read_raw;
 }
 
 int32_t pp_last_filtered_pa(void) {

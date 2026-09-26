@@ -580,6 +580,7 @@ add_custom_target(pressure_chain_tests
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_pressure_chain.c
                ${CMAKE_CURRENT_LIST_DIR}/test/board_harness.c
+               ${CMAKE_CURRENT_LIST_DIR}/sim/replay.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
@@ -667,6 +668,7 @@ add_custom_target(sim
                ${PYRO_HOST_INC_FLAGS} ${PYRO_HOST_DEF_FLAGS}
                ${CMAKE_CURRENT_LIST_DIR}/sim/sim_cli.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/main_sim.c
+               ${CMAKE_CURRENT_LIST_DIR}/sim/replay.c
                ${PYRO_HOST_HAL_SOURCES}
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c

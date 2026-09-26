@@ -157,8 +157,7 @@ int hal_pyro_claim_channels(uint32_t (*pads_of)(uint8_t channel)) {
     return 2; /* both channels */
 }
 
-void hal_pyro_sample(void) {
-}
+void hal_pyro_sample(void) {}
 
 void hal_pyro_get(uint8_t channel, hal_continuity_t *out) {
     if (channel == 1)
@@ -351,7 +350,7 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
             "# Pyro MK1B Flight Data\n# ID: %.8s\n# Name: %.8s\n"
             "# Pyro1: %s %u\n# Pyro2: %s %u\n"
             "# Units: %s\n# Ground Pa: %ld\n"
-            "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",
+            "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n",
             cfg->id, cfg->name, config_mode_name(cfg->pyro1_mode), cfg->pyro1_value, config_mode_name(cfg->pyro2_mode),
             cfg->pyro2_value,
             cfg->units == 2   ? "ft"
@@ -365,8 +364,10 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
                     uint8_t event) {
     if (!sim_log_running || !sim_log_file)
         return;
-    fprintf(sim_log_file, "%lu,%ld,%ld,%u,%u,%s\n", (unsigned long)time_ms, (long)pressure_pa, (long)altitude_cm, state,
-            under_thrust, flight_event_name(event));
+    /* The simulator models no temperature: the column holds the standard
+     * atmosphere's at the pad. */
+    fprintf(sim_log_file, "%lu,%ld,%ld,%u,%u,%ld,15.0,%s\n", (unsigned long)time_ms, (long)pressure_pa,
+            (long)altitude_cm, state, under_thrust, (long)pp_last_read_raw_pa(), flight_event_name(event));
 }
 
 void hal_log_stop(void) {

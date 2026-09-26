@@ -64,16 +64,17 @@ function buildIni(s) {
 /* 10,000ft flight: boost 0-3s, coast 3-8s, apogee ~8s at 304800cm,
    drogue descent 8-28s, main at 500ft(15240cm) ~28s, landing ~32s.
 
-   The firmware's own format: a '#' header, then six columns with the thrust
-   flag before the event, and text rows whose numeric columns are empty. The
-   thrust column is what a parser reading the event from column 5 trips on. */
+   The firmware's own format: a '#' header, then eight columns with the thrust
+   flag, the raw reading and the temperature before the event, and text rows
+   whose numeric columns are empty. A parser reading the event by position
+   trips on them. */
 
-const EMPTY_LOG = 'time_ms,pressure_pa,altitude_cm,state,thrust,event\r\n';
+const EMPTY_LOG = 'time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\r\n';
 
 function generateFlightCSV() {
   let lines = ['# Pyro MK1B Flight Data', '# ID: RACE01', '# Name: Screamer', '# Pyro1: delay 0',
                '# Pyro2: agl 500', '# Units: ft', '# Ground Pa: 101325',
-               'time_ms,pressure_pa,altitude_cm,state,thrust,event'];
+               'time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event'];
   const g = 101325;
   const pts = [
     // time_ms, alt_cm, state, event
@@ -108,8 +109,8 @@ function generateFlightCSV() {
   for (const [t, alt, st, evt] of pts) {
     const pa = Math.round(g - alt * 10 / 83);
     const thrust = t > 0 && t <= 3000 ? 1 : 0;
-    lines.push(`${t},${pa},${alt},${st},${thrust},${evt}`);
-    if (t === 5000) lines.push('5000,,,,,LUA coasting');
+    lines.push(`${t},${pa},${alt},${st},${thrust},${pa + 2},21.5,${evt}`);
+    if (t === 5000) lines.push('5000,,,,,,,LUA coasting');
   }
   return lines.join('\n') + '\n';
 }

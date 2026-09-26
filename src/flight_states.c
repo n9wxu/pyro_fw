@@ -699,6 +699,7 @@ static bool arming_gate_met(const flight_context_t *ctx) {
 }
 
 static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
+    (void)now; /* every decision here is on sample time [FLT-RATE-05] */
     altitude_sample_t sample;
     if (!pp_read(&sample))
         return SEVT_NONE;
@@ -933,6 +934,7 @@ static bool landing_detected(flight_context_t *ctx, uint32_t now, int32_t prev_a
  * tested, so a trigger sees this sample and not the one before it; the
  * previous altitude is handed back for landing detection. */
 static bool descent_sample(flight_context_t *ctx, uint32_t now, flight_state_t st, int32_t *prev_out) {
+    (void)now; /* the row is logged at the sample's time [DAT-02] */
     altitude_sample_t sample;
     if (!pp_read(&sample))
         return false;
@@ -1022,6 +1024,7 @@ static state_event_t detect_chute_descent(flight_context_t *ctx, uint32_t now) {
 
 /* [FLT-LAND-06, FLT-RATE-04] */
 static state_event_t detect_landed(flight_context_t *ctx, uint32_t now) {
+    (void)now;
     altitude_sample_t sample;
     if (!pp_read(&sample))
         return SEVT_NONE;

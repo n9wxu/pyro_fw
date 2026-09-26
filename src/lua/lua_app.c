@@ -192,9 +192,9 @@ int lua_app_console_read(char *buf, int max) {
  * output goes to /api/lua/console, which needs no flash. */
 
 /* Sized to fit inside hal_log_text()'s 80-byte row, of which the widest
- * timestamp plus the ",,,,,LUA " prefix take 19 and the newline one. Anything
- * over 59 is truncated there, and only once uptime reaches ten digits of
- * milliseconds -- a bug that appears after 27 hours and not before. */
+ * timestamp plus the ",,,,,,,LUA " prefix take 21 and the newline one. Anything
+ * over 57 is truncated there, and only once the flight time reaches ten digits
+ * of milliseconds, which is 27 hours of flight. */
 #define LUA_LINE_MAX 56
 
 static char line_buf[LUA_LINE_MAX];

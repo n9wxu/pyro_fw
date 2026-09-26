@@ -101,7 +101,7 @@ check("404 body is framed by Content-Length", hdr.get("Content-Length") == str(l
 code, _, body = req("POST", "/api/flight/erase")
 check("POST /api/flight/erase -> 200", code == 200 and b"erased" in body, f"{code} {body[:60]!r}")
 code, _, body = req("GET", "/api/flight.csv")
-check("erased log reads as the bare column header", body.strip() == b"time_ms,pressure_pa,altitude_cm,state,thrust,event",
+check("erased log reads as the bare column header", body.strip() == b"time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event",
       repr(body[:80]))
 
 # REV-02 / REV-12: a disabled channel survives the merge, and no inert key is written.

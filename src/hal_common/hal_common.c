@@ -930,7 +930,7 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
                      "# " PYRO_BOARD_NAME " Flight Data\n# ID: %.8s\n# Name: %.8s\n"
                      "# Pyro1: %s %u\n# Pyro2: %s %u\n"
                      "# Units: %s\n# Ground Pa: %ld\n"
-                     "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",
+                     "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n",
                      cfg->id, cfg->name, config_mode_name(cfg->pyro1_mode), cfg->pyro1_value,
                      config_mode_name(cfg->pyro2_mode), cfg->pyro2_value,
                      cfg->units == 2   ? "ft"
@@ -1021,9 +1021,10 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
                     uint8_t event) {
     if (!log_task.active)
         return;
-    char line[80];
-    int n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%s\n", (unsigned long)time_ms, (long)pressure_pa,
-                     (long)altitude_cm, state, under_thrust, flight_event_name(event));
+    char line[96];
+    int n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%ld,%.1f,%s\n", (unsigned long)time_ms, (long)pressure_pa,
+                     (long)altitude_cm, state, under_thrust, (long)pp_last_read_raw_pa(),
+                     (double)pres.last.temperature_c, flight_event_name(event));
     if (n <= 0)
         return;
     /* Do not flush synchronously here: this runs on the flight path, and a
@@ -1052,7 +1053,7 @@ static bool log_tagged(uint32_t time_ms, const char *tag, const char *text, int 
     }
 
     char line[80];
-    int n = snprintf(line, sizeof(line), "%lu,,,,,%s ", (unsigned long)time_ms, tag);
+    int n = snprintf(line, sizeof(line), "%lu,,,,,,,%s ", (unsigned long)time_ms, tag);
     if (n <= 0 || n >= (int)sizeof(line) - 2) {
         return false;
     }

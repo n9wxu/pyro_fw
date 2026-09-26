@@ -598,7 +598,7 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
                      "# " PYRO_BOARD_NAME " Flight Data\n# ID: %.8s\n# Name: %.8s\n"
                      "# Pyro1: %s %u\n# Pyro2: %s %u\n"
                      "# Units: %s\n# Ground Pa: %ld\n"
-                     "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",
+                     "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n",
                      cfg->id, cfg->name, config_mode_name(cfg->pyro1_mode), cfg->pyro1_value,
                      config_mode_name(cfg->pyro2_mode), cfg->pyro2_value,
                      cfg->units == 2   ? "ft"
@@ -613,9 +613,10 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
                     uint8_t event) {
     if (!test_log_active || !test_log_file)
         return;
-    char line[80];
-    int n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%s\n", (unsigned long)time_ms, (long)pressure_pa,
-                     (long)altitude_cm, state, under_thrust, flight_event_name(event));
+    char line[96];
+    int n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%ld,%.1f,%s\n", (unsigned long)time_ms, (long)pressure_pa,
+                     (long)altitude_cm, state, under_thrust, (long)pp_last_read_raw_pa(),
+                     (double)mock_pressure.temperature_c, flight_event_name(event));
     hal_fs_write(test_log_file, line, n);
 }
 

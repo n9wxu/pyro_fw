@@ -25,6 +25,7 @@
 #include "../src/telemetry_formatter.h"
 #include "pressure_processing.h"
 #include "board_harness.h"
+#include "../sim/replay.h"
 #include "../src/ms5607_driver.h"
 
 extern reset_cause_t mock_reset_cause; /* test/hal_test.c */
@@ -1332,6 +1333,76 @@ void test_T6_rejecting_starts_at_zero(void) {
     }
 }
 
+/* ── T8: raw readings in the log, and replay ──────────────────────── */
+
+static char logbuf[65536];
+
+static int flown_log(void) {
+    const flight_t f = {5.0f, 1.0f, 20.0f, 0.0f}; /* apogee 147 m: the log fits the test HAL's file */
+    result_t r = fly(&f, 51, 3, 120000, false);
+    TEST_ASSERT_TRUE_MESSAGE(r.landed_ms != 0, "the flight landed and closed its log");
+    int n = hal_fs_read_file("flight_log.csv", logbuf, (int)sizeof(logbuf) - 1);
+    TEST_ASSERT_TRUE_MESSAGE(n > 0, "the flight wrote a log");
+    logbuf[n] = '\0';
+    return n;
+}
+
+void test_T8_columns(void) {
+    flown_log();
+    const char *cols = "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n";
+    const char *hdr = strstr(logbuf, cols);
+    TEST_ASSERT_NOT_NULL_MESSAGE(hdr, "the log names raw_pa and temp_c");
+    int rows = 0, bad = 0;
+    for (const char *p = hdr + strlen(cols); *p; p = strchr(p, '\n') + 1) {
+        char line[128];
+        size_t len = strcspn(p, "\n");
+        if (len >= sizeof(line))
+            break;
+        memcpy(line, p, len);
+        line[len] = '\0';
+        int fields = 1;
+        for (char *c = line; *c; c++)
+            fields += *c == ',';
+        long raw = 0;
+        char ev[32] = "";
+        if (sscanf(line, "%*[^,],%*[^,],%*[^,],%*[^,],%*[^,],%ld,%*[^,],%31s", &raw, ev) >= 1 && ev[0] == '\0') {
+            rows++;
+            bad += fields != 8 || raw < 1000 || raw > 120000;
+        }
+        if (!strchr(p, '\n'))
+            break;
+    }
+    char msg[64];
+    snprintf(msg, sizeof(msg), "%d sample rows, %d without a plausible raw_pa", rows, bad);
+    TEST_ASSERT_TRUE_MESSAGE(rows > 100 && bad == 0, msg);
+}
+
+/* The harness ends each pulse every tick; the replay's rows do the same. */
+static void end_pulse(uint32_t now_ms) {
+    (void)now_ms;
+    mock_pyro.firing = false;
+}
+
+void test_T8_replay(void) {
+    flown_log();
+    replay_row_hook = end_pulse;
+    replay_events_t logged, decided;
+    TEST_ASSERT_TRUE(replay_logged_events(logbuf, &logged));
+    TEST_ASSERT_TRUE_MESSAGE(replay_run(logbuf, &decided), "the log carries each sample's raw reading");
+    replay_row_hook = NULL;
+    char msg[192];
+    snprintf(msg, sizeof(msg), "logged apogee %u pyro1 %u pyro2 %u landing %u; replayed %u %u %u %u; diverged at %u",
+             (unsigned)logged.apogee_ms, (unsigned)logged.pyro1_ms, (unsigned)logged.pyro2_ms,
+             (unsigned)logged.landing_ms, (unsigned)decided.apogee_ms, (unsigned)decided.pyro1_ms,
+             (unsigned)decided.pyro2_ms, (unsigned)decided.landing_ms, (unsigned)decided.diverged_ms);
+    TEST_ASSERT_TRUE_MESSAGE(logged.apogee_ms && logged.pyro1_ms && logged.pyro2_ms && logged.landing_ms, msg);
+    const uint32_t a[] = {logged.apogee_ms, logged.pyro1_ms, logged.pyro2_ms, logged.landing_ms};
+    const uint32_t b[] = {decided.apogee_ms, decided.pyro1_ms, decided.pyro2_ms, decided.landing_ms};
+    for (int i = 0; i < 4; i++)
+        TEST_ASSERT_TRUE_MESSAGE(b[i] != 0 && (a[i] > b[i] ? a[i] - b[i] : b[i] - a[i]) <= 20u, msg);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, decided.diverged_ms, msg);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -1378,5 +1449,7 @@ int main(void) {
     RUN_TEST(test_T11_loop_clock_independent);
     RUN_TEST(test_T11_log_rows_at_sample_time);
     RUN_TEST(test_T11_landing_holds_a_second);
+    RUN_TEST(test_T8_columns);
+    RUN_TEST(test_T8_replay);
     return UNITY_END();
 }

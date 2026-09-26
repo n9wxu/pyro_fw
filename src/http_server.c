@@ -967,7 +967,7 @@ static void serve_get(conn_t *c) {
         serve_file(c, "config.ini", TEXT, NULL, 404, TEXT, "No config.ini");
     } else if (strcmp(path, "/api/flight.csv") == 0) {
         serve_file(c, FLIGHT_LOG_PATH, "text/csv", "Content-Disposition: attachment; filename=\"flight.csv\"\r\n", 200,
-                   "text/csv", "time_ms,pressure_pa,altitude_cm,state,thrust,event\r\n");
+                   "text/csv", "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\r\n");
     } else if (strcmp(path, "/") == 0) {
         /* no-store: the UI is re-uploaded whenever the firmware or web files
          * change, and without this browsers heuristically cache it and keep

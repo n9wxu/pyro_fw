@@ -9,6 +9,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include <stdio.h>
+#include "replay.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -88,7 +89,44 @@ static void compute_burn(physics_t *p, float target_m) {
 
 /* ── Main: drive the simulation ───────────────────────────────────── */
 
+/* The simulator's driver ends each pulse every step; the replay's rows do. */
+static void end_pulse(uint32_t now_ms) {
+    (void)now_ms;
+    sim_clear_pyro_firing();
+}
+
+/* pyro_sim --replay <flight_log.csv>: the log's readings through the firmware,
+ * its decisions against the log's own [DAT-02]. */
+static int replay_file(const char *path) {
+    replay_row_hook = end_pulse;
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        printf("cannot open %s\n", path);
+        return 1;
+    }
+    static char csv[1 << 20];
+    size_t n = fread(csv, 1, sizeof(csv) - 1, f);
+    fclose(f);
+    csv[n] = '\0';
+    replay_events_t logged, decided;
+    if (!replay_logged_events(csv, &logged) || !replay_run(csv, &decided)) {
+        printf("%s: not a flight log with a raw_pa column\n", path);
+        return 1;
+    }
+    printf("%d sample rows replayed\n", decided.rows);
+    printf("%-8s %10s %10s\n", "event", "logged", "replayed");
+    printf("%-8s %10u %10u\n", "apogee", (unsigned)logged.apogee_ms, (unsigned)decided.apogee_ms);
+    printf("%-8s %10u %10u\n", "pyro1", (unsigned)logged.pyro1_ms, (unsigned)decided.pyro1_ms);
+    printf("%-8s %10u %10u\n", "pyro2", (unsigned)logged.pyro2_ms, (unsigned)decided.pyro2_ms);
+    printf("%-8s %10u %10u\n", "landing", (unsigned)logged.landing_ms, (unsigned)decided.landing_ms);
+    if (decided.diverged_ms)
+        printf("first state that differs from the log: at %u ms\n", (unsigned)decided.diverged_ms);
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc > 2 && strcmp(argv[1], "--replay") == 0)
+        return replay_file(argv[2]);
     float target = 1524.0f;
     if (argc > 1) target = atof(argv[1]);
 

@@ -653,6 +653,12 @@ send `!GND reseed`; count re-seeds on `/api/status`.
 
 ### T8. Log raw pressure and temperature; replay real flights
 
+**Done 2026-09-26** (DD-047), except its bench checks (G4): `api_check.py`'s
+header and a 60 s log run on MK1C. The columns sit before `event`, since a
+text row's last field is free text. The replay lives in `sim/replay.c`, as
+`pyro_sim --replay`. Building it found the hold bug in T11's first commit,
+fixed and tested separately (c8f9b7a).
+
 **Why:** the log carries filtered pressure only, so a filter change can't be
 checked against a real flight.
 

@@ -146,7 +146,8 @@ Verify web interface behavior against mock server in 3 device modes.
 | SYS-DATA-02 | Export standard format | — | ⚠️ |
 | SYS-DATA-03 | Announce max altitude | Integration: test_BUZ_07_03_lifecycle | ✅ |
 | DAT-01 | 4096-entry ring buffer | Integration: samples recorded throughout flight | ✅ |
-| DAT-02 | Sample fields, at the sample's time | Integration: events have correct fields; Chain: test_T11_log_rows_at_sample_time | ✅ |
+| DAT-02 | Sample fields, at the sample's time | Integration: events have correct fields; Chain: test_T11_log_rows_at_sample_time, test_T8_columns | ✅ |
+| DAT-08 | A log replays through the firmware | Chain: test_T8_replay (every event to the sample, no state diverging) | ✅ |
 | DAT-03 | Events tag samples | Integration: test_DAT_04_events | ✅ |
 | DAT-04 | Log all event types | Integration: test_DAT_04_events; Closed-loop: test_REV16_forced_main_is_in_the_log | ✅ |
 | DAT-06 | CSV export | — | ⚠️ |
@@ -357,7 +358,7 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 195 |
+| ✅ Verified by a host, web or closed-loop test | 196 |
 | ⚠️ Not directly verified (needs a test or hardware) | 35 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 12 |
