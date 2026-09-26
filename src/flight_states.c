@@ -584,7 +584,6 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
  * when the filtered altitude is more than 100 ft above the frozen-at-launch
  * ground reference AND the rocket is climbing faster than 5 m/s. The height
  * is what rejects weather drift; the speed is what rejects a slow rise. */
-#define PAD_SAMPLE_MS 20   /* the sensor's sample interval on the pad */
 #define LAUNCH_ALT_CM 3048 /* 100 ft */
 #define LAUNCH_SPEED_CMS 500
 #define LAUNCH_RISE_CM 50 /* [FLT-LAUNCH-03] T+0 is the first sample above this */

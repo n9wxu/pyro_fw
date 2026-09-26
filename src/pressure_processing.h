@@ -54,7 +54,7 @@ typedef struct {
 
 /* ── Ring buffer sizing ──────────────────────────────────────────── */
 
-#define PP_RING_SIZE 32 /* power of 2; ~640ms at 50Hz */
+#define PP_RING_SIZE 64 /* power of 2; 1.3 s at 50 Hz, 0.7 s at the MS5607's ~90 Hz */
 #define PP_RING_MASK (PP_RING_SIZE - 1)
 
 #define PP_CAL_SAMPLES 10 /* number of raw samples for ground calibration */
@@ -168,8 +168,9 @@ void pp_set_sigma(float sigma_pa);
  *
  * The median's output since power-on, in every state, calibration included:
  * brownout recovery decides before calibration starts, and must decide from
- * real readings. About 1.3 s at 50 Hz. */
-#define PP_HIST_SIZE 64 /* power of 2 */
+ * real readings. The fit's window and a little more at ~90 Hz [FLT-RATE-01]:
+ * a window short of samples is a noisier fit. */
+#define PP_HIST_SIZE 128 /* power of 2 */
 
 /* The oldest and newest times in the history; false while it is empty. */
 bool pp_history_span(uint32_t *oldest_ms, uint32_t *newest_ms);

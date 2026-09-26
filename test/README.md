@@ -41,6 +41,10 @@ readings under the drogue, the thrust flag, and σ through a brownout.
 drogue) and `test_T5_canopy_swing`, flown on a standard-atmosphere pad, where
 the firmware's pressure altitude is the true height.
 
+`test_T9_same_outcomes` flies the key scenarios with the sensor sampled every
+11 ms, the MS5607's rate once its temperature is read less often, and holds
+them to the 50 Hz outcomes.
+
 `test_T8_replay` flies a flight, reads back its log, and replays the log's
 readings through `sim/replay.c`; every event must land on the sample the
 flight decided it on. The same code is `pyro_sim --replay <flight_log.csv>`

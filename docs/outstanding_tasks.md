@@ -129,7 +129,7 @@ are still yours; their tasks wait.
 | T5-W | The fit's window | **Adopted: 1.0 s.** At 50 Hz it gives 0.19 m/s of speed noise on the pad and 4.4 Pa/s² of p̈ noise. The Mach prompt's example of 0.5 s gives 23.8 Pa/s² at 50 Hz (17.5 at 100 Hz). At 9 km, with no drag, 1 g of deceleration would then sit only 0.7σ (1.0σ at 100 Hz) above the release threshold, and the release would keep resetting. The cost of 1 s: a Mach step or an ejection keeps fits unclean for 1 s instead of 0.5 s, and so does the ignition step, which M1 handles by setting the flag on any fit. | T5 |
 | T5-A | How far below the peak apogee needs | **Adopted: p ≥ 1.0001·p_min**, 0.6–0.9 m, about +0.4 s. The Mach prompt's 1.0005 means 3–5 m and puts the drogue 0.8–1.0 s after apogee; today it is +0.56 s. The fit's pressure noise is about 0.5 Pa. At 9 km, 1.0001 is 3 Pa, so noise cannot fake the drop, and an early apogee becomes impossible. | T5 |
 | T6 | How long the ground tracker waits before re-seeding | **Adopted:** 5 s. The pressure-filter prompt's 30 s leaves the pad reference wrong for half a minute after the rocket is set down. | T6 |
-| T8 | Flight logging rate | **Open, not blocking.** Full rate makes flights replayable, at a cost in flash wear. T8 adds the columns and the replay tool at today's default rate. | — |
+| T8 | Flight logging rate | **Open; now blocks T9's switch to ~90 Hz.** Full rate makes flights replayable, at a cost in flash wear. T8 adds the columns and the replay tool at today's default rate, which is every sample at 50 Hz; at 90 Hz the default of 50 would thin the log, and a thinned log cannot be replayed. | T9 |
 | M1-D | Accept M1's deviations from the Mach prompt | **Adopted.** They are listed in M1. The largest: the fit is solved against each sample's own time, in floating point, not with precomputed integer coefficients. Flash stalls make the sample spacing uneven (T11), and precomputed coefficients assume even spacing. | M1 |
 | N20 | Shared littlefs buffers | **Adopted:** refuse file GETs while the flight log is open. It can be tested on the host, the log can be read after landing, and WEB-API-08 already refuses every writer in flight. | N20 task |
 
@@ -967,6 +967,27 @@ trigger, and T5's 2 s limit on waiting for a clean fit does not apply.
 ---
 
 ### T9. Read MS5607 temperature less often
+
+**Partly done 2026-09-26.** Done: everything that holds at any rate.
+- `test_T9_short_interval`: the idle time is `ms5607_idle_ms()`, which
+  cannot wrap.
+- The history is 128 samples and the ring 64, so the fit keeps its whole
+  second at ~90 Hz. At 90 Hz with the old 64 it held 0.7 s, and the pad
+  speed was noisier than at 50 Hz (0.252 m/s against 0.192).
+- `test_T9_same_outcomes`, at 11 ms sampling: pad speed 0.153 m/s; apogee
+  -0.001 s from the drop over 100 flights, none early; SPEED within
+  0.20 m/s; DELAY within 0.012 s.
+- `test_T9_mach_at_90hz`: every fast profile, both pads, flagged before
+  Mach 0.85 and released before apogee.
+
+**Waits** on the T8 logging-rate decision (section 2) and on the bench (G4):
+the D2 cadence in `hal_common.c`, the switch to ~90 Hz, `SENSOR_RATE_HZ`,
+FLT-RATE-01/02, `test_T9_temperature_reuse` and `test_T9_drains`. At 90 Hz the
+default `log_rate_hz` of 50 would thin the log, and a thinned log cannot be
+replayed (DAT-08). Logging every sample instead nearly doubles the flash
+written per flight. Which to pay is the user's call. The cadence itself can
+only be checked on a board: `pres_waits`, `pres_rejects`, loop overruns and
+`stage_max_us[2]`.
 
 **Why:** every sample converts both pressure (D1) and temperature (D2), at
 10 ms each. Temperature moves slowly. Converting it every tenth cycle nearly

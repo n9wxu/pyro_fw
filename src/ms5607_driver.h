@@ -28,6 +28,13 @@
 /* Minimum conversion time (ms) at OSR 4096 — use in state machine */
 #define MS5607_CONV_MS 10
 
+/* [FLT-RATE-01] The rest of a sample's interval once its conversions are
+ * done: none when they fill it. Taken unsigned, a short interval wrapped. */
+static inline uint32_t ms5607_idle_ms(uint32_t interval_ms, uint32_t conversions) {
+    uint32_t busy = conversions * (uint32_t)MS5607_CONV_MS;
+    return interval_ms > busy ? interval_ms - busy : 0u;
+}
+
 /* [SNS-PRES-08] A reading describes the middle of its D1 conversion (OSR 4096
  * takes up to 9.04 ms), not the moment it is read. From the hardware timer,
  * which keeps counting while a flash erase stalls the loop. */

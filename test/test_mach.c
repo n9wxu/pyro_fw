@@ -73,6 +73,7 @@ typedef struct {
     float coast_noise_pa;   /* ports this noisy from burnout: no fit is clean */
     float coast_noise_to_s; /* until this flight time; 0: until the true apogee */
     bool stop_after_apogee; /* 2 s after the true apogee */
+    uint32_t interval_ms;   /* the sensor's sample interval; 0: the test HAL's 20 ms */
 } conditions_t;
 
 typedef struct {
@@ -97,6 +98,8 @@ static mach_result_t fly_mach(const mp_rocket_t *r, const mp_site_t *s, const co
     mach_result_t res;
     memset(&res, 0, sizeof(res));
     boot_like_hardware(seed);
+    if (c->interval_ms)
+        mock_sample_interval_ms = c->interval_ms;
     if (c->to_landed)
         power.landing_timeout = 0;
     float pad_pa = mp_pad_pa(s);
@@ -951,6 +954,41 @@ void test_M2_real_sensor_never_stuck(void) {
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, ctx.diag & DIAG_SENSOR_STUCK, "an hour of real noise read as a stuck sensor");
 }
 
+/* ── T9: the lockout at the MS5607's ~90 Hz ───────────────────────── */
+
+/* The fast profiles, both pads, clean ports and the one that fakes a
+ * descent: flagged before Mach 0.85, released before apogee, and the drogue
+ * after it, sampled every 11 ms as at 20. */
+void test_T9_mach_at_90hz(void) {
+    const unsigned fast[] = {DRAGGY, LOW_DRAG, BOOST_30G};
+    const mp_port_t *ports[] = {NULL, &PORT_FAKES_DESCENT};
+    char bad[512] = "";
+    for (unsigned i = 0; i < 3; i++) {
+        for (int si = 0; si < 2; si++) {
+            for (unsigned pi = 0; pi < 2; pi++) {
+                conditions_t c;
+                memset(&c, 0, sizeof(c));
+                if (ports[pi])
+                    c.port = *ports[pi];
+                c.stop_after_apogee = true;
+                c.interval_ms = 11u;
+                mach_result_t r = fly_mach(&PROFILES[fast[i]].r, SITES[si], &c, 20, 120.0f);
+                char what[48];
+                snprintf(what, sizeof(what), "%s %s%s", PROFILES[fast[i]].name, si ? "hot" : "cold",
+                         pi ? " fakes descent" : "");
+                drogue_after_apogee(&r, what, bad, sizeof(bad));
+                if (!r.locked || r.flag_mach >= 0.85f || !r.released || r.release_t >= r.apogee_t) {
+                    char item[96];
+                    snprintf(item, sizeof(item), " %s: flag Mach %.2f, released %d;", what, (double)r.flag_mach,
+                             r.released);
+                    strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+                }
+            }
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_M0_atmosphere);
@@ -978,5 +1016,6 @@ int main(void) {
     RUN_TEST(test_M2_out_of_range);
     RUN_TEST(test_M2_reported);
     RUN_TEST(test_M2_real_sensor_never_stuck);
+    RUN_TEST(test_T9_mach_at_90hz);
     return UNITY_END();
 }

@@ -100,7 +100,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-DESC-02 | Landing from every descent phase | Closed-loop: test_FLT_DESC_02_ballistic_reaches_landed | ✅ |
 | PYR-ALT-01 | Clamp altitude settings | Closed-loop: Karman suite (AGL > 8000m clamped, pyro still fires) | ✅ |
 | PYR-ALT-02 | Warning beep for range | Integration: test_PYR_ALT_02_cfg_range_beep | ✅ |
-| FLT-RATE-01..02 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds) | ⚠️ |
+| FLT-RATE-01..02 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds); Chain: test_T9_short_interval (the idle time never wraps) | ⚠️ |
 | FLT-RATE-03 | 1 Hz while LANDED | Chain: test_N18_landed_logs_once_a_second | ✅ |
 | FLT-RATE-04 | The rate is the HAL's | Integration: test_FLT_LAUNCH_01_timing | ⚠️ |
 | FLT-RATE-05 | Holds and dwells in sample time | Chain: test_T11_loop_clock_independent (a loop clock lagging 0-70 ms changes no decision's sample) | ✅ |
@@ -185,7 +185,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | SNS-PRES-05 | Conversion read after its worst case | Hardware (MK1C, MK1B): pres_rejects 0 under HTTP load, 18 in 60 s without the timing | ✅ HW |
 | SNS-PRES-07 | A single outlier never reaches the filter | Chain: test_T2_pad_glitch_sweep, test_T2_coast_glitch, test_T2_median_timing | ✅ |
 | SNS-PRES-08 | Each sample stamped at its reading | Chain: test_T11_d1_stamp (the MS5607 stamp), test_T11_stalls_change_nothing (under the test HAL's model of the stamping); `hal_common.c` by inspection; bench check owed | ⚠️ |
-| SNS-PRES-09 | A quadratic fit over the last second, and whether it is clean | Chain: test_T5_fit_reference, test_T5_fit_noise, test_T5_clean, test_T5_sigma, test_T5_sigma_ignores_the_launch; the fit's cost on the RP2040 is a bench check owed | ✅ |
+| SNS-PRES-09 | A quadratic fit over the last second, and whether it is clean | Chain: test_T5_fit_reference, test_T5_fit_noise, test_T5_clean, test_T5_sigma, test_T5_sigma_ignores_the_launch, test_T9_same_outcomes (the whole second at ~90 Hz); Mach: test_T9_mach_at_90hz; the fit's cost on the RP2040 is a bench check owed | ✅ |
 | SNS-PRES-10 | A stuck sensor: reported, and never a deployment | Mach: test_M2_stuck_in_coast, test_M2_reported, test_M2_real_sensor_never_stuck | ✅ |
 | SNS-PRES-11 | A gap or a lost sensor: a whole window of new samples before any decision | Mach: test_M2_dropout_in_coast, test_M2_lost, test_M2_reported, test_M2_out_of_range | ✅ |
 | SNS-PRES-06 | Impossible readings discarded and counted | Hardware: pres_rejects on /api/status; the false launch they caused did not recur | ✅ HW |

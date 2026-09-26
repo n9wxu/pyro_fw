@@ -101,6 +101,7 @@ static struct {
     uint16_t p1_value, p2_value;
     bool stop_after_apogee; /* 2 s after the true apogee */
     void (*on_sample)(const truth_t *tr);
+    uint32_t interval_ms; /* the sensor's sample interval; 0: the test HAL's 20 ms */
 } fly_opts;
 
 /* A flight from power-on to LANDED, or to until_ms. */
@@ -109,6 +110,8 @@ static result_t fly(const flight_t *f, uint32_t seed, uint32_t pad_s, uint32_t u
     memset(&r, 0, sizeof(r));
     boot_like_hardware(seed);
     mock_stall_model = stalls;
+    if (fly_opts.interval_ms)
+        mock_sample_interval_ms = fly_opts.interval_ms;
     uint32_t t = 0;
     uint32_t pad = run_to_pad(&t);
     r.ignition_ms = pad + pad_s * 1000u;
@@ -1950,6 +1953,95 @@ void test_M1_minimum_altitude_arm(void) {
     TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
 }
 
+/* ── T9: the chain at the MS5607's ~90 Hz ─────────────────────────── */
+
+/* With D2 once in ten cycles the MS5607 gives a sample every 11 ms or so. */
+#define T9_INTERVAL_MS 11u
+
+/* [FLT-RATE-01] The idle time after a sample's conversions: none when they
+ * fill the interval. Unsigned, it wrapped to 49 days. */
+void test_T9_short_interval(void) {
+    TEST_ASSERT_EQUAL_UINT32(0u, ms5607_idle_ms(20u, 2u));
+    TEST_ASSERT_EQUAL_UINT32(80u, ms5607_idle_ms(100u, 2u));
+    TEST_ASSERT_EQUAL_UINT32(0u, ms5607_idle_ms(11u, 2u));
+    TEST_ASSERT_EQUAL_UINT32(1u, ms5607_idle_ms(11u, 1u));
+    TEST_ASSERT_EQUAL_UINT32(0u, ms5607_idle_ms(9u, 1u));
+}
+
+static double pad_speed_rms(uint32_t interval_ms) {
+    boot_like_hardware(12);
+    mock_sample_interval_ms = interval_ms;
+    uint32_t t = 0;
+    run_to_pad(&t);
+    for (uint32_t end = t + 5000u; t < end; t++)
+        tick(t);
+    double sq = 0.0;
+    int n = 0;
+    uint32_t last = ctx.last_sample;
+    for (uint32_t end = t + 60000u; t < end; t++) {
+        tick(t);
+        if (ctx.last_sample != last) {
+            double v = ctx.pad_speed_cms / 100.0;
+            sq += v * v;
+            n++;
+            last = ctx.last_sample;
+        }
+    }
+    return sqrt(sq / n);
+}
+
+/* The same outcomes at ~90 Hz as at 50 Hz: the fit keeps its whole second,
+ * so its noise falls as the root of the samples it holds. */
+void test_T9_same_outcomes(void) {
+    double v50 = pad_speed_rms(20u), v90 = pad_speed_rms(T9_INTERVAL_MS);
+    printf("  pad speed: %.3f m/s RMS at 50 Hz, %.3f at 90 Hz\n", v50, v90);
+    TEST_ASSERT_TRUE_MESSAGE(v90 <= 0.85 * v50, "a second of 90 Hz samples is quieter than one of 50 Hz");
+
+    const float gs[] = {3.0f, 5.0f, 10.0f, 15.0f};
+    double sum = 0.0;
+    int early = 0, missed = 0, n = 0;
+    for (int i = 0; i < 100; i++) {
+        float h = 100.0f * powf(90.0f, (float)i / 99.0f);
+        float g = gs[i % 4];
+        flight_t f = {g, sqrtf(2.0f * h / (g * G * (1.0f + g))), 20.0f, 0.0f};
+        fly_opts.stop_after_apogee = true;
+        fly_opts.interval_ms = T9_INTERVAL_MS;
+        result_t r = fly(&f, (uint32_t)i + 1u, 6, 200000u, false);
+        if (r.apogee_ms == 0 || r.drop_ms == 0) {
+            missed++;
+            continue;
+        }
+        early += (int32_t)(r.apogee_sample_ms - r.apogee_true_ms) < 0;
+        sum += ((double)r.apogee_sample_ms - (double)r.drop_ms) / 1000.0;
+        n++;
+    }
+    double mean = n ? sum / n : 1.0;
+    printf("  90 Hz apogee over %d flights: %+.3f s from the drop; %d early, %d missed\n", n, mean, early, missed);
+    TEST_ASSERT_EQUAL_INT(0, missed);
+    TEST_ASSERT_EQUAL_INT(0, early);
+    TEST_ASSERT_TRUE(fabs(mean) <= 0.1);
+
+    const flight_t f = {5.0f, 2.0f, 60.0f, 0.0f};
+    double worst_v = 0.0, worst_d = 0.0;
+    for (uint32_t seed = 1; seed <= 10; seed++) {
+        fly_opts.channels = true;
+        fly_opts.p1_mode = PYRO_MODE_DELAY;
+        fly_opts.p1_value = 3;
+        fly_opts.p2_mode = PYRO_MODE_SPEED;
+        fly_opts.p2_value = 20;
+        fly_opts.interval_ms = T9_INTERVAL_MS;
+        result_t r = fly(&f, seed, 6, 60000u, false);
+        TEST_ASSERT_TRUE(r.pyro_ms[1] != 0 && r.pyro_ms[2] != 0);
+        double dv = fabs(-(double)r.pyro_v[2] - 20.0);
+        double dd = fabs(((double)r.pyro_ms[1] - (double)r.apogee_true_ms) / 1000.0 - 3.0);
+        worst_v = dv > worst_v ? dv : worst_v;
+        worst_d = dd > worst_d ? dd : worst_d;
+    }
+    printf("  90 Hz: SPEED within %.2f m/s, DELAY within %.3f s\n", worst_v, worst_d);
+    TEST_ASSERT_TRUE(worst_v <= 1.0);
+    TEST_ASSERT_TRUE(worst_d <= 0.1);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -2010,5 +2102,7 @@ int main(void) {
     RUN_TEST(test_T5_under_thrust);
     RUN_TEST(test_M1_recovered_ascent_locked);
     RUN_TEST(test_M1_minimum_altitude_arm);
+    RUN_TEST(test_T9_short_interval);
+    RUN_TEST(test_T9_same_outcomes);
     return UNITY_END();
 }

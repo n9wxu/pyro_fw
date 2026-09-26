@@ -308,8 +308,7 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
             /* Total cycle = 2 * MS5607_CONV_MS (phases) + idle remainder.
              * At 50 Hz sample_interval = 20 ms → idle = 0 (continuous).
              * At 10 Hz sample_interval = 100 ms → idle = 80 ms sleep. */
-            uint32_t idle = p->sample_interval_ms - 2u * MS5607_CONV_MS;
-            p->base.next_due_ms = now_ms + idle;
+            p->base.next_due_ms = now_ms + ms5607_idle_ms(p->sample_interval_ms, 2u);
             break;
         }
         }
