@@ -16,6 +16,7 @@
 #include "mocks.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "../src/flight_states.h"
 #include "../src/brownout.h"
@@ -1014,6 +1015,109 @@ void test_T4_touchdown(void) {
     }
 }
 
+/* ── T6: the ground tracker recovers from a step (N9) ─────────────── */
+
+#define RESEED_TEST_MS 5000u
+
+/* A step on the pad: the board carried to a pad higher or lower than the
+ * prep table. Since T4 the filter moves smoothly enough through a small step
+ * for the 5 s mean to creep after it; past the 50 Pa gate's reach the mean
+ * locks out (N9) unless it re-seeds. Either way the reference must reach the
+ * new level, and a re-seed must rewrite the marker. */
+static void step_on_pad(float step_pa, char *bad, size_t cap) {
+    boot_like_hardware(21);
+    uint32_t t = 0;
+    run_to_pad(&t);
+    for (uint32_t end = t + 12000u; t < end; t++)
+        tick(t);
+    float level = 101325.0f + step_pa;
+    mock_pressure.pressure_pa = level;
+    uint32_t step_at = t, reseeded_at = 0;
+    for (uint32_t end = t + 30000u; t < end; t++) {
+        tick(t);
+        if (reseeded_at == 0 && pp_ground_reseeds() > 0)
+            reseeded_at = t;
+    }
+    int32_t off = pp_ground_pressure() - ((int32_t)level - 1);
+    pad_marker_t m;
+    int n = hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m));
+    bool marker_ok =
+        n == (int)sizeof(m) && pad_marker_valid(&m) && abs(m.ground_pressure_pa - ((int32_t)level - 1)) <= 3;
+    bool ok =
+        off >= -2 && off <= 2 && (reseeded_at == 0 || (reseeded_at - step_at <= RESEED_TEST_MS + 1500u && marker_ok));
+    if (!ok) {
+        char item[112];
+        snprintf(item, sizeof(item), " [%+.0f Pa: ground %+ld Pa off, re-seeded %s, marker %s]", step_pa, (long)off,
+                 reseeded_at ? "yes" : "no", marker_ok ? "new" : "stale");
+        strncat(bad, item, cap - 1 - strlen(bad));
+    }
+}
+
+void test_T6_step_reseeds(void) {
+    const float steps[] = {-60.0f, -100.0f, -150.0f, -300.0f, 60.0f, 100.0f, 150.0f, 300.0f};
+    char bad[768] = "";
+    for (unsigned i = 0; i < sizeof(steps) / sizeof(steps[0]); i++)
+        step_on_pad(steps[i], bad, sizeof(bad));
+    if (bad[0])
+        printf("  steps the ground did not recover from:%s\n", bad);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("", bad, "after a step the ground must reach the new level");
+}
+
+/* guard: nothing that is not a step re-seeds. */
+void test_T6_launch_never_reseeds(void) {
+    const float gs[] = {2.0f, 5.0f, 15.0f, 30.0f};
+    for (unsigned i = 0; i < 4; i++) {
+        const flight_t f = {gs[i], 3.0f, 20.0f, 0.0f};
+        result_t r = fly(&f, 5, 10, 60000, false);
+        TEST_ASSERT_TRUE(r.launch_ms != 0);
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, pp_ground_reseeds(), "a launch is not a step on the pad");
+    }
+}
+
+void test_T6_gusts_never_reseed(void) {
+    const float gusts[] = {20.0f, 40.0f, 60.0f, 80.0f, -80.0f};
+    for (unsigned i = 0; i < 5; i++) {
+        boot_like_hardware(22);
+        uint32_t t = 0;
+        run_to_pad(&t);
+        for (uint32_t end = t + 6000u; t < end; t++)
+            tick(t);
+        for (int g = 0; g < 5; g++) {
+            mock_pressure.pressure_pa = 101325.0f + gusts[i];
+            for (uint32_t end = t + RESEED_TEST_MS - 1000u; t < end; t++)
+                tick(t);
+            mock_pressure.pressure_pa = 101325.0f;
+            for (uint32_t end = t + 3000u; t < end; t++)
+                tick(t);
+        }
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, pp_ground_reseeds(), "a gust shorter than the wait is not a step");
+        TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
+    }
+}
+
+void test_T6_drift(void) {
+    boot_like_hardware(23);
+    uint32_t t = 0;
+    run_to_pad(&t);
+    uint32_t start = t;
+    double worst = 0.0;
+    for (uint32_t end = t + 3600000u; t < end; t++) {
+        /* 2 hPa an hour, falling. */
+        double truth = 101325.0 - 200.0 * (double)(t - start) / 3600000.0;
+        mock_pressure.pressure_pa = (float)truth;
+        tick(t);
+        if (t % 1000u == 0 && t - start > 10000u) {
+            double err = fabs((double)pp_ground_pressure() - truth);
+            if (err > worst)
+                worst = err;
+        }
+    }
+    char msg[64];
+    snprintf(msg, sizeof(msg), "worst ground error %.1f Pa", worst);
+    TEST_ASSERT_TRUE_MESSAGE(worst <= PA_PER_M, msg);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, pp_ground_reseeds(), "drift is tracked, not re-seeded");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -1049,5 +1153,9 @@ int main(void) {
     RUN_TEST(test_T4_filter_noise);
     RUN_TEST(test_T4_pad_speed);
     RUN_TEST(test_T4_touchdown);
+    RUN_TEST(test_T6_step_reseeds);
+    RUN_TEST(test_T6_launch_never_reseeds);
+    RUN_TEST(test_T6_gusts_never_reseed);
+    RUN_TEST(test_T6_drift);
     return UNITY_END();
 }

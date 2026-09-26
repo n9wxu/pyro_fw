@@ -535,6 +535,12 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
 #define LAUNCH_SPEED_CMS 500
 #define LAUNCH_RISE_CM 50 /* [FLT-LAUNCH-03] T+0 is the first sample above this */
 
+/* [GND-CAL-06] Every sample rejected for this long, with the board still, is
+ * a new ground: re-seed. Long enough that no gust lasts it; short enough that
+ * the reference is not wrong for long after the rocket is set down. */
+#define GND_RESEED_MS 5000u
+#define GND_STILL_CMS 100 /* 1 m/s */
+
 /* [FLT-LAUNCH-07, FLT-APO-01] A trigger must hold, sample after sample, for
  * this long. A median of three stops one bad reading; two in a row reach the
  * detectors, and each trigger used to fire on one sample. Durations, never
@@ -622,6 +628,15 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     }
 
     ctx->filtered_pressure = pp_last_filtered_pa(); /* for telemetry/debug */
+
+    if (pp_ground_rejecting_ms(ts) >= GND_RESEED_MS && abs(ctx->pad_speed_cms) < GND_STILL_CMS) {
+        extern void hal_telemetry_send(const char *sentence);
+        pp_ground_reseed();
+        hal_telemetry_send("!GND reseed\r\n");
+        /* The marker records the ground this board now stands on. */
+        ctx->boot_timer = now;
+        ctx->marker_written = false;
+    }
 
     /* [GND-CAL-01] The ground reference is the pressure layer's 5-second
      * rolling mean of the filtered pressure. A boxcar forgets: the value

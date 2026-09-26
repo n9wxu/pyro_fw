@@ -538,6 +538,25 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-045: The Ground Reference Re-Seeds After A Step
+- **Decision:** When every sample has been rejected by GND-CAL-03's 50 Pa gate
+  for 5 s, and the board is still (under 1 m/s), the reference restarts from
+  the current filtered pressure (GND-CAL-06). `!GND reseed` goes out on
+  telemetry, `ground_reseeds` counts it on /api/status, and the pad marker's
+  dwell restarts so the marker records the new ground.
+- **Why:** a board powered at the prep table and carried to a higher or lower
+  pad saw every later sample rejected, and its reference froze at the old
+  ground for good (N9). Since T4 the filter moves through a small step
+  smoothly enough for the mean to creep after it, so a 60 Pa step now
+  recovers without help. From 100 Pa up, the mean still locked out. It now
+  re-seeds within 5 s, in both directions.
+- **5 s, not the pressure-filter prompt's 30 s:** for 30 s after the rocket
+  is set down, the reference, and every altitude, would be wrong. No gust
+  lasts 5 s (`test_T6_gusts_never_reseed`), and drift stays inside the gate
+  (`test_T6_drift`).
+- **Still, because** a board being carried is still moving from one ground to
+  the next; a re-seed mid-walk would only need another.
+
 ### DD-044: The Filter Keeps Fractions, And T+0 Comes From The Reading
 - **Decision:** The pressure filter's state is Q8 fixed point, with its step
   computed exactly (SNS-PRES-02), and SNS-PRES-04's forced 1 Pa step is gone.

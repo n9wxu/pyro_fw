@@ -60,6 +60,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **GND-CAL-03**: A sample more than 50 Pa from the reference shall not be averaged into it, so a climbing rocket cannot drag it upward. ← GND-CAL-01
 - **GND-CAL-04**: The reference shall freeze at launch to the mean of the pad before T+0 -- the blocks of GND-CAL-01's mean that ended before the first sample of the rise -- rather than being snapped to the pressure at detection. ← GND-CAL-01
 - **GND-CAL-05**: Altitude at launch detection shall report the height actually reached, not zero. ← GND-CAL-04
+- **GND-CAL-06**: When every sample has been rejected for 5 s while the board is still (under 1 m/s), the reference shall re-seed at the current filtered pressure, say so on telemetry, count it on /api/status, and have the pad marker rewritten after its dwell. ← GND-CAL-03
 - **GND-CAL-07**: A reference frozen on less than a second of the pad shall be reported as degraded on /api/status. ← GND-CAL-04
 
 #### Apogee Detection

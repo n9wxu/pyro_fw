@@ -172,7 +172,7 @@ ground bias, and the stall figure, where they used a different stall model.
 | Touchdown to LANDED, by the stillness test | on the pad's level 1.9 s, because the zero clamp hides the noise there; 5 m above it, never within 400 s, so only the 60 s timeout lands it | ≤ 3 s, at any landing height: done, 1.6 s | T4, T5 |
 | Apogee after the true apogee | +0.56 s mean (+0.54 to +0.58) | never early; about +0.4 s | T5 |
 | Ground pressure frozen at launch | reads 0.17 m (30 g) to 0.42 m (2 g) low | ≤ 0.1 m: done, 0.08 m | T7 |
-| Ground tracker after a >50 Pa step | frozen for good (N9) | re-seeds | T6 |
+| Ground tracker after a >50 Pa step | frozen for good (N9) | re-seeds: done, within 5 s | T6 |
 | Sample timestamps | loop ms at the temperature read, 16 ms after the conversion, up to 127 ms after it through a stall; stalls raise the worst speed error at 100 m/s from 8.3 to 9.3 m/s | hardware timer at the pressure conversion | T11 |
 | Fit-based speed and acceleration through flash stalls | worst −294 m/s and 441 m/s² with today's stamps (earlier experiments; T11 re-measures) | RMS 1.2 m/s and 3.5 m/s², stalls or not | T11 |
 | A flight above 8 km AGL | apogee fired 14.9 s early, at the clamp (N26) | apogee at the real apogee: done | T3 |
@@ -600,6 +600,12 @@ points to.
 ---
 
 ### T6. Let the ground tracker recover from a step (N9)
+
+**Done 2026-09-26** (DD-045), except `ground_reseeds` on a board (G4). The
+step test first passed at 60 Pa on the code after T4: the quiet filter lets
+the mean creep through a small step. It now sweeps 60 to 300 Pa both ways,
+and failed from 100 Pa up. The drift, launch and gust tests are guards; they
+passed before the change.
 
 **Why:** after a shift of more than 50 Pa (about 4 m, such as carrying the
 rocket to a higher pad), the gate rejects every sample. The reference freezes,

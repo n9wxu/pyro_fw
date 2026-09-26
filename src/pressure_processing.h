@@ -120,6 +120,14 @@ uint32_t pp_ground_window_ms(void);
  * pad [GND-CAL-07]. */
 bool pp_ground_degraded(void);
 
+/* [GND-CAL-06] A step bigger than the gate -- the board carried to a higher
+ * or lower pad -- leaves every sample rejected, and the reference frozen at
+ * the old ground for good. How long every sample has been rejected, and a
+ * fresh start from the current filtered pressure. */
+uint32_t pp_ground_rejecting_ms(uint32_t now_ms);
+void pp_ground_reseed(void);
+uint32_t pp_ground_reseeds(void);
+
 /* ── Recent history [FLT-BROWN-02] ────────────────────────────────
  *
  * The median's output since power-on, in every state, calibration included:

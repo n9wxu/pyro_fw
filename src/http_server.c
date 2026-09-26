@@ -768,7 +768,8 @@ static void serve_api_status(http_conn_t *hc) {
         "\"sensor_ok\":%s,\"fs_ok\":%s,\"faults\":[%s],"
         "\"reset_cause\":%u,\"recovery\":\"%s\","
         "\"pyro1_refused\":%s,\"pyro2_refused\":%s,\"pyro1_refires\":%u,\"main_forced\":%s,"
-        "\"pres_waits\":%lu,\"pres_rejects\":%lu,\"raw_pa\":%ld,\"pad_speed_cms\":%ld,\"ground_degraded\":%s,\"usb_"
+        "\"pres_waits\":%lu,\"pres_rejects\":%lu,\"raw_pa\":%ld,\"pad_speed_cms\":%ld,\"ground_degraded\":%s,\"ground_"
+        "reseeds\":%lu,\"usb_"
         "attached\":%s,\"test_"
         "mode\":%s,\"buzzer_active\":%s,"
         "\"beep\":\"%s\",\"beep_sound\":\"%s\","
@@ -812,7 +813,7 @@ static void serve_api_status(http_conn_t *hc) {
          * detector reads: together, the sensor's noise and what it costs. */
         (long)pp_last_raw_pa(), fctx ? (long)fctx->pad_speed_cms : 0L,
         /* The launch froze a reference on under a second of pad [GND-CAL-07]. */
-        pp_ground_degraded() ? "true" : "false",
+        pp_ground_degraded() ? "true" : "false", (unsigned long)pp_ground_reseeds(),
         /* A board on USB detects no launch and says nothing, unless it is in
          * test mode [USB-01..03, USB-08]. */
         fctx && fctx->usb_attached ? "true" : "false", fctx && fctx->test_mode ? "true" : "false",

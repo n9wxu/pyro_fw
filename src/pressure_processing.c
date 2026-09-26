@@ -62,8 +62,10 @@ static struct {
         uint32_t start[PP_GROUND_BLOCKS]; /* when each block began */
         uint8_t cur;                      /* block being filled */
         uint32_t block_start_ms;
-        uint8_t filled; /* blocks that have ever been written */
-        bool degraded;  /* frozen on less than a second of the pad */
+        uint8_t filled;        /* blocks that have ever been written */
+        bool degraded;         /* frozen on less than a second of the pad */
+        uint32_t reject_since; /* first of an unbroken run of rejections; 0: none */
+        uint32_t reseeds;
     } gnd;
 
     /* Altitude ring buffer */
@@ -80,7 +82,9 @@ static struct {
  * anything the weather does. */
 
 static void gnd_reset(int32_t seed_pa) {
+    uint32_t reseeds = pp.gnd.reseeds;
     memset(&pp.gnd, 0, sizeof(pp.gnd));
+    pp.gnd.reseeds = reseeds;
     pp.gnd.tracking = true;
     /* Seeded with the calibration result, so the mean is usable from the
      * first sample rather than climbing out of zero. */
@@ -99,8 +103,11 @@ static void gnd_feed(int32_t filtered_pa, uint32_t now_ms) {
      * and a mean that followed it up would under-report the whole flight. */
     int32_t dev = filtered_pa - pp.ground_pressure;
     if (dev > PP_GROUND_MAX_DEV_PA || dev < -PP_GROUND_MAX_DEV_PA) {
+        if (pp.gnd.reject_since == 0)
+            pp.gnd.reject_since = now_ms | 1u;
         return;
     }
+    pp.gnd.reject_since = 0;
     if (pp.gnd.block_start_ms == 0) {
         pp.gnd.block_start_ms = now_ms;
         pp.gnd.start[pp.gnd.cur] = now_ms;
@@ -155,6 +162,20 @@ bool pp_ground_freeze_before(uint32_t t_ms) {
         pp.ground_pressure = (int32_t)(total / (int64_t)count);
     pp.gnd.degraded = span_ms < 1000u;
     return !pp.gnd.degraded;
+}
+
+uint32_t pp_ground_rejecting_ms(uint32_t now_ms) {
+    return (pp.gnd.tracking && pp.gnd.reject_since) ? now_ms - pp.gnd.reject_since : 0;
+}
+
+void pp_ground_reseed(void) {
+    pp.ground_pressure = pp.last_filtered;
+    gnd_reset(pp.last_filtered);
+    pp.gnd.reseeds++;
+}
+
+uint32_t pp_ground_reseeds(void) {
+    return pp.gnd.reseeds;
 }
 
 bool pp_ground_degraded(void) {
