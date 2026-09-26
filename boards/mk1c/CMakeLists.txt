@@ -8,6 +8,7 @@ add_library(pyro_board STATIC
     hal_board.c       # implements src/board_if.h
     pyro_board.c      # implements src/pyro.h
     pressure_board.c  # implements src/pressure_sensor.h
+    arm_pump.c        # ARM_TOGGLE charge pump, for the firing path
 )
 
 target_include_directories(pyro_board PUBLIC ${CMAKE_CURRENT_LIST_DIR})
@@ -43,16 +44,3 @@ target_link_libraries(pyro_board PUBLIC
     hardware_i2c
     hardware_uart
 )
-
-# Bench mode: hold BIAS_BUS continuously so a multimeter can read a steady DC
-# level on the firing bus, instead of the ~3% duty pulse the routine tracking
-# test uses. Firing side stays cold -- FIRE_A/FIRE_B/ARM_TOGGLE untouched.
-#
-#   cmake -B build-hold -DPYRO_BOARD=mk1c -DPYRO_MK1C_BIAS_HOLD=ON
-#
-# Must be OFF for flight.
-option(PYRO_MK1C_BIAS_HOLD "Bench: hold BIAS_BUS continuously" OFF)
-if(PYRO_MK1C_BIAS_HOLD)
-    target_compile_definitions(pyro_board PRIVATE PYRO_MK1C_BIAS_HOLD=1)
-    message(STATUS "  MK1C BENCH MODE: BIAS_BUS held continuously (not for flight)")
-endif()

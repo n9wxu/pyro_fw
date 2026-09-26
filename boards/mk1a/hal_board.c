@@ -95,21 +95,13 @@ void board_buzzer_off(void) {
 
 bool board_pyro_raw(board_pyro_raw_t *out) {
     /* MK1A has no bus-level analog sensing -- only the two per-channel sense
-     * taps -- so there is nothing to fill the bus/bias fields with. Reporting
+     * taps -- so there is nothing to fill the bus fields with. Reporting
      * false leaves them out of /api/status entirely, which is better than
      * publishing zeros that read as "bus cold, all healthy". */
     (void)out;
     return false;
 }
 
-bool board_pyro_wave_request(int mode) {
-    (void)mode;
-    return false; /* no high-speed capture on this board */
-}
-
-int board_pyro_wave_state(void) {
-    return 0;
-}
 
 uart_inst_t *board_uart(void) {
     return BOARD_UART_INST;

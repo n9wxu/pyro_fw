@@ -359,7 +359,7 @@ A user need is verified through the system requirements under it, and is marked 
 | SYS-PORT-02 | Runnable in a browser | Web: test_sim.spec.js flies docs/sim.html's WASM build from power-on to LANDED; CI checks docs/app against www/ (`scripts/sync_demo.sh --check`) | ✅ |
 | SYS-PWR-01 | Minimise CPU active time | Through PWR-SLEEP-01; no test measures CPU active time | ⚠️ |
 | SYS-PWR-02 | I/O without the CPU | Through PWR-SAMPLE-01/02, PWR-TELEM-01..03, PWR-BUZZ-01, PWR-LOG-01..04 | ✅ |
-| PWR-WAIT-01 | No sleeps: the exec loop is the only clock | Board pyro: test_mk1b_continuity_never_sleeps, test_mk1b_reads_after_the_settle (MK1B's continuity against a fake SDK whose sleeps fail the test); Bring-up, on every board: test_bringup_finds_its_sensor, test_bringup_recovers_the_bus_first, test_bringup_waits_out_the_reset (bus recovery, settles and sensor resets as loop steps); `support/wait_check.py` in CI, a ratchet over every sleep and busy-wait still in `src/` and `boards/`, at 7, all in MK1C's bench waveform capture (DD-053) | ⚠️ |
+| PWR-WAIT-01 | No sleeps: the exec loop is the only clock | Board pyro: test_mk1b_continuity_never_sleeps, test_mk1b_reads_after_the_settle (MK1B's continuity against a fake SDK whose sleeps fail the test); Bring-up, on every board: test_bringup_finds_its_sensor, test_bringup_recovers_the_bus_first, test_bringup_waits_out_the_reset (bus recovery, settles and sensor resets as loop steps); Board pyro (MK1C): test_mk1c_only_the_tracking_test_runs (the real backend against the plant: nothing it does holds the loop); `support/wait_check.py` in CI, which fails on any sleep or busy-wait in `src/` or `boards/`, and finds none (DD-053, DD-055) | ✅ |
 | PWR-USB-01 | USB serviced autonomously | — (deferred to v2.1; USB is serviced from the main loop) | ⚠️ |
 | SYS-TEST-01 | Ground test over serial | Integration: test_GND_TEST_01..04 | ✅ |
 
@@ -369,8 +369,8 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 221 |
-| ⚠️ Not directly verified (needs a test or hardware) | 22 |
+| ✅ Verified by a host, web or closed-loop test | 222 |
+| ⚠️ Not directly verified (needs a test or hardware) | 21 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 11 |
 

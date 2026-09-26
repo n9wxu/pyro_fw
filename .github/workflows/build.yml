@@ -193,9 +193,9 @@ jobs:
         run: cd build && ninja sensor_bringup_tests
 
       # The firing-network models, MK1C's held to the bench board (DD-054),
-      # and the bench script graded on captures synthesized from it.
-      - name: Run plant model and bench script tests
-        run: cd build && ninja plant_tests && ninja pyro_check_tests
+      # and MK1C's real pyro backend run against it (DD-055).
+      - name: Run plant model and MK1C pyro backend tests
+        run: cd build && ninja plant_tests && ninja board_pyro_mk1c_tests
 
       - name: Validate web JS syntax
         run: node --check www/app.js

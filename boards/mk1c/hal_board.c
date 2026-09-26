@@ -94,15 +94,6 @@ bool board_pyro_raw(board_pyro_raw_t *out) {
     return pyro_raw_sense(out);
 }
 
-bool board_pyro_wave_request(int mode) {
-    extern bool pyro_wave_request(int mode);
-    return pyro_wave_request(mode);
-}
-
-int board_pyro_wave_state(void) {
-    extern int pyro_wave_state(void);
-    return pyro_wave_state();
-}
 
 uart_inst_t *board_uart(void) {
     return BOARD_UART_INST;

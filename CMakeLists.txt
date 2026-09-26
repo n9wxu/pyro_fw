@@ -872,36 +872,31 @@ add_custom_target(sensor_bringup_tests
     COMMENT "Pressure sensor bring-up tests, every board"
 )
 
-# support/pyro_check.py graded offline on MK1C captures synthesized from the
-# plant model (DD-054): a healthy board passes, an open R_BLEED fails. Uses
-# the board models plant_tests compiles.
-find_package(Python3 COMPONENTS Interpreter)
-add_custom_target(pyro_check_tests
-    COMMAND ${CMAKE_COMMAND} -E echo "Building the MK1C capture synthesizer..."
-    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/sim/plant
-               ${CMAKE_CURRENT_LIST_DIR}/test/synth_mk1c_capture.c
+# MK1C's real pyro backend against sim/hw/'s SDK stand-in and the plant model
+# of the board as measured: presence and shorts, and nothing else (DD-055).
+add_custom_target(board_pyro_mk1c_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building MK1C pyro backend tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -DPYRO_SIM_BOARD_PYRO
+               -I${CMAKE_CURRENT_LIST_DIR}/sim/hw -I${CMAKE_CURRENT_LIST_DIR}/sim/plant
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1c -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_board_pyro_mk1c.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1c/pyro_board.c
+               ${CMAKE_CURRENT_LIST_DIR}/sim/hw/rp2040_shim.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/plant/net_solve.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/plant/plant.c
                ${CMAKE_BINARY_DIR}/plant_mk1a.o
                ${CMAKE_BINARY_DIR}/plant_mk1b.o
                ${CMAKE_BINARY_DIR}/plant_mk1c.o
+               ${unity_SOURCE_DIR}/src/unity.c
                -lm
-               -o ${CMAKE_BINARY_DIR}/synth_mk1c_capture
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/cap_healthy ${CMAKE_BINARY_DIR}/cap_bleed_open
-    COMMAND ${CMAKE_BINARY_DIR}/synth_mk1c_capture ${CMAKE_BINARY_DIR}/cap_healthy
-    COMMAND ${CMAKE_BINARY_DIR}/synth_mk1c_capture ${CMAKE_BINARY_DIR}/cap_bleed_open bleed_open
-    COMMAND ${CMAKE_COMMAND} -E echo "A healthy board passes..."
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/support/pyro_check.py
-               --offline ${CMAKE_BINARY_DIR}/cap_healthy --rpd 1918 --r120 330
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/support/pyro_check.py
-               --offline ${CMAKE_BINARY_DIR}/cap_healthy --rpd 1918
-    COMMAND ${CMAKE_COMMAND} -E echo "...and an open R_BLEED fails."
-    COMMAND sh -c "! ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/support/pyro_check.py --offline ${CMAKE_BINARY_DIR}/cap_bleed_open --rpd 1918 --r120 330 | grep -q 'all checks PASS'"
+               -o ${CMAKE_BINARY_DIR}/test_board_pyro_mk1c
+    COMMAND ${CMAKE_COMMAND} -E echo "Running MK1C pyro backend tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_board_pyro_mk1c
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    COMMENT "Bench script against the MK1C model"
-    VERBATIM
+    COMMENT "MK1C pyro backend on the modelled board"
 )
-add_dependencies(pyro_check_tests plant_tests)
+add_dependencies(board_pyro_mk1c_tests plant_tests)
 
 # The beep vocabulary: the rules half, with no file I/O, like pin_assign.
 add_custom_target(beep_tests

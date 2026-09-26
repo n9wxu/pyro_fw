@@ -21,6 +21,8 @@ recorded.
 | 3 | [Safety fixes](#3-safety-fixes) | done |
 | 4 | [The pressure chain and the Mach lockout](#4-the-pressure-chain-and-the-mach-lockout) | done, except every task's G4 |
 | 5 | [Other code defects](#5-other-code-defects) | done, except C10, C6 and U6 (their decisions) |
+| 5a | [No sleeps](#5a-no-sleeps-dd-053) | done |
+| 5b | [MK1C firing path](#5b-mk1c-firing-path) | your go-ahead, then a supervised bench test |
 | 6 | [Bench checks](#6-bench-checks) | a person or equipment |
 | 7 | [Board changes](#7-board-changes) | hardware design |
 | 8 | [Documentation and housekeeping](#8-documentation-and-housekeeping) | done |
@@ -136,6 +138,7 @@ are still yours; their tasks wait.
 | T6 | How long the ground tracker waits before re-seeding | **Adopted:** 5 s. The pressure-filter prompt's 30 s leaves the pad reference wrong for half a minute after the rocket is set down. | T6 |
 | T8 | Flight logging rate | **Open.** Full rate makes flights replayable, at a cost in flash wear. The default logs every sample, which since T9 (DD-051) is about 90 rows a second on the MS5607 boards: nearly twice the flash per flight. A thinned log cannot be replayed. | T9 |
 | M1-D | Accept M1's deviations from the Mach prompt | **Adopted.** They are listed in M1. The largest: the fit is solved against each sample's own time, in floating point, not with precomputed integer coefficients. Flash stalls make the sample spacing uneven (T11), and precomputed coefficients assume even spacing. | M1 |
+| P1 | MK1C's tracking pulse is 10-11 ms; DESIGN.md S3 asks for 5-10 ms | **Open.** The loop ends a phase no sooner than the next iteration, so the 8 ms asked for becomes one loop and a little more (scoped 2026-09-26). A timer one-shot, like the MS5607's, could end it at 8 ms exactly. | — |
 | N20 | Shared littlefs buffers | **Adopted:** refuse file GETs while the flight log is open. It can be tested on the host, the log can be read after landing, and WEB-API-08 already refuses every writer in flight. | N20 task |
 
 ---
@@ -1201,13 +1204,66 @@ without lowering the list.
 | W2 | `src/lua/lua_pio_platform.c` | the bridge's first word | **done**: the FIFO is empty, so a plain put |
 | W3 | `boards/*/pressure_board.c`, `ms5607_detect()` | bus recovery clocks, pull-up settle, sensor resets | **done**: steps the loop runs during BOOT_SETTLE (`sensor_bringup_tests`, every board) |
 | W4 | `ms5607_read()`, `pressure_sensor_read()` | two conversions | **done**: removed; nothing called them |
-| W5 | MK1C `pyro_board.c` waveform capture | bias settle, the edge's lead-in, the DMA capture, the arm pump's FIFO | in the flash window, on a bench request. The pump's pacing is part of the arm interlock's safety argument, so its conversion needs the user |
+| W5 | MK1C `pyro_board.c` waveform capture | bias settle, the edge's lead-in, the DMA capture, the arm pump's FIFO | **done**: the capture is gone with the hardware checks (DD-055). The arm pump stays for firing; feeding it from the loop is F1's |
 
 Outside the check, recorded so they are not forgotten: the MS5607 one-shot's
 wait for STOP inside its handler (at most 0.15 ms at 400 kHz), which an I2C
 interrupt could replace; and, found on the way, MK1A's `pyro_init()` asserts
 PYRO_LOW before the release claim, so a board with both channels released
 keeps it asserted until Lua reconfigures the pad.
+
+---
+
+## 5b. MK1C firing path
+
+### F1. Arm the firing bus and fire, on MK1C
+
+**Open, not started.** Added 2026-09-26 at the user's request.
+
+**Why:** MK1C cannot fire. `pyro_fire()` refuses ("firing not implemented on
+MK1C"), and the board announces a sense-only build. The firing bus is
+energised only while U9 is enabled, and U9's enable stays up only while the
+ARM_TOGGLE charge pump keeps toggling (DESIGN.md 5.1, invariant 5). The pump
+had only ever run inside the bench arm test, which went with the hardware
+checks (DD-055); its start and stop are kept in `boards/mk1c/arm_pump.c`,
+uncalled.
+
+**The sequence** (`~/Documents/pyro_mk1c/IGNITER_OPERATION.md` F0-F10,
+DESIGN.md 7.1), every step a loop step, nothing waiting [DD-053]:
+1. Preconditions: a valid tracking test with the channel present, no
+   latched short, the pack above UVLO, the bus cold.
+2. Arm: start the pump and feed it from the loop, a burst per word, only
+   while the FIFO has room. The FIFO's depth times the burst bounds how far
+   the pump can run past the last check; the old bench code blocked on a
+   full FIFO instead, which DD-053 rules out.
+3. Wait for the bus to reach the pack: the dVdT slew brings it to 90 % in
+   about 8.5 ms on 2S (DESIGN.md 4).
+4. Fire: FIRE_x on for the pulse, then off.
+5. Disarm: stop feeding and stop the pump; C_HOLD bleeds and U9 turns off in
+   about 9.6 ms, then R_BLEED drains the bus.
+6. Verify (S6): the tracking test must read the fired channel open.
+
+Any latched short, or a failed precondition at any step, stops the feed and
+drops FIRE_x at once. To settle in the design: the old bench code scoped a
+50 ms watchdog to the armed window, against the loop's own watchdog of twice
+`PYRO_LOOP_WORST_MS`.
+
+**Tests first**, in `board_pyro_mk1c_tests` (the real `pyro_board.c` against
+the plant, which models U9, the pump, the slew and a match's ignition):
+- a fitted channel fires: the plant's ignition latch sets, the other
+  channel's does not;
+- the bus reaches the pack within the slew's time, and not before the pump
+  runs;
+- the loop stopping mid-arm disarms U9 within about 20 ms;
+- a short latched mid-arm stops the pump and never drives FIRE_x;
+- a channel reading open, or no valid tracking test, is refused;
+- after a fire the channel reads open;
+- nothing blocks, and ARM_TOGGLE never toggles except inside a fire.
+
+**Records:** a DD; MK1C's firing requirements and their trace rows.
+
+**Bench:** a flash (G4), then a supervised test with a dummy load on CN1 and
+the scope on the firing bus, before any real match.
 
 ---
 
@@ -1226,8 +1282,8 @@ resolution doc.
 | T1 | Recovery reads samples on the hardware | a board with a marker, booted on battery with USB plugged in afterwards, reads "cold: at ground level" | a battery |
 | T1 | Brownout recovery on the real path | a power cut during a chamber descent rejoins in FALLING; a power cut on the pad stays cold | a battery, the chamber, telemetry over serial or radio (USB forces a cold boot, and a reset ends test mode) |
 | N11 | LUA and MOCK rows on the flight clock | in test mode, a script that calls `log()` once a second through a chamber flight writes LUA rows whose times fall among the sample rows', not near the board's uptime | test mode, the chamber, MK1C with Lua |
-| D-C1 | MK1C's R_BLEED, open, hides from the bus level | U9's reverse path carries the bus either way (685 against 730 counts), so no level check can find it (DD-054). Below U9's knee the bus decays through the pull-down alone, about 2.3 ms healthy against 16 ms with R_BLEED open; `support/pyro_check.py` now finds it that way on the bench. A firmware check could read the bus one loop after T2 releases its bias: about 5 counts healthy, about 170 open. Not built | the user's decision |
-| CI-1 | Six host suites never run in CI | `pin_caps_tests`, `beep_tests`, `pin_assign_tests`, `buzzer_tests`, `config_tests` and `config_persistence_tests` pass in the local gate but no workflow step runs them; `plant_tests` and `pyro_check_tests` were added with DD-054 | a workflow edit |
+| D-C1 | MK1C's R_BLEED, open, hides from the bus level | U9's reverse path carries the bus either way (685 against 730 counts), so no level check can find it (DD-054). **Closed, not wanted:** the firmware checks only presence and shorts (DD-055) | — |
+| CI-1 | Six host suites never run in CI | `pin_caps_tests`, `beep_tests`, `pin_assign_tests`, `buzzer_tests`, `config_tests` and `config_persistence_tests` pass in the local gate but no workflow step runs them; `plant_tests` and `board_pyro_mk1c_tests` now do | a workflow edit |
 | D-B1 | MK1B's continuity check stalls the loop | Found 2026-09-26 on a second MK1B that owns its pyros: `pyro_sample()` held PYRO_COMMON_EN for a `sleep_ms(10)` settle inside STAGE 3, once a second, so `stage_max_us[3]` was 10.2 ms and the loop overran once a second (250 in 252 s). The bench MK1B never showed it: both its channels are released to Lua, which skips the check. **Fixed in code (DD-053):** the settle is a deadline the loop checks (`board_pyro_tests`). Pass: 0 overruns with the pyros owned, and `stage_max_us[3]` back near 4 ms | a flash |
 | T5 | The fit's cost, and the pad's σ, on each board | `stage_max_us[2]` no more than 500 µs above its value before T5, 0 loop overruns, with Lua running on MK1C; `fit_sigma_mpa` between 1200 and 5000, and on the BMP280 (MK1A) recorded, since its noise is not the MS5607's. First reading, the second MK1B on 2.1.680 at ~50 Hz: `stage_max_us[2]` 2.7 ms against 0.9-1.1 ms on the boards still on 2.1.674-676, so over the 500 µs; to be read again at 90 Hz | G4's flash |
 | N20 | No file served while the log is written | in test mode, once a chamber pump-down declares a launch, `GET /www/app.js` answers 409 and `/api/status` 200; after LANDED the log reads back whole | test mode, the chamber |

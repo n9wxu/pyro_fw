@@ -247,13 +247,13 @@ static const char *content_type_hdr(const char *path) {
 }
 
 /* [PYR-SAFE-04] A browser must not reboot, reflash or write the flash of a
- * board that is flying. Every POST changes something; the one GET that does
- * is the capture, which drives the firing bus. */
+ * board that is flying. Every POST changes something. */
 static bool refused_in_flight(const char *method, const char *path) {
+    (void)path;
     if (!flight_in_progress()) {
         return false;
     }
-    return strcmp(method, "POST") == 0 || strncmp(path, "/api/capture", 12) == 0;
+    return strcmp(method, "POST") == 0;
 }
 
 #define FLIGHT_LOG_PATH "flight_log.csv"
@@ -739,14 +739,11 @@ static void serve_api_status(http_conn_t *hc) {
     /* Raw pyro sense counts; -1 on a board that has none. Reported as raw
      * ADC counts rather than volts so a marginal reading stays visible. */
     board_pyro_raw_t praw = {0};
-    int raw_busq = -1, raw_bus = -1, raw_vbat = -1, raw_a = -1, raw_b = -1, raw_tau = -1;
+    int raw_busq = -1, raw_bus = -1, raw_vbat = -1;
     if (board_pyro_raw(&praw)) {
         raw_busq = (int)praw.bus_quiescent;
         raw_bus = (int)praw.bus_biased;
         raw_vbat = (int)praw.vbat;
-        raw_a = (int)praw.ch_a_biased;
-        raw_b = (int)praw.ch_b_biased;
-        raw_tau = (int)praw.bus_decay_tau_us;
     }
     int pos = snprintf(
         buf, cap,
@@ -761,7 +758,6 @@ static void serve_api_status(http_conn_t *hc) {
         "\"units\":%u,\"rocket_id\":\"%.8s\",\"rocket_name\":\"%.8s\","
         "\"sensor\":\"%s\",\"board\":\"%s\","
         "\"pyro_bus_q\":%d,\"pyro_bus_adc\":%d,\"pyro_vbat_adc\":%d,"
-        "\"bias_a\":%d,\"bias_b\":%d,\"decay_tau_us\":%d,\"wave_state\":%d,"
         "\"loop_max_us\":%lu,\"loop_overruns\":%lu,\"loop_late_max_us\":%lu,"
         "\"loop_count\":%lu,\"stage_max_us\":[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu],"
         "\"flash_opens\":%lu,\"flash_skips\":%lu,\"flash_refusals\":%lu,\"log_dropped\":%lu,"
@@ -785,8 +781,7 @@ static void serve_api_status(http_conn_t *hc) {
         g_status.pyros_armed ? "true" : "false", (unsigned long)g_status.flight_time_ms,
         (unsigned long)to_ms_since_boot(get_absolute_time()), FW_VERSION, p1m, (unsigned)g_status.pyro1_value, p2m,
         (unsigned)g_status.pyro2_value, (unsigned)g_status.units, g_status.rocket_id, g_status.rocket_name,
-        pressure_sensor_name(), PYRO_BOARD_NAME, raw_busq, raw_bus, raw_vbat, raw_a, raw_b, raw_tau,
-        board_pyro_wave_state(), (unsigned long)loop_max_us, (unsigned long)loop_overruns,
+        pressure_sensor_name(), PYRO_BOARD_NAME, raw_busq, raw_bus, raw_vbat, (unsigned long)loop_max_us, (unsigned long)loop_overruns,
         (unsigned long)loop_late_max_us, (unsigned long)loop_count, (unsigned long)stage_max_us[0],
         (unsigned long)stage_max_us[1], (unsigned long)stage_max_us[2], (unsigned long)stage_max_us[3],
         (unsigned long)stage_max_us[4], (unsigned long)stage_max_us[5], (unsigned long)stage_max_us[6],
@@ -901,25 +896,7 @@ static void serve_get(conn_t *c) {
     http_conn_t *hc = &c->h;
     const char *path = hc->path;
 
-    if (strncmp(path, "/api/capture", 12) == 0) {
-        /* Bench: queue a high-speed bus capture. The work happens in the main
-         * loop; poll wave_state in /api/status until it reads 2, then GET
-         * /wave_c.csv or /wave_d.csv. */
-        int mode = 0; /* charge */
-        if (strstr(path, "m=d")) {
-            mode = 1;
-        } else if (strstr(path, "m=a")) {
-            mode = 2; /* arm: runs the arm element, interlock applies */
-        }
-        if (board_pyro_wave_request(mode)) {
-            http_respond_str(hc, 200, TEXT,
-                             (mode == 2)   ? "queued /wave_a.csv"
-                             : (mode == 1) ? "queued /wave_d.csv"
-                                           : "queued /wave_c.csv");
-        } else {
-            http_respond_str(hc, 503, TEXT, "refused: busy, unsupported, or arm interlock");
-        }
-    } else if (strcmp(path, "/api/status") == 0) {
+    if (strcmp(path, "/api/status") == 0) {
         serve_api_status(hc);
 #if PYRO_HAS_LUA
     } else if (strcmp(path, "/api/lua/script") == 0) {

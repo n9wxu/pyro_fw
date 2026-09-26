@@ -19,11 +19,9 @@
  *   adc_read()       advances 2 us, one 96-cycle conversion at 48 MHz
  *   busy_wait_us(n)  advances n us
  *
- * adc_read() costing time is load-bearing rather than pedantic. MK1C's
- * bus_decay_probe() times a decay by counting adc_read() calls until the
- * level crosses 1/e; with a free conversion that loop measures zero and
- * the probe silently reports nonsense. With the conversion priced at 2 us
- * it measures the same thing it measures on the bench.
+ * adc_read() costing time is load-bearing rather than pedantic: code that
+ * times anything by counting conversions measures zero with a free one.
+ * Priced at 2 us, it measures what it measures on the bench.
  *
  * ── Two peripherals run in the background ────────────────────────
  *
@@ -32,9 +30,8 @@
  * the time advance rather than from their own API calls. For the pump that
  * is what reproduces the coast DESIGN.md's passive-disarm argument depends
  * on: when the CPU stops pushing, the SM keeps toggling until the FIFO
- * drains and only then stalls. For the capture it is what puts the
- * pre-trigger baseline in the buffer, since the firmware arms the DMA,
- * busy-waits 200 us, and only then moves the pin.
+ * drains and only then stalls. For a capture it is what puts a
+ * pre-trigger baseline in the buffer.
  *
  * SPDX-License-Identifier: MIT
  */

@@ -18,8 +18,7 @@
 
 /* ── The bench characterisation (DD-054) ───────────────────────────
  * Fitted to the bench MK1C's ADC and a scope at CN1, 2026-09-26. The plant
- * model is built from these, and every waveform capture carries them so
- * support/pyro_check.py grades the board against what was measured. */
+ * model is built from these. */
 #define MK1C_BENCH_BUS_BIASED_COUNTS 688   /* bus under its bias, no match     */
 #define MK1C_BENCH_CH_BIASED_COUNTS 1262   /* channel under its bias, no match */
 #define MK1C_BENCH_C_BUS_NF 1100           /* C115 and the bus's strays        */

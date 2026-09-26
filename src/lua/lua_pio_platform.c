@@ -541,8 +541,7 @@ void lua_plat_safe_outputs(void) {
 
     /* Hand every Lua pad back to SIO and drive it low. gpio_init() clears the
      * function select, so a pad that a state machine was driving stops being
-     * the PIO's regardless of what the program left behind -- the same move
-     * arm_pump_stop() makes in boards/mk1c/pyro_board.c. */
+     * the PIO's regardless of what the program left behind. */
     if (bridge_sm >= 0) {
         pio_sm_set_enabled(PYRO_PIO_INST, (uint)bridge_sm, false);
     }

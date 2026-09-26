@@ -9,9 +9,9 @@ writes. So no source in src/ or boards/ may call a function whose job is to
 let time pass: the SDK's sleeps and busy-waits, and the blocking DMA and PIO
 waits that pace a transfer by time.
 
-ALLOWED lists the calls not yet converted, per file, as a ratchet: a file
-over its count fails, and so does a file under it, so the list is kept exact
-and only shrinks. It is empty when the work is done.
+ALLOWED lists calls not yet converted, per file, as a ratchet: a file over
+its count fails, and so does a file under it, so the list is kept exact and
+only shrinks. It is empty: every sleep in the tree is gone.
 
 Outside this check: bounded waits on a bus or a peripheral's handshake, such
 as the I2C drivers' transfers and core1's power-state acknowledgement. They
@@ -34,9 +34,7 @@ WAITS = [
 ]
 CALL_RE = re.compile(r"\b(" + "|".join(WAITS) + r")\s*\(")
 
-ALLOWED = {
-    "boards/mk1c/pyro_board.c": 7,
-}
+ALLOWED = {}
 
 
 def strip_comments(text):

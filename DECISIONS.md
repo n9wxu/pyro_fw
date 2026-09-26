@@ -557,6 +557,35 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-055: MK1C's Firmware Checks Presence And Shorts, Nothing Else
+- **Decision:** at the user's direction -- "The ONLY FW checks we need are
+  those that verify the pyro is present and we do not have short circuits.
+  We do not need live HW checks." -- MK1C's pyro backend runs the T2
+  tracking test and the two short latches, and no other probe:
+  - presence: a channel following the biased bus (DD-054);
+  - a bus that will not rise under its bias: shorted to ground, by the bus,
+    a harness lead, or a shorted low-side FET behind a fitted match;
+  - the bus at the pack with nothing armed: a shorted high side.
+- **Removed:** the T3 channel-bias probe, the bus decay probe, the bias-hold
+  bench mode, the waveform capture and its `/api/capture` endpoint (with the
+  board interface's capture calls, the status fields `bias_a`, `bias_b`,
+  `decay_tau_us` and `wave_state`, and `support/pyro_check.py`, which
+  needed it), and the arm interlock that guarded the capture's arm mode.
+  The capture held the tree's last seven sleeps, so DD-053's ratchet is
+  empty.
+- **Kept: the arm pump.** The firing bus is energised only while ARM_TOGGLE
+  pumps U9's enable, so firing needs it. Its start and stop live in
+  `boards/mk1c/arm_pump.c`, uncalled: MK1C's firing path is not built
+  (`pyro_fire()` refuses), and is task F1.
+- **A shorted low-side FET without a match** is no longer reported; T3 found
+  it. It cannot fire anything, and with a match fitted the tracking test
+  sees the bus pulled down.
+- `board_pyro_mk1c_tests` runs the real backend against the plant: a fitted
+  match reads present and an absent one open, a shorted bus, a shorted low
+  side behind a match and a shorted high side each latch, and the only
+  stimulus is the tracking pulse, once in 500 ms, with nothing holding the
+  loop.
+
 ### DD-054: MK1C's Firing Bus Is Designed Around The Board As Measured
 - **Decision:** at the user's direction, the firmware and its model follow
   the bench MK1C, not DESIGN.md 4's algebra. Scoped at CN1 and read by the
@@ -586,15 +615,9 @@ rationale and the alternatives considered.
   pull-down alone, so the decay there still shows it (about 2.3 ms against
   16 ms); nothing checks that yet. The tracking current falls to about
   0.11 mA, safer than the 0.2 mA designed.
-- **The bench script grades the board as measured:** the characterisation
-  lives in `pyro_sense.h`, the model is built from it, and every waveform
-  capture carries it, so `support/pyro_check.py` holds a board to U9's
-  fitted path and the Schottky sources rather than to DESIGN.md 4. It finds
-  an open R_BLEED from the decay below the knee, where the level cannot.
-  Against the paper design it failed a healthy board four ways and could
-  not tell it from one with the bleed open. `pyro_check_tests` grades
-  captures synthesized from the model: a healthy board passes, an open
-  bleed fails.
+- **The bench script** graded the board against this characterisation for
+  a while, finding an open R_BLEED from the decay below the knee. It went
+  with the waveform capture it depended on (DD-055).
 
 ### DD-053: No Sleeps: The Exec Loop Is The Only Clock
 - **Decision:** at the user's direction, no code sleeps or busy-waits

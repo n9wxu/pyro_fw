@@ -21,10 +21,8 @@
  * The flight software has a millisecond clock that the simulation driver
  * sets, and the shim has a microsecond clock that board code advances by
  * blocking. They are reconciled once per update, in the only direction
- * that is safe: forward. Board code that spends 42 ms in blocking bias
- * probes -- which MK1C's board.cmake notes as its worst-case contribution
- * to the loop budget -- has moved the shim past the tick, and that is a
- * real result, not an error to correct.
+ * that is safe: forward. Board code that blocks has moved the shim past
+ * the tick, and that is a real result, not an error to correct.
  *
  * ── What counts as a fire ────────────────────────────────────────
  *
