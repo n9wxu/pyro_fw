@@ -100,12 +100,24 @@ void pp_set_ground_pressure(int32_t pa);
 /* Track while true, hold the last value while false. PAD_IDLE enables it;
  * launch freezes it. */
 void pp_ground_track(bool enabled);
+
+/* Freeze the reference to the mean of the blocks that ended before t_ms
+ * [GND-CAL-04]. Launch passes the first sample of the rise: a reference frozen
+ * at detection, a second or more later, has averaged in the start of the
+ * climb, and reads every altitude low. With no such block the reference is
+ * kept as it is. Returns false, and pp_ground_degraded() says so, when the
+ * blocks span less than a second of the pad. */
+bool pp_ground_freeze_before(uint32_t t_ms);
 bool pp_ground_tracking(void);
 
 /* How much of the window has filled, for /api/status. The mean is over
  * whatever is there, so an early launch is not penalised -- but a short
  * window is worth knowing about. */
 uint32_t pp_ground_window_ms(void);
+
+/* True when the reference frozen at launch rests on less than a second of the
+ * pad [GND-CAL-07]. */
+bool pp_ground_degraded(void);
 
 /* ── Recent history [FLT-BROWN-02] ────────────────────────────────
  *

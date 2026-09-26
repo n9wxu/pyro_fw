@@ -171,7 +171,7 @@ ground bias, and the stall figure, where they used a different stall model.
 | Speed noise on the pad (RMS) | 1.58 m/s | ≤ 0.3 m/s | T4, T5 |
 | Touchdown to LANDED, by the stillness test | on the pad's level 1.9 s, because the zero clamp hides the noise there; 5 m above it, never within 400 s, so only the 60 s timeout lands it | ≤ 3 s, at any landing height | T4, T5 |
 | Apogee after the true apogee | +0.56 s mean (+0.54 to +0.58) | never early; about +0.4 s | T5 |
-| Ground pressure frozen at launch | reads 0.17 m (30 g) to 0.42 m (2 g) low | ≤ 0.1 m | T7 |
+| Ground pressure frozen at launch | reads 0.17 m (30 g) to 0.42 m (2 g) low | ≤ 0.1 m: done, 0.08 m | T7 |
 | Ground tracker after a >50 Pa step | frozen for good (N9) | re-seeds | T6 |
 | Sample timestamps | loop ms at the temperature read, 16 ms after the conversion, up to 127 ms after it through a stall; stalls raise the worst speed error at 100 m/s from 8.3 to 9.3 m/s | hardware timer at the pressure conversion | T11 |
 | Fit-based speed and acceleration through flash stalls | worst −294 m/s and 441 m/s² with today's stamps (earlier experiments; T11 re-measures) | RMS 1.2 m/s and 3.5 m/s², stalls or not | T11 |
@@ -401,6 +401,12 @@ stop two bad samples in a row.
 ---
 
 ### T7. Take the launch ground pressure from before the rise
+
+**Done 2026-09-26** (DD-043), except `ground_degraded` on a board's
+`/api/status` (G4). The frozen ground now reads 0.08 m at every acceleration.
+That is about 1 Pa, the HAL's truncation of each reading to whole pascals.
+The degraded flag is GND-CAL-07 rather than an amended GND-CAL-05, which
+still holds as written.
 
 **Why:** the reference freezes at detection, 1–2 s after liftoff. Samples
 from the first few metres of climb still pass the 50 Pa gate, so every AGL

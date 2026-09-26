@@ -538,6 +538,22 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-043: The Launch's Ground Pressure Comes From Before The Rise
+- **Decision:** At launch the reference freezes to the mean of the blocks of
+  GND-CAL-01's 5 s mean that ended before T+0, the first sample of the rise
+  (GND-CAL-04). Each block records when it began. With less than a second of
+  such blocks the reference is flagged degraded (GND-CAL-07), and with none
+  it is kept as it is.
+- **Why:** the reference froze at detection, 1-2 s into the climb. The first
+  metres of that climb passed GND-CAL-03's 50 Pa gate, so every AGL value read
+  0.17 m (30 g) to 0.42 m (2 g) low. It now reads 0.08 m, about 1 Pa, which
+  is the HAL truncating each reading to whole pascals.
+- **T+0 is already known.** FLT-LAUNCH-03 records the first sample above
+  50 cm, so no fixed look-back (the pressure-filter prompt's 3 s) is needed,
+  and a fast launch does not lose three seconds of pad.
+- **Degraded, not refused:** a rocket launched the moment the board reached
+  PAD_IDLE still flies; its AGL values are only as good as the calibration.
+
 ### DD-042: Triggers Hold For A Duration, And Speed Passes The Clamps
 - **Decision:** Launch needs its height and speed condition held for 100 ms
   of sample time (FLT-LAUNCH-07); apogee needs speed at or below zero held for

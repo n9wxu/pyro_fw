@@ -126,7 +126,7 @@ The flight context also keeps a 4096-entry ring of samples and events (DAT-01); 
 ### Pressure Filter
 Each reading first passes a median of three, stamped with the middle reading's time, so no single outlier reaches the filter (SNS-PRES-07, DD-040). `pp_filter_pressure()` in `src/pressure_processing.c` is then a first-order IIR with a 500 ms time constant (SNS-PRES-02), initialised to the first raw reading (SNS-PRES-03). The state is whole pascals. At 20 ms the step is 3.8 % of the difference, which rounds to zero for any difference under about 26 Pa, so SNS-PRES-04 forces a 1 Pa step instead. Near steady state that makes the filter a rate limiter that passes noise through; T4 in `docs/outstanding_tasks.md` replaces it with a fractional state.
 
-Altitude is the hypsometric formula against the ground reference (SNS-ALT-01), clamped to 0-8000 m (SNS-ALT-02, SNS-ALT-03). The ground reference is a 5 s mean of the filtered pressure, frozen at launch (GND-CAL-01..05).
+Altitude is the hypsometric formula against the ground reference (SNS-ALT-01), clamped to 0-8000 m (SNS-ALT-02, SNS-ALT-03). The ground reference is a 5 s mean of the filtered pressure. Launch freezes it to the part of that mean from before T+0 (GND-CAL-01..05, GND-CAL-07).
 
 ### Altitude Limitations
 Altitude is clamped at 8000 m (SNS-ALT-02) and at 0 (SNS-ALT-03) where it is reported. Speed is taken from the unclamped height (SNS-ALT-04), so neither clamp reads as a stopped rocket.

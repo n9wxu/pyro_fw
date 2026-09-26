@@ -1061,8 +1061,9 @@ static void action_launch(flight_context_t *ctx, uint32_t now) {
 
     /* Freeze the reference; do not snap it to the pressure here. Snapping
      * would define the 100 ft already climbed as zero, and apogee and every
-     * AGL threshold would be that much lower. */
-    pp_ground_track(false);
+     * AGL threshold would be that much lower. Frozen from before T+0, since
+     * the climb up to detection has already leaked into the mean. */
+    (void)pp_ground_freeze_before(ctx->launch_time);
     ctx->ground_pressure = pp_ground_pressure();
 
     /* Also the base of the first ASCENT speed: from zero it would be one

@@ -59,9 +59,11 @@ static struct {
         bool tracking;
         int64_t sum[PP_GROUND_BLOCKS]; /* filtered Pa summed within a block */
         uint16_t n[PP_GROUND_BLOCKS];
-        uint8_t cur; /* block being filled */
+        uint32_t start[PP_GROUND_BLOCKS]; /* when each block began */
+        uint8_t cur;                      /* block being filled */
         uint32_t block_start_ms;
         uint8_t filled; /* blocks that have ever been written */
+        bool degraded;  /* frozen on less than a second of the pad */
     } gnd;
 
     /* Altitude ring buffer */
@@ -101,12 +103,14 @@ static void gnd_feed(int32_t filtered_pa, uint32_t now_ms) {
     }
     if (pp.gnd.block_start_ms == 0) {
         pp.gnd.block_start_ms = now_ms;
+        pp.gnd.start[pp.gnd.cur] = now_ms;
     }
     if (now_ms - pp.gnd.block_start_ms >= PP_GROUND_BLOCK_MS) {
         pp.gnd.cur = (uint8_t)((pp.gnd.cur + 1) % PP_GROUND_BLOCKS);
         pp.gnd.sum[pp.gnd.cur] = 0;
         pp.gnd.n[pp.gnd.cur] = 0;
         pp.gnd.block_start_ms = now_ms;
+        pp.gnd.start[pp.gnd.cur] = now_ms;
         if (pp.gnd.filled < PP_GROUND_BLOCKS) {
             pp.gnd.filled++;
         }
@@ -131,6 +135,30 @@ void pp_ground_track(bool enabled) {
 
 bool pp_ground_tracking(void) {
     return pp.gnd.tracking;
+}
+
+bool pp_ground_freeze_before(uint32_t t_ms) {
+    pp.gnd.tracking = false;
+    int64_t total = 0;
+    uint32_t count = 0;
+    uint32_t span_ms = 0;
+    for (int i = 0; i < PP_GROUND_BLOCKS; i++) {
+        /* The block being filled has not ended; one that ended after t_ms may
+         * hold the climb. */
+        if (i == pp.gnd.cur || pp.gnd.n[i] == 0 || (int32_t)(t_ms - (pp.gnd.start[i] + PP_GROUND_BLOCK_MS)) < 0)
+            continue;
+        total += pp.gnd.sum[i];
+        count += pp.gnd.n[i];
+        span_ms += PP_GROUND_BLOCK_MS;
+    }
+    if (count > 0)
+        pp.ground_pressure = (int32_t)(total / (int64_t)count);
+    pp.gnd.degraded = span_ms < 1000u;
+    return !pp.gnd.degraded;
+}
+
+bool pp_ground_degraded(void) {
+    return pp.gnd.degraded;
 }
 
 uint32_t pp_ground_window_ms(void) {

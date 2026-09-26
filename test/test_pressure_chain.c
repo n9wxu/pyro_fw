@@ -1013,6 +1013,37 @@ void test_N26_apogee_above_8km(void) {
     TEST_ASSERT_TRUE_MESSAGE(r.apogee_ms != 0 && r.apogee_ms >= r.apogee_true_ms, msg);
 }
 
+/* ── T7: the launch's ground pressure from before the rise ─────────── */
+
+void test_T7_ground_error(void) {
+    const float gs[] = {2.0f, 5.0f, 15.0f, 30.0f};
+    char bad[256] = "";
+    for (unsigned i = 0; i < 4; i++) {
+        flight_t f = {gs[i], 3.0f, 20.0f, 0.0f};
+        for (uint32_t seed = 1; seed <= 10; seed++) {
+            result_t r = fly(&f, seed, 10, 20000, false);
+            double err_m = (PAD_PA - (double)r.ground_frozen_pa) / PA_PER_M;
+            if (r.launch_ms == 0 || fabs(err_m) > 0.1) {
+                char item[48];
+                snprintf(item, sizeof(item), " [%.0f g seed %u: %+.2f m]", gs[i], (unsigned)seed, err_m);
+                strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+            }
+        }
+    }
+    if (bad[0])
+        printf("  frozen ground off by more than 0.1 m:%s\n", bad);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("", bad, "the ground frozen at launch must be the pad's, within 0.1 m");
+}
+
+void test_T7_early_launch_degraded(void) {
+    const flight_t f = {5.0f, 3.0f, 20.0f, 0.0f};
+    fly(&f, 3, 0, 20000, false); /* ignition the moment PAD_IDLE begins */
+    TEST_ASSERT_EQUAL(ASCENT, ctx.current_state == FALLING ? ASCENT : ctx.current_state);
+    TEST_ASSERT_TRUE_MESSAGE(pp_ground_degraded(), "a launch with under a second of pad behind it is flagged");
+    fly(&f, 3, 10, 20000, false);
+    TEST_ASSERT_FALSE_MESSAGE(pp_ground_degraded(), "one with ten seconds is not");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -1043,5 +1074,7 @@ int main(void) {
     RUN_TEST(test_T3_latency);
     RUN_TEST(test_T3_durations_not_counts);
     RUN_TEST(test_N26_apogee_above_8km);
+    RUN_TEST(test_T7_ground_error);
+    RUN_TEST(test_T7_early_launch_degraded);
     return UNITY_END();
 }

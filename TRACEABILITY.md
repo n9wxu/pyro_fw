@@ -44,7 +44,8 @@ Verify web interface behavior against mock server in 3 device modes.
 | GND-CAL-01 | Ground reference: a 5 s rolling mean | Unit: test_GND_CAL_01_reference_follows_slow_drift | ✅ |
 | GND-CAL-02 | The reference averages pressure, not altitude | Unit: test_GND_CAL_01_reference_follows_slow_drift (the reference is in pascals) | ✅ |
 | GND-CAL-03 | A sample 50 Pa away is not averaged in | Unit: test_GND_CAL_02_reference_stops_tracking_when_the_rocket_moves | ✅ |
-| GND-CAL-04 | Frozen at launch, not snapped | Unit: test_FLT_LAUNCH_09_freezing_keeps_the_hundred_feet | ✅ |
+| GND-CAL-04 | Frozen from before T+0, not snapped | Unit: test_FLT_LAUNCH_09_freezing_keeps_the_hundred_feet; Chain: test_T7_ground_error (within 0.1 m at 2, 5, 15 and 30 g) | ✅ |
+| GND-CAL-07 | A reference on under a second of pad is flagged | Chain: test_T7_early_launch_degraded | ✅ |
 | FLT-LAUNCH-03 | T+0 at the first sample above 50 cm | Unit: test_REV07_launch_backdates_to_first_rise; Integration: test_FLT_LAUNCH_03_backdate (exact) | ✅ |
 | FLT-LAUNCH-07 | 100 ft and 5 m/s, held for 100 ms | Unit: test_FLT_LAUNCH_08_ten_metres_is_no_longer_enough, test_FLT_LAUNCH_01_detects_ascent; Chain: test_T3_pad_two_sample_glitch, test_T3_latency, test_T3_durations_not_counts | ✅ |
 | GND-CAL-05 | LAUNCH reports the height reached | Integration: test_REV11_launch_row_reports_the_height_reached | ✅ |
@@ -350,7 +351,7 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 191 |
+| ✅ Verified by a host, web or closed-loop test | 192 |
 | ⚠️ Not directly verified (needs a test or hardware) | 32 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 12 |
