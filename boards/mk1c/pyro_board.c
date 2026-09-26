@@ -213,32 +213,27 @@ static void t2_sample(void) {
  * read, rather than the ~3% duty pulse train of the routine test, and
  * suppresses every other probe.
  *
- * Cold on the firing side: U9 is off, the bias divider caps the bus at about
- * 1.7 V, and bridgewire current is about 0.9 mA. */
+ * Cold on the firing side: U9 is off, and the bus sits at about 1.7 V under
+ * bias (see the decay probe below), not the design's 2.56 V. */
 #ifndef PYRO_MK1C_BIAS_HOLD
 #define PYRO_MK1C_BIAS_HOLD 0
 #endif
 
-/* ── Bring-up probe: bus decay time constant ──────────────────────
+/* ── Bring-up probe: bus decay ─────────────────────────────────────
  *
- * Do not derive R120 from tau_decay/tau_charge. That reports 221 us where
- * bench DC measurements imply 428 us, putting the derived R120 at 526 ohm
- * against a measured 1375 ohm -- authoritative-looking and wrong by 2.6x.
- * tau_decay alone agrees with the bench results.
+ * The time from releasing the bias to 1/e of the peak. It names no resistor,
+ * because the bench MK1C's bus is not linear. Scoped at CN1:3 on 2026-09-26,
+ * with R120 metered at 330 ohm: under bias the bus sits at 1.74 V, where the
+ * designed 1.92k pull-down (R103 2.2k with the SNS_BUS divider) would give
+ * 2.56 V. The rise starts at about 8 V/ms, 9 mA into about 1.1 uF, and below
+ * about 0.85 V the bus decays with a 2.0 ms time constant, 1.8k with that
+ * capacitance: R120, R103 and C115 as designed. Above about 0.85 V it falls
+ * far faster, so something on the bus draws a few mA there, with a
+ * junction's knee. This probe's 1/e time, about 1.05 ms, blends the two.
  *
- * The bus level under bias is set by the DIVIDER Rpd/(R120+Rpd), so a wrong
- * R120 and a wrong R103 produce an identical reading. The decay after the
- * bias is released depends on the pull-down ALONE:
- *
- *     tau = Rpd * C_bus
- *
- * With only C115 (1uF) fitted:
- *     R103 wrong, Rpd ~405 ohm   -> tau ~405 us
- *     R120 wrong, Rpd ~1918 ohm  -> tau ~1918 us
- *
- * A 4.7x separation, well clear of the 33 us ADC filter. If a THT C_BULK is
- * populated both scale together, so the absolute value only settles the
- * question when C_bus is known. */
+ * support/pyro_check.py measures that extra current from a DC point given
+ * --r120. Without it, it derives R120 assuming no extra current, which
+ * reads the extra current as a high R120. */
 static uint16_t decay_tau_us;
 
 #if PYRO_MK1C_BRINGUP_T3
