@@ -43,8 +43,8 @@
 
 /*        pin  functions                                       group      connector   */
 #define BOARD_PIN_CAPS(X)                                                                                              \
-    X(0, FN_UART_TX, PG_NONE, "J6.4 TX")                                                                               \
-    X(1, FN_UART_RX, PG_NONE, "J6.5 RX")                                                                               \
+    X(0, FN_UART_TX, PG_NONE, "J6.3 TX via D7")                                                                        \
+    X(1, FN_UART_RX, PG_NONE, "J6.3 RX via R19")                                                                       \
     X(9, FN_PYRO_FIRE | FN_DIGITAL | FN_PWM | FN_BRIDGE, PG_CH1, "J3 drogue")                                          \
     X(10, FN_PYRO_COMMON | FN_DIGITAL | FN_BRIDGE, PG_COMMON, "igniter common")                                        \
     X(11, FN_PYRO_FIRE | FN_DIGITAL | FN_PWM | FN_BRIDGE, PG_CH2, "J4 main")                                           \

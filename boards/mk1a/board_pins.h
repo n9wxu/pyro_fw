@@ -1,10 +1,9 @@
 /*
  * Pin map and capabilities — Pyro MK1A (bare RP2040, QFN-56).
  *
- * Transcribed from the MK1A schematic. Unlike MK1C, this has NOT been
- * checked against a netlist export -- if a KiCad source exists, verify with
- *     kicad-cli sch export netlist --format kicadsexpr <file>.kicad_sch
- * before the first board is powered with an igniter attached.
+ * Checked against the MK1A schematic, ~/Documents/Pyro_mk1a.pdf, on
+ * 2026-09-26: every GPIO matches. There is no KiCad source for this board to
+ * export a netlist from; ~/Documents/pyro/ is a different design.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -17,14 +16,18 @@
 /* ── Capabilities (read by src/hal_common) ───────────────────────── */
 #define BOARD_HAS_BMP280 1 /* U4 BMP280 is the only sensor fitted; no MS5607 */
 
-/* ── Telemetry UART (out to J6, the serial expansion header) ─────── */
+/* ── Telemetry UART: J6.3, the header's one-wire serial ─────────────
+ *
+ * TX and RX meet at one node, R17 1k pulls it to +3V3, and R19 1k takes it to
+ * J6.3. TX can only pull it low, through D7, so the line is half-duplex and
+ * RX hears everything TX sends. J6.4 is +VSW and J6.5 GND. */
 #define BOARD_UART_INST    uart0
 #define BOARD_UART_IRQ_NUM UART0_IRQ
-#define BOARD_PIN_UART_TX  0 /* -> R19 1k -> J6.4, and D7 1N4148 to RX */
-#define BOARD_PIN_UART_RX  1 /* -> J6.5, R17 1k pull-up to +3V3        */
+#define BOARD_PIN_UART_TX  0 /* -> D7 1N4148 -> the J6.3 node */
+#define BOARD_PIN_UART_RX  1 /* <- the J6.3 node               */
 
 /* ── Indicators ──────────────────────────────────────────────────── */
-#define BOARD_PIN_LED 25 /* -> R12/R13 1k -> D3/D4 */
+#define BOARD_PIN_LED 25 /* -> R12 1k -> D3; D4 (R13) is the +3V3 power light */
 
 /* No buzzer is fitted. board_buzzer_*() in hal_board.c are no-ops, which is
  * why there is no BOARD_PIN_BUZZER here: an unused pin number invites
@@ -67,17 +70,17 @@
  * so SENSE_n sees the pack voltage through R5/R14 (1k). On a 2S pack that is
  * about 5 mA into the RP2040's ADC clamp for the 500 ms of the pulse. It is
  * survivable and firmware cannot change it, but it is worth knowing. */
-#define BOARD_PIN_FIRE1    9  /* -> R4 100R -> Q6A gate  */
-#define BOARD_PIN_PYRO_LOW 10 /* -> R6 1k -> Q2 gate     */
-#define BOARD_PIN_FIRE2    11 /* -> R8 1k -> Q1A gate    */
+#define BOARD_PIN_FIRE1    9  /* -> Q6A gate, R4 1k pull-down */
+#define BOARD_PIN_PYRO_LOW 10 /* -> Q2 gate, R6 1k pull-down  */
+#define BOARD_PIN_FIRE2    11 /* -> Q1A gate, R8 1k pull-down */
 
 #define BOARD_PIN_PYRO1_SENSE 26 /* ADC0, via R5 1k + C6 100nF  */
 #define BOARD_PIN_PYRO2_SENSE 27 /* ADC1, via R14 1k + C5 100nF */
 #define BOARD_ADC_CH_SENSE1   0
 #define BOARD_ADC_CH_SENSE2   1
 
-/* U2 is a plain dual MOSFET, not a protected switch: there is no FLAG or
- * fault output anywhere on this board, so pyro_fault() has no hardware
+/* Q1 and Q6 are plain dual MOSFETs, not protected switches: there is no FLAG
+ * or fault output anywhere on this board, so pyro_fault() has no hardware
  * source. Compare MK1B, whose AP2192 does provide one. */
 
 #endif
