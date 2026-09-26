@@ -8,6 +8,7 @@ from a part. Cite the file and page, not memory.
 | `MS5607-02BA03_2017-06.pdf` | TE MS5607-02BA03 barometric pressure sensor (MK1B, MK1C) | 06/2017 | farnell.com/datasheets/2917207.pdf, fetched 2026-09-26; TE's later revisions would not download |
 | `BST-BMP280-DS001-26_2021-10.pdf` | Bosch BMP280 barometric pressure sensor (MK1A) | 1.26, 10/2021 | bosch-sensortec.com, bst-bmp280-ds001.pdf, fetched 2026-09-26 |
 | `UM10204_I2C-bus_Rev7.0_2021-10.pdf` | NXP UM10204, the I2C-bus specification and user manual | Rev. 7.0, 1 October 2021 | pololu.com/file/0J435/UM10204.pdf, fetched 2026-09-26; NXP's link would not download |
+| `TPS2595_SLVSE57C_2018-04.pdf` | TI TPS2595x eFuse, including the TPS259570 (MK1C's U9) | SLVSE57C, revised April 2018 | ti.com/lit/ds/symlink/tps2595.pdf, fetched 2026-09-26 |
 | `rp2040-datasheet_2025-02-20.pdf` | Raspberry Pi RP2040 microcontroller | build 3184e62, 2025-02-20 | datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf, fetched 2026-09-26 |
 
 MS5607, page 3: conversion time at OSR 4096 is 7.40 / 8.22 / 9.04 ms (min /
@@ -28,3 +29,8 @@ UM10204, page 44 (Table 10): the rise time of SDA and SCL is at most
 1000 ns in standard mode, 300 ns in fast mode and 120 ns in fast-mode plus.
 Page 50 (Equation 1): Rp(max) = tr / (0.8473 x Cb); 4k7 holds fast mode's
 300 ns to about 75 pF of bus.
+
+TPS2595, page 3 (device options): the TPS259570 has no output-voltage clamp,
+latches off, and has no quick output discharge. Page 5 (absolute maximum
+ratings): OUT from -0.3 V to VIN + 0.3 V. Section 9.2.5: disabled, the output
+is left floating (page 30). Nothing specifies current into OUT while disabled.

@@ -227,9 +227,13 @@ static void t2_sample(void) {
  * designed 1.92k pull-down (R103 2.2k with the SNS_BUS divider) would give
  * 2.56 V. The rise starts at about 8 V/ms, 9 mA into about 1.1 uF, and below
  * about 0.85 V the bus decays with a 2.0 ms time constant, 1.8k with that
- * capacitance: R120, R103 and C115 as designed. Above about 0.85 V it falls
- * far faster, so something on the bus draws a few mA there, with a
- * junction's knee. This probe's 1/e time, about 1.05 ms, blends the two.
+ * capacitance: R120, R103 and C115 as designed. Above that it falls far
+ * faster: the bus draws current beyond the pull-down from about 0.72 V,
+ * rising about 3.6 mA per volt above 0.9 V, 2.4 mA at 1.5 V -- a junction
+ * with about 280 ohm behind it. Not the ch B TVS (the ch B node stays at
+ * 50 mV). U9's OUT, off, is the prime suspect; its datasheet specifies no
+ * current into OUT while disabled. This probe's 1/e time, about 1.05 ms,
+ * blends the two regions.
  *
  * support/pyro_check.py measures that extra current from a DC point given
  * --r120. Without it, it derives R120 assuming no extra current, which
