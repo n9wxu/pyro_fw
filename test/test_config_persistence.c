@@ -167,13 +167,14 @@ void test_config_reload_normalises_invalid_pyro_mode(void) {
 
     /* An out-of-range mode cannot reach flight_config_reload()'s validation
      * through a file, because both ends of the round trip normalise it:
-     * config_serialize_ini() writes mode_to_str(99), whose default arm is
-     * "delay", and parse_mode() maps any unrecognised string to 0. The
-     * -3 branch is a backstop against a corrupt in-memory config, not
-     * something this path can trigger.
+     * config_serialize_ini() writes config_mode_name(99), which is "none",
+     * and parse_mode() maps any unrecognised string to NONE. The -3 branch
+     * is a backstop against a corrupt in-memory config, not something this
+     * path can trigger.
      *
      * So the property to hold is stronger than rejection: the board ends up
-     * with a VALID config rather than refusing to reload. */
+     * with a VALID config, and the channel it could not name is one that
+     * never fires [REV-02]. */
     config_t bad_cfg;
     config_set_defaults(&bad_cfg);
     bad_cfg.pyro1_mode = 99;
@@ -183,7 +184,7 @@ void test_config_reload_normalises_invalid_pyro_mode(void) {
     TEST_ASSERT_EQUAL(0, reload_result);
 
     TEST_ASSERT_LESS_OR_EQUAL(PYRO_MODE_DELAY, ctx.config.pyro1_mode);
-    TEST_ASSERT_EQUAL(PYRO_MODE_DELAY, ctx.config.pyro1_mode); /* mode_to_str's default */
+    TEST_ASSERT_EQUAL(PYRO_MODE_NONE, ctx.config.pyro1_mode);
 }
 
 /* ── Test 7: Config reload fails if file missing ── */

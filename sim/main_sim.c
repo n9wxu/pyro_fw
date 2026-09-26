@@ -31,8 +31,12 @@ void sim_flight_init(const char *config_ini) {
 int sim_flight_tick(uint32_t time_ms) {
     sim_set_time(time_ms);
     sim_clear_pyro_firing();
+    /* The same order as main(): the tasks feed the pressure layer, and with
+     * no samples calibration times out into FAULT. */
+    hal_tasks_tick(time_ms);
     ctx.current_state = dispatch_state(&ctx, time_ms);
     flight_update_outputs(&ctx, time_ms);
+    flight_flash_service(&ctx, time_ms);
     return ctx.current_state;
 }
 

@@ -110,6 +110,10 @@ const char *beep_codes_strerror(beep_err_t e) {
         return "the selected personality does not exist";
     case BEEP_ERR_ALL_SILENT:
         return "a personality that says nothing tells an operator nothing";
+    case BEEP_ERR_TOO_LARGE:
+        return "the table does not fit beep.ini";
+    case BEEP_ERR_STORE:
+        return "could not write beep.ini";
     default:
         return "unknown";
     }

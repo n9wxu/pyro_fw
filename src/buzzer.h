@@ -17,28 +17,14 @@ typedef struct {
 } buzzer_pattern_t;
 
 #define BUZZER_PATTERN_END {0, false}
-#define BUZZER_MAX_PATTERN                                                                                             \
-    128 /* max steps in one encoded pattern                                                                            \
-         * Altitude beep-out with zero digits (10 beeps each)                                                          \
-         * needs up to 120 entries for 6-digit cm values.                                                              \
-         * 64 was too small — caused silent truncation and                                                           \
-         * garbled infinite-loop patterns (BUZ-OVERFLOW fix). */
+/* Max steps in one encoded pattern. An altitude beep-out spends ten beeps on
+ * each zero digit, so a six-digit value needs up to 120; a shorter buffer
+ * truncates the pattern silently and loops a garbled one. */
+#define BUZZER_MAX_PATTERN 128
 
-/* ── Beep codes: two digits, each 1-5 beeps ──────────────────────── */
-
-#define BEEP_CODE(d1, d2) (((d1) << 4) | (d2))
-#define BEEP_DIGIT1(code) (((code) >> 4) & 0x0F)
-#define BEEP_DIGIT2(code) ((code) & 0x0F)
-
-/* The codes themselves live in beep_codes.h, one row per REASON, and are
+/* What a beep sounds like lives in beep_codes.h, one row per REASON, and is
  * configurable through beep.ini. The firmware asks beep_for(BR_...) and gets
- * whatever is assigned; nothing outside beep_store.c should hold a raw code.
- *
- * These names remain only for the tests, which exercise the PATTERN a given
- * code produces and therefore need a literal one. */
-#define BEEP_ALL_GOOD BEEP_CODE(1, 1)
-#define BEEP_P1_FAULT BEEP_CODE(2, 3)
-#define BEEP_P2_NO_OPEN BEEP_CODE(3, 4)
+ * whatever is assigned; nothing outside beep_store.c should hold a raw spec. */
 
 /* ── Public API ───────────────────────────────────────────────────── */
 
@@ -48,20 +34,6 @@ typedef struct {
  * Calls hal_buzzer_init() internally for GPIO setup.
  */
 void buzzer_init(void);
-
-/*
- * buzzer_play_code() — encode and play a two-digit beep code.
- * Sequence: 10 startup chirps (once) → pause → digit1 beeps → gap → digit2 beeps.
- *
- * repeat_count controls how many complete passes through the digit section play:
- *   0  — repeat indefinitely (chirps once at start, digits loop forever)
- *   1  — play once then stop (chirps + digits once)
- *   2  — play twice then stop [BUZ-02] (chirps once + digits twice)
- *   N  — play N times then stop (chirps once + digits N times)
- *
- * Non-blocking: encoding and playback run in the async task runner.
- */
-void buzzer_play_code(uint8_t code, uint8_t repeat_count);
 
 /* Play one outcome under the active personality. gap_ms is the silence
  * between re-announcements; repeat_count 0 runs until stopped.
@@ -78,22 +50,15 @@ void buzzer_play_spec(const beep_spec_t *spec, uint16_t gap_ms, uint8_t repeat_c
  */
 void buzzer_play_altitude(int32_t value_in_units);
 
+/* [USB-03] Two short chirps, once: the only thing a board on USB says. Fixed
+ * rather than a beep.ini reason, so no personality can make it sound like a
+ * status code. */
+void buzzer_play_usb_ok(void);
+
 /* Stop playback immediately and silence the buzzer. */
 void buzzer_stop(void);
 
 /* Returns true if the buzzer task is currently encoding or playing. */
 bool buzzer_is_active(void);
-
-/* ── Legacy compatibility shims ───────────────────────────────────── */
-
-/* These redirect to the new API so existing call sites continue to
- * compile without modification during the migration. */
-static inline void buzzer_set_code(uint8_t code, bool repeat) {
-    /* repeat=true → 0 (infinite), repeat=false → 1 (play once) */
-    buzzer_play_code(code, repeat ? 0 : 1);
-}
-static inline void buzzer_set_altitude(int32_t alt) {
-    buzzer_play_altitude(alt);
-}
 
 #endif

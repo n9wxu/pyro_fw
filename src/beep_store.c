@@ -48,20 +48,19 @@ void beep_store_load(char *reason, int reason_len) {
         bool wrote = (w > 0) && (hal_fs_write_file(BEEP_STORE_PATH, out, w) == 0);
         snprintf(load_reason, sizeof(load_reason), "no %s; shipped codes%s", BEEP_STORE_PATH,
                  wrote ? " written" : " (could not write)");
-        return;
-    }
-
-    buf[n] = '\0';
-    beep_table_t from_file = defaults;
-    beep_codes_parse_ini(buf, &from_file);
-
-    beep_verdict_t v = beep_codes_validate(&from_file);
-    if (v.err == BEEP_OK) {
-        live = from_file;
     } else {
-        live = defaults;
-        snprintf(load_reason, sizeof(load_reason), "beep.ini rejected: %s (%s)", beep_codes_strerror(v.err),
-                 v.reason >= 0 ? beep_codes_key((beep_reason_t)v.reason) : "table");
+        buf[n] = '\0';
+        beep_table_t from_file = defaults;
+        beep_codes_parse_ini(buf, &from_file);
+
+        beep_verdict_t v = beep_codes_validate(&from_file);
+        if (v.err == BEEP_OK) {
+            live = from_file;
+        } else {
+            live = defaults;
+            snprintf(load_reason, sizeof(load_reason), "beep.ini rejected: %s (%s)", beep_codes_strerror(v.err),
+                     v.reason >= 0 ? beep_codes_key((beep_reason_t)v.reason) : "table");
+        }
     }
 
     if (reason && reason_len > 0) {
@@ -78,11 +77,11 @@ beep_verdict_t beep_store_save(const beep_table_t *t) {
     char buf[BEEP_STORE_MAX];
     int n = beep_codes_serialize_ini(t, buf, (int)sizeof(buf));
     if (n <= 0) {
-        beep_verdict_t bad = {BEEP_ERR_DIGIT_RANGE, -1, -1, "table does not fit beep.ini"};
+        beep_verdict_t bad = {BEEP_ERR_TOO_LARGE, -1, -1, beep_codes_strerror(BEEP_ERR_TOO_LARGE)};
         return bad;
     }
     if (hal_fs_write_file(BEEP_STORE_PATH, buf, n) != 0) {
-        beep_verdict_t bad = {BEEP_ERR_DIGIT_RANGE, -1, -1, "could not write beep.ini"};
+        beep_verdict_t bad = {BEEP_ERR_STORE, -1, -1, beep_codes_strerror(BEEP_ERR_STORE)};
         return bad;
     }
 

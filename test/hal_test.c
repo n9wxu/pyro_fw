@@ -10,6 +10,7 @@
 #include "../src/device_status.h"
 #include "../src/pressure_processing.h"
 #include "../src/board_id.h"
+#include "../src/flight_events.h"
 #include "mocks.h"
 #include <string.h>
 #include <stdio.h>
@@ -120,6 +121,10 @@ int hal_pressure_init(void) {
  * behaviour the hardware HAL gets is the behaviour these tests exercise. The
  * mocked table is the module's own; what follows is the "real" one. */
 static void test_fire(uint8_t channel) {
+    if (mock_pyro.refuse_fire) {
+        mock_pyro.refused_count++;
+        return;
+    }
     mock_pyro.fire_count++;
     mock_pyro.last_fire_channel = channel;
     mock_pyro.firing = true;
@@ -394,21 +399,6 @@ void hal_fs_close(hal_file_t *f) {
 
 /* ── In-flight data logging [v2-9] ───────────────────────────────── */
 
-static const char *test_mode_name(uint8_t mode) {
-    switch (mode) {
-    case 1:
-        return "agl";
-    case 2:
-        return "fallen";
-    case 3:
-        return "speed";
-    case 4:
-        return "delay";
-    default:
-        return "none";
-    }
-}
-
 void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     if (test_log_active)
         return;
@@ -421,8 +411,8 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
                      "# Pyro1: %s %u\n# Pyro2: %s %u\n"
                      "# Units: %s\n# Ground Pa: %ld\n"
                      "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",
-                     cfg->id, cfg->name, test_mode_name(cfg->pyro1_mode), cfg->pyro1_value,
-                     test_mode_name(cfg->pyro2_mode), cfg->pyro2_value,
+                     cfg->id, cfg->name, config_mode_name(cfg->pyro1_mode), cfg->pyro1_value,
+                     config_mode_name(cfg->pyro2_mode), cfg->pyro2_value,
                      cfg->units == 2   ? "ft"
                      : cfg->units == 1 ? "m"
                                        : "cm",
@@ -431,32 +421,13 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     test_log_active = true;
 }
 
-static const char *test_evt_name(uint8_t evt) {
-    switch (evt) {
-    case 1:
-        return "LAUNCH";
-    case 2:
-        return "APOGEE";
-    case 3:
-        return "PYRO1";
-    case 4:
-        return "PYRO2";
-    case 7:
-        return "LANDING";
-    case 9:
-        return "ARMED";
-    default:
-        return "";
-    }
-}
-
 void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
                     uint8_t event) {
     if (!test_log_active || !test_log_file)
         return;
     char line[80];
     int n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%s\n", (unsigned long)time_ms, (long)pressure_pa,
-                     (long)altitude_cm, state, under_thrust, test_evt_name(event));
+                     (long)altitude_cm, state, under_thrust, flight_event_name(event));
     hal_fs_write(test_log_file, line, n);
 }
 

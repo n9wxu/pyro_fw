@@ -23,7 +23,9 @@ static uint8_t parse_mode(const char *s) {
     return 0;
 }
 
-static const char *mode_to_str(uint8_t m) {
+/* Anything unrecognised is written as "none": a mode this board cannot name
+ * must come back from config.ini as one that never fires. */
+const char *config_mode_name(uint8_t m) {
     switch (m) {
     case PYRO_MODE_DELAY:
         return "delay";
@@ -34,7 +36,7 @@ static const char *mode_to_str(uint8_t m) {
     case PYRO_MODE_SPEED:
         return "speed";
     default:
-        return "delay";
+        return "none";
     }
 }
 
@@ -62,6 +64,25 @@ static const char *units_to_str(uint8_t u) {
 }
 
 /* ── Defaults ─────────────────────────────────────────────────────── */
+
+/* A shipped string default longer than its field would be truncated on every
+ * board without anyone asking for it. */
+#define X_CHECK_STR(type, field, key, def)                                                                             \
+    _Static_assert(sizeof(def) <= sizeof(((config_t *)0)->field), "default for " key " does not fit its field");
+#define X_CHECK_U8(type, field, key, def)
+#define X_CHECK_U16(type, field, key, def)
+#define X_CHECK_MODE(type, field, key, def)
+#define X_CHECK_UNITS(type, field, key, def)
+#define X_CHECK_BOOL(type, field, key, def)
+#define X_CHECK(type, field, key, def) X_CHECK_##type(type, field, key, def)
+CONFIG_FIELDS(X_CHECK)
+#undef X_CHECK
+#undef X_CHECK_STR
+#undef X_CHECK_U8
+#undef X_CHECK_U16
+#undef X_CHECK_MODE
+#undef X_CHECK_UNITS
+#undef X_CHECK_BOOL
 
 void config_set_defaults(config_t *cfg) {
     memset(cfg, 0, sizeof(*cfg));
@@ -189,7 +210,7 @@ int config_serialize_ini(const config_t *cfg, char *buf, int max_len) {
 #define X_SER_STR(type, field, key, def) APPEND("%s=%s\r\n", key, cfg->field);
 #define X_SER_U8(type, field, key, def) APPEND("%s=%u\r\n", key, (unsigned)cfg->field);
 #define X_SER_U16(type, field, key, def) APPEND("%s=%u\r\n", key, (unsigned)cfg->field);
-#define X_SER_MODE(type, field, key, def) APPEND("%s=%s\r\n", key, mode_to_str(cfg->field));
+#define X_SER_MODE(type, field, key, def) APPEND("%s=%s\r\n", key, config_mode_name(cfg->field));
 #define X_SER_UNITS(type, field, key, def) APPEND("%s=%s\r\n", key, units_to_str(cfg->field));
 #define X_SER_BOOL(type, field, key, def) APPEND("%s=%s\r\n", key, cfg->field ? "true" : "false");
 

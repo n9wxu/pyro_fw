@@ -21,6 +21,12 @@
  * safe it and walk away. This split is what picks the beep. */
 #define DIAG_PYRO_ANY (DIAG_P1_OPEN | DIAG_P1_SHORT | DIAG_P2_OPEN | DIAG_P2_SHORT)
 #define DIAG_FATAL_ANY (DIAG_SENSOR_FAIL | DIAG_FS_FAIL | DIAG_CFG_RANGE)
+/* What the pad check re-derives every second, as distinct from what the
+ * power-up test found once. */
+#define DIAG_PAD_ANY (DIAG_PYRO_ANY | DIAG_CFG_RANGE)
+
+/* The name a DIAG_* bit goes by on /api/status and the console. */
+const char *flight_diag_name(uint16_t bit);
 
 // System states
 typedef enum {
@@ -81,22 +87,7 @@ typedef struct {
 
 /* Pyro firing modes — defined in config.h */
 
-// Event types (stored in flight_sample_t.event)
-#define EVT_NONE 0
-#define EVT_LAUNCH 1
-#define EVT_APOGEE 2
-#define EVT_PYRO1_FIRE 3
-#define EVT_PYRO2_FIRE 4
-#define EVT_PYRO1_CONT 5 /* data1 = adc */
-#define EVT_PYRO2_CONT 6 /* data1 = adc */
-#define EVT_LANDING 7
-#define EVT_STATE_CHANGE 8 /* data1 = new state */
-#define EVT_ARMED 9
-#define EVT_BOOT_DONE 10
-#define EVT_PYRO1_FAULT 11
-#define EVT_PYRO2_FAULT 12
-#define EVT_PYRO1_NOPEN 13 /* post-fire verify: pyro didn't open */
-#define EVT_PYRO2_NOPEN 14
+#include "flight_events.h" /* EVT_* codes, stored in flight_sample_t.event */
 
 // Flight sample (16 bytes)
 typedef struct {
@@ -112,9 +103,8 @@ typedef struct {
 /* config_t is defined in config.h */
 
 // Flight context
-/* Ring buffer size — holds samples for /api/flight.csv HTTP endpoint and
- * apogee-window replay (launch backdating). 64 entries × 16 bytes = 1KB.
- * In-flight record is owned by hal_log_sample() [v2-9]. */
+/* The last 64 samples, 1 KB, for flight_save_csv(). The flight record is
+ * hal_log's flight_log.csv; nothing on the flight path reads this back. */
 #define FLIGHT_BUF_SIZE 64
 
 typedef struct flight_context_t {
@@ -142,10 +132,12 @@ typedef struct flight_context_t {
     uint16_t telemetry_seq;
     uint16_t pyro1_adc;
     uint16_t pyro2_adc;
-    uint8_t pyro_firing;
-    uint32_t pyro_fire_start;
-    uint32_t pyro1_fire_time;
+    uint32_t pyro1_fire_time; /* last command, fired or refused */
     uint32_t pyro2_fire_time;
+    /* The board took the fire call and energised nothing. The channel is not
+     * asked again: a refusal is a property of the board, not of the moment. */
+    bool pyro1_refused;
+    bool pyro2_refused;
     bool pyro1_fault; /* overcurrent detected during fire */
     bool pyro2_fault;
     bool pyro1_verify_fail; /* post-fire continuity still good (pyro didn't open) */
@@ -153,24 +145,23 @@ typedef struct flight_context_t {
     config_t config;
     flight_state_t current_state;
     int32_t filtered_pressure;
-    bool filter_initialized;
     // Boot state fields
     uint32_t boot_timer;
-    int cal_count;
-    int32_t cal_sum;
     // PAD_IDLE state
     uint32_t last_cont_check;
     bool buzzer_started;
-    bool landed_beep_started;
-    bool csv_saved;
+    /* [FLT-LAUNCH-03] The first sample above 50 cm since the last one at or
+     * below it: T+0, once the detector trips a hundred feet later. */
+    bool pad_rising;
+    uint32_t pad_rise_ms;
     // Safety features [DD-016, DD-017]
     int32_t max_speed_cms; // peak speed during ASCENT (for arming gate)
-    /* Kept after the backup timer was removed [DD-022]: it is the only record
-     * that arming preceded apogee, which is a real ordering guarantee. */
+    /* The only record that arming preceded apogee [DD-022]. */
     uint32_t armed_time;
     uint32_t descent_start_time; // when DESCENT started (for landing timeout)
+    uint32_t landing_time;       /* flight time stops here [WEB-UI-04] */
+    uint32_t last_logged_ms;     /* log_rate_hz decimation, flight time */
     int32_t pad_speed_cms;       // vertical speed during PAD_IDLE (for launch confirm)
-    int32_t last_raw_pressure;   // raw sensor Pa before IIR filter (for debug)
     // Last continuity status beep code [GND-TEST-01]
     uint8_t last_reason; /* beep_reason_t last said; for BEEP STATUS replay */
 
@@ -180,19 +171,24 @@ typedef struct flight_context_t {
     uint8_t sensor_type;
     bool fs_ok;
 
-    /* ── Brownout recovery [FLT-BOOT-11] ──────────────────────────
+    /* ── Brownout recovery [FLT-BROWN-01..03] ─────────────────────
      * What the reset registers and the pad marker said at boot, kept so
      * /api/status and the flight log can report it. A recovered flight is
      * not the same flight -- the log restarts at the moment of recovery --
      * and nothing downstream should have to guess that from the data. */
     uint8_t reset_cause;
     uint8_t recovery;
-    /* Samples taken for the recovery verdict. Two are needed for a speed, and
-     * an explicit count is what makes the priming pass legible -- an earlier
-     * version inferred it from boot_timer, which is legitimately zero. */
+    /* Samples taken for the recovery verdict. Two are needed for a speed.
+     * boot_timer cannot stand in for this count: it is legitimately zero. */
     uint8_t recovery_samples;
     bool marker_written;
-    int32_t marker_ground_pa;
+
+    /* [USB-01..04] A PC is on the USB port: the board is on a bench, so it
+     * detects no launch, says no status code and writes no pad marker --
+     * unless the operator has put it in test mode [USB-08], which is held
+     * here in RAM and so is off at every boot. */
+    bool usb_attached;
+    bool test_mode;
 
     /* ── What is wrong, as distinct from what to do ──────────────
      *
@@ -222,11 +218,13 @@ typedef struct flight_context_t {
     uint32_t desc_fail_since;
 
     /* ── Emergency deploy [FLT-EMRG-01] ───────────────────────────
-     * The retry budget is what makes the ladder terminate; check_refire
-     * used to rewrite fire_time and could retry for the whole descent. */
+     * The retry budget is what makes the ladder terminate. The failure
+     * window is the evidence the main is brought forward on: faster than a
+     * drogue explains, not being slowed, since emrg_fail_since. */
     uint8_t pyro1_refires;
-    uint8_t pyro2_refires;
     bool main_forced; /* the ladder overrode pyro2's configured trigger */
+    uint32_t emrg_fail_since;
+    int32_t emrg_fail_ref_cms;
     // Ground test state machine [GND-TEST-01..04, DD-011]
     ground_test_ctx_t gt;
 } flight_context_t;
@@ -235,12 +233,27 @@ typedef struct flight_context_t {
 void flight_init(flight_context_t *ctx);
 flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now);
 void flight_update_outputs(flight_context_t *ctx, uint32_t now);
+/* The flash writes the flight software owes. Call only where a write can
+ * land: inside the hardware's flash window, and every tick on the host. */
+void flight_flash_service(flight_context_t *ctx, uint32_t now);
 /* Legacy compat — redirects to config module */
 #define parse_config_ini(buf, cfg) config_parse_ini(buf, cfg)
-/* [DAT-06] One-shot ring-buffer dump — debug / HTTP endpoint use only.
- * The primary in-flight record is written by hal_log_sample() [v2-9]. */
+/* [DAT-06] The ring buffer's last 64 samples as flight.csv. The simulator's
+ * export; the flight record itself is hal_log's flight_log.csv. */
 int flight_save_csv(flight_context_t *ctx);
-/* csv_flush_safe() / csv_flush_step() retired: hal_log owns the flight record [v2-9] */
+
+/* Milliseconds since launch while airborne, frozen at the landing, and 0 on
+ * the pad or in any state with no flight behind it [WEB-UI-04]. */
+uint32_t flight_elapsed_ms(const flight_context_t *ctx, uint32_t now);
+
+/* [PYR-DEPLOY-02] Energise one channel, if the shared element is free.
+ *
+ * The single place a channel is fired from, flight or ground test, because
+ * the interlock has to sit below every caller. hal_pyro_is_firing() read
+ * straight after hal_pyro_fire() is the board's acknowledgement: a board or
+ * a mocked channel that energised nothing answers REFUSED. */
+typedef enum { PYRO_BUSY, PYRO_REFUSED, PYRO_ENERGISED } pyro_fire_result_t;
+pyro_fire_result_t flight_pyro_energise(uint8_t channel);
 
 // Telemetry
 void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm, flight_state_t state);
@@ -267,5 +280,18 @@ flight_context_t *flight_get_context(void);
 /* Get the current flight state (for HTTP server safety checks).
  * Returns BOOT_SETTLE if flight_init() hasn't been called yet. */
 flight_state_t flight_get_state(void);
+
+/* True from launch to landing. Anything that could disturb the flight -- a
+ * reboot, a flash write, a firmware image -- is refused while this holds. */
+bool flight_in_progress(void);
+
+/* [USB-01..04] Whether a host is on the USB port, asked every loop before
+ * dispatch_state(). Ignored from launch to landing: a flight is never
+ * abandoned on the strength of it. */
+void flight_set_usb_attached(flight_context_t *ctx, bool attached, uint32_t now);
+
+/* [USB-08] With test mode on, a board on USB behaves as it does on battery.
+ * Not changed from launch to landing. */
+void flight_set_test_mode(flight_context_t *ctx, bool on, uint32_t now);
 
 #endif

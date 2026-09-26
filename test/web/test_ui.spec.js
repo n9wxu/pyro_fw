@@ -81,8 +81,39 @@ test.describe('New device', () => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Flight Data');
-    const dur = await page.locator('#dDur').textContent();
-    expect(dur).toContain('0.0');
+    await expect(page.locator('#dWhich')).toContainText('No flight recorded');
+    await expect(page.locator('#dDur')).toHaveText('—');
+  });
+
+  /* REV-10: a flight that happens while the page is open must be shown. The
+     tab cached the log for the life of the page. */
+  test('a flight recorded while the page is open appears on refresh', async ({ page, request }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Flight Data');
+    await expect(page.locator('#dWhich')).toContainText('No flight recorded');
+    await request.post(BASE + '/api/_test/fly');
+    await page.click('button:has-text("Refresh")');
+    await expect(page.locator('#dDur')).toContainText('32.4');
+    await expect(page.locator('#dWhich')).toContainText('Screamer');
+    await request.post(BASE + '/api/_test/reset');
+  });
+
+  /* REV-12: a control that changes nothing is not offered. */
+  test('there is no beep mode control', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await expect(page.locator('#cfgBeep')).toHaveCount(0);
+  });
+
+  /* REV-15: the shipped default name fits its 8-character field. */
+  test('the default rocket name is not truncated', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await page.click('button:has-text("Default")');
+    await expect(page.locator('#cfgName')).toHaveValue('MyRocket');
   });
 });
 
@@ -158,6 +189,32 @@ test.describe('Configured device', () => {
     await expect(page.locator('#cfgUnits')).toHaveValue('2');
   });
 
+  /* REV-19: changing units converts the deployment altitudes. Leaving the
+     number alone turned a 500 ft main into a 500 m main. */
+  test('changing units converts the pyro values', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await expect(page.locator('#p2val')).toHaveValue('500');
+    await page.selectOption('#cfgUnits', '1');
+    await expect(page.locator('#p2val')).toHaveValue('152');
+    await expect(page.locator('#p1val')).toHaveValue('2'); /* a delay is seconds */
+    await page.selectOption('#cfgUnits', '2');
+    await expect(page.locator('#p2val')).toHaveValue('499');
+  });
+
+  /* REV-20: the 8-character limit is stated, not discovered. */
+  test('the rocket name shows its 8-character limit', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await expect(page.locator('#cfgNameLen')).toContainText('8');
+    await page.fill('#cfgName', '');
+    await page.type('#cfgName', 'SKYSTREAK');
+    await expect(page.locator('#cfgName')).toHaveValue('SKYSTREA');
+    await expect(page.locator('#cfgNameLen')).toHaveText('8 of 8 characters');
+  });
+
   test('range warning for value exceeding sensor limit', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -167,6 +224,44 @@ test.describe('Configured device', () => {
     await page.locator('#p2val').dispatchEvent('change');
     const warn = await page.locator('#p2warn').textContent();
     expect(warn).toContain('sensor limit');
+  });
+
+  /* USB-01: a board reached over USB says it is grounded. */
+  test('on USB the status tab says launch detection is off', async ({ page }) => {
+    await page.request.post(`${BASE}/api/_test/reset`);
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await expect(page.locator('#sUsb')).toContainText('launch detection and beeps off');
+    await expect(page.locator('#testWarn')).toBeHidden();
+    await expect(page.locator('#testMode')).not.toBeChecked();
+  });
+
+  /* USB-08: test mode asks first, warns while on, and turns off without a prompt. */
+  test('test mode asks first, warns while on, and can be turned off', async ({ page }) => {
+    await page.request.post(`${BASE}/api/_test/reset`);
+    await page.goto(BASE);
+    await waitForStatus(page);
+    page.once('dialog', d => d.accept());
+    await page.click('#testMode');
+    await expect(page.locator('#testWarn')).toBeVisible();
+    await expect(page.locator('#sUsb')).toContainText('test mode');
+    await expect(page.locator('#testMode')).toBeChecked();
+    await page.click('#testMode');
+    await expect(page.locator('#testWarn')).toBeHidden();
+    await expect(page.locator('#sUsb')).toContainText('launch detection and beeps off');
+    const st = await (await page.request.get(`${BASE}/api/status`)).json();
+    expect(st.test_mode).toBe(false);
+  });
+
+  test('declining the test mode prompt leaves it off', async ({ page }) => {
+    await page.request.post(`${BASE}/api/_test/reset`);
+    await page.goto(BASE);
+    await waitForStatus(page);
+    page.once('dialog', d => d.dismiss());
+    await page.click('#testMode');
+    await expect(page.locator('#testMode')).not.toBeChecked();
+    const st = await (await page.request.get(`${BASE}/api/status`)).json();
+    expect(st.test_mode).toBe(false);
   });
 });
 
@@ -226,14 +321,22 @@ test.describe('Pin assignment', () => {
     await expect(page.locator('#bzHint')).toContainText('frees GPIO16');
 
     await sel.selectOption('8');
-    await page.click('#btnSaveRel');
+    await page.click('#btnSaveCfg');
     await expect(page.locator('#relMsg')).toContainText('saved', { timeout: 5000 });
   });
 
-  /* TODO from the clean-wipe decision: a firmware update wipes the
-     filesystem, so a program that lives only on the device is one the next
-     update destroys. Import must land in the editor and not on the device,
-     so a mis-picked file costs nothing until Save. */
+  /* REV-21: one Save on the Config tab. The release no longer has a button of
+     its own that an operator has to guess the meaning of. */
+  test('the config tab has one save button', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await expect(page.locator('#tab-config button:has-text("Save")')).toHaveCount(1);
+  });
+
+  /* [LUA-IO-01/02] A program that lives only on the device is lost with its
+     filesystem. Import must land in the editor and not on the device, so a
+     mis-picked file costs nothing until Save. */
   test('lua program exports to a file', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -454,6 +557,7 @@ test.describe('Beep codes', () => {
 
 test.describe('Flown device', () => {
   test.skip(process.env.PYRO_MODE !== 'flown', 'Skipped: not flown mode');
+  test.afterEach(async ({ request }) => { await request.post(BASE + '/api/_test/reset'); });
 
   test('status shows LANDED', async ({ page }) => {
     await page.goto(BASE);
@@ -488,14 +592,34 @@ test.describe('Flown device', () => {
     expect(apogee).toContain('10000');
   });
 
+  /* The log's own column names decide where the event is: the firmware
+     writes a thrust flag before it, which a fixed column 5 read as the event. */
   test('pyro events shown in flight summary', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Flight Data');
-    const p1 = await page.locator('#dP1').textContent();
-    const p2 = await page.locator('#dP2').textContent();
-    expect(p1).toContain('Fired');
-    expect(p2).toContain('Fired');
+    await expect(page.locator('#dP1')).toContainText('Fired at 8.1s');
+    await expect(page.locator('#dP2')).toContainText('Fired at 28.0s, 500.0 ft');
+  });
+
+  /* REV-10: the summary names the flight it describes. */
+  test('flight data names the flight on screen', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Flight Data');
+    await expect(page.locator('#dWhich')).toContainText('Screamer (RACE01)');
+  });
+
+  /* REV-10: the one log slot can be cleared on purpose. */
+  test('the flight log can be erased', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Flight Data');
+    await expect(page.locator('#dDur')).toContainText('32.4');
+    page.once('dialog', d => d.accept());
+    await page.click('#btnEraseFlight');
+    await expect(page.locator('#dMsg')).toContainText('erased');
+    await expect(page.locator('#dWhich')).toContainText('No flight recorded');
   });
 
   test('flight CSV download link works', async ({ page }) => {

@@ -104,39 +104,35 @@ static void update_mock_pressure(uint32_t now_ms) {
 }
 
 /* ── Buzzer mock ──────────────────────────────────────────────────── */
-/* The integration test does not compile src/buzzer.c, so we provide
- * lightweight stubs here.  buzzer_set_code/set_altitude are now static
- * inline shims in buzzer.h that call buzzer_play_code/play_altitude,
- * so we only need to define the real functions. */
+/* The integration test does not compile src/buzzer.c. These record what the
+ * flight software asked the buzzer to say. */
 
 static int buzzer_code_count = 0;
-static uint8_t last_buzzer_code = 0;
+static beep_spec_t last_buzzer_spec;
 static int buzzer_stop_count = 0;
 static int buzzer_altitude_count = 0;
 static int32_t last_buzzer_altitude = 0;
 static bool buzzer_active_flag = false;
 
 void buzzer_init(void) {}
-/* beep_say() plays a spec now, because a chirp is not a code. Records the
- * outcome's sound the same way the code fake does. */
 void buzzer_play_spec(const beep_spec_t *spec, uint16_t gap_ms, uint8_t repeat_count) {
     (void)gap_ms;
     (void)repeat_count;
-    if (spec && spec->kind == BK_CODE) {
-        last_buzzer_code = BEEP_CODE(spec->d1, spec->d2);
+    if (spec) {
+        last_buzzer_spec = *spec;
     }
     buzzer_code_count++;
-}
-
-void buzzer_play_code(uint8_t code, uint8_t repeat_count) {
-    (void)repeat_count;
-    buzzer_code_count++;
-    last_buzzer_code = code;
     buzzer_active_flag = true;
 }
+
 void buzzer_play_altitude(int32_t altitude) {
     buzzer_altitude_count++;
     last_buzzer_altitude = altitude;
+    buzzer_active_flag = true;
+}
+static int buzzer_usb_ok_count = 0;
+void buzzer_play_usb_ok(void) {
+    buzzer_usb_ok_count++;
     buzzer_active_flag = true;
 }
 void buzzer_stop(void) {
@@ -190,6 +186,7 @@ static void app_tick(uint32_t now_ms) {
     /* Telemetry + buzzer + pyro update via flight_update_outputs()
      * (same call path as real firmware main_hardware.c). */
     flight_update_outputs(&ctx, now_ms);
+    flight_flash_service(&ctx, now_ms);
 }
 
 /* Run full simulation from t=0 to end of sim data + 2s settling */
@@ -631,33 +628,33 @@ void test_DAT_06_csv_export(void) {
     TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "LANDING") != NULL, "Missing LANDING in batch CSV");
 }
 
-/* [FLT-LAUNCH-03] Launch time is backdated toward the first sample above 50cm
- * AGL by walking the ring buffer.  The buffer is 64 entries × 10ms = 640ms
- * deep.  In this OpenRocket CSV the rocket crosses 50cm at ~210ms and launch
- * is not detected until ~1060ms (850ms later), so the 50cm crossing is outside
- * the buffer window and no backdate is applied.  The invariant is therefore:
- *   ctx.launch_time <= ascent_start_ms
- * (equality when the crossing is beyond buffer depth; earlier when it fits). */
+/* [FLT-LAUNCH-03, REV-07] Launch time is the first sample above 50 cm, not
+ * the moment the detector tripped. In this profile the rocket clears 50 cm
+ * about 200 ms in and 100 ft about a second later, so the interval is large
+ * enough that a backdate of zero cannot pass for one. */
 void test_FLT_LAUNCH_03_backdate(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     reset_sim();
 
-    uint32_t ascent_start_ms = 0;
+    uint32_t ascent_start_ms = 0, first_rise_ms = 0;
     float end_s = sim_data[sim_count - 1].time_s + 2.0f;
     uint32_t end_ms = (uint32_t)(end_s * 1000.0f);
 
     for (uint32_t t = 0; t <= end_ms; t++) {
         app_tick(t);
+        if (ctx.current_state == PAD_IDLE && first_rise_ms == 0 && ctx.last_altitude > 50)
+            first_rise_ms = ctx.last_sample;
         if (ctx.current_state == ASCENT && ascent_start_ms == 0)
             ascent_start_ms = t;
     }
 
-    TEST_ASSERT_TRUE_MESSAGE(ctx.launch_time > 0, "Launch time never set");
     TEST_ASSERT_TRUE_MESSAGE(ascent_start_ms > 0, "Never reached ASCENT");
-    char msg[128];
-    snprintf(msg, sizeof(msg), "launch_time=%u > ascent_start=%u (must not be set after ASCENT transition)",
-             ctx.launch_time, ascent_start_ms);
-    TEST_ASSERT_TRUE_MESSAGE(ctx.launch_time <= ascent_start_ms, msg);
+    TEST_ASSERT_TRUE_MESSAGE(first_rise_ms > 0, "never saw the rocket leave 50 cm");
+    char msg[160];
+    snprintf(msg, sizeof(msg), "first rise %u, detected %u, launch_time %u", first_rise_ms, ascent_start_ms,
+             ctx.launch_time);
+    TEST_ASSERT_GREATER_THAN_MESSAGE(300, ascent_start_ms - first_rise_ms, msg);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(first_rise_ms, ctx.launch_time, msg);
 }
 
 /* [FLT-APO-04] Apogee must never be detected before pyros are armed.
@@ -733,7 +730,7 @@ void test_PYR_ALT_02_cfg_range_beep(void) {
     ctx.config.pyro2_value = 9000; /* 9000m > 8000m ceiling */
     ctx.config.units = 1;          /* meters */
     buzzer_code_count = 0;
-    last_buzzer_code = 0;
+    memset(&last_buzzer_spec, 0, sizeof(last_buzzer_spec));
     buzzer_active_flag = true;
 
     /* Run PAD_IDLE for 1500ms. update_continuity_and_buzzer() gates on
@@ -749,9 +746,10 @@ void test_PYR_ALT_02_cfg_range_beep(void) {
 
     TEST_ASSERT_TRUE_MESSAGE(buzzer_code_count > 0, "Buzzer code never set — update_continuity_and_buzzer not reached");
     char msg[64];
-    snprintf(msg, sizeof(msg), "Expected the system-failure count (%u), got 0x%02X", (unsigned)beep_for(BR_SYSTEM_FAILURE).d1,
-             last_buzzer_code);
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(beep_for(BR_SYSTEM_FAILURE).d1, BEEP_DIGIT1(last_buzzer_code), msg);
+    snprintf(msg, sizeof(msg), "Expected the system-failure count (%u), got %u",
+             (unsigned)beep_for(BR_SYSTEM_FAILURE).d1, (unsigned)last_buzzer_spec.d1);
+    TEST_ASSERT_EQUAL_MESSAGE(beep_for(BR_SYSTEM_FAILURE).kind, last_buzzer_spec.kind, msg);
+    TEST_ASSERT_EQUAL_MESSAGE(beep_for(BR_SYSTEM_FAILURE).d1, last_buzzer_spec.d1, msg);
 }
 
 /* ── Ground test command tests [GND-TEST-01..04, DD-011] ──────────── */
@@ -761,7 +759,6 @@ void test_PYR_ALT_02_cfg_range_beep(void) {
  * least once (requires >1000ms to pass while in PAD_IDLE). */
 static void setup_pad_idle_with_continuity(void) {
     reset_sim();
-    ctx.filter_initialized = true;
     ctx.filtered_pressure = 101325;
     /* Advance to just past the 1000ms continuity-check gate so
      * last_status_code is set before we issue serial commands */
@@ -788,7 +785,7 @@ void test_GND_TEST_01_beep_status_replay(void) {
     mock_pressure.pressure_pa = 101325.0f;
     ctx.current_state = step(&ctx, 1210);
 
-    TEST_ASSERT_EQUAL_MESSAGE(code_before + 1, buzzer_code_count, "BEEP STATUS did not trigger buzzer_set_code()");
+    TEST_ASSERT_EQUAL_MESSAGE(code_before + 1, buzzer_code_count, "BEEP STATUS did not replay the outcome");
     TEST_ASSERT_EQUAL_MESSAGE(BR_OK_TO_FLY, ctx.last_reason, "Replayed the wrong outcome");
 }
 
@@ -869,6 +866,119 @@ void test_GND_TEST_04_only_in_pad_idle(void) {
                              "Expected GT,ERR,not_pad_idle when not in PAD_IDLE");
 }
 
+/* ── Code review 2026-09-24 ───────────────────────────────────────── */
+
+/* The row of flight_log.csv carrying an event, or NULL. */
+static const char *log_row(const char *log, const char *event) {
+    const char *p = log;
+    size_t n = strlen(event);
+    while ((p = strstr(p, event)) != NULL) {
+        if ((p[n] == '\n' || p[n] == '\0') && p > log && p[-1] == ',') {
+            while (p > log && p[-1] != '\n')
+                p--;
+            return p;
+        }
+        p += n;
+    }
+    return NULL;
+}
+
+static int read_flight_log(char *buf, int len) {
+    int n = hal_fs_read_file("flight_log.csv", buf, len - 1);
+    if (n > 0)
+        buf[n] = '\0';
+    return n;
+}
+
+/* [GND-CAL-05, REV-11] The LAUNCH row carries the height the rocket had
+ * reached when the detector tripped -- a hundred feet -- not zero. */
+void test_REV11_launch_row_reports_the_height_reached(void) {
+    load_sim_data("test_data/open_rocket_export.csv");
+    reset_sim();
+    run_full_sim();
+    static char log[32768];
+    TEST_ASSERT_TRUE(read_flight_log(log, (int)sizeof(log)) > 0);
+    const char *row = log_row(log, "LAUNCH");
+    TEST_ASSERT_NOT_NULL_MESSAGE(row, "no LAUNCH row");
+    unsigned long t;
+    long pa, alt;
+    TEST_ASSERT_EQUAL(3, sscanf(row, "%lu,%ld,%ld,", &t, &pa, &alt));
+    char m[96];
+    snprintf(m, sizeof(m), "LAUNCH row: t=%lu alt=%ld cm", t, alt);
+    TEST_ASSERT_GREATER_THAN_MESSAGE(3000, alt, m);
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, (long)t, m);
+}
+
+/* The log header names each channel's mode the way config.ini spells it.
+ * The HALs had AGL and FALLEN swapped, so a log of an AGL flight said
+ * "fallen" -- and the header is the only record of what was configured. */
+void test_REV_NEW_log_header_names_the_configured_modes(void) {
+    load_sim_data("test_data/open_rocket_export.csv");
+    reset_sim(); /* pyro1 delay 0, pyro2 agl 50 */
+    run_full_sim();
+    static char log[32768];
+    TEST_ASSERT_TRUE(read_flight_log(log, (int)sizeof(log)) > 0);
+    char *end = strstr(log, "time_ms,");
+    if (end)
+        *end = '\0'; /* the header is the part under test */
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(log, "# Pyro1: delay 0"), log);
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(log, "# Pyro2: agl 50"), log);
+}
+
+/* [CFG-SUBSYS-01, REV-12] log_rate_hz thins the samples; it never drops an
+ * event. */
+void test_REV12_log_rate_hz_thins_samples_not_events(void) {
+    static char log[32768];
+    load_sim_data("test_data/open_rocket_export.csv");
+
+    reset_sim();
+    run_full_sim();
+    TEST_ASSERT_TRUE(read_flight_log(log, (int)sizeof(log)) > 0);
+    int full = 0;
+    for (const char *p = log; (p = strchr(p, '\n')) != NULL; p++)
+        full++;
+
+    reset_sim();
+    ctx.config.log_rate_hz = 10;
+    run_full_sim();
+    TEST_ASSERT_TRUE(read_flight_log(log, (int)sizeof(log)) > 0);
+    int thin = 0;
+    for (const char *p = log; (p = strchr(p, '\n')) != NULL; p++)
+        thin++;
+
+    char m[96];
+    snprintf(m, sizeof(m), "50 Hz log %d rows, 10 Hz log %d rows", full, thin);
+    TEST_ASSERT_TRUE_MESSAGE(thin * 3 < full, m);
+    TEST_ASSERT_NOT_NULL(log_row(log, "LAUNCH"));
+    TEST_ASSERT_NOT_NULL(log_row(log, "ARMED"));
+    TEST_ASSERT_NOT_NULL(log_row(log, "APOGEE"));
+    TEST_ASSERT_NOT_NULL(log_row(log, "PYRO1"));
+    TEST_ASSERT_NOT_NULL(log_row(log, "LANDING"));
+}
+
+/* [PYR-DEPLOY-02, GND-TEST-02, REV-06] The ground test goes through the same
+ * interlock as the flight: channel 2 may not be energised while channel 1's
+ * pulse is still running through the shared element. */
+void test_REV06_ground_test_waits_for_the_other_channel(void) {
+    setup_pad_idle_with_continuity();
+
+    mock_serial_enqueue("ARM 1");
+    ctx.current_state = step(&ctx, 1210);
+    mock_serial_enqueue("FIRE 1");
+    ctx.current_state = step(&ctx, 1220);
+    TEST_ASSERT_EQUAL(1, mock_pyro.fire_count);
+    TEST_ASSERT_TRUE(mock_pyro.firing); /* the pulse is still running */
+
+    mock_uart_len = 0;
+    mock_uart_buf[0] = '\0';
+    mock_serial_enqueue("ARM 2");
+    ctx.current_state = step(&ctx, 1300);
+    mock_serial_enqueue("FIRE 2");
+    ctx.current_state = step(&ctx, 1310);
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_pyro.fire_count, "both channels were energised through one common element");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_uart_buf, "GT,ERR,busy"), mock_uart_buf);
+}
+
 /* ── Main ─────────────────────────────────────────────────────────── */
 
 /* ── Item 6: brownout recovery, through the real machine ──────────── */
@@ -885,10 +995,11 @@ static void pad_tick_range(uint32_t from_ms, uint32_t to_ms) {
         mock_pyro.firing = false;
         ctx.current_state = step(&ctx, t);
         flight_update_outputs(&ctx, t);
+        flight_flash_service(&ctx, t);
     }
 }
 
-/* [FLT-BOOT-11] The marker is written after ten seconds of PAD_IDLE and not
+/* [FLT-BROWN-01] The marker is written after ten seconds of PAD_IDLE and not
  * before, because the whole point is to have it on disk long before the
  * moment it protects against. */
 void test_BRN_INT_01_marker_written_after_pad_dwell(void) {
@@ -920,6 +1031,91 @@ void test_BRN_INT_02_marker_written_only_once(void) {
     uint32_t before = mock_fs_write_count;
     pad_tick_range(PAD_MARKER_DWELL_MS + 3000, PAD_MARKER_DWELL_MS + 5000);
     TEST_ASSERT_EQUAL_MESSAGE(before, mock_fs_write_count, "the marker must be written once, not every tick");
+}
+
+/* On the hardware the state machine runs with the flash window shut, and a
+ * write there is refused every time -- the marker was never written on any
+ * board. So the detector must not be where the write happens: only
+ * flight_flash_service(), which the main loop calls inside the window. */
+void test_BRN_INT_05_marker_is_written_only_by_the_flash_service(void) {
+    reset_sim();
+    ctx.boot_timer = 0;
+    for (uint32_t t = 0; t < PAD_MARKER_DWELL_MS + 2000; t++) {
+        mock_time_ms = t;
+        mock_pressure.pressure_pa = 101325.0f;
+        ctx.current_state = step(&ctx, t);
+        flight_update_outputs(&ctx, t);
+    }
+    pad_marker_t m;
+    TEST_ASSERT_TRUE_MESSAGE(hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m)) < (int)sizeof(m),
+                             "the state machine wrote flash where the hardware refuses it");
+    flight_flash_service(&ctx, PAD_MARKER_DWELL_MS + 2000);
+    TEST_ASSERT_EQUAL_MESSAGE((int)sizeof(m), hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m)),
+                              "the flash service must write the marker once the dwell has passed");
+}
+
+/* [USB-01, USB-04] No marker while on USB, where the board sits at the
+ * bench's altitude rather than the pad's; the dwell starts again when it is
+ * unplugged, so the marker records where the board is flown from. */
+void test_USB_INT_01_marker_waits_for_the_cable_to_go(void) {
+    reset_sim();
+    ctx.boot_timer = 0;
+    int chirps = buzzer_usb_ok_count;
+    flight_set_usb_attached(&ctx, true, 0);
+    flight_set_usb_attached(&ctx, true, 20);
+    TEST_ASSERT_EQUAL_MESSAGE(chirps + 1, buzzer_usb_ok_count, "one chirp per attach, not per loop");
+    pad_tick_range(0, PAD_MARKER_DWELL_MS + 5000);
+    pad_marker_t m;
+    TEST_ASSERT_TRUE_MESSAGE(hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m)) < (int)sizeof(m),
+                             "a marker was written while on USB");
+
+    uint32_t unplugged = PAD_MARKER_DWELL_MS + 5000;
+    flight_set_usb_attached(&ctx, false, unplugged);
+    pad_tick_range(unplugged, unplugged + PAD_MARKER_DWELL_MS - 500);
+    TEST_ASSERT_TRUE_MESSAGE(hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m)) < (int)sizeof(m),
+                             "the dwell must restart when the cable goes");
+    pad_tick_range(unplugged + PAD_MARKER_DWELL_MS - 500, unplugged + PAD_MARKER_DWELL_MS + 1000);
+    TEST_ASSERT_EQUAL((int)sizeof(m), hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m)));
+}
+
+/* [USB-08] Test mode on USB flies from where the board sits, so it records
+ * that ground as the pad's. */
+void test_USB_INT_03_test_mode_writes_the_marker_on_usb(void) {
+    reset_sim();
+    ctx.boot_timer = 0;
+    flight_set_usb_attached(&ctx, true, 0);
+    flight_set_test_mode(&ctx, true, 0);
+    pad_tick_range(0, PAD_MARKER_DWELL_MS + 1500);
+    pad_marker_t m;
+    TEST_ASSERT_EQUAL_MESSAGE((int)sizeof(m), hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m)),
+                              "test mode on USB must write the marker");
+}
+
+/* [USB-01] A board powered up on USB is on a bench, whatever the reset
+ * registers and a leftover marker say. */
+void test_USB_INT_02_no_flight_recovery_on_usb(void) {
+    reset_sim();
+    pad_marker_t m;
+    pad_marker_fill(&m, 101325);
+    TEST_ASSERT_EQUAL(0, hal_fs_write_file(PAD_MARKER_PATH, (const char *)&m, (int)sizeof(m)));
+    mock_reset_cause = RESET_POWER_EVENT;
+    ctx.current_state = BOOT_SETTLE;
+    ctx.boot_timer = 0;
+    ctx.sensor_type = 1;
+    ctx.fs_ok = true;
+    flight_set_usb_attached(&ctx, true, 0);
+    for (uint32_t t = 0; t < 6000; t++) {
+        float alt_m = 600.0f - 20.0f * ((float)t / 1000.0f); /* what recovery would take for a descent */
+        mock_pressure.pressure_pa = 101325.0f - alt_m * 12.0f;
+        mock_time_ms = t;
+        mock_pyro.firing = false;
+        ctx.current_state = step(&ctx, t);
+        if (ctx.current_state != BOOT_SETTLE && ctx.current_state != BOOT_SENSOR)
+            break;
+    }
+    TEST_ASSERT_FALSE_MESSAGE(ctx.current_state == FALLING || ctx.current_state == ASCENT,
+                              "a board on USB rejoined a flight");
+    TEST_ASSERT_FALSE(ctx.diag & DIAG_BROWNOUT);
 }
 
 /* The case the mechanism exists for. A marker on disk, a power event, and a
@@ -1048,5 +1244,15 @@ int main(void) {
     RUN_TEST(test_BRN_INT_02_marker_written_only_once);
     RUN_TEST(test_BRN_INT_03_descending_recovery_rejoins_flight);
     RUN_TEST(test_BRN_INT_04_pad_power_on_calibrates_normally);
+    RUN_TEST(test_BRN_INT_05_marker_is_written_only_by_the_flash_service);
+    RUN_TEST(test_USB_INT_01_marker_waits_for_the_cable_to_go);
+    RUN_TEST(test_USB_INT_02_no_flight_recovery_on_usb);
+    RUN_TEST(test_USB_INT_03_test_mode_writes_the_marker_on_usb);
+
+    /* Code review 2026-09-24 */
+    RUN_TEST(test_REV11_launch_row_reports_the_height_reached);
+    RUN_TEST(test_REV_NEW_log_header_names_the_configured_modes);
+    RUN_TEST(test_REV12_log_rate_hz_thins_samples_not_events);
+    RUN_TEST(test_REV06_ground_test_waits_for_the_other_channel);
     return UNITY_END();
 }

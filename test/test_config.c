@@ -17,19 +17,16 @@ void test_config_defaults(void) {
     config_t cfg;
     config_set_defaults(&cfg);
     TEST_ASSERT_EQUAL_STRING("PYRO001", cfg.id);
-    TEST_ASSERT_EQUAL_STRING("My Rocke", cfg.name); /* truncated to 8 chars */
+    TEST_ASSERT_EQUAL_STRING("MyRocket", cfg.name);
     TEST_ASSERT_EQUAL(PYRO_MODE_DELAY, cfg.pyro1_mode);
     TEST_ASSERT_EQUAL(0, cfg.pyro1_value);
     TEST_ASSERT_EQUAL(PYRO_MODE_AGL, cfg.pyro2_mode);
     TEST_ASSERT_EQUAL(300, cfg.pyro2_value);
     TEST_ASSERT_EQUAL(1, cfg.units); /* meters */
-    TEST_ASSERT_EQUAL(0, cfg.beep_mode);
-    TEST_ASSERT_EQUAL(30, cfg.max_coast_s);
     TEST_ASSERT_EQUAL(0, cfg.telem_format);
     TEST_ASSERT_EQUAL(10, cfg.telem_rate_hz);
     TEST_ASSERT_EQUAL(50, cfg.log_rate_hz);
-    TEST_ASSERT_TRUE(cfg.log_enabled);
-    TEST_ASSERT_TRUE(cfg.buzzer_startup);
+    TEST_ASSERT_FALSE(cfg.lua_enabled);
 }
 
 /* ── Round-trip: serialize → parse → compare [CFG-TABLE-02] ───────── */
@@ -53,13 +50,10 @@ void test_config_roundtrip_defaults(void) {
     TEST_ASSERT_EQUAL(original.pyro2_mode, restored.pyro2_mode);
     TEST_ASSERT_EQUAL(original.pyro2_value, restored.pyro2_value);
     TEST_ASSERT_EQUAL(original.units, restored.units);
-    TEST_ASSERT_EQUAL(original.beep_mode, restored.beep_mode);
-    TEST_ASSERT_EQUAL(original.max_coast_s, restored.max_coast_s);
     TEST_ASSERT_EQUAL(original.telem_format, restored.telem_format);
     TEST_ASSERT_EQUAL(original.telem_rate_hz, restored.telem_rate_hz);
     TEST_ASSERT_EQUAL(original.log_rate_hz, restored.log_rate_hz);
-    TEST_ASSERT_EQUAL(original.log_enabled, restored.log_enabled);
-    TEST_ASSERT_EQUAL(original.buzzer_startup, restored.buzzer_startup);
+    TEST_ASSERT_EQUAL(original.lua_enabled, restored.lua_enabled);
 }
 
 void test_config_roundtrip_custom(void) {
@@ -76,13 +70,10 @@ void test_config_roundtrip_custom(void) {
     original.pyro2_mode = PYRO_MODE_SPEED;
     original.pyro2_value = 42;
     original.units = 2; /* ft */
-    original.beep_mode = 1;
-    original.max_coast_s = 120;
     original.telem_format = 1;
     original.telem_rate_hz = 5;
     original.log_rate_hz = 25;
-    original.log_enabled = false;
-    original.buzzer_startup = false;
+    original.lua_enabled = true;
 
     char buf[512];
     config_serialize_ini(&original, buf, sizeof(buf));
@@ -98,13 +89,10 @@ void test_config_roundtrip_custom(void) {
     TEST_ASSERT_EQUAL(original.pyro2_mode, restored.pyro2_mode);
     TEST_ASSERT_EQUAL(original.pyro2_value, restored.pyro2_value);
     TEST_ASSERT_EQUAL(original.units, restored.units);
-    TEST_ASSERT_EQUAL(original.beep_mode, restored.beep_mode);
-    TEST_ASSERT_EQUAL(original.max_coast_s, restored.max_coast_s);
     TEST_ASSERT_EQUAL(original.telem_format, restored.telem_format);
     TEST_ASSERT_EQUAL(original.telem_rate_hz, restored.telem_rate_hz);
     TEST_ASSERT_EQUAL(original.log_rate_hz, restored.log_rate_hz);
-    TEST_ASSERT_EQUAL(original.log_enabled, restored.log_enabled);
-    TEST_ASSERT_EQUAL(original.buzzer_startup, restored.buzzer_startup);
+    TEST_ASSERT_EQUAL(original.lua_enabled, restored.lua_enabled);
 }
 
 /* ── Parser edge cases ────────────────────────────────────────────── */
@@ -180,23 +168,25 @@ void test_config_parse_bool_values(void) {
     config_t cfg;
     config_set_defaults(&cfg);
 
-    char ini1[] = "log_enabled=false\r\nbuzzer_startup=0\r\n";
+    char ini1[] = "lua_enabled=true\r\n";
     config_parse_ini(ini1, &cfg);
-    TEST_ASSERT_FALSE(cfg.log_enabled);
-    TEST_ASSERT_FALSE(cfg.buzzer_startup);
+    TEST_ASSERT_TRUE(cfg.lua_enabled);
 
-    char ini2[] = "log_enabled=true\r\nbuzzer_startup=1\r\n";
+    char ini2[] = "lua_enabled=0\r\n";
     config_parse_ini(ini2, &cfg);
-    TEST_ASSERT_TRUE(cfg.log_enabled);
-    TEST_ASSERT_TRUE(cfg.buzzer_startup);
+    TEST_ASSERT_FALSE(cfg.lua_enabled);
+
+    char ini3[] = "lua_enabled=1\r\n";
+    config_parse_ini(ini3, &cfg);
+    TEST_ASSERT_TRUE(cfg.lua_enabled);
 }
 
 void test_config_parse_new_fields(void) {
     config_t cfg;
     config_set_defaults(&cfg);
-    char ini[] = "max_coast_s=60\r\ntelem_rate_hz=5\r\nlog_rate_hz=25\r\n";
+    char ini[] = "landing_timeout=90\r\ntelem_rate_hz=5\r\nlog_rate_hz=25\r\n";
     config_parse_ini(ini, &cfg);
-    TEST_ASSERT_EQUAL(60, cfg.max_coast_s);
+    TEST_ASSERT_EQUAL(90, cfg.landing_timeout);
     TEST_ASSERT_EQUAL(5, cfg.telem_rate_hz);
     TEST_ASSERT_EQUAL(25, cfg.log_rate_hz);
 }
@@ -246,11 +236,64 @@ void test_config_default_ini_string(void) {
     /* Should contain key fields */
     TEST_ASSERT_NOT_NULL(strstr(ini, "pyro1_mode=delay"));
     TEST_ASSERT_NOT_NULL(strstr(ini, "pyro2_mode=agl"));
-    TEST_ASSERT_NOT_NULL(strstr(ini, "max_coast_s=30"));
+    TEST_ASSERT_NOT_NULL(strstr(ini, "landing_timeout=60"));
 }
 
-/* ── Test runner ──────────────────────────────────────────────────── */
+/* ── A disabled channel stays disabled [CFG-04, REV-02] ───────────
+ *
+ * POST /api/config parses the posted keys over the running config and writes
+ * the re-serialised result, so every mode has to survive that trip. `none`
+ * once came back as `delay`, and delay 0 fires at apogee. */
 
+void test_config_mode_none_round_trips(void) {
+    config_t cfg;
+    config_set_defaults(&cfg);
+    char ini[] = "[pyro]\r\npyro1_mode=none\r\n";
+    config_parse_ini(ini, &cfg);
+    TEST_ASSERT_EQUAL(PYRO_MODE_NONE, cfg.pyro1_mode);
+
+    char buf[512];
+    TEST_ASSERT_GREATER_THAN(0, config_serialize_ini(&cfg, buf, (int)sizeof(buf)));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(buf, "pyro1_mode=none"), buf);
+
+    config_t back;
+    config_set_defaults(&back);
+    config_parse_ini(buf, &back);
+    TEST_ASSERT_EQUAL_MESSAGE(PYRO_MODE_NONE, back.pyro1_mode, "a disabled channel came back armed");
+}
+
+void test_config_unknown_mode_serialises_as_none(void) {
+    config_t cfg;
+    config_set_defaults(&cfg);
+    cfg.pyro2_mode = 9; /* no such mode */
+    char buf[512];
+    TEST_ASSERT_GREATER_THAN(0, config_serialize_ini(&cfg, buf, (int)sizeof(buf)));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(buf, "pyro2_mode=none"),
+                                 "an unknown mode must be written as one that never fires");
+}
+
+/* ── The shipped defaults fit their fields [CFG-07, REV-15] ───────── */
+
+void test_config_default_name_is_not_truncated(void) {
+    config_t cfg;
+    config_set_defaults(&cfg);
+    TEST_ASSERT_EQUAL_STRING("MyRocket", cfg.name);
+}
+
+/* ── Every key written is one something reads [REV-12] ────────────
+ *
+ * A key in config.ini is a promise that changing it changes what the board
+ * does. These four were parsed, stored and read by nothing. */
+
+void test_config_writes_no_inert_keys(void) {
+    const char *ini = config_default_ini();
+    TEST_ASSERT_NULL_MESSAGE(strstr(ini, "beep_mode="), "beep_mode is read by nothing");
+    TEST_ASSERT_NULL_MESSAGE(strstr(ini, "max_coast_s="), "max_coast_s is read by nothing (DD-022)");
+    TEST_ASSERT_NULL_MESSAGE(strstr(ini, "log_enabled="), "log_enabled is read by nothing");
+    TEST_ASSERT_NULL_MESSAGE(strstr(ini, "buzzer_startup="), "buzzer_startup is read by nothing");
+    TEST_ASSERT_NOT_NULL(strstr(ini, "telem_rate_hz="));
+    TEST_ASSERT_NOT_NULL(strstr(ini, "log_rate_hz="));
+}
 
 /* ── CFG-06: a partial file must not reset what it omits ──────────── */
 
@@ -340,8 +383,6 @@ void test_config_worst_case_fits_the_budget(void) {
     cfg.pyro1_value = 65535;
     cfg.pyro2_value = 65535;
     cfg.units = 0; /* "cm" is shortest, but units is not the driver here */
-    cfg.beep_mode = 255;
-    cfg.max_coast_s = 255;
     cfg.telem_format = 255;
     cfg.telem_rate_hz = 255;
     cfg.log_rate_hz = 255;
@@ -407,6 +448,11 @@ int main(void) {
 
     /* Default INI string */
     RUN_TEST(test_config_default_ini_string);
+
+    RUN_TEST(test_config_mode_none_round_trips);
+    RUN_TEST(test_config_unknown_mode_serialises_as_none);
+    RUN_TEST(test_config_default_name_is_not_truncated);
+    RUN_TEST(test_config_writes_no_inert_keys);
 
     return UNITY_END();
 }

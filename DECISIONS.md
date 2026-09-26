@@ -122,6 +122,7 @@ rationale and the alternatives considered.
 ## Configuration & Features
 
 ### DD-010: beep_mode Deferred to V2 X-Macro Config
+- **Superseded by DD-030:** `beep_mode` was never implemented and is removed.
 - **Decision:** The `beep_mode` config field (digits vs hundreds) is not implemented
   in v1.5. It will be added via the X-macro config table in V2 Task 1.
 - **Rationale:** The X-macro system generates parser, serializer, and test
@@ -235,7 +236,7 @@ rationale and the alternatives considered.
   which `test_integration.c` asserts as an ordering guarantee.
 - **`max_coast_s` remains dead.** It is parsed, stored and read by nothing. It
   was not pressed into service as a substitute timeout here, because that would
-  reintroduce exactly what this decision removes.
+  reintroduce exactly what this decision removes. (Removed by DD-030.)
 
 ### DD-023: Descent Phase Comes From The Rocket, Not The Firing Log
 - **Decision:** `FALLING` / `DROGUE_DESCENT` / `CHUTE_DESCENT` advance on the
@@ -264,6 +265,8 @@ rationale and the alternatives considered.
   overriding the operator on the strength of an inference.
 
 ### DD-024: The Emergency Ladder Has No Bare Descent-Rate Trigger
+- **Amended by DD-028:** the rungs below are replaced; the rule in the title
+  stands.
 - **Decision:** The ladder acts only when the drogue has been commanded and the
   rocket has not steadied under a canopy. Free fall alone never triggers it.
 - **Why:** a drogue configured below apogee means a deliberate free fall down
@@ -352,4 +355,237 @@ rationale and the alternatives considered.
 - **Not verified by test.** The holdoff is a timing property of the flash
   service and the host harness does not model flash write windows; it is marked
   as such in TRACEABILITY.md rather than claimed.
+
+### DD-028: The Emergency Ladder Acts On Evidence Of Failure
+- **Decision:** The main is brought forward only when, once the most recent
+  drogue command has had 2 s to deploy, the rocket descends faster than 35 m/s
+  and is not being slowed, for 1 s. The drogue retry keeps its own evidence,
+  `pyro1_verify_fail`. Nothing acts on the absence of a settled descent.
+- **Why:** a drogue opened at apogee starts from zero and is still accelerating
+  toward its terminal rate for seconds. "Not settled within 2 s" is therefore
+  true of a working drogue, and a ladder keyed on it forced the main 2 s after
+  the drogue on every flight that set the main by altitude -- 541 m, 1100 m and
+  3884 m instead of 152 m in the review's measurements. FLT-EMRG-01's old text
+  mandated exactly that, so it was rewritten with FLT-EMRG-03 as the guard.
+- **"Not being slowed"** is a fall of more than the descent tolerance (a
+  quarter of the rate) since the window opened; a fall restarts the window. A
+  drogue fired into a fast descent is still decelerating when its grace ends
+  and never trips it; a shredded one at a steady terminal rate does.
+- **The cost:** on the H73 profile a failed drogue now brings the main out 4.6 s
+  after apogee at 1071 m, against 2 s before. The operator narrative expects
+  about 3 s. Shortening the grace or the hold buys time on a failure at the
+  price of forcing mains under slow drogues.
+- **A refused drogue counts as commanded.** A board that could not fire the
+  drogue has no drogue, and the main rung applies.
+
+### DD-029: AGL And FALLEN Triggers Are Corrected For The Filter Lag
+- **Decision:** `should_fire_pyro()` compares `altitude + speed x 500 ms` (on
+  the way down) rather than the filtered altitude.
+- **Why:** the 500 ms IIR makes the filtered altitude trail a descending rocket
+  by rate x tau -- 56 m at a ballistic 100 m/s, turning a 400 ft drogue into a
+  220 ft one. Closed-loop, every AGL channel now fires within 8 m of its
+  setting (121 m for 122 m ballistic, 62 m for 61 m under drogue).
+- **Not applied** to SPEED (the speed lags too, but a speed trigger is not a
+  height) or DELAY.
+
+### DD-030: Every Configuration Key Is Read By Something
+- **Decision:** `beep_mode`, `max_coast_s`, `log_enabled` and `buzzer_startup`
+  are removed; `telem_rate_hz` now sets the in-flight telemetry cadence and
+  `log_rate_hz` thins the logged samples (never the events).
+- **Why:** a key in `config.ini` is a promise that changing it changes the
+  board. `beep_mode` was a visible UI control with no effect. The two rates are
+  kept because CFG-SUBSYS-01 asks for configurable telemetry and logging; the
+  other four would each have contradicted a requirement if wired
+  (`log_enabled` SYS-DATA-01, `buzzer_startup` SYS-STATUS-01 and BUZ-CODE-08,
+  `max_coast_s` DD-022). Old files carrying the keys still parse (CFG-08) and
+  lose them on the next save.
+
+### DD-031: A Faulted Board Sends No State Sentence
+- **Decision:** No `$PYRO` in boot states or FAULT; a `!FAULT <names>` line
+  every 5 s instead.
+- **Why:** the ground-station contract has six states and no FAULT, and state 0
+  means "on the pad, ready". A board that cannot fly was reporting itself ready
+  at 1 Hz.
+
+### DD-032: A Refused Fire Is Not A Fire
+- **Decision:** `hal_pyro_is_firing()` read straight after `hal_pyro_fire()` is
+  the board's acknowledgement. A channel is recorded as fired only if it reads
+  true; otherwise the command is logged as `PYROn_REFUSED` and not repeated.
+- **Why:** MK1C cannot fire yet and the flight log, CSV, telemetry and
+  `/api/status` all said it had. No HAL function was added: the semantics were
+  already true of MK1A, MK1B, the test HAL and the simulator, and are now
+  written down in `hal.h` and `pyro.h` for the MK1C firing sequence to honour.
+- **The same function, `flight_pyro_energise()`,** is the only fire site for the
+  flight and the ground test, so PYR-DEPLOY-02's interlock sits below both.
+
+### DD-033: The Pad Marker Is Written Inside The Flash Window
+- **Decision:** `flight_flash_service()`, called by the main loop inside the
+  flash window, writes the pad marker; the PAD_IDLE detector does not.
+- **Why:** the detector runs at STAGE 3 with the window shut, so
+  `hal_fs_write_file()` refused the write every time and brownout recovery
+  (DD-026) could never engage. Found on the bench: no `pad.mkr` on any board.
+  The host HAL has no window, which is why every test passed.
+
+### DD-034: No State-Changing Request While Flying
+- **Decision:** From launch to landing every POST, and the bench capture, is
+  refused with 409. GETs are answered.
+- **Why:** `/api/config`, `/api/pins` and `/api/beeps/play` already refused, but
+  `/api/reboot`, `/api/ota`, `/www/`, `/api/serial`, `/api/beeps` and
+  `/api/lua/*` did not -- a browser could reboot a flying board.
+- **The cost:** a board stuck in a flight state (a false launch that never arms,
+  or a sensor that dies in flight, DD-022) can no longer be rebooted or updated
+  from the browser; it needs a power cycle. The firmware cannot tell such a
+  board from one that is flying, which is the point of the interlock.
+
+### DD-035: The Flight Log Is Published Every Second, Inside The Flash Window
+- **Decision:** `log_flash_service()` calls `lfs_file_sync()` on the flight log
+  once a second while it has unsynced bytes, in a window where no flush write
+  happened.
+- **The rule it lives under:** every flash write -- flush, sync, the partial
+  block a sync makes the next write copy -- runs between core1's work units,
+  in the window core0 opens at STAGE 7 once core1's grant has expired. Core1 is
+  then idle in RAM, so no XIP fetch can coincide with a program or erase.
+  `flash_refusals` stays 0 if that holds: the littlefs driver refuses and
+  counts any program or erase outside the window.
+- **Why:** littlefs publishes what a file holds only on sync or close, and the
+  log closed only at LANDED. On MK1C a 60 s bench log read 0 bytes until its
+  close; a reset 30 s in, with no close, now leaves every row up to 0.5 s
+  before the reset.
+- **The cost, measured on MK1C with Lua running, 60 s at 50 Hz:** erases 20 to
+  81, `stage_max_us[7]` 46 to 73 ms, loop overruns 20 to 77, Lua ticks down
+  about 4 %, no dropped sample. Each sync makes the next write copy the partial
+  last block. `LOG_SYNC_MS` trades that stall rate against how much flight a
+  power loss can take with it.
+
+### DD-036: An MS5607 Conversion Is Timed From Its Command, And Impossible Readings Are Refused
+- **Decision:** The D1 and D2 reads wait until 9.1 ms after the conversion
+  command, measured in microseconds from the command itself (the datasheet
+  maximum at OSR 4096 is 9.04 ms). A reading of zero, or a pressure outside the
+  sensor's 1-120 kPa range, is not fed to the filter. Both events are counted on
+  `/api/status` as `pres_waits` and `pres_rejects`.
+- **Why:** the task's millisecond deadline was taken from the top of the loop,
+  before STAGE 1's USB and lwIP work, so a long STAGE 1 ate the ~1 ms margin
+  and the read came back 0 -- which compensates to a large negative pressure,
+  hundreds of metres of altitude through the IIR. Reproduced on MK1C under HTTP
+  load: a bench false launch (LAUNCH row at a filtered 95 290 Pa), and 18
+  impossible readings in 60 s. With the fix, 0 in 120 s of heavier load, and no
+  deferral at all when the board is idle.
+- **Why the gate as well as the timing:** one bad sample on the pad is a false
+  launch, and in flight it is a false AGL trigger. The gate costs nothing inside
+  the sensor's range, so it cannot reject a real reading anywhere a rocket can
+  go.
+- **The bench false launches** on MK1B and MK1C that led to the 100 ft trigger
+  (48d47c0) were attributed to weather drift. MK1B's recorded maximum was 243 m,
+  which drift does not produce and this does.
+
+### DD-037: A PC On USB Is Detected From Start-Of-Frame, And A Charger Cannot Be Detected
+- **Decision:** A USB host is attached while the SIE's last start-of-frame
+  number (`usb_hw->sof_rd`) has changed within the last 100 ms. The main loop
+  asks before each `dispatch_state()` and passes the answer to
+  `flight_set_usb_attached()`. While attached, the board detects no launch,
+  says nothing but one double chirp on attach, writes no pad marker and takes
+  no brownout recovery (USB-01..05).
+- **Why SOF:** a host sends a start-of-frame every millisecond while it is
+  awake, and nothing else does. So a false "attached" needs a real host, and
+  every other error means "not attached", which leaves launch detection on
+  (USB-07). A false "attached" in flight would mean no deployment.
+- **Rejected:**
+  - *VBUS.* On MK1A, MK1B and MK1C, USB VBUS goes only to the TP4057 charger
+    (VCC, its capacitor, the two LED resistors and a test point). No RP2040
+    pin sees it, and TinyUSB forces the SIE's VBUS-detect override anyway.
+  - *`tud_ready()` / suspend.* An unplugged cable is reported as a suspend
+    only if the idle line reads as J. D- floats with no host, so that is not
+    assured, and the error would be "attached" on a battery.
+  - *Data-line state for chargers.* A BC1.2 charger shorts D+ to D-, which
+    reads as SE1 through the device's pull-up. A floating D- with no cable
+    can read the same, so this can false-trigger in flight. Not shipped.
+- **What it cannot do:** see a charger, a sleeping PC or a suspended bus. All
+  three read as detached. The board then announces and detects launches as if
+  on battery, and chirps again when the host wakes.
+- **To detect a charger** needs a board change:
+  - A VBUS divider to a spare GPIO. MK1C has GPIO2-5, 9, 10 and 13-15 free.
+    GPIO24 is unconnected on MK1A/B. RP2040 pins are not 5 V tolerant.
+  - Or the TP4057's open-drain ~CHRG and ~STDBY to two GPIOs: either one low
+    means the charger has input power. Those nets also drive the LEDs, and
+    with VBUS present an idle one sits near VBUS minus the LED drop, so check
+    that voltage against the pin's limit.
+  Either signal would be ORed with SOF in `usb_host_active()`.
+
+### DD-038: Test Mode Flies On USB, And Lives Only In RAM
+- **Decision:** `POST /api/test_mode/on` and `/off` set a RAM flag. While it
+  is on, a board on USB behaves exactly as on battery: it detects a launch,
+  fires, writes the pad marker and announces. Every boot starts with it off.
+  It cannot change from launch to landing: the HTTP interlock refuses the
+  request, and the flight layer ignores it anyway. The web UI asks for
+  confirmation before turning it on, and shows a warning while it is on.
+- **Why:** a chamber flight watched in the web UI, and a bench soak for false
+  launches, both need the flight machine with a PC on the port (USB-01 turns
+  it off). A PC on USB means a bench, never a flight, so this is as safe as
+  flying on battery. The igniters are the operator's business, and the
+  prompt says so.
+- **Why RAM:** nobody should plug a board in and find it still in test mode
+  from a session someone forgot about. With the flag in a file, whether
+  "USB means grounded" held would depend on that file.
+- **The cost:** a reboot ends test mode, including one mid-test. For the same
+  reason, brownout recovery on USB can never run in test mode: the reset
+  clears the flag before the recovery verdict. Recovery has to be tested on
+  battery.
+- **On and off go in the path, not a body:** a body can arrive in a later TCP
+  segment, and gathering it holds the flash window, which this request has no
+  use for. Found on hardware: Python's urllib sends the body separately, and
+  a first-segment-only handler read it as empty.
+- **Chirp:** switching test mode off while attached is an attach, so it
+  chirps. Switching it on resumes the pad announcement, which confirms it by
+  ear.
+
+### DD-039: HTTP Is A Byte Stream, Between Two Rings
+- **Decision:** Each connection owns an rx ring and a tx ring (`net_ring.c`)
+  and an HTTP engine (`http_conn.c`). The engine parses the request from rx a
+  line at a time, takes the body at the pace its consumer allows, and writes
+  the response into tx. The lwIP adapter in `http_server.c` does four things:
+  - queue what arrives;
+  - copy it into rx as there is room;
+  - call `tcp_recved()` for what the parser consumed;
+  - feed tx to `tcp_write()` as the send buffer allows.
+
+  The callbacks only queue. The work runs in `http_server_service()`, from
+  `net_service()` in the main loop.
+- **Why:** the old server parsed each segment as it came. Several failures
+  followed from that:
+  - A body in a later segment was read as empty. The Beep Codes audition
+    answered 400 to a valid request (N22), and test mode had to move on/off
+    into the path to avoid it.
+  - A header block split across segments was parsed as a malformed request,
+    and so was a request whose first segment was a single byte.
+  - A body segment arriving in its own read was answered as a fresh request.
+    An upload sent in small writes got a 400 for every segment.
+  - Waiting on the flash window depended on lwIP holding a refused segment
+    and redelivering it on its 250 ms timer.
+
+  Against the old server, `support/http_stream_check.py` passes 4 of 16.
+  Against the new one it passes 16 of 16 on all three boards.
+- **What it also fixed:**
+  - N8: the OTA reply arrives. The reboot runs through `pending_reset` once
+    the reply is in lwIP's hands, instead of `pfb_perform_update()` spinning
+    inside the callback.
+  - OTA answers `Expect: 100-continue`, so curl no longer waits a second
+    before sending. An OTA now takes 2.9 s on MK1C (was 37 s) and 5.6 s on
+    MK1A (was 81 s).
+  - Every response carries Content-Length, including files.
+  - An upload that dies mid-body is never closed, so littlefs keeps the
+    previous file whole instead of committing a truncated one.
+- **Why rings:** smallest_tcp (github.com/n9wxu/smallest_tcp), the stack
+  intended to replace lwIP here, gives each connection application-owned RX
+  and TX buffers behind a vtable. It advertises the RX buffer's free space as
+  the window, and the application drains RX and fills TX from its main loop.
+  `net_ring.h` follows those operations. Replacing lwIP means replacing the
+  adapter; the HTTP engine and routes stay as they are.
+- **The cost:** 4 exchanges of 2 kB rx, 2 kB tx and a 5 kB work buffer. The
+  work buffer is shared, one use at a time, by the gathered body, the part
+  of a response that does not fit tx, and the littlefs cache of a streamed
+  file. That is about 38 kB in place of about 32 kB of static buffers the
+  old server kept; bss grew 8.6 kB. A pcb gets an exchange only when it
+  first sends a byte, so a browser's speculative idle sockets cost nothing.
+  While all four are busy, a new request waits in its pbufs, held back by
+  its TCP window.
 

@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, lua-all-boards]
   pull_request:
     branches: [main]
 
@@ -148,6 +148,11 @@ jobs:
       # otherwise need a rocket and a loose battery connector runs here.
       - name: Run brownout recovery tests
         run: cd build && ninja brownout_tests
+
+      # The HTTP engine against a byte stream: every request split at every
+      # byte, and drained through a small window.
+      - name: Run HTTP stream tests
+        run: cd build && ninja http_tests
 
       - name: Validate web JS syntax
         run: node --check www/app.js

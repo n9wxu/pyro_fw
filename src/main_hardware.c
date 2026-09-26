@@ -19,6 +19,7 @@
 #include "buzzer.h"
 #include "tusb.h"
 #include "hardware/structs/watchdog.h"
+#include "hardware/structs/usb.h"
 
 /* The period is one MS5607 conversion phase: the pressure task is a
  * three-phase state machine clocked at MS5607_CONV_MS, so one iteration
@@ -95,6 +96,27 @@ volatile device_status_t g_status = {0};
 void net_mdns_poll(void);
 void net_service(void); /* net_glue.c; serviced again in the loop's slack */
 
+/* [USB-01] A host sends a start-of-frame every millisecond while it is awake,
+ * and nothing else does, so a frame number that moves proves a PC and one that
+ * stands still proves nothing: a charger, a sleeping host and no cable look
+ * alike. VBUS cannot tell them apart either -- on these boards it reaches only
+ * the charger IC, and TinyUSB overrides the SIE's detect bit. Every error here
+ * is towards "not attached", which leaves launch detection on. */
+#define USB_HOST_QUIET_MS 100u
+
+static bool usb_host_active(uint32_t now) {
+    static uint16_t frame;
+    static uint32_t moved_ms;
+    static bool moved;
+    uint16_t f = (uint16_t)(usb_hw->sof_rd & USB_SOF_RD_BITS);
+    if (f != frame) {
+        frame = f;
+        moved_ms = now;
+        moved = true;
+    }
+    return moved && now - moved_ms < USB_HOST_QUIET_MS;
+}
+
 static void update_status(flight_context_t *ctx, uint32_t now) {
     g_status.state = ctx->current_state;
     g_status.altitude_cm = ctx->last_altitude;
@@ -109,7 +131,7 @@ static void update_status(flight_context_t *ctx, uint32_t now) {
     g_status.pyro1_adc = ctx->pyro1_adc;
     g_status.pyro2_adc = ctx->pyro2_adc;
     g_status.under_thrust = ctx->under_thrust;
-    g_status.flight_time_ms = (ctx->launch_time > 0) ? (now - ctx->launch_time) : 0;
+    g_status.flight_time_ms = flight_elapsed_ms(ctx, now);
     g_status.pyro1_mode = ctx->config.pyro1_mode;
     g_status.pyro1_value = ctx->config.pyro1_value;
     g_status.pyro2_mode = ctx->config.pyro2_mode;
@@ -189,8 +211,8 @@ int main() {
 
         /* Arm once: pending_reset stays set, and re-arming every iteration
          * would reload the countdown faster than it can expire. The loop
-         * keeps running so the in-flight HTTP response flushes first.
-         * pfb_perform_update() reboots through here too. */
+         * keeps running so the in-flight HTTP response flushes first. An
+         * OTA reboots through here too, once its reply is with lwIP. */
         if (pending_reset == 2 && !reset_armed) {
             reset_armed = true;
             watchdog_reboot(0, 0, 100);
@@ -203,6 +225,7 @@ int main() {
         /* Flight software — single code path via pressure_processing ring.
          * dispatch_state() internally reads altitude samples via pp_read(). */
         STAGE(3);
+        flight_set_usb_attached(&ctx, usb_host_active(now), now);
         ctx.current_state = dispatch_state(&ctx, now);
 
         /* Outputs (telemetry, pyro update) */
@@ -228,6 +251,7 @@ int main() {
             CRUMB(71);
             flash_window_open();
             hal_flash_service(now);
+            flight_flash_service(&ctx, now);
             CRUMB(72);
         } else {
             CRUMB(74);
@@ -264,8 +288,8 @@ int main() {
                 tud_task();
                 /* Core0 hands out no more work until the next period, so a
                  * core1 observed idle here stays idle for the rest of the
-                 * slack. Without this, a config save waits out a 250 ms
-                 * tcp_fasttmr before lwIP redelivers it. */
+                 * slack. Without this, a flash-writing request waits for the
+                 * next period's STAGE 7. */
                 if (!flash_window_is_open() && lua_core1_flash_ok()) {
                     flash_window_open();
                 }

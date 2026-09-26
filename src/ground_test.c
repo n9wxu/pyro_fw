@@ -5,9 +5,9 @@
  */
 #include "ground_test.h"
 #include "beep_store.h"
-#include "flight_states.h" /* flight_context_t, PAD_IDLE, send_telemetry */
-#include "buzzer.h"        /* buzzer_set_code, buzzer_set_altitude         */
-#include "hal.h"           /* hal_pyro_fire, hal_pyro_sample, hal_telemetry_send */
+#include "flight_states.h" /* flight_context_t, PAD_IDLE, flight_pyro_energise */
+#include "buzzer.h"
+#include "hal.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -63,7 +63,7 @@ void ground_test_handle_command(ground_test_ctx_t *gt, const char *cmd, struct f
     /* ── BEEP ALT <n>: play altitude beep-out [GND-TEST-01] ── */
     if (strncmp(cmd, "BEEP ALT ", 9) == 0) {
         int32_t alt = (int32_t)atoi(cmd + 9);
-        buzzer_set_altitude(alt);
+        buzzer_play_altitude(alt);
         char resp[32];
         snprintf(resp, sizeof(resp), "GT,BEEP,alt,%ld", (long)alt);
         gt_respond(resp);
@@ -93,8 +93,9 @@ void ground_test_handle_command(ground_test_ctx_t *gt, const char *cmd, struct f
     }
 
     /* ── FIRE <1|2>: fire an armed channel [GND-TEST-02..03] ── */
-    if (strcmp(cmd, "FIRE 1") == 0) {
-        if (gt->arm_state != GT_ARMED_1) {
+    if (strcmp(cmd, "FIRE 1") == 0 || strcmp(cmd, "FIRE 2") == 0) {
+        uint8_t ch = (uint8_t)(cmd[5] - '0');
+        if (gt->arm_state != (ch == 1 ? GT_ARMED_1 : GT_ARMED_2)) {
             gt_respond("GT,ERR,not_armed");
             return;
         }
@@ -103,26 +104,19 @@ void ground_test_handle_command(ground_test_ctx_t *gt, const char *cmd, struct f
             gt_respond("GT,ERR,arm_expired");
             return;
         }
-        hal_pyro_fire(1);
-        gt->arm_state = GT_IDLE;
-        gt->arm_time_ms = 0;
-        gt_respond("GT,FIRED,1");
-        return;
-    }
-    if (strcmp(cmd, "FIRE 2") == 0) {
-        if (gt->arm_state != GT_ARMED_2) {
-            gt_respond("GT,ERR,not_armed");
+        /* [PYR-DEPLOY-02] The same interlock the flight uses: the other
+         * channel's pulse may still be running through the shared element.
+         * The channel stays armed, so FIRE can be sent again inside the
+         * window. */
+        pyro_fire_result_t r = flight_pyro_energise(ch);
+        if (r == PYRO_BUSY) {
+            gt_respond("GT,ERR,busy");
             return;
         }
-        if (gt->arm_time_ms > 0 && (now_ms - gt->arm_time_ms) >= GT_ARM_TIMEOUT_MS) {
-            gt->arm_state = GT_IDLE;
-            gt_respond("GT,ERR,arm_expired");
-            return;
-        }
-        hal_pyro_fire(2);
         gt->arm_state = GT_IDLE;
         gt->arm_time_ms = 0;
-        gt_respond("GT,FIRED,2");
+        gt_respond(r == PYRO_ENERGISED ? (ch == 1 ? "GT,FIRED,1" : "GT,FIRED,2")
+                                       : (ch == 1 ? "GT,ERR,refused,1" : "GT,ERR,refused,2"));
         return;
     }
 

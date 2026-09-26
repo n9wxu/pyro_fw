@@ -28,9 +28,37 @@ __attribute__((weak)) bool lua_app_ready_or_absent(void) {
 
 /* ── Ring buffer ──────────────────────────────────────────────────── */
 
+/* States whose samples belong in the flight log. A set, not an ordering:
+ * BOOT_SENSOR and FAULT are numbered after LANDED. */
+static bool state_is_logged(flight_state_t st) {
+    switch (st) {
+    case ASCENT:
+    case FALLING:
+    case DROGUE_DESCENT:
+    case CHUTE_DESCENT:
+    case LANDED:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* [CFG-SUBSYS-01] log_rate_hz thins the samples written; events are always
+ * written. At or above the sensor's rate every sample goes in. */
+#define SENSOR_RATE_HZ 50
+
+static bool log_sample_due(flight_context_t *ctx, uint32_t time_ms) {
+    uint8_t hz = ctx->config.log_rate_hz;
+    if (hz == 0 || hz >= SENSOR_RATE_HZ)
+        return true;
+    if (time_ms - ctx->last_logged_ms < 1000u / hz)
+        return false;
+    ctx->last_logged_ms = time_ms;
+    return true;
+}
+
 void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t altitude, uint8_t st) {
-    /* v2-9: log every in-flight sample; events tagged later by buf_tag_event */
-    if ((flight_state_t)st >= ASCENT) {
+    if (state_is_logged((flight_state_t)st) && log_sample_due(ctx, time_ms)) {
         hal_log_sample(time_ms, pressure, altitude, st, ctx->under_thrust, EVT_NONE);
     }
     if (ctx->buf_count == FLIGHT_BUF_SIZE) {
@@ -47,20 +75,30 @@ void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t 
     s->event_data = 0;
     ctx->buf_head = (ctx->buf_head + 1) % FLIGHT_BUF_SIZE;
     ctx->buf_count++;
-    /* csv_track_sample() removed: incremental logger retired, hal_log owns flight record [v2-9] */
+}
+
+static const flight_sample_t *buf_newest(const flight_context_t *ctx) {
+    return &ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE];
+}
+
+/* An event row in the flight log, against the newest sample. */
+static void log_event(flight_context_t *ctx, uint8_t event) {
+    const flight_sample_t *s = buf_newest(ctx);
+    if (hal_log_active() && state_is_logged((flight_state_t)s->state))
+        hal_log_sample(s->time_ms, s->pressure_pa, s->altitude_cm, s->state, s->under_thrust, event);
 }
 
 static void buf_tag_event(flight_context_t *ctx, uint8_t event) { /* [DAT-03] */
     ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE].event = event;
-    /* v2-9: also emit a timestamped event line to the HAL log */
-    if (hal_log_active()) {
-        const flight_sample_t *s = &ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE];
-        if ((flight_state_t)s->state >= ASCENT)
-            hal_log_sample(s->time_ms, s->pressure_pa, s->altitude_cm, s->state, s->under_thrust, event);
-    }
+    log_event(ctx, event);
 }
 
 #define MAX_ALTITUDE_CM 800000
+
+/* [USB-01, USB-08] */
+static bool grounded_on_usb(const flight_context_t *ctx) {
+    return ctx->usb_attached && !ctx->test_mode;
+}
 
 static int32_t cm_to_units(int32_t cm, uint8_t units) {
     switch (units) {
@@ -75,6 +113,15 @@ static int32_t cm_to_units(int32_t cm, uint8_t units) {
 
 /* ── Pyro firing logic ────────────────────────────────────────────── */
 
+/* [PYR-MODE-02/03] The filtered altitude trails a descending rocket by its
+ * rate times the filter's time constant: 56 m at a ballistic 100 m/s. Put that
+ * back, so an AGL or FALLEN trigger fires at the altitude it names. */
+static int32_t lag_corrected_altitude(const flight_context_t *ctx) {
+    int32_t lead = ctx->vertical_speed_cms < 0 ? ctx->vertical_speed_cms * PP_FILTER_TAU_MS / 1000 : 0;
+    int32_t alt = ctx->last_altitude + lead;
+    return alt > 0 ? alt : 0;
+}
+
 /* [PYR-MODE-01..04, PYR-ALT-01] See IMPLEMENTATION.md "Altitude Limitations"
  * for behavior above 8000m. */
 bool should_fire_pyro(flight_context_t *ctx, uint8_t mode, uint16_t value) {
@@ -82,8 +129,9 @@ bool should_fire_pyro(flight_context_t *ctx, uint8_t mode, uint16_t value) {
         return false; /* [PYR-SAFE-04] */
     int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
     int32_t clamped = ((int32_t)value > max_units) ? max_units : (int32_t)value;
-    int32_t fallen = cm_to_units(ctx->max_altitude - ctx->last_altitude, ctx->config.units);
-    int32_t agl = cm_to_units(ctx->last_altitude, ctx->config.units);
+    int32_t alt_cm = lag_corrected_altitude(ctx);
+    int32_t fallen = cm_to_units(ctx->max_altitude - alt_cm, ctx->config.units);
+    int32_t agl = cm_to_units(alt_cm, ctx->config.units);
     int32_t speed = cm_to_units(-ctx->vertical_speed_cms, ctx->config.units);
     uint32_t delay_s = (hal_time_ms() - ctx->apogee_time) / 1000;
     switch (mode) {
@@ -100,37 +148,57 @@ bool should_fire_pyro(flight_context_t *ctx, uint8_t mode, uint16_t value) {
     }
 }
 
-/* [PYR-SAFE-01..03] */
-/* [PYR-DEPLOY-02] The one place a channel is energised.
- *
- * Both igniters draw through one common FET and one fuse, so only one may be
- * live at a time -- on MK1B that path is a 1.5 A self-resetting PTC and the
- * combined draw can trip it and fire neither. A refusal here is not a failure:
- * the caller runs again next tick and the other channel will have finished.
- * That is also why every fire site goes through this function rather than
- * calling hal_pyro_fire() directly. */
-static bool fire_channel(flight_context_t *ctx, int ch, uint32_t now) {
+/* [PYR-DEPLOY-02] Both igniters draw through one common FET and one fuse, so
+ * only one may be live at a time -- on MK1B that path is a 1.5 A
+ * self-resetting PTC and the combined draw can trip it and fire neither.
+ * BUSY is not a failure: the caller asks again next tick, and the other
+ * channel's pulse will have ended. */
+pyro_fire_result_t flight_pyro_energise(uint8_t channel) {
     if (hal_pyro_is_firing())
+        return PYRO_BUSY;
+    hal_pyro_fire(channel);
+    return hal_pyro_is_firing() ? PYRO_ENERGISED : PYRO_REFUSED;
+}
+
+/* [PYR-SAFE-01..03, SYS-DEPLOY-01] Every in-flight fire goes through here.
+ *
+ * A channel is recorded as fired only when the board energised it. A refusal
+ * -- MK1C before its firing sequence exists, or a channel released to Lua --
+ * is recorded as one, and the channel is not asked again. */
+static bool fire_channel(flight_context_t *ctx, int ch, uint32_t now) {
+    pyro_fire_result_t r = flight_pyro_energise((uint8_t)ch);
+    if (r == PYRO_BUSY)
         return false;
-    hal_pyro_fire(ch);
-    if (ch == 1) {
-        ctx->pyro1_fired = true;
+    if (ch == 1)
         ctx->pyro1_fire_time = now;
-        buf_tag_event(ctx, EVT_PYRO1_FIRE);
-    } else {
-        ctx->pyro2_fired = true;
+    else
         ctx->pyro2_fire_time = now;
-        buf_tag_event(ctx, EVT_PYRO2_FIRE);
+    if (r == PYRO_REFUSED) {
+        if (ch == 1)
+            ctx->pyro1_refused = true;
+        else
+            ctx->pyro2_refused = true;
+        buf_tag_event(ctx, ch == 1 ? EVT_PYRO1_REFUSED : EVT_PYRO2_REFUSED);
+        return false;
     }
+    if (ch == 1)
+        ctx->pyro1_fired = true;
+    else
+        ctx->pyro2_fired = true;
+    buf_tag_event(ctx, ch == 1 ? EVT_PYRO1_FIRE : EVT_PYRO2_FIRE);
     telemetry_pyro_fire(ch, ctx->last_altitude, now - ctx->launch_time);
     return true;
 }
 
+static bool channel_waiting(bool fired, bool refused, bool continuity) {
+    return !fired && !refused && continuity;
+}
+
 static void try_fire_pyros(flight_context_t *ctx, uint32_t now) {
-    if (!ctx->pyro1_fired && ctx->pyro1_continuity_good &&
+    if (channel_waiting(ctx->pyro1_fired, ctx->pyro1_refused, ctx->pyro1_continuity_good) &&
         should_fire_pyro(ctx, ctx->config.pyro1_mode, ctx->config.pyro1_value))
         (void)fire_channel(ctx, 1, now);
-    if (!ctx->pyro2_fired && ctx->pyro2_continuity_good &&
+    if (channel_waiting(ctx->pyro2_fired, ctx->pyro2_refused, ctx->pyro2_continuity_good) &&
         should_fire_pyro(ctx, ctx->config.pyro2_mode, ctx->config.pyro2_value))
         (void)fire_channel(ctx, 2, now);
 }
@@ -181,10 +249,6 @@ static void check_post_fire_verify(flight_context_t *ctx, uint32_t now) {
     }
 }
 
-/* check_refire() retired -- the bounded ladder below does this [DD-023] */
-
-/* Config parser moved to config.c — X-macro generated [CFG-TABLE-01] */
-
 /* ── Event detectors ──────────────────────────────────────────────── */
 
 /* [FLT-BOOT-04, FLT-BOOT-09] */
@@ -214,9 +278,7 @@ static state_event_t detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
     }
     /* The sensor is good, so the barometer may now be believed about whether
      * this board is airborne. The verdict needs two samples for a speed, so
-     * this state lingers until it has them -- returning SEVT_DONE on the first
-     * tick is what made an earlier version decide on one sample, which is to
-     * say on no speed at all, which is to say never. */
+     * this state lingers until it has them: one sample is no speed at all. */
     state_event_t rec = SEVT_NONE;
     if (!assess_recovery(ctx, now, &rec)) {
         return SEVT_NONE;
@@ -236,7 +298,7 @@ static state_event_t detect_fault(flight_context_t *ctx, uint32_t now) {
     return SEVT_NONE;
 }
 
-/* ── Brownout recovery [FLT-BOOT-11] ──────────────────────────────
+/* ── Brownout recovery [FLT-BROWN-02] ─────────────────────────────
  *
  * Runs once the sensor has been proved, because every question here is asked
  * of the barometer and an unproved barometer can answer anything.
@@ -254,7 +316,7 @@ static bool assess_recovery(flight_context_t *ctx, uint32_t now, state_event_t *
     pad_marker_t m;
     int n = hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m));
     bool ok = (n == (int)sizeof(m)) && pad_marker_valid(&m);
-    if (!ok) {
+    if (!ok || grounded_on_usb(ctx)) {
         ctx->recovery = (uint8_t)RECOVER_COLD;
         return true; /* nothing to recover: decided, and decided now */
     }
@@ -262,7 +324,6 @@ static bool assess_recovery(flight_context_t *ctx, uint32_t now, state_event_t *
         ctx->recovery = (uint8_t)RECOVER_COLD;
         return true;
     }
-    ctx->marker_ground_pa = m.ground_pressure_pa;
 
     altitude_sample_t sample;
     if (!pp_read(&sample)) {
@@ -277,10 +338,9 @@ static bool assess_recovery(flight_context_t *ctx, uint32_t now, state_event_t *
      * LEVEL has to come from the marker's ground pressure, because that is
      * the only ground this board still knows about.
      *
-     * Mixing them is what an earlier version did: it took the level from the
-     * newest filtered pressure and the timestamp from an older queued sample,
-     * so the two disagreed about which instant they described and the speed
-     * came out as zero. */
+     * Do not take the level from the newest filtered pressure and the time
+     * from the queued sample: the two describe different instants, and the
+     * speed comes out as zero. */
     int32_t alt_pp = sample.altitude_cm;
     int32_t alt_agl = pp_pressure_to_altitude_cm(pp_last_filtered_pa(), m.ground_pressure_pa);
 
@@ -343,11 +403,10 @@ static state_event_t detect_boot_calibrate(flight_context_t *ctx, uint32_t now) 
     if (pp_cal_done())
         return SEVT_CAL_DONE;
 
-    /* A sensor that answered at init but produces no samples.
-     *
-     * This used to force PAD_IDLE, which left pp stuck in PP_CALIBRATING so
-     * pp_read() never yielded a sample: the board sat on the pad looking
-     * healthy, beeped "all good", and could not have detected a launch. */
+    /* A sensor that answered at init but produces no samples. PAD_IDLE is
+     * not an option: pp would stay in PP_CALIBRATING, pp_read() would never
+     * yield a sample, and a board that beeps "all good" could not detect a
+     * launch. */
     if (now - ctx->boot_timer >= 10000) {
         extern void hal_telemetry_send(const char *sentence);
         hal_telemetry_send("!CAL TIMEOUT - sensor produced no samples\r\n");
@@ -358,26 +417,37 @@ static state_event_t detect_boot_calibrate(flight_context_t *ctx, uint32_t now) 
     return SEVT_NONE;
 }
 
-/* What the pad check found, as DIAG_* bits. Several can be true at once.
+/* What the pad check finds, as DIAG_* bits. Several can be true at once.
  *
  * Separate from the beep because they are different questions: this is what
  * is wrong, and beep_reason_for_diag() below is what to do about it. */
-static void collect_pad_faults(flight_context_t *ctx, const hal_continuity_t *c1, const hal_continuity_t *c2) {
+static bool mode_is_altitude(uint8_t mode) {
+    return mode == PYRO_MODE_AGL || mode == PYRO_MODE_FALLEN || mode == PYRO_MODE_SPEED;
+}
+
+/* A channel with an igniter the flight software means to fire. A released
+ * channel is a Lua output and a disabled one has nothing connected by design:
+ * their open continuity is the expected reading, and "check the pyro" would be
+ * a false alarm the operator cannot clear. */
+static bool channel_expects_igniter(const flight_context_t *ctx, uint8_t ch) {
+    uint8_t mode = ch == 1 ? ctx->config.pyro1_mode : ctx->config.pyro2_mode;
+    return mode != PYRO_MODE_NONE && !pyro_release_is_released(ch);
+}
+
+static uint16_t pad_faults(const flight_context_t *ctx, const hal_continuity_t *c1, const hal_continuity_t *c2) {
+    uint16_t d = 0;
     int32_t max_units = cm_to_units(MAX_ALTITUDE_CM, ctx->config.units);
-    if ((ctx->config.pyro1_mode != PYRO_MODE_DELAY && ctx->config.pyro1_value > max_units) ||
-        (ctx->config.pyro2_mode != PYRO_MODE_DELAY && ctx->config.pyro2_value > max_units)) {
-        ctx->diag |= DIAG_CFG_RANGE;
+    if ((mode_is_altitude(ctx->config.pyro1_mode) && ctx->config.pyro1_value > max_units) ||
+        (mode_is_altitude(ctx->config.pyro2_mode) && ctx->config.pyro2_value > max_units)) {
+        d |= DIAG_CFG_RANGE;
     }
-    /* A released channel is a Lua output, not a firing path. Its mocked
-     * continuity reads open by design, and reporting "check the pyro" for a
-     * pad the operator deliberately gave away is a false alarm they cannot
-     * clear. */
-    if (!c1->good && !pyro_release_is_released(1)) {
-        ctx->diag |= c1->open ? DIAG_P1_OPEN : DIAG_P1_SHORT;
+    if (!c1->good && channel_expects_igniter(ctx, 1)) {
+        d |= c1->open ? DIAG_P1_OPEN : DIAG_P1_SHORT;
     }
-    if (!c2->good && !pyro_release_is_released(2)) {
-        ctx->diag |= c2->open ? DIAG_P2_OPEN : DIAG_P2_SHORT;
+    if (!c2->good && channel_expects_igniter(ctx, 2)) {
+        d |= c2->open ? DIAG_P2_OPEN : DIAG_P2_SHORT;
     }
+    return d;
 }
 
 /* Which outcome to say.
@@ -416,10 +486,15 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
     ctx->pyro2_adc = c2.raw_adc;
     ctx->last_cont_check = now;
 
-    if (ctx->buzzer_started)
+    /* [FLT-BOOT-15] Re-derived on every check, so the diagnosis describes the
+     * same instant as the continuity it came from. */
+    ctx->diag = (uint16_t)((ctx->diag & ~DIAG_PAD_ANY) | pad_faults(ctx, &c1, &c2));
+
+    /* [USB-02] Diagnosed, for the screen, but not said. */
+    if (grounded_on_usb(ctx))
         return;
 
-    /* Hold the startup beep until the board is genuinely up.
+    /* Hold the first announcement until the board is genuinely up.
      *
      * Core1's startup -- compiling the script and running init() -- is
      * unbounded, and core0 writes no flash for its duration. So a beeping,
@@ -429,42 +504,50 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
      *
      * Always true when Lua is not in play, so boards without it are
      * unaffected. */
-    if (!lua_app_ready_or_absent())
+    if (!ctx->buzzer_started && !lua_app_ready_or_absent())
         return;
 
+    /* Said again whenever the answer changes: an igniter lead that lets go
+     * during a long wait on the pad must stop the board saying OK to fly, and
+     * one that is fixed must stop it saying otherwise. Said on the active
+     * personality's cadence, which by default repeats until launch -- a board
+     * that speaks once and falls silent is indistinguishable from one whose
+     * battery died a second later. */
+    beep_reason_t r = beep_reason_for_diag(ctx->diag);
+    if (ctx->buzzer_started && r == (beep_reason_t)ctx->last_reason)
+        return;
     ctx->buzzer_started = true;
-    collect_pad_faults(ctx, &c1, &c2);
-
-    /* Say it on the active personality's cadence, which by default keeps
-     * saying it until launch. A board that speaks once and falls silent is
-     * indistinguishable from one whose battery died a second later. */
-    ctx->last_reason = (uint8_t)beep_reason_for_diag(ctx->diag);
-    beep_say((beep_reason_t)ctx->last_reason);
+    ctx->last_reason = (uint8_t)r;
+    beep_say(r);
 }
 
-/* [FLT-LAUNCH-01, FLT-LAUNCH-02, FLT-RATE-01, DD-016]
- * Strengthened launch confirmation requires ALL of:
- *   1. Filtered altitude > 10m (1000cm)
- *   2. Vertical speed > 5 m/s (500 cm/s)
- * This prevents false launch from barometric drift or thermal expansion. */
-/* The sensor produces a sample about every 20 ms; the loop runs at 10. */
-#define PAD_SAMPLE_MS 20
-#define LAUNCH_ALT_CM 3048 /* 100 ft above the frozen ground reference */
+/* [FLT-LAUNCH-01, FLT-LAUNCH-02, FLT-LAUNCH-06, DD-016] Launch is declared
+ * when the filtered altitude is more than 100 ft above the frozen-at-launch
+ * ground reference AND the rocket is climbing faster than 5 m/s. The height
+ * is what rejects weather drift; the speed is what rejects a slow rise. */
+#define PAD_SAMPLE_MS 20   /* the sensor's sample interval on the pad */
+#define LAUNCH_ALT_CM 3048 /* 100 ft */
 #define LAUNCH_SPEED_CMS 500
+#define LAUNCH_RISE_CM 50 /* [FLT-LAUNCH-03] T+0 is the first sample above this */
 
-/* [FLT-BOOT-11] The pad marker, written once and only here.
+/* [FLT-BROWN-01] The pad marker, written once, after ten seconds of PAD_IDLE.
  *
- * Ten seconds of PAD_IDLE, because the point is to have written it long
- * before the moment it protects against. Launch shock -- a battery connector
- * bouncing -- is the likeliest cause of the brownout this exists to survive,
- * and a flash write in progress is the worst possible moment to lose power.
- * So nothing writes flash at launch, and this is what makes that affordable:
- * the ground reference is already safe on disk before the motor lights.
+ * Ten seconds, because the point is to have written it long before the moment
+ * it protects against. Launch shock -- a battery connector bouncing -- is the
+ * likeliest cause of the brownout this exists to survive, and a flash write in
+ * progress is the worst possible moment to lose power. So nothing writes flash
+ * at launch, and this is what makes that affordable: the ground reference is
+ * already safe on disk before the motor lights.
+ *
+ * Written from flight_flash_service(), not from the PAD_IDLE detector: on the
+ * hardware the detector runs with the flash window shut, and a write there is
+ * refused every time.
  *
  * A failure costs the recovery path and nothing else, so it is not retried
  * and not reported as an error -- the flight is unaffected either way. */
-static void write_pad_marker(flight_context_t *ctx, uint32_t now) {
-    if (ctx->marker_written || now - ctx->boot_timer < PAD_MARKER_DWELL_MS) {
+void flight_flash_service(flight_context_t *ctx, uint32_t now) {
+    if (ctx->current_state != PAD_IDLE || grounded_on_usb(ctx) || ctx->marker_written ||
+        now - ctx->boot_timer < PAD_MARKER_DWELL_MS) {
         return;
     }
     ctx->marker_written = true; /* once, whatever the write does */
@@ -485,7 +568,6 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
         return SEVT_NONE;
 
     update_continuity_and_buzzer(ctx, now);
-    write_pad_marker(ctx, now);
 
     altitude_sample_t sample;
     if (!pp_read(&sample))
@@ -498,14 +580,18 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     if (dt > 0)
         ctx->pad_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
 
+    if (altitude <= LAUNCH_RISE_CM) {
+        ctx->pad_rising = false;
+    } else if (!ctx->pad_rising) {
+        ctx->pad_rising = true;
+        ctx->pad_rise_ms = ts;
+    }
+
     ctx->filtered_pressure = pp_last_filtered_pa(); /* for telemetry/debug */
 
-    /* [GND-CAL-01] The ground reference is a 5-second rolling mean of the
-     * filtered pressure, kept by the pressure layer and fed from every
-     * sample. It used to be a 60-second IIR computed here; it moved because
-     * the reference belongs with the pressure it is derived from, and because
-     * a boxcar forgets -- the value frozen at launch is the mean of the last
-     * five seconds, with nothing older leaking in. */
+    /* [GND-CAL-01] The ground reference is the pressure layer's 5-second
+     * rolling mean of the filtered pressure. A boxcar forgets: the value
+     * frozen at launch is the last five seconds, with nothing older in it. */
     ctx->ground_pressure = pp_ground_pressure();
 
     buf_add(ctx, 0, ctx->filtered_pressure, altitude, PAD_IDLE);
@@ -514,7 +600,7 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
 
     bool alt_ok = altitude > LAUNCH_ALT_CM;
     bool speed_ok = ctx->pad_speed_cms > LAUNCH_SPEED_CMS;
-    return (alt_ok && speed_ok) ? SEVT_LAUNCH : SEVT_NONE;
+    return (alt_ok && speed_ok && !grounded_on_usb(ctx)) ? SEVT_LAUNCH : SEVT_NONE; /* [USB-01] */
 }
 
 /* [FLT-ASC-01..06, FLT-APO-01..04, FLT-RATE-02, DD-017]
@@ -589,18 +675,18 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
     if (altitude > ctx->max_altitude)
         ctx->max_altitude = altitude;
     ctx->last_altitude = altitude;
-    /* The sample clock, not the loop clock. dt above is measured between
-     * sample timestamps, so storing `now` here made every speed wrong by
-     * however late the loop was running. */
+    /* The sample clock, not the loop clock: dt above is measured between
+     * sample timestamps, and `now` would put the loop's lateness into every
+     * speed. */
     ctx->last_sample = ts;
 
     if (arming_gate_met(ctx))
         return SEVT_ARMED;
 
     /* [FLT-APO-01] Apogee is the sensor saying the rocket has stopped going
-     * up, and nothing else. The backup timer that used to force it here was
-     * removed [DD-022]: a wrong timer value fires during ascent, which is
-     * worse than the sensor failure it was meant to cover. */
+     * up, and nothing else. No timer may force it [DD-022]: a wrong value
+     * fires during ascent, which is worse than the sensor failure it would
+     * cover. */
     if (ctx->pyros_armed && !ctx->apogee_detected && mach_gate_clear(ctx, now) && ctx->vertical_speed_cms <= 0)
         return SEVT_APOGEE;
     return SEVT_NONE;
@@ -608,12 +694,10 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
 
 /* ── Descent ──────────────────────────────────────────────────────────
  *
- * The phase is read from the rocket, not from the firing log. The old machine
- * left FALLING only on pyro1_fired and DROGUE_DESCENT only on pyro2_fired,
- * which meant a channel with no continuity, a channel set to NONE, or the two
- * firing out of order each parked the machine in a descent state for the rest
- * of the flight -- and since LANDED was reachable only from CHUTE_DESCENT,
- * hal_log_stop() was never called on exactly the flights whose log matters.
+ * The phase is read from the rocket, not from the firing log [DD-023]. Do not
+ * key a phase on pyroN_fired: a channel with no continuity, a channel set to
+ * NONE, or the two firing out of order would each park the machine in a
+ * descent state for the rest of the flight, and the log would never close.
  *
  * What a working canopy looks like is a descent rate that has stopped
  * changing. What a failed one looks like is a rate that has not. So the phase
@@ -646,6 +730,11 @@ static desc_band_t descent_band(int32_t rate) {
     return BAND_FAST;
 }
 
+static int32_t desc_tolerance(int32_t rate) {
+    int32_t tol = rate / DESC_TOL_FRAC;
+    return tol < DESC_TOL_MIN_CMS ? DESC_TOL_MIN_CMS : tol;
+}
+
 /* True once the rate has stayed in one band, and near one value, for the
  * dwell. Climbing does not count: just after apogee the rate passes through
  * the main band on its way to ballistic, and only the stability test keeps
@@ -658,9 +747,7 @@ static bool descent_settled(flight_context_t *ctx, uint32_t now, desc_band_t *ou
     }
     int32_t rate = descent_rate(ctx);
     desc_band_t b = descent_band(rate);
-    int32_t tol = rate / DESC_TOL_FRAC;
-    if (tol < DESC_TOL_MIN_CMS)
-        tol = DESC_TOL_MIN_CMS;
+    int32_t tol = desc_tolerance(rate);
     int32_t drift = v - ctx->desc_ref_cms;
     if (drift < 0)
         drift = -drift;
@@ -690,55 +777,73 @@ static bool band_exceeded(flight_context_t *ctx, uint32_t now, int32_t ceiling) 
     return now - ctx->desc_fail_since >= DESC_FAIL_MS;
 }
 
-/* [FLT-EMRG-01] What to do when a canopy does not answer.
+/* [FLT-EMRG-01, PYR-REFIRE-01] What to do when a canopy does not answer.
  *
- * The drogue gets a grace period to bite, then one more attempt, then the
- * main goes out early whatever its configured trigger said. A main opened
- * high costs drift; a main that arrives too fast to open costs the rocket.
- * The budget is what makes this terminate -- the retired check_refire()
- * rewrote fire_time on every attempt and could retry for the whole descent. */
-#define EMRG_DROGUE_GRACE_MS 2000
+ * Two rungs. The retry answers a charge that never lit, and the evidence for
+ * it is the channel's own post-fire continuity. The early main answers a
+ * drogue that is not slowing the rocket, and the evidence for that is the
+ * rocket: faster than any drogue explains, and not being slowed, for
+ * DESC_FAIL_MS. Neither acts on the mere absence of a settled descent -- a
+ * canopy opened at apogee starts from zero and is still accelerating toward its
+ * terminal rate for seconds, so "not yet settled" is true of a working drogue
+ * and would put the main out high on every flight. */
+#define EMRG_DROGUE_GRACE_MS 2000 /* the drogue's chance to bite, per command */
 #define EMRG_MAX_REFIRE 1
-/* A last resort, not a deployment policy. It only shortens the grace the
- * drogue is given; it never skips the retry and never fires over the top of a
- * trigger the flight has not reached yet. Set high deliberately: an ordinary
+/* Shortens the retry's grace only. Set high deliberately: an ordinary
  * failed-drogue descent must reach the retry on the grace, not on this. */
 #define EMRG_MAIN_PANIC_CMS 9000 /* 90 m/s */
 
-/* canopy_working is deliberately not "settled": a rocket at terminal velocity
- * in free fall has a perfectly steady descent rate, and that steadiness is the
- * shredded-drogue case, not a success. Only settling inside a band a canopy
- * could explain counts. */
+/* The evidence the main is brought forward on. Measured only once the drogue
+ * has had its grace: before that a rocket falling toward a trigger below
+ * apogee is fast by design [FLT-EMRG-02], and one whose drogue has just opened
+ * is still being slowed. A rate that falls by more than the tolerance is a
+ * canopy biting, and starts the window again. */
+static bool drogue_failing(flight_context_t *ctx, uint32_t now, uint32_t drogue_cmd_ms) {
+    int32_t rate = ctx->vertical_speed_cms < 0 ? -ctx->vertical_speed_cms : 0;
+    if (rate <= DESC_DROGUE_CMS || now - drogue_cmd_ms < EMRG_DROGUE_GRACE_MS) {
+        ctx->emrg_fail_since = 0;
+        return false;
+    }
+    if (ctx->emrg_fail_since == 0 || rate < ctx->emrg_fail_ref_cms - desc_tolerance(ctx->emrg_fail_ref_cms)) {
+        ctx->emrg_fail_since = now;
+        ctx->emrg_fail_ref_cms = rate;
+        return false;
+    }
+    return now - ctx->emrg_fail_since >= DESC_FAIL_MS;
+}
+
+/* The retry rung. Its evidence is the channel's own post-fire continuity; a
+ * channel that opened fired its charge, and the canopy failed mechanically:
+ * re-firing an empty channel spends altitude the main still needs
+ * [PYR-REFIRE-02]. */
+static void retry_drogue(flight_context_t *ctx, uint32_t now, bool canopy_working) {
+    bool panic = ctx->vertical_speed_cms < 0 && descent_rate(ctx) >= EMRG_MAIN_PANIC_CMS;
+    if (canopy_working || (!panic && now - ctx->pyro1_fire_time < EMRG_DROGUE_GRACE_MS))
+        return;
+    /* A refused retry is spent too: asked again it would only be refused, and
+     * logged, every tick. */
+    if (fire_channel(ctx, 1, now) || ctx->pyro1_refused)
+        ctx->pyro1_refires++;
+}
+
+/* canopy_working is settling inside a band a canopy could explain; settling
+ * in the fast band is a rocket at terminal velocity with nothing out. */
 static void emergency_ladder(flight_context_t *ctx, uint32_t now, bool canopy_working) {
-    /* The ladder answers a canopy that was commanded and did not work.
-     *
-     * It deliberately has no bare descent-rate trigger. A rocket in free fall
-     * toward a trigger it has not reached yet is not failing, however fast it
-     * is going -- free fall IS fast, and a rate trigger here would fire the
-     * main over the top of any config whose drogue is set below apogee. */
-    if (canopy_working || !ctx->pyro1_fired || ctx->pyro2_fired || !ctx->pyro2_continuity_good)
+    bool drogue_commanded = ctx->pyro1_fired || ctx->pyro1_refused;
+    if (!drogue_commanded || ctx->pyro2_fired || ctx->pyro2_refused || !ctx->pyro2_continuity_good)
         return;
 
-    /* Descending so fast that waiting out the rest of the grace cannot help. */
-    bool panic = ctx->vertical_speed_cms < 0 && descent_rate(ctx) >= EMRG_MAIN_PANIC_CMS;
-    if (!panic && now - ctx->pyro1_fire_time < EMRG_DROGUE_GRACE_MS)
-        return; /* the canopy is still being given its chance to bite */
-
-    /* Retry only where a retry can work: pyro1_verify_fail means the channel
-     * never opened, so the charge did not light. A channel that opened fired
-     * its charge and the canopy failed mechanically -- a second attempt on an
-     * empty channel just spends altitude the main still needs. That flag was
-     * previously collected and used for nothing but suppressing its own
-     * re-check. */
     if (ctx->pyro1_verify_fail && ctx->pyro1_refires < EMRG_MAX_REFIRE) {
-        if (fire_channel(ctx, 1, now))
-            ctx->pyro1_refires++;
+        retry_drogue(ctx, now, canopy_working);
         return;
     }
 
-    /* Out of drogue options and still not slowing: the main goes out early. */
-    if (fire_channel(ctx, 2, now))
+    if (!drogue_failing(ctx, now, ctx->pyro1_fire_time))
+        return;
+    if (fire_channel(ctx, 2, now)) {
         ctx->main_forced = true;
+        log_event(ctx, EVT_MAIN_FORCED);
+    }
 }
 
 /* [DD-015] Landing, checked in every descent state rather than only under the
@@ -746,8 +851,9 @@ static void emergency_ladder(flight_context_t *ctx, uint32_t now, bool canopy_wo
  * closed on that flight too. */
 #define LANDING_SPEED_CMS 500 /* 5 m/s — slow enough to be "landed" */
 
-static bool landing_detected(flight_context_t *ctx, uint32_t now, int32_t altitude) {
-    bool altitude_stable = abs(altitude - ctx->last_altitude) < 100;
+static bool landing_detected(flight_context_t *ctx, uint32_t now, int32_t prev_altitude) {
+    int32_t altitude = ctx->last_altitude;
+    bool altitude_stable = abs(altitude - prev_altitude) < 100;
     bool speed_low = abs(ctx->vertical_speed_cms) < 200;
     bool near_ground = altitude < 3000;
 
@@ -768,11 +874,11 @@ static bool landing_detected(flight_context_t *ctx, uint32_t now, int32_t altitu
 }
 
 /* Every descent state reads the same sample and derives the same speed; only
- * the verdict differs. dt is taken between sample timestamps -- mixing the
- * sample clock with the loop clock, as this did, made the speed wrong by
- * whatever the loop was running late by. last_altitude is left for the caller
- * because landing detection needs the previous value. */
-static bool descent_sample(flight_context_t *ctx, uint32_t now, flight_state_t st, int32_t *alt_out) {
+ * the verdict differs. dt is taken between sample timestamps, never against
+ * the loop clock. The sample becomes last_altitude before any trigger is
+ * tested, so a trigger sees this sample and not the one before it; the
+ * previous altitude is handed back for landing detection. */
+static bool descent_sample(flight_context_t *ctx, uint32_t now, flight_state_t st, int32_t *prev_out) {
     altitude_sample_t sample;
     if (!pp_read(&sample))
         return false;
@@ -783,15 +889,16 @@ static bool descent_sample(flight_context_t *ctx, uint32_t now, flight_state_t s
         ctx->vertical_speed_cms = (sample.altitude_cm - ctx->last_altitude) * 1000 / (int32_t)dt;
     buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, sample.altitude_cm, st);
     ctx->last_sample = sample.timestamp_ms;
-    *alt_out = sample.altitude_cm;
+    *prev_out = ctx->last_altitude;
+    ctx->last_altitude = sample.altitude_cm;
     return true;
 }
 
 /* Free fall: no canopy is working yet. Both channels may still fire here --
  * a low flight puts drogue and main out on the same event. */
 static state_event_t detect_falling(flight_context_t *ctx, uint32_t now) {
-    int32_t altitude;
-    if (!descent_sample(ctx, now, FALLING, &altitude))
+    int32_t prev;
+    if (!descent_sample(ctx, now, FALLING, &prev))
         return SEVT_NONE;
 
     desc_band_t band = BAND_FAST;
@@ -802,24 +909,21 @@ static state_event_t detect_falling(flight_context_t *ctx, uint32_t now) {
     check_post_fire_verify(ctx, now);
     emergency_ladder(ctx, now, settled && band != BAND_FAST);
 
-    state_event_t evt = SEVT_NONE;
-    if (landing_detected(ctx, now, altitude))
-        evt = SEVT_LANDING;
-    else if (settled && band == BAND_MAIN)
-        evt = SEVT_CHUTE;
-    else if (settled && band == BAND_DROGUE)
-        evt = SEVT_DROGUE;
-
-    ctx->last_altitude = altitude;
-    return evt;
+    if (landing_detected(ctx, now, prev))
+        return SEVT_LANDING;
+    if (settled && band == BAND_MAIN)
+        return SEVT_CHUTE;
+    if (settled && band == BAND_DROGUE)
+        return SEVT_DROGUE;
+    return SEVT_NONE;
 }
 
 /* Under drogue. The main may still be pending, and the drogue may still fail:
  * a rate above the drogue band, held, sends the machine back to free fall
  * where the ladder can escalate. */
 static state_event_t detect_drogue_descent(flight_context_t *ctx, uint32_t now) {
-    int32_t altitude;
-    if (!descent_sample(ctx, now, DROGUE_DESCENT, &altitude))
+    int32_t prev;
+    if (!descent_sample(ctx, now, DROGUE_DESCENT, &prev))
         return SEVT_NONE;
 
     desc_band_t band = BAND_FAST;
@@ -830,29 +934,25 @@ static state_event_t detect_drogue_descent(flight_context_t *ctx, uint32_t now) 
     check_post_fire_verify(ctx, now);
     emergency_ladder(ctx, now, settled && band != BAND_FAST);
 
-    state_event_t evt = SEVT_NONE;
-    if (landing_detected(ctx, now, altitude))
-        evt = SEVT_LANDING;
-    else if (settled && band == BAND_MAIN)
-        evt = SEVT_CHUTE;
-    else if (band_exceeded(ctx, now, DESC_DROGUE_CMS))
-        evt = SEVT_FREEFALL;
-
-    ctx->last_altitude = altitude;
-    return evt;
+    if (landing_detected(ctx, now, prev))
+        return SEVT_LANDING;
+    if (settled && band == BAND_MAIN)
+        return SEVT_CHUTE;
+    if (band_exceeded(ctx, now, DESC_DROGUE_CMS))
+        return SEVT_FREEFALL;
+    return SEVT_NONE;
 }
 
 /* Under the main.
  *
  * try_fire_pyros() runs here too, and must. The phase is a diagnosis, not a
- * licence to cancel the flight plan: a rocket already descending slowly still
- * gets the deployment its config asked for. Leaving it out meant a flight
- * whose descent merely looked main-like -- a big drogue, a light airframe --
- * silently skipped a configured main, which is the firmware overriding the
- * operator on the strength of an inference. */
+ * licence to cancel the flight plan: a rocket already descending slowly -- a
+ * big drogue, a light airframe -- still gets the deployment its config asked
+ * for. Skipping it would be the firmware overriding the operator on the
+ * strength of an inference. */
 static state_event_t detect_chute_descent(flight_context_t *ctx, uint32_t now) {
-    int32_t altitude;
-    if (!descent_sample(ctx, now, CHUTE_DESCENT, &altitude))
+    int32_t prev;
+    if (!descent_sample(ctx, now, CHUTE_DESCENT, &prev))
         return SEVT_NONE;
 
     desc_band_t band = BAND_FAST;
@@ -862,9 +962,7 @@ static state_event_t detect_chute_descent(flight_context_t *ctx, uint32_t now) {
     check_post_fire_verify(ctx, now);
     emergency_ladder(ctx, now, settled && band != BAND_FAST);
 
-    state_event_t evt = landing_detected(ctx, now, altitude) ? SEVT_LANDING : SEVT_NONE;
-    ctx->last_altitude = altitude;
-    return evt;
+    return landing_detected(ctx, now, prev) ? SEVT_LANDING : SEVT_NONE;
 }
 
 /* [FLT-LAND-06, FLT-RATE-04] */
@@ -887,14 +985,17 @@ static state_event_t detect_landed(flight_context_t *ctx, uint32_t now) {
 /* Repeat forever: a repeat count of 0 is infinite and nothing clears it. There
  * is no recovery from a failed power-up test, so the board must not fall silent
  * and look like it passed. */
-static void action_fault(flight_context_t *ctx, uint32_t now) {
-    (void)now;
-    /* Until power is removed: there is no recovery from a failed power-up
-     * test, so the board must not fall silent and look like it passed. */
-    ctx->last_reason = (uint8_t)BR_SYSTEM_FAILURE;
+static void say_fault(void) {
     beep_spec_t sp = beep_for(BR_SYSTEM_FAILURE);
     const beep_personality_t *p = beep_codes_active(beep_store_current());
     buzzer_play_spec(&sp, p->gap_ms, 0);
+}
+
+static void action_fault(flight_context_t *ctx, uint32_t now) {
+    (void)now;
+    ctx->last_reason = (uint8_t)BR_SYSTEM_FAILURE;
+    if (!grounded_on_usb(ctx))
+        say_fault();
 }
 
 static void action_cal_init(flight_context_t *ctx, uint32_t now) {
@@ -910,48 +1011,33 @@ static void action_ground_cal(flight_context_t *ctx, uint32_t now) {
     ctx->boot_timer = now;
     ctx->ground_pressure = pp_ground_pressure();
     ctx->filtered_pressure = ctx->ground_pressure;
-    /* last_altitude is already 0 from flight_init() — correct for ground.
-     * No need to set last_sample or filter state — pressure_processing
-     * owns the filter and ring buffer now. Altitude samples will arrive
-     * in chronological order via pp_read(). */
 }
 
-/* [FLT-LAUNCH-03..05] Backdate launch time to first sample above 50cm */
+/* [FLT-LAUNCH-03..05, GND-CAL-04/05] */
 static void action_launch(flight_context_t *ctx, uint32_t now) {
     buzzer_stop();
-    ctx->launch_time = now;
-    for (int i = ctx->buf_count - 1; i >= 0; i--) {
-        uint16_t idx = (ctx->buf_head - 1 - i + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE;
-        if (ctx->flight_buffer[idx].altitude_cm <= 50) {
-            /* PAD_IDLE samples arrive at the sensor's ~20 ms, not the 10 ms
-             * loop period this assumed, so launch_time was backdated about
-             * half the true elapsed time. */
-            ctx->launch_time = now - (uint32_t)(ctx->buf_count - 1 - i) * PAD_SAMPLE_MS;
-            break;
-        }
-    }
-    /* [GND-CAL-02] Snap ground pressure to the current filtered pressure so
-     * T+0 altitude is exactly 0 cm regardless of any residual tracker error.
-     * ctx->ground_pressure (written to the log header) now records the true
-     * atmospheric pressure at the moment of launch. */
-    /* Freeze the reference; do not snap it to here.
-     *
-     * Snapping made T+0 altitude zero by definition, which threw away the
-     * 100 ft the rocket had already climbed to trip the detector. Freezing
-     * keeps it, so apogee and every AGL threshold are that much truer. */
+    /* T+0 is the first sample above 50 cm. The detector cannot be sure of a
+     * launch until 100 ft, a second or more later, and every time in the log
+     * would be late by that climb. */
+    ctx->launch_time = ctx->pad_rising ? ctx->pad_rise_ms : now;
+
+    /* Freeze the reference; do not snap it to the pressure here. Snapping
+     * would define the 100 ft already climbed as zero, and apogee and every
+     * AGL threshold would be that much lower. */
     pp_ground_track(false);
     ctx->ground_pressure = pp_ground_pressure();
 
-    /* The rocket is ~100 ft up, not at zero. Starting the first ASCENT speed
-     * calculation from zero produced one enormous sample. */
+    /* Also the base of the first ASCENT speed: from zero it would be one
+     * enormous sample. */
     ctx->last_altitude = pp_pressure_to_altitude_cm(ctx->filtered_pressure, ctx->ground_pressure);
+    ctx->last_logged_ms = now - ctx->launch_time;
 
-    /* v2-9: start log BEFORE tagging — LAUNCH sample is PAD_IDLE state
-     * (below the >= ASCENT guard in buf_tag_event), so emit it directly.
-     * time_ms = 0 = T+0 relative to launch. */
+    /* The ring's newest sample is a PAD_IDLE one, which the log does not
+     * take, so the LAUNCH row is written here: the moment of detection and
+     * the height reached by then. */
     hal_log_start(&ctx->config, ctx->ground_pressure);
-    hal_log_sample(0, ctx->filtered_pressure, 0, ASCENT, 0, EVT_LAUNCH);
-    buf_tag_event(ctx, EVT_LAUNCH); /* tags ring buffer for flight_save_csv() */
+    hal_log_sample(now - ctx->launch_time, ctx->filtered_pressure, ctx->last_altitude, ASCENT, 0, EVT_LAUNCH);
+    buf_tag_event(ctx, EVT_LAUNCH);
 }
 
 /* Rejoining a flight already on its way down. Apogee is behind us by
@@ -973,27 +1059,21 @@ static void action_armed(flight_context_t *ctx, uint32_t now) {
     buf_tag_event(ctx, EVT_ARMED);
 }
 
-/* [FLT-APO-03, DD-014] Force CSV flush at apogee */
+/* [FLT-APO-02/03] */
 static void action_apogee(flight_context_t *ctx, uint32_t now) {
     ctx->apogee_detected = true;
     ctx->apogee_time = now;
     ctx->descent_start_time = now; /* [DD-015] start landing timeout */
     buf_tag_event(ctx, EVT_APOGEE);
     telemetry_apogee(ctx->max_altitude, now - ctx->launch_time);
-    /* pyro firing handled by detect_falling() on first tick in FALLING state */
-    /* [DD-014] hal_log async task flushes to flash every 200ms — no
-     * explicit apogee flush needed. hal_log_sample() already wrote the
-     * APOGEE event line immediately above. */
 }
 
 /* [FLT-LAND-05, BUZ-03, DAT-06] */
 static void action_landing(flight_context_t *ctx, uint32_t now) {
+    ctx->landing_time = now;
     buf_tag_event(ctx, EVT_LANDING);
     telemetry_landing(ctx->max_altitude, now - ctx->launch_time);
-    buzzer_set_altitude(cm_to_units(ctx->max_altitude, ctx->config.units));
-    ctx->landed_beep_started = true;
-    ctx->csv_saved = true;
-    /* v2-9: finalize flight log — flush remaining buffer to flash */
+    buzzer_play_altitude(cm_to_units(ctx->max_altitude, ctx->config.units));
     hal_log_stop();
 }
 
@@ -1073,41 +1153,7 @@ flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {
 
 /* ── CSV export ───────────────────────────────────────────────────── */
 
-static const char *event_name(uint8_t evt) {
-    switch (evt) {
-    case EVT_LAUNCH:
-        return "LAUNCH";
-    case EVT_ARMED:
-        return "ARMED";
-    case EVT_APOGEE:
-        return "APOGEE";
-    case EVT_PYRO1_FIRE:
-        return "PYRO1";
-    case EVT_PYRO2_FIRE:
-        return "PYRO2";
-    case EVT_LANDING:
-        return "LANDING";
-    default:
-        return "";
-    }
-}
-
-static const char *mode_name(uint8_t mode) {
-    switch (mode) {
-    case PYRO_MODE_DELAY:
-        return "delay";
-    case PYRO_MODE_AGL:
-        return "agl";
-    case PYRO_MODE_FALLEN:
-        return "fallen";
-    case PYRO_MODE_SPEED:
-        return "speed";
-    default:
-        return "none";
-    }
-}
-
-/* [DAT-06, DAT-07] Batch CSV export (fallback, used by simulator) */
+/* [DAT-06, DAT-07] The ring buffer's last 64 samples, for the simulator. */
 int flight_save_csv(flight_context_t *ctx) {
     if (ctx->buf_count == 0)
         return -1;
@@ -1121,8 +1167,8 @@ int flight_save_csv(flight_context_t *ctx) {
                      "# Pyro1: %s %u\n# Pyro2: %s %u\n"
                      "# Units: %s\n# Ground Pa: %ld\n# Max Alt cm: %ld\n"
                      "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",
-                     ctx->config.id, ctx->config.name, mode_name(ctx->config.pyro1_mode), ctx->config.pyro1_value,
-                     mode_name(ctx->config.pyro2_mode), ctx->config.pyro2_value,
+                     ctx->config.id, ctx->config.name, config_mode_name(ctx->config.pyro1_mode),
+                     ctx->config.pyro1_value, config_mode_name(ctx->config.pyro2_mode), ctx->config.pyro2_value,
                      ctx->config.units == 2   ? "ft"
                      : ctx->config.units == 1 ? "m"
                                               : "cm",
@@ -1133,7 +1179,7 @@ int flight_save_csv(flight_context_t *ctx) {
     for (int i = 0; i < ctx->buf_count; i++) {
         flight_sample_t *s = &ctx->flight_buffer[idx];
         n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%s\n", (unsigned long)s->time_ms, (long)s->pressure_pa,
-                     (long)s->altitude_cm, s->state, s->under_thrust, event_name(s->event));
+                     (long)s->altitude_cm, s->state, s->under_thrust, flight_event_name(s->event));
         hal_fs_write(f, line, n);
         idx = (idx + 1) % FLIGHT_BUF_SIZE;
     }
@@ -1218,6 +1264,105 @@ flight_state_t flight_get_state(void) {
     return g_flight_ctx ? g_flight_ctx->current_state : BOOT_SETTLE;
 }
 
+/* Sets, not orderings: BOOT_SENSOR and FAULT are numbered after LANDED, so a
+ * `>= PAD_IDLE` test includes them. */
+static bool state_is_airborne(flight_state_t st) {
+    switch (st) {
+    case ASCENT:
+    case FALLING:
+    case DROGUE_DESCENT:
+    case CHUTE_DESCENT:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* [TEL-04, TEL-05] The ground-station contract has six states and no FAULT,
+ * so a board that failed its power-up test and a board still booting send no
+ * $PYRO sentence at all: state 0 would tell a tracker it is ready to fly. */
+static bool state_sends_telemetry(flight_state_t st) {
+    return st == PAD_IDLE || st == LANDED || state_is_airborne(st);
+}
+
+static void grounding_changed(flight_context_t *ctx, bool was, uint32_t now) {
+    bool is = grounded_on_usb(ctx);
+    if (is == was)
+        return;
+    if (is) {
+        buzzer_play_usb_ok(); /* in place of whatever was being said */
+        ctx->buzzer_started = false;
+        return;
+    }
+    switch (ctx->current_state) {
+    case PAD_IDLE:
+        /* The marker is the pad's ground, and the bench was not the pad. The
+         * pad check announces on its next pass. */
+        ctx->boot_timer = now;
+        ctx->marker_written = false;
+        break;
+    case LANDED:
+        buzzer_play_altitude(cm_to_units(ctx->max_altitude, ctx->config.units));
+        break;
+    case FAULT:
+        say_fault();
+        break;
+    default:
+        break;
+    }
+}
+
+void flight_set_usb_attached(flight_context_t *ctx, bool attached, uint32_t now) {
+    if (attached == ctx->usb_attached || state_is_airborne(ctx->current_state))
+        return;
+    bool was = grounded_on_usb(ctx);
+    ctx->usb_attached = attached;
+    grounding_changed(ctx, was, now);
+}
+
+void flight_set_test_mode(flight_context_t *ctx, bool on, uint32_t now) {
+    if (on == ctx->test_mode || state_is_airborne(ctx->current_state))
+        return;
+    bool was = grounded_on_usb(ctx);
+    ctx->test_mode = on;
+    grounding_changed(ctx, was, now);
+}
+
+bool flight_in_progress(void) {
+    return g_flight_ctx && state_is_airborne(g_flight_ctx->current_state);
+}
+
+uint32_t flight_elapsed_ms(const flight_context_t *ctx, uint32_t now) {
+    if (state_is_airborne(ctx->current_state))
+        return now - ctx->launch_time;
+    if (ctx->current_state == LANDED)
+        return ctx->landing_time - ctx->launch_time;
+    return 0;
+}
+
+const char *flight_diag_name(uint16_t bit) {
+    switch (bit) {
+    case DIAG_SENSOR_FAIL:
+        return "sensor_fail";
+    case DIAG_FS_FAIL:
+        return "fs_fail";
+    case DIAG_CFG_RANGE:
+        return "cfg_range";
+    case DIAG_P1_OPEN:
+        return "pyro1_open";
+    case DIAG_P1_SHORT:
+        return "pyro1_short";
+    case DIAG_P2_OPEN:
+        return "pyro2_open";
+    case DIAG_P2_SHORT:
+        return "pyro2_short";
+    case DIAG_BROWNOUT:
+        return "brownout_recovered";
+    default:
+        return "";
+    }
+}
+
 /* Map flight_state_t to the 0-5 telemetry state_id (spec v1.2) */
 static uint8_t state_to_telem_id(flight_state_t state) {
     switch (state) {
@@ -1238,43 +1383,76 @@ static uint8_t state_to_telem_id(flight_state_t state) {
     }
 }
 
+/* [TEL-03, CFG-SUBSYS-01] The in-flight cadence is telem_rate_hz, bounded by
+ * what the UART can carry; 0 takes the TEL-03 default. */
+#define TELEM_DEFAULT_HZ 10
+#define TELEM_MAX_HZ 50
+
+static uint32_t telem_interval_ms(const config_t *cfg) {
+    uint32_t hz = cfg->telem_rate_hz ? cfg->telem_rate_hz : TELEM_DEFAULT_HZ;
+    if (hz > TELEM_MAX_HZ)
+        hz = TELEM_MAX_HZ;
+    return 1000u / hz;
+}
+
+/* A faulted board has no $PYRO sentence to send, but a console on the UART
+ * should still be told why it is silent. */
+#define FAULT_REPORT_MS 5000
+
+static void report_fault(flight_context_t *ctx, uint32_t now) {
+    if (ctx->last_telemetry != 0 && now - ctx->last_telemetry < FAULT_REPORT_MS)
+        return;
+    char line[96];
+    int n = snprintf(line, sizeof(line), "!FAULT");
+    for (uint16_t bit = 1; bit != 0 && n > 0 && n < (int)sizeof(line) - 24; bit <<= 1) {
+        if ((ctx->diag & bit) && *flight_diag_name(bit))
+            n += snprintf(line + n, sizeof(line) - (size_t)n, " %s", flight_diag_name(bit));
+    }
+    snprintf(line + n, sizeof(line) - (size_t)n, "\r\n");
+    hal_telemetry_send(line);
+    ctx->last_telemetry = now;
+}
+
 void flight_update_outputs(flight_context_t *ctx, uint32_t now) {
     hal_pyro_update(now);
     /* The buzzer is autonomous: hal_tasks_tick() drives it. */
 
-    if (ctx->current_state >= PAD_IDLE) {
-        /* ASCENT..CHUTE_DESCENT are contiguous — all high-rate states */
-        uint32_t interval = (ctx->current_state >= ASCENT && ctx->current_state <= CHUTE_DESCENT) ? 100 : 1000;
-        if (now - ctx->last_telemetry >= interval) {
-            uint32_t flight_time = (ctx->current_state != PAD_IDLE) ? (now - ctx->launch_time) : 0;
-            telemetry_snapshot_t snap = {
-                .seq = ctx->telemetry_seq,
-                .state_id = state_to_telem_id(ctx->current_state),
-                .thrust = (ctx->current_state == ASCENT && ctx->under_thrust) ? 1u : 0u,
-                .alt_cm = ctx->last_altitude,
-                .max_alt_cm = ctx->max_altitude,
-                .speed_cms = ctx->vertical_speed_cms,
-                .press_pa = ctx->filtered_pressure,
-                .p1_adc = ctx->pyro1_adc,
-                .p2_adc = ctx->pyro2_adc,
-                .time_ms = flight_time,
-                .flags = 0,
-            };
-            if (ctx->pyro1_continuity_good)
-                snap.flags |= TELEM_FLAG_P1_CONT;
-            if (ctx->pyro2_continuity_good)
-                snap.flags |= TELEM_FLAG_P2_CONT;
-            if (ctx->pyro1_fired)
-                snap.flags |= TELEM_FLAG_P1_FIRED;
-            if (ctx->pyro2_fired)
-                snap.flags |= TELEM_FLAG_P2_FIRED;
-            if (ctx->pyros_armed)
-                snap.flags |= TELEM_FLAG_ARMED;
-            if (ctx->apogee_detected)
-                snap.flags |= TELEM_FLAG_APOGEE;
-            telemetry_state(&snap);
-            ctx->telemetry_seq++;
-            ctx->last_telemetry = now;
-        }
+    if (ctx->current_state == FAULT) {
+        report_fault(ctx, now);
+        return;
     }
+    if (!state_sends_telemetry(ctx->current_state))
+        return;
+
+    uint32_t interval = state_is_airborne(ctx->current_state) ? telem_interval_ms(&ctx->config) : 1000;
+    if (now - ctx->last_telemetry < interval)
+        return;
+    telemetry_snapshot_t snap = {
+        .seq = ctx->telemetry_seq,
+        .state_id = state_to_telem_id(ctx->current_state),
+        .thrust = (ctx->current_state == ASCENT && ctx->under_thrust) ? 1u : 0u,
+        .alt_cm = ctx->last_altitude,
+        .max_alt_cm = ctx->max_altitude,
+        .speed_cms = ctx->vertical_speed_cms,
+        .press_pa = ctx->filtered_pressure,
+        .p1_adc = ctx->pyro1_adc,
+        .p2_adc = ctx->pyro2_adc,
+        .time_ms = flight_elapsed_ms(ctx, now),
+        .flags = 0,
+    };
+    if (ctx->pyro1_continuity_good)
+        snap.flags |= TELEM_FLAG_P1_CONT;
+    if (ctx->pyro2_continuity_good)
+        snap.flags |= TELEM_FLAG_P2_CONT;
+    if (ctx->pyro1_fired)
+        snap.flags |= TELEM_FLAG_P1_FIRED;
+    if (ctx->pyro2_fired)
+        snap.flags |= TELEM_FLAG_P2_FIRED;
+    if (ctx->pyros_armed)
+        snap.flags |= TELEM_FLAG_ARMED;
+    if (ctx->apogee_detected)
+        snap.flags |= TELEM_FLAG_APOGEE;
+    telemetry_state(&snap);
+    ctx->telemetry_seq++;
+    ctx->last_telemetry = now;
 }

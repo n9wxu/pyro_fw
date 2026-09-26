@@ -18,6 +18,10 @@ void pyro_sample(void);
 void pyro_get(uint8_t channel, pyro_continuity_t *out);
 void pyro_fire(uint8_t channel);   /* 1 or 2 */
 void pyro_update(uint32_t now_ms); /* call from main loop, manages fire duration */
+/* True from the moment pyro_fire() accepts a command until the channel is
+ * de-energised. Read straight after pyro_fire() as the acknowledgement: a
+ * board that cannot fire yet leaves it false, and the flight records a
+ * refusal rather than a deployment. */
 bool pyro_is_firing(void);
 bool pyro_fault(uint8_t channel); /* AP2192 FLAG pin: true = overcurrent fault */
 

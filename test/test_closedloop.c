@@ -228,14 +228,12 @@ void buzzer_play_spec(const beep_spec_t *spec, uint16_t gap_ms, uint8_t repeat_c
     buzzer_active_flag = true;
 }
 
-void buzzer_play_code(uint8_t c, uint8_t r) {
-    (void)c;
-    (void)r;
-    buzzer_active_flag = true;
-}
 void buzzer_play_altitude(int32_t a) {
     buzzer_altitude_count++;
     last_buzzer_altitude = a;
+}
+void buzzer_play_usb_ok(void) {
+    buzzer_active_flag = true;
 }
 void buzzer_stop(void) {
     buzzer_stop_count++;
@@ -337,6 +335,7 @@ typedef struct {
     uint32_t p1_refire_ms, apogee_true_ms;
     float max_speed_ms;
     bool saw_drogue_phase, saw_chute_phase;
+    bool main_forced; /* the emergency ladder overrode pyro2's trigger */
 } sim_result_t;
 
 /* What the airframe does with a command. A canopy that is commanded and does
@@ -462,6 +461,7 @@ static sim_result_t run_sim_opts(config_t cfg, const rocket_profile_t *r, sim_op
 
         flight_update_outputs(&ctx, t);
     }
+    res.main_forced = ctx.main_forced;
 
     res.sample_count = ctx.buf_count;
     char *cp = mock_uart_buf;
@@ -472,9 +472,16 @@ static sim_result_t run_sim_opts(config_t cfg, const rocket_profile_t *r, sim_op
     return res;
 }
 
+/* The nominal airframe: both canopies open, and a fired igniter goes open
+ * circuit, which is what a lit charge does. */
 static sim_result_t run_sim(config_t cfg, const rocket_profile_t *r, bool enable_pyros) {
-    sim_opts_t o = {.enable_pyros = enable_pyros, .drogue_works = true, .main_works = true};
+    sim_opts_t o = {.enable_pyros = enable_pyros, .drogue_works = true, .main_works = true, .p1_opens_on_fire = true};
     return run_sim_opts(cfg, r, o);
+}
+
+/* A configured altitude trigger, in metres. */
+static float trigger_m(uint16_t value, uint8_t units) {
+    return units == 2 ? (float)value * 0.3048f : units == 1 ? (float)value : (float)value / 100.0f;
 }
 
 /* ── Configs ──────────────────────────────────────────────────────── */
@@ -544,6 +551,10 @@ static config_t cfg_speed_agl(void) {
 }
 
 /* ── Assertions ───────────────────────────────────────────────────── */
+
+/* How far from its configured altitude an AGL channel may fire. The sensor
+ * samples every 20 ms, and a ballistic rocket covers two metres of that. */
+#define AGL_TOL_M 8.0f
 
 static void assert_flight(const sim_result_t *r, const char *l) {
     char m[128];
@@ -619,6 +630,29 @@ static void run_suite(cfg_fn make, const char *suite_name) {
         if (r->expected_apogee_m >= 100.0f) {
             assert_p2(&res, label);
             assert_order(&res, label);
+        }
+
+        /* [REV-01] Every canopy in this runner works, so nothing may be
+         * overridden: each channel goes out on its own trigger. */
+        char m[160];
+        snprintf(m, sizeof(m), "%s: the ladder forced the main on a flight whose drogue worked", label);
+        TEST_ASSERT_FALSE_MESSAGE(res.main_forced, m);
+
+        /* [PYR-MODE-02, REV-05] An AGL trigger fires at its altitude, not a
+         * filter lag later. Only where the trigger is below apogee: above it
+         * the channel fires at apogee by design (PYR-DEPLOY-01). */
+        if (c.pyro1_mode == PYRO_MODE_AGL && trigger_m(c.pyro1_value, c.units) < res.apogee_m - 5.0f) {
+            float want = trigger_m(c.pyro1_value, c.units);
+            snprintf(m, sizeof(m), "%s: P1 AGL %.0f m fired at %.0f m", label, (double)want, (double)res.pyro1_alt_m);
+            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(AGL_TOL_M, want, res.pyro1_alt_m, m);
+        }
+        if (c.pyro2_mode == PYRO_MODE_AGL && trigger_m(c.pyro2_value, c.units) < res.apogee_m - 5.0f &&
+            res.pyro2_fired) {
+            float want = trigger_m(c.pyro2_value, c.units);
+            /* When both channels share a trigger the main waits out the
+             * drogue's pulse (PYR-DEPLOY-02) and fires a step later. */
+            snprintf(m, sizeof(m), "%s: P2 AGL %.0f m fired at %.0f m", label, (double)want, (double)res.pyro2_alt_m);
+            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(AGL_TOL_M, want, res.pyro2_alt_m, m);
         }
     }
 }
@@ -1194,6 +1228,86 @@ void test_FLT_DESC_02_ballistic_reaches_landed(void) {
     TEST_ASSERT_TRUE_MESSAGE(res.reached_landed, "ballistic flight never reached LANDED: the log is lost");
 }
 
+
+/* ── Code review 2026-09-24 ───────────────────────────────────────── */
+
+/* [FLT-EMRG-01, PYR-MODE-02, REV-01] The regression guard the review asked
+ * for: a drogue that opens, and a main set to 500 ft AGL. The main must go out
+ * at 500 ft, not two seconds after the drogue. */
+void test_REV01_working_drogue_main_at_its_trigger(void) {
+    for (int i = 0; i < g_num_rockets; i++) {
+        const rocket_profile_t *r = &g_rockets[i];
+        config_t cfg = cfg_delay_agl();
+        cfg.pyro2_value = 500; /* ft */
+        sim_opts_t o = {.enable_pyros = true, .drogue_works = true, .main_works = true, .p1_opens_on_fire = true};
+        sim_result_t res = run_sim_opts(cfg, r, o);
+        char label[64];
+        snprintf(label, sizeof(label), "Main500@%s", r->motor);
+        print_summary(label, &res);
+
+        char m[176];
+        snprintf(m, sizeof(m), "%s: main forced at %.0f m, %u ms after the drogue", label, (double)res.pyro2_alt_m,
+                 res.p2_fire_ms - res.p1_fire_ms);
+        TEST_ASSERT_FALSE_MESSAGE(res.main_forced, m);
+        if (res.apogee_m > 152.4f + 10.0f) {
+            TEST_ASSERT_TRUE_MESSAGE(res.pyro2_fired, label);
+            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(AGL_TOL_M, 152.4f, res.pyro2_alt_m, m);
+        }
+    }
+}
+
+/* [PYR-MODE-02, REV-05] A drogue set to 400 ft AGL on a ballistic descent.
+ * The filtered altitude trails the rocket by rate x tau, which at these
+ * speeds was 56 m. */
+void test_REV05_agl_drogue_fires_at_its_altitude(void) {
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket");
+    sim_result_t res = run_sim(cfg_agl_agl(), &g_rockets[ROCKET_IDX_L1], true);
+    print_summary("AglLag", &res);
+    char m[160];
+    snprintf(m, sizeof(m), "400 ft (122 m) drogue fired at %.0f m, descending at up to %.0f m/s",
+             (double)res.pyro1_alt_m, (double)res.max_speed_ms);
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(AGL_TOL_M, 121.9f, res.pyro1_alt_m, m);
+}
+
+/* [FLT-EMRG-01, REV-01] The failure case, told the way the pad narrative
+ * tells it: the charge lit, the drogue did not deploy, the rocket keeps
+ * accelerating. The main must be brought forward on that evidence -- well
+ * above its own trigger, and within a few seconds of the drogue. */
+void test_REV01_failed_drogue_brings_the_main_forward(void) {
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket");
+    config_t cfg = cfg_delay_agl();
+    cfg.pyro2_value = 500; /* ft */
+    sim_opts_t o = {.enable_pyros = true, .drogue_works = false, .main_works = true, .p1_opens_on_fire = true};
+    sim_result_t res = run_sim_opts(cfg, &g_rockets[ROCKET_IDX_L1], o);
+    print_summary("FailedDrogue", &res);
+
+    char m[176];
+    TEST_ASSERT_TRUE_MESSAGE(res.main_forced, "the ladder never acted on a drogue that failed");
+    uint32_t after = res.p2_fire_ms - res.p1_fire_ms;
+    snprintf(m, sizeof(m), "main forced %u ms after the drogue at %.0f m", after, (double)res.pyro2_alt_m);
+    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(7000, after, m);
+    TEST_ASSERT_TRUE_MESSAGE(res.pyro2_alt_m > 152.4f + 300.0f, m);
+    TEST_ASSERT_TRUE_MESSAGE(res.reached_landed, "a failed drogue must still reach LANDED");
+}
+
+/* [FLT-EMRG-01, DAT-04, REV-16] An emergency deployment is recorded as one.
+ * After the shredded-drogue flight the log is the only way to tell a forced
+ * main from a configured one. */
+void test_REV16_forced_main_is_in_the_log(void) {
+    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket");
+    config_t cfg = cfg_delay_agl();
+    cfg.pyro2_value = 20;
+    sim_opts_t o = {.enable_pyros = true, .drogue_works = false, .main_works = true, .p1_opens_on_fire = true};
+    sim_result_t res = run_sim_opts(cfg, &g_rockets[ROCKET_IDX_L1], o);
+    TEST_ASSERT_TRUE(res.main_forced);
+
+    static char log[65536];
+    int n = hal_fs_read_file("flight_log.csv", log, (int)sizeof(log) - 1);
+    TEST_ASSERT_TRUE_MESSAGE(n > 0, "no flight log");
+    log[n] = '\0';
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(log, "MAIN_FORCED"), "the log does not say the main was forced");
+}
+
 /* ── Main ─────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -1227,5 +1341,11 @@ int main(void) {
     RUN_TEST(test_FLT_MACH_01_supersonic_apogee_gated);
     RUN_TEST(test_FLT_DESC_01_phase_without_pyros);
     RUN_TEST(test_FLT_DESC_02_ballistic_reaches_landed);
+
+    /* Code review 2026-09-24 */
+    RUN_TEST(test_REV01_working_drogue_main_at_its_trigger);
+    RUN_TEST(test_REV05_agl_drogue_fires_at_its_altitude);
+    RUN_TEST(test_REV01_failed_drogue_brings_the_main_forward);
+    RUN_TEST(test_REV16_forced_main_is_in_the_log);
     return UNITY_END();
 }

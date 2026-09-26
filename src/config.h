@@ -61,4 +61,9 @@ int config_serialize_ini(const config_t *cfg, char *buf, int max_len);
 /* Return the default config as an INI string (static, do not free). */
 const char *config_default_ini(void);
 
+/* The config.ini spelling of a pyro mode: none/delay/agl/fallen/speed. The one
+ * table every writer of a mode name uses, so a log header cannot disagree
+ * with the file that configured it. */
+const char *config_mode_name(uint8_t mode);
+
 #endif

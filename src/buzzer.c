@@ -1,7 +1,7 @@
 /*
  * Buzzer driver — one autonomous async task that encodes and then plays.
  *
- * buzzer_play_code() and buzzer_play_altitude() store a request and arm the
+ * buzzer_play_spec() and buzzer_play_altitude() store a request and arm the
  * task. The task encodes that request into a flat buzzer_pattern_t[] on its
  * first tick, then steps through the pattern on later ticks, toggling the
  * GPIO through hal_buzzer_tone_on() and hal_buzzer_tone_off().
@@ -22,8 +22,6 @@
 /* Status code timing */
 #define CHIRP_ON_MS 30
 #define CHIRP_GAP_MS 30
-#define CHIRP_COUNT 10
-#define STARTUP_PAUSE_MS 500
 #define BEEP_ON_MS 100
 #define BEEP_GAP_MS 200
 #define DIGIT_GAP_MS 300
@@ -61,55 +59,6 @@ static int pat_append_beeps(buzzer_pattern_t *buf, int idx, int count, uint16_t 
         if (i < count - 1)
             idx = pat_append(buf, idx, gap_ms, false);
     }
-    return idx;
-}
-
-/*
- * Build the status-code pattern into buf[].
- * Layout:
- *   10x chirp on/off → startup pause  ← played only on the FIRST pass
- *   → digit1 beeps → digit gap        ← loop_start points here
- *   → digit2 beeps → code gap
- *   → zero-duration sentinel (loop/stop decision is in the task handler)
- *
- * *p_loop_start is set to the index of the first digit step so that
- * subsequent passes skip the startup chirps (fixing BUZ-01: chirps once).
- */
-static int build_code_pattern(uint8_t code, buzzer_pattern_t *buf, int *p_loop_start) {
-    int idx = 0;
-
-    /* 10 startup chirps — played once; subsequent loops restart after here */
-    for (int i = 0; i < CHIRP_COUNT; i++) {
-        idx = pat_append(buf, idx, CHIRP_ON_MS, true);
-        idx = pat_append(buf, idx, CHIRP_GAP_MS, false);
-    }
-
-    /* Startup pause */
-    idx = pat_append(buf, idx, STARTUP_PAUSE_MS, false);
-
-    /* Record where the digit section starts — this is the loop restart point */
-    *p_loop_start = idx;
-
-    /* Digit 1 */
-    int d1 = BEEP_DIGIT1(code);
-    if (d1 < 1)
-        d1 = 1;
-    idx = pat_append_beeps(buf, idx, d1, BEEP_ON_MS, BEEP_GAP_MS);
-
-    /* Inter-digit gap */
-    idx = pat_append(buf, idx, DIGIT_GAP_MS, false);
-
-    /* Digit 2 */
-    int d2 = BEEP_DIGIT2(code);
-    if (d2 < 1)
-        d2 = 1;
-    idx = pat_append_beeps(buf, idx, d2, BEEP_ON_MS, BEEP_GAP_MS);
-
-    /* End-of-code gap, then zero-duration sentinel */
-    idx = pat_append(buf, idx, CODE_GAP_MS, false);
-    buf[idx].duration_ms = 0;
-    buf[idx].tone_on = false;
-    idx++;
     return idx;
 }
 
@@ -166,11 +115,27 @@ static int build_alt_pattern(int32_t value, buzzer_pattern_t *buf) {
 
 /* ── Async task ───────────────────────────────────────────────────── */
 
+#define USB_OK_CHIRPS 5 /* per burst; a fifth of the ready-to-fly warble */
+#define USB_OK_GAP_MS 150
+
+static int build_usb_ok_pattern(buzzer_pattern_t *buf) {
+    int idx = 0;
+    for (int burst = 0; burst < 2; burst++) {
+        if (burst > 0)
+            idx = pat_append(buf, idx, USB_OK_GAP_MS, false);
+        idx = pat_append_beeps(buf, idx, USB_OK_CHIRPS, CHIRP_ON_MS, CHIRP_GAP_MS);
+    }
+    buf[idx].duration_ms = 0;
+    buf[idx].tone_on = false;
+    idx++;
+    return idx;
+}
+
 typedef enum {
     BZ_IDLE,
-    BZ_ENCODE_CODE,
     BZ_ENCODE_SPEC,
     BZ_ENCODE_ALT,
+    BZ_ENCODE_USB_OK,
     BZ_PLAYING,
 } bz_state_t;
 
@@ -179,7 +144,6 @@ typedef struct {
     bz_state_t state;
 
     /* Request fields — set by buzzer_play_* before arming */
-    uint8_t req_code;
     beep_spec_t req_spec;
     uint16_t req_gap_ms;
     int32_t req_altitude;
@@ -189,7 +153,7 @@ typedef struct {
     buzzer_pattern_t pattern[BUZZER_MAX_PATTERN];
     int pattern_len;
     int index;
-    int loop_start;       /* index to restart from when looping (after chirps) */
+    int loop_start;       /* index to restart from when looping */
     uint8_t repeat_count; /* 0=infinite, N=play N times */
     uint8_t loops_done;   /* complete passes so far */
 } buzzer_task_t;
@@ -198,15 +162,11 @@ static buzzer_task_t bz;
 
 /* ── Pattern from a spec ──────────────────────────────────────────
  *
- * The status beep now follows a beep_spec_t rather than a packed two-digit
- * code, because Eggtimer's ready-to-fly is a rapid chirp and a chirp is not
- * expressible as a pair of counts. That is the whole point of it: the case
- * meaning "everything is fine" should be recognised, not counted.
- *
- * The ten-chirp preamble the old status beep carried is gone. It is not part
- * of the convention -- Eggtimer's counted fault codes simply repeat with a
- * pause -- and with a chirp now meaning "ready", a chirp preamble in front of
- * a fault would have said the opposite of the code behind it. */
+ * The status beep follows a beep_spec_t rather than a pair of counts, because
+ * Eggtimer's ready-to-fly is a rapid chirp: the case meaning "everything is
+ * fine" should be recognised, not counted. For the same reason nothing may
+ * precede a counted fault code -- a chirp in front of it would say the
+ * opposite of the code behind it. */
 
 #define CHIRP_CYCLES 25 /* one pass of the ready-to-fly warble */
 #define TONE_ON_MS 2000 /* an unbroken tone, in one long step   */
@@ -274,15 +234,6 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
         t->base.next_due_ms = now_ms;
         break;
 
-    case BZ_ENCODE_CODE:
-        t->pattern_len = build_code_pattern(t->req_code, t->pattern, &t->loop_start);
-        t->repeat_count = t->req_repeat_count;
-        t->loops_done = 0;
-        t->index = 0;
-        t->state = BZ_PLAYING;
-        t->base.next_due_ms = now_ms; /* play first step immediately */
-        return;
-
     case BZ_ENCODE_ALT:
         t->pattern_len = build_alt_pattern(t->req_altitude, t->pattern);
         t->loop_start = 0;   /* altitude loops from the beginning */
@@ -291,6 +242,16 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
         t->index = 0;
         t->state = BZ_PLAYING;
         t->base.next_due_ms = now_ms; /* play first step immediately */
+        return;
+
+    case BZ_ENCODE_USB_OK:
+        t->pattern_len = build_usb_ok_pattern(t->pattern);
+        t->loop_start = 0;
+        t->repeat_count = 1;
+        t->loops_done = 0;
+        t->index = 0;
+        t->state = BZ_PLAYING;
+        t->base.next_due_ms = now_ms;
         return;
 
     case BZ_PLAYING: {
@@ -310,7 +271,7 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
             t->loops_done++;
             /* repeat_count==0 means infinite; otherwise stop when done */
             if (t->repeat_count == 0 || t->loops_done < t->repeat_count) {
-                t->index = t->loop_start; /* restart from digits (chirps skipped) */
+                t->index = t->loop_start;
                 t->base.next_due_ms = now_ms;
                 return;
             }
@@ -350,6 +311,9 @@ void buzzer_play_spec(const beep_spec_t *spec, uint16_t gap_ms, uint8_t repeat_c
     if (!spec) {
         return;
     }
+    /* A new outcome can arrive mid-pattern, when the pad check changes its
+     * mind, and the step it interrupts may be a tone. */
+    hal_buzzer_tone_off();
     bz.req_spec = *spec;
     bz.req_gap_ms = gap_ms;
     bz.req_repeat_count = repeat_count;
@@ -358,22 +322,18 @@ void buzzer_play_spec(const beep_spec_t *spec, uint16_t gap_ms, uint8_t repeat_c
     bz.base.tick = buzzer_tick;
 }
 
-void buzzer_play_code(uint8_t code, uint8_t repeat_count) {
-    hal_buzzer_tone_off(); /* silence immediately */
-    bz.req_code = code;
-    bz.req_repeat_count = repeat_count;
-    bz.loops_done = 0;
-    bz.index = 0;
-    bz.state = BZ_ENCODE_CODE;
-    bz.base.next_due_ms = 0; /* run on next hal_tasks_tick() */
-    bz.base.tick = buzzer_tick;
-}
-
 void buzzer_play_altitude(int32_t value_in_units) {
     hal_buzzer_tone_off();
     bz.req_altitude = value_in_units;
     bz.index = 0;
     bz.state = BZ_ENCODE_ALT;
+    bz.base.next_due_ms = 0;
+    bz.base.tick = buzzer_tick;
+}
+
+void buzzer_play_usb_ok(void) {
+    hal_buzzer_tone_off();
+    bz.state = BZ_ENCODE_USB_OK;
     bz.base.next_due_ms = 0;
     bz.base.tick = buzzer_tick;
 }

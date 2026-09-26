@@ -252,6 +252,8 @@ void net_mdns_poll(void) {
     mdns_resp_add_service(&netif_data, mdns_hostname, "_pyro", DNSSD_PROTO_TCP, 80, NULL, NULL);
 }
 
+void http_server_service(void); /* http_server.c */
+
 void net_service(void) {
     /* Process received frames - RX always works */
     if (received_frame) {
@@ -261,6 +263,8 @@ void net_service(void) {
         tud_network_recv_renew();
     }
     sys_check_timeouts();
+    /* Outside every lwIP callback: the HTTP work the callbacks queued. */
+    http_server_service();
 }
 
 /* lwIP system hooks */

@@ -135,7 +135,7 @@ int32_t pp_filter_pressure(int32_t raw_pressure, uint32_t dt_ms) {
         return raw_pressure;
     }
     int32_t diff = raw_pressure - pp.filtered_pressure;
-    int32_t alpha = (dt_ms * 1000) / (500 + dt_ms);
+    int32_t alpha = (dt_ms * 1000) / (PP_FILTER_TAU_MS + dt_ms);
     int32_t step = (diff * alpha) / 1000;
     if (step == 0 && diff != 0)
         step = (diff > 0) ? 1 : -1;

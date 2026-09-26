@@ -34,12 +34,16 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-MODE-04 | SPEED mode | Closed-loop: test_PYR_MODE_04_delay_speed, test_PYR_MODE_04_speed_agl | ✅ |
 | PYR-SAFE-01 | No fire without continuity | Closed-loop: test_PYR_SAFE_01_no_fire_without_continuity | ✅ |
 | PYR-DEPLOY-01 | Both channels may deploy on one event | Closed-loop: test_PYR_DEPLOY_01_low_flight_fires_both | ✅ |
-| PYR-DEPLOY-02 | Not energised at the same instant | Enforced by `hal_pyro_is_firing()`; see DD-021 | ✅ |
+| PYR-DEPLOY-02 | Not energised at the same instant, flight or ground test | `flight_pyro_energise()`, DD-021; Integration: test_REV06_ground_test_waits_for_the_other_channel | ✅ |
+| PYR-FIRE-01 | Fired only when energised; a refusal is recorded once | Unit: test_REV03_refused_fire_is_not_recorded_as_fired; Hardware: `pyro1_refused` on /api/status | ✅ |
+| PYR-MODE-05 | AGL / FALLEN corrected for filter lag | Closed-loop: test_REV05_agl_drogue_fires_at_its_altitude; every AGL channel in the mode suites within 8 m | ✅ |
 | PYR-SAFE-03 | Single fire per channel | Closed-loop: verified by fire_count | ✅ |
 | PYR-SAFE-04 | No fire before apogee | Closed-loop: drogue fires at/after apogee | ✅ |
-| FLT-LAUNCH-01 | Transition at >10m | Integration: test_FLT_BOOT_01_all_states | ✅ |
+| FLT-LAUNCH-01 | Transition at >100 ft | Unit: test_FLT_LAUNCH_08/09; Integration: test_FLT_BOOT_01_all_states | ✅ |
 | FLT-LAUNCH-02 | Stay at ground level | Integration: PAD_IDLE persists before launch | ✅ |
-| FLT-LAUNCH-03 | Backdate launch time | Integration: test_FLT_LAUNCH_03_backdate | ✅ |
+| FLT-LAUNCH-03 | T+0 at the first sample above 50 cm | Unit: test_REV07_launch_backdates_to_first_rise; Integration: test_FLT_LAUNCH_03_backdate (exact) | ✅ |
+| FLT-LAUNCH-07 | Speed > 5 m/s at the 100 ft sample | Unit: test_FLT_LAUNCH_08_ten_metres_is_no_longer_enough | ✅ |
+| GND-CAL-05 | LAUNCH reports the height reached | Integration: test_REV11_launch_row_reports_the_height_reached | ✅ |
 | FLT-LAUNCH-04 | Log LAUNCH event | Integration: test_DAT_04_events | ✅ |
 | FLT-LAUNCH-05 | Stop buzzer on launch | Integration: test_BUZ_07_03_lifecycle | ✅ |
 | FLT-APO-01 | Apogee when speed ≤ 0 | Integration: test_FLT_APO_01_detected | ✅ |
@@ -60,12 +64,15 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-LAND-06 | Stay in LANDED | Integration: state remains LANDED after detection | ✅ |
 | PYR-REFIRE-01 | One drogue retry at 2 s, only if unopened | Closed-loop: test_PYR_REFIRE_01_refire_ballistic | ✅ |
 | PYR-REFIRE-02 | No retry on an opened channel | Closed-loop: test_PYR_REFIRE_02_no_retry_when_opened | ✅ |
-| FLT-EMRG-01 | Main early when the drogue fails | Closed-loop: test_FLT_EMRG_01_shredded_drogue_fires_main | ✅ |
+| FLT-EMRG-01 | Main early on evidence the drogue failed | Closed-loop: test_FLT_EMRG_01, test_REV01_failed_drogue_brings_the_main_forward | ✅ |
 | FLT-EMRG-02 | No bare descent-rate trigger | Closed-loop: test_FLT_EMRG_02_freefall_to_trigger_not_overridden | ✅ |
-| FLT-BOOT-11 | Pad marker at 10 s PAD_IDLE | Integration: test_BRN_INT_01/02 | ✅ |
-| FLT-BOOT-12 | Recover the ground reference | Brownout: test_BRN_01..08; Integration: test_BRN_INT_03/04 | ✅ |
-| FLT-BOOT-13 | A stationary board is never airborne | Brownout: test_BRN_06/07 | ✅ |
+| FLT-EMRG-03 | Not on the absence of a settled descent | Closed-loop: test_REV01_working_drogue_main_at_its_trigger; `main_forced` false in every mode suite | ✅ |
+| FLT-EMRG-04 | An emergency deployment is recorded | Closed-loop: test_REV16_forced_main_is_in_the_log; Hardware: `main_forced` on /api/status | ✅ |
+| FLT-BROWN-01 | Pad marker at 10 s PAD_IDLE | Integration: test_BRN_INT_01/02/05; Hardware: `pad.mkr` present on MK1A/B/C | ✅ |
+| FLT-BROWN-02 | Recover the ground reference | Brownout: test_BRN_01..08; Integration: test_BRN_INT_03/04 | ✅ |
+| FLT-BROWN-03 | A stationary board is never airborne | Brownout: test_BRN_06/07 | ✅ |
 | FLT-LOG-05 | No flash write through the shock window | Code review: log_flash_service() holdoff | ⚠ untested |
+| FLT-LOG-06 | Log committed every second, in the window | Hardware (MK1C, instrumented bench build): readable while written; reset mid-log keeps rows to 0.5 s before it; flash_refusals 0 | ✅ HW |
 | LUA-IO-01 | Export / import the Lua program | Playwright: lua program exports to a file; imports into the editor | ✅ |
 | LUA-IO-02 | Import does not touch the device | Playwright: imports into the editor without saving; oversized import refused | ✅ |
 | PIN-LABEL-01 | Connector designator per pin | Host: test_PIN_LABEL_01..03; Playwright: pin tables name the connector | ✅ |
@@ -84,7 +91,9 @@ Verify web interface behavior against mock server in 3 device modes.
 |-----|-------------|-------------|--------|
 | SYS-STATUS-01 | Audible readiness | Integration: test_BUZ_07_03_lifecycle | ✅ |
 | SYS-STATUS-02 | Verify pyro integrity | Integration: continuity checked before flight | ✅ |
-| PYR-CONT-01 | Check every 1s | — | ⚠️ |
+| PYR-CONT-01 | Check every 1s | Unit: test_PYR_CONT_01_continuity_check | ✅ |
+| PYR-CONT-03 | Diagnosis and announcement follow each check | Unit: test_REV04_pad_fault_after_boot_is_announced; Hardware: bench smoke test | ✅ |
+| FLT-BOOT-16 | No fault for a released or disabled channel | Unit: test_REV_NEW_disabled_channel_is_not_a_fault; Hardware: bench smoke test | ✅ |
 | PYR-CONT-02 | Report good/open/short | Web UI: pyro channels show OK/OPEN/FIRED | ✅ |
 | BUZ-STATUS-01 | Distinct beep codes | — | ⚠️ |
 | BUZ-01..02 | Startup chirps + code | — | ⚠️ |
@@ -104,7 +113,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | DAT-01 | 4096-entry ring buffer | Integration: samples recorded throughout flight | ✅ |
 | DAT-02 | Sample fields | Integration: events have correct fields | ✅ |
 | DAT-03 | Events tag samples | Integration: test_DAT_04_events | ✅ |
-| DAT-04 | Log all event types | Integration: test_DAT_04_events | ✅ |
+| DAT-04 | Log all event types | Integration: test_DAT_04_events; Closed-loop: test_REV16_forced_main_is_in_the_log | ✅ |
 | DAT-06 | CSV export | — | ⚠️ |
 | DAT-07 | CSV metadata header | — | ⚠️ |
 | BUZ-03..07 | Altitude beep-out | Integration: test_BUZ_07_03_lifecycle | ✅ |
@@ -117,7 +126,9 @@ Verify web interface behavior against mock server in 3 device modes.
 | SYS-CFG-02 | Config without tools | Web UI: config editor tests | ✅ |
 | SYS-CFG-03 | Validate against limits | Web UI: range warning test | ✅ |
 | CFG-01..09 | INI parsing | Closed-loop: all configs parsed and applied correctly | ✅ |
-| WEB-UI-02 | Guided editor | Web UI: config tab tests | ✅ |
+| CFG-04 | `none` survives the round trip; unknown modes stored as none | Config: test_config_mode_none_round_trips, test_config_unknown_mode_serialises_as_none; Hardware: bench smoke test | ✅ |
+| CFG-07 | Shipped defaults fit their fields | Config: test_config_default_name_is_not_truncated; compile-time check in config.c | ✅ |
+| WEB-UI-02 | Guided editor; units convert; limits stated | Web UI: config tab tests, changing units converts the pyro values, the rocket name shows its 8-character limit | ✅ |
 | WEB-UI-03 | Warn if not applied | Web UI: save shows confirmation | ✅ |
 
 ## 5. Altitude Measurement
@@ -128,6 +139,8 @@ Verify web interface behavior against mock server in 3 device modes.
 | SYS-ALT-02 | Multiple sensors | — (hardware test only) | ⚠️ |
 | SNS-PRES-01 | Auto-detect sensor | — (hardware test only) | ⚠️ |
 | SNS-PRES-02..04 | Pressure filter | Integration: altitude converges correctly | ✅ |
+| SNS-PRES-05 | Conversion read after its worst case | Hardware (MK1C, MK1B): pres_rejects 0 under HTTP load, 18 in 60 s without the timing | ✅ HW |
+| SNS-PRES-06 | Impossible readings discarded and counted | Hardware: pres_rejects on /api/status; the false launch they caused did not recur | ✅ HW |
 | SNS-ALT-01..03 | Altitude computation | Integration: max altitude within expected range | ✅ |
 
 ## 6. Telemetry
@@ -138,7 +151,8 @@ Verify web interface behavior against mock server in 3 device modes.
 | TEL-01..02 | NMEA format + checksum | Integration: test_TEL_01_output (checksum verified) | ✅ |
 | TEL-03 | NMEA event sentences ($PYRO_APO, $PYRO_FIRE, $PYRO_LAND) | Integration: test_TEL_03_event_sentences | ✅ |
 | TEL-04 | JSON format (telem_format=1) | Integration: test_TEL_04_json_format | ✅ |
-| TEL-03..05 | Telemetry rates | Integration: ≥10 sentences during flight | ✅ |
+| TEL-03..05 | Telemetry rates | Integration: ≥10 sentences during flight; Unit: test_REV12_telem_rate_hz_sets_the_flight_cadence | ✅ |
+| TEL-05 | No $PYRO in boot or FAULT | Unit: test_REV08_fault_sends_no_state_sentence | ✅ |
 | TEL-06..10 | Field contents | Integration: test_TEL_01_output | ✅ |
 
 ## 7. Pyro Fault Protection
@@ -158,12 +172,19 @@ Verify web interface behavior against mock server in 3 device modes.
 | WEB-API-01 | GET /api/status | Web UI: status tests (3 modes) | ✅ |
 | WEB-API-02 | GET /api/config | Web UI: config loads from device | ✅ |
 | WEB-API-03 | POST /api/config | Web UI: save test | ✅ |
-| WEB-API-04 | POST /api/ota | — | ⚠️ HW |
-| WEB-API-05 | POST /api/reboot | — | ⚠️ |
-| WEB-API-06 | GET /api/flight.csv | — (stub) | ⚠️ |
-| WEB-API-07 | CORS headers | — | ⚠️ |
+| WEB-API-04 | POST /api/ota | Hardware: OTA to MK1A/B/C, every littlefs file preserved | ✅ HW |
+| WEB-API-05 | POST /api/reboot | Hardware: 200 with CORS, board back in PAD_IDLE | ✅ HW |
+| WEB-API-06 | GET /api/flight.csv | Hardware: bench smoke test | ✅ HW |
+| WEB-API-07 | CORS headers | Hardware: bench smoke test, every route | ✅ HW |
+| WEB-API-08 | No state-changing request in flight | Unit: test_REV18_flight_in_progress_is_launch_to_landing (the predicate); route wiring by inspection | ⚠️ |
+| WEB-API-09 | Erase the flight log | Web UI: the flight log can be erased; Hardware: bench smoke test | ✅ |
+| WEB-HTTP-01 | A request is a byte stream | HTTP: test_HTTP_02 (split at every byte), test_HTTP_03 (byte by byte, random), test_HTTP_04, test_HTTP_07; Hardware: `support/http_stream_check.py` 16/16 on MK1A/B/C (4/16 on the old server) | ✅ |
+| WEB-HTTP-02 | Content-Length and Connection: close on every response | HTTP: body_of() asserts both on every test; Hardware: http_stream_check framing checks | ✅ |
+| WEB-HTTP-03 | Flow control, not refusal | HTTP: test_HTTP_12 (a 10 kB body through a 2 kB ring into a sink that refuses 50 times); Hardware: uploads round-trip byte-exact, flash_refusals 0, Lua heartbeat unbroken on MK1C | ✅ |
+| WEB-HTTP-04 | Status codes for bad requests | HTTP: test_HTTP_08, 09, 10, 11; Hardware: 405 and 413 in http_stream_check | ✅ |
+| WEB-HTTP-05 | HTTP work from the main loop, stack-neutral | By construction: http_conn.c and net_ring.c build and test on the host with no lwIP; callbacks only queue (http_server.c) | ✅ |
 | WEB-UI-01 | Status in config units | Web UI: altitude in meters/feet tests | ✅ |
-| WEB-UI-04 | Flight summary + CSV | Web UI: flight data tests | ✅ |
+| WEB-UI-04 | Flight summary + CSV, from the log, refreshed, named | Web UI: flight data tests, a flight recorded while the page is open appears on refresh; Unit: test_REV09_flight_time_freezes_at_landing | ✅ |
 | WEB-UI-05 | Firmware upload | Web UI: update tab test | ✅ |
 
 ## 9. Firmware Update
@@ -214,7 +235,8 @@ Verify web interface behavior against mock server in 3 device modes.
 | PWR-SAMPLE-01 | 50Hz pressure sampling via async task | Integration: all tests use hal_pressure_fifo_* | ✅ |
 | PWR-SAMPLE-02 | 5-sample batch delivery | Integration: flight_process_samples() in all integration runs | ✅ |
 | PWR-TELEM-01 | Async telemetry TX | Host: buzzer_tests / integration (non-blocking send) | ✅ |
-| PWR-BUZZ-01 | Autonomous buzzer via async task | Buzzer: test_BUZ_ACT_01..05_pattern_correct | ✅ |
+| PWR-BUZZ-01 | Autonomous buzzer via async task | Buzzer: test_BUZ_ACT_01..04, test_BUZ_PAT_01..09 | ✅ |
+| BUZ-CODE-14 | A storage failure is not a validation failure | Buzzer: test_BEEP_STORE_01/02 | ✅ |
 | PWR-SLEEP-01 | CPU sleep between events | Integration: no-op in test; __wfe on hardware | ✅ |
 | PWR-LOG-01 | RAM-buffered async flash logging | Integration: hal_log_sample() called; mock records calls | ✅ |
 | PWR-LOG-02 | hal_log_start() opens file + registers task | Integration: test_FLT_BOOT_01 (log starts on LAUNCH) | ✅ |
@@ -231,7 +253,7 @@ Verify web interface behavior against mock server in 3 device modes.
 |-----|-------------|-------------|--------|
 | CFG-TABLE-01 | X-macro single-table config | Config: test_CFG_TABLE_01_all_fields_present | ✅ |
 | CFG-TABLE-02 | Round-trip serialize → parse | Config: test_CFG_TABLE_02_roundtrip (15 tests) | ✅ |
-| CFG-SUBSYS-01 | Each subsystem has configurable params | Config: fields cover telem_format, beep_mode, etc. | ✅ |
+| CFG-SUBSYS-01 | Each subsystem has configurable params, every key read | Config: test_config_writes_no_inert_keys; Unit: telem_rate_hz; Integration: test_REV12_log_rate_hz_thins_samples_not_events | ✅ |
 
 ## 15. Telemetry Formatting (v2.0)
 
@@ -241,15 +263,30 @@ Verify web interface behavior against mock server in 3 device modes.
 | TELEM-FMT-02 | Event + state messages | Integration: test_TEL_03_event_sentences | ✅ |
 | TELEM-FMT-03 | HAL transport is raw bytes | Integration: hal_telemetry_send(const char*) | ✅ |
 
+## 16. On USB
+
+| Req | Description | Verified By | Status |
+|-----|-------------|-------------|--------|
+| UN-13 | Quiet and grounded on the bench | USB-01..05, 07, 08. Not for a charger (USB-06) | ⚠️ |
+| SYS-USB-01 | No flight, no announcement on USB | As UN-13 | ⚠️ |
+| USB-01 | No launch, recovery or marker on USB | Unit: test_USB_01_no_launch_while_attached; Integration: test_USB_INT_01_marker_waits_for_the_cable_to_go, test_USB_INT_02_no_flight_recovery_on_usb; Hardware: 0 flash programs after 50-90 s of PAD_IDLE on MK1A/B/C | ✅ |
+| USB-02 | Nothing announced on USB | Unit: test_USB_02, test_USB_03, test_USB_04, test_USB_05; Hardware: `buzzer_active` false on MK1A/B/C (`support/api_check.py`) | ✅ |
+| USB-03 | One double chirp on attach | Buzzer: test_BUZ_PAT_10_usb_ok_is_one_double_chirp; Unit: test_USB_02; Integration: test_USB_INT_01 | ✅ |
+| USB-04 | Resume on detach | Unit: test_USB_02, test_USB_04, test_USB_05; Integration: test_USB_INT_01. Not on hardware: nobody unplugged a board | ✅ |
+| USB-05 | Ignored in flight | Unit: test_USB_06_ignored_once_airborne | ✅ |
+| USB-06 | A charger counts as USB | No hardware path (DD-037) | ❌ |
+| USB-08 | Test mode flies on USB, RAM only | Unit: test_USB_07_test_mode_flies_on_usb, test_USB_08_test_mode_announces_and_leaving_it_chirps, test_USB_09_test_mode_is_off_at_boot, test_USB_10_test_mode_does_not_change_in_flight; Integration: test_USB_INT_03_test_mode_writes_the_marker_on_usb; Web: 3 tests; Hardware: on MK1A/B/C test mode announced and wrote pad.mkr on USB, went quiet when turned off, and was off after a reboot | ✅ |
+| USB-07 | Errors leave launch detection on | By design: SOF needs a host (DD-037); Hardware: `usb_attached` true on MK1A/B/C with a PC attached | ✅ |
+
 ---
 
 ## Summary
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by integration/closed-loop/buzzer/config/web test | 118 |
-| ⚠️ Not directly verified (needs integration test or hardware) | 16 |
-| ❌ Not implemented | 0 |
+| ✅ Verified by integration/closed-loop/buzzer/config/web test | 130 |
+| ⚠️ Not directly verified (needs integration test or hardware) | 18 |
+| ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 1 |
 
 _+8 requirements in v2 Task 2/3 (GND-TEST-01..04, DD-011, CFG-HAL-01..02, PWR-SLEEP-01)_
@@ -264,6 +301,6 @@ _+20 requirements in v2 Tasks 7–10 (PWR-*, CFG-TABLE-*, TELEM-FMT-*), all veri
 - **SYS-DATA-02 / DAT-06..07**: CSV export format — hardware integration test
 - **SYS-ALT-02 / SNS-PRES-01**: Multi-sensor detection — hardware test
 - **WEB-NET-01..04**: USB network / mDNS / DNS-SD — hardware test
-- **WEB-API-04..07**: OTA, reboot, CSV download, CORS — hardware test
+- **WEB-API-08**: the in-flight refusal is wired into on_head() in http_server.c and verified by inspection; a bench board cannot be put in flight to exercise it
 - **OTA-01..04**: OTA update flow — hardware test
 - **PWR-USB-01**: USB servicing autonomy — deferred to v2.1

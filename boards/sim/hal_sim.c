@@ -10,6 +10,7 @@
 #include "../src/hal.h"
 #include "../src/pressure_processing.h"
 #include "../src/config.h"
+#include "../src/flight_events.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -22,6 +23,8 @@ static uint32_t sim_time = 0;
 /* Pressure — set by physics engine */
 static float sim_pressure_pa = 101325.0f;
 static int sim_sensor_type = 2;
+static uint32_t sim_last_feed_ms;
+static bool sim_fed;
 
 /* Pyro */
 static int sim_pyro_fire_count = 0;
@@ -105,6 +108,7 @@ void sim_reset(void) {
     sim_telem_len = 0;
     sim_telem_buf[0] = '\0';
     memset(sim_files, 0, sizeof(sim_files));
+    sim_fed = false;
 }
 
 /* ── HAL implementation ───────────────────────────────────────────── */
@@ -303,10 +307,18 @@ bool hal_serial_readline(char *buf, int max_len) {
 
 /* ── Async task runner (sim) ─────────────────────────────────────── */
 
+/* The sensor's rate on the hardware (FLT-RATE-01, DD-001). Fed every tick
+ * instead, the speed becomes a difference of pressures one millisecond apart
+ * -- quantisation noise that no descent phase can settle on. */
+#define SIM_SAMPLE_MS 20
+
 void hal_tasks_tick(uint32_t now_ms) {
     /* Feed pressure_processing so detectors read altitude via pp_read(). */
-    if (sim_sensor_type > 0)
+    if (sim_sensor_type > 0 && (!sim_fed || now_ms - sim_last_feed_ms >= SIM_SAMPLE_MS)) {
         pp_feed((int32_t)sim_pressure_pa, now_ms);
+        sim_last_feed_ms = now_ms;
+        sim_fed = true;
+    }
 
     /* Drive the buzzer task so the sim produces correct buzzer audio. */
     if (sim_buzzer_task && sim_buzzer_task->tick && (int32_t)(now_ms - sim_buzzer_task->next_due_ms) >= 0) {
@@ -329,21 +341,6 @@ void hal_firmware_commit(void) {}
 static FILE *sim_log_file = NULL;
 static bool sim_log_running = false;
 
-static const char *sim_mode_name(uint8_t mode) {
-    switch (mode) {
-    case 1:
-        return "agl";
-    case 2:
-        return "fallen";
-    case 3:
-        return "speed";
-    case 4:
-        return "delay";
-    default:
-        return "none";
-    }
-}
-
 void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     if (sim_log_running)
         return;
@@ -355,7 +352,7 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
             "# Pyro1: %s %u\n# Pyro2: %s %u\n"
             "# Units: %s\n# Ground Pa: %ld\n"
             "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",
-            cfg->id, cfg->name, sim_mode_name(cfg->pyro1_mode), cfg->pyro1_value, sim_mode_name(cfg->pyro2_mode),
+            cfg->id, cfg->name, config_mode_name(cfg->pyro1_mode), cfg->pyro1_value, config_mode_name(cfg->pyro2_mode),
             cfg->pyro2_value,
             cfg->units == 2   ? "ft"
             : cfg->units == 1 ? "m"
@@ -364,31 +361,12 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     sim_log_running = true;
 }
 
-static const char *sim_evt_name(uint8_t evt) {
-    switch (evt) {
-    case 1:
-        return "LAUNCH";
-    case 2:
-        return "APOGEE";
-    case 3:
-        return "PYRO1";
-    case 4:
-        return "PYRO2";
-    case 7:
-        return "LANDING";
-    case 9:
-        return "ARMED";
-    default:
-        return "";
-    }
-}
-
 void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
                     uint8_t event) {
     if (!sim_log_running || !sim_log_file)
         return;
     fprintf(sim_log_file, "%lu,%ld,%ld,%u,%u,%s\n", (unsigned long)time_ms, (long)pressure_pa, (long)altitude_cm, state,
-            under_thrust, sim_evt_name(event));
+            under_thrust, flight_event_name(event));
 }
 
 void hal_log_stop(void) {

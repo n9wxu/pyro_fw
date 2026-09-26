@@ -11,10 +11,8 @@ var MAX_ALT = {0:800000, 1:8000, 2:26247};
 var UNIT_LABELS = {0:'cm', 1:'m', 2:'ft'};
 var UNIT_NAMES = ['cm','m','ft'];
 var MODE_LABELS = {delay:'Delay',agl:'AGL',fallen:'Fallen',speed:'Speed',none:'None'};
-/* beep_mode is a U8 in config_fields.h, so sending the name made atoi() read 0
- * on every save. Nothing in the firmware consumes the field yet. */
-var BEEP_CODES = {digits:0, hundreds:1};
-function beepCode(n) { return BEEP_CODES[n] !== undefined ? BEEP_CODES[n] : 0; }
+/* Centimetres per unit, the pivot for converting a value between units. */
+var CM_PER_UNIT = {0:1, 1:100, 2:30.48};
 var WEB_VERSION = '2.0.0';
 
 /* ── Tabs ──────────────────────────────────────────────────────── */
@@ -23,7 +21,7 @@ function showTab(name) {
   document.querySelectorAll('.tab').forEach(function(el) { el.classList.remove('active'); });
   document.getElementById('tab-' + name).style.display = 'block';
   event.target.classList.add('active');
-  if (name === 'data') { loadFlightData(); drawGraph(); }
+  if (name === 'data') { loadFlightData(); }
   if (name === 'lua') { luaInit(); }
   if (name === 'config') { relInit(); }
   if (name === 'beeps') { beepsInit(); }
@@ -46,6 +44,30 @@ function fmtMode(mode, val, u) {
   return (MODE_LABELS[mode]||mode) + ' ' + val + ' ' + unitLabel(u);
 }
 
+/* ── Test mode [USB-08] ───────────────────────────────────────────
+ * The board holds it in RAM; the checkbox follows /api/status except while a
+ * request is out. */
+var testBusy = false;
+function setTestMode(on) {
+  var box = document.getElementById('testMode');
+  var msg = document.getElementById('testMsg');
+  if (on && !confirm('Test mode: on USB this board will detect a launch and fire its pyros. ' +
+                     'Disconnect any igniter you do not mean to fire. Turn test mode on?')) {
+    box.checked = false;
+    return;
+  }
+  testBusy = true;
+  msg.textContent = '';
+  fetch('/api/test_mode/' + (on ? 'on' : 'off'), {method:'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (j.error) msg.textContent = j.error;
+      box.checked = !!j.test_mode;
+    })
+    .catch(function(){ msg.textContent = 'no answer from the board'; })
+    .then(function(){ testBusy = false; });
+}
+
 /* ── Status polling ────────────────────────────────────────────── */
 function update() {
   fetch('/api/status').then(function(r){return r.json()}).then(function(d) {
@@ -65,15 +87,26 @@ function update() {
     document.getElementById('sFt').textContent = (d.flight_ms/1000).toFixed(1) + 's';
     document.getElementById('sUp').textContent = (d.uptime/1000).toFixed(0) + 's';
 
-    /* Pyro status */
-    function pyroStr(fired, cont, adc) {
-      if (fired) return '<span class="pyro-fired">FIRED</span> (ADC:' + adc + ')';
+    /* Pyro status. A refusal is the board declining to energise a channel it
+       was told to fire, which is not the same thing as firing it. */
+    function pyroStr(fired, refused, cont, adc, note) {
+      if (fired) return '<span class="pyro-fired">FIRED</span>' + (note || '') + ' (ADC:' + adc + ')';
+      if (refused) return '<span class="pyro-open">REFUSED by the board</span> (ADC:' + adc + ')';
       if (cont) return '<span class="pyro-ok">OK</span> (ADC:' + adc + ')';
       return '<span class="pyro-open">OPEN</span> (ADC:' + adc + ')';
     }
-    document.getElementById('sP1').innerHTML = pyroStr(d.pyro1_fired, d.pyro1_cont, d.pyro1_adc);
-    document.getElementById('sP2').innerHTML = pyroStr(d.pyro2_fired, d.pyro2_cont, d.pyro2_adc);
+    document.getElementById('sP1').innerHTML = pyroStr(d.pyro1_fired, d.pyro1_refused, d.pyro1_cont, d.pyro1_adc,
+      d.pyro1_refires ? ' (retried)' : '');
+    document.getElementById('sP2').innerHTML = pyroStr(d.pyro2_fired, d.pyro2_refused, d.pyro2_cont, d.pyro2_adc,
+      d.main_forced ? ' <span class="warn-inline">emergency: brought forward</span>' : '');
     document.getElementById('sArm').textContent = d.armed ? 'YES' : 'No';
+
+    /* A board on USB is grounded unless it is in test mode [USB-01, USB-08]. */
+    var tm = !!d.test_mode;
+    document.getElementById('sUsb').textContent = !d.usb_attached ? 'not attached'
+      : tm ? 'attached, test mode: flying as on battery' : 'attached: launch detection and beeps off';
+    if (!testBusy) document.getElementById('testMode').checked = tm;
+    document.getElementById('testWarn').style.display = tm ? 'block' : 'none';
 
     /* Config display */
     document.getElementById('sCfgId').textContent = d.rocket_id || '—';
@@ -89,25 +122,13 @@ function update() {
     document.getElementById('sCfgP2').innerHTML = p2Str + (pendingConfig ? ' <span class="warn-inline">not yet applied</span>' : '');
     document.getElementById('pendingWarn').style.display = pendingConfig ? 'block' : 'none';
 
-    /* Flight summary */
-    document.getElementById('dDur').textContent = (d.flight_ms/1000).toFixed(1) + 's';
-    document.getElementById('dApogee').textContent = cmToUnit(d.max_alt_cm, u) + ' ' + ul;
-    var p1Txt = 'Not fired';
-    if (d.pyro1_mode === 'none') p1Txt = 'Disabled';
-    else if (d.pyro1_fired) p1Txt = 'Fired';
-    var p2Txt = 'Not fired';
-    if (d.pyro2_mode === 'none') p2Txt = 'Disabled';
-    else if (d.pyro2_fired) p2Txt = 'Fired';
-    document.getElementById('dP1').innerHTML = p1Txt;
-    document.getElementById('dP2').innerHTML = p2Txt;
-
     /* Version info */
     currentVersion = d.fw_version;
     document.getElementById('uFwVer').textContent = d.fw_version;
     document.getElementById('uWebVer').textContent = WEB_VERSION;
 
     /* Store device config — update every poll */
-    var newCfg = {id:d.rocket_id, name:d.rocket_name, units:u, beep:'digits',
+    var newCfg = {id:d.rocket_id, name:d.rocket_name, units:u,
       p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value};
     if (!deviceConfig) {
       deviceConfig = newCfg;
@@ -169,11 +190,41 @@ function cfgChanged() {
   document.getElementById('cfgDirty').style.display = 'block';
 }
 
+/* The firmware keeps 8 characters of the id and the name (CFG-07); say so
+   while typing rather than letting the operator find the ninth missing on the
+   Status tab. */
+function cfgLenHint(id) {
+  var v = document.getElementById(id).value;
+  document.getElementById(id + 'Len').textContent = v.length + ' of 8 characters';
+}
+
+/* The units the pyro values on screen are written in. */
+var cfgShownUnits = 1;
+
+/* A value is a distance or a speed in the chosen units, so changing units
+   converts it; leaving the number alone would turn 500 ft into 500 m. */
+function unitsChanged() {
+  var to = getUnits(), from = cfgShownUnits;
+  if (to !== from) {
+    [1,2].forEach(function(ch) {
+      var mode = document.getElementById('p'+ch+'mode').value;
+      if (mode === 'none' || mode === 'delay') return;
+      var el = document.getElementById('p'+ch+'val');
+      var v = parseInt(el.value) || 0;
+      el.value = Math.round(v * CM_PER_UNIT[from] / CM_PER_UNIT[to]);
+    });
+  }
+  cfgShownUnits = to;
+  cfgChanged();
+}
+
 function cfgLoadFromObj(c) {
   document.getElementById('cfgId').value = c.id || '';
   document.getElementById('cfgName').value = c.name || '';
+  cfgLenHint('cfgId');
+  cfgLenHint('cfgName');
   document.getElementById('cfgUnits').value = c.units || 0;
-  document.getElementById('cfgBeep').value = c.beep || 'digits';
+  cfgShownUnits = parseInt(c.units) || 0;
   document.getElementById('p1mode').value = c.p1mode || 'delay';
   document.getElementById('p1val').value = c.p1val || 0;
   document.getElementById('p2mode').value = c.p2mode || 'agl';
@@ -184,7 +235,7 @@ function cfgLoadFromObj(c) {
 }
 
 function cfgDefault() {
-  cfgLoadFromObj({id:'PYRO001', name:'My Rocke', units:1, beep:'digits', p1mode:'delay', p1val:0, p2mode:'agl', p2val:300});
+  cfgLoadFromObj({id:'PYRO001', name:'MyRocket', units:1, p1mode:'delay', p1val:0, p2mode:'agl', p2val:300});
   document.getElementById('cfgDirty').style.display = 'block';
   document.getElementById('cfgDirty').innerHTML = '⚠ Defaults loaded — press <b>Save</b> then <b>Reboot</b> to apply';
 }
@@ -198,7 +249,6 @@ function cfgGetObj() {
     id: document.getElementById('cfgId').value,
     name: document.getElementById('cfgName').value,
     units: getUnits(),
-    beep: document.getElementById('cfgBeep').value,
     p1mode: document.getElementById('p1mode').value,
     p1val: parseInt(document.getElementById('p1val').value) || 0,
     p2mode: document.getElementById('p2mode').value,
@@ -206,13 +256,17 @@ function cfgGetObj() {
   };
 }
 
+/* One Save for the whole tab. The flight settings go to config.ini and apply
+   at once; the pin release and the buzzer pad go to pins.ini and apply at the
+   next reboot -- two stores, but one decision for the operator. */
 function cfgSave() {
+  if (relDirty) relSave();
   var c = cfgGetObj();
   var uname = UNIT_NAMES[c.units];
   var ini = '[pyro]\r\nid=' + c.id + '\r\nname=' + c.name +
     '\r\npyro1_mode=' + c.p1mode + '\r\npyro1_value=' + c.p1val +
     '\r\npyro2_mode=' + c.p2mode + '\r\npyro2_value=' + c.p2val +
-    '\r\nunits=' + uname + '\r\nbeep_mode=' + beepCode(c.beep) + '\r\n';
+    '\r\nunits=' + uname + '\r\n';
   var msg = document.getElementById('cfgMsg');
   fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:ini})
     .then(function(r) {
@@ -273,46 +327,105 @@ function cfgReboot() {
   waitForReboot(msg);
 }
 
-/* ── Flight data ───────────────────────────────────────────────── */
+/* ── Flight data ───────────────────────────────────────────────
+ *
+ * Everything on this tab comes from the one flight log, read fresh each time
+ * the tab is shown: mixing it with live /api/status would put two flights on
+ * the screen at once. The log names its columns in its header row, so the
+ * parse goes by name -- text rows (MOCK, LUA) carry no numbers and are
+ * skipped. */
 function dlFlight() { window.location = '/api/flight.csv'; }
 
 var flightData = [];
 var flightEvents = {};
-var flightLoaded = false;
+var flightMeta = {};
+
+function parseFlightCsv(csv) {
+  var data = [], events = {}, meta = {}, col = null;
+  csv.split('\n').forEach(function(line) {
+    line = line.replace(/\r$/, '');
+    if (!line) return;
+    if (line.charAt(0) === '#') {
+      var m = /^#\s*([^:]+):\s*(.*)$/.exec(line);
+      if (m) meta[m[1].trim()] = m[2].trim();
+      return;
+    }
+    var parts = line.split(',');
+    if (!col) {
+      col = {};
+      parts.forEach(function(name, i) { col[name.trim()] = i; });
+      return;
+    }
+    var t = parseInt(parts[col.time_ms]), alt = parseInt(parts[col.altitude_cm]);
+    var evt = (parts[col.event] || '').trim();
+    if (isNaN(t) || isNaN(alt)) return;
+    data.push({t:t, a:alt});
+    if (evt && !events[evt]) events[evt] = {t:t, alt:alt};
+  });
+  return {data:data, events:events, meta:meta};
+}
 
 function loadFlightData() {
-  if (flightLoaded) return;
-  fetch('/api/flight.csv').then(function(r){return r.text()}).then(function(csv) {
-    flightData = [];
-    flightEvents = {};
-    csv.split('\n').forEach(function(line) {
-      if (!line || line.startsWith('time')) return;
-      var parts = line.split(',');
-      if (parts.length < 4) return;
-      var t = parseInt(parts[0]), alt = parseInt(parts[2]), evt = (parts[4]||'').trim();
-      if (!isNaN(t) && !isNaN(alt)) flightData.push({t:t, a:alt});
-      if (evt) flightEvents[evt] = {t:t, alt:alt};
-    });
-    flightLoaded = true;
-    updateFlightEvents();
+  var which = document.getElementById('dWhich');
+  return fetch('/api/flight.csv').then(function(r){return r.text()}).then(function(csv) {
+    var f = parseFlightCsv(csv);
+    flightData = f.data;
+    flightEvents = f.events;
+    flightMeta = f.meta;
+    which.textContent = flightData.length
+      ? 'Flight of ' + (flightMeta.Name || '?') + ' (' + (flightMeta.ID || '?') + '), the one flight log on the board'
+      : 'No flight recorded. The next launch writes the log.';
+    updateFlightSummary();
     drawGraph();
-  }).catch(function(){});
+  }).catch(function() { which.textContent = 'Could not read the flight log.'; });
 }
 
-function updateFlightEvents() {
+function updateFlightSummary() {
   var u = deviceConfig ? deviceConfig.units : 0;
   var ul = unitLabel(u);
-  var p1 = document.getElementById('dP1');
-  var p2 = document.getElementById('dP2');
-  if (flightEvents.PYRO1) {
-    p1.innerHTML = 'Fired at ' + (flightEvents.PYRO1.t/1000).toFixed(1) + 's, ' +
-      cmToUnit(flightEvents.PYRO1.alt, u) + ' ' + ul;
+  var ev = flightEvents;
+  function at(e) { return (e.t/1000).toFixed(1) + 's, ' + cmToUnit(e.alt, u) + ' ' + ul; }
+
+  var dur = '—', apo = '—';
+  if (flightData.length) {
+    var end = ev.LANDING ? ev.LANDING : flightData[flightData.length - 1];
+    dur = (end.t/1000).toFixed(1) + 's' + (ev.LANDING ? '' : ' (no landing recorded)');
+    var maxA = 0;
+    flightData.forEach(function(p) { if (p.a > maxA) maxA = p.a; });
+    apo = cmToUnit(maxA, u) + ' ' + ul;
   }
-  if (flightEvents.PYRO2) {
-    p2.innerHTML = 'Fired at ' + (flightEvents.PYRO2.t/1000).toFixed(1) + 's, ' +
-      cmToUnit(flightEvents.PYRO2.alt, u) + ' ' + ul;
+  document.getElementById('dDur').textContent = dur;
+  document.getElementById('dApogee').textContent = apo;
+
+  function pyroLine(n) {
+    if (!flightData.length) return '—';
+    if (ev['PYRO' + n]) {
+      var s = 'Fired at ' + at(ev['PYRO' + n]);
+      if (n === 2 && ev.MAIN_FORCED) s += ' — <span class="warn-inline">emergency: the drogue failed</span>';
+      return s;
+    }
+    if (ev['PYRO' + n + '_REFUSED']) return 'Refused by the board at ' + at(ev['PYRO' + n + '_REFUSED']);
+    return 'Not fired';
   }
+  document.getElementById('dP1').innerHTML = pyroLine(1);
+  document.getElementById('dP2').innerHTML = pyroLine(2);
 }
+
+/* The board keeps one flight log and the next launch overwrites it, so this
+   is only ever a choice about the flight on screen. */
+function eraseFlight() {
+  var msg = document.getElementById('dMsg');
+  if (!confirm('Erase the flight log on the board? Download it first if you want to keep it.')) return;
+  fetch('/api/flight/erase', {method:'POST'})
+    .then(function(r) { return r.json().catch(function(){ return {error:'HTTP ' + r.status}; }); })
+    .then(function(d) {
+      msg.style.color = d.error ? 'red' : 'green';
+      msg.textContent = d.error ? ' ✗ ' + d.error : ' ✓ erased';
+      return loadFlightData();
+    })
+    .catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ✗ ' + e.message; });
+}
+
 function drawGraph() {
   var canvas = document.getElementById('flightGraph');
   var ctx = canvas.getContext('2d');
@@ -865,10 +978,19 @@ function renderRelease() {
     : 'none';
   document.getElementById('relTable').style.display = '';
   document.getElementById('relBtns').style.display = '';
-  relChanged();
+  relWarnings();
 }
 
+/* The release and buzzer controls are saved by the tab's one Save button. */
+var relDirty = false;
+
 function relChanged() {
+  relDirty = true;
+  document.getElementById('cfgDirty').style.display = 'block';
+  relWarnings();
+}
+
+function relWarnings() {
   if (!pinCaps) return;
   var r1 = document.getElementById('rel1').checked;
   var r2 = document.getElementById('rel2').checked;
@@ -941,6 +1063,7 @@ function relSave() {
     ini += 'p' + p.p + '_role=off\r\np' + p.p + '_name=\r\n';
   });
 
+  relDirty = false;
   postPins(ini, 'relMsg', function() { renderRelease(); renderLuaPins(); });
 }
 
@@ -991,15 +1114,17 @@ function luaLoad() {
 
 /* ── Export / import the program ───────────────────────────────────
  *
- * A firmware update wipes the filesystem, so a program that exists only on
- * the device is a program the next update destroys. Both directions work on
- * the editor's contents rather than the stored file: export gives you what
- * you are looking at, and import does not touch the device until you press
- * Save, so a mis-picked file costs nothing.
+ * An OTA update leaves the filesystem in place, but a failed mount formats
+ * it, a change of flash geometry moves it, and stored formats change without
+ * migration -- a program that exists only on the device is one of those away
+ * from being lost. Both directions work on the editor's contents rather than
+ * the stored file: export gives you what you are looking at, and import does
+ * not touch the device until you press Save, so a mis-picked file costs
+ * nothing.
  *
  * The export runs entirely in the browser -- no endpoint is needed, and it
- * works even when the device has already been wiped and the editor still
- * holds the text. */
+ * works even when the device has lost the file and the editor still holds
+ * the text. */
 function luaExport() {
   var text = document.getElementById('luSrc').value;
   var msg = document.getElementById('luIoMsg');

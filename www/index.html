@@ -21,6 +21,7 @@
 <!-- ── Tab 1: Status ──────────────────────────────────────────── -->
 <div id="tab-status" class="tabpanel">
   <div id="pendingWarn" class="warn" style="display:none">⚠ Configuration changed but not applied — press Reboot in Config tab</div>
+  <div id="testWarn" class="warn" style="display:none">⚠ Test mode: on USB this board detects a launch, fires its pyros and beeps as it does on battery. A reboot ends it.</div>
   <table class="info" id="statusTable">
     <tr><td class="lbl">State</td><td id="sState" class="val big">—</td></tr>
     <tr><td class="lbl">Altitude</td><td id="sAlt" class="val big">—</td></tr>
@@ -36,6 +37,11 @@
     <tr><td class="lbl">Pyro 2</td><td id="sP2" class="val">—</td></tr>
     <tr><td class="lbl">Armed</td><td id="sArm" class="val">—</td></tr>
   </table>
+  <h3>USB</h3>
+  <table class="info">
+    <tr><td class="lbl">Host</td><td id="sUsb" class="val">—</td></tr>
+    <tr><td class="lbl">Test mode</td><td class="val"><label><input type="checkbox" id="testMode" onchange="setTestMode(this.checked)"> fly on USB</label> <span id="testMsg" class="warn-inline"></span></td></tr>
+  </table>
   <h3>Active Configuration</h3>
   <table class="info">
     <tr><td class="lbl">Rocket ID</td><td id="sCfgId" class="val">—</td></tr>
@@ -49,16 +55,13 @@
 <!-- ── Tab 2: Config ──────────────────────────────────────────── -->
 <div id="tab-config" class="tabpanel" style="display:none">
   <table class="info">
-    <tr><td class="lbl">Rocket ID</td><td><input type="text" id="cfgId" maxlength="8" size="10" onchange="cfgChanged()"></td></tr>
-    <tr><td class="lbl">Rocket Name</td><td><input type="text" id="cfgName" maxlength="8" size="10" onchange="cfgChanged()"></td></tr>
+    <tr><td class="lbl">Rocket ID</td><td><input type="text" id="cfgId" maxlength="8" size="10" oninput="cfgLenHint('cfgId')" onchange="cfgChanged()">
+      <span class="hint" id="cfgIdLen">up to 8 characters</span></td></tr>
+    <tr><td class="lbl">Rocket Name</td><td><input type="text" id="cfgName" maxlength="8" size="10" oninput="cfgLenHint('cfgName')" onchange="cfgChanged()">
+      <span class="hint" id="cfgNameLen">up to 8 characters</span></td></tr>
     <tr><td class="lbl">Units</td><td>
-      <select id="cfgUnits" onchange="cfgChanged()">
+      <select id="cfgUnits" onchange="unitsChanged()">
         <option value="0">cm</option><option value="1">meters</option><option value="2">feet</option>
-      </select></td></tr>
-    <tr><td class="lbl">Beep Mode</td><td>
-      <select id="cfgBeep" onchange="cfgChanged()">
-        <option value="digits">Digits (each digit beeped)</option>
-        <option value="hundreds">Hundreds (value/100, then digits)</option>
       </select></td></tr>
   </table>
   <h3>Pyro 1 — Drogue</h3>
@@ -106,10 +109,8 @@
             <span id="bzHint" class="hint"></span></td></tr>
   </table>
   <div id="relWarn"></div>
-  <div class="btnrow" id="relBtns" style="display:none">
-    <button id="btnSaveRel" onclick="relSave()">💾 Save release</button>
-    <span id="relMsg"></span>
-  </div>
+  <p class="hint" id="relBtns" style="display:none">Saved with the rest of this tab. A release takes
+     effect at the next reboot. <span id="relMsg"></span></p>
 
   <div id="cfgTips" class="tips" style="display:none"></div>
   <div id="cfgDirty" class="warn" style="display:none">⚠ Changes not applied — press Reboot after saving</div>
@@ -127,13 +128,19 @@
 <!-- ── Tab 3: Flight Data ─────────────────────────────────────── -->
 <div id="tab-data" class="tabpanel" style="display:none">
   <h3>Flight Summary</h3>
+  <p class="hint" id="dWhich">Loading the flight log…</p>
   <table class="info" id="flightSummary">
     <tr><td class="lbl">Duration</td><td id="dDur" class="val">—</td></tr>
     <tr><td class="lbl">Apogee</td><td id="dApogee" class="val">—</td></tr>
     <tr><td class="lbl">Pyro 1</td><td id="dP1" class="val">—</td></tr>
     <tr><td class="lbl">Pyro 2</td><td id="dP2" class="val">—</td></tr>
   </table>
-  <button onclick="dlFlight()">⬇ Download Flight CSV</button>
+  <div class="btnrow">
+    <button onclick="loadFlightData()">↻ Refresh</button>
+    <button onclick="dlFlight()">⬇ Download Flight CSV</button>
+    <button id="btnEraseFlight" onclick="eraseFlight()">🗑 Erase flight log</button>
+    <span id="dMsg"></span>
+  </div>
   <h3>Altitude Profile</h3>
   <canvas id="flightGraph" width="660" height="300" style="border:1px solid #ccc;width:100%;max-width:660px"></canvas>
 </div>
@@ -203,8 +210,9 @@
     <button onclick="luaCheck()">✓ Check</button>
     <button onclick="luaSave()">💾 Save &amp; Apply</button>
     <button onclick="luaLoad()">↻ Reload</button>
-    <!-- A firmware update wipes the filesystem, so a program that exists only
-         on the device is a program you are about to lose. -->
+    <!-- A program that exists only on the device is lost with its
+         filesystem: a failed mount formats it, and a flash-geometry change
+         moves it. -->
     <button onclick="luaExport()">⬇ Export .lua</button>
     <button onclick="document.getElementById('luFile').click()">⬆ Import .lua</button>
     <input type="file" id="luFile" accept=".lua,.txt,text/plain"

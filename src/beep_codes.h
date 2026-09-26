@@ -113,6 +113,9 @@ typedef enum {
     BEEP_ERR_DUPLICATE,    /* two outcomes sound the same                     */
     BEEP_ERR_NO_ACTIVE,    /* the active slot is not one that exists          */
     BEEP_ERR_ALL_SILENT,   /* a personality that says nothing at all          */
+    /* Not a verdict on the table: it was valid and could not be stored. */
+    BEEP_ERR_TOO_LARGE, /* serialised, it does not fit beep.ini's budget   */
+    BEEP_ERR_STORE,     /* the write to beep.ini failed                    */
 } beep_err_t;
 
 typedef struct {

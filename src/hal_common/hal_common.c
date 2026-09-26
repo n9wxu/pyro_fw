@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hal.h"
+#include "flight_events.h"
 #include "flash_window.h"
 #include "board_id.h"
 #include "config.h"
@@ -127,9 +128,42 @@ typedef struct {
     /* Latest sample for hal_pressure_read() bridge (transparent mode). */
     hal_pressure_t last;
     bool has_last;
+
+    uint32_t conv_start_us; /* MS5607: when the pending conversion was commanded */
+    uint32_t waits;         /* reads put off because the conversion was not done */
+    uint32_t rejects;       /* readings no atmosphere can produce, not fed on */
 } pres_task_t;
 
 static pres_task_t pres;
+
+uint32_t hal_pressure_waits(void) {
+    return pres.waits;
+}
+
+uint32_t hal_pressure_rejects(void) {
+    return pres.rejects;
+}
+
+/* The sensor's own range, 10-1200 mbar. Inside it nothing is judged: a real
+ * reading can be anywhere a rocket can go. Outside it the reading is not the
+ * atmosphere, and one of them through the IIR is hundreds of metres of
+ * altitude -- a launch on the pad, or a trigger in flight. */
+#define PRES_MIN_PA 1000.0f
+#define PRES_MAX_PA 120000.0f
+
+/* The datasheet's worst case at OSR 4096 is 9.04 ms, and a read issued before
+ * then returns 0. Timed from the command itself: the task's millisecond
+ * deadline is taken from the top of the loop, before STAGE 1's USB and lwIP
+ * work, which can run for milliseconds and so eat the whole margin. */
+#define MS5607_CONV_DONE_US 9100u
+
+static bool conv_done(const pres_task_t *p) {
+    return time_us_32() - p->conv_start_us >= MS5607_CONV_DONE_US;
+}
+
+static bool pres_plausible(const pressure_reading_t *r) {
+    return r->pressure_pa >= PRES_MIN_PA && r->pressure_pa <= PRES_MAX_PA;
+}
 
 /* Append a completed reading to the batch, update the bridge sample,
  * and feed the pressure_processing pipeline (IIR + altitude ring). */
@@ -187,6 +221,7 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
         switch (p->phase) {
         case PRES_IDLE:
             if (ms5607_start_d1()) {
+                p->conv_start_us = time_us_32();
                 p->phase = PRES_D1_CONV;
                 p->base.next_due_ms = now_ms + MS5607_CONV_MS;
             } else {
@@ -195,7 +230,12 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
             break;
 
         case PRES_D1_CONV:
+            if (!conv_done(p)) {
+                p->waits++;
+                break; /* still due: tried again next iteration */
+            }
             if (ms5607_read_raw(&p->d1_raw) && ms5607_start_d2()) {
+                p->conv_start_us = time_us_32();
                 p->phase = PRES_D2_CONV;
                 p->base.next_due_ms = now_ms + MS5607_CONV_MS;
             } else {
@@ -205,19 +245,25 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
             break;
 
         case PRES_D2_CONV: {
+            if (!conv_done(p)) {
+                p->waits++;
+                break;
+            }
             uint32_t d2;
             if (ms5607_read_raw(&d2)) {
                 pressure_reading_t r;
                 ms5607_compensate(p->d1_raw, d2, &r);
-                /* Anomaly log: dump raw ADC values when compensated
-                 * pressure is outside plausible atmosphere (30–120 kPa) */
-                if (r.pressure_pa < 30000.0f || r.pressure_pa > 120000.0f) {
+                /* A zero is what the sensor answers to a read issued during a
+                 * conversion; either one makes the compensated value noise. */
+                if (p->d1_raw == 0 || d2 == 0 || !pres_plausible(&r)) {
+                    p->rejects++;
                     char dbuf[80];
                     snprintf(dbuf, sizeof(dbuf), "!PRES d1=%lu d2=%lu pa=%.0f t=%lu\r\n", (unsigned long)p->d1_raw,
                              (unsigned long)d2, (double)r.pressure_pa, (unsigned long)now_ms);
                     hal_telemetry_send(dbuf);
+                } else {
+                    pres_append(p, &r, now_ms);
                 }
-                pres_append(p, &r, now_ms);
             }
             p->phase = PRES_IDLE;
             /* Total cycle = 2 * MS5607_CONV_MS (phases) + idle remainder.
@@ -235,8 +281,12 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
          * Only reachable on boards that declare BOARD_HAS_BMP280; elsewhere
          * pressure_sensor_init() can never report type 2. */
         pressure_reading_t r;
-        if (bmp280_read(&r))
-            pres_append(p, &r, now_ms);
+        if (bmp280_read(&r)) {
+            if (pres_plausible(&r))
+                pres_append(p, &r, now_ms);
+            else
+                p->rejects++;
+        }
         p->base.next_due_ms = now_ms + p->sample_interval_ms;
 #endif
     }
@@ -519,9 +569,13 @@ void hal_telemetry_send(const char *sentence) {
 
 /* Refusing partway through an lfs operation leaves its metadata half
  * written, so this stops a multi-block operation from starting at all. The
- * driver's own check is the backstop. */
+ * driver's own check is the backstop. A refusal is counted like the driver's:
+ * a caller outside the window is a bug, and uncounted it fails silently. */
 static bool flash_writable(void) {
-    return flash_window_is_open();
+    if (flash_window_is_open())
+        return true;
+    flash_window_refused();
+    return false;
 }
 
 static bool fs_ok;
@@ -771,9 +825,8 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
  *
  * At the 50 Hz default a sample line is about 30 bytes, so 4 KB is roughly
  * 2.7 seconds of flight held in RAM -- which is what makes the holdoff below
- * worth having. At the old 512 bytes the buffer filled in under a third of a
- * second and "wait until it is full" would have bought about 80 ms over the
- * flush timer it replaced. */
+ * worth having. At 512 bytes the buffer fills in under a third of a second,
+ * and "wait until it is full" would buy about 80 ms over a 200 ms timer. */
 #define LOG_BUF_SIZE 4096
 #define LOG_FLUSH_MS 200u
 
@@ -786,6 +839,13 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
  * own lines rather than a single altitude reading. */
 #define LOG_TEXT_CEILING (LOG_BUF_SIZE / 2)
 
+/* How much flight a power loss can take with it. littlefs publishes what a
+ * file holds only on sync or close, and the log closes at LANDED, so a flight
+ * that never lands -- a crash, a battery that lets go on impact -- would
+ * leave an empty file. A sync makes the next write copy the file's partial
+ * last block, an erase, so both land in the window like every other write. */
+#define LOG_SYNC_MS 1000u
+
 typedef struct {
     hal_file_t *file;
     char buf[LOG_BUF_SIZE];
@@ -794,6 +854,8 @@ typedef struct {
     bool stopping;
     bool pending_open; /* the file still has to be created, inside a window */
     uint32_t next_due_ms;
+    uint32_t next_sync_ms;
+    bool unsynced;         /* written since the last sync */
     uint32_t dropped;      /* sample bytes the buffer could not hold */
     uint32_t text_dropped; /* script bytes refused: not a lost sample */
     /* No flash write until the buffer has filled once. Launch shock is the
@@ -811,21 +873,6 @@ uint32_t hal_log_dropped(void) {
     return log_task.dropped;
 }
 
-static const char *hw_mode_name(uint8_t mode) {
-    switch (mode) {
-    case 1:
-        return "agl";
-    case 2:
-        return "fallen";
-    case 3:
-        return "speed";
-    case 4:
-        return "delay";
-    default:
-        return "none";
-    }
-}
-
 void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     if (log_task.active)
         return;
@@ -839,8 +886,8 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
                      "# Pyro1: %s %u\n# Pyro2: %s %u\n"
                      "# Units: %s\n# Ground Pa: %ld\n"
                      "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",
-                     cfg->id, cfg->name, hw_mode_name(cfg->pyro1_mode), cfg->pyro1_value, hw_mode_name(cfg->pyro2_mode),
-                     cfg->pyro2_value,
+                     cfg->id, cfg->name, config_mode_name(cfg->pyro1_mode), cfg->pyro1_value,
+                     config_mode_name(cfg->pyro2_mode), cfg->pyro2_value,
                      cfg->units == 2   ? "ft"
                      : cfg->units == 1 ? "m"
                                        : "cm",
@@ -853,7 +900,20 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     log_task.active = true;
     log_task.stopping = false;
     log_task.next_due_ms = hal_time_ms() + LOG_FLUSH_MS;
+    log_task.next_sync_ms = hal_time_ms();
+    log_task.unsynced = false;
     log_task.launch_holdoff = true;
+}
+
+/* Only from log_flash_service(), in the window. On a failure the next window
+ * retries: the file keeps its last published length meanwhile. */
+static void log_sync_if_due(uint32_t now_ms) {
+    hal_file_t *f = log_task.file;
+    if (!f || !f->open || !log_task.unsynced || (int32_t)(now_ms - log_task.next_sync_ms) < 0)
+        return;
+    if (lfs_file_sync(&f->lfs, &f->file) == LFS_ERR_OK)
+        log_task.unsynced = false;
+    log_task.next_sync_ms = now_ms + LOG_SYNC_MS;
 }
 
 /* Every branch here can fail costing only a delay: the next window retries,
@@ -879,11 +939,17 @@ static void log_flash_service(uint32_t now_ms) {
     bool due = !log_task.launch_holdoff && (int32_t)(now_ms - log_task.next_due_ms) >= 0;
     if (full || log_task.stopping)
         due = true;
-    if (!due)
+    if (!due) {
+        /* In a window with no write in it, so a sync and a block write never
+         * share one window's stall. */
+        log_sync_if_due(now_ms);
         return;
+    }
 
     if (log_task.head > 0 && log_task.file) {
         int n = hal_fs_write(log_task.file, log_task.buf, log_task.head);
+        if (n > 0)
+            log_task.unsynced = true;
         if (n == log_task.head)
             log_task.head = 0;
         /* A short or failed write keeps the bytes: the next window retries. */
@@ -906,32 +972,13 @@ void hal_flash_service(uint32_t now_ms) {
     board_flash_service(now_ms);
 }
 
-static const char *hw_evt_name(uint8_t evt) {
-    switch (evt) {
-    case 1:
-        return "LAUNCH";
-    case 2:
-        return "APOGEE";
-    case 3:
-        return "PYRO1";
-    case 4:
-        return "PYRO2";
-    case 7:
-        return "LANDING";
-    case 9:
-        return "ARMED";
-    default:
-        return "";
-    }
-}
-
 void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
                     uint8_t event) {
     if (!log_task.active)
         return;
     char line[80];
     int n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%s\n", (unsigned long)time_ms, (long)pressure_pa,
-                     (long)altitude_cm, state, under_thrust, hw_evt_name(event));
+                     (long)altitude_cm, state, under_thrust, flight_event_name(event));
     if (n <= 0)
         return;
     /* Do not flush synchronously here: this runs on the flight path, and a

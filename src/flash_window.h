@@ -10,9 +10,9 @@
  * lua_app_service() while it spins. See docs/core1_hazard.md.
  *
  * A flash write that arrives outside the window fails instead of blocking.
- * littlefs_driver.c returns LFS_ERR_IO, hal_common.c refuses the open, and
- * http_server.c hands the segment back to lwIP. Each caller retries a period
- * later.
+ * littlefs_driver.c returns LFS_ERR_IO and hal_common.c refuses the open. An
+ * HTTP request that writes flash leaves its bytes in its ring until the window
+ * opens, and TCP flow control holds the sender meanwhile.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -45,8 +45,8 @@ uint32_t flash_window_skips(void);
 void flash_window_refused(void);
 uint32_t flash_window_refusals(void);
 
-/* A request handed back to lwIP unparsed. Lossless, since lwIP redelivers it
- * a period later. A large count means core1 is taking most of the slack. */
+/* A flash-writing HTTP request found the window shut and waits; counted once
+ * per wait. A large count means core1 is taking most of the slack. */
 void flash_window_deferred(void);
 uint32_t flash_window_deferrals(void);
 

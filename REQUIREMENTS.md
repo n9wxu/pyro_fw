@@ -32,24 +32,26 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **PYR-MODE-02**: The system shall support an AGL mode that fires when altitude drops below a threshold. ← SYS-DEPLOY-01
 - **PYR-MODE-03**: The system shall support a FALLEN mode that fires when altitude drops a specified distance from maximum. ← SYS-DEPLOY-01
 - **PYR-MODE-04**: The system shall support a SPEED mode that fires when descent speed exceeds a threshold. ← SYS-DEPLOY-01
+- **PYR-MODE-05**: AGL and FALLEN triggers shall compare the altitude corrected for the pressure filter's lag (rate × time constant), so that a trigger fires at its configured altitude on a fast descent. ← PYR-MODE-02, PYR-MODE-03
 
 #### Firing Safety
 - **PYR-SAFE-01**: The system shall not fire a channel that has no continuity. ← SYS-DEPLOY-03
 - **PYR-DEPLOY-01**: The system shall allow both channels to deploy on a single flight event, so that a low flight can put out drogue and main together. ← SYS-DEPLOY-02
-- **PYR-DEPLOY-02**: The system shall not energise both channels at the same instant. This is a current limit, not a sequencing rule: both igniters share one common element, and on a PTC-protected board the combined draw can trip it and fire neither. ← SYS-DEPLOY-02
+- **PYR-DEPLOY-02**: The system shall not energise both channels at the same instant, whether the fire comes from the flight or from a ground test. This is a current limit, not a sequencing rule: both igniters share one common element, and on a PTC-protected board the combined draw can trip it and fire neither. ← SYS-DEPLOY-02
+- **PYR-FIRE-01**: The system shall record a channel as fired only when the board energised it. A fire command the board refuses shall be recorded as a refusal, in the flight log and on `/api/status`, and shall not be repeated. ← SYS-DEPLOY-01, DAT-04
 - **PYR-SAFE-03**: The system shall fire each channel at most once per flight (except re-fire). ← SYS-DEPLOY-02
 - **PYR-SAFE-04**: The system shall not fire any pyro before apogee is detected. ← SYS-DEPLOY-03
 
 ### L4 Implementation Requirements
 
 #### Launch Detection
-- **FLT-LAUNCH-01**: The system shall transition to ASCENT when filtered altitude exceeds 100 feet (3048 cm) above the ground reference. ← FLT-PHASE-01
+- **FLT-LAUNCH-01**: The system shall transition to ASCENT when filtered altitude exceeds 100 feet (3048 cm) above the ground reference, and never while a USB host is attached (USB-01). ← FLT-PHASE-01
 - **FLT-LAUNCH-02**: The system shall remain in PAD_IDLE when altitude is at or below 100 feet. ← FLT-PHASE-01
-- **FLT-LAUNCH-03**: The system shall record launch time by backdating to the first sample above 50cm, at the sensor's sample interval. ← FLT-PHASE-01
+- **FLT-LAUNCH-03**: The system shall record launch time as the timestamp of the first sample above 50 cm since the last sample at or below it. ← FLT-PHASE-01
 - **FLT-LAUNCH-04**: The system shall log a LAUNCH event at the transition. ← FLT-PHASE-01
 - **FLT-LAUNCH-05**: The system shall stop the buzzer upon launch detection. ← FLT-PHASE-01
-- **FLT-LAUNCH-06**: The system shall require altitude gain exceeding 10 meters within 2 seconds to confirm launch. ← FLT-PHASE-01
-- **FLT-LAUNCH-07**: The system shall require vertical speed exceeding 5 m/s at the time altitude exceeds 10 meters. ← FLT-PHASE-01
+- **FLT-LAUNCH-06**: Withdrawn. The launch height is FLT-LAUNCH-01's 100 feet; there is no separate gain-within-a-window test (DD-016).
+- **FLT-LAUNCH-07**: The system shall require vertical speed exceeding 5 m/s on the sample at which altitude exceeds 100 feet. ← FLT-PHASE-01
 
 #### Ground Reference
 - **GND-CAL-01**: The ground reference shall be a 5-second rolling mean of the filtered pressure. ← FLT-PHASE-01
@@ -85,13 +87,16 @@ Each derived requirement traces to its parent with `← parent_id`.
 #### Pyro Re-fire
 - **PYR-REFIRE-01**: The system shall re-fire the drogue channel once, 2 seconds after the initial fire, if the descent rate has not steadied under a canopy and the channel's post-fire continuity check shows it never opened. The retry is limited to one attempt per flight. ← SYS-DEPLOY-01
 - **PYR-REFIRE-02**: The system shall not re-fire a channel whose post-fire continuity check shows it opened. An opened channel fired its charge, so the canopy failed mechanically and a second attempt cannot help. ← SYS-DEPLOY-01
-- **FLT-EMRG-01**: When the drogue has been commanded and the descent rate has not steadied under a canopy, the system shall deploy the main early, overriding its configured trigger. ← SYS-DEPLOY-01
+- **FLT-EMRG-01**: When the drogue has been commanded (fired or refused) and, once it has had 2 seconds to deploy, the rocket descends faster than 35 m/s without being slowed for 1 second, the system shall deploy the main early, overriding its configured trigger. ← SYS-DEPLOY-01
 - **FLT-EMRG-02**: The emergency ladder shall not act on a descent rate alone. A rocket in free fall toward a trigger it has not yet reached is following the flight plan, however fast it is descending. ← SYS-DEPLOY-01
-- **FLT-BOOT-11**: The system shall write a pad marker recording the ground pressure after 10 seconds of PAD_IDLE, and shall write no flash during ascent. ← SYS-DEPLOY-01
-- **FLT-BOOT-12**: After a power event, the system shall recover the ground reference from the pad marker rather than recalibrating, if and only if the barometer shows it is above the recorded ground AND moving. ← FLT-BOOT-11
-- **FLT-BOOT-13**: The system shall not treat a stationary board as airborne, whatever its apparent altitude. ← FLT-BOOT-12
-- **FLT-LOG-05**: The flight log shall not write flash until its RAM buffer has filled once, so that the launch shock window passes without a write in progress. ← FLT-BOOT-11
-- **LUA-IO-01**: The web UI shall export the Lua program to a local file and import one back, so a program survives the filesystem wipe a firmware update performs. ← SYS-CFG-01
+- **FLT-EMRG-03**: The emergency ladder shall not act on the absence of a settled descent. A drogue opened at apogee is still accelerating toward its terminal rate for seconds, so "not yet settled" is true of a working drogue. ← FLT-EMRG-01
+- **FLT-EMRG-04**: An emergency deployment shall be recorded as one: a MAIN_FORCED event in the flight log, and `main_forced` and the retry count on `/api/status`. ← FLT-EMRG-01, DAT-04
+- **FLT-BROWN-01**: The system shall write a pad marker recording the ground pressure after 10 seconds of PAD_IDLE with no USB host attached (USB-01, USB-04), so that nothing needs to be written at launch. ← SYS-DEPLOY-01
+- **FLT-BROWN-02**: After a power event, the system shall recover the ground reference from the pad marker rather than recalibrating, if and only if the barometer shows it is above the recorded ground AND moving, AND no USB host is attached (USB-01). ← FLT-BROWN-01
+- **FLT-BROWN-03**: The system shall not treat a stationary board as airborne, whatever its apparent altitude. ← FLT-BROWN-02
+- **FLT-LOG-05**: The flight log shall not write flash until its RAM buffer has filled once, so that the launch shock window passes without a write in progress. ← FLT-BROWN-01
+- **FLT-LOG-06**: The flight log shall be committed to the filesystem at least once per second while it is written, so that a flight which never lands keeps its record. Every write and commit shall run in the flash window between core1 work units. ← SYS-DATA-01
+- **LUA-IO-01**: The web UI shall export the Lua program to a local file and import one back, so a program survives the loss of the filesystem that holds it -- a failed mount formats it, and a flash-geometry change moves it. (An OTA update does not: verified to leave every file in place.) ← SYS-CFG-01
 - **LUA-IO-02**: An imported program shall land in the editor and not on the device, so a mis-picked file costs nothing until it is saved. ← LUA-IO-01
 - **PIN-LABEL-01**: Every assignable pin shall carry the connector designator silkscreened on the board, and the web UI shall show it beside the GPIO number. ← SYS-CFG-01
 - **PIN-BUZZ-01**: The buzzer shall be assignable to any pad the board declares capable of driving one, defaulting to the board's own buzzer pad where it fits one. ← SYS-CFG-01
@@ -118,6 +123,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **BUZ-CODE-11**: The outcomes, their meanings and the personalities shall be served to the web interface so the firmware is the only place the vocabulary is written down. ← BUZ-CODE-04
 - **BUZ-CODE-12**: A board with no beep.ini shall write the shipped personalities out. ← BUZ-CODE-04
 - **BUZ-CODE-13**: The shipped defaults shall follow the Eggtimer Rocketry convention: a rapid chirp for OK to fly, 5 beeps for a drogue-channel fault, 4 for a main-channel fault, 2 for a hardware fault. ← BUZ-CODE-01
+- **BUZ-CODE-14**: A valid beep table that cannot be stored shall be reported as a storage failure, not as a validation failure. ← BUZ-CODE-10
 
 ### Power-up Self-Test
 - **FLT-BOOT-11**: The system shall test the pressure sensor before the pyro channels. ← FLT-PHASE-01
@@ -125,7 +131,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-BOOT-13**: The system shall enter FAULT when calibration produces no samples within 10 seconds, rather than proceeding to PAD_IDLE. ← FLT-BOOT-11
 - **FLT-BOOT-14**: The system shall enter FAULT, and announce system failure, when the filesystem does not mount. ← FLT-BOOT-11
 - **FLT-BOOT-15**: The system shall report every pad fault found, not only the first. ← SYS-STATUS-02
-- **FLT-BOOT-16**: The system shall not report a continuity fault for a pyro channel released to Lua. ← FLT-BOOT-15
+- **FLT-BOOT-16**: The system shall not report a continuity fault for a pyro channel released to Lua or configured as disabled. ← FLT-BOOT-15
 
 #### Sampling Rates (v2.0)
 - **FLT-RATE-01**: The system shall sample pressure at 50Hz (20ms) during PAD_IDLE, ASCENT, and DESCENT. ← FLT-PHASE-01, DD-001
@@ -146,12 +152,13 @@ Each derived requirement traces to its parent with `← parent_id`.
 
 ### L3 Subsystem Requirements
 - **PYR-CONT-01**: The system shall check pyro continuity at least once per second during PAD_IDLE. ← SYS-STATUS-02
+- **PYR-CONT-03**: The pad diagnosis and announcement shall be re-derived at every continuity check, so that a fault which appears or clears on the pad changes the announcement without a power cycle. On USB the verdict is re-derived but not said (USB-02). ← PYR-CONT-01, FLT-BOOT-15
 - **PYR-CONT-02**: The system shall report continuity status (good, open, short) for each channel. ← SYS-STATUS-02
 - **BUZ-STATUS-01**: The system shall emit distinct beep codes for each fault condition. ← SYS-STATUS-01
 
 ### L4 Implementation Requirements
 - **BUZ-01**: The system shall announce one of four outcomes: OK to fly, check pyro 1, check pyro 2, system failure. ← BUZ-STATUS-01
-- **BUZ-02**: The announcement shall repeat on a configurable cadence, defaulting to every 5 s until launch, so that silence means a fault rather than a finished message. ← BUZ-STATUS-01
+- **BUZ-02**: The announcement shall repeat on a configurable cadence, defaulting to every 5 s until launch, so that silence means a fault rather than a finished message. Not while a USB host is attached (USB-02). ← BUZ-STATUS-01
 - **FLT-BOOT-01**: The system shall complete a non-blocking boot sequence before entering PAD_IDLE. ← SYS-STATUS-01
 - **FLT-BOOT-04**: The system shall wait at least 500ms after power-on before sensor communication. ← FLT-BOOT-01
 - **FLT-BOOT-05**: The system shall detect and initialize the pressure sensor during boot. ← FLT-BOOT-01
@@ -176,10 +183,10 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **DAT-01**: The system shall store flight samples in a ring buffer of at least 4096 entries. ← SYS-DATA-01
 - **DAT-02**: Each sample shall include: time, pressure, altitude, state, thrust flag, event. ← SYS-DATA-01
 - **DAT-03**: Events shall be tagged on existing data samples, not stored as separate records. ← SYS-DATA-01
-- **DAT-04**: The system shall log events: LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING. ← SYS-DATA-01
+- **DAT-04**: The system shall log events: LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING, and when they occur PYRO1/2_REFUSED, PYRO1/2_NOPEN, PYRO1/2_FAULT and MAIN_FORCED. ← SYS-DATA-01
 - **DAT-06**: The system shall export flight data as CSV to persistent storage after landing. ← SYS-DATA-02
 - **DAT-07**: The CSV shall include a metadata header with configuration and flight summary. ← SYS-DATA-02
-- **BUZ-03**: The system shall play an altitude beep-out sequence after landing. ← SYS-DATA-03
+- **BUZ-03**: The system shall play an altitude beep-out sequence after landing, holding it while a USB host is attached and resuming it when the host goes (USB-02, USB-04). ← SYS-DATA-03
 - **BUZ-04**: The altitude beep-out shall encode each digit of the max altitude in configured units. ← BUZ-03
 - **BUZ-05**: The digit 0 shall be encoded as 10 beeps. ← BUZ-04
 - **BUZ-06**: The altitude beep-out shall repeat indefinitely. ← BUZ-03
@@ -201,9 +208,9 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **CFG-01**: The system shall store configuration in an INI-format file on persistent storage. ← SYS-CFG-01
 - **CFG-02**: The system shall parse fields: id, name, pyro1_mode, pyro1_value, pyro2_mode, pyro2_value, units. ← CFG-01
 - **CFG-03**: The system shall support unit settings: cm, m, ft. ← CFG-02
-- **CFG-04**: The system shall support pyro mode settings: delay, agl, fallen, speed. ← CFG-02
+- **CFG-04**: The system shall support pyro mode settings: none (disabled), delay, agl, fallen, speed. A mode the system cannot name shall be stored as none. ← CFG-02
 - **CFG-05**: The system shall create a default configuration if the config file is missing. ← SYS-CFG-01
-- **WEB-UI-02**: The web interface shall provide a guided configuration editor with input validation. ← SYS-CFG-02, SYS-CFG-03
+- **WEB-UI-02**: The web interface shall provide a guided configuration editor with input validation. Changing units shall convert the configured altitudes and speeds rather than reinterpret them, and a field with a length limit shall state it. ← SYS-CFG-02, SYS-CFG-03
 - **WEB-UI-03**: The web interface shall warn when configuration has been saved but not applied. ← SYS-CFG-02
 
 ### L4 Implementation Requirements
@@ -233,6 +240,8 @@ Each derived requirement traces to its parent with `← parent_id`.
 ### L4 Implementation Requirements
 - **SNS-PRES-03**: The pressure filter shall initialize to the first raw reading without smoothing. ← SNS-PRES-02
 - **SNS-PRES-04**: The pressure filter shall advance by at least 1 Pa per sample when the raw value differs from the filtered value. ← SNS-PRES-02
+- **SNS-PRES-05**: A sensor conversion shall be read no sooner than its worst-case conversion time after the command that started it. ← SNS-PRES-01
+- **SNS-PRES-06**: A reading the sensor cannot produce -- a zero conversion, or a pressure outside its rated range -- shall be discarded and counted, not filtered. ← SNS-PRES-02
 - **SNS-ALT-02**: The system shall clamp computed altitude to a maximum of 8000 meters. ← SNS-ALT-01
 - **SNS-ALT-03**: The system shall clamp computed altitude to a minimum of 0 meters. ← SNS-ALT-01
 
@@ -251,11 +260,11 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **TEL-02**: Each telemetry sentence shall include an XOR checksum. ← SYS-TEL-01
 - **TEL-03**: The system shall output telemetry at 10Hz during ASCENT and DESCENT. ← SYS-TEL-01
 - **TEL-04**: The system shall output telemetry at 1Hz during PAD_IDLE and LANDED. ← SYS-TEL-01
-- **TEL-05**: The system shall not output telemetry during boot states. ← SYS-TEL-01
+- **TEL-05**: The system shall not output telemetry during boot states or in FAULT. A faulted board shall instead send a `!FAULT` diagnostic line every 5 s. ← SYS-TEL-01
 
 ### L4 Implementation Requirements
 - **TEL-06**: Each sentence shall include: sequence, state, altitude, speed, max altitude, pressure, flight time, flags. ← TEL-01
-- **TEL-07**: The state field shall map: PAD_IDLE=0, ASCENT=1, DESCENT=2, LANDED=3. ← TEL-06
+- **TEL-07**: The state field shall map: PAD_IDLE=0, ASCENT=1, FALLING=2, DROGUE_DESCENT=3, CHUTE_DESCENT=4, LANDED=5. ← TEL-06
 - **TEL-08**: The flags field shall encode: P1 continuity, P2 continuity, P1 fired, P2 fired, armed, apogee. ← TEL-06
 - **TEL-09**: The sequence number shall increment with each sentence. ← TEL-01
 - **TEL-10**: The thrust flag shall only be set during ASCENT when under thrust. ← TEL-06
@@ -297,12 +306,19 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **WEB-API-01**: The system shall serve device status as JSON at `/api/status`. ← SYS-WEB-01
 - **WEB-API-02**: The system shall serve the configuration file at `/api/config` (GET). ← SYS-WEB-01
 - **WEB-API-03**: The system shall accept configuration updates at `/api/config` (POST) and write to persistent storage. ← SYS-WEB-01
-- **WEB-API-04**: The system shall accept firmware updates at `/api/ota` (POST). ← SYS-WEB-01
+- **WEB-API-04**: The system shall accept firmware updates at `/api/ota` (POST), answer before it restarts, and answer `Expect: 100-continue`. ← SYS-WEB-01
 - **WEB-API-05**: The system shall trigger a device restart at `/api/reboot` (POST). ← SYS-WEB-01
 - **WEB-API-06**: The system shall serve flight data as CSV at `/api/flight.csv`. ← SYS-WEB-01
 - **WEB-API-07**: All API responses shall include CORS headers. ← SYS-WEB-01
+- **WEB-API-08**: The system shall refuse every POST, and the bench capture, while the rocket is in flight (ASCENT through CHUTE_DESCENT). ← PYR-SAFE-04, SYS-WEB-01
+- **WEB-API-09**: The system shall erase the flight log on request at `/api/flight/erase` (POST), unless the log is being written. ← DAT-06
+- **WEB-HTTP-01**: The HTTP server shall treat each connection as a byte stream: a request shall be answered the same however TCP divides it into segments, including a header block or body split at any byte and more than one request in a single segment. ← SYS-WEB-01
+- **WEB-HTTP-02**: Every response shall be framed by Content-Length and carry Connection: close; one request is served per connection. ← SYS-WEB-01
+- **WEB-HTTP-03**: The server shall read a request body only as fast as it consumes it, so that TCP flow control, not a refused segment, holds back a sender while the body waits for the flash window. ← SYS-WEB-01, DD-035
+- **WEB-HTTP-04**: The server shall refuse a malformed or oversized request with its HTTP status: 400 malformed, 405 unsupported method (with Allow), 411 no length, 413 body too large, 414 path too long, 431 header block too large. ← SYS-WEB-01
+- **WEB-HTTP-05**: The server shall do its HTTP work from the main loop, never inside a network stack callback, and shall not depend on the stack beyond moving bytes, so that the stack can be replaced. ← SYS-WEB-01
 - **WEB-UI-01**: The web interface shall display device status in the configured units. ← SYS-WEB-01
-- **WEB-UI-04**: The web interface shall display flight summary data and allow CSV download. ← SYS-WEB-01
+- **WEB-UI-04**: The web interface shall display flight summary data and allow CSV download. The summary shall come from the flight log alone, be re-read whenever it is shown, and name the flight it describes; flight time shall stop at the landing. ← SYS-WEB-01
 - **WEB-UI-05**: The web interface shall support firmware upload and update checking. ← SYS-WEB-01
 
 ---
@@ -410,7 +426,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 ### L3 Subsystem Requirements
 - **CFG-TABLE-01**: All configuration fields shall be defined in a single table that generates the struct, parser, serializer, and defaults. ← SYS-CFG-04 ✅ config_fields.h X-macro
 - **CFG-TABLE-02**: A round-trip test shall automatically verify every field survives serialize → parse. ← CFG-TABLE-01 ✅ test_config.c (15 tests)
-- **CFG-SUBSYS-01**: Each subsystem (telemetry, logging, buzzer) shall have configurable parameters. ← UN-4 ✅
+- **CFG-SUBSYS-01**: Each subsystem (telemetry, logging, buzzer) shall have configurable parameters: `telem_format` and `telem_rate_hz`, `log_rate_hz`, and the beep personalities in `beep.ini`. Every configuration key shall be read by something. ← UN-4 ✅
 
 ## 16. Ground Test (v2.0) ✅ Done
 
@@ -425,3 +441,22 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **GND-TEST-02**: The system shall accept serial commands to arm and fire individual pyro channels for ground testing. ← SYS-TEST-01 ✅
 - **GND-TEST-03**: Ground test arm shall require a multi-step confirmation and auto-disarm after 3 seconds. ← SYS-TEST-01 ✅
 - **GND-TEST-04**: Ground test shall be available only during PAD_IDLE state. ← PYR-SAFE-04 ✅
+
+## 17. On USB
+
+### L1 User Need
+- **UN-13**: The user needs a board on the bench, plugged into a computer or a charger, to stay quiet and never behave as though it were flying.
+
+### L2 System Requirements
+- **SYS-USB-01**: While attached to USB, the system shall not detect a flight and shall not announce its status, unless the operator has put it in test mode. ← UN-13
+
+### L3 Subsystem Requirements
+- **USB-01**: While a USB host is attached and test mode is off, the system shall not declare launch, shall not rejoin a flight after a power event, and shall not write the pad marker. ← SYS-USB-01
+- **USB-02**: While a USB host is attached and test mode is off, the system shall not announce the pad verdict, a system failure, or the altitude beep-out. The verdict and diagnosis stay on /api/status. This overrides BUZ-02, BUZ-03, FLT-BOOT-12 and FLT-BOOT-14 while attached. ← SYS-USB-01
+- **USB-03**: On attach, and on leaving test mode while attached, the system shall play one OK-on-USB double chirp, and nothing more of its own until detached. Sounds an operator asks for (the web beep audition, the ground-test BEEP commands) still play. ← SYS-USB-01
+- **USB-04**: On detach, the system shall resume what it would have been saying, and restart the pad marker's 10 s dwell. ← SYS-USB-01
+- **USB-05**: From launch to landing, the attach state shall be ignored. ← SYS-USB-01
+- **USB-06**: Attachment to a charger shall count as USB attachment. ← SYS-USB-01 ❌ Not possible on MK1A/MK1B/MK1C: VBUS reaches only the charger IC. See DD-037.
+- **USB-07**: The system shall judge a host attached only on evidence that a host is present, so that every detection error leaves launch detection on. ← SYS-USB-01, SYS-DEPLOY-01
+- **USB-08**: An operator-selected test mode shall make the system behave on USB as it does on battery: launch detection, deployment, the pad marker and every announcement. It shall be held in RAM so that every boot starts with it off, shall not change from launch to landing, shall be set from the web interface after a confirmation, and shall be reported on /api/status. ← SYS-USB-01, UN-12
+

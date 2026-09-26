@@ -7,10 +7,54 @@ Host-compiled tests for the Pyro MK1B flight computer. All tests run on the buil
 ```bash
 cd build
 
-ninja host_tests          # 39 unit tests
-ninja integration_tests   # 12 integration tests (OpenRocket data)
-ninja closedloop_tests    # 13 closed-loop tests (32+ simulated flights)
+ninja host_tests          # 58 unit tests
+ninja integration_tests   # 46 integration tests (OpenRocket data)
+ninja closedloop_tests    # 25 closed-loop tests (60+ simulated flights)
 ```
+
+The other host suites (`config_tests`, `config_persistence_tests`,
+`buzzer_tests`, `beep_tests`, `brownout_tests`, `pin_assign_tests`,
+`pin_caps_tests`, `plant_tests`, `lua_tests`) build and run the same way, and
+`test/web/run_web_tests.sh` runs the Playwright suite against the mock server
+in all three modes.
+
+## Code review 2026-09-24 regressions
+
+Each finding the review proved, or that was found while fixing it, has a test
+that fails on the code it was reported against. See
+`docs/code_review_2026-09-24_resolution.md` for the mapping.
+
+| Suite | Tests |
+|-------|-------|
+| config | `test_config_mode_none_round_trips`, `test_config_unknown_mode_serialises_as_none`, `test_config_default_name_is_not_truncated`, `test_config_writes_no_inert_keys` |
+| unit | `test_REV03_*`, `test_REV04_*`, `test_REV07_*`, `test_REV08_*`, `test_REV09_*`, `test_REV12_*`, `test_REV18_*`, `test_REV_NEW_disabled_channel_is_not_a_fault` |
+| integration | `test_FLT_LAUNCH_03_backdate` (now exact), `test_REV06_*`, `test_REV11_*`, `test_REV12_log_rate_*`, `test_REV_NEW_log_header_*`, `test_BRN_INT_05_*` |
+| closed-loop | `test_REV01_working_drogue_main_at_its_trigger`, `test_REV01_failed_drogue_brings_the_main_forward`, `test_REV05_*`, `test_REV16_*`; every mode suite now asserts no forced main and AGL channels within 8 m |
+| buzzer | rewritten against `buzzer_play_spec()`; `test_BUZ_ACT_04_*`, `test_BEEP_STORE_01/02` |
+| web | flight data refresh, naming, erase and column parsing; unit conversion; name limit; one Save; no beep mode |
+
+## The HTTP server as a byte stream (WEB-HTTP-01..05)
+
+`test_http.c` (target `http_tests`) drives `http_conn.c` through a fake
+transport: each request whole, split at every byte position, byte by byte and
+in random pieces, drained through windows of 1 to 9 bytes. It covers framing,
+long header blocks, HEAD, refusals (400/405/411/413/414/431), a peer that
+closes early, a streamed body five times the ring into a sink that refuses,
+a streamed response, a response larger than tx, and `Expect: 100-continue`.
+`support/http_stream_check.py <board-ip>` does the same over raw sockets on a
+board.
+
+## On USB (USB-01..07)
+
+| Suite | Tests |
+|-------|-------|
+| unit | `test_USB_01..06`: no launch, no announcement, the beep-out and fault stop and resume, ignored in flight. `test_USB_07..10`: test mode flies and announces on USB, chirps on leaving, is off at boot, does not change in flight |
+| integration | `test_USB_INT_01` (no marker on USB, dwell restarts on detach, one chirp per attach), `test_USB_INT_02` (no flight recovery on USB), `test_USB_INT_03` (test mode writes the marker on USB) |
+| buzzer | `test_BUZ_PAT_10_usb_ok_is_one_double_chirp` |
+| web | the USB row says grounded; test mode asks first, warns while on and turns off; declining leaves it off |
+
+`test/web/hw_ui_check.js <board-ip>` runs the read-only UI checks against a real
+board, and `support/api_check.py <board-ip>` the HTTP ones.
 
 All three run automatically in GitHub Actions CI on every push.
 

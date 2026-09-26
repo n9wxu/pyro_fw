@@ -323,6 +323,8 @@ add_executable(pyro_fw_c
     src/usb_descriptors.c
     src/net_glue.c
     src/http_server.c
+    src/http_conn.c
+    src/net_ring.c
     src/reset_interface.c
     src/littlefs_driver.c
     src/flash_window.c
@@ -611,6 +613,9 @@ add_custom_target(sim
                ${CMAKE_CURRENT_LIST_DIR}/sim/main_sim.c
                ${PYRO_HOST_HAL_SOURCES}
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
                ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
@@ -693,6 +698,22 @@ add_custom_target(brownout_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_brownout
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Brownout recovery decision tests"
+)
+
+# The HTTP engine over a byte stream: no lwIP, no littlefs.
+add_custom_target(http_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building HTTP stream tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_http.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/http_conn.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/net_ring.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_http
+    COMMAND ${CMAKE_COMMAND} -E echo "Running HTTP stream tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_http
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "HTTP stream parser and framing tests"
 )
 
 # The beep vocabulary: the rules half, with no file I/O, like pin_assign.

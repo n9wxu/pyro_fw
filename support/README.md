@@ -7,6 +7,8 @@ Scripts for flashing, testing, and managing the Pyro MK1B flight computer.
 | Script | Purpose |
 |--------|---------|
 | `test_network.py` | Comprehensive network/API test suite with TUI |
+| `http_stream_check.py` | The HTTP server over raw sockets: requests split byte by byte, bodies in later writes, coalesced requests, odd-chunk uploads round-tripped, parallel fetches past a stalled connection (rewrites /www/app.js and index.html with the local copies) |
+| `api_check.py` | Bench check of every HTTP route, the config round trip, the pad diagnosis, silence on USB, and test mode (erases the flight log; about 15 s in test mode) |
 | `flash_picotool.sh` | Flash bootloader + app via picotool |
 | `upload_fw.sh` | OTA firmware update via HTTP |
 | `upload_www.sh` | Upload web files to device |

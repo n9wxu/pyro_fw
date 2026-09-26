@@ -37,6 +37,10 @@ typedef struct {
 
 #define PP_CAL_SAMPLES 10 /* number of raw samples for ground calibration */
 
+/* The pressure filter's time constant. On a steady climb or descent the
+ * filtered altitude trails the rocket by its rate times this. */
+#define PP_FILTER_TAU_MS 500
+
 /* ── Lifecycle ───────────────────────────────────────────────────── */
 
 void pp_init(void);
@@ -55,8 +59,8 @@ bool pp_cal_done(void);
 /* Returns the ground pressure computed during calibration. */
 int32_t pp_ground_pressure(void);
 
-/* Overwrite the ground pressure reference (PAD_IDLE tracking and launch snap).
- * Only valid while PP_RUNNING; ignored otherwise. */
+/* Overwrite the ground pressure reference. Only valid while PP_RUNNING;
+ * ignored otherwise. */
 void pp_set_ground_pressure(int32_t pa);
 
 /* ── The ground reference ─────────────────────────────────────────
@@ -66,16 +70,15 @@ void pp_set_ground_pressure(int32_t pa);
  * matters: pressure sits around 101 kPa and is nowhere near the zero that
  * altitude is clamped at, so the mean carries no clamp bias.
  *
- * A boxcar rather than the 60-second IIR it replaces, because a boxcar
- * forgets: the value frozen at launch is the mean of the last five seconds
- * before it, with nothing older leaking in.
+ * A boxcar rather than an IIR, because a boxcar forgets: the value frozen at
+ * launch is the mean of the last five seconds before it, with nothing older
+ * leaking in.
  *
  * FROZEN AT LAUNCH, NOT SNAPPED
  *
- * It used to be snapped to the instantaneous reading at launch detection, so
- * T+0 altitude was zero by definition -- which threw away the 100 ft the
- * rocket had already climbed to trip the detector. Freezing keeps it, and
- * every altitude for the rest of the flight is that much truer. */
+ * Do not snap it to the reading at launch detection: that defines T+0 as zero
+ * altitude and throws away the 100 ft the rocket climbed to trip the
+ * detector. Frozen, every altitude for the rest of the flight keeps it. */
 /* A sample this far from the current reference is not the pad.
  *
  * Without this the mean chases a climbing rocket: a launch takes about a

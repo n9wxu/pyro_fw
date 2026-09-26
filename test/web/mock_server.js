@@ -25,7 +25,7 @@ const DEFAULTS = {
     pyro1_adc: 48, pyro2_adc: 52, pyro1_fired: false, pyro2_fired: false,
     armed: false, flight_ms: 0, uptime: 5000, fw_version: '1.3.0',
     pyro1_mode: 'delay', pyro1_value: 0, pyro2_mode: 'agl', pyro2_value: 300,
-    units: 1, rocket_id: 'PYRO001', rocket_name: 'My Rocke'
+    units: 1, rocket_id: 'PYRO001', rocket_name: 'MyRocket'
   },
   configured: {
     state: 'PAD_IDLE', alt_cm: 0, max_alt_cm: 0, vspeed_cms: 0,
@@ -46,6 +46,9 @@ const DEFAULTS = {
 };
 
 let status = JSON.parse(JSON.stringify(DEFAULTS[MODE]));
+/* Reached over USB, as every real board is. */
+Object.assign(status, {usb_attached: true, test_mode: false, buzzer_active: false});
+const FLYING = ['ASCENT', 'FALLING', 'DROGUE_DESCENT', 'CHUTE_DESCENT'];
 let configIni = buildIni(status);
 let pendingReboot = false;
 let pendingConfig = null;
@@ -59,10 +62,18 @@ function buildIni(s) {
 
 /* ── Flight CSV for flown mode ────────────────────────────────────── */
 /* 10,000ft flight: boost 0-3s, coast 3-8s, apogee ~8s at 304800cm,
-   drogue descent 8-28s, main at 500ft(15240cm) ~28s, landing ~32s */
+   drogue descent 8-28s, main at 500ft(15240cm) ~28s, landing ~32s.
+
+   The firmware's own format: a '#' header, then six columns with the thrust
+   flag before the event, and text rows whose numeric columns are empty. The
+   thrust column is what a parser reading the event from column 5 trips on. */
+
+const EMPTY_LOG = 'time_ms,pressure_pa,altitude_cm,state,thrust,event\r\n';
 
 function generateFlightCSV() {
-  let lines = ['time_ms,pressure_pa,altitude_cm,state,event'];
+  let lines = ['# Pyro MK1B Flight Data', '# ID: RACE01', '# Name: Screamer', '# Pyro1: delay 0',
+               '# Pyro2: agl 500', '# Units: ft', '# Ground Pa: 101325',
+               'time_ms,pressure_pa,altitude_cm,state,thrust,event'];
   const g = 101325;
   const pts = [
     // time_ms, alt_cm, state, event
@@ -96,10 +107,14 @@ function generateFlightCSV() {
   ];
   for (const [t, alt, st, evt] of pts) {
     const pa = Math.round(g - alt * 10 / 83);
-    lines.push(`${t},${pa},${alt},${st},${evt}`);
+    const thrust = t > 0 && t <= 3000 ? 1 : 0;
+    lines.push(`${t},${pa},${alt},${st},${thrust},${evt}`);
+    if (t === 5000) lines.push('5000,,,,,LUA coasting');
   }
   return lines.join('\n') + '\n';
 }
+
+let flightCsv = MODE === 'flown' ? generateFlightCSV() : EMPTY_LOG;
 
 /* ── HTTP Server ──────────────────────────────────────────────────── */
 
@@ -313,9 +328,41 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.url === '/api/flight.csv' && req.method === 'GET') {
-    const csv = MODE === 'flown' ? generateFlightCSV() : 'time_ms,pressure_pa,altitude_cm,state,event\n';
     res.writeHead(200, {...cors, 'Content-Type':'text/csv', 'Content-Disposition':'attachment; filename="flight.csv"'});
-    res.end(csv);
+    res.end(flightCsv);
+    return;
+  }
+
+  if ((req.url === '/api/test_mode/on' || req.url === '/api/test_mode/off') && req.method === 'POST') {
+    if (FLYING.includes(status.state)) {
+      res.writeHead(409, {...cors, 'Content-Type':'application/json'});
+      res.end(JSON.stringify({error: 'refused while the rocket is in flight'}));
+    } else {
+      status.test_mode = req.url.endsWith('/on');
+      res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+      res.end(JSON.stringify({test_mode: status.test_mode}));
+    }
+    return;
+  }
+
+  if (req.url === '/api/flight/erase' && req.method === 'POST') {
+    flightCsv = EMPTY_LOG;
+    res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+    res.end(JSON.stringify({status:'erased'}));
+    return;
+  }
+
+  /* Test hooks: a flight happens while the page is open, or the log goes
+     back to what this mode started with. */
+  if (req.url === '/api/_test/fly' && req.method === 'POST') {
+    flightCsv = generateFlightCSV();
+    res.writeHead(200, cors); res.end('ok');
+    return;
+  }
+  if (req.url === '/api/_test/reset' && req.method === 'POST') {
+    flightCsv = MODE === 'flown' ? generateFlightCSV() : EMPTY_LOG;
+    status.test_mode = false;
+    res.writeHead(200, cors); res.end('ok');
     return;
   }
 

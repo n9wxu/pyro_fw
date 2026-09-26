@@ -71,6 +71,9 @@ void hal_pyro_sample(void);
 void hal_pyro_get(uint8_t channel, hal_continuity_t *out);
 void hal_pyro_fire(uint8_t channel);
 void hal_pyro_update(uint32_t now_ms);
+/* True from the moment hal_pyro_fire() accepts a command until the channel is
+ * de-energised. The flight software reads it straight after the call as the
+ * board's acknowledgement: false there means nothing was energised. */
 bool hal_pyro_is_firing(void);
 bool hal_pyro_fault(uint8_t channel); /* FLAG pin: true = fault during fire */
 

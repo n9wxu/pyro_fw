@@ -34,7 +34,9 @@ void sim_flight_save_csv(void);
 #define G           9.81f
 #define DT          0.001f
 #define GROUND_PA   101325.0f
-#define PAD_DWELL_MS 2000
+/* Long enough for the boot sequence to finish and the 5 s ground reference
+ * to fill: ignite earlier and the board calibrates on the way up. */
+#define PAD_DWELL_MS 9000
 
 #define DROGUE_DRAG  0.8f
 #define MAIN_DRAG    4.0f
