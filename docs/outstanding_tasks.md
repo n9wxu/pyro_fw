@@ -18,13 +18,18 @@ recorded.
 | — | [How every task runs](#how-every-task-runs) | read first |
 | 1 | [Commit the work](#1-commit-the-work) | done, except G4 |
 | 2 | [Decisions](#2-decisions) | you |
-| 3 | [Safety fixes](#3-safety-fixes) | code |
-| 4 | [The pressure chain and the Mach lockout](#4-the-pressure-chain-and-the-mach-lockout) | code |
-| 5 | [Other code defects](#5-other-code-defects) | code, some decisions |
+| 3 | [Safety fixes](#3-safety-fixes) | done |
+| 4 | [The pressure chain and the Mach lockout](#4-the-pressure-chain-and-the-mach-lockout) | done, except T9's switch to ~90 Hz (the T8 logging-rate decision) and every task's G4 |
+| 5 | [Other code defects](#5-other-code-defects) | done, except C10, C6 and U6 (their decisions) |
 | 6 | [Bench checks](#6-bench-checks) | a person or equipment |
 | 7 | [Board changes](#7-board-changes) | hardware design |
-| 8 | [Documentation and housekeeping](#8-documentation-and-housekeeping) | code/docs |
+| 8 | [Documentation and housekeeping](#8-documentation-and-housekeeping) | done |
 | 9 | [Deferred, and not planned](#9-deferred-and-not-planned) | nothing yet |
+
+**G4 is owed for every task since section 1.** Flashing the bench boards
+(OTA) was refused as a production deploy, so no task since has been checked
+on hardware. Each task's note names what its bench check is; section 6
+lists the ones that need a person or equipment.
 
 ---
 
