@@ -1165,7 +1165,7 @@ static void emergency_ladder(flight_context_t *ctx, uint32_t now, bool canopy_wo
 /* [DD-015] Landing, checked in every descent state rather than only under the
  * main. A flight whose drogue never opened still lands, and the log has to be
  * closed on that flight too. */
-#define LANDING_SPEED_CMS 500 /* 5 m/s — slow enough to be "landed" */
+#define LANDING_STILL_CMS 200 /* 2 m/s: the stillness test's own speed */
 
 static bool landing_detected(flight_context_t *ctx, uint32_t now, int32_t prev_altitude) {
     int32_t altitude = ctx->last_altitude;
@@ -1183,11 +1183,15 @@ static bool landing_detected(flight_context_t *ctx, uint32_t now, int32_t prev_a
         ctx->landing_stable_since = 0;
     }
 
-    /* Force landing if descent has run long and the rocket is slow: handles
-     * landing above the pad elevation, where AGL never returns near zero. */
+    /* [FLT-LAND-07] Force landing if descent has run long and the rocket is
+     * still: landing above the pad's elevation, where AGL never comes near
+     * zero. Still, not merely slow -- a main descends at 3-6 m/s (N7) -- and
+     * on a sensor that has not failed, since a stuck one reads as still. */
     uint32_t timeout_s = ctx->config.landing_timeout;
-    return timeout_s > 0 && ctx->descent_start_time > 0 && (now - ctx->descent_start_time) >= timeout_s * 1000 &&
-           abs(ctx->vertical_speed_cms) < LANDING_SPEED_CMS;
+    bool timed_out = timeout_s > 0 && ctx->descent_start_time > 0 &&
+                     (now - ctx->descent_start_time) >= timeout_s * 1000;
+    bool still = abs(ctx->vertical_speed_cms) < LANDING_STILL_CMS && !ctx->fit_suspect;
+    return held(timed_out && still, &ctx->still_since, ctx->last_sample, 1000u);
 }
 
 /* Every descent state reads the same sample and derives the same speed; only

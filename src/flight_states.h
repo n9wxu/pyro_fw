@@ -125,6 +125,7 @@ typedef struct flight_context_t {
     uint32_t last_sample;
     uint32_t last_telemetry;
     uint32_t landing_stable_since;
+    uint32_t still_since; /* the landing timeout's stillness, ts + 1 form [FLT-LAND-07] */
     bool pyro1_fired;
     bool pyro2_fired;
     bool pyro1_continuity_good;

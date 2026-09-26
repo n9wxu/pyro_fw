@@ -70,7 +70,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-LAND-04 | Transition to LANDED | Integration: test_FLT_LAND_04_duration | ✅ |
 | FLT-LAND-05 | Log LANDING event | Integration: test_DAT_04_events | ✅ |
 | FLT-LAND-06 | Stay in LANDED | Integration: state remains LANDED after detection | ✅ |
-| FLT-LAND-07 | Landing timeout | — (N7: it declares LANDED under a main; `docs/outstanding_tasks.md` section 5) | ⚠️ |
+| FLT-LAND-07 | Landing timeout, on stillness | Chain: test_N7_no_landing_under_main (no LANDED under a 5 m/s main, and within 3 s of touchdown on the pad's level and 50 m above it) | ✅ |
 | PYR-REFIRE-01 | One drogue retry at 2 s, only if unopened | Closed-loop: test_PYR_REFIRE_01_refire_ballistic | ✅ |
 | PYR-REFIRE-02 | No retry on an opened channel | Closed-loop: test_PYR_REFIRE_02_no_retry_when_opened | ✅ |
 | FLT-EMRG-01 | Main early on evidence the drogue failed | Closed-loop: test_FLT_EMRG_01, test_REV01_failed_drogue_brings_the_main_forward | ✅ |
@@ -367,8 +367,8 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 205 |
-| ⚠️ Not directly verified (needs a test or hardware) | 35 |
+| ✅ Verified by a host, web or closed-loop test | 206 |
+| ⚠️ Not directly verified (needs a test or hardware) | 34 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 12 |
 

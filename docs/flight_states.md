@@ -302,7 +302,8 @@ Landing needs all three for a continuous 1000 ms:
 `|Δalt| < 100 cm`, `|speed| < 200 cm/s`, `altitude < 3000 cm`.
 
 Or the DD-015 timeout: `landing_timeout` seconds since **apogee** (not since
-main deployment) with `|speed| < 500 cm/s` -- see defect 14.
+main deployment) and stillness, `|speed| < 200 cm/s` held 1 s on a sensor
+that has not failed -- see defect 14.
 
 ### LANDED (8) / FAULT (10)
 Terminal. Flight time freezes at the landing. FAULT keeps serving HTTP and
@@ -478,7 +479,11 @@ guaranteeing it always moves at least 1 Pa toward a bad reading.
 
 **Fixed.** See "The Mach lockout" above.
 
-### 14. The landing timeout declares LANDED under a main — OPEN
+### 14. The landing timeout declares LANDED under a main — FIXED (N7)
+
+The timeout now needs stillness: under 2 m/s for 1 s, on a sensor that has
+not failed (FLT-LAND-07, DD-015). `test_N7_no_landing_under_main`.
+
 
 The DD-015 timeout (FLT-LAND-07) needs only `landing_timeout` seconds since
 apogee and `|speed| < 5 m/s`. A main canopy descends at 3-6 m/s, so on any
@@ -489,7 +494,12 @@ of the descent is not recorded. Reproduced in the host simulator: LANDED at
 ~55 m with the main just open. The requirement itself sets the 5 m/s figure,
 so this needs a requirement change; see the 2026-09-24 review resolution.
 
-### 15. A canopy approaching its terminal rate from below can settle in the main band — OPEN
+### 15. A canopy approaching its terminal rate from below can settle in the main band — FIXED (T5)
+
+T5's fit reads the rate without the filter's lag, and drogues of 12-25 m/s
+opened at apogee are never reported as the main
+(`test_N12_drogue_from_below`).
+
 
 A drogue opened at apogee accelerates from zero toward, say, 13 m/s. If the
 rate creeps up slowly enough to stay within the 2.5 m/s tolerance for 1.2 s

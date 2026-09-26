@@ -2084,6 +2084,36 @@ void test_N12_drogue_from_below(void) {
     TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
 }
 
+/* ── N7: the landing timeout under a main ─────────────────────────── */
+
+/* [FLT-LAND-07] A main descends at 3-6 m/s, and a flight from 1 km spends
+ * minutes under it: the 60 s timeout must wait for stillness, not declare
+ * LANDED on "slower than 5 m/s" in the air. On the pad's level and 50 m above
+ * it, past the 30 m the stillness test itself asks for, where only the
+ * timeout can land the flight. */
+void test_N7_no_landing_under_main(void) {
+    const float sites[] = {0.0f, 50.0f};
+    char bad[256] = "";
+    for (unsigned i = 0; i < 2; i++) {
+        for (uint32_t seed = 1; seed <= 3; seed++) {
+            const flight_t f = {5.0f, 3.0f, 5.0f, sites[i]}; /* about 1.3 km, then 5 m/s */
+            result_t r = fly(&f, seed, 6, 400000u, false);
+            float land = r.landed_ms && r.touchdown_ms ? ((float)r.landed_ms - (float)r.touchdown_ms) / 1000.0f : 1e6f;
+            if (r.landed_ms == 0 || land < 0.0f || land > 3.0f) {
+                char item[64];
+                if (r.landed_ms && !r.touchdown_ms)
+                    snprintf(item, sizeof(item), " %.0f m up, seed %u: LANDED in the air;", (double)sites[i],
+                             (unsigned)seed);
+                else
+                    snprintf(item, sizeof(item), " %.0f m up, seed %u: LANDED %+.1f s from touchdown;",
+                             (double)sites[i], (unsigned)seed, (double)land);
+                strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+            }
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -2145,6 +2175,7 @@ int main(void) {
     RUN_TEST(test_M1_recovered_ascent_locked);
     RUN_TEST(test_M1_minimum_altitude_arm);
     RUN_TEST(test_N12_drogue_from_below);
+    RUN_TEST(test_N7_no_landing_under_main);
     RUN_TEST(test_T9_short_interval);
     RUN_TEST(test_T9_same_outcomes);
     return UNITY_END();

@@ -1105,6 +1105,13 @@ flight with a port reading 15 % of q low logs 1976 m for a 1526 m apogee.
 
 ### N7 / C8. The landing timeout declares LANDED under a main
 
+**Done 2026-09-26** (FLT-LAND-07, DD-015). `test_N7_no_landing_under_main`
+failed first: every flight under a 5 m/s main from 1.3 km was declared LANDED
+in the air, 60 s after apogee. The timeout now needs stillness, under 2 m/s
+held for a second on a sensor that has not failed, and lands the flight
+1.7 s after touchdown, on the pad's level and 50 m above it. The host's
+chain flight stands in for the simulator's 5000 ft one.
+
 **Needs:** T5.
 - **Tests first:** `test_N7_no_landing_under_main`: the simulator's 5000 ft
   flight with a drogue declares no LANDED while the main descends at 5 m/s,

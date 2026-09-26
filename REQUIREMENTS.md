@@ -88,7 +88,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-LAND-04**: The system shall transition from DESCENT to LANDED upon landing detection. ← FLT-PHASE-03
 - **FLT-LAND-05**: The system shall log a LANDING event at the transition. ← FLT-PHASE-03
 - **FLT-LAND-06**: The system shall remain in LANDED state permanently after landing. ← FLT-PHASE-03
-- **FLT-LAND-07**: The system shall detect landing if descent has lasted 60 seconds and vertical speed is below 5 m/s, regardless of AGL altitude. ← FLT-PHASE-03
+- **FLT-LAND-07**: The system shall detect landing if descent has lasted 60 seconds and the rocket has been still -- vertical speed below 2 m/s for 1 s of sample time, on a sensor that has not failed -- regardless of AGL altitude. Slower than 5 m/s is not enough: a main descends at 3-6 m/s. ← FLT-PHASE-03
 
 #### Pyro Re-fire
 - **PYR-REFIRE-01**: The system shall re-fire the drogue channel once, 2 seconds after the initial fire, if the descent rate has not steadied under a canopy and the channel's post-fire continuity check shows it never opened. The retry is limited to one attempt per flight. ← SYS-DEPLOY-01

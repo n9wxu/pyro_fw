@@ -123,6 +123,11 @@ rationale and the alternatives considered.
 ### DD-015: Landing Timeout for Elevation Mismatch
 - **Decision:** Detect landing if descent has lasted 60 seconds and speed is below
   5 m/s, regardless of AGL altitude.
+- **Amended (N7, C8):** the timeout needs stillness -- under 2 m/s for 1 s, on
+  a sensor that has not failed -- not "below 5 m/s". A main descends at
+  3-6 m/s, and any flight whose main was still out 60 s after apogee was
+  declared LANDED in the air, its log closed with the descent unrecorded. A
+  5 m/s main from 1.3 km now lands 1.7 s after touchdown.
 - **Rationale:** If the rocket lands at an elevation significantly above the launch
   pad (mesa, hillside), the 30m AGL check may never pass. The timeout ensures
   the system transitions to LANDED and begins post-flight operations.
