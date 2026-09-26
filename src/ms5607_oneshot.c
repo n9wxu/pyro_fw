@@ -85,3 +85,18 @@ bool ms5607_async_take(ms5607_conversion_t *out) {
     oneshot.ready = false;
     return true;
 }
+
+bool ms5607_async_cycle(ms5607_temps_t *t, ms5607_conversion_t *out, ms5607_start_t *started) {
+    bool took = ms5607_async_take(out);
+    if (took && !out->ok) {
+        *started = MS5607_HELD;
+        return true;
+    }
+    if (took && out->temperature && out->raw != 0)
+        ms5607_temps_note(t, out->raw, out->at_us);
+    bool temperature = ms5607_temperature_due(t);
+    *started = ms5607_async_start(temperature);
+    if (*started == MS5607_STARTED)
+        ms5607_conversion_started(t, temperature);
+    return took;
+}

@@ -231,58 +231,42 @@ static void pres_reject(pres_task_t *p, const char *why, uint32_t raw, float pa,
 }
 
 /* [DD-051] The conversion the last loop started, which the one-shot's handler
- * commanded, stamped and read: a temperature joins the line the pressures are
- * compensated along; a pressure is compensated at its own time and fed on.
- * False when the sensor did not answer. */
-static bool ms5607_take(pres_task_t *p, uint32_t now_ms) {
+ * commanded, stamped and read. The cycle starts the next conversion before
+ * this work: done first, the compensation, filter and fit (up to 2.7 ms on
+ * MK1B) made the next conversion miss the next loop every other loop. */
+static void ms5607_tick(pres_task_t *p, uint32_t now_ms) {
     ms5607_conversion_t c;
-    if (!ms5607_async_take(&c))
-        return true;
+    ms5607_start_t started;
+    bool took = ms5607_async_cycle(&p->temps, &c, &started);
+    if (started == MS5607_BUSY)
+        p->waits++;
+    /* HELD: the sensor did not answer; back off rather than retry every loop. */
+    p->base.next_due_ms = (started == MS5607_STARTED || started == MS5607_BUSY) ? now_ms : now_ms + 50;
+    if (!took)
+        return;
     /* A zero is what the sensor answers to a read during a conversion. */
     if (!c.ok || c.raw == 0) {
         pres_reject(p, c.ok ? "zero" : "bus", c.raw, 0.0f, now_ms);
-        return c.ok;
+        return;
     }
-    if (c.temperature) {
-        ms5607_temps_note(&p->temps, c.raw, c.at_us);
-        return true;
-    }
-    if (p->temps.n == 0)
-        return true;
+    if (c.temperature || p->temps.n == 0)
+        return;
     pressure_reading_t r;
     ms5607_compensate(c.raw, ms5607_temps_at(&p->temps, c.at_us), &r);
     r.time_us = c.at_us;
     if (!pres_plausible(&r)) {
         pres_reject(p, "range", c.raw, r.pressure_pa, now_ms);
-        return true;
+        return;
     }
     pres_append(p, &r);
-    return true;
-}
-
-static void ms5607_command(pres_task_t *p, uint32_t now_ms) {
-    bool temperature = ms5607_temperature_due(&p->temps);
-    switch (ms5607_async_start(temperature)) {
-    case MS5607_STARTED:
-        ms5607_conversion_started(&p->temps, temperature);
-        p->base.next_due_ms = now_ms;
-        break;
-    case MS5607_BUSY:
-        p->waits++;
-        p->base.next_due_ms = now_ms;
-        break;
-    default:
-        p->base.next_due_ms = now_ms + 50;
-        break;
-    }
 }
 
 /*
  * Pressure tick, once a loop.
  *
  * MS5607 (sensor_type == 1) [DD-051]: take the conversion the last loop
- *   started, then start the next; the one-shot's handler commands, stamps and
- *   reads it. One conversion a loop, the temperature once in
+ *   started and start the next, then work on the one taken; the one-shot's
+ *   handler commands, stamps and reads each. One conversion a loop, the temperature once in
  *   MS5607_D2_EVERY: 90 pressures a second at the 10 ms loop.
  *
  * BMP280 (sensor_type == 2): single phase — read output registers.
@@ -292,10 +276,7 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
     pres_task_t *p = (pres_task_t *)base;
 
     if (p->sensor_type == 1) {
-        if (ms5607_take(p, now_ms))
-            ms5607_command(p, now_ms);
-        else
-            p->base.next_due_ms = now_ms + 50; /* back off: the sensor did not answer */
+        ms5607_tick(p, now_ms);
 
 #if BOARD_HAS_BMP280
     } else if (p->sensor_type == 2) {

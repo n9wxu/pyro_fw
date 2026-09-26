@@ -1008,6 +1008,14 @@ pull-ups were read from their design files; 100 kHz for MK1B's BMP280 probe,
 whose SDA has none. `test_ms5607_ready_before_the_next_loop` fails at
 100 kHz (ready 9.87 ms into a 10 ms loop) and passes at 400 kHz (9.29 ms).
 
+**Bench, 2026-09-26, a second MK1B (serial 02E72A403441) flashed by the user
+with 2.1.680:** the MS5607 at 400 kHz, `pres_rejects` 0 and `flash_refusals`
+0 over four minutes. 47 % of loops waited: the next conversion was started
+after the pressure's compensation, filter and fit (`stage_max_us[2]`
+2.7 ms). Fixed by starting it first (`ms5607_async_cycle()`,
+`test_ms5607_work_costs_no_samples`); to be flashed and measured again. The
+same board overran its loop once a second: see D-B1 in section 6.
+
 **Owed on the bench (G4):** bus errors and `pres_rejects` at 0 at 400 kHz on
 every board; `sample_interval_us` near 10 ms, 20 ms where the
 temperature was read; `stamp_lag_max_us` near 5.5 ms; `pres_waits` and
@@ -1195,7 +1203,8 @@ resolution doc.
 | T1 | Recovery reads samples on the hardware | a board with a marker, booted on battery with USB plugged in afterwards, reads "cold: at ground level" | a battery |
 | T1 | Brownout recovery on the real path | a power cut during a chamber descent rejoins in FALLING; a power cut on the pad stays cold | a battery, the chamber, telemetry over serial or radio (USB forces a cold boot, and a reset ends test mode) |
 | N11 | LUA and MOCK rows on the flight clock | in test mode, a script that calls `log()` once a second through a chamber flight writes LUA rows whose times fall among the sample rows', not near the board's uptime | test mode, the chamber, MK1C with Lua |
-| T5 | The fit's cost, and the pad's σ, on each board | `stage_max_us[2]` no more than 500 µs above its value before T5, 0 loop overruns, with Lua running on MK1C; `fit_sigma_mpa` between 1200 and 5000, and on the BMP280 (MK1A) recorded, since its noise is not the MS5607's | G4's flash |
+| D-B1 | MK1B's continuity check stalls the loop | Found 2026-09-26 on a second MK1B that owns its pyros: `pyro_sample()` holds PYRO_COMMON_EN for a `sleep_ms(10)` settle inside STAGE 3, once a second, so `stage_max_us[3]` is 10.2 ms and the loop overruns once a second (250 in 252 s). The bench MK1B never showed it: both its channels are released to Lua, which skips the check. Fix, a two-phase sample like MK1A's, awaits the user's go-ahead; pass is 0 overruns with the pyros owned | the user's decision; then a flash |
+| T5 | The fit's cost, and the pad's σ, on each board | `stage_max_us[2]` no more than 500 µs above its value before T5, 0 loop overruns, with Lua running on MK1C; `fit_sigma_mpa` between 1200 and 5000, and on the BMP280 (MK1A) recorded, since its noise is not the MS5607's. First reading, the second MK1B on 2.1.680 at ~50 Hz: `stage_max_us[2]` 2.7 ms against 0.9-1.1 ms on the boards still on 2.1.674-676, so over the 500 µs; to be read again at 90 Hz | G4's flash |
 | N20 | No file served while the log is written | in test mode, once a chamber pump-down declares a launch, `GET /www/app.js` answers 409 and `/api/status` 200; after LANDED the log reads back whole | test mode, the chamber |
 | — | The arming path independent of software | with the mechanical disconnect in, a commanded ground-test FIRE puts no current through a dummy load, on each board | a dummy load and a meter. The Mach prompt asks for this path; the operator narrative uses a mechanical disconnect, but no document says what it breaks |
 

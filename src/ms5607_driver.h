@@ -132,7 +132,9 @@ uint8_t ms5607_address(void);
 
 /* ── One-shot conversion [DD-051] ─────────────────────────────────── */
 
-typedef enum { MS5607_STARTED, MS5607_BUSY, MS5607_NOT_BEGUN } ms5607_start_t;
+/* HELD: the conversion taken failed, so nothing was started and the caller
+ * backs off. */
+typedef enum { MS5607_STARTED, MS5607_BUSY, MS5607_NOT_BEGUN, MS5607_HELD } ms5607_start_t;
 
 typedef struct {
     uint32_t raw;   /* D1 or D2 */
@@ -151,5 +153,11 @@ ms5607_start_t ms5607_async_start(bool temperature);
 
 /* The conversion the one-shot finished, once. */
 bool ms5607_async_take(ms5607_conversion_t *out);
+
+/* Once a loop: takes the finished conversion into *out, notes a temperature
+ * on *t, and starts the next conversion, the temperature when due, before
+ * returning. Whatever the caller then does with a pressure cannot delay the
+ * next command. False when nothing was finished. */
+bool ms5607_async_cycle(ms5607_temps_t *t, ms5607_conversion_t *out, ms5607_start_t *started);
 
 #endif /* MS5607_DRIVER_H */

@@ -193,6 +193,103 @@ void test_ms5607_ready_before_the_next_loop(void) {
     TEST_ASSERT_TRUE_MESSAGE(ready + 500u <= 1000000u + MS5607_CONV_MS * 1000u, msg);
 }
 
+/* Primes the temperature line the way a loop does, so what follows is
+ * pressure. */
+static void prime_temperature(ms5607_temps_t *t) {
+    ms5607_conversion_t c;
+    ms5607_start_t started;
+    *t = (ms5607_temps_t){0};
+    fake_bus_adc = 8077636u;
+    ms5607_async_cycle(t, &c, &started);
+    run_to(fake_bus_now + 10000u);
+    fake_bus_adc = 6465444u;
+    ms5607_async_cycle(t, &c, &started);
+    TEST_ASSERT_EQUAL(1, t->n);
+}
+
+/* The next conversion is started before the one taken is handed back, so
+ * whatever the caller does with it cannot delay the next command. */
+void test_ms5607_cycle_starts_before_returning(void) {
+    ms5607_temps_t t;
+    prime_temperature(&t);
+    interrupts();
+    run_to(fake_bus_now + 10000u);
+    ms5607_conversion_t c;
+    ms5607_start_t started;
+    TEST_ASSERT_TRUE(ms5607_async_cycle(&t, &c, &started));
+    TEST_ASSERT_FALSE(c.temperature);
+    TEST_ASSERT_EQUAL(MS5607_STARTED, started);
+    TEST_ASSERT_TRUE(fake_bus_forced);
+}
+
+/* Measured on an MK1B: a pressure's compensation, filter and fit take up to
+ * 2.7 ms of the loop. Started after that work, the next conversion missed the
+ * next loop half the time: 47 % of loops waited, and the rate was 50 Hz. */
+#define PRESSURE_WORK_US 2700u
+
+void test_ms5607_work_costs_no_samples(void) {
+    ms5607_temps_t t;
+    prime_temperature(&t);
+    uint64_t top = fake_bus_now + 10000u;
+    run_to(top);
+    int busy = 0, pressures = 0, temperatures = 0;
+    for (int loop = 0; loop < 200; loop++) {
+        ms5607_conversion_t c;
+        ms5607_start_t started;
+        bool took = ms5607_async_cycle(&t, &c, &started);
+        interrupts();
+        if (started == MS5607_BUSY)
+            busy++;
+        if (took && c.temperature)
+            temperatures++;
+        if (took && !c.temperature) {
+            pressures++;
+            fake_bus_now += PRESSURE_WORK_US;
+        }
+        top += MS5607_CONV_MS * 1000u;
+        run_to(top);
+    }
+    char msg[80];
+    snprintf(msg, sizeof(msg), "%d of 200 loops waited; %d pressures, %d temperatures", busy, pressures,
+             temperatures);
+    TEST_ASSERT_EQUAL_MESSAGE(0, busy, msg);
+    TEST_ASSERT_INT_WITHIN_MESSAGE(2, 180, pressures, msg);
+    TEST_ASSERT_INT_WITHIN_MESSAGE(2, 20, temperatures, msg);
+}
+
+/* A temperature goes onto the line inside the cycle, so the choice of the
+ * next conversion sees it. */
+void test_ms5607_cycle_notes_the_temperature(void) {
+    ms5607_temps_t t = {0};
+    ms5607_conversion_t c;
+    ms5607_start_t started;
+    TEST_ASSERT_FALSE(ms5607_async_cycle(&t, &c, &started));
+    TEST_ASSERT_EQUAL(MS5607_STARTED, started);
+    run_to(1020000u);
+    TEST_ASSERT_EQUAL_HEX8(CONV_D2, fake_bus_cmds[0]);
+    TEST_ASSERT_TRUE(ms5607_async_cycle(&t, &c, &started));
+    TEST_ASSERT_TRUE(c.temperature);
+    TEST_ASSERT_EQUAL(1, t.n);
+    interrupts();
+    TEST_ASSERT_EQUAL_HEX8(CONV_D1, fake_bus_cmds[1]);
+}
+
+/* A read the sensor did not answer starts nothing: the caller backs off
+ * rather than retrying every loop against a missing sensor. */
+void test_ms5607_cycle_holds_off_after_a_failed_read(void) {
+    ms5607_temps_t t = {0};
+    ms5607_conversion_t c;
+    ms5607_start_t started;
+    ms5607_async_cycle(&t, &c, &started);
+    interrupts();
+    fake_bus_nack = true;
+    run_to(1020000u);
+    TEST_ASSERT_TRUE(ms5607_async_cycle(&t, &c, &started));
+    TEST_ASSERT_FALSE(c.ok);
+    TEST_ASSERT_EQUAL(MS5607_HELD, started);
+    TEST_ASSERT_FALSE(fake_bus_forced);
+}
+
 void test_ms5607_begin_addresses_the_sensor(void) {
     TEST_ASSERT_EQUAL_HEX8(0x77, fake_bus_address);
 }
@@ -209,6 +306,10 @@ int main(void) {
     RUN_TEST(test_ms5607_read_nack);
     RUN_TEST(test_ms5607_taken_once);
     RUN_TEST(test_ms5607_ready_before_the_next_loop);
+    RUN_TEST(test_ms5607_cycle_starts_before_returning);
+    RUN_TEST(test_ms5607_work_costs_no_samples);
+    RUN_TEST(test_ms5607_cycle_notes_the_temperature);
+    RUN_TEST(test_ms5607_cycle_holds_off_after_a_failed_read);
     RUN_TEST(test_ms5607_begin_addresses_the_sensor);
     return UNITY_END();
 }

@@ -630,6 +630,14 @@ rationale and the alternatives considered.
   are forced inline. `support/prove_core0.py` fails the build if the handler,
   anything it branches to, through a veneer or not, or any address it loads
   is in flash; a `time_us_64()` planted in the handler fails it.
+- **Start, then work:** `ms5607_async_cycle()` takes the finished conversion
+  and starts the next before the loop works on the one taken. The first
+  flash, on a second MK1B (2.1.680), started it after the compensation,
+  filter and fit, up to 2.7 ms: the next conversion then missed the next loop
+  every other loop, 47 % of loops waited and the rate was 50 Hz. The fake bus
+  reproduces that (47.3 %) with 2.7 ms of work a pressure, and the cycle
+  makes it none (`test_ms5607_work_costs_no_samples`). The same board read
+  its MS5607 at 400 kHz with no rejected reading.
 - **What the host can test:** the state machine is `ms5607_oneshot.c`, and
   `ms5607_tests` builds it against a fake bus and clock (`test/ms5607_bus.h`):
   the stamp, a read held 60 ms, a loop 50 ms late, the 9.04 ms wait, one
