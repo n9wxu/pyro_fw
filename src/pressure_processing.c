@@ -105,7 +105,7 @@ static void gnd_feed(int32_t filtered_pa, uint32_t now_ms) {
     int32_t dev = filtered_pa - pp.ground_pressure;
     if (dev > PP_GROUND_MAX_DEV_PA || dev < -PP_GROUND_MAX_DEV_PA) {
         if (pp.gnd.reject_since == 0)
-            pp.gnd.reject_since = now_ms | 1u;
+            pp.gnd.reject_since = now_ms + 1u; /* 0 means none; + 1 keeps a time of 0 possible */
         return;
     }
     pp.gnd.reject_since = 0;
@@ -166,7 +166,7 @@ bool pp_ground_freeze_before(uint32_t t_ms) {
 }
 
 uint32_t pp_ground_rejecting_ms(uint32_t now_ms) {
-    return (pp.gnd.tracking && pp.gnd.reject_since) ? now_ms - pp.gnd.reject_since : 0;
+    return (pp.gnd.tracking && pp.gnd.reject_since) ? now_ms + 1u - pp.gnd.reject_since : 0;
 }
 
 void pp_ground_reseed(void) {

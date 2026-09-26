@@ -1075,16 +1075,17 @@ void test_T6_launch_never_reseeds(void) {
     }
 }
 
+/* On odd sample times and even ones: the loop starting at 0 or at 2. */
 void test_T6_gusts_never_reseed(void) {
     const float gusts[] = {20.0f, 40.0f, 60.0f, 80.0f, -80.0f};
-    for (unsigned i = 0; i < 5; i++) {
+    for (unsigned i = 0; i < 10; i++) {
         boot_like_hardware(22);
-        uint32_t t = 0;
+        uint32_t t = i < 5 ? 0u : 2u;
         run_to_pad(&t);
         for (uint32_t end = t + 6000u; t < end; t++)
             tick(t);
         for (int g = 0; g < 5; g++) {
-            mock_pressure.pressure_pa = 101325.0f + gusts[i];
+            mock_pressure.pressure_pa = 101325.0f + gusts[i % 5];
             for (uint32_t end = t + RESEED_TEST_MS - 1000u; t < end; t++)
                 tick(t);
             mock_pressure.pressure_pa = 101325.0f;
@@ -1268,6 +1269,69 @@ void test_T11_log_rows_at_sample_time(void) {
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, lagged.row_err_max, msg);
 }
 
+/* The landing hold is a full second of stillness in sample time, whatever
+ * the parity of the sample that began it. Starting the loop at 0 puts every
+ * sample on an odd millisecond, at 2 on an even one. */
+void test_T11_landing_holds_a_second(void) {
+    const flight_t f = {5.0f, 1.0f, 5.0f, 0.0f};
+    char bad[256] = "";
+    for (uint32_t seed = 1; seed <= 20; seed++) {
+        boot_like_hardware(seed);
+        power.landing_timeout = 0;
+        uint32_t t = (seed & 1u) ? 0u : 2u;
+        uint32_t pad = run_to_pad(&t);
+        uint32_t ign = pad + 3000u + seed;
+        truth_t tr = {0};
+        for (; t < 400000u; t++) {
+            float tf = ((float)t - (float)ign) / 1000.0f;
+            float vb = tr.v;
+            truth_step(&tr, &f, tf);
+            if (!tr.apogee && tf > f.burn_s && vb > 0.0f && tr.v <= 0.0f)
+                tr.apogee = true;
+            mock_pressure.pressure_pa = isa_pa(tr.h);
+            tick(t);
+            if (ctx.current_state == LANDED)
+                break;
+        }
+        uint32_t held = ctx.last_sample + 1u - ctx.landing_stable_since;
+        if (ctx.current_state != LANDED || held < 1000u) {
+            char item[40];
+            snprintf(item, sizeof(item), " [seed %u: held %d ms]", (unsigned)seed, (int)held);
+            strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+        }
+    }
+    if (bad[0])
+        printf("  landings short of the hold:%s\n", bad);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("", bad, "LANDED needs a full second of stillness");
+}
+
+/* The rejection clock starts at zero on the first rejected sample, whatever
+ * the parity of its time. */
+void test_T6_rejecting_starts_at_zero(void) {
+    for (uint32_t t0 = 1000; t0 <= 1001; t0++) {
+        pp_init();
+        pp_test_prime(101325);
+        uint32_t t = t0;
+        for (int i = 0; i < 20; i++, t += 20)
+            pp_feed(101325, t);
+        TEST_ASSERT_EQUAL_UINT32(0, pp_ground_rejecting_ms(t));
+        /* Far past the gate, for long enough that the median passes it. */
+        uint32_t bad_from = t;
+        for (int i = 0; i < 3; i++, t += 20)
+            pp_feed(101325 - 5000, t);
+        uint32_t first = 0;
+        altitude_sample_t a;
+        while (pp_read(&a))
+            if (first == 0 && a.timestamp_ms >= bad_from)
+                first = a.timestamp_ms;
+        TEST_ASSERT_EQUAL_UINT32(bad_from, first);
+        uint32_t r = pp_ground_rejecting_ms(first);
+        char msg[64];
+        snprintf(msg, sizeof(msg), "t0 %u: rejecting for %u ms on its first sample", (unsigned)t0, (unsigned)r);
+        TEST_ASSERT_TRUE_MESSAGE(r < 100u, msg);
+    }
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -1307,10 +1371,12 @@ int main(void) {
     RUN_TEST(test_T6_launch_never_reseeds);
     RUN_TEST(test_T6_gusts_never_reseed);
     RUN_TEST(test_T6_drift);
+    RUN_TEST(test_T6_rejecting_starts_at_zero);
     RUN_TEST(test_N18_landed_logs_once_a_second);
     RUN_TEST(test_T11_stalls_change_nothing);
     RUN_TEST(test_T11_d1_stamp);
     RUN_TEST(test_T11_loop_clock_independent);
     RUN_TEST(test_T11_log_rows_at_sample_time);
+    RUN_TEST(test_T11_landing_holds_a_second);
     return UNITY_END();
 }

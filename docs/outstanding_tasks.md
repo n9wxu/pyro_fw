@@ -502,6 +502,11 @@ the plan:
   model and passes under the new.
 - `test_T11_wrap` moves to T5, the first code that does microsecond
   arithmetic across samples.
+- A bug in T11's first commit, found by T8's replay: each hold stored its
+  start as `ts | 1`. On an even sample time the landing hold read as 4 billion
+  milliseconds, so LANDED came on the first still sample, and T6's rejection
+  clock had the same flaw. Fixed with tests on both parities; the harness's
+  samples fall on odd milliseconds, which is why nothing caught it.
 - The loop-clock test first anchored ignition to PAD_IDLE. Since the boot
   timers run on the loop clock, that let a lagged loop fly a different
   flight; it now anchors ignition to a fixed sample time. It fails on the

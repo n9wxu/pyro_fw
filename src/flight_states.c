@@ -805,11 +805,11 @@ static bool descent_settled(flight_context_t *ctx, uint32_t ts, desc_band_t *out
     if (b != (desc_band_t)ctx->desc_band || drift > tol || ctx->desc_band_since == 0) {
         ctx->desc_band = (uint8_t)b;
         ctx->desc_ref_cms = v;
-        ctx->desc_band_since = ts | 1u;
+        ctx->desc_band_since = ts + 1u;
         return false;
     }
     *out = b;
-    return ts - ctx->desc_band_since >= DESC_DWELL_MS;
+    return ts + 1u - ctx->desc_band_since >= DESC_DWELL_MS;
 }
 
 /* A canopy that has failed shows as a rate its phase cannot explain, held
@@ -821,10 +821,10 @@ static bool band_exceeded(flight_context_t *ctx, uint32_t ts, int32_t ceiling) {
         return false;
     }
     if (ctx->desc_fail_since == 0) {
-        ctx->desc_fail_since = ts | 1u;
+        ctx->desc_fail_since = ts + 1u;
         return false;
     }
-    return ts - ctx->desc_fail_since >= DESC_FAIL_MS;
+    return ts + 1u - ctx->desc_fail_since >= DESC_FAIL_MS;
 }
 
 /* [FLT-EMRG-01, PYR-REFIRE-01] What to do when a canopy does not answer.
@@ -858,11 +858,11 @@ static bool drogue_failing(flight_context_t *ctx, uint32_t now, uint32_t drogue_
         return false;
     }
     if (ctx->emrg_fail_since == 0 || rate < ctx->emrg_fail_ref_cms - desc_tolerance(ctx->emrg_fail_ref_cms)) {
-        ctx->emrg_fail_since = ts | 1u;
+        ctx->emrg_fail_since = ts + 1u;
         ctx->emrg_fail_ref_cms = rate;
         return false;
     }
-    return ts - ctx->emrg_fail_since >= DESC_FAIL_MS;
+    return ts + 1u - ctx->emrg_fail_since >= DESC_FAIL_MS;
 }
 
 /* The retry rung. Its evidence is the channel's own post-fire continuity; a
@@ -913,8 +913,8 @@ static bool landing_detected(flight_context_t *ctx, uint32_t now, int32_t prev_a
     if (altitude_stable && speed_low && near_ground) {
         uint32_t ts = ctx->last_sample;
         if (ctx->landing_stable_since == 0)
-            ctx->landing_stable_since = ts | 1u;
-        if (ts - ctx->landing_stable_since >= 1000)
+            ctx->landing_stable_since = ts + 1u;
+        if (ts + 1u - ctx->landing_stable_since >= 1000)
             return true;
     } else {
         ctx->landing_stable_since = 0;

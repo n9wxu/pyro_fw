@@ -46,7 +46,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | GND-CAL-03 | A sample 50 Pa away is not averaged in | Unit: test_GND_CAL_02_reference_stops_tracking_when_the_rocket_moves | ✅ |
 | GND-CAL-04 | Frozen from before T+0, not snapped | Unit: test_FLT_LAUNCH_09_freezing_keeps_the_hundred_feet; Chain: test_T7_ground_error (within 0.1 m at 2, 5, 15 and 30 g) | ✅ |
 | GND-CAL-07 | A reference on under a second of pad is flagged | Chain: test_T7_early_launch_degraded | ✅ |
-| GND-CAL-06 | Re-seed after a step | Chain: test_T6_step_reseeds (100-300 Pa either way), test_T6_launch_never_reseeds, test_T6_gusts_never_reseed | ✅ |
+| GND-CAL-06 | Re-seed after a step | Chain: test_T6_step_reseeds (100-300 Pa either way), test_T6_launch_never_reseeds, test_T6_gusts_never_reseed, test_T6_rejecting_starts_at_zero | ✅ |
 | FLT-LAUNCH-03 | T+0 at the first reading above 50 cm | Unit: test_REV07_launch_backdates_to_first_rise; Integration: test_FLT_LAUNCH_03_backdate; Chain: test_T3_latency (within 40 ms of the truth at 2-30 g) | ✅ |
 | FLT-LAUNCH-07 | 100 ft and 5 m/s, held for 100 ms | Unit: test_FLT_LAUNCH_08_ten_metres_is_no_longer_enough, test_FLT_LAUNCH_01_detects_ascent; Chain: test_T3_pad_two_sample_glitch, test_T3_latency, test_T3_durations_not_counts | ✅ |
 | GND-CAL-05 | LAUNCH reports the height reached | Integration: test_REV11_launch_row_reports_the_height_reached | ✅ |
@@ -63,7 +63,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-ASC-05 | Log ARMED event | Integration: test_DAT_04_events | ✅ |
 | FLT-ASC-06 | No arm above 10 m/s | Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
 | FLT-ASC-07 | No arming unless the peak speed passed 20 m/s | Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
-| FLT-LAND-01 | Stable <1m for 1s | Integration: test_FLT_BOOT_01_all_states reaches LANDED; Chain: test_T4_touchdown (within 3 s, under noise, on the pad's level and 5 m above) | ✅ |
+| FLT-LAND-01 | Stable <1m for 1s | Integration: test_FLT_BOOT_01_all_states reaches LANDED; Chain: test_T4_touchdown (within 3 s, under noise, on the pad's level and 5 m above), test_T11_landing_holds_a_second (the full second, on odd and even sample times) | ✅ |
 | FLT-LAND-02 | Speed <2 m/s | Integration: landing detected at correct time | ✅ |
 | FLT-LAND-03 | Altitude <30m | Integration: landing detected at correct time | ✅ |
 | FLT-LAND-04 | Transition to LANDED | Integration: test_FLT_LAND_04_duration | ✅ |

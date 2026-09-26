@@ -571,6 +571,14 @@ rationale and the alternatives considered.
 - **Timer-driven sampling rejected:** a hardware alarm starting conversions
   would not keep sampling uniform through a stall, because a flash erase runs
   with interrupts off. True stamps make uniform sampling unnecessary.
+- **A hold's start is stored as its sample time plus one**, and read back as
+  `ts + 1 - since`, so 0 can still mean "not started". The first version
+  stored `ts | 1` and read `ts - since`. On an even sample time that read as
+  4 billion milliseconds, so LANDED came on the first still sample with no
+  hold at all, and so could a ground re-seed (DD-045). The host harness's
+  samples happen to fall on odd milliseconds, which hid it; T8's replay, whose
+  are even, found it. `test_T11_landing_holds_a_second` and
+  `test_T6_rejecting_starts_at_zero` now run both parities.
 
 ### DD-045: The Ground Reference Re-Seeds After A Step
 - **Decision:** When every sample has been rejected by GND-CAL-03's 50 Pa gate
