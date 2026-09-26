@@ -34,9 +34,9 @@ FALLING / DROGUE_DESCENT / CHUTE_DESCENT → LANDED on SEVT_LANDING
 
 ### State Transition Criteria
 
-**PAD_IDLE → ASCENT:** Filtered altitude above 100 ft with vertical speed above 5 m/s on the same sample (FLT-LAUNCH-01, FLT-LAUNCH-07). T+0 is backdated to the first sample above 50 cm (FLT-LAUNCH-03).
+**PAD_IDLE → ASCENT:** Filtered altitude above 100 ft with vertical speed above 5 m/s, held together for 100 ms (FLT-LAUNCH-01, FLT-LAUNCH-07). T+0 is backdated to the first sample above 50 cm (FLT-LAUNCH-03).
 
-**ASCENT → FALLING:** Vertical speed ≤ 0 while the pyros are armed and the Mach gate is clear (FLT-APO-01, FLT-MACH-01). The pyros arm once the peak speed has passed 10 m/s filtered (about 20 m/s true) and the speed has fallen back below it (DD-017).
+**ASCENT → FALLING:** Vertical speed ≤ 0 for 60 ms while the pyros are armed and the Mach gate is clear (FLT-APO-01, FLT-MACH-01). The pyros arm once the peak speed has passed 10 m/s filtered (about 20 m/s true) and the speed has fallen back below it (DD-017).
 
 **Descent:** the phase is read from the descent rate settling in a band, never from a firing command (DD-023).
 
@@ -129,7 +129,7 @@ Each reading first passes a median of three, stamped with the middle reading's t
 Altitude is the hypsometric formula against the ground reference (SNS-ALT-01), clamped to 0-8000 m (SNS-ALT-02, SNS-ALT-03). The ground reference is a 5 s mean of the filtered pressure, frozen at launch (GND-CAL-01..05).
 
 ### Altitude Limitations
-Altitude is clamped at 8000 m (SNS-ALT-02). Above that the altitude, and any speed taken from it, is wrong; N26 in `docs/outstanding_tasks.md`.
+Altitude is clamped at 8000 m (SNS-ALT-02) and at 0 (SNS-ALT-03) where it is reported. Speed is taken from the unclamped height (SNS-ALT-04), so neither clamp reads as a stopped rocket.
 
 ### Simulation
 The `sim/` directory contains a WASM-compilable flight computer black box and a shared physics engine. See `sim/README.md` for architecture and integration guide.

@@ -46,6 +46,7 @@ static bool test_log_active = false;
 
 /* ── Sensor model ─────────────────────────────────────────────────── */
 
+uint32_t mock_sample_interval_ms = 20;
 float mock_noise_rms_pa = 0.0f;
 uint32_t mock_noise_seed = 1;
 int32_t mock_glitch_pa = 0;
@@ -252,6 +253,7 @@ void mock_reset_all(void) {
     test_file.open = false;
     memset(sim_files, 0, sizeof(sim_files));
     last_pp_feed_ms = 0;
+    mock_sample_interval_ms = 20;
     mock_noise_rms_pa = 0.0f;
     mock_noise_seed = 1;
     mock_glitch_pa = 0;
@@ -508,7 +510,8 @@ void hal_tasks_tick(uint32_t now_ms) {
             stall_model_tick(now_ms);
         if (mock_core0_stalled(now_ms))
             return;
-    } else if (mock_pressure.sensor_type > 0 && (last_pp_feed_ms == 0 || (now_ms - last_pp_feed_ms) >= 20)) {
+    } else if (mock_pressure.sensor_type > 0 &&
+               (last_pp_feed_ms == 0 || (now_ms - last_pp_feed_ms) >= mock_sample_interval_ms)) {
         feed_reading(mock_pressure.pressure_pa, now_ms);
         last_pp_feed_ms = now_ms;
     }

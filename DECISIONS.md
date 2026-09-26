@@ -538,6 +538,32 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-042: Triggers Hold For A Duration, And Speed Passes The Clamps
+- **Decision:** Launch needs its height and speed condition held for 100 ms
+  of sample time (FLT-LAUNCH-07); apogee needs speed at or below zero held for
+  60 ms (FLT-APO-01). Durations, never sample counts. Every detector takes its
+  speed from an unclamped height, carried beside the clamped altitude in the
+  pressure layer's ring (SNS-ALT-04); the clamps now apply only to what is
+  reported.
+- **Why the holds:** the median of three (DD-040) stops one bad reading, and
+  two in a row still reached detectors that fired on one sample: a launch on
+  the pad, an early apogee in coast.
+- **Why the height:** T3's coast test still failed with the holds in. Two
+  high readings drove the filtered altitude 60 m down, below the pad; the zero
+  clamp held it at exactly 0 while the filter decayed back, and a constant
+  altitude is a speed of zero for 180 ms, longer than any hold. The same
+  clamp at 8000 m read as zero speed on the way up (N26): a flight to 9.3 km
+  declared apogee 14.9 s early.
+- **Cost:** launch is detected up to 100 ms later, with T+0 unchanged.
+  Apogee moved from +0.59 s to +0.65 s after the true one.
+- **Consequence:** on the pad's own level the zero clamp had been hiding the
+  sensor's noise from the landing test, which is why touchdown there took
+  1.9 s. Unclamped, the noise reaches it, and landing waits for the 60 s
+  timeout on the pad's level as it already did anywhere else, until T4
+  quietens the filter.
+- **Rejected:** counting samples. At T9's 90 Hz a count of five would be a
+  55 ms hold; `test_T3_durations_not_counts` fails that.
+
 ### DD-041: Brownout Recovery Reads The History From Power-On
 - **Decision:** The pressure layer keeps the median's output from power-on in
   every state (`pp_history_*`). Recovery takes its level as the median of the

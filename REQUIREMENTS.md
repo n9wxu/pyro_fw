@@ -52,7 +52,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-LAUNCH-04**: The system shall log a LAUNCH event at the transition. ← FLT-PHASE-01
 - **FLT-LAUNCH-05**: The system shall stop the buzzer upon launch detection. ← FLT-PHASE-01
 - **FLT-LAUNCH-06**: Withdrawn. The launch height is FLT-LAUNCH-01's 100 feet; there is no separate gain-within-a-window test (DD-016).
-- **FLT-LAUNCH-07**: The system shall require vertical speed exceeding 5 m/s on the sample at which altitude exceeds 100 feet. ← FLT-PHASE-01
+- **FLT-LAUNCH-07**: The system shall declare launch only when altitude above 100 feet and vertical speed above 5 m/s have held together for 100 ms of sample time, so that two bad readings in a row cannot. ← FLT-PHASE-01
 
 #### Ground Reference
 - **GND-CAL-01**: The ground reference shall be a 5-second rolling mean of the filtered pressure. ← FLT-PHASE-01
@@ -62,7 +62,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **GND-CAL-05**: Altitude at launch detection shall report the height actually reached, not zero. ← GND-CAL-04
 
 #### Apogee Detection
-- **FLT-APO-01**: The system shall detect apogee when vertical speed crosses zero while pyros are armed. ← FLT-PHASE-02
+- **FLT-APO-01**: The system shall detect apogee when vertical speed has been at or below zero for 60 ms of sample time while pyros are armed. ← FLT-PHASE-02
 - **FLT-APO-02**: The system shall transition from ASCENT to DESCENT upon apogee detection. ← FLT-PHASE-02
 - **FLT-APO-03**: The system shall log an APOGEE event at the transition. ← FLT-PHASE-02
 - **FLT-APO-04**: The system shall not detect apogee before pyros are armed. ← FLT-PHASE-02, PYR-SAFE-04
@@ -251,6 +251,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **SNS-PRES-07**: A single-sample outlier shall not reach the pressure filter. The median of the newest three readings stands between the range check and the filter, carrying the middle reading's time. ← SNS-PRES-02
 - **SNS-ALT-02**: The system shall clamp computed altitude to a maximum of 8000 meters. ← SNS-ALT-01
 - **SNS-ALT-03**: The system shall clamp computed altitude to a minimum of 0 meters. ← SNS-ALT-01
+- **SNS-ALT-04**: Vertical speed shall be taken from altitude that is not clamped; SNS-ALT-02 and SNS-ALT-03 clamp only the altitude that is reported. ← SNS-ALT-01
 
 ---
 

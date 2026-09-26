@@ -74,10 +74,11 @@ extern int mock_xip_stall_count;         /* number of stall events */
 /* Off by default: a test that sets none of these sees the smooth signal it
  * always has. Every reading passes the HAL's own range check, and is
  * truncated to whole pascals as hal_common.c does. */
-extern float mock_noise_rms_pa;  /* Gaussian noise on every reading */
-extern uint32_t mock_noise_seed; /* the same seed gives the same noise */
-extern int32_t mock_glitch_pa;   /* added to each of the next ... */
-extern int mock_glitch_samples;  /* ... this many readings */
+extern uint32_t mock_sample_interval_ms; /* 20: the MS5607 at 50 Hz */
+extern float mock_noise_rms_pa;          /* Gaussian noise on every reading */
+extern uint32_t mock_noise_seed;         /* the same seed gives the same noise */
+extern int32_t mock_glitch_pa;           /* added to each of the next ... */
+extern int mock_glitch_samples;          /* ... this many readings */
 extern uint32_t mock_pres_rejects;
 
 /* The MS5607's timing on the hardware, with core0 stalls. A reading is the

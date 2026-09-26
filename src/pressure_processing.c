@@ -275,12 +275,19 @@ int32_t pp_filter_pressure(int32_t raw_pressure, uint32_t dt_ms) {
  *
  *   h = 44330 × (1 − (P/P₀)^(1/5.2561))
  */
-int32_t pp_pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa) {
+/* [SNS-ALT-04] Unclamped, because a clamp stops the altitude and a stopped
+ * altitude is a speed of zero: below the pad, a glitch's decay read as
+ * apogee; above 8 km, the climb itself did (N26). */
+int32_t pp_pressure_to_height_cm(int32_t pressure_pa, int32_t ground_pressure_pa) {
     if (pressure_pa <= 0 || ground_pressure_pa <= 0)
         return 0;
     float ratio = (float)pressure_pa / (float)ground_pressure_pa;
     float alt_m = 44330.0f * (1.0f - powf(ratio, 1.0f / 5.2561f));
-    int32_t alt_cm = (int32_t)(alt_m * 100.0f);
+    return (int32_t)(alt_m * 100.0f);
+}
+
+int32_t pp_pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa) {
+    int32_t alt_cm = pp_pressure_to_height_cm(pressure_pa, ground_pressure_pa);
     if (alt_cm > MAX_ALTITUDE_CM)
         alt_cm = MAX_ALTITUDE_CM;
     if (alt_cm < 0)
@@ -290,8 +297,9 @@ int32_t pp_pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_
 
 /* ── Ring buffer helpers ──────────────────────────────────────────── */
 
-static void ring_push(int32_t altitude_cm, uint32_t timestamp_ms) {
+static void ring_push(int32_t altitude_cm, int32_t height_cm, uint32_t timestamp_ms) {
     pp.ring[pp.head].altitude_cm = altitude_cm;
+    pp.ring[pp.head].height_cm = height_cm;
     pp.ring[pp.head].timestamp_ms = timestamp_ms;
     pp.head = (pp.head + 1) & PP_RING_MASK;
     if (pp.count < PP_RING_SIZE) {
@@ -390,10 +398,11 @@ void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
         gnd_feed(filtered, ts);
 
         /* Convert to altitude */
+        int32_t height_cm = pp_pressure_to_height_cm(filtered, pp.ground_pressure);
         int32_t alt_cm = pp_pressure_to_altitude_cm(filtered, pp.ground_pressure);
 
         /* Push to ring */
-        ring_push(alt_cm, ts);
+        ring_push(alt_cm, height_cm, ts);
         return;
     }
     }

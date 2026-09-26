@@ -414,13 +414,18 @@ ctx->last_sample = sample.timestamp_ms;   /* updated every tick */
 `last_sample` is updated unconditionally, so the difference stays near zero and
 the branch is effectively unreachable after the first tick.
 
-### 10. Altitude is clamped to >= 0
+### 10. Altitude is clamped to >= 0 — speed no longer is
 
-`pressure_processing.c:83-86`. Nothing can read below pad level: a landing below
-the launch elevation reads as exactly 0, and AGL mode can never see a negative
-altitude. **This matters for any rolling mean of altitude** — a mean of a
-quantity clamped at zero that dithers around zero is biased upward by roughly
-half the dither amplitude.
+`pp_pressure_to_altitude_cm()`. Nothing can read below pad level: a landing
+below the launch elevation reads as exactly 0, and AGL mode can never see a
+negative altitude. **This matters for any rolling mean of altitude** — a mean
+of a quantity clamped at zero that dithers around zero is biased upward by
+roughly half the dither amplitude.
+
+Speed used to be taken from the clamped altitude, so a clamp read as a speed
+of zero: a glitch's decay below the pad as apogee, and the 8000 m clamp as
+apogee on the way up (N26). Speed now comes from the unclamped height
+(SNS-ALT-04, DD-042).
 
 ### 11. `max_coast_s` was dead — REMOVED
 
@@ -479,13 +484,12 @@ it skipped BOOT_CONTINUITY, so PYR-SAFE-01 refused both channels. Either one
 alone would have deployed nothing. The recovered flight now starts the layer
 against the marker's ground and reads continuity first.
 
-### 17. One sample can declare a launch or an apogee — PARTLY FIXED (N24)
+### 17. One sample can declare a launch or an apogee — FIXED (N24)
 
 A single reading 11 kPa or more low declared a launch, and one high reading
-in the last second of coast declared apogee early. A median of three now
-stands between the range check and the filter (DD-040), so no single reading
-reaches the detectors. Two bad readings in a row still can, because both
-tests fire on one sample; T3 holds them for a duration.
+in the last second of coast declared apogee early. A median of three stands
+between the range check and the filter (DD-040), and launch and apogee must
+hold for 100 ms and 60 ms of sample time (DD-042).
 
 ## What is not in the machine
 

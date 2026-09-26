@@ -46,11 +46,11 @@ Verify web interface behavior against mock server in 3 device modes.
 | GND-CAL-03 | A sample 50 Pa away is not averaged in | Unit: test_GND_CAL_02_reference_stops_tracking_when_the_rocket_moves | ✅ |
 | GND-CAL-04 | Frozen at launch, not snapped | Unit: test_FLT_LAUNCH_09_freezing_keeps_the_hundred_feet | ✅ |
 | FLT-LAUNCH-03 | T+0 at the first sample above 50 cm | Unit: test_REV07_launch_backdates_to_first_rise; Integration: test_FLT_LAUNCH_03_backdate (exact) | ✅ |
-| FLT-LAUNCH-07 | Speed > 5 m/s at the 100 ft sample | Unit: test_FLT_LAUNCH_08_ten_metres_is_no_longer_enough | ✅ |
+| FLT-LAUNCH-07 | 100 ft and 5 m/s, held for 100 ms | Unit: test_FLT_LAUNCH_08_ten_metres_is_no_longer_enough, test_FLT_LAUNCH_01_detects_ascent; Chain: test_T3_pad_two_sample_glitch, test_T3_latency, test_T3_durations_not_counts | ✅ |
 | GND-CAL-05 | LAUNCH reports the height reached | Integration: test_REV11_launch_row_reports_the_height_reached | ✅ |
 | FLT-LAUNCH-04 | Log LAUNCH event | Integration: test_DAT_04_events | ✅ |
 | FLT-LAUNCH-05 | Stop buzzer on launch | Integration: test_BUZ_07_03_lifecycle | ✅ |
-| FLT-APO-01 | Apogee when speed ≤ 0 | Integration: test_FLT_APO_01_detected | ✅ |
+| FLT-APO-01 | Apogee when speed ≤ 0 for 60 ms | Integration: test_FLT_APO_01_detected; Unit: test_FLT_APO_01_detects_apogee; Chain: test_T3_coast_two_sample_glitch, test_T3_latency | ✅ |
 | FLT-APO-02 | Transition to DESCENT | Integration: test_FLT_BOOT_01_all_states | ✅ |
 | FLT-APO-03 | Log APOGEE event | Integration: test_DAT_04_events | ✅ |
 | FLT-APO-04 | No apogee before armed | Integration: test_FLT_APO_04_no_apogee_before_armed | ✅ |
@@ -174,6 +174,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | SNS-PRES-07 | A single outlier never reaches the filter | Chain: test_T2_pad_glitch_sweep, test_T2_coast_glitch, test_T2_median_timing | ✅ |
 | SNS-PRES-06 | Impossible readings discarded and counted | Hardware: pres_rejects on /api/status; the false launch they caused did not recur | ✅ HW |
 | SNS-ALT-01..03 | Altitude computation | Integration: max altitude within expected range | ✅ |
+| SNS-ALT-04 | Speed from the unclamped height | Chain: test_N26_apogee_above_8km, test_T3_coast_two_sample_glitch (a glitch's decay below the pad) | ✅ |
 
 ## 6. Telemetry
 
@@ -349,7 +350,7 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 190 |
+| ✅ Verified by a host, web or closed-loop test | 191 |
 | ⚠️ Not directly verified (needs a test or hardware) | 32 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 12 |

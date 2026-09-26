@@ -115,6 +115,7 @@ typedef struct flight_context_t {
     int32_t ground_pressure;
     int32_t max_altitude;
     int32_t last_altitude;
+    int32_t last_height; /* unclamped: speeds are taken from this [SNS-ALT-04] */
     int32_t vertical_speed_cms;
     int32_t prev_vertical_speed_cms;
     uint32_t launch_time;
@@ -154,6 +155,10 @@ typedef struct flight_context_t {
      * below it: T+0, once the detector trips a hundred feet later. */
     bool pad_rising;
     uint32_t pad_rise_ms;
+    /* [FLT-LAUNCH-07, FLT-APO-01] When each trigger's condition first held,
+     * in sample time; 0 while it does not. */
+    uint32_t launch_held_since;
+    uint32_t apogee_held_since;
     // Safety features [DD-016, DD-017]
     int32_t max_speed_cms; // peak speed during ASCENT (for arming gate)
     /* The only record that arming preceded apogee [DD-022]. */

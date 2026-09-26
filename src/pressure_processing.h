@@ -26,7 +26,8 @@
 /* ── Altitude sample — what flight software consumes ─────────────── */
 
 typedef struct {
-    int32_t altitude_cm;
+    int32_t altitude_cm; /* clamped to 0-8000 m [SNS-ALT-02, SNS-ALT-03]: what is reported */
+    int32_t height_cm;   /* not clamped: what speed is taken from [SNS-ALT-04] */
     uint32_t timestamp_ms;
 } altitude_sample_t;
 
@@ -150,5 +151,6 @@ int32_t pp_last_filtered_pa(void);
 
 int32_t pp_filter_pressure(int32_t raw_pressure, uint32_t dt_ms);
 int32_t pp_pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa);
+int32_t pp_pressure_to_height_cm(int32_t pressure_pa, int32_t ground_pressure_pa);
 
 #endif /* PRESSURE_PROCESSING_H */

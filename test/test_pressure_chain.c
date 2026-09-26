@@ -828,6 +828,191 @@ void test_T1_marker_invalid_after_landing(void) {
     TEST_ASSERT_FALSE_MESSAGE(marker_valid(), "after LANDED no power-up may recover against the old marker");
 }
 
+/* ── T3: triggers held for a duration ─────────────────────────────── */
+
+/* Launch latency and T+0, from ignition, at four accelerations: the numbers
+ * T3's latency test holds the held triggers to. */
+typedef struct {
+    double detect_ms, t0_ms;
+} launch_times_t;
+
+static launch_times_t launch_times(float g) {
+    const flight_t f = {g, 3.0f, 20.0f, 0.0f};
+    launch_times_t lt = {0, 0};
+    int n = 0;
+    for (uint32_t seed = 1; seed <= 5; seed++) {
+        result_t r = fly(&f, seed, 10, 20000, false);
+        if (r.launch_ms == 0)
+            continue;
+        lt.detect_ms += (double)r.launch_ms - (double)r.ignition_ms;
+        lt.t0_ms += (double)ctx.launch_time - (double)r.ignition_ms;
+        n++;
+    }
+    if (n) {
+        lt.detect_ms /= n;
+        lt.t0_ms /= n;
+    }
+    return lt;
+}
+
+/* Before T3, with T2's median in place: detection and T+0 after ignition. */
+static const struct {
+    float g;
+    double detect_ms, t0_ms;
+} BEFORE_T3[] = {{2.0f, 2260.0, 264.0}, {5.0f, 1560.0, 204.0}, {15.0f, 1020.0, 176.0}, {30.0f, 800.0, 156.0}};
+#define BEFORE_T3_APOGEE_S 0.59
+
+#define LAUNCH_HOLD_TEST_MS 100.0
+#define APOGEE_HOLD_TEST_MS 60.0
+
+void test_T3_pad_two_sample_glitch(void) {
+    char launched[256] = "";
+    for (unsigned i = 0; i < N_GLITCHES; i++) {
+        for (uint32_t seed = 1; seed <= 3; seed++) {
+            boot_like_hardware(seed);
+            uint32_t t = 0;
+            run_to_pad(&t);
+            uint32_t end = t + 5000u + 7u * seed;
+            for (; t < end; t++)
+                tick(t);
+            mock_glitch_pa = GLITCHES[i];
+            mock_glitch_samples = 2;
+            end = t + 3000u;
+            for (; t < end; t++)
+                tick(t);
+            if (ctx.current_state != PAD_IDLE) {
+                char item[24];
+                snprintf(item, sizeof(item), " %+ld(seed %u)", (long)(GLITCHES[i] / 1000), (unsigned)seed);
+                strncat(launched, item, sizeof(launched) - 1 - strlen(launched));
+            }
+        }
+    }
+    if (launched[0])
+        printf("  two glitches on the pad launched at (kPa):%s\n", launched);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("", launched, "two glitches in a row must never declare a launch");
+}
+
+/* The coast sweep of T2, with two bad readings in a row. */
+static void coast_glitch_sweep(int samples, char *early, size_t cap) {
+    const flight_t flights[] = {
+        {5.0f, 2.0f, 20.0f, 0.0f},
+        {5.0f, 0.55f, 20.0f, 0.0f},
+    };
+    const int32_t sizes[] = {2000, 5000, 10000, 20000};
+    for (unsigned fi = 0; fi < 2; fi++) {
+        const flight_t *f = &flights[fi];
+        float t_ap = f->burn_s + f->g_net * f->burn_s;
+        for (unsigned i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+            for (int k = 1; k <= 20; k++) {
+                glitch.at_s = t_ap - 0.05f * (float)k;
+                glitch.pa = sizes[i];
+                glitch.samples = samples;
+                result_t r = fly(f, 4, 3, 40000, false);
+                if (r.apogee_ms != 0 && r.apogee_ms < r.apogee_true_ms) {
+                    char item[64];
+                    snprintf(item, sizeof(item), " [flight %u, +%ld kPa, %.2f s before: %ld ms early]", fi,
+                             (long)(sizes[i] / 1000), 0.05 * k, (long)r.apogee_true_ms - (long)r.apogee_ms);
+                    strncat(early, item, cap - 1 - strlen(early));
+                }
+            }
+        }
+    }
+}
+
+void test_T3_coast_two_sample_glitch(void) {
+    char early[512] = "";
+    coast_glitch_sweep(2, early, sizeof(early));
+    if (early[0])
+        printf("  early apogees:%s\n", early);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("", early, "two glitches in coast must never declare apogee early");
+}
+
+void test_T3_latency(void) {
+    for (unsigned i = 0; i < sizeof(BEFORE_T3) / sizeof(BEFORE_T3[0]); i++) {
+        launch_times_t lt = launch_times(BEFORE_T3[i].g);
+        char msg[128];
+        snprintf(msg, sizeof(msg), "%.0f g: detected %.1f ms after ignition (was %.1f), T+0 %.1f ms (was %.1f)",
+                 BEFORE_T3[i].g, lt.detect_ms, BEFORE_T3[i].detect_ms, lt.t0_ms, BEFORE_T3[i].t0_ms);
+        TEST_ASSERT_TRUE_MESSAGE(lt.detect_ms <= BEFORE_T3[i].detect_ms + LAUNCH_HOLD_TEST_MS + 20.0, msg);
+        TEST_ASSERT_TRUE_MESSAGE(lt.t0_ms == BEFORE_T3[i].t0_ms, msg);
+    }
+    const flight_t f = {5.0f, 2.0f, 20.0f, 0.0f};
+    double sum = 0.0;
+    int n = 0;
+    for (uint32_t seed = 1; seed <= 20; seed++) {
+        result_t r = fly(&f, seed, 3, 60000, false);
+        if (r.apogee_ms == 0 || r.apogee_true_ms == 0)
+            continue;
+        sum += ((double)r.apogee_ms - (double)r.apogee_true_ms) / 1000.0;
+        n++;
+    }
+    double mean = n ? sum / n : 99.0;
+    char msg[96];
+    snprintf(msg, sizeof(msg), "apogee %+.3f s after the true one (was %+.2f)", mean, BEFORE_T3_APOGEE_S);
+    TEST_ASSERT_TRUE_MESSAGE(n == 20 && mean <= BEFORE_T3_APOGEE_S + APOGEE_HOLD_TEST_MS / 1000.0 + 0.02, msg);
+}
+
+/* At 100 Hz a 60 ms burst is six readings. A hold counted in samples -- five
+ * samples is 100 ms at 50 Hz -- lets it through; one measured in time does
+ * not. */
+void test_T3_durations_not_counts(void) {
+    boot_like_hardware(3);
+    mock_sample_interval_ms = 10;
+    uint32_t t = 0;
+    run_to_pad(&t);
+    uint32_t end = t + 5000u;
+    for (; t < end; t++)
+        tick(t);
+    mock_glitch_pa = -20000;
+    mock_glitch_samples = 6;
+    end = t + 3000u;
+    for (; t < end; t++)
+        tick(t);
+    TEST_ASSERT_EQUAL_MESSAGE(PAD_IDLE, ctx.current_state, "a 60 ms burst at 100 Hz must not launch");
+
+    /* ...and a real flight at 100 Hz still launches and finds apogee. */
+    const flight_t f = {5.0f, 2.0f, 20.0f, 0.0f};
+    boot_like_hardware(4);
+    mock_sample_interval_ms = 10;
+    t = 0;
+    uint32_t pad = run_to_pad(&t);
+    uint32_t ign = pad + 3000u;
+    truth_t tr = {0};
+    uint32_t apogee_true = 0, apogee = 0;
+    bool launched = false;
+    for (; t < 40000u && apogee == 0; t++) {
+        float tf = ((float)t - (float)ign) / 1000.0f;
+        float vb = tr.v;
+        truth_step(&tr, &f, tf);
+        if (!tr.apogee && tf > f.burn_s && vb > 0.0f && tr.v <= 0.0f) {
+            tr.apogee = true;
+            apogee_true = t;
+        }
+        if (apogee_true && t == apogee_true - 300u) {
+            mock_glitch_pa = 10000;
+            mock_glitch_samples = 6;
+        }
+        mock_pressure.pressure_pa = isa_pa(tr.h);
+        tick(t);
+        launched |= ctx.current_state == ASCENT;
+        if (ctx.apogee_detected)
+            apogee = t;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(launched, "a real flight at 100 Hz launches");
+    TEST_ASSERT_TRUE_MESSAGE(apogee != 0 && apogee >= apogee_true, "and finds apogee after the true one");
+}
+
+/* N26: above 8 km the altitude clamp stopped the altitude, and a stopped
+ * altitude read as a speed of zero -- apogee, while still climbing. About
+ * 420 m/s at burnout; the true apogee is near 9.3 km AGL. */
+void test_N26_apogee_above_8km(void) {
+    const flight_t f = {30.0f, 1.43f, 20.0f, 0.0f};
+    result_t r = fly(&f, 1, 3, 120000, false);
+    char msg[96];
+    snprintf(msg, sizeof(msg), "apogee %+ld ms from the true one", (long)r.apogee_ms - (long)r.apogee_true_ms);
+    TEST_ASSERT_TRUE_MESSAGE(r.apogee_ms != 0 && r.apogee_ms >= r.apogee_true_ms, msg);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -853,5 +1038,10 @@ int main(void) {
     RUN_TEST(test_T1_glitch_on_the_pad);
     RUN_TEST(test_T1_cold_reasons);
     RUN_TEST(test_T1_marker_invalid_after_landing);
+    RUN_TEST(test_T3_pad_two_sample_glitch);
+    RUN_TEST(test_T3_coast_two_sample_glitch);
+    RUN_TEST(test_T3_latency);
+    RUN_TEST(test_T3_durations_not_counts);
+    RUN_TEST(test_N26_apogee_above_8km);
     return UNITY_END();
 }

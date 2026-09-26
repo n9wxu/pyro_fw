@@ -211,13 +211,12 @@ void test_FLT_LAUNCH_01_detects_ascent(void) {
     pp_test_prime(101325);
     /* Launch is now 100 ft (3048 cm) above the ground reference, not 10 m.
        ~12 Pa per metre near sea level, so 30.5 m needs about 370 Pa; 600 Pa
-       (~5000 cm) clears it without depending on the exact lapse rate. */
-    mock_pressure.pressure_pa = 101325.0f - 600.0f;
-
-    /* Run several samples so filter converges */
-    for (int i = 0; i < 20; i++) {
+       (~5000 cm) clears it without depending on the exact lapse rate. The
+       climb continues at about 33 m/s: the trigger must hold for
+       LAUNCH_HOLD_MS, and only a rocket still climbing holds it. */
+    for (int i = 0; i < 40; i++) {
         mock_time_ms = i * 15;
-        ctx.last_sample = (i > 0) ? (i - 1) * 15 : 0;
+        mock_pressure.pressure_pa = 101325.0f - 600.0f - 0.4f * (float)mock_time_ms;
         ctx.current_state = step(&ctx, mock_time_ms);
     }
     TEST_ASSERT_EQUAL(ASCENT, ctx.current_state);
@@ -268,8 +267,7 @@ void test_GND_CAL_02_reference_stops_tracking_when_the_rocket_moves(void) {
     /* A launch: far outside the band, immediately. The reference must hold
        still rather than climb with the rocket. */
     feed_pad(&ctx, 101325.0f - 600.0f, 420, 800, 20);
-    TEST_ASSERT_INT_WITHIN_MESSAGE(3, before, pp_ground_pressure(),
-                                   "the reference must not follow a climbing rocket");
+    TEST_ASSERT_INT_WITHIN_MESSAGE(3, before, pp_ground_pressure(), "the reference must not follow a climbing rocket");
 }
 
 void test_FLT_LAUNCH_08_ten_metres_is_no_longer_enough(void) {
@@ -365,6 +363,7 @@ void test_FLT_ASC_04_arms_pyros(void) {
     ctx.launch_time = 0;
     ctx.last_sample = 0;
     ctx.last_altitude = 5000;
+    ctx.last_height = 5000;
     ctx.vertical_speed_cms = 500; /* 5 m/s — below 10 m/s threshold, coasting */
     ctx.max_speed_cms = 5000;     /* [DD-017] peak was 50 m/s — motor burn confirmed */
 
@@ -388,16 +387,20 @@ void test_FLT_APO_01_detects_apogee(void) {
     ctx.launch_time = 0;
     ctx.last_sample = 0;
     ctx.last_altitude = 8000;
+    ctx.last_height = 8000;
     ctx.max_altitude = 8000;
     ctx.pyros_armed = true;
     ctx.vertical_speed_cms = 100;
     ctx.pyro1_continuity_good = true;
     ctx.pyro2_continuity_good = true;
 
-    /* Altitude lower than last → negative speed → apogee */
-    mock_pressure.pressure_pa = 101325.0f - 900.0f; /* ~7470 cm < 8000 */
-    mock_time_ms = 200;
-    ctx.current_state = step(&ctx, mock_time_ms);
+    /* Altitude lower than last, and still falling: a negative speed held for
+     * APOGEE_HOLD_MS is apogee. */
+    for (uint32_t t = 200; t <= 340 && ctx.current_state == ASCENT; t += 20) {
+        mock_pressure.pressure_pa = 101325.0f - 900.0f + 1.2f * (float)(t - 200); /* ~7470 cm, down 5 m/s */
+        mock_time_ms = t;
+        ctx.current_state = step(&ctx, mock_time_ms);
+    }
 
     TEST_ASSERT_EQUAL(FALLING, ctx.current_state);
     TEST_ASSERT_TRUE(ctx.apogee_detected);
@@ -475,6 +478,7 @@ void test_FLT_LAND_01_detects_landing(void) {
     ctx.filtered_pressure = 101313; /* pre-converged near mock pressure */
     ctx.launch_time = 0;
     ctx.last_altitude = 100;
+    ctx.last_height = 100;
     ctx.vertical_speed_cms = 0;
     ctx.apogee_detected = true;
 

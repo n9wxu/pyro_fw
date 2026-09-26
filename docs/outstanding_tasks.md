@@ -142,9 +142,9 @@ Each is scheduled in section 4, and listed here so none is missed.
 | ID | What | Fixed by |
 |---|---|---|
 | N23 | **Fixed (T1).** Brownout recovery never engages on hardware. It asks for samples before the pressure layer starts, so it always boots cold. The tests hide this by priming the layer. | T1 |
-| N24 | **Single readings fixed (T2); two in a row wait for T3.** A single plausible glitch, 12 kPa or more low, declares a launch. The board then sits in ASCENT until power-cycled, and a glitch in coast can declare apogee. | T2, T3 |
+| N24 | **Fixed (T2, T3).** A single plausible glitch, 12 kPa or more low, declares a launch. The board then sits in ASCENT until power-cycled, and a glitch in coast can declare apogee. | T2, T3 |
 | N25 | **Fixed (T2, T1).** **The pad marker outlives its flight, and T1 would make that dangerous.** `pad.mkr` is never deleted, and every power-on reset counts as a power event. So every battery power-up with any old marker runs recovery. The operator narrative powers the board twice per flight with its charges connected: on the bench, then on the pad. Today N23 hides the problem. Once T1 feeds recovery samples, a single glitch in its history reads as about 80 m up and climbing, and the verdict is "recovered in ascent", on the pad. If the averaging window reaches into the older half of the slope's window, a glitch there reads as high and falling: "recovered in descent", which arms the pyros at once. | T2 before T1; T1's glitch tests; T1 removes the marker at landing |
-| N26 | **Above 8 km AGL the altitude clamp reads as a stopped rocket.** SNS-ALT-02 clamps altitude at 8000 m, and speed comes from the clamped altitude. Past 8 km the speed reads zero, so the pyros arm, the Mach gate clears after 1 s, and apogee fires while the rocket is still climbing. Supersonic flights are the ones that go this high. | T5: speed from the pressure fit, never from a clamped altitude |
+| N26 | **Fixed (T3).** **Above 8 km AGL the altitude clamp reads as a stopped rocket.** SNS-ALT-02 clamps altitude at 8000 m, and speed comes from the clamped altitude. Past 8 km the speed reads zero, so the pyros arm, the Mach gate clears after 1 s, and apogee fires while the rocket is still climbing. Supersonic flights are the ones that go this high. | T5: speed from the pressure fit, never from a clamped altitude |
 | — | **A stuck sensor in coast may fire the drogue** (suspected, not yet shown). The filter settles onto a stuck value, speed reaches zero, and apogee fires if the pyros are armed. `test_M2_stuck_in_coast` shows whether it does. | M2 |
 
 ---
@@ -175,7 +175,7 @@ ground bias, and the stall figure, where they used a different stall model.
 | Ground tracker after a >50 Pa step | frozen for good (N9) | re-seeds | T6 |
 | Sample timestamps | loop ms at the temperature read, 16 ms after the conversion, up to 127 ms after it through a stall; stalls raise the worst speed error at 100 m/s from 8.3 to 9.3 m/s | hardware timer at the pressure conversion | T11 |
 | Fit-based speed and acceleration through flash stalls | worst −294 m/s and 441 m/s² with today's stamps (earlier experiments; T11 re-measures) | RMS 1.2 m/s and 3.5 m/s², stalls or not | T11 |
-| A flight above 8 km AGL | apogee fires about 1 s after passing 8 km (N26) | apogee at the real apogee | T5 |
+| A flight above 8 km AGL | apogee fired 14.9 s early, at the clamp (N26) | apogee at the real apogee: done | T3 |
 | Supersonic flight with a static-port error | the Mach gate trusts any 1 s below 100 ft/s, which the error can fake | no drogue before the true apogee, on every M0 profile | M1 |
 | A sensor stuck or lost in flight | a stuck value may read as apogee | never causes a deployment | M2 |
 | Real flights replayable offline | no (raw pressure not logged) | yes | T8 |
@@ -366,6 +366,16 @@ marker's lifetime.
 
 ### T3. Hold a trigger for a duration
 
+**Done 2026-09-26** (DD-042). The coast test kept failing with the holds in:
+two high readings pushed the filtered altitude below the pad, and the zero
+clamp held it at 0 while the filter decayed, a speed of zero for 180 ms. So
+T3 also took T5's "speed from the unclamped altitude", which fixed N26 as well
+(`test_N26_apogee_above_8km` failed on the old code by 14.9 s).
+`test_T3_latency` is a guard: it bounds what the holds may cost. Launch is up
+to 100 ms later with T+0 unchanged; apogee moved from +0.59 s to +0.65 s. The
+unclamped speed also lets the noise reach the landing test on the pad's own
+level, which the clamp had hidden: T4's job.
+
 **Why:** launch and apogee each fire on one sample. A median of 3 doesn't
 stop two bad samples in a row.
 
@@ -543,9 +553,9 @@ speed.
   noise is ≤ 0.25 Pa RMS. (A first-order filter at τ = 500 ms and 50 Hz gives
   about 0.17 Pa.) Fails today.
 - `test_T4_pad_speed`: speed noise on the pad ≤ 0.3 m/s RMS. Fails today.
-- `test_T4_touchdown`: touchdown to LANDED ≤ 3 s under noise, on a landing
-  site 5 m above the pad, where the zero clamp can't hide the noise. Fails
-  today: it never lands by stillness.
+- `test_T4_touchdown`: touchdown to LANDED ≤ 3 s under noise, on the pad's
+  level and 5 m above it. Fails today: since T3 it never lands by stillness
+  at either.
 - *guard*: the AGL accuracy tests (REV-05) and the closed-loop suites.
 - Bench: `noise_baseline.py`'s pad-speed RMS on all three boards is ≤ 0.3 m/s.
 
@@ -619,7 +629,6 @@ too.
   all three. That settles T5's old choice between a least-squares slope and an
   alpha-beta tracker; the tracker would also need tuning to the vehicle, which
   the Mach prompt rules out.
-- N26: speed taken from the clamped altitude reads zero above 8 km.
 
 **Tests first** (in `pressure_chain_tests` and `mach_tests`):
 - `test_T5_fit_reference`: on random quadratics with jittered spacing and
@@ -635,8 +644,6 @@ too.
 - `test_T5_apogee`: over 1000 seeds and apogees from 100 m to 9 km: never
   before the true apogee, and a mean delay within 0.1 s of what the 1.0001
   drop implies.
-- `test_T5_above_8km` (N26): a flight to 9 km AGL declares apogee only at the
-  real one. Fails today.
 - `test_T5_ejection`: M0's ejection pulse at the drogue doesn't move the
   main. An AGL main fires within 8 m of its setting.
 - `test_T5_canopy_swing`: under M0's canopy-swing noise, the main still fires
@@ -665,8 +672,8 @@ too.
   clean test. The pad marker stores it for recovery (marker version 2).
 - One function gives every detector its vertical speed. It converts ṗ through
   the slope of the altitude formula at the fitted pressure, so it agrees with
-  the altitude the detectors compare. It never passes through either clamp
-  (SNS-ALT-02, SNS-ALT-03); the clamps apply to reported altitude only.
+  the altitude the detectors compare. Like T3's, it never passes through
+  either clamp (SNS-ALT-04).
 - AGL and FALLEN compare the fit's pressure, which doesn't lag, so DD-029's
   lead goes. SPEED uses the fit's speed. DELAY counts from the better apogee.
 - After each charge fires, pressure-driven triggers wait for a clean fit, for
@@ -683,9 +690,9 @@ too.
 
   The Mach gate's constants carry over as true speeds until M1 replaces it.
 
-**Records:** amend FLT-APO-01, SNS-ALT-02 and SNS-ALT-03 (reported altitude
-only), PYR-MODE-05, and the affected FLT-DESC and FLT-LAND entries; amend
-DD-017 and DD-029; a new DD for the estimator. Mark REV-05 and N26 fixed.
+**Records:** amend FLT-APO-01, PYR-MODE-05, and the affected FLT-DESC and
+FLT-LAND entries; amend DD-017 and DD-029; a new DD for the estimator. Mark
+REV-05 fixed.
 
 ---
 

@@ -376,6 +376,7 @@ static bool assess_recovery(flight_context_t *ctx, uint32_t now, state_event_t *
     ctx->launch_time = now;
     ctx->max_altitude = alt_agl;
     ctx->last_altitude = alt_agl;
+    ctx->last_height = pp_pressure_to_height_cm(level, m.ground_pressure_pa);
     ctx->last_sample = newest;
     ctx->vertical_speed_cms = speed;
     hal_log_start(&ctx->config, ctx->ground_pressure);
@@ -534,6 +535,25 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
 #define LAUNCH_SPEED_CMS 500
 #define LAUNCH_RISE_CM 50 /* [FLT-LAUNCH-03] T+0 is the first sample above this */
 
+/* [FLT-LAUNCH-07, FLT-APO-01] A trigger must hold, sample after sample, for
+ * this long. A median of three stops one bad reading; two in a row reach the
+ * detectors, and each trigger used to fire on one sample. Durations, never
+ * sample counts: at another sample rate a count is another hold. */
+#define LAUNCH_HOLD_MS 100u
+#define APOGEE_HOLD_MS 60u
+
+/* True once cond has held continuously for hold_ms of sample time. A sample
+ * time of 0 is legitimate, so the start is kept one past it. */
+static bool held(bool cond, uint32_t *since, uint32_t ts, uint32_t hold_ms) {
+    if (!cond) {
+        *since = 0;
+        return false;
+    }
+    if (*since == 0)
+        *since = ts + 1u;
+    return ts + 1u - *since >= hold_ms;
+}
+
 /* [FLT-BROWN-01] The pad marker, written once, after ten seconds of PAD_IDLE.
  *
  * Ten seconds, because the point is to have written it long before the moment
@@ -592,7 +612,7 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     /* Track speed on the pad for launch confirmation [DD-016] */
     uint32_t dt = (ctx->last_sample > 0) ? (ts - ctx->last_sample) : 10;
     if (dt > 0)
-        ctx->pad_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
+        ctx->pad_speed_cms = (sample.height_cm - ctx->last_height) * 1000 / (int32_t)dt;
 
     if (altitude <= LAUNCH_RISE_CM) {
         ctx->pad_rising = false;
@@ -610,11 +630,13 @@ static state_event_t detect_pad_idle(flight_context_t *ctx, uint32_t now) {
 
     buf_add(ctx, 0, ctx->filtered_pressure, altitude, PAD_IDLE);
     ctx->last_altitude = altitude;
+    ctx->last_height = sample.height_cm;
     ctx->last_sample = ts;
 
     bool alt_ok = altitude > LAUNCH_ALT_CM;
     bool speed_ok = ctx->pad_speed_cms > LAUNCH_SPEED_CMS;
-    return (alt_ok && speed_ok && !grounded_on_usb(ctx)) ? SEVT_LAUNCH : SEVT_NONE; /* [USB-01] */
+    bool launch = held(alt_ok && speed_ok && !grounded_on_usb(ctx), &ctx->launch_held_since, ts, LAUNCH_HOLD_MS);
+    return launch ? SEVT_LAUNCH : SEVT_NONE; /* [USB-01] */
 }
 
 /* [FLT-ASC-01..06, FLT-APO-01..04, FLT-RATE-02, DD-017]
@@ -674,7 +696,7 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
 
     ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
     if (dt > 0)
-        ctx->vertical_speed_cms = (altitude - ctx->last_altitude) * 1000 / (int32_t)dt;
+        ctx->vertical_speed_cms = (sample.height_cm - ctx->last_height) * 1000 / (int32_t)dt;
     ctx->under_thrust = ctx->vertical_speed_cms > ctx->prev_vertical_speed_cms;
 
     /* Track peak speed for arming gate [DD-017] */
@@ -689,6 +711,7 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
     if (altitude > ctx->max_altitude)
         ctx->max_altitude = altitude;
     ctx->last_altitude = altitude;
+    ctx->last_height = sample.height_cm;
     /* The sample clock, not the loop clock: dt above is measured between
      * sample timestamps, and `now` would put the loop's lateness into every
      * speed. */
@@ -701,9 +724,8 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
      * up, and nothing else. No timer may force it [DD-022]: a wrong value
      * fires during ascent, which is worse than the sensor failure it would
      * cover. */
-    if (ctx->pyros_armed && !ctx->apogee_detected && mach_gate_clear(ctx, now) && ctx->vertical_speed_cms <= 0)
-        return SEVT_APOGEE;
-    return SEVT_NONE;
+    bool cond = ctx->pyros_armed && !ctx->apogee_detected && mach_gate_clear(ctx, now) && ctx->vertical_speed_cms <= 0;
+    return held(cond, &ctx->apogee_held_since, ts, APOGEE_HOLD_MS) ? SEVT_APOGEE : SEVT_NONE;
 }
 
 /* ── Descent ──────────────────────────────────────────────────────────
@@ -900,11 +922,12 @@ static bool descent_sample(flight_context_t *ctx, uint32_t now, flight_state_t s
     ctx->filtered_pressure = pp_last_filtered_pa();
     ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
     if (dt > 0)
-        ctx->vertical_speed_cms = (sample.altitude_cm - ctx->last_altitude) * 1000 / (int32_t)dt;
+        ctx->vertical_speed_cms = (sample.height_cm - ctx->last_height) * 1000 / (int32_t)dt;
     buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, sample.altitude_cm, st);
     ctx->last_sample = sample.timestamp_ms;
     *prev_out = ctx->last_altitude;
     ctx->last_altitude = sample.altitude_cm;
+    ctx->last_height = sample.height_cm;
     return true;
 }
 
@@ -990,6 +1013,7 @@ static state_event_t detect_landed(flight_context_t *ctx, uint32_t now) {
     if (now - ctx->last_sample >= 1000)
         buf_add(ctx, now - ctx->launch_time, ctx->filtered_pressure, sample.altitude_cm, LANDED);
     ctx->last_altitude = sample.altitude_cm;
+    ctx->last_height = sample.height_cm;
     ctx->last_sample = sample.timestamp_ms;
     return SEVT_NONE;
 }
@@ -1044,6 +1068,7 @@ static void action_launch(flight_context_t *ctx, uint32_t now) {
     /* Also the base of the first ASCENT speed: from zero it would be one
      * enormous sample. */
     ctx->last_altitude = pp_pressure_to_altitude_cm(ctx->filtered_pressure, ctx->ground_pressure);
+    ctx->last_height = pp_pressure_to_height_cm(ctx->filtered_pressure, ctx->ground_pressure);
     ctx->last_logged_ms = now - ctx->launch_time;
 
     /* The ring's newest sample is a PAD_IDLE one, which the log does not
