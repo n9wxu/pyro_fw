@@ -538,7 +538,8 @@ brings in, 294 m/s wrong through a stall; T11's tests measure that again.
   for a reference fit. Fails today.
 - `test_T11_d1_stamp`: with a mocked timer, D1 commanded at t and D2 at
   t + 9.2 ms, the sample is stamped t + 4.5 ms. `conv_start_us` can't provide
-  this, because D2's command overwrites it.
+  this, because D2's command overwrites it. Retired by DD-051: the one-shot's
+  handler stamps each conversion itself, tested by `ms5607_tests`.
 - `test_T11_bmp280_forced`: a mocked BMP280 in forced mode stamps at its
   command.
 - `test_T11_log_rows_at_sample_time`: logged row times equal the samples'
@@ -988,6 +989,10 @@ Temperature once in ten, carried to each pressure along its line.
   detectors read it in the same iteration.
 - `support/prove_core0.py` proves the alarm handler RAM-closed, and fails on a
   planted flash call.
+- At the user's rule, the driver provides every stamp: the MS5607's
+  interrupt state machine commands, stamps and reads each conversion
+  (`ms5607_tests`: the stamp survives a read held 60 ms and a loop 50 ms
+  late), and `bmp280_read()` stamps its own reading.
 - The history is 128 samples and the ring 64, so the fit keeps its whole
   second at ~90 Hz. At 90 Hz with the old 64 it held 0.7 s, and the pad
   speed was noisier than at 50 Hz (0.252 m/s against 0.192).

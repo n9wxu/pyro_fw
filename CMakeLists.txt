@@ -321,6 +321,7 @@ add_executable(pyro_fw_c
     src/telemetry_formatter.c
     src/buzzer.c
     src/ms5607_driver.c
+    src/ms5607_oneshot.c
     src/usb_descriptors.c
     src/net_glue.c
     src/http_server.c
@@ -779,6 +780,24 @@ add_custom_target(http_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_http
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "HTTP stream parser and framing tests"
+)
+
+# The MS5607 one-shot's interrupt state machine, on a fake bus and clock:
+# test/ms5607_bus.h stands in for src/hal_common/ms5607_bus.h, so -I test
+# comes first.
+add_custom_target(ms5607_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building MS5607 one-shot tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/test
+               -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_ms5607.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_oneshot.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_ms5607
+    COMMAND ${CMAKE_COMMAND} -E echo "Running MS5607 one-shot tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_ms5607
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "MS5607 one-shot state machine tests"
 )
 
 # The beep vocabulary: the rules half, with no file I/O, like pin_assign.

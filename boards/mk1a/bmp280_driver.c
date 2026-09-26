@@ -17,7 +17,14 @@
  */
 #include "pressure_sensor.h"
 #include "hardware/i2c.h"
+#include "hardware/timer.h"
 #include <stdio.h>
+
+/* [SNS-PRES-08] Normal mode converts on its own, through any stall, so what is
+ * read is at most one conversion old: x4 pressure, x1 temperature and a 0.5 ms
+ * standby take 11.5 ms typical, 13.8 ms worst. Stamped half that before the
+ * read. */
+#define BMP280_HALF_CYCLE_US 6000u
 
 #define I2C_PORT i2c0 /* MK1A: BMP280 on SDA0/SCL0 (GPIO20/21) */
 
@@ -120,6 +127,7 @@ bool bmp280_read(pressure_reading_t *reading) {
 
     if (!bmp280_read_reg(BMP280_REG_PRESS_MSB, data, 6))
         return false;
+    reading->time_us = time_us_64() - BMP280_HALF_CYCLE_US;
 
     int32_t adc_P = ((int32_t)data[0] << 12) | ((int32_t)data[1] << 4) | (data[2] >> 4);
     int32_t adc_T = ((int32_t)data[3] << 12) | ((int32_t)data[4] << 4) | (data[5] >> 4);

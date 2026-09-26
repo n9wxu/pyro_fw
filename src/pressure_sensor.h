@@ -18,6 +18,10 @@ typedef enum {
 typedef struct {
     float pressure_pa;
     float temperature_c;
+    /* [SNS-PRES-08] When the pressure was measured, from the hardware timer,
+     * set by the driver. The temperature may be older: the sensor's thermal
+     * mass keeps it slow. */
+    uint64_t time_us;
 } pressure_reading_t;
 
 // Initialize and detect sensor

@@ -3,7 +3,7 @@
  *
  * Implements src/pressure_sensor.h. Return value of pressure_sensor_init()
  * selects the sampling path in src/hal_common:
- *     0 = none, 1 = MS5607 (two-phase D1/D2), 2 = BMP280 (single read)
+ *     0 = none, 1 = MS5607 (a one-shot conversion each loop), 2 = BMP280 (single read)
  *
  * Type 2 is only compiled when board_pins.h sets BOARD_HAS_BMP280 to 1.
  *

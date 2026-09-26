@@ -1229,14 +1229,6 @@ void test_T11_stalls_change_nothing(void) {
     TEST_ASSERT_TRUE_MESSAGE(stalled <= 1.1 * calm, msg);
 }
 
-/* The MS5607 is stamped at the middle of its D1 conversion, from the hardware
- * timer: not at D2's command, which overwrites conv_start_us, and not at the
- * loop's read. */
-void test_T11_d1_stamp(void) {
-    uint64_t d1 = 123456789ull;
-    TEST_ASSERT_EQUAL_UINT64(d1 + 4500u, ms5607_sample_time_us(d1));
-}
-
 /* Decisions are functions of the samples: a loop clock that runs late, by an
  * amount that wanders, changes which sample decided nothing. */
 static uint32_t lag_state;
@@ -2256,7 +2248,6 @@ int main(void) {
     RUN_TEST(test_T6_rejecting_starts_at_zero);
     RUN_TEST(test_N18_landed_logs_once_a_second);
     RUN_TEST(test_T11_stalls_change_nothing);
-    RUN_TEST(test_T11_d1_stamp);
     RUN_TEST(test_T9_datasheet_example);
     RUN_TEST(test_T9_temperature_reuse);
     RUN_TEST(test_T9_one_shot_cadence);

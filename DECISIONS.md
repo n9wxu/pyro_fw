@@ -558,10 +558,12 @@ rationale and the alternatives considered.
   ear.
 
 ### DD-051: The MS5607 Converts Once A Loop, Read By A One-Shot In RAM
-- **Decision:** each loop takes the conversion the last loop commanded and
-  commands the next. A hardware alarm 9.1 ms after the command (DD-036's
-  margin) runs a handler that reads the ADC and leaves the result for the
-  next loop. Temperature is converted once in ten; each pressure is
+- **Decision:** each loop takes the conversion the last loop started and
+  starts the next. From the start to the take, an interrupt state machine
+  owns the sensor: the loop forces the alarm's interrupt, whose handler sends
+  the command, stamps it from the hardware timer and arms the alarm 9.1 ms on
+  (DD-036's margin); at the alarm it reads the ADC and leaves the result, with
+  its stamp, for the next loop. Temperature is converted once in ten; each pressure is
   compensated with the temperature at its own time, on the least-squares line
   through the last four temperature readings, carried no more than 200 ms past
   the newest (SNS-PRES-12). At the 10 ms loop that is 90 pressures a second,
@@ -573,6 +575,15 @@ rationale and the alternatives considered.
   read came early. Measured on MK1B and MK1C, a new pressure every 27-35 ms,
   where the code, the docs and the host tests assumed 20. The loop now only
   schedules, and a conversion never waits on the loop's work.
+- **Why the handler stamps it:** the user's rule: the driver provides the
+  stamp, the time the pressure was measured, and the MS5607's must come from
+  the interrupt state machine, which runs apart from the loop. The stamp is
+  the conversion's middle, from the handler's own clock as the command ends,
+  not the time of the read: an erase holds interrupts off, and so the read,
+  for up to tens of milliseconds, but not the conversion. A late loop or a
+  held read moves no stamp (`test_SNS_PRES_08_held_read_keeps_its_stamp`,
+  `test_SNS_PRES_08_late_loop_keeps_the_stamp`). The temperature needs no
+  such care: the sensor's thermal mass keeps it slow.
 - **Why a line through the temperature:** a temperature reused as read is up
   to ten conversions old. For a sensor warming at 1 °C/s that costs 12.1 Pa
   RMS; carried along its line, 0.71 Pa RMS and 2.00 Pa at worst
@@ -581,18 +592,23 @@ rationale and the alternatives considered.
 - **Why the handler is in RAM:** it can come due while core0 is erasing
   flash. Interrupts are held off across every erase and program, so it waits
   for the erase, and from RAM it could not fault even were that ever not so.
-  The SDK's i2c functions are in flash, so the handler drives i2c1's
-  registers itself. `support/prove_core0.py` fails the build if the handler,
+  The SDK's i2c and time functions are in flash, so the handler drives i2c1's
+  registers and reads the timer itself, through `ms5607_bus.h`, whose calls
+  are forced inline. `support/prove_core0.py` fails the build if the handler,
   anything it branches to, through a veneer or not, or any address it loads
   is in flash; a `time_us_64()` planted in the handler fails it.
+- **What the host can test:** the state machine is `ms5607_oneshot.c`, and
+  `ms5607_tests` builds it against a fake bus and clock (`test/ms5607_bus.h`):
+  the stamp, a read held 60 ms, a loop 50 ms late, the 9.04 ms wait, one
+  conversion at a time, NACKs on the command and on the read.
 - **The budget:** at 100 kHz the command takes about 0.2 ms and the read about
-  0.6 ms, so a conversion is ready about 9.9 ms after the top of the loop that
-  commanded it, and the next top is never sooner than 10 ms. A loop that finds
+  0.6 ms, both in the handler, so a conversion is ready about 9.9 ms after the
+  top of the loop that started it, and the next top is never sooner than 10 ms. A loop that finds
   it still in flight counts a `pres_waits` and skips that loop's sample; it
   never reads early. 400 kHz, the sensor's maximum, would widen the margin to
   about 0.7 ms, if the boards' pull-ups allow it.
-- **The cost:** the handler holds core0 for the read, about 0.6 ms in every
-  10. `log_rate_hz`'s default of 50 is at or above `SENSOR_RATE_HZ`, so every
+- **The cost:** the handler holds core0 for the command and the read, about
+  0.8 ms in every 10. `log_rate_hz`'s default of 50 is at or above `SENSOR_RATE_HZ`, so every
   sample is logged: about 90 rows a second, nearly twice the flash written per
   flight, until the T8 logging-rate decision is made.
 
@@ -843,6 +859,9 @@ rationale and the alternatives considered.
   samples happen to fall on odd milliseconds, which hid it; T8's replay, whose
   are even, found it. `test_T11_landing_holds_a_second` and
   `test_T6_rejecting_starts_at_zero` now run both parities.
+- **Amended by DD-051:** the driver stamps each reading, not the HAL. The
+  MS5607's stamp is the one-shot's handler's, taken as it commands the
+  conversion; the BMP280's is `bmp280_read()`'s. The HAL passes them on.
 
 ### DD-045: The Ground Reference Re-Seeds After A Step
 - **Decision:** When every sample has been rejected by GND-CAL-03's 50 Pa gate

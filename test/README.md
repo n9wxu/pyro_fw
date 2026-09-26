@@ -51,6 +51,12 @@ conversion a loop with the temperature once in ten, and
 compensates each pressure with the temperature carried along its line, for a
 sensor warming at 1 °C/s.
 
+`ms5607_tests` runs the MS5607 one-shot's interrupt state machine
+(`src/ms5607_oneshot.c`) on a fake bus and clock: `test/ms5607_bus.h` stands
+in for `src/hal_common/ms5607_bus.h`, so the suite puts `test/` first on the
+include path. The stamp is the handler's, through a read held 60 ms and a
+loop 50 ms late.
+
 `test_T8_replay` flies a flight, reads back its log, and replays the log's
 readings through `sim/replay.c`; every event must land on the sample the
 flight decided it on. The same code is `pyro_sim --replay <flight_log.csv>`

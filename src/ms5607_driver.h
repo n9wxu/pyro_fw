@@ -27,13 +27,9 @@
  * answers 0. Timed from the end of the command. */
 #define MS5607_CONV_DONE_US 9100u
 
-/* [SNS-PRES-08] A reading describes the middle of its D1 conversion (OSR 4096
- * takes up to 9.04 ms), not the moment it is read. From the hardware timer,
- * which keeps counting while a flash erase stalls the loop. */
+/* [SNS-PRES-08] A reading describes the middle of its conversion (OSR 4096
+ * takes up to 9.04 ms), not the moment it is read. */
 #define MS5607_HALF_CONV_US 4500u
-static inline uint64_t ms5607_sample_time_us(uint64_t d1_command_us) {
-    return d1_command_us + MS5607_HALF_CONV_US;
-}
 
 /* The datasheet's first-order compensation (page 8), from the PROM's C1-C6. */
 static inline void ms5607_compensate_prom(const uint16_t prom[8], uint32_t d1, uint32_t d2,
@@ -127,21 +123,25 @@ bool ms5607_read(pressure_reading_t *reading);
  * part's PROM. Always returns true (pure arithmetic, no I2C). */
 bool ms5607_compensate(uint32_t d1, uint32_t d2, pressure_reading_t *out);
 
+/* The address ms5607_detect() found the sensor at. */
+uint8_t ms5607_address(void);
+
 /* ── One-shot conversion [DD-051] ─────────────────────────────────── */
 
-typedef enum { MS5607_STARTED, MS5607_BUSY, MS5607_BUS_ERROR } ms5607_start_t;
+typedef enum { MS5607_STARTED, MS5607_BUSY, MS5607_NOT_BEGUN } ms5607_start_t;
 
 typedef struct {
-    uint32_t raw;        /* D1 or D2 */
-    uint64_t command_us; /* when the conversion began */
+    uint32_t raw;   /* D1 or D2 */
+    uint64_t at_us; /* [SNS-PRES-08] the middle of the conversion, stamped by
+                     * the handler from the hardware timer as it began */
     bool temperature;
-    bool ok; /* the read completed; false: a NACK or a stuck bus */
+    bool ok; /* false: the sensor did not answer, or the bus stuck */
 } ms5607_conversion_t;
 
 /* Claims a hardware alarm for the one-shot and installs its handler. */
 bool ms5607_async_begin(void);
 
-/* Command a conversion and arm its one-shot. BUSY: the last one is still in
+/* Hands the handler a conversion to command. BUSY: the last one is still in
  * flight, and nothing was sent. */
 ms5607_start_t ms5607_async_start(bool temperature);
 
