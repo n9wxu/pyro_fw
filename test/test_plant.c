@@ -44,8 +44,9 @@ enum { C_ADC_VBAT = 0, C_ADC_BUS = 1, C_ADC_A = 2, C_ADC_B = 3 };
 /* The bench MK1C, 2026-09-26: its ADC and a scope at CN1 (DD-054). U9's OUT
  * conducts back into the part above about 0.72 V, so the bus sits far below
  * DESIGN.md 4's 1058 counts, and the model is held to the board. */
-#define MK1C_BENCH_BUS_BIASED   688  /* ADC 685 and 690                    */
-#define MK1C_BENCH_CH_ISOLATED 1262  /* ADC 1258 (A) and 1266 (B)          */
+#include "../boards/mk1c/pyro_sense.h"
+#define MK1C_BENCH_BUS_BIASED MK1C_BENCH_BUS_BIASED_COUNTS /* ADC 685 and 690       */
+#define MK1C_BENCH_CH_ISOLATED MK1C_BENCH_CH_BIASED_COUNTS /* ADC 1258 (A), 1266 (B) */
 
 #define MK1A_CNT_PATH_MAX      500
 #define MK1A_CNT_OPEN_MIN     3000
@@ -70,8 +71,6 @@ void setUp(void) {}
 void tearDown(void) {}
 
 /* ══════════════════ MK1C: the board as measured ═══════════════════ */
-
-#include "../boards/mk1c/pyro_sense.h"
 
 /* Measured levels scatter by a few counts between reads and boards. */
 static void assert_bench_near(int expect, int got, int pct, const char *what) {

@@ -78,6 +78,7 @@
  */
 #include "plant_internal.h"
 #include "board_pins.h"
+#include "pyro_sense.h"
 
 #include <math.h>
 #include <string.h>
@@ -95,14 +96,14 @@
 #define R_BLEED_OHM      2200.0   /* see the note above                   */
 #define R_VBAT_DIV_OHM 149900.0   /* 100k + 49.9k                         */
 #define R_VBAT_RATIO    (49900.0 / 149900.0)
-#define GPIO_HIGH_V         3.3
-/* BAT54WS, fitted to the bench: 3.12 V at 0.2 mA, 2.99 V at 4 mA. */
-#define BIAS_DIODE_IS_A    3.7e-6
-#define BIAS_DIODE_NVT_V   0.045
-/* U9's OUT, off, conducting back into the part: fitted to the scope. */
-#define U9_REV_IS_A        1.2e-12
-#define U9_REV_NVT_V       0.040
-#define U9_REV_OHM         250.0
+/* Fitted to the bench (boards/mk1c/pyro_sense.h): the BAT54WS gives 3.12 V
+ * at 0.2 mA and 2.99 V at 4 mA; U9's reverse path fits the scope's points. */
+#define GPIO_HIGH_V        MK1C_BIAS_GPIO_V
+#define BIAS_DIODE_IS_A    MK1C_BIAS_DIODE_IS_A
+#define BIAS_DIODE_NVT_V   MK1C_BIAS_DIODE_NVT_V
+#define U9_REV_IS_A        MK1C_U9_REV_IS_A
+#define U9_REV_NVT_V       MK1C_U9_REV_NVT_V
+#define U9_REV_OHM         ((double)MK1C_U9_REV_OHM)
 #define C_ADC_F           10e-9
 #define C_NODE_F           1e-9   /* drain node strays: TVS, FET, track    */
 

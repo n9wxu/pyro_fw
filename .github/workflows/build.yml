@@ -192,6 +192,11 @@ jobs:
       - name: Run sensor bring-up tests
         run: cd build && ninja sensor_bringup_tests
 
+      # The firing-network models, MK1C's held to the bench board (DD-054),
+      # and the bench script graded on captures synthesized from it.
+      - name: Run plant model and bench script tests
+        run: cd build && ninja plant_tests && ninja pyro_check_tests
+
       - name: Validate web JS syntax
         run: node --check www/app.js
 

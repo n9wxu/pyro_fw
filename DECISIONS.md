@@ -586,6 +586,15 @@ rationale and the alternatives considered.
   pull-down alone, so the decay there still shows it (about 2.3 ms against
   16 ms); nothing checks that yet. The tracking current falls to about
   0.11 mA, safer than the 0.2 mA designed.
+- **The bench script grades the board as measured:** the characterisation
+  lives in `pyro_sense.h`, the model is built from it, and every waveform
+  capture carries it, so `support/pyro_check.py` holds a board to U9's
+  fitted path and the Schottky sources rather than to DESIGN.md 4. It finds
+  an open R_BLEED from the decay below the knee, where the level cannot.
+  Against the paper design it failed a healthy board four ways and could
+  not tell it from one with the bleed open. `pyro_check_tests` grades
+  captures synthesized from the model: a healthy board passes, an open
+  bleed fails.
 
 ### DD-053: No Sleeps: The Exec Loop Is The Only Clock
 - **Decision:** at the user's direction, no code sleeps or busy-waits

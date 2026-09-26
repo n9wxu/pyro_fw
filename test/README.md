@@ -72,6 +72,15 @@ them. `board_pyro_tests` runs MK1B's `pyro_board.c` against it; and
 against its own package, with fake sensors that refuse a transfer during
 their reset.
 
+## MK1C's firing bus as measured (DD-054)
+
+`plant_tests` holds `sim/plant/plant_mk1c.c` to the bench MK1C: U9's reverse
+path and the bias sources' Schottky, fitted to the board's ADC and a scope,
+from `boards/mk1c/pyro_sense.h`. `pyro_check_tests` synthesizes waveform
+captures from that model (`test/synth_mk1c_capture.c`) and has
+`support/pyro_check.py` grade them offline: a healthy board passes, one with
+R_BLEED open fails.
+
 ## The Mach lockout's test ground (M0)
 
 `test_mach.c` (target `mach_tests`) flies supersonic rockets through the board

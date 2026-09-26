@@ -3,8 +3,9 @@
 pyro_check.py — bench verification for the Pyro MK1C pyro front end.
 
 Triggers high-speed captures of the firing bus charging and discharging,
-fits the exponentials, and solves for the actual component values. Compares
-everything against the design constants from DESIGN.md section 4.
+profiles the decay, and grades the board against the bench characterisation
+the capture carries (DD-054): U9's reverse path, the bias sources' Schottky,
+and the levels the bench MK1C reads. DESIGN.md section 4 where it is silent.
 
 The device writes self-describing CSV, so every constant used here comes out
 of the capture file. Nothing is hardcoded except the argument defaults.
@@ -140,10 +141,10 @@ def tau_profile(cap, rpd, charging):
     Local time constant as a function of node voltage.
 
     Deliberately NOT a single-exponential fit. A constant-R, constant-C
-    network gives a flat profile; anything else means the model is wrong,
-    and reporting one tau would hide that. This is what caught C115: its
-    capacitance changes 3.4x with DC bias, so every single-tau estimate
-    disagreed with every other one and with the DC measurement.
+    network gives a flat profile, and MK1C's bus does not: above about
+    0.72 V U9's OUT conducts back into the part (DD-054), so tau falls
+    there, while below it the profile is the pull-down and C alone. One tau
+    would blend the two.
     """
     c = cap.counts
     pre = cap.pre_n
@@ -183,98 +184,141 @@ def tau_profile(cap, rpd, charging):
     return out
 
 
+def junction_i(v, i_s, nvt, r):
+    """Current through a junction in series with r, at v volts across both:
+    v = nvt ln(1 + i/i_s) + r i. Bisection on the monotonic inverse."""
+    if v <= 0.0:
+        return 0.0
+    lo, hi = 0.0, v / r
+    for _ in range(60):
+        mid = (lo + hi) / 2.0
+        if nvt * math.log1p(mid / i_s) + r * mid < v:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
+class Bench:
+    """The characterisation the capture carries (DD-054): U9's reverse path
+    and the bias sources' Schottky, fitted to the bench MK1C. A capture from
+    firmware that predates it carries none, and is graded against DESIGN.md
+    4 with U9 taken to draw nothing."""
+
+    def __init__(self, cap):
+        self.have = cap.num("u9_rev_is_a") is not None
+        self.c_nf = cap.num("bench_c_bus_nf", cap.num("design_c_bus_nf"))
+        self.u9 = (cap.num("u9_rev_is_a"), cap.num("u9_rev_nvt_v"), cap.num("u9_rev_ohm"))
+        self.gpio_v = cap.num("bias_gpio_v", 3.3)
+        self.diode = (cap.num("bias_diode_is_a"), cap.num("bias_diode_nvt_v"))
+        self.bus_counts = cap.num("bench_bus_biased_counts")
+        self.ch_counts = cap.num("bench_ch_biased_counts")
+
+    def u9_i(self, v):
+        return junction_i(v, *self.u9) if self.have else 0.0
+
+    def source_v(self, i):
+        """What a bias GPIO puts behind its 330 ohm while sourcing i."""
+        if not self.have:
+            return 3.0
+        i_s, nvt = self.diode
+        return self.gpio_v - nvt * math.log1p(i / i_s)
+
+
 def analyse(chg, dec, rpd_measured=None, dc=None, r120_measured=None):
     rows = []
+    bench = Bench(chg)
     dsn_rbias = chg.num("design_r_bias_ohm")
     dsn_rpd = chg.num("design_rpd_ohm")
-    dsn_c = chg.num("design_c_bus_nf")
     rdiv = chg.num("design_r_div_ohm")
+    c_nf = bench.c_nf
 
     rpd = rpd_measured if rpd_measured else dsn_rpd
     src = "measured" if rpd_measured else "design"
+    if not bench.have:
+        print("  this capture carries no bench characterisation: graded against DESIGN.md 4")
+        print()
 
     prof = tau_profile(dec, rpd, charging=False)
 
-    # tau(V) = R(V) * C(V); a decay alone cannot separate the two. Resolve it
-    # by holding C at the design value and solving for R, then sanity-check:
-    # a capacitor can derate DOWN but never reads several times ABOVE nominal,
-    # so an implied C far over design means the resistance is what is moving.
-    print("  decay profile (a linear RC gives a FLAT tau):")
-    print("     bus V     local tau     R_eff at C=design    implied C at R=design")
-    for v, tau, cnf in prof:
-        r_eff = tau * 1e-6 / (dsn_c * 1e-9)
-        print(f"     {v:5.2f} V   {tau:8.0f} us   {r_eff:10.0f} ohm        {cnf:8.0f} nF")
+    # Local tau gives the current the bus draws at each voltage: I = C dV/dt.
+    # Below U9's knee that is the pull-down alone, one RC; above it U9's
+    # reverse path adds a junction's current, which the profile is held to.
+    print(f"  decay profile at C = {c_nf:.0f} nF (the bench's bus capacitance):")
+    print("     bus V     local tau    I_total    I_pull-down    I_extra    U9 path")
+    for v, tau, _ in prof:
+        it = v * c_nf * 1e-9 / (tau * 1e-6)
+        print(f"     {v:5.2f} V   {tau:8.0f} us   {it*1000:6.3f} mA   {v/rpd*1000:6.3f} mA   "
+              f"{(it - v/rpd)*1000:6.3f} mA   {bench.u9_i(v)*1000:6.3f} mA")
     print()
 
-    if len(prof) >= 3:
-        taus = [t for _, t, _ in prof]
+    tail = [(v, tau) for v, tau, _ in prof if v <= 0.6]
+    if len(tail) >= 2:
+        taus = [t for _, t in tail]
         spread = max(taus) / min(taus)
-        c_over = max(c for _, _, c in prof) / dsn_c
-        verdict = "PASS" if spread < 1.35 else "FAIL"
-        note = "flat = linear RC" if verdict == "PASS" else "R(V) varies; see leakage below"
-        rows.append(("RC linearity", f"{spread:.2f}x tau spread", "<1.35x", "-", verdict, note))
+        rows.append(("decay below U9's knee", f"{spread:.2f}x tau spread", "<1.35x", "-",
+                     "PASS" if spread < 1.35 else "FAIL", "one RC: the pull-down alone"))
+        r_tail = (sum(taus) / len(taus)) * 1e-6 / (c_nf * 1e-9)
+        rows.append(check("pull-down, from the decay", r_tail, rpd, 15, "ohm",
+                          f"below 0.6 V, C {c_nf:.0f} nF; an open R_BLEED reads several times this"))
 
-        if verdict == "FAIL" and rpd_measured:
-            # C is a 50V X7R at ~1.7V, so its derating is negligible and it is
-            # treated as fixed at the design value. tau(V)/C then gives R(V),
-            # and the current above what the cold pull-down explains is leakage.
-            print("  leakage I-V (C held at design; current above the cold pull-down):")
-            print("     bus V     R_eff     I_total    I_via_Rpd    I_LEAK")
-            for v, tau, _ in prof:
-                r_eff = tau * 1e-6 / (dsn_c * 1e-9)
-                it, ir = v / r_eff, v / rpd
-                print(f"     {v:5.2f} V  {r_eff:7.0f} ohm  {it*1000:7.3f} mA  "
-                      f"{ir*1000:8.3f} mA  {(it-ir)*1000:7.3f} mA")
-            print()
-            print("  A junction conducts ~nothing below its turn-on then rises steeply.")
-            print("  A wrong resistor would instead give a FLAT R(V).")
-            print()
+    upper = [(v, tau) for v, tau, _ in prof if v >= 0.95]
+    if upper:
+        worst = None
+        for v, tau in upper:
+            extra = v * c_nf * 1e-9 / (tau * 1e-6) - v / rpd
+            model = bench.u9_i(v)
+            err = (extra - model) / model * 100.0 if model > 0 else float("inf")
+            if worst is None or abs(err) > abs(worst[2]):
+                worst = (v, extra, err, model)
+        v, extra, err, model = worst
+        rows.append(("U9 reverse path, decay", f"{extra*1000:.2f} mA at {v:.2f} V",
+                     f"{model*1000:.2f} mA", f"{err:+.0f}%" if model > 0 else "-",
+                     "PASS" if abs(err) <= 35.0 else "FAIL", "above the knee"))
 
-    # DC levels: steady state, so no capacitance involved. Authoritative.
+    # The DC point: steady state, so no capacitance involved.
     bus_b = chg.num("meas_bus_biased_counts")
     ch_a = chg.num("meas_ch_a_biased_counts")
-    v_bus = chg.mv(bus_b) / 1000.0 if bus_b else None
-    v_src = None
-    if dc:
-        v_src = dc["cathode"]
-        v_bus = dc["bus"]
-    elif ch_a:
-        v_src = (chg.mv(ch_a) / 1000.0) * (dsn_rbias + rdiv) / rdiv
+    v_bus = dc["bus"] if dc else (chg.mv(bus_b) / 1000.0 if bus_b else None)
 
     rows.append(check("bus pull-down Rpd", rpd, dsn_rpd, 5, "ohm", f"({src})"))
-    if v_src and v_bus:
+    if v_bus:
+        i_bus = v_bus / rpd + bench.u9_i(v_bus)
         if r120_measured:
-            # R120 known, so the DC point measures the bus impedance directly.
-            i_in = (v_src - v_bus) / r120_measured
-            r_bus_op = v_bus / i_in
-            i_extra = i_in - v_bus / rpd
+            if dc:
+                i_in = (dc["cathode"] - v_bus) / r120_measured
+            else:
+                # The source sags with its own current: solve for the pair.
+                i_in = i_bus
+                for _ in range(40):
+                    i_in = (bench.source_v(i_in) - v_bus) / r120_measured
+            extra = i_in - v_bus / rpd
+            model = bench.u9_i(v_bus)
+            err = (extra - model) / model * 100.0 if model > 0 else float("inf")
             rows.append(check("R120", r120_measured, dsn_rbias, 10, "ohm", "meter"))
-            rows.append(check("bus impedance, operating", r_bus_op, rpd, 15, "ohm",
-                              f"at {v_bus:.3f} V"))
-            rows.append(("bus leakage current", f"{i_extra*1000:.2f} mA", "~0", "-",
-                         "PASS" if abs(i_extra) < 0.05e-3 else "FAIL",
-                         "beyond the cold pull-down"))
+            rows.append(("U9 reverse path, DC", f"{extra*1000:.2f} mA at {v_bus:.3f} V",
+                         f"{model*1000:.2f} mA", f"{err:+.0f}%" if model > 0 else "-",
+                         "PASS" if abs(err) <= 35.0 else "FAIL", "beyond the pull-down"))
         else:
-            i_bus = v_bus / rpd
-            r120 = (v_src - v_bus) / i_bus
-            rows.append(check("R120 (DC, assumes no leakage)", r120, dsn_rbias, 20, "ohm",
-                              "give --r120 if measured"))
-        rows.append(check("bias source", v_src * 1000, 3000, 10, "mV", "3.3V less a Schottky"))
+            r120 = (bench.source_v(i_bus) - v_bus) / i_bus
+            rows.append(check("R120, from the DC point", r120, dsn_rbias, 15, "ohm",
+                              "U9's path included; give --r120 if metered"))
+    if ch_a:
+        v_ch = chg.mv(ch_a) / 1000.0
+        i_ch = v_ch / rdiv
+        v_src = v_ch + i_ch * dsn_rbias
+        rows.append(check("bias source, at a channel", v_src * 1000, bench.source_v(i_ch) * 1000, 3,
+                          "mV", f"at {i_ch*1000:.2f} mA"))
 
-    if prof and not rpd_measured:
-        # Only meaningful when there is no DC anchor to say which of R or C
-        # is moving. With --rpd/--r120 the leakage table above supersedes it.
-        rows.append(check("C_bus (assumes R fixed)", prof[-1][2], dsn_c, 25, "nF",
-                          f"at {prof[-1][0]:.2f} V"))
-
-    for key, design_key, name in (
-        ("meas_bus_biased_counts", "design_bus_biased_counts", "bus under bias"),
-        ("meas_ch_a_biased_counts", "design_ch_biased_counts", "ch A under bias"),
-        ("meas_ch_b_biased_counts", "design_ch_biased_counts", "ch B under bias"),
+    for key, bench_v, design_key, name in (
+        ("meas_bus_biased_counts", bench.bus_counts, "design_bus_biased_counts", "bus under bias"),
+        ("meas_ch_a_biased_counts", bench.ch_counts, "design_ch_biased_counts", "ch A under bias"),
+        ("meas_ch_b_biased_counts", bench.ch_counts, "design_ch_biased_counts", "ch B under bias"),
     ):
-        m, d = chg.num(key), chg.num(design_key)
+        m = chg.num(key)
         if m:
-            rows.append(check(name, m, d, 10, "counts", f"{chg.mv(m)/1000:.3f} V"))
+            ref, tol, basis = (bench_v, 5, "bench") if bench_v else (chg.num(design_key), 10, "design")
+            rows.append(check(name, m, ref, tol, "counts", f"{chg.mv(m)/1000:.3f} V, against {basis}"))
 
     q = chg.num("meas_bus_quiescent_counts")
     if q is not None:

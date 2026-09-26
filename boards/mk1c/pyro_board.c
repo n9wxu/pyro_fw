@@ -581,6 +581,20 @@ static void wave_write_csv(int mode) {
     WCSV("# design_c_bus_nf,1000\n");
     WCSV("# design_bus_biased_counts,1058\n");
     WCSV("# design_ch_biased_counts,1214\n");
+    /* --- the bench characterisation the board is held to (DD-054) --- */
+#define WCSV_KEY(key, value) WCSV("# " key "," #value "\n")
+#define WCSV_VAL(key, value) WCSV_KEY(key, value)
+    WCSV_VAL("bench_bus_biased_counts", MK1C_BENCH_BUS_BIASED_COUNTS);
+    WCSV_VAL("bench_ch_biased_counts", MK1C_BENCH_CH_BIASED_COUNTS);
+    WCSV_VAL("bench_c_bus_nf", MK1C_BENCH_C_BUS_NF);
+    WCSV_VAL("u9_rev_is_a", MK1C_U9_REV_IS_A);
+    WCSV_VAL("u9_rev_nvt_v", MK1C_U9_REV_NVT_V);
+    WCSV_VAL("u9_rev_ohm", MK1C_U9_REV_OHM);
+    WCSV_VAL("bias_gpio_v", MK1C_BIAS_GPIO_V);
+    WCSV_VAL("bias_diode_is_a", MK1C_BIAS_DIODE_IS_A);
+    WCSV_VAL("bias_diode_nvt_v", MK1C_BIAS_DIODE_NVT_V);
+#undef WCSV_VAL
+#undef WCSV_KEY
     /* --- levels measured by the routine tests, same session --- */
     WCSV("# meas_bus_quiescent_counts,%u\n", (unsigned)sns_bus);
     WCSV("# meas_bus_biased_counts,%u\n", (unsigned)(trk_valid ? trk_bus : 0));
