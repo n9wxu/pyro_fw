@@ -924,6 +924,11 @@ Each starts with its tests, like any other task.
 
 ### N11. Text rows in the flight log carry uptime
 
+**Done 2026-09-26**, except its bench check. `lua_app.c` and `hal_common.c`
+run only on the RP2040, so the check that their rows carry flight time is in
+section 6. They now take `flight_elapsed_ms()`, which `test_REV09_*` covers
+on the host.
+
 **Needs:** T11. LUA and MOCK rows carry uptime, while sample rows carry flight
 time. Fixed before T11, the Lua rows would move to the loop clock just as the
 sample rows move to sample time.
@@ -999,6 +1004,7 @@ resolution doc.
 | — | Chamber runs for T1–T7 | pump-down, hold and vent in test mode give launch, apogee and landing as the host tests predict, with no false launch during the hold | the chamber |
 | T1 | Recovery reads samples on the hardware | a board with a marker, booted on battery with USB plugged in afterwards, reads "cold: at ground level" | a battery |
 | T1 | Brownout recovery on the real path | a power cut during a chamber descent rejoins in FALLING; a power cut on the pad stays cold | a battery, the chamber, telemetry over serial or radio (USB forces a cold boot, and a reset ends test mode) |
+| N11 | LUA and MOCK rows on the flight clock | in test mode, a script that calls `log()` once a second through a chamber flight writes LUA rows whose times fall among the sample rows', not near the board's uptime | test mode, the chamber, MK1C with Lua |
 | N20 | No file served while the log is written | in test mode, once a chamber pump-down declares a launch, `GET /www/app.js` answers 409 and `/api/status` 200; after LANDED the log reads back whole | test mode, the chamber |
 | — | The arming path independent of software | with the mechanical disconnect in, a commanded ground-test FIRE puts no current through a dummy load, on each board | a dummy load and a meter. The Mach prompt asks for this path; the operator narrative uses a mechanical disconnect, but no document says what it breaks |
 

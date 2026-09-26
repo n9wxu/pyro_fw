@@ -398,7 +398,9 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     lua_core1_publish(&f);
 
     lua_core1_service(now_ms);
-    log_drain(now_ms);
+    /* [DAT-02, N11] The flight log's time column is flight time, since T+0,
+     * for every row: not uptime, which the sample rows beside it do not use. */
+    log_drain(flight_elapsed_ms(ctx, now_ms));
 
     /* Core0 has withheld flash for the whole of startup, so waiting longer
      * costs more than killing core1. */

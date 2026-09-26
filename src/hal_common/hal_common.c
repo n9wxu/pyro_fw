@@ -32,6 +32,7 @@
 #include <pico_fota_bootloader/core.h>
 #include "pressure_sensor.h"
 #include "pressure_processing.h"
+#include "flight_states.h"
 #include "pyro.h"
 #include "pyro_release.h"
 #include <string.h>
@@ -456,7 +457,10 @@ static const pyro_ch_ops_t real_pyro_ops = {real_fire, real_get, real_fault};
 static void report_mock(uint8_t channel, const char *what) {
     char note[48];
     snprintf(note, sizeof(note), "pyro%u %s: released to Lua", (unsigned)channel, what);
-    hal_log_mock(to_ms_since_boot(get_absolute_time()), note);
+    /* [DAT-02, N11] On the flight log's clock, since T+0, like every other row. */
+    const flight_context_t *fc = flight_get_context();
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+    hal_log_mock(fc ? flight_elapsed_ms(fc, now) : now, note);
 
     char line[64];
     snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
