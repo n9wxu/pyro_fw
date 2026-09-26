@@ -71,6 +71,28 @@ function buildIni(s) {
 
 const EMPTY_LOG = 'time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\r\n';
 
+/* A supersonic flight's log (FLT-MACH-07): the Mach lock goes up at 1 s,
+   and while it stands the ports read the rocket far higher than it is. The
+   lock lets go at unlockMs, or never, when fallbackMs gives the lock's
+   fallback instead. */
+function generateLockedFlightCSV(unlockMs, fallbackMs) {
+  const lines = generateFlightCSV().split('\n');
+  const out = [];
+  for (const line of lines) {
+    const f = line.split(',');
+    const t = parseInt(f[0]);
+    if (line.charAt(0) === '#' || isNaN(t) || f.length < 8 || f[2] === '') { out.push(line); continue; }
+    const end = unlockMs || fallbackMs;
+    if (t >= 1000 && t < end) f[2] = '420000'; /* the port's error: 13780 ft */
+    out.push(f.join(','));
+    if (t === 1000) out.push('1000,' + f[1] + ',420000,1,1,' + f[5] + ',21.5,LOCK');
+  }
+  const ev = unlockMs ? 'UNLOCK' : 'LOCK_FALLBACK';
+  const at = out.findIndex(l => parseInt(l.split(',')[0]) >= (unlockMs || fallbackMs));
+  out.splice(at, 0, (unlockMs || fallbackMs) + ',60000,290000,1,0,60000,21.5,' + ev);
+  return out.join('\n');
+}
+
 function generateFlightCSV() {
   let lines = ['# Pyro MK1B Flight Data', '# ID: RACE01', '# Name: Screamer', '# Pyro1: delay 0',
                '# Pyro2: agl 500', '# Units: ft', '# Ground Pa: 101325',
@@ -357,6 +379,14 @@ const server = http.createServer((req, res) => {
      back to what this mode started with. */
   if (req.url === '/api/_test/fly' && req.method === 'POST') {
     flightCsv = generateFlightCSV();
+    res.writeHead(200, cors); res.end('ok');
+    return;
+  }
+  if (req.url.startsWith('/api/_test/fly_locked/') && req.method === 'POST') {
+    const how = req.url.split('/').pop();
+    flightCsv = how === 'late' ? generateLockedFlightCSV(7000, 0)
+              : how === 'fallback' ? generateLockedFlightCSV(0, 8100)
+              : generateLockedFlightCSV(4000, 0);
     res.writeHead(200, cors); res.end('ok');
     return;
   }

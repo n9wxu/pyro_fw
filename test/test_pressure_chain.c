@@ -2042,6 +2042,48 @@ void test_T9_same_outcomes(void) {
     TEST_ASSERT_TRUE(worst_d <= 0.1);
 }
 
+/* ── N12: a drogue approaching its rate from below ─────────────────── */
+
+/* [FLT-DESC-01] A drogue opened at apogee starts from rest and speeds up
+ * toward its terminal rate, through the main's band on the way. It is a
+ * drogue, and must never be reported as the main. No main is configured, so
+ * nothing but the rate speaks for the phase. */
+static struct {
+    bool chute, drogue;
+} phase_seen;
+
+static void note_phase(const truth_t *tr) {
+    if (tr->down)
+        return;
+    phase_seen.chute |= ctx.current_state == CHUTE_DESCENT;
+    phase_seen.drogue |= ctx.current_state == DROGUE_DESCENT;
+}
+
+void test_N12_drogue_from_below(void) {
+    const float rates[] = {12.0f, 15.0f, 20.0f, 25.0f};
+    char bad[256] = "";
+    for (unsigned i = 0; i < sizeof(rates) / sizeof(rates[0]); i++) {
+        for (uint32_t seed = 1; seed <= 5; seed++) {
+            const flight_t f = {5.0f, 2.0f, rates[i], 0.0f};
+            memset(&phase_seen, 0, sizeof(phase_seen));
+            fly_opts.channels = true;
+            fly_opts.p1_mode = PYRO_MODE_DELAY;
+            fly_opts.p1_value = 0;
+            fly_opts.p2_mode = PYRO_MODE_NONE;
+            fly_opts.p2_value = 0;
+            fly_opts.on_sample = note_phase;
+            (void)fly(&f, seed, 6, 200000u, false);
+            if (phase_seen.chute || !phase_seen.drogue) {
+                char item[64];
+                snprintf(item, sizeof(item), " %.0f m/s seed %u: %s;", (double)rates[i], (unsigned)seed,
+                         phase_seen.chute ? "reported as the main" : "never a drogue");
+                strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+            }
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -2102,6 +2144,7 @@ int main(void) {
     RUN_TEST(test_T5_under_thrust);
     RUN_TEST(test_M1_recovered_ascent_locked);
     RUN_TEST(test_M1_minimum_altitude_arm);
+    RUN_TEST(test_N12_drogue_from_below);
     RUN_TEST(test_T9_short_interval);
     RUN_TEST(test_T9_same_outcomes);
     return UNITY_END();

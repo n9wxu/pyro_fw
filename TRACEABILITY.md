@@ -95,8 +95,8 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-MACH-04 | The fallback | Mach: test_M1_fallback | ✅ |
 | FLT-MACH-05 | No apogee while flagged | Mach: test_M1_no_drogue_before_apogee (both pads, both port signs), test_M0_report | ✅ |
 | FLT-MACH-06 | No arming below 30 m; a recovered ascent starts flagged | Chain: test_M1_minimum_altitude_arm, test_M1_recovered_ascent_locked | ✅ |
-| FLT-MACH-07 | The peak from outside the lock | Mach: test_M1_peak_outside_lock | ✅ |
-| FLT-DESC-01 | Phase from rate, not from command | Closed-loop: test_FLT_DESC_01_phase_without_pyros | ✅ |
+| FLT-MACH-07 | The peak from outside the lock | Mach: test_M1_peak_outside_lock; Web: apogee skips the Mach lock, a lock let go near apogee makes it a lower bound, a lock that fell back makes it a lower bound | ✅ |
+| FLT-DESC-01 | Phase from rate, not from command | Closed-loop: test_FLT_DESC_01_phase_without_pyros; Chain: test_N12_drogue_from_below (a drogue speeding up through the main's band is still a drogue) | ✅ |
 | FLT-DESC-02 | Landing from every descent phase | Closed-loop: test_FLT_DESC_02_ballistic_reaches_landed | ✅ |
 | PYR-ALT-01 | Clamp altitude settings | Closed-loop: Karman suite (AGL > 8000m clamped, pyro still fires) | ✅ |
 | PYR-ALT-02 | Warning beep for range | Integration: test_PYR_ALT_02_cfg_range_beep | ✅ |

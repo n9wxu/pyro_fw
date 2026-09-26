@@ -116,7 +116,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-MACH-04**: If the flag is never released, the system shall declare apogee once clean fits have shown the pressure rising, and above the pressure the flag was set at, for 1 s, and shall arm the pyrotechnics if they are not armed. ← FLT-MACH-02
 - **FLT-MACH-05**: The system shall not declare apogee from FLT-APO-01 while the flag stands. ← FLT-MACH-02
 - **FLT-MACH-06**: No channel shall arm before the fitted pressure has been below 0.9965·p0 (about 30 m). A flight recovered into ASCENT shall start flagged, at the pressure it rejoined at. ← PYR-SAFE-04, FLT-MACH-02
-- **FLT-MACH-07**: The reported peak shall be the height of the lowest pressure a clean fit showed outside the flag, marked a lower bound if the flag was released within 2 s of apogee. ← FLT-MACH-02
+- **FLT-MACH-07**: The reported peak shall be the height of the lowest pressure a clean fit showed outside the flag, marked a lower bound if the flag was released within 2 s of apogee. The web UI's Flight Data summary shall take its apogee from the log's rows outside the flag, marked "at least" in the same case or when the flag fell back. ← FLT-MACH-02
 - **FLT-DESC-01**: The system shall determine the descent phase from the measured descent rate holding steady, not from which channel has been commanded. ← FLT-PHASE-02
 - **FLT-DESC-02**: The system shall detect landing in every descent phase, so that a flight which deployed nothing still closes its flight log. ← FLT-PHASE-02
 

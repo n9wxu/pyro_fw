@@ -592,6 +592,33 @@ test.describe('Flown device', () => {
     expect(apogee).toContain('10000');
   });
 
+  /* N27, FLT-MACH-07: while the Mach lock stands the ports' altitude is not
+     the rocket's, so the apogee comes from the rows outside it -- and is only
+     a lower bound if the lock let go within 2 s of apogee, or never did. */
+  async function openLocked(page, request, how) {
+    await request.post(BASE + '/api/_test/fly_locked/' + how);
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Flight Data');
+  }
+
+  test('apogee skips the Mach lock', async ({ page, request }) => {
+    await openLocked(page, request, 'early');
+    await expect(page.locator('#dApogee')).toContainText('10000');
+    await expect(page.locator('#dApogee')).not.toContainText('at least');
+  });
+
+  test('a lock let go near apogee makes it a lower bound', async ({ page, request }) => {
+    await openLocked(page, request, 'late');
+    await expect(page.locator('#dApogee')).toContainText('at least');
+  });
+
+  test('a lock that fell back makes it a lower bound', async ({ page, request }) => {
+    await openLocked(page, request, 'fallback');
+    await expect(page.locator('#dApogee')).toContainText('at least');
+    await expect(page.locator('#dApogee')).not.toContainText('13780');
+  });
+
   /* The log's own column names decide where the event is: the firmware
      writes a thrust flag before it, which a fixed column 5 read as the event. */
   test('pyro events shown in flight summary', async ({ page }) => {

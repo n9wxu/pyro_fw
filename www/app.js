@@ -390,9 +390,17 @@ function updateFlightSummary() {
   if (flightData.length) {
     var end = ev.LANDING ? ev.LANDING : flightData[flightData.length - 1];
     dur = (end.t/1000).toFixed(1) + 's' + (ev.LANDING ? '' : ' (no landing recorded)');
+    /* FLT-MACH-07: while the Mach lock stands the ports' altitude is not the
+       rocket's, so the apogee comes from the rows outside it; a lock let go
+       within 2 s of apogee, or never, may have hidden the top. */
+    var lock = ev.LOCK, unlock = ev.UNLOCK || ev.LOCK_FALLBACK;
     var maxA = 0;
-    flightData.forEach(function(p) { if (p.a > maxA) maxA = p.a; });
-    apo = cmToUnit(maxA, u) + ' ' + ul;
+    flightData.forEach(function(p) {
+      var locked = lock && p.t >= lock.t && (!unlock || p.t < unlock.t);
+      if (!locked && p.a > maxA) maxA = p.a;
+    });
+    var bound = ev.LOCK_FALLBACK || (ev.UNLOCK && ev.APOGEE && ev.APOGEE.t - ev.UNLOCK.t < 2000);
+    apo = (bound ? 'at least ' : '') + cmToUnit(maxA, u) + ' ' + ul;
   }
   document.getElementById('dDur').textContent = dur;
   document.getElementById('dApogee').textContent = apo;

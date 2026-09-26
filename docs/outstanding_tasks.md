@@ -1073,6 +1073,13 @@ observed).
 
 ### N12. A canopy approaching its rate from below can settle in the main band
 
+**Done 2026-09-26, by T5.** `test_N12_drogue_from_below` flies drogues of 12
+to 25 m/s opened at apogee, five seeds each, with no main configured: none is
+ever reported as the main. It passes on T5's fit, whose speed does not trail
+the rate the way the filter's did, so no change was needed and the test is
+its guard. It could not be run on the code before T5: it uses T5's flight
+options in the chain suite.
+
 **Needs:** T5. Phase report only; triggers don't read it.
 - **Tests first:** `test_N12_drogue_from_below`: a drogue that approaches its
   terminal rate from below is reported as DROGUE_DESCENT. Fails today in the
@@ -1080,6 +1087,13 @@ observed).
 - **Change:** revisit the band test on T5's speed.
 
 ### N27. The Flight Data summary's apogee includes the locked interval
+
+**Done 2026-09-26** (FLT-MACH-07). Three web tests on locked logs from the mock
+server (`/api/_test/fly_locked/early|late|fallback`) failed on the old
+summary, which showed the port's 13779.5 ft for a 10000 ft apogee.
+`updateFlightSummary()` skips the rows between LOCK and UNLOCK or
+LOCK_FALLBACK, and says "at least" after a fallback or a release within 2 s of
+APOGEE.
 
 **Needs:** M1. The web UI takes the highest altitude row in the flight log as
 the apogee. On a locked flight that row can be the port's error: M0's draggy
