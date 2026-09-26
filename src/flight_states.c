@@ -305,6 +305,12 @@ static void read_continuity(flight_context_t *ctx);
 
 static state_event_t detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
     extern void hal_telemetry_send(const char *sentence);
+    if (ctx->sensor_type == SENSOR_PENDING) {
+        int sensor = hal_pressure_sensor();
+        if (sensor < 0 && now - ctx->boot_timer < SENSOR_BRINGUP_MS)
+            return SEVT_NONE;
+        ctx->sensor_type = sensor < 0 ? 0u : (uint8_t)sensor;
+    }
     if (ctx->sensor_type == 0) {
         hal_telemetry_send("!SENSOR FAIL - no pressure sensor answered\r\n");
         ctx->diag |= DIAG_SENSOR_FAIL;
@@ -1554,7 +1560,9 @@ void flight_init(flight_context_t *ctx) {
     /* Captured, not discarded. 0 means no sensor answered, and BOOT_SENSOR
      * turns that into a terminal fault rather than a board that beeps "all
      * good" and then never detects a launch. */
-    ctx->sensor_type = (uint8_t)hal_pressure_init();
+    hal_pressure_init();
+    int sensor = hal_pressure_sensor();
+    ctx->sensor_type = sensor < 0 ? SENSOR_PENDING : (uint8_t)sensor;
     ctx->fs_ok = hal_fs_healthy();
     hal_pyro_init();
     ctx->boot_timer = hal_time_ms();

@@ -1,8 +1,8 @@
 /*
  * MS5607-02BA03 pressure sensor driver interface.
  *
- * Synchronous (blocking), at init only: ms5607_detect() probes both I2C
- * addresses and reads the PROM; ms5607_read() makes one full conversion.
+ * Detection, at boot: ms5607_detect_step(), once a loop, resets each I2C
+ * address in turn and reads its PROM once the reset has reloaded it.
  *
  * One-shot, in flight [DD-051]: each loop takes the conversion its alarm
  * finished and commands the next. The alarm's handler reads the ADC from RAM,
@@ -118,10 +118,21 @@ static inline uint32_t ms5607_temps_at(const ms5607_temps_t *t, uint64_t at_us) 
     return (uint32_t)((int64_t)t->d2[newest] + (int64_t)(d >= 0.0f ? d + 0.5f : d - 0.5f));
 }
 
-/* ── Synchronous API (blocking, init time only) ─────────────────── */
+/* ── Detection [DD-053] ─────────────────────────────────────────── */
 
-bool ms5607_detect(void);
-bool ms5607_read(pressure_reading_t *reading);
+/* The PROM reloads for 2.8 ms after a reset (datasheet pages 10-11). */
+#define MS5607_RESET_MS 3u
+
+typedef enum { MS5607_DETECT_PENDING, MS5607_DETECT_FOUND, MS5607_DETECT_ABSENT } ms5607_detect_result_t;
+
+typedef struct {
+    uint8_t addr;
+    bool reloading;
+    uint32_t due_ms;
+} ms5607_detect_t;
+
+void ms5607_detect_begin(ms5607_detect_t *d);
+ms5607_detect_result_t ms5607_detect_step(ms5607_detect_t *d, uint32_t now_ms);
 
 /* Compute compensated pressure and temperature from raw D1/D2, with this
  * part's PROM. Always returns true (pure arithmetic, no I2C). */

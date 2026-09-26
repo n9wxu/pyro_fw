@@ -576,6 +576,24 @@ rationale and the alternatives considered.
   with both channels released never calls `pyro_update()`: its common, then
   Lua's pad, is never left raised. `board_pyro_tests` runs the board file on
   the host against `test/fake_sdk`, whose sleeps fail the test.
+- **The sensor's bring-up** is steps the loop takes too: bus recovery at one
+  SCL edge a loop (I2C has no lowest clock rate), with a STOP on every SDA the
+  board has; the pull-ups' settle; the MS5607's 2.8 ms PROM reload and the
+  BMP280's 2 ms start-up, each a deadline. It takes about a quarter of a
+  second, inside BOOT_SETTLE. `hal_pressure_init()` starts it on the pressure
+  task's slot, which samples once it knows the sensor; BOOT_SENSOR waits for
+  it (`hal_pressure_sensor()` is -1 until then), and one still going
+  `SENSOR_BRINGUP_MS` after boot is a missing sensor. `sensor_bringup_tests`
+  runs each board's own `pressure_board.c` against fake sensors that refuse
+  a transfer during their reset. On MK1B the recovery's STOP used to reach
+  only the BMP280's pad, never the MS5607 it carries. The unused synchronous
+  `ms5607_read()` and `pressure_sensor_read()` are gone.
+- **Left:** MK1C's bench waveform capture, 7 waits in the flash window on a
+  bench request. The arm pump's pacing is part of the arm interlock's safety
+  argument, so its conversion waits on the user. In the SDK, `uart_init()`
+  can busy-wait only when re-initialising an enabled UART, which ours never
+  is, and `stdio_get_until()` is reachable only from newlib's `_read()`,
+  which nothing calls.
 - **Outside the check:** waits on a bus or a peripheral's handshake, which
   wait for hardware rather than for time: the I2C transfers, the MS5607
   one-shot's wait for STOP inside its handler (at most 0.15 ms at 400 kHz),

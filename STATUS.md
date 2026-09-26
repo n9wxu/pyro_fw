@@ -776,7 +776,7 @@ Two findings that constrain the rework:
 2. **Export / import Lua programs** — no way to get a script off a board or onto
    another one today. `/api/lua/script` serves the raw text, so this is mostly a
    UI affordance plus a sensible filename.
-3. **Convert MK1B's `ms5607_read()` fallback** — the last `sleep_ms()` on a flight path, 11 ms in stage 3
+3. ~~**Convert MK1B's `ms5607_read()` fallback**~~ — removed 2026-09-26: nothing called it (DD-053)
 4. **Instrument `ota_flush()`** — separate erase from program timing to explain MK1A's 1.0 s/sector
 5. **Re-enable WFE sleep** — MAC mismatch was the real root cause, not `__wfe()`
 6. Long-duration soak test (network + UART stability over hours)

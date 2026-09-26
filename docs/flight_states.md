@@ -226,7 +226,9 @@ stay; the flight carries on when the sensor answers again.
 A bare 2500 ms wait. Silent — nothing beeps here.
 
 ### BOOT_SENSOR (9)
-Checks `sensor_type` (captured from `hal_pressure_init()`) and `fs_ok`. Runs
+Checks `sensor_type` (from `hal_pressure_sensor()`, waited for while the
+sensor is still being brought up, and a missing sensor once
+`SENSOR_BRINGUP_MS` has passed since boot) and `fs_ok`. Runs
 before the continuity check deliberately: the continuity verdict is worth
 nothing on a board that cannot measure altitude.
 

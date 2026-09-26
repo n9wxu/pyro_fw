@@ -16,6 +16,7 @@ typedef struct {
     float pressure_pa;
     float temperature_c;
     int sensor_type;
+    uint32_t pending_until_ms; /* hal_pressure_sensor() is -1 before this */
 } mock_pressure_t;
 
 typedef struct {

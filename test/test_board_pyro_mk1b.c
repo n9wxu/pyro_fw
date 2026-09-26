@@ -9,16 +9,6 @@
 #include "pyro.h"
 #include <stdio.h>
 
-uint32_t fake_now_ms;
-bool fake_level[FAKE_PINS];
-bool fake_output[FAKE_PINS];
-uint32_t fake_writes[FAKE_PINS];
-uint32_t fake_rose_ms[FAKE_PINS];
-uint16_t fake_adc[4];
-uint8_t fake_adc_selected;
-void (*fake_on_adc_read)(uint8_t channel);
-const char *fake_slept;
-
 static bool owns[FAKE_PINS];
 bool pin_store_owns(uint8_t pin) {
     return pin < FAKE_PINS && owns[pin];

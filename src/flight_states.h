@@ -80,6 +80,12 @@ struct flight_context_t;
 typedef state_event_t (*detect_fn)(struct flight_context_t *ctx, uint32_t now);
 typedef void (*action_fn)(struct flight_context_t *ctx, uint32_t now);
 
+/* [DD-053] The sensor is brought up a step a loop, from boot. It takes about
+ * a quarter of a second, inside BOOT_SETTLE's 2.5 s; one still going when
+ * this much has passed since boot has stopped, and is a missing sensor. */
+#define SENSOR_PENDING 0xFFu
+#define SENSOR_BRINGUP_MS 5000u
+
 typedef struct {
     flight_state_t from;
     state_event_t event;
@@ -174,9 +180,10 @@ typedef struct flight_context_t {
     // Last continuity status beep code [GND-TEST-01]
     uint8_t last_reason; /* beep_reason_t last said; for BEEP STATUS replay */
 
-    /* Power-up self-test results. sensor_type is what hal_pressure_init()
-     * returned; 0 means no sensor answered. A board that cannot measure
-     * altitude cannot fly, so it must not report itself ready. */
+    /* Power-up self-test results. sensor_type is what hal_pressure_sensor()
+     * said; 0 means no sensor answered, SENSOR_PENDING that it was still being
+     * brought up. A board that cannot measure altitude cannot fly, so it must
+     * not report itself ready. */
     uint8_t sensor_type;
     bool fs_ok;
 

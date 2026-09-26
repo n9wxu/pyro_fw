@@ -250,6 +250,7 @@ void mock_reset_all(void) {
     memset(&sim_files, 0, sizeof(sim_files));
     memset(&mock_pressure, 0, sizeof(mock_pressure));
     mock_pressure.sensor_type = 2;
+    mock_pressure.pending_until_ms = 0;
     mock_pressure.pressure_pa = 101325.0f;
     memset(&mock_pyro, 0, sizeof(mock_pyro));
     mock_pyro.p1_good = true;
@@ -308,7 +309,11 @@ uint32_t hal_time_ms(void) {
     return mock_time_ms;
 }
 
-int hal_pressure_init(void) {
+void hal_pressure_init(void) {}
+
+int hal_pressure_sensor(void) {
+    if (mock_time_ms < mock_pressure.pending_until_ms)
+        return -1;
     return mock_pressure.sensor_type;
 }
 

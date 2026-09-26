@@ -282,7 +282,7 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
     } else if (p->sensor_type == 2) {
         /* ── BMP280 (normal/continuous mode) ──
          * Only reachable on boards that declare BOARD_HAS_BMP280; elsewhere
-         * pressure_sensor_init() can never report type 2. */
+         * pressure_sensor_step() can never report type 2. */
         pressure_reading_t r;
         if (bmp280_read(&r)) {
             if (pres_plausible(&r))
@@ -324,12 +324,32 @@ reset_cause_t hal_reset_cause(void) {
 
 /* ── Pressure sensor ──────────────────────────────────────────────── */
 
-static int hw_sensor_type = 0;
+/* -1 while the sensor is being brought up. */
+static int hw_sensor_type = -1;
 
-int hal_pressure_init(void) {
-    hw_sensor_type = (int)pressure_sensor_init();
-    if (hw_sensor_type > 0)
-        hal_pressure_fifo_start(50); /* the BMP280 at 50 Hz; the MS5607 every loop */
+/* [DD-053] The bring-up, a step a loop, on the pressure task's own slot. Once
+ * it knows the sensor, the same slot samples it: the BMP280 at 50 Hz, the
+ * MS5607 every loop. */
+static void pres_bringup_tick(async_task_t *base, uint32_t now_ms) {
+    base->next_due_ms = now_ms;
+    pressure_sensor_type_t t = pressure_sensor_step(now_ms);
+    if (t == PRESSURE_SENSOR_PENDING)
+        return;
+    hw_sensor_type = (int)t;
+    if (t == PRESSURE_SENSOR_NONE || !hal_pressure_fifo_start(50))
+        pres.base.tick = NULL;
+}
+
+void hal_pressure_init(void) {
+    hw_sensor_type = -1;
+    pressure_sensor_begin();
+    memset(&pres, 0, sizeof(pres));
+    pres.base.tick = pres_bringup_tick;
+    pres.base.next_due_ms = hal_time_ms();
+    hw_task_register(&pres.base);
+}
+
+int hal_pressure_sensor(void) {
     return hw_sensor_type;
 }
 
@@ -348,7 +368,7 @@ bool hal_pressure_read(hal_pressure_t *out) {
 /* ── Pressure FIFO (v2 async batch API) ───────────────────────────── */
 
 static bool hal_pressure_fifo_start(uint8_t rate_hz) {
-    if (hw_sensor_type == 0)
+    if (hw_sensor_type <= 0)
         return false;
     memset(&pres, 0, sizeof(pres));
     pres.base.tick = pres_tick;
@@ -379,7 +399,7 @@ void hal_pressure_fifo_release(void) {
 }
 
 bool hal_pressure_fifo_active(void) {
-    return pres.base.tick != NULL;
+    return pres.base.tick == pres_tick;
 }
 
 /* ── Pyro ─────────────────────────────────────────────────────────── */
@@ -795,9 +815,8 @@ void hal_platform_init(void) {
 
     pfb_firmware_commit();
 
-    /* i2c_deinit(i2c1); — REMOVED: this was disabling I2C before
-     * pressure_sensor_init() could detect sensors. I2C is initialized
-     * later in pressure_sensor_init() when the sensor type is detected. */
+    /* The sensor's I2C is its bring-up's to set up: pressure_sensor_begin()
+     * resets the peripheral and recovers the bus itself. */
 }
 
 void hal_platform_service(void) {

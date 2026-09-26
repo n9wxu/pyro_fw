@@ -188,6 +188,10 @@ jobs:
       - name: Run board pyro tests
         run: cd build && ninja board_pyro_tests
 
+      # Every board's sensor bring-up as loop steps, against fake sensors.
+      - name: Run sensor bring-up tests
+        run: cd build && ninja sensor_bringup_tests
+
       - name: Validate web JS syntax
         run: node --check www/app.js
 

@@ -21,6 +21,9 @@
  * BOARD_BMP280_I2C_HZ. */
 #define BMP280_I2C_MAX_HZ 400000u
 
+/* From power-on or a soft reset to the first transfer (datasheet page 8). */
+#define BMP280_STARTUP_MS 2u
+
 /* Probe the sensor, read calibration, start normal-mode conversions.
  * Returns true if a BMP280 is detected and configured. */
 bool bmp280_detect(void);

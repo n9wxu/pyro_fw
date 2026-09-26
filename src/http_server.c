@@ -802,7 +802,8 @@ static void serve_api_status(http_conn_t *hc) {
         pyro_release_is_released(1) ? "false" : "true", pyro_release_is_released(2) ? "false" : "true",
         /* The power-up self-test, said out loud: a board that cannot measure
          * altitude must not report itself healthy. */
-        fctx && fctx->sensor_type ? "true" : "false", fctx && fctx->fs_ok ? "true" : "false", fault_list,
+        fctx && fctx->sensor_type && fctx->sensor_type != SENSOR_PENDING ? "true" : "false",
+        fctx && fctx->fs_ok ? "true" : "false", fault_list,
         /* Why this boot happened and what was made of it. A brownout reads as
          * a power event, so the phrase is the part worth reading. */
         fctx ? (unsigned)fctx->reset_cause : 0u,

@@ -322,6 +322,7 @@ add_executable(pyro_fw_c
     src/buzzer.c
     src/ms5607_driver.c
     src/ms5607_oneshot.c
+    src/i2c_recover.c
     src/usb_descriptors.c
     src/net_glue.c
     src/http_server.c
@@ -809,6 +810,7 @@ add_custom_target(board_pyro_tests
                -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1b -I${CMAKE_CURRENT_LIST_DIR}/src
                -I${CMAKE_CURRENT_LIST_DIR}/src/lua -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_board_pyro_mk1b.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c
                ${CMAKE_CURRENT_LIST_DIR}/boards/mk1b/pyro_board.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_board_pyro_mk1b
@@ -816,6 +818,58 @@ add_custom_target(board_pyro_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_board_pyro_mk1b
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Board pyro backend tests"
+)
+
+# Every board's pressure sensor bring-up, on the host against test/fake_sdk
+# and fake sensors, each board built against its own package (DD-053).
+add_custom_target(sensor_bringup_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building sensor bring-up tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1a -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_sensor_bringup.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_i2c.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/i2c_recover.c ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_driver.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1a/pressure_board.c ${CMAKE_CURRENT_LIST_DIR}/boards/mk1a/bmp280_driver.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_sensor_bringup_mk1a
+    COMMAND ${CMAKE_COMMAND} -E echo "Running sensor bring-up tests: mk1a"
+    COMMAND ${CMAKE_BINARY_DIR}/test_sensor_bringup_mk1a
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1b -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_sensor_bringup.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_i2c.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/i2c_recover.c ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_driver.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1b/pressure_board.c ${CMAKE_CURRENT_LIST_DIR}/boards/mk1b/bmp280_driver.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_sensor_bringup_mk1b
+    COMMAND ${CMAKE_COMMAND} -E echo "Running sensor bring-up tests: mk1b"
+    COMMAND ${CMAKE_BINARY_DIR}/test_sensor_bringup_mk1b
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1c -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_sensor_bringup.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_i2c.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/i2c_recover.c ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_driver.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1c/pressure_board.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_sensor_bringup_mk1c
+    COMMAND ${CMAKE_COMMAND} -E echo "Running sensor bring-up tests: mk1c"
+    COMMAND ${CMAKE_BINARY_DIR}/test_sensor_bringup_mk1c
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/reference -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_sensor_bringup.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_i2c.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/i2c_recover.c ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_driver.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/reference/pressure_board.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_sensor_bringup_reference
+    COMMAND ${CMAKE_COMMAND} -E echo "Running sensor bring-up tests: reference"
+    COMMAND ${CMAKE_BINARY_DIR}/test_sensor_bringup_reference
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Pressure sensor bring-up tests, every board"
 )
 
 # The beep vocabulary: the rules half, with no file I/O, like pin_assign.

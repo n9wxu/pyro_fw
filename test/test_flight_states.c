@@ -177,6 +177,43 @@ void test_SNS_PRES_01_boot_no_sensor(void) {
     TEST_ASSERT_EQUAL(0, ctx.ground_pressure);
 }
 
+/* [FLT-BOOT-11, DD-053] The sensor is brought up a step a loop, so at
+ * BOOT_SENSOR it may still be on its way: the board waits for it, rather than
+ * calling it missing. */
+void test_FLT_BOOT_11_waits_for_the_sensor_bringup(void) {
+    flight_context_t ctx = {0};
+    ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
+    ctx.current_state = BOOT_SENSOR;
+    ctx.boot_timer = 0;
+    ctx.fs_ok = true;
+    ctx.sensor_type = SENSOR_PENDING;
+    mock_pressure.pending_until_ms = 3000;
+    mock_time_ms = 2600;
+    TEST_ASSERT_EQUAL(BOOT_SENSOR, step(&ctx, mock_time_ms));
+    TEST_ASSERT_EQUAL(SENSOR_PENDING, ctx.sensor_type);
+    TEST_ASSERT_FALSE(ctx.diag & DIAG_SENSOR_FAIL);
+    mock_time_ms = 3100;
+    TEST_ASSERT_NOT_EQUAL(FAULT, step(&ctx, mock_time_ms));
+    TEST_ASSERT_EQUAL(2, ctx.sensor_type);
+    TEST_ASSERT_FALSE(ctx.diag & DIAG_SENSOR_FAIL);
+}
+
+/* [FLT-BOOT-12] A bring-up that never ends is a sensor that did not answer. */
+void test_FLT_BOOT_12_bringup_that_never_ends_is_fault(void) {
+    flight_context_t ctx = {0};
+    ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
+    ctx.current_state = BOOT_SENSOR;
+    ctx.boot_timer = 0;
+    ctx.fs_ok = true;
+    ctx.sensor_type = SENSOR_PENDING;
+    mock_pressure.pending_until_ms = UINT32_MAX;
+    mock_time_ms = SENSOR_BRINGUP_MS - 100u;
+    TEST_ASSERT_EQUAL(BOOT_SENSOR, step(&ctx, mock_time_ms));
+    mock_time_ms = SENSOR_BRINGUP_MS;
+    TEST_ASSERT_EQUAL(FAULT, step(&ctx, mock_time_ms));
+    TEST_ASSERT_TRUE(ctx.diag & DIAG_SENSOR_FAIL);
+}
+
 void test_FLT_BOOT_04_settle_wait(void) {
     flight_context_t ctx = {0};
     ctx.current_state = BOOT_SETTLE;
@@ -1522,6 +1559,8 @@ int main(void) {
     RUN_TEST(test_FLT_BOOT_01_reaches_pad_idle);
     RUN_TEST(test_FLT_BOOT_08_calibrates_ground);
     RUN_TEST(test_SNS_PRES_01_boot_no_sensor);
+    RUN_TEST(test_FLT_BOOT_11_waits_for_the_sensor_bringup);
+    RUN_TEST(test_FLT_BOOT_12_bringup_that_never_ends_is_fault);
     RUN_TEST(test_FLT_BOOT_04_settle_wait);
     RUN_TEST(test_FLT_BOOT_13_no_calibration_samples_is_fault);
     RUN_TEST(test_FLT_BOOT_14_no_filesystem_is_fault);

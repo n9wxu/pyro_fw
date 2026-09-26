@@ -31,11 +31,14 @@ reset_cause_t hal_reset_cause(void);
 
 /* ── Pressure sensor ──────────────────────────────────────────────── */
 
-/* Initialize the pressure sensor hardware.
- * Returns: 0=none, 1=ms5607, 2=bmp280.
- * On hardware, this starts the autonomous sampling async task which
- * calls pp_feed() for each raw sample — see pressure_processing.h. */
-int hal_pressure_init(void);
+/* Starts bringing the pressure sensor up [DD-053]. On hardware the pressure
+ * task takes it a step a loop, then samples what it found, calling pp_feed()
+ * for each reading -- see pressure_processing.h. */
+void hal_pressure_init(void);
+
+/* The sensor found: 0=none, 1=ms5607, 2=bmp280; -1 while it is still being
+ * brought up. */
+int hal_pressure_sensor(void);
 
 /* ── Pyro channels ────────────────────────────────────────────────── */
 

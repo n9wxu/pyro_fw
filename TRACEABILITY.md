@@ -125,8 +125,8 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-BOOT-07 | Initial continuity check | Integration: test_FLT_BOOT_01_all_states (BOOT_CONTINUITY on the way to PAD_IDLE) | ✅ |
 | FLT-BOOT-08 | Calibrate from the median of 10 readings | Unit: test_FLT_BOOT_08_calibrates_ground; Chain: test_T2_calibration_glitch | ✅ |
 | FLT-BOOT-09 | 2s stabilization | Unit: test_FLT_BOOT_04_settle_wait (2.5 s) | ✅ |
-| FLT-BOOT-11 | The sensor is tested before the pyros | Unit: test_SNS_PRES_01_boot_no_sensor (BOOT_SENSOR first; a failure never reaches the pyro test) | ✅ |
-| FLT-BOOT-12 | No sensor: FAULT and system failure | Unit: test_SNS_PRES_01_boot_no_sensor | ✅ |
+| FLT-BOOT-11 | The sensor is tested before the pyros | Unit: test_SNS_PRES_01_boot_no_sensor (BOOT_SENSOR first; a failure never reaches the pyro test), test_FLT_BOOT_11_waits_for_the_sensor_bringup (a sensor still being brought up is waited for, not called missing) | ✅ |
+| FLT-BOOT-12 | No sensor: FAULT and system failure | Unit: test_SNS_PRES_01_boot_no_sensor, test_FLT_BOOT_12_bringup_that_never_ends_is_fault; Bring-up: test_bringup_without_a_sensor on every board | ✅ |
 | FLT-BOOT-13 | No calibration samples in 10 s: FAULT | Unit: test_FLT_BOOT_13_no_calibration_samples_is_fault | ✅ |
 | FLT-BOOT-14 | No filesystem: FAULT and system failure | Unit: test_FLT_BOOT_14_no_filesystem_is_fault; Integration: test_BEEP_03_anything_unfixable_says_system_failure (the announcement) | ✅ |
 | FLT-BOOT-15 | Every pad fault reported | Unit: test_REV04_pad_fault_after_boot_is_announced | ✅ |
@@ -359,7 +359,7 @@ A user need is verified through the system requirements under it, and is marked 
 | SYS-PORT-02 | Runnable in a browser | Web: test_sim.spec.js flies docs/sim.html's WASM build from power-on to LANDED; CI checks docs/app against www/ (`scripts/sync_demo.sh --check`) | ✅ |
 | SYS-PWR-01 | Minimise CPU active time | Through PWR-SLEEP-01; no test measures CPU active time | ⚠️ |
 | SYS-PWR-02 | I/O without the CPU | Through PWR-SAMPLE-01/02, PWR-TELEM-01..03, PWR-BUZZ-01, PWR-LOG-01..04 | ✅ |
-| PWR-WAIT-01 | No sleeps: the exec loop is the only clock | Board pyro: test_mk1b_continuity_never_sleeps, test_mk1b_reads_after_the_settle (MK1B's continuity against a fake SDK whose sleeps fail the test); `support/wait_check.py` in CI, a ratchet over every sleep and busy-wait still in `src/` and `boards/`, not yet at zero (DD-053) | ⚠️ |
+| PWR-WAIT-01 | No sleeps: the exec loop is the only clock | Board pyro: test_mk1b_continuity_never_sleeps, test_mk1b_reads_after_the_settle (MK1B's continuity against a fake SDK whose sleeps fail the test); Bring-up, on every board: test_bringup_finds_its_sensor, test_bringup_recovers_the_bus_first, test_bringup_waits_out_the_reset (bus recovery, settles and sensor resets as loop steps); `support/wait_check.py` in CI, a ratchet over every sleep and busy-wait still in `src/` and `boards/`, at 7, all in MK1C's bench waveform capture (DD-053) | ⚠️ |
 | PWR-USB-01 | USB serviced autonomously | — (deferred to v2.1; USB is serviced from the main loop) | ⚠️ |
 | SYS-TEST-01 | Ground test over serial | Integration: test_GND_TEST_01..04 | ✅ |
 

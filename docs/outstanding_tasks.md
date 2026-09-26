@@ -1199,8 +1199,8 @@ without lowering the list.
 |---|---|---|---|
 | W1 | MK1B `pyro_board.c` | the continuity settle | **done**: a deadline the loop checks |
 | W2 | `src/lua/lua_pio_platform.c` | the bridge's first word | **done**: the FIFO is empty, so a plain put |
-| W3 | `boards/*/pressure_board.c`, `ms5607_detect()` | bus recovery clocks, pull-up settle, sensor resets | at boot, from `flight_init()`: to become steps the loop runs during BOOT_SETTLE |
-| W4 | `ms5607_read()`, `pressure_sensor_read()` | two conversions | never: nothing calls them. To be removed |
+| W3 | `boards/*/pressure_board.c`, `ms5607_detect()` | bus recovery clocks, pull-up settle, sensor resets | **done**: steps the loop runs during BOOT_SETTLE (`sensor_bringup_tests`, every board) |
+| W4 | `ms5607_read()`, `pressure_sensor_read()` | two conversions | **done**: removed; nothing called them |
 | W5 | MK1C `pyro_board.c` waveform capture | bias settle, the edge's lead-in, the DMA capture, the arm pump's FIFO | in the flash window, on a bench request. The pump's pacing is part of the arm interlock's safety argument, so its conversion needs the user |
 
 Outside the check, recorded so they are not forgotten: the MS5607 one-shot's

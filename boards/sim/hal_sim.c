@@ -124,7 +124,9 @@ uint32_t hal_time_ms(void) {
     return sim_time;
 }
 
-int hal_pressure_init(void) {
+void hal_pressure_init(void) {}
+
+int hal_pressure_sensor(void) {
     return sim_sensor_type;
 }
 

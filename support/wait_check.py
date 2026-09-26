@@ -35,12 +35,7 @@ WAITS = [
 CALL_RE = re.compile(r"\b(" + "|".join(WAITS) + r")\s*\(")
 
 ALLOWED = {
-    "boards/mk1a/pressure_board.c": 7,
-    "boards/mk1b/pressure_board.c": 9,
-    "boards/mk1c/pressure_board.c": 7,
     "boards/mk1c/pyro_board.c": 7,
-    "boards/reference/pressure_board.c": 1,
-    "src/ms5607_driver.c": 3,
 }
 
 
