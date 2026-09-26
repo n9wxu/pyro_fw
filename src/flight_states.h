@@ -159,6 +159,7 @@ typedef struct flight_context_t {
      * in sample time; 0 while it does not. */
     uint32_t launch_held_since;
     uint32_t apogee_held_since;
+    uint32_t landed_row_ms; /* [FLT-RATE-03] the last 1 Hz LANDED row, in sample time */
     // Safety features [DD-016, DD-017]
     int32_t max_speed_cms; // peak speed during ASCENT (for arming gate)
     /* The only record that arming preceded apogee [DD-022]. */

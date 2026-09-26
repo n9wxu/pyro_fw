@@ -94,7 +94,9 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-DESC-02 | Landing from every descent phase | Closed-loop: test_FLT_DESC_02_ballistic_reaches_landed | ✅ |
 | PYR-ALT-01 | Clamp altitude settings | Closed-loop: Karman suite (AGL > 8000m clamped, pyro still fires) | ✅ |
 | PYR-ALT-02 | Warning beep for range | Integration: test_PYR_ALT_02_cfg_range_beep | ✅ |
-| FLT-RATE-01..04 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds) | ⚠️ |
+| FLT-RATE-01..02 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds) | ⚠️ |
+| FLT-RATE-03 | 1 Hz while LANDED | Chain: test_N18_landed_logs_once_a_second | ✅ |
+| FLT-RATE-04 | The rate is the HAL's | Integration: test_FLT_LAUNCH_01_timing | ⚠️ |
 
 ## 2. Pre-Flight Status
 
@@ -352,8 +354,8 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 193 |
-| ⚠️ Not directly verified (needs a test or hardware) | 32 |
+| ✅ Verified by a host, web or closed-loop test | 194 |
+| ⚠️ Not directly verified (needs a test or hardware) | 33 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 12 |
 

@@ -1118,6 +1118,39 @@ void test_T6_drift(void) {
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, pp_ground_reseeds(), "drift is tracked, not re-seeded");
 }
 
+/* ── Section 5 ────────────────────────────────────────────────────── */
+
+/* N18: LANDED logs one row a second, for telemetry and the ring's export. */
+void test_N18_landed_logs_once_a_second(void) {
+    const flight_t f = {5.0f, 1.0f, 5.0f, 0.0f};
+    boot_like_hardware(31);
+    uint32_t t = 0;
+    uint32_t pad = run_to_pad(&t);
+    uint32_t ign = pad + 3000u, landed = 0;
+    truth_t tr = {0};
+    for (; t < 400000u; t++) {
+        float tf = ((float)t - (float)ign) / 1000.0f;
+        float vb = tr.v;
+        truth_step(&tr, &f, tf);
+        if (!tr.apogee && tf > f.burn_s && vb > 0.0f && tr.v <= 0.0f)
+            tr.apogee = true;
+        mock_pressure.pressure_pa = isa_pa(tr.h);
+        tick(t);
+        if (ctx.current_state == LANDED && landed == 0)
+            landed = t;
+        if (landed && t >= landed + 10000u)
+            break;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(landed != 0, "the flight landed");
+    int rows = 0;
+    for (int i = 0; i < FLIGHT_BUF_SIZE; i++)
+        if (ctx.flight_buffer[i].state == LANDED && ctx.flight_buffer[i].event == EVT_NONE)
+            rows++;
+    char msg[64];
+    snprintf(msg, sizeof(msg), "%d LANDED rows in 10 s", rows);
+    TEST_ASSERT_TRUE_MESSAGE(rows >= 9 && rows <= 11, msg);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -1157,5 +1190,6 @@ int main(void) {
     RUN_TEST(test_T6_launch_never_reseeds);
     RUN_TEST(test_T6_gusts_never_reseed);
     RUN_TEST(test_T6_drift);
+    RUN_TEST(test_N18_landed_logs_once_a_second);
     return UNITY_END();
 }

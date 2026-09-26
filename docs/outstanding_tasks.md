@@ -916,6 +916,8 @@ sample rows move to sample time.
 
 ### N18. LANDED's 1 Hz logging never fires
 
+**Done 2026-09-26.**
+
 `detect_landed()` compares against `last_sample`, which it updates on every
 sample.
 - **Tests first:** `test_N18_landed_logs_once_a_second`: after LANDED, one row

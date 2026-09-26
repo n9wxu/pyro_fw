@@ -404,15 +404,11 @@ sample above 50 cm, tracked on the pad (`pad_rise_ms`); covered by
 `test_REV07_launch_backdates_to_first_rise` and `test_FLT_LAUNCH_03_backdate`,
 which assert the interval rather than an inequality zero backdating satisfies.
 
-### 9. LANDED's 1 Hz logging never fires
+### 9. LANDED's 1 Hz logging never fired — FIXED (N18)
 
-```c
-if (now - ctx->last_sample >= 1000) buf_add(...);
-ctx->last_sample = sample.timestamp_ms;   /* updated every tick */
-```
-
-`last_sample` is updated unconditionally, so the difference stays near zero and
-the branch is effectively unreachable after the first tick.
+`detect_landed()` compared the loop time against `last_sample`, which it moved
+to every sample's time, so the difference never reached a second. The 1 Hz row
+is now timed on its own, in sample time.
 
 ### 10. Altitude is clamped to >= 0 — speed no longer is
 
