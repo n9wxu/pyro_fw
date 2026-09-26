@@ -25,12 +25,23 @@ static struct {
     int cal_count;
     int32_t ground_pressure;
 
-    /* The newest three readings, oldest first [SNS-PRES-07]. */
+    /* The newest three readings, oldest first [SNS-PRES-07], and the time
+     * of the last median out, so none goes out twice. */
     struct {
         int32_t pa[3];
         uint32_t ts[3];
         uint8_t n;
+        bool emitted;
+        uint32_t last_ts;
     } med;
+
+    /* The median's output since power-on [FLT-BROWN-02]. */
+    struct {
+        int32_t pa[PP_HIST_SIZE];
+        uint32_t ts[PP_HIST_SIZE];
+        uint8_t head;
+        uint8_t n;
+    } hist;
 
     /* IIR filter state */
     int32_t filtered_pressure;
@@ -154,13 +165,37 @@ static int32_t median3(int32_t a, int32_t b, int32_t c) {
     return c < lo ? lo : (c > hi ? hi : c);
 }
 
-/* The ground reference from calibration's readings: their median, so one bad
- * reading cannot bias it -- and a biased reference stays biased, because the
- * tracker rejects everything 50 Pa from it [GND-CAL-03]. */
-static int32_t cal_median(void) {
-    int32_t v[PP_CAL_SAMPLES];
-    memcpy(v, pp.cal, sizeof(v));
-    for (int i = 1; i < PP_CAL_SAMPLES; i++) {
+/* The median out of the window, if it has one not yet given. Short of three
+ * readings -- at power-on, or after a test primes the layer -- the newest
+ * goes straight through. */
+static bool med_out(int32_t *pa, uint32_t *ts) {
+    if (pp.med.n == 0)
+        return false;
+    int32_t p = pp.med.pa[2];
+    uint32_t t = pp.med.ts[2];
+    if (pp.med.n == 3) {
+        p = median3(pp.med.pa[0], pp.med.pa[1], pp.med.pa[2]);
+        t = pp.med.ts[1];
+    }
+    if (pp.med.emitted && (int32_t)(t - pp.med.last_ts) <= 0)
+        return false;
+    pp.med.emitted = true;
+    pp.med.last_ts = t;
+    *pa = p;
+    *ts = t;
+    return true;
+}
+
+static void hist_push(int32_t pa, uint32_t ts) {
+    pp.hist.pa[pp.hist.head] = pa;
+    pp.hist.ts[pp.hist.head] = ts;
+    pp.hist.head = (uint8_t)((pp.hist.head + 1u) & (PP_HIST_SIZE - 1u));
+    if (pp.hist.n < PP_HIST_SIZE)
+        pp.hist.n++;
+}
+
+static void sort_i32(int32_t *v, int n) {
+    for (int i = 1; i < n; i++) {
         int32_t x = v[i];
         int j = i - 1;
         while (j >= 0 && v[j] > x) {
@@ -169,6 +204,41 @@ static int32_t cal_median(void) {
         }
         v[j + 1] = x;
     }
+}
+
+bool pp_history_span(uint32_t *oldest_ms, uint32_t *newest_ms) {
+    if (pp.hist.n == 0)
+        return false;
+    unsigned newest = (pp.hist.head + PP_HIST_SIZE - 1u) & (PP_HIST_SIZE - 1u);
+    unsigned oldest = (pp.hist.head + PP_HIST_SIZE - pp.hist.n) & (PP_HIST_SIZE - 1u);
+    *newest_ms = pp.hist.ts[newest];
+    *oldest_ms = pp.hist.ts[oldest];
+    return true;
+}
+
+bool pp_history_median(uint32_t from_ms, uint32_t to_ms, int min_n, int32_t *out_pa) {
+    int32_t v[PP_HIST_SIZE];
+    int n = 0;
+    for (unsigned i = 0; i < pp.hist.n; i++) {
+        unsigned k = (pp.hist.head + PP_HIST_SIZE - 1u - i) & (PP_HIST_SIZE - 1u);
+        uint32_t t = pp.hist.ts[k];
+        if ((int32_t)(t - from_ms) >= 0 && (int32_t)(to_ms - t) >= 0)
+            v[n++] = pp.hist.pa[k];
+    }
+    if (n < min_n || n == 0)
+        return false;
+    sort_i32(v, n);
+    *out_pa = (n & 1) ? v[n / 2] : (int32_t)(((int64_t)v[n / 2 - 1] + v[n / 2]) / 2);
+    return true;
+}
+
+/* The ground reference from calibration's readings: their median, so one bad
+ * reading cannot bias it -- and a biased reference stays biased, because the
+ * tracker rejects everything 50 Pa from it [GND-CAL-03]. */
+static int32_t cal_median(void) {
+    int32_t v[PP_CAL_SAMPLES];
+    memcpy(v, pp.cal, sizeof(v));
+    sort_i32(v, PP_CAL_SAMPLES);
     return (v[PP_CAL_SAMPLES / 2 - 1] + v[PP_CAL_SAMPLES / 2]) / 2;
 }
 
@@ -251,6 +321,16 @@ void pp_test_prime(int32_t ground_pressure_pa) {
     gnd_reset(ground_pressure_pa);
 }
 
+void pp_resume_flight(int32_t ground_pa, int32_t start_pa) {
+    pp.state = PP_RUNNING;
+    pp.ground_pressure = ground_pa;
+    pp.filtered_pressure = start_pa;
+    pp.last_filtered = start_pa;
+    pp.filter_initialized = true;
+    pp.last_timestamp = pp.med.last_ts;
+    pp.gnd.tracking = false;
+}
+
 void pp_start_cal(void) {
     pp.cal_count = 0;
     pp.state = PP_CALIBRATING;
@@ -272,6 +352,11 @@ void pp_set_ground_pressure(int32_t pa) {
 void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
     pp.last_raw = raw_pressure_pa;
     med_push(raw_pressure_pa, timestamp_ms);
+    int32_t pa;
+    uint32_t ts;
+    bool fresh = med_out(&pa, &ts);
+    if (fresh)
+        hist_push(pa, ts);
 
     switch (pp.state) {
     case PP_IDLE:
@@ -284,25 +369,14 @@ void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
             pp.ground_pressure = cal_median();
             pp.filtered_pressure = pp.ground_pressure;
             pp.filter_initialized = true;
-            /* The first median out carries the newest reading's time, one
-             * sample after the middle one here. */
-            pp.last_timestamp = pp.med.ts[1];
+            pp.last_timestamp = pp.med.last_ts;
             gnd_reset(pp.ground_pressure);
             pp.state = PP_RUNNING;
         }
         return;
 
     case PP_RUNNING: {
-        /* Short of three readings -- only after a test primes the layer, since
-         * calibration fills the window -- the newest goes straight through.
-         * Either way no time goes out twice. */
-        int32_t pa = pp.med.pa[2];
-        uint32_t ts = pp.med.ts[2];
-        if (pp.med.n == 3) {
-            pa = median3(pp.med.pa[0], pp.med.pa[1], pp.med.pa[2]);
-            ts = pp.med.ts[1];
-        }
-        if (pp.filter_initialized && (int32_t)(ts - pp.last_timestamp) <= 0)
+        if (!fresh)
             return;
 
         uint32_t dt = ts - pp.last_timestamp;

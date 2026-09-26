@@ -178,10 +178,9 @@ typedef struct flight_context_t {
      * and nothing downstream should have to guess that from the data. */
     uint8_t reset_cause;
     uint8_t recovery;
-    /* Samples taken for the recovery verdict. Two are needed for a speed.
-     * boot_timer cannot stand in for this count: it is legitimately zero. */
-    uint8_t recovery_samples;
+    uint8_t recovery_why; /* cold_reason_t, when recovery is RECOVER_COLD */
     bool marker_written;
+    bool marker_spent; /* invalidated at LANDED [FLT-BROWN-04] */
 
     /* [USB-01..04] A PC is on the USB port: the board is on a bench, so it
      * detects no launch, says no status code and writes no pad marker --
@@ -245,6 +244,9 @@ int flight_save_csv(flight_context_t *ctx);
 /* Milliseconds since launch while airborne, frozen at the landing, and 0 on
  * the pad or in any state with no flight behind it [WEB-UI-04]. */
 uint32_t flight_elapsed_ms(const flight_context_t *ctx, uint32_t now);
+
+/* What brownout recovery made of this boot, for /api/status. */
+const char *flight_recovery_text(const flight_context_t *ctx);
 
 /* [PYR-DEPLOY-02] Energise one channel, if the shared element is free.
  *

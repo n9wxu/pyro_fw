@@ -106,6 +106,25 @@ bool pp_ground_tracking(void);
  * window is worth knowing about. */
 uint32_t pp_ground_window_ms(void);
 
+/* ── Recent history [FLT-BROWN-02] ────────────────────────────────
+ *
+ * The median's output since power-on, in every state, calibration included:
+ * brownout recovery decides before calibration starts, and must decide from
+ * real readings. About 1.3 s at 50 Hz. */
+#define PP_HIST_SIZE 64 /* power of 2 */
+
+/* The oldest and newest times in the history; false while it is empty. */
+bool pp_history_span(uint32_t *oldest_ms, uint32_t *newest_ms);
+
+/* The median of the history's readings stamped from from_ms to to_ms, if at
+ * least min_n of them are. */
+bool pp_history_median(uint32_t from_ms, uint32_t to_ms, int min_n, int32_t *out_pa);
+
+/* Produce altitude in flight without calibrating, against the pad marker's
+ * ground pressure: calibrating in the air would call the current height zero.
+ * The filter starts at start_pa, and the ground reference stays frozen. */
+void pp_resume_flight(int32_t ground_pa, int32_t start_pa);
+
 /* ── Producer: called by HAL or test code ────────────────────────── */
 
 /* Feed a raw pressure sample.  During calibration this accumulates for

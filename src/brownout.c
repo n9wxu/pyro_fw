@@ -55,6 +55,24 @@ recovery_t brownout_assess(reset_cause_t cause, bool marker_ok, int32_t altitude
     return RECOVER_AMBIGUOUS;
 }
 
+const char *brownout_cold_name(cold_reason_t w) {
+    switch (w) {
+    case COLD_NOT_POWER:
+        return "cold: not a power event";
+    case COLD_NO_MARKER:
+        return "cold: no marker";
+    case COLD_ON_USB:
+        return "cold: on USB";
+    case COLD_AT_GROUND:
+        return "cold: at ground level";
+    case COLD_NO_SAMPLE:
+        return "cold: no sample in time";
+    case COLD_UNDECIDED:
+    default:
+        return "cold boot";
+    }
+}
+
 const char *brownout_recovery_name(recovery_t r) {
     switch (r) {
     case RECOVER_ASCENT:

@@ -263,6 +263,7 @@ static state_event_t detect_boot_settle(flight_context_t *ctx, uint32_t now) {
  * never arm and never deploy. The continuity verdict is worth nothing until
  * this one has passed, so it comes first and a failure is terminal. */
 static bool assess_recovery(flight_context_t *ctx, uint32_t now, state_event_t *evt);
+static void read_continuity(flight_context_t *ctx);
 
 static state_event_t detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
     extern void hal_telemetry_send(const char *sentence);
@@ -277,8 +278,8 @@ static state_event_t detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
         return SEVT_FAULT;
     }
     /* The sensor is good, so the barometer may now be believed about whether
-     * this board is airborne. The verdict needs two samples for a speed, so
-     * this state lingers until it has them: one sample is no speed at all. */
+     * this board is airborne. The verdict needs 600 ms of history for a speed,
+     * so this state lingers until it has it. */
     state_event_t rec = SEVT_NONE;
     if (!assess_recovery(ctx, now, &rec)) {
         return SEVT_NONE;
@@ -311,71 +312,71 @@ static state_event_t detect_fault(flight_context_t *ctx, uint32_t now) {
  * cannot answer within this gets the cold-boot verdict and carries on. */
 #define RECOVERY_DEADLINE_MS 4000u
 
+/* The verdict is read from the pressure layer's history, which runs from
+ * power-on. The level is the median of the newest 250 ms; the speed is that
+ * against the median of a window ending 350 ms earlier. Medians, because the
+ * history is only the median of three: two bad readings in a row pass it, and
+ * on the pad one of them would read as a flight in progress. Two-reading
+ * speed noise, 1.7 m/s RMS, sits too close to the 5 m/s threshold. */
+#define RECOVERY_LEVEL_MS 250u
+#define RECOVERY_SPAN_MS 600u
+#define RECOVERY_MIN_READINGS 8
+
+static bool recovery_cold(flight_context_t *ctx, cold_reason_t why) {
+    ctx->recovery = (uint8_t)RECOVER_COLD;
+    ctx->recovery_why = (uint8_t)why;
+    return true;
+}
+
 static bool assess_recovery(flight_context_t *ctx, uint32_t now, state_event_t *evt) {
     *evt = SEVT_NONE;
     pad_marker_t m;
     int n = hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m));
-    bool ok = (n == (int)sizeof(m)) && pad_marker_valid(&m);
-    if (!ok || grounded_on_usb(ctx)) {
-        ctx->recovery = (uint8_t)RECOVER_COLD;
-        return true; /* nothing to recover: decided, and decided now */
-    }
-    if (now - ctx->boot_timer >= RECOVERY_DEADLINE_MS) {
-        ctx->recovery = (uint8_t)RECOVER_COLD;
-        return true;
+    if (n != (int)sizeof(m) || !pad_marker_valid(&m))
+        return recovery_cold(ctx, COLD_NO_MARKER);
+    if (grounded_on_usb(ctx))
+        return recovery_cold(ctx, COLD_ON_USB);
+    if (now - ctx->boot_timer >= RECOVERY_DEADLINE_MS)
+        return recovery_cold(ctx, COLD_NO_SAMPLE);
+
+    uint32_t oldest, newest;
+    int32_t level, before;
+    if (!pp_history_span(&oldest, &newest) || newest - oldest < RECOVERY_SPAN_MS ||
+        !pp_history_median(newest - RECOVERY_LEVEL_MS, newest, RECOVERY_MIN_READINGS, &level) ||
+        !pp_history_median(newest - RECOVERY_SPAN_MS, newest - (RECOVERY_SPAN_MS - RECOVERY_LEVEL_MS),
+                           RECOVERY_MIN_READINGS, &before)) {
+        return false; /* not enough history yet; asked again next tick */
     }
 
-    altitude_sample_t sample;
-    if (!pp_read(&sample)) {
-        return false; /* no sample yet; asked again next tick */
-    }
-
-    /* Two references, deliberately.
-     *
-     * The RATE comes from the queued sample's own altitude, measured against
-     * whatever reference pp happens to be using before calibration -- that
-     * reference is constant, and a constant cancels in a difference. The
-     * LEVEL has to come from the marker's ground pressure, because that is
-     * the only ground this board still knows about.
-     *
-     * Do not take the level from the newest filtered pressure and the time
-     * from the queued sample: the two describe different instants, and the
-     * speed comes out as zero. */
-    int32_t alt_pp = sample.altitude_cm;
-    int32_t alt_agl = pp_pressure_to_altitude_cm(pp_last_filtered_pa(), m.ground_pressure_pa);
-
-    bool have_pair = ctx->recovery_samples > 0 && sample.timestamp_ms > ctx->last_sample;
-    int32_t speed = 0;
-    if (have_pair) {
-        speed = (alt_pp - ctx->last_altitude) * 1000 / (int32_t)(sample.timestamp_ms - ctx->last_sample);
-    }
-    ctx->last_altitude = alt_pp;
-    ctx->last_sample = sample.timestamp_ms;
-    if (ctx->recovery_samples < UINT8_MAX) {
-        ctx->recovery_samples++;
-    }
-    /* One sample is not a speed. The deadline above is what stops this state
-     * waiting forever for a second one. */
-    if (!have_pair) {
-        return false;
-    }
+    /* The level is measured against the marker's ground: that is the only
+     * ground this board still knows about. */
+    int32_t alt_agl = pp_pressure_to_altitude_cm(level, m.ground_pressure_pa);
+    int32_t alt_before = pp_pressure_to_altitude_cm(before, m.ground_pressure_pa);
+    int32_t speed = (alt_agl - alt_before) * 1000 / (int32_t)(RECOVERY_SPAN_MS - RECOVERY_LEVEL_MS);
 
     recovery_t r = brownout_assess((reset_cause_t)ctx->reset_cause, true, alt_agl, speed);
     ctx->recovery = (uint8_t)r;
-    if (r != RECOVER_ASCENT && r != RECOVER_DESCENT) {
+    if (r == RECOVER_COLD)
+        return recovery_cold(ctx, ctx->reset_cause == RESET_POWER_EVENT ? COLD_AT_GROUND : COLD_NOT_POWER);
+    if (r != RECOVER_ASCENT && r != RECOVER_DESCENT)
         return true;
-    }
 
     /* The flight the log was recording is gone with the RAM that held it, so
      * this is a new log opened mid-air. T+0 is the moment of recovery, which
-     * is the only launch time this board can still honestly claim. */
+     * is the only launch time this board can still honestly claim. The
+     * pressure layer starts here, against the marker's ground, never
+     * calibrated: calibrating would call this height zero. */
+    pp_resume_flight(m.ground_pressure_pa, level);
+    /* BOOT_CONTINUITY is skipped on this path, and a channel whose continuity
+     * was never read is never fired [PYR-SAFE-01]. */
+    read_continuity(ctx);
     ctx->diag |= DIAG_BROWNOUT;
     ctx->ground_pressure = m.ground_pressure_pa;
-    pp_ground_track(false);
-    ctx->filtered_pressure = pp_last_filtered_pa();
+    ctx->filtered_pressure = level;
     ctx->launch_time = now;
     ctx->max_altitude = alt_agl;
     ctx->last_altitude = alt_agl;
+    ctx->last_sample = newest;
     ctx->vertical_speed_cms = speed;
     hal_log_start(&ctx->config, ctx->ground_pressure);
     hal_log_sample(0, ctx->filtered_pressure, alt_agl, ASCENT, 0, EVT_LAUNCH);
@@ -383,15 +384,18 @@ static bool assess_recovery(flight_context_t *ctx, uint32_t now, state_event_t *
     return true;
 }
 
-/* [SYS-STATUS-02] */
-static state_event_t detect_boot_continuity(flight_context_t *ctx, uint32_t now) {
-    (void)now;
+static void read_continuity(flight_context_t *ctx) {
     hal_continuity_t c1, c2;
     hal_pyro_sample();
     hal_pyro_get(1, &c1);
     hal_pyro_get(2, &c2);
     ctx->pyro1_continuity_good = c1.good;
     ctx->pyro2_continuity_good = c2.good;
+}
+
+/* [SYS-STATUS-02] */
+static state_event_t detect_boot_continuity(flight_context_t *ctx, uint32_t now) {
+    read_continuity(ctx);
     ctx->boot_timer = now;
     return SEVT_DONE;
 }
@@ -546,6 +550,16 @@ static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { 
  * A failure costs the recovery path and nothing else, so it is not retried
  * and not reported as an error -- the flight is unaffected either way. */
 void flight_flash_service(flight_context_t *ctx, uint32_t now) {
+    /* [FLT-BROWN-04] The flight is over, so the marker is spent: a power-up
+     * after this, at the recovery site or back on the pad, must not recover
+     * against it. hal.h has no delete, so an invalid marker is written. */
+    if (ctx->current_state == LANDED && !ctx->marker_spent) {
+        ctx->marker_spent = true;
+        pad_marker_t spent;
+        memset(&spent, 0, sizeof(spent));
+        (void)hal_fs_write_file(PAD_MARKER_PATH, (const char *)&spent, (int)sizeof(spent));
+        return;
+    }
     if (ctx->current_state != PAD_IDLE || grounded_on_usb(ctx) || ctx->marker_written ||
         now - ctx->boot_timer < PAD_MARKER_DWELL_MS) {
         return;
@@ -1330,6 +1344,12 @@ void flight_set_test_mode(flight_context_t *ctx, bool on, uint32_t now) {
 
 bool flight_in_progress(void) {
     return g_flight_ctx && state_is_airborne(g_flight_ctx->current_state);
+}
+
+const char *flight_recovery_text(const flight_context_t *ctx) {
+    if (ctx->recovery == RECOVER_COLD)
+        return brownout_cold_name((cold_reason_t)ctx->recovery_why);
+    return brownout_recovery_name((recovery_t)ctx->recovery);
 }
 
 uint32_t flight_elapsed_ms(const flight_context_t *ctx, uint32_t now) {

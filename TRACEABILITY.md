@@ -75,8 +75,11 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-EMRG-03 | Not on the absence of a settled descent | Closed-loop: test_REV01_working_drogue_main_at_its_trigger; `main_forced` false in every mode suite | ✅ |
 | FLT-EMRG-04 | An emergency deployment is recorded | Closed-loop: test_REV16_forced_main_is_in_the_log; Hardware: `main_forced` on /api/status | ✅ |
 | FLT-BROWN-01 | Pad marker at 10 s PAD_IDLE | Integration: test_BRN_INT_01/02/05; Hardware: `pad.mkr` present on MK1A/B/C | ✅ |
-| FLT-BROWN-02 | Recover the ground reference | Brownout: test_BRN_01..08; Integration: test_BRN_INT_03/04 | ✅ |
-| FLT-BROWN-03 | A stationary board is never airborne | Brownout: test_BRN_06/07 | ✅ |
+| FLT-BROWN-02 | Recover the ground reference, from medians since power-on | Brownout: test_BRN_01..08; Integration: test_BRN_INT_03/04; Chain: test_T1_rejoins_descent, test_T1_rejoins_ascent, test_T1_glitch_on_the_pad | ✅ |
+| FLT-BROWN-03 | A stationary board is never airborne | Brownout: test_BRN_06/07; Chain: test_T1_still_board_stays_cold | ✅ |
+| FLT-BROWN-04 | The marker is spent at landing | Chain: test_T1_marker_invalid_after_landing | ✅ |
+| FLT-BROWN-05 | Why a boot was cold | Chain: test_T1_cold_reasons | ✅ |
+| FLT-BROWN-06 | A recovered flight reads continuity and produces altitude | Chain: test_T1_rejoins_descent (the main fires at 300 m), test_T1_rejoins_ascent (the drogue fires at apogee) | ✅ |
 | FLT-LOG-05 | No flash write through the shock window | Code review: log_flash_service() holdoff | ⚠ untested |
 | FLT-LOG-06 | Log committed every second, in the window | Hardware (MK1C, instrumented bench build): readable while written; reset mid-log keeps rows to 0.5 s before it; flash_refusals 0 | ✅ HW |
 | LUA-IO-01 | Export / import the Lua program | Playwright: lua program exports to a file; imports into the editor | ✅ |
@@ -346,7 +349,7 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 187 |
+| ✅ Verified by a host, web or closed-loop test | 190 |
 | ⚠️ Not directly verified (needs a test or hardware) | 32 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 12 |

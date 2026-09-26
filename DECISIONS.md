@@ -538,6 +538,38 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-041: Brownout Recovery Reads The History From Power-On
+- **Decision:** The pressure layer keeps the median's output from power-on in
+  every state (`pp_history_*`). Recovery takes its level as the median of the
+  newest 250 ms, and its speed as that level against the median of a window
+  ending 350 ms earlier (FLT-BROWN-02). A flight it rejoins starts the
+  pressure layer against the marker's ground (`pp_resume_flight()`) and reads
+  continuity first (FLT-BROWN-06). The marker is invalidated at LANDED
+  (FLT-BROWN-04), and /api/status says why a boot was cold (FLT-BROWN-05).
+- **Why:** recovery asked for samples before the pressure layer produced any,
+  so it never engaged on the hardware (N23). Making it engage exposed three
+  more gaps, each hidden by tests that primed the layer:
+  - A rejoined flight got no altitude, because nothing started the pressure
+    layer. It would have deployed nothing.
+  - It skipped BOOT_CONTINUITY, so both channels read as open and
+    PYR-SAFE-01 refused them. It would have deployed nothing.
+  - The marker is never deleted, and every battery connection is a power
+    event, so every power-up ran recovery against the last session's marker
+    (N25). The operator narrative powers up twice per flight, charges
+    connected.
+- **Medians, not a line fit.** The history is only the median of three, so
+  two bad readings in a row pass it. On the pad, one bad reading inside the
+  level's window reads as 80 m up and climbing; placed right, it reads as
+  falling, and a recovered descent arms the pyros at once. A median of each
+  window moves by one rank for each bad reading. The speed's noise is about
+  0.15 m/s; a two-reading speed's was 1.7 m/s, too close to the 5 m/s
+  threshold. `test_T1_glitch_on_the_pad` puts one and two glitches at every
+  position of the history.
+- **Invalidated, not deleted:** `hal.h` has no delete, and a new board must
+  not have to implement one. A zeroed marker fails `pad_marker_valid()`.
+- **Rejected:** a least-squares slope with outliers discarded after a first
+  fit. The first fit is what the outliers corrupt.
+
 ### DD-040: A Median Of Three Before The Filter
 - **Decision:** The pressure layer passes the median of the newest three
   readings to the filter, stamped with the middle reading's time

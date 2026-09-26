@@ -141,9 +141,9 @@ Each is scheduled in section 4, and listed here so none is missed.
 
 | ID | What | Fixed by |
 |---|---|---|
-| N23 | Brownout recovery never engages on hardware. It asks for samples before the pressure layer starts, so it always boots cold. The tests hide this by priming the layer. | T1 |
-| N24 | A single plausible glitch, 12 kPa or more low, declares a launch. The board then sits in ASCENT until power-cycled, and a glitch in coast can declare apogee. | T2, T3 |
-| N25 | **The pad marker outlives its flight, and T1 would make that dangerous.** `pad.mkr` is never deleted, and every power-on reset counts as a power event. So every battery power-up with any old marker runs recovery. The operator narrative powers the board twice per flight with its charges connected: on the bench, then on the pad. Today N23 hides the problem. Once T1 feeds recovery samples, a single glitch in its history reads as about 80 m up and climbing, and the verdict is "recovered in ascent", on the pad. If the averaging window reaches into the older half of the slope's window, a glitch there reads as high and falling: "recovered in descent", which arms the pyros at once. | T2 before T1; T1's glitch tests; T1 removes the marker at landing |
+| N23 | **Fixed (T1).** Brownout recovery never engages on hardware. It asks for samples before the pressure layer starts, so it always boots cold. The tests hide this by priming the layer. | T1 |
+| N24 | **Single readings fixed (T2); two in a row wait for T3.** A single plausible glitch, 12 kPa or more low, declares a launch. The board then sits in ASCENT until power-cycled, and a glitch in coast can declare apogee. | T2, T3 |
+| N25 | **Fixed (T2, T1).** **The pad marker outlives its flight, and T1 would make that dangerous.** `pad.mkr` is never deleted, and every power-on reset counts as a power event. So every battery power-up with any old marker runs recovery. The operator narrative powers the board twice per flight with its charges connected: on the bench, then on the pad. Today N23 hides the problem. Once T1 feeds recovery samples, a single glitch in its history reads as about 80 m up and climbing, and the verdict is "recovered in ascent", on the pad. If the averaging window reaches into the older half of the slope's window, a glitch there reads as high and falling: "recovered in descent", which arms the pyros at once. | T2 before T1; T1's glitch tests; T1 removes the marker at landing |
 | N26 | **Above 8 km AGL the altitude clamp reads as a stopped rocket.** SNS-ALT-02 clamps altitude at 8000 m, and speed comes from the clamped altitude. Past 8 km the speed reads zero, so the pyros arm, the Mach gate clears after 1 s, and apogee fires while the rocket is still climbing. Supersonic flights are the ones that go this high. | T5: speed from the pressure fit, never from a clamped altitude |
 | — | **A stuck sensor in coast may fire the drogue** (suspected, not yet shown). The filter settles onto a stuck value, speed reaches zero, and apogee fires if the pyros are armed. `test_M2_stuck_in_coast` shows whether it does. | M2 |
 
@@ -302,6 +302,19 @@ filter"; amend FLT-BOOT-08.
 
 ### T1. Brownout recovery sees real samples, and cannot be fooled on the pad (N23, N25)
 
+**Done 2026-09-26** (DD-041), except the bench check below (G4). Two more
+gaps turned up behind N23, and the tests now fly the rejoined flight to its
+deployment:
+- nothing started the pressure layer after a rejoin;
+- a rejoin skips BOOT_CONTINUITY, so PYR-SAFE-01 refused both channels.
+
+Either one alone meant a recovered flight deployed nothing. The speed is a
+difference of two medians rather than a fitted slope: an outlier corrupts the
+first fit that is meant to find it. The marker is invalidated, not removed,
+because `hal.h` has no delete. `test_T1_still_board_stays_cold` and
+`test_T1_glitch_on_the_pad` passed before the change, since recovery never
+ran; they are guards for it.
+
 **Why:**
 - `assess_recovery()` asks the pressure layer for samples in BOOT_SENSOR, but
   the layer only starts at BOOT_CALIBRATE. Recovery always waits out its 4 s
@@ -323,8 +336,8 @@ filter"; amend FLT-BOOT-08.
   glitches in adjacent samples: always cold.
 - `test_T1_cold_reasons`: `/api/status` says which cold it is: no marker, on
   USB, at ground level, or no sample in time.
-- `test_T1_marker_removed_at_landing`: after LANDED, `pad.mkr` is gone,
-  removed inside the flash window with no refusal. Fails today.
+- `test_T1_marker_invalid_after_landing`: after LANDED, `pad.mkr` no longer
+  holds a valid marker. Fails today.
 - *guard*: the existing BRN and USB_INT tests.
 - Bench, on a board with a marker, booted on USB: status reads "cold: on
   USB". Booting on battery and plugging USB in afterwards, which should read

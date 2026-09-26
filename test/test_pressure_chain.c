@@ -92,24 +92,42 @@ static void truth_step(truth_t *tr, const flight_t *f, float t_flight_s) {
 static flight_context_t ctx;
 extern reset_cause_t mock_reset_cause; /* test/hal_test.c */
 
-/* Boots the way the hardware does: nothing primed, from BOOT_SETTLE. */
+/* What a test sets before power-on, applied after flight_init() as the
+ * hardware's main loop would find it. */
+static struct {
+    bool powered;
+    bool usb;
+    int landing_timeout; /* -1: the default */
+} power;
+
+/* Boots the way the hardware does: nothing primed, from BOOT_SETTLE. The
+ * first tick runs flight_init(), which reads the reset cause and the sensor,
+ * so anything a test sets up before it -- a marker, a reset cause -- is what
+ * the board finds at power-on. */
 static void boot_like_hardware(uint32_t seed) {
     mock_reset_all();
-    pp_init();
     memset(&ctx, 0, sizeof(ctx));
-    config_set_defaults(&ctx.config);
-    telemetry_init(&ctx.config);
-    ctx.current_state = BOOT_SETTLE;
-    ctx.sensor_type = 1;
-    ctx.fs_ok = true;
+    memset(&power, 0, sizeof(power));
+    power.landing_timeout = -1;
     mock_pressure.pressure_pa = PAD_PA;
     mock_noise_rms_pa = SENSOR_RMS_PA;
     mock_noise_seed = seed;
     mock_stall_seed = seed * 7919u + 1u;
 }
 
+static void power_on(void) {
+    flight_init(&ctx);
+    hal_pyro_claim_channels(mock_pyro_pads);
+    if (power.landing_timeout >= 0)
+        ctx.config.landing_timeout = (uint8_t)power.landing_timeout;
+    ctx.usb_attached = power.usb;
+    power.powered = true;
+}
+
 /* One pass of the main loop, in its order (main_hardware.c). */
 static void tick(uint32_t t) {
+    if (!power.powered)
+        power_on();
     mock_time_ms = t;
     mock_pyro.firing = false;
     hal_tasks_tick(t);
@@ -310,7 +328,7 @@ static void touchdown_to_landed(float land_m) {
      * off: fly() boots with the defaults. */
     for (uint32_t seed = 1; seed <= 20; seed++) {
         boot_like_hardware(seed);
-        ctx.config.landing_timeout = 0;
+        power.landing_timeout = 0;
         uint32_t t = 0;
         uint32_t pad = run_to_pad(&t);
         uint32_t ign = pad + 3000u, touchdown = 0, landed = 0;
@@ -615,6 +633,201 @@ void test_T2_median_timing(void) {
     }
 }
 
+/* ── T1: brownout recovery from real samples (N23, N25) ───────────── */
+
+static void write_marker(int32_t ground_pa) {
+    pad_marker_t m;
+    pad_marker_fill(&m, ground_pa);
+    TEST_ASSERT_EQUAL(0, hal_fs_write_file(PAD_MARKER_PATH, (const char *)&m, (int)sizeof(m)));
+}
+
+static bool marker_valid(void) {
+    pad_marker_t m;
+    int n = hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m));
+    return n == (int)sizeof(m) && pad_marker_valid(&m);
+}
+
+static bool booting(void) {
+    return ctx.current_state == BOOT_SETTLE || ctx.current_state == BOOT_SENSOR;
+}
+
+static bool descending_state(void) {
+    return ctx.current_state == FALLING || ctx.current_state == DROGUE_DESCENT || ctx.current_state == CHUTE_DESCENT;
+}
+
+/* A board that powers up in the air, against a marker from the pad. The truth
+ * starts at h0 moving at v0, coasts ballistic, and falls under a 20 m/s canopy
+ * once past apogee. Returns the truth's apogee time (0 if it was already
+ * descending) and records when each channel fired, and at what height. */
+typedef struct {
+    uint32_t apogee_ms, fire_ms[3];
+    float fire_h[3];
+    flight_state_t rejoined;
+} air_boot_t;
+
+static air_boot_t boot_in_the_air(float h0, float v0, uint32_t seed, uint32_t until_ms) {
+    air_boot_t a;
+    memset(&a, 0, sizeof(a));
+    boot_like_hardware(seed);
+    write_marker((int32_t)PAD_PA);
+    mock_reset_cause = RESET_POWER_EVENT;
+    float h = h0, v = v0;
+    int fires = 0;
+    for (uint32_t t = 0; t < until_ms; t++) {
+        float vb = v;
+        float acc = -G;
+        if (v < 0.0f)
+            acc += G * (v / 20.0f) * (v / 20.0f);
+        v += acc * 0.001f;
+        h += v * 0.001f;
+        if (vb > 0.0f && v <= 0.0f)
+            a.apogee_ms = t;
+        if (h < 0.0f)
+            h = 0.0f;
+        mock_pressure.pressure_pa = isa_pa(h);
+        bool was_booting = booting();
+        tick(t);
+        if (was_booting && !booting())
+            a.rejoined = ctx.current_state;
+        while (fires < mock_pyro.fire_count) {
+            uint8_t ch = mock_pyro.last_fire_channel;
+            if (ch <= 2 && a.fire_ms[ch] == 0) {
+                a.fire_ms[ch] = t;
+                a.fire_h[ch] = h;
+            }
+            fires++;
+        }
+        if (h <= 0.0f && t > 1000)
+            break;
+    }
+    return a;
+}
+
+void test_T1_rejoins_descent(void) {
+    air_boot_t a = boot_in_the_air(600.0f, -20.0f, 1, 60000);
+    char msg[128];
+    snprintf(msg, sizeof(msg), "rejoined in state %d, recovery '%s'", (int)a.rejoined, flight_recovery_text(&ctx));
+    TEST_ASSERT_TRUE_MESSAGE(a.rejoined == FALLING || a.rejoined == DROGUE_DESCENT || a.rejoined == CHUTE_DESCENT, msg);
+    /* And the resumed flight deploys: the default main is 300 m AGL. */
+    snprintf(msg, sizeof(msg), "main fired at %.0f m (0: never)", (double)a.fire_h[2]);
+    TEST_ASSERT_TRUE_MESSAGE(a.fire_ms[2] != 0 && fabsf(a.fire_h[2] - 300.0f) < 20.0f, msg);
+}
+
+void test_T1_rejoins_ascent(void) {
+    air_boot_t a = boot_in_the_air(300.0f, 50.0f, 2, 60000);
+    char msg[128];
+    snprintf(msg, sizeof(msg), "rejoined in state %d, recovery '%s'", (int)a.rejoined, flight_recovery_text(&ctx));
+    TEST_ASSERT_EQUAL_MESSAGE(ASCENT, a.rejoined, msg);
+    /* The drogue (apogee, no delay) fires after the true apogee, not long after. */
+    snprintf(msg, sizeof(msg), "drogue %ld ms after the true apogee (fire at %u)",
+             (long)a.fire_ms[1] - (long)a.apogee_ms, (unsigned)a.fire_ms[1]);
+    TEST_ASSERT_TRUE_MESSAGE(a.fire_ms[1] != 0 && a.fire_ms[1] >= a.apogee_ms && a.fire_ms[1] - a.apogee_ms < 1500,
+                             msg);
+}
+
+/* guard: FLT-BROWN-03. Passes on the old code only because recovery never ran. */
+void test_T1_still_board_stays_cold(void) {
+    int resumed = 0;
+    for (uint32_t seed = 1; seed <= 1000; seed++) {
+        boot_like_hardware(seed);
+        write_marker((int32_t)PAD_PA);
+        mock_reset_cause = RESET_POWER_EVENT;
+        mock_pressure.pressure_pa = isa_pa(40.0f);
+        for (uint32_t t = 0; t < 8000 && booting(); t++)
+            tick(t);
+        if (ctx.recovery == RECOVER_ASCENT || ctx.recovery == RECOVER_DESCENT)
+            resumed++;
+    }
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, resumed, "a still board 40 m up must never resume a flight");
+}
+
+/* guard: N25. One or two glitches anywhere in the history, on the pad, never
+ * make a flight. Passes on the old code only because recovery never ran. */
+void test_T1_glitch_on_the_pad(void) {
+    const int32_t sizes[] = {-60000, -20000, -12000, -5000, 5000, 12000, 18000};
+    char resumed[512] = "";
+    for (unsigned i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+        for (int pair = 1; pair <= 2; pair++) {
+            for (uint32_t k = 0; k <= 40; k++) {
+                boot_like_hardware(100 + k);
+                write_marker((int32_t)PAD_PA);
+                mock_reset_cause = RESET_POWER_EVENT;
+                uint32_t at = 2520u - 20u * k;
+                for (uint32_t t = 0; t < 8000 && booting(); t++) {
+                    if (t == at) {
+                        mock_glitch_pa = sizes[i];
+                        mock_glitch_samples = pair;
+                    }
+                    tick(t);
+                }
+                if (ctx.recovery == RECOVER_ASCENT || ctx.recovery == RECOVER_DESCENT) {
+                    char item[48];
+                    snprintf(item, sizeof(item), " [%+ld kPa x%d at %u ms]", (long)(sizes[i] / 1000), pair,
+                             (unsigned)at);
+                    strncat(resumed, item, sizeof(resumed) - 1 - strlen(resumed));
+                }
+            }
+        }
+    }
+    if (resumed[0])
+        printf("  resumed a flight on the pad:%s\n", resumed);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("", resumed, "a glitch on the pad must never resume a flight");
+}
+
+static const char *cold_reason(bool marker, bool usb, bool samples, reset_cause_t cause, float h) {
+    boot_like_hardware(7);
+    if (marker)
+        write_marker((int32_t)PAD_PA);
+    mock_reset_cause = cause;
+    power.usb = usb;
+    mock_pressure.pressure_pa = isa_pa(h);
+    for (uint32_t t = 0; t < 10000 && booting(); t++) {
+        tick(t);
+        if (!samples)
+            mock_pressure.sensor_type = 0; /* answered at init, then nothing */
+    }
+    return flight_recovery_text(&ctx);
+}
+
+void test_T1_cold_reasons(void) {
+    TEST_ASSERT_EQUAL_STRING("cold: no marker", cold_reason(false, false, true, RESET_POWER_EVENT, 0.0f));
+    TEST_ASSERT_EQUAL_STRING("cold: on USB", cold_reason(true, true, true, RESET_POWER_EVENT, 0.0f));
+    TEST_ASSERT_EQUAL_STRING("cold: at ground level", cold_reason(true, false, true, RESET_POWER_EVENT, 0.0f));
+    TEST_ASSERT_EQUAL_STRING("cold: no sample in time", cold_reason(true, false, false, RESET_POWER_EVENT, 0.0f));
+    TEST_ASSERT_EQUAL_STRING("cold: not a power event", cold_reason(true, false, true, RESET_SOFTWARE, 0.0f));
+}
+
+/* N25: a marker outlives nothing but its own flight. */
+void test_T1_marker_invalid_after_landing(void) {
+    const flight_t f = {5.0f, 1.0f, 5.0f, 0.0f};
+    boot_like_hardware(8);
+    mock_reset_cause = RESET_POWER_EVENT;
+    uint32_t t = 0;
+    uint32_t pad = run_to_pad(&t);
+    uint32_t ign = pad + 12000u;
+    truth_t tr = {0};
+    uint32_t landed = 0;
+    bool had_marker = false;
+    for (; t < 300000u; t++) {
+        float tf = ((float)t - (float)ign) / 1000.0f;
+        float vb = tr.v;
+        truth_step(&tr, &f, tf);
+        if (!tr.apogee && tf > f.burn_s && vb > 0.0f && tr.v <= 0.0f)
+            tr.apogee = true;
+        mock_pressure.pressure_pa = isa_pa(tr.h);
+        tick(t);
+        if (t == ign)
+            had_marker = marker_valid();
+        if (ctx.current_state == LANDED && landed == 0)
+            landed = t;
+        if (landed && t > landed + 200u)
+            break;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(had_marker, "the pad wrote a marker before the launch");
+    TEST_ASSERT_TRUE_MESSAGE(landed != 0, "the flight landed");
+    TEST_ASSERT_FALSE_MESSAGE(marker_valid(), "after LANDED no power-up may recover against the old marker");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_T0_noise_model);
@@ -634,5 +847,11 @@ int main(void) {
     RUN_TEST(test_T2_coast_glitch);
     RUN_TEST(test_T2_calibration_glitch);
     RUN_TEST(test_T2_median_timing);
+    RUN_TEST(test_T1_rejoins_descent);
+    RUN_TEST(test_T1_rejoins_ascent);
+    RUN_TEST(test_T1_still_board_stays_cold);
+    RUN_TEST(test_T1_glitch_on_the_pad);
+    RUN_TEST(test_T1_cold_reasons);
+    RUN_TEST(test_T1_marker_invalid_after_landing);
     return UNITY_END();
 }

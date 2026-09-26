@@ -468,13 +468,16 @@ while still under 10 m/s, the phase settles in the main band and the machine
 enters CHUTE_DESCENT under a drogue. It affects the reported phase only; the
 triggers and the ladder's main rung do not read it.
 
-### 16. Brownout recovery never sees a sample on hardware — OPEN (N23)
+### 16. Brownout recovery never sees a sample on hardware — FIXED (N23, DD-041)
 
-`assess_recovery()` runs in BOOT_SENSOR and reads `pp_read()`, but the
-pressure layer stays in PP_IDLE until BOOT_CALIBRATE's `pp_start_cal()`, and
-PP_IDLE produces no samples. Every recovery waits out `RECOVERY_DEADLINE_MS`
-and boots cold. The integration tests prime the layer with `pp_test_prime()`
-first, which hides it. Planned as T1 in `docs/outstanding_tasks.md` (section 4).
+`assess_recovery()` ran in BOOT_SENSOR and read `pp_read()`, but the pressure
+layer produced no samples before BOOT_CALIBRATE, so every recovery waited out
+`RECOVERY_DEADLINE_MS` and booted cold. It now reads the history the layer
+keeps from power-on. Two more gaps sat behind it, both hidden by tests that
+primed the layer: the rejoined flight never started the pressure layer, and
+it skipped BOOT_CONTINUITY, so PYR-SAFE-01 refused both channels. Either one
+alone would have deployed nothing. The recovered flight now starts the layer
+against the marker's ground and reads continuity first.
 
 ### 17. One sample can declare a launch or an apogee — PARTLY FIXED (N24)
 

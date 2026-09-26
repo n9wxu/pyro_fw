@@ -75,4 +75,17 @@ recovery_t brownout_assess(reset_cause_t cause, bool marker_ok, int32_t altitude
 /* A phrase for /api/status and the flight log. */
 const char *brownout_recovery_name(recovery_t r);
 
+/* Why a boot was cold [FLT-BROWN-05]. "At ground level" is the one that proves
+ * the barometer was read: every other reason is decided without a sample. */
+typedef enum {
+    COLD_UNDECIDED = 0,
+    COLD_NOT_POWER, /* a reset, not a power event */
+    COLD_NO_MARKER, /* no valid pad marker */
+    COLD_ON_USB,    /* a host on the port: a bench, not a flight [USB-01] */
+    COLD_AT_GROUND, /* read, and within 30 m of the marker's ground */
+    COLD_NO_SAMPLE, /* the deadline came before enough readings */
+} cold_reason_t;
+
+const char *brownout_cold_name(cold_reason_t w);
+
 #endif

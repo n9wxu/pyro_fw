@@ -800,7 +800,7 @@ static void serve_api_status(http_conn_t *hc) {
         /* Why this boot happened and what was made of it. A brownout reads as
          * a power event, so the phrase is the part worth reading. */
         fctx ? (unsigned)fctx->reset_cause : 0u,
-        brownout_recovery_name(fctx ? (recovery_t)fctx->recovery : RECOVER_COLD),
+        fctx ? flight_recovery_text(fctx) : brownout_recovery_name(RECOVER_COLD),
         /* A deployment the board could not make, and one the ladder made
          * over the operator's trigger: after the flight, these are the
          * difference between a configured main and an emergency one. */
