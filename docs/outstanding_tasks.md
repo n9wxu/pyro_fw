@@ -1188,6 +1188,29 @@ Waiting on their decisions (section 2). Their tests, once decided:
 
 ---
 
+## 5a. No sleeps (DD-053)
+
+The user's rule, 2026-09-26: no sleeps; the exec loop is the only clock, with
+flash writes its only interruptions. `support/wait_check.py` holds the sites
+still to convert, and fails CI if a new one appears or one is converted
+without lowering the list.
+
+| ID | Where | What waits | Runs |
+|---|---|---|---|
+| W1 | MK1B `pyro_board.c` | the continuity settle | **done**: a deadline the loop checks |
+| W2 | `src/lua/lua_pio_platform.c` | the bridge's first word | **done**: the FIFO is empty, so a plain put |
+| W3 | `boards/*/pressure_board.c`, `ms5607_detect()` | bus recovery clocks, pull-up settle, sensor resets | at boot, from `flight_init()`: to become steps the loop runs during BOOT_SETTLE |
+| W4 | `ms5607_read()`, `pressure_sensor_read()` | two conversions | never: nothing calls them. To be removed |
+| W5 | MK1C `pyro_board.c` waveform capture | bias settle, the edge's lead-in, the DMA capture, the arm pump's FIFO | in the flash window, on a bench request. The pump's pacing is part of the arm interlock's safety argument, so its conversion needs the user |
+
+Outside the check, recorded so they are not forgotten: the MS5607 one-shot's
+wait for STOP inside its handler (at most 0.15 ms at 400 kHz), which an I2C
+interrupt could replace; and, found on the way, MK1A's `pyro_init()` asserts
+PYRO_LOW before the release claim, so a board with both channels released
+keeps it asserted until Lua reconfigures the pad.
+
+---
+
 ## 6. Bench checks
 
 Each check's pass criteria are its test. Record the result here and in the
@@ -1203,7 +1226,7 @@ resolution doc.
 | T1 | Recovery reads samples on the hardware | a board with a marker, booted on battery with USB plugged in afterwards, reads "cold: at ground level" | a battery |
 | T1 | Brownout recovery on the real path | a power cut during a chamber descent rejoins in FALLING; a power cut on the pad stays cold | a battery, the chamber, telemetry over serial or radio (USB forces a cold boot, and a reset ends test mode) |
 | N11 | LUA and MOCK rows on the flight clock | in test mode, a script that calls `log()` once a second through a chamber flight writes LUA rows whose times fall among the sample rows', not near the board's uptime | test mode, the chamber, MK1C with Lua |
-| D-B1 | MK1B's continuity check stalls the loop | Found 2026-09-26 on a second MK1B that owns its pyros: `pyro_sample()` holds PYRO_COMMON_EN for a `sleep_ms(10)` settle inside STAGE 3, once a second, so `stage_max_us[3]` is 10.2 ms and the loop overruns once a second (250 in 252 s). The bench MK1B never showed it: both its channels are released to Lua, which skips the check. Fix, a two-phase sample like MK1A's, awaits the user's go-ahead; pass is 0 overruns with the pyros owned | the user's decision; then a flash |
+| D-B1 | MK1B's continuity check stalls the loop | Found 2026-09-26 on a second MK1B that owns its pyros: `pyro_sample()` held PYRO_COMMON_EN for a `sleep_ms(10)` settle inside STAGE 3, once a second, so `stage_max_us[3]` was 10.2 ms and the loop overran once a second (250 in 252 s). The bench MK1B never showed it: both its channels are released to Lua, which skips the check. **Fixed in code (DD-053):** the settle is a deadline the loop checks (`board_pyro_tests`). Pass: 0 overruns with the pyros owned, and `stage_max_us[3]` back near 4 ms | a flash |
 | T5 | The fit's cost, and the pad's σ, on each board | `stage_max_us[2]` no more than 500 µs above its value before T5, 0 loop overruns, with Lua running on MK1C; `fit_sigma_mpa` between 1200 and 5000, and on the BMP280 (MK1A) recorded, since its noise is not the MS5607's. First reading, the second MK1B on 2.1.680 at ~50 Hz: `stage_max_us[2]` 2.7 ms against 0.9-1.1 ms on the boards still on 2.1.674-676, so over the 500 µs; to be read again at 90 Hz | G4's flash |
 | N20 | No file served while the log is written | in test mode, once a chamber pump-down declares a launch, `GET /www/app.js` answers 409 and `/api/status` 200; after LANDED the log reads back whole | test mode, the chamber |
 | — | The arming path independent of software | with the mechanical disconnect in, a commanded ground-test FIRE puts no current through a dummy load, on each board | a dummy load and a meter. The Mach prompt asks for this path; the operator narrative uses a mechanical disconnect, but no document says what it breaks |

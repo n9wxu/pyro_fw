@@ -800,6 +800,24 @@ add_custom_target(ms5607_tests
     COMMENT "MS5607 one-shot state machine tests"
 )
 
+# A board's pyro backend run on the host against test/fake_sdk, whose sleeps
+# fail the test (DD-053). Pinned to MK1B's board directory, whatever board
+# this build is for.
+add_custom_target(board_pyro_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building board pyro tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1b -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/src/lua -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_board_pyro_mk1b.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1b/pyro_board.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_board_pyro_mk1b
+    COMMAND ${CMAKE_COMMAND} -E echo "Running board pyro tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_board_pyro_mk1b
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Board pyro backend tests"
+)
+
 # The beep vocabulary: the rules half, with no file I/O, like pin_assign.
 add_custom_target(beep_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building beep code tests..."

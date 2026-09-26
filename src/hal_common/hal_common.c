@@ -391,9 +391,7 @@ bool hal_pressure_fifo_active(void) {
  * these are then simply not reachable for it. See pad_claim.h.
  *
  * Not named *_vt on purpose. That suffix means "core1 can reach this" and
- * prove_core0.py folds those into the core1 proof -- these run on core0, and
- * MK1B's pyro_sample() sleeps, so folding them in would fail the proof over a
- * call core1 never makes. */
+ * prove_core0.py folds those into the core1 proof; these run on core0 only. */
 static void real_fire(uint8_t channel) {
     pyro_fire(channel);
 }

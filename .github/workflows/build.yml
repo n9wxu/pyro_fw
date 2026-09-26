@@ -178,6 +178,16 @@ jobs:
       - name: Traceability check
         run: python3 support/trace_check.py --counts
 
+      # No sleeps: the exec loop is the only clock (DD-053). A ratchet over
+      # the sites not yet converted, which only shrinks.
+      - name: Wait check
+        run: python3 support/wait_check.py
+
+      # A board's pyro backend on the host, against a fake SDK whose sleeps
+      # fail the test.
+      - name: Run board pyro tests
+        run: cd build && ninja board_pyro_tests
+
       - name: Validate web JS syntax
         run: node --check www/app.js
 

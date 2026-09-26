@@ -452,9 +452,9 @@ int lua_plat_configure_bridge(uint8_t channel_pin, uint8_t common_pin, const cha
     pyro_bridge_program_init(PYRO_PIO_INST, (uint)sm, offset, channel_pin, common_pin, 1.0f);
     pio_sm_set_enabled(PYRO_PIO_INST, (uint)sm, true);
 
-    /* The first word is the dead time; the program keeps it in Y. Pushed
-     * from core0 before core1 runs, so blocking here cannot deadlock. */
-    pio_sm_put_blocking(PYRO_PIO_INST, (uint)sm, deadtime_cycles);
+    /* The first word is the dead time; the program keeps it in Y. The state
+     * machine was initialised just above, so its FIFO is empty. */
+    pio_sm_put(PYRO_PIO_INST, (uint)sm, deadtime_cycles);
 
     claim_pad(channel_pin);
     claim_pad(common_pin);

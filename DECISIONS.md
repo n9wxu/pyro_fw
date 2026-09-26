@@ -557,6 +557,30 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-053: No Sleeps: The Exec Loop Is The Only Clock
+- **Decision:** at the user's direction, no code sleeps or busy-waits
+  (PWR-WAIT-01). The exec loop sets the time; anything that has to wait parks
+  on a deadline that a later iteration checks, and the only interruptions to
+  the loop are flash writes. `support/wait_check.py` fails CI on any sleep,
+  busy-wait, or blocking DMA or PIO wait in `src/` or `boards/`, with a
+  ratchet of the sites not yet converted that only shrinks.
+- **Why:** a sleep inside an iteration is time the loop does not have. The
+  first flash of the one-shot, on a second MK1B, showed it: the continuity
+  check held PYRO_COMMON_EN for a `sleep_ms(10)` settle once a second, and the
+  loop overran once a second (250 in 252 s). The bench MK1B had never shown
+  it, because both its channels are released to Lua, which skips the check.
+- **MK1B's continuity** now works like MK1A's: the settle is a deadline, the
+  reading comes on a later `pyro_update()`, once a second, and a fresh one
+  lands a settle after a pulse. The first `pyro_update()` starts the cycle,
+  not `pyro_init()`, because the release claim comes after init and a board
+  with both channels released never calls `pyro_update()`: its common, then
+  Lua's pad, is never left raised. `board_pyro_tests` runs the board file on
+  the host against `test/fake_sdk`, whose sleeps fail the test.
+- **Outside the check:** waits on a bus or a peripheral's handshake, which
+  wait for hardware rather than for time: the I2C transfers, the MS5607
+  one-shot's wait for STOP inside its handler (at most 0.15 ms at 400 kHz),
+  and core1's power-state acknowledgement.
+
 ### DD-052: Each Board Runs Its Sensor Bus As Fast As Its Device And Its PCB Allow
 - **Decision:** at the user's direction, the I2C speeds are part of each
   board support package: `BOARD_MS5607_I2C_HZ` and `BOARD_BMP280_I2C_HZ` in

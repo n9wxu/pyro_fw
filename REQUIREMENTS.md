@@ -422,6 +422,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **PWR-BUZZ-01**: Buzzer patterns shall be played autonomously via async task runner. ← SYS-PWR-02 ✅ v2-7 buzzer async state machine
 - **PWR-USB-01**: USB servicing shall run autonomously via timer ISR or second core. ← SYS-PWR-02 (deferred to v2.1)
 - **PWR-SLEEP-01**: The CPU shall sleep between pressure buffer delivery events. ← SYS-PWR-01 ✅ hal_sleep_until_event() / __wfe()
+- **PWR-WAIT-01**: No code shall sleep or busy-wait. The exec loop is the only clock: anything that has to wait parks on a deadline that a later iteration checks, and the only interruptions to the loop are flash writes. ← SYS-PWR-02, DD-053
 - **PWR-LOG-01**: Data logging shall buffer in RAM and flush to flash asynchronously. ← SYS-PWR-02 ✅ v2-9 hal_log_sample() 512-byte ring, 200ms flush task
 
 ### L4 Implementation Requirements
