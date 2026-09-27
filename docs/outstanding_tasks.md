@@ -16,22 +16,24 @@ recorded.
 | # | Section | Needs |
 |---|---|---|
 | — | [How every task runs](#how-every-task-runs) | read first |
-| 1 | [Commit the work](#1-commit-the-work) | done, except G4 |
+| 1 | [Commit the work](#1-commit-the-work) | done; G4 ran 2026-09-27 |
 | 2 | [Decisions](#2-decisions) | you |
 | 3 | [Safety fixes](#3-safety-fixes) | done |
-| 4 | [The pressure chain and the Mach lockout](#4-the-pressure-chain-and-the-mach-lockout) | done, except every task's G4 |
+| 4 | [The pressure chain and the Mach lockout](#4-the-pressure-chain-and-the-mach-lockout) | done; G4 ran 2026-09-27, T5's cost over its limit (T5-C) |
 | 5 | [Other code defects](#5-other-code-defects) | done, except C10, C6 and U6 (their decisions) |
 | 5a | [No sleeps](#5a-no-sleeps-dd-053) | done |
 | 5b | [MK1C firing path](#5b-mk1c-firing-path) | **done in code** (DD-056); a flash, then a supervised bench fire into a dummy load |
 | 6 | [Bench checks](#6-bench-checks) | a person or equipment |
-| 7 | [Board changes](#7-board-changes) | hardware design |
+| 7 | [Board changes](#7-board-changes) | hardware design; **B-U5: MK1B cannot sense continuity** |
 | 8 | [Documentation and housekeeping](#8-documentation-and-housekeeping) | done |
 | 9 | [Deferred, and not planned](#9-deferred-and-not-planned) | nothing yet |
 
-**G4 is owed for every task since section 1.** Flashing the bench boards
-(OTA) was refused as a production deploy, so no task since has been checked
-on hardware. Each task's note names what its bench check is; section 6
-lists the ones that need a person or equipment.
+**G4 ran on 2026-09-27**, with your permission to flash: all four bench
+boards on 2.1.681 (MK1A 02632D472F0C, MK1B 02E7253A34C2 and 02E72A403441,
+MK1C 02373331FFDE), the MK1Bs then on 2.1.682 (DD-059). `api_check.py`,
+`http_stream_check.py` and `hw_ui_check.js` pass on each; 100 loops a
+second, 0 overruns, 0 flash refusals, 0 pressure rejects. Section 6 lists
+what still needs a person or equipment.
 
 ---
 
@@ -78,9 +80,7 @@ documents runs G5.
 Every flash write runs in core0's STAGE 7 window. G4's 0 flash refusals on
 MK1C with Lua running is what checks it.
 
-**G4 is pending.** On 2026-09-26 the session's permission rules refused the
-OTA flash as a production deploy. Until you allow it, tasks close on G1, G2,
-G3 and G5, and each task's G4 and bench tests are listed as owed here.
+**G4 ran on 2026-09-27** (above).
 
 ---
 
@@ -139,6 +139,8 @@ are still yours; their tasks wait.
 | T8 | Flight logging rate | **Open.** Full rate makes flights replayable, at a cost in flash wear. The default logs every sample, which since T9 (DD-051) is about 90 rows a second on the MS5607 boards: nearly twice the flash per flight. A thinned log cannot be replayed. | T9 |
 | M1-D | Accept M1's deviations from the Mach prompt | **Adopted.** They are listed in M1. The largest: the fit is solved against each sample's own time, in floating point, not with precomputed integer coefficients. Flash stalls make the sample spacing uneven (T11), and precomputed coefficients assume even spacing. | M1 |
 | P1 | MK1C's tracking pulse is 10-11 ms; DESIGN.md S3 asks for 5-10 ms | **Open.** The loop ends a phase no sooner than the next iteration, so the 8 ms asked for becomes one loop and a little more (scoped 2026-09-26). A timer one-shot, like the MS5607's, could end it at 8 ms exactly. | — |
+| B-U5 | MK1B until U5 is changed | **Open.** Both MK1B builds fit AP2192AMPG-13, whose 100 ohm output discharge holds each sense node near 0 V while its channel is off (DS32193 p.4, RDIS, note 6), so every channel reads shorted, fitted or not, and an MK1B that owns its pyros never deploys (PYR-SAFE-01). The firmware cannot see past it. Until the part changes (section 7): leave it, or release the channels to Lua, as the bench MK1B is, or something else you choose. | an MK1B that fires |
+| T5-C | The fit's cost | **Open.** Measured 2026-09-27 at rest: `stage_max_us[2]` 2.9 ms on the MS5607 boards (100 Hz, a 1 s window of 100 samples, software float) and 2.1 ms on MK1A, against T5's limit of about 1.6 ms. The loop holds: work at most 6 ms, 0 overruns. Accept it, or make the fit incremental (running sums, O(1) a sample), which needs care with float cancellation. | — |
 | N20 | Shared littlefs buffers | **Adopted:** refuse file GETs while the flight log is open. It can be tested on the host, the log can be read after landing, and WEB-API-08 already refuses every writer in flight. | N20 task |
 
 ---
@@ -1273,8 +1275,8 @@ resolution doc.
 | N11 | LUA and MOCK rows on the flight clock | in test mode, a script that calls `log()` once a second through a chamber flight writes LUA rows whose times fall among the sample rows', not near the board's uptime | test mode, the chamber, MK1C with Lua |
 | D-C1 | MK1C's R_BLEED, open, hides from the bus level | U9's reverse path carries the bus either way (685 against 730 counts), so no level check can find it (DD-054). **Closed, not wanted:** the firmware checks only presence and shorts (DD-055) | — |
 | CI-1 | Six host suites never run in CI | `pin_caps_tests`, `beep_tests`, `pin_assign_tests`, `buzzer_tests`, `config_tests` and `config_persistence_tests` pass in the local gate but no workflow step runs them; `plant_tests` and `board_pyro_mk1c_tests` now do | a workflow edit |
-| D-B1 | MK1B's continuity check stalls the loop | Found 2026-09-26 on a second MK1B that owns its pyros: `pyro_sample()` held PYRO_COMMON_EN for a `sleep_ms(10)` settle inside STAGE 3, once a second, so `stage_max_us[3]` was 10.2 ms and the loop overran once a second (250 in 252 s). The bench MK1B never showed it: both its channels are released to Lua, which skips the check. **Fixed in code (DD-053):** the settle is a deadline the loop checks (`board_pyro_tests`). Pass: 0 overruns with the pyros owned, and `stage_max_us[3]` back near 4 ms | a flash |
-| T5 | The fit's cost, and the pad's σ, on each board | `stage_max_us[2]` no more than 500 µs above its value before T5, 0 loop overruns, with Lua running on MK1C; `fit_sigma_mpa` between 1200 and 5000, and on the BMP280 (MK1A) recorded, since its noise is not the MS5607's. First reading, the second MK1B on 2.1.680 at ~50 Hz: `stage_max_us[2]` 2.7 ms against 0.9-1.1 ms on the boards still on 2.1.674-676, so over the 500 µs; to be read again at 90 Hz | G4's flash |
+| D-B1 | MK1B's continuity check stalls the loop | **Passed 2026-09-27** on 2.1.681: the second MK1B, owning its pyros, 0 overruns (79,233 on 2.1.680), `stage_max_us[3]` 4.1 ms. The reading it makes is B-U5's | — |
+| T5 | The fit's cost, and the pad's σ, on each board | **Measured 2026-09-27**, at rest after a reboot: `stage_max_us[2]` 2.9 ms on both MK1Bs and MK1C, 2.1 ms on MK1A, steady from the first seconds on the pad -- over the 500 µs allowance (T5-C); 0 overruns. `fit_sigma_mpa` MK1A 1495-1508, MK1C 4314-4480, both MK1Bs 5000, the ceiling (`PP_SIGMA_CEIL_PA`): the MS5607 boards read three to four times the datasheet's 1.2 Pa on this bench | — |
 | N20 | No file served while the log is written | in test mode, once a chamber pump-down declares a launch, `GET /www/app.js` answers 423 and `/api/status` 200; after LANDED the log reads back whole | test mode, the chamber |
 | — | The arming path independent of software | with the mechanical disconnect in, a commanded ground-test FIRE puts no current through a dummy load, on each board | a dummy load and a meter. The Mach prompt asks for this path; the operator narrative uses a mechanical disconnect, but no document says what it breaks |
 
@@ -1288,6 +1290,7 @@ flow. `mach_tests` is its only check short of a flight.
 | ID | What | Tests first |
 |---|---|---|
 | U1 | Detect a charger on USB (USB-06). VBUS reaches only the TP4057 on MK1A, MK1B and MK1C. The options are a VBUS divider to a spare GPIO (MK1C has GPIO2–5, 9, 10 and 13–15 free; GPIO24 on MK1A/B), or routing the charger's CHRG/STDBY pins to GPIOs. Firmware would OR either with the USB frame check. | Host, with a mocked VBUS input: a charger alone counts as attached; a sleeping PC (VBUS, no frames) counts as attached (U3); no input counts as detached. Bench, on the new board: a charger stops launch detection. |
+| B-U5 | **MK1B cannot sense continuity.** U5 is AP2192AMPG-13 (LCSC C507872) on both JLCPCB builds: the AP2192A's output discharge, about 100 ohm while disabled, holds SENSE1 and SENSE2 near 0 V against their 100k pull-ups, so a fitted igniter, an empty connector and a short all read the same. The base AP2192 (DS31569) has no discharge and the same MSOP-8EP footprint. Found on the bench 2026-09-27 (DD-059). | Bench, on a board with the base part: an empty connector reads open (about 4095), a 1 ohm load good (about 0), a short to ground shorted -- `board_pyro_tests` already holds the firmware to that |
 | REV-03 | MK1C cannot fire. **Done in code (F1, DD-056).** | The bench fire into a dummy load that sets `pyro1_fired` and shows the pulse on a scope (F1's bench check). |
 | — | An arming path independent of software, if section 6's check finds a board without one | That check. |
 

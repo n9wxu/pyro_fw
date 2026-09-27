@@ -45,6 +45,11 @@
  * -> OUT1 -> channel 2) are modelled active-high, which is what the
  * firmware assumes when it writes 0 to keep them off and 1 to fire.
  *
+ * Not modelled: the part fitted is the AP2192A, whose outputs discharge to
+ * ground through about 100 ohm while disabled. On the boards that holds
+ * both sense nodes near 0 V and defeats the reading above (DD-059, task
+ * B-U5). The model is the board as it senses with the base AP2192.
+ *
  * ── The FLAG pins ────────────────────────────────────────────────
  *
  * U5's FLG2 and FLG1 are open drain with 100 kohm pull-ups (R21/R20) and

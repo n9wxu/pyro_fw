@@ -579,6 +579,13 @@ rationale and the alternatives considered.
 - `board_pyro_tests` models the node as the netlist has it: an igniter
   reads good, an empty connector open, a short to ground shorted, a 1k joint
   good with its count, and no read comes before its settle or recharge.
+- **And then the part:** both MK1B builds fit U5 as AP2192AMPG-13, and the
+  A variant discharges its outputs through about 100 ohm while disabled
+  (DS32193 p.4, RDIS; note 6). That holds each sense node near 0 V whenever
+  its channel is off, which is always during a check, so on the bench the
+  second MK1B still reads both channels shorted (20 and 16 counts). No
+  threshold can see past it: this rule is right for the netlist, and an MK1B
+  senses continuity only once U5 is the base AP2192 (task B-U5).
 
 ### DD-058: The API Is Live In Flight; Only The Log Touches The Filesystem
 - **Decision:** at the user's direction -- "Leave the USB and API live

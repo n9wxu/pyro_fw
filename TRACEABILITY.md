@@ -100,7 +100,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-DESC-02 | Landing from every descent phase | Closed-loop: test_FLT_DESC_02_ballistic_reaches_landed | ✅ |
 | PYR-ALT-01 | Clamp altitude settings | Closed-loop: Karman suite (AGL > 8000m clamped, pyro still fires) | ✅ |
 | PYR-ALT-02 | Warning beep for range | Integration: test_PYR_ALT_02_cfg_range_beep | ✅ |
-| FLT-RATE-01..02 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds); Chain: test_T9_one_shot_cadence (the one-shot schedule: 900 pressures in 10 s, a 20 ms gap only where the temperature was read); test_ms5607_ready_before_the_next_loop (at each MS5607 board's own bus rate, 400 kHz on MK1B and MK1C, each conversion is ready 0.7 ms before the next loop, DD-052), test_ms5607_work_costs_no_samples (2.7 ms of work a pressure, as measured, costs no conversion); the rate on a board is a bench check owed (DD-051) | ⚠️ |
+| FLT-RATE-01..02 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds); Chain: test_T9_one_shot_cadence (the one-shot schedule: 900 pressures in 10 s, a 20 ms gap only where the temperature was read); test_ms5607_ready_before_the_next_loop (at each MS5607 board's own bus rate, 400 kHz on MK1B and MK1C, each conversion is ready 0.7 ms before the next loop, DD-052), test_ms5607_work_costs_no_samples (2.7 ms of work a pressure, as measured, costs no conversion); Hardware (2.1.681, 2026-09-27): every MS5607 board converts once a 10 ms loop, 9.97 ms apart with a 20 ms gap at the temperature slot, and MK1A's BMP280 at 50 Hz | ✅ |
 | FLT-RATE-03 | 1 Hz while LANDED | Chain: test_N18_landed_logs_once_a_second | ✅ |
 | FLT-RATE-04 | The rate is the HAL's | Chain: test_T9_same_outcomes (the same outcomes at 11 ms and 20 ms), test_T3_durations_not_counts (at 10 ms) | ✅ |
 | FLT-RATE-05 | Holds and dwells in sample time | Chain: test_T11_loop_clock_independent (a loop clock lagging 0-70 ms changes no decision's sample) | ✅ |
@@ -183,7 +183,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | SYS-ALT-02 | Multiple sensors | — (hardware test only) | ⚠️ |
 | SNS-PRES-01 | Auto-detect sensor | — (hardware test only) | ⚠️ |
 | SNS-PRES-02..03 | Pressure filter, fractional | Unit: test_SNS_PRES_02_filter_smoothing, test_SNS_PRES_03_filter_init; Chain: test_T4_filter_noise (0.17 Pa of 1.2), test_T4_pad_speed (0.22 m/s) | ✅ |
-| SNS-PRES-05 | Conversion read after its worst case | Hardware (MK1C, MK1B): pres_rejects 0 under HTTP load, 18 in 60 s without the timing. The read is now the one-shot's, at the same 9.1 ms (DD-051): test_SNS_PRES_05_read_after_worst_case; `support/prove_core0.py` proves its handler RAM-closed; the bench recheck is owed | ⚠️ |
+| SNS-PRES-05 | Conversion read after its worst case | Hardware (MK1C, MK1B): pres_rejects 0 under HTTP load, 18 in 60 s without the timing. The read is now the one-shot's, at the same 9.1 ms (DD-051): test_SNS_PRES_05_read_after_worst_case; `support/prove_core0.py` proves its handler RAM-closed; rechecked on 2.1.681 (2026-09-27): pres_rejects 0 on MK1B and MK1C through the G4 HTTP checks | ✅ |
 | SNS-PRES-07 | A single outlier never reaches the filter | Chain: test_T2_pad_glitch_sweep, test_T2_coast_glitch, test_T2_median_timing | ✅ |
 | SNS-PRES-08 | Each sample stamped by its driver at its measurement | MS5607: test_SNS_PRES_08_stamp_is_the_conversions, test_SNS_PRES_08_held_read_keeps_its_stamp (a read held 60 ms), test_SNS_PRES_08_late_loop_keeps_the_stamp (the handler's state machine on a fake bus); Chain: test_T11_stalls_change_nothing (under the test HAL's model of the stamping); the BMP280's stamp in `bmp280_read()` by inspection; bench check owed | ⚠️ |
 | SNS-PRES-09 | A quadratic fit over the last second, and whether it is clean | Chain: test_T5_fit_reference, test_T5_fit_noise, test_T5_clean, test_T5_sigma, test_T5_sigma_ignores_the_launch, test_T9_same_outcomes (the whole second at ~90 Hz); Mach: test_T9_mach_at_90hz; the fit's cost on the RP2040 is a bench check owed | ✅ |
@@ -376,8 +376,8 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 229 |
-| ⚠️ Not directly verified (needs a test or hardware) | 21 |
+| ✅ Verified by a host, web or closed-loop test | 231 |
+| ⚠️ Not directly verified (needs a test or hardware) | 19 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 11 |
 
