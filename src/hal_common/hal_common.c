@@ -607,6 +607,26 @@ static bool flash_writable(void) {
 
 static bool fs_ok;
 
+/* [WEB-API-08, DD-058] Mounts other than the flight log's, open now. The log
+ * waits for none before it mounts, and none may start while it holds. */
+static int fs_borrowed;
+
+bool hal_fs_locked(void) {
+    return hal_log_active();
+}
+
+int hal_fs_enter(void) {
+    if (hal_fs_locked())
+        return HAL_FS_LOCKED;
+    fs_borrowed++;
+    return 0;
+}
+
+void hal_fs_leave(void) {
+    if (fs_borrowed > 0)
+        fs_borrowed--;
+}
+
 bool hal_fs_healthy(void) {
     return fs_ok;
 }
@@ -628,7 +648,7 @@ void hal_fs_unmount(void) {
     /* Each read/write mounts and unmounts internally */
 }
 
-int hal_fs_read_file(const char *path, char *buf, int max_len) {
+static int read_file(const char *path, char *buf, int max_len) {
     lfs_t lfs;
     if (lfs_mount(&lfs, &lfs_pico_flash_config) != LFS_ERR_OK)
         return -1;
@@ -648,7 +668,16 @@ int hal_fs_read_file(const char *path, char *buf, int max_len) {
     return (int)n;
 }
 
-int hal_fs_write_file(const char *path, const char *data, int len) {
+int hal_fs_read_file(const char *path, char *buf, int max_len) {
+    int err = hal_fs_enter();
+    if (err != 0)
+        return err;
+    int n = read_file(path, buf, max_len);
+    hal_fs_leave();
+    return n;
+}
+
+static int write_file(const char *path, const char *data, int len) {
     if (!flash_writable())
         return -1;
 
@@ -667,17 +696,27 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
     return 0;
 }
 
+int hal_fs_write_file(const char *path, const char *data, int len) {
+    int err = hal_fs_enter();
+    if (err != 0)
+        return err;
+    err = write_file(path, data, len);
+    hal_fs_leave();
+    return err;
+}
+
 /* ── Streaming file writes ─────────────────────────────────────────── */
 
 struct hal_file {
     lfs_t lfs;
     lfs_file_t file;
     bool open;
+    bool borrowed; /* not the flight log's: counted by hal_fs_enter() */
 };
 
 static struct hal_file hw_file;
 
-hal_file_t *hal_fs_open(const char *path, bool append) {
+static hal_file_t *open_file(const char *path, bool append) {
     /* There is no read mode here: both paths are LFS_O_WRONLY | LFS_O_CREAT,
      * and creating the file commits a dirent. */
     if (!flash_writable())
@@ -694,7 +733,20 @@ hal_file_t *hal_fs_open(const char *path, bool append) {
         return NULL;
     }
     hw_file.open = true;
+    hw_file.borrowed = false;
     return &hw_file;
+}
+
+hal_file_t *hal_fs_open(const char *path, bool append) {
+    if (hal_fs_enter() != 0)
+        return NULL;
+    hal_file_t *f = open_file(path, append);
+    if (!f) {
+        hal_fs_leave();
+        return NULL;
+    }
+    f->borrowed = true;
+    return f;
 }
 
 int hal_fs_write(hal_file_t *f, const char *data, int len) {
@@ -709,6 +761,8 @@ void hal_fs_close(hal_file_t *f) {
     lfs_file_close(&f->lfs, &f->file);
     lfs_unmount(&f->lfs);
     f->open = false;
+    if (f->borrowed)
+        hal_fs_leave();
 }
 
 /* ── Config (v2) ──────────────────────────────────────────────────── */
@@ -950,7 +1004,11 @@ static void log_flash_service(uint32_t now_ms) {
         return;
 
     if (log_task.pending_open) {
-        log_task.file = hal_fs_open("flight_log.csv", false);
+        /* A web transfer mounted before launch lets go on its next pass
+         * [WEB-API-08]; the rows wait in the buffer meanwhile. */
+        if (fs_borrowed > 0)
+            return;
+        log_task.file = open_file("flight_log.csv", false);
         if (!log_task.file)
             return; /* window refused or the fs is busy: try the next one */
         log_task.pending_open = false;

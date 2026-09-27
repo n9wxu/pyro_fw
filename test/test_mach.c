@@ -819,7 +819,7 @@ void test_M1_port_error_margin(void) {
 
 static bool log_has(const char *event) {
     static char log[65536];
-    int n = hal_fs_read_file("flight_log.csv", log, (int)sizeof(log) - 1);
+    int n = mock_fs_peek("flight_log.csv", log, (int)sizeof(log) - 1);
     if (n <= 0)
         return false;
     log[n] = '\0';

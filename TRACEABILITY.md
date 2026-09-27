@@ -233,9 +233,9 @@ Verify web interface behavior against mock server in 3 device modes.
 | WEB-API-05 | POST /api/reboot | Hardware: 200 with CORS, board back in PAD_IDLE | ✅ HW |
 | WEB-API-06 | GET /api/flight.csv | Hardware: bench smoke test | ✅ HW |
 | WEB-API-07 | CORS headers | Hardware: bench smoke test, every route | ✅ HW |
-| WEB-API-08 | No state-changing request in flight; a reboot on USB is obeyed | Unit: test_REV18_flight_in_progress_is_launch_to_landing, test_C5_usb_means_not_flying (the predicates); route wiring by inspection | ⚠️ |
+| WEB-API-08 | The API live in flight; only the log touches the filesystem | Integration: test_WEB_API_08_only_the_log_touches_the_filesystem_in_flight (a whole flight asks for no other file), test_WEB_API_08_spent_marker_waits_for_the_log; the web server's 423s and the dropped transfer by inspection, bench check owed | ⚠️ |
 | WEB-API-09 | Erase the flight log | Web UI: the flight log can be erased; Hardware: bench smoke test | ✅ |
-| WEB-API-10 | No file served while the log is written | `serve_file()` refuses on `hal_log_active()`, by inspection; bench check owed (section 6 of docs/outstanding_tasks.md) | ⚠️ |
+| WEB-API-10 | No file served while the log is written | `serve_file()` answers 423 through `hal_fs_enter()`, by inspection; bench check owed (section 6 of docs/outstanding_tasks.md) | ⚠️ |
 | WEB-HTTP-01 | A request is a byte stream | HTTP: test_HTTP_02 (split at every byte), test_HTTP_03 (byte by byte, random), test_HTTP_04, test_HTTP_07; Hardware: `support/http_stream_check.py` 16/16 on MK1A/B/C (4/16 on the old server) | ✅ |
 | WEB-HTTP-02 | Content-Length and Connection: close on every response | HTTP: body_of() asserts both on every test; Hardware: http_stream_check framing checks | ✅ |
 | WEB-HTTP-03 | Flow control, not refusal | HTTP: test_HTTP_12 (a 10 kB body through a 2 kB ring into a sink that refuses 50 times); Hardware: uploads round-trip byte-exact, flash_refusals 0, Lua heartbeat unbroken on MK1C | ✅ |
@@ -395,6 +395,6 @@ _+20 requirements in v2 Tasks 7–10 (PWR-*, CFG-TABLE-*, TELEM-FMT-*), all veri
 - **SYS-DATA-02 / DAT-06..07**: CSV export format — hardware integration test
 - **SYS-ALT-02 / SNS-PRES-01**: Multi-sensor detection — hardware test
 - **WEB-NET-01..04**: USB network / mDNS / DNS-SD — hardware test
-- **WEB-API-08**: the in-flight refusal is wired into on_head() in http_server.c and verified by inspection; a bench board cannot be put in flight to exercise it
+- **WEB-API-08**: the web server's 423s and the dropped transfer are in http_server.c, verified by inspection; the bench check is a chamber flight in test mode
 - **OTA-01..04**: OTA update flow — hardware test
 - **PWR-USB-01**: USB servicing autonomy — deferred to v2.1

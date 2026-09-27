@@ -255,6 +255,42 @@ void test_FLT_BOOT_01_all_states(void) {
     TEST_ASSERT_TRUE_MESSAGE(saw_landed, "Never in LANDED");
 }
 
+/* [WEB-API-08] From launch until its tail is flushed the flight log holds
+ * the filesystem, and nothing else may touch it: every mount shares the
+ * log's buffers. A whole flight, pad to landing, asks for no other file. */
+void test_WEB_API_08_only_the_log_touches_the_filesystem_in_flight(void) {
+    load_sim_data("test_data/open_rocket_export.csv");
+    reset_sim();
+    bool logged = false;
+    float end_s = sim_data[sim_count - 1].time_s + 2.0f;
+    for (uint32_t t = 0; t <= (uint32_t)(end_s * 1000.0f); t++) {
+        app_tick(t);
+        logged = logged || hal_log_active();
+    }
+    TEST_ASSERT_TRUE_MESSAGE(logged, "the flight was logged");
+    TEST_ASSERT_EQUAL_MESSAGE(LANDED, ctx.current_state, "the flight landed");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_fs_locked_count, "a file call was refused while the log held the filesystem");
+}
+
+/* [WEB-API-08, FLT-BROWN-04] On the hardware the log's tail can be flushed
+ * after LANDED, and the log holds the filesystem until then. The spent
+ * marker waits for it, rather than being refused and never written. */
+void test_WEB_API_08_spent_marker_waits_for_the_log(void) {
+    reset_sim();
+    pad_marker_t m;
+    pad_marker_fill(&m, 101325, 1000);
+    TEST_ASSERT_EQUAL(0, hal_fs_write_file(PAD_MARKER_PATH, (const char *)&m, (int)sizeof(m)));
+    ctx.current_state = LANDED;
+    hal_log_start(&ctx.config, 101325);
+    flight_flash_service(&ctx, 1000);
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_fs_locked_count, "the marker asked for the filesystem the log holds");
+
+    hal_log_stop();
+    flight_flash_service(&ctx, 1010);
+    TEST_ASSERT_EQUAL((int)sizeof(m), hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m)));
+    TEST_ASSERT_FALSE_MESSAGE(pad_marker_valid(&m), "the marker is spent once the log lets go");
+}
+
 void test_FLT_APO_01_detected(void) {
     load_sim_data("test_data/open_rocket_export.csv");
     reset_sim();
@@ -495,7 +531,7 @@ void test_DAT_04_events(void) {
     /* hal_log_stop() was called at landing; flight_log.csv is complete.
      * The incremental ring-buffer CSV logger is retired (v2-9). */
     char buf[32768];
-    int n = hal_fs_read_file("flight_log.csv", buf, sizeof(buf) - 1);
+    int n = mock_fs_peek("flight_log.csv", buf, sizeof(buf) - 1);
     TEST_ASSERT_TRUE(n > 0);
     buf[n] = '\0';
 
@@ -892,7 +928,7 @@ static const char *log_row(const char *log, const char *event) {
 }
 
 static int read_flight_log(char *buf, int len) {
-    int n = hal_fs_read_file("flight_log.csv", buf, len - 1);
+    int n = mock_fs_peek("flight_log.csv", buf, len - 1);
     if (n > 0)
         buf[n] = '\0';
     return n;
@@ -1210,6 +1246,8 @@ int main(void) {
     RUN_TEST(test_TST_02_interpolation);
     RUN_TEST(test_SNS_ALT_01_roundtrip);
     RUN_TEST(test_FLT_BOOT_01_all_states);
+    RUN_TEST(test_WEB_API_08_only_the_log_touches_the_filesystem_in_flight);
+    RUN_TEST(test_WEB_API_08_spent_marker_waits_for_the_log);
     RUN_TEST(test_FLT_APO_01_detected);
     RUN_TEST(test_PYR_MODE_01_fires);
     RUN_TEST(test_PYR_REL_01_released_channel_never_fires);

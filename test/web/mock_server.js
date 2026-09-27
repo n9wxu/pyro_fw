@@ -357,14 +357,12 @@ const server = http.createServer((req, res) => {
   }
 
   if ((req.url === '/api/test_mode/on' || req.url === '/api/test_mode/off') && req.method === 'POST') {
-    if (FLYING.includes(status.state)) {
-      res.writeHead(409, {...cors, 'Content-Type':'application/json'});
-      res.end(JSON.stringify({error: 'refused while the rocket is in flight'}));
-    } else {
+    /* In flight the firmware keeps the mode and says which it kept. */
+    if (!FLYING.includes(status.state)) {
       status.test_mode = req.url.endsWith('/on');
-      res.writeHead(200, {...cors, 'Content-Type':'application/json'});
-      res.end(JSON.stringify({test_mode: status.test_mode}));
     }
+    res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+    res.end(JSON.stringify({test_mode: status.test_mode}));
     return;
   }
 

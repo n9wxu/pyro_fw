@@ -128,7 +128,7 @@ that fails on the code it was reported against. See
 | Suite | Tests |
 |-------|-------|
 | config | `test_config_mode_none_round_trips`, `test_config_unknown_mode_serialises_as_none`, `test_config_default_name_is_not_truncated`, `test_config_writes_no_inert_keys` |
-| unit | `test_REV03_*`, `test_REV04_*`, `test_REV07_*`, `test_REV08_*`, `test_REV09_*`, `test_REV12_*`, `test_REV18_*`, `test_REV_NEW_disabled_channel_is_not_a_fault` |
+| unit | `test_REV03_*`, `test_REV04_*`, `test_REV07_*`, `test_REV08_*`, `test_REV09_*`, `test_REV12_*`, `test_REV_NEW_disabled_channel_is_not_a_fault` |
 | integration | `test_FLT_LAUNCH_03_backdate` (now exact), `test_REV06_*`, `test_REV11_*`, `test_REV12_log_rate_*`, `test_REV_NEW_log_header_*`, `test_BRN_INT_05_*` |
 | closed-loop | `test_REV01_working_drogue_main_at_its_trigger`, `test_REV01_failed_drogue_brings_the_main_forward`, `test_REV05_*`, `test_REV16_*`; every mode suite now asserts no forced main and AGL channels within 8 m |
 | buzzer | rewritten against `buzzer_play_spec()`; `test_BUZ_ACT_04_*`, `test_BEEP_STORE_01/02` |

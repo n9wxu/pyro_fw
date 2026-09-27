@@ -42,7 +42,7 @@ be flown.
 | REV-14 | Med | **Fixed** | — | — |
 | REV-16 | Med | **Fixed** | `test_REV16_forced_main_is_in_the_log` | ✅ `main_forced`, `pyro1_refires` on /api/status |
 | REV-17 | Med | **Fixed** | by inspection | route not reachable: every board has a pins.ini |
-| REV-18 | Med | **Fixed**; wiring verified by inspection only | `test_REV18_flight_in_progress_is_launch_to_landing` | a bench board cannot be put in flight |
+| REV-18 | Med | **Superseded (DD-058)**: the API is live in flight; only the filesystem is locked, to the flight log | `test_WEB_API_08_only_the_log_touches_the_filesystem_in_flight`, `test_WEB_API_08_spent_marker_waits_for_the_log` | a chamber flight in test mode |
 | REV-15 | Low | **Fixed**, and a compile-time check added | `test_config_default_name_is_not_truncated`; web: *default rocket name* | — |
 | REV-20 | Low | **Fixed** | web: *shows its 8-character limit* | ✅ |
 | REV-21 | Low | **Fixed**: one Save on the Config tab | web: *one save button*, *buzzer can be moved* | ✅ |
@@ -158,8 +158,9 @@ replaced `respond()` and `finish()` with `http_conn.c`'s framing, and now
 routes POSTs through `post_routes[]`; `on_recv()` only queues. GETs are still
 a chain of comparisons.
 
-**REV-18.** `refused_in_flight()` answers 409 to every POST, and to the bench
-capture, from launch to landing (WEB-API-08, DD-034). That covers what the
+**REV-18.** `refused_in_flight()` answered 409 to every POST, and to the bench
+capture, from launch to landing (WEB-API-08, DD-034); since DD-058 the API is
+live in flight and only the filesystem is locked. That covers what the
 review listed plus `/api/beeps`, `/api/lua/*` and `/api/flight/erase`. See
 conflict C5.
 
@@ -246,8 +247,8 @@ promises, so please review:
   MK1C when N21 left it in ASCENT); otherwise it needs a power cycle. The MK1B and MK1C on the bench had been in ASCENT and FALLING
   for 11–13 hours on their old firmware when this work started. The firmware
   cannot tell them from a flying board, which is the point of the interlock.
-  **Decided 2026-09-26 (DD-057):** a board on USB is not flying, so it obeys
-  `/api/reboot` there, test mode excepted.
+  **Decided 2026-09-26 (DD-058):** the API is live in flight, the reboot
+  included; only the filesystem is locked, to the flight log.
 - **C6. Numbered flight logs against FLT-BROWN-01 and DD-027.** Keeping more
   than one flight means creating a file at launch, and a new littlefs file
   commits a directory entry immediately. Alternatives: rename or pre-create on

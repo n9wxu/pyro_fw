@@ -1298,7 +1298,7 @@ void test_REV16_forced_main_is_in_the_log(void) {
     TEST_ASSERT_TRUE(res.main_forced);
 
     static char log[65536];
-    int n = hal_fs_read_file("flight_log.csv", log, (int)sizeof(log) - 1);
+    int n = mock_fs_peek("flight_log.csv", log, (int)sizeof(log) - 1);
     TEST_ASSERT_TRUE_MESSAGE(n > 0, "no flight log");
     log[n] = '\0';
     TEST_ASSERT_NOT_NULL_MESSAGE(strstr(log, "MAIN_FORCED"), "the log does not say the main was forced");

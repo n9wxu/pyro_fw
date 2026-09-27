@@ -1394,7 +1394,7 @@ static int flown_log(void) {
     const flight_t f = {5.0f, 1.0f, 20.0f, 0.0f}; /* apogee 147 m: the log fits the test HAL's file */
     result_t r = fly(&f, 51, 3, 120000, false);
     TEST_ASSERT_TRUE_MESSAGE(r.landed_ms != 0, "the flight landed and closed its log");
-    int n = hal_fs_read_file("flight_log.csv", logbuf, (int)sizeof(logbuf) - 1);
+    int n = mock_fs_peek("flight_log.csv", logbuf, (int)sizeof(logbuf) - 1);
     TEST_ASSERT_TRUE_MESSAGE(n > 0, "the flight wrote a log");
     logbuf[n] = '\0';
     return n;

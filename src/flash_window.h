@@ -92,6 +92,18 @@ void flash_window_release(void);
  * RP2040 exec loop calls anything below. board_flash_service() is weak, so a
  * board that queues no flash of its own defines nothing. */
 void hal_flash_service(uint32_t now_ms);
+
+/* ── The filesystem in flight [WEB-API-08, DD-058] ─────────────────
+ *
+ * The flight log holds littlefs from launch until its tail is flushed, and
+ * every mount shares one set of buffers, so nothing else may mount then.
+ * hal_fs_enter() before any mount but the log's returns HAL_FS_LOCKED
+ * meanwhile, else 0, and counts the mount until hal_fs_leave(); the log
+ * mounts only when none is counted. The HAL's own file calls do this; the
+ * web server does it for the mounts it makes itself, and answers 423. */
+bool hal_fs_locked(void);
+int hal_fs_enter(void);
+void hal_fs_leave(void);
 void board_flash_service(uint32_t now_ms);
 uint32_t hal_log_dropped(void);
 

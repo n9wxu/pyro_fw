@@ -453,6 +453,7 @@ rationale and the alternatives considered.
   from the browser; it needs a power cycle. The firmware cannot tell such a
   board from one that is flying, which is the point of the interlock.
 - **Amended by DD-057:** on USB, with test mode off, a reboot is obeyed.
+- **Superseded by DD-058:** the API is live in flight; the filesystem is not.
 
 ### DD-035: The Flight Log Is Published Every Second, Inside The Flash Window
 - **Decision:** `log_flash_service()` calls `lfs_file_sync()` on the flight log
@@ -558,6 +559,38 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-058: The API Is Live In Flight; Only The Log Touches The Filesystem
+- **Decision:** at the user's direction -- "Leave the USB and API live
+  during flight. This will simplify testing." then "flight mode will lock
+  out the filesystem except for logging" and "file writes must return a
+  suitable error code" -- the in-flight refusal of every POST (DD-034,
+  DD-057) is gone, and in its place the flight log holds the filesystem
+  from launch until its tail is flushed:
+  - the HAL's file calls return `HAL_FS_LOCKED` (-3), `hal_fs_open()` NULL;
+  - a web request that needs a file -- an upload, a file GET, config, pins,
+    beeps, serial, the log's erase -- is answered 423 Locked at its head,
+    before any mount and before its body is read;
+  - a transfer that took the filesystem before launch is reset on its next
+    pass, and the log waits for it before it mounts (`hal_fs_enter()` counts
+    every mount but the log's).
+- **Why not simply later:** the conflict is a second mount, not the moment
+  of a write. Every littlefs mount shares one set of buffers, and each keeps
+  its own view of the metadata and the free blocks, so any mount beside the
+  log's can corrupt it, whenever it writes. One mount for the whole firmware
+  would let writes run in flight; that is a filesystem change of its own.
+- **Why 423:** the file is locked, not the request malformed or the board
+  in the wrong state. The 409s that remain mean the state: config and pins
+  are taken on the pad only.
+- **Live in flight:** status and every other GET, reboot, OTA (its own flash
+  area, and kept out of a MK1C fire by DD-056), the beep audition and the
+  Lua check. A reboot ends a chamber flight, and an OTA or a Lua compile
+  stalls the loop; that is the tester's choice.
+- **Resting on:** the API is reached only over USB, and a flying rocket has
+  no PC on its cable. A board that carries the API over a radio needs the
+  in-flight lock back.
+- **The spent pad marker** waits for the log to let go of the filesystem;
+  refused, it would never be written.
+
 ### DD-057: A Board On USB Is Not Flying: It Obeys A Reboot
 - **Decision:** at the user's direction -- "If usb is attached you are not
   flying. Obey the USB reboot." -- `/api/reboot` is answered in a flight
@@ -574,6 +607,8 @@ rationale and the alternatives considered.
   chamber flight must see what a real one does.
 - **After the reboot:** a board booting on USB recovers cold (COLD_ON_USB),
   so it comes up on the pad, not back in the flight it was stuck in.
+- **Superseded by DD-058:** every request is live in flight, the reboot
+  included.
 
 ### DD-056: MK1C Fires: DESIGN.md 7.1 As Loop Steps
 - **Decision:** at the user's direction ("Finish F1"), MK1C's `pyro_fire()`

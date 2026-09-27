@@ -124,6 +124,10 @@ int hal_fs_mount(void); /* returns 0 on success, <0 on error */
  * emitted from nowhere. */
 bool hal_fs_healthy(void);
 void hal_fs_unmount(void);
+/* [WEB-API-08] From launch until its tail is flushed the flight log holds
+ * the filesystem, and every other file call returns this (hal_fs_open(),
+ * NULL). -1 is any other failure, and a read's -2 a missing file. */
+#define HAL_FS_LOCKED (-3)
 int hal_fs_read_file(const char *path, char *buf, int max_len);     /* returns bytes read, <0 on error */
 int hal_fs_write_file(const char *path, const char *data, int len); /* returns 0 on success */
 

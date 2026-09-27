@@ -637,8 +637,12 @@ static bool held(bool cond, uint32_t *since, uint32_t ts, uint32_t hold_ms) {
 void flight_flash_service(flight_context_t *ctx, uint32_t now) {
     /* [FLT-BROWN-04] The flight is over, so the marker is spent: a power-up
      * after this, at the recovery site or back on the pad, must not recover
-     * against it. hal.h has no delete, so an invalid marker is written. */
+     * against it. hal.h has no delete, so an invalid marker is written --
+     * once the log has flushed its tail and let go of the filesystem
+     * [WEB-API-08]. */
     if (ctx->current_state == LANDED && !ctx->marker_spent) {
+        if (hal_log_active())
+            return;
         ctx->marker_spent = true;
         pad_marker_t spent;
         memset(&spent, 0, sizeof(spent));
@@ -1663,7 +1667,6 @@ static void grounding_changed(flight_context_t *ctx, bool was, uint32_t now) {
 }
 
 void flight_set_usb_attached(flight_context_t *ctx, bool attached, uint32_t now) {
-    ctx->usb_now = attached;
     if (attached == ctx->usb_attached || state_is_airborne(ctx->current_state))
         return;
     bool was = grounded_on_usb(ctx);
@@ -1677,14 +1680,6 @@ void flight_set_test_mode(flight_context_t *ctx, bool on, uint32_t now) {
     bool was = grounded_on_usb(ctx);
     ctx->test_mode = on;
     grounding_changed(ctx, was, now);
-}
-
-bool flight_in_progress(void) {
-    return g_flight_ctx && state_is_airborne(g_flight_ctx->current_state);
-}
-
-bool flight_on_usb_now(void) {
-    return g_flight_ctx && g_flight_ctx->usb_now && !g_flight_ctx->test_mode;
 }
 
 const char *flight_recovery_text(const flight_context_t *ctx) {

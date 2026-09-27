@@ -125,7 +125,7 @@ are still yours; their tasks wait.
 | ID | Question | Status | Blocks |
 |---|---|---|---|
 | C2 | The launch trigger | **Open, not blocking.** The options: (a) today's 100 ft and 5 m/s; (b) the operator narrative's "rising for more than 1 s and past 50 ft"; (c) the pressure-filter prompt's 15 m held for 8 samples with a positive speed; (d) the Mach prompt's acceleration trigger, fitted p̈ < −0.0025·p held for 50–100 ms. (d) misses launches under 2.1–2.4 g net, a thrust-to-weight below about 3.1–3.4, so it needs a height trigger behind it. The 100 ft figure came from bench false launches now blamed on N21. T3 keeps today's trigger and adds a hold, which (a), (b) and (c) all need. Choosing one later means changing constants. | — |
-| C5 | In-flight lock against recoverability | **Decided 2026-09-26 (DD-057):** "If usb is attached you are not flying." `/api/reboot` is obeyed in a flight state while a USB host is on the port and test mode is off; the board recovers cold on USB and comes up on the pad. Everything else stays refused in flight. | — |
+| C5 | In-flight lock against recoverability | **Decided 2026-09-26 (DD-058):** the API and USB stay live in flight, so a board stuck in a flight state takes a reboot; only the filesystem is locked, to the flight log, and a request for it gets 423. | — |
 | C6 | Numbered flight logs | **Open.** Keeping more than one flight means creating a file at launch, which is a flash write during launch shock. The alternatives are to create or rename it on the pad when the marker is written, or to accept the write. If taken, do it with T8's log-format change. | C6 task |
 | C8 / N7 | The landing timeout declares LANDED under a main | **Adopted:** once T5 makes the stillness test reliable, the timeout needs stillness instead of "slower than 5 m/s". | N7 task |
 | C10 | Forced main after a failed drogue: 4.6 s today, the narrative about 3 s | **Open.** Shortening the grace or the 1 s hold trades early deployment on a real failure against forcing mains under slow drogues. | C10 task |
@@ -1125,7 +1125,7 @@ refusal can only be checked on a board. That check is in section 6.
 A file download while the flight log is open can disturb the log (not
 observed).
 - **Tests first:** on a bench board in test mode with the log open, a file
-  GET answers 409, `/api/status` still answers, and the log is intact after
+  GET answers 423 (DD-058), `/api/status` still answers, and the log is intact after
   landing.
 - **Change:** `serve_file()` refuses while `hal_log_active()`.
 
@@ -1265,7 +1265,7 @@ resolution doc.
 |---|---|---|---|
 | U2 | Unplug a board from USB, then plug it back in | the pad announcement resumes within one repeat period (5 s); plugging back in gives exactly one double chirp | a person, 10 s, on MK1B or MK1C |
 | REV-06 / REV-08 | Serial ground-test commands; a board in FAULT | FIRE while the other channel pulses answers `GT,ERR,busy`; a FAULT board sends `!FAULT <diagnosis>` every 5 s and no `$PYRO` | a USB-serial adapter on the TRRS jack |
-| REV-18 | The in-flight lock on hardware | in test mode, once a chamber pump-down declares a launch, every POST answers 409 until LANDED | test mode, the chamber |
+| REV-18 | The filesystem lock on hardware (DD-058) | in test mode, once a chamber pump-down declares a launch: `POST /www/x` and `GET /www/app.js` answer 423, `/api/status` 200; a page load across the launch is reset, not left holding a mount; after LANDED the log reads back whole; `POST /api/reboot` in flight reboots | test mode, the chamber |
 | — | The USB network after the Mac sleeps and wakes | the board answers `/api/status` within 10 s of wake, without replugging | a person. The v2.1.50 fix is gone, so today's behaviour is unknown |
 | — | Chamber runs for T1–T7 | pump-down, hold and vent in test mode give launch, apogee and landing as the host tests predict, with no false launch during the hold | the chamber |
 | T1 | Recovery reads samples on the hardware | a board with a marker, booted on battery with USB plugged in afterwards, reads "cold: at ground level" | a battery |
@@ -1275,7 +1275,7 @@ resolution doc.
 | CI-1 | Six host suites never run in CI | `pin_caps_tests`, `beep_tests`, `pin_assign_tests`, `buzzer_tests`, `config_tests` and `config_persistence_tests` pass in the local gate but no workflow step runs them; `plant_tests` and `board_pyro_mk1c_tests` now do | a workflow edit |
 | D-B1 | MK1B's continuity check stalls the loop | Found 2026-09-26 on a second MK1B that owns its pyros: `pyro_sample()` held PYRO_COMMON_EN for a `sleep_ms(10)` settle inside STAGE 3, once a second, so `stage_max_us[3]` was 10.2 ms and the loop overran once a second (250 in 252 s). The bench MK1B never showed it: both its channels are released to Lua, which skips the check. **Fixed in code (DD-053):** the settle is a deadline the loop checks (`board_pyro_tests`). Pass: 0 overruns with the pyros owned, and `stage_max_us[3]` back near 4 ms | a flash |
 | T5 | The fit's cost, and the pad's σ, on each board | `stage_max_us[2]` no more than 500 µs above its value before T5, 0 loop overruns, with Lua running on MK1C; `fit_sigma_mpa` between 1200 and 5000, and on the BMP280 (MK1A) recorded, since its noise is not the MS5607's. First reading, the second MK1B on 2.1.680 at ~50 Hz: `stage_max_us[2]` 2.7 ms against 0.9-1.1 ms on the boards still on 2.1.674-676, so over the 500 µs; to be read again at 90 Hz | G4's flash |
-| N20 | No file served while the log is written | in test mode, once a chamber pump-down declares a launch, `GET /www/app.js` answers 409 and `/api/status` 200; after LANDED the log reads back whole | test mode, the chamber |
+| N20 | No file served while the log is written | in test mode, once a chamber pump-down declares a launch, `GET /www/app.js` answers 423 and `/api/status` 200; after LANDED the log reads back whole | test mode, the chamber |
 | — | The arming path independent of software | with the mechanical disconnect in, a commanded ground-test FIRE puts no current through a dummy load, on each board | a dummy load and a meter. The Mach prompt asks for this path; the operator narrative uses a mechanical disconnect, but no document says what it breaks |
 
 The Mach lockout can't be checked in a chamber, because it needs supersonic
@@ -1370,8 +1370,7 @@ gate.
 
 Today such a board sits in ASCENT until it is power-cycled (defect 2, N24):
 - its flight log stays open;
-- the in-flight lock refuses OTA and config; a reboot on USB clears it
-  (C5, DD-057);
+- the API stays live, so a reboot clears it (C5, DD-058);
 - the pad announcement has stopped;
 - its ground reference is frozen.
 

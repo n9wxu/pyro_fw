@@ -244,9 +244,20 @@ typedef struct {
 static sim_file_t sim_files[SIM_FS_MAX_FILES];
 static uint32_t last_pp_feed_ms = 0;
 uint32_t mock_fs_write_count = 0;
+uint32_t mock_fs_locked_count = 0;
+
+/* [WEB-API-08] As the hardware HAL: while the flight log holds the
+ * filesystem, every other file call is refused, and counted. */
+static bool fs_locked(void) {
+    if (!test_log_active)
+        return false;
+    mock_fs_locked_count++;
+    return true;
+}
 
 void mock_reset_all(void) {
     mock_fs_write_count = 0;
+    mock_fs_locked_count = 0;
     memset(&sim_files, 0, sizeof(sim_files));
     memset(&mock_pressure, 0, sizeof(mock_pressure));
     mock_pressure.sensor_type = 2;
@@ -454,7 +465,22 @@ int hal_fs_mount(void) {
 }
 void hal_fs_unmount(void) {}
 
+/* A test's own look at a file, as a probe reads flash: past the lock, and
+ * not counted by it. */
+int mock_fs_peek(const char *path, char *buf, int max_len) {
+    for (int i = 0; i < SIM_FS_MAX_FILES; i++) {
+        if (sim_files[i].used && strcmp(sim_files[i].path, path) == 0) {
+            int n = sim_files[i].len < max_len ? sim_files[i].len : max_len;
+            memcpy(buf, sim_files[i].data, n);
+            return n;
+        }
+    }
+    return -2;
+}
+
 int hal_fs_read_file(const char *path, char *buf, int max_len) {
+    if (fs_locked())
+        return HAL_FS_LOCKED;
     for (int i = 0; i < SIM_FS_MAX_FILES; i++) {
         if (sim_files[i].used && strcmp(sim_files[i].path, path) == 0) {
             int n = sim_files[i].len < max_len ? sim_files[i].len : max_len;
@@ -466,6 +492,8 @@ int hal_fs_read_file(const char *path, char *buf, int max_len) {
 }
 
 int hal_fs_write_file(const char *path, const char *data, int len) {
+    if (fs_locked())
+        return HAL_FS_LOCKED;
     xip_stall(); /* simulate flash erase+write XIP stall */
     mock_fs_write_count++;
     int slot = -1;
@@ -560,6 +588,8 @@ void hal_firmware_commit(void) {}
 /* ── Streaming file writes (test) ─────────────────────────────────── */
 
 hal_file_t *hal_fs_open(const char *path, bool append) {
+    if (fs_locked())
+        return NULL;
     if (test_file.open)
         return NULL;
     int slot = -1;

@@ -117,6 +117,7 @@ typedef struct conn {
     bool file_open;
     bool file_writing;
     bool holding;          /* this exchange holds the flash window */
+    bool fs_held;          /* counted by hal_fs_enter() until conn_release() */
     bool deferral_counted; /* one deferral per wait, not per pass */
     bool reboot_when_sent;
     char dest[HTTP_PATH_MAX];
@@ -246,16 +247,24 @@ static const char *content_type_hdr(const char *path) {
     return "application/octet-stream";
 }
 
-/* [PYR-SAFE-04] A browser must not reboot, reflash or write the flash of a
- * board that is flying. Every POST changes something.
- *
- * [WEB-API-08, DD-057] Except a reboot on USB: a board with a PC on its
- * cable is not flying, only stuck in a flight state. */
-static bool refused_in_flight(const char *method, const char *path) {
-    if (!flight_in_progress() || strcmp(method, "POST") != 0) {
+/* [WEB-API-08, DD-058] The API is live in flight; the filesystem is not.
+ * The flight log holds it from launch until its tail is flushed, and a
+ * request that needs it is answered 423 before any mount. The hold is
+ * released in conn_release(). */
+static void respond_fs_locked(http_conn_t *hc) {
+    http_respond_str(hc, 423, JSON, "{\"error\":\"the flight log holds the filesystem\"}");
+}
+
+static bool fs_take(conn_t *c) {
+    if (c->fs_held) {
+        return true;
+    }
+    if (hal_fs_enter() != 0) {
+        respond_fs_locked(&c->h);
         return false;
     }
-    return !(strcmp(path, "/api/reboot") == 0 && flight_on_usb_now());
+    c->fs_held = true;
+    return true;
 }
 
 #define FLIGHT_LOG_PATH "flight_log.csv"
@@ -346,8 +355,8 @@ static void apply_api_beep_play(http_conn_t *hc, const char *body) {
 }
 
 /* POST /api/test_mode/on, /api/test_mode/off [USB-08]. Held in RAM, so a
- * reboot ends it. Refused in flight by refused_in_flight(), and ignored there
- * by the flight layer as well. */
+ * reboot ends it. In flight the flight layer ignores it, and the answer says
+ * the mode it kept. */
 #define TEST_MODE_ON_PATH "/api/test_mode/on"
 #define TEST_MODE_OFF_PATH "/api/test_mode/off"
 
@@ -859,8 +868,7 @@ static void serve_file(conn_t *c, const char *lfs_path, const char *ctype, const
      * and lookahead buffers, and the flight log holds its mount from launch
      * until its tail is flushed after landing. A second mount meanwhile would
      * reset the caches the log's instance believes it holds. */
-    if (hal_log_active()) {
-        http_respond_str(hc, 409, JSON, "{\"error\":\"the flight log is still being written\"}");
+    if (!fs_take(c)) {
         return;
     }
     c->file_cfg = (struct lfs_file_config){.buffer = hc->work};
@@ -1060,12 +1068,7 @@ static bool serial_valid(const char *s) {
 static void apply_erase(http_conn_t *hc) {
     /* [DAT-06, WEB-UI-04] There is one log slot, and the next launch
      * overwrites it; this is how an operator clears it on purpose. Refused
-     * while the log is still being written -- that is the flight in progress,
-     * or its tail being flushed after landing. */
-    if (hal_log_active()) {
-        http_respond_str(hc, 409, JSON, "{\"error\":\"the flight log is still being written\"}");
-        return;
-    }
+     * at the head while the log is being written (fs_take()). */
     lfs_t lfs;
     int rc = lfs_mount(&lfs, &lfs_pico_flash_config);
     if (rc == LFS_ERR_OK) {
@@ -1127,21 +1130,22 @@ typedef struct {
     route_t route;
     uint32_t gather;
     bool flash;
+    bool fs; /* littlefs: refused while the flight log holds it */
 } post_route_t;
 
 static const post_route_t post_routes[] = {
-    {"/api/ota", false, R_OTA, 0, true},
-    {"/www/", true, R_UPLOAD, 0, true},
+    {"/api/ota", false, R_OTA, 0, true, false},
+    {"/www/", true, R_UPLOAD, 0, true, true},
 #if PYRO_HAS_LUA
     /* The Lua program rides the same streaming write as a web file. */
-    {"/api/lua/script", false, R_UPLOAD, 0, true},
-    {"/api/lua/check", false, R_LUA_CHECK, 2047, false},
+    {"/api/lua/script", false, R_UPLOAD, 0, true, true},
+    {"/api/lua/check", false, R_LUA_CHECK, 2047, false, false},
 #endif
-    {"/api/serial", false, R_SERIAL, 12, true},
-    {"/api/config", false, R_CONFIG, 511, true},
-    {"/api/beeps/play", false, R_BEEP_PLAY, 63, false},
-    {"/api/beeps", false, R_BEEPS, BEEP_STORE_MAX - 1, true},
-    {"/api/pins", false, R_PINS, PIN_STORE_MAX - 1, true},
+    {"/api/serial", false, R_SERIAL, 12, true, true},
+    {"/api/config", false, R_CONFIG, 511, true, true},
+    {"/api/beeps/play", false, R_BEEP_PLAY, 63, false, false},
+    {"/api/beeps", false, R_BEEPS, BEEP_STORE_MAX - 1, true, true},
+    {"/api/pins", false, R_PINS, PIN_STORE_MAX - 1, true, true},
 };
 
 static const post_route_t *find_post_route(const char *path) {
@@ -1169,6 +1173,9 @@ static void route_post(conn_t *c) {
         return;
     }
     if (strcmp(path, FLIGHT_ERASE_PATH) == 0) {
+        if (!fs_take(c)) {
+            return;
+        }
         c->route = R_ERASE;
         flash_ready(c);
         return;
@@ -1177,6 +1184,9 @@ static void route_post(conn_t *c) {
     const post_route_t *r = find_post_route(path);
     if (!r) {
         http_respond_str(hc, 404, TEXT, "Not found");
+        return;
+    }
+    if (r->fs && !fs_take(c)) {
         return;
     }
     if (hc->content_length == 0) {
@@ -1219,9 +1229,7 @@ static void route_post(conn_t *c) {
 
 static void on_head(http_conn_t *hc) {
     conn_t *c = (conn_t *)hc;
-    if (refused_in_flight(hc->method, hc->path)) {
-        http_respond_str(hc, 409, JSON, "{\"error\":\"refused while the rocket is in flight\"}");
-    } else if (strcmp(hc->method, "POST") == 0) {
+    if (strcmp(hc->method, "POST") == 0) {
         route_post(c);
     } else {
         serve_get(c);
@@ -1288,13 +1296,17 @@ static bool on_complete(http_conn_t *hc) {
     case R_BEEPS:
         apply_api_beeps(hc, body);
         break;
-    case R_SERIAL:
-        if (hal_fs_write_file("serial.txt", body, 12) != 0) {
+    case R_SERIAL: {
+        int rc = hal_fs_write_file("serial.txt", body, 12);
+        if (rc == HAL_FS_LOCKED) {
+            respond_fs_locked(hc);
+        } else if (rc != 0) {
             http_respond_str(hc, 500, TEXT, "write failed");
         } else {
             http_respond_str(hc, 200, TEXT, "OK, reboot to apply");
         }
         break;
+    }
     case R_ERASE:
         apply_erase(hc);
         break;
@@ -1331,6 +1343,10 @@ static void conn_release(conn_t *c) {
         lfs_unmount(&c->lfs);
         c->lfs_mounted = false;
     }
+    if (c->fs_held) {
+        hal_fs_leave();
+        c->fs_held = false;
+    }
     release_window(c);
     if (ota_conn == c) {
         ota_conn = NULL;
@@ -1354,6 +1370,7 @@ static void conn_bind(conn_t *c, link_t *l) {
     c->file_open = false;
     c->file_writing = false;
     c->holding = false;
+    c->fs_held = false;
     c->deferral_counted = false;
     c->reboot_when_sent = false;
     c->dest[0] = '\0';
@@ -1542,6 +1559,14 @@ static void service_link(link_t *l, uint32_t now) {
         return;
     }
     http_conn_t *hc = &c->h;
+
+    /* [WEB-API-08, DD-058] The log takes the filesystem at launch. A request
+     * that took it before then lets go now, so the log can mount; its client
+     * sees the connection reset. */
+    if (c->fs_held && hal_fs_locked()) {
+        link_abort(l);
+        return;
+    }
 
     while (l->pending && net_ring_writable(&hc->rx) > 0) {
         uint8_t *p;
