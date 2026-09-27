@@ -84,12 +84,11 @@ typedef struct {
      *               adiabatic and a slow one is not. This is the criterion
      *               DESIGN.md 7.3 argues the capacitor discharge satisfies.
      *   sustained -- a current at or above all_fire_a held for
-     *               all_fire_hold_s. This is how variant A fires: 3.5 A
-     *               current-limited from U9, well under the energy a
-     *               capacitor would dump but far over the all-fire current.
+     *               all_fire_hold_s: a slow drive, under the energy of a
+     *               fast pulse but over the all-fire current.
      *
-     * A model with only the energy criterion never fires variant A, and one
-     * with only the current criterion never fires on a 1 ms pulse. */
+     * A model with only the energy criterion never fires a slow drive, and
+     * one with only the current criterion never fires on a 1 ms pulse. */
     double energy_j;  /* accumulated in the bridgewire, leaked at tau     */
     double all_fire_run_s; /* time so far at or above all_fire_a          */
     double last_i_a;  /* last solved current, for reporting              */
@@ -182,7 +181,6 @@ void plant_set_bus_pulldown_ohms(double ohms);
  * 8 Mohm, which lifts a 10 kohm-leakage reading by 9 counts. Set it when
  * asking what a leaking high side would do. */
 void plant_set_highside_leak_ohms(double ohms);
-void plant_set_c_bulk_uf(double uf);    /* variant A 100, variant B 470-2200 */
 void plant_set_fault(plant_fault_t f, bool on);
 bool plant_get_fault(plant_fault_t f);
 bool plant_fault_applies(plant_board_t board, plant_fault_t f);

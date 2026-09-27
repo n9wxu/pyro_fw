@@ -78,13 +78,6 @@ _Static_assert((3469u * NODE_UV_PER_COUNT) / 1000u >= 8390 && (3469u * NODE_UV_P
 #define TRACK_BIAS_MS 8     /* 5-10 ms of bias per measurement */
 #define TRACK_PERIOD_MS 500 /* duty-cycled: one test per few hundred ms */
 
-/* DESIGN.md S3's 5-10 ms settles the bench board's 1.1 uF, not C_BULK: the
- * bias charges it through 282 ohm (330 against the bus's 1.92k), so the bus
- * needs about 6 ms to pass TRACK_BUS_MIN_COUNTS at 100 uF and 130 ms at
- * 2200 uF. The bias is held until it does, this long at most; a bus still
- * below it then is shorted [DD-056]. The bridgewire sees 0.2 mA at most. */
-#define TRACK_BIAS_MAX_MS 400
-
 /* ── Firing (DESIGN.md 7.1, IGNITER_OPERATION.md F0-F10) ──────────── */
 
 #define FIRE_AT_TENTHS 9   /* 7.1 step 4: bus at 90 % of the measured pack */
@@ -96,9 +89,10 @@ _Static_assert((3469u * NODE_UV_PER_COUNT) / 1000u >= 8390 && (3469u * NODE_UV_P
 #define UVLO_COUNTS 1239   /* 3.0 V: an empty 1S cell, above U9's own 2.5 V */
 
 /* How long the bleed has to bring the bus below three quarters of the pack
- * after a fire: 1.2 s at 2200 uF, 2 s with one of R_BLEED's two resistors
- * open. A bus still hot after this is a high side that did not turn off. */
-#define BLEED_BELOW_HOT_MS 5000
+ * after a fire. The bus carries 1.1 uF against 1.85k, a 2 ms constant, and
+ * there is no bulk capacitor. A bus still hot after this is a high side
+ * that did not turn off. */
+#define BLEED_BELOW_HOT_MS 100
 
 typedef enum {
     SEQ_IDLE,      /* S4: the tracking test runs                      */
@@ -206,13 +200,9 @@ static void track_service(uint32_t now_ms) {
         trk_due_ms = now_ms + TRACK_PERIOD_MS;
         return;
     }
-    uint32_t on_ms = now_ms - trk_start_ms;
-    if (on_ms < TRACK_BIAS_MS)
+    if (now_ms - trk_start_ms < TRACK_BIAS_MS)
         return;
-    uint16_t bus = adc_median3(BOARD_ADC_CH_BUS);
-    if (bus < TRACK_BUS_MIN_COUNTS && on_ms < TRACK_BIAS_MAX_MS)
-        return; /* C_BULK still charging */
-    trk_bus = bus;
+    trk_bus = adc_median3(BOARD_ADC_CH_BUS);
     trk_a = adc_median3(BOARD_ADC_CH_A);
     trk_b = adc_median3(BOARD_ADC_CH_B);
     gpio_put(BOARD_PIN_BIAS_BUS, 0);
@@ -350,8 +340,9 @@ static void sequence_service(uint32_t now_ms) {
             seq = SEQ_DRAIN;
             report_fire("ABORT", seq_ch);
         } else if (bus_charged()) {
-            /* 7.1 steps 4 and 7 together: U9 stays on for the 9.6 ms its
-             * enable takes to bleed, which carries the pulse. */
+            /* 7.1 steps 4 and 7 together. With no bulk capacitor U9's
+             * current limit is the pulse, and U9 stays on for the 9.6 ms
+             * its enable takes to bleed. */
             gpio_put(fire_pin[seq_ch - 1], 1);
             disarm(now_ms);
             seq_fire_ms = now_ms;

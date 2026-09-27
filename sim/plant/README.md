@@ -75,8 +75,8 @@ repository describes its sense network.
 
 The e-match is the same device on all three boards and carries the M1–M13
 properties from DESIGN.md §1.2, including both ignition criteria — an
-energy criterion for a fast pulse and a sustained-current criterion, since
-variant A fires by the second and never by the first.
+energy criterion for a fast pulse and a sustained-current criterion for a
+slow drive, since neither implies the other.
 
 ## What is not modelled
 

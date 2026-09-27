@@ -125,11 +125,10 @@ static void until_released(uint32_t max_ms) {
         loops(LOOP_MS);
 }
 
-static void board_at(bool match1, bool match2, double pack_mv, double c_bulk_uf) {
+/* The board as built: no bulk capacitor, 1.1 uF on the bus (DD-054). */
+static void board_at(bool match1, bool match2, double pack_mv) {
     plant_init(PLANT_MK1C);
     plant_set_pack_mv(pack_mv);
-    if (c_bulk_uf > 0.0)
-        plant_set_c_bulk_uf(c_bulk_uf);
     plant_match_defaults(plant_match(1));
     plant_match_defaults(plant_match(2));
     plant_match(1)->state = match1 ? MATCH_PRESENT : MATCH_ABSENT;
@@ -142,14 +141,8 @@ static void board_at(bool match1, bool match2, double pack_mv, double c_bulk_uf)
     pyro_init();
 }
 
-/* The bench board: no C_BULK fitted, 1.1 uF on the bus (DD-054). */
 static void board(bool match1, bool match2) {
-    board_at(match1, match2, 8400, 0.0);
-}
-
-/* Variant B: 2S and 1000 uF (DESIGN.md 1.1). */
-static void board_b(bool match1, bool match2) {
-    board_at(match1, match2, 8400, 1000.0);
+    board_at(match1, match2, 8400);
 }
 
 static bool fired(int ch) {
@@ -226,29 +219,6 @@ void test_mk1c_one_bad_tracking_reading_does_not_latch(void) {
     TEST_ASSERT_FALSE_MESSAGE(pyro_fault(1), "one bad reading is an outlier, not a short");
 }
 
-/* C_BULK on the bus: 100 uF on every variant, up to 2200 uF (DESIGN.md
- * 1.1). The bias holds until the bus has risen, so presence reads the same
- * on each, and a healthy bus is never taken for a short. */
-void test_mk1c_presence_with_c_bulk(void) {
-    const double uf[] = {100.0, 1000.0, 2200.0};
-    for (int i = 0; i < 3; i++) {
-        board_at(true, false, 8400, uf[i]);
-        loops(1100u);
-        pyro_continuity_t c1, c2;
-        pyro_get(1, &c1);
-        pyro_get(2, &c2);
-        char msg[64];
-        snprintf(msg, sizeof(msg), "%.0f uF: ch1 %u", uf[i], c1.raw_adc);
-        TEST_ASSERT_TRUE_MESSAGE(c1.good, msg);
-        TEST_ASSERT_TRUE_MESSAGE(c2.open, msg);
-        TEST_ASSERT_FALSE_MESSAGE(pyro_fault(1), msg);
-    }
-    board_at(true, false, 8400, 2200.0);
-    plant_set_fault(PF_BUS_SHORT_GND, true);
-    loops(2100u);
-    TEST_ASSERT_TRUE_MESSAGE(pyro_fault(1), "a shorted bus still latches");
-}
-
 /* The only stimulus is the tracking test's bus bias, once in each 500 ms:
  * no channel bias, no second bus pulse, no pump, and nothing that blocks. */
 void test_mk1c_only_the_tracking_test_runs(void) {
@@ -266,7 +236,7 @@ void test_mk1c_only_the_tracking_test_runs(void) {
 /* ── The fire (DD-056) ────────────────────────────────────────────── */
 
 void test_mk1c_fires_a_present_channel(void) {
-    board_b(true, true);
+    board(true, true);
     loops(1100u);
     TEST_ASSERT_TRUE_MESSAGE(accepted(1), "a present channel is energised");
     loops(100u);
@@ -284,7 +254,7 @@ void test_mk1c_fires_a_present_channel(void) {
  * on elapsed time. The slew takes 8.9 ms to 90 % on 2S; the loop sees it on
  * the next iteration. */
 void test_mk1c_fires_on_the_measured_bus(void) {
-    board_b(true, false);
+    board(true, false);
     loops(1100u);
     TEST_ASSERT_TRUE(accepted(1));
     loops(100u);
@@ -301,7 +271,7 @@ void test_mk1c_fires_on_the_measured_bus(void) {
 /* DESIGN.md 5.1 and 7.1 step 7: the pump runs only inside a fire and stops
  * at it, and U9 lets go within its 9.6 ms after that. */
 void test_mk1c_pump_runs_only_inside_a_fire(void) {
-    board_b(true, false);
+    board(true, false);
     loops(1100u);
     TEST_ASSERT_FALSE(w.toggle_seen);
     TEST_ASSERT_TRUE(accepted(1));
@@ -312,14 +282,14 @@ void test_mk1c_pump_runs_only_inside_a_fire(void) {
     snprintf(msg, sizeof(msg), "U9 on %llu us after the fire", (unsigned long long)(w.armed_last_us - w.fire_us[0]));
     TEST_ASSERT_TRUE_MESSAGE(w.armed_last_us <= w.fire_us[0] + 10000u, msg);
     uint64_t last = w.toggle_last_us;
-    loops(6000u);
+    loops(2000u);
     TEST_ASSERT_EQUAL_MESSAGE(last, w.toggle_last_us, "and does not run again");
 }
 
 /* The passive disarm: a loop that stops feeding the pump disarms the bus by
  * construction -- the FIFO drains, then C_HOLD bleeds. */
 void test_mk1c_a_stopped_loop_disarms(void) {
-    board_b(true, false);
+    board(true, false);
     loops(1100u);
     TEST_ASSERT_TRUE(accepted(1));
     stall(40u);
@@ -333,7 +303,7 @@ void test_mk1c_a_stopped_loop_disarms(void) {
 /* DESIGN.md 7.2: the bus not at 90 % by 1.5 times the slew's time aborts
  * the fire and latches, and the gate is never driven. */
 void test_mk1c_a_short_during_precharge_aborts(void) {
-    board_b(true, false);
+    board(true, false);
     loops(1100u);
     TEST_ASSERT_TRUE(accepted(1));
     plant_set_fault(PF_BUS_SHORT_GND, true);
@@ -356,18 +326,18 @@ static void assert_refused_quietly(uint8_t ch) {
 }
 
 void test_mk1c_refuses_an_open_channel(void) {
-    board_b(true, false);
+    board(true, false);
     loops(1100u);
     assert_refused_quietly(2);
 }
 
 void test_mk1c_refuses_before_a_tracking_test(void) {
-    board_b(true, false);
+    board(true, false);
     assert_refused_quietly(1);
 }
 
 void test_mk1c_refuses_with_a_latched_fault(void) {
-    board_b(true, false);
+    board(true, false);
     plant_set_fault(PF_HIGH_SIDE_SHORT, true);
     loops(200u);
     TEST_ASSERT_TRUE(pyro_fault(1));
@@ -378,7 +348,7 @@ void test_mk1c_refuses_with_a_latched_fault(void) {
 
 /* Invariant 10: the firmware UVLO, before each arm. */
 void test_mk1c_refuses_below_uvlo(void) {
-    board_at(true, false, 2800, 1000.0);
+    board_at(true, false, 2800);
     loops(1100u);
     pyro_continuity_t c1;
     pyro_get(1, &c1);
@@ -391,7 +361,7 @@ void test_mk1c_refuses_below_uvlo(void) {
 /* S6: the bus drains, the tracking test resumes only on a cold bus
  * (invariants 1 and 7), and the fired channel reads open. */
 void test_mk1c_fired_channel_reads_open_after(void) {
-    board_b(true, true);
+    board(true, true);
     loops(1100u);
     TEST_ASSERT_TRUE(accepted(1));
     until_released(100u);
@@ -415,7 +385,7 @@ void test_mk1c_fired_channel_reads_open_after(void) {
 
 /* Invariant 12: a misfire on one channel never inhibits the other. */
 void test_mk1c_misfire_leaves_the_other_channel(void) {
-    board_b(true, true);
+    board(true, true);
     plant_match(1)->fire_energy_j = 1e9;
     plant_match(1)->all_fire_a = 1e9;
     loops(1100u);
@@ -427,7 +397,7 @@ void test_mk1c_misfire_leaves_the_other_channel(void) {
     TEST_ASSERT_TRUE_MESSAGE(accepted(2), "the other channel is still available");
     loops(100u);
     TEST_ASSERT_TRUE(fired(2));
-    loops(12000u);
+    loops(1500u);
     TEST_ASSERT_NOT_NULL_MESSAGE(strstr(telemetry, "ch=1 still present: misfire"), telemetry);
     pyro_continuity_t c1;
     pyro_get(1, &c1);
@@ -437,7 +407,7 @@ void test_mk1c_misfire_leaves_the_other_channel(void) {
 /* DESIGN.md 5.3: two events one after the other. The second needs the bus
  * charged, so it does not wait for the drain. */
 void test_mk1c_both_channels_one_after_the_other(void) {
-    board_b(true, true);
+    board(true, true);
     loops(1100u);
     TEST_ASSERT_TRUE(accepted(1));
     until_released(100u);
@@ -455,32 +425,20 @@ void test_mk1c_both_channels_one_after_the_other(void) {
 /* A U9 that will not turn off keeps the bus at the pack after the fire: the
  * high side is shorted, and it latches once the bleed has had its time. */
 void test_mk1c_bus_stuck_live_after_a_fire_latches(void) {
-    board_b(true, false);
+    board(true, false);
     loops(1100u);
     TEST_ASSERT_TRUE(accepted(1));
     plant_set_fault(PF_EFUSE_WONT_TURN_OFF, true);
     loops(100u);
     TEST_ASSERT_TRUE(fired(1));
     TEST_ASSERT_FALSE_MESSAGE(pyro_fault(1), "a live bus just after a fire is ours");
-    loops(6000u);
-    TEST_ASSERT_TRUE_MESSAGE(pyro_fault(1), "a bus still live 5 s later is a shorted high side");
+    loops(200u);
+    TEST_ASSERT_TRUE_MESSAGE(pyro_fault(1), "a bus still live once the bleed has had its time is a shorted high side");
 }
 
-/* ── Variants and the bench board ─────────────────────────────────── */
-
-/* Variant A: 1S and 100 uF; U9 supplies the match directly. */
+/* One cell: U9's limit is 3.5 A into the match at 4.2 V. */
 void test_mk1c_fires_on_one_cell(void) {
-    board_at(true, false, 4200, 100.0);
-    loops(1100u);
-    TEST_ASSERT_TRUE(accepted(1));
-    loops(100u);
-    TEST_ASSERT_TRUE(fired(1));
-    TEST_ASSERT_FALSE(pyro_fault(1));
-}
-
-/* The bench MK1C, with no C_BULK fitted. */
-void test_mk1c_fires_on_the_bench_board(void) {
-    board(true, false);
+    board_at(true, false, 4200);
     loops(1100u);
     TEST_ASSERT_TRUE(accepted(1));
     loops(100u);
@@ -491,7 +449,7 @@ void test_mk1c_fires_on_the_bench_board(void) {
 /* An erase stalls the loop for tens of milliseconds, longer than the pump
  * coasts: no flash write while a fire is in its sequence. */
 void test_mk1c_flash_waits_out_a_fire(void) {
-    board_b(true, false);
+    board(true, false);
     loops(1100u);
     TEST_ASSERT_TRUE(board_flash_ok());
     TEST_ASSERT_TRUE(accepted(1));
@@ -512,7 +470,6 @@ int main(void) {
     RUN_TEST(test_mk1c_shorted_lowside_behind_a_match_latches);
     RUN_TEST(test_mk1c_high_side_short_latches);
     RUN_TEST(test_mk1c_one_bad_tracking_reading_does_not_latch);
-    RUN_TEST(test_mk1c_presence_with_c_bulk);
     RUN_TEST(test_mk1c_only_the_tracking_test_runs);
     RUN_TEST(test_mk1c_fires_a_present_channel);
     RUN_TEST(test_mk1c_fires_on_the_measured_bus);
@@ -528,7 +485,6 @@ int main(void) {
     RUN_TEST(test_mk1c_both_channels_one_after_the_other);
     RUN_TEST(test_mk1c_bus_stuck_live_after_a_fire_latches);
     RUN_TEST(test_mk1c_fires_on_one_cell);
-    RUN_TEST(test_mk1c_fires_on_the_bench_board);
     RUN_TEST(test_mk1c_flash_waits_out_a_fire);
     return UNITY_END();
 }

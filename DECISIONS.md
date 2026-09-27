@@ -572,15 +572,16 @@ rationale and the alternatives considered.
   - **F3, fire on the measured bus:** FIRE_x when SNS_BUS reaches 90 % of
     SNS_VBAT. Not there within 1.5 times the pump and the ramp (7.2): the
     pump stops, no gate is driven, and a fault latches.
-  - **F6 with F3:** the pump stops when the gate is driven. U9's enable takes
-    its 9.6 ms to bleed, which carries the pulse; the misfire exposure is
-    DESIGN.md's budgeted 9.6 ms, not more.
+  - **F6 with F3:** the pump stops when the gate is driven. The bulk
+    capacitor requirement is dropped (the user, 2026-09-26), so U9's current
+    limit is the pulse: about 4 A for the 9.6 ms its enable takes to bleed,
+    which puts far more than M5's 15 mJ into a 1 ohm bridgewire. The misfire
+    exposure is the same 9.6 ms, not more.
   - **F7-F8, the hold:** the gate is released once U9 is off and the bus is
     flat between two loops, or at 30 ms.
   - **F9, the drain:** the tracking test waits for a cold bus. A second
     channel may fire meanwhile (DESIGN.md 5.3), and a hot-bus fault is not
-    judged for 5 s, the bleed's time to bring even 2200 uF below three
-    quarters of the pack.
+    judged for 100 ms; the bus's 1.1 uF bleeds on a 2 ms constant.
   - **F10, verify:** the first tracking test after the drain reports the
     fired channel open (fired) or still present (a misfire, live). Nothing
     latches: a misfire never inhibits the other channel (invariant 12).
@@ -599,26 +600,18 @@ rationale and the alternatives considered.
   `flash_window.c`) shuts the loop's window from the command to the gate's
   release, a few loop periods. MK1A and MK1B keep theirs: their pulse is a
   timed level that a stall only lengthens.
-- **The tracking test holds its bias until the bus rises.** DESIGN.md S3's
-  5-10 ms was sized for the bus's sense network, not C_BULK: through 282 ohm
-  the bus needs about 6 ms to become readable at 100 uF and 130 ms at
-  2200 uF, and at 8 ms every production board would read its bus as shorted
-  and never show a match. The bias now holds until the bus passes
-  TRACK_BUS_MIN_COUNTS, 400 ms at most; a bus below that then is the short.
-  The bench board, with no C_BULK, is unchanged at one loop. The bridgewire
-  sees at most 0.2 mA, so a longer pulse costs nothing against the no-fire
-  current.
 - **One tracking test is one sample** (invariant 8): the bus-short latch
-  counts tests, not the loops that read a test.
+  counts tests, not the loops that read a test, and a bus too low to judge
+  presence by, under TRACK_BUS_MIN_COUNTS, is the short.
 - **Not built:** ILM and FLT are not routed to the MCU, so the capacitance
   check of 7.2 and the FLT abort are absent; the precharge timeout covers a
   loaded bus. No decay profile is classified (DD-055: no live checks); F10's
   tracking test is the verdict.
-- `board_pyro_mk1c_tests` runs it against the plant on the bench board and
-  on variants A and B: a fire, the measured trigger, the pump's bounds, a
-  stopped loop, an aborted precharge, each refusal, the verification, a
-  misfire, both channels in turn, a high side stuck on, and the flash
-  window. The bench fire into a dummy load is owed.
+- `board_pyro_mk1c_tests` runs it against the plant of the board as built,
+  on 2S and 1S: a fire, the measured trigger, the pump's bounds, a stopped
+  loop, an aborted precharge, each refusal, the verification, a misfire,
+  both channels in turn, a high side stuck on, and the flash window. The
+  bench fire into a dummy load is owed.
 
 ### DD-055: MK1C's Firmware Checks Presence And Shorts, Nothing Else
 - **Decision:** at the user's direction -- "The ONLY FW checks we need are
@@ -639,8 +632,7 @@ rationale and the alternatives considered.
 - **Kept: the arm pump.** The firing bus is energised only while ARM_TOGGLE
   pumps U9's enable, so firing needs it. Its start and stop live in
   `boards/mk1c/arm_pump.c`, for task F1.
-- **Amended by DD-056:** the firing path is built, and the tracking test
-  holds its bias until the bus rises, so it reads through C_BULK.
+- **Amended by DD-056:** the firing path is built.
 - **A shorted low-side FET without a match** is no longer reported; T3 found
   it. It cannot fire anything, and with a match fitted the tracking test
   sees the bus pulled down.

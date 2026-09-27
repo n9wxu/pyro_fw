@@ -115,7 +115,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-CONT-03 | Diagnosis and announcement follow each check | Unit: test_REV04_pad_fault_after_boot_is_announced; Hardware: bench smoke test | ✅ |
 | FLT-BOOT-16 | No fault for a released or disabled channel | Unit: test_REV_NEW_disabled_channel_is_not_a_fault; Hardware: bench smoke test | ✅ |
 | PYR-CONT-02 | Report good/open/short | Web UI: pyro channels show OK/OPEN/FIRED | ✅ |
-| PYR-CONT-04 | MK1C: the tracking bias held until the bus rises; a short judged on three tests | Board pyro (MK1C): test_mk1c_presence_with_c_bulk (100, 1000 and 2200 uF), test_mk1c_one_bad_tracking_reading_does_not_latch, test_mk1c_bus_short_latches | ✅ |
+| PYR-CONT-04 | MK1C: a short judged on three tracking tests | Board pyro (MK1C): test_mk1c_one_bad_tracking_reading_does_not_latch, test_mk1c_bus_short_latches | ✅ |
 | BUZ-STATUS-01 | Distinct beep codes | Beep: test_shipped_table_is_valid, test_two_outcomes_that_sound_alike_are_refused | ✅ |
 | BUZ-01..02 | Four outcomes, said again on a cadence | Integration: test_BEEP_01_clean_board_says_ok_to_fly, test_BEEP_02_a_pyro_fault_names_its_channel, test_BEEP_03_anything_unfixable_says_system_failure, test_BEEP_04_unfixable_outranks_fixable; Beep: test_shipped_cadence_keeps_talking; Buzzer: test_BUZ_PAT_07_gap_between_passes | ✅ |
 | FLT-BOOT-01 | Non-blocking boot | Integration: test_FLT_BOOT_01_all_states | ✅ |
@@ -216,7 +216,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-VERIFY-01 | Post-fire verification | check_post_fire_verify() + beep codes 2-4/3-4; Board pyro (MK1C): test_mk1c_fired_channel_reads_open_after (the first tracking test on the drained bus reports the fired channel open) | ✅ |
 | PYR-ARM-01 | The pump only inside a fire; a stopped loop disarms | Board pyro (MK1C): test_mk1c_pump_runs_only_inside_a_fire, test_mk1c_a_stopped_loop_disarms (U9 off within 20 ms), test_mk1c_only_the_tracking_test_runs | ✅ |
 | PYR-ARM-02 | Refused without presence, with a fault, or below UVLO | Board pyro (MK1C): test_mk1c_refuses_an_open_channel, test_mk1c_refuses_before_a_tracking_test, test_mk1c_refuses_with_a_latched_fault, test_mk1c_refuses_below_uvlo | ✅ |
-| PYR-ARM-03 | Fire on the measured bus; a precharge timeout aborts and latches | Board pyro (MK1C): test_mk1c_fires_on_the_measured_bus, test_mk1c_a_short_during_precharge_aborts, test_mk1c_fires_a_present_channel, test_mk1c_fires_on_one_cell, test_mk1c_fires_on_the_bench_board; the bench fire into a dummy load is owed | ✅ |
+| PYR-ARM-03 | Fire on the measured bus; a precharge timeout aborts and latches | Board pyro (MK1C): test_mk1c_fires_on_the_measured_bus, test_mk1c_a_short_during_precharge_aborts, test_mk1c_fires_a_present_channel, test_mk1c_fires_on_one_cell; the bench fire into a dummy load is owed | ✅ |
 | PYR-ARM-04 | The pump stops at the gate; the gate held until U9 is off | Board pyro (MK1C): test_mk1c_pump_runs_only_inside_a_fire | ✅ |
 | PYR-ARM-05 | No flash write during a fire | Board pyro (MK1C): test_mk1c_flash_waits_out_a_fire (`board_flash_ok()`); `main_hardware.c` shuts the window on it, by inspection | ✅ |
 | PYR-ARM-06 | A misfire latches nothing; the other channel fires | Board pyro (MK1C): test_mk1c_misfire_leaves_the_other_channel, test_mk1c_both_channels_one_after_the_other | ✅ |

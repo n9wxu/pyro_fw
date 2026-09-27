@@ -170,7 +170,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **PYR-CONT-01**: The system shall check pyro continuity at least once per second during PAD_IDLE. ← SYS-STATUS-02
 - **PYR-CONT-03**: The pad diagnosis and announcement shall be re-derived at every continuity check, so that a fault which appears or clears on the pad changes the announcement without a power cycle. On USB the verdict is re-derived but not said (USB-02). ← PYR-CONT-01, FLT-BOOT-15
 - **PYR-CONT-02**: The system shall report continuity status (good, open, short) for each channel. ← SYS-STATUS-02
-- **PYR-CONT-04**: On MK1C the tracking test shall hold its bias until the bus has risen to a readable level, at most 400 ms, so that presence reads the same whatever bulk capacitance is fitted. A bus not risen by then is shorted, judged on three consecutive tests. ← PYR-CONT-02, DD-056
+- **PYR-CONT-04**: On MK1C a bus too low under its tracking bias to judge presence by shall be declared shorted only on three consecutive tracking tests, each test one sample. ← PYR-CONT-02, DD-056
 - **BUZ-STATUS-01**: The system shall emit distinct beep codes for each fault condition. ← SYS-STATUS-01
 
 ### L4 Implementation Requirements

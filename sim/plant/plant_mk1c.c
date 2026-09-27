@@ -6,7 +6,7 @@
  * low-side channel FETs, three switched bias injectors, and four divided
  * sense taps.
  *
- *   3.0V ─[330]─┬─────────── FIRING BUS (node 0) ──┬─ C_BULK
+ *   3.0V ─[330]─┬─────────── FIRING BUS (node 0) ──┬─ C115 1.1 uF
  *   (BIAS_BUS)  │                                  ├─ R_BLEED 2.2k ─ GND
  *          U9 ──┘                                  └─ divider 14.99k ─ GND
  *          eFuse                │            │
@@ -120,9 +120,9 @@
 #define EFUSE_EN_ON_V     1.20    /* EN/UVLO rising threshold             */
 #define EFUSE_EN_OFF_V    1.10
 /* How long U9 may sit in current limit before it latches off. The part is
- * the latch-off type, and DESIGN.md 3 shows a correct precharge never
- * reaches ILIM (2.0 A at 2200 uF against a 4.05 A limit), so this only
- * fires on a real fault. The value itself is *bench*: it stands in for the
+ * the latch-off type. A correct precharge never reaches ILIM (1 mA into the
+ * bus's 1.1 uF), and a misfire holds U9 there only for the 9.6 ms its enable
+ * takes to bleed, so this fires only on a fault. The value itself is *bench*: it stands in for the
  * thermal element and has not been measured. */
 #define EFUSE_ILIM_LATCH_S 0.010
 
@@ -292,7 +292,7 @@ static void mk1c_build(plant_t *p, double dt_s) {
         if (!p->faults[PF_BLEED_OPEN])
             net_res_to_gnd(n, N_BUS, R_BLEED_OHM);
     }
-    net_cap_to_gnd(n, N_BUS, p->c_bulk_f);
+    net_cap_to_gnd(n, N_BUS, p->c_bus_f);
     if (plant_gpio(p, BOARD_PIN_BIAS_BUS) && !p->faults[PF_BIAS_BUS_OPEN])
         stamp_bias(n, N_BUS);
     if (!p->efuse_on && !p->faults[PF_HIGH_SIDE_SHORT])
@@ -350,7 +350,7 @@ static void mk1c_post(plant_t *p, double dt_s) {
     if (p->faults[PF_BUS_SHORT_GND])
         i_load += net_current_to_gnd(n, N_BUS, 0.5);
     i_load += p->i_a + p->i_b;
-    i_load += p->c_bulk_f * EFUSE_SLEW_V_PER_S * (p->efuse_on ? 1.0 : 0.0);
+    i_load += p->c_bus_f * EFUSE_SLEW_V_PER_S * (p->efuse_on ? 1.0 : 0.0);
     efuse_i_prev = p->efuse_on ? i_load : 0.0;
 
     if (p->efuse_on && fabs(efuse_i_prev) > EFUSE_ILIM_A) {

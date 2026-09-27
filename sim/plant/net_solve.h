@@ -15,9 +15,9 @@
  *     (G + C/dt) v = (C/dt) v_prev + i
  *
  * Backward rather than forward because the networks are stiff: a 10 nF ADC
- * filter against 330 ohm is a 3.3 us constant, while C_BULK against the
- * bleed is 5 seconds, a spread of 10^6. Forward Euler would need the small
- * step everywhere. Backward Euler is unconditionally stable, so the sim can
+ * filter against 330 ohm is a 3.3 us constant, while a node's capacitance
+ * against its bleed runs to milliseconds and beyond. Forward Euler would
+ * need the small step everywhere. Backward Euler is unconditionally stable, so the sim can
  * take the 1 ms step the main loop wants and still settle the fast node
  * correctly.
  *

@@ -75,7 +75,7 @@ struct plant {
     double bus_pulldown_override; /* 0 = use the design network */
     double highside_leak_ohms;    /* 0 = an ideal open                */
     double pack_sag_v;    /* PF_PACK_COLLAPSE: droop under load            */
-    double c_bulk_f;
+    double c_bus_f;
 
     bool faults[PF_COUNT];
 

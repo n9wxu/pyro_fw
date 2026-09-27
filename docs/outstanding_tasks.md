@@ -1238,17 +1238,14 @@ steps in `boards/mk1c/pyro_board.c`, feeding the pump in
    fired (open) or a misfire (still present, live). A misfire latches nothing,
    and the other channel may fire on the charged bus meanwhile.
 
-Found while testing it: DESIGN.md S3's 5-10 ms bias cannot lift a bus
-carrying C_BULK (6 ms at 100 uF, 130 ms at 2200 uF to become readable), so
-every production board would have read its bus as shorted. The tracking test
-now holds its bias until the bus rises, 400 ms at most. **DESIGN.md S3
-should say so**; it lives outside this repo, so it is yours to change.
+There is no bulk capacitor (the requirement is dropped), so U9's current
+limit is the pulse: about 4 A for the 9.6 ms its enable takes to bleed.
 
 Also: no flash write during a fire (`board_flash_ok()`), and the bus-short
 latch counts tracking tests, not loops (invariant 8).
 
-`board_pyro_mk1c_tests`: 24 tests against the plant, on the bench board and
-variants A and B. Requirements PYR-ARM-01..06 and PYR-CONT-04.
+`board_pyro_mk1c_tests`: 22 tests against the plant of the board as built,
+on 2S and 1S. Requirements PYR-ARM-01..06 and PYR-CONT-04.
 
 **Owed, on the bench:** a flash (G4), then a supervised fire with a 1 ohm
 pulse resistor on CN1 and the scope on the firing bus, before any real match.

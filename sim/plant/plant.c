@@ -254,13 +254,13 @@ void plant_reset(void) {
     memset(p->adc_primed, 0, sizeof(p->adc_primed));
     memset(p->faults, 0, sizeof(p->faults));
 
-    /* 2S is the DESIGN.md 1.1 variant B pack and the one MK1C's levels are
-     * tabulated against. A variant A test calls plant_set_pack_mv(4200). */
+    /* 2S, the pack MK1C's levels are tabulated against. A 1S test calls
+     * plant_set_pack_mv(4200). */
     p->pack_mv = 8400.0;
     p->pack_sag_v = 0.0;
     p->bus_pulldown_override = 0.0;
     p->highside_leak_ohms = 0.0;
-    p->c_bulk_f = 1.1e-6; /* C115 and the bus's strays, no THT part: the bench decay (DD-054) */
+    p->c_bus_f = 1.1e-6; /* C115 and the bus's strays; no bulk capacitor: the bench decay (DD-054) */
 
     plant_match_defaults(&p->match[0]);
     plant_match_defaults(&p->match[1]);
@@ -405,7 +405,6 @@ void plant_step(double dt_s) {
 void plant_set_pack_mv(double mv) { plant_instance()->pack_mv = mv; }
 void plant_set_bus_pulldown_ohms(double ohms) { plant_instance()->bus_pulldown_override = ohms; }
 void plant_set_highside_leak_ohms(double ohms) { plant_instance()->highside_leak_ohms = ohms; }
-void plant_set_c_bulk_uf(double uf) { plant_instance()->c_bulk_f = uf * 1e-6; }
 
 plant_match_t *plant_match(int ch) {
     plant_t *p = plant_instance();
