@@ -52,8 +52,8 @@ enum { C_ADC_VBAT = 0, C_ADC_BUS = 1, C_ADC_A = 2, C_ADC_B = 3 };
 #define MK1A_CNT_OPEN_MIN     3000
 #define MK1A_SETTLE_MS          50
 
-#define MK1B_OPEN_THRESHOLD   3800
-#define MK1B_SHORT_THRESHOLD    50
+#define MK1B_CNT_PATH_MAX      500 /* as MK1A's (DD-059) */
+#define MK1B_CNT_OPEN_MIN     3000
 #define MK1B_SAMPLE_SLEEP_MS    10
 
 static void ms(double t) { plant_step(t / 1000.0); }
@@ -391,7 +391,7 @@ static void test_mk1b_flag_is_high_when_healthy(void) {
 static void report_settle_margins(void) {
     struct { const char *name; plant_board_t b; int low_pin; int thresh; int settle_ms; } t[] = {
         {"MK1A", PLANT_MK1A, A_LOW,       MK1A_CNT_OPEN_MIN,   MK1A_SETTLE_MS},
-        {"MK1B", PLANT_MK1B, B_COMMON_EN, MK1B_OPEN_THRESHOLD, MK1B_SAMPLE_SLEEP_MS},
+        {"MK1B", PLANT_MK1B, B_COMMON_EN, MK1B_CNT_OPEN_MIN,   MK1B_SAMPLE_SLEEP_MS},
     };
     printf("\n  ── time for a just-opened channel to read OPEN ──\n");
     printf("    %-6s %-10s %-10s %-12s %s\n", "board", "threshold", "firmware", "model says", "");
@@ -452,11 +452,8 @@ static void report_present_match_classification(void) {
     plant_match(1)->state = MATCH_PRESENT; plant_match(1)->r_ohm = 1.0;
     plant_set_gpio(B_COMMON_EN, 1); ms(200);
     uint16_t b = plant_adc_counts(0);
-    bool b_open = b > MK1B_OPEN_THRESHOLD, b_short = b < MK1B_SHORT_THRESHOLD;
-    printf("    MK1B  %4u counts   open>%d short<%d -> open=%s shorted=%s good=%s\n",
-           b, MK1B_OPEN_THRESHOLD, MK1B_SHORT_THRESHOLD,
-           b_open ? "true" : "false", b_short ? "true" : "false",
-           (!b_open && !b_short) ? "true" : "false");
+    printf("    MK1B  %4u counts   CNT_PATH_MAX %d -> good=%s\n",
+           b, MK1B_CNT_PATH_MAX, (b < MK1B_CNT_PATH_MAX) ? "true" : "false");
 
     plant_init(PLANT_MK1C);
     plant_match(1)->state = MATCH_PRESENT; plant_match(1)->r_ohm = 1.0;

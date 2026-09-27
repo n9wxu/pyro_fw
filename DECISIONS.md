@@ -559,6 +559,27 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-059: MK1B Reads Continuity As MK1A Does
+- **Found on the bench, 2026-09-27:** the second MK1B, which owns its pyros,
+  reported `pyro1_short` and `pyro2_short` at 16 and 17 counts. MK1B's sense
+  node is MK1A's (the netlist, `sim/plant/plant_mk1b.c`): 100k to 3V3, and
+  PYRO_COMMON_EN the shared low-side gate. With the common on, a fitted
+  igniter pulls the node to 0 counts -- and the firmware called anything
+  under 50 a short, and only 50-3800 good. No healthy igniter could read
+  good, so a MK1B with real igniters would never have deployed
+  (PYR-SAFE-01). The plant's report had printed it: "MK1B 0 counts ...
+  shorted=true good=false".
+- **Decision:** MK1A's rule. Two readings a second: with the common off,
+  after the idle second has recharged the node, a channel still low is
+  shorted to ground; with it on, below 500 counts is an igniter (a 1k bad
+  joint reads 41, a 10k leak 372), above 3000 open, and the raw count is
+  reported. That is the presence-and-shorts check DD-055 asks for.
+- **After a fire** the common stays on into the fresh reading, so there is
+  no short reading then; the last one stands.
+- `board_pyro_tests` models the node as the netlist has it: an igniter
+  reads good, an empty connector open, a short to ground shorted, a 1k joint
+  good with its count, and no read comes before its settle or recharge.
+
 ### DD-058: The API Is Live In Flight; Only The Log Touches The Filesystem
 - **Decision:** at the user's direction -- "Leave the USB and API live
   during flight. This will simplify testing." then "flight mode will lock

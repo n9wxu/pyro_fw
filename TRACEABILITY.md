@@ -114,7 +114,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-CONT-01 | Check every 1s | Unit: test_PYR_CONT_01_continuity_check | ✅ |
 | PYR-CONT-03 | Diagnosis and announcement follow each check | Unit: test_REV04_pad_fault_after_boot_is_announced; Hardware: bench smoke test | ✅ |
 | FLT-BOOT-16 | No fault for a released or disabled channel | Unit: test_REV_NEW_disabled_channel_is_not_a_fault; Hardware: bench smoke test | ✅ |
-| PYR-CONT-02 | Report good/open/short | Web UI: pyro channels show OK/OPEN/FIRED | ✅ |
+| PYR-CONT-02 | Report good/open/short | Web UI: pyro channels show OK/OPEN/FIRED; Board pyro (MK1B): test_mk1b_igniter_reads_good, test_mk1b_empty_connector_reads_open, test_mk1b_short_to_ground_reads_shorted, test_mk1b_bad_joint_reads_good_with_its_count (DD-059) | ✅ |
 | PYR-CONT-04 | MK1C: a short judged on three tracking tests | Board pyro (MK1C): test_mk1c_one_bad_tracking_reading_does_not_latch, test_mk1c_bus_short_latches | ✅ |
 | BUZ-STATUS-01 | Distinct beep codes | Beep: test_shipped_table_is_valid, test_two_outcomes_that_sound_alike_are_refused | ✅ |
 | BUZ-01..02 | Four outcomes, said again on a cadence | Integration: test_BEEP_01_clean_board_says_ok_to_fly, test_BEEP_02_a_pyro_fault_names_its_channel, test_BEEP_03_anything_unfixable_says_system_failure, test_BEEP_04_unfixable_outranks_fixable; Beep: test_shipped_cadence_keeps_talking; Buzzer: test_BUZ_PAT_07_gap_between_passes | ✅ |

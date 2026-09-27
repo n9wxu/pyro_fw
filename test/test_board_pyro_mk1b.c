@@ -2,6 +2,11 @@
  * MK1B's pyro backend, boards/mk1b/pyro_board.c, run on the host against
  * test/fake_sdk. The loop is the only clock (DD-053): a continuity reading
  * waits out its settle across loop iterations, never inside one.
+ *
+ * The sense node is modelled as the netlist has it (sim/plant/plant_mk1b.c):
+ * 100k to 3V3, 100 nF at the pin, and PYRO_COMMON_EN the shared low-side
+ * gate. An igniter pulls the node to ground only while the common is on; a
+ * short to ground pulls it down either way (DD-059).
  */
 #include "unity.h"
 #include "board_pins.h"
@@ -19,15 +24,40 @@ bool pin_store_owns(uint8_t pin) {
 #define EN2 BOARD_PIN_PYRO2_EN
 #define SETTLE_MS 10u /* the sense node's settle, as the sleep it replaces */
 
-static int reads, reads_unstimulated, reads_unsettled;
+#define RECHARGE_MS 50u /* 5 x 100k x 100 nF: the node back at 3V3 */
+
+typedef enum { L_OPEN, L_IGNITER, L_SHORT, L_JOINT_1K } load_t;
+static load_t load[2];
+static uint32_t common_fell_ms;
+
+static int reads, reads_stimulated, reads_unsettled;
+
+/* Counts at the pin: 0 for a 1 ohm igniter, 41 for a 1k joint, 4095 open. */
+static uint16_t node_counts(load_t l, bool common) {
+    switch (l) {
+    case L_SHORT:
+        return 0u;
+    case L_IGNITER:
+        return common ? 0u : 4095u;
+    case L_JOINT_1K:
+        return common ? 41u : 4095u;
+    default:
+        return 4095u;
+    }
+}
 
 static void on_read(uint8_t channel) {
-    (void)channel;
     reads++;
-    if (!fake_level[COMMON])
-        reads_unstimulated++;
-    else if (fake_now_ms - fake_rose_ms[COMMON] < SETTLE_MS)
-        reads_unsettled++;
+    bool common = fake_level[COMMON];
+    if (common) {
+        reads_stimulated++;
+        if (fake_now_ms - fake_rose_ms[COMMON] < SETTLE_MS)
+            reads_unsettled++;
+    } else if (fake_now_ms - common_fell_ms < RECHARGE_MS) {
+        reads_unsettled++; /* the node has not charged back up */
+    }
+    if (channel < 2)
+        fake_adc[channel] = node_counts(load[channel], common);
 }
 
 static uint32_t common_on_ms;
@@ -39,7 +69,10 @@ static void loops(uint32_t ms) {
         fake_now_ms += 10u;
         if (fake_level[COMMON])
             common_on_ms += 10u;
+        bool was = fake_level[COMMON];
         pyro_update(fake_now_ms);
+        if (was && !fake_level[COMMON])
+            common_fell_ms = fake_now_ms;
         if (fake_now_ms % 1000u == 0u)
             pyro_sample();
         char msg[64];
@@ -55,12 +88,13 @@ void setUp(void) {
         owns[i] = false;
     }
     owns[COMMON] = owns[EN1] = owns[EN2] = true;
-    fake_adc[0] = fake_adc[1] = 2000u;
+    load[0] = load[1] = L_IGNITER;
     fake_on_adc_read = on_read;
     fake_slept = NULL;
-    reads = reads_unstimulated = reads_unsettled = 0;
+    reads = reads_stimulated = reads_unsettled = 0;
     common_on_ms = 0;
     fake_now_ms = 100000u;
+    common_fell_ms = 0;
     pyro_init();
 }
 
@@ -71,11 +105,12 @@ void test_mk1b_continuity_never_sleeps(void) {
     TEST_ASSERT_TRUE(reads > 0);
 }
 
-/* Each read comes with the stimulus on, and a settle after it came on. */
+/* A presence read comes a settle after the common came on; a short read, with
+ * the common off, once the node has charged back up. */
 void test_mk1b_reads_after_the_settle(void) {
     loops(3000u);
-    TEST_ASSERT_TRUE(reads > 0);
-    TEST_ASSERT_EQUAL(0, reads_unstimulated);
+    TEST_ASSERT_TRUE(reads_stimulated > 0);
+    TEST_ASSERT_TRUE(reads > reads_stimulated);
     TEST_ASSERT_EQUAL(0, reads_unsettled);
 }
 
@@ -102,22 +137,52 @@ void test_mk1b_not_good_before_a_reading(void) {
     TEST_ASSERT_TRUE(c.open);
 }
 
-void test_mk1b_classifies(void) {
-    fake_adc[0] = 4000u; /* open */
-    fake_adc[1] = 20u;   /* short */
-    loops(1100u);
+static void read_both(pyro_continuity_t *c1, pyro_continuity_t *c2) {
+    loops(2100u);
+    pyro_get(1, c1);
+    pyro_get(2, c2);
+}
+
+/* A fitted igniter pulls the node to 0 counts with the common on. That is a
+ * present igniter, as on MK1A, and not a short. */
+void test_mk1b_igniter_reads_good(void) {
     pyro_continuity_t c1, c2;
-    pyro_get(1, &c1);
-    pyro_get(2, &c2);
+    read_both(&c1, &c2);
+    TEST_ASSERT_TRUE_MESSAGE(c1.good, "a fitted igniter reads good");
+    TEST_ASSERT_FALSE(c1.shorted);
+    TEST_ASSERT_FALSE(c1.open);
+    TEST_ASSERT_TRUE(c2.good);
+    TEST_ASSERT_EQUAL_UINT16(0u, c1.raw_adc);
+}
+
+void test_mk1b_empty_connector_reads_open(void) {
+    load[0] = L_OPEN;
+    pyro_continuity_t c1, c2;
+    read_both(&c1, &c2);
     TEST_ASSERT_TRUE(c1.open);
     TEST_ASSERT_FALSE(c1.good);
+    TEST_ASSERT_FALSE(c1.shorted);
+    TEST_ASSERT_TRUE_MESSAGE(c2.good, "the other channel is its own");
+}
+
+/* A path to ground with the common off bypasses the low side: a harness or
+ * connector shorted to ground. */
+void test_mk1b_short_to_ground_reads_shorted(void) {
+    load[1] = L_SHORT;
+    pyro_continuity_t c1, c2;
+    read_both(&c1, &c2);
     TEST_ASSERT_TRUE(c2.shorted);
     TEST_ASSERT_FALSE(c2.good);
-    fake_adc[0] = fake_adc[1] = 2000u;
-    loops(1100u);
-    pyro_get(1, &c1);
     TEST_ASSERT_TRUE(c1.good);
-    TEST_ASSERT_EQUAL_UINT16(2000u, c1.raw_adc);
+}
+
+/* A degraded joint still conducts; the raw count shows how well. */
+void test_mk1b_bad_joint_reads_good_with_its_count(void) {
+    load[0] = L_JOINT_1K;
+    pyro_continuity_t c1, c2;
+    read_both(&c1, &c2);
+    TEST_ASSERT_TRUE(c1.good);
+    TEST_ASSERT_EQUAL_UINT16(41u, c1.raw_adc);
 }
 
 /* The pulse runs its 500 ms; then a fresh reading lands inside the post-fire
@@ -130,7 +195,7 @@ void test_mk1b_fire_then_a_fresh_reading(void) {
     loops(490u);
     TEST_ASSERT_TRUE(pyro_is_firing());
     TEST_ASSERT_TRUE(fake_level[EN1] && fake_level[COMMON]);
-    fake_adc[0] = 4000u; /* the bridgewire is gone */
+    load[0] = L_OPEN; /* the bridgewire is gone */
     loops(20u);
     TEST_ASSERT_FALSE(pyro_is_firing());
     TEST_ASSERT_FALSE(fake_level[EN1]);
@@ -138,6 +203,7 @@ void test_mk1b_fire_then_a_fresh_reading(void) {
     pyro_continuity_t c;
     pyro_get(1, &c);
     TEST_ASSERT_TRUE_MESSAGE(c.open, "no fresh reading within 50 ms of the pulse");
+    TEST_ASSERT_FALSE_MESSAGE(c.shorted, "the common, on through the pulse, is no short");
     TEST_ASSERT_EQUAL(0, reads_unsettled);
 }
 
@@ -156,7 +222,10 @@ int main(void) {
     RUN_TEST(test_mk1b_common_raised_only_by_the_loop);
     RUN_TEST(test_mk1b_one_reading_a_second);
     RUN_TEST(test_mk1b_not_good_before_a_reading);
-    RUN_TEST(test_mk1b_classifies);
+    RUN_TEST(test_mk1b_igniter_reads_good);
+    RUN_TEST(test_mk1b_empty_connector_reads_open);
+    RUN_TEST(test_mk1b_short_to_ground_reads_shorted);
+    RUN_TEST(test_mk1b_bad_joint_reads_good_with_its_count);
     RUN_TEST(test_mk1b_fire_then_a_fresh_reading);
     RUN_TEST(test_mk1b_released_enable_left_alone);
     return UNITY_END();
