@@ -1663,6 +1663,7 @@ static void grounding_changed(flight_context_t *ctx, bool was, uint32_t now) {
 }
 
 void flight_set_usb_attached(flight_context_t *ctx, bool attached, uint32_t now) {
+    ctx->usb_now = attached;
     if (attached == ctx->usb_attached || state_is_airborne(ctx->current_state))
         return;
     bool was = grounded_on_usb(ctx);
@@ -1680,6 +1681,10 @@ void flight_set_test_mode(flight_context_t *ctx, bool on, uint32_t now) {
 
 bool flight_in_progress(void) {
     return g_flight_ctx && state_is_airborne(g_flight_ctx->current_state);
+}
+
+bool flight_on_usb_now(void) {
+    return g_flight_ctx && g_flight_ctx->usb_now && !g_flight_ctx->test_mode;
 }
 
 const char *flight_recovery_text(const flight_context_t *ctx) {

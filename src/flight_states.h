@@ -204,6 +204,7 @@ typedef struct flight_context_t {
      * here in RAM and so is off at every boot. */
     bool usb_attached;
     bool test_mode;
+    bool usb_now; /* the cable as it is, not frozen at launch: see flight_on_usb_now() */
 
     /* ── What is wrong, as distinct from what to do ──────────────
      *
@@ -334,6 +335,11 @@ flight_state_t flight_get_state(void);
 /* True from launch to landing. Anything that could disturb the flight -- a
  * reboot, a flash write, a firmware image -- is refused while this holds. */
 bool flight_in_progress(void);
+
+/* [WEB-API-08] A USB host is on the port now, and test mode is off: the
+ * board is on a bench, whatever state it is stuck in, so it obeys a reboot.
+ * Read live, where the flight machine holds the cable as it was at launch. */
+bool flight_on_usb_now(void);
 
 /* [USB-01..04] Whether a host is on the USB port, asked every loop before
  * dispatch_state(). Ignored from launch to landing: a flight is never

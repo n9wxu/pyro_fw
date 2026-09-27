@@ -233,7 +233,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | WEB-API-05 | POST /api/reboot | Hardware: 200 with CORS, board back in PAD_IDLE | ✅ HW |
 | WEB-API-06 | GET /api/flight.csv | Hardware: bench smoke test | ✅ HW |
 | WEB-API-07 | CORS headers | Hardware: bench smoke test, every route | ✅ HW |
-| WEB-API-08 | No state-changing request in flight | Unit: test_REV18_flight_in_progress_is_launch_to_landing (the predicate); route wiring by inspection | ⚠️ |
+| WEB-API-08 | No state-changing request in flight; a reboot on USB is obeyed | Unit: test_REV18_flight_in_progress_is_launch_to_landing, test_C5_usb_means_not_flying (the predicates); route wiring by inspection | ⚠️ |
 | WEB-API-09 | Erase the flight log | Web UI: the flight log can be erased; Hardware: bench smoke test | ✅ |
 | WEB-API-10 | No file served while the log is written | `serve_file()` refuses on `hal_log_active()`, by inspection; bench check owed (section 6 of docs/outstanding_tasks.md) | ⚠️ |
 | WEB-HTTP-01 | A request is a byte stream | HTTP: test_HTTP_02 (split at every byte), test_HTTP_03 (byte by byte, random), test_HTTP_04, test_HTTP_07; Hardware: `support/http_stream_check.py` 16/16 on MK1A/B/C (4/16 on the old server) | ✅ |

@@ -1542,6 +1542,30 @@ void test_REV18_flight_in_progress_is_launch_to_landing(void) {
     }
 }
 
+/* [WEB-API-08, C5] A board on USB is not flying: a PC is on the end of the
+ * cable. Stuck in a flight state on the bench -- a false launch, a sensor
+ * that died -- it must still take a reboot. The flight machine ignores the
+ * cable from launch to landing; the reboot's question reads it live. Test
+ * mode flies on USB on purpose, and keeps the lock. */
+void test_C5_usb_means_not_flying(void) {
+    static flight_context_t ctx;
+    flight_init(&ctx);
+    ctx.current_state = ASCENT;
+    TEST_ASSERT_TRUE(flight_in_progress());
+    TEST_ASSERT_FALSE_MESSAGE(flight_on_usb_now(), "no cable yet");
+
+    flight_set_usb_attached(&ctx, true, 0);
+    TEST_ASSERT_FALSE_MESSAGE(ctx.usb_attached, "the flight machine still ignores the cable");
+    TEST_ASSERT_TRUE_MESSAGE(flight_on_usb_now(), "plugged in after launch: on a bench");
+
+    ctx.test_mode = true;
+    TEST_ASSERT_FALSE_MESSAGE(flight_on_usb_now(), "test mode flies on USB");
+    ctx.test_mode = false;
+
+    flight_set_usb_attached(&ctx, false, 0);
+    TEST_ASSERT_FALSE_MESSAGE(flight_on_usb_now(), "unplugged");
+}
+
 /* ── Main ─────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -1631,6 +1655,7 @@ int main(void) {
     RUN_TEST(test_REV03_refused_retry_is_asked_once);
     RUN_TEST(test_REV12_telem_rate_hz_sets_the_flight_cadence);
     RUN_TEST(test_REV18_flight_in_progress_is_launch_to_landing);
+    RUN_TEST(test_C5_usb_means_not_flying);
 
     /* On USB */
     RUN_TEST(test_USB_01_no_launch_while_attached);

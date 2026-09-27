@@ -49,7 +49,7 @@ Every task follows the same steps. No task closes any other way.
 2. **Change** the code, and the records in the same change:
    - `REQUIREMENTS.md`: requirements added, amended or withdrawn;
    - `DECISIONS.md`: a DD entry for each design choice (the next free number
-     is DD-040);
+     is DD-058);
    - `TRACEABILITY.md`: each new or amended requirement linked to its tests;
    - `docs/flight_states.md`, where a state's behaviour changes.
 3. **Pass.** Every test the task lists passes, and so does the gate.
@@ -125,7 +125,7 @@ are still yours; their tasks wait.
 | ID | Question | Status | Blocks |
 |---|---|---|---|
 | C2 | The launch trigger | **Open, not blocking.** The options: (a) today's 100 ft and 5 m/s; (b) the operator narrative's "rising for more than 1 s and past 50 ft"; (c) the pressure-filter prompt's 15 m held for 8 samples with a positive speed; (d) the Mach prompt's acceleration trigger, fitted p̈ < −0.0025·p held for 50–100 ms. (d) misses launches under 2.1–2.4 g net, a thrust-to-weight below about 3.1–3.4, so it needs a height trigger behind it. The 100 ft figure came from bench false launches now blamed on N21. T3 keeps today's trigger and adds a hold, which (a), (b) and (c) all need. Choosing one later means changing constants. | — |
-| C5 | In-flight lock against recoverability | **Open.** A board stuck in a flight state can't be rebooted or updated from the browser. picotool over USB, or a power cycle, recovers it. The false-launch reversion (section 9) would cover the false-launch case. | — |
+| C5 | In-flight lock against recoverability | **Decided 2026-09-26 (DD-057):** "If usb is attached you are not flying." `/api/reboot` is obeyed in a flight state while a USB host is on the port and test mode is off; the board recovers cold on USB and comes up on the pad. Everything else stays refused in flight. | — |
 | C6 | Numbered flight logs | **Open.** Keeping more than one flight means creating a file at launch, which is a flash write during launch shock. The alternatives are to create or rename it on the pad when the marker is written, or to accept the write. If taken, do it with T8's log-format change. | C6 task |
 | C8 / N7 | The landing timeout declares LANDED under a main | **Adopted:** once T5 makes the stillness test reliable, the timeout needs stillness instead of "slower than 5 m/s". | N7 task |
 | C10 | Forced main after a failed drogue: 4.6 s today, the narrative about 3 s | **Open.** Shortening the grace or the 1 s hold trades early deployment on a real failure against forcing mains under slow drogues. | C10 task |
@@ -1370,7 +1370,8 @@ gate.
 
 Today such a board sits in ASCENT until it is power-cycled (defect 2, N24):
 - its flight log stays open;
-- the in-flight lock refuses reboot and OTA (C5);
+- the in-flight lock refuses OTA and config; a reboot on USB clears it
+  (C5, DD-057);
 - the pad announcement has stopped;
 - its ground reference is frozen.
 

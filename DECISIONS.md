@@ -452,6 +452,7 @@ rationale and the alternatives considered.
   or a sensor that dies in flight, DD-022) can no longer be rebooted or updated
   from the browser; it needs a power cycle. The firmware cannot tell such a
   board from one that is flying, which is the point of the interlock.
+- **Amended by DD-057:** on USB, with test mode off, a reboot is obeyed.
 
 ### DD-035: The Flight Log Is Published Every Second, Inside The Flash Window
 - **Decision:** `log_flash_service()` calls `lfs_file_sync()` on the flight log
@@ -556,6 +557,23 @@ rationale and the alternatives considered.
 - **Chirp:** switching test mode off while attached is an attach, so it
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
+
+### DD-057: A Board On USB Is Not Flying: It Obeys A Reboot
+- **Decision:** at the user's direction -- "If usb is attached you are not
+  flying. Obey the USB reboot." -- `/api/reboot` is answered in a flight
+  state while a USB host is on the port and test mode is off. Every other
+  POST is still refused from launch to landing (DD-034).
+- **Why:** the lock left a board stuck in a flight state -- a false launch
+  that never arms, a sensor that died, N7 -- needing picotool or a power
+  cycle (C5). A flying rocket has no PC on its cable, and the web server is
+  reached only over USB.
+- **Read live:** the flight machine holds the cable as it was at launch, so
+  that a flight is never abandoned on the strength of it (USB-06).
+  `flight_on_usb_now()` reads the cable as it is, for the reboot alone.
+- **Test mode keeps the lock:** it flies on USB on purpose (USB-08), and a
+  chamber flight must see what a real one does.
+- **After the reboot:** a board booting on USB recovers cold (COLD_ON_USB),
+  so it comes up on the pad, not back in the flight it was stuck in.
 
 ### DD-056: MK1C Fires: DESIGN.md 7.1 As Loop Steps
 - **Decision:** at the user's direction ("Finish F1"), MK1C's `pyro_fire()`

@@ -246,6 +246,8 @@ promises, so please review:
   MK1C when N21 left it in ASCENT); otherwise it needs a power cycle. The MK1B and MK1C on the bench had been in ASCENT and FALLING
   for 11–13 hours on their old firmware when this work started. The firmware
   cannot tell them from a flying board, which is the point of the interlock.
+  **Decided 2026-09-26 (DD-057):** a board on USB is not flying, so it obeys
+  `/api/reboot` there, test mode excepted.
 - **C6. Numbered flight logs against FLT-BROWN-01 and DD-027.** Keeping more
   than one flight means creating a file at launch, and a new littlefs file
   commits a directory entry immediately. Alternatives: rename or pre-create on

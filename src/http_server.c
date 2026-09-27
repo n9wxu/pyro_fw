@@ -247,13 +247,15 @@ static const char *content_type_hdr(const char *path) {
 }
 
 /* [PYR-SAFE-04] A browser must not reboot, reflash or write the flash of a
- * board that is flying. Every POST changes something. */
+ * board that is flying. Every POST changes something.
+ *
+ * [WEB-API-08, DD-057] Except a reboot on USB: a board with a PC on its
+ * cable is not flying, only stuck in a flight state. */
 static bool refused_in_flight(const char *method, const char *path) {
-    (void)path;
-    if (!flight_in_progress()) {
+    if (!flight_in_progress() || strcmp(method, "POST") != 0) {
         return false;
     }
-    return strcmp(method, "POST") == 0;
+    return !(strcmp(path, "/api/reboot") == 0 && flight_on_usb_now());
 }
 
 #define FLIGHT_LOG_PATH "flight_log.csv"
