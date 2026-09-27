@@ -321,6 +321,7 @@ add_executable(pyro_fw_c
     src/telemetry_formatter.c
     src/buzzer.c
     src/ms5607_driver.c
+    src/bmp280_driver.c
     src/ms5607_oneshot.c
     src/i2c_recover.c
     src/usb_descriptors.c
@@ -830,7 +831,7 @@ add_custom_target(sensor_bringup_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_sensor_bringup.c
                ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_i2c.c
                ${CMAKE_CURRENT_LIST_DIR}/src/i2c_recover.c ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_driver.c
-               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1a/pressure_board.c ${CMAKE_CURRENT_LIST_DIR}/boards/mk1a/bmp280_driver.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_single_sensor.c ${CMAKE_CURRENT_LIST_DIR}/src/bmp280_driver.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_sensor_bringup_mk1a
     COMMAND ${CMAKE_COMMAND} -E echo "Running sensor bring-up tests: mk1a"
@@ -841,7 +842,7 @@ add_custom_target(sensor_bringup_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_sensor_bringup.c
                ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_i2c.c
                ${CMAKE_CURRENT_LIST_DIR}/src/i2c_recover.c ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_driver.c
-               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1b/pressure_board.c ${CMAKE_CURRENT_LIST_DIR}/boards/mk1b/bmp280_driver.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1b/pressure_board.c ${CMAKE_CURRENT_LIST_DIR}/src/bmp280_driver.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_sensor_bringup_mk1b
     COMMAND ${CMAKE_COMMAND} -E echo "Running sensor bring-up tests: mk1b"
@@ -852,7 +853,7 @@ add_custom_target(sensor_bringup_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_sensor_bringup.c
                ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_i2c.c
                ${CMAKE_CURRENT_LIST_DIR}/src/i2c_recover.c ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_driver.c
-               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1c/pressure_board.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_single_sensor.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_sensor_bringup_mk1c
     COMMAND ${CMAKE_COMMAND} -E echo "Running sensor bring-up tests: mk1c"
@@ -863,7 +864,7 @@ add_custom_target(sensor_bringup_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_sensor_bringup.c
                ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_i2c.c
                ${CMAKE_CURRENT_LIST_DIR}/src/i2c_recover.c ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_driver.c
-               ${CMAKE_CURRENT_LIST_DIR}/boards/reference/pressure_board.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_single_sensor.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_sensor_bringup_reference
     COMMAND ${CMAKE_COMMAND} -E echo "Running sensor bring-up tests: reference"
@@ -882,6 +883,9 @@ add_custom_target(board_pyro_mk1c_tests
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_board_pyro_mk1c.c
                ${CMAKE_CURRENT_LIST_DIR}/boards/mk1c/pyro_board.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1c/pyro_measure.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1c/pyro_faults.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1c/pyro_sequence.c
                ${CMAKE_CURRENT_LIST_DIR}/boards/mk1c/arm_pump.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/hw/rp2040_shim.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/plant/net_solve.c

@@ -106,9 +106,10 @@ jobs:
 
       - name: Format check (clang-format)
         run: |
-          # Two renames have silently emptied this list before:
-          # hal_hardware.c -> src/hal_common/hal_common.c, and
-          # telemetry.c -> src/telemetry_formatter.c. A missing file makes
+          # Three renames have silently emptied this list before:
+          # hal_hardware.c -> src/hal_common/hal_common.c,
+          # telemetry.c -> src/telemetry_formatter.c, and the boards'
+          # hal_board.c -> board_info.c. A missing file makes
           # clang-format error out and check nothing, and the step ends in
           # `|| echo ::warning::`, so it stays green while checking nothing.
           # Rename a file and you must fix it here, in cppcheck and in pmccabe.
@@ -116,8 +117,10 @@ jobs:
             src/flight_states.c src/telemetry_formatter.c src/buzzer.c \
             src/hal.h src/main_hardware.c \
             src/board_if.h src/board_id.h \
-            src/hal_common/hal_common.c \
-            boards/*/hal_board.c boards/*/pyro_board.c boards/*/pressure_board.c \
+            src/hal_common/hal_common.c src/hal_common/board_defaults.c \
+            src/board_support.h src/pressure_single_sensor.c src/bmp280_driver.c \
+            boards/*/board_info.c boards/*/pyro_*.c boards/*/pyro_*.h boards/mk1b/pressure_board.c \
+            boards/mk1c/arm_pump.c boards/mk1c/arm_pump.h \
             2>&1 || echo "::warning::Code formatting differences found. Run: clang-format -i src/*.c src/*.h"
 
       - name: Cyclomatic complexity (pmccabe)

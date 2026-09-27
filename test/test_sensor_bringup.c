@@ -1,5 +1,6 @@
 /*
- * A board's pressure sensor bring-up, boards/<name>/pressure_board.c, run on
+ * A board's pressure sensor bring-up, src/pressure_single_sensor.c or the
+ * board's own pressure_board.c, run on
  * the host against test/fake_sdk and fake sensors. Built once per board
  * (sensor_bringup_tests). The loop is the only clock (DD-053): bus recovery,
  * settles and sensor resets are steps a later loop takes, and the fake SDK's

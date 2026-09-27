@@ -68,9 +68,10 @@ flight decided it on. The same code is `pyro_sim --replay <flight_log.csv>`
 the ADC, I2C with fake devices (`fake_i2c.c`), and a clock that moves only
 when the test moves it. Its sleeps and busy-waits fail the test that reaches
 them. `board_pyro_tests` runs MK1B's `pyro_board.c` against it; and
-`sensor_bringup_tests` runs every board's `pressure_board.c`, each built
-against its own package, with fake sensors that refuse a transfer during
-their reset.
+`sensor_bringup_tests` runs every board's sensor bring-up —
+`src/pressure_single_sensor.c`, or MK1B's own `pressure_board.c` — each
+built against its own package, with fake sensors that refuse a transfer
+during their reset.
 
 ## MK1C's firing bus as measured (DD-054, DD-055, DD-056)
 

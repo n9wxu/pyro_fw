@@ -1,13 +1,10 @@
-# ── Stage 2: sources and target, added AFTER pico_sdk_init() ─────────
-#
-# Exports the target `pyro_board`, which the application links.
+# The board's sources, added after pico_sdk_init(), as the `pyro_board`
+# library the application links.
 
 add_library(pyro_board STATIC
-    hal_board.c       # implements src/board_if.h
-    pyro_board.c      # implements src/pyro.h
-    pressure_board.c  # implements src/pressure_sensor.h
-    bmp280_driver.c   # board-private; see the header comment for why it is
-                      # copied rather than shared with MK1B
+    pyro_board.c      # src/pyro.h, and board_early_init()
+    board_info.c      # picotool's pin names
+    ${CMAKE_SOURCE_DIR}/src/pressure_single_sensor.c  # src/pressure_sensor.h
 )
 
 target_include_directories(pyro_board PUBLIC ${CMAKE_CURRENT_LIST_DIR})
@@ -21,14 +18,10 @@ target_link_libraries(pyro_board PUBLIC
     hardware_uart
 )
 
-# Lua user pins. The implementation is shared (src/lua/lua_pio_platform.c);
-# this board contributes only its pin list, in pin_caps.h. Everything Lua can
-# reach goes through PIO or plain SIO -- see the header comment in
-# src/lua/lua_pio.pio for why a peripheral function is never used.
+# Lua's pins: shared code, this board's list in pin_caps.h.
 if(PYRO_HAS_LUA)
     target_sources(pyro_board PRIVATE ${CMAKE_SOURCE_DIR}/src/lua/lua_pio_platform.c)
     pico_generate_pio_header(pyro_board ${CMAKE_SOURCE_DIR}/src/lua/lua_pio.pio)
-    # The half-bridge runs on the PYRO PIO, not Lua's. See pyro_bridge.pio.
     pico_generate_pio_header(pyro_board ${CMAKE_SOURCE_DIR}/src/pyro_bridge.pio)
     target_include_directories(pyro_board PRIVATE
         ${CMAKE_SOURCE_DIR}/src/lua

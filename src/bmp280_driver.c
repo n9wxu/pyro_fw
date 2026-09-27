@@ -1,10 +1,12 @@
 /*
- * BMP280 pressure sensor driver
- * I2C address: 0x76 or 0x77
+ * BMP280, in normal mode, on the board's sensor bus (BOARD_I2C_INST). Built
+ * into every image and empty unless the board fits one (BOARD_HAS_BMP280).
  *
  * SPDX-License-Identifier: MIT
  */
-#include "pressure_sensor.h"
+#include "board_pins.h"
+#if BOARD_HAS_BMP280
+#include "bmp280_driver.h"
 #include "hardware/i2c.h"
 #include "hardware/timer.h"
 #include <stdio.h>
@@ -15,7 +17,7 @@
  * read. */
 #define BMP280_HALF_CYCLE_US 6000u
 
-#define I2C_PORT i2c1
+#define I2C_PORT BOARD_I2C_INST
 
 #define BMP280_ADDR_SDO_LOW 0x76
 #define BMP280_ADDR_SDO_HIGH 0x77
@@ -28,6 +30,12 @@
 #define BMP280_REG_CALIB 0x88
 
 #define BMP280_CHIP_ID 0x58
+
+/* Pressure x4, temperature x1, normal mode: a conversion every 11.5 ms
+ * typical, 13.3 ms at most (BMP280 datasheet table 13, page 18), so each
+ * 20 ms read finds a fresh one. */
+#define BMP280_CTRL_MEAS_X1_X4_NORMAL 0x2F
+#define BMP280_CONFIG_NO_FILTER 0x00
 
 static uint8_t bmp280_addr = 0;
 static uint16_t dig_T1;
@@ -69,12 +77,10 @@ static bool bmp280_read_calibration(void) {
     return true;
 }
 
-bool bmp280_detect(void) {
-    /* Instrumentation: log I2C attempt to detect early hangs */
-    extern void hal_telemetry_send(const char *sentence);
-    char buf[64];
+extern void hal_telemetry_send(const char *sentence);
 
-    // Try both possible addresses
+bool bmp280_detect(void) {
+    char buf[64];
     for (uint8_t addr = BMP280_ADDR_SDO_LOW; addr <= BMP280_ADDR_SDO_HIGH; addr++) {
         bmp280_addr = addr;
         snprintf(buf, sizeof(buf), "!BMP280 try addr=0x%02X\r\n", addr);
@@ -86,15 +92,10 @@ bool bmp280_detect(void) {
             hal_telemetry_send(buf);
 
             if (chip_id == BMP280_CHIP_ID) {
-                // Read calibration data
                 hal_telemetry_send("!BMP280 reading calibration\r\n");
                 if (bmp280_read_calibration()) {
-                    /* Configure: normal mode, osrs_t=x1(001), osrs_p=x4(011)
-                     * 0x2F = 001_011_11 → T_meas ≈ 13.3ms → ~72Hz
-                     * Matches 50Hz async read cadence; each read gets fresh data.
-                     * (0xB7 / x16 oversampling gives only ~13Hz — stale on 3/4 reads) */
-                    bmp280_write_reg(BMP280_REG_CTRL_MEAS, 0x2F);
-                    bmp280_write_reg(BMP280_REG_CONFIG, 0x00);
+                    bmp280_write_reg(BMP280_REG_CTRL_MEAS, BMP280_CTRL_MEAS_X1_X4_NORMAL);
+                    bmp280_write_reg(BMP280_REG_CONFIG, BMP280_CONFIG_NO_FILTER);
                     hal_telemetry_send("!BMP280 detect OK\r\n");
                     return true;
                 } else {
@@ -121,14 +122,13 @@ bool bmp280_read(pressure_reading_t *reading) {
     int32_t adc_P = ((int32_t)data[0] << 12) | ((int32_t)data[1] << 4) | (data[2] >> 4);
     int32_t adc_T = ((int32_t)data[3] << 12) | ((int32_t)data[4] << 4) | (data[5] >> 4);
 
-    // Calculate temperature
+    /* Bosch's 64-bit integer compensation, datasheet section 3.11.3, page 21. */
     int32_t var1 = ((((adc_T >> 3) - ((int32_t)dig_T1 << 1))) * ((int32_t)dig_T2)) >> 11;
     int32_t var2 =
         (((((adc_T >> 4) - ((int32_t)dig_T1)) * ((adc_T >> 4) - ((int32_t)dig_T1))) >> 12) * ((int32_t)dig_T3)) >> 14;
     t_fine = var1 + var2;
     int32_t T = (t_fine * 5 + 128) >> 8;
 
-    // Calculate pressure
     int64_t var1_64 = ((int64_t)t_fine) - 128000;
     int64_t var2_64 = var1_64 * var1_64 * (int64_t)dig_P6;
     var2_64 = var2_64 + ((var1_64 * (int64_t)dig_P5) << 17);
@@ -150,3 +150,5 @@ bool bmp280_read(pressure_reading_t *reading) {
 
     return true;
 }
+
+#endif /* BOARD_HAS_BMP280 */

@@ -1,19 +1,6 @@
 /*
- * Pyro MK1A — what each pin may become.
- *
- * Rows say what the HARDWARE supports, not what is assigned. See
- * src/pin_model.h for the vocabulary and the build-time checks.
- *
- * Topology, from the header comment in pyro_board.c:
- *
- *   VBATT -> Q6 [FIRE1] -> J3 igniter -.
- *   VBATT -> Q1 [FIRE2] -> J4 igniter -+-> Initiator_ground
- *                    Initiator_ground -> F1 8A -> Q2 [PYRO_LOW] -> GND
- *
- * Two switched high sides and one common low side, so a released FIRE plus a
- * released PYRO_LOW is a half-bridge with the igniter terminals shorted as
- * the midpoint. F1 is 8 A and does not reset, which is why this board's
- * protection class differs from MK1B's.
+ * What each MK1A pin may become; src/pin_model.h holds the vocabulary and
+ * the build-time checks. See THEORY_OF_OPERATION.md "Lua and released pads".
  *
  * SPDX-License-Identifier: MIT
  */
@@ -25,18 +12,10 @@
 #define BOARD_PYRO_TOPOLOGY PYRO_TOPO_HIGH_SWITCHED
 #define BOARD_PYRO_PROTECTION PYRO_PROT_FUSE_ONESHOT
 
-/* ── PIO allocation ───────────────────────────────────────────────
- *
- * PIO0 is the pyro block and PIO1 is Lua's. A released pyro pad is still pyro
- * hardware, so a half-bridge on it runs on PIO0 under pyro rules whoever is
- * commanding it -- which also keeps Lua's four state machines free for Lua's
- * own roles. */
-#define PYRO_PIO_INST pio0
+#define PYRO_PIO_INST pio0 /* the pyro block: released pyro pads run here too */
 #define LUA_PIO_INST pio1
 
-/* J6.3 is deliberately absent: it is half-duplex and needs a role of its own
- * before it can be granted. Granting it silently would give a script a pin
- * that echoes back everything it sends. */
+/* Not J6.3: it echoes back everything sent on it. */
 #define LUA_PIN_COUNT 2
 #define LUA_PIN_LIST                                                                                                   \
     { 18, 19 }

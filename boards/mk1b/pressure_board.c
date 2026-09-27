@@ -1,22 +1,19 @@
 /*
- * Pressure sensor interface — Pyro MK1B.
- *
- * Two SDA pads share SCL (GPIO7) on i2c1: a BMP280 on GPIO6 and an MS5607 on
- * GPIO10, and a board carries one or the other. The BMP280 pad is probed
- * first, in standard mode because its SDA has no pull-up but the RP2040's
- * own (DD-052); then the MS5607's, at its fastest.
+ * src/pressure_sensor.h for MK1B: two SDA pads on one SCL, a BMP280's and an
+ * MS5607's, and a board carries one or the other. See
+ * THEORY_OF_OPERATION.md "Pressure sensor".
  *
  * SPDX-License-Identifier: MIT
  */
 #include "pressure_sensor.h"
+#include "board_pins.h"
+#include "board_support.h"
 #include "bmp280_driver.h"
 #include "i2c_recover.h"
 #include "ms5607_driver.h"
-#include "hardware/i2c.h"
 #include "hardware/gpio.h"
+#include "hardware/i2c.h"
 #include "hardware/resets.h"
-
-#include "board_pins.h"
 
 _Static_assert(BOARD_MS5607_I2C_HZ <= MS5607_I2C_MAX_HZ, "faster than the MS5607 allows");
 _Static_assert(BOARD_BMP280_I2C_HZ <= BMP280_I2C_MAX_HZ, "faster than the BMP280 allows");
@@ -25,12 +22,17 @@ _Static_assert(BOARD_BMP280_I2C_HZ <= BMP280_I2C_MAX_HZ, "faster than the BMP280
 #define BMP280_SDA BOARD_PIN_BMP280_SDA
 #define MS5607_SDA BOARD_PIN_MS5607_SDA
 
-/* The pull-ups settle before the first transfer. */
 #define PULLUP_SETTLE_MS 10u
+
+/* BMP280 datasheet page 24: 0xB6 to register 0xE0 is a soft reset. */
+#define BMP280_REG_RESET 0xE0
+#define BMP280_SOFT_RESET 0xB6
+#define BMP280_ADDR_SDO_LOW 0x76
+#define BMP280_ADDR_SDO_HIGH 0x77
 
 extern void hal_telemetry_send(const char *sentence);
 
-/* [DD-053] Each state is a step a loop takes; nothing here waits. */
+/* Each state is a step a loop takes [DD-053]. */
 typedef enum {
     BU_RECOVER,
     BU_BMP280_SETTLE, /* pads configured; then the soft reset */
@@ -58,8 +60,9 @@ static void configure_i2c_pins(uint sda_pin) {
 
 void pressure_sensor_begin(void) {
     hal_telemetry_send("!PRES sensor init start\r\n");
-    reset_block(RESETS_RESET_I2C1_BITS);
-    unreset_block_wait(RESETS_RESET_I2C1_BITS);
+    uint32_t i2c_block = BOARD_I2C_INST == i2c0 ? RESETS_RESET_I2C0_BITS : RESETS_RESET_I2C1_BITS;
+    reset_block(i2c_block);
+    unreset_block_wait(i2c_block);
     /* A STOP on both pads: either sensor may be the one left mid-transfer. */
     static const uint8_t sda[] = {BMP280_SDA, MS5607_SDA};
     i2c_recover_begin(&bu.recover, I2C_SCL_PIN, sda, 2);
@@ -82,7 +85,7 @@ pressure_sensor_type_t pressure_sensor_step(uint32_t now_ms) {
         if (!i2c_recover_step(&bu.recover))
             return PRESSURE_SENSOR_PENDING;
         hal_telemetry_send("!PRES bus recovery done\r\n");
-        i2c_init(i2c1, BOARD_BMP280_I2C_HZ);
+        i2c_init(BOARD_I2C_INST, BOARD_BMP280_I2C_HZ);
         hal_telemetry_send("!PRES trying BMP280 (SDA=6)\r\n");
         configure_i2c_pins(BMP280_SDA);
         bu.due_ms = now_ms + PULLUP_SETTLE_MS;
@@ -90,24 +93,24 @@ pressure_sensor_type_t pressure_sensor_step(uint32_t now_ms) {
         return PRESSURE_SENSOR_PENDING;
 
     case BU_BMP280_SETTLE: {
-        if ((int32_t)(now_ms - bu.due_ms) < 0)
+        if (!deadline_reached(now_ms, bu.due_ms))
             return PRESSURE_SENSOR_PENDING;
-        /* A soft reset at either address, which a missing sensor NACKs. */
-        static const uint8_t reset_cmd[2] = {0xE0, 0xB6};
-        i2c_write_blocking(i2c1, 0x76, reset_cmd, 2, false);
-        i2c_write_blocking(i2c1, 0x77, reset_cmd, 2, false);
+        /* At either address: a missing sensor NACKs. */
+        static const uint8_t reset_cmd[2] = {BMP280_REG_RESET, BMP280_SOFT_RESET};
+        i2c_write_blocking(BOARD_I2C_INST, BMP280_ADDR_SDO_LOW, reset_cmd, 2, false);
+        i2c_write_blocking(BOARD_I2C_INST, BMP280_ADDR_SDO_HIGH, reset_cmd, 2, false);
         bu.due_ms = now_ms + BMP280_STARTUP_MS;
         bu.state = BU_BMP280_START;
         return PRESSURE_SENSOR_PENDING;
     }
 
     case BU_BMP280_START:
-        if ((int32_t)(now_ms - bu.due_ms) < 0)
+        if (!deadline_reached(now_ms, bu.due_ms))
             return PRESSURE_SENSOR_PENDING;
         if (bmp280_detect())
             return done(PRESSURE_SENSOR_BMP280);
         gpio_init(BMP280_SDA); /* back to a plain input: the pad is let go */
-        i2c_set_baudrate(i2c1, BOARD_MS5607_I2C_HZ);
+        i2c_set_baudrate(BOARD_I2C_INST, BOARD_MS5607_I2C_HZ);
         hal_telemetry_send("!PRES trying MS5607 (SDA=10)\r\n");
         configure_i2c_pins(MS5607_SDA);
         bu.due_ms = now_ms + PULLUP_SETTLE_MS;
@@ -115,7 +118,7 @@ pressure_sensor_type_t pressure_sensor_step(uint32_t now_ms) {
         return PRESSURE_SENSOR_PENDING;
 
     case BU_MS5607_SETTLE:
-        if ((int32_t)(now_ms - bu.due_ms) < 0)
+        if (!deadline_reached(now_ms, bu.due_ms))
             return PRESSURE_SENSOR_PENDING;
         ms5607_detect_begin(&bu.detect);
         bu.state = BU_MS5607_DETECT;

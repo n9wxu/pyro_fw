@@ -1,10 +1,6 @@
 /*
- * BMP280 pressure sensor driver interface.
- *
- * The BMP280 is configured in normal mode (continuous conversion).
- * Results are always available in output registers — no phased API
- * is needed.  The async pressure state machine just calls bmp280_read()
- * periodically.
+ * BMP280 pressure sensor. Normal mode converts continuously, so a read takes
+ * whatever the output registers hold; there is no phased API.
  *
  * SPDX-License-Identifier: MIT
  */

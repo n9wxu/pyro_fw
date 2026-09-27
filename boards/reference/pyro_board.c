@@ -1,63 +1,41 @@
 /*
- * Pyro backend — REFERENCE BOARD (template).
- *
- * Implements src/pyro.h. As shipped this is a safe stub: it reports no
+ * Pyro backend -- REFERENCE BOARD (template). A safe stub: it reports no
  * continuity and refuses to fire, so a board brought up from this template
- * cannot energise anything before you have written the real driver.
- *
- * boards/mk1b/pyro_board.c (AP2192 high-side switches, common enable) and
- * boards/mk1c/pyro_board.c (TPS259570 eFuse, software charge-pump arm) share
- * nothing but this interface.
- *
- * SAFETY, if your board can fire a pyrotechnic device:
- *   - Drive every output inactive in pyro_init(), and from
- *     board_early_init() before any slow initialisation runs.
- *   - Report good == false until continuity is genuinely proven. The
- *     flight logic gates firing on it, which is a second barrier behind
- *     whatever pyro_fire() itself checks.
- *   - Keep the set of functions that can assert a firing output as small
- *     as possible, ideally one, so it can be reviewed as a unit.
+ * energises nothing before its real backend is written. See
+ * THEORY_OF_OPERATION.md "Pyro backend" for what a real one must do.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "pyro.h"
+#include "board_if.h"
 #include "board_pins.h"
 
 extern void hal_telemetry_send(const char *sentence);
 
+void board_early_init(void) {
+    /* TODO: drive every pyro output inactive, as boards/mk1c/pyro_board.c does. */
+}
+
 void pyro_init(void) {
-    /* TODO: claim your pyro pins and drive them inactive. */
+    /* TODO: claim the pyro pins and drive them inactive. */
     hal_telemetry_send("!PYRO reference stub: firing not implemented\r\n");
 }
 
-/* TODO: perform ONE stimulus event here and latch both channels. The
- * stimulus is shared on both existing boards, so doing it per channel would
- * double the current through the bridgewire on every routine check. */
 void pyro_sample(void) {}
 
 void pyro_get(uint8_t channel, pyro_continuity_t *out) {
-    /* TODO: report the RAW reading in raw_adc as well as the booleans -- a
-     * degraded match sits between the thresholds and only the raw number
-     * shows it. Report good == false until continuity is genuinely proven. */
     if (channel != 1 && channel != 2)
         return;
-    out->raw_adc = 0;
-    out->good = false;
-    out->open = true;
-    out->shorted = false;
+    *out = (pyro_continuity_t){.raw_adc = 0, .good = false, .open = true, .shorted = false};
 }
 
 void pyro_fire(uint8_t channel) {
     (void)channel;
-    /* TODO: implement, or leave refusing. */
     hal_telemetry_send("!PYRO FIRE REFUSED: not implemented\r\n");
 }
 
 void pyro_update(uint32_t now_ms) {
-    /* Called every main-loop iteration. Drive any non-blocking state
-     * machine here: duty-cycled measurement, fire-pulse timing, drain
-     * monitoring. Must not block. */
-    (void)now_ms;
+    (void)now_ms; /* TODO: the board's non-blocking check and pulse timing */
 }
 
 bool pyro_is_firing(void) {

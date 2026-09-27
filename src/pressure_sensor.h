@@ -1,6 +1,7 @@
 /*
- * Unified pressure sensor interface, implemented per board in
- * boards/<name>/pressure_board.c.
+ * Unified pressure sensor interface: src/pressure_single_sensor.c for a
+ * board with one sensor on one bus, boards/<name>/pressure_board.c for one
+ * with more.
  *
  * SPDX-License-Identifier: MIT
  */

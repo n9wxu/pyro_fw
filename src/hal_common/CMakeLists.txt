@@ -8,6 +8,7 @@
 
 add_library(pyro_hal_common STATIC
     hal_common.c
+    board_defaults.c    # weak board_if.h defaults: plain GPIO
     ../pyro_release.c
     ../pad_claim.c
 )

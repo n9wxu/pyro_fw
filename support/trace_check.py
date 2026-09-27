@@ -22,7 +22,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 CODE_DIRS = ["src", "boards", "sim", "test", "www", "support"]
-CODE_EXT = (".c", ".h", ".js", ".py")
+CODE_EXT = (".c", ".h", ".js", ".py", ".pio", ".cmake")
 SKIP_DIRS = {"node_modules", "test-results", "playwright-report", "lua-5.4", "third_party"}
 
 # Cited IDs are checked here. Each is a record of the current code.
@@ -31,8 +31,12 @@ ID_DOCS = ["REQUIREMENTS.md", "TRACEABILITY.md", "DECISIONS.md", "IMPLEMENTATION
            "test/README.md", "support/README.md"]
 
 # Functions named in these must exist: they describe the code as it is.
+# Each board's theory of operation joins them.
 FUNC_DOCS = ["IMPLEMENTATION.md", "TRACEABILITY.md", "docs/flight_states.md",
-             "test/README.md", "support/README.md"]
+             "test/README.md", "support/README.md"] + sorted(
+    os.path.relpath(os.path.join(d, "THEORY_OF_OPERATION.md"), ROOT)
+    for d in (os.path.join(ROOT, "boards", b) for b in os.listdir(os.path.join(ROOT, "boards")))
+    if os.path.exists(os.path.join(d, "THEORY_OF_OPERATION.md")))
 
 # Named in the living documents, defined outside this tree.
 EXTERNAL_FUNCS = {
@@ -61,7 +65,7 @@ def code_files():
         for dirpath, dirnames, filenames in os.walk(os.path.join(ROOT, d)):
             dirnames[:] = [x for x in dirnames if x not in SKIP_DIRS]
             for fn in filenames:
-                if fn.endswith(CODE_EXT):
+                if fn.endswith(CODE_EXT) or fn == "CMakeLists.txt":
                     yield os.path.relpath(os.path.join(dirpath, fn), ROOT)
 
 
@@ -204,11 +208,16 @@ def main():
                 if fn not in defined and fn not in EXTERNAL_FUNCS:
                     problems.append(f"{doc}:{lineno}: `{fn}()` is not in the tree")
 
-    # A comment's pointer to a section lands on a heading.
+    # A comment's pointer to a section lands on a heading. The document is
+    # looked for beside the file first -- a board's THEORY_OF_OPERATION.md --
+    # then at the top of the tree.
     for f in code_files():
         for lineno, line in enumerate(read(f).splitlines(), 1):
             for doc, section in SECTION_REF_RE.findall(line):
-                if not os.path.exists(os.path.join(ROOT, doc)):
+                beside = os.path.join(os.path.dirname(f), doc)
+                if os.path.exists(os.path.join(ROOT, beside)):
+                    doc = beside
+                elif not os.path.exists(os.path.join(ROOT, doc)):
                     problems.append(f"{f}:{lineno}: points to {doc}, which does not exist")
                     continue
                 heads = [h.lstrip("#").strip() for h in read(doc).splitlines() if h.startswith("#")]

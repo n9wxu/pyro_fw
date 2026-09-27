@@ -3,6 +3,17 @@
 Each directory here is a self-contained board. The top-level `CMakeLists.txt`
 names no board and never needs editing to add one.
 
+Each board's `THEORY_OF_OPERATION.md` explains how it works, from the pins
+up, and its code points there instead of carrying the explanation:
+
+| Board | Hardware | Pyro architecture |
+|---|---|---|
+| [`mk1a`](mk1a/THEORY_OF_OPERATION.md) | bare RP2040, 16 MB flash | a switched high side per channel, one shared low side |
+| [`mk1b`](mk1b/THEORY_OF_OPERATION.md) | Pico module, 2 MB flash | the same topology on AP2192 high-side switches |
+| [`mk1c`](mk1c/THEORY_OF_OPERATION.md) | bare RP2040, 16 MB flash | a TPS259570 eFuse armed by a charge pump; a low side per channel |
+| [`reference`](reference/THEORY_OF_OPERATION.md) | template (`pico`) | safe stubs: no continuity, refuses to fire |
+| [`sim`, `sim_mk1a/b/c`](sim/THEORY_OF_OPERATION.md) | none (`host`) | a fixture, or the real board file against a model |
+
 ## Porting to new hardware
 
 ```bash
@@ -36,16 +47,26 @@ targets. `boards/sim` is the worked example.
 |---|---|---|
 | `board_pins.h` | identity, capabilities, pin map, bus speeds | `BOARD_NAME_STR`, `BOARD_SHORT_STR`, `BOARD_HAS_*`, `BOARD_MS5607_I2C_HZ` / `BOARD_BMP280_I2C_HZ` |
 | `pin_caps.h` | what each pin MAY become | `BOARD_PIN_CAPS`, topology, protection class, `LUA_PIN_LIST` |
-| `hal_board.c` | `src/board_if.h` | 9 functions: lifecycle, LED, buzzer, UART |
-| `pyro_board.c` | `src/pyro.h` | 6 functions |
-| `pressure_board.c` | `src/pressure_sensor.h` | 3 functions |
-| `board.cmake` | pre-SDK settings | `PICO_BOARD`, flash geometry |
+| `pyro_board.c` | `src/pyro.h` and `board_early_init()` | the pyro outputs are the board's to put down |
+| `board_info.c` | picotool's pin names | recommended |
+| `board.cmake` | pre-SDK settings | `PICO_BOARD`, flash geometry, loop budget |
 | `CMakeLists.txt` | sources and target | must export `pyro_board` |
 | `sdk/<name>.h` | Pico SDK board header | only for a non-Pico-module board |
+| `pressure_board.c` | `src/pressure_sensor.h` | only with two sensors on one bus, as MK1B |
+| `THEORY_OF_OPERATION.md` | how the board works | the code's comments point into it |
 
-Everything else — the UART ISR ring buffer, littlefs, config persistence, the
-async task runner, flight logging, USB and networking — lives in
-`src/hal_common/` and is shared. A board never copies it.
+A board writes none of the rest:
+
+- `src/hal_common/board_defaults.c` implements the rest of `src/board_if.h` —
+  LED, telemetry UART, buzzer, `board_pyro_raw()` — as plain GPIO on the pins
+  `board_pins.h` names. Each is weak: a board whose hardware differs defines
+  its own, and that one links.
+- `src/pressure_single_sensor.c` brings up one sensor on one bus, whichever
+  `board_pins.h` gives a bus speed.
+- `src/board_support.h` holds the deadline test, the median ADC read and the
+  safe-output helper every board file uses.
+- The UART's interrupt-driven ring, littlefs, config persistence, the async
+  task runner, flight logging, USB and networking live in `src/hal_common/`.
 
 ### Sensor bus speeds
 
@@ -54,8 +75,8 @@ Each board sets its own I2C speed per sensor (DD-052): the device's fastest
 carry it. Fast mode's 300 ns rise needs pull-ups of at most
 300 ns / (0.8473 x Cb), 4k7 to about 75 pF (docs/datasheets/, UM10204 pages 44
 and 50); the RP2040's own 50-80k pull-ups are too weak for it. Read the
-pull-ups from the board's design files, not from memory. `pressure_board.c`
-fails the build if a speed exceeds its device's.
+pull-ups from the board's design files, not from memory. The bring-up fails
+the build if a speed exceeds its device's.
 
 ### pin_caps.h
 
@@ -99,7 +120,7 @@ it generates its linker script at FetchContent time. Both happen *before*
 `gpio_init(LED_PIN); gpio_set_dir(LED_PIN, GPIO_OUT)` on whatever that macro
 names. The stock `boards/pico.h` sets it to 25 — which on MK1C is `BIAS_B`, a
 pyro bias injector. A custom SDK board header should leave it undefined and
-drive the LED from `hal_board.c` instead.
+let `board_hw_init()` drive the LED instead.
 
 **A custom SDK board header needs the CMake directive as well as the
 `#define`.** `cmake/generic_board.cmake` greps board headers for
@@ -111,14 +132,7 @@ negative flash size and a garbage A/B slot map **that still links without
 error**. The top level has an explicit geometry guard because the bootloader's
 own linker assertions do not catch it.
 
-## Existing boards
-
-| Board | Hardware | Pyro architecture |
-|---|---|---|
-| `mk1b` | Pico module, 2 MB flash | AP2192 high-side switches, common enable |
-| `mk1c` | Bare RP2040, 16 MB flash | TPS259570 eFuse, software charge-pump arm |
-| `reference` | template (`pico`) | safe stubs: no continuity, refuses to fire |
-| `sim` | none (`host`) | simulated; runs natively or as WASM |
+## The template and the simulator
 
 `reference` is not buildable hardware. It compiles, so a copy of it builds
 before you have written anything, which is the point.

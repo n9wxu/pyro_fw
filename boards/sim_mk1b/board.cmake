@@ -24,6 +24,7 @@ set(PYRO_HOST_INCLUDE_DIRS
     ${_sim_root}/sim/hw
     ${_sim_root}/sim/plant
     ${_sim_root}/boards/mk1b
+    ${_sim_root}/src/lua        # pin_store.h's pin_assign.h names the Lua platform
 )
 set(PYRO_HOST_DEFINES
     PYRO_SIM_BOARD_PYRO      # hal_sim.c leaves hal_pyro_* to the glue
@@ -33,6 +34,7 @@ set(PYRO_HOST_DEFINES
 set(PYRO_HOST_HAL_SOURCES
     ${_sim_root}/boards/sim/hal_sim.c
     ${_sim_root}/boards/mk1b/pyro_board.c
+    ${_sim_root}/boards/sim_mk1b/pin_store_sim.c
     ${_sim_root}/sim/hw/rp2040_shim.c
     ${_sim_root}/sim/hw/pyro_sim_glue.c
     ${_sim_root}/sim/plant/net_solve.c

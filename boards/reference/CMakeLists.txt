@@ -5,9 +5,10 @@
 # top-level CMakeLists.txt never needs to know this board exists.
 
 add_library(pyro_board STATIC
-    hal_board.c       # implements src/board_if.h
-    pyro_board.c      # implements src/pyro.h
-    pressure_board.c  # implements src/pressure_sensor.h
+    pyro_board.c      # src/pyro.h, and board_early_init()
+    board_info.c      # picotool's pin names
+    # One sensor on one bus. With two, write a pressure_board.c as MK1B does.
+    ${CMAKE_SOURCE_DIR}/src/pressure_single_sensor.c
     # TODO: board-private drivers go here
 )
 

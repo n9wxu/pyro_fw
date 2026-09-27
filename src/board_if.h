@@ -6,6 +6,10 @@
  * numbers, so a new board is a new directory rather than an edit to shared
  * code.
  *
+ * Only board_early_init() has no default. The rest have plain-GPIO defaults
+ * in src/hal_common/board_defaults.c, on the pins board_pins.h names; a
+ * board whose hardware differs defines its own and that one links.
+ *
  * Scope: this contract assumes an RP2040-family target, because
  * src/hal_common/ is written against the Pico SDK. Porting to a different
  * MCU family means supplying a new common HAL alongside a new board
@@ -30,21 +34,15 @@
 
 /* ── Lifecycle ────────────────────────────────────────────────────── */
 
-/* Called first in hal_platform_init(), before any slow initialisation
- * (USB, networking, filesystem) that could leave a pin floating.
- *
- * Put anything here that must reach a safe state immediately. On both
- * existing boards that means silencing the buzzer; on a board with pyro
- * outputs it also means driving them inactive, although the RP2040 pad
- * reset state (input, pull-down) already does that before any code runs. */
+/* Called in hal_platform_init() once the buzzer is silenced, before any
+ * slow initialisation (USB, networking, filesystem). Drive every pyro output
+ * inactive here. The RP2040's pad reset state (input, pull-down) already
+ * holds them there, so this asserts the safe state rather than making it. */
 void board_early_init(void);
 
-/* Called after the TinyUSB BSP's board_init(), which may reinitialise pins
- * the BSP believes it owns. Set up the LED, the telemetry UART pins and any
- * ADC inputs here.
- *
- * Named board_hw_init rather than board_init because bsp/board_api.h already
- * declares board_init() for the TinyUSB BSP. */
+/* Called after the TinyUSB BSP's board_init(), which reinitialises the pin
+ * PICO_DEFAULT_LED_PIN names. The default sets up the LED and the telemetry
+ * UART pins. Not board_init(): bsp/board_api.h declares that. */
 void board_hw_init(void);
 
 /* ── Heartbeat LED ────────────────────────────────────────────────── */
@@ -64,14 +62,11 @@ void board_led_toggle(void);
 
 /* Move the buzzer to another pad, or BOARD_BUZZER_NO_PIN to silence it.
  *
- * The pin is runtime rather than compile-time because an operator may wire a
- * buzzer to a user pad -- the only way MK1A can have one at all. The old pad
- * is returned to input so a reassignment does not leave two pads driven.
- *
- * Still a board function rather than common code: the drive is a plain GPIO
- * on every board here, but a board with a piezo driver or a PWM slice behind
- * its buzzer needs to do something else, and that is what this interface is
- * for. pin_assign_validate() has already checked the pad can take it. */
+ * Runtime rather than compile-time: an operator may wire a buzzer to a user
+ * pad, the only way MK1A has one at all. The old pad returns to input, so a
+ * reassignment never leaves two pads driven. pin_assign_validate() has
+ * already checked the pad can take it. The default starts on
+ * BOARD_PIN_BUZZER, or on no pad when board_pins.h declares none. */
 void board_buzzer_set_pin(uint8_t pin);
 
 void board_buzzer_init(void);

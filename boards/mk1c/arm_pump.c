@@ -14,7 +14,7 @@ static uint arm_sm;
 static uint arm_offset;
 static bool arm_pio_loaded;
 
-/* Claimed at boot, so a PIO that is full fails there and not at a fire. */
+/* At boot: a PIO that is full fails there, not at a fire. */
 void arm_pump_init(void) {
     if (arm_pio_loaded)
         return;
@@ -40,7 +40,7 @@ void arm_pump_stop(void) {
         return;
     pio_sm_set_enabled(ARM_PIO, arm_sm, false);
     pio_sm_clear_fifos(ARM_PIO, arm_sm);
-    /* Hand the pad back to SIO and drive it low, so nothing can toggle it. */
+    /* Back to plain GPIO, low: nothing can toggle it. */
     gpio_init(BOARD_PIN_ARM_TOGGLE);
     gpio_put(BOARD_PIN_ARM_TOGGLE, 0);
     gpio_set_dir(BOARD_PIN_ARM_TOGGLE, GPIO_OUT);

@@ -13,8 +13,8 @@
  * injector. Leaving it undefined is the entire reason this board header
  * exists rather than reusing PICO_BOARD=pico.
  *
- * The MK1C heartbeat LED (D1, blue) is GPIO8 and is driven directly by
- * hal_hardware.c, not by the BSP.
+ * The MK1C heartbeat LED (D1, blue) is GPIO8, driven by board_led_set() in
+ * src/hal_common/board_defaults.c, not by the BSP.
  *
  * SPDX-License-Identifier: MIT
  */

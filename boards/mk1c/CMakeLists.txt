@@ -1,31 +1,25 @@
-# ── Stage 2: sources and target, added AFTER pico_sdk_init() ─────────
-#
-# Exports the target `pyro_board`, which the application links. Anything
-# private to this board (extra drivers, compile flags, dependencies) stays
-# here rather than leaking into the top-level CMakeLists.txt.
+# The board's sources, added after pico_sdk_init(), as the `pyro_board`
+# library the application links.
 
 add_library(pyro_board STATIC
-    hal_board.c       # implements src/board_if.h
-    pyro_board.c      # implements src/pyro.h
-    pressure_board.c  # implements src/pressure_sensor.h
-    arm_pump.c        # ARM_TOGGLE charge pump, for the firing path
+    pyro_board.c      # src/pyro.h, board_early_init() and board_pyro_raw()
+    pyro_measure.c    # the quiescent read and the presence test
+    pyro_faults.c     # the bus's latched faults
+    pyro_sequence.c   # the firing sequence
+    arm_pump.c        # the ARM_TOGGLE charge pump
+    board_info.c      # picotool's pin names
+    ${CMAKE_SOURCE_DIR}/src/pressure_single_sensor.c  # src/pressure_sensor.h
 )
 
 target_include_directories(pyro_board PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 
-# ARM_TOGGLE charge pump. FIFO-paced so it stops when the firmware stops;
-# see the header comment in arm_pump.pio for why it is not a free-running
-# PWM slice.
+# See THEORY_OF_OPERATION.md "Arm pump".
 pico_generate_pio_header(pyro_board ${CMAKE_CURRENT_LIST_DIR}/arm_pump.pio)
 
-# Lua user pins. The implementation is shared (src/lua/lua_pio_platform.c);
-# this board contributes only its pin list, in pin_caps.h. Everything Lua can
-# reach goes through PIO or plain SIO -- see the header comment in
-# src/lua/lua_pio.pio for why a peripheral function is never used.
+# Lua's pins: shared code, this board's list in pin_caps.h.
 if(PYRO_HAS_LUA)
     target_sources(pyro_board PRIVATE ${CMAKE_SOURCE_DIR}/src/lua/lua_pio_platform.c)
     pico_generate_pio_header(pyro_board ${CMAKE_SOURCE_DIR}/src/lua/lua_pio.pio)
-    # The half-bridge runs on the PYRO PIO, not Lua's. See pyro_bridge.pio.
     pico_generate_pio_header(pyro_board ${CMAKE_SOURCE_DIR}/src/pyro_bridge.pio)
     target_include_directories(pyro_board PRIVATE
         ${CMAKE_SOURCE_DIR}/src/lua

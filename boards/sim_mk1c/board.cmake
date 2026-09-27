@@ -33,6 +33,10 @@ set(PYRO_HOST_DEFINES
 set(PYRO_HOST_HAL_SOURCES
     ${_sim_root}/boards/sim/hal_sim.c
     ${_sim_root}/boards/mk1c/pyro_board.c
+    ${_sim_root}/boards/mk1c/pyro_measure.c
+    ${_sim_root}/boards/mk1c/pyro_faults.c
+    ${_sim_root}/boards/mk1c/pyro_sequence.c
+    ${_sim_root}/boards/mk1c/arm_pump.c
     ${_sim_root}/sim/hw/rp2040_shim.c
     ${_sim_root}/sim/hw/pyro_sim_glue.c
     ${_sim_root}/sim/plant/net_solve.c

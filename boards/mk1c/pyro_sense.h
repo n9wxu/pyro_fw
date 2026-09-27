@@ -1,13 +1,7 @@
 /*
- * MK1C tracking-test classification [DESIGN.md S3, DD-054]. Pure arithmetic
- * on ADC counts, shared by pyro_board.c and the host tests.
- *
- * Presence is a channel node following the bus, judged against the bus
- * reading taken in the same test, never against an absolute level. The
- * bench MK1C's bus sits at about 688 counts under bias, not DESIGN.md 4's
- * 1058, because U9's OUT conducts back into the part above about 0.72 V,
- * and that knee moves with the part and its temperature. A present channel
- * reads the bus less its match; an open one reads under 50 counts.
+ * MK1C's sense levels and the presence verdict: pure arithmetic on ADC
+ * counts, shared with the plant model and the host tests. See
+ * THEORY_OF_OPERATION.md "Sense network" and "Presence test".
  *
  * SPDX-License-Identifier: MIT
  */
@@ -16,12 +10,28 @@
 
 #include <stdint.h>
 
-/* ── The bench characterisation (DD-054) ───────────────────────────
- * Fitted to the bench MK1C's ADC and a scope at CN1, 2026-09-26. The plant
- * model is built from these. */
-#define MK1C_BENCH_BUS_BIASED_COUNTS 688   /* bus under its bias, no match     */
-#define MK1C_BENCH_CH_BIASED_COUNTS 1262   /* channel under its bias, no match */
-#define MK1C_BENCH_C_BUS_NF 1100           /* C115 and the bus's strays        */
+/* ── Scaling ─────────────────────────────────────────────────────── */
+
+/* Every divider is 0.3329 against a 3.3 V, 12-bit ADC. */
+#define NODE_UV_PER_COUNT 2421
+
+static inline uint32_t counts_to_node_mv(uint16_t counts) {
+    return ((uint32_t)counts * NODE_UV_PER_COUNT) / 1000u;
+}
+
+/* DESIGN.md 4's levels, which a change of divider or reference breaks. */
+_Static_assert((1058u * NODE_UV_PER_COUNT) / 1000u >= 2550 && (1058u * NODE_UV_PER_COUNT) / 1000u <= 2570,
+               "bus bias, no match: 1058 counts should be ~2.56 V");
+_Static_assert((1214u * NODE_UV_PER_COUNT) / 1000u >= 2930 && (1214u * NODE_UV_PER_COUNT) / 1000u <= 2950,
+               "channel bias, match off: 1214 counts should be ~2.94 V");
+_Static_assert((3469u * NODE_UV_PER_COUNT) / 1000u >= 8390 && (3469u * NODE_UV_PER_COUNT) / 1000u <= 8410,
+               "full 2S bus: 3469 counts should be ~8.4 V");
+
+/* ── The board as measured (DD-054) ──────────────────────────────── */
+
+#define MK1C_BENCH_BUS_BIASED_COUNTS 688 /* bus under its bias, no match     */
+#define MK1C_BENCH_CH_BIASED_COUNTS 1262 /* channel under its bias, no match */
+#define MK1C_BENCH_C_BUS_NF 1100         /* C115 and the bus's strays        */
 /* U9's OUT, off, conducting back into the part: a junction behind a resistance. */
 #define MK1C_U9_REV_IS_A 1.2e-12
 #define MK1C_U9_REV_NVT_V 0.040
@@ -31,14 +41,15 @@
 #define MK1C_BIAS_DIODE_IS_A 3.7e-6
 #define MK1C_BIAS_DIODE_NVT_V 0.045
 
-/* A bus below this never rose: shorted, or its bias open. The test then
- * says nothing about the channels. Every healthy bias puts it above 600. */
-#define TRACK_BUS_MIN_COUNTS 200u
+/* ── Levels ──────────────────────────────────────────────────────── */
+
+#define COLD_NODE_MAX_COUNTS 50   /* an unbiased node with nothing on it   */
+#define TRACK_BUS_MIN_COUNTS 200u /* a biased bus below this did not rise */
+
+/* ── The presence verdict ────────────────────────────────────────── */
 
 typedef enum { TRACK_OPEN, TRACK_PRESENT, TRACK_INVALID } track_t;
 
-/* Present at half the bus or more: a match reads about the whole of it, a
- * 5k dirty connector three quarters, and the raw counts say which. */
 static inline track_t track_channel(uint16_t channel, uint16_t bus) {
     if (bus < TRACK_BUS_MIN_COUNTS)
         return TRACK_INVALID;

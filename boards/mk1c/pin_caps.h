@@ -1,20 +1,7 @@
 /*
- * Pyro MK1C — what each pin may become.
- *
- * Rows say what the HARDWARE supports, not what is assigned. See
- * src/pin_model.h for the vocabulary and the build-time checks.
- *
- * Topology is the mirror of MK1A and MK1B: two switched LOW sides (FIRE_A,
- * FIRE_B into AO3400A gates) and a common HIGH side, the U9 TPS259570 eFuse.
- *
- * The common is not a plain gate. U9's enable is driven by the ARM_TOGGLE
- * charge pump, which must keep toggling to stay on -- see arm_pump.pio and
- * DESIGN.md invariant 5. So ARM_TOGGLE carries no FN_DIGITAL: holding it at a
- * level does not hold the eFuse on, and a script that assumed otherwise would
- * be reasoning about a pin that behaves like no other output on any board.
- * That also means this board cannot offer a half-bridge.
- *
- * GPIO25 is BIAS_B here, NOT an LED. See board_pins.h.
+ * What each MK1C pin may become; src/pin_model.h holds the vocabulary and
+ * the build-time checks. See THEORY_OF_OPERATION.md "Lua and released pads":
+ * ARM_TOGGLE has no plain-output capability, so there is no half-bridge.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -26,13 +13,7 @@
 #define BOARD_PYRO_TOPOLOGY PYRO_TOPO_LOW_SWITCHED
 #define BOARD_PYRO_PROTECTION PYRO_PROT_EFUSE
 
-/* ── PIO allocation ───────────────────────────────────────────────
- *
- * PIO0 is the pyro block and PIO1 is Lua's. A released pyro pad is still pyro
- * hardware, so a half-bridge on it runs on PIO0 under pyro rules whoever is
- * commanding it -- which also keeps Lua's four state machines free for Lua's
- * own roles. */
-#define PYRO_PIO_INST pio0
+#define PYRO_PIO_INST pio0 /* the pyro block: released pyro pads run here too */
 #define LUA_PIO_INST pio1
 
 #define LUA_PIN_COUNT 4

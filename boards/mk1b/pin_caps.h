@@ -1,24 +1,6 @@
 /*
- * Pyro MK1B — what each pin may become.
- *
- * Rows say what the HARDWARE supports, not what is assigned. See
- * src/pin_model.h for the vocabulary and the build-time checks.
- *
- * Same topology as MK1A: two switched high sides and one common low side.
- * U5 AP2192 is a dual high-side switch whose EN1/EN2 gate OUT1/OUT2 into
- * Switched_BAT1/2, and Q1B AO6800 is the common low side gated by sw_gnd.
- * CN1 carries igniter 1 on pin 1, igniter 2 on pin 4 and the common return on
- * pins 2-3, so shorting a channel pin to the common pins gives the bridge
- * midpoint.
- *
- * Protection differs from MK1A and the UI warning must follow it: F2 is a
- * 1.5 A self-resetting PTC and the AP2192 current-limits with FLG1/FLG2
- * wired back to the MCU, so a shoot-through here trips and recovers.
- *
- * Note for anything reading sense on this board: the AP2192 has an internal
- * ~100 ohm output bleed. Against the 100k pull-ups (R26, R19) that holds the
- * sense node near 4 counts with the high side off, so continuity
- * discrimination is a few counts here where MK1A gets a full-scale swing.
+ * What each MK1B pin may become; src/pin_model.h holds the vocabulary and
+ * the build-time checks. See THEORY_OF_OPERATION.md "Lua and released pads".
  *
  * SPDX-License-Identifier: MIT
  */
@@ -30,18 +12,10 @@
 #define BOARD_PYRO_TOPOLOGY PYRO_TOPO_HIGH_SWITCHED
 #define BOARD_PYRO_PROTECTION PYRO_PROT_PTC_LIMITED
 
-/* ── PIO allocation ───────────────────────────────────────────────
- *
- * PIO0 is the pyro block and PIO1 is Lua's. A released pyro pad is still pyro
- * hardware, so a half-bridge on it runs on PIO0 under pyro rules whoever is
- * commanding it -- which also keeps Lua's four state machines free for Lua's
- * own roles. */
-#define PYRO_PIO_INST pio0
+#define PYRO_PIO_INST pio0 /* the pyro block: released pyro pads run here too */
 #define LUA_PIO_INST pio1
 
-/* Only GPIO8. GPIO0/GPIO1 are the telemetry UART: they can be moved to Lua,
- * but that is a configuration decision that costs the downlink, and nothing
- * in the firmware can hand the UART back yet if the VM dies. */
+/* Not GPIO0/1: moving the telemetry UART to Lua costs the downlink. */
 #define LUA_PIN_COUNT 1
 #define LUA_PIN_LIST                                                                                                   \
     { 8 }

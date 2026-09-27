@@ -559,6 +559,49 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-060: A Theory Of Operation Per Board; Structure In Place Of Comments
+- **Decision:** at the user's direction -- "write a comprehensive theory of
+  operation for each board type ... Reduce the comments by referencing the
+  theory of operation ... The code functionality should be clear by the code
+  structure and not rely upon comments" -- each board directory carries a
+  `THEORY_OF_OPERATION.md` (MK1A, MK1B, MK1C, the reference template, and one
+  for the simulator boards), and its code points into it with
+  `See THEORY_OF_OPERATION.md "Heading"`. `support/trace_check.py` resolves
+  such a pointer beside the file that makes it, and fails CI on a heading
+  that is not there; it also checks that the functions a board's document
+  names exist, and scans `.pio`, `.cmake` and `CMakeLists.txt` too.
+- **What was the same on every board is written once:**
+  - `src/hal_common/board_defaults.c`: the LED, the telemetry UART, the
+    buzzer pad and `board_pyro_raw()`, as weak plain-GPIO defaults. The
+    buzzer stays overridable, as `src/board_if.h` promised for a board with a
+    piezo driver or a PWM slice behind it.
+  - `src/pressure_single_sensor.c`: the bring-up for one sensor on one bus,
+    which sensor chosen by the bus speed `board_pins.h` declares. MK1B, with
+    two sensors on one SCL, keeps its own.
+  - `src/bmp280_driver.c`, from the two boards' identical copies, on the
+    board's `BOARD_I2C_INST`.
+  - `src/board_support.h`: the deadline test, the median ADC read and the
+    safe-output helper.
+- **`board_early_init()` moves into each `pyro_board.c`.** Its one job is to
+  put the pyro outputs down, and those are the pyro backend's pins;
+  `hal_platform_init()` already silenced the buzzer before calling it. MK1B,
+  which only silenced the buzzer there, now drives its enables and common low
+  as the other boards do. What was left of `hal_board.c` -- picotool's pin
+  names -- is `board_info.c`, and MK1B's now calls GPIO15 the shared low side,
+  as the netlist does.
+- **MK1C's `pyro_board.c` is split** by what each part is: the measurements
+  (`pyro_measure.c`), the latched faults (`pyro_faults.c`), the firing
+  sequence (`pyro_sequence.c`), and the `src/pyro.h` glue.
+- **Names say what the code does:** the continuity phases are named for what
+  they measure (`CHECK_PRESENCE`, `CHECK_SHORTS`), the fire steps for the
+  step (`STEP_PRECHARGE`, `STEP_HOLD`), and the thresholds for what they
+  separate (`PATH_TO_GROUND_MAX_COUNTS`, `NO_PATH_MIN_COUNTS`).
+- **Behaviour is unchanged.** Every host suite passes as it did, and CI's
+  format check follows the renamed files. `boards/sim_mk1b`, broken since
+  MK1B's backend began asking which pads it owns, builds again with a
+  `pin_store_owns()` of its own; `boards/sim_mk1c` gains the arm pump it
+  lacked since DD-056.
+
 ### DD-059: MK1B Reads Continuity As MK1A Does
 - **Found on the bench, 2026-09-27:** the second MK1B, which owns its pyros,
   reported `pyro1_short` and `pyro2_short` at 16 and 17 counts. MK1B's sense
