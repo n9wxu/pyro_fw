@@ -102,6 +102,7 @@ static struct {
     bool stop_after_apogee; /* 2 s after the true apogee */
     void (*on_sample)(const truth_t *tr);
     uint32_t interval_ms; /* the sensor's sample interval; 0: the test HAL's 20 ms */
+    bool every_sample;    /* high-rate logging [FLT-LOG-07] */
 } fly_opts;
 
 /* A flight from power-on to LANDED, or to until_ms. */
@@ -115,6 +116,7 @@ static result_t fly(const flight_t *f, uint32_t seed, uint32_t pad_s, uint32_t u
     uint32_t t = 0;
     uint32_t pad = run_to_pad(&t);
     r.ignition_ms = pad + pad_s * 1000u;
+    ctx.config.log_high_rate = fly_opts.every_sample;
     if (fly_opts.channels) {
         ctx.config.pyro1_mode = fly_opts.p1_mode;
         ctx.config.pyro1_value = fly_opts.p1_value;
@@ -1390,18 +1392,18 @@ void test_T6_rejecting_starts_at_zero(void) {
 
 static char logbuf[65536];
 
-static int flown_log(void) {
+static int flown_log(bool every_sample) {
     const flight_t f = {5.0f, 1.0f, 20.0f, 0.0f}; /* apogee 147 m: the log fits the test HAL's file */
+    fly_opts.every_sample = every_sample;
     result_t r = fly(&f, 51, 3, 120000, false);
     TEST_ASSERT_TRUE_MESSAGE(r.landed_ms != 0, "the flight landed and closed its log");
-    int n = mock_fs_peek("flight_log.csv", logbuf, (int)sizeof(logbuf) - 1);
+    int n = test_flight_log_csv(logbuf, (int)sizeof(logbuf));
     TEST_ASSERT_TRUE_MESSAGE(n > 0, "the flight wrote a log");
-    logbuf[n] = '\0';
     return n;
 }
 
 void test_T8_columns(void) {
-    flown_log();
+    flown_log(true);
     const char *cols = "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n";
     const char *hdr = strstr(logbuf, cols);
     TEST_ASSERT_NOT_NULL_MESSAGE(hdr, "the log names raw_pa and temp_c");
@@ -1437,7 +1439,7 @@ static void end_pulse(uint32_t now_ms) {
 }
 
 void test_T8_replay(void) {
-    flown_log();
+    flown_log(true);
     replay_row_hook = end_pulse;
     replay_events_t logged, decided;
     TEST_ASSERT_TRUE(replay_logged_events(logbuf, &logged));
@@ -1454,6 +1456,14 @@ void test_T8_replay(void) {
     for (int i = 0; i < 4; i++)
         TEST_ASSERT_TRUE_MESSAGE(b[i] != 0 && (a[i] > b[i] ? a[i] - b[i] : b[i] - a[i]) <= 20u, msg);
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, decided.diverged_ms, msg);
+}
+
+/* [DAT-08] A log thinned to a row a second has lost the readings a replay
+ * needs: the replay says so rather than deciding from a tenth of them. */
+void test_T8_replay_refuses_a_thinned_log(void) {
+    flown_log(false);
+    replay_events_t decided;
+    TEST_ASSERT_FALSE(replay_run(logbuf, &decided));
 }
 
 /* ── T5: one estimator, a fit to the pressure ─────────────────────── */
@@ -2256,6 +2266,7 @@ int main(void) {
     RUN_TEST(test_T11_landing_holds_a_second);
     RUN_TEST(test_T8_columns);
     RUN_TEST(test_T8_replay);
+    RUN_TEST(test_T8_replay_refuses_a_thinned_log);
     RUN_TEST(test_T5_fit_reference);
     RUN_TEST(test_T5_fit_noise);
     RUN_TEST(test_T5_clean);

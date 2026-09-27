@@ -22,6 +22,7 @@ typedef struct {
     int col[C_COUNT]; /* each named column's position, or -1 */
     int32_t ground_pa;
     config_t cfg;
+    bool thinned; /* a row a second: the readings between are gone [DAT-08] */
 } header_t;
 
 /* Splits one line into at most max fields, in place. */
@@ -72,6 +73,8 @@ static const char *read_header(const char *csv, header_t *h) {
             snprintf(ini + k, sizeof(ini) - k, "units=%s\n", line + 9);
         } else if (strncmp(line, "# Ground Pa: ", 13) == 0) {
             h->ground_pa = (int32_t)strtol(line + 13, NULL, 10);
+        } else if (strncmp(line, "# Log rate: ", 12) == 0) {
+            h->thinned = strcmp(line + 12, "every sample") != 0;
         }
         p = eol + 1;
     }
@@ -222,7 +225,7 @@ bool replay_run(const char *csv, replay_events_t *out) {
     memset(out, 0, sizeof(*out));
     header_t h;
     const char *rows = read_header(csv, &h);
-    if (!rows || h.col[C_TIME] < 0 || h.col[C_EVENT] < 0 || h.col[C_RAW] < 0 || h.col[C_PRESSURE] < 0)
+    if (!rows || h.thinned || h.col[C_TIME] < 0 || h.col[C_EVENT] < 0 || h.col[C_RAW] < 0 || h.col[C_PRESSURE] < 0)
         return false;
     static flight_context_t ctx;
     memset(&ctx, 0, sizeof(ctx));

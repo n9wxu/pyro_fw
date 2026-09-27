@@ -84,6 +84,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-BROWN-05 | Why a boot was cold | Chain: test_T1_cold_reasons | ✅ |
 | FLT-BROWN-06 | A recovered flight reads continuity and produces altitude | Chain: test_T1_rejoins_descent (the main fires at 300 m), test_T1_rejoins_ascent (the drogue fires at apogee) | ✅ |
 | FLT-LOG-05 | No flash write through the shock window | Code review: log_flash_service() holdoff | ⚠ untested |
+| FLT-LOG-07 | A row a second, or every sample; binary on disk | Integration: test_FLT_LOG_07_one_row_a_second_unless_high_rate (1.0-1.1 s apart, 15x more at the high rate, every event at both); Format: test_FLOG_01..08 | ✅ |
 | FLT-LOG-06 | Log committed every second, in the window | Hardware (MK1C, instrumented bench build): readable while written; reset mid-log keeps rows to 0.5 s before it; flash_refusals 0 | ✅ HW |
 | LUA-IO-01 | Export / import the Lua program | Playwright: lua program exports to a file; imports into the editor | ✅ |
 | LUA-IO-02 | Import does not touch the device | Playwright: imports into the editor without saving; oversized import refused | ✅ |
@@ -154,11 +155,11 @@ Verify web interface behavior against mock server in 3 device modes.
 | SYS-DATA-03 | Announce max altitude | Integration: test_BUZ_07_03_lifecycle | ✅ |
 | DAT-01 | 4096-entry ring buffer | Integration: samples recorded throughout flight | ✅ |
 | DAT-02 | Sample fields, at the sample's time | Integration: events have correct fields; Chain: test_T11_log_rows_at_sample_time, test_T8_columns | ✅ |
-| DAT-08 | A log replays through the firmware | Chain: test_T8_replay (every event to the sample, no state diverging) | ✅ |
+| DAT-08 | A high-rate log replays through the firmware | Chain: test_T8_replay (every event to the sample, no state diverging), test_T8_replay_refuses_a_thinned_log | ✅ |
 | DAT-03 | Events tag samples | Integration: test_DAT_04_events | ✅ |
 | DAT-04 | Log all event types | Integration: test_DAT_04_events; Closed-loop: test_REV16_forced_main_is_in_the_log | ✅ |
-| DAT-06 | CSV export | Integration: test_DAT_06_csv_export (flight.csv); Chain: test_T8_columns (flight_log.csv, closed at landing) | ✅ |
-| DAT-07 | CSV metadata header | Integration: test_DAT_06_csv_export (ID, both channels, max altitude); Chain: test_T8_replay (reads the log's own header) | ✅ |
+| DAT-06 | Kept as binary, exported as CSV | Integration: test_DAT_06_csv_export (flight.csv); Chain: test_T8_columns (the binary log rendered, closed at landing); Format: test_FLOG_02, test_FLOG_06 (a log cut anywhere) | ✅ |
+| DAT-07 | CSV metadata header | Integration: test_DAT_06_csv_export (ID, both channels, max altitude), test_FLT_LOG_07_one_row_a_second_unless_high_rate (the rate); Format: test_FLOG_01; Chain: test_T8_replay (reads the log's own header) | ✅ |
 | BUZ-03..07 | Altitude beep-out | Integration: test_BUZ_07_03_lifecycle | ✅ |
 
 ## 4. Configuration
@@ -231,7 +232,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | WEB-API-03 | POST /api/config | Web UI: save test | ✅ |
 | WEB-API-04 | POST /api/ota | Hardware: OTA to MK1A/B/C, every littlefs file preserved | ✅ HW |
 | WEB-API-05 | POST /api/reboot | Hardware: 200 with CORS, board back in PAD_IDLE | ✅ HW |
-| WEB-API-06 | GET /api/flight.csv | Hardware: bench smoke test | ✅ HW |
+| WEB-API-06 | GET /api/flight.csv, rendered from the binary log | Format: test_FLOG_04 (any division of the reads), test_FLOG_05 (the counted length is the rendered one); Hardware: the empty log reads as the column header (`support/api_check.py`); a flown log's download is owed on the bench | ⚠️ |
 | WEB-API-07 | CORS headers | Hardware: bench smoke test, every route | ✅ HW |
 | WEB-API-08 | The API live in flight; only the log touches the filesystem | Integration: test_WEB_API_08_only_the_log_touches_the_filesystem_in_flight (a whole flight asks for no other file), test_WEB_API_08_spent_marker_waits_for_the_log; the web server's 423s and the dropped transfer by inspection, bench check owed | ⚠️ |
 | WEB-API-09 | Erase the flight log | Web UI: the flight log can be erased; Hardware: bench smoke test | ✅ |
@@ -244,9 +245,11 @@ Verify web interface behavior against mock server in 3 device modes.
 | WEB-HTTP-06 | The head moves bytes; units run in the slack | HTTP work: test_WORK_01..05 (in turn, only with a step, the budget, one a period); HTTP: test_HTTP_17 (a step to take); Hardware: all four bench boards through G4, 0 loop overruns (MK1C 1-4 before), STAGE 1 peak 2.1 ms at most (MK1C 7.7 before) | ✅ |
 | WEB-HTTP-07 | Portable units on core1, the connection held exclusively | HTTP work: test_WORK_06..15 (the claim, the hold, the return, a unit cut short); HTTP: test_HTTP_18 (answered away from the service call); `support/prove_core0.py` folds http_unit_vt into core1's graph and fails an image without it; Hardware: MK1C, 961 units on core1 through one G4 run | ✅ |
 | WEB-API-11 | /api/status from a snapshot; its keys; valid JSON | Status: test_SJ_01 (every key, in order, formatted), test_SJ_02 (the widest fits), test_SJ_03 (a quote in the rocket's name), test_SJ_04 (refused, not truncated), test_SJ_07 (no watchdog, no stage); Hardware: `support/api_check.py` on all four bench boards | ✅ |
+| WEB-API-12 | /api/log/space | Hardware: `support/api_check.py` (bytes free, 22-byte records, 1 and 50 or 100 rows/s) on the bench boards; Web UI: the mock's answer drives WEB-UI-06's tests | ✅ HW |
 | WEB-UI-01 | Status in config units | Web UI: altitude in meters/feet tests | ✅ |
 | WEB-UI-04 | Flight summary + CSV, from the log, refreshed, named | Web UI: flight data tests, a flight recorded while the page is open appears on refresh; Unit: test_REV09_flight_time_freezes_at_landing | ✅ |
 | WEB-UI-05 | Firmware upload | Web UI: update tab test | ✅ |
+| WEB-UI-06 | High-rate logging, and the longest flight the log holds | Web UI: *log rate: the longest flight the log holds follows the switch*, *log rate: saved with the rest of the tab*, *log rate: no estimate while the flight log is written*; *config tab shows non-default values* | ✅ |
 
 ## 9. Firmware Update
 
@@ -314,7 +317,7 @@ Verify web interface behavior against mock server in 3 device modes.
 |-----|-------------|-------------|--------|
 | CFG-TABLE-01 | X-macro single-table config | Config: test_config_defaults, test_config_roundtrip_defaults (every field from `config_fields.h`) | ✅ |
 | CFG-TABLE-02 | Round-trip serialize → parse | Config: test_config_roundtrip_defaults, test_config_roundtrip_custom | ✅ |
-| CFG-SUBSYS-01 | Each subsystem has configurable params, every key read | Config: test_config_writes_no_inert_keys; Unit: telem_rate_hz; Integration: test_REV12_log_rate_hz_thins_samples_not_events | ✅ |
+| CFG-SUBSYS-01 | Each subsystem has configurable params, every key read | Config: test_config_writes_no_inert_keys; Unit: telem_rate_hz; Config: test_config_parse_new_fields (log_high_rate; an old log_rate_hz is ignored); Integration: test_FLT_LOG_07_one_row_a_second_unless_high_rate | ✅ |
 
 ## 15. Telemetry Formatting (v2.0)
 
@@ -379,8 +382,8 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 234 |
-| ⚠️ Not directly verified (needs a test or hardware) | 19 |
+| ✅ Verified by a host, web or closed-loop test | 236 |
+| ⚠️ Not directly verified (needs a test or hardware) | 20 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 11 |
 

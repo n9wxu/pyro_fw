@@ -23,7 +23,7 @@ function showTab(name) {
   event.target.classList.add('active');
   if (name === 'data') { loadFlightData(); }
   if (name === 'lua') { luaInit(); }
-  if (name === 'config') { relInit(); }
+  if (name === 'config') { relInit(); loadLogSpace(); }
   if (name === 'beeps') { beepsInit(); }
 }
 
@@ -129,7 +129,8 @@ function update() {
 
     /* Store device config — update every poll */
     var newCfg = {id:d.rocket_id, name:d.rocket_name, units:u,
-      p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value};
+      p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value,
+      logHigh:!!d.log_high_rate};
     if (!deviceConfig) {
       deviceConfig = newCfg;
       cfgLoadFromObj(deviceConfig);
@@ -137,7 +138,7 @@ function update() {
       /* Detect device-side change (reboot applied new config) */
       if (deviceConfig.p1mode !== newCfg.p1mode || deviceConfig.p1val !== newCfg.p1val ||
           deviceConfig.p2mode !== newCfg.p2mode || deviceConfig.p2val !== newCfg.p2val ||
-          deviceConfig.units !== newCfg.units) {
+          deviceConfig.units !== newCfg.units || deviceConfig.logHigh !== newCfg.logHigh) {
         deviceConfig = newCfg;
         pendingConfig = null;
         cfgLoadFromObj(deviceConfig);
@@ -190,6 +191,48 @@ function cfgChanged() {
   document.getElementById('cfgDirty').style.display = 'block';
 }
 
+/* ── The flight log's rate, and the longest flight it holds [DD-062] ──
+   The board says how much room the next log has and how big a row is; the
+   estimate is that room at the rate the switch shows. */
+var logSpace = null;
+
+function fmtDuration(s) {
+  if (s >= 2 * 86400) return (s / 86400).toFixed(1) + ' days';
+  if (s >= 2 * 3600) return (s / 3600).toFixed(1) + ' h';
+  if (s >= 120) return Math.round(s / 60) + ' min';
+  return Math.round(s) + ' s';
+}
+
+function logEstimate() {
+  var el = document.getElementById('logEst');
+  if (!el || !logSpace) return;
+  var rate = logSpace.rates_hz[document.getElementById('logHigh').checked ? 1 : 0];
+  if (!rate) { el.textContent = 'No estimate until the pressure sensor is running.'; return; }
+  var secs = logSpace.bytes_free / (logSpace.record_bytes * rate);
+  el.textContent = 'The log holds about ' + fmtDuration(secs) + ' of flight at ' +
+    (rate === 1 ? '1 row/s' : rate + ' rows/s') + '. Lua log lines take room too.';
+}
+
+function loadLogSpace() {
+  var el = document.getElementById('logEst');
+  fetch('/api/log/space').then(function(r) {
+    if (!r.ok) throw r.status;
+    return r.json();
+  }).then(function(d) {
+    logSpace = d;
+    logEstimate();
+  }).catch(function(code) {
+    logSpace = null;
+    el.textContent = code === 423 ? 'No estimate while the flight log is being written.'
+                                  : 'Could not read the space left for the flight log.';
+  });
+}
+
+function logRateChanged() {
+  logEstimate();
+  document.getElementById('cfgDirty').style.display = 'block';
+}
+
 /* The firmware keeps 8 characters of the id and the name (CFG-07); say so
    while typing rather than letting the operator find the ninth missing on the
    Status tab. */
@@ -229,13 +272,16 @@ function cfgLoadFromObj(c) {
   document.getElementById('p1val').value = c.p1val || 0;
   document.getElementById('p2mode').value = c.p2mode || 'agl';
   document.getElementById('p2val').value = c.p2val || 0;
+  document.getElementById('logHigh').checked = !!c.logHigh;
+  logEstimate();
   document.getElementById('cfgDirty').style.display = 'none';
   cfgChanged();
   document.getElementById('cfgDirty').style.display = 'none';
 }
 
 function cfgDefault() {
-  cfgLoadFromObj({id:'PYRO001', name:'MyRocket', units:1, p1mode:'delay', p1val:0, p2mode:'agl', p2val:300});
+  cfgLoadFromObj({id:'PYRO001', name:'MyRocket', units:1, p1mode:'delay', p1val:0, p2mode:'agl', p2val:300,
+                  logHigh:false});
   document.getElementById('cfgDirty').style.display = 'block';
   document.getElementById('cfgDirty').innerHTML = '⚠ Defaults loaded — press <b>Save</b> then <b>Reboot</b> to apply';
 }
@@ -252,7 +298,8 @@ function cfgGetObj() {
     p1mode: document.getElementById('p1mode').value,
     p1val: parseInt(document.getElementById('p1val').value) || 0,
     p2mode: document.getElementById('p2mode').value,
-    p2val: parseInt(document.getElementById('p2val').value) || 0
+    p2val: parseInt(document.getElementById('p2val').value) || 0,
+    logHigh: document.getElementById('logHigh').checked
   };
 }
 
@@ -266,7 +313,7 @@ function cfgSave() {
   var ini = '[pyro]\r\nid=' + c.id + '\r\nname=' + c.name +
     '\r\npyro1_mode=' + c.p1mode + '\r\npyro1_value=' + c.p1val +
     '\r\npyro2_mode=' + c.p2mode + '\r\npyro2_value=' + c.p2val +
-    '\r\nunits=' + uname + '\r\n';
+    '\r\nunits=' + uname + '\r\nlog_high_rate=' + (c.logHigh ? 'true' : 'false') + '\r\n';
   var msg = document.getElementById('cfgMsg');
   fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:ini})
     .then(function(r) {

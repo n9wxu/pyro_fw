@@ -33,6 +33,7 @@ typedef struct {
     const char *pyro_mode[2];
     uint16_t pyro_value[2];
     uint8_t units;
+    bool log_high_rate;
     char rocket_id[9], rocket_name[9];
     const char *sensor, *board;
     int32_t pyro_bus_q, pyro_bus_adc, pyro_vbat_adc; /* -1: none on this board */

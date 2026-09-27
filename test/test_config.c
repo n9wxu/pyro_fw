@@ -25,7 +25,7 @@ void test_config_defaults(void) {
     TEST_ASSERT_EQUAL(1, cfg.units); /* meters */
     TEST_ASSERT_EQUAL(0, cfg.telem_format);
     TEST_ASSERT_EQUAL(10, cfg.telem_rate_hz);
-    TEST_ASSERT_EQUAL(50, cfg.log_rate_hz);
+    TEST_ASSERT_FALSE_MESSAGE(cfg.log_high_rate, "one row a second unless asked [DD-062]");
     TEST_ASSERT_FALSE(cfg.lua_enabled);
 }
 
@@ -52,7 +52,7 @@ void test_config_roundtrip_defaults(void) {
     TEST_ASSERT_EQUAL(original.units, restored.units);
     TEST_ASSERT_EQUAL(original.telem_format, restored.telem_format);
     TEST_ASSERT_EQUAL(original.telem_rate_hz, restored.telem_rate_hz);
-    TEST_ASSERT_EQUAL(original.log_rate_hz, restored.log_rate_hz);
+    TEST_ASSERT_EQUAL(original.log_high_rate, restored.log_high_rate);
     TEST_ASSERT_EQUAL(original.lua_enabled, restored.lua_enabled);
 }
 
@@ -72,7 +72,7 @@ void test_config_roundtrip_custom(void) {
     original.units = 2; /* ft */
     original.telem_format = 1;
     original.telem_rate_hz = 5;
-    original.log_rate_hz = 25;
+    original.log_high_rate = true;
     original.lua_enabled = true;
 
     char buf[512];
@@ -91,7 +91,7 @@ void test_config_roundtrip_custom(void) {
     TEST_ASSERT_EQUAL(original.units, restored.units);
     TEST_ASSERT_EQUAL(original.telem_format, restored.telem_format);
     TEST_ASSERT_EQUAL(original.telem_rate_hz, restored.telem_rate_hz);
-    TEST_ASSERT_EQUAL(original.log_rate_hz, restored.log_rate_hz);
+    TEST_ASSERT_EQUAL(original.log_high_rate, restored.log_high_rate);
     TEST_ASSERT_EQUAL(original.lua_enabled, restored.lua_enabled);
 }
 
@@ -184,11 +184,17 @@ void test_config_parse_bool_values(void) {
 void test_config_parse_new_fields(void) {
     config_t cfg;
     config_set_defaults(&cfg);
-    char ini[] = "landing_timeout=90\r\ntelem_rate_hz=5\r\nlog_rate_hz=25\r\n";
+    char ini[] = "landing_timeout=90\r\ntelem_rate_hz=5\r\nlog_high_rate=1\r\n";
     config_parse_ini(ini, &cfg);
     TEST_ASSERT_EQUAL(90, cfg.landing_timeout);
     TEST_ASSERT_EQUAL(5, cfg.telem_rate_hz);
-    TEST_ASSERT_EQUAL(25, cfg.log_rate_hz);
+    TEST_ASSERT_TRUE(cfg.log_high_rate);
+
+    /* A config.ini from before DD-062 names a rate: it logs at the default. */
+    config_set_defaults(&cfg);
+    char old[] = "log_rate_hz=50\r\n";
+    config_parse_ini(old, &cfg);
+    TEST_ASSERT_FALSE(cfg.log_high_rate);
 }
 
 void test_config_parse_all_modes(void) { /* [CFG-04] */
@@ -292,7 +298,8 @@ void test_config_writes_no_inert_keys(void) {
     TEST_ASSERT_NULL_MESSAGE(strstr(ini, "log_enabled="), "log_enabled is read by nothing");
     TEST_ASSERT_NULL_MESSAGE(strstr(ini, "buzzer_startup="), "buzzer_startup is read by nothing");
     TEST_ASSERT_NOT_NULL(strstr(ini, "telem_rate_hz="));
-    TEST_ASSERT_NOT_NULL(strstr(ini, "log_rate_hz="));
+    TEST_ASSERT_NOT_NULL(strstr(ini, "log_high_rate="));
+    TEST_ASSERT_NULL_MESSAGE(strstr(ini, "log_rate_hz="), "replaced by log_high_rate [DD-062]");
 }
 
 /* ── CFG-06: a partial file must not reset what it omits ──────────── */
@@ -385,7 +392,7 @@ void test_config_worst_case_fits_the_budget(void) {
     cfg.units = 0; /* "cm" is shortest, but units is not the driver here */
     cfg.telem_format = 255;
     cfg.telem_rate_hz = 255;
-    cfg.log_rate_hz = 255;
+    cfg.log_high_rate = true;
     cfg.landing_timeout = 255;
     cfg.lua_baud = 65535;
     cfg.lua_pixels = 65535;

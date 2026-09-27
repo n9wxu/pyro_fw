@@ -89,14 +89,15 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         "\"pyro1_fired\":%s,\"pyro2_fired\":%s,"
         "\"armed\":%s,\"flight_ms\":%lu,\"uptime\":%lu,\"fw_version\":\"%s\","
         "\"pyro1_mode\":\"%s\",\"pyro1_value\":%u,\"pyro2_mode\":\"%s\",\"pyro2_value\":%u,"
-        "\"units\":%u,\"rocket_id\":\"%s\",\"rocket_name\":\"%s\",\"sensor\":\"%s\",\"board\":\"%s\","
+        "\"units\":%u,\"log_high_rate\":%s,\"rocket_id\":\"%s\",\"rocket_name\":\"%s\",\"sensor\":\"%s\","
+        "\"board\":\"%s\","
         "\"pyro_bus_q\":%ld,\"pyro_bus_adc\":%ld,\"pyro_vbat_adc\":%ld,",
         S(s->state), (long)s->alt_cm, (long)s->max_alt_cm, (long)s->vspeed_cms, (long)s->pressure_pa,
         B(s->pyro_cont[0]), B(s->pyro_cont[1]), (unsigned)s->pyro_adc[0], (unsigned)s->pyro_adc[1], B(s->pyro_fired[0]),
         B(s->pyro_fired[1]), B(s->armed), (unsigned long)s->flight_ms, (unsigned long)s->uptime_ms, S(s->fw_version),
         S(s->pyro_mode[0]), (unsigned)s->pyro_value[0], S(s->pyro_mode[1]), (unsigned)s->pyro_value[1],
-        (unsigned)s->units, id, name, S(s->sensor), S(s->board), (long)s->pyro_bus_q, (long)s->pyro_bus_adc,
-        (long)s->pyro_vbat_adc);
+        (unsigned)s->units, B(s->log_high_rate), id, name, S(s->sensor), S(s->board), (long)s->pyro_bus_q,
+        (long)s->pyro_bus_adc, (long)s->pyro_vbat_adc);
     put(&o,
         "\"loop_max_us\":%lu,\"loop_overruns\":%lu,\"loop_late_max_us\":%lu,\"loop_count\":%lu,"
         "\"stage_max_us\":[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu],\"stage1_parts_us\":[%lu,%lu,%lu,%lu],"

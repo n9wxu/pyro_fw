@@ -330,6 +330,7 @@ add_executable(pyro_fw_c
     src/http_conn.c
     src/http_work.c
     src/status_json.c
+    src/flight_log.c
     src/net_ring.c
     src/reset_interface.c
     src/littlefs_driver.c
@@ -507,6 +508,7 @@ add_custom_target(host_tests
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_flight_states.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
@@ -535,6 +537,7 @@ add_custom_target(integration_tests
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_integration.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
@@ -562,6 +565,7 @@ add_custom_target(closedloop_tests
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_closedloop.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
@@ -591,6 +595,7 @@ add_custom_target(pressure_chain_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/board_harness.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/replay.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
@@ -621,6 +626,7 @@ add_custom_target(mach_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/board_harness.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/mach_plant.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
@@ -802,6 +808,22 @@ add_custom_target(http_work_tests
     COMMENT "HTTP work unit scheduling tests"
 )
 
+# The flight log's binary records and the CSV they render as (DD-062).
+add_custom_target(flight_log_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building flight log format tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_flight_log.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_flight_log
+    COMMAND ${CMAKE_COMMAND} -E echo "Running flight log format tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_flight_log
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flight log format tests"
+)
+
 # /api/status from a snapshot, linked alone: the renderer reads nothing else.
 add_custom_target(status_json_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building status rendering tests..."
@@ -978,6 +1000,7 @@ add_custom_target(buzzer_tests
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_buzzer.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
@@ -1017,6 +1040,7 @@ add_custom_target(config_persistence_tests
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_config_persistence.c
                ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c

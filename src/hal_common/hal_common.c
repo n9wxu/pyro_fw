@@ -36,6 +36,8 @@
 #include "pyro.h"
 #include "pyro_release.h"
 #include "http_server.h"
+#include "flight_log.h"
+#include <math.h>
 #include <string.h>
 
 /* ── External dependencies ────────────────────────────────────────── */
@@ -147,6 +149,14 @@ uint32_t hal_pressure_rejects(void) {
  * any sample waited between its conversion and the loop reading it. */
 uint32_t hal_pressure_interval_min_us(void) {
     return pres.interval_min_us;
+}
+
+/* Samples a second, and so the high log rate [DD-062]: the MS5607 converts
+ * once a loop; the BMP280 at its own interval. 0 before bring-up. */
+uint32_t hal_pressure_rate_hz(void) {
+    if (pres.sensor_type == 1)
+        return 1000u / MS5607_CONV_MS;
+    return pres.sample_interval_ms ? 1000u / pres.sample_interval_ms : 0u;
 }
 uint32_t hal_pressure_interval_max_us(void) {
     return pres.interval_max_us;
@@ -917,17 +927,15 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
  * core0 has checked core1's grant and usually while core1 is mid-unit.
  */
 
-/* Sized to span the launch shock window, not to be small.
- *
- * At the 50 Hz default a sample line is about 30 bytes, so 4 KB is roughly
- * 2.7 seconds of flight held in RAM -- which is what makes the holdoff below
- * worth having. At 512 bytes the buffer fills in under a third of a second,
- * and "wait until it is full" would buy about 80 ms over a 200 ms timer. */
+/* Binary records (flight_log.h), rendered as CSV only when downloaded
+ * [DD-062]. 4 KB holds 1.9 s of samples at 100 Hz, enough to span the launch
+ * shock window below; at a row a second it would hold three minutes, so the
+ * holdoff also ends on a timer. */
 #define LOG_BUF_SIZE 4096
 #define LOG_FLUSH_MS 200u
+#define LOG_HOLDOFF_MAX_MS 2000u /* [FLT-LOG-05] */
 
-/* At 100 Hz with 40-byte lines the buffer fills in about 130 ms, so the
- * flush deadline alone would drop samples. */
+/* Room for the rows of the periods before the next window. */
 #define LOG_WATERMARK (LOG_BUF_SIZE - 96)
 
 /* Script text shares this buffer with the flight samples and ranks below
@@ -944,7 +952,7 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
 
 typedef struct {
     hal_file_t *file;
-    char buf[LOG_BUF_SIZE];
+    uint8_t buf[LOG_BUF_SIZE];
     int head; /* write cursor */
     bool active;
     bool stopping;
@@ -957,10 +965,11 @@ typedef struct {
     /* No flash write until the buffer has filled once. Launch shock is the
      * likeliest cause of a brownout -- a battery connector bouncing -- and a
      * flash write in progress is the worst moment to lose power, so the first
-     * seconds of the flight live in RAM. Cleared on the first watermark hit,
-     * after which flushing is periodic as before: this delays the first write
-     * past the shock, it does not make the whole flight write-once. */
+     * seconds of the flight live in RAM. Cleared on the first watermark hit
+     * or at LOG_HOLDOFF_MAX_MS, after which flushing is periodic: this delays
+     * the first write past the shock, it does not make the flight write-once. */
     bool launch_holdoff;
+    uint32_t started_ms;
 } log_task_t;
 
 static log_task_t log_task;
@@ -975,21 +984,20 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
 
     /* Called at liftoff, so it opens no file and writes no flash: a launch
      * that waited for an erase would be a launch detected late. */
-    log_task.head = 0;
     log_task.dropped = 0;
-    int n = snprintf(log_task.buf, LOG_BUF_SIZE,
-                     "# " PYRO_BOARD_NAME " Flight Data\n# ID: %.8s\n# Name: %.8s\n"
-                     "# Pyro1: %s %u\n# Pyro2: %s %u\n"
-                     "# Units: %s\n# Ground Pa: %ld\n"
-                     "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n",
-                     cfg->id, cfg->name, config_mode_name(cfg->pyro1_mode), cfg->pyro1_value,
-                     config_mode_name(cfg->pyro2_mode), cfg->pyro2_value,
-                     cfg->units == 2   ? "ft"
-                     : cfg->units == 1 ? "m"
-                                       : "cm",
-                     (long)ground_pressure_pa);
-    if (n > 0 && n < LOG_BUF_SIZE)
-        log_task.head = n;
+    flog_header_t h = {
+        .board = PYRO_BOARD_NAME,
+        .id = cfg->id,
+        .name = cfg->name,
+        .pyro1_mode = cfg->pyro1_mode,
+        .pyro2_mode = cfg->pyro2_mode,
+        .pyro1_value = cfg->pyro1_value,
+        .pyro2_value = cfg->pyro2_value,
+        .units = cfg->units,
+        .ground_pa = ground_pressure_pa,
+        .high_rate = cfg->log_high_rate,
+    };
+    log_task.head = flog_put_header(log_task.buf, LOG_BUF_SIZE, &h);
 
     log_task.file = NULL;
     log_task.pending_open = true;
@@ -999,6 +1007,7 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     log_task.next_sync_ms = hal_time_ms();
     log_task.unsynced = false;
     log_task.launch_holdoff = true;
+    log_task.started_ms = hal_time_ms();
 }
 
 /* Only from log_flash_service(), in the window. On a failure the next window
@@ -1024,14 +1033,14 @@ static void log_flash_service(uint32_t now_ms) {
          * [WEB-API-08]; the rows wait in the buffer meanwhile. */
         if (fs_borrowed > 0)
             return;
-        log_task.file = open_file("flight_log.csv", false);
+        log_task.file = open_file(FLOG_PATH, false);
         if (!log_task.file)
             return; /* window refused or the fs is busy: try the next one */
         log_task.pending_open = false;
     }
 
     bool full = log_task.head >= LOG_WATERMARK;
-    if (full) {
+    if (full || now_ms - log_task.started_ms >= LOG_HOLDOFF_MAX_MS) {
         log_task.launch_holdoff = false;
     }
     /* The timer does not fire during the holdoff; a full buffer and a stop
@@ -1047,12 +1056,15 @@ static void log_flash_service(uint32_t now_ms) {
     }
 
     if (log_task.head > 0 && log_task.file) {
-        int n = hal_fs_write(log_task.file, log_task.buf, log_task.head);
-        if (n > 0)
+        int n = hal_fs_write(log_task.file, (const char *)log_task.buf, log_task.head);
+        if (n > 0) {
+            /* Only what was written leaves: a record written twice would
+             * misalign every record after it. */
+            memmove(log_task.buf, log_task.buf + n, (size_t)(log_task.head - n));
+            log_task.head -= n;
             log_task.unsynced = true;
-        if (n == log_task.head)
-            log_task.head = 0;
-        /* A short or failed write keeps the bytes: the next window retries. */
+        }
+        /* A failed write keeps the bytes: the next window retries. */
     }
     log_task.next_due_ms = now_ms + LOG_FLUSH_MS;
 
@@ -1076,60 +1088,40 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
                     uint8_t event) {
     if (!log_task.active)
         return;
-    char line[96];
-    int n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%ld,%.1f,%s\n", (unsigned long)time_ms, (long)pressure_pa,
-                     (long)altitude_cm, state, under_thrust, (long)pp_last_read_raw_pa(),
-                     (double)pres.last.temperature_c, flight_event_name(event));
-    if (n <= 0)
-        return;
+    flog_sample_t s = {
+        .time_ms = time_ms,
+        .pressure_pa = pressure_pa,
+        .altitude_cm = altitude_cm,
+        .raw_pa = pp_last_read_raw_pa(),
+        .temp_dc = (int16_t)lroundf(pres.last.temperature_c * 10.0f),
+        .state = state,
+        .thrust = under_thrust,
+        .event = event,
+    };
     /* Do not flush synchronously here: this runs on the flight path, and a
      * flush would put an erase wherever a sample happened to overflow the
      * buffer -- an arbitrary point in the period, with core1 mid-unit. */
-    if (log_task.head + n > LOG_BUF_SIZE) {
-        log_task.dropped += (uint32_t)n;
+    int n = flog_put_sample(log_task.buf + log_task.head, LOG_BUF_SIZE - log_task.head, &s);
+    if (n == 0) {
+        log_task.dropped += FLOG_SAMPLE_BYTES;
         return;
     }
-    memcpy(log_task.buf + log_task.head, line, n);
     log_task.head += n;
 }
 
 /* A text row: script output, or a note about something the firmware did not
- * do. See flash_window.h for what a false return means.
- *
- * The numeric columns are left empty rather than zeroed: neither row is a
- * sample, and a zero in the altitude column is a reading a plot will draw.
- *
- * Stripped rather than quoted, because every consumer of this file -- the web
- * UI, the CSV export, a spreadsheet -- splits on commas with no quoting
- * rules. */
-static bool log_tagged(uint32_t time_ms, const char *tag, const char *text, int len) {
+ * do. See flash_window.h for what a false return means. Its numeric columns
+ * render empty: neither is a sample, and a zero altitude is a reading a plot
+ * would draw. */
+static bool log_tagged(uint32_t time_ms, uint8_t tag, const char *text, int len) {
     if (!log_task.active || len <= 0) {
         return false;
     }
-
-    char line[80];
-    int n = snprintf(line, sizeof(line), "%lu,,,,,,,%s ", (unsigned long)time_ms, tag);
-    if (n <= 0 || n >= (int)sizeof(line) - 2) {
+    int n = flog_put_text(log_task.buf + log_task.head, LOG_BUF_SIZE - log_task.head, time_ms, tag, text, len);
+    if (n == 0) {
+        log_task.text_dropped += (uint32_t)len;
         return false;
     }
-    int room = (int)sizeof(line) - n - 2; /* the newline and the terminator */
-    if (len > room) {
-        len = room;
-    }
-    for (int i = 0; i < len; i++) {
-        /* unsigned deliberately: plain char is signed on the host and
-         * unsigned on ARM, so a byte above 0x7f takes a different branch on
-         * each. */
-        unsigned char c = (unsigned char)text[i];
-        line[n++] = (c == ',' || c < 0x20u || c >= 0x7fu) ? ' ' : (char)c;
-    }
-    line[n++] = '\n';
-
-    if (log_task.head + n > LOG_BUF_SIZE) {
-        log_task.text_dropped += (uint32_t)n;
-        return false;
-    }
-    memcpy(log_task.buf + log_task.head, line, (size_t)n);
     log_task.head += n;
     return true;
 }
@@ -1141,14 +1133,14 @@ bool hal_log_text(uint32_t time_ms, const char *text, int len) {
         log_task.text_dropped += (uint32_t)(len > 0 ? len : 0);
         return false;
     }
-    return log_tagged(time_ms, "LUA", text, len);
+    return log_tagged(time_ms, FLOG_TAG_LUA, text, len);
 }
 
 bool hal_log_mock(uint32_t time_ms, const char *what) {
     /* Not rationed. A mocked fire happens a handful of times in a flight and
      * is the reason the flight looks wrong afterwards; dropping it to make
      * room for samples would hide exactly the row that explains them. */
-    return log_tagged(time_ms, "MOCK", what, (int)strlen(what));
+    return log_tagged(time_ms, FLOG_TAG_MOCK, what, (int)strlen(what));
 }
 
 uint32_t hal_log_text_dropped(void) {

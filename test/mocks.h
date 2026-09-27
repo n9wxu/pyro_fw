@@ -56,6 +56,8 @@ extern int mock_uart_len;
 extern uint32_t mock_time_ms;
 extern uint32_t mock_fs_locked_count; /* file calls refused while the flight log held the filesystem */
 int mock_fs_peek(const char *path, char *buf, int max_len); /* a test's look at a file, past the lock */
+/* The flight log as its download renders it: CSV, NUL-terminated. */
+int test_flight_log_csv(char *buf, int max_len);
 
 /* ── XIP stall simulation ─────────────────────────────────────────── */
 /* On RP2040, flash writes disable XIP (Execute In Place), stalling the

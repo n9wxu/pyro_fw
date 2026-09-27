@@ -819,10 +819,8 @@ void test_M1_port_error_margin(void) {
 
 static bool log_has(const char *event) {
     static char log[65536];
-    int n = mock_fs_peek("flight_log.csv", log, (int)sizeof(log) - 1);
-    if (n <= 0)
+    if (test_flight_log_csv(log, (int)sizeof(log)) <= 0)
         return false;
-    log[n] = '\0';
     char field[40];
     snprintf(field, sizeof(field), ",%s", event);
     return strstr(log, field) != NULL;

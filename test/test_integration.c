@@ -528,12 +528,9 @@ void test_DAT_04_events(void) {
     reset_sim();
     run_full_sim();
 
-    /* hal_log_stop() was called at landing; flight_log.csv is complete.
-     * The incremental ring-buffer CSV logger is retired (v2-9). */
-    char buf[32768];
-    int n = mock_fs_peek("flight_log.csv", buf, sizeof(buf) - 1);
-    TEST_ASSERT_TRUE(n > 0);
-    buf[n] = '\0';
+    /* hal_log_stop() was called at landing, so the log is complete. */
+    static char buf[32768];
+    TEST_ASSERT_TRUE(test_flight_log_csv(buf, (int)sizeof(buf)) > 0);
 
     TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "LAUNCH") != NULL, "Expected LAUNCH event");
     TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "LANDING") != NULL, "Expected LANDING event");
@@ -928,10 +925,7 @@ static const char *log_row(const char *log, const char *event) {
 }
 
 static int read_flight_log(char *buf, int len) {
-    int n = mock_fs_peek("flight_log.csv", buf, len - 1);
-    if (n > 0)
-        buf[n] = '\0';
-    return n;
+    return test_flight_log_csv(buf, len);
 }
 
 /* [GND-CAL-05, REV-11] The LAUNCH row carries the height the rocket had
@@ -969,35 +963,53 @@ void test_REV_NEW_log_header_names_the_configured_modes(void) {
     TEST_ASSERT_NOT_NULL_MESSAGE(strstr(log, "# Pyro2: agl 50"), log);
 }
 
-/* [CFG-SUBSYS-01, REV-12] log_rate_hz thins the samples; it never drops an
- * event. */
-void test_REV12_log_rate_hz_thins_samples_not_events(void) {
-    static char log[32768];
+/* The time of each sample row -- a row with no event -- in order. */
+static int sample_times(const char *log, uint32_t *t, int max) {
+    const char *p = strstr(log, "time_ms,");
+    int n = 0;
+    for (p = p ? strchr(p, '\n') : NULL; p && p[1] && n < max; p = strchr(p + 1, '\n')) {
+        const char *row = p + 1;
+        const char *eol = strchr(row, '\n');
+        if (!eol || eol[-1] != ',' || row[0] < '0' || row[0] > '9')
+            continue; /* an event row, or a text row */
+        t[n++] = (uint32_t)strtoul(row, NULL, 10);
+    }
+    return n;
+}
+
+/* [FLT-LOG-07, CFG-SUBSYS-01] One sample row a second unless high-rate
+ * logging is set, then every sample; every event row at either rate. */
+void test_FLT_LOG_07_one_row_a_second_unless_high_rate(void) {
+    static char log[65536];
+    static uint32_t t[4096];
+    const char *events[] = {"LAUNCH", "ARMED", "APOGEE", "PYRO1", "LANDING"};
     load_sim_data("test_data/open_rocket_export.csv");
 
     reset_sim();
     run_full_sim();
     TEST_ASSERT_TRUE(read_flight_log(log, (int)sizeof(log)) > 0);
-    int full = 0;
-    for (const char *p = log; (p = strchr(p, '\n')) != NULL; p++)
-        full++;
+    TEST_ASSERT_NOT_NULL(strstr(log, "# Log rate: 1 row/s\n"));
+    int low = sample_times(log, t, 4096);
+    TEST_ASSERT_GREATER_THAN_INT(5, low);
+    for (int i = 1; i < low; i++) {
+        char m[64];
+        snprintf(m, sizeof(m), "rows %d and %d: %lu ms apart", i - 1, i, (unsigned long)(t[i] - t[i - 1]));
+        TEST_ASSERT_TRUE_MESSAGE(t[i] - t[i - 1] >= 1000u && t[i] - t[i - 1] <= 1100u, m);
+    }
+    for (unsigned k = 0; k < sizeof(events) / sizeof(events[0]); k++)
+        TEST_ASSERT_NOT_NULL_MESSAGE(log_row(log, events[k]), events[k]);
 
     reset_sim();
-    ctx.config.log_rate_hz = 10;
+    ctx.config.log_high_rate = true;
     run_full_sim();
     TEST_ASSERT_TRUE(read_flight_log(log, (int)sizeof(log)) > 0);
-    int thin = 0;
-    for (const char *p = log; (p = strchr(p, '\n')) != NULL; p++)
-        thin++;
-
-    char m[96];
-    snprintf(m, sizeof(m), "50 Hz log %d rows, 10 Hz log %d rows", full, thin);
-    TEST_ASSERT_TRUE_MESSAGE(thin * 3 < full, m);
-    TEST_ASSERT_NOT_NULL(log_row(log, "LAUNCH"));
-    TEST_ASSERT_NOT_NULL(log_row(log, "ARMED"));
-    TEST_ASSERT_NOT_NULL(log_row(log, "APOGEE"));
-    TEST_ASSERT_NOT_NULL(log_row(log, "PYRO1"));
-    TEST_ASSERT_NOT_NULL(log_row(log, "LANDING"));
+    TEST_ASSERT_NOT_NULL(strstr(log, "# Log rate: every sample\n"));
+    int high = sample_times(log, t, 4096);
+    char m[64];
+    snprintf(m, sizeof(m), "1 row/s: %d rows; every sample: %d rows", low, high);
+    TEST_ASSERT_TRUE_MESSAGE(high > 15 * low, m);
+    for (unsigned k = 0; k < sizeof(events) / sizeof(events[0]); k++)
+        TEST_ASSERT_NOT_NULL_MESSAGE(log_row(log, events[k]), events[k]);
 }
 
 /* [PYR-DEPLOY-02, GND-TEST-02, REV-06] The ground test goes through the same
@@ -1296,7 +1308,7 @@ int main(void) {
     /* Code review 2026-09-24 */
     RUN_TEST(test_REV11_launch_row_reports_the_height_reached);
     RUN_TEST(test_REV_NEW_log_header_names_the_configured_modes);
-    RUN_TEST(test_REV12_log_rate_hz_thins_samples_not_events);
+    RUN_TEST(test_FLT_LOG_07_one_row_a_second_unless_high_rate);
     RUN_TEST(test_REV06_ground_test_waits_for_the_other_channel);
     return UNITY_END();
 }

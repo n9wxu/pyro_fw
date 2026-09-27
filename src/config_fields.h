@@ -32,7 +32,7 @@
     X(UNITS, units, "units", 1)                                                                                        \
     X(U8, telem_format, "telem_format", 0)                                                                             \
     X(U8, telem_rate_hz, "telem_rate_hz", 10)                                                                          \
-    X(U8, log_rate_hz, "log_rate_hz", 50)                                                                              \
+    X(BOOL, log_high_rate, "log_high_rate", false)                                                                     \
     X(U8, landing_timeout, "landing_timeout", 60)                                                                      \
     X(BOOL, lua_enabled, "lua_enabled", false)                                                                         \
     X(U16, lua_baud, "lua_baud", 9600)                                                                                 \

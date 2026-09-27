@@ -45,15 +45,14 @@ static bool state_is_logged(flight_state_t st) {
     }
 }
 
-/* [CFG-SUBSYS-01] log_rate_hz thins the samples written; events are always
- * written. At or above the sensor's rate every sample goes in. */
-#define SENSOR_RATE_HZ 50
+/* [FLT-LOG-07, CFG-SUBSYS-01] A sample row a second, or every sample with
+ * high-rate logging set; events are always written. */
+#define LOG_LOW_RATE_MS 1000u
 
 static bool log_sample_due(flight_context_t *ctx, uint32_t time_ms) {
-    uint8_t hz = ctx->config.log_rate_hz;
-    if (hz == 0 || hz >= SENSOR_RATE_HZ)
+    if (ctx->config.log_high_rate)
         return true;
-    if (time_ms - ctx->last_logged_ms < 1000u / hz)
+    if (time_ms - ctx->last_logged_ms < LOG_LOW_RATE_MS)
         return false;
     ctx->last_logged_ms = time_ms;
     return true;

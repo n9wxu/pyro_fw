@@ -127,23 +127,23 @@ are still yours; their tasks wait.
 
 | ID | Question | Status | Blocks |
 |---|---|---|---|
-| C2 | The launch trigger | **Open, not blocking.** The options: (a) today's 100 ft and 5 m/s; (b) the operator narrative's "rising for more than 1 s and past 50 ft"; (c) the pressure-filter prompt's 15 m held for 8 samples with a positive speed; (d) the Mach prompt's acceleration trigger, fitted p̈ < −0.0025·p held for 50–100 ms. (d) misses launches under 2.1–2.4 g net, a thrust-to-weight below about 3.1–3.4, so it needs a height trigger behind it. The 100 ft figure came from bench false launches now blamed on N21. T3 keeps today's trigger and adds a hold, which (a), (b) and (c) all need. Choosing one later means changing constants. | — |
+| C2 | The launch trigger | **Open, not blocking.** 2026-09-27 you asked for a continuous rise in altitude for more than 1 s, past 15 m. The fitted climb speed has to hold above a threshold for that second: raw samples rise every time only above about 200 m/s. It detects 1.1-1.6 s after ignition, short burns included, but above about 25 g net the rocket passes Mach 0.85 before the second is up, and the ports can then read a fall. The open question: that rule alone, or with today's rule (100 ft, 5 m/s, 100 ms) as a fast second trigger. | — |
 | C5 | In-flight lock against recoverability | **Decided 2026-09-26 (DD-058):** the API and USB stay live in flight, so a board stuck in a flight state takes a reboot; only the filesystem is locked, to the flight log, and a request for it gets 423. | — |
-| C6 | Numbered flight logs | **Open.** Keeping more than one flight means creating a file at launch, which is a flash write during launch shock. The alternatives are to create or rename it on the pad when the marker is written, or to accept the write. If taken, do it with T8's log-format change. | C6 task |
+| C6 | Numbered flight logs | **Decided 2026-09-27:** keep 2 flights, and write nothing at launch; OK to fly sounds only once the log is ready. You then proposed a raw working log outside littlefs (1 MB on MK1A and MK1C), built into a littlefs file after landing, with the start sector rotated for wear. Open for it: the working log's size on MK1B (2 MB of flash), and whether file reads may be allowed in flight. | C6 task |
 | C8 / N7 | The landing timeout declares LANDED under a main | **Adopted:** once T5 makes the stillness test reliable, the timeout needs stillness instead of "slower than 5 m/s". | N7 task |
-| C10 | Forced main after a failed drogue: 4.6 s today, the narrative about 3 s | **Open.** Shortening the grace or the 1 s hold trades early deployment on a real failure against forcing mains under slow drogues. | C10 task |
-| U3 | A sleeping PC counts as unplugged | **Open.** Holding "attached" through a sleep needs VBUS sensing (U1). | — |
-| U4 / U5 | Silence on USB against BUZ-02 and FLT-BOOT-12/14 | **Open.** Accept the silence, or amend those requirements. | — |
-| U6 | The audition button and ground-test BEEP still sound on USB | **Open.** Silencing them is one check each. The web UI only works over USB, so silencing the audition removes the feature. | U6 task |
+| C10 | Forced main after a failed drogue | **Decided 2026-09-27:** force the main when the descent reaches a tunable critical speed, default 50 m/s, about 5 s of free fall from apogee, the most you will accept. Replaces today's 4.6 s. | C10 task |
+| U3 | A sleeping PC counts as unplugged | **Decided 2026-09-27: leave it.** | — |
+| U4 / U5 | Silence on USB against BUZ-02 and FLT-BOOT-12/14 | **Decided 2026-09-27:** on USB every announcement plays once and does not repeat. BUZ-02 becomes "When a USB host is not attached, the announcement shall repeat ...". Still to confirm: whether the attach chirp stays, and whether a verdict that changes while attached plays once more. | U6 task |
+| U6 | The audition button and ground-test BEEP on USB | **Decided 2026-09-27:** they play once on USB. The audition already does; the ground-test BEEPs repeat today, so they change. | U6 task |
 | T3 | How long launch and apogee must hold | **Adopted:** 100 ms and 60 ms. | T3 |
 | T5-W | The fit's window | **Adopted: 1.0 s.** At 50 Hz it gives 0.19 m/s of speed noise on the pad and 4.4 Pa/s² of p̈ noise. The Mach prompt's example of 0.5 s gives 23.8 Pa/s² at 50 Hz (17.5 at 100 Hz). At 9 km, with no drag, 1 g of deceleration would then sit only 0.7σ (1.0σ at 100 Hz) above the release threshold, and the release would keep resetting. The cost of 1 s: a Mach step or an ejection keeps fits unclean for 1 s instead of 0.5 s, and so does the ignition step, which M1 handles by setting the flag on any fit. | T5 |
 | T5-A | How far below the peak apogee needs | **Adopted: p ≥ 1.0001·p_min**, 0.6–0.9 m, about +0.4 s. The Mach prompt's 1.0005 means 3–5 m and puts the drogue 0.8–1.0 s after apogee; today it is +0.56 s. The fit's pressure noise is about 0.5 Pa. At 9 km, 1.0001 is 3 Pa, so noise cannot fake the drop, and an early apogee becomes impossible. | T5 |
 | T6 | How long the ground tracker waits before re-seeding | **Adopted:** 5 s. The pressure-filter prompt's 30 s leaves the pad reference wrong for half a minute after the rocket is set down. | T6 |
-| T8 | Flight logging rate | **Open.** Full rate makes flights replayable, at a cost in flash wear. The default logs every sample, which since T9 (DD-051) is about 90 rows a second on the MS5607 boards: nearly twice the flash per flight. A thinned log cannot be replayed. | T9 |
+| T8 | Flight logging rate | **Decided 2026-09-27 (DD-062):** a sample row a second by default, not replayable; `log_high_rate` logs every sample. The log is binary on disk and rendered as CSV when downloaded, and the Config tab estimates the longest flight the log holds at the rate chosen. | — |
 | M1-D | Accept M1's deviations from the Mach prompt | **Adopted.** They are listed in M1. The largest: the fit is solved against each sample's own time, in floating point, not with precomputed integer coefficients. Flash stalls make the sample spacing uneven (T11), and precomputed coefficients assume even spacing. | M1 |
-| P1 | MK1C's tracking pulse is 10-11 ms; DESIGN.md S3 asks for 5-10 ms | **Open.** The loop ends a phase no sooner than the next iteration, so the 8 ms asked for becomes one loop and a little more (scoped 2026-09-26). A timer one-shot, like the MS5607's, could end it at 8 ms exactly. | — |
-| B-U5 | MK1B until U5 is changed | **Open.** Both MK1B builds fit AP2192AMPG-13, whose 100 ohm output discharge holds each sense node near 0 V while its channel is off (DS32193 p.4, RDIS, note 6), so every channel reads shorted, fitted or not, and an MK1B that owns its pyros never deploys (PYR-SAFE-01). The firmware cannot see past it. Until the part changes (section 7): leave it, or release the channels to Lua, as the bench MK1B is, or something else you choose. | an MK1B that fires |
-| T5-C | The fit's cost | **Open.** Measured 2026-09-27 at rest: `stage_max_us[2]` 2.9 ms on the MS5607 boards (100 Hz, a 1 s window of 100 samples, software float) and 2.1 ms on MK1A, against T5's limit of about 1.6 ms. The loop holds: work at most 6 ms, 0 overruns. Accept it, or make the fit incremental (running sums, O(1) a sample), which needs care with float cancellation. | — |
+| P1 | MK1C's tracking pulse is 10-11 ms; DESIGN.md S3 asks for 5-10 ms | **Decided 2026-09-27: a timer one-shot**, like the MS5607's, ends the pulse at 8 ms. | P1 task |
+| B-U5 | MK1B until U5 is changed | **Decided 2026-09-27: leave it.** The firmware already assumes the base AP2192; an MK1B that owns its pyros reads every channel shorted and cannot fire until its U5 is refitted (section 7). | — |
+| T5-C | The fit's cost | **Decided 2026-09-27: leave it.** 2.9 ms on the MS5607 boards against T5's 1.6 ms limit; the loop holds with 0 overruns. | — |
 | N20 | Shared littlefs buffers | **Adopted:** refuse file GETs while the flight log is open. It can be tested on the host, the log can be read after landing, and WEB-API-08 already refuses every writer in flight. | N20 task |
 
 ---
@@ -1031,10 +1031,8 @@ temperature was read; `stamp_lag_max_us` near 5.5 ms; `pres_waits` and
 `stage_max_us[7]` with the log at 90 rows a second; `flash_refusals` 0 with
 Lua running on MK1C.
 
-**The T8 logging-rate decision is still the user's.** `log_rate_hz`'s default
-of 50 is at or above `SENSOR_RATE_HZ`, so every sample is logged, about 90
-rows a second: the log still replays (DAT-08), at nearly twice the flash
-written per flight. Thinning it would stop the replay.
+**T8 decided (DD-062):** a row a second by default, every sample with
+`log_high_rate`; only a high-rate log replays (DAT-08).
 
 **Why:** every sample converts both pressure (D1) and temperature (D2), at
 10 ms each. Temperature moves slowly. Converting it every tenth cycle nearly

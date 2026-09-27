@@ -45,6 +45,7 @@
 #include "http_server.h"
 #include "http_work.h"
 #include "status_json.h"
+#include "flight_log.h"
 
 extern uint32_t hal_time_ms(void);
 
@@ -63,6 +64,7 @@ extern uint32_t hal_pressure_interval_min_us(void);
 extern uint32_t hal_pressure_interval_max_us(void);
 extern uint32_t hal_pressure_stamp_lag_max_us(void);
 extern uint32_t hal_pressure_waits(void);
+extern uint32_t hal_pressure_rate_hz(void);
 extern uint32_t hal_pressure_rejects(void);
 
 #define CORS_HDR "Access-Control-Allow-Origin: *\r\n"
@@ -99,6 +101,7 @@ typedef enum {
     R_BEEP_PLAY,
     R_LUA_CHECK,
     R_STATUS, /* answered by HTTP_UNIT_STATUS */
+    R_FLOG,   /* the binary flight log, rendered as CSV by fill() */
 } route_t;
 
 struct conn;
@@ -129,7 +132,13 @@ typedef struct conn {
     bool reboot_when_sent;
     bool orphan; /* its link is gone while the worker holds it */
     char dest[HTTP_PATH_MAX];
-    status_snap_t status;
+    union {
+        status_snap_t status;
+        struct {
+            flog_csv_t csv;
+            uint32_t len;
+        } flog;
+    };
 } conn_t;
 
 _Static_assert(CONN_POOL_SIZE == HTTP_WORK_SLOTS, "a work slot is a connection");
@@ -260,8 +269,10 @@ static bool fs_take(conn_t *c) {
     return true;
 }
 
-#define FLIGHT_LOG_PATH "flight_log.csv"
+#define OLD_LOG_PATH "flight_log.csv" /* before DD-062: served as it is */
 #define FLIGHT_ERASE_PATH "/api/flight/erase"
+#define CSV_DISPOSITION "Content-Disposition: attachment; filename=\"flight.csv\"\r\n"
+#define EMPTY_LOG_CSV "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\r\n"
 
 /* ── API handlers ─────────────────────────────────────────────────── */
 
@@ -713,6 +724,7 @@ static void status_capture(status_snap_t *s) {
     s->pyro_value[0] = g_status.pyro1_value;
     s->pyro_value[1] = g_status.pyro2_value;
     s->units = g_status.units;
+    s->log_high_rate = fctx && fctx->config.log_high_rate;
     memcpy(s->rocket_id, (const char *)g_status.rocket_id, sizeof(s->rocket_id) - 1);
     memcpy(s->rocket_name, (const char *)g_status.rocket_name, sizeof(s->rocket_name) - 1);
     s->sensor = pressure_sensor_name();
@@ -864,11 +876,92 @@ static void serve_file(conn_t *c, const char *lfs_path, const char *ctype, const
 
 static uint16_t fill(http_conn_t *hc, uint8_t *dst, uint16_t max) {
     conn_t *c = (conn_t *)hc;
+    if (c->route == R_FLOG) {
+        return (uint16_t)flog_csv_read(&c->flog.csv, (char *)dst, max);
+    }
     if (c->route != R_FILE || !c->file_open) {
         return 0;
     }
     lfs_ssize_t n = lfs_file_read(&c->lfs, &c->file, dst, max);
     return n > 0 ? (uint16_t)n : 0;
+}
+
+/* ── The flight log ───────────────────────────────────────────────── */
+
+static int flog_reader(void *ctx, uint8_t *dst, int n) {
+    conn_t *c = (conn_t *)ctx;
+    lfs_ssize_t k = lfs_file_read(&c->lfs, &c->file, dst, (lfs_size_t)n);
+    return k > 0 ? (int)k : 0;
+}
+
+/* [WEB-API-06, DD-062] The binary log, as the CSV it was once stored as. Its
+ * length is counted a unit at a time (flight_csv_count()) before the head is
+ * sent, then the same rendering streams through fill(). */
+static void serve_flight_csv(conn_t *c) {
+    http_conn_t *hc = &c->h;
+    if (!fs_take(c)) {
+        return;
+    }
+    c->file_cfg = (struct lfs_file_config){.buffer = hc->work};
+    if (lfs_mount(&c->lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
+        c->lfs_mounted = true;
+        if (lfs_file_opencfg(&c->lfs, &c->file, FLOG_PATH, LFS_O_RDONLY, &c->file_cfg) == LFS_ERR_OK) {
+            c->file_open = true;
+            c->route = R_FLOG;
+            flog_csv_init(&c->flog.csv, flog_reader, c);
+            c->flog.len = 0;
+            return;
+        }
+        lfs_unmount(&c->lfs);
+        c->lfs_mounted = false;
+    }
+    serve_file(c, OLD_LOG_PATH, "text/csv", CSV_DISPOSITION, 200, "text/csv", EMPTY_LOG_CSV);
+}
+
+/* CSV bytes counted a unit: about a hundred rows. */
+#define FLOG_COUNT_STEP 4096
+
+static bool flight_csv_count(conn_t *c) {
+    int k = flog_csv_read(&c->flog.csv, NULL, FLOG_COUNT_STEP);
+    c->flog.len += (uint32_t)k;
+    if (k == FLOG_COUNT_STEP) {
+        return false; /* more to count, next unit */
+    }
+    if (c->flog.len == 0) {
+        http_respond_str(&c->h, 200, "text/csv", EMPTY_LOG_CSV);
+        return true;
+    }
+    lfs_file_rewind(&c->lfs, &c->file);
+    flog_csv_init(&c->flog.csv, flog_reader, c);
+    http_respond_stream(&c->h, 200, "text/csv", c->flog.len, CSV_DISPOSITION);
+    return true;
+}
+
+/* [WEB-API-12, DD-062] The room the next flight's log has: what is free, and
+ * the current log's own, which the next launch replaces. A few blocks are
+ * kept back for littlefs's copy-on-write metadata. */
+#define LOG_SPACE_RESERVE_BLOCKS 4
+
+static void serve_log_space(conn_t *c) {
+    http_conn_t *hc = &c->h;
+    if (!fs_take(c)) {
+        return;
+    }
+    if (lfs_mount(&c->lfs, &lfs_pico_flash_config) != LFS_ERR_OK) {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"mount failed\"}");
+        return;
+    }
+    c->lfs_mounted = true;
+    lfs_ssize_t used = lfs_fs_size(&c->lfs);
+    struct lfs_info info;
+    int64_t log_bytes = lfs_stat(&c->lfs, FLOG_PATH, &info) == LFS_ERR_OK ? (int64_t)info.size : 0;
+    int64_t spare = (int64_t)lfs_pico_flash_config.block_count - used - LOG_SPACE_RESERVE_BLOCKS;
+    int64_t room = used < 0 ? 0 : spare * (int64_t)lfs_pico_flash_config.block_size + log_bytes;
+    char *buf = (char *)hc->work;
+    int n = snprintf(buf, sizeof(hc->work), "{\"bytes_free\":%lu,\"record_bytes\":%u,\"rates_hz\":[1,%lu]}",
+                     (unsigned long)(room > 0 ? room : 0), (unsigned)FLOG_SAMPLE_BYTES,
+                     (unsigned long)hal_pressure_rate_hz());
+    http_respond(hc, 200, JSON, buf, (uint32_t)n);
 }
 
 /* ── Default page if /www/index.html missing ──────────────────────── */
@@ -940,8 +1033,9 @@ static void serve_get(conn_t *c) {
     } else if (strcmp(path, "/api/config") == 0) {
         serve_file(c, "config.ini", TEXT, NULL, 404, TEXT, "No config.ini");
     } else if (strcmp(path, "/api/flight.csv") == 0) {
-        serve_file(c, FLIGHT_LOG_PATH, "text/csv", "Content-Disposition: attachment; filename=\"flight.csv\"\r\n", 200,
-                   "text/csv", "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\r\n");
+        serve_flight_csv(c);
+    } else if (strcmp(path, "/api/log/space") == 0) {
+        serve_log_space(c);
     } else if (strcmp(path, "/") == 0) {
         /* no-store: the UI is re-uploaded whenever the firmware or web files
          * change, and without this browsers heuristically cache it and keep
@@ -1049,7 +1143,11 @@ static void apply_erase(http_conn_t *hc) {
     lfs_t lfs;
     int rc = lfs_mount(&lfs, &lfs_pico_flash_config);
     if (rc == LFS_ERR_OK) {
-        rc = lfs_remove(&lfs, FLIGHT_LOG_PATH);
+        rc = lfs_remove(&lfs, FLOG_PATH);
+        int old = lfs_remove(&lfs, OLD_LOG_PATH);
+        if (rc == LFS_ERR_NOENT) {
+            rc = old;
+        }
         lfs_unmount(&lfs);
     }
     DBG("POST %s rc=%d", FLIGHT_ERASE_PATH, rc);
@@ -1234,6 +1332,8 @@ static bool on_complete(http_conn_t *hc) {
     switch (c->route) {
     case R_STATUS:
         return false;
+    case R_FLOG:
+        return flight_csv_count(c);
     case R_BEEP_PLAY:
         apply_api_beep_play(hc, body);
         return true;

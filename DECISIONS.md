@@ -559,6 +559,47 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-062: A Row A Second By Default; Binary On Disk, CSV On Download
+- **Decision:** at the user's direction (T8) -- "log at 1 row/sec (this is
+  not replayable) but give the config a high-rate logging option ... Give
+  them a maximum flight time estimator that updates with the log rate
+  button", and "on-disk format should be binary. We can translate to csv
+  on-the-fly when downloading":
+  - **`log_high_rate`** (default false) replaces `log_rate_hz`. Off, the log
+    takes a sample row a second; on, every sample: 100 rows a second on the
+    MS5607 boards, 50 on MK1A's BMP280. Every event row is written at either
+    rate [FLT-LOG-07]. A `config.ini` that still names `log_rate_hz` logs at
+    the default, and its next save drops the key.
+  - **`flight_log.bin`** holds binary records (`src/flight_log.h`): the magic,
+    a header record, then 22-byte samples and text rows. `/api/flight.csv`
+    renders them as the CSV the log used to be stored as, plus a
+    `# Log rate:` line. The response is framed by Content-Length: the server
+    counts the rendered length first, 4 KB of CSV a work unit, then streams
+    the same rendering. A board with a log from before this change serves
+    that CSV as it is; the erase removes both.
+  - **`/api/log/space`** reports the room the next flight's log has -- free
+    littlefs space plus the current log, which the next launch replaces,
+    less four blocks for littlefs's metadata -- with the record size and the
+    two rates. The Config tab's *High-rate logging* switch shows the longest
+    flight that holds and updates as it is flipped [WEB-UI-06, WEB-API-12].
+- **Why binary:** a sample is 22 bytes against about 38 as CSV, and the CSV
+  is only for a person or a tool reading it, so it is made when it is read.
+- **Not replayable at a row a second:** `pyro_sim --replay` refuses a log
+  whose header says `1 row/s`, rather than deciding from a tenth of the
+  readings [DAT-08].
+- **The launch holdoff now also ends at 2 s** [FLT-LOG-05]. At a row a
+  second the 4 KB RAM buffer takes three minutes to fill, and until the first
+  write a power loss would lose the whole flight so far; 2 s is about what the
+  full-rate log took to fill it.
+- **A short write keeps only what was not written:** retried whole, the
+  written part would appear twice, and one duplicated record misaligns every
+  record after it.
+- **The CSV rows are the old rows,** held to that by `test_flight_log.c`:
+  the temperature is kept in tenths of a degree, so the rounding of a value
+  exactly between two tenths can differ from the old `%.1f`.
+- **Owed on the bench:** a flown log's download. The bench boards have none,
+  and nothing on the bench can make one without a launch.
+
 ### DD-061: HTTP As Work Units, Run From The Slack Or By Core1
 - **Decision:** at the user's direction -- "refactoring the http so it
   operates with work units that can be assigned to worker threads" -- the

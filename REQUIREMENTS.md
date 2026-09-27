@@ -103,8 +103,9 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-BROWN-04**: The pad marker shall be invalidated when the flight lands, so that no later power-up recovers against it. ← FLT-BROWN-02
 - **FLT-BROWN-05**: /api/status shall say why a boot was cold: not a power event, no marker, on USB, at ground level, or no sample in time. ← FLT-BROWN-02
 - **FLT-BROWN-06**: A recovered flight shall read pyro continuity before it rejoins, and shall produce altitude against the marker's ground from then on. ← FLT-BROWN-02
-- **FLT-LOG-05**: The flight log shall not write flash until its RAM buffer has filled once, so that the launch shock window passes without a write in progress. ← FLT-BROWN-01
+- **FLT-LOG-05**: The flight log shall not write flash until its RAM buffer has filled once or 2 s have passed since launch, whichever is first, so that the launch shock window passes without a write in progress. ← FLT-BROWN-01
 - **FLT-LOG-06**: The flight log shall be committed to the filesystem at least once per second while it is written, so that a flight which never lands keeps its record. Every write and commit shall run in the flash window between core1 work units. ← SYS-DATA-01
+- **FLT-LOG-07**: The flight log shall record a sample row a second, or every sample when `log_high_rate` is set, and every event row at either rate. It shall be stored as binary records and rendered as CSV only when read. ← SYS-DATA-01, DD-062
 - **LUA-IO-01**: The web UI shall export the Lua program to a local file and import one back, so a program survives the loss of the filesystem that holds it -- a failed mount formats it, and a flash-geometry change moves it. (An OTA update does not: verified to leave every file in place.) ← SYS-CFG-01
 - **LUA-IO-02**: An imported program shall land in the editor and not on the device, so a mis-picked file costs nothing until it is saved. ← LUA-IO-01
 - **PIN-LABEL-01**: Every assignable pin shall carry the connector designator silkscreened on the board, and the web UI shall show it beside the GPIO number. ← SYS-CFG-01
@@ -199,11 +200,11 @@ Each derived requirement traces to its parent with `← parent_id`.
 ### L3 Subsystem Requirements
 - **DAT-01**: The system shall store flight samples in a ring buffer of at least 4096 entries. ← SYS-DATA-01
 - **DAT-02**: Each sample shall include: time, pressure, altitude, state, thrust flag, the raw reading it is centred on, the sensor temperature, and event. The time is the sample's own, from its reading, since T+0 (SNS-PRES-08). ← SYS-DATA-01
-- **DAT-08**: A flight log shall carry what is needed to replay the flight through the pressure layer and the detectors, and `pyro_sim --replay` shall do so and set the replay's events against the log's. ← DAT-02
+- **DAT-08**: A flight log written with `log_high_rate` set shall carry what is needed to replay the flight through the pressure layer and the detectors, and `pyro_sim --replay` shall do so and set the replay's events against the log's. It shall refuse a log written at a row a second. ← DAT-02
 - **DAT-03**: Events shall be tagged on existing data samples, not stored as separate records. ← SYS-DATA-01
 - **DAT-04**: The system shall log events: LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING, and when they occur PYRO1/2_REFUSED, PYRO1/2_NOPEN, PYRO1/2_FAULT and MAIN_FORCED. ← SYS-DATA-01
-- **DAT-06**: The system shall export flight data as CSV to persistent storage after landing. ← SYS-DATA-02
-- **DAT-07**: The CSV shall include a metadata header with configuration and flight summary. ← SYS-DATA-02
+- **DAT-06**: The system shall keep flight data in persistent storage after landing, as binary records (FLT-LOG-07), and export it as CSV when it is read (WEB-API-06). ← SYS-DATA-02
+- **DAT-07**: The CSV shall include a metadata header with configuration, flight summary and the rate it was logged at. ← SYS-DATA-02
 - **BUZ-03**: The system shall play an altitude beep-out sequence after landing, holding it while a USB host is attached and resuming it when the host goes (USB-02, USB-04). ← SYS-DATA-03
 - **BUZ-04**: The altitude beep-out shall encode each digit of the max altitude in configured units. ← BUZ-03
 - **BUZ-05**: The digit 0 shall be encoded as 10 beeps. ← BUZ-04
@@ -341,7 +342,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **WEB-API-03**: The system shall accept configuration updates at `/api/config` (POST) and write to persistent storage. ← SYS-WEB-01
 - **WEB-API-04**: The system shall accept firmware updates at `/api/ota` (POST), answer before it restarts, and answer `Expect: 100-continue`. ← SYS-WEB-01
 - **WEB-API-05**: The system shall trigger a device restart at `/api/reboot` (POST). ← SYS-WEB-01
-- **WEB-API-06**: The system shall serve flight data as CSV at `/api/flight.csv`. ← SYS-WEB-01
+- **WEB-API-06**: The system shall serve flight data as CSV at `/api/flight.csv`, rendered from the binary log as it is sent and framed by Content-Length. ← SYS-WEB-01
 - **WEB-API-07**: All API responses shall include CORS headers. ← SYS-WEB-01
 - **WEB-API-08**: The web API and USB shall stay live in flight. From launch until the flight log's tail is flushed, the log alone shall hold the filesystem: any other file access shall be refused -- the HAL's file calls with HAL_FS_LOCKED, a web request with 423 before it mounts -- and a web transfer that holds the filesystem when the log starts shall be dropped so the log can mount. ← SYS-WEB-01, DD-058
 - **WEB-API-09**: The system shall erase the flight log on request at `/api/flight/erase` (POST), unless the log is being written. ← DAT-06
@@ -354,9 +355,11 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **WEB-HTTP-06**: The loop's head shall only move bytes between the network stack and the connections. Every other HTTP step shall be a bounded unit run from the loop's slack, after the flight work, started only with its budget left in the period, except that every period shall run at least one. ← SYS-WEB-01, DD-061
 - **WEB-HTTP-07**: A unit that touches nothing but its own connection may run on core1 within core1's grant. Core0 shall not touch a connection core1 holds, shall take it back only once core1 is idle, and shall fail one whose unit core1 did not finish. ← DD-061
 - **WEB-API-11**: `/api/status` shall be rendered from a snapshot core0 takes in one pass, shall keep its keys and their order, and shall be well-formed JSON whatever the configured rocket id and name contain. ← SYS-WEB-01, DD-061
+- **WEB-API-12**: The system shall report at `/api/log/space` the bytes the next flight's log has room for, the size of a sample record and the two log rates, and refuse with 423 while the flight log holds the filesystem. ← SYS-WEB-01, DD-062
 - **WEB-UI-01**: The web interface shall display device status in the configured units. ← SYS-WEB-01
 - **WEB-UI-04**: The web interface shall display flight summary data and allow CSV download. The summary shall come from the flight log alone, be re-read whenever it is shown, and name the flight it describes; flight time shall stop at the landing. ← SYS-WEB-01
 - **WEB-UI-05**: The web interface shall support firmware upload and update checking. ← SYS-WEB-01
+- **WEB-UI-06**: The Config tab shall offer high-rate logging, and shall estimate the longest flight the log holds at the rate chosen, updating as the choice changes. ← SYS-WEB-01, DD-062
 
 ---
 
@@ -464,7 +467,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 ### L3 Subsystem Requirements
 - **CFG-TABLE-01**: All configuration fields shall be defined in a single table that generates the struct, parser, serializer, and defaults. ← SYS-CFG-04 ✅ config_fields.h X-macro
 - **CFG-TABLE-02**: A round-trip test shall automatically verify every field survives serialize → parse. ← CFG-TABLE-01 ✅ test_config.c (15 tests)
-- **CFG-SUBSYS-01**: Each subsystem (telemetry, logging, buzzer) shall have configurable parameters: `telem_format` and `telem_rate_hz`, `log_rate_hz`, and the beep personalities in `beep.ini`. Every configuration key shall be read by something. ← UN-4 ✅
+- **CFG-SUBSYS-01**: Each subsystem (telemetry, logging, buzzer) shall have configurable parameters: `telem_format` and `telem_rate_hz`, `log_high_rate`, and the beep personalities in `beep.ini`. Every configuration key shall be read by something. ← UN-4 ✅
 
 ## 16. Ground Test (v2.0) ✅ Done
 

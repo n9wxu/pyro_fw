@@ -86,7 +86,7 @@ print(f"== {board} {st0['fw_version']} at {HOST}, state {st0['state']}")
 NEW_FIELDS = ("pyro1_refused", "pyro2_refused", "pyro1_refires", "main_forced", "usb_attached", "test_mode",
               "buzzer_active", "raw_pa", "pad_speed_cms", "ground_degraded", "ground_reseeds",
               "sample_interval_us", "stamp_lag_max_us", "fit_sigma_mpa", "mach_lock", "mach_flag_ms",
-              "peak_lower_bound")
+              "peak_lower_bound", "log_high_rate")
 check("status: new fields present", all(k in st0 for k in NEW_FIELDS),
       ",".join(k for k in NEW_FIELDS if k not in st0))
 # T0: the sensor's own reading, and the speed the launch detector reads.
@@ -109,7 +109,7 @@ if st0["uptime"] > 5000:
 for method, path, want in (("GET", "/www/no_such_file.html", 404), ("POST", "/api/no_such_route", 404),
                            ("GET", "/api/config", 200), ("GET", "/api/pins", 200),
                            ("GET", "/api/pins/caps", 200), ("GET", "/api/beeps", 200),
-                           ("GET", "/api/flight.csv", 200)):
+                           ("GET", "/api/flight.csv", 200), ("GET", "/api/log/space", 200)):
     code, hdr, body = req(method, path, "" if method == "POST" else None)
     cors = hdr.get("Access-Control-Allow-Origin") == "*"
     check(f"{method} {path} -> {want} with CORS", code == want and cors, f"{code} cors={cors}")
@@ -124,6 +124,13 @@ code, _, body = req("GET", "/api/flight.csv")
 check("erased log reads as the bare column header", body.strip() == b"time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event",
       repr(body[:80]))
 
+# DD-062: the room the next flight's log has, in bytes and binary records.
+_, _, body = req("GET", "/api/log/space")
+sp = json.loads(body)
+check("log space: bytes free, record size and the two rates",
+      sp.get("bytes_free", 0) > 0 and sp.get("record_bytes") == 22 and sp.get("rates_hz", [0])[0] == 1
+      and sp.get("rates_hz", [0, 0])[1] in (50, 100), str(sp))
+
 # REV-02 / REV-12: a disabled channel survives the merge, and no inert key is written.
 _, _, cfg0 = req("GET", "/api/config")
 cfg0 = cfg0.decode()
@@ -136,7 +143,7 @@ check("POST /api/config pyro1_mode=none applied", code == 200 and b"applied" in 
 _, _, cfg1 = req("GET", "/api/config")
 cfg1 = cfg1.decode()
 check("config.ini keeps pyro1_mode=none", "pyro1_mode=none" in cfg1)
-inert = [k for k in ("beep_mode=", "max_coast_s=", "log_enabled=", "buzzer_startup=") if k in cfg1]
+inert = [k for k in ("beep_mode=", "max_coast_s=", "log_enabled=", "buzzer_startup=", "log_rate_hz=") if k in cfg1]
 check("config.ini carries no inert keys after a save", not inert, ",".join(inert))
 st1 = wait_for(lambda s: s["pyro1_mode"] == "none" and "pyro1_open" not in s["faults"])
 check("status reports pyro1_mode none", st1["pyro1_mode"] == "none")

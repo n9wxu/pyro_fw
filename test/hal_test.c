@@ -11,6 +11,7 @@
 #include "../src/pressure_processing.h"
 #include "../src/board_id.h"
 #include "../src/flight_events.h"
+#include "../src/flight_log.h"
 #include "mocks.h"
 #include <string.h>
 #include <stdio.h>
@@ -638,22 +639,23 @@ void hal_fs_close(hal_file_t *f) {
 void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     if (test_log_active)
         return;
-    test_log_file = hal_fs_open("flight_log.csv", false);
+    test_log_file = hal_fs_open(FLOG_PATH, false);
     if (!test_log_file)
         return;
-    char hdr[256];
-    int n = snprintf(hdr, sizeof(hdr),
-                     "# " PYRO_BOARD_NAME " Flight Data\n# ID: %.8s\n# Name: %.8s\n"
-                     "# Pyro1: %s %u\n# Pyro2: %s %u\n"
-                     "# Units: %s\n# Ground Pa: %ld\n"
-                     "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n",
-                     cfg->id, cfg->name, config_mode_name(cfg->pyro1_mode), cfg->pyro1_value,
-                     config_mode_name(cfg->pyro2_mode), cfg->pyro2_value,
-                     cfg->units == 2   ? "ft"
-                     : cfg->units == 1 ? "m"
-                                       : "cm",
-                     (long)ground_pressure_pa);
-    hal_fs_write(test_log_file, hdr, n);
+    flog_header_t h = {
+        .board = PYRO_BOARD_NAME,
+        .id = cfg->id,
+        .name = cfg->name,
+        .pyro1_mode = cfg->pyro1_mode,
+        .pyro2_mode = cfg->pyro2_mode,
+        .pyro1_value = cfg->pyro1_value,
+        .pyro2_value = cfg->pyro2_value,
+        .units = cfg->units,
+        .ground_pa = ground_pressure_pa,
+        .high_rate = cfg->log_high_rate,
+    };
+    uint8_t rec[128];
+    hal_fs_write(test_log_file, (const char *)rec, flog_put_header(rec, (int)sizeof(rec), &h));
     test_log_active = true;
 }
 
@@ -661,11 +663,44 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
                     uint8_t event) {
     if (!test_log_active || !test_log_file)
         return;
-    char line[96];
-    int n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%ld,%.1f,%s\n", (unsigned long)time_ms, (long)pressure_pa,
-                     (long)altitude_cm, state, under_thrust, (long)pp_last_read_raw_pa(),
-                     (double)mock_pressure.temperature_c, flight_event_name(event));
-    hal_fs_write(test_log_file, line, n);
+    flog_sample_t s = {
+        .time_ms = time_ms,
+        .pressure_pa = pressure_pa,
+        .altitude_cm = altitude_cm,
+        .raw_pa = pp_last_read_raw_pa(),
+        .temp_dc = (int16_t)lroundf(mock_pressure.temperature_c * 10.0f),
+        .state = state,
+        .thrust = under_thrust,
+        .event = event,
+    };
+    uint8_t rec[FLOG_SAMPLE_BYTES];
+    hal_fs_write(test_log_file, (const char *)rec, flog_put_sample(rec, (int)sizeof(rec), &s));
+}
+
+typedef struct {
+    const uint8_t *p;
+    int len, pos;
+} log_src_t;
+
+static int log_src_read(void *ctx, uint8_t *dst, int n) {
+    log_src_t *s = (log_src_t *)ctx;
+    if (n > s->len - s->pos)
+        n = s->len - s->pos;
+    memcpy(dst, s->p + s->pos, (size_t)n);
+    s->pos += n;
+    return n;
+}
+
+int test_flight_log_csv(char *buf, int max_len) {
+    static uint8_t bin[SIM_FS_MAX_SIZE];
+    log_src_t src = {bin, mock_fs_peek(FLOG_PATH, (char *)bin, (int)sizeof(bin)), 0};
+    if (src.len <= 0)
+        return 0;
+    flog_csv_t r;
+    flog_csv_init(&r, log_src_read, &src);
+    int n = flog_csv_read(&r, buf, max_len - 1);
+    buf[n] = '\0';
+    return n;
 }
 
 void hal_log_stop(void) {

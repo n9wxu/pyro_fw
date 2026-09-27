@@ -29,7 +29,7 @@ bool replay_logged_events(const char *csv, replay_events_t *out);
 
 /* The events the firmware decides from the log's readings, starting in ASCENT
  * with the log's configuration and ground pressure. false if the log has no
- * raw_pa column. */
+ * raw_pa column, or was written at a row a second [DAT-08]. */
 bool replay_run(const char *csv, replay_events_t *out);
 
 /* Called before each row with its time: what a HAL's own tick would do, such

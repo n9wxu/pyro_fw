@@ -115,6 +115,45 @@ test.describe('New device', () => {
     await page.click('button:has-text("Default")');
     await expect(page.locator('#cfgName')).toHaveValue('MyRocket');
   });
+
+  /* WEB-UI-06, DD-062: the longest flight the log holds, at the rate chosen.
+     The mock reports 7,900,000 bytes free and 22-byte records. */
+  test('log rate: the longest flight the log holds follows the switch', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await expect(page.locator('#logHigh')).not.toBeChecked();
+    await expect(page.locator('#logEst')).toContainText('4.2 days');
+    await expect(page.locator('#logEst')).toContainText('1 row/s');
+    await page.check('#logHigh');
+    await expect(page.locator('#logEst')).toContainText('60 min');
+    await expect(page.locator('#logEst')).toContainText('100 rows/s');
+    await expect(page.locator('#cfgDirty')).toBeVisible();
+    await page.uncheck('#logHigh');
+    await expect(page.locator('#logEst')).toContainText('4.2 days');
+  });
+
+  test('log rate: saved with the rest of the tab', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await page.check('#logHigh');
+    await page.click('#btnSaveCfg');
+    await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 5000 });
+    const ini = await (await page.request.get(BASE + '/api/config')).text();
+    expect(ini).toContain('log_high_rate=true');
+    await page.click('button:has-text("Default")');
+    await expect(page.locator('#logHigh')).not.toBeChecked();
+  });
+
+  /* In flight the log holds the filesystem, so the space cannot be read. */
+  test('log rate: no estimate while the flight log is written', async ({ page }) => {
+    await page.route('**/api/log/space', r => r.fulfill({ status: 423, body: '{"error":"the flight log holds the filesystem"}' }));
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await expect(page.locator('#logEst')).toContainText('flight log');
+  });
 });
 
 /* ══════════════════════════════════════════════════════════════════
@@ -140,6 +179,7 @@ test.describe('Configured device', () => {
     await expect(page.locator('#p2mode')).toHaveValue('agl');
     await expect(page.locator('#p2val')).toHaveValue('500');
     await expect(page.locator('#cfgUnits')).toHaveValue('2');
+    await expect(page.locator('#logHigh')).toBeChecked();
   });
 
   test('active config shows custom settings', async ({ page }) => {
