@@ -586,10 +586,9 @@ test.describe('Flown device', () => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Flight Data');
-    const dur = await page.locator('#dDur').textContent();
-    expect(dur).toContain('32.4');
-    const apogee = await page.locator('#dApogee').textContent();
-    expect(apogee).toContain('10000');
+    /* The tab fetches the log on opening: wait for it, don't sample. */
+    await expect(page.locator('#dDur')).toContainText('32.4');
+    await expect(page.locator('#dApogee')).toContainText('10000');
   });
 
   /* N27, FLT-MACH-07: while the Mach lock stands the ports' altitude is not
