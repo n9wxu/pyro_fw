@@ -30,9 +30,11 @@ recorded.
 
 **G4 ran on 2026-09-27**, with your permission to flash: all four bench
 boards on 2.1.681 (MK1A 02632D472F0C, MK1B 02E7253A34C2 and 02E72A403441,
-MK1C 02373331FFDE), the MK1Bs then on 2.1.682 (DD-059). `api_check.py`,
+MK1C 02373331FFDE), the MK1Bs then on 2.1.682 (DD-059), and all four on
+2.1.683 (DD-060). `api_check.py`,
 `http_stream_check.py` and `hw_ui_check.js` pass on each; 100 loops a
-second, 0 overruns, 0 flash refusals, 0 pressure rejects. Section 6 lists
+second, 0 flash refusals, 0 pressure rejects. Overruns under the checks'
+own load are G4-L. Section 6 lists
 what still needs a person or equipment.
 
 ---
@@ -1275,6 +1277,7 @@ resolution doc.
 | N11 | LUA and MOCK rows on the flight clock | in test mode, a script that calls `log()` once a second through a chamber flight writes LUA rows whose times fall among the sample rows', not near the board's uptime | test mode, the chamber, MK1C with Lua |
 | D-C1 | MK1C's R_BLEED, open, hides from the bus level | U9's reverse path carries the bus either way (685 against 730 counts), so no level check can find it (DD-054). **Closed, not wanted:** the firmware checks only presence and shorts (DD-055) | — |
 | CI-1 | Six host suites never run in CI | `pin_caps_tests`, `beep_tests`, `pin_assign_tests`, `buzzer_tests`, `config_tests` and `config_persistence_tests` pass in the local gate but no workflow step runs them; `plant_tests` and `board_pyro_mk1c_tests` now do | a workflow edit |
+| G4-L | MK1C overruns under G4's own load | **Found 2026-09-27.** G4 asks for 0 loop overruns on MK1C with Lua running. Under the checks' HTTP load MK1C logs 1-4, on 2.1.681 and 2.1.683 alike -- an A/B on the same board, so DD-060 is not the cause: STAGE 1 (USB, lwIP, HTTP) peaks at 7.5-8.4 ms, and with the sensor and flight stages a loop's work passes 10 ms. The first G4 run on 2.1.681 happened to log none. Pass: bound the HTTP work STAGE 1 does in one loop, then 0 overruns through G4 | a change to the loop, and G4 |
 | D-B1 | MK1B's continuity check stalls the loop | **Passed 2026-09-27** on 2.1.681: the second MK1B, owning its pyros, 0 overruns (79,233 on 2.1.680), `stage_max_us[3]` 4.1 ms. The reading it makes is B-U5's | — |
 | T5 | The fit's cost, and the pad's σ, on each board | **Measured 2026-09-27**, at rest after a reboot: `stage_max_us[2]` 2.9 ms on both MK1Bs and MK1C, 2.1 ms on MK1A, steady from the first seconds on the pad -- over the 500 µs allowance (T5-C); 0 overruns. `fit_sigma_mpa` MK1A 1495-1508, MK1C 4314-4480, both MK1Bs 5000, the ceiling (`PP_SIGMA_CEIL_PA`): the MS5607 boards read about twice the datasheet's 2.4 Pa at OSR 4096 (MS5607-02BA03 p.4) on this bench, the MK1Bs at least that | — |
 | N20 | No file served while the log is written | in test mode, once a chamber pump-down declares a launch, `GET /www/app.js` answers 423 and `/api/status` 200; after LANDED the log reads back whole | test mode, the chamber |
