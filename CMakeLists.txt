@@ -328,6 +328,8 @@ add_executable(pyro_fw_c
     src/net_glue.c
     src/http_server.c
     src/http_conn.c
+    src/http_work.c
+    src/status_json.c
     src/net_ring.c
     src/reset_interface.c
     src/littlefs_driver.c
@@ -782,6 +784,37 @@ add_custom_target(http_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_http
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "HTTP stream parser and framing tests"
+)
+
+# Who runs the HTTP work units: core0's turn and budget, and the worker's
+# exclusive hold on the connections it takes (DD-061).
+add_custom_target(http_work_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building HTTP work unit tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_http_work.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/http_work.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_http_work
+    COMMAND ${CMAKE_COMMAND} -E echo "Running HTTP work unit tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_http_work
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "HTTP work unit scheduling tests"
+)
+
+# /api/status from a snapshot, linked alone: the renderer reads nothing else.
+add_custom_target(status_json_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building status rendering tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_status_json.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/status_json.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_status_json
+    COMMAND ${CMAKE_COMMAND} -E echo "Running status rendering tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_status_json
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "/api/status rendering tests"
 )
 
 # The MS5607 one-shot's interrupt state machine, on a fake bus and clock at

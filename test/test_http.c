@@ -40,6 +40,8 @@ static void on_head(http_conn_t *c) {
         http_stream(c);
     } else if (strcmp(c->method, "POST") == 0 && strcmp(c->path, "/slow") == 0) {
         /* body discarded; on_complete answers */
+    } else if (strcmp(c->method, "GET") == 0 && strncmp(c->path, "/later", 6) == 0) {
+        /* answered by a unit, away from the service call */
     } else {
         http_respond_str(c, 404, "text/plain", "Not found");
     }
@@ -59,7 +61,13 @@ static uint16_t on_body(http_conn_t *c, const uint8_t *data, uint16_t len) {
     return n;
 }
 
+static int later_asks;
+
 static bool on_complete(http_conn_t *c) {
+    if (strncmp(c->path, "/later", 6) == 0) {
+        later_asks++;
+        return false;
+    }
     if (complete_refusals > 0) {
         complete_refusals--;
         return false;
@@ -198,6 +206,7 @@ void setUp(void) {
     complete_refusals = 0;
     fill_pos = 0;
     stream_len = 5000;
+    later_asks = 0;
     for (unsigned i = 0; i < sizeof(big); i++) {
         big[i] = (char)('A' + i % 26);
     }
@@ -474,6 +483,85 @@ void test_HTTP_16_expect_continue(void) {
     TEST_ASSERT_EQUAL(413, status_of(out));
 }
 
+/* The scheduler serves a connection only when it has a step to take: bytes
+ * to parse, a handler to ask again, or a response and room to put it. */
+void test_HTTP_17_wants_service_only_with_a_step_to_take(void) {
+    http_conn_init(&conn);
+    out_len = 0;
+    TEST_ASSERT_FALSE_MESSAGE(http_conn_wants_service(&conn), "nothing received");
+
+    const char *part = "GET /hello HT";
+    net_ring_write(&conn.rx, part, (uint16_t)strlen(part));
+    TEST_ASSERT_TRUE(http_conn_wants_service(&conn));
+    pass(0xFFFF);
+    TEST_ASSERT_FALSE_MESSAGE(http_conn_wants_service(&conn), "waiting for the rest of the head");
+    conn.rx_eof = true;
+    TEST_ASSERT_TRUE_MESSAGE(http_conn_wants_service(&conn), "a head cut short is answered");
+
+    http_conn_init(&conn);
+    const char *hello = "GET /hello HTTP/1.1\r\n\r\n";
+    net_ring_write(&conn.rx, hello, (uint16_t)strlen(hello));
+    pass(0xFFFF);
+    TEST_ASSERT_TRUE(http_conn_done(&conn));
+    TEST_ASSERT_FALSE_MESSAGE(http_conn_wants_service(&conn), "done");
+
+    http_conn_init(&conn);
+    const char *bigreq = "GET /big HTTP/1.1\r\n\r\n";
+    net_ring_write(&conn.rx, bigreq, (uint16_t)strlen(bigreq));
+    http_conn_service(&conn, &H);
+    TEST_ASSERT_EQUAL_UINT16(0, net_ring_writable(&conn.tx));
+    TEST_ASSERT_FALSE_MESSAGE(http_conn_wants_service(&conn), "tx full: nothing to do until it drains");
+    uint8_t scratch[64];
+    net_ring_read(&conn.tx, scratch, sizeof(scratch));
+    TEST_ASSERT_TRUE(http_conn_wants_service(&conn));
+
+    http_conn_init(&conn);
+    complete_refusals = 1;
+    const char *slow = "POST /slow HTTP/1.1\r\nContent-Length: 0\r\n\r\n";
+    net_ring_write(&conn.rx, slow, (uint16_t)strlen(slow));
+    http_conn_service(&conn, &H);
+    TEST_ASSERT_TRUE_MESSAGE(http_conn_wants_service(&conn), "on_complete said not now: ask again");
+
+    conn.failed = true;
+    TEST_ASSERT_FALSE_MESSAGE(http_conn_wants_service(&conn), "failed: the transport aborts it");
+}
+
+/* A portable unit answers from outside http_conn_service(), on another core,
+ * and the exchange then finishes as if a handler had answered. */
+static void answer_later(const char *req, const void *body, uint32_t len, uint16_t window) {
+    http_conn_init(&conn);
+    out_len = 0;
+    net_ring_write(&conn.rx, req, (uint16_t)strlen(req));
+    for (int i = 0; i < 3; i++) {
+        pass(window);
+    }
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, out_len, "nothing sent before the unit answers");
+    TEST_ASSERT_GREATER_THAN_INT(0, later_asks);
+    TEST_ASSERT_FALSE(http_conn_done(&conn));
+
+    http_respond(&conn, 200, "application/json", body, len);
+    int asks = later_asks;
+    for (int i = 0; i < 20000 && !http_conn_done(&conn); i++) {
+        pass(window);
+    }
+    drain(0xFFFF);
+    TEST_ASSERT_TRUE(http_conn_done(&conn));
+    TEST_ASSERT_EQUAL_MESSAGE(asks, later_asks, "answered: on_complete is not asked again");
+    out[out_len] = '\0';
+    TEST_ASSERT_EQUAL(200, status_of(out));
+    uint32_t bl;
+    const char *b = body_of(out, out_len, &bl);
+    TEST_ASSERT_EQUAL_UINT32(len, bl);
+    TEST_ASSERT_EQUAL_MEMORY(body, b, len);
+}
+
+void test_HTTP_18_a_unit_answers_away_from_the_service_call(void) {
+    answer_later("GET /later HTTP/1.1\r\n\r\n", "{\"a\":1}", 7, 0xFFFF);
+    /* Rendered into work, larger than tx: the rest follows as tx drains. */
+    memcpy(conn.work, big, sizeof(big));
+    answer_later("GET /later/big HTTP/1.1\r\n\r\n", conn.work, sizeof(big), 5);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_HTTP_01_whole_request);
@@ -492,5 +580,7 @@ int main(void) {
     RUN_TEST(test_HTTP_14_response_larger_than_tx);
     RUN_TEST(test_HTTP_15_complete_can_wait);
     RUN_TEST(test_HTTP_16_expect_continue);
+    RUN_TEST(test_HTTP_17_wants_service_only_with_a_step_to_take);
+    RUN_TEST(test_HTTP_18_a_unit_answers_away_from_the_service_call);
     return UNITY_END();
 }

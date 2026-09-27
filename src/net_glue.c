@@ -14,6 +14,7 @@
 #include "lwip/ethip6.h"
 #include "lwip/igmp.h"
 #include "lwip/apps/mdns.h"
+#include "http_server.h"
 
 #define INIT_IP4(a, b, c, d)                                                                                           \
     { PP_HTONL(LWIP_MAKEU32(a, b, c, d)) }
@@ -252,7 +253,8 @@ void net_mdns_poll(void) {
     mdns_resp_add_service(&netif_data, mdns_hostname, "_pyro", DNSSD_PROTO_TCP, 80, NULL, NULL);
 }
 
-void http_server_service(void); /* http_server.c */
+/* How long the last call's HTTP transport took, for STAGE 1's breakdown. */
+uint32_t net_last_http_us;
 
 void net_service(void) {
     /* Process received frames - RX always works */
@@ -263,8 +265,10 @@ void net_service(void) {
         tud_network_recv_renew();
     }
     sys_check_timeouts();
-    /* Outside every lwIP callback: the HTTP work the callbacks queued. */
-    http_server_service();
+    /* Outside every lwIP callback: the bytes the callbacks queued. */
+    uint32_t t0 = time_us_32();
+    http_server_transport();
+    net_last_http_us = time_us_32() - t0;
 }
 
 /* lwIP system hooks */

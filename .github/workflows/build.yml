@@ -121,6 +121,8 @@ jobs:
             src/board_support.h src/pressure_single_sensor.c src/bmp280_driver.c \
             boards/*/board_info.c boards/*/pyro_*.c boards/*/pyro_*.h boards/mk1b/pressure_board.c \
             boards/mk1c/arm_pump.c boards/mk1c/arm_pump.h \
+            src/http_server.c src/http_server.h src/http_conn.c src/http_conn.h \
+            src/http_work.c src/http_work.h src/status_json.c src/status_json.h \
             2>&1 || echo "::warning::Code formatting differences found. Run: clang-format -i src/*.c src/*.h"
 
       - name: Cyclomatic complexity (pmccabe)
@@ -166,6 +168,11 @@ jobs:
       # byte, and drained through a small window.
       - name: Run HTTP stream tests
         run: cd build && ninja http_tests
+
+      # Who runs each HTTP work unit, and /api/status rendered from a
+      # snapshot, linked alone (DD-061).
+      - name: Run HTTP work unit and status rendering tests
+        run: cd build && ninja http_work_tests && ninja status_json_tests
 
       # The MS5607's interrupt state machine on a fake bus at each board's
       # own bus rate: the stamp is the handler's, through a held read and a

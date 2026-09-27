@@ -35,6 +35,7 @@
 #include "flight_states.h"
 #include "pyro.h"
 #include "pyro_release.h"
+#include "http_server.h"
 #include <string.h>
 
 /* ── External dependencies ────────────────────────────────────────── */
@@ -48,7 +49,6 @@ void net_start(void);
 void net_mdns_poll(void);
 void net_mac_init(void);
 void net_service(void);
-void http_server_init(void);
 
 /* ── Hardware-internal pressure types ─────────────────────────────── */
 /* These are implementation details of the hardware HAL, not exposed
@@ -872,10 +872,27 @@ void hal_platform_init(void) {
      * resets the peripheral and recovers the bus itself. */
 }
 
+/* STAGE 1's peak, by part: TinyUSB, lwIP, HTTP transport, mDNS. */
+volatile uint32_t stage1_part_max_us[4];
+
+static void note_part(int part, uint32_t us) {
+    if (us > stage1_part_max_us[part])
+        stage1_part_max_us[part] = us;
+}
+
 void hal_platform_service(void) {
+    extern uint32_t net_last_http_us;
+    uint32_t t0 = time_us_32();
     tud_task();
+    uint32_t t1 = time_us_32();
     net_service();
+    uint32_t t2 = time_us_32();
     net_mdns_poll();
+    uint32_t t3 = time_us_32();
+    note_part(0, t1 - t0);
+    note_part(1, (t2 - t1) - net_last_http_us);
+    note_part(2, net_last_http_us);
+    note_part(3, t3 - t2);
 }
 
 /* ── Pressure sample override [v2-8] ─────────────────────────────── */

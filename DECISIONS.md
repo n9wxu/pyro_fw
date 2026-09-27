@@ -559,6 +559,69 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-061: HTTP As Work Units, Run From The Slack Or By Core1
+- **Decision:** at the user's direction -- "refactoring the http so it
+  operates with work units that can be assigned to worker threads" -- the
+  HTTP server is split in two. The transport (`http_server_transport()`, from
+  `net_service()`) moves bytes between lwIP and each connection's rings and
+  decides when to close, and runs no handler. Everything else is a unit: one
+  `http_conn_service()` step on one connection, or a portable unit.
+  `src/http_work.c` decides who runs each [WEB-HTTP-06, WEB-HTTP-07].
+- **Why:** G4-L. Under G4's load MK1C's STAGE 1 peaked at 7.7 ms, of which
+  7.4 ms was HTTP handlers: `http_server_service()` served every connection
+  in one pass at the loop's head, before the flight work, and several
+  `/api/status` renders in one pass pushed a loop past 10 ms (1-4 overruns a
+  G4 run).
+- **Core0 runs units only from the slack,** after STAGE 7, one at a time and
+  in turn, and starts one only with `HTTP_UNIT_BUDGET_US` (2 ms) of the period
+  left. The first of each period runs regardless, so HTTP still progresses on
+  a loop with no slack; the overrun branch runs that one.
+- **A portable unit touches nothing but its own connection,** and core1 may
+  run it before its Lua slice. The only one is the `/api/status` render: on
+  core0 `on_head` captures a `status_snap_t` in one pass, and `status_json()`,
+  which links alone in its test, renders it. A render core0 had room for it
+  runs at once; what it had no room for, the next grant hands to core1, which
+  is charged `HTTP_WORKER_UNIT_US` (4 ms) per unit, leaving Lua at least
+  1 ms. Core0 first because the slack is idle time: sending every render to
+  core1 first measured 49 requests/s and a 20 ms median on one client,
+  against 73/s and 13.5 ms core0-first.
+- **Ownership is whole-connection and changes hands only on core0:** units
+  are handed over before `lua_core1_dispatch()` bumps the grant and taken
+  back when `lua_core1_flash_ok()` says core1 is idle. The transport skips a
+  held connection entirely, so the rings need no cross-core protocol; a link
+  that dies meanwhile only unlinks it, and the connection is released on its
+  return. A unit core1 started and did not finish -- a kill mid-unit -- fails
+  its connection.
+- **`http_unit_vt` is named `*_vt`** so `support/prove_core0.py` folds its
+  entries into core1's call graph; an image that links `http_work_run()`
+  without it now fails.
+- **Measured on the four bench boards (2.1.688), through G4:** 0 loop
+  overruns on each, 0 flash refusals, 0 pressure rejects, every check passing,
+  MK1C's Lua heartbeat climbing. STAGE 1 peaks at 1.9-2.1 ms (was 7.7 on
+  MK1C), mostly lwIP; the transport's share is under 1 ms. Core0's costliest
+  unit that writes no flash is 1.6 ms, core1's 3.8 ms, fetching from flash
+  while core0 does. A unit that writes flash still runs to completion in the
+  slack, as the old slack pass did: an upload's littlefs write takes 35-87 ms.
+  One client polling `/api/status` on MK1C gets 73/s at a 13.5 ms median,
+  where MK1A on the old path answered in 7.3 ms: work that ran at the loop's
+  head now waits for the flight work.
+- **`/api/status` keeps every key and its order, and gains five:**
+  `http_units` and `http_unit_max_us` (core0, core1) after `stage1_parts_us`,
+  whose third figure is now the transport; and after `recovery`, how the last
+  boot ended -- `prev_watchdog`, true for a watchdog timeout rather than a
+  requested reboot, and `prev_stage`/`prev_stage_ms`, the stage or crumb core0
+  was in, read before anything restamps them. HTTP units have crumbs of their
+  own (80-82), so a hang inside one names itself. The rocket's id and name are
+  escaped: a quote in either had ended the JSON string [WEB-API-11].
+- **Found on the bench:** the pad Mach flag (FLT-MACH-02) rises after G4's
+  uploads, whose flash erases stretch the pressure readings' stamp lag to
+  50-90 ms: 6 of 12 runs on the bench MK1B at 2.1.687-688 failed
+  `api_check.py`'s "no Mach lock on the pad", and 2 of 4 on 2.1.683 -- an A/B
+  on the same board, so it predates this change. Task G4-M. Once in those
+  twelve runs the bench MK1B stopped answering HTTP for 40-60 s without
+  resetting, cause unknown; it has not recurred in the fourteen G4 runs since,
+  on the four boards. Task G4-N.
+
 ### DD-060: A Theory Of Operation Per Board; Structure In Place Of Comments
 - **Decision:** at the user's direction -- "write a comprehensive theory of
   operation for each board type ... Reduce the comments by referencing the

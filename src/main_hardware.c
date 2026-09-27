@@ -17,6 +17,7 @@
 #include "flight_states.h"
 #include "device_status.h"
 #include "buzzer.h"
+#include "http_server.h"
 #include "tusb.h"
 #include "hardware/structs/watchdog.h"
 #include "hardware/structs/usb.h"
@@ -72,6 +73,8 @@ static inline void stage_enter(uint8_t n, uint32_t now) {
  *
  *   70-74  core0 in the flash window (see below)
  *   60-61  around lua_core1_start()          (lua_app.c)
+ *   80-82  an HTTP unit on core0: a step, a portable unit, between units
+ *          (http_server.c)
  *   95-98  around one sector erase / program (littlefs_driver.c)
  *
  * flash_window_crumb() is the same store, callable from those files. */
@@ -92,8 +95,23 @@ volatile uint32_t net_conn_full;
 
 volatile device_status_t g_status = {0};
 
+/* How the last boot ended, read before anything here restamps the scratch
+ * registers or re-arms the watchdog; /api/status reports it. */
+volatile bool boot_prev_watchdog;
+volatile int32_t boot_prev_stage = -1;
+volatile uint32_t boot_prev_stage_ms;
+
+static void note_last_boot(void) {
+    boot_prev_watchdog = watchdog_enable_caused_reboot();
+    uint32_t st = watchdog_hw->scratch[0];
+    if ((st & 0xffff0000u) == 0x53540000u) {
+        boot_prev_stage = (int32_t)(st & 0xffffu);
+        boot_prev_stage_ms = watchdog_hw->scratch[1];
+    }
+}
+
 void net_mdns_poll(void);
-void net_service(void); /* net_glue.c; serviced again in the loop's slack */
+void net_service(void); /* net_glue.c: USB frames, lwIP, the HTTP transport */
 
 /* [USB-01] A host sends a start-of-frame every millisecond while it is awake,
  * and nothing else does, so a frame number that moves proves a PC and one that
@@ -141,6 +159,7 @@ static void update_status(flight_context_t *ctx, uint32_t now) {
 }
 
 int main() {
+    note_last_boot();
     hal_platform_init();
 
     flight_context_t ctx;
@@ -201,7 +220,8 @@ int main() {
         STAGE(2);
         hal_tasks_tick(now);
 
-        /* Platform services */
+        /* USB, lwIP and the HTTP transport, which only moves bytes: HTTP's
+         * handlers run as units from the slack, after the flight work. */
         STAGE(1);
         hal_platform_service();
 
@@ -257,9 +277,9 @@ int main() {
             flash_window_skipped();
         }
 
-        /* Slack from here, spent servicing USB and lwIP rather than
+        /* Slack from here, spent on USB, lwIP and HTTP work units rather than
          * sleeping: throttling those to the period rate costs HTTP and OTA
-         * throughput.
+         * throughput. A unit starts only with its budget left (http_work.h).
          *
          * A live hold gives core1 nothing for the whole period. One sector
          * erase takes tens of milliseconds, so an upload cannot run
@@ -270,6 +290,9 @@ int main() {
         if (work_us > loop_max_us)
             loop_max_us = work_us;
         loop_count++;
+
+        /* Before the dispatch, which hands core1 its HTTP units. */
+        http_server_period();
 
 #if PYRO_HAS_LUA
         if (window && !flash_window_holding(now)) {
@@ -282,6 +305,7 @@ int main() {
          * deadline and would make every iteration an overrun. */
         if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0) {
             loop_overruns++;
+            http_server_work(0); /* one a period however late: HTTP must not starve */
         } else {
             while (absolute_time_diff_us(get_absolute_time(), deadline) > 0) {
                 tud_task();
@@ -293,6 +317,7 @@ int main() {
                     flash_window_open();
                 }
                 net_service();
+                http_server_work((int32_t)absolute_time_diff_us(get_absolute_time(), deadline));
             }
         }
 

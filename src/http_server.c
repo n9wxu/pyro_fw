@@ -6,8 +6,11 @@
  * a segment. The lwIP adapter at the bottom moves bytes between lwIP and
  * those rings: it queues what arrives, hands it over as the parser consumes
  * it -- which is also what reopens the TCP window -- and feeds tx to lwIP as
- * its send buffer allows. lwIP callbacks only queue; all the work happens in
- * http_server_service(), from the main loop.
+ * its send buffer allows.
+ *
+ * lwIP callbacks only queue. http_server_transport() moves bytes and nothing
+ * else, from anywhere in the loop; every other step is a work unit
+ * (http_work.h), run by http_server_work() from the slack or by core1.
  */
 #include "lwip/tcp.h"
 #include "board_id.h"
@@ -39,6 +42,9 @@
 #include "buzzer.h"
 #include "pyro_release.h"
 #include "http_conn.h"
+#include "http_server.h"
+#include "http_work.h"
+#include "status_json.h"
 
 extern uint32_t hal_time_ms(void);
 
@@ -92,6 +98,7 @@ typedef enum {
     R_ERASE,
     R_BEEP_PLAY,
     R_LUA_CHECK,
+    R_STATUS, /* answered by HTTP_UNIT_STATUS */
 } route_t;
 
 struct conn;
@@ -120,8 +127,13 @@ typedef struct conn {
     bool fs_held;          /* counted by hal_fs_enter() until conn_release() */
     bool deferral_counted; /* one deferral per wait, not per pass */
     bool reboot_when_sent;
+    bool orphan; /* its link is gone while the worker holds it */
     char dest[HTTP_PATH_MAX];
+    status_snap_t status;
 } conn_t;
+
+_Static_assert(CONN_POOL_SIZE == HTTP_WORK_SLOTS, "a work slot is a connection");
+_Static_assert(STATUS_JSON_MAX <= HTTP_WORK_SIZE, "the status is rendered into the work buffer");
 
 static link_t links[LINK_POOL_SIZE];
 static conn_t conns[CONN_POOL_SIZE];
@@ -209,25 +221,6 @@ static uint16_t ota_write(const void *data, uint16_t len) {
     return done;
 }
 
-/* Minimal JSON string escaping: quote, backslash and newline, dropping the
- * rest of the control range. Truncates rather than overflowing. */
-static void json_escape(char *out, int out_sz, const char *in, int len) {
-    int j = 0;
-    for (int i = 0; i < len && j < out_sz - 8; i++) {
-        char ch = in[i];
-        if (ch == '"' || ch == '\\') {
-            out[j++] = '\\';
-            out[j++] = ch;
-        } else if (ch == '\n') {
-            out[j++] = '\\';
-            out[j++] = 'n';
-        } else if ((unsigned char)ch >= 0x20) {
-            out[j++] = ch;
-        }
-    }
-    out[j] = '\0';
-}
-
 /* ── Content type ─────────────────────────────────────────────────── */
 
 static const char *content_type_hdr(const char *path) {
@@ -285,6 +278,10 @@ static const char *state_names[] = {"BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALI
  * does, rather than being taken on trust. */
 extern volatile uint32_t loop_count, loop_max_us, loop_overruns, loop_late_max_us;
 extern volatile uint32_t stage_max_us[];
+extern volatile uint32_t stage1_part_max_us[]; /* hal_common.c: TinyUSB, lwIP, HTTP transport, mDNS */
+extern volatile bool boot_prev_watchdog;       /* main_hardware.c */
+extern volatile int32_t boot_prev_stage;
+extern volatile uint32_t boot_prev_stage_ms;
 
 #include "board_identity.h"
 
@@ -686,174 +683,152 @@ static void serve_api_pin_caps(http_conn_t *hc) {
     http_respond(hc, 200, JSON, buf, (uint32_t)pos);
 }
 
-static void serve_api_status(http_conn_t *hc) {
-    char pins_reason_esc[128];
-    const char *pr = pin_store_reason();
-    json_escape(pins_reason_esc, (int)sizeof(pins_reason_esc), pr, (int)strlen(pr));
-
-    /* The live assignment, which phase 4's Config tab renders and which makes
-     * "did my pins.ini actually take effect" answerable without a debugger. */
-    const pin_assign_t *pa = pin_store_current();
-    char bridge_desc[24];
-    uint8_t br_ch, br_common;
-    const char *br_name;
-    if (pin_store_bridge(&br_ch, &br_common, &br_name)) {
-        snprintf(bridge_desc, sizeof(bridge_desc), "%u+%u", (unsigned)br_ch, (unsigned)br_common);
-    } else {
-        snprintf(bridge_desc, sizeof(bridge_desc), "none");
-    }
-    /* What is wrong, named, as distinct from what the buzzer says about it.
-     *
-     * The beep is one of three, because three is the number of actions
-     * available at the pad. This is the screen, so it carries the diagnosis:
-     * nobody has to count beeps to read it. */
+/* /api/status, captured on core0 in one pass; rendered by HTTP_UNIT_STATUS
+ * on whichever core takes it. */
+static void status_capture(status_snap_t *s) {
     extern flight_context_t *flight_get_context(void);
+    extern beep_reason_t beep_reason_for_diag(uint16_t diag);
+    static const char *mode_names[] = {"none", "fallen", "agl", "speed", "delay"};
     const flight_context_t *fctx = flight_get_context();
-    char fault_list[160] = {0};
-    if (fctx) {
-        int fl = 0;
-        for (uint16_t bit = 1; bit != 0; bit <<= 1) {
-            if ((fctx->diag & bit) && *flight_diag_name(bit) && fl < (int)sizeof(fault_list) - 24) {
-                fl += snprintf(fault_list + fl, sizeof(fault_list) - (size_t)fl, "%s\"%s\"", fl ? "," : "",
-                               flight_diag_name(bit));
-            }
+    const pin_assign_t *pa = pin_store_current();
+    memset(s, 0, sizeof(*s));
+
+    s->state = g_status.state < STATE_NAME_COUNT ? state_names[g_status.state] : "UNKNOWN";
+    s->alt_cm = g_status.altitude_cm;
+    s->max_alt_cm = g_status.max_altitude_cm;
+    s->vspeed_cms = g_status.vertical_speed_cms;
+    s->pressure_pa = g_status.pressure_pa;
+    s->pyro_cont[0] = g_status.pyro1_continuity;
+    s->pyro_cont[1] = g_status.pyro2_continuity;
+    s->pyro_adc[0] = g_status.pyro1_adc;
+    s->pyro_adc[1] = g_status.pyro2_adc;
+    s->pyro_fired[0] = g_status.pyro1_fired;
+    s->pyro_fired[1] = g_status.pyro2_fired;
+    s->armed = g_status.pyros_armed;
+    s->flight_ms = g_status.flight_time_ms;
+    s->uptime_ms = to_ms_since_boot(get_absolute_time());
+    s->fw_version = FW_VERSION;
+    s->pyro_mode[0] = g_status.pyro1_mode < 5 ? mode_names[g_status.pyro1_mode] : "?";
+    s->pyro_mode[1] = g_status.pyro2_mode < 5 ? mode_names[g_status.pyro2_mode] : "?";
+    s->pyro_value[0] = g_status.pyro1_value;
+    s->pyro_value[1] = g_status.pyro2_value;
+    s->units = g_status.units;
+    memcpy(s->rocket_id, (const char *)g_status.rocket_id, sizeof(s->rocket_id) - 1);
+    memcpy(s->rocket_name, (const char *)g_status.rocket_name, sizeof(s->rocket_name) - 1);
+    s->sensor = pressure_sensor_name();
+    s->board = PYRO_BOARD_NAME;
+
+    /* Raw counts rather than volts, so a marginal reading stays visible. */
+    board_pyro_raw_t praw = {0};
+    bool raw = board_pyro_raw(&praw);
+    s->pyro_bus_q = raw ? (int32_t)praw.bus_quiescent : -1;
+    s->pyro_bus_adc = raw ? (int32_t)praw.bus_biased : -1;
+    s->pyro_vbat_adc = raw ? (int32_t)praw.vbat : -1;
+
+    s->loop_max_us = loop_max_us;
+    s->loop_overruns = loop_overruns;
+    s->loop_late_max_us = loop_late_max_us;
+    s->loop_count = loop_count;
+    for (int i = 0; i < STATUS_STAGES; i++) {
+        s->stage_max_us[i] = stage_max_us[i];
+    }
+    for (int i = 0; i < STATUS_STAGE1_PARTS; i++) {
+        s->stage1_parts_us[i] = stage1_part_max_us[i];
+    }
+    http_work_stats_t ws;
+    http_work_stats(&ws);
+    for (int w = 0; w < 2; w++) {
+        s->http_units[w] = ws.units[w];
+        s->http_unit_max_us[w] = ws.max_us[w];
+    }
+    s->flash_opens = flash_window_opens();
+    s->flash_skips = flash_window_skips();
+    s->flash_refusals = flash_window_refusals();
+    s->log_dropped = hal_log_dropped();
+    s->flash_erases = flash_window_erases();
+    s->flash_programs = flash_window_programs();
+    s->flash_deferrals = flash_window_deferrals();
+
+    snprintf(s->pins_reason, sizeof(s->pins_reason), "%s", pin_store_reason());
+    s->pyro_released[0] = pa->pyro1_released;
+    s->pyro_released[1] = pa->pyro2_released;
+    const char *br_name;
+    s->bridge = pin_store_bridge(&s->bridge_ch, &s->bridge_common, &br_name);
+    s->pyro_mocked = pyro_release_mocks();
+    /* What the claim decided, beside what the assignment asked for: a channel
+     * that could not take its pads shows as a disagreement. */
+    s->pyro_real[0] = !pyro_release_is_released(1);
+    s->pyro_real[1] = !pyro_release_is_released(2);
+
+    /* The power-up self-test: a board that cannot measure altitude must not
+     * report itself healthy. */
+    s->sensor_ok = fctx && fctx->sensor_type && fctx->sensor_type != SENSOR_PENDING;
+    s->fs_ok = fctx && fctx->fs_ok;
+    uint16_t diag = fctx ? fctx->diag : 0;
+    for (uint16_t bit = 1; bit != 0 && s->n_faults < STATUS_FAULTS_MAX; bit <<= 1) {
+        if ((diag & bit) && *flight_diag_name(bit)) {
+            s->faults[s->n_faults++] = flight_diag_name(bit);
         }
     }
+    s->reset_cause = fctx ? (uint8_t)fctx->reset_cause : 0u;
+    s->recovery = fctx ? flight_recovery_text(fctx) : brownout_recovery_name(RECOVER_COLD);
+    s->prev_watchdog = boot_prev_watchdog;
+    s->prev_stage = boot_prev_stage;
+    s->prev_stage_ms = boot_prev_stage_ms;
+    s->pyro_refused[0] = fctx && fctx->pyro1_refused;
+    s->pyro_refused[1] = fctx && fctx->pyro2_refused;
+    s->pyro1_refires = fctx ? (uint8_t)fctx->pyro1_refires : 0u;
+    s->main_forced = fctx && fctx->main_forced;
+    s->pres_waits = hal_pressure_waits();
+    s->pres_rejects = hal_pressure_rejects();
+    s->raw_pa = pp_last_raw_pa();
+    s->pad_speed_cms = fctx ? fctx->pad_speed_cms : 0;
+    s->ground_degraded = pp_ground_degraded(); /* [GND-CAL-07] */
+    s->ground_reseeds = pp_ground_reseeds();
+    s->sample_interval_us[0] = hal_pressure_interval_min_us(); /* [SNS-PRES-08] */
+    s->sample_interval_us[1] = hal_pressure_interval_max_us();
+    s->stamp_lag_max_us = hal_pressure_stamp_lag_max_us();
+    s->fit_sigma_mpa = (uint32_t)(pp_sigma_pa() * 1000.0f); /* [SNS-PRES-09] */
+    s->mach_lock = fctx && fctx->mach_lock;                 /* [FLT-MACH-02..07] */
+    s->mach_flag_ms = fctx && fctx->mach_flag_ms ? fctx->mach_flag_ms - fctx->launch_time : 0u;
+    s->peak_lower_bound = fctx && fctx->peak_lower_bound;
+    s->usb_attached = fctx && fctx->usb_attached; /* [USB-01..03, USB-08] */
+    s->test_mode = fctx && fctx->test_mode;
+    s->buzzer_active = buzzer_is_active();
 
-    /* Which outcome, and how it sounds under the active personality, so it can
-     * be read rather than counted. */
-    extern beep_reason_t beep_reason_for_diag(uint16_t diag);
-    uint16_t diag_now = fctx ? fctx->diag : 0;
-    beep_reason_t beep_r = beep_reason_for_diag(diag_now);
-    beep_spec_t beep_sp = beep_for(beep_r);
-    char beep_sound[16];
-    if (beep_sp.kind != BK_CODE) {
-        snprintf(beep_sound, sizeof(beep_sound), "%s", beep_codes_kind_name((beep_kind_t)beep_sp.kind));
-    } else if (beep_sp.d2 == 0) {
-        snprintf(beep_sound, sizeof(beep_sound), "%u", (unsigned)beep_sp.d1);
-    } else {
-        snprintf(beep_sound, sizeof(beep_sound), "%u-%u", (unsigned)beep_sp.d1, (unsigned)beep_sp.d2);
-    }
+    /* What the buzzer says, or would say off USB, so it can be read rather
+     * than counted. */
+    beep_reason_t r = beep_reason_for_diag(diag);
+    beep_spec_t sp = beep_for(r);
+    s->beep = beep_codes_key(r);
+    s->beep_kind = beep_codes_kind_name((beep_kind_t)sp.kind);
+    s->beep_is_code = sp.kind == BK_CODE;
+    s->beep_d1 = sp.d1;
+    s->beep_d2 = sp.d2;
 
-    /* MK1C carries the most fields -- the bias probes, pack voltage and wave
-     * state on top of everything shared -- and at 1280 it had begun truncating
-     * mid-word. */
-    char *buf = (char *)hc->work;
-    const size_t cap = 2048;
-    const char *sn = (g_status.state < (int)(sizeof(state_names) / sizeof(state_names[0])))
-                         ? state_names[g_status.state]
-                         : "UNKNOWN";
-    static const char *mode_names[] = {"none", "fallen", "agl", "speed", "delay"};
-    const char *p1m = (g_status.pyro1_mode < 5) ? mode_names[g_status.pyro1_mode] : "?";
-    const char *p2m = (g_status.pyro2_mode < 5) ? mode_names[g_status.pyro2_mode] : "?";
+    snprintf(s->serial, sizeof(s->serial), "%s", board_serial());
+    s->serial_assigned = board_serial_assigned();
+    snprintf(s->hw_id, sizeof(s->hw_id), "%s", board_hw_id());
+    s->subnet = board_subnet_octet();
+}
 
-    /* Raw pyro sense counts; -1 on a board that has none. Reported as raw
-     * ADC counts rather than volts so a marginal reading stays visible. */
-    board_pyro_raw_t praw = {0};
-    int raw_busq = -1, raw_bus = -1, raw_vbat = -1;
-    if (board_pyro_raw(&praw)) {
-        raw_busq = (int)praw.bus_quiescent;
-        raw_bus = (int)praw.bus_biased;
-        raw_vbat = (int)praw.vbat;
-    }
-    int pos = snprintf(
-        buf, cap,
-        "{\"state\":\"%s\",\"alt_cm\":%ld,\"max_alt_cm\":%ld,"
-        "\"vspeed_cms\":%ld,\"pressure_pa\":%ld,"
-        "\"pyro1_cont\":%s,\"pyro2_cont\":%s,"
-        "\"pyro1_adc\":%u,\"pyro2_adc\":%u,"
-        "\"pyro1_fired\":%s,\"pyro2_fired\":%s,"
-        "\"armed\":%s,\"flight_ms\":%lu,\"uptime\":%lu,\"fw_version\":\"%s\","
-        "\"pyro1_mode\":\"%s\",\"pyro1_value\":%u,"
-        "\"pyro2_mode\":\"%s\",\"pyro2_value\":%u,"
-        "\"units\":%u,\"rocket_id\":\"%.8s\",\"rocket_name\":\"%.8s\","
-        "\"sensor\":\"%s\",\"board\":\"%s\","
-        "\"pyro_bus_q\":%d,\"pyro_bus_adc\":%d,\"pyro_vbat_adc\":%d,"
-        "\"loop_max_us\":%lu,\"loop_overruns\":%lu,\"loop_late_max_us\":%lu,"
-        "\"loop_count\":%lu,\"stage_max_us\":[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu],"
-        "\"flash_opens\":%lu,\"flash_skips\":%lu,\"flash_refusals\":%lu,\"log_dropped\":%lu,"
-        "\"flash_erases\":%lu,\"flash_programs\":%lu,\"flash_deferrals\":%lu,"
-        "\"pins_reason\":\"%s\",\"pyro1_released\":%s,\"pyro2_released\":%s,\"bridge\":\"%s\","
-        "\"pyro_mocked\":%lu,\"pyro1_real\":%s,\"pyro2_real\":%s,"
-        "\"sensor_ok\":%s,\"fs_ok\":%s,\"faults\":[%s],"
-        "\"reset_cause\":%u,\"recovery\":\"%s\","
-        "\"pyro1_refused\":%s,\"pyro2_refused\":%s,\"pyro1_refires\":%u,\"main_forced\":%s,"
-        "\"pres_waits\":%lu,\"pres_rejects\":%lu,\"raw_pa\":%ld,\"pad_speed_cms\":%ld,"
-        "\"ground_degraded\":%s,\"ground_reseeds\":%lu,"
-        "\"sample_interval_us\":[%lu,%lu],\"stamp_lag_max_us\":%lu,\"fit_sigma_mpa\":%lu,"
-        "\"mach_lock\":%s,\"mach_flag_ms\":%lu,\"peak_lower_bound\":%s,"
-        "\"usb_attached\":%s,\"test_mode\":%s,\"buzzer_active\":%s,"
-        "\"beep\":\"%s\",\"beep_sound\":\"%s\","
-        "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u}",
-        sn, (long)g_status.altitude_cm, (long)g_status.max_altitude_cm, (long)g_status.vertical_speed_cms,
-        (long)g_status.pressure_pa, g_status.pyro1_continuity ? "true" : "false",
-        g_status.pyro2_continuity ? "true" : "false", (unsigned)g_status.pyro1_adc, (unsigned)g_status.pyro2_adc,
-        g_status.pyro1_fired ? "true" : "false", g_status.pyro2_fired ? "true" : "false",
-        g_status.pyros_armed ? "true" : "false", (unsigned long)g_status.flight_time_ms,
-        (unsigned long)to_ms_since_boot(get_absolute_time()), FW_VERSION, p1m, (unsigned)g_status.pyro1_value, p2m,
-        (unsigned)g_status.pyro2_value, (unsigned)g_status.units, g_status.rocket_id, g_status.rocket_name,
-        pressure_sensor_name(), PYRO_BOARD_NAME, raw_busq, raw_bus, raw_vbat, (unsigned long)loop_max_us, (unsigned long)loop_overruns,
-        (unsigned long)loop_late_max_us, (unsigned long)loop_count, (unsigned long)stage_max_us[0],
-        (unsigned long)stage_max_us[1], (unsigned long)stage_max_us[2], (unsigned long)stage_max_us[3],
-        (unsigned long)stage_max_us[4], (unsigned long)stage_max_us[5], (unsigned long)stage_max_us[6],
-        (unsigned long)stage_max_us[7], (unsigned long)stage_max_us[8], (unsigned long)flash_window_opens(),
-        (unsigned long)flash_window_skips(), (unsigned long)flash_window_refusals(), (unsigned long)hal_log_dropped(),
-        (unsigned long)flash_window_erases(), (unsigned long)flash_window_programs(),
-        (unsigned long)flash_window_deferrals(), pins_reason_esc, pa->pyro1_released ? "true" : "false",
-        pa->pyro2_released ? "true" : "false", bridge_desc, (unsigned long)pyro_release_mocks(),
-        /* What the CLAIM decided, next to what the assignment asked for. They
-         * agree in every normal case; showing both is how a disagreement --
-         * a channel that could not take its pads -- becomes visible rather
-         * than being read off the intent. */
-        pyro_release_is_released(1) ? "false" : "true", pyro_release_is_released(2) ? "false" : "true",
-        /* The power-up self-test, said out loud: a board that cannot measure
-         * altitude must not report itself healthy. */
-        fctx && fctx->sensor_type && fctx->sensor_type != SENSOR_PENDING ? "true" : "false",
-        fctx && fctx->fs_ok ? "true" : "false", fault_list,
-        /* Why this boot happened and what was made of it. A brownout reads as
-         * a power event, so the phrase is the part worth reading. */
-        fctx ? (unsigned)fctx->reset_cause : 0u,
-        fctx ? flight_recovery_text(fctx) : brownout_recovery_name(RECOVER_COLD),
-        /* A deployment the board could not make, and one the ladder made
-         * over the operator's trigger: after the flight, these are the
-         * difference between a configured main and an emergency one. */
-        fctx && fctx->pyro1_refused ? "true" : "false", fctx && fctx->pyro2_refused ? "true" : "false",
-        fctx ? (unsigned)fctx->pyro1_refires : 0u, fctx && fctx->main_forced ? "true" : "false",
-        (unsigned long)hal_pressure_waits(), (unsigned long)hal_pressure_rejects(),
-        /* The newest reading before any filtering, and the speed the launch
-         * detector reads: together, the sensor's noise and what it costs. */
-        (long)pp_last_raw_pa(), fctx ? (long)fctx->pad_speed_cms : 0L,
-        /* The launch froze a reference on under a second of pad [GND-CAL-07]. */
-        pp_ground_degraded() ? "true" : "false", (unsigned long)pp_ground_reseeds(),
-        /* [SNS-PRES-08] The spread of the true intervals, and the longest any
-         * reading waited to be read: a stall shows as a gap, not a late stamp. */
-        (unsigned long)hal_pressure_interval_min_us(), (unsigned long)hal_pressure_interval_max_us(),
-        (unsigned long)hal_pressure_stamp_lag_max_us(),
-        /* [SNS-PRES-09] The noise the fit's clean test is judged against, as
-         * this board's sensor measured it on the pad. */
-        (unsigned long)(pp_sigma_pa() * 1000.0f),
-        /* [FLT-MACH-02..07] The lockout, and when in flight time its flag
-         * went up; 0: never. */
-        fctx && fctx->mach_lock ? "true" : "false",
-        fctx && fctx->mach_flag_ms ? (unsigned long)(fctx->mach_flag_ms - fctx->launch_time) : 0ul,
-        fctx && fctx->peak_lower_bound ? "true" : "false",
-        /* A board on USB detects no launch and says nothing, unless it is in
-         * test mode [USB-01..03, USB-08]. */
-        fctx && fctx->usb_attached ? "true" : "false", fctx && fctx->test_mode ? "true" : "false",
-        buzzer_is_active() ? "true" : "false",
-        /* What the buzzer says, or would say off USB, and how it sounds, so
-         * it can be read rather than counted. */
-        beep_codes_key(beep_r), beep_sound, board_serial(), board_serial_assigned() ? "true" : "false", board_hw_id(),
-        (unsigned)board_subnet_octet());
-    /* Truncated JSON parses as nothing, so "send what fits" showed the web UI
-     * a connection failure and told nobody why. Say so instead -- the same
-     * rule /api/pins/caps follows. */
-    if (pos < 0 || (size_t)pos >= cap) {
+/* Portable: reads its own connection and nothing else. */
+static void unit_status(int slot) {
+    http_conn_t *hc = &conns[slot].h;
+    int n = status_json(&conns[slot].status, (char *)hc->work, sizeof(hc->work));
+    if (n < 0) {
         http_respond_str(hc, 500, JSON, "{\"error\":\"status exceeds the response buffer\"}");
         return;
     }
-    http_respond(hc, 200, JSON, buf, (uint32_t)pos);
+    http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
 }
+
+enum { HTTP_UNIT_STATUS };
+
+const http_unit_fn http_unit_vt[] = {
+    [HTTP_UNIT_STATUS] = unit_status,
+};
+
 /* ── Files ────────────────────────────────────────────────────────── */
 
 #define WWW_HEADERS "Cache-Control: no-store, must-revalidate\r\n"
@@ -907,7 +882,9 @@ static void serve_get(conn_t *c) {
     const char *path = hc->path;
 
     if (strcmp(path, "/api/status") == 0) {
-        serve_api_status(hc);
+        status_capture(&c->status);
+        c->route = R_STATUS;
+        http_work_offer((int)(c - conns), HTTP_UNIT_STATUS);
 #if PYRO_HAS_LUA
     } else if (strcmp(path, "/api/lua/script") == 0) {
         /* No script yet is a normal state, not an error: the editor should
@@ -1255,6 +1232,8 @@ static bool on_complete(http_conn_t *hc) {
     conn_t *c = (conn_t *)hc;
     char *body = (char *)hc->work;
     switch (c->route) {
+    case R_STATUS:
+        return false;
     case R_BEEP_PLAY:
         apply_api_beep_play(hc, body);
         return true;
@@ -1333,7 +1312,12 @@ extern volatile uint32_t net_http_accept;
 extern volatile uint32_t net_http_err;
 extern volatile uint32_t net_conn_full;
 
+static int slot_of(const conn_t *c) {
+    return (int)(c - conns);
+}
+
 static void conn_release(conn_t *c) {
+    http_work_cancel(slot_of(c));
     if (c->file_open && !c->file_writing) {
         lfs_file_close(&c->lfs, &c->file);
     }
@@ -1373,6 +1357,7 @@ static void conn_bind(conn_t *c, link_t *l) {
     c->fs_held = false;
     c->deferral_counted = false;
     c->reboot_when_sent = false;
+    c->orphan = false;
     c->dest[0] = '\0';
     c->link = l;
     l->conn = c;
@@ -1417,9 +1402,16 @@ static void link_detach(link_t *l) {
     tcp_err(l->pcb, NULL);
 }
 
+/* A connection the worker holds is only unlinked here; it is released once
+ * the worker gives it back (take_back_from_worker()). */
 static void link_free(link_t *l) {
-    if (l->conn) {
-        conn_release(l->conn);
+    conn_t *c = l->conn;
+    if (c && http_work_held(slot_of(c))) {
+        c->orphan = true;
+        c->link = NULL;
+        l->conn = NULL;
+    } else if (c) {
+        conn_release(c);
     }
     if (l->pending) {
         pbuf_free(l->pending);
@@ -1522,7 +1514,7 @@ static void attach_waiting(void) {
     for (;;) {
         conn_t *c = NULL;
         for (int i = 0; i < CONN_POOL_SIZE && !c; i++) {
-            if (!conns[i].link) {
+            if (!conns[i].link && !conns[i].orphan && !http_work_held(i)) {
                 c = &conns[i];
             }
         }
@@ -1547,7 +1539,9 @@ static void attach_waiting(void) {
     }
 }
 
-static void service_link(link_t *l, uint32_t now) {
+/* Bytes between lwIP and the rings, and the decision to close. No handler
+ * runs here. */
+static void transport_link(link_t *l, uint32_t now) {
     struct tcp_pcb *pcb = l->pcb;
     conn_t *c = l->conn;
     if (!c) {
@@ -1557,6 +1551,9 @@ static void service_link(link_t *l, uint32_t now) {
             link_abort(l); /* a socket opened speculatively and never used */
         }
         return;
+    }
+    if (http_work_held(slot_of(c))) {
+        return; /* core1 is writing its rings */
     }
     http_conn_t *hc = &c->h;
 
@@ -1576,8 +1573,6 @@ static void service_link(link_t *l, uint32_t now) {
         l->pending = pbuf_free_header(l->pending, n);
     }
     hc->rx_eof = l->fin && !l->pending;
-
-    http_conn_service(hc, &handlers);
 
     /* The window reopens by what the parser took, not by what arrived:
      * a request waiting on the flash window holds its sender back. */
@@ -1617,15 +1612,66 @@ static void service_link(link_t *l, uint32_t now) {
     }
 }
 
-/* From the main loop, after lwIP's own input and timers: net_service(). */
-void http_server_service(void) {
+/* Idle, or gone: lua_core1_flash_ok() is true exactly when core1 is not
+ * executing a grant. */
+static void take_back_from_worker(void) {
+    uint8_t lost;
+    uint8_t back = http_work_reclaim(lua_core1_flash_ok(), &lost);
+    for (int i = 0; i < CONN_POOL_SIZE && back; i++) {
+        conn_t *c = &conns[i];
+        if (!(back & (1u << i))) {
+            continue;
+        }
+        if (lost & (1u << i)) {
+            c->h.failed = true;
+        }
+        if (c->orphan) {
+            c->orphan = false;
+            conn_release(c);
+        }
+    }
+}
+
+uint32_t http_work_clock_us(void) {
+    return time_us_32();
+}
+
+void http_server_transport(void) {
     uint32_t now = hal_time_ms();
+    take_back_from_worker();
     attach_waiting();
     for (int i = 0; i < LINK_POOL_SIZE; i++) {
         if (links[i].pcb) {
-            service_link(&links[i], now);
+            transport_link(&links[i], now);
         }
     }
+}
+
+void http_server_period(void) {
+    http_work_period();
+}
+
+bool http_server_work(int32_t remaining_us) {
+    bool runnable[CONN_POOL_SIZE];
+    for (int i = 0; i < CONN_POOL_SIZE; i++) {
+        runnable[i] = conns[i].link && !http_work_held(i) && http_conn_wants_service(&conns[i].h);
+    }
+    uint8_t unit;
+    int i = http_work_next(runnable, remaining_us, &unit);
+    if (i < 0) {
+        return false;
+    }
+    uint32_t t0 = time_us_32();
+    if (unit != HTTP_UNIT_NONE) {
+        flash_window_crumb(81);
+        http_unit_vt[unit](i);
+    } else {
+        flash_window_crumb(80);
+        http_conn_service(&conns[i].h, &handlers);
+    }
+    flash_window_crumb(82);
+    http_work_note(HTTP_ON_CORE0, time_us_32() - t0);
+    return true;
 }
 
 void http_server_init(void) {

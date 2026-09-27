@@ -7,6 +7,7 @@
 #include "hal.h"
 #include "flash_window.h"
 #include "flight_states.h"
+#include "http_work.h"
 #include "lua_core1.h"
 #include "lua_platform.h"
 #include "lua_platform_cfg.h"
@@ -442,6 +443,8 @@ void lua_app_dispatch(int64_t slack_us) {
     if (grant < LUA_GRANT_MIN_US) {
         return;
     }
+    /* The units run first and come out of Lua's slice (http_work.h). */
+    http_work_claim(grant);
     lua_core1_dispatch(grant);
 }
 

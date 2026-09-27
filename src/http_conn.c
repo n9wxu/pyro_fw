@@ -145,6 +145,27 @@ bool http_conn_done(const http_conn_t *c) {
     return c->phase == HTTP_DONE;
 }
 
+bool http_conn_wants_service(const http_conn_t *c) {
+    if (c->failed) {
+        return false;
+    }
+    bool input = net_ring_readable(&c->rx) > 0 || c->rx_eof;
+    switch (c->phase) {
+    case HTTP_HEAD:
+        return input;
+    case HTTP_BODY:
+        return input || c->body_left == 0;
+    case HTTP_APPLY:
+        return true;
+    case HTTP_SEND: {
+        bool more = c->out_left > 0 || (c->streaming && c->stream_left > 0);
+        return !more || net_ring_writable(&c->tx) > 0;
+    }
+    default:
+        return false;
+    }
+}
+
 /* ── Request head ─────────────────────────────────────────────────── */
 
 static uint16_t rx_take(http_conn_t *c, void *dst, uint16_t n) {

@@ -109,6 +109,10 @@ void http_conn_service(http_conn_t *c, const http_handlers_t *h);
 /* The whole response is in tx. Anything left in rx is not needed. */
 bool http_conn_done(const http_conn_t *c);
 
+/* There is a step to take: bytes to parse, a handler to ask again, or a
+ * response and room in tx for it. The scheduler serves nothing else. */
+bool http_conn_wants_service(const http_conn_t *c);
+
 /* For the transport's flow control: what the parser has taken from rx. */
 uint32_t http_conn_take_consumed(http_conn_t *c);
 

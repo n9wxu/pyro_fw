@@ -241,6 +241,9 @@ Verify web interface behavior against mock server in 3 device modes.
 | WEB-HTTP-03 | Flow control, not refusal | HTTP: test_HTTP_12 (a 10 kB body through a 2 kB ring into a sink that refuses 50 times); Hardware: uploads round-trip byte-exact, flash_refusals 0, Lua heartbeat unbroken on MK1C | ✅ |
 | WEB-HTTP-04 | Status codes for bad requests | HTTP: test_HTTP_08, 09, 10, 11; Hardware: 405 and 413 in http_stream_check | ✅ |
 | WEB-HTTP-05 | HTTP work from the main loop, stack-neutral | By construction: http_conn.c and net_ring.c build and test on the host with no lwIP; callbacks only queue (http_server.c) | ✅ |
+| WEB-HTTP-06 | The head moves bytes; units run in the slack | HTTP work: test_WORK_01..05 (in turn, only with a step, the budget, one a period); HTTP: test_HTTP_17 (a step to take); Hardware: all four bench boards through G4, 0 loop overruns (MK1C 1-4 before), STAGE 1 peak 2.1 ms at most (MK1C 7.7 before) | ✅ |
+| WEB-HTTP-07 | Portable units on core1, the connection held exclusively | HTTP work: test_WORK_06..15 (the claim, the hold, the return, a unit cut short); HTTP: test_HTTP_18 (answered away from the service call); `support/prove_core0.py` folds http_unit_vt into core1's graph and fails an image without it; Hardware: MK1C, 961 units on core1 through one G4 run | ✅ |
+| WEB-API-11 | /api/status from a snapshot; its keys; valid JSON | Status: test_SJ_01 (every key, in order, formatted), test_SJ_02 (the widest fits), test_SJ_03 (a quote in the rocket's name), test_SJ_04 (refused, not truncated), test_SJ_07 (no watchdog, no stage); Hardware: `support/api_check.py` on all four bench boards | ✅ |
 | WEB-UI-01 | Status in config units | Web UI: altitude in meters/feet tests | ✅ |
 | WEB-UI-04 | Flight summary + CSV, from the log, refreshed, named | Web UI: flight data tests, a flight recorded while the page is open appears on refresh; Unit: test_REV09_flight_time_freezes_at_landing | ✅ |
 | WEB-UI-05 | Firmware upload | Web UI: update tab test | ✅ |
@@ -376,7 +379,7 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 231 |
+| ✅ Verified by a host, web or closed-loop test | 234 |
 | ⚠️ Not directly verified (needs a test or hardware) | 19 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 11 |

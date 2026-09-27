@@ -267,9 +267,10 @@ def vtable_targets(elf, objdump):
     callbacks, which reach flash legitimately, and the check then fails on
     everything and means nothing. So the naming is load-bearing, and enforced
     below: an image that links lua_iface_publish and exposes no *_vt has
-    renamed its way out of coverage, and that fails."""
+    renamed its way out of coverage, and that fails. So does an image that
+    links http_work_run, core1's HTTP work units, without http_unit_vt."""
     syms = subprocess.run([objdump, "-t", elf], capture_output=True, text=True).stdout
-    funcs, tables, have_publish = {}, [], False
+    funcs, tables, have_publish, have_units = {}, [], False, False
     for line in syms.splitlines():
         m = SYM_FUNC_RE.match(line)
         if m:
@@ -277,12 +278,16 @@ def vtable_targets(elf, objdump):
             funcs[int(m.group(1), 16) | 1] = m.group(3)
             if m.group(3) == "lua_iface_publish":
                 have_publish = True
+            if m.group(3) == "http_work_run":
+                have_units = True
             continue
         m = SYM_OBJ_RE.match(line)
         if m and m.group(3).endswith(VTABLE_SUFFIX):
             tables.append((int(m.group(1), 16), int(m.group(2), 16), m.group(3)))
 
     if have_publish and not tables:
+        return None, []
+    if have_units and "http_unit_vt" not in [t[2] for t in tables]:
         return None, []
 
     mem = section_bytes(elf, objdump)
@@ -303,8 +308,8 @@ def check_core1(elf, entry, callers):
     # rather than stopping at the cut.
     indirect, tables = vtable_targets(elf, find_objdump())
     if indirect is None:
-        print("FAIL  image publishes Lua interfaces but exposes no "
-              f"'*{VTABLE_SUFFIX}' symbol: vtable dispatch is uncovered")
+        print("FAIL  image dispatches through a table core1 reaches but exposes "
+              f"no '*{VTABLE_SUFFIX}' symbol for it: that dispatch is uncovered")
         return 1
     for fn in indirect:
         callers[fn].add(entry)

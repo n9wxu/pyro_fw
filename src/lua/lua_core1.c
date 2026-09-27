@@ -8,6 +8,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "lua_core1.h"
+#include "http_work.h"
 #include "lua_platform.h"
 #include "lua_platform_cfg.h"
 #include "pyro_lua.h"
@@ -33,6 +34,7 @@ volatile uint8_t c1_loc;
 #define C1_LOC_TICK 7u
 #define C1_LOC_INIT 8u
 #define C1_LOC_LOAD 9u
+#define C1_LOC_HTTP 10u
 static volatile uint8_t evt_seq; /* core0 writes */
 static volatile uint8_t evt_ack; /* core1 writes */
 static char evt_name[16];        /* core0 writes before bumping evt_seq */
@@ -281,6 +283,11 @@ void lua_core1_kill(void) {
 
 /* ── core1 entry ──────────────────────────────────────────────────── */
 
+static uint32_t grant_left(uint32_t start_us) {
+    uint32_t spent = lua_plat_now_us() - start_us;
+    return spent < c1_grant_us ? c1_grant_us - spent : 1u;
+}
+
 static void core1_main(void) {
     /* Numbered from 20 to stay clear of core0's phases. */
     LAUNCH_PHASE(20);
@@ -309,22 +316,24 @@ static void core1_main(void) {
         lua_core1_idle_wait();
 
         heartbeat++;
+
+        /* The HTTP units core0 handed over, the event handler and tick()
+         * share the grant; what the first two spend comes out of tick()'s
+         * share. The handler cannot yield, so its bound raises rather than
+         * suspends. */
+        uint32_t unit_start_us = lua_plat_now_us();
+        c1_loc = C1_LOC_HTTP;
+        http_work_run();
         c1_loc = C1_LOC_PINSVC;
         lua_plat_pin_service();
-
-        /* Shares the unit's box with tick() below. The handler cannot yield,
-         * so its bound raises rather than suspends, and what it spends comes
-         * out of tick()'s share. */
-        uint32_t unit_start_us = lua_plat_now_us();
         if (evt_seq != seen) {
             seen = evt_seq;
             c1_loc = C1_LOC_EVENT;
-            pyro_lua_event(evt_name, c1_grant_us);
+            pyro_lua_event(evt_name, grant_left(unit_start_us));
             evt_ack = seen;
         }
         c1_loc = C1_LOC_TICK;
-        uint32_t spent = lua_plat_now_us() - unit_start_us;
-        pyro_lua_tick_slice((spent < c1_grant_us) ? (c1_grant_us - spent) : 1u);
+        pyro_lua_tick_slice(grant_left(unit_start_us));
         c1_loc = C1_LOC_TOP;
     }
 }
