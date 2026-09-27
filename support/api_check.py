@@ -23,6 +23,7 @@ Usage:
 SPDX-License-Identifier: MIT
 """
 import json
+import struct
 import sys
 import time
 import urllib.request
@@ -31,6 +32,18 @@ import urllib.error
 HOST = sys.argv[1]
 BASE = f"http://{HOST}"
 results = []
+
+
+def marker_valid(mk):
+    """src/brownout.c's pad_marker_valid(): pad_marker_t, five little-endian
+    words, version 2 since the fit's sigma joined it (DD-048)."""
+    if len(mk) != 20:
+        return False
+    magic, version, ground, sigma, total = struct.unpack("<IIiII", mk)
+    want = (magic ^ ((version * 2654435761) & 0xFFFFFFFF) ^ (ground & 0xFFFFFFFF) ^
+            ((sigma * 40503) & 0xFFFFFFFF))
+    return (magic == 0x50594D31 and version == 2 and 50000 <= ground <= 110000
+            and 0 < sigma <= 100000 and total == want)
 
 
 def req(method, path, body=None, timeout=10):
@@ -161,7 +174,7 @@ try:
     check("test mode: the pad marker is written on USB", st3["flash_programs"] > programs0,
           f"flash_programs {programs0} -> {st3['flash_programs']}")
     code, _, mk = req("GET", "/pad.mkr")
-    check("pad.mkr holds a marker", code == 200 and len(mk) == 16, f"{code} {len(mk)} B")
+    check("pad.mkr holds a marker", code == 200 and marker_valid(mk), f"{code} {len(mk)} B")
 finally:
     code, _, body = req("POST", "/api/test_mode/off")
 check("POST /api/test_mode/off -> 200", code == 200 and b'"test_mode":false' in body, f"{code} {body[:40]!r}")
