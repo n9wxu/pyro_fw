@@ -91,6 +91,13 @@ self.addEventListener('fetch', e => {
     return;
   }
 
+  /* DD-062: an MK1B's room for its next log, as a bench board reported it. */
+  if (path === '/api/log/space' && e.request.method === 'GET') {
+    e.respondWith(new Response(JSON.stringify({bytes_free: 892928, record_bytes: 22, rates_hz: [1, 100]}),
+                               {headers: {'Content-Type': 'application/json'}}));
+    return;
+  }
+
   if (path === '/api/config' && e.request.method === 'GET') {
     e.respondWith(new Response(configIni, {
       headers: { 'Content-Type': 'text/plain' }

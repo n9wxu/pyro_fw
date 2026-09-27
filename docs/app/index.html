@@ -94,6 +94,13 @@
       <span id="p2unit"></span>
       <span id="p2warn" class="warn-inline"></span></td></tr>
   </table>
+  <h3>Flight log</h3>
+  <table class="info">
+    <tr><td class="lbl">High-rate logging</td>
+        <td><label><input type="checkbox" id="logHigh" onchange="logRateChanged()">
+            every sample, so the flight can be replayed</label>
+            <div class="hint" id="logEst">Reading the space left for the log…</div></td></tr>
+  </table>
   <h3>Release pyro pins to Lua</h3>
   <p class="hint" id="relHint">Loading the board's capability table…</p>
   <table class="info" id="relTable" style="display:none">

@@ -510,6 +510,9 @@
                 });
                 return { body: csv, contentType: 'text/csv' };
             }
+            /* DD-062: the simulator's log is one 64 KB file (boards/sim/hal_sim.c). */
+            if (path === '/api/log/space' && method === 'GET')
+                return { body: JSON.stringify({bytes_free: 65536, record_bytes: 22, rates_hz: [1, 50]}) };
             return { status: 404, body: 'Not found', contentType: 'text/plain' };
         }
 
