@@ -11,6 +11,9 @@ from a part. Cite the file and page, not memory.
 | `TPS2595_SLVSE57C_2018-04.pdf` | TI TPS2595x eFuse, including the TPS259570 (MK1C's U9) | SLVSE57C, revised April 2018 | ti.com/lit/ds/symlink/tps2595.pdf, fetched 2026-09-26 |
 | `rp2040-datasheet_2025-02-20.pdf` | Raspberry Pi RP2040 microcontroller | build 3184e62, 2025-02-20 | datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf, fetched 2026-09-26 |
 | `rp2350-datasheet_2025-07-29.pdf` | Raspberry Pi RP2350 microcontroller (a candidate for a future board) | build d126e9e, 2025-07-29 | datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf, fetched 2026-09-28 |
+| `W25Q16JV_RevI_2024-12-24.pdf` | Winbond W25Q16JV 16 Mbit 3 V serial flash (MK1B's U7, by its marking) | Revision I, 24 December 2024 | winbond.com/resource-files/W25Q16JV SPI RevI 12242024 Plus.pdf, fetched 2026-09-28 |
+| `GD25Q64E_Rev1.4_2021-07.pdf` | GigaDevice GD25Q64E 64 Mbit 3 V serial flash (a larger part for MK1B's footprint) | 1.4, 2021-07-06 | uploadcdn.oneyac.com, GD25Q64ESIGR.pdf, fetched 2026-09-28 |
+| `Winbond_code_storage_flash_selection_guide_2025.pdf` | Winbond code storage flash selection guide: every serial NOR part by package and voltage | 2025, dated 2025-02-18 | winbond.com, 2025-Product-Selection-Guide-Winbond-Code-Storage-Flash-Memory.pdf, fetched 2026-09-28 |
 | `esp32-s3_datasheet_v2.2.pdf` | Espressif ESP32-S3 series (a candidate for a future board) | v2.2 | espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf, fetched 2026-09-28 |
 
 MS5607, page 3: conversion time at OSR 4096 is 7.40 / 8.22 / 9.04 ms (min /
@@ -60,3 +63,15 @@ SPI0/1 interface. Page 39: the instruction and data caches are shared by
 both cores. What a flash write does to the caches is in ESP-IDF, not the
 datasheet: "Concurrency Constraints for Flash on SPI0/1" (ESP-IDF
 Programming Guide v6.1), fetched 2026-09-28.
+
+W25Q16JV, PDF page 70 (section 11.5): the USON 4x3 mm package, code UU:
+4.00 x 3.00 mm, 0.80 mm pitch, leads 0.30 mm wide and 0.60 mm long, a
+0.80 x 0.20 mm centre pad connected to nothing.
+
+GD25Q64E, PDF page 56 (section 10.4): the USON8 3x4 mm package, code N, has
+the same outline, pitch, leads and centre pad (floating). PDF page 50: the
+GD25Q64ENIG. PDF pages 39-41: VCC 2.7-3.6 V.
+
+Winbond selection guide, PDF pages 30-31: the only 2.7-3.6 V parts in USON-8
+4x3 mm are the W25Q16JV and the W25Q32JV (UU). Page 39 onward: the 64 Mbit
+and larger UU parts, W25Q64JW, W25Q64PW and W25Q12PW, are 1.65-1.95 V.

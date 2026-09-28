@@ -29,7 +29,7 @@ All three boards are RP2040s. Each has a theory of operation in `boards/<name>/T
 | | MK1A | MK1B | MK1C |
 |---|---|---|---|
 | Form | bare RP2040 | bare RP2040 | bare RP2040 |
-| Flash | 16 MB, 8 MB littlefs | 8 MB fitted (W25Q64JW), 2 MB used, 984 KB littlefs | 16 MB, 8 MB littlefs |
+| Flash | 16 MB, 8 MB littlefs | 2 MB (W25Q16JV), 984 KB littlefs | 16 MB, 8 MB littlefs |
 | Pressure | BMP280, I2C0 at 400 kHz | an MS5607 or a BMP280 pad, I2C1 | MS5607, I2C1 at 400 kHz |
 | Channel switch | a MOSFET high side per channel | U5 AP2192 high side per channel | Q103/Q104 low side per channel |
 | Shared element | Q2 low side, 8 A fuse | Q1B low side, 1.5 A PTC | U9 TPS259570 eFuse bus, armed by a PIO charge pump |

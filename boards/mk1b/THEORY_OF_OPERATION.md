@@ -32,7 +32,7 @@ a weak pull-up. The AP2192 adds a fault flag per channel that MK1A lacks.
 | Item | Part | Notes |
 |---|---|---|
 | MCU | U6 RP2040, QFN-56, 12 MHz crystal Y1 | bare chip on the SDK's own `pico` board header: GPIO25 is the LED here too |
-| Flash | U7 W25Q64JWUUIQ, 8 MB, on both builds | the `pico` header declares 2 MB, and that is all the firmware uses: 984 KB littlefs, the rest two OTA slots |
+| Flash | U7, a W25Q16JVUUIQ (2 MB, 3 V) by its marking, on a USON-8 4x3 mm footprint | 984 KB littlefs, the rest two OTA slots; see "Flash" below |
 | High sides | U5 AP2192AMPG-13 (LCSC C507872) | EN1/EN2 gate OUT1/OUT2; FLG1/FLG2 open drain |
 | Low side | Q1B, the second FET of an AO6800 | gate `sw_gnd` |
 | Fuse | F2, 1.5 A PTC | resets |
@@ -41,6 +41,25 @@ a weak pull-up. The AP2192 adds a fault flag per channel that MK1A lacks.
 | Pressure | U4 BMP280 (build V1) or U8 MS5607 (build V2), on separate SDA pads | a board carries one |
 | Buzzer | BUZZER1 KXG0903C3, from VIN | switched on its low side by Q1A, the AO6800's first FET; R23 1 kΩ holds the gate low |
 | LED | D3, blue, via R4 1 kΩ | |
+
+## Flash
+
+The chip on U7 is marked Q16JVUUIQ: a Winbond W25Q16JV, 16 Mbit, 2.7-3.6 V,
+in the USON 4x3 mm package (`docs/datasheets/W25Q16JV_RevI_2024-12-24.pdf`,
+page 70). It is powered from +3.3 V. Both builds' production files name
+W25Q64JWUUIQ (LCSC C6604692) for U7 instead, a 1.7-1.95 V part that would be
+out of its ratings on this rail; it is not what was fitted. The firmware
+takes the chip as 2 MB (`PYRO_FLASH_SIZE_KB` in `board.cmake`) and the
+SDK's `pico` header's W25Q080 boot stage 2.
+
+The largest 3 V parts for the same footprint are the W25Q32JVUUIQ, 4 MB,
+and the GigaDevice GD25Q64ENIG, 8 MB (`docs/datasheets/README.md`); no
+16 MB one was found. A GigaDevice part needs its boot stage 2 checked
+before a build uses it.
+
+The KiCad design as it now stands names U9, an XTX XT25F128FWOIGT-W
+(LCSC C3202839: 16 MB, 2.7-3.6 V) on a WSON-8 6x5 mm footprint, in place of
+U7. No board built from it has been seen.
 
 ## Pins
 
