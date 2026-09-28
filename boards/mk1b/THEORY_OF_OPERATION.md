@@ -52,10 +52,26 @@ out of its ratings on this rail; it is not what was fitted. The firmware
 takes the chip as 2 MB (`PYRO_FLASH_SIZE_KB` in `board.cmake`) and the
 SDK's `pico` header's W25Q080 boot stage 2.
 
-The largest 3 V parts for the same footprint are the W25Q32JVUUIQ, 4 MB,
-and the GigaDevice GD25Q64ENIG, 8 MB (`docs/datasheets/README.md`); no
-16 MB one was found. A GigaDevice part needs its boot stage 2 checked
-before a build uses it.
+A replacement has to suit the W25Q080 boot stage 2 as well as the
+footprint. That boot stage reads status register 2 with 35h, sets its QE
+bit (bit 1) with a two-byte 01h, and leaves the chip in continuous EBh
+reads (mode bits A0h, M5-4 = 10); the SDK reads the unique ID, and with it
+the board's name and addresses, with 4Bh and four dummy bytes.
+
+- BYTe Semiconductor BY25Q64ESHIG(R), 8 MB, 2.7-3.6 V: does all four
+  (`docs/datasheets/BY25Q64ES_Rev2.9_2024-10-29.pdf`, pages 15, 29, 36 and
+  45), and its USON8 4x3 package matches the UU one (page 79). Not yet run
+  on a board.
+- GigaDevice GD25Q-E parts, among them the GD25Q32ENIGR (4 MB) and the
+  GD25Q64ENIGR (8 MB): an 01h longer than one byte is not executed
+  (GD25Q64E, section 7.4), so QE is never set. They need another boot stage
+  2: the SDK's AT25SF128A one writes status register 2 with 31h.
+- ISSI parts keep QE in status register 1, bit 6; the SDK's IS25LP080
+  boot stage 2 exists for them.
+- Winbond's W25Q32JV, the other 3 V part in the UU package, is no longer
+  made.
+
+No 16 MB 3 V part was found for this footprint.
 
 The KiCad design as it now stands names U9, an XTX XT25F128FWOIGT-W
 (LCSC C3202839: 16 MB, 2.7-3.6 V) on a WSON-8 6x5 mm footprint, in place of

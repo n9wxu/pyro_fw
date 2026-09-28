@@ -12,7 +12,8 @@ from a part. Cite the file and page, not memory.
 | `rp2040-datasheet_2025-02-20.pdf` | Raspberry Pi RP2040 microcontroller | build 3184e62, 2025-02-20 | datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf, fetched 2026-09-26 |
 | `rp2350-datasheet_2025-07-29.pdf` | Raspberry Pi RP2350 microcontroller (a candidate for a future board) | build d126e9e, 2025-07-29 | datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf, fetched 2026-09-28 |
 | `W25Q16JV_RevI_2024-12-24.pdf` | Winbond W25Q16JV 16 Mbit 3 V serial flash (MK1B's U7, by its marking) | Revision I, 24 December 2024 | winbond.com/resource-files/W25Q16JV SPI RevI 12242024 Plus.pdf, fetched 2026-09-28 |
-| `GD25Q64E_Rev1.4_2021-07.pdf` | GigaDevice GD25Q64E 64 Mbit 3 V serial flash (a larger part for MK1B's footprint) | 1.4, 2021-07-06 | uploadcdn.oneyac.com, GD25Q64ESIGR.pdf, fetched 2026-09-28 |
+| `BY25Q64ES_Rev2.9_2024-10-29.pdf` | BYTe Semiconductor BY25Q64ES 64 Mbit 3 V serial flash (a larger part for MK1B's footprint) | Rev. 2.9, 2024-10-29 | byte-semi.com/wp-content/uploads/BY25Q64ES.pdf, fetched 2026-09-28 |
+| `GD25Q64E_Rev1.4_2021-07.pdf` | GigaDevice GD25Q64E 64 Mbit 3 V serial flash (fits MK1B's footprint, not its boot stage 2) | 1.4, 2021-07-06 | uploadcdn.oneyac.com, GD25Q64ESIGR.pdf, fetched 2026-09-28 |
 | `Winbond_code_storage_flash_selection_guide_2025.pdf` | Winbond code storage flash selection guide: every serial NOR part by package and voltage | 2025, dated 2025-02-18 | winbond.com, 2025-Product-Selection-Guide-Winbond-Code-Storage-Flash-Memory.pdf, fetched 2026-09-28 |
 | `esp32-s3_datasheet_v2.2.pdf` | Espressif ESP32-S3 series (a candidate for a future board) | v2.2 | espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf, fetched 2026-09-28 |
 
@@ -70,8 +71,19 @@ W25Q16JV, PDF page 70 (section 11.5): the USON 4x3 mm package, code UU:
 
 GD25Q64E, PDF page 56 (section 10.4): the USON8 3x4 mm package, code N, has
 the same outline, pitch, leads and centre pad (floating). PDF page 50: the
-GD25Q64ENIG. PDF pages 39-41: VCC 2.7-3.6 V.
+GD25Q64ENIG. PDF pages 39-41: VCC 2.7-3.6 V. Section 7.4: 01h writes status
+register 1 only, and is not executed unless CS# rises after the eighth data
+bit; status register 2, with QE, takes 31h.
+
+BY25Q64ES, page 79 (section 9.3): the USON8 4x3 mm package, the UU outline
+again (0.50 mm thick against 0.55). Page 15: QE is S9, bit 1 of status
+register 2. Page 29 (7.1.5): 01h takes one or two bytes, the second into
+status register 2. Page 36 (7.2.6): EBh stays in continuous mode on
+M5-4 = (1,0), after the mode byte and four dummy clocks. Page 45 (7.3.5):
+4Bh and four dummy bytes read a 128-bit unique ID. Section 8.7: 120 MHz at
+3.0-3.6 V.
 
 Winbond selection guide, PDF pages 30-31: the only 2.7-3.6 V parts in USON-8
-4x3 mm are the W25Q16JV and the W25Q32JV (UU). Page 39 onward: the 64 Mbit
+4x3 mm are the W25Q16JV and the W25Q32JV (UU); the W25Q32JV is no longer
+made (2026-09-28). Page 39 onward: the 64 Mbit
 and larger UU parts, W25Q64JW, W25Q64PW and W25Q12PW, are 1.65-1.95 V.
