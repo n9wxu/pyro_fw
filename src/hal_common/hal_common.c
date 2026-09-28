@@ -155,11 +155,11 @@ uint32_t hal_pressure_interval_min_us(void) {
 }
 
 /* Pressure samples a second, and so the full log rate [DD-062]: the MS5607
- * converts once a loop, one in MS5607_D2_EVERY of them the temperature; the
- * BMP280 at its own interval. 0 before bring-up. */
+ * a pressure every loop [DD-066], the BMP280 at its own interval. 0 before
+ * bring-up. */
 uint32_t hal_pressure_rate_hz(void) {
     if (pres.sensor_type == 1)
-        return (1000u / LOOP_PERIOD_MS) * (MS5607_D2_EVERY - 1u) / MS5607_D2_EVERY;
+        return 1000u / LOOP_PERIOD_MS;
     return pres.sample_interval_ms ? 1000u / pres.sample_interval_ms : 0u;
 }
 uint32_t hal_pressure_interval_max_us(void) {
@@ -244,12 +244,12 @@ static void pres_reject(pres_task_t *p, const char *why, uint32_t raw, float pa,
     hal_telemetry_send(dbuf);
 }
 
-/* [DD-051] The conversion the last loop started, which the one-shot's handler
- * commanded, stamped and read. The cycle starts the next conversion before
+/* [DD-051, DD-066] The pair the last loop started, which the one-shot's
+ * handler commanded, stamped and read. The cycle starts the next pair before
  * this work: done first, the compensation, filter and fit (up to 2.7 ms on
  * MK1B) made the next conversion miss the next loop every other loop. */
 static void ms5607_tick(pres_task_t *p, uint32_t now_ms) {
-    ms5607_conversion_t c;
+    ms5607_pair_t c;
     ms5607_start_t started;
     bool took = ms5607_async_cycle(&p->temps, &c, &started);
     uint32_t read_us = (uint32_t)time_us_64();
@@ -261,38 +261,43 @@ static void ms5607_tick(pres_task_t *p, uint32_t now_ms) {
     p->base.next_due_ms = (started == MS5607_STARTED || started == MS5607_BUSY) ? now_ms : now_ms + 50;
     if (!took)
         return;
-    /* A zero is what the sensor answers to a read during a conversion. */
-    if (!c.ok || c.raw == 0) {
-        ptrace_note((uint32_t)c.at_us, read_us, c.raw, 0, 0, c.ok ? PTRACE_ZERO : PTRACE_BUS);
-        pres_reject(p, c.ok ? "zero" : "bus", c.raw, 0.0f, now_ms);
+    if (!c.ok) {
+        ptrace_note((uint32_t)c.d1_at_us, read_us, c.d1, 0, 0, PTRACE_BUS);
+        pres_reject(p, "bus", c.d1, 0.0f, now_ms);
         return;
     }
-    if (c.temperature) {
-        ptrace_note((uint32_t)c.at_us, read_us, c.raw, 0, 0, PTRACE_TEMPERATURE);
+    /* A zero is what the sensor answers to a read during a conversion; the
+     * cycle notes no zero temperature. */
+    ptrace_note((uint32_t)c.d2_at_us, read_us, c.d2, 0, 0, c.d2 ? PTRACE_TEMPERATURE : PTRACE_ZERO);
+    if (c.d2 == 0)
+        pres_reject(p, "zero", 0, 0.0f, now_ms);
+    if (c.d1 == 0) {
+        ptrace_note((uint32_t)c.d1_at_us, read_us, 0, 0, 0, PTRACE_ZERO);
+        pres_reject(p, "zero", 0, 0.0f, now_ms);
         return;
     }
     if (p->temps.n == 0)
         return;
     pressure_reading_t r;
-    ms5607_compensate(c.raw, ms5607_temps_at(&p->temps, c.at_us), &r);
-    r.time_us = c.at_us;
+    ms5607_compensate(c.d1, ms5607_temps_at(&p->temps, c.d1_at_us), &r);
+    r.time_us = c.d1_at_us;
     int32_t pa_c = (int32_t)lroundf(r.pressure_pa * 100.0f);
     if (!pres_plausible(&r)) {
-        ptrace_note((uint32_t)c.at_us, read_us, c.raw, 0, pa_c, PTRACE_RANGE);
-        pres_reject(p, "range", c.raw, r.pressure_pa, now_ms);
+        ptrace_note((uint32_t)c.d1_at_us, read_us, c.d1, 0, pa_c, PTRACE_RANGE);
+        pres_reject(p, "range", c.d1, r.pressure_pa, now_ms);
         return;
     }
-    ptrace_note((uint32_t)c.at_us, read_us, c.raw, 0, pa_c, PTRACE_PRESSURE);
+    ptrace_note((uint32_t)c.d1_at_us, read_us, c.d1, 0, pa_c, PTRACE_PRESSURE);
     pres_append(p, &r);
 }
 
 /*
  * Pressure tick, once a loop.
  *
- * MS5607 (sensor_type == 1) [DD-051]: take the conversion the last loop
+ * MS5607 (sensor_type == 1) [DD-051, DD-066]: take the pair the last loop
  *   started and start the next, then work on the one taken; the one-shot's
- *   handler commands, stamps and reads each. One conversion a loop, the temperature once in
- *   MS5607_D2_EVERY: 45 pressures a second at the 20 ms loop.
+ *   handler commands, stamps and reads each. A pressure and a temperature
+ *   every loop: 50 pressures a second at the 20 ms loop.
  *
  * BMP280 (sensor_type == 2): single phase — read output registers.
  *   No conversion wait needed (normal/continuous mode).

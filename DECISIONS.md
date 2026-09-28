@@ -559,6 +559,47 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-066: A Pressure And A Temperature Every Loop
+- **Decision:** at the user's question -- "Can we make the one shot collect
+  a pressure and a temperature every time?" -- the one-shot converts a pair
+  each loop: the pressure, then the temperature, commanded by the handler as
+  it reads the pressure. The loop takes both at its next top and starts the
+  next pair. 50 pressures a second where it was 45, each a loop after the
+  last: no loop gives its slot to a temperature.
+- **Why it fits:** each conversion at OSR 4096 takes up to 9.04 ms. With
+  DD-036's 9.1 ms, and the commands and reads at 400 kHz, the pair is ready
+  18.6 ms after the top, 1.4 ms before the next
+  (`test_ms5607_pair_ready_before_the_next_loop` asks 0.5 ms). A compile-time
+  check holds two conversions inside the period. At the reference template's
+  100 kHz placeholder the pair would be ready 0.26 ms before the next top,
+  and its note now says so.
+- **The temperature at the pressure's time:** each pressure now sits between
+  two temperatures, the last loop's 11 ms before it and its own 9 ms after.
+  The line through the last four (SNS-PRES-12) now reaches back as well as
+  ahead, no further back than its oldest reading. A die warming at 1 °C/s:
+  0.70 Pa RMS, 1.00 Pa worst (`test_T9_temperature_at_the_pressures_time`);
+  the pair's own temperature as read would cost 2.1 Pa RMS.
+- **The step after a temperature is gone.** DD-063 found a pressure read
+  just after a temperature conversion about 4 Pa high, relaxing over 90 ms:
+  a sawtooth at the temperature's period. Every pressure now follows a
+  temperature by the same 1.4 ms, so whatever the conversion leaves behind
+  is the same in every sample, and a constant cancels against the pad. On
+  MK1C the residual by samples since a temperature ran from +3.3 Pa to -2.5
+  at 2.1.691; at 2.1.697 it folds flat, and the residual fell from 6.96 Pa
+  to 6.43. The white noise remains (S2).
+- **The trace:** each pair leaves a temperature record and a pressure
+  record. `support/pressure_trace.py` had excused one missing slot at a
+  temperature; one per pressure takes none, so it no longer does
+  (`--selftest` covers both schedules).
+- **Hardware (2.1.697, 2026-09-27, 60 s traces):** MK1C and both MK1Bs 50.0
+  pressures a second, a temperature with each, intervals 19.98-21.32 ms, no
+  gaps, no missed slots, no rejects, consistently good; noise 6.3-9.4 Pa.
+  G4 passes on all four boards. MK1C counted one wait under G4's uploads: a
+  sector erase in the slack holds interrupts off for tens of milliseconds,
+  and a held handler finishes its pair late, as a held read did before. The
+  filesystem is locked in flight (DD-058).
+- **Supersedes** DD-051's "temperature is converted once in ten".
+
 ### DD-065: A 20 ms Loop
 - **Decision:** at the user's direction -- "shift the loop rate to 50hz
   (20ms)" -- the main loop runs every 20 ms. The period lives in one place,

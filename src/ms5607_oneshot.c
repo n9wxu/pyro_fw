@@ -1,12 +1,13 @@
 /*
- * MS5607 one-shot conversion [DD-051].
+ * MS5607 one-shot pair [DD-051, DD-066].
  *
- * The loop starts a conversion and, a loop later, takes it. Between the two an
- * interrupt state machine owns the sensor: the handler sends the command,
- * stamps it from the hardware timer, arms an alarm for the conversion's end,
- * and at the alarm reads the ADC. The stamp is the handler's, taken as the
- * conversion begins, so neither a late loop nor a flash erase that holds the
- * read off moves it [SNS-PRES-08].
+ * The loop starts a pair and, a loop later, takes it: a pressure, then a
+ * temperature. Between the two an interrupt state machine owns the sensor:
+ * the handler sends each command, stamps it from the hardware timer, arms an
+ * alarm for the conversion's end, and at the alarm reads the ADC -- and, after
+ * the pressure, commands the temperature at once. The stamps are the
+ * handler's, taken as each conversion begins, so neither a late loop nor a
+ * flash erase that holds a read off moves them [SNS-PRES-08].
  *
  * The handler runs from RAM, and ms5607_bus.h forces everything it calls
  * inline. The firmware's bus is src/hal_common/ms5607_bus.h; ms5607_tests
@@ -16,39 +17,53 @@
  */
 #include "ms5607_bus.h"
 #include "ms5607_driver.h"
+#include "loop_period.h"
+
+_Static_assert(2u * MS5607_CONV_MS <= LOOP_PERIOD_MS, "a pair a loop");
 
 #define MS5607_CMD_CONV_D1 0x48u
 #define MS5607_CMD_CONV_D2 0x58u
 
-enum { ONESHOT_IDLE, ONESHOT_COMMAND, ONESHOT_CONVERTING };
+enum { ONESHOT_IDLE, ONESHOT_COMMAND, ONESHOT_PRESSURE, ONESHOT_TEMPERATURE };
 
 static struct {
     volatile uint8_t state;
     volatile bool ready; /* finished; the loop has not taken it */
-    bool temperature;
-    bool ok;
-    uint32_t raw;
-    uint64_t at_us;
+    ms5607_pair_t pair;
     int alarm; /* -1: not begun */
 } oneshot = {.alarm = -1};
 
+/* Commands a conversion and arms its read. False: the sensor did not answer.
+ * Forced inline: the handler's whole closure must be in RAM. */
+__force_inline static bool convert(uint8_t cmd, uint64_t *at_us) {
+    if (!ms5607_bus_command(cmd))
+        return false;
+    uint64_t began = ms5607_bus_now_us();
+    *at_us = began + MS5607_HALF_CONV_US;
+    ms5607_bus_alarm_at(oneshot.alarm, began + MS5607_CONV_DONE_US);
+    return true;
+}
+
 static void __noinline __not_in_flash_func(ms5607_alarm_isr)(void) {
     ms5607_bus_alarm_ack(oneshot.alarm);
-    if (oneshot.state == ONESHOT_COMMAND) {
-        if (ms5607_bus_command(oneshot.temperature ? MS5607_CMD_CONV_D2 : MS5607_CMD_CONV_D1)) {
-            uint64_t began = ms5607_bus_now_us();
-            oneshot.at_us = began + MS5607_HALF_CONV_US;
-            oneshot.state = ONESHOT_CONVERTING;
-            ms5607_bus_alarm_at(oneshot.alarm, began + MS5607_CONV_DONE_US);
+    ms5607_pair_t *p = &oneshot.pair;
+    switch (oneshot.state) {
+    case ONESHOT_COMMAND:
+        if (convert(MS5607_CMD_CONV_D1, &p->d1_at_us)) {
+            oneshot.state = ONESHOT_PRESSURE;
             return;
         }
-        oneshot.ok = false;
-        oneshot.raw = 0;
-    } else if (oneshot.state == ONESHOT_CONVERTING) {
-        uint32_t raw = 0;
-        oneshot.ok = ms5607_bus_read_adc(&raw);
-        oneshot.raw = raw;
-    } else {
+        break;
+    case ONESHOT_PRESSURE:
+        if (ms5607_bus_read_adc(&p->d1) && convert(MS5607_CMD_CONV_D2, &p->d2_at_us)) {
+            oneshot.state = ONESHOT_TEMPERATURE;
+            return;
+        }
+        break;
+    case ONESHOT_TEMPERATURE:
+        p->ok = ms5607_bus_read_adc(&p->d2);
+        break;
+    default:
         return;
     }
     __dmb();
@@ -62,41 +77,35 @@ bool ms5607_async_begin(void) {
     return ms5607_bus_begin(ms5607_address(), ms5607_alarm_isr, &oneshot.alarm);
 }
 
-ms5607_start_t ms5607_async_start(bool temperature) {
+ms5607_start_t ms5607_async_start(void) {
     if (oneshot.alarm < 0)
         return MS5607_NOT_BEGUN;
     if (oneshot.state != ONESHOT_IDLE)
         return MS5607_BUSY;
-    oneshot.temperature = temperature;
+    oneshot.pair = (ms5607_pair_t){0};
     __dmb();
     oneshot.state = ONESHOT_COMMAND;
     ms5607_bus_alarm_now(oneshot.alarm);
     return MS5607_STARTED;
 }
 
-bool ms5607_async_take(ms5607_conversion_t *out) {
+bool ms5607_async_take(ms5607_pair_t *out) {
     if (!oneshot.ready)
         return false;
     __dmb();
-    out->raw = oneshot.raw;
-    out->at_us = oneshot.at_us;
-    out->temperature = oneshot.temperature;
-    out->ok = oneshot.ok;
+    *out = oneshot.pair;
     oneshot.ready = false;
     return true;
 }
 
-bool ms5607_async_cycle(ms5607_temps_t *t, ms5607_conversion_t *out, ms5607_start_t *started) {
+bool ms5607_async_cycle(ms5607_temps_t *t, ms5607_pair_t *out, ms5607_start_t *started) {
     bool took = ms5607_async_take(out);
     if (took && !out->ok) {
         *started = MS5607_HELD;
         return true;
     }
-    if (took && out->temperature && out->raw != 0)
-        ms5607_temps_note(t, out->raw, out->at_us);
-    bool temperature = ms5607_temperature_due(t);
-    *started = ms5607_async_start(temperature);
-    if (*started == MS5607_STARTED)
-        ms5607_conversion_started(t, temperature);
+    if (took && out->d2 != 0)
+        ms5607_temps_note(t, out->d2, out->d2_at_us);
+    *started = ms5607_async_start();
     return took;
 }

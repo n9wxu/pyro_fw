@@ -15,6 +15,7 @@
 
 #define __not_in_flash_func(f) f
 #define __noinline __attribute__((noinline))
+#define __force_inline inline __attribute__((always_inline))
 #define __dmb() __sync_synchronize()
 
 #ifndef BOARD_MS5607_I2C_HZ
@@ -27,7 +28,9 @@
 #define FAKE_BUS_READ_US (57u * 1000000u / BOARD_MS5607_I2C_HZ)
 
 extern uint64_t fake_bus_now;
-extern uint32_t fake_bus_adc; /* what the next ADC read returns */
+extern uint32_t fake_bus_adc;   /* what an ADC read after a D1 command returns */
+extern uint32_t fake_bus_adc_t; /* ... after a D2 command */
+extern uint8_t fake_bus_last_cmd;
 extern bool fake_bus_nack;    /* the sensor does not answer */
 extern uint8_t fake_bus_cmds[64];
 extern int fake_bus_ncmds;
@@ -48,6 +51,7 @@ static inline bool ms5607_bus_command(uint8_t cmd) {
         return false;
     if (fake_bus_ncmds < (int)sizeof(fake_bus_cmds))
         fake_bus_cmds[fake_bus_ncmds++] = cmd;
+    fake_bus_last_cmd = cmd;
     return true;
 }
 
@@ -56,7 +60,7 @@ static inline bool ms5607_bus_read_adc(uint32_t *value) {
     fake_bus_reads++;
     if (fake_bus_nack)
         return false;
-    *value = fake_bus_adc;
+    *value = fake_bus_last_cmd == 0x58u ? fake_bus_adc_t : fake_bus_adc;
     return true;
 }
 

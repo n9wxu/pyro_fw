@@ -127,7 +127,9 @@ def analyze(recs, lost):
     span = sum(iv) / 1e6
     nominal = statistics.median(iv)
     backwards = sum(1 for d in iv if d <= 0)
-    gaps = [d for d, t in zip(iv, t_between) if d > (2.5 if t else 1.5) * nominal]
+    # Paired with every pressure [DD-066], a temperature takes no slot.
+    paired = kinds["T"] >= 0.9 * len(p)
+    gaps = [d for d, t in zip(iv, t_between) if d > (2.5 if t and not paired else 1.5) * nominal]
     raw = [r[2] for r in p]
     d = [b - a for a, b in zip(raw, raw[1:])]
     # The codes' own step: an oversampling that leaves the low bits zero makes
@@ -208,7 +210,7 @@ def report(name, a):
 
 
 def synthetic(n=900, period_us=10000, t_every=10, noise_counts=80, bmp=False, stale_every=0, gap_at=None,
-              zeros=0):
+              zeros=0, pairs=False, skip_at=None):
     import random
     rnd = random.Random(7)
     recs, t, raw = [], 1000, 6_500_000
@@ -217,7 +219,11 @@ def synthetic(n=900, period_us=10000, t_every=10, noise_counts=80, bmp=False, st
         t += period_us
         if gap_at is not None and i == gap_at:
             t += 5 * period_us
-        if not bmp and i % t_every == t_every - 1:
+        if skip_at is not None and i == skip_at:
+            t += period_us
+        if pairs:
+            recs.append(((t + 9500) & 0xFFFFFFFF, t + 19000, 8_000_000, 0, 0, ord("T")))
+        elif not bmp and i % t_every == t_every - 1:
             recs.append((t & 0xFFFFFFFF, t + 3000, 8_000_000, 0, 0, ord("T")))
             continue
         if stale_every and last and i % stale_every == 0:
@@ -240,6 +246,8 @@ def selftest():
         ("stale BMP280 reads", synthetic(bmp=True, stale_every=6), False),
         ("stale MS5607 reads repeat the code", synthetic(stale_every=6), False),
         ("an unexplained gap", synthetic(gap_at=400), False),
+        ("clean MS5607 pairs", synthetic(period_us=20000, pairs=True), True),
+        ("a pair missed: its temperature took no slot", synthetic(period_us=20000, pairs=True, skip_at=400), False),
         ("zeros", synthetic(zeros=3), False),
         ("a quiet sensor repeats by chance", synthetic(noise_counts=1), True),
     ]

@@ -141,9 +141,10 @@ as loop steps (DD-053):
 The speeds come from the board (DD-052): SCL and the MS5607's SDA have 4k7
 pull-ups (R10, R11), which carry fast mode; the BMP280's SDA has only the
 RP2040's own 50–80 kΩ, too slow an edge for fast mode, so its probe stays in
-standard mode. The MS5607 then converts once a loop, read from a one-shot alarm
-whose handler runs from RAM (DD-051); the BMP280 runs in normal mode and is read
-every 20 ms.
+standard mode. The MS5607 then converts a pressure and a temperature every
+loop, read from a one-shot alarm whose handler runs from RAM (DD-051, DD-066):
+the pair is ready 18.6 ms after the top of a 20 ms loop, which only fast mode
+allows. The BMP280 runs in normal mode and is read every 20 ms.
 
 ## Telemetry, LED and buzzer
 

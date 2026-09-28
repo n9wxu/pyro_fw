@@ -78,9 +78,8 @@ static struct {
     uint32_t stall_until, next_stall_at;
     /* The one-shot schedule: the loop's next top, and the conversion in
      * flight since the last. */
-    bool started, pending, pending_temp;
+    bool started, pending;
     uint32_t next_top, cmd_ms;
-    unsigned since_temp;
 } sm;
 
 static uint32_t xorshift32(uint32_t *s) {
@@ -172,15 +171,14 @@ bool mock_core0_stalled(uint32_t now_ms) {
     return mock_stall_model && (int32_t)(now_ms - sm.stall_until) < 0;
 }
 
-/* One loop of the hardware's (DD-051): take the conversion commanded at the
- * last loop -- its one-shot read it 9.1 ms in, before this loop, or at the end
- * of any stall that held interrupts off -- and command the next, the
- * temperature once in ten. A pressure is the reading at the middle of its
- * conversion, 4.5 ms in. */
+/* One loop of the hardware's (DD-051, DD-066): take the pair commanded at the
+ * last loop -- a pressure its one-shot read 9.1 ms in, then a temperature --
+ * and command the next. A pressure is the reading at the middle of its
+ * conversion, 4.5 ms in; a stall that held interrupts off delays the take. */
 #define ONE_SHOT_LOOP_MS LOOP_PERIOD_MS
 
 static void one_shot_loop(uint32_t now) {
-    if (sm.pending && !sm.pending_temp) {
+    if (sm.pending) {
         uint64_t conv_us = (uint64_t)sm.cmd_ms * 1000u + 4500u;
         uint32_t lag = (uint32_t)(((uint64_t)now * 1000u - conv_us) / 1000u);
         if (mock_stamp_lag_min_ms == 0 || lag < mock_stamp_lag_min_ms)
@@ -191,8 +189,6 @@ static void one_shot_loop(uint32_t now) {
     }
     sm.pending = true;
     sm.cmd_ms = now;
-    sm.pending_temp = !sm.started || sm.since_temp + 1u >= 10u;
-    sm.since_temp = sm.pending_temp ? 0u : sm.since_temp + 1u;
     sm.started = true;
 }
 

@@ -1740,26 +1740,37 @@ void test_T5_apogee(void) {
 
 /* [PYR-MODE-04, PYR-MODE-05, REV-05] A SPEED channel reads the fit's speed,
  * which does not lag; a DELAY channel counts from the fit's apogee, which the
- * fit dates back to where its rate crossed zero. */
+ * fit dates back to where its rate crossed zero. A stall holds core0 -- the
+ * flight code with it -- so a fire due during one comes when it ends, the
+ * rocket in free fall meanwhile: up to the model's longest stall, 73 ms, at
+ * 9.81 m/s^2 on top. */
+#define STALL_MAX_S 0.073
 void test_T5_speed_and_delay_triggers(void) {
     const flight_t f = {5.0f, 2.0f, 60.0f, 0.0f}; /* about 590 m; nearly free fall after apogee */
-    double worst_v = 0.0, worst_d = 0.0;
+    double worst_v = 0.0, worst_v_stalled = 0.0, worst_d = 0.0;
     for (uint32_t seed = 1; seed <= 20; seed++) {
         fly_opts.channels = true;
         fly_opts.p1_mode = PYRO_MODE_DELAY;
         fly_opts.p1_value = 3;
         fly_opts.p2_mode = PYRO_MODE_SPEED;
         fly_opts.p2_value = 20;
-        result_t r = fly(&f, seed, 6, 60000u, (seed & 1) != 0);
+        bool stalls = (seed & 1) != 0;
+        result_t r = fly(&f, seed, 6, 60000u, stalls);
         TEST_ASSERT_TRUE_MESSAGE(r.pyro_ms[1] != 0 && r.pyro_ms[2] != 0, "both channels fired");
         double dv = fabs(-(double)r.pyro_v[2] - 20.0);
         double dd = fabs(((double)r.pyro_ms[1] - (double)r.apogee_true_ms) / 1000.0 - 3.0);
-        worst_v = dv > worst_v ? dv : worst_v;
+        if (stalls)
+            worst_v_stalled = dv > worst_v_stalled ? dv : worst_v_stalled;
+        else
+            worst_v = dv > worst_v ? dv : worst_v;
         worst_d = dd > worst_d ? dd : worst_d;
     }
-    printf("  SPEED 20 m/s fired within %.2f m/s; DELAY 3 s within %.3f s of the true apogee plus 3 s\n", worst_v,
-           worst_d);
+    printf("  SPEED 20 m/s fired within %.2f m/s, %.2f with stalls; DELAY 3 s within %.3f s of the true apogee plus "
+           "3 s\n",
+           worst_v, worst_v_stalled, worst_d);
     TEST_ASSERT_TRUE_MESSAGE(worst_v <= 1.0, "a SPEED channel fires within 1 m/s of its setting");
+    TEST_ASSERT_TRUE_MESSAGE(worst_v_stalled <= 1.0 + STALL_MAX_S * 9.81,
+                             "and a stall adds no more than its free fall");
     TEST_ASSERT_TRUE_MESSAGE(worst_d <= 0.1, "a DELAY channel fires within 0.1 s of the true apogee plus its delay");
 }
 
@@ -2138,56 +2149,54 @@ static uint32_t ds_d1(double pa, uint32_t d2) {
 
 /* With these coefficients a temperature 1 °C stale moves the pressure about
  * 240 Pa: the bridge's own temperature coefficient, which is what the
- * compensation is for. So a D2 read once in ten conversions must be carried
- * forward along its trend, not reused. A die warming at 1 °C/s, each
- * temperature reading with the datasheet's 0.002 °C RMS: within 1 Pa RMS of a
- * fresh temperature. */
-void test_T9_temperature_reuse(void) {
+ * compensation is for. Each loop reads a pressure, then a temperature 9 ms
+ * later [DD-066], so the pressure takes the line through the recent readings
+ * at its own time -- between the last loop's temperature and its own. A die
+ * warming at 1 °C/s, each temperature reading with the datasheet's 0.002 °C
+ * RMS: within 1 Pa RMS of the true temperature. */
+void test_T9_temperature_at_the_pressures_time(void) {
     ms5607_temps_t tt;
     memset(&tt, 0, sizeof(tt));
     uint32_t rng = 7;
-    uint32_t last_d2 = 0;
     double sq = 0.0, worst = 0.0, stale_sq = 0.0;
     int n = 0;
-    for (int k = 0; k < 3000; k++) {
-        uint64_t at = 1000000ull + 10000ull * (uint64_t)k + MS5607_HALF_CONV_US;
-        double temp = 20.0 + (double)(at - 1000000ull) / 1e6;
-        bool temperature = ms5607_temperature_due(&tt);
-        ms5607_conversion_started(&tt, temperature);
-        if (temperature) {
-            rng = rng * 1103515245u + 12345u;
-            double u1 = ((rng >> 8) + 0.5) / 16777216.0;
-            rng = rng * 1103515245u + 12345u;
-            double u2 = ((rng >> 8) + 0.5) / 16777216.0;
-            double g = sqrt(-2.0 * log(u1)) * cos(6.283185307 * u2);
-            last_d2 = ds_d2(temp + 0.002 * g);
-            ms5607_temps_note(&tt, last_d2, at);
-            continue;
-        }
+    for (int k = 0; k < 1500; k++) {
+        uint64_t top = 1000000ull + (uint64_t)LOOP_PERIOD_US * (uint64_t)k;
+        uint64_t p_at = top + MS5607_HALF_CONV_US;
+        uint64_t t_at = top + MS5607_CONV_DONE_US + MS5607_HALF_CONV_US + 300u;
+        double temp_p = 20.0 + (double)(p_at - 1000000ull) / 1e6;
+        double temp_t = 20.0 + (double)(t_at - 1000000ull) / 1e6;
+        rng = rng * 1103515245u + 12345u;
+        double u1 = ((rng >> 8) + 0.5) / 16777216.0;
+        rng = rng * 1103515245u + 12345u;
+        double u2 = ((rng >> 8) + 0.5) / 16777216.0;
+        double g = sqrt(-2.0 * log(u1)) * cos(6.283185307 * u2);
+        uint32_t d2_read = ds_d2(temp_t + 0.002 * g);
+        ms5607_temps_note(&tt, d2_read, t_at);
         if (tt.n < MS5607_TEMPS)
             continue; /* the line needs its readings: boot and calibration outlast this */
-        uint32_t d2 = ds_d2(temp);
+        uint32_t d2 = ds_d2(temp_p);
         uint32_t d1 = ds_d1(101325.0, d2);
         pressure_reading_t full, est, stale;
         ms5607_compensate_prom(DS_PROM, d1, d2, &full);
-        ms5607_compensate_prom(DS_PROM, d1, ms5607_temps_at(&tt, at), &est);
-        ms5607_compensate_prom(DS_PROM, d1, last_d2, &stale);
+        ms5607_compensate_prom(DS_PROM, d1, ms5607_temps_at(&tt, p_at), &est);
+        ms5607_compensate_prom(DS_PROM, d1, d2_read, &stale);
         double e = est.pressure_pa - full.pressure_pa, s = stale.pressure_pa - full.pressure_pa;
         sq += e * e;
         stale_sq += s * s;
         worst = fabs(e) > worst ? fabs(e) : worst;
         n++;
     }
-    printf("  temperature once in %d at 1 C/s: %.2f Pa RMS, %.2f worst; reused as read it would be %.1f Pa RMS\n",
-           MS5607_D2_EVERY, sqrt(sq / n), worst, sqrt(stale_sq / n));
+    printf("  a temperature every loop at 1 C/s: %.2f Pa RMS, %.2f worst; the pair's own as read, %.1f Pa RMS\n",
+           sqrt(sq / n), worst, sqrt(stale_sq / n));
     TEST_ASSERT_TRUE(sqrt(sq / n) <= 1.0);
     TEST_ASSERT_TRUE(worst <= 3.0);
 }
 
-/* The test HAL's model of the hardware (DD-051, DD-065): each loop takes the
- * conversion its one-shot finished and commands the next; the temperature
- * once in ten. Nine samples every ten loops, each stamped at the middle of
- * its conversion, 4.5 ms in, and taken at the next loop's top. */
+/* The test HAL's model of the hardware (DD-051, DD-065, DD-066): each loop
+ * takes the pair its one-shot finished and commands the next. A pressure
+ * every loop, stamped at the middle of its conversion, 4.5 ms in, and taken
+ * at the next loop's top. */
 void test_T9_one_shot_cadence(void) {
     mock_reset_all();
     pp_init();
@@ -2212,9 +2221,9 @@ void test_T9_one_shot_cadence(void) {
     printf("  one-shot schedule: %d samples in 10 s, %d two-loop gaps, stamp lag %u-%u ms\n", n, gaps2,
            (unsigned)mock_stamp_lag_min_ms, (unsigned)mock_stamp_lag_max_ms);
     const int loops = (int)(10000u / LOOP_PERIOD_MS);
-    TEST_ASSERT_INT_WITHIN(2, loops * (int)(MS5607_D2_EVERY - 1u) / (int)MS5607_D2_EVERY, n);
-    TEST_ASSERT_INT_WITHIN(2, loops / (int)MS5607_D2_EVERY, gaps2);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, other, "every interval is one loop, or two across a temperature");
+    TEST_ASSERT_INT_WITHIN(2, loops, n);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, gaps2, "no loop gives its slot to a temperature");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, other, "every interval is one loop");
     TEST_ASSERT_EQUAL_UINT32(LOOP_PERIOD_MS - 5u, mock_stamp_lag_min_ms);
     TEST_ASSERT_EQUAL_UINT32(LOOP_PERIOD_MS - 5u, mock_stamp_lag_max_ms);
 }
@@ -2262,7 +2271,7 @@ int main(void) {
     RUN_TEST(test_N18_landed_logs_once_a_second);
     RUN_TEST(test_T11_stalls_change_nothing);
     RUN_TEST(test_T9_datasheet_example);
-    RUN_TEST(test_T9_temperature_reuse);
+    RUN_TEST(test_T9_temperature_at_the_pressures_time);
     RUN_TEST(test_T9_one_shot_cadence);
     RUN_TEST(test_T11_loop_clock_independent);
     RUN_TEST(test_T11_log_rows_at_sample_time);

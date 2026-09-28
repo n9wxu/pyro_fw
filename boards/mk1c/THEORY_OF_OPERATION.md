@@ -264,9 +264,11 @@ One MS5607 on I2C1, at its fastest, 400 kHz: R3 and R5 (4k7) hold fast mode's
 300 ns rise to about 75 pF (DD-052). Bring-up is the shared single-sensor path,
 `src/pressure_single_sensor.c`: clock the bus free in case the sensor was left
 mid-transfer across a reset, hand it to the I2C block, let the pull-ups settle,
-detect. In flight the sensor converts once a loop, started at the top of the
-loop and read 9.1 ms later by a one-shot alarm whose handler runs from RAM
-(DD-051), so a flash write cannot delay the read or its timestamp.
+detect. In flight the sensor converts a pressure and then a temperature every
+loop, started at the top of the loop, each read 9.1 ms after its command by a
+one-shot alarm whose handler runs from RAM (DD-051, DD-066), so a flash write
+cannot delay a read or its timestamp. The pair is ready 18.6 ms after the top,
+1.4 ms before the next; at standard mode it would be 0.26 ms.
 
 ## Telemetry, LED and buzzer
 
