@@ -587,7 +587,11 @@ rationale and the alternatives considered.
   about 1,400-4,600 each, 540-1,180 held and sent; lwIP's heap refused
   3,230-6,517 times, its high-water mark 7,656-7,976 bytes. Before the fix, a
   one-hour soak of three boards (2.1.697, about 32,000 trace requests each)
-  met no outage: G4-N needs G4's parallel load, not the trace alone.
+  met no outage: G4-N needs G4's parallel load, not the trace alone. On the
+  fix, a 30-minute soak of all four boards (about 16,000 requests each,
+  five G4 rounds on the bench MK1B meanwhile) met none; each board held and
+  then sent about 17,000 frames, and no frame was refused and no heap
+  allocation failed beyond what G4 had left.
 
 ### DD-069: No Sensor Bus Transfer Waits Without Bound
 - **Decision:** every I2C transfer the loop makes to a pressure sensor gives
