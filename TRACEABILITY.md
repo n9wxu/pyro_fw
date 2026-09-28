@@ -101,7 +101,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-DESC-02 | Landing from every descent phase | Closed-loop: test_FLT_DESC_02_ballistic_reaches_landed | ✅ |
 | PYR-ALT-01 | Clamp altitude settings | Closed-loop: Karman suite (AGL > 8000m clamped, pyro still fires) | ✅ |
 | PYR-ALT-02 | Warning beep for range | Integration: test_PYR_ALT_02_cfg_range_beep | ✅ |
-| FLT-RATE-01..02 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds); Chain: test_T9_one_shot_cadence (the one-shot at the loop period: 498 pressures in 10 s at 20 ms, every interval one loop, DD-066); test_ms5607_pair_ready_before_the_next_loop (at each MS5607 board's own bus rate, 400 kHz on MK1B and MK1C, the pair is ready 1.4 ms before the next loop, DD-052), test_ms5607_a_pair_every_loop (2.7 ms of work a pressure, as measured, costs no pair); Hardware (2.1.697, 2026-09-27, `support/pressure_trace.py`, 60 s each): MK1C and both MK1Bs 50.0 pressures a second, a temperature with each, no gaps, no missed slots; MK1A's BMP280 50.0 a second | ✅ |
+| FLT-RATE-01..02 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds); Chain: test_T9_one_shot_cadence (the one-shot at the loop period: 498 pressures in 10 s at 20 ms, every interval one loop, DD-066); test_ms5607_pair_ready_before_the_next_loop (at each MS5607 board's own bus rate, 400 kHz on MK1B and MK1C, the pair is ready 1.4 ms before the next loop, DD-052), test_ms5607_a_pair_every_loop (2.7 ms of work a pressure, as measured, costs no pair); Hardware (2.1.697, 2026-09-27, `support/pressure_trace.py`, 60 s each): MK1C and both MK1Bs 50.0 pressures a second, a temperature with each, no gaps, no missed slots; MK1A's BMP280, one forced conversion a loop (2.1.701, DD-067), 50.0 a second, consistently good | ✅ |
 | FLT-RATE-03 | 1 Hz while LANDED | Chain: test_N18_landed_logs_once_a_second | ✅ |
 | FLT-RATE-04 | The rate is the HAL's | Chain: test_T9_same_outcomes (the same outcomes at 11 ms and 20 ms), test_T3_durations_not_counts (at 10 ms) | ✅ |
 | FLT-RATE-05 | Holds and dwells in sample time | Chain: test_T11_loop_clock_independent (a loop clock lagging 0-70 ms changes no decision's sample) | ✅ |
@@ -191,7 +191,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | SNS-PRES-10 | A stuck sensor: reported, and never a deployment | Mach: test_M2_stuck_in_coast, test_M2_reported, test_M2_real_sensor_never_stuck | ✅ |
 | SNS-PRES-11 | A gap or a lost sensor: a whole window of new samples before any decision | Mach: test_M2_dropout_in_coast, test_M2_lost, test_M2_reported, test_M2_out_of_range | ✅ |
 | SNS-PRES-12 | Each pressure compensated with the temperature at its own time | Chain: test_T9_temperature_at_the_pressures_time (0.70 Pa RMS, 1.00 worst, warming at 1 °C/s; 2.1 Pa RMS with the pair's own temperature as read, DD-066), test_T9_datasheet_example (the datasheet's worked example to the pascal); MS5607: test_SNS_PRES_12_the_line_interpolates_back (between two readings, the line's value; no further back than the oldest) | ✅ |
-| SNS-PRES-14 | A conversion a flash operation ran beside is not used | MS5607: test_ms5607_flash_during_the_pressure_marks_it, test_ms5607_flash_during_the_temperature_marks_it, test_ms5607_cycle_skips_a_flashed_temperature; BMP280: test_bmp280_flash_during_the_conversion_marks_it; Status: test_SJ_01_keys_order_and_formatting_are_the_api (`pres_flashed`); `support/pressure_trace.py --selftest` (a discarded pressure explains its slot); Hardware: owed, G4's loads on the bench MK1B (DD-068) | ⚠️ |
+| SNS-PRES-14 | A conversion a flash operation ran beside is not used | MS5607: test_ms5607_flash_during_the_pressure_marks_it, test_ms5607_flash_during_the_temperature_marks_it, test_ms5607_cycle_skips_a_flashed_temperature; BMP280: test_bmp280_flash_during_the_conversion_marks_it; Status: test_SJ_01_keys_order_and_formatting_are_the_api (`pres_flashed`); `support/pressure_trace.py --selftest` (a discarded pressure explains its slot); Hardware (2.1.701): G4 on all four boards discards 23-38 conversions each, no rejects, no Mach flag; on the bench MK1B the discarded pressures scattered twice the kept (DD-068) | ✅ |
 | SNS-PRES-13 | Every conversion, served for the bench | Trace: test_PTRACE_01..04 (order, numbering, a wrapped ring says what it lost); `support/pressure_trace.py --selftest`; Hardware: the four bench boards traced (DD-063) | ✅ |
 | SNS-PRES-06 | Impossible readings discarded and counted | Hardware: pres_rejects on /api/status; the false launch they caused did not recur | ✅ HW |
 | SNS-ALT-01..03 | Altitude computation | Integration: max altitude within expected range | ✅ |
@@ -387,8 +387,8 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 240 |
-| ⚠️ Not directly verified (needs a test or hardware) | 21 |
+| ✅ Verified by a host, web or closed-loop test | 241 |
+| ⚠️ Not directly verified (needs a test or hardware) | 20 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 11 |
 

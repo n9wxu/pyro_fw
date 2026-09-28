@@ -583,8 +583,11 @@ rationale and the alternatives considered.
   per connection, so two or three connections streaming at once still
   exhaust it. Raising it spends RAM the flight-code move would need; that is
   the user's call.
-- **Owed:** a soak of all four boards with the new monitor (the ping's TTL
-  and `/api/net` before and after any outage), to show no outage.
+- **Hardware (2.1.701, G4 on all four boards):** 14-43 frames refused of
+  about 1,400-4,600 each, 540-1,180 held and sent; lwIP's heap refused
+  3,230-6,517 times, its high-water mark 7,656-7,976 bytes. Before the fix, a
+  one-hour soak of three boards (2.1.697, about 32,000 trace requests each)
+  met no outage: G4-N needs G4's parallel load, not the trace alone.
 
 ### DD-069: No Sensor Bus Transfer Waits Without Bound
 - **Decision:** every I2C transfer the loop makes to a pressure sensor gives
@@ -651,8 +654,15 @@ rationale and the alternatives considered.
   judged only in flight, where only the log writes.
 - **The mechanism** is presumed electrical: the flash's program and erase
   current on the rail both parts share. The fix does not depend on it.
-- **Owed on the bench:** G4's loads on the bench MK1B with the trace, to
-  show the conversions kept during writes scatter as they do at rest.
+- **Hardware:** on the bench MK1B (2.1.698, ten G4 rounds traced) the
+  discarded pressures scattered 49 Pa during uploads, twice the kept ones.
+  The kept ones still scattered 24 Pa while `api_check.py` ran: the buzzer,
+  in test mode. A beep code alone, no flash write, takes MK1B from 9 to
+  31-38 Pa for as long as it plays; the flag's short rate then trips about
+  once in 20 codes. MK1C, whose buzzer a MOSFET switches, shows none:
+  6-7 Pa beeping or not. The buzzer is left to the user (task M3).
+  Through G4 on all four boards (2.1.701): 23-38 conversions discarded
+  each, no pressure rejects, no Mach flag.
 
 ### DD-067: The BMP280 At The Loop's Rate
 - **Decision:** at the user's direction -- "S1 needs to make the BMP280
@@ -674,8 +684,9 @@ rationale and the alternatives considered.
   13.3 ms inside the period.
 - **Also:** the transfers are bounded (DD-069), and a conversion a flash
   operation ran beside is discarded (DD-068).
-- **Owed on the bench:** MK1A traced at 50 a second, with no stale read and
-  a constant lag.
+- **Hardware (2.1.701, 2026-09-27):** MK1A traced for 60 s, 50.0 pressures
+  a second, consistently good; the lag from stamp to read is 11.9-13.1 ms,
+  where normal mode's guessed stamp showed a flat 5.8. G4 passes.
 - **Supersedes** DD-063's option of a 100 Hz BMP280 (task S1).
 
 ### DD-066: A Pressure And A Temperature Every Loop
