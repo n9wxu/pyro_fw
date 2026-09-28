@@ -37,6 +37,7 @@
 #include "pyro_release.h"
 #include "http_server.h"
 #include "flight_log.h"
+#include "pressure_trace.h"
 #include <math.h>
 #include <string.h>
 
@@ -248,26 +249,37 @@ static void ms5607_tick(pres_task_t *p, uint32_t now_ms) {
     ms5607_conversion_t c;
     ms5607_start_t started;
     bool took = ms5607_async_cycle(&p->temps, &c, &started);
-    if (started == MS5607_BUSY)
+    uint32_t read_us = (uint32_t)time_us_64();
+    if (started == MS5607_BUSY) {
         p->waits++;
+        ptrace_note(read_us, read_us, 0, 0, 0, PTRACE_MISSED);
+    }
     /* HELD: the sensor did not answer; back off rather than retry every loop. */
     p->base.next_due_ms = (started == MS5607_STARTED || started == MS5607_BUSY) ? now_ms : now_ms + 50;
     if (!took)
         return;
     /* A zero is what the sensor answers to a read during a conversion. */
     if (!c.ok || c.raw == 0) {
+        ptrace_note((uint32_t)c.at_us, read_us, c.raw, 0, 0, c.ok ? PTRACE_ZERO : PTRACE_BUS);
         pres_reject(p, c.ok ? "zero" : "bus", c.raw, 0.0f, now_ms);
         return;
     }
-    if (c.temperature || p->temps.n == 0)
+    if (c.temperature) {
+        ptrace_note((uint32_t)c.at_us, read_us, c.raw, 0, 0, PTRACE_TEMPERATURE);
+        return;
+    }
+    if (p->temps.n == 0)
         return;
     pressure_reading_t r;
     ms5607_compensate(c.raw, ms5607_temps_at(&p->temps, c.at_us), &r);
     r.time_us = c.at_us;
+    int32_t pa_c = (int32_t)lroundf(r.pressure_pa * 100.0f);
     if (!pres_plausible(&r)) {
+        ptrace_note((uint32_t)c.at_us, read_us, c.raw, 0, pa_c, PTRACE_RANGE);
         pres_reject(p, "range", c.raw, r.pressure_pa, now_ms);
         return;
     }
+    ptrace_note((uint32_t)c.at_us, read_us, c.raw, 0, pa_c, PTRACE_PRESSURE);
     pres_append(p, &r);
 }
 
@@ -294,11 +306,19 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
          * Only reachable on boards that declare BOARD_HAS_BMP280; elsewhere
          * pressure_sensor_step() can never report type 2. */
         pressure_reading_t r;
+        uint32_t read_us = (uint32_t)time_us_64();
         if (bmp280_read(&r)) {
-            if (pres_plausible(&r))
+            uint32_t adc_p, adc_t;
+            bmp280_last_raw(&adc_p, &adc_t);
+            bool ok = pres_plausible(&r);
+            ptrace_note((uint32_t)r.time_us, read_us, adc_p, adc_t, (int32_t)lroundf(r.pressure_pa * 100.0f),
+                        ok ? PTRACE_PRESSURE : PTRACE_RANGE);
+            if (ok)
                 pres_append(p, &r);
             else
                 p->rejects++;
+        } else {
+            ptrace_note(read_us, read_us, 0, 0, 0, PTRACE_BUS);
         }
         p->base.next_due_ms = now_ms + p->sample_interval_ms;
 #endif

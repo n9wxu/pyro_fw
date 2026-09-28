@@ -559,6 +559,50 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-063: Every Pressure Conversion, Traced; 100 Hz Checked On Each Sensor
+- **Decision:** at the user's direction -- "We need to verify that 100hz
+  pressure data is valid. The sensor may operate at 100hz, but there could be
+  duplicate data. Run a 100hz sensor test on all HW sensors ... We will drop
+  the loop rate to 20ms if 10ms is too fast" -- the firmware keeps its last
+  256 conversions (`src/pressure_trace.h`) and serves them at
+  `/api/pressure/trace` [SNS-PRES-13]. `support/pressure_trace.py HOST`
+  polls it and judges the sensor: rate and interval spread, stale reads,
+  rejects, missed slots, lag and noise. A stale read is judged against what
+  chance gives: noise repeats a code now and then, more often where the
+  codes step by more than one -- 2 on the MS5607 at OSR 4096, 4 on the BMP280
+  at x4, 8 at x2.
+- **Measured 2026-09-27, 60 s each, idle:**
+
+  | Board | Sensor, setting | Rate | Stale reads (chance) | Rejects | White noise | Verdict |
+  |---|---|---|---|---|---|---|
+  | MK1C | MS5607, 10 ms loop | 89.9/s | -- ; code repeats 12 (17.9) | 0 | 6.5 Pa | good |
+  | MK1B bench | MS5607, 10 ms loop | 89.9/s | -- ; 15 (12.1) | 0 | 9.3 Pa | good |
+  | MK1B second | MS5607, 10 ms loop | 89.9/s | -- ; 14 (15.0) | 0 | 7.8 Pa | good |
+  | MK1C | MS5607, 20 ms loop (bench variant) | 45.0/s | -- ; 8 (8.7) | 0 | 6.7 Pa | good |
+  | MK1A | BMP280 x4, read at 50 Hz (as shipped) | 49.9/s | 89 (88) | 0 | 2.1 Pa | good |
+  | MK1A | BMP280 x4, read at 100 Hz (variant) | 99.9/s | **1149 (349)** | 0 | -- | **stale** |
+  | MK1A | BMP280 x2, read at 100 Hz (variant) | 99.9/s | 298 (251) | 0 | 2.5 Pa | good, narrowly |
+
+  The MS5607 answers every slot at 100 Hz: no zeros, no missed slots,
+  intervals 9.96-10.01 ms and 20 ms across each temperature conversion.
+- **The 10 ms loop stays.** Halving the MS5607's duty at a 20 ms loop left
+  the noise where it was (6.7 Pa against 6.5), so the rate costs nothing, and
+  half the samples would cost the fit. A 20 ms mode worth having would need
+  its own one-shot sequence, as the user noted, and would still give no more
+  than 100 Hz does.
+- **The BMP280 cannot run x4 at 100 Hz:** it converts at about 85 Hz there,
+  and 13% of reads took a conversion already read. At x2 it converts at
+  125 Hz; the reads are fresh within what chance explains, narrowly (298
+  stale against 251, about a one-in-700 excess), and the noise is the
+  datasheet's (2.6 Pa, Table 8, page 15). MK1A stays at x4 and 50 Hz. A
+  forced-mode read, one conversion commanded each loop as the MS5607's
+  one-shot does, would make a 100 Hz BMP280 fresh by construction: task S1.
+- **Two findings on the MS5607, both in its raw codes and so the sensor's
+  own:** its white noise is 6.5-9.3 Pa against the datasheet's 2.4 Pa at
+  OSR 4096 (MS5607-02BA03 page 4), the same at half the duty; and each
+  pressure right after a temperature conversion reads about 4 Pa high,
+  relaxing over the next 90 ms, the same on all three boards. Task S2.
+
 ### DD-062: A Row A Second By Default; Binary On Disk, CSV On Download
 - **Decision:** at the user's direction (T8) -- "log at 1 row/sec (this is
   not replayable) but give the config a high-rate logging option ... Give

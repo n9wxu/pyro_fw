@@ -191,6 +191,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | SNS-PRES-10 | A stuck sensor: reported, and never a deployment | Mach: test_M2_stuck_in_coast, test_M2_reported, test_M2_real_sensor_never_stuck | ✅ |
 | SNS-PRES-11 | A gap or a lost sensor: a whole window of new samples before any decision | Mach: test_M2_dropout_in_coast, test_M2_lost, test_M2_reported, test_M2_out_of_range | ✅ |
 | SNS-PRES-12 | Each pressure compensated with the temperature at its own time | Chain: test_T9_temperature_reuse (0.71 Pa RMS, 2.00 worst, warming at 1 °C/s; 12.1 Pa reusing the last reading), test_T9_datasheet_example (the datasheet's worked example to the pascal) | ✅ |
+| SNS-PRES-13 | Every conversion, served for the bench | Trace: test_PTRACE_01..04 (order, numbering, a wrapped ring says what it lost); `support/pressure_trace.py --selftest`; Hardware: the four bench boards traced (DD-063) | ✅ |
 | SNS-PRES-06 | Impossible readings discarded and counted | Hardware: pres_rejects on /api/status; the false launch they caused did not recur | ✅ HW |
 | SNS-ALT-01..03 | Altitude computation | Integration: max altitude within expected range | ✅ |
 | SNS-ALT-04 | Speed from the unclamped height | Chain: test_N26_apogee_above_8km, test_T3_coast_two_sample_glitch (a glitch's decay below the pad) | ✅ |
@@ -382,7 +383,7 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 236 |
+| ✅ Verified by a host, web or closed-loop test | 237 |
 | ⚠️ Not directly verified (needs a test or hardware) | 20 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 11 |

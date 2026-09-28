@@ -331,6 +331,7 @@ add_executable(pyro_fw_c
     src/http_work.c
     src/status_json.c
     src/flight_log.c
+    src/pressure_trace.c
     src/net_ring.c
     src/reset_interface.c
     src/littlefs_driver.c
@@ -822,6 +823,21 @@ add_custom_target(flight_log_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_flight_log
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Flight log format tests"
+)
+
+# The pressure trace's ring, as /api/pressure/trace reads it.
+add_custom_target(pressure_trace_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building pressure trace tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_pressure_trace.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_trace.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_pressure_trace
+    COMMAND ${CMAKE_COMMAND} -E echo "Running pressure trace tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_pressure_trace
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Pressure trace ring tests"
 )
 
 # /api/status from a snapshot, linked alone: the renderer reads nothing else.

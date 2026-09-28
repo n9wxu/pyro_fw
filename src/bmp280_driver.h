@@ -29,4 +29,7 @@ bool bmp280_detect(void);
  * Returns false on I2C error. */
 bool bmp280_read(pressure_reading_t *reading);
 
+/* The raw codes the last read returned, for the pressure trace. */
+void bmp280_last_raw(uint32_t *adc_p, uint32_t *adc_t);
+
 #endif /* BMP280_DRIVER_H */

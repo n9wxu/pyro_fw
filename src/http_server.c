@@ -17,6 +17,7 @@
 #include "board_if.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <lfs.h>
 #include <pico/stdlib.h>
 #include <hardware/flash.h>
@@ -46,6 +47,7 @@
 #include "http_work.h"
 #include "status_json.h"
 #include "flight_log.h"
+#include "pressure_trace.h"
 
 extern uint32_t hal_time_ms(void);
 
@@ -1036,6 +1038,13 @@ static void serve_get(conn_t *c) {
         serve_flight_csv(c);
     } else if (strcmp(path, "/api/log/space") == 0) {
         serve_log_space(c);
+    } else if (strncmp(path, "/api/pressure/trace", 19) == 0 && (path[19] == '\0' || path[19] == '?')) {
+        /* Every conversion since ?since=N, in binary (pressure_trace.h), for
+         * support/pressure_trace.py. */
+        const char *q = strstr(path, "since=");
+        uint32_t since = q ? (uint32_t)strtoul(q + 6, NULL, 10) : 0u;
+        int n = ptrace_read(since, hc->work, (int)sizeof(hc->work));
+        http_respond(hc, 200, "application/octet-stream", hc->work, (uint32_t)n);
     } else if (strcmp(path, "/") == 0) {
         /* no-store: the UI is re-uploaded whenever the firmware or web files
          * change, and without this browsers heuristically cache it and keep

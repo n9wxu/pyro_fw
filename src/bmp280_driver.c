@@ -112,6 +112,13 @@ bool bmp280_detect(void) {
     return false;
 }
 
+static uint32_t last_adc_p, last_adc_t;
+
+void bmp280_last_raw(uint32_t *adc_p, uint32_t *adc_t) {
+    *adc_p = last_adc_p;
+    *adc_t = last_adc_t;
+}
+
 bool bmp280_read(pressure_reading_t *reading) {
     uint8_t data[6];
 
@@ -121,6 +128,8 @@ bool bmp280_read(pressure_reading_t *reading) {
 
     int32_t adc_P = ((int32_t)data[0] << 12) | ((int32_t)data[1] << 4) | (data[2] >> 4);
     int32_t adc_T = ((int32_t)data[3] << 12) | ((int32_t)data[4] << 4) | (data[5] >> 4);
+    last_adc_p = (uint32_t)adc_P;
+    last_adc_t = (uint32_t)adc_T;
 
     /* Bosch's 64-bit integer compensation, datasheet section 3.11.3, page 21. */
     int32_t var1 = ((((adc_T >> 3) - ((int32_t)dig_T1 << 1))) * ((int32_t)dig_T2)) >> 11;
