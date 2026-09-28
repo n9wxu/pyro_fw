@@ -1435,6 +1435,11 @@ flight. Logging must not disrupt flight operations." From an audit of the
 flight path, checked against the code, and an analysis of moving the flight
 code into RAM, which you asked for without changes.
 
+**2026-09-28:** you adopted R1, with a second memory for logging on future
+boards. The options, against five hardware changes (an SD card on MK1C, an
+ESP32-S3, an RP2350 with a second flash or a PSRAM), are designed in
+`docs/log_storage_options.md`; its section 7 lists the decisions.
+
 **Done the same day:** every sensor bus transfer is bounded (DD-069: the
 BMP280's, the MS5607's detection and MK1B's BMP280 reset waited forever on
 a held bus, and bring-up runs again after a reset in flight); conversions a
