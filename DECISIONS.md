@@ -588,8 +588,12 @@ rationale and the alternatives considered.
 
 ### DD-069: No Sensor Bus Transfer Waits Without Bound
 - **Decision:** every I2C transfer the loop makes to a pressure sensor gives
-  up within 2 ms: the BMP280's reads and commands, the MS5607's detection,
-  and MK1B's BMP280 reset. `support/wait_check.py` now refuses the SDK's
+  up: the MS5607's detection and MK1B's BMP280 reset within 2 ms, the
+  BMP280's reads and commands within twice their own time on the bus and a
+  millisecond (3 ms for a loop's read at MK1B's 100 kHz, 5.5 ms for the
+  calibration). A fixed 2 ms failed MK1B's BMP280, whose 24-byte calibration
+  takes 2.3 ms at 100 kHz; the fake bus now times a transfer at its rate, and
+  `test_bringup_mk1b_bmp280` caught it. `support/wait_check.py` now refuses the SDK's
   `i2c_write_blocking` and `i2c_read_blocking`.
 - **Why:** at the user's direction, "There must never be a lockup in
   flight." The SDK's blocking transfers pass no timeout

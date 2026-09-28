@@ -138,7 +138,7 @@ One BMP280 on I2C0 at 400 kHz, its fastest: R1 and R2 (4k7) hold fast mode's
 takes the forced conversion the last loop commanded and commands the next
 (pressure ×4, temperature ×1, 13.3 ms at most), so every reading is a
 conversion of its own, stamped from its command (DD-067). Every transfer gives
-up within 2 ms (DD-069). Bring-up is the shared single-sensor path,
+up, within twice its own time on the bus and a millisecond (DD-069). Bring-up is the shared single-sensor path,
 `src/pressure_single_sensor.c`: clock the bus free — the sensor stays powered
 across a CPU reset and can be left holding SDA low — hand it to the I2C block,
 let the pull-ups settle, detect.

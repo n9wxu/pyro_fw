@@ -48,19 +48,22 @@ static uint64_t commanded_us;
 static uint32_t commanded_flash_ops;
 
 /* Every transfer is bounded: the SDK's blocking calls wait forever on a part
- * holding SCL low, and the loop reads this part in flight. The longest, the
- * calibration's 24 bytes, is about 0.7 ms at 400 kHz. */
-#define BMP280_BUS_TIMEOUT_US 2000u
+ * holding SCL low, and the loop reads this part in flight. The bound is twice
+ * the transfer's own time at the board's rate, and a millisecond: MK1B runs
+ * this part at 100 kHz, where the calibration's 24 bytes take 2.3 ms. */
+static uint bus_timeout_us(size_t len) {
+    return (uint)((len + 1u) * 9u * 1000000u / BOARD_BMP280_I2C_HZ * 2u + 1000u);
+}
 
 static bool bmp280_write_reg(uint8_t reg, uint8_t value) {
     uint8_t data[2] = {reg, value};
-    return i2c_write_timeout_us(I2C_PORT, bmp280_addr, data, 2, false, BMP280_BUS_TIMEOUT_US) == 2;
+    return i2c_write_timeout_us(I2C_PORT, bmp280_addr, data, 2, false, bus_timeout_us(2)) == 2;
 }
 
 static bool bmp280_read_reg(uint8_t reg, uint8_t *data, size_t len) {
-    if (i2c_write_timeout_us(I2C_PORT, bmp280_addr, &reg, 1, true, BMP280_BUS_TIMEOUT_US) != 1)
+    if (i2c_write_timeout_us(I2C_PORT, bmp280_addr, &reg, 1, true, bus_timeout_us(1)) != 1)
         return false;
-    return i2c_read_timeout_us(I2C_PORT, bmp280_addr, data, len, false, BMP280_BUS_TIMEOUT_US) == (int)len;
+    return i2c_read_timeout_us(I2C_PORT, bmp280_addr, data, len, false, bus_timeout_us(len)) == (int)len;
 }
 
 static bool bmp280_read_calibration(void) {
