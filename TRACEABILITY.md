@@ -84,7 +84,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-BROWN-05 | Why a boot was cold | Chain: test_T1_cold_reasons | ✅ |
 | FLT-BROWN-06 | A recovered flight reads continuity and produces altitude | Chain: test_T1_rejoins_descent (the main fires at 300 m), test_T1_rejoins_ascent (the drogue fires at apogee) | ✅ |
 | FLT-LOG-05 | No flash write through the shock window | Code review: log_flash_service() holdoff | ⚠ untested |
-| FLT-LOG-07 | A row a second, or every sample; binary on disk | Integration: test_FLT_LOG_07_one_row_a_second_unless_high_rate (1.0-1.1 s apart, 15x more at the high rate, every event at both); Format: test_FLOG_01..08 | ✅ |
+| FLT-LOG-07 | Three logging plans; binary on disk | Plan: test_PLAN_01..06 (what each keeps, windows that overlap, the log's end, the base rate resuming, a stream faster than the delay line, time order throughout); Integration: test_FLT_LOG_07_the_three_logging_plans (1.0-1.1 s apart; 90+ rows within a second of apogee; 15x more at full; every event in all three); Format: test_FLOG_01..08 | ✅ |
 | FLT-LOG-06 | Log committed every second, in the window | Hardware (MK1C, instrumented bench build): readable while written; reset mid-log keeps rows to 0.5 s before it; flash_refusals 0 | ✅ HW |
 | LUA-IO-01 | Export / import the Lua program | Playwright: lua program exports to a file; imports into the editor | ✅ |
 | LUA-IO-02 | Import does not touch the device | Playwright: imports into the editor without saving; oversized import refused | ✅ |
@@ -159,7 +159,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | DAT-03 | Events tag samples | Integration: test_DAT_04_events | ✅ |
 | DAT-04 | Log all event types | Integration: test_DAT_04_events; Closed-loop: test_REV16_forced_main_is_in_the_log | ✅ |
 | DAT-06 | Kept as binary, exported as CSV | Integration: test_DAT_06_csv_export (flight.csv); Chain: test_T8_columns (the binary log rendered, closed at landing); Format: test_FLOG_02, test_FLOG_06 (a log cut anywhere) | ✅ |
-| DAT-07 | CSV metadata header | Integration: test_DAT_06_csv_export (ID, both channels, max altitude), test_FLT_LOG_07_one_row_a_second_unless_high_rate (the rate); Format: test_FLOG_01; Chain: test_T8_replay (reads the log's own header) | ✅ |
+| DAT-07 | CSV metadata header | Integration: test_DAT_06_csv_export (ID, both channels, max altitude), test_FLT_LOG_07_the_three_logging_plans (the rate); Format: test_FLOG_01; Chain: test_T8_replay (reads the log's own header) | ✅ |
 | BUZ-03..07 | Altitude beep-out | Integration: test_BUZ_07_03_lifecycle | ✅ |
 
 ## 4. Configuration
@@ -250,7 +250,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | WEB-UI-01 | Status in config units | Web UI: altitude in meters/feet tests | ✅ |
 | WEB-UI-04 | Flight summary + CSV, from the log, refreshed, named | Web UI: flight data tests, a flight recorded while the page is open appears on refresh; Unit: test_REV09_flight_time_freezes_at_landing | ✅ |
 | WEB-UI-05 | Firmware upload | Web UI: update tab test | ✅ |
-| WEB-UI-06 | High-rate logging, and the longest flight the log holds | Web UI: *log rate: the longest flight the log holds follows the switch*, *log rate: saved with the rest of the tab*, *log rate: no estimate while the flight log is written*; *config tab shows non-default values* | ✅ |
+| WEB-UI-06 | The three logging plans, and the longest flight the log holds | Web UI: *log rate: the longest flight the log holds follows the plan*, *log rate: saved with the rest of the tab*, *log rate: no estimate while the flight log is written*; *config tab shows non-default values* | ✅ |
 
 ## 9. Firmware Update
 
@@ -318,7 +318,7 @@ Verify web interface behavior against mock server in 3 device modes.
 |-----|-------------|-------------|--------|
 | CFG-TABLE-01 | X-macro single-table config | Config: test_config_defaults, test_config_roundtrip_defaults (every field from `config_fields.h`) | ✅ |
 | CFG-TABLE-02 | Round-trip serialize → parse | Config: test_config_roundtrip_defaults, test_config_roundtrip_custom | ✅ |
-| CFG-SUBSYS-01 | Each subsystem has configurable params, every key read | Config: test_config_writes_no_inert_keys; Unit: telem_rate_hz; Config: test_config_parse_new_fields (log_high_rate; an old log_rate_hz is ignored); Integration: test_FLT_LOG_07_one_row_a_second_unless_high_rate | ✅ |
+| CFG-SUBSYS-01 | Each subsystem has configurable params, every key read | Config: test_config_writes_no_inert_keys; Unit: telem_rate_hz; Config: test_config_parse_new_fields (log_rate's three names; an unknown one, and an old log_rate_hz, log at the default); Integration: test_FLT_LOG_07_the_three_logging_plans | ✅ |
 
 ## 15. Telemetry Formatting (v2.0)
 

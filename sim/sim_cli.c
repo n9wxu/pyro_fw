@@ -111,7 +111,7 @@ static int replay_file(const char *path) {
     replay_events_t logged, decided;
     if (!replay_logged_events(csv, &logged) || !replay_run(csv, &decided)) {
         printf("%s: not a flight log with a raw_pa column, or logged at a row a second\n"
-               "(set log_high_rate=true in config.ini to log a replayable flight)\n",
+               "(set log_rate=full in config.ini to log a replayable flight)\n",
                path);
         return 1;
     }

@@ -96,9 +96,12 @@
   </table>
   <h3>Flight log</h3>
   <table class="info">
-    <tr><td class="lbl">High-rate logging</td>
-        <td><label><input type="checkbox" id="logHigh" onchange="logRateChanged()">
-            every sample, so the flight can be replayed</label>
+    <tr><td class="lbl">Logging rate</td>
+        <td><select id="logRate" onchange="logRateChanged()">
+              <option value="1hz">1 row a second</option>
+              <option value="events">High rate 1: 1 row a second, every sample within 1 s of an event</option>
+              <option value="full">High rate 2: every sample (the flight can be replayed)</option>
+            </select>
             <div class="hint" id="logEst">Reading the space left for the log…</div></td></tr>
   </table>
   <h3>Release pyro pins to Lua</h3>

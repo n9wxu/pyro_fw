@@ -105,7 +105,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-BROWN-06**: A recovered flight shall read pyro continuity before it rejoins, and shall produce altitude against the marker's ground from then on. ← FLT-BROWN-02
 - **FLT-LOG-05**: The flight log shall not write flash until its RAM buffer has filled once or 2 s have passed since launch, whichever is first, so that the launch shock window passes without a write in progress. ← FLT-BROWN-01
 - **FLT-LOG-06**: The flight log shall be committed to the filesystem at least once per second while it is written, so that a flight which never lands keeps its record. Every write and commit shall run in the flash window between core1 work units. ← SYS-DATA-01
-- **FLT-LOG-07**: The flight log shall record a sample row a second, or every sample when `log_high_rate` is set, and every event row at either rate. It shall be stored as binary records and rendered as CSV only when read. ← SYS-DATA-01, DD-062
+- **FLT-LOG-07**: The flight log shall keep, by `log_rate`: a sample row a second (`1hz`, the default); that and every sample within 1 s of each event (`events`); or every sample (`full`). It shall keep every event row at its own time under each, in time order. It shall be stored as binary records and rendered as CSV only when read. ← SYS-DATA-01, DD-062, DD-064
 - **LUA-IO-01**: The web UI shall export the Lua program to a local file and import one back, so a program survives the loss of the filesystem that holds it -- a failed mount formats it, and a flash-geometry change moves it. (An OTA update does not: verified to leave every file in place.) ← SYS-CFG-01
 - **LUA-IO-02**: An imported program shall land in the editor and not on the device, so a mis-picked file costs nothing until it is saved. ← LUA-IO-01
 - **PIN-LABEL-01**: Every assignable pin shall carry the connector designator silkscreened on the board, and the web UI shall show it beside the GPIO number. ← SYS-CFG-01
@@ -200,7 +200,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 ### L3 Subsystem Requirements
 - **DAT-01**: The system shall store flight samples in a ring buffer of at least 4096 entries. ← SYS-DATA-01
 - **DAT-02**: Each sample shall include: time, pressure, altitude, state, thrust flag, the raw reading it is centred on, the sensor temperature, and event. The time is the sample's own, from its reading, since T+0 (SNS-PRES-08). ← SYS-DATA-01
-- **DAT-08**: A flight log written with `log_high_rate` set shall carry what is needed to replay the flight through the pressure layer and the detectors, and `pyro_sim --replay` shall do so and set the replay's events against the log's. It shall refuse a log written at a row a second. ← DAT-02
+- **DAT-08**: A flight log written with `log_rate=full` shall carry what is needed to replay the flight through the pressure layer and the detectors, and `pyro_sim --replay` shall do so and set the replay's events against the log's. It shall refuse a log that kept fewer samples. ← DAT-02
 - **DAT-03**: Events shall be tagged on existing data samples, not stored as separate records. ← SYS-DATA-01
 - **DAT-04**: The system shall log events: LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING, and when they occur PYRO1/2_REFUSED, PYRO1/2_NOPEN, PYRO1/2_FAULT and MAIN_FORCED. ← SYS-DATA-01
 - **DAT-06**: The system shall keep flight data in persistent storage after landing, as binary records (FLT-LOG-07), and export it as CSV when it is read (WEB-API-06). ← SYS-DATA-02
@@ -360,7 +360,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **WEB-UI-01**: The web interface shall display device status in the configured units. ← SYS-WEB-01
 - **WEB-UI-04**: The web interface shall display flight summary data and allow CSV download. The summary shall come from the flight log alone, be re-read whenever it is shown, and name the flight it describes; flight time shall stop at the landing. ← SYS-WEB-01
 - **WEB-UI-05**: The web interface shall support firmware upload and update checking. ← SYS-WEB-01
-- **WEB-UI-06**: The Config tab shall offer high-rate logging, and shall estimate the longest flight the log holds at the rate chosen, updating as the choice changes. ← SYS-WEB-01, DD-062
+- **WEB-UI-06**: The Config tab shall offer the three logging plans, and shall estimate the longest flight the log holds under the plan chosen, updating as the choice changes. ← SYS-WEB-01, DD-062, DD-064
 
 ---
 
@@ -468,7 +468,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 ### L3 Subsystem Requirements
 - **CFG-TABLE-01**: All configuration fields shall be defined in a single table that generates the struct, parser, serializer, and defaults. ← SYS-CFG-04 ✅ config_fields.h X-macro
 - **CFG-TABLE-02**: A round-trip test shall automatically verify every field survives serialize → parse. ← CFG-TABLE-01 ✅ test_config.c (15 tests)
-- **CFG-SUBSYS-01**: Each subsystem (telemetry, logging, buzzer) shall have configurable parameters: `telem_format` and `telem_rate_hz`, `log_high_rate`, and the beep personalities in `beep.ini`. Every configuration key shall be read by something. ← UN-4 ✅
+- **CFG-SUBSYS-01**: Each subsystem (telemetry, logging, buzzer) shall have configurable parameters: `telem_format` and `telem_rate_hz`, `log_rate`, and the beep personalities in `beep.ini`. Every configuration key shall be read by something. ← UN-4 ✅
 
 ## 16. Ground Test (v2.0) ✅ Done
 

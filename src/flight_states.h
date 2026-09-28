@@ -175,7 +175,6 @@ typedef struct flight_context_t {
     uint32_t armed_time;
     uint32_t descent_start_time; // when DESCENT started (for landing timeout)
     uint32_t landing_time;       /* flight time stops here [WEB-UI-04] */
-    uint32_t last_logged_ms;     /* the low-rate log's last sample row, flight time */
     int32_t pad_speed_cms;       // vertical speed during PAD_IDLE (for launch confirm)
     // Last continuity status beep code [GND-TEST-01]
     uint8_t last_reason; /* beep_reason_t last said; for BEEP STATUS replay */

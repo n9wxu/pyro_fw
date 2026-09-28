@@ -10,7 +10,7 @@
 enum { REC_HEADER = 'H', REC_SAMPLE = 'S', REC_TEXT = 'T' };
 
 /* type, len, id[8], name[8], pyro1 mode+value, pyro2 mode+value, units,
- * ground_pa, high_rate, then the board name */
+ * ground_pa, rate, then the board name */
 #define HDR_FIXED 30
 #define TEXT_FIXED 7 /* type, time, tag, len */
 
@@ -62,7 +62,7 @@ int flog_put_header(uint8_t *dst, int cap, const flog_header_t *h) {
     put16(p + 22, h->pyro2_value);
     p[24] = h->units;
     put32(p + 25, (uint32_t)h->ground_pa);
-    p[29] = h->high_rate;
+    p[29] = h->rate;
     memcpy(p + HDR_FIXED, h->board, (size_t)board);
     return n;
 }
@@ -147,6 +147,17 @@ static char *put_str(char *o, const char *s) {
     return o;
 }
 
+static const char *rate_line(uint8_t rate) {
+    switch (rate) {
+    case LOG_RATE_FULL:
+        return "every sample";
+    case LOG_RATE_EVENTS:
+        return "1 row/s, every sample within 1 s of an event";
+    default:
+        return "1 row/s";
+    }
+}
+
 static int render_header(flog_csv_t *r) {
     uint8_t h[HDR_FIXED - 2 + FLOG_BOARD_MAX];
     uint8_t lead[2];
@@ -171,7 +182,7 @@ static int render_header(flog_csv_t *r) {
                      units == 2   ? "ft"
                      : units == 1 ? "m"
                                   : "cm",
-                     (long)(int32_t)get32(h + 23), h[27] ? "every sample" : "1 row/s");
+                     (long)(int32_t)get32(h + 23), rate_line(h[27]));
     return n > 0 && n < (int)sizeof(r->line) ? n : 0;
 }
 

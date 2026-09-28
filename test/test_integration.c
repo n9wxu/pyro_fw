@@ -977,9 +977,10 @@ static int sample_times(const char *log, uint32_t *t, int max) {
     return n;
 }
 
-/* [FLT-LOG-07, CFG-SUBSYS-01] One sample row a second unless high-rate
- * logging is set, then every sample; every event row at either rate. */
-void test_FLT_LOG_07_one_row_a_second_unless_high_rate(void) {
+/* [FLT-LOG-07, CFG-SUBSYS-01] The three plans on one flight: a sample row a
+ * second; that and every sample within a second of each event; every sample.
+ * Every event row in all three. */
+void test_FLT_LOG_07_the_three_logging_plans(void) {
     static char log[65536];
     static uint32_t t[4096];
     const char *events[] = {"LAUNCH", "ARMED", "APOGEE", "PYRO1", "LANDING"};
@@ -1000,7 +1001,27 @@ void test_FLT_LOG_07_one_row_a_second_unless_high_rate(void) {
         TEST_ASSERT_NOT_NULL_MESSAGE(log_row(log, events[k]), events[k]);
 
     reset_sim();
-    ctx.config.log_high_rate = true;
+    ctx.config.log_rate = LOG_RATE_EVENTS;
+    run_full_sim();
+    TEST_ASSERT_TRUE(read_flight_log(log, (int)sizeof(log)) > 0);
+    TEST_ASSERT_NOT_NULL(strstr(log, "# Log rate: 1 row/s, every sample within 1 s of an event\n"));
+    for (unsigned k = 0; k < sizeof(events) / sizeof(events[0]); k++)
+        TEST_ASSERT_NOT_NULL_MESSAGE(log_row(log, events[k]), events[k]);
+    int around = sample_times(log, t, 4096);
+    unsigned long apogee = strtoul(log_row(log, "APOGEE"), NULL, 10);
+    int near = 0;
+    for (int i = 0; i < around; i++) {
+        TEST_ASSERT_TRUE_MESSAGE(i == 0 || t[i] >= t[i - 1], "rows in time order");
+        near += t[i] + 1000u >= apogee && t[i] <= apogee + 1000u;
+    }
+    char m2[96];
+    snprintf(m2, sizeof(m2), "%d sample rows within a second of apogee, %d in all, %d at 1 row/s", near, around, low);
+    TEST_ASSERT_TRUE_MESSAGE(near >= 90, m2); /* 2 s at the test HAL's 50 Hz */
+    /* At most a row a second, and two seconds at 50 Hz for each event. */
+    TEST_ASSERT_TRUE_MESSAGE(around > low && around <= low + 8 * 101, m2);
+
+    reset_sim();
+    ctx.config.log_rate = LOG_RATE_FULL;
     run_full_sim();
     TEST_ASSERT_TRUE(read_flight_log(log, (int)sizeof(log)) > 0);
     TEST_ASSERT_NOT_NULL(strstr(log, "# Log rate: every sample\n"));
@@ -1308,7 +1329,7 @@ int main(void) {
     /* Code review 2026-09-24 */
     RUN_TEST(test_REV11_launch_row_reports_the_height_reached);
     RUN_TEST(test_REV_NEW_log_header_names_the_configured_modes);
-    RUN_TEST(test_FLT_LOG_07_one_row_a_second_unless_high_rate);
+    RUN_TEST(test_FLT_LOG_07_the_three_logging_plans);
     RUN_TEST(test_REV06_ground_test_waits_for_the_other_channel);
     return UNITY_END();
 }

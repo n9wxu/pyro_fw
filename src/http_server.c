@@ -726,7 +726,7 @@ static void status_capture(status_snap_t *s) {
     s->pyro_value[0] = g_status.pyro1_value;
     s->pyro_value[1] = g_status.pyro2_value;
     s->units = g_status.units;
-    s->log_high_rate = fctx && fctx->config.log_high_rate;
+    s->log_rate = config_log_rate_name(fctx ? fctx->config.log_rate : LOG_RATE_1HZ);
     memcpy(s->rocket_id, (const char *)g_status.rocket_id, sizeof(s->rocket_id) - 1);
     memcpy(s->rocket_name, (const char *)g_status.rocket_name, sizeof(s->rocket_name) - 1);
     s->sensor = pressure_sensor_name();

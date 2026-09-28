@@ -63,6 +63,21 @@ static const char *units_to_str(uint8_t u) {
     }
 }
 
+static const char *const LOG_RATE_NAMES[] = {"1hz", "events", "full"};
+
+const char *config_log_rate_name(uint8_t rate) {
+    return rate < sizeof(LOG_RATE_NAMES) / sizeof(LOG_RATE_NAMES[0]) ? LOG_RATE_NAMES[rate] : LOG_RATE_NAMES[0];
+}
+
+/* An unknown rate logs at the default. */
+static uint8_t parse_log_rate(const char *s) {
+    for (uint8_t i = 0; i < sizeof(LOG_RATE_NAMES) / sizeof(LOG_RATE_NAMES[0]); i++) {
+        if (strcmp(s, LOG_RATE_NAMES[i]) == 0)
+            return i;
+    }
+    return LOG_RATE_1HZ;
+}
+
 /* ── Defaults ─────────────────────────────────────────────────────── */
 
 /* A shipped string default longer than its field would be truncated on every
@@ -74,6 +89,7 @@ static const char *units_to_str(uint8_t u) {
 #define X_CHECK_MODE(type, field, key, def)
 #define X_CHECK_UNITS(type, field, key, def)
 #define X_CHECK_BOOL(type, field, key, def)
+#define X_CHECK_LOGRATE(type, field, key, def)
 #define X_CHECK(type, field, key, def) X_CHECK_##type(type, field, key, def)
 CONFIG_FIELDS(X_CHECK)
 #undef X_CHECK
@@ -83,6 +99,7 @@ CONFIG_FIELDS(X_CHECK)
 #undef X_CHECK_MODE
 #undef X_CHECK_UNITS
 #undef X_CHECK_BOOL
+#undef X_CHECK_LOGRATE
 
 void config_set_defaults(config_t *cfg) {
     memset(cfg, 0, sizeof(*cfg));
@@ -95,6 +112,7 @@ void config_set_defaults(config_t *cfg) {
 #define X_DEF_MODE(type, field, key, def) cfg->field = (uint8_t)(def);
 #define X_DEF_UNITS(type, field, key, def) cfg->field = (uint8_t)(def);
 #define X_DEF_BOOL(type, field, key, def) cfg->field = (def);
+#define X_DEF_LOGRATE(type, field, key, def) cfg->field = (uint8_t)(def);
 
 #define X_DEFAULTS(type, field, key, def) X_DEF_##type(type, field, key, def)
     CONFIG_FIELDS(X_DEFAULTS)
@@ -105,6 +123,7 @@ void config_set_defaults(config_t *cfg) {
 #undef X_DEF_MODE
 #undef X_DEF_UNITS
 #undef X_DEF_BOOL
+#undef X_DEF_LOGRATE
 }
 
 /* ── Parser ───────────────────────────────────────────────────────── */
@@ -143,6 +162,11 @@ static void config_parse_line(const char *key, const char *val, config_t *cfg) {
         cfg->field = (strcmp(val, "true") == 0 || strcmp(val, "1") == 0);                                              \
         return;                                                                                                        \
     }
+#define X_PARSE_LOGRATE(type, field, key_str, def)                                                                     \
+    if (strcmp(key, key_str) == 0) {                                                                                   \
+        cfg->field = parse_log_rate(val);                                                                              \
+        return;                                                                                                        \
+    }
 
 #define X_PARSE(type, field, key_str, def) X_PARSE_##type(type, field, key_str, def)
     CONFIG_FIELDS(X_PARSE)
@@ -153,6 +177,7 @@ static void config_parse_line(const char *key, const char *val, config_t *cfg) {
 #undef X_PARSE_MODE
 #undef X_PARSE_UNITS
 #undef X_PARSE_BOOL
+#undef X_PARSE_LOGRATE
     /* Unknown key — silently ignored [CFG-08] */
 }
 
@@ -213,6 +238,7 @@ int config_serialize_ini(const config_t *cfg, char *buf, int max_len) {
 #define X_SER_MODE(type, field, key, def) APPEND("%s=%s\r\n", key, config_mode_name(cfg->field));
 #define X_SER_UNITS(type, field, key, def) APPEND("%s=%s\r\n", key, units_to_str(cfg->field));
 #define X_SER_BOOL(type, field, key, def) APPEND("%s=%s\r\n", key, cfg->field ? "true" : "false");
+#define X_SER_LOGRATE(type, field, key, def) APPEND("%s=%s\r\n", key, config_log_rate_name(cfg->field));
 
 #define X_SERIALIZE(type, field, key, def) X_SER_##type(type, field, key, def)
     CONFIG_FIELDS(X_SERIALIZE)
@@ -223,6 +249,7 @@ int config_serialize_ini(const config_t *cfg, char *buf, int max_len) {
 #undef X_SER_MODE
 #undef X_SER_UNITS
 #undef X_SER_BOOL
+#undef X_SER_LOGRATE
 #undef APPEND
 
     return pos;

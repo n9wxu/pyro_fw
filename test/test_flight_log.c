@@ -64,7 +64,7 @@ static const flog_header_t HDR = {
     .pyro2_value = 300,
     .units = 1,
     .ground_pa = 101325,
-    .high_rate = false,
+    .rate = LOG_RATE_1HZ,
 };
 
 static const char *const HDR_CSV = "# Pyro MK1C Flight Data\n# ID: PYRO001\n# Name: MyRocket\n"
@@ -119,7 +119,7 @@ void test_FLOG_01_the_header_renders_as_the_old_header_with_the_rate(void) {
     TEST_ASSERT_EQUAL_STRING(HDR_CSV, csv);
 
     flog_header_t h = HDR;
-    h.high_rate = true;
+    h.rate = LOG_RATE_FULL;
     h.units = 2;
     h.pyro1_mode = PYRO_MODE_SPEED;
     h.pyro1_value = 15;
@@ -128,6 +128,10 @@ void test_FLOG_01_the_header_renders_as_the_old_header_with_the_rate(void) {
     render(bin_len, 4096, 0);
     TEST_ASSERT_NOT_NULL(strstr(csv, "# Pyro1: speed 15\n"));
     TEST_ASSERT_NOT_NULL(strstr(csv, "# Units: ft\n# Ground Pa: -3\n# Log rate: every sample\n"));
+    h.rate = LOG_RATE_EVENTS;
+    header(&h);
+    render(bin_len, 4096, 0);
+    TEST_ASSERT_NOT_NULL(strstr(csv, "# Log rate: 1 row/s, every sample within 1 s of an event\n"));
 }
 
 void test_FLOG_02_samples_render_as_the_old_rows(void) {

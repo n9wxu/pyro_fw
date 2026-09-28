@@ -37,6 +37,7 @@
 #include "pyro_release.h"
 #include "http_server.h"
 #include "flight_log.h"
+#include "log_plan.h"
 #include "pressure_trace.h"
 #include <math.h>
 #include <string.h>
@@ -993,6 +994,20 @@ typedef struct {
 } log_task_t;
 
 static log_task_t log_task;
+static log_plan_t log_plan;
+
+static void log_keep(void *ctx, const flog_sample_t *s) {
+    (void)ctx;
+    /* Do not flush synchronously here: this runs on the flight path, and a
+     * flush would put an erase wherever a sample happened to overflow the
+     * buffer -- an arbitrary point in the period, with core1 mid-unit. */
+    int n = flog_put_sample(log_task.buf + log_task.head, LOG_BUF_SIZE - log_task.head, s);
+    if (n == 0) {
+        log_task.dropped += FLOG_SAMPLE_BYTES;
+        return;
+    }
+    log_task.head += n;
+}
 
 uint32_t hal_log_dropped(void) {
     return log_task.dropped;
@@ -1015,9 +1030,10 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
         .pyro2_value = cfg->pyro2_value,
         .units = cfg->units,
         .ground_pa = ground_pressure_pa,
-        .high_rate = cfg->log_high_rate,
+        .rate = cfg->log_rate,
     };
     log_task.head = flog_put_header(log_task.buf, LOG_BUF_SIZE, &h);
+    log_plan_init(&log_plan, cfg->log_rate);
 
     log_task.file = NULL;
     log_task.pending_open = true;
@@ -1118,15 +1134,7 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
         .thrust = under_thrust,
         .event = event,
     };
-    /* Do not flush synchronously here: this runs on the flight path, and a
-     * flush would put an erase wherever a sample happened to overflow the
-     * buffer -- an arbitrary point in the period, with core1 mid-unit. */
-    int n = flog_put_sample(log_task.buf + log_task.head, LOG_BUF_SIZE - log_task.head, &s);
-    if (n == 0) {
-        log_task.dropped += FLOG_SAMPLE_BYTES;
-        return;
-    }
-    log_task.head += n;
+    log_plan_take(&log_plan, &s, log_keep, NULL);
 }
 
 /* A text row: script output, or a note about something the firmware did not
@@ -1170,6 +1178,7 @@ uint32_t hal_log_text_dropped(void) {
 void hal_log_stop(void) {
     if (!log_task.active)
         return;
+    log_plan_finish(&log_plan, log_keep, NULL);
     log_task.stopping = true;
 }
 

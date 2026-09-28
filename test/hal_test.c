@@ -12,6 +12,7 @@
 #include "../src/board_id.h"
 #include "../src/flight_events.h"
 #include "../src/flight_log.h"
+#include "../src/log_plan.h"
 #include "mocks.h"
 #include <string.h>
 #include <stdio.h>
@@ -636,6 +637,14 @@ void hal_fs_close(hal_file_t *f) {
 
 /* ── In-flight data logging [v2-9] ───────────────────────────────── */
 
+static log_plan_t test_log_plan;
+
+static void test_log_keep(void *ctx, const flog_sample_t *s) {
+    (void)ctx;
+    uint8_t rec[FLOG_SAMPLE_BYTES];
+    hal_fs_write(test_log_file, (const char *)rec, flog_put_sample(rec, (int)sizeof(rec), s));
+}
+
 void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     if (test_log_active)
         return;
@@ -652,10 +661,11 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
         .pyro2_value = cfg->pyro2_value,
         .units = cfg->units,
         .ground_pa = ground_pressure_pa,
-        .high_rate = cfg->log_high_rate,
+        .rate = cfg->log_rate,
     };
     uint8_t rec[128];
     hal_fs_write(test_log_file, (const char *)rec, flog_put_header(rec, (int)sizeof(rec), &h));
+    log_plan_init(&test_log_plan, cfg->log_rate);
     test_log_active = true;
 }
 
@@ -673,8 +683,7 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
         .thrust = under_thrust,
         .event = event,
     };
-    uint8_t rec[FLOG_SAMPLE_BYTES];
-    hal_fs_write(test_log_file, (const char *)rec, flog_put_sample(rec, (int)sizeof(rec), &s));
+    log_plan_take(&test_log_plan, &s, test_log_keep, NULL);
 }
 
 typedef struct {
@@ -706,6 +715,7 @@ int test_flight_log_csv(char *buf, int max_len) {
 void hal_log_stop(void) {
     if (!test_log_active)
         return;
+    log_plan_finish(&test_log_plan, test_log_keep, NULL);
     if (test_log_file) {
         hal_fs_close(test_log_file);
         test_log_file = NULL;

@@ -139,7 +139,7 @@ are still yours; their tasks wait.
 | T5-W | The fit's window | **Adopted: 1.0 s.** At 50 Hz it gives 0.19 m/s of speed noise on the pad and 4.4 Pa/s² of p̈ noise. The Mach prompt's example of 0.5 s gives 23.8 Pa/s² at 50 Hz (17.5 at 100 Hz). At 9 km, with no drag, 1 g of deceleration would then sit only 0.7σ (1.0σ at 100 Hz) above the release threshold, and the release would keep resetting. The cost of 1 s: a Mach step or an ejection keeps fits unclean for 1 s instead of 0.5 s, and so does the ignition step, which M1 handles by setting the flag on any fit. | T5 |
 | T5-A | How far below the peak apogee needs | **Adopted: p ≥ 1.0001·p_min**, 0.6–0.9 m, about +0.4 s. The Mach prompt's 1.0005 means 3–5 m and puts the drogue 0.8–1.0 s after apogee; today it is +0.56 s. The fit's pressure noise is about 0.5 Pa. At 9 km, 1.0001 is 3 Pa, so noise cannot fake the drop, and an early apogee becomes impossible. | T5 |
 | T6 | How long the ground tracker waits before re-seeding | **Adopted:** 5 s. The pressure-filter prompt's 30 s leaves the pad reference wrong for half a minute after the rocket is set down. | T6 |
-| T8 | Flight logging rate | **Decided 2026-09-27 (DD-062):** a sample row a second by default, not replayable; `log_high_rate` logs every sample. The log is binary on disk and rendered as CSV when downloaded, and the Config tab estimates the longest flight the log holds at the rate chosen. | — |
+| T8 | Flight logging rate | **Decided 2026-09-27 (DD-062, DD-064):** three plans, `log_rate`: a sample row a second by default; High rate 1, that and every sample within 1 s of an event; High rate 2, every sample, the only one that replays. Every event row is kept at its own time. The log is binary on disk and rendered as CSV when downloaded; the Config tab estimates the longest flight it holds under the plan chosen. | — |
 | M1-D | Accept M1's deviations from the Mach prompt | **Adopted.** They are listed in M1. The largest: the fit is solved against each sample's own time, in floating point, not with precomputed integer coefficients. Flash stalls make the sample spacing uneven (T11), and precomputed coefficients assume even spacing. | M1 |
 | P1 | MK1C's tracking pulse is 10-11 ms; DESIGN.md S3 asks for 5-10 ms | **Decided 2026-09-27: a timer one-shot**, like the MS5607's, ends the pulse at 8 ms. | P1 task |
 | B-U5 | MK1B until U5 is changed | **Decided 2026-09-27: leave it.** The firmware already assumes the base AP2192; an MK1B that owns its pyros reads every channel shorted and cannot fire until its U5 is refitted (section 7). | — |
@@ -1031,8 +1031,8 @@ temperature was read; `stamp_lag_max_us` near 5.5 ms; `pres_waits` and
 `stage_max_us[7]` with the log at 90 rows a second; `flash_refusals` 0 with
 Lua running on MK1C.
 
-**T8 decided (DD-062):** a row a second by default, every sample with
-`log_high_rate`; only a high-rate log replays (DAT-08).
+**T8 decided (DD-062, DD-064):** three plans under `log_rate`; only
+`full` replays (DAT-08).
 
 **Why:** every sample converts both pressure (D1) and temperature (D2), at
 10 ms each. Temperature moves slowly. Converting it every tenth cycle nearly

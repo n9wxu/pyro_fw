@@ -463,8 +463,8 @@ is clamped.
 ### 11. `max_coast_s` was dead — REMOVED
 
 With `beep_mode`, `log_enabled` and `buzzer_startup`, dropped from
-`config_fields.h`. `telem_rate_hz` is now read, and `log_high_rate`
-(DD-062, which replaced `log_rate_hz`).
+`config_fields.h`. `telem_rate_hz` is now read, and `log_rate` (DD-064,
+after `log_high_rate` in DD-062 replaced `log_rate_hz`).
 
 ### 12. The backup apogee timer cannot help in the case it was written for — REMOVED
 

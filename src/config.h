@@ -20,6 +20,13 @@ typedef enum {
     PYRO_MODE_DELAY = 4
 } pyro_mode_t;
 
+/* The flight log's plan [FLT-LOG-07, DD-064]; log_plan.h says what each keeps. */
+typedef enum {
+    LOG_RATE_1HZ = 0,
+    LOG_RATE_EVENTS = 1,
+    LOG_RATE_FULL = 2,
+} log_rate_t;
+
 /* ── Config struct — generated from X-macro table ─────────────────── */
 
 #include "config_fields.h"
@@ -30,6 +37,7 @@ typedef enum {
 #define X_FIELD_MODE(type, field, key, def) uint8_t field;
 #define X_FIELD_UNITS(type, field, key, def) uint8_t field;
 #define X_FIELD_BOOL(type, field, key, def) bool field;
+#define X_FIELD_LOGRATE(type, field, key, def) uint8_t field;
 
 /* Dispatch: X_FIELD_##type expands to the correct declaration */
 #define X_STRUCT(type, field, key, def) X_FIELD_##type(type, field, key, def)
@@ -45,6 +53,7 @@ typedef struct {
 #undef X_FIELD_MODE
 #undef X_FIELD_UNITS
 #undef X_FIELD_BOOL
+#undef X_FIELD_LOGRATE
 
 /* ── API ──────────────────────────────────────────────────────────── */
 
@@ -65,5 +74,8 @@ const char *config_default_ini(void);
  * table every writer of a mode name uses, so a log header cannot disagree
  * with the file that configured it. */
 const char *config_mode_name(uint8_t mode);
+
+/* The config.ini spelling of a log rate: 1hz/events/full. */
+const char *config_log_rate_name(uint8_t rate);
 
 #endif

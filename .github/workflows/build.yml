@@ -124,6 +124,7 @@ jobs:
             src/http_server.c src/http_server.h src/http_conn.c src/http_conn.h \
             src/http_work.c src/http_work.h src/status_json.c src/status_json.h \
             src/flight_log.c src/flight_log.h src/pressure_trace.c src/pressure_trace.h \
+            src/log_plan.c src/log_plan.h \
             2>&1 || echo "::warning::Code formatting differences found. Run: clang-format -i src/*.c src/*.h"
 
       - name: Cyclomatic complexity (pmccabe)
@@ -177,7 +178,7 @@ jobs:
 
       # The flight log's binary records and their CSV (DD-062).
       - name: Run flight log format tests
-        run: cd build && ninja flight_log_tests && ninja pressure_trace_tests
+        run: cd build && ninja flight_log_tests && ninja pressure_trace_tests && ninja log_plan_tests
 
       # The MS5607's interrupt state machine on a fake bus at each board's
       # own bus rate: the stamp is the handler's, through a held read and a

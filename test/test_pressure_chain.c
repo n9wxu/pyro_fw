@@ -116,7 +116,7 @@ static result_t fly(const flight_t *f, uint32_t seed, uint32_t pad_s, uint32_t u
     uint32_t t = 0;
     uint32_t pad = run_to_pad(&t);
     r.ignition_ms = pad + pad_s * 1000u;
-    ctx.config.log_high_rate = fly_opts.every_sample;
+    ctx.config.log_rate = fly_opts.every_sample ? LOG_RATE_FULL : LOG_RATE_1HZ;
     if (fly_opts.channels) {
         ctx.config.pyro1_mode = fly_opts.p1_mode;
         ctx.config.pyro1_value = fly_opts.p1_value;

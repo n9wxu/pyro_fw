@@ -130,7 +130,7 @@ function update() {
     /* Store device config — update every poll */
     var newCfg = {id:d.rocket_id, name:d.rocket_name, units:u,
       p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value,
-      logHigh:!!d.log_high_rate};
+      logRate:d.log_rate || '1hz'};
     if (!deviceConfig) {
       deviceConfig = newCfg;
       cfgLoadFromObj(deviceConfig);
@@ -138,7 +138,7 @@ function update() {
       /* Detect device-side change (reboot applied new config) */
       if (deviceConfig.p1mode !== newCfg.p1mode || deviceConfig.p1val !== newCfg.p1val ||
           deviceConfig.p2mode !== newCfg.p2mode || deviceConfig.p2val !== newCfg.p2val ||
-          deviceConfig.units !== newCfg.units || deviceConfig.logHigh !== newCfg.logHigh) {
+          deviceConfig.units !== newCfg.units || deviceConfig.logRate !== newCfg.logRate) {
         deviceConfig = newCfg;
         pendingConfig = null;
         cfgLoadFromObj(deviceConfig);
@@ -191,9 +191,12 @@ function cfgChanged() {
   document.getElementById('cfgDirty').style.display = 'block';
 }
 
-/* ── The flight log's rate, and the longest flight it holds [DD-062] ──
-   The board says how much room the next log has and how big a row is; the
-   estimate is that room at the rate the switch shows. */
+/* ── The flight log's plan, and the longest flight it holds [DD-064] ──
+   The board says how much room the next log has, how big a row is and how
+   fast its sensor samples; the estimate is that room at the plan chosen. The
+   plan that keeps every sample around events is estimated for LOG_EVENTS
+   events, each two seconds at the full rate. */
+var LOG_EVENTS = 10;
 var logSpace = null;
 
 function fmtDuration(s) {
@@ -206,11 +209,21 @@ function fmtDuration(s) {
 function logEstimate() {
   var el = document.getElementById('logEst');
   if (!el || !logSpace) return;
-  var rate = logSpace.rates_hz[document.getElementById('logHigh').checked ? 1 : 0];
-  if (!rate) { el.textContent = 'No estimate until the pressure sensor is running.'; return; }
-  var secs = logSpace.bytes_free / (logSpace.record_bytes * rate);
-  el.textContent = 'The log holds about ' + fmtDuration(secs) + ' of flight at ' +
-    (rate === 1 ? '1 row/s' : rate + ' rows/s') + '. Lua log lines take room too.';
+  var plan = document.getElementById('logRate').value;
+  var full = logSpace.rates_hz[1];
+  if (!full) { el.textContent = 'No estimate until the pressure sensor is running.'; return; }
+  var rows = logSpace.bytes_free / logSpace.record_bytes;
+  var text;
+  if (plan === 'full') {
+    text = fmtDuration(rows / full) + ' of flight at ' + full + ' rows/s';
+  } else if (plan === 'events') {
+    var secs = Math.max(0, rows - LOG_EVENTS * 2 * (full - 1));
+    text = fmtDuration(secs) + ' of flight at 1 row/s, with ' + full + ' rows/s for 2 s around each event (' +
+      LOG_EVENTS + ' events allowed for)';
+  } else {
+    text = fmtDuration(rows) + ' of flight at 1 row/s';
+  }
+  el.textContent = 'The log holds about ' + text + '. Lua log lines take room too.';
 }
 
 function loadLogSpace() {
@@ -272,7 +285,7 @@ function cfgLoadFromObj(c) {
   document.getElementById('p1val').value = c.p1val || 0;
   document.getElementById('p2mode').value = c.p2mode || 'agl';
   document.getElementById('p2val').value = c.p2val || 0;
-  document.getElementById('logHigh').checked = !!c.logHigh;
+  document.getElementById('logRate').value = c.logRate || '1hz';
   logEstimate();
   document.getElementById('cfgDirty').style.display = 'none';
   cfgChanged();
@@ -281,7 +294,7 @@ function cfgLoadFromObj(c) {
 
 function cfgDefault() {
   cfgLoadFromObj({id:'PYRO001', name:'MyRocket', units:1, p1mode:'delay', p1val:0, p2mode:'agl', p2val:300,
-                  logHigh:false});
+                  logRate:'1hz'});
   document.getElementById('cfgDirty').style.display = 'block';
   document.getElementById('cfgDirty').innerHTML = '⚠ Defaults loaded — press <b>Save</b> then <b>Reboot</b> to apply';
 }
@@ -299,7 +312,7 @@ function cfgGetObj() {
     p1val: parseInt(document.getElementById('p1val').value) || 0,
     p2mode: document.getElementById('p2mode').value,
     p2val: parseInt(document.getElementById('p2val').value) || 0,
-    logHigh: document.getElementById('logHigh').checked
+    logRate: document.getElementById('logRate').value
   };
 }
 
@@ -313,7 +326,7 @@ function cfgSave() {
   var ini = '[pyro]\r\nid=' + c.id + '\r\nname=' + c.name +
     '\r\npyro1_mode=' + c.p1mode + '\r\npyro1_value=' + c.p1val +
     '\r\npyro2_mode=' + c.p2mode + '\r\npyro2_value=' + c.p2val +
-    '\r\nunits=' + uname + '\r\nlog_high_rate=' + (c.logHigh ? 'true' : 'false') + '\r\n';
+    '\r\nunits=' + uname + '\r\nlog_rate=' + c.logRate + '\r\n';
   var msg = document.getElementById('cfgMsg');
   fetch('api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:ini})
     .then(function(r) {

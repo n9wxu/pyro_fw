@@ -12,6 +12,7 @@
  *   MODE  — pyro_mode_t (parsed from string: none/delay/agl/fallen/speed)
  *   UNITS — uint8_t (parsed from string: cm/m/ft)
  *   BOOL  — bool (parsed from string: true/false/1/0)
+ *   LOGRATE — log_rate_t (parsed from string: 1hz/events/full)
  *
  * SPDX-License-Identifier: MIT
  */
@@ -32,7 +33,7 @@
     X(UNITS, units, "units", 1)                                                                                        \
     X(U8, telem_format, "telem_format", 0)                                                                             \
     X(U8, telem_rate_hz, "telem_rate_hz", 10)                                                                          \
-    X(BOOL, log_high_rate, "log_high_rate", false)                                                                     \
+    X(LOGRATE, log_rate, "log_rate", LOG_RATE_1HZ)                                                                     \
     X(U8, landing_timeout, "landing_timeout", 60)                                                                      \
     X(BOOL, lua_enabled, "lua_enabled", false)                                                                         \
     X(U16, lua_baud, "lua_baud", 9600)                                                                                 \

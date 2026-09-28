@@ -33,7 +33,7 @@ typedef struct {
     uint16_t pyro1_value, pyro2_value;
     uint8_t units;
     int32_t ground_pa;
-    bool high_rate;
+    uint8_t rate; /* log_rate_t */
 } flog_header_t;
 
 typedef struct {

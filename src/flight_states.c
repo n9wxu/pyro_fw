@@ -45,21 +45,10 @@ static bool state_is_logged(flight_state_t st) {
     }
 }
 
-/* [FLT-LOG-07, CFG-SUBSYS-01] A sample row a second, or every sample with
- * high-rate logging set; events are always written. */
-#define LOG_LOW_RATE_MS 1000u
-
-static bool log_sample_due(flight_context_t *ctx, uint32_t time_ms) {
-    if (ctx->config.log_high_rate)
-        return true;
-    if (time_ms - ctx->last_logged_ms < LOG_LOW_RATE_MS)
-        return false;
-    ctx->last_logged_ms = time_ms;
-    return true;
-}
-
+/* Every sample goes to the log; its plan decides what it keeps
+ * [FLT-LOG-07, log_plan.h]. */
 void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t altitude, uint8_t st) {
-    if (state_is_logged((flight_state_t)st) && log_sample_due(ctx, time_ms)) {
+    if (state_is_logged((flight_state_t)st)) {
         hal_log_sample(time_ms, pressure, altitude, st, ctx->under_thrust, EVT_NONE);
     }
     if (ctx->buf_count == FLIGHT_BUF_SIZE) {
@@ -1370,7 +1359,6 @@ static void action_launch(flight_context_t *ctx, uint32_t now) {
      * enormous sample. */
     ctx->last_altitude = pp_pressure_to_altitude_cm(ctx->filtered_pressure, ctx->ground_pressure);
     ctx->last_height = pp_pressure_to_height_cm(ctx->filtered_pressure, ctx->ground_pressure);
-    ctx->last_logged_ms = ctx->last_sample - ctx->launch_time;
 
     /* The ring's newest sample is a PAD_IDLE one, which the log does not
      * take, so the LAUNCH row is written here: the moment of detection and

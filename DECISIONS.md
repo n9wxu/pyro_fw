@@ -559,6 +559,35 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-064: Three Logging Plans
+- **Decision:** at the user's direction -- "Default is 1hz logging with
+  immediate logging for events. There are two higher rate plans. High rate
+  1: 1hz logging, immediate logging for events, but +/-1s around event is
+  full rate logging. High rate 2: full rate logging" -- `log_rate` replaces
+  DD-062's `log_high_rate`: `1hz` (the default), `events` (High rate 1) and
+  `full` (High rate 2) [FLT-LOG-07]. Every event row is kept at its own time
+  under each.
+- **The plan is the log's, not the flight's.** The flight code hands every
+  sample to `hal_log_sample()`, and `src/log_plan.c` -- shared by the board's
+  log writer and the test HAL -- decides what the log keeps. `src/hal.h` is
+  unchanged.
+- **`events` holds a second in RAM.** The second before an event is only
+  known to matter once the event comes, and writing it then would put it
+  after a 1-a-second row already written: the log would go back in time, and
+  the Flight Data plot with it. So every row passes through a delay line of
+  one second (128 rows, 3 KB), and each is decided as it leaves: an event row,
+  within a second of an event, or due at the 1 Hz rate. The log's end flushes
+  the line. The newest second is lost with power as the unflushed buffer
+  already was. A Lua or mock text row does not pass through the line, so under
+  `events` it can come before the second of samples before it.
+- **The estimate** for `events` allows for ten events, each two seconds at
+  the full rate. From what the bench boards reported: MK1C holds 4.3 days
+  at `1hz` or `events` and 62 min at `full`; MK1B 11.3 h, 10.7 h and 7 min;
+  MK1A, whose full rate is 50 Hz, 4.4 days and 2.1 h at `full`.
+- **Only `full` replays** [DAT-08]; the log's header names the plan.
+- **`log_high_rate`, a few hours old, is not carried over:** a `config.ini`
+  that names it logs at `1hz`, like one that names `log_rate_hz`.
+
 ### DD-063: Every Pressure Conversion, Traced; 100 Hz Checked On Each Sensor
 - **Decision:** at the user's direction -- "We need to verify that 100hz
   pressure data is valid. The sensor may operate at 100hz, but there could be
