@@ -29,27 +29,29 @@ read:
 | Hardware | In the simulator |
 |---|---|
 | clock | `sim_set_time()`; the driver steps it |
-| pressure sensor | `sim_set_pressure()`, from the physics engine; reported as a BMP280 |
+| pressure sensor | `sim_set_pressure()`, from the physics engine, fed every 20 ms; reported as a BMP280 |
 | pyro channels | continuity is whatever `sim_set_continuity()` last wrote; a fire is a counter |
 | buzzer | a flag the WASM page turns into sound |
 | telemetry UART | an 8 KB buffer (`sim_get_telemetry()`) |
 | filesystem | four files of 64 KB in memory |
 | reset cause | always a software reset: there is no power event, so no brownout recovery |
+| ground test switch | none: `hal_ground_test_asserted()` is `flight_states.c`'s weak default, always false, so ground test mode never starts |
 
 `sim/main_sim.c` and `sim/sim_cli.c` drive it from a trajectory — a physics
 model or a replayed log (`sim/replay.c`) — and `sim_note_pyro_fire()` feeds each
 fire back into the physics, so a chute opens when the flight software fires it.
 
-Lua runs here too: `lua_platform_sim.c` implements `src/lua/lua_platform.h` on
-simulated pins and a simulated serial port, mirroring MK1C's resource set so a
-script written in the browser runs unchanged on the board.
+Lua runs in the browser build: `lua_platform_sim.c` implements
+`src/lua/lua_platform.h` on simulated pins and a simulated serial port,
+mirroring MK1C's resource set so a script written in the browser runs
+unchanged on the board. `lua_tests` builds the sandbox against it too.
 
 ## The simulated MK1 boards
 
 `sim_mk1a`, `sim_mk1b` and `sim_mk1c` define `PYRO_SIM_BOARD_PYRO`. `hal_sim.c`
 then leaves the pyro half of `src/hal.h` out, and `sim/hw/pyro_sim_glue.c`
 supplies it by calling the **real** `boards/<name>/pyro_board.c`, compiled
-against `sim/hw/` — a stand-in for the thirty-odd Pico SDK functions the board
+against `sim/hw/` — a stand-in for the fifty-odd Pico SDK functions the board
 files use — which drives the plant model in `sim/plant/`:
 
 ```

@@ -47,7 +47,7 @@ DESIGN.md 7.1 run one step per loop iteration (DD-056).
 | Bus bleed | R_BLEED, two 4.7 kΩ in parallel | 2.35 kΩ; no single open resistor removes it |
 | Bus capacitance | C115 and strays, 1.1 µF | **no bulk capacitor** is fitted |
 | Pressure | U2 MS5607, I2C | PS tied high (I2C mode), CSB low |
-| Buzzer | driven by Q2 AO3400A | |
+| Buzzer | BUZZER1 KXG0903C3, from VIN | switched on its low side by Q2 AO3400A |
 | LED | D1, blue | |
 
 U9's ~FLT goes only to a pull-up and its ILM only to R130 499 Ω; neither reaches
@@ -69,7 +69,7 @@ images. `board_pins.h` is the map; `pin_caps.h` says what each pin may become;
 | 12 | ARM_TOGGLE | C101 → the pump → U9 EN |
 | 16 | BIAS_A | channel A node |
 | 17 | FIRE_A | Q103 gate |
-| 18–21 | user pads | J3.3–J3.6, Lua |
+| 18–21 | user pads | J3.3–J3.6, Lua; J3.1 is 3V3, J3.2 ground |
 | 22 | spare | J1.6 |
 | 23 | BIAS_BUS | the firing bus |
 | 24 | FIRE_B | Q104 gate |
@@ -93,10 +93,10 @@ the first quiescent reading.
 
 ## The main loop
 
-The shared loop (`src/main_hardware.c`) runs every 20 ms (`src/loop_period.h`, DD-065). The MS5607's
-one-shot conversion is started first; then platform services, the flight state
-machine, and the outputs, where `hal_pyro_update()` calls `pyro_update()`. Each
-`pyro_update()`:
+The shared loop (`src/main_hardware.c`) runs every 20 ms (`src/loop_period.h`,
+DD-065). The MS5607's one-shot conversion is started first; then platform
+services, the flight state machine, and the outputs, where `hal_pyro_update()`
+calls `pyro_update()`. Each `pyro_update()`:
 
 1. reads the pack, the bus and both channel nodes with no stimulus
    (`read_quiescent()`);
@@ -270,22 +270,45 @@ one-shot alarm whose handler runs from RAM (DD-051, DD-066), so a flash write
 cannot delay a read or its timestamp. The pair is ready 18.6 ms after the top,
 1.4 ms before the next; at standard mode it would be 0.26 ms.
 
+Every transfer gives up rather than wait on a part holding the bus: detection
+and the one-shot's transfers within 2 ms (DD-069). A conversion a flash erase
+or program ran beside is discarded, not used, and counted in `pres_flashed` on
+`/api/status` (DD-068). The buzzer does not disturb the sensor: on the bench
+the scatter is 6–7 Pa beeping or not, where MK1B's rises during a beep code
+(DD-068, task B-BZ).
+
 ## Telemetry, LED and buzzer
 
 The defaults in `src/hal_common/board_defaults.c` drive all three: UART0 at
 115200 on GPIO0/1 for telemetry and ground-test commands, the LED on GPIO8
-lit from boot and toggled from the main loop — never from a timer, which would
-keep blinking after the firmware stopped — and the buzzer on GPIO11, which an
-operator may move to another pad in `pins.ini`.
+lit from boot and toggled by the main loop's pressure task every fifth reading
+— never from a timer, which would keep blinking after the firmware stopped —
+and the buzzer on GPIO11, which an operator may move to another pad in
+`pins.ini`.
 
 ## Lua and released pads
 
-Lua runs on core1 and owns the four J3 pads (GPIO18–21). A pyro channel can be
-released to Lua; `pin_caps.h` lists what each pyro pad may then become.
-ARM_TOGGLE carries no plain-output capability: holding it at a level does not
-hold U9 on, so this board cannot offer a half-bridge. With both channels
-released, `hal_pyro_update()` stops calling `pyro_update()`: there is nothing
-to arm and nothing to sense.
+Lua runs on core1 and owns the four J3 pads (GPIO18–21); `pins.ini` can give
+it the spare, GPIO22 on J1.6, too. A pyro channel can be released to Lua;
+`pin_caps.h` lists what each pyro pad may then become. ARM_TOGGLE carries no
+plain-output capability: holding it at a level does not hold U9 on, so this
+board cannot offer a half-bridge. With both channels released,
+`hal_pyro_update()` stops calling `pyro_update()`: there is nothing to arm and
+nothing to sense.
+
+## Ground test switch
+
+A switch held closed at power-up puts the board in ground test mode, and
+opening it fires the enabled channels on a countdown (DD-071). J3 has its own
+ground, so a switch from one J3 user pad to J3.2 suits this board:
+`ground_test=ground` and, say, `ground_test_pin=18` in `pins.ini`. Any other
+digital pad serves, GPIO22 included, and two of them can carry the two-pad
+wiring (`ground_test=pair`). The switch's pads leave Lua.
+
+The procedure fires through `pyro_fire()`, so the refusals of
+[Firing sequence](#firing-sequence) still apply: a channel the presence test
+has not read present is refused, the refusal is reported, and the procedure
+goes on.
 
 ## Faults
 
@@ -302,10 +325,10 @@ to arm and nothing to sense.
 
 ## Known limits
 
-- **No bulk capacitor.** The requirement was dropped; DESIGN.md 1.1's variants
-  and 7.3's capacitor-discharge pulse no longer describe the board.
+- **No bulk capacitor** is fitted: DESIGN.md 1.1's variants and 7.3's
+  capacitor-discharge pulse do not describe the board.
 - **U9's reverse conduction** sets the bus's level under bias (DD-054); an open
-  R_BLEED no longer shows in it, and the firmware does not look for one
+  R_BLEED does not show in it, and the firmware does not look for one
   (DD-055).
 - **No ~FLT, no ILM**, so DESIGN.md 7.2's capacitance check and the FLT abort
   have no source; the precharge timeout covers a loaded bus.
@@ -337,7 +360,9 @@ of milliseconds on this class of part). `/api/status` reports `loop_max_us` and
   stopped loop, an aborted precharge, a misfire, both channels in turn, a high
   side stuck on, and the flash window.
 - `plant_tests` holds the model to the bench measurements.
-- `sensor_bringup_tests` and `ms5607_tests` cover the pressure sensor.
+- `sensor_bringup_tests` and `ms5607_tests` cover the pressure sensor, the
+  one-shot at this board's 400 kHz.
+- `integration_tests` flies the flight software built for MK1C.
 - `boards/sim_mk1c` runs the whole flight software against the same model.
 
 ## References
@@ -347,4 +372,6 @@ of milliseconds on this class of part). `/api/status` reports `loop_max_us` and
   `rp2040-datasheet_2025-02-20.pdf`, `UM10204_I2C-bus_Rev7.0_2021-10.pdf`
 - DD-051 (the MS5607 one-shot), DD-052 (bus speeds), DD-053 (no waits),
   DD-054 (the bus as measured), DD-055 (presence and shorts only), DD-056 (the
-  fire) in `DECISIONS.md`
+  fire), DD-065 (the 20 ms loop), DD-066 (a pair every loop), DD-068
+  (conversions beside a flash operation), DD-069 (bounded transfers), DD-071
+  (the ground test switch) in `DECISIONS.md`

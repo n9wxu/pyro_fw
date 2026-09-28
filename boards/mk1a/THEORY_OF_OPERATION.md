@@ -49,7 +49,7 @@ No buzzer is fitted, and no part on the pyro path has a fault output.
 | 9 | FIRE1 | Q6A gate — channel 1 high side, J3 (drogue) |
 | 10 | PYRO_LOW | Q2 gate — the shared low side |
 | 11 | FIRE2 | Q1A gate — channel 2 high side, J4 (main) |
-| 18, 19 | user pads | J6 header, Lua |
+| 18, 19 | user pads | J6.2, J6.1, Lua |
 | 20, 21 | I2C0 SDA, SCL | BMP280, R1/R2 4k7 pull-ups |
 | 25 | LED | R12 → D3 |
 | 26, 27 | ADC0, ADC1 | SENSE1, SENSE2 |
@@ -69,10 +69,10 @@ inputs, and starts the first continuity check.
 
 ## The main loop
 
-The shared loop (`src/main_hardware.c`) runs every 20 ms (`src/loop_period.h`, DD-065) and calls
-`pyro_update()` from its outputs stage. `pyro_update()` either ends a fire pulse
-or advances the continuity check by one step. Nothing waits (DD-053): every
-settle is a deadline a later iteration checks.
+The shared loop (`src/main_hardware.c`) runs every 20 ms (`src/loop_period.h`,
+DD-065) and calls `pyro_update()` from its outputs stage. `pyro_update()` either
+ends a fire pulse or advances the continuity check by one step. Nothing waits
+(DD-053): every settle is a deadline a later iteration checks.
 
 ## Pyro circuit
 
@@ -138,10 +138,12 @@ One BMP280 on I2C0 at 400 kHz, its fastest: R1 and R2 (4k7) hold fast mode's
 takes the forced conversion the last loop commanded and commands the next
 (pressure ×4, temperature ×1, 13.3 ms at most), so every reading is a
 conversion of its own, stamped from its command (DD-067). Every transfer gives
-up, within twice its own time on the bus and a millisecond (DD-069). Bring-up is the shared single-sensor path,
-`src/pressure_single_sensor.c`: clock the bus free — the sensor stays powered
-across a CPU reset and can be left holding SDA low — hand it to the I2C block,
-let the pull-ups settle, detect.
+up within twice its own time on the bus and a millisecond (DD-069). A
+conversion a flash erase or program ran beside is discarded, not used, and
+counted in `pres_flashed` on `/api/status` (DD-068). Bring-up is the shared
+single-sensor path, `src/pressure_single_sensor.c`: clock the bus free — the
+sensor stays powered across a CPU reset and can be left holding SDA low — hand
+it to the I2C block, let the pull-ups settle, detect.
 
 ## Telemetry, LED and buzzer
 
@@ -151,7 +153,8 @@ pull the node low, through D7. The line is half duplex, and RX hears everything
 TX sends. J6.4 is the switched supply and J6.5 ground.
 
 The defaults in `src/hal_common/board_defaults.c` drive the UART pins and the
-LED, lit from boot and toggled from the main loop. No buzzer is fitted and
+LED, lit from boot and toggled by the main loop's pressure task every fifth
+reading: a steady blink means the sensor is delivering. No buzzer is fitted and
 `board_pins.h` names no buzzer pin, so the buzzer starts on no pad; an operator
 can give MK1A one by assigning a pad in `pins.ini`.
 
@@ -163,6 +166,20 @@ FIRE with a released PYRO_LOW is a half-bridge whose midpoint is the shorted
 igniter terminals; it runs on PIO0, the pyro block. F1 is 8 A and does not
 reset, which is why this board's protection class (`PYRO_PROT_FUSE_ONESHOT`)
 differs from MK1B's.
+
+## Ground test switch
+
+A switch held closed at power-up puts the board in ground test mode, and
+opening it fires the enabled channels on a countdown (DD-071). J6 has one
+ground, J6.5, so the two-pad wiring suits this board: a switch across the user
+pads J6.2 and J6.1, `ground_test=pair` in `pins.ini` with GPIO18 and GPIO19 as
+`ground_test_pin` and `ground_test_drive_pin`. The driven pad alternates high
+and low each loop and the read pad is pulled the other way, so the switch
+reads closed only when the read pad follows both ways; a pad touching ground
+or 3V3 never does. A switch from one pad to J6.5 is `ground_test=ground`.
+
+The switch's pads leave Lua: `pins.ini` is refused if they carry a Lua role or
+the buzzer. With no buzzer the procedure fires on the same schedule, silently.
 
 ## Faults
 
@@ -210,5 +227,7 @@ erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
 - `~/Documents/Pyro_mk1a.pdf`, the schematic
 - `docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf`,
   `rp2040-datasheet_2025-02-20.pdf`, `UM10204_I2C-bus_Rev7.0_2021-10.pdf`
-- DD-052 (bus speeds), DD-053 (no waits), DD-059 (MK1B reads as MK1A does) in
-  `DECISIONS.md`
+- DD-052 (bus speeds), DD-053 (no waits), DD-059 (MK1B reads as MK1A does),
+  DD-065 (the 20 ms loop), DD-067 (the BMP280 at the loop's rate), DD-068
+  (conversions beside a flash operation), DD-069 (bounded transfers), DD-071
+  (the ground test switch) in `DECISIONS.md`

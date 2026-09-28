@@ -1,6 +1,7 @@
 /*
  * The board, driven the way the hardware drives it, for suites that fly a
- * truth beside the firmware (pressure_chain_tests, mach_tests).
+ * truth beside the firmware (pressure_chain_tests, mach_tests,
+ * ground_test_tests).
  *
  * The first tick runs flight_init(), which reads the reset cause and the
  * sensor, so anything a test sets up before it -- a marker, a reset cause, a

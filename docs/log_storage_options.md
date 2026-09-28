@@ -225,7 +225,8 @@ prepared on a PC.
   Card-detect on a free GPIO (9, 10 or 13-15).
   - Give the card its own supply filtering, away from the MS5607's supply.
     DD-068 found MK1B's sensor disturbed by its buzzer and by flash writes;
-    MK1C's buzzer, switched by a MOSFET, disturbed nothing.
+    MK1C's buzzer disturbed nothing, though both switch theirs with a
+    MOSFET, so the difference is in the layout or supply (task B-BZ).
   - **1a: a microSD socket.** Choose a retention (hinged or push-pull, not
     push-push) that holds under boost and ejection loads.
   - **1b: a soldered SD NAND part.** Same protocol and FAT, nothing to

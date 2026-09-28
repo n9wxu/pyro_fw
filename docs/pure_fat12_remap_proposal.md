@@ -1,6 +1,8 @@
 # Pure FAT12 on Flash with Cluster Remapping
 
-## Status: PROPOSAL - Not implemented. Preferred alternative to fat_mimic.
+## Status: PROPOSAL - Not implemented.
+
+Status, 2026-09-28 (2.1.702): the firmware presents no USB drive and has no fat_mimic. Its files live in littlefs on internal flash and are served over the USB network (`docs/http_implementation_notes.md`). The current storage design is `docs/log_storage_options.md`, which cites this proposal as prior art for presenting an SD card as a USB drive.
 
 ## Summary
 Real FAT12 filesystem directly on flash with wear leveling via cluster remapping. No littlefs dependency. 4096-byte clusters match flash erase blocks for zero write amplification. MBR and boot sector generated from compile-time constants, never stored.
@@ -97,7 +99,7 @@ Same code path as USB: FAT + root dir from RAM, data via remap table.
 - At 10 edits/day: ~6.4 years. At 1 edit/day: ~64 years.
 
 ## Comparison
-| Aspect | fat_mimic (current) | FAT12 image on lfs | Pure FAT12 + remap |
+| Aspect | fat_mimic | FAT12 image on lfs | Pure FAT12 + remap |
 |--------|---------------------|--------------------|--------------------|
 | RAM | 35KB | 26KB | **12.5KB** |
 | Correctness | Translation bugs | Perfect FAT12 | Perfect FAT12 |
@@ -119,5 +121,5 @@ Same code path as USB: FAT + root dir from RAM, data via remap table.
 ## Risks
 1. Custom wear leveling needs thorough testing
 2. Power-loss safety simpler than littlefs but must be correct
-3. ~500 lines of code (more than image approach, less than current fat_mimic)
+3. ~500 lines of code (more than image approach, less than fat_mimic)
 4. No subdirectory support (FAT12 root dir only)

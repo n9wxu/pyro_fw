@@ -23,8 +23,8 @@ disassembly, resolves long-branch veneers, and reports every path from a
 flight-critical entry point to a primitive that can wait forever.
 
 Usage:
-    support/prove_core0.py build-mk1c/pyro_fw_mk1c.elf
-    support/prove_core0.py --compare build-mk1c/...elf build-core1/...elf
+    support/prove_core0.py --core1 core1_main build-mk1c/pyro_fw_mk1c.elf
+    support/prove_core0.py --root my_entry build/pyro_fw_mk1b.elf   # an extra root
 
 Exit status is 1 if any flight-critical root can reach an unbounded wait,
 so this runs in CI as the standing guard on the rule above.

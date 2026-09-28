@@ -6,7 +6,16 @@ The safety rule for putting Lua on core1 is one sentence:
 
 This document proves the rule can be violated — not by argument, but by an
 experiment anyone can rerun. Nothing here needs a board attached. The design
-that discharges it is in `src/flash_window.h`.
+that discharges it is in `src/flash_window.h` and `src/lua/lua_core1.h`.
+
+**Status, 2026-09-28 (2.1.702).** Every remedy below is in place:
+`LFS_NO_MALLOC` with static buffers (`src/littlefs_driver.c`), the flash
+window, core1 idling in RAM, and the unilateral kill. MK1A, MK1B and MK1C all
+build Lua, so every hardware image links `pico_multicore`, and CI runs
+`support/prove_core0.py --core1 core1_main` over each. The result below is the
+MK1C image before `LFS_NO_MALLOC`. With Lua on MK1C both of its builds link
+`pico_multicore`, so the A/B now needs a board built without Lua, such as the
+reference template.
 
 ## The experiment
 
@@ -85,11 +94,13 @@ unbounded wait on a lock core1 also takes.**
 
 ## Why it reaches the flight path
 
-`hal_fs_open()` mounts the filesystem on *every* open, and `lfs_mount` →
+`hal_fs_open()` mounts the filesystem on *every* open (`open_file()` in
+`src/hal_common/hal_common.c`), and without `LFS_NO_MALLOC`, `lfs_mount` →
 `lfs_init` → `malloc`, `lfs_unmount` → `free`:
 
 ```c
-hal_file_t *hal_fs_open(const char *path, bool append) {
+static hal_file_t *open_file(const char *path, bool append) {
+    if (!flash_writable()) return NULL;
     if (hw_file.open) return NULL;
     if (lfs_mount(&hw_file.lfs, &lfs_pico_flash_config) != LFS_ERR_OK) return NULL;
 ```
@@ -126,6 +137,14 @@ The likely outcome is a core1 HardFault, whose default handler spins forever —
 and if it faults while holding `malloc_mutex`, the two hazards compose into a
 permanent core0 hang.
 
+It reaches core0 directly too. A core1 spinning on XIP reads during an erase
+keeps the bootrom from reading the flash's status register, and core0 stays
+inside `flash_range_program()` until the watchdog resets the board. An idle
+loop the compiler inlined into flash is enough, and the fault shows only with
+Lua running. So core1 idles in RAM (`lua_core1_idle_wait`,
+`__not_in_flash_func` and `__noinline`), and `prove_core0.py` fails an image
+where it has no out-of-line copy there.
+
 This one is symmetric and it is the reason core0 cannot simply "be careful":
 core0's own log flush is what breaks core1.
 
@@ -141,9 +160,9 @@ a degraded mode rather than a hang.
 
 ## malloc is not the whole hazard
 
-The demonstrated deadlock is narrow: two call sites in littlefs, removable
-with `LFS_NO_MALLOC` and four static buffers. The proof above also has a blind
-spot, and a green check that cannot fail is worse than no check.
+The demonstrated deadlock is narrow: two call sites in littlefs, which
+`LFS_NO_MALLOC` and four static buffers remove. The proof above also has a
+blind spot, and a green check that cannot fail is worse than no check.
 
 `spin_lock_unsafe_blocking()` is `__force_inline`:
 
@@ -154,7 +173,7 @@ while (__builtin_expect(!*lock, 0)) {
 ```
 
 No call, no symbol, nothing for a call-graph analysis to find. It is an
-unbounded wait that `prove_core0.py` structurally cannot see. The tool now
+unbounded wait that `prove_core0.py` structurally cannot see. The tool
 finds these by matching the spin lock addresses (`SIO_BASE+0x100..0x17c`) in
 literal pools and reports them separately — it never fails on them, because
 taking a spin lock is normal and correct.
@@ -166,10 +185,11 @@ The SDK states its own safety argument in a comment next to that loop:
 > us, so we just need to wait on another core anyway which should be finished
 > soon
 
-The convention holds only while the other core *finishes*. Today the users are
-`hw_claim_*` (spin lock 11) and `irq_*` (spin lock 9), and both run only at
-boot, so nothing is at risk yet. That changes when core1 loads PIO programs for
-Lua: `pio_claim_unused_sm()` and friends take spin lock 11 at runtime, on core1.
+The convention holds only while the other core *finishes*. The users are
+`hw_claim_*` (spin lock 11) and `irq_*` (spin lock 9). Lua drives PIO and DMA
+from core1, and `pio_claim_unused_sm()` and friends take spin lock 11: run on
+core1 at runtime, they would put that lock in the hands of a core core0 may
+kill.
 
 Which produces a deadlock that has nothing to do with malloc, and that **our own
 remedy creates**: core0 decides core1 is wedged and does a unilateral PSM
@@ -221,8 +241,15 @@ every capability core1 gains, and a call graph cannot settle it.
 
 5. `support/prove_core0.py` is the standing check, run in CI over every board
    that builds Lua. It fails if a flight-critical root can reach an unbounded
-   wait, if core1's call graph reaches an acquire, or if a function marked
-   `__not_in_flash_func` has no out-of-line copy in RAM, or if the MS5607's
-   alarm handler can reach flash through a callee or a constant (DD-051). It is not a safety
-   case: inlined spin lock acquires and indirect calls are outside what it can
-   see, and it says so in its own output.
+   wait, if a root is missing from the image, if core1's call graph reaches an
+   acquire, if a function marked `__not_in_flash_func` has no out-of-line copy
+   in RAM, or if the MS5607's alarm handler can reach flash through a callee
+   or a constant (DD-051). The SDK's `i2c_write_blocking` and
+   `i2c_read_blocking` count as unbounded waits: a part holding SCL low holds
+   the caller forever. The task ticks `hal_tasks_tick()` reaches through a
+   pointer (`pres_tick`, `pres_bringup_tick`, `buzzer_tick`) are roots of their
+   own, and a renamed root fails rather than drops out (DD-069). Core1's
+   indirect calls are followed through tables named `*_vt`, and an image that
+   dispatches core1 through a table without one fails (DD-061). It is not a
+   safety case: inlined spin lock acquires and other indirect calls are outside
+   what it can see, and it says so in its own output.

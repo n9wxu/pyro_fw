@@ -1,18 +1,21 @@
-# Pyro MK1B WASM Simulation — Integration Guide for AI Assistants
+# Pyro WASM Simulation — Integration Guide for AI Assistants
 
 > **Purpose**: This file is intended for AI coding assistants (Copilot, Cline, Cursor, ChatGPT, etc.)
-> that need to integrate the Pyro MK1B flight computer simulation into another web project.
+> that need to integrate the Pyro flight computer simulation into another web project.
 > Read this file first when asked to "add the pyro simulation" or "integrate the rocket sim."
 
 ## What This Is
 
-The Pyro MK1B is a model rocket flight computer. Its firmware (state machine, pyro firing logic,
-telemetry) is compiled to WebAssembly along with a physics engine. Together they form a
+Pyro is a family of model rocket flight computers (MK1A, MK1B, MK1C). Its firmware (state machine,
+pyro firing logic, telemetry) is compiled to WebAssembly along with a physics engine. Together they form a
 **closed-loop rocket flight simulation** that runs entirely in the browser.
 
 The WASM module contains two independent subsystems:
 1. **Flight Computer** — the real firmware (state machine, pyro logic, telemetry, buzzer)
 2. **Physics Engine** — standard atmosphere model, thrust, drag, chute deployment
+
+The pyro channels are a fixture: continuity is whatever `sim.setContinuity()` last set, and a
+fire is a counter. The module also carries the Lua VM that `docs/lua.html` drives.
 
 ## Files to Copy
 
@@ -29,6 +32,7 @@ If these files are stale or missing, rebuild them:
 cd pyro_fw && ./scripts/build_wasm.sh
 ```
 This requires the [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html).
+`PYRO_BOARD=sim_mk1a|sim_mk1b|sim_mk1c` builds of this script do not compile; the default does.
 
 ## Integration Pattern
 
@@ -36,13 +40,16 @@ This requires the [Emscripten SDK](https://emscripten.org/docs/getting_started/d
 
 ```javascript
 // ES module import (recommended)
-import { createPyroSim, FlightState } from './wasm/pyro-sim.js';
+import { createPyroSim } from './wasm/pyro-sim.js';
 
-// Or with script tags:
-// <script src="wasm/pyro.js"></script>
-// <script src="wasm/pyro-sim.js"></script>
-// Then use: const sim = wrapModule(Module);
+// flight_state_t numbers (see Flight States). pyro-sim.js's FlightState,
+// STATE_NAMES and sim.stateName do not follow them: compare sim.state.
+const PAD_IDLE = 3, LANDED = 8, FAULT = 10;
 ```
+
+`pyro-sim.js` is an ES module. Without modules, load `wasm/pyro.js` with a
+script tag and call the exports on `Module` in `Module.onRuntimeInitialized`,
+as `docs/sim.html` does (`Module._sim_flight_tick(t)`, `Module._sim_set_pressure(pa)`, ...).
 
 ### Step 2: Initialize
 
@@ -70,7 +77,7 @@ phys.init(1524);  // ~5000 ft
 ### Step 3: Run the simulation loop
 
 ```javascript
-const PAD_DWELL_MS = 2000;  // Sit on pad before "launch"
+const PAD_DWELL_MS = 9000;  // Boot, then let the 5 s ground reference fill
 let prevFires = 0;
 
 for (let t = 0; t <= 600000; t++) {
@@ -89,14 +96,12 @@ for (let t = 0; t <= 600000; t++) {
 
     // 3. Feed physics output to flight computer
     sim.setPressure(phys.pressurePa);
-    sim.clearPyroFiring();
 
-    // 4. Tick the flight computer
+    // 4. Tick the flight computer (it ends the previous fire pulse itself)
     sim.tick(t);
 
     // 5. Read outputs for your UI
-    // sim.state          → 0-7 (see FlightState enum)
-    // sim.stateName      → "PAD_IDLE", "ASCENT", etc.
+    // sim.state          → 0-11 (see Flight States)
     // sim.altitudeCm     → filtered altitude in cm
     // sim.maxAltCm       → peak altitude in cm
     // sim.vspeedCms      → vertical speed in cm/s
@@ -108,7 +113,7 @@ for (let t = 0; t <= 600000; t++) {
     // phys.velMs         → actual velocity in m/s
     // phys.apogeeM       → peak altitude in meters
 
-    if (sim.state === FlightState.LANDED) break;
+    if (sim.state === LANDED) break;
 }
 ```
 
@@ -138,13 +143,14 @@ requestAnimationFrame(frame);
 | Method/Property | Type | Description |
 |----------------|------|-------------|
 | `sim.init(configStr)` | method | Initialize with config.ini string |
-| `sim.tick(timeMs)` | method → int | Advance 1ms, returns state |
+| `sim.tick(timeMs)` | method → int | Advance to `timeMs`, returns state |
 | `sim.reset()` | method | Reset to power-on |
 | `sim.setPressure(pa)` | method | Set barometric pressure |
+| `sim.setSensorType(t)` | method | 0 none (boots to FAULT), 1 MS5607, 2 BMP280 (default) |
 | `sim.setContinuity(ch,adc,good,open)` | method | Set pyro continuity |
-| `sim.clearPyroFiring()` | method | Clear fire flag (call each tick) |
-| `sim.state` | int | Current state (0-7) |
-| `sim.stateName` | string | State name |
+| `sim.clearPyroFiring()` | method | Clear fire flag; `tick()` does this itself |
+| `sim.state` | int | Current state (0-11) |
+| `sim.stateName` | string | From `pyro-sim.js`'s own list, which does not follow `flight_state_t`: use `sim.state` |
 | `sim.altitudeCm` | int | Filtered altitude (cm) |
 | `sim.maxAltCm` | int | Peak altitude (cm) |
 | `sim.vspeedCms` | int | Vertical speed (cm/s) |
@@ -179,19 +185,30 @@ requestAnimationFrame(frame);
 ## Flight States
 
 ```
-0 = BOOT_INIT        (loading config)
-1 = BOOT_SETTLE      (sensor warmup, 2.5s)
-2 = BOOT_CONTINUITY  (checking pyro circuits)
-3 = BOOT_CALIBRATE   (10 pressure samples → ground reference)
-4 = PAD_IDLE         (ready for launch)
-5 = ASCENT           (climbing, 100ms sample rate)
-6 = DESCENT          (past apogee, pyros fire here, 50ms rate)
-7 = LANDED           (on ground, 1Hz logging)
+0  = BOOT_SETTLE      (sensor warmup, 2.5s)
+9  = BOOT_SENSOR      (the pressure sensor answers, or FAULT)
+1  = BOOT_CONTINUITY  (checking pyro circuits)
+2  = BOOT_CALIBRATE   (10 pressure samples → ground reference)
+3  = PAD_IDLE         (ready for launch)
+4  = ASCENT           (climbing; pyros arm once past 10 m/s and slowing below it)
+5  = FALLING          (past apogee, no canopy steadying the descent)
+6  = DROGUE_DESCENT   (steady at a drogue's rate)
+7  = CHUTE_DESCENT    (steady at a main's rate)
+8  = LANDED           (on ground after flight)
+10 = FAULT            (terminal: a power-up test failed)
+11 = GROUND_TEST      (terminal: powered up with the ground test switch held)
 ```
 
-The boot sequence (states 0-3) runs automatically. The flight computer
-detects launch when altitude exceeds 10m. No explicit "launch" command is needed —
-just start feeding decreasing pressure (increasing altitude) from the physics engine.
+`flight_state_t` in `src/flight_states.h`: states are appended, never renumbered. The
+descent phase comes from the measured rate, not from which pyro fired (DD-023). Pressure is
+read every 20 ms of simulated time in every state (DD-065).
+
+The boot sequence runs automatically and reaches PAD_IDLE about 2.7 s after power-on. The
+flight computer detects launch at 100 ft above the ground reference while climbing faster than
+5 m/s, both held for 100 ms (FLT-LAUNCH-07). No explicit "launch" command is needed — just
+start feeding decreasing pressure (increasing altitude) from the physics engine, after the
+5 s ground reference has filled. Ignite before PAD_IDLE and the board calibrates on the way
+up, reading every altitude low.
 
 ## Pyro Configuration Modes
 
@@ -201,6 +218,7 @@ just start feeding decreasing pressure (increasing altitude) from the physics en
 | `agl` | Altitude above ground (in configured units) | `pyro2_mode=agl`, `pyro2_value=200` (200 ft) |
 | `fallen` | Altitude fallen from apogee (in units) | `pyro1_mode=fallen`, `pyro1_value=100` |
 | `speed` | Descent speed (in units/s) | `pyro1_mode=speed`, `pyro1_value=30` |
+| `none` | The channel never fires | `pyro2_mode=none` |
 
 Units: `cm`, `m`, or `ft` (set via `units=ft` in config).
 
@@ -223,11 +241,10 @@ sim.physics.init(304.8);  // 1000 ft
 
 for (let t = 0; t <= 120000; t++) {
     if (sim.pyroFireCount > 0 && sim.lastFireChannel === 1) sim.physics.deployDrogue();
-    if (t >= 2000) sim.physics.step((t - 2000) / 1000);
+    if (t >= 9000) sim.physics.step((t - 9000) / 1000);
     sim.setPressure(sim.physics.pressurePa);
-    sim.clearPyroFiring();
     sim.tick(t);
-    if (sim.state === 7) break;
+    if (sim.state === 8) break;  // LANDED
 }
 console.log("Apogee:", sim.physics.apogeeM, "m");
 console.log("Max alt (firmware):", sim.maxAltCm / 100, "m");
@@ -237,7 +254,6 @@ console.log("Max alt (firmware):", sim.maxAltCm / 100, "m");
 Just don't call `sim.physics.*`. Feed your own pressure values:
 ```javascript
 sim.setPressure(myPhysicsEngine.getPressurePa());
-sim.clearPyroFiring();
 sim.tick(t);
 // Check sim.pyroFireCount to know when to deploy chutes in your engine
 ```
@@ -247,10 +263,11 @@ sim.tick(t);
 | Issue | Solution |
 |-------|---------|
 | `WASM load timeout` | Ensure `pyro.js` and `pyro.wasm` are served from the same directory |
-| Flight computer stays in BOOT | Let it run for ~3500ms (boot sequence takes ~3s) |
-| Pyros don't fire | Check: (1) continuity set, (2) apogee detected, (3) config mode/value correct |
-| State stuck at PAD_IDLE | Altitude must exceed 10m for launch detection |
-| Two pyros fire simultaneously | By design they don't — P2 waits for P1 to finish firing |
+| Flight computer stays in BOOT | Let it run for ~3000ms (PAD_IDLE at ~2.7 s) |
+| State 10 (FAULT) | Sensor type 0 at boot: no sensor, no flight (FLT-BOOT-12) |
+| Pyros don't fire | Check: (1) continuity set, (2) armed: the climb passed 10 m/s, (3) apogee detected, (4) config mode/value correct |
+| State stuck at PAD_IDLE | Launch needs 100 ft and a climb faster than 5 m/s, held 100 ms |
+| Two pyros fire simultaneously | By design they don't — P2 waits for P1's pulse to end (PYR-DEPLOY-02) |
 
 ## Source Repository
 
@@ -259,6 +276,6 @@ GitHub: https://github.com/n9wxu/pyro_fw
 Key files:
 - `sim/pyro_sim.h` — C API documentation
 - `sim/physics.h` — Physics engine C API
-- `sim/README.md` — Detailed architecture and API tables
+- `sim/README.md` — Detailed architecture, API tables and the other simulator builds
 - `docs/sim.html` — Working example (interactive browser simulation)
-- `test/test_closedloop.c` — 13 closed-loop tests showing all integration patterns
+- `test/test_closedloop.c` — 25 closed-loop tests, with their own physics and four rocket profiles

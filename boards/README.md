@@ -1,7 +1,9 @@
 # Board support packages
 
 Each directory here is a self-contained board. The top-level `CMakeLists.txt`
-names no board and never needs editing to add one.
+finds boards by their `board.cmake` and never needs editing to add one; it
+names a board only as the default (`mk1b`) and in the host test suites pinned
+to one board's files.
 
 Each board's `THEORY_OF_OPERATION.md` explains how it works, from the pins
 up, and its code points there instead of carrying the explanation:
@@ -9,7 +11,7 @@ up, and its code points there instead of carrying the explanation:
 | Board | Hardware | Pyro architecture |
 |---|---|---|
 | [`mk1a`](mk1a/THEORY_OF_OPERATION.md) | bare RP2040, 16 MB flash | a switched high side per channel, one shared low side |
-| [`mk1b`](mk1b/THEORY_OF_OPERATION.md) | Pico module, 2 MB flash | the same topology on AP2192 high-side switches |
+| [`mk1b`](mk1b/THEORY_OF_OPERATION.md) | bare RP2040 on the stock `pico` header, 2 MB of flash used | the same topology on AP2192 high-side switches |
 | [`mk1c`](mk1c/THEORY_OF_OPERATION.md) | bare RP2040, 16 MB flash | a TPS259570 eFuse armed by a charge pump; a low side per channel |
 | [`reference`](reference/THEORY_OF_OPERATION.md) | template (`pico`) | safe stubs: no continuity, refuses to fire |
 | [`sim`, `sim_mk1a/b/c`](sim/THEORY_OF_OPERATION.md) | none (`host`) | a fixture, or the real board file against a model |
@@ -19,12 +21,15 @@ up, and its code points there instead of carrying the explanation:
 ```bash
 cp -r boards/reference boards/mk1d          # 1. copy
 $EDITOR boards/mk1d/board_pins.h            # 2. implement (every TODO)
+$EDITOR boards/mk1d/pin_caps.h
 $EDITOR boards/mk1d/board.cmake             # 3. fix up cmake
 cmake -B build-mk1d -DPYRO_BOARD=mk1d       # 4. build
 cmake --build build-mk1d
 ```
 
-An unknown board name fails the configure and lists what is available.
+An unknown board name fails the configure and lists what is available. Then
+write `pyro_board.c` and the board's `THEORY_OF_OPERATION.md`;
+`boards/reference/THEORY_OF_OPERATION.md` is the checklist, Lua included.
 
 ## Board kinds
 
@@ -49,9 +54,9 @@ targets. `boards/sim` is the worked example.
 | `pin_caps.h` | what each pin MAY become | `BOARD_PIN_CAPS`, topology, protection class, `LUA_PIN_LIST` |
 | `pyro_board.c` | `src/pyro.h` and `board_early_init()` | the pyro outputs are the board's to put down |
 | `board_info.c` | picotool's pin names | recommended |
-| `board.cmake` | pre-SDK settings | `PICO_BOARD`, flash geometry, loop budget |
+| `board.cmake` | pre-SDK settings | `PYRO_BOARD_KIND`, `BOARD_DISPLAY_NAME`, `PICO_BOARD`, flash geometry, `PYRO_HAS_LUA`, loop budget |
 | `CMakeLists.txt` | sources and target | must export `pyro_board` |
-| `sdk/<name>.h` | Pico SDK board header | only for a non-Pico-module board |
+| `sdk/<name>.h` | Pico SDK board header | only where the stock `pico` header does not describe the board |
 | `pressure_board.c` | `src/pressure_sensor.h` | only with two sensors on one bus, as MK1B |
 | `THEORY_OF_OPERATION.md` | how the board works | the code's comments point into it |
 
@@ -61,12 +66,19 @@ A board writes none of the rest:
   LED, telemetry UART, buzzer, `board_pyro_raw()` — as plain GPIO on the pins
   `board_pins.h` names. Each is weak: a board whose hardware differs defines
   its own, and that one links.
+- `src/flash_window.c` holds a weak `board_flash_ok()`, always true. A board
+  whose firing sequence is paced by the loop answers false while it runs, as
+  MK1C's does, since a flash erase stalls the loop (DD-056).
 - `src/pressure_single_sensor.c` brings up one sensor on one bus, whichever
   `board_pins.h` gives a bus speed.
 - `src/board_support.h` holds the deadline test, the median ADC read and the
   safe-output helper every board file uses.
-- The UART's interrupt-driven ring, littlefs, config persistence, the async
-  task runner, flight logging, USB and networking live in `src/hal_common/`.
+- The ground test switch (DD-071) is `src/hal_common/`'s: it reads whichever
+  pads `pins.ini` names, and any `pin_caps.h` row with `FN_DIGITAL` can be one,
+  a pyro pad once its channel is released.
+- The UART's interrupt-driven ring, the async task runner, config persistence
+  and flight logging are `src/hal_common/`'s, over the littlefs driver, USB
+  and networking in `src/`.
 
 ### Sensor bus speeds
 
@@ -74,9 +86,16 @@ Each board sets its own I2C speed per sensor (DD-052): the device's fastest
 (`MS5607_I2C_MAX_HZ`, `BMP280_I2C_MAX_HZ`), or slower where the PCB cannot
 carry it. Fast mode's 300 ns rise needs pull-ups of at most
 300 ns / (0.8473 x Cb), 4k7 to about 75 pF (docs/datasheets/, UM10204 pages 44
-and 50); the RP2040's own 50-80k pull-ups are too weak for it. Read the
-pull-ups from the board's design files, not from memory. The bring-up fails
-the build if a speed exceeds its device's.
+and 50); the RP2040's own 50-80k pull-ups (RP2040 datasheet page 617,
+Table 625) are too weak for it. Read the pull-ups from the board's design
+files, not from memory. The bring-up fails the build if a speed exceeds its
+device's.
+
+The MS5607's one-shot converts a pressure and a temperature every 20 ms loop:
+at 400 kHz the pair is ready 18.6 ms into the loop, at 100 kHz only 0.26 ms
+before the next (DD-066), so an MS5607 board wants fast mode. Every sensor
+transfer is bounded (DD-069), and a conversion a flash operation ran beside is
+discarded (DD-068).
 
 ### pin_caps.h
 
@@ -119,8 +138,9 @@ it generates its linker script at FetchContent time. Both happen *before*
 **`PICO_DEFAULT_LED_PIN` is not inert.** TinyUSB's BSP `board_init()` does
 `gpio_init(LED_PIN); gpio_set_dir(LED_PIN, GPIO_OUT)` on whatever that macro
 names. The stock `boards/pico.h` sets it to 25 — which on MK1C is `BIAS_B`, a
-pyro bias injector. A custom SDK board header should leave it undefined and
-let `board_hw_init()` drive the LED instead.
+pyro bias injector. A custom SDK board header names it only where that pin
+really is an LED (MK1A's does); otherwise it leaves it undefined and lets
+`board_hw_init()` drive the LED.
 
 **A custom SDK board header needs the CMake directive as well as the
 `#define`.** `cmake/generic_board.cmake` greps board headers for

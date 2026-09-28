@@ -1,5 +1,16 @@
 # Pyro MK1B Firmware - Current Status
 
+> **Note, 2026-09-28 (v2.1.702):** this file is a record of findings and
+> fixes, each as it stood when written, from 2026-04-04 to 2026-09-24. It is
+> not kept current. Much of it no longer describes the code: the loop runs at
+> 20 ms, not 10 (DD-065); the flight log is `flight_log.bin`, not
+> `flight_log.csv` (DD-062); the flight ring holds 64 samples; UART TX is an
+> interrupt-driven ring, not DMA; Lua programs export and import from the Lua
+> tab; and the "Next Priority" list below is superseded. For what is open now,
+> see [docs/outstanding_tasks.md](docs/outstanding_tasks.md); for decisions,
+> `DECISIONS.md` (DD-001 to DD-071); for how the code works,
+> `IMPLEMENTATION.md` and each board's `THEORY_OF_OPERATION.md`.
+
 _Last updated: 2026-09-23 — v2.1.466, dispatch handshake race closed_
 
 ## 🐞 Dispatch handshake race (fixed 2026-09-23)

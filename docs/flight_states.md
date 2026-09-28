@@ -1,21 +1,16 @@
 # The flight state machine
 
-This is the machine in `src/flight_states.c`. It was first written down as it
-stood, so it could be reviewed before being changed; the descent half has since
-been rebuilt and this document now describes what is there.
+This is the machine in `src/flight_states.c`, as it is.
 
-`SPECIFICATION.md` documents four states. The code has eleven. That gap is why
-this document exists.
+`SPECIFICATION.md` carries a sketch and names this document the authority. The
+code has twelve states.
 
-**What changed in the descent rebuild.** The phase used to advance on *which
-pyro had been commanded*: `FALLING` exited only on `pyro1_fired`, and
-`DROGUE_DESCENT` only on `pyro2_fired`. A channel with no continuity, a channel
-set to `NONE`, or the two firing out of order each parked the machine in a
-descent state for the rest of the flight -- and because `LANDED` was reachable
-only from `CHUTE_DESCENT`, `hal_log_stop()` was never called on exactly the
-flights whose log mattered most. The phase now comes from the measured descent
-rate holding steady, landing is detected in every descent state, and an
-emergency ladder answers a canopy that was commanded and did not work.
+**The descent.** The phase comes from the measured descent rate holding
+steady, never from which pyro was commanded (DD-023): a channel with no
+continuity, a channel set to `NONE`, or the two firing out of order cannot
+park the machine. Landing is detected in every descent state, so
+`hal_log_stop()` runs on every flight, and an emergency ladder answers a canopy
+that was commanded and did not work (DD-028).
 
 Read with `src/flight_states.h` (the enum and the context) and
 `src/flight_states.c` (the detectors, the transition table and the actions)
@@ -25,7 +20,7 @@ open beside it.
 
 ## How it runs
 
-`dispatch_state()` (`flight_states.c:610`) is called once per main-loop
+`dispatch_state()` (`flight_states.c:1545`) is called once per main-loop
 iteration at **50 Hz** (`src/loop_period.h`, DD-065). One detector per state, one
 event per call, and a table lookup to find the transition:
 
@@ -46,13 +41,24 @@ moved in the last 100 ms. While it has, PAD_IDLE never raises SEVT_LAUNCH,
 BOOT_SENSOR takes the cold-boot verdict, no pad marker is written and nothing
 is announced. Attaching plays one double chirp; detaching resumes whatever
 PAD_IDLE, LANDED or FAULT would be saying. From launch to landing the call is
-ignored. Test mode (`flight_set_test_mode()`, USB-08, DD-038) cancels all of
-this: with it on, a board on USB is flown as on battery. It is held in RAM, so
-it is off at every boot.
+ignored. Test mode (`flight_set_test_mode()`, USB-08, DD-038; `POST
+/api/test_mode/on|off`) cancels all of this: with it on, a board on USB is
+flown as on battery. It is held in RAM, so it is off at every boot, and it too
+is ignored from launch to landing. GROUND_TEST runs its procedure on USB as on
+battery, and the attach chirp does not take its buzzer (GND-TEST-06).
 
-**The sensor produces samples at ~50 Hz**, not 100. Every flight detector
-begins `if (!pp_read(&sample)) return SEVT_NONE;`, so **about half of all
-dispatch calls do nothing at all**.
+**The sensor produces one sample a loop**, 50 a second on the MS5607 and the
+BMP280 alike (DD-066, DD-067). Every flight detector reads one with
+`pp_read()` and returns `SEVT_NONE` without one, so a loop with no new sample
+-- a conversion a flash operation ran beside is discarded (DD-068) -- decides
+nothing. Samples queued behind a late loop are taken one a call, on their own
+timestamps.
+
+**Telemetry** follows the state, from `flight_update_outputs()`: a $PYRO
+sentence once a second in PAD_IDLE and LANDED, and in flight at
+`telem_rate_hz` (10 by default, 50 at most); none in the boot states, FAULT or
+GROUND_TEST (TEL-03..05, DD-031). `state_to_telem_id()` maps the six states
+that send one onto the ground station's codes 0-5 (TEL-07).
 
 ---
 
@@ -66,12 +72,14 @@ stateDiagram-v2
     BOOT_SETTLE --> BOOT_SENSOR: SEVT_TIMER<br/>2500 ms elapsed
     BOOT_SENSOR --> BOOT_CONTINUITY: SEVT_DONE<br/>sensor answered and fs mounted
     BOOT_SENSOR --> FAULT: SEVT_FAULT<br/>no sensor, or no filesystem
+    BOOT_SENSOR --> ASCENT: SEVT_RECOVER_ASCENT<br/>power event in flight, climbing
+    BOOT_SENSOR --> FALLING: SEVT_RECOVER_DESCENT<br/>power event in flight, descending
     BOOT_CONTINUITY --> BOOT_CALIBRATE: SEVT_DONE<br/>first tick
-    BOOT_CONTINUITY --> GROUND_TEST: SEVT_GROUND_TEST<br/>ground test switch held at power-up
-    BOOT_CALIBRATE --> PAD_IDLE: SEVT_CAL_DONE<br/>10 samples averaged
+    BOOT_CONTINUITY --> GROUND_TEST: SEVT_GROUND_TEST<br/>switch held the settle's last 500 ms
+    BOOT_CALIBRATE --> PAD_IDLE: SEVT_CAL_DONE<br/>median of 10 samples
     BOOT_CALIBRATE --> FAULT: SEVT_FAULT<br/>no samples within 10 s
 
-    PAD_IDLE --> ASCENT: SEVT_LAUNCH<br/>alt > 100 ft AND pad speed > 5 m/s
+    PAD_IDLE --> ASCENT: SEVT_LAUNCH<br/>alt > 100 ft AND pad speed > 5 m/s<br/>held 100 ms, not on USB
     ASCENT --> ASCENT: SEVT_ARMED<br/>self-loop, arms the pyros
     ASCENT --> FALLING: SEVT_APOGEE<br/>armed AND clean fits rising 60 ms<br/>AND p >= 1.0001 p_min
 
@@ -113,7 +121,7 @@ Complete. `transitions[]` has nineteen rows and this is all of them.
 | From | Event | To | Action | Condition |
 |---|---|---|---|---|
 | BOOT_SETTLE | SEVT_TIMER | BOOT_SENSOR | — | `now - boot_timer >= 2500` |
-| BOOT_SENSOR | SEVT_DONE | BOOT_CONTINUITY | — | `sensor_type != 0 && fs_ok` |
+| BOOT_SENSOR | SEVT_DONE | BOOT_CONTINUITY | — | `sensor_type != 0 && fs_ok`, and no flight to rejoin |
 | BOOT_SENSOR | SEVT_RECOVER_ASCENT | ASCENT | — | a power event in flight, climbing (brownout.h) |
 | BOOT_SENSOR | SEVT_RECOVER_DESCENT | FALLING | `action_recovered_descent` | a power event in flight, descending |
 | BOOT_SENSOR | SEVT_FAULT | FAULT | `action_fault` | `sensor_type == 0` or `!fs_ok` |
@@ -121,7 +129,7 @@ Complete. `transitions[]` has nineteen rows and this is all of them.
 | BOOT_CONTINUITY | SEVT_GROUND_TEST | GROUND_TEST | `action_ground_test` | `gt_requested`: the switch held 500 ms at the settle's end [GND-TEST-05] |
 | BOOT_CALIBRATE | SEVT_CAL_DONE | PAD_IDLE | `action_ground_cal` | `pp_cal_done()` |
 | BOOT_CALIBRATE | SEVT_FAULT | FAULT | `action_fault` | `now - boot_timer >= 10000` |
-| PAD_IDLE | SEVT_LAUNCH | ASCENT | `action_launch` | `alt > 3048 cm && pad_speed > 500 cm/s` |
+| PAD_IDLE | SEVT_LAUNCH | ASCENT | `action_launch` | `alt > 3048 cm && pad_speed > 500 cm/s`, held 100 ms, not grounded on USB |
 | ASCENT | SEVT_ARMED | **ASCENT** | `action_armed` | see arming gate below |
 | ASCENT | SEVT_APOGEE | FALLING | `action_apogee` | `pyros_armed && !mach_lock && fit_clean && fit_pdot > 0`, held 60 ms, and `fit_pa >= 1.0001 * p_min_pa`; or the lock's fallback |
 | FALLING | SEVT_DROGUE | DROGUE_DESCENT | — | rate settled in the drogue band |
@@ -182,11 +190,11 @@ on it put the main out 2 s after the drogue on every flight.
    working one takes the rate below 35 m/s and never trips this.
    `main_forced` is set, `MAIN_FORCED` is logged, and `/api/status` says so.
 
-Closed-loop, on the H73 profile: a working drogue now lets the main open at its
+Closed-loop, on the H73 profile: a working drogue lets the main open at its
 configured 500 ft (153 m); a drogue whose charge lit but whose canopy failed
 brings the main forward 4.6 s later at 1071 m.
 
-`try_fire_pyros()` still runs in all three descent states. The phase is a
+`try_fire_pyros()` runs in all three descent states. The phase is a
 diagnosis, not a licence to cancel the flight plan: a rocket already descending
 slowly still gets the deployment its config asked for.
 
@@ -219,16 +227,19 @@ over 250 ms or a whole window of one reading, and for a window after either
 and more: it cannot set the Mach flag, arm the pyros or feed the emergency
 ladder, and the pressure triggers wait on it with no time limit. A window of
 one reading is a stuck sensor (`sensor_stuck`, DIAG `sensor_stuck`,
-SENSOR_STUCK), in any state. No sample for 0.5 s in ASCENT or a descent state
-is a lost one (`sensor_lost`, DIAG `sensor_lost`, SENSOR_LOST). The DIAG bits
-stay; the flight carries on when the sensor answers again.
+SENSOR_STUCK), on the pad and in flight. No sample for 0.5 s in ASCENT or a
+descent state is a lost one (`sensor_lost`, DIAG `sensor_lost`, SENSOR_LOST).
+The DIAG bits stay; the flight carries on when the sensor answers again.
 
 ---
 
 ## Per state
 
 ### BOOT_SETTLE (0)
-A bare 2500 ms wait. Silent — nothing beeps here.
+A 2500 ms wait, while the sensor is brought up a step a loop (DD-053). It
+watches the ground test switch: closed for the settle's last 500 ms
+(`GT_BOOT_HOLD_MS`), it asks for GROUND_TEST (GND-TEST-05). Silent — nothing
+beeps here.
 
 ### BOOT_SENSOR (9)
 Checks `sensor_type` (from `hal_pressure_sensor()`, waited for while the
@@ -237,9 +248,19 @@ sensor is still being brought up, and a missing sensor once
 before the continuity check deliberately: the continuity verdict is worth
 nothing on a board that cannot measure altitude.
 
+Then `assess_recovery()` asks whether this boot rejoins a flight
+(FLT-BROWN-02, DD-026, DD-041). With a valid pad marker, off USB, it reads the
+pressure history kept from power-on: the median of the newest 250 ms against
+the median of a 250 ms window ending 350 ms earlier, as heights above the
+marker's ground. It waits for 600 ms of history, up to 4 s since boot.
+`brownout_assess()` rejoins a power event more than 30 m up and moving at
+5 m/s or more: climbing, into ASCENT, locked; descending, into FALLING, armed.
+Anything else is a cold boot.
+
 ### BOOT_CONTINUITY (1)
 Samples both channels once, stores `pyro1/2_continuity_good`, resets
-`boot_timer` as the calibration deadline, returns `SEVT_DONE` immediately.
+`boot_timer` as the calibration deadline, and returns at once: `SEVT_DONE`, or
+`SEVT_GROUND_TEST` when the settle saw the switch held.
 **Measures continuity but announces nothing** — that happens in PAD_IDLE.
 
 ### BOOT_CALIBRATE (2)
@@ -257,7 +278,9 @@ sample if one is waiting. Every decision runs on the sample's own time
   that lets go on the pad stops the board saying OK to fly. A disabled or
   released channel is never a fault.
 - **Ground reference:** the pressure layer's 5-second rolling mean of the
-  filtered pressure, frozen at launch (GND-CAL-01..04).
+  filtered pressure, frozen at launch from before T+0 (GND-CAL-01..04). Five
+  seconds of rejected samples with the board still re-seed it (GND-CAL-06,
+  DD-045), and restart the pad marker's dwell.
 - **Launch:** `altitude > 3048 cm && pad_speed_cms > 500`, both on the same
   sample, held for 100 ms of sample time (FLT-LAUNCH-07). The pad speed is the
   fit's while it is clean and the two-point speed of the filtered height while
@@ -267,7 +290,7 @@ sample if one is waiting. Every decision runs on the sample's own time
   altitude at detection.
 - **Pad marker:** after 10 s, written by `flight_flash_service()` inside the
   flash window -- never from the detector, which runs with the window shut.
-  Not on USB; the 10 s restart when the host goes.
+  Not on USB; the 10 s restart when the host goes, and after a ground re-seed.
 - **On USB:** the pad check still diagnoses, for `/api/status`, but says
   nothing, and the launch test is never raised.
 
@@ -278,19 +301,23 @@ lowest pressure a clean fit showed (`p_min_pa`, `peak_height_cm`).
 
 **Arming gate** (`arming_gate_met`):
 ```
-!pyros_armed && max_speed_cms >= 1000 && vertical_speed_cms < 1000 && vertical_speed_cms >= 0
+!pyros_armed && arm_height && !fit_suspect && max_speed_cms >= 1000 && vertical_speed_cms < 1000
 ```
-So: peak speed reached 10 m/s, current speed has fallen back below 10 m/s,
-and is still non-negative. A narrow window late in coast.
+So: peak speed reached 10 m/s and has fallen back below it, the rocket has
+been above about 30 m (`p < 0.9965 p0`, FLT-MACH-06), and the sensor has not
+failed. Descending counts (DD-050): the window opens late in coast and does not
+close at apogee.
 
 **Apogee:** clean fits showing the pressure rising (`fit_pdot > 0`) for 60 ms
 of sample time, and the fitted pressure at least 1.0001 times `p_min_pa`:
 0.6-0.9 m below the peak, about 0.4 s after it. `apogee_time` is dated back
 to where the fit's rate crossed zero, which is what DELAY counts from.
 
-Arming is checked **first and returns immediately**, so arming and apogee can
-never happen on the same tick — the earliest apogee is one sample (~20 ms)
-after arming.
+The Mach lockout runs first, then arming, then apogee, and each returns
+immediately. Arming and apogee never happen on the same tick, and since the
+apogee hold counts only armed samples, the earliest apogee is 60 ms of samples
+after arming. The Mach fallback is the exception: it arms and declares apogee
+on one tick.
 
 ### FALLING (5) / DROGUE_DESCENT (6) / CHUTE_DESCENT (7)
 Each reads the sample (which becomes `last_altitude` before any trigger is
@@ -303,8 +330,11 @@ AGL and FALLEN triggers compare the fit's height, which does not lag; FALLEN
 measures from the peak. SPEED compares the fit's speed (PYR-MODE-05). The three
 act on a clean fit, and wait out an unclean run for at most 2 s, restarting at
 each charge (PYR-MODE-06): a charge pressurising the bay, or two bad readings
-in a row, reads for a moment as hundreds of metres lower. A channel whose
-trigger was met while the other's pulse held the common path stays due.
+in a row, reads for a moment as hundreds of metres lower. Within 2 s of a
+charge, an unclean fit that reads no lower than the last clean fit carried on
+ballistically is believed at once. A suspect fit is never believed. DELAY needs
+no fit. A channel whose trigger was met while the other's pulse held the
+common path stays due.
 
 Landing needs all three for a continuous 1000 ms:
 `|Δalt| < 100 cm`, `|speed| < 200 cm/s`, `altitude < 3000 cm`.
@@ -317,58 +347,57 @@ that has not failed -- see defect 14.
 Entered from BOOT_CONTINUITY when the ground test switch was closed through
 the end of the power-up settle, once the sensor and continuity have been
 checked; a recovery leaves BOOT_SENSOR for the flight first, so it always
-wins. Terminal until the next power-up: no launch detection, no flight log,
-no $PYRO sentence and no pad announcement. `ground_test_seq.c` runs the
+wins, and a failed sensor or filesystem goes to FAULT. Terminal until the next
+power-up: no launch detection, no flight log, no $PYRO sentence and no pad
+announcement. Continuity is still sampled once a second, quietly: MK1C fires
+only a channel its tracking test has seen present. `ground_test_seq.c` runs the
 procedure -- the alert, the countdown, pyro 1 at zero, the tone and a
 second countdown, pyro 2 at zero, the all-clear -- and `!GT` lines report
-each step on the UART [GND-TEST-05..11, DD-071].
+each step on the UART [GND-TEST-05..11, DD-071]. A channel is enabled with a
+mode other than NONE and its pads not released to Lua. Each fire goes through
+`flight_pyro_energise()`, the same interlock as flight (PYR-DEPLOY-02); a
+refusal is reported and the procedure goes on.
 
 ### LANDED (8) / FAULT (10)
-Terminal. Flight time freezes at the landing. FAULT keeps serving HTTP and
-repeats its announcement, but sends **no $PYRO sentence**: the ground-station
-contract has no FAULT state and state 0 would say "ready". A `!FAULT` line with
-the diagnosis goes to the UART every 5 s instead. On USB, neither the altitude
-beep-out nor the fault announcement plays; both resume when the host goes.
+Terminal. Flight time freezes at the landing. LANDED keeps a row a second in
+the ring (FLT-RATE-04), and once the log has flushed, `flight_flash_service()`
+spends the pad marker, so no later power-up rejoins this flight
+(FLT-BROWN-04). FAULT keeps serving HTTP and repeats its announcement, but
+sends **no $PYRO sentence**: the ground-station contract has no FAULT state
+and state 0 would say "ready" (DD-031). A `!FAULT` line with the diagnosis goes
+to the UART every 5 s instead. On USB, neither the altitude beep-out nor the
+fault announcement plays; both resume when the host goes.
 
 ---
 
 ## Dead ends and defects
 
-These are properties of the machine as written, not speculation. Each one is
-marked with whether the descent rebuild closed it.
+These are properties of the machine, not speculation. Each is marked with its
+status; a fixed one says what closes it and the test that holds it.
 
 ### 1. FALLING never exits if pyro1 cannot fire — **observed live** — FIXED
 
-`detect_falling` exits only on `ctx->pyro1_fired`. Three ways that never
-becomes true:
+No descent state waits on a channel. The phase comes from the rate (DD-023),
+and every descent state can reach `LANDED`, so `action_landing` runs and
+`hal_log_stop()` finalises the log whether or not anything fired: pyro1 on
+NONE, pyro1 without continuity, or pyro2 first.
+`test_FLT_DESC_02_ballistic_reaches_landed` flies with no continuity on either
+channel and asserts the machine still lands.
 
-- `pyro1_mode == PYRO_MODE_NONE`
-- `pyro1_continuity_good == false`
-- pyro2 fired first and pyro1's condition never comes true
-
-Then: no DROGUE_DESCENT, no CHUTE_DESCENT, no LANDED, `action_landing` never
-runs, **`hal_log_stop()` is never called and the flight log is never
-finalised**.
-
-**This happened on MK1C on the bench.** A false launch from pressure drift took
-it through ASCENT and apogee into FALLING, where neither channel had continuity
-because no igniters were connected. It sat there until power was removed, and
-it blocked its own OTA while stuck.
-
-**Fixed.** The phase comes from the rate, and every descent state can reach
-`LANDED`. Covered by `test_FLT_DESC_02_ballistic_reaches_landed`, which flies
-with no continuity on either channel and asserts the machine still lands.
+Observed on MK1C on the bench: a false launch from pressure drift took it
+through ASCENT and apogee into FALLING with no igniters connected, where it sat
+until power was removed and blocked its own OTA.
 
 ### 2. ASCENT never exits if the arming gate is never met
 
-`max_speed_cms` must reach 1000 cm/s (10 m/s, now of true speed). A flight
+`max_speed_cms` must reach 1000 cm/s (10 m/s, of true speed). A flight
 that never does stays in ASCENT forever — no apogee, no deployment, no
 landing. Any flight that can trip the 100 ft launch detector climbing at
-10 m/s or more passes it; the arming window no longer closes at apogee,
+10 m/s or more passes it; the arming window stays open past apogee,
 since descending counts (DD-050). Only a launch that barely clears 100 ft,
 peaking under 35 m, is left here, and it is too low for a canopy to matter.
 
-A false launch no longer gets here from one or two bad readings (N24: the
+A false launch does not get here from one or two bad readings (N24: the
 median, the holds, and the launch's two-point speed while the fit is
 unclean). A reversion to PAD_IDLE for a board that was never armed and is
 back on the ground is recorded but not scheduled:
@@ -376,185 +405,123 @@ back on the ground is recorded but not scheduled:
 
 ### 3. Continuity is frozen after the pad
 
-`pyro1/2_continuity_good` is last written in PAD_IDLE at 1 Hz and **never
-updated during flight**. A channel that read bad at T−1 s can never fire for
-the whole flight, which is also dead end 1.
+`pyro1/2_continuity_good` is last written in PAD_IDLE at 1 Hz, or by a
+recovery's one read, and **never updated during flight**. A channel that read
+bad at T−1 s can never fire for the whole flight. The machine does not wait on
+it (defect 1).
 
 ### 4. Nothing sequences the two channels — FIXED
 
-`try_fire_pyros` gates each channel on its own `!pyroN_fired` — one-shot per
-channel — but there is **no ordering constraint** between them. The only thing
-separating them is the shared `hal_pyro_is_firing()` flag during the 500 ms
-fire pulse. With pyro1 on NONE or bad continuity, **pyro2 fires first and alone
-at apogee**: main chute at apogee, at full speed.
+Every flight fire goes through `fire_channel()`, and it and the ground test go
+through `flight_pyro_energise()`, the one place a channel is energised, which
+refuses while the shared element is busy (PYR-DEPLOY-02). A channel whose
+trigger was met meanwhile stays due and fires when the other's pulse ends.
+Otherwise each channel fires on its own trigger, and both may deploy on one
+event (DD-021).
 
-For the 500 ms that one channel is firing, the other's condition is not
-deferred — it is **not evaluated at all**.
+### 5. An unbounded refire — FIXED
 
-**Fixed.** Every fire site goes through `fire_channel()`, the one place a
-channel is energised, which refuses while the shared element is busy
-(PYR-DEPLOY-02, DD-021).
-
-### 5. `check_refire` is unbounded — FIXED
-
-Window 1000–1500 ms after a fire, requires `vertical_speed_cms < -3000`
-(30 m/s). It **rewrites `fire_time`**, so the window reopens each time and it
-can loop for as long as the rocket stays ballistic.
-
-It does take a fresh `hal_pyro_sample()` and require `!c.open`, so it is not
-firing blind. What it skips is `hal_pyro_is_firing()` — nothing stops it
-commanding a fire while the other channel's 500 ms pulse is still up — and the
-cached `pyroN_continuity_good` that `try_fire_pyros` uses.
-
-Called from FALLING (`:504`) and DROGUE_DESCENT (`:532`) only. **A failed main
-has no recovery at all.**
-
-**Fixed.** `check_refire()` is retired. The retry is now the first rung of the
-emergency ladder, bounded by `EMRG_MAX_REFIRE` and conditioned on evidence that
-a retry can help.
+The one retry is the emergency ladder's first rung: bounded by
+`EMRG_MAX_REFIRE` (one), taken only when the drogue's post-fire continuity says
+its charge never lit (PYR-REFIRE-01, PYR-REFIRE-02, DD-028), and fired through
+`fire_channel()` like any other. A failed main has no retry.
 
 ### 6. Faults and verify failures are recorded and acted on by nothing — PARTLY FIXED
 
-`check_pyro_fault` latches `pyro1/2_fault`; nothing reads it.
+`check_pyro_fault` latches `pyro1/2_fault` and logs it. `check_post_fire_verify`
+latches `pyro1/2_verify_fail` when a channel still reads closed 500–600 ms
+after firing -- the charge may not have gone -- and logs NOPEN.
 
-`check_post_fire_verify` latches `pyro1/2_verify_fail` when a channel still
-reads closed 500–600 ms after firing — meaning the charge may not have gone.
-That flag **is** read, but only by `verify_window_open()` (`:138`) as a latch to
-stop the check repeating itself. Nothing escalates, retries, or reports it
-outside the log event.
-
-So the board detects "the charge probably did not fire" and does nothing with
-the knowledge.
-
-**Partly fixed.** `pyro1_verify_fail` now decides whether the drogue retry is
-worth attempting. `pyro1_fault` / `pyro2_fault` are still recorded and acted on
-by nothing.
+**Partly fixed.** `pyro1_verify_fail` decides whether the drogue retry is worth
+attempting. `pyro2_verify_fail`, `pyro1_fault` and `pyro2_fault` are logged and
+acted on by nothing, and `/api/status` does not report them.
 
 ### 7. The `dt` bug, in all four flight detectors — FIXED
 
-```c
-uint32_t dt = ts - ctx->last_sample;   /* ts is the SAMPLE timestamp */
-...
-ctx->last_sample = now;                /* now is the LOOP timestamp  */
-```
-
-PAD_IDLE and LANDED store `ts`; ASCENT, FALLING, DROGUE_DESCENT and
-CHUTE_DESCENT store `now`. They are equal for a freshly produced sample, so the
-error is usually zero — and becomes non-zero exactly when a sample was queued
-(a loop overrun, a flash window), silently skewing every speed calculation at
-the moments the timing is already disturbed.
-
-**Fixed.** Every detector now stores the sample timestamp in `last_sample`
-rather than the loop clock, so `dt` is measured between samples throughout.
+Every detector stores the sample's timestamp in `last_sample`, never the loop
+clock, so every speed short of a fit is taken between samples, and a sample
+queued behind a late loop keeps its own time (FLT-RATE-05).
 
 ### 8. The launch backdate was a no-op — FIXED
 
-The ring-buffer walk matched the oldest ground sample and aged it as the newest,
-so `launch_time` always came out as `now`. T+0 is now the timestamp of the first
-sample above 50 cm, tracked on the pad (`pad_rise_ms`); covered by
-`test_REV07_launch_backdates_to_first_rise` and `test_FLT_LAUNCH_03_backdate`,
-which assert the interval rather than an inequality zero backdating satisfies.
+T+0 is the timestamp of the first sample above 50 cm, tracked on the pad
+(`pad_rise_ms`, FLT-LAUNCH-03). `test_REV07_launch_backdates_to_first_rise` and
+`test_FLT_LAUNCH_03_backdate` assert the interval, which no zero backdate
+satisfies.
 
 ### 9. LANDED's 1 Hz logging never fired — FIXED (N18)
 
-`detect_landed()` compared the loop time against `last_sample`, which it moved
-to every sample's time, so the difference never reached a second. The 1 Hz row
-is now timed on its own, in sample time.
+`detect_landed()` times the 1 Hz row on its own (`landed_row_ms`), in sample
+time, apart from `last_sample`, which every sample moves (FLT-RATE-04).
+`test_N18_landed_logs_once_a_second`.
 
-### 10. Altitude is clamped to >= 0 — speed no longer is
+### 10. Altitude is clamped to >= 0 — speed is not
 
-`pp_pressure_to_altitude_cm()`. Nothing can read below pad level: a landing
-below the launch elevation reads as exactly 0, and AGL mode can never see a
-negative altitude. **This matters for any rolling mean of altitude** — a mean
-of a quantity clamped at zero that dithers around zero is biased upward by
+`pp_pressure_to_altitude_cm()`. Nothing reported can read below pad level: a
+landing below the launch elevation reads as exactly 0, and AGL mode can never
+see a negative altitude. **This matters for any rolling mean of altitude** — a
+mean of a quantity clamped at zero that dithers around zero is biased upward by
 roughly half the dither amplitude.
 
-Speed used to be taken from the clamped altitude, so a clamp read as a speed
-of zero: a glitch's decay below the pad as apogee, and the 8000 m clamp as
-apogee on the way up (N26). Speed and the trigger heights now come from the
-pressure fit, unclamped (SNS-ALT-04, DD-042, DD-048); only what is reported
-is clamped.
+Speed and the trigger heights come from the pressure fit, unclamped, and the
+speed short of a fit from the unclamped height (SNS-ALT-04, DD-042, DD-048,
+N26): a clamp never reads as a speed of zero. Only what is reported is clamped,
+to 0-8000 m (SNS-ALT-02, SNS-ALT-03).
 
 ### 11. `max_coast_s` was dead — REMOVED
 
-With `beep_mode`, `log_enabled` and `buzzer_startup`, dropped from
-`config_fields.h`. `telem_rate_hz` is now read, and `log_rate` (DD-064,
-after `log_high_rate` in DD-062 replaced `log_rate_hz`).
+Not in `config_fields.h`, and nor are `beep_mode`, `log_enabled` and
+`buzzer_startup`. Every key there is read (DD-030): `telem_rate_hz` sets the
+in-flight telemetry rate (TEL-03), and `log_rate` the log's plan (DD-064).
 
 ### 12. The backup apogee timer cannot help in the case it was written for — REMOVED
 
-`backup_apogee_expired` is keyed on `armed_time` and evaluated **only inside
-`detect_ascent`**. A board that never arms never runs it — which is precisely
-the sensor-failure case DD-013 describes. Its `backup_timer` field is a
-`uint8_t` with no range validation, despite DECISIONS.md claiming 10–120 s.
-
-**Removed** along with the `backup_timer` config field. See DD-022: a wrong
-timer value fires during ascent, which is worse than the sensor failure it was
-meant to cover.
+**Removed**, with the `backup_timer` config field (DD-022). No timer may
+declare apogee: a wrong value fires during ascent, which is worse than the
+sensor failure it would cover (DD-013). A board whose sensor fails never arms,
+so a timer keyed on arming cannot cover that failure anyway.
 
 ### 13. No mach or plausibility gate — FIXED
 
-Nothing rejects an implausible sample. `hal_common.c:210` logs pressure outside
-30–120 kPa to the telemetry UART and **then feeds it to `pp_feed()` anyway**.
-The only mitigation is the 500 ms IIR, which has a min-step anti-stall
-guaranteeing it always moves at least 1 Pa toward a bad reading.
-
----
-
-**Fixed.** See "The Mach lockout" above.
+The Mach lockout gates apogee (above; DD-049). A reading outside 1-120 kPa is
+refused before the pressure layer (DD-036), and a median of three stops a
+single bad one (DD-040); see "What is not in the machine" for what remains.
 
 ### 14. The landing timeout declares LANDED under a main — FIXED (N7)
 
-The timeout now needs stillness: under 2 m/s for 1 s, on a sensor that has
-not failed (FLT-LAND-07, DD-015). `test_N7_no_landing_under_main`.
-
-
-The DD-015 timeout (FLT-LAND-07) needs only `landing_timeout` seconds since
-apogee and `|speed| < 5 m/s`. A main canopy descends at 3-6 m/s, so on any
-flight whose main opens more than 60 s after apogee -- a 5000 ft flight with a
-drogue, or any main brought forward high by the ladder -- LANDED is declared
-the moment the main slows the rocket, in the air. The log closes and the rest
-of the descent is not recorded. Reproduced in the host simulator: LANDED at
-~55 m with the main just open. The requirement itself sets the 5 m/s figure,
-so this needs a requirement change; see the 2026-09-24 review resolution.
+The timeout needs stillness: under 2 m/s for 1 s, on a sensor that has
+not failed (FLT-LAND-07, DD-015). A main descends at 3-6 m/s, so a looser
+bound would declare LANDED in the air under any main open more than
+`landing_timeout` after apogee. `test_N7_no_landing_under_main`.
 
 ### 15. A canopy approaching its terminal rate from below can settle in the main band — FIXED (T5)
 
-T5's fit reads the rate without the filter's lag, and drogues of 12-25 m/s
-opened at apogee are never reported as the main
-(`test_N12_drogue_from_below`).
-
-
-A drogue opened at apogee accelerates from zero toward, say, 13 m/s. If the
-rate creeps up slowly enough to stay within the 2.5 m/s tolerance for 1.2 s
-while still under 10 m/s, the phase settles in the main band and the machine
-enters CHUTE_DESCENT under a drogue. It affects the reported phase only; the
-triggers and the ladder's main rung do not read it.
+The fit reads the rate without the filter's lag (DD-048), and drogues of
+12-25 m/s opened at apogee are never reported as the main
+(`test_N12_drogue_from_below`). The phase is a report: the triggers and the
+ladder's main rung do not read it.
 
 ### 16. Brownout recovery never sees a sample on hardware — FIXED (N23, DD-041)
 
-`assess_recovery()` ran in BOOT_SENSOR and read `pp_read()`, but the pressure
-layer produced no samples before BOOT_CALIBRATE, so every recovery waited out
-`RECOVERY_DEADLINE_MS` and booted cold. It now reads the history the layer
-keeps from power-on. Two more gaps sat behind it, both hidden by tests that
-primed the layer: the rejoined flight never started the pressure layer, and
-it skipped BOOT_CONTINUITY, so PYR-SAFE-01 refused both channels. Either one
-alone would have deployed nothing. The recovered flight now starts the layer
-against the marker's ground and reads continuity first.
+`assess_recovery()` reads the history the pressure layer keeps from power-on,
+not `pp_read()`, which yields nothing before BOOT_CALIBRATE. The rejoined
+flight starts the pressure layer against the marker's ground
+(`pp_resume_flight()`) and reads continuity first: it skips BOOT_CONTINUITY,
+and PYR-SAFE-01 fires no channel whose continuity was never read.
 
 ### 17. One sample can declare a launch or an apogee — FIXED (N24)
 
-A single reading 11 kPa or more low declared a launch, and one high reading
-in the last second of coast declared apogee early. A median of three stands
-between the range check and the filter (DD-040), and launch and apogee must
-hold for 100 ms and 60 ms of sample time (DD-042). On the fit (DD-048) two bad
-readings in a row spoil every fit for a second: the launch reads the
-two-point speed while the fit is unclean, apogee wants clean fits, and the
-pressure triggers wait an unclean run out.
+A median of three stands between the range check and the filter (DD-040), and
+launch and apogee must hold for 100 ms and 60 ms of sample time (DD-042). On
+the fit (DD-048) two bad readings in a row spoil every fit for a second: the
+launch reads the two-point speed while the fit is unclean, apogee wants clean
+fits, and the pressure triggers wait an unclean run out.
 
 ## What is not in the machine
 
-- No filter on speed beyond the fit (DD-048): 0.19 m/s RMS on the pad.
+- No filter on speed beyond the fit (DD-048): 0.19 m/s RMS on a sea-level
+  pad for 1.2 Pa of sensor noise (`docs/mach_lockout.md`), in proportion to a
+  board's own noise, which `/api/status` reports as `fit_sigma_mpa`.
 - No plausibility check on a sample beyond the sensor's own range (DD-036)
   and the median of three (DD-040): two readings in a row inside 1-120 kPa
   are believed, however far they are from the last.

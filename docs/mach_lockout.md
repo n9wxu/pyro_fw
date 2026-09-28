@@ -227,9 +227,14 @@ flag; 0: never) and `peak_lower_bound`.
   and T+0 with it. The flag is unaffected: it is evaluated from the first
   rise.
 - **A bad reading can set the flag,** before the first release, from the
-  40 ms rate. It is the safe direction: the lock releases after a second of
-  clean coast. Within about 2 s of apogee it cannot, and the fallback deploys
-  a second or two late.
+  40 ms rate: the newest two intervals of the 20 ms loop (DD-065). It is the
+  safe direction: the lock releases after a second of clean coast. Within
+  about 2 s of apogee it cannot, and the fallback deploys a second or two
+  late. A conversion a flash operation ran beside never reaches the rate
+  (DD-068), so the flight log's writes cannot set it. On MK1B a beep code
+  can, about once in 20 codes on the bench (DD-068); MK1C, whose buzzer a
+  MOSFET switches, shows none. The choice is open: task M3,
+  `docs/outstanding_tasks.md` section 10.
 - **σ is the pad's,** frozen from a second before T+0. A sensor noisier in
   flight than on the pad makes more fits unclean. That delays the release and
   the apogee; it never releases early.

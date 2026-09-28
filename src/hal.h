@@ -1,14 +1,14 @@
 /*
- * Hardware Abstraction Layer for Pyro MK1B flight computer.
+ * Hardware Abstraction Layer for the Pyro flight computers.
  *
  * This header defines the complete boundary between flight logic
- * and hardware. Flight code (flight_states.c, telemetry.c, buzzer.c)
- * includes ONLY this header — no platform-specific headers.
+ * and hardware. Flight code (flight_states.c, telemetry_formatter.c,
+ * buzzer.c) includes ONLY this header — no platform-specific headers.
  *
  * Three implementations exist:
- *   src/hal_hardware.c  — real Pico hardware
- *   test/hal_test.c     — mock for unit/integration tests
- *   sim/hal_sim.c       — WASM/host simulation
+ *   src/hal_common/hal_common.c  — the RP2040 boards, with boards/<name>/
+ *   test/hal_test.c              — mock for unit/integration tests
+ *   boards/sim/hal_sim.c         — WASM/host simulation
  *
  * SPDX-License-Identifier: MIT
  */
@@ -150,8 +150,8 @@ int hal_config_save(const config_t *cfg);
 
 /* ── Serial commands (ground test, DD-011) ────────────────────────── */
 
-/* Non-blocking line read from the TRRS telemetry jack, on the RX side of the
- * UART that carries telemetry TX.
+/* Non-blocking line read from the RX side of the UART that carries
+ * telemetry TX.
  *
  * Returns true when a complete line was read, leaving buf NUL-terminated with
  * any trailing CR or LF stripped. Returns false when no complete line is

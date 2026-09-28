@@ -1,6 +1,6 @@
 # Board plant models
 
-`sim/physics.c` models the rocket. This models the **board**: the firing
+`sim/physics.c` and `sim/sim_cli.c` model the rocket. This models the **board**: the firing
 bus, the sense dividers, the bias injectors, the switches and the e-match.
 
 It exists so the flight software can be tested against something that
@@ -8,18 +8,20 @@ answers like hardware. `boards/sim` runs the flight software with a pyro
 *fixture* — continuity is whatever a test last wrote with
 `sim_set_continuity()`, and a fire is a counter. That is the right thing
 for flight-logic questions and the wrong thing for board questions, because
-the 810 lines of `boards/mk1c/pyro_board.c` never execute.
+the board's own pyro backend never executes.
 
 The plant closes that gap by running the **real board file**:
 
 ```
-sim/physics.c ──pressure──► flight_states.c
+sim/sim_cli.c ──pressure──► flight_states.c
                                   │ hal_pyro_fire()
                                   ▼
                        sim/hw/pyro_sim_glue.c
                                   │ pyro_fire()
                                   ▼
-                 boards/mk1c/pyro_board.c        ← the actual file
+                 boards/mk1c/pyro_board.c        ← the actual files:
+                 pyro_measure.c, pyro_faults.c,     MK1C's backend
+                 pyro_sequence.c, arm_pump.c
                                   │ gpio_put() / adc_read()
                                   ▼
                   sim/hw/rp2040_shim.c           ← Pico SDK stand-in
@@ -31,7 +33,8 @@ sim/physics.c ──pressure──► flight_states.c
 ```
 
 Nothing in `boards/mk1a`, `boards/mk1b`, `boards/mk1c` or `src/` is aware of
-any of it, and none of those files were changed to make it work.
+any of it. The plant reads MK1C's bench fit from `boards/mk1c/pyro_sense.h`,
+the constants the firmware reads (DD-054).
 
 ## Using it
 
@@ -40,13 +43,17 @@ any of it, and none of those files were changed to make it work.
 cmake -B build-sim-mk1c -DPYRO_BOARD=sim_mk1c
 cmake --build build-sim-mk1c --target sim        # ./pyro_sim
 cmake --build build-sim-mk1c --target plant_tests
-
-# same, in the browser
-PYRO_BOARD=sim_mk1c ./scripts/build_wasm.sh      # docs/wasm/pyro_sim_mk1c.js
+cmake --build build-sim-mk1c --target board_pyro_mk1c_tests
 ```
 
-`sim_mk1a` and `sim_mk1b` work the same way. `-DPYRO_BOARD=sim` still
-selects the fixture and is unchanged.
+`sim_mk1a` and `sim_mk1b` work the same way. `-DPYRO_BOARD=sim` selects the
+fixture. `plant_tests` and `board_pyro_mk1c_tests` build in any configured
+tree, since each compiles its own board's files.
+
+`scripts/build_wasm.sh` takes `PYRO_BOARD=sim_mk1a|sim_mk1b|sim_mk1c`, but
+those builds do not compile: it puts `boards/sim` ahead of the board's own
+`board_pins.h`, and leaves out MK1B's `pin_store_sim.c` and MK1C's
+`pyro_measure.c`, `pyro_faults.c`, `pyro_sequence.c` and `arm_pump.c`.
 
 ## What is modelled
 
@@ -63,15 +70,16 @@ what it finds.
 | high side | per channel (Q6/Q1) | per channel (AP2192) | shared eFuse (TPS259570) |
 | low side | one shared (Q2) | one shared (AO6800 Q1B) | per channel (Q103/Q104) |
 | sense | 100k pull-up, 1k + 100nF | 100k pull-up, 100R + 100nF | 4 divided taps, 0.333 |
-| stimulus | assert the low side | assert the low side | 330R bias injection |
+| stimulus | assert the low side | assert the low side | GPIO through BAT54WS + 330R |
 | pack current to sense | none | none | none (0.2 mA of bias) |
 | fault output | none | AP2192 FLAG ×2 | none (~FLT not routed) |
-| modelled extras | — | FLAG assertion | charge pump, dVdT ramp, ILIM, latch-off |
+| modelled extras | — | FLAG assertion | charge pump, dVdT ramp, ILIM, latch-off, U9's reverse path |
 
-Sources: MK1A and MK1C from the block comments in their own `pyro_board.c`
-and from `~/Documents/pyro_mk1c/DESIGN.md`; MK1B from a netlist export of
-`~/Documents/pyro_mk1b/pyro_mk1b.kicad_sch`, because nothing in this
-repository describes its sense network.
+Sources: MK1A from `boards/mk1a/THEORY_OF_OPERATION.md`; MK1C from
+`~/Documents/pyro_mk1c/DESIGN.md` and the bench MK1C, whose bias diodes and
+U9 reverse path are fitted in `boards/mk1c/pyro_sense.h` (DD-054); MK1B from a
+netlist export of `~/Documents/pyro_mk1b/pyro_mk1b.kicad_sch`, as its
+`THEORY_OF_OPERATION.md` is.
 
 The e-match is the same device on all three boards and carries the M1–M13
 properties from DESIGN.md §1.2, including both ignition criteria — an
@@ -82,10 +90,16 @@ slow drive, since neither implies the other.
 
 - **Temperature.** Every value is at room temperature. The S9 trip point
   and the MOSFET SOA both move with it.
-- **Non-linear devices.** The bias Schottkys are a fixed 0.3 V drop, the
-  TVS is either absent or a short, and a FET is either 30 mΩ or open.
-- **The RP2040 itself.** `sim/hw/` is about thirty functions, not an
-  emulator. There is no interrupt model and no core 1.
+- **Most non-linear devices.** MK1C's bias Schottkys and U9's reverse path
+  are junctions, linearised about each step's node voltage; the rest are
+  not. The pump's diodes are a fixed 0.3 V drop, the TVS is either absent or
+  a short, and a FET is either 30 mΩ or open.
+- **MK1B's AP2192A.** The part fitted discharges its outputs while disabled,
+  which holds both sense nodes near 0 V (DD-059, task B-U5). The model senses
+  as the base AP2192 would.
+- **The RP2040 itself.** `sim/hw/` is about sixty functions — GPIO, the ADC
+  and its FIFO, DMA, the PIO state machine MK1C's pump runs on, the watchdog —
+  not an emulator. There is no interrupt model and no core 1.
 - **U9's latch-off clears only at a plant reset.** The part clears it when
   its enable is cycled (DESIGN.md 5.0), which the next arm does; the model
   keeps it, so a test that trips it cannot fire again.
@@ -94,11 +108,12 @@ slow drive, since neither implies the other.
 
 `test/test_plant.c` splits into assertions and reports, deliberately.
 
-**Assertions** are levels and time constants that the board files and
-DESIGN.md state independently of the model — the four `_Static_assert`
-anchors in `pyro_board.c`, the DESIGN.md §4 table, the counts quoted in
-MK1A's own comments, the 0.89 V/ms slew. If one fails, the model is wrong,
-or a component value moved under it.
+**Assertions** are levels and time constants that the board files, the
+bench and DESIGN.md state independently of the model — the three
+`_Static_assert` anchors in `boards/mk1c/pyro_sense.h`, the DESIGN.md §4
+table, the bench MK1C's levels and bus decay, the counts MK1A's theory of
+operation quotes, the 0.89 V/ms slew. If one fails, the model is wrong, or a
+component value moved under it.
 
 **Reports** print rather than assert. They say what the model thinks of the
 *firmware's* thresholds and settle times, and which injected faults move a

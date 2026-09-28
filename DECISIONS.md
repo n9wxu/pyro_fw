@@ -717,8 +717,13 @@ rationale and the alternatives considered.
   The kept ones still scattered 24 Pa while `api_check.py` ran: the buzzer,
   in test mode. A beep code alone, no flash write, takes MK1B from 9 to
   31-38 Pa for as long as it plays; the flag's short rate then trips about
-  once in 20 codes. MK1C, whose buzzer a MOSFET switches, shows none:
-  6-7 Pa beeping or not. The buzzer is left to the user (task M3).
+  once in 20 codes. MK1C shows none: 6-7 Pa beeping or not. The buzzer is
+  left to the user (task M3).
+- **Correction, 2026-09-28:** this entry and the task list first put the
+  difference down to MK1B's buzzer hanging off a GPIO while MK1C's is
+  switched by a MOSFET. The MK1B netlist says otherwise: BUZZER1 runs from
+  VIN through Q1A, and GPIO16 drives only the gate, as MK1C's Q2 does. Why
+  MK1B's buzzer disturbs its sensor and MK1C's does not is not established.
   Through G4 on all four boards (2.1.701): 23-38 conversions discarded
   each, no pressure rejects, no Mach flag.
 

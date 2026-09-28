@@ -1,5 +1,15 @@
 Flight use cases
 
+**Status, 2026-09-28 (2.1.702).** These are still the intended flights. Where the firmware and the web pages differ from the stories:
+- The rocket name takes up to 8 characters, so SKYSTREAK (9) does not fit.
+- The Config tab has no Beep Mode; the Beep Codes tab holds the personalities.
+- One Save on the Config tab saves the release choices with the rest. A release takes effect at the next reboot.
+- The Flight Data tab has an Erase flight log button.
+- Units still offer cm, with meters and feet.
+- Launch is declared at 100 ft and 5 m/s, held 100 ms. The log's T+0 is the first sample 50 cm above the pad (FLT-LAUNCH-03, FLT-LAUNCH-07).
+- A 0 s delay fires at apogee detection, about 0.4 s after the peak.
+- The emergency main fires once the drogue has had 2 s and the rocket has then fallen faster than 35 m/s for 1 s without being slowed (FLT-EMRG-01, DD-028): about 3 s, as in the third story.
+
 # Happy Path
 I attach a new pyro mk1c to a usb port on a pc.  I point a browser at pyro.local and see the Pyro MK1C web pages.  The status shows pad_idle and the altitude is 0.0m.
 Checking the Config, I give my rocket the name SKYSTREAK and the id SKY001.  I set the units to feet.  I don't know why there is a choice of cm.  That makes no sense.  Beep Mode of Digits is OK.  Pyro 1 (Drogue) fits my rocket.  I set to 0 seconds after apogee.  Pyro 2 (Main) is set for 500 ft AGL.  I do not release the pyro channels to LUA.  I press save.  I am confused about the "Save Release" option.  Maybe that is for the release choices.  I went to the Flight Data tab and I see what appears to be stale data.  I would like to clear this but I don't see a button for that.  Visiting the beep codes tab I will leave the Personality to default and the repeat to twice.  I press save beep codes and move to Lua.  I make no change to lua and move to update and leave it alone.

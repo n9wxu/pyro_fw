@@ -1,6 +1,22 @@
-# Pyro MK1B Simulation Library
+# Pyro Simulation Library
 
-The simulation library packages the Pyro MK1B flight computer **and** a rocket physics engine as a single WASM module that any web project can import. The flight code runs identically to hardware — same state machine, same pyro logic, same telemetry — but with an in-memory HAL instead of real sensors.
+The simulation library packages the Pyro flight software **and** a rocket physics engine as a single WASM module that any web project can import. The flight code runs identically to hardware — same state machine, same pyro logic, same telemetry — but with an in-memory HAL (`boards/sim/hal_sim.c`) instead of real sensors.
+
+## The simulator builds
+
+| Build | What it runs |
+|-------|--------------|
+| `scripts/build_wasm.sh` | the WASM module below: `boards/sim`'s HAL with a pyro *fixture*, `sim/physics.c` and the Lua VM (`docs/sim.html`, `docs/lua.html`) |
+| `sim` target, `PYRO_BOARD=sim` | `pyro_sim`, the same flight software natively, flown by `sim/sim_cli.c`'s own physics |
+| `sim` target, `PYRO_BOARD=sim_mk1a`, `sim_mk1b`, `sim_mk1c` | `pyro_sim` with the real `boards/<board>/` pyro backend against `sim/plant/` (see `sim/plant/README.md`) |
+| `pyro_sim --replay <flight_log.csv>` | a logged flight's readings back through the firmware (`sim/replay.c`) |
+| `sim/qemu/` | the real ARM image on an emulated RP2040 (see `sim/qemu/README.md`) |
+
+`sim/mach_plant.c` is the Mach lockout tests' plant, not a simulator build.
+
+With the fixture, continuity is whatever `sim.setContinuity()` last set and a
+fire is a counter; with a modelled board, a fire counts only when the match
+takes its ignition energy.
 
 ## Architecture
 
@@ -27,6 +43,7 @@ The simulation library packages the Pyro MK1B flight computer **and** a rocket p
               │ hal_sim.c  │  in-memory HAL
               │ flight_    │  real flight state machine
               │ states.c   │  (same as hardware)
+              │ Lua VM     │  user programs
               └────────────┘
 ```
 
@@ -40,16 +57,24 @@ The simulation library packages the Pyro MK1B flight computer **and** a rocket p
 # Output: docs/wasm/pyro.js + docs/wasm/pyro.wasm
 ```
 
+The first run clones Lua 5.4.6 into `build-wasm-lua/`. The script also takes
+`PYRO_BOARD=sim_mk1a`, `sim_mk1b` or `sim_mk1c`, but those builds do not
+compile: it puts `boards/sim` ahead of the board's own `board_pins.h`, and
+leaves out MK1B's `pin_store_sim.c` and MK1C's `pyro_measure.c`,
+`pyro_faults.c`, `pyro_sequence.c` and `arm_pump.c`. The native `sim` target
+builds all three.
+
 ### 2. Use from any web project
 
 Copy `docs/wasm/pyro.js`, `docs/wasm/pyro.wasm`, and `docs/wasm/pyro-sim.js` into your project:
 
 ```html
 <script type="module">
-import { createPyroSim, FlightState } from './wasm/pyro-sim.js';
+import { createPyroSim } from './wasm/pyro-sim.js';
 
 const sim = await createPyroSim();
 const phys = sim.physics;
+const LANDED = 8;  // flight_state_t; see Flight States below
 
 // Configure and initialize
 sim.init("pyro1_mode=delay\npyro1_value=0\npyro2_mode=agl\npyro2_value=200\nunits=ft\n");
@@ -58,10 +83,10 @@ sim.setContinuity(2, 50, true, false);
 phys.init(1524);  // 5000 ft target apogee
 
 // Closed-loop simulation
-const PAD_DWELL_MS = 2000;
+const PAD_DWELL_MS = 9000;
 let prevFires = 0;
 
-for (let t = 0; t <= 120000; t++) {
+for (let t = 0; t <= 600000; t++) {
     // Physics → flight computer feedback
     if (sim.pyroFireCount > prevFires) {
         if (sim.lastFireChannel === 1) phys.deployDrogue();
@@ -76,30 +101,38 @@ for (let t = 0; t <= 120000; t++) {
 
     // Feed physics pressure to flight computer
     sim.setPressure(phys.pressurePa);
-    sim.clearPyroFiring();
     sim.tick(t);
 
     // Read outputs
     if (t % 1000 === 0) {
-        console.log(`t=${t}ms state=${sim.stateName} alt=${phys.altM.toFixed(0)}m`);
+        console.log(`t=${t}ms state=${sim.state} alt=${phys.altM.toFixed(0)}m`);
     }
 
-    if (sim.state === FlightState.LANDED) break;
+    if (sim.state === LANDED) break;
 }
 
 console.log(`Apogee: ${phys.apogeeM.toFixed(0)}m`);
 </script>
 ```
 
+PAD_IDLE comes about 2.7 s after power-on, and the ground reference is a 5 s
+rolling mean (GND-CAL-01), so the example ignites at 9 s, as `sim/sim_cli.c`
+does. Ignite before PAD_IDLE and the board calibrates on the way up, reading
+every altitude low. The HAL feeds the pressure layer one reading per 20 ms of
+simulated time, the hardware's loop (DD-065), so tick at least that often.
+
 ### 3. Use with script tags (no modules)
+
+`pyro-sim.js` is an ES module and cannot be loaded as a classic script. Without
+modules, call the exports on `Module` directly, as `docs/sim.html` does:
 
 ```html
 <script src="wasm/pyro.js"></script>
-<script src="wasm/pyro-sim.js"></script>
 <script>
 Module.onRuntimeInitialized = function() {
-    const sim = wrapModule(Module);  // from pyro-sim.js
-    // ... same API as above
+    Module._sim_flight_init(0);        // defaults; pass a malloc'd string for a config
+    Module._sim_set_pressure(101325);
+    const state = Module._sim_flight_tick(0);
 };
 </script>
 ```
@@ -112,30 +145,34 @@ Module.onRuntimeInitialized = function() {
 | Method | Description |
 |--------|-------------|
 | `sim.init(configIni)` | Initialize with optional config string |
-| `sim.tick(timeMs)` | Advance one tick, returns state (0-7) |
+| `sim.tick(timeMs)` | Advance to `timeMs`, returns state (0-11) |
 | `sim.reset()` | Reset to power-on defaults |
 
 #### Inputs (set before each tick)
 | Method | Description |
 |--------|-------------|
 | `sim.setPressure(pa)` | Barometric pressure in Pascals |
+| `sim.setSensorType(type)` | 0 none, 1 MS5607, 2 BMP280 (the default); 0 boots to FAULT |
 | `sim.setContinuity(ch, adc, good, open)` | Pyro circuit status |
-| `sim.clearPyroFiring()` | Clear firing flag |
+| `sim.clearPyroFiring()` | Clear firing flag; `tick()` clears it itself |
 
 #### Outputs (read after each tick)
 | Property | Description |
 |----------|-------------|
-| `sim.state` | Flight state (0-7) |
-| `sim.stateName` | State name string |
+| `sim.state` | Flight state (0-11) |
+| `sim.stateName` | A name from `pyro-sim.js`'s own list, which does not follow `flight_state_t`: use the table below |
 | `sim.altitudeCm` | Filtered altitude (cm) |
 | `sim.maxAltCm` | Peak altitude (cm) |
 | `sim.vspeedCms` | Vertical speed (cm/s) |
+| `sim.pressure` | Filtered pressure (Pa) |
 | `sim.pyro1Fired` | Pyro 1 has fired |
 | `sim.pyro2Fired` | Pyro 2 has fired |
 | `sim.armed` | Pyros armed |
 | `sim.pyroFireCount` | Total fires |
 | `sim.lastFireChannel` | Last fired channel |
 | `sim.buzzerActive` | Buzzer on/off |
+| `sim.samples` | Samples in the flight buffer |
+| `sim.launchTime` | T+0 (ms) |
 
 ### Physics Engine (`sim.physics.*`)
 
@@ -167,16 +204,23 @@ Module.onRuntimeInitialized = function() {
 
 ## Flight States
 
+`flight_state_t` in `src/flight_states.h`. States are appended, never
+renumbered: the numbers reach the flight log, telemetry and `/api/status`.
+
 | Value | Name | Description |
 |-------|------|-------------|
-| 0 | BOOT_INIT | Loading config, init hardware |
-| 1 | BOOT_SETTLE | Waiting for sensors to stabilize |
-| 2 | BOOT_CONTINUITY | Checking pyro circuits |
-| 3 | BOOT_CALIBRATE | Establishing ground pressure |
-| 4 | PAD_IDLE | On pad, waiting for launch |
-| 5 | ASCENT | Rocket ascending |
-| 6 | DESCENT | Past apogee, descending |
-| 7 | LANDED | On ground after flight |
+| 0 | BOOT_SETTLE | Waiting for sensors to stabilize |
+| 9 | BOOT_SENSOR | The pressure sensor answers, or FAULT |
+| 1 | BOOT_CONTINUITY | Checking pyro circuits |
+| 2 | BOOT_CALIBRATE | Establishing ground pressure |
+| 3 | PAD_IDLE | On pad, waiting for launch |
+| 4 | ASCENT | Rocket ascending |
+| 5 | FALLING | Past apogee, no canopy steadying the descent |
+| 6 | DROGUE_DESCENT | Descending steadily at a drogue's rate |
+| 7 | CHUTE_DESCENT | Descending steadily at a main's rate |
+| 8 | LANDED | On ground after flight |
+| 10 | FAULT | A power-up test failed; terminal |
+| 11 | GROUND_TEST | Powered up with the ground test switch held; terminal |
 
 ## Files
 
@@ -185,9 +229,15 @@ Module.onRuntimeInitialized = function() {
 | `sim/physics.h` | Physics engine C API |
 | `sim/physics.c` | Physics implementation (atmosphere, thrust, drag) |
 | `sim/pyro_sim.h` | Flight computer simulation C API |
-| `sim/hal_sim.h` | Internal sim HAL accessors |
-| `sim/hal_sim.c` | In-memory HAL implementation |
 | `sim/main_sim.c` | High-level sim lifecycle functions |
+| `sim/sim_cli.c` | `pyro_sim`'s driver: its own physics, and `--replay` |
+| `sim/replay.c` | A flight log's readings back through the firmware |
+| `sim/hw/` | The Pico SDK calls a board file makes, for the modelled boards |
+| `sim/plant/` | The board plant models |
+| `sim/mach_plant.c` | The Mach lockout tests' atmosphere, rocket and static ports |
+| `boards/sim/hal_sim.h` | Internal sim HAL accessors |
+| `boards/sim/hal_sim.c` | In-memory HAL implementation |
+| `boards/sim_mk1a`, `sim_mk1b`, `sim_mk1c` | Host boards that build a real pyro backend against its plant |
 | `docs/wasm/pyro-sim.js` | ES module wrapper for WASM |
 | `docs/wasm/pyro.js` | Emscripten glue (generated) |
 | `docs/wasm/pyro.wasm` | WASM binary (generated) |
@@ -195,17 +245,30 @@ Module.onRuntimeInitialized = function() {
 
 ## Examples
 
-- **Interactive browser sim**: `docs/sim.html` — UI driving WASM flight computer
+- **Interactive browser sim**: `docs/sim.html` — UI driving WASM flight computer, with its own JS physics (`docs/physics.js`)
+- **Lua in the browser**: `docs/lua.html` — a user program against the simulated platform
 - **CLI simulator**: `sim/sim_cli.c` — C physics + flight computer
-- **Closed-loop tests**: `test/test_closedloop.c` — 13 tests × 4 altitudes
+- **Closed-loop tests**: `test/test_closedloop.c` — 25 tests; seven pyro configurations on four rockets from `test_data/rockets.json`
 
 ## Building for C projects
 
-The physics engine and flight sim also work as plain C libraries:
+The native simulator is the `sim` target of a host board:
 
 ```bash
-cc -I sim/ -I src/ \
-   sim/physics.c sim/main_sim.c sim/hal_sim.c \
-   src/flight_states.c src/telemetry.c src/buzzer.c \
+cmake -B build-sim -DPYRO_BOARD=sim && cmake --build build-sim --target sim
+./build-sim/pyro_sim [altitude_m]                 # default 1524
+./build-sim/pyro_sim --replay flight_log.csv      # a flight logged with log_rate=full
+```
+
+It writes `flight_sim.csv` into the working directory. The physics engine and
+flight sim also work as plain C libraries:
+
+```bash
+cc -I boards/sim -I sim/ -I src/ \
+   sim/physics.c sim/main_sim.c boards/sim/hal_sim.c \
+   src/flight_states.c src/brownout.c src/pad_claim.c src/pyro_release.c \
+   src/beep_codes.c src/beep_store.c src/pressure_processing.c src/pressure_fit.c \
+   src/ground_test.c src/ground_test_seq.c src/config.c \
+   src/telemetry_formatter.c src/buzzer.c \
    my_app.c -lm -o my_app
 ```

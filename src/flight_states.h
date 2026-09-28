@@ -115,7 +115,7 @@ typedef struct {
 
 // Flight context
 /* The last 64 samples, 1 KB, for flight_save_csv(). The flight record is
- * hal_log's flight_log.csv; nothing on the flight path reads this back. */
+ * hal_log's flight_log.bin; nothing on the flight path reads this back. */
 #define FLIGHT_BUF_SIZE 64
 
 typedef struct flight_context_t {
@@ -295,7 +295,7 @@ void flight_flash_service(flight_context_t *ctx, uint32_t now);
 /* Legacy compat — redirects to config module */
 #define parse_config_ini(buf, cfg) config_parse_ini(buf, cfg)
 /* [DAT-06] The ring buffer's last 64 samples as flight.csv. The simulator's
- * export; the flight record itself is hal_log's flight_log.csv. */
+ * export; the flight record itself is hal_log's flight_log.bin. */
 int flight_save_csv(flight_context_t *ctx);
 
 /* Milliseconds since launch while airborne, frozen at the landing, and 0 on

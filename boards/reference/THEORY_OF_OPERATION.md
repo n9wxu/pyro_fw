@@ -12,7 +12,8 @@ As shipped the template compiles and links, and it is safe: it reports no
 continuity, refuses every fire, and drives nothing. A board brought up from it
 energises nothing until its real pyro backend is written. It assumes an RP2040
 (`PYRO_BOARD_KIND pico`), one pressure sensor on one I2C bus, and a plain-GPIO
-LED, UART and buzzer.
+LED, UART and buzzer, and it builds without Lua. CI builds it as shipped
+(`.github/workflows/build.yml`).
 
 ## Porting steps
 
@@ -24,8 +25,13 @@ $EDITOR boards/<name>/board.cmake       # SDK header, flash geometry, Lua, loop 
 cmake -B build-<name> -DPYRO_BOARD=<name> && cmake --build build-<name>
 ```
 
-Nothing outside the board's directory changes. Then write the pyro backend,
-its host tests, and this file.
+Nothing outside the board's directory changes for it to build. Then write the
+pyro backend, its host tests, and this file.
+
+Lua takes three edits, as `boards/mk1a` has them: `set(PYRO_HAS_LUA 1)` in
+`board.cmake`, the `if(PYRO_HAS_LUA)` block that adds the Lua PIO sources to
+`CMakeLists.txt`, and the pads in `pin_caps.h`'s `LUA_PIN_LIST` and
+`LUA_PIN_COUNT`, each with a row offering Lua functions.
 
 ## Files
 
@@ -37,7 +43,7 @@ its host tests, and this file.
 | `board_info.c` | the pins `picotool info -a` names | recommended |
 | `board.cmake` | settings the Pico SDK needs before it initialises | yes |
 | `CMakeLists.txt` | the `pyro_board` library | yes |
-| `sdk/<name>.h` | a Pico SDK board header, for a bare RP2040 | if not a Pico module |
+| `sdk/<name>.h` | a Pico SDK board header | if the stock `pico` header does not describe the board |
 | `pressure_board.c` | `src/pressure_sensor.h`, for two sensors on one bus | only then |
 
 What a board need not write:
@@ -46,6 +52,12 @@ What a board need not write:
   drives them as plain GPIO on the pins `board_pins.h` names. Each is weak: a
   board with other hardware behind one — a piezo driver, a PWM slice —
   defines its own and that one links.
+- **`board_flash_ok()`**, weak and always true in `src/flash_window.c`. A
+  board whose firing sequence is paced by the loop answers false while it
+  runs, as MK1C does: a flash erase stalls the loop (DD-056).
+- **The ground test switch.** `src/hal_common/` reads it on whichever pads
+  `pins.ini` names; any row with `FN_DIGITAL` can carry it, a pyro pad once
+  its channel is released (DD-071).
 - **The pressure sensor's bring-up**, for one sensor on one bus:
   `src/pressure_single_sensor.c` picks the sensor from whichever bus speed
   `board_pins.h` declares, `BOARD_MS5607_I2C_HZ` or `BOARD_BMP280_I2C_HZ`.
@@ -68,7 +80,8 @@ which has the flight state. A backend that can fire must:
   whatever `pyro_fire()` checks.
 - **Never wait.** `pyro_update()` runs every loop; a settle is a deadline a
   later call checks (`deadline_reached()` in `src/board_support.h`), never a
-  sleep. `support/wait_check.py` fails CI on any sleep in `boards/`.
+  sleep. `support/wait_check.py` fails CI on any sleep in `boards/`, and on
+  the SDK's blocking I2C transfers: use the `_timeout_us` forms (DD-069).
 - **Answer `pyro_is_firing()` straight after `pyro_fire()`**: that is the
   flight's acknowledgement, and a board that refuses leaves it false.
 - **Check only presence and shorts** between fires (DD-055).
@@ -81,12 +94,22 @@ a pyro bias injector, where MK1A and MK1B put their LED.
 Declare the sensor by its bus speed, as fast as the device allows and no faster
 than the PCB carries: fast mode's 300 ns rise needs pull-ups of at most
 300 ns / (0.8473 × Cb), 4k7 to about 75 pF (UM10204 pages 44 and 50), and the
-RP2040's own 50–80 kΩ are too weak for it (DD-052). Read the pull-ups from the
-design files. The template declares 100 kHz until that is checked.
+RP2040's own 50–80 kΩ (RP2040 datasheet page 617, Table 625) are too weak for
+it (DD-052). Read the pull-ups from the design files. The template declares
+100 kHz until that is checked.
+
+An MS5607 wants fast mode: the one-shot converts a pressure and a temperature
+every 20 ms loop, and at 100 kHz the pair is ready only 0.26 ms before the
+next, short of the 0.5 ms `ms5607_tests` asks (DD-066). A BMP280 runs one
+forced conversion a loop at either speed (DD-067).
 
 ## Build
 
-- **A bare RP2040 needs its own SDK header.** It must carry
+- **The SDK board header.** The stock `pico` header declares 2 MB of flash and
+  an LED on GPIO25, and leaves the crystal at the SDK's default 12 MHz; MK1B
+  fits it, bare RP2040 as it is.
+  MK1A has its own for its 16 MB, MK1C for its 16 MB and because its GPIO25 is
+  not an LED. An own header must carry
   `pico_board_cmake_set_default(PICO_FLASH_SIZE_BYTES, ...)` as well as the
   `#define`: without the directive the bootloader's linker script gets a
   negative flash size that still links. And it must not name
@@ -105,4 +128,6 @@ a pin-level test (`board_pyro_tests` does MK1B), or `sim/hw/` with a plant model
 in `sim/plant/` for one that needs the circuit's physics
 (`board_pyro_mk1c_tests`). `sensor_bringup_tests` builds once per board. Add the
 new board to both, and a `boards/sim_<name>` package to run the flight software
-against the plant.
+against the plant. `ms5607_tests` and `integration_tests` build against the
+selected board's package, so run them in the new board's build directory, and
+add the board to `.github/workflows/build.yml`.

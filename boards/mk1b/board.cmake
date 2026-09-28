@@ -4,7 +4,7 @@
 set(PYRO_BOARD_KIND pico)
 set(BOARD_DISPLAY_NAME "Pyro MK1B")
 
-set(PICO_BOARD pico CACHE STRING "Board type" FORCE) # the Pico module itself
+set(PICO_BOARD pico CACHE STRING "Board type" FORCE) # a bare RP2040 the stock header describes
 
 set(PYRO_FLASH_SIZE_KB 2048)
 set(PYRO_PFB_FS_KB     984)  # littlefs

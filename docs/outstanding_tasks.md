@@ -16,27 +16,26 @@ recorded.
 | # | Section | Needs |
 |---|---|---|
 | — | [How every task runs](#how-every-task-runs) | read first |
-| 1 | [Commit the work](#1-commit-the-work) | done; G4 ran 2026-09-27 |
+| 1 | [Commit the work](#1-commit-the-work) | done; G4 last ran 2026-09-28, on 2.1.702 |
 | 2 | [Decisions](#2-decisions) | you |
 | 3 | [Safety fixes](#3-safety-fixes) | done |
-| 4 | [The pressure chain and the Mach lockout](#4-the-pressure-chain-and-the-mach-lockout) | done; G4 ran 2026-09-27, T5's cost over its limit (T5-C) |
-| 5 | [Other code defects](#5-other-code-defects) | done, except C10, C6 and U6 (their decisions) |
+| 4 | [The pressure chain and the Mach lockout](#4-the-pressure-chain-and-the-mach-lockout) | done; T5's cost over its limit (T5-C) |
+| 5 | [Other code defects](#5-other-code-defects) | done, except C10, C6 and U6: decided, not yet built |
 | 5a | [No sleeps](#5a-no-sleeps-dd-053) | done |
 | 5b | [MK1C firing path](#5b-mk1c-firing-path) | **done in code** (DD-056); the bench fire is deferred (section 9) |
-| 6 | [Bench checks](#6-bench-checks) | a person or equipment |
-| 7 | [Board changes](#7-board-changes) | hardware design; **B-U5: MK1B cannot sense continuity** |
-| 8 | [Documentation and housekeeping](#8-documentation-and-housekeeping) | done |
+| 6 | [Bench checks](#6-bench-checks) | a person or equipment, the ground test's (GT-1) among them |
+| 7 | [Board changes](#7-board-changes) | hardware design; **B-U5: MK1B cannot sense continuity**; B-BZ: MK1B's buzzer disturbs its sensor |
+| 8 | [Documentation and housekeeping](#8-documentation-and-housekeeping) | every document reviewed 2026-09-28; H3: the defects and unmet requirements the review found |
 | 9 | [Deferred, and not planned](#9-deferred-and-not-planned) | F1's bench fire; false-launch reversion |
 | 10 | [Logging and lockups in flight](#10-logging-and-lockups-in-flight) | **your decisions**: the logging design, the Mach short rate, lwIP's heap |
 
-**G4 ran on 2026-09-27**, with your permission to flash: all four bench
-boards on 2.1.681 (MK1A 02632D472F0C, MK1B 02E7253A34C2 and 02E72A403441,
-MK1C 02373331FFDE), the MK1Bs then on 2.1.682 (DD-059), and all four on
-2.1.683 (DD-060). `api_check.py`,
-`http_stream_check.py` and `hw_ui_check.js` pass on each; 100 loops a
-second, 0 flash refusals, 0 pressure rejects. Overruns under the checks'
-own load were G4-L; with DD-061, all four on 2.1.688 pass G4 with none.
-G4-M and G4-N are what the repeated runs found. Section 6 lists
+**G4, the bench check on the four boards** (MK1A 02632D472F0C, MK1B
+02E7253A34C2 and 02E72A403441, MK1C 02373331FFDE): `api_check.py`,
+`http_stream_check.py` and `hw_ui_check.js`. Last run 2026-09-28 on 2.1.702:
+every check passes on all four, at 50 loops a second, with no loop
+overrun, no flash refusal and no pressure reject. G4-L and G4-N, which
+the repeated runs found, are done; G4-M is found and waits on your
+decision (section 10, M3). Section 6 lists
 what still needs a person or equipment.
 
 ---
@@ -55,7 +54,7 @@ Every task follows the same steps. No task closes any other way.
 2. **Change** the code, and the records in the same change:
    - `REQUIREMENTS.md`: requirements added, amended or withdrawn;
    - `DECISIONS.md`: a DD entry for each design choice (the next free number
-     is DD-058);
+     is DD-072);
    - `TRACEABILITY.md`: each new or amended requirement linked to its tests;
    - `docs/flight_states.md`, where a state's behaviour changes.
 3. **Pass.** Every test the task lists passes, and so does the gate.
@@ -1283,7 +1282,7 @@ resolution doc.
 | D-C1 | MK1C's R_BLEED, open, hides from the bus level | U9's reverse path carries the bus either way (685 against 730 counts), so no level check can find it (DD-054). **Closed, not wanted:** the firmware checks only presence and shorts (DD-055) | — |
 | CI-1 | Six host suites never run in CI | **Done 2026-09-28:** `pin_caps_tests`, `beep_tests`, `pin_assign_tests`, `buzzer_tests`, `config_tests` and `config_persistence_tests` now run in CI, with the ground test's two suites | -- |
 | G4-L | MK1C overruns under G4's own load | **Done 2026-09-27 (DD-061).** G4 asks for 0 loop overruns on MK1C with Lua running. Under the checks' HTTP load MK1C logged 1-4, on 2.1.681 and 2.1.683 alike: STAGE 1 peaked at 7.7 ms, 7.4 ms of it HTTP handlers. HTTP now runs as work units from the slack, or on core1; the loop's head only moves bytes. All four bench boards on 2.1.688 through G4: 0 overruns, STAGE 1 peak 2.1 ms at most, every check passing | -- |
-| G4-M | The pad Mach flag rises under upload load | **Cause found 2026-09-27.** Not the stamps: MK1B's MS5607 is disturbed electrically. With every conversion traced through ten G4 rounds, the scatter rose from 9 Pa to 21-25 Pa while `api_check.py` ran, in two stretches: its flash writes, and test mode, where the buzzer announces the pad verdict. A beep code alone, with no flash write, takes it to 31-38 Pa for as long as it plays (`/api/beeps/play`). The flag's short rate over two intervals then trips about once in 20 beep codes at the 20 ms loop, and nearly every code at the old 10 ms loop: G4-M's 6 in 12. Flash writes: conversions a write overlapped are now discarded (DD-068). The buzzer: MK1B's only -- MK1C, whose buzzer a MOSFET switches, shows no effect -- so a board change (section 7, B-BZ) or **your decision** on the short rate (section 10, M3). No flag in 20 G4 rounds on 2.1.697-698, nor through G4 on all four boards on 2.1.701 | your decision |
+| G4-M | The pad Mach flag rises under upload load | **Cause found 2026-09-27.** Not the stamps: MK1B's MS5607 is disturbed electrically. With every conversion traced through ten G4 rounds, the scatter rose from 9 Pa to 21-25 Pa while `api_check.py` ran, in two stretches: its flash writes, and test mode, where the buzzer announces the pad verdict. A beep code alone, with no flash write, takes it to 31-38 Pa for as long as it plays (`/api/beeps/play`). The flag's short rate over two intervals then trips about once in 20 beep codes at the 20 ms loop, and nearly every code at the old 10 ms loop: G4-M's 6 in 12. Flash writes: conversions a write overlapped are now discarded (DD-068). The buzzer: MK1B's only -- MK1C shows no effect, though both switch it with a MOSFET -- so a board change (section 7, B-BZ) or **your decision** on the short rate (section 10, M3). No flag in 20 G4 rounds on 2.1.697-698, nor through G4 on all four boards on 2.1.701 | your decision |
 | G4-N | A 40-60 s HTTP outage, once | **Done 2026-09-27 (DD-070).** `/api/net` on one G4 round: 40 % of frames refused at the USB endpoint and left to lwIP's retransmit timer (3 s, doubling), lwIP's heap out 27,865 times at 7,832 of 8,000 bytes. A stalled response, then refused connects while ping answers, is what that produces. Frames the endpoint cannot take yet are now held and sent (2.4 % refused on the next round; 14-43 per board through G4 on 2.1.701). Before the fix a one-hour soak of three boards under the trace poller alone (about 32,000 requests each) met no outage: it needs G4's parallel load. On the fix, a 30-minute soak of all four boards (about 16,000 requests each, five G4 rounds meanwhile on the bench MK1B) met none. lwIP's heap size is **your decision** (section 10, N1) | -- |
 | S1 | The BMP280 at the loop's rate | **Done 2026-09-27 (DD-067),** at your direction: "S1 needs to make the BMP280 match the loop rate." One forced conversion a loop, x4/x1, taken at the next, stamped from its command; every transfer bounded (DD-069). MK1A traced on 2.1.701: 50.0 a second, consistently good, lag 11.9-13.1 ms | -- |
 | S2 | The MS5607's noise and its temperature step | **Found 2026-09-27 (DD-063).** White noise 6.5-9.3 Pa on all three boards against the datasheet's 2.4 Pa at OSR 4096, unchanged at half the duty; and the pressure right after each temperature conversion reads about 4 Pa high, relaxing over 90 ms. Both are in the raw codes. **The step is gone (DD-066, 2.1.697):** with a temperature before every pressure each sits at the same distance from one, and the residual folds flat (MK1C 6.96 Pa to 6.43). The white noise remains, 6.4-9.1 Pa. **Your note (2026-09-27):** the sensors run in ambient air on the bench, so part of it may be ordinary pressure noise. **Found the same day:** MK1B's buzzer, sounding, takes the MS5607's scatter from 9 to 31-38 Pa, pressure and temperature codes alike, so it is electrical; flash writes do the same, less (DD-068). Worth checking: the VDD decoupling (the datasheet asks 100 nF at the pin, page 17) and bus activity during conversions (page 6) | the boards' design files, and the trace |
@@ -1304,7 +1303,7 @@ flow. `mach_tests` is its only check short of a flight.
 |---|---|---|
 | U1 | Detect a charger on USB (USB-06). VBUS reaches only the TP4057 on MK1A, MK1B and MK1C. The options are a VBUS divider to a spare GPIO (MK1C has GPIO2–5, 9, 10 and 13–15 free; GPIO24 on MK1A/B), or routing the charger's CHRG/STDBY pins to GPIOs. Firmware would OR either with the USB frame check. | Host, with a mocked VBUS input: a charger alone counts as attached; a sleeping PC (VBUS, no frames) counts as attached (U3); no input counts as detached. Bench, on the new board: a charger stops launch detection. |
 | B-U5 | **MK1B cannot sense continuity.** U5 is AP2192AMPG-13 (LCSC C507872) on both JLCPCB builds: the AP2192A's output discharge, about 100 ohm while disabled, holds SENSE1 and SENSE2 near 0 V against their 100k pull-ups, so a fitted igniter, an empty connector and a short all read the same. The base AP2192 (DS31569) has no discharge and the same MSOP-8EP footprint. Found on the bench 2026-09-27 (DD-059). | Bench, on a board with the base part: an empty connector reads open (about 4095), a 1 ohm load good (about 0), a short to ground shorted -- `board_pyro_tests` already holds the firmware to that |
-| B-BZ | **MK1B's buzzer disturbs its MS5607.** LS1 hangs off GPIO16 directly, so its drive current is the RP2040's; while a beep code plays the sensor's scatter rises from 9 to 31-38 Pa, both codes, and the Mach flag's short rate trips about once in 20 codes (DD-068). MK1C switches its buzzer with a MOSFET (Q2) and shows none. Options: a MOSFET driver as MK1C's, and the sensor's own decoupling (the MS5607 datasheet asks 100 nF at its pin, page 17) | Bench, on the new board: `scratchpad buzz_test.py`'s three beep codes leave the trace's scatter at its quiet level |
+| B-BZ | **MK1B's buzzer disturbs its MS5607.** While a beep code plays the sensor's scatter rises from 9 to 31-38 Pa, both codes, and the Mach flag's short rate trips about once in 20 codes (DD-068). MK1C shows none. Both boards switch the buzzer from VIN with a MOSFET (MK1B's Q1A, MK1C's Q2), so the difference is not the drive; the cause is not established. To look at: the buzzer's return path and VIN's decoupling near the sensor, and the sensor's own decoupling (the MS5607 datasheet asks 100 nF at its pin, page 17) | Bench, on the changed board: `scratchpad buzz_test.py`'s three beep codes leave the trace's scatter at its quiet level |
 | REV-03 | MK1C cannot fire. **Done in code (F1, DD-056).** | The bench fire into a dummy load that sets `pyro1_fired` and shows the pulse on a scope (F1's bench check). |
 | — | An arming path independent of software, if section 6's check finds a board without one | That check. |
 
@@ -1371,6 +1370,34 @@ rebuilt after the simulator fixes (N6). `emcc` is now installed.
   `www/`, with a CI step that fails when they drift; a headless run of
   `docs/sim.html` flies from boot to LANDED.
 - **Change:** run `scripts/sync_demo.sh` and `scripts/build_wasm.sh`.
+
+### H3. Found reviewing the documents, 2026-09-28
+
+Open. The review corrected every document; these are defects in code and
+tools it found, which a document cannot fix.
+
+| ID | What | Checked |
+|---|---|---|
+| H3-1 | `docs/wasm/pyro-sim.js` numbers the states as they were before the descent phases (`LANDED: 7`) and calls `_sim_clear_telemetry`, which `scripts/build_wasm.sh` does not export | read |
+| H3-2 | `scripts/build_wasm.sh` fails for the `sim_mk1*` variants and leaves out sources they need | reported by the review, not rerun |
+| H3-3 | `sim/qemu/sync-plant.sh` does not copy `src/pyro_sense.h`, which `plant_mk1c.c` includes | read |
+| H3-4 | `support/flash_picotool.sh`, `install.py`, `update_from_release.py` and `test_network.py` default to 192.168.7.1; a board's address is 192.168.N.1 with N from its unique ID | read |
+| H3-5 | `support/install.py` looks for the MK1C image, then MK1B's, and never picks MK1A's | read |
+| H3-6 | A release ships only the MK1B image, and an OTA upload is not checked against the board it lands on | reported by the review, not rerun |
+| H3-7 | `support/pressure_trace.py` is not executable | read |
+| H3-8 | `hal_pressure_fifo_get()` and its 5-sample batches in `hal_common.c` have no caller | read |
+| H3-9 | **A question for you:** MK1B's flash is a W25Q64JW, which Winbond sells for 1.8 V; is it on a 1.8 V rail, or is the part number on the schematic not the fitted part? | not checked on the board |
+
+Requirements the code does not meet as written. Each needs the requirement
+rewritten to what was decided, or the code changed; `TRACEABILITY.md` still
+marks the first, third and fourth verified.
+
+| ID | Says | The code |
+|---|---|---|
+| DAT-01 | a ring of at least 4096 samples | `FLIGHT_BUF_SIZE` is 64; the flight record is `flight_log.bin` (DD-062) |
+| FLT-RATE-02 | pressure delivered in batches of 5 | one sample a loop; the batch API is unused (H3-8) |
+| FLT-RATE-03 | sampling cut to 1 Hz in LANDED | sampling stays at 50 Hz; the log keeps a row a second (N18) |
+| TST-05 | closed-loop tests from 100 ft to 100 km | `test_data/rockets.json` flies 65 m to 950 m |
 
 ---
 

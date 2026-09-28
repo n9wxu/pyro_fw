@@ -316,7 +316,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **PYR-VERIFY-01**: The system shall verify pyro circuit opened after firing by reading continuity. ← SYS-FAULT-02
 
 #### Armed Firing Bus (MK1C, DD-056)
-- **PYR-ARM-01**: On a board whose firing bus is armed by a charge pump, the pump shall run only inside a fire, fed once a loop by the code that has just re-checked the fire's conditions, so that a loop that stops leaves the bus disarmed within 20 ms. ← SYS-FAULT-01
+- **PYR-ARM-01**: On a board whose firing bus is armed by a charge pump, the pump shall run only inside a fire, fed once a loop by the code that has just re-checked the fire's conditions, so that a loop that stops leaves the bus disarmed within about 35 ms at the 20 ms loop: a loop and a quarter of queued pump, then the high side's turn-off (DD-065). ← SYS-FAULT-01
 - **PYR-ARM-02**: A fire shall be refused, with its reason, unless the channel read present on a tracking test since it last fired, no fault is latched, and the pack is above 3.0 V. ← PYR-SAFE-01
 - **PYR-ARM-03**: The gate shall be driven when the measured bus reaches 90 % of the measured pack, never on elapsed time. A bus not there within 1.5 times the arming and the ramp's time shall abort the fire, drive no gate, and latch a fault. ← SYS-DEPLOY-01, SYS-FAULT-02
 - **PYR-ARM-04**: The pump shall stop when the gate is driven, and the gate shall be released only once the high side has turned off and the bus is flat, or 30 ms after the fire. ← SYS-FAULT-01

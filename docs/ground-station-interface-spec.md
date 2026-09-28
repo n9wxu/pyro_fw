@@ -232,16 +232,17 @@ The altimeter board connects to the tracker board over a wired UART link.
 
 ## 9. Required Altimeter State Mapping
 
-The altimeter's internal state machine currently uses an enum (`flight_state_t`) with values PAD_IDLE, ASCENT, DESCENT, LANDED. The function `state_to_telem_id()` in `flight_states.c` must be updated to map to the new 6-code protocol. The single DESCENT internal state must be split into three distinct telemetry states.
+**Status in pyro_fw 2.1.702 (2026-09-28): done.** The single DESCENT internal state is split into three. `flight_state_t` has twelve states, and `state_to_telem_id()` in `src/flight_states.c` maps the six that send a $PYRO sentence; the boot states, FAULT and GROUND_TEST send none.
 
 | Internal State | state_id | GS Interprets As | Status |
 |---|---|---|---|
 | `PAD_IDLE` | 0 | PAD | Correct |
 | `ASCENT` | 1 | BOOST or COAST | Correct (uses thrust flag) |
-| `DESCENT` (current) | 2 | FALLING | **Needs split — see below** |
-| *(new)* DROGUE state | 3 | DROGUE | Firmware update required |
-| *(new)* CHUTE state | 4 | CHUTE | Firmware update required |
-| `LANDED` | 5 | LANDED | **Code changed from 3 → 5** |
+| `FALLING` | 2 | FALLING | Correct |
+| `DROGUE_DESCENT` | 3 | DROGUE | Correct |
+| `CHUTE_DESCENT` | 4 | CHUTE | Correct |
+| `LANDED` | 5 | LANDED | Correct (code 3 before Revision 1.2) |
+| `BOOT_SETTLE`, `BOOT_SENSOR`, `BOOT_CONTINUITY`, `BOOT_CALIBRATE`, `FAULT`, `GROUND_TEST` | — | — | No $PYRO sentence |
 
 **The DESCENT internal state must be replaced with three states** corresponding to the three phases of descent:
 
@@ -249,13 +250,28 @@ The altimeter's internal state machine currently uses an enum (`flight_state_t`)
 - **DROGUE** (state_id 3): Entered when pyro channel 1 fires and drogue deployment is confirmed. Descent rate is higher than main chute.
 - **CHUTE** (state_id 4): Entered when pyro channel 2 fires and main chute deployment is confirmed. Slow final descent.
 
+pyro_fw enters DROGUE_DESCENT and CHUTE_DESCENT when the measured descent rate settles in a canopy's band, whichever channel fired, and returns from DROGUE_DESCENT to FALLING when a drogue stops slowing the rocket: state_id can go from 3 back to 2. A flight with no canopy goes from 2 straight to 5 (`docs/flight_states.md`).
+
 The `LANDED` state_id changes from 3 to 5. Any downstream system (tracker, DSM, ground station) that checks `state_id == 3` for landed must be updated to check `state_id == 5`.
 
 ---
 
 ## 10. Required Changes for Compatibility
 
-Based on the flight 4 analysis and the Revision 1.2 protocol update, the following items need verification and possible changes:
+Based on the flight 4 analysis and the Revision 1.2 protocol update, the following items need verification and possible changes.
+
+**Status in pyro_fw 2.1.702 (2026-09-28)** (`src/telemetry_formatter.c`, `src/flight_states.c`):
+
+- 10.1: done; see Section 9.
+- 10.2: the thrust flag is 1 in ASCENT while the pressure fit shows upward acceleration, so it falls to 0 at burnout.
+- 10.3: `$PYRO_APO,max_alt_cm,flight_time_ms`, `$PYRO_FIRE,channel,alt_cm,flight_time_ms` and `$PYRO_LAND,max_alt_cm,flight_time_ms`, as Sections 6.1-6.3.
+- 10.4: `telem_format` defaults to 0.
+- `press_pa` is the filtered pressure, not the raw reading. `batt` and `temp` are always 0. Decimal fields carry no leading zeros; `flags` is always two hex digits.
+- `time_ms` counts from T+0, the first sample of the rise, backdated from launch detection, and stops at landing.
+- In flight the $PYRO rate is `telem_rate_hz`: 10 by default, at most 50. PAD and LANDED are 1 Hz.
+- `$PYRO_FIRE` is sent only for a channel the board energised. The one retry of a drogue whose charge did not light (PYR-REFIRE-01) sends a second `$PYRO_FIRE,1`.
+- A power event in flight that the board rejoins while descending enters FALLING with the APOGEE flag set and no `$PYRO_APO`.
+- The same UART also carries diagnostic lines that begin with `!` (`!FAULT`, `!MACH LOCK`, `!GT`, `!SENSOR STUCK` and others) and web-server debug lines that begin with `HTTP:`. Neither begins with `$`.
 
 ### 10.1 Update `state_to_telem_id()` Mapping
 

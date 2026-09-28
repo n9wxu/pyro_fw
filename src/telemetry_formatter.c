@@ -17,7 +17,7 @@
  * Backwards-compatibility shim — send_telemetry():
  *   Declared in flight_states.h and called by test_flight_states.c and
  *   test_closedloop.c.  Builds a snapshot from flight_context_t fields
- *   and delegates to telemetry_state().  Will be removed in Task 10.
+ *   and delegates to telemetry_state().
  *
  * SPDX-License-Identifier: MIT
  */
@@ -152,8 +152,6 @@ void telemetry_landing(int32_t max_alt_cm, uint32_t flight_time_ms) {
  * It builds a telemetry_snapshot_t from flight_context_t fields and calls
  * telemetry_state(), then increments ctx->telemetry_seq so the sequence
  * counter in test assertions remains correct.
- *
- * Will be removed in Task 10 when those tests are updated to the new API.
  */
 
 static uint8_t compat_state_id(flight_state_t state) {

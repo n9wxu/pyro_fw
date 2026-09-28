@@ -1,5 +1,5 @@
 /*
- * Pin map — Pyro MK1B (Raspberry Pi Pico module), read from the
+ * Pin map — Pyro MK1B (a bare RP2040, U6), read from the
  * pyro_mk1b.kicad_sch netlist. See THEORY_OF_OPERATION.md "Pins".
  *
  * SPDX-License-Identifier: MIT
@@ -19,7 +19,7 @@
 #define BOARD_PIN_UART_RX  1
 
 #define BOARD_PIN_LED    25 /* the Pico's own */
-#define BOARD_PIN_BUZZER 16 /* LS1 */
+#define BOARD_PIN_BUZZER 16 /* Q1A's gate: BUZZER1 from VIN */
 
 /* Two sensors' SDA pads on one SCL; a board carries one sensor. See
  * THEORY_OF_OPERATION.md "Pressure sensor". */

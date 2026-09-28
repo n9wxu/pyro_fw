@@ -9,8 +9,8 @@ place a question gets asked. This path exists for the questions it cannot
 answer — anything involving **two cores**: the `multicore_launch_core1_raw`
 handshake, `malloc_mutex`, and the flash window of `src/flash_window.h`,
 where core0 erasing flash takes XIP away from a core1 that is executing
-from it. `support/prove_core0.py` proves statically that those hazards
-*can* happen. This is where they happen.
+from it. `support/prove_core0.py` checks statically which of those waits
+core0 can reach. This is where they happen.
 
 ## Setup
 
@@ -48,7 +48,10 @@ Then, after any change under `sim/plant/`:
 
 The plant is canonical in *this* repository. The copy under
 `hw/misc/pyro-plant/` in the QEMU tree is generated, because QEMU's meson
-cannot reach outside its own source root.
+cannot reach outside its own source root. The script copies each board's
+`board_pins.h` but not `boards/mk1c/pyro_sense.h`, which `plant_mk1c.c`
+includes (DD-054): copy it into `hw/misc/pyro-plant/mk1c/` too, or the QEMU
+build fails.
 
 ## Use
 
@@ -68,8 +71,8 @@ is linked above `pico_fota_bootloader`.
 
 The plant device takes `board`, `match1`, `match2` (`present` / `absent` /
 `short` / `spent`), `pack-mv`, `match-mohm` and `verbose`. With
-`verbose=true` and `-D <file>` every pin edge is logged with its timestamp,
-which is how the sense cadence below was read off.
+`verbose=true` and `-D <file>` every pin edge is logged with its timestamp;
+`run-qemu.sh` passes no extra QEMU arguments, so add `-D` to its last line.
 
 ## What the `pyro-plant` branch adds
 
@@ -96,31 +99,23 @@ address silently returns zero for everything. Use
 
 ## What works
 
-MK1A and MK1B boot through the bootloader, mount littlefs, probe I2C, reach
-the main loop and emit telemetry that tracks the plant:
-
-```
-plant: ch1 present, ch2 absent
-  mk1a   $PYRO,40,...,01,0,4095,0,0      flags 01 = channel 1 continuity good
-  mk1b   $PYRO,40,...,00,0,4095,0,0      flags 00 = neither channel good
-```
-
-Same plant, same raw counts, opposite verdicts — MK1B classifies a healthy
-1 ohm igniter as `shorted`. The sense cadence is real, not scripted:
-
-```
-GPIO10 -> 1 at 2062.373 ms     PYRO_LOW asserted
-GPIO10 -> 0 at 2112.761 ms     +50 ms, SETTLE_MS
-GPIO10 -> 1 at 2562.743 ms     +450 ms, IDLE_MS
-```
+MK1A and MK1B boot through the bootloader, mount littlefs, probe I2C and
+reach the main loop. With no pressure sensor modelled (item 3) each reports
+`!SENSOR FAIL` and stays in FAULT, which sends no `$PYRO` sentence
+(FLT-BOOT-12, DD-031). The pyro backend's sense cycle still runs against the
+plant, and its cadence is real, not scripted: MK1A asserts PYRO_LOW (GPIO10)
+for `NODE_SETTLE_MS` (50 ms) and reads, releases it for another 50 ms and
+reads for shorts, then waits `IDLE_BETWEEN_CHECKS_MS` (400 ms), each deadline
+taken by the 20 ms loop (DD-065). MK1B reads its channels as MK1A does
+(DD-059).
 
 ## TODO
 
 ### 1. Lua on core1 — the reason this path exists
 
-Core1 never launches today: `lua_core1_start()` is only called when there is
-a script to run, and the emulated littlefs is empty. Nothing about the
-multicore hazard surface is being exercised yet.
+Core1 never launches: `lua_core1_start()` is only called when there is a
+script to run, and the emulated littlefs is empty, so nothing exercises the
+multicore hazard surface.
 
 The way in is a pre-built littlefs image laid into the flash array at the
 filesystem offset, so a script is present at boot without needing the web
@@ -149,8 +144,8 @@ hunting is not worth much without it.
 The firmware serves its web UI over lwIP on USB ECM (TinyUSB device stack).
 The RFC machine has "USB DPRAM and shallow USB controller register storage"
 and explicitly no "device and host transactions, endpoint state machines".
-So today the guest never enumerates and the log fills with
-`!NET tx fail (not ready)`.
+So the guest never enumerates, and every frame lwIP sends is refused as not
+ready (`NET_TX_NOT_READY`, `src/net_txq.h`).
 
 Closing it means a **USB device-mode controller that terminates ECM inside
 the device model** and passes Ethernet frames to a QEMU `-netdev`:
@@ -169,20 +164,22 @@ controller: DPRAM buffer-control registers, EP0 SETUP handling, and the
 endpoint state machines — call it a few days, most of it spent on
 enumeration.
 
-Worth weighing against the cheaper option first: `src/http_server.c` and
-the `www/` handlers can be linked host-side against a socket shim, which
-catches most web bugs for a fraction of the effort. It does **not** exercise
-the interaction that `DECISIONS.md` #2 and the flash window are about —
-HTTP uploads landing on flash writes — and that interaction is the reason
-to want the real thing.
+Worth weighing against the cheaper option first: `http_tests` already runs
+`src/http_conn.c` against a fake transport, and `http_work_tests` runs
+`src/http_work.c`, which catches most web bugs for a fraction of the effort.
+They do **not** exercise the interaction the flash window is about — HTTP
+uploads landing on flash writes, with core1 running HTTP units (DD-061) —
+and that interaction is the reason to want the real thing.
 
 ### 3. Pressure
 
-No BMP280 model, so `!PRES init FAIL` and `!CAL TIMEOUT` force PAD_IDLE and
-flights never progress. A BMP280 on the new `rp2040-i2c` bus, fed by
-`sim/physics.c`, would give full flights on emulated hardware — and the
-I2C controller already drives a real `I2CBus`, so the device can just be
-attached.
+No pressure sensor model, so bring-up ends in `!PRES init FAIL`, the board
+reports `!SENSOR FAIL` and stays in FAULT, and flights never start. A BMP280
+(MK1A, MK1B) or MS5607 (MK1B, MK1C) on the new `rp2040-i2c` bus, fed by
+`sim/physics.c`, would give full flights on emulated hardware — and the I2C
+controller already drives a real `I2CBus`, so the device can just be
+attached. The bring-up's transfers are the SDK's `_timeout_us` forms
+(DD-069), so the model must answer within their bounds.
 
 ### 4. MK1C
 

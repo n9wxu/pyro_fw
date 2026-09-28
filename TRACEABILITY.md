@@ -101,8 +101,9 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-DESC-02 | Landing from every descent phase | Closed-loop: test_FLT_DESC_02_ballistic_reaches_landed | ✅ |
 | PYR-ALT-01 | Clamp altitude settings | Closed-loop: Karman suite (AGL > 8000m clamped, pyro still fires) | ✅ |
 | PYR-ALT-02 | Warning beep for range | Integration: test_PYR_ALT_02_cfg_range_beep | ✅ |
-| FLT-RATE-01..02 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds); Chain: test_T9_one_shot_cadence (the one-shot at the loop period: 498 pressures in 10 s at 20 ms, every interval one loop, DD-066); test_ms5607_pair_ready_before_the_next_loop (at each MS5607 board's own bus rate, 400 kHz on MK1B and MK1C, the pair is ready 1.4 ms before the next loop, DD-052), test_ms5607_a_pair_every_loop (2.7 ms of work a pressure, as measured, costs no pair); Hardware (2.1.697, 2026-09-27, `support/pressure_trace.py`, 60 s each): MK1C and both MK1Bs 50.0 pressures a second, a temperature with each, no gaps, no missed slots; MK1A's BMP280, one forced conversion a loop (2.1.701, DD-067), 50.0 a second, consistently good | ✅ |
-| FLT-RATE-03 | 1 Hz while LANDED | Chain: test_N18_landed_logs_once_a_second | ✅ |
+| FLT-RATE-01 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds); Chain: test_T9_one_shot_cadence (the one-shot at the loop period: 498 pressures in 10 s at 20 ms, every interval one loop, DD-066); test_ms5607_pair_ready_before_the_next_loop (at each MS5607 board's own bus rate, 400 kHz on MK1B and MK1C, the pair is ready 1.4 ms before the next loop, DD-052), test_ms5607_a_pair_every_loop (2.7 ms of work a pressure, as measured, costs no pair); Hardware (2.1.697, 2026-09-27, `support/pressure_trace.py`, 60 s each): MK1C and both MK1Bs 50.0 pressures a second, a temperature with each, no gaps, no missed slots; MK1A's BMP280, one forced conversion a loop (2.1.701, DD-067), 50.0 a second, consistently good | ✅ |
+| FLT-RATE-02 | Batches of 5 | — the flight software takes one sample a loop; the batch API has no caller (H3 in docs/outstanding_tasks.md) | ❌ |
+| FLT-RATE-03 | 1 Hz while LANDED | — sampling stays at the loop rate; the log keeps a row a second, Chain: test_N18_landed_logs_once_a_second (H3) | ❌ |
 | FLT-RATE-04 | The rate is the HAL's | Chain: test_T9_same_outcomes (the same outcomes at 11 ms and 20 ms), test_T3_durations_not_counts (at 10 ms) | ✅ |
 | FLT-RATE-05 | Holds and dwells in sample time | Chain: test_T11_loop_clock_independent (a loop clock lagging 0-70 ms changes no decision's sample) | ✅ |
 
@@ -153,7 +154,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | SYS-DATA-01 | Record flight data | Integration: test_DAT_04_events (samples > 100) | ✅ |
 | SYS-DATA-02 | Export standard format | Integration: test_DAT_06_csv_export; Chain: test_T8_columns, test_T8_replay | ✅ |
 | SYS-DATA-03 | Announce max altitude | Integration: test_BUZ_07_03_lifecycle | ✅ |
-| DAT-01 | 4096-entry ring buffer | Integration: samples recorded throughout flight | ✅ |
+| DAT-01 | 4096-entry ring buffer | — the ring holds 64 (`FLIGHT_BUF_SIZE`); the flight record is `flight_log.bin`, DD-062 (H3) | ❌ |
 | DAT-02 | Sample fields, at the sample's time | Integration: events have correct fields; Chain: test_T11_log_rows_at_sample_time, test_T8_columns | ✅ |
 | DAT-08 | A high-rate log replays through the firmware | Chain: test_T8_replay (every event to the sample, no state diverging), test_T8_replay_refuses_a_thinned_log | ✅ |
 | DAT-03 | Events tag samples | Integration: test_DAT_04_events | ✅ |
@@ -217,7 +218,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | PYR-FAULT-02 | Detect overcurrent | Closed-loop: test_PYR_FAULT_02_overcurrent_detection | ✅ |
 | PYR-FAULT-03 | Indicate overcurrent | Beep codes 2-3/3-3 + flight buffer events | ✅ |
 | PYR-VERIFY-01 | Post-fire verification | check_post_fire_verify() + beep codes 2-4/3-4; Board pyro (MK1C): test_mk1c_fired_channel_reads_open_after (the first tracking test on the drained bus reports the fired channel open) | ✅ |
-| PYR-ARM-01 | The pump only inside a fire; a stopped loop disarms | Board pyro (MK1C): test_mk1c_pump_runs_only_inside_a_fire, test_mk1c_a_stopped_loop_disarms (U9 off within 20 ms), test_mk1c_only_the_tracking_test_runs | ✅ |
+| PYR-ARM-01 | The pump only inside a fire; a stopped loop disarms | Board pyro (MK1C): test_mk1c_pump_runs_only_inside_a_fire, test_mk1c_a_stopped_loop_disarms (U9 off within 35 ms at the 20 ms loop), test_mk1c_only_the_tracking_test_runs | ✅ |
 | PYR-ARM-02 | Refused without presence, with a fault, or below UVLO | Board pyro (MK1C): test_mk1c_refuses_an_open_channel, test_mk1c_refuses_before_a_tracking_test, test_mk1c_refuses_with_a_latched_fault, test_mk1c_refuses_below_uvlo | ✅ |
 | PYR-ARM-03 | Fire on the measured bus; a precharge timeout aborts and latches | Board pyro (MK1C): test_mk1c_fires_on_the_measured_bus, test_mk1c_a_short_during_precharge_aborts, test_mk1c_fires_a_present_channel, test_mk1c_fires_on_one_cell; the bench fire into a dummy load is owed | ✅ |
 | PYR-ARM-04 | The pump stops at the gate; the gate held until U9 is off | Board pyro (MK1C): test_mk1c_pump_runs_only_inside_a_fire | ✅ |
@@ -296,7 +297,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | BLD-01..05 | Build targets | CI: build succeeds | ✅ |
 | TST-01..03 | Unit/integration/closed-loop | CI: all pass | ✅ |
 | TST-04 | All 4 pyro modes | Closed-loop: 7 config suites | ✅ |
-| TST-05 | 100ft to 100km | Closed-loop: 4 altitude profiles | ✅ |
+| TST-05 | 100ft to 100km | Closed-loop: 4 profiles, 65 m to 950 m, from rockets.json (H3) | ❌ |
 | TST-06 | Chute reduces descent | Closed-loop: test_TST_06_chute_effect | ✅ |
 | TST-07 | Web UI tests | CI: Playwright tests | ✅ |
 | TST-08 | CI on every push | GitHub Actions | ✅ |
@@ -395,9 +396,9 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 249 |
+| ✅ Verified by a host, web or closed-loop test | 246 |
 | ⚠️ Not directly verified (needs a test or hardware) | 20 |
-| ❌ Not implemented | 1 (USB-06: no hardware path) |
+| ❌ Not implemented | 5 (USB-06: no hardware path; DAT-01, FLT-RATE-02, FLT-RATE-03, TST-05: H3) |
 | ✅ HW (hardware satisfies) | 11 |
 
 Rows of the tables above. `support/trace_check.py --counts` computes them, and CI fails when this table disagrees.
@@ -407,6 +408,7 @@ _+2 requirements in v2 Task 5 (TEL-03 event sentences, TEL-04 JSON format)_
 _+20 requirements in v2 Tasks 7–10 (PWR-*, CFG-TABLE-*, TELEM-FMT-*), all verified by buzzer/config/integration tests_
 
 ### Remaining gaps (hardware or future work only):
+- **DAT-01, FLT-RATE-02, FLT-RATE-03, TST-05**: the code does not do what they say (H3 in docs/outstanding_tasks.md)
 - **FLT-RATE-01..04**: Sample rate precision — hardware timing test
 - **PYR-CONT-01**: Continuity check period — hardware timing test
 - **BUZ-STATUS-01 / BUZ-01..02**: Beep codes / startup chirps — hardware audio test

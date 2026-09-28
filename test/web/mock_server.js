@@ -304,7 +304,7 @@ const server = http.createServer((req, res) => {
         {p:0,  f:FN.uart_tx, g:'none',   lbl:'J1 TX',         role:'off',    name:'',      held:true},
         {p:8,  f:FN.digital|FN.pwm|FN.serial|FN.pixel, g:'none', lbl:'J1 user pad', role:'out', name:'led', held:false},
         {p:15, f:FN.pyro_common|FN.digital|FN.bridge,  g:'common', lbl:'CN1.2-3 common', role:'bridge', name:'motor_lo', held:false},
-        {p:16, f:FN.buzzer,  g:'none',   lbl:'LS1 buzzer',    role:'off',    name:'',      held:true},
+        {p:16, f:FN.buzzer,  g:'none',   lbl:'BUZZER1 via Q1A', role:'off',    name:'',      held:true},
         {p:21, f:FN.pyro_fire|FN.digital|FN.pwm|FN.bridge, g:'ch1', lbl:'CN1.1 drogue', role:'bridge', name:'motor', held:false},
         {p:22, f:FN.pyro_fire|FN.digital|FN.pwm|FN.bridge, g:'ch2', lbl:'CN1.4 main', role:'in', name:'probe', held:false},
         {p:26, f:FN.pyro_sense|FN.analog, g:'none', lbl:'ADC0 sense 1', role:'off', name:'', held:true}

@@ -29,7 +29,7 @@
     X(8, FN_DIGITAL | FN_PWM | FN_SERIAL | FN_PIXEL, PG_NONE, "J1 user pad")                                           \
     X(10, FN_I2C_SDA, PG_NONE, "MS5607 SDA")                                                                           \
     X(15, FN_PYRO_COMMON | FN_DIGITAL | FN_BRIDGE, PG_COMMON, "CN1.2-3 common")                                        \
-    X(16, FN_BUZZER, PG_NONE, "LS1 buzzer")                                                                            \
+    X(16, FN_BUZZER, PG_NONE, "BUZZER1 via Q1A")                                                                       \
     X(21, FN_PYRO_FIRE | FN_DIGITAL | FN_PWM | FN_BRIDGE, PG_CH1, "CN1.1 drogue")                                      \
     X(22, FN_PYRO_FIRE | FN_DIGITAL | FN_PWM | FN_BRIDGE, PG_CH2, "CN1.4 main")                                        \
     X(25, FN_LED, PG_NONE, "D1 status LED")                                                                            \

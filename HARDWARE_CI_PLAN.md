@@ -1,5 +1,35 @@
 # Hardware CI Plan — Proxmox Self-Hosted Runners
 
+> **Status, 2026-09-28: a plan from March 2026, not built.** No self-hosted
+> runner and no `.github/workflows/hardware.yml` exist.
+>
+> **What exists.** `.github/workflows/build.yml` runs on GitHub's hosted
+> runner for pushes to `main` and `lua-all-boards` and for pull requests: it
+> builds mk1b (the default), mk1c, mk1a and the reference template, runs the
+> host suites, `support/prove_core0.py` on the mk1b, mk1c and mk1a images,
+> `support/trace_check.py`, `support/wait_check.py`, the web UI tests, and
+> uploads the mk1b artifacts. `.github/workflows/release.yml` builds mk1b for a
+> `v*` tag and publishes it. Hardware is checked by hand on the bench, with the
+> scripts in `support/` (`support/README.md`): `api_check.py`,
+> `http_stream_check.py`, `pressure_trace.py`, `noise_baseline.py` and
+> `test_network.py`; `flash_picotool.sh`, `upload_fw.sh` and `upload_www.sh`
+> load a board, and `register_board.py` records it in
+> `boards/BOARD_REGISTRY.json`.
+>
+> **Where the plan below is out of date:**
+> - The bench is four boards of three designs, MK1A, two MK1Bs and MK1C
+>   (DD-066, DD-070), not four MK1Bs. Each design needs its own image,
+>   `-DPYRO_BOARD=<name>`; the build job below builds only the default.
+> - The image is `pyro_fw_<board>.uf2` and `.bin` (`build/pyro_fw_mk1b.uf2`
+>   by default), not `pyro_fw_c.uf2`; the OTA image is still
+>   `pyro_fw_c_fota_image.bin`.
+> - Each board answers at 192.168.*n*.1, where *n* is the last byte of its
+>   MAC: derived from its flash's unique id, or set in `/serial.txt`
+>   (`src/board_identity.h`; `/api/status` field `subnet`). Not 192.168.7.1.
+> - The USB IDs (`2e8a:4002` in application mode, `2e8a:0003` in BOOTSEL), the
+>   Pico SDK version (2.2.0) and the API routes the job uses (`/api/status`,
+>   `/api/config`, `/api/reboot`, `/api/ota`) are as the plan has them.
+
 ## Overview
 4 Pyro MK1B boards on Proxmox VMs as GitHub Actions self-hosted runners.
 2× MS5607 sensor, 2× BMP280 sensor. 4 parallel jobs.
