@@ -65,6 +65,12 @@ uint32_t flash_window_deferrals(void);
  * that only programs a page. */
 void flash_window_erased(void);
 void flash_window_programmed(void);
+
+/* [DD-068] Advanced by every erase and program, before interrupts return.
+ * An operation's current disturbs a pressure conversion running beside it
+ * (G4-M), so a sensor notes this as a conversion starts and compares it as
+ * the conversion is read. A plain RAM word: the MS5607's handler reads it. */
+extern volatile uint32_t flash_op_seq;
 uint32_t flash_window_erases(void);
 uint32_t flash_window_programs(void);
 

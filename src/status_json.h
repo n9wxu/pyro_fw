@@ -65,6 +65,7 @@ typedef struct {
     uint8_t pyro1_refires;
     bool main_forced;
     uint32_t pres_waits, pres_rejects;
+    uint32_t pres_flashed; /* [DD-068] readings a flash operation disturbed, not fed on */
     int32_t raw_pa, pad_speed_cms;
     bool ground_degraded;
     uint32_t ground_reseeds;

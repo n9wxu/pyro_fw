@@ -144,7 +144,8 @@ RP2040's own 50–80 kΩ, too slow an edge for fast mode, so its probe stays in
 standard mode. The MS5607 then converts a pressure and a temperature every
 loop, read from a one-shot alarm whose handler runs from RAM (DD-051, DD-066):
 the pair is ready 18.6 ms after the top of a 20 ms loop, which only fast mode
-allows. The BMP280 runs in normal mode and is read every 20 ms.
+allows. A BMP280 fitted instead converts once a loop, commanded in forced
+mode and taken at the next (DD-067).
 
 ## Telemetry, LED and buzzer
 

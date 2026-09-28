@@ -22,11 +22,12 @@ recorded.
 | 4 | [The pressure chain and the Mach lockout](#4-the-pressure-chain-and-the-mach-lockout) | done; G4 ran 2026-09-27, T5's cost over its limit (T5-C) |
 | 5 | [Other code defects](#5-other-code-defects) | done, except C10, C6 and U6 (their decisions) |
 | 5a | [No sleeps](#5a-no-sleeps-dd-053) | done |
-| 5b | [MK1C firing path](#5b-mk1c-firing-path) | **done in code** (DD-056); a flash, then a supervised bench fire into a dummy load |
+| 5b | [MK1C firing path](#5b-mk1c-firing-path) | **done in code** (DD-056); the bench fire is deferred (section 9) |
 | 6 | [Bench checks](#6-bench-checks) | a person or equipment |
 | 7 | [Board changes](#7-board-changes) | hardware design; **B-U5: MK1B cannot sense continuity** |
 | 8 | [Documentation and housekeeping](#8-documentation-and-housekeeping) | done |
-| 9 | [Deferred, and not planned](#9-deferred-and-not-planned) | nothing yet |
+| 9 | [Deferred, and not planned](#9-deferred-and-not-planned) | F1's bench fire; false-launch reversion |
+| 10 | [Logging and lockups in flight](#10-logging-and-lockups-in-flight) | **your decisions**: the logging design, the Mach short rate, lwIP's heap |
 
 **G4 ran on 2026-09-27**, with your permission to flash: all four bench
 boards on 2.1.681 (MK1A 02632D472F0C, MK1B 02E7253A34C2 and 02E72A403441,
@@ -1250,6 +1251,9 @@ latch counts tracking tests, not loops (invariant 8).
 `board_pyro_mk1c_tests`: 22 tests against the plant of the board as built,
 on 2S and 1S. Requirements PYR-ARM-01..06 and PYR-CONT-04.
 
+**Deferred 2026-09-27, at your direction:** "We will not do F1 anytime soon."
+See section 9. What the bench fire would check:
+
 **Owed, on the bench:** a flash (G4), then a supervised fire with a 1 ohm
 pulse resistor on CN1 and the scope on the firing bus, before any real match.
 Pass: `!PYRO FIRE` with the bus at 90 % of the pack or more, the gate held
@@ -1279,10 +1283,10 @@ resolution doc.
 | D-C1 | MK1C's R_BLEED, open, hides from the bus level | U9's reverse path carries the bus either way (685 against 730 counts), so no level check can find it (DD-054). **Closed, not wanted:** the firmware checks only presence and shorts (DD-055) | — |
 | CI-1 | Six host suites never run in CI | `pin_caps_tests`, `beep_tests`, `pin_assign_tests`, `buzzer_tests`, `config_tests` and `config_persistence_tests` pass in the local gate but no workflow step runs them; `plant_tests` and `board_pyro_mk1c_tests` now do | a workflow edit |
 | G4-L | MK1C overruns under G4's own load | **Done 2026-09-27 (DD-061).** G4 asks for 0 loop overruns on MK1C with Lua running. Under the checks' HTTP load MK1C logged 1-4, on 2.1.681 and 2.1.683 alike: STAGE 1 peaked at 7.7 ms, 7.4 ms of it HTTP handlers. HTTP now runs as work units from the slack, or on core1; the loop's head only moves bytes. All four bench boards on 2.1.688 through G4: 0 overruns, STAGE 1 peak 2.1 ms at most, every check passing | -- |
-| G4-M | The pad Mach flag rises under upload load | **Found 2026-09-27.** After G4's uploads `api_check.py` finds the Mach flag up on the pad (FLT-MACH-02): 6 of 12 runs on the bench MK1B at 2.1.687-688, and 2 of 4 at 2.1.683 -- an A/B on the same board, so DD-061 is not the cause. Each run's littlefs writes stretch the pressure readings' stamp lag to 50-90 ms. Suspect the short rate over the newest two intervals, which a delayed stamp can make tiny. The flag is forgotten after 10 s with no launch, but a launch inside those 10 s starts flagged. Pass: a test that reproduces the flag from a stamp pattern, a fix, and 0 in 10 G4 runs | a pressure-chain change, and G4 |
-| G4-N | A 40-60 s HTTP outage, once | **Found 2026-09-27.** In one of twelve runs on the bench MK1B (2.1.687) the board stopped answering HTTP -- a request timed out, then connects did -- for 40-60 s, and answered again without resetting (uptime continuous, 310 units served). Not seen in the fourteen G4 runs since on the four boards, nor in four on 2.1.683. `/api/status` now reports how the last boot ended (`prev_watchdog`, `prev_stage`), so a reset would name itself. **Recurred 2026-09-27 on MK1A** (2.1.692) during a pressure trace polling it ten times a second: HTTP unanswered while ping answered, and no reset (`prev_watchdog` false, uptime continuous). `support/pressure_trace.py` rides out an outage and reports its length, so a long trace is a reproducer. Pass: reproduce, or a soak that shows none | a soak |
-| S1 | A 100 Hz BMP280 | **Open decision (DD-063).** MK1A's BMP280 runs x4 at 50 Hz, which the bench found clean. At 100 Hz x4 gives 13% stale reads; x2 in normal mode is clean within chance, narrowly. To log MK1A at 100 Hz: a forced-mode one-shot at x2, one conversion commanded each loop, fresh by construction; then `support/pressure_trace.py` on MK1A. | your decision, then a driver change |
-| S2 | The MS5607's noise and its temperature step | **Found 2026-09-27 (DD-063).** White noise 6.5-9.3 Pa on all three boards against the datasheet's 2.4 Pa at OSR 4096, unchanged at half the duty; and the pressure right after each temperature conversion reads about 4 Pa high, relaxing over 90 ms. Both are in the raw codes. **The step is gone (DD-066, 2.1.697):** with a temperature before every pressure each sits at the same distance from one, and the residual folds flat (MK1C 6.96 Pa to 6.43). The white noise remains, 6.4-9.1 Pa. Worth checking: the VDD decoupling (the datasheet asks 100 nF at the pin, page 17) and bus activity during conversions (page 6) | the boards' design files, and the trace |
+| G4-M | The pad Mach flag rises under upload load | **Cause found 2026-09-27.** Not the stamps: MK1B's MS5607 is disturbed electrically. With every conversion traced through ten G4 rounds, the scatter rose from 9 Pa to 21-25 Pa while `api_check.py` ran, in two stretches: its flash writes, and test mode, where the buzzer announces the pad verdict. A beep code alone, with no flash write, takes it to 31-38 Pa for as long as it plays (`/api/beeps/play`). The flag's short rate over two intervals then trips about once in 20 beep codes at the 20 ms loop, and nearly every code at the old 10 ms loop: G4-M's 6 in 12. Flash writes: conversions a write overlapped are now discarded (DD-068). The buzzer: **your decision** (section 10, M3). No flag in 20 G4 rounds on 2.1.697-698 | your decision |
+| G4-N | A 40-60 s HTTP outage, once | **Mechanism found 2026-09-27 (DD-070).** `/api/net` on one G4 round: 40 % of frames refused at the USB endpoint and left to lwIP's retransmit timer (3 s, doubling), lwIP's heap out 27,865 times at 7,832 of 8,000 bytes. A stalled response, then refused connects while ping answers, is what that produces. Frames the endpoint cannot take yet are now held and sent (2.4 % refused on the next round). Owed: a soak on the fix with `soak_n2.py`'s monitor (the ping's TTL, `/api/net` either side of an outage); lwIP's heap size is **your decision** (section 10, N1) | a soak |
+| S1 | The BMP280 at the loop's rate | **Done in code 2026-09-27 (DD-067),** at your direction: "S1 needs to make the BMP280 match the loop rate." One forced conversion a loop, x4/x1, taken at the next, stamped from its command; every transfer bounded (DD-069). Owed: `support/pressure_trace.py` on MK1A | a flash and a trace |
+| S2 | The MS5607's noise and its temperature step | **Found 2026-09-27 (DD-063).** White noise 6.5-9.3 Pa on all three boards against the datasheet's 2.4 Pa at OSR 4096, unchanged at half the duty; and the pressure right after each temperature conversion reads about 4 Pa high, relaxing over 90 ms. Both are in the raw codes. **The step is gone (DD-066, 2.1.697):** with a temperature before every pressure each sits at the same distance from one, and the residual folds flat (MK1C 6.96 Pa to 6.43). The white noise remains, 6.4-9.1 Pa. **Your note (2026-09-27):** the sensors run in ambient air on the bench, so part of it may be ordinary pressure noise. **Found the same day:** MK1B's buzzer, sounding, takes the MS5607's scatter from 9 to 31-38 Pa, pressure and temperature codes alike, so it is electrical; flash writes do the same, less (DD-068). Worth checking: the VDD decoupling (the datasheet asks 100 nF at the pin, page 17) and bus activity during conversions (page 6) | the boards' design files, and the trace |
 | D-B1 | MK1B's continuity check stalls the loop | **Passed 2026-09-27** on 2.1.681: the second MK1B, owning its pyros, 0 overruns (79,233 on 2.1.680), `stage_max_us[3]` 4.1 ms. The reading it makes is B-U5's | — |
 | T5 | The fit's cost, and the pad's σ, on each board | **Measured 2026-09-27**, at rest after a reboot: `stage_max_us[2]` 2.9 ms on both MK1Bs and MK1C, 2.1 ms on MK1A, steady from the first seconds on the pad -- over the 500 µs allowance (T5-C); 0 overruns. `fit_sigma_mpa` MK1A 1495-1508, MK1C 4314-4480, both MK1Bs 5000, the ceiling (`PP_SIGMA_CEIL_PA`): the MS5607 boards read about twice the datasheet's 2.4 Pa at OSR 4096 (MS5607-02BA03 p.4) on this bench, the MK1Bs at least that | — |
 | N20 | No file served while the log is written | in test mode, once a chamber pump-down declares a launch, `GET /www/app.js` answers 423 and `/api/status` 200; after LANDED the log reads back whole | test mode, the chamber |
@@ -1370,6 +1374,14 @@ rebuilt after the simulator fixes (N6). `emcc` is now installed.
 
 ## 9. Deferred, and not planned
 
+### The MK1C bench fire (F1)
+
+Deferred 2026-09-27, at your direction: "We will not do F1 anytime soon." The
+firing path is done in code and tested against the board's plant
+(`board_pyro_mk1c_tests`); section 5b's F1 keeps the pass criteria for when
+it is taken up, with DD-065's 20 ms-loop timings (gate held up to 40 ms,
+disarm about 35 ms).
+
 ### False-launch reversion
 
 Not scheduled, at your decision (2026-09-25).
@@ -1412,3 +1424,29 @@ From `docs/pressure-filter-prompt.md`:
 
 From `docs/mach-lockout-prompt.md`: the deviations are listed in M1, and the
 launch trigger is C2.
+
+---
+
+## 10. Logging and lockups in flight
+
+Opened 2026-09-27 at your direction: "There must never be a lockup in
+flight. Logging must not disrupt flight operations." From an audit of the
+flight path, checked against the code, and an analysis of moving the flight
+code into RAM, which you asked for without changes.
+
+**Done the same day:** every sensor bus transfer is bounded (DD-069: the
+BMP280's, the MS5607's detection and MK1B's BMP280 reset waited forever on
+a held bus, and bring-up runs again after a reset in flight); conversions a
+flash write overlapped are discarded (DD-068).
+
+| ID | Risk | Evidence | Needs |
+|---|---|---|---|
+| L1 | A watchdog reset in flight never deploys | `WATCHDOG_MS` is 1000 (`PYRO_LOOP_WORST_MS` 500 on every board). A watchdog reset comes back cold (`test_BRN_01_software_reset_never_recovers`), and a cold board in the air needs a new 100 ft climb to launch. Nothing bounds how many erases one littlefs call makes, and each may take the flash part's worst case | the logging design |
+| L2 | The log erases flash about once a second in flight | Each 1 s sync (`LOG_SYNC_MS`) makes the next write copy the partial last block into a freshly erased one (`lfs_ctz_extend`). An erase holds core0 with interrupts off: 46-73 ms measured (DD-035). It delays the loop, and so a fire decided just after it, and costs the conversions it overlaps (DD-068). No guard near apogee or deploy | the logging design |
+| L3 | C6 is not implemented, and a recovery truncates the flight's own log | The log is opened with `LFS_O_TRUNC` in the first window after launch detection (`hal_common.c`); the brownout-recovery path calls `hal_log_start()` too (`flight_states.c:428`), which erases what DD-035's syncs kept. The pad announcement does not wait for the log | the logging design |
+| L4 | A write failure in flight | littlefs can take part of a write and still fail it; the retry writes the part again and the CSV stops at the misaligned record. After an error `lfs_file_sync` returns success without writing. No counter | the logging design |
+| L5 | USB in flight | With a host attached (test mode, the chamber) OTA erases, reboots and BOOTSEL are obeyed in flight | a decision: refuse them in flight |
+| L6 | MK1C: a stall during precharge latches a fault | A core0 stall over about 35 ms during precharge times out and latches `FAULT_PRECHARGE_TIMEOUT`, refusing both channels thereafter. No flight source of such a stall once the window is shut, but no test of the latch after the loop resumes | a test |
+| R1 | Moving the flight path into RAM | **Analysis, 2026-09-27:** it fits. About 38 KB of code and 2 KB of constants move per board; 50.6 KB of SRAM is free, 7-10 KB left after, once printf leaves the flight path. Recommended: from launch to landing core0 runs only RAM code, and core1 does the log's flash writes as units core0 hands it (Lua pauses during them). The USB and alarm-pool interrupts are masked while a unit is out, an MPU guard faults any missed flash access, and `prove_core0.py` proves the flight closure RAM-closed. About 13-19 engineer-days. The whole image cannot run from RAM: code and constants alone exceed SRAM | your decision |
+| M3 | The Mach short rate and the buzzer | On MK1B a beep code trips FLT-MACH-02's two-interval rate about once in 20 codes (DD-068's table). Options: a 5-sample slope (80 ms, about 20 ms more lag, noise at 35 Pa 5.3 sigma below the threshold); discarding beep-overlapped samples (blinds the pad detector for up to 5.5 s at a time); or the board (a decoupled sensor supply). The flag's rate path exists for 66 g boosts, so its lag is the safety margin | your decision |
+| N1 | lwIP's heap | 8,000 bytes against a 5,840-byte send buffer per connection: two or three streaming connections still exhaust it (4,493 refusals in a G4 round after DD-070). More heap spends RAM R1 would need | your decision |

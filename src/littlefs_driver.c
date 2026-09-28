@@ -63,6 +63,7 @@ static int pico_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t of
     flash_window_crumb(97);
     uint32_t ints = save_and_disable_interrupts();
     flash_range_program(fs_base(c) + p, buffer, size);
+    flash_op_seq++;
     restore_interrupts(ints);
     flash_window_programmed();
     flash_window_crumb(98);
@@ -79,6 +80,7 @@ static int pico_erase(const struct lfs_config *c, lfs_block_t block) {
     flash_window_crumb(95);
     uint32_t ints = save_and_disable_interrupts();
     flash_range_erase(fs_base(c) + off, FLASH_SECTOR_SIZE);
+    flash_op_seq++;
     restore_interrupts(ints);
     flash_window_erased();
     flash_window_crumb(96);

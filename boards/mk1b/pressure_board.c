@@ -95,10 +95,11 @@ pressure_sensor_type_t pressure_sensor_step(uint32_t now_ms) {
     case BU_BMP280_SETTLE: {
         if (!deadline_reached(now_ms, bu.due_ms))
             return PRESSURE_SENSOR_PENDING;
-        /* At either address: a missing sensor NACKs. */
+        /* At either address: a missing sensor NACKs, and a held bus times
+         * out, since this also runs after a reset in flight. */
         static const uint8_t reset_cmd[2] = {BMP280_REG_RESET, BMP280_SOFT_RESET};
-        i2c_write_blocking(BOARD_I2C_INST, BMP280_ADDR_SDO_LOW, reset_cmd, 2, false);
-        i2c_write_blocking(BOARD_I2C_INST, BMP280_ADDR_SDO_HIGH, reset_cmd, 2, false);
+        i2c_write_timeout_us(BOARD_I2C_INST, BMP280_ADDR_SDO_LOW, reset_cmd, 2, false, 2000u);
+        i2c_write_timeout_us(BOARD_I2C_INST, BMP280_ADDR_SDO_HIGH, reset_cmd, 2, false, 2000u);
         bu.due_ms = now_ms + BMP280_STARTUP_MS;
         bu.state = BU_BMP280_START;
         return PRESSURE_SENSOR_PENDING;

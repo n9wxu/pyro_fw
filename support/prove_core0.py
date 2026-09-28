@@ -62,21 +62,30 @@ UNBOUNDED = {
     "queue_add_blocking": "waits for space core1 may never make",
     "queue_remove_blocking": "waits for an entry core1 may never add",
     "critical_section_enter_blocking": "shared spin lock, no timeout",
+    "i2c_write_blocking": "no timeout: a part holding SCL low holds the caller forever",
+    "i2c_read_blocking": "no timeout: a part holding SCL low holds the caller forever",
 }
 
 # Entry points that must keep running for the rocket to be safe. These are the
 # obligations: watchdog feed, launch detect, pyro service, state machine.
 FLIGHT_ROOTS = [
     "main",
-    "flight_update",
+    "dispatch_state",
     "flight_update_outputs",
+    "hal_tasks_tick",
+    # hal_tasks_tick() calls these through async_task_t.tick, set at run time,
+    # which a call graph cannot follow.
+    "pres_bringup_tick",
+    "pres_tick",
+    "buzzer_tick",
     "hal_pyro_update",
     "pyro_update",
     "hal_pyro_fire",
     "hal_pyro_sample",
     "action_launch",
     "hal_log_start",
-    "hal_watchdog_feed",
+    "hal_log_sample",
+    "watchdog_update",
     "net_service",
 ]
 
@@ -470,9 +479,28 @@ def check_ram_closed(elf, objdump):
     return rc
 
 
+def defined_functions(elf, objdump):
+    out = subprocess.run([objdump, "-t", elf], capture_output=True, text=True, check=True).stdout
+    return {line.split()[-1] for line in out.splitlines() if " F " in line and line.split()}
+
+
+def check_roots(elf, roots, objdump):
+    """A root the image does not define proves nothing, silently: a renamed
+    function would leave the proof without a word."""
+    have = defined_functions(elf, objdump)
+    missing = [r for r in roots if r not in have]
+    if not missing:
+        print(f"PASS  every flight root is in the image ({len(roots)})")
+        return 0
+    print(f"FAIL  flight roots not in the image: {', '.join(missing)}")
+    print("      a renamed or removed function leaves the proof; name what replaced it")
+    return 1
+
+
 def report(elf, roots, core1_entry=None):
     findings, xip, spins, callers = analyse(elf, roots)
     print(f"=== {elf} ===")
+    root_rc = check_roots(elf, roots, find_objdump())
     present = [p for p in UNBOUNDED if p in callers]
     print(f"unbounded primitives linked in : {', '.join(sorted(present)) or '(none)'}")
     if not findings:
@@ -499,6 +527,7 @@ def report(elf, roots, core1_entry=None):
         for root, op, path in xip:
             print(f"      {root} -> ... -> {op}  ({len(path)} frames)")
     rc = 0 if not findings else 1
+    rc |= root_rc
     rc |= check_ram_resident(elf, find_objdump())
     rc |= check_ram_closed(elf, find_objdump())
     if core1_entry:

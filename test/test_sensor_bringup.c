@@ -18,6 +18,8 @@ void hal_telemetry_send(const char *sentence) {
     (void)sentence;
 }
 
+volatile uint32_t flash_op_seq;
+
 #if defined(BOARD_PIN_MS5607_SDA) /* MK1B: two SDA pads on one SCL */
 #define MS_SDA BOARD_PIN_MS5607_SDA
 #define BMP_SDA BOARD_PIN_BMP280_SDA
@@ -239,6 +241,19 @@ void test_bringup_at_the_boards_speed(void) {
 #endif
 }
 
+/* A sensor holding SCL low completes no transfer, and bring-up waits on none:
+ * it also runs after a brownout reset in flight, where a hung transfer holds
+ * the loop until the watchdog resets the board cold. */
+void test_bringup_a_held_bus_is_bounded(void) {
+    attach_fitted();
+#ifdef HAS_MS5607
+    ms_dev.held = true;
+#else
+    bmp_dev.held = true;
+#endif
+    TEST_ASSERT_EQUAL(PRESSURE_SENSOR_NONE, bring_up(NULL));
+}
+
 void test_bringup_without_a_sensor(void) {
     int loops;
     TEST_ASSERT_EQUAL(PRESSURE_SENSOR_NONE, bring_up(&loops));
@@ -255,6 +270,13 @@ void test_bringup_mk1b_bmp280(void) {
     TEST_ASSERT_EQUAL(0, bmp_early);
 }
 
+/* MK1B: a BMP280 holding its pad's bus costs bounded waits too. */
+void test_bringup_mk1b_held_bmp280_is_bounded(void) {
+    attach_bmp280();
+    bmp_dev.held = true;
+    TEST_ASSERT_EQUAL(PRESSURE_SENSOR_NONE, bring_up(NULL));
+}
+
 /* MK1B with its MS5607: the BMP280 pad is let go before the MS5607's. */
 void test_bringup_mk1b_releases_the_bmp280_pad(void) {
     attach_ms5607();
@@ -269,9 +291,11 @@ int main(void) {
     RUN_TEST(test_bringup_recovers_the_bus_first);
     RUN_TEST(test_bringup_waits_out_the_reset);
     RUN_TEST(test_bringup_at_the_boards_speed);
+    RUN_TEST(test_bringup_a_held_bus_is_bounded);
     RUN_TEST(test_bringup_without_a_sensor);
 #if defined(HAS_MS5607) && defined(HAS_BMP280)
     RUN_TEST(test_bringup_mk1b_bmp280);
+    RUN_TEST(test_bringup_mk1b_held_bmp280_is_bounded);
     RUN_TEST(test_bringup_mk1b_releases_the_bmp280_pad);
 #endif
     return UNITY_END();

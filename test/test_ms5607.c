@@ -23,6 +23,7 @@ bool fake_bus_armed;
 bool fake_bus_forced;
 uint8_t fake_bus_address;
 void (*fake_bus_handler)(void);
+uint32_t fake_bus_flash_ops;
 
 uint8_t ms5607_address(void) {
     return 0x77;
@@ -287,6 +288,48 @@ void test_ms5607_cycle_holds_off_after_a_failed_read(void) {
     TEST_ASSERT_FALSE(fake_bus_forced);
 }
 
+/* [DD-068] A flash erase or program disturbs a conversion running beside it
+ * (G4-M: 83 % of the temperatures read after one were outliers). Each code
+ * says whether one ran between its command and its read. */
+void test_ms5607_flash_during_the_pressure_marks_it(void) {
+    ms5607_async_start();
+    interrupts();
+    fake_bus_flash_ops += 2u;
+    run_to(1000000u + LOOP_PERIOD_US);
+    ms5607_pair_t c;
+    TEST_ASSERT_TRUE(ms5607_async_take(&c));
+    TEST_ASSERT_TRUE(c.ok);
+    TEST_ASSERT_TRUE(c.d1_flashed);
+    TEST_ASSERT_FALSE(c.d2_flashed);
+}
+
+void test_ms5607_flash_during_the_temperature_marks_it(void) {
+    ms5607_async_start();
+    run_to(D1_READ_END + 100u);
+    fake_bus_flash_ops += 2u;
+    run_to(1000000u + LOOP_PERIOD_US);
+    ms5607_pair_t c;
+    TEST_ASSERT_TRUE(ms5607_async_take(&c));
+    TEST_ASSERT_FALSE(c.d1_flashed);
+    TEST_ASSERT_TRUE(c.d2_flashed);
+}
+
+/* A disturbed temperature never reaches the line: every pressure near it
+ * would take its error. */
+void test_ms5607_cycle_skips_a_flashed_temperature(void) {
+    ms5607_temps_t t = {0};
+    ms5607_pair_t c;
+    ms5607_start_t started;
+    ms5607_async_cycle(&t, &c, &started);
+    run_to(D1_READ_END + 100u);
+    fake_bus_flash_ops += 2u;
+    run_to(1000000u + LOOP_PERIOD_US);
+    TEST_ASSERT_TRUE(ms5607_async_cycle(&t, &c, &started));
+    TEST_ASSERT_TRUE(c.d2_flashed);
+    TEST_ASSERT_EQUAL(0, t.n);
+    TEST_ASSERT_EQUAL(MS5607_STARTED, started);
+}
+
 /* [SNS-PRES-12] A pressure is compensated with the temperature at its own
  * time: between two readings, the line's value there, not the newest's. */
 void test_SNS_PRES_12_the_line_interpolates_back(void) {
@@ -317,6 +360,9 @@ int main(void) {
     RUN_TEST(test_ms5607_cycle_notes_the_temperature_and_starts_the_next);
     RUN_TEST(test_ms5607_a_pair_every_loop);
     RUN_TEST(test_ms5607_cycle_holds_off_after_a_failed_read);
+    RUN_TEST(test_ms5607_flash_during_the_pressure_marks_it);
+    RUN_TEST(test_ms5607_flash_during_the_temperature_marks_it);
+    RUN_TEST(test_ms5607_cycle_skips_a_flashed_temperature);
     RUN_TEST(test_SNS_PRES_12_the_line_interpolates_back);
     RUN_TEST(test_ms5607_begin_addresses_the_sensor);
     return UNITY_END();

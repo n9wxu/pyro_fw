@@ -103,10 +103,16 @@ extern i2c_inst_t fake_i2c_inst[2];
 #define i2c0 (&fake_i2c_inst[0])
 #define i2c1 (&fake_i2c_inst[1])
 #define PICO_ERROR_GENERIC (-1)
+#define PICO_ERROR_TIMEOUT (-2)
 uint i2c_init(i2c_inst_t *i2c, uint baudrate);
 uint i2c_set_baudrate(i2c_inst_t *i2c, uint baudrate);
+/* On a held bus these wait forever on the hardware, as the SDK's do: the
+ * fake marks that an unbounded wait, like a sleep. */
 int i2c_write_blocking(i2c_inst_t *i2c, uint8_t addr, const uint8_t *src, size_t len, bool nostop);
 int i2c_read_blocking(i2c_inst_t *i2c, uint8_t addr, uint8_t *dst, size_t len, bool nostop);
+int i2c_write_timeout_us(i2c_inst_t *i2c, uint8_t addr, const uint8_t *src, size_t len, bool nostop,
+                         uint timeout_us);
+int i2c_read_timeout_us(i2c_inst_t *i2c, uint8_t addr, uint8_t *dst, size_t len, bool nostop, uint timeout_us);
 
 static inline void sleep_ms(uint32_t ms) {
     (void)ms;

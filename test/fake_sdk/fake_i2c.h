@@ -17,6 +17,7 @@ typedef struct fake_i2c_dev {
     int (*read)(struct fake_i2c_dev *d, uint8_t *dst, size_t len);
     uint hz_last; /* the bus rate at its last answered transfer */
     int transfers;
+    bool held; /* holds SCL low: no transfer to it ever completes */
 } fake_i2c_dev_t;
 
 extern uint fake_i2c_hz[2];

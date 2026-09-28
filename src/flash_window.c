@@ -54,6 +54,7 @@ bool flash_window_is_open(void) {
 }
 
 static uint32_t erases, programs;
+volatile uint32_t flash_op_seq;
 
 void flash_window_open(void) {
     window_open = true;

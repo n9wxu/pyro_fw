@@ -124,7 +124,7 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         "],\"reset_cause\":%u,\"recovery\":\"%s\","
         "\"prev_watchdog\":%s,\"prev_stage\":%ld,\"prev_stage_ms\":%lu,"
         "\"pyro1_refused\":%s,\"pyro2_refused\":%s,\"pyro1_refires\":%u,\"main_forced\":%s,"
-        "\"pres_waits\":%lu,\"pres_rejects\":%lu,\"raw_pa\":%ld,\"pad_speed_cms\":%ld,"
+        "\"pres_waits\":%lu,\"pres_rejects\":%lu,\"pres_flashed\":%lu,\"raw_pa\":%ld,\"pad_speed_cms\":%ld,"
         "\"ground_degraded\":%s,\"ground_reseeds\":%lu,"
         "\"sample_interval_us\":[%lu,%lu],\"stamp_lag_max_us\":%lu,\"fit_sigma_mpa\":%lu,"
         "\"mach_lock\":%s,\"mach_flag_ms\":%lu,\"peak_lower_bound\":%s,"
@@ -132,8 +132,8 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u}",
         (unsigned)s->reset_cause, S(s->recovery), B(s->prev_watchdog), (long)s->prev_stage,
         (unsigned long)s->prev_stage_ms, B(s->pyro_refused[0]), B(s->pyro_refused[1]), (unsigned)s->pyro1_refires,
-        B(s->main_forced), (unsigned long)s->pres_waits, (unsigned long)s->pres_rejects, (long)s->raw_pa,
-        (long)s->pad_speed_cms, B(s->ground_degraded), (unsigned long)s->ground_reseeds,
+        B(s->main_forced), (unsigned long)s->pres_waits, (unsigned long)s->pres_rejects, (unsigned long)s->pres_flashed,
+        (long)s->raw_pa, (long)s->pad_speed_cms, B(s->ground_degraded), (unsigned long)s->ground_reseeds,
         (unsigned long)s->sample_interval_us[0], (unsigned long)s->sample_interval_us[1],
         (unsigned long)s->stamp_lag_max_us, (unsigned long)s->fit_sigma_mpa, B(s->mach_lock),
         (unsigned long)s->mach_flag_ms, B(s->peak_lower_bound), B(s->usb_attached), B(s->test_mode),

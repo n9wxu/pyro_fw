@@ -89,6 +89,7 @@ static void typical(status_snap_t *s) {
     s->pyro_refused[1] = true;
     s->pyro1_refires = 1;
     s->pres_waits = 7;
+    s->pres_flashed = 3;
     s->raw_pa = 101300;
     s->pad_speed_cms = -3;
     s->ground_reseeds = 2;
@@ -174,6 +175,7 @@ static const char *const TYPICAL[][2] = {
     {"main_forced", "false"},
     {"pres_waits", "7"},
     {"pres_rejects", "0"},
+    {"pres_flashed", "3"},
     {"raw_pa", "101300"},
     {"pad_speed_cms", "-3"},
     {"ground_degraded", "false"},
@@ -321,6 +323,7 @@ void test_SJ_02_the_widest_status_fits_its_bound(void) {
                        &s.loop_late_max_us, &s.loop_count,       &s.flash_opens,        &s.flash_skips,
                        &s.flash_refusals,   &s.log_dropped,      &s.flash_erases,       &s.flash_programs,
                        &s.flash_deferrals,  &s.pyro_mocked,      &s.pres_waits,         &s.pres_rejects,
+                       &s.pres_flashed,
                        &s.ground_reseeds,   &s.stamp_lag_max_us, &s.fit_sigma_mpa,      &s.mach_flag_ms,
                        &s.http_units[0],    &s.http_units[1],    &s.http_unit_max_us[0], &s.http_unit_max_us[1],
                        &s.sample_interval_us[0], &s.sample_interval_us[1], &s.prev_stage_ms};

@@ -46,6 +46,10 @@ int i2c_write_blocking(i2c_inst_t *i2c, uint8_t addr, const uint8_t *src, size_t
     fake_i2c_dev_t *d = find(i2c, addr);
     if (!d)
         return PICO_ERROR_GENERIC;
+    if (d->held) {
+        fake_slept = "i2c_write_blocking on a held bus";
+        return PICO_ERROR_GENERIC;
+    }
     int n = d->write(d, src, len);
     if (n >= 0) {
         d->transfers++;
@@ -59,10 +63,31 @@ int i2c_read_blocking(i2c_inst_t *i2c, uint8_t addr, uint8_t *dst, size_t len, b
     fake_i2c_dev_t *d = find(i2c, addr);
     if (!d)
         return PICO_ERROR_GENERIC;
+    if (d->held) {
+        fake_slept = "i2c_read_blocking on a held bus";
+        return PICO_ERROR_GENERIC;
+    }
     int n = d->read(d, dst, len);
     if (n >= 0) {
         d->transfers++;
         d->hz_last = fake_i2c_hz[i2c->index];
     }
     return n;
+}
+
+int i2c_write_timeout_us(i2c_inst_t *i2c, uint8_t addr, const uint8_t *src, size_t len, bool nostop,
+                         uint timeout_us) {
+    (void)timeout_us;
+    fake_i2c_dev_t *d = find(i2c, addr);
+    if (d && d->held)
+        return PICO_ERROR_TIMEOUT;
+    return i2c_write_blocking(i2c, addr, src, len, nostop);
+}
+
+int i2c_read_timeout_us(i2c_inst_t *i2c, uint8_t addr, uint8_t *dst, size_t len, bool nostop, uint timeout_us) {
+    (void)timeout_us;
+    fake_i2c_dev_t *d = find(i2c, addr);
+    if (d && d->held)
+        return PICO_ERROR_TIMEOUT;
+    return i2c_read_blocking(i2c, addr, dst, len, nostop);
 }

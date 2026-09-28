@@ -147,6 +147,8 @@ typedef struct {
      * from the hardware timer as it began */
     uint64_t d1_at_us, d2_at_us;
     bool ok; /* false: the sensor did not answer, or the bus stuck */
+    /* [DD-068] a flash erase or program ran during that code's conversion */
+    bool d1_flashed, d2_flashed;
 } ms5607_pair_t;
 
 /* Claims a hardware alarm for the one-shot and installs its handler. */

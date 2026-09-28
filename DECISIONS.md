@@ -559,6 +559,121 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-070: The USB Network Holds A Frame The Endpoint Cannot Take Yet
+- **Decision:** link output no longer drops a frame the USB endpoint is too
+  busy to take. It holds it, by reference, in a queue of eight
+  (`net_txq.c`), and `net_service()` sends the queue in order as the endpoint
+  frees, before and after the HTTP transport. A frame is refused only when
+  the queue is full or the host has let the device go. lwIP does not
+  retransmit a segment a driver still holds. `/api/net` reports lwIP's pools,
+  TCP's connections by state and what the transport refused (WEB-API-13).
+- **Why (G4-N):** the board's HTTP outages of 40-60 s needed evidence, and
+  `/api/net` gave it on the first G4 round: 472 of 1182 frames (40 %)
+  refused at the endpoint, lwIP's heap out 27,865 times at a high-water mark
+  of 7,832 of 8,000 bytes, and 158,937 refused TCP writes. The old link
+  output gave up after 20 quick retries, far less than one full frame's
+  1.2 ms on the bus, and left the frame to lwIP's retransmit timer: 3 s,
+  doubling. Meanwhile the segment held the heap, and a SYN-ACK needs the
+  heap too. That makes a stalled response, then refused connects, while
+  ping, which needs no heap, still answers: G4-N's order of events.
+- **After, on the bench MK1B (2.1.700, one G4 round):** 21 of 878 frames
+  refused (2.4 %), 522 held and sent; heap refusals 4,493, TCP write
+  refusals 4,493.
+- **Not done:** lwIP's heap is 8,000 bytes against a 5,840-byte send buffer
+  per connection, so two or three connections streaming at once still
+  exhaust it. Raising it spends RAM the flight-code move would need; that is
+  the user's call.
+- **Owed:** a soak of all four boards with the new monitor (the ping's TTL
+  and `/api/net` before and after any outage), to show no outage.
+
+### DD-069: No Sensor Bus Transfer Waits Without Bound
+- **Decision:** every I2C transfer the loop makes to a pressure sensor gives
+  up within 2 ms: the BMP280's reads and commands, the MS5607's detection,
+  and MK1B's BMP280 reset. `support/wait_check.py` now refuses the SDK's
+  `i2c_write_blocking` and `i2c_read_blocking`.
+- **Why:** at the user's direction, "There must never be a lockup in
+  flight." The SDK's blocking transfers pass no timeout
+  (`hardware_i2c/i2c.c:246` in SDK 2.2.0), so a part holding SCL low holds
+  core0 until the watchdog resets it. A watchdog reset comes back cold, and a
+  cold board in the air never deploys (`test_BRN_01_software_reset_never_recovers`).
+  The BMP280 is read every loop in flight, and bring-up, MS5607 detection
+  included, runs again after any reset in flight. The MS5607 one-shot's own
+  transfers were bounded already (`MS5607_BUS_TIMEOUT_US`, DD-051). Found
+  by an audit of the flight path for this task.
+- **Tests:** a fake part that holds the bus, against a fake SDK whose
+  blocking transfers count as an unbounded wait
+  (`test_bmp280_a_held_bus_costs_a_bounded_wait`,
+  `test_bringup_a_held_bus_is_bounded`,
+  `test_bringup_mk1b_held_bmp280_is_bounded`). The two bring-up tests failed
+  on MK1B before the change.
+- **The proof, too:** `support/prove_core0.py` now counts the SDK's blocking
+  I2C transfers as unbounded waits, and names as flight roots the task ticks
+  `hal_tasks_tick()` reaches through a function pointer (`pres_tick`,
+  `pres_bringup_tick`, `buzzer_tick`), which a call graph cannot follow. Two
+  of its roots, `flight_update` and `hal_watchdog_feed`, no longer existed
+  and were skipped without a word; a root missing from the image now fails
+  it, and `dispatch_state`, `watchdog_update`, `hal_tasks_tick` and
+  `hal_log_sample` stand in. On HEAD's MK1A image it fails
+  `pres_tick -> bmp280_read -> i2c_read_blocking`; on this change's images of
+  all three boards it passes.
+
+### DD-068: A Conversion A Flash Operation Ran Beside Is Not Used
+- **Decision:** the flash layer advances `flash_op_seq` with every erase and
+  program, before interrupts return. Each sensor notes it as a conversion
+  starts and compares it as the conversion is read: the MS5607's handler for
+  each code of its pair, the BMP280's cycle for its forced conversion. A
+  changed count discards that code. A disturbed pressure is not fed on; a
+  disturbed temperature is not put on the line. Each is counted
+  (`pres_flashed` on `/api/status`) and traced ('F' a pressure, 'G' a
+  temperature), and `support/pressure_trace.py` lets a discarded pressure
+  explain its slot.
+- **Why (G4-M):** the pad Mach flag that G4's uploads raised on the bench
+  MK1B was the flash disturbing the sensor. Ten rounds of G4's loads on
+  2.1.697, with every conversion traced: while `api_check.py` and the
+  uploads wrote flash, the pressure's residual went from 9.4 Pa to 21-25 Pa,
+  with readings up to 91 Pa off. The raw codes carry it -- D1's scatter 2.7
+  times its idle, D2's up to 5.7 times -- so it is the conversion, not the
+  arithmetic. Of the temperature reads an erase held off, 83 % were
+  outliers. The UI check, which only reads flash, disturbed nothing. The
+  worst short rate reached 0.0217 of p against the flag's 0.029. At the old
+  10 ms loop the same disturbance over half the span is twice the rate:
+  G4-M's 6 flags in 12 runs. The 20 ms loop hid it, with a quarter to spare,
+  and did not fix it.
+- **Why it matters in flight:** the flight log writes flash all flight
+  (DD-035), and before the Mach flag's first release the short rate sets it
+  from any sample.
+- **What it costs:** a disturbed conversion is a missing sample, 20 ms. A
+  gap needs 250 ms before any fit is suspect (SNS-PRES-11). Sensor loss is
+  judged only in flight, where only the log writes.
+- **The mechanism** is presumed electrical: the flash's program and erase
+  current on the rail both parts share. The fix does not depend on it.
+- **Owed on the bench:** G4's loads on the bench MK1B with the trace, to
+  show the conversions kept during writes scatter as they do at rest.
+
+### DD-067: The BMP280 At The Loop's Rate
+- **Decision:** at the user's direction -- "S1 needs to make the BMP280
+  match the loop rate" -- the BMP280 runs one forced conversion a loop.
+  Detection leaves it asleep, x4 pressure and x1 temperature, no filter. Each
+  loop, `bmp280_cycle()` takes the conversion the last loop commanded, then
+  commands the next. It reads status and data in one burst; a conversion
+  still measuring is a wait, and nothing is commanded over it. 50 pressures
+  a second, each a conversion of its own.
+- **Why:** in normal mode the part converted on its own clock, 11.5 ms
+  typical, beating against the 20 ms loop. A read took whatever the
+  registers held, and its stamp was a guess, 6 ms before the read. The
+  datasheet recommends forced mode for "host-based synchronization"
+  (section 3.6.2, page 16).
+- **The stamp** is the command's time plus 7.5 ms: the middle of the
+  pressure's measurement. Table 13 (page 18) gives the whole at 11.5 ms
+  typical, 13.3 ms at most, and its rows add 2 ms typical a pressure
+  oversample, so x4's pressure is the last 8 ms. A compile-time check keeps
+  13.3 ms inside the period.
+- **Also:** the transfers are bounded (DD-069), and a conversion a flash
+  operation ran beside is discarded (DD-068).
+- **Owed on the bench:** MK1A traced at 50 a second, with no stale read and
+  a constant lag.
+- **Supersedes** DD-063's option of a 100 Hz BMP280 (task S1).
+
 ### DD-066: A Pressure And A Temperature Every Loop
 - **Decision:** at the user's question -- "Can we make the one shot collect
   a pressure and a temperature every time?" -- the one-shot converts a pair

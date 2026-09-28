@@ -13,6 +13,9 @@
  * (http_work.h), run by http_server_work() from the slack or by core1.
  */
 #include "lwip/tcp.h"
+#include "lwip/memp.h"
+#include "lwip/stats.h"
+#include "lwip/priv/tcp_priv.h"
 #include "board_id.h"
 #include "board_if.h"
 #include <string.h>
@@ -48,6 +51,7 @@
 #include "status_json.h"
 #include "flight_log.h"
 #include "pressure_trace.h"
+#include "net_stats.h"
 
 extern uint32_t hal_time_ms(void);
 
@@ -68,6 +72,7 @@ extern uint32_t hal_pressure_stamp_lag_max_us(void);
 extern uint32_t hal_pressure_waits(void);
 extern uint32_t hal_pressure_rate_hz(void);
 extern uint32_t hal_pressure_rejects(void);
+extern uint32_t hal_pressure_flashed(void);
 
 #define CORS_HDR "Access-Control-Allow-Origin: *\r\n"
 
@@ -208,6 +213,7 @@ static bool ota_flush(void) {
     uint32_t ints = save_and_disable_interrupts();
     flash_range_erase(addr, FLASH_SECTOR_SIZE);
     flash_range_program(addr, ota_buf, ota_buf_fill);
+    flash_op_seq++;
     restore_interrupts(ints);
     ota_offset += FLASH_SECTOR_SIZE;
     ota_buf_fill = 0;
@@ -795,6 +801,7 @@ static void status_capture(status_snap_t *s) {
     s->main_forced = fctx && fctx->main_forced;
     s->pres_waits = hal_pressure_waits();
     s->pres_rejects = hal_pressure_rejects();
+    s->pres_flashed = hal_pressure_flashed();
     s->raw_pa = pp_last_raw_pa();
     s->pad_speed_cms = fctx ? fctx->pad_speed_cms : 0;
     s->ground_degraded = pp_ground_degraded(); /* [GND-CAL-07] */
@@ -944,6 +951,8 @@ static bool flight_csv_count(conn_t *c) {
  * kept back for littlefs's copy-on-write metadata. */
 #define LOG_SPACE_RESERVE_BLOCKS 4
 
+static void serve_api_net(http_conn_t *hc);
+
 static void serve_log_space(conn_t *c) {
     http_conn_t *hc = &c->h;
     if (!fs_take(c)) {
@@ -1038,6 +1047,8 @@ static void serve_get(conn_t *c) {
         serve_flight_csv(c);
     } else if (strcmp(path, "/api/log/space") == 0) {
         serve_log_space(c);
+    } else if (strcmp(path, "/api/net") == 0) {
+        serve_api_net(hc);
     } else if (strncmp(path, "/api/pressure/trace", 19) == 0 && (path[19] == '\0' || path[19] == '?')) {
         /* Every conversion since ?since=N, in binary (pressure_trace.h), for
          * support/pressure_trace.py. */
@@ -1420,6 +1431,61 @@ static const http_handlers_t handlers = {
 extern volatile uint32_t net_http_accept;
 extern volatile uint32_t net_http_err;
 extern volatile uint32_t net_conn_full;
+extern volatile uint32_t net_rx_count, net_rx_drop, net_tx_fail, net_tx_ok, net_tx_held;
+extern volatile uint32_t net_usb_events[4];
+
+/* G4-N: what refused, for /api/net. */
+static uint32_t net_accept_refused, net_write_fails, net_idle_aborts, net_last_accept_ms;
+
+static void net_pool(net_pool_t *o, const struct stats_mem *m) {
+    o->used = m->used;
+    o->max = m->max;
+    o->err = m->err;
+}
+
+/* GET /api/net: lwIP's pools and TCP's connections by state, and what the
+ * transport refused (net_stats.h). */
+static void serve_api_net(http_conn_t *hc) {
+    net_snap_t s;
+    memset(&s, 0, sizeof(s));
+    net_pool(&s.heap, &lwip_stats.mem);
+    net_pool(&s.tcp_pcb, lwip_stats.memp[MEMP_TCP_PCB]);
+    net_pool(&s.tcp_seg, lwip_stats.memp[MEMP_TCP_SEG]);
+    net_pool(&s.pbuf_pool, lwip_stats.memp[MEMP_PBUF_POOL]);
+    s.tcp_xmit = lwip_stats.tcp.xmit;
+    s.tcp_recv = lwip_stats.tcp.recv;
+    s.tcp_drop = lwip_stats.tcp.drop;
+    s.tcp_memerr = lwip_stats.tcp.memerr;
+    s.icmp_recv = lwip_stats.icmp.recv;
+    s.icmp_xmit = lwip_stats.icmp.xmit;
+    struct tcp_pcb *const lists[2] = {tcp_active_pcbs, tcp_tw_pcbs};
+    for (int i = 0; i < 2; i++) {
+        for (struct tcp_pcb *p = lists[i]; p; p = p->next) {
+            if ((unsigned)p->state < sizeof(s.states) / sizeof(s.states[0]))
+                s.states[p->state]++;
+            if (p->snd_queuelen > s.sndq_max)
+                s.sndq_max = p->snd_queuelen;
+            if (p->nrtx > s.nrtx_max)
+                s.nrtx_max = p->nrtx;
+        }
+    }
+    s.accepts = net_http_accept;
+    s.accept_refused = net_accept_refused;
+    s.write_fails = net_write_fails;
+    s.conn_full = net_conn_full;
+    s.http_err = net_http_err;
+    s.idle_aborts = net_idle_aborts;
+    s.rx_frames = net_rx_count;
+    s.rx_drops = net_rx_drop;
+    s.tx_sent = net_tx_ok;
+    s.tx_held = net_tx_held;
+    s.tx_refused = net_tx_fail;
+    for (int i = 0; i < 4; i++)
+        s.usb[i] = net_usb_events[i];
+    s.last_accept_ms = net_last_accept_ms;
+    int n = net_json(&s, (char *)hc->work, sizeof(hc->work));
+    http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
+}
 
 static int slot_of(const conn_t *c) {
     return (int)(c - conns);
@@ -1597,6 +1663,7 @@ static void on_err(void *arg, err_t err) {
 static err_t on_accept(void *arg, struct tcp_pcb *pcb, err_t err) {
     (void)arg;
     if (err != ERR_OK || !pcb) {
+        net_accept_refused++;
         return ERR_VAL;
     }
     link_t *l = NULL;
@@ -1611,7 +1678,8 @@ static err_t on_accept(void *arg, struct tcp_pcb *pcb, err_t err) {
         return ERR_ABRT;
     }
     net_http_accept++;
-    *l = (link_t){.pcb = pcb, .seq = ++link_seq, .last_ms = hal_time_ms()};
+    net_last_accept_ms = hal_time_ms();
+    *l = (link_t){.pcb = pcb, .seq = ++link_seq, .last_ms = net_last_accept_ms};
     tcp_nagle_disable(pcb);
     link_attach(l);
     return ERR_OK;
@@ -1701,7 +1769,10 @@ static void transport_link(link_t *l, uint32_t now) {
         uint16_t span = net_ring_read_span(&hc->tx, &p);
         u16_t room = tcp_sndbuf(pcb);
         uint16_t n = span < room ? span : room;
-        if (n == 0 || tcp_write(pcb, p, n, TCP_WRITE_FLAG_COPY) != ERR_OK) {
+        if (n == 0)
+            break;
+        if (tcp_write(pcb, p, n, TCP_WRITE_FLAG_COPY) != ERR_OK) {
+            net_write_fails++;
             break;
         }
         net_ring_discard(&hc->tx, n);
@@ -1717,6 +1788,7 @@ static void transport_link(link_t *l, uint32_t now) {
     } else if (http_conn_done(hc) && net_ring_readable(&hc->tx) == 0) {
         link_close(l);
     } else if (now - l->last_ms > HTTP_IDLE_MS) {
+        net_idle_aborts++;
         link_abort(l);
     }
 }

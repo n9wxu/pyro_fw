@@ -134,9 +134,11 @@ fresh reading about 50 ms in.
 ## Pressure sensor
 
 One BMP280 on I2C0 at 400 kHz, its fastest: R1 and R2 (4k7) hold fast mode's
-300 ns rise to about 75 pF (DD-052). It runs in normal mode, converting on its
-own every 11.5 ms (pressure ×4, temperature ×1), and the flight reads it every
-20 ms. Bring-up is the shared single-sensor path,
+300 ns rise to about 75 pF (DD-052). It sleeps between conversions: each loop
+takes the forced conversion the last loop commanded and commands the next
+(pressure ×4, temperature ×1, 13.3 ms at most), so every reading is a
+conversion of its own, stamped from its command (DD-067). Every transfer gives
+up within 2 ms (DD-069). Bring-up is the shared single-sensor path,
 `src/pressure_single_sensor.c`: clock the bus free — the sensor stays powered
 across a CPU reset and can be left holding SDA low — hand it to the I2C block,
 let the pull-ups settle, detect.
@@ -198,6 +200,8 @@ erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
 - `plant_tests` models this board's sense network (`sim/plant/plant_mk1a.c`):
   the counts above and how long a just-opened channel takes to read open.
 - `sensor_bringup_tests` runs the bring-up against a fake BMP280.
+- `bmp280_tests` runs the forced-mode cycle against a fake part timed from the
+  datasheet: a conversion a loop, its stamp, a held bus.
 - `integration_tests` flies the flight software built for MK1A.
 - `boards/sim_mk1a` runs the real `pyro_board.c` against the plant.
 

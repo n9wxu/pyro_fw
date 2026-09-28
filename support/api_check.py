@@ -109,7 +109,8 @@ if st0["uptime"] > 5000:
 for method, path, want in (("GET", "/www/no_such_file.html", 404), ("POST", "/api/no_such_route", 404),
                            ("GET", "/api/config", 200), ("GET", "/api/pins", 200),
                            ("GET", "/api/pins/caps", 200), ("GET", "/api/beeps", 200),
-                           ("GET", "/api/flight.csv", 200), ("GET", "/api/log/space", 200)):
+                           ("GET", "/api/flight.csv", 200), ("GET", "/api/log/space", 200),
+                           ("GET", "/api/net", 200)):
     code, hdr, body = req(method, path, "" if method == "POST" else None)
     cors = hdr.get("Access-Control-Allow-Origin") == "*"
     check(f"{method} {path} -> {want} with CORS", code == want and cors, f"{code} cors={cors}")
@@ -130,6 +131,15 @@ sp = json.loads(body)
 check("log space: bytes free, record size and the two rates",
       sp.get("bytes_free", 0) > 0 and sp.get("record_bytes") == 22 and sp.get("rates_hz", [0])[0] == 1
       and 40 <= sp.get("rates_hz", [0, 0])[1] <= 100, str(sp))
+
+# G4-N: the network's counters. This request's own connection is open, so
+# accepts and an established connection are at least one.
+_, _, body = req("GET", "/api/net")
+nt = json.loads(body)
+check("net: lwIP's pools, TCP by state, the transport's refusals",
+      all(len(nt.get(k, [])) == 3 for k in ("heap", "tcp_pcb", "tcp_seg", "pbuf_pool"))
+      and len(nt.get("states", [])) == 11 and nt["states"][4] >= 1 and nt.get("accepts", 0) >= 1
+      and len(nt.get("usb", [])) == 4 and nt["usb"][0] >= 1, str(nt)[:160])
 
 # REV-02 / REV-12: a disabled channel survives the merge, and no inert key is written.
 _, _, cfg0 = req("GET", "/api/config")

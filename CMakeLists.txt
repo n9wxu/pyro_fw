@@ -330,6 +330,8 @@ add_executable(pyro_fw_c
     src/http_conn.c
     src/http_work.c
     src/status_json.c
+    src/net_stats.c
+    src/net_txq.c
     src/flight_log.c
     src/log_plan.c
     src/pressure_trace.c
@@ -862,6 +864,36 @@ add_custom_target(pressure_trace_tests
 )
 
 # /api/status from a snapshot, linked alone: the renderer reads nothing else.
+# The USB network's transmit queue, against a fake endpoint (G4-N).
+add_custom_target(net_txq_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building network transmit queue tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_net_txq.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/net_txq.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_net_txq
+    COMMAND ${CMAKE_COMMAND} -E echo "Running network transmit queue tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_net_txq
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "USB network transmit queue tests"
+)
+
+# /api/net's rendering, the network's counters for the bench (G4-N).
+add_custom_target(net_stats_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building network counter tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_net_stats.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/net_stats.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_net_stats
+    COMMAND ${CMAKE_COMMAND} -E echo "Running network counter tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_net_stats
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "/api/net rendering tests"
+)
+
 add_custom_target(status_json_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building status rendering tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
@@ -963,6 +995,24 @@ add_custom_target(sensor_bringup_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_sensor_bringup_reference
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Pressure sensor bring-up tests, every board"
+)
+
+# The BMP280 at the loop's rate: one forced conversion a loop (DD-067), on a
+# fake part timed from the datasheet, with MK1A's pins.
+add_custom_target(bmp280_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building BMP280 tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1a -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_bmp280.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_i2c.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/bmp280_driver.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_bmp280
+    COMMAND ${CMAKE_COMMAND} -E echo "Running BMP280 tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_bmp280
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "BMP280 forced-mode tests"
 )
 
 # MK1C's real pyro backend against sim/hw/'s SDK stand-in and the plant model

@@ -18,6 +18,8 @@ Polls /api/pressure/trace (src/pressure_trace.h) and reports, per board:
   rejects    zeros (read before the conversion finished), bus errors, codes
              that compensate outside 1-120 kPa, and missed slots (the loop
              found the conversion still running)
+  flashed    conversions a flash erase or program ran beside, which the
+             firmware discards (DD-068): counted, not a fault
   lag        from the driver's stamp to the loop reading it
   noise      the sample-to-sample scatter, in pascals
 
@@ -102,21 +104,25 @@ REPEAT_P = 1e-3
 
 
 def analyze(recs, lost):
-    kinds = {k: 0 for k in "PTZBRW"}
+    kinds = {k: 0 for k in "PTZBRWFG"}
     for r in recs:
         kinds[chr(r[5])] = kinds.get(chr(r[5]), 0) + 1
-    # One pass: the pressures, and whether a temperature conversion sat
-    # between each and the one before, which explains one missing slot.
-    p, t_between, seen_t = [], [], False
+    # One pass: the pressures, and what sat between each and the one before.
+    # A temperature explains one missing slot, and so does each pressure
+    # discarded for a flash operation [DD-068].
+    p, t_between, f_between, seen_t, seen_f = [], [], [], False, 0
     for r in recs:
         k = chr(r[5])
         if k == "T":
             seen_t = True
+        elif k == "F":
+            seen_f += 1
         elif k == "P":
             if p:
                 t_between.append(seen_t)
+                f_between.append(seen_f)
             p.append(r)
-            seen_t = False
+            seen_t, seen_f = False, 0
     out = {"lost": lost, "kinds": kinds, "n": len(p)}
     if len(p) < 20:
         out["verdict"] = "too few pressure samples"
@@ -129,7 +135,8 @@ def analyze(recs, lost):
     backwards = sum(1 for d in iv if d <= 0)
     # Paired with every pressure [DD-066], a temperature takes no slot.
     paired = kinds["T"] >= 0.9 * len(p)
-    gaps = [d for d, t in zip(iv, t_between) if d > (2.5 if t and not paired else 1.5) * nominal]
+    gaps = [d for d, t, f in zip(iv, t_between, f_between)
+            if d > (1.5 + f + (1 if t and not paired else 0)) * nominal]
     raw = [r[2] for r in p]
     d = [b - a for a, b in zip(raw, raw[1:])]
     # The codes' own step: an oversampling that leaves the low bits zero makes
@@ -202,6 +209,8 @@ def report(name, a):
     print(f"   code step {a['step']}; repeats {a['repeats']} (chance {a['repeats_chance']:.1f}), stale {a['stale']} "
           f"(chance {a['stale_chance']:.1f}); "
           f"zeros {k['Z']}, bus {k['B']}, range {k['R']}, missed {k['W']}, lost {a['lost']}")
+    if k["F"] or k["G"]:
+        print(f"   discarded for a flash operation (DD-068): {k['F']} pressures, {k['G']} temperatures")
     print(f"   lag min/median/max {a['lag_ms'][0]:.2f}/{a['lag_ms'][1]:.2f}/{a['lag_ms'][2]:.2f} ms; "
           f"noise {a['noise_pa']:.2f} Pa")
 
@@ -210,7 +219,7 @@ def report(name, a):
 
 
 def synthetic(n=900, period_us=10000, t_every=10, noise_counts=80, bmp=False, stale_every=0, gap_at=None,
-              zeros=0, pairs=False, skip_at=None):
+              zeros=0, pairs=False, skip_at=None, flashed_at=()):
     import random
     rnd = random.Random(7)
     recs, t, raw = [], 1000, 6_500_000
@@ -231,6 +240,9 @@ def synthetic(n=900, period_us=10000, t_every=10, noise_counts=80, bmp=False, st
             continue
         code = raw + int(rnd.gauss(0, noise_counts))
         pa = 101325 * 100 + int((code - raw) * 4.4)
+        if i in flashed_at:
+            recs.append((t & 0xFFFFFFFF, t + 3000, code + 3000, 0, pa + 13000, ord("F")))
+            continue
         rec = (t & 0xFFFFFFFF, t + 3000, code, (500_000 + rnd.randint(0, 3)) if bmp else 0, pa, ord("P"))
         recs.append(rec)
         last = rec
@@ -248,6 +260,8 @@ def selftest():
         ("an unexplained gap", synthetic(gap_at=400), False),
         ("clean MS5607 pairs", synthetic(period_us=20000, pairs=True), True),
         ("a pair missed: its temperature took no slot", synthetic(period_us=20000, pairs=True, skip_at=400), False),
+        ("pressures discarded for a flash write explain their slots",
+         synthetic(period_us=20000, pairs=True, flashed_at=(300, 301, 600)), True),
         ("zeros", synthetic(zeros=3), False),
         ("a quiet sensor repeats by chance", synthetic(noise_counts=1), True),
     ]

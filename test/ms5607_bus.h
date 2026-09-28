@@ -40,6 +40,7 @@ extern bool fake_bus_armed;  /* an alarm is set and has not fired */
 extern bool fake_bus_forced; /* the interrupt is pending now */
 extern uint8_t fake_bus_address;
 extern void (*fake_bus_handler)(void);
+extern uint32_t fake_bus_flash_ops; /* advanced by each flash erase or program */
 
 static inline uint64_t ms5607_bus_now_us(void) {
     return fake_bus_now;
@@ -78,6 +79,10 @@ static inline void ms5607_bus_alarm_now(int alarm) {
 static inline void ms5607_bus_alarm_ack(int alarm) {
     (void)alarm;
     fake_bus_forced = false;
+}
+
+static inline uint32_t ms5607_bus_flash_ops(void) {
+    return fake_bus_flash_ops;
 }
 
 static inline bool ms5607_bus_begin(uint8_t address, void (*handler)(void), int *alarm) {

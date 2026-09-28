@@ -7,15 +7,18 @@ The exec loop is the only clock: anything that has to wait parks on a
 deadline and a later iteration picks it up. The only interruptions are flash
 writes. So no source in src/ or boards/ may call a function whose job is to
 let time pass: the SDK's sleeps and busy-waits, and the blocking DMA and PIO
-waits that pace a transfer by time.
+waits that pace a transfer by time. Nor the SDK's blocking I2C transfers:
+they pass no timeout, so a part holding SCL low holds the caller forever,
+and in flight that is a lockup until the watchdog resets the board cold. The
+_timeout_us forms are the bounded ones.
 
 ALLOWED lists calls not yet converted, per file, as a ratchet: a file over
 its count fails, and so does a file under it, so the list is kept exact and
 only shrinks. It is empty: every sleep in the tree is gone.
 
 Outside this check: bounded waits on a bus or a peripheral's handshake, such
-as the I2C drivers' transfers and core1's power-state acknowledgement. They
-wait for hardware, not for time.
+as the MS5607 one-shot's register-level transfers and core1's power-state
+acknowledgement. They wait for hardware, not for time, and give up.
 """
 import os
 import re
@@ -31,6 +34,7 @@ WAITS = [
     "best_effort_wfe_or_timeout",
     "dma_channel_wait_for_finish_blocking",
     "pio_sm_put_blocking", "pio_sm_get_blocking",
+    "i2c_write_blocking", "i2c_read_blocking",
 ]
 CALL_RE = re.compile(r"\b(" + "|".join(WAITS) + r")\s*\(")
 

@@ -15,6 +15,7 @@
 #include "lwip/igmp.h"
 #include "lwip/apps/mdns.h"
 #include "http_server.h"
+#include "net_txq.h"
 
 #define INIT_IP4(a, b, c, d)                                                                                           \
     { PP_HTONL(LWIP_MAKEU32(a, b, c, d)) }
@@ -30,6 +31,7 @@ volatile uint32_t net_rx_count;
 volatile uint32_t net_rx_drop;
 volatile uint32_t net_tx_fail;
 volatile uint32_t net_tx_ok;
+volatile uint32_t net_usb_events[4]; /* mounts, unmounts, suspends, resumes: /api/net */
 
 /* Device-side MAC. Filled by net_mac_init() from board_identity, which must
  * run before tud_init() because the ECM descriptor carries this as a string
@@ -82,48 +84,56 @@ void net_mac_init(void) {
     IP4_ADDR(&dhcp_config.dns, 192, 168, n, 1);
 }
 
-/* Non-blocking link output: try briefly, then let lwIP retry via TCP
- * retransmit.
- *
- * Do not spin waiting for the USB host to drain its FIFO. That blocks the
- * pressure tasks, the buzzer and incoming USB frames for as long as the host
- * takes. A bounded retry holds worst-case latency under 2 ms and still
- * succeeds on the first attempt in the common case. */
+/* Link output never waits on the endpoint and never drops a frame it could
+ * send a moment later: a busy endpoint holds the frame (net_txq.h), and
+ * net_service() sends it as soon as the endpoint frees [G4-N]. Frames held
+ * through the host's settling time after a mount go out once it has passed. */
+static net_txq_t txq;
+volatile uint32_t net_tx_held;
+
+static bool tx_ready(void) {
+    return tud_ready();
+}
+
+static bool tx_can_send(void *frame) {
+    if (mount_delay_until_ms != 0) {
+        if ((int32_t)(to_ms_since_boot(get_absolute_time()) - mount_delay_until_ms) < 0)
+            return false;
+        mount_delay_until_ms = 0;
+    }
+    return tud_network_can_xmit(((struct pbuf *)frame)->tot_len);
+}
+
+static void tx_send(void *frame) {
+    tud_network_xmit(frame, 0);
+    net_tx_ok++;
+}
+
+static void tx_hold(void *frame) {
+    pbuf_ref((struct pbuf *)frame);
+}
+
+static void tx_release(void *frame) {
+    pbuf_free((struct pbuf *)frame);
+}
+
+static const net_tx_ops_t tx_ops = {tx_ready, tx_can_send, tx_send, tx_hold, tx_release};
+
 static err_t linkoutput_fn(struct netif *netif, struct pbuf *p) {
     (void)netif;
-
-    /* Block transmission during initial mount delay to give host time to configure ECM interface */
-    if (mount_delay_until_ms != 0) {
-        uint32_t now = to_ms_since_boot(get_absolute_time());
-        if ((int32_t)(now - mount_delay_until_ms) < 0) {
-            /* Still in delay period - drop packet silently */
-            return ERR_WOULDBLOCK;
-        }
-        /* Delay expired - clear flag and allow transmission */
-        mount_delay_until_ms = 0;
-        lwip_uart_printf("!NET tx ready\r\n");
+    switch (net_tx_offer(&txq, &tx_ops, p)) {
+    case NET_TX_SENT:
+        return ERR_OK;
+    case NET_TX_HELD:
+        net_tx_held++;
+        return ERR_OK;
+    case NET_TX_FULL:
+        net_tx_fail++;
+        return ERR_MEM; /* lwIP's retransmit has it */
+    default:
+        net_tx_fail++;
+        return ERR_USE;
     }
-
-    for (int tries = 0; tries < 20; tries++) {
-        if (!tud_ready()) {
-            net_tx_fail++;
-            lwip_uart_printf("!NET tx fail (not ready) cnt=%lu\r\n", (unsigned long)net_tx_fail);
-            return ERR_USE;
-        }
-        if (tud_network_can_xmit(p->tot_len)) {
-            tud_network_xmit(p, 0);
-            net_tx_ok++;
-            /* Log every 10th successful TX to avoid flooding */
-            if ((net_tx_ok % 10) == 0) {
-                lwip_uart_printf("!NET tx ok cnt=%lu\r\n", (unsigned long)net_tx_ok);
-            }
-            return ERR_OK;
-        }
-        tud_task();
-    }
-    net_tx_fail++;
-    lwip_uart_printf("!NET tx fail (retry exhaust) cnt=%lu len=%u\r\n", (unsigned long)net_tx_fail, p->tot_len);
-    return ERR_WOULDBLOCK; /* lwIP will retry via TCP retransmission */
 }
 
 static err_t ip4_output_fn(struct netif *netif, struct pbuf *p, const ip4_addr_t *addr) {
@@ -181,6 +191,7 @@ uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg) {
 
 void tud_network_init_cb(void) {
     lwip_uart_printf("!NET init_cb\r\n");
+    net_tx_flush(&txq, &tx_ops);
     if (received_frame) {
         pbuf_free(received_frame);
         received_frame = NULL;
@@ -190,21 +201,25 @@ void tud_network_init_cb(void) {
 /* ── TinyUSB device lifecycle callbacks (instrumentation) ────────────── */
 
 void tud_mount_cb(void) {
+    net_usb_events[0]++;
     lwip_uart_printf("!USB mount\r\n");
     /* Give host 500ms to configure ECM interface before sending packets */
     mount_delay_until_ms = to_ms_since_boot(get_absolute_time()) + 500;
 }
 
 void tud_umount_cb(void) {
+    net_usb_events[1]++;
     lwip_uart_printf("!USB unmount\r\n");
 }
 
 void tud_suspend_cb(bool remote_wakeup_en) {
     (void)remote_wakeup_en;
+    net_usb_events[2]++;
     lwip_uart_printf("!USB suspend\r\n");
 }
 
 void tud_resume_cb(void) {
+    net_usb_events[3]++;
     lwip_uart_printf("!USB resume\r\n");
     /* Give host time to reconfigure ECM interface after resume */
     mount_delay_until_ms = to_ms_since_boot(get_absolute_time()) + 500;
@@ -257,6 +272,7 @@ void net_mdns_poll(void) {
 uint32_t net_last_http_us;
 
 void net_service(void) {
+    net_tx_drain(&txq, &tx_ops);
     /* Process received frames - RX always works */
     if (received_frame) {
         if (ethernet_input(received_frame, &netif_data) != ERR_OK)
@@ -268,6 +284,7 @@ void net_service(void) {
     /* Outside every lwIP callback: the bytes the callbacks queued. */
     uint32_t t0 = time_us_32();
     http_server_transport();
+    net_tx_drain(&txq, &tx_ops);
     net_last_http_us = time_us_32() - t0;
 }
 

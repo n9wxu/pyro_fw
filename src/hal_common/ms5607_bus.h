@@ -14,6 +14,7 @@
 #include "hardware/structs/timer.h"
 #include "hardware/sync.h"
 #include "hardware/timer.h"
+#include "flash_window.h"
 
 #define MS5607_BUS_TIMEOUT_US 2000u /* the longest transfer is about 0.15 ms at 400 kHz */
 
@@ -30,6 +31,12 @@ __force_inline static uint64_t ms5607_bus_now_us(void) {
 
 /* After a NACK the controller sends STOP itself; either way the transfer is
  * over at STOP_DET. */
+/* [DD-068] Compared across a conversion: a change is a flash operation that
+ * ran beside it. */
+__force_inline static uint32_t ms5607_bus_flash_ops(void) {
+    return flash_op_seq;
+}
+
 __force_inline static bool ms5607_bus_finish(i2c_hw_t *hw, uint32_t t0) {
     while (!(hw->raw_intr_stat & I2C_IC_RAW_INTR_STAT_STOP_DET_BITS)) {
         if (timer_hw->timerawl - t0 > MS5607_BUS_TIMEOUT_US)

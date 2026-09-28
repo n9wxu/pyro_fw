@@ -30,7 +30,8 @@ static struct {
     volatile uint8_t state;
     volatile bool ready; /* finished; the loop has not taken it */
     ms5607_pair_t pair;
-    int alarm; /* -1: not begun */
+    uint32_t flash_ops; /* ms5607_bus_flash_ops() as the conversion began */
+    int alarm;          /* -1: not begun */
 } oneshot = {.alarm = -1};
 
 /* Commands a conversion and arms its read. False: the sensor did not answer.
@@ -39,6 +40,7 @@ __force_inline static bool convert(uint8_t cmd, uint64_t *at_us) {
     if (!ms5607_bus_command(cmd))
         return false;
     uint64_t began = ms5607_bus_now_us();
+    oneshot.flash_ops = ms5607_bus_flash_ops();
     *at_us = began + MS5607_HALF_CONV_US;
     ms5607_bus_alarm_at(oneshot.alarm, began + MS5607_CONV_DONE_US);
     return true;
@@ -55,12 +57,14 @@ static void __noinline __not_in_flash_func(ms5607_alarm_isr)(void) {
         }
         break;
     case ONESHOT_PRESSURE:
+        p->d1_flashed = ms5607_bus_flash_ops() != oneshot.flash_ops;
         if (ms5607_bus_read_adc(&p->d1) && convert(MS5607_CMD_CONV_D2, &p->d2_at_us)) {
             oneshot.state = ONESHOT_TEMPERATURE;
             return;
         }
         break;
     case ONESHOT_TEMPERATURE:
+        p->d2_flashed = ms5607_bus_flash_ops() != oneshot.flash_ops;
         p->ok = ms5607_bus_read_adc(&p->d2);
         break;
     default:
@@ -104,7 +108,7 @@ bool ms5607_async_cycle(ms5607_temps_t *t, ms5607_pair_t *out, ms5607_start_t *s
         *started = MS5607_HELD;
         return true;
     }
-    if (took && out->d2 != 0)
+    if (took && out->d2 != 0 && !out->d2_flashed)
         ms5607_temps_note(t, out->d2, out->d2_at_us);
     *started = ms5607_async_start();
     return took;

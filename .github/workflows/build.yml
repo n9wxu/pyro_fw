@@ -174,7 +174,7 @@ jobs:
       # Who runs each HTTP work unit, and /api/status rendered from a
       # snapshot, linked alone (DD-061).
       - name: Run HTTP work unit and status rendering tests
-        run: cd build && ninja http_work_tests && ninja status_json_tests
+        run: cd build && ninja http_work_tests && ninja status_json_tests && ninja net_stats_tests && ninja net_txq_tests
 
       # The flight log's binary records and their CSV (DD-062).
       - name: Run flight log format tests
@@ -210,7 +210,7 @@ jobs:
 
       # Every board's sensor bring-up as loop steps, against fake sensors.
       - name: Run sensor bring-up tests
-        run: cd build && ninja sensor_bringup_tests
+        run: cd build && ninja sensor_bringup_tests && ninja bmp280_tests
 
       # The firing-network models, MK1C's held to the bench board (DD-054),
       # and MK1C's real pyro backend run against it (DD-055).

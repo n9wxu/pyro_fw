@@ -1,6 +1,9 @@
 /*
- * BMP280 pressure sensor. Normal mode converts continuously, so a read takes
- * whatever the output registers hold; there is no phased API.
+ * BMP280 pressure sensor, at the loop's rate [DD-067]: the loop commands one
+ * forced conversion each iteration and takes it at the next, so every reading
+ * is a conversion of its own and its time is known. The part sleeps between.
+ *
+ * Figures are from docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -9,6 +12,7 @@
 
 #include "pressure_sensor.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 /* [DD-052] The fastest the BMP280 allows the RP2040: fast mode. It lists
  * standard, fast and high-speed modes, not fast-mode plus (docs/datasheets/,
@@ -20,16 +24,31 @@
 /* From power-on or a soft reset to the first transfer (datasheet page 8). */
 #define BMP280_STARTUP_MS 2u
 
-/* Probe the sensor, read calibration, start normal-mode conversions.
- * Returns true if a BMP280 is detected and configured. */
+/* x4 pressure and x1 temperature take 11.5 ms typical, 13.3 ms at most
+ * (Table 13, page 18): each conversion is done before the next loop. */
+#define BMP280_MEAS_MAX_US 13300u
+
+/* [SNS-PRES-08] From the command to the middle of the pressure's own
+ * measurement. Table 13's rows add 2 ms typical a pressure oversample, so
+ * x4's pressure is the last 8 ms of the 11.5. */
+#define BMP280_P_MID_US 7500u
+
+/* Probe the sensor and read its calibration, leaving it asleep with the
+ * loop's settings. True if a BMP280 answered and is configured. */
 bool bmp280_detect(void);
 
-/* Read the current output registers and compute Pa/°C.
- * Non-blocking in normal mode — reads from continuously-updated regs.
- * Returns false on I2C error. */
-bool bmp280_read(pressure_reading_t *reading);
+/* BUSY: the last conversion is still running, so nothing was taken or
+ * commanded. BUS: the part did not answer. */
+typedef enum { BMP280_STARTED, BMP280_BUSY, BMP280_BUS } bmp280_start_t;
 
-/* The raw codes the last read returned, for the pressure trace. */
-void bmp280_last_raw(uint32_t *adc_p, uint32_t *adc_t);
+typedef struct {
+    pressure_reading_t reading;
+    uint32_t adc_p, adc_t; /* the raw codes, for the pressure trace */
+    bool flashed;          /* [DD-068] a flash erase or program ran during it */
+} bmp280_reading_t;
+
+/* Once a loop: takes the conversion the last call commanded into *r, then
+ * commands the next. False when nothing was taken. */
+bool bmp280_cycle(bmp280_reading_t *r, bmp280_start_t *started);
 
 #endif /* BMP280_DRIVER_H */

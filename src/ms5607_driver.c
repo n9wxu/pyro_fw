@@ -15,11 +15,15 @@
 #define MS5607_CMD_RESET 0x1E
 #define MS5607_CMD_PROM_READ 0xA0 // Base address for PROM
 
+/* Every transfer is bounded: the SDK's blocking calls wait forever on a part
+ * holding SCL low, and detection also runs after a reset in flight. */
+#define MS5607_DETECT_TIMEOUT_US 2000u
+
 static uint8_t ms5607_addr = 0;
 static uint16_t prom[8];
 
 static bool ms5607_write_cmd(uint8_t cmd) {
-    return i2c_write_blocking(I2C_PORT, ms5607_addr, &cmd, 1, false) == 1;
+    return i2c_write_timeout_us(I2C_PORT, ms5607_addr, &cmd, 1, false, MS5607_DETECT_TIMEOUT_US) == 1;
 }
 
 bool ms5607_compensate(uint32_t d1, uint32_t d2, pressure_reading_t *out) {
@@ -36,10 +40,10 @@ static bool ms5607_read_prom(void) {
         uint8_t cmd = MS5607_CMD_PROM_READ + (i * 2);
         uint8_t data[2];
 
-        if (i2c_write_blocking(I2C_PORT, ms5607_addr, &cmd, 1, true) != 1)
+        if (i2c_write_timeout_us(I2C_PORT, ms5607_addr, &cmd, 1, true, MS5607_DETECT_TIMEOUT_US) != 1)
             return false;
 
-        if (i2c_read_blocking(I2C_PORT, ms5607_addr, data, 2, false) != 2)
+        if (i2c_read_timeout_us(I2C_PORT, ms5607_addr, data, 2, false, MS5607_DETECT_TIMEOUT_US) != 2)
             return false;
 
         prom[i] = ((uint16_t)data[0] << 8) | data[1];

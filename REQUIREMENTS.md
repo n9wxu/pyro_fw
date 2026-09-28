@@ -150,7 +150,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-BOOT-16**: The system shall not report a continuity fault for a pyro channel released to Lua or configured as disabled. ← FLT-BOOT-15
 
 #### Sampling Rates (v2.0)
-- **FLT-RATE-01**: The system shall sample pressure continuously during PAD_IDLE, ASCENT, and DESCENT: on an MS5607 board a pressure and a temperature every 20 ms loop, 50 pressures a second; on a BMP280 board 50 Hz (20 ms). ← FLT-PHASE-01, DD-001, DD-051, DD-066
+- **FLT-RATE-01**: The system shall sample pressure continuously during PAD_IDLE, ASCENT, and DESCENT: on an MS5607 board a pressure and a temperature every 20 ms loop, 50 pressures a second; on a BMP280 board one forced conversion every loop, 50 a second. ← FLT-PHASE-01, DD-001, DD-051, DD-066, DD-067
 - **FLT-RATE-02**: The system shall deliver pressure samples to the flight software in batches of 5. ← FLT-RATE-01, PWR-SAMPLE-02
 - **FLT-RATE-03**: The system shall reduce sampling to 1Hz during LANDED for power conservation. ← FLT-PHASE-03, SYS-PWR-01
 - **FLT-RATE-04**: The sampling rate shall be a HAL responsibility; flight software processes whatever buffer it receives. ← HAL-02
@@ -262,12 +262,13 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **SNS-PRES-05**: A sensor conversion shall be read no sooner than its worst-case conversion time after the command that started it. ← SNS-PRES-01
 - **SNS-PRES-06**: A reading the sensor cannot produce -- a zero conversion, or a pressure outside its rated range -- shall be discarded and counted, not filtered. ← SNS-PRES-02
 - **SNS-PRES-07**: A single-sample outlier shall not reach the pressure filter. The median of the newest three readings stands between the range check and the filter, carrying the middle reading's time. ← SNS-PRES-02
-- **SNS-PRES-08**: Each sample shall carry the time its pressure was measured, provided by the sensor's driver from the hardware timer to the microsecond: for the MS5607 the middle of its pressure conversion, stamped by the one-shot's interrupt handler as the conversion begins, so that neither the loop nor a flash write moves it; for the free-running BMP280 half a conversion before the read. The temperature a pressure is compensated with is SNS-PRES-12's, at the pressure's time. ← SNS-PRES-02
+- **SNS-PRES-08**: Each sample shall carry the time its pressure was measured, provided by the sensor's driver from the hardware timer to the microsecond: for the MS5607 the middle of its pressure conversion, stamped by the one-shot's interrupt handler as the conversion begins, so that neither the loop nor a flash write moves it; for the BMP280 the middle of its pressure measurement, from the forced conversion's command (DD-067). The temperature a pressure is compensated with is SNS-PRES-12's, at the pressure's time. ← SNS-PRES-02
 - **SNS-PRES-09**: Each sample shall carry a least-squares quadratic fit through the median's output over the last second, against each sample's own time, evaluated at the newest sample: its pressure, rate and acceleration, and whether it is clean -- residual RMS within 2σ and every residual within 4σ. σ is the fit's residual noise measured on the pad, no less than 1.2 Pa and no more than 5 Pa, frozen at launch to its value from a second before T+0, and a recovered flight takes it from the pad marker. ← SNS-PRES-07, SNS-PRES-08
 - **SNS-PRES-10**: A whole window of one reading, to the pascal, shall be taken as a stuck sensor: a DIAG bit, a SENSOR_STUCK event and a telemetry line. While its window holds a stuck run, and for a window after, no fit shall be clean, set the Mach flag, arm the pyrotechnics or feed the emergency ladder, and pressure triggers shall wait with no time limit. ← SNS-PRES-09, SYS-DEPLOY-01
 - **SNS-PRES-11**: A gap of more than 250 ms between samples shall make every fit suspect, as SNS-PRES-10, until a whole window of new samples exists. No sample for 0.5 s in flight shall be taken as a lost sensor: a DIAG bit, a SENSOR_LOST event and a telemetry line. The flight carries on when samples return. ← SNS-PRES-09, SYS-DEPLOY-01
 - **SNS-PRES-12**: Each MS5607 pressure shall be compensated with the temperature at its own time, from the least-squares line through the last four temperature conversions -- one converted after each pressure -- carried no more than 200 ms past the newest and no further back than the oldest. ← SNS-PRES-08, DD-051, DD-066
-- **SNS-PRES-13**: The system shall keep the last 256 pressure conversions -- the driver's stamp, when the loop read it, the raw codes, the compensated pressure, and whether it was a pressure, a temperature, a zero, a bus error, a range reject or a missed slot -- and serve them at `/api/pressure/trace`, so a sensor can be judged on the bench for stale reads, gaps and noise. ← SNS-PRES-08, DD-063
+- **SNS-PRES-14**: A pressure or temperature conversion during which a flash erase or program ran shall not be used. Each shall be counted, as `pres_flashed` on `/api/status`, and traced. ← SNS-PRES-07, DD-068
+- **SNS-PRES-13**: The system shall keep the last 256 pressure conversions -- the driver's stamp, when the loop read it, the raw codes, the compensated pressure, and whether it was a pressure, a temperature, a zero, a bus error, a range reject, a missed slot or a conversion discarded for a flash operation -- and serve them at `/api/pressure/trace`, so a sensor can be judged on the bench for stale reads, gaps and noise. ← SNS-PRES-08, DD-063
 - **SNS-ALT-02**: The system shall clamp computed altitude to a maximum of 8000 meters. ← SNS-ALT-01
 - **SNS-ALT-03**: The system shall clamp computed altitude to a minimum of 0 meters. ← SNS-ALT-01
 - **SNS-ALT-04**: Vertical speed shall be taken from altitude that is not clamped; SNS-ALT-02 and SNS-ALT-03 clamp only the altitude that is reported. ← SNS-ALT-01
@@ -338,6 +339,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **WEB-NET-02**: The system shall serve DHCP, assigning itself 192.168.7.1. ← SYS-WEB-01
 - **WEB-NET-03**: The system shall advertise its hostname via mDNS. ← SYS-WEB-02
 - **WEB-NET-04**: The system shall advertise a DNS-SD service for automatic discovery. ← SYS-WEB-02
+- **WEB-NET-05**: A frame the USB endpoint cannot take yet shall be held and sent in order as soon as it can, not dropped; one shall be refused only when eight wait already or the host has let the device go. ← SYS-WEB-01, DD-070
 - **WEB-API-01**: The system shall serve device status as JSON at `/api/status`. ← SYS-WEB-01
 - **WEB-API-02**: The system shall serve the configuration file at `/api/config` (GET). ← SYS-WEB-01
 - **WEB-API-03**: The system shall accept configuration updates at `/api/config` (POST) and write to persistent storage. ← SYS-WEB-01
@@ -356,6 +358,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **WEB-HTTP-06**: The loop's head shall only move bytes between the network stack and the connections. Every other HTTP step shall be a bounded unit run from the loop's slack, after the flight work, started only with its budget left in the period, except that every period shall run at least one. ← SYS-WEB-01, DD-061
 - **WEB-HTTP-07**: A unit that touches nothing but its own connection may run on core1 within core1's grant. Core0 shall not touch a connection core1 holds, shall take it back only once core1 is idle, and shall fail one whose unit core1 did not finish. ← DD-061
 - **WEB-API-11**: `/api/status` shall be rendered from a snapshot core0 takes in one pass, shall keep its keys and their order, and shall be well-formed JSON whatever the configured rocket id and name contain. ← SYS-WEB-01, DD-061
+- **WEB-API-13**: The system shall report at `/api/net` lwIP's pools (in use, high-water mark, refusals), TCP's connections by state, and what the network transport refused -- accepts refused, writes refused, idle aborts, frames dropped or not sent, and the USB interface's mounts, unmounts, suspends and resumes -- so an HTTP outage can be told apart on the bench. ← SYS-WEB-01
 - **WEB-API-12**: The system shall report at `/api/log/space` the bytes the next flight's log has room for, the size of a sample record and the two log rates, and refuse with 423 while the flight log holds the filesystem. ← SYS-WEB-01, DD-062
 - **WEB-UI-01**: The web interface shall display device status in the configured units. ← SYS-WEB-01
 - **WEB-UI-04**: The web interface shall display flight summary data and allow CSV download. The summary shall come from the flight log alone, be re-read whenever it is shown, and name the flight it describes; flight time shall stop at the landing. ← SYS-WEB-01
@@ -438,6 +441,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **PWR-BUZZ-01**: Buzzer patterns shall be played autonomously via async task runner. ← SYS-PWR-02 ✅ v2-7 buzzer async state machine
 - **PWR-USB-01**: USB servicing shall run autonomously via timer ISR or second core. ← SYS-PWR-02 (deferred to v2.1)
 - **PWR-SLEEP-01**: The CPU shall sleep between pressure buffer delivery events. ← SYS-PWR-01 ✅ hal_sleep_until_event() / __wfe()
+- **PWR-WAIT-02**: No sensor bus transfer shall wait without bound: each shall give up within 2 ms, so a part holding SCL low costs a bus error, never a lockup. ← PWR-WAIT-01, DD-069
 - **PWR-WAIT-01**: No code shall sleep or busy-wait. The exec loop is the only clock: anything that has to wait parks on a deadline that a later iteration checks, and the only interruptions to the loop are flash writes. ← SYS-PWR-02, DD-053
 - **PWR-LOG-01**: Data logging shall buffer in RAM and flush to flash asynchronously. ← SYS-PWR-02 ✅ v2-9 hal_log_sample() 512-byte ring, 200ms flush task
 
