@@ -6,6 +6,7 @@
  * arms the bus with the charge pump, fires on the measured bus, and verifies
  * with the next tracking test (DD-056). Nothing it does blocks.
  */
+#include "../src/loop_period.h"
 #include "unity.h"
 #include "plant.h"
 #include "pyro.h"
@@ -23,7 +24,7 @@ void hal_telemetry_send(const char *sentence) {
         memcpy(telemetry + n, sentence, m + 1);
 }
 
-#define LOOP_MS 10u
+#define LOOP_MS LOOP_PERIOD_MS
 #define WATCH_US 25u
 
 static int bias_bus_rises, bias_bus_falls, bias_ch_rises;
@@ -252,7 +253,7 @@ void test_mk1c_fires_a_present_channel(void) {
 
 /* DESIGN.md 7.2: fire on the measured bus against the measured pack, never
  * on elapsed time. The slew takes 8.9 ms to 90 % on 2S; the loop sees it on
- * the next iteration. */
+ * the next iteration, a period after the command [DD-065]. */
 void test_mk1c_fires_on_the_measured_bus(void) {
     board(true, false);
     loops(1100u);
@@ -264,7 +265,7 @@ void test_mk1c_fires_on_the_measured_bus(void) {
     TEST_ASSERT_TRUE_MESSAGE(w.bus_at_fire[0] >= 0.9 * w.vbat_at_fire[0], msg);
     uint64_t after = w.fire_us[0] - accept_us;
     snprintf(msg, sizeof(msg), "fired %llu us after the command", (unsigned long long)after);
-    TEST_ASSERT_TRUE_MESSAGE(after >= 8000u && after <= 20000u, msg);
+    TEST_ASSERT_TRUE_MESSAGE(after >= 8000u && after <= LOOP_PERIOD_US + 1000u, msg);
     TEST_ASSERT_TRUE_MESSAGE(w.toggle_first_us >= accept_us, "the pump starts with the command");
 }
 
@@ -287,7 +288,9 @@ void test_mk1c_pump_runs_only_inside_a_fire(void) {
 }
 
 /* The passive disarm: a loop that stops feeding the pump disarms the bus by
- * construction -- the FIFO drains, then C_HOLD bleeds. */
+ * construction -- the FIFO drains, then C_HOLD bleeds. The FIFO carries a
+ * loop and a quarter (arm_pump.h), and U9 lets go within 9.6 ms after
+ * [DD-065]. */
 void test_mk1c_a_stopped_loop_disarms(void) {
     board(true, false);
     loops(1100u);
@@ -296,7 +299,7 @@ void test_mk1c_a_stopped_loop_disarms(void) {
     char msg[96];
     snprintf(msg, sizeof(msg), "U9 on %llu us after the loop stopped", (unsigned long long)(w.armed_last_us - accept_us));
     TEST_ASSERT_TRUE_MESSAGE(w.armed_last_us > accept_us, "the pump armed the bus");
-    TEST_ASSERT_TRUE_MESSAGE(w.armed_last_us <= accept_us + 20000u, msg);
+    TEST_ASSERT_TRUE_MESSAGE(w.armed_last_us <= accept_us + LOOP_PERIOD_US * 5u / 4u + 10000u, msg);
     TEST_ASSERT_FALSE(w.fire_seen[0]);
 }
 
@@ -405,7 +408,8 @@ void test_mk1c_misfire_leaves_the_other_channel(void) {
 }
 
 /* DESIGN.md 5.3: two events one after the other. The second needs the bus
- * charged, so it does not wait for the drain. */
+ * charged, so it does not wait for the drain: it fires within four loops,
+ * inside the 100 ms the drain takes [DD-065]. */
 void test_mk1c_both_channels_one_after_the_other(void) {
     board(true, true);
     loops(1100u);
@@ -419,7 +423,7 @@ void test_mk1c_both_channels_one_after_the_other(void) {
     TEST_ASSERT_FALSE_MESSAGE(w.both_gates, "never both gates");
     char msg[96];
     snprintf(msg, sizeof(msg), "second fire %llu us after the first", (unsigned long long)(w.fire_us[1] - w.fire_us[0]));
-    TEST_ASSERT_TRUE_MESSAGE(w.fire_us[1] - w.fire_us[0] <= 60000u, msg);
+    TEST_ASSERT_TRUE_MESSAGE(w.fire_us[1] - w.fire_us[0] <= 4u * LOOP_PERIOD_US && 4u * LOOP_PERIOD_US < 100000u, msg);
 }
 
 /* A U9 that will not turn off keeps the bus at the pack after the fire: the

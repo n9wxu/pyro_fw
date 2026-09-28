@@ -150,7 +150,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-BOOT-16**: The system shall not report a continuity fault for a pyro channel released to Lua or configured as disabled. ← FLT-BOOT-15
 
 #### Sampling Rates (v2.0)
-- **FLT-RATE-01**: The system shall sample pressure continuously during PAD_IDLE, ASCENT, and DESCENT: on an MS5607 board one conversion every 10 ms loop, temperature once in ten, about 90 pressures a second; on a BMP280 board 50Hz (20ms). ← FLT-PHASE-01, DD-001, DD-051
+- **FLT-RATE-01**: The system shall sample pressure continuously during PAD_IDLE, ASCENT, and DESCENT: on an MS5607 board one conversion every 20 ms loop, temperature once in ten, 45 pressures a second; on a BMP280 board 50 Hz (20 ms). ← FLT-PHASE-01, DD-001, DD-051
 - **FLT-RATE-02**: The system shall deliver pressure samples to the flight software in batches of 5. ← FLT-RATE-01, PWR-SAMPLE-02
 - **FLT-RATE-03**: The system shall reduce sampling to 1Hz during LANDED for power conservation. ← FLT-PHASE-03, SYS-PWR-01
 - **FLT-RATE-04**: The sampling rate shall be a HAL responsibility; flight software processes whatever buffer it receives. ← HAL-02

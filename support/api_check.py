@@ -129,7 +129,7 @@ _, _, body = req("GET", "/api/log/space")
 sp = json.loads(body)
 check("log space: bytes free, record size and the two rates",
       sp.get("bytes_free", 0) > 0 and sp.get("record_bytes") == 22 and sp.get("rates_hz", [0])[0] == 1
-      and sp.get("rates_hz", [0, 0])[1] in (50, 100), str(sp))
+      and 40 <= sp.get("rates_hz", [0, 0])[1] <= 100, str(sp))
 
 # REV-02 / REV-12: a disabled channel survives the merge, and no inert key is written.
 _, _, cfg0 = req("GET", "/api/config")

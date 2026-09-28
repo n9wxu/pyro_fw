@@ -141,7 +141,7 @@ are still yours; their tasks wait.
 | T6 | How long the ground tracker waits before re-seeding | **Adopted:** 5 s. The pressure-filter prompt's 30 s leaves the pad reference wrong for half a minute after the rocket is set down. | T6 |
 | T8 | Flight logging rate | **Decided 2026-09-27 (DD-062, DD-064):** three plans, `log_rate`: a sample row a second by default; High rate 1, that and every sample within 1 s of an event; High rate 2, every sample, the only one that replays. Every event row is kept at its own time. The log is binary on disk and rendered as CSV when downloaded; the Config tab estimates the longest flight it holds under the plan chosen. | — |
 | M1-D | Accept M1's deviations from the Mach prompt | **Adopted.** They are listed in M1. The largest: the fit is solved against each sample's own time, in floating point, not with precomputed integer coefficients. Flash stalls make the sample spacing uneven (T11), and precomputed coefficients assume even spacing. | M1 |
-| P1 | MK1C's tracking pulse is 10-11 ms; DESIGN.md S3 asks for 5-10 ms | **Decided 2026-09-27: a timer one-shot**, like the MS5607's, ends the pulse at 8 ms. | P1 task |
+| P1 | MK1C's presence pulse is 20-21 ms at the 20 ms loop (DD-065); DESIGN.md S3 asks for 5-10 ms | **Decided 2026-09-27: a timer one-shot**, like the MS5607's, ends the pulse at 8 ms. More pressing since DD-065 doubled the pulse. | P1 task |
 | B-U5 | MK1B until U5 is changed | **Decided 2026-09-27: leave it.** The firmware already assumes the base AP2192; an MK1B that owns its pyros reads every channel shorted and cannot fire until its U5 is refitted (section 7). | — |
 | T5-C | The fit's cost | **Decided 2026-09-27: leave it.** 2.9 ms on the MS5607 boards against T5's 1.6 ms limit; the loop holds with 0 overruns. | — |
 | N20 | Shared littlefs buffers | **Adopted:** refuse file GETs while the flight log is open. It can be tested on the host, the log can be read after landing, and WEB-API-08 already refuses every writer in flight. | N20 task |
@@ -1253,9 +1253,11 @@ on 2S and 1S. Requirements PYR-ARM-01..06 and PYR-CONT-04.
 **Owed, on the bench:** a flash (G4), then a supervised fire with a 1 ohm
 pulse resistor on CN1 and the scope on the firing bus, before any real match.
 Pass: `!PYRO FIRE` with the bus at 90 % of the pack or more, the gate held
-no more than 30 ms, `!PYRO F10 ch=1 still present` (a resistor does not
+no more than 40 ms (the hold ends on the loop after 30 ms: two loops at the
+20 ms loop, DD-065), `!PYRO F10 ch=1 still present` (a resistor does not
 open), and `pyro1_fired` on `/api/status`. Then the same with a stopped loop
-(a debugger halt mid-arm): U9 off within 20 ms.
+(a debugger halt mid-arm): U9 off within about 35 ms (DD-065; 20 ms at the
+old 10 ms loop).
 
 ---
 

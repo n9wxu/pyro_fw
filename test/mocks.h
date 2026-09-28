@@ -87,7 +87,7 @@ extern int32_t mock_glitch_pa;           /* added to each of the next ... */
 extern int mock_glitch_samples;          /* ... this many readings */
 extern uint32_t mock_pres_rejects;
 
-/* The MS5607's schedule on the hardware (DD-051): each 10 ms loop takes the
+/* The MS5607's schedule on the hardware (DD-051, DD-065): each loop takes the
  * conversion its one-shot finished and commands the next, the temperature
  * once in ten. A reading is the pressure at the middle of its conversion,
  * 4.5 ms in, taken 5.5 ms later -- or later still if a stall holds the loop.

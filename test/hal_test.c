@@ -13,6 +13,7 @@
 #include "../src/flight_events.h"
 #include "../src/flight_log.h"
 #include "../src/log_plan.h"
+#include "../src/loop_period.h"
 #include "mocks.h"
 #include <string.h>
 #include <stdio.h>
@@ -176,7 +177,7 @@ bool mock_core0_stalled(uint32_t now_ms) {
  * of any stall that held interrupts off -- and command the next, the
  * temperature once in ten. A pressure is the reading at the middle of its
  * conversion, 4.5 ms in. */
-#define ONE_SHOT_LOOP_MS 10u
+#define ONE_SHOT_LOOP_MS LOOP_PERIOD_MS
 
 static void one_shot_loop(uint32_t now) {
     if (sm.pending && !sm.pending_temp) {

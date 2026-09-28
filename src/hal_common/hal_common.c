@@ -39,6 +39,7 @@
 #include "flight_log.h"
 #include "log_plan.h"
 #include "pressure_trace.h"
+#include "loop_period.h"
 #include <math.h>
 #include <string.h>
 
@@ -153,11 +154,12 @@ uint32_t hal_pressure_interval_min_us(void) {
     return pres.interval_min_us;
 }
 
-/* Samples a second, and so the high log rate [DD-062]: the MS5607 converts
- * once a loop; the BMP280 at its own interval. 0 before bring-up. */
+/* Pressure samples a second, and so the full log rate [DD-062]: the MS5607
+ * converts once a loop, one in MS5607_D2_EVERY of them the temperature; the
+ * BMP280 at its own interval. 0 before bring-up. */
 uint32_t hal_pressure_rate_hz(void) {
     if (pres.sensor_type == 1)
-        return 1000u / MS5607_CONV_MS;
+        return (1000u / LOOP_PERIOD_MS) * (MS5607_D2_EVERY - 1u) / MS5607_D2_EVERY;
     return pres.sample_interval_ms ? 1000u / pres.sample_interval_ms : 0u;
 }
 uint32_t hal_pressure_interval_max_us(void) {
@@ -290,7 +292,7 @@ static void ms5607_tick(pres_task_t *p, uint32_t now_ms) {
  * MS5607 (sensor_type == 1) [DD-051]: take the conversion the last loop
  *   started and start the next, then work on the one taken; the one-shot's
  *   handler commands, stamps and reads each. One conversion a loop, the temperature once in
- *   MS5607_D2_EVERY: 90 pressures a second at the 10 ms loop.
+ *   MS5607_D2_EVERY: 45 pressures a second at the 20 ms loop.
  *
  * BMP280 (sensor_type == 2): single phase — read output registers.
  *   No conversion wait needed (normal/continuous mode).

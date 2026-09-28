@@ -93,7 +93,7 @@ the first quiescent reading.
 
 ## The main loop
 
-The shared loop (`src/main_hardware.c`) runs every 10 ms. The MS5607's
+The shared loop (`src/main_hardware.c`) runs every 20 ms (`src/loop_period.h`, DD-065). The MS5607's
 one-shot conversion is started first; then platform services, the flight state
 machine, and the outputs, where `hal_pyro_update()` calls `pyro_update()`. Each
 `pyro_update()`:
@@ -158,9 +158,9 @@ whole bus, a 5 kΩ dirty connector about three quarters, and the raw counts are
 reported so a degraded joint shows. A test whose bus stayed under 200 counts is
 no reading at all.
 
-With 1.1 µF on the bus, one loop is ample settle. The pulse is 10–11 ms where
+With 1.1 µF on the bus, one loop is ample settle. The pulse is 20–21 ms where
 DESIGN.md S3 asks 5–10 ms, because the loop ends a phase no sooner than its
-next iteration (task P1).
+next iteration (task P1: a timer one-shot, decided).
 
 The test never runs while the bus is live: not during a fire, and after one
 not until the bus has drained cold (DESIGN.md invariants 1 and 7).
@@ -199,12 +199,14 @@ bleed's current at 10 kHz. Stopping the toggle **is** the disarm: C_HOLD bleeds
 and U9 turns off within 9.6 ms (DESIGN.md 5.1).
 
 The toggle comes from a PIO state machine that is FIFO-paced (`arm_pump.pio`):
-each word pushed buys one burst of 20 cycles (2 ms), and the machine stalls when
+each word pushed buys one burst of 50 cycles (5 ms), and the machine stalls when
 the words run out. A free-running PWM would keep a dead processor armed; this
 cannot run past what the firmware last pushed. `arm_pump_feed()` tops the FIFO
-up once a loop, never waiting. Four FIFO words and the one running hold 10 ms,
-which carries the pump across a loop period and bounds how far it runs past the
-last check. A loop that stops leaves the bus disarmed within about 20 ms.
+up once a loop, never waiting. Four FIFO words and the one running hold 25 ms,
+a loop and a quarter, which carries the pump across a loop period and bounds
+how far it runs past the last check (`arm_pump.h` sizes the burst from the
+period). A loop that stops leaves the bus disarmed within about 35 ms: the 25 ms
+the FIFO holds, then U9's 9.6 ms.
 `arm_pump_stop()` disables the machine and returns the pad to plain GPIO, low.
 
 ## Firing sequence
@@ -293,7 +295,7 @@ to arm and nothing to sense.
 | the bus will not charge during a fire | precharge timeout: aborted, latched |
 | U9 will not turn off after a fire | the bus stays hot past the bleed: latched |
 | a misfire | reported by the verify step; nothing latched |
-| the loop stops mid-arm | the pump stalls; the bus disarms within about 20 ms |
+| the loop stops mid-arm | the pump stalls; the bus disarms within about 35 ms |
 | the processor resets mid-pulse | the pads' pull-downs open the gates; the match's TVS takes the transient (DESIGN.md 5.4) |
 
 ## Known limits
@@ -305,7 +307,7 @@ to arm and nothing to sense.
   (DD-055).
 - **No ~FLT, no ILM**, so DESIGN.md 7.2's capacitance check and the FLT abort
   have no source; the precharge timeout covers a loaded bus.
-- **The presence pulse is 10–11 ms**, not 5–10 (task P1).
+- **The presence pulse is 20–21 ms**, not 5–10 (task P1).
 
 ## Build
 

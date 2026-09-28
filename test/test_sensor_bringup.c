@@ -6,6 +6,7 @@
  * settles and sensor resets are steps a later loop takes, and the fake SDK's
  * sleeps fail the test.
  */
+#include "../src/loop_period.h"
 #include "unity.h"
 #include "board_pins.h"
 #include "fake_i2c.h"
@@ -155,7 +156,7 @@ static pressure_sensor_type_t bring_up(int *loops) {
     pressure_sensor_type_t t = PRESSURE_SENSOR_PENDING;
     int n = 0;
     while (t == PRESSURE_SENSOR_PENDING && n < 200) {
-        fake_now_ms += 10u;
+        fake_now_ms += LOOP_PERIOD_MS;
         n++;
         t = pressure_sensor_step(fake_now_ms);
         TEST_ASSERT_NULL_MESSAGE(fake_slept, fake_slept);

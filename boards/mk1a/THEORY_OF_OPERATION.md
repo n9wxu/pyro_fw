@@ -69,7 +69,7 @@ inputs, and starts the first continuity check.
 
 ## The main loop
 
-The shared loop (`src/main_hardware.c`) runs every 10 ms and calls
+The shared loop (`src/main_hardware.c`) runs every 20 ms (`src/loop_period.h`, DD-065) and calls
 `pyro_update()` from its outputs stage. `pyro_update()` either ends a fire pulse
 or advances the continuity check by one step. Nothing waits (DD-053): every
 settle is a deadline a later iteration checks.
@@ -116,7 +116,7 @@ first check completes, every channel reads open.
 
 **The settle is the slow edge.** Going low is fast (1 kΩ into 100 nF,
 100 µs), but reading open means charging C6/C5 through 101 kΩ, a 10.1 ms
-constant; 50 ms is five of them. That cannot be a wait inside a 10 ms loop, so
+constant; 50 ms is five of them. That cannot be a wait inside a 20 ms loop, so
 each step parks on a deadline. Holding the low side on only 50 ms in 500 keeps
 the exposure small if a high side ever leaks.
 

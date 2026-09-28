@@ -12,6 +12,7 @@
  *
  * SPDX-License-Identifier: MIT
  */
+#include "../src/loop_period.h"
 #include "unity.h"
 #include "mocks.h"
 #include <math.h>
@@ -245,10 +246,11 @@ void test_T0_stall_model(void) {
            (unsigned)mock_stamp_lag_max_ms);
     TEST_ASSERT_TRUE_MESSAGE(per_s > 1.15 && per_s < 1.45, "about 1.3 stalls a second");
     TEST_ASSERT_TRUE(mock_stall_min_ms >= 40 && mock_stall_max_ms <= 73);
-    /* DD-051: taken at the loop after its command, 10 ms on, stamped at the
-     * middle of its conversion, 4.5 ms in. */
-    TEST_ASSERT_EQUAL_UINT32_MESSAGE(5, mock_stamp_lag_min_ms, "normally taken 5.5 ms after the conversion");
-    TEST_ASSERT_TRUE_MESSAGE(mock_stamp_lag_max_ms >= 5 + 40,
+    /* DD-051, DD-065: taken at the loop after its command, a period on,
+     * stamped at the middle of its conversion, 4.5 ms in. */
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(LOOP_PERIOD_MS - 5u, mock_stamp_lag_min_ms,
+                                     "normally taken a period less 4.5 ms after the conversion");
+    TEST_ASSERT_TRUE_MESSAGE(mock_stamp_lag_max_ms >= LOOP_PERIOD_MS - 5u + 40u,
                              "a conversion commanded before a stall is taken after it");
 }
 
@@ -2182,17 +2184,17 @@ void test_T9_temperature_reuse(void) {
     TEST_ASSERT_TRUE(worst <= 3.0);
 }
 
-/* The test HAL's model of the hardware (DD-051): each 10 ms loop takes the
+/* The test HAL's model of the hardware (DD-051, DD-065): each loop takes the
  * conversion its one-shot finished and commands the next; the temperature
- * once in ten. Nine samples every 100 ms, each stamped at the middle of its
- * conversion and taken 5.5 ms after it. */
+ * once in ten. Nine samples every ten loops, each stamped at the middle of
+ * its conversion, 4.5 ms in, and taken at the next loop's top. */
 void test_T9_one_shot_cadence(void) {
     mock_reset_all();
     pp_init();
     pp_test_prime((int32_t)PAD_PA);
     mock_one_shot = true;
     mock_pressure.pressure_pa = PAD_PA;
-    int n = 0, gaps20 = 0, other = 0;
+    int n = 0, gaps2 = 0, other = 0;
     uint32_t last_us = 0;
     for (uint32_t t = 1; t <= 10000; t++) {
         hal_tasks_tick(t);
@@ -2200,20 +2202,21 @@ void test_T9_one_shot_cadence(void) {
         while (pp_read(&s)) {
             if (n > 0) {
                 uint32_t d = s.timestamp_us - last_us;
-                gaps20 += d == 20000u;
-                other += d != 10000u && d != 20000u;
+                gaps2 += d == 2u * LOOP_PERIOD_US;
+                other += d != LOOP_PERIOD_US && d != 2u * LOOP_PERIOD_US;
             }
             last_us = s.timestamp_us;
             n++;
         }
     }
-    printf("  one-shot schedule: %d samples in 10 s, %d 20 ms gaps, stamp lag %u-%u ms\n", n, gaps20,
+    printf("  one-shot schedule: %d samples in 10 s, %d two-loop gaps, stamp lag %u-%u ms\n", n, gaps2,
            (unsigned)mock_stamp_lag_min_ms, (unsigned)mock_stamp_lag_max_ms);
-    TEST_ASSERT_INT_WITHIN(2, 900, n);
-    TEST_ASSERT_INT_WITHIN(2, 100, gaps20);
+    const int loops = (int)(10000u / LOOP_PERIOD_MS);
+    TEST_ASSERT_INT_WITHIN(2, loops * (int)(MS5607_D2_EVERY - 1u) / (int)MS5607_D2_EVERY, n);
+    TEST_ASSERT_INT_WITHIN(2, loops / (int)MS5607_D2_EVERY, gaps2);
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, other, "every interval is one loop, or two across a temperature");
-    TEST_ASSERT_EQUAL_UINT32(5, mock_stamp_lag_min_ms);
-    TEST_ASSERT_EQUAL_UINT32(5, mock_stamp_lag_max_ms);
+    TEST_ASSERT_EQUAL_UINT32(LOOP_PERIOD_MS - 5u, mock_stamp_lag_min_ms);
+    TEST_ASSERT_EQUAL_UINT32(LOOP_PERIOD_MS - 5u, mock_stamp_lag_max_ms);
 }
 
 int main(void) {

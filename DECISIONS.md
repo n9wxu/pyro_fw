@@ -559,6 +559,42 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-065: A 20 ms Loop
+- **Decision:** at the user's direction -- "shift the loop rate to 50hz
+  (20ms)" -- the main loop runs every 20 ms. The period lives in one place,
+  `src/loop_period.h`, and everything that paces itself by it reads it there:
+  the loop, MK1C's arm pump, the full log rate, and the host tests' model of
+  the hardware, which step at it.
+- **The sensors:** the MS5607 converts once a loop, the temperature once in
+  ten, so 45 pressures a second where it was 90; each is read at the next
+  loop, 15.5 ms after the middle of its conversion. The BMP280 was read every
+  20 ms already. DD-063 measured the MS5607 at this period (MK1C, 45.0/s,
+  clean, 6.7 Pa). The flight logic's host tests already sampled at 50 Hz.
+- **MK1C's arm pump had to follow.** Its FIFO held 10 ms of pump -- four
+  words and the one running, 2 ms each -- which carried it across a 10 ms
+  loop. Across 20 ms it ran dry mid-precharge and U9 dropped out: seven of
+  the MK1C firing tests failed at the new period. Each word now buys 5 ms, so
+  the FIFO carries a loop and a quarter (`arm_pump.h` derives it). **What
+  that costs, for review before the F1 bench fire:** a loop that stops now
+  leaves the bus armed for up to about 35 ms (25 ms of queued pump, then U9's
+  9.6 ms), where it was about 20. The fire comes a loop after the bus is up,
+  about 20 ms after the command where it was about 10; a second event three
+  loops after the first, still inside the 100 ms drain it does not wait for.
+  The gate is held until the loop after 30 ms, up to 40 ms where it was up
+  to 30; U9 has collapsed within 9.6 ms of the pump stopping, so the longer
+  hold drives a dead bus. The tests' bounds are now stated in loops, with
+  these reasons beside them, and F1's pass criteria follow.
+- **MK1C's presence pulse is 20-21 ms** against DESIGN.md S3's 5-10 ms: the
+  loop ends a phase no sooner than its next iteration. Task P1, decided as a
+  timer one-shot, now matters twice as much.
+- **Lua gets half the slices:** a grant a period, still capped at 5 ms, so a
+  script's tick() runs 50 times a second where it ran 100. A script that
+  counts ticks as time runs slow; one that reads the clock does not.
+- **MK1B's presence stimulus** is on for a loop, 20 ms, and its reading after
+  a fire lands about 40 ms after the pulse, inside the 100 ms verify window.
+- **Supersedes** DD-063's "the 10 ms loop stays", which was the finding the
+  user weighed.
+
 ### DD-064: Three Logging Plans
 - **Decision:** at the user's direction -- "Default is 1hz logging with
   immediate logging for events. There are two higher rate plans. High rate

@@ -22,10 +22,9 @@
 #include "hardware/structs/watchdog.h"
 #include "hardware/structs/usb.h"
 
-/* The period is one MS5607 conversion: each iteration takes the conversion
- * the last one commanded and commands the next [DD-051]. */
-#define LOOP_PERIOD_MS MS5607_CONV_MS
-#define LOOP_PERIOD_US (LOOP_PERIOD_MS * 1000u)
+/* Each iteration takes the MS5607 conversion the last one commanded and
+ * commands the next [DD-051]; the period is loop_period.h's [DD-065]. */
+#include "loop_period.h"
 
 /* Twice the board's declared worst case, so a board that exceeds its own
  * budget shows up in loop_overruns rather than being reset for it. */

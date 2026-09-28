@@ -78,7 +78,7 @@ flags up. The first continuity check starts from `pyro_update()`, never from
 
 ## The main loop
 
-The shared loop (`src/main_hardware.c`) runs every 10 ms and calls
+The shared loop (`src/main_hardware.c`) runs every 20 ms (`src/loop_period.h`, DD-065) and calls
 `pyro_update()` from its outputs stage. `pyro_update()` either ends a fire
 pulse or advances the continuity check. Nothing waits (DD-053).
 
@@ -103,7 +103,7 @@ Once a second, in two steps:
 | Step | Common | Reads |
 |---|---|---|
 | shorts | off, after the idle second | a channel still low has a path to ground bypassing the low side: a short |
-| presence | on, for 10 ms | a channel pulled low has an igniter; one left high is open |
+| presence | on, for its 10 ms settle, read at the next loop | a channel pulled low has an igniter; one left high is open |
 
 The node behaves as MK1A's: against the 100 kΩ pull-up a fitted igniter reads
 about 0 counts, a 1 kΩ bad joint 41, a 10 kΩ leak 372, and nothing 4095. A
@@ -122,8 +122,8 @@ stamp a Lua output low on every check.
 `pyro_fire()` turns the common and the channel's enable on and starts a
 500 ms pulse; the check is suspended, since the pulse owns the common. When the
 pulse ends, the enable goes off and the common stays on as the stimulus, so a
-fresh presence reading lands 10 ms later — inside the flight's post-fire verify
-window, which opens as the pulse ends. With the common on there is no short
+fresh presence reading lands a loop or two later, about 40 ms — inside the
+flight's post-fire verify window, which opens as the pulse ends and runs 100 ms. With the common on there is no short
 reading; the last one stands.
 
 ## Pressure sensor

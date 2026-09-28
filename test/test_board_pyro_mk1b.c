@@ -8,6 +8,7 @@
  * gate. An igniter pulls the node to ground only while the common is on; a
  * short to ground pulls it down either way (DD-059).
  */
+#include "../src/loop_period.h"
 #include "unity.h"
 #include "board_pins.h"
 #include "fake_sdk.h"
@@ -62,13 +63,13 @@ static void on_read(uint8_t channel) {
 
 static uint32_t common_on_ms;
 
-/* The flight loop: pyro_update() every 10 ms, and the once-a-second
+/* The flight loop: pyro_update() every period, and the once-a-second
  * continuity check's pyro_sample(). */
 static void loops(uint32_t ms) {
-    for (uint32_t t = 0; t < ms; t += 10u) {
-        fake_now_ms += 10u;
+    for (uint32_t t = 0; t < ms; t += LOOP_PERIOD_MS) {
+        fake_now_ms += LOOP_PERIOD_MS;
         if (fake_level[COMMON])
-            common_on_ms += 10u;
+            common_on_ms += LOOP_PERIOD_MS;
         bool was = fake_level[COMMON];
         pyro_update(fake_now_ms);
         if (was && !fake_level[COMMON])
@@ -186,20 +187,20 @@ void test_mk1b_bad_joint_reads_good_with_its_count(void) {
 }
 
 /* The pulse runs its 500 ms; then a fresh reading lands inside the post-fire
- * verify window, which opens as the pulse ends. */
+ * verify window, which opens as the pulse ends and runs 100 ms. */
 void test_mk1b_fire_then_a_fresh_reading(void) {
     loops(1500u);
     pyro_fire(1);
     TEST_ASSERT_TRUE(pyro_is_firing());
     TEST_ASSERT_TRUE(fake_level[EN1] && fake_level[COMMON]);
-    loops(490u);
+    loops(500u - LOOP_PERIOD_MS);
     TEST_ASSERT_TRUE(pyro_is_firing());
     TEST_ASSERT_TRUE(fake_level[EN1] && fake_level[COMMON]);
     load[0] = L_OPEN; /* the bridgewire is gone */
-    loops(20u);
+    loops(LOOP_PERIOD_MS);
     TEST_ASSERT_FALSE(pyro_is_firing());
     TEST_ASSERT_FALSE(fake_level[EN1]);
-    loops(30u);
+    loops(2u * LOOP_PERIOD_MS);
     pyro_continuity_t c;
     pyro_get(1, &c);
     TEST_ASSERT_TRUE_MESSAGE(c.open, "no fresh reading within 50 ms of the pulse");

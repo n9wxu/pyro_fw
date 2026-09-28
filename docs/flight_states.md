@@ -26,7 +26,7 @@ open beside it.
 ## How it runs
 
 `dispatch_state()` (`flight_states.c:610`) is called once per main-loop
-iteration at **100 Hz** from `main_hardware.c:199`. One detector per state, one
+iteration at **50 Hz** (`src/loop_period.h`, DD-065). One detector per state, one
 event per call, and a table lookup to find the transition:
 
 ```
