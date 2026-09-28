@@ -559,6 +559,60 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-071: A Ground Test Procedure, By Switch
+- **Decision:** at the user's direction, a ground test switch assigned to a
+  pin. Powered up with it closed, the board enters ground test mode and
+  announces it: three long beeps and a pause, repeating. Opening the switch
+  starts the procedure:
+  - a countdown at a count a second, five fast beeps down to none, and at
+    zero pyro 1 fires;
+  - a 3 s steady tone and a second countdown, and at its zero pyro 2 fires;
+  - three long beeps, once, then silence.
+
+  A channel not enabled is skipped: with one enabled, the tone and the second
+  countdown go; with none, the countdown leads to the all-clear. The user's
+  words: "When the pin is asserted on powerup, the unit enters ground test
+  mode"; "step 5 becomes, 3 second tone, followed by the 5 count down. The
+  count-down pace is 1 second per count."
+- **The switch, two ways (the user's second change):** "a switch to ground"
+  or "a switch that shorts two other pins", because "the mk1a ground pad got
+  crowded". pins.ini says `ground_test=none|ground|pair`,
+  `ground_test_pin=` and, across two pads, `ground_test_drive_pin=`.
+  - Across two pads the driven pad alternates high and low each loop, and the
+    read pad is pulled the opposite way each time. The switch reads closed
+    only when the read pad follows both ways (`ground_test_switch.c`), so a
+    read pad touching ground or the supply is never a closed switch.
+  - The switch's pads are the flight software's: reserved against Lua,
+    claimed at boot, refused if a script, the buzzer or the board holds them.
+- **Choices made where the description was silent, for the user to confirm:**
+  - *Enabled* means a configured mode other than none, and pads not released
+    to Lua. The board's own refusals still apply (MK1C fires only a channel
+    its tracking test has seen present); a refusal is reported and the
+    procedure goes on.
+  - *At power-up* means held closed for the last 0.5 s of the 2.5 s settle.
+    The mode is taken after the sensor and continuity checks
+    (PYR-SAFE-01), and a board recovering a flight after a power event keeps
+    flying whatever the switch says.
+  - A release counts only after the switch has been held closed 1 s in the
+    mode, so the operator has heard the mode first; a switch opened during
+    boot must be closed and opened again. A change counts once it has held
+    100 ms.
+  - Closing the switch again during a countdown or the tone stops the
+    procedure before the next fire and announces the mode again.
+  - The fire comes at the zero count, five seconds into the countdown. Five
+    fast beeps (60 ms on, 60 off) take 0.54 s, clear of the next count.
+  - The mode is terminal until the next power-up: no launch detection, no
+    flight log, no $PYRO sentence, no pad announcement, and the USB attach
+    chirp does not take the buzzer. `!GT` lines report each step.
+  - The schedule is the sequence's, not the buzzer's: a board with no buzzer
+    (MK1A as shipped) fires on the same clock, silently.
+- **Contracts:** `hal.h` gains `hal_ground_test_asserted()`, with a weak
+  default in `flight_states.c` so every build links, and
+  `hal_ground_test_configure()` for `main()`. GROUND_TEST is appended as
+  state 12, after FAULT, so no recorded state number moves.
+- **Owed on the bench:** a person with the switch wired, both wirings, dummy
+  loads on both channels, and a scope or meter on the firing pads.
+
 ### DD-070: The USB Network Holds A Frame The Endpoint Cannot Take Yet
 - **Decision:** link output no longer drops a frame the USB endpoint is too
   busy to take. It holds it, by reference, in a queue of eight

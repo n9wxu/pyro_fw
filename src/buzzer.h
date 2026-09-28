@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "beep_codes.h"
+#include "ground_test_seq.h"
 #include <stdbool.h>
 
 /* ── Buzzer pattern types ─────────────────────────────────────────── */
@@ -54,6 +55,12 @@ void buzzer_play_altitude(int32_t value_in_units);
  * rather than a beep.ini reason, so no personality can make it sound like a
  * status code. */
 void buzzer_play_usb_ok(void);
+
+/* [GND-TEST-06..08] The ground test's voice. Fixed, like the USB chirp: the
+ * procedure is timed to these patterns (ground_test_seq.h), so no beep.ini
+ * personality may reshape them. The alert repeats until replaced; the rest
+ * play once. */
+void buzzer_play_ground_test(gt_sound_t sound);
 
 /* Stop playback immediately and silence the buzzer. */
 void buzzer_stop(void);

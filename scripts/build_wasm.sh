@@ -136,6 +136,7 @@ emcc -O2 -s WASM=1 \
   "$ROOT/src/buzzer.c" \
   "$ROOT/src/config.c" \
   "$ROOT/src/ground_test.c" \
+  "$ROOT/src/ground_test_seq.c" \
   "$ROOT/src/lua/pyro_lua.c" \
   "$ROOT/src/lua/lua_arena.c" \
   "$ROOT/src/lua/lua_iface.c" \

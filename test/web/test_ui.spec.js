@@ -367,6 +367,39 @@ test.describe('Pin assignment', () => {
     await expect(page.locator('#relMsg')).toContainText('saved', { timeout: 5000 });
   });
 
+  /* [GND-TEST-12] The ground test switch: none by default, a switch to
+     ground on one pad, or a switch across two -- MK1A's ground pad is
+     crowded. Only a digital pad is offered, and the second pad only for a
+     switch across two. */
+  test('the ground test switch is wired to ground or across two pads', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    const w = page.locator('#gtWiring');
+    await expect(w).toBeVisible();
+    await expect(w).toHaveValue('none');
+    await expect(page.locator('#gtPin')).toBeHidden();
+    await expect(page.locator('#gtDrive')).toBeHidden();
+
+    await w.selectOption('ground');
+    await expect(page.locator('#gtPin')).toBeVisible();
+    await expect(page.locator('#gtDrive')).toBeHidden();
+    await expect(page.locator('#gtPin option[value="8"]')).toHaveCount(1);
+    await expect(page.locator('#gtPin option[value="16"]')).toHaveCount(0); /* the buzzer's */
+    await expect(page.locator('#gtPin option[value="26"]')).toHaveCount(0); /* a sense pad */
+
+    await w.selectOption('pair');
+    await expect(page.locator('#gtDrive')).toBeVisible();
+    await page.locator('#gtPin').selectOption('8');
+    await page.locator('#gtDrive').selectOption('21');
+    await page.click('#btnSaveCfg');
+    await expect(page.locator('#relMsg')).toContainText('saved', { timeout: 5000 });
+    const ini = await page.evaluate(() => fetch('/api/pins').then(r => r.text()));
+    expect(ini).toContain('ground_test=pair');
+    expect(ini).toContain('ground_test_pin=8');
+    expect(ini).toContain('ground_test_drive_pin=21');
+  });
+
   /* REV-21: one Save on the Config tab. The release no longer has a button of
      its own that an operator has to guess the meaning of. */
   test('the config tab has one save button', async ({ page }) => {

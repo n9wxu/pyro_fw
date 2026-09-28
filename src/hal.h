@@ -175,6 +175,13 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
 void hal_log_stop(void);
 bool hal_log_active(void);
 
+/* ── Ground test pin [GND-TEST-05, GND-TEST-12] ────────────────────
+ *
+ * Whether the ground test switch is closed now. False where no ground test
+ * pin is assigned. A switch to ground on one pad, or a switch across two
+ * pads, as pins.ini says; the platform hides which. */
+bool hal_ground_test_asserted(void);
+
 /* ── Async task runner [v2] ───────────────────────────────────────── */
 
 /* Advance every registered async HAL state machine. Call once per main-loop
@@ -197,5 +204,10 @@ void hal_sleep_until_event(void);
 void hal_platform_init(void);
 void hal_platform_service(void);
 void hal_firmware_commit(void);
+
+/* [GND-TEST-12] The ground test switch's pads, from pins.ini (GT_WIRING_* in
+ * ground_test_switch.h), once they are claimed. Nothing is read before this, and
+ * nothing at all for GT_WIRING_NONE. */
+void hal_ground_test_configure(uint8_t wiring, uint8_t pin, uint8_t drive_pin);
 
 #endif

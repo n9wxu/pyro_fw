@@ -317,6 +317,8 @@ add_executable(pyro_fw_c
     src/pressure_processing.c
     src/pressure_fit.c
     src/ground_test.c
+    src/ground_test_seq.c
+    src/ground_test_switch.c
     src/config.c
     src/telemetry_formatter.c
     src/buzzer.c
@@ -523,6 +525,7 @@ add_custom_target(host_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
@@ -553,6 +556,7 @@ add_custom_target(integration_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
                ${unity_SOURCE_DIR}/src/unity.c
@@ -582,6 +586,7 @@ add_custom_target(closedloop_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
                ${unity_SOURCE_DIR}/src/unity.c
@@ -613,6 +618,7 @@ add_custom_target(pressure_chain_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
                ${unity_SOURCE_DIR}/src/unity.c
@@ -622,6 +628,39 @@ add_custom_target(pressure_chain_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_pressure_chain
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "The pressure chain under sensor noise, booted as the hardware boots"
+)
+
+# The ground test through the flight software, booted as the hardware boots
+# (DD-071).
+add_custom_target(ground_test_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building ground test tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/test
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_ground_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/board_harness.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/log_plan.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -lm
+               -o ${CMAKE_BINARY_DIR}/test_ground_test
+    COMMAND ${CMAKE_COMMAND} -E echo "Running ground test tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_ground_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "The ground test, booted as the hardware boots"
 )
 
 add_custom_target(mach_tests
@@ -645,6 +684,7 @@ add_custom_target(mach_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
                ${unity_SOURCE_DIR}/src/unity.c
@@ -705,6 +745,7 @@ add_custom_target(sim
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
@@ -997,6 +1038,22 @@ add_custom_target(sensor_bringup_tests
     COMMENT "Pressure sensor bring-up tests, every board"
 )
 
+# The ground test procedure's schedule, against a fake clock (DD-071).
+add_custom_target(ground_test_seq_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building ground test sequence tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_ground_test_seq.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_switch.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_ground_test_seq
+    COMMAND ${CMAKE_COMMAND} -E echo "Running ground test sequence tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_ground_test_seq
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Ground test sequence tests"
+)
+
 # The BMP280 at the loop's rate: one forced conversion a loop (DD-067), on a
 # fake part timed from the datasheet, with MK1A's pins.
 add_custom_target(bmp280_tests
@@ -1139,6 +1196,7 @@ add_custom_target(config_persistence_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c

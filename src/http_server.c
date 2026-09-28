@@ -289,7 +289,7 @@ static bool fs_take(conn_t *c) {
  * reach the flight log and telemetry stable. */
 static const char *state_names[] = {"BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALIBRATE", "PAD_IDLE",
                                     "ASCENT",      "FALLING",         "DROGUE_DESCENT", "CHUTE_DESCENT",
-                                    "LANDED",      "BOOT_SENSOR",     "FAULT"};
+                                    "LANDED",      "BOOT_SENSOR",     "FAULT",          "GROUND_TEST"};
 #define STATE_NAME_COUNT ((int)(sizeof(state_names) / sizeof(state_names[0])))
 
 /* Main-loop pacing counters (main_hardware.c). Reported so the budget a
@@ -644,19 +644,24 @@ static void serve_api_pin_caps(http_conn_t *hc) {
     char note[320];
     json_escape(note, (int)sizeof(note), pin_caps_protection_note(), (int)strlen(pin_caps_protection_note()));
 
-    int pos = snprintf(buf, cap,
-                       "{\"board\":\"%s\",\"topology\":\"%s\",\"bridge_possible\":%s,"
-                       "\"protection_note\":\"%s\","
-                       "\"pyro1_released\":%s,\"pyro2_released\":%s,\"reserved_mask\":%u,"
-                       "\"buzzer_pin\":%d,\"buzzer_on\":%d,\"fn\":{",
-                       PYRO_BOARD_NAME, pin_caps_topology_name(), pin_caps_bridge_possible() ? "true" : "false", note,
-                       pa->pyro1_released ? "true" : "false", pa->pyro2_released ? "true" : "false",
-                       (unsigned)FN_BOARD_RESERVED,
-                       /* buzzer_pin is the SETTING (-1 = leave it where the
-                        * board put it); buzzer_on is where it actually is, so
-                        * the UI can show the default without resolving it. */
-                       pa->buzzer_pin == PIN_BUZZER_BOARD ? -1 : (int)pa->buzzer_pin,
-                       pin_assign_buzzer_pin(pa) == PIN_BUZZER_BOARD ? -1 : (int)pin_assign_buzzer_pin(pa));
+    int pos = snprintf(
+        buf, cap,
+        "{\"board\":\"%s\",\"topology\":\"%s\",\"bridge_possible\":%s,"
+        "\"protection_note\":\"%s\","
+        "\"pyro1_released\":%s,\"pyro2_released\":%s,\"reserved_mask\":%u,"
+        "\"buzzer_pin\":%d,\"buzzer_on\":%d,"
+        "\"ground_test\":\"%s\",\"gt_pin\":%d,\"gt_drive_pin\":%d,\"fn\":{",
+        PYRO_BOARD_NAME, pin_caps_topology_name(), pin_caps_bridge_possible() ? "true" : "false", note,
+        pa->pyro1_released ? "true" : "false", pa->pyro2_released ? "true" : "false", (unsigned)FN_BOARD_RESERVED,
+        /* buzzer_pin is the SETTING (-1 = leave it where the
+         * board put it); buzzer_on is where it actually is, so
+         * the UI can show the default without resolving it. */
+        pa->buzzer_pin == PIN_BUZZER_BOARD ? -1 : (int)pa->buzzer_pin,
+        pin_assign_buzzer_pin(pa) == PIN_BUZZER_BOARD ? -1 : (int)pin_assign_buzzer_pin(pa),
+        /* [GND-TEST-12] -1 where a pad is not assigned. */
+        pa->gt_wiring == GT_WIRING_GROUND ? "ground" : (pa->gt_wiring == GT_WIRING_PAIR ? "pair" : "none"),
+        pa->gt_pin == PIN_GT_UNSET ? -1 : (int)pa->gt_pin,
+        pa->gt_drive_pin == PIN_GT_UNSET ? -1 : (int)pa->gt_drive_pin);
 
     for (unsigned i = 0; i < sizeof(fn_bits) / sizeof(fn_bits[0]) && pos > 0 && pos < (int)cap; i++) {
         pos += snprintf(buf + pos, cap - (size_t)pos, "%s\"%s\":%u", i ? "," : "", fn_bits[i].name,

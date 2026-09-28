@@ -269,6 +269,14 @@ Verify web interface behavior against mock server in 3 device modes.
 | GND-TEST-02 | ARM then FIRE within 3s fires the pyro | Integration: test_GND_TEST_02_arm_fire_sequence | ✅ |
 | GND-TEST-03 | ARM auto-disarms after 3s timeout | Integration: test_GND_TEST_03_auto_disarm | ✅ |
 | GND-TEST-04 | Commands rejected outside PAD_IDLE | Integration: test_GND_TEST_04_only_in_pad_idle | ✅ |
+| GND-TEST-05 | Ground test mode at power-up, after the checks; a recovery wins | Ground test: test_GND_TEST_05_powered_up_asserted_enters_ground_test, test_GND_TEST_05_not_asserted_boots_to_the_pad, test_GND_TEST_05_asserted_briefly_boots_to_the_pad, test_GND_TEST_05_a_recovery_outranks_the_pin | ✅ |
+| GND-TEST-06 | The mode announced; the buzzer the procedure's alone | Ground test: test_GND_TEST_06_usb_does_not_take_the_buzzer; Sequence: test_GT_mode_is_announced; Buzzer: test_BUZ_GT_01_alert | ✅ |
+| GND-TEST-07 | Countdown, pyro 1, tone and countdown, pyro 2, all-clear | Ground test: test_GND_TEST_07_the_procedure; Sequence: test_GT_both_channels, test_GT_the_countdown_is_a_second_a_count; Buzzer: test_BUZ_GT_02_countdown, test_BUZ_GT_03_tone, test_BUZ_GT_04_all_clear; bench check owed (a person, dummy loads) | ✅ |
+| GND-TEST-08 | Only enabled channels; the steps omitted | Ground test: test_GND_TEST_08_only_the_enabled_channels_fire, test_GND_TEST_08_a_released_channel_is_not_enabled; Sequence: test_GT_only_channel_1, test_GT_only_channel_2, test_GT_no_channel | ✅ |
+| GND-TEST-09 | Held 1 s before a release counts; a 100 ms debounce | Sequence: test_GT_a_release_before_arming_does_nothing, test_GT_a_bounce_is_not_a_release | ✅ |
+| GND-TEST-10 | Closed again: the procedure stops before the next fire | Ground test: test_GND_TEST_10_reasserting_aborts; Sequence: test_GT_reasserting_aborts_the_countdown, test_GT_reasserting_in_the_tone_stops_the_second, test_GT_reasserting_in_the_second_countdown_stops_the_second | ✅ |
+| GND-TEST-11 | Terminal until power-up; never flies | Ground test: test_GND_TEST_11_never_flies; Sequence: test_GT_done_is_final | ✅ |
+| GND-TEST-12 | The switch: to ground, or across two pads | Pin assignment: test_PIN_GT_01_default_is_none, test_PIN_GT_02_a_switch_to_ground_on_a_user_pad, test_PIN_GT_03_a_switch_across_two_pads, test_PIN_GT_04_each_wiring_needs_its_pads, test_PIN_GT_05_pads_it_cannot_take, test_PIN_GT_06_not_a_pad_already_in_use, test_PIN_GT_07_ini_round_trip; Switch: test_GT_SW_switch_to_ground, test_GT_SW_two_pads_closed_and_open, test_GT_SW_two_pads_a_stuck_pad_is_not_closed, test_GT_SW_two_pads_drive_alternates; Web UI: the ground test switch is wired to ground or across two pads; bench check owed | ✅ |
 | DD-011 | NMEA-style $GT,... responses with XOR checksum | Integration: test_GND_TEST_02_arm_fire_sequence | ✅ |
 | CFG-HAL-01 | hal_config_load() abstracts config storage | Integration: all tests load config via HAL | ✅ |
 | CFG-HAL-02 | hal_config_save() persists config changes | Integration: hal_test.c implements in-memory save | ✅ |
@@ -387,7 +395,7 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 241 |
+| ✅ Verified by a host, web or closed-loop test | 249 |
 | ⚠️ Not directly verified (needs a test or hardware) | 20 |
 | ❌ Not implemented | 1 (USB-06: no hardware path) |
 | ✅ HW (hardware satisfies) | 11 |

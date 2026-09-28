@@ -132,6 +132,13 @@ check("log space: bytes free, record size and the two rates",
       sp.get("bytes_free", 0) > 0 and sp.get("record_bytes") == 22 and sp.get("rates_hz", [0])[0] == 1
       and 40 <= sp.get("rates_hz", [0, 0])[1] <= 100, str(sp))
 
+# GND-TEST-12: the ground test switch's wiring and pads, as pins.ini has them.
+_, _, body = req("GET", "/api/pins/caps")
+pc = json.loads(body)
+check("pins caps: the ground test switch", pc.get("ground_test") in ("none", "ground", "pair")
+      and isinstance(pc.get("gt_pin"), int) and isinstance(pc.get("gt_drive_pin"), int),
+      f'{pc.get("ground_test")} {pc.get("gt_pin")} {pc.get("gt_drive_pin")}')
+
 # G4-N: the network's counters. This request's own connection is open, so
 # accepts and an established connection are at least one.
 _, _, body = req("GET", "/api/net")

@@ -13,6 +13,11 @@
 __attribute__((weak)) bool lua_app_ready_or_absent(void) {
     return true;
 }
+
+/* Likewise for a platform with no ground test pin: never asserted. */
+__attribute__((weak)) bool hal_ground_test_asserted(void) {
+    return false;
+}
 #include "board_id.h"
 #include "flight_states.h"
 #include "brownout.h"
@@ -277,9 +282,18 @@ static void check_post_fire_verify(flight_context_t *ctx, uint32_t now) {
 
 /* ── Event detectors ──────────────────────────────────────────────── */
 
-/* [FLT-BOOT-04, FLT-BOOT-09] */
+/* [FLT-BOOT-04, FLT-BOOT-09] The settle also watches the ground test pin:
+ * held through its end, ground test mode follows the sensor and continuity
+ * checks [GND-TEST-05]. */
 static state_event_t detect_boot_settle(flight_context_t *ctx, uint32_t now) {
-    return (now - ctx->boot_timer >= 2500) ? SEVT_TIMER : SEVT_NONE;
+    bool held = hal_ground_test_asserted();
+    if (held && !ctx->gt_held)
+        ctx->gt_held_since = now;
+    ctx->gt_held = held;
+    if (now - ctx->boot_timer < 2500)
+        return SEVT_NONE;
+    ctx->gt_requested = held && now - ctx->gt_held_since >= GT_BOOT_HOLD_MS;
+    return SEVT_TIMER;
 }
 
 /* The first power-up test is the sensor.
@@ -443,10 +457,13 @@ static void read_continuity(flight_context_t *ctx) {
 }
 
 /* [SYS-STATUS-02] */
+/* [GND-TEST-05] Ground test mode is taken here, once the continuity has
+ * been read [PYR-SAFE-01]. A recovery never reaches this: it leaves
+ * BOOT_SENSOR straight for the flight. */
 static state_event_t detect_boot_continuity(flight_context_t *ctx, uint32_t now) {
     read_continuity(ctx);
     ctx->boot_timer = now;
-    return SEVT_DONE;
+    return ctx->gt_requested ? SEVT_GROUND_TEST : SEVT_DONE;
 }
 
 /* [FLT-BOOT-08] Calibration is handled by pressure_processing layer.
@@ -526,18 +543,25 @@ beep_reason_t beep_reason_for_diag(uint16_t diag) {
     return BR_OK_TO_FLY;
 }
 
-static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { /* [PYR-CONT-01, PYR-ALT-02] */
+/* [PYR-CONT-01] Once a second. False when it is not yet due. */
+static bool sample_continuity(flight_context_t *ctx, uint32_t now, hal_continuity_t *c1, hal_continuity_t *c2) {
     if (now - ctx->last_cont_check <= 1000)
-        return;
-    hal_continuity_t c1, c2;
+        return false;
     hal_pyro_sample();
-    hal_pyro_get(1, &c1);
-    hal_pyro_get(2, &c2);
-    ctx->pyro1_continuity_good = c1.good;
-    ctx->pyro2_continuity_good = c2.good;
-    ctx->pyro1_adc = c1.raw_adc;
-    ctx->pyro2_adc = c2.raw_adc;
+    hal_pyro_get(1, c1);
+    hal_pyro_get(2, c2);
+    ctx->pyro1_continuity_good = c1->good;
+    ctx->pyro2_continuity_good = c2->good;
+    ctx->pyro1_adc = c1->raw_adc;
+    ctx->pyro2_adc = c2->raw_adc;
     ctx->last_cont_check = now;
+    return true;
+}
+
+static void update_continuity_and_buzzer(flight_context_t *ctx, uint32_t now) { /* [PYR-CONT-01, PYR-ALT-02] */
+    hal_continuity_t c1, c2;
+    if (!sample_continuity(ctx, now, &c1, &c2))
+        return;
 
     /* [FLT-BOOT-15] Re-derived on every check, so the diagnosis describes the
      * same instant as the continuity it came from. */
@@ -1416,6 +1440,54 @@ static void action_landing(flight_context_t *ctx, uint32_t now) {
     hal_log_stop();
 }
 
+/* ── Ground test [GND-TEST-05..11] ────────────────────────────────── */
+
+/* A channel is enabled for the ground test when the configuration gives it
+ * a mode and a script has not taken its pads. */
+static bool gt_enabled(const flight_context_t *ctx, uint8_t ch) {
+    uint8_t mode = ch == 1 ? ctx->config.pyro1_mode : ctx->config.pyro2_mode;
+    return mode != PYRO_MODE_NONE && !pyro_release_is_released(ch);
+}
+
+static void action_ground_test(flight_context_t *ctx, uint32_t now) {
+    extern void hal_telemetry_send(const char *sentence);
+    bool p1 = gt_enabled(ctx, 1), p2 = gt_enabled(ctx, 2);
+    gt_seq_begin(&ctx->gt_seq, p1, p2, hal_ground_test_asserted(), now);
+    char line[40];
+    snprintf(line, sizeof(line), "!GT MODE p1=%s p2=%s\r\n", p1 ? "on" : "off", p2 ? "on" : "off");
+    hal_telemetry_send(line);
+}
+
+/* Terminal until the next power-up. The continuity is still sampled, quietly
+ * -- MK1C fires only a channel its tracking test has seen present -- and the
+ * buzzer is the procedure's alone. */
+static state_event_t detect_ground_test(flight_context_t *ctx, uint32_t now) {
+    extern void hal_telemetry_send(const char *sentence);
+    hal_continuity_t c1, c2;
+    sample_continuity(ctx, now, &c1, &c2);
+
+    gt_phase_t was = ctx->gt_seq.phase;
+    gt_action_t a = gt_seq_step(&ctx->gt_seq, hal_ground_test_asserted(), now);
+    if (a.sound != GT_SOUND_NONE)
+        buzzer_play_ground_test(a.sound);
+    char line[40];
+    if (a.fire) {
+        pyro_fire_result_t r = flight_pyro_energise(a.fire);
+        gt_fire_t g = r == PYRO_BUSY ? GT_FIRE_BUSY : (r == PYRO_ENERGISED ? GT_FIRE_ENERGISED : GT_FIRE_REFUSED);
+        gt_seq_fired(&ctx->gt_seq, a.fire, g, now);
+        if (g != GT_FIRE_BUSY) {
+            snprintf(line, sizeof(line), "!GT FIRE %u %s\r\n", (unsigned)a.fire,
+                     g == GT_FIRE_ENERGISED ? "fired" : "refused");
+            hal_telemetry_send(line);
+        }
+    }
+    if (ctx->gt_seq.phase != was) {
+        snprintf(line, sizeof(line), "!GT %s\r\n", gt_seq_phase_name(ctx->gt_seq.phase));
+        hal_telemetry_send(line);
+    }
+    return SEVT_NONE;
+}
+
 /* ── State machine ────────────────────────────────────────────────── */
 
 static const detect_fn detectors[STATE_COUNT] = {
@@ -1430,6 +1502,7 @@ static const detect_fn detectors[STATE_COUNT] = {
     [LANDED] = detect_landed,
     [BOOT_SENSOR] = detect_boot_sensor,
     [FAULT] = detect_fault,
+    [GROUND_TEST] = detect_ground_test,
 };
 
 static const transition_t transitions[] = {
@@ -1445,6 +1518,7 @@ static const transition_t transitions[] = {
     {BOOT_SENSOR, SEVT_FAULT, FAULT, action_fault},
     {BOOT_CALIBRATE, SEVT_FAULT, FAULT, action_fault},
     {BOOT_CONTINUITY, SEVT_DONE, BOOT_CALIBRATE, action_cal_init},
+    {BOOT_CONTINUITY, SEVT_GROUND_TEST, GROUND_TEST, action_ground_test},
     {BOOT_CALIBRATE, SEVT_CAL_DONE, PAD_IDLE, action_ground_cal},
     {PAD_IDLE, SEVT_LAUNCH, ASCENT, action_launch},
     {ASCENT, SEVT_ARMED, ASCENT, action_armed},
@@ -1628,7 +1702,9 @@ static bool state_sends_telemetry(flight_state_t st) {
 
 static void grounding_changed(flight_context_t *ctx, bool was, uint32_t now) {
     bool is = grounded_on_usb(ctx);
-    if (is == was)
+    /* [GND-TEST-06] The ground test's buzzer is its countdown: an attach
+     * chirp must not cut it off. */
+    if (is == was || ctx->current_state == GROUND_TEST)
         return;
     if (is) {
         buzzer_play_usb_ok(); /* in place of whatever was being said */

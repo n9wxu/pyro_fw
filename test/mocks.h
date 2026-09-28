@@ -122,6 +122,14 @@ void mock_serial_enqueue(const char *cmd);
  * the correct number of transitions without real hardware. */
 extern int mock_buzzer_tone_on_count;
 extern int mock_buzzer_tone_off_count;
+/* Each change of the tone, with mock_time_ms, so a test can time a pattern. */
+#define MOCK_BUZZER_EDGES 256
+extern uint32_t mock_buzzer_edge_ms[MOCK_BUZZER_EDGES];
+extern bool mock_buzzer_edge_on[MOCK_BUZZER_EDGES];
+extern int mock_buzzer_edges;
+
+/* The ground test pin: true is closed [GND-TEST-05]. */
+extern bool mock_ground_test_pin;
 
 void mock_reset_all(void);
 

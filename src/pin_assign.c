@@ -97,6 +97,12 @@ const char *pin_assign_strerror(pin_err_t e) {
         return "that pad is already doing something else";
     case PIN_ERR_DUPLICATE_NAME:
         return "two resources share one name";
+    case PIN_ERR_GT_NOT_CAPABLE:
+        return "that pad cannot read the ground test switch";
+    case PIN_ERR_GT_BUSY:
+        return "that pad is already doing something else";
+    case PIN_ERR_GT_INCOMPLETE:
+        return "the ground test switch needs its pads: one to ground, or two different pads";
     }
     return "invalid";
 }
@@ -113,6 +119,15 @@ void pin_assign_defaults(pin_assign_t *a) {
     /* Not memset's 0, which is GPIO0 -- the telemetry UART on every board
      * here. The default has to mean "wherever the board put it". */
     a->buzzer_pin = PIN_BUZZER_BOARD;
+    a->gt_pin = PIN_GT_UNSET;
+    a->gt_drive_pin = PIN_GT_UNSET;
+}
+
+/* Whether this pad carries the ground test switch. */
+static bool is_gt_pad(const pin_assign_t *a, uint8_t pin) {
+    if (!a || a->gt_wiring == GT_WIRING_NONE)
+        return false;
+    return pin == a->gt_pin || (a->gt_wiring == GT_WIRING_PAIR && pin == a->gt_drive_pin);
 }
 
 /* The board's own buzzer pad, or PIN_BUZZER_BOARD when it fits none. */
@@ -148,7 +163,7 @@ bool pin_assign_is_reserved(const pin_assign_t *a, uint8_t pin) {
      * whether that is the board's own pad or a user pad the operator moved it
      * to. The converse matters just as much: once the buzzer has moved, the
      * board's original pad is no longer reserved and Lua may have it. */
-    if (pin_assign_buzzer_pin(a) == pin) {
+    if (pin_assign_buzzer_pin(a) == pin || is_gt_pad(a, pin)) {
         return true;
     }
     if (c && (c->functions & FN_BUZZER) && a && a->buzzer_pin != PIN_BUZZER_BOARD) {
@@ -218,6 +233,52 @@ static pin_verdict_t check_buzzer(const pin_assign_t *a) {
     return ok();
 }
 
+/* One pad of the ground test switch: a plain digital pad that nothing else
+ * has -- no script, not the buzzer, nothing the board holds. */
+static pin_verdict_t check_gt_pad(const pin_assign_t *a, uint8_t pin) {
+    if (pin == PIN_GT_UNSET) {
+        return fail(PIN_ERR_GT_INCOMPLETE, 0);
+    }
+    const pin_cap_t *c = pin_caps_find(pin);
+    if (!c) {
+        return fail(PIN_ERR_UNKNOWN_PIN, pin);
+    }
+    if (!(c->functions & FN_DIGITAL)) {
+        return fail(PIN_ERR_GT_NOT_CAPABLE, pin);
+    }
+    if (pin < PIN_ASSIGN_MAX_GPIO && a->role[pin] != LUA_ROLE_OFF) {
+        return fail(PIN_ERR_GT_BUSY, pin);
+    }
+    if (pin_assign_buzzer_pin(a) == pin) {
+        return fail(PIN_ERR_GT_BUSY, pin);
+    }
+    if (c->group != PG_NONE) {
+        bool released = (c->group == PG_CH1)   ? a->pyro1_released
+                        : (c->group == PG_CH2) ? a->pyro2_released
+                                               : (a->pyro1_released && a->pyro2_released);
+        if (!released) {
+            return fail(PIN_ERR_PYRO_RETAINED, pin);
+        }
+    } else if (c->functions & FN_BOARD_RESERVED) {
+        return fail(PIN_ERR_GT_BUSY, pin);
+    }
+    return ok();
+}
+
+static pin_verdict_t check_ground_test(const pin_assign_t *a) {
+    if (a->gt_wiring == GT_WIRING_NONE) {
+        return ok();
+    }
+    pin_verdict_t v = check_gt_pad(a, a->gt_pin);
+    if (v.err != PIN_OK || a->gt_wiring != GT_WIRING_PAIR) {
+        return v;
+    }
+    if (a->gt_drive_pin == a->gt_pin) {
+        return fail(PIN_ERR_GT_INCOMPLETE, a->gt_pin);
+    }
+    return check_gt_pad(a, a->gt_drive_pin);
+}
+
 pin_verdict_t pin_assign_validate(const pin_assign_t *a) {
     int bridge_channel = 0;
     int bridge_common = 0;
@@ -225,6 +286,10 @@ pin_verdict_t pin_assign_validate(const pin_assign_t *a) {
     pin_verdict_t bz = check_buzzer(a);
     if (bz.err != PIN_OK) {
         return bz;
+    }
+    pin_verdict_t gt = check_ground_test(a);
+    if (gt.err != PIN_OK) {
+        return gt;
     }
 
     for (uint8_t pin = 0; pin < PIN_ASSIGN_MAX_GPIO; pin++) {
@@ -307,6 +372,11 @@ static bool parse_bool(const char *v) {
     return strcmp(v, "true") == 0 || strcmp(v, "1") == 0;
 }
 
+/* A pad number, or PIN_GT_UNSET: never atoi()'s 0, which is a real GPIO. */
+static uint8_t parse_pad(const char *v) {
+    return (v[0] >= '0' && v[0] <= '9') ? (uint8_t)atoi(v) : (uint8_t)PIN_GT_UNSET;
+}
+
 void pin_assign_parse_ini(char *buf, pin_assign_t *a) {
     char *line = buf;
     while (line && *line) {
@@ -332,6 +402,15 @@ void pin_assign_parse_ini(char *buf, pin_assign_t *a) {
                      * anything unparseable falls back to it rather than to
                      * atoi()'s 0, which is the telemetry UART. */
                     a->buzzer_pin = (val[0] >= '0' && val[0] <= '9') ? (uint8_t)atoi(val) : (uint8_t)PIN_BUZZER_BOARD;
+                } else if (strcmp(key, "ground_test") == 0) {
+                    /* An unknown wiring is none, never a guess. */
+                    a->gt_wiring = strcmp(val, "ground") == 0 ? GT_WIRING_GROUND
+                                   : strcmp(val, "pair") == 0 ? GT_WIRING_PAIR
+                                                              : GT_WIRING_NONE;
+                } else if (strcmp(key, "ground_test_pin") == 0) {
+                    a->gt_pin = parse_pad(val);
+                } else if (strcmp(key, "ground_test_drive_pin") == 0) {
+                    a->gt_drive_pin = parse_pad(val);
                 } else if (strcmp(key, "pyro1_released") == 0) {
                     a->pyro1_released = parse_bool(val);
                 } else if (strcmp(key, "pyro2_released") == 0) {
@@ -382,6 +461,15 @@ int pin_assign_serialize_ini(const pin_assign_t *a, char *buf, int max_len) {
         APPEND("buzzer_pin=board\r\n");
     } else {
         APPEND("buzzer_pin=%u\r\n", (unsigned)a->buzzer_pin);
+    }
+    APPEND("ground_test=%s\r\n", a->gt_wiring == GT_WIRING_GROUND ? "ground"
+                                 : a->gt_wiring == GT_WIRING_PAIR ? "pair"
+                                                               : "none");
+    if (a->gt_pin != PIN_GT_UNSET) {
+        APPEND("ground_test_pin=%u\r\n", (unsigned)a->gt_pin);
+    }
+    if (a->gt_drive_pin != PIN_GT_UNSET) {
+        APPEND("ground_test_drive_pin=%u\r\n", (unsigned)a->gt_drive_pin);
     }
 
     /* Only assigned pins, so the file stays about as long as the

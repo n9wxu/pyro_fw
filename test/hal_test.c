@@ -254,7 +254,15 @@ static bool fs_locked(void) {
     return true;
 }
 
+static bool mock_tone; /* the buzzer's level, for the edge log */
+
+bool mock_ground_test_pin;
+bool hal_ground_test_asserted(void) {
+    return mock_ground_test_pin;
+}
+
 void mock_reset_all(void) {
+    mock_ground_test_pin = false;
     mock_fs_write_count = 0;
     mock_fs_locked_count = 0;
     memset(&sim_files, 0, sizeof(sim_files));
@@ -276,6 +284,8 @@ void mock_reset_all(void) {
     mock_serial_queue_count = 0;
     mock_buzzer_tone_on_count = 0;
     mock_buzzer_tone_off_count = 0;
+    mock_buzzer_edges = 0;
+    mock_tone = false;
     /* Reset log state and streaming file handle so each test starts clean
      * regardless of whether the previous test reached LANDED. */
     test_log_active = false;
@@ -424,13 +434,26 @@ bool hal_pyro_fault(uint8_t channel) {
 
 int mock_buzzer_tone_on_count = 0;
 int mock_buzzer_tone_off_count = 0;
+uint32_t mock_buzzer_edge_ms[MOCK_BUZZER_EDGES];
+bool mock_buzzer_edge_on[MOCK_BUZZER_EDGES];
+int mock_buzzer_edges;
+
+static void buzzer_edge(bool on) {
+    if (on != mock_tone && mock_buzzer_edges < MOCK_BUZZER_EDGES) {
+        mock_buzzer_edge_ms[mock_buzzer_edges] = mock_time_ms;
+        mock_buzzer_edge_on[mock_buzzer_edges++] = on;
+    }
+    mock_tone = on;
+}
 
 void hal_buzzer_init(void) {}
 void hal_buzzer_tone_on(void) {
     mock_buzzer_tone_on_count++;
+    buzzer_edge(true);
 }
 void hal_buzzer_tone_off(void) {
     mock_buzzer_tone_off_count++;
+    buzzer_edge(false);
 }
 
 /* ── Buzzer async task (test) ─────────────────────────────────────── */

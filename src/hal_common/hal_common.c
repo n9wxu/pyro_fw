@@ -37,6 +37,7 @@
 #include "pyro_release.h"
 #include "http_server.h"
 #include "flight_log.h"
+#include "ground_test_switch.h"
 #include "log_plan.h"
 #include "pressure_trace.h"
 #include "loop_period.h"
@@ -93,6 +94,54 @@ void hal_tasks_tick(uint32_t now_ms) {
         if (t->tick && (int32_t)(now_ms - t->next_due_ms) >= 0)
             t->tick(t, now_ms);
     }
+}
+
+/* ── The ground test switch [GND-TEST-12] ──────────────────────────
+ *
+ * Read once a loop, as a task, so however often the flight code asks it gets
+ * one reading a loop; across two pads the drive and the pull then change, and
+ * settle for a loop before the next read. */
+static struct {
+    async_task_t base; /* MUST be first */
+    gt_switch_t sw;
+    uint8_t pin, drive;
+    bool on;
+} gts;
+
+static void gts_tick(async_task_t *base, uint32_t now_ms) {
+    base->next_due_ms = now_ms;
+    gt_switch_out_t o = gt_switch_step(&gts.sw, gpio_get(gts.pin));
+    if (gts.sw.pair) {
+        gpio_put(gts.drive, o.drive_high);
+        gpio_set_pulls(gts.pin, o.pull_up, !o.pull_up);
+    }
+}
+
+static void hw_task_register(async_task_t *task);
+
+void hal_ground_test_configure(uint8_t wiring, uint8_t pin, uint8_t drive_pin) {
+    if (wiring == GT_WIRING_NONE || pin >= NUM_BANK0_GPIOS)
+        return;
+    bool pair = wiring == GT_WIRING_PAIR && drive_pin < NUM_BANK0_GPIOS;
+    gpio_init(pin);
+    gpio_set_dir(pin, GPIO_IN);
+    gpio_set_pulls(pin, true, false);
+    if (pair) {
+        gpio_init(drive_pin);
+        gpio_set_dir(drive_pin, GPIO_OUT);
+        gpio_put(drive_pin, false);
+    }
+    gt_switch_begin(&gts.sw, pair);
+    gts.pin = pin;
+    gts.drive = drive_pin;
+    gts.on = true;
+    gts.base.tick = gts_tick;
+    gts.base.next_due_ms = hal_time_ms();
+    hw_task_register(&gts.base);
+}
+
+bool hal_ground_test_asserted(void) {
+    return gts.on && gt_switch_asserted(&gts.sw);
 }
 
 /* Return the earliest next_due_ms across all registered tasks.

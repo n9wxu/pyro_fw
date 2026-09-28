@@ -217,6 +217,82 @@ void test_BUZ_PAT_10_usb_ok_is_one_double_chirp(void) {
     TEST_ASSERT_EQUAL_MESSAGE(10, mock_buzzer_tone_on_count, "two bursts of five chirps");
 }
 
+/* ── The ground test's voice [GND-TEST-06..08] ────────────────────
+ *
+ * Fixed patterns, timed from ground_test_seq.h's constants, which also time
+ * the procedure: the fire comes at the countdown's zero whether or not a
+ * buzzer is fitted. */
+
+/* The on-times, in order, from the edge log; each beep's length in len[]. */
+static int beeps(uint32_t *start, uint32_t *len, int max) {
+    int n = 0;
+    for (int i = 0; i < mock_buzzer_edges && n < max; i++) {
+        if (!mock_buzzer_edge_on[i])
+            continue;
+        start[n] = mock_buzzer_edge_ms[i];
+        len[n] = (i + 1 < mock_buzzer_edges) ? mock_buzzer_edge_ms[i + 1] - mock_buzzer_edge_ms[i] : 0;
+        n++;
+    }
+    return n;
+}
+
+/* Three long beeps and a pause, repeating until stopped. */
+void test_BUZ_GT_01_alert(void) {
+    buzzer_play_ground_test(GT_SOUND_ALERT);
+    uint32_t period = 3u * GT_LONG_ON_MS + 2u * GT_LONG_OFF_MS + GT_ALERT_PAUSE_MS;
+    drive_for(2u * period + 10u);
+    TEST_ASSERT_TRUE(buzzer_is_active());
+    uint32_t st[16], len[16];
+    int n = beeps(st, len, 16);
+    TEST_ASSERT_EQUAL(7, n); /* two passes, and the third's first beep */
+    for (int i = 0; i < 6; i++)
+        TEST_ASSERT_UINT32_WITHIN(2, GT_LONG_ON_MS, len[i]);
+    TEST_ASSERT_UINT32_WITHIN(2, GT_LONG_ON_MS + GT_LONG_OFF_MS, st[1] - st[0]);
+    TEST_ASSERT_UINT32_WITHIN(2, period, st[3] - st[0]);
+}
+
+/* A count a second from five: five fast beeps, then four, down to one, and
+ * then it stops, at zero. */
+void test_BUZ_GT_02_countdown(void) {
+    buzzer_play_ground_test(GT_SOUND_COUNTDOWN);
+    uint32_t t0 = mock_time_ms;
+    uint32_t done = drive_until_idle(20000);
+    uint32_t st[32], len[32];
+    int n = beeps(st, len, 32);
+    TEST_ASSERT_EQUAL(15, n);
+    int i = 0;
+    for (int count = (int)GT_COUNT_FROM; count >= 1; count--) {
+        uint32_t at = t0 + (GT_COUNT_FROM - (uint32_t)count) * GT_COUNT_MS;
+        for (int b = 0; b < count; b++, i++) {
+            TEST_ASSERT_UINT32_WITHIN(2, at + (uint32_t)b * (GT_FAST_ON_MS + GT_FAST_OFF_MS), st[i]);
+            TEST_ASSERT_UINT32_WITHIN(2, GT_FAST_ON_MS, len[i]);
+        }
+    }
+    TEST_ASSERT_UINT32_WITHIN(3, t0 + GT_COUNTDOWN_MS, done);
+}
+
+/* A steady tone, once. */
+void test_BUZ_GT_03_tone(void) {
+    buzzer_play_ground_test(GT_SOUND_TONE);
+    uint32_t done = drive_until_idle(20000);
+    uint32_t st[4], len[4];
+    TEST_ASSERT_EQUAL(1, beeps(st, len, 4));
+    TEST_ASSERT_UINT32_WITHIN(2, GT_TONE_MS, len[0]);
+    TEST_ASSERT_UINT32_WITHIN(3, GT_TONE_MS, done);
+}
+
+/* Three long beeps, once, then silence. */
+void test_BUZ_GT_04_all_clear(void) {
+    buzzer_play_ground_test(GT_SOUND_ALL_CLEAR);
+    uint32_t done = drive_until_idle(20000);
+    uint32_t st[8], len[8];
+    TEST_ASSERT_EQUAL(3, beeps(st, len, 8));
+    for (int i = 0; i < 3; i++)
+        TEST_ASSERT_UINT32_WITHIN(2, GT_LONG_ON_MS, len[i]);
+    TEST_ASSERT_UINT32_WITHIN(3, GT_ALL_CLEAR_MS, done);
+    TEST_ASSERT_FALSE(buzzer_is_active());
+}
+
 /* ── A new outcome can interrupt a tone [REV-04] ──────────────────
  *
  * The pad check re-announces when its answer changes, which can land in the
@@ -283,6 +359,10 @@ int main(void) {
     RUN_TEST(test_BUZ_PAT_09_altitude_10000);
     RUN_TEST(test_BUZ_ACT_04_new_outcome_silences_the_old_one);
     RUN_TEST(test_BUZ_PAT_10_usb_ok_is_one_double_chirp);
+    RUN_TEST(test_BUZ_GT_01_alert);
+    RUN_TEST(test_BUZ_GT_02_countdown);
+    RUN_TEST(test_BUZ_GT_03_tone);
+    RUN_TEST(test_BUZ_GT_04_all_clear);
     RUN_TEST(test_BEEP_STORE_01_write_failure_is_not_a_digit_error);
     RUN_TEST(test_BEEP_STORE_02_missing_file_reason_reaches_the_caller);
     RUN_TEST(test_BUZ_CODE_12_missing_table_is_written);

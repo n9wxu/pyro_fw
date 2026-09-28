@@ -235,6 +235,10 @@ void buzzer_play_altitude(int32_t a) {
 void buzzer_play_usb_ok(void) {
     buzzer_active_flag = true;
 }
+void buzzer_play_ground_test(gt_sound_t sound) {
+    (void)sound;
+    buzzer_active_flag = true;
+}
 void buzzer_stop(void) {
     buzzer_stop_count++;
     buzzer_active_flag = false;

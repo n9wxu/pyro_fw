@@ -131,11 +131,46 @@ static int build_usb_ok_pattern(buzzer_pattern_t *buf) {
     return idx;
 }
 
+/* The ground test's sounds [GND-TEST-06..08]. The countdown gives each count
+ * a second: its beeps, then silence to the next count. */
+static int build_gt_pattern(gt_sound_t sound, buzzer_pattern_t *buf, uint8_t *repeat) {
+    int idx = 0;
+    *repeat = 1;
+    switch (sound) {
+    case GT_SOUND_ALERT:
+        *repeat = 0;
+        idx = pat_append_beeps(buf, idx, 3, GT_LONG_ON_MS, GT_LONG_OFF_MS);
+        idx = pat_append(buf, idx, GT_ALERT_PAUSE_MS, false);
+        break;
+    case GT_SOUND_COUNTDOWN:
+        for (int count = (int)GT_COUNT_FROM; count >= 1; count--) {
+            idx = pat_append_beeps(buf, idx, count, GT_FAST_ON_MS, GT_FAST_OFF_MS);
+            uint16_t used = (uint16_t)(count * (int)(GT_FAST_ON_MS + GT_FAST_OFF_MS) - (int)GT_FAST_OFF_MS);
+            idx = pat_append(buf, idx, (uint16_t)(GT_COUNT_MS - used), false);
+        }
+        break;
+    case GT_SOUND_TONE:
+        idx = pat_append(buf, idx, GT_TONE_MS, true);
+        break;
+    case GT_SOUND_ALL_CLEAR:
+        idx = pat_append_beeps(buf, idx, 3, GT_LONG_ON_MS, GT_LONG_OFF_MS);
+        break;
+    default:
+        idx = pat_append(buf, idx, 1, false);
+        break;
+    }
+    buf[idx].duration_ms = 0;
+    buf[idx].tone_on = false;
+    idx++;
+    return idx;
+}
+
 typedef enum {
     BZ_IDLE,
     BZ_ENCODE_SPEC,
     BZ_ENCODE_ALT,
     BZ_ENCODE_USB_OK,
+    BZ_ENCODE_GT,
     BZ_PLAYING,
 } bz_state_t;
 
@@ -147,6 +182,7 @@ typedef struct {
     beep_spec_t req_spec;
     uint16_t req_gap_ms;
     int32_t req_altitude;
+    gt_sound_t req_gt;
     uint8_t req_repeat_count; /* 0=infinite, N=play N times */
 
     /* Encoded pattern */
@@ -244,6 +280,15 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
         t->base.next_due_ms = now_ms; /* play first step immediately */
         return;
 
+    case BZ_ENCODE_GT:
+        t->pattern_len = build_gt_pattern(t->req_gt, t->pattern, &t->repeat_count);
+        t->loop_start = 0;
+        t->loops_done = 0;
+        t->index = 0;
+        t->state = BZ_PLAYING;
+        t->base.next_due_ms = now_ms;
+        return;
+
     case BZ_ENCODE_USB_OK:
         t->pattern_len = build_usb_ok_pattern(t->pattern);
         t->loop_start = 0;
@@ -334,6 +379,14 @@ void buzzer_play_altitude(int32_t value_in_units) {
 void buzzer_play_usb_ok(void) {
     hal_buzzer_tone_off();
     bz.state = BZ_ENCODE_USB_OK;
+    bz.base.next_due_ms = 0;
+    bz.base.tick = buzzer_tick;
+}
+
+void buzzer_play_ground_test(gt_sound_t sound) {
+    hal_buzzer_tone_off();
+    bz.req_gt = sound;
+    bz.state = BZ_ENCODE_GT;
     bz.base.next_due_ms = 0;
     bz.base.tick = buzzer_tick;
 }

@@ -486,7 +486,15 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **GND-TEST-01**: The system shall accept serial commands to replay status and altitude beep codes. ← SYS-TEST-01 ✅
 - **GND-TEST-02**: The system shall accept serial commands to arm and fire individual pyro channels for ground testing. ← SYS-TEST-01 ✅
 - **GND-TEST-03**: Ground test arm shall require a multi-step confirmation and auto-disarm after 3 seconds. ← SYS-TEST-01 ✅
-- **GND-TEST-04**: Ground test shall be available only during PAD_IDLE state. ← PYR-SAFE-04 ✅
+- **GND-TEST-04**: The serial ground test commands shall be available only during PAD_IDLE state. ← PYR-SAFE-04 ✅
+- **GND-TEST-05**: A board powered up with its ground test switch closed, and held closed for 0.5 s at the end of the power-up settle, shall enter ground test mode once its sensor and continuity have been checked, and never the pad or a flight state. A board recovering a flight after a power event shall carry on flying, whatever the switch says. ← SYS-TEST-01, PYR-SAFE-01, DD-071
+- **GND-TEST-06**: Ground test mode shall be announced by three long beeps and a pause, repeating. Nothing else shall take the buzzer while the mode lasts, the USB attach chirp included. ← SYS-TEST-01, DD-071
+- **GND-TEST-07**: The switch opened, once it has been held closed in ground test mode, shall start the procedure: a countdown at a count a second -- five fast beeps, then four, down to none -- and at zero pyro 1 fires; then a 3 s steady tone and a second countdown, and at its zero pyro 2 fires; then three long beeps, once, and silence. ← SYS-TEST-01, DD-071
+- **GND-TEST-08**: Only an enabled channel shall fire: one with a configured mode other than none, whose pads are not released to Lua. With one channel enabled the tone and the second countdown shall be omitted; with none, the countdown shall lead to the all-clear. ← GND-TEST-07
+- **GND-TEST-09**: The switch shall count as opened only after it has been held closed for 1 s in ground test mode, and a change of the switch only once it has held for 100 ms. ← GND-TEST-07
+- **GND-TEST-10**: The switch closed again during a countdown or the tone shall stop the procedure before the next fire, and ground test mode shall be announced again. ← GND-TEST-07
+- **GND-TEST-11**: Ground test mode shall last until the next power-up: it shall never detect a launch or open a flight log, and after the all-clear nothing more shall happen. ← PYR-SAFE-04
+- **GND-TEST-12**: The ground test switch shall be assignable in `pins.ini` as none, a switch from one digital pad to ground, or a switch across two digital pads, and its pads shall be reserved against Lua. Across two pads one pad shall be driven high and low in turn with the other pulled the opposite way, and the switch shall read closed only when the read pad follows the driven one both ways. ← SYS-TEST-01, DD-071
 
 ## 17. On USB
 

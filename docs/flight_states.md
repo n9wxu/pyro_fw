@@ -66,7 +66,8 @@ stateDiagram-v2
     BOOT_SETTLE --> BOOT_SENSOR: SEVT_TIMER<br/>2500 ms elapsed
     BOOT_SENSOR --> BOOT_CONTINUITY: SEVT_DONE<br/>sensor answered and fs mounted
     BOOT_SENSOR --> FAULT: SEVT_FAULT<br/>no sensor, or no filesystem
-    BOOT_CONTINUITY --> BOOT_CALIBRATE: SEVT_DONE<br/>unconditional, first tick
+    BOOT_CONTINUITY --> BOOT_CALIBRATE: SEVT_DONE<br/>first tick
+    BOOT_CONTINUITY --> GROUND_TEST: SEVT_GROUND_TEST<br/>ground test switch held at power-up
     BOOT_CALIBRATE --> PAD_IDLE: SEVT_CAL_DONE<br/>10 samples averaged
     BOOT_CALIBRATE --> FAULT: SEVT_FAULT<br/>no samples within 10 s
 
@@ -85,6 +86,7 @@ stateDiagram-v2
 
     FAULT --> FAULT: terminal
     LANDED --> LANDED: terminal
+    GROUND_TEST --> GROUND_TEST: terminal until power-up
 
     note right of ASCENT
         DEAD END: no exit unless armed,
@@ -100,20 +102,23 @@ stateDiagram-v2
 
 Every descent state can reach `LANDED`, so a flight that deployed nothing still
 closes its log. `DROGUE_DESCENT --> FALLING` is the only back edge in the
-machine. Nothing leaves `LANDED` or `FAULT`.
+machine. Nothing leaves `LANDED`, `FAULT` or `GROUND_TEST`.
 
 ---
 
 ## Transition table
 
-Complete. `transitions[]` has seventeen rows and this is all of them.
+Complete. `transitions[]` has nineteen rows and this is all of them.
 
 | From | Event | To | Action | Condition |
 |---|---|---|---|---|
 | BOOT_SETTLE | SEVT_TIMER | BOOT_SENSOR | — | `now - boot_timer >= 2500` |
 | BOOT_SENSOR | SEVT_DONE | BOOT_CONTINUITY | — | `sensor_type != 0 && fs_ok` |
+| BOOT_SENSOR | SEVT_RECOVER_ASCENT | ASCENT | — | a power event in flight, climbing (brownout.h) |
+| BOOT_SENSOR | SEVT_RECOVER_DESCENT | FALLING | `action_recovered_descent` | a power event in flight, descending |
 | BOOT_SENSOR | SEVT_FAULT | FAULT | `action_fault` | `sensor_type == 0` or `!fs_ok` |
-| BOOT_CONTINUITY | SEVT_DONE | BOOT_CALIBRATE | `action_cal_init` | unconditional, first tick |
+| BOOT_CONTINUITY | SEVT_DONE | BOOT_CALIBRATE | `action_cal_init` | first tick, no ground test |
+| BOOT_CONTINUITY | SEVT_GROUND_TEST | GROUND_TEST | `action_ground_test` | `gt_requested`: the switch held 500 ms at the settle's end [GND-TEST-05] |
 | BOOT_CALIBRATE | SEVT_CAL_DONE | PAD_IDLE | `action_ground_cal` | `pp_cal_done()` |
 | BOOT_CALIBRATE | SEVT_FAULT | FAULT | `action_fault` | `now - boot_timer >= 10000` |
 | PAD_IDLE | SEVT_LAUNCH | ASCENT | `action_launch` | `alt > 3048 cm && pad_speed > 500 cm/s` |
@@ -307,6 +312,16 @@ Landing needs all three for a continuous 1000 ms:
 Or the DD-015 timeout: `landing_timeout` seconds since **apogee** (not since
 main deployment) and stillness, `|speed| < 200 cm/s` held 1 s on a sensor
 that has not failed -- see defect 14.
+
+### GROUND_TEST (12)
+Entered from BOOT_CONTINUITY when the ground test switch was closed through
+the end of the power-up settle, once the sensor and continuity have been
+checked; a recovery leaves BOOT_SENSOR for the flight first, so it always
+wins. Terminal until the next power-up: no launch detection, no flight log,
+no $PYRO sentence and no pad announcement. `ground_test_seq.c` runs the
+procedure -- the alert, the countdown, pyro 1 at zero, the tone and a
+second countdown, pyro 2 at zero, the all-clear -- and `!GT` lines report
+each step on the UART [GND-TEST-05..11, DD-071].
 
 ### LANDED (8) / FAULT (10)
 Terminal. Flight time freezes at the landing. FAULT keeps serving HTTP and

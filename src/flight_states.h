@@ -5,7 +5,8 @@
 #include <stdbool.h>
 #include "config.h"
 #include "hal.h"
-#include "ground_test.h" /* ground_test_ctx_t embedded in flight_context_t */
+#include "ground_test.h"     /* ground_test_ctx_t embedded in flight_context_t */
+#include "ground_test_seq.h" /* gt_seq_t, likewise */
 
 /* What the power-up self-test found. Several can be true at once. */
 #define DIAG_SENSOR_FAIL (1u << 0)
@@ -46,6 +47,7 @@ typedef enum {
      * make every previously recorded flight read wrong. */
     BOOT_SENSOR, /* the pressure sensor is tested BEFORE the pyros */
     FAULT,       /* terminal: the board cannot fly and says so */
+    GROUND_TEST, /* terminal: powered up with the ground test pin asserted [GND-TEST-05] */
     STATE_COUNT
 } flight_state_t;
 
@@ -71,6 +73,7 @@ typedef enum {
      * way the rocket is going. See brownout.h. */
     SEVT_RECOVER_ASCENT,
     SEVT_RECOVER_DESCENT,
+    SEVT_GROUND_TEST, /* the pin was held through power-up [GND-TEST-05] */
 } state_event_t;
 
 // Forward declare for function pointer types
@@ -273,6 +276,13 @@ typedef struct flight_context_t {
 
     // Ground test state machine [GND-TEST-01..04, DD-011]
     ground_test_ctx_t gt;
+
+    /* [GND-TEST-05..11] The ground test pin at power-up, and the procedure
+     * it asks for. */
+    bool gt_held;
+    uint32_t gt_held_since;
+    bool gt_requested;
+    gt_seq_t gt_seq;
 } flight_context_t;
 
 // Flight init and dispatch

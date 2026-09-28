@@ -296,6 +296,7 @@ const server = http.createServer((req, res) => {
                        'switch current-limits with its fault line wired back.',
       pyro1_released: true, pyro2_released: true, reserved_mask: 511, fn: FN,
       buzzer_pin: -1, buzzer_on: 16,
+      ground_test: 'none', gt_pin: -1, gt_drive_pin: -1,
       roles: [{r:'off',needs:0},{r:'out',needs:FN.digital},{r:'pwm',needs:FN.pwm},
               {r:'in',needs:FN.digital},{r:'tx',needs:FN.serial},{r:'rx',needs:FN.serial},
               {r:'pixel',needs:FN.pixel},{r:'bridge',needs:FN.bridge}],

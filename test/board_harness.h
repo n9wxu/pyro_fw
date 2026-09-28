@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "../src/flight_states.h"
+#include "../src/ground_test_seq.h"
 
 #define SENSOR_RMS_PA 1.2f /* MS5607 at OSR 4096 */
 
@@ -40,6 +41,11 @@ void tick(uint32_t t);
 extern uint32_t (*loop_lag_ms)(uint32_t t);
 uint32_t run_to_pad(uint32_t *t); /* returns the time PAD_IDLE began */
 bool booting(void);
+
+/* What the buzzer was asked to say. */
+extern int harness_spec_plays, harness_usb_ok_plays;
+extern gt_sound_t harness_gt_sounds[32];
+extern int harness_gt_sound_n;
 
 void write_marker(int32_t ground_pa);
 bool marker_valid(void);

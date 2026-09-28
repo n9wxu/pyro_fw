@@ -183,6 +183,11 @@ int main() {
      * this is how the board gets a buzzer at all. */
     board_buzzer_set_pin(pin_assign_buzzer_pin(pin_store_current()));
 
+    /* The ground test switch's pads, claimed by the same pass; read from the
+     * first loop, which is where the power-up settle watches it. */
+    const pin_assign_t *pins = pin_store_current();
+    hal_ground_test_configure(pins->gt_wiring, pins->gt_pin, pins->gt_drive_pin);
+
 #if PYRO_HAS_LUA
     /* Core1 is launched here, once, after the filesystem is mounted and the
      * config is loaded, and before the flight loop. There is deliberately no

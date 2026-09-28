@@ -1021,6 +1021,7 @@ function renderRelease() {
   /* Before the early return: the buzzer lives on this panel too, and a board
    * with no releasable pyro pads still has a buzzer to place. */
   renderBuzzerPins();
+  renderGroundTest();
   if (!ch1.length && !ch2.length) {
     hint.textContent = esc(pinCaps.board) + ' declares no releasable pyro pins.';
     document.getElementById('relTable').style.display = '';
@@ -1112,6 +1113,40 @@ function renderBuzzerPins() {
     : 'Wire a buzzer to a user pad and name it here.';
 }
 
+/* [GND-TEST-12] The ground test switch: none, a switch from one pad to
+ * ground, or a switch across two pads, one driven and one read. Every
+ * digital pad is offered, as for the buzzer; the firmware refuses one already
+ * in use, and says why. */
+function renderGroundTest() {
+  var w = document.getElementById('gtWiring');
+  if (!w || !pinCaps.fn) return;
+  var digital = pinCaps.fn.digital || 0;
+  function opts(selected) {
+    return pinCaps.pins.filter(function(p) { return (p.f & digital) !== 0; }).map(function(p) {
+      return '<option value="' + p.p + '"' + (selected === p.p ? ' selected' : '') +
+             '>GPIO' + p.p + (p.lbl ? ' — ' + esc(p.lbl) : '') + '</option>';
+    }).join('');
+  }
+  w.value = pinCaps.ground_test || 'none';
+  document.getElementById('gtPin').innerHTML = opts(pinCaps.gt_pin);
+  document.getElementById('gtDrive').innerHTML = opts(pinCaps.gt_drive_pin);
+  gtShow();
+}
+
+function gtShow() {
+  var w = document.getElementById('gtWiring').value;
+  document.getElementById('gtPin').style.display = w === 'none' ? 'none' : '';
+  document.getElementById('gtDrive').style.display = w === 'pair' ? '' : 'none';
+  document.getElementById('gtHint').textContent =
+    w === 'ground' ? 'Closed to ground at power-up: ground test mode.' :
+    w === 'pair' ? 'Closed across these two pads at power-up: ground test mode.' : '';
+}
+
+function gtChanged() {
+  gtShow();
+  relChanged();
+}
+
 /* Posts the release flags, and clears the Lua role off any pad being taken
  * back -- a role left on a re-retained pad fails validation, and the whole
  * file is then rejected, which is a confusing way to learn you unticked a
@@ -1122,6 +1157,12 @@ function relSave() {
   var bz = document.getElementById('bzPin');
   var ini = '[pins]\r\npyro1_released=' + r1 + '\r\npyro2_released=' + r2 + '\r\n' +
             'buzzer_pin=' + (bz ? bz.value : 'board') + '\r\n';
+  var gt = document.getElementById('gtWiring');
+  if (gt) {
+    ini += 'ground_test=' + gt.value + '\r\n';
+    if (gt.value !== 'none') ini += 'ground_test_pin=' + document.getElementById('gtPin').value + '\r\n';
+    if (gt.value === 'pair') ini += 'ground_test_drive_pin=' + document.getElementById('gtDrive').value + '\r\n';
+  }
 
   var retaking = [];
   if (!r1) retaking = retaking.concat(pinByGroup('ch1'));

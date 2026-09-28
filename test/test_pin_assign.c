@@ -419,6 +419,117 @@ void test_PIN_BUZZ_07_ini_round_trip(void) {
     TEST_ASSERT_EQUAL_MESSAGE(PIN_BUZZER_BOARD, c.buzzer_pin, "an unparseable value must fall back to the board pad");
 }
 
+
+/* ── The ground test switch [GND-TEST-12] ─────────────────────────
+ *
+ * A switch from one pad to ground, or a switch across two pads: MK1A's J6
+ * ground pad is crowded, and its two user pads (18, 19) take the switch
+ * between them instead. */
+
+void test_PIN_GT_01_default_is_none(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    TEST_ASSERT_EQUAL(GT_WIRING_NONE, a.gt_wiring);
+    TEST_ASSERT_EQUAL(PIN_OK, pin_assign_validate(&a).err);
+    TEST_ASSERT_FALSE(pin_assign_is_reserved(&a, USER_PAD));
+}
+
+void test_PIN_GT_02_a_switch_to_ground_on_a_user_pad(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    a.gt_wiring = GT_WIRING_GROUND;
+    a.gt_pin = 18;
+    pin_verdict_t v = pin_assign_validate(&a);
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_OK, v.err, v.what);
+    TEST_ASSERT_TRUE(pin_assign_is_reserved(&a, 18));
+    TEST_ASSERT_FALSE(pin_assign_is_reserved(&a, 19));
+}
+
+void test_PIN_GT_03_a_switch_across_two_pads(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    a.gt_wiring = GT_WIRING_PAIR;
+    a.gt_pin = 18;
+    a.gt_drive_pin = 19;
+    pin_verdict_t v = pin_assign_validate(&a);
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_OK, v.err, v.what);
+    TEST_ASSERT_TRUE(pin_assign_is_reserved(&a, 18));
+    TEST_ASSERT_TRUE(pin_assign_is_reserved(&a, 19));
+}
+
+void test_PIN_GT_04_each_wiring_needs_its_pads(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    a.gt_wiring = GT_WIRING_GROUND;
+    TEST_ASSERT_EQUAL(PIN_ERR_GT_INCOMPLETE, pin_assign_validate(&a).err);
+    a.gt_wiring = GT_WIRING_PAIR;
+    a.gt_pin = 18;
+    TEST_ASSERT_EQUAL(PIN_ERR_GT_INCOMPLETE, pin_assign_validate(&a).err);
+    a.gt_drive_pin = 18;
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_ERR_GT_INCOMPLETE, pin_assign_validate(&a).err, "one pad cannot be both ends");
+}
+
+void test_PIN_GT_05_pads_it_cannot_take(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    a.gt_wiring = GT_WIRING_GROUND;
+    a.gt_pin = 0; /* the telemetry UART */
+    TEST_ASSERT_EQUAL(PIN_ERR_GT_NOT_CAPABLE, pin_assign_validate(&a).err);
+    a.gt_pin = SENSE1;
+    TEST_ASSERT_EQUAL(PIN_ERR_GT_NOT_CAPABLE, pin_assign_validate(&a).err);
+    a.gt_pin = 2; /* no row on this board */
+    TEST_ASSERT_EQUAL(PIN_ERR_UNKNOWN_PIN, pin_assign_validate(&a).err);
+    a.gt_pin = FIRE1;
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_ERR_PYRO_RETAINED, pin_assign_validate(&a).err,
+                              "a firing pad the channel still holds is not a switch");
+}
+
+/* Not a pad a script holds, nor the buzzer's. */
+void test_PIN_GT_06_not_a_pad_already_in_use(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    a.gt_wiring = GT_WIRING_PAIR;
+    a.gt_pin = 18;
+    a.gt_drive_pin = 19;
+    a.role[19] = LUA_ROLE_OUT;
+    pin_verdict_t v = pin_assign_validate(&a);
+    TEST_ASSERT_EQUAL(PIN_ERR_GT_BUSY, v.err);
+    TEST_ASSERT_EQUAL(19, v.pin);
+    a.role[19] = LUA_ROLE_OFF;
+    a.buzzer_pin = 18;
+    TEST_ASSERT_EQUAL(PIN_ERR_GT_BUSY, pin_assign_validate(&a).err);
+}
+
+void test_PIN_GT_07_ini_round_trip(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    a.gt_wiring = GT_WIRING_PAIR;
+    a.gt_pin = 18;
+    a.gt_drive_pin = 19;
+    char buf[1024];
+    TEST_ASSERT_GREATER_THAN(0, pin_assign_serialize_ini(&a, buf, (int)sizeof(buf)));
+    pin_assign_t b;
+    pin_assign_defaults(&b);
+    pin_assign_parse_ini(buf, &b);
+    TEST_ASSERT_EQUAL(GT_WIRING_PAIR, b.gt_wiring);
+    TEST_ASSERT_EQUAL(18, b.gt_pin);
+    TEST_ASSERT_EQUAL(19, b.gt_drive_pin);
+
+    a.gt_wiring = GT_WIRING_GROUND;
+    a.gt_drive_pin = PIN_GT_UNSET;
+    TEST_ASSERT_GREATER_THAN(0, pin_assign_serialize_ini(&a, buf, (int)sizeof(buf)));
+    pin_assign_defaults(&b);
+    pin_assign_parse_ini(buf, &b);
+    TEST_ASSERT_EQUAL(GT_WIRING_GROUND, b.gt_wiring);
+    TEST_ASSERT_EQUAL(18, b.gt_pin);
+
+    char junk[] = "[pins]\nground_test=sideways\nground_test_pin=x\n";
+    pin_assign_defaults(&b);
+    pin_assign_parse_ini(junk, &b);
+    TEST_ASSERT_EQUAL_MESSAGE(GT_WIRING_NONE, b.gt_wiring, "an unknown wiring is none, never a guess");
+    TEST_ASSERT_EQUAL(PIN_GT_UNSET, b.gt_pin);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_defaults_are_valid_and_release_nothing);
@@ -460,5 +571,12 @@ int main(void) {
     RUN_TEST(test_PIN_BUZZ_05_reserved_pads_refused);
     RUN_TEST(test_PIN_BUZZ_06_pyro_pad_needs_release_first);
     RUN_TEST(test_PIN_BUZZ_07_ini_round_trip);
+    RUN_TEST(test_PIN_GT_01_default_is_none);
+    RUN_TEST(test_PIN_GT_02_a_switch_to_ground_on_a_user_pad);
+    RUN_TEST(test_PIN_GT_03_a_switch_across_two_pads);
+    RUN_TEST(test_PIN_GT_04_each_wiring_needs_its_pads);
+    RUN_TEST(test_PIN_GT_05_pads_it_cannot_take);
+    RUN_TEST(test_PIN_GT_06_not_a_pad_already_in_use);
+    RUN_TEST(test_PIN_GT_07_ini_round_trip);
     return UNITY_END();
 }

@@ -15,6 +15,7 @@
 #ifndef PIN_ASSIGN_H
 #define PIN_ASSIGN_H
 
+#include "ground_test_switch.h"
 #include "lua_platform_cfg.h"
 #include "pin_model.h"
 #include <stdbool.h>
@@ -41,6 +42,10 @@
 /* "leave the buzzer where the board put it". Not 0, which is a real GPIO. */
 #define PIN_BUZZER_BOARD 255u
 
+/* [GND-TEST-12] A ground test pad not assigned. The wirings, GT_WIRING_*,
+ * are ground_test_switch.h's. */
+#define PIN_GT_UNSET 255u
+
 typedef struct {
     bool pyro1_released;
     bool pyro2_released;
@@ -57,6 +62,13 @@ typedef struct {
      * by pin_assign_is_reserved() exactly as the board's own pad is. */
     uint8_t buzzer_pin;
 
+    /* The ground test switch: a flight-software assignment, reserved against
+     * Lua as the buzzer's pad is. gt_pin is read; gt_drive_pin is driven, for
+     * a switch across two pads. PIN_GT_UNSET where not used. */
+    uint8_t gt_wiring;
+    uint8_t gt_pin;
+    uint8_t gt_drive_pin;
+
     /* Indexed by GPIO. LUA_ROLE_OFF where nothing is assigned. */
     uint8_t role[PIN_ASSIGN_MAX_GPIO];
     char name[PIN_ASSIGN_MAX_GPIO][LUA_NAME_MAX];
@@ -66,15 +78,18 @@ typedef struct {
  * problem it hits and an operator can act on it. */
 typedef enum {
     PIN_OK = 0,
-    PIN_ERR_UNKNOWN_PIN,    /* the board declares no row for it        */
-    PIN_ERR_NOT_CAPABLE,    /* the pin cannot take that role           */
-    PIN_ERR_PYRO_RETAINED,  /* the channel still owns the pin          */
-    PIN_ERR_COMMON_HELD,    /* the other channel still needs the common */
+    PIN_ERR_UNKNOWN_PIN,        /* the board declares no row for it        */
+    PIN_ERR_NOT_CAPABLE,        /* the pin cannot take that role           */
+    PIN_ERR_PYRO_RETAINED,      /* the channel still owns the pin          */
+    PIN_ERR_COMMON_HELD,        /* the other channel still needs the common */
     PIN_ERR_BRIDGE_UNSUPPORTED, /* this board offers no bridge         */
     PIN_ERR_BRIDGE_INCOMPLETE,  /* a bridge needs a channel and the common */
-    PIN_ERR_DUPLICATE_NAME, /* two resources share one Lua name        */
+    PIN_ERR_DUPLICATE_NAME,     /* two resources share one Lua name        */
     PIN_ERR_BUZZER_NOT_CAPABLE, /* the pad cannot drive a buzzer       */
     PIN_ERR_BUZZER_BUSY,        /* the pad is already doing something  */
+    PIN_ERR_GT_NOT_CAPABLE,     /* the pad cannot read a switch        */
+    PIN_ERR_GT_BUSY,            /* the pad is already doing something  */
+    PIN_ERR_GT_INCOMPLETE,      /* the wiring lacks a pad it needs     */
 } pin_err_t;
 
 typedef struct {

@@ -12,17 +12,28 @@
 #include "../src/hal.h"
 #include "pressure_processing.h"
 
-/* The announcements are not under test here. */
+/* The announcements are not under test here, only counted. */
+int harness_spec_plays, harness_usb_ok_plays;
+gt_sound_t harness_gt_sounds[32];
+int harness_gt_sound_n;
+
 void buzzer_init(void) {}
 void buzzer_play_spec(const beep_spec_t *spec, uint16_t gap_ms, uint8_t repeat_count) {
     (void)spec;
     (void)gap_ms;
     (void)repeat_count;
+    harness_spec_plays++;
 }
 void buzzer_play_altitude(int32_t altitude) {
     (void)altitude;
 }
-void buzzer_play_usb_ok(void) {}
+void buzzer_play_usb_ok(void) {
+    harness_usb_ok_plays++;
+}
+void buzzer_play_ground_test(gt_sound_t sound) {
+    if (harness_gt_sound_n < 32)
+        harness_gt_sounds[harness_gt_sound_n++] = sound;
+}
 void buzzer_stop(void) {}
 bool buzzer_is_active(void) {
     return false;
@@ -36,6 +47,7 @@ void boot_like_hardware(uint32_t seed) {
     mock_reset_all();
     memset(&ctx, 0, sizeof(ctx));
     memset(&power, 0, sizeof(power));
+    harness_spec_plays = harness_usb_ok_plays = harness_gt_sound_n = 0;
     power.landing_timeout = -1;
     loop_lag_ms = NULL;
     mock_pressure.pressure_pa = 101325.0f;

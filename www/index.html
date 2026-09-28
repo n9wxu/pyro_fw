@@ -117,6 +117,14 @@
     <tr><td class="lbl">Buzzer</td>
         <td><select id="bzPin" onchange="relChanged()"></select>
             <span id="bzHint" class="hint"></span></td></tr>
+    <tr><td class="lbl">Ground test</td>
+        <td><select id="gtWiring" onchange="gtChanged()">
+              <option value="none">no switch</option>
+              <option value="ground">a switch to ground</option>
+              <option value="pair">a switch across two pads</option></select>
+            <select id="gtPin" onchange="relChanged()"></select>
+            <select id="gtDrive" onchange="relChanged()"></select>
+            <span id="gtHint" class="hint"></span></td></tr>
   </table>
   <div id="relWarn"></div>
   <p class="hint" id="relBtns" style="display:none">Saved with the rest of this tab. A release takes

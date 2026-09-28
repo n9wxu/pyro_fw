@@ -212,6 +212,17 @@ jobs:
       - name: Run sensor bring-up tests
         run: cd build && ninja sensor_bringup_tests && ninja bmp280_tests
 
+      # The ground test procedure: its schedule and switch on a fake clock,
+      # then through the flight software booted as the hardware boots (DD-071).
+      - name: Run ground test tests
+        run: cd build && ninja ground_test_seq_tests && ninja ground_test_tests
+
+      # Six suites the local gate ran and CI did not (task CI-1).
+      - name: Run pin, beep, buzzer and config tests
+        run: |
+          cd build && ninja pin_caps_tests && ninja beep_tests && ninja pin_assign_tests
+          ninja buzzer_tests && ninja config_tests && ninja config_persistence_tests
+
       # The firing-network models, MK1C's held to the bench board (DD-054),
       # and MK1C's real pyro backend run against it (DD-055).
       - name: Run plant model and MK1C pyro backend tests
