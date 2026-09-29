@@ -35,13 +35,16 @@ in the section named.
    backend. Written through littlefs as it is today, the log erases flash
    about once a second in flight (L2), and each erase would stop everything
    for up to 400 ms.
-2. **Tasks of different priorities must run at once (section 4).**
-   FreeRTOS's default, `configRUN_MULTIPLE_PRIORITIES` 0, makes every
-   lower-priority task on both cores yield whenever a higher-priority one
-   runs, so Lua would never run beside the flight code. The plan sets it
-   to 1 and pins the tasks to cores. The logging task then stops the flight
-   task by preempting it on core0, and stops core1 only for a flash write,
-   through the SDK's lockout.
+2. **One priority for everything but the logger (section 4).** At your
+   direction the kernel runs one priority level at a time
+   (`configRUN_MULTIPLE_PRIORITIES` 0, FreeRTOS's default). The flight
+   task and Lua share a priority, pinned to different cores, so they run
+   together; when the logger runs, both stop. Three rules come with it:
+   the logger sits at `configMAX_PRIORITIES - 1`, the SDK's lockout
+   helper's priority, or a write deadlocks the board; the network task
+   shares Lua's core and priority, since anything below that priority
+   starves while a script runs; and nothing may depend on the logger
+   excluding Lua, because ESP-IDF does not schedule that way.
 3. **The flight task never waits on another task (section 8).** It hands
    records over through a lock-free ring and wakes the logger with a
    notification. Its only blocking call is the wait for its next period.
@@ -79,15 +82,22 @@ What it costs and what it removes:
 
 ## 3. The tasks
 
-| Task | Core | Priority (of 8) | Runs | Stack (estimate) | Blocks on |
+Two priority levels are used, and nothing between them: the top,
+`configMAX_PRIORITIES - 1` (T), and one below it for everything else (P).
+
+| Task | Core | Priority | Runs | Stack (estimate) | Blocks on |
 |---|---|---|---|---|---|
-| SDK flash lockout | the core not writing | 7, `configMAX_PRIORITIES - 1` | only during a write, created by `flash_safe_execute()` | 1 KB, static | nothing: spins in RAM with interrupts off |
-| Logging and storage | 0 | 6 | when notified: records to write, a commit due, a file request | 1-2 KB | its notification |
-| Flight | 0 | 5 | every 20 ms, woken by a hardware-timer alarm | 2-4 KB | its period only |
-| Network: TinyUSB, lwIP, HTTP | 0, or either (section 7) | 3 | USB events, lwIP timers | 3-4 KB | TinyUSB's event queue, with a timeout for lwIP's timers |
-| FreeRTOS timer daemon | either | 3 | the SDK's sync interop from interrupts | 2 KB | its queue |
-| Lua | 1 | 1 | whenever nothing above it wants core1 | 12 KB (today's core1 stack) | nothing it did not ask for |
+| SDK flash lockout | 1 | T | only during a write (5.1) | 1 KB, static | nothing: spins in RAM with interrupts off |
+| Logging and storage | 0 | T | when notified: records to write, a commit due, a file request | 1-2 KB | its notification |
+| Flight | 0, alone | P | every 20 ms, woken by a hardware-timer alarm | 2-4 KB | its period only |
+| Lua | 1 | P | whenever it is ready, sharing core1 with the two below | 12 KB (today's core1 stack) | nothing it did not ask for |
+| Network: TinyUSB, lwIP, HTTP | 1 (section 7) | P | USB events, lwIP timers | 3-4 KB | TinyUSB's event queue, with a timeout for lwIP's timers |
+| FreeRTOS timer daemon | 1 | P | the SDK's sync interop from interrupts | 2 KB | its queue |
 | Idle, one per core | each | 0 | otherwise | 1 KB each | never |
+
+`configUSE_TIME_SLICING` 1 shares core1 among Lua, the network and the
+daemon a tick at a time when more than one is ready. Core0 holds only
+the flight task at P, so slicing never takes core0 from it.
 
 **The flight task's period comes from the hardware timer, not the tick.**
 A write keeps interrupts off on both cores for its duration. The SysTick
@@ -111,37 +121,87 @@ come back as notifications. The rule the flash window keeps today,
 
 ## 4. Scheduling two cores
 
-FreeRTOS-Kernel V11 schedules the two RP2040 cores with one ready list.
-Three settings decide the proposal:
+FreeRTOS-Kernel V11 schedules the two RP2040 cores from one ready list.
+Its `configRUN_MULTIPLE_PRIORITIES` setting decides whether tasks of
+different priorities may run at the same time. **The plan uses 0, the
+default, at your direction.**
 
-- **`configRUN_MULTIPLE_PRIORITIES`**, default 0 (`include/FreeRTOS.h`).
-  At 0, when a task becomes ready, every running non-idle task of lower
-  priority, on any core, is made to yield (`tasks.c`,
-  `prvYieldForTask()`). Only tasks of one priority ever run together. That
-  is "the logging task blocks the others while it works", but it also stops
-  Lua whenever the flight task runs, which is 20 ms in every 20. **Set it
-  to 1.**
-- **`configUSE_CORE_AFFINITY` 1**, with each task pinned
-  (`vTaskCoreAffinitySet()`). The SDK's flash lockout requires it
-  (`pico_flash/flash.c`: `#error configUSE_CORE_AFFINITY is required`).
-  Pinning the logging task beside the flight task on core0 is what makes
-  the logger preempt the flight task while it works. Lua keeps core1 as
-  it does today.
-- **`configUSE_TIME_SLICING` 0.** No round-robin among tasks of equal
-  priority; there are none.
+### 4.1 What 0 does
 
-**What "blocking them while it works" means, then:**
+- **When a task becomes ready, every running task of lower priority, on
+  either core, yields** (`tasks.c`, `prvYieldForTask()`).
+- **A core may then run only tasks of the highest ready priority, or its
+  idle task:** "We can't schedule any tasks, other than idle, that have a
+  priority lower than the priority of a task currently running on another
+  core" (`tasks.c`, `prvSelectHighestPriorityTask()`).
+- **Tasks of equal priority do not preempt one another.** One that becomes
+  ready waits for a core to fall free: a task blocking, or, with time
+  slicing, the next tick.
 
-- On core0, the logging task preempts the flight task and the network
-  task whenever it is woken. Draining the ring takes microseconds.
-- On core1, Lua keeps running while the logger drains the ring, and stops
-  only for a flash write, when the SDK's lockout parks core1 (section 5).
-- The flight task itself never waits for the logger: its handover is a
-  ring write and a notification (section 8).
+So with the flight task and Lua at P, pinned to cores 0 and 1, both run at
+once. When the logger (T) wakes, both yield, and core1 drops to its idle
+task until the logger blocks again. That is the behaviour you asked for.
+Each wake costs a context switch on each core and one inter-core
+interrupt, tens of microseconds (an estimate).
 
-`vTaskSuspendAll()` is not a way to block the system for a write. On SMP
-it stops the scheduler switching tasks, but the task already running on
-the other core keeps running, from flash. The SDK says the same of
+### 4.2 The rules it brings
+
+1. **The logger must be at T, the SDK helper's priority.**
+   `flash_safe_execute()` creates its helper on core1 at priority 0, then
+   raises it to `configMAX_PRIORITIES - 1` (`pico_flash/flash.c`). On SMP,
+   raising a ready task's priority calls `prvYieldForTask()` (`tasks.c`,
+   `vTaskPrioritySet()`), which with 0 yields every running task below it,
+   on both cores, the calling logger included. Then:
+   - Core0 may run only its idle task: the helper is ready at T and is
+     pinned to core1.
+   - The helper disables core1's interrupts and spins until the logger
+     releases it. That wait has no timeout.
+   - Nothing runs again until the watchdog resets the board. In flight a
+     watchdog reset comes back cold, and a cold board never deploys (L1).
+
+   With the logger at T as well, logger and helper run together, one on
+   each core, as intended. A build-time assertion holds it:
+   `_Static_assert(LOGGER_PRIO == configMAX_PRIORITIES - 1)`.
+2. **Everything else is at P.** A task below P starves whenever a script
+   is running: Lua is at P and always ready while it computes, so core1
+   has a task at P and core0 may run only the flight task or its idle
+   task. A task above P but below T stops the flight task and Lua every
+   time it runs. So the network task and the timer daemon join Lua at P.
+3. **The flight task runs alone at P on core0.** Equal priorities do not
+   preempt one another, so a task at P that could take core0 would
+   make the flight task wait for it when it wakes. The network task and
+   the daemon are therefore pinned to core1 with Lua. Core0 is idle
+   whenever the flight task waits, roughly four fifths of each period,
+   where today it spends that time on USB, lwIP and HTTP.
+4. **Stopping both is not a lock.** A task is preempted wherever it is,
+   possibly halfway through writing a record, so the handover stays a
+   ring. What stopping both buys is quiet: the logger never runs beside
+   the flight task or a script, so their timing is disturbed in one
+   place, and the bus and the XIP cache are the logger's while it works.
+   It does not make the flash safe on its own either: core1's idle task
+   and its interrupt handlers run from flash, so the write still needs
+   the lockout (section 5).
+
+### 4.3 The alternative: 1
+
+With `configRUN_MULTIPLE_PRIORITIES` 1, a core runs its own
+highest-priority ready task whatever runs on the other. The logger then
+preempts the flight task on core0 while Lua carries on on core1, and only
+the lockout stops core1, for the write itself.
+
+| | 0, your direction | 1 |
+|---|---|---|
+| While the logger works | the flight task and Lua both stop | the flight task stops; Lua runs on |
+| During the flash write | both stopped, core1 locked out | both stopped, core1 locked out |
+| The logger's priority | must be T, or the SDK's helper deadlocks | any above the flight task |
+| The network task | at P on core1, sharing it with Lua | below the flight task on core0, in its slack, as today |
+| Core0 while the flight task waits | idle | USB, lwIP and HTTP |
+| HTTP throughput while a script runs | about half of core1 (time slicing) | core0's slack, as today |
+| On the ESP32-S3 | IDF schedules each core on its own, as 1 does (section 11), so the logger stops only its own core there | the same as IDF |
+
+`vTaskSuspendAll()` is not a way to block the system for a write, in
+either mode. On SMP it stops task switching, but the task already running
+on the other core keeps running, from flash. The SDK says the same of
 `taskENTER_CRITICAL`: "on SMP it only prevents the other core from also
 entering a critical section" (`pico_flash/flash.c`, SDK 2.2.0).
 
@@ -175,12 +235,14 @@ failed write, never a hang.
 Two refinements, both small:
 
 - **A persistent lockout helper.** The SDK looks the helper up through a
-  weak `get_flash_safety_helper()`. Ours would keep one lockout task,
-  created at boot and pinned to core1, instead of creating and deleting one
-  per page. That takes the kernel's task creation out of every write.
+  weak `get_flash_safety_helper()`. Ours would keep one lockout task at T,
+  created at boot and pinned to core1, blocked on a notification, instead
+  of creating one per page and raising its priority. That takes the
+  kernel's task creation out of every write, and with it the priority
+  raise that 4.2 rule 1 guards against.
 - **Nothing preempts the logger in the gap.** The SDK notes that the
   caller "may get preempted" after core1 is parked and before it disables
-  its own interrupts. No task on core0 ranks above the logger, so only an
+  its own interrupts. Nothing ranks above the logger, so only an
   interrupt can run there, and it lengthens core1's wait by its own
   duration.
 
@@ -327,15 +389,25 @@ knows core1 is out of flash, and writes with only its own interrupts off.
 **The network task.** TinyUSB with its FreeRTOS abstraction
 (`CFG_TUSB_OS OPT_OS_FREERTOS`), lwIP kept as `NO_SYS` inside this one
 task, and the HTTP server. HTTP's work splits into units today only
-because core0 had to share its slack with them. As a task at priority 3
-it runs whenever the flight task and the logger do not need core0. The
-rule about TinyUSB callbacks (never start an endpoint transfer from one)
-stays.
+because core0 had to share its slack with them; as a task it needs no
+units. The rule about TinyUSB callbacks (never start an endpoint transfer
+from one) stays. The USB interrupt stays on core0 and hands its events to
+the task through TinyUSB's queue.
 
-**Where the network task runs:** pinned to core0, below the flight task,
-as today's slack work is; or free to use either core, which gives HTTP
-core1's idle time when no script runs, and takes core1 from Lua when
-HTTP is busy. Your choice (section 13).
+**Where it runs.** Under 4.2 it shares core1 and priority P with Lua, a
+tick at a time when both are ready. A busy script halves HTTP's share of
+core1; an idle one leaves it all. Two other placements, each with a cost:
+
+- **Free to use either core, at P.** It fills core0's idle time, but a
+  flight task that wakes to find it on core0 waits for it to block, or
+  for the next tick with time slicing: up to 1 ms of jitter on the
+  period.
+- **Under 4.3's mode 1 instead,** on core0 below the flight task, as
+  today.
+
+**A runaway script** no longer threatens the flight task: it shares
+core1 with the network task by time slicing, and the flight task has
+core0 to itself.
 
 ---
 
@@ -360,7 +432,11 @@ What discharges it:
   the one wait on the other core that plan 2 adds, and the proof has to
   state it rather than hide it.
 - **The write's waits are bounded** by `flash_safe_execute()`'s timeout
-  (5.1). The program itself is bounded by the part's maximum.
+  (5.1), provided the logger is at T (4.2, rule 1). The program itself is
+  bounded by the part's maximum.
+- **The priorities are checked at build time:** the logger and the
+  lockout helper at T, every other task at P, and the flight task the
+  only one pinned to core0 at P.
 
 **`prove_core0.py` changes** from "no flight root calls an unbounded
 primitive" to three checks:
@@ -438,7 +514,7 @@ needs about 40 KB for code and constants in RAM, of the 50.6 KB free
 | The log in flight | any medium; RAW-INT on today's boards | RAW-INT on today's boards (erases must stay out of flight) |
 | SRAM | about 40 KB of code and constants; 7-10 KB left | about 12-16 KB of kernel and stacks |
 | MK1B flash | unchanged | about 16 KB more code |
-| Lua | units on core1, as today | a task; units, grants and the kill removed |
+| Lua | units on core1, as today | a task at the flight task's priority, sharing core1 with the network; units, grants and the kill removed |
 | The proof | the flight closure RAM-closed, and no unbounded wait | no blocking kernel call from the flight task; the kernel's spin locks named as a bounded wait |
 | Toward the ESP32-S3 | the RAM flight path maps to IRAM, but the core1-writer does not: ESP-IDF parks the other core during a write | the same model ESP-IDF uses |
 | Effort (rough estimate) | 18-27 engineer-days with the common layer | 21-33 (section 12) |
@@ -454,11 +530,14 @@ media, the code flash, on today's boards.
 
 What carries over:
 
-- **The task graph, priorities, ring and notifications.** IDF FreeRTOS
-  schedules each core independently, and "the core will select the highest
-  priority ready-state task that can be run by the core" (ESP-IDF v6.1,
-  "FreeRTOS (IDF)"). That is `configRUN_MULTIPLE_PRIORITIES` 1 with
-  affinity, as section 4 sets.
+- **The task graph, ring and notifications.** One difference in the
+  scheduling: IDF FreeRTOS schedules each core independently, and "the
+  core will select the highest priority ready-state task that can be run
+  by the core" (ESP-IDF v6.1, "FreeRTOS (IDF)"). That is 4.3's mode 1. On
+  the ESP32-S3 the logger stops only its own core, and Lua runs on
+  through its work. Nothing in the plan depends on the logger excluding
+  Lua (4.2, rule 4), so the tasks carry over; the network task can move
+  back beside the flight task, on core0 below it.
 - **The fully blocking write is ESP-IDF's own.** During a write to the
   flash on SPI0/1, "all other tasks are suspended. The other core will be
   polling in a busy loop", and only IRAM-safe interrupts run (ESP-IDF v6.1,
@@ -520,7 +599,9 @@ Estimates are rough, for comparison only.
    RAM idle loop, kill and FIFO handshake; TinyUSB's FreeRTOS abstraction.
    Tests: `lua_tests` and `http_tests` unchanged; a runaway script leaves
    the flight task's period intact on the bench.
-6. **The proof and the wait rules (2-3 days).**
+6. **The proof, the wait rules and the priorities (2-3 days).** Tests
+   first: the build fails with the logger below T, with a task between P
+   and T, or with a second task at P on core0 (4.2).
 7. **Bench (2-3 days).** On each board, with Lua running and High rate 2:
    loop jitter and overruns, a histogram of lockout durations, the
    conversions discarded, and G4.
@@ -540,7 +621,10 @@ boards. Steps 1, 4 and 7 are needed by either plan.
    room.
 3. **Discards or the gap (5.4):** accept a discarded conversion per write,
    or schedule writes into the sensor's idle stretch.
-4. **The network task:** pinned to core0, or free to use core1's idle time.
+4. **The scheduling mode:** 0, as you directed, with the network sharing
+   core1 with Lua; or 1, with the network in core0's slack as today
+   (4.3). Under 0, whether the network may also use core0, at the cost
+   of up to 1 ms of jitter on the flight task's period.
 5. **A runaway script:** preempted and left running, or ended by an
    instruction budget.
 
@@ -550,6 +634,9 @@ boards. Steps 1, 4 and 7 are needed by either plan.
 
 - **A 3 ms stop is the part's maximum, not a measurement.** The histogram
   of step 7 decides whether the typical 0.4 ms holds on these boards.
+- **The SDK helper's deadlock under mode 0** if the logger is ever below
+  T (4.2, rule 1). The build-time assertion, and a persistent helper of
+  our own that never raises its priority, both guard it.
 - **Kernel spin locks are a wait on the other core.** They are bounded,
   but they break today's rule's letter, and the proof must say so.
 - **XIP cache contention** between the two cores' code, and the cache
