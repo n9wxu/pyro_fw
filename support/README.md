@@ -165,7 +165,8 @@ Discovery reads the host's own interfaces: a board hands the host
 registry is a record, not an allocator; deleting it loses nothing that running
 this again with the boards attached does not rebuild. Two boards on one octet
 cannot share a host: POST 12 hex digits to `/api/serial` on one of them and
-reboot it.
+reboot it. The same fixes two boards whose flash chips report one id, as two
+MK1Cs' do: a record is keyed by hw_id and MAC, and the report lists shared ids.
 
 ## Static Checks (CI)
 

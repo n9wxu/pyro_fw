@@ -9,12 +9,17 @@ running this again with the hardware attached.
 
 What it is for:
   - knowing which boards exist, and what firmware each was last given
-  - catching the one case derivation cannot prevent: two boards whose derived
-    subnet octet collides. That is a ~4% chance at 5 boards, 16% at 10, and it
-    only bites when both are plugged in at once. Recorded here, it is visible
-    before it is confusing.
+  - catching the two cases derivation cannot prevent: two boards whose derived
+    subnet octet collides (a ~4% chance at 5 boards, 16% at 10), and two
+    flash chips that report one id, as MK1C's XT25F128F does. Either bites
+    only when both boards are plugged in at once. Recorded here, it is
+    visible before it is confusing.
   - noticing a flash swap. The identity belongs to the flash chip, not the
     PCB, so a reflowed board arrives as a new hw_id and an old one goes quiet.
+
+A record is keyed by hw_id AND mac: boards that share a hw_id are told apart
+by their /serial.txt. Giving a board a serial therefore starts a new record
+and leaves the old one quiet, as a flash swap does.
 
 Discovery uses the host's own interface addresses. Each board is a
 point-to-point USB link running a DHCP server that hands the host
@@ -78,7 +83,7 @@ def main():
         return 1
 
     reg = load(args.registry)
-    by_hw = {b.get("hw_id"): b for b in reg["boards"] if b.get("hw_id")}
+    by_key = {(b.get("hw_id"), b.get("mac")): b for b in reg["boards"] if b.get("hw_id")}
     today = datetime.date.today().isoformat()
     seen, changed = [], 0
 
@@ -92,7 +97,8 @@ def main():
             print(f"  {host:<16} {st.get('board','?')} -- firmware predates hw_id; reflash to register")
             continue
 
-        rec = by_hw.get(hw, {})
+        key = (hw, st.get("serial"))
+        rec = by_key.get(key, {})
         was = dict(rec)
         rec.update({
             "hw_id": hw,
@@ -104,9 +110,9 @@ def main():
             "last_seen": today,
         })
         rec.setdefault("first_seen", today)
-        if hw not in by_hw:
+        if key not in by_key:
             reg["boards"].append(rec)
-            by_hw[hw] = rec
+            by_key[key] = rec
         if rec != was:
             changed += 1
         seen.append(rec)
@@ -124,11 +130,20 @@ def main():
             print(f"  192.168.{octet}.x  " + ", ".join(f"{b['board']}/{b['hw_id'][:8]}" for b in boards))
         print("  Fix: POST 12 hex digits to /api/serial on one of them, then reboot.")
 
+    shared = {}
+    for b in reg["boards"]:
+        shared.setdefault(b.get("hw_id"), []).append(b)
+    shared = {k: v for k, v in shared.items() if k and len(v) > 1}
+    if shared:
+        print("\nSHARED FLASH IDS -- these derive one identity; each after the first needs /serial.txt:")
+        for hw, boards in sorted(shared.items()):
+            print(f"  {hw}  " + ", ".join(f"{b['board']}/{b['mac']} ({b['mac_source']})" for b in boards))
+
     if args.dry_run:
         print(f"\n(dry run; {changed} record(s) would change)")
         return 0
 
-    reg["boards"].sort(key=lambda b: (b.get("board") or "", b.get("hw_id") or ""))
+    reg["boards"].sort(key=lambda b: (b.get("board") or "", b.get("hw_id") or "", b.get("mac") or ""))
     os.makedirs(os.path.dirname(args.registry), exist_ok=True)
     with open(args.registry, "w") as f:
         json.dump(reg, f, indent=2, sort_keys=True)

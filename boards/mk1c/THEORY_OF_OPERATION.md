@@ -383,7 +383,7 @@ goes on.
   "AP4Y731" then FF: a lot code, it seems, not a die's. A host enumerates the
   second board and gives it no interface. Each MK1C after the first needs a
   `/serial.txt` (`POST /api/serial`), set while the first is unplugged
-  (task ID-1).
+  (task ID-1); the second carries 02373331FF2A, subnet 42.
 
 ## Build
 
