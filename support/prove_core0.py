@@ -110,8 +110,10 @@ FLIGHT_ROOTS = [
     "hal_log_sample",
     "watchdog_update",
     "flight_call_service",
-    "lua_app_service",
 ]
+
+# Roots only an image with Lua has; required there, like the rest.
+LUA_ROOTS = ["lua_app_service"]
 
 # Flash operations that disable XIP. While these run, the *other* core must not
 # be fetching instructions from flash. Guarding them is not a call-graph
@@ -378,6 +380,9 @@ def check_core1(elf, entry, callers):
             bad.append((prim, why, path))
     print(f"core1 entry point       : {entry}")
     if entry not in callers and not any(entry in v for v in callers.values()):
+        if "pyro_lua_init" not in callers:
+            print(f"SKIP  no Lua in this image (mk1c_sd builds without it): {entry} has nothing to check")
+            return 0
         print(f"WARN  {entry} not found in this binary; core1 rule NOT checked")
         return 1
     if not bad:
@@ -547,6 +552,8 @@ def check_roots(elf, roots, objdump):
 
 
 def report(elf, roots, core1_entry=None):
+    if "pyro_lua_init" in defined_functions(elf, find_objdump()):
+        roots = roots + LUA_ROOTS
     findings, xip, spins, kernel, callers = analyse(elf, roots)
     print(f"=== {elf} ===")
     root_rc = check_roots(elf, roots, find_objdump())

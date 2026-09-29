@@ -61,7 +61,7 @@ int vfs_rewind(vfs_file_t *f);
 
 int vfs_remove(const char *path); /* VFS_NOENT when there was none */
 int vfs_rename(const char *from, const char *to);
-int vfs_mkdir(const char *path);   /* 0 also when it exists */
+int vfs_mkdir(const char *path);         /* 0 also when it exists */
 int32_t vfs_stat_size(const char *path); /* size, or VFS_NOENT / VFS_ERR */
 
 /* The store a path goes to now: VFS_LFS or VFS_FAT. */

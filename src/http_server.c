@@ -44,6 +44,8 @@
 #include "vfs.h"
 #if PYRO_HAS_SD
 #include "sd_card.h"
+#include "hr_log.h"
+#include "ff.h"
 #endif
 #include "rtos_tasks.h"
 #include "buzzer.h"
@@ -983,6 +985,80 @@ static void serve_api_sd(conn_t *c) {
                      (unsigned long)s.acmd41_other_ms, (unsigned)s.acmd41_other);
     http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
 }
+
+/* GET /api/hr: the high-rate log (hr_log.h). */
+static void serve_api_hr(http_conn_t *hc) {
+    hr_stats_t s;
+    hr_log_get_stats(&s);
+    int n = snprintf(
+        (char *)hc->work, sizeof(hc->work),
+        "{\"logging\":%s,\"prepared\":%s,\"preparing\":%s,\"card\":%s,\"imu_ok\":%s,\"odr_hz\":%lu,"
+        "\"file\":\"%s\",\"file_bytes\":%lu,\"expanded_bytes\":%lu,\"ring_used\":%lu,\"ring_max\":%lu,"
+        "\"dropped_records\":%lu,\"dropped_bytes\":%lu,\"imu_sets\":%lu,\"imu_reads\":%lu,"
+        "\"imu_overruns\":%lu,\"imu_backlog_max\":%lu,\"imu_read_fails\":%lu,\"pres_records\":%lu,"
+        "\"flight_records\":%lu,\"writes\":%lu,\"write_max_us\":%lu,\"write_errors\":%lu,\"syncs\":%lu,"
+        "\"sync_max_us\":%lu,\"prepare_us\":%lu,\"logs\":%lu,\"bytes_total\":%lu,"
+        "\"last_g\":[%d,%d,%d],\"last_a\":[%d,%d,%d]}",
+        s.logging ? "true" : "false", s.prepared ? "true" : "false", s.preparing ? "true" : "false",
+        s.card ? "true" : "false", s.imu_ok ? "true" : "false", (unsigned long)s.odr_hz, s.file,
+        (unsigned long)s.file_bytes, (unsigned long)s.expanded_bytes, (unsigned long)s.ring_used,
+        (unsigned long)s.ring_max, (unsigned long)s.dropped_records, (unsigned long)s.dropped_bytes,
+        (unsigned long)s.imu_sets, (unsigned long)s.imu_reads, (unsigned long)s.imu_overruns,
+        (unsigned long)s.imu_backlog_max, (unsigned long)s.imu_read_fails, (unsigned long)s.pres_records,
+        (unsigned long)s.flight_records, (unsigned long)s.writes, (unsigned long)s.write_max_us,
+        (unsigned long)s.write_errors, (unsigned long)s.syncs, (unsigned long)s.sync_max_us,
+        (unsigned long)s.prepare_us, (unsigned long)s.logs, (unsigned long)s.bytes_total, s.last.g[0], s.last.g[1],
+        s.last.g[2], s.last.a[0], s.last.a[1], s.last.a[2]);
+    http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
+}
+
+/* POST /api/sd/bench?kb=N&chunk=B: N kB written to /bench.bin in B-byte
+ * writes, timed, then removed. The card's sequential rate and its worst
+ * write, on the bench only: the net task does nothing else meanwhile. */
+static void apply_sd_bench(http_conn_t *hc, const char *path) {
+    const char *q = strstr(path, "kb=");
+    uint32_t kb = q ? (uint32_t)strtoul(q + 3, NULL, 10) : 1024u;
+    q = strstr(path, "chunk=");
+    uint32_t chunk = q ? (uint32_t)strtoul(q + 6, NULL, 10) : 4096u;
+    if (chunk < 512u || chunk > sizeof(hc->work) - 64u || kb == 0 || kb > 65536u) {
+        http_respond_str(hc, 400, JSON, "{\"error\":\"kb 1-65536, chunk 512 to the work buffer\"}");
+        return;
+    }
+    static FIL f;
+    if (!vfs_sd_mounted() || f_open(&f, "/bench.bin", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) {
+        http_respond_str(hc, 409, JSON, "{\"error\":\"no card\"}");
+        return;
+    }
+    uint8_t *buf = hc->work;
+    for (uint32_t i = 0; i < chunk; i++)
+        buf[i] = (uint8_t)i;
+    uint32_t total = kb * 1024u, done = 0, worst = 0, errors = 0;
+    uint32_t t0 = time_us_32();
+    while (done < total) {
+        uint32_t n = total - done < chunk ? total - done : chunk;
+        UINT put = 0;
+        uint32_t a = time_us_32();
+        if (f_write(&f, buf, n, &put) != FR_OK || put != n)
+            errors++;
+        uint32_t d = time_us_32() - a;
+        if (d > worst)
+            worst = d;
+        done += n;
+    }
+    uint32_t w_us = time_us_32() - t0;
+    uint32_t s0 = time_us_32();
+    f_close(&f);
+    uint32_t close_us = time_us_32() - s0;
+    f_unlink("/bench.bin");
+    char jb[256];
+    int jn = snprintf(jb, sizeof(jb),
+                      "{\"bytes\":%lu,\"chunk\":%lu,\"us\":%lu,\"kb_per_s\":%lu,\"worst_write_us\":%lu,"
+                      "\"close_us\":%lu,\"errors\":%lu}",
+                      (unsigned long)total, (unsigned long)chunk, (unsigned long)w_us,
+                      (unsigned long)(w_us ? (uint64_t)total * 1000000u / 1024u / w_us : 0u), (unsigned long)worst,
+                      (unsigned long)close_us, (unsigned long)errors);
+    http_respond(hc, 200, JSON, jb, (uint32_t)jn);
+}
 #endif
 
 /* ── Default page if /www/index.html missing ──────────────────────── */
@@ -1062,6 +1138,8 @@ static void serve_get(conn_t *c) {
 #if PYRO_HAS_SD
     } else if (strcmp(path, "/api/sd") == 0) {
         serve_api_sd(c);
+    } else if (strcmp(path, "/api/hr") == 0) {
+        serve_api_hr(hc);
 #endif
     } else if (strncmp(path, "/api/pressure/trace", 19) == 0 && (path[19] == '\0' || path[19] == '?')) {
         /* Every conversion since ?since=N, in binary (pressure_trace.h), for
@@ -1280,6 +1358,30 @@ static void route_post(conn_t *c) {
         return;
     }
 #if PYRO_HAS_SD
+    if (strncmp(path, "/api/sd/bench", 13) == 0 && (path[13] == '\0' || path[13] == '?')) {
+        apply_sd_bench(hc, path);
+        return;
+    }
+    if (strncmp(path, "/api/hr/start", 13) == 0 && (path[13] == '\0' || path[13] == '?')) {
+        const char *q = strstr(path, "odr=");
+        if (q) {
+            uint32_t hz = (uint32_t)strtoul(q + 4, NULL, 10);
+            lsm6ds3_odr_t o = hz >= 1660 ? LSM6DS3_ODR_1660
+                              : hz >= 833 ? LSM6DS3_ODR_833
+                              : hz >= 416 ? LSM6DS3_ODR_416
+                              : hz >= 208 ? LSM6DS3_ODR_208
+                                          : LSM6DS3_ODR_104;
+            hr_log_set_odr(o);
+        }
+        bool ok = hr_log_start("bench");
+        http_respond_str(hc, ok ? 200 : 409, JSON, ok ? "{\"status\":\"logging\"}" : "{\"error\":\"no card\"}");
+        return;
+    }
+    if (strcmp(path, "/api/hr/stop") == 0) {
+        hr_log_stop();
+        http_respond_str(hc, 200, JSON, "{\"status\":\"stopping\"}");
+        return;
+    }
     if (strncmp(path, "/api/sd/init", 12) == 0 && (path[12] == '\0' || path[12] == '?')) {
         /* Bring the card up again, and mount it: a card inserted after boot,
          * or one that failed then. ?crc=0 leaves CMD59 off. */

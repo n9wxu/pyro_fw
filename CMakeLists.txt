@@ -438,7 +438,10 @@ if(PYRO_HAS_SD)
         src/sd/sd_card.c
         src/sd/spi_bus.c
         src/sd/diskio.c
-        src/sd/ffsystem.c)
+        src/sd/ffsystem.c
+        src/sd/lsm6ds3.c
+        src/sd/hr_log.c
+        src/sd/crc16.c)
     target_link_libraries(pyro_fw_c hardware_spi)
 endif()
 
@@ -946,6 +949,32 @@ add_custom_target(net_txq_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_net_txq
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "USB network transmit queue tests"
+)
+
+# The high-rate log, its real reader and writer stepped by hand, on FatFs over
+# a RAM disk [DD-077].
+add_custom_target(hr_log_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building high-rate log tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -Wno-unused-parameter -DHR_LOG_TEST -DPYRO_HAS_SD=1
+               -I${CMAKE_CURRENT_LIST_DIR}/test/fake_rtos
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1c_sd
+               -I${CMAKE_CURRENT_LIST_DIR}/src/sd -I${CMAKE_CURRENT_LIST_DIR}/lib/fatfs
+               -I${CMAKE_CURRENT_LIST_DIR}/src/rtos -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_hr_log.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/sd/hr_log.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/sd/crc16.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_trace.c
+               ${CMAKE_CURRENT_LIST_DIR}/lib/fatfs/ff.c
+               ${CMAKE_CURRENT_LIST_DIR}/lib/fatfs/ffunicode.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_hr_log
+    COMMAND ${CMAKE_COMMAND} -E echo "Running high-rate log tests..."
+    COMMAND ${CMAKE_COMMAND} -E env HR_LOG_SAMPLE=${CMAKE_BINARY_DIR}/hr_sample.bin ${CMAKE_BINARY_DIR}/test_hr_log
+    COMMAND python3 support/hr_log.py --selftest
+    COMMAND python3 support/hr_log.py --summary ${CMAKE_BINARY_DIR}/hr_sample.bin
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "High-rate log tests"
 )
 
 # A MAC drawn from the RNG and the /serial.txt that keeps it [DD-072].

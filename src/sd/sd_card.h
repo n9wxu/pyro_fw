@@ -41,18 +41,18 @@ sd_type_t sd_type(void);
 
 /* Counters for /api/sd. */
 typedef struct {
-    uint32_t hz;             /* the data clock in use */
-    uint32_t reads, writes;  /* commands */
+    uint32_t hz;            /* the data clock in use */
+    uint32_t reads, writes; /* commands */
     uint32_t sectors_read, sectors_written;
-    uint32_t crc_errors;     /* a data block whose CRC16 did not match */
-    uint32_t cmd_errors;     /* a command the card refused or did not answer */
+    uint32_t crc_errors; /* a data block whose CRC16 did not match */
+    uint32_t cmd_errors; /* a command the card refused or did not answer */
     uint32_t timeouts;
     uint32_t retries;
-    uint32_t busy_max_us;    /* the longest the card held its busy line */
-    uint32_t write_max_us;   /* the longest one sd_write() took */
-    uint32_t mount_rc;       /* FatFs's FRESULT from the mount */
-    uint8_t init_r1[6];      /* CMD0, CMD8, CMD59, ACMD41, CMD58, CMD9: the last init's R1s */
-    uint8_t init_r7[4];      /* CMD8's echo */
+    uint32_t busy_max_us;  /* the longest the card held its busy line */
+    uint32_t write_max_us; /* the longest one sd_write() took */
+    uint32_t mount_rc;     /* FatFs's FRESULT from the mount */
+    uint8_t init_r1[6];    /* CMD0, CMD8, CMD59, ACMD41, CMD58, CMD9: the last init's R1s */
+    uint8_t init_r7[4];    /* CMD8's echo */
     uint8_t init_ocr[4];
     uint8_t cmd55_first, acmd41_first;
     uint32_t acmd41_polls, acmd41_ones;

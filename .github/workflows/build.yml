@@ -55,6 +55,14 @@ jobs:
         env:
           CI_BUILD: 1
 
+      - name: Build (mk1c_sd)
+        run: |
+          mkdir build-mk1c_sd && cd build-mk1c_sd
+          cmake -G Ninja -DPICO_SDK_PATH=/tmp/pico-sdk -DPYRO_BOARD=mk1c_sd ..
+          ninja
+        env:
+          CI_BUILD: 1
+
       # Every board declares PYRO_LOOP_WORST_MS; the reference template is what
       # a new board is copied from, so it has to keep building as shipped.
       - name: Build (reference template)
@@ -84,7 +92,7 @@ jobs:
       # inline differently -- and it was the one not being checked.
       - name: Prove the flight task cannot be hung
         run: |
-          for elf in build/pyro_fw_*.elf build-mk1c/pyro_fw_*.elf build-mk1a/pyro_fw_*.elf; do
+          for elf in build/pyro_fw_*.elf build-mk1c/pyro_fw_*.elf build-mk1a/pyro_fw_*.elf build-mk1c_sd/pyro_fw_*.elf; do
             echo "--- $elf"
             python3 support/prove_core0.py --core1 lua_task "$elf"
           done
@@ -174,7 +182,7 @@ jobs:
       # Who runs each HTTP work unit, and /api/status rendered from a
       # snapshot, linked alone (DD-061).
       - name: Run HTTP work unit and status rendering tests
-        run: cd build && ninja http_work_tests && ninja status_json_tests && ninja net_stats_tests && ninja net_txq_tests && ninja mac_random_tests
+        run: cd build && ninja http_work_tests && ninja status_json_tests && ninja net_stats_tests && ninja net_txq_tests && ninja mac_random_tests && ninja hr_log_tests
 
       # The flight log's binary records and their CSV (DD-062).
       - name: Run flight log format tests

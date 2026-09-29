@@ -5,7 +5,9 @@
 #include <string.h>
 
 static ptrace_rec_t ring[PTRACE_N];
-static uint32_t next_seq; /* the number the next record gets */
+/* The number the next record gets. Advanced only once the record is whole,
+ * so a reader on another task sees whole records up to it. */
+static volatile uint32_t next_seq;
 
 void ptrace_reset(void) {
     memset(ring, 0, sizeof(ring));
@@ -20,6 +22,7 @@ void ptrace_note(uint32_t at_us, uint32_t read_us, uint32_t raw, uint32_t raw_t,
     r->raw_t = raw_t;
     r->pa_c = pa_c;
     r->kind = (uint8_t)kind;
+    __asm volatile("" ::: "memory");
     next_seq++;
 }
 

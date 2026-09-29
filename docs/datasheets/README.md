@@ -20,6 +20,7 @@ from a part. Cite the file and page, not memory.
 | `AP2182A_AP2192A_DS32193_Rev5-2.pdf` | Diodes AP2182A/AP2192A, with output discharge (MK1B's U5 as built) | DS32193 Rev. 5-2, 2022 | diodes.com/assets/Datasheets/AP2182A_92A.pdf, fetched 2026-09-28 |
 | `esp32-s3_datasheet_v2.2.pdf` | Espressif ESP32-S3 series (a candidate for a future board) | v2.2 | espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf, fetched 2026-09-28 |
 | `LSM6DS3_DocID026899_Rev4_2015-04.pdf` | ST LSM6DS3 accelerometer and gyroscope (MK1C J3 test board) | DocID026899 Rev 4, April 2015 | cdn.sparkfun.com/assets/learn_tutorials/4/1/6/DM00133076.pdf, fetched 2026-09-28; st.com would not download |
+| `AN4650_LSM6DS3_DocID027415_Rev1.pdf` | ST AN4650, the LSM6DS3 application note: the FIFO, its pattern and burst reads | DocID027415 Rev 1 | cdn.sparkfun.com/assets/learn_tutorials/4/1/6/AN4650_DM00157511.pdf, fetched 2026-09-29; st.com would not download |
 | `XC6206_ETR0305_004b.pdf` | Torex XC6206 LDO; the XC6206P332MR is MK1C's U6, the 3.3 V rail | ETR0305_004b | wmsc.lcsc.com (LCSC C5446), fetched 2026-09-28; torexsemi.com refused |
 | `SD_Physical_Layer_Simplified_v6.00_2017-04.pdf` | SD Association Physical Layer Simplified Specification | Version 6.00, April 10, 2017 | academy.cba.mit.edu/classes/networking_communications/SD/SD.pdf, fetched 2026-09-28; sdcard.org would not download |
 
@@ -135,3 +136,21 @@ SD simplified 6.00, PDF pages (the printed number is 18 less): page 36, in
 SPI mode a card draws up to 0.36 W, 100 mA at 3.6 V. Pages 221-222: after 1 ms
 of stable VDD the host gives at least 74 clocks with CS held high before
 the first command, and in SPI mode CMD0 is that first command.
+
+LSM6DS3 registers (datasheet): CTRL1_XL (10h) ODR_XL[7:4], FS_XL[3:2]
+(00 2 g, 01 16 g, 10 4 g, 11 8 g), BW_XL[1:0], page 52; CTRL2_G (11h)
+ODR_G[7:4] to 1.66 kHz, FS_G[3:2] (00 245, 01 500, 10 1000, 11 2000 dps),
+page 53; CTRL3_C (12h) BDU bit 6, IF_INC bit 2 (default 1), page 54;
+FIFO_CTRL3 (08h) DEC_FIFO_GYRO[5:3], DEC_FIFO_XL[2:0] (001 no decimation),
+pages 46-47; FIFO_CTRL5 (0Ah) ODR_FIFO[6:3] (1000 1.66 kHz), FIFO_MODE[2:0]
+(110 continuous), pages 48-49; FIFO_STATUS1-4 (3Ah-3Dh): DIFF_FIFO[11:0]
+unread 16-bit words, FIFO_OVER_RUN bit 6 and FIFO_EMPTY bit 4 of 3Bh,
+FIFO_PATTERN[9:0], pages 69-70; the FIFO holds 8 kbyte (page 15).
+
+AN4650, page 89 (section 8.4): "The rounding function ... is automatically
+enabled when applying a multiple read operation to the FIFO output
+registers", so a burst read from 3Eh returns successive FIFO words. Section
+8.5.1: gyroscope and accelerometer at one ODR repeat Gx Gy Gz XLx XLy XLz.
+Page 88: over SPI the FIFO status should be read in step with a data-ready
+or watermark interrupt; with no interrupt pin wired, a read takes only whole
+patterns, aligned by FIFO_PATTERN.

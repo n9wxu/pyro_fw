@@ -4,7 +4,8 @@
  * support/pressure_trace.py reads it through /api/pressure/trace and looks
  * for what a sample rate hides -- a stale read, a missed slot, a gap.
  *
- * Written and read on core0 only.
+ * Written by the flight task; read by the net task and the high-rate log,
+ * which see a record once it is whole.
  *
  * SPDX-License-Identifier: MIT
  */

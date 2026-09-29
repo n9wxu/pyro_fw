@@ -8,6 +8,9 @@
 #include "task.h"
 #include "semphr.h"
 #include "flash_op.h"
+#if PYRO_HAS_SD
+#include "hr_log.h"
+#endif
 #include "hardware/structs/watchdog.h"
 #include "hardware/sync.h"
 #include "pico/time.h"
@@ -142,6 +145,9 @@ void rtos_start(struct flight_context_t *ctx) {
                                              &tcb_storage, CORE1_ONLY);
 #if PYRO_HAS_LUA
     lua_task_create();
+#endif
+#if PYRO_HAS_SD
+    hr_log_create_tasks();
 #endif
     running = true;
     vTaskStartScheduler();
