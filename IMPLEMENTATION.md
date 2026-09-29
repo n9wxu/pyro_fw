@@ -60,7 +60,7 @@ Flight logic files (`flight_states.c`, `telemetry_formatter.c`, `buzzer.c`) cont
 | `hal_pyro_init()`, `hal_pyro_sample()`, `hal_pyro_get()`, `hal_pyro_fire()`, `hal_pyro_update()`, `hal_pyro_fault()` | Pyro channels |
 | `hal_buzzer_init()`, `hal_buzzer_tone_on()`, `hal_buzzer_tone_off()` | Buzzer |
 | `hal_telemetry_send()` | UART output |
-| `hal_fs_open()`, `hal_fs_write()`, `hal_fs_close()`, `hal_fs_read_file()`, `hal_fs_write_file()` | Filesystem |
+| `hal_fs_open()`, `hal_fs_write()`, `hal_fs_close()`, `hal_fs_read_file()`, `hal_fs_write_file()`, `hal_fs_read_cached()` | Filesystem |
 | `hal_config_load()`, `hal_config_save()` | `config.ini` |
 | `hal_log_start()`, `hal_log_sample()`, `hal_log_stop()` | Flight log |
 | `hal_ground_test_asserted()` | Ground test switch |
@@ -68,8 +68,8 @@ Flight logic files (`flight_states.c`, `telemetry_formatter.c`, `buzzer.c`) cont
 
 Three implementations: `src/hal_common/hal_common.c` with each board's files in `boards/<name>/` (Pico), `test/hal_test.c` (mocks), `boards/sim/hal_sim.c` (simulation).
 
-### Main Loop
-`src/main_hardware.c` runs one iteration every 20 ms (`src/loop_period.h`, DD-065). In order: `hal_tasks_tick()` (the pressure sensor first, so the MS5607 is commanded at a steady offset); `hal_platform_service()` (TinyUSB, lwIP and the HTTP transport, which only moves bytes); `dispatch_state()`; `flight_update_outputs()`; Lua's service; then the flash window, where `hal_flash_service()` and `flight_flash_service()` do every flash write. The rest of the period is slack: `net_service()` and HTTP work units (`http_server_work()`), each started only with its budget left (DD-061). `lua_app_dispatch()` then grants core1 its slice, which may begin with HTTP units that touch only their own connection (WEB-HTTP-07). Nothing sleeps (DD-053). The watchdog is twice `PYRO_LOOP_WORST_MS`.
+### Tasks
+FreeRTOS SMP on both cores (DD-073, `src/rtos/rtos_tasks.h`). `main()` in `src/main_hardware.c` brings the board up on core0 and starts the scheduler. `flight_task()` runs alone at P on core0, woken every 20 ms (`src/loop_period.h`, DD-065) by an alarm on the hardware timer. In order: `hal_tasks_tick()` (the pressure sensor first, so the MS5607 is commanded at a steady offset); `flight_call_service()` (changes the net task handed over); `dispatch_state()`; `flight_update_outputs()`; Lua's service and its tick request; then a notification to the storage task. The net task (`src/net_task.c`: TinyUSB, lwIP, HTTP's transport and work units, DD-061), the Lua task (`src/lua/lua_core1.c`) and the storage task (`src/storage_task.c`: `hal_storage_service()` and `flight_flash_service()`) share core1 at P. Every flash program or erase runs through `flash_op()` under a lockout that parks the other core (DD-074). The flight task waits only for its period (RTOS-01). The watchdog is twice `PYRO_LOOP_WORST_MS`.
 
 Pads are owned once: `pin_store_claim_pads()` gives each pad one owner, and `pyro_release_claim()` and `lua_iface_publish()` install operations only for pads they could claim (DD-020).
 

@@ -5,9 +5,9 @@
  */
 #include "lua_app.h"
 #include "hal.h"
-#include "flash_window.h"
+#include "flash_op.h"
+#include "hal_storage.h"
 #include "flight_states.h"
-#include "http_work.h"
 #include "lua_core1.h"
 #include "lua_platform.h"
 #include "lua_platform_cfg.h"
@@ -48,17 +48,14 @@ static bool launched;
 #define LUA_PHASE_SCRATCH 2
 #define LUA_SETTLE_MS 15000u
 
-/* Never a constant: a fixed grant handed out near the end of a 10 ms period
- * runs into the next period, where core0 wants its window. The grant is
- * what remains after the reserve, capped so a period whose work stages ran
- * quickly does not hand out a unit long enough to overrun anyway. */
-#define LUA_FLASH_RESERVE_US 3000u
-#define LUA_GRANT_MAX_US 5000u
-#define LUA_GRANT_MIN_US 500u
+/* One tick()'s budget, through the instruction hook. The Lua task shares
+ * core1 with the net and storage tasks a tick at a time, so this bounds how
+ * long one script step holds its share, not the flight. */
+#define LUA_TICK_BUDGET_US 5000u
 
 /* Covers compiling the script and running init(), where a script may do real
- * work. Not unlimited: core0 writes no flash for the whole of startup, so a
- * core1 that never finishes costs logging and uploads for the flight. */
+ * work. Not unlimited: a script that never finishes starting holds its share
+ * of core1 from the net and storage tasks for nothing. */
 #define LUA_BOOT_LIMIT_MS 5000u
 
 /* How long both sides of a half-bridge are held off between transitions, in
@@ -70,8 +67,8 @@ static bool launched;
  * them: phase 5 measures it. */
 #define PYRO_BRIDGE_DEADTIME_CYCLES 250u
 
-/* Survives a watchdog reboot, so the next boot can report what core0 was
- * doing. */
+/* Survives a watchdog reboot, so the next boot can report what the flight
+ * task was doing. */
 #define PH_NO_LUA 1u
 #define PH_PRELAUNCH 2u
 #define PH_LAUNCHED 3u
@@ -183,7 +180,7 @@ int lua_app_console_read(char *buf, int max) {
 /* ── Script log ───────────────────────────────────────────────────
  *
  * A script's log() output goes into the flight log as event rows, so it is
- * written through the window the samples already need.
+ * written by the storage task with the samples.
  *
  * Do not open a file here. A second file contends with the flight log for
  * hal_fs_open()'s single streaming handle, which the flight log holds for
@@ -344,11 +341,9 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
         watchdog_hw->scratch[LUA_BOOT_SCRATCH] = LUA_BOOT_MARK;
         phase(PH_LAUNCHED);
         launched = true;
-        /* The one call on this path that touches the FIFO; without the
-         * crumbs a hang inside it and after it look identical. */
-        flash_window_crumb(60);
+        flash_op_crumb(60);
         lua_core1_start(script_buf, script_len);
-        flash_window_crumb(61);
+        flash_op_crumb(61);
         phase(17);
         snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)",
                  lua_iface_count_kind(LUA_IF_OUTPUT), lua_iface_count_kind(LUA_IF_INPUT),
@@ -370,7 +365,7 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     }
 
     /* Clear the safe-boot marker once the board has demonstrably survived
-     * with core1 running. A later crash is then a crash, not a bad boot. */
+     * with the script running. A later crash is then a crash, not a bad boot. */
     if (now_ms > LUA_SETTLE_MS && watchdog_hw->scratch[LUA_BOOT_SCRATCH] == LUA_BOOT_MARK) {
         watchdog_hw->scratch[LUA_BOOT_SCRATCH] = 0;
         phase(PH_SETTLED);
@@ -379,7 +374,7 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     lua_core1_check_stack();
 
     /* The seqlock write never waits, so this costs a fixed handful of stores
-     * whatever core1 is doing. */
+     * whatever the Lua task is doing. */
     lua_flight_t f;
     f.pressure_pa = ctx->filtered_pressure;
     f.altitude_cm = ctx->last_altitude;
@@ -403,8 +398,7 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
      * for every row: not uptime, which the sample rows beside it do not use. */
     log_drain(flight_elapsed_ms(ctx, now_ms));
 
-    /* Core0 has withheld flash for the whole of startup, so waiting longer
-     * costs more than killing core1. */
+    /* A startup that runs this long is not going to finish. */
     if (!lua_core1_ready() && launched && (int32_t)(now_ms - (launch_at_ms + LUA_BOOT_LIMIT_MS)) >= 0 &&
         lua_core1_state() == LUA_C1_RUNNING) {
         snprintf(status_line, sizeof(status_line), "killed: startup exceeded %lums", (unsigned long)LUA_BOOT_LIMIT_MS);
@@ -424,28 +418,13 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     }
 }
 
-/* Call after the flash window has closed, with the microseconds left before
- * the deadline. A unit may overrun its box slightly, hence the reserve.
- *
- * Returning without dispatching is normal: core1 stays in RAM for a period,
- * which is what a long flash write needs. */
-void lua_app_dispatch(int64_t slack_us) {
+/* Once a period, after the flight work: asks the Lua task for a tick.
+ * Returning without asking is normal while it is still starting. */
+void lua_app_dispatch(void) {
     if (!lua_core1_ready()) {
-        return; /* still in startup; a grant would mean nothing */
-    }
-    if (slack_us <= (int64_t)LUA_FLASH_RESERVE_US) {
         return;
     }
-    uint32_t grant = (uint32_t)(slack_us - (int64_t)LUA_FLASH_RESERVE_US);
-    if (grant > LUA_GRANT_MAX_US) {
-        grant = LUA_GRANT_MAX_US;
-    }
-    if (grant < LUA_GRANT_MIN_US) {
-        return;
-    }
-    /* The units run first and come out of Lua's slice (http_work.h). */
-    http_work_claim(grant);
-    lua_core1_dispatch(grant);
+    lua_core1_dispatch(LUA_TICK_BUDGET_US);
 }
 
 void lua_app_event(const char *name) {

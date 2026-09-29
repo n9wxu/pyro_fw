@@ -7,7 +7,12 @@
  */
 #include "hal.h"
 #include "flight_events.h"
-#include "flash_window.h"
+#include "flash_op.h"
+#include "hal_storage.h"
+#include "lfs_mount.h"
+#include "rtos_tasks.h"
+#include "FreeRTOS.h"
+#include "semphr.h"
 #include "board_id.h"
 #include "config.h"
 #include "async_task.h"
@@ -22,6 +27,7 @@
 #include "hardware/adc.h"
 #include "hardware/uart.h"
 #include "hardware/irq.h"
+#include "hardware/sync.h"
 #include "hardware/i2c.h"
 #include "hardware/watchdog.h"
 #include "hardware/structs/vreg_and_chip_reset.h"
@@ -45,9 +51,6 @@
 #include <string.h>
 
 /* ── External dependencies ────────────────────────────────────────── */
-
-extern const struct lfs_config lfs_pico_flash_config;
-extern const struct lfs_file_config lfs_pico_file_config;
 
 /* Network (net_glue.c / http_server.c) */
 void net_init(void);
@@ -651,12 +654,23 @@ static void uart_tx_drain_isr(void) {
         hw_clear_bits(&uart_get_hw(tuart())->imsc, UART_UARTIMSC_TXIM_BITS);
 }
 
+static spin_lock_t *uart_tx_lock;
+
 static void telem_uart_irq_handler(void) {
-    if (uart_get_hw(tuart())->mis & UART_UARTMIS_TXMIS_BITS)
+    if (uart_get_hw(tuart())->mis & UART_UARTMIS_TXMIS_BITS) {
+        uint32_t irq = spin_lock_blocking(uart_tx_lock);
         uart_tx_drain_isr();
+        spin_unlock(uart_tx_lock, irq);
+    }
 }
 
+/* The flight task writes telemetry and the net task its diagnostics, on
+ * different cores, into one ring, which the TX interrupt drains. A hardware
+ * spin lock with interrupts off makes each insert and each drain whole; it is
+ * held for one line's copy, so the flight task's wait on it is bounded by
+ * that. */
 static void uart_tx_ring_init(void) {
+    uart_tx_lock = spin_lock_instance((uint)spin_lock_claim_unused(true));
     irq_set_exclusive_handler(board_uart_irq(), telem_uart_irq_handler);
     irq_set_enabled(board_uart_irq(), true);
     hw_clear_bits(&uart_get_hw(tuart())->imsc, UART_UARTIMSC_TXIM_BITS);
@@ -665,8 +679,9 @@ static void uart_tx_ring_init(void) {
 /* ── Telemetry ────────────────────────────────────────────────────── */
 
 void hal_telemetry_send(const char *sentence) {
-    if (!sentence)
+    if (!sentence || !uart_tx_lock)
         return;
+    uint32_t irq = spin_lock_blocking(uart_tx_lock);
 
     /* Check if ring was empty before adding new data */
     bool was_empty = (uart_tx_head == uart_tx_tail);
@@ -690,25 +705,20 @@ void hal_telemetry_send(const char *sentence) {
     /* Enable TX interrupt to continue draining ring buffer */
     if (uart_tx_head != uart_tx_tail)
         hw_set_bits(&uart_get_hw(tuart())->imsc, UART_UARTIMSC_TXIM_BITS);
+    spin_unlock(uart_tx_lock, irq);
 }
 
 /* ── Filesystem ───────────────────────────────────────────────────── */
 
-/* Refusing partway through an lfs operation leaves its metadata half
- * written, so this stops a multi-block operation from starting at all. The
- * driver's own check is the backstop. A refusal is counted like the driver's:
- * a caller outside the window is a bug, and uncounted it fails silently. */
-static bool flash_writable(void) {
-    if (flash_window_is_open())
-        return true;
-    flash_window_refused();
-    return false;
-}
-
+lfs_t g_lfs;
 static bool fs_ok;
 
-/* [WEB-API-08, DD-058] Mounts other than the flight log's, open now. The log
- * waits for none before it mounts, and none may start while it holds. */
+bool lfs_mounted(void) {
+    return fs_ok;
+}
+
+/* [WEB-API-08, DD-058] File uses other than the flight log's, open now. None
+ * may start while the log holds the filesystem. */
 static int fs_borrowed;
 
 bool hal_fs_locked(void) {
@@ -731,41 +741,77 @@ bool hal_fs_healthy(void) {
     return fs_ok;
 }
 
+/* Once, at boot, before the scheduler: formats a blank board. */
 int hal_fs_mount(void) {
-    lfs_t lfs;
-    int err = lfs_mount(&lfs, &lfs_pico_flash_config);
+    if (fs_ok)
+        return 0;
+    int err = lfs_mount(&g_lfs, &lfs_pico_flash_config);
     if (err < 0) {
-        lfs_format(&lfs, &lfs_pico_flash_config);
-        err = lfs_mount(&lfs, &lfs_pico_flash_config);
+        lfs_format(&g_lfs, &lfs_pico_flash_config);
+        err = lfs_mount(&g_lfs, &lfs_pico_flash_config);
     }
-    if (err == 0)
-        lfs_unmount(&lfs);
     fs_ok = (err == 0);
     return err;
 }
 
 void hal_fs_unmount(void) {
-    /* Each read/write mounts and unmounts internally */
+    /* Mounted for the life of the firmware. */
+}
+
+/* One cache buffer for the whole-file helpers below; littlefs's own lock
+ * serialises each call, and this one serialises the buffer across a whole
+ * open-read-close. Never the flight task's. */
+static uint8_t whole_buf[LFS_FILE_BUF_SIZE];
+static SemaphoreHandle_t whole_mutex;
+static StaticSemaphore_t whole_mutex_buf;
+
+static bool whole_take(void) {
+    if (!rtos_running())
+        return true;
+    if (rtos_in_flight_task())
+        return false;
+    if (!whole_mutex)
+        whole_mutex = xSemaphoreCreateMutexStatic(&whole_mutex_buf);
+    return xSemaphoreTake(whole_mutex, pdMS_TO_TICKS(5000)) == pdTRUE;
+}
+
+static void whole_give(void) {
+    if (rtos_running() && whole_mutex)
+        xSemaphoreGive(whole_mutex);
+}
+
+static int read_from(lfs_t *lfs, const char *path, char *buf, int max_len) {
+    lfs_file_t f;
+    struct lfs_file_config fc = {.buffer = whole_buf};
+    int err = lfs_file_opencfg(lfs, &f, path, LFS_O_RDONLY, &fc);
+    if (err == LFS_ERR_NOENT)
+        return -2;
+    if (err != LFS_ERR_OK)
+        return -1;
+    lfs_ssize_t n = lfs_file_read(lfs, &f, buf, max_len);
+    lfs_file_close(lfs, &f);
+    return (int)n;
 }
 
 static int read_file(const char *path, char *buf, int max_len) {
-    lfs_t lfs;
-    if (lfs_mount(&lfs, &lfs_pico_flash_config) != LFS_ERR_OK)
+    if (!whole_take())
         return -1;
-    lfs_file_t f;
-    int err = lfs_file_opencfg(&lfs, &f, path, LFS_O_RDONLY, &lfs_pico_file_config);
-    if (err == LFS_ERR_NOENT) {
-        lfs_unmount(&lfs);
-        return -2;
+    int n;
+    if (fs_ok) {
+        n = read_from(&g_lfs, path, buf, max_len);
+    } else {
+        /* Before hal_fs_mount(): board_identity_init() reads /serial.txt
+         * this way. Read-only, and never formats, so a blank board draws a
+         * MAC and enumerates instead of waiting out an 8 MB format. */
+        lfs_t lfs;
+        n = -1;
+        if (lfs_mount(&lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
+            n = read_from(&lfs, path, buf, max_len);
+            lfs_unmount(&lfs);
+        }
     }
-    if (err != LFS_ERR_OK) {
-        lfs_unmount(&lfs);
-        return -1;
-    }
-    lfs_ssize_t n = lfs_file_read(&lfs, &f, buf, max_len);
-    lfs_file_close(&lfs, &f);
-    lfs_unmount(&lfs);
-    return (int)n;
+    whole_give();
+    return n;
 }
 
 int hal_fs_read_file(const char *path, char *buf, int max_len) {
@@ -777,23 +823,89 @@ int hal_fs_read_file(const char *path, char *buf, int max_len) {
     return n;
 }
 
-static int write_file(const char *path, const char *data, int len) {
-    if (!flash_writable())
-        return -1;
+/* ── Files the flight task reads ──────────────────────────────────
+ *
+ * The pad marker, read by the flight task's recovery decision and written by
+ * the storage task: a seqlock over one RAM copy, so the reader never waits and
+ * a writer that races it costs the reader a retry. A torn read the retries do
+ * not settle fails the marker's own check and reads as no marker -- a cold
+ * boot, the safe answer. */
+#define CACHED_MAX 64
 
-    lfs_t lfs;
-    if (lfs_mount(&lfs, &lfs_pico_flash_config) != LFS_ERR_OK)
+typedef struct {
+    const char *path;
+    volatile uint32_t seq;
+    int len; /* -2: no such file */
+    uint8_t data[CACHED_MAX];
+} cached_file_t;
+
+static cached_file_t cached[] = {{PAD_MARKER_PATH, 0, -2, {0}}};
+
+static cached_file_t *cached_find(const char *path) {
+    for (unsigned i = 0; i < sizeof(cached) / sizeof(cached[0]); i++)
+        if (strcmp(cached[i].path, path) == 0)
+            return &cached[i];
+    return NULL;
+}
+
+static void cached_store(cached_file_t *c, const char *data, int len) {
+    c->seq++;
+    __dmb();
+    if (len > CACHED_MAX)
+        len = CACHED_MAX;
+    if (len > 0)
+        memcpy(c->data, data, (size_t)len);
+    c->len = len;
+    __dmb();
+    c->seq++;
+}
+
+int hal_fs_read_cached(const char *path, char *buf, int max_len) {
+    cached_file_t *c = cached_find(path);
+    if (!c)
+        return -1;
+    for (int tries = 0; tries < 4; tries++) {
+        uint32_t s = c->seq;
+        if (s & 1u)
+            continue;
+        __dmb();
+        int n = c->len;
+        if (n > max_len)
+            n = max_len;
+        if (n > 0)
+            memcpy(buf, c->data, (size_t)n);
+        __dmb();
+        if (c->seq == s)
+            return n;
+    }
+    return -1;
+}
+
+/* At boot, after the mount: every cached file, read once. */
+static void cached_fill(void) {
+    for (unsigned i = 0; i < sizeof(cached) / sizeof(cached[0]); i++) {
+        char buf[CACHED_MAX];
+        int n = read_file(cached[i].path, buf, (int)sizeof(buf));
+        cached_store(&cached[i], buf, n >= 0 ? n : -2);
+    }
+}
+
+static int write_file(const char *path, const char *data, int len) {
+    if (!fs_ok || !whole_take())
         return -1;
     lfs_file_t f;
-    if (lfs_file_opencfg(&lfs, &f, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC, &lfs_pico_file_config) !=
-        LFS_ERR_OK) {
-        lfs_unmount(&lfs);
-        return -1;
+    struct lfs_file_config fc = {.buffer = whole_buf};
+    int rc = -1;
+    if (lfs_file_opencfg(&g_lfs, &f, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC, &fc) == LFS_ERR_OK) {
+        bool wrote = lfs_file_write(&g_lfs, &f, data, len) == len;
+        /* Close commits: a failed close leaves the previous file whole. */
+        rc = (lfs_file_close(&g_lfs, &f) == LFS_ERR_OK && wrote) ? 0 : -1;
     }
-    lfs_file_write(&lfs, &f, data, len);
-    lfs_file_close(&lfs, &f);
-    lfs_unmount(&lfs);
-    return 0;
+    whole_give();
+    cached_file_t *c = cached_find(path);
+    if (c && rc == 0)
+        cached_store(c, data, len);
+    return rc;
 }
 
 int hal_fs_write_file(const char *path, const char *data, int len) {
@@ -807,62 +919,48 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
 
 /* ── Streaming file writes ─────────────────────────────────────────── */
 
+/* One at a time, on the whole-file helpers' buffer, which it holds from open
+ * to close. */
 struct hal_file {
-    lfs_t lfs;
     lfs_file_t file;
+    struct lfs_file_config cfg;
     bool open;
-    bool borrowed; /* not the flight log's: counted by hal_fs_enter() */
 };
 
 static struct hal_file hw_file;
 
-static hal_file_t *open_file(const char *path, bool append) {
-    /* There is no read mode here: both paths are LFS_O_WRONLY | LFS_O_CREAT,
-     * and creating the file commits a dirent. */
-    if (!flash_writable())
-        return NULL;
-
-    if (hw_file.open)
-        return NULL;
-    if (lfs_mount(&hw_file.lfs, &lfs_pico_flash_config) != LFS_ERR_OK)
-        return NULL;
-    int flags = LFS_O_WRONLY | LFS_O_CREAT;
-    flags |= append ? LFS_O_APPEND : LFS_O_TRUNC;
-    if (lfs_file_opencfg(&hw_file.lfs, &hw_file.file, path, flags, &lfs_pico_file_config) != LFS_ERR_OK) {
-        lfs_unmount(&hw_file.lfs);
-        return NULL;
-    }
-    hw_file.open = true;
-    hw_file.borrowed = false;
-    return &hw_file;
-}
-
 hal_file_t *hal_fs_open(const char *path, bool append) {
-    if (hal_fs_enter() != 0)
+    if (!fs_ok || hw_file.open || hal_fs_enter() != 0)
         return NULL;
-    hal_file_t *f = open_file(path, append);
-    if (!f) {
+    if (!whole_take()) {
         hal_fs_leave();
         return NULL;
     }
-    f->borrowed = true;
-    return f;
+    int flags = LFS_O_WRONLY | LFS_O_CREAT;
+    flags |= append ? LFS_O_APPEND : LFS_O_TRUNC;
+    hw_file.cfg = (struct lfs_file_config){.buffer = whole_buf};
+    if (lfs_file_opencfg(&g_lfs, &hw_file.file, path, flags, &hw_file.cfg) != LFS_ERR_OK) {
+        whole_give();
+        hal_fs_leave();
+        return NULL;
+    }
+    hw_file.open = true;
+    return &hw_file;
 }
 
 int hal_fs_write(hal_file_t *f, const char *data, int len) {
     if (!f || !f->open)
         return -1;
-    return (int)lfs_file_write(&f->lfs, &f->file, data, len);
+    return (int)lfs_file_write(&g_lfs, &f->file, data, len);
 }
 
 void hal_fs_close(hal_file_t *f) {
     if (!f || !f->open)
         return;
-    lfs_file_close(&f->lfs, &f->file);
-    lfs_unmount(&f->lfs);
+    lfs_file_close(&g_lfs, &f->file);
     f->open = false;
-    if (f->borrowed)
-        hal_fs_leave();
+    whole_give();
+    hal_fs_leave();
 }
 
 /* ── Config (v2) ──────────────────────────────────────────────────── */
@@ -942,17 +1040,18 @@ void hal_platform_init(void) {
      * board header named via PICO_DEFAULT_LED_PIN. */
     board_hw_init();
 
-    /* Before net_mac_init() and tud_init(), both of which consume it: the MAC
-     * goes into the ECM descriptor and the subnet into the DHCP server, and
-     * the host reads each exactly once, at enumeration.
+    /* Before net_mac_init() and the net task's tud_init(), both of which
+     * consume it: the MAC goes into the ECM descriptor and the subnet into the
+     * DHCP server, and the host reads each exactly once, at enumeration.
      *
      * Reads /serial.txt via hal_fs_read_file(), which mounts read-only and
-     * does NOT format on failure -- so a board with no filesystem yet falls
-     * back to its hardware id and enumerates normally, instead of waiting out
-     * an 8 MB format before USB appears. */
+     * does NOT format on failure -- so a blank board draws a MAC and
+     * enumerates instead of waiting out an 8 MB format. */
     board_identity_init();
     net_mac_init();
-    tud_init(BOARD_TUD_RHPORT);
+    /* tud_init() is the net task's, on core1: TinyUSB's interrupt and its
+     * task must share a core, since OPT_OS_NONE guards its queue by masking
+     * the interrupt on the calling core only. */
     /* stdio_init_all() removed — we own the telemetry UART exclusively for ISR-driven
      * telemetry TX and ground-test RX.  No SDK stdio drivers needed. */
 
@@ -963,16 +1062,15 @@ void hal_platform_init(void) {
     net_start();
     http_server_init();
 
-    /* Format/mount littlefs once at boot so HTTP file uploads work */
+    /* Mounted once, for good: every task shares this mount. */
     hal_fs_mount();
-
-    pfb_firmware_commit();
+    cached_fill();
 
     /* The sensor's I2C is its bring-up's to set up: pressure_sensor_begin()
      * resets the peripheral and recovers the bus itself. */
 }
 
-/* STAGE 1's peak, by part: TinyUSB, lwIP, HTTP transport, mDNS. */
+/* The net task's pass, by part: TinyUSB, lwIP, HTTP transport, mDNS. */
 volatile uint32_t stage1_part_max_us[4];
 
 static void note_part(int part, uint32_t us) {
@@ -1009,86 +1107,108 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
 
 /* ── In-flight data logging (REQUIREMENTS.md v2-9) ───────────────
  *
- * Nothing on the flight path reaches flash: not the first sample, not a full
- * buffer, not the file's own creation. hal_flash_service() is the other
- * half, and is the only thing in this file that erases or programs.
+ * The flight task only fills a ring; the storage task empties it into the
+ * file. Nothing on the flight path waits or reaches flash: not the first
+ * sample, not a full ring, not the file's own creation.
  *
- * Do not move it onto the async task list: those run at STAGE 2, before
- * core0 has checked core1's grant and usually while core1 is mid-unit.
- */
+ * One producer, one consumer, no lock. The flight task writes head and the
+ * state's IDLE -> RUNNING -> STOPPING steps; the storage task writes tail and
+ * STOPPING -> IDLE. Both counters only grow, so used = head - tail. */
 
 /* Binary records (flight_log.h), rendered as CSV only when downloaded
- * [DD-062]. 4 KB holds 1.9 s of samples at 100 Hz, enough to span the launch
+ * [DD-062]. 4 kB holds 1.9 s of samples at 100 Hz, enough to span the launch
  * shock window below; at a row a second it would hold three minutes, so the
  * holdoff also ends on a timer. */
-#define LOG_BUF_SIZE 4096
+#define LOG_BUF_SIZE 4096u
+#define LOG_MASK (LOG_BUF_SIZE - 1u)
 #define LOG_FLUSH_MS 200u
 #define LOG_HOLDOFF_MAX_MS 2000u /* [FLT-LOG-05] */
 
-/* Room for the rows of the periods before the next window. */
-#define LOG_WATERMARK (LOG_BUF_SIZE - 96)
+/* Written at once from here up, without waiting for the flush timer. */
+#define LOG_WATERMARK (LOG_BUF_SIZE - 96u)
 
-/* Script text shares this buffer with the flight samples and ranks below
- * them, so it is admitted only in the lower half: a chatty script loses its
- * own lines rather than a single altitude reading. */
-#define LOG_TEXT_CEILING (LOG_BUF_SIZE / 2)
+/* Script text shares the ring with the flight samples and ranks below them,
+ * so it is admitted only in the lower half: a chatty script loses its own
+ * lines rather than a single altitude reading. */
+#define LOG_TEXT_CEILING (LOG_BUF_SIZE / 2u)
 
 /* How much flight a power loss can take with it. littlefs publishes what a
  * file holds only on sync or close, and the log closes at LANDED, so a flight
  * that never lands -- a crash, a battery that lets go on impact -- would
- * leave an empty file. A sync makes the next write copy the file's partial
- * last block, an erase, so both land in the window like every other write. */
+ * leave an empty file. */
 #define LOG_SYNC_MS 1000u
 
+/* The largest record the producer builds: a text row. */
+#define LOG_REC_MAX 96
+
+_Static_assert((LOG_BUF_SIZE & LOG_MASK) == 0, "the ring's size is a power of two");
+
+enum { LOG_IDLE, LOG_RUNNING, LOG_STOPPING };
+
 typedef struct {
-    hal_file_t *file;
     uint8_t buf[LOG_BUF_SIZE];
-    int head; /* write cursor */
-    bool active;
-    bool stopping;
-    bool pending_open; /* the file still has to be created, inside a window */
+    volatile uint32_t head; /* the flight task */
+    volatile uint32_t tail; /* the storage task */
+    volatile uint8_t state; /* see above */
+    uint32_t dropped;       /* sample bytes the ring could not hold */
+    uint32_t text_dropped;  /* script bytes refused: not a lost sample */
+    /* The storage task's own. */
+    lfs_file_t file;
+    struct lfs_file_config file_cfg;
+    bool file_open;
     uint32_t next_due_ms;
     uint32_t next_sync_ms;
-    bool unsynced;         /* written since the last sync */
-    uint32_t dropped;      /* sample bytes the buffer could not hold */
-    uint32_t text_dropped; /* script bytes refused: not a lost sample */
-    /* No flash write until the buffer has filled once. Launch shock is the
+    bool unsynced;
+    /* No flash write until the ring has filled once. Launch shock is the
      * likeliest cause of a brownout -- a battery connector bouncing -- and a
      * flash write in progress is the worst moment to lose power, so the first
      * seconds of the flight live in RAM. Cleared on the first watermark hit
-     * or at LOG_HOLDOFF_MAX_MS, after which flushing is periodic: this delays
-     * the first write past the shock, it does not make the flight write-once. */
+     * or at LOG_HOLDOFF_MAX_MS, after which flushing is periodic. */
     bool launch_holdoff;
     uint32_t started_ms;
-} log_task_t;
+} log_ring_t;
 
-static log_task_t log_task;
+static log_ring_t log_ring;
+static uint8_t log_file_buf[LFS_FILE_BUF_SIZE];
 static log_plan_t log_plan;
+
+static uint32_t log_used(void) {
+    return log_ring.head - log_ring.tail;
+}
+
+/* The flight task's side. False, and nothing written, when it does not fit. */
+static bool log_put(const uint8_t *rec, uint32_t n) {
+    if (n > LOG_BUF_SIZE - log_used())
+        return false;
+    uint32_t h = log_ring.head;
+    for (uint32_t i = 0; i < n; i++)
+        log_ring.buf[(h + i) & LOG_MASK] = rec[i];
+    __dmb();
+    log_ring.head = h + n;
+    return true;
+}
 
 static void log_keep(void *ctx, const flog_sample_t *s) {
     (void)ctx;
-    /* Do not flush synchronously here: this runs on the flight path, and a
-     * flush would put an erase wherever a sample happened to overflow the
-     * buffer -- an arbitrary point in the period, with core1 mid-unit. */
-    int n = flog_put_sample(log_task.buf + log_task.head, LOG_BUF_SIZE - log_task.head, s);
-    if (n == 0) {
-        log_task.dropped += FLOG_SAMPLE_BYTES;
-        return;
-    }
-    log_task.head += n;
+    uint8_t rec[FLOG_SAMPLE_BYTES + 8];
+    int n = flog_put_sample(rec, (int)sizeof(rec), s);
+    if (n <= 0 || !log_put(rec, (uint32_t)n))
+        log_ring.dropped += FLOG_SAMPLE_BYTES;
 }
 
 uint32_t hal_log_dropped(void) {
-    return log_task.dropped;
+    return log_ring.dropped;
 }
 
 void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
-    if (log_task.active)
+    if (log_ring.state != LOG_IDLE)
         return;
 
     /* Called at liftoff, so it opens no file and writes no flash: a launch
-     * that waited for an erase would be a launch detected late. */
-    log_task.dropped = 0;
+     * that waited for an erase would be a launch detected late. The storage
+     * task is idle on the ring until the state below says RUNNING. */
+    log_ring.dropped = 0;
+    log_ring.head = log_ring.tail = 0;
     flog_header_t h = {
         .board = PYRO_BOARD_NAME,
         .id = cfg->id,
@@ -1101,99 +1221,102 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
         .ground_pa = ground_pressure_pa,
         .rate = cfg->log_rate,
     };
-    log_task.head = flog_put_header(log_task.buf, LOG_BUF_SIZE, &h);
+    int n = flog_put_header(log_ring.buf, (int)LOG_BUF_SIZE, &h);
+    log_ring.head = n > 0 ? (uint32_t)n : 0u;
     log_plan_init(&log_plan, cfg->log_rate);
-
-    log_task.file = NULL;
-    log_task.pending_open = true;
-    log_task.active = true;
-    log_task.stopping = false;
-    log_task.next_due_ms = hal_time_ms() + LOG_FLUSH_MS;
-    log_task.next_sync_ms = hal_time_ms();
-    log_task.unsynced = false;
-    log_task.launch_holdoff = true;
-    log_task.started_ms = hal_time_ms();
+    __dmb();
+    log_ring.state = LOG_RUNNING;
 }
 
-/* Only from log_flash_service(), in the window. On a failure the next window
- * retries: the file keeps its last published length meanwhile. */
+/* The storage task's side from here to hal_storage_service(). A failure costs
+ * only a delay: the ring keeps its bytes until a write takes them. Only a
+ * ring that filled faster than the task drained it loses anything. */
 static void log_sync_if_due(uint32_t now_ms) {
-    hal_file_t *f = log_task.file;
-    if (!f || !f->open || !log_task.unsynced || (int32_t)(now_ms - log_task.next_sync_ms) < 0)
+    if (!log_ring.file_open || !log_ring.unsynced || (int32_t)(now_ms - log_ring.next_sync_ms) < 0)
         return;
-    if (lfs_file_sync(&f->lfs, &f->file) == LFS_ERR_OK)
-        log_task.unsynced = false;
-    log_task.next_sync_ms = now_ms + LOG_SYNC_MS;
+    if (lfs_file_sync(&g_lfs, &log_ring.file) == LFS_ERR_OK)
+        log_ring.unsynced = false;
+    log_ring.next_sync_ms = now_ms + LOG_SYNC_MS;
 }
 
-/* Every branch here can fail costing only a delay: the next window retries,
- * and the buffer keeps its bytes until a write takes them. Only a buffer
- * that filled faster than the windows drained it loses anything. */
-static void log_flash_service(uint32_t now_ms) {
-    if (!log_task.active)
+/* Everything the ring holds now, in at most two spans. */
+static void log_write_out(void) {
+    uint32_t h = log_ring.head;
+    __dmb();
+    while (log_ring.tail != h) {
+        uint32_t t = log_ring.tail;
+        uint32_t off = t & LOG_MASK;
+        uint32_t span = h - t;
+        if (span > LOG_BUF_SIZE - off)
+            span = LOG_BUF_SIZE - off;
+        lfs_ssize_t n = lfs_file_write(&g_lfs, &log_ring.file, log_ring.buf + off, span);
+        if (n <= 0)
+            return; /* the bytes stay: the next pass retries */
+        __dmb();
+        log_ring.tail = t + (uint32_t)n;
+        log_ring.unsynced = true;
+    }
+}
+
+static void log_service(uint32_t now_ms) {
+    uint8_t st = log_ring.state;
+    if (st == LOG_IDLE)
         return;
 
-    if (log_task.pending_open) {
-        /* A web transfer mounted before launch lets go on its next pass
-         * [WEB-API-08]; the rows wait in the buffer meanwhile. */
-        if (fs_borrowed > 0)
-            return;
-        log_task.file = open_file(FLOG_PATH, false);
-        if (!log_task.file)
-            return; /* window refused or the fs is busy: try the next one */
-        log_task.pending_open = false;
+    if (!log_ring.file_open) {
+        log_ring.file_cfg = (struct lfs_file_config){.buffer = log_file_buf};
+        if (!fs_ok || lfs_file_opencfg(&g_lfs, &log_ring.file, FLOG_PATH, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC,
+                                       &log_ring.file_cfg) != LFS_ERR_OK)
+            return; /* the next pass retries; the ring keeps the rows */
+        log_ring.file_open = true;
+        log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
+        log_ring.next_sync_ms = now_ms;
+        log_ring.unsynced = false;
+        log_ring.launch_holdoff = true;
+        log_ring.started_ms = now_ms;
     }
 
-    bool full = log_task.head >= LOG_WATERMARK;
-    if (full || now_ms - log_task.started_ms >= LOG_HOLDOFF_MAX_MS) {
-        log_task.launch_holdoff = false;
-    }
-    /* The timer does not fire during the holdoff; a full buffer and a stop
+    bool full = log_used() >= LOG_WATERMARK;
+    if (full || now_ms - log_ring.started_ms >= LOG_HOLDOFF_MAX_MS)
+        log_ring.launch_holdoff = false;
+    /* The timer does not fire during the holdoff; a full ring and a stop
      * always do, so nothing is ever dropped to keep the flash quiet. */
-    bool due = !log_task.launch_holdoff && (int32_t)(now_ms - log_task.next_due_ms) >= 0;
-    if (full || log_task.stopping)
+    bool due = !log_ring.launch_holdoff && (int32_t)(now_ms - log_ring.next_due_ms) >= 0;
+    if (full || st == LOG_STOPPING)
         due = true;
     if (!due) {
-        /* In a window with no write in it, so a sync and a block write never
-         * share one window's stall. */
+        /* In a pass with no write in it, so a sync and a block write never
+         * share one pass's stop. */
         log_sync_if_due(now_ms);
         return;
     }
 
-    if (log_task.head > 0 && log_task.file) {
-        int n = hal_fs_write(log_task.file, (const char *)log_task.buf, log_task.head);
-        if (n > 0) {
-            /* Only what was written leaves: a record written twice would
-             * misalign every record after it. */
-            memmove(log_task.buf, log_task.buf + n, (size_t)(log_task.head - n));
-            log_task.head -= n;
-            log_task.unsynced = true;
-        }
-        /* A failed write keeps the bytes: the next window retries. */
-    }
-    log_task.next_due_ms = now_ms + LOG_FLUSH_MS;
+    log_write_out();
+    log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
 
-    if (log_task.stopping && log_task.head == 0) {
-        if (log_task.file) {
-            hal_fs_close(log_task.file);
-            log_task.file = NULL;
-        }
-        log_task.active = false;
-        log_task.stopping = false;
+    if (st == LOG_STOPPING && log_ring.tail == log_ring.head) {
+        lfs_file_close(&g_lfs, &log_ring.file);
+        log_ring.file_open = false;
+        __dmb();
+        log_ring.state = LOG_IDLE;
     }
 }
 
-/* Call only from inside the window. */
-void hal_flash_service(uint32_t now_ms) {
+/* Weak and empty: most boards queue no flash work of their own. */
+__attribute__((weak)) void board_flash_service(uint32_t now_ms) {
+    (void)now_ms;
+}
+
+void hal_storage_service(uint32_t now_ms) {
     if (board_identity_unsaved() && !hal_log_active())
         board_identity_save();
-    log_flash_service(now_ms);
+    log_service(now_ms);
     board_flash_service(now_ms);
 }
 
 void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
                     uint8_t event) {
-    if (!log_task.active)
+    if (log_ring.state != LOG_RUNNING)
         return;
     flog_sample_t s = {
         .time_ms = time_ms,
@@ -1209,27 +1332,25 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
 }
 
 /* A text row: script output, or a note about something the firmware did not
- * do. See flash_window.h for what a false return means. Its numeric columns
- * render empty: neither is a sample, and a zero altitude is a reading a plot
- * would draw. */
+ * do. Its numeric columns render empty: neither is a sample, and a zero
+ * altitude is a reading a plot would draw. */
 static bool log_tagged(uint32_t time_ms, uint8_t tag, const char *text, int len) {
-    if (!log_task.active || len <= 0) {
+    if (log_ring.state != LOG_RUNNING || len <= 0)
+        return false;
+    uint8_t rec[LOG_REC_MAX];
+    int n = flog_put_text(rec, (int)sizeof(rec), time_ms, tag, text, len);
+    if (n <= 0 || !log_put(rec, (uint32_t)n)) {
+        log_ring.text_dropped += (uint32_t)len;
         return false;
     }
-    int n = flog_put_text(log_task.buf + log_task.head, LOG_BUF_SIZE - log_task.head, time_ms, tag, text, len);
-    if (n == 0) {
-        log_task.text_dropped += (uint32_t)len;
-        return false;
-    }
-    log_task.head += n;
     return true;
 }
 
 bool hal_log_text(uint32_t time_ms, const char *text, int len) {
     /* Rationed: a script can flood, and script output must not crowd out the
      * flight samples it is annotating. */
-    if (log_task.head >= LOG_TEXT_CEILING) {
-        log_task.text_dropped += (uint32_t)(len > 0 ? len : 0);
+    if (log_used() >= LOG_TEXT_CEILING) {
+        log_ring.text_dropped += (uint32_t)(len > 0 ? len : 0);
         return false;
     }
     return log_tagged(time_ms, FLOG_TAG_LUA, text, len);
@@ -1243,20 +1364,35 @@ bool hal_log_mock(uint32_t time_ms, const char *what) {
 }
 
 uint32_t hal_log_text_dropped(void) {
-    return log_task.text_dropped;
+    return log_ring.text_dropped;
 }
 
 void hal_log_stop(void) {
-    if (!log_task.active)
+    if (log_ring.state != LOG_RUNNING)
         return;
     log_plan_finish(&log_plan, log_keep, NULL);
-    log_task.stopping = true;
+    __dmb();
+    log_ring.state = LOG_STOPPING;
 }
 
 bool hal_log_active(void) {
-    return log_task.active;
+    return log_ring.state != LOG_IDLE;
+}
+
+/* pico_fota_bootloader rolls back to the previous image unless the new one
+ * commits before its next reboot, so an image that crash-loops reverts by
+ * itself. Committed by the storage task once every task has run (see
+ * storage_task.c), not at boot: a commit before the scheduler would keep an
+ * image that dies the moment its tasks start. Under the lockout: the library
+ * masks interrupts and writes flash itself. */
+static void commit_op(void *arg) {
+    (void)arg;
+    pfb_firmware_commit();
 }
 
 void hal_firmware_commit(void) {
-    pfb_firmware_commit();
+    /* Only an image on its first boot after an update has anything to
+     * commit; every other boot writes no flash here. */
+    if (pfb_is_after_firmware_update())
+        flash_op(commit_op, NULL);
 }

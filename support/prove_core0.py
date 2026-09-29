@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-prove_core0.py -- prove (or disprove) that core1 can hang core0.
+prove_core0.py -- prove (or disprove) that the flight task can be hung.
 
-The safety rule for running Lua on core1 is a single sentence:
+Under FreeRTOS [DD-073] the rule is plan 2's (docs/log_storage_plan2_freertos.md,
+section 8):
 
-    core0 must never wait on anything core1 can hold.
+    the flight task never waits on anything another task can hold. Its only
+    blocking call is the wait for its next period.
 
 That is a property of the linked binary, not of the source, because the
 dangerous waits are introduced by the SDK underneath us. The clearest example:
@@ -23,7 +25,7 @@ disassembly, resolves long-branch veneers, and reports every path from a
 flight-critical entry point to a primitive that can wait forever.
 
 Usage:
-    support/prove_core0.py --core1 core1_main build-mk1c/pyro_fw_mk1c.elf
+    support/prove_core0.py --core1 lua_task build-mk1c/pyro_fw_mk1c.elf
     support/prove_core0.py --root my_entry build/pyro_fw_mk1b.elf   # an extra root
 
 Exit status is 1 if any flight-critical root can reach an unbounded wait,
@@ -64,12 +66,33 @@ UNBOUNDED = {
     "critical_section_enter_blocking": "shared spin lock, no timeout",
     "i2c_write_blocking": "no timeout: a part holding SCL low holds the caller forever",
     "i2c_read_blocking": "no timeout: a part holding SCL low holds the caller forever",
+    # FreeRTOS's blocking-capable calls. The graph cannot see a timeout
+    # argument, so each is refused by name; the one exception, the flight
+    # task's wait for its period, is taken out of the graph below.
+    "xQueueReceive": "a queue another task fills",
+    "xQueueSemaphoreTake": "a mutex or semaphore another task holds",
+    "xQueueTakeMutexRecursive": "a mutex another task holds",
+    "xQueueGenericSend": "a queue another task drains",
+    "ulTaskGenericNotifyTake": "a notification another task gives",
+    "xTaskGenericNotifyWait": "a notification another task gives",
+    "xEventGroupWaitBits": "bits another task sets",
+    "vTaskDelay": "a sleep",
+    "xTaskDelayUntil": "a sleep",
+    "flash_op": "raises to T and waits for the other core to park",
 }
+
+# The flight task's one allowed blocking call: the wait for its period.
+ALLOWED_EDGES = {("flight_task", "ulTaskGenericNotifyTake")}
+
+# Entered by every kernel call, on either core: a spin lock with interrupts
+# off, held for a kernel critical section. Bounded by the kernel's own code,
+# not by another task, and reported as such, never failed.
+KERNEL_CRITICAL = ["vTaskEnterCritical", "vPortEnterCriticalMultiCore"]
 
 # Entry points that must keep running for the rocket to be safe. These are the
 # obligations: watchdog feed, launch detect, pyro service, state machine.
 FLIGHT_ROOTS = [
-    "main",
+    "flight_task",
     "dispatch_state",
     "flight_update_outputs",
     "hal_tasks_tick",
@@ -86,7 +109,8 @@ FLIGHT_ROOTS = [
     "hal_log_start",
     "hal_log_sample",
     "watchdog_update",
-    "net_service",
+    "flight_call_service",
+    "lua_app_service",
 ]
 
 # Flash operations that disable XIP. While these run, the *other* core must not
@@ -105,8 +129,8 @@ XIP_DISABLERS = ["flash_range_erase", "flash_range_program"]
 # not evidence of anything.
 SPINLOCK_LIT_RE = re.compile(r"\bd00001[0-7][0-9a-f]\b")
 
-FN_RE = re.compile(r"^[0-9a-f]+ <(.+)>:$")
-BL_RE = re.compile(r"\sbl(?:x)?\s+[0-9a-f]+ <([^>+]+)")
+FN_RE = re.compile(r"^([0-9a-f]+) <(.+)>:$")
+BL_RE = re.compile(r"\sbl(?:x)?\s+([0-9a-f]+) <([^>+]+)")
 
 
 def find_objdump():
@@ -130,23 +154,38 @@ def build_graph(elf):
     collapse them silently reports 'no path' -- which is how a proof like this
     quietly turns into a rubber stamp."""
     out = subprocess.run([find_objdump(), "-d", elf], capture_output=True, text=True, check=True).stdout
+    # Two static functions may share a name -- Lua's lauxlib.c has its own
+    # panic() -- and merging them by name invents paths. Functions are keyed
+    # by address; a name defined twice becomes name@address.
+    lines = out.splitlines()
+    by_name = collections.defaultdict(list)
+    for line in lines:
+        m = FN_RE.match(line)
+        if m:
+            by_name[m.group(2)].append(int(m.group(1), 16))
+    label = {}
+    for name, addrs in by_name.items():
+        for a in addrs:
+            label[a] = name if len(addrs) == 1 or name.startswith("__") else f"{name}@{a:08x}"
     callers = collections.defaultdict(set)
     spin_sites = set()
     fn = None
-    for line in out.splitlines():
+    for line in lines:
         m = FN_RE.match(line)
         if m:
-            fn = m.group(1)
+            fn = label[int(m.group(1), 16)]
             continue
         if fn and SPINLOCK_LIT_RE.search(line):
             spin_sites.add(fn)
         m = BL_RE.search(line)
         if m and fn:
-            callee = m.group(1)
+            callee = label.get(int(m.group(1), 16), m.group(2))
             if callee.startswith("__") and callee.endswith("_veneer"):
                 callee = callee[2:-len("_veneer")]
             if fn.startswith("__") and fn.endswith("_veneer"):
                 continue  # the veneer's own body is a jump, not a call site
+            if (fn, callee) in ALLOWED_EDGES:
+                continue
             callers[callee].add(fn)
     spin_sites.discard("spin_locks_reset")  # the recovery, not a hazard
     return callers, spin_sites
@@ -197,15 +236,24 @@ def analyse(elf, roots):
             if path:
                 spins.append((root, site, path))
                 break
-    return findings, xip, spins, callers
+    kernel = []
+    for k in KERNEL_CRITICAL:
+        for root in roots:
+            path = shortest_path(callers, k, root)
+            if path:
+                kernel.append((root, k, path))
+                break
+    return findings, xip, spins, kernel, callers
 
 
-# Anything core1 must never call. A core that acquires nothing can be killed
-# at any instant with PSM frce_off and strand nothing, which is what makes the
-# unilateral kill in src/lua/lua_core1.c safe. Spin lock acquires are inlined
-# and invisible to a call graph, so the functions that contain them are named
-# here directly.
+# Anything the Lua task must never call. A task that holds nothing another
+# task waits on can be stopped with vTaskSuspend() at any instant and strand
+# nothing, which is what makes the stop in src/lua/lua_core1.c safe. Spin lock
+# acquires are inlined and invisible to a call graph, so the functions that
+# contain them are named here directly.
 CORE1_FORBIDDEN = {
+    "xQueueSemaphoreTake": "a mutex: stopped holding it, the Lua task strands every task that waits on it",
+    "flash_op": "the Lua task touches no file and no flash",
     "__wrap_malloc": "system heap: enters malloc_mutex, which core0 also takes",
     "__wrap_calloc": "system heap",
     "__wrap_realloc": "system heap",
@@ -217,8 +265,8 @@ CORE1_FORBIDDEN = {
     "hw_claim_clear": "spin lock 11",
     "irq_set_exclusive_handler": "spin lock 9",
     "irq_add_shared_handler": "spin lock 9",
-    "flash_range_erase": "core1 must never touch flash",
-    "flash_range_program": "core1 must never touch flash",
+    "flash_range_erase": "the Lua task touches no file and no flash",
+    "flash_range_program": "the Lua task touches no file and no flash",
     "multicore_fifo_pop_blocking": "unbounded wait on core0",
     "multicore_fifo_push_blocking": "unbounded wait on core0",
     # A core1 that blocks here stops answering park requests, so core0 kills
@@ -333,7 +381,7 @@ def check_core1(elf, entry, callers):
         print(f"WARN  {entry} not found in this binary; core1 rule NOT checked")
         return 1
     if not bad:
-        print(f"PASS  {entry} acquires nothing: killable at any instant")
+        print(f"PASS  {entry} acquires nothing: stoppable at any instant")
         print(f"      ({len(tables)} vtables, {len(indirect)} entries folded "
               f"in as indirectly reachable)")
         return 0
@@ -363,7 +411,7 @@ def check_core1(elf, entry, callers):
 # So the placement is checked here rather than trusted. Each entry is
 # (symbol, why it has to be in RAM).
 RAM_RESIDENT = [
-    ("lua_core1_idle_wait", "core1's idle spin; core0 erases flash while core1 is in it"),
+    ("flash_op_park", "the lockout helper's spin; the other core writes flash while it runs"),
 ]
 
 # RP2040 SRAM. Anything at 0x10xxxxxx is XIP.
@@ -405,6 +453,7 @@ def check_ram_resident(elf, objdump):
 # cannot be followed, so one fails the check.
 RAM_CLOSED = [
     ("ms5607_alarm_isr", "the MS5607 one-shot's alarm handler [DD-051]"),
+    ("flash_op_park", "the lockout helper's spin: interrupts off while the other core writes flash"),
 ]
 
 XIP_LO, XIP_HI = 0x10000000, 0x20000000
@@ -498,7 +547,7 @@ def check_roots(elf, roots, objdump):
 
 
 def report(elf, roots, core1_entry=None):
-    findings, xip, spins, callers = analyse(elf, roots)
+    findings, xip, spins, kernel, callers = analyse(elf, roots)
     print(f"=== {elf} ===")
     root_rc = check_roots(elf, roots, find_objdump())
     present = [p for p in UNBOUNDED if p in callers]
@@ -526,6 +575,11 @@ def report(elf, roots, core1_entry=None):
         print("\nnote: these disable XIP; core1 must not be fetching from flash meanwhile")
         for root, op, path in xip:
             print(f"      {root} -> ... -> {op}  ({len(path)} frames)")
+    if kernel:
+        print("\nnote: the kernel's critical section, a bounded wait on the other core")
+        print("      (plan 2, section 8): the longest kernel critical section, not a task")
+        for root, k, path in kernel:
+            print(f"      {root} -> ... -> {k}  ({len(path)} frames)")
     rc = 0 if not findings else 1
     rc |= root_rc
     rc |= check_ram_resident(elf, find_objdump())
@@ -541,7 +595,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("elf", nargs="+")
     ap.add_argument("--root", action="append", default=[], help="extra flight-critical entry point")
-    ap.add_argument("--core1", metavar="SYM", help="core1 entry point; fails if it acquires anything")
+    ap.add_argument("--core1", metavar="SYM", help="the Lua task's entry; fails if it acquires anything")
     args = ap.parse_args()
     roots = FLIGHT_ROOTS + args.root
     rc = 0

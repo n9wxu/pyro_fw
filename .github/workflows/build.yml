@@ -82,11 +82,11 @@ jobs:
       # out-of-line copy. mk1b is the default board and the one whose 384KB
       # A/B slot forced lua_lib to -Os, so it is the build most likely to
       # inline differently -- and it was the one not being checked.
-      - name: Prove core0 cannot be hung by core1
+      - name: Prove the flight task cannot be hung
         run: |
           for elf in build/pyro_fw_*.elf build-mk1c/pyro_fw_*.elf build-mk1a/pyro_fw_*.elf; do
             echo "--- $elf"
-            python3 support/prove_core0.py --core1 core1_main "$elf"
+            python3 support/prove_core0.py --core1 lua_task "$elf"
           done
 
       - name: Static analysis (cppcheck)

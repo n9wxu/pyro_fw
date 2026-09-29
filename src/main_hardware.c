@@ -1,5 +1,11 @@
 /*
- * Pyro MK1B Flight Controller — hardware main loop.
+ * Pyro flight computers — main() and the flight task [DD-073].
+ *
+ * main() brings the board up on core0 alone, then starts the scheduler. The
+ * flight task runs the period's work, woken every LOOP_PERIOD_US by an alarm
+ * on the hardware timer: not by the kernel's tick, which a flash operation
+ * delays. A late period delays one wake, never the ones after it.
+ *
  * SPDX-License-Identifier: MIT
  */
 #include <string.h>
@@ -8,10 +14,14 @@
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
 #include "hardware/watchdog.h"
-#include "ms5607_driver.h"
+#include "hardware/timer.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 #include "hal.h"
-#include "flash_window.h"
+#include "hal_storage.h"
+#include "flash_op.h"
+#include "rtos_tasks.h"
 #include "pin_store.h"
 #include "board_if.h"
 #include "flight_states.h"
@@ -22,7 +32,7 @@
 #include "hardware/structs/watchdog.h"
 #include "hardware/structs/usb.h"
 
-/* Each iteration takes the MS5607 conversion the last one commanded and
+/* Each period takes the MS5607 conversion the last one commanded and
  * commands the next [DD-051]; the period is loop_period.h's [DD-065]. */
 #include "loop_period.h"
 
@@ -34,15 +44,17 @@
 #define WATCHDOG_MS (2u * PYRO_LOOP_WORST_MS)
 
 /* High-water marks, reported by /api/status, so PYRO_LOOP_WORST_MS can be set
- * from measurement. loop_overruns above zero means the budget is optimistic
- * or the period is too short; stage_max_us says which stage to look at. */
+ * from measurement. loop_overruns above zero means a period's work did not
+ * finish before the next period began; stage_max_us says which stage to look
+ * at. Stage 1 was the USB and network pass, now the net task's; stage 8 is
+ * the time the flight task spends waiting for its next period. */
 #define STAGE_COUNT 9
 #define STAGE_SLACK 8
 
 volatile uint32_t loop_count;
-volatile uint32_t loop_max_us;      /* longest iteration of work, slack excluded */
-volatile uint32_t loop_overruns;    /* iterations that missed the deadline       */
-volatile uint32_t loop_late_max_us; /* worst overshoot past the deadline         */
+volatile uint32_t loop_max_us;      /* longest period of work, the wait excluded */
+volatile uint32_t loop_overruns;    /* periods whose wake came after the next one */
+volatile uint32_t loop_late_max_us; /* worst delay from the alarm to the wake    */
 volatile uint32_t stage_max_us[STAGE_COUNT];
 
 static uint32_t stage_mark_us;
@@ -64,20 +76,18 @@ static inline void stage_enter(uint8_t n, uint32_t now) {
 
 #define STAGE(n) stage_enter((n), now)
 
-/* Sub-steps inside a stage, where a stage number is too coarse: one stage
- * covers several calls that can each stop returning. Same encoding as
+/* Sub-steps, where a stage number is too coarse. Same encoding as
  * stage_enter, numbered above the stage range so the two cannot be confused,
  * and without stage_mark_us so a crumb does not distort a high-water mark.
  * The map:
  *
- *   70-74  core0 in the flash window (see below)
  *   60-61  around lua_core1_start()          (lua_app.c)
- *   80-82  an HTTP unit on core0: a step, a portable unit, between units
- *          (http_server.c)
+ *   80-82  an HTTP unit in the net task      (http_server.c)
  *   95-98  around one sector erase / program (littlefs_driver.c)
  *
- * flash_window_crumb() is the same store, callable from those files. */
-#define CRUMB(n) (watchdog_hw->scratch[0] = 0x53540000u | (uint32_t)(n))
+ * flash_op_crumb() is the same store, callable from those files. 201-203 are
+ * an RTOS assertion, a stack overflow and a panic (rtos_tasks.c), with the
+ * detail in scratch[1]; 100-109 the boot, in main(). */
 
 #if PYRO_HAS_LUA
 #include "lua_app.h"
@@ -108,9 +118,6 @@ static void note_last_boot(void) {
         boot_prev_stage_ms = watchdog_hw->scratch[1];
     }
 }
-
-void net_mdns_poll(void);
-void net_service(void); /* net_glue.c: USB frames, lwIP, the HTTP transport */
 
 /* [USB-01] A host sends a start-of-frame every millisecond while it is awake,
  * and nothing else does, so a frame number that moves proves a PC and one that
@@ -157,12 +164,137 @@ static void update_status(flight_context_t *ctx, uint32_t now) {
     memcpy((char *)g_status.rocket_name, ctx->config.name, 9);
 }
 
+/* ── The period ───────────────────────────────────────────────────────
+ *
+ * The alarm re-arms itself on a fixed grid. A wake the flight task has not
+ * reached by the next alarm is counted as an overrun, and the grid skips
+ * forward rather than catching up: adding periods to a missed target would
+ * compress the periods after it. */
+static TaskHandle_t flight_h;
+static int period_alarm = -1;
+static volatile uint64_t period_target_us;
+static volatile uint32_t period_fires;
+
+static void period_isr(uint alarm) {
+    uint64_t now = time_us_64();
+    uint64_t next = period_target_us + LOOP_PERIOD_US;
+    if ((int64_t)(next - now) < 200)
+        next = now + LOOP_PERIOD_US;
+    period_target_us = next;
+    hardware_alarm_set_target(alarm, from_us_since_boot(next));
+    period_fires++;
+    BaseType_t woken = pdFALSE;
+    vTaskNotifyGiveFromISR(flight_h, &woken);
+    portYIELD_FROM_ISR(woken);
+}
+
+/* From the flight task, so the alarm's interrupt belongs to core0. */
+static void period_start(void) {
+    flight_h = xTaskGetCurrentTaskHandle();
+    period_alarm = hardware_alarm_claim_unused(true);
+    hardware_alarm_set_callback((uint)period_alarm, period_isr);
+    period_target_us = time_us_64() + LOOP_PERIOD_US;
+    hardware_alarm_set_target((uint)period_alarm, from_us_since_boot(period_target_us));
+}
+
+void flight_task(void *arg) {
+    flight_context_t *ctx = (flight_context_t *)arg;
+    bool reset_armed = false; /* see the pending_reset handling below */
+
+    /* After USB, lwIP and the filesystem, which are slow enough to trip it.
+     * The safe-boot latch in lua_app.c cannot fire without this. */
+    watchdog_enable(WATCHDOG_MS, true);
+    period_start();
+    stage_mark_us = time_us_32();
+    stage_cur = STAGE_SLACK;
+    uint32_t fires_seen = 0;
+
+    for (;;) {
+        /* The flight task's only blocking call [plan 2, section 8]. */
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        uint32_t fires = period_fires;
+        if (fires - fires_seen > 1u)
+            loop_overruns += fires - fires_seen - 1u;
+        fires_seen = fires;
+        uint32_t late = (uint32_t)(time_us_64() - (period_target_us - LOOP_PERIOD_US));
+        if (late < LOOP_PERIOD_US && late > loop_late_max_us)
+            loop_late_max_us = late;
+
+        uint32_t now = hal_time_ms();
+        uint32_t iter_t0 = time_us_32();
+
+        /* watchdog_reboot() works by loading a short timeout and letting it
+         * expire, so feeding afterwards cancels the reboot. On the ground a
+         * storage task that has stopped checking in is not fed for: the
+         * board resets. In flight it is counted, and the flight goes on. */
+        if (!reset_armed && (storage_alive(now) || hal_log_active())) {
+            watchdog_update();
+        }
+
+        /* First: the MS5607 is commanded at a steady offset from the period,
+         * so the conversion's one-shot has read it before the next period
+         * comes to take it. */
+        STAGE(2);
+        hal_tasks_tick(now);
+
+        extern volatile uint8_t pending_reset;
+        if (pending_reset == 1)
+            rom_reset_usb_boot(0, 0); /* never returns */
+
+        /* Arm once: pending_reset stays set, and re-arming every period would
+         * reload the countdown faster than it can expire. The net task keeps
+         * running meanwhile, so the HTTP response flushes first. An OTA
+         * reboots through here too, once its reply is with lwIP. */
+        if (pending_reset == 2 && !reset_armed) {
+            reset_armed = true;
+            watchdog_reboot(0, 0, 100);
+        }
+
+        /* Changes another task handed over: config, test mode, a buzzer
+         * audition. Applied here, before the flight software reads them. */
+        STAGE(3);
+        flight_call_service();
+        flight_set_usb_attached(ctx, usb_host_active(now), now);
+        ctx->current_state = dispatch_state(ctx, now);
+
+        /* Outputs (telemetry, pyro update) */
+        STAGE(4);
+        flight_update_outputs(ctx, now);
+        STAGE(5);
+        update_status(ctx, now);
+
+#if PYRO_HAS_LUA
+        STAGE(6);
+        lua_app_service(ctx, now);
+        lua_app_dispatch();
+#endif
+
+        /* The flight log's ring and the pad marker are the storage task's to
+         * write: wake it. Never waits. */
+        STAGE(7);
+        rtos_notify_storage();
+
+        STAGE(STAGE_SLACK);
+        uint32_t work_us = time_us_32() - iter_t0;
+        if (work_us > loop_max_us)
+            loop_max_us = work_us;
+        loop_count++;
+    }
+}
+
+static flight_context_t ctx;
+
+#define BOOT(n) (watchdog_hw->scratch[0] = 0x53540000u | (100u + (n)))
+
 int main() {
     note_last_boot();
+    BOOT(0);
     hal_platform_init();
+    BOOT(1);
 
-    flight_context_t ctx;
     flight_init(&ctx);
+    BOOT(2);
 
     /* Before lua_app_init(), which configures Lua from the assignment. A
      * rejected pins.ini falls back to the board defaults and says so on
@@ -170,10 +302,10 @@ int main() {
     pin_store_load(NULL, 0);
 
     /* The single pass that gives every pad one owner, then the flight
-     * software spending its claims. Both before core1 exists, and in this
-     * order: whatever the flight software claims here, lua_plat_configure()
-     * can no longer publish, and the pads it could not claim are Lua's. See
-     * pad_claim.h. */
+     * software spending its claims. Both before the scheduler starts, and in
+     * this order: whatever the flight software claims here,
+     * lua_plat_configure() can no longer publish, and the pads it could not
+     * claim are Lua's. See pad_claim.h. */
     pin_store_claim_pads();
     hal_pyro_claim_channels(pin_store_pyro_pads);
 
@@ -184,159 +316,17 @@ int main() {
     board_buzzer_set_pin(pin_assign_buzzer_pin(pin_store_current()));
 
     /* The ground test switch's pads, claimed by the same pass; read from the
-     * first loop, which is where the power-up settle watches it. */
+     * first period, which is where the power-up settle watches it. */
     const pin_assign_t *pins = pin_store_current();
     hal_ground_test_configure(pins->gt_wiring, pins->gt_pin, pins->gt_drive_pin);
 
 #if PYRO_HAS_LUA
-    /* Core1 is launched here, once, after the filesystem is mounted and the
-     * config is loaded, and before the flight loop. There is deliberately no
-     * relaunch path: see src/lua/lua_core1.h. */
+    /* Configures Lua from the assignment and reads the script; the script
+     * starts two seconds into the flight task's periods. See lua_core1.h. */
     lua_app_init(&ctx.config);
 #endif
 
-    bool reset_armed = false; /* see the pending_reset handling below */
-
-    /* After USB enumeration, lwIP and the filesystem mount, which are slow
-     * enough to trip a watchdog armed in hal_platform_init(). The safe-boot
-     * latch in lua_app.c cannot fire without this. */
-    watchdog_enable(WATCHDOG_MS, true);
-
-    /* Prime both, or the first iteration measures time since power-on. */
-    absolute_time_t deadline = make_timeout_time_us(LOOP_PERIOD_US);
-    stage_mark_us = time_us_32();
-    stage_cur = STAGE_SLACK;
-
-    while (1) {
-        uint32_t now = hal_time_ms();
-        uint32_t iter_t0 = time_us_32();
-
-        /* watchdog_reboot() works by loading a short timeout and letting it
-         * expire, so feeding afterwards cancels the reboot. */
-        if (!reset_armed) {
-            watchdog_update();
-        }
-
-        /* First, before STAGE 1's USB and lwIP work, which runs for
-         * milliseconds on no fixed schedule: the MS5607 is commanded at a
-         * steady offset from the period, so the conversion's one-shot has
-         * read it before the next iteration comes to take it. */
-        STAGE(2);
-        hal_tasks_tick(now);
-
-        /* USB, lwIP and the HTTP transport, which only moves bytes: HTTP's
-         * handlers run as units from the slack, after the flight work. */
-        STAGE(1);
-        hal_platform_service();
-
-        extern volatile uint8_t pending_reset;
-        if (pending_reset == 1)
-            rom_reset_usb_boot(0, 0); /* never returns */
-
-        /* Arm once: pending_reset stays set, and re-arming every iteration
-         * would reload the countdown faster than it can expire. The loop
-         * keeps running so the in-flight HTTP response flushes first. An
-         * OTA reboots through here too, once its reply is with lwIP. */
-        if (pending_reset == 2 && !reset_armed) {
-            reset_armed = true;
-            watchdog_reboot(0, 0, 100);
-        }
-
-        /* Flight software — single code path via pressure_processing ring.
-         * dispatch_state() internally reads altitude samples via pp_read(). */
-        STAGE(3);
-        flight_set_usb_attached(&ctx, usb_host_active(now), now);
-        ctx.current_state = dispatch_state(&ctx, now);
-
-        /* Outputs (telemetry, pyro update) */
-        STAGE(4);
-        flight_update_outputs(&ctx, now);
-        STAGE(5);
-        update_status(&ctx, now);
-
-#if PYRO_HAS_LUA
-        STAGE(6);
-        lua_app_service(&ctx, now);
-#endif
-
-        /* Core1 is idle here because core0 handed it no work since the
-         * previous period's dispatch, and sized that grant to expire before
-         * this line. A core1 still executing -- an overrunning unit, or its
-         * unbounded startup -- leaves the window shut for the period rather
-         * than stalling core0. See flash_window.h.
-         *
-         * A fire in its sequence shuts it too: an erase would stall the loop
-         * that paces it [DD-056]. */
-        STAGE(7);
-        CRUMB(70);
-        bool window = lua_core1_flash_ok() && board_flash_ok();
-        if (window) {
-            CRUMB(71);
-            flash_window_open();
-            hal_flash_service(now);
-            flight_flash_service(&ctx, now);
-            CRUMB(72);
-        } else {
-            CRUMB(74);
-            flash_window_skipped();
-        }
-
-        /* Slack from here, spent on USB, lwIP and HTTP work units rather than
-         * sleeping: throttling those to the period rate costs HTTP and OTA
-         * throughput. A unit starts only with its budget left (http_work.h).
-         *
-         * A live hold gives core1 nothing for the whole period. One sector
-         * erase takes tens of milliseconds, so an upload cannot run
-         * concurrently with core1 on any schedule; core0 makes that trade
-         * explicitly and briefly. */
-        STAGE(STAGE_SLACK);
-        uint32_t work_us = time_us_32() - iter_t0;
-        if (work_us > loop_max_us)
-            loop_max_us = work_us;
-        loop_count++;
-
-        /* Before the dispatch, which hands core1 its HTTP units. */
-        http_server_period();
-
-#if PYRO_HAS_LUA
-        if (window && !flash_window_holding(now)) {
-            flash_window_close();
-            lua_app_dispatch(absolute_time_diff_us(get_absolute_time(), deadline));
-        }
-#endif
-
-        /* Tested before the slack loop, which by definition exits at the
-         * deadline and would make every iteration an overrun. */
-        if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0) {
-            loop_overruns++;
-            http_server_work(0); /* one a period however late: HTTP must not starve */
-        } else {
-            while (absolute_time_diff_us(get_absolute_time(), deadline) > 0) {
-                tud_task();
-                /* Core0 hands out no more work until the next period, so a
-                 * core1 observed idle here stays idle for the rest of the
-                 * slack. Without this, a flash-writing request waits for the
-                 * next period's STAGE 7. */
-                if (!flash_window_is_open() && lua_core1_flash_ok() && board_flash_ok()) {
-                    flash_window_open();
-                }
-                net_service();
-                http_server_work((int32_t)absolute_time_diff_us(get_absolute_time(), deadline));
-            }
-        }
-
-        /* Unconditional: a flash write from a USB callback or an interrupt
-         * must fail rather than land while core1 is running. */
-        flash_window_close();
-
-        /* Counts both causes: work that did not fit, and a final USB/lwIP
-         * pass that overshot. */
-        int64_t late_us = absolute_time_diff_us(deadline, get_absolute_time());
-        if (late_us > 0 && (uint32_t)late_us > loop_late_max_us)
-            loop_late_max_us = (uint32_t)late_us;
-
-        /* Skip rather than catch up: adding a period to the previous
-         * deadline compresses the iterations after an overrun. */
-        deadline = make_timeout_time_us(LOOP_PERIOD_US);
-    }
+    BOOT(3);
+    rtos_start(&ctx); /* never returns */
+    return 0;
 }

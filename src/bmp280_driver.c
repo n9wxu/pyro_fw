@@ -8,7 +8,7 @@
 #include "board_pins.h"
 #if BOARD_HAS_BMP280
 #include "bmp280_driver.h"
-#include "flash_window.h"
+#include "flash_op.h"
 #include "hardware/i2c.h"
 #include "hardware/timer.h"
 #include "loop_period.h"

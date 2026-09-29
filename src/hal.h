@@ -131,6 +131,12 @@ void hal_fs_unmount(void);
 int hal_fs_read_file(const char *path, char *buf, int max_len);     /* returns bytes read, <0 on error */
 int hal_fs_write_file(const char *path, const char *data, int len); /* returns 0 on success */
 
+/* A small file the flight software reads while it flies -- the pad marker
+ * (brownout.h). Never blocks and never waits on the filesystem: the platform
+ * serves it from RAM, filled at boot and refreshed by hal_fs_write_file().
+ * Same returns as hal_fs_read_file(), without HAL_FS_LOCKED. */
+int hal_fs_read_cached(const char *path, char *buf, int max_len);
+
 /* Streaming file writes */
 typedef struct hal_file hal_file_t;
 hal_file_t *hal_fs_open(const char *path, bool append); /* NULL on error */

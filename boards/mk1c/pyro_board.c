@@ -14,7 +14,7 @@
 #include "board_if.h"
 #include "board_pins.h"
 #include "board_support.h"
-#include "flash_window.h"
+#include "flash_op.h"
 #include "pyro_faults.h"
 #include "pyro_measure.h"
 #include "pyro_sense.h"

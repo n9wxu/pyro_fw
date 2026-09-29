@@ -10,7 +10,7 @@
 #include "unity.h"
 #include "plant.h"
 #include "pyro.h"
-#include "flash_window.h"
+#include "flash_op.h"
 #include "rp2040_shim.h"
 #include "board_pins.h"
 #include <stdio.h>

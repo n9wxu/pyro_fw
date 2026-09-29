@@ -16,7 +16,7 @@
 #define DIAG_P1_SHORT (1u << 4)
 #define DIAG_P2_OPEN (1u << 5)
 #define DIAG_P2_SHORT (1u << 6)
-#define DIAG_BROWNOUT (1u << 7) /* came back mid-flight after a power event */
+#define DIAG_BROWNOUT (1u << 7)     /* came back mid-flight after a power event */
 #define DIAG_SENSOR_STUCK (1u << 8) /* a full window of identical readings [SNS-PRES-10] */
 #define DIAG_SENSOR_LOST (1u << 9)  /* no sample for 0.5 s in flight [SNS-PRES-11] */
 
@@ -331,6 +331,11 @@ void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t 
  *  -3 if config validation failed (invalid field values)
  */
 int flight_config_reload(flight_context_t *ctx);
+
+/* The apply half of flight_config_reload(), for a config already loaded: on
+ * the hardware the net task loads it and the flight task, which owns the
+ * running config, applies it (rtos_tasks.h, flight_call()). Same returns. */
+int flight_config_apply(flight_context_t *ctx, const config_t *new_config);
 
 /* Get the global flight context pointer (for HTTP server access).
  * Returns NULL if flight_init() hasn't been called yet. */

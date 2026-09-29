@@ -500,6 +500,17 @@ int mock_fs_peek(const char *path, char *buf, int max_len) {
     return -2;
 }
 
+int hal_fs_read_cached(const char *path, char *buf, int max_len) {
+    for (int i = 0; i < SIM_FS_MAX_FILES; i++) {
+        if (sim_files[i].used && strcmp(sim_files[i].path, path) == 0) {
+            int n = sim_files[i].len < max_len ? sim_files[i].len : max_len;
+            memcpy(buf, sim_files[i].data, n);
+            return n;
+        }
+    }
+    return -2;
+}
+
 int hal_fs_read_file(const char *path, char *buf, int max_len) {
     if (fs_locked())
         return HAL_FS_LOCKED;

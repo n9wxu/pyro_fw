@@ -14,7 +14,7 @@
 #include "hardware/structs/timer.h"
 #include "hardware/sync.h"
 #include "hardware/timer.h"
-#include "flash_window.h"
+#include "flash_op.h"
 
 #define MS5607_BUS_TIMEOUT_US 2000u /* the longest transfer is about 0.15 ms at 400 kHz */
 

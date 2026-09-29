@@ -353,11 +353,11 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **WEB-API-10**: A request for a file shall be refused with 423 while the flight log is being written, since every filesystem mount shares the buffers the log's mount holds. ← WEB-API-08
 - **WEB-HTTP-01**: The HTTP server shall treat each connection as a byte stream: a request shall be answered the same however TCP divides it into segments, including a header block or body split at any byte and more than one request in a single segment. ← SYS-WEB-01
 - **WEB-HTTP-02**: Every response shall be framed by Content-Length and carry Connection: close; one request is served per connection. ← SYS-WEB-01
-- **WEB-HTTP-03**: The server shall read a request body only as fast as it consumes it, so that TCP flow control, not a refused segment, holds back a sender while the body waits for the flash window. ← SYS-WEB-01, DD-035
+- **WEB-HTTP-03**: The server shall read a request body only as fast as it consumes it, so that TCP flow control, not a refused segment, holds back a sender while the body waits for storage to take it. ← SYS-WEB-01, DD-035
 - **WEB-HTTP-04**: The server shall refuse a malformed or oversized request with its HTTP status: 400 malformed, 405 unsupported method (with Allow), 411 no length, 413 body too large, 414 path too long, 431 header block too large. ← SYS-WEB-01
-- **WEB-HTTP-05**: The server shall do its HTTP work from the main loop, never inside a network stack callback, and shall not depend on the stack beyond moving bytes, so that the stack can be replaced. ← SYS-WEB-01
-- **WEB-HTTP-06**: The loop's head shall only move bytes between the network stack and the connections. Every other HTTP step shall be a bounded unit run from the loop's slack, after the flight work, started only with its budget left in the period, except that every period shall run at least one. ← SYS-WEB-01, DD-061
-- **WEB-HTTP-07**: A unit that touches nothing but its own connection may run on core1 within core1's grant. Core0 shall not touch a connection core1 holds, shall take it back only once core1 is idle, and shall fail one whose unit core1 did not finish. ← DD-061
+- **WEB-HTTP-05**: The server shall do its HTTP work in the net task, never inside a network stack callback, and shall not depend on the stack beyond moving bytes, so that the stack can be replaced. ← SYS-WEB-01
+- **WEB-HTTP-06**: The net task's transport pass shall only move bytes between the network stack and the connections. Every other HTTP step shall be a bounded unit, run in the net task and never on the flight task. ← SYS-WEB-01, DD-061, DD-073
+- **WEB-HTTP-07**: Withdrawn (DD-073). Units no longer run on core1 within a grant: every unit runs in the net task.
 - **WEB-API-11**: `/api/status` shall be rendered from a snapshot core0 takes in one pass, shall keep its keys and their order, and shall be well-formed JSON whatever the configured rocket id and name contain. ← SYS-WEB-01, DD-061
 - **WEB-API-13**: The system shall report at `/api/net` lwIP's pools (in use, high-water mark, refusals), TCP's connections by state, and what the network transport refused -- accepts refused, writes refused, idle aborts, frames dropped or not sent, and the USB interface's mounts, unmounts, suspends and resumes -- so an HTTP outage can be told apart on the bench. ← SYS-WEB-01
 - **WEB-API-12**: The system shall report at `/api/log/space` the bytes the next flight's log has room for, the size of a sample record and the two log rates, and refuse with 423 while the flight log holds the filesystem. ← SYS-WEB-01, DD-062
@@ -396,6 +396,8 @@ Each derived requirement traces to its parent with `← parent_id`.
 
 ### L3 Subsystem Requirements
 - **HAL-01**: Flight logic source files shall contain no platform-specific code or conditional compilation. ← SYS-PORT-01
+- **RTOS-01**: The flight task shall block only on the wait for its next period, woken by an alarm on the hardware timer. No other blocking kernel call, lock or file access shall be reachable from it; what it hands to another task goes through a ring or a notification that does not wait. ← SYS-DEPLOY-01, DD-073
+- **RTOS-02**: A flash program or erase shall run with the other core parked in RAM with its interrupts off and the caller at the top priority. Every wait in it shall be bounded, a refused operation shall fail as an error and never hang, and the flight task shall never start one. ← SYS-DEPLOY-01, DD-074
 - **HAL-02**: All hardware interaction shall occur through a defined HAL interface. ← SYS-PORT-01
 - **HAL-03**: The HAL interface shall support at least three implementations: hardware, test, simulation. ← SYS-PORT-01, SYS-PORT-02
 - **HAL-04**: The same flight logic source files shall compile unchanged for all targets. ← HAL-01

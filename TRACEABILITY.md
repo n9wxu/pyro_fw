@@ -244,9 +244,8 @@ Verify web interface behavior against mock server in 3 device modes.
 | WEB-HTTP-02 | Content-Length and Connection: close on every response | HTTP: body_of() asserts both on every test; Hardware: http_stream_check framing checks | ✅ |
 | WEB-HTTP-03 | Flow control, not refusal | HTTP: test_HTTP_12 (a 10 kB body through a 2 kB ring into a sink that refuses 50 times); Hardware: uploads round-trip byte-exact, flash_refusals 0, Lua heartbeat unbroken on MK1C | ✅ |
 | WEB-HTTP-04 | Status codes for bad requests | HTTP: test_HTTP_08, 09, 10, 11; Hardware: 405 and 413 in http_stream_check | ✅ |
-| WEB-HTTP-05 | HTTP work from the main loop, stack-neutral | By construction: http_conn.c and net_ring.c build and test on the host with no lwIP; callbacks only queue (http_server.c) | ✅ |
-| WEB-HTTP-06 | The head moves bytes; units run in the slack | HTTP work: test_WORK_01..05 (in turn, only with a step, the budget, one a period); HTTP: test_HTTP_17 (a step to take); Hardware: all four bench boards through G4, 0 loop overruns (MK1C 1-4 before), STAGE 1 peak 2.1 ms at most (MK1C 7.7 before) | ✅ |
-| WEB-HTTP-07 | Portable units on core1, the connection held exclusively | HTTP work: test_WORK_06..15 (the claim, the hold, the return, a unit cut short); HTTP: test_HTTP_18 (answered away from the service call); `support/prove_core0.py` folds http_unit_vt into core1's graph and fails an image without it; Hardware: MK1C, 961 units on core1 through one G4 run | ✅ |
+| WEB-HTTP-05 | HTTP work in the net task, stack-neutral | By construction: http_conn.c and net_ring.c build and test on the host with no lwIP; callbacks only queue (http_server.c) | ✅ |
+| WEB-HTTP-06 | The transport moves bytes; units run in the net task | HTTP work: test_WORK_01..05 (in turn, only with a step, the budget, one a period); HTTP: test_HTTP_17 (a step to take); `support/prove_core0.py`: no HTTP handler is reachable from the flight task | ✅ |
 | WEB-API-11 | /api/status from a snapshot; its keys; valid JSON | Status: test_SJ_01 (every key, in order, formatted), test_SJ_02 (the widest fits), test_SJ_03 (a quote in the rocket's name), test_SJ_04 (refused, not truncated), test_SJ_07 (no watchdog, no stage); Hardware: `support/api_check.py` on all four bench boards | ✅ |
 | WEB-NET-05 | A busy endpoint holds the frame | Net: test_TXQ_01_sent_at_once_when_the_endpoint_is_free, test_TXQ_02_a_busy_endpoint_holds_the_frame, test_TXQ_03_order_is_kept, test_TXQ_04_drain_stops_when_the_endpoint_is_busy, test_TXQ_05_full_refuses, test_TXQ_06_not_ready_releases_everything, test_TXQ_07_wraps, test_TXQ_08_flush_releases_everything; Hardware (2.1.700, bench MK1B, one G4 round): 21 of 878 frames refused where 472 of 1182 were (DD-070) | ✅ |
 | WEB-NET-06 | The MAC drawn from the RNG and kept | MAC: test_WEB_NET_06_drawn_mac_is_local_unicast, test_WEB_NET_06_subnet_is_never_0_1_or_255, test_WEB_NET_06_same_seed_different_samples_differ, test_WEB_NET_06_no_repeat_across_many_boards, test_WEB_NET_06_subnet_spreads_evenly, test_WEB_NET_06_file_round_trips_drawn_and_assigned, test_WEB_NET_06_assigned_file_as_the_api_writes_it, test_WEB_NET_06_malformed_files_are_refused_whole; Status: test_SJ_01_keys_order_and_formatting_are_the_api | ✅ |
@@ -289,6 +288,8 @@ Verify web interface behavior against mock server in 3 device modes.
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
 | HAL-01 | No #ifdef in flight code | CI: grep verification | ✅ |
+| RTOS-01 | The flight task waits only for its period | `support/prove_core0.py` in CI: every blocking kernel call refused by name on the flight task's graph, the period wait the one allowed edge; Hardware: loop_overruns and flash_skips 0 on the bench boards | ⚠️ |
+| RTOS-02 | Flash operations under a bounded lockout | `support/prove_core0.py` in CI: flash_op_park RAM-resident and RAM-closed, flash_op unreachable from the flight task; Hardware: flash_refusals 0, flash_skips 0 on the bench boards | ⚠️ |
 | HAL-02..04 | HAL interface | CI: all 3 targets build from same source | ✅ |
 
 ## 12. Build & Test System
@@ -397,8 +398,8 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 247 |
-| ⚠️ Not directly verified (needs a test or hardware) | 20 |
+| ✅ Verified by a host, web or closed-loop test | 246 |
+| ⚠️ Not directly verified (needs a test or hardware) | 22 |
 | ❌ Not implemented | 5 (USB-06: no hardware path; DAT-01, FLT-RATE-02, FLT-RATE-03, TST-05: H3) |
 | ✅ HW (hardware satisfies) | 11 |
 

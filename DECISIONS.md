@@ -559,6 +559,71 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-074: A Flash Operation Parks The Other Core From A Task Raised To T
+- **Decision:** any task but the flight task may write flash, one operation
+  at a time, through `flash_op()` (`src/flash_op.h`): the caller raises
+  itself to T, wakes the other core's lockout helper -- a task at T that
+  exists from boot, pinned to that core -- which disables that core's
+  interrupts and spins in RAM (`flash_op_park`), runs the operation with its
+  own interrupts off, releases the helper and drops back to its priority.
+  Every wait is bounded: a helper that does not park within 20 ms refuses
+  the operation; a parked helper frees itself after 1.5 s. The flight task
+  and interrupt handlers are refused. littlefs is built `LFS_THREADSAFE` on
+  one mount made at boot, its program and erase callbacks go through
+  `flash_op()`, and its caches are 1 kB, so one program operation stops the
+  system for four pages at most.
+- **Why not only the logger writes flash (plan 2, section 3):** under mode 0
+  a task at T stops every task at P on both cores for as long as it runs. A
+  single writer at T would run every file request -- an upload, an OTA
+  image, a config save -- at T and stop the flight task for all of it; an SD
+  card's busy time, hundreds of milliseconds, likewise. Raising a caller to
+  T for one operation keeps the stop to the operation, which is what plan 2's
+  4.2 rule 1 requires: the task that holds the lockout is at T while it does.
+- **Why not the SDK's `flash_safe_execute()`:** it creates a task on the
+  other core for every operation, on one static stack and control block when
+  dynamic allocation is off, and raises its priority after creating it.
+  Plan 2's 5.1 refinement, a persistent helper, removes both.
+- **The pad marker:** the flight task reads it during a boot's recovery
+  decision. `hal_fs_read_cached()` serves it from RAM behind a seqlock,
+  filled at boot and refreshed by every write, so the read never waits.
+
+### DD-073: FreeRTOS SMP, Plan 2, Mode 0
+- **Decision:** at the user's direction ("Do a full refactor to the
+  freertos plan"), the firmware runs on FreeRTOS-Kernel V11.3.1 SMP across
+  both cores, as `docs/log_storage_plan2_freertos.md` lays out, with
+  `configRUN_MULTIPLE_PRIORITIES` 0 as the user directed on 2026-09-28:
+  - two priorities, P and T = `configMAX_PRIORITIES - 1`, checked at build
+    time (`rtos_tasks.c`);
+  - the flight task alone at P on core0, woken every 20 ms by an alarm on
+    the hardware timer, never by the tick; its only blocking call is that
+    wait, and `prove_core0.py` refuses every other blocking kernel call on
+    its path by name;
+  - the net task (TinyUSB, lwIP, HTTP, with the USB interrupt), the Lua task,
+    the storage task and the timer daemon at P on core1, sharing it by time
+    slicing; the tick interrupts core1 only;
+  - a lockout helper at T on each core (DD-074).
+- **What went:** the flash window, core1's time-boxed units and RAM idle
+  loop, the grants, the FIFO launch and the PSM kill. Lua's stop is
+  `vTaskSuspend()`. HTTP's work units all run in the net task.
+- **What the flight task hands over:** the flight log's records go into a
+  single-producer ring the storage task writes out; the pad marker and a
+  drawn MAC are written by the storage task. Changes to state the flight task
+  owns -- the running config, test mode, a buzzer audition -- reach it
+  through `flight_call()`, a mailbox it empties at the head of its period.
+- **The watchdog:** fed by the flight task, and on the ground only while the
+  storage task checks in, so a stuck storage task resets the board there. In
+  flight a stall is counted and the flight goes on.
+- **A new image commits** to `pico_fota_bootloader` from the storage task
+  after five seconds of every task running, not at boot, so an image that
+  dies once its tasks start rolls back by itself.
+- **Plan 2's open decisions, taken:** conversions a write disturbs are
+  discarded (DD-068 already does it) rather than writes being placed in the
+  sensor's idle stretch; a runaway script is preempted and its tick bounded
+  by Lua's instruction hook; the network shares core1 with Lua.
+- **Cost:** the kernel adds about 15 kB of code on each board; lwIP, TinyUSB
+  and the kernel are compiled `-Os` so MK1B's 384 kB slot still holds the
+  image. RAM rose about 15 kB on MK1C for the task stacks and the kernel.
+
 ### DD-072: The MAC Is Drawn From The RNG And Kept
 - **Decision:** at the user's direction ("build the mac with the RNG"), a
   board with no `/serial.txt` draws its MAC at boot and keeps it there. The

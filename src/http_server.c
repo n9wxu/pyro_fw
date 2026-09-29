@@ -1,6 +1,10 @@
 /*
  * The HTTP server: files from littlefs, the API, uploads and OTA.
  *
+ * Runs in the net task [DD-073]: every route, unit and file call here is on
+ * core1 at P, beside Lua and storage, never on the flight task. What changes
+ * flight state goes through flight_call() (rtos_tasks.h).
+ *
  * Two halves. The routes below answer one request on an http_conn_t, which
  * parses from an rx ring and writes to a tx ring (http_conn.h) and never sees
  * a segment. The lwIP adapter at the bottom moves bytes between lwIP and
@@ -9,8 +13,8 @@
  * its send buffer allows.
  *
  * lwIP callbacks only queue. http_server_transport() moves bytes and nothing
- * else, from anywhere in the loop; every other step is a work unit
- * (http_work.h), run by http_server_work() from the slack or by core1.
+ * else; every other step is a work unit (http_work.h), run by
+ * http_server_work().
  */
 #include "lwip/tcp.h"
 #include "lwip/memp.h"
@@ -21,7 +25,6 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <lfs.h>
 #include <pico/stdlib.h>
 #include <hardware/flash.h>
 #include <hardware/sync.h>
@@ -31,14 +34,16 @@
 #include "flight_states.h"
 #include "pressure_processing.h"
 
-/* Defined by src/lua/lua_core1.c; weak no-ops in littlefs_driver.c when
- * Lua is not linked. */
 #if PYRO_HAS_LUA
 #include "lua_app.h"
 #include "lua_core1.h"
 #endif
 
-#include "flash_window.h"
+#include "flash_op.h"
+#include "hal_storage.h"
+#include "lfs_mount.h"
+#include "rtos_tasks.h"
+#include "buzzer.h"
 #include "pin_store.h"
 #include "brownout.h"
 #include "beep_store.h"
@@ -75,9 +80,6 @@ extern uint32_t hal_pressure_rejects(void);
 extern uint32_t hal_pressure_flashed(void);
 
 #define CORS_HDR "Access-Control-Allow-Origin: *\r\n"
-
-extern const struct lfs_config lfs_pico_flash_config;
-extern const struct lfs_file_config lfs_pico_file_config;
 
 #define JSON "application/json"
 #define TEXT "text/plain"
@@ -127,15 +129,11 @@ typedef struct conn {
     http_conn_t h; /* MUST be first: the handlers cast back */
     link_t *link;  /* NULL: free */
     route_t route;
-    lfs_t lfs;
     lfs_file_t file;
     struct lfs_file_config file_cfg;
-    bool lfs_mounted;
     bool file_open;
-    bool file_writing;
-    bool holding;          /* this exchange holds the flash window */
-    bool fs_held;          /* counted by hal_fs_enter() until conn_release() */
-    bool deferral_counted; /* one deferral per wait, not per pass */
+    bool file_writing; /* an upload into dest's ".part", renamed when whole */
+    bool fs_held;      /* counted by hal_fs_enter() until conn_release() */
     bool reboot_when_sent;
     bool orphan; /* its link is gone while the worker holds it */
     char dest[HTTP_PATH_MAX];
@@ -156,30 +154,6 @@ static conn_t conns[CONN_POOL_SIZE];
 static uint32_t link_seq;
 static conn_t *ota_conn; /* the OTA state below is one image at a time */
 
-/* A flash-writing request asks this before each step. The hold stops core0
- * dispatching core1, so the window opens within a period; until then the
- * request waits with its bytes in the ring, and flow control does the rest. */
-static bool flash_ready(conn_t *c) {
-    flash_window_hold(hal_time_ms());
-    c->holding = true;
-    if (flash_window_is_open()) {
-        c->deferral_counted = false;
-        return true;
-    }
-    if (!c->deferral_counted) {
-        flash_window_deferred();
-        c->deferral_counted = true;
-    }
-    return false;
-}
-
-static void release_window(conn_t *c) {
-    if (c->holding) {
-        flash_window_release();
-        c->holding = false;
-    }
-}
-
 /* ── OTA firmware update state ────────────────────────────────────── */
 
 /* Download slot flash offset (from linker symbols) */
@@ -190,37 +164,37 @@ static uint8_t ota_buf[FLASH_SECTOR_SIZE] __attribute__((aligned(FLASH_PAGE_SIZE
 static uint32_t ota_offset; /* bytes written so far */
 static uint16_t ota_buf_fill;
 static bool ota_failed;
-static bool pfb_started; /* the rollback mark is a flash write: done in the window */
+static bool pfb_started; /* the rollback mark, a flash write, once per image */
 
-/* Returns false with nothing written when the window is shut; lwIP
- * redelivers the same bytes, so a refusal costs latency and never data.
- *
- * Do not wait for the window here. This runs inside an lwIP callback, itself
- * inside core0's slack loop, so only lua_app_service() can release core0 and
- * a spin here stops core0 reaching it. Core1's unbounded startup holds
- * flash_ok false for up to five seconds. */
+/* One sector: an erase and a program, each its own lockout, so the system
+ * stops for one operation at a time. */
 static bool ota_flush(void) {
     if (ota_buf_fill == 0)
         return true;
-    if (!flash_window_is_open()) {
-        flash_window_refused();
-        return false;
-    }
     /* pad to page alignment */
     while (ota_buf_fill & (FLASH_PAGE_SIZE - 1))
         ota_buf[ota_buf_fill++] = 0xFF;
     uint32_t addr = OTA_SLOT_OFF + ota_offset;
-    uint32_t ints = save_and_disable_interrupts();
-    flash_range_erase(addr, FLASH_SECTOR_SIZE);
-    flash_range_program(addr, ota_buf, ota_buf_fill);
-    flash_op_seq++;
-    restore_interrupts(ints);
+    if (flash_op_erase(addr, FLASH_SECTOR_SIZE) != 0 || flash_op_program(addr, ota_buf, ota_buf_fill) != 0)
+        return false;
     ota_offset += FLASH_SECTOR_SIZE;
     ota_buf_fill = 0;
     return true;
 }
 
-/* Short when the sector filled and the window would not take it. */
+/* pico_fota_bootloader's marks mask interrupts and write flash themselves;
+ * under the lockout, so the other core is out of XIP meanwhile. */
+static void pfb_commit_op(void *arg) {
+    (void)arg;
+    pfb_firmware_commit();
+}
+
+static void pfb_valid_op(void *arg) {
+    (void)arg;
+    pfb_mark_download_slot_as_valid();
+}
+
+/* Short when a sector would not write. */
 static uint16_t ota_write(const void *data, uint16_t len) {
     const uint8_t *src = (const uint8_t *)data;
     uint16_t done = 0;
@@ -312,6 +286,13 @@ extern volatile uint32_t boot_prev_stage_ms;
  * Takes a kind and, for a counted code, its beeps -- because a chirp is not a
  * number. Writes no flash, so it needs no window. PAD_IDLE only: the buzzer is
  * the flight software's voice and a browser must not talk over a launch. */
+/* How long a request waits for the flight task to take its change. */
+#define CALL_MS 200u
+
+static void beep_play_call(void *arg) {
+    buzzer_play_spec((const beep_spec_t *)arg, 0, 1);
+}
+
 static void apply_api_beep_play(http_conn_t *hc, const char *body) {
     extern flight_state_t flight_get_state(void);
 
@@ -360,8 +341,9 @@ static void apply_api_beep_play(http_conn_t *hc, const char *body) {
         jn = snprintf(jb, sizeof(jb), "{\"error\":\"this board has no buzzer fitted\"}");
         status = 409;
     } else {
-        /* Once, with no gap: an audition is a sample, not a state. */
-        buzzer_play_spec(&sp, 0, 1);
+        /* Once, with no gap: an audition is a sample, not a state. The
+         * buzzer is the flight task's to drive. */
+        flight_call(beep_play_call, &sp, CALL_MS);
         jn = snprintf(jb, sizeof(jb), "{\"status\":\"playing\",\"kind\":\"%s\",\"d1\":%u,\"d2\":%u}",
                       beep_codes_kind_name((beep_kind_t)sp.kind), (unsigned)sp.d1, (unsigned)sp.d2);
         status = 200;
@@ -376,13 +358,20 @@ static void apply_api_beep_play(http_conn_t *hc, const char *body) {
 #define TEST_MODE_ON_PATH "/api/test_mode/on"
 #define TEST_MODE_OFF_PATH "/api/test_mode/off"
 
+static void test_mode_call(void *arg) {
+    flight_set_test_mode(flight_get_context(), *(const bool *)arg, hal_time_ms());
+}
+
 static void apply_api_test_mode(http_conn_t *hc, bool on) {
     flight_context_t *ctx = flight_get_context();
     if (!ctx) {
         http_respond_str(hc, 503, JSON, "{\"error\":\"not ready\"}");
         return;
     }
-    flight_set_test_mode(ctx, on, hal_time_ms());
+    if (!flight_call(test_mode_call, &on, CALL_MS)) {
+        http_respond_str(hc, 503, JSON, "{\"error\":\"the flight task did not take the change\"}");
+        return;
+    }
     http_respond_str(hc, 200, JSON, ctx->test_mode ? "{\"test_mode\":true}" : "{\"test_mode\":false}");
 }
 
@@ -471,11 +460,19 @@ static void apply_api_beeps(http_conn_t *hc, char *body) {
     http_respond(hc, status, JSON, jb, (uint32_t)jn);
 }
 
-/* Apply a complete config.ini body and answer. Runs inside the flash window. */
+typedef struct {
+    config_t cfg;
+    int rc;
+} config_apply_t;
+
+static void config_apply_call(void *arg) {
+    config_apply_t *ap = (config_apply_t *)arg;
+    ap->rc = flight_config_apply(flight_get_context(), &ap->cfg);
+}
+
+/* Apply a complete config.ini body and answer. */
 static void apply_api_config(http_conn_t *hc, char *cfgbuf) {
     extern flight_state_t flight_get_state(void);
-    extern flight_context_t *flight_get_context(void);
-    extern int flight_config_reload(flight_context_t *);
     flight_state_t state = flight_get_state();
 
     if (state != PAD_IDLE) {
@@ -513,43 +510,30 @@ static void apply_api_config(http_conn_t *hc, char *cfgbuf) {
             return;
         }
 
-        /* Safe to update: write to flash and reload */
-        lfs_t lfs;
-        if (lfs_mount(&lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
-            lfs_file_t f;
-            if (lfs_file_opencfg(&lfs, &f, "config.ini", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC,
-                                 &lfs_pico_file_config) == LFS_ERR_OK) {
-                lfs_ssize_t written = lfs_file_write(&lfs, &f, cfgout, cfgn);
-                int close_err = lfs_file_close(&lfs, &f);
-                int unmount_err = lfs_unmount(&lfs);
-
-                DBG("POST /api/config write=%d close=%d unmount=%d", (int)written, close_err, unmount_err);
-
-                /* Reload config into running system */
-                flight_context_t *ctx = flight_get_context();
-                int reload_result = flight_config_reload(ctx);
-
-                if (reload_result == 0) {
-                    DBG("POST /api/config OK (applied)");
-                    http_respond_str(hc, 200, JSON, "{\"status\":\"ok\",\"applied\":true}");
-                } else {
-                    DBG("POST /api/config WARN reload_result=%d", reload_result);
-                    http_respond_str(hc, 500, JSON,
-                                     "{\"error\":\"Config saved but reload failed\",\"reboot_required\":true}");
-                }
-            } else {
-                DBG("POST /api/config FAIL file_open");
-                lfs_unmount(&lfs);
-                http_respond_str(hc, 500, TEXT, "File open failed");
-            }
+        int wr = hal_fs_write_file("config.ini", cfgout, cfgn);
+        DBG("POST /api/config write=%d", wr);
+        if (wr != 0) {
+            http_respond_str(hc, 500, TEXT, "config.ini write failed");
+            return;
+        }
+        /* Read back as the next boot will, then applied by the flight task,
+         * which owns the running config. */
+        static config_apply_t ap;
+        config_set_defaults(&ap.cfg);
+        ap.rc = hal_config_load(&ap.cfg) < 0 ? -2 : 0;
+        if (ap.rc == 0 && !flight_call(config_apply_call, &ap, CALL_MS))
+            ap.rc = -4;
+        if (ap.rc == 0) {
+            DBG("POST /api/config OK (applied)");
+            http_respond_str(hc, 200, JSON, "{\"status\":\"ok\",\"applied\":true}");
         } else {
-            DBG("POST /api/config FAIL lfs_mount");
-            http_respond_str(hc, 500, TEXT, "Mount failed");
+            DBG("POST /api/config WARN reload_result=%d", ap.rc);
+            http_respond_str(hc, 500, JSON, "{\"error\":\"Config saved but reload failed\",\"reboot_required\":true}");
         }
     }
 }
 
-/* Apply a complete pins.ini body and answer. Runs inside the flash window. */
+/* Apply a complete pins.ini body and answer. */
 static void apply_api_pins(http_conn_t *hc, char *body) {
     extern flight_state_t flight_get_state(void);
     flight_state_t st = flight_get_state();
@@ -567,7 +551,7 @@ static void apply_api_pins(http_conn_t *hc, char *body) {
          * by omitting its key.
          *
          * static, not a local: pin_assign_t is about 300 bytes, and nothing
-         * else runs this -- the service loop is core0's alone. */
+         * else runs this -- the net task is the only caller. */
         static pin_assign_t merged;
         merged = *pin_store_current();
         pin_assign_parse_ini(body, &merged);
@@ -766,13 +750,13 @@ static void status_capture(status_snap_t *s) {
         s->http_units[w] = ws.units[w];
         s->http_unit_max_us[w] = ws.max_us[w];
     }
-    s->flash_opens = flash_window_opens();
-    s->flash_skips = flash_window_skips();
-    s->flash_refusals = flash_window_refusals();
+    s->flash_opens = flash_op_lockouts();
+    s->flash_skips = flash_op_timeouts();
+    s->flash_refusals = flash_op_refusals();
     s->log_dropped = hal_log_dropped();
-    s->flash_erases = flash_window_erases();
-    s->flash_programs = flash_window_programs();
-    s->flash_deferrals = flash_window_deferrals();
+    s->flash_erases = flash_op_erases();
+    s->flash_programs = flash_op_programs();
+    s->flash_deferrals = flash_op_waits();
 
     snprintf(s->pins_reason, sizeof(s->pins_reason), "%s", pin_store_reason());
     s->pyro_released[0] = pa->pyro1_released;
@@ -860,30 +844,24 @@ const http_unit_fn http_unit_vt[] = {
 
 #define WWW_HEADERS "Cache-Control: no-store, must-revalidate\r\n"
 
-/* Stream a littlefs file, framed by its size. Read-only, so no flash window:
- * core1 may keep executing from flash while this reads it. The work buffer is
- * the file's cache. Answers fb_status/fb_body when there is no such file. */
+/* Stream a littlefs file, framed by its size. The work buffer is the file's
+ * cache. Answers fb_status/fb_body when there is no such file. */
 static void serve_file(conn_t *c, const char *lfs_path, const char *ctype, const char *extra, uint16_t fb_status,
                        const char *fb_ctype, const char *fb_body) {
     http_conn_t *hc = &c->h;
-    /* [WEB-API-10, N20] Every littlefs mount shares one set of read, program
-     * and lookahead buffers, and the flight log holds its mount from launch
-     * until its tail is flushed after landing. A second mount meanwhile would
-     * reset the caches the log's instance believes it holds. */
+    /* [WEB-API-10, DD-058] The flight log holds the filesystem from launch
+     * until its tail is written after landing. */
     if (!fs_take(c)) {
         return;
     }
     c->file_cfg = (struct lfs_file_config){.buffer = hc->work};
-    if (lfs_mount(&c->lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
-        c->lfs_mounted = true;
-        if (lfs_file_opencfg(&c->lfs, &c->file, lfs_path, LFS_O_RDONLY, &c->file_cfg) == LFS_ERR_OK) {
-            c->file_open = true;
-            lfs_soff_t size = lfs_file_size(&c->lfs, &c->file);
-            if (size >= 0) {
-                c->route = R_FILE;
-                http_respond_stream(hc, 200, ctype, (uint32_t)size, extra);
-                return;
-            }
+    if (lfs_file_opencfg(&g_lfs, &c->file, lfs_path, LFS_O_RDONLY, &c->file_cfg) == LFS_ERR_OK) {
+        c->file_open = true;
+        lfs_soff_t size = lfs_file_size(&g_lfs, &c->file);
+        if (size >= 0) {
+            c->route = R_FILE;
+            http_respond_stream(hc, 200, ctype, (uint32_t)size, extra);
+            return;
         }
     }
     http_respond_str(hc, fb_status, fb_ctype, fb_body);
@@ -897,7 +875,7 @@ static uint16_t fill(http_conn_t *hc, uint8_t *dst, uint16_t max) {
     if (c->route != R_FILE || !c->file_open) {
         return 0;
     }
-    lfs_ssize_t n = lfs_file_read(&c->lfs, &c->file, dst, max);
+    lfs_ssize_t n = lfs_file_read(&g_lfs, &c->file, dst, max);
     return n > 0 ? (uint16_t)n : 0;
 }
 
@@ -905,7 +883,7 @@ static uint16_t fill(http_conn_t *hc, uint8_t *dst, uint16_t max) {
 
 static int flog_reader(void *ctx, uint8_t *dst, int n) {
     conn_t *c = (conn_t *)ctx;
-    lfs_ssize_t k = lfs_file_read(&c->lfs, &c->file, dst, (lfs_size_t)n);
+    lfs_ssize_t k = lfs_file_read(&g_lfs, &c->file, dst, (lfs_size_t)n);
     return k > 0 ? (int)k : 0;
 }
 
@@ -918,17 +896,12 @@ static void serve_flight_csv(conn_t *c) {
         return;
     }
     c->file_cfg = (struct lfs_file_config){.buffer = hc->work};
-    if (lfs_mount(&c->lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
-        c->lfs_mounted = true;
-        if (lfs_file_opencfg(&c->lfs, &c->file, FLOG_PATH, LFS_O_RDONLY, &c->file_cfg) == LFS_ERR_OK) {
-            c->file_open = true;
-            c->route = R_FLOG;
-            flog_csv_init(&c->flog.csv, flog_reader, c);
-            c->flog.len = 0;
-            return;
-        }
-        lfs_unmount(&c->lfs);
-        c->lfs_mounted = false;
+    if (lfs_file_opencfg(&g_lfs, &c->file, FLOG_PATH, LFS_O_RDONLY, &c->file_cfg) == LFS_ERR_OK) {
+        c->file_open = true;
+        c->route = R_FLOG;
+        flog_csv_init(&c->flog.csv, flog_reader, c);
+        c->flog.len = 0;
+        return;
     }
     serve_file(c, OLD_LOG_PATH, "text/csv", CSV_DISPOSITION, 200, "text/csv", EMPTY_LOG_CSV);
 }
@@ -946,7 +919,7 @@ static bool flight_csv_count(conn_t *c) {
         http_respond_str(&c->h, 200, "text/csv", EMPTY_LOG_CSV);
         return true;
     }
-    lfs_file_rewind(&c->lfs, &c->file);
+    lfs_file_rewind(&g_lfs, &c->file);
     flog_csv_init(&c->flog.csv, flog_reader, c);
     http_respond_stream(&c->h, 200, "text/csv", c->flog.len, CSV_DISPOSITION);
     return true;
@@ -964,14 +937,9 @@ static void serve_log_space(conn_t *c) {
     if (!fs_take(c)) {
         return;
     }
-    if (lfs_mount(&c->lfs, &lfs_pico_flash_config) != LFS_ERR_OK) {
-        http_respond_str(hc, 500, JSON, "{\"error\":\"mount failed\"}");
-        return;
-    }
-    c->lfs_mounted = true;
-    lfs_ssize_t used = lfs_fs_size(&c->lfs);
+    lfs_ssize_t used = lfs_fs_size(&g_lfs);
     struct lfs_info info;
-    int64_t log_bytes = lfs_stat(&c->lfs, FLOG_PATH, &info) == LFS_ERR_OK ? (int64_t)info.size : 0;
+    int64_t log_bytes = lfs_stat(&g_lfs, FLOG_PATH, &info) == LFS_ERR_OK ? (int64_t)info.size : 0;
     int64_t spare = (int64_t)lfs_pico_flash_config.block_count - used - LOG_SPACE_RESERVE_BLOCKS;
     int64_t room = used < 0 ? 0 : spare * (int64_t)lfs_pico_flash_config.block_size + log_bytes;
     char *buf = (char *)hc->work;
@@ -1074,22 +1042,22 @@ static void serve_get(conn_t *c) {
 
 /* ── Uploads ──────────────────────────────────────────────────────────
  *
- * Opened on the first body bytes, inside the window, because creating and
- * truncating a file writes its metadata. An upload that dies before its last
- * byte is never closed, so littlefs keeps the previous file whole. */
+ * Written to dest + ".part" and renamed over dest only once the last byte is
+ * in, so an upload that dies part-way leaves the previous file whole. The
+ * part file of one that dies is removed when its connection is released. */
+
+static void part_path(const conn_t *c, char *out, size_t cap) {
+    snprintf(out, cap, "%s.part", c->dest);
+}
 
 static bool upload_open(conn_t *c) {
     c->file_cfg = (struct lfs_file_config){.buffer = c->h.work};
-    int err = lfs_mount(&c->lfs, &lfs_pico_flash_config);
-    if (err != LFS_ERR_OK) {
-        DBG("POST %s FAIL lfs_mount err=%d", c->dest, err);
-        return false;
-    }
-    c->lfs_mounted = true;
     if (strncmp(c->dest, "/www/", 5) == 0) {
-        lfs_mkdir(&c->lfs, "/www");
+        lfs_mkdir(&g_lfs, "/www");
     }
-    err = lfs_file_opencfg(&c->lfs, &c->file, c->dest, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC, &c->file_cfg);
+    char part[HTTP_PATH_MAX + 8];
+    part_path(c, part, sizeof(part));
+    int err = lfs_file_opencfg(&g_lfs, &c->file, part, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC, &c->file_cfg);
     if (err != LFS_ERR_OK) {
         DBG("POST %s FAIL lfs_file_open err=%d", c->dest, err);
         return false;
@@ -1106,7 +1074,7 @@ static uint16_t upload_body(conn_t *c, const uint8_t *data, uint16_t len) {
     }
     /* Check every write: an unchecked refusal leaves a file of the right
      * length that is wrong in the middle, with nothing reported. */
-    if (lfs_file_write(&c->lfs, &c->file, data, len) != (lfs_ssize_t)len) {
+    if (lfs_file_write(&g_lfs, &c->file, data, len) != (lfs_ssize_t)len) {
         DBG("POST %s FAIL write refused", c->dest);
         http_respond_str(&c->h, 500, TEXT, "write failed; file is incomplete, retry");
     }
@@ -1116,9 +1084,17 @@ static uint16_t upload_body(conn_t *c, const uint8_t *data, uint16_t len) {
 static void upload_complete(conn_t *c) {
     /* lfs_file_close() flushes the last partial block, so a refusal there
      * loses the tail of the file as quietly as a refused write does. */
-    bool ok = c->file_open && lfs_file_close(&c->lfs, &c->file) == LFS_ERR_OK;
+    bool ok = c->file_open && lfs_file_close(&g_lfs, &c->file) == LFS_ERR_OK;
     c->file_open = false;
     c->file_writing = false;
+    char part[HTTP_PATH_MAX + 8];
+    part_path(c, part, sizeof(part));
+    if (ok) {
+        ok = lfs_rename(&g_lfs, part, c->dest) == LFS_ERR_OK;
+    }
+    if (!ok) {
+        lfs_remove(&g_lfs, part);
+    }
     DBG("POST %s done ok=%d", c->dest, (int)ok);
     if (ok) {
         http_respond_str(&c->h, 201, TEXT, "OK");
@@ -1131,10 +1107,9 @@ static void upload_complete(conn_t *c) {
 
 static uint16_t ota_body(conn_t *c, const uint8_t *data, uint16_t len) {
     if (ota_write(data, len) != len) {
-        /* Unreachable inside the window, and a truncated image if that
-         * reasoning is wrong. */
+        /* A sector the lockout would not write: a truncated image. */
         ota_failed = true;
-        http_respond_str(&c->h, 500, TEXT, "OTA aborted: flash window closed mid-image");
+        http_respond_str(&c->h, 500, TEXT, "OTA aborted: a sector did not write");
     }
     return len;
 }
@@ -1166,15 +1141,10 @@ static void apply_erase(http_conn_t *hc) {
     /* [DAT-06, WEB-UI-04] There is one log slot, and the next launch
      * overwrites it; this is how an operator clears it on purpose. Refused
      * at the head while the log is being written (fs_take()). */
-    lfs_t lfs;
-    int rc = lfs_mount(&lfs, &lfs_pico_flash_config);
-    if (rc == LFS_ERR_OK) {
-        rc = lfs_remove(&lfs, FLOG_PATH);
-        int old = lfs_remove(&lfs, OLD_LOG_PATH);
-        if (rc == LFS_ERR_NOENT) {
-            rc = old;
-        }
-        lfs_unmount(&lfs);
+    int rc = lfs_remove(&g_lfs, FLOG_PATH);
+    int old = lfs_remove(&g_lfs, OLD_LOG_PATH);
+    if (rc == LFS_ERR_NOENT) {
+        rc = old;
     }
     DBG("POST %s rc=%d", FLIGHT_ERASE_PATH, rc);
     if (rc == LFS_ERR_OK || rc == LFS_ERR_NOENT) {
@@ -1189,7 +1159,7 @@ static void apply_erase(http_conn_t *hc) {
  * it: the editor's as-you-go check. The authoritative one runs on the stored
  * file at boot. */
 static void apply_lua_check(http_conn_t *hc) {
-    static lua_chk_result_t chk; /* large, and the service loop is core0's alone */
+    static lua_chk_result_t chk; /* large, and the net task is the only caller */
     lua_app_check((const char *)hc->work, (int)hc->gathered, &flight_get_context()->config, &chk);
 
     /* The script is done with, so the work buffer takes the answer. */
@@ -1278,7 +1248,6 @@ static void route_post(conn_t *c) {
             return;
         }
         c->route = R_ERASE;
-        flash_ready(c);
         return;
     }
 
@@ -1303,9 +1272,6 @@ static void route_post(conn_t *c) {
         http_gather(hc, r->gather);
     } else {
         http_stream(hc);
-    }
-    if (r->flash) {
-        flash_ready(c);
     }
     if (r->route == R_OTA) {
         /* Per transfer. Left latched, a failure would abort every later
@@ -1339,12 +1305,9 @@ static void on_head(http_conn_t *hc) {
 
 static uint16_t on_body(http_conn_t *hc, const uint8_t *data, uint16_t len) {
     conn_t *c = (conn_t *)hc;
-    if (!flash_ready(c)) {
-        return 0;
-    }
     if (c->route == R_OTA) {
         if (!pfb_started) {
-            pfb_firmware_commit();
+            flash_op(pfb_commit_op, NULL);
             pfb_started = true;
         }
         return ota_body(c, data, len);
@@ -1378,16 +1341,15 @@ static bool on_complete(http_conn_t *hc) {
         break;
     }
 
-    if (!flash_ready(c)) {
-        return false;
-    }
     switch (c->route) {
     case R_UPLOAD:
         upload_complete(c);
         break;
     case R_OTA:
-        ota_flush(); /* the window is open: the tail sector cannot be refused */
-        pfb_mark_download_slot_as_valid();
+        if (ota_failed || !ota_flush() || flash_op(pfb_valid_op, NULL) != 0) {
+            http_respond_str(hc, 500, TEXT, "OTA failed: the image did not write");
+            break;
+        }
         c->reboot_when_sent = true;
         http_respond_str(hc, 200, TEXT, "OTA OK, rebooting...");
         break;
@@ -1419,8 +1381,6 @@ static bool on_complete(http_conn_t *hc) {
         http_respond_str(hc, 404, TEXT, "Not found");
         break;
     }
-    /* Done with flash: two seconds of parked Lua would buy nothing. */
-    release_window(c);
     return true;
 }
 
@@ -1499,20 +1459,22 @@ static int slot_of(const conn_t *c) {
 
 static void conn_release(conn_t *c) {
     http_work_cancel(slot_of(c));
-    if (c->file_open && !c->file_writing) {
-        lfs_file_close(&c->lfs, &c->file);
+    if (c->file_open) {
+        /* An upload that did not finish: its part file goes, and dest keeps
+         * whatever it held before. */
+        lfs_file_close(&g_lfs, &c->file);
+        if (c->file_writing) {
+            char part[HTTP_PATH_MAX + 8];
+            part_path(c, part, sizeof(part));
+            lfs_remove(&g_lfs, part);
+        }
     }
     c->file_open = false;
     c->file_writing = false;
-    if (c->lfs_mounted) {
-        lfs_unmount(&c->lfs);
-        c->lfs_mounted = false;
-    }
     if (c->fs_held) {
         hal_fs_leave();
         c->fs_held = false;
     }
-    release_window(c);
     if (ota_conn == c) {
         ota_conn = NULL;
     }
@@ -1531,12 +1493,9 @@ static void conn_release(conn_t *c) {
 static void conn_bind(conn_t *c, link_t *l) {
     http_conn_init(&c->h);
     c->route = R_NONE;
-    c->lfs_mounted = false;
     c->file_open = false;
     c->file_writing = false;
-    c->holding = false;
     c->fs_held = false;
-    c->deferral_counted = false;
     c->reboot_when_sent = false;
     c->orphan = false;
     c->dest[0] = '\0';
@@ -1799,11 +1758,11 @@ static void transport_link(link_t *l, uint32_t now) {
     }
 }
 
-/* Idle, or gone: lua_core1_flash_ok() is true exactly when core1 is not
- * executing a grant. */
+/* Nothing hands units to another task now; kept so a connection can never be
+ * stranded in the held state. */
 static void take_back_from_worker(void) {
     uint8_t lost;
-    uint8_t back = http_work_reclaim(lua_core1_flash_ok(), &lost);
+    uint8_t back = http_work_reclaim(true, &lost);
     for (int i = 0; i < CONN_POOL_SIZE && back; i++) {
         conn_t *c = &conns[i];
         if (!(back & (1u << i))) {
@@ -1850,13 +1809,13 @@ bool http_server_work(int32_t remaining_us) {
     }
     uint32_t t0 = time_us_32();
     if (unit != HTTP_UNIT_NONE) {
-        flash_window_crumb(81);
+        flash_op_crumb(81);
         http_unit_vt[unit](i);
     } else {
-        flash_window_crumb(80);
+        flash_op_crumb(80);
         http_conn_service(&conns[i].h, &handlers);
     }
-    flash_window_crumb(82);
+    flash_op_crumb(82);
     http_work_note(HTTP_ON_CORE0, time_us_32() - t0);
     return true;
 }

@@ -254,6 +254,10 @@ int hal_fs_read_file(const char *path, char *buf, int max_len) {
     return -2; /* not found */
 }
 
+int hal_fs_read_cached(const char *path, char *buf, int max_len) {
+    return hal_fs_read_file(path, buf, max_len);
+}
+
 int hal_fs_write_file(const char *path, const char *data, int len) {
     /* Find existing or empty slot */
     int slot = -1;

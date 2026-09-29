@@ -22,18 +22,17 @@
  * is reported and never fatal: the flight computer runs without Lua. */
 void lua_app_init(const config_t *cfg);
 
-/* Main-loop service: publish flight state, watch core1, and drain core1's log
- * ring into the flight log. Touches no flash and never blocks.
+/* The flight task's service: publish flight state, watch the Lua task, and
+ * drain the script's log ring into the flight log. Touches no file and never
+ * blocks.
  *
- * There is no flash half. A script's log() output is appended to the flight
- * log as event rows, in the same RAM buffer as the samples, so core0 writes
- * it in the window it was already opening for them. */
+ * A script's log() output is appended to the flight log as event rows, in
+ * the same ring as the samples, which the storage task writes. */
 void lua_app_service(const flight_context_t *ctx, uint32_t now_ms);
 
-/* Hand core1 its unit for this period, sized from the microseconds left
- * before the deadline. Call AFTER the flash window has closed; core0 skips
- * it entirely when a flash hold is live, which parks core1 for the period. */
-void lua_app_dispatch(int64_t slack_us);
+/* Asks the Lua task for this period's tick. Once a period, after the flight
+ * work; never blocks. */
+void lua_app_dispatch(void);
 
 /* Flight events, forwarded to the script's on_event(). */
 void lua_app_event(const char *name);

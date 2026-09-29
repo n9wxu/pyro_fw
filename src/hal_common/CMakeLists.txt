@@ -22,6 +22,7 @@ target_include_directories(pyro_hal_common PUBLIC
     ${CMAKE_CURRENT_LIST_DIR}/..
     ${PYRO_BOARD_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/../..            # project root
+    ${CMAKE_CURRENT_LIST_DIR}/../rtos          # rtos_tasks.h, FreeRTOSConfig.h
     ${LWIP_DIR}/src/include
     ${TINYUSB_DIR}/lib/networking
     ${PICO_SDK_PATH}/src/common/pico_usb_reset_interface_headers/include
@@ -39,4 +40,9 @@ target_link_libraries(pyro_hal_common PUBLIC
     tinyusb_device            # hal_platform_init() drives tud_init/tud_task
     tinyusb_board             # bsp/board_api.h board_init()
     pico_fota_bootloader_lib  # pfb_firmware_commit() on a good boot
+    FreeRTOS-Kernel-Static    # the tasks share the filesystem [DD-073]
 )
+
+# A panic stamps the watchdog scratch and stops, without printing: see
+# pyro_panic() in src/rtos/rtos_tasks.c.
+target_compile_definitions(pyro_hal_common PUBLIC PICO_PANIC_FUNCTION=pyro_panic)

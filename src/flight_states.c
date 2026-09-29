@@ -389,7 +389,7 @@ static bool recovery_cold(flight_context_t *ctx, cold_reason_t why) {
 static bool assess_recovery(flight_context_t *ctx, uint32_t now, state_event_t *evt) {
     *evt = SEVT_NONE;
     pad_marker_t m;
-    int n = hal_fs_read_file(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m));
+    int n = hal_fs_read_cached(PAD_MARKER_PATH, (char *)&m, (int)sizeof(m));
     if (n != (int)sizeof(m) || !pad_marker_valid(&m))
         return recovery_cold(ctx, COLD_NO_MARKER);
     if (grounded_on_usb(ctx))
@@ -1210,8 +1210,8 @@ static bool landing_detected(flight_context_t *ctx, uint32_t now, int32_t prev_a
      * zero. Still, not merely slow -- a main descends at 3-6 m/s (N7) -- and
      * on a sensor that has not failed, since a stuck one reads as still. */
     uint32_t timeout_s = ctx->config.landing_timeout;
-    bool timed_out = timeout_s > 0 && ctx->descent_start_time > 0 &&
-                     (now - ctx->descent_start_time) >= timeout_s * 1000;
+    bool timed_out =
+        timeout_s > 0 && ctx->descent_start_time > 0 && (now - ctx->descent_start_time) >= timeout_s * 1000;
     bool still = abs(ctx->vertical_speed_cms) < LANDING_STILL_CMS && !ctx->fit_suspect;
     return held(timed_out && still, &ctx->still_since, ctx->last_sample, 1000u);
 }
@@ -1641,34 +1641,39 @@ void flight_init(flight_context_t *ctx) {
 
 /* ── Config reload (runtime config update) ────────────────────────── */
 
-int flight_config_reload(flight_context_t *ctx) {
+int flight_config_apply(flight_context_t *ctx, const config_t *new_config) {
     /* Safety check: only allow reload in PAD_IDLE state */
     if (ctx->current_state != PAD_IDLE) {
         return -1; /* Rejected: not in safe state */
     }
 
-    /* Load config from persistent storage */
-    config_t new_config;
-    config_set_defaults(&new_config);
-    if (hal_config_load(&new_config) < 0) {
-        return -2; /* Rejected: load failed */
-    }
-
     /* Validate critical fields to prevent invalid configurations */
-    if (new_config.pyro1_mode > PYRO_MODE_DELAY || new_config.pyro2_mode > PYRO_MODE_DELAY) {
+    if (new_config->pyro1_mode > PYRO_MODE_DELAY || new_config->pyro2_mode > PYRO_MODE_DELAY) {
         return -3; /* Rejected: invalid pyro mode */
     }
-    if (new_config.units > 2) {
+    if (new_config->units > 2) {
         return -3; /* Rejected: invalid units */
     }
 
     /* Apply new configuration */
-    ctx->config = new_config;
+    ctx->config = *new_config;
 
     /* Reinitialize telemetry with new config (updates headers, format, etc.) */
     telemetry_init(&ctx->config);
 
     return 0; /* Success */
+}
+
+int flight_config_reload(flight_context_t *ctx) {
+    if (ctx->current_state != PAD_IDLE) {
+        return -1;
+    }
+    config_t new_config;
+    config_set_defaults(&new_config);
+    if (hal_config_load(&new_config) < 0) {
+        return -2; /* Rejected: load failed */
+    }
+    return flight_config_apply(ctx, &new_config);
 }
 
 flight_context_t *flight_get_context(void) {

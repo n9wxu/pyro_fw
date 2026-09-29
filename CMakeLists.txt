@@ -172,8 +172,20 @@ FetchContent_Declare(
     GIT_TAG master
 )
 
+# FreeRTOS SMP [DD-073]. SOURCE_SUBDIR adds only the RP2040 port, which adds
+# the kernel's libraries once the SDK is initialised.
 if(PYRO_BOARD_KIND STREQUAL "pico")
-    FetchContent_MakeAvailable(littlefs unity pico_fota_bootloader)
+    set(FREERTOS_CONFIG_FILE_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/src/rtos)
+    FetchContent_Declare(
+        freertos_kernel
+        GIT_REPOSITORY https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+        GIT_TAG V11.3.1
+        SOURCE_SUBDIR portable/ThirdParty/GCC/RP2040
+    )
+endif()
+
+if(PYRO_BOARD_KIND STREQUAL "pico")
+    FetchContent_MakeAvailable(littlefs unity pico_fota_bootloader freertos_kernel)
 else()
     FetchContent_MakeAvailable(littlefs unity) # no bootloader on a host build
 endif()
@@ -278,11 +290,10 @@ target_include_directories(littlefs_lib PUBLIC
 target_compile_options(littlefs_lib INTERFACE -Wno-unused-function -Wno-null-dereference)
 target_link_libraries(littlefs_lib INTERFACE hardware_flash)
 
-# littlefs is the only malloc caller in the firmware, and linking
-# pico_multicore turns every malloc/free into a blocking cross-core mutex
-# acquire on core0's liftoff path. Static buffers remove the call entirely;
-# src/littlefs_driver.c supplies them. See docs/core1_hazard.md.
-target_compile_definitions(littlefs_lib PUBLIC LFS_NO_MALLOC)
+# Static buffers keep littlefs off the heap, whose lock pico_multicore (linked
+# by the FreeRTOS port) makes a mutex; src/littlefs_driver.c supplies them.
+# LFS_THREADSAFE: one mount shared by every task, locked per call.
+target_compile_definitions(littlefs_lib PUBLIC LFS_NO_MALLOC LFS_THREADSAFE)
 
 # ====================================================================================
 
@@ -341,7 +352,10 @@ add_executable(pyro_fw_c
     src/net_ring.c
     src/reset_interface.c
     src/littlefs_driver.c
-    src/flash_window.c
+    src/flash_op.c
+    src/rtos/rtos_tasks.c
+    src/net_task.c
+    src/storage_task.c
     src/pin_caps.c
     src/pin_assign.c
     src/pin_store.c
@@ -400,20 +414,19 @@ add_executable(pyro_fw_c
         tinyusb_board
         littlefs_lib
         pico_fota_bootloader_lib
+        hardware_flash
+        FreeRTOS-Kernel-Static
         )
+target_include_directories(pyro_fw_c PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/rtos)
 
-# Core1 hazard experiment (see docs/core1_hazard.md).
-#
-# Linking pico_multicore does more than make multicore_launch_core1() available:
-# pico/malloc.h turns PICO_USE_MALLOC_MUTEX on automatically when
-# LIB_PICO_MULTICORE is defined, which rewrites every malloc/calloc/realloc/free
-# on BOTH cores to take a shared mutex via mutex_enter_blocking() -- a call with
-# no timeout parameter and no failure return. Off by default so the A/B is
-# measurable; Phase 1 turns it on for real.
-option(PYRO_LINK_MULTICORE "Link pico_multicore (enables core1)" OFF)
-if(PYRO_HAS_LUA OR PYRO_LINK_MULTICORE)
-    target_link_libraries(pyro_fw_c pico_multicore)
-endif()
+# The third-party stacks for size: FreeRTOS, lwIP and TinyUSB are not on the
+# flight task's path, and at -O3 MK1B's 384 kB slot does not hold them.
+file(GLOB_RECURSE _pyro_os_sources
+    ${freertos_kernel_SOURCE_DIR}/*.c
+    ${LWIP_DIR}/src/*.c
+    ${TINYUSB_DIR}/src/*.c
+    ${TINYUSB_DIR}/lib/networking/*.c)
+set_source_files_properties(${_pyro_os_sources} PROPERTIES COMPILE_OPTIONS "-Os")
 
 if(PYRO_HAS_LUA)
     target_sources(pyro_fw_c PRIVATE src/lua/lua_core1.c src/lua/lua_app.c)

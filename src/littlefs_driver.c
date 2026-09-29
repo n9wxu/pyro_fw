@@ -10,19 +10,18 @@
 #include <lfs.h>
 #include "pico/stdlib.h"
 
-/* Core1 must not be fetching from flash while XIP is off, and
- * save_and_disable_interrupts() below acts on the calling core only. Core0's
- * exec loop arranges that by scheduling a window; this layer only refuses a
- * write that arrived outside one.
+/* Every program and erase runs under flash_op()'s lockout, which parks the
+ * other core and raises the caller to T for the operation alone. A refused
+ * operation -- from the flight task, or a helper that would not park --
+ * returns LFS_ERR_IO, a failed file operation every caller already retries.
  *
- * Do not stall here instead. Core1 is gated for the whole of its startup on a
- * flag only core0 clears, and core0 cannot clear it from in here. A bounded
- * spin is no better: one lfs_file_write touches dozens of blocks, and each
- * block pays the bound.
- *
- * LFS_ERR_IO propagates out as a failed file operation, which every caller
- * already retries a period later. */
-#include "flash_window.h"
+ * LFS_THREADSAFE: littlefs takes lfs_lock() around every public call, so the
+ * one mount (lfs_mount.h) serves every task but the flight task. */
+#include "flash_op.h"
+#include "lfs_mount.h"
+#include "rtos_tasks.h"
+#include "FreeRTOS.h"
+#include "semphr.h"
 
 /* Must match PFB_RESERVED_FILESYSTEM_SIZE_KB exactly: pico_fota_bootloader
  * carves the filesystem out of the top of flash and sizes its A/B slots
@@ -54,37 +53,19 @@ static int pico_read(const struct lfs_config *c, lfs_block_t block, lfs_off_t of
 
 static int pico_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, const void *buffer,
                      lfs_size_t size) {
-    (void)c;
     uint32_t p = (block * FLASH_SECTOR_SIZE) + off;
-    if (!flash_window_is_open()) {
-        flash_window_refused();
-        return LFS_ERR_IO;
-    }
-    flash_window_crumb(97);
-    uint32_t ints = save_and_disable_interrupts();
-    flash_range_program(fs_base(c) + p, buffer, size);
-    flash_op_seq++;
-    restore_interrupts(ints);
-    flash_window_programmed();
-    flash_window_crumb(98);
-    return 0;
+    flash_op_crumb(97);
+    int rc = flash_op_program(fs_base(c) + p, (const uint8_t *)buffer, size);
+    flash_op_crumb(98);
+    return rc == 0 ? 0 : LFS_ERR_IO;
 }
 
 static int pico_erase(const struct lfs_config *c, lfs_block_t block) {
-    (void)c;
     uint32_t off = block * FLASH_SECTOR_SIZE;
-    if (!flash_window_is_open()) {
-        flash_window_refused();
-        return LFS_ERR_IO;
-    }
-    flash_window_crumb(95);
-    uint32_t ints = save_and_disable_interrupts();
-    flash_range_erase(fs_base(c) + off, FLASH_SECTOR_SIZE);
-    flash_op_seq++;
-    restore_interrupts(ints);
-    flash_window_erased();
-    flash_window_crumb(96);
-    return 0;
+    flash_op_crumb(95);
+    int rc = flash_op_erase(fs_base(c) + off, FLASH_SECTOR_SIZE);
+    flash_op_crumb(96);
+    return rc == 0 ? 0 : LFS_ERR_IO;
 }
 
 static int pico_sync(const struct lfs_config *c) {
@@ -92,23 +73,36 @@ static int pico_sync(const struct lfs_config *c) {
     return 0;
 }
 
-/* Static buffers for LFS_NO_MALLOC.
- *
- * littlefs is the ONLY caller of malloc in this firmware (lfs_init takes
- * three buffers, lfs_file_opencfg takes one). Linking pico_multicore -- which
- * Lua requires -- makes every malloc and free on both cores enter
- * malloc_mutex through mutex_enter_blocking(), a call with no timeout. That
- * put an unbounded wait on the liftoff path:
- *
- *     action_launch -> hal_log_start -> lfs_mount -> __wrap_free
- *                   -> mutex_enter_blocking
- *
- * Giving littlefs static buffers removes core0's last heap call, so the
- * mutex is never entered and the hazard does not exist rather than being
- * mitigated. support/prove_core0.py fails the build if it comes back.
- * See docs/core1_hazard.md. */
-static uint8_t lfs_read_buf[FLASH_SECTOR_SIZE];
-static uint8_t lfs_prog_buf[FLASH_SECTOR_SIZE];
+/* Before the scheduler there is one thread, and the mutex does not exist. A
+ * lock not taken in 10 s is a holder that is not coming back: the call fails
+ * as an I/O error rather than hanging its task. Never the flight task. */
+static SemaphoreHandle_t lfs_mutex;
+static StaticSemaphore_t lfs_mutex_buf;
+
+static int pico_lock(const struct lfs_config *c) {
+    (void)c;
+    if (!rtos_running())
+        return 0;
+    if (rtos_in_flight_task())
+        return LFS_ERR_IO;
+    if (!lfs_mutex)
+        lfs_mutex = xSemaphoreCreateMutexStatic(&lfs_mutex_buf);
+    return xSemaphoreTake(lfs_mutex, pdMS_TO_TICKS(10000)) == pdTRUE ? 0 : LFS_ERR_IO;
+}
+
+static int pico_unlock(const struct lfs_config *c) {
+    (void)c;
+    if (rtos_running() && lfs_mutex)
+        xSemaphoreGive(lfs_mutex);
+    return 0;
+}
+
+/* Static buffers for LFS_NO_MALLOC. Linking pico_multicore, which the
+ * FreeRTOS port does, makes every malloc and free take a mutex, and no file
+ * path should hold a task on the heap's lock. Each open file brings its own
+ * cache buffer (lfs_mount.h). */
+static uint8_t lfs_read_buf[LFS_FILE_BUF_SIZE];
+static uint8_t lfs_prog_buf[LFS_FILE_BUF_SIZE];
 static uint8_t lfs_lookahead_buf[16] __attribute__((aligned(8)));
 
 const struct lfs_config lfs_pico_flash_config = {
@@ -116,22 +110,16 @@ const struct lfs_config lfs_pico_flash_config = {
     .prog = pico_prog,
     .erase = pico_erase,
     .sync = pico_sync,
+    .lock = pico_lock,
+    .unlock = pico_unlock,
     .read_size = 1,
     .prog_size = FLASH_PAGE_SIZE,
     .block_size = FLASH_SECTOR_SIZE,
     .block_count = FS_SIZE / FLASH_SECTOR_SIZE,
-    .cache_size = FLASH_SECTOR_SIZE,
+    .cache_size = LFS_FILE_BUF_SIZE,
     .lookahead_size = 16,
     .block_cycles = 500,
     .read_buffer = lfs_read_buf,
     .prog_buffer = lfs_prog_buf,
     .lookahead_buffer = lfs_lookahead_buf,
-};
-
-/* Per-file cache, likewise static. hal_fs_open() keeps a single streaming
- * file, and the short-lived helpers open one at a time, so one buffer and one
- * config are enough; hal_common.c serialises them through hw_file.open. */
-static uint8_t lfs_file_buf[FLASH_SECTOR_SIZE];
-const struct lfs_file_config lfs_pico_file_config = {
-    .buffer = lfs_file_buf,
 };
