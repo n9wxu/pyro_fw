@@ -27,7 +27,7 @@ recorded.
 | 7 | [Board changes](#7-board-changes) | hardware design; **B-U5: MK1B cannot sense continuity**; B-BZ: MK1B's buzzer disturbs its sensor |
 | 8 | [Documentation and housekeeping](#8-documentation-and-housekeeping) | every document reviewed 2026-09-28; H3: the defects and unmet requirements the review found |
 | 9 | [Deferred, and not planned](#9-deferred-and-not-planned) | F1's bench fire; false-launch reversion |
-| 10 | [Logging and lockups in flight](#10-logging-and-lockups-in-flight) | **your decisions**: the logging design, the Mach short rate, lwIP's heap |
+| 10 | [Logging and lockups in flight](#10-logging-and-lockups-in-flight) | **your decisions**: the logging design (plan 1, R1, or plan 2, FreeRTOS), the Mach short rate, lwIP's heap |
 
 **G4, the bench check on the four boards** (MK1A 02632D472F0C, MK1B
 02E7253A34C2 and 02E72A403441, MK1C 02373331FFDE): `api_check.py`,
@@ -1468,6 +1468,10 @@ code into RAM, which you asked for without changes.
 boards. The options, against five hardware changes (an SD card on MK1C, an
 ESP32-S3, an RP2350 with a second flash or a PSRAM), are designed in
 `docs/log_storage_options.md`; its section 7 lists the decisions.
+You then asked for a second plan: the flight code, Lua and a log writer as
+FreeRTOS SMP tasks, the writer blocking the whole system for each flash
+write, as a step toward the ESP32. It is `docs/log_storage_plan2_freertos.md`;
+its section 13 lists the decisions, the first being plan 1 or plan 2.
 
 **Done the same day:** every sensor bus transfer is bounded (DD-069: the
 BMP280's, the MS5607's detection and MK1B's BMP280 reset waited forever on

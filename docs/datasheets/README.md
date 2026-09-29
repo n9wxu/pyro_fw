@@ -11,6 +11,7 @@ from a part. Cite the file and page, not memory.
 | `TPS2595_SLVSE57C_2018-04.pdf` | TI TPS2595x eFuse, including the TPS259570 (MK1C's U9) | SLVSE57C, revised April 2018 | ti.com/lit/ds/symlink/tps2595.pdf, fetched 2026-09-26 |
 | `rp2040-datasheet_2025-02-20.pdf` | Raspberry Pi RP2040 microcontroller | build 3184e62, 2025-02-20 | datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf, fetched 2026-09-26 |
 | `rp2350-datasheet_2025-07-29.pdf` | Raspberry Pi RP2350 microcontroller (a candidate for a future board) | build d126e9e, 2025-07-29 | datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf, fetched 2026-09-28 |
+| `W25Q128JV_RevH_2021-03-10.pdf` | Winbond W25Q128JV 128 Mbit 3 V serial flash (MK1A) | Revision H, 10 March 2021 | winbond.com/resource-files/W25Q128JV RevH 03102021 Plus.pdf, fetched 2026-09-28 |
 | `W25Q16JV_RevI_2024-12-24.pdf` | Winbond W25Q16JV 16 Mbit 3 V serial flash (MK1B's U7, by its marking) | Revision I, 24 December 2024 | winbond.com/resource-files/W25Q16JV SPI RevI 12242024 Plus.pdf, fetched 2026-09-28 |
 | `BY25Q64ES_Rev2.9_2024-10-29.pdf` | BYTe Semiconductor BY25Q64ES 64 Mbit 3 V serial flash (a larger part for MK1B's footprint) | Rev. 2.9, 2024-10-29 | byte-semi.com/wp-content/uploads/BY25Q64ES.pdf, fetched 2026-09-28 |
 | `GD25Q64E_Rev1.4_2021-07.pdf` | GigaDevice GD25Q64E 64 Mbit 3 V serial flash (fits MK1B's footprint, not its boot stage 2) | 1.4, 2021-07-06 | uploadcdn.oneyac.com, GD25Q64ESIGR.pdf, fetched 2026-09-28 |
@@ -101,3 +102,14 @@ AP2192A (DS32193), page 1: output discharge; 85 mOhm. Page 4: R_DIS 100 Ohm
 typical while disabled (note 6). DigiKey's attributes for AP2192MPG-13 on
 2026-09-28 list "load discharge" and 85 mOhm, the AP2192A's figures; the
 datasheet says otherwise.
+
+W25Q16JV, page 64, and W25Q128JV, page 66 (AC characteristics): a page
+program takes 0.4 ms typically and 3 ms at most; a 4 KB sector erase 45 ms
+and 400 ms; a 64 KB block erase 150 ms and 2,000 ms. W25Q16JV page 34: a
+partial page can be programmed into erased bytes "without having any
+effect on other bytes within the same page". Pages 15 and 40: the SUS bit
+is S15, and suspend and resume are 75h and 7Ah.
+
+RP2040, page 123: the XIP cache is 16 kB, two-way set-associative; page
+124: flushing it takes just over 1024 clock cycles. Page 418: the UART's
+FIFOs are 32 deep.

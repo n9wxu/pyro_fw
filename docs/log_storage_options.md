@@ -2,6 +2,9 @@
 
 **Status: design, 2026-09-28. Nothing here is implemented.**
 
+This is plan 1. Plan 2, the flight code, Lua and the log writer as FreeRTOS
+SMP tasks with a fully blocking write, is `docs/log_storage_plan2_freertos.md`.
+
 You adopted R1 (the flight path in RAM) and asked for an architecture that
 also supports a second memory for logging, "so current boards operate and
 future boards operate with SD cards": Petit FatFs on SD cards, littlefs on
