@@ -620,6 +620,7 @@ add_custom_target(closedloop_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
                ${CMAKE_CURRENT_LIST_DIR}/src/config.c
                ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_sim.c
                ${unity_SOURCE_DIR}/src/unity.c
                -lm
                -o ${CMAKE_BINARY_DIR}/test_closedloop
@@ -990,6 +991,23 @@ add_custom_target(mac_random_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_mac_random
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "MAC draw tests"
+)
+
+# The bench flight source: the atmosphere, the profile and the bench (DD-078).
+add_custom_target(flight_sim_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building flight source tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -DBENCH_FLIGHT_TEST -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_flight_sim.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_sim.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/bench_flight.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -lm
+               -o ${CMAKE_BINARY_DIR}/test_flight_sim
+    COMMAND ${CMAKE_COMMAND} -E echo "Running flight source tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_flight_sim
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flight source tests"
 )
 
 # /api/net's rendering, the network's counters for the bench (G4-N).

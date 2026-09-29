@@ -129,6 +129,7 @@ typedef struct flight_context_t {
     int32_t last_height; /* unclamped: the speed short of a fit [SNS-ALT-04] */
     int32_t vertical_speed_cms;
     int32_t prev_vertical_speed_cms;
+    float air_scale; /* pp_air_scale() at the last descent sample; 0 is 1 */
     uint32_t launch_time;
     uint32_t apogee_time;
     uint32_t last_sample;

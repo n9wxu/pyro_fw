@@ -21,6 +21,7 @@
 #define PRESSURE_PROCESSING_H
 
 #include <stdint.h>
+#include "pressure_fit.h"
 #include <stdbool.h>
 
 /* ── Altitude sample — what flight software consumes ─────────────── */
@@ -214,10 +215,20 @@ int32_t pp_last_raw_pa(void);
 int32_t pp_last_read_raw_pa(void);
 int32_t pp_last_filtered_pa(void);
 
+/* The newest sample's fit, as the detectors saw it, for the bench. */
+pfit_t pp_last_fit(bool *suspect, bool *stuck);
+
 /* ── Unit-testable internals (exposed for test_flight_states) ────── */
 
 int32_t pp_filter_pressure(int32_t raw_pressure, uint32_t dt_ms);
 int32_t pp_pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa);
 int32_t pp_pressure_to_height_cm(int32_t pressure_pa, int32_t ground_pressure_pa);
+
+/* [FLT-AIR-01, DD-079] What turns a speed from the altitude formula into the
+ * speed the pad's air would give the same canopy: the atmosphere's slope over
+ * the formula's, times sqrt(rho / rho_pad). 1 at the pad; 0.22 at 30 km over
+ * a sea-level pad. Temperatures are the 1976 US Standard Atmosphere's at each
+ * pressure. */
+float pp_air_scale(int32_t pressure_pa, int32_t ground_pressure_pa);
 
 #endif /* PRESSURE_PROCESSING_H */

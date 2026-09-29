@@ -99,6 +99,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | FLT-MACH-07 | The peak from outside the lock | Mach: test_M1_peak_outside_lock; Web: apogee skips the Mach lock, a lock let go near apogee makes it a lower bound, a lock that fell back makes it a lower bound | ✅ |
 | FLT-DESC-01 | Phase from rate, not from command | Closed-loop: test_FLT_DESC_01_phase_without_pyros; Chain: test_N12_drogue_from_below (a drogue speeding up through the main's band is still a drogue) | ✅ |
 | FLT-DESC-02 | Landing from every descent phase | Closed-loop: test_FLT_DESC_02_ballistic_reaches_landed | ✅ |
+| FLT-AIR-01 | Descent rates in the pad's air | Closed-loop: test_FLT_AIR_01_air_scale_is_the_pad_air_rate (against the bench flight's atmosphere, 0-32 km, two pads), test_SIM_02_the_flight_software_flies_a_30_km_profile (no forced main from a working drogue), test_FLT_AIR_01_a_failed_drogue_is_seen_at_30_km, test_FLT_AIR_01_a_high_pad_flies_20_km | ✅ |
 | PYR-ALT-01 | Clamp altitude settings | Closed-loop: Karman suite (AGL > 8000m clamped, pyro still fires) | ✅ |
 | PYR-ALT-02 | Warning beep for range | Integration: test_PYR_ALT_02_cfg_range_beep | ✅ |
 | FLT-RATE-01 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds); Chain: test_T9_one_shot_cadence (the one-shot at the loop period: 498 pressures in 10 s at 20 ms, every interval one loop, DD-066); test_ms5607_pair_ready_before_the_next_loop (at each MS5607 board's own bus rate, 400 kHz on MK1B and MK1C, the pair is ready 1.4 ms before the next loop, DD-052), test_ms5607_a_pair_every_loop (2.7 ms of work a pressure, as measured, costs no pair); Hardware (2.1.697, 2026-09-27, `support/pressure_trace.py`, 60 s each): MK1C and both MK1Bs 50.0 pressures a second, a temperature with each, no gaps, no missed slots; MK1A's BMP280, one forced conversion a loop (2.1.701, DD-067), 50.0 a second, consistently good | ✅ |
@@ -154,6 +155,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | SYS-DATA-01 | Record flight data | Integration: test_DAT_04_events (samples > 100) | ✅ |
 | SYS-DATA-02 | Export standard format | Integration: test_DAT_06_csv_export; Chain: test_T8_columns, test_T8_replay | ✅ |
 | SYS-DATA-03 | Announce max altitude | Integration: test_BUZ_07_03_lifecycle | ✅ |
+| SYS-DATA-04 | The flight's motion on an SD card | Through SD-01, SD-02 (hardware, the card not yet up) and HR-01..05 | ⚠️ |
 | DAT-01 | 4096-entry ring buffer | — the ring holds 64 (`FLIGHT_BUF_SIZE`); the flight record is `flight_log.bin`, DD-062 (H3) | ❌ |
 | DAT-02 | Sample fields, at the sample's time | Integration: events have correct fields; Chain: test_T11_log_rows_at_sample_time, test_T8_columns | ✅ |
 | DAT-08 | A high-rate log replays through the firmware | Chain: test_T8_replay (every event to the sample, no state diverging), test_T8_replay_refuses_a_thinned_log | ✅ |
@@ -342,6 +344,28 @@ Verify web interface behavior against mock server in 3 device modes.
 | TELEM-FMT-02 | Event + state messages | Integration: test_TEL_03_event_sentences | ✅ |
 | TELEM-FMT-03 | HAL transport is raw bytes | Integration: hal_telemetry_send(const char*) | ✅ |
 
+## 18. SD Card and High-Rate Log
+
+| Req | Description | Verified By | Status |
+|-----|-------------|-------------|--------|
+| SD-01 | SPI mode, CRC, bounded waits, the bus shared | Hardware only. On the bench MK1C-SD the LSM6DS3 reads at 1.66 kHz on the shared bus; the wire-wrapped card resets inside ACMD41 and has not come up (DD-075) | ⚠️ |
+| SD-02 | Every file on the card, configuration mirrored | Hardware only, and the card has not come up; by inspection of `vfs.c` | ⚠️ |
+| HR-01 | The next file ready, the second before launch kept | HR log: test_HR_01_between_flights_the_file_is_ready_and_the_ring_keeps_half, test_HR_02_a_flight_is_logged_whole_with_the_second_before_it | ✅ |
+| HR-02 | Every set, every conversion, the state at 10 Hz | HR log: test_HR_02_a_flight_is_logged_whole_with_the_second_before_it; `support/hr_log.py --selftest` | ✅ |
+| HR-03 | Whole 4 kB writes | HR log: test_HR_03_the_log_goes_to_the_card_in_multi_sector_writes | ✅ |
+| HR-04 | A CRC per record, a power cut's log kept | HR log: test_HR_04_a_log_a_power_cut_left_is_kept_under_a_number; `support/hr_log.py --selftest` (a torn last record) | ✅ |
+| HR-05 | Whole records dropped and counted, off the flight path | HR log: test_HR_05_a_full_ring_drops_whole_records_and_counts_them; `support/prove_core0.py` on MK1C-SD in CI | ✅ |
+
+## 19. Bench Flight
+
+| Req | Description | Verified By | Status |
+|-----|-------------|-------------|--------|
+| UN-14 | See it fly before it flies | Through SYS-SIM-01 | ✅ |
+| SYS-SIM-01 | A scripted flight on the bench, firing nothing | Through SIM-01..03; Hardware: MK1C-SD flew 1 km, 10 km and 30 km profiles to LANDED with both channels mocked (`support/bench_flight.py`); the 30 km flights found HA-1 | ✅ |
+| SIM-01 | Only from the pad, in test mode | Flight source: test_SIM_01_a_bench_flight_starts_only_from_the_pad_in_test_mode, test_SIM_01_profiles_that_cannot_fly_are_refused | ✅ |
+| SIM-02 | The profile's pressure in the reading's place | Closed-loop: test_SIM_02_a_9_km_supersonic_flight_with_sensor_noise, and test_SIM_02_30_km_with_sensor_noise_finds_apogee, ignored until HA-1; Flight source: test_SIM_02_isa_pressure_at_the_layer_bases, test_SIM_02_isa_pressure_inside_the_layers, test_SIM_02_isa_density_at_sea_level_and_30_km, test_SIM_02_isa_altitude_inverts_pressure, test_SIM_02_the_coast_peaks_at_the_apogee_asked_for, test_SIM_02_phases_run_in_order_and_it_lands, test_SIM_02_descent_times_at_constant_rates, test_SIM_02_thin_air_speeds_the_drogue, test_SIM_02_a_high_pad_adds_its_own_altitude, test_SIM_02_the_bench_replaces_the_reading_while_it_flies, test_SIM_02_the_bench_ends_when_both_have_landed; Closed-loop: test_SIM_02_the_flight_software_flies_a_30_km_profile | ✅ |
+| SIM-03 | Every fire mocked until reboot | Flight source: test_SIM_03_the_channels_stay_mocked_after_a_stop; by inspection, `hal_pyro_fire()` is every fire's one path | ✅ |
+
 ## 16. On USB
 
 | Req | Description | Verified By | Status |
@@ -398,8 +422,8 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 246 |
-| ⚠️ Not directly verified (needs a test or hardware) | 22 |
+| ✅ Verified by a host, web or closed-loop test | 257 |
+| ⚠️ Not directly verified (needs a test or hardware) | 25 |
 | ❌ Not implemented | 5 (USB-06: no hardware path; DAT-01, FLT-RATE-02, FLT-RATE-03, TST-05: H3) |
 | ✅ HW (hardware satisfies) | 11 |
 
@@ -420,4 +444,5 @@ _+20 requirements in v2 Tasks 7–10 (PWR-*, CFG-TABLE-*, TELEM-FMT-*), all veri
 - **WEB-NET-01..04**: USB network / mDNS / DNS-SD — hardware test
 - **WEB-API-08**: the web server's 423s and the dropped transfer are in http_server.c, verified by inspection; the bench check is a chamber flight in test mode
 - **OTA-01..04**: OTA update flow — hardware test
+- **SD-01, SD-02 / SYS-DATA-04**: the SD card on the bench — its supply (SPI-1)
 - **PWR-USB-01**: USB servicing autonomy — deferred to v2.1

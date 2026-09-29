@@ -120,6 +120,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-MACH-07**: The reported peak shall be the height of the lowest pressure a clean fit showed outside the flag, marked a lower bound if the flag was released within 2 s of apogee. The web UI's Flight Data summary shall take its apogee from the log's rows outside the flag, marked "at least" in the same case or when the flag fell back. ← FLT-MACH-02
 - **FLT-DESC-01**: The system shall determine the descent phase from the measured descent rate holding steady, not from which channel has been commanded. ← FLT-PHASE-02
 - **FLT-DESC-02**: The system shall detect landing in every descent phase, so that a flight which deployed nothing still closes its flight log. ← FLT-PHASE-02
+- **FLT-AIR-01**: The descent bands and the emergency ladder shall judge a descent rate as the pad's air would give it: the speed the altitude formula reads, corrected to the atmosphere's own slope and scaled by sqrt(rho / rho_pad), with the 1976 US Standard Atmosphere's temperature at each pressure. A working drogue in thin air shall not be read as a failed one, and a drogue failing at any height shall still be. ← FLT-EMRG-01, FLT-DESC-01, DD-079
 
 #### Altitude Clamping
 - **PYR-ALT-01**: The system shall clamp altitude-based pyro settings to the barometric sensor ceiling. ← PYR-MODE-02, PYR-MODE-03, PYR-MODE-04
@@ -196,6 +197,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **SYS-DATA-01**: The system shall record flight data throughout the flight. ← UN-3
 - **SYS-DATA-02**: The system shall export flight data in a standard format. ← UN-3
 - **SYS-DATA-03**: The system shall announce maximum altitude audibly after landing. ← UN-3
+- **SYS-DATA-04**: A board with an SD card and an accelerometer shall record the flight's motion at the accelerometer's rate on the card, with every pressure conversion and the flight's state, and shall keep its files on the card. ← UN-3
 
 ### L3 Subsystem Requirements
 - **DAT-01**: The system shall store flight samples in a ring buffer of at least 4096 entries. ← SYS-DATA-01
@@ -498,6 +500,30 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **GND-TEST-10**: The switch closed again during a countdown or the tone shall stop the procedure before the next fire, and ground test mode shall be announced again. ← GND-TEST-07
 - **GND-TEST-11**: Ground test mode shall last until the next power-up: it shall never detect a launch or open a flight log, and after the all-clear nothing more shall happen. ← PYR-SAFE-04
 - **GND-TEST-12**: The ground test switch shall be assignable in `pins.ini` as none, a switch from one digital pad to ground, or a switch across two digital pads, and its pads shall be reserved against Lua. Across two pads one pad shall be driven high and low in turn with the other pulled the opposite way, and the switch shall read closed only when the read pad follows the driven one both ways. ← SYS-TEST-01, DD-071
+
+## 18. SD Card and High-Rate Log
+
+### L3 Subsystem Requirements
+- **SD-01**: The SD card shall be driven in SPI mode with CRC on commands and data, every wait bounded by the SD specification's own limits, and the shared bus given back between busy polls, so the accelerometer is read while the card programs. A card that fails to come up shall leave the board on littlefs, and shall be retried without a reboot. ← SYS-DATA-04, DD-075
+- **SD-02**: While a card is mounted every file shall live on it, except the board's identity and the pad marker. Each configuration file shall be copied into littlefs whenever the two differ, a blank card shall be seeded from littlefs, and a file the card lacks shall be read from littlefs. ← SYS-DATA-04, DD-076
+- **HR-01**: Between flights the next high-rate log shall be created and preallocated contiguously, and its ring shall keep its newest half, so that launch waits on no allocation and a log opens with the second before launch. ← SYS-DATA-04, DD-077
+- **HR-02**: From launch to landing, and on the bench on request, the high-rate log shall record every accelerometer and gyroscope set the FIFO delivers, every pressure and temperature conversion, and the flight's state ten times a second. ← SYS-DATA-04, DD-077
+- **HR-03**: The log shall reach the card in whole 4 kB writes that keep the file sector-aligned. ← HR-02
+- **HR-04**: Every record shall carry a CRC of its payload, a log shall be read to its last whole record, and a log a power cut left open shall be kept under a number at the next boot. ← HR-02
+- **HR-05**: A ring the card cannot keep up with shall drop whole records and count them, and nothing the logger does shall be on the flight task's path. ← HR-02, RTOS-01
+
+## 19. Bench Flight
+
+### L1 User Need
+- **UN-14**: The user needs to see the board fly a flight, to any altitude it may reach, before it flies one.
+
+### L2 System Requirements
+- **SYS-SIM-01**: The system shall fly a scripted flight on the bench, to 32 km, through its own flight software, logs and sensors, and fire nothing. ← UN-14
+
+### L3 Subsystem Requirements
+- **SIM-01**: A bench flight shall start only from PAD_IDLE with test mode on, on the flight task, and only a profile that can fly. ← SYS-SIM-01, DD-078
+- **SIM-02**: While one flies, the profile's pressure, from the 1976 US Standard Atmosphere, shall replace each reading after the pressure trace has recorded the sensor's, and the flight shall end once the profile and the flight machine have both landed. ← SYS-SIM-01, DD-078
+- **SIM-03**: From the start of a bench flight until the board reboots, every fire shall be mocked and logged as one, reading energised for its pulse and open after it; a stop shall not give the channels back. ← SYS-SIM-01, PYR-SAFE-01, DD-078
 
 ## 17. On USB
 

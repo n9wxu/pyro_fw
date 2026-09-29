@@ -182,7 +182,7 @@ jobs:
       # Who runs each HTTP work unit, and /api/status rendered from a
       # snapshot, linked alone (DD-061).
       - name: Run HTTP work unit and status rendering tests
-        run: cd build && ninja http_work_tests && ninja status_json_tests && ninja net_stats_tests && ninja net_txq_tests && ninja mac_random_tests && ninja hr_log_tests
+        run: cd build && ninja http_work_tests && ninja status_json_tests && ninja net_stats_tests && ninja net_txq_tests && ninja mac_random_tests && ninja hr_log_tests && ninja flight_sim_tests
 
       # The flight log's binary records and their CSV (DD-062).
       - name: Run flight log format tests

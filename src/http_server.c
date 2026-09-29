@@ -62,6 +62,9 @@
 #include "flight_log.h"
 #include "pressure_trace.h"
 #include "net_stats.h"
+#if PYRO_HAS_BENCH_FLIGHT
+#include "bench_flight.h"
+#endif
 
 extern uint32_t hal_time_ms(void);
 
@@ -378,6 +381,79 @@ static void apply_api_test_mode(http_conn_t *hc, bool on) {
     }
     http_respond_str(hc, 200, JSON, ctx->test_mode ? "{\"test_mode\":true}" : "{\"test_mode\":false}");
 }
+
+#if PYRO_HAS_BENCH_FLIGHT
+/* POST /api/sim/flight?apogee=&boost=&drogue=&main_alt=&main=&thin=&pad=,
+ * POST /api/sim/stop, GET /api/sim [SIM-01, DD-078]. Metres, seconds and
+ * metres a second; thin=0 holds the drogue's rate at every height. */
+typedef struct {
+    fsim_params_t p;
+    bf_start_t rc;
+} sim_start_t;
+
+static void sim_start_call(void *arg) {
+    sim_start_t *a = arg;
+    const flight_context_t *ctx = flight_get_context();
+    a->rc = bench_flight_start(&a->p, (float)pp_ground_pressure(), flight_get_state() == PAD_IDLE,
+                               ctx && ctx->test_mode, time_us_64());
+}
+
+static void sim_stop_call(void *arg) {
+    (void)arg;
+    bench_flight_stop();
+}
+
+static float query_f(const char *path, const char *key, float dflt) {
+    const char *q = strstr(path, key);
+    return q ? strtof(q + strlen(key), NULL) : dflt;
+}
+
+static void apply_sim_flight(http_conn_t *hc, const char *path) {
+    sim_start_t a = {.p = {.apogee_m = query_f(path, "apogee=", 3000.0f),
+                           .boost_s = query_f(path, "boost=", 2.0f),
+                           .drogue_ms = query_f(path, "drogue=", 25.0f),
+                           .main_alt_m = query_f(path, "main_alt=", 300.0f),
+                           .main_ms = query_f(path, "main=", 6.0f),
+                           .thin_air = query_f(path, "thin=", 1.0f) != 0.0f,
+                           .pad_s = query_f(path, "pad=", 5.0f)},
+                     .rc = BF_BAD_PROFILE};
+    if (!flight_call(sim_start_call, &a, CALL_MS)) {
+        http_respond_str(hc, 503, JSON, "{\"error\":\"the flight task did not take the start\"}");
+        return;
+    }
+    static const char *const why[] = {"started", "not on the pad", "test mode is off", "one is flying",
+                                      "the profile cannot fly"};
+    char jb[80];
+    int jn = snprintf(jb, sizeof(jb), a.rc == BF_STARTED ? "{\"status\":\"%s\"}" : "{\"error\":\"%s\"}", why[a.rc]);
+    http_respond(hc, a.rc == BF_STARTED ? 200 : a.rc == BF_BAD_PROFILE ? 400 : 409, JSON, jb, (uint32_t)jn);
+}
+
+static void serve_api_sim(http_conn_t *hc) {
+    bench_flight_status_t s;
+    bench_flight_status(&s);
+    bool suspect, stuck;
+    pfit_t f = pp_last_fit(&suspect, &stuck);
+    const flight_context_t *ctx = flight_get_context();
+    int n = snprintf((char *)hc->work, sizeof(hc->work),
+                     "{\"flying\":%s,\"mocked\":%s,\"flights\":%lu,\"phase\":\"%s\",\"t_s\":%.2f,\"t_apogee_s\":%.2f,"
+                     "\"alt_m\":%.1f,\"peak_m\":%.1f,\"pa\":%.1f,\"ground_pa\":%.1f,\"fires\":[%lu,%lu],"
+                     "\"apogee_m\":%.0f,\"boost_s\":%.2f,\"drogue_ms\":%.1f,\"main_alt_m\":%.0f,"
+                     "\"main_ms\":%.1f,\"thin_air\":%s,\"pad_s\":%.1f,"
+                     "\"fit\":{\"pa\":%.2f,\"pdot\":%.3f,\"pddot\":%.4f,\"rms\":%.3f,\"worst\":%.3f,\"n\":%u,"
+                     "\"valid\":%s,\"suspect\":%s,\"stuck\":%s,\"sigma\":%.3f},"
+                     "\"mach_lock\":%s,\"release_since\":%lu,\"fit_clean\":%s}",
+                     s.flying ? "true" : "false", s.mocked ? "true" : "false", (unsigned long)s.flights,
+                     fsim_phase_name(s.phase), (double)s.t_s, (double)s.t_apogee_s, (double)s.alt_m, (double)s.peak_m,
+                     (double)s.pa, (double)s.ground_pa, (unsigned long)s.fires[0], (unsigned long)s.fires[1],
+                     (double)s.p.apogee_m, (double)s.p.boost_s, (double)s.p.drogue_ms, (double)s.p.main_alt_m,
+                     (double)s.p.main_ms, s.p.thin_air ? "true" : "false", (double)s.p.pad_s, (double)f.p,
+                     (double)f.pdot, (double)f.pddot, (double)f.rms, (double)f.worst, (unsigned)f.n,
+                     f.valid ? "true" : "false", suspect ? "true" : "false", stuck ? "true" : "false",
+                     (double)pp_sigma_pa(), ctx && ctx->mach_lock ? "true" : "false",
+                     (unsigned long)(ctx ? ctx->release_since : 0), ctx && ctx->fit_clean ? "true" : "false");
+    http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
+}
+#endif
 
 /* ── GET /api/beeps ───────────────────────────────────────────────
  *
@@ -1135,6 +1211,10 @@ static void serve_get(conn_t *c) {
         serve_log_space(c);
     } else if (strcmp(path, "/api/net") == 0) {
         serve_api_net(hc);
+#if PYRO_HAS_BENCH_FLIGHT
+    } else if (strcmp(path, "/api/sim") == 0) {
+        serve_api_sim(hc);
+#endif
 #if PYRO_HAS_SD
     } else if (strcmp(path, "/api/sd") == 0) {
         serve_api_sd(c);
@@ -1357,6 +1437,17 @@ static void route_post(conn_t *c) {
         apply_api_test_mode(hc, strcmp(path, TEST_MODE_ON_PATH) == 0);
         return;
     }
+#if PYRO_HAS_BENCH_FLIGHT
+    if (strncmp(path, "/api/sim/flight", 15) == 0 && (path[15] == '\0' || path[15] == '?')) {
+        apply_sim_flight(hc, path);
+        return;
+    }
+    if (strcmp(path, "/api/sim/stop") == 0) {
+        bool ok = flight_call(sim_stop_call, NULL, CALL_MS);
+        http_respond_str(hc, ok ? 200 : 503, JSON, ok ? "{\"status\":\"stopped\"}" : "{\"error\":\"busy\"}");
+        return;
+    }
+#endif
 #if PYRO_HAS_SD
     if (strncmp(path, "/api/sd/bench", 13) == 0 && (path[13] == '\0' || path[13] == '?')) {
         apply_sd_bench(hc, path);

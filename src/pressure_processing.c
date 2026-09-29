@@ -49,6 +49,8 @@ static struct {
     float sigma_sq; /* 0: not measured */
     uint32_t suspect_until_us; /* fits are suspect before this [SNS-PRES-10/11] */
     bool suspect;
+    pfit_t last_fit; /* the newest sample's, for the bench (pp_last_fit()) */
+    bool last_stuck;
 
     /* IIR filter state */
     int32_t filtered_q8; /* pascals x 256 [SNS-PRES-02] */
@@ -383,6 +385,31 @@ static int32_t height_from_q8(int32_t pressure_q8, int32_t ground_pressure_pa) {
     return (int32_t)(alt_m * 100.0f);
 }
 
+/* The 1976 standard's temperature at a pressure, to 32 km: a lapse to
+ * 11 km, isothermal to 20 km, then warming at 1 K/km. T = Tb (p / pb)^(-L R / g M). */
+static float isa_temperature(float pa) {
+    if (pa >= 22632.06f)
+        return 288.15f * powf(pa / 101325.0f, 0.190263f);
+    if (pa >= 5474.889f)
+        return 216.65f;
+    if (pa < 868.0187f)
+        pa = 868.0187f;
+    return 216.65f * powf(pa / 5474.889f, -0.0292716f);
+}
+
+/* v_formula = 44330 n r^n pdot / p and v_true = R T pdot / (g M p), with
+ * R T0 / g M = 44330 n; v_pad_air = v_true sqrt(rho / rho_pad), rho ~ p / T.
+ * Divided by its value at the pad, where the formula's T0 is not the pad's,
+ * so a rate at the pad reads as it always has. */
+float pp_air_scale(int32_t pressure_pa, int32_t ground_pressure_pa) {
+    if (pressure_pa <= 0 || ground_pressure_pa <= 0)
+        return 1.0f;
+    float r = (float)pressure_pa / (float)ground_pressure_pa;
+    float t = isa_temperature((float)pressure_pa);
+    float t_pad = isa_temperature((float)ground_pressure_pa);
+    return sqrtf(t * r / t_pad) / powf(r, 1.0f / 5.2561f);
+}
+
 int32_t pp_pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa) {
     int32_t alt_cm = pp_pressure_to_height_cm(pressure_pa, ground_pressure_pa);
     if (alt_cm > MAX_ALTITUDE_CM)
@@ -413,6 +440,12 @@ static void ring_push(int32_t altitude_cm, int32_t height_cm, int32_t rise_cm, u
 }
 
 /* ── The fit [DD-048] ─────────────────────────────────────────────── */
+
+pfit_t pp_last_fit(bool *suspect, bool *stuck) {
+    *suspect = pp.suspect;
+    *stuck = pp.last_stuck;
+    return pp.last_fit;
+}
 
 float pp_sigma_pa(void) {
     if (pp.sigma_sq <= 0.0f)
@@ -509,6 +542,8 @@ static void measure_sigma(const pfit_t *f, uint32_t dt_ms) {
 static void fit_sample(altitude_sample_t *s, uint32_t dt_ms) {
     window_t w = fit_history();
     pfit_t f = w.fit;
+    pp.last_fit = f;
+    pp.last_stuck = w.stuck;
     s->fit_suspect = suspect_after(&w, s->timestamp_us);
     s->sensor_stuck = w.stuck;
     if (!s->fit_suspect)

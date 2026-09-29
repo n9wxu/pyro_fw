@@ -21,7 +21,7 @@ cd build
 
 ninja host_tests          # 74 unit tests
 ninja integration_tests   # 51 integration tests (OpenRocket data)
-ninja closedloop_tests    # 25 closed-loop tests (7 configurations x 4 rockets)
+ninja closedloop_tests    # 31 closed-loop tests (7 configurations x 4 rockets, and profiles to 30 km)
 ```
 
 Each target builds its binary into the build directory and runs it. A suite
@@ -51,6 +51,9 @@ than one build.
 | `status_json_tests` | `test_status_json.c` | `/api/status` rendered from a snapshot, `status_json.c` linked alone |
 | `net_stats_tests` | `test_net_stats.c` | `/api/net`'s rendering |
 | `net_txq_tests` | `test_net_txq.c` | the USB network's transmit queue against a fake endpoint (DD-070) |
+| `mac_random_tests` | `test_mac_random.c` | the MAC drawn from the RNG, and `/serial.txt` (DD-072) |
+| `hr_log_tests` | `test_hr_log.c` | the high-rate log on a fake card and IMU, its tasks run by hand (`test/fake_rtos`, DD-077) |
+| `flight_sim_tests` | `test_flight_sim.c` | the bench flight's atmosphere and profile, and its hold on the channels (DD-078) |
 | `flight_log_tests` | `test_flight_log.c` | the flight log's binary records and the CSV they render as (DD-062) |
 | `log_plan_tests` | `test_log_plan.c` | the three logging plans, in time order (DD-064) |
 | `pressure_trace_tests` | `test_pressure_trace.c` | the ring `/api/pressure/trace` reads (DD-063) |
@@ -380,7 +383,7 @@ The `test_REV*`, `test_FLT_LAUNCH_03_backdate`, `test_BRN_INT_05_*` and
 | test_FLT_LOG_07_the_three_logging_plans | FLT-LOG-07 | The three logging plans on one flight |
 | test_BRN_INT_01..04 | FLT-BROWN-01, FLT-BROWN-02 | Pad marker after 10 s, once; a descending board rejoins its flight; a pad power-on calibrates |
 
-## Closed-Loop Tests (test_closedloop.c) — 25 tests, 28+ flights
+## Closed-Loop Tests (test_closedloop.c) — 31 tests, 28+ flights
 
 Physics simulation with pyro deployment feedback. Pyro fires change descent rate.
 
@@ -421,3 +424,17 @@ down to fit it.
 | test_FLT_MACH_02_fast_subsonic_flight_not_locked | FLT-MACH-02 | A fast subsonic flight is never locked |
 | test_FLT_DESC_01_phase_without_pyros | FLT-DESC-01 | Phase follows the rate with no drogue configured |
 | test_FLT_DESC_02_ballistic_reaches_landed | FLT-DESC-02 | A flight that deployed nothing still lands |
+
+### High Flights (`flight_sim.h` profiles, DD-078, DD-079)
+
+The profile does not answer the channels: it is the flight the board flies on
+the bench. `fly_profile()` flies one through the flight software at 1 ms.
+
+| Test | Requirement | Verifies |
+|------|-------------|----------|
+| test_SIM_02_the_flight_software_flies_a_30_km_profile | SIM-02, FLT-AIR-01 | Mach 2, apogee on time, main at 300 m, not forced |
+| test_SIM_02_a_9_km_supersonic_flight_with_sensor_noise | FLT-MACH-02 | Inside the lockout's envelope with 3 Pa of noise: apogee within 3 s |
+| test_SIM_02_30_km_with_sensor_noise_finds_apogee | — | Ignored while HA-1 is open (`docs/high_altitude_flight.md`) |
+| test_FLT_AIR_01_air_scale_is_the_pad_air_rate | FLT-AIR-01 | `pp_air_scale()` against the profile's own atmosphere, two pads |
+| test_FLT_AIR_01_a_failed_drogue_is_seen_at_30_km | FLT-AIR-01, FLT-EMRG-01 | 90 m/s of pad air still forces the main |
+| test_FLT_AIR_01_a_high_pad_flies_20_km | FLT-AIR-01 | From 1500 m, the main within 20 m of its trigger |

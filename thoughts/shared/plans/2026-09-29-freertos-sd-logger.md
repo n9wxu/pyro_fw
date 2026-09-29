@@ -48,12 +48,17 @@ a push.
 - [x] B. FreeRTOS in the build; the superloop as the flight task; net and
       Lua as tasks; the flash window, core1 units and the kill removed;
       flash operations under the lockout (DD-073, DD-074) -- 8974faa
-- [ ] C. Bench: all five boards, G4 checks, a soak with no lockup
-- [ ] D. `mk1c_sd`: SPI0, the SD driver, FatFs, the storage layer, SD for
-      every file, config mirrored into littlefs (DD-075, DD-076)
-- [ ] E. LSM6DS3 driver; the high-rate logger on the SD (DD-077)
+- [x] C. Bench: the four reachable boards, G4 checks, no lockup (the first
+      MK1C, with a drawn MAC, is not reachable: macOS makes no interface)
+- [x] D. `mk1c_sd`: SPI0, the SD driver, FatFs, the storage layer, SD for
+      every file, config mirrored into littlefs (DD-075, DD-076) -- b244b34,
+      c4d196e; the card itself has not come up (SPI-1)
+- [x] E. LSM6DS3 driver; the high-rate logger on the SD (DD-077) -- f5bbaa9;
+      the IMU verified, the log on a card waits on SPI-1
 - [ ] F. A bench flight source for high-altitude flights; measure the SD
-      and the logger to their limits
+      and the logger to their limits. The source is done (DD-078) and found
+      DD-079 and HA-1; the SD's limits and the logger over a flight wait on
+      the card (SD-1)
 - [ ] G. RAW-INT for the flight log on boards without an SD, if time allows
 
 ## Progress notes
@@ -68,3 +73,13 @@ a push.
   image was recovered by `picotool reboot -u -f --vid 0x2E8A --pid 0x4002
   --bus 2 --address <USB Address from ioreg -r -d 1 -n <node>>` in its alive
   window, then picotool load of bootloader and app.
+- 2026-09-29, F: the bench flight on MK1C-SD. 1 km: drogue at apogee, main at
+  300 m, LANDED, no overrun or refusal. 10 km: Mach lock set in the boost,
+  released at 35.5 s, apogee on time. 30 km, first flight: the lock never
+  released and the drogue fired from the fallback at 150 m; second flight:
+  released 12 s before apogee. The host, with sensor noise, maps the limit
+  (docs/high_altitude_flight.md, HA-1): the lock does not release above
+  about 15 km at MK1C's 3 Pa, 22 km at 1.2 Pa. Before that the host found the
+  descent ladder forcing the main at 29 km under a working drogue: fixed by
+  judging rates in the pad's air (DD-079). The card still resets in ACMD41,
+  so no high-rate log has been written on hardware.

@@ -312,10 +312,10 @@ A second chip select takes the spare, GPIO22 on J1.6; J1.4 and J1.5 are the
 console UART, pulled up by R1 and R2. SPI0 has no other user: the MS5607 is on
 I2C1 and the flash on QSPI.
 
-No firmware drives it yet. Lua reaches these pads only as SIO or PIO1
-(`src/lua/lua_pio.pio`), so a device here needs a PIO SPI program on the same
-pins, or a C driver that claims the pads from Lua and sets `GPIO_FUNC_SPI`.
-The second does not reach the sensor's bus: SPI0 is not I2C1.
+On MK1C Lua reaches these pads only as SIO or PIO1 (`src/lua/lua_pio.pio`).
+The `mk1c_sd` variant gives them to SPI0 and a C driver instead, with Lua
+off (`../mk1c_sd/THEORY_OF_OPERATION.md`, DD-075). SPI0 is not I2C1, so
+nothing there touches the sensor's bus.
 
 The test board wired on 2026-09-28 carries an SD card on J3, its CS on GPIO21,
 and an LSM6DS3 on the same SCK, MOSI and MISO, its CS on GPIO22. It needs:

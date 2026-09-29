@@ -13,6 +13,7 @@ up, and its code points there instead of carrying the explanation:
 | [`mk1a`](mk1a/THEORY_OF_OPERATION.md) | bare RP2040, 16 MB flash | a switched high side per channel, one shared low side |
 | [`mk1b`](mk1b/THEORY_OF_OPERATION.md) | bare RP2040 on the stock `pico` header, 2 MB of flash used | the same topology on AP2192 high-side switches |
 | [`mk1c`](mk1c/THEORY_OF_OPERATION.md) | bare RP2040, 16 MB flash | a TPS259570 eFuse armed by a charge pump; a low side per channel |
+| [`mk1c_sd`](mk1c_sd/THEORY_OF_OPERATION.md) | MK1C, with J3 and J1.6 as an SPI bus: an SD card and an LSM6DS3 | MK1C's |
 | [`reference`](reference/THEORY_OF_OPERATION.md) | template (`pico`) | safe stubs: no continuity, refuses to fire |
 | [`sim`, `sim_mk1a/b/c`](sim/THEORY_OF_OPERATION.md) | none (`host`) | a fixture, or the real board file against a model |
 
@@ -54,7 +55,7 @@ targets. `boards/sim` is the worked example.
 | `pin_caps.h` | what each pin MAY become | `BOARD_PIN_CAPS`, topology, protection class, `LUA_PIN_LIST` |
 | `pyro_board.c` | `src/pyro.h` and `board_early_init()` | the pyro outputs are the board's to put down |
 | `board_info.c` | picotool's pin names | recommended |
-| `board.cmake` | pre-SDK settings | `PYRO_BOARD_KIND`, `BOARD_DISPLAY_NAME`, `PICO_BOARD`, flash geometry, `PYRO_HAS_LUA`, loop budget |
+| `board.cmake` | pre-SDK settings | `PYRO_BOARD_KIND`, `BOARD_DISPLAY_NAME`, `PICO_BOARD`, flash geometry, `PYRO_HAS_LUA`, `PYRO_HAS_SD`, `PYRO_HAS_BENCH_FLIGHT`, loop budget |
 | `CMakeLists.txt` | sources and target | must export `pyro_board` |
 | `sdk/<name>.h` | Pico SDK board header | only where the stock `pico` header does not describe the board |
 | `pressure_board.c` | `src/pressure_sensor.h` | only with two sensors on one bus, as MK1B |

@@ -1039,6 +1039,14 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
 #define DESC_DROGUE_CMS 3500 /* at or under 35 m/s, something is slowing us */
 #define DESC_MAIN_CMS 1000   /* at or under 10 m/s, the main is out */
 
+/* [FLT-AIR-01, DD-079] Every rate below is as the pad's air would give it: a
+ * drogue that settles at 25 m/s over the pad falls at 200 m/s at 30 km, and
+ * read raw that is a failed drogue and a main put out at apogee. */
+static int32_t pad_air_speed(const flight_context_t *ctx) {
+    float k = ctx->air_scale > 0.0f ? ctx->air_scale : 1.0f;
+    return (int32_t)((float)ctx->vertical_speed_cms * k);
+}
+
 /* The dwell is what keeps free fall from being mistaken for a canopy. A
  * rocket in free fall gains ~11.8 m/s over this window, which breaks the
  * tolerance at every rate a canopy could explain. The tolerance is a fraction
@@ -1052,7 +1060,8 @@ static state_event_t detect_ascent(flight_context_t *ctx, uint32_t now) {
 typedef enum { BAND_FAST = 0, BAND_DROGUE, BAND_MAIN } desc_band_t;
 
 static int32_t descent_rate(const flight_context_t *ctx) {
-    return ctx->vertical_speed_cms < 0 ? -ctx->vertical_speed_cms : ctx->vertical_speed_cms;
+    int32_t v = pad_air_speed(ctx);
+    return v < 0 ? -v : v;
 }
 
 static desc_band_t descent_band(int32_t rate) {
@@ -1074,7 +1083,7 @@ static int32_t desc_tolerance(int32_t rate) {
  * that from reading as a deployed main. */
 /* ts is sample time: the dwell is how long the samples have held steady. */
 static bool descent_settled(flight_context_t *ctx, uint32_t ts, desc_band_t *out) {
-    int32_t v = ctx->vertical_speed_cms;
+    int32_t v = pad_air_speed(ctx);
     if (v >= 0) {
         ctx->desc_band_since = 0;
         return false;
@@ -1136,7 +1145,7 @@ static bool band_exceeded(flight_context_t *ctx, uint32_t ts, int32_t ceiling) {
  * because it is the samples that must keep showing the rate. */
 static bool drogue_failing(flight_context_t *ctx, uint32_t now, uint32_t drogue_cmd_ms) {
     uint32_t ts = ctx->last_sample;
-    int32_t rate = ctx->vertical_speed_cms < 0 ? -ctx->vertical_speed_cms : 0;
+    int32_t rate = ctx->vertical_speed_cms < 0 ? descent_rate(ctx) : 0;
     /* A failed sensor's speed is no evidence [SNS-PRES-10, SNS-PRES-11]. */
     if (rate <= DESC_DROGUE_CMS || ctx->fit_suspect || now - drogue_cmd_ms < EMRG_DROGUE_GRACE_MS) {
         ctx->emrg_fail_since = 0;
@@ -1230,6 +1239,7 @@ static bool descent_sample(flight_context_t *ctx, uint32_t now, flight_state_t s
     ctx->filtered_pressure = pp_last_filtered_pa();
     ctx->prev_vertical_speed_cms = ctx->vertical_speed_cms;
     ctx->vertical_speed_cms = sample_speed(ctx, &sample);
+    ctx->air_scale = pp_air_scale(ctx->filtered_pressure, ctx->ground_pressure);
     take_fit(ctx, &sample);
     buf_add(ctx, sample.timestamp_ms - ctx->launch_time, ctx->filtered_pressure, sample.altitude_cm, st);
     note_stuck(ctx, &sample);

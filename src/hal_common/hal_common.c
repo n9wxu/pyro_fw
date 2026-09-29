@@ -51,6 +51,9 @@
 #include "log_plan.h"
 #include "pressure_trace.h"
 #include "loop_period.h"
+#if PYRO_HAS_BENCH_FLIGHT
+#include "bench_flight.h"
+#endif
 #include <math.h>
 #include <string.h>
 
@@ -242,7 +245,13 @@ static bool pres_plausible(const pressure_reading_t *r) {
  * [SNS-PRES-08] The reading's time is the driver's: never the loop's, which a
  * flash stall between the conversion and the read would make late by the
  * whole stall. */
-static void pres_append(pres_task_t *p, const pressure_reading_t *r) {
+static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
+    pressure_reading_t rb = *r_in;
+    const pressure_reading_t *r = &rb;
+#if PYRO_HAS_BENCH_FLIGHT
+    /* [SIM-02] After the trace took the sensor's reading. */
+    bench_flight_pressure(rb.time_us, flight_get_state() == LANDED, &rb.pressure_pa);
+#endif
     uint64_t stamp_us = r->time_us;
     uint32_t now_ms = (uint32_t)(stamp_us / 1000u);
     p->last.pressure_pa = r->pressure_pa;
@@ -576,11 +585,43 @@ void hal_pyro_sample(void) {
     pyro_sample();
 }
 
+#if PYRO_HAS_BENCH_FLIGHT
+/* [SIM-03] Good until fired, open after, as a lit charge. */
+static void bench_get(uint8_t channel, hal_continuity_t *out) {
+    bool fired = bench_flight_fired(channel);
+    *out = (hal_continuity_t){.raw_adc = fired ? 0 : 1000, .good = !fired, .open = fired, .shorted = false};
+}
+
+static void bench_fire(uint8_t channel) {
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+    bench_flight_fire(channel, now);
+    const flight_context_t *fc = flight_get_context();
+    char note[40];
+    snprintf(note, sizeof(note), "pyro%u fire: bench flight", (unsigned)channel);
+    hal_log_mock(fc ? flight_elapsed_ms(fc, now) : now, note);
+    char line[56];
+    snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
+    hal_telemetry_send(line);
+}
+#endif
+
 void hal_pyro_get(uint8_t channel, hal_continuity_t *out) {
+#if PYRO_HAS_BENCH_FLIGHT
+    if (bench_flight_mocked()) {
+        bench_get(channel, out);
+        return;
+    }
+#endif
     pyro_ch(channel)->get(channel, out);
 }
 
 void hal_pyro_fire(uint8_t channel) {
+#if PYRO_HAS_BENCH_FLIGHT
+    if (bench_flight_mocked()) {
+        bench_fire(channel);
+        return;
+    }
+#endif
     pyro_ch(channel)->fire(channel);
 }
 void hal_pyro_update(uint32_t now_ms) {
@@ -593,9 +634,17 @@ void hal_pyro_update(uint32_t now_ms) {
     pyro_update(now_ms);
 }
 bool hal_pyro_is_firing(void) {
+#if PYRO_HAS_BENCH_FLIGHT
+    if (bench_flight_mocked())
+        return bench_flight_firing(to_ms_since_boot(get_absolute_time()));
+#endif
     return pyro_is_firing();
 }
 bool hal_pyro_fault(uint8_t channel) {
+#if PYRO_HAS_BENCH_FLIGHT
+    if (bench_flight_mocked())
+        return false;
+#endif
     return pyro_ch(channel)->fault(channel);
 }
 

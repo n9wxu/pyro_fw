@@ -52,6 +52,13 @@ if(PYRO_HAS_SD)
         ${CMAKE_CURRENT_LIST_DIR}/../sd)
 endif()
 
+# A flight on the bench [DD-078]: the profile's pressure in the sensor's
+# place, and the channels mocked.
+if(PYRO_HAS_BENCH_FLIGHT)
+    target_compile_definitions(pyro_hal_common PUBLIC PYRO_HAS_BENCH_FLIGHT=1)
+    target_sources(pyro_hal_common PRIVATE ../flight_sim.c ../bench_flight.c)
+endif()
+
 # A panic stamps the watchdog scratch and stops, without printing: see
 # pyro_panic() in src/rtos/rtos_tasks.c.
 target_compile_definitions(pyro_hal_common PUBLIC PICO_PANIC_FUNCTION=pyro_panic)

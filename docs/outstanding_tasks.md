@@ -17,13 +17,13 @@ recorded.
 |---|---|---|
 | — | [How every task runs](#how-every-task-runs) | read first |
 | 1 | [Commit the work](#1-commit-the-work) | done; G4 last ran 2026-09-28, on 2.1.702 |
-| 2 | [Decisions](#2-decisions) | you |
+| 2 | [Decisions](#2-decisions) | you; **HA-1: the Mach lockout above 9 km** |
 | 3 | [Safety fixes](#3-safety-fixes) | done |
 | 4 | [The pressure chain and the Mach lockout](#4-the-pressure-chain-and-the-mach-lockout) | done; T5's cost over its limit (T5-C) |
 | 5 | [Other code defects](#5-other-code-defects) | done, except C10, C6 and U6: decided, not yet built |
 | 5a | [No sleeps](#5a-no-sleeps-dd-053) | done |
 | 5b | [MK1C firing path](#5b-mk1c-firing-path) | **done in code** (DD-056); the bench fire is deferred (section 9) |
-| 6 | [Bench checks](#6-bench-checks) | a person or equipment, the ground test's (GT-1) among them; ID-1, two MK1Cs share one identity: fixed on the bench, **your decision** for later MK1Cs; SPI-1, the J3 SPI test board |
+| 6 | [Bench checks](#6-bench-checks) | a person or equipment, the ground test's (GT-1) among them; ID-1, two MK1Cs share one identity: fixed on the bench, **your decision** for later MK1Cs; SPI-1, the J3 SPI test board: the IMU works, the card does not come up; SD-1, the card's limits and the logger over a bench flight |
 | 7 | [Board changes](#7-board-changes) | hardware design; **B-U5: MK1B cannot sense continuity**; B-BZ: MK1B's buzzer disturbs its sensor |
 | 8 | [Documentation and housekeeping](#8-documentation-and-housekeeping) | every document reviewed 2026-09-28; H3: the defects and unmet requirements the review found |
 | 9 | [Deferred, and not planned](#9-deferred-and-not-planned) | F1's bench fire; false-launch reversion |
@@ -145,6 +145,7 @@ are still yours; their tasks wait.
 | B-U5 | MK1B until U5 is changed | **Decided 2026-09-27: leave it.** The firmware already assumes the base AP2192; an MK1B that owns its pyros reads every channel shorted and cannot fire until its U5 is refitted (section 7). | — |
 | T5-C | The fit's cost | **Decided 2026-09-27: leave it.** 2.9 ms on the MS5607 boards against T5's 1.6 ms limit; the loop holds with 0 overruns. | — |
 | N20 | Shared littlefs buffers | **Adopted:** refuse file GETs while the flight log is open. It can be tested on the host, the log can be read after landing, and WEB-API-08 already refuses every writer in flight. | N20 task |
+| HA-1 | **The Mach lockout above 9 km** | **Open, found 2026-09-29 by the bench flight (DD-078).** Above the lockout's 9 km envelope its release cannot see 0.58 g through the fit's noise, the lock holds, and apogee comes from the fallback 100-190 m above the pad: on MK1C's 3 Pa of noise from about 15 km, on the datasheet's 1.2 Pa from about 22 km. On the bench MK1C-SD a 30 km profile fired drogue and main together at 150 m once in two flights. `docs/high_altitude_flight.md` has the evidence and the options: A, a longer fit for the release as the pressure falls, with E, a fallback on a descent held for seconds rather than on p > p_flag, is the recommendation. `test_SIM_02_30_km_with_sensor_noise_finds_apogee` reports it ignored until then. | HA-1 task |
 
 ---
 
@@ -1292,7 +1293,8 @@ resolution doc.
 | N20 | No file served while the log is written | in test mode, once a chamber pump-down declares a launch, `GET /www/app.js` answers 423 and `/api/status` 200; after LANDED the log reads back whole | test mode, the chamber |
 | — | The arming path independent of software | with the mechanical disconnect in, a commanded ground-test FIRE puts no current through a dummy load, on each board | a dummy load and a meter. The Mach prompt asks for this path; the operator narrative uses a mechanical disconnect, but no document says what it breaks |
 | ID-1 | **The second MK1C shares the first's identity** | **Done 2026-09-29:** the second MK1C carries `/serial.txt` 02373331FF2A and answers at 192.168.42.1 beside the first at 192.168.222.1, both with TTL 255; `register_board.py` now keys a record by hw_id and MAC (it had merged the two) and lists shared flash ids. **Found 2026-09-28.** Flashed blank with 2.1.703, it enumerates as 02373331FFDE, the first MK1C's serial, and macOS gives it no network interface. Neither board has a `/serial.txt`: the XT25F128F ids match (`boards/mk1c/THEORY_OF_OPERATION.md`, "Known limits"). Fix on the bench: unplug the first MK1C, `POST /api/serial` 12 hex digits (02 first) to the second at 192.168.222.1, reboot it, plug the first back in, run `register_board.py`. Pass: both answer, on two subnets. **Your decision** for later MK1Cs: provision each with a serial, or have the firmware make one at first boot (the ring oscillator's random bits) and keep it in `/serial.txt` | your decision |
-| SPI-1 | The J3 SPI test board: an SD card and an LSM6DS3 (`boards/mk1c/THEORY_OF_OPERATION.md`, "J3 as an SPI port") | the LSM6DS3 reads WHO_AM_I 0x69 with I2C_disable set; the card answers CMD0 and initialises; `flash_refusals` 0 and no loop overrun while both run; the MS5607's scatter on the trace unchanged while the card writes | a driver, PIO or SPI0, first; the second MK1C (192.168.42.1) |
+| SPI-1 | The J3 SPI test board: an SD card and an LSM6DS3 (`boards/mk1c_sd/THEORY_OF_OPERATION.md`) | the LSM6DS3 reads WHO_AM_I 0x69 with I2C_disable set; the card answers CMD0 and initialises; `flash_refusals` 0 and no loop overrun while both run; the MS5607's scatter on the trace unchanged while the card writes | **Half done 2026-09-29** on 02373331FF2A (MK1C-SD image): the LSM6DS3 reads at 1.66 kHz with no overrun. The card answers CMD0, CMD8 and CMD59, then resets 27-41 ms into ACMD41 whatever the CRC setting or poll interval, and never initialises: the card's supply is the suspect (power the module from 5 V if it has a regulator, or 10-47 uF and 100 nF at the card). `POST /api/sd/init` retries without a reboot. |
+| SD-1 | The SD card's limits, and the high-rate log over a flight | `/api/sd/bench` across chunk sizes, then `BOARD_SD_SPI_HZ` raised toward 25 MHz; a bench flight (`support/bench_flight.py`) with `/api/hr` showing no dropped records and no IMU overrun, decoded by `support/hr_log.py` | SPI-1's card |
 
 The Mach lockout can't be checked in a chamber, because it needs supersonic
 flow. `mach_tests` is its only check short of a flight.

@@ -559,6 +559,127 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-079: Descent Rates Are Judged In The Pad's Air
+- **Decision:** the descent bands (a main at 10 m/s or less, a drogue at
+  35 m/s or less) and the emergency ladder's evidence read the descent rate
+  scaled to what the same canopy would give in the pad's air:
+  `pp_air_scale()` multiplies the formula's speed by the atmosphere's slope
+  over the formula's, and by sqrt(rho / rho_pad), with the 1976 US Standard
+  Atmosphere's temperature at each pressure. It is 1 at the pad, 0.95 1 km
+  above a sea-level pad, and 0.22 at 30 km.
+- **Why:** found by the first 30 km profile the bench flew (DD-078). A
+  parachute's terminal rate goes as 1/sqrt(rho): a drogue that settles at
+  25 m/s over the pad falls at about 200 m/s at 30 km. Read raw, that was a
+  failed drogue by FLT-EMRG-01's test, and the ladder put the main out at
+  29 km, four seconds after apogee. The same flight with a drogue giving
+  90 m/s of pad air still forces the main near apogee: the ladder still acts
+  up there, on a rate no drogue explains at that height.
+- **Why the formula's slope too:** the altitude formula,
+  h = 44330 (1 - (p/p0)^(1/5.2561)), is the troposphere's. Above 11 km the
+  air stops cooling and the formula reads short: 25.3 km at a true 30 km, and
+  a speed 0.54 of the true one. The scale takes the true one first. The
+  formula itself, and the 8000 m clamp on altitude (SNS-ALT-02), are
+  unchanged.
+- **Pinned by** `test_FLT_AIR_01_air_scale_is_the_pad_air_rate` against the
+  bench flight's own atmosphere, and by closed-loop flights of 30 km from a
+  sea-level pad and 20 km from a 1500 m pad.
+- **Not changed:** a pad above sea level still reads its AGL triggers about
+  3 % low (the formula assumes 288.15 K at the pad; at 1500 m the standard
+  gives 278.4 K): a main set for 300 m fires at 290 m.
+
+### DD-078: A Flight On The Bench
+- **Decision:** on a board built with `PYRO_HAS_BENCH_FLIGHT` (MK1C and
+  MK1C-SD), `POST /api/sim/flight` flies a profile (`src/flight_sim.h`):
+  on the pad, a constant-acceleration boost sized for the apogee asked for,
+  a ballistic coast, a drogue whose rate scales as sqrt(rho0 / rho), a main
+  from its altitude, landing. Its pressure, from the 1976 US Standard
+  Atmosphere to 32 km, replaces each reading after the pressure trace has
+  recorded the sensor's, so the flight software, the flight log and the
+  high-rate log fly it on the real board while the IMU logs the board as it
+  sits. `GET /api/sim` follows it; `support/bench_flight.py` drives one.
+- **Guarded:** it starts only from PAD_IDLE with test mode on (USB-08), and
+  runs on the flight task through `flight_call()`. From its start until the
+  board reboots, every fire is mocked and logged as one; a mocked fire reads
+  energised for 500 ms, as MK1B's pulse does, so the machine records it as
+  fired, and the channel reads open after it, as a lit charge does. The
+  channels read good until fired, so the whole plan flies with nothing
+  connected. A flight stopped part-way hands the machine the pad's pressure
+  mid-descent, and a main set by altitude would fire into it, which is why a
+  stop does not give the channels back.
+- **Why not a replay:** the logger has to be judged over a flight the board
+  has not flown, to the altitudes the user asked about ("the full high-rate
+  logger works over high altitude flights"), and the chamber reaches none of
+  them. A profile is short to describe and repeats exactly.
+- **What it found:** DD-079, and that the Mach lockout does not release
+  above its 9 km envelope, so a flight there gets its drogue from the
+  fallback, 100-190 m above the pad (`docs/high_altitude_flight.md`, task
+  HA-1, open).
+
+### DD-077: The High-Rate Log On The SD Card
+- **Decision:** on MK1C-SD, an LSM6DS3 on the SD card's bus (±16 g,
+  ±2000 dps, both at 1.66 kHz into its FIFO in continuous mode) and a
+  high-rate log on the card (`src/sd/hr_log.h`): every IMU set, every
+  pressure and temperature conversion as the pressure trace records it, and a
+  snapshot of the flight ten times a second. Two tasks at P on core1: a
+  reader every 10 ms drains the FIFO and the conversions into a 32 kB
+  lock-free ring, and a writer empties it onto the card in 4 kB stages. The
+  flight task is not on its path.
+- **When:** while the flight log runs, launch to landing, and on the bench
+  from `POST /api/hr/start`. Between flights the ring keeps its newest half,
+  so a log opens with the second before launch.
+- **Power cuts:** the next file is created and preallocated contiguously on
+  the pad (`f_expand`), so launch waits on no FAT search; it is
+  `logs/next.bin` until it closes and is renamed `logs/hrNNNN.bin`, and one
+  a power cut left is renamed at the next boot. Each record carries a
+  CRC-16 of its payload, and the log ends at the first that does not match.
+- **Why a card:** 1.66 kHz of six 16-bit values is 20 kB/s before framing;
+  a 30 km flight is ten minutes, 12 MB. littlefs on the internal flash has
+  neither the room nor the write rate, and its erases stop the other core
+  (DD-074).
+- **No interrupt pin:** none reaches the MCU, so the reader polls. The FIFO
+  holds 682 sets, 410 ms at 1.66 kHz, so a reader late by less than that
+  loses nothing, and the FIFO says when it did (FIFO_OVER_RUN). Reads take
+  whole sets only, aligned by FIFO_PATTERN (AN4650, page 88).
+- **Decoded by** `support/hr_log.py`; host-tested by `test_hr_log.c`.
+
+### DD-076: Every File Through vfs.h, The SD Card First
+- **Decision:** every file the firmware opens goes through `src/vfs.h`,
+  which routes a path to FatFs on the SD card while one is mounted, and to
+  littlefs otherwise. The board's identity (`/serial.txt`) and the pad
+  marker stay in littlefs on every board. FatFs is R0.16 with its two
+  patches (`lib/fatfs`), with exFAT, long names, `f_expand` and its
+  reentrant lock, over this firmware's SD driver (DD-075).
+- **Configuration:** `config.ini`, `pins.ini`, `beep.ini` and
+  `lua_user.lua` are the card's, and each is copied into littlefs whenever
+  the two differ (`vfs_mirror()`, at mount and after every write), so a board
+  whose card is missing or unreadable boots with the configuration it last
+  had. A blank card is seeded from littlefs at mount. A file the card lacks
+  is read from littlefs, so a blank card still serves the web pages.
+- **Why:** at the user's direction: "Use the SD for all files, but copy the
+  SD card configuration files to the littlefs storage when they are
+  different."
+- **Every call may block** on the store's lock; the flight task reads the one
+  file it needs through `hal_fs_read_cached()` (DD-074) and writes through
+  rings the storage task empties.
+
+### DD-075: An SD Card And An IMU On MK1C's J3
+- **Decision:** a board variant, `boards/mk1c_sd`, gives J3 (GPIO18-21) to
+  SPI0 -- SCK 18, MOSI 19, MISO 20, the card's select 21 -- and J1.6
+  (GPIO22) to the LSM6DS3's select. Lua is off on it: J3 was Lua's. The SD
+  card runs in SPI mode with CRC on (CMD59) at 12.5 MHz, the LSM6DS3 at
+  10 MHz, and each takes the bus for one transaction at a time, so a card's
+  busy wait gives the bus back between polls (`src/sd/spi_bus.h`,
+  `src/sd/sd_card.h`).
+- **Waits:** every one bounded by the SD specification's limits -- reads
+  100 ms, write busy 250 ms, 500 ms on SDXC (Physical Layer Simplified
+  Specification 6.00, PDF page 97) -- and the card's initialisation by 1 s.
+- **Found on the bench, 2026-09-29:** the wire-wrapped card resets 27 to
+  41 ms into ACMD41 whatever the CRC setting or the poll interval: its
+  answer turns to 0xFF and CMD0 starts over. The IMU on the same bus reads
+  cleanly at 1.66 kHz. The card's supply is the suspect; `POST /api/sd/init`
+  brings it up again without a reboot, with the init's R1s, OCR and ACMD41
+  poll history on `/api/sd`.
+
 ### DD-074: A Flash Operation Parks The Other Core From A Task Raised To T
 - **Decision:** any task but the flight task may write flash, one operation
   at a time, through `flash_op()` (`src/flash_op.h`): the caller raises

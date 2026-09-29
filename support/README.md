@@ -22,6 +22,8 @@ extension installs it.
 | `pressure_trace.py` | Every pressure conversion a board makes, judged for the faults a sample rate hides (DD-063) |
 | `noise_baseline.py` | A still board's pressure noise and pad speed noise, from `/api/status` |
 | `register_board.py` | Record the attached boards in `boards/BOARD_REGISTRY.json` and report subnet collisions |
+| `bench_flight.py` | Fly a profile on a board through its flight software, channels mocked (DD-078) |
+| `hr_log.py` | Decode a high-rate log from the SD card into CSV (DD-077) |
 | `prove_core0.py` | Prove from the linked ELF that no flight-critical root can reach a wait core1 can hold |
 | `trace_check.py` | Check the requirements, decisions, traceability and living documents against each other and the code |
 | `wait_check.py` | Fail if any source in `src/` or `boards/` sleeps or busy-waits (DD-053) |
@@ -151,6 +153,23 @@ not the sensor.
 
 `test/web/hw_ui_check.js <board-ip>` runs the web UI's read-only checks on a
 board.
+
+### A flight on the bench
+
+```bash
+python3 support/bench_flight.py <board-ip>                       # 3 km, the board's defaults
+python3 support/bench_flight.py <board-ip> --apogee 30000 --boost 4
+python3 support/hr_log.py --fetch <board-ip> hr0001              # the high-rate log after it
+```
+
+`bench_flight.py` turns test mode on, starts the profile (`POST
+/api/sim/flight`), and follows `/api/sim` and `/api/status` until the board
+lands. It fails a flight whose drogue is not within 4 s of the profile's
+apogee, whose main did not fire, or during which the loop overran or a flash
+operation was refused. From the start every fire on the board is mocked until
+it reboots, and the board must be rebooted to fly again. `/api/sim` also
+reports the newest pressure fit and the Mach lock, for a flight that goes
+wrong.
 
 ## Board Registry
 

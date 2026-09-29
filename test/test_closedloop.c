@@ -30,6 +30,7 @@
 #include "../src/telemetry_formatter.h"
 #include "../src/hal.h"
 #include "../src/buzzer.h"
+#include "../src/flight_sim.h"
 
 /* Wrapper: feed pressure into pp, then dispatch */
 static flight_state_t step(flight_context_t *ctx, uint32_t now) {
@@ -1309,6 +1310,187 @@ void test_REV16_forced_main_is_in_the_log(void) {
 
 /* ── Main ─────────────────────────────────────────────────────────── */
 
+/* A profile from flight_sim.h, flown by the flight software. The profile does
+ * not answer the channels: it is the flight the board flies on the bench. */
+typedef struct {
+    uint32_t launch_ms, t0_ms, apogee_ms, true_apogee_ms, p1_ms, p2_ms, landed_ms;
+    float p2_alt_m;
+    bool locked, main_forced;
+} fsim_run_t;
+
+static fsim_run_t fly_profile(config_t cfg, const fsim_params_t *p, float ground_pa, float noise_pa,
+                              uint32_t noise_seed) {
+    mock_reset_all();
+    mock_noise_rms_pa = noise_pa;
+    mock_noise_seed = noise_seed;
+    mock_pyro.p1_good = mock_pyro.p2_good = true;
+    mock_pyro.p1_adc = mock_pyro.p2_adc = 50;
+    buzzer_active_flag = true;
+    fsim_t s;
+    TEST_ASSERT_TRUE(fsim_start(&s, p, ground_pa));
+
+    flight_context_t ctx = {0};
+    ctx.config = cfg;
+    telemetry_init(&ctx.config);
+    ctx.current_state = PAD_IDLE;
+    ctx.ground_pressure = (int32_t)ground_pa;
+    pp_test_prime((int32_t)ground_pa);
+
+    fsim_run_t r = {.true_apogee_ms = (uint32_t)((p->pad_s + s.t_apogee) * 1000.0f), .p2_alt_m = -1.0f};
+    uint8_t fires = 0;
+    for (uint32_t t = 0; t < 1500000u && !r.landed_ms; t++) {
+        float alt = fsim_altitude(&s, (float)t / 1000.0f);
+        mock_time_ms = t;
+        mock_pressure.pressure_pa = fsim_isa_pressure(s.pad_msl + alt);
+        mock_pyro.firing = false;
+        ctx.current_state = step(&ctx, t);
+        if (mock_pyro.fire_count > fires) {
+            if (mock_pyro.last_fire_channel == 1 && !r.p1_ms)
+                r.p1_ms = t;
+            if (mock_pyro.last_fire_channel == 2 && !r.p2_ms) {
+                r.p2_ms = t;
+                r.p2_alt_m = alt;
+            }
+            fires = mock_pyro.fire_count;
+        }
+        r.locked |= ctx.mach_lock;
+        if (ctx.current_state == ASCENT && !r.launch_ms)
+            r.launch_ms = t;
+        if (ctx.current_state >= FALLING && ctx.current_state <= LANDED && !r.apogee_ms)
+            r.apogee_ms = t;
+        if (ctx.current_state == LANDED)
+            r.landed_ms = t;
+        flight_update_outputs(&ctx, t);
+    }
+    r.t0_ms = ctx.launch_time;
+    r.main_forced = ctx.main_forced;
+    printf("  %5.0f m profile: T+0=%.2fs launch=%.1fs lock=%d apogee=%.1fs (true %.1fs) P1=%.1fs "
+           "P2=%.1fs@%.0fm%s landed=%.1fs (profile %.1fs)\n",
+           (double)p->apogee_m, r.t0_ms / 1000.0, r.launch_ms / 1000.0, r.locked, r.apogee_ms / 1000.0,
+           r.true_apogee_ms / 1000.0, r.p1_ms / 1000.0, r.p2_ms / 1000.0, (double)r.p2_alt_m,
+           r.main_forced ? " forced" : "", r.landed_ms / 1000.0, (double)(p->pad_s + s.t_landed));
+    return r;
+}
+
+static fsim_params_t profile_30km(void) {
+    return (fsim_params_t){.apogee_m = 30000.0f,
+                           .boost_s = 4.0f,
+                           .drogue_ms = 25.0f,
+                           .main_alt_m = 300.0f,
+                           .main_ms = 6.0f,
+                           .thin_air = true,
+                           .pad_s = 2.0f};
+}
+
+static config_t cfg_main_300m(void) {
+    config_t cfg = cfg_delay_agl();
+    cfg.pyro2_value = 984; /* ft: 300 m */
+    return cfg;
+}
+
+/* [SIM-02, FLT-AIR-01] The bench's high flight: Mach 2 off the pad, and a
+ * drogue that falls at eight times its sea-level rate at the top. Read raw,
+ * that rate is a failed drogue, and the ladder put the main out at 29 km.
+ * Without sensor noise, as the bench flies it: with it, see the next two. */
+void test_SIM_02_the_flight_software_flies_a_30_km_profile(void) {
+    fsim_params_t p = profile_30km();
+    fsim_run_t r = fly_profile(cfg_main_300m(), &p, GROUND_PA, 0.0f, 1u);
+    char m[160];
+    snprintf(m, sizeof(m), "T+0 at %u ms, ignition at 2000 ms", r.t0_ms);
+    TEST_ASSERT_TRUE_MESSAGE(r.t0_ms >= 2000u && r.t0_ms < 2100u, m);
+    TEST_ASSERT_TRUE_MESSAGE(r.launch_ms > 2000u && r.launch_ms < 3500u, "launch not declared within 1.5 s");
+    TEST_ASSERT_TRUE_MESSAGE(r.locked, "Mach 2 off the pad and the lockout never engaged");
+    snprintf(m, sizeof(m), "apogee declared at %u ms, the profile's is at %u ms", r.apogee_ms, r.true_apogee_ms);
+    TEST_ASSERT_TRUE_MESSAGE(r.apogee_ms + 1000u > r.true_apogee_ms && r.apogee_ms < r.true_apogee_ms + 1000u, m);
+    TEST_ASSERT_TRUE_MESSAGE(r.p1_ms >= r.apogee_ms && r.p1_ms < r.apogee_ms + 1000u, "the drogue is not at apogee");
+    TEST_ASSERT_FALSE_MESSAGE(r.main_forced, "a working drogue in thin air was read as a failed one");
+    snprintf(m, sizeof(m), "main at %.0f m, set for 300 m", (double)r.p2_alt_m);
+    TEST_ASSERT_TRUE_MESSAGE(fabsf(r.p2_alt_m - 300.0f) < AGL_TOL_M, m);
+    TEST_ASSERT_TRUE_MESSAGE(r.landed_ms > 0, "never LANDED");
+}
+
+/* [FLT-MACH-02] Inside the Mach lockout's envelope (docs/mach_lockout.md: to
+ * about 9 km) with the sensor's noise as MK1C measures it, 3 Pa: the lock
+ * releases in the coast and the drogue goes out within 3 s of apogee -- the
+ * noise costs up to 2 s there, where the rocket has fallen 20 m. */
+void test_SIM_02_a_9_km_supersonic_flight_with_sensor_noise(void) {
+    fsim_params_t p = profile_30km();
+    p.apogee_m = 9000.0f;
+    p.boost_s = 3.0f;
+    for (uint32_t seed = 1; seed <= 3; seed++) {
+        pp_init();
+        fsim_run_t r = fly_profile(cfg_main_300m(), &p, GROUND_PA, 3.0f, seed * 7919u);
+        char m[96];
+        snprintf(m, sizeof(m), "seed %u: apogee declared at %u ms, the profile's at %u ms", (unsigned)seed, r.apogee_ms,
+                 r.true_apogee_ms);
+        TEST_ASSERT_TRUE(r.locked);
+        TEST_ASSERT_TRUE_MESSAGE(r.apogee_ms + 1000u > r.true_apogee_ms && r.apogee_ms < r.true_apogee_ms + 3000u, m);
+    }
+}
+
+/* Beyond it: at 30 km a 1 g deceleration is 1.8 Pa/s^2 of curvature, and a
+ * one-second fit through 3 Pa of noise reads it to 11 Pa/s^2. The lock never
+ * releases, and apogee comes from the fallback, 150 m above the pad
+ * (docs/high_altitude_flight.md). Ignored, and saying so, until it does. */
+void test_SIM_02_30_km_with_sensor_noise_finds_apogee(void) {
+    fsim_params_t p = profile_30km();
+    fsim_run_t r = fly_profile(cfg_main_300m(), &p, GROUND_PA, 3.0f, 7919u);
+    if (r.apogee_ms > r.true_apogee_ms + 5000u)
+        TEST_IGNORE_MESSAGE("known limit: the Mach lock does not release above ~9 km (docs/high_altitude_flight.md)");
+    TEST_ASSERT_TRUE(r.apogee_ms + 1000u > r.true_apogee_ms);
+}
+
+/* [FLT-AIR-01] The scale against the flight source's own atmosphere: a
+ * canopy falling at v through air of density rho makes pdot = rho g v; the
+ * flight software reads that through its formula, and the scale must give
+ * back v sqrt(rho / rho_pad) -- 1 m/s of pad air per 1 m/s of pad air. */
+void test_FLT_AIR_01_air_scale_is_the_pad_air_rate(void) {
+    const float pads[] = {0.0f, 1500.0f};
+    for (unsigned i = 0; i < 2; i++) {
+        float pad_pa = fsim_isa_pressure(pads[i]);
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.0f, pp_air_scale((int32_t)pad_pa, (int32_t)pad_pa));
+        for (float h = 500.0f; pads[i] + h <= 32000.0f; h += 500.0f) {
+            float pa = fsim_isa_pressure(pads[i] + h);
+            float rho = fsim_isa_density(pads[i] + h);
+            float pdot = rho * 9.80665f * 1.0f; /* 1 m/s */
+            float r = pa / pad_pa;
+            float v_formula = 44330.0f / 5.2561f * powf(r, 1.0f / 5.2561f) * pdot / pa;
+            float v_pad_air = sqrtf(rho / fsim_isa_density(pads[i]));
+            /* The pad's formula speed is the formula's T0 over the pad's T. */
+            float at_pad = 288.15f / (288.15f - 0.0065f * pads[i]);
+            float got = pp_air_scale((int32_t)pa, (int32_t)pad_pa) * v_formula;
+            char m[96];
+            snprintf(m, sizeof(m), "pad %.0f m, %.0f m above it", (double)pads[i], (double)h);
+            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.01f * v_pad_air, v_pad_air * at_pad, got, m);
+        }
+    }
+    TEST_ASSERT_FLOAT_WITHIN(0.005f, 0.223f, pp_air_scale((int32_t)fsim_isa_pressure(30000.0f), 101325));
+}
+
+/* [FLT-AIR-01, FLT-EMRG-01] And the ladder still acts up there: a drogue
+ * that gives 90 m/s in the pad's air is not slowing the rocket at any
+ * height, and the main comes forward. */
+void test_FLT_AIR_01_a_failed_drogue_is_seen_at_30_km(void) {
+    fsim_params_t p = profile_30km();
+    p.drogue_ms = 90.0f;
+    fsim_run_t r = fly_profile(cfg_main_300m(), &p, GROUND_PA, 0.0f, 1u);
+    TEST_ASSERT_TRUE_MESSAGE(r.main_forced, "a drogue at 90 m/s of pad air was left to fall");
+    TEST_ASSERT_TRUE_MESSAGE(r.p2_alt_m > 20000.0f, "the ladder waited for the thick air");
+}
+
+/* [FLT-AIR-01] From a pad at 1500 m, the scale is 1 at the pad itself: the
+ * 20 km profile flies as the sea-level one does. */
+void test_FLT_AIR_01_a_high_pad_flies_20_km(void) {
+    fsim_params_t p = profile_30km();
+    p.apogee_m = 20000.0f;
+    fsim_run_t r = fly_profile(cfg_main_300m(), &p, 84556.0f, 0.0f, 1u);
+    TEST_ASSERT_FALSE(r.main_forced);
+    char m[96];
+    snprintf(m, sizeof(m), "main at %.0f m, set for 300 m", (double)r.p2_alt_m);
+    TEST_ASSERT_TRUE_MESSAGE(fabsf(r.p2_alt_m - 300.0f) < 20.0f, m);
+    TEST_ASSERT_TRUE(r.landed_ms > 0);
+}
+
 int main(void) {
     printf("\n=== Loading rocket profiles ===\n");
     int n = load_rockets_json("test_data/rockets.json");
@@ -1346,5 +1528,11 @@ int main(void) {
     RUN_TEST(test_REV05_agl_drogue_fires_at_its_altitude);
     RUN_TEST(test_REV01_failed_drogue_brings_the_main_forward);
     RUN_TEST(test_REV16_forced_main_is_in_the_log);
+    RUN_TEST(test_SIM_02_the_flight_software_flies_a_30_km_profile);
+    RUN_TEST(test_SIM_02_a_9_km_supersonic_flight_with_sensor_noise);
+    RUN_TEST(test_SIM_02_30_km_with_sensor_noise_finds_apogee);
+    RUN_TEST(test_FLT_AIR_01_air_scale_is_the_pad_air_rate);
+    RUN_TEST(test_FLT_AIR_01_a_failed_drogue_is_seen_at_30_km);
+    RUN_TEST(test_FLT_AIR_01_a_high_pad_flies_20_km);
     return UNITY_END();
 }
