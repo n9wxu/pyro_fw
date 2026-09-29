@@ -15,6 +15,8 @@ from a part. Cite the file and page, not memory.
 | `BY25Q64ES_Rev2.9_2024-10-29.pdf` | BYTe Semiconductor BY25Q64ES 64 Mbit 3 V serial flash (a larger part for MK1B's footprint) | Rev. 2.9, 2024-10-29 | byte-semi.com/wp-content/uploads/BY25Q64ES.pdf, fetched 2026-09-28 |
 | `GD25Q64E_Rev1.4_2021-07.pdf` | GigaDevice GD25Q64E 64 Mbit 3 V serial flash (fits MK1B's footprint, not its boot stage 2) | 1.4, 2021-07-06 | uploadcdn.oneyac.com, GD25Q64ESIGR.pdf, fetched 2026-09-28 |
 | `Winbond_code_storage_flash_selection_guide_2025.pdf` | Winbond code storage flash selection guide: every serial NOR part by package and voltage | 2025, dated 2025-02-18 | winbond.com, 2025-Product-Selection-Guide-Winbond-Code-Storage-Flash-Memory.pdf, fetched 2026-09-28 |
+| `AP2182_AP2192_DS31569_Rev10-2.pdf` | Diodes AP2182/AP2192 dual high-side switch, no output discharge (the part MK1B's U5 should be) | DS31569 Rev. 10-2, May 2016 | diodes.com/assets/Datasheets/AP2182_92.pdf, fetched 2026-09-28 |
+| `AP2182A_AP2192A_DS32193_Rev5-2.pdf` | Diodes AP2182A/AP2192A, with output discharge (MK1B's U5 as built) | DS32193 Rev. 5-2, 2022 | diodes.com/assets/Datasheets/AP2182A_92A.pdf, fetched 2026-09-28 |
 | `esp32-s3_datasheet_v2.2.pdf` | Espressif ESP32-S3 series (a candidate for a future board) | v2.2 | espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf, fetched 2026-09-28 |
 
 MS5607, page 3: conversion time at OSR 4096 is 7.40 / 8.22 / 9.04 ms (min /
@@ -87,3 +89,15 @@ Winbond selection guide, PDF pages 30-31: the only 2.7-3.6 V parts in USON-8
 4x3 mm are the W25Q16JV and the W25Q32JV (UU); the W25Q32JV is no longer
 made (2026-09-28). Page 39 onward: the 64 Mbit
 and larger UU parts, W25Q64JW, W25Q64PW and W25Q12PW, are 1.65-1.95 V.
+
+AP2192 (DS31569), page 1: features list reverse-current blocking and no
+output discharge; 115 mOhm. Page 4: disabled, IN-to-OUT leakage at most
+1 uA, reverse leakage 1 uA typical (VIN 0 V, VOUT 5 V); no discharge
+resistance is specified. Page 14: AP2192MPG-13 is the MSOP-8EP on a
+2,500 reel. Page 15: the MSOP-8EP drawing, the same as DS32193's (D1 1.80,
+E3 2.95, e 0.65 mm). Pinout and active-high enable are the AP2192A's.
+
+AP2192A (DS32193), page 1: output discharge; 85 mOhm. Page 4: R_DIS 100 Ohm
+typical while disabled (note 6). DigiKey's attributes for AP2192MPG-13 on
+2026-09-28 list "load discharge" and 85 mOhm, the AP2192A's figures; the
+datasheet says otherwise.

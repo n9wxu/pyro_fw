@@ -236,8 +236,11 @@ released pyro pad is one.
   fitted igniter, an empty connector and a real short all read the same, near
   0 counts, and the check reports every channel shorted. The flight fires only
   a channel with continuity (PYR-SAFE-01), so an MK1B that owns its pyros never
-  deploys. The base AP2192 (DS31569) has no discharge and the same MSOP-8EP
-  footprint; with it the check above works as written.
+  deploys. The base AP2192, AP2192MPG-13, has no discharge, the same
+  pinout, active-high enables and MSOP-8EP drawing, and blocks reverse
+  current, so the nodes read high when the battery is below 3.3 V
+  (`docs/datasheets/AP2182_AP2192_DS31569_Rev10-2.pdf`, pages 1, 4 and 15);
+  with it the check above works as written.
 - **The BMP280 pad has no pull-up**, so a BMP280 board's sensor runs at
   100 kHz.
 - **A beep code disturbs the MS5607 (task B-BZ).** On the bench, while one
