@@ -69,8 +69,8 @@ images. `board_pins.h` is the map; `pin_caps.h` says what each pin may become;
 | 12 | ARM_TOGGLE | C101 → the pump → U9 EN |
 | 16 | BIAS_A | channel A node |
 | 17 | FIRE_A | Q103 gate |
-| 18–21 | user pads | J3.3–J3.6, Lua; J3.1 is 3V3, J3.2 ground |
-| 22 | spare | J1.6 |
+| 18–21 | user pads | J3.3–J3.6, Lua, or SPI0; J3.1 is 3V3, J3.2 ground |
+| 22 | spare | J1.6; a second SPI chip select ([J3 as an SPI port](#j3-as-an-spi-port)) |
 | 23 | BIAS_BUS | the firing bus |
 | 24 | FIRE_B | Q104 gate |
 | 25 | **BIAS_B** | channel B node — **not an LED** |
@@ -296,6 +296,49 @@ board cannot offer a half-bridge. With both channels released,
 `hal_pyro_update()` stops calling `pyro_update()`: there is nothing to arm and
 nothing to sense.
 
+## J3 as an SPI port
+
+Each J3 pad has exactly one SPI function, all four on SPI0, so the order is
+fixed (RP2040 section 2.19.2, Table 279, page 237):
+
+| J3 | GPIO | SPI0 |
+|---|---|---|
+| 3 | 18 | SCK |
+| 4 | 19 | TX, MOSI |
+| 5 | 20 | RX, MISO |
+| 6 | 21 | CSn |
+
+A second chip select takes the spare, GPIO22 on J1.6; J1.4 and J1.5 are the
+console UART, pulled up by R1 and R2. SPI0 has no other user: the MS5607 is on
+I2C1 and the flash on QSPI.
+
+No firmware drives it yet. Lua reaches these pads only as SIO or PIO1
+(`src/lua/lua_pio.pio`), so a device here needs a PIO SPI program on the same
+pins, or a C driver that claims the pads from Lua and sets `GPIO_FUNC_SPI`.
+The second does not reach the sensor's bus: SPI0 is not I2C1.
+
+The test board wired on 2026-09-28 carries an SD card on J3, its CS on GPIO21,
+and an LSM6DS3 on the same SCK, MOSI and MISO, its CS on GPIO22. It needs:
+
+- **4.7 kΩ pull-ups on both chip selects.** A pad resets with its 50–80 kΩ
+  pull-down on (RP2040 pages 302 and 616): without them both parts are
+  selected together until firmware drives the lines.
+- **A pull-up on MISO.** Against the pull-down an absent card reads 0x00, a
+  plausible reply to CMD0; against a pull-up it reads 0xFF.
+- **10 µF and 100 nF at the card.** A card may draw 100 mA in SPI mode (SD
+  simplified 6.00, PDF page 36) from U6, an XC6206 rated 200 mA with up to
+  680 mV of dropout at 100 mA (XC6206 page 5). That rail also feeds the MS5607
+  and the ADC.
+
+Bring-up, in order: both chip selects high; the LSM6DS3 selected and
+I2C_disable set, CTRL4_C (13h) bit 2, because deselected its I2C block listens
+on SCK and MOSI (LSM6DS3 pages 32, 55); WHO_AM_I (0Fh) reads 0x69 (page 51);
+it runs in SPI mode 3 (page 34), 10 MHz at most (page 23). Then the card: at
+least 74 clocks with CS high, and CMD0 first (SD simplified, PDF pages
+221–222). The LSM6DS3's sensor hub is an I2C master on its SDx and SCx pins
+for up to four more sensors, read on its own data-ready, which adds sensors
+without MCU pins (pages 16–18, 60, 83–87).
+
 ## Ground test switch
 
 A switch held closed at power-up puts the board in ground test mode, and
@@ -333,6 +376,14 @@ goes on.
 - **No ~FLT, no ILM**, so DESIGN.md 7.2's capacitance check and the FLT abort
   have no source; the precharge timeout covers a loaded bus.
 - **The presence pulse is 20–21 ms**, not 5–10 (task P1).
+- **Two MK1Cs share one identity.** The second board, flashed 2026-09-28,
+  derives the first's MAC, USB serial and subnet (02373331FFDE, 222). The MAC
+  takes the flash id's last four bytes and a fold of all eight, so the two
+  XT25F128F ids match there at least. The first reads 41503459373331FF, ASCII
+  "AP4Y731" then FF: a lot code, it seems, not a die's. A host enumerates the
+  second board and gives it no interface. Each MK1C after the first needs a
+  `/serial.txt` (`POST /api/serial`), set while the first is unplugged
+  (task ID-1).
 
 ## Build
 
@@ -369,7 +420,9 @@ of milliseconds on this class of part). `/api/status` reports `loop_max_us` and
 
 - `~/Documents/pyro_mk1c/DESIGN.md`, `IGNITER_OPERATION.md`, `pyro_mk1c.kicad_sch`
 - `docs/datasheets/TPS2595_SLVSE57C_2018-04.pdf` (U9), `MS5607-02BA03_2017-06.pdf`,
-  `rp2040-datasheet_2025-02-20.pdf`, `UM10204_I2C-bus_Rev7.0_2021-10.pdf`
+  `rp2040-datasheet_2025-02-20.pdf`, `UM10204_I2C-bus_Rev7.0_2021-10.pdf`,
+  `XC6206_ETR0305_004b.pdf` (U6), `LSM6DS3_DocID026899_Rev4_2015-04.pdf`,
+  `SD_Physical_Layer_Simplified_v6.00_2017-04.pdf`
 - DD-051 (the MS5607 one-shot), DD-052 (bus speeds), DD-053 (no waits),
   DD-054 (the bus as measured), DD-055 (presence and shorts only), DD-056 (the
   fire), DD-065 (the 20 ms loop), DD-066 (a pair every loop), DD-068

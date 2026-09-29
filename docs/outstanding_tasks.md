@@ -23,7 +23,7 @@ recorded.
 | 5 | [Other code defects](#5-other-code-defects) | done, except C10, C6 and U6: decided, not yet built |
 | 5a | [No sleeps](#5a-no-sleeps-dd-053) | done |
 | 5b | [MK1C firing path](#5b-mk1c-firing-path) | **done in code** (DD-056); the bench fire is deferred (section 9) |
-| 6 | [Bench checks](#6-bench-checks) | a person or equipment, the ground test's (GT-1) among them |
+| 6 | [Bench checks](#6-bench-checks) | a person or equipment, the ground test's (GT-1) among them; **ID-1: two MK1Cs share one identity**; SPI-1, the J3 SPI test board |
 | 7 | [Board changes](#7-board-changes) | hardware design; **B-U5: MK1B cannot sense continuity**; B-BZ: MK1B's buzzer disturbs its sensor |
 | 8 | [Documentation and housekeeping](#8-documentation-and-housekeeping) | every document reviewed 2026-09-28; H3: the defects and unmet requirements the review found |
 | 9 | [Deferred, and not planned](#9-deferred-and-not-planned) | F1's bench fire; false-launch reversion |
@@ -1291,6 +1291,8 @@ resolution doc.
 | GT-1 | The ground test procedure on the bench (DD-071) | wired both ways in turn -- a switch to ground, then across two pads (MK1A's J6 18 and 19) -- and pyro modes set: powered up closed, the alert; opened after it, a count a second from five, the pulse on channel 1 at zero, 3 s of tone, a second countdown and the pulse on channel 2, three long beeps. Closed again mid-countdown, nothing fires. Powered up open, the pad as usual | a person, dummy loads, a scope or meter on the firing pads |
 | N20 | No file served while the log is written | in test mode, once a chamber pump-down declares a launch, `GET /www/app.js` answers 423 and `/api/status` 200; after LANDED the log reads back whole | test mode, the chamber |
 | — | The arming path independent of software | with the mechanical disconnect in, a commanded ground-test FIRE puts no current through a dummy load, on each board | a dummy load and a meter. The Mach prompt asks for this path; the operator narrative uses a mechanical disconnect, but no document says what it breaks |
+| ID-1 | **The second MK1C shares the first's identity** | **Found 2026-09-28.** Flashed blank with 2.1.703, it enumerates as 02373331FFDE, the first MK1C's serial, and macOS gives it no network interface. Neither board has a `/serial.txt`: the XT25F128F ids match (`boards/mk1c/THEORY_OF_OPERATION.md`, "Known limits"). Fix on the bench: unplug the first MK1C, `POST /api/serial` 12 hex digits (02 first) to the second at 192.168.222.1, reboot it, plug the first back in, run `register_board.py`. Pass: both answer, on two subnets. **Your decision** for later MK1Cs: provision each with a serial, or have the firmware make one at first boot (the ring oscillator's random bits) and keep it in `/serial.txt` | a person, to unplug the first MK1C |
+| SPI-1 | The J3 SPI test board: an SD card and an LSM6DS3 (`boards/mk1c/THEORY_OF_OPERATION.md`, "J3 as an SPI port") | the LSM6DS3 reads WHO_AM_I 0x69 with I2C_disable set; the card answers CMD0 and initialises; `flash_refusals` 0 and no loop overrun while both run; the MS5607's scatter on the trace unchanged while the card writes | a driver, PIO or SPI0, first; the second MK1C, after ID-1 |
 
 The Mach lockout can't be checked in a chamber, because it needs supersonic
 flow. `mach_tests` is its only check short of a flight.

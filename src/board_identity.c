@@ -66,7 +66,8 @@ static bool mac_from_hex(const char *s, uint8_t *out) {
  * its own batch with its own flash part, so ids are near-sequential WITHIN a
  * type and independent ACROSS types. The fold is therefore collision-free for
  * any number of same-type boards up to 256, and only cross-type pairs carry
- * risk. A cryptographic hash throws that structure away and treats every
+ * risk -- given distinct ids, which MK1C's XT25F128F does not give (see
+ * board_identity.h). A cryptographic hash throws that structure away and treats every
  * board as independent. Simulated over 6000 trials on three types:
  *
  *      boards   fold*31    md5

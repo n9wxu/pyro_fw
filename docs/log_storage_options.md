@@ -236,6 +236,11 @@ prepared on a PC.
     eject, not removable.
   - **1c (not asked): a SPI NOR flash on the same pins.** Class NONE, no
     FAT, the smallest board change.
+  - **A prototype without a board change.** J3's pads, GPIO18-21, are SPI0
+    too, the same peripheral, and a test board wired on 2026-09-28 carries an
+    SD card there (`boards/mk1c/THEORY_OF_OPERATION.md`, "J3 as an SPI port";
+    task SPI-1). A driver written against it moves to GPIO2-5 by its pin
+    numbers.
 - **Class.** NONE for the SD. With a fallback to internal flash, R1 is still
   needed.
 - **Software.** The common layer; an SD-over-SPI driver as loop steps

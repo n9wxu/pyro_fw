@@ -9,7 +9,10 @@
  * unique id, so there is no allocation to perform and no registry to keep in
  * step with the hardware. The RP2040 itself has no factory MAC and no on-die
  * GUID -- pico_get_unique_board_id() reads the QSPI flash over JEDEC 0x4B, and
- * the flash vendor guarantees uniqueness. Two consequences worth knowing:
+ * the flash vendor is meant to guarantee uniqueness. MK1C's XT25F128F does
+ * not: two boards read one id (boards/mk1c/THEORY_OF_OPERATION.md, "Known
+ * limits"), and only /serial.txt separates them. Two consequences worth
+ * knowing:
  *
  *   - the identity belongs to the flash chip, not the PCB. Reflow a new flash
  *     and the board's identity changes; move that flash to another PCB and the

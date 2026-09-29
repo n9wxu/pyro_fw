@@ -19,6 +19,9 @@ from a part. Cite the file and page, not memory.
 | `AP2182_AP2192_DS31569_Rev10-2.pdf` | Diodes AP2182/AP2192 dual high-side switch, no output discharge (the part MK1B's U5 should be) | DS31569 Rev. 10-2, May 2016 | diodes.com/assets/Datasheets/AP2182_92.pdf, fetched 2026-09-28 |
 | `AP2182A_AP2192A_DS32193_Rev5-2.pdf` | Diodes AP2182A/AP2192A, with output discharge (MK1B's U5 as built) | DS32193 Rev. 5-2, 2022 | diodes.com/assets/Datasheets/AP2182A_92A.pdf, fetched 2026-09-28 |
 | `esp32-s3_datasheet_v2.2.pdf` | Espressif ESP32-S3 series (a candidate for a future board) | v2.2 | espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf, fetched 2026-09-28 |
+| `LSM6DS3_DocID026899_Rev4_2015-04.pdf` | ST LSM6DS3 accelerometer and gyroscope (MK1C J3 test board) | DocID026899 Rev 4, April 2015 | cdn.sparkfun.com/assets/learn_tutorials/4/1/6/DM00133076.pdf, fetched 2026-09-28; st.com would not download |
+| `XC6206_ETR0305_004b.pdf` | Torex XC6206 LDO; the XC6206P332MR is MK1C's U6, the 3.3 V rail | ETR0305_004b | wmsc.lcsc.com (LCSC C5446), fetched 2026-09-28; torexsemi.com refused |
+| `SD_Physical_Layer_Simplified_v6.00_2017-04.pdf` | SD Association Physical Layer Simplified Specification | Version 6.00, April 10, 2017 | academy.cba.mit.edu/classes/networking_communications/SD/SD.pdf, fetched 2026-09-28; sdcard.org would not download |
 
 MS5607, page 3: conversion time at OSR 4096 is 7.40 / 8.22 / 9.04 ms (min /
 typ / max). Page 4 (pressure output): RMS resolution 0.024 mbar (2.4 Pa) at
@@ -113,3 +116,22 @@ is S15, and suspend and resume are 75h and 7Ah.
 RP2040, page 123: the XIP cache is 16 kB, two-way set-associative; page
 124: flushing it takes just over 1024 clock cycles. Page 418: the UART's
 FIFOs are 32 deep.
+
+RP2040, page 302 (PADS_BANK0 GPIO registers): every GPIO pad resets with
+its pull-down enabled (PDE 0x1, PUE 0x0). Page 616: the pulls are 50-80 kohm.
+
+LSM6DS3, page 23 (Table 6): SPI clock 10 MHz at most. Page 32 (Table 9):
+CS high is "SPI idle mode / I2C communication enabled", and the I2C block
+stays live on SCL/SPC and SDA/SDI until I2C_disable = 1 in CTRL4_C (13h),
+bit 2 (page 55). Page 34: SPC is stopped high while CS is high, data driven
+on the falling edge and captured on the rising (SPI mode 3). Page 51:
+WHO_AM_I (0Fh) reads 0x69. Page 21: Vdd 1.71-3.6 V.
+
+XC6206, page 3: SOT-23 dissipation 250 mW, input 7.0 V absolute maximum.
+Page 4: input 6.0 V at most in operation. Page 5, 3.3 V row: 200 mA output
+at least; dropout 75/350 mV (typ/max) at 30 mA and 250/680 mV at 100 mA.
+
+SD simplified 6.00, PDF pages (the printed number is 18 less): page 36, in
+SPI mode a card draws up to 0.36 W, 100 mA at 3.6 V. Pages 221-222: after 1 ms
+of stable VDD the host gives at least 74 clocks with CS held high before
+the first command, and in SPI mode CMD0 is that first command.
