@@ -88,8 +88,14 @@ static int open_on(int kind, vfs_file_t *f, const char *path, int flags, void *l
     return 0;
 }
 
+/* A file the card lacks is read from littlefs, so a blank card still serves
+ * the web pages and the last flight the board kept. Writes go to the card. */
 int vfs_open(vfs_file_t *f, const char *path, int flags, void *lfs_buf) {
-    return open_on(vfs_route(path), f, path, flags, lfs_buf);
+    int kind = vfs_route(path);
+    int rc = open_on(kind, f, path, flags, lfs_buf);
+    if (rc == VFS_NOENT && kind == VFS_FAT && !(flags & VFS_WR))
+        rc = open_on(VFS_LFS, f, path, flags, lfs_buf);
+    return rc;
 }
 
 int vfs_read(vfs_file_t *f, void *buf, uint32_t n) {
@@ -193,7 +199,10 @@ int32_t vfs_stat_size(const char *path) {
     if (vfs_route(path) == VFS_FAT) {
         FILINFO fi;
         FRESULT r = f_stat(path, &fi);
-        return r == FR_OK ? (int32_t)fi.fsize : fat_err(r);
+        if (r == FR_OK)
+            return (int32_t)fi.fsize;
+        if (fat_err(r) != VFS_NOENT)
+            return VFS_ERR;
     }
 #endif
     struct lfs_info info;
@@ -286,6 +295,34 @@ static bool copy_in(const char *path) {
     return ok;
 }
 
+/* littlefs's copy onto the card, for a card that has none: a blank card in
+ * a configured board takes the board's configuration rather than defaults. */
+static bool copy_out(const char *path) {
+    vfs_file_t own, card;
+    if (open_on(VFS_LFS, &own, path, VFS_RD, mirror_lfs_buf) != 0)
+        return false;
+    bool ok = open_on(VFS_FAT, &card, path, VFS_WR, NULL) == 0;
+    bool opened = ok;
+    while (ok) {
+        int n = vfs_read(&own, mirror_a, MIRROR_CHUNK);
+        if (n <= 0) {
+            ok = n == 0;
+            break;
+        }
+        ok = vfs_write(&card, mirror_a, (uint32_t)n) == n;
+    }
+    if (opened)
+        ok = (vfs_close(&card) == 0) && ok;
+    vfs_close(&own);
+    if (!ok && opened)
+        f_unlink(path);
+    return ok;
+}
+
+static bool on_card(const char *path) {
+    FILINFO fi;
+    return f_stat(path, &fi) == FR_OK;
+}
 #endif
 
 int vfs_mirror_one(const char *path) {
@@ -302,8 +339,15 @@ int vfs_mirror_one(const char *path) {
 int vfs_mirror(void) {
     int n = 0;
 #if PYRO_HAS_SD
-    for (unsigned i = 0; i < sizeof(config_paths) / sizeof(config_paths[0]); i++)
-        n += vfs_mirror_one(config_paths[i]);
+    if (!vfs_sd_mounted())
+        return 0;
+    for (unsigned i = 0; i < sizeof(config_paths) / sizeof(config_paths[0]); i++) {
+        const char *p = config_paths[i];
+        if (on_card(p))
+            n += vfs_mirror_one(p);
+        else
+            n += copy_out(p) ? 1 : 0;
+    }
 #endif
     return n;
 }

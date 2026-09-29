@@ -42,6 +42,9 @@
 #include "flash_op.h"
 #include "hal_storage.h"
 #include "vfs.h"
+#if PYRO_HAS_SD
+#include "sd_card.h"
+#endif
 #include "rtos_tasks.h"
 #include "buzzer.h"
 #include "pin_store.h"
@@ -950,6 +953,38 @@ static void serve_log_space(conn_t *c) {
     http_respond(hc, 200, JSON, buf, (uint32_t)n);
 }
 
+#if PYRO_HAS_SD
+/* GET /api/sd: the card, its FAT and the driver's counters [DD-075]. */
+static void serve_api_sd(conn_t *c) {
+    http_conn_t *hc = &c->h;
+    sd_stats_t s;
+    sd_get_stats(&s);
+    uint64_t free_b = 0, total_b = 0;
+    bool fat = vfs_sd_mounted() && vfs_space("/", &free_b, &total_b) == 0;
+    static const char *types[] = {"none", "v1", "v2_sc", "v2_hc"};
+    int n = snprintf((char *)hc->work, sizeof(hc->work),
+                     "{\"mounted\":%s,\"type\":\"%s\",\"sectors\":%lu,\"cid\":\"%s\",\"mount_rc\":%lu,"
+                     "\"free\":%llu,\"total\":%llu,\"hz\":%lu,\"reads\":%lu,\"writes\":%lu,"
+                     "\"sectors_read\":%lu,\"sectors_written\":%lu,\"crc_errors\":%lu,\"cmd_errors\":%lu,"
+                     "\"timeouts\":%lu,\"retries\":%lu,\"busy_max_us\":%lu,\"write_max_us\":%lu,"
+                     "\"init_r1\":\"%02X %02X %02X %02X %02X %02X\",\"init_r7\":\"%02X%02X%02X%02X\","
+                     "\"ocr\":\"%02X%02X%02X%02X\",\"imu_whoami\":%u,\"cmd55\":%u,\"acmd41\":%u,"
+                     "\"acmd41_polls\":%lu,\"acmd41_ones\":%lu,\"acmd41_other_ms\":%lu,\"acmd41_other\":%u}",
+                     vfs_sd_mounted() ? "true" : "false", types[sd_type()], (unsigned long)sd_sectors(), sd_cid(),
+                     (unsigned long)s.mount_rc, (unsigned long long)(fat ? free_b : 0),
+                     (unsigned long long)(fat ? total_b : 0), (unsigned long)s.hz, (unsigned long)s.reads,
+                     (unsigned long)s.writes, (unsigned long)s.sectors_read, (unsigned long)s.sectors_written,
+                     (unsigned long)s.crc_errors, (unsigned long)s.cmd_errors, (unsigned long)s.timeouts,
+                     (unsigned long)s.retries, (unsigned long)s.busy_max_us, (unsigned long)s.write_max_us,
+                     s.init_r1[0], s.init_r1[1], s.init_r1[2], s.init_r1[3], s.init_r1[4], s.init_r1[5],
+                     s.init_r7[0], s.init_r7[1], s.init_r7[2], s.init_r7[3], s.init_ocr[0], s.init_ocr[1],
+                     s.init_ocr[2], s.init_ocr[3], (unsigned)sd_bus_probe_imu(), (unsigned)s.cmd55_first,
+                     (unsigned)s.acmd41_first, (unsigned long)s.acmd41_polls, (unsigned long)s.acmd41_ones,
+                     (unsigned long)s.acmd41_other_ms, (unsigned)s.acmd41_other);
+    http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
+}
+#endif
+
 /* ── Default page if /www/index.html missing ──────────────────────── */
 
 static const char DEFAULT_PAGE[] = "<!DOCTYPE html><html><body><h2>" PYRO_BOARD_NAME "</h2>"
@@ -1024,6 +1059,10 @@ static void serve_get(conn_t *c) {
         serve_log_space(c);
     } else if (strcmp(path, "/api/net") == 0) {
         serve_api_net(hc);
+#if PYRO_HAS_SD
+    } else if (strcmp(path, "/api/sd") == 0) {
+        serve_api_sd(c);
+#endif
     } else if (strncmp(path, "/api/pressure/trace", 19) == 0 && (path[19] == '\0' || path[19] == '?')) {
         /* Every conversion since ?since=N, in binary (pressure_trace.h), for
          * support/pressure_trace.py. */
@@ -1240,6 +1279,22 @@ static void route_post(conn_t *c) {
         apply_api_test_mode(hc, strcmp(path, TEST_MODE_ON_PATH) == 0);
         return;
     }
+#if PYRO_HAS_SD
+    if (strncmp(path, "/api/sd/init", 12) == 0 && (path[12] == '\0' || path[12] == '?')) {
+        /* Bring the card up again, and mount it: a card inserted after boot,
+         * or one that failed then. ?crc=0 leaves CMD59 off. */
+        sd_set_crc(strstr(path, "crc=0") == NULL);
+        const char *to = strstr(path, "timeout=");
+        sd_set_init_timeout_ms(to ? (uint32_t)strtoul(to + 8, NULL, 10) : 1000u);
+        const char *gap = strstr(path, "gap=");
+        sd_set_poll_gap_ms(gap ? (uint32_t)strtoul(gap + 4, NULL, 10) : 0u);
+        int rc = sd_start();
+        char jb[64];
+        int jn = snprintf(jb, sizeof(jb), "{\"rc\":%d,\"mounted\":%s}", rc, vfs_sd_mounted() ? "true" : "false");
+        http_respond(hc, 200, JSON, jb, (uint32_t)jn);
+        return;
+    }
+#endif
     if (strcmp(path, "/api/reboot") == 0) {
         DBG("POST /api/reboot");
         c->reboot_when_sent = true;

@@ -11,6 +11,9 @@
 #include "hal_storage.h"
 #include "lfs_mount.h"
 #include "vfs.h"
+#if PYRO_HAS_SD
+#include "sd_card.h"
+#endif
 #include "rtos_tasks.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
@@ -1075,6 +1078,14 @@ void hal_platform_init(void) {
     /* Mounted once, for good: every task shares this mount. */
     hal_fs_mount();
     cached_fill();
+
+#if PYRO_HAS_SD
+    /* Before flight_init() loads the configuration, which is the card's when
+     * there is one [DD-076]. No card, or one that will not mount: every file
+     * stays in littlefs. */
+    if (sd_start() == 0)
+        vfs_mirror();
+#endif
 
     /* The sensor's I2C is its bring-up's to set up: pressure_sensor_begin()
      * resets the peripheral and recovers the bus itself. */

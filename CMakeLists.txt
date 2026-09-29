@@ -429,6 +429,19 @@ file(GLOB_RECURSE _pyro_os_sources
     ${TINYUSB_DIR}/lib/networking/*.c)
 set_source_files_properties(${_pyro_os_sources} PROPERTIES COMPILE_OPTIONS "-Os")
 
+# An SD card on SPI [DD-075, DD-076]: FatFs R0.16 (lib/fatfs) over this
+# firmware's driver (src/sd).
+if(PYRO_HAS_SD)
+    target_sources(pyro_fw_c PRIVATE
+        lib/fatfs/ff.c
+        lib/fatfs/ffunicode.c
+        src/sd/sd_card.c
+        src/sd/spi_bus.c
+        src/sd/diskio.c
+        src/sd/ffsystem.c)
+    target_link_libraries(pyro_fw_c hardware_spi)
+endif()
+
 if(PYRO_HAS_LUA)
     target_sources(pyro_fw_c PRIVATE src/lua/lua_core1.c src/lua/lua_app.c)
     target_link_libraries(pyro_fw_c pyro_lua hardware_pio hardware_dma)

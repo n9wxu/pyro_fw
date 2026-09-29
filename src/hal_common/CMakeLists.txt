@@ -43,6 +43,15 @@ target_link_libraries(pyro_hal_common PUBLIC
     FreeRTOS-Kernel-Static    # the tasks share the filesystem [DD-073]
 )
 
+# vfs.h's file handle holds a FatFs FIL on a board with an SD card, so every
+# library that includes it must agree on PYRO_HAS_SD.
+if(PYRO_HAS_SD)
+    target_compile_definitions(pyro_hal_common PUBLIC PYRO_HAS_SD=1)
+    target_include_directories(pyro_hal_common PUBLIC
+        ${CMAKE_CURRENT_LIST_DIR}/../../lib/fatfs
+        ${CMAKE_CURRENT_LIST_DIR}/../sd)
+endif()
+
 # A panic stamps the watchdog scratch and stops, without printing: see
 # pyro_panic() in src/rtos/rtos_tasks.c.
 target_compile_definitions(pyro_hal_common PUBLIC PICO_PANIC_FUNCTION=pyro_panic)

@@ -9,7 +9,9 @@
  *
  * The configuration files are the card's, and each is copied into littlefs
  * whenever the two differ (vfs_mirror()), so a board whose card is missing
- * or unreadable still boots with the configuration it last had.
+ * or unreadable still boots with the configuration it last had. A file the
+ * card lacks is read from littlefs, so a blank card still serves the web
+ * pages; every write goes to the card.
  *
  * Every call may block on the store's lock: never from the flight task, which
  * reads the one file it needs through hal_fs_read_cached().
@@ -71,8 +73,11 @@ int vfs_space(const char *path, uint64_t *free_bytes, uint64_t *total_bytes);
 /* True while an SD card is mounted and taking files. */
 bool vfs_sd_mounted(void);
 
-/* The configuration files: each the card holds and littlefs does not, or
- * holds differently, is copied into littlefs. Returns how many were copied. */
+/* At boot, the configuration files: each the card holds and littlefs does
+ * not, or holds differently, is copied into littlefs; each littlefs holds and
+ * the card does not is copied onto the card, so a blank card in a configured
+ * board takes its configuration rather than defaults. Returns how many were
+ * copied. */
 int vfs_mirror(void);
 
 /* The same for one path, after a write to it. 1 when it copied. */
