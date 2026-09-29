@@ -559,6 +559,30 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-072: The MAC Is Drawn From The RNG And Kept
+- **Decision:** at the user's direction ("build the mac with the RNG"), a
+  board with no `/serial.txt` draws its MAC at boot and keeps it there. The
+  pool takes 2048 samples, each an ADC conversion of the temperature sensor
+  with a ring-oscillator random bit and the timer's low bits beside it, and
+  mixes them through splitmix64's finaliser (`mac_random.c`). 0x02 leads;
+  the last byte, the subnet, is never 0, 1 or 255. The file is written once
+  the filesystem is up, as twelve hex digits and a second line `rng`, and
+  `/api/status` reports `mac_source`: `rng` or `assigned`.
+- **Why:** the MAC used to be derived from the flash chip's unique id. Two
+  MK1Cs read the same id from their XT25F128F, 41503459373331FF, and took
+  one MAC, serial and subnet (task ID-1).
+- **Why these sources:** the RP2040 has no hardware RNG. The ring
+  oscillator's random bit is usable while the system runs from the crystal,
+  "not ... for security systems" but "useful in less critical applications"
+  (`rp2040-datasheet_2025-02-20.pdf`, section 2.17.5, page 223), and no
+  figure is given for its entropy. The ADC's low bits are a second,
+  independent source. A MAC needs 40 bits; the pool sees thousands.
+- **What it does not fix:** the subnet is 8 bits, so two boards share one at
+  the birthday rate whatever the randomness: about 4 % at 5 boards, 16 % at
+  10. `/api/serial` still overrides.
+- **Consequence:** a board without `/serial.txt` moves to a new subnet on its
+  first boot of this firmware. `support/register_board.py` finds it again.
+
 ### DD-071: A Ground Test Procedure, By Switch
 - **Decision:** at the user's direction, a ground test switch assigned to a
   pin. Powered up with it closed, the board enters ground test mode and

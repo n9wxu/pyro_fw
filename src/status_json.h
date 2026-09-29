@@ -82,6 +82,7 @@ typedef struct {
 
     char serial[16];
     bool serial_assigned;
+    char mac_source[12]; /* "rng" or "assigned" [DD-072] */
     char hw_id[17];
     uint8_t subnet;
 } status_snap_t;

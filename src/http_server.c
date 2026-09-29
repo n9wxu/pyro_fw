@@ -834,6 +834,7 @@ static void status_capture(status_snap_t *s) {
 
     snprintf(s->serial, sizeof(s->serial), "%s", board_serial());
     s->serial_assigned = board_serial_assigned();
+    strncpy(s->mac_source, board_mac_source(), sizeof(s->mac_source) - 1);
     snprintf(s->hw_id, sizeof(s->hw_id), "%s", board_hw_id());
     s->subnet = board_subnet_octet();
 }

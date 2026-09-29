@@ -129,7 +129,7 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         "\"sample_interval_us\":[%lu,%lu],\"stamp_lag_max_us\":%lu,\"fit_sigma_mpa\":%lu,"
         "\"mach_lock\":%s,\"mach_flag_ms\":%lu,\"peak_lower_bound\":%s,"
         "\"usb_attached\":%s,\"test_mode\":%s,\"buzzer_active\":%s,\"beep\":\"%s\",\"beep_sound\":\"%s\","
-        "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u}",
+        "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u,\"mac_source\":\"%s\"}",
         (unsigned)s->reset_cause, S(s->recovery), B(s->prev_watchdog), (long)s->prev_stage,
         (unsigned long)s->prev_stage_ms, B(s->pyro_refused[0]), B(s->pyro_refused[1]), (unsigned)s->pyro1_refires,
         B(s->main_forced), (unsigned long)s->pres_waits, (unsigned long)s->pres_rejects, (unsigned long)s->pres_flashed,
@@ -137,6 +137,7 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         (unsigned long)s->sample_interval_us[0], (unsigned long)s->sample_interval_us[1],
         (unsigned long)s->stamp_lag_max_us, (unsigned long)s->fit_sigma_mpa, B(s->mach_lock),
         (unsigned long)s->mach_flag_ms, B(s->peak_lower_bound), B(s->usb_attached), B(s->test_mode),
-        B(s->buzzer_active), S(s->beep), sound, s->serial, B(s->serial_assigned), s->hw_id, (unsigned)s->subnet);
+        B(s->buzzer_active), S(s->beep), sound, s->serial, B(s->serial_assigned), s->hw_id, (unsigned)s->subnet,
+        S(s->mac_source));
     return o.over ? -1 : (int)o.pos;
 }

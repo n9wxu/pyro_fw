@@ -249,6 +249,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | WEB-HTTP-07 | Portable units on core1, the connection held exclusively | HTTP work: test_WORK_06..15 (the claim, the hold, the return, a unit cut short); HTTP: test_HTTP_18 (answered away from the service call); `support/prove_core0.py` folds http_unit_vt into core1's graph and fails an image without it; Hardware: MK1C, 961 units on core1 through one G4 run | ✅ |
 | WEB-API-11 | /api/status from a snapshot; its keys; valid JSON | Status: test_SJ_01 (every key, in order, formatted), test_SJ_02 (the widest fits), test_SJ_03 (a quote in the rocket's name), test_SJ_04 (refused, not truncated), test_SJ_07 (no watchdog, no stage); Hardware: `support/api_check.py` on all four bench boards | ✅ |
 | WEB-NET-05 | A busy endpoint holds the frame | Net: test_TXQ_01_sent_at_once_when_the_endpoint_is_free, test_TXQ_02_a_busy_endpoint_holds_the_frame, test_TXQ_03_order_is_kept, test_TXQ_04_drain_stops_when_the_endpoint_is_busy, test_TXQ_05_full_refuses, test_TXQ_06_not_ready_releases_everything, test_TXQ_07_wraps, test_TXQ_08_flush_releases_everything; Hardware (2.1.700, bench MK1B, one G4 round): 21 of 878 frames refused where 472 of 1182 were (DD-070) | ✅ |
+| WEB-NET-06 | The MAC drawn from the RNG and kept | MAC: test_WEB_NET_06_drawn_mac_is_local_unicast, test_WEB_NET_06_subnet_is_never_0_1_or_255, test_WEB_NET_06_same_seed_different_samples_differ, test_WEB_NET_06_no_repeat_across_many_boards, test_WEB_NET_06_subnet_spreads_evenly, test_WEB_NET_06_file_round_trips_drawn_and_assigned, test_WEB_NET_06_assigned_file_as_the_api_writes_it, test_WEB_NET_06_malformed_files_are_refused_whole; Status: test_SJ_01_keys_order_and_formatting_are_the_api | ✅ |
 | WEB-API-13 | /api/net: the network's counters | Net: test_NET_01_keys_order_and_formatting_are_the_api, test_NET_02_the_widest_fits_its_bound, test_NET_03_too_small_renders_nothing; Hardware: `support/api_check.py` (every pool, eleven states, this request's own connection) | ✅ |
 | WEB-API-12 | /api/log/space | Hardware: `support/api_check.py` (bytes free, 22-byte records, 1 and 50 or 100 rows/s) on the bench boards; Web UI: the mock's answer drives WEB-UI-06's tests | ✅ HW |
 | WEB-UI-01 | Status in config units | Web UI: altitude in meters/feet tests | ✅ |
@@ -396,7 +397,7 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 246 |
+| ✅ Verified by a host, web or closed-loop test | 247 |
 | ⚠️ Not directly verified (needs a test or hardware) | 20 |
 | ❌ Not implemented | 5 (USB-06: no hardware path; DAT-01, FLT-RATE-02, FLT-RATE-03, TST-05: H3) |
 | ✅ HW (hardware satisfies) | 11 |

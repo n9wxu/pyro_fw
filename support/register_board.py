@@ -61,6 +61,17 @@ def query(host, timeout=4.0):
         return None
 
 
+def mac_source(st):
+    """"rng" (drawn, DD-072), "override" (assigned through /api/serial), or
+    "derived" from firmware that predates the draw."""
+    src = st.get("mac_source")
+    if src == "rng":
+        return "rng"
+    if src == "assigned" or st.get("serial_assigned"):
+        return "override"
+    return "derived"
+
+
 def load(path):
     try:
         with open(path) as f:
@@ -105,7 +116,7 @@ def main():
             "board": st.get("board"),
             "mac": st.get("serial"),
             "subnet": st.get("subnet"),
-            "mac_source": "override" if st.get("serial_assigned") else "derived",
+            "mac_source": mac_source(st),
             "fw_version": st.get("fw_version"),
             "last_seen": today,
         })
@@ -116,7 +127,7 @@ def main():
         if rec != was:
             changed += 1
         seen.append(rec)
-        flag = "" if rec["mac_source"] == "derived" else "  [MAC overridden]"
+        flag = {"derived": "", "rng": "  [MAC drawn]"}.get(rec["mac_source"], "  [MAC overridden]")
         print(f"  {host:<16} {rec['board']:<10} hw={hw}  mac={rec['mac']}  fw={rec['fw_version']}{flag}")
 
     # The one thing derivation cannot rule out.

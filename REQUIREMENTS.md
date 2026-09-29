@@ -340,6 +340,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **WEB-NET-03**: The system shall advertise its hostname via mDNS. ← SYS-WEB-02
 - **WEB-NET-04**: The system shall advertise a DNS-SD service for automatic discovery. ← SYS-WEB-02
 - **WEB-NET-05**: A frame the USB endpoint cannot take yet shall be held and sent in order as soon as it can, not dropped; one shall be refused only when eight wait already or the host has let the device go. ← SYS-WEB-01, DD-070
+- **WEB-NET-06**: A board with no /serial.txt shall draw its MAC from the RNG -- the ring oscillator's random bit and the ADC's noise, pooled and mixed -- with 0x02 leading and a last byte, its subnet, other than 0, 1 and 255, and shall keep it in /serial.txt, tagged as drawn, so its address survives reboots. /api/status shall say whether the MAC was drawn or assigned. ← SYS-WEB-02, DD-072
 - **WEB-API-01**: The system shall serve device status as JSON at `/api/status`. ← SYS-WEB-01
 - **WEB-API-02**: The system shall serve the configuration file at `/api/config` (GET). ← SYS-WEB-01
 - **WEB-API-03**: The system shall accept configuration updates at `/api/config` (POST) and write to persistent storage. ← SYS-WEB-01

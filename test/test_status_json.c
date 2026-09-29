@@ -107,6 +107,7 @@ static void typical(status_snap_t *s) {
     s->serial_assigned = true;
     strcpy(s->hw_id, "E6614104031F5A2B");
     s->subnet = 11;
+    strcpy(s->mac_source, "assigned");
 }
 
 /* Today's /api/status, key for key and in order, for typical(). */
@@ -195,6 +196,7 @@ static const char *const TYPICAL[][2] = {
     {"serial_assigned", "true"},
     {"hw_id", "\"E6614104031F5A2B\""},
     {"subnet", "11"},
+    {"mac_source", "\"assigned\""},
 };
 
 static void compose(char *out, size_t cap, const char *const kv[][2], size_t n) {

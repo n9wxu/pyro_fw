@@ -312,6 +312,7 @@ add_executable(pyro_fw_c
     src/main_hardware.c
     src/board_binary_info.c
     src/board_identity.c
+    src/mac_random.c
     src/flight_states.c
     src/brownout.c
     src/pressure_processing.c
@@ -918,6 +919,21 @@ add_custom_target(net_txq_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_net_txq
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "USB network transmit queue tests"
+)
+
+# A MAC drawn from the RNG and the /serial.txt that keeps it [DD-072].
+add_custom_target(mac_random_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building MAC draw tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_mac_random.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/mac_random.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_mac_random
+    COMMAND ${CMAKE_COMMAND} -E echo "Running MAC draw tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_mac_random
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "MAC draw tests"
 )
 
 # /api/net's rendering, the network's counters for the bench (G4-N).

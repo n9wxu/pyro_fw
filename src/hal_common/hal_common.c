@@ -1185,6 +1185,8 @@ static void log_flash_service(uint32_t now_ms) {
 
 /* Call only from inside the window. */
 void hal_flash_service(uint32_t now_ms) {
+    if (board_identity_unsaved() && !hal_log_active())
+        board_identity_save();
     log_flash_service(now_ms);
     board_flash_service(now_ms);
 }
