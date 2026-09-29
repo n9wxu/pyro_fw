@@ -1,5 +1,5 @@
 /*
- * The HTTP server: files from littlefs, the API, uploads and OTA.
+ * The HTTP server: files (vfs.h), the API, uploads and OTA.
  *
  * Runs in the net task [DD-073]: every route, unit and file call here is on
  * core1 at P, beside Lua and storage, never on the flight task. What changes
@@ -41,7 +41,7 @@
 
 #include "flash_op.h"
 #include "hal_storage.h"
-#include "lfs_mount.h"
+#include "vfs.h"
 #include "rtos_tasks.h"
 #include "buzzer.h"
 #include "pin_store.h"
@@ -129,8 +129,7 @@ typedef struct conn {
     http_conn_t h; /* MUST be first: the handlers cast back */
     link_t *link;  /* NULL: free */
     route_t route;
-    lfs_file_t file;
-    struct lfs_file_config file_cfg;
+    vfs_file_t file;
     bool file_open;
     bool file_writing; /* an upload into dest's ".part", renamed when whole */
     bool fs_held;      /* counted by hal_fs_enter() until conn_release() */
@@ -844,9 +843,10 @@ const http_unit_fn http_unit_vt[] = {
 
 #define WWW_HEADERS "Cache-Control: no-store, must-revalidate\r\n"
 
-/* Stream a littlefs file, framed by its size. The work buffer is the file's
- * cache. Answers fb_status/fb_body when there is no such file. */
-static void serve_file(conn_t *c, const char *lfs_path, const char *ctype, const char *extra, uint16_t fb_status,
+/* Stream a file, framed by its size. The work buffer is littlefs's cache for
+ * it when the file is internal. Answers fb_status/fb_body when there is no
+ * such file. */
+static void serve_file(conn_t *c, const char *path, const char *ctype, const char *extra, uint16_t fb_status,
                        const char *fb_ctype, const char *fb_body) {
     http_conn_t *hc = &c->h;
     /* [WEB-API-10, DD-058] The flight log holds the filesystem from launch
@@ -854,10 +854,9 @@ static void serve_file(conn_t *c, const char *lfs_path, const char *ctype, const
     if (!fs_take(c)) {
         return;
     }
-    c->file_cfg = (struct lfs_file_config){.buffer = hc->work};
-    if (lfs_file_opencfg(&g_lfs, &c->file, lfs_path, LFS_O_RDONLY, &c->file_cfg) == LFS_ERR_OK) {
+    if (vfs_open(&c->file, path, VFS_RD, hc->work) == 0) {
         c->file_open = true;
-        lfs_soff_t size = lfs_file_size(&g_lfs, &c->file);
+        int32_t size = vfs_size(&c->file);
         if (size >= 0) {
             c->route = R_FILE;
             http_respond_stream(hc, 200, ctype, (uint32_t)size, extra);
@@ -875,7 +874,7 @@ static uint16_t fill(http_conn_t *hc, uint8_t *dst, uint16_t max) {
     if (c->route != R_FILE || !c->file_open) {
         return 0;
     }
-    lfs_ssize_t n = lfs_file_read(&g_lfs, &c->file, dst, max);
+    int n = vfs_read(&c->file, dst, max);
     return n > 0 ? (uint16_t)n : 0;
 }
 
@@ -883,7 +882,7 @@ static uint16_t fill(http_conn_t *hc, uint8_t *dst, uint16_t max) {
 
 static int flog_reader(void *ctx, uint8_t *dst, int n) {
     conn_t *c = (conn_t *)ctx;
-    lfs_ssize_t k = lfs_file_read(&g_lfs, &c->file, dst, (lfs_size_t)n);
+    int k = vfs_read(&c->file, dst, (uint32_t)n);
     return k > 0 ? (int)k : 0;
 }
 
@@ -895,8 +894,7 @@ static void serve_flight_csv(conn_t *c) {
     if (!fs_take(c)) {
         return;
     }
-    c->file_cfg = (struct lfs_file_config){.buffer = hc->work};
-    if (lfs_file_opencfg(&g_lfs, &c->file, FLOG_PATH, LFS_O_RDONLY, &c->file_cfg) == LFS_ERR_OK) {
+    if (vfs_open(&c->file, FLOG_PATH, VFS_RD, hc->work) == 0) {
         c->file_open = true;
         c->route = R_FLOG;
         flog_csv_init(&c->flog.csv, flog_reader, c);
@@ -919,16 +917,16 @@ static bool flight_csv_count(conn_t *c) {
         http_respond_str(&c->h, 200, "text/csv", EMPTY_LOG_CSV);
         return true;
     }
-    lfs_file_rewind(&g_lfs, &c->file);
+    vfs_rewind(&c->file);
     flog_csv_init(&c->flog.csv, flog_reader, c);
     http_respond_stream(&c->h, 200, "text/csv", c->flog.len, CSV_DISPOSITION);
     return true;
 }
 
 /* [WEB-API-12, DD-062] The room the next flight's log has: what is free, and
- * the current log's own, which the next launch replaces. A few blocks are
- * kept back for littlefs's copy-on-write metadata. */
-#define LOG_SPACE_RESERVE_BLOCKS 4
+ * the current log's own, which the next launch replaces, on whichever store
+ * the log goes to. Some is kept back for the filesystem's own metadata. */
+#define LOG_SPACE_RESERVE_BYTES (16u * 1024u)
 
 static void serve_api_net(http_conn_t *hc);
 
@@ -937,15 +935,18 @@ static void serve_log_space(conn_t *c) {
     if (!fs_take(c)) {
         return;
     }
-    lfs_ssize_t used = lfs_fs_size(&g_lfs);
-    struct lfs_info info;
-    int64_t log_bytes = lfs_stat(&g_lfs, FLOG_PATH, &info) == LFS_ERR_OK ? (int64_t)info.size : 0;
-    int64_t spare = (int64_t)lfs_pico_flash_config.block_count - used - LOG_SPACE_RESERVE_BLOCKS;
-    int64_t room = used < 0 ? 0 : spare * (int64_t)lfs_pico_flash_config.block_size + log_bytes;
+    uint64_t free_b = 0, total_b = 0;
+    if (vfs_space(FLOG_PATH, &free_b, &total_b) != 0) {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"no filesystem\"}");
+        return;
+    }
+    int32_t log_bytes = vfs_stat_size(FLOG_PATH);
+    int64_t room = (int64_t)free_b - LOG_SPACE_RESERVE_BYTES + (log_bytes > 0 ? log_bytes : 0);
     char *buf = (char *)hc->work;
-    int n = snprintf(buf, sizeof(hc->work), "{\"bytes_free\":%lu,\"record_bytes\":%u,\"rates_hz\":[1,%lu]}",
-                     (unsigned long)(room > 0 ? room : 0), (unsigned)FLOG_SAMPLE_BYTES,
-                     (unsigned long)hal_pressure_rate_hz());
+    int n = snprintf(buf, sizeof(hc->work),
+                     "{\"bytes_free\":%llu,\"record_bytes\":%u,\"rates_hz\":[1,%lu],\"store\":\"%s\"}",
+                     (unsigned long long)(room > 0 ? room : 0), (unsigned)FLOG_SAMPLE_BYTES,
+                     (unsigned long)hal_pressure_rate_hz(), vfs_route(FLOG_PATH) == VFS_FAT ? "sd" : "flash");
     http_respond(hc, 200, JSON, buf, (uint32_t)n);
 }
 
@@ -1051,15 +1052,14 @@ static void part_path(const conn_t *c, char *out, size_t cap) {
 }
 
 static bool upload_open(conn_t *c) {
-    c->file_cfg = (struct lfs_file_config){.buffer = c->h.work};
     if (strncmp(c->dest, "/www/", 5) == 0) {
-        lfs_mkdir(&g_lfs, "/www");
+        vfs_mkdir("/www");
     }
     char part[HTTP_PATH_MAX + 8];
     part_path(c, part, sizeof(part));
-    int err = lfs_file_opencfg(&g_lfs, &c->file, part, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC, &c->file_cfg);
-    if (err != LFS_ERR_OK) {
-        DBG("POST %s FAIL lfs_file_open err=%d", c->dest, err);
+    int err = vfs_open(&c->file, part, VFS_WR, c->h.work);
+    if (err != 0) {
+        DBG("POST %s FAIL open err=%d", c->dest, err);
         return false;
     }
     c->file_open = true;
@@ -1074,7 +1074,7 @@ static uint16_t upload_body(conn_t *c, const uint8_t *data, uint16_t len) {
     }
     /* Check every write: an unchecked refusal leaves a file of the right
      * length that is wrong in the middle, with nothing reported. */
-    if (lfs_file_write(&g_lfs, &c->file, data, len) != (lfs_ssize_t)len) {
+    if (vfs_write(&c->file, data, len) != (int)len) {
         DBG("POST %s FAIL write refused", c->dest);
         http_respond_str(&c->h, 500, TEXT, "write failed; file is incomplete, retry");
     }
@@ -1082,18 +1082,21 @@ static uint16_t upload_body(conn_t *c, const uint8_t *data, uint16_t len) {
 }
 
 static void upload_complete(conn_t *c) {
-    /* lfs_file_close() flushes the last partial block, so a refusal there
+    /* Close flushes the last partial block, so a refusal there
      * loses the tail of the file as quietly as a refused write does. */
-    bool ok = c->file_open && lfs_file_close(&g_lfs, &c->file) == LFS_ERR_OK;
+    bool ok = c->file_open && vfs_close(&c->file) == 0;
     c->file_open = false;
     c->file_writing = false;
     char part[HTTP_PATH_MAX + 8];
     part_path(c, part, sizeof(part));
     if (ok) {
-        ok = lfs_rename(&g_lfs, part, c->dest) == LFS_ERR_OK;
+        ok = vfs_rename(part, c->dest) == 0;
     }
     if (!ok) {
-        lfs_remove(&g_lfs, part);
+        vfs_remove(part);
+    } else {
+        /* The Lua program is configuration: littlefs keeps a copy. */
+        vfs_mirror_one(c->dest);
     }
     DBG("POST %s done ok=%d", c->dest, (int)ok);
     if (ok) {
@@ -1141,13 +1144,13 @@ static void apply_erase(http_conn_t *hc) {
     /* [DAT-06, WEB-UI-04] There is one log slot, and the next launch
      * overwrites it; this is how an operator clears it on purpose. Refused
      * at the head while the log is being written (fs_take()). */
-    int rc = lfs_remove(&g_lfs, FLOG_PATH);
-    int old = lfs_remove(&g_lfs, OLD_LOG_PATH);
-    if (rc == LFS_ERR_NOENT) {
+    int rc = vfs_remove(FLOG_PATH);
+    int old = vfs_remove(OLD_LOG_PATH);
+    if (rc == VFS_NOENT) {
         rc = old;
     }
     DBG("POST %s rc=%d", FLIGHT_ERASE_PATH, rc);
-    if (rc == LFS_ERR_OK || rc == LFS_ERR_NOENT) {
+    if (rc == 0 || rc == VFS_NOENT) {
         http_respond_str(hc, 200, JSON, "{\"status\":\"erased\"}");
     } else {
         http_respond_str(hc, 500, JSON, "{\"error\":\"could not erase\"}");
@@ -1462,11 +1465,11 @@ static void conn_release(conn_t *c) {
     if (c->file_open) {
         /* An upload that did not finish: its part file goes, and dest keeps
          * whatever it held before. */
-        lfs_file_close(&g_lfs, &c->file);
+        vfs_close(&c->file);
         if (c->file_writing) {
             char part[HTTP_PATH_MAX + 8];
             part_path(c, part, sizeof(part));
-            lfs_remove(&g_lfs, part);
+            vfs_remove(part);
         }
     }
     c->file_open = false;

@@ -44,10 +44,10 @@ Each phase ends with every host suite passing, all four boards building,
 `prove_core0.py` / `wait_check.py` / `trace_check.py` passing, a commit and
 a push.
 
-- [ ] A. MAC from the RNG (DD-072)
-- [ ] B. FreeRTOS in the build; the superloop as the flight task; net and
+- [x] A. MAC from the RNG (DD-072) -- 907a67b
+- [x] B. FreeRTOS in the build; the superloop as the flight task; net and
       Lua as tasks; the flash window, core1 units and the kill removed;
-      flash operations under the lockout (DD-073, DD-074)
+      flash operations under the lockout (DD-073, DD-074) -- 8974faa
 - [ ] C. Bench: all five boards, G4 checks, a soak with no lockup
 - [ ] D. `mk1c_sd`: SPI0, the SD driver, FatFs, the storage layer, SD for
       every file, config mirrored into littlefs (DD-075, DD-076)
@@ -59,3 +59,12 @@ a push.
 ## Progress notes
 
 (appended as phases land)
+
+- 2026-09-29, B on the second MK1C (192.168.42.1): api_check 41/41,
+  http_stream_check 16/16, hw_ui_check passed. Two boot failures found on the
+  bench and fixed: guard words written into the Lua stack's bottom tripped
+  the kernel's overflow check; pfb's commit copies a 4 kB sector onto the
+  caller's stack (net and storage stacks now 8 kB). A committed crash-looping
+  image was recovered by `picotool reboot -u -f --vid 0x2E8A --pid 0x4002
+  --bus 2 --address <USB Address from ioreg -r -d 1 -n <node>>` in its alive
+  window, then picotool load of bootloader and app.

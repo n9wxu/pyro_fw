@@ -353,6 +353,7 @@ add_executable(pyro_fw_c
     src/reset_interface.c
     src/littlefs_driver.c
     src/flash_op.c
+    src/vfs.c
     src/rtos/rtos_tasks.c
     src/net_task.c
     src/storage_task.c

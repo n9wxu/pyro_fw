@@ -10,6 +10,7 @@
 #include "flash_op.h"
 #include "hal_storage.h"
 #include "lfs_mount.h"
+#include "vfs.h"
 #include "rtos_tasks.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
@@ -793,12 +794,22 @@ static int read_from(lfs_t *lfs, const char *path, char *buf, int max_len) {
     return (int)n;
 }
 
+static int read_vfs(const char *path, char *buf, int max_len) {
+    vfs_file_t f;
+    int err = vfs_open(&f, path, VFS_RD, whole_buf);
+    if (err < 0)
+        return err;
+    int n = vfs_read(&f, buf, (uint32_t)max_len);
+    vfs_close(&f);
+    return n;
+}
+
 static int read_file(const char *path, char *buf, int max_len) {
     if (!whole_take())
         return -1;
     int n;
     if (fs_ok) {
-        n = read_from(&g_lfs, path, buf, max_len);
+        n = read_vfs(path, buf, max_len);
     } else {
         /* Before hal_fs_mount(): board_identity_init() reads /serial.txt
          * this way. Read-only, and never formats, so a blank board draws a
@@ -893,14 +904,17 @@ static void cached_fill(void) {
 static int write_file(const char *path, const char *data, int len) {
     if (!fs_ok || !whole_take())
         return -1;
-    lfs_file_t f;
-    struct lfs_file_config fc = {.buffer = whole_buf};
+    vfs_file_t f;
     int rc = -1;
-    if (lfs_file_opencfg(&g_lfs, &f, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC, &fc) == LFS_ERR_OK) {
-        bool wrote = lfs_file_write(&g_lfs, &f, data, len) == len;
-        /* Close commits: a failed close leaves the previous file whole. */
-        rc = (lfs_file_close(&g_lfs, &f) == LFS_ERR_OK && wrote) ? 0 : -1;
+    if (vfs_open(&f, path, VFS_WR, whole_buf) == 0) {
+        bool wrote = vfs_write(&f, data, (uint32_t)len) == len;
+        /* Close commits: on littlefs a failed close leaves the previous file
+         * whole. */
+        rc = (vfs_close(&f) == 0 && wrote) ? 0 : -1;
     }
+    /* A configuration file written to the card is copied into littlefs. */
+    if (rc == 0)
+        vfs_mirror_one(path);
     whole_give();
     cached_file_t *c = cached_find(path);
     if (c && rc == 0)
@@ -922,8 +936,7 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
 /* One at a time, on the whole-file helpers' buffer, which it holds from open
  * to close. */
 struct hal_file {
-    lfs_file_t file;
-    struct lfs_file_config cfg;
+    vfs_file_t file;
     bool open;
 };
 
@@ -936,10 +949,7 @@ hal_file_t *hal_fs_open(const char *path, bool append) {
         hal_fs_leave();
         return NULL;
     }
-    int flags = LFS_O_WRONLY | LFS_O_CREAT;
-    flags |= append ? LFS_O_APPEND : LFS_O_TRUNC;
-    hw_file.cfg = (struct lfs_file_config){.buffer = whole_buf};
-    if (lfs_file_opencfg(&g_lfs, &hw_file.file, path, flags, &hw_file.cfg) != LFS_ERR_OK) {
+    if (vfs_open(&hw_file.file, path, VFS_WR | (append ? VFS_APPEND : 0), whole_buf) != 0) {
         whole_give();
         hal_fs_leave();
         return NULL;
@@ -951,13 +961,13 @@ hal_file_t *hal_fs_open(const char *path, bool append) {
 int hal_fs_write(hal_file_t *f, const char *data, int len) {
     if (!f || !f->open)
         return -1;
-    return (int)lfs_file_write(&g_lfs, &f->file, data, len);
+    return vfs_write(&f->file, data, (uint32_t)len);
 }
 
 void hal_fs_close(hal_file_t *f) {
     if (!f || !f->open)
         return;
-    lfs_file_close(&g_lfs, &f->file);
+    vfs_close(&f->file);
     f->open = false;
     whole_give();
     hal_fs_leave();
@@ -1153,8 +1163,7 @@ typedef struct {
     uint32_t dropped;       /* sample bytes the ring could not hold */
     uint32_t text_dropped;  /* script bytes refused: not a lost sample */
     /* The storage task's own. */
-    lfs_file_t file;
-    struct lfs_file_config file_cfg;
+    vfs_file_t file;
     bool file_open;
     uint32_t next_due_ms;
     uint32_t next_sync_ms;
@@ -1234,7 +1243,7 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
 static void log_sync_if_due(uint32_t now_ms) {
     if (!log_ring.file_open || !log_ring.unsynced || (int32_t)(now_ms - log_ring.next_sync_ms) < 0)
         return;
-    if (lfs_file_sync(&g_lfs, &log_ring.file) == LFS_ERR_OK)
+    if (vfs_sync(&log_ring.file) == 0)
         log_ring.unsynced = false;
     log_ring.next_sync_ms = now_ms + LOG_SYNC_MS;
 }
@@ -1249,7 +1258,7 @@ static void log_write_out(void) {
         uint32_t span = h - t;
         if (span > LOG_BUF_SIZE - off)
             span = LOG_BUF_SIZE - off;
-        lfs_ssize_t n = lfs_file_write(&g_lfs, &log_ring.file, log_ring.buf + off, span);
+        int n = vfs_write(&log_ring.file, log_ring.buf + off, span);
         if (n <= 0)
             return; /* the bytes stay: the next pass retries */
         __dmb();
@@ -1264,9 +1273,7 @@ static void log_service(uint32_t now_ms) {
         return;
 
     if (!log_ring.file_open) {
-        log_ring.file_cfg = (struct lfs_file_config){.buffer = log_file_buf};
-        if (!fs_ok || lfs_file_opencfg(&g_lfs, &log_ring.file, FLOG_PATH, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC,
-                                       &log_ring.file_cfg) != LFS_ERR_OK)
+        if (!fs_ok || vfs_open(&log_ring.file, FLOG_PATH, VFS_WR, log_file_buf) != 0)
             return; /* the next pass retries; the ring keeps the rows */
         log_ring.file_open = true;
         log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
@@ -1295,7 +1302,7 @@ static void log_service(uint32_t now_ms) {
     log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
 
     if (st == LOG_STOPPING && log_ring.tail == log_ring.head) {
-        lfs_file_close(&g_lfs, &log_ring.file);
+        vfs_close(&log_ring.file);
         log_ring.file_open = false;
         __dmb();
         log_ring.state = LOG_IDLE;
