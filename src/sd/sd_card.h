@@ -58,10 +58,21 @@ typedef struct {
     uint32_t acmd41_polls, acmd41_ones;
     uint32_t acmd41_other_ms; /* when a poll first answered neither 0 nor 1 */
     uint8_t acmd41_other;
+    /* After that answer: CMD58, which a card still in SPI mode answers, then
+     * CMD0, which one that has reset to SD mode answers too. Each CMD0 that
+     * answers idle restarts the initialisation, up to SD_INIT_RESTARTS. */
+    uint8_t after_r58, after_r0;
+    uint8_t restarts;
+    uint16_t fail_ms[4];   /* since the first ACMD41, each attempt's end */
+    uint32_t init_yields; /* bus given away during an initialisation */
 } sd_stats_t;
 
 void sd_set_init_timeout_ms(uint32_t ms);
 void sd_set_poll_gap_ms(uint32_t ms);
+/* How many times a card that resets inside ACMD41 is brought up again in one
+ * sd_start(), within its timeout: many, to hold a failing card's current
+ * draw on the rail long enough to measure. */
+void sd_set_init_restarts(uint32_t n);
 
 /* CMD59 at the next init: on by default. */
 void sd_set_crc(bool on);

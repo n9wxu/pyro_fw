@@ -1047,7 +1047,9 @@ static void serve_api_sd(conn_t *c) {
                      "\"timeouts\":%lu,\"retries\":%lu,\"busy_max_us\":%lu,\"write_max_us\":%lu,"
                      "\"init_r1\":\"%02X %02X %02X %02X %02X %02X\",\"init_r7\":\"%02X%02X%02X%02X\","
                      "\"ocr\":\"%02X%02X%02X%02X\",\"imu_whoami\":%u,\"cmd55\":%u,\"acmd41\":%u,"
-                     "\"acmd41_polls\":%lu,\"acmd41_ones\":%lu,\"acmd41_other_ms\":%lu,\"acmd41_other\":%u}",
+                     "\"acmd41_polls\":%lu,\"acmd41_ones\":%lu,\"acmd41_other_ms\":%lu,\"acmd41_other\":%u,"
+                     "\"after_r58\":%u,\"after_r0\":%u,\"restarts\":%u,\"fail_ms\":[%u,%u,%u,%u],"
+                     "\"init_yields\":%lu}",
                      vfs_sd_mounted() ? "true" : "false", types[sd_type()], (unsigned long)sd_sectors(), sd_cid(),
                      (unsigned long)s.mount_rc, (unsigned long long)(fat ? free_b : 0),
                      (unsigned long long)(fat ? total_b : 0), (unsigned long)s.hz, (unsigned long)s.reads,
@@ -1058,7 +1060,9 @@ static void serve_api_sd(conn_t *c) {
                      s.init_r7[0], s.init_r7[1], s.init_r7[2], s.init_r7[3], s.init_ocr[0], s.init_ocr[1],
                      s.init_ocr[2], s.init_ocr[3], (unsigned)sd_bus_probe_imu(), (unsigned)s.cmd55_first,
                      (unsigned)s.acmd41_first, (unsigned long)s.acmd41_polls, (unsigned long)s.acmd41_ones,
-                     (unsigned long)s.acmd41_other_ms, (unsigned)s.acmd41_other);
+                     (unsigned long)s.acmd41_other_ms, (unsigned)s.acmd41_other, (unsigned)s.after_r58,
+                     (unsigned)s.after_r0, (unsigned)s.restarts, (unsigned)s.fail_ms[0], (unsigned)s.fail_ms[1],
+                     (unsigned)s.fail_ms[2], (unsigned)s.fail_ms[3], (unsigned long)s.init_yields);
     http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
 }
 
@@ -1475,12 +1479,15 @@ static void route_post(conn_t *c) {
     }
     if (strncmp(path, "/api/sd/init", 12) == 0 && (path[12] == '\0' || path[12] == '?')) {
         /* Bring the card up again, and mount it: a card inserted after boot,
-         * or one that failed then. ?crc=0 leaves CMD59 off. */
+         * or one that failed then. ?crc=0 leaves CMD59 off; ?timeout=ms and
+         * ?restarts=n hold a card that resets on the rail to be measured. */
         sd_set_crc(strstr(path, "crc=0") == NULL);
         const char *to = strstr(path, "timeout=");
         sd_set_init_timeout_ms(to ? (uint32_t)strtoul(to + 8, NULL, 10) : 1000u);
         const char *gap = strstr(path, "gap=");
         sd_set_poll_gap_ms(gap ? (uint32_t)strtoul(gap + 4, NULL, 10) : 0u);
+        const char *rs = strstr(path, "restarts=");
+        sd_set_init_restarts(rs ? (uint32_t)strtoul(rs + 9, NULL, 10) : 3u);
         int rc = sd_start();
         char jb[64];
         int jn = snprintf(jb, sizeof(jb), "{\"rc\":%d,\"mounted\":%s}", rc, vfs_sd_mounted() ? "true" : "false");

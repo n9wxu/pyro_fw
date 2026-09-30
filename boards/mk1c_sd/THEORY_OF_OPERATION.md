@@ -71,13 +71,23 @@ that does not leaves the board on littlefs. `POST /api/sd/init` tries again
 without a reboot, and `GET /api/sd` reports the card, the FAT and the
 driver's counters, with the last initialisation's responses.
 
-**On the bench, 2026-09-29, the card never initialised.** It answers CMD0,
-CMD8 (echoing 0x1AA) and CMD59, and ACMD41 answers "idle" as it should; then,
-27 to 41 ms into ACMD41's polling, its answers turn to 0xFF and it has reset,
-whatever the CRC setting or the interval between polls. The IMU on the same
-wires reads cleanly. A card draws its largest current during ACMD41's
-initialisation, so the card's supply is the suspect: power the module from
-5 V if it carries a regulator, or add 10-47 µF and 100 nF at the card.
+**On the bench, 2026-09-29, the card never initialised: it resets.** It
+answers CMD0, CMD8 (echoing 0x1AA) and CMD59, and ACMD41 answers "idle" as it
+should, about 37 times; then, 28-29 ms after ACMD41 began, it stops
+answering. CMD58, which a card still in SPI mode answers, gets nothing; CMD0
+brings it back to idle at once. So it has fallen back to SD mode, as a card
+does after a power-on reset. Brought up again, it resets again 28-29 ms
+later, every time: 68 times in 2 s. CRC on or off, and the interval between
+polls, change nothing, and neither did 22 µF at the card. A card draws its
+largest current when ACMD41 starts its internal initialisation, and a
+capacitor carries that only for microseconds, so the card's supply sags for
+as long as the draw lasts. J3.1 is MK1C's 3.3 V rail, U6 fed from VIN (about
+4.5 V on USB), with the headroom for 100 mA: the suspect is the module
+between J3.1 and the card, a regulator on it fed from 3.3 V, or the card.
+
+`POST /api/sd/init?timeout=10000&restarts=1000` keeps bringing the card up
+for 10 s, so the sag can be measured at the card's VDD; `GET /api/sd`
+reports each attempt (`after_r58`, `after_r0`, `restarts`, `fail_ms`).
 
 ## The LSM6DS3
 

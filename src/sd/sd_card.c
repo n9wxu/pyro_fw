@@ -30,6 +30,7 @@
 
 /* A busy wait gives the bus back after this, between polls. */
 #define YIELD_AFTER_US 1000u
+#define SD_INIT_RESTARTS 3u
 
 #define RETRIES 3
 
@@ -44,6 +45,7 @@ static uint32_t data_hz;
 static bool use_crc = true;
 static uint32_t init_timeout_us = INIT_TIMEOUT_US;
 static uint32_t poll_gap_ms;
+static uint32_t init_restarts = SD_INIT_RESTARTS;
 static char cid_hex[48];
 
 /* CRC7 over a command's first five bytes, with the end bit. */
@@ -90,6 +92,8 @@ static bool wait_ready(uint32_t timeout_us) {
             return false;
         }
         if (el > YIELD_AFTER_US && rtos_running()) {
+            if (data_hz == 0)
+                st.init_yields++;
             deselect();
             spi_bus_give();
             vTaskDelay(1);
@@ -233,6 +237,9 @@ int sd_init_card(void) {
                 st.acmd41_ones = 0;
                 st.acmd41_other_ms = 0;
                 st.acmd41_other = 0;
+                st.after_r58 = st.after_r0 = 0xEE;
+                st.restarts = 0;
+                memset(st.fail_ms, 0, sizeof(st.fail_ms));
                 while (r41 != 0 && time_us_32() - t0 < init_timeout_us) {
                     spi_bus_xfer(NULL, NULL, 8);
                     if (poll_gap_ms && rtos_running()) {
@@ -241,12 +248,34 @@ int sd_init_card(void) {
                     }
                     r41 = send_cmd(ACMD | 41, 1u << 30);
                     st.acmd41_polls++;
-                    if (r41 == 1)
-                        st.acmd41_ones++;
-                    else if (r41 != 0 && !st.acmd41_other_ms) {
-                        st.acmd41_other_ms = (time_us_32() - t0) / 1000u + 1u;
+                    if (r41 == 0 || r41 == 1) {
+                        st.acmd41_ones += r41;
+                        continue;
+                    }
+                    uint32_t ms = (time_us_32() - t0) / 1000u + 1u;
+                    if (!st.acmd41_other_ms) {
+                        st.acmd41_other_ms = ms;
                         st.acmd41_other = r41;
                     }
+                    if (st.restarts < sizeof(st.fail_ms) / sizeof(st.fail_ms[0]))
+                        st.fail_ms[st.restarts] = (uint16_t)ms;
+                    uint8_t ocr[4];
+                    uint8_t r58 = send_cmd(58, 0);
+                    spi_bus_xfer(NULL, ocr, 4);
+                    uint8_t r0 = send_cmd(0, 0);
+                    if (st.after_r0 == 0xEE) {
+                        st.after_r58 = r58;
+                        st.after_r0 = r0;
+                    }
+                    if (r0 != 1 || st.restarts >= init_restarts)
+                        break;
+                    if (st.restarts < 255u)
+                        st.restarts++;
+                    if (send_cmd(8, 0x1AA) != 1)
+                        break;
+                    spi_bus_xfer(NULL, ocr, 4);
+                    if (use_crc)
+                        send_cmd(59, 1);
                 }
                 st.init_r1[3] = r41;
                 uint8_t r58 = 0xEE;
@@ -408,6 +437,10 @@ void sd_set_init_timeout_ms(uint32_t ms) {
 
 void sd_set_poll_gap_ms(uint32_t ms) {
     poll_gap_ms = ms;
+}
+
+void sd_set_init_restarts(uint32_t n) {
+    init_restarts = n;
 }
 
 int sd_start(void) {
