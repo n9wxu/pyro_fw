@@ -113,6 +113,7 @@ bool lsm6ds3_read(lsm6ds3_set_t *out, uint32_t max, lsm6ds3_read_t *r) {
     uint8_t st[4];
     spi_bus_xfer(&a, NULL, 1);
     spi_bus_xfer(NULL, st, 4);
+    r->at_us = time_us_32();
     bus_end();
 
     uint32_t words = ((uint32_t)(st[1] & 0x0Fu) << 8) | st[0];

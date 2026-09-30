@@ -70,8 +70,10 @@ typedef struct __attribute__((packed)) {
 } hr_header_t;
 
 /* The sets follow: the newest was in the FIFO backlog_words words before the
- * end when read_us was stamped, so set i of n is at
- *   read_us - (backlog_words / 6 + n - 1 - i) / odr_hz. */
+ * end when the FIFO status was read, at read_us -- after the bus was had,
+ * which the card may hold for a stage -- so set i of n is at
+ *   read_us - (backlog_words / 6 + n - 1 - i) / rate,
+ * the rate the sensor's own, measured from the log (support/hr_log.py). */
 typedef struct __attribute__((packed)) {
     uint32_t read_us;
     uint16_t backlog_words;

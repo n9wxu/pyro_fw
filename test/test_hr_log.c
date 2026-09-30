@@ -119,6 +119,7 @@ bool lsm6ds3_read(lsm6ds3_set_t *out, uint32_t max, lsm6ds3_read_t *r) {
     r->sets = n;
     r->overrun = false;
     r->backlog = 0;
+    r->at_us = now_us;
     return true;
 }
 

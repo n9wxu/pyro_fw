@@ -108,7 +108,6 @@ static uint32_t ptrace_next(void) {
 
 static void read_imu(void) {
     lsm6ds3_read_t r;
-    uint32_t t = time_us_32();
     if (!lsm6ds3_read(imu_buf, IMU_MAX_SETS, &r)) {
         st.imu_read_fails++;
         return;
@@ -121,7 +120,7 @@ static void read_imu(void) {
     if (!r.sets)
         return;
     st.last = imu_buf[r.sets - 1];
-    hr_imu_t m = {t, r.backlog, (uint8_t)(r.overrun ? 1 : 0), 0};
+    hr_imu_t m = {r.at_us, r.backlog, (uint8_t)(r.overrun ? 1 : 0), 0};
     if (put_record(HR_REC_IMU, &m, sizeof(m), imu_buf, r.sets * sizeof(lsm6ds3_set_t)))
         st.imu_sets += r.sets;
 }
@@ -460,6 +459,8 @@ void hr_log_stop(void) {
 bool hr_log_set_odr(lsm6ds3_odr_t o) {
     if (lsm6ds3_odr_hz(o) == 0 || st.logging)
         return false;
+    if (o == odr)
+        return true; /* a restart empties the FIFO */
     odr = o;
     odr_changed = true;
     return true;

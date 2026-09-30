@@ -60,6 +60,7 @@ typedef struct {
     uint32_t sets;    /* sets read */
     bool overrun;     /* the FIFO filled and dropped its oldest set */
     uint16_t backlog; /* words left unread after this read */
+    uint32_t at_us;   /* time_us_32() at the FIFO status the backlog counts from */
 } lsm6ds3_read_t;
 
 /* Up to max whole sets, oldest first. Never waits for data: an empty FIFO

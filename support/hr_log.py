@@ -13,9 +13,14 @@ whose CRC does not match: a power cut leaves the last one's payload
 unwritten, and the preallocated space past it holds what the card held.
 
 IMU times: the newest set of a batch was backlog_words/6 sets from the end of
-the FIFO when read_us was stamped, and the sets before it are one ODR period
-apart. The timer is 32 bits of microseconds; times are unwrapped from the
-header's open_us.
+the FIFO when its status was read, at read_us. The sensor spaces its sets
+evenly, at its own rate rather than the nominal one (1627.8 Hz against 1660
+on MK1C-SD), and a stamp is late by up to one period: the FIFO counts a set
+once it is complete. So the timeline is fitted: within a run of batches --
+broken by a FIFO overrun, or by a batch more than GAP_PERIODS periods off the
+run's prediction, where sets were lost -- set k of the run is at a + k*p by
+least squares over the batches' stamps, moved back half a period. The timer
+is 32 bits of microseconds; times are unwrapped from the header's open_us.
 """
 import argparse
 import os
@@ -70,10 +75,59 @@ def records(blob):
         o += REC.size + n
 
 
+def imu_rate(blob, nominal):
+    """Sets a second, from the reads' own stamps; the nominal rate for a log
+    too short to measure."""
+    unwrap, first, last, sets = None, None, None, 0
+    for typ, body in records(blob):
+        if typ == T_HEADER:
+            unwrap = Unwrap(HEADER.unpack_from(body)[6])
+        elif typ == T_IMU and unwrap:
+            read_us = IMU.unpack_from(body)[0]
+            sets += (len(body) - IMU.size) // SET.size
+            t = unwrap(read_us)
+            if first is None:
+                first = (t, sets)
+            last = (t, sets)
+    if first and last and last[0] - first[0] > 1e6 and last[1] > first[1]:
+        return (last[1] - first[1]) * 1e6 / (last[0] - first[0])
+    return nominal
+
+
+GAP_PERIODS = 4
+
+
+def imu_timeline(batches, rate):
+    """Each batch's newest set time and its run's set period, in
+    microseconds, from (stamp, overrun, sets) per batch; see the module's
+    note on IMU times."""
+    period = 1e6 / rate
+    runs, cur = [], []
+    for obs, overrun, n in batches:
+        if cur:
+            k_prev, obs_prev = cur[-1][0], cur[-1][1]
+            if overrun or abs(obs - (obs_prev + n * period)) > GAP_PERIODS * period:
+                runs.append(cur)
+                cur = []
+        cur.append((n - 1 if not cur else cur[-1][0] + n, obs))
+    if cur:
+        runs.append(cur)
+    times = []
+    for run in runs:
+        m = len(run)
+        mk = sum(k for k, _ in run) / m
+        mt = sum(t for _, t in run) / m
+        skk = sum((k - mk) ** 2 for k, _ in run)
+        slope = sum((k - mk) * (t - mt) for k, t in run) / skk if m > 2 and skk > 0 else period
+        times += [(mt + slope * (k - mk) - slope / 2, slope) for k, _ in run]
+    return times
+
+
 def decode(blob):
     out = {"header": None, "imu": [], "pres": [], "flight": [], "overruns": 0, "batches": 0, "bytes": 0}
     unwrap = None
     odr = 1
+    batches, sets = [], []
     for typ, body in records(blob):
         out["bytes"] += REC.size + len(body)
         if typ == T_HEADER:
@@ -84,6 +138,8 @@ def decode(blob):
                              "open_us": open_us, "open_ms": open_ms,
                              "board": board.split(b"\0")[0].decode(), "reason": reason.split(b"\0")[0].decode()}
             unwrap = Unwrap(open_us)
+            rate = imu_rate(blob, odr)
+            out["header"]["rate_hz"] = rate
         elif out["header"] is None:
             raise ValueError("the first record is not the header")
         elif typ == T_IMU:
@@ -91,16 +147,10 @@ def decode(blob):
             n = (len(body) - IMU.size) // SET.size
             h = out["header"]
             t_read = unwrap(read_us) - h["open_us"]
-            newest = t_read - (backlog // 6) * 1e6 / odr
+            batches.append((t_read - (backlog // 6) * 1e6 / rate, overrun, n))
+            sets.append([SET.unpack_from(body, IMU.size + i * SET.size) for i in range(n)])
             out["batches"] += 1
             out["overruns"] += overrun
-            for i in range(n):
-                gx, gy, gz, ax, ay, az = SET.unpack_from(body, IMU.size + i * SET.size)
-                t = newest - (n - 1 - i) * 1e6 / odr
-                out["imu"].append((t / 1e6,
-                                   ax * h["ug_per_lsb"] / 1e6, ay * h["ug_per_lsb"] / 1e6, az * h["ug_per_lsb"] / 1e6,
-                                   gx * h["mdps_per_lsb"] / 1e3, gy * h["mdps_per_lsb"] / 1e3,
-                                   gz * h["mdps_per_lsb"] / 1e3))
         elif typ == T_PRES:
             at_us, read_us, raw, raw_t, pa_c, kind = PRES.unpack_from(body)
             out["pres"].append(((unwrap(at_us) - out["header"]["open_us"]) / 1e6, chr(kind), raw, raw_t,
@@ -110,14 +160,24 @@ def decode(blob):
             out["flight"].append(((unwrap(t_us) - out["header"]["open_us"]) / 1e6,
                                   STATES[state] if state < len(STATES) else str(state), thrust, alt / 100.0,
                                   speed / 100.0, pa))
+    if batches:
+        h = out["header"]
+        for (newest, period), batch in zip(imu_timeline(batches, h["rate_hz"]), sets):
+            n = len(batch)
+            for i, (gx, gy, gz, ax, ay, az) in enumerate(batch):
+                t = newest - (n - 1 - i) * period
+                out["imu"].append((t / 1e6,
+                                   ax * h["ug_per_lsb"] / 1e6, ay * h["ug_per_lsb"] / 1e6, az * h["ug_per_lsb"] / 1e6,
+                                   gx * h["mdps_per_lsb"] / 1e3, gy * h["mdps_per_lsb"] / 1e3,
+                                   gz * h["mdps_per_lsb"] / 1e3))
     return out
 
 
 def summary(d):
     h = d["header"]
     imu = d["imu"]
-    lines = [f"{h['board']}, {h['reason']}, v{h['version']}: IMU at {h['odr_hz']} Hz, "
-             f"{d['bytes']} bytes of records"]
+    lines = [f"{h['board']}, {h['reason']}, v{h['version']}: IMU at {h['odr_hz']} Hz nominal, "
+             f"{h['rate_hz']:.1f} Hz measured, {d['bytes']} bytes of records"]
     if imu:
         span = imu[-1][0] - imu[0][0]
         rate = (len(imu) - 1) / span if span > 0 else 0
@@ -170,7 +230,8 @@ def selftest():
         t = (t + 10240) & 0xFFFFFFFF
         sets = b"".join(SET.pack(seq + i, 0, 0, 0, 0, 2049) for i in range(17))
         seq += 17
-        recs.append((T_IMU, IMU.pack(t, 0, 0, 0) + sets))
+        late = (batch * 263) % 600  # a stamp is late by up to a period
+        recs.append((T_IMU, IMU.pack((t + late) & 0xFFFFFFFF, 0, 0, 0) + sets))
         recs.append((T_PRES, PRES.pack(t - 3000 & 0xFFFFFFFF, t, 4000000, 0, 10132500, ord("P"))))
         if batch % 10 == 0:
             recs.append((T_FLIGHT, FLIGHT.pack(t, 4, 1, 0, 12345, 6789, 100000)))
@@ -184,7 +245,9 @@ def selftest():
     ok &= [int(round(s[1] * 1e6 / 488)) for s in d["imu"][:3]] == [0, 0, 0]
     ok &= abs(d["imu"][0][3] - 1.0) < 0.001  # 2049 * 488 ug
     ts = [s[0] for s in d["imu"]]
-    ok &= all(b >= a for a, b in zip(ts, ts[1:]))  # through the 32-bit wrap
+    steps = [b - a for a, b in zip(ts, ts[1:])]
+    ok &= all(x > 0 for x in steps)  # through the 32-bit wrap
+    ok &= max(steps) - min(steps) < 1e-6  # one even run, whatever the stamps' lateness
     ok &= len(d["pres"]) == 100 and abs(d["pres"][0][4] - 101325.0) < 0.01
     ok &= len(d["flight"]) == 10 and d["flight"][0][1] == "ASCENT"
     dt = decode(bytes(torn))
