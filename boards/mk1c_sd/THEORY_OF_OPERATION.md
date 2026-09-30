@@ -75,15 +75,20 @@ driver's counters, with the last initialisation's responses.
 answers CMD0, CMD8 (echoing 0x1AA) and CMD59, and ACMD41 answers "idle" as it
 should, about 37 times; then, 28-29 ms after ACMD41 began, it stops
 answering. CMD58, which a card still in SPI mode answers, gets nothing; CMD0
-brings it back to idle at once. So it has fallen back to SD mode, as a card
-does after a power-on reset. Brought up again, it resets again 28-29 ms
-later, every time: 68 times in 2 s. CRC on or off, and the interval between
-polls, change nothing, and neither did 22 µF at the card. A card draws its
-largest current when ACMD41 starts its internal initialisation, and a
-capacitor carries that only for microseconds, so the card's supply sags for
-as long as the draw lasts. J3.1 is MK1C's 3.3 V rail, U6 fed from VIN (about
-4.5 V on USB), with the headroom for 100 mA: the suspect is the module
-between J3.1 and the card, a regulator on it fed from 3.3 V, or the card.
+brings it back to idle at once. A card in SPI mode returns to SD mode only
+through a power cycle (SD simplified 6.00, section 7.2.1, PDF page 228), so
+it has been through a power-on reset. Brought up again, it resets again
+28-29 ms later, every time: 68 times in 2 s. CRC on or off, and the interval
+between polls, change nothing, and neither did 22 µF at the card.
+
+The card sits on a carrier with no regulator, powered from J3.1, MK1C's own
+3.3 V rail: U6, an XC6206 fed from VIN. VIN has no path from USB: it is
+J1.3, or the TP4057 charger's battery output through JP1 (open as built).
+While the card resets, the MS5607 on the same rail reads about 10 Pa low and
+its step noise nearly doubles (5.8-8.4 Pa against 3.2-4.2, the largest step
+32-34 Pa against 15-17, three trials each way): the card's draw as it starts
+its initialisation moves the rail itself. A card draws up to 100 mA in SPI
+mode (PDF page 36); U6's dropout at 100 mA is up to 680 mV (XC6206, page 5).
 
 `POST /api/sd/init?timeout=10000&restarts=1000` keeps bringing the card up
 for 10 s, so the sag can be measured at the card's VDD; `GET /api/sd`
