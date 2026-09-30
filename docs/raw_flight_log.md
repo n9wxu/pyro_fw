@@ -5,7 +5,8 @@ Status: options for a decision (task C6, plan phase G). 2026-09-29.
 The question: can the flight log be a 2 MB area, erased before flight and
 aligned with the flash's sectors, so that flight only programs it?
 
-Yes, outside littlefs. Inside it, no: littlefs has no preallocation, and it
+Yes, outside littlefs, or inside a patched one (below). Unpatched, no:
+littlefs has no preallocation, and it
 never writes into a block a committed file points to. Every append after a
 sync allocates a fresh block, erases it and copies the partly filled last
 block into it (`lfs_ctz_extend()`, `build/_deps/littlefs-src/lfs.c` line
@@ -13,6 +14,61 @@ block into it (`lfs_ctz_extend()`, `build/_deps/littlefs-src/lfs.c` line
 cleared `LFS_F_WRITING`, line 3420). Overwriting a placeholder file of 0xFF
 is the same copy-on-write. That is why the flight log's once-a-second sync
 (DD-035, FLT-LOG-06) costs an erase a second.
+
+## Or: extend littlefs
+
+The alternative to a raw area is to take the cost out of littlefs itself,
+with two patches to littlefs 2.11.2. The disk format does not change: an
+unpatched littlefs reads what they write. No layout change, no reformat, and
+the flight log stays a file.
+
+**Patch 1: append in place.** After a sync, the next append finds the
+file's last block (`lfs_ctz_find()`) and then erases a new block and copies
+the partial one into it (`lfs_ctz_extend()`), because littlefs cannot assume
+the rest of the block is still erased. On a NOR flash that allows programming
+the rest of a partly programmed page (W25Q128JV, PDF page 37), the append
+can go on in the same block: the cache is loaded with the partial program
+unit's existing bytes, and the write carries on from where the file ends.
+Nothing committed is touched -- the directory still says the old size until
+the next sync -- so a power cut mid-append leaves the committed file whole.
+A block whose tail is not erased, because a power cut left bytes past the
+committed size, fails the program's read-back, and littlefs already answers
+`LFS_ERR_CORRUPT` from a data program by copying the block to a fresh one
+(`lfs_file_relocate()`): the fallback is the cost we pay today, once. The
+flash driver programs only bytes still 0xFF, so no bit is programmed twice.
+
+With it, an erase happens only when a 4 kB block fills: at a row a second,
+one every 3 minutes instead of every second; at every sample, one every
+3.7 s.
+
+**Patch 2: reserve.** A call that takes N free blocks for an open file and
+erases them -- on the pad, paced, as D2 -- and that `lfs_ctz_extend()` then
+uses in order instead of allocating and erasing. The allocator sees a
+block as used only if a file reaches it (`lfs_fs_traverse_()`), so the open
+file's reserved list must be reported there too; a power cut frees them, as
+nothing committed points to them. RAM: one word a block, 2 kB for 2 MB.
+With both patches a flight writes no data erase at all. The directory's
+commits are appends already: littlefs 2.11 tracks the erased state of a
+metadata block (its FCRC), so they erase only when a metadata block fills
+and compacts -- every few hundred syncs, less with the log in a directory of
+its own.
+
+**The cost is proving them.** littlefs is the boards' filesystem: its
+configuration, its pages, its identity. The patches must pass littlefs's
+own test suite with its power-loss simulation, and new power-loss tests for
+an append in place and for reserved blocks, before a board runs them. And we
+carry a fork of littlefs until upstream has an equivalent.
+
+| | Raw area | Patched littlefs |
+|---|---|---|
+| Flash layout | changes (D1): a reformat or a move of every file | unchanged |
+| Flight log | a second storage path, rendered from the area | the same file and API |
+| Data erases in flight | none | patch 1: one per 4 kB of log; patch 2: none |
+| Code risk | ours alone, small | a filesystem fork; power-loss proof needed |
+| Needs the chip to allow partial page programs | yes | yes |
+
+Patch 1 alone takes most of the gain for the least change: one erase in
+three minutes at the default logging rate. It is the one to prove first.
 
 ## What it would change
 
