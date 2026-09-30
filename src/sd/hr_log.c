@@ -190,6 +190,12 @@ static void reader_task(void *arg) {
 
 static FIL fil;
 static bool fil_open;
+static uint32_t fil_mount; /* sd_mount_count() when fil was opened */
+static uint32_t fails_in_row;
+/* The first record boundary at or after r_tail. A stage ends where it ends,
+ * inside a record as often as not; a new file must start on a record. */
+static uint32_t rec_next;
+#define WRITE_FAILS_MAX 3u
 static uint8_t stage[STAGE] __attribute__((aligned(4)));
 static uint32_t next_n = 1;
 static uint32_t last_sync_ms;
@@ -203,6 +209,7 @@ static void trim(void) {
         __dmb();
         r_tail += sizeof(h) + h.len;
     }
+    rec_next = r_tail;
 }
 
 static bool free_name(char *out, size_t cap) {
@@ -218,25 +225,32 @@ static bool free_name(char *out, size_t cap) {
 /* A next.bin that holds a log -- one a power cut left open -- keeps its data
  * under a numbered name. Its tail past the last record is whatever the
  * preallocation held; the decoder stops at the first record that is not one. */
-static void recover_next(void) {
+/* False while next.bin still holds a log it could not rename: then it must
+ * not be created over. */
+static bool recover_next(void) {
     FIL f;
-    if (f_open(&f, NEXT_PATH, FA_READ) != FR_OK)
-        return;
+    FRESULT r = f_open(&f, NEXT_PATH, FA_READ);
+    if (r != FR_OK)
+        return r == FR_NO_FILE;
     uint8_t head[sizeof(hr_rec_t) + 4];
     UINT got = 0;
-    bool log = f_read(&f, head, sizeof(head), &got) == FR_OK && got == sizeof(head) && head[0] == HR_REC_HEADER &&
-               memcmp(head + sizeof(hr_rec_t), HR_MAGIC, 4) == 0;
+    r = f_read(&f, head, sizeof(head), &got);
     f_close(&f);
+    if (r != FR_OK)
+        return false;
+    bool log = got == sizeof(head) && head[0] == HR_REC_HEADER && memcmp(head + sizeof(hr_rec_t), HR_MAGIC, 4) == 0;
     char name[24];
-    if (log && free_name(name, sizeof(name)))
-        f_rename(NEXT_PATH, name);
+    return !log || (free_name(name, sizeof(name)) && f_rename(NEXT_PATH, name) == FR_OK);
 }
 
 static void prepare(void) {
     st.preparing = true;
     uint32_t t0 = time_us_32();
     f_mkdir("/logs");
-    recover_next();
+    if (!recover_next()) {
+        st.preparing = false;
+        return;
+    }
     uint64_t want = EXPAND_BYTES;
     FATFS *fs;
     DWORD free_cl;
@@ -250,10 +264,22 @@ static void prepare(void) {
         return;
     }
     fil_open = true;
-    /* Contiguous, so a flight writes no FAT. Without room for that, the file
-     * grows as it is written, as any file does. */
-    st.expanded_bytes = f_expand(&fil, (FSIZE_t)want, 1) == FR_OK ? (uint32_t)want : 0u;
+    fil_mount = sd_mount_count();
+    fails_in_row = 0;
+    /* Contiguous, so a flight writes no FAT: the longest run the free space
+     * holds, halving from want. Without one, the file grows as it is
+     * written, as any file does. */
+    st.expanded_bytes = 0;
+    for (; want >= EXPAND_MIN; want /= 2u) {
+        if (f_expand(&fil, (FSIZE_t)want, 1) == FR_OK) {
+            st.expanded_bytes = (uint32_t)want;
+            break;
+        }
+    }
     f_lseek(&fil, 0);
+    /* The directory then holds the expanded size: a log begun in this file
+     * is recoverable whole, whatever happens before its first sync. */
+    f_sync(&fil);
     st.prepare_us = time_us_32() - t0;
     st.prepared = true;
     st.preparing = false;
@@ -269,11 +295,23 @@ static bool write_out(const void *buf, uint32_t n) {
         st.write_max_us = d;
     if (r != FR_OK || put != n) {
         st.write_errors++;
+        fails_in_row++;
         return false;
     }
+    fails_in_row = 0;
     st.file_bytes += n;
     st.bytes_total += n;
     return true;
+}
+
+static void sync_now(void) {
+    uint32_t t0 = time_us_32();
+    f_sync(&fil);
+    uint32_t d = time_us_32() - t0;
+    st.syncs++;
+    if (d > st.sync_max_us)
+        st.sync_max_us = d;
+    last_sync_ms = hal_time_ms();
 }
 
 _Static_assert(HEADER_BYTES <= STAGE, "the header is built in the stage");
@@ -300,18 +338,10 @@ static void begin(const char *reason) {
     st.logging = true;
     snprintf(st.file, sizeof(st.file), "%s", "logs/next.bin");
     write_out(stage, HEADER_BYTES);
-    last_sync_ms = hal_time_ms();
+    rec_next = r_tail;
+    sync_now();
 }
 
-static void sync_now(void) {
-    uint32_t t0 = time_us_32();
-    f_sync(&fil);
-    uint32_t d = time_us_32() - t0;
-    st.syncs++;
-    if (d > st.sync_max_us)
-        st.sync_max_us = d;
-    last_sync_ms = hal_time_ms();
-}
 
 /* The ring's whole content, in stages; the last one short. */
 static void drain(bool all) {
@@ -320,6 +350,11 @@ static void drain(bool all) {
         ring_copy_out(r_tail, stage, n);
         if (!write_out(stage, n))
             return; /* kept: the next pass retries */
+        while ((int32_t)(rec_next - (r_tail + n)) < 0) {
+            hr_rec_t h;
+            ring_copy_out(rec_next, &h, sizeof(h));
+            rec_next += sizeof(h) + h.len;
+        }
         __dmb();
         r_tail += n;
     }
@@ -338,9 +373,25 @@ static void finish(void) {
     st.logs++;
 }
 
+/* A file that cannot be written any more: the card was mounted again under
+ * it, or it keeps failing. What reached it stays, and the next prepare
+ * renames it; the ring keeps what did not, and a new file takes it. */
+static void give_up(void) {
+    f_close(&fil);
+    __dmb();
+    r_tail = rec_next;
+    fil_open = false;
+    fails_in_row = 0;
+    st.logging = false;
+    st.prepared = false;
+    st.reopens++;
+}
+
 void hr_writer_step(void) {
     st.card = sd_mounted();
     bool want = manual || hal_log_active();
+    if (fil_open && (fil_mount != sd_mount_count() || fails_in_row >= WRITE_FAILS_MAX))
+        give_up();
     if (!st.card) {
         trim();
         return;
@@ -377,6 +428,7 @@ static void writer_task(void *arg) {
  * the tasks start again. */
 void hr_log_test_power_cut(void) {
     fil_open = false;
+    rec_next = 0;
     st.logging = false;
     st.prepared = false;
     manual = false;

@@ -33,12 +33,17 @@ volatile device_status_t g_status;
 bool sd_mounted(void) {
     return true;
 }
+static uint32_t mounts = 1;
+uint32_t sd_mount_count(void) {
+    return mounts;
+}
 
-/* ── An 8 MB card ─────────────────────────────────────────────────── */
+/* ── A 32 MB card ─────────────────────────────────────────────────── */
 
-#define SECTORS 16384u
+#define SECTORS 65536u
 static uint8_t disk[SECTORS][512];
 static uint32_t sectors_multi, sectors_single;
+static uint32_t writes_to_fail; /* disk_write refuses while this counts down */
 static uint32_t logging_multi, logging_single; /* while test HR_02 logged */
 
 DSTATUS disk_status(BYTE p) {
@@ -56,6 +61,10 @@ DRESULT disk_read(BYTE p, BYTE *b, LBA_t s, UINT n) {
 }
 DRESULT disk_write(BYTE p, const BYTE *b, LBA_t s, UINT n) {
     (void)p;
+    if (writes_to_fail) {
+        writes_to_fail--;
+        return RES_ERROR;
+    }
     if (n >= 2)
         sectors_multi += n;
     else
@@ -307,8 +316,67 @@ void test_HR_05_a_full_ring_drops_whole_records_and_counts_them(void) {
     TEST_ASSERT_GREATER_THAN_UINT32(0, d.gaps_between); /* whole ones dropped */
 }
 
+static FATFS fs;
+
+/* [HR-06] A card mounted again under an open log -- POST /api/sd/init did it
+ * on the bench -- leaves the log's file invalid, and every write to it fails.
+ * The log goes on in a new file, from the next whole record. */
+void test_HR_06_a_card_mounted_again_under_a_log_goes_on_in_a_new_file(void) {
+    hr_stats_t before;
+    hr_log_get_stats(&before);
+    hr_log_start("bench");
+    run(150, true);
+    f_mount(NULL, "", 0);
+    TEST_ASSERT_EQUAL(FR_OK, f_mount(&fs, "", 1));
+    mounts++;
+    run(150, true);
+    hr_log_stop();
+    run(2, true);
+    hr_stats_t s;
+    hr_log_get_stats(&s);
+    TEST_ASSERT_EQUAL_UINT32(before.reopens + 1u, s.reopens);
+    TEST_ASSERT_EQUAL_UINT32(before.write_errors, s.write_errors);
+    decoded_t a, b;
+    TEST_ASSERT_TRUE(decode("/logs/hr0004.bin", &a));
+    TEST_ASSERT_TRUE(decode("/logs/hr0005.bin", &b));
+    TEST_ASSERT_TRUE(a.header_ok && b.header_ok);
+    TEST_ASSERT_EQUAL_STRING("bench", b.reason);
+    TEST_ASSERT_GREATER_THAN_UINT32(1000u, a.imu_sets);
+    TEST_ASSERT_GREATER_THAN_UINT32(1000u, b.imu_sets);
+    TEST_ASSERT_EQUAL_UINT32(0, b.gaps_inside + b.gaps_between);
+    uint16_t lost = (uint16_t)(b.seq_first - a.seq_last - 1u);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT16_MESSAGE(17u, lost, "more than the torn record lost across the remount");
+}
+
+/* [HR-06] A card that refuses writes for a while: FatFs keeps a failed file's
+ * error for good, so the log gives it up and, once the card takes writes
+ * again, goes on in a new one. Lost: the one record the failed stage tore,
+ * its head in the old file and its tail skipped. */
+void test_HR_06_a_card_that_refuses_writes_for_a_while_loses_one_record(void) {
+    hr_stats_t before;
+    hr_log_get_stats(&before);
+    hr_log_start("bench");
+    run(100, true);
+    writes_to_fail = 40;
+    run(40, true);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, writes_to_fail, "the writer stopped trying");
+    run(150, true);
+    hr_log_stop();
+    run(2, true);
+    hr_stats_t s;
+    hr_log_get_stats(&s);
+    TEST_ASSERT_GREATER_THAN_UINT32(before.reopens, s.reopens);
+    TEST_ASSERT_EQUAL_UINT32(before.dropped_records, s.dropped_records);
+    decoded_t a, b;
+    TEST_ASSERT_TRUE(decode("/logs/hr0006.bin", &a));
+    TEST_ASSERT_TRUE(decode("/logs/hr0007.bin", &b));
+    TEST_ASSERT_TRUE(a.header_ok && b.header_ok);
+    TEST_ASSERT_EQUAL_UINT32(0, b.gaps_inside + b.gaps_between);
+    uint16_t lost = (uint16_t)(b.seq_first - a.seq_last - 1u);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT16_MESSAGE(17u, lost, "more than the torn record lost across the failure");
+}
+
 int main(void) {
-    static FATFS fs;
     static BYTE work[4096];
     MKFS_PARM opt = {FM_ANY, 0, 0, 0, 0};
     if (f_mkfs("", &opt, work, sizeof(work)) != FR_OK || f_mount(&fs, "", 1) != FR_OK)
@@ -319,5 +387,7 @@ int main(void) {
     RUN_TEST(test_HR_03_the_log_goes_to_the_card_in_multi_sector_writes);
     RUN_TEST(test_HR_04_a_log_a_power_cut_left_is_kept_under_a_number);
     RUN_TEST(test_HR_05_a_full_ring_drops_whole_records_and_counts_them);
+    RUN_TEST(test_HR_06_a_card_mounted_again_under_a_log_goes_on_in_a_new_file);
+    RUN_TEST(test_HR_06_a_card_that_refuses_writes_for_a_while_loses_one_record);
     return UNITY_END();
 }

@@ -39,6 +39,7 @@
 static sd_type_t type;
 static uint32_t sectors;
 static bool mounted;
+static uint32_t mount_count;
 static FATFS fatfs;
 static sd_stats_t st;
 static uint32_t data_hz;
@@ -46,6 +47,7 @@ static bool use_crc = true;
 static uint32_t init_timeout_us = INIT_TIMEOUT_US;
 static uint32_t poll_gap_ms;
 static uint32_t init_restarts = SD_INIT_RESTARTS;
+static uint32_t data_hz_asked = BOARD_SD_SPI_HZ;
 static char cid_hex[48];
 
 /* CRC7 over a command's first five bytes, with the end bit. */
@@ -118,7 +120,8 @@ static uint8_t send_cmd(uint8_t cmd, uint32_t arg) {
     if (cmd != 12) {
         deselect();
         select();
-        if (cmd != 0 && !wait_ready(READ_TIMEOUT_US))
+        /* The card may still be programming the last write's block. */
+        if (cmd != 0 && !wait_ready(WRITE_TIMEOUT_US))
             return 0xFF;
     }
     uint8_t f[6] = {(uint8_t)(0x40u | cmd), (uint8_t)(arg >> 24), (uint8_t)(arg >> 16),
@@ -304,7 +307,7 @@ int sd_init_card(void) {
         hexify(cid, 16, cid_hex);
     deselect();
     if (ty != SD_NONE) {
-        data_hz = spi_bus_setup(BOARD_SD_SPI_HZ, 0, 0);
+        data_hz = spi_bus_setup(data_hz_asked, 0, 0);
         st.hz = data_hz;
     }
     type = ty;
@@ -411,6 +414,10 @@ sd_type_t sd_type(void) {
     return type;
 }
 
+uint32_t sd_mount_count(void) {
+    return mount_count;
+}
+
 bool sd_mounted(void) {
     return mounted;
 }
@@ -443,6 +450,10 @@ void sd_set_init_restarts(uint32_t n) {
     init_restarts = n;
 }
 
+void sd_set_data_hz(uint32_t hz) {
+    data_hz_asked = hz;
+}
+
 bool sd_clock_idle(uint32_t ms) {
     if (!spi_bus_take(2000))
         return false;
@@ -464,6 +475,8 @@ int sd_start(void) {
     FRESULT r = f_mount(&fatfs, "", 1);
     st.mount_rc = (uint32_t)r;
     mounted = r == FR_OK;
+    if (mounted)
+        mount_count++;
     return mounted ? 0 : -2;
 }
 

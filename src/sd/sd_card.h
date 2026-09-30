@@ -31,6 +31,10 @@ int sd_start(void);
 /* True while a card is mounted and taking files. */
 bool sd_mounted(void);
 
+/* Mounts since boot. A file opened under one mount is invalid under the
+ * next: FatFs refuses every operation on it. */
+uint32_t sd_mount_count(void);
+
 /* The card layer, for FatFs's diskio.c. 0, or <0. */
 int sd_init_card(void);
 int sd_read(uint8_t *buf, uint32_t lba, uint32_t count);
@@ -73,6 +77,10 @@ void sd_set_poll_gap_ms(uint32_t ms);
  * sd_start(), within its timeout: many, to hold a failing card's current
  * draw on the rail long enough to measure. */
 void sd_set_init_restarts(uint32_t n);
+
+/* The data clock the next initialisation sets, BOARD_SD_SPI_HZ by default;
+ * the peripheral rounds it down to one it can make. */
+void sd_set_data_hz(uint32_t hz);
 
 /* The initialisation's clock, with the card deselected, for ms: the bus's
  * own disturbance without the card's draw, for the bench. */

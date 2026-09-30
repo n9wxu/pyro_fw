@@ -155,7 +155,7 @@ Verify web interface behavior against mock server in 3 device modes.
 | SYS-DATA-01 | Record flight data | Integration: test_DAT_04_events (samples > 100) | ✅ |
 | SYS-DATA-02 | Export standard format | Integration: test_DAT_06_csv_export; Chain: test_T8_columns, test_T8_replay | ✅ |
 | SYS-DATA-03 | Announce max altitude | Integration: test_BUZ_07_03_lifecycle | ✅ |
-| SYS-DATA-04 | The flight's motion on an SD card | Through SD-01, SD-02 (hardware, the card not yet up) and HR-01..05 | ⚠️ |
+| SYS-DATA-04 | The flight's motion on an SD card | Through SD-01, SD-02 (hardware) and HR-01..06 | ⚠️ |
 | DAT-01 | 4096-entry ring buffer | — the ring holds 64 (`FLIGHT_BUF_SIZE`); the flight record is `flight_log.bin`, DD-062 (H3) | ❌ |
 | DAT-02 | Sample fields, at the sample's time | Integration: events have correct fields; Chain: test_T11_log_rows_at_sample_time, test_T8_columns | ✅ |
 | DAT-08 | A high-rate log replays through the firmware | Chain: test_T8_replay (every event to the sample, no state diverging), test_T8_replay_refuses_a_thinned_log | ✅ |
@@ -348,13 +348,14 @@ Verify web interface behavior against mock server in 3 device modes.
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| SD-01 | SPI mode, CRC, bounded waits, the bus shared | Hardware only. On the bench MK1C-SD the LSM6DS3 reads at 1.66 kHz on the shared bus; the wire-wrapped card resets inside ACMD41 and has not come up (DD-075) | ⚠️ |
-| SD-02 | Every file on the card, configuration mirrored | Hardware only, and the card has not come up; by inspection of `vfs.c` | ⚠️ |
+| SD-01 | SPI mode, CRC, bounded waits, the bus shared | Hardware only. On MK1C-SD with the card on its own regulator (C-U6): 16 MB written with 0 CRC errors, 0 timeouts, 0 retries at 12.5 and 20.8 MHz; the LSM6DS3 read at 1.63 kHz with no FIFO overrun while the card wrote; a card that resets inside ACMD41 brought up again by `POST /api/sd/init` | ⚠️ |
+| SD-02 | Every file on the card, configuration mirrored | Hardware only. On MK1C-SD the flight log routes to the card (`/api/log/space` store `sd`), config.ini and the web pages are served through `vfs.h`, and serial.txt stays in littlefs; the mirror into littlefs by inspection of `vfs.c` | ⚠️ |
 | HR-01 | The next file ready, the second before launch kept | HR log: test_HR_01_between_flights_the_file_is_ready_and_the_ring_keeps_half, test_HR_02_a_flight_is_logged_whole_with_the_second_before_it | ✅ |
 | HR-02 | Every set, every conversion, the state at 10 Hz | HR log: test_HR_02_a_flight_is_logged_whole_with_the_second_before_it; `support/hr_log.py --selftest` | ✅ |
 | HR-03 | Whole 4 kB writes | HR log: test_HR_03_the_log_goes_to_the_card_in_multi_sector_writes | ✅ |
 | HR-04 | A CRC per record, a power cut's log kept | HR log: test_HR_04_a_log_a_power_cut_left_is_kept_under_a_number; `support/hr_log.py --selftest` (a torn last record) | ✅ |
 | HR-05 | Whole records dropped and counted, off the flight path | HR log: test_HR_05_a_full_ring_drops_whole_records_and_counts_them; `support/prove_core0.py` on MK1C-SD in CI | ✅ |
+| HR-06 | A file the card cannot take any more: go on in a new one | HR log: test_HR_06_a_card_mounted_again_under_a_log_goes_on_in_a_new_file, test_HR_06_a_card_that_refuses_writes_for_a_while_loses_one_record; Hardware: MK1C-SD mounted again 40 s into a 1.66 kHz log, the new file's first set 0.9 ms after the old one's last | ✅ |
 
 ## 19. Bench Flight
 
@@ -422,7 +423,7 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 257 |
+| ✅ Verified by a host, web or closed-loop test | 258 |
 | ⚠️ Not directly verified (needs a test or hardware) | 25 |
 | ❌ Not implemented | 5 (USB-06: no hardware path; DAT-01, FLT-RATE-02, FLT-RATE-03, TST-05: H3) |
 | ✅ HW (hardware satisfies) | 11 |
@@ -444,5 +445,5 @@ _+20 requirements in v2 Tasks 7–10 (PWR-*, CFG-TABLE-*, TELEM-FMT-*), all veri
 - **WEB-NET-01..04**: USB network / mDNS / DNS-SD — hardware test
 - **WEB-API-08**: the web server's 423s and the dropped transfer are in http_server.c, verified by inspection; the bench check is a chamber flight in test mode
 - **OTA-01..04**: OTA update flow — hardware test
-- **SD-01, SD-02 / SYS-DATA-04**: the SD card on the bench — its supply (SPI-1)
+- **SD-01, SD-02 / SYS-DATA-04**: the SD card, verified on the bench only
 - **PWR-USB-01**: USB servicing autonomy — deferred to v2.1

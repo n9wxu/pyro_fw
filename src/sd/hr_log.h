@@ -19,7 +19,9 @@
  * preallocates the next file (f_expand, contiguous) on the pad, so launch
  * waits on no FAT search; it is logs/next.bin until it closes, then renamed
  * logs/hrNNNN.bin. One left behind by a power cut is renamed at the next
- * boot.
+ * boot. A file the card cannot take any more -- mounted again under it, or
+ * writes that keep failing -- is given up, and the log goes on in a new one
+ * from the next whole record [HR-06].
  *
  * The file is records, little-endian: a u8 type, a u8 of flags, a u16 payload
  * length, a u16 CRC of the payload, then the payload. The first is the
@@ -101,6 +103,8 @@ typedef struct {
     uint32_t syncs, sync_max_us;
     uint32_t prepare_us;  /* the last create and f_expand */
     uint32_t logs;        /* files closed since boot */
+    uint32_t reopens;     /* files given up: the card remounted under one, or
+                             WRITE_FAILS_MAX writes in a row failed */
     uint32_t bytes_total; /* written since boot */
     lsm6ds3_set_t last;   /* the newest set read */
 } hr_stats_t;

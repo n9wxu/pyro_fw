@@ -511,6 +511,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **HR-03**: The log shall reach the card in whole 4 kB writes that keep the file sector-aligned. ← HR-02
 - **HR-04**: Every record shall carry a CRC of its payload, a log shall be read to its last whole record, and a log a power cut left open shall be kept under a number at the next boot. ← HR-02
 - **HR-05**: A ring the card cannot keep up with shall drop whole records and count them, and nothing the logger does shall be on the flight task's path. ← HR-02, RTOS-01
+- **HR-06**: A log whose file the card can no longer take -- the card mounted again under it, or writes that keep failing -- shall go on in a new file from the next whole record, with the old file kept under a number; at most the one record the switch tears shall be lost. ← HR-02, HR-04
 
 ## 19. Bench Flight
 

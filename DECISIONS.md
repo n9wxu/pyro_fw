@@ -640,6 +640,18 @@ rationale and the alternatives considered.
   holds 682 sets, 410 ms at 1.66 kHz, so a reader late by less than that
   loses nothing, and the FIFO says when it did (FIFO_OVER_RUN). Reads take
   whole sets only, aligned by FIFO_PATTERN (AN4650, page 88).
+- **A file the card cannot take any more** -- the card mounted again under
+  it, or three writes in a row failing, whose error FatFs keeps for good --
+  is given up: the log goes on in a new file from the next whole record, and
+  the old one is renamed at the next prepare, which never creates over a log
+  it could not rename. The expanded size is synced at prepare, so a log is
+  recoverable whole from its first byte. The record a switch tears is the
+  most lost (HR-06). Contiguous space is taken as the longest run the free
+  space holds, halving from 128 MB.
+- **On the bench, 2026-09-29:** 70 s at 1.66 kHz with a remount at 40 s:
+  24 kB/s to the card, no record dropped, no FIFO overrun, the slowest 4 kB
+  write 9 ms, the ring at most 17 kB of 32; the new file's first set 0.9 ms
+  after the old one's last.
 - **Decoded by** `support/hr_log.py`; host-tested by `test_hr_log.c`.
 
 ### DD-076: Every File Through vfs.h, The SD Card First
@@ -673,12 +685,21 @@ rationale and the alternatives considered.
 - **Waits:** every one bounded by the SD specification's limits -- reads
   100 ms, write busy 250 ms, 500 ms on SDXC (Physical Layer Simplified
   Specification 6.00, PDF page 97) -- and the card's initialisation by 1 s.
-- **Found on the bench, 2026-09-29:** the wire-wrapped card resets 27 to
-  41 ms into ACMD41 whatever the CRC setting or the poll interval: its
-  answer turns to 0xFF and CMD0 starts over. The IMU on the same bus reads
-  cleanly at 1.66 kHz. The card's supply is the suspect; `POST /api/sd/init`
-  brings it up again without a reboot, with the init's R1s, OCR and ACMD41
-  poll history on `/api/sd`.
+- **A command waits out the last write:** a card programs its last block
+  after it is deselected, so the ready wait before every command allows the
+  write-busy limit, 500 ms, not the read limit. With the read limit a
+  4 kB-chunk bench counted 7 timeouts and 3 retries; with it, none in 16 MB.
+- **Found on the bench, 2026-09-29: MK1C's 3.3 V cannot carry a card.** On
+  J3.1 the card reset 28-29 ms into every initialisation -- a power-on reset,
+  since only one returns a card in SPI mode to SD mode (SD simplified 6.00,
+  section 7.2.1, PDF page 228) -- and moved the MS5607 on the same rail by
+  10 Pa. The same clocking with the card deselected moved nothing, and a
+  battery on VIN changed nothing: the card's draw into U6's foldback limit
+  (XC6206, PDF pages 1 and 5). On its own MIC2920A-3.3 from VIN the card
+  initialises at once (SDHC, 15.6 GB) and writes 734 kB/s in 4 kB chunks at
+  12.5 MHz, 1020 kB/s at 20.8 MHz, with no CRC error; its programming pauses
+  reach 155 ms. A board carrying a card needs a larger U6 or a regulator for
+  the card (task C-U6).
 
 ### DD-074: A Flash Operation Parks The Other Core From A Task Raised To T
 - **Decision:** any task but the flight task may write flash, one operation

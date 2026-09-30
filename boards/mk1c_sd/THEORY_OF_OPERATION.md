@@ -71,38 +71,34 @@ that does not leaves the board on littlefs. `POST /api/sd/init` tries again
 without a reboot, and `GET /api/sd` reports the card, the FAT and the
 driver's counters, with the last initialisation's responses.
 
-**On the bench, 2026-09-29, the card never initialised: it resets.** It
-answers CMD0, CMD8 (echoing 0x1AA) and CMD59, and ACMD41 answers "idle" as it
-should, about 37 times; then, 28-29 ms after ACMD41 began, it stops
-answering. CMD58, which a card still in SPI mode answers, gets nothing; CMD0
-brings it back to idle at once. A card in SPI mode returns to SD mode only
-through a power cycle (SD simplified 6.00, section 7.2.1, PDF page 228), so
-it has been through a power-on reset. Brought up again, it resets again
-28-29 ms later, every time: 68 times in 2 s. CRC on or off, and the interval
-between polls, change nothing, and neither did 22 µF at the card.
+**The card needs its own 3.3 V.** On J3.1, MK1C's rail from U6 (an XC6206
+fed from VIN), the card reset 28-29 ms into every initialisation: it
+answered CMD0, CMD8 and CMD59, then about 37 "idle" answers to ACMD41, then
+nothing until CMD0. A card in SPI mode returns to SD mode only through a
+power cycle (SD simplified 6.00, section 7.2.1, PDF page 228), so each was a
+power-on reset. While it reset, the MS5607 on the same rail read 10 Pa low
+with twice its noise; the same clock with the card deselected
+(`POST /api/sd/idle?ms=`) moved nothing, and a battery on VIN changed
+nothing. U6 is rated 200 mA and folds back to about 100 mA once pulled down
+(XC6206, PDF pages 1 and 5), and a card's 100 mA is an average over a second
+(SD simplified, PDF page 86).
 
-The card sits on a carrier with no regulator, powered from J3.1, MK1C's own
-3.3 V rail: U6, an XC6206 fed from VIN. VIN has no path from USB: it is
-J1.3, or the TP4057 charger's battery output through JP1 (open as built).
-While the card resets, the MS5607 on the same rail reads about 10 Pa low and
-its step noise nearly doubles (5.8-8.4 Pa against 3.2-4.2, the largest step
-32-34 Pa against 15-17, three trials each way). The same clock with the card
-deselected (`POST /api/sd/idle?ms=`) leaves the sensor as quiet as no
-traffic at all, and a battery on VIN changed nothing: it is the card's draw
-as it starts its initialisation, through U6, that moves the rail.
+On the test board the card now has a MIC2920A-3.3 of its own, fed from VIN
+(J1.3), its ground MK1C's, with 22 µF at the card. It comes up at once: an
+SDHC card of 15.6 GB, ready on its first ACMD41.
 
-U6 is rated for 200 mA at least, and its current limiter folds back to about
-100 mA once the output is pulled down (XC6206, PDF pages 1 and 5). A card's
-rating is 100 mA averaged over a second (SD simplified, PDF pages 36 and 86),
-so its peaks go higher, on top of what the rest of MK1C draws. A peak into
-the limiter pulls the rail down, the foldback lowers the limit further, and
-the card resets: no capacitor at the card carries that. The card wants its
-own regulator, and a flight board carrying an SD card a larger U6, or the
-card's writes will move the MS5607's rail in flight.
+| Data clock | 512 B writes | 4 kB writes | Slowest write | CRC errors |
+|---|---|---|---|---|
+| 12.5 MHz (`BOARD_SD_SPI_HZ`) | 258 kB/s | 734 kB/s | 160 ms | 0 |
+| 20.8 MHz (25 MHz asked) | 277 kB/s | 1020 kB/s | 116 ms | 0 |
 
-`POST /api/sd/init?timeout=10000&restarts=1000` keeps bringing the card up
-for 10 s, so the sag can be measured at the card's VDD; `GET /api/sd`
-reports each attempt (`after_r58`, `after_r0`, `restarts`, `fail_ms`).
+The slowest writes are the card's own programming pauses, up to 155 ms. The
+high-rate log needs 24 kB/s, and its ring holds 1.3 s of it.
+
+`POST /api/sd/init?timeout=10000&restarts=1000` keeps bringing a card that
+resets up again for 10 s, so its supply can be measured; `?hz=` sets the data
+clock for `POST /api/sd/bench?kb=&chunk=`. `GET /api/sd` reports each
+initialisation (`after_r58`, `after_r0`, `restarts`, `fail_ms`).
 
 ## The LSM6DS3
 
@@ -123,9 +119,13 @@ flight log does, launch to landing, and on the bench from
 `POST /api/hr/start`; `GET /api/hr` follows it. It needs the card.
 `support/hr_log.py` decodes a log into CSV.
 
+Measured on the bench: 70 s at 1.66 kHz, 24 kB/s to the card, no record
+dropped and no FIFO overrun, the slowest 4 kB write 9 ms, the ring at most
+17 kB of 32. A remount 40 s in moved the log to a new file whose first set
+came 0.9 ms after the old one's last (HR-06).
+
 ## Known limits
 
-- The card has not come up on this board (above), so SD-01, SD-02 and the
-  logger over a flight (task SD-1) are not yet verified on hardware.
+- The card cannot run from MK1C's own 3.3 V (above, task C-U6).
 - No Lua: J3 was Lua's.
 - The bus is wire-wrapped; the clocks are set for it, not for a PCB.

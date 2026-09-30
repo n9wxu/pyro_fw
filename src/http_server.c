@@ -1077,7 +1077,7 @@ static void serve_api_hr(http_conn_t *hc) {
         "\"dropped_records\":%lu,\"dropped_bytes\":%lu,\"imu_sets\":%lu,\"imu_reads\":%lu,"
         "\"imu_overruns\":%lu,\"imu_backlog_max\":%lu,\"imu_read_fails\":%lu,\"pres_records\":%lu,"
         "\"flight_records\":%lu,\"writes\":%lu,\"write_max_us\":%lu,\"write_errors\":%lu,\"syncs\":%lu,"
-        "\"sync_max_us\":%lu,\"prepare_us\":%lu,\"logs\":%lu,\"bytes_total\":%lu,"
+        "\"sync_max_us\":%lu,\"prepare_us\":%lu,\"logs\":%lu,\"reopens\":%lu,\"bytes_total\":%lu,"
         "\"last_g\":[%d,%d,%d],\"last_a\":[%d,%d,%d]}",
         s.logging ? "true" : "false", s.prepared ? "true" : "false", s.preparing ? "true" : "false",
         s.card ? "true" : "false", s.imu_ok ? "true" : "false", (unsigned long)s.odr_hz, s.file,
@@ -1087,7 +1087,7 @@ static void serve_api_hr(http_conn_t *hc) {
         (unsigned long)s.imu_backlog_max, (unsigned long)s.imu_read_fails, (unsigned long)s.pres_records,
         (unsigned long)s.flight_records, (unsigned long)s.writes, (unsigned long)s.write_max_us,
         (unsigned long)s.write_errors, (unsigned long)s.syncs, (unsigned long)s.sync_max_us,
-        (unsigned long)s.prepare_us, (unsigned long)s.logs, (unsigned long)s.bytes_total, s.last.g[0], s.last.g[1],
+        (unsigned long)s.prepare_us, (unsigned long)s.logs, (unsigned long)s.reopens, (unsigned long)s.bytes_total, s.last.g[0], s.last.g[1],
         s.last.g[2], s.last.a[0], s.last.a[1], s.last.a[2]);
     http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
 }
@@ -1486,7 +1486,8 @@ static void route_post(conn_t *c) {
     if (strncmp(path, "/api/sd/init", 12) == 0 && (path[12] == '\0' || path[12] == '?')) {
         /* Bring the card up again, and mount it: a card inserted after boot,
          * or one that failed then. ?crc=0 leaves CMD59 off; ?timeout=ms and
-         * ?restarts=n hold a card that resets on the rail to be measured. */
+         * ?restarts=n hold a card that resets on the rail to be measured;
+         * ?hz= sets the data clock. */
         sd_set_crc(strstr(path, "crc=0") == NULL);
         const char *to = strstr(path, "timeout=");
         sd_set_init_timeout_ms(to ? (uint32_t)strtoul(to + 8, NULL, 10) : 1000u);
@@ -1494,6 +1495,8 @@ static void route_post(conn_t *c) {
         sd_set_poll_gap_ms(gap ? (uint32_t)strtoul(gap + 4, NULL, 10) : 0u);
         const char *rs = strstr(path, "restarts=");
         sd_set_init_restarts(rs ? (uint32_t)strtoul(rs + 9, NULL, 10) : 3u);
+        const char *hz = strstr(path, "hz=");
+        sd_set_data_hz(hz ? (uint32_t)strtoul(hz + 3, NULL, 10) : BOARD_SD_SPI_HZ);
         int rc = sd_start();
         char jb[64];
         int jn = snprintf(jb, sizeof(jb), "{\"rc\":%d,\"mounted\":%s}", rc, vfs_sd_mounted() ? "true" : "false");
