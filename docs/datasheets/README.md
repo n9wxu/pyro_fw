@@ -22,6 +22,7 @@ from a part. Cite the file and page, not memory.
 | `LSM6DS3_DocID026899_Rev4_2015-04.pdf` | ST LSM6DS3 accelerometer and gyroscope (MK1C J3 test board) | DocID026899 Rev 4, April 2015 | cdn.sparkfun.com/assets/learn_tutorials/4/1/6/DM00133076.pdf, fetched 2026-09-28; st.com would not download |
 | `AN4650_LSM6DS3_DocID027415_Rev1.pdf` | ST AN4650, the LSM6DS3 application note: the FIFO, its pattern and burst reads | DocID027415 Rev 1 | cdn.sparkfun.com/assets/learn_tutorials/4/1/6/AN4650_DM00157511.pdf, fetched 2026-09-29; st.com would not download |
 | `XC6206_ETR0305_004b.pdf` | Torex XC6206 LDO; the XC6206P332MR is MK1C's U6, the 3.3 V rail | ETR0305_004b | wmsc.lcsc.com (LCSC C5446), fetched 2026-09-28; torexsemi.com refused |
+| `MIC2920A_Micrel_2005-02.pdf` | Micrel MIC2920A 400 mA LDO; the MIC2920A-3.3 feeds the MK1C J3 test board's SD card (C-U6) | Micrel, February 2005 | ww1.microchip.com/downloads/en/DeviceDoc/mic2920.pdf, fetched 2026-09-29 |
 | `SD_Physical_Layer_Simplified_v6.00_2017-04.pdf` | SD Association Physical Layer Simplified Specification | Version 6.00, April 10, 2017 | academy.cba.mit.edu/classes/networking_communications/SD/SD.pdf, fetched 2026-09-28; sdcard.org would not download |
 
 MS5607, page 3: conversion time at OSR 4096 is 7.40 / 8.22 / 9.04 ms (min /
@@ -132,10 +133,24 @@ XC6206, page 3: SOT-23 dissipation 250 mW, input 7.0 V absolute maximum.
 Page 4: input 6.0 V at most in operation. Page 5, 3.3 V row: 200 mA output
 at least; dropout 75/350 mV (typ/max) at 30 mA and 250/680 mV at 100 mA.
 
+XC6206, page 1: foldback current limiting, which serves as short-circuit
+protection. Page 5, 3.3 V row: 200 mA maximum output, short-circuit current
+100 mA typical.
+
+MIC2920A, page 1: SOT-223 pins 1 input, 2 ground and tab, 3 output. Page 3:
+400 mA guaranteed; dropout 250 mV typical at 100 mA, 370 mV at 250 mA,
+400/600 mV (typ/max) at 400 mA; ground current 1.3 mA at 100 mA, 5 mA at
+250 mA. Page 8: 10 µF or more on the output, ESR about 5 Ω or less,
+tantalum or aluminium electrolytic; 0.1 µF on the input when a battery feeds
+it; in regulation down to 1 mA of load.
+
 SD simplified 6.00, PDF pages (the printed number is 18 less): page 36, in
 SPI mode a card draws up to 0.36 W, 100 mA at 3.6 V. Pages 221-222: after 1 ms
 of stable VDD the host gives at least 74 clocks with CS held high before
-the first command, and in SPI mode CMD0 is that first command.
+the first command, and in SPI mode CMD0 is that first command. Page 86: a
+card's maximum current is averaged over one second. Page 228 (7.2.1): a card
+enters SPI mode on CMD0 with CS low, and only a power cycle returns it to SD
+mode.
 
 LSM6DS3 registers (datasheet): CTRL1_XL (10h) ODR_XL[7:4], FS_XL[3:2]
 (00 2 g, 01 16 g, 10 4 g, 11 8 g), BW_XL[1:0], page 52; CTRL2_G (11h)
