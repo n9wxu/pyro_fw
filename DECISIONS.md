@@ -651,7 +651,13 @@ rationale and the alternatives considered.
 - **On the bench, 2026-09-29:** 70 s at 1.66 kHz with a remount at 40 s:
   24 kB/s to the card, no record dropped, no FIFO overrun, the slowest 4 kB
   write 9 ms, the ring at most 17 kB of 32; the new file's first set 0.9 ms
-  after the old one's last.
+  after the old one's last. A 30 km bench flight, launch to landing: 16.2 MB,
+  1,088,033 sets over 668 s with none lost, 33,421 conversions with none
+  missed, 6,684 snapshots.
+- **Timing:** a batch is stamped at its FIFO status read, after the bus is
+  had; stamped before, a stage holding the bus made batches look early.
+  `support/hr_log.py` spaces sets at the sensor's measured rate (1627.8 Hz
+  on this LSM6DS3, not 1660) and fits each unbroken run of batches to a line.
 - **Decoded by** `support/hr_log.py`; host-tested by `test_hr_log.c`.
 
 ### DD-076: Every File Through vfs.h, The SD Card First

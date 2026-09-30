@@ -124,6 +124,14 @@ dropped and no FIFO overrun, the slowest 4 kB write 9 ms, the ring at most
 17 kB of 32. A remount 40 s in moved the log to a new file whose first set
 came 0.9 ms after the old one's last (HR-06).
 
+A 30 km bench flight (DD-078), launch to landing: 16.2 MB, 1,088,033 sets
+over 668 s at the sensor's 1627.8 Hz, every one 614.33 µs after the last in
+the decoded timeline; 33,421 pressure conversions, one every 20.0 ms with
+none missed, since the flight log is on the card and the internal flash is
+not written in flight; 6,684 snapshots of the flight. No record dropped, no
+FIFO overrun, no loop overrun; the slowest write 103 ms, a programming pause
+the ring absorbed.
+
 ## Known limits
 
 - The card cannot run from MK1C's own 3.3 V (above, task C-U6).

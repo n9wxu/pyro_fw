@@ -55,10 +55,9 @@ a push.
       c4d196e; the card itself has not come up (SPI-1)
 - [x] E. LSM6DS3 driver; the high-rate logger on the SD (DD-077) -- f5bbaa9;
       the IMU verified, the log on a card waits on SPI-1
-- [ ] F. A bench flight source for high-altitude flights; measure the SD
-      and the logger to their limits. The source is done (DD-078) and found
-      DD-079 and HA-1; the SD's limits and the logger over a flight wait on
-      the card (SD-1)
+- [x] F. A bench flight source for high-altitude flights; measure the SD
+      and the logger to their limits (DD-078, DD-079; the card on its own
+      regulator, C-U6; HA-1 found and left to the user)
 - [ ] G. RAW-INT for the flight log on boards without an SD, if time allows
 
 ## Progress notes
@@ -83,3 +82,10 @@ a push.
   descent ladder forcing the main at 29 km under a working drogue: fixed by
   judging rates in the pad's air (DD-079). The card still resets in ACMD41,
   so no high-rate log has been written on hardware.
+- 2026-09-29, F finished: with a MIC2920A-3.3 for the card, 734 kB/s in
+  4 kB writes at 12.5 MHz and 1020 at 20.8; a 30 km bench flight logged
+  16.2 MB whole -- 1,088,033 IMU sets at an even 614.33 us, 33,421 pressure
+  conversions with none missed (the flight log on the card, the internal
+  flash unwritten), 6,684 snapshots. Found and fixed on the way: the ready
+  wait before a command (read limit, not write-busy), the logger stranded by
+  a remount or a failed write (HR-06), batches stamped before the bus.
