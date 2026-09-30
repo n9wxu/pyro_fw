@@ -68,7 +68,37 @@ carry a fork of littlefs until upstream has an equivalent.
 | Needs the chip to allow partial page programs | yes | yes |
 
 Patch 1 alone takes most of the gain for the least change: one erase in
-three minutes at the default logging rate. It is the one to prove first.
+three minutes at the default logging rate. But see "Upstream": v2 is
+frozen, and v3 does both of these things itself.
+
+## Upstream (littlefs-project/littlefs, read 2026-09-29)
+
+The problem is known and open in v2, and solved in v3, which is not released.
+
+| Where | What it says |
+|---|---|
+| Issue #344 (2019, open) | geky: littlefs "freezes the file's blocks", so the next write copies the last block. "On NOR flash, where you can program a byte at a time, littlefs could simply continue to write data to the file without copying the block... as cheap as a single metadata update" -- but not when a sync has written a padded program unit. Ideas: continue only when the synced size is `prog_size`-aligned, or keep the file's tail inline in the metadata. Not done: "a rather niche optimization". Asked again in May 2025; unanswered. |
+| Issue #374 (2020, open) | "lfs is erasing a block on every append." geky: littlefs does not assume the erase value (an encrypted device may not read 0xFF), so it cannot tell a tail is still erased; a per-file "end block erased" flag was considered. Dec 2024: pre-erase needs "a block map which can store this... a work-in-progress". |
+| Issue #581 (2021, closed) | "Each append requires a full rewrite of the block when you sync the file." Mitigations: inline files (a file under `cache_size` and 1/8 of a block lives in the metadata log), or fewer syncs. Inlining small appends: "medium priority", not soon "unless someone contributes an implementation". |
+| PR #692 (2022, open) | `lfs_file_reserve()`: a contiguous run of blocks held as a file, written by the application directly -- the raw area, inside littlefs. A new record type (a disk version bump), +11% code, no read or write through littlefs. geky pointed it at the B-tree rewrite, "~1/2 year out" (Jan 2024). |
+| PR #1056 (2024, open) | ArduPilot: skip the read-back of programs while logging. Deferred for v3. Not the copy. |
+| PR #1111 (2025, open) v3-alpha | "Better logging: No more sync-padding issues" -- a sync stores the tail inline in the file's B-tree, so no block is rewritten after it. "Pre-erased block tracking" through an on-disk block map, "should significantly reduce the latency of file writes in the critical path". Also `lfs3_file_fruncate` for logs. Marked "INCOMPLETE AND UNSTABLE"; the alpha's disk version is 0.0, which v3 will refuse; v2 to v3 migration is a stretch goal. |
+| Issue #1114, v3 discussion | Apr 2026: "~2-3 months minimum" of work left. No release since. |
+| v2.11.3 release (Mar 2026) | "littlefs2 status: feature freeze." Fixes data corruption with two handles open on one file (PR #1194). |
+
+What that means here:
+
+- A v2 patch (patches 1 and 2 above) would never go upstream: v2 is frozen.
+  We would carry it until we move to v3, which does the same thing its own
+  way and makes the patch obsolete.
+- v3 is the real answer, later: both costs gone, with a new disk format
+  every board would have to migrate to, and more code (MK1B has 2.5 kB
+  left).
+- The raw area is our own small code, independent of littlefs, and can stay
+  or go when v3 arrives. With v2 frozen, it is now the better of the two
+  options for today.
+- Separately: take v2.11.3. Two uploads of one file at once would open one
+  `.part` file twice, the case #1194 fixes.
 
 ## What it would change
 
