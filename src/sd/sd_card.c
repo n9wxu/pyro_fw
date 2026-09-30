@@ -443,6 +443,20 @@ void sd_set_init_restarts(uint32_t n) {
     init_restarts = n;
 }
 
+bool sd_clock_idle(uint32_t ms) {
+    if (!spi_bus_take(2000))
+        return false;
+    spi_bus_setup(INIT_HZ, 0, 0);
+    gpio_put(BOARD_PIN_SD_CS, 1);
+    uint32_t t0 = time_us_32();
+    while (time_us_32() - t0 < ms * 1000u)
+        spi_bus_byte(0xFF);
+    if (data_hz)
+        spi_bus_setup(data_hz, 0, 0);
+    spi_bus_give();
+    return true;
+}
+
 int sd_start(void) {
     spi_bus_init();
     if (sd_init_card() != 0)

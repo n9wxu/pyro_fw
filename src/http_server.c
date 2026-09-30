@@ -1477,6 +1477,12 @@ static void route_post(conn_t *c) {
         http_respond_str(hc, 200, JSON, "{\"status\":\"stopping\"}");
         return;
     }
+    if (strncmp(path, "/api/sd/idle", 12) == 0 && (path[12] == '\0' || path[12] == '?')) {
+        const char *q = strstr(path, "ms=");
+        bool ok = sd_clock_idle(q ? (uint32_t)strtoul(q + 3, NULL, 10) : 2000u);
+        http_respond_str(hc, ok ? 200 : 503, JSON, ok ? "{\"status\":\"clocked\"}" : "{\"error\":\"bus\"}");
+        return;
+    }
     if (strncmp(path, "/api/sd/init", 12) == 0 && (path[12] == '\0' || path[12] == '?')) {
         /* Bring the card up again, and mount it: a card inserted after boot,
          * or one that failed then. ?crc=0 leaves CMD59 off; ?timeout=ms and

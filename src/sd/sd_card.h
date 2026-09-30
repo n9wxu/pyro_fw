@@ -74,6 +74,10 @@ void sd_set_poll_gap_ms(uint32_t ms);
  * draw on the rail long enough to measure. */
 void sd_set_init_restarts(uint32_t n);
 
+/* The initialisation's clock, with the card deselected, for ms: the bus's
+ * own disturbance without the card's draw, for the bench. */
+bool sd_clock_idle(uint32_t ms);
+
 /* CMD59 at the next init: on by default. */
 void sd_set_crc(bool on);
 

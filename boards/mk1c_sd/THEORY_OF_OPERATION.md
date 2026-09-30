@@ -86,9 +86,19 @@ The card sits on a carrier with no regulator, powered from J3.1, MK1C's own
 J1.3, or the TP4057 charger's battery output through JP1 (open as built).
 While the card resets, the MS5607 on the same rail reads about 10 Pa low and
 its step noise nearly doubles (5.8-8.4 Pa against 3.2-4.2, the largest step
-32-34 Pa against 15-17, three trials each way): the card's draw as it starts
-its initialisation moves the rail itself. A card draws up to 100 mA in SPI
-mode (PDF page 36); U6's dropout at 100 mA is up to 680 mV (XC6206, page 5).
+32-34 Pa against 15-17, three trials each way). The same clock with the card
+deselected (`POST /api/sd/idle?ms=`) leaves the sensor as quiet as no
+traffic at all, and a battery on VIN changed nothing: it is the card's draw
+as it starts its initialisation, through U6, that moves the rail.
+
+U6 is rated for 200 mA at least, and its current limiter folds back to about
+100 mA once the output is pulled down (XC6206, PDF pages 1 and 5). A card's
+rating is 100 mA averaged over a second (SD simplified, PDF pages 36 and 86),
+so its peaks go higher, on top of what the rest of MK1C draws. A peak into
+the limiter pulls the rail down, the foldback lowers the limit further, and
+the card resets: no capacitor at the card carries that. The card wants its
+own regulator, and a flight board carrying an SD card a larger U6, or the
+card's writes will move the MS5607's rail in flight.
 
 `POST /api/sd/init?timeout=10000&restarts=1000` keeps bringing the card up
 for 10 s, so the sag can be measured at the card's VDD; `GET /api/sd`
