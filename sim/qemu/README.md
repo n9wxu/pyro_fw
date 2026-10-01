@@ -28,7 +28,9 @@ git clone -b pyro-plant https://github.com/n9wxu/qemu-rp2040-pico.git ~/src/qemu
 cd ~/src/qemu-rp2040-pico
 mkdir build && cd build
 ../configure --target-list=arm-softmmu --disable-werror --disable-docs \
-             --disable-tools --disable-guest-agent --disable-capstone --disable-slirp
+             --disable-tools --disable-guest-agent --disable-capstone \
+             --disable-slirp --disable-sdl --disable-gtk --disable-vnc \
+             --disable-curses --disable-cocoa
 ninja
 ```
 
@@ -76,14 +78,16 @@ The plant device takes `board`, `match1`, `match2` (`present` / `absent` /
 
 ## What the `pyro-plant` branch adds
 
-Four devices on top of the RFC machine, all in commit `b33e355`:
+Four devices on top of the RFC machine (`b33e355`), plus three fixes to
+the machine's own multicore path and a BMP280 (`415ed4d`):
 
 | | |
 |---|---|
 | `hw/i2c/rp2040_i2c.c` | DW_apb_i2c master on a real QEMU `I2CBus`. Without it `i2c_write_blocking()` waits on `IC_RAW_INTR_STAT.TX_EMPTY` forever, because an unimplemented register window reads as zero. |
 | `hw/adc/rp2040_adc.c` | One-shot and free-running paths, values from a board-supplied callback. |
 | `hw/misc/pyro_plant.c` | The `pyro-plant` device: wires the SIO pins in, supplies ADC samples, integrates on the virtual clock. |
-| `hw/misc/rp2040_sio.c` | Named `gpio-out` lines, edges only. Closes the RFC's "external GPIO signal transport is not implemented" gap. |
+| `hw/misc/rp2040_sio.c` | Named `gpio-out` lines, edges only. Closes the RFC's "external GPIO signal transport is not implemented" gap. Also the ROM's core 1 entry handshake, and an event line per core so a WFE wait on the mailbox can end. |
+| `hw/sensor/bmp280.c` | A barometer. It bisects Bosch's compensation to produce the raw value that maps to a chosen pressure, rather than inverting it by algebra and drifting from what the driver computes. |
 
 Plus: the machine's flash array default raised to 16 MiB with a `flash-size`
 machine property, since MK1A puts littlefs at the 8 MB mark and a short
@@ -99,45 +103,83 @@ address silently returns zero for everything. Use
 
 ## What works
 
-MK1A and MK1B boot through the bootloader, mount littlefs, probe I2C and
-reach the main loop. With no pressure sensor modelled (item 3) each reports
-`!SENSOR FAIL` and stays in FAULT, which sends no `$PYRO` sentence
-(FLT-BOOT-12, DD-031). The pyro backend's sense cycle still runs against the
-plant, and its cadence is real, not scripted: MK1A asserts PYRO_LOW (GPIO10)
-for `NODE_SETTLE_MS` (50 ms) and reads, releases it for another 50 ms and
-reads for shorts, then waits `IDLE_BETWEEN_CHECKS_MS` (400 ms), each deadline
-taken by the 20 ms loop (DD-065). MK1B reads its channels as MK1A does
-(DD-059).
+MK1A boots FreeRTOS SMP on both cores, mounts littlefs, finds its
+barometer, flies, and fires both channels:
+
+```
+pyro-plant: launch at 14.001 s, target apogee 1524 m
+pyro-plant: match 1 IGNITED at 33077 ms, alt 1524.2 m
+pyro-plant: match 2 IGNITED at 123612 ms, alt 300.3 m
+
+$PYRO_APO,152530,18921        apogee 1525.30 m
+$PYRO_FIRE,1,152401,18941     drogue at 1524 m
+$PYRO_FIRE,2,30718,109473     main at 307 m
+```
+
+Both ignitions come from the plant's own energy integrator, not from the
+fire command, so a channel that would not have lit does not deploy
+anything. The loop is closed: physics to the barometer, the barometer to
+the firmware, the firmware's FIRE pin to the plant, the plant's ignition
+latch back to the chutes.
+
+Continuity tracks the plant as it does on the host, and the two boards
+still disagree about a healthy igniter, now on emulated silicon:
+
+```
+plant: ch1 present, ch2 absent
+  mk1a   $PYRO,...,01,0,4095,0,0      flags 01 = channel 1 continuity good
+  mk1b   $PYRO,...,00,0,4095,0,0      flags 00 = neither channel good
+```
+
+### One thing to look at
+
+A flight shows `$PYRO_FIRE,1` twice, about 2 s apart, the second from the
+re-fire path in `check_refire()`. That may be the re-fire logic working as
+designed on a channel it believed was still intact, or the spent match not
+reaching the firmware before the window opens. Not root-caused.
+
+### Two things that bite
+
+**Configure headless.** A desktop library that moves under the binary
+breaks it with a dyld error that looks nothing like a QEMU problem. The
+configure line above passes `--disable-sdl --disable-gtk --disable-vnc
+--disable-curses --disable-cocoa`; nothing here ever opens a window.
+
+**The watchdog can reset the guest.** Without `-icount`, virtual time
+follows host wall-clock, so the emulated core does less work per virtual
+millisecond than real silicon and a watchdog sized for real hardware can
+fire. It shows up as a clean QEMU exit under `-no-reboot` — a guest reset,
+not a crash, with nothing in the log. `-icount shift=3` should fix it by
+tying virtual time to instructions at 125 MHz, but produced no output at
+all on this machine and was not pursued; a longer `PYRO_LOOP_WORST_MS` for
+emulated runs is the cruder option.
 
 ## TODO
 
-### 1. Lua on core1 — the reason this path exists
+### 1. Lua on core 1
 
-Core1 never launches: `lua_core1_start()` is only called when there is a
-script to run, and the emulated littlefs is empty, so nothing exercises the
-multicore hazard surface.
+**The framing here changed.** This item used to be about the bare-metal
+core0/core1 split and `src/flash_window.h` — core0 erasing flash while
+core1 executed from XIP. That file is gone; FreeRTOS SMP replaced it. What
+is left of the original list:
 
-The way in is a pre-built littlefs image laid into the flash array at the
-filesystem offset, so a script is present at boot without needing the web
-interface (which needs networking, which is item 2 — do not wait for it).
-littlefs is already vendored under `_deps/littlefs-src`, so a small host
-writer can build the image; `littlefs-python` is the other option.
+- `multicore_launch_core1_raw()`'s unbounded handshake: **exercised**, and
+  it found three real emulator bugs (see the commit above). The FreeRTOS
+  port calls it on every boot, so every boot now exercises it.
+- `malloc_mutex` from linking `pico_multicore` (`docs/core1_hazard.md`):
+  still worth driving, and now reachable, since the scheduler runs.
+- the flash window: no longer applicable in this form. The equivalent
+  question under SMP is what happens to a task on the other core during a
+  flash erase, and the RFC does model that — its XIP is ROMD-backed
+  normally and switches to device callbacks while flash is busy, with NOR
+  programming rules and busy faults.
 
-Once a script runs, the things worth driving:
-
-- the `multicore_launch_core1_raw()` push/pop handshake, which has no
-  timeout — `lua_core1.c` already works around a stray-0 case
-- `malloc_mutex`, which appears purely from linking `pico_multicore`
-  (`docs/core1_hazard.md`)
-- the flash window: core0 erasing while core1 executes from XIP. The RFC
-  models this — its XIP is ROMD-backed normally and switches to device
-  callbacks while flash is busy, with NOR programming rules and busy
-  faults — so the fault is real rather than elided
-- `flash_window_skips` / `refusals` / `deferrals` under a core1 that
-  overruns its grant
-
-Run with `-icount 0` for a reproducible instruction-accurate clock; race
-hunting is not worth much without it.
+Lua itself still does not run: `lua_core1_start()` needs a script, and the
+emulated littlefs is empty. The way in is a pre-built littlefs image laid
+into the flash array at the filesystem offset, so a script is present at
+boot without needing the web interface (item 2 — do not wait for it).
+littlefs is vendored under `_deps/littlefs-src`, so a small host writer can
+build the image; `littlefs-python` is the other option.
 
 ### 2. Web interface — needs a USB network bridge
 

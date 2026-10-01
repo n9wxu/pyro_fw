@@ -11,7 +11,7 @@
 set -e
 
 BUILD="${1:?usage: run-qemu.sh <firmware-build-dir> [plant-options]}"
-PLANT_OPTS="${2:-match1=present,match2=absent}"
+PLANT_OPTS="${2:-match1=present,match2=present,flight-alt-m=1524}"
 QEMU="${PYRO_QEMU:-$HOME/src/qemu-rp2040-pico/build}/qemu-system-arm"
 # The board name comes from the artifact, not from the directory name: a
 # build tree can be called anything, and CMake names the image after the
