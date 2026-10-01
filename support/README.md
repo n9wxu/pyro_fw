@@ -286,9 +286,14 @@ python3 support/update_from_release.py --force
 prereleases.
 
 The tool:
-1. Queries the device's current version via `/api/status`
+1. Queries the device's current version **and board** via `/api/status`
 2. Checks GitHub releases API for the latest (or specified) version
-3. Downloads `pyro_fw_c_fota_image.bin` from the release
+3. Downloads `pyro_fw_<board>_fota.bin` from the release -- the image for
+   the board the device reported, since the boards do not take each other's
+   firmware (mk1b is a 2 MB part, mk1a and mk1c are 16 MB). If the device
+   does not report a board, pass `--board`. Releases up to v2.2.0 carried a
+   single unqualified `pyro_fw_c_fota_image.bin`, which is still accepted as
+   a fallback.
 4. Pushes it to the device via `/api/ota`
 5. Waits for reboot and verifies the new version
 

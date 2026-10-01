@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Update Pyro MK1B firmware from GitHub releases.
+"""Update Pyro firmware from GitHub releases.
 
 Usage:
   ./update_from_release.py                  Check and update from latest release
@@ -18,10 +18,24 @@ except ImportError:
 
 REPO = "n9wxu/pyro_fw"  # Update to your GitHub repo
 API_URL = f"https://api.github.com/repos/{REPO}/releases"
-ASSET_NAME = "pyro_fw_c_fota_image.bin"
+
+# A release carries one OTA image per supported board, named after the
+# board, because the boards do not take each other's firmware -- mk1b is a
+# 2 MB part and mk1a and mk1c are 16 MB, so the flash layouts differ. The
+# asset is chosen from the board the DEVICE reports, never guessed.
+#
+# Releases up to v2.2.0 shipped a single unqualified image built for the
+# default board. LEGACY_ASSET_NAME is tried only as a fallback, so this
+# script still updates from them.
+def asset_name_for(board):
+    return f"pyro_fw_{board}_fota.bin"
+
+
+LEGACY_ASSET_NAME = "pyro_fw_c_fota_image.bin"
 
 parser = argparse.ArgumentParser(description="Update Pyro MK1B from GitHub releases")
 parser.add_argument("--host", default="192.168.7.1", help="Device address")
+parser.add_argument("--board", help="Override the board the device reports (mk1a, mk1b, mk1c)")
 parser.add_argument("--check", action="store_true", help="Check only, don't update")
 parser.add_argument("--version", help="Update to specific version (e.g. 1.2.0)")
 parser.add_argument("--force", action="store_true", help="Update even if same version")
@@ -29,17 +43,22 @@ parser.add_argument("--beta", action="store_true", help="Include beta/prerelease
 args = parser.parse_args()
 
 
-def get_device_version(host):
-    """Get current firmware version from device."""
+def get_device_status(host):
+    """Get /api/status from the device, or None if it cannot be reached."""
     try:
         url = f"http://{host}/api/status"
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-            return data.get("fw_version", "unknown")
+            return json.loads(resp.read().decode())
     except Exception as e:
         print(f"Error: Cannot reach device at {host}: {e}")
         return None
+
+
+def get_device_version(host):
+    """Get current firmware version from device."""
+    status = get_device_status(host)
+    return status.get("fw_version", "unknown") if status else None
 
 
 def get_releases():
@@ -69,10 +88,24 @@ def find_release(releases, version=None, include_beta=False):
     return None, None
 
 
-def find_asset(release):
-    """Find the OTA binary asset in a release."""
-    for asset in release.get("assets", []):
-        if asset["name"] == ASSET_NAME:
+def find_asset(release, board=None):
+    """The OTA image for this board, falling back to the pre-v2.2.0 name.
+
+    Returning the legacy asset when a board-specific one exists would risk
+    writing another board's firmware, so the board-specific name wins and
+    the fallback applies only when nothing matches it.
+    """
+    assets = release.get("assets", [])
+    if board:
+        want = asset_name_for(board)
+        for asset in assets:
+            if asset["name"] == want:
+                return asset["browser_download_url"], asset["size"]
+    for asset in assets:
+        if asset["name"] == LEGACY_ASSET_NAME:
+            if board:
+                print(f"Note: no {asset_name_for(board)} in this release; "
+                      f"falling back to {LEGACY_ASSET_NAME}")
             return asset["browser_download_url"], asset["size"]
     return None, 0
 
@@ -147,7 +180,14 @@ def main():
     print(f"Device: {args.host}\n")
 
     # Get current device version
-    current = get_device_version(args.host)
+    status = get_device_status(args.host)
+    current = status.get("fw_version", "unknown") if status else None
+    board = args.board or (status.get("board") if status else None)
+    if board:
+        print(f"Device board: {board}")
+    elif not args.check:
+        print("Warning: the device did not report its board; the OTA image "
+              "cannot be matched to it. Pass --board to choose explicitly.")
     if current is None:
         sys.exit(1)
     print(f"Current firmware: v{current}")
@@ -176,9 +216,10 @@ def main():
         sys.exit(0)
 
     # Find OTA asset
-    asset_url, asset_size = find_asset(release)
+    asset_url, asset_size = find_asset(release, board)
     if not asset_url:
-        print(f"Error: {ASSET_NAME} not found in release assets")
+        wanted = asset_name_for(board) if board else LEGACY_ASSET_NAME
+        print(f"Error: {wanted} not found in release assets")
         sys.exit(1)
 
     print(f"\nUpdating: v{current} → v{release_ver}")

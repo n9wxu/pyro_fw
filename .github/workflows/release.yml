@@ -6,6 +6,13 @@ on:
 
 env:
   PICO_SDK_VERSION: 2.2.0
+  # Every board a release ships binaries for.
+  #
+  # reference/ is a porting template and builds nothing anyone flashes, and
+  # mk1c_sd is not in the supported set yet, so neither is listed. Adding a
+  # board here is all it takes -- the steps below loop over this list and
+  # name every artifact after the board it came from.
+  PYRO_RELEASE_BOARDS: mk1a mk1b mk1c
 
 jobs:
   release:
@@ -28,24 +35,58 @@ jobs:
       - name: Set version from tag
         run: echo "${GITHUB_REF_NAME#v}" > VERSION
 
-      - name: Build
-        run: |
-          mkdir build && cd build
-          cmake -G Ninja -DPICO_SDK_PATH=/tmp/pico-sdk ..
-          ninja
+      - name: Build every supported board
         env:
           CI_BUILD: 1
+        run: |
+          set -e
+          mkdir -p dist
+          for BOARD in $PYRO_RELEASE_BOARDS; do
+            echo "::group::$BOARD"
+            cmake -G Ninja -B "build-$BOARD" -DPICO_SDK_PATH=/tmp/pico-sdk -DPYRO_BOARD="$BOARD"
+            cmake --build "build-$BOARD"
+
+            # Two of the three artifacts have the same filename whatever
+            # board produced them, and the bootloader's CONTENTS differ per
+            # board because the flash geometry does -- mk1b is a 2 MB part,
+            # mk1a and mk1c are 16 MB. Publishing them unrenamed would have
+            # each board's upload overwrite the last and leave one set of
+            # binaries labelled as if it fitted all three.
+            # pyro_fw_$BOARD.bin and pyro_fw_c_fota_image.bin are
+            # byte-identical, so only the OTA-named one is shipped.
+            cp "build-$BOARD/pyro_fw_$BOARD.uf2"       "dist/pyro_fw_$BOARD.uf2"
+            cp "build-$BOARD/pyro_fw_c_fota_image.bin" "dist/pyro_fw_${BOARD}_fota.bin"
+            cp "build-$BOARD/_deps/pico_fota_bootloader-build/pico_fota_bootloader.uf2" \
+               "dist/pico_fota_bootloader_$BOARD.uf2"
+            echo "::endgroup::"
+          done
+          echo "=== release payload ==="
+          ls -l dist
+
+      - name: Refuse to release a board that built nothing
+        run: |
+          set -e
+          for BOARD in $PYRO_RELEASE_BOARDS; do
+            for f in "pyro_fw_$BOARD.uf2" "pyro_fw_${BOARD}_fota.bin" \
+                     "pico_fota_bootloader_$BOARD.uf2"; do
+              [ -s "dist/$f" ] || { echo "::error::missing or empty dist/$f"; exit 1; }
+            done
+          done
+          # The bootloaders must differ between a 2 MB board and a 16 MB one.
+          # If they match, a board was built against the wrong flash geometry
+          # and the artifacts would be silently wrong rather than absent.
+          if cmp -s dist/pico_fota_bootloader_mk1b.uf2 dist/pico_fota_bootloader_mk1c.uf2; then
+            echo "::error::mk1b and mk1c bootloaders are identical -- flash geometry did not take"
+            exit 1
+          fi
+          echo "all boards present and distinct"
 
       - name: Package support tools and web files
-        run: zip -r pyro-mk1b-support.zip www/ support/ VERSION
+        run: zip -r dist/pyro-support.zip www/ support/ VERSION
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
-          files: |
-            build/pyro_fw_mk1b.uf2
-            build/pyro_fw_c_fota_image.bin
-            build/_deps/pico_fota_bootloader-build/pico_fota_bootloader.uf2
-            pyro-mk1b-support.zip
+          files: dist/*
