@@ -20,9 +20,9 @@
 typedef enum {
     PTRACE_PRESSURE = 'P',
     PTRACE_TEMPERATURE = 'T',
-    PTRACE_ZERO = 'Z',  /* read before the conversion finished */
-    PTRACE_BUS = 'B',   /* the sensor did not answer */
-    PTRACE_RANGE = 'R', /* compensated outside 1-120 kPa */
+    PTRACE_ZERO = 'Z',   /* read before the conversion finished */
+    PTRACE_BUS = 'B',    /* the sensor did not answer */
+    PTRACE_RANGE = 'R',  /* compensated outside 1-120 kPa */
     PTRACE_MISSED = 'W', /* the loop found the last conversion still running */
     /* [DD-068] a flash operation ran during the conversion: not fed on */
     PTRACE_FLASHED = 'F',  /* the pressure's */
