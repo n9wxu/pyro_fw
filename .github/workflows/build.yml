@@ -342,10 +342,15 @@ jobs:
   # Every green push to main is released as a patch, so the released version
   # and the code on main never drift apart.
   #
-  # The bump is committed with [skip ci] and the release is CALLED rather
+  # The bump is committed with a skip-ci marker and the release is CALLED
+  # rather
   # than triggered by pushing the tag -- a tag pushed with GITHUB_TOKEN does
   # not start another workflow, so a tag-triggered release would simply
   # never run. Calling the reusable workflow needs no extra secret.
+  #
+  # The marker is spelled out only in the step below, never in prose:
+  # GitHub matches it anywhere in a commit message, so writing it in a
+  # sentence skips that commit's build.
   patch-release:
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'

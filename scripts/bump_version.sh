@@ -12,6 +12,12 @@
 # What it does NOT do is decide anything. support/version.py owns the rules
 # -- a bump zeroes everything below it -- and refuses a step that breaks
 # them, so this cannot produce a 2.3.7.
+# A note on the marker this script puts in its commit message: GitHub
+# matches that token anywhere in a commit message, body included. So
+# mentioning it in prose skips the build for that commit -- which is
+# exactly how the commit that introduced the automatic patch release
+# managed to skip its own CI and never release. Write "skip-ci" when you
+# mean to talk about it.
 set -e
 
 LEVEL="${1:-}"
