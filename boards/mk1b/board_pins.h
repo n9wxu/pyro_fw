@@ -31,7 +31,7 @@
 #define BOARD_BMP280_I2C_HZ  100000u /* no pull-up but the RP2040's */
 
 /* See THEORY_OF_OPERATION.md "Pyro circuit". */
-#define BOARD_PIN_PYRO_COMMON_EN 15 /* -> Q1B gate: the shared LOW side */
+#define BOARD_PIN_PYRO_LOW 15 /* -> Q1B gate, the shared low side (net PYRO_COMMON_EN) */
 #define BOARD_PIN_PYRO1_EN       21 /* -> U5 EN2 -> OUT2, channel 1     */
 #define BOARD_PIN_PYRO2_EN       22 /* -> U5 EN1 -> OUT1, channel 2     */
 #define BOARD_PIN_PYRO1_FLAG     17 /* <- U5 FLG2, active low           */

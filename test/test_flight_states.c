@@ -268,6 +268,47 @@ void test_FLT_BOOT_03_writes_default_config(void) {
                              "a board with no config.ini gets one");
 }
 
+/* Boot from power-up until the board leaves BOOT_SENSOR. */
+static flight_state_t boot_past_sensor_test(flight_context_t *ctx) {
+    flight_init(ctx);
+    mock_time_ms = 2600;
+    flight_state_t st = step(ctx, mock_time_ms);
+    for (int i = 0; i < 5 && st == BOOT_SENSOR; i++) {
+        mock_time_ms += 20;
+        st = ctx->current_state = step(ctx, mock_time_ms);
+    }
+    return st;
+}
+
+/* [FLT-BOOT-17] An image built for another board drives that board's pin map. */
+void test_FLT_BOOT_17_board_image_mismatch_is_fault(void) {
+    mock_board_image_ok = false;
+    static flight_context_t ctx;
+    TEST_ASSERT_EQUAL_MESSAGE(FAULT, boot_past_sensor_test(&ctx), "a mismatched image must not reach the pad");
+    TEST_ASSERT_TRUE(ctx.diag & DIAG_BOARD_MISMATCH);
+    TEST_ASSERT_EQUAL_STRING("board_mismatch", flight_diag_name(DIAG_BOARD_MISMATCH));
+}
+
+void test_FLT_BOOT_17_matching_image_boots_on(void) {
+    static flight_context_t ctx;
+    TEST_ASSERT_NOT_EQUAL(FAULT, boot_past_sensor_test(&ctx));
+    TEST_ASSERT_FALSE(ctx.diag & DIAG_BOARD_MISMATCH);
+}
+
+/* [FLT-BOOT-18, CFG-05] A config.ini that exists but cannot be read is not
+ * replaced, and the board does not fly a plan the operator did not set. */
+void test_FLT_BOOT_18_unreadable_config_is_fault_and_kept(void) {
+    const char *ini = "[pyro]\r\npyro2_mode=agl\r\npyro2_value=123\r\n";
+    TEST_ASSERT_EQUAL(0, hal_fs_write_file("config.ini", ini, (int)strlen(ini)));
+    mock_config_unreadable = true;
+    static flight_context_t ctx;
+    TEST_ASSERT_EQUAL(FAULT, boot_past_sensor_test(&ctx));
+    TEST_ASSERT_TRUE(ctx.diag & DIAG_CFG_UNREADABLE);
+    char buf[128];
+    int n = mock_fs_peek("config.ini", buf, (int)sizeof(buf) - 1);
+    TEST_ASSERT_EQUAL_MESSAGE((int)strlen(ini), n, "the operator's file is not overwritten with defaults");
+}
+
 /* ── PAD_IDLE tests ───────────────────────────────────────────────── */
 
 void test_FLT_LAUNCH_02_stays_on_ground(void) {
@@ -1678,6 +1719,9 @@ int main(void) {
     RUN_TEST(test_FLT_BOOT_04_settle_wait);
     RUN_TEST(test_FLT_BOOT_13_no_calibration_samples_is_fault);
     RUN_TEST(test_FLT_BOOT_14_no_filesystem_is_fault);
+    RUN_TEST(test_FLT_BOOT_17_board_image_mismatch_is_fault);
+    RUN_TEST(test_FLT_BOOT_17_matching_image_boots_on);
+    RUN_TEST(test_FLT_BOOT_18_unreadable_config_is_fault_and_kept);
     RUN_TEST(test_FLT_BOOT_02_reads_config_at_boot);
     RUN_TEST(test_FLT_BOOT_03_writes_default_config);
 

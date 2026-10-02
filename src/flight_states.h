@@ -19,11 +19,13 @@
 #define DIAG_BROWNOUT (1u << 7)     /* came back mid-flight after a power event */
 #define DIAG_SENSOR_STUCK (1u << 8) /* a full window of identical readings [SNS-PRES-10] */
 #define DIAG_SENSOR_LOST (1u << 9)  /* no sample for 0.5 s in flight [SNS-PRES-11] */
+#define DIAG_BOARD_MISMATCH (1u << 10) /* image built for another board [FLT-BOOT-17] */
+#define DIAG_CFG_UNREADABLE (1u << 11) /* config.ini there but unreadable [FLT-BOOT-18] */
 
 /* The pyro ones can be fixed at the rocket; the rest mean safe it and walk
  * away. The split picks the beep. */
 #define DIAG_PYRO_ANY (DIAG_P1_OPEN | DIAG_P1_SHORT | DIAG_P2_OPEN | DIAG_P2_SHORT)
-#define DIAG_FATAL_ANY (DIAG_SENSOR_FAIL | DIAG_FS_FAIL | DIAG_CFG_RANGE)
+#define DIAG_FATAL_ANY (DIAG_SENSOR_FAIL | DIAG_FS_FAIL | DIAG_CFG_RANGE | DIAG_BOARD_MISMATCH | DIAG_CFG_UNREADABLE)
 /* Re-derived at every pad check [PYR-CONT-03]. */
 #define DIAG_PAD_ANY (DIAG_PYRO_ANY | DIAG_CFG_RANGE)
 
@@ -165,6 +167,8 @@ typedef struct flight_context_t {
      * being brought up. */
     uint8_t sensor_type;
     bool fs_ok;
+    bool board_mismatch; /* [FLT-BOOT-17] */
+    bool cfg_unreadable; /* [FLT-BOOT-18] */
 
     /* ── Brownout recovery [FLT-BROWN-01..05] ───────────────────── */
     uint8_t reset_cause;

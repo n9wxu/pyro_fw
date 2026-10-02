@@ -249,22 +249,25 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
 
 /* ── Config ───────────────────────────────────────────────────────── */
 
+/* As the hardware's: defaults are written only over a file that is not there. */
 int hal_config_load(config_t *cfg) {
-    config_set_defaults(cfg);
-    char buf[512];
-    int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
-    if (n > 0) {
-        buf[n] = '\0';
-        config_parse_ini(buf, cfg);
+    char buf[CONFIG_INI_MAX];
+    int n = hal_fs_read_file("config.ini", buf, (int)sizeof(buf) - 1);
+    switch (config_from_file(cfg, buf, (int)sizeof(buf), n, NULL)) {
+    case CONFIG_FILE_LOADED:
         return 0;
+    case CONFIG_FILE_MISSING: {
+        const char *def = config_default_ini();
+        hal_fs_write_file("config.ini", def, (int)strlen(def));
+        return -1;
     }
-    const char *def = config_default_ini();
-    hal_fs_write_file("config.ini", def, (int)strlen(def));
-    return -1;
+    default:
+        return -2;
+    }
 }
 
 int hal_config_save(const config_t *cfg) {
-    char buf[512];
+    char buf[CONFIG_INI_MAX];
     int n = config_serialize_ini(cfg, buf, (int)sizeof(buf));
     if (n <= 0)
         return -1;
@@ -303,7 +306,10 @@ void hal_sleep_until_event(void) {}
 
 void hal_platform_init(void) {}
 void hal_platform_service(void) {}
-void hal_firmware_commit(void) {}
+/* The simulated board is always the board the image was built for. */
+bool hal_board_image_ok(void) {
+    return true;
+}
 
 /* ── In-flight data logging: flight_sim.csv in the working directory ── */
 

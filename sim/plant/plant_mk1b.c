@@ -44,7 +44,7 @@ static double lowside_ohms(const plant_t *p) {
     bool shorted = p->faults[PF_LOWSIDE_A_SHORT] || p->faults[PF_LOWSIDE_B_SHORT];
     if (shorted)
         return PLANT_FET_ON_OHM + R_FUSE_OHM;
-    return plant_gpio(p, BOARD_PIN_PYRO_COMMON_EN) ? (PLANT_FET_ON_OHM + R_FUSE_OHM) : PLANT_OPEN_OHM;
+    return plant_gpio(p, BOARD_PIN_PYRO_LOW) ? (PLANT_FET_ON_OHM + R_FUSE_OHM) : PLANT_OPEN_OHM;
 }
 
 static double mk1b_max_dt(plant_t *p) {

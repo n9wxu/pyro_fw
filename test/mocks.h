@@ -138,6 +138,11 @@ extern bool mock_ground_test_pin;
 
 void mock_reset_all(void);
 
+/* hal_board_image_ok()'s answer [CR-13]; true after mock_reset_all(). */
+extern bool mock_board_image_ok;
+/* config.ini reads fail with HAL_FS_ERROR, as an I/O error would. */
+extern bool mock_config_unreadable;
+
 /* Whole-file writes, so a test can prove something is written once. */
 extern uint32_t mock_fs_write_count;
 

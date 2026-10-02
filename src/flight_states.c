@@ -311,6 +311,16 @@ static state_event_t detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
         ctx->diag |= DIAG_FS_FAIL;
         return SEVT_FAULT;
     }
+    if (ctx->board_mismatch) {
+        hal_telemetry_send("!BOARD MISMATCH - this image is for another board\r\n");
+        ctx->diag |= DIAG_BOARD_MISMATCH;
+        return SEVT_FAULT;
+    }
+    if (ctx->cfg_unreadable) {
+        hal_telemetry_send("!CFG FAIL - config.ini could not be read\r\n");
+        ctx->diag |= DIAG_CFG_UNREADABLE;
+        return SEVT_FAULT;
+    }
     /* [FLT-BROWN-02] Lingers until the history holds a speed. */
     state_event_t rec = SEVT_NONE;
     if (!assess_recovery(ctx, now, &rec)) {
@@ -1407,7 +1417,8 @@ void flight_init(flight_context_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     config_set_defaults(&ctx->config);
 
-    hal_config_load(&ctx->config); /* [FLT-BOOT-02] */
+    ctx->cfg_unreadable = hal_config_load(&ctx->config) == -2; /* [FLT-BOOT-02, FLT-BOOT-18] */
+    ctx->board_mismatch = !hal_board_image_ok();               /* [FLT-BOOT-17] */
     telemetry_init(&ctx->config);
     buzzer_init();
     beep_store_load(NULL, 0); /* the shipped table, until the file is read */
@@ -1556,6 +1567,10 @@ const char *flight_diag_name(uint16_t bit) {
         return "sensor_stuck";
     case DIAG_SENSOR_LOST:
         return "sensor_lost";
+    case DIAG_BOARD_MISMATCH:
+        return "board_mismatch";
+    case DIAG_CFG_UNREADABLE:
+        return "cfg_unreadable";
     default:
         return "";
     }

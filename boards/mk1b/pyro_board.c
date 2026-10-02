@@ -23,7 +23,7 @@
 
 #define FIRE_PULSE_MS 500
 
-static const uint8_t pyro_outputs[] = {BOARD_PIN_PYRO_COMMON_EN, BOARD_PIN_PYRO1_EN, BOARD_PIN_PYRO2_EN};
+static const uint8_t pyro_outputs[] = {BOARD_PIN_PYRO_LOW, BOARD_PIN_PYRO1_EN, BOARD_PIN_PYRO2_EN};
 static const uint8_t high_side_pin[2] = {BOARD_PIN_PYRO1_EN, BOARD_PIN_PYRO2_EN};
 static const uint8_t fault_flag_pin[2] = {BOARD_PIN_PYRO1_FLAG, BOARD_PIN_PYRO2_FLAG};
 static const uint8_t sense_adc[2] = {BOARD_ADC_CH_SENSE1, BOARD_ADC_CH_SENSE2};
@@ -76,7 +76,7 @@ static void begin_presence(uint32_t now_ms, bool read_shorts_first) {
     if (read_shorts_first)
         read_sense(check.short_counts);
     hold_high_sides_off();
-    gpio_put(BOARD_PIN_PYRO_COMMON_EN, 1);
+    gpio_put(BOARD_PIN_PYRO_LOW, 1);
     check.phase = CHECK_PRESENCE;
     check.started_ms = now_ms;
     check.due_ms = now_ms + PRESENCE_SETTLE_MS;
@@ -85,7 +85,7 @@ static void begin_presence(uint32_t now_ms, bool read_shorts_first) {
 static void finish_presence(uint32_t now_ms) {
     uint16_t presence[2];
     read_sense(presence);
-    gpio_put(BOARD_PIN_PYRO_COMMON_EN, 0);
+    gpio_put(BOARD_PIN_PYRO_LOW, 0);
     for (int i = 0; i < 2; i++) {
         check.result[i] = classify(presence[i], check.short_counts[i]);
         check.fired_since[i] = false;
@@ -147,7 +147,7 @@ void pyro_get(uint8_t channel, pyro_continuity_t *out) {
 void pyro_fire(uint8_t channel) {
     if ((channel != 1 && channel != 2) || pulse.channel != 0)
         return;
-    gpio_put(BOARD_PIN_PYRO_COMMON_EN, 1);
+    gpio_put(BOARD_PIN_PYRO_LOW, 1);
     gpio_put(high_side_pin[channel - 1], 1);
     pulse.channel = channel;
     pulse.start_ms = to_ms_since_boot(get_absolute_time());

@@ -30,7 +30,7 @@ for t in host_tests closedloop_tests pressure_chain_tests mach_tests brownout_te
          http_tests http_work_tests status_json_tests net_stats_tests net_txq_tests mac_random_tests hr_log_tests flight_sim_tests \
          flight_log_tests pressure_trace_tests log_plan_tests board_pyro_tests \
          sensor_bringup_tests bmp280_tests ground_test_seq_tests ground_test_tests \
-         pin_caps_tests beep_tests pin_assign_tests buzzer_tests config_tests \
+         pin_caps_tests beep_tests beep_out_tests pin_assign_tests buzzer_tests config_tests \
          config_persistence_tests plant_tests board_pyro_mk1c_tests board_selftest_tests \
          physics_tests replay_tests integration_tests ms5607_tests; do
     run "$B" "$t"

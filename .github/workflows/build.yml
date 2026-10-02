@@ -248,7 +248,7 @@ jobs:
 
       - name: Run pin, beep, buzzer and config tests
         run: |
-          cd build && ninja pin_caps_tests && ninja beep_tests && ninja pin_assign_tests
+          cd build && ninja pin_caps_tests && ninja beep_tests && ninja beep_out_tests && ninja pin_assign_tests
           ninja buzzer_tests && ninja config_tests && ninja config_persistence_tests
 
       # The firing-network models, MK1C's held to the bench board (DD-054),

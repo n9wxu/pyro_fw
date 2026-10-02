@@ -20,7 +20,7 @@ bool pin_store_owns(uint8_t pin) {
     return pin < FAKE_PINS && owns[pin];
 }
 
-#define COMMON BOARD_PIN_PYRO_COMMON_EN
+#define COMMON BOARD_PIN_PYRO_LOW
 #define EN1 BOARD_PIN_PYRO1_EN
 #define EN2 BOARD_PIN_PYRO2_EN
 #define SETTLE_MS 10u /* the sense node's settle, as the sleep it replaces */
