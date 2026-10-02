@@ -1,9 +1,7 @@
 /*
- * HAL implementation for simulation (host or WASM).
- *
- * Pressure comes from the physics engine. Pyro fires feed back
- * into the physics. Buzzer tone state is exported for audio.
- * Telemetry is captured in a buffer. Filesystem is in-memory.
+ * hal.h for the simulator, on the host or in the browser: pressure is set by
+ * the driver's physics, fires are counted for it, the buzzer's state and the
+ * telemetry are kept for it to read, and the filesystem is memory.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -11,39 +9,35 @@
 #include "../src/pressure_processing.h"
 #include "../src/config.h"
 #include "../src/flight_events.h"
+#include "../src/loop_period.h"
+#include "board_pins.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
 
-/* ── Simulation state (accessible from main_sim.c) ────────────────── */
+/* ── Simulation state ───────────────────────────────────────────── */
 
-/* Time */
 static uint32_t sim_time = 0;
 
-/* Pressure — set by physics engine */
 static float sim_pressure_pa = 101325.0f;
 static int sim_sensor_type = 2;
 static uint32_t sim_last_feed_ms;
 static bool sim_fed;
 
-/* Pyro */
 static int sim_pyro_fire_count = 0;
 static uint8_t sim_pyro_last_channel = 0;
 static bool sim_pyro_firing = false;
 
-/* Continuity — set by user */
+/* The fixture's continuity, as sim_set_continuity() last set it. */
 static hal_continuity_t sim_cont1 = {50, true, false, false};
 static hal_continuity_t sim_cont2 = {50, true, false, false};
 
-/* Buzzer */
 static bool sim_buzzer_on = false;
 
-/* Telemetry capture */
 #define SIM_TELEM_BUF 8192
 static char sim_telem_buf[SIM_TELEM_BUF];
 static int sim_telem_len = 0;
 
-/* In-memory filesystem */
 #define SIM_FS_MAX_FILES 4
 #define SIM_FS_MAX_SIZE 65536
 typedef struct {
@@ -54,7 +48,7 @@ typedef struct {
 } sim_file_t;
 static sim_file_t sim_files[SIM_FS_MAX_FILES];
 
-/* ── Accessors for main_sim.c ─────────────────────────────────────── */
+/* ── Accessors (pyro_sim.h) ───────────────────────────────────────── */
 
 void sim_set_time(uint32_t ms) {
     sim_time = ms;
@@ -132,28 +126,14 @@ int hal_pressure_sensor(void) {
 
 /* ── Pyro ─────────────────────────────────────────────────────────
  *
- * Two implementations, chosen at build time.
- *
- * By default the pyro side is a FIXTURE: continuity is whatever a test
- * last wrote with sim_set_continuity(), and a fire is a counter. That is
- * the right thing for the flight-logic tests, which care about when the
- * state machine decides to fire and not about what the board does when it
- * does.
- *
- * The boards/sim_mk1a, sim_mk1b and sim_mk1c packages define
- * PYRO_SIM_BOARD_PYRO instead. They compile the REAL board file from
- * boards/<name>/pyro_board.c against sim/hw/ and sim/plant/, so the sense
- * thresholds, the settle timing and the firing sequence all run against a
- * modelled board. Their glue supplies hal_pyro_* from pyro.h, so the
- * fixture below must not also define it. */
+ * A fixture: continuity is what sim_set_continuity() set, and a fire is a
+ * count. A modelled-board build (PYRO_SIM_BOARD_PYRO) takes hal_pyro_* from
+ * sim/hw/pyro_sim_glue.c instead. See THEORY_OF_OPERATION.md "The sim board". */
 #ifndef PYRO_SIM_BOARD_PYRO
 
 void hal_pyro_init(void) {}
 
-/* The simulator has no pin assignment to release from, so both channels
- * are always the flight software's. Present because hal.h asks for it:
- * a HAL that silently omits an entry point is one that links until
- * something calls it. */
+/* No pin assignment to release from: both channels are the flight's. */
 int hal_pyro_claim_channels(uint32_t (*pads_of)(uint8_t channel)) {
     (void)pads_of;
     return 2; /* both channels */
@@ -187,15 +167,8 @@ bool hal_pyro_fault(uint8_t channel) {
 
 #endif /* !PYRO_SIM_BOARD_PYRO */
 
-/* Record a fire for the simulation's own bookkeeping, which is what the
- * JS wrapper reads as sim.pyroFireCount and sim.lastFireChannel.
- *
- * With the fixture above, hal_pyro_fire() calls this directly and the
- * count means "the flight software commanded a fire". With a modelled
- * board it is called from the plant's ignition latch instead, so the
- * count means "a match actually took its ignition energy" -- which is
- * the event a chute deployment should follow, and not always the same
- * one. A commanded fire into an open channel does not deploy anything. */
+/* A fire, for sim_get_pyro_fire_count(): commanded, with the fixture; a
+ * match that lit, with a modelled board. */
 void sim_note_pyro_fire(uint8_t channel) {
     sim_pyro_fire_count++;
     sim_pyro_last_channel = channel;
@@ -213,9 +186,7 @@ void hal_buzzer_tone_off(void) {
 }
 
 /* ── Buzzer async task (sim) ──────────────────────────────────────── */
-/* Store the buzzer task pointer so hal_tasks_tick() can drive it.
- * sim_get_buzzer_state() reads the GPIO state set by tone_on/off,
- * which is correct because the buzzer task calls those directly. */
+
 
 static async_task_t *sim_buzzer_task = NULL;
 
@@ -232,8 +203,7 @@ void hal_telemetry_send(const char *sentence) {
     }
 }
 
-/* The simulator's filesystem is memory, so the mount cannot fail. Present because
- * hal.h asks for it. */
+/* Memory: the mount cannot fail. */
 bool hal_fs_healthy(void) {
     return true;
 }
@@ -259,7 +229,6 @@ int hal_fs_read_cached(const char *path, char *buf, int max_len) {
 }
 
 int hal_fs_write_file(const char *path, const char *data, int len) {
-    /* Find existing or empty slot */
     int slot = -1;
     for (int i = 0; i < SIM_FS_MAX_FILES; i++) {
         if (sim_files[i].used && strcmp(sim_files[i].path, path) == 0) {
@@ -278,7 +247,7 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
     return 0;
 }
 
-/* ── Config (v2) ──────────────────────────────────────────────────── */
+/* ── Config ───────────────────────────────────────────────────────── */
 
 int hal_config_load(config_t *cfg) {
     config_set_defaults(cfg);
@@ -307,41 +276,36 @@ int hal_config_save(const config_t *cfg) {
 bool hal_serial_readline(char *buf, int max_len) {
     (void)buf;
     (void)max_len;
-    return false; /* simulation has no serial input */
+    return false;
 }
 
 /* ── Async task runner (sim) ─────────────────────────────────────── */
 
-/* The sensor's rate on the hardware (FLT-RATE-01, DD-001). Fed every tick
- * instead, the speed becomes a difference of pressures one millisecond apart
- * -- quantisation noise that no descent phase can settle on. */
-#define SIM_SAMPLE_MS 20
+/* The sensor's rate on the hardware [FLT-RATE-01]. Fed every tick, the speed
+ * would be a difference of pressures 1 ms apart: quantisation noise no
+ * descent phase settles on. */
+#define SIM_SAMPLE_MS LOOP_PERIOD_MS
 
 void hal_tasks_tick(uint32_t now_ms) {
-    /* Feed pressure_processing so detectors read altitude via pp_read(). */
     if (sim_sensor_type > 0 && (!sim_fed || now_ms - sim_last_feed_ms >= SIM_SAMPLE_MS)) {
         pp_feed((int32_t)sim_pressure_pa, now_ms);
         sim_last_feed_ms = now_ms;
         sim_fed = true;
     }
 
-    /* Drive the buzzer task so the sim produces correct buzzer audio. */
     if (sim_buzzer_task && sim_buzzer_task->tick && (int32_t)(now_ms - sim_buzzer_task->next_due_ms) >= 0) {
         sim_buzzer_task->tick(sim_buzzer_task, now_ms);
     }
 }
 
-/* ── Sleep (sim: no-op) ───────────────────────────────────────────── */
-
-void hal_sleep_until_event(void) {
-    /* No-op: sim loop is driven by physics engine */
-}
+/* The driver's loop is the clock: nothing to sleep for. */
+void hal_sleep_until_event(void) {}
 
 void hal_platform_init(void) {}
 void hal_platform_service(void) {}
 void hal_firmware_commit(void) {}
 
-/* ── In-flight data logging [v2-9] (sim: write to flight_sim.csv) ── */
+/* ── In-flight data logging: flight_sim.csv in the working directory ── */
 
 static FILE *sim_log_file = NULL;
 static bool sim_log_running = false;
@@ -353,11 +317,11 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     if (!sim_log_file)
         return;
     fprintf(sim_log_file,
-            "# Pyro MK1B Flight Data\n# ID: %.8s\n# Name: %.8s\n"
+            "# %s Flight Data\n# ID: %.8s\n# Name: %.8s\n"
             "# Pyro1: %s %u\n# Pyro2: %s %u\n"
             "# Units: %s\n# Ground Pa: %ld\n"
             "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n",
-            cfg->id, cfg->name, config_mode_name(cfg->pyro1_mode), cfg->pyro1_value, config_mode_name(cfg->pyro2_mode),
+            BOARD_NAME_STR, cfg->id, cfg->name, config_mode_name(cfg->pyro1_mode), cfg->pyro1_value, config_mode_name(cfg->pyro2_mode),
             cfg->pyro2_value,
             cfg->units == 2   ? "ft"
             : cfg->units == 1 ? "m"

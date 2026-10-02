@@ -1,12 +1,7 @@
-/* Host stand-in for hardware/pio.h.
- *
- * Behavioural, not an instruction-level PIO model: the shim knows the one
- * program this tree has -- boards/mk1c/arm_pump.pio -- and reproduces its
- * contract, which is "each pushed word buys (word+1) toggle cycles, then
- * the state machine stalls on an empty FIFO". The stall and the 4-deep
- * FIFO are what DESIGN.md's passive-disarm argument rests on, so both are
- * modelled; the instruction encoding is not, because nothing depends on
- * it. See rp2040_shim.h. */
+/* Host stand-in for hardware/pio.h. Behavioural: the one program in the
+ * tree, boards/mk1c/arm_pump.pio, as its contract -- each pushed word buys
+ * (word + 1) toggle cycles, then the state machine stalls on its empty
+ * 4-deep FIFO. See boards/mk1c/THEORY_OF_OPERATION.md "Arm pump". */
 #ifndef _HARDWARE_PIO_H
 #define _HARDWARE_PIO_H
 #include "pico/types.h"

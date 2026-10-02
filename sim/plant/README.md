@@ -75,14 +75,15 @@ what it finds.
 | fault output | none | AP2192 FLAG ×2 | none (~FLT not routed) |
 | modelled extras | — | FLAG assertion | charge pump, dVdT ramp, ILIM, latch-off, U9's reverse path |
 
-Sources: MK1A from `boards/mk1a/THEORY_OF_OPERATION.md`; MK1C from
-`~/Documents/pyro_mk1c/DESIGN.md` and the bench MK1C, whose bias diodes and
-U9 reverse path are fitted in `boards/mk1c/pyro_sense.h` (DD-054); MK1B from a
-netlist export of `~/Documents/pyro_mk1b/pyro_mk1b.kicad_sch`, as its
-`THEORY_OF_OPERATION.md` is.
+Sources: MK1A from `boards/mk1a/THEORY_OF_OPERATION.md`; MK1C from the MK1C
+design record (`pyro_mk1c/DESIGN.md`) and the bench MK1C, whose bias diodes
+and U9 reverse path are fitted in `boards/mk1c/pyro_sense.h` (DD-054); MK1B
+from a netlist export of its schematic (`pyro_mk1b.kicad_sch`), as its
+`THEORY_OF_OPERATION.md` is. The design record and the schematics are on the
+author's machine and not in this repository.
 
 The e-match is the same device on all three boards and carries the M1–M13
-properties from DESIGN.md §1.2, including both ignition criteria — an
+properties from the design record's §1.2, including both ignition criteria — an
 energy criterion for a fast pulse and a sustained-current criterion for a
 slow drive, since neither implies the other.
 
@@ -95,8 +96,9 @@ slow drive, since neither implies the other.
   not. The pump's diodes are a fixed 0.3 V drop, the TVS is either absent or
   a short, and a FET is either 30 mΩ or open.
 - **MK1B's AP2192A.** The part fitted discharges its outputs while disabled,
-  which holds both sense nodes near 0 V (DD-059, task B-U5). The model senses
-  as the base AP2192 would.
+  which holds both sense nodes near 0 V (DD-059, task B-U5). The model is the
+  board as fitted, so a simulated MK1B reads every channel shorted and never
+  fires; `plant_set_mk1b_u5(MK1B_U5_AP2192)` models the netlist's part.
 - **The RP2040 itself.** `sim/hw/` is about sixty functions — GPIO, the ADC
   and its FIFO, DMA, the PIO state machine MK1C's pump runs on, the watchdog —
   not an emulator. There is no interrupt model and no core 1.

@@ -1,6 +1,5 @@
 /*
- * Host stand-in for the Pico SDK surface the pyro board files use.
- * See rp2040_shim.h for the design and for why the clock matters.
+ * See rp2040_shim.h.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -25,8 +24,7 @@ uint64_t shim_now_us(void) { return now_us; }
 
 /* ── ADC ─────────────────────────────────────────────────────────── */
 
-/* One conversion is 96 cycles of the 48 MHz ADC clock. */
-#define ADC_CONV_US 2
+#define ADC_CONV_US 2 /* 96 cycles of the 48 MHz ADC clock */
 
 static uint adc_input;
 static bool adc_fifo_en;
@@ -50,8 +48,6 @@ uint adc_get_selected_input(void) { return adc_input; }
 void adc_set_temp_sensor_enabled(bool enable) { (void)enable; }
 
 uint16_t adc_read(void) {
-    /* A one-shot conversion. Costing it virtual time is what lets a
-     * polling loop measure a real interval. */
     shim_advance_us(ADC_CONV_US);
     return plant_adc_counts((int)adc_input);
 }
@@ -65,8 +61,7 @@ bool adc_fifo_is_empty(void) { return true; }
 uint16_t adc_fifo_get(void) { return plant_adc_counts((int)adc_input); }
 
 void adc_set_clkdiv(float clkdiv) {
-    /* The SDK's divider counts in ADC clocks: a sample every (clkdiv + 1)
-     * ticks of 48 MHz. 0 means back-to-back conversions. */
+    /* A sample every (clkdiv + 1) ticks of 48 MHz; 0 is back to back. */
     double ticks = (double)clkdiv + 1.0;
     double us = ticks / 48.0;
     adc_sample_interval_us = (us < ADC_CONV_US) ? ADC_CONV_US : us;
@@ -124,10 +119,7 @@ bool dma_channel_is_busy(uint channel) {
 
 void dma_channel_wait_for_finish_blocking(uint channel) {
     if (channel >= DMA_N_CHANNELS) return;
-    /* Let time carry the transfer to completion, a sample interval at a
-     * time, so the plant keeps evolving under the capture. Bounded so a
-     * capture that can never complete -- the ADC never started -- fails
-     * as a short run of zeros rather than as a hang. */
+    /* Bounded: a capture whose ADC never started ends short, not hung. */
     uint64_t guard = 0;
     while (dma_ch[channel].busy && guard < 10ull * 1000ull * 1000ull) {
         shim_advance_us(1);
@@ -136,9 +128,7 @@ void dma_channel_wait_for_finish_blocking(uint channel) {
     dma_ch[channel].busy = false;
 }
 
-/* Called from inside the time advance: the capture runs whether or not the
- * CPU is looking at it, which is what puts the pre-trigger baseline in the
- * buffer while the firmware is still in busy_wait_us(). */
+/* From the time advance: the capture runs while the CPU waits. */
 static void dma_service(double us) {
     if (!adc_running || !adc_fifo_en)
         return;
@@ -159,8 +149,8 @@ static void dma_service(double us) {
 
 /* ── PIO ─────────────────────────────────────────────────────────── */
 
-/* arm_pump.pio is 50 PIO clocks per toggle cycle: 25 high, 25 low. */
-#define ARM_PUMP_CLOCKS_PER_CYCLE 50.0
+#define ARM_PUMP_CLOCKS_PER_CYCLE 50.0 /* boards/mk1c/arm_pump.pio: 25 high, 25 low */
+#define PIO_CLOCK_MHZ 125.0
 #define PIO_FIFO_DEPTH 4
 
 struct pio_instance { int id; };
@@ -186,7 +176,9 @@ uint pio_add_program(PIO pio, const pio_program_t *program) { (void)pio; (void)p
 int  pio_claim_unused_sm(PIO pio, bool required) { (void)pio; (void)required; return 0; }
 void pio_gpio_init(PIO pio, uint pin) { (void)pio; pump.pin = pin; }
 void pio_sm_set_consecutive_pindirs(PIO pio, uint sm, uint b, uint n, bool o) {
-    (void)pio; (void)sm; (void)b; (void)n; (void)o;
+    (void)pio; (void)sm;
+    for (uint pin = b; pin < b + n; pin++)
+        plant_set_gpio_dir((int)pin, o);
 }
 void sm_config_set_set_pins(pio_sm_config *c, uint set_base, uint set_count) {
     c->pin_base = set_base; c->pin_count = set_count;
@@ -197,8 +189,7 @@ void pio_sm_init(PIO pio, uint sm, uint initial_pc, const pio_sm_config *config)
     (void)pio; (void)sm; (void)initial_pc;
     pending_cfg = *config;
     pump.pin = config->pin_base;
-    /* 50 PIO clocks per cycle at (125 MHz / clkdiv). */
-    double cycle_us = ARM_PUMP_CLOCKS_PER_CYCLE * (double)config->clkdiv / 125.0;
+    double cycle_us = ARM_PUMP_CLOCKS_PER_CYCLE * (double)config->clkdiv / PIO_CLOCK_MHZ;
     pump.half_period_us = cycle_us / 2.0;
     if (pump.half_period_us <= 0.0)
         pump.half_period_us = 50.0;
@@ -208,17 +199,11 @@ void pio_sm_init(PIO pio, uint sm, uint initial_pc, const pio_sm_config *config)
     pump.fifo_count = 0;
 }
 
+/* Disabled, the SM stops where it is and its pin holds its level (RP2040
+ * datasheet, PIO CTRL.SM_ENABLE). */
 void pio_sm_set_enabled(PIO pio, uint sm, bool enabled) {
     (void)pio; (void)sm;
     pump.enabled = enabled;
-    if (!enabled) {
-        pump.cycles_left = 0;
-        pump.fifo_count = 0;
-        if (pump.level) {
-            pump.level = false;
-            plant_set_gpio((int)pump.pin, false);
-        }
-    }
 }
 
 void pio_sm_clear_fifos(PIO pio, uint sm) { (void)pio; (void)sm; pump.fifo_count = 0; }
@@ -226,8 +211,7 @@ bool pio_sm_is_tx_fifo_full(PIO pio, uint sm) { (void)pio; (void)sm; return pump
 
 void pio_sm_put_blocking(PIO pio, uint sm, uint32_t data) {
     (void)pio; (void)sm;
-    /* Blocks only while the FIFO is full, which is what bounds how far
-     * ahead of the firmware's safety checks the pump can ever run. */
+    /* A full FIFO bounds how far the pump runs ahead of the firmware. */
     uint64_t guard = 0;
     while (pump.fifo_count >= PIO_FIFO_DEPTH && guard < 1000000) {
         shim_advance_us(1);
@@ -244,8 +228,8 @@ void pio_sm_put(PIO pio, uint sm, uint32_t data) {
         pump.fifo[pump.fifo_count++] = data;
 }
 
-/* Driven from the time advance. When the FIFO empties the SM stalls at
- * `pull block` with the pin low, which is the disarm. */
+/* From the time advance. An empty FIFO stalls the SM at `pull block`, its
+ * pin low after a whole cycle: the disarm. */
 static void pump_service(double us) {
     if (!pump.enabled)
         return;
@@ -303,29 +287,21 @@ static void watchdog_service(void) {
 /* ── GPIO ────────────────────────────────────────────────────────── */
 
 void gpio_init(uint gpio) {
-    /* Pad reset state: input, and whatever the plant already holds. The
-     * board files call gpio_init() then set the level then the direction,
-     * which is the order that matters and which the plant records. */
     plant_set_gpio_dir((int)gpio, false);
+    plant_set_gpio((int)gpio, false);
 }
 void gpio_set_dir(uint gpio, bool out) { plant_set_gpio_dir((int)gpio, out); }
 void gpio_put(uint gpio, bool value) { plant_set_gpio((int)gpio, value); }
 bool gpio_get(uint gpio) { return plant_get_gpio((int)gpio); }
-void gpio_pull_up(uint gpio) { (void)gpio; }
-void gpio_pull_down(uint gpio) { (void)gpio; }
-void gpio_disable_pulls(uint gpio) { (void)gpio; }
+void gpio_pull_up(uint gpio) { plant_set_gpio_pull_up((int)gpio, true); }
+void gpio_pull_down(uint gpio) { plant_set_gpio_pull_up((int)gpio, false); }
+void gpio_disable_pulls(uint gpio) { plant_set_gpio_pull_up((int)gpio, false); }
 void gpio_set_function(uint gpio, enum gpio_function fn) { (void)gpio; (void)fn; }
 
 /* ── Time ────────────────────────────────────────────────────────── */
 
-/* How long until a background peripheral next needs attention. The clock
- * may jump straight to it: plant_step() subdivides internally to whatever
- * resolution the board model asks for, so the only thing the shim has to
- * land on exactly is a peripheral edge.
- *
- * Without this the shim stepped 1 us at a time and a two-minute flight
- * took minutes of wall clock, almost all of it solving an unchanged
- * network while the board sat idle on the pad. */
+/* The clock may jump to the next peripheral edge: plant_step() subdivides
+ * to its own resolution. */
 static uint64_t next_peripheral_event_us(void) {
     uint64_t next = UINT64_MAX;
 
