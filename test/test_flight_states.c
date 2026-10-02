@@ -290,11 +290,9 @@ void test_FLT_LAUNCH_01_detects_ascent(void) {
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = 101325;
     pp_test_prime(101325);
-    /* Launch is now 100 ft (3048 cm) above the ground reference, not 10 m.
-       ~12 Pa per metre near sea level, so 30.5 m needs about 370 Pa; 600 Pa
-       (~5000 cm) clears it without depending on the exact lapse rate. The
-       climb continues at about 33 m/s: the trigger must hold for
-       LAUNCH_HOLD_MS, and only a rocket still climbing holds it. */
+    /* [FLT-LAUNCH-01] 100 ft is about 370 Pa near sea level; 600 Pa clears it
+       without depending on the lapse rate. The climb continues at about
+       33 m/s: the trigger must hold for LAUNCH_HOLD_MS. */
     for (int i = 0; i < 40; i++) {
         mock_time_ms = i * 15;
         mock_pressure.pressure_pa = 101325.0f - 600.0f - 0.4f * (float)mock_time_ms;
@@ -307,10 +305,10 @@ void test_FLT_LAUNCH_01_detects_ascent(void) {
 
 /* ── The ground reference ─────────────────────────────────────────
  *
- * A 5-second rolling mean of the filtered PRESSURE, frozen at launch. MK1C
- * false-launched on a bench from weather drift under the old 10 m trigger, so
- * these hold the two properties that prevent it: the reference follows slow
- * drift, and the trigger is 100 ft above wherever the reference has got to. */
+ * A 5-second rolling mean of the filtered PRESSURE, frozen at launch
+ * [GND-CAL-01]. Weather drift must not launch a board on a bench: the
+ * reference follows slow drift, and the trigger is 100 ft above wherever the
+ * reference has got to. */
 
 static void feed_pad(flight_context_t *ctx, float pa, uint32_t from_ms, uint32_t to_ms, uint32_t step_ms) {
     for (uint32_t t = from_ms; t <= to_ms; t += step_ms) {
@@ -352,22 +350,19 @@ void test_GND_CAL_02_reference_stops_tracking_when_the_rocket_moves(void) {
 }
 
 void test_FLT_LAUNCH_08_ten_metres_is_no_longer_enough(void) {
-    /* The old trigger. MK1C reached it on a bench from pressure drift. */
     flight_context_t ctx = {0};
     ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
     ctx.current_state = PAD_IDLE;
     pp_test_prime(101325);
     mock_time_ms = 0;
 
-    /* ~250 Pa is about 21 m (69 ft): comfortably past the old 10 m trigger
-       and comfortably short of 100 ft, so this discriminates between them
-       rather than sitting on either boundary. Run long enough for the IIR to
-       settle, and for the speed condition to have been satisfied on the way
-       -- otherwise this would pass merely because nothing moved. */
+    /* ~250 Pa is about 21 m (69 ft): well past 10 m, which weather drift
+       reaches on a bench, and well short of 100 ft. Long enough for the IIR
+       to settle and for the speed condition to have been met on the way. */
     feed_pad(&ctx, 101325.0f - 250.0f, 0, 2000, 20);
-    TEST_ASSERT_GREATER_THAN_MESSAGE(1000, ctx.last_altitude, "the climb must clear the OLD 10 m threshold");
-    TEST_ASSERT_LESS_THAN_MESSAGE(LAUNCH_ALT_CM_FOR_TEST, ctx.last_altitude, "and stay under the new one");
-    TEST_ASSERT_EQUAL_MESSAGE(PAD_IDLE, ctx.current_state, "10 m must no longer trip the launch detector");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(1000, ctx.last_altitude, "the climb must clear 10 m");
+    TEST_ASSERT_LESS_THAN_MESSAGE(LAUNCH_ALT_CM_FOR_TEST, ctx.last_altitude, "and stay under 100 ft");
+    TEST_ASSERT_EQUAL_MESSAGE(PAD_IDLE, ctx.current_state, "21 m tripped the launch detector");
 }
 
 void test_FLT_LAUNCH_09_freezing_keeps_the_hundred_feet(void) {
@@ -522,10 +517,9 @@ void test_FLT_APO_01_detects_apogee(void) {
 
 /* ── FALLING / DROGUE / CHUTE tests ──────────────────────────────── */
 
-/* [FLT-DESC-01] The descent phase comes from the rate, so these two can no
- * longer be single-step tests: a phase needs its dwell. Feeding a steady rate
- * is the point -- under the old contract merely setting pyro1_fired advanced
- * the machine, which is what let a commanded-but-dead canopy look deployed. */
+/* [FLT-DESC-01] The descent phase comes from the rate, held for its dwell,
+ * never from pyro1_fired: a commanded-but-dead canopy must not look
+ * deployed. */
 #define PA_PER_CM 0.12f
 
 static void descend_steady(flight_context_t *ctx, int32_t start_cm, int32_t rate_cms, uint32_t ms) {
@@ -1087,7 +1081,7 @@ static int count_pyro_sentences(void) {
     return n;
 }
 
-/* [PYR-CONT-01, FLT-BOOT-15, REV-04] A lead that lets go while the rocket
+/* [PYR-CONT-01, FLT-BOOT-15] A lead that lets go while the rocket
  * waits on the pad must change what the buzzer says, and a fault fixed
  * without a power cycle must stop being reported. */
 void test_REV04_pad_fault_after_boot_is_announced(void) {
@@ -1127,7 +1121,7 @@ void test_REV_NEW_disabled_channel_is_not_a_fault(void) {
     TEST_ASSERT_EQUAL(BR_OK_TO_FLY, ctx.last_reason);
 }
 
-/* [FLT-LAUNCH-03, REV-07] T+0 is the first sample above 50 cm, not the
+/* [FLT-LAUNCH-03] T+0 is the first sample above 50 cm, not the
  * moment the detector tripped a hundred feet later. */
 void test_REV07_launch_backdates_to_first_rise(void) {
     flight_context_t ctx = {0};
@@ -1160,7 +1154,7 @@ void test_REV07_launch_backdates_to_first_rise(void) {
     TEST_ASSERT_TRUE_MESSAGE(ctx.launch_time >= first_rise_ms && ctx.launch_time <= first_rise_ms + 20u, m);
 }
 
-/* [TEL-05, REV-08] A board that failed its power-up test is not on the pad
+/* [TEL-05] A board that failed its power-up test is not on the pad
  * waiting to fly. The ground-station contract has no state for it, so it
  * sends no $PYRO sentence at all -- state 0 would read as "ready". */
 void test_REV08_fault_sends_no_state_sentence(void) {
@@ -1185,7 +1179,7 @@ void test_REV08_fault_sends_no_state_sentence(void) {
     TEST_ASSERT_NULL_MESSAGE(strstr(mock_uart_buf, "$PYRO,"), "nor may a board still booting");
 }
 
-/* [WEB-UI-04, REV-09] Flight time stops at the landing. Read ten minutes
+/* [WEB-UI-04] Flight time stops at the landing. Read ten minutes
  * later it is still the flight, not the time since launch. */
 void test_REV09_flight_time_freezes_at_landing(void) {
     flight_context_t ctx = {0};
@@ -1220,7 +1214,7 @@ void test_REV09_flight_time_freezes_at_landing(void) {
     TEST_ASSERT_INT_WITHIN(100, (long)(landed_at - ctx.launch_time), at_landing);
 }
 
-/* [SYS-DEPLOY-01, DAT-04, REV-03] A board that takes the fire call and
+/* [SYS-DEPLOY-01, DAT-04] A board that takes the fire call and
  * energises nothing has not deployed anything, and must not say it has. */
 void test_REV03_refused_fire_is_not_recorded_as_fired(void) {
     flight_context_t ctx = {0};
@@ -1420,7 +1414,7 @@ void test_dispatch_of_an_unknown_state_is_a_fault(void) {
     TEST_ASSERT_EQUAL(FAULT, dispatch_state(&ctx, 1000));
 }
 
-/* [CFG-SUBSYS-01, REV-12] telem_rate_hz is the in-flight cadence. */
+/* [CFG-SUBSYS-01] telem_rate_hz is the in-flight cadence. */
 void test_REV12_telem_rate_hz_sets_the_flight_cadence(void) {
     flight_context_t ctx = {0};
     config_set_defaults(&ctx.config);

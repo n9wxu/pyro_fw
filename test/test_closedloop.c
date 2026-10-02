@@ -665,13 +665,13 @@ static void run_suite(cfg_fn make, const char *suite_name) {
             assert_order(&res, label);
         }
 
-        /* [REV-01] Every canopy in this runner works, so nothing may be
+        /* Every canopy in this runner works, so nothing may be
          * overridden: each channel goes out on its own trigger. */
         char m[160];
         snprintf(m, sizeof(m), "%s: the ladder forced the main on a flight whose drogue worked", label);
         TEST_ASSERT_FALSE_MESSAGE(res.main_forced, m);
 
-        /* [PYR-MODE-02, REV-05] An AGL trigger fires at its altitude, not a
+        /* [PYR-MODE-02] An AGL trigger fires at its altitude, not a
          * filter lag later. Only where the trigger is below apogee: above it
          * the channel fires at apogee by design (PYR-DEPLOY-01). */
         if (c.pyro1_mode == PYRO_MODE_AGL && trigger_m(c.pyro1_value, c.units) < res.apogee_m - 5.0f) {
@@ -801,22 +801,8 @@ void test_PYR_SAFE_01_no_fire_without_continuity(void) {
     TEST_ASSERT_TRUE_MESSAGE(res.pyro2_fired, "Pyro2 should fire with good continuity");
 }
 
-/* [PYR-DEPLOY-01] A low flight puts both out on one event.
- *
- * This was test_PYR_SAFE_02_no_simultaneous_fire, which asserted the two fire
- * times DIFFER. That forbade exactly the case this exists to allow -- and it
- * was proving almost nothing anyway, because run_sim() clears
- * mock_pyro.firing before every step, so the 500 ms hardware separation it
- * was measuring is 1 ms here.
- *
- * What matters now: with both channels set to fire at apogee, both actually
- * deploy, and close enough together to be one event rather than two.
- *
- * The gap this measures is the SIMULATION's, not the hardware's. run_sim()
- * clears mock_pyro.firing each step, so the separation here is one step; on a
- * board it is FIRE_DURATION_MS, about 500 ms, because the two channels share a
- * common element and must not be energised together (PYR-DEPLOY-02). The
- * bound below is generous enough to cover both. */
+/* [PYR-DEPLOY-01, PYR-DEPLOY-02] A low flight puts both out on one event: the
+ * second as the first one's pulse ends, never inside it. */
 void test_PYR_DEPLOY_01_low_flight_fires_both(void) {
     TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket for the both-on-one-event test");
     const rocket_profile_t *r = &g_rockets[ROCKET_IDX_L1];
@@ -841,7 +827,8 @@ void test_PYR_DEPLOY_01_low_flight_fires_both(void) {
     snprintf(msg, sizeof(msg), "both should deploy on one event: P1=%u P2=%u gap=%u ms", res.p1_fire_ms,
              res.p2_fire_ms, gap);
     TEST_ASSERT_TRUE_MESSAGE(res.pyro1_fired && res.pyro2_fired, msg);
-    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(1000, gap, msg);
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(RIG_PULSE_MS, gap, msg);
+    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(RIG_PULSE_MS + 100u, gap, msg);
 }
 
 /* [SYS-DEPLOY-03, PYR-SAFE-04] No fire while the rocket is still climbing,
@@ -1103,10 +1090,7 @@ void test_PYR_REFIRE_01_refire_ballistic(void) {
              ctx.vertical_speed_cms);
     TEST_ASSERT_TRUE_MESSAGE(refire_detected, msg);
 
-    /* The retry is now the first rung of the emergency ladder rather than the
-     * old free-standing check_refire() window. It lands one grace period after
-     * the initial fire, deterministically, instead of inside a 1-1.5 s window
-     * that the descent rate happened to fall through. */
+    /* The retry lands one grace period after the initial fire. */
     uint32_t window_ms = second_fire_time - first_fire_time;
     snprintf(msg, sizeof(msg), "Re-fire window %ums not at the 2000 ms grace", window_ms);
     TEST_ASSERT_TRUE_MESSAGE(window_ms >= 1900 && window_ms <= 2300, msg);
@@ -1198,9 +1182,7 @@ void test_FLT_MACH_02_fast_subsonic_flight_not_locked(void) {
 }
 
 /* [FLT-DESC-01] Phase comes from the rate. With no drogue configured at all,
- * the old machine sat in FALLING for the rest of the flight because its only
- * exit was pyro1_fired. The main opens, the rate steadies, and the phase must
- * follow the rocket. */
+ * the main opens, the rate steadies, and the phase must follow the rocket. */
 void test_FLT_DESC_01_phase_without_pyros(void) {
     TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket");
     config_t cfg = cfg_agl_agl();
@@ -1238,7 +1220,7 @@ void test_FLT_DESC_02_ballistic_reaches_landed(void) {
 
 /* ── Code review 2026-09-24 ───────────────────────────────────────── */
 
-/* [FLT-EMRG-01, PYR-MODE-02, REV-01] The regression guard the review asked
+/* [FLT-EMRG-01, PYR-MODE-02] The regression guard the review asked
  * for: a drogue that opens, and a main set to 500 ft AGL. The main must go out
  * at 500 ft, not two seconds after the drogue. */
 void test_REV01_working_drogue_main_at_its_trigger(void) {
@@ -1266,7 +1248,7 @@ void test_REV01_working_drogue_main_at_its_trigger(void) {
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(2, checked, "too few rockets climb past 500 ft for the main to be tested");
 }
 
-/* [PYR-MODE-02, REV-05] A drogue set to 400 ft AGL on a ballistic descent.
+/* [PYR-MODE-02] A drogue set to 400 ft AGL on a ballistic descent.
  * The filtered altitude trails the rocket by rate x tau, which at these
  * speeds was 56 m. */
 void test_REV05_agl_drogue_fires_at_its_altitude(void) {
@@ -1279,7 +1261,7 @@ void test_REV05_agl_drogue_fires_at_its_altitude(void) {
     TEST_ASSERT_FLOAT_WITHIN_MESSAGE(AGL_TOL_M, 121.9f, res.pyro1_alt_m, m);
 }
 
-/* [FLT-EMRG-01, REV-01] The failure case, told the way the pad narrative
+/* [FLT-EMRG-01] The failure case, told the way the pad narrative
  * tells it: the charge lit, the drogue did not deploy, the rocket keeps
  * accelerating. The main must be brought forward on that evidence -- well
  * above its own trigger, and within a few seconds of the drogue. */
@@ -1300,7 +1282,7 @@ void test_REV01_failed_drogue_brings_the_main_forward(void) {
     TEST_ASSERT_TRUE_MESSAGE(res.reached_landed, "a failed drogue must still reach LANDED");
 }
 
-/* [FLT-EMRG-01, DAT-04, REV-16] An emergency deployment is recorded as one.
+/* [FLT-EMRG-01, DAT-04] An emergency deployment is recorded as one.
  * After the shredded-drogue flight the log is the only way to tell a forced
  * main from a configured one. */
 void test_REV16_forced_main_is_in_the_log(void) {
