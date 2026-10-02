@@ -346,8 +346,11 @@ static void test_fire(uint8_t channel) {
         return;
     }
     mock_pyro.fire_count++;
+    if (channel < 3)
+        mock_pyro.fires_on[channel]++;
     mock_pyro.last_fire_channel = channel;
     mock_pyro.firing = true;
+    mock_pyro.fired_at_ms = mock_time_ms;
 }
 
 static void test_get(uint8_t channel, hal_continuity_t *out) {
@@ -416,7 +419,8 @@ void hal_pyro_fire(uint8_t channel) {
 }
 
 void hal_pyro_update(uint32_t now_ms) {
-    (void)now_ms;
+    if (mock_pyro.pulse_ms && mock_pyro.firing && now_ms - mock_pyro.fired_at_ms >= mock_pyro.pulse_ms)
+        mock_pyro.firing = false;
 }
 /* Host tests drive the recovery matrix through brownout_assess() directly;
  * this only has to exist and be settable. */

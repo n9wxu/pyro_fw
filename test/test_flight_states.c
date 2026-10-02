@@ -1278,6 +1278,148 @@ void test_REV03_refused_retry_is_asked_once(void) {
     TEST_ASSERT_TRUE(ctx.pyro1_refused);
 }
 
+/* A drogue fired on DELAY 0 in free fall, its pulse ending at 500 ms, then
+ * the board's reading of channel 1: none (neither good nor open) for
+ * unknown_ms after the fire, then open or still present. */
+static void fly_post_fire_verify(flight_context_t *ctx, uint32_t unknown_ms, bool opened) {
+    config_set_defaults(&ctx->config);
+    ctx->config.pyro1_mode = PYRO_MODE_DELAY;
+    ctx->config.pyro1_value = 0;
+    ctx->config.pyro2_mode = PYRO_MODE_NONE;
+    ctx->config.landing_timeout = 0;
+    ctx->current_state = FALLING;
+    ctx->apogee_detected = true;
+    ctx->pyros_armed = true;
+    ctx->pyro1_continuity_good = true;
+    pp_test_prime(101325);
+    pp_ground_track(false);
+    ctx->last_altitude = 50000;
+    mock_time_ms = 0;
+    for (uint32_t t = 0; t <= 1500; t += 20) {
+        if (ctx->pyro1_fired) {
+            uint32_t since = mock_time_ms - ctx->pyro1_fire_time;
+            bool known = since >= unknown_ms;
+            mock_pyro.p1_good = known && !opened;
+            mock_pyro.p1_open = known && opened;
+            mock_pyro.firing = since < 500;
+        }
+        mock_pressure.pressure_pa = 101325.0f - (float)(50000 - 2 * (int32_t)t) * PA_PER_CM;
+        mock_time_ms += 20;
+        ctx->current_state = step(ctx, mock_time_ms);
+    }
+    TEST_ASSERT_TRUE(ctx->pyro1_fired);
+}
+
+/* [PYR-VERIFY-01, PYR-REFIRE-01] The verdict is the board's first reading
+ * after the pulse, however long that check takes: MK1A's runs 100 ms past the
+ * pulse's end. A misfire found then is a misfire. */
+void test_PYR_VERIFY_01_a_late_verdict_of_a_misfire_is_heard(void) {
+    flight_context_t ctx = {0};
+    fly_post_fire_verify(&ctx, 640u, false);
+    TEST_ASSERT_TRUE_MESSAGE(ctx.pyro1_verify_fail, "a channel still present after its fire was not called a misfire");
+}
+
+/* [PYR-VERIFY-01, PYR-REFIRE-02] And no reading is no verdict: a channel the
+ * board has not yet checked is not a misfire, and an opened one never is. */
+void test_PYR_VERIFY_01_no_misfire_from_a_channel_not_yet_checked(void) {
+    flight_context_t ctx = {0};
+    fly_post_fire_verify(&ctx, 640u, true);
+    TEST_ASSERT_FALSE_MESSAGE(ctx.pyro1_verify_fail, "a fired channel that opened was called a misfire");
+}
+
+/* [FLT-EMRG-01, CFG-04] The ladder brings forward a main the configuration
+ * has. A channel set to none has nothing on it to fire, whatever its
+ * continuity reads. */
+void test_FLT_EMRG_01_ladder_never_fires_a_disabled_channel(void) {
+    flight_context_t ctx = {0};
+    config_set_defaults(&ctx.config);
+    ctx.config.pyro1_mode = PYRO_MODE_DELAY;
+    ctx.config.pyro2_mode = PYRO_MODE_NONE;
+    ctx.config.landing_timeout = 0;
+    ctx.current_state = FALLING;
+    ctx.apogee_detected = true;
+    ctx.pyros_armed = true;
+    ctx.pyro1_fired = true;
+    ctx.pyro1_fire_time = 1;
+    ctx.pyro1_continuity_good = true;
+    ctx.pyro2_continuity_good = true;
+    mock_pyro.p1_good = false; /* the drogue's charge lit: no retry */
+    mock_pyro.p1_open = true;
+    pp_test_prime(101325);
+    pp_ground_track(false);
+    ctx.last_altitude = 50000;
+    mock_time_ms = 0;
+
+    descend_steady(&ctx, 50000, 5000, 5000); /* 50 m/s: no drogue explains it */
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_pyro.fire_count, "the ladder fired a channel configured as none");
+    TEST_ASSERT_FALSE(ctx.pyro2_fired);
+    TEST_ASSERT_FALSE(ctx.main_forced);
+}
+
+/* [PYR-CONT-01] At least once a second, on the loop's 20 ms grid. */
+void test_PYR_CONT_01_pad_check_at_least_once_a_second(void) {
+    flight_context_t ctx = {0};
+    boot_to_pad_idle(&ctx);
+    int count = mock_pyro.sample_count;
+    uint32_t last = mock_time_ms, worst = 0;
+    for (int i = 0; i < 500; i++) {
+        mock_time_ms += 20;
+        ctx.current_state = step(&ctx, mock_time_ms);
+        if (mock_pyro.sample_count != count) {
+            count = mock_pyro.sample_count;
+            if (mock_time_ms - last > worst && last != 0)
+                worst = mock_time_ms - last;
+            last = mock_time_ms;
+        }
+    }
+    char m[64];
+    snprintf(m, sizeof(m), "%u ms between continuity checks", (unsigned)worst);
+    TEST_ASSERT_TRUE_MESSAGE(worst > 0 && worst <= 1000u, m);
+}
+
+/* [FLT-ASC-03] Thrust is an ASCENT report: the climb's last flag is not
+ * logged against the samples of the descent. */
+void test_FLT_ASC_03_no_thrust_logged_in_descent(void) {
+    flight_context_t ctx = {0};
+    config_set_defaults(&ctx.config);
+    ctx.config.landing_timeout = 0;
+    ctx.current_state = FALLING;
+    ctx.apogee_detected = true;
+    ctx.under_thrust = true;
+    pp_test_prime(101325);
+    pp_ground_track(false);
+    ctx.last_altitude = 50000;
+    mock_time_ms = 0;
+    hal_log_start(&ctx.config, 101325);
+    descend_steady(&ctx, 50000, 2000, 3000);
+    hal_log_stop();
+
+    static char csv[65536];
+    int n = test_flight_log_csv(csv, (int)sizeof(csv));
+    TEST_ASSERT_TRUE(n > 0);
+    int rows = 0;
+    for (char *line = strtok(csv, "\n"); line; line = strtok(NULL, "\n")) {
+        unsigned long tm;
+        long pa, alt;
+        int st, thrust;
+        if (sscanf(line, "%lu,%ld,%ld,%d,%d", &tm, &pa, &alt, &st, &thrust) != 5 || st == ASCENT)
+            continue;
+        rows++;
+        TEST_ASSERT_EQUAL_MESSAGE(0, thrust, line);
+    }
+    TEST_ASSERT_TRUE_MESSAGE(rows > 0, "no descent rows logged");
+}
+
+/* A state number the machine does not know cannot be flown, and the board
+ * says so: back to PAD_IDLE would re-open launch detection mid-flight. */
+void test_dispatch_of_an_unknown_state_is_a_fault(void) {
+    flight_context_t ctx = {0};
+    config_set_defaults(&ctx.config);
+    ctx.current_state = (flight_state_t)(STATE_COUNT + 3);
+    TEST_ASSERT_EQUAL(FAULT, dispatch_state(&ctx, 1000));
+}
+
 /* [CFG-SUBSYS-01, REV-12] telem_rate_hz is the in-flight cadence. */
 void test_REV12_telem_rate_hz_sets_the_flight_cadence(void) {
     flight_context_t ctx = {0};
@@ -1607,6 +1749,12 @@ int main(void) {
     RUN_TEST(test_REV09_flight_time_freezes_at_landing);
     RUN_TEST(test_REV03_refused_fire_is_not_recorded_as_fired);
     RUN_TEST(test_REV03_refused_retry_is_asked_once);
+    RUN_TEST(test_PYR_VERIFY_01_a_late_verdict_of_a_misfire_is_heard);
+    RUN_TEST(test_PYR_VERIFY_01_no_misfire_from_a_channel_not_yet_checked);
+    RUN_TEST(test_FLT_EMRG_01_ladder_never_fires_a_disabled_channel);
+    RUN_TEST(test_PYR_CONT_01_pad_check_at_least_once_a_second);
+    RUN_TEST(test_FLT_ASC_03_no_thrust_logged_in_descent);
+    RUN_TEST(test_dispatch_of_an_unknown_state_is_a_fault);
     RUN_TEST(test_REV12_telem_rate_hz_sets_the_flight_cadence);
 
     /* On USB */

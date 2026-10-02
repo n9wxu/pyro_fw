@@ -318,6 +318,24 @@ void test_mk1c_a_short_during_precharge_aborts(void) {
     TEST_ASSERT_TRUE_MESSAGE(w.toggle_last_us <= accept_us + 30000u, "the pump stopped at the timeout");
 }
 
+/* [PYR-ARM-03] The fire is stamped on the live clock, and the loop updates
+ * with the `now` it read at the top of the period: a millisecond boundary
+ * between the two is not a precharge that timed out. */
+void test_PYR_ARM_03_mk1c_fire_clock_ahead_of_the_loop_is_no_timeout(void) {
+    board(true, false);
+    loops(1100u);
+    uint32_t loop_now = (uint32_t)(shim_now_us() / 1000u);
+    shim_advance_us(1000u);
+    pyro_fire(1);
+    TEST_ASSERT_TRUE(pyro_is_firing());
+    pyro_update(loop_now);
+    TEST_ASSERT_FALSE_MESSAGE(pyro_fault(1), "a precharge a millisecond old latched a timeout");
+    loops(100u);
+    TEST_ASSERT_TRUE_MESSAGE(fired(1), "the match took its energy");
+    TEST_ASSERT_FALSE(pyro_fault(1));
+    TEST_ASSERT_NULL_MESSAGE(strstr(telemetry, "precharge timeout"), telemetry);
+}
+
 /* ── Refusals ─────────────────────────────────────────────────────── */
 
 static void assert_refused_quietly(uint8_t ch) {
@@ -386,7 +404,22 @@ void test_mk1c_fired_channel_reads_open_after(void) {
     TEST_ASSERT_NOT_NULL_MESSAGE(strstr(telemetry, "ch=1 open: fired"), telemetry);
 }
 
-/* Invariant 12: a misfire on one channel never inhibits the other. */
+/* [PYR-VERIFY-01] Between the fire and the next presence test the fired
+ * channel has no verdict, and says so: neither present nor open. */
+void test_PYR_VERIFY_01_mk1c_fired_channel_unknown_until_the_next_presence_test(void) {
+    board(true, true);
+    loops(1100u);
+    TEST_ASSERT_TRUE(accepted(1));
+    pyro_continuity_t c1;
+    pyro_get(1, &c1);
+    TEST_ASSERT_FALSE_MESSAGE(c1.good || c1.open, "a verdict before the presence test that gives it");
+    for (int i = 0; i < 100 && !strstr(telemetry, "F10 ch=1"); i++)
+        loops(LOOP_MS);
+    pyro_get(1, &c1);
+    TEST_ASSERT_TRUE_MESSAGE(c1.open, "the fired channel, tested, reads open");
+}
+
+/* [PYR-ARM-06] A misfire on one channel never inhibits the other. */
 void test_mk1c_misfire_leaves_the_other_channel(void) {
     board(true, true);
     plant_match(1)->fire_energy_j = 1e9;
@@ -480,11 +513,13 @@ int main(void) {
     RUN_TEST(test_mk1c_pump_runs_only_inside_a_fire);
     RUN_TEST(test_mk1c_a_stopped_loop_disarms);
     RUN_TEST(test_mk1c_a_short_during_precharge_aborts);
+    RUN_TEST(test_PYR_ARM_03_mk1c_fire_clock_ahead_of_the_loop_is_no_timeout);
     RUN_TEST(test_mk1c_refuses_an_open_channel);
     RUN_TEST(test_mk1c_refuses_before_a_tracking_test);
     RUN_TEST(test_mk1c_refuses_with_a_latched_fault);
     RUN_TEST(test_mk1c_refuses_below_uvlo);
     RUN_TEST(test_mk1c_fired_channel_reads_open_after);
+    RUN_TEST(test_PYR_VERIFY_01_mk1c_fired_channel_unknown_until_the_next_presence_test);
     RUN_TEST(test_mk1c_misfire_leaves_the_other_channel);
     RUN_TEST(test_mk1c_both_channels_one_after_the_other);
     RUN_TEST(test_mk1c_bus_stuck_live_after_a_fire_latches);

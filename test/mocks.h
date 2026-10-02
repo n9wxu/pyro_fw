@@ -36,6 +36,11 @@ typedef struct {
     bool refuse_fire;
     int refused_count;
     int sample_count; /* hal_pyro_sample() calls; one shared stimulus each */
+    int fires_on[3];  /* energised fires per channel, 1 and 2 */
+    /* Nonzero: hal_pyro_update() ends a pulse this long after its fire, as a
+     * board does. Zero: firing stays as the test leaves it. */
+    uint32_t pulse_ms;
+    uint32_t fired_at_ms;
 } mock_pyro_t;
 
 #define MOCK_UART_BUF_SIZE 32768

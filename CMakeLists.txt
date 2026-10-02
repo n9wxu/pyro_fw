@@ -1096,6 +1096,20 @@ add_custom_target(board_pyro_tests
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Board pyro backend tests"
 )
+add_custom_target(board_pyro_mk1a_tests
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1a -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_board_pyro_mk1a.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1a/pyro_board.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_board_pyro_mk1a
+    COMMAND ${CMAKE_BINARY_DIR}/test_board_pyro_mk1a
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "MK1A pyro backend tests"
+)
+add_dependencies(board_pyro_tests board_pyro_mk1a_tests)
 
 # Every board's pressure sensor bring-up, on the host against test/fake_sdk
 # and fake sensors, each board built against its own package (DD-053).

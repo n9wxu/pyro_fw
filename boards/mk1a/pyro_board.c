@@ -11,7 +11,7 @@
 #include "board_if.h"
 #include "board_pins.h"
 #include "board_support.h"
-#include "pico/time.h"
+#include "pico/stdlib.h"
 
 /* See THEORY_OF_OPERATION.md "Continuity check". */
 #define PATH_TO_GROUND_MAX_COUNTS 500
