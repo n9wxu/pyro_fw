@@ -3,6 +3,9 @@
  *
  * Copyright 2024, Hiroyuki OYAMA. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Reads come through the XIP no-cache, no-allocate alias (RP2040 datasheet
+ * §2.6.3.1), so they never see a cache line a program left stale.
  */
 #include <hardware/flash.h>
 #include <hardware/sync.h>
@@ -73,20 +76,23 @@ static int pico_sync(const struct lfs_config *c) {
     return 0;
 }
 
-/* Before the scheduler there is one thread, and the mutex does not exist. A
- * lock not taken in 10 s is a holder that is not coming back: the call fails
- * as an I/O error rather than hanging its task. Never the flight task. */
+/* Before the scheduler there is one thread and nothing to lock. A lock not
+ * taken in 10 s is a holder that is not coming back: the call fails as an I/O
+ * error rather than hanging its task. Never the flight task. */
 static SemaphoreHandle_t lfs_mutex;
 static StaticSemaphore_t lfs_mutex_buf;
+
+void lfs_lock_init(void) {
+    if (!lfs_mutex)
+        lfs_mutex = xSemaphoreCreateMutexStatic(&lfs_mutex_buf);
+}
 
 static int pico_lock(const struct lfs_config *c) {
     (void)c;
     if (!rtos_running())
         return 0;
-    if (rtos_in_flight_task())
+    if (rtos_in_flight_task() || !lfs_mutex)
         return LFS_ERR_IO;
-    if (!lfs_mutex)
-        lfs_mutex = xSemaphoreCreateMutexStatic(&lfs_mutex_buf);
     return xSemaphoreTake(lfs_mutex, pdMS_TO_TICKS(10000)) == pdTRUE ? 0 : LFS_ERR_IO;
 }
 

@@ -20,6 +20,10 @@ extern const struct lfs_config lfs_pico_flash_config;
 /* True once hal_fs_mount() has mounted g_lfs. */
 bool lfs_mounted(void);
 
+/* Makes the mount's lock. Before the scheduler starts (hal_fs_mount()); until
+ * then littlefs runs unlocked, on the one thread there is. */
+void lfs_lock_init(void);
+
 /* An open file's cache, and littlefs's read and program caches: four pages.
  * Not part of the on-flash format. Small, so one program operation stops the
  * system for four pages at most. */

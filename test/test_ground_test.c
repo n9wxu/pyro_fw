@@ -12,6 +12,8 @@
 #include "../src/ground_test_seq.h"
 #include "../src/hal.h"
 #include "../src/pad_claim.h"
+#include "../src/ground_test.h"
+#include "../src/serial_line.h"
 #include <math.h>
 #include <string.h>
 
@@ -219,6 +221,68 @@ void test_GND_TEST_06_usb_does_not_take_the_buzzer(void) {
     TEST_ASSERT_EQUAL(2, fires);
 }
 
+/* ── The serial commands' line [GND-TEST-01..04] ─────────────────── */
+
+static int gt_replies(void) {
+    int n = 0;
+    for (const char *p = mock_uart_buf; (p = strstr(p, "$GT,")) != NULL; p++)
+        n++;
+    return n;
+}
+
+/* MK1A's RX hears its own TX. Each echoed reply, answered as a command, was
+ * answered with unknown_cmd, whose echo was answered again: a loop with no
+ * end on the wire. Nothing this board sends is a command. */
+void test_GND_TEST_01_an_echo_of_our_own_line_is_not_a_command(void) {
+    power_up(false, true, true);
+    run_for(20000u);
+    TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
+    mock_uart_len = 0;
+    mock_uart_buf[0] = '\0';
+    ground_test_handle_command(&ctx.gt, "$GT,ERR,unknown_cmd*2B", &ctx, t);
+    ground_test_handle_command(&ctx.gt, "$PYRO,1,0,0,0,0,101325,0,0*00", &ctx, t);
+    ground_test_handle_command(&ctx.gt, "!PRES init OK: MS5607", &ctx, t);
+    ground_test_handle_command(&ctx.gt, "", &ctx, t);
+    TEST_ASSERT_EQUAL_MESSAGE(0, gt_replies(), mock_uart_buf);
+
+    ground_test_handle_command(&ctx.gt, "NONSENSE", &ctx, t);
+    TEST_ASSERT_EQUAL(1, gt_replies());
+}
+
+/* Bytes in, lines out, as hal_serial_readline() assembles them. */
+static int feed(serial_line_t *r, const char *bytes, char *out, int max_len, char lines[][SERIAL_LINE_MAX]) {
+    int n = 0;
+    for (const char *c = bytes; *c; c++) {
+        if (serial_line_feed(r, *c, out, max_len))
+            strcpy(lines[n++], out);
+    }
+    return n;
+}
+
+/* 63 bytes with no line end filled the old buffer, and the reader stopped
+ * taking bytes for good: no command reached the board again. A line too long
+ * is dropped whole, and the next one reads from its start. */
+void test_GND_TEST_01_an_over_long_line_is_dropped_and_the_next_read(void) {
+    serial_line_t r = {0};
+    char out[48], lines[4][SERIAL_LINE_MAX];
+    char noise[200];
+    memset(noise, 'x', sizeof(noise) - 1);
+    noise[sizeof(noise) - 1] = '\0';
+    TEST_ASSERT_EQUAL(0, feed(&r, noise, out, (int)sizeof(out), lines));
+    TEST_ASSERT_EQUAL(0, feed(&r, "ARM 1", out, (int)sizeof(out), lines));
+    TEST_ASSERT_EQUAL_MESSAGE(0, feed(&r, "\r\n", out, (int)sizeof(out), lines), "the tail of the long line came out");
+    TEST_ASSERT_EQUAL(1, feed(&r, "STATUS\r\n", out, (int)sizeof(out), lines));
+    TEST_ASSERT_EQUAL_STRING("STATUS", lines[0]);
+}
+
+void test_GND_TEST_01_a_line_is_cut_to_the_callers_buffer(void) {
+    serial_line_t r = {0};
+    char out[4], lines[2][SERIAL_LINE_MAX];
+    TEST_ASSERT_EQUAL(1, feed(&r, "BEEP\n", out, (int)sizeof(out), lines));
+    TEST_ASSERT_EQUAL_STRING("BEE", lines[0]);
+    TEST_ASSERT_EQUAL_MESSAGE(0, feed(&r, "BEEP\n", out, 0, lines), "a zero-length buffer takes nothing");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_GND_TEST_05_powered_up_asserted_enters_ground_test);
@@ -231,5 +295,8 @@ int main(void) {
     RUN_TEST(test_GND_TEST_11_never_flies);
     RUN_TEST(test_GND_TEST_05_a_recovery_outranks_the_pin);
     RUN_TEST(test_GND_TEST_06_usb_does_not_take_the_buzzer);
+    RUN_TEST(test_GND_TEST_01_an_echo_of_our_own_line_is_not_a_command);
+    RUN_TEST(test_GND_TEST_01_an_over_long_line_is_dropped_and_the_next_read);
+    RUN_TEST(test_GND_TEST_01_a_line_is_cut_to_the_callers_buffer);
     return UNITY_END();
 }

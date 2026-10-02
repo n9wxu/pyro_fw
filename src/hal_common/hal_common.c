@@ -52,6 +52,7 @@
 #include "log_plan.h"
 #include "pressure_trace.h"
 #include "loop_period.h"
+#include "serial_line.h"
 #if PYRO_HAS_BENCH_FLIGHT
 #include "bench_flight.h"
 #endif
@@ -67,9 +68,8 @@ void net_mdns_poll(void);
 void net_mac_init(void);
 void net_service(void);
 
-/* ── Hardware-internal pressure types ─────────────────────────────── */
-/* These are implementation details of the hardware HAL, not exposed
- * in hal.h.  Flight software reads altitude via pp_read(). */
+/* ── Pressure samples, for the hardware HAL's own readers ─────────── */
+/* The flight software reads altitude through pp_read(), not these. */
 
 typedef struct {
     float pressure_pa;
@@ -155,30 +155,13 @@ bool hal_ground_test_asserted(void) {
     return gts.on && gt_switch_asserted(&gts.sw);
 }
 
-/* Return the earliest next_due_ms across all registered tasks.
- * Returns 0 if no tasks are registered. */
-static uint32_t hw_tasks_next_due(void) {
-    if (hw_task_count == 0)
-        return 0;
-    uint32_t min = hw_tasks[0]->next_due_ms;
-    for (int i = 1; i < hw_task_count; i++)
-        if ((int32_t)(hw_tasks[i]->next_due_ms - min) < 0)
-            min = hw_tasks[i]->next_due_ms;
-    return min;
-}
-
-/* Forward declarations for internal functions */
 static bool hal_pressure_fifo_start(void);
 
-/* ── Pressure sensor async state machine [v2 Task 4] ─────────────── */
+/* ── Pressure sensor async state machine ─────────────────────────── */
 
-/*
- * Pressure async task.  struct async_task MUST be the first member so
- * a pointer cast between pres_task_t * and async_task_t * is safe.
- */
 typedef struct {
-    async_task_t base;    /* MUST be first */
-    int sensor_type;      /* 1=MS5607  2=BMP280 */
+    async_task_t base; /* MUST be first: the task runner casts back */
+    pressure_sensor_type_t sensor_type;
     ms5607_temps_t temps; /* MS5607: the temperature, carried to each pressure [DD-051] */
 
     /* Ping-pong batch buffers.  back is filled by the tick function;
@@ -220,7 +203,7 @@ uint32_t hal_pressure_interval_min_us(void) {
 /* Pressure samples a second, and so the full log rate [DD-062]: either
  * sensor converts once a loop [DD-066, DD-067]. 0 before bring-up. */
 uint32_t hal_pressure_rate_hz(void) {
-    return pres.sensor_type ? 1000u / LOOP_PERIOD_MS : 0u;
+    return pres.sensor_type != PRESSURE_SENSOR_NONE ? 1000u / LOOP_PERIOD_MS : 0u;
 }
 uint32_t hal_pressure_interval_max_us(void) {
     return pres.interval_max_us;
@@ -229,15 +212,17 @@ uint32_t hal_pressure_stamp_lag_max_us(void) {
     return pres.stamp_lag_max_us;
 }
 
-/* The sensor's own range, 10-1200 mbar. Inside it nothing is judged: a real
- * reading can be anywhere a rocket can go. Outside it the reading is not the
- * atmosphere, and one of them through the IIR is hundreds of metres of
- * altitude -- a launch on the pad, or a trigger in flight. */
-#define PRES_MIN_PA 1000.0f
-#define PRES_MAX_PA 120000.0f
+/* [SNS-PRES-06] Each sensor's rated range: inside it nothing is judged, and
+ * outside it a reading is not the atmosphere -- one through the IIR is
+ * hundreds of metres of altitude. MS5607 10-1200 mbar (datasheet page 1);
+ * BMP280 300-1100 hPa (BST-BMP280-DS001-26 Table 2). */
+#define MS5607_MIN_PA 1000.0f
+#define MS5607_MAX_PA 120000.0f
+#define BMP280_MIN_PA 30000.0f
+#define BMP280_MAX_PA 110000.0f
 
-static bool pres_plausible(const pressure_reading_t *r) {
-    return r->pressure_pa >= PRES_MIN_PA && r->pressure_pa <= PRES_MAX_PA;
+static bool pres_plausible(const pressure_reading_t *r, float min_pa, float max_pa) {
+    return r->pressure_pa >= min_pa && r->pressure_pa <= max_pa;
 }
 
 /* Append a completed reading to the batch, update the bridge sample,
@@ -272,8 +257,6 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
     }
     p->last_stamp_us = stamp_us;
 
-    /* Feed the pressure_processing ring so detectors can read altitude
-     * samples via pp_read() — single data path from sensor to FSM. */
     pp_feed_us((int32_t)r->pressure_pa, stamp_us);
 
     int idx = p->back.count;
@@ -284,17 +267,14 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
         p->back.count++;
     }
 
-    /* Promote back → front when the batch is full and the consumer has
-     * released the previous front.  If the consumer is slow we keep
-     * overwriting back; the flight filter handles repeated readings. */
+    /* A slow consumer leaves front held, and back keeps being overwritten. */
     if (p->back.count >= HAL_PRESSURE_BATCH_SIZE && !p->front_ready) {
         p->front = p->back;
         p->front_ready = true;
         p->back.count = 0;
     }
 
-    /* Proof-of-life heartbeat: toggle LED every HAL_PRESSURE_BATCH_SIZE
-     * samples (50 Hz / 5 = 10 Hz toggle = ~5 Hz visible blink). */
+    /* The heartbeat LED: a toggle every batch, 5 Hz at 50 samples a second. */
     static uint8_t led_n = 0;
     if (++led_n >= HAL_PRESSURE_BATCH_SIZE) {
         led_n = 0;
@@ -356,7 +336,7 @@ static void ms5607_tick(pres_task_t *p, uint32_t now_ms) {
         p->flashed++;
         return;
     }
-    if (!pres_plausible(&r)) {
+    if (!pres_plausible(&r, MS5607_MIN_PA, MS5607_MAX_PA)) {
         ptrace_note((uint32_t)c.d1_at_us, read_us, c.d1, 0, pa_c, PTRACE_RANGE);
         pres_reject(p, "range", c.d1, r.pressure_pa, now_ms);
         return;
@@ -368,24 +348,22 @@ static void ms5607_tick(pres_task_t *p, uint32_t now_ms) {
 /*
  * Pressure tick, once a loop.
  *
- * MS5607 (sensor_type == 1) [DD-051, DD-066]: take the pair the last loop
+ * MS5607 [DD-051, DD-066]: take the pair the last loop
  *   started and start the next, then work on the one taken; the one-shot's
  *   handler commands, stamps and reads each. A pressure and a temperature
  *   every loop: 50 pressures a second at the 20 ms loop.
  *
- * BMP280 (sensor_type == 2) [DD-067]: take the forced conversion the last
+ * BMP280 [DD-067]: take the forced conversion the last
  *   loop commanded and command the next. 50 pressures a second.
  */
 static void pres_tick(async_task_t *base, uint32_t now_ms) {
     pres_task_t *p = (pres_task_t *)base;
 
-    if (p->sensor_type == 1) {
+    if (p->sensor_type == PRESSURE_SENSOR_MS5607) {
         ms5607_tick(p, now_ms);
 
 #if BOARD_HAS_BMP280
-    } else if (p->sensor_type == 2) {
-        /* Only reachable on boards that declare BOARD_HAS_BMP280; elsewhere
-         * pressure_sensor_step() can never report type 2. */
+    } else if (p->sensor_type == PRESSURE_SENSOR_BMP280) {
         bmp280_reading_t r;
         bmp280_start_t started;
         uint32_t read_us = (uint32_t)time_us_64();
@@ -397,7 +375,7 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
             ptrace_note(read_us, read_us, 0, 0, 0, PTRACE_BUS);
         }
         if (took) {
-            bool ok = pres_plausible(&r.reading);
+            bool ok = pres_plausible(&r.reading, BMP280_MIN_PA, BMP280_MAX_PA);
             ptrace_note((uint32_t)r.reading.time_us, read_us, r.adc_p, r.adc_t,
                         (int32_t)lroundf(r.reading.pressure_pa * 100.0f),
                         r.flashed ? PTRACE_FLASHED : (ok ? PTRACE_PRESSURE : PTRACE_RANGE));
@@ -442,8 +420,9 @@ reset_cause_t hal_reset_cause(void) {
 
 /* ── Pressure sensor ──────────────────────────────────────────────── */
 
-/* -1 while the sensor is being brought up. */
-static int hw_sensor_type = -1;
+/* HW_SENSOR_PENDING while the sensor is being brought up (hal.h). */
+#define HW_SENSOR_PENDING (-1)
+static int hw_sensor_type = HW_SENSOR_PENDING;
 
 /* [DD-053] The bring-up, a step a loop, on the pressure task's own slot. Once
  * it knows the sensor, the same slot samples it: the BMP280 at 50 Hz, the
@@ -459,7 +438,7 @@ static void pres_bringup_tick(async_task_t *base, uint32_t now_ms) {
 }
 
 void hal_pressure_init(void) {
-    hw_sensor_type = -1;
+    hw_sensor_type = HW_SENSOR_PENDING;
     pressure_sensor_begin();
     memset(&pres, 0, sizeof(pres));
     pres.base.tick = pres_bringup_tick;
@@ -471,10 +450,8 @@ int hal_pressure_sensor(void) {
     return hw_sensor_type;
 }
 
-/* Returns the most recent async sample.  In the v2 architecture all
- * pressure reads come from the async task — there is no synchronous
- * fallback.  Returns false when the async task hasn't produced a
- * sample yet (the MS5607's first pressure waits on its first temperature). */
+/* The newest sample; false before the first (the MS5607's first pressure
+ * waits on its first temperature). */
 bool hal_pressure_read(hal_pressure_t *out) {
     if (pres.has_last) {
         *out = pres.last;
@@ -483,20 +460,20 @@ bool hal_pressure_read(hal_pressure_t *out) {
     return false;
 }
 
-/* ── Pressure FIFO (v2 async batch API) ───────────────────────────── */
+/* ── Pressure batches ─────────────────────────────────────────────── */
 
 static bool hal_pressure_fifo_start(void) {
-    if (hw_sensor_type <= 0)
+    if (hw_sensor_type != PRESSURE_SENSOR_MS5607 && hw_sensor_type != PRESSURE_SENSOR_BMP280)
         return false;
     memset(&pres, 0, sizeof(pres));
     pres.base.tick = pres_tick;
-    pres.base.next_due_ms = hal_time_ms(); /* run on first tick */
-    pres.sensor_type = hw_sensor_type;
-    if (pres.sensor_type == 1 && !ms5607_async_begin()) {
+    pres.base.next_due_ms = hal_time_ms();
+    pres.sensor_type = (pressure_sensor_type_t)hw_sensor_type;
+    if (pres.sensor_type == PRESSURE_SENSOR_MS5607 && !ms5607_async_begin()) {
         hal_telemetry_send("!PRES no hardware alarm free for the MS5607\r\n");
         return false;
     }
-    /* Register once (idempotent — re-calling changes rate but not slot). */
+    /* Registered once: the bring-up already holds a slot. */
     for (int i = 0; i < hw_task_count; i++)
         if (hw_tasks[i] == &pres.base)
             return true;
@@ -556,7 +533,7 @@ static const pyro_ch_ops_t real_pyro_ops = {real_fire, real_get, real_fault};
 static void report_mock(uint8_t channel, const char *what) {
     char note[48];
     snprintf(note, sizeof(note), "pyro%u %s: released to Lua", (unsigned)channel, what);
-    /* [DAT-02, N11] On the flight log's clock, since T+0, like every other row. */
+    /* [DAT-02] On the flight log's clock, since T+0, like every other row. */
     const flight_context_t *fc = flight_get_context();
     uint32_t now = to_ms_since_boot(get_absolute_time());
     hal_log_mock(fc ? flight_elapsed_ms(fc, now) : now, note);
@@ -662,23 +639,15 @@ void hal_buzzer_tone_off(void) {
     board_buzzer_off();
 }
 
-/* Register the buzzer async task with the hardware task runner.
- * buzzer_init() calls this so the buzzer task runs alongside the
- * pressure task without any main-loop involvement. */
 void hal_buzzer_task_register(async_task_t *task) {
     hw_task_register(task);
 }
 
-/* ── UART TX ring buffer (v2-10) ──────────────────────────────────── */
-/*
- * ISR-driven UART0 TX.  hal_telemetry_send() copies bytes into a 512-byte
- * circular buffer and re-arms the UART0 TX interrupt.  The ISR drains the
- * ring into the PL011 TX FIFO on each TX-FIFO-half-empty event.
+/* ── Telemetry UART TX ring ──────────────────────────────────────────
  *
- * Telemetry is best-effort: if the ring is full, remaining bytes are dropped.
- *
- * RX is unchanged: hal_serial_readline() polls the RX FIFO directly.
- */
+ * hal_telemetry_send() copies into the ring and the TX interrupt drains it
+ * into the PL011's FIFO. Best effort: what a full ring cannot take is
+ * dropped. RX is polled (hal_serial_readline()). */
 
 #define UART_TX_BUF_SIZE 512
 #define UART_TX_BUF_MASK (UART_TX_BUF_SIZE - 1)
@@ -686,6 +655,9 @@ void hal_buzzer_task_register(async_task_t *task) {
 /* Telemetry UART instance, supplied by the board. Cached on first use so
  * the TX ISR does not make a cross-module call on every byte. */
 static uart_inst_t *s_uart;
+
+#define TELEMETRY_BAUD 115200u /* docs/ground-station-interface-spec.md "8. Serial Interface" */
+
 static inline uart_inst_t *tuart(void) {
     if (!s_uart)
         s_uart = board_uart();
@@ -737,18 +709,17 @@ void hal_telemetry_send(const char *sentence) {
         return;
     uint32_t irq = spin_lock_blocking(uart_tx_lock);
 
-    /* Check if ring was empty before adding new data */
     bool was_empty = (uart_tx_head == uart_tx_tail);
 
     for (const char *p = sentence; *p; p++) {
         int next = (uart_tx_head + 1) & UART_TX_BUF_MASK;
         if (next == uart_tx_tail)
-            break; /* ring full — drop */
+            break;
         uart_tx_buf[uart_tx_head] = (uint8_t)*p;
         uart_tx_head = next;
     }
 
-    /* If ring was empty, manually prime the UART FIFO to trigger first interrupt */
+    /* An idle UART raises no TX interrupt until its FIFO has been fed. */
     if (was_empty && uart_tx_head != uart_tx_tail) {
         while (uart_is_writable(tuart()) && uart_tx_tail != uart_tx_head) {
             uart_get_hw(tuart())->dr = uart_tx_buf[uart_tx_tail];
@@ -756,7 +727,6 @@ void hal_telemetry_send(const char *sentence) {
         }
     }
 
-    /* Enable TX interrupt to continue draining ring buffer */
     if (uart_tx_head != uart_tx_tail)
         hw_set_bits(&uart_get_hw(tuart())->imsc, UART_UARTIMSC_TXIM_BITS);
     spin_unlock(uart_tx_lock, irq);
@@ -795,8 +765,15 @@ bool hal_fs_healthy(void) {
     return fs_ok;
 }
 
-/* Once, at boot, before the scheduler: formats a blank board. */
+static SemaphoreHandle_t whole_mutex;
+static StaticSemaphore_t whole_mutex_buf;
+
+/* Once, at boot, before the scheduler: formats a blank board. The locks are
+ * made here, while one thread runs, so no task can race their creation. */
 int hal_fs_mount(void) {
+    if (!whole_mutex)
+        whole_mutex = xSemaphoreCreateMutexStatic(&whole_mutex_buf);
+    lfs_lock_init();
     if (fs_ok)
         return 0;
     int err = lfs_mount(&g_lfs, &lfs_pico_flash_config);
@@ -816,16 +793,12 @@ void hal_fs_unmount(void) {
  * serialises each call, and this one serialises the buffer across a whole
  * open-read-close. Never the flight task's. */
 static uint8_t whole_buf[LFS_FILE_BUF_SIZE];
-static SemaphoreHandle_t whole_mutex;
-static StaticSemaphore_t whole_mutex_buf;
 
 static bool whole_take(void) {
     if (!rtos_running())
         return true;
-    if (rtos_in_flight_task())
+    if (rtos_in_flight_task() || !whole_mutex)
         return false;
-    if (!whole_mutex)
-        whole_mutex = xSemaphoreCreateMutexStatic(&whole_mutex_buf);
     return xSemaphoreTake(whole_mutex, pdMS_TO_TICKS(5000)) == pdTRUE;
 }
 
@@ -866,9 +839,11 @@ static int read_file(const char *path, char *buf, int max_len) {
     } else {
         /* Before hal_fs_mount(): board_identity_init() reads /serial.txt
          * this way. Read-only, and never formats, so a blank board draws a
-         * MAC and enumerates instead of waiting out an 8 MB format. */
+         * MAC and enumerates instead of waiting out a whole format. */
         lfs_t lfs;
-        n = -1;
+        /* A volume that does not mount is formatted by hal_fs_mount(): it
+         * holds no file. */
+        n = HAL_FS_NOENT;
         if (lfs_mount(&lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
             n = read_from(&lfs, path, buf, max_len);
             lfs_unmount(&lfs);
@@ -1026,75 +1001,67 @@ void hal_fs_close(hal_file_t *f) {
     hal_fs_leave();
 }
 
-/* ── Config (v2) ──────────────────────────────────────────────────── */
+/* ── Config ───────────────────────────────────────────────────────── */
 
 int hal_config_load(config_t *cfg) {
-    config_set_defaults(cfg);
-    char buf[512];
-    int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
-    if (n > 0) {
-        buf[n] = '\0';
-        config_parse_ini(buf, cfg);
+    char buf[CONFIG_INI_MAX];
+    int n = hal_fs_read_file("config.ini", buf, (int)sizeof(buf) - 1);
+    int rejected = 0;
+    char line[96];
+    switch (config_from_file(cfg, buf, (int)sizeof(buf), n, &rejected)) {
+    case CONFIG_FILE_LOADED:
+        if (rejected > 0) {
+            snprintf(line, sizeof(line), "!CFG %d value(s) in config.ini refused; those fields keep defaults\r\n",
+                     rejected);
+            hal_telemetry_send(line);
+        }
         return 0;
+    case CONFIG_FILE_MISSING: {
+        const char *def = config_default_ini();
+        hal_fs_write_file("config.ini", def, (int)strlen(def));
+        return -1;
     }
-    /* No config file — write defaults for next boot */
-    const char *def = config_default_ini();
-    hal_fs_write_file("config.ini", def, (int)strlen(def));
-    return -1;
+    default:
+        snprintf(line, sizeof(line), "!CFG config.ini unreadable (%d): defaults, file kept\r\n", n);
+        hal_telemetry_send(line);
+        return -2;
+    }
 }
 
 int hal_config_save(const config_t *cfg) {
-    char buf[512];
+    char buf[CONFIG_INI_MAX];
     int n = config_serialize_ini(cfg, buf, (int)sizeof(buf));
     if (n <= 0)
         return -1;
     return hal_fs_write_file("config.ini", buf, n);
 }
 
-/* ── Serial readline (v2, telemetry UART RX) ──────────────────────── */
+/* ── Serial readline (telemetry UART RX) ──────────────────────────── */
 
 bool hal_serial_readline(char *buf, int max_len) {
-    static char rx_buf[64];
-    static int rx_len = 0;
-
-    while (uart_is_readable(tuart()) && rx_len < (int)(sizeof(rx_buf) - 1)) {
-        char c = (char)uart_getc(tuart());
-        if (c == '\n' || c == '\r') {
-            if (rx_len > 0) {
-                int n = (rx_len < max_len - 1) ? rx_len : max_len - 1;
-                memcpy(buf, rx_buf, n);
-                buf[n] = '\0';
-                rx_len = 0;
-                return true;
-            }
-            /* empty line — skip */
-        } else {
-            rx_buf[rx_len++] = c;
-        }
+    static serial_line_t rx;
+    while (uart_is_readable(tuart())) {
+        if (serial_line_feed(&rx, (char)uart_getc(tuart()), buf, max_len))
+            return true;
     }
     return false;
 }
 
-/* Deliberately a no-op: __wfe() is suspected of blocking USB NCM TX, which
- * shows up as the txf counter climbing and http stuck at zero. */
+/* A no-op: __wfe() here is suspected of stalling USB NCM TX (the txf counter
+ * climbed and http served nothing). */
 
 void hal_sleep_until_event(void) {}
 
 /* ── Platform ─────────────────────────────────────────────────────── */
 
 void hal_platform_init(void) {
-    /* Silence buzzer GPIO immediately — before any slow init (board, USB,
-     * network) that could leave the pin floating and produce a spurious
-     * tone at power-on. */
+    /* Before anything slow, so the buzzer pin does not float into a tone. */
     hal_buzzer_init();
 
     /* Puts the pyro outputs down before anything slow runs; without it the
      * firing pins keep their reset state until pyro_init(), which is after
      * USB enumeration, lwIP and the filesystem mount. */
     board_early_init();
-
-    /* Watchdog initialization removed - watchdog_reboot() handles enabling
-     * internally when needed. The 1ms timeout was causing boot loops. */
 
     board_init();
 
@@ -1109,18 +1076,16 @@ void hal_platform_init(void) {
      *
      * Reads /serial.txt via hal_fs_read_file(), which mounts read-only and
      * does NOT format on failure -- so a blank board draws a MAC and
-     * enumerates instead of waiting out an 8 MB format. */
+     * enumerates instead of waiting out a whole format. */
     board_identity_init();
     board_selftest_init();
     net_mac_init();
     /* tud_init() is the net task's, on core1: TinyUSB's interrupt and its
      * task must share a core, since OPT_OS_NONE guards its queue by masking
      * the interrupt on the calling core only. */
-    /* stdio_init_all() removed — we own the telemetry UART exclusively for ISR-driven
-     * telemetry TX and ground-test RX.  No SDK stdio drivers needed. */
-
-    uart_init(tuart(), 115200); /* pins were assigned by board_hw_init() */
-    uart_tx_ring_init();        /* v2-10: non-blocking TX via ISR ring buffer */
+    /* No SDK stdio: this UART is the telemetry ring's and the ground test's. */
+    uart_init(tuart(), TELEMETRY_BAUD); /* pins were assigned by board_hw_init() */
+    uart_tx_ring_init();
 
     net_init();
     net_start();
@@ -1165,19 +1130,18 @@ void hal_platform_service(void) {
     note_part(3, t3 - t2);
 }
 
-/* ── Pressure sample override [v2-8] ─────────────────────────────── */
+/* ── Pressure sample override ─────────────────────────────────────── */
 
 void hal_pressure_push_sample(const hal_pressure_t *sample) {
     if (sample) {
         pres.last = *sample;
         pres.has_last = true;
     } else {
-        /* clear override — next read comes from the async task as normal */
         pres.has_last = false;
     }
 }
 
-/* ── In-flight data logging (REQUIREMENTS.md v2-9) ───────────────
+/* ── In-flight data logging [FLT-LOG-05, FLT-LOG-06] ─────────────
  *
  * The flight task only fills a ring; the storage task empties it into the
  * file. Nothing on the flight path waits or reaches flash: not the first
@@ -1213,6 +1177,12 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
 /* The largest record the producer builds: a text row. */
 #define LOG_REC_MAX 96
 
+/* A stopped log that has not reached its file by then never will -- it could
+ * not open, or the writes keep failing -- and is given up, its rows counted
+ * as dropped. Until then it holds the filesystem [WEB-API-08]; for good, it
+ * would refuse every file call and starve the storage task's check-in. */
+#define LOG_STOP_MAX_MS 10000u
+
 _Static_assert((LOG_BUF_SIZE & LOG_MASK) == 0, "the ring's size is a power of two");
 
 enum { LOG_IDLE, LOG_RUNNING, LOG_STOPPING };
@@ -1237,6 +1207,8 @@ typedef struct {
      * or at LOG_HOLDOFF_MAX_MS, after which flushing is periodic. */
     bool launch_holdoff;
     uint32_t started_ms;
+    bool stop_seen;
+    uint32_t stop_seen_ms;
 } log_ring_t;
 
 static log_ring_t log_ring;
@@ -1329,10 +1301,31 @@ static void log_write_out(void) {
     }
 }
 
+/* The storage task's end of a log: the file closed, the filesystem free. */
+static void log_finish(void) {
+    if (log_ring.file_open)
+        vfs_close(&log_ring.file);
+    log_ring.file_open = false;
+    log_ring.stop_seen = false;
+    __dmb();
+    log_ring.state = LOG_IDLE;
+}
+
 static void log_service(uint32_t now_ms) {
     uint8_t st = log_ring.state;
     if (st == LOG_IDLE)
         return;
+
+    if (st == LOG_STOPPING && !log_ring.stop_seen) {
+        log_ring.stop_seen = true;
+        log_ring.stop_seen_ms = now_ms;
+    }
+    if (st == LOG_STOPPING && now_ms - log_ring.stop_seen_ms >= LOG_STOP_MAX_MS) {
+        log_ring.dropped += log_used();
+        log_ring.tail = log_ring.head;
+        log_finish();
+        return;
+    }
 
     if (!log_ring.file_open) {
         if (!fs_ok || vfs_open(&log_ring.file, FLOG_PATH, VFS_WR, log_file_buf) != 0)
@@ -1363,12 +1356,8 @@ static void log_service(uint32_t now_ms) {
     log_write_out();
     log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
 
-    if (st == LOG_STOPPING && log_ring.tail == log_ring.head) {
-        vfs_close(&log_ring.file);
-        log_ring.file_open = false;
-        __dmb();
-        log_ring.state = LOG_IDLE;
-    }
+    if (st == LOG_STOPPING && log_ring.tail == log_ring.head)
+        log_finish();
 }
 
 /* Weak and empty: most boards queue no flash work of their own. */
@@ -1461,38 +1450,37 @@ static void commit_op(void *arg) {
     pfb_firmware_commit();
 }
 
-void hal_firmware_commit(void) {
-    /* Only an image on its first boot after an update has anything to
-     * commit; every other boot writes no flash here. */
-    if (!pfb_is_after_firmware_update())
-        return;
+bool hal_board_image_ok(void) {
+    return board_selftest_result() != BOARD_SELFTEST_FAIL;
+}
 
-    /* An image on hardware it was not built for does not commit, and the
-     * bootloader puts the previous one back on the next reboot. The
-     * previous image is by definition the one that was running on this
-     * board, so rolling back lands somewhere known-good.
-     *
-     * Reported before the reboot and not only after it, because after the
-     * rollback this image is gone and so is anything it would have said.
-     * The reboot is deliberate: waiting for a natural one would leave the
-     * wrong firmware driving the wrong pins for as long as it took. */
-    if (board_selftest_result() == BOARD_SELFTEST_FAIL) {
-        char line[128];
-        snprintf(line, sizeof(line),
-                 "!BOARD MISMATCH this image is " BOARD_SHORT_STR
-                 ", board is %s -- not committing, rolling back\r\n",
-                 board_selftest_stored());
-        hal_telemetry_send(line);
-        /* Through the main loop's own reset path rather than arming the
-         * watchdog from here: this runs on the storage task on core1, and
-         * that path already arms once, lets the net task flush what was
-         * just said, and is the way an OTA reboots. */
-        {
-            extern volatile uint8_t pending_reset;
-            pending_reset = 2;
-        }
-        return;
+/* Said at every boot of a mismatched image, before the reboot into a rollback
+ * where there is one: after it, this image and what it would say are gone. */
+static void report_board_mismatch(const char *what) {
+    char line[128];
+    snprintf(line, sizeof(line), "!BOARD MISMATCH this image is " BOARD_SHORT_STR ", board is %s -- %s\r\n",
+             board_selftest_stored(), what);
+    hal_telemetry_send(line);
+}
+
+bool hal_firmware_commit(void) {
+    bool after_update = pfb_is_after_firmware_update();
+    switch (board_selftest_action(board_selftest_result(), after_update)) {
+    case BOARD_IMAGE_ROLL_BACK: {
+        report_board_mismatch("not committing, rolling back");
+        /* The main loop's reset path, which lets the net task flush the line
+         * above and is the way an OTA reboots, rather than the watchdog armed
+         * from here on core1. */
+        extern volatile uint8_t pending_reset;
+        pending_reset = 2;
+        return true;
     }
-
-    flash_op(commit_op, NULL);
+    case BOARD_IMAGE_REFUSE:
+        report_board_mismatch("refusing to arm or fire");
+        return true;
+    case BOARD_IMAGE_RUN:
+    default:
+        /* Only the first boot after an update writes flash here. */
+        return !after_update || flash_op(commit_op, NULL) == 0;
+    }
 }
