@@ -203,8 +203,7 @@ void test_mk1b_bad_joint_reads_good_with_its_count(void) {
     TEST_ASSERT_EQUAL_UINT16(41u, c1.raw_adc);
 }
 
-/* The pulse runs its 500 ms; then a fresh reading lands inside the post-fire
- * verify window, which opens as the pulse ends and runs 100 ms. */
+/* The pulse runs its 500 ms; then a fresh reading, within two loops. */
 void test_mk1b_fire_then_a_fresh_reading(void) {
     loops(1500u);
     pyro_fire(1);

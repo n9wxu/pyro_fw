@@ -54,8 +54,9 @@ void hal_pyro_init(void);
 /* The continuity stimulus is shared between the channels, so one sample
  * serves both, and each channel is then read from it. Every board checks in
  * the background from hal_pyro_update(); hal_pyro_get() returns the newest
- * completed check. channel is 1 or 2; any other value leaves *out unmodified.
- */
+ * completed check. A fired channel reads none of good, open and shorted until
+ * a check begun after its pulse completes [PYR-VERIFY-01]. channel is 1 or 2;
+ * any other value leaves *out unmodified. */
 void hal_pyro_sample(void);
 void hal_pyro_get(uint8_t channel, hal_continuity_t *out);
 void hal_pyro_fire(uint8_t channel);
