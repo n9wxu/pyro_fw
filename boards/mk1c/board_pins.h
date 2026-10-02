@@ -27,8 +27,6 @@
 #define BOARD_PIN_I2C_SCL   7
 #define BOARD_MS5607_I2C_HZ 400000u /* R3, R5 4k7 [DD-052] */
 
-#define BOARD_PIN_SPARE_GPIO 22 /* -> J1.6 */
-
 /* See THEORY_OF_OPERATION.md "Firing bus". GPIO25 is BIAS_B, not an LED. */
 #define BOARD_PIN_ARM_TOGGLE 12 /* -> C101 10nF pump -> U9 EN/UVLO */
 #define BOARD_PIN_BIAS_A     16 /* -> D104 -> R112 330R -> node A  */

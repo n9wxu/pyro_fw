@@ -1,6 +1,5 @@
 /*
- * Board self-test. See board_selftest.h for why it is a stamp and not a
- * hardware probe.
+ * Board self-test. See board_selftest.h.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -18,15 +17,19 @@ static board_selftest_t verdict = BOARD_SELFTEST_UNKNOWN;
 static bool unsaved;
 
 board_selftest_t board_selftest_verdict(const char *s, const char *compiled) {
-    if (!compiled || !compiled[0]) {
-        /* No compiled-in token means nothing to compare, which is a build
-         * problem rather than a board one. Say UNKNOWN rather than FAIL:
-         * refusing to commit here would roll back every image. */
+    /* No compiled-in token is a build problem, not a board one: FAIL here
+     * would roll back every image. */
+    if (!compiled || !compiled[0])
         return BOARD_SELFTEST_UNKNOWN;
-    }
     if (!s || !s[0])
         return BOARD_SELFTEST_UNKNOWN;
     return strcmp(s, compiled) == 0 ? BOARD_SELFTEST_PASS : BOARD_SELFTEST_FAIL;
+}
+
+board_image_action_t board_selftest_action(board_selftest_t verdict, bool after_update) {
+    if (verdict != BOARD_SELFTEST_FAIL)
+        return BOARD_IMAGE_RUN;
+    return after_update ? BOARD_IMAGE_ROLL_BACK : BOARD_IMAGE_REFUSE;
 }
 
 /* The stamp is one bare token and nothing else, so a stray newline from an
@@ -48,19 +51,17 @@ void board_selftest_init(void) {
     if (n > 0) {
         buf[n] = '\0';
         trim(buf);
-        /* A stamp longer than a token is not a token. Treat it as absent
-         * rather than as a mismatch: a corrupt file should not roll back a
-         * good image. */
+        /* A stamp longer than a token is not a token: absent, not a
+         * mismatch, so a corrupt file does not roll back a good image. */
         if (buf[0] && strlen(buf) < TOKEN_MAX)
             memcpy(stored, buf, strlen(buf) + 1);
     }
 
     verdict = board_selftest_verdict(stored, BOARD_SHORT_STR);
-    /* Stamp a board that has none, so the next update has something to
-     * check. Never overwrite a stamp that disagrees -- that stamp is the
-     * evidence, and the image that disagrees with it is the one that should
-     * not be here. */
-    unsaved = (stored[0] == '\0');
+    /* Stamp a board that has none. Never over a stamp that disagrees -- it
+     * is the evidence -- nor over one that could not be read, which may be
+     * the same stamp. */
+    unsaved = stored[0] == '\0' && (n >= 0 || n == HAL_FS_NOENT);
 }
 
 board_selftest_t board_selftest_result(void) {
