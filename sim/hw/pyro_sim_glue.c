@@ -1,36 +1,12 @@
 /*
- * Glue between the simulator's HAL and a real board's pyro backend.
+ * hal.h's pyro half for a modelled-board build (PYRO_SIM_BOARD_PYRO): the
+ * real boards/<board>/pyro_board.c, against sim/hw/ and sim/plant/.
+ * boards/sim/hal_sim.c supplies the rest of hal.h.
  *
- * boards/sim/hal_sim.c implements all of hal.h except the pyro half, which
- * it leaves out when PYRO_SIM_BOARD_PYRO is defined. This file supplies
- * that half by calling the actual board file -- boards/mk1a, mk1b or mk1c's
- * pyro_board.c -- which is running against sim/hw/ and sim/plant/.
- *
- * So the call chain in a sim_mk1c build is
- *
- *     flight_states.c  ->  hal_pyro_fire()      [here]
- *                      ->  pyro_fire()          [boards/mk1c/pyro_board.c]
- *                      ->  gpio_put()           [sim/hw/rp2040_shim.c]
- *                      ->  plant_set_gpio()     [sim/plant/plant_mk1c.c]
- *
- * and back up through adc_read(). Nothing in boards/ or src/ is aware of
- * any of it.
- *
- * ── Two clocks ───────────────────────────────────────────────────
- *
- * The flight software has a millisecond clock that the simulation driver
- * sets, and the shim has a microsecond clock that board code advances by
- * blocking. They are reconciled once per update, in the only direction
- * that is safe: forward. Board code that blocks has moved the shim past
- * the tick, and that is a real result, not an error to correct.
- *
- * ── What counts as a fire ────────────────────────────────────────
- *
- * The simulation's fire count follows the PLANT's ignition latch, not the
- * firmware's command. Firing into an open channel increments nothing, so a
- * closed-loop driver that deploys a chute on sim.pyroFireCount will not
- * deploy one for a match that never lit. That is the distinction the whole
- * model exists to make, and it is free here.
+ * The shim's microsecond clock is brought up to the flight software's
+ * millisecond clock each update, never back: board code that blocked has
+ * already moved it past the tick. A fire counts when the plant's match
+ * lights, not when the firmware commands it.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -55,18 +31,14 @@ void sim_note_pyro_fire(uint8_t channel);
 static int seen_fire_events;
 
 void hal_pyro_init(void) {
-    /* The plant must exist before the board file's first gpio_put(), which
-     * happens inside pyro_init()'s safing pass. */
+    /* Before pyro_init()'s safing pass writes its first pad. */
     shim_reset();
     plant_init(SIM_PLANT_BOARD);
     seen_fire_events = plant_fire_events();
     pyro_init();
 }
 
-/* The board model has no pin assignment to release from, so both channels
- * are always the flight software's. Present because hal.h asks for it:
- * a HAL that silently omits an entry point is one that links until
- * something calls it. */
+/* No pin assignment to release from: both channels are the flight's. */
 int hal_pyro_claim_channels(uint32_t (*pads_of)(uint8_t channel)) {
     (void)pads_of;
     return 2; /* both channels */
@@ -93,10 +65,8 @@ void hal_pyro_update(uint32_t now_ms) {
     shim_advance_to_ms(now_ms);
     pyro_update(now_ms);
 
-    /* Report ignitions the plant has latched since the last update. A
-     * single update can span more than one only if both channels lit
-     * inside it, which the firing rules are supposed to prevent -- so the
-     * loop is also a way for a test to catch that they did not. */
+    /* Every ignition since the last update, two if both channels lit in
+     * one, which the firing rules forbid. */
     int ev = plant_fire_events();
     while (seen_fire_events < ev) {
         seen_fire_events++;

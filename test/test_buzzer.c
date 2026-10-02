@@ -1,17 +1,7 @@
 /*
- * Buzzer pattern player unit tests — v2 async task architecture.
- *
- * Tests the full encode-then-play pipeline by driving hal_tasks_tick()
- * while advancing mock_time_ms.  All tone_on/off calls are counted via
- * mock_buzzer_tone_on/off_count from hal_test.c.
- *
- * Test IDs:
- *   BUZ-PAT-01  chirp (ready to fly)   — one warble, 25 cycles
- *   BUZ-PAT-02  counted codes          — one and two groups
- *   BUZ-PAT-03  altitude 165           — digit decomposition 1-6-5
- *   BUZ-ACT-01  is_active() lifecycle  — idle→active→idle
- *   BUZ-ACT-02  buzzer_stop()          — immediate silence
- *   BUZ-ACT-03  repeat until stopped   — pattern restarts at sentinel
+ * The buzzer's pattern player [PWR-BUZZ-01..03], driven through
+ * hal_tasks_tick() as mock_time_ms advances, with every tone counted by the
+ * test HAL; and the beep store.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -65,7 +55,7 @@ void setUp(void) {
 
 void tearDown(void) {}
 
-/* ── BUZ-ACT-01: is_active() lifecycle ───────────────────────────── */
+/* [PWR-BUZZ-02] Idle, then active, then idle once the pattern ends. */
 
 void test_BUZ_ACT_01_lifecycle(void) {
     TEST_ASSERT_FALSE_MESSAGE(buzzer_is_active(), "Buzzer should be inactive before play");
@@ -78,7 +68,7 @@ void test_BUZ_ACT_01_lifecycle(void) {
     TEST_ASSERT_FALSE_MESSAGE(buzzer_is_active(), "Buzzer should be inactive after pattern completes");
 }
 
-/* ── BUZ-ACT-02: buzzer_stop() immediately silences ──────────────── */
+/* [BUZ-07] buzzer_stop() silences at once. */
 
 void test_BUZ_ACT_02_stop(void) {
     buzzer_play_spec(&FIVE, 5000, 0); /* until stopped */
@@ -95,7 +85,7 @@ void test_BUZ_ACT_02_stop(void) {
     TEST_ASSERT_EQUAL_MESSAGE(off_before, mock_buzzer_tone_off_count, "extra tone_off after buzzer_stop()");
 }
 
-/* ── BUZ-PAT-01: the ready-to-fly chirp is a warble, not a count ─── */
+/* [BUZ-CODE-05] The ready-to-fly chirp is a warble, not a count. */
 
 void test_BUZ_PAT_01_chirp_is_one_warble(void) {
     buzzer_play_spec(&CHIRP, 0, 1);
@@ -103,7 +93,7 @@ void test_BUZ_PAT_01_chirp_is_one_warble(void) {
     TEST_ASSERT_EQUAL_MESSAGE(25, mock_buzzer_tone_on_count, "one pass of the chirp is 25 short tones");
 }
 
-/* ── BUZ-PAT-02: counted codes carry exactly their counts ─────────── */
+/* [BUZ-CODE-05] Counted codes carry exactly their counts. */
 
 void test_BUZ_PAT_02_counted_codes(void) {
     buzzer_play_spec(&FIVE, 0, 1);
@@ -116,15 +106,8 @@ void test_BUZ_PAT_02_counted_codes(void) {
     TEST_ASSERT_EQUAL_MESSAGE(5, mock_buzzer_tone_on_count, "a 2-3 is two beeps then three");
 }
 
-/* ── BUZ-PAT-03: altitude 165 digit decomposition ────────────────── */
-/* Digits of 165: 1, 6, 5
- * Expected tone_on events:
- *   header long beep = 1 on
- *   digit 1 (=1)     = 1 on
- *   digit 6 (=6)     = 6 on
- *   digit 5 (=5)     = 5 on
- *   Total: 13 on events before first loop-back
- * Altitude always loops — we stop after one pass by stopping. */
+/* [BUZ-04, PWR-BUZZ-03] Altitude 165 is a header beep, then 1, 6 and 5. The
+ * beep-out repeats, so the test stops it after one pass. */
 
 void test_BUZ_PAT_03_altitude_165_digits(void) {
     mock_buzzer_tone_on_count = 0;
@@ -144,7 +127,7 @@ void test_BUZ_PAT_03_altitude_165_digits(void) {
     TEST_ASSERT_EQUAL_MESSAGE(13, mock_buzzer_tone_on_count, "altitude 165 should produce 13 tone_on events (1+1+6+5)");
 }
 
-/* ── BUZ-ACT-03: repeat 0 restarts at the sentinel until stopped ─── */
+/* [BUZ-02] A repeat of 0 plays until stopped. */
 
 void test_BUZ_ACT_03_repeat_restarts(void) {
     buzzer_play_spec(&ONE, 500, 0);
@@ -153,7 +136,7 @@ void test_BUZ_ACT_03_repeat_restarts(void) {
     TEST_ASSERT_TRUE_MESSAGE(mock_buzzer_tone_on_count >= 4, "and must have started more than one pass");
 }
 
-/* ── BUZ-PAT-04: play arms the async task immediately ─────────────── */
+/* [PWR-BUZZ-01] Play arms the async task at once. */
 
 void test_BUZ_PAT_04_task_armed_on_play(void) {
     TEST_ASSERT_EQUAL(0, mock_buzzer_tone_on_count);
@@ -163,7 +146,7 @@ void test_BUZ_PAT_04_task_armed_on_play(void) {
     TEST_ASSERT_TRUE_MESSAGE(buzzer_is_active(), "Task should be active after buzzer_play_spec");
 }
 
-/* ── BUZ-PAT-06: a repeat of 2 plays exactly twice [BUZ-02] ──────── */
+/* [BUZ-02] A repeat of 2 plays exactly twice. */
 
 void test_BUZ_PAT_06_repeat_count_2_buz02(void) {
     buzzer_play_spec(&FIVE, 1000, 2);
@@ -172,7 +155,7 @@ void test_BUZ_PAT_06_repeat_count_2_buz02(void) {
     TEST_ASSERT_EQUAL_MESSAGE(10, mock_buzzer_tone_on_count, "two passes of a 5 are ten beeps");
 }
 
-/* ── BUZ-PAT-07: the personality's gap separates the passes ───────── */
+/* [BUZ-02] The personality's gap separates the passes. */
 
 void test_BUZ_PAT_07_gap_between_passes(void) {
     buzzer_play_spec(&ONE, 2000, 0);
@@ -183,7 +166,7 @@ void test_BUZ_PAT_07_gap_between_passes(void) {
     buzzer_stop();
 }
 
-/* ── BUZ-PAT-08: altitude 1000 — zero digits need 10 beeps each ──── */
+/* [BUZ-04, BUZ-05] Altitude 1000: each zero is 10 beeps. */
 
 void test_BUZ_PAT_08_altitude_1000_zero_digits(void) {
     buzzer_play_altitude(1000);
@@ -196,7 +179,7 @@ void test_BUZ_PAT_08_altitude_1000_zero_digits(void) {
                               "altitude 1000 should produce 32 tone_on events (1+1+10+10+10)");
 }
 
-/* ── BUZ-PAT-09: altitude 10000 — five digits with four zeros ─────── */
+/* [BUZ-04, BUZ-05] Altitude 10000: five digits, four of them zeros. */
 
 void test_BUZ_PAT_09_altitude_10000(void) {
     buzzer_play_altitude(10000);
@@ -293,7 +276,7 @@ void test_BUZ_GT_04_all_clear(void) {
     TEST_ASSERT_FALSE(buzzer_is_active());
 }
 
-/* ── A new outcome can interrupt a tone [REV-04] ──────────────────
+/* ── A new outcome can interrupt a tone [BUZ-01] ──────────────────
  *
  * The pad check re-announces when its answer changes, which can land in the
  * middle of a step that holds the tone on. */
@@ -307,7 +290,7 @@ void test_BUZ_ACT_04_new_outcome_silences_the_old_one(void) {
                               "the tone must stop when the outcome changes");
 }
 
-/* ── Beep store errors say what went wrong [BUZ-CODE-10, REV-22] ─── */
+/* ── Beep store errors say what went wrong [BUZ-CODE-14] ──────────── */
 
 void test_BEEP_STORE_01_write_failure_is_not_a_digit_error(void) {
     /* Fill every slot of the in-memory filesystem so beep.ini cannot be

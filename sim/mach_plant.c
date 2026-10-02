@@ -9,7 +9,7 @@
 /* ── Atmosphere ───────────────────────────────────────────────────── */
 
 static float isa_pa_at_elev(float elev_m) {
-    return 101325.0f * powf(1.0f - MP_LAPSE * elev_m / 288.15f, MP_G / (MP_R * MP_LAPSE));
+    return PHYS_SEA_LEVEL_PA * powf(1.0f - MP_LAPSE * elev_m / 288.15f, MP_G / (MP_R * MP_LAPSE));
 }
 
 float mp_pad_pa(const mp_site_t *s) {

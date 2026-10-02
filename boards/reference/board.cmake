@@ -6,8 +6,9 @@
 # its linker script at FetchContent time -- all before add_subdirectory()
 # would run. That is why a board has two CMake entry points.
 #
-# The top level requires BOARD_DISPLAY_NAME, PYRO_FLASH_SIZE_KB and
-# PYRO_PFB_FS_KB, and fails the configure if any is missing.
+# The top level requires BOARD_DISPLAY_NAME, PYRO_FLASH_SIZE_KB,
+# PYRO_PFB_FS_KB and PYRO_LOOP_WORST_MS, and fails the configure if any is
+# missing.
 
 set(PYRO_BOARD_KIND pico)  # RP2040 target: uses the Pico SDK and src/hal_common
 set(BOARD_DISPLAY_NAME "Pyro REFERENCE")  # TODO: match BOARD_NAME_STR
@@ -21,11 +22,12 @@ set(BOARD_DISPLAY_NAME "Pyro REFERENCE")  # TODO: match BOARD_NAME_STR
 set(PICO_BOARD pico CACHE STRING "Board type" FORCE)
 # list(APPEND PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_LIST_DIR}/sdk)
 
-# TODO: must match PICO_FLASH_SIZE_BYTES for this board.
+# TODO: this board's flash; the top level fails the configure unless it
+# matches the board header's PICO_FLASH_SIZE_BYTES.
 set(PYRO_FLASH_SIZE_KB 2048)
 
 # TODO: littlefs reservation, carved off the top of flash.
-# The top level checks that (flash - fs - 40) is a multiple of 8, so the
+# The top level checks that (flash - fs - 36 - 4) is a multiple of 8, so the
 # bootloader's A/B slots land on a 4k boundary. A bad value fails the
 # configure with the arithmetic shown.
 set(PYRO_PFB_FS_KB 984)
