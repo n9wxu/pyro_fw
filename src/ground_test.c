@@ -1,6 +1,6 @@
 /*
- * Ground test command handler — serial commands via the 3.5mm TRRS jack.
- * Implements GND-TEST-01..04, DD-011.
+ * Ground test serial commands [GND-TEST-01..04, DD-011]. See ground_test.h.
+ *
  * SPDX-License-Identifier: MIT
  */
 #include "ground_test.h"
@@ -12,7 +12,14 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-/* ── NMEA-style $GT response helper ──────────────────────────────── */
+/* Lines this board sends start with these: telemetry and replies '$'
+ * (docs/ground-station-interface-spec.md "5. $PYRO Sentence Format"),
+ * diagnostics '!'. MK1A's RX hears its own TX, and an echo answered as a
+ * command would be answered again, without end.
+ * boards/mk1a/THEORY_OF_OPERATION.md "Telemetry, LED and buzzer" */
+static bool is_own_line(const char *line) {
+    return line[0] == '$' || line[0] == '!';
+}
 
 static void gt_respond(const char *payload) {
     uint8_t chk = 0;
@@ -43,18 +50,17 @@ void ground_test_update(ground_test_ctx_t *gt, uint32_t now_ms) {
 
 /* [GND-TEST-01..04] Parse and execute one command line */
 void ground_test_handle_command(ground_test_ctx_t *gt, const char *cmd, struct flight_context_t *ctx, uint32_t now_ms) {
+    if (cmd[0] == '\0' || is_own_line(cmd))
+        return;
+
     /* [GND-TEST-04] Commands are only valid in PAD_IDLE */
     if (ctx->current_state != PAD_IDLE) {
         gt_respond("GT,ERR,not_pad_idle");
         return;
     }
 
-    /* ── BEEP STATUS: replay last continuity beep code [GND-TEST-01] ── */
+    /* ── BEEP STATUS: replay what the pad check last said [GND-TEST-01] ── */
     if (strcmp(cmd, "BEEP") == 0 || strcmp(cmd, "BEEP STATUS") == 0) {
-        /* Replay whatever the pad check last said, on the active personality.
-         * There is always an answer now: the outcomes include "OK to fly", so
-         * a healthy board has something to replay rather than nothing.
-         * [GND-TEST-01] */
         beep_say((beep_reason_t)ctx->last_reason);
         gt_respond("GT,BEEP,status");
         return;
@@ -126,6 +132,5 @@ void ground_test_handle_command(ground_test_ctx_t *gt, const char *cmd, struct f
         return;
     }
 
-    /* Unknown command */
     gt_respond("GT,ERR,unknown_cmd");
 }

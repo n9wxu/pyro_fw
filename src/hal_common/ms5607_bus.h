@@ -1,14 +1,19 @@
 /*
- * The MS5607 one-shot's bus and clock on the RP2040 [DD-051]: i2c1 and a
- * timer alarm, register by register. test/ms5607_bus.h fakes the same calls.
+ * The MS5607 one-shot's bus and clock on the RP2040 [DD-051]: the board's
+ * I2C block and a timer alarm, register by register. test/ms5607_bus.h fakes
+ * the same calls.
  *
  * Every call the alarm handler makes is forced inline, so it runs from RAM
  * with the handler: the SDK's i2c and time functions live in flash.
  * support/prove_core0.py fails the build if the handler reaches flash.
+ *
+ * Register names and bits: RP2040 datasheet §4.3.17 (I2C) and §4.6.5 (timer).
  */
 #ifndef MS5607_BUS_H
 #define MS5607_BUS_H
 
+#include "board_pins.h"
+#include "hardware/i2c.h"
 #include "hardware/irq.h"
 #include "hardware/structs/i2c.h"
 #include "hardware/structs/timer.h"
@@ -17,6 +22,10 @@
 #include "flash_op.h"
 
 #define MS5607_BUS_TIMEOUT_US 2000u /* the longest transfer is about 0.15 ms at 400 kHz */
+
+/* The board's I2C block, set by ms5607_bus_begin() before the handler runs: a
+ * RAM word, where i2c_get_hw() would be a call into flash. */
+static i2c_hw_t *ms5607_bus_hw;
 
 __force_inline static uint64_t ms5607_bus_now_us(void) {
     uint32_t hi = timer_hw->timerawh;
@@ -29,14 +38,14 @@ __force_inline static uint64_t ms5607_bus_now_us(void) {
     }
 }
 
-/* After a NACK the controller sends STOP itself; either way the transfer is
- * over at STOP_DET. */
 /* [DD-068] Compared across a conversion: a change is a flash operation that
  * ran beside it. */
 __force_inline static uint32_t ms5607_bus_flash_ops(void) {
     return flash_op_seq;
 }
 
+/* After a NACK the controller sends STOP itself; either way the transfer is
+ * over at STOP_DET. */
 __force_inline static bool ms5607_bus_finish(i2c_hw_t *hw, uint32_t t0) {
     while (!(hw->raw_intr_stat & I2C_IC_RAW_INTR_STAT_STOP_DET_BITS)) {
         if (timer_hw->timerawl - t0 > MS5607_BUS_TIMEOUT_US)
@@ -48,7 +57,7 @@ __force_inline static bool ms5607_bus_finish(i2c_hw_t *hw, uint32_t t0) {
 }
 
 __force_inline static bool ms5607_bus_command(uint8_t cmd) {
-    i2c_hw_t *hw = i2c1_hw;
+    i2c_hw_t *hw = ms5607_bus_hw;
     uint32_t t0 = timer_hw->timerawl;
     (void)hw->clr_intr;
     hw->data_cmd = I2C_IC_DATA_CMD_STOP_BITS | cmd;
@@ -57,7 +66,7 @@ __force_inline static bool ms5607_bus_command(uint8_t cmd) {
 
 /* 0x00, then three bytes back: queued at once, the TX FIFO holds sixteen. */
 __force_inline static bool ms5607_bus_read_adc(uint32_t *value) {
-    i2c_hw_t *hw = i2c1_hw;
+    i2c_hw_t *hw = ms5607_bus_hw;
     uint32_t t0 = timer_hw->timerawl;
     (void)hw->clr_intr;
     while (hw->rxflr) /* whatever a failed read left behind */
@@ -95,14 +104,15 @@ __force_inline static void ms5607_bus_alarm_ack(int alarm) {
 }
 
 /* From the loop, once: claims an alarm, addresses the sensor, installs the
- * handler. Nothing else uses i2c1 after this. */
+ * handler. Nothing else uses the sensor's I2C block after this. */
 static inline bool ms5607_bus_begin(uint8_t address, irq_handler_t handler, int *alarm) {
     int n = hardware_alarm_claim_unused(false);
     if (n < 0)
         return false;
-    i2c1_hw->enable = 0;
-    i2c1_hw->tar = address;
-    i2c1_hw->enable = 1;
+    ms5607_bus_hw = i2c_get_hw(BOARD_I2C_INST);
+    ms5607_bus_hw->enable = 0; /* IC_TAR is written only while disabled */
+    ms5607_bus_hw->tar = address;
+    ms5607_bus_hw->enable = 1;
     uint irq = timer_hardware_alarm_get_irq_num(timer_hw, (uint)n);
     irq_set_exclusive_handler(irq, handler);
     hw_set_bits(&timer_hw->inte, 1u << (unsigned)n);

@@ -1,19 +1,20 @@
 /*
- * MS5607-02BA03 pressure sensor driver
- * I2C address: 0x76 or 0x77
+ * MS5607-02BA03 detection and compensation; the one-shot is ms5607_oneshot.c.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "ms5607_driver.h"
+#include "board_pins.h"
 #include "hardware/i2c.h"
 
-#define I2C_PORT i2c1
+#define I2C_PORT BOARD_I2C_INST
 
-#define MS5607_ADDR_CSB_LOW 0x76
-#define MS5607_ADDR_CSB_HIGH 0x77
+/* The address's LSB is CSB's complement (datasheet page 7). */
+#define MS5607_ADDR_CSB_VDD 0x76
+#define MS5607_ADDR_CSB_GND 0x77
 
 #define MS5607_CMD_RESET 0x1E
-#define MS5607_CMD_PROM_READ 0xA0 // Base address for PROM
+#define MS5607_CMD_PROM_READ 0xA0 /* word n at 0xA0 + 2n */
 
 /* Every transfer is bounded: the SDK's blocking calls wait forever on a part
  * holding SCL low, and detection also runs after a reset in flight. */
@@ -51,14 +52,27 @@ static bool ms5607_read_prom(void) {
     return true;
 }
 
+/* The CRC passes an all-zero PROM, which is what a blank one reads; no C1-C6
+ * of a real part is 0 or 0xFFFF. */
+static bool prom_valid(void) {
+    if (!ms5607_prom_crc_ok(prom))
+        return false;
+    for (int i = 1; i <= 6; i++)
+        if (prom[i] == 0 || prom[i] == 0xFFFFu)
+            return false;
+    return true;
+}
+
 void ms5607_detect_begin(ms5607_detect_t *d) {
-    d->addr = MS5607_ADDR_CSB_LOW;
+    d->addr = MS5607_ADDR_CSB_VDD;
+    d->tries = 0;
     d->reloading = false;
 }
 
-/* [DD-053] Reset, then the PROM a deadline later, at each address in turn. */
+/* [DD-053] Reset, then the PROM a deadline later, at each address in turn. A
+ * PROM read that fails its CRC is read again after another reset. */
 ms5607_detect_result_t ms5607_detect_step(ms5607_detect_t *d, uint32_t now_ms) {
-    while (d->addr <= MS5607_ADDR_CSB_HIGH) {
+    while (d->addr <= MS5607_ADDR_CSB_GND) {
         ms5607_addr = d->addr;
         if (!d->reloading) {
             if (ms5607_write_cmd(MS5607_CMD_RESET)) {
@@ -70,10 +84,13 @@ ms5607_detect_result_t ms5607_detect_step(ms5607_detect_t *d, uint32_t now_ms) {
             if ((int32_t)(now_ms - d->due_ms) < 0)
                 return MS5607_DETECT_PENDING;
             d->reloading = false;
-            /* A blank PROM reads all zeros or all ones. */
-            if (ms5607_read_prom() && prom[0] != 0 && prom[0] != 0xFFFF)
+            bool read = ms5607_read_prom();
+            if (read && prom_valid())
                 return MS5607_DETECT_FOUND;
+            if (read && ++d->tries < MS5607_PROM_TRIES)
+                return MS5607_DETECT_PENDING;
         }
+        d->tries = 0;
         d->addr++;
     }
     return MS5607_DETECT_ABSENT;

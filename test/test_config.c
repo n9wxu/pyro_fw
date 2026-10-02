@@ -6,6 +6,8 @@
  */
 #include "unity.h"
 #include "config.h"
+#include "hal.h"
+#include <stdio.h>
 #include <string.h>
 
 void setUp(void) {}
@@ -193,8 +195,8 @@ void test_config_parse_new_fields(void) {
     config_parse_ini(events, &cfg);
     TEST_ASSERT_EQUAL(LOG_RATE_EVENTS, cfg.log_rate);
     char junk[] = "log_rate=fast\r\n";
-    config_parse_ini(junk, &cfg);
-    TEST_ASSERT_EQUAL_MESSAGE(LOG_RATE_1HZ, cfg.log_rate, "a rate it does not know logs at the default");
+    TEST_ASSERT_EQUAL(1, config_parse_ini(junk, &cfg));
+    TEST_ASSERT_EQUAL_MESSAGE(LOG_RATE_EVENTS, cfg.log_rate, "a rate it does not know keeps the one it had");
 
     /* A config.ini from before DD-062 names a rate: it logs at the default. */
     config_set_defaults(&cfg);
@@ -251,11 +253,11 @@ void test_config_default_ini_string(void) {
     TEST_ASSERT_NOT_NULL(strstr(ini, "landing_timeout=60"));
 }
 
-/* ── A disabled channel stays disabled [CFG-04, REV-02] ───────────
+/* ── A disabled channel stays disabled [CFG-04] ───────────────────
  *
  * POST /api/config parses the posted keys over the running config and writes
- * the re-serialised result, so every mode has to survive that trip. `none`
- * once came back as `delay`, and delay 0 fires at apogee. */
+ * the re-serialised result, so every mode has to survive that trip: delay 0
+ * fires at apogee. */
 
 void test_config_mode_none_round_trips(void) {
     config_t cfg;
@@ -284,7 +286,7 @@ void test_config_unknown_mode_serialises_as_none(void) {
                                  "an unknown mode must be written as one that never fires");
 }
 
-/* ── The shipped defaults fit their fields [CFG-07, REV-15] ───────── */
+/* ── The shipped defaults fit their fields [CFG-07] ───────────────── */
 
 void test_config_default_name_is_not_truncated(void) {
     config_t cfg;
@@ -292,10 +294,7 @@ void test_config_default_name_is_not_truncated(void) {
     TEST_ASSERT_EQUAL_STRING("MyRocket", cfg.name);
 }
 
-/* ── Every key written is one something reads [REV-12] ────────────
- *
- * A key in config.ini is a promise that changing it changes what the board
- * does. These four were parsed, stored and read by nothing. */
+/* ── Every key written is one something reads [CFG-SUBSYS-01] ───── */
 
 void test_config_writes_no_inert_keys(void) {
     const char *ini = config_default_ini();
@@ -401,15 +400,152 @@ void test_config_worst_case_fits_the_budget(void) {
     cfg.telem_rate_hz = 255;
     cfg.log_rate = LOG_RATE_EVENTS; /* the longest name */
     cfg.landing_timeout = 255;
-    cfg.lua_baud = 65535;
+    cfg.lua_baud = 921600;
     cfg.lua_pixels = 65535;
     char buf[512];
     int n = config_serialize_ini(&cfg, buf, (int)sizeof(buf));
     TEST_ASSERT_GREATER_THAN_MESSAGE(0, n, "a fully populated config must still serialise");
-    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(512, n, "and must fit what hal_config_load() reads back");
-    /* Headroom, so the next field added does not silently land on the limit.
-       341 bytes today; this fires well before 512. */
+    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(CONFIG_INI_MAX - 1, n, "and must fit what hal_config_load() reads back");
+    /* POST /api/config's merge buffer is 512 bytes; headroom below it, so the
+       next field added does not silently land on the limit. */
     TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(440, n, "config.ini is running out of headroom");
+}
+
+/* ── Ranges [SYS-CFG-03] ───────────────────────────────────────────
+ *
+ * A value outside its row's range, or one that does not parse, is refused and
+ * the field keeps what it had. Cast instead, 700 m entered as 70000 cm became
+ * 4464 cm. */
+
+void test_SYS_CFG_03_a_value_beyond_its_field_is_refused_not_wrapped(void) {
+    config_t cfg;
+    config_set_defaults(&cfg);
+    char ini[] = "units=cm\r\npyro2_value=70000\r\n";
+    TEST_ASSERT_EQUAL(1, config_parse_ini(ini, &cfg));
+    TEST_ASSERT_EQUAL_MESSAGE(300, cfg.pyro2_value, "70000 cm wrapped instead of being refused");
+    TEST_ASSERT_EQUAL(UNITS_CM, cfg.units);
+
+    char top[] = "pyro2_value=65535\r\n";
+    TEST_ASSERT_EQUAL(0, config_parse_ini(top, &cfg));
+    TEST_ASSERT_EQUAL(65535, cfg.pyro2_value);
+}
+
+void test_SYS_CFG_03_a_value_that_does_not_parse_keeps_the_previous(void) {
+    static const char *bad[] = {"pyro1_value=abc", "pyro1_value=-5", "pyro1_value=12x", "pyro1_value=",
+                                "pyro1_value=+7", "pyro1_value=99999999999999999999"};
+    for (unsigned i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        config_t cfg;
+        config_set_defaults(&cfg);
+        cfg.pyro1_value = 42;
+        char ini[64];
+        snprintf(ini, sizeof(ini), "%s\r\n", bad[i]);
+        TEST_ASSERT_EQUAL_MESSAGE(1, config_parse_ini(ini, &cfg), bad[i]);
+        TEST_ASSERT_EQUAL_MESSAGE(42, cfg.pyro1_value, bad[i]);
+    }
+}
+
+void test_SYS_CFG_03_every_bounded_field_refuses_beyond_its_row(void) {
+    config_t cfg;
+    config_set_defaults(&cfg);
+    char ini[] = "telem_format=2\r\ntelem_rate_hz=51\r\nlanding_timeout=256\r\nlua_baud=299\r\n"
+                 "lua_baud=921601\r\nlua_enabled=yes\r\nunits=furlongs\r\n";
+    TEST_ASSERT_EQUAL(7, config_parse_ini(ini, &cfg));
+    config_t def;
+    config_set_defaults(&def);
+    TEST_ASSERT_EQUAL(0, memcmp(&def, &cfg, sizeof(cfg)));
+}
+
+/* [CFG-04] A mode it cannot name is none, and still counted as refused. */
+void test_CFG_04_an_unnamed_mode_is_none_and_reported(void) {
+    config_t cfg;
+    config_set_defaults(&cfg);
+    char ini[] = "pyro1_mode=apogee\r\n";
+    TEST_ASSERT_EQUAL(1, config_parse_ini(ini, &cfg));
+    TEST_ASSERT_EQUAL(PYRO_MODE_NONE, cfg.pyro1_mode);
+}
+
+/* ── One tokenizer [CFG-09] ─────────────────────────────────────── */
+
+void test_CFG_09_blanks_around_key_and_value_are_not_part_of_them(void) {
+    config_t cfg;
+    config_set_defaults(&cfg);
+    cfg.pyro1_mode = PYRO_MODE_NONE;
+    char ini[] = "pyro1_mode=delay \r\npyro2_value = 150\r\n\tunits\t=\tft\t\n  [pyro]\n  ; note\nname = Rkt 7 \n";
+    TEST_ASSERT_EQUAL(0, config_parse_ini(ini, &cfg));
+    TEST_ASSERT_EQUAL_MESSAGE(PYRO_MODE_DELAY, cfg.pyro1_mode, "a trailing blank turned delay into none");
+    TEST_ASSERT_EQUAL_MESSAGE(150, cfg.pyro2_value, "a blank before '=' hid the key");
+    TEST_ASSERT_EQUAL(UNITS_FT, cfg.units);
+    TEST_ASSERT_EQUAL_STRING("Rkt 7", cfg.name);
+}
+
+void test_CFG_09_a_line_with_no_key_carries_nothing(void) {
+    config_t cfg;
+    config_set_defaults(&cfg);
+    char ini[] = "=5\r\n  =  \r\npyro1_value\r\n";
+    TEST_ASSERT_EQUAL(0, config_parse_ini(ini, &cfg));
+    config_t def;
+    config_set_defaults(&def);
+    TEST_ASSERT_EQUAL(0, memcmp(&def, &cfg, sizeof(cfg)));
+}
+
+void test_lua_baud_holds_115200(void) {
+    config_t cfg;
+    config_set_defaults(&cfg);
+    char ini[] = "lua_baud=115200\r\n";
+    TEST_ASSERT_EQUAL(0, config_parse_ini(ini, &cfg));
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(115200u, cfg.lua_baud, "115200 wrapped to 49664");
+
+    char buf[CONFIG_INI_MAX];
+    TEST_ASSERT_GREATER_THAN(0, config_serialize_ini(&cfg, buf, (int)sizeof(buf)));
+    config_t back;
+    config_set_defaults(&back);
+    config_parse_ini(buf, &back);
+    TEST_ASSERT_EQUAL_UINT32(115200u, back.lua_baud);
+}
+
+/* ── Reading config.ini [CFG-05, FLT-BOOT-03] ─────────────────────
+ *
+ * Only a file that does not exist is replaced by the defaults. A read that
+ * failed -- an I/O error, a lock not had in time, the flight log holding the
+ * filesystem -- leaves the file as it is for the next boot. */
+
+void test_CFG_05_only_a_missing_file_is_rewritten(void) {
+    static const int failures[] = {HAL_FS_ERROR, HAL_FS_LOCKED};
+    for (unsigned i = 0; i < sizeof(failures) / sizeof(failures[0]); i++) {
+        config_t cfg;
+        char buf[CONFIG_INI_MAX];
+        TEST_ASSERT_EQUAL(CONFIG_FILE_UNREADABLE, config_from_file(&cfg, buf, (int)sizeof(buf), failures[i], NULL));
+        TEST_ASSERT_EQUAL(300, cfg.pyro2_value);
+    }
+    config_t cfg;
+    char buf[CONFIG_INI_MAX];
+    TEST_ASSERT_EQUAL(CONFIG_FILE_MISSING, config_from_file(&cfg, buf, (int)sizeof(buf), HAL_FS_NOENT, NULL));
+    TEST_ASSERT_EQUAL(300, cfg.pyro2_value);
+}
+
+void test_CFG_05_a_file_that_filled_the_buffer_is_not_parsed(void) {
+    config_t cfg;
+    char buf[64];
+    memset(buf, ';', sizeof(buf));
+    memcpy(buf, "pyro2_value=1", 13); /* "...=150", cut */
+    TEST_ASSERT_EQUAL(CONFIG_FILE_UNREADABLE, config_from_file(&cfg, buf, (int)sizeof(buf), (int)sizeof(buf) - 1, NULL));
+    TEST_ASSERT_EQUAL(300, cfg.pyro2_value);
+}
+
+/* Comments make a hand-edited config.ini longer than the 511 bytes once read. */
+void test_CFG_05_a_long_commented_file_is_read_whole(void) {
+    char file[CONFIG_INI_MAX];
+    int n = snprintf(file, sizeof(file), "[pyro]\r\n");
+    for (int i = 0; i < 12; i++)
+        n += snprintf(file + n, sizeof(file) - (size_t)n, "; a note an operator wrote about the rocket, line %02d\r\n", i);
+    n += snprintf(file + n, sizeof(file) - (size_t)n, "pyro2_value=150\r\n");
+    TEST_ASSERT_GREATER_THAN(600, n);
+
+    config_t cfg;
+    int rejected = -1;
+    TEST_ASSERT_EQUAL(CONFIG_FILE_LOADED, config_from_file(&cfg, file, (int)sizeof(file), n, &rejected));
+    TEST_ASSERT_EQUAL(0, rejected);
+    TEST_ASSERT_EQUAL(150, cfg.pyro2_value);
 }
 
 /* ── Serializer overflow ──────────────────────────────────────────── */
@@ -467,6 +603,17 @@ int main(void) {
     RUN_TEST(test_config_unknown_mode_serialises_as_none);
     RUN_TEST(test_config_default_name_is_not_truncated);
     RUN_TEST(test_config_writes_no_inert_keys);
+
+    RUN_TEST(test_SYS_CFG_03_a_value_beyond_its_field_is_refused_not_wrapped);
+    RUN_TEST(test_SYS_CFG_03_a_value_that_does_not_parse_keeps_the_previous);
+    RUN_TEST(test_SYS_CFG_03_every_bounded_field_refuses_beyond_its_row);
+    RUN_TEST(test_CFG_04_an_unnamed_mode_is_none_and_reported);
+    RUN_TEST(test_CFG_09_blanks_around_key_and_value_are_not_part_of_them);
+    RUN_TEST(test_CFG_09_a_line_with_no_key_carries_nothing);
+    RUN_TEST(test_lua_baud_holds_115200);
+    RUN_TEST(test_CFG_05_only_a_missing_file_is_rewritten);
+    RUN_TEST(test_CFG_05_a_file_that_filled_the_buffer_is_not_parsed);
+    RUN_TEST(test_CFG_05_a_long_commented_file_is_read_whole);
 
     return UNITY_END();
 }

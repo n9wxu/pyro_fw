@@ -7,6 +7,11 @@
  */
 #include "board_pins.h"
 #include "pico/binary_info.h"
+#include "sdk_default_pins.h"
+
+SDK_DEFAULT_PIN_IS_FREE(BOARD_PIN_FIRE1);
+SDK_DEFAULT_PIN_IS_FREE(BOARD_PIN_PYRO_LOW);
+SDK_DEFAULT_PIN_IS_FREE(BOARD_PIN_FIRE2);
 
 bi_decl(bi_1pin_with_name(BOARD_PIN_LED, "LED (D3)"));
 bi_decl(bi_2pins_with_names(BOARD_PIN_UART_TX, "UART0 TX -> J6.3", BOARD_PIN_UART_RX, "UART0 RX <- J6.3"));

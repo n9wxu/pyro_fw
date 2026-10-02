@@ -1,16 +1,8 @@
 /*
- * What a pin may become, and where it sits in a power group.
- *
- * A board declares one row per assignable pin in its own pin_caps.h. This
- * header is the vocabulary those rows are written in, plus the assertions
- * that check them at build time.
- *
- * Configuration chooses an assignment; the board decides which assignments
- * exist. That split is what keeps DECISIONS.md DD-012 substantially intact
- * while letting an operator retask a pin: the pin map still lives in the
- * board header, and config may only pick from what it offers.
- *
- * A pin with no row is not assignable to anything.
+ * What a pin may become, and where it sits in a power group: the vocabulary of
+ * each board's pin_caps.h rows, and their build-time checks. The pin map stays
+ * in the board header [DD-012]; configuration only picks from what a row
+ * offers, and a pin with no row is not assignable to anything.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -23,15 +15,9 @@
 
 /* ── What a pin may become ────────────────────────────────────────
  *
- * A row lists every function the HARDWARE can support on that pin, not what
- * is currently assigned, and the two are different things. A pyro firing pad
- * carries FN_PYRO_FIRE *and* the Lua functions it could take once its channel
- * is released -- that pairing is the whole feature. What may not happen is
- * holding both at once, which is an assignment-time rule rather than a
- * property of the hardware.
- *
- * FN_PYRO_FIRE on a pad means a firing FET gate is wired to it, so a Lua role
- * there is reaching real power hardware. */
+ * Every function the hardware supports on the pin, not what is assigned: a
+ * firing pad carries FN_PYRO_FIRE and the Lua functions it can take once its
+ * channel is released. Holding both at once is refused at assignment. */
 #define FN_NONE 0u
 
 /* Owned by the flight software when assigned. */
@@ -86,12 +72,8 @@ typedef struct {
     uint8_t pin;
     uint32_t functions;
     pin_group_t group;
-    /* Where this pin comes out on the board, in the designators silkscreened
-     * on it: "J3.3", "CN1.1", "J6.4". An operator wiring a rocket is holding
-     * a connector, not a GPIO number, and until this existed the two could
-     * only be matched by reading the board header. Boards with no designator
-     * for a pad say what it is instead ("match A terminal"); inventing a
-     * J-number that is not printed on the board would be worse than either. */
+    /* [PIN-LABEL-01] The silkscreen designator ("J3.3"), or, for a pad that
+     * has none, what it is ("match A terminal") -- never an invented one. */
     const char *label;
 } pin_cap_t;
 
@@ -100,15 +82,12 @@ typedef struct {
 
 /* ── Build-time checks ────────────────────────────────────────────
  *
- * A board invokes PIN_CAPS_ASSERT(BOARD_PIN_CAPS) once. A wrong row fails the
- * build rather than producing a board that can be misconfigured -- same
- * argument as the PIO budget assertions in src/lua/lua_pio_platform.c. */
+ * A board invokes PIN_CAPS_ASSERT(BOARD_PIN_CAPS) once, so a wrong row fails
+ * the build. */
 
-/* The sensor's I2C pads are never Lua-assignable under any configuration.
- * RP2040 fixes a pin's peripheral function by pin number, and on these boards
- * a Lua-reachable pad shares an I2C instance with the flight pressure sensor
- * -- GPIO18/19 are i2c1 on MK1C, whose MS5607 is on GPIO6/7. Barometric
- * pressure is a fixed function, so the pads carrying it never move. */
+/* The sensor's I2C pads are never Lua-assignable. A pin's peripheral is fixed
+ * by its number (RP2040 datasheet §2.19.2), and a Lua pad can share the
+ * sensor's I2C instance: GPIO18/19 are i2c1 on MK1C, as its MS5607's 6/7. */
 #define PIN_CAP_X_I2C_NEVER_LUA(pin, fn, pg, lbl)                                                                           \
     _Static_assert(!((fn) & (FN_I2C_SDA | FN_I2C_SCL)) || !((fn) & FN_LUA_ANY),                                        \
                    "pin " #pin " carries the sensor bus and must never be Lua-assignable");
@@ -156,13 +135,8 @@ const pin_cap_t *pin_caps_find(uint8_t pin);
  * it. Never NULL, so callers can print it without a guard. */
 const char *pin_caps_label(uint8_t pin);
 
-/* True when this board has a buzzer pad at all.
- *
- * MK1A fits none: its board_pins.h declares no BOARD_PIN_BUZZER, so the
- * buzzer starts on no pad. Without asking, the web UI offers a "play this
- * code" button there that returns 200 and makes no sound. Derived from the
- * capability table rather than a new board macro, because FN_BUZZER already
- * says it. */
+/* True when this board fits a buzzer pad of its own (an FN_BUZZER row). MK1A
+ * fits none. */
 bool pin_caps_has_buzzer(void);
 
 /* True when this board can offer a half-bridge. */
@@ -174,19 +148,15 @@ bool pin_caps_bridge_possible(void);
 const char *pin_caps_topology_name(void);
 
 /* What happens on THIS board if both sides of a bridge conduct at once, as a
- * sentence for the operator. Served to the web UI rather than written there,
- * because the consequence is not the same on every board and a UI holding its
- * own copy is a UI that will be wrong about one of them. */
+ * sentence for the operator; the consequence differs by board. */
 const char *pin_caps_protection_note(void);
 
 /* True when the pin is Lua's before any configuration releases anything:
  * Lua-capable and reserved for nothing. */
 bool pin_caps_is_default_lua(const pin_cap_t *c);
 
-/* Checks LUA_PIN_LIST against the table. Returns the first pin that is listed
- * but not actually free for Lua, or -1 when the list is consistent. Called at
- * boot: the list and the table are two statements of the same fact, and they
- * are written by hand in the same file. */
+/* Checks LUA_PIN_LIST, written by hand beside the table, against it. Returns
+ * the first pin listed but not free for Lua, or -1. Called at boot. */
 int pin_caps_check_lua_list(void);
 
 #endif

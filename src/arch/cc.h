@@ -1,3 +1,9 @@
+/*
+ * lwIP's compiler and platform port, the hooks lwip/arch.h names: errno from
+ * lwIP, and its diagnostics out lwip_uart_printf().
+ *
+ * SPDX-License-Identifier: MIT
+ */
 #ifndef ARCH_CC_H
 #define ARCH_CC_H
 

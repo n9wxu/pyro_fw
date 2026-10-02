@@ -27,7 +27,10 @@
 #define DIGIT_GAP_MS 300
 #define CODE_GAP_MS 500
 
-/* Altitude beep-out timing */
+/* Altitude beep-out timing. Six digits at most: BUZZER_MAX_PATTERN holds six
+ * zeros, the longest. */
+#define ALT_MAX_DIGITS 6
+#define ALT_MAX_VALUE 999999u
 #define ALT_LONG_PAUSE_MS 2000
 #define ALT_LONG_BEEP_MS 500
 #define ALT_SHORT_PAUSE_MS 300
@@ -37,22 +40,17 @@
 
 /* ── Pattern builder helpers ──────────────────────────────────────── */
 
-/*
- * Append a single step to the pattern buffer.
- * Returns the new write index, or -1 if the buffer is full.
- */
+/* One step; the new write index. A full buffer keeps its last slot for the
+ * end sentinel and drops the step. */
 static int pat_append(buzzer_pattern_t *buf, int idx, uint16_t dur, bool on) {
     if (idx >= BUZZER_MAX_PATTERN - 1)
-        return idx; /* silently truncate — pattern is too long */
+        return idx;
     buf[idx].duration_ms = dur;
     buf[idx].tone_on = on;
     return idx + 1;
 }
 
-/*
- * Append N on/off beep pairs separated by GAP_MS, followed by a
- * final TAIL_MS pause (used for digit gaps or end-of-code gaps).
- */
+/* count beeps of on_ms, gap_ms apart; no gap after the last. */
 static int pat_append_beeps(buzzer_pattern_t *buf, int idx, int count, uint16_t on_ms, uint16_t gap_ms) {
     for (int i = 0; i < count; i++) {
         idx = pat_append(buf, idx, on_ms, true);
@@ -70,20 +68,21 @@ static int pat_append_beeps(buzzer_pattern_t *buf, int idx, int count, uint16_t 
  *   → loop (zero-duration sentinel with repeat=true implied)
  */
 static int build_alt_pattern(int32_t value, buzzer_pattern_t *buf) {
-    /* Extract decimal digits, most-significant first */
-    if (value < 0)
-        value = -value;
+    /* The magnitude, taken unsigned so INT32_MIN has one; past six digits,
+     * the most that can be beeped, rather than six of them. */
+    uint32_t v = value < 0 ? 0u - (uint32_t)value : (uint32_t)value;
+    if (v > ALT_MAX_VALUE)
+        v = ALT_MAX_VALUE;
 
-    uint8_t digits[6];
+    uint8_t digits[ALT_MAX_DIGITS];
     int num_digits = 0;
 
-    if (value == 0) {
+    if (v == 0) {
         digits[0] = 0;
         num_digits = 1;
     } else {
-        uint8_t tmp[6];
-        int32_t v = value;
-        while (v > 0 && num_digits < 6) {
+        uint8_t tmp[ALT_MAX_DIGITS];
+        while (v > 0 && num_digits < ALT_MAX_DIGITS) {
             tmp[num_digits++] = (uint8_t)(v % 10);
             v /= 10;
         }
