@@ -6,14 +6,18 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   PICO_SDK_VERSION: 2.2.0
+  EMSDK_VERSION: 6.0.9
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install dependencies
         run: |
@@ -23,7 +27,7 @@ jobs:
 
       - name: Install Pico SDK
         run: |
-          git clone --depth 1 --branch ${{ env.PICO_SDK_VERSION }} https://github.com/raspberrypi/pico-sdk.git /tmp/pico-sdk
+          git clone --depth 1 --branch "$PICO_SDK_VERSION" https://github.com/raspberrypi/pico-sdk.git /tmp/pico-sdk
           cd /tmp/pico-sdk && git submodule update --init lib/tinyusb lib/mbedtls lib/lwip lib/btstack lib/cyw43-driver
 
       - name: Build (default board, mk1b)
@@ -34,11 +38,8 @@ jobs:
         env:
           CI_BUILD: 1
 
-      # A second board. Building exactly one board is how a hardcoded board
-      # name in a test survived the move to boards/<name>/: whatever is
-      # board-specific is only checked by building more than one. mk1c is also
-      # where lua_tests runs, since the sandbox assertions are
-      # board-independent and pinning them to one board keeps them stable.
+      # Whatever is board-specific is checked only by building more than one
+      # board. lua_tests runs on mk1c: its assertions are board-independent.
       - name: Build (mk1c)
         run: |
           mkdir build-mk1c && cd build-mk1c
@@ -84,12 +85,9 @@ jobs:
       # property of the linked binary, not of the source, because the SDK
       # introduces the blocking waits underneath us.
       #
-      # EVERY board with Lua, not just one. Both things this checks are
-      # decided by the linker and the inliner per image: whether an unbounded
-      # primitive got pulled in, and whether a __not_in_flash_func() kept an
-      # out-of-line copy. mk1b is the default board and the one whose 384KB
-      # A/B slot forced lua_lib to -Os, so it is the build most likely to
-      # inline differently -- and it was the one not being checked.
+      # Every board with Lua: the linker and the inliner decide, per image,
+      # whether an unbounded primitive is pulled in and whether a
+      # __not_in_flash_func() keeps an out-of-line copy.
       - name: Prove the flight task cannot be hung
         run: |
           for elf in build/pyro_fw_*.elf build-mk1c/pyro_fw_*.elf build-mk1a/pyro_fw_*.elf build-mk1c_sd/pyro_fw_*.elf; do
@@ -97,7 +95,9 @@ jobs:
             python3 support/prove_core0.py --core1 lua_task "$elf"
           done
 
-      - name: Static analysis (cppcheck)
+      # Informational: --error-exitcode=0, so findings are reported and never
+      # fail the build.
+      - name: Static analysis (cppcheck, informational)
         run: |
           cppcheck --enable=all --std=c11 \
             --suppress=missingIncludeSystem \
@@ -112,15 +112,10 @@ jobs:
           echo "=== Cppcheck summary ==="
           grep -c "error\|warning\|style\|performance\|portability" cppcheck-report.txt || echo "Clean"
 
+      # A gate: an unformatted file, or a listed file that no longer exists,
+      # fails the build.
       - name: Format check (clang-format)
         run: |
-          # Three renames have silently emptied this list before:
-          # hal_hardware.c -> src/hal_common/hal_common.c,
-          # telemetry.c -> src/telemetry_formatter.c, and the boards'
-          # hal_board.c -> board_info.c. A missing file makes
-          # clang-format error out and check nothing, and the step ends in
-          # `|| echo ::warning::`, so it stays green while checking nothing.
-          # Rename a file and you must fix it here, in cppcheck and in pmccabe.
           clang-format --dry-run --Werror \
             src/flight_states.c src/telemetry_formatter.c src/buzzer.c \
             src/hal.h src/main_hardware.c \
@@ -133,7 +128,8 @@ jobs:
             src/http_work.c src/http_work.h src/status_json.c src/status_json.h \
             src/flight_log.c src/flight_log.h src/pressure_trace.c src/pressure_trace.h \
             src/log_plan.c src/log_plan.h \
-            2>&1 || echo "::warning::Code formatting differences found. Run: clang-format -i src/*.c src/*.h"
+            sim/physics.c sim/physics.h sim/replay.c sim/replay.h sim/pyro_sim.h \
+            sim/sim_cli.c sim/main_sim.c test/test_physics.c test/test_replay.c
 
       - name: Cyclomatic complexity (pmccabe)
         run: |
@@ -148,7 +144,7 @@ jobs:
           fi
           echo "All functions within complexity limit"
 
-      # On both boards: these compile against the selected board's board_pins.h,
+      # On every board: these compile against the selected board's board_pins.h,
       # which is exactly where a board-specific assumption hides.
       - name: Run integration tests
         run: |
@@ -184,6 +180,10 @@ jobs:
       - name: Run HTTP work unit and status rendering tests
         run: cd build && ninja http_work_tests && ninja status_json_tests && ninja net_stats_tests && ninja net_txq_tests && ninja mac_random_tests && ninja hr_log_tests && ninja flight_sim_tests
 
+      # The simulators' rocket against USSA76, and flight logs read for replay.
+      - name: Run physics and replay tests
+        run: cd build && ninja physics_tests && ninja replay_tests
+
       # The flight log's binary records and their CSV (DD-062).
       - name: Run flight log format tests
         run: cd build && ninja flight_log_tests && ninja pressure_trace_tests && ninja log_plan_tests
@@ -196,16 +196,11 @@ jobs:
           cd build && ninja ms5607_tests
           cd ../build-mk1c && ninja ms5607_tests
 
-      # The records against each other and the code: every cited requirement
-      # and DD exists, every requirement has a traceability row, every test a
-      # row names exists, and the summary counts the rows.
       - name: Version rules
         run: |
           python3 support/version.py --selftest
-          # VERSION must be the newest release, or one legal bump past it.
-          # This is what stops a hand-edit from shipping a 2.3.7 -- a minor
-          # bump that kept its patch number, which nothing downstream would
-          # otherwise complain about.
+          # VERSION must be the newest release, or one legal bump past it:
+          # a minor bump that kept its patch number (2.3.7) is refused.
           git fetch -q --tags origin || true
           LAST=$(git tag -l 'v*' | sed 's/^v//' \
                  | awk -F. '$1~/^[0-9]+$/ && $2~/^[0-9]+$/ && $3~/^[0-9]+$/' \
@@ -218,8 +213,12 @@ jobs:
             python3 support/version.py --check "$LAST" "$CUR"
           fi
 
+      # The records against each other and the code (support/trace_check.py's
+      # docstring lists the checks).
       - name: Traceability check
-        run: python3 support/trace_check.py --counts
+        run: |
+          python3 support/trace_check.py --selftest
+          python3 support/trace_check.py --counts
 
       # No sleeps: the exec loop is the only clock (DD-053). A ratchet over
       # the sites not yet converted, which only shrinks.
@@ -247,7 +246,6 @@ jobs:
       - name: Run board self-test decision tests
         run: cd build && ninja board_selftest_tests
 
-      # Six suites the local gate ran and CI did not (task CI-1).
       - name: Run pin, beep, buzzer and config tests
         run: |
           cd build && ninja pin_caps_tests && ninja beep_tests && ninja pin_assign_tests
@@ -278,7 +276,6 @@ jobs:
             node mock_server.js $MODE 3456 &
             PID=$!
             sleep 2
-            # Verify server is up
             curl -s http://localhost:3456/api/status | head -c 100
             echo ""
             PYRO_MODE=$MODE BASE_URL=http://localhost:3456 npx playwright test --reporter=list 2>&1
@@ -301,7 +298,7 @@ jobs:
 
       - name: Upload Playwright results
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-results
           path: |
@@ -310,18 +307,18 @@ jobs:
 
       - name: Read version
         id: ver
-        run: echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
+        run: echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
 
       - name: Build WASM simulation
         run: |
-          git clone --depth 1 https://github.com/emscripten-core/emsdk.git /tmp/emsdk
-          cd /tmp/emsdk && ./emsdk install latest && ./emsdk activate latest
+          git clone --depth 1 --branch "$EMSDK_VERSION" https://github.com/emscripten-core/emsdk.git /tmp/emsdk
+          cd /tmp/emsdk && ./emsdk install "$EMSDK_VERSION" && ./emsdk activate "$EMSDK_VERSION"
           source /tmp/emsdk/emsdk_env.sh
           cd $GITHUB_WORKSPACE && scripts/build_wasm.sh
         continue-on-error: true
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: pyro-mk1b-v${{ steps.ver.outputs.version }}
           path: |
@@ -339,28 +336,24 @@ jobs:
             support/test_network.py
             support/README.md
 
-  # Every green push to main is released as a patch, so the released version
-  # and the code on main never drift apart.
-  #
-  # The bump is committed with a skip-ci marker and the release is CALLED
-  # rather
-  # than triggered by pushing the tag -- a tag pushed with GITHUB_TOKEN does
-  # not start another workflow, so a tag-triggered release would simply
-  # never run. Calling the reusable workflow needs no extra secret.
-  #
-  # The marker is spelled out only in the step below, never in prose:
-  # GitHub matches it anywhere in a commit message, so writing it in a
-  # sentence skips that commit's build.
+  # Every green push to main is released as a patch. The bump is committed
+  # with a skip-ci marker, and the release workflow is called rather than
+  # triggered by the tag: a tag pushed with GITHUB_TOKEN starts no workflow.
+  # The marker is spelled only in the step below, never in prose: GitHub
+  # matches it anywhere in a commit message.
   patch-release:
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    concurrency:
+      group: patch-release
+      cancel-in-progress: false
     outputs:
       version: ${{ steps.bump.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
@@ -379,14 +372,16 @@ jobs:
           echo "version=$NEW" >> "$GITHUB_OUTPUT"
 
       - name: Commit and tag
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add VERSION
-          git commit -m "chore(release): v${{ steps.bump.outputs.version }} [skip ci]"
-          git tag -a "v${{ steps.bump.outputs.version }}" -m "v${{ steps.bump.outputs.version }}"
+          git commit -m "chore(release): v$VERSION [skip ci]"
+          git tag -a "v$VERSION" -m "v$VERSION"
           git push origin HEAD:main
-          git push origin "v${{ steps.bump.outputs.version }}"
+          git push origin "v$VERSION"
 
   release:
     needs: patch-release

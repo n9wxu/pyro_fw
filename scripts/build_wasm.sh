@@ -1,10 +1,7 @@
 #!/bin/bash
-# Build the pyro flight computer as a WASM module.
-#
-# The WASM/host HAL is a board like any other: boards/sim/. Select it with
-#     cmake -B build-sim -DPYRO_BOARD=sim
-# for the native simulator; this script drives emcc directly.
-# Requires: emsdk (https://emscripten.org/docs/getting_started/downloads.html)
+# Build the flight computer and sim/physics.c as a WASM module for
+# docs/sim.html. Requires emsdk (https://emscripten.org). The board's sources
+# come from its boards/<board>/board.cmake, as the CMake build takes them.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -28,32 +25,30 @@ mkdir -p "$OUT"
 # The output name carries the board so the variants can sit side by side.
 PYRO_BOARD="${PYRO_BOARD:-sim}"
 
-BOARD_SRC=""
-BOARD_INC=""
-BOARD_DEF=""
-OUT_NAME="pyro"
-
 case "$PYRO_BOARD" in
-  sim)
-    ;;
-  sim_mk1a|sim_mk1b|sim_mk1c)
-    REAL_BOARD="${PYRO_BOARD#sim_}"
-    UPPER=$(echo "$REAL_BOARD" | tr 'a-z' 'A-Z')
-    BOARD_SRC="$ROOT/boards/$REAL_BOARD/pyro_board.c
-               $ROOT/sim/hw/rp2040_shim.c
-               $ROOT/sim/hw/pyro_sim_glue.c
-               $ROOT/sim/plant/net_solve.c
-               $ROOT/sim/plant/plant.c
-               $ROOT/sim/plant/plant_$REAL_BOARD.c"
-    BOARD_INC="-I $ROOT/sim/hw -I $ROOT/sim/plant -I $ROOT/boards/$REAL_BOARD"
-    BOARD_DEF="-DPYRO_SIM_BOARD_PYRO -DPYRO_SIM_PLANT_$UPPER"
-    OUT_NAME="pyro_$PYRO_BOARD"
-    ;;
+  sim|sim_mk1a|sim_mk1b|sim_mk1c) ;;
   *)
     echo "unknown PYRO_BOARD '$PYRO_BOARD' (want sim, sim_mk1a, sim_mk1b or sim_mk1c)" >&2
     exit 1
     ;;
 esac
+
+# PYRO_HOST_HAL_SOURCES, PYRO_HOST_INCLUDE_DIRS and PYRO_HOST_DEFINES, read
+# from the board's board.cmake by CMake itself.
+board_list() {
+    local probe
+    probe=$(mktemp --suffix=.cmake)
+    printf 'include("%s")\nforeach(_x ${%s})\n  message("${_x}")\nendforeach()\n' \
+        "$ROOT/boards/$PYRO_BOARD/board.cmake" "$1" > "$probe"
+    cmake -P "$probe" 2>&1
+    rm -f "$probe"
+}
+BOARD_SRC=$(board_list PYRO_HOST_HAL_SOURCES)
+BOARD_INC=$(board_list PYRO_HOST_INCLUDE_DIRS | sed 's/^/-I /')
+BOARD_DEF=$(board_list PYRO_HOST_DEFINES | sed 's/^/-D/')
+[ -n "$BOARD_SRC" ] || { echo "boards/$PYRO_BOARD/board.cmake names no PYRO_HOST_HAL_SOURCES" >&2; exit 1; }
+OUT_NAME="pyro"
+[ "$PYRO_BOARD" = sim ] || OUT_NAME="pyro_$PYRO_BOARD"
 
 # Flight computer exports
 FLIGHT_EXPORTS='
@@ -97,8 +92,8 @@ LUA_EXPORTS='
 
 EXPORTED="[${FLIGHT_EXPORTS},${PHYSICS_EXPORTS},${LUA_EXPORTS},\"_malloc\",\"_free\"]"
 
-# Lua sources. Fetched once into build-wasm-lua/ and reused; the same four
-# libraries are excluded as in the CMake build -- see the note there.
+# Lua sources, fetched once into build-wasm-lua/: the set CMakeLists.txt's
+# PYRO_LUA_SOURCES compiles.
 LUA_DIR="$ROOT/build-wasm-lua/lua"
 if [ ! -d "$LUA_DIR" ]; then
     mkdir -p "$ROOT/build-wasm-lua"
@@ -107,7 +102,7 @@ fi
 LUA_SRC=""
 for f in lapi lcode lctype ldebug ldo ldump lfunc lgc llex lmem lobject \
          lopcodes lparser lstate lstring ltable ltm lundump lvm lzio \
-         lauxlib lbaselib lcorolib ldblib lmathlib lstrlib ltablib lutf8lib; do
+         lauxlib lbaselib lmathlib lstrlib ltablib; do
     LUA_SRC="$LUA_SRC $LUA_DIR/$f.c"
 done
 
@@ -120,13 +115,12 @@ emcc -O2 -s WASM=1 \
   -s TOTAL_MEMORY=1048576 \
   -I "$ROOT/src" \
   -I "$ROOT/sim" \
-  -I "$ROOT/boards/sim" \
+  -I "$ROOT/boards/$PYRO_BOARD" \
   $BOARD_INC \
   $BOARD_DEF \
   -I "$ROOT/src/lua" \
   -I "$ROOT/build-wasm-lua/lua" \
   "$ROOT/sim/main_sim.c" \
-  "$ROOT/boards/sim/hal_sim.c" \
   "$ROOT/sim/physics.c" \
   "$ROOT/src/flight_states.c" \
   "$ROOT/src/brownout.c" \
