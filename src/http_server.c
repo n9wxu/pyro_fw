@@ -1130,6 +1130,49 @@ static const char DEFAULT_PAGE[] = "<!DOCTYPE html><html><body><h2>" PYRO_BOARD_
                                    "<p>No web files uploaded. POST files to /www/ to set up the UI.</p>"
                                    "<p><a href=\"/api/status\">Status JSON</a></p></body></html>";
 
+#if PYRO_HAS_LUA
+/* GET /api/lua/console: the console ring, drained, and the VM's liveness: a
+ * frozen heartbeat under "running" is a VM stuck where the instruction hook
+ * cannot reach. The buffers are static, off the net task's stack: it is the
+ * only caller. */
+static void serve_lua_console(http_conn_t *hc) {
+    static char text[900];
+    static char esc[1024];
+    static char esc_status[192];
+    int n = lua_app_console_read(text, sizeof(text) - 1);
+    text[n] = '\0';
+    json_escape(esc, sizeof(esc), text, n);
+    /* A Lua error names its chunk in quotes: [string "check"]:128: */
+    const char *st = lua_app_status();
+    json_escape(esc_status, sizeof(esc_status), st, (int)strlen(st));
+    /* c1_go ahead of c1_seen: a tick dispatched that the VM never took,
+     * which otherwise looks the same as a VM stuck mid-tick. */
+    uint32_t dbg_go, dbg_seen, dbg_skipped, dbg_hb;
+    lua_core1_dispatch_stats(&dbg_go, &dbg_seen, &dbg_skipped, &dbg_hb);
+    uint32_t dbg_loc = lua_core1_loc();
+    char *body = (char *)hc->work;
+    int blen =
+        snprintf(body, sizeof(hc->work),
+                 "{\"status\":\"%s\",\"heartbeat\":%lu,\"log_written\":%lu,"
+                 "\"console_dropped\":%lu,\"log_dropped\":%lu,\"log_refused\":%lu,"
+                 "\"log_active\":%s,"
+                 "\"c1_state\":%d,\"c1_loc\":%lu,\"c1_busy\":%lu,\"c1_go\":%lu,\"c1_seen\":%lu,"
+                 "\"c1_skipped\":%lu,\"c1_ready\":%s,\"c1_flash_ok\":%s,\"stack_free\":%lu,"
+                 "\"text\":\"%s\"}",
+                 esc_status, (unsigned long)lua_core1_heartbeat(), (unsigned long)lua_app_log_written(),
+                 (unsigned long)lua_core1_console_dropped(), (unsigned long)lua_core1_log_dropped(),
+                 (unsigned long)hal_log_text_dropped(), hal_log_active() ? "true" : "false", (int)lua_core1_state(),
+                 (unsigned long)(dbg_loc & 0xffu), (unsigned long)((dbg_loc >> 8) & 0xffu), (unsigned long)dbg_go,
+                 (unsigned long)dbg_seen, (unsigned long)dbg_skipped, lua_core1_ready() ? "true" : "false",
+                 lua_core1_flash_ok() ? "true" : "false", (unsigned long)lua_core1_stack_free(), esc);
+    if (blen < 0 || blen >= (int)sizeof(hc->work)) {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"console exceeds the response buffer\"}");
+        return;
+    }
+    http_respond(hc, 200, JSON, body, (uint32_t)blen);
+}
+#endif
+
 static void serve_get(conn_t *c) {
     http_conn_t *hc = &c->h;
     const char *path = hc->path;
@@ -1147,40 +1190,7 @@ static void serve_get(conn_t *c) {
          * open empty rather than show a 404. */
         serve_file(c, "/" LUA_SCRIPT_PATH, TEXT, NULL, 200, TEXT, "");
     } else if (strcmp(path, "/api/lua/console") == 0) {
-        /* The console ring, drained, and the VM's liveness: a frozen
-         * heartbeat under "running" is a VM stuck where the instruction hook
-         * cannot reach. */
-        char text[900];
-        int n = lua_app_console_read(text, sizeof(text) - 1);
-        text[n] = '\0';
-        char esc[1024];
-        json_escape(esc, sizeof(esc), text, n);
-
-        /* A Lua error names its chunk in quotes: [string "check"]:128: */
-        char esc_status[192];
-        const char *st = lua_app_status();
-        json_escape(esc_status, sizeof(esc_status), st, (int)strlen(st));
-        /* c1_go ahead of c1_seen: a tick dispatched that the VM never took,
-         * which otherwise looks the same as a VM stuck mid-tick. */
-        uint32_t dbg_go, dbg_seen, dbg_skipped, dbg_hb;
-        lua_core1_dispatch_stats(&dbg_go, &dbg_seen, &dbg_skipped, &dbg_hb);
-        uint32_t dbg_loc = lua_core1_loc();
-        char *body = (char *)hc->work;
-        int blen =
-            snprintf(body, sizeof(hc->work),
-                     "{\"status\":\"%s\",\"heartbeat\":%lu,\"log_written\":%lu,"
-                     "\"console_dropped\":%lu,\"log_dropped\":%lu,\"log_refused\":%lu,"
-                     "\"log_active\":%s,"
-                     "\"c1_state\":%d,\"c1_loc\":%lu,\"c1_busy\":%lu,\"c1_go\":%lu,\"c1_seen\":%lu,"
-                     "\"c1_skipped\":%lu,\"c1_ready\":%s,\"c1_flash_ok\":%s,\"stack_free\":%lu,"
-                     "\"text\":\"%s\"}",
-                     esc_status, (unsigned long)lua_core1_heartbeat(), (unsigned long)lua_app_log_written(),
-                     (unsigned long)lua_core1_console_dropped(), (unsigned long)lua_core1_log_dropped(),
-                     (unsigned long)hal_log_text_dropped(), hal_log_active() ? "true" : "false", (int)lua_core1_state(),
-                     (unsigned long)(dbg_loc & 0xffu), (unsigned long)((dbg_loc >> 8) & 0xffu), (unsigned long)dbg_go,
-                     (unsigned long)dbg_seen, (unsigned long)dbg_skipped, lua_core1_ready() ? "true" : "false",
-                     lua_core1_flash_ok() ? "true" : "false", (unsigned long)lua_core1_stack_free(), esc);
-        http_respond(hc, 200, JSON, body, (uint32_t)blen);
+        serve_lua_console(hc);
 #endif
     } else if (strcmp(path, "/api/beeps") == 0) {
         serve_api_beeps(hc);
