@@ -1,5 +1,5 @@
 /*
- * A byte ring: one producer, one consumer, both on core0.
+ * A byte ring: one producer, one consumer, both in the net task [DD-073].
  *
  * The HTTP layer owns a pair of these per connection. The transport fills the
  * RX ring and drains the TX ring; the HTTP parser drains RX and the response

@@ -1,7 +1,7 @@
 /*
- * /api/net: the network's counters, for the bench. An HTTP outage (G4-N)
- * leaves nothing on the board to say what ran out; these say which of lwIP's
- * pools, which TCP states, and which transport step refused.
+ * /api/net [WEB-API-13]: the network's counters, for the bench. They say
+ * which of lwIP's pools, which TCP states, and which transport step refused,
+ * so an HTTP outage can be told apart.
  *
  * A snapshot, rendered by net_json(), which touches nothing else, so the
  * host tests the API it produces.

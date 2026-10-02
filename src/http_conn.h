@@ -1,14 +1,15 @@
 /*
  * One HTTP exchange over a byte stream.
  *
- * The request arrives in rx and the response leaves through tx, in whatever
- * pieces the transport happens to deliver and accept. Nothing here knows
- * about segments: a request split at every byte, or two requests in one
- * read, parse the same way. The transport's whole job is to move bytes
+ * [WEB-HTTP-01] The request arrives in rx and the response leaves through tx,
+ * in whatever pieces the transport happens to deliver and accept. Nothing
+ * here knows about segments: a request split at every byte, or two requests
+ * in one read, parse the same way. The transport's whole job is to move bytes
  * between its buffers and these rings, and to close once http_conn_done().
  *
- * Every response is framed by Content-Length and carries Connection: close,
- * so one request is served per connection (RFC 9112 §9.6).
+ * [WEB-HTTP-02] Every response is framed by Content-Length and carries
+ * Connection: close, so one request is served per connection (RFC 9112
+ * §9.6).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -21,12 +22,13 @@
 
 #define HTTP_RX_RING 2048
 #define HTTP_TX_RING 2048
-/* The largest gathered body or rendered response, and big enough to be a
- * littlefs file cache (FLASH_SECTOR_SIZE) for a streamed file. */
+/* The largest gathered body or rendered response (/api/pins/caps sets it),
+ * and a streamed file's littlefs cache (LFS_FILE_BUF_SIZE). */
 #define HTTP_WORK_SIZE 5120
 #define HTTP_LINE_MAX 256 /* request line, or a header line worth reading */
 #define HTTP_METHOD_MAX 8
 #define HTTP_PATH_MAX 64
+#define HTTP_HOST_MAX 64
 #define HTTP_HEAD_MAX 8192 /* the whole header block */
 #define HTTP_HDR_MAX 384   /* a response header block */
 
@@ -72,6 +74,8 @@ struct http_conn {
     char path[HTTP_PATH_MAX];
     bool head_only;
     uint32_t content_length;
+    char host[HTTP_HOST_MAX]; /* "" when absent, "?" when unusable */
+    bool x_pyro;              /* X-Pyro: 1 */
 
     /* Head parser. */
     bool have_request_line;
@@ -130,5 +134,13 @@ void http_respond_str(http_conn_t *c, uint16_t status, const char *ctype, const 
 void http_respond_stream(http_conn_t *c, uint16_t status, const char *ctype, uint32_t len, const char *extra);
 
 const char *http_reason(uint16_t status);
+
+/* The board's own names: pyro.local, pyro-<n>.local and 192.168.<subnet>.1,
+ * each with or without :80. */
+bool http_host_is_board(const char *host, uint8_t subnet);
+
+/* From on_head: 0, or the status that refuses a request that did not come
+ * from the board's own page. */
+uint16_t http_origin_refusal(const http_conn_t *c, uint8_t subnet);
 
 #endif
