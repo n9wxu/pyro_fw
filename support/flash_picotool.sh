@@ -1,12 +1,16 @@
 #!/bin/bash
-# Flash Pyro MK1B/MK1C via picotool (no debugger or BOOTSEL button needed)
+# Flash a Pyro board via picotool (no debugger or BOOTSEL button needed)
 # Usage: ./flash_picotool.sh [build_dir]
 #
-# The application artifact is named per board (pyro_fw_mk1b.uf2 /
-# pyro_fw_mk1c.uf2) so an image cannot be flashed to the wrong hardware.
+# The application is named for its board (pyro_fw_<board>.uf2).
 
 BUILD=${1:-build}
-PICOTOOL=~/.pico-sdk/picotool/2.2.0-a4/picotool/picotool
+# picotool on PATH, else the newest the VS Code Pico extension installed.
+PICOTOOL=$(command -v picotool || ls -d ~/.pico-sdk/picotool/*/picotool/picotool 2>/dev/null | sort | tail -1)
+if [ -z "$PICOTOOL" ]; then
+    echo "Error: picotool not found on PATH or under ~/.pico-sdk"
+    exit 1
+fi
 BL="$BUILD/_deps/pico_fota_bootloader-build/pico_fota_bootloader.uf2"
 APP=$(ls "$BUILD"/pyro_fw_mk1*.uf2 2>/dev/null | head -1)
 if [ -z "$APP" ]; then
@@ -39,9 +43,11 @@ $PICOTOOL load "$APP" || exit 1
 echo "Rebooting to application..."
 $PICOTOOL reboot || exit 1
 
+# The reply timeout is -W on Linux, where -t is the TTL, and -t on macOS.
+if [ "$(uname)" = Linux ]; then WAIT=-W; else WAIT=-t; fi
 echo "Done. Waiting for network..."
 for i in $(seq 1 15); do
     sleep 1
-    ping -c 1 -t 2 192.168.7.1 >/dev/null 2>&1 && { echo "Device up after ${i}s"; exit 0; }
+    ping -c 1 $WAIT 2 192.168.7.1 >/dev/null 2>&1 && { echo "Device up after ${i}s"; exit 0; }
 done
 echo "Warning: device not responding on network"
