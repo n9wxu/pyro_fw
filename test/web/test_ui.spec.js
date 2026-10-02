@@ -256,7 +256,7 @@ test.describe('Configured device', () => {
     await expect(page.locator('#cfgNameLen')).toHaveText('8 of 8 characters');
   });
 
-  test('range warning for value exceeding sensor limit', async ({ page }) => {
+  test('range warning for a value past what the board holds', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Config');
@@ -264,7 +264,7 @@ test.describe('Configured device', () => {
     await page.fill('#p2val', '30000');
     await page.locator('#p2val').dispatchEvent('change');
     const warn = await page.locator('#p2warn').textContent();
-    expect(warn).toContain('sensor limit');
+    expect(warn).toContain('out of range: 0 to 26247 ft');
   });
 
   /* USB-01: a board reached over USB says it is grounded. */

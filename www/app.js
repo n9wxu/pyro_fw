@@ -38,20 +38,59 @@ function findAsset(rel) {
     if (assets[i].name === LEGACY_ASSET_NAME) return assets[i];
   return null;
 }
-var MAX_ALT = {0:800000, 1:8000, 2:26247};
+/* [WEB-UI-02] The board keeps a deploy value as a 16-bit number in the units
+   chosen, so cm stops at 65535; in m and ft the sensor's 8 km stops first. */
+var MAX_ALT = {0:65535, 1:8000, 2:26247};
+var MAX_DELAY_S = 65535;
 var UNIT_LABELS = {0:'cm', 1:'m', 2:'ft'};
 var UNIT_NAMES = ['cm','m','ft'];
 var MODE_LABELS = {delay:'Delay',agl:'AGL',fallen:'Fallen',speed:'Speed',none:'None'};
 /* [WEB-UI-02] Centimetres per unit: values convert through cm. */
 var CM_PER_UNIT = {0:1, 1:100, 2:30.48};
-var WEB_VERSION = '2.0.0';
+var POLL_MS = 1000;
+var ANSWER_MS = 3000;  /* a status request not answered by then is abandoned */
+
+/* Every POST: the board refuses one without X-Pyro, which a page on another
+   site cannot send without a preflight the board does not grant. */
+function post(path, body, type) {
+  var headers = {'X-Pyro': '1'};
+  if (type) headers['Content-Type'] = type;
+  return fetch(path, {method: 'POST', headers: headers, body: body === undefined ? '' : body});
+}
+
+/* A GET abandoned after ANSWER_MS, so a board that stops answering cannot
+   stack requests up behind it. */
+function getTimed(path) {
+  var ctl = new AbortController();
+  var timer = setTimeout(function() { ctl.abort(); }, ANSWER_MS);
+  return fetch(path, {signal: ctl.signal}).finally(function() { clearTimeout(timer); });
+}
+
+/* The uploaders put the release's VERSION beside the web files. */
+function loadWebVersion() {
+  fetch('/www/version.txt')
+    .then(function(r) { return r.ok ? r.text() : ''; })
+    .catch(function() { return ''; })
+    .then(function(t) {
+      document.getElementById('uWebVer').textContent = t.trim() || 'not recorded';
+    });
+}
+
+/* A link only to an https URL: a release's URL comes from GitHub, not from
+   this page. */
+function safeLink(url, text) {
+  var a = document.createElement('a');
+  if (/^https:\/\//.test(String(url))) a.href = url;
+  a.textContent = text;
+  return a;
+}
 
 /* ── Tabs ──────────────────────────────────────────────────────── */
-function showTab(name) {
+function showTab(name, button) {
   document.querySelectorAll('.tabpanel').forEach(function(el) { el.style.display = 'none'; });
   document.querySelectorAll('.tab').forEach(function(el) { el.classList.remove('active'); });
   document.getElementById('tab-' + name).style.display = 'block';
-  event.target.classList.add('active');
+  if (button) button.classList.add('active');
   if (name === 'data') { loadFlightData(); }
   if (name === 'lua') { luaInit(); }
   if (name === 'config') { relInit(); loadLogSpace(); }
@@ -89,7 +128,7 @@ function setTestMode(on) {
   }
   testBusy = true;
   msg.textContent = '';
-  fetch('/api/test_mode/' + (on ? 'on' : 'off'), {method:'POST'})
+  post('/api/test_mode/' + (on ? 'on' : 'off'))
     .then(function(r){ return r.json(); })
     .then(function(j){
       if (j.error) msg.textContent = j.error;
@@ -101,7 +140,7 @@ function setTestMode(on) {
 
 /* ── Status [WEB-API-01, WEB-UI-01] ────────────────────────────── */
 function update() {
-  fetch('/api/status').then(function(r){return r.json()}).then(function(d) {
+  getTimed('/api/status').then(function(r){return r.json()}).then(function(d) {
     missCount = 0;
     var u = d.units || 0;
     var ul = unitLabel(u);
@@ -156,7 +195,6 @@ function update() {
     currentVersion = d.fw_version;
     currentBoard = boardIdOf(d);
     document.getElementById('uFwVer').textContent = d.fw_version;
-    document.getElementById('uWebVer').textContent = WEB_VERSION;
 
     var newCfg = {id:d.rocket_id, name:d.rocket_name, units:u,
       p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value,
@@ -176,8 +214,9 @@ function update() {
     }
   }).catch(function() {
     if (++missCount > 3) document.getElementById('sState').textContent = 'Connection lost';
+  }).finally(function() {
+    setTimeout(update, POLL_MS);
   });
-  setTimeout(update, 1000);
 }
 
 /* ── Config editor [WEB-UI-02] ─────────────────────────────────── */
@@ -193,10 +232,8 @@ function cfgChanged() {
     else if (mode === 'delay') { uSpan.textContent = 'seconds'; vInput.max = 65535; vInput.disabled = false; }
     else if (mode === 'speed') { uSpan.textContent = unitLabel(getUnits()) + '/s'; vInput.max = getMaxAlt(); vInput.disabled = false; }
     else { uSpan.textContent = unitLabel(getUnits()); vInput.max = getMaxAlt(); vInput.disabled = false; }
-    var val = parseInt(vInput.value) || 0;
     var warn = document.getElementById('p'+ch+'warn');
-    warn.textContent = (mode !== 'delay' && val > getMaxAlt()) ?
-      '⚠ Exceeds ' + getMaxAlt() + ' ' + unitLabel(getUnits()) + ' sensor limit' : '';
+    warn.textContent = valueProblem(ch) || '';
   });
   var tips = document.getElementById('cfgTips');
   var p1 = document.getElementById('p1mode').value;
@@ -279,22 +316,48 @@ function cfgLenHint(id) {
   document.getElementById(id + 'Len').textContent = v.length + ' of 8 characters';
 }
 
+/* What is wrong with a channel's value, or null. The board stores what it is
+   sent, so a value out of range is refused here, not warned about. */
+function valueProblem(ch) {
+  var mode = document.getElementById('p'+ch+'mode').value;
+  if (mode === 'none') return null;
+  var v = parseInt(document.getElementById('p'+ch+'val').value) || 0;
+  var max = mode === 'delay' ? MAX_DELAY_S : getMaxAlt();
+  var unit = mode === 'delay' ? 's' : unitLabel(getUnits()) + (mode === 'speed' ? '/s' : '');
+  if (v < 0 || v > max) return '⚠ ' + v + ' ' + unit + ' is out of range: 0 to ' + max + ' ' + unit;
+  return null;
+}
+
 /* The units the pyro values on screen are written in. */
 var cfgShownUnits = 1;
 
 /* A value is a distance or a speed in the chosen units, so changing units
-   converts it; leaving the number alone would turn 500 ft into 500 m. */
+   converts it; leaving the number alone would turn 500 ft into 500 m. A
+   change that would carry a value past what the new units hold is refused,
+   and the units stay. */
 function unitsChanged() {
   var to = getUnits(), from = cfgShownUnits;
-  if (to !== from) {
-    [1,2].forEach(function(ch) {
-      var mode = document.getElementById('p'+ch+'mode').value;
-      if (mode === 'none' || mode === 'delay') return;
-      var el = document.getElementById('p'+ch+'val');
-      var v = parseInt(el.value) || 0;
-      el.value = Math.round(v * CM_PER_UNIT[from] / CM_PER_UNIT[to]);
-    });
+  if (to === from) { cfgChanged(); return; }
+  var converted = {}, refused = null;
+  [1,2].forEach(function(ch) {
+    var mode = document.getElementById('p'+ch+'mode').value;
+    if (mode === 'none' || mode === 'delay') return;
+    var v = parseInt(document.getElementById('p'+ch+'val').value) || 0;
+    converted[ch] = Math.round(v * CM_PER_UNIT[from] / CM_PER_UNIT[to]);
+    if (converted[ch] > MAX_ALT[to] && !refused) {
+      refused = {ch: ch, text: '⚠ ' + v + ' ' + unitLabel(from) + ' is ' + converted[ch] + ' ' + unitLabel(to) +
+                 '; the board holds at most ' + MAX_ALT[to] + ' ' + unitLabel(to) + '. Units not changed.'};
+    }
+  });
+  if (refused) {
+    document.getElementById('cfgUnits').value = from;
+    cfgChanged();
+    document.getElementById('p' + refused.ch + 'warn').textContent = refused.text;
+    return;
   }
+  Object.keys(converted).forEach(function(ch) {
+    document.getElementById('p'+ch+'val').value = converted[ch];
+  });
   cfgShownUnits = to;
   cfgChanged();
 }
@@ -343,41 +406,49 @@ function cfgGetObj() {
 
 /* One Save for the whole tab. The flight settings go to config.ini and apply
    at once; the pin release and the buzzer pad go to pins.ini and apply at the
-   next reboot -- two stores, but one decision for the operator. */
+   next reboot -- two stores, but one decision for the operator. Nothing is
+   sent while a value is out of range. */
 function cfgSave() {
-  if (relDirty) relSave();
+  var msg = document.getElementById('cfgMsg');
+  var bad = valueProblem(1) || valueProblem(2);
+  if (bad) {
+    msg.style.color = 'red';
+    msg.textContent = ' ✗ not saved: ' + bad.replace(/^⚠ /, '');
+    return;
+  }
   var c = cfgGetObj();
-  var uname = UNIT_NAMES[c.units];
   var ini = '[pyro]\r\nid=' + c.id + '\r\nname=' + c.name +
     '\r\npyro1_mode=' + c.p1mode + '\r\npyro1_value=' + c.p1val +
     '\r\npyro2_mode=' + c.p2mode + '\r\npyro2_value=' + c.p2val +
-    '\r\nunits=' + uname + '\r\nlog_rate=' + c.logRate + '\r\n';
+    '\r\nunits=' + UNIT_NAMES[c.units] + '\r\nlog_rate=' + c.logRate + '\r\n';
+  (relDirty ? relSave() : Promise.resolve()).then(function() { cfgPost(ini, c); });
+}
+
+/* [WEB-API-03, WEB-UI-03] Posts config.ini and says what became of it:
+   applied, written but applied only at the next boot, or refused. */
+function cfgPost(ini, c) {
   var msg = document.getElementById('cfgMsg');
-  fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:ini})
+  return post('/api/config', ini, 'text/plain')
     .then(function(r) {
-      if (r.ok) {
-        return r.json().then(function(data) {
-          if (data.applied) {
-            msg.style.color = 'green';
-            msg.textContent = ' ✓ Config applied successfully!';
-            deviceConfig = c;
-            pendingConfig = null;
-            document.getElementById('cfgDirty').style.display = 'none';
-          } else {
-            msg.style.color = 'orange';
-            msg.textContent = ' Saved — reboot to apply';
-            pendingConfig = c;
-            document.getElementById('cfgDirty').style.display = 'block';
-          }
-        });
-      } else {
-        return r.json().catch(function() { return {error: 'Save failed'}; });
-      }
+      return r.json().catch(function() { return {error: 'HTTP ' + r.status}; })
+        .then(function(d) { return {status: r.status, d: d}; });
     })
-    .then(function(err) {
-      if (err) {
+    .then(function(a) {
+      if (a.status === 200 && a.d.applied) {
+        msg.style.color = 'green';
+        msg.textContent = ' ✓ Config applied successfully!';
+        deviceConfig = c;
+        pendingConfig = null;
+        document.getElementById('cfgDirty').style.display = 'none';
+      } else if (a.status === 200 || (a.status === 500 && a.d.reboot_required)) {
+        /* Written; the board reads it again at the next boot. */
+        msg.style.color = 'orange';
+        msg.textContent = ' Saved — reboot to apply' + (a.d.error ? ' (' + a.d.error + ')' : '');
+        pendingConfig = c;
+        document.getElementById('cfgDirty').style.display = 'block';
+      } else {
         msg.style.color = 'red';
-        msg.textContent = ' ' + (err.error || 'Error saving');
+        msg.textContent = ' ✗ not saved: ' + (a.d.error || 'HTTP ' + a.status);
       }
     })
     .catch(function() {
@@ -386,19 +457,31 @@ function cfgSave() {
     });
 }
 
+/* A config.ini's keys over the running config, as the board merges them
+   [CFG-06]. */
+function cfgFromIni(txt, base) {
+  var c = JSON.parse(JSON.stringify(base || cfgGetObj()));
+  txt.split(/\r?\n/).forEach(function(line) {
+    var i = line.indexOf('=');
+    if (i < 0) return;
+    var k = line.slice(0, i).trim(), v = line.slice(i + 1).trim();
+    if (k === 'id') c.id = v;
+    else if (k === 'name') c.name = v;
+    else if (k === 'pyro1_mode') c.p1mode = v;
+    else if (k === 'pyro1_value') c.p1val = parseInt(v) || 0;
+    else if (k === 'pyro2_mode') c.p2mode = v;
+    else if (k === 'pyro2_value') c.p2val = parseInt(v) || 0;
+    else if (k === 'units' && UNIT_NAMES.indexOf(v) >= 0) c.units = UNIT_NAMES.indexOf(v);
+    else if (k === 'log_rate') c.logRate = v;
+  });
+  return c;
+}
+
 function cfgUpload() { document.getElementById('cfgFile').click(); }
 function cfgFileSelected() {
   var file = document.getElementById('cfgFile').files[0];
   if (!file) return;
-  var msg = document.getElementById('cfgMsg');
-  file.text().then(function(txt) {
-    fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:txt})
-      .then(function(r) {
-        msg.style.color = r.ok ? 'green' : 'red';
-        msg.textContent = r.ok ? ' Uploaded — reboot to apply' : ' Error';
-        if (r.ok) { pendingConfig = cfgGetObj(); document.getElementById('cfgDirty').style.display = 'block'; }
-      });
-  });
+  file.text().then(function(txt) { cfgPost(txt, cfgFromIni(txt, deviceConfig)); });
 }
 
 function cfgReboot() {
@@ -408,7 +491,7 @@ function cfgReboot() {
   msg.textContent = ' Rebooting...';
   pendingConfig = null;
   deviceConfig = null;
-  fetch('/api/reboot', {method:'POST'}).catch(function(){});
+  post('/api/reboot').catch(function(){});
   waitForReboot(msg);
 }
 
@@ -507,7 +590,7 @@ function updateFlightSummary() {
 function eraseFlight() {
   var msg = document.getElementById('dMsg');
   if (!confirm('Erase the flight log on the board? Download it first if you want to keep it.')) return;
-  fetch('/api/flight/erase', {method:'POST'})
+  post('/api/flight/erase')
     .then(function(r) { return r.json().catch(function(){ return {error:'HTTP ' + r.status}; }); })
     .then(function(d) {
       msg.style.color = d.error ? 'red' : 'green';
@@ -572,7 +655,7 @@ function checkUpdate() {
   fetch('https://api.github.com/repos/' + GITHUB_REPO + '/releases/latest')
     .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(rel) {
-      var ver = rel.tag_name.replace(/^v/, '');
+      var ver = String(rel.tag_name).replace(/^v/, '');
       if (ver === currentVersion) {
         msg.style.color = 'green'; msg.textContent = ' Up to date (v' + ver + ')';
       } else {
@@ -585,11 +668,16 @@ function checkUpdate() {
         }
         var forBoard = currentBoard && asset.name === assetNameFor(currentBoard);
         msg.style.color = 'blue';
-        msg.innerHTML = ' v' + currentVersion + ' → v' + ver +
-          ' <a href="' + asset.browser_download_url + '">⬇ ' + asset.name + '</a>' +
-          (forBoard ? ' (' + currentBoard + ')' : ' <b>— not board-specific, check it is for ' +
-            (currentBoard || 'this board') + '</b>') +
-          ' then Upload below';
+        msg.textContent = ' v' + currentVersion + ' → v' + ver + ' ';
+        msg.appendChild(safeLink(asset.browser_download_url, '⬇ ' + asset.name));
+        if (forBoard) {
+          msg.appendChild(document.createTextNode(' (' + currentBoard + ')'));
+        } else {
+          var b = document.createElement('b');
+          b.textContent = ' — not board-specific, check it is for ' + (currentBoard || 'this board');
+          msg.appendChild(b);
+        }
+        msg.appendChild(document.createTextNode(' then Upload below'));
       }
     }).catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ' + e.message; });
 }
@@ -607,19 +695,19 @@ function toggleAllVersions() {
     .then(function(releases) {
       var html = '<table><tr><th>Version</th><th>Date</th><th>Type</th><th></th></tr>';
       releases.forEach(function(rel) {
-        var ver = rel.tag_name.replace(/^v/, '');
-        var date = rel.published_at ? rel.published_at.substring(0,10) : '';
+        var ver = String(rel.tag_name).replace(/^v/, '');
+        var date = rel.published_at ? String(rel.published_at).substring(0,10) : '';
         var type = rel.prerelease ? 'beta' : 'release';
         var isCurrent = (ver === currentVersion);
         var asset = findAsset(rel);
-        var dl = asset ? '<a href="' + asset.browser_download_url + '" title="' +
-                 asset.name + '">⬇</a>' : '—';
-        html += '<tr class="' + (isCurrent?'current':'') + '"><td>v' + ver + '</td><td>' + date +
+        var url = asset && /^https:\/\//.test(String(asset.browser_download_url)) ? asset.browser_download_url : null;
+        var dl = url ? '<a href="' + esc(url) + '" title="' + esc(asset.name) + '">⬇</a>' : '—';
+        html += '<tr class="' + (isCurrent?'current':'') + '"><td>v' + esc(ver) + '</td><td>' + esc(date) +
           '</td><td>' + type + '</td><td>' + (isCurrent ? '✓ current' : dl) + '</td></tr>';
       });
       html += '</table>';
       div.innerHTML = html;
-    }).catch(function(e) { div.innerHTML = '<span style="color:red">' + e.message + '</span>'; });
+    }).catch(function(e) { div.innerHTML = '<span style="color:red">' + esc(e.message) + '</span>'; });
 }
 
 
@@ -693,9 +781,25 @@ function uploadFW() {
   var msg = document.getElementById('fwmsg');
   msg.style.color = 'orange'; msg.textContent = ' Uploading...';
   file.arrayBuffer().then(function(buf) {
-    fetch('/api/ota', {method:'POST', body:new Uint8Array(buf)})
-      .then(function() { msg.textContent = ' Rebooting...'; deviceConfig = null; waitForReboot(msg); })
-      .catch(function() { msg.textContent = ' Rebooting...'; deviceConfig = null; waitForReboot(msg); });
+    post('/api/ota', new Uint8Array(buf), 'application/octet-stream')
+      .then(function(r) {
+        if (r.ok) {
+          msg.textContent = ' Rebooting...';
+          deviceConfig = null;
+          waitForReboot(msg);
+          return;
+        }
+        return r.text().then(function(t) {
+          msg.style.color = 'red';
+          msg.textContent = ' ✗ Update failed (HTTP ' + r.status + '): ' + t;
+        });
+      })
+      .catch(function() {
+        /* No answer at all: the board may or may not have taken it. */
+        msg.textContent = ' No answer from the board; waiting to see which firmware comes back...';
+        deviceConfig = null;
+        waitForReboot(msg);
+      });
   });
 }
 
@@ -705,8 +809,12 @@ function uploadWeb() {
   if (!file || !path) { alert('Select file and enter path'); return; }
   var msg = document.getElementById('webmsg');
   file.arrayBuffer().then(function(buf) {
-    fetch(path, {method:'POST', body:new Uint8Array(buf)})
-      .then(function(r) { msg.style.color = r.ok?'green':'red'; msg.textContent = r.ok?' Uploaded':' Error'; });
+    post(path, new Uint8Array(buf), 'application/octet-stream')
+      .then(function(r) { return r.text().then(function(t) {
+        msg.style.color = r.ok ? 'green' : 'red';
+        msg.textContent = r.ok ? ' Uploaded' : ' ✗ ' + r.status + ': ' + t;
+      }); })
+      .catch(function() { msg.style.color = 'red'; msg.textContent = ' ✗ no answer from the board'; });
   });
 }
 
@@ -714,7 +822,7 @@ function waitForReboot(msg) {
   var attempts = 0;
   var poll = setInterval(function() {
     if (++attempts > 30) { clearInterval(poll); msg.style.color='red'; msg.textContent=' Device not responding'; return; }
-    fetch('/api/status').then(function(r){return r.json()}).then(function(d) {
+    getTimed('/api/status').then(function(r){return r.json()}).then(function(d) {
       clearInterval(poll);
       msg.style.color = 'green';
       msg.textContent = ' Online — v' + d.fw_version;
@@ -870,8 +978,7 @@ function beepsPlay(key) {
   var i = +document.getElementById('bpSel').value;
   var sp = beepEdit[i].spec[key];
   var msg = document.getElementById('bpMsg');
-  fetch('/api/beeps/play', {method:'POST', headers:{'Content-Type':'text/plain'},
-        body: JSON.stringify({kind: sp.kind, d1: sp.d1, d2: sp.d2})})
+  post('/api/beeps/play', JSON.stringify({kind: sp.kind, d1: sp.d1, d2: sp.d2}), 'text/plain')
     .then(function(r) { return r.json().catch(function(){ return {error:'HTTP ' + r.status}; }); })
     .then(function(d) {
       msg.style.color = d.error ? 'red' : '';
@@ -901,7 +1008,7 @@ function beepsSave() {
 
   var msg = document.getElementById('bpMsg');
   msg.style.color = ''; msg.textContent = ' saving…';
-  fetch('/api/beeps', {method:'POST', headers:{'Content-Type':'text/plain'}, body: ini})
+  post('/api/beeps', ini, 'text/plain')
     .then(function(r) { return r.json().catch(function(){ return {error:'HTTP ' + r.status}; }); })
     .then(function(d) {
       if (d.error) {
@@ -1079,22 +1186,23 @@ function pinsSave() {
   postPins(ini, 'luaPinsMsg', renderLuaPins);
 }
 
+/* Resolves true once the board has the file. */
 function postPins(ini, msgId, after) {
   var msg = document.getElementById(msgId);
   msg.style.color = ''; msg.textContent = ' saving…';
-  fetch('/api/pins', {method:'POST', headers:{'Content-Type':'text/plain'}, body: ini})
+  return post('/api/pins', ini, 'text/plain')
     .then(function(r) { return r.json().catch(function(){ return {error:'HTTP ' + r.status}; }); })
     .then(function(d) {
       if (d.error) {
         msg.style.color = 'red';
         msg.textContent = ' ✗ ' + d.error + (d.pin !== undefined ? ' (GPIO' + d.pin + ')' : '');
-        return;
+        return false;
       }
       msg.style.color = 'green';
       msg.textContent = d.reboot_required ? ' ✓ saved — reboot to apply' : ' ✓ saved';
-      return pinsFetch().then(function() { if (after) after(); });
+      return pinsFetch().then(function() { if (after) after(); return true; });
     })
-    .catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ✗ ' + e.message; });
+    .catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ✗ ' + e.message; return false; });
 }
 
 /* ── Config tab: releasing pyro pins ───────────────────────────── */
@@ -1107,7 +1215,7 @@ function renderRelease() {
   renderBuzzerPins();
   renderGroundTest();
   if (!ch1.length && !ch2.length) {
-    hint.textContent = esc(pinCaps.board) + ' declares no releasable pyro pins.';
+    hint.textContent = pinCaps.board + ' declares no releasable pyro pins.';
     document.getElementById('relTable').style.display = '';
     document.getElementById('relBtns').style.display = '';
     return;
@@ -1256,8 +1364,8 @@ function relSave() {
     ini += 'p' + p.p + '_role=off\r\np' + p.p + '_name=\r\n';
   });
 
-  relDirty = false;
-  postPins(ini, 'relMsg', function() { renderRelease(); renderLuaPins(); });
+  return postPins(ini, 'relMsg', function() { renderRelease(); renderLuaPins(); })
+    .then(function(saved) { if (saved) relDirty = false; });
 }
 
 var relReady = false;
@@ -1362,14 +1470,13 @@ function luaShowResult(d) {
              (d.green ? '✓ ready for flight' : '✗ not ready') + '</div><ul>';
   d.items.forEach(function(it) {
     var tag = {0:'ok', 1:'syntax', 2:'missing', 3:'warning'}[it.kind] || '?';
-    html += '<li><b>' + tag + ':</b> ' + it.detail.replace(/</g,'&lt;') + '</li>';
+    html += '<li><b>' + tag + ':</b> ' + esc(it.detail) + '</li>';
   });
   box.innerHTML = html + '</ul>';
 }
 
 function luaCheck() {
-  fetch('/api/lua/check', {method:'POST', headers:{'Content-Type':'text/plain'},
-                           body: document.getElementById('luSrc').value})
+  post('/api/lua/check', document.getElementById('luSrc').value, 'text/plain')
     .then(function(r){return r.json()}).then(luaShowResult)
     .catch(function(){ document.getElementById('luChk').textContent = 'check failed'; });
 }
@@ -1379,16 +1486,23 @@ function luaSave() {
   box.textContent = 'saving…';
   /* Config first, so the check on the device runs against the resource set
      the operator just chose rather than the previous one. */
-  fetch('/api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body: luaCfgIni()})
+  /* Written counts as saved: a 500 with reboot_required is written, applied
+     at the next boot. */
+  function written(what, r) {
+    return r.json().catch(function() { return {}; }).then(function(d) {
+      if (!r.ok && !(r.status === 500 && d.reboot_required))
+        throw new Error(what + ' not saved: ' + (d.error || 'HTTP ' + r.status));
+    });
+  }
+  post('/api/config', luaCfgIni(), 'text/plain')
+    .then(function(r) { return written('settings', r); })
     .then(function() {
-      return fetch('/api/lua/script', {method:'POST', headers:{'Content-Type':'text/plain'},
-                                       body: document.getElementById('luSrc').value});
+      return post('/api/lua/script', document.getElementById('luSrc').value, 'text/plain');
     })
     .then(function(r) {
-      if (!r.ok) throw new Error('upload rejected');
+      if (!r.ok) return r.text().then(function(t) { throw new Error('script not saved: ' + t); });
       /* The upload answers 201 with no verdict: ask for one. */
-      return fetch('/api/lua/check', {method:'POST', headers:{'Content-Type':'text/plain'},
-                                      body: document.getElementById('luSrc').value});
+      return post('/api/lua/check', document.getElementById('luSrc').value, 'text/plain');
     })
     .then(function(r){ return r.json(); })
     .then(function(d) {
@@ -1397,7 +1511,7 @@ function luaSave() {
         ? '<div class="warn">Saved. Reboot to load it on core 1.</div>'
         : '<div class="warn">Saved, but it will not be started until this is green.</div>';
     })
-    .catch(function(){ box.textContent = 'save failed'; });
+    .catch(function(e){ box.textContent = '✗ ' + (e.message || 'save failed'); });
 }
 
 function luaConPoll() {
@@ -1418,3 +1532,4 @@ function luaConPoll() {
 function luaConClear() { document.getElementById('luCon').textContent = ''; }
 
 update();
+loadWebVersion();
