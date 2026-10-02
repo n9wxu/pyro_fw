@@ -643,10 +643,87 @@ function toggleAllVersions() {
     }).catch(function(e) { div.innerHTML = '<span style="color:red">' + e.message + '</span>'; });
 }
 
+
+/* ── What a firmware filename claims to be ─────────────────────────
+ *
+ * The release ships three files per board and they are not
+ * interchangeable: fw_<board>_fota.bin goes through this page,
+ * fw_<board>.uf2 and fw_<board>_bootloader.uf2 go through BOOTSEL. And
+ * every board is an RP2040, so the wrong board's OTA image does not fail
+ * to run -- it runs against the wrong pin map, which on a firing board
+ * means GPIO25 is an LED on MK1A and BIAS_B on MK1C.
+ *
+ * The device cannot catch this yet: /api/ota takes whatever it is handed.
+ * So the check lives here, where the filename still exists -- by the time
+ * the bytes reach the device the name is gone. A later firmware does its
+ * own pre- and post-flash checks and rolls back; until every board is
+ * running that, this is the gate.
+ *
+ * Returns { board, kind }. board is null when the name does not say.
+ */
+function imageFromName(name) {
+  var n = String(name || '');
+  var m;
+  if ((m = /^fw_([a-z0-9]+)_fota\.bin$/i.exec(n)))       return {board: m[1].toLowerCase(), kind: 'fota'};
+  if ((m = /^fw_([a-z0-9]+)_bootloader\.uf2$/i.exec(n)))  return {board: m[1].toLowerCase(), kind: 'bootloader'};
+  if ((m = /^fw_([a-z0-9]+)\.uf2$/i.exec(n)))             return {board: m[1].toLowerCase(), kind: 'uf2'};
+  /* Releases up to v2.2.0 shipped one unqualified image for one board. */
+  if (/^pyro_fw_c_fota_image\.bin$/i.test(n))             return {board: null, kind: 'fota'};
+  if (/\.uf2$/i.test(n))                                  return {board: null, kind: 'uf2'};
+  return {board: null, kind: 'unknown'};
+}
+
+/* null to proceed, or the reason this file must not be sent to /api/ota. */
+function otaRefusal(fileName, board) {
+  var img = imageFromName(fileName);
+  if (img.kind === 'bootloader') {
+    return 'That is the bootloader, not an application image. It installs over ' +
+           'USB in BOOTSEL mode, not here.';
+  }
+  if (img.kind === 'uf2') {
+    return 'That is a .uf2, which installs over USB in BOOTSEL mode. This page ' +
+           'takes the OTA image: fw_' + (board || '<board>') + '_fota.bin';
+  }
+  if (img.board && board && img.board !== board) {
+    return 'That image is for ' + img.board + ' and this device is ' + board +
+           '. Every board is an RP2040, so it would install and run with the ' +
+           'wrong pin map. Use fw_' + board + '_fota.bin';
+  }
+  return null;
+}
+
+/* A warning to confirm past, or null if the file is unambiguously right. */
+function otaCaution(fileName, board) {
+  var img = imageFromName(fileName);
+  if (!board) {
+    return 'This device has not reported which board it is, so the image ' +
+           'cannot be checked against it.';
+  }
+  if (!img.board) {
+    return 'The filename does not say which board "' + fileName + '" is for, ' +
+           'so it cannot be checked against this ' + board + ' device.';
+  }
+  return null;
+}
+
 function uploadFW() {
   var file = document.getElementById('fwfile').files[0];
   if (!file) { alert('Select a .bin file'); return; }
-  if (!confirm('Flash firmware? Device will reboot.')) return;
+
+  var refusal = otaRefusal(file.name, currentBoard);
+  if (refusal) {
+    var m0 = document.getElementById('fwmsg');
+    m0.style.color = 'red';
+    m0.textContent = ' Refused';
+    alert('Not flashing this file.\n\n' + refusal);
+    return;
+  }
+
+  var caution = otaCaution(file.name, currentBoard);
+  var prompt = caution
+    ? caution + '\n\nFlash it anyway? Device will reboot.'
+    : 'Flash ' + file.name + ' to this ' + currentBoard + '? Device will reboot.';
+  if (!confirm(prompt)) return;
   var msg = document.getElementById('fwmsg');
   msg.style.color = 'orange'; msg.textContent = ' Uploading...';
   file.arrayBuffer().then(function(buf) {

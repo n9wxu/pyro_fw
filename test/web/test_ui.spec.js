@@ -741,6 +741,80 @@ test.describe('Flown device', () => {
     await expect(page.locator('#uFwVer')).toHaveText('1.3.0');
   });
 
+  /* The OTA filename guard.
+   *
+   * Every board is an RP2040, so another board's image installs and runs
+   * against the wrong pin map. Until the firmware checks itself, the only
+   * place the board is still knowable is the filename, here. */
+  test('OTA refuses another board\'s image', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Update');
+
+    var alerted = null;
+    page.on('dialog', async d => { alerted = d.message(); await d.dismiss(); });
+
+    await page.setInputFiles('#fwfile', {
+      name: 'fw_mk1a_fota.bin', mimeType: 'application/octet-stream',
+      buffer: Buffer.from('not really firmware')
+    });
+    await page.click('text=⬆ Upload Firmware');
+    await expect.poll(() => alerted).toContain('is for mk1a');
+    expect(alerted).toContain('mk1b');
+    await expect(page.locator('#fwmsg')).toContainText('Refused');
+  });
+
+  test('OTA refuses a .uf2, which is the BOOTSEL path', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Update');
+
+    var alerted = null;
+    page.on('dialog', async d => { alerted = d.message(); await d.dismiss(); });
+
+    await page.setInputFiles('#fwfile', {
+      name: 'fw_mk1b.uf2', mimeType: 'application/octet-stream',
+      buffer: Buffer.from('UF2\n')
+    });
+    await page.click('text=⬆ Upload Firmware');
+    await expect.poll(() => alerted).toContain('BOOTSEL');
+  });
+
+  test('OTA accepts this board\'s image, naming it in the confirm', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Update');
+
+    var asked = null;
+    /* Dismissed, so nothing is uploaded -- the point is the question. */
+    page.on('dialog', async d => { asked = d.message(); await d.dismiss(); });
+
+    await page.setInputFiles('#fwfile', {
+      name: 'fw_mk1b_fota.bin', mimeType: 'application/octet-stream',
+      buffer: Buffer.from('not really firmware')
+    });
+    await page.click('text=⬆ Upload Firmware');
+    await expect.poll(() => asked).toContain('fw_mk1b_fota.bin');
+    expect(asked).toContain('mk1b');
+    expect(asked).not.toContain('cannot be checked');
+  });
+
+  test('OTA cautions on a name that does not say the board', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Update');
+
+    var asked = null;
+    page.on('dialog', async d => { asked = d.message(); await d.dismiss(); });
+
+    await page.setInputFiles('#fwfile', {
+      name: 'pyro_fw_c_fota_image.bin', mimeType: 'application/octet-stream',
+      buffer: Buffer.from('legacy image')
+    });
+    await page.click('text=⬆ Upload Firmware');
+    await expect.poll(() => asked).toContain('does not say which board');
+  });
+
   test('all four tabs are navigable', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);

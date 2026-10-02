@@ -25,7 +25,7 @@ const DEFAULTS = {
     pyro1_adc: 48, pyro2_adc: 52, pyro1_fired: false, pyro2_fired: false,
     armed: false, flight_ms: 0, uptime: 5000, fw_version: '1.3.0',
     pyro1_mode: 'delay', pyro1_value: 0, pyro2_mode: 'agl', pyro2_value: 300,
-    units: 1, rocket_id: 'PYRO001', rocket_name: 'MyRocket', log_rate: '1hz'
+    units: 1, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'PYRO001', rocket_name: 'MyRocket', log_rate: '1hz'
   },
   configured: {
     state: 'PAD_IDLE', alt_cm: 0, max_alt_cm: 0, vspeed_cms: 0,
@@ -33,7 +33,7 @@ const DEFAULTS = {
     pyro1_adc: 45, pyro2_adc: 50, pyro1_fired: false, pyro2_fired: false,
     armed: false, flight_ms: 0, uptime: 12000, fw_version: '1.3.0',
     pyro1_mode: 'delay', pyro1_value: 2, pyro2_mode: 'agl', pyro2_value: 500,
-    units: 2, rocket_id: 'RACE01', rocket_name: 'Screamer', log_rate: 'full'
+    units: 2, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'RACE01', rocket_name: 'Screamer', log_rate: 'full'
   },
   flown: {
     state: 'LANDED', alt_cm: 15, max_alt_cm: 304800, vspeed_cms: 0,
@@ -41,7 +41,7 @@ const DEFAULTS = {
     pyro1_adc: 4, pyro2_adc: 6, pyro1_fired: true, pyro2_fired: true,
     armed: false, flight_ms: 32400, uptime: 45000, fw_version: '1.3.0',
     pyro1_mode: 'delay', pyro1_value: 0, pyro2_mode: 'agl', pyro2_value: 500,
-    units: 2, rocket_id: 'RACE01', rocket_name: 'Screamer', log_rate: '1hz'
+    units: 2, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'RACE01', rocket_name: 'Screamer', log_rate: '1hz'
   }
 };
 
