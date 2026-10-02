@@ -1,14 +1,15 @@
 /*
  * One HTTP exchange over a byte stream.
  *
- * The request arrives in rx and the response leaves through tx, in whatever
- * pieces the transport happens to deliver and accept. Nothing here knows
- * about segments: a request split at every byte, or two requests in one
- * read, parse the same way. The transport's whole job is to move bytes
+ * [WEB-HTTP-01] The request arrives in rx and the response leaves through tx,
+ * in whatever pieces the transport happens to deliver and accept. Nothing
+ * here knows about segments: a request split at every byte, or two requests
+ * in one read, parse the same way. The transport's whole job is to move bytes
  * between its buffers and these rings, and to close once http_conn_done().
  *
- * Every response is framed by Content-Length and carries Connection: close,
- * so one request is served per connection (RFC 9112 §9.6).
+ * [WEB-HTTP-02] Every response is framed by Content-Length and carries
+ * Connection: close, so one request is served per connection (RFC 9112
+ * §9.6).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -21,8 +22,8 @@
 
 #define HTTP_RX_RING 2048
 #define HTTP_TX_RING 2048
-/* The largest gathered body or rendered response, and big enough to be a
- * littlefs file cache (FLASH_SECTOR_SIZE) for a streamed file. */
+/* The largest gathered body or rendered response (/api/pins/caps sets it),
+ * and a streamed file's littlefs cache (LFS_FILE_BUF_SIZE). */
 #define HTTP_WORK_SIZE 5120
 #define HTTP_LINE_MAX 256 /* request line, or a header line worth reading */
 #define HTTP_METHOD_MAX 8

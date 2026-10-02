@@ -12,9 +12,9 @@
  * it -- which is also what reopens the TCP window -- and feeds tx to lwIP as
  * its send buffer allows.
  *
- * lwIP callbacks only queue. http_server_transport() moves bytes and nothing
- * else; every other step is a work unit (http_work.h), run by
- * http_server_work().
+ * [WEB-HTTP-05, WEB-HTTP-06] lwIP callbacks only queue.
+ * http_server_transport() moves bytes and nothing else; every other step is a
+ * work unit (http_work.h), run by http_server_work().
  */
 #include "lwip/tcp.h"
 #include "lwip/memp.h"
@@ -77,8 +77,8 @@ extern void hal_telemetry_send(const char *sentence);
     } while (0)
 
 extern const char *pressure_sensor_name(void);
-/* hal_common.c: sensor reads deferred for an unfinished conversion, and
- * readings refused as impossible. The second must stay at zero. */
+/* hal_common.c. pres_rejects counts readings refused as impossible: on a
+ * healthy board it stays at zero. */
 extern uint32_t hal_pressure_interval_min_us(void);
 extern uint32_t hal_pressure_interval_max_us(void);
 extern uint32_t hal_pressure_stamp_lag_max_us(void);
@@ -87,7 +87,7 @@ extern uint32_t hal_pressure_rate_hz(void);
 extern uint32_t hal_pressure_rejects(void);
 extern uint32_t hal_pressure_flashed(void);
 
-#define CORS_HDR "Access-Control-Allow-Origin: *\r\n"
+#define CORS_HDR "Access-Control-Allow-Origin: *\r\n" /* [WEB-API-07] */
 
 #define JSON "application/json"
 #define TEXT "text/plain"
@@ -142,7 +142,6 @@ typedef struct conn {
     bool file_writing; /* an upload into dest's ".part", renamed when whole */
     bool fs_held;      /* counted by hal_fs_enter() until conn_release() */
     bool reboot_when_sent;
-    bool orphan; /* its link is gone while the worker holds it */
     char dest[HTTP_PATH_MAX];
     union {
         status_snap_t status;
@@ -163,7 +162,6 @@ static conn_t *ota_conn; /* the OTA state below is one image at a time */
 
 /* ── OTA firmware update state ────────────────────────────────────── */
 
-/* Download slot flash offset (from linker symbols) */
 extern uint32_t __FLASH_DOWNLOAD_SLOT_START;
 #define OTA_SLOT_OFF ((uint32_t) & __FLASH_DOWNLOAD_SLOT_START - XIP_BASE)
 
@@ -178,7 +176,6 @@ static bool pfb_started; /* the rollback mark, a flash write, once per image */
 static bool ota_flush(void) {
     if (ota_buf_fill == 0)
         return true;
-    /* pad to page alignment */
     while (ota_buf_fill & (FLASH_PAGE_SIZE - 1))
         ota_buf[ota_buf_fill++] = 0xFF;
     uint32_t addr = OTA_SLOT_OFF + ota_offset;
@@ -238,9 +235,9 @@ static const char *content_type_hdr(const char *path) {
     return "application/octet-stream";
 }
 
-/* [WEB-API-08, DD-058] The API is live in flight; the filesystem is not.
- * The flight log holds it from launch until its tail is flushed, and a
- * request that needs it is answered 423 before any mount. The hold is
+/* [WEB-API-08, WEB-API-10, DD-058] The API is live in flight; the filesystem
+ * is not. The flight log holds it from launch until its tail is flushed, and
+ * a request that needs it is answered 423 before any mount. The hold is
  * released in conn_release(). */
 static void respond_fs_locked(http_conn_t *hc) {
     http_respond_str(hc, 423, JSON, "{\"error\":\"the flight log holds the filesystem\"}");
@@ -265,17 +262,15 @@ static bool fs_take(conn_t *c) {
 
 /* ── API handlers ─────────────────────────────────────────────────── */
 
-/* Indexed by flight_state_t, so the order here follows the enum -- including
- * BOOT_SENSOR and FAULT, which are appended there to keep the numbers that
- * reach the flight log and telemetry stable. */
+/* Indexed by flight_state_t, in its order: BOOT_SENSOR and FAULT come late
+ * because the enum's numbers reach the flight log. */
 static const char *state_names[] = {"BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALIBRATE", "PAD_IDLE",
                                     "ASCENT",      "FALLING",         "DROGUE_DESCENT", "CHUTE_DESCENT",
                                     "LANDED",      "BOOT_SENSOR",     "FAULT",          "GROUND_TEST"};
 #define STATE_NAME_COUNT ((int)(sizeof(state_names) / sizeof(state_names[0])))
 
-/* Main-loop pacing counters (main_hardware.c). Reported so the budget a
- * board declares in board.cmake can be checked against what it actually
- * does, rather than being taken on trust. */
+/* The flight task's pacing (main_hardware.c), reported so the budget a board
+ * declares in board.cmake is measured rather than trusted. */
 extern volatile uint32_t loop_count, loop_max_us, loop_overruns, loop_late_max_us;
 extern volatile uint32_t stage_max_us[];
 extern volatile uint32_t stage1_part_max_us[]; /* hal_common.c: TinyUSB, lwIP, HTTP transport, mDNS */
@@ -286,14 +281,9 @@ extern volatile uint32_t boot_prev_stage_ms;
 #include "board_identity.h"
 #include "board_selftest.h"
 
-/* POST /api/beeps/play : play one sound, once.
- *
- * A beep editor that only shows numbers asks an operator to choose sounds they
- * will identify by ear, from a form. This is how they hear one first.
- *
- * Takes a kind and, for a counted code, its beeps -- because a chirp is not a
- * number. Writes no flash, so it needs no window. PAD_IDLE only: the buzzer is
- * the flight software's voice and a browser must not talk over a launch. */
+/* POST /api/beeps/play: one sound, once, so an operator hears it before
+ * choosing it [BUZ-CODE-04, USB-03]. PAD_IDLE only: the buzzer is the flight
+ * software's voice and a browser must not talk over a launch. */
 /* How long a request waits for the flight task to take its change. */
 #define CALL_MS 200u
 
@@ -344,13 +334,11 @@ static void apply_api_beep_play(http_conn_t *hc, const char *body) {
                       BEEP_DIGIT_MAX);
         status = 400;
     } else if (!pin_store_has_buzzer()) {
-        /* MK1A fits none. Answering "playing" would be a lie the operator
-         * could only detect by listening to silence. */
+        /* MK1A fits none: "playing" would be a lie told in silence. */
         jn = snprintf(jb, sizeof(jb), "{\"error\":\"this board has no buzzer fitted\"}");
         status = 409;
     } else {
-        /* Once, with no gap: an audition is a sample, not a state. The
-         * buzzer is the flight task's to drive. */
+        /* Once, with no gap: an audition is a sample, not a state. */
         flight_call(beep_play_call, &sp, CALL_MS);
         jn = snprintf(jb, sizeof(jb), "{\"status\":\"playing\",\"kind\":\"%s\",\"d1\":%u,\"d2\":%u}",
                       beep_codes_kind_name((beep_kind_t)sp.kind), (unsigned)sp.d1, (unsigned)sp.d2);
@@ -456,12 +444,9 @@ static void serve_api_sim(http_conn_t *hc) {
 }
 #endif
 
-/* ── GET /api/beeps ───────────────────────────────────────────────
- *
- * The outcomes, their meanings, the three personalities and which is active.
- * Same vocabulary-travels-with-the-data shape as /api/pins/caps, so app.js
- * holds no copy: adding an outcome or a pattern kind grows a row without
- * touching the UI. */
+/* GET /api/beeps [BUZ-CODE-04, BUZ-CODE-09]: the outcomes, their meanings
+ * and the personalities. The vocabulary travels with the data, as in
+ * /api/pins/caps, so app.js holds no copy of it. */
 static void serve_api_beeps(http_conn_t *hc) {
     char *buf = (char *)hc->work;
     const size_t cap = sizeof(hc->work);
@@ -551,13 +536,12 @@ static void config_apply_call(void *arg) {
     ap->rc = flight_config_apply(flight_get_context(), &ap->cfg);
 }
 
-/* Apply a complete config.ini body and answer. */
+/* POST /api/config [WEB-API-03]. */
 static void apply_api_config(http_conn_t *hc, char *cfgbuf) {
     extern flight_state_t flight_get_state(void);
     flight_state_t state = flight_get_state();
 
     if (state != PAD_IDLE) {
-        /* Reject config changes - device not ready */
         DBG("POST /api/config REJECT state=%u (need PAD_IDLE=3)", (unsigned)state);
         char err_msg[160];
         int n = snprintf(err_msg, sizeof(err_msg),
@@ -568,25 +552,15 @@ static void apply_api_config(http_conn_t *hc, char *cfgbuf) {
         http_respond(hc, 409, JSON, err_msg, (uint32_t)n);
         return;
     } else {
-        /* Merge, never replace (REQUIREMENTS.md CFG-06).
-         *
-         * The body is a PARTIAL config: the Config tab posts eight keys
-         * and the Lua tab posts only the lua_* ones. Writing it verbatim
-         * left config.ini holding just those keys, and hal_config_load()
-         * starts from config_set_defaults(), so every field the other tab
-         * owns reverted. Saving config wiped the Lua pin roles and saving
-         * Lua reset the rocket id, name and both pyro modes.
-         *
-         * Parsing over the running config and re-serialising also gives
-         * CFG-08 for free: config_parse_ini() ignores keys it does not
-         * know, so an unknown key neither lands nor destroys anything. */
+        /* [CFG-06] Each tab posts only its own keys, so the body is parsed
+         * over the running config and re-serialised, never written as it is;
+         * [CFG-08] a key config_parse_ini() does not know is dropped. */
         config_t merged = flight_get_context()->config;
         config_parse_ini(cfgbuf, &merged);
         char cfgout[512];
         int cfgn = config_serialize_ini(&merged, cfgout, (int)sizeof(cfgout));
         if (cfgn <= 0) {
-            /* Does not fit what hal_config_load() can read back, so
-             * writing it would produce a file the board cannot parse. */
+            /* More than hal_config_load() reads back. */
             http_respond_str(hc, 500, JSON, "{\"error\":\"Merged config exceeds the 512-byte budget\"}");
             return;
         }
@@ -614,7 +588,7 @@ static void apply_api_config(http_conn_t *hc, char *cfgbuf) {
     }
 }
 
-/* Apply a complete pins.ini body and answer. */
+/* POST /api/pins. */
 static void apply_api_pins(http_conn_t *hc, char *body) {
     extern flight_state_t flight_get_state(void);
     flight_state_t st = flight_get_state();
@@ -627,12 +601,9 @@ static void apply_api_pins(http_conn_t *hc, char *body) {
                           state_names[st < STATE_NAME_COUNT ? st : 0]);
         http_respond(hc, 409, JSON, jb, (uint32_t)jn);
     } else {
-        /* Merged over the live assignment for the same reason /api/config
-         * merges (CFG-06): a partial post must not silently release a channel
-         * by omitting its key.
-         *
-         * static, not a local: pin_assign_t is about 300 bytes, and nothing
-         * else runs this -- the net task is the only caller. */
+        /* [CFG-06] Merged, as /api/config is: a partial post must not
+         * release a channel by omitting its key. Static: about 300 bytes,
+         * and the net task is the only caller. */
         static pin_assign_t merged;
         merged = *pin_store_current();
         pin_assign_parse_ini(body, &merged);
@@ -655,26 +626,14 @@ static void apply_api_pins(http_conn_t *hc, char *body) {
     }
 }
 
-/* ── GET /api/pins/caps ───────────────────────────────────────────
- *
- * What this board offers, what is assigned to it now, and the vocabulary to
- * read both in. The browser has never learned anything board-specific beyond
- * the board name, which is why the Lua tab rendered MK1C's four J3 pads on
- * every board and offered roles no pin here can take.
- *
- * The vocabulary travels WITH the data: `fn` names the capability bits and
- * `roles` names each role together with the bit it requires. A UI that reads
- * both filters its menus by the same rule pin_assign_validate() enforces,
- * rather than by a copy of it that drifts. Nothing here needs updating when a
- * bit or a role is added -- only the tables they come from. */
+/* GET /api/pins/caps: what this board offers, what is assigned now, and the
+ * vocabulary to read both in. `fn` names the capability bits and `roles` the
+ * bit each role needs, so the UI filters its menus by the rule
+ * pin_assign_validate() enforces rather than by a copy of it. */
 static void serve_api_pin_caps(http_conn_t *hc) {
-    /* The connection's work buffer, which HTTP_WORK_SIZE sizes for this, the
-     * largest response the server builds. Sized from the worst case rather
-     * than from today's boards. A pin row is at most ~110 bytes with every
-     * field at its longest -- the connector label added ~25 -- and RP2040 has
-     * 30 GPIOs, so the rows can reach ~3300; the fn map, the role list and the
-     * protection sentence add ~1000. MK1C already serves 1878 with most names
-     * empty. */
+    /* The largest response the server builds, and what sizes HTTP_WORK_SIZE:
+     * 30 GPIO rows of at most ~110 bytes, plus ~1000 for the fn map, the
+     * roles and the protection note. */
     char *buf = (char *)hc->work;
     const size_t cap = sizeof(hc->work);
 
@@ -718,9 +677,8 @@ static void serve_api_pin_caps(http_conn_t *hc) {
         "\"ground_test\":\"%s\",\"gt_pin\":%d,\"gt_drive_pin\":%d,\"fn\":{",
         PYRO_BOARD_NAME, pin_caps_topology_name(), pin_caps_bridge_possible() ? "true" : "false", note,
         pa->pyro1_released ? "true" : "false", pa->pyro2_released ? "true" : "false", (unsigned)FN_BOARD_RESERVED,
-        /* buzzer_pin is the SETTING (-1 = leave it where the
-         * board put it); buzzer_on is where it actually is, so
-         * the UI can show the default without resolving it. */
+        /* buzzer_pin: the setting, -1 for the board's own;
+         * buzzer_on: where it is. */
         pa->buzzer_pin == PIN_BUZZER_BOARD ? -1 : (int)pa->buzzer_pin,
         pin_assign_buzzer_pin(pa) == PIN_BUZZER_BOARD ? -1 : (int)pin_assign_buzzer_pin(pa),
         /* [GND-TEST-12] -1 where a pad is not assigned. */
@@ -762,9 +720,7 @@ static void serve_api_pin_caps(http_conn_t *hc) {
         pos += snprintf(buf + pos, cap - (size_t)pos, "]}");
     }
 
-    /* Truncated JSON parses as nothing and would leave the tab silently
-     * empty, so say so instead. The buffer is sized for the largest board's
-     * table with room to spare; reaching here means one outgrew it. */
+    /* Truncated JSON parses as nothing: say so instead. */
     if (pos < 0 || pos >= (int)cap) {
         http_respond_str(hc, 500, JSON, "{\"error\":\"capability table exceeds the response buffer\"}");
         return;
@@ -833,10 +789,8 @@ static void status_capture(status_snap_t *s) {
     }
     http_work_stats_t ws;
     http_work_stats(&ws);
-    for (int w = 0; w < 2; w++) {
-        s->http_units[w] = ws.units[w];
-        s->http_unit_max_us[w] = ws.max_us[w];
-    }
+    s->http_units[0] = ws.units;
+    s->http_unit_max_us[0] = ws.max_us;
     s->flash_opens = flash_op_lockouts();
     s->flash_skips = flash_op_timeouts();
     s->flash_refusals = flash_op_refusals();
@@ -910,7 +864,6 @@ static void status_capture(status_snap_t *s) {
     s->subnet = board_subnet_octet();
 }
 
-/* Portable: reads its own connection and nothing else. */
 static void unit_status(int slot) {
     http_conn_t *hc = &conns[slot].h;
     int n = status_json(&conns[slot].status, (char *)hc->work, sizeof(hc->work));
@@ -937,8 +890,6 @@ const http_unit_fn http_unit_vt[] = {
 static void serve_file(conn_t *c, const char *path, const char *ctype, const char *extra, uint16_t fb_status,
                        const char *fb_ctype, const char *fb_body) {
     http_conn_t *hc = &c->h;
-    /* [WEB-API-10, DD-058] The flight log holds the filesystem from launch
-     * until its tail is written after landing. */
     if (!fs_take(c)) {
         return;
     }
@@ -974,9 +925,9 @@ static int flog_reader(void *ctx, uint8_t *dst, int n) {
     return k > 0 ? (int)k : 0;
 }
 
-/* [WEB-API-06, DD-062] The binary log, as the CSV it was once stored as. Its
- * length is counted a unit at a time (flight_csv_count()) before the head is
- * sent, then the same rendering streams through fill(). */
+/* GET /api/flight.csv [WEB-API-06, DD-062]: the binary log rendered as CSV.
+ * Its length is counted a unit at a time (flight_csv_count()) before the head
+ * is sent, then the same rendering streams through fill(). */
 static void serve_flight_csv(conn_t *c) {
     http_conn_t *hc = &c->h;
     if (!fs_take(c)) {
@@ -1158,7 +1109,7 @@ static void serve_get(conn_t *c) {
     http_conn_t *hc = &c->h;
     const char *path = hc->path;
 
-    if (strcmp(path, "/api/status") == 0) {
+    if (strcmp(path, "/api/status") == 0) { /* [WEB-API-01, WEB-API-11] */
         status_capture(&c->status);
         c->route = R_STATUS;
         http_work_offer((int)(c - conns), HTTP_UNIT_STATUS);
@@ -1168,26 +1119,21 @@ static void serve_get(conn_t *c) {
          * open empty rather than show a 404. */
         serve_file(c, "/" LUA_SCRIPT_PATH, TEXT, NULL, 200, TEXT, "");
     } else if (strcmp(path, "/api/lua/console") == 0) {
-        /* Drains core1's console ring and reports its liveness. The heartbeat
-         * is what tells the operator core1 is still turning over; a frozen
-         * number with a "running" status means the VM is stuck somewhere the
-         * instruction hook cannot reach, and core0 will kill it shortly. */
+        /* The console ring, drained, and the VM's liveness: a frozen
+         * heartbeat under "running" is a VM stuck where the instruction hook
+         * cannot reach. */
         char text[900];
         int n = lua_app_console_read(text, sizeof(text) - 1);
         text[n] = '\0';
         char esc[1024];
         json_escape(esc, sizeof(esc), text, n);
 
-        /* The status line carries pyro_lua_last_error() verbatim, and a Lua
-         * error names its chunk: [string "check"]:128: ... Unescaped, those
-         * quotes end the JSON string, so the response stops parsing at
-         * exactly the moment it has something to report. */
+        /* A Lua error names its chunk in quotes: [string "check"]:128: */
         char esc_status[192];
         const char *st = lua_app_status();
         json_escape(esc_status, sizeof(esc_status), st, (int)strlen(st));
-        /* "running" with a frozen heartbeat and c1_go ahead of c1_seen means
-         * core0 handed out a unit core1 never claimed. Without these, that
-         * and a VM stuck mid-tick look identical. */
+        /* c1_go ahead of c1_seen: a tick dispatched that the VM never took,
+         * which otherwise looks the same as a VM stuck mid-tick. */
         uint32_t dbg_go, dbg_seen, dbg_skipped, dbg_hb;
         lua_core1_dispatch_stats(&dbg_go, &dbg_seen, &dbg_skipped, &dbg_hb);
         uint32_t dbg_loc = lua_core1_loc();
@@ -1215,7 +1161,7 @@ static void serve_get(conn_t *c) {
     } else if (strcmp(path, "/api/pins") == 0) {
         serve_file(c, "/" PIN_STORE_PATH, TEXT, NULL, 404, TEXT, "No pins.ini");
     } else if (strcmp(path, "/api/config") == 0) {
-        serve_file(c, "config.ini", TEXT, NULL, 404, TEXT, "No config.ini");
+        serve_file(c, "config.ini", TEXT, NULL, 404, TEXT, "No config.ini"); /* [WEB-API-02] */
     } else if (strcmp(path, "/api/flight.csv") == 0) {
         serve_flight_csv(c);
     } else if (strcmp(path, "/api/log/space") == 0) {
@@ -1240,9 +1186,8 @@ static void serve_get(conn_t *c) {
         int n = ptrace_read(since, hc->work, (int)sizeof(hc->work));
         http_respond(hc, 200, "application/octet-stream", hc->work, (uint32_t)n);
     } else if (strcmp(path, "/") == 0) {
-        /* no-store: the UI is re-uploaded whenever the firmware or web files
-         * change, and without this browsers heuristically cache it and keep
-         * showing the previous build. */
+        /* no-store: browsers otherwise cache it heuristically and keep
+         * showing the previous upload. */
         serve_file(c, "/www/index.html", "text/html", WWW_HEADERS, 200, "text/html", DEFAULT_PAGE);
     } else {
         serve_file(c, path, content_type_hdr(path), WWW_HEADERS, 404, TEXT, "Not found");
@@ -1327,13 +1272,9 @@ static uint16_t ota_body(conn_t *c, const uint8_t *data, uint16_t len) {
 
 /* ── Small POSTs ──────────────────────────────────────────────────── */
 
-/* Provisioning: the board's assigned MAC, into /serial.txt.
- *
- * Exactly 12 characters, validated as hex and as a unicast address before
- * anything touches flash. A board that accepts a bad identity is one that
- * will not enumerate usefully and cannot be reached to fix it. Takes effect at
- * the next boot: the MAC goes into the ECM descriptor and the subnet into the
- * DHCP server, both of which the host reads once, at enumeration. */
+/* POST /api/serial: the board's assigned MAC, into /serial.txt, used from the
+ * next boot [DD-072]. Twelve hex digits, unicast, checked before anything
+ * touches flash: a board with a bad identity cannot be reached to fix it. */
 static bool serial_valid(const char *s) {
     for (int i = 0; i < 12; i++) {
         char ch = s[i];
@@ -1341,17 +1282,15 @@ static bool serial_valid(const char *s) {
             return false;
         }
     }
-    /* Bit 0 of the first octet is the multicast bit. A NIC that sources
-     * frames from a multicast address is not something to debug later. */
+    /* Bit 0 of the first octet: multicast. */
     int hi = (s[0] >= '0' && s[0] <= '9') ? s[0] - '0' : (s[0] | 32) - 'a' + 10;
     int lo = (s[1] >= '0' && s[1] <= '9') ? s[1] - '0' : (s[1] | 32) - 'a' + 10;
     return (((hi << 4) | lo) & 0x01) == 0;
 }
 
 static void apply_erase(http_conn_t *hc) {
-    /* [DAT-06, WEB-UI-04] There is one log slot, and the next launch
-     * overwrites it; this is how an operator clears it on purpose. Refused
-     * at the head while the log is being written (fs_take()). */
+    /* [WEB-API-09, DAT-06] One log slot, which the next launch overwrites;
+     * refused at the head while the log is written (fs_take()). */
     int rc = vfs_remove(FLOG_PATH);
     int old = vfs_remove(OLD_LOG_PATH);
     if (rc == VFS_NOENT) {
@@ -1377,14 +1316,7 @@ static void apply_lua_check(http_conn_t *hc) {
     char *body = (char *)hc->work;
     const int cap = (int)sizeof(hc->work);
     int blen = snprintf(body, (size_t)cap, "{\"green\":%s,\"items\":[", chk.green ? "true" : "false");
-    /* detail carries a Lua error verbatim, and a Lua error names its chunk:
-     * [string "check"]:128: ... Unescaped, those quotes end the JSON string
-     * and the Check button reports "check failed" instead of the error it was
-     * asked to show.
-     *
-     * blen is bounded on every append because snprintf returns what it WOULD
-     * have written: letting it run past cap hands the next call a negative
-     * size. */
+    /* detail is a Lua error, which quotes its chunk name. */
     for (int i = 0; i < chk.count && blen > 0 && blen < cap - 2; i++) {
         char esc_detail[sizeof(chk.items[i].detail) * 2 + 8];
         json_escape(esc_detail, (int)sizeof(esc_detail), chk.items[i].detail, (int)strlen(chk.items[i].detail));
@@ -1511,7 +1443,7 @@ static void route_post(conn_t *c) {
         return;
     }
 #endif
-    if (strcmp(path, "/api/reboot") == 0) {
+    if (strcmp(path, "/api/reboot") == 0) { /* [WEB-API-05] */
         DBG("POST /api/reboot");
         c->reboot_when_sent = true;
         http_respond_str(hc, 200, TEXT, "Rebooting");
@@ -1674,7 +1606,7 @@ extern volatile uint32_t net_conn_full;
 extern volatile uint32_t net_rx_count, net_rx_drop, net_tx_fail, net_tx_ok, net_tx_held;
 extern volatile uint32_t net_usb_events[4];
 
-/* G4-N: what refused, for /api/net. */
+/* [WEB-API-13] What the transport refused. */
 static uint32_t net_accept_refused, net_write_fails, net_idle_aborts, net_last_accept_ms;
 
 static void net_pool(net_pool_t *o, const struct stats_mem *m) {
@@ -1683,8 +1615,8 @@ static void net_pool(net_pool_t *o, const struct stats_mem *m) {
     o->err = m->err;
 }
 
-/* GET /api/net: lwIP's pools and TCP's connections by state, and what the
- * transport refused (net_stats.h). */
+/* GET /api/net [WEB-API-13]: lwIP's pools, TCP's connections by state, and
+ * what the transport refused (net_stats.h). */
 static void serve_api_net(http_conn_t *hc) {
     net_snap_t s;
     memset(&s, 0, sizeof(s));
@@ -1753,8 +1685,8 @@ static void conn_release(conn_t *c) {
         ota_conn = NULL;
     }
     if (c->reboot_when_sent) {
-        /* The main loop arms a 100 ms watchdog and keeps servicing lwIP, so
-         * the reply now in lwIP's hands reaches the client. */
+        /* The flight task arms a 100 ms watchdog; the net task meanwhile
+         * sends the reply lwIP now holds. */
         extern volatile uint8_t pending_reset;
         pending_reset = 2;
     }
@@ -1771,7 +1703,6 @@ static void conn_bind(conn_t *c, link_t *l) {
     c->file_writing = false;
     c->fs_held = false;
     c->reboot_when_sent = false;
-    c->orphan = false;
     c->dest[0] = '\0';
     c->link = l;
     l->conn = c;
@@ -1816,16 +1747,9 @@ static void link_detach(link_t *l) {
     tcp_err(l->pcb, NULL);
 }
 
-/* A connection the worker holds is only unlinked here; it is released once
- * the worker gives it back (take_back_from_worker()). */
 static void link_free(link_t *l) {
-    conn_t *c = l->conn;
-    if (c && http_work_held(slot_of(c))) {
-        c->orphan = true;
-        c->link = NULL;
-        l->conn = NULL;
-    } else if (c) {
-        conn_release(c);
+    if (l->conn) {
+        conn_release(l->conn);
     }
     if (l->pending) {
         pbuf_free(l->pending);
@@ -1930,7 +1854,7 @@ static void attach_waiting(void) {
     for (;;) {
         conn_t *c = NULL;
         for (int i = 0; i < CONN_POOL_SIZE && !c; i++) {
-            if (!conns[i].link && !conns[i].orphan && !http_work_held(i)) {
+            if (!conns[i].link) {
                 c = &conns[i];
             }
         }
@@ -1968,9 +1892,6 @@ static void transport_link(link_t *l, uint32_t now) {
         }
         return;
     }
-    if (http_work_held(slot_of(c))) {
-        return; /* core1 is writing its rings */
-    }
     http_conn_t *hc = &c->h;
 
     /* [WEB-API-08, DD-058] The log takes the filesystem at launch. A request
@@ -1990,8 +1911,8 @@ static void transport_link(link_t *l, uint32_t now) {
     }
     hc->rx_eof = l->fin && !l->pending;
 
-    /* The window reopens by what the parser took, not by what arrived:
-     * a request waiting on the flash window holds its sender back. */
+    /* [WEB-HTTP-03] The window reopens by what the parser took, not by what
+     * arrived: a request waiting on storage holds its sender back. */
     uint32_t used = http_conn_take_consumed(hc);
     if (used > 0) {
         l->last_ms = now;
@@ -2032,33 +1953,8 @@ static void transport_link(link_t *l, uint32_t now) {
     }
 }
 
-/* Nothing hands units to another task now; kept so a connection can never be
- * stranded in the held state. */
-static void take_back_from_worker(void) {
-    uint8_t lost;
-    uint8_t back = http_work_reclaim(true, &lost);
-    for (int i = 0; i < CONN_POOL_SIZE && back; i++) {
-        conn_t *c = &conns[i];
-        if (!(back & (1u << i))) {
-            continue;
-        }
-        if (lost & (1u << i)) {
-            c->h.failed = true;
-        }
-        if (c->orphan) {
-            c->orphan = false;
-            conn_release(c);
-        }
-    }
-}
-
-uint32_t http_work_clock_us(void) {
-    return time_us_32();
-}
-
 void http_server_transport(void) {
     uint32_t now = hal_time_ms();
-    take_back_from_worker();
     attach_waiting();
     for (int i = 0; i < LINK_POOL_SIZE; i++) {
         if (links[i].pcb) {
@@ -2074,7 +1970,7 @@ void http_server_period(void) {
 bool http_server_work(int32_t remaining_us) {
     bool runnable[CONN_POOL_SIZE];
     for (int i = 0; i < CONN_POOL_SIZE; i++) {
-        runnable[i] = conns[i].link && !http_work_held(i) && http_conn_wants_service(&conns[i].h);
+        runnable[i] = conns[i].link && http_conn_wants_service(&conns[i].h);
     }
     uint8_t unit;
     int i = http_work_next(runnable, remaining_us, &unit);
@@ -2090,7 +1986,7 @@ bool http_server_work(int32_t remaining_us) {
         http_conn_service(&conns[i].h, &handlers);
     }
     flash_op_crumb(82);
-    http_work_note(HTTP_ON_CORE0, time_us_32() - t0);
+    http_work_note(time_us_32() - t0);
     return true;
 }
 

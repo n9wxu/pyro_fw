@@ -1,14 +1,12 @@
 /*
- * The USB network's transmit queue [G4-N].
+ * The USB network's transmit queue [WEB-NET-05, DD-070].
  *
  * A frame the endpoint cannot take yet is held, by reference, and sent in
- * order as soon as it can. Dropped instead, lwIP learns of it only by its
- * retransmit timer, 3 s and doubling, and the heap stays held meanwhile:
- * under G4's load 40 % of frames were refused and the heap ran out 27,865
- * times. lwIP does not retransmit a segment a driver still holds.
+ * order as soon as it can, rather than dropped and left to TCP's
+ * retransmission timer.
  *
- * Portable: the endpoint and the frames' references are the caller's, so the
- * host tests this against a fake one.
+ * The endpoint and the frames' references are the caller's, so the host
+ * tests this against a fake one.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -36,7 +34,7 @@ typedef struct {
 typedef enum {
     NET_TX_SENT,      /* gone */
     NET_TX_HELD,      /* waiting for the endpoint */
-    NET_TX_FULL,      /* refused: lwIP's retransmit has it */
+    NET_TX_FULL,      /* refused: TCP's retransmission resends it */
     NET_TX_NOT_READY, /* refused: the link is gone, and the queue with it */
 } net_tx_result_t;
 

@@ -1,29 +1,21 @@
-/* ── Globals ───────────────────────────────────────────────────── */
 var currentVersion = null;
-var deviceConfig = null;   /* config from device */
-var pendingConfig = null;  /* edited but not rebooted */
+var deviceConfig = null;
+var pendingConfig = null;  /* [WEB-UI-03] saved, not yet applied */
 var missCount = 0;
 var showAllVersions = false;
 
 var GITHUB_REPO = 'n9wxu/pyro_fw';
-/* Firmware assets are fw_<board>_fota.bin. The board comes from the device,
- * never from a guess: all the boards are RP2040, so the wrong image will
- * run, and its pin map is wrong -- which on a firing board is not a
- * cosmetic problem. Releases up to v2.2.0 carried one unqualified image,
- * kept here only as a fallback for updating off those. */
+/* Firmware assets are fw_<board>_fota.bin, the board from the device and never
+ * a guess: every board is an RP2040, so another board's image runs, with the
+ * wrong pin map. Releases up to v2.2.0 carried one unqualified image. */
 var LEGACY_ASSET_NAME = 'pyro_fw_c_fota_image.bin';
 var currentBoard = null;
 
 function assetNameFor(board) { return 'fw_' + board + '_fota.bin'; }
 
-/* The board token for a /api/status payload.
- *
- * board_id is the token and is what asset names use. Firmware older than
- * it reported only the display name, so that is reduced to a token as a
- * fallback -- "Pyro MK1A" to "mk1a". The fallback is deliberately strict:
- * anything that is not one bare word of letters and digits yields null, so
- * a decorated name like "Pyro MK1C (simulated)" refuses rather than
- * inventing a board. */
+/* The board token, which asset names use. Firmware without board_id reports
+ * only the display name, reduced here strictly ("Pyro MK1A" to "mk1a"): a
+ * decorated name yields null rather than an invented board. */
 function boardIdOf(d) {
   if (d && d.board_id) return String(d.board_id);
   if (!d || !d.board) return null;
@@ -32,9 +24,8 @@ function boardIdOf(d) {
   return /^[a-z0-9]+$/.test(last) ? last : null;
 }
 
-/* The asset for this device's board, or null if the release has none.
- * A board-specific asset always wins over the legacy one: preferring the
- * legacy asset is exactly how another board's firmware would get flashed. */
+/* The asset for this device's board, or null. The board's own always wins
+ * over the legacy one. */
 function findAsset(rel) {
   var assets = rel.assets || [];
   var i;
@@ -51,7 +42,7 @@ var MAX_ALT = {0:800000, 1:8000, 2:26247};
 var UNIT_LABELS = {0:'cm', 1:'m', 2:'ft'};
 var UNIT_NAMES = ['cm','m','ft'];
 var MODE_LABELS = {delay:'Delay',agl:'AGL',fallen:'Fallen',speed:'Speed',none:'None'};
-/* Centimetres per unit, the pivot for converting a value between units. */
+/* [WEB-UI-02] Centimetres per unit: values convert through cm. */
 var CM_PER_UNIT = {0:1, 1:100, 2:30.48};
 var WEB_VERSION = '2.0.0';
 
@@ -67,7 +58,7 @@ function showTab(name) {
   if (name === 'beeps') { beepsInit(); }
 }
 
-/* ── Unit conversion ───────────────────────────────────────────── */
+/* ── Units [WEB-UI-01] ─────────────────────────────────────────── */
 function cmToUnit(cm, u) {
   if (u === 1) return (cm / 100).toFixed(1);
   if (u === 2) return (cm / 30.48).toFixed(1);
@@ -108,7 +99,7 @@ function setTestMode(on) {
     .then(function(){ testBusy = false; });
 }
 
-/* ── Status polling ────────────────────────────────────────────── */
+/* ── Status [WEB-API-01, WEB-UI-01] ────────────────────────────── */
 function update() {
   fetch('/api/status').then(function(r){return r.json()}).then(function(d) {
     missCount = 0;
@@ -127,8 +118,8 @@ function update() {
     document.getElementById('sFt').textContent = (d.flight_ms/1000).toFixed(1) + 's';
     document.getElementById('sUp').textContent = (d.uptime/1000).toFixed(0) + 's';
 
-    /* Pyro status. A refusal is the board declining to energise a channel it
-       was told to fire, which is not the same thing as firing it. */
+    /* A refusal is the board declining to energise a channel it was told to
+       fire, which is not firing it. */
     function pyroStr(fired, refused, cont, adc, note) {
       if (fired) return '<span class="pyro-fired">FIRED</span>' + (note || '') + ' (ADC:' + adc + ')';
       if (refused) return '<span class="pyro-open">REFUSED by the board</span> (ADC:' + adc + ')';
@@ -148,7 +139,7 @@ function update() {
     if (!testBusy) document.getElementById('testMode').checked = tm;
     document.getElementById('testWarn').style.display = tm ? 'block' : 'none';
 
-    /* Config display */
+    /* [WEB-UI-03] */
     document.getElementById('sCfgId').textContent = d.rocket_id || '—';
     document.getElementById('sCfgName').textContent = d.rocket_name || '—';
     document.getElementById('sCfgUnits').textContent = UNIT_NAMES[u] || 'cm';
@@ -162,13 +153,11 @@ function update() {
     document.getElementById('sCfgP2').innerHTML = p2Str + (pendingConfig ? ' <span class="warn-inline">not yet applied</span>' : '');
     document.getElementById('pendingWarn').style.display = pendingConfig ? 'block' : 'none';
 
-    /* Version info */
     currentVersion = d.fw_version;
     currentBoard = boardIdOf(d);
     document.getElementById('uFwVer').textContent = d.fw_version;
     document.getElementById('uWebVer').textContent = WEB_VERSION;
 
-    /* Store device config — update every poll */
     var newCfg = {id:d.rocket_id, name:d.rocket_name, units:u,
       p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value,
       logRate:d.log_rate || '1hz'};
@@ -176,7 +165,7 @@ function update() {
       deviceConfig = newCfg;
       cfgLoadFromObj(deviceConfig);
     } else {
-      /* Detect device-side change (reboot applied new config) */
+      /* The board applied a change, as after a reboot. */
       if (deviceConfig.p1mode !== newCfg.p1mode || deviceConfig.p1val !== newCfg.p1val ||
           deviceConfig.p2mode !== newCfg.p2mode || deviceConfig.p2val !== newCfg.p2val ||
           deviceConfig.units !== newCfg.units || deviceConfig.logRate !== newCfg.logRate) {
@@ -191,12 +180,11 @@ function update() {
   setTimeout(update, 1000);
 }
 
-/* ── Config editor ─────────────────────────────────────────────── */
+/* ── Config editor [WEB-UI-02] ─────────────────────────────────── */
 function getUnits() { return parseInt(document.getElementById('cfgUnits').value); }
 function getMaxAlt() { return MAX_ALT[getUnits()]; }
 
 function cfgChanged() {
-  /* Update unit labels */
   [1,2].forEach(function(ch) {
     var mode = document.getElementById('p'+ch+'mode').value;
     var uSpan = document.getElementById('p'+ch+'unit');
@@ -205,13 +193,11 @@ function cfgChanged() {
     else if (mode === 'delay') { uSpan.textContent = 'seconds'; vInput.max = 65535; vInput.disabled = false; }
     else if (mode === 'speed') { uSpan.textContent = unitLabel(getUnits()) + '/s'; vInput.max = getMaxAlt(); vInput.disabled = false; }
     else { uSpan.textContent = unitLabel(getUnits()); vInput.max = getMaxAlt(); vInput.disabled = false; }
-    /* Range warning */
     var val = parseInt(vInput.value) || 0;
     var warn = document.getElementById('p'+ch+'warn');
     warn.textContent = (mode !== 'delay' && val > getMaxAlt()) ?
       '⚠ Exceeds ' + getMaxAlt() + ' ' + unitLabel(getUnits()) + ' sensor limit' : '';
   });
-  /* Tips */
   var tips = document.getElementById('cfgTips');
   var p1 = document.getElementById('p1mode').value;
   var p2 = document.getElementById('p2mode').value;
@@ -228,15 +214,13 @@ function cfgChanged() {
   if (p1 === p2 && p1 !== 'delay') msgs.push('💡 Same mode on both — consider different modes for redundancy');
   tips.style.display = msgs.length ? 'block' : 'none';
   tips.innerHTML = msgs.join('<br>');
-  /* Dirty indicator */
   document.getElementById('cfgDirty').style.display = 'block';
 }
 
-/* ── The flight log's plan, and the longest flight it holds [DD-064] ──
-   The board says how much room the next log has, how big a row is and how
-   fast its sensor samples; the estimate is that room at the plan chosen. The
-   plan that keeps every sample around events is estimated for LOG_EVENTS
-   events, each two seconds at the full rate. */
+/* ── The flight log's plan, and the longest flight it holds ───────
+   [WEB-UI-06, WEB-API-12, DD-064] The room the next log has, at the plan
+   chosen. The events plan is estimated for LOG_EVENTS events, each two
+   seconds at the full rate. */
 var LOG_EVENTS = 10;
 var logSpace = null;
 
@@ -428,13 +412,11 @@ function cfgReboot() {
   waitForReboot(msg);
 }
 
-/* ── Flight data ───────────────────────────────────────────────
+/* ── Flight data [WEB-UI-04] ───────────────────────────────────
  *
- * Everything on this tab comes from the one flight log, read fresh each time
- * the tab is shown: mixing it with live /api/status would put two flights on
- * the screen at once. The log names its columns in its header row, so the
- * parse goes by name -- text rows (MOCK, LUA) carry no numbers and are
- * skipped. */
+ * From the flight log alone, read each time the tab is shown: live
+ * /api/status beside it would put two flights on screen. Columns are found by
+ * the names in the header row; text rows (MOCK, LUA) carry no numbers. */
 function dlFlight() { window.location = '/api/flight.csv'; }
 
 var flightData = [];
@@ -555,14 +537,12 @@ function drawGraph() {
   var pad = {l:50, r:10, t:10, b:30};
   var gw = W - pad.l - pad.r, gh = H - pad.t - pad.b;
 
-  /* Grid */
   ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1;
   for (var i = 0; i <= 4; i++) {
     var y = pad.t + gh - (i/4)*gh;
     ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l+gw, y); ctx.stroke();
   }
 
-  /* Axes labels */
   ctx.fillStyle = '#666'; ctx.font = '11px sans-serif';
   var u = deviceConfig ? deviceConfig.units : 0;
   for (var i = 0; i <= 4; i++) {
@@ -574,7 +554,6 @@ function drawGraph() {
     ctx.fillText((maxT * i/5 / 1000).toFixed(0) + 's', x - 8, H - 5);
   }
 
-  /* Altitude line */
   ctx.strokeStyle = '#2266cc'; ctx.lineWidth = 2;
   ctx.beginPath();
   flightData.forEach(function(p, idx) {
@@ -585,7 +564,7 @@ function drawGraph() {
   ctx.stroke();
 }
 
-/* ── Firmware update ───────────────────────────────────────────── */
+/* ── Firmware update [WEB-UI-05, WEB-API-04] ───────────────────── */
 function checkUpdate() {
   var msg = document.getElementById('updMsg');
   msg.style.color = 'orange'; msg.textContent = ' Checking...';
@@ -644,23 +623,10 @@ function toggleAllVersions() {
 }
 
 
-/* ── What a firmware filename claims to be ─────────────────────────
- *
- * The release ships three files per board and they are not
- * interchangeable: fw_<board>_fota.bin goes through this page,
- * fw_<board>.uf2 and fw_<board>_bootloader.uf2 go through BOOTSEL. And
- * every board is an RP2040, so the wrong board's OTA image does not fail
- * to run -- it runs against the wrong pin map, which on a firing board
- * means GPIO25 is an LED on MK1A and BIAS_B on MK1C.
- *
- * The device cannot catch this yet: /api/ota takes whatever it is handed.
- * So the check lives here, where the filename still exists -- by the time
- * the bytes reach the device the name is gone. A later firmware does its
- * own pre- and post-flash checks and rolls back; until every board is
- * running that, this is the gate.
- *
- * Returns { board, kind }. board is null when the name does not say.
- */
+/* What a firmware filename claims to be: { board, kind }, board null when
+ * the name does not say. fw_<board>_fota.bin goes through this page;
+ * fw_<board>.uf2 and fw_<board>_bootloader.uf2 through BOOTSEL. The name
+ * exists only here, so this is where it is checked against the board. */
 function imageFromName(name) {
   var n = String(name || '');
   var m;
@@ -763,17 +729,12 @@ function waitForReboot(msg) {
 }
 
 
-/* ── Lua ───────────────────────────────────────────────────────── */
-
-/* ── Beep personalities ────────────────────────────────────────
+/* ── Beep personalities [BUZ-CODE-04..09] ──────────────────────
  *
- * Everything here comes from /api/beeps: the outcomes, their meanings, the
- * pattern kinds and the three personalities. The firmware is the only place
- * the vocabulary is written down, so adding an outcome or a kind grows the
- * table without touching this file.
- *
- * Defaults follow Eggtimer Rocketry, whose convention most fliers already
- * know: a rapid chirp means ready, a repeating beep count means a fault. */
+ * Everything here comes from /api/beeps; the firmware is the one place the
+ * vocabulary is written down. The shipped personality follows Eggtimer
+ * Rocketry's convention: a rapid chirp means ready, a repeating count a
+ * fault. */
 var beepCaps = null;
 var beepEdit = null;   /* the personality being edited, as a working copy */
 var beepsReady = false;
@@ -973,15 +934,9 @@ function beepsDefaults() {
 
 /* ── Pin capabilities ──────────────────────────────────────────
  *
- * Everything board-specific this page knows comes from /api/pins/caps. It
- * used to hardcode MK1C's four J3 pads and keep its own role list, so on
- * MK1A and MK1B the Lua tab rendered four pads that are not there and offered
- * roles no pin on those boards can take.
- *
- * The rule for "may this pin take this role" is the firmware's own -- a
- * capability bit, tested against the same mask pin_assign_validate() uses --
- * applied to the firmware's own table. Nothing here needs changing when a
- * board, a role or a capability is added. */
+ * Everything board-specific comes from /api/pins/caps, and "may this pin take
+ * this role" is the firmware's rule (pin_assign_validate()) on the
+ * firmware's table. */
 var pinCaps = null;
 
 /* Presentation only, with a fallback: a role this page has not been taught
@@ -1338,9 +1293,6 @@ function luaLoad() {
     document.getElementById('luBaud').value = kv.lua_baud || '9600';
     document.getElementById('luPx').value   = kv.lua_pixels || '0';
   });
-  /* Pin roles live in pins.ini, not here. The lua_p18..p21 keys this used to
-     read are migration-only now: the firmware consults them once, when a
-     board has no pins.ini yet. */
   pinsFetch().then(renderLuaPins).catch(function(e) {
     document.getElementById('luaPinsHint').textContent =
       'could not read the capability table: ' + e.message;
@@ -1352,24 +1304,15 @@ function luaLoad() {
 
 /* ── Export / import the program ───────────────────────────────────
  *
- * An OTA update leaves the filesystem in place, but a failed mount formats
- * it, a change of flash geometry moves it, and stored formats change without
- * migration -- a program that exists only on the device is one of those away
- * from being lost. Both directions work on the editor's contents rather than
- * the stored file: export gives you what you are looking at, and import does
- * not touch the device until you press Save, so a mis-picked file costs
- * nothing.
- *
- * The export runs entirely in the browser -- no endpoint is needed, and it
- * works even when the device has lost the file and the editor still holds
- * the text. */
+ * A program kept only on the board is one failed mount from lost. Both work
+ * on the editor's text, not the stored file: export saves what is on screen,
+ * and import writes nothing until Save. */
 function luaExport() {
   var text = document.getElementById('luSrc').value;
   var msg = document.getElementById('luIoMsg');
   if (!text) { msg.textContent = 'nothing to export'; return; }
 
-  /* Named from the board id when there is one, so several boards' programs
-     do not all land in Downloads as the same file. */
+  /* Named for the rocket, so several boards' programs differ in Downloads. */
   var cfg = deviceConfig || {};
   var id = cfg.id ? String(cfg.id).replace(/[^A-Za-z0-9_-]/g, '') : 'pyro';
   if (!id) id = 'pyro';
@@ -1389,8 +1332,7 @@ function luaImport(input) {
   var msg = document.getElementById('luIoMsg');
   input.value = ''; /* so re-picking the same file fires onchange again */
   if (!f) return;
-  /* Bounded before reading: the device's script store is finite and a huge
-     file would be rejected on save anyway, with less to say about why. */
+  /* Bounded before reading: the board's script store would refuse it. */
   if (f.size > 65536) {
     msg.textContent = 'that file is ' + f.size + ' bytes; the limit is 65536';
     return;
@@ -1399,9 +1341,7 @@ function luaImport(input) {
   r.onerror = function() { msg.textContent = 'could not read that file'; };
   r.onload = function() {
     document.getElementById('luSrc').value = r.result;
-    /* Loaded into the editor, NOT onto the device: nothing is written until
-       Save, and Check runs first so a bad import is visible before it is
-       stored. */
+    /* Into the editor only, and checked, so a bad import shows before Save. */
     msg.textContent = 'loaded ' + f.name + ' into the editor — press Save & Apply to store it';
     luaCheck();
   };
@@ -1446,8 +1386,7 @@ function luaSave() {
     })
     .then(function(r) {
       if (!r.ok) throw new Error('upload rejected');
-      /* The upload replies 201 Created, not JSON. Ask for the verdict
-         separately so it is computed against what is now stored. */
+      /* The upload answers 201 with no verdict: ask for one. */
       return fetch('/api/lua/check', {method:'POST', headers:{'Content-Type':'text/plain'},
                                       body: document.getElementById('luSrc').value});
     })
@@ -1478,5 +1417,4 @@ function luaConPoll() {
 
 function luaConClear() { document.getElementById('luCon').textContent = ''; }
 
-/* ── Init ──────────────────────────────────────────────────────── */
 update();

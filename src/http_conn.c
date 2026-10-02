@@ -179,6 +179,7 @@ static void rx_drop(http_conn_t *c, uint16_t n) {
     c->consumed += n;
 }
 
+/* [WEB-HTTP-04] */
 static void refuse(http_conn_t *c, uint16_t status, const char *why) {
     if (status == 405) {
         /* An Allow header is required with a 405 (RFC 9110 §15.5.6). */

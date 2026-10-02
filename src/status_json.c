@@ -48,8 +48,6 @@ static const char *B(bool b) {
     return b ? "true" : "false";
 }
 
-/* The self-test is a code in the snapshot, not a string: three values, and
- * a char* would let STATUS_JSON_MAX have to assume an arbitrary one. */
 static const char *selftest_name(uint8_t v) {
     switch (v) {
     case 1:  return "pass";

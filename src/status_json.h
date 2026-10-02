@@ -1,7 +1,7 @@
 /*
- * /api/status, in two halves: core0 captures a snapshot in one pass, and
- * status_json() renders it anywhere. The renderer reads nothing but the
- * snapshot, which is what lets core1 run it (DD-061).
+ * /api/status [WEB-API-01, WEB-API-11], in two halves: a snapshot taken in
+ * one pass, and status_json(), which renders it and reads nothing else, so
+ * the host tests the API it produces.
  *
  * Every string pointer names a constant; anything that can change is copied.
  *
@@ -18,12 +18,9 @@
 #define STATUS_STAGE1_PARTS 4
 #define STATUS_FAULTS_MAX 16
 
-/* The longest rendering, with every field at its widest.
- *
- * test_SJ_02 measures it and fails if it grows past this, which is how the
- * board_id and board_selftest keys were caught: the bound has to move
- * deliberately, and it has to stay under HTTP_WORK_SIZE, which the
- * _Static_assert in http_server.c checks. */
+/* The longest rendering, with every field at its widest. test_SJ_02 fails if
+ * it grows past this, so the bound moves deliberately; http_server.c asserts
+ * it stays under HTTP_WORK_SIZE. */
 #define STATUS_JSON_MAX 3200
 
 typedef struct {
@@ -41,25 +38,20 @@ typedef struct {
     const char *log_rate; /* 1hz, events or full */
     char rocket_id[9], rocket_name[9];
     const char *sensor, *board;
-    /* board is the display name ("Pyro MK1A"); board_id is the short token
-     * ("mk1a") that names things -- release assets, image descriptors, build
-     * directories. A consumer choosing a firmware image must key off the
-     * token, never off the display string. */
+    /* board: the display name ("Pyro MK1A"); board_id: the token ("mk1a")
+     * that names release assets, which a consumer choosing an image keys on. */
     const char *board_id;
-    /* The board self-test, as a code and not a string: it has exactly three
-     * values, and a char* here would let the widest-rendering bound below
-     * assume an arbitrary one.
-     *   0 unknown -- no stamp yet, nothing to compare
-     *   1 pass    -- the stamp agrees with the compiled-in board
-     *   2 fail    -- the stamp names another board; this image is not
-     *                committing and will roll back */
+    /* 0 unknown: no stamp yet; 1 pass: the stamp names this board; 2 fail:
+     * it names another, and this image will roll back. A code rather than a
+     * string, so STATUS_JSON_MAX bounds it. */
     uint8_t board_selftest;
     int32_t pyro_bus_q, pyro_bus_adc, pyro_vbat_adc; /* -1: none on this board */
 
     uint32_t loop_max_us, loop_overruns, loop_late_max_us, loop_count;
     uint32_t stage_max_us[STATUS_STAGES];
     uint32_t stage1_parts_us[STATUS_STAGE1_PARTS]; /* TinyUSB, lwIP, HTTP transport, mDNS */
-    uint32_t http_units[2], http_unit_max_us[2];   /* core0, core1 */
+    /* The net task's units; [1] stays 0, kept for the keys' shape [WEB-API-11]. */
+    uint32_t http_units[2], http_unit_max_us[2];
     uint32_t flash_opens, flash_skips, flash_refusals, log_dropped;
     uint32_t flash_erases, flash_programs, flash_deferrals;
 
@@ -74,8 +66,8 @@ typedef struct {
     uint8_t n_faults;
     uint8_t reset_cause;
     const char *recovery;
-    /* How the last boot ended: the watchdog, and the stage or crumb core0
-     * was in (src/main_hardware.c has the map); -1: none stamped. */
+    /* How the last boot ended: the watchdog, and the stage or crumb the
+     * flight task was in (src/main_hardware.c has the map); -1: none. */
     bool prev_watchdog;
     int32_t prev_stage;
     uint32_t prev_stage_ms;
