@@ -135,8 +135,10 @@ typedef struct flight_context_t {
     bool pyro2_refused;
     bool pyro1_fault; /* [PYR-FAULT-02] */
     bool pyro2_fault;
-    bool pyro1_verify_fail; /* post-fire continuity still good (pyro didn't open) */
+    bool pyro1_verify_fail; /* the verdict: still present after its fire */
     bool pyro2_verify_fail;
+    bool pyro1_verified; /* the post-fire verdict is in [PYR-VERIFY-01] */
+    bool pyro2_verified;
     config_t config;
     flight_state_t current_state;
     int32_t filtered_pressure;

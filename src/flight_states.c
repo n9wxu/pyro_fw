@@ -27,6 +27,7 @@ __attribute__((weak)) bool hal_ground_test_asserted(void) {
 #include "buzzer.h"
 #include "beep_store.h"
 #include "pyro_release.h"
+#include "loop_period.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,8 +52,9 @@ static bool state_is_logged(flight_state_t st) {
 /* Every sample goes to the log; its plan decides what it keeps
  * [FLT-LOG-07, log_plan.h]. */
 void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t altitude, uint8_t st) {
+    uint8_t thrust = st == ASCENT && ctx->under_thrust; /* [FLT-ASC-03] */
     if (state_is_logged((flight_state_t)st)) {
-        hal_log_sample(time_ms, pressure, altitude, st, ctx->under_thrust, EVT_NONE);
+        hal_log_sample(time_ms, pressure, altitude, st, thrust, EVT_NONE);
     }
     if (ctx->buf_count == FLIGHT_BUF_SIZE) {
         ctx->buf_tail = (ctx->buf_tail + 1) % FLIGHT_BUF_SIZE;
@@ -63,7 +65,7 @@ void buf_add(flight_context_t *ctx, uint32_t time_ms, int32_t pressure, int32_t 
     s->pressure_pa = pressure;
     s->altitude_cm = altitude;
     s->state = st;
-    s->under_thrust = 0;
+    s->under_thrust = thrust;
     s->event = EVT_NONE;
     ctx->buf_head = (ctx->buf_head + 1) % FLIGHT_BUF_SIZE;
     ctx->buf_count++;
@@ -159,10 +161,13 @@ static bool fire_channel(flight_context_t *ctx, int ch, uint32_t now) {
         buf_tag_event(ctx, ch == 1 ? EVT_PYRO1_REFUSED : EVT_PYRO2_REFUSED);
         return false;
     }
-    if (ch == 1)
+    if (ch == 1) {
         ctx->pyro1_fired = true;
-    else
+        ctx->pyro1_verified = false;
+    } else {
         ctx->pyro2_fired = true;
+        ctx->pyro2_verified = false;
+    }
     buf_tag_event(ctx, ch == 1 ? EVT_PYRO1_FIRE : EVT_PYRO2_FIRE);
     telemetry_pyro_fire(ch, ctx->last_altitude, now - ctx->launch_time);
     return true;
@@ -231,38 +236,38 @@ static void check_pyro_fault(flight_context_t *ctx) {
     }
 }
 
-/* [PYR-VERIFY-01] Post-fire continuity check: if pyro didn't open, it failed */
+/* [PYR-VERIFY-01] The verdict is the board's first reading after the pulse;
+ * until a check has run since, a fired channel reads none of good, open and
+ * shorted (hal.h). Not asked before the longest pulse a board drives, for a
+ * HAL whose reading is live. */
+#define VERIFY_AFTER_MS 500u
 
-/* Each channel's verify window opens 500-600 ms after THAT channel fired, so
- * the two windows generally do not coincide. */
-static bool verify_window_open(bool fired, bool already_failed, uint32_t fire_time, uint32_t now) {
-    return fired && !already_failed && fire_time > 0 && now - fire_time > 500 && now - fire_time < 600;
+static bool verify_due(bool fired, bool verified, uint32_t fire_time, uint32_t now) {
+    return fired && !verified && now - fire_time > VERIFY_AFTER_MS;
+}
+
+static void verify_channel(flight_context_t *ctx, uint8_t ch, bool *verified, bool *failed) {
+    hal_continuity_t c = {0};
+    hal_pyro_get(ch, &c);
+    if (!c.good && !c.open && !c.shorted)
+        return;
+    *verified = true;
+    if (c.good && !c.open) {
+        *failed = true;
+        buf_tag_event(ctx, ch == 1 ? EVT_PYRO1_NOPEN : EVT_PYRO2_NOPEN);
+    }
 }
 
 static void check_post_fire_verify(flight_context_t *ctx, uint32_t now) {
-    bool w1 = verify_window_open(ctx->pyro1_fired, ctx->pyro1_verify_fail, ctx->pyro1_fire_time, now);
-    bool w2 = verify_window_open(ctx->pyro2_fired, ctx->pyro2_verify_fail, ctx->pyro2_fire_time, now);
-    if (!w1 && !w2)
+    bool due1 = verify_due(ctx->pyro1_fired, ctx->pyro1_verified, ctx->pyro1_fire_time, now);
+    bool due2 = verify_due(ctx->pyro2_fired, ctx->pyro2_verified, ctx->pyro2_fire_time, now);
+    if (!due1 && !due2)
         return;
-
-    /* One stimulus event serves whichever windows are open. */
     hal_pyro_sample();
-    hal_continuity_t c;
-
-    if (w1) {
-        hal_pyro_get(1, &c);
-        if (c.good && !c.open) {
-            ctx->pyro1_verify_fail = true;
-            buf_tag_event(ctx, EVT_PYRO1_NOPEN);
-        }
-    }
-    if (w2) {
-        hal_pyro_get(2, &c);
-        if (c.good && !c.open) {
-            ctx->pyro2_verify_fail = true;
-            buf_tag_event(ctx, EVT_PYRO2_NOPEN);
-        }
-    }
+    if (due1)
+        verify_channel(ctx, 1, &ctx->pyro1_verified, &ctx->pyro1_verify_fail);
+    if (due2)
+        verify_channel(ctx, 2, &ctx->pyro2_verified, &ctx->pyro2_verify_fail);
 }
 
 /* ── Event detectors ──────────────────────────────────────────────── */
@@ -487,9 +492,12 @@ beep_reason_t beep_reason_for_diag(uint16_t diag) {
     return BR_OK_TO_FLY;
 }
 
-/* [PYR-CONT-01] Once a second. False when it is not yet due. */
+/* [PYR-CONT-01] At least once a second: due a loop early, so the 20 ms grid
+ * never stretches it past the second. */
+#define CONT_CHECK_MS (1000u - LOOP_PERIOD_MS)
+
 static bool sample_continuity(flight_context_t *ctx, uint32_t now, hal_continuity_t *c1, hal_continuity_t *c2) {
-    if (now - ctx->last_cont_check <= 1000)
+    if (now - ctx->last_cont_check < CONT_CHECK_MS)
         return false;
     hal_pyro_sample();
     hal_pyro_get(1, c1);
@@ -850,8 +858,6 @@ static void ascent_take(flight_context_t *ctx, const altitude_sample_t *s) {
         ctx->arm_height = true;
 
     buf_add(ctx, s->timestamp_ms - ctx->launch_time, ctx->filtered_pressure, s->altitude_cm, ASCENT);
-    ctx->flight_buffer[(ctx->buf_head - 1 + FLIGHT_BUF_SIZE) % FLIGHT_BUF_SIZE].under_thrust =
-        ctx->under_thrust ? 1 : 0;
     ctx->last_altitude = s->altitude_cm;
     ctx->last_height = s->height_cm;
     ctx->last_sample = s->timestamp_ms; /* [FLT-RATE-05] */
@@ -1009,7 +1015,7 @@ static void retry_drogue(flight_context_t *ctx, uint32_t now, bool canopy_workin
 /* canopy_working: settled in a band a canopy could explain, not the fast one. */
 static void emergency_ladder(flight_context_t *ctx, uint32_t now, bool canopy_working) {
     bool drogue_commanded = ctx->pyro1_fired || ctx->pyro1_refused;
-    if (!drogue_commanded || ctx->pyro2_fired || ctx->pyro2_refused || !ctx->pyro2_continuity_good)
+    if (!drogue_commanded || ctx->pyro2_fired || ctx->pyro2_refused)
         return;
 
     if (ctx->pyro1_verify_fail && ctx->pyro1_refires < EMRG_MAX_REFIRE) {
@@ -1017,7 +1023,9 @@ static void emergency_ladder(flight_context_t *ctx, uint32_t now, bool canopy_wo
         return;
     }
 
-    if (!drogue_failing(ctx, now, ctx->pyro1_fire_time))
+    /* [CFG-04] Only a main the configuration has, with its igniter. */
+    if (!channel_expects_igniter(ctx, 2) || !ctx->pyro2_continuity_good ||
+        !drogue_failing(ctx, now, ctx->pyro1_fire_time))
         return;
     if (fire_channel(ctx, 2, now)) {
         ctx->main_forced = true;
@@ -1329,9 +1337,14 @@ static const transition_t transitions[] = {
 
 #define NUM_TRANSITIONS (sizeof(transitions) / sizeof(transitions[0]))
 
+/* A state number the machine does not know (corrupt RAM) cannot be flown on,
+ * and is said as a fault: PAD_IDLE would re-open launch detection mid-flight
+ * and beep "ready" with nothing behind it. */
 flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {
-    if (ctx->current_state >= STATE_COUNT)
-        return PAD_IDLE;
+    if (ctx->current_state >= STATE_COUNT) {
+        action_fault(ctx, now);
+        return FAULT;
+    }
 
     detect_fn detect = detectors[ctx->current_state];
     if (!detect)
