@@ -290,11 +290,9 @@ void test_FLT_LAUNCH_01_detects_ascent(void) {
     ctx.current_state = PAD_IDLE;
     ctx.ground_pressure = 101325;
     pp_test_prime(101325);
-    /* Launch is now 100 ft (3048 cm) above the ground reference, not 10 m.
-       ~12 Pa per metre near sea level, so 30.5 m needs about 370 Pa; 600 Pa
-       (~5000 cm) clears it without depending on the exact lapse rate. The
-       climb continues at about 33 m/s: the trigger must hold for
-       LAUNCH_HOLD_MS, and only a rocket still climbing holds it. */
+    /* [FLT-LAUNCH-01] 100 ft is about 370 Pa near sea level; 600 Pa clears it
+       without depending on the lapse rate. The climb continues at about
+       33 m/s: the trigger must hold for LAUNCH_HOLD_MS. */
     for (int i = 0; i < 40; i++) {
         mock_time_ms = i * 15;
         mock_pressure.pressure_pa = 101325.0f - 600.0f - 0.4f * (float)mock_time_ms;
@@ -307,10 +305,10 @@ void test_FLT_LAUNCH_01_detects_ascent(void) {
 
 /* ── The ground reference ─────────────────────────────────────────
  *
- * A 5-second rolling mean of the filtered PRESSURE, frozen at launch. MK1C
- * false-launched on a bench from weather drift under the old 10 m trigger, so
- * these hold the two properties that prevent it: the reference follows slow
- * drift, and the trigger is 100 ft above wherever the reference has got to. */
+ * A 5-second rolling mean of the filtered PRESSURE, frozen at launch
+ * [GND-CAL-01]. Weather drift must not launch a board on a bench: the
+ * reference follows slow drift, and the trigger is 100 ft above wherever the
+ * reference has got to. */
 
 static void feed_pad(flight_context_t *ctx, float pa, uint32_t from_ms, uint32_t to_ms, uint32_t step_ms) {
     for (uint32_t t = from_ms; t <= to_ms; t += step_ms) {
@@ -352,22 +350,19 @@ void test_GND_CAL_02_reference_stops_tracking_when_the_rocket_moves(void) {
 }
 
 void test_FLT_LAUNCH_08_ten_metres_is_no_longer_enough(void) {
-    /* The old trigger. MK1C reached it on a bench from pressure drift. */
     flight_context_t ctx = {0};
     ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
     ctx.current_state = PAD_IDLE;
     pp_test_prime(101325);
     mock_time_ms = 0;
 
-    /* ~250 Pa is about 21 m (69 ft): comfortably past the old 10 m trigger
-       and comfortably short of 100 ft, so this discriminates between them
-       rather than sitting on either boundary. Run long enough for the IIR to
-       settle, and for the speed condition to have been satisfied on the way
-       -- otherwise this would pass merely because nothing moved. */
+    /* ~250 Pa is about 21 m (69 ft): well past 10 m, which weather drift
+       reaches on a bench, and well short of 100 ft. Long enough for the IIR
+       to settle and for the speed condition to have been met on the way. */
     feed_pad(&ctx, 101325.0f - 250.0f, 0, 2000, 20);
-    TEST_ASSERT_GREATER_THAN_MESSAGE(1000, ctx.last_altitude, "the climb must clear the OLD 10 m threshold");
-    TEST_ASSERT_LESS_THAN_MESSAGE(LAUNCH_ALT_CM_FOR_TEST, ctx.last_altitude, "and stay under the new one");
-    TEST_ASSERT_EQUAL_MESSAGE(PAD_IDLE, ctx.current_state, "10 m must no longer trip the launch detector");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(1000, ctx.last_altitude, "the climb must clear 10 m");
+    TEST_ASSERT_LESS_THAN_MESSAGE(LAUNCH_ALT_CM_FOR_TEST, ctx.last_altitude, "and stay under 100 ft");
+    TEST_ASSERT_EQUAL_MESSAGE(PAD_IDLE, ctx.current_state, "21 m tripped the launch detector");
 }
 
 void test_FLT_LAUNCH_09_freezing_keeps_the_hundred_feet(void) {
@@ -522,10 +517,9 @@ void test_FLT_APO_01_detects_apogee(void) {
 
 /* ── FALLING / DROGUE / CHUTE tests ──────────────────────────────── */
 
-/* [FLT-DESC-01] The descent phase comes from the rate, so these two can no
- * longer be single-step tests: a phase needs its dwell. Feeding a steady rate
- * is the point -- under the old contract merely setting pyro1_fired advanced
- * the machine, which is what let a commanded-but-dead canopy look deployed. */
+/* [FLT-DESC-01] The descent phase comes from the rate, held for its dwell,
+ * never from pyro1_fired: a commanded-but-dead canopy must not look
+ * deployed. */
 #define PA_PER_CM 0.12f
 
 static void descend_steady(flight_context_t *ctx, int32_t start_cm, int32_t rate_cms, uint32_t ms) {
@@ -808,7 +802,7 @@ void test_CFG_02_parse_full(void) {
     config_t cfg = {0};
     char ini[] = "[pyro]\r\nid=ROCKET1\r\nname=MyRkt\r\npyro1_mode=delay\r\npyro1_value=0\r\npyro2_mode=agl\r\npyro2_"
                  "value=300\r\nunits=ft\r\n";
-    parse_config_ini(ini, &cfg);
+    config_parse_ini(ini, &cfg);
     TEST_ASSERT_EQUAL_STRING("ROCKET1", cfg.id);
     TEST_ASSERT_EQUAL_STRING("MyRkt", cfg.name);
     TEST_ASSERT_EQUAL(PYRO_MODE_DELAY, cfg.pyro1_mode);
@@ -821,36 +815,36 @@ void test_CFG_02_parse_full(void) {
 void test_CFG_04_parse_all_modes(void) {
     config_t cfg = {0};
     char ini1[] = "pyro1_mode=delay\r\n";
-    parse_config_ini(ini1, &cfg);
+    config_parse_ini(ini1, &cfg);
     TEST_ASSERT_EQUAL(PYRO_MODE_DELAY, cfg.pyro1_mode);
     char ini2[] = "pyro1_mode=agl\r\n";
-    parse_config_ini(ini2, &cfg);
+    config_parse_ini(ini2, &cfg);
     TEST_ASSERT_EQUAL(PYRO_MODE_AGL, cfg.pyro1_mode);
     char ini3[] = "pyro1_mode=fallen\r\n";
-    parse_config_ini(ini3, &cfg);
+    config_parse_ini(ini3, &cfg);
     TEST_ASSERT_EQUAL(PYRO_MODE_FALLEN, cfg.pyro1_mode);
     char ini4[] = "pyro1_mode=speed\r\n";
-    parse_config_ini(ini4, &cfg);
+    config_parse_ini(ini4, &cfg);
     TEST_ASSERT_EQUAL(PYRO_MODE_SPEED, cfg.pyro1_mode);
 }
 
 void test_CFG_03_parse_all_units(void) {
     config_t cfg = {0};
     char ini1[] = "units=cm\r\n";
-    parse_config_ini(ini1, &cfg);
+    config_parse_ini(ini1, &cfg);
     TEST_ASSERT_EQUAL(0, cfg.units);
     char ini2[] = "units=m\r\n";
-    parse_config_ini(ini2, &cfg);
+    config_parse_ini(ini2, &cfg);
     TEST_ASSERT_EQUAL(1, cfg.units);
     char ini3[] = "units=ft\r\n";
-    parse_config_ini(ini3, &cfg);
+    config_parse_ini(ini3, &cfg);
     TEST_ASSERT_EQUAL(2, cfg.units);
 }
 
 void test_CFG_09_unix_newlines(void) {
     config_t cfg = {0};
     char ini[] = "[pyro]\npyro1_mode=speed\npyro1_value=42\n";
-    parse_config_ini(ini, &cfg);
+    config_parse_ini(ini, &cfg);
     TEST_ASSERT_EQUAL(PYRO_MODE_SPEED, cfg.pyro1_mode);
     TEST_ASSERT_EQUAL(42, cfg.pyro1_value);
 }
@@ -858,7 +852,7 @@ void test_CFG_09_unix_newlines(void) {
 void test_CFG_02_no_section_header(void) {
     config_t cfg = {0};
     char ini[] = "pyro2_mode=fallen\r\npyro2_value=100\r\n";
-    parse_config_ini(ini, &cfg);
+    config_parse_ini(ini, &cfg);
     TEST_ASSERT_EQUAL(PYRO_MODE_FALLEN, cfg.pyro2_mode);
     TEST_ASSERT_EQUAL(100, cfg.pyro2_value);
 }
@@ -866,21 +860,21 @@ void test_CFG_02_no_section_header(void) {
 void test_CFG_08_unknown_keys(void) {
     config_t cfg = {0};
     char ini[] = "foo=bar\r\npyro1_value=55\r\nbaz=qux\r\n";
-    parse_config_ini(ini, &cfg);
+    config_parse_ini(ini, &cfg);
     TEST_ASSERT_EQUAL(55, cfg.pyro1_value);
 }
 
 void test_CFG_04_unknown_mode(void) {
     config_t cfg = {0};
     char ini[] = "pyro1_mode=bogus\r\n";
-    parse_config_ini(ini, &cfg);
+    config_parse_ini(ini, &cfg);
     TEST_ASSERT_EQUAL(0, cfg.pyro1_mode);
 }
 
 void test_CFG_02_empty_string(void) {
     config_t cfg = {0};
     char ini[] = "";
-    parse_config_ini(ini, &cfg);
+    config_parse_ini(ini, &cfg);
     TEST_ASSERT_EQUAL(0, cfg.pyro1_mode);
     TEST_ASSERT_EQUAL(0, cfg.pyro2_value);
 }
@@ -888,14 +882,14 @@ void test_CFG_02_empty_string(void) {
 void test_CFG_09_no_trailing_newline(void) {
     config_t cfg = {0};
     char ini[] = "pyro1_value=123";
-    parse_config_ini(ini, &cfg);
+    config_parse_ini(ini, &cfg);
     TEST_ASSERT_EQUAL(123, cfg.pyro1_value);
 }
 
 void test_CFG_07_id_truncated(void) {
     config_t cfg = {0};
     char ini[] = "id=ABCDEFGHIJKLMNOP\r\n";
-    parse_config_ini(ini, &cfg);
+    config_parse_ini(ini, &cfg);
     TEST_ASSERT_EQUAL(8, strlen(cfg.id));
     TEST_ASSERT_EQUAL_STRING("ABCDEFGH", cfg.id);
 }
@@ -905,7 +899,7 @@ void test_CFG_06_preserves_unset(void) {
     cfg.pyro1_mode = PYRO_MODE_DELAY;
     cfg.pyro1_value = 99;
     char ini[] = "pyro2_mode=agl\r\npyro2_value=200\r\n";
-    parse_config_ini(ini, &cfg);
+    config_parse_ini(ini, &cfg);
     /* pyro1 fields unchanged */
     TEST_ASSERT_EQUAL(PYRO_MODE_DELAY, cfg.pyro1_mode);
     TEST_ASSERT_EQUAL(99, cfg.pyro1_value);
@@ -918,7 +912,7 @@ void test_CFG_08_comment_lines(void) {
     config_t cfg = {0};
     /* Lines without '=' are skipped (section headers, comments) */
     char ini[] = "[pyro]\r\n; this is a comment\r\npyro1_value=77\r\n# another comment\r\n";
-    parse_config_ini(ini, &cfg);
+    config_parse_ini(ini, &cfg);
     TEST_ASSERT_EQUAL(77, cfg.pyro1_value);
 }
 
@@ -1087,7 +1081,7 @@ static int count_pyro_sentences(void) {
     return n;
 }
 
-/* [PYR-CONT-01, FLT-BOOT-15, REV-04] A lead that lets go while the rocket
+/* [PYR-CONT-01, FLT-BOOT-15] A lead that lets go while the rocket
  * waits on the pad must change what the buzzer says, and a fault fixed
  * without a power cycle must stop being reported. */
 void test_REV04_pad_fault_after_boot_is_announced(void) {
@@ -1127,7 +1121,7 @@ void test_REV_NEW_disabled_channel_is_not_a_fault(void) {
     TEST_ASSERT_EQUAL(BR_OK_TO_FLY, ctx.last_reason);
 }
 
-/* [FLT-LAUNCH-03, REV-07] T+0 is the first sample above 50 cm, not the
+/* [FLT-LAUNCH-03] T+0 is the first sample above 50 cm, not the
  * moment the detector tripped a hundred feet later. */
 void test_REV07_launch_backdates_to_first_rise(void) {
     flight_context_t ctx = {0};
@@ -1160,7 +1154,7 @@ void test_REV07_launch_backdates_to_first_rise(void) {
     TEST_ASSERT_TRUE_MESSAGE(ctx.launch_time >= first_rise_ms && ctx.launch_time <= first_rise_ms + 20u, m);
 }
 
-/* [TEL-05, REV-08] A board that failed its power-up test is not on the pad
+/* [TEL-05] A board that failed its power-up test is not on the pad
  * waiting to fly. The ground-station contract has no state for it, so it
  * sends no $PYRO sentence at all -- state 0 would read as "ready". */
 void test_REV08_fault_sends_no_state_sentence(void) {
@@ -1185,7 +1179,7 @@ void test_REV08_fault_sends_no_state_sentence(void) {
     TEST_ASSERT_NULL_MESSAGE(strstr(mock_uart_buf, "$PYRO,"), "nor may a board still booting");
 }
 
-/* [WEB-UI-04, REV-09] Flight time stops at the landing. Read ten minutes
+/* [WEB-UI-04] Flight time stops at the landing. Read ten minutes
  * later it is still the flight, not the time since launch. */
 void test_REV09_flight_time_freezes_at_landing(void) {
     flight_context_t ctx = {0};
@@ -1220,7 +1214,7 @@ void test_REV09_flight_time_freezes_at_landing(void) {
     TEST_ASSERT_INT_WITHIN(100, (long)(landed_at - ctx.launch_time), at_landing);
 }
 
-/* [SYS-DEPLOY-01, DAT-04, REV-03] A board that takes the fire call and
+/* [SYS-DEPLOY-01, DAT-04] A board that takes the fire call and
  * energises nothing has not deployed anything, and must not say it has. */
 void test_REV03_refused_fire_is_not_recorded_as_fired(void) {
     flight_context_t ctx = {0};
@@ -1278,7 +1272,149 @@ void test_REV03_refused_retry_is_asked_once(void) {
     TEST_ASSERT_TRUE(ctx.pyro1_refused);
 }
 
-/* [CFG-SUBSYS-01, REV-12] telem_rate_hz is the in-flight cadence. */
+/* A drogue fired on DELAY 0 in free fall, its pulse ending at 500 ms, then
+ * the board's reading of channel 1: none (neither good nor open) for
+ * unknown_ms after the fire, then open or still present. */
+static void fly_post_fire_verify(flight_context_t *ctx, uint32_t unknown_ms, bool opened) {
+    config_set_defaults(&ctx->config);
+    ctx->config.pyro1_mode = PYRO_MODE_DELAY;
+    ctx->config.pyro1_value = 0;
+    ctx->config.pyro2_mode = PYRO_MODE_NONE;
+    ctx->config.landing_timeout = 0;
+    ctx->current_state = FALLING;
+    ctx->apogee_detected = true;
+    ctx->pyros_armed = true;
+    ctx->pyro1_continuity_good = true;
+    pp_test_prime(101325);
+    pp_ground_track(false);
+    ctx->last_altitude = 50000;
+    mock_time_ms = 0;
+    for (uint32_t t = 0; t <= 1500; t += 20) {
+        if (ctx->pyro1_fired) {
+            uint32_t since = mock_time_ms - ctx->pyro1_fire_time;
+            bool known = since >= unknown_ms;
+            mock_pyro.p1_good = known && !opened;
+            mock_pyro.p1_open = known && opened;
+            mock_pyro.firing = since < 500;
+        }
+        mock_pressure.pressure_pa = 101325.0f - (float)(50000 - 2 * (int32_t)t) * PA_PER_CM;
+        mock_time_ms += 20;
+        ctx->current_state = step(ctx, mock_time_ms);
+    }
+    TEST_ASSERT_TRUE(ctx->pyro1_fired);
+}
+
+/* [PYR-VERIFY-01, PYR-REFIRE-01] The verdict is the board's first reading
+ * after the pulse, however long that check takes: MK1A's runs 100 ms past the
+ * pulse's end. A misfire found then is a misfire. */
+void test_PYR_VERIFY_01_a_late_verdict_of_a_misfire_is_heard(void) {
+    flight_context_t ctx = {0};
+    fly_post_fire_verify(&ctx, 640u, false);
+    TEST_ASSERT_TRUE_MESSAGE(ctx.pyro1_verify_fail, "a channel still present after its fire was not called a misfire");
+}
+
+/* [PYR-VERIFY-01, PYR-REFIRE-02] And no reading is no verdict: a channel the
+ * board has not yet checked is not a misfire, and an opened one never is. */
+void test_PYR_VERIFY_01_no_misfire_from_a_channel_not_yet_checked(void) {
+    flight_context_t ctx = {0};
+    fly_post_fire_verify(&ctx, 640u, true);
+    TEST_ASSERT_FALSE_MESSAGE(ctx.pyro1_verify_fail, "a fired channel that opened was called a misfire");
+}
+
+/* [FLT-EMRG-01, CFG-04] The ladder brings forward a main the configuration
+ * has. A channel set to none has nothing on it to fire, whatever its
+ * continuity reads. */
+void test_FLT_EMRG_01_ladder_never_fires_a_disabled_channel(void) {
+    flight_context_t ctx = {0};
+    config_set_defaults(&ctx.config);
+    ctx.config.pyro1_mode = PYRO_MODE_DELAY;
+    ctx.config.pyro2_mode = PYRO_MODE_NONE;
+    ctx.config.landing_timeout = 0;
+    ctx.current_state = FALLING;
+    ctx.apogee_detected = true;
+    ctx.pyros_armed = true;
+    ctx.pyro1_fired = true;
+    ctx.pyro1_fire_time = 1;
+    ctx.pyro1_continuity_good = true;
+    ctx.pyro2_continuity_good = true;
+    mock_pyro.p1_good = false; /* the drogue's charge lit: no retry */
+    mock_pyro.p1_open = true;
+    pp_test_prime(101325);
+    pp_ground_track(false);
+    ctx.last_altitude = 50000;
+    mock_time_ms = 0;
+
+    descend_steady(&ctx, 50000, 5000, 5000); /* 50 m/s: no drogue explains it */
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_pyro.fire_count, "the ladder fired a channel configured as none");
+    TEST_ASSERT_FALSE(ctx.pyro2_fired);
+    TEST_ASSERT_FALSE(ctx.main_forced);
+}
+
+/* [PYR-CONT-01] At least once a second, on the loop's 20 ms grid. */
+void test_PYR_CONT_01_pad_check_at_least_once_a_second(void) {
+    flight_context_t ctx = {0};
+    boot_to_pad_idle(&ctx);
+    int count = mock_pyro.sample_count;
+    uint32_t last = mock_time_ms, worst = 0;
+    for (int i = 0; i < 500; i++) {
+        mock_time_ms += 20;
+        ctx.current_state = step(&ctx, mock_time_ms);
+        if (mock_pyro.sample_count != count) {
+            count = mock_pyro.sample_count;
+            if (mock_time_ms - last > worst && last != 0)
+                worst = mock_time_ms - last;
+            last = mock_time_ms;
+        }
+    }
+    char m[64];
+    snprintf(m, sizeof(m), "%u ms between continuity checks", (unsigned)worst);
+    TEST_ASSERT_TRUE_MESSAGE(worst > 0 && worst <= 1000u, m);
+}
+
+/* [FLT-ASC-03] Thrust is an ASCENT report: the climb's last flag is not
+ * logged against the samples of the descent. */
+void test_FLT_ASC_03_no_thrust_logged_in_descent(void) {
+    flight_context_t ctx = {0};
+    config_set_defaults(&ctx.config);
+    ctx.config.landing_timeout = 0;
+    ctx.current_state = FALLING;
+    ctx.apogee_detected = true;
+    ctx.under_thrust = true;
+    pp_test_prime(101325);
+    pp_ground_track(false);
+    ctx.last_altitude = 50000;
+    mock_time_ms = 0;
+    hal_log_start(&ctx.config, 101325);
+    descend_steady(&ctx, 50000, 2000, 3000);
+    hal_log_stop();
+
+    static char csv[65536];
+    int n = test_flight_log_csv(csv, (int)sizeof(csv));
+    TEST_ASSERT_TRUE(n > 0);
+    int rows = 0;
+    for (char *line = strtok(csv, "\n"); line; line = strtok(NULL, "\n")) {
+        unsigned long tm;
+        long pa, alt;
+        int st, thrust;
+        if (sscanf(line, "%lu,%ld,%ld,%d,%d", &tm, &pa, &alt, &st, &thrust) != 5 || st == ASCENT)
+            continue;
+        rows++;
+        TEST_ASSERT_EQUAL_MESSAGE(0, thrust, line);
+    }
+    TEST_ASSERT_TRUE_MESSAGE(rows > 0, "no descent rows logged");
+}
+
+/* A state number the machine does not know cannot be flown, and the board
+ * says so: back to PAD_IDLE would re-open launch detection mid-flight. */
+void test_dispatch_of_an_unknown_state_is_a_fault(void) {
+    flight_context_t ctx = {0};
+    config_set_defaults(&ctx.config);
+    ctx.current_state = (flight_state_t)(STATE_COUNT + 3);
+    TEST_ASSERT_EQUAL(FAULT, dispatch_state(&ctx, 1000));
+}
+
+/* [CFG-SUBSYS-01] telem_rate_hz is the in-flight cadence. */
 void test_REV12_telem_rate_hz_sets_the_flight_cadence(void) {
     flight_context_t ctx = {0};
     config_set_defaults(&ctx.config);
@@ -1607,6 +1743,12 @@ int main(void) {
     RUN_TEST(test_REV09_flight_time_freezes_at_landing);
     RUN_TEST(test_REV03_refused_fire_is_not_recorded_as_fired);
     RUN_TEST(test_REV03_refused_retry_is_asked_once);
+    RUN_TEST(test_PYR_VERIFY_01_a_late_verdict_of_a_misfire_is_heard);
+    RUN_TEST(test_PYR_VERIFY_01_no_misfire_from_a_channel_not_yet_checked);
+    RUN_TEST(test_FLT_EMRG_01_ladder_never_fires_a_disabled_channel);
+    RUN_TEST(test_PYR_CONT_01_pad_check_at_least_once_a_second);
+    RUN_TEST(test_FLT_ASC_03_no_thrust_logged_in_descent);
+    RUN_TEST(test_dispatch_of_an_unknown_state_is_a_fault);
     RUN_TEST(test_REV12_telem_rate_hz_sets_the_flight_cadence);
 
     /* On USB */

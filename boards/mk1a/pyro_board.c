@@ -11,7 +11,7 @@
 #include "board_if.h"
 #include "board_pins.h"
 #include "board_support.h"
-#include "pico/time.h"
+#include "pico/stdlib.h"
 
 /* See THEORY_OF_OPERATION.md "Continuity check". */
 #define PATH_TO_GROUND_MAX_COUNTS 500
@@ -36,6 +36,7 @@ static struct {
     uint32_t due_ms;
     uint16_t presence_counts[2];
     bool complete;
+    bool fired_since[2]; /* fired, and no check begun after its pulse has ended */
     pyro_continuity_t result[2];
 } check;
 
@@ -85,8 +86,10 @@ static void check_step(uint32_t now_ms) {
     case CHECK_SHORTS: {
         uint16_t short_counts[2];
         read_sense(short_counts);
-        for (int i = 0; i < 2; i++)
+        for (int i = 0; i < 2; i++) {
             check.result[i] = classify(check.presence_counts[i], short_counts[i]);
+            check.fired_since[i] = false;
+        }
         check.complete = true;
         check.phase = CHECK_IDLE;
         check.due_ms = now_ms + IDLE_BETWEEN_CHECKS_MS;
@@ -107,6 +110,7 @@ void pyro_init(void) {
     adc_gpio_init(BOARD_PIN_PYRO2_SENSE);
     pulse.channel = 0;
     check.complete = false;
+    check.fired_since[0] = check.fired_since[1] = false;
     begin_check(to_ms_since_boot(get_absolute_time()));
 }
 
@@ -119,16 +123,22 @@ void pyro_get(uint8_t channel, pyro_continuity_t *out) {
         *out = (pyro_continuity_t){.raw_adc = 0, .good = false, .open = true, .shorted = false};
         return;
     }
+    if (check.fired_since[channel - 1]) {
+        *out = (pyro_continuity_t){0}; /* no verdict yet [PYR-VERIFY-01] */
+        return;
+    }
     *out = check.result[channel - 1];
 }
 
+/* [PYR-DEPLOY-02] One channel at a time, whatever the caller checked. */
 void pyro_fire(uint8_t channel) {
-    if (channel != 1 && channel != 2)
+    if ((channel != 1 && channel != 2) || pulse.channel != 0)
         return;
     low_side(true);
     gpio_put(high_side_pin[channel - 1], 1);
     pulse.channel = channel;
     pulse.start_ms = to_ms_since_boot(get_absolute_time());
+    check.fired_since[channel - 1] = true;
 }
 
 /* See THEORY_OF_OPERATION.md "Firing" for why a check restarts at once. */

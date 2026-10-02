@@ -667,7 +667,7 @@ void test_DAT_06_csv_export(void) {
     TEST_ASSERT_TRUE_MESSAGE(strstr(buf, "LANDING") != NULL, "Missing LANDING in batch CSV");
 }
 
-/* [FLT-LAUNCH-03, REV-07] Launch time is the first sample above 50 cm, not
+/* [FLT-LAUNCH-03] Launch time is the first sample above 50 cm, not
  * the moment the detector tripped. In this profile the rocket clears 50 cm
  * about 200 ms in and 100 ft about a second later, so the interval is large
  * enough that a backdate of zero cannot pass for one. */
@@ -778,9 +778,8 @@ void test_PYR_ALT_02_cfg_range_beep(void) {
     memset(&last_buzzer_spec, 0, sizeof(last_buzzer_spec));
     buzzer_active_flag = true;
 
-    /* Run PAD_IDLE for 1500ms. update_continuity_and_buzzer() gates on
-     * now - last_cont_check > 1000ms AND buzzer_started == false.
-     * The buzzer code is set on the first continuity check after 1s. */
+    /* Run PAD_IDLE for 1500 ms: the buzzer code is set on the first
+     * continuity check, within the first second [PYR-CONT-01]. */
     for (uint32_t t = 0; t < 1500; t++) {
         mock_time_ms = t;
         update_mock_pressure(t);
@@ -932,7 +931,7 @@ static int read_flight_log(char *buf, int len) {
     return test_flight_log_csv(buf, len);
 }
 
-/* [GND-CAL-05, REV-11] The LAUNCH row carries the height the rocket had
+/* [GND-CAL-05] The LAUNCH row carries the height the rocket had
  * reached when the detector tripped -- a hundred feet -- not zero. */
 void test_REV11_launch_row_reports_the_height_reached(void) {
     load_sim_data("test_data/open_rocket_export.csv");
@@ -1037,7 +1036,7 @@ void test_FLT_LOG_07_the_three_logging_plans(void) {
         TEST_ASSERT_NOT_NULL_MESSAGE(log_row(log, events[k]), events[k]);
 }
 
-/* [PYR-DEPLOY-02, GND-TEST-02, REV-06] The ground test goes through the same
+/* [PYR-DEPLOY-02, GND-TEST-02] The ground test goes through the same
  * interlock as the flight: channel 2 may not be energised while channel 1's
  * pulse is still running through the shared element. */
 void test_REV06_ground_test_waits_for_the_other_channel(void) {

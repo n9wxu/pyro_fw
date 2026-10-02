@@ -521,14 +521,9 @@ bool hal_pressure_fifo_active(void) {
 
 /* ── Pyro ─────────────────────────────────────────────────────────── */
 
-/* ── The real channel operations ──────────────────────────────────
- *
- * Installed per channel by pyro_release_claim(), and only for a channel whose
- * pads it could claim. A channel Lua already holds gets the mocked table, and
- * these are then simply not reachable for it. See pad_claim.h.
- *
- * Not named *_vt on purpose. That suffix means "core1 can reach this" and
- * prove_core0.py folds those into the core1 proof; these run on core0 only. */
+/* The real channel operations, installed by pyro_release_claim() [DD-020].
+ * Not named *_vt: that suffix tells prove_core0.py core1 can reach a function,
+ * and these run on core0 only. */
 static void real_fire(uint8_t channel) {
     pyro_fire(channel);
 }
@@ -548,15 +543,11 @@ static bool real_fault(uint8_t channel) {
 
 static const pyro_ch_ops_t real_pyro_ops = {real_fire, real_get, real_fault};
 
-/* Said in three places, because each reaches a different audience: the flight
- * log during the flight, the telemetry downlink at the time, and the counter
- * on /api/status afterwards. The log row is the one that matters -- a flight
- * log showing PYRO1 with nothing beside it is a record of an ignition that
- * did not happen. */
+/* [DD-019] The flight log, the downlink and /api/status's counter. */
 static void report_mock(uint8_t channel, const char *what) {
     char note[48];
     snprintf(note, sizeof(note), "pyro%u %s: released to Lua", (unsigned)channel, what);
-    /* [DAT-02, N11] On the flight log's clock, since T+0, like every other row. */
+    /* [DAT-02] On the flight log's clock, since T+0. */
     const flight_context_t *fc = flight_get_context();
     uint32_t now = to_ms_since_boot(get_absolute_time());
     hal_log_mock(fc ? flight_elapsed_ms(fc, now) : now, note);
@@ -576,11 +567,7 @@ int hal_pyro_claim_channels(uint32_t (*pads_of)(uint8_t channel)) {
 }
 
 void hal_pyro_sample(void) {
-    /* The continuity stimulus drives the COMMON element, which is Lua's
-     * exactly when both channels are released. Sampling then would put core0
-     * and core1 on the same pad, and there would be nothing left to measure
-     * anyway. */
-    if (pyro_release_all()) {
+    if (pyro_release_all()) { /* the common is Lua's [DD-019] */
         return;
     }
     pyro_sample();
@@ -626,10 +613,7 @@ void hal_pyro_fire(uint8_t channel) {
     pyro_ch(channel)->fire(channel);
 }
 void hal_pyro_update(uint32_t now_ms) {
-    /* Same argument as hal_pyro_sample(): MK1A's background sense cycle and
-     * MK1C's arm pump both drive the common, and with both channels released
-     * there is nothing to arm and nothing to sense. */
-    if (pyro_release_all()) {
+    if (pyro_release_all()) { /* the common is Lua's [DD-019] */
         return;
     }
     pyro_update(now_ms);

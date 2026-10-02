@@ -1,9 +1,6 @@
 /*
- * The pad ownership table. See pad_claim.h.
- *
- * Deliberately free of every other header: it is linked into the firmware,
- * the simulator and the host tests, and it decides something all three have
- * to agree about.
+ * No other header: the firmware, the simulator and the host tests all link
+ * this, and must agree on what it decides.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -24,9 +21,8 @@ bool pad_claim_take(uint32_t pads, pad_owner_t who) {
         return false;
     }
 
-    /* Checked whole before anything is written. A partial claim would leave
-     * pads owned by someone who believes the claim failed, which is worse
-     * than the conflict it was meant to prevent. */
+    /* Checked whole before anything is written: a partial claim would leave
+     * pads owned by someone who believes the claim failed. */
     for (int i = 0; i < PAD_CLAIM_MAX_GPIO; i++) {
         if ((pads & PAD(i)) && owner[i] != PAD_FREE && owner[i] != (uint8_t)who) {
             return false;

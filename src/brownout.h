@@ -1,16 +1,6 @@
 /*
- * Surviving a power event in flight.
- *
- * A brownout is electrically a power cycle: the RP2040's brown-out detector
- * drives POR, every RAM contents and every watchdog scratch register is gone,
- * and the reset registers cannot tell a brownout from someone plugging the
- * battery in. So the reset cause alone can never answer "did we just fall out
- * of the sky and come back". It narrows the question to "this was a power
- * event"; a marker written to flash while the board sat on the pad, plus what
- * the barometer says now, answers the rest.
- *
- * The decision is a pure function so the whole matrix can be tested on the
- * host, including the cases that would need a rocket to reproduce.
+ * Surviving a power event in flight [FLT-BROWN-01..06]: the pad marker, and
+ * the verdict on a boot, as a pure function. See DD-026.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -27,12 +17,7 @@ typedef enum {
     RESET_DEBUG,
 } reset_cause_t;
 
-/* ── The pad marker ───────────────────────────────────────────────
- *
- * Written once, after the board has sat still on the pad for ten seconds, and
- * never during ascent. Launch shock is the most likely cause of the brownout
- * this exists to survive -- a battery connector bouncing -- and a flash write
- * in progress is the worst moment to lose power. */
+/* ── The pad marker [FLT-BROWN-01, DD-033] ───────────────────────── */
 #define PAD_MARKER_MAGIC 0x50594d31u /* "PYM1" */
 #define PAD_MARKER_PATH "pad.mkr"
 #define PAD_MARKER_VERSION 2u /* 2: the fit's sigma [DD-048] */
@@ -58,16 +43,13 @@ typedef enum {
     RECOVER_AMBIGUOUS, /* reads high but is not moving: treated as cold */
 } recovery_t;
 
-/* Above the recorded ground by more than this, the board is not where it was
- * when the marker was written. 30 m is well clear of the barometric noise
- * that put the launch trigger at 100 ft. */
+/* Above the marker's ground by more than this, the board has moved: 30 m is
+ * well clear of the barometric noise that set the launch trigger at 100 ft. */
 #define RECOVER_ALT_CM 3000
 
-/* Nothing in flight is this slow. The motion test is what makes the altitude
- * test safe: weather can drift the pressure by more than 30 m of altitude
- * between the marker being written and the board being switched on again, and
- * without this a drifting barometer on the pad would look airborne -- which
- * would arm the pyros of a rocket somebody is standing next to. */
+/* [FLT-BROWN-03] Nothing in flight is this slow. Weather can drift a pad by
+ * more than 30 m between marker and power-up; motion is what tells it from a
+ * flight. */
 #define RECOVER_SPEED_CMS 500
 
 /* speed_cms is signed: positive is up. */

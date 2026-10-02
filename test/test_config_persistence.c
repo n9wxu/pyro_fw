@@ -1,6 +1,6 @@
 /*
- * Config persistence and runtime reload tests.
- * Verifies config save/load cycle and runtime reload safety.
+ * Config persistence, and the runtime reload that only the pad allows.
+ *
  * SPDX-License-Identifier: MIT
  */
 #include "unity.h"
@@ -17,59 +17,53 @@ void setUp(void) {
 
 void tearDown(void) {}
 
-/* ── Test 1: Config persists across power cycle (save → load) ── */
+/* Boot to PAD_IDLE through the HAL's ticks: the mock sensor feeds the
+ * pressure layer from hal_tasks_tick(), and calibration needs its samples. */
+static void advance_to_pad_idle(flight_context_t *ctx) {
+    mock_time_ms = 0;
+    while (ctx->current_state != PAD_IDLE && mock_time_ms < 30000) {
+        hal_tasks_tick(mock_time_ms);
+        ctx->current_state = dispatch_state(ctx, mock_time_ms);
+        mock_time_ms += 100;
+    }
+    TEST_ASSERT_EQUAL(PAD_IDLE, ctx->current_state);
+}
+
+static void save_config_named(const char *id) {
+    config_t cfg;
+    config_set_defaults(&cfg);
+    strncpy(cfg.id, id, 8);
+    cfg.id[8] = '\0';
+    hal_config_save(&cfg);
+}
+
+/* [FLT-BOOT-02] */
 void test_config_persists_across_power_cycle(void) {
-    /* Simulate first boot: create custom config and save */
     config_t cfg1;
     config_set_defaults(&cfg1);
     strncpy(cfg1.id, "TEST001", 8);
     cfg1.id[8] = '\0';
     cfg1.pyro1_mode = PYRO_MODE_FALLEN;
     cfg1.pyro1_value = 100;
-    cfg1.units = 2; /* ft */
+    cfg1.units = 2;
+    TEST_ASSERT_EQUAL(0, hal_config_save(&cfg1));
 
-    int save_result = hal_config_save(&cfg1);
-    TEST_ASSERT_EQUAL(0, save_result);
-
-    /* Simulate power cycle: load config into new struct */
     config_t cfg2;
     memset(&cfg2, 0, sizeof(cfg2));
-    int load_result = hal_config_load(&cfg2);
-    TEST_ASSERT_EQUAL(0, load_result);
-
-    /* Verify all fields persisted */
+    TEST_ASSERT_EQUAL(0, hal_config_load(&cfg2));
     TEST_ASSERT_EQUAL_STRING("TEST001", cfg2.id);
     TEST_ASSERT_EQUAL(PYRO_MODE_FALLEN, cfg2.pyro1_mode);
     TEST_ASSERT_EQUAL(100, cfg2.pyro1_value);
     TEST_ASSERT_EQUAL(2, cfg2.units);
 }
 
-/* ── Test 2: Runtime reload succeeds in PAD_IDLE ── */
 void test_config_reload_succeeds_in_pad_idle(void) {
-    /* Initialize flight context in PAD_IDLE */
     flight_context_t ctx;
     flight_init(&ctx);
-    /* Advance to PAD_IDLE state */
-    mock_time_ms = 0;
-    while (ctx.current_state != PAD_IDLE && mock_time_ms < 30000) {
-        /* Tick the HAL, not just the state machine.
-         *
-         * The mock sensor feeds pp from hal_tasks_tick(); without it no
-         * sample is ever produced and calibration cannot finish. These
-         * loops used to reach PAD_IDLE anyway because BOOT_CALIBRATE timed
-         * out after 10 s and forced it -- on a board that had measured
-         * nothing. That path is a FAULT now, so the sensor has to work. */
-        hal_tasks_tick(mock_time_ms);
-        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
-        mock_time_ms += 100;
-    }
-    TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
-
-    /* Verify initial config */
+    advance_to_pad_idle(&ctx);
     TEST_ASSERT_EQUAL_STRING("PYRO001", ctx.config.id);
     TEST_ASSERT_EQUAL(PYRO_MODE_DELAY, ctx.config.pyro1_mode);
 
-    /* Write new config to filesystem */
     config_t new_cfg;
     config_set_defaults(&new_cfg);
     strncpy(new_cfg.id, "RELOAD1", 8);
@@ -78,152 +72,82 @@ void test_config_reload_succeeds_in_pad_idle(void) {
     new_cfg.pyro1_value = 500;
     hal_config_save(&new_cfg);
 
-    /* Reload config (should succeed in PAD_IDLE) */
-    int reload_result = flight_config_reload(&ctx);
-    TEST_ASSERT_EQUAL(0, reload_result);
-
-    /* Verify config updated in running system */
+    TEST_ASSERT_EQUAL(CFG_APPLIED, flight_config_reload(&ctx));
     TEST_ASSERT_EQUAL_STRING("RELOAD1", ctx.config.id);
     TEST_ASSERT_EQUAL(PYRO_MODE_AGL, ctx.config.pyro1_mode);
     TEST_ASSERT_EQUAL(500, ctx.config.pyro1_value);
 }
 
-/* ── Test 3: Runtime reload rejected during ASCENT ── */
+/* Off the pad the running config is the flight's, in every state. */
+static void assert_reload_refused_in(flight_state_t st) {
+    flight_context_t ctx;
+    flight_init(&ctx);
+    ctx.current_state = st;
+    save_config_named("UNSAFE");
+    TEST_ASSERT_EQUAL(CFG_NOT_ON_PAD, flight_config_reload(&ctx));
+    TEST_ASSERT_EQUAL_STRING("PYRO001", ctx.config.id);
+}
+
 void test_config_reload_rejected_during_ascent(void) {
-    flight_context_t ctx;
-    flight_init(&ctx);
-
-    /* Force state to ASCENT */
-    ctx.current_state = ASCENT;
-
-    /* Write new config to filesystem */
-    config_t new_cfg;
-    config_set_defaults(&new_cfg);
-    strncpy(new_cfg.id, "HACKED!", 8);
-    new_cfg.id[8] = '\0';
-    hal_config_save(&new_cfg);
-
-    /* Attempt reload (should fail in ASCENT) */
-    int reload_result = flight_config_reload(&ctx);
-    TEST_ASSERT_EQUAL(-1, reload_result);
-
-    /* Verify old config unchanged */
-    TEST_ASSERT_EQUAL_STRING("PYRO001", ctx.config.id);
+    assert_reload_refused_in(ASCENT);
 }
 
-/* ── Test 4: Runtime reload rejected during FALLING (descent) ── */
 void test_config_reload_rejected_during_descent(void) {
-    flight_context_t ctx;
-    flight_init(&ctx);
-    ctx.current_state = FALLING;
-
-    config_t new_cfg;
-    config_set_defaults(&new_cfg);
-    strncpy(new_cfg.id, "BADCFG", 7);
-    new_cfg.id[7] = '\0';
-    hal_config_save(&new_cfg);
-
-    int reload_result = flight_config_reload(&ctx);
-    TEST_ASSERT_EQUAL(-1, reload_result);
-    TEST_ASSERT_EQUAL_STRING("PYRO001", ctx.config.id);
+    assert_reload_refused_in(FALLING);
 }
 
-/* ── Test 5: Runtime reload rejected during LANDED ── */
 void test_config_reload_rejected_during_landed(void) {
-    flight_context_t ctx;
-    flight_init(&ctx);
-    ctx.current_state = LANDED;
-
-    config_t new_cfg;
-    config_set_defaults(&new_cfg);
-    strncpy(new_cfg.id, "UNSAFE", 7);
-    new_cfg.id[7] = '\0';
-    hal_config_save(&new_cfg);
-
-    int reload_result = flight_config_reload(&ctx);
-    TEST_ASSERT_EQUAL(-1, reload_result);
-    TEST_ASSERT_EQUAL_STRING("PYRO001", ctx.config.id);
+    assert_reload_refused_in(LANDED);
 }
 
-/* ── Test 6: Invalid config rejected on reload ── */
+/* An out-of-range mode cannot reach the reload's validation through a file:
+ * config_serialize_ini() writes config_mode_name(99), "none", and the parser
+ * maps any unrecognised name to NONE. So the property is stronger than a
+ * rejection: the board ends with a valid config, and the channel it could not
+ * name never fires. */
 void test_config_reload_normalises_invalid_pyro_mode(void) {
     flight_context_t ctx;
     flight_init(&ctx);
+    advance_to_pad_idle(&ctx);
 
-    /* Advance to PAD_IDLE */
-    mock_time_ms = 0;
-    while (ctx.current_state != PAD_IDLE && mock_time_ms < 30000) {
-        /* Tick the HAL, not just the state machine.
-         *
-         * The mock sensor feeds pp from hal_tasks_tick(); without it no
-         * sample is ever produced and calibration cannot finish. These
-         * loops used to reach PAD_IDLE anyway because BOOT_CALIBRATE timed
-         * out after 10 s and forced it -- on a board that had measured
-         * nothing. That path is a FAULT now, so the sensor has to work. */
-        hal_tasks_tick(mock_time_ms);
-        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
-        mock_time_ms += 100;
-    }
-
-    /* An out-of-range mode cannot reach flight_config_reload()'s validation
-     * through a file, because both ends of the round trip normalise it:
-     * config_serialize_ini() writes config_mode_name(99), which is "none",
-     * and parse_mode() maps any unrecognised string to NONE. The -3 branch
-     * is a backstop against a corrupt in-memory config, not something this
-     * path can trigger.
-     *
-     * So the property to hold is stronger than rejection: the board ends up
-     * with a VALID config, and the channel it could not name is one that
-     * never fires [REV-02]. */
     config_t bad_cfg;
     config_set_defaults(&bad_cfg);
     bad_cfg.pyro1_mode = 99;
     hal_config_save(&bad_cfg);
 
-    int reload_result = flight_config_reload(&ctx);
-    TEST_ASSERT_EQUAL(0, reload_result);
-
-    TEST_ASSERT_LESS_OR_EQUAL(PYRO_MODE_DELAY, ctx.config.pyro1_mode);
+    TEST_ASSERT_EQUAL(CFG_APPLIED, flight_config_reload(&ctx));
     TEST_ASSERT_EQUAL(PYRO_MODE_NONE, ctx.config.pyro1_mode);
 }
 
-/* ── Test 7: Config reload fails if file missing ── */
+/* The in-memory backstop the file path cannot reach. */
+void test_config_apply_rejects_an_invalid_config(void) {
+    flight_context_t ctx;
+    flight_init(&ctx);
+    advance_to_pad_idle(&ctx);
+    config_t bad_cfg;
+    config_set_defaults(&bad_cfg);
+    bad_cfg.pyro2_mode = 99;
+    TEST_ASSERT_EQUAL(CFG_INVALID, flight_config_apply(&ctx, &bad_cfg));
+    bad_cfg.pyro2_mode = PYRO_MODE_NONE;
+    bad_cfg.units = 3;
+    TEST_ASSERT_EQUAL(CFG_INVALID, flight_config_apply(&ctx, &bad_cfg));
+    TEST_ASSERT_EQUAL_STRING("PYRO001", ctx.config.id);
+}
+
 void test_config_reload_fails_if_file_missing(void) {
     flight_context_t ctx;
     flight_init(&ctx);
-
-    /* Advance to PAD_IDLE */
-    mock_time_ms = 0;
-    while (ctx.current_state != PAD_IDLE && mock_time_ms < 30000) {
-        /* Tick the HAL, not just the state machine.
-         *
-         * The mock sensor feeds pp from hal_tasks_tick(); without it no
-         * sample is ever produced and calibration cannot finish. These
-         * loops used to reach PAD_IDLE anyway because BOOT_CALIBRATE timed
-         * out after 10 s and forced it -- on a board that had measured
-         * nothing. That path is a FAULT now, so the sensor has to work. */
-        hal_tasks_tick(mock_time_ms);
-        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
-        mock_time_ms += 100;
-    }
-
-    /* Clear filesystem (delete config.ini) */
-    mock_reset_all();
-
-    /* Reload should fail */
-    int reload_result = flight_config_reload(&ctx);
-    TEST_ASSERT_EQUAL(-2, reload_result); /* Load failed */
+    advance_to_pad_idle(&ctx);
+    mock_reset_all(); /* the filesystem with it */
+    TEST_ASSERT_EQUAL(CFG_LOAD_FAILED, flight_config_reload(&ctx));
 }
 
-/* ── Test 8: Multiple config changes persist correctly ── */
 void test_multiple_config_changes_persist(void) {
-    /* Change 1 */
     config_t cfg1;
     config_set_defaults(&cfg1);
     cfg1.pyro1_value = 100;
     hal_config_save(&cfg1);
 
-    /* Change 2 */
     config_t cfg2;
     config_set_defaults(&cfg2);
     hal_config_load(&cfg2);
@@ -231,23 +155,19 @@ void test_multiple_config_changes_persist(void) {
     cfg2.pyro2_value = 300;
     hal_config_save(&cfg2);
 
-    /* Change 3 */
     config_t cfg3;
     config_set_defaults(&cfg3);
     hal_config_load(&cfg3);
     cfg3.pyro1_value = 400;
     hal_config_save(&cfg3);
 
-    /* Final load should have latest values */
     config_t final;
     hal_config_load(&final);
     TEST_ASSERT_EQUAL(400, final.pyro1_value);
-    TEST_ASSERT_EQUAL(300, final.pyro2_value); /* from change 2 */
+    TEST_ASSERT_EQUAL(300, final.pyro2_value);
 }
 
-/* ── Test 9: Config survives flight cycle ── */
 void test_config_survives_flight_cycle(void) {
-    /* Set custom config before flight */
     config_t pre_flight;
     config_set_defaults(&pre_flight);
     strncpy(pre_flight.id, "FLIGHT1", 8);
@@ -256,110 +176,64 @@ void test_config_survives_flight_cycle(void) {
     pre_flight.pyro1_value = 300;
     hal_config_save(&pre_flight);
 
-    /* Simulate flight */
     flight_context_t ctx;
     flight_init(&ctx);
     TEST_ASSERT_EQUAL_STRING("FLIGHT1", ctx.config.id);
 
-    /* After flight, simulate new boot */
-    mock_reset_all();
-    /* Re-save config since mock_reset_all() clears filesystem */
+    mock_reset_all(); /* a new boot; the file is put back, as flash keeps it */
     hal_config_save(&pre_flight);
 
     flight_context_t ctx2;
     flight_init(&ctx2);
-
-    /* Config should still be custom values */
     TEST_ASSERT_EQUAL_STRING("FLIGHT1", ctx2.config.id);
     TEST_ASSERT_EQUAL(PYRO_MODE_AGL, ctx2.config.pyro1_mode);
     TEST_ASSERT_EQUAL(300, ctx2.config.pyro1_value);
 }
 
-/* ── Test 10: Invalid units rejected on reload ── */
+/* As the pyro mode: units_to_str(5) writes "m", and the parser maps anything
+ * unrecognised to 1. */
 void test_config_reload_normalises_invalid_units(void) {
     flight_context_t ctx;
     flight_init(&ctx);
+    advance_to_pad_idle(&ctx);
 
-    /* Advance to PAD_IDLE */
-    mock_time_ms = 0;
-    while (ctx.current_state != PAD_IDLE && mock_time_ms < 30000) {
-        /* Tick the HAL, not just the state machine.
-         *
-         * The mock sensor feeds pp from hal_tasks_tick(); without it no
-         * sample is ever produced and calibration cannot finish. These
-         * loops used to reach PAD_IDLE anyway because BOOT_CALIBRATE timed
-         * out after 10 s and forced it -- on a board that had measured
-         * nothing. That path is a FAULT now, so the sensor has to work. */
-        hal_tasks_tick(mock_time_ms);
-        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
-        mock_time_ms += 100;
-    }
-
-    /* Same normalisation as the pyro-mode case above: units_to_str(5) writes
-     * "m" and parse_units() maps anything unrecognised to 1. */
     config_t bad_cfg;
     config_set_defaults(&bad_cfg);
-    bad_cfg.units = 5; /* only 0, 1, 2 are valid */
+    bad_cfg.units = 5;
     hal_config_save(&bad_cfg);
 
-    int reload_result = flight_config_reload(&ctx);
-    TEST_ASSERT_EQUAL(0, reload_result);
-
-    TEST_ASSERT_LESS_OR_EQUAL(2, ctx.config.units);
-    TEST_ASSERT_EQUAL(1, ctx.config.units); /* units_to_str's default: meters */
+    TEST_ASSERT_EQUAL(CFG_APPLIED, flight_config_reload(&ctx));
+    TEST_ASSERT_EQUAL(1, ctx.config.units);
 }
 
-/* ── Test 11: flight_get_context returns correct pointer ── */
 void test_flight_get_context_returns_correct_pointer(void) {
     flight_context_t ctx;
     flight_init(&ctx);
-
-    flight_context_t *retrieved = flight_get_context();
-    TEST_ASSERT_EQUAL_PTR(&ctx, retrieved);
+    TEST_ASSERT_EQUAL_PTR(&ctx, flight_get_context());
 }
 
-/* ── Test 12: flight_get_state returns correct state ── */
 void test_flight_get_state_returns_correct_state(void) {
     flight_context_t ctx;
     flight_init(&ctx);
-
-    /* Should start in BOOT_SETTLE */
     TEST_ASSERT_EQUAL(BOOT_SETTLE, flight_get_state());
-
-    /* Advance to PAD_IDLE */
-    mock_time_ms = 0;
-    while (ctx.current_state != PAD_IDLE && mock_time_ms < 30000) {
-        /* Tick the HAL, not just the state machine.
-         *
-         * The mock sensor feeds pp from hal_tasks_tick(); without it no
-         * sample is ever produced and calibration cannot finish. These
-         * loops used to reach PAD_IDLE anyway because BOOT_CALIBRATE timed
-         * out after 10 s and forced it -- on a board that had measured
-         * nothing. That path is a FAULT now, so the sensor has to work. */
-        hal_tasks_tick(mock_time_ms);
-        ctx.current_state = dispatch_state(&ctx, mock_time_ms);
-        mock_time_ms += 100;
-    }
-
+    advance_to_pad_idle(&ctx);
     TEST_ASSERT_EQUAL(PAD_IDLE, flight_get_state());
 }
 
-/* ── Test Runner ── */
 int main(void) {
     UNITY_BEGIN();
-
     RUN_TEST(test_config_persists_across_power_cycle);
     RUN_TEST(test_config_reload_succeeds_in_pad_idle);
     RUN_TEST(test_config_reload_rejected_during_ascent);
     RUN_TEST(test_config_reload_rejected_during_descent);
     RUN_TEST(test_config_reload_rejected_during_landed);
     RUN_TEST(test_config_reload_normalises_invalid_pyro_mode);
+    RUN_TEST(test_config_apply_rejects_an_invalid_config);
     RUN_TEST(test_config_reload_fails_if_file_missing);
     RUN_TEST(test_multiple_config_changes_persist);
     RUN_TEST(test_config_survives_flight_cycle);
     RUN_TEST(test_config_reload_normalises_invalid_units);
     RUN_TEST(test_flight_get_context_returns_correct_pointer);
     RUN_TEST(test_flight_get_state_returns_correct_state);
-
     return UNITY_END();
 }

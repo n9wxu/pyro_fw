@@ -35,9 +35,10 @@ typedef enum {
 
 static struct {
     check_phase_t phase;
-    uint32_t due_ms;
+    uint32_t due_ms, started_ms;
     uint16_t short_counts[2];
     bool complete;
+    bool fired_since[2]; /* fired, and no check begun after its pulse has ended */
     pyro_continuity_t result[2];
 } check;
 
@@ -77,6 +78,7 @@ static void begin_presence(uint32_t now_ms, bool read_shorts_first) {
     hold_high_sides_off();
     gpio_put(BOARD_PIN_PYRO_COMMON_EN, 1);
     check.phase = CHECK_PRESENCE;
+    check.started_ms = now_ms;
     check.due_ms = now_ms + PRESENCE_SETTLE_MS;
 }
 
@@ -84,11 +86,13 @@ static void finish_presence(uint32_t now_ms) {
     uint16_t presence[2];
     read_sense(presence);
     gpio_put(BOARD_PIN_PYRO_COMMON_EN, 0);
-    for (int i = 0; i < 2; i++)
+    for (int i = 0; i < 2; i++) {
         check.result[i] = classify(presence[i], check.short_counts[i]);
+        check.fired_since[i] = false;
+    }
     check.complete = true;
     check.phase = CHECK_IDLE;
-    check.due_ms = now_ms + CHECK_PERIOD_MS - PRESENCE_SETTLE_MS;
+    check.due_ms = check.started_ms + CHECK_PERIOD_MS; /* [PYR-CONT-01] start to start */
 }
 
 static void check_step(uint32_t now_ms) {
@@ -119,6 +123,7 @@ void pyro_init(void) {
     check.phase = CHECK_IDLE;
     check.due_ms = to_ms_since_boot(get_absolute_time()) + NODE_RECHARGE_MS;
     check.complete = false;
+    check.fired_since[0] = check.fired_since[1] = false;
     check.short_counts[0] = check.short_counts[1] = 4095;
 }
 
@@ -131,14 +136,22 @@ void pyro_get(uint8_t channel, pyro_continuity_t *out) {
         *out = (pyro_continuity_t){.raw_adc = 0, .good = false, .open = true, .shorted = false};
         return;
     }
+    if (check.fired_since[channel - 1]) {
+        *out = (pyro_continuity_t){0}; /* no verdict yet [PYR-VERIFY-01] */
+        return;
+    }
     *out = check.result[channel - 1];
 }
 
+/* [PYR-DEPLOY-02] One channel at a time, whatever the caller checked. */
 void pyro_fire(uint8_t channel) {
+    if ((channel != 1 && channel != 2) || pulse.channel != 0)
+        return;
     gpio_put(BOARD_PIN_PYRO_COMMON_EN, 1);
     gpio_put(high_side_pin[channel - 1], 1);
     pulse.channel = channel;
     pulse.start_ms = to_ms_since_boot(get_absolute_time());
+    check.fired_since[channel - 1] = true;
 }
 
 /* See THEORY_OF_OPERATION.md "Firing": the common stays on into a fresh
@@ -152,7 +165,7 @@ static void end_pulse(uint32_t now_ms) {
 void pyro_update(uint32_t now_ms) {
     if (pulse.channel == 0)
         check_step(now_ms);
-    else if (now_ms - pulse.start_ms >= FIRE_PULSE_MS)
+    else if (deadline_reached(now_ms, pulse.start_ms + FIRE_PULSE_MS))
         end_pulse(now_ms);
 }
 

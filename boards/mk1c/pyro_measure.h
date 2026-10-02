@@ -1,7 +1,7 @@
 /*
  * MK1C's two measurements: the quiescent read, with no stimulus, and the
- * presence test, with the bus biased. See THEORY_OF_OPERATION.md
- * "Presence test".
+ * presence test, with the bus biased.
+ * See THEORY_OF_OPERATION.md "Presence test".
  *
  * SPDX-License-Identifier: MIT
  */

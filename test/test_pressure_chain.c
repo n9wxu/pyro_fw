@@ -275,10 +275,12 @@ void test_T0_unprimed_boot(void) {
     TEST_ASSERT_INT_WITHIN(3, (int32_t)PAD_PA, pp_ground_pressure());
 }
 
-/* ── T0: today's numbers ──────────────────────────────────────────── */
+/* ── Bounds on what the chain delivers ─────────────────────────────
+ * Each bound is the measured value with margin, so a regression fails. */
 
-/* Speed noise on the pad: the speed the launch detector reads. */
-void test_T0_baseline_pad_speed_noise(void) {
+/* [FLT-LAUNCH-07] The speed the launch detector reads on the pad: its noise
+ * far under the 5 m/s it needs (0.2 m/s RMS measured). */
+void test_FLT_LAUNCH_07_pad_speed_noise_far_below_the_launch_speed(void) {
     boot_like_hardware(11);
     uint32_t t = 0;
     run_to_pad(&t);
@@ -294,8 +296,10 @@ void test_T0_baseline_pad_speed_noise(void) {
             last = ctx.last_sample;
         }
     }
-    printf("  BASELINE pad speed noise: %.2f m/s RMS over %d samples\n", sqrt(sq / n), n);
+    printf("  pad speed noise: %.2f m/s RMS over %d samples\n", sqrt(sq / n), n);
     TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
+    TEST_ASSERT_TRUE(n > 1000);
+    TEST_ASSERT_TRUE_MESSAGE(sqrt(sq / n) < 0.5, "pad speed noise above 0.5 m/s RMS");
 }
 
 /* Touchdown to LANDED under a 5 m/s canopy, by the stillness test alone, on
@@ -345,20 +349,29 @@ static touchdown_t touchdown_to_landed(float land_m) {
             worst = s;
         n++;
     }
-    printf("  BASELINE touchdown to LANDED, %2.0f m above the pad: %.1f s mean, %.1f s worst, %d flights (%d not "
+    printf("  touchdown to LANDED, %2.0f m above the pad: %.1f s mean, %.1f s worst, %d flights (%d not "
            "landed within 400 s, or before touchdown)\n",
            land_m, n ? sum / n : 0.0, worst, n, never);
     touchdown_t td = {n ? sum / n : 0.0, worst, n, never};
     return td;
 }
 
-void test_T0_baseline_touchdown_to_landed(void) {
-    (void)touchdown_to_landed(0.0f);
-    (void)touchdown_to_landed(5.0f);
+/* [FLT-LAND-01..03] Still for 1 s after touchdown, then LANDED: 1.7-1.8 s
+ * measured, on the pad's level and 5 m above it. */
+void test_FLT_LAND_01_landed_within_3_s_of_touchdown(void) {
+    const float heights[] = {0.0f, 5.0f};
+    for (unsigned i = 0; i < 2; i++) {
+        touchdown_t td = touchdown_to_landed(heights[i]);
+        TEST_ASSERT_EQUAL_MESSAGE(0, td.never, "a flight never landed, or landed in the air");
+        TEST_ASSERT_EQUAL(20, td.landed);
+        TEST_ASSERT_TRUE_MESSAGE(td.mean_s >= 1.0, "LANDED before the stillness held for its second");
+        TEST_ASSERT_TRUE_MESSAGE(td.worst_s <= 3.0, "LANDED more than 3 s after touchdown");
+    }
 }
 
-/* Apogee declared after the true apogee. */
-void test_T0_baseline_apogee_delay(void) {
+/* [FLT-APO-01, PYR-SAFE-04] Apogee is declared after the true apogee, never
+ * before it, and within a second (+0.40 to +0.48 s measured). */
+void test_FLT_APO_01_apogee_after_the_true_one_within_a_second(void) {
     const flight_t f = {5.0f, 2.0f, 20.0f, 0.0f};
     double sum = 0.0, lo = 1e9, hi = -1e9;
     int n = 0;
@@ -372,13 +385,16 @@ void test_T0_baseline_apogee_delay(void) {
         hi = d > hi ? d : hi;
         n++;
     }
-    printf("  BASELINE apogee after the true apogee: %+.2f s mean (%+.2f to %+.2f) over %d flights\n",
-           n ? sum / n : 0.0, lo, hi, n);
-    TEST_ASSERT_TRUE(n > 0);
+    printf("  apogee after the true apogee: %+.2f s mean (%+.2f to %+.2f) over %d flights\n", n ? sum / n : 0.0, lo, hi,
+           n);
+    TEST_ASSERT_EQUAL(20, n);
+    TEST_ASSERT_TRUE_MESSAGE(lo >= 0.0, "apogee declared before the true one");
+    TEST_ASSERT_TRUE_MESSAGE(hi < 1.0, "apogee declared a second or more late");
 }
 
-/* The ground pressure the launch froze, against the pad's true pressure. */
-void test_T0_baseline_ground_at_launch(void) {
+/* [GND-CAL-04, GND-CAL-05] The ground the launch froze is the pad's, at every
+ * boost: AGL reads 0.08 m low measured. */
+void test_GND_CAL_04_ground_frozen_at_launch_is_the_pad(void) {
     const float gs[] = {2.0f, 5.0f, 15.0f, 30.0f};
     for (unsigned i = 0; i < sizeof(gs) / sizeof(gs[0]); i++) {
         flight_t f = {gs[i], 3.0f, 20.0f, 0.0f};
@@ -391,13 +407,16 @@ void test_T0_baseline_ground_at_launch(void) {
             sum += (PAD_PA - (double)r.ground_frozen_pa) / PA_PER_M;
             n++;
         }
-        printf("  BASELINE %2.0f g launch: every AGL reads %.2f m low (ground frozen from the climb), %d flights\n",
-               gs[i], n ? sum / n : 0.0, n);
+        printf("  %2.0f g launch: every AGL reads %.2f m low (ground frozen from the climb), %d flights\n", gs[i],
+               n ? sum / n : 0.0, n);
+        TEST_ASSERT_EQUAL(10, n);
+        TEST_ASSERT_TRUE_MESSAGE(fabs(sum / n) < 0.5, "the frozen ground is 0.5 m or more off the pad");
     }
 }
 
-/* A step on the pad bigger than the 50 Pa gate. */
-void test_T0_baseline_ground_step(void) {
+/* [GND-CAL-06] A step on the pad bigger than the 50 Pa gate: the board
+ * carried to a new pad. Re-seeded within the minute (1 Pa off measured). */
+void test_GND_CAL_06_ground_follows_a_step_past_the_gate(void) {
     boot_like_hardware(5);
     uint32_t t = 0;
     run_to_pad(&t);
@@ -408,12 +427,14 @@ void test_T0_baseline_ground_step(void) {
     end = t + 60000u;
     for (; t < end; t++)
         tick(t);
-    printf("  BASELINE ground reference 60 s after a 60 Pa step: %ld Pa off\n",
-           (long)(pp_ground_pressure() - (int32_t)(PAD_PA - 60.0f)));
+    long off = (long)(pp_ground_pressure() - (int32_t)(PAD_PA - 60.0f));
+    printf("  ground reference 60 s after a 60 Pa step: %ld Pa off\n", off);
+    TEST_ASSERT_TRUE_MESSAGE(labs(off) <= 3, "the reference did not follow the board to its new pad");
 }
 
-/* One glitch on the pad: which sizes declare a launch. */
-void test_T0_baseline_pad_glitch(void) {
+/* [SNS-PRES-07] One glitch on the pad, of any size a flipped bit makes,
+ * declares no launch. */
+void test_SNS_PRES_07_one_glitch_on_the_pad_is_no_launch(void) {
     const int32_t sizes[] = {-60000, -40000, -20000, -15000, -13000, -12000, -11000, -8000,
                              -5000,  -2000,  2000,   5000,   10000,  15000,  18000};
     char launched[256] = "", held[256] = "";
@@ -434,11 +455,13 @@ void test_T0_baseline_pad_glitch(void) {
         snprintf(item, sizeof(item), " %+ld", (long)(sizes[i] / 1000));
         strncat(dst, item, 255 - strlen(dst));
     }
-    printf("  BASELINE one glitch on the pad (kPa): launches at%s; holds at%s\n", launched, held);
+    printf("  one glitch on the pad (kPa): launches at%s; holds at%s\n", launched, held);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("", launched, "a single glitch declared a launch");
 }
 
-/* Brownout recovery, booted as the hardware boots. */
-void test_T0_baseline_recovery_unprimed(void) {
+/* [FLT-BROWN-02] Brownout recovery, booted as the hardware boots: 600 m up
+ * and descending is a recovered descent. */
+void test_FLT_BROWN_02_recovery_booted_as_the_hardware_boots(void) {
     boot_like_hardware(3);
     pad_marker_t m;
     pad_marker_fill(&m, (int32_t)PAD_PA, 1200u);
@@ -450,12 +473,15 @@ void test_T0_baseline_recovery_unprimed(void) {
         if (ctx.current_state != BOOT_SETTLE && ctx.current_state != BOOT_SENSOR)
             break;
     }
-    printf("  BASELINE recovery 600 m up and descending, booted unprimed: %s (state %d)\n",
+    printf("  recovery 600 m up and descending, booted unprimed: %s (state %d)\n",
            brownout_recovery_name((recovery_t)ctx.recovery), (int)ctx.current_state);
+    TEST_ASSERT_EQUAL(RECOVER_DESCENT, ctx.recovery);
+    TEST_ASSERT_EQUAL(FALLING, ctx.current_state);
 }
 
-/* Speed error at 100 m/s, with and without core0's flash stalls. */
-void test_T0_baseline_stall_speed_error(void) {
+/* [FLT-ASC-02, SNS-PRES-08] The speed at 100 m/s, with and without core0's
+ * flash stalls: 0.8 m/s worst measured either way. */
+void test_FLT_ASC_02_speed_error_at_100_m_s_with_flash_stalls(void) {
     const flight_t f = {15.0f, 1.2f, 20.0f, 0.0f}; /* about 176 m/s at burnout; passes 100 m/s in coast */
     for (int stalls = 0; stalls <= 1; stalls++) {
         double worst = 0.0, sq = 0.0;
@@ -467,23 +493,23 @@ void test_T0_baseline_stall_speed_error(void) {
             if (r.speed_err_max > worst)
                 worst = r.speed_err_max;
         }
-        printf("  BASELINE speed error at 90-110 m/s %s stalls: %.1f m/s worst, %.1f m/s RMS\n",
-               stalls ? "with" : "without", worst, n ? sqrt(sq / n) : 0.0);
+        printf("  speed error at 90-110 m/s %s stalls: %.1f m/s worst, %.1f m/s RMS\n", stalls ? "with" : "without",
+               worst, n ? sqrt(sq / n) : 0.0);
+        TEST_ASSERT_TRUE(n > 0);
+        TEST_ASSERT_TRUE_MESSAGE(worst < 2.0, "speed error at 100 m/s of 2 m/s or more");
     }
 }
 
-/* A main at 5 m/s: the landing timeout (N7). */
-void test_T0_baseline_landing_under_main(void) {
-    const flight_t f = {5.0f, 3.0f, 5.0f, 0.0f}; /* apogee about 1 km: over 3 minutes on the main */
+/* [FLT-LAND-07] Under a 5 m/s main, over three minutes from 1 km: LANDED on
+ * the ground, not in the air (1.7 s after touchdown measured). */
+void test_FLT_LAND_07_landed_under_a_main_after_touchdown(void) {
+    const flight_t f = {5.0f, 3.0f, 5.0f, 0.0f};
     result_t r = fly(&f, 2, 3, 400000, false);
-    if (r.landed_ms && r.touchdown_ms)
-        printf("  BASELINE main at 5 m/s: LANDED %.1f s after touchdown\n",
-               ((double)r.landed_ms - (double)r.touchdown_ms) / 1000.0);
-    else if (r.landed_ms)
-        printf("  BASELINE main at 5 m/s: LANDED in the air, %.1f s after apogee\n",
-               ((double)r.landed_ms - (double)r.apogee_true_ms) / 1000.0);
-    else
-        printf("  BASELINE main at 5 m/s: never LANDED\n");
+    TEST_ASSERT_TRUE_MESSAGE(r.landed_ms != 0, "never LANDED");
+    TEST_ASSERT_TRUE_MESSAGE(r.touchdown_ms != 0 && r.landed_ms >= r.touchdown_ms, "LANDED in the air");
+    double s = ((double)r.landed_ms - (double)r.touchdown_ms) / 1000.0;
+    printf("  main at 5 m/s: LANDED %.1f s after touchdown\n", s);
+    TEST_ASSERT_TRUE_MESSAGE(s <= 3.0, "LANDED more than 3 s after touchdown");
 }
 
 /* ── T2: a single-sample glitch never reaches the filter ──────────── */
@@ -2234,15 +2260,15 @@ int main(void) {
     RUN_TEST(test_T0_stall_model);
     RUN_TEST(test_T0_off_by_default);
     RUN_TEST(test_T0_unprimed_boot);
-    RUN_TEST(test_T0_baseline_pad_speed_noise);
-    RUN_TEST(test_T0_baseline_touchdown_to_landed);
-    RUN_TEST(test_T0_baseline_apogee_delay);
-    RUN_TEST(test_T0_baseline_ground_at_launch);
-    RUN_TEST(test_T0_baseline_ground_step);
-    RUN_TEST(test_T0_baseline_pad_glitch);
-    RUN_TEST(test_T0_baseline_recovery_unprimed);
-    RUN_TEST(test_T0_baseline_stall_speed_error);
-    RUN_TEST(test_T0_baseline_landing_under_main);
+    RUN_TEST(test_FLT_LAUNCH_07_pad_speed_noise_far_below_the_launch_speed);
+    RUN_TEST(test_FLT_LAND_01_landed_within_3_s_of_touchdown);
+    RUN_TEST(test_FLT_APO_01_apogee_after_the_true_one_within_a_second);
+    RUN_TEST(test_GND_CAL_04_ground_frozen_at_launch_is_the_pad);
+    RUN_TEST(test_GND_CAL_06_ground_follows_a_step_past_the_gate);
+    RUN_TEST(test_SNS_PRES_07_one_glitch_on_the_pad_is_no_launch);
+    RUN_TEST(test_FLT_BROWN_02_recovery_booted_as_the_hardware_boots);
+    RUN_TEST(test_FLT_ASC_02_speed_error_at_100_m_s_with_flash_stalls);
+    RUN_TEST(test_FLT_LAND_07_landed_under_a_main_after_touchdown);
     RUN_TEST(test_T2_pad_glitch_sweep);
     RUN_TEST(test_T2_coast_glitch);
     RUN_TEST(test_T2_calibration_glitch);

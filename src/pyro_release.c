@@ -1,6 +1,4 @@
 /*
- * Installing the mocked pyro operations. See pyro_release.h.
- *
  * SPDX-License-Identifier: MIT
  */
 #include "pyro_release.h"
@@ -21,8 +19,8 @@ static void report(uint8_t channel, const char *what) {
 
 /* ── The mocked channel ───────────────────────────────────────────
  *
- * Reported on every call rather than once. A flight log has to show each
- * command that went nowhere, not that one of them did at some point. */
+ * Reported on every call: the log has to show each command that went
+ * nowhere. */
 
 static void mock_fire(uint8_t channel) {
     report(channel, "fire");
@@ -32,9 +30,7 @@ static void mock_get(uint8_t channel, hal_continuity_t *out) {
     if (!out) {
         return;
     }
-    /* Open rather than good. There is no igniter circuit the flight software
-     * controls here any more, and reporting continuity would let it arm and
-     * then "fire" a channel that cannot. Open is what is true. */
+    /* Open, not good: see DD-019. */
     out->raw_adc = 0;
     out->good = false;
     out->open = true;
@@ -44,9 +40,7 @@ static void mock_get(uint8_t channel, hal_continuity_t *out) {
 
 static bool mock_fault(uint8_t channel) {
     (void)channel;
-    /* Not reported: this is polled, and a fault line that reads clear is the
-     * honest answer for a channel with no fire in progress. Reporting it
-     * would bury the fire attempts that matter. */
+    /* Not reported: it is polled, and the reports would bury the fires. */
     return false;
 }
 
@@ -65,9 +59,7 @@ int pyro_release_claim(pyro_pads_fn pads_of) {
     for (uint8_t ch = 1; ch <= 2; ch++) {
         uint32_t pads = pads_of ? pads_of(ch) : PAD_NONE;
 
-        /* Spending the claim is the install. A channel whose pads Lua already
-         * holds cannot take them, so it cannot be given the real methods --
-         * there is no branch here that could be written the other way. */
+        /* Spending the claim is the install [DD-020]. */
         bool mine = (pads != PAD_NONE) && pad_claim_take(pads, PAD_FLIGHT);
         ch_ops[ch - 1] = mine ? real_ops : &mock_ops;
         released[ch - 1] = !mine;

@@ -1,7 +1,8 @@
 /*
  * MK1C's sense levels and the presence verdict: pure arithmetic on ADC
- * counts, shared with the plant model and the host tests. See
- * THEORY_OF_OPERATION.md "Sense network" and "Presence test".
+ * counts, shared with the plant model and the host tests.
+ * See THEORY_OF_OPERATION.md "Sense network".
+ * See THEORY_OF_OPERATION.md "Presence test".
  *
  * SPDX-License-Identifier: MIT
  */
@@ -19,7 +20,7 @@ static inline uint32_t counts_to_node_mv(uint16_t counts) {
     return ((uint32_t)counts * NODE_UV_PER_COUNT) / 1000u;
 }
 
-/* DESIGN.md 4's levels, which a change of divider or reference breaks. */
+/* The levels in THEORY_OF_OPERATION.md "Sense network": a new divider or reference breaks them. */
 _Static_assert((1058u * NODE_UV_PER_COUNT) / 1000u >= 2550 && (1058u * NODE_UV_PER_COUNT) / 1000u <= 2570,
                "bus bias, no match: 1058 counts should be ~2.56 V");
 _Static_assert((1214u * NODE_UV_PER_COUNT) / 1000u >= 2930 && (1214u * NODE_UV_PER_COUNT) / 1000u <= 2950,
