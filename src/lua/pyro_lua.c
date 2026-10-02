@@ -4,14 +4,14 @@
  * The bindings are the security boundary: RP2040 has no MPU, so no hardware
  * enforces anything below this line. Read them as a syscall table.
  *
- * Every load passes mode "t" (Lua 5.4 manual §6.1, load). luaL_loadbuffer()
+ * [LUA-SAFE-01] Every load passes mode "t" (Lua 5.4 manual §6.1, load). luaL_loadbuffer()
  * passes NULL, meaning "bt", and Lua does not verify bytecode -- lundump.c
  * checks a header and trusts the rest -- so a crafted blob POSTed to
  * /api/lua/script would execute arbitrary loads and stores over the whole
  * address space. Every invariant below is a property of the bindings, which
  * bytecode never reaches.
  *
- * Every entry from the host into the VM runs under lua_pcall, so nothing a
+ * [LUA-SAFE-02] Every entry from the host into the VM runs under lua_pcall, so nothing a
  * script does can raise outside protection (§4.4).
  *
  * Implements invariants L4, L5, L7, L8 and L11 of
@@ -49,18 +49,18 @@ _Static_assert(sizeof(lua_Number) == 4 && sizeof(lua_Integer) == 4,
 #define PYRO_LUA_HOOK_COUNT 1000
 #endif
 
-/* Hook periods one protected call may use: about two million instructions. */
+/* [LUA-SAFE-03] Hook periods one protected call may use: about two million instructions. */
 #ifndef PYRO_LUA_BUDGET
 #define PYRO_LUA_BUDGET 2000
 #endif
 
-/* How far past its box a tick() may run where it cannot be suspended -- a
+/* [LUA-SAFE-04] How far past its box a tick() may run where it cannot be suspended -- a
  * sort comparator, a metamethod, one pattern match. Longer is a runaway. */
 #ifndef PYRO_LUA_OVERRUN_US
 #define PYRO_LUA_OVERRUN_US 5000u
 #endif
 
-/* lua_arena.c aligns every block relative to this base. */
+/* [LUA-SAFE-09] lua_arena.c aligns every block relative to this base. */
 static uint8_t arena_buf[PYRO_LUA_ARENA_BYTES] __attribute__((aligned(8)));
 static lua_arena_t arena;
 static lua_State *L;
@@ -83,7 +83,7 @@ static bool hard_boxed;
 
 /* ── Limits ───────────────────────────────────────────────────────── */
 
-/* Raised as light userdata, which no script can construct, and remembered:
+/* [LUA-SAFE-05] Raised as light userdata, which no script can construct, and remembered:
  * pcall and xpcall re-raise while one is set, so a script cannot catch the
  * error that stops it (see l_pcall). */
 static const char BUDGET_EXHAUSTED[] = "instruction budget exhausted";
@@ -223,7 +223,7 @@ static int l_xpcall(lua_State *Ls) {
     return finish_pcall(Ls, status, 2);
 }
 
-/* Finalisers run with hooks off, so a __gc would escape every limit. Lua
+/* [LUA-SAFE-07] Finalisers run with hooks off, so a __gc would escape every limit. Lua
  * marks an object for finalisation only if its metatable has __gc when
  * setmetatable is called (§2.5.3), so refusing it here is sufficient. */
 static int l_setmetatable(lua_State *Ls) {
@@ -792,7 +792,7 @@ static void reg_table(lua_State *Ls, const char *name, const luaL_Reg *fns) {
     lua_setglobal(Ls, name);
 }
 
-/* flight.<NAME>, spelled from the enumerators so the numbers cannot drift
+/* [LUA-SAFE-11] flight.<NAME>, spelled from the enumerators so the numbers cannot drift
  * from flight_state_t. No flight.BOOT: boot is four states, and any one
  * number would miss three of them. */
 #define FLIGHT_STATE(name)                                                                                             \
@@ -1147,7 +1147,7 @@ bool pyro_lua_check(const char *src, size_t len, const lua_chk_env_t *env, lua_c
  * One poster (the flight task) and one consumer (the VM's task), on either
  * core: each index has one writer, and release/acquire orders the name
  * before the index that publishes it. */
-#define EVENT_QUEUE_LEN 8u /* a power of two; apogee brings two or three at once */
+#define EVENT_QUEUE_LEN 8u /* [LUA-SAFE-12] a power of two; apogee brings two or three at once */
 #define EVENT_NAME_MAX 16
 
 static char event_names[EVENT_QUEUE_LEN][EVENT_NAME_MAX];

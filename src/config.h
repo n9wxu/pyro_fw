@@ -65,7 +65,7 @@ void config_set_defaults(config_t *cfg);
 
 /* Parse INI text over cfg [CFG-02, CFG-06..09]: a key the text does not name
  * keeps its value. A value that does not parse, or is outside its row's
- * [min, max], is rejected and the field keeps its value [SYS-CFG-03]; an
+ * [min, max], is rejected and the field keeps its value [SYS-CFG-03, CFG-10]; an
  * unnamed pyro mode is stored as none [CFG-04]. Returns how many values were
  * rejected. Mutates buf. */
 int config_parse_ini(char *buf, config_t *cfg);

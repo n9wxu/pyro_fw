@@ -182,7 +182,7 @@ done:
         pc->rejected++;
 }
 
-/* [CFG-02, CFG-06..09, SYS-CFG-03] */
+/* [CFG-02, CFG-06..10, SYS-CFG-03] */
 int config_parse_ini(char *buf, config_t *cfg) {
     parse_ctx_t pc = {cfg, 0};
     ini_for_each(buf, config_parse_pair, &pc);

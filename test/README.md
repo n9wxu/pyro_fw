@@ -19,7 +19,7 @@ would not link.
 ```bash
 cd build
 
-ninja host_tests          # 74 unit tests
+ninja host_tests          # 84 unit tests
 ninja integration_tests   # 51 integration tests (OpenRocket data)
 ninja closedloop_tests    # 31 closed-loop tests (7 configurations x 4 rockets, and profiles to 30 km)
 ```
@@ -63,6 +63,11 @@ than one build.
 | `board_pyro_tests` | `test_board_pyro_mk1b.c` | MK1B's pyro backend on the fake SDK (below) |
 | `plant_tests` | `test_plant.c` | the three board plant models (below) |
 | `board_pyro_mk1c_tests` | `test_board_pyro_mk1c.c` | MK1C's pyro backend on its modelled board (below); builds `plant_tests` first |
+| `board_pyro_mk1a_tests` | `test_board_pyro_mk1a.c` | MK1A's pyro backend on the fake SDK: one channel at a time, the pulse on one clock, no verdict before a fresh check; `board_pyro_tests` runs it first |
+| `board_selftest_tests` | `test_board_selftest.c` | the board-image stamp and what each verdict does at boot (DD-081) |
+| `beep_out_tests` | `test_beep_out.c` | the altitude beep-out heard from the buzzer pin: `buzzer.c` alone, its digits read back |
+| `physics_tests` | `test_physics.c` | the simulators' 1976 US Standard Atmosphere and the flight profile (DD-086) |
+| `replay_tests` | `test_replay.c` | `pyro_sim --replay` on a CRLF log and on a log with no state column (DAT-08) |
 
 `sim` is the simulator, not a test: see `sim/README.md`.
 
@@ -259,7 +264,7 @@ test_data/
   rockets.json           the closed-loop suite's four rocket profiles
 ```
 
-## Unit Tests (test_flight_states.c) — 74 tests
+## Unit Tests (test_flight_states.c) — 84 tests
 
 The `test_REV*` and `test_USB_*` tests are in the sections above.
 
@@ -282,7 +287,7 @@ The `test_REV*` and `test_USB_*` tests are in the sections above.
 | test_SNS_PRES_01_boot_no_sensor | SNS-PRES-01, FLT-BOOT-12 | No sensor: FAULT and system failure, before the pyro test |
 | test_FLT_BOOT_11_waits_for_the_sensor_bringup | FLT-BOOT-11 | A bring-up still running is waited for |
 | test_FLT_BOOT_12_bringup_that_never_ends_is_fault | FLT-BOOT-12 | A bring-up that never ends is FAULT |
-| test_FLT_BOOT_04_settle_wait | FLT-BOOT-04 | 2.5s settle wait |
+| test_FLT_BOOT_04_settle_wait | FLT-BOOT-09 | 2.5s settle wait |
 | test_FLT_BOOT_13_no_calibration_samples_is_fault | FLT-BOOT-13 | No calibration samples in 10 s: FAULT |
 | test_FLT_BOOT_14_no_filesystem_is_fault | FLT-BOOT-14 | No filesystem: FAULT |
 | test_FLT_BOOT_02_reads_config_at_boot | FLT-BOOT-02 | Config read at power-up |
@@ -434,7 +439,7 @@ the bench. `fly_profile()` flies one through the flight software at 1 ms.
 |------|-------------|----------|
 | test_SIM_02_the_flight_software_flies_a_30_km_profile | SIM-02, FLT-AIR-01 | Mach 2, apogee on time, main at 300 m, not forced |
 | test_SIM_02_a_9_km_supersonic_flight_with_sensor_noise | FLT-MACH-02 | Inside the lockout's envelope with 3 Pa of noise: apogee within 3 s |
-| test_SIM_02_30_km_with_sensor_noise_finds_apogee | — | Ignored while HA-1 is open (`docs/high_altitude_flight.md`) |
+| test_SIM_02_30_km_with_sensor_noise_finds_apogee | SIM-02 | A known limit held as it stands: the lock never releases at 30 km with 3 Pa of noise, and the fallback finds apogee near the ground (`docs/high_altitude_flight.md`) |
 | test_FLT_AIR_01_air_scale_is_the_pad_air_rate | FLT-AIR-01 | `pp_air_scale()` against the profile's own atmosphere, two pads |
 | test_FLT_AIR_01_a_failed_drogue_is_seen_at_30_km | FLT-AIR-01, FLT-EMRG-01 | 90 m/s of pad air still forces the main |
 | test_FLT_AIR_01_a_high_pad_flies_20_km | FLT-AIR-01 | From 1500 m, the main within 20 m of its trigger |

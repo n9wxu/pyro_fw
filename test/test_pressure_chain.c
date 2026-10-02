@@ -1764,7 +1764,7 @@ void test_T5_apogee(void) {
     TEST_ASSERT_TRUE_MESSAGE(fabs(mean) <= 0.1, "on average within 0.1 s of the 1.0001 drop");
 }
 
-/* [PYR-MODE-04, PYR-MODE-05, REV-05] A SPEED channel reads the fit's speed,
+/* [PYR-MODE-04, PYR-MODE-05] A SPEED channel reads the fit's speed,
  * which does not lag; a DELAY channel counts from the fit's apogee, which the
  * fit dates back to where its rate crossed zero. A stall holds core0 -- the
  * flight code with it -- so a fire due during one comes when it ends, the

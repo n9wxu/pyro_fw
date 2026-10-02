@@ -138,9 +138,9 @@ extern bool mock_ground_test_pin;
 
 void mock_reset_all(void);
 
-/* hal_board_image_ok()'s answer [CR-13]; true after mock_reset_all(). */
+/* hal_board_image_ok()'s answer [FLT-BOOT-17]; true after mock_reset_all(). */
 extern bool mock_board_image_ok;
-/* Flight events offered to Lua's on_event() [CR-34]. */
+/* Flight events offered to Lua's on_event() [LUA-SAFE-12]. */
 extern char mock_lua_events[256];
 
 /* config.ini reads fail with HAL_FS_ERROR, as an I/O error would. */

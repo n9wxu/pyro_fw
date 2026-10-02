@@ -18,6 +18,7 @@ static inline bool vfs_name_char(char ch) {
            ch == '-';
 }
 
+/* [WEB-API-14] */
 static inline bool vfs_path_ok(const char *path) {
     if (!path) {
         return false;

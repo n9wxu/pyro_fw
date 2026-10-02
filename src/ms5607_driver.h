@@ -40,7 +40,7 @@
 #define MS5607_LOW_TEMP 2000
 #define MS5607_VERY_LOW_TEMP (-1500)
 
-/* The datasheet's compensation from the PROM's C1-C6: first
+/* [SNS-PRES-15] The datasheet's compensation from the PROM's C1-C6: first
  * order (page 8), then the second order below 20 °C (page 9). */
 static inline void ms5607_compensate_prom(const uint16_t prom[8], uint32_t d1, uint32_t d2,
                                           pressure_reading_t *out) {
@@ -66,7 +66,7 @@ static inline void ms5607_compensate_prom(const uint16_t prom[8], uint32_t d1, u
     out->pressure_pa = (float)p;
 }
 
-/* The PROM's CRC-4, in word 7's low nibble (datasheet page 13),
+/* [SNS-PRES-16] The PROM's CRC-4, in word 7's low nibble (datasheet page 13),
  * by AN520's algorithm: word 7's low byte counts as zero. */
 static inline bool ms5607_prom_crc_ok(const uint16_t prom[8]) {
     uint16_t rem = 0;
@@ -147,7 +147,7 @@ static inline uint32_t ms5607_temps_at(const ms5607_temps_t *t, uint64_t at_us) 
 /* The PROM reloads for 2.8 ms after a reset (datasheet pages 10-11). */
 #define MS5607_RESET_MS 3u
 
-/* Resets and PROM reads an address gets before a PROM that fails its CRC
+/* [SNS-PRES-16] Resets and PROM reads an address gets before a PROM that fails its CRC
  * counts as no sensor there. */
 #define MS5607_PROM_TRIES 3u
 

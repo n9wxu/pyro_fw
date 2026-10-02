@@ -589,7 +589,7 @@ void test_WEB_HTTP_04_a_post_with_no_content_length_is_411(void) {
     TEST_ASSERT_EQUAL_MESSAGE(200, guarded("GET /hello HTTP/1.1\r\n\r\n"), "a GET needs no length");
 }
 
-/* CR-22: a page on another site can make the browser send a request to the
+/* [WEB-API-07] A page on another site can make the browser send a request to the
  * board, by a rebound name or by a form; only the board's own page sends the
  * board's name and the X-Pyro header together. */
 void test_HTTP_20_a_request_naming_another_host_is_refused(void) {
@@ -629,9 +629,9 @@ void test_HTTP_22_the_board_answers_to_its_names_and_its_own_address(void) {
     }
 }
 
-/* ── Paths (CR-05) ────────────────────────────────────────────────── */
+/* ── Paths [WEB-API-14] ───────────────────────────────────────────── */
 
-/* littlefs resolves "..", so /www/../config.ini overwrote the config. */
+/* littlefs resolves "..": /www/../config.ini would be the config. */
 void test_HTTP_23_a_path_that_climbs_out_or_hides_its_name_is_refused(void) {
     static const char *const ok[] = {"/www/index.html", "www/app.js", "config.ini", "/lua_user.lua",
                                      "/www/a-b_c.1.css", "flight_log.bin.part", "/www"};
@@ -649,7 +649,7 @@ void test_HTTP_23_a_path_that_climbs_out_or_hides_its_name_is_refused(void) {
     TEST_ASSERT_FALSE_MESSAGE(vfs_path_ok(NULL), "no path");
 }
 
-/* ── The OTA image's bound (CR-06) ────────────────────────────────── */
+/* ── The OTA image's bound [OTA-05] ───────────────────────────────── */
 
 #define SLOT (64u * 4096u)
 
@@ -672,8 +672,9 @@ void test_OTA_01_no_sector_is_written_past_the_slot_end(void) {
 
 /* ── The POST routes ──────────────────────────────────────────────── */
 
-/* [WEB-API-08] CR-23: the card's bench, mount, clock and log starts went
- * round the lock, and could re-mount the volume under the flight log. */
+/* [WEB-API-08] The card's bench, mount, clock and log starts are storage
+ * routes: outside the lock they could re-mount the volume under the flight
+ * log. */
 void test_WEB_API_08_every_route_that_touches_storage_waits_for_the_flight_log(void) {
     static const char *const storage[] = {"/www/index.html",   "/api/lua/script",  "/api/serial",
                                           "/api/config",       "/api/beeps",       "/api/pins",

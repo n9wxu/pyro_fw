@@ -568,7 +568,7 @@ static void apply_api_config(http_conn_t *hc, char *cfgbuf) {
         config_t merged = fctx->config;
         int refused = config_parse_ini(cfgbuf, &merged);
         if (refused > 0) {
-            /* [SYS-CFG-03] A value out of its field's range is refused whole,
+            /* [SYS-CFG-03, CFG-10, WEB-API-03] A value out of its field's range is refused whole,
              * rather than saved with that field quietly left as it was. */
             char err[96];
             int n = snprintf(err, sizeof(err), "{\"error\":\"%d value(s) out of range or unreadable\"}", refused);

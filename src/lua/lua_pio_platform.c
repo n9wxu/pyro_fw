@@ -15,7 +15,8 @@
  *
  * 2. Core0 claims every pad, PIO state machine, program offset and DMA
  *    channel here, at boot, before the scheduler starts, so the Lua task
- *    acquires nothing (lua_core1.h). A pad is claimed before it is touched.
+ *    acquires nothing (lua_core1.h). A pad is claimed before it is touched
+ *    [LUA-SAFE-13].
  *
  * 3. Nothing here blocks: a full FIFO drops and a busy DMA skips a frame.
  *
@@ -517,7 +518,7 @@ void lua_plat_safe_outputs(void) {
         pio_sm_set_enabled(PYRO_PIO_INST, (uint)bridge_sm, false);
     }
 
-    /* gpio_init() selects SIO, whatever a state machine left behind. */
+    /* [LUA-SAFE-14] gpio_init() selects SIO, whatever a state machine left behind. */
     for (int i = 0; i < n_claimed; i++) {
         gpio_init(claimed[i]);
         gpio_put(claimed[i], 0);

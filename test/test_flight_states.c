@@ -344,8 +344,8 @@ void test_FLT_LAUNCH_01_detects_ascent(void) {
     TEST_ASSERT_EQUAL_UINT32(0, ctx.launch_time);
 }
 
-/* Every logged flight event is offered to a Lua program's on_event() [CR-34]. */
-void test_logged_flight_events_reach_lua(void) {
+/* [LUA-SAFE-12] Every logged flight event is offered to a Lua program's on_event(). */
+void test_LUA_SAFE_12_logged_flight_events_reach_lua(void) {
     flight_context_t ctx = {0};
     ctx.config = (config_t){"TEST", "TEST", 1, 300, 1, 150};
     ctx.current_state = PAD_IDLE;
@@ -1744,7 +1744,7 @@ int main(void) {
     /* PAD_IDLE */
     RUN_TEST(test_FLT_LAUNCH_02_stays_on_ground);
     RUN_TEST(test_FLT_LAUNCH_01_detects_ascent);
-    RUN_TEST(test_logged_flight_events_reach_lua);
+    RUN_TEST(test_LUA_SAFE_12_logged_flight_events_reach_lua);
     RUN_TEST(test_GND_CAL_01_reference_follows_slow_drift);
     RUN_TEST(test_GND_CAL_02_reference_stops_tracking_when_the_rocket_moves);
     RUN_TEST(test_FLT_LAUNCH_08_ten_metres_is_no_longer_enough);

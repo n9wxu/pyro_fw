@@ -192,7 +192,7 @@ static void rx_reset(void) {
     rx.cap = 1514;
 }
 
-/* Taken: the slot holds a copy until net_service() hands it to lwIP. */
+/* [WEB-NET-07] Taken: the slot holds a copy until net_service() hands it to lwIP. */
 void test_RXQ_01_a_frame_is_held_until_lwip_takes_it(void) {
     rx_reset();
     void *slot = NULL;
@@ -202,9 +202,9 @@ void test_RXQ_01_a_frame_is_held_until_lwip_takes_it(void) {
     TEST_ASSERT_EQUAL_MEMORY(FRAME_BYTES, rx.buf, 60);
 }
 
-/* CR-14: TinyUSB waits for tud_network_recv_renew() after a true, and
+/* [WEB-NET-07] TinyUSB waits for tud_network_recv_renew() after a true, and
  * net_service() renews only once it has a frame to give lwIP. A true with
- * nothing held stopped USB reception for good. */
+ * nothing held stops USB reception for good. */
 void test_RXQ_02_with_no_buffer_the_frame_is_handed_back(void) {
     rx_reset();
     rx.pool = 0;
@@ -241,7 +241,7 @@ void test_RXQ_05_a_second_frame_while_one_is_held_is_handed_back(void) {
     TEST_ASSERT_EQUAL(1, rx.allocated);
 }
 
-/* CR-24: the endpoint buffer holds CFG_TUD_NET_MTU bytes, a whole Ethernet
+/* [WEB-NET-07] The endpoint buffer holds CFG_TUD_NET_MTU bytes, a whole Ethernet
  * frame; a longer frame is not copied over its end. */
 void test_RXQ_06_a_frame_longer_than_the_endpoint_buffer_is_not_copied(void) {
     TEST_ASSERT_EQUAL_UINT16(1514, net_tx_copy_len(1514, 1514));

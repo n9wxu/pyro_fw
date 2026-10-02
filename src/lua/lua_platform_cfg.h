@@ -68,7 +68,7 @@ uint32_t lua_plat_bridge_dropped(void);
 
 /* Software PWM: the Lua task advances one phase per tick, so the period is
  * LUA_PWM_STEPS ticks -- 2 s at the 20 ms loop (loop_period.h). A duty of 0
- * and of 100 are steady levels. */
+ * and of 100 are steady levels [LUA-SAFE-15]. */
 #define LUA_PWM_STEPS 100u
 
 static inline bool lua_pwm_level(uint32_t phase, int duty_percent) {

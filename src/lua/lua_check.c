@@ -267,6 +267,6 @@ void lua_check_in(void *mem, size_t mem_len, const char *src, size_t len, const 
 }
 
 void lua_check(const char *src, size_t len, const lua_chk_env_t *env, lua_chk_result_t *out) {
-    static uint8_t scratch[LUA_CHECK_SCRATCH_BYTES] __attribute__((aligned(8)));
+    static uint8_t scratch[LUA_CHECK_SCRATCH_BYTES] __attribute__((aligned(8))); /* [LUA-SAFE-09] */
     lua_check_in(scratch, sizeof(scratch), src, len, env, out);
 }

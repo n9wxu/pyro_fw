@@ -315,12 +315,12 @@ static state_event_t detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
         ctx->diag |= DIAG_FS_FAIL;
         return SEVT_FAULT;
     }
-    if (ctx->board_mismatch) {
+    if (ctx->board_mismatch) { /* [FLT-BOOT-17] */
         hal_telemetry_send("!BOARD MISMATCH - this image is for another board\r\n");
         ctx->diag |= DIAG_BOARD_MISMATCH;
         return SEVT_FAULT;
     }
-    if (ctx->cfg_unreadable) {
+    if (ctx->cfg_unreadable) { /* [FLT-BOOT-18] */
         hal_telemetry_send("!CFG FAIL - config.ini could not be read\r\n");
         ctx->diag |= DIAG_CFG_UNREADABLE;
         return SEVT_FAULT;

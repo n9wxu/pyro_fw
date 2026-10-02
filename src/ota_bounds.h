@@ -1,5 +1,5 @@
 /*
- * The OTA image's bound [OTA-01, OTA-04]: the download slot, past which lies
+ * The OTA image's bound [OTA-01, OTA-04, OTA-05]: the download slot, past which lies
  * littlefs. Checked against Content-Length before a byte is written, and
  * again for each sector, so no length the client claims reaches past it.
  *

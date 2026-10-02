@@ -168,7 +168,7 @@ check("net: lwIP's pools, TCP by state, the transport's refusals",
       and len(nt.get("states", [])) == 11 and nt["states"][4] >= 1 and nt.get("accepts", 0) >= 1
       and len(nt.get("usb", [])) == 4 and nt["usb"][0] >= 1, str(nt)[:160])
 
-# REV-02 / REV-12: a disabled channel survives the merge, and no inert key is written.
+# [CFG-04, CFG-SUBSYS-01] A disabled channel survives the merge, and no inert key is written.
 _, _, cfg0 = req("GET", "/api/config")
 cfg0 = cfg0.decode()
 kv0 = dict(l.split("=", 1) for l in cfg0.replace("\r", "").split("\n") if "=" in l)
@@ -185,7 +185,7 @@ check("config.ini carries no inert keys after a save", not inert, ",".join(inert
 st1 = wait_for(lambda s: s["pyro1_mode"] == "none" and "pyro1_open" not in s["faults"])
 check("status reports pyro1_mode none", st1["pyro1_mode"] == "none")
 
-# REV-04 + disabled channel: the pad diagnosis follows the config within a check or two.
+# [PYR-CONT-03, FLT-BOOT-16] The pad diagnosis follows the config within a check or two.
 if not st0["pyro1_cont"] and "pyro1_open" in st0["faults"]:
     check("disabled channel 1 no longer reported open", "pyro1_open" not in st1["faults"], str(st1["faults"]))
     want = "check_pyro_2" if "pyro2_open" in st1["faults"] else "ok_to_fly"
