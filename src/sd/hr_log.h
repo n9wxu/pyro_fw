@@ -1,34 +1,13 @@
 /*
- * The high-rate log, on the SD card [DD-077].
- *
- * Everything the board senses, at the rate it senses it: every LSM6DS3 FIFO
+ * The high-rate log, on the SD card [DD-077, HR-01..06]: every LSM6DS3 FIFO
  * set, every pressure and temperature conversion (pressure_trace.h), and a
- * snapshot of the flight a tenth of a second. Two tasks on core1 at P:
+ * snapshot of the flight a tenth of a second, from two tasks on core1 at P --
+ * a reader into a lock-free ring, a writer from it onto the card in 4 kB
+ * chunks. Nothing here is on the flight task's path.
  *
- *   reader  every 10 ms drains the IMU's FIFO, takes the new conversions,
- *           and appends records to a lock-free ring (32 kB, ~1.6 s at
- *           1.66 kHz);
- *   writer  empties the ring onto the card in 4 kB chunks that keep the file
- *           sector-aligned, so FatFs writes them straight through.
- *
- * The flight task is untouched: nothing here is on its path.
- *
- * Logging runs while the flight log does -- launch to landing -- or from a
- * POST /api/hr/start on the bench. Between flights the ring keeps its newest
- * half, so a log opens with the second before launch. The writer creates and
- * preallocates the next file (f_expand, contiguous) on the pad, so launch
- * waits on no FAT search; it is logs/next.bin until it closes, then renamed
- * logs/hrNNNN.bin. One left behind by a power cut is renamed at the next
- * boot. A file the card cannot take any more -- mounted again under it, or
- * writes that keep failing -- is given up, and the log goes on in a new one
- * from the next whole record [HR-06].
- *
- * The file is records, little-endian: a u8 type, a u8 of flags, a u16 payload
- * length, a u16 CRC of the payload, then the payload. The first is the
- * header, padded to 4 kB. A record whose CRC does not match is where the
- * log ends: a power cut can leave the last one's payload unwritten, and the
- * preallocated space past it holds whatever the card held. support/hr_log.py
- * decodes them.
+ * The file is the records below, little-endian, each an hr_rec_t and its
+ * payload; the first is the header, padded to 4 kB. A record whose CRC does
+ * not match is where the log ends [HR-04]. support/hr_log.py decodes them.
  *
  * SPDX-License-Identifier: MIT
  */

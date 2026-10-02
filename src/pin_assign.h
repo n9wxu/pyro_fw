@@ -1,14 +1,9 @@
 /*
  * Which function each pin is actually assigned, and whether that is legal.
  *
- * pin_caps.h says what a pin MAY become; this says what it IS. The split
- * matters because the board owns the first and an operator owns the second,
- * and validation is the only thing standing between them.
- *
- * Stored in pins.ini rather than config.ini. config.ini serialises to ~451 of
- * the 512 bytes hal_config_load() can read back, and a per-pin table does not
- * fit in 61 bytes. Keeping them apart also means the hardware map and the
- * flight settings version independently.
+ * pin_caps.h says what a pin MAY become, and the board owns it; this says what
+ * it IS, and the operator owns it. Stored in pins.ini, apart from config.ini,
+ * so the hardware map and the flight settings version independently.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -27,18 +22,10 @@
  *
  * A pyro channel releases independently; the common releases only once BOTH
  * channels are released, because until then it is still half of the retained
- * channel's firing path.
- *
- * On a board with two switched high sides and one common low side (MK1A,
- * MK1B) that yields:
- *
- *   one channel released   1 digital pin, that channel's own side
- *   both released          3 digital pins, or 1 half-bridge + 1 digital
- *
- * Releasing one channel while the other still fires has a consequence the
- * firmware cannot prevent: pyro_fire() on the retained channel asserts the
- * common for 500 ms, and for that window the released side has a return path.
- * The UI warns; the released side genuinely is just a digital pin. */
+ * channel's firing path. With one channel released, a fire on the other
+ * asserts the common for its pulse, and the released side has a return path
+ * meanwhile; the UI warns. */
+
 /* "leave the buzzer where the board put it". Not 0, which is a real GPIO. */
 #define PIN_BUZZER_BOARD 255u
 
@@ -50,16 +37,10 @@ typedef struct {
     bool pyro1_released;
     bool pyro2_released;
 
-    /* Which pad drives the buzzer, or PIN_BUZZER_BOARD for the board's own.
-     *
-     * The buzzer is a square wave on a plain GPIO, so any digital pad can
-     * drive one -- which is how MK1A gets a buzzer at all. It fits none, and
-     * rather than invent an FN_BUZZER row for a pad that goes nowhere, the
-     * operator wires a buzzer to a J6 user pad and says which one here.
-     *
-     * This is a flight-software assignment, not a Lua role: the buzzer
-     * belongs to the firmware, and a pad carrying it is reserved against Lua
-     * by pin_assign_is_reserved() exactly as the board's own pad is. */
+    /* [PIN-BUZZ-01, PIN-BUZZ-02] The pad driving the buzzer, or
+     * PIN_BUZZER_BOARD for the board's own. Any digital pad can (MK1A fits no
+     * buzzer, so this is how it gets one); a flight-software assignment,
+     * reserved against Lua like the board's own pad. */
     uint8_t buzzer_pin;
 
     /* The ground test switch: a flight-software assignment, reserved against
@@ -133,14 +114,8 @@ const char *pin_assign_strerror(pin_err_t e);
 
 /* ── The role vocabulary ──────────────────────────────────────────
  *
- * Served to the web UI rather than copied into it. app.js kept its own list
- * and the two drifted: it offered MK1C's four J3 pads on every board and
- * never learned `bridge` at all. A UI that asks which roles exist, and which
- * capability bit each one needs, filters its own menus by the same rule
- * pin_assign_validate() enforces -- so an option it offers is one the
- * firmware will accept.
- *
- * Index 0 is always "off". */
+ * Served to the web UI rather than copied into it, so a menu offers only what
+ * pin_assign_validate() accepts. Index 0 is always "off". */
 int pin_assign_role_count(void);
 const char *pin_assign_role_name(int idx);
 
@@ -148,10 +123,8 @@ const char *pin_assign_role_name(int idx);
  * every pin can take. */
 uint32_t pin_assign_role_needs(int idx);
 
-/* The name of a role VALUE (a LUA_ROLE_*), as stored in pin_assign_t.role[].
- * Distinct from the index form above: the vocabulary is enumerated by index,
- * an assignment is read by value, and tying the two together would make the
- * enum's numbering load-bearing. */
+/* The name of a role VALUE (a LUA_ROLE_*), as stored in pin_assign_t.role[],
+ * so the enum's numbering need not match the vocabulary's index. */
 const char *pin_assign_role_name_of(uint8_t role);
 
 #endif

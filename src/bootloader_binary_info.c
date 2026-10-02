@@ -1,21 +1,14 @@
 /*
- * Binary info for the BOOTLOADER, so `picotool info` identifies the board.
+ * Binary info for the BOOTLOADER, so `picotool info` names the board before an
+ * image is loaded onto it: an MK1A image on an MK1C drives GPIO25, its LED,
+ * which there is BIAS_B, a pyro bias injector.
  *
- * This file exists because putting the identification in the application does
- * not work. picotool reads the image at XIP_BASE, and with pico_fota_bootloader
- * that is the bootloader -- the application lives in an A/B slot further up, so
- * its .binary_info section is never scanned. Verified on hardware: an image
- * whose strings are demonstrably in flash still reports "Program Information:
- * none".
- *
- * The bootloader is a target in our own build (FetchContent), so this is added
- * to it with target_sources() rather than by patching the dependency. It emits
- * data only -- no code -- so it cannot change bootloader behaviour.
- *
- * Without this, every board reports the same thing: name pico_fota_bootloader,
- * pico_board pico. Which is exactly the situation where someone flashes MK1C's
- * image onto an MK1A and finds out when GPIO25 -- a pyro bias injector there,
- * the heartbeat LED here -- does something unexpected.
+ * In the bootloader, not the application: picotool reads the image at
+ * XIP_BASE, which with pico_fota_bootloader is the bootloader, and never scans
+ * the application's A/B slot (on hardware, an application's own strings
+ * report "Program Information: none"). Added with target_sources() to the
+ * FetchContent target; data only, so it cannot change what the bootloader
+ * does.
  *
  * SPDX-License-Identifier: MIT
  */

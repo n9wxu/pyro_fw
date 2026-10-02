@@ -47,10 +47,6 @@ bool pin_caps_is_default_lua(const pin_cap_t *c) {
     return c && (c->functions & FN_LUA_ANY) && !(c->functions & FN_BOARD_RESERVED);
 }
 
-/* A bridge needs one per-channel element and the common, and both have to be
- * able to sit at a level. MK1C fails here rather than by topology: its common
- * is the ARM_TOGGLE charge pump, which carries no FN_BRIDGE because holding
- * it at a level does not hold the eFuse on. */
 bool pin_caps_has_buzzer(void) {
     for (int i = 0; i < CAP_COUNT; i++) {
         if (caps[i].functions & FN_BUZZER) {
@@ -60,6 +56,10 @@ bool pin_caps_has_buzzer(void) {
     return false;
 }
 
+/* A bridge needs one per-channel element and the common, and both have to be
+ * able to sit at a level. MK1C fails here rather than by topology: its common
+ * is the ARM_TOGGLE charge pump, which carries no FN_BRIDGE because holding
+ * it at a level does not hold the eFuse on. */
 bool pin_caps_bridge_possible(void) {
     bool have_channel = false;
     bool have_common = false;
@@ -99,12 +99,8 @@ const char *pin_caps_protection_note(void) {
 #endif
 }
 
-/* LUA_PIN_LIST and the table are two hand-written statements of the same
- * fact, in the same file. This is the cheap check that they agree.
- *
- * Not a _Static_assert because the list cannot be iterated at compile time:
- * an X-macro cannot conditionally emit array elements, so the list stays
- * explicit and the agreement is checked here instead. */
+/* At run time: an X-macro cannot conditionally emit array elements, so the
+ * list cannot be checked by _Static_assert. */
 int pin_caps_check_lua_list(void) {
     static const uint8_t listed[] = LUA_PIN_LIST;
     for (unsigned i = 0; i < sizeof(listed) / sizeof(listed[0]); i++) {
