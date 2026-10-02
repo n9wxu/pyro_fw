@@ -1483,10 +1483,14 @@ void hal_firmware_commit(void) {
                  ", board is %s -- not committing, rolling back\r\n",
                  board_selftest_stored());
         hal_telemetry_send(line);
-        /* 500 ms, not 0: long enough for lwIP and the UART to push that
-         * line out, short enough that the wrong firmware is not driving the
-         * wrong pins for any longer than it takes to say so. */
-        watchdog_reboot(0, 0, 500);
+        /* Through the main loop's own reset path rather than arming the
+         * watchdog from here: this runs on the storage task on core1, and
+         * that path already arms once, lets the net task flush what was
+         * just said, and is the way an OTA reboots. */
+        {
+            extern volatile uint8_t pending_reset;
+            pending_reset = 2;
+        }
         return;
     }
 
