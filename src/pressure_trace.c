@@ -37,16 +37,19 @@ int ptrace_read(uint32_t since, uint8_t *dst, int cap) {
     if (cap < 12) {
         return 0;
     }
-    uint32_t oldest = next_seq > PTRACE_N ? next_seq - PTRACE_N : 0;
-    uint32_t first = since < oldest ? oldest : since > next_seq ? next_seq : since;
-    uint32_t n = next_seq - first;
+    /* Read once: the writer moves it between any two reads. */
+    uint32_t end = next_seq;
+    __asm volatile("" ::: "memory");
+    uint32_t oldest = end > PTRACE_N ? end - PTRACE_N : 0;
+    uint32_t first = since < oldest ? oldest : since > end ? end : since;
+    uint32_t n = end - first;
     uint32_t room = (uint32_t)(cap - 12) / sizeof(ptrace_rec_t);
     if (n > room) {
         n = room;
     }
     memcpy(dst, PTRACE_MAGIC, 4);
     put32(dst + 4, first);
-    put32(dst + 8, first + n < next_seq ? first + n : next_seq);
+    put32(dst + 8, first + n);
     uint8_t *o = dst + 12;
     for (uint32_t i = 0; i < n; i++) {
         const ptrace_rec_t *r = &ring[(first + i) % PTRACE_N];
