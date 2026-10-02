@@ -35,16 +35,46 @@ volatile uint32_t flash_op_seq;
 #define SCL BOARD_PIN_I2C_SCL
 #define BUS (BOARD_I2C_INST->index)
 
-/* ── The bus recovery, watched from the pins ───────────────────────── */
+/* ── The bus recovery, watched from the wires ──────────────────────
+ *
+ * A GPIO line on the bus is low when driven low and high when let go to its
+ * pull-up. One driven high is a push-pull output fighting whatever holds the
+ * line low (UM10204 Rev.7 §3.1.1): counted, never allowed. The recovery moves
+ * one edge a step, so a look after each step sees every edge. */
 
-static int scl_falls, stops[FAKE_PINS], transfers_before_recovery;
+static int scl_falls, stops[FAKE_PINS], transfers_before_recovery, driven_high;
+static bool wire_was[FAKE_PINS];
 
-static void on_put(uint pin, bool value) {
-    if (pin == SCL && !value && fake_level[SCL] && fake_func[SCL] != GPIO_FUNC_I2C)
-        scl_falls++;
-    /* A STOP: an SDA line released high while SCL is high. */
-    if (pin != SCL && value && !fake_level[pin] && fake_level[SCL] && fake_output[pin])
-        stops[pin]++;
+static bool wire(uint pin) {
+    return fake_output[pin] ? fake_level[pin] : true;
+}
+
+static bool on_the_bus(uint pin) {
+#ifdef MS_SDA
+    if (pin == MS_SDA)
+        return true;
+#endif
+#ifdef BMP_SDA
+    if (pin == BMP_SDA)
+        return true;
+#endif
+    return pin == SCL;
+}
+
+static void watch_wires(void) {
+    for (uint pin = 0; pin < FAKE_PINS; pin++) {
+        if (!on_the_bus(pin) || fake_func[pin] == GPIO_FUNC_I2C)
+            continue;
+        bool now = wire(pin);
+        if (fake_output[pin] && fake_level[pin])
+            driven_high++;
+        if (pin == SCL && wire_was[pin] && !now)
+            scl_falls++;
+        /* A STOP: SDA rising while SCL is high. */
+        if (pin != SCL && !wire_was[pin] && now && wire(SCL))
+            stops[pin]++;
+        wire_was[pin] = now;
+    }
 }
 
 static void note_transfer(uint8_t sda) {
@@ -63,7 +93,9 @@ static uint64_t now_us(void) {
 #ifdef HAS_MS5607
 /* ── A fake MS5607: NACKs through the 2.8 ms reload after a reset ─── */
 
-static const uint16_t MS_PROM[8] = {0x0042, 46372, 43981, 29059, 27842, 31553, 28165, 0x0005};
+/* The datasheet's C1-C6, with word 7's CRC nibble AN520 gives them. */
+static const uint16_t MS_PROM[8] = {0x0042, 46372, 43981, 29059, 27842, 31553, 28165, 0x0001};
+static int ms_corrupt_proms; /* PROM reads still to come back with C1 bit-flipped */
 
 static int ms_write(fake_i2c_dev_t *d, const uint8_t *src, size_t len) {
     note_transfer(d->sda);
@@ -88,8 +120,13 @@ static int ms_read(fake_i2c_dev_t *d, uint8_t *dst, size_t len) {
         return PICO_ERROR_GENERIC;
     }
     if (ms_sel >= 0 && len == 2) {
-        dst[0] = (uint8_t)(MS_PROM[ms_sel] >> 8);
-        dst[1] = (uint8_t)MS_PROM[ms_sel];
+        uint16_t word = MS_PROM[ms_sel];
+        if (ms_sel == 1 && ms_corrupt_proms > 0) {
+            word ^= 0x0100u;
+            ms_corrupt_proms--;
+        }
+        dst[0] = (uint8_t)(word >> 8);
+        dst[1] = (uint8_t)word;
     } else {
         memset(dst, 0, len);
     }
@@ -153,7 +190,10 @@ static void attach_bmp280(void) {
 #endif
 
 static pressure_sensor_type_t bring_up(int *loops) {
+    for (uint pin = 0; pin < FAKE_PINS; pin++)
+        wire_was[pin] = true;
     pressure_sensor_begin();
+    watch_wires();
     TEST_ASSERT_NULL_MESSAGE(fake_slept, fake_slept);
     pressure_sensor_type_t t = PRESSURE_SENSOR_PENDING;
     int n = 0;
@@ -161,6 +201,7 @@ static pressure_sensor_type_t bring_up(int *loops) {
         fake_now_ms += LOOP_PERIOD_MS;
         n++;
         t = pressure_sensor_step(fake_now_ms);
+        watch_wires();
         TEST_ASSERT_NULL_MESSAGE(fake_slept, fake_slept);
     }
     if (loops)
@@ -172,15 +213,18 @@ void setUp(void) {
     memset(fake_level, 0, sizeof(fake_level));
     memset(fake_output, 0, sizeof(fake_output));
     memset(fake_func, 0, sizeof(fake_func));
-    fake_on_put = on_put;
+    fake_on_put = NULL;
     fake_slept = NULL;
     fake_now_ms = 5000u;
     fake_i2c_reset();
-    scl_falls = transfers_before_recovery = 0;
+    scl_falls = transfers_before_recovery = driven_high = 0;
     memset(stops, 0, sizeof(stops));
     ms_reload_until = bmp_start_until = 0;
     ms_early = bmp_early = 0;
     ms_sel = 0;
+#ifdef HAS_MS5607
+    ms_corrupt_proms = 0;
+#endif
 }
 
 void tearDown(void) {}
@@ -221,6 +265,33 @@ void test_bringup_recovers_the_bus_first(void) {
     TEST_ASSERT_TRUE(stops[FITTED_SDA] >= 1);
     TEST_ASSERT_EQUAL(0, transfers_before_recovery);
 }
+
+/* UM10204 Rev.7 §3.1.1: SDA and SCL are open drain. A recovery that drives a
+ * line high fights the very target it exists to free, which holds SDA low. */
+void test_bringup_recovery_never_drives_a_line_high(void) {
+    attach_fitted();
+    bring_up(NULL);
+    TEST_ASSERT_EQUAL_MESSAGE(0, driven_high, "a bus line was driven high, push-pull");
+}
+
+#ifdef HAS_MS5607
+/* A PROM read that fails its CRC (datasheet page 13) is read again after
+ * another reset; one bad read does not lose the sensor. */
+void test_bringup_a_corrupt_prom_read_is_read_again(void) {
+    attach_ms5607();
+    ms_corrupt_proms = 1;
+    TEST_ASSERT_EQUAL(PRESSURE_SENSOR_MS5607, bring_up(NULL));
+    TEST_ASSERT_EQUAL(0, ms_corrupt_proms);
+}
+
+/* A PROM that never passes is no sensor: its coefficients would be wrong for
+ * the whole flight. */
+void test_bringup_a_prom_that_never_passes_its_crc_is_no_sensor(void) {
+    attach_ms5607();
+    ms_corrupt_proms = 1000;
+    TEST_ASSERT_EQUAL(PRESSURE_SENSOR_NONE, bring_up(NULL));
+}
+#endif
 
 /* A sensor is not spoken to during its reset: the MS5607's 2.8 ms reload and
  * the BMP280's 2 ms start-up are deadlines a later loop meets. */
@@ -289,6 +360,11 @@ int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_bringup_finds_its_sensor);
     RUN_TEST(test_bringup_recovers_the_bus_first);
+    RUN_TEST(test_bringup_recovery_never_drives_a_line_high);
+#ifdef HAS_MS5607
+    RUN_TEST(test_bringup_a_corrupt_prom_read_is_read_again);
+    RUN_TEST(test_bringup_a_prom_that_never_passes_its_crc_is_no_sensor);
+#endif
     RUN_TEST(test_bringup_waits_out_the_reset);
     RUN_TEST(test_bringup_at_the_boards_speed);
     RUN_TEST(test_bringup_a_held_bus_is_bounded);
