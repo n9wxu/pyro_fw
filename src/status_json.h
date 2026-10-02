@@ -18,8 +18,13 @@
 #define STATUS_STAGE1_PARTS 4
 #define STATUS_FAULTS_MAX 16
 
-/* The longest rendering, with every field at its widest. */
-#define STATUS_JSON_MAX 3072
+/* The longest rendering, with every field at its widest.
+ *
+ * test_SJ_02 measures it and fails if it grows past this, which is how the
+ * board_id and board_selftest keys were caught: the bound has to move
+ * deliberately, and it has to stay under HTTP_WORK_SIZE, which the
+ * _Static_assert in http_server.c checks. */
+#define STATUS_JSON_MAX 3200
 
 typedef struct {
     const char *state;
@@ -41,6 +46,14 @@ typedef struct {
      * directories. A consumer choosing a firmware image must key off the
      * token, never off the display string. */
     const char *board_id;
+    /* The board self-test, as a code and not a string: it has exactly three
+     * values, and a char* here would let the widest-rendering bound below
+     * assume an arbitrary one.
+     *   0 unknown -- no stamp yet, nothing to compare
+     *   1 pass    -- the stamp agrees with the compiled-in board
+     *   2 fail    -- the stamp names another board; this image is not
+     *                committing and will roll back */
+    uint8_t board_selftest;
     int32_t pyro_bus_q, pyro_bus_adc, pyro_vbat_adc; /* -1: none on this board */
 
     uint32_t loop_max_us, loop_overruns, loop_late_max_us, loop_count;

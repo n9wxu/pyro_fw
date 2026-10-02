@@ -36,6 +36,7 @@
 #include "hardware/watchdog.h"
 #include "hardware/structs/vreg_and_chip_reset.h"
 #include "board_identity.h"
+#include "board_selftest.h"
 #include "tusb.h"
 #include "bsp/board_api.h"
 #include <lfs.h>
@@ -1110,6 +1111,7 @@ void hal_platform_init(void) {
      * does NOT format on failure -- so a blank board draws a MAC and
      * enumerates instead of waiting out an 8 MB format. */
     board_identity_init();
+    board_selftest_init();
     net_mac_init();
     /* tud_init() is the net task's, on core1: TinyUSB's interrupt and its
      * task must share a core, since OPT_OS_NONE guards its queue by masking
@@ -1377,6 +1379,8 @@ __attribute__((weak)) void board_flash_service(uint32_t now_ms) {
 void hal_storage_service(uint32_t now_ms) {
     if (board_identity_unsaved() && !hal_log_active())
         board_identity_save();
+    else if (board_selftest_unsaved() && !hal_log_active())
+        board_selftest_save();
     log_service(now_ms);
     board_flash_service(now_ms);
 }
@@ -1460,6 +1464,31 @@ static void commit_op(void *arg) {
 void hal_firmware_commit(void) {
     /* Only an image on its first boot after an update has anything to
      * commit; every other boot writes no flash here. */
-    if (pfb_is_after_firmware_update())
-        flash_op(commit_op, NULL);
+    if (!pfb_is_after_firmware_update())
+        return;
+
+    /* An image on hardware it was not built for does not commit, and the
+     * bootloader puts the previous one back on the next reboot. The
+     * previous image is by definition the one that was running on this
+     * board, so rolling back lands somewhere known-good.
+     *
+     * Reported before the reboot and not only after it, because after the
+     * rollback this image is gone and so is anything it would have said.
+     * The reboot is deliberate: waiting for a natural one would leave the
+     * wrong firmware driving the wrong pins for as long as it took. */
+    if (board_selftest_result() == BOARD_SELFTEST_FAIL) {
+        char line[128];
+        snprintf(line, sizeof(line),
+                 "!BOARD MISMATCH this image is " BOARD_SHORT_STR
+                 ", board is %s -- not committing, rolling back\r\n",
+                 board_selftest_stored());
+        hal_telemetry_send(line);
+        /* 500 ms, not 0: long enough for lwIP and the UART to push that
+         * line out, short enough that the wrong firmware is not driving the
+         * wrong pins for any longer than it takes to say so. */
+        watchdog_reboot(0, 0, 500);
+        return;
+    }
+
+    flash_op(commit_op, NULL);
 }

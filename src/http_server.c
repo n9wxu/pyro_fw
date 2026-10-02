@@ -284,6 +284,7 @@ extern volatile int32_t boot_prev_stage;
 extern volatile uint32_t boot_prev_stage_ms;
 
 #include "board_identity.h"
+#include "board_selftest.h"
 
 /* POST /api/beeps/play : play one sound, once.
  *
@@ -807,6 +808,11 @@ static void status_capture(status_snap_t *s) {
     s->sensor = pressure_sensor_name();
     s->board = PYRO_BOARD_NAME;
     s->board_id = BOARD_SHORT_STR;
+    switch (board_selftest_result()) {
+    case BOARD_SELFTEST_PASS:  s->board_selftest = 1; break;
+    case BOARD_SELFTEST_FAIL:  s->board_selftest = 2; break;
+    default:                   s->board_selftest = 0; break;
+    }
 
     /* Raw counts rather than volts, so a marginal reading stays visible. */
     board_pyro_raw_t praw = {0};

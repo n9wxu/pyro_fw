@@ -49,6 +49,7 @@ static void typical(status_snap_t *s) {
     s->sensor = "MS5607";
     s->board = "Pyro MK1C";
     s->board_id = "mk1c";
+    s->board_selftest = 1; /* pass */
     s->pyro_bus_q = -1;
     s->pyro_bus_adc = 812;
     s->pyro_vbat_adc = 2900;
@@ -139,6 +140,7 @@ static const char *const TYPICAL[][2] = {
     {"sensor", "\"MS5607\""},
     {"board", "\"Pyro MK1C\""},
     {"board_id", "\"mk1c\""},
+    {"board_selftest", "\"pass\""},
     {"pyro_bus_q", "-1"},
     {"pyro_bus_adc", "812"},
     {"pyro_vbat_adc", "2900"},
@@ -321,6 +323,7 @@ void test_SJ_02_the_widest_status_fits_its_bound(void) {
     typical(&s);
     s.state = s.fw_version = s.sensor = s.board = s.board_id = s.recovery = s.beep = s.beep_kind = long40;
     s.pyro_mode[0] = s.pyro_mode[1] = long40;
+    s.board_selftest = 0; /* "unknown", the widest of the three */
     s.alt_cm = s.max_alt_cm = s.vspeed_cms = s.pressure_pa = s.prev_stage = INT32_MIN;
     s.raw_pa = s.pad_speed_cms = s.pyro_bus_q = s.pyro_bus_adc = s.pyro_vbat_adc = INT32_MIN;
     uint32_t *u32[] = {&s.flight_ms,        &s.uptime_ms,        &s.loop_max_us,        &s.loop_overruns,

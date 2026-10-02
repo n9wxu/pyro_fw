@@ -48,6 +48,16 @@ static const char *B(bool b) {
     return b ? "true" : "false";
 }
 
+/* The self-test is a code in the snapshot, not a string: three values, and
+ * a char* would let STATUS_JSON_MAX have to assume an arbitrary one. */
+static const char *selftest_name(uint8_t v) {
+    switch (v) {
+    case 1:  return "pass";
+    case 2:  return "fail";
+    default: return "unknown";
+    }
+}
+
 static const char *S(const char *s) {
     return s ? s : "";
 }
@@ -90,13 +100,13 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         "\"armed\":%s,\"flight_ms\":%lu,\"uptime\":%lu,\"fw_version\":\"%s\","
         "\"pyro1_mode\":\"%s\",\"pyro1_value\":%u,\"pyro2_mode\":\"%s\",\"pyro2_value\":%u,"
         "\"units\":%u,\"log_rate\":\"%s\",\"rocket_id\":\"%s\",\"rocket_name\":\"%s\",\"sensor\":\"%s\","
-        "\"board\":\"%s\",\"board_id\":\"%s\","
+        "\"board\":\"%s\",\"board_id\":\"%s\",\"board_selftest\":\"%s\","
         "\"pyro_bus_q\":%ld,\"pyro_bus_adc\":%ld,\"pyro_vbat_adc\":%ld,",
         S(s->state), (long)s->alt_cm, (long)s->max_alt_cm, (long)s->vspeed_cms, (long)s->pressure_pa,
         B(s->pyro_cont[0]), B(s->pyro_cont[1]), (unsigned)s->pyro_adc[0], (unsigned)s->pyro_adc[1], B(s->pyro_fired[0]),
         B(s->pyro_fired[1]), B(s->armed), (unsigned long)s->flight_ms, (unsigned long)s->uptime_ms, S(s->fw_version),
         S(s->pyro_mode[0]), (unsigned)s->pyro_value[0], S(s->pyro_mode[1]), (unsigned)s->pyro_value[1],
-        (unsigned)s->units, S(s->log_rate), id, name, S(s->sensor), S(s->board), S(s->board_id), (long)s->pyro_bus_q,
+        (unsigned)s->units, S(s->log_rate), id, name, S(s->sensor), S(s->board), S(s->board_id), selftest_name(s->board_selftest), (long)s->pyro_bus_q,
         (long)s->pyro_bus_adc, (long)s->pyro_vbat_adc);
     put(&o,
         "\"loop_max_us\":%lu,\"loop_overruns\":%lu,\"loop_late_max_us\":%lu,\"loop_count\":%lu,"

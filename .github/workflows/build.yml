@@ -225,6 +225,9 @@ jobs:
       - name: Run ground test tests
         run: cd build && ninja ground_test_seq_tests && ninja ground_test_tests
 
+      - name: Run board self-test decision tests
+        run: cd build && ninja board_selftest_tests
+
       # Six suites the local gate ran and CI did not (task CI-1).
       - name: Run pin, beep, buzzer and config tests
         run: |

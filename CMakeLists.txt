@@ -323,6 +323,7 @@ add_executable(pyro_fw_c
     src/main_hardware.c
     src/board_binary_info.c
     src/board_identity.c
+    src/board_selftest.c
     src/mac_random.c
     src/flight_states.c
     src/brownout.c
@@ -824,6 +825,26 @@ endif()
 # selected: the structural invariants are _Static_assert and already fail the
 # build, so what is left to test is the runtime surface, and pinning it to one
 # board keeps the assertions about specific pins stable.
+# The board self-test's decision table. Pure, so every case it can reach is
+# checkable without a filesystem or a board -- including the two asymmetric
+# ones that matter: a mismatch must refuse to commit, and no evidence must
+# not refuse.
+add_custom_target(board_selftest_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building board self-test tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra
+               -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1c
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_board_selftest.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/board_selftest.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_board_selftest
+    COMMAND ${CMAKE_COMMAND} -E echo "Running board self-test tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_board_selftest
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Board self-test decision tests"
+)
+
 add_custom_target(pin_caps_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building pin capability tests..."
     COMMAND ${HOST_CC} -Wall -Wextra
