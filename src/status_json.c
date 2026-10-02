@@ -50,9 +50,12 @@ static const char *B(bool b) {
 
 static const char *selftest_name(uint8_t v) {
     switch (v) {
-    case 1:  return "pass";
-    case 2:  return "fail";
-    default: return "unknown";
+    case 1:
+        return "pass";
+    case 2:
+        return "fail";
+    default:
+        return "unknown";
     }
 }
 
@@ -104,8 +107,8 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         B(s->pyro_cont[0]), B(s->pyro_cont[1]), (unsigned)s->pyro_adc[0], (unsigned)s->pyro_adc[1], B(s->pyro_fired[0]),
         B(s->pyro_fired[1]), B(s->armed), (unsigned long)s->flight_ms, (unsigned long)s->uptime_ms, S(s->fw_version),
         S(s->pyro_mode[0]), (unsigned)s->pyro_value[0], S(s->pyro_mode[1]), (unsigned)s->pyro_value[1],
-        (unsigned)s->units, S(s->log_rate), id, name, S(s->sensor), S(s->board), S(s->board_id), selftest_name(s->board_selftest), (long)s->pyro_bus_q,
-        (long)s->pyro_bus_adc, (long)s->pyro_vbat_adc);
+        (unsigned)s->units, S(s->log_rate), id, name, S(s->sensor), S(s->board), S(s->board_id),
+        selftest_name(s->board_selftest), (long)s->pyro_bus_q, (long)s->pyro_bus_adc, (long)s->pyro_vbat_adc);
     put(&o,
         "\"loop_max_us\":%lu,\"loop_overruns\":%lu,\"loop_late_max_us\":%lu,\"loop_count\":%lu,"
         "\"stage_max_us\":[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu],\"stage1_parts_us\":[%lu,%lu,%lu,%lu],"

@@ -74,8 +74,8 @@ struct http_conn {
     char path[HTTP_PATH_MAX];
     bool head_only;
     uint32_t content_length;
-    char host[HTTP_HOST_MAX];
-    bool x_pyro;
+    char host[HTTP_HOST_MAX]; /* "" when absent, "?" when unusable */
+    bool x_pyro;              /* X-Pyro: 1 */
 
     /* Head parser. */
     bool have_request_line;
@@ -135,7 +135,12 @@ void http_respond_stream(http_conn_t *c, uint16_t status, const char *ctype, uin
 
 const char *http_reason(uint16_t status);
 
+/* The board's own names: pyro.local, pyro-<n>.local and 192.168.<subnet>.1,
+ * each with or without :80. */
 bool http_host_is_board(const char *host, uint8_t subnet);
+
+/* From on_head: 0, or the status that refuses a request that did not come
+ * from the board's own page. */
 uint16_t http_origin_refusal(const http_conn_t *c, uint8_t subnet);
 
 #endif

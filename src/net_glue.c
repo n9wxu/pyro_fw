@@ -15,7 +15,10 @@
 #include "lwip/ethip6.h"
 #include "lwip/igmp.h"
 #include "lwip/apps/mdns.h"
+#include "lwip/prot/ethernet.h"
+#include "hardware/structs/rosc.h"
 #include "http_server.h"
+#include "mac_random.h"
 #include "net_txq.h"
 
 #define INIT_IP4(a, b, c, d)                                                                                           \
@@ -113,6 +116,10 @@ static const net_tx_ops_t tx_ops = {tx_ready, tx_can_send, tx_send, tx_hold, tx_
 
 static err_t linkoutput_fn(struct netif *netif, struct pbuf *p) {
     (void)netif;
+    if (net_tx_copy_len(p->tot_len, CFG_TUD_NET_MTU) == 0) {
+        net_tx_fail++;
+        return ERR_BUF;
+    }
     switch (net_tx_offer(&txq, &tx_ops, p)) {
     case NET_TX_SENT:
         return ERR_OK;
@@ -132,8 +139,12 @@ static err_t ip4_output_fn(struct netif *netif, struct pbuf *p, const ip4_addr_t
     return etharp_output(netif, p, addr);
 }
 
+/* CFG_TUD_NET_MTU is the endpoint buffer, a whole Ethernet frame; lwIP's MTU
+ * is the IP packet inside it. */
+_Static_assert(CFG_TUD_NET_MTU - SIZEOF_ETH_HDR == 1500, "an IP MTU of 1500, as TCP_MSS assumes (lwipopts.h)");
+
 static err_t netif_init_cb(struct netif *netif) {
-    netif->mtu = CFG_TUD_NET_MTU;
+    netif->mtu = CFG_TUD_NET_MTU - SIZEOF_ETH_HDR;
     netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP | NETIF_FLAG_UP | NETIF_FLAG_IGMP;
     netif->state = NULL;
     netif->name[0] = 'E';
@@ -151,25 +162,26 @@ bool dns_query_proc(const char *name, ip4_addr_t *addr) {
     return false;
 }
 
+static void *rx_alloc(uint16_t size) {
+    return pbuf_alloc(PBUF_RAW, size, PBUF_POOL);
+}
+
+static bool rx_fill(void *frame, const uint8_t *src, uint16_t size) {
+    return pbuf_take((struct pbuf *)frame, src, size) == ERR_OK;
+}
+
+static const net_rx_ops_t rx_ops = {rx_alloc, rx_fill, tx_release};
+
 bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
-    if (received_frame) {
+    bool busy = received_frame != NULL;
+    if (!net_rx_take((void **)&received_frame, &rx_ops, src, size)) {
         net_rx_drop++;
-        lwip_uart_printf("!NET rx drop (slot busy) sz=%u\r\n", size);
+        lwip_uart_printf("!NET rx drop (%s) sz=%u\r\n", busy ? "slot busy" : "no pbuf", size);
         return false;
     }
-    if (size) {
-        struct pbuf *p = pbuf_alloc(PBUF_RAW, size, PBUF_POOL);
-        if (p) {
-            memcpy(p->payload, src, size);
-            received_frame = p;
-            net_rx_count++;
-            if ((net_rx_count % 10) == 0) {
-                lwip_uart_printf("!NET rx ok cnt=%lu\r\n", (unsigned long)net_rx_count);
-            }
-        } else {
-            net_rx_drop++;
-            lwip_uart_printf("!NET rx drop (no pbuf) sz=%u\r\n", size);
-        }
+    net_rx_count++;
+    if ((net_rx_count % 10) == 0) {
+        lwip_uart_printf("!NET rx ok cnt=%lu\r\n", (unsigned long)net_rx_count);
     }
     return true;
 }
@@ -177,7 +189,7 @@ bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
 uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg) {
     (void)arg;
     struct pbuf *p = (struct pbuf *)ref;
-    return pbuf_copy_partial(p, dst, p->tot_len, 0);
+    return pbuf_copy_partial(p, dst, net_tx_copy_len(p->tot_len, CFG_TUD_NET_MTU), 0);
 }
 
 void tud_network_init_cb(void) {
@@ -286,8 +298,17 @@ void sys_arch_unprotect(sys_prot_t pval) {
 uint32_t sys_now(void) {
     return to_ms_since_boot(get_absolute_time());
 }
+/* TCP's initial sequence numbers and mDNS's probe delays: they must differ
+ * from boot to boot, not be secret. The ring oscillator's random bit
+ * (rp2040-datasheet_2025-02-20.pdf, section 2.17.5, page 223) and the timer,
+ * mixed [DD-072]. */
 unsigned int lwip_port_rand(void) {
-    return to_ms_since_boot(get_absolute_time());
+    static uint64_t pool;
+    for (int i = 0; i < 32; i++) {
+        pool = (pool << 1 | pool >> 63) ^ (rosc_hw->randombit & 1u);
+    }
+    pool += time_us_64();
+    return (unsigned int)mac_mix64(pool);
 }
 
 #include <stdarg.h>

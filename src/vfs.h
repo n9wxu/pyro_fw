@@ -24,6 +24,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <lfs.h>
+#include "vfs_path.h"
 #if PYRO_HAS_SD
 #include "ff.h"
 #endif
@@ -34,7 +35,8 @@ enum { VFS_NONE = 0, VFS_LFS, VFS_FAT };
 #define VFS_WR 0x02     /* create, truncate */
 #define VFS_APPEND 0x04 /* with VFS_WR: create, keep, write at the end */
 
-/* Errors: VFS_NOENT for no such file, VFS_ERR for anything else. */
+/* Errors: VFS_NOENT for no such file, VFS_ERR for anything else, a path
+ * vfs_path_ok() refuses included. */
 #define VFS_NOENT (-2)
 #define VFS_ERR (-1)
 

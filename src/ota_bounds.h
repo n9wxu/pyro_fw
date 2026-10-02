@@ -1,5 +1,7 @@
 /*
- * The OTA image's bound.
+ * The OTA image's bound [OTA-01, OTA-04]: the download slot, past which lies
+ * littlefs. Checked against Content-Length before a byte is written, and
+ * again for each sector, so no length the client claims reaches past it.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -10,16 +12,11 @@
 #include <stdint.h>
 
 static inline bool ota_image_fits(uint32_t len, uint32_t slot_bytes) {
-    (void)len;
-    (void)slot_bytes;
-    return true;
+    return len > 0 && len <= slot_bytes;
 }
 
 static inline bool ota_sector_fits(uint32_t offset, uint32_t sector_bytes, uint32_t slot_bytes) {
-    (void)offset;
-    (void)sector_bytes;
-    (void)slot_bytes;
-    return true;
+    return offset <= slot_bytes && sector_bytes <= slot_bytes - offset;
 }
 
 #endif

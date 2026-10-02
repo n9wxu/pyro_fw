@@ -47,14 +47,22 @@ void net_tx_drain(net_txq_t *q, const net_tx_ops_t *ops);
 /* Releases everything held: the link it was for is gone. */
 void net_tx_flush(net_txq_t *q, const net_tx_ops_t *ops);
 
+/* ── Received frames ──────────────────────────────────────────────── */
+
 typedef struct {
-    void *(*alloc)(uint16_t size);
-    bool (*fill)(void *frame, const uint8_t *src, uint16_t size);
+    void *(*alloc)(uint16_t size);                                /* NULL: none free */
+    bool (*fill)(void *frame, const uint8_t *src, uint16_t size); /* copies size bytes */
     void (*release)(void *frame);
 } net_rx_ops_t;
 
+/* A frame the endpoint received, copied into *slot, which holds one at a
+ * time. True only when *slot now holds it: TinyUSB then waits for
+ * tud_network_recv_renew(), which comes once lwIP has the frame, and after a
+ * false it renews the endpoint itself (TinyUSB's ecm_rndis_device.c). */
 bool net_rx_take(void **slot, const net_rx_ops_t *ops, const uint8_t *src, uint16_t size);
 
+/* What may be copied into a cap-byte endpoint buffer: the whole frame, or 0
+ * when it does not fit. */
 uint16_t net_tx_copy_len(uint32_t frame_len, uint16_t cap);
 
 #endif /* NET_TXQ_H */
