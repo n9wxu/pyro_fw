@@ -1,6 +1,6 @@
 /*
- * MK1C's firing sequence, DESIGN.md 7.1 as loop steps. See
- * THEORY_OF_OPERATION.md "Firing sequence".
+ * MK1C's firing sequence, a step a loop [PYR-ARM-01..06].
+ * See THEORY_OF_OPERATION.md "Firing sequence".
  *
  * SPDX-License-Identifier: MIT
  */

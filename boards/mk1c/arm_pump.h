@@ -1,7 +1,7 @@
 /*
  * The ARM_TOGGLE charge pump: U9 stays enabled only while it toggles, and
- * stopping it is the disarm. A FIFO-paced PIO machine, fed once a loop. See
- * THEORY_OF_OPERATION.md "Arm pump".
+ * stopping it is the disarm [PYR-ARM-01]. A FIFO-paced PIO machine, fed once
+ * a loop. See THEORY_OF_OPERATION.md "Arm pump".
  *
  * SPDX-License-Identifier: MIT
  */
@@ -10,7 +10,7 @@
 
 #include "loop_period.h"
 
-#define ARM_PUMP_PERIOD_US 100 /* 10 kHz: DESIGN.md 5.1's band is 10-50 */
+#define ARM_PUMP_PERIOD_US 100 /* 10 kHz. See THEORY_OF_OPERATION.md "Arm pump" */
 
 /* Toggle cycles per pushed word. The four FIFO words and the one running
  * carry the pump across a loop and a quarter: a feed a little late does not

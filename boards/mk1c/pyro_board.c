@@ -1,7 +1,7 @@
 /*
  * Pyro backend -- Pyro MK1C: a TPS259570 eFuse high side armed by a charge
- * pump, a low-side gate per channel, and a biased-bus presence test. See
- * THEORY_OF_OPERATION.md "Firing bus".
+ * pump, a low-side gate per channel, and a biased-bus presence test.
+ * See THEORY_OF_OPERATION.md "Firing bus".
  *
  * Between fires the board checks presence and shorts, nothing else
  * [DD-055]; a fire is the sequence in pyro_sequence.c [DD-056]. Only that

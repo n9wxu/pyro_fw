@@ -17,7 +17,8 @@
  *
  * Altitudes are above the pad. Pressure is the ISA's at the pad's own
  * altitude plus the profile's, the pad's taken from the pressure it reads,
- * to 32 km (1976 US Standard Atmosphere, the three lowest layers).
+ * to 32 km (U.S. Standard Atmosphere 1976, NOAA-S/T 76-1562, the three
+ * lowest layers).
  *
  * Pure: host-tested (test_flight_sim.c).
  *

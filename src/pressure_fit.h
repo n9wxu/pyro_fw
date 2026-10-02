@@ -1,18 +1,8 @@
 /*
- * The one estimator: a least-squares quadratic through the last second of
- * pressure samples, evaluated at the newest.
- *
- * Every detector's speed, and the Mach lockout's rate and curvature, come from
- * here (DD-048). A fit gives what a two-point difference cannot: the rate and
- * its change, with the noise of fifty samples rather than two, and a measure
- * of whether the samples can be believed at all -- a step, a charge in the
- * bay, a shock across the ports, each leaves residuals no smooth flight does.
- *
- * Evaluated at the newest sample, not the window's centre: the endpoint of a
- * quadratic fit has no lag on a constant acceleration. Fitted against each
- * sample's own time (SNS-PRES-08), not an assumed even spacing: a flash stall
- * leaves a gap, and precomputed coefficients would put every sample after it
- * in the wrong place.
+ * The one estimator [DD-048]: a least-squares quadratic through the last
+ * second of pressure samples, evaluated at the newest -- the endpoint, which
+ * has no lag on a constant acceleration -- and fitted against each sample's
+ * own time [SNS-PRES-08], because a flash stall leaves a gap.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -22,7 +12,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define PFIT_WINDOW_US 1000000u /* T5-W: one second */
+#define PFIT_WINDOW_US 1000000u
 #define PFIT_MIN_SAMPLES 8
 
 typedef struct {

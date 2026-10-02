@@ -5,8 +5,8 @@
 #include "pyro_sense.h"
 #include <string.h>
 
-#define AGREEING_SAMPLES 3 /* DESIGN.md invariant 8 */
-#define PACK_PRESENT_MIN_COUNTS 200
+#define AGREEING_SAMPLES 3          /* [PYR-CONT-04] See THEORY_OF_OPERATION.md "Short latches" */
+#define PACK_PRESENT_MIN_COUNTS 200 /* about 1.5 V of pack: none fitted below it */
 
 static struct {
     uint8_t latched;

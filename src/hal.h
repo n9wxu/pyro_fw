@@ -51,25 +51,11 @@ typedef struct {
 
 void hal_pyro_init(void);
 
-/* Continuity is measured with a stimulus that is SHARED between channels --
- * MK1B asserts the common enable, MK1C biases the firing bus -- so one
- * measurement yields both channels. Taking a sample and reading a channel
- * are therefore separate operations:
- *
- *   hal_pyro_sample()  performs one stimulus event and latches both results
- *   hal_pyro_get(ch)   returns the latched result for one channel
- *
- * Callers that want both channels at one instant sample once and get twice.
- * Callers that care about a single channel at a particular moment -- the
- * post-fire verify and re-fire windows, which open per channel -- sample
- * once and get only the channel whose window is open.
- *
- * A single combined call cannot serve both: it forced the per-channel sites
- * to sample twice and discard half of each result. A per-channel API cannot
- * either, because it would hide that the stimulus is shared and double the
- * current through the bridgewire on every routine check.
- *
- * channel is 1 or 2; any other value leaves *out unmodified. */
+/* The continuity stimulus is shared between the channels, so one sample
+ * serves both, and each channel is then read from it. Every board checks in
+ * the background from hal_pyro_update(); hal_pyro_get() returns the newest
+ * completed check. channel is 1 or 2; any other value leaves *out unmodified.
+ */
 void hal_pyro_sample(void);
 void hal_pyro_get(uint8_t channel, hal_continuity_t *out);
 void hal_pyro_fire(uint8_t channel);
@@ -78,21 +64,12 @@ void hal_pyro_update(uint32_t now_ms);
  * de-energised. The flight software reads it straight after the call as the
  * board's acknowledgement: false there means nothing was energised. */
 bool hal_pyro_is_firing(void);
-bool hal_pyro_fault(uint8_t channel); /* FLAG pin: true = fault during fire */
+bool hal_pyro_fault(uint8_t channel); /* [PYR-FAULT-02] the board's overcurrent report */
 
-/* Claim each channel's pads for the flight software and install the real
- * operations for the channels that got them. Call once at boot, after the
- * pads have owners (pin_store_claim_pads()) and before the flight loop.
- *
- * A channel whose pads Lua already holds cannot claim them, so it is given
- * mocked operations instead -- the calls above then reach a function that
- * touches no hardware, because the real one was never installed for it.
- * pads_of answers which pads a channel switches, as a pad_claim.h mask. Passed
- * in rather than looked up, so this layer stays free of the pin assignment and
- * of Lua -- the caller already knows both.
- *
- * Returns how many channels the flight software kept. Every mocked operation
- * is logged and counted; see pyro_release.h and pad_claim.h. */
+/* Claim each channel's pads, after pin_store_claim_pads() and before the
+ * flight loop; a channel Lua holds gets the mocked operations [DD-019,
+ * DD-020]. pads_of answers which pads a channel switches, so this layer
+ * knows neither the pin assignment nor Lua. Returns the channels kept. */
 int hal_pyro_claim_channels(uint32_t (*pads_of)(uint8_t channel));
 
 /* ── Buzzer ───────────────────────────────────────────────────────── */

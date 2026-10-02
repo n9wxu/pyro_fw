@@ -1,7 +1,6 @@
 /*
- * The flight log on disk: binary records, rendered as CSV when it is read
- * (DD-062). The CSV is the text the log used to be stored as, plus a line
- * saying the rate it was written at.
+ * The flight log on disk: binary records, rendered as CSV, with a line saying
+ * the rate it was written at, when it is read (DD-062).
  *
  * A file is the magic, one header record, then sample and text records in
  * the order they were written. Multi-byte fields are little-endian. A record
