@@ -353,7 +353,7 @@ A channel whose mode is none, or whose pads are released to Lua, is skipped: wit
 2. **Two-key firing** - a channel's own switch and the shared element must both be on
 3. **Current protection** - MK1A an 8 A fuse, MK1B a 1.5 A PTC and the AP2192's limit, MK1C the eFuse's current limit
 4. **Fault monitoring** - MK1B's FLAG pins; MK1C's short latches and fire preconditions
-5. **Post-fire verification** - 500-600 ms after a fire a channel still reading good is logged as not opened; pyro 1 is then re-fired once if the descent shows no canopy (PYR-VERIFY-01, PYR-REFIRE-01)
+5. **Post-fire verification** - the first continuity check completed after the pulse decides it: a channel still reading good is logged as not opened; pyro 1 is then re-fired once if the descent shows no canopy (PYR-VERIFY-01, PYR-REFIRE-01)
 6. **A failed sensor deploys nothing** - a stuck or silent sensor holds every pressure trigger (DD-050)
 7. **USB means grounded** - with a host attached there is no launch detection and no pad marker, unless test mode is on (USB-01, USB-08)
 8. **Ground test safety** - serial: 3 s ARM→FIRE window, PAD_IDLE only; switch: power-up only, after the sensor and continuity checks
@@ -442,7 +442,7 @@ This produces:
 - `pyro_fw_<board>.uf2` — application firmware
 - `pyro_fw_c_fota_image.bin` — OTA update image
 
-A local build increments the patch number in `VERSION`.
+A build reads `VERSION` and does not change it.
 
 ## Flash Layout
 Set by each board's `board.cmake`.
@@ -486,7 +486,7 @@ For routine updates without reflashing the bootloader:
 ```bash
 ./support/upload_fw.sh [path_to_bin] [host]
 ```
-Or use the "Firmware Update" button in the web interface at http://pyro.local/. The image is not checked against the board: send one built for it.
+Or use the "Firmware Update" button in the web interface at http://pyro.local/. An image built for another board refuses to arm or fire and declines to commit, so the bootloader puts the previous image back (DD-081): send each board its own.
 
 The A/B bootloader ([pico_fota_bootloader](https://github.com/JZimnol/pico_fota_bootloader)) provides:
 - **Safe updates** — new firmware is written to the inactive slot while the device keeps running
@@ -504,7 +504,7 @@ Connect the board via USB. It appears as a network adapter (RNDIS on Windows, EC
 - **Lua tab:** Lua pads, the program editor with check, export and import, and the console
 - **Update tab:** firmware and web upload, GitHub release checker
 - **Test mode:** with it on, a board on USB detects a launch, fires and beeps as on battery. It lives in RAM, so every boot starts with it off, and it cannot change from launch to landing (USB-08, DD-038).
-- **APIs** (all CORS enabled):
+- **APIs** (same origin only; a POST needs `X-Pyro: 1`, DD-083):
   - `GET /api/status`, `/api/net` (network counters, WEB-API-13), `/api/pressure/trace` (the last 256 conversions, DD-063), `/api/log/space`, `/api/flight.csv`, `/api/pins/caps`, `/api/lua/console`
   - `GET`/`POST /api/config`, `/api/pins`, `/api/beeps`, `/api/lua/script`
   - `POST /api/beeps/play`, `/api/lua/check`, `/api/flight/erase`, `/api/test_mode/on`, `/api/test_mode/off`, `/api/reboot`, `/api/ota`, `/api/serial`, `/www/<file>`
@@ -587,11 +587,11 @@ git tag v2.0.0
 git push && git push --tags
 ```
 
-GitHub Actions will build the default board, MK1B, and publish `pyro_fw_mk1b.uf2`, `pyro_fw_c_fota_image.bin`, `pico_fota_bootloader.uf2` and `pyro-mk1b-support.zip` as release assets.
+GitHub Actions builds MK1A, MK1B and MK1C and publishes `fw_<board>.uf2`, `fw_<board>_fota.bin` and `fw_<board>_bootloader.uf2` for each, and `pyro-support.zip`, as release assets.
 
 ## Self-Update from GitHub
 
-Update a device to the latest release directly from GitHub. Releases carry MK1B's image, so this is for an MK1B:
+Update a device to the latest release directly from GitHub. The tool takes the release's image for the board the device reports:
 ```bash
 # Check for updates
 python3 support/update_from_release.py --check --host pyro.local
@@ -610,7 +610,7 @@ Without `--host` the tool uses 192.168.7.1. It checks the device's current versi
 Current work, open decisions and bench checks still owed are tracked in [docs/outstanding_tasks.md](docs/outstanding_tasks.md). Among them: MK1B cannot sense continuity until its U5 is changed (B-U5), MK1C's bench fire into a dummy load (F1), and the ground test procedure on the bench (GT-1).
 
 - [REQUIREMENTS.md](REQUIREMENTS.md) and [TRACEABILITY.md](TRACEABILITY.md) - requirements and the tests that verify them
-- [DECISIONS.md](DECISIONS.md) - design decisions, DD-001 to DD-071
+- [DECISIONS.md](DECISIONS.md) - design decisions
 - [IMPLEMENTATION.md](IMPLEMENTATION.md) and [ARCHITECTURE_V2.md](ARCHITECTURE_V2.md) - how the firmware is built
 - [docs/flight_states.md](docs/flight_states.md) - the state machine
 - `boards/<name>/THEORY_OF_OPERATION.md` - each board

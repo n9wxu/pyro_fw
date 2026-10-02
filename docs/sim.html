@@ -410,9 +410,9 @@
            appends states and never renumbers them, since the numbers reach the
            flight log and /api/status. */
         var STATE_NAMES = ['BOOT_SETTLE', 'BOOT_CONTINUITY', 'BOOT_CALIBRATE', 'PAD_IDLE', 'ASCENT', 'FALLING',
-                           'DROGUE_DESCENT', 'CHUTE_DESCENT', 'LANDED', 'BOOT_SENSOR', 'FAULT'];
+                           'DROGUE_DESCENT', 'CHUTE_DESCENT', 'LANDED', 'BOOT_SENSOR', 'FAULT', 'GROUND_TEST'];
         var STATE_CLASSES = ['state-boot', 'state-boot', 'state-boot', 'state-pad', 'state-ascent', 'state-descent',
-                             'state-descent', 'state-descent', 'state-landed', 'state-boot', 'state-boot'];
+                             'state-descent', 'state-descent', 'state-landed', 'state-boot', 'state-boot', 'state-boot'];
         var ST_PAD_IDLE = 3, ST_ASCENT = 4, ST_LANDED = 8;
 
         /* ---- Simulated flight state for physics-only mode ---- */

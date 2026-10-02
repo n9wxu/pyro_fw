@@ -159,9 +159,10 @@ stamp a Lua output low on every check.
 `pyro_fire()` turns the common and the channel's enable on and starts a
 500 ms pulse; the check is suspended, since the pulse owns the common. When the
 pulse ends, the enable goes off and the common stays on as the stimulus, so a
-fresh presence reading lands a loop or two later, about 40 ms — inside the
-flight's post-fire verify window, which opens as the pulse ends and runs
-100 ms. With the common on there is no short reading; the last one stands.
+fresh presence reading lands a loop or two later, about 40 ms. Until then
+`pyro_get()` gives the fired channel no verdict, and that reading is the
+flight's post-fire verify (PYR-VERIFY-01, DD-080). With the common on there is
+no short reading; the last one stands.
 
 ## Pressure sensor
 
@@ -271,9 +272,11 @@ sector erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
   400 kHz.
 - `integration_tests` flies the flight software built for MK1B, the default
   board.
-- `plant_tests` models the sense network from the netlist; it leaves out U5's
-  discharge.
-- `boards/sim_mk1b` runs the real `pyro_board.c` against the plant.
+- `plant_tests` models the sense network from the netlist, with U5 as fitted,
+  the AP2192A, discharging its disabled outputs (DD-086); the base AP2192 is a
+  plant option.
+- `boards/sim_mk1b` runs the real `pyro_board.c` against the plant, and reads
+  both channels shorted, as the bench boards do (DD-059).
 
 ## References
 

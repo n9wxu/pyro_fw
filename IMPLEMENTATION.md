@@ -75,7 +75,7 @@ Pads are owned once: `pin_store_claim_pads()` gives each pad one owner, and `pyr
 
 ### Pyro Fault Detection
 - `hal_pyro_fault(channel)`: MK1B reads its AP2192 FLAG pins (GPIO 17/18, active-low with pull-ups); MK1C reports its latched bus faults; MK1A has no fault output
-- Post-fire continuity verification: ADC re-check 500-600 ms after each fire (PYR-VERIFY-01)
+- Post-fire continuity verification: a fired channel has no verdict until a check begun after its pulse completes; the first verdict, asked for from 500 ms after the fire, is the verify (PYR-VERIFY-01, DD-080)
 - Fault events: EVT_PYRO1_FAULT, EVT_PYRO2_FAULT (overcurrent during fire)
 - Verify events: EVT_PYRO1_NOPEN, EVT_PYRO2_NOPEN (pyro didn't open after fire)
 - Refusals: EVT_PYRO1_REFUSED, EVT_PYRO2_REFUSED (the board energised nothing, PYR-FIRE-01)

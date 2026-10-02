@@ -205,27 +205,27 @@ jobs:
       - name: Test config save/reboot cycle
         run: |
           # Save a test config
-          curl -s -X POST -H "Content-Type: text/plain" \
+          curl -s -X POST -H "X-Pyro: 1" -H "Content-Type: text/plain" \
             -d $'[pyro]\r\npyro1_mode=delay\r\npyro1_value=5\r\npyro2_mode=agl\r\npyro2_value=200\r\nunits=ft\r\n' \
             http://192.168.7.1/api/config
           # Reboot
-          curl -s -X POST http://192.168.7.1/api/reboot
+          curl -s -X POST -H "X-Pyro: 1" -d '' http://192.168.7.1/api/reboot
           sleep 8
           # Verify config applied
           P2VAL=$(curl -s http://192.168.7.1/api/status | python3 -c "import sys,json; print(json.load(sys.stdin)['pyro2_value'])")
           echo "pyro2_value after reboot: $P2VAL"
           [ "$P2VAL" = "200" ]
           # Restore default config
-          curl -s -X POST -H "Content-Type: text/plain" \
+          curl -s -X POST -H "X-Pyro: 1" -H "Content-Type: text/plain" \
             -d $'[pyro]\r\npyro1_mode=delay\r\npyro1_value=0\r\npyro2_mode=agl\r\npyro2_value=300\r\nunits=m\r\n' \
             http://192.168.7.1/api/config
-          curl -s -X POST http://192.168.7.1/api/reboot
+          curl -s -X POST -H "X-Pyro: 1" -d '' http://192.168.7.1/api/reboot
           sleep 8
 
       - name: Test OTA update
         run: |
           # OTA the same firmware to test the update path
-          curl -s -X POST --data-binary @build/pyro_fw_c_fota_image.bin \
+          curl -s -X POST -H "X-Pyro: 1" --data-binary @build/pyro_fw_c_fota_image.bin \
             http://192.168.7.1/api/ota
           sleep 10
           VER=$(curl -s http://192.168.7.1/api/status | python3 -c "import sys,json; print(json.load(sys.stdin)['fw_version'])")

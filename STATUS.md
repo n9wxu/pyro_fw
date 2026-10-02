@@ -8,7 +8,7 @@
 > interrupt-driven ring, not DMA; Lua programs export and import from the Lua
 > tab; and the "Next Priority" list below is superseded. For what is open now,
 > see [docs/outstanding_tasks.md](docs/outstanding_tasks.md); for decisions,
-> `DECISIONS.md` (DD-001 to DD-071); for how the code works,
+> `DECISIONS.md`; for how the code works,
 > `IMPLEMENTATION.md` and each board's `THEORY_OF_OPERATION.md`.
 
 _Last updated: 2026-09-23 — v2.1.466, dispatch handshake race closed_

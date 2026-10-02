@@ -182,12 +182,16 @@ on it put the main out 2 s after the drogue on every flight.
    the rate has not settled under a canopy. It waits out the drogue's 2 s grace,
    or less above 90 m/s. A channel that opened fired its charge, so the canopy
    failed mechanically and re-firing an empty channel just spends altitude.
+   The retry rests on the drogue's own verdict alone: the main channel's mode
+   and continuity play no part in it.
 2. **Main early**, overriding its trigger, on the rocket's own evidence:
    descending faster than any drogue explains (35 m/s), **not being slowed**
    (the rate has not fallen by more than the descent tolerance), for 1 s, and
    measured only once the most recent drogue command has had its 2 s grace. A
    drogue fired into a fast descent is still decelerating inside its grace; a
    working one takes the rate below 35 m/s and never trips this.
+   Only a main whose mode expects an igniter, and which reads continuity, is
+   forced (CFG-04): a main configured as none is never fired.
    `main_forced` is set, `MAIN_FORCED` is logged, and `/api/status` says so.
 
 Closed-loop, on the H73 profile: a working drogue lets the main open at its
@@ -429,8 +433,9 @@ its charge never lit (PYR-REFIRE-01, PYR-REFIRE-02, DD-028), and fired through
 ### 6. Faults and verify failures are recorded and acted on by nothing — PARTLY FIXED
 
 `check_pyro_fault` latches `pyro1/2_fault` and logs it. `check_post_fire_verify`
-latches `pyro1/2_verify_fail` when a channel still reads closed 500–600 ms
-after firing -- the charge may not have gone -- and logs NOPEN.
+latches `pyro1/2_verify_fail` when a channel still reads closed on the first
+check completed after its pulse -- the charge may not have gone -- and logs
+NOPEN (DD-080).
 
 **Partly fixed.** `pyro1_verify_fail` decides whether the drogue retry is worth
 attempting. `pyro2_verify_fail`, `pyro1_fault` and `pyro2_fault` are logged and
