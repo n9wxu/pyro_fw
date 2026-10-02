@@ -1,5 +1,5 @@
 /*
- * Flash operations under FreeRTOS. See flash_op.h for the argument.
+ * Flash operations under FreeRTOS [DD-074].
  *
  * SPDX-License-Identifier: MIT
  */
@@ -14,8 +14,9 @@
 #include "pico/platform.h"
 
 /* A parked helper frees itself after this, whatever the caller does. Longer
- * than any single operation here: a 4 kB sector erase is 400 ms at most
- * (W25Q128JV_RevH_2021-03-10.pdf, page 66), and nothing erases more at once. */
+ * than the longest operation, one 4 kB sector erase, tSE max at -40..85 °C:
+ * W25Q128JV 400 ms (RevH §9.6, MK1A), BY25Q64ES 300 ms (Rev2.9 §8.7, MK1B).
+ * MK1C's XT25F128F: no datasheet in docs/datasheets. */
 #define PARK_MAX_US 1500000u
 
 /* A helper that has not parked by this is not going to: refuse the operation. */

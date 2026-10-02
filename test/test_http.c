@@ -10,6 +10,14 @@
  */
 #include "unity.h"
 #include "../src/http_conn.h"
+#include "../src/vfs_path.h"
+#include "../src/ota_bounds.h"
+#define PYRO_HAS_SD 1
+#define PYRO_HAS_LUA 1
+#define PYRO_HAS_BENCH_FLIGHT 1
+#define PIN_STORE_MAX 1024
+#include "../src/beep_store.h"
+#include "../src/http_routes.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,6 +34,7 @@ static int offers_while_shut;
 static int complete_refusals;
 static uint32_t stream_len;
 static char big[4000];
+#define BOARD_SUBNET 42
 
 static void on_head(http_conn_t *c) {
     if (strcmp(c->method, "GET") == 0 && strcmp(c->path, "/hello") == 0) {
@@ -42,6 +51,9 @@ static void on_head(http_conn_t *c) {
         /* body discarded; on_complete answers */
     } else if (strcmp(c->method, "GET") == 0 && strncmp(c->path, "/later", 6) == 0) {
         /* answered by a unit, away from the service call */
+    } else if (strcmp(c->path, "/guarded") == 0) {
+        uint16_t refusal = http_origin_refusal(c, BOARD_SUBNET);
+        http_respond_str(c, refusal ? refusal : 200, "text/plain", refusal ? "refused" : "ok");
     } else {
         http_respond_str(c, 404, "text/plain", "Not found");
     }
@@ -562,6 +574,131 @@ void test_HTTP_18_a_unit_answers_away_from_the_service_call(void) {
     answer_later("GET /later/big HTTP/1.1\r\n\r\n", conn.work, sizeof(big), 5);
 }
 
+/* ── Requests from elsewhere ──────────────────────────────────────── */
+
+static int guarded(const char *req) {
+    run_whole(req);
+    out[out_len] = '\0';
+    return status_of(out);
+}
+
+/* [WEB-HTTP-04] A POST with no length is refused, not read as empty. */
+void test_WEB_HTTP_04_a_post_with_no_content_length_is_411(void) {
+    TEST_ASSERT_EQUAL(411, guarded("POST /echo HTTP/1.1\r\nHost: pyro.local\r\n\r\n"));
+    TEST_ASSERT_EQUAL(200, guarded("POST /echo HTTP/1.1\r\nHost: pyro.local\r\nContent-Length: 0\r\n\r\n"));
+    TEST_ASSERT_EQUAL_MESSAGE(200, guarded("GET /hello HTTP/1.1\r\n\r\n"), "a GET needs no length");
+}
+
+/* [WEB-API-07] A page on another site can make the browser send a request to the
+ * board, by a rebound name or by a form; only the board's own page sends the
+ * board's name and the X-Pyro header together. */
+void test_HTTP_20_a_request_naming_another_host_is_refused(void) {
+    TEST_ASSERT_EQUAL(200, guarded("GET /guarded HTTP/1.1\r\nHost: pyro.local\r\n\r\n"));
+    TEST_ASSERT_EQUAL(403, guarded("GET /guarded HTTP/1.1\r\nHost: attacker.example\r\n\r\n"));
+    TEST_ASSERT_EQUAL(403, guarded("GET /guarded HTTP/1.1\r\nHost: 192.168.7.1\r\n\r\n"));
+    TEST_ASSERT_EQUAL_MESSAGE(400, guarded("GET /guarded HTTP/1.1\r\n\r\n"), "RFC 9112 §3.2: Host is required");
+}
+
+void test_HTTP_21_a_post_without_the_x_pyro_header_is_refused(void) {
+    TEST_ASSERT_EQUAL(403, guarded("POST /guarded HTTP/1.1\r\nHost: pyro.local\r\nContent-Length: 0\r\n\r\n"));
+    TEST_ASSERT_EQUAL(403, guarded("POST /guarded HTTP/1.1\r\nHost: pyro.local\r\nX-Pyro: 0\r\n"
+                                   "Content-Length: 0\r\n\r\n"));
+    TEST_ASSERT_EQUAL(200, guarded("POST /guarded HTTP/1.1\r\nhost: PYRO.local\r\nx-pyro: 1\r\n"
+                                   "Content-Length: 0\r\n\r\n"));
+}
+
+void test_HTTP_22_the_board_answers_to_its_names_and_its_own_address(void) {
+    static const char *const ok[] = {"pyro.local", "pyro.local:80", "PYRO.LOCAL", "pyro-1.local",
+                                     "pyro-12.local:80", "192.168.42.1", "192.168.42.1:80", "pyro.local."};
+    static const char *const refused[] = {"",
+                                          "pyro",
+                                          "pyro.local.attacker.example",
+                                          "evilpyro.local",
+                                          "pyro-.local",
+                                          "pyro-1x.local",
+                                          "192.168.7.1",
+                                          "192.168.42.10",
+                                          "192.168.42.1:8080",
+                                          "192.168.42.1.attacker.example",
+                                          "pyro.local:81"};
+    for (unsigned i = 0; i < sizeof(ok) / sizeof(ok[0]); i++) {
+        TEST_ASSERT_TRUE_MESSAGE(http_host_is_board(ok[i], BOARD_SUBNET), ok[i]);
+    }
+    for (unsigned i = 0; i < sizeof(refused) / sizeof(refused[0]); i++) {
+        TEST_ASSERT_FALSE_MESSAGE(http_host_is_board(refused[i], BOARD_SUBNET), refused[i]);
+    }
+}
+
+/* ── Paths [WEB-API-14] ───────────────────────────────────────────── */
+
+/* littlefs resolves "..": /www/../config.ini would be the config. */
+void test_HTTP_23_a_path_that_climbs_out_or_hides_its_name_is_refused(void) {
+    static const char *const ok[] = {"/www/index.html", "www/app.js", "config.ini", "/lua_user.lua",
+                                     "/www/a-b_c.1.css", "flight_log.bin.part", "/www"};
+    static const char *const refused[] = {
+        "/www/../config.ini", "/www/..", "../config.ini", "/www/./x.js", "/www/.", "/www//x.js",
+        "/www\\..\\config.ini", "/www/%2e%2e/config.ini", "/www/a b.js", "/www/x.js?q", "", "/",
+        "/www/\x01x",
+    };
+    for (unsigned i = 0; i < sizeof(ok) / sizeof(ok[0]); i++) {
+        TEST_ASSERT_TRUE_MESSAGE(vfs_path_ok(ok[i]), ok[i]);
+    }
+    for (unsigned i = 0; i < sizeof(refused) / sizeof(refused[0]); i++) {
+        TEST_ASSERT_FALSE_MESSAGE(vfs_path_ok(refused[i]), refused[i]);
+    }
+    TEST_ASSERT_FALSE_MESSAGE(vfs_path_ok(NULL), "no path");
+}
+
+/* ── The OTA image's bound [OTA-05] ───────────────────────────────── */
+
+#define SLOT (64u * 4096u)
+
+/* Past the download slot is littlefs. */
+void test_OTA_01_an_image_larger_than_the_download_slot_is_refused(void) {
+    TEST_ASSERT_TRUE(ota_image_fits(1, SLOT));
+    TEST_ASSERT_TRUE(ota_image_fits(SLOT, SLOT));
+    TEST_ASSERT_FALSE(ota_image_fits(SLOT + 1, SLOT));
+    TEST_ASSERT_FALSE(ota_image_fits(UINT32_MAX, SLOT));
+    TEST_ASSERT_FALSE_MESSAGE(ota_image_fits(0, SLOT), "an empty image is no image");
+}
+
+void test_OTA_01_no_sector_is_written_past_the_slot_end(void) {
+    TEST_ASSERT_TRUE(ota_sector_fits(0, 4096, SLOT));
+    TEST_ASSERT_TRUE(ota_sector_fits(SLOT - 4096, 4096, SLOT));
+    TEST_ASSERT_FALSE(ota_sector_fits(SLOT, 4096, SLOT));
+    TEST_ASSERT_FALSE(ota_sector_fits(SLOT - 4095, 4096, SLOT));
+    TEST_ASSERT_FALSE(ota_sector_fits(UINT32_MAX - 100, 4096, SLOT));
+}
+
+/* ── The POST routes ──────────────────────────────────────────────── */
+
+/* [WEB-API-08] The card's bench, mount, clock and log starts are storage
+ * routes: outside the lock they could re-mount the volume under the flight
+ * log. */
+void test_WEB_API_08_every_route_that_touches_storage_waits_for_the_flight_log(void) {
+    static const char *const storage[] = {"/www/index.html",   "/api/lua/script",  "/api/serial",
+                                          "/api/config",       "/api/beeps",       "/api/pins",
+                                          "/api/flight/erase", "/api/sd/bench",    "/api/sd/bench?kb=1",
+                                          "/api/sd/init",      "/api/sd/init?crc=0", "/api/sd/idle?ms=5",
+                                          "/api/hr/start",     "/api/hr/start?odr=833"};
+    for (unsigned i = 0; i < sizeof(storage) / sizeof(storage[0]); i++) {
+        const post_route_t *r = find_post_route(storage[i]);
+        TEST_ASSERT_NOT_NULL_MESSAGE(r, storage[i]);
+        TEST_ASSERT_TRUE_MESSAGE(r->fs, storage[i]);
+    }
+}
+
+void test_HTTP_19_a_query_route_matches_only_its_path(void) {
+    TEST_ASSERT_NULL(find_post_route("/api/sd/benchmark"));
+    TEST_ASSERT_NULL(find_post_route("/api/test_mode/maybe"));
+    TEST_ASSERT_NOT_NULL(find_post_route("/api/test_mode/on"));
+    TEST_ASSERT_NOT_NULL(find_post_route("/api/sim/flight?apogee=100"));
+    TEST_ASSERT_NULL(find_post_route("/api/sim/flightx"));
+    const post_route_t *ota = find_post_route("/api/ota");
+    TEST_ASSERT_NOT_NULL(ota);
+    TEST_ASSERT_FALSE_MESSAGE(ota->fs, "the image goes to flash, not to a file");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_HTTP_01_whole_request);
@@ -582,5 +719,14 @@ int main(void) {
     RUN_TEST(test_HTTP_16_expect_continue);
     RUN_TEST(test_HTTP_17_wants_service_only_with_a_step_to_take);
     RUN_TEST(test_HTTP_18_a_unit_answers_away_from_the_service_call);
+    RUN_TEST(test_WEB_HTTP_04_a_post_with_no_content_length_is_411);
+    RUN_TEST(test_HTTP_20_a_request_naming_another_host_is_refused);
+    RUN_TEST(test_HTTP_21_a_post_without_the_x_pyro_header_is_refused);
+    RUN_TEST(test_HTTP_22_the_board_answers_to_its_names_and_its_own_address);
+    RUN_TEST(test_HTTP_23_a_path_that_climbs_out_or_hides_its_name_is_refused);
+    RUN_TEST(test_OTA_01_an_image_larger_than_the_download_slot_is_refused);
+    RUN_TEST(test_OTA_01_no_sector_is_written_past_the_slot_end);
+    RUN_TEST(test_WEB_API_08_every_route_that_touches_storage_waits_for_the_flight_log);
+    RUN_TEST(test_HTTP_19_a_query_route_matches_only_its_path);
     return UNITY_END();
 }

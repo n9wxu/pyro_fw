@@ -1,11 +1,12 @@
 /*
- * A plant for the Mach lockout's tests: a real atmosphere at any pad, a
- * rocket that can go supersonic, and the pressure its static ports report.
+ * A plant for the Mach lockout's tests: an atmosphere at any pad, a rocket
+ * that can go supersonic, and the pressure its static ports report.
  *
- * physics.c drives the browser simulator and stays as it is. This one is for
- * the host tests, where the pad's temperature and elevation matter: every
- * threshold of the lockout is a pressure ratio whose Mach meaning depends on
- * the air's temperature (docs/mach-lockout-prompt.md).
+ * Unlike physics.c's standard day, the pad's own temperature sets the air:
+ * every threshold of the lockout is a pressure ratio whose Mach meaning
+ * depends on it (docs/mach_lockout.md). The troposphere lapses at the
+ * standard rate from the pad's temperature; above it the air is isothermal,
+ * as the standard's is to 20 km.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -13,11 +14,12 @@
 #define MACH_PLANT_H
 
 #include <stdbool.h>
+#include "physics.h"
 
-#define MP_G 9.80665f
-#define MP_R 287.05f
-#define MP_GAMMA 1.4f
-#define MP_LAPSE 0.0065f         /* K/m, to the tropopause */
+#define MP_G PHYS_G0
+#define MP_R ((float)PHYS_R_AIR)
+#define MP_GAMMA 1.4f            /* dry air, USSA76 */
+#define MP_LAPSE 0.0065f         /* K/m, USSA76 Table 4, to the tropopause */
 #define MP_TROPOPAUSE_M 11000.0f /* ASL */
 
 /* The pad: its air temperature, and its elevation above sea level. Its

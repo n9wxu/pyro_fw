@@ -1,17 +1,9 @@
 /*
- * The Mach lockout's thresholds, in the pressure domain and in integers
- * (DD-049, docs/mach_lockout.md).
+ * The Mach lockout's thresholds, as pressure ratios in integers [DD-049].
+ * Each is derived in docs/mach_lockout.md "Thresholds".
  *
- * Every threshold is a pressure ratio. -pdot/p is the climb rate over RT/g,
- * and pddot/p the deceleration over RT/g, so a fixed ratio means the same
- * Mach, or the same fraction of g, at any site elevation; only the air's
- * temperature moves it, and each ratio is chosen for the envelope's worst
- * air, 216 K to 318 K. docs/mach_lockout.md derives each one.
- *
- * The fit's rates arrive as floats and are rounded and clamped here: a spoiled
- * fit's rate can be anything, and 1000 x 1 MPa/s is still inside an int32.
- * No real flight comes near either clamp, so clamping never changes a
- * verdict.
+ * A spoiled fit's rate can be anything, so it is clamped: 1000 x 1 MPa/s
+ * still fits an int32, and no real flight comes near either clamp.
  *
  * SPDX-License-Identifier: MIT
  */

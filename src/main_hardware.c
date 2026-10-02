@@ -46,8 +46,7 @@
 /* High-water marks, reported by /api/status, so PYRO_LOOP_WORST_MS can be set
  * from measurement. loop_overruns above zero means a period's work did not
  * finish before the next period began; stage_max_us says which stage to look
- * at. Stage 1 was the USB and network pass, now the net task's; stage 8 is
- * the time the flight task spends waiting for its next period. */
+ * at. Stage 1 is unused; stage 8 is the wait for the next period. */
 #define STAGE_COUNT 9
 #define STAGE_SLACK 8
 
@@ -210,7 +209,7 @@ void flight_task(void *arg) {
     uint32_t fires_seen = 0;
 
     for (;;) {
-        /* The flight task's only blocking call [plan 2, section 8]. */
+        /* [RTOS-01] The flight task's only blocking call. */
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         uint32_t fires = period_fires;
@@ -258,7 +257,6 @@ void flight_task(void *arg) {
         flight_set_usb_attached(ctx, usb_host_active(now), now);
         ctx->current_state = dispatch_state(ctx, now);
 
-        /* Outputs (telemetry, pyro update) */
         STAGE(4);
         flight_update_outputs(ctx, now);
         STAGE(5);

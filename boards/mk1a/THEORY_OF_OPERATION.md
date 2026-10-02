@@ -125,11 +125,10 @@ the exposure small if a high side ever leaks.
 `pyro_fire()` turns the low side and the channel's high side on and starts a
 500 ms pulse; the check is suspended, since the pulse owns the low side. When
 the pulse ends, the high side goes off and a new check starts **at once**, with
-the low side still on. The flight's post-fire verify window opens as the pulse
-ends and looks for the channel gone open; resuming the check anywhere else
-would leave the pre-fire reading latched through that window, and a channel
-still reading good there counts as a failed verify. Starting at once lands a
-fresh reading about 50 ms in.
+the low side still on. Until that check completes, `pyro_get()` gives the fired
+channel no verdict, and its first reading is the flight's post-fire verify
+(PYR-VERIFY-01, DD-080). Starting at once lands it about 50 ms after the
+pulse.
 
 ## Pressure sensor
 

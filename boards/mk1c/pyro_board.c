@@ -1,7 +1,7 @@
 /*
  * Pyro backend -- Pyro MK1C: a TPS259570 eFuse high side armed by a charge
- * pump, a low-side gate per channel, and a biased-bus presence test. See
- * THEORY_OF_OPERATION.md "Firing bus".
+ * pump, a low-side gate per channel, and a biased-bus presence test.
+ * See THEORY_OF_OPERATION.md "Firing bus".
  *
  * Between fires the board checks presence and shorts, nothing else
  * [DD-055]; a fire is the sequence in pyro_sequence.c [DD-056]. Only that
@@ -91,10 +91,13 @@ void pyro_sample(void) {}
 void pyro_get(uint8_t channel, pyro_continuity_t *out) {
     if (channel != 1 && channel != 2)
         return;
+    if (sequence_verdict_pending(channel)) {
+        *out = (pyro_continuity_t){0}; /* no verdict yet [PYR-VERIFY-01] */
+        return;
+    }
     const tracking_t *t = tracking_result();
     uint16_t counts = t->valid ? (channel == 1 ? t->a : t->b) : 0;
-    bool known = t->valid && !sequence_fired_since_tracking(channel);
-    track_t verdict = known ? track_channel(counts, t->bus) : TRACK_INVALID;
+    track_t verdict = t->valid ? track_channel(counts, t->bus) : TRACK_INVALID;
     out->raw_adc = counts;
     out->open = verdict != TRACK_PRESENT;
     out->good = verdict == TRACK_PRESENT;

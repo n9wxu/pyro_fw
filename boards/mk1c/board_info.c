@@ -8,6 +8,14 @@
  */
 #include "board_pins.h"
 #include "pico/binary_info.h"
+#include "sdk_default_pins.h"
+
+SDK_DEFAULT_PIN_IS_FREE(BOARD_PIN_ARM_TOGGLE);
+SDK_DEFAULT_PIN_IS_FREE(BOARD_PIN_BIAS_A);
+SDK_DEFAULT_PIN_IS_FREE(BOARD_PIN_FIRE_A);
+SDK_DEFAULT_PIN_IS_FREE(BOARD_PIN_BIAS_BUS);
+SDK_DEFAULT_PIN_IS_FREE(BOARD_PIN_FIRE_B);
+SDK_DEFAULT_PIN_IS_FREE(BOARD_PIN_BIAS_B);
 
 bi_decl(bi_1pin_with_name(BOARD_PIN_LED, "LED (D1 blue)"));
 bi_decl(bi_1pin_with_name(BOARD_PIN_BUZZER, "buzzer (Q2 gate)"));

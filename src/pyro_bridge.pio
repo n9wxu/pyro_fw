@@ -1,45 +1,12 @@
+; Half-bridge on a released pyro channel, on the pyro PIO (PIO0).
 ;
-; Half-bridge on a released pyro channel.
-;
-; A released pyro pad is still pyro hardware: a FET gate, a fuse and a common
-; return. So it keeps running under pyro rules, on the pyro PIO, whoever is
-; commanding it. PIO0 is that PIO; PIO1 is Lua's.
-;
-; With the igniter terminals shorted as the midpoint, the per-channel element
-; and the common form a half-bridge that can drive a WS2812 string or a servo
-; at VBAT. Turning both on at once shorts VBAT to ground through the pyro
-; fuse, so the program is built so that no data can ask for it.
-;
-; SHOOT-THROUGH IS UNREPRESENTABLE
-;
-; The only thing the FIFO carries is one bit choosing WHICH SINGLE SIDE turns
-; on. The program never copies a two-bit field to the pins, so there is no
-; value -- no Lua mistake, no corrupt word, no partially shifted OSR -- that
-; encodes "both". Every transition also passes through the dead band below,
-; so the two sides are never commanded on within the same instruction.
-;
-; DEAD TIME
-;
-; Y holds the count, loaded once from the first word the CPU pushes, and X is
-; the working copy so Y survives. A FET turns off in finite time, so the gap
-; between one side releasing and the other engaging is what keeps a
-; momentarily-conducting pair from becoming a shoot-through. Tunable rather
-; than fixed: the right value depends on the FETs a board fits.
-;
-; STALLING IS SAFE
-;
-; `pull block` sits immediately after the dead band, so an empty FIFO stalls
-; the state machine with BOTH SIDES OFF. A dead core1 therefore stops the
-; bridge rather than freezing it mid-drive, which is the same property
-; arm_pump.pio depends on, and PSM_WDSEL resets the PIO block if the
-; processor wedges instead.
-;
-; PIN MAPPING
-;
-; SET drives the per-channel element and side-set drives the common. Two
-; separate bases rather than one consecutive pair, because they are not
-; adjacent on every board -- MK1B has PYRO1_EN on GPIO21 and the common on
-; GPIO15.
+; The per-channel element (SET) and the common (side-set) are the two halves.
+; Each word's bit 0 picks ONE side; no word can encode both, so shoot-through
+; is unrepresentable. The side is held until a word asks for the other, and
+; every change passes through Y+1 cycles of both off (Y: the first word).
+; Until the first level arrives both sides are off. A stalled machine holds
+; its side: side-set applies during a stall (RP2040 datasheet §3.2.4) and SET
+; latches the pin (§3.4.10). JMP X-- tests X before decrementing (§3.4.2).
 ;
 ; SPDX-License-Identifier: MIT
 ;
@@ -47,26 +14,33 @@
 .program pyro_bridge
 .side_set 1
 
-; First word is the dead-time count. Both sides stay off while we wait for it.
-    pull block              side 0
+    pull block              side 0      ; Y: the dead band, in cycles
     mov  y, osr             side 0
-
+    pull block              side 0      ; both off until the first level
+    out  x, 1               side 0
+    jmp  !x, dead_to_low    side 0
 .wrap_target
-both_off:
-    set  pins, 0            side 0      ; channel off, common off
+dead_to_high:
+    set  pins, 0            side 0
     mov  x, y               side 0
-deadband:
-    jmp  x--, deadband      side 0      ; hold both off for y+1 cycles
-
-    pull block              side 0      ; STALL POINT: both sides off
-    out  x, 1               side 0      ; 0 = drive low, 1 = drive high
-    jmp  !x, drive_low      side 0
-
-    set  pins, 1            side 0      ; channel on, common off -> midpoint high
-    jmp  both_off           side 0
-drive_low:
-    set  pins, 0            side 1      ; channel off, common on -> midpoint low
-.wrap                                   ; the low branch is last, so it wraps
+dead_h:
+    jmp  x--, dead_h        side 0
+    set  pins, 1            side 0      ; channel on: midpoint high
+hold_high:
+    pull block              side 0
+    out  x, 1               side 0
+    jmp  x--, hold_high     side 0
+dead_to_low:
+    set  pins, 0            side 0
+    mov  x, y               side 0
+dead_l:
+    jmp  x--, dead_l        side 0
+    set  pins, 0            side 1      ; common on: midpoint low
+hold_low:
+    pull block              side 1
+    out  x, 1               side 1
+    jmp  !x, hold_low       side 1
+.wrap
 
 % c-sdk {
 #include "hardware/clocks.h"

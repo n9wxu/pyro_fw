@@ -179,6 +179,7 @@ static void rx_drop(http_conn_t *c, uint16_t n) {
     c->consumed += n;
 }
 
+/* [WEB-HTTP-04] */
 static void refuse(http_conn_t *c, uint16_t status, const char *why) {
     if (status == 405) {
         /* An Allow header is required with a 405 (RFC 9110 §15.5.6). */
@@ -265,8 +266,8 @@ static void request_line(http_conn_t *c) {
 }
 
 static void end_of_head(http_conn_t *c) {
-    if (c->chunked) {
-        /* Transfer codings are not implemented; a length is required. */
+    /* Transfer codings are not implemented; a POST states its length. */
+    if (c->chunked || (strcmp(c->method, "POST") == 0 && !c->have_length)) {
         refuse(c, 411, "send Content-Length");
         return;
     }
@@ -317,6 +318,17 @@ static void header_line(http_conn_t *c) {
         c->chunked = !contains_token(v, "identity") || contains_token(v, "chunked");
     } else if (name_is(c->line, "expect", &v)) {
         c->expect_continue = contains_token(v, "100-continue");
+    } else if (name_is(c->line, "host", &v)) {
+        size_t n = strlen(v);
+        while (n > 0 && (v[n - 1] == ' ' || v[n - 1] == '\t')) {
+            n--;
+        }
+        /* One Host, and one that fits; otherwise one that names nothing. */
+        bool usable = !c->host[0] && n < sizeof(c->host);
+        memcpy(c->host, usable ? v : "?", usable ? n : 1);
+        c->host[usable ? n : 1] = '\0';
+    } else if (name_is(c->line, "x-pyro", &v)) {
+        c->x_pyro = v[0] == '1' && (v[1] == '\0' || v[1] == ' ' || v[1] == '\t');
     }
 }
 
@@ -434,4 +446,70 @@ void http_conn_service(http_conn_t *c, const http_handlers_t *h) {
     if (c->phase == HTTP_SEND && !c->failed && c->out_left == 0 && (!c->streaming || c->stream_left == 0)) {
         c->phase = HTTP_DONE;
     }
+}
+
+/* ── Where a request came from ────────────────────────────────────── */
+
+static bool same_nocase(const char *a, size_t n, const char *b) {
+    if (strlen(b) != n) {
+        return false;
+    }
+    for (size_t i = 0; i < n; i++) {
+        if ((a[i] | 32) != (b[i] | 32)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool http_host_is_board(const char *host, uint8_t subnet) {
+    size_t n = strlen(host);
+    const char *colon = strchr(host, ':');
+    if (colon) {
+        if (strcmp(colon, ":80") != 0) {
+            return false;
+        }
+        n = (size_t)(colon - host);
+    }
+    if (n > 0 && host[n - 1] == '.') {
+        n--; /* the root label of a fully qualified name */
+    }
+    if (same_nocase(host, n, "pyro.local")) {
+        return true;
+    }
+    /* pyro-<n>.local: the name mDNS takes after a conflict (net_glue.c). */
+    static const char prefix[] = "pyro-", suffix[] = ".local";
+    const size_t np = sizeof(prefix) - 1, ns = sizeof(suffix) - 1;
+    if (n > np + ns && same_nocase(host, np, prefix) && same_nocase(host + n - ns, ns, suffix)) {
+        size_t digits = n - np - ns;
+        bool all_digits = digits <= 3;
+        for (size_t i = 0; i < digits && all_digits; i++) {
+            all_digits = host[np + i] >= '0' && host[np + i] <= '9';
+        }
+        if (all_digits) {
+            return true;
+        }
+    }
+    char own[16];
+    int k = snprintf(own, sizeof(own), "192.168.%u.1", (unsigned)subnet);
+    return k > 0 && (size_t)k == n && memcmp(host, own, n) == 0;
+}
+
+/* A page on another site can make a browser send the board a request: by a
+ * name it rebinds to the board's address, which the Host header still
+ * carries, or by a form or a simple fetch, which cannot add a header of its
+ * own without a CORS preflight, and the board grants none. So a request must
+ * name the board, and a POST must carry X-Pyro: 1. A request with no Host is
+ * malformed (RFC 9112 §3.2). */
+uint16_t http_origin_refusal(const http_conn_t *c, uint8_t subnet) {
+    if (c->host[0] == '\0') {
+        return 400;
+    }
+    if (!http_host_is_board(c->host, subnet)) {
+        return 403;
+    }
+    if (strcmp(c->method, "POST") == 0 && !c->x_pyro) {
+        return 403;
+    }
+    return 0;
 }

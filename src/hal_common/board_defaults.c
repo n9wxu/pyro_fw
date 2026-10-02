@@ -2,7 +2,7 @@
  * The src/board_if.h functions every board so far implements the same way:
  * plain GPIO on the pins board_pins.h names. Each is weak, so a board with
  * different hardware behind one -- a piezo driver, a PWM slice -- defines its
- * own in hal_board.c and that one links instead.
+ * own in its board package and that one links instead.
  *
  * SPDX-License-Identifier: MIT
  */

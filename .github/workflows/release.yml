@@ -31,7 +31,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install dependencies
         run: |
@@ -40,14 +40,16 @@ jobs:
 
       - name: Install Pico SDK
         run: |
-          git clone --depth 1 --branch ${{ env.PICO_SDK_VERSION }} https://github.com/raspberrypi/pico-sdk.git /tmp/pico-sdk
+          git clone --depth 1 --branch "$PICO_SDK_VERSION" https://github.com/raspberrypi/pico-sdk.git /tmp/pico-sdk
           cd /tmp/pico-sdk && git submodule update --init lib/tinyusb lib/mbedtls lib/lwip lib/btstack lib/cyw43-driver
 
       - name: Settle the version
         id: ver
+        env:
+          CALLED_VERSION: ${{ inputs.version }}
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            V="${{ inputs.version }}"          # called by Build
+          if [ -n "$CALLED_VERSION" ]; then
+            V="$CALLED_VERSION"                # called by Build
           else
             V="${GITHUB_REF_NAME#v}"           # run from a pushed tag
           fi
@@ -68,14 +70,11 @@ jobs:
             cmake -G Ninja -B "build-$BOARD" -DPICO_SDK_PATH=/tmp/pico-sdk -DPYRO_BOARD="$BOARD"
             cmake --build "build-$BOARD"
 
-            # Two of the three artifacts have the same filename whatever
-            # board produced them, and the bootloader's CONTENTS differ per
-            # board because the flash geometry does -- mk1b is a 2 MB part,
-            # mk1a and mk1c are 16 MB. Publishing them unrenamed would have
-            # each board's upload overwrite the last and leave one set of
-            # binaries labelled as if it fitted all three.
-            # pyro_fw_$BOARD.bin and pyro_fw_c_fota_image.bin are
-            # byte-identical, so only the OTA-named one is shipped.
+            # The build names two of the three the same for every board, and
+            # the bootloader differs per board with its flash geometry (mk1b
+            # 2 MB, mk1a and mk1c 16 MB), so each is renamed for its board.
+            # pyro_fw_$BOARD.bin is byte-identical to the fota image, so only
+            # the fota image ships.
             cp "build-$BOARD/pyro_fw_$BOARD.uf2"       "dist/fw_$BOARD.uf2"
             cp "build-$BOARD/pyro_fw_c_fota_image.bin" "dist/fw_${BOARD}_fota.bin"
             cp "build-$BOARD/_deps/pico_fota_bootloader-build/pico_fota_bootloader.uf2" \
@@ -111,7 +110,7 @@ jobs:
       # than by guessing which of several unlabelled files is theirs.
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
           generate_release_notes: true

@@ -1,25 +1,15 @@
 /*
  * The resource table a script sees, and the interfaces behind it.
  *
- * A board publishes what it offers; Lua reaches it by name and kind. Between
- * those two sits one table of function pointers, so a board can expose a
- * feature nothing else has without the Lua bindings learning about it, and
- * adding an interface costs a vtable rather than a new array, a new count, a
- * new find_ and a new binding in four files.
+ * A board publishes what it offers; Lua reaches it by name and kind through
+ * one table of function pointers, so a board can expose a feature nothing
+ * else has without the bindings learning about it.
  *
- * SAFETY BY REACHABILITY
- *
- * A wrong combination is not rejected, it is absent. lua_iface_find() takes
+ * A wrong combination is not rejected, it is absent: lua_iface_find() takes
  * the kind it wants, so output.set() on a pad published as an input finds
- * nothing: that entry carries an input vtable and no output vtable was ever
- * installed. A blanked entry carries no vtable at all and every lookup
- * misses it.
- *
- * That is the same argument as invariant L4 -- a capability configuration did
- * not enable has no table, so a script referencing it fails legibly -- and
- * the same as the half-bridge PIO program, where shoot-through is not avoided
- * but unencodable. Checks can be forgotten; a missing pointer cannot be
- * called.
+ * nothing, because no output vtable was ever installed for it. Checks can be
+ * forgotten; a missing pointer cannot be called. Invariants L4 and L5 of
+ * thoughts/shared/plans/2026-09-21-lua-user-programs-core1.md
  *
  * SPDX-License-Identifier: MIT
  */
@@ -31,14 +21,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* How many resources a script can be given at once. Generous: the bound that
- * actually bites is the board's pin count and the PIO budget. */
+/* Generous: the bound that bites is the board's pin count and PIO budget. */
 #define LUA_IFACE_MAX 12
 
 /* One kind per API shape. A script's `output`, `input`, `serial` and `pixel`
  * tables each resolve against exactly one of these. */
 typedef enum {
-    LUA_IF_NONE = 0, /* blank: unreachable from Lua */
+    LUA_IF_NONE = 0, /* refused by publish and by lookup */
     LUA_IF_OUTPUT,
     LUA_IF_INPUT,
     LUA_IF_SERIAL,
@@ -47,12 +36,8 @@ typedef enum {
 
 /* ── The interfaces ───────────────────────────────────────────────
  *
- * Separate structs rather than one wide one, so a pixel vtable cannot be
- * reached through an output lookup even by mistake: the kind selects the
- * struct, and the struct has only the calls that kind supports.
- *
- * ctx is whatever the publisher needs to identify the instance. Nothing here
- * interprets it. */
+ * One struct per kind, holding only the calls that kind supports. ctx is
+ * whatever the publisher needs to identify the instance. */
 
 typedef struct {
     void (*set)(void *ctx, int value); /* 0-100; 0/100 when not dimmable */
@@ -78,66 +63,50 @@ typedef struct {
 typedef struct {
     char name[LUA_NAME_MAX];
     lua_iface_kind_t kind;
-    const void *vt; /* one of the structs above; NULL when blank */
+    const void *vt; /* the struct for this kind, above */
     void *ctx;
     uint32_t pads; /* the pads it drives; see the publish rule below */
 } lua_resource_t;
 
 /* ── Publishing ───────────────────────────────────────────────────
  *
- * Called on core0, at boot, before core1 exists -- the same rule every other
- * Lua resource follows, because claiming hardware later means taking a spin
- * lock on a core that must never hold one.
+ * On core0, at boot, before the scheduler starts, like every other Lua
+ * resource: the Lua task claims nothing.
  *
- * pads is every pad the resource drives, as a pad_claim.h mask. The publish
- * FAILS unless Lua can claim all of them, and claims them when it can.
+ * pads is every pad the resource drives, as a pad_claim.h mask, and the
+ * publish claims all of them or fails having claimed none -- so a bridge
+ * cannot be half-claimed, and a pad the flight software kept (it claims
+ * first) can never appear here. There is one pad and one owner; nothing
+ * compares two tables. A refused publish -- full table, duplicate name,
+ * claim refused -- takes nothing.
  *
- * That is what makes it impossible for a pad to be here and in the pyro table
- * at once: the flight software spends its claims first, so a pad it kept
- * cannot be claimed here, and the entry cannot exist without the claim.
- * Nothing compares the two tables -- there is one pad and one owner.
+ * PAD_NONE is allowed, for a resource that drives no pad of its own.
  *
- * All or nothing, which is what stops a half-claimed bridge existing: a
- * resource driving two pads takes both or neither.
- *
- * PAD_NONE is allowed, for a resource that drives no pad of its own; it
- * cannot conflict over one.
- *
- * vt must have static storage: the table keeps the pointer, not a copy. */
+ * vt must have static storage: the table keeps the pointer, not a copy.
+ * Returns the entry's index, or -1. */
 int lua_iface_publish(uint32_t pads, const char *name, lua_iface_kind_t kind, const void *vt, void *ctx);
 
 /* Drop every published resource. */
 void lua_iface_reset(void);
 
-/* Make one entry unreachable: kind NONE, no vtable. A script holding its name
- * stops resolving rather than reaching a half-configured resource. */
-void lua_iface_blank(int idx);
-
 /* ── Lookup ───────────────────────────────────────────────────────── */
 
-/* The index of a resource published under this name AND this kind, or -1.
- *
- * Taking the kind is what makes a wrong combination unreachable rather than
- * merely refused -- see the file comment. */
+/* The index of a resource published under this name AND this kind, or -1. */
 int lua_iface_find(const char *name, lua_iface_kind_t kind);
 
-int lua_iface_count(void);
 const lua_resource_t *lua_iface_at(int idx);
 
-/* How many of one kind are published, and the n'th of that kind. What the
- * `list()` bindings enumerate. */
+/* How many of one kind are published, and the n'th of that kind: what the
+ * list() bindings enumerate. */
 int lua_iface_count_kind(lua_iface_kind_t kind);
 const lua_resource_t *lua_iface_nth_of_kind(lua_iface_kind_t kind, int n);
 
 /* ── Board hook ───────────────────────────────────────────────────
  *
- * Weak and empty. A board implements it to publish a feature the shared
- * platform knows nothing about, using lua_iface_publish(). Called from
- * lua_plat_configure() once the generic roles are in place, so a board can
- * see what is already published and add to it.
- *
- * Here rather than in board_if.h because board_if.h is the contract every
- * board must implement, and this is an option a board may take up. */
+ * Weak and empty: a board may implement it to publish a feature the shared
+ * platform knows nothing about. Called from lua_plat_configure() once the
+ * generic roles are in place. Not in board_if.h, which is the contract every
+ * board must implement. */
 void board_lua_publish(void);
 
 #endif

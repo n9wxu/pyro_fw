@@ -44,7 +44,7 @@ DESIGN.md 7.1 run one step per loop iteration (DD-056).
 | Low sides | Q103, Q104 AO3400A | gates through R108/R113 100 Ω |
 | Bias sources | D104/D106/D107 BAT54WS, R112/R117/R120 330 Ω | from BIAS_A, BIAS_B, BIAS_BUS |
 | Sense dividers | 10 k / 4.99 k (bus, A, B); 100 k / 49.9 k (pack) | all 0.3329 |
-| Bus bleed | R_BLEED, two 4.7 kΩ in parallel | 2.35 kΩ; no single open resistor removes it |
+| Bus bleed | R103 (R_BLEED) 2.2 kΩ | one resistor: if it opens, the bus loses its bleed (Known limits) |
 | Bus capacitance | C115 and strays, 1.1 µF | **no bulk capacitor** is fitted |
 | Pressure | U2 MS5607, I2C | PS tied high (I2C mode), CSB low |
 | Buzzer | BUZZER1 KXG0903C3, from VIN | switched on its low side by Q2 AO3400A |
@@ -113,7 +113,7 @@ The loop's watchdog, at twice `PYRO_LOOP_WORST_MS`, is the only watchdog.
 ```
  VBAT ── U9 eFuse ──┬── FIRING BUS ──┬── match A ── node A ── Q103 [FIRE_A] ── GND
           ▲ EN      │                └── match B ── node B ── Q104 [FIRE_B] ── GND
-          │         ├── R_BLEED 2.35k ── GND
+          │         ├── R_BLEED 2.2k ─── GND
    ARM_TOGGLE pump  ├── divider ── ADC1
                     └── BIAS_BUS injector
 ```
@@ -177,8 +177,9 @@ Three faults latch until reset (invariant 4), each only after agreeing samples
 | precharge timeout | a fire's bus did not reach the pack in time | 1 |
 
 "The sequence charged it" covers a fire and the 100 ms after its pump stops:
-the bus's 1.1 µF bleeds through 1.85 kΩ on a 2 ms constant, so a bus still
-hot after that is a high side that did not turn off. A bus short covers the
+the bus's 1.1 µF bleeds through 1.92 kΩ (R103 2.2 kΩ ∥ the 15 kΩ divider) on
+a 2.1 ms constant, so a bus still hot after that is a high side that did not
+turn off. A bus short covers the
 bus itself, a harness lead to ground, and a shorted low-side FET behind a
 fitted match.
 

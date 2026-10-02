@@ -1,19 +1,9 @@
 /*
- * Pressure processing layer — sits between HAL and flight software.
+ * Pressure processing: between the sensor HAL and the flight software.
  *
- * Responsibilities:
- *   1. IIR low-pass filter on raw pressure
- *   2. Hypsometric pressure-to-altitude conversion
- *   3. Ground calibration (accumulates first N raw samples)
- *   4. Altitude ring buffer for flight software consumption
- *
- * Data flow:
- *   HAL pres_tick() → pp_feed(raw_pa, timestamp_ms)
- *                    → IIR filter → altitude conversion
- *                    → ring buffer → flight software reads via pp_read()
- *
- * The flight software sees only altitude_cm + timestamp.  All pressure
- * math is encapsulated here.  Tests and hardware use the same code path.
+ * pp_feed_us(): median of three [SNS-PRES-07] -> history [FLT-BROWN-02] ->
+ * IIR filter [SNS-PRES-02] -> altitude [SNS-ALT-01] -> ring -> pp_read(),
+ * with each sample's fit through the last second [DD-048].
  *
  * SPDX-License-Identifier: MIT
  */
@@ -23,8 +13,6 @@
 #include <stdint.h>
 #include "pressure_fit.h"
 #include <stdbool.h>
-
-/* ── Altitude sample — what flight software consumes ─────────────── */
 
 typedef struct {
     int32_t altitude_cm; /* clamped to 0-8000 m [SNS-ALT-02, SNS-ALT-03]: what is reported */
@@ -58,69 +46,41 @@ typedef struct {
 #define PP_RING_SIZE 64 /* power of 2; 1.3 s at 50 Hz */
 #define PP_RING_MASK (PP_RING_SIZE - 1)
 
-#define PP_CAL_SAMPLES 10 /* number of raw samples for ground calibration */
+#define PP_CAL_SAMPLES 10 /* [FLT-BOOT-08] */
 
 /* The pressure filter's time constant. On a steady climb or descent the
  * filtered altitude trails the rocket by its rate times this. */
 #define PP_FILTER_TAU_MS 500
 
-/* ── Lifecycle ───────────────────────────────────────────────────── */
-
 void pp_init(void);
 
-/* Test helper: prime pp to PP_RUNNING with given ground pressure.
- * Allows unit tests to skip the boot/calibration sequence. */
+/* For tests: running against this ground, with no calibration. */
 void pp_test_prime(int32_t ground_pressure_pa);
 
-/* Start ground calibration.  Until calibration completes, pp_feed()
- * accumulates raw pressure but produces no altitude output. */
+/* Until PP_CAL_SAMPLES readings have arrived, no altitude comes out. */
 void pp_start_cal(void);
-
-/* Returns true once calibration has accumulated PP_CAL_SAMPLES. */
 bool pp_cal_done(void);
 
-/* Returns the ground pressure computed during calibration. */
 int32_t pp_ground_pressure(void);
 
-/* Overwrite the ground pressure reference. Only valid while PP_RUNNING;
- * ignored otherwise. */
-void pp_set_ground_pressure(int32_t pa);
+/* ── The ground reference [GND-CAL-01..07] ────────────────────────
+ *
+ * A 5 s boxcar mean of the filtered pressure on the pad, frozen (never
+ * snapped) at launch. A boxcar, because it forgets: the frozen value holds
+ * nothing older than the window. Pressure, not altitude, because altitude is
+ * clamped at zero and its mean would carry the clamp's bias. */
 
-/* ── The ground reference ─────────────────────────────────────────
- *
- * Ground pressure is a 5-second rolling mean of the filtered pressure, taken
- * while the board sits on the pad. Averaging PRESSURE rather than altitude
- * matters: pressure sits around 101 kPa and is nowhere near the zero that
- * altitude is clamped at, so the mean carries no clamp bias.
- *
- * A boxcar rather than an IIR, because a boxcar forgets: the value frozen at
- * launch is the mean of the last five seconds before it, with nothing older
- * leaking in.
- *
- * FROZEN AT LAUNCH, NOT SNAPPED
- *
- * Do not snap it to the reading at launch detection: that defines T+0 as zero
- * altitude and throws away the 100 ft the rocket climbed to trip the
- * detector. Frozen, every altitude for the rest of the flight keeps it. */
-/* A sample this far from the current reference is not the pad.
- *
- * Without this the mean chases a climbing rocket: a launch takes about a
- * second to reach the 100 ft trigger, which is a fifth of the window, so the
- * reference would drift a fifth of the way up with it -- delaying detection
- * and biasing the frozen value toward flight pressure, which under-reports
- * every altitude afterwards.
- *
- * 50 Pa is roughly 14 ft. Sensor noise is a pascal or two and weather moves
- * far slower than the mean tracks, so nothing legitimate is rejected; a rocket
- * leaves this band almost immediately. */
+/* A sample this far from the reference is not the pad, and is left out:
+ * otherwise the mean follows the first second of a climb up. 50 Pa is about
+ * 4 m, far above sensor noise and far faster than weather [GND-CAL-03]. */
 #define PP_GROUND_MAX_DEV_PA 50
 
 #define PP_GROUND_WINDOW_MS 5000
 #define PP_GROUND_BLOCK_MS 250
 #define PP_GROUND_BLOCKS (PP_GROUND_WINDOW_MS / PP_GROUND_BLOCK_MS)
 
-/* Track while true, hold the last value while false. PAD_IDLE enables it;
- * launch freezes it. */
+/* Calibration starts tracking and pp_ground_freeze_before() stops it; this
+ * is for tests that want it stopped. */
 void pp_ground_track(bool enabled);
 
 /* Freeze the reference to the mean of the blocks that ended before t_ms
@@ -131,11 +91,6 @@ void pp_ground_track(bool enabled);
  * blocks span less than a second of the pad. */
 bool pp_ground_freeze_before(uint32_t t_ms);
 bool pp_ground_tracking(void);
-
-/* How much of the window has filled, for /api/status. The mean is over
- * whatever is there, so an early launch is not penalised -- but a short
- * window is worth knowing about. */
-uint32_t pp_ground_window_ms(void);
 
 /* True when the reference frozen at launch rests on less than a second of the
  * pad [GND-CAL-07]. */
@@ -185,11 +140,8 @@ bool pp_history_median(uint32_t from_ms, uint32_t to_ms, int min_n, int32_t *out
  * The filter starts at start_pa, and the ground reference stays frozen. */
 void pp_resume_flight(int32_t ground_pa, int32_t start_pa);
 
-/* ── Producer: called by HAL or test code ────────────────────────── */
+/* ── Producer: the HAL, the simulator and the tests ──────────────── */
 
-/* Feed a raw pressure sample.  During calibration this accumulates for
- * the ground average.  After calibration, it filters, converts to
- * altitude, and pushes to the ring buffer. */
 void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms);
 
 /* [SNS-PRES-08] The same, stamped to the microsecond by the hardware timer at
@@ -197,16 +149,12 @@ void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms);
  * hal_time_ms() reads. */
 void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us);
 
-/* ── Consumer: called by flight software ─────────────────────────── */
+/* ── Consumer: the flight software ───────────────────────────────── */
 
-/* Number of altitude samples available in the ring. */
-int pp_available(void);
-
-/* Read the oldest altitude sample from the ring.
- * Returns true if a sample was available, false if ring is empty. */
+/* The oldest sample in the ring; false when it is empty. */
 bool pp_read(altitude_sample_t *out);
 
-/* ── Debug accessors (for telemetry / status display) ────────────── */
+/* ── For telemetry, the log and the bench ────────────────────────── */
 
 int32_t pp_last_raw_pa(void);
 
@@ -218,7 +166,7 @@ int32_t pp_last_filtered_pa(void);
 /* The newest sample's fit, as the detectors saw it, for the bench. */
 pfit_t pp_last_fit(bool *suspect, bool *stuck);
 
-/* ── Unit-testable internals (exposed for test_flight_states) ────── */
+/* ── The conversions ─────────────────────────────────────────────── */
 
 int32_t pp_filter_pressure(int32_t raw_pressure, uint32_t dt_ms);
 int32_t pp_pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa);

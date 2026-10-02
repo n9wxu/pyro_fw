@@ -85,8 +85,7 @@ test.describe('New device', () => {
     await expect(page.locator('#dDur')).toHaveText('—');
   });
 
-  /* REV-10: a flight that happens while the page is open must be shown. The
-     tab cached the log for the life of the page. */
+  /* [WEB-UI-04] The log is re-read whenever the tab is shown. */
   test('a flight recorded while the page is open appears on refresh', async ({ page, request }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -99,7 +98,7 @@ test.describe('New device', () => {
     await request.post(BASE + '/api/_test/reset');
   });
 
-  /* REV-12: a control that changes nothing is not offered. */
+  /* A control that changes nothing is not offered. */
   test('there is no beep mode control', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -107,7 +106,7 @@ test.describe('New device', () => {
     await expect(page.locator('#cfgBeep')).toHaveCount(0);
   });
 
-  /* REV-15: the shipped default name fits its 8-character field. */
+  /* [CFG-07] The shipped default name fits its 8-character field. */
   test('the default rocket name is not truncated', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -231,8 +230,8 @@ test.describe('Configured device', () => {
     await expect(page.locator('#cfgUnits')).toHaveValue('2');
   });
 
-  /* REV-19: changing units converts the deployment altitudes. Leaving the
-     number alone turned a 500 ft main into a 500 m main. */
+  /* [WEB-UI-02] Changing units converts the deployment altitudes: 500 ft
+     must not become 500 m. */
   test('changing units converts the pyro values', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -245,7 +244,7 @@ test.describe('Configured device', () => {
     await expect(page.locator('#p2val')).toHaveValue('499');
   });
 
-  /* REV-20: the 8-character limit is stated, not discovered. */
+  /* [WEB-UI-02, CFG-07] The 8-character limit is stated, not discovered. */
   test('the rocket name shows its 8-character limit', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -257,7 +256,7 @@ test.describe('Configured device', () => {
     await expect(page.locator('#cfgNameLen')).toHaveText('8 of 8 characters');
   });
 
-  test('range warning for value exceeding sensor limit', async ({ page }) => {
+  test('range warning for a value past what the board holds', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Config');
@@ -265,7 +264,7 @@ test.describe('Configured device', () => {
     await page.fill('#p2val', '30000');
     await page.locator('#p2val').dispatchEvent('change');
     const warn = await page.locator('#p2warn').textContent();
-    expect(warn).toContain('sensor limit');
+    expect(warn).toContain('out of range: 0 to 26247 ft');
   });
 
   /* USB-01: a board reached over USB says it is grounded. */
@@ -400,8 +399,7 @@ test.describe('Pin assignment', () => {
     expect(ini).toContain('ground_test_drive_pin=21');
   });
 
-  /* REV-21: one Save on the Config tab. The release no longer has a button of
-     its own that an operator has to guess the meaning of. */
+  /* One Save on the Config tab, for config.ini and pins.ini both. */
   test('the config tab has one save button', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -703,7 +701,7 @@ test.describe('Flown device', () => {
     await expect(page.locator('#dP2')).toContainText('Fired at 28.0s, 500.0 ft');
   });
 
-  /* REV-10: the summary names the flight it describes. */
+  /* [WEB-UI-04] The summary names the flight it describes. */
   test('flight data names the flight on screen', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -711,7 +709,7 @@ test.describe('Flown device', () => {
     await expect(page.locator('#dWhich')).toContainText('Screamer (RACE01)');
   });
 
-  /* REV-10: the one log slot can be cleared on purpose. */
+  /* [WEB-API-09] The one log slot can be cleared on purpose. */
   test('the flight log can be erased', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -828,5 +826,160 @@ test.describe('Flown device', () => {
       await clickTab(page, name);
       await expect(page.locator(id)).toBeVisible();
     }
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════
+ * What the page sends, and what it believes about the answer
+ * ══════════════════════════════════════════════════════════════════ */
+
+test.describe('Saving', () => {
+  test.skip(process.env.PYRO_MODE !== 'configured', 'configured mode only');
+  test.afterEach(async ({ request }) => {
+    await request.post(BASE + '/api/_test/reset');
+  });
+
+  /* The board refuses a POST without it: a page on another site cannot send
+     it without a preflight, which the board does not grant. */
+  test('every POST carries the X-Pyro header', async ({ page }) => {
+    const posts = [];
+    page.on('request', r => { if (r.method() === 'POST') posts.push(r.headers()['x-pyro']); });
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await page.fill('#p2val', '400');
+    await page.click('#btnSaveCfg');
+    await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 5000 });
+    expect(posts.length).toBeGreaterThan(0);
+    for (const h of posts) expect(h).toBe('1');
+  });
+
+  /* [WEB-UI-02] The board keeps a deploy value in 16 bits, in the units
+     chosen: 700 m is 70000 cm, which does not fit. */
+  test('a unit change that would overflow the deploy value is refused', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await page.selectOption('#cfgUnits', '1');
+    await page.fill('#p2val', '700');
+    await page.locator('#p2val').dispatchEvent('change');
+    await page.selectOption('#cfgUnits', '0');
+    await expect(page.locator('#cfgUnits')).toHaveValue('1');
+    await expect(page.locator('#p2val')).toHaveValue('700');
+    await expect(page.locator('#p2warn')).toContainText('65535');
+  });
+
+  test('an out-of-range deploy value is not saved', async ({ page }) => {
+    const posts = [];
+    page.on('request', r => { if (r.method() === 'POST' && r.url().endsWith('/api/config')) posts.push(r); });
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await page.selectOption('#cfgUnits', '0');
+    await expect(page.locator('#p2val')).toHaveAttribute('max', '65535');
+    await page.fill('#p2val', '70000');
+    await page.locator('#p2val').dispatchEvent('change');
+    await page.click('#btnSaveCfg');
+    await expect(page.locator('#cfgMsg')).toContainText('not saved');
+    expect(posts.length).toBe(0);
+  });
+
+  /* [WEB-UI-03] Written but not applied is pending, whatever the status code. */
+  test('a config saved but not applied shows as pending', async ({ page, request }) => {
+    await request.post(BASE + '/api/_test/config_reload_fails');
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await page.fill('#p2val', '400');
+    await page.click('#btnSaveCfg');
+    await expect(page.locator('#cfgMsg')).toContainText('reboot', { timeout: 5000 });
+    await clickTab(page, 'Status');
+    await expect(page.locator('#pendingWarn')).toBeVisible();
+    await expect(page.locator('#sCfgP2')).toContainText('400');
+  });
+
+  test('an uploaded config file is shown pending with its own values', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await page.setInputFiles('#cfgFile', {
+      name: 'config.ini', mimeType: 'text/plain',
+      buffer: Buffer.from('[pyro]\r\npyro1_mode=delay\r\npyro1_value=3\r\npyro2_mode=agl\r\npyro2_value=777\r\nunits=ft\r\n')
+    });
+    await expect(page.locator('#cfgMsg')).toContainText('reboot', { timeout: 5000 });
+    await clickTab(page, 'Status');
+    await expect(page.locator('#sCfgP2')).toContainText('777');
+    await expect(page.locator('#sCfgP2')).toContainText('not yet applied');
+  });
+
+  test('a pin release that failed to save is sent again on the next save', async ({ page, request }) => {
+    const pins = [];
+    page.on('request', r => { if (r.method() === 'POST' && r.url().endsWith('/api/pins')) pins.push(r); });
+    await request.post(BASE + '/api/_test/pins_fail');
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await expect(page.locator('#relTable')).toBeVisible();
+    await page.click('#rel1');
+    await page.click('#btnSaveCfg');
+    await expect(page.locator('#relMsg')).toContainText('✗', { timeout: 5000 });
+    await page.click('#btnSaveCfg');
+    await expect.poll(() => pins.length).toBe(2);
+  });
+
+  test('a Lua save whose settings were refused says so', async ({ page, request }) => {
+    await request.post(BASE + '/api/_test/config_refused');
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Lua');
+    await page.fill('#luSrc', 'function tick() end');
+    await page.click('button:has-text("Save & Apply")');
+    await expect(page.locator('#luChk')).toContainText('not saved', { timeout: 5000 });
+  });
+
+  test('the web files report their own version', async ({ page }) => {
+    const fs = require('fs');
+    const path = require('path');
+    const want = fs.readFileSync(path.join(__dirname, '..', '..', 'VERSION'), 'utf8').trim();
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Update');
+    await expect(page.locator('#uWebVer')).toHaveText(want);
+  });
+
+  /* A release's name comes from GitHub, not from this page. */
+  test('a release name is shown as text, never as markup', async ({ page }) => {
+    await page.route('https://api.github.com/**', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({tag_name: 'v9.9.9<img id="pwned" src="x">',
+        assets: [{name: 'fw_mk1b_fota.bin', browser_download_url: 'javascript:alert(1)'}]})
+    }));
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Update');
+    await page.click('button:has-text("Check for Updates")');
+    await expect(page.locator('#updMsg')).toContainText('<img');
+    await expect(page.locator('#pwned')).toHaveCount(0);
+    await expect(page.locator('#updMsg a[href^="javascript"]')).toHaveCount(0);
+  });
+});
+
+test.describe('Firmware upload', () => {
+  test.skip(process.env.PYRO_MODE !== 'flown', 'flown mode only');
+
+  /* [WEB-UI-05] A refused image is not a reboot. */
+  test('a failed OTA says it failed and why', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Update');
+    page.on('dialog', async d => { await d.accept(); });
+    await page.setInputFiles('#fwfile', {
+      name: 'fw_mk1b_fota.bin', mimeType: 'application/octet-stream',
+      buffer: Buffer.from('BAD image')
+    });
+    await page.click('text=⬆ Upload Firmware');
+    await expect(page.locator('#fwmsg')).toContainText('failed', { timeout: 5000 });
+    await expect(page.locator('#fwmsg')).toContainText('did not write');
+    await expect(page.locator('#fwmsg')).not.toContainText('Rebooting');
   });
 });

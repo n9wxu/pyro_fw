@@ -17,12 +17,17 @@
  *                would make the finding invisible the moment it is fixed.
  *
  * Built by the `plant_tests` target, which compiles each plant separately
- * against its own board's board_pins.h and links all three.
+ * against its own board's board_pins.h and links all three. "DESIGN.md" is
+ * the MK1C design record (pyro_mk1c/DESIGN.md), on the author's machine and
+ * not in this repository.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "unity.h"
 #include "plant.h"
+#include "rp2040_shim.h"
+#include "hardware/gpio.h"
+#include "hardware/pio.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -57,6 +62,12 @@ enum { C_ADC_VBAT = 0, C_ADC_BUS = 1, C_ADC_A = 2, C_ADC_B = 3 };
 #define MK1B_SAMPLE_SLEEP_MS    10
 
 static void ms(double t) { plant_step(t / 1000.0); }
+
+/* A pin the firmware drives: an output, at this level. */
+static void drive(int gpio, bool level) {
+    plant_set_gpio_dir(gpio, true);
+    plant_set_gpio(gpio, level);
+}
 
 /* The tabulated levels are quoted to the nearest count but derived from
  * values given to three figures, so agreement to 1 % is agreement. */
@@ -103,14 +114,14 @@ static void test_mk1c_vbat_divider(void) {
 
 static void test_mk1c_bus_bias_no_match(void) {
     mk1c_start();
-    plant_set_gpio(C_BIAS_BUS, 1);
+    drive(C_BIAS_BUS, 1);
     ms(MK1C_TRACK_BIAS_MS);
     assert_bench_near(MK1C_BENCH_BUS_BIASED, plant_adc_counts(C_ADC_BUS), 3, "T2 bus bias, no match");
 }
 
 static void test_mk1c_channel_bias_match_off(void) {
     mk1c_start();
-    plant_set_gpio(C_BIAS_A, 1);
+    drive(C_BIAS_A, 1);
     ms(MK1C_TRACK_BIAS_MS);
     assert_bench_near(MK1C_BENCH_CH_ISOLATED, plant_adc_counts(C_ADC_A), 2, "T3 channel bias, match off");
 }
@@ -120,9 +131,9 @@ static void test_mk1c_channel_bias_match_off(void) {
  * DESIGN.md 4 drew it, takes about 2 ms just to reach 0.9 V. */
 static void test_mk1c_bus_fall_as_measured(void) {
     mk1c_start();
-    plant_set_gpio(C_BIAS_BUS, 1);
+    drive(C_BIAS_BUS, 1);
     ms(MK1C_TRACK_BIAS_MS);
-    plant_set_gpio(C_BIAS_BUS, 0);
+    drive(C_BIAS_BUS, 0);
     plant_probe_t pr;
     double t = 0.0, t09 = -1.0, t06 = -1.0, t02 = -1.0;
     while (t < 8e-3) {
@@ -148,7 +159,7 @@ static void test_mk1c_channel_bias_match_fitted(void) {
     plant_match(1)->state = MATCH_PRESENT;
     plant_match(1)->r_ohm = 1.0;
     ms(10);
-    plant_set_gpio(C_BIAS_A, 1);
+    drive(C_BIAS_A, 1);
     ms(MK1C_TRACK_BIAS_MS);
     uint16_t loaded = plant_adc_counts(C_ADC_A);
     TEST_ASSERT_TRUE_MESSAGE(loaded + 300 < MK1C_BENCH_CH_ISOLATED, "a fitted match must pull the channel well down");
@@ -160,12 +171,12 @@ static void test_mk1c_shorted_tvs_reads_like_a_match(void) {
     plant_match(1)->state = MATCH_PRESENT;
     plant_match(1)->r_ohm = 1.0;
     ms(10);
-    plant_set_gpio(C_BIAS_A, 1);
+    drive(C_BIAS_A, 1);
     ms(MK1C_TRACK_BIAS_MS);
     uint16_t match = plant_adc_counts(C_ADC_A);
     mk1c_start();
     plant_set_fault(PF_TVS_A_SHORT, true);
-    plant_set_gpio(C_BIAS_A, 1);
+    drive(C_BIAS_A, 1);
     ms(MK1C_TRACK_BIAS_MS);
     assert_counts_near(match, plant_adc_counts(C_ADC_A), "T3 with a shorted TVS against a fitted match");
 }
@@ -177,7 +188,7 @@ static void test_mk1c_tracking_separates_present_from_open(void) {
     plant_match(1)->r_ohm = 1.0;
     plant_match(2)->state = MATCH_ABSENT;
     ms(10);
-    plant_set_gpio(C_BIAS_BUS, 1);
+    drive(C_BIAS_BUS, 1);
     ms(MK1C_TRACK_BIAS_MS);
     uint16_t bus = plant_adc_counts(C_ADC_BUS);
     TEST_ASSERT_EQUAL(TRACK_PRESENT, track_channel(plant_adc_counts(C_ADC_A), bus));
@@ -190,7 +201,7 @@ static void test_mk1c_bus_bias_two_matches(void) {
     plant_match(1)->state = MATCH_PRESENT; plant_match(1)->r_ohm = 1.0;
     plant_match(2)->state = MATCH_PRESENT; plant_match(2)->r_ohm = 1.0;
     ms(10);
-    plant_set_gpio(C_BIAS_BUS, 1);
+    drive(C_BIAS_BUS, 1);
     ms(MK1C_TRACK_BIAS_MS);
     uint16_t bus = plant_adc_counts(C_ADC_BUS);
     assert_bench_near(MK1C_BENCH_BUS_BIASED, bus, 5, "T2 bus bias, two matches");
@@ -202,7 +213,7 @@ static void test_mk1c_bus_bias_two_matches(void) {
 static void test_mk1c_tracking_needs_the_bus_to_rise(void) {
     mk1c_start();
     plant_set_fault(PF_BUS_SHORT_GND, true);
-    plant_set_gpio(C_BIAS_BUS, 1);
+    drive(C_BIAS_BUS, 1);
     ms(MK1C_TRACK_BIAS_MS);
     TEST_ASSERT_EQUAL(TRACK_INVALID, track_channel(plant_adc_counts(C_ADC_A), plant_adc_counts(C_ADC_BUS)));
 }
@@ -231,7 +242,7 @@ static void test_mk1c_tracking_current_is_far_below_no_fire(void) {
     plant_match(1)->state = MATCH_PRESENT;
     plant_match(1)->r_ohm = 1.0;
     ms(10);
-    plant_set_gpio(C_BIAS_BUS, 1);
+    drive(C_BIAS_BUS, 1);
     ms(MK1C_TRACK_BIAS_MS);
     double i_ma = fabs(plant_match(1)->last_i_a) * 1000.0;
     char msg[128];
@@ -246,15 +257,15 @@ static void test_mk1c_precharge_follows_the_dvdt_slew(void) {
     plant_probe_t p0, p1;
 
     for (int c = 0; c < 20; c++) {   /* 2 ms of pump: U9 is on and ramping */
-        plant_set_gpio(C_ARM, 1); plant_step(50e-6);
-        plant_set_gpio(C_ARM, 0); plant_step(50e-6);
+        drive(C_ARM, 1); plant_step(50e-6);
+        drive(C_ARM, 0); plant_step(50e-6);
     }
     plant_probe(&p0);
     TEST_ASSERT_TRUE_MESSAGE(p0.armed, "the charge pump should have enabled U9 within 2 ms");
 
     for (int c = 0; c < 20; c++) {   /* another 2 ms */
-        plant_set_gpio(C_ARM, 1); plant_step(50e-6);
-        plant_set_gpio(C_ARM, 0); plant_step(50e-6);
+        drive(C_ARM, 1); plant_step(50e-6);
+        drive(C_ARM, 0); plant_step(50e-6);
     }
     plant_probe(&p1);
 
@@ -270,8 +281,8 @@ static void test_mk1c_stopping_the_pump_disarms(void) {
      * R_BLEED_EN in about 9.6 ms. */
     mk1c_start();
     for (int c = 0; c < 100; c++) {
-        plant_set_gpio(C_ARM, 1); plant_step(50e-6);
-        plant_set_gpio(C_ARM, 0); plant_step(50e-6);
+        drive(C_ARM, 1); plant_step(50e-6);
+        drive(C_ARM, 0); plant_step(50e-6);
     }
     plant_probe_t p;
     plant_probe(&p);
@@ -296,7 +307,7 @@ static uint16_t mk1a_sense_with(match_state_t st, double ohms) {
     if (ohms > 0.0)
         plant_match(1)->r_ohm = ohms;
     plant_match(2)->state = MATCH_ABSENT;
-    plant_set_gpio(A_LOW, 1);
+    drive(A_LOW, 1);
     ms(MK1A_SETTLE_MS);
     return plant_adc_counts(A_ADC1);
 }
@@ -329,7 +340,7 @@ static void test_mk1a_open_settles_inside_its_window(void) {
     plant_match(1)->state = MATCH_PRESENT;
     plant_match(1)->r_ohm = 1.0;
     plant_match(2)->state = MATCH_ABSENT;
-    plant_set_gpio(A_LOW, 1);
+    drive(A_LOW, 1);
     ms(200);
     TEST_ASSERT_LESS_THAN_UINT16(MK1A_CNT_PATH_MAX, plant_adc_counts(A_ADC1));
 
@@ -347,7 +358,7 @@ static void test_mk1a_sense_draws_nothing_from_the_pack(void) {
     plant_set_pack_mv(8400);
     plant_match(1)->state = MATCH_PRESENT;
     plant_match(1)->r_ohm = 1.0;
-    plant_set_gpio(A_LOW, 1);
+    drive(A_LOW, 1);
     ms(200);
     double i_ma = fabs(plant_match(1)->last_i_a) * 1000.0;
     char msg[128];
@@ -363,13 +374,14 @@ static void test_mk1b_has_the_same_sense_topology_as_mk1a(void) {
      * igniter pulls the node to nearly zero and an open one charges to the
      * rail, exactly as on MK1A. */
     plant_init(PLANT_MK1B);
+    plant_set_mk1b_u5(MK1B_U5_AP2192);
     plant_set_pack_mv(8400);
     plant_match(1)->state = MATCH_PRESENT;
     plant_match(1)->r_ohm = 1.0;
     plant_match(2)->state = MATCH_ABSENT;
-    plant_set_gpio(B_EN1, 0);
-    plant_set_gpio(B_EN2, 0);
-    plant_set_gpio(B_COMMON_EN, 1);
+    drive(B_EN1, 0);
+    drive(B_EN2, 0);
+    drive(B_COMMON_EN, 1);
     ms(200);
     assert_counts_near(0,    plant_adc_counts(0), "MK1B present igniter");
     assert_counts_near(4095, plant_adc_counts(1), "MK1B open channel");
@@ -383,6 +395,64 @@ static void test_mk1b_flag_is_high_when_healthy(void) {
     TEST_ASSERT_TRUE(plant_get_gpio(B_FLAG2));
 }
 
+static void test_mk1b_as_built_ap2192a_holds_both_sense_nodes_low(void) {
+    /* DD-059: the AP2192A's disabled outputs discharge through RDIS, so an
+     * open channel reads like a fitted igniter (DS32193 p.4). */
+    plant_init(PLANT_MK1B);
+    plant_match(1)->state = MATCH_ABSENT;
+    plant_match(2)->state = MATCH_ABSENT;
+    drive(B_EN1, 0);
+    drive(B_EN2, 0);
+    drive(B_COMMON_EN, 1);
+    ms(200);
+    TEST_ASSERT_LESS_THAN_UINT16(MK1B_CNT_PATH_MAX, plant_adc_counts(0));
+    TEST_ASSERT_LESS_THAN_UINT16(MK1B_CNT_PATH_MAX, plant_adc_counts(1));
+}
+
+/* ══════════════════ The SDK shim's pads ═══════════════════════════ */
+
+static void test_a_pin_latched_high_but_left_an_input_does_not_fire(void) {
+    plant_init(PLANT_MK1A);
+    plant_set_pack_mv(8400);
+    plant_match(1)->state = MATCH_PRESENT;
+    plant_match(1)->r_ohm = 1.0;
+    drive(A_LOW, 1);
+    plant_set_gpio(A_FIRE1, 1); /* gpio_put() with no gpio_set_dir(OUT) */
+    ms(600);
+    TEST_ASSERT_FALSE_MESSAGE(plant_match(1)->fired, "an input pad drives no gate");
+    TEST_ASSERT_FALSE(plant_get_gpio(A_FIRE1));
+}
+
+static void test_gpio_init_clears_the_output_latch_as_the_sdk_does(void) {
+    plant_init(PLANT_MK1A);
+    shim_reset();
+    gpio_put(A_FIRE1, 1);
+    gpio_init(A_FIRE1);
+    gpio_set_dir(A_FIRE1, GPIO_OUT);
+    TEST_ASSERT_FALSE(gpio_get(A_FIRE1));
+}
+
+static void test_a_disabled_pio_state_machine_holds_its_pin(void) {
+    /* RP2040 datasheet, PIO CTRL.SM_ENABLE: a disabled state machine stops
+     * executing, and its pins keep the levels it last drove. */
+    plant_init(PLANT_MK1C);
+    shim_reset();
+    pio_sm_config c = {0};
+    sm_config_set_set_pins(&c, C_ARM, 1);
+    sm_config_set_clkdiv(&c, 125.0f);
+    pio_gpio_init(pio0, C_ARM);
+    pio_sm_set_consecutive_pindirs(pio0, 0, C_ARM, 1, true);
+    pio_sm_init(pio0, 0, 0, &c);
+    pio_sm_set_enabled(pio0, 0, true);
+    pio_sm_put(pio0, 0, 100);
+    for (int us = 0; us < 1000 && !gpio_get(C_ARM); us++)
+        shim_advance_us(1);
+    TEST_ASSERT_TRUE_MESSAGE(gpio_get(C_ARM), "the pump drove its pin high");
+    pio_sm_set_enabled(pio0, 0, false);
+    shim_advance_us(1000);
+    TEST_ASSERT_TRUE(gpio_get(C_ARM));
+}
+
 /* ══════════════════ Reports ═══════════════════════════════════════ */
 
 /* How long a just-opened channel takes to read as open, against the settle
@@ -391,16 +461,17 @@ static void test_mk1b_flag_is_high_when_healthy(void) {
 static void report_settle_margins(void) {
     struct { const char *name; plant_board_t b; int low_pin; int thresh; int settle_ms; } t[] = {
         {"MK1A", PLANT_MK1A, A_LOW,       MK1A_CNT_OPEN_MIN,   MK1A_SETTLE_MS},
-        {"MK1B", PLANT_MK1B, B_COMMON_EN, MK1B_CNT_OPEN_MIN,   MK1B_SAMPLE_SLEEP_MS},
+        {"MK1B*", PLANT_MK1B, B_COMMON_EN, MK1B_CNT_OPEN_MIN,  MK1B_SAMPLE_SLEEP_MS},
     };
     printf("\n  ── time for a just-opened channel to read OPEN ──\n");
     printf("    %-6s %-10s %-10s %-12s %s\n", "board", "threshold", "firmware", "model says", "");
     for (unsigned i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
         plant_init(t[i].b);
+        plant_set_mk1b_u5(MK1B_U5_AP2192); /* *: the netlist's part; the fitted A never reads open */
         plant_match(1)->state = MATCH_PRESENT;
         plant_match(1)->r_ohm = 1.0;
         plant_match(2)->state = MATCH_ABSENT;
-        plant_set_gpio(t[i].low_pin, 1);
+        drive(t[i].low_pin, 1);
         ms(200);
         plant_match(1)->state = MATCH_SPENT_OPEN;
 
@@ -443,14 +514,14 @@ static void report_present_match_classification(void) {
 
     plant_init(PLANT_MK1A);
     plant_match(1)->state = MATCH_PRESENT; plant_match(1)->r_ohm = 1.0;
-    plant_set_gpio(A_LOW, 1); ms(200);
+    drive(A_LOW, 1); ms(200);
     uint16_t a = plant_adc_counts(A_ADC1);
     printf("    MK1A  %4u counts   CNT_PATH_MAX %d -> good=%s\n",
            a, MK1A_CNT_PATH_MAX, (a < MK1A_CNT_PATH_MAX) ? "true" : "false");
 
     plant_init(PLANT_MK1B);
     plant_match(1)->state = MATCH_PRESENT; plant_match(1)->r_ohm = 1.0;
-    plant_set_gpio(B_COMMON_EN, 1); ms(200);
+    drive(B_COMMON_EN, 1); ms(200);
     uint16_t b = plant_adc_counts(0);
     printf("    MK1B  %4u counts   CNT_PATH_MAX %d -> good=%s\n",
            b, MK1B_CNT_PATH_MAX, (b < MK1B_CNT_PATH_MAX) ? "true" : "false");
@@ -459,7 +530,7 @@ static void report_present_match_classification(void) {
     plant_match(1)->state = MATCH_PRESENT; plant_match(1)->r_ohm = 1.0;
     plant_match(2)->state = MATCH_ABSENT;   /* one match, not two */
     ms(10);
-    plant_set_gpio(C_BIAS_BUS, 1); ms(MK1C_TRACK_BIAS_MS);
+    drive(C_BIAS_BUS, 1); ms(MK1C_TRACK_BIAS_MS);
     uint16_t c = plant_adc_counts(C_ADC_A), cbus = plant_adc_counts(C_ADC_BUS);
     bool present = track_channel(c, cbus) == TRACK_PRESENT;
     printf("    MK1C  %4u counts   against the bus's %u -> open=%s good=%s\n",
@@ -492,15 +563,15 @@ static void report_mk1c_fault_coverage(void) {
          * as latent on that basis would be a fault of the report. */
         uint16_t v[5];
         v[0] = plant_adc_counts(C_ADC_BUS);                       /* T1     */
-        plant_set_gpio(C_BIAS_BUS, 1); ms(MK1C_TRACK_BIAS_MS);
+        drive(C_BIAS_BUS, 1); ms(MK1C_TRACK_BIAS_MS);
         v[1] = plant_adc_counts(C_ADC_BUS);                       /* T2     */
-        plant_set_gpio(C_BIAS_BUS, 0); ms(20);
-        plant_set_gpio(C_BIAS_A, 1); ms(MK1C_TRACK_BIAS_MS);
+        drive(C_BIAS_BUS, 0); ms(20);
+        drive(C_BIAS_A, 1); ms(MK1C_TRACK_BIAS_MS);
         v[2] = plant_adc_counts(C_ADC_A);                         /* T3, A  */
-        plant_set_gpio(C_BIAS_A, 0); ms(20);
-        plant_set_gpio(C_BIAS_B, 1); ms(MK1C_TRACK_BIAS_MS);
+        drive(C_BIAS_A, 0); ms(20);
+        drive(C_BIAS_B, 1); ms(MK1C_TRACK_BIAS_MS);
         v[3] = plant_adc_counts(C_ADC_B);                         /* T3, B  */
-        plant_set_gpio(C_BIAS_B, 0);
+        drive(C_BIAS_B, 0);
         v[4] = plant_adc_counts(C_ADC_VBAT);
 
         if (f < 0) {
@@ -542,6 +613,11 @@ int main(void) {
 
     RUN_TEST(test_mk1b_has_the_same_sense_topology_as_mk1a);
     RUN_TEST(test_mk1b_flag_is_high_when_healthy);
+    RUN_TEST(test_mk1b_as_built_ap2192a_holds_both_sense_nodes_low);
+
+    RUN_TEST(test_a_pin_latched_high_but_left_an_input_does_not_fire);
+    RUN_TEST(test_gpio_init_clears_the_output_latch_as_the_sdk_does);
+    RUN_TEST(test_a_disabled_pio_state_machine_holds_its_pin);
 
     int rc = UNITY_END();
 

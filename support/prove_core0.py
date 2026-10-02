@@ -316,20 +316,16 @@ def vtable_targets(elf, objdump):
     """Functions reachable through a vtable core1 dispatches on.
 
     The call graph above is built from `bl` instructions, so a call through a
-    function pointer is invisible to it. That was harmless while core1 reached
-    hardware only through direct calls; lua_iface.c dispatches on stored
-    pointers, and a graph that cannot see past the cut keeps passing while
-    covering less -- which is how a check becomes a rubber stamp.
+    function pointer is invisible to it; lua_iface.c dispatches on stored
+    pointers.
 
-    Scoped to symbols named *_vt rather than to every address-taken function.
-    The broad reading folds in core0's HTTP route table and the littlefs
+    Scoped to symbols named *_vt rather than to every address-taken function:
+    the broad reading folds in the HTTP route table and the littlefs
     callbacks, which reach flash legitimately, and the check then fails on
-    everything and means nothing. So the naming is load-bearing, and enforced
-    below: an image that links lua_iface_publish and exposes no *_vt has
-    renamed its way out of coverage, and that fails. So does an image that
-    links http_work_run, core1's HTTP work units, without http_unit_vt."""
+    everything. So the naming is load-bearing, and enforced below: an image
+    that links lua_iface_publish and exposes no *_vt fails."""
     syms = subprocess.run([objdump, "-t", elf], capture_output=True, text=True).stdout
-    funcs, tables, have_publish, have_units = {}, [], False, False
+    funcs, tables, have_publish = {}, [], False
     for line in syms.splitlines():
         m = SYM_FUNC_RE.match(line)
         if m:
@@ -337,16 +333,12 @@ def vtable_targets(elf, objdump):
             funcs[int(m.group(1), 16) | 1] = m.group(3)
             if m.group(3) == "lua_iface_publish":
                 have_publish = True
-            if m.group(3) == "http_work_run":
-                have_units = True
             continue
         m = SYM_OBJ_RE.match(line)
         if m and m.group(3).endswith(VTABLE_SUFFIX):
             tables.append((int(m.group(1), 16), int(m.group(2), 16), m.group(3)))
 
     if have_publish and not tables:
-        return None, []
-    if have_units and "http_unit_vt" not in [t[2] for t in tables]:
         return None, []
 
     mem = section_bytes(elf, objdump)

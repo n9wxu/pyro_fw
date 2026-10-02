@@ -1,20 +1,12 @@
 /*
- * Pico SDK board header — Pyro MK1C
+ * Pico SDK board header — Pyro MK1C, selected by PICO_BOARD=pyro_mk1c.
  *
- * Bare RP2040 (QFN-56), 12MHz crystal, XT25F128FWOIGT-W 16MB QSPI flash.
- * Selected by CMake via PICO_BOARD=pyro_mk1c.
- *
- * CRITICAL: this header must NOT define PICO_DEFAULT_LED_PIN.
- *
- * TinyUSB's RP2040 BSP (lib/tinyusb/hw/bsp/rp2040/family.c:152-155) does
- *     gpio_init(LED_PIN); gpio_set_dir(LED_PIN, GPIO_OUT);
- * inside board_init() for whatever PICO_DEFAULT_LED_PIN says. The stock
- * boards/pico.h sets that to 25 — which on MK1C is BIAS_B, a pyro bias
- * injector. Leaving it undefined is the entire reason this board header
- * exists rather than reusing PICO_BOARD=pico.
- *
- * The MK1C heartbeat LED (D1, blue) is GPIO8, driven by board_led_set() in
- * src/hal_common/board_defaults.c, not by the BSP.
+ * Every PICO_DEFAULT_*_PIN here is a pin SDK or BSP code may drive, so none
+ * may be a pyro pin; boards/mk1c/board_info.c checks that at build time. The
+ * stock boards/pico.h fails it twice: its LED, 25, is BIAS_B -- TinyUSB's
+ * board_init() drives PICO_DEFAULT_LED_PIN (lib/tinyusb/hw/bsp/rp2040/
+ * family.c) -- and its SPI RX and CSn, 16 and 17, are BIAS_A and FIRE_A.
+ * The LED, D1 on GPIO8, is board_defaults.c's. ../THEORY_OF_OPERATION.md "Pins"
  *
  * SPDX-License-Identifier: MIT
  */
@@ -24,7 +16,7 @@
 // For board detection
 #define RASPBERRYPI_PYRO_MK1C
 
-// --- UART (telemetry + ground-test RX, out to J1 pins 4/5) ---
+// --- UART0: telemetry and ground-test commands, J1.4/J1.5 ---
 #ifndef PICO_DEFAULT_UART
 #define PICO_DEFAULT_UART 0
 #endif
@@ -35,11 +27,9 @@
 #define PICO_DEFAULT_UART_RX_PIN 1
 #endif
 
-// --- LED ---
-// Deliberately NOT defined. See the header comment above.
-// #define PICO_DEFAULT_LED_PIN 8   <-- do not do this
+// --- LED: none. See the header comment. ---
 
-// --- I2C (MS5607 pressure sensor on i2c1) ---
+// --- I2C1: the MS5607 ---
 #ifndef PICO_DEFAULT_I2C
 #define PICO_DEFAULT_I2C 1
 #endif
@@ -50,7 +40,7 @@
 #define PICO_DEFAULT_I2C_SCL_PIN 7
 #endif
 
-// --- SPI (unused on this board; give the SDK sane defaults) ---
+// --- SPI0 on J3, as mk1c_sd uses it: ../THEORY_OF_OPERATION.md "J3 as an SPI port" ---
 #ifndef PICO_DEFAULT_SPI
 #define PICO_DEFAULT_SPI 0
 #endif
@@ -61,10 +51,10 @@
 #define PICO_DEFAULT_SPI_TX_PIN 19
 #endif
 #ifndef PICO_DEFAULT_SPI_RX_PIN
-#define PICO_DEFAULT_SPI_RX_PIN 16
+#define PICO_DEFAULT_SPI_RX_PIN 20
 #endif
 #ifndef PICO_DEFAULT_SPI_CSN_PIN
-#define PICO_DEFAULT_SPI_CSN_PIN 17
+#define PICO_DEFAULT_SPI_CSN_PIN 21
 #endif
 
 // --- FLASH: XT25F128FWOIGT-W, 128 Mbit = 16 MB ---
@@ -74,19 +64,15 @@
 #define PICO_FLASH_SPI_CLKDIV 2
 #endif
 
-/* The pico_board_cmake_set_default() line is NOT a comment and NOT optional.
- * cmake/generic_board.cmake greps board headers for it to set the CMake-side
- * variable of the same name. pico_fota_bootloader's linker_definitions.in
- * substitutes @PICO_FLASH_SIZE_BYTES@ from that CMake variable, so omitting
- * this line yields "__FLASH_SIZE =  - __FILESYSTEM_SIZE" -- an empty
- * substitution producing a NEGATIVE flash size and a garbage A/B slot map
- * that still links. Keep the directive and the #define in agreement. */
+/* Not a comment: cmake/generic_board.cmake greps board headers for this line
+ * to set the CMake variable pico_fota_bootloader's linker_definitions.in
+ * substitutes. Without it __FLASH_SIZE is empty, and the A/B slot map is
+ * garbage that still links. Keep the directive and the #define in step. */
 pico_board_cmake_set_default(PICO_FLASH_SIZE_BYTES, (16 * 1024 * 1024))
 #ifndef PICO_FLASH_SIZE_BYTES
 #define PICO_FLASH_SIZE_BYTES (16 * 1024 * 1024)
 #endif
 
-// Bootloader button is a dedicated switch (SW1 -> nBOOTSEL), not a GPIO.
 #ifndef PICO_RP2040_B0_SUPPORTED
 #define PICO_RP2040_B0_SUPPORTED 1
 #endif

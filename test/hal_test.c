@@ -261,8 +261,25 @@ bool hal_ground_test_asserted(void) {
     return mock_ground_test_pin;
 }
 
+bool mock_board_image_ok = true;
+char mock_lua_events[256];
+
+void lua_app_event(const char *name) {
+    size_t n = strlen(mock_lua_events);
+    snprintf(mock_lua_events + n, sizeof(mock_lua_events) - n, "%s;", name);
+}
+
+bool mock_config_unreadable;
+
+bool hal_board_image_ok(void) {
+    return mock_board_image_ok;
+}
+
 void mock_reset_all(void) {
     mock_ground_test_pin = false;
+    mock_board_image_ok = true;
+    mock_lua_events[0] = '\0';
+    mock_config_unreadable = false;
     mock_fs_write_count = 0;
     mock_fs_locked_count = 0;
     memset(&sim_files, 0, sizeof(sim_files));
@@ -346,8 +363,11 @@ static void test_fire(uint8_t channel) {
         return;
     }
     mock_pyro.fire_count++;
+    if (channel < 3)
+        mock_pyro.fires_on[channel]++;
     mock_pyro.last_fire_channel = channel;
     mock_pyro.firing = true;
+    mock_pyro.fired_at_ms = mock_time_ms;
 }
 
 static void test_get(uint8_t channel, hal_continuity_t *out) {
@@ -416,7 +436,8 @@ void hal_pyro_fire(uint8_t channel) {
 }
 
 void hal_pyro_update(uint32_t now_ms) {
-    (void)now_ms;
+    if (mock_pyro.pulse_ms && mock_pyro.firing && now_ms - mock_pyro.fired_at_ms >= mock_pyro.pulse_ms)
+        mock_pyro.firing = false;
 }
 /* Host tests drive the recovery matrix through brownout_assess() directly;
  * this only has to exist and be settable. */
@@ -514,6 +535,8 @@ int hal_fs_read_cached(const char *path, char *buf, int max_len) {
 int hal_fs_read_file(const char *path, char *buf, int max_len) {
     if (fs_locked())
         return HAL_FS_LOCKED;
+    if (mock_config_unreadable && strcmp(path, "config.ini") == 0)
+        return HAL_FS_ERROR;
     for (int i = 0; i < SIM_FS_MAX_FILES; i++) {
         if (sim_files[i].used && strcmp(sim_files[i].path, path) == 0) {
             int n = sim_files[i].len < max_len ? sim_files[i].len : max_len;
@@ -549,24 +572,25 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
 
 /* ── Config (v2) ──────────────────────────────────────────────────── */
 
+/* As the hardware's: defaults are written only over a file that is not there. */
 int hal_config_load(config_t *cfg) {
-    config_set_defaults(cfg);
-    /* Check if config.ini is stored in the mock filesystem */
-    char buf[512];
-    int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
-    if (n > 0) {
-        buf[n] = '\0';
-        config_parse_ini(buf, cfg);
+    char buf[CONFIG_INI_MAX];
+    int n = hal_fs_read_file("config.ini", buf, (int)sizeof(buf) - 1);
+    switch (config_from_file(cfg, buf, (int)sizeof(buf), n, NULL)) {
+    case CONFIG_FILE_LOADED:
         return 0;
+    case CONFIG_FILE_MISSING: {
+        const char *def = config_default_ini();
+        hal_fs_write_file("config.ini", def, (int)strlen(def));
+        return -1;
     }
-    /* No file — write defaults so next boot finds them */
-    const char *def = config_default_ini();
-    hal_fs_write_file("config.ini", def, (int)strlen(def));
-    return -1;
+    default:
+        return -2;
+    }
 }
 
 int hal_config_save(const config_t *cfg) {
-    char buf[512];
+    char buf[CONFIG_INI_MAX];
     int n = config_serialize_ini(cfg, buf, (int)sizeof(buf));
     if (n <= 0)
         return -1;
@@ -616,7 +640,6 @@ void hal_sleep_until_event(void) {
 
 void hal_platform_init(void) {}
 void hal_platform_service(void) {}
-void hal_firmware_commit(void) {}
 
 /* ── Streaming file writes (test) ─────────────────────────────────── */
 

@@ -1,78 +1,21 @@
 /*
- * Plant — Pyro MK1C.
+ * Plant: MK1C's firing network, as measured on the bench (DD-054). See
+ * boards/mk1c/THEORY_OF_OPERATION.md "Firing bus" and "Sense network".
+ * "DESIGN.md" below is the MK1C design record (pyro_mk1c/DESIGN.md, on the
+ * author's machine and not in this repository); its section numbers are
+ * cited as it stood when the model was written.
  *
- * Models the firing network of ~/Documents/pyro_mk1c/DESIGN.md: a
- * TPS259570 eFuse on the high side driven by a software charge pump, two
- * low-side channel FETs, three switched bias injectors, and four divided
- * sense taps.
+ * DESIGN.md 4 tabulates three sense levels and boards/mk1c/pyro_sense.h
+ * checks them at build time; the divider algebra gives them, and
+ * test/test_plant.c holds the model to the bench's values.
  *
- *   3.0V ─[330]─┬─────────── FIRING BUS (node 0) ──┬─ C115 1.1 uF
- *   (BIAS_BUS)  │                                  ├─ R_BLEED 2.2k ─ GND
- *          U9 ──┘                                  └─ divider 14.99k ─ GND
- *          eFuse                │            │
- *          from VBAT       [match A]    [match B]     (TVS in parallel)
- *                               │            │
- *                          node 1 (A)   node 2 (B)
- *                               ├─ divider 14.99k ─ GND
- *                               ├─ Q103 ─ GND   (gate = FIRE_A)
- *                               └─ [330] ─ 3.0V (BIAS_A)
+ * R_BLEED is R103, one 2.2 kohm. No S9 indicator divider is placed, so the
+ * bus pull-down is 14.99k || 2.2k = 1918 ohm.
  *
- * ── Why the levels come out right ────────────────────────────────
- *
- * DESIGN.md 4 tabulates three levels and boards/mk1c/pyro_board.c asserts
- * all three at compile time. They are the model's acceptance test, and all
- * three fall out of the divider algebra above:
- *
- *   bus under its own bias, no match
- *       Rpd = 14.99k || 2.2k = 1918 ohm
- *       3.0 x 1918/(330+1918)      = 2.560 V = 1058 counts
- *   channel under its own bias, match disconnected
- *       3.0 x 14990/(330+14990)    = 2.935 V = 1212 counts   (DESIGN: 1214)
- *   channel tied to the bus through a match
- *       14.99k || (1 + 1918)       = 1701 ohm
- *       3.0 x 1701/(330+1701)      = 2.513 V = 1038 counts   (DESIGN: 1037)
- *
- * test/test_plant_mk1c.c asserts these against the firmware's own
- * constants, so a change to either side that breaks the agreement fails
- * rather than quietly shifting a threshold.
- *
- * ── Two constants that need naming ───────────────────────────────
- *
- * R_BLEED: DESIGN.md is inconsistent with itself and with the board. The
- * architecture sketch in section 2 says 2.2 k; the component table in
- * section 3 says "2 x 4.7 kohm in parallel", which is 2.35 k, and argues
- * for the split on the grounds that one open resistor must not defeat the
- * only discharge path. The board as drawn has a SINGLE R103 of 2.2 k --
- * verified by pulling the reference-to-value map out of
- * ~/Documents/pyro_mk1c/pyro.kicad_sch, whose pyro sheet is R100-R122 plus
- * R130 and contains exactly one 2.2 k part. The model follows the board.
- *
- * The bus pull-down is therefore 14.99k || 2.2k = 1918 ohm, which is what
- * pyro_board.c's design_rpd_ohm says and what DESIGN.md 4's formulas use
- * ("3.0 x 1.92/(0.33 + 1.92)"). DESIGN.md 4's own pull-down row disagrees
- * with its formulas: it says 1.85 kohm and tells the reader to
- * include "the 16.7 kohm indicator divider" from section S9. No such
- * divider is placed on the pyro sheet -- there is no NPN sink, no BAV99
- * instance and no 12k/150R pair anywhere in the reference map -- so the S9
- * indicator load does not exist on this revision and 1.92 kohm is right.
- *
- * ── The board as measured (DD-054) ──────────────────────────────
- *
- * The bench MK1C, 2026-09-26, its ADC and a scope at CN1: the bus sits at
- * about 688 counts under bias, not the 1058 the divider algebra above gives.
- * R120, R103 and C115 are as designed -- the rise starts at 9 mA into about
- * 1 uF, and below 0.72 V the bus decays with the designed pull-down's time
- * constant -- but above about 0.72 V U9's OUT conducts back into the part,
- * a junction with about 250 ohm behind it, 2.4 mA at 1.5 V. It is expected
- * of the part and is modelled, not fixed. U9_REV_* fits the scope's points
- * within about 10 mV.
- *
- * The bias sources are a 3.3 V GPIO through a BAT54WS (D104/D106/D107), not
- * a fixed 3.0 V: 3.12 V at a channel's 0.2 mA and 2.99 V at the bus's 4 mA,
- * which is what puts the isolated channel at 1262 counts rather than 1212.
- *
- * Both are nonlinear and the network is solved linearly, so each step
- * stamps them linearized about the previous step's node voltage.
+ * Two elements are nonlinear and stamped linearized about the previous
+ * step's node voltage: U9's reverse conduction above about 0.72 V, and the
+ * bias sources, a 3.3 V GPIO through a BAT54WS (both fitted to the bench in
+ * pyro_sense.h).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -93,7 +36,7 @@
 #define R_BIAS_OHM       330.0    /* R112 / R117 / R120                   */
 #define R_DIV_OHM       14990.0   /* 10k + 4.99k, the whole divider chain */
 #define R_DIV_RATIO     (4990.0 / 14990.0)  /* 0.33289                    */
-#define R_BLEED_OHM      2200.0   /* see the note above                   */
+#define R_BLEED_OHM      2200.0   /* R103, as fitted; see the note above  */
 #define R_VBAT_DIV_OHM 149900.0   /* 100k + 49.9k                         */
 #define R_VBAT_RATIO    (49900.0 / 149900.0)
 /* Fitted to the bench (boards/mk1c/pyro_sense.h): the BAT54WS gives 3.12 V
@@ -119,11 +62,10 @@
 #define EFUSE_SLEW_V_PER_S 890.0  /* C_dVdT 47 nF -> 0.89 V/ms            */
 #define EFUSE_EN_ON_V     1.20    /* EN/UVLO rising threshold             */
 #define EFUSE_EN_OFF_V    1.10
-/* How long U9 may sit in current limit before it latches off. The part is
- * the latch-off type. A correct precharge never reaches ILIM (1 mA into the
- * bus's 1.1 uF), and a misfire holds U9 there only for the 9.6 ms its enable
- * takes to bleed, so this fires only on a fault. The value itself is *bench*: it stands in for the
- * thermal element and has not been measured. */
+/* How long U9, a latch-off part, may sit in current limit. Unmeasured: it
+ * stands in for the thermal element. A correct precharge never reaches
+ * ILIM, and a misfire holds U9 there only for the 9.6 ms its enable takes to
+ * bleed, so only a fault reaches it. */
 #define EFUSE_ILIM_LATCH_S 0.010
 
 /* ── The charge pump (DESIGN.md 5.1) ─────────────────────────────── */
@@ -178,7 +120,7 @@ static void stamp_u9_reverse(net_t *n) {
 }
 
 static double arm_path_ohms(const plant_t *p) {
-    return p->faults[PF_ARM_SWITCH_OPEN] ? 1e11 : R_ARM_CLOSED_OHM;
+    return p->faults[PF_ARM_SWITCH_OPEN] ? PLANT_OPEN_OHM : R_ARM_CLOSED_OHM;
 }
 
 /* Match A or B in circuit, between the bus and its drain node: the
@@ -369,7 +311,7 @@ static void mk1c_post(plant_t *p, double dt_s) {
      * what the firmware does when VBAT moves during a fire. */
     if (p->faults[PF_PACK_COLLAPSE]) {
         double i = fabs(p->i_a) + fabs(p->i_b);
-        p->pack_sag_v = i * 0.15;
+        p->pack_sag_v = i * PLANT_PACK_SAG_OHM;
     } else {
         p->pack_sag_v = 0.0;
     }

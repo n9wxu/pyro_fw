@@ -71,7 +71,8 @@ void board_identity_init(void) {
         pool_hardware(&pool);
         mac_pool_draw(&pool, mac);
         drawn = true;
-        unsaved = true;
+        /* A file that could not be read may hold an assigned MAC: kept. */
+        unsaved = n >= 0 || n == HAL_FS_NOENT;
     }
 
     snprintf(serial, sizeof(serial), "%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);

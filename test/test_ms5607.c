@@ -9,6 +9,7 @@
 #include "ms5607_bus.h"
 #include "loop_period.h"
 #include <stdio.h>
+#include <string.h>
 
 uint64_t fake_bus_now;
 uint32_t fake_bus_adc;
@@ -345,6 +346,63 @@ void test_ms5607_begin_addresses_the_sensor(void) {
     TEST_ASSERT_EQUAL_HEX8(0x77, fake_bus_address);
 }
 
+/* ── Compensation (datasheet pages 8-9) ───────────────────────────
+ *
+ * The page 8 example coefficients, D1 6465444, and the D2 that puts the first
+ * order's TEMP at each temperature. Expected values worked from the page 8
+ * and page 9 equations in exact integers, apart from the driver:
+ *   20 °C  D2 8077568  dT       0  TEMP  2000  P 110002
+ *   10 °C  D2 7779729  dT -297839  TEMP   958  P 107522
+ *  -10 °C  D2 7184053  dT -893515  TEMP -1372  P 102133
+ *  -20 °C  D2 6886215  dT -1191353 TEMP -2661  P  99148
+ * First order alone reads 10 °C as 107594 Pa and -20 °C as 100372 Pa. */
+static const uint16_t DS_PROM[8] = {0, 46372, 43981, 29059, 27842, 31553, 28165, 0};
+
+static void check_vector(uint32_t d2, int32_t temp_c100, int32_t pa) {
+    pressure_reading_t r;
+    ms5607_compensate_prom(DS_PROM, 6465444u, d2, &r);
+    TEST_ASSERT_EQUAL_FLOAT((float)pa, r.pressure_pa);
+    TEST_ASSERT_EQUAL_FLOAT(temp_c100 / 100.0f, r.temperature_c);
+}
+
+void test_ms5607_at_20C_first_order_only(void) {
+    check_vector(8077568u, 2000, 110002);
+}
+
+void test_ms5607_second_order_at_10C(void) {
+    check_vector(7779729u, 958, 107522);
+}
+
+void test_ms5607_second_order_at_minus_10C(void) {
+    check_vector(7184053u, -1372, 102133);
+}
+
+void test_ms5607_very_low_temperature_term_at_minus_20C(void) {
+    check_vector(6886215u, -2661, 99148);
+}
+
+/* ── PROM CRC-4 (datasheet page 13, AN520) ────────────────────────
+ *
+ * AN520's worked example: these eight words give CRC 0xB. */
+void test_ms5607_prom_crc_an520_example(void) {
+    uint16_t p[8] = {0x3132, 0x3334, 0x3536, 0x3738, 0x3940, 0x4142, 0x4344, 0x4500};
+    TEST_ASSERT_FALSE(ms5607_prom_crc_ok(p));
+    p[7] |= 0xB;
+    TEST_ASSERT_TRUE(ms5607_prom_crc_ok(p));
+}
+
+void test_ms5607_prom_crc_catches_one_flipped_bit(void) {
+    uint16_t p[8] = {0x3132, 0x3334, 0x3536, 0x3738, 0x3940, 0x4142, 0x4344, 0x450B};
+    for (int w = 0; w < 7; w++) {
+        for (int b = 0; b < 16; b++) {
+            uint16_t q[8];
+            memcpy(q, p, sizeof(q));
+            q[w] ^= (uint16_t)(1u << b);
+            TEST_ASSERT_FALSE(ms5607_prom_crc_ok(q));
+        }
+    }
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_SNS_PRES_08_stamps_are_the_conversions);
@@ -365,5 +423,11 @@ int main(void) {
     RUN_TEST(test_ms5607_cycle_skips_a_flashed_temperature);
     RUN_TEST(test_SNS_PRES_12_the_line_interpolates_back);
     RUN_TEST(test_ms5607_begin_addresses_the_sensor);
+    RUN_TEST(test_ms5607_at_20C_first_order_only);
+    RUN_TEST(test_ms5607_second_order_at_10C);
+    RUN_TEST(test_ms5607_second_order_at_minus_10C);
+    RUN_TEST(test_ms5607_very_low_temperature_term_at_minus_20C);
+    RUN_TEST(test_ms5607_prom_crc_an520_example);
+    RUN_TEST(test_ms5607_prom_crc_catches_one_flipped_bit);
     return UNITY_END();
 }

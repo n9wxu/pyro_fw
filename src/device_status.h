@@ -1,3 +1,10 @@
+/*
+ * The flight state the other tasks may see, written by the flight task each
+ * period (main_hardware.c). A reader that needs fields which agree with one
+ * another takes them through flight_call() [WEB-API-11].
+ *
+ * SPDX-License-Identifier: MIT
+ */
 #ifndef DEVICE_STATUS_H
 #define DEVICE_STATUS_H
 

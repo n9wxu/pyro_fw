@@ -44,6 +44,7 @@ static flight_state_t step(flight_context_t *ctx, uint32_t now) {
 #define DT 0.001f /* physics step (s) = 1 ms */
 #define GROUND_PA 101325.0f
 #define PAD_DWELL_MS 2000 /* sit on pad before ignition */
+#define RIG_PULSE_MS 500  /* how long a board holds a channel energised */
 
 /* Parachute drag-deceleration coefficients (empirical, not physical Cd·A)
  * Terminal velocity: v_term = G / CHUTE_DRAG
@@ -338,6 +339,10 @@ typedef struct {
      * decided it was), the peak speed, and which phases were visited. */
     int p1_fires, p2_fires;
     uint32_t p1_refire_ms, apogee_true_ms;
+    /* Physics truth at each channel's first fire, and whether two fires ever
+     * landed in one tick [PYR-DEPLOY-02]. */
+    float pyro1_vel_ms, pyro2_vel_ms;
+    bool fired_together;
     float max_speed_ms;
     bool saw_drogue_phase, saw_chute_phase;
     bool main_forced; /* the emergency ladder overrode pyro2's trigger */
@@ -391,37 +396,42 @@ static sim_result_t run_sim_opts(config_t cfg, const rocket_profile_t *r, sim_op
 
     /* Time budget: 2 min for tiny low-power rockets, 10 min otherwise */
     uint32_t max_ms = (r->expected_apogee_m < 100.0f) ? 120000u : 600000u;
-    uint8_t prev_fires = 0;
+    mock_pyro.pulse_ms = RIG_PULSE_MS;
 
     for (uint32_t t = 0; t <= max_ms; t++) {
-        /* Closed-loop: check pyro fires, update physics accordingly */
-        if (mock_pyro.fire_count > prev_fires) {
-            uint8_t ch = mock_pyro.last_fire_channel;
-            if (ch == 1) {
-                res.p1_fires++;
-                if (res.p1_fires == 1) {
-                    res.pyro1_fired = true;
-                    res.pyro1_alt_m = ps.alt_m;
-                    res.p1_fire_ms = t;
-                    if (o.p1_opens_on_fire)
-                        mock_pyro.p1_open = true;
-                } else if (res.p1_refire_ms == 0) {
-                    res.p1_refire_ms = t;
+        /* Every fire since the last tick, per channel: two in one tick are
+         * both seen. */
+        int new1 = mock_pyro.fires_on[1] - res.p1_fires;
+        int new2 = mock_pyro.fires_on[2] - res.p2_fires;
+        if (new1 + new2 > 1)
+            res.fired_together = true;
+        if (new1 > 0) {
+            if (res.p1_fires == 0) {
+                res.pyro1_fired = true;
+                res.pyro1_alt_m = ps.alt_m;
+                res.pyro1_vel_ms = ps.vel_ms;
+                res.p1_fire_ms = t;
+                if (o.p1_opens_on_fire) {
+                    mock_pyro.p1_good = false;
+                    mock_pyro.p1_open = true;
                 }
-                if (o.drogue_works)
-                    ps.drogue_deployed = true;
+            } else if (res.p1_refire_ms == 0) {
+                res.p1_refire_ms = t;
             }
-            if (ch == 2) {
-                res.p2_fires++;
-                if (res.p2_fires == 1) {
-                    res.pyro2_fired = true;
-                    res.pyro2_alt_m = ps.alt_m;
-                    res.p2_fire_ms = t;
-                }
-                if (o.main_works)
-                    ps.main_deployed = true;
+            res.p1_fires += new1;
+            if (o.drogue_works)
+                ps.drogue_deployed = true;
+        }
+        if (new2 > 0) {
+            if (res.p2_fires == 0) {
+                res.pyro2_fired = true;
+                res.pyro2_alt_m = ps.alt_m;
+                res.pyro2_vel_ms = ps.vel_ms;
+                res.p2_fire_ms = t;
             }
-            prev_fires = mock_pyro.fire_count;
+            res.p2_fires += new2;
+            if (o.main_works)
+                ps.main_deployed = true;
         }
 
         /* Physics: pad dwell, then ignition */
@@ -439,7 +449,6 @@ static sim_result_t run_sim_opts(config_t cfg, const rocket_profile_t *r, sim_op
         /* Feed pressure sensor to firmware */
         mock_time_ms = t;
         mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
-        mock_pyro.firing = false;
         ctx.current_state = step(&ctx, t);
 
         if (ctx.current_state == ASCENT && !res.reached_ascent) {
@@ -585,6 +594,24 @@ static void assert_order(const sim_result_t *r, const char *l) {
     snprintf(m, sizeof(m), "%s: main higher than drogue (P1=%.0f P2=%.0f)", l, r->pyro1_alt_m, r->pyro2_alt_m);
     TEST_ASSERT_TRUE_MESSAGE(r->pyro1_alt_m >= r->pyro2_alt_m, m);
 }
+/* [PYR-SAFE-03, PYR-SAFE-04, PYR-DEPLOY-02] Against the physics, never the
+ * firmware's own account: no channel twice, none before the true apogee,
+ * never two in one tick. A rig run with working canopies and charges that
+ * light owes no re-fire. */
+static void assert_fires_safe(const sim_result_t *r, const char *l) {
+    char m[160];
+    snprintf(m, sizeof(m), "%s: P1 fired %d times, P2 %d times", l, r->p1_fires, r->p2_fires);
+    TEST_ASSERT_TRUE_MESSAGE(r->p1_fires <= 1 && r->p2_fires <= 1, m);
+    snprintf(m, sizeof(m), "%s: P1 fired climbing at %.1f m/s, %d ms before the true apogee", l,
+             (double)r->pyro1_vel_ms, (int)(r->apogee_true_ms - r->p1_fire_ms));
+    TEST_ASSERT_TRUE_MESSAGE(!r->pyro1_fired || (r->pyro1_vel_ms <= 0.0f && r->p1_fire_ms >= r->apogee_true_ms), m);
+    snprintf(m, sizeof(m), "%s: P2 fired climbing at %.1f m/s, %d ms before the true apogee", l,
+             (double)r->pyro2_vel_ms, (int)(r->apogee_true_ms - r->p2_fire_ms));
+    TEST_ASSERT_TRUE_MESSAGE(!r->pyro2_fired || (r->pyro2_vel_ms <= 0.0f && r->p2_fire_ms >= r->apogee_true_ms), m);
+    snprintf(m, sizeof(m), "%s: two channels energised in one tick", l);
+    TEST_ASSERT_FALSE_MESSAGE(r->fired_together, m);
+}
+
 static void assert_data(const sim_result_t *r, const char *l) {
     char m[128];
     snprintf(m, sizeof(m), "%s: samples=%d", l, r->sample_count);
@@ -630,6 +657,7 @@ static void run_suite(cfg_fn make, const char *suite_name) {
         assert_flight(&res, label);
         assert_p1(&res, label);
         assert_data(&res, label);
+        assert_fires_safe(&res, label);
 
         /* Main chute required for rockets that fly above ~100 m */
         if (r->expected_apogee_m >= 100.0f) {
@@ -637,13 +665,13 @@ static void run_suite(cfg_fn make, const char *suite_name) {
             assert_order(&res, label);
         }
 
-        /* [REV-01] Every canopy in this runner works, so nothing may be
+        /* Every canopy in this runner works, so nothing may be
          * overridden: each channel goes out on its own trigger. */
         char m[160];
         snprintf(m, sizeof(m), "%s: the ladder forced the main on a flight whose drogue worked", label);
         TEST_ASSERT_FALSE_MESSAGE(res.main_forced, m);
 
-        /* [PYR-MODE-02, REV-05] An AGL trigger fires at its altitude, not a
+        /* [PYR-MODE-02] An AGL trigger fires at its altitude, not a
          * filter lag later. Only where the trigger is below apogee: above it
          * the channel fires at apogee by design (PYR-DEPLOY-01). */
         if (c.pyro1_mode == PYRO_MODE_AGL && trigger_m(c.pyro1_value, c.units) < res.apogee_m - 5.0f) {
@@ -654,10 +682,16 @@ static void run_suite(cfg_fn make, const char *suite_name) {
         if (c.pyro2_mode == PYRO_MODE_AGL && trigger_m(c.pyro2_value, c.units) < res.apogee_m - 5.0f &&
             res.pyro2_fired) {
             float want = trigger_m(c.pyro2_value, c.units);
-            /* When both channels share a trigger the main waits out the
-             * drogue's pulse (PYR-DEPLOY-02) and fires a step later. */
             snprintf(m, sizeof(m), "%s: P2 AGL %.0f m fired at %.0f m", label, (double)want, (double)res.pyro2_alt_m);
-            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(AGL_TOL_M, want, res.pyro2_alt_m, m);
+            /* [PYR-DEPLOY-02] A main whose trigger came during the drogue's
+             * pulse goes out as that pulse ends. */
+            uint32_t after_p1 = res.p2_fire_ms - res.p1_fire_ms;
+            if (res.pyro1_fired && res.p2_fire_ms >= res.p1_fire_ms && after_p1 <= RIG_PULSE_MS + 20u) {
+                TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(RIG_PULSE_MS, after_p1, m);
+                TEST_ASSERT_TRUE_MESSAGE(res.pyro2_alt_m <= want + AGL_TOL_M, m);
+            } else {
+                TEST_ASSERT_FLOAT_WITHIN_MESSAGE(AGL_TOL_M, want, res.pyro2_alt_m, m);
+            }
         }
     }
 }
@@ -767,22 +801,8 @@ void test_PYR_SAFE_01_no_fire_without_continuity(void) {
     TEST_ASSERT_TRUE_MESSAGE(res.pyro2_fired, "Pyro2 should fire with good continuity");
 }
 
-/* [PYR-DEPLOY-01] A low flight puts both out on one event.
- *
- * This was test_PYR_SAFE_02_no_simultaneous_fire, which asserted the two fire
- * times DIFFER. That forbade exactly the case this exists to allow -- and it
- * was proving almost nothing anyway, because run_sim() clears
- * mock_pyro.firing before every step, so the 500 ms hardware separation it
- * was measuring is 1 ms here.
- *
- * What matters now: with both channels set to fire at apogee, both actually
- * deploy, and close enough together to be one event rather than two.
- *
- * The gap this measures is the SIMULATION's, not the hardware's. run_sim()
- * clears mock_pyro.firing each step, so the separation here is one step; on a
- * board it is FIRE_DURATION_MS, about 500 ms, because the two channels share a
- * common element and must not be energised together (PYR-DEPLOY-02). The
- * bound below is generous enough to cover both. */
+/* [PYR-DEPLOY-01, PYR-DEPLOY-02] A low flight puts both out on one event: the
+ * second as the first one's pulse ends, never inside it. */
 void test_PYR_DEPLOY_01_low_flight_fires_both(void) {
     TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket for the both-on-one-event test");
     const rocket_profile_t *r = &g_rockets[ROCKET_IDX_L1];
@@ -807,52 +827,25 @@ void test_PYR_DEPLOY_01_low_flight_fires_both(void) {
     snprintf(msg, sizeof(msg), "both should deploy on one event: P1=%u P2=%u gap=%u ms", res.p1_fire_ms,
              res.p2_fire_ms, gap);
     TEST_ASSERT_TRUE_MESSAGE(res.pyro1_fired && res.pyro2_fired, msg);
-    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(1000, gap, msg);
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(RIG_PULSE_MS, gap, msg);
+    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(RIG_PULSE_MS + 100u, gap, msg);
 }
 
-/* [SYS-DEPLOY-03] No firing during ascent */
+/* [SYS-DEPLOY-03, PYR-SAFE-04] No fire while the rocket is still climbing,
+ * judged by the physics, on every rocket, with both channels set to go out
+ * the moment the firmware believes apogee has come. */
 void test_SYS_DEPLOY_03_no_fire_during_ascent(void) {
-    TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket for ascent-fire test");
-    const rocket_profile_t *r = &g_rockets[ROCKET_IDX_L1];
-    config_t cfg = cfg_delay_agl();
-
-    mock_reset_all();
-    mock_pyro.p1_good = true;
-    mock_pyro.p2_good = true;
-    mock_pyro.p1_adc = 50;
-    mock_pyro.p2_adc = 50;
-    mock_uart_len = 0;
-    buzzer_stop_count = 0;
-    buzzer_altitude_count = 0;
-    buzzer_active_flag = true;
-
-    flight_context_t ctx = {0};
-    ctx.config = cfg;
-    ctx.current_state = PAD_IDLE;
-    ctx.ground_pressure = (int32_t)GROUND_PA;
-    pp_test_prime((int32_t)GROUND_PA);
-
-    physics_state_t ps = {0};
-    bool pyro_during_ascent = false;
-    uint32_t max_ms = (r->expected_apogee_m < 100.0f) ? 120000u : 600000u;
-
-    for (uint32_t t = 0; t <= max_ms; t++) {
-        if (t >= PAD_DWELL_MS) {
-            float ft = (float)(t - PAD_DWELL_MS) / 1000.0f;
-            physics_step(&ps, ft, r);
-        }
-        mock_time_ms = t;
-        mock_pressure.pressure_pa = alt_m_to_pa(ps.alt_m);
-        mock_pyro.firing = false;
-        ctx.current_state = step(&ctx, t);
-
-        if (ctx.current_state == ASCENT && mock_pyro.fire_count > 0)
-            pyro_during_ascent = true;
-        if (ctx.current_state == LANDED)
-            break;
+    config_t cfg = cfg_delay_delay();
+    cfg.pyro2_value = 0;
+    for (int i = 0; i < g_num_rockets; i++) {
+        sim_result_t res = run_sim(cfg, &g_rockets[i], true);
+        char label[48];
+        snprintf(label, sizeof(label), "AtApogee@%s", g_rockets[i].motor);
+        print_summary(label, &res);
+        assert_p1(&res, label);
+        assert_p2(&res, label);
+        assert_fires_safe(&res, label);
     }
-
-    TEST_ASSERT_FALSE_MESSAGE(pyro_during_ascent, "Pyro fired during ASCENT — must only fire after apogee");
 }
 
 /* [PYR-FAULT-02] Overcurrent fault detection via FLAG pin */
@@ -1097,10 +1090,7 @@ void test_PYR_REFIRE_01_refire_ballistic(void) {
              ctx.vertical_speed_cms);
     TEST_ASSERT_TRUE_MESSAGE(refire_detected, msg);
 
-    /* The retry is now the first rung of the emergency ladder rather than the
-     * old free-standing check_refire() window. It lands one grace period after
-     * the initial fire, deterministically, instead of inside a 1-1.5 s window
-     * that the descent rate happened to fall through. */
+    /* The retry lands one grace period after the initial fire. */
     uint32_t window_ms = second_fire_time - first_fire_time;
     snprintf(msg, sizeof(msg), "Re-fire window %ums not at the 2000 ms grace", window_ms);
     TEST_ASSERT_TRUE_MESSAGE(window_ms >= 1900 && window_ms <= 2300, msg);
@@ -1192,9 +1182,7 @@ void test_FLT_MACH_02_fast_subsonic_flight_not_locked(void) {
 }
 
 /* [FLT-DESC-01] Phase comes from the rate. With no drogue configured at all,
- * the old machine sat in FALLING for the rest of the flight because its only
- * exit was pyro1_fired. The main opens, the rate steadies, and the phase must
- * follow the rocket. */
+ * the main opens, the rate steadies, and the phase must follow the rocket. */
 void test_FLT_DESC_01_phase_without_pyros(void) {
     TEST_ASSERT_TRUE_MESSAGE(g_num_rockets > ROCKET_IDX_L1, "Need L1 rocket");
     config_t cfg = cfg_agl_agl();
@@ -1232,10 +1220,11 @@ void test_FLT_DESC_02_ballistic_reaches_landed(void) {
 
 /* ── Code review 2026-09-24 ───────────────────────────────────────── */
 
-/* [FLT-EMRG-01, PYR-MODE-02, REV-01] The regression guard the review asked
+/* [FLT-EMRG-01, PYR-MODE-02] The regression guard the review asked
  * for: a drogue that opens, and a main set to 500 ft AGL. The main must go out
  * at 500 ft, not two seconds after the drogue. */
 void test_REV01_working_drogue_main_at_its_trigger(void) {
+    int checked = 0;
     for (int i = 0; i < g_num_rockets; i++) {
         const rocket_profile_t *r = &g_rockets[i];
         config_t cfg = cfg_delay_agl();
@@ -1253,11 +1242,13 @@ void test_REV01_working_drogue_main_at_its_trigger(void) {
         if (res.apogee_m > 152.4f + 10.0f) {
             TEST_ASSERT_TRUE_MESSAGE(res.pyro2_fired, label);
             TEST_ASSERT_FLOAT_WITHIN_MESSAGE(AGL_TOL_M, 152.4f, res.pyro2_alt_m, m);
+            checked++;
         }
     }
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(2, checked, "too few rockets climb past 500 ft for the main to be tested");
 }
 
-/* [PYR-MODE-02, REV-05] A drogue set to 400 ft AGL on a ballistic descent.
+/* [PYR-MODE-02] A drogue set to 400 ft AGL on a ballistic descent.
  * The filtered altitude trails the rocket by rate x tau, which at these
  * speeds was 56 m. */
 void test_REV05_agl_drogue_fires_at_its_altitude(void) {
@@ -1270,7 +1261,7 @@ void test_REV05_agl_drogue_fires_at_its_altitude(void) {
     TEST_ASSERT_FLOAT_WITHIN_MESSAGE(AGL_TOL_M, 121.9f, res.pyro1_alt_m, m);
 }
 
-/* [FLT-EMRG-01, REV-01] The failure case, told the way the pad narrative
+/* [FLT-EMRG-01] The failure case, told the way the pad narrative
  * tells it: the charge lit, the drogue did not deploy, the rocket keeps
  * accelerating. The main must be brought forward on that evidence -- well
  * above its own trigger, and within a few seconds of the drogue. */
@@ -1291,7 +1282,7 @@ void test_REV01_failed_drogue_brings_the_main_forward(void) {
     TEST_ASSERT_TRUE_MESSAGE(res.reached_landed, "a failed drogue must still reach LANDED");
 }
 
-/* [FLT-EMRG-01, DAT-04, REV-16] An emergency deployment is recorded as one.
+/* [FLT-EMRG-01, DAT-04] An emergency deployment is recorded as one.
  * After the shredded-drogue flight the log is the only way to tell a forced
  * main from a configured one. */
 void test_REV16_forced_main_is_in_the_log(void) {
@@ -1428,16 +1419,23 @@ void test_SIM_02_a_9_km_supersonic_flight_with_sensor_noise(void) {
     }
 }
 
-/* Beyond it: at 30 km a 1 g deceleration is 1.8 Pa/s^2 of curvature, and a
- * one-second fit through 3 Pa of noise reads it to 11 Pa/s^2. The lock never
- * releases, and apogee comes from the fallback, 150 m above the pad
- * (docs/high_altitude_flight.md). Ignored, and saying so, until it does. */
+/* A known limit, held as it stands. At 30 km with 3 Pa of noise the lock
+ * never releases, and apogee comes from the fallback near the ground, where
+ * both channels go out together. A change either way -- the lock releasing,
+ * or the fallback failing -- fails this, and the document and this test are
+ * revised together.
+ * See docs/high_altitude_flight.md "2. The Mach lock does not release above its envelope (open)". */
 void test_SIM_02_30_km_with_sensor_noise_finds_apogee(void) {
     fsim_params_t p = profile_30km();
     fsim_run_t r = fly_profile(cfg_main_300m(), &p, GROUND_PA, 3.0f, 7919u);
-    if (r.apogee_ms > r.true_apogee_ms + 5000u)
-        TEST_IGNORE_MESSAGE("known limit: the Mach lock does not release above ~9 km (docs/high_altitude_flight.md)");
-    TEST_ASSERT_TRUE(r.apogee_ms + 1000u > r.true_apogee_ms);
+    char m[160];
+    snprintf(m, sizeof(m), "apogee at %u ms against the profile's %u ms: the limit has moved", r.apogee_ms,
+             r.true_apogee_ms);
+    TEST_ASSERT_TRUE_MESSAGE(r.apogee_ms > r.true_apogee_ms + 300000u, m);
+    TEST_ASSERT_TRUE_MESSAGE(r.apogee_ms < r.landed_ms, "the fallback never declared apogee");
+    TEST_ASSERT_TRUE_MESSAGE(r.p1_ms >= r.apogee_ms && r.p2_ms >= r.apogee_ms, "a channel fired before apogee");
+    snprintf(m, sizeof(m), "the main went out at %.0f m", (double)r.p2_alt_m);
+    TEST_ASSERT_TRUE_MESSAGE(r.p2_alt_m > 50.0f && r.p2_alt_m < 300.0f, m);
 }
 
 /* [FLT-AIR-01] The scale against the flight source's own atmosphere: a

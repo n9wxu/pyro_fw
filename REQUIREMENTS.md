@@ -1,4 +1,4 @@
-# Pyro MK1B Requirements
+# Pyro Flight Computer Requirements
 
 Requirements are organized in four levels:
 - **L1 — User Needs**: What the user wants to accomplish
@@ -6,7 +6,8 @@ Requirements are organized in four levels:
 - **L3 — Subsystem Requirements**: Derived from system requirements
 - **L4 — Implementation Requirements**: Specific, measurable, testable criteria
 
-Each derived requirement traces to its parent with `← parent_id`.
+Each derived requirement traces to its parent with `← parent_id`. Where a
+requirement is verified, and how, is recorded in TRACEABILITY.md.
 
 ---
 
@@ -104,7 +105,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-BROWN-05**: /api/status shall say why a boot was cold: not a power event, no marker, on USB, at ground level, or no sample in time. ← FLT-BROWN-02
 - **FLT-BROWN-06**: A recovered flight shall read pyro continuity before it rejoins, and shall produce altitude against the marker's ground from then on. ← FLT-BROWN-02
 - **FLT-LOG-05**: The flight log shall not write flash until its RAM buffer has filled once or 2 s have passed since launch, whichever is first, so that the launch shock window passes without a write in progress. ← FLT-BROWN-01
-- **FLT-LOG-06**: The flight log shall be committed to the filesystem at least once per second while it is written, so that a flight which never lands keeps its record. Every write and commit shall run in the flash window between core1 work units. ← SYS-DATA-01
+- **FLT-LOG-06**: The flight log shall be committed to the filesystem at least once per second while it is written, so that a flight which never lands keeps its record. ← SYS-DATA-01
 - **FLT-LOG-07**: The flight log shall keep, by `log_rate`: a sample row a second (`1hz`, the default); that and every sample within 1 s of each event (`events`); or every sample (`full`). It shall keep every event row at its own time under each, in time order. It shall be stored as binary records and rendered as CSV only when read. ← SYS-DATA-01, DD-062, DD-064
 - **LUA-IO-01**: The web UI shall export the Lua program to a local file and import one back, so a program survives the loss of the filesystem that holds it -- a failed mount formats it, and a flash-geometry change moves it. (An OTA update does not: verified to leave every file in place.) ← SYS-CFG-01
 - **LUA-IO-02**: An imported program shall land in the editor and not on the device, so a mis-picked file costs nothing until it is saved. ← LUA-IO-01
@@ -124,7 +125,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 
 #### Altitude Clamping
 - **PYR-ALT-01**: The system shall clamp altitude-based pyro settings to the barometric sensor ceiling. ← PYR-MODE-02, PYR-MODE-03, PYR-MODE-04
-- **PYR-ALT-02**: The system shall emit a warning beep code when any altitude-based pyro setting exceeds the sensor ceiling. ← PYR-ALT-01
+- **PYR-ALT-02**: The system shall announce system failure (BUZ-CODE-02), and report `cfg_range` on /api/status, when any altitude-based pyro setting exceeds the sensor ceiling. ← PYR-ALT-01
 
 ### Beep Codes
 - **BUZ-CODE-01**: The beep vocabulary shall be the set of actions available at the pad: OK to fly, check pyro 1, check pyro 2, system failure. ← SYS-STATUS-02
@@ -149,11 +150,13 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **FLT-BOOT-14**: The system shall enter FAULT, and announce system failure, when the filesystem does not mount. ← FLT-BOOT-11
 - **FLT-BOOT-15**: The system shall report every pad fault found, not only the first. ← SYS-STATUS-02
 - **FLT-BOOT-16**: The system shall not report a continuity fault for a pyro channel released to Lua or configured as disabled. ← FLT-BOOT-15
+- **FLT-BOOT-17**: The system shall enter FAULT, and announce system failure, at every boot of an image built for a different board than the one it runs on (the board self-test's verdict). ← FLT-BOOT-11, DD-081
+- **FLT-BOOT-18**: The system shall enter FAULT, and announce system failure, when config.ini exists but cannot be read, and shall not overwrite it with defaults. ← FLT-BOOT-02, DD-082
 
-#### Sampling Rates (v2.0)
+#### Sampling Rates
 - **FLT-RATE-01**: The system shall sample pressure continuously during PAD_IDLE, ASCENT, and DESCENT: on an MS5607 board a pressure and a temperature every 20 ms loop, 50 pressures a second; on a BMP280 board one forced conversion every loop, 50 a second. ← FLT-PHASE-01, DD-001, DD-051, DD-066, DD-067
 - **FLT-RATE-02**: The system shall deliver pressure samples to the flight software in batches of 5. ← FLT-RATE-01, PWR-SAMPLE-02
-- **FLT-RATE-03**: The system shall reduce sampling to 1Hz during LANDED for power conservation. ← FLT-PHASE-03, SYS-PWR-01
+- **FLT-RATE-03**: While LANDED the system shall keep sampling at the loop rate and add one row a second to the flight buffer. ← FLT-PHASE-03
 - **FLT-RATE-04**: The sampling rate shall be a HAL responsibility; flight software processes whatever buffer it receives. ← HAL-02
 - **FLT-RATE-05**: Every detector hold and dwell that measures the sensor shall run in sample time, so that the loop's lateness changes no decision. ← SNS-PRES-08
 
@@ -179,7 +182,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **BUZ-01**: The system shall announce one of four outcomes: OK to fly, check pyro 1, check pyro 2, system failure. ← BUZ-STATUS-01
 - **BUZ-02**: The announcement shall repeat on a configurable cadence, defaulting to every 5 s until launch, so that silence means a fault rather than a finished message. Not while a USB host is attached (USB-02). ← BUZ-STATUS-01
 - **FLT-BOOT-01**: The system shall complete a non-blocking boot sequence before entering PAD_IDLE. ← SYS-STATUS-01
-- **FLT-BOOT-04**: The system shall wait at least 500ms after power-on before sensor communication. ← FLT-BOOT-01
+- **FLT-BOOT-04**: Withdrawn (DD-053). The sensor is brought up from the first loop as a sequence of deadlines; FLT-BOOT-09's settle comes before calibration.
 - **FLT-BOOT-05**: The system shall detect and initialize the pressure sensor during boot. ← FLT-BOOT-01
 - **FLT-BOOT-06**: The system shall initialize the pyrotechnic subsystem during boot. ← FLT-BOOT-01
 - **FLT-BOOT-07**: The system shall perform an initial continuity check during boot. ← SYS-STATUS-02
@@ -203,7 +206,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **DAT-01**: The system shall store flight samples in a ring buffer of at least 4096 entries. ← SYS-DATA-01
 - **DAT-02**: Each sample shall include: time, pressure, altitude, state, thrust flag, the raw reading it is centred on, the sensor temperature, and event. The time is the sample's own, from its reading, since T+0 (SNS-PRES-08). ← SYS-DATA-01
 - **DAT-08**: A flight log written with `log_rate=full` shall carry what is needed to replay the flight through the pressure layer and the detectors, and `pyro_sim --replay` shall do so and set the replay's events against the log's. It shall refuse a log that kept fewer samples. ← DAT-02
-- **DAT-03**: Events shall be tagged on existing data samples, not stored as separate records. ← SYS-DATA-01
+- **DAT-03**: The flight log shall record each event as a row of its own, at the time of the sample it was detected on (FLT-LOG-07). ← SYS-DATA-01
 - **DAT-04**: The system shall log events: LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING, and when they occur PYRO1/2_REFUSED, PYRO1/2_NOPEN, PYRO1/2_FAULT and MAIN_FORCED. ← SYS-DATA-01
 - **DAT-06**: The system shall keep flight data in persistent storage after landing, as binary records (FLT-LOG-07), and export it as CSV when it is read (WEB-API-06). ← SYS-DATA-02
 - **DAT-07**: The CSV shall include a metadata header with configuration, flight summary and the rate it was logged at. ← SYS-DATA-02
@@ -239,6 +242,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **CFG-07**: The system shall truncate id and name fields to 8 characters. ← CFG-02
 - **CFG-08**: The system shall ignore unknown keys in the config file. ← CFG-02
 - **CFG-09**: The system shall handle both CR+LF and LF line endings. ← CFG-01
+- **CFG-10**: A configuration value that does not parse, or is outside its field's range, shall be refused and counted, and the field shall keep its previous value. ← SYS-CFG-03, DD-082
 - **FLT-BOOT-02**: The system shall read configuration from persistent storage during boot. ← SYS-CFG-01
 - **FLT-BOOT-03**: The system shall create a default configuration file if none exists. ← CFG-05
 
@@ -270,6 +274,8 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **SNS-PRES-11**: A gap of more than 250 ms between samples shall make every fit suspect, as SNS-PRES-10, until a whole window of new samples exists. No sample for 0.5 s in flight shall be taken as a lost sensor: a DIAG bit, a SENSOR_LOST event and a telemetry line. The flight carries on when samples return. ← SNS-PRES-09, SYS-DEPLOY-01
 - **SNS-PRES-12**: Each MS5607 pressure shall be compensated with the temperature at its own time, from the least-squares line through the last four temperature conversions -- one converted after each pressure -- carried no more than 200 ms past the newest and no further back than the oldest. ← SNS-PRES-08, DD-051, DD-066
 - **SNS-PRES-14**: A pressure or temperature conversion during which a flash erase or program ran shall not be used. Each shall be counted, as `pres_flashed` on `/api/status`, and traced. ← SNS-PRES-07, DD-068
+- **SNS-PRES-15**: The system shall apply the MS5607's second-order temperature compensation below 20 °C (`docs/datasheets/MS5607-02BA03_2017-06.pdf`, page 9). ← SYS-ALT-01
+- **SNS-PRES-16**: The system shall check the MS5607 PROM's CRC-4 (AN520) and read a PROM that fails it again, treating the sensor as absent after 3 failures. ← SNS-PRES-01
 - **SNS-PRES-13**: The system shall keep the last 256 pressure conversions -- the driver's stamp, when the loop read it, the raw codes, the compensated pressure, and whether it was a pressure, a temperature, a zero, a bus error, a range reject, a missed slot or a conversion discarded for a flash operation -- and serve them at `/api/pressure/trace`, so a sensor can be judged on the bench for stale reads, gaps and noise. ← SNS-PRES-08, DD-063
 - **SNS-ALT-02**: The system shall clamp computed altitude to a maximum of 8000 meters. ← SNS-ALT-01
 - **SNS-ALT-03**: The system shall clamp computed altitude to a minimum of 0 meters. ← SNS-ALT-01
@@ -312,10 +318,10 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **SYS-FAULT-03**: The system shall notify the user of pyro fault conditions. ← UN-7
 
 ### L3 Subsystem Requirements
-- **PYR-FAULT-01**: The system shall disable pyro drive when current exceeds 1.5A. ← SYS-FAULT-01
+- **PYR-FAULT-01**: The pyro drive shall be current-limited in hardware: on MK1B by U5 (AP2192) and the 1.5 A PTC F2, on MK1C at 4.05 A by U9. MK1A has no current limit, only F1, an 8 A fuse that does not reset. ← SYS-FAULT-01
 - **PYR-FAULT-02**: The system shall detect when pyro drive has exceeded the current limit. ← SYS-FAULT-02
 - **PYR-FAULT-03**: The system shall indicate to the user that an overcurrent condition occurred during pyro firing. ← SYS-FAULT-03
-- **PYR-VERIFY-01**: The system shall verify pyro circuit opened after firing by reading continuity. ← SYS-FAULT-02
+- **PYR-VERIFY-01**: The system shall verify that a fired pyro circuit opened, from the first continuity check completed after the pulse; until that check, the channel has no verdict. ← SYS-FAULT-02, DD-080
 
 #### Armed Firing Bus (MK1C, DD-056)
 - **PYR-ARM-01**: On a board whose firing bus is armed by a charge pump, the pump shall run only inside a fire, fed once a loop by the code that has just re-checked the fire's conditions, so that a loop that stops leaves the bus disarmed within about 35 ms at the 20 ms loop: a loop and a quarter of queued pump, then the high side's turn-off (DD-065). ← SYS-FAULT-01
@@ -338,18 +344,19 @@ Each derived requirement traces to its parent with `← parent_id`.
 
 ### L3 Subsystem Requirements
 - **WEB-NET-01**: The system shall present a USB network interface to the host computer. ← SYS-WEB-01
-- **WEB-NET-02**: The system shall serve DHCP, assigning itself 192.168.7.1. ← SYS-WEB-01
+- **WEB-NET-02**: The system shall serve DHCP on 192.168.N.0/24, assigning itself 192.168.N.1, where N is the last byte of its MAC (WEB-NET-06). ← SYS-WEB-01, DD-072
 - **WEB-NET-03**: The system shall advertise its hostname via mDNS. ← SYS-WEB-02
 - **WEB-NET-04**: The system shall advertise a DNS-SD service for automatic discovery. ← SYS-WEB-02
 - **WEB-NET-05**: A frame the USB endpoint cannot take yet shall be held and sent in order as soon as it can, not dropped; one shall be refused only when eight wait already or the host has let the device go. ← SYS-WEB-01, DD-070
 - **WEB-NET-06**: A board with no /serial.txt shall draw its MAC from the RNG -- the ring oscillator's random bit and the ADC's noise, pooled and mixed -- with 0x02 leading and a last byte, its subnet, other than 0, 1 and 255, and shall keep it in /serial.txt, tagged as drawn, so its address survives reboots. /api/status shall say whether the MAC was drawn or assigned. ← SYS-WEB-02, DD-072
+- **WEB-NET-07**: A received frame the device cannot hold -- no buffer free, an empty frame, a frame that will not copy, or one arriving while another is held -- shall be handed back to the USB stack so that reception continues, and no frame shall be copied past the endpoint's buffer. ← SYS-WEB-01
 - **WEB-API-01**: The system shall serve device status as JSON at `/api/status`. ← SYS-WEB-01
 - **WEB-API-02**: The system shall serve the configuration file at `/api/config` (GET). ← SYS-WEB-01
-- **WEB-API-03**: The system shall accept configuration updates at `/api/config` (POST) and write to persistent storage. ← SYS-WEB-01
+- **WEB-API-03**: The system shall accept configuration updates at `/api/config` (POST) and write to persistent storage. A body with a refused value (CFG-10) shall be answered 400 and nothing written. ← SYS-WEB-01
 - **WEB-API-04**: The system shall accept firmware updates at `/api/ota` (POST), answer before it restarts, and answer `Expect: 100-continue`. ← SYS-WEB-01
 - **WEB-API-05**: The system shall trigger a device restart at `/api/reboot` (POST). ← SYS-WEB-01
 - **WEB-API-06**: The system shall serve flight data as CSV at `/api/flight.csv`, rendered from the binary log as it is sent and framed by Content-Length. ← SYS-WEB-01
-- **WEB-API-07**: All API responses shall include CORS headers. ← SYS-WEB-01
+- **WEB-API-07**: The API shall grant no cross-origin access (no Access-Control-Allow-Origin; Cross-Origin-Resource-Policy: same-origin), shall refuse a request whose Host is not the board's, and shall refuse a POST without `X-Pyro: 1`. ← SYS-WEB-01, DD-083
 - **WEB-API-08**: The web API and USB shall stay live in flight. From launch until the flight log's tail is flushed, the log alone shall hold the filesystem: any other file access shall be refused -- the HAL's file calls with HAL_FS_LOCKED, a web request with 423 before it mounts -- and a web transfer that holds the filesystem when the log starts shall be dropped so the log can mount. ← SYS-WEB-01, DD-058
 - **WEB-API-09**: The system shall erase the flight log on request at `/api/flight/erase` (POST), unless the log is being written. ← DAT-06
 - **WEB-API-10**: A request for a file shall be refused with 423 while the flight log is being written, since every filesystem mount shares the buffers the log's mount holds. ← WEB-API-08
@@ -360,8 +367,9 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **WEB-HTTP-05**: The server shall do its HTTP work in the net task, never inside a network stack callback, and shall not depend on the stack beyond moving bytes, so that the stack can be replaced. ← SYS-WEB-01
 - **WEB-HTTP-06**: The net task's transport pass shall only move bytes between the network stack and the connections. Every other HTTP step shall be a bounded unit, run in the net task and never on the flight task. ← SYS-WEB-01, DD-061, DD-073
 - **WEB-HTTP-07**: Withdrawn (DD-073). Units no longer run on core1 within a grant: every unit runs in the net task.
-- **WEB-API-11**: `/api/status` shall be rendered from a snapshot core0 takes in one pass, shall keep its keys and their order, and shall be well-formed JSON whatever the configured rocket id and name contain. ← SYS-WEB-01, DD-061
+- **WEB-API-11**: `/api/status` shall be rendered from a snapshot the flight task captures in one pass, shall keep its keys and their order, and shall be well-formed JSON whatever the configured rocket id and name contain. ← SYS-WEB-01, DD-061
 - **WEB-API-13**: The system shall report at `/api/net` lwIP's pools (in use, high-water mark, refusals), TCP's connections by state, and what the network transport refused -- accepts refused, writes refused, idle aborts, frames dropped or not sent, and the USB interface's mounts, unmounts, suspends and resumes -- so an HTTP outage can be told apart on the bench. ← SYS-WEB-01
+- **WEB-API-14**: A file path, from a request or any other caller, shall be '/'-separated names of letters, digits, '.', '_' and '-'. A path with a `.` or `..` name, an empty name, or any other character shall be refused. ← WEB-API-03, CFG-06
 - **WEB-API-12**: The system shall report at `/api/log/space` the bytes the next flight's log has room for, the size of a sample record and the two log rates, and refuse with 423 while the flight log holds the filesystem. ← SYS-WEB-01, DD-062
 - **WEB-UI-01**: The web interface shall display device status in the configured units. ← SYS-WEB-01
 - **WEB-UI-04**: The web interface shall display flight summary data and allow CSV download. The summary shall come from the flight log alone, be re-read whenever it is shown, and name the flight it describes; flight time shall stop at the landing. ← SYS-WEB-01
@@ -384,6 +392,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **OTA-02**: The system shall write new firmware to an inactive slot while continuing to run. ← SYS-OTA-01
 - **OTA-03**: The system shall automatically revert to the previous firmware if the new firmware does not confirm within one boot cycle. ← SYS-OTA-02
 - **OTA-04**: A failed or interrupted update shall not affect the currently running firmware. ← SYS-OTA-02
+- **OTA-05**: An image longer than the download slot shall be refused before any of it is written, and no write shall reach past the slot's end, where littlefs begins. ← OTA-04
 
 ---
 
@@ -430,7 +439,7 @@ Each derived requirement traces to its parent with `← parent_id`.
 
 ---
 
-## 13. Power Management (v2.0) ✅ Done
+## 13. Power Management
 
 ### L1 User Need
 - **UN-11**: The user needs the flight computer to operate on battery for extended pad time.
@@ -440,46 +449,46 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **SYS-PWR-02**: The system shall perform all I/O autonomously without CPU involvement. ← SYS-PWR-01
 
 ### L3 Subsystem Requirements
-- **PWR-SAMPLE-01**: Pressure sampling shall run autonomously at 50Hz via ISR, DMA, or second core. ← SYS-PWR-02 ✅ async_task.h + hal_pressure_fifo_*
-- **PWR-SAMPLE-02**: Pressure data shall be delivered to the flight software in batches of 5 samples (100ms). ← PWR-SAMPLE-01 ✅ hal_pressure_batch_t + flight_process_samples()
-- **PWR-TELEM-01**: Telemetry transmission shall be asynchronous via ISR or DMA. ← SYS-PWR-02 ✅ v2-10 UART0 TX ring buffer + ISR
-- **PWR-BUZZ-01**: Buzzer patterns shall be played autonomously via async task runner. ← SYS-PWR-02 ✅ v2-7 buzzer async state machine
-- **PWR-USB-01**: USB servicing shall run autonomously via timer ISR or second core. ← SYS-PWR-02 (deferred to v2.1)
-- **PWR-SLEEP-01**: The CPU shall sleep between pressure buffer delivery events. ← SYS-PWR-01 ✅ hal_sleep_until_event() / __wfe()
+- **PWR-SAMPLE-01**: Pressure sampling shall run autonomously at 50Hz via ISR, DMA, or second core. ← SYS-PWR-02
+- **PWR-SAMPLE-02**: Pressure data shall be delivered to the flight software in batches of 5 samples (100ms). ← PWR-SAMPLE-01
+- **PWR-TELEM-01**: Telemetry transmission shall be asynchronous via ISR or DMA. ← SYS-PWR-02
+- **PWR-BUZZ-01**: Buzzer patterns shall be played autonomously via async task runner. ← SYS-PWR-02
+- **PWR-USB-01**: USB servicing shall run autonomously via timer ISR or second core. ← SYS-PWR-02
+- **PWR-SLEEP-01**: The CPU shall sleep between pressure buffer delivery events. ← SYS-PWR-01
 - **PWR-WAIT-02**: No sensor bus transfer shall wait without bound: each shall give up within a bound set by its own length at the board's bus rate, a few milliseconds, so a part holding SCL low costs a bus error, never a lockup. ← PWR-WAIT-01, DD-069
 - **PWR-WAIT-01**: No code shall sleep or busy-wait. The exec loop is the only clock: anything that has to wait parks on a deadline that a later iteration checks, and the only interruptions to the loop are flash writes. ← SYS-PWR-02, DD-053
-- **PWR-LOG-01**: Data logging shall buffer in RAM and flush to flash asynchronously. ← SYS-PWR-02 ✅ v2-9 hal_log_sample() 512-byte ring, 200ms flush task
+- **PWR-LOG-01**: The flight log shall be buffered in a 4096-byte RAM ring, which the storage task writes to flash every 200 ms or when it nears full; the flight task shall never write flash. ← SYS-PWR-02, DD-073
 
 ### L4 Implementation Requirements
-- **PWR-LOG-02**: `hal_log_start()` shall open the flight log file and register a flush task. ← PWR-LOG-01
-- **PWR-LOG-03**: `hal_log_sample()` shall be non-blocking: it copies one formatted line into a RAM buffer. ← PWR-LOG-01
+- **PWR-LOG-02**: `hal_log_start()` shall open no file and write no flash: it puts the log's header in the ring and starts the log, and the storage task opens the file. ← PWR-LOG-01
+- **PWR-LOG-03**: `hal_log_sample()` shall be non-blocking: it puts one binary sample record into the ring as the logging plan keeps it (FLT-LOG-07), or counts it dropped when the ring is full. ← PWR-LOG-01
 - **PWR-LOG-04**: `hal_log_stop()` shall signal the flush task to finalize and close the log file. ← PWR-LOG-01
 - **PWR-BUZZ-02**: The buzzer pattern player shall use three states: IDLE → ENCODE → PLAYING. ← PWR-BUZZ-01
 - **PWR-BUZZ-03**: Pattern steps shall be computed at request time from the beep code or altitude value. ← PWR-BUZZ-01
 - **PWR-TELEM-02**: `hal_telemetry_send()` shall complete in O(n) time with no UART stall. ← PWR-TELEM-01
 - **PWR-TELEM-03**: The UART TX ring shall be at least 512 bytes; overflow shall drop the end of the sentence. ← PWR-TELEM-01
 
-## 14. Telemetry Formatting (v2.0) ✅ Done
+## 14. Telemetry Formatting
 
 ### L2 System Requirements
 - **SYS-TELEM-FMT-01**: The telemetry format shall be configurable without changing flight software. ← UN-4
 
 ### L3 Subsystem Requirements
-- **TELEM-FMT-01**: A telemetry formatter module shall convert flight events to protocol-specific messages. ← SYS-TELEM-FMT-01 ✅ telemetry_formatter.c
-- **TELEM-FMT-02**: The formatter shall support event messages (apogee, pyro fire, landing) and periodic state messages. ← TELEM-FMT-01 ✅
-- **TELEM-FMT-03**: The HAL telemetry transport shall be a raw byte interface with no protocol knowledge. ← TELEM-FMT-01 ✅ hal_telemetry_send(const char*)
+- **TELEM-FMT-01**: A telemetry formatter module shall convert flight events to protocol-specific messages. ← SYS-TELEM-FMT-01
+- **TELEM-FMT-02**: The formatter shall support event messages (apogee, pyro fire, landing) and periodic state messages. ← TELEM-FMT-01
+- **TELEM-FMT-03**: The HAL telemetry transport shall be a raw byte interface with no protocol knowledge. ← TELEM-FMT-01
 
-## 15. Configuration System (v2.0) ✅ Done
+## 15. Configuration System
 
 ### L2 System Requirements
 - **SYS-CFG-04**: Adding a configuration field shall require changes to a single location. ← UN-4
 
 ### L3 Subsystem Requirements
-- **CFG-TABLE-01**: All configuration fields shall be defined in a single table that generates the struct, parser, serializer, and defaults. ← SYS-CFG-04 ✅ config_fields.h X-macro
-- **CFG-TABLE-02**: A round-trip test shall automatically verify every field survives serialize → parse. ← CFG-TABLE-01 ✅ test_config.c (15 tests)
-- **CFG-SUBSYS-01**: Each subsystem (telemetry, logging, buzzer) shall have configurable parameters: `telem_format` and `telem_rate_hz`, `log_rate`, and the beep personalities in `beep.ini`. Every configuration key shall be read by something. ← UN-4 ✅
+- **CFG-TABLE-01**: All configuration fields shall be defined in a single table that generates the struct, parser, serializer, and defaults. ← SYS-CFG-04
+- **CFG-TABLE-02**: A round-trip test shall automatically verify every field survives serialize → parse. ← CFG-TABLE-01
+- **CFG-SUBSYS-01**: Each subsystem (telemetry, logging, buzzer) shall have configurable parameters: `telem_format` and `telem_rate_hz`, `log_rate`, and the beep personalities in `beep.ini`. Every configuration key shall be read by something. ← UN-4
 
-## 16. Ground Test (v2.0) ✅ Done
+## 16. Ground Test
 
 ### L1 User Need
 - **UN-12**: The user needs to verify pyro circuits and system behavior on the ground without a computer.
@@ -488,10 +497,10 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **SYS-TEST-01**: The system shall support ground test operations via serial commands. ← UN-12, DD-011
 
 ### L3 Subsystem Requirements
-- **GND-TEST-01**: The system shall accept serial commands to replay status and altitude beep codes. ← SYS-TEST-01 ✅
-- **GND-TEST-02**: The system shall accept serial commands to arm and fire individual pyro channels for ground testing. ← SYS-TEST-01 ✅
-- **GND-TEST-03**: Ground test arm shall require a multi-step confirmation and auto-disarm after 3 seconds. ← SYS-TEST-01 ✅
-- **GND-TEST-04**: The serial ground test commands shall be available only during PAD_IDLE state. ← PYR-SAFE-04 ✅
+- **GND-TEST-01**: The system shall accept serial commands to replay status and altitude beep codes. ← SYS-TEST-01
+- **GND-TEST-02**: The system shall accept serial commands to arm and fire individual pyro channels for ground testing. ← SYS-TEST-01
+- **GND-TEST-03**: Ground test arm shall require a multi-step confirmation and auto-disarm after 3 seconds. ← SYS-TEST-01
+- **GND-TEST-04**: The serial ground test commands shall be available only during PAD_IDLE state. ← PYR-SAFE-04
 - **GND-TEST-05**: A board powered up with its ground test switch closed, and held closed for 0.5 s at the end of the power-up settle, shall enter ground test mode once its sensor and continuity have been checked, and never the pad or a flight state. A board recovering a flight after a power event shall carry on flying, whatever the switch says. ← SYS-TEST-01, PYR-SAFE-01, DD-071
 - **GND-TEST-06**: Ground test mode shall be announced by three long beeps and a pause, repeating. Nothing else shall take the buzzer while the mode lasts, the USB attach chirp included. ← SYS-TEST-01, DD-071
 - **GND-TEST-07**: The switch opened, once it has been held closed in ground test mode, shall start the procedure: a countdown at a count a second -- five fast beeps, then four, down to none -- and at zero pyro 1 fires; then a 3 s steady tone and a second countdown, and at its zero pyro 2 fires; then three long beeps, once, and silence. ← SYS-TEST-01, DD-071
@@ -540,7 +549,28 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **USB-03**: On attach, and on leaving test mode while attached, the system shall play one OK-on-USB double chirp, and nothing more of its own until detached. Sounds an operator asks for (the web beep audition, the ground-test BEEP commands) still play. ← SYS-USB-01
 - **USB-04**: On detach, the system shall resume what it would have been saying, and restart the pad marker's 10 s dwell. ← SYS-USB-01
 - **USB-05**: From launch to landing, the attach state shall be ignored. ← SYS-USB-01
-- **USB-06**: Attachment to a charger shall count as USB attachment. ← SYS-USB-01 ❌ Not possible on MK1A/MK1B/MK1C: VBUS reaches only the charger IC. See DD-037.
+- **USB-06**: Attachment to a charger shall count as USB attachment. ← SYS-USB-01. Not possible on MK1A, MK1B or MK1C: VBUS reaches only the charger IC (DD-037).
 - **USB-07**: The system shall judge a host attached only on evidence that a host is present, so that every detection error leaves launch detection on. ← SYS-USB-01, SYS-DEPLOY-01
 - **USB-08**: An operator-selected test mode shall make the system behave on USB as it does on battery: launch detection, deployment, the pad marker and every announcement. It shall be held in RAM so that every boot starts with it off, shall not change from launch to landing, shall be set from the web interface after a confirmation, and shall be reported on /api/status. ← SYS-USB-01, UN-12
 
+## 20. Lua User Programs
+
+A Lua program runs in its own task beside the flight software. RP2040 has no
+MPU, so these limits are what keep a script from the flight. DD-085.
+
+### L3 Subsystem Requirements
+- **LUA-SAFE-01**: The Lua VM shall load only source text; a precompiled (bytecode) chunk shall be refused. ← SYS-DEPLOY-01
+- **LUA-SAFE-02**: Every call from the firmware into the Lua VM shall run in protected mode, so that a script error -- including one raised by `_G`'s metatable or by memory exhaustion -- is reported and never halts the processor. ← SYS-DEPLOY-01
+- **LUA-SAFE-03**: Loading a script, `init()`, `on_event()` and the console eval shall be stopped after 2,000 × 1,000 VM instructions; `on_event()` shall also be stopped at its time box. ← SYS-DEPLOY-01
+- **LUA-SAFE-04**: `tick()` shall run within a per-period time box, suspended at its end and resumed at the next grant; where it cannot be suspended, it shall be stopped no later than 5 ms after its box ends. ← SYS-DEPLOY-01, RTOS-01
+- **LUA-SAFE-05**: A script shall not be able to catch or suppress the error that enforces LUA-SAFE-03 and LUA-SAFE-04. ← LUA-SAFE-03, LUA-SAFE-04
+- **LUA-SAFE-06**: Pattern-matching work shall count against the same limits as VM instructions. ← LUA-SAFE-03, LUA-SAFE-04
+- **LUA-SAFE-07**: `setmetatable` shall refuse a metatable that has a `__gc` field. ← LUA-SAFE-03
+- **LUA-SAFE-08**: A script shall be limited to 20 nested C calls or parser levels, and the pattern matcher to 32 levels of recursion. ← SYS-DEPLOY-01
+- **LUA-SAFE-09**: The Lua VM and the script checker shall allocate only from fixed static arenas, never from the system heap. ← SYS-DEPLOY-01
+- **LUA-SAFE-10**: Lua numbers shall be 32-bit integers and 32-bit floats. ← LUA-SAFE-09
+- **LUA-SAFE-11**: The `flight.<STATE>` constants shall equal the `flight_state_t` values. ← SYS-DEPLOY-01
+- **LUA-SAFE-12**: Every flight event the firmware logs shall be offered to `on_event()` without blocking the flight task; up to 8 shall be queued, and further events dropped and counted. ← RTOS-01
+- **LUA-SAFE-13**: A pad shall be configured for Lua only after it has been claimed for Lua, and the Lua platform shall drive or safe only pads so claimed. ← SYS-DEPLOY-01
+- **LUA-SAFE-14**: Stopping the Lua task shall return every Lua-claimed pad to SIO, driven low. ← LUA-SAFE-13
+- **LUA-SAFE-15**: A software PWM duty of 0 or 100 shall be a steady level. ← SYS-CFG-01

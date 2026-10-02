@@ -1,9 +1,8 @@
 /*
- * The USB network's transmit queue (net_txq.c), against a fake endpoint. A
- * frame the endpoint cannot take yet is held and sent, in order, as soon as it
- * can: dropping it left lwIP to find out by its retransmit timer, 3 s and
- * doubling, with the heap held meanwhile (G4-N: 40 % of frames refused under
- * G4's load, the heap out 27,865 times).
+ * The USB network's frames (net_txq.c), against a fake endpoint and a fake
+ * buffer pool. Sent: a frame the endpoint cannot take yet is held and sent,
+ * in order, as soon as it can [WEB-NET-05, DD-070]. Received: the receive
+ * callback says it holds a frame only when it does.
  */
 #include "unity.h"
 #include "net_txq.h"
@@ -100,7 +99,7 @@ void test_TXQ_04_drain_stops_when_the_endpoint_is_busy(void) {
     TEST_ASSERT_EQUAL_INT_ARRAY(((int[]){1, 2, 3, 4}), ep.sent, 4);
 }
 
-/* Full: the frame is refused, not held, and lwIP's retransmit has it. */
+/* Full: the frame is refused, not held, and TCP's retransmission resends it. */
 void test_TXQ_05_full_refuses(void) {
     ep.room = 0;
     for (int i = 1; i <= NET_TXQ_N; i++)
@@ -153,6 +152,104 @@ void test_TXQ_08_flush_releases_everything(void) {
     TEST_ASSERT_EQUAL(0, ep.n_sent);
 }
 
+/* ── Received frames ──────────────────────────────────────────────── */
+
+static struct {
+    int pool;      /* buffers left */
+    int allocated; /* buffers out */
+    bool fill_fails;
+    uint16_t cap; /* the largest buffer the pool gives */
+    uint8_t buf[2048];
+    uint16_t len;
+} rx;
+
+static void *rx_alloc(uint16_t size) {
+    if (rx.pool == 0 || size > rx.cap)
+        return NULL;
+    rx.pool--;
+    rx.allocated++;
+    return rx.buf;
+}
+static bool rx_fill(void *frame, const uint8_t *src, uint16_t size) {
+    if (rx.fill_fails)
+        return false;
+    memcpy(frame, src, size);
+    rx.len = size;
+    return true;
+}
+static void rx_release(void *frame) {
+    (void)frame;
+    rx.pool++;
+    rx.allocated--;
+}
+
+static const net_rx_ops_t rx_ops = {rx_alloc, rx_fill, rx_release};
+static const uint8_t FRAME_BYTES[64] = {1, 2, 3};
+
+static void rx_reset(void) {
+    memset(&rx, 0, sizeof(rx));
+    rx.pool = 4;
+    rx.cap = 1514;
+}
+
+/* [WEB-NET-07] Taken: the slot holds a copy until net_service() hands it to lwIP. */
+void test_RXQ_01_a_frame_is_held_until_lwip_takes_it(void) {
+    rx_reset();
+    void *slot = NULL;
+    TEST_ASSERT_TRUE(net_rx_take(&slot, &rx_ops, FRAME_BYTES, 60));
+    TEST_ASSERT_NOT_NULL(slot);
+    TEST_ASSERT_EQUAL_UINT16(60, rx.len);
+    TEST_ASSERT_EQUAL_MEMORY(FRAME_BYTES, rx.buf, 60);
+}
+
+/* [WEB-NET-07] TinyUSB waits for tud_network_recv_renew() after a true, and
+ * net_service() renews only once it has a frame to give lwIP. A true with
+ * nothing held stops USB reception for good. */
+void test_RXQ_02_with_no_buffer_the_frame_is_handed_back(void) {
+    rx_reset();
+    rx.pool = 0;
+    void *slot = NULL;
+    TEST_ASSERT_FALSE_MESSAGE(net_rx_take(&slot, &rx_ops, FRAME_BYTES, 60), "true here stalls reception");
+    TEST_ASSERT_NULL(slot);
+}
+
+void test_RXQ_03_an_empty_frame_is_handed_back(void) {
+    rx_reset();
+    void *slot = NULL;
+    TEST_ASSERT_FALSE(net_rx_take(&slot, &rx_ops, FRAME_BYTES, 0));
+    TEST_ASSERT_NULL(slot);
+    TEST_ASSERT_EQUAL(0, rx.allocated);
+}
+
+void test_RXQ_04_a_frame_that_will_not_copy_is_handed_back_and_its_buffer_freed(void) {
+    rx_reset();
+    rx.fill_fails = true;
+    void *slot = NULL;
+    TEST_ASSERT_FALSE(net_rx_take(&slot, &rx_ops, FRAME_BYTES, 60));
+    TEST_ASSERT_NULL(slot);
+    TEST_ASSERT_EQUAL(0, rx.allocated);
+}
+
+/* One frame at a time: TinyUSB drops a second while lwIP has the first. */
+void test_RXQ_05_a_second_frame_while_one_is_held_is_handed_back(void) {
+    rx_reset();
+    void *slot = NULL;
+    net_rx_take(&slot, &rx_ops, FRAME_BYTES, 60);
+    void *held = slot;
+    TEST_ASSERT_FALSE(net_rx_take(&slot, &rx_ops, FRAME_BYTES, 60));
+    TEST_ASSERT_EQUAL_PTR(held, slot);
+    TEST_ASSERT_EQUAL(1, rx.allocated);
+}
+
+/* [WEB-NET-07] The endpoint buffer holds CFG_TUD_NET_MTU bytes, a whole Ethernet
+ * frame; a longer frame is not copied over its end. */
+void test_RXQ_06_a_frame_longer_than_the_endpoint_buffer_is_not_copied(void) {
+    TEST_ASSERT_EQUAL_UINT16(1514, net_tx_copy_len(1514, 1514));
+    TEST_ASSERT_EQUAL_UINT16(60, net_tx_copy_len(60, 1514));
+    TEST_ASSERT_EQUAL_UINT16(0, net_tx_copy_len(1515, 1514));
+    TEST_ASSERT_EQUAL_UINT16(0, net_tx_copy_len(70000, 1514));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_TXQ_01_sent_at_once_when_the_endpoint_is_free);
@@ -163,5 +260,11 @@ int main(void) {
     RUN_TEST(test_TXQ_06_not_ready_releases_everything);
     RUN_TEST(test_TXQ_07_wraps);
     RUN_TEST(test_TXQ_08_flush_releases_everything);
+    RUN_TEST(test_RXQ_01_a_frame_is_held_until_lwip_takes_it);
+    RUN_TEST(test_RXQ_02_with_no_buffer_the_frame_is_handed_back);
+    RUN_TEST(test_RXQ_03_an_empty_frame_is_handed_back);
+    RUN_TEST(test_RXQ_04_a_frame_that_will_not_copy_is_handed_back_and_its_buffer_freed);
+    RUN_TEST(test_RXQ_05_a_second_frame_while_one_is_held_is_handed_back);
+    RUN_TEST(test_RXQ_06_a_frame_longer_than_the_endpoint_buffer_is_not_copied);
     return UNITY_END();
 }

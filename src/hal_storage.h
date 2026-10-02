@@ -30,6 +30,13 @@ void hal_fs_leave(void);
  * flight task. */
 void hal_storage_service(uint32_t now_ms);
 
+/* Commit an image on its first boot after an update, so pico_fota_bootloader
+ * does not roll it back; refuse, and reboot into the rollback, when the board
+ * self-test failed. True when there is nothing left to do -- committed, or
+ * nothing to commit; false when a commit was tried and failed, so the caller
+ * tries again. The storage task's. */
+bool hal_firmware_commit(void);
+
 /* Weak and empty: most boards queue no flash work of their own. */
 void board_flash_service(uint32_t now_ms);
 

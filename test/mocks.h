@@ -30,12 +30,17 @@ typedef struct {
     bool fault; /* injectable fault state */
     int fire_count;
     uint8_t last_fire_channel;
-    /* The board takes the call and energises nothing, as MK1C does while its
-     * firing sequence is unimplemented. Counted separately from fire_count,
-     * which counts channels that were actually energised. */
+    /* The board takes the call and energises nothing, as MK1C does when a
+     * precondition fails. Counted apart from fire_count, which counts
+     * channels that were energised. */
     bool refuse_fire;
     int refused_count;
     int sample_count; /* hal_pyro_sample() calls; one shared stimulus each */
+    int fires_on[3];  /* energised fires per channel, 1 and 2 */
+    /* Nonzero: hal_pyro_update() ends a pulse this long after its fire, as a
+     * board does. Zero: firing stays as the test leaves it. */
+    uint32_t pulse_ms;
+    uint32_t fired_at_ms;
 } mock_pyro_t;
 
 #define MOCK_UART_BUF_SIZE 32768
@@ -132,6 +137,14 @@ extern int mock_buzzer_edges;
 extern bool mock_ground_test_pin;
 
 void mock_reset_all(void);
+
+/* hal_board_image_ok()'s answer [FLT-BOOT-17]; true after mock_reset_all(). */
+extern bool mock_board_image_ok;
+/* Flight events offered to Lua's on_event() [LUA-SAFE-12]. */
+extern char mock_lua_events[256];
+
+/* config.ini reads fail with HAL_FS_ERROR, as an I/O error would. */
+extern bool mock_config_unreadable;
 
 /* Whole-file writes, so a test can prove something is written once. */
 extern uint32_t mock_fs_write_count;

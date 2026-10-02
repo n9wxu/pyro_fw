@@ -18,7 +18,7 @@
  * To add a board:
  *   1. cp -r boards/reference boards/<name>
  *   2. Implement the functions below, plus pyro.h and pressure_sensor.h
- *   3. Edit boards/<name>/board.cmake and CMakeLists.txt
+ *   3. Edit boards/<name>/board.cmake and boards/<name>/CMakeLists.txt
  *   4. cmake -B build-<name> -DPYRO_BOARD=<name> && cmake --build build-<name>
  *
  * The top-level CMakeLists.txt never changes.
@@ -83,7 +83,8 @@ void board_buzzer_off(void);
  *
  * bus_quiescent is the firing bus with NO stimulus applied. It is the
  * safety-relevant one: a bus sitting near the pack voltage with nothing
- * driving it means the high side has failed short (DESIGN.md 8.1).
+ * driving it means the high side has failed short (MK1C:
+ * boards/mk1c/THEORY_OF_OPERATION.md "Faults").
  * bus_biased is the same node during the bias pulse, which measures the
  * bus pull-down network instead.
  *

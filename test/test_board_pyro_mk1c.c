@@ -205,7 +205,7 @@ void test_mk1c_high_side_short_latches(void) {
     TEST_ASSERT_TRUE_MESSAGE(pyro_fault(1), "a shorted high side latches a fault");
 }
 
-/* DESIGN.md invariant 8: N consecutive agreeing samples. One tracking test
+/* [PYR-CONT-04] Consecutive agreeing samples. One tracking test
  * is one sample, however many loops read it. */
 void test_mk1c_one_bad_tracking_reading_does_not_latch(void) {
     board(true, false);
@@ -251,7 +251,7 @@ void test_mk1c_fires_a_present_channel(void) {
     TEST_ASSERT_TRUE_MESSAGE(longest_update_us < 200u, msg);
 }
 
-/* DESIGN.md 7.2: fire on the measured bus against the measured pack, never
+/* [PYR-ARM-03] Fire on the measured bus against the measured pack, never
  * on elapsed time. The slew takes 8.9 ms to 90 % on 2S; the loop sees it on
  * the next iteration, a period after the command [DD-065]. */
 void test_mk1c_fires_on_the_measured_bus(void) {
@@ -269,7 +269,7 @@ void test_mk1c_fires_on_the_measured_bus(void) {
     TEST_ASSERT_TRUE_MESSAGE(w.toggle_first_us >= accept_us, "the pump starts with the command");
 }
 
-/* DESIGN.md 5.1 and 7.1 step 7: the pump runs only inside a fire and stops
+/* [PYR-ARM-01, PYR-ARM-04] The pump runs only inside a fire and stops
  * at it, and U9 lets go within its 9.6 ms after that. */
 void test_mk1c_pump_runs_only_inside_a_fire(void) {
     board(true, false);
@@ -303,7 +303,7 @@ void test_mk1c_a_stopped_loop_disarms(void) {
     TEST_ASSERT_FALSE(w.fire_seen[0]);
 }
 
-/* DESIGN.md 7.2: the bus not at 90 % by 1.5 times the slew's time aborts
+/* [PYR-ARM-03] The bus not at 90 % by 1.5 times the slew's time aborts
  * the fire and latches, and the gate is never driven. */
 void test_mk1c_a_short_during_precharge_aborts(void) {
     board(true, false);
@@ -316,6 +316,24 @@ void test_mk1c_a_short_during_precharge_aborts(void) {
     TEST_ASSERT_FALSE(pyro_is_firing());
     TEST_ASSERT_TRUE_MESSAGE(pyro_fault(1), "a precharge timeout latches");
     TEST_ASSERT_TRUE_MESSAGE(w.toggle_last_us <= accept_us + 30000u, "the pump stopped at the timeout");
+}
+
+/* [PYR-ARM-03] The fire is stamped on the live clock, and the loop updates
+ * with the `now` it read at the top of the period: a millisecond boundary
+ * between the two is not a precharge that timed out. */
+void test_PYR_ARM_03_mk1c_fire_clock_ahead_of_the_loop_is_no_timeout(void) {
+    board(true, false);
+    loops(1100u);
+    uint32_t loop_now = (uint32_t)(shim_now_us() / 1000u);
+    shim_advance_us(1000u);
+    pyro_fire(1);
+    TEST_ASSERT_TRUE(pyro_is_firing());
+    pyro_update(loop_now);
+    TEST_ASSERT_FALSE_MESSAGE(pyro_fault(1), "a precharge a millisecond old latched a timeout");
+    loops(100u);
+    TEST_ASSERT_TRUE_MESSAGE(fired(1), "the match took its energy");
+    TEST_ASSERT_FALSE(pyro_fault(1));
+    TEST_ASSERT_NULL_MESSAGE(strstr(telemetry, "precharge timeout"), telemetry);
 }
 
 /* ── Refusals ─────────────────────────────────────────────────────── */
@@ -349,7 +367,7 @@ void test_mk1c_refuses_with_a_latched_fault(void) {
     assert_refused_quietly(1);
 }
 
-/* Invariant 10: the firmware UVLO, before each arm. */
+/* [PYR-ARM-02] The firmware UVLO, before each arm. */
 void test_mk1c_refuses_below_uvlo(void) {
     board_at(true, false, 2800);
     loops(1100u);
@@ -361,8 +379,8 @@ void test_mk1c_refuses_below_uvlo(void) {
 
 /* ── After the fire ───────────────────────────────────────────────── */
 
-/* S6: the bus drains, the tracking test resumes only on a cold bus
- * (invariants 1 and 7), and the fired channel reads open. */
+/* The bus drains, the tracking test resumes only on a cold bus
+ * [DD-056], and the fired channel reads open. */
 void test_mk1c_fired_channel_reads_open_after(void) {
     board(true, true);
     loops(1100u);
@@ -386,7 +404,22 @@ void test_mk1c_fired_channel_reads_open_after(void) {
     TEST_ASSERT_NOT_NULL_MESSAGE(strstr(telemetry, "ch=1 open: fired"), telemetry);
 }
 
-/* Invariant 12: a misfire on one channel never inhibits the other. */
+/* [PYR-VERIFY-01] Between the fire and the next presence test the fired
+ * channel has no verdict, and says so: neither present nor open. */
+void test_PYR_VERIFY_01_mk1c_fired_channel_unknown_until_the_next_presence_test(void) {
+    board(true, true);
+    loops(1100u);
+    TEST_ASSERT_TRUE(accepted(1));
+    pyro_continuity_t c1;
+    pyro_get(1, &c1);
+    TEST_ASSERT_FALSE_MESSAGE(c1.good || c1.open, "a verdict before the presence test that gives it");
+    for (int i = 0; i < 100 && !strstr(telemetry, "F10 ch=1"); i++)
+        loops(LOOP_MS);
+    pyro_get(1, &c1);
+    TEST_ASSERT_TRUE_MESSAGE(c1.open, "the fired channel, tested, reads open");
+}
+
+/* [PYR-ARM-06] A misfire on one channel never inhibits the other. */
 void test_mk1c_misfire_leaves_the_other_channel(void) {
     board(true, true);
     plant_match(1)->fire_energy_j = 1e9;
@@ -407,7 +440,7 @@ void test_mk1c_misfire_leaves_the_other_channel(void) {
     TEST_ASSERT_TRUE_MESSAGE(c1.good, "the misfired match still reads present, and is live");
 }
 
-/* DESIGN.md 5.3: two events one after the other. The second needs the bus
+/* [PYR-ARM-06] Two events one after the other. The second needs the bus
  * charged, so it does not wait for the drain: it fires within four loops,
  * inside the 100 ms the drain takes [DD-065]. */
 void test_mk1c_both_channels_one_after_the_other(void) {
@@ -480,11 +513,13 @@ int main(void) {
     RUN_TEST(test_mk1c_pump_runs_only_inside_a_fire);
     RUN_TEST(test_mk1c_a_stopped_loop_disarms);
     RUN_TEST(test_mk1c_a_short_during_precharge_aborts);
+    RUN_TEST(test_PYR_ARM_03_mk1c_fire_clock_ahead_of_the_loop_is_no_timeout);
     RUN_TEST(test_mk1c_refuses_an_open_channel);
     RUN_TEST(test_mk1c_refuses_before_a_tracking_test);
     RUN_TEST(test_mk1c_refuses_with_a_latched_fault);
     RUN_TEST(test_mk1c_refuses_below_uvlo);
     RUN_TEST(test_mk1c_fired_channel_reads_open_after);
+    RUN_TEST(test_PYR_VERIFY_01_mk1c_fired_channel_unknown_until_the_next_presence_test);
     RUN_TEST(test_mk1c_misfire_leaves_the_other_channel);
     RUN_TEST(test_mk1c_both_channels_one_after_the_other);
     RUN_TEST(test_mk1c_bus_stuck_live_after_a_fire_latches);

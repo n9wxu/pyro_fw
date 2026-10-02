@@ -1,6 +1,6 @@
 /*
- * Vendor reset interface for picotool support.
- * Defers reset to main loop to avoid interrupting I2C.
+ * picotool's vendor reset interface. The reset is left to the flight task,
+ * which takes it between periods rather than mid-transfer on a sensor bus.
  */
 #include "tusb.h"
 #include "device/usbd_pvt.h"
@@ -10,8 +10,7 @@
 
 static uint8_t itf_num;
 
-/* Deferred reset flags — checked by main loop */
-volatile uint8_t pending_reset = 0;  /* 1=BOOTSEL, 2=flash */
+volatile uint8_t pending_reset = 0; /* 1: into BOOTSEL; 2: reboot from flash */
 
 static void resetd_init(void) {}
 static void resetd_reset(uint8_t rhport) { (void)rhport; itf_num = 0; }

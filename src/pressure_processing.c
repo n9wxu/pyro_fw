@@ -1,8 +1,4 @@
 /*
- * Pressure processing layer — filter, altitude conversion, ring buffer.
- *
- * See pressure_processing.h for architecture overview.
- *
  * SPDX-License-Identifier: MIT
  */
 #include "pressure_processing.h"
@@ -10,18 +6,15 @@
 #include <string.h>
 #include <math.h>
 
-/* ── Internal state ───────────────────────────────────────────────── */
-
 typedef enum {
-    PP_IDLE,        /* discarding samples (before calibration starts) */
-    PP_CALIBRATING, /* accumulating ground pressure */
-    PP_RUNNING,     /* filtering and producing altitude */
+    PP_IDLE,
+    PP_CALIBRATING,
+    PP_RUNNING,
 } pp_state_t;
 
 static struct {
     pp_state_t state;
 
-    /* Calibration */
     int32_t cal[PP_CAL_SAMPLES];
     int cal_count;
     int32_t ground_pressure;
@@ -46,18 +39,16 @@ static struct {
         uint8_t n;
     } hist;
 
-    float sigma_sq; /* 0: not measured */
+    float sigma_sq;            /* 0: not measured */
     uint32_t suspect_until_us; /* fits are suspect before this [SNS-PRES-10/11] */
     bool suspect;
     pfit_t last_fit; /* the newest sample's, for the bench (pp_last_fit()) */
     bool last_stuck;
 
-    /* IIR filter state */
     int32_t filtered_q8; /* pascals x 256 [SNS-PRES-02] */
     bool filter_initialized;
     uint32_t last_timestamp;
 
-    /* Debug copies */
     int32_t last_raw;
     int32_t last_filtered;
     int32_t last_read_raw;
@@ -79,26 +70,23 @@ static struct {
         uint32_t reseeds;
     } gnd;
 
-    /* Altitude ring buffer */
     altitude_sample_t ring[PP_RING_SIZE];
     uint8_t head;
     uint8_t tail;
     uint8_t count;
 } pp;
 
-/* ── The ground reference ─────────────────────────────────────────
+/* ── The ground reference [GND-CAL-01..07] ──────────────────────────
  *
- * See pressure_processing.h. Blocks, not individual samples: the window only
- * has to track slow atmospheric drift, and a 250 ms step is finer than
- * anything the weather does. */
+ * Blocks, not individual samples: the window only has to track the weather,
+ * and a 250 ms step is finer than anything the weather does. */
 
 static void gnd_reset(int32_t seed_pa) {
     uint32_t reseeds = pp.gnd.reseeds;
     memset(&pp.gnd, 0, sizeof(pp.gnd));
     pp.gnd.reseeds = reseeds;
     pp.gnd.tracking = true;
-    /* Seeded with the calibration result, so the mean is usable from the
-     * first sample rather than climbing out of zero. */
+    /* Seeded, so the mean does not climb out of zero. */
     pp.gnd.sum[0] = seed_pa;
     pp.gnd.n[0] = 1;
     pp.gnd.filled = 1;
@@ -108,10 +96,7 @@ static void gnd_feed(int32_t filtered_pa, uint32_t now_ms) {
     if (!pp.gnd.tracking) {
         return;
     }
-    /* Not the pad any more. Holding the reference here rather than at the
-     * launch transition is what keeps the frozen value honest: by the time
-     * launch is declared at 100 ft the rocket has been moving for a second,
-     * and a mean that followed it up would under-report the whole flight. */
+    /* [GND-CAL-03] */
     int32_t dev = filtered_pa - pp.ground_pressure;
     if (dev > PP_GROUND_MAX_DEV_PA || dev < -PP_GROUND_MAX_DEV_PA) {
         if (pp.gnd.reject_since == 0)
@@ -213,10 +198,6 @@ uint32_t pp_ground_reseeds(void) {
 
 bool pp_ground_degraded(void) {
     return pp.gnd.degraded;
-}
-
-uint32_t pp_ground_window_ms(void) {
-    return (uint32_t)pp.gnd.filled * PP_GROUND_BLOCK_MS;
 }
 
 /* ── Spike rejection [SNS-PRES-07] ──────────────────────────────────
@@ -366,9 +347,8 @@ int32_t pp_filter_pressure(int32_t raw_pressure, uint32_t dt_ms) {
  *
  *   h = 44330 × (1 − (P/P₀)^(1/5.2561))
  */
-/* [SNS-ALT-04] Unclamped, because a clamp stops the altitude and a stopped
- * altitude is a speed of zero: below the pad, a glitch's decay read as
- * apogee; above 8 km, the climb itself did (N26). */
+/* [SNS-ALT-04] Unclamped, because a clamped altitude stops, and a stopped
+ * altitude is a speed of zero: an apogee to every detector reading it. */
 int32_t pp_pressure_to_height_cm(int32_t pressure_pa, int32_t ground_pressure_pa) {
     if (pressure_pa <= 0 || ground_pressure_pa <= 0)
         return 0;
@@ -434,7 +414,6 @@ static void ring_push(int32_t altitude_cm, int32_t height_cm, int32_t rise_cm, u
     if (pp.count < PP_RING_SIZE) {
         pp.count++;
     } else {
-        /* Overrun: drop oldest */
         pp.tail = (pp.tail + 1) & PP_RING_MASK;
     }
 }
@@ -608,11 +587,6 @@ int32_t pp_ground_pressure(void) {
     return pp.ground_pressure;
 }
 
-void pp_set_ground_pressure(int32_t pa) {
-    if (pp.state == PP_RUNNING)
-        pp.ground_pressure = pa;
-}
-
 void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
     pp_feed_us(raw_pressure_pa, (uint64_t)timestamp_ms * 1000u);
 }
@@ -630,7 +604,6 @@ void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us) {
 
     switch (pp.state) {
     case PP_IDLE:
-        /* Discard — not calibrating yet */
         return;
 
     case PP_CALIBRATING:
@@ -652,7 +625,6 @@ void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us) {
         uint32_t dt = ts - pp.last_timestamp;
         pp.last_timestamp = ts;
 
-        /* IIR filter */
         int32_t q8 = filter_q8(pa, dt);
         int32_t filtered = q8_round(q8);
         pp.last_filtered = filtered;
@@ -670,16 +642,11 @@ void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us) {
          * noise is a tenth of it. */
         int32_t rise_cm = pp_pressure_to_height_cm(pa, pp.ground_pressure);
 
-        /* Push to ring */
         ring_push(alt_cm, height_cm, rise_cm, ts, us, raw);
         fit_sample(&pp.ring[(pp.head + PP_RING_SIZE - 1u) & PP_RING_MASK], dt);
         return;
     }
     }
-}
-
-int pp_available(void) {
-    return pp.count;
 }
 
 bool pp_read(altitude_sample_t *out) {

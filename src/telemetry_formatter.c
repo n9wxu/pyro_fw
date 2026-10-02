@@ -1,38 +1,16 @@
 /*
- * Telemetry formatter: NMEA (format 0) and JSON (format 1).
- *
- * Format 0 — NMEA $PYRO sentences (backwards-compatible with v1):
- *   Periodic: $PYRO,seq,st,thr,alt,spd,max,pa,ms,fl,a1,a2,0,0*XX\r\n
- *   Apogee:   $PYRO_APO,max_cm,ms*XX\r\n
- *   Fire:     $PYRO_FIRE,ch,alt_cm,ms*XX\r\n
- *   Landing:  $PYRO_LAND,max_cm,ms*XX\r\n
- *
- * Format 1 — JSON (newline-delimited objects):
- *   Periodic: {"t":"state","seq":N,"st":N,"thr":N,"alt":N,"spd":N,
- *              "max":N,"pa":N,"ms":N,"fl":N,"a1":N,"a2":N}\r\n
- *   Apogee:   {"t":"apogee","max":N,"ms":N}\r\n
- *   Fire:     {"t":"fire","ch":N,"alt":N,"ms":N}\r\n
- *   Landing:  {"t":"landing","max":N,"ms":N}\r\n
- *
- * Backwards-compatibility shim — send_telemetry():
- *   Declared in flight_states.h and called by test_flight_states.c and
- *   test_closedloop.c.  Builds a snapshot from flight_context_t fields
- *   and delegates to telemetry_state().
+ * The serial telemetry (telemetry_formatter.h). Sentences and fields:
+ * docs/ground-station-interface-spec.md §5 and §6.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "telemetry_formatter.h"
 #include "hal.h"
-#include "flight_states.h" /* for send_telemetry() compat shim */
+#include "flight_states.h"
 #include <stdio.h>
 
 static const config_t *s_cfg = NULL;
 
-/* Borrows cfg; it is NOT copied. The caller must keep the object alive for
- * as long as telemetry is used. flight_states.c passes &ctx->config, and ctx
- * lives for the duration of main(), which is what makes that safe. A caller
- * passing a stack local leaves this dangling -- see the note in the test
- * harness setUp(). */
 void telemetry_init(const config_t *cfg) {
     s_cfg = cfg;
 }
@@ -63,8 +41,7 @@ void telemetry_state(const telemetry_snapshot_t *s) {
         return;
 
     if (s_cfg->telem_format == TELEM_FORMAT_NMEA) {
-        /* Identical field order to the original send_telemetry() so all
-         * existing tests that parse $PYRO sentences continue to pass. */
+        /* The last two, battery and temperature, are not measured. */
         char payload[200];
         snprintf(payload, sizeof(payload), "PYRO,%u,%u,%u,%ld,%ld,%ld,%ld,%lu,%02X,%u,%u,%d,%d", (unsigned)s->seq,
                  (unsigned)s->state_id, (unsigned)s->thrust, (long)s->alt_cm, (long)s->speed_cms, (long)s->max_alt_cm,
@@ -143,18 +120,9 @@ void telemetry_landing(int32_t max_alt_cm, uint32_t flight_time_ms) {
     }
 }
 
-/* ── Backwards-compatibility shim ────────────────────────────────── */
-/*
- * send_telemetry() is declared in flight_states.h and called directly by:
- *   - test/test_flight_states.c  (10 telemetry unit tests)
- *   - test/test_closedloop.c     (run_sim() telemetry loop)
- *
- * It builds a telemetry_snapshot_t from flight_context_t fields and calls
- * telemetry_state(), then increments ctx->telemetry_seq so the sequence
- * counter in test assertions remains correct.
- */
+/* ── The state message, from the flight context ───────────────────── */
 
-static uint8_t compat_state_id(flight_state_t state) {
+uint8_t state_to_telem_id(flight_state_t state) {
     switch (state) {
     case PAD_IDLE:
         return 0;
@@ -176,7 +144,7 @@ static uint8_t compat_state_id(flight_state_t state) {
 void send_telemetry(flight_context_t *ctx, uint32_t time_ms, int32_t altitude_cm, flight_state_t state) {
     telemetry_snapshot_t snap = {
         .seq = ctx->telemetry_seq,
-        .state_id = compat_state_id(state),
+        .state_id = state_to_telem_id(state),
         .thrust = (state == ASCENT && ctx->under_thrust) ? 1u : 0u,
         .alt_cm = altitude_cm,
         .max_alt_cm = ctx->max_altitude,

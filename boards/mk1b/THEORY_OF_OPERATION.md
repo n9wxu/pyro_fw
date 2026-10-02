@@ -91,7 +91,7 @@ board.
 | 7 | I2C1 SCL | both sensors, R10 4k7 |
 | 8 | user pad | J1.6, Lua |
 | 10 | I2C1 SDA | the MS5607 pad, R11 4k7 |
-| 15 | PYRO_COMMON_EN | Q1B gate — the shared **low** side |
+| 15 | PYRO_LOW (net PYRO_COMMON_EN) | Q1B gate — the shared **low** side |
 | 16 | buzzer | Q1A gate — the buzzer's low side |
 | 17 | PYRO1_FLAG | U5 FLG2, active low |
 | 18 | PYRO2_FLAG | U5 FLG1, active low |
@@ -100,14 +100,13 @@ board.
 | 25 | LED | R4 → D3 |
 | 26, 27 | ADC0, ADC1 | SENSE1, SENSE2 |
 
-The name PYRO_COMMON_EN reads as a high-side enable; the netlist puts it on
-the low-side FET's gate. J1 also carries ground (J1.1), VBATT (J1.2) and the
+J1 also carries ground (J1.1), VBATT (J1.2) and the
 input supply (J1.3).
 
 ## Start-up
 
 `hal_platform_init()` silences the buzzer, then `board_early_init()` drives
-PYRO_COMMON_EN and both enables low before USB, networking or the filesystem
+PYRO_LOW and both enables low before USB, networking or the filesystem
 start. `pyro_init()` repeats it, claims the sense inputs and pulls the two
 flags up. The first continuity check starts from `pyro_update()`, never from
 `pyro_init()`: a board with both channels released never calls
@@ -125,7 +124,7 @@ either ends a fire pulse or advances the continuity check. Nothing waits
 ```
  +3V3 ── R26 100k ──┬── Switched_BAT1 ── CN1.1 igniter 1 CN1.2 ──┐
                  U5 OUT2 ── R25 100R ──┬── ADC0                    │
-                                    C25 100n                      ├── F2 1.5A PTC ── Q1B [PYRO_COMMON_EN] ── GND
+                                    C25 100n                      ├── F2 1.5A PTC ── Q1B [PYRO_LOW] ── GND
  +3V3 ── R19 100k ──┬── Switched_BAT2 ── CN1.4 igniter 2 CN1.3 ──┘
                  U5 OUT1 ── R18 100R ──┬── ADC1
                                     C21 100n
@@ -160,9 +159,10 @@ stamp a Lua output low on every check.
 `pyro_fire()` turns the common and the channel's enable on and starts a
 500 ms pulse; the check is suspended, since the pulse owns the common. When the
 pulse ends, the enable goes off and the common stays on as the stimulus, so a
-fresh presence reading lands a loop or two later, about 40 ms — inside the
-flight's post-fire verify window, which opens as the pulse ends and runs
-100 ms. With the common on there is no short reading; the last one stands.
+fresh presence reading lands a loop or two later, about 40 ms. Until then
+`pyro_get()` gives the fired channel no verdict, and that reading is the
+flight's post-fire verify (PYR-VERIFY-01, DD-080). With the common on there is
+no short reading; the last one stands.
 
 ## Pressure sensor
 
@@ -272,9 +272,11 @@ sector erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
   400 kHz.
 - `integration_tests` flies the flight software built for MK1B, the default
   board.
-- `plant_tests` models the sense network from the netlist; it leaves out U5's
-  discharge.
-- `boards/sim_mk1b` runs the real `pyro_board.c` against the plant.
+- `plant_tests` models the sense network from the netlist, with U5 as fitted,
+  the AP2192A, discharging its disabled outputs (DD-086); the base AP2192 is a
+  plant option.
+- `boards/sim_mk1b` runs the real `pyro_board.c` against the plant, and reads
+  both channels shorted, as the bench boards do (DD-059).
 
 ## References
 

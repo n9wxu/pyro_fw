@@ -67,8 +67,9 @@ Never attempt to flash web page files via picotool or BOOTSEL — they must go t
 # Check device is responsive
 ping <device_ip>
 
-# Flash application firmware via OTA
-curl -X POST http://<device_ip>/update -F "firmware=@pyro_fw.bin"
+# Flash application firmware via OTA (support/upload_fw.sh does the same)
+curl --fail-with-body -X POST http://<device_ip>/api/ota -H "X-Pyro: 1" \
+  -H "Content-Type: application/octet-stream" --data-binary @fw_<board>_fota.bin
 
 # Install web page files via web interface
 # Navigate to http://<device_ip> and use the upload interface

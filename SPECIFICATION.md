@@ -5,7 +5,7 @@
 This section contains everything needed to resume development with a new AI session.
 
 ### Project Overview
-Dual-deployment rocket flight computer on the RP2040, for three boards: MK1A, MK1B (the default build) and MK1C. Logs flight data to littlefs flash, serves a web dashboard via USB network (RNDIS/ECM), fires two pyrotechnic channels for parachute deployment, outputs $PYRO NMEA or JSON telemetry via UART (see docs/ground-station-interface-spec.md), and runs user Lua scripts on core1. OTA firmware updates via A/B bootloader. Open work is in `docs/outstanding_tasks.md`; decisions in `DECISIONS.md` (to DD-071).
+Dual-deployment rocket flight computer on the RP2040, for three boards: MK1A, MK1B (the default build) and MK1C. Logs flight data to littlefs flash, serves a web dashboard via USB network (RNDIS/ECM), fires two pyrotechnic channels for parachute deployment, outputs $PYRO NMEA or JSON telemetry via UART (see docs/ground-station-interface-spec.md), and runs user Lua scripts on core1. OTA firmware updates via A/B bootloader. Open work is in `docs/outstanding_tasks.md`; decisions in `DECISIONS.md`.
 
 ### Current Implementation Status
 - **Event-driven state machine**: `src/flight_states.c` — a detector per state, a transition table, actions; twelve states (`docs/flight_states.md`)
@@ -133,7 +133,7 @@ GROUND_TEST are numbered after LANDED, so recorded state numbers never move.
 ### DESCENT (FALLING, DROGUE_DESCENT, CHUTE_DESCENT)
 - Check pyro conditions every sample; a channel whose trigger is met fires once (PYR-SAFE-03)
 - The phase is the descent rate settling in a band: 10-35 m/s drogue, 10 m/s or less main (DD-023)
-- Post-fire verification 500-600 ms after each fire (PYR-VERIFY-01); an emergency ladder re-fires a drogue that did not open and brings the main forward when the drogue is not slowing the rocket (DD-028)
+- Post-fire verification from the first continuity check completed after the pulse (PYR-VERIFY-01, DD-080); an emergency ladder re-fires a drogue that did not open and brings the main forward when the drogue is not slowing the rocket (DD-028)
 - Landing: altitude change < 1 m between samples, speed < 2 m/s and altitude < 30 m, for 1 s (FLT-LAND-01..03); or `landing_timeout` (60 s) of descent and still for 1 s (FLT-LAND-07)
 
 ### LANDED

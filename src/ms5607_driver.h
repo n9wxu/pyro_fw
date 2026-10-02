@@ -36,16 +36,47 @@
  * takes up to 9.04 ms), not the moment it is read. */
 #define MS5607_HALF_CONV_US 4500u
 
-/* The datasheet's first-order compensation (page 8), from the PROM's C1-C6. */
+/* Second-order compensation applies below these, in TEMP's 0.01 °C. */
+#define MS5607_LOW_TEMP 2000
+#define MS5607_VERY_LOW_TEMP (-1500)
+
+/* [SNS-PRES-15] The datasheet's compensation from the PROM's C1-C6: first
+ * order (page 8), then the second order below 20 °C (page 9). */
 static inline void ms5607_compensate_prom(const uint16_t prom[8], uint32_t d1, uint32_t d2,
                                           pressure_reading_t *out) {
     int32_t dT = (int32_t)d2 - ((int32_t)prom[5] << 8);
     int32_t temp = 2000 + (int32_t)(((int64_t)dT * prom[6]) >> 23);
     int64_t off = ((int64_t)prom[2] << 17) + (((int64_t)prom[4] * dT) >> 6);
     int64_t sens = ((int64_t)prom[1] << 16) + (((int64_t)prom[3] * dT) >> 7);
+    if (temp < MS5607_LOW_TEMP) {
+        int64_t low = (int64_t)(temp - MS5607_LOW_TEMP) * (temp - MS5607_LOW_TEMP);
+        int64_t off2 = (61 * low) >> 4;
+        int64_t sens2 = 2 * low;
+        if (temp < MS5607_VERY_LOW_TEMP) {
+            int64_t very = (int64_t)(temp - MS5607_VERY_LOW_TEMP) * (temp - MS5607_VERY_LOW_TEMP);
+            off2 += 15 * very;
+            sens2 += 8 * very;
+        }
+        temp -= (int32_t)(((int64_t)dT * dT) >> 31);
+        off -= off2;
+        sens -= sens2;
+    }
     int32_t p = (int32_t)((((int64_t)d1 * sens >> 21) - off) >> 15);
     out->temperature_c = temp / 100.0f;
     out->pressure_pa = (float)p;
+}
+
+/* [SNS-PRES-16] The PROM's CRC-4, in word 7's low nibble (datasheet page 13),
+ * by AN520's algorithm: word 7's low byte counts as zero. */
+static inline bool ms5607_prom_crc_ok(const uint16_t prom[8]) {
+    uint16_t rem = 0;
+    for (int i = 0; i < 16; i++) {
+        uint16_t word = (i >> 1) == 7 ? (uint16_t)(prom[7] & 0xFF00u) : prom[i >> 1];
+        rem ^= (i & 1) ? (uint16_t)(word & 0x00FFu) : (uint16_t)(word >> 8);
+        for (int bit = 0; bit < 8; bit++)
+            rem = (rem & 0x8000u) ? (uint16_t)((rem << 1) ^ 0x3000u) : (uint16_t)(rem << 1);
+    }
+    return ((rem >> 12) & 0xFu) == (prom[7] & 0xFu);
 }
 
 /* ── Temperature, every loop [DD-066] ─────────────────────────────────
@@ -116,10 +147,15 @@ static inline uint32_t ms5607_temps_at(const ms5607_temps_t *t, uint64_t at_us) 
 /* The PROM reloads for 2.8 ms after a reset (datasheet pages 10-11). */
 #define MS5607_RESET_MS 3u
 
+/* [SNS-PRES-16] Resets and PROM reads an address gets before a PROM that fails its CRC
+ * counts as no sensor there. */
+#define MS5607_PROM_TRIES 3u
+
 typedef enum { MS5607_DETECT_PENDING, MS5607_DETECT_FOUND, MS5607_DETECT_ABSENT } ms5607_detect_result_t;
 
 typedef struct {
     uint8_t addr;
+    uint8_t tries;
     bool reloading;
     uint32_t due_ms;
 } ms5607_detect_t;

@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: MIT
  */
 #include "beep_codes.h"
+#include "ini_tokenizer.h"
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -280,19 +282,37 @@ static bool parse_bool(const char *s) {
     return strcmp(s, "true") == 0 || strcmp(s, "1") == 0;
 }
 
-/* One field of one personality. Split from the line parser, which was over
- * the complexity limit the project enforces. */
+/* Decimal digits only, at most max; false leaves *out alone. */
+static bool parse_count(const char *s, unsigned long max, unsigned long *out) {
+    if (s[0] < '0' || s[0] > '9')
+        return false;
+    char *end;
+    errno = 0;
+    unsigned long v = strtoul(s, &end, 10);
+    if (*end != '\0' || errno == ERANGE || v > max)
+        return false;
+    *out = v;
+    return true;
+}
+
+/* One field of one personality, kept apart from the key's routing for the
+ * project's complexity limit. */
 static void apply_personality_field(beep_personality_t *p, const char *field, const char *val) {
+    unsigned long v;
     if (strcmp(field, "name") == 0) {
-        snprintf(p->name, sizeof(p->name), "%s", val);
+        /* An empty name reads as a table never loaded (beep_codes_active()). */
+        if (val[0])
+            snprintf(p->name, sizeof(p->name), "%s", val);
         return;
     }
     if (strcmp(field, "gap") == 0) {
-        p->gap_ms = (uint16_t)atoi(val);
+        if (parse_count(val, UINT16_MAX, &v))
+            p->gap_ms = (uint16_t)v;
         return;
     }
     if (strcmp(field, "repeat") == 0) {
-        p->repeat = (uint8_t)atoi(val);
+        if (parse_count(val, UINT8_MAX, &v))
+            p->repeat = (uint8_t)v;
         return;
     }
     if (strcmp(field, "split") == 0) {
@@ -310,49 +330,21 @@ static void apply_personality_field(beep_personality_t *p, const char *field, co
     }
 }
 
-/* One "key=value" line. Unrecognised keys and unparsable values both leave
- * the table alone, so a garbled line cannot silently mute an outcome. */
-static void apply_line(char *line, beep_table_t *t) {
-    if (!*line || *line == '[' || *line == ';' || *line == '#') {
-        return;
-    }
-    char *eq = strchr(line, '=');
-    if (!eq) {
-        return;
-    }
-    *eq = '\0';
-    const char *key = line;
-    const char *val = eq + 1;
-
+/* One key=value. Unrecognised keys and unparsable values both leave the
+ * table alone, so a garbled line cannot silently mute an outcome. */
+static void apply_pair(const char *key, const char *val, void *ctx) {
+    beep_table_t *t = ctx;
+    unsigned long a;
     if (strcmp(key, "active") == 0) {
-        int a = atoi(val);
-        if (a >= 0 && a < BEEP_PERSONALITY_COUNT) {
+        if (parse_count(val, BEEP_PERSONALITY_COUNT - 1, &a))
             t->active = (uint8_t)a;
-        }
     } else if (key[0] == 'p' && key[1] >= '0' && key[1] < ('0' + BEEP_PERSONALITY_COUNT) && key[2] == '_') {
         apply_personality_field(&t->p[key[1] - '0'], key + 3, val);
     }
-    *eq = '=';
 }
 
 void beep_codes_parse_ini(char *buf, beep_table_t *t) {
-    char *line = buf;
-    while (line && *line) {
-        char *nl = strchr(line, '\n');
-        if (nl) {
-            *nl = '\0';
-        }
-        char *end = line + strlen(line);
-        while (end > line && (end[-1] == '\r' || end[-1] == ' ')) {
-            *--end = '\0';
-        }
-        apply_line(line, t);
-        if (!nl) {
-            break;
-        }
-        *nl = '\n';
-        line = nl + 1;
-    }
+    ini_for_each(buf, apply_pair, t);
 }
 
 int beep_codes_serialize_ini(const beep_table_t *t, char *buf, int max_len) {

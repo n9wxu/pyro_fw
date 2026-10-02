@@ -1,6 +1,6 @@
 /*
- * The HTTP server's entry points, for the main loop. See http_work.h for how
- * the work between them is divided.
+ * The HTTP server's entry points, for the net task (net_task.c). See
+ * http_work.h for how the work between them is divided.
  *
  * SPDX-License-Identifier: MIT
  */

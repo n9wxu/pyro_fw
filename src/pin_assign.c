@@ -8,6 +8,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "pin_assign.h"
+#include "ini_tokenizer.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -159,10 +160,9 @@ uint8_t pin_assign_buzzer_pin(const pin_assign_t *a) {
 bool pin_assign_is_reserved(const pin_assign_t *a, uint8_t pin) {
     const pin_cap_t *c = pin_caps_find(pin);
 
-    /* Whatever is currently driving the buzzer is the flight software's,
-     * whether that is the board's own pad or a user pad the operator moved it
-     * to. The converse matters just as much: once the buzzer has moved, the
-     * board's original pad is no longer reserved and Lua may have it. */
+    /* [PIN-BUZZ-02] The pad driving the buzzer is the flight software's,
+     * the board's own or one the operator moved it to; once it has moved,
+     * the board's own pad is free for Lua. */
     if (pin_assign_buzzer_pin(a) == pin || is_gt_pad(a, pin)) {
         return true;
     }
@@ -209,10 +209,8 @@ static pin_verdict_t check_buzzer(const pin_assign_t *a) {
     if (!(c->functions & (FN_BUZZER | FN_DIGITAL))) {
         return fail(PIN_ERR_BUZZER_NOT_CAPABLE, a->buzzer_pin);
     }
-    /* A pad the pyro channels still hold, or one already given a Lua role,
-     * cannot also be the buzzer. Checking the role here rather than relying on
-     * is_reserved() is deliberate: is_reserved() now answers true FOR the
-     * buzzer pad, so it cannot be the test for whether the pad was free. */
+    /* [PIN-BUZZ-02] A pad with a Lua role cannot also be the buzzer. Not
+     * is_reserved(), which answers true FOR the buzzer pad itself. */
     if (a->buzzer_pin < PIN_ASSIGN_MAX_GPIO && a->role[a->buzzer_pin] != LUA_ROLE_OFF) {
         return fail(PIN_ERR_BUZZER_BUSY, a->buzzer_pin);
     }
@@ -361,82 +359,65 @@ pin_verdict_t pin_assign_validate(const pin_assign_t *a) {
  *
  *   [pins]
  *   pyro1_released=true
- *   pyro2_released=true
  *   p9_role=bridge
  *   p9_name=motor
  *
- * Same line-oriented shape as config.ini, and unknown keys are ignored for
- * the same reason (CFG-08): an older firmware must survive a newer file. */
+ * config.ini's tokenizer, and its rule for unknown keys (CFG-08): an older
+ * firmware must survive a newer file. */
 
 static bool parse_bool(const char *v) {
     return strcmp(v, "true") == 0 || strcmp(v, "1") == 0;
 }
 
-/* A pad number, or PIN_GT_UNSET: never atoi()'s 0, which is a real GPIO. */
-static uint8_t parse_pad(const char *v) {
-    return (v[0] >= '0' && v[0] <= '9') ? (uint8_t)atoi(v) : (uint8_t)PIN_GT_UNSET;
+/* A pad number, or `unset` for anything that is not one: never atoi()'s 0,
+ * which is a real GPIO, and never a number wrapped into one. A number no pad
+ * has is kept, for pin_assign_validate() to refuse. */
+static uint8_t parse_pad(const char *v, uint8_t unset) {
+    if (v[0] < '0' || v[0] > '9')
+        return unset;
+    char *end;
+    unsigned long p = strtoul(v, &end, 10);
+    return (*end == '\0' && p < unset) ? (uint8_t)p : unset;
+}
+
+static void parse_pin_key(pin_assign_t *a, const char *key, const char *val) {
+    char *suffix;
+    unsigned long pin = strtoul(key + 1, &suffix, 10);
+    if (suffix == key + 1 || pin >= PIN_ASSIGN_MAX_GPIO)
+        return;
+    if (strcmp(suffix, "_role") == 0) {
+        a->role[pin] = role_from_name(val);
+    } else if (strcmp(suffix, "_name") == 0) {
+        strncpy(a->name[pin], val, LUA_NAME_MAX - 1);
+        a->name[pin][LUA_NAME_MAX - 1] = '\0';
+    }
+}
+
+static void parse_pair(const char *key, const char *val, void *ctx) {
+    pin_assign_t *a = ctx;
+    if (strcmp(key, "buzzer_pin") == 0) {
+        /* "board" is the default and the only non-numeric value. */
+        a->buzzer_pin = parse_pad(val, PIN_BUZZER_BOARD);
+    } else if (strcmp(key, "ground_test") == 0) {
+        /* An unknown wiring is none, never a guess. */
+        a->gt_wiring = strcmp(val, "ground") == 0 ? GT_WIRING_GROUND
+                       : strcmp(val, "pair") == 0 ? GT_WIRING_PAIR
+                                                  : GT_WIRING_NONE;
+    } else if (strcmp(key, "ground_test_pin") == 0) {
+        a->gt_pin = parse_pad(val, PIN_GT_UNSET);
+    } else if (strcmp(key, "ground_test_drive_pin") == 0) {
+        a->gt_drive_pin = parse_pad(val, PIN_GT_UNSET);
+    } else if (strcmp(key, "pyro1_released") == 0) {
+        a->pyro1_released = parse_bool(val);
+    } else if (strcmp(key, "pyro2_released") == 0) {
+        a->pyro2_released = parse_bool(val);
+    } else if (key[0] == 'p' && key[1] >= '0' && key[1] <= '9') {
+        parse_pin_key(a, key, val);
+    }
 }
 
 void pin_assign_parse_ini(char *buf, pin_assign_t *a) {
-    char *line = buf;
-    while (line && *line) {
-        char *nl = strchr(line, '\n');
-        if (nl) {
-            *nl = '\0';
-        }
-
-        char *end = line + strlen(line);
-        while (end > line && (end[-1] == '\r' || end[-1] == ' ')) {
-            *--end = '\0';
-        }
-
-        if (*line && *line != '[' && *line != ';' && *line != '#') {
-            char *eq = strchr(line, '=');
-            if (eq) {
-                *eq = '\0';
-                const char *key = line;
-                const char *val = eq + 1;
-
-                if (strcmp(key, "buzzer_pin") == 0) {
-                    /* "board" is the default and the only non-numeric value;
-                     * anything unparseable falls back to it rather than to
-                     * atoi()'s 0, which is the telemetry UART. */
-                    a->buzzer_pin = (val[0] >= '0' && val[0] <= '9') ? (uint8_t)atoi(val) : (uint8_t)PIN_BUZZER_BOARD;
-                } else if (strcmp(key, "ground_test") == 0) {
-                    /* An unknown wiring is none, never a guess. */
-                    a->gt_wiring = strcmp(val, "ground") == 0 ? GT_WIRING_GROUND
-                                   : strcmp(val, "pair") == 0 ? GT_WIRING_PAIR
-                                                              : GT_WIRING_NONE;
-                } else if (strcmp(key, "ground_test_pin") == 0) {
-                    a->gt_pin = parse_pad(val);
-                } else if (strcmp(key, "ground_test_drive_pin") == 0) {
-                    a->gt_drive_pin = parse_pad(val);
-                } else if (strcmp(key, "pyro1_released") == 0) {
-                    a->pyro1_released = parse_bool(val);
-                } else if (strcmp(key, "pyro2_released") == 0) {
-                    a->pyro2_released = parse_bool(val);
-                } else if (key[0] == 'p' && key[1] >= '0' && key[1] <= '9') {
-                    int pin = atoi(key + 1);
-                    const char *suffix = strchr(key, '_');
-                    if (suffix && pin >= 0 && pin < PIN_ASSIGN_MAX_GPIO) {
-                        if (strcmp(suffix, "_role") == 0) {
-                            a->role[pin] = role_from_name(val);
-                        } else if (strcmp(suffix, "_name") == 0) {
-                            strncpy(a->name[pin], val, LUA_NAME_MAX - 1);
-                            a->name[pin][LUA_NAME_MAX - 1] = '\0';
-                        }
-                    }
-                }
-                *eq = '=';
-            }
-        }
-
-        if (!nl) {
-            break;
-        }
-        *nl = '\n';
-        line = nl + 1;
-    }
+    ini_for_each(buf, parse_pair, a);
 }
 
 int pin_assign_serialize_ini(const pin_assign_t *a, char *buf, int max_len) {

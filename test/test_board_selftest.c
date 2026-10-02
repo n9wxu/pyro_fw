@@ -1,29 +1,43 @@
 /*
- * The board self-test's decision table.
+ * The board self-test's decisions: the verdict from the stamp, what a boot
+ * does about it, and when the stamp may be written.
  *
- * board_selftest_verdict() is the whole decision, and it is pure, so every
- * case it can reach is checkable here without a filesystem or a board. The
- * cases that matter are the two asymmetric ones: a mismatch must FAIL,
- * because committing it leaves the wrong firmware driving the wrong pins;
- * and anything unknown must NOT fail, because refusing to commit on no
- * evidence rolls back good updates.
+ * The asymmetric cases are the ones that matter: a mismatch must FAIL and
+ * must never fly, because the image drives the wrong pins; and anything
+ * unknown must NOT fail, because refusing on no evidence rolls back good
+ * updates.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "unity.h"
 #include "board_selftest.h"
+#include "board_pins.h"
+#include "hal.h"
+#include <string.h>
 
-/* board_selftest.c reaches the filesystem in its init/save paths. The
- * decision under test does not, so these satisfy the linker and are not
- * called -- a test that needed them would be testing the HAL, not the
- * decision table. */
+/* The stamp board_selftest_init() reads: a file's text, or a failure. */
+static const char *stamp_text;
+static int stamp_rc;
+
 int hal_fs_read_file(const char *path, char *buf, int max_len) {
-    (void)path; (void)buf; (void)max_len;
-    return -1;
+    (void)path;
+    if (stamp_rc < 0)
+        return stamp_rc;
+    int n = (int)strlen(stamp_text);
+    if (n > max_len)
+        n = max_len;
+    memcpy(buf, stamp_text, (size_t)n);
+    return n;
 }
 int hal_fs_write_file(const char *path, const char *data, int len) {
     (void)path; (void)data; (void)len;
     return -1;
+}
+
+static void boot_with_stamp(const char *text, int rc) {
+    stamp_text = text;
+    stamp_rc = rc;
+    board_selftest_init();
 }
 
 void setUp(void) {}
@@ -85,6 +99,38 @@ static void test_BST_06_every_shipped_pair(void) {
     }
 }
 
+/* A mismatch never flies, at every boot: after an OTA it also rolls back,
+ * and after a UF2 or picotool flash, with nothing to roll back to, it stays
+ * on the ground. */
+static void test_BST_07_a_mismatch_never_flies(void) {
+    TEST_ASSERT_EQUAL(BOARD_IMAGE_ROLL_BACK, board_selftest_action(BOARD_SELFTEST_FAIL, true));
+    TEST_ASSERT_EQUAL(BOARD_IMAGE_REFUSE, board_selftest_action(BOARD_SELFTEST_FAIL, false));
+    TEST_ASSERT_EQUAL(BOARD_IMAGE_RUN, board_selftest_action(BOARD_SELFTEST_PASS, true));
+    TEST_ASSERT_EQUAL(BOARD_IMAGE_RUN, board_selftest_action(BOARD_SELFTEST_PASS, false));
+    TEST_ASSERT_EQUAL(BOARD_IMAGE_RUN, board_selftest_action(BOARD_SELFTEST_UNKNOWN, true));
+    TEST_ASSERT_EQUAL(BOARD_IMAGE_RUN, board_selftest_action(BOARD_SELFTEST_UNKNOWN, false));
+}
+
+/* Another board's image flashed by hand finds this board's stamp. */
+static void test_BST_08_a_hand_flashed_wrong_image_is_refused(void) {
+    boot_with_stamp(strcmp(BOARD_SHORT_STR, "mk1a") == 0 ? "mk1c\n" : "mk1a\n", 0);
+    TEST_ASSERT_EQUAL(BOARD_SELFTEST_FAIL, board_selftest_result());
+    TEST_ASSERT_EQUAL(BOARD_IMAGE_REFUSE, board_selftest_action(board_selftest_result(), false));
+    TEST_ASSERT_FALSE_MESSAGE(board_selftest_unsaved(), "the evidence was about to be overwritten");
+}
+
+/* Only a stamp that does not exist is written. One that could not be read
+ * may be the very stamp that disagrees with this image. */
+static void test_BST_09_a_stamp_that_could_not_be_read_is_kept(void) {
+    boot_with_stamp("", HAL_FS_ERROR);
+    TEST_ASSERT_FALSE(board_selftest_unsaved());
+    boot_with_stamp("", HAL_FS_LOCKED);
+    TEST_ASSERT_FALSE(board_selftest_unsaved());
+    boot_with_stamp("", HAL_FS_NOENT);
+    TEST_ASSERT_TRUE(board_selftest_unsaved());
+    TEST_ASSERT_EQUAL(BOARD_SELFTEST_UNKNOWN, board_selftest_result());
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_BST_01_matching_stamp_passes);
@@ -93,5 +139,8 @@ int main(void) {
     RUN_TEST(test_BST_04_missing_compiled_token_is_unknown);
     RUN_TEST(test_BST_05_comparison_is_exact);
     RUN_TEST(test_BST_06_every_shipped_pair);
+    RUN_TEST(test_BST_07_a_mismatch_never_flies);
+    RUN_TEST(test_BST_08_a_hand_flashed_wrong_image_is_refused);
+    RUN_TEST(test_BST_09_a_stamp_that_could_not_be_read_is_kept);
     return UNITY_END();
 }

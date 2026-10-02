@@ -88,6 +88,7 @@ rationale and the alternatives considered.
 ## Safety
 
 ### DD-013: Backup Apogee Timer
+- **Superseded by DD-022:** the timer and its configuration are removed.
 - **Decision:** Force apogee detection if no apogee detected within a configurable
   time (default 30s, range 10-120s) after pyros are armed.
 - **Rationale:** If the pressure sensor fails or produces garbage during coast,
@@ -559,6 +560,114 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-086: The Simulators Share One Atmosphere And Fly MK1B As Built
+- **Decision:** the CLI simulator, the WASM build and the browser
+  simulator take pressure, temperature and density from one table of the
+  1976 US Standard Atmosphere (`sim/physics.c`), its seven layers to
+  84,852 geopotential metres.
+  The MK1B plant models U5 as fitted, the AP2192A, whose disabled outputs
+  discharge to ground; the base AP2192 is a plant option.
+- **Why:** an isothermal layer from 11 to 47 km reads 30 % low at 47 km, and
+  three copies of an atmosphere drift apart. The bench boards' U5 is the
+  AP2192A and reads both channels shorted (DD-059); a plant without the
+  discharge passes what the boards fail.
+- **Consequence:** `sim_mk1b` reads both channels shorted, as the bench
+  boards do. `test_physics.c` pins the table at every layer base.
+
+### DD-085: The Lua Runtime's Limits
+- **Decision:** the limits LUA-SAFE-01..15 state. Text chunks only. Every
+  host entry into the VM under `lua_pcall`. An instruction budget of 2,000
+  hook periods of 1,000 instructions for a load, `init()`, `on_event()` and
+  the console eval, and for `on_event()` its time box too. `tick()` in a
+  coroutine, yielded at its box and resumed at the next grant, raised 5 ms
+  past it where it cannot yield. The limit is raised as light userdata, and
+  `pcall` and `xpcall` re-raise it. The matcher's steps are charged like
+  instructions. `setmetatable` refuses `__gc`. 20 C levels, 32 matcher
+  levels. Static arenas for the VM and the checker; decimals parsed without
+  `strtof`. `lua_patch.cmake` sets `LUA_32BITS` in `luaconf.h`.
+- **Why:** RP2040 has no MPU, so the bindings and these limits are all that
+  stand between a script and the flight. An error outside protection reaches
+  `abort()` and halts core1, and the flight log with it. A script's own
+  `pcall` can otherwise catch the budget error and loop on; a finaliser runs
+  with hooks off; an exponential pattern runs for seconds between two hook
+  calls unless the matcher is charged.
+  `LUA_USER_H` is read after `luaconf.h` has chosen the number types, so
+  only a patch to `luaconf.h` gives 32-bit numbers.
+- **Consequence:** a script that needs more than the budget in one call is
+  stopped; one that needs time spreads it over `tick()`s.
+
+### DD-084: The Released-Channel Bridge Holds Its Side
+- **Decision:** `pyro_bridge.pio` holds the side a word commands until a
+  word asks for the other. Every change passes through Y+1 cycles of both
+  off; a repeat costs none. Until the first level, both sides are off.
+- **Why:** a servo or a WS2812 string needs a level held between words; a
+  machine that gives each word an 8-16 ns pulse and then the dead band
+  drives neither. Shoot-through stays unrepresentable, since a word picks
+  one side.
+- **Consequence:** a stalled state machine holds its side (RP2040 datasheet
+  §3.2.4, §3.4.10). Stopping the Lua task disables the machine and returns
+  its pads to SIO, driven low (LUA-SAFE-14); that, not an empty FIFO, is
+  what turns the bridge off.
+
+### DD-083: The API Answers Only The Board's Own Page
+- **Decision:** no `Access-Control-Allow-Origin`, and
+  `Cross-Origin-Resource-Policy: same-origin` on every response. A request
+  whose Host is not one of the board's names -- `pyro.local`,
+  `pyro-<n>.local` or `192.168.<subnet>.1`, with or without `:80` -- is
+  refused 403, and one with no Host 400. A POST without `X-Pyro: 1` is
+  refused 403. The web UI sends the header on every POST (WEB-API-07).
+- **Why:** every page that talks to the board is served by the board, so
+  every legitimate request is same-origin. `*` lets any site read the API; a
+  rebound name or a plain form can POST to it. A form cannot set a custom
+  header, and a rebound name does not carry the board's.
+- **Consequence:** a script or `curl` that posts needs `-H "X-Pyro: 1"` and
+  a body (`-d ''` for an empty one).
+
+### DD-082: config.ini Is Refused Field By Field, And Never Overwritten Unread
+- **Decision:** each row of `config_fields.h` carries a range; a value that
+  does not parse, or is outside it, is refused and counted, and the field
+  keeps its previous value (CFG-10); `POST /api/config` answers 400 and
+  writes nothing. One tokenizer reads config.ini, pins.ini and beep.ini.
+  Defaults are written only when the file is missing; a file that exists
+  but cannot be read leaves the board in FAULT, the file untouched
+  (FLT-BOOT-18).
+- **Why:** a value cast into its field wraps: 700 m entered as 70000 cm
+  would be 4464 cm. A failed read is not a missing file -- an I/O error, a
+  lock timeout, an SD CRC -- and defaults written then would replace the
+  user's configuration, and on SD boards be mirrored into littlefs. Two
+  tokenizers would read whitespace two ways.
+- **Consequence:** a board with an unreadable config.ini does not fly until
+  the file is read or replaced.
+
+### DD-081: The Board Image Is Checked At Every Boot
+- **Decision:** the board self-test (`board_selftest.h`) compares the image's
+  board with the stamp in `board.txt` at every boot. A mismatch is FAULT and
+  system failure (FLT-BOOT-17): the image refuses to arm or fire. After an
+  OTA it also declines to commit and reboots, so the bootloader puts the
+  previous image back. A board with no stamp is UNKNOWN and flies.
+- **Why:** every board is an RP2040, so another board's image runs against
+  the wrong pin map, and a hand-flashed image never passes through the OTA
+  commit, so a check there alone misses it.
+- **Consequence:** an image for the wrong board is heard at the pad.
+
+### DD-080: A Fired Channel Has No Verdict Until A Fresh Check
+- **Decision:** a fired channel reads none of good, open and shorted until
+  a continuity check begun after its pulse completes (`pyro.h`, `hal.h`).
+  The flight asks from 500 ms after the fire, and the first verdict it gets
+  is the post-fire verify (PYR-VERIFY-01): MK1A's check starts as the pulse
+  ends and lands about 50 ms later, MK1B's about 40 ms, MK1C's at the next
+  presence test.
+- **Why:** a fixed window after the fire reads whatever the board last
+  had. On MK1A and MK1B that is the check from before the fire, which reads
+  good, so every fire would be judged not opened and the drogue fired again
+  at 2 s.
+- **The ladder:** the drogue retry rests on the drogue's own verdict and
+  does not depend on the main channel. The main is forced only when its
+  mode expects an igniter and it reads continuity (CFG-04).
+- **A state the machine does not know** -- a corrupt `current_state` --
+  dispatches to FAULT, since PAD_IDLE would reopen launch detection in
+  flight.
+
 ### DD-079: Descent Rates Are Judged In The Pad's Air
 - **Decision:** the descent bands (a main at 10 m/s or less, a drogue at
   35 m/s or less) and the emergency ladder's evidence read the descent rate
@@ -612,8 +721,8 @@ rationale and the alternatives considered.
   them. A profile is short to describe and repeats exactly.
 - **What it found:** DD-079, and that the Mach lockout does not release
   above its 9 km envelope, so a flight there gets its drogue from the
-  fallback, 100-190 m above the pad (`docs/high_altitude_flight.md`, task
-  HA-1, open).
+  fallback, 100-190 m above the pad (`docs/high_altitude_flight.md`, an
+  open limit).
 
 ### DD-077: The High-Rate Log On The SD Card
 - **Decision:** on MK1C-SD, an LSM6DS3 on the SD card's bus (±16 g,
@@ -781,9 +890,9 @@ rationale and the alternatives considered.
   the last byte, the subnet, is never 0, 1 or 255. The file is written once
   the filesystem is up, as twelve hex digits and a second line `rng`, and
   `/api/status` reports `mac_source`: `rng` or `assigned`.
-- **Why:** the MAC used to be derived from the flash chip's unique id. Two
+- **Why:** a MAC derived from the flash chip's unique id is not unique: two
   MK1Cs read the same id from their XT25F128F, 41503459373331FF, and took
-  one MAC, serial and subnet (task ID-1).
+  one MAC, serial and subnet.
 - **Why these sources:** the RP2040 has no hardware RNG. The ring
   oscillator's random bit is usable while the system runs from the crystal,
   "not ... for security systems" but "useful in less critical applications"
@@ -1062,7 +1171,8 @@ rationale and the alternatives considered.
   script's tick() runs 50 times a second where it ran 100. A script that
   counts ticks as time runs slow; one that reads the clock does not.
 - **MK1B's presence stimulus** is on for a loop, 20 ms, and its reading after
-  a fire lands about 40 ms after the pulse, inside the 100 ms verify window.
+  a fire lands about 40 ms after the pulse; that reading is the post-fire
+  verdict (DD-080).
 - **Supersedes** DD-063's "the 10 ms loop stays", which was the finding the
   user weighed.
 
