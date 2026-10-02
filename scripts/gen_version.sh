@@ -1,17 +1,12 @@
 #!/bin/bash
-# Generate version.h from VERSION file
-# In CI (CI_BUILD=1): use VERSION as-is
-# Locally: auto-increment patch on each build
+# Generate version.h from VERSION, which only a release changes
+# (scripts/bump_version.sh, or CI's patch release).
+# A build outside CI carries "+local" so it is never mistaken for the release
+# of the same number.
+set -eu
 OUT="$1"
-VER_FILE="$2/VERSION"
-VERSION=$(cat "$VER_FILE" 2>/dev/null || echo "1.0.0")
-
-if [ -z "$CI_BUILD" ]; then
-    IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-    PATCH=$((PATCH + 1))
-    VERSION="$MAJOR.$MINOR.$PATCH"
-    echo "$VERSION" > "$VER_FILE"
-fi
+VERSION=$(cat "$2/VERSION" 2>/dev/null || echo "0.0.0")
+[ -n "${CI_BUILD:-}" ] || VERSION="$VERSION+local"
 
 BUILD_DATE=$(date +"%Y-%m-%d %H:%M:%S")
 cat > "$OUT" << EOF
