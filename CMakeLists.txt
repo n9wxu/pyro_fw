@@ -154,6 +154,7 @@ if(PYRO_HAS_LUA)
         lua
         GIT_REPOSITORY https://github.com/lua/lua.git
         GIT_TAG v5.4.6
+        PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_patch.cmake
     )
 endif()
 
@@ -212,13 +213,11 @@ endif()
 #                   budget outright, so its absence is load-bearing, not tidy
 #   lutf8lib.c      utf8 table; never requiref'd
 #
-# The last three were compiled and linked but never opened: dead weight in
-# every image, and on MK1B dead weight it could not afford -- its A/B slot is
-# 384KB and the image with Lua landed within 1KB of it.
-#
-# LUA_32BITS makes numbers 32-bit float and 32-bit int. That halves the size
-# of every Lua value, which matters against a fixed arena, and keeps the
-# simulator numerically identical to the target rather than subtly better.
+# Numbers are 32-bit float and 32-bit int, which halves every Lua value
+# against a fixed arena and keeps the simulator numerically identical to
+# the target.
+# src/lua/lua_patch.cmake sets that in luaconf.h, the only place it can be
+# set; pyro_luaconf.h refuses to build against an unpatched tree.
 # ====================================================================================
 if(PYRO_HAS_LUA)
     set(PYRO_LUA_SOURCES
@@ -230,15 +229,12 @@ if(PYRO_HAS_LUA)
     list(TRANSFORM PYRO_LUA_SOURCES PREPEND ${lua_SOURCE_DIR}/)
     add_library(lua_lib STATIC ${PYRO_LUA_SOURCES})
     target_include_directories(lua_lib PUBLIC ${lua_SOURCE_DIR} ${CMAKE_CURRENT_LIST_DIR}/src/lua)
-    # luaconf.h defines LUA_32BITS unconditionally, so -DLUA_32BITS=1 collides
-    # and loses. Force it through the one hook upstream provides for this.
     target_compile_definitions(lua_lib PUBLIC LUA_USER_H="pyro_luaconf.h")
     target_compile_options(lua_lib PRIVATE -Wno-unused-but-set-variable -Wno-implicit-fallthrough)
     # The interpreter is built for size, not speed, while the flight code stays
     # at -O3. A work unit is bounded by a deadline the hook checks, so a slower
-    # VM executes fewer Lua instructions in its 9 ms and nothing else changes --
-    # whereas the ~14KB -O3 costs is the difference between fitting in MK1B's
-    # 384KB A/B slot and not fitting.
+    # VM executes fewer Lua instructions in its time box and nothing else
+    # changes -- whereas the ~14KB -O3 costs would not fit MK1B's 384KB slot.
     target_compile_options(lua_lib PRIVATE -Os)
     set(PYRO_LUA_INCLUDE ${lua_SOURCE_DIR})
 
@@ -783,6 +779,9 @@ add_custom_target(lua_tests
                -I${lua_SOURCE_DIR}
                -I${CMAKE_CURRENT_LIST_DIR}/test
                -I${unity_SOURCE_DIR}/src
+               "-DLUA_USER_H=\"pyro_luaconf.h\""
+               # Counted by the tests that assert the VM never reaches them.
+               -Wl,--wrap=strtof,--wrap=strtod,--wrap=malloc,--wrap=realloc
                ${CMAKE_CURRENT_LIST_DIR}/test/test_lua.c
                ${CMAKE_CURRENT_LIST_DIR}/src/lua/pyro_lua.c
                ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_arena.c
@@ -799,6 +798,7 @@ add_custom_target(lua_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_lua
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Lua sandbox and resource-limit tests"
+    VERBATIM
 )
 endif()
 
