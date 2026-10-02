@@ -9,6 +9,7 @@
 #include <string.h>
 #include "../src/config.h"
 #include "../src/flight_states.h"
+#include "../src/loop_period.h"
 #include "pressure_processing.h"
 
 /* Any time will do for T+0; far from zero, so no stamp is ever 0. */
@@ -24,6 +25,13 @@ typedef struct {
     config_t cfg;
     bool thinned; /* a row a second: the readings between are gone [DAT-08] */
 } header_t;
+
+/* A log without a state column replays, but nothing is checked against it. */
+#define NO_STATE (-1)
+
+static int logged_state(char **field, const header_t *h) {
+    return h->col[C_STATE] < 0 ? NO_STATE : (int)strtol(field[h->col[C_STATE]], NULL, 10);
+}
 
 /* Splits one line into at most max fields, in place. */
 static int split(char *line, char **field, int max) {
@@ -59,6 +67,7 @@ static const char *read_header(const char *csv, header_t *h) {
         size_t len = (size_t)(eol - p) < sizeof(line) - 1 ? (size_t)(eol - p) : sizeof(line) - 1;
         memcpy(line, p, len);
         line[len] = '\0';
+        line[strcspn(line, "\r")] = '\0';
         char mode[16];
         unsigned value;
         if (sscanf(line, "# Pyro1: %15s %u", mode, &value) == 2) {
@@ -170,7 +179,8 @@ static void step(run_t *r, uint32_t now) {
     ctx->current_state = dispatch_state(ctx, now);
     flight_update_outputs(ctx, now);
     r->out->rows++;
-    if (r->out->diverged_ms == 0 && ctx->last_sample - REPLAY_T0_MS == r->prev_ms && (int)before != r->prev_state)
+    if (r->prev_state != NO_STATE && r->out->diverged_ms == 0 && ctx->last_sample - REPLAY_T0_MS == r->prev_ms &&
+        (int)before != r->prev_state)
         r->out->diverged_ms = r->prev_ms;
     note_decided(r);
 }
@@ -208,7 +218,7 @@ static void feed_row(char **field, const header_t *h, void *arg) {
         ctx->last_sample = now;
         r->started = true;
         r->prev_ms = now - REPLAY_T0_MS;
-        r->prev_state = (int)strtol(field[h->col[C_STATE]], NULL, 10);
+        r->prev_state = logged_state(field, h);
         r->prev_raw = raw;
         return;
     }
@@ -217,7 +227,7 @@ static void feed_row(char **field, const header_t *h, void *arg) {
     pp_feed(raw, now);
     step(r, now);
     r->prev_ms = now - REPLAY_T0_MS;
-    r->prev_state = (int)strtol(field[h->col[C_STATE]], NULL, 10);
+    r->prev_state = logged_state(field, h);
     r->prev_raw = raw;
 }
 
@@ -245,7 +255,7 @@ bool replay_run(const char *csv, replay_events_t *out) {
     /* The median gives each sample a reading late, so the last one needs one
      * more reading to come out: its own again, a sample later. */
     if (r.started) {
-        uint32_t now = REPLAY_T0_MS + r.prev_ms + 20u;
+        uint32_t now = REPLAY_T0_MS + r.prev_ms + LOOP_PERIOD_MS;
         if (replay_row_hook)
             replay_row_hook(now);
         pp_feed(r.prev_raw, now);
