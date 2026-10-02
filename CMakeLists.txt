@@ -876,8 +876,7 @@ add_custom_target(http_tests
     COMMENT "HTTP stream parser and framing tests"
 )
 
-# Who runs the HTTP work units: core0's turn and budget, and the worker's
-# exclusive hold on the connections it takes (DD-061).
+# The HTTP work units' turn and budget (DD-061, DD-073).
 add_custom_target(http_work_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building HTTP work unit tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
@@ -939,7 +938,7 @@ add_custom_target(pressure_trace_tests
 )
 
 # /api/status from a snapshot, linked alone: the renderer reads nothing else.
-# The USB network's transmit queue, against a fake endpoint (G4-N).
+# The USB network's transmit queue, against a fake endpoint.
 add_custom_target(net_txq_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building network transmit queue tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
@@ -1012,7 +1011,7 @@ add_custom_target(flight_sim_tests
     COMMENT "Flight source tests"
 )
 
-# /api/net's rendering, the network's counters for the bench (G4-N).
+# /api/net's rendering, the network's counters for the bench.
 add_custom_target(net_stats_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building network counter tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src

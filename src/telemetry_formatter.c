@@ -122,10 +122,7 @@ void telemetry_landing(int32_t max_alt_cm, uint32_t flight_time_ms) {
 
 /* ── The state message, from the flight context ───────────────────── */
 
-/* The internal state as the ground station knows it: spec §4 and §9. A state
- * the ground station has no code for (GROUND_TEST, through ground_test.c)
- * reports as the pad. */
-static uint8_t state_to_telem_id(flight_state_t state) {
+uint8_t state_to_telem_id(flight_state_t state) {
     switch (state) {
     case PAD_IDLE:
         return 0;

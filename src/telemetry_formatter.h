@@ -13,6 +13,7 @@
 #define TELEMETRY_FORMATTER_H
 
 #include "config.h"
+#include "flight_states.h"
 #include <stdint.h>
 
 /* ── telem_format values (config.telem_format) ───────────────────── */
@@ -52,5 +53,10 @@ void telemetry_state(const telemetry_snapshot_t *s);
 void telemetry_apogee(int32_t max_alt_cm, uint32_t flight_time_ms);
 void telemetry_pyro_fire(uint8_t channel, int32_t alt_cm, uint32_t time_ms);
 void telemetry_landing(int32_t max_alt_cm, uint32_t flight_time_ms);
+
+/* The internal state as the ground station knows it: see
+ * docs/ground-station-interface-spec.md "4. Telemetry State Codes (the Fixed Contract)".
+ * A state it has no code for (BOOT_*, FAULT, GROUND_TEST) reports as the pad. */
+uint8_t state_to_telem_id(flight_state_t state);
 
 #endif /* TELEMETRY_FORMATTER_H */

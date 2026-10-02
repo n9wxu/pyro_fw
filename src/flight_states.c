@@ -1576,26 +1576,6 @@ const char *flight_diag_name(uint16_t bit) {
     }
 }
 
-/* See docs/ground-station-interface-spec.md "4. Telemetry State Codes (the Fixed Contract)". */
-static uint8_t state_to_telem_id(flight_state_t state) {
-    switch (state) {
-    case PAD_IDLE:
-        return 0;
-    case ASCENT:
-        return 1;
-    case FALLING:
-        return 2;
-    case DROGUE_DESCENT:
-        return 3;
-    case CHUTE_DESCENT:
-        return 4;
-    case LANDED:
-        return 5;
-    default:
-        return 0;
-    }
-}
-
 /* [TEL-03, CFG-SUBSYS-01] The in-flight cadence is telem_rate_hz, bounded by
  * what the UART can carry; 0 takes the TEL-03 default. */
 #define TELEM_DEFAULT_HZ 10

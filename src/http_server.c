@@ -564,12 +564,19 @@ static void apply_api_config(http_conn_t *hc, char *cfgbuf) {
          * over the running config and re-serialised, never written as it is;
          * [CFG-08] a key config_parse_ini() does not know is dropped. */
         config_t merged = fctx->config;
-        config_parse_ini(cfgbuf, &merged);
-        char cfgout[512];
+        int refused = config_parse_ini(cfgbuf, &merged);
+        if (refused > 0) {
+            /* [SYS-CFG-03] A value out of its field's range is refused whole,
+             * rather than saved with that field quietly left as it was. */
+            char err[96];
+            int n = snprintf(err, sizeof(err), "{\"error\":\"%d value(s) out of range or unreadable\"}", refused);
+            http_respond(hc, 400, JSON, err, (uint32_t)n);
+            return;
+        }
+        char cfgout[CONFIG_INI_MAX];
         int cfgn = config_serialize_ini(&merged, cfgout, (int)sizeof(cfgout));
         if (cfgn <= 0) {
-            /* More than hal_config_load() reads back. */
-            http_respond_str(hc, 500, JSON, "{\"error\":\"Merged config exceeds the 512-byte budget\"}");
+            http_respond_str(hc, 500, JSON, "{\"error\":\"Merged config exceeds CONFIG_INI_MAX\"}");
             return;
         }
 
