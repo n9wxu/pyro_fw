@@ -9,11 +9,8 @@
  * checks them at build time; the divider algebra gives them, and
  * test/test_plant.c holds the model to the bench's values.
  *
- * R_BLEED follows the board, not DESIGN.md: the schematic (pyro.kicad_sch,
- * not in this repository) has one R103 of 2.2 kohm, where DESIGN.md 2 says
- * 2.2 k and its section 3 says 2 x 4.7 k. No S9 indicator divider is placed,
- * so the bus pull-down is 14.99k || 2.2k = 1918 ohm, as DESIGN.md 4's
- * formulas use.
+ * R_BLEED is R103, one 2.2 kohm. No S9 indicator divider is placed, so the
+ * bus pull-down is 14.99k || 2.2k = 1918 ohm.
  *
  * Two elements are nonlinear and stamped linearized about the previous
  * step's node voltage: U9's reverse conduction above about 0.72 V, and the
