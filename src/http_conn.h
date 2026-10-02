@@ -28,6 +28,7 @@
 #define HTTP_LINE_MAX 256 /* request line, or a header line worth reading */
 #define HTTP_METHOD_MAX 8
 #define HTTP_PATH_MAX 64
+#define HTTP_HOST_MAX 64
 #define HTTP_HEAD_MAX 8192 /* the whole header block */
 #define HTTP_HDR_MAX 384   /* a response header block */
 
@@ -73,6 +74,8 @@ struct http_conn {
     char path[HTTP_PATH_MAX];
     bool head_only;
     uint32_t content_length;
+    char host[HTTP_HOST_MAX];
+    bool x_pyro;
 
     /* Head parser. */
     bool have_request_line;
@@ -131,5 +134,8 @@ void http_respond_str(http_conn_t *c, uint16_t status, const char *ctype, const 
 void http_respond_stream(http_conn_t *c, uint16_t status, const char *ctype, uint32_t len, const char *extra);
 
 const char *http_reason(uint16_t status);
+
+bool http_host_is_board(const char *host, uint8_t subnet);
+uint16_t http_origin_refusal(const http_conn_t *c, uint8_t subnet);
 
 #endif

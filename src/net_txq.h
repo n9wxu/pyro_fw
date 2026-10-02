@@ -47,4 +47,14 @@ void net_tx_drain(net_txq_t *q, const net_tx_ops_t *ops);
 /* Releases everything held: the link it was for is gone. */
 void net_tx_flush(net_txq_t *q, const net_tx_ops_t *ops);
 
+typedef struct {
+    void *(*alloc)(uint16_t size);
+    bool (*fill)(void *frame, const uint8_t *src, uint16_t size);
+    void (*release)(void *frame);
+} net_rx_ops_t;
+
+bool net_rx_take(void **slot, const net_rx_ops_t *ops, const uint8_t *src, uint16_t size);
+
+uint16_t net_tx_copy_len(uint32_t frame_len, uint16_t cap);
+
 #endif /* NET_TXQ_H */

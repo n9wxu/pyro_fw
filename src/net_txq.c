@@ -43,3 +43,22 @@ net_tx_result_t net_tx_offer(net_txq_t *q, const net_tx_ops_t *ops, void *frame)
     q->n++;
     return NET_TX_HELD;
 }
+
+/* What tud_network_recv_cb() does today. */
+bool net_rx_take(void **slot, const net_rx_ops_t *ops, const uint8_t *src, uint16_t size) {
+    if (*slot)
+        return false;
+    if (size) {
+        void *f = ops->alloc(size);
+        if (f) {
+            ops->fill(f, src, size);
+            *slot = f;
+        }
+    }
+    return true;
+}
+
+uint16_t net_tx_copy_len(uint32_t frame_len, uint16_t cap) {
+    (void)cap;
+    return (uint16_t)frame_len;
+}

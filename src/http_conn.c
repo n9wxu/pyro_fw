@@ -436,3 +436,15 @@ void http_conn_service(http_conn_t *c, const http_handlers_t *h) {
         c->phase = HTTP_DONE;
     }
 }
+
+bool http_host_is_board(const char *host, uint8_t subnet) {
+    (void)host;
+    (void)subnet;
+    return true;
+}
+
+uint16_t http_origin_refusal(const http_conn_t *c, uint8_t subnet) {
+    (void)c;
+    (void)subnet;
+    return 0;
+}
