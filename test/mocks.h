@@ -30,9 +30,9 @@ typedef struct {
     bool fault; /* injectable fault state */
     int fire_count;
     uint8_t last_fire_channel;
-    /* The board takes the call and energises nothing, as MK1C does while its
-     * firing sequence is unimplemented. Counted separately from fire_count,
-     * which counts channels that were actually energised. */
+    /* The board takes the call and energises nothing, as MK1C does when a
+     * precondition fails. Counted apart from fire_count, which counts
+     * channels that were energised. */
     bool refuse_fire;
     int refused_count;
     int sample_count; /* hal_pyro_sample() calls; one shared stimulus each */
