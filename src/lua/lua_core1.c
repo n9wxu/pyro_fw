@@ -180,10 +180,6 @@ bool lua_core1_ready(void) {
     return c1_ready != 0u;
 }
 
-bool lua_core1_flash_ok(void) {
-    return true;
-}
-
 const char *lua_core1_refusal(void) {
     return refusal;
 }

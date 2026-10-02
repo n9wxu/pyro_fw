@@ -38,6 +38,8 @@
 #if PYRO_HAS_LUA
 #include "lua_app.h"
 #include "lua_core1.h"
+#include "lua_platform_cfg.h"
+#include "pyro_lua.h"
 #endif
 
 #include "flash_op.h"
@@ -1164,14 +1166,16 @@ static void serve_lua_console(http_conn_t *hc) {
                  "\"console_dropped\":%lu,\"log_dropped\":%lu,\"log_refused\":%lu,"
                  "\"log_active\":%s,"
                  "\"c1_state\":%d,\"c1_loc\":%lu,\"c1_busy\":%lu,\"c1_go\":%lu,\"c1_seen\":%lu,"
-                 "\"c1_skipped\":%lu,\"c1_ready\":%s,\"c1_flash_ok\":%s,\"stack_free\":%lu,"
+                 "\"c1_skipped\":%lu,\"c1_ready\":%s,\"events_dropped\":%lu,\"bridge_dropped\":%lu,"
+                 "\"stack_free\":%lu,"
                  "\"text\":\"%s\"}",
                  esc_status, (unsigned long)lua_core1_heartbeat(), (unsigned long)lua_app_log_written(),
                  (unsigned long)lua_core1_console_dropped(), (unsigned long)lua_core1_log_dropped(),
                  (unsigned long)hal_log_text_dropped(), hal_log_active() ? "true" : "false", (int)lua_core1_state(),
                  (unsigned long)(dbg_loc & 0xffu), (unsigned long)((dbg_loc >> 8) & 0xffu), (unsigned long)dbg_go,
                  (unsigned long)dbg_seen, (unsigned long)dbg_skipped, lua_core1_ready() ? "true" : "false",
-                 lua_core1_flash_ok() ? "true" : "false", (unsigned long)lua_core1_stack_free(), esc);
+                 (unsigned long)pyro_lua_events_dropped(), (unsigned long)lua_plat_bridge_dropped(),
+                 (unsigned long)lua_core1_stack_free(), esc);
     if (blen < 0 || blen >= (int)sizeof(hc->work)) {
         http_respond_str(hc, 500, JSON, "{\"error\":\"console exceeds the response buffer\"}");
         return;

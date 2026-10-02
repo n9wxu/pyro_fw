@@ -89,9 +89,6 @@ const char *lua_core1_refusal(void);
  * not queued. budget_us is the tick's time box, events included. */
 void lua_core1_dispatch(uint32_t budget_us);
 
-/* Always true: flash does not depend on the Lua task [DD-074]. */
-bool lua_core1_flash_ok(void);
-
 /* The startup beep waits on this, so a board that beeps is running a script
  * rather than compiling one. */
 bool lua_core1_ready(void);

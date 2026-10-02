@@ -99,6 +99,9 @@ if [ ! -d "$LUA_DIR" ]; then
     mkdir -p "$ROOT/build-wasm-lua"
     git clone --depth 1 --branch v5.4.6 https://github.com/lua/lua.git "$LUA_DIR"
 fi
+# The firmware's patch (32-bit numbers, counted pattern matching): without it
+# src/lua/pyro_luaconf.h refuses to compile. Idempotent.
+(cd "$LUA_DIR" && cmake -P "$ROOT/src/lua/lua_patch.cmake")
 LUA_SRC=""
 for f in lapi lcode lctype ldebug ldo ldump lfunc lgc llex lmem lobject \
          lopcodes lparser lstate lstring ltable ltm lundump lvm lzio \

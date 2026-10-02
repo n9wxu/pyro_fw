@@ -262,6 +262,13 @@ bool hal_ground_test_asserted(void) {
 }
 
 bool mock_board_image_ok = true;
+char mock_lua_events[256];
+
+void lua_app_event(const char *name) {
+    size_t n = strlen(mock_lua_events);
+    snprintf(mock_lua_events + n, sizeof(mock_lua_events) - n, "%s;", name);
+}
+
 bool mock_config_unreadable;
 
 bool hal_board_image_ok(void) {
@@ -271,6 +278,7 @@ bool hal_board_image_ok(void) {
 void mock_reset_all(void) {
     mock_ground_test_pin = false;
     mock_board_image_ok = true;
+    mock_lua_events[0] = '\0';
     mock_config_unreadable = false;
     mock_fs_write_count = 0;
     mock_fs_locked_count = 0;

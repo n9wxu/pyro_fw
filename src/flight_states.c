@@ -11,6 +11,9 @@
 __attribute__((weak)) bool lua_app_ready_or_absent(void) {
     return true;
 }
+__attribute__((weak)) void lua_app_event(const char *name) {
+    (void)name;
+}
 
 /* A platform with no ground test pin. */
 __attribute__((weak)) bool hal_ground_test_asserted(void) {
@@ -77,6 +80,7 @@ static const flight_sample_t *buf_newest(const flight_context_t *ctx) {
 
 /* An event row in the flight log, against the newest sample. */
 static void log_event(flight_context_t *ctx, uint8_t event) {
+    lua_app_event(flight_event_name(event)); /* queued, never blocks */
     const flight_sample_t *s = buf_newest(ctx);
     if (hal_log_active() && state_is_logged((flight_state_t)s->state))
         hal_log_sample(s->time_ms, s->pressure_pa, s->altitude_cm, s->state, s->under_thrust, event);
