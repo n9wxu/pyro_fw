@@ -48,6 +48,7 @@ static void typical(status_snap_t *s) {
     strcpy(s->rocket_name, "Test");
     s->sensor = "MS5607";
     s->board = "Pyro MK1C";
+    s->board_id = "mk1c";
     s->pyro_bus_q = -1;
     s->pyro_bus_adc = 812;
     s->pyro_vbat_adc = 2900;
@@ -137,6 +138,7 @@ static const char *const TYPICAL[][2] = {
     {"rocket_name", "\"Test\""},
     {"sensor", "\"MS5607\""},
     {"board", "\"Pyro MK1C\""},
+    {"board_id", "\"mk1c\""},
     {"pyro_bus_q", "-1"},
     {"pyro_bus_adc", "812"},
     {"pyro_vbat_adc", "2900"},
@@ -317,7 +319,7 @@ void test_SJ_02_the_widest_status_fits_its_bound(void) {
     static const char *const long40 = "0123456789012345678901234567890123456789";
     status_snap_t s;
     typical(&s);
-    s.state = s.fw_version = s.sensor = s.board = s.recovery = s.beep = s.beep_kind = long40;
+    s.state = s.fw_version = s.sensor = s.board = s.board_id = s.recovery = s.beep = s.beep_kind = long40;
     s.pyro_mode[0] = s.pyro_mode[1] = long40;
     s.alt_cm = s.max_alt_cm = s.vspeed_cms = s.pressure_pa = s.prev_stage = INT32_MIN;
     s.raw_pa = s.pad_speed_cms = s.pyro_bus_q = s.pyro_bus_adc = s.pyro_vbat_adc = INT32_MIN;

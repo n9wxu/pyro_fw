@@ -28,9 +28,10 @@ API_URL = f"https://api.github.com/repos/{REPO}/releases"
 # default board. LEGACY_ASSET_NAME is tried only as a fallback, so this
 # script still updates from them.
 def asset_name_for(board):
-    return f"pyro_fw_{board}_fota.bin"
+    return f"fw_{board}_fota.bin"
 
 
+# Releases up to and including v2.2.0 shipped a single unqualified image.
 LEGACY_ASSET_NAME = "pyro_fw_c_fota_image.bin"
 
 parser = argparse.ArgumentParser(description="Update Pyro MK1B from GitHub releases")
@@ -53,6 +54,25 @@ def get_device_status(host):
     except Exception as e:
         print(f"Error: Cannot reach device at {host}: {e}")
         return None
+
+
+def board_id_of(status):
+    """The board token from /api/status.
+
+    board_id is the token the asset names use. Firmware older than it
+    reported only the display name, so that is reduced as a fallback --
+    "Pyro MK1A" to "mk1a" -- strictly, so a decorated name yields None
+    instead of a guess.
+    """
+    if not status:
+        return None
+    if status.get("board_id"):
+        return str(status["board_id"])
+    name = str(status.get("board", "")).strip()
+    if not name:
+        return None
+    last = name.split()[-1].lower()
+    return last if last.isalnum() else None
 
 
 def get_device_version(host):
@@ -182,7 +202,7 @@ def main():
     # Get current device version
     status = get_device_status(args.host)
     current = status.get("fw_version", "unknown") if status else None
-    board = args.board or (status.get("board") if status else None)
+    board = args.board or (board_id_of(status) if status else None)
     if board:
         print(f"Device board: {board}")
     elif not args.check:

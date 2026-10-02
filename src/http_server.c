@@ -806,6 +806,7 @@ static void status_capture(status_snap_t *s) {
     memcpy(s->rocket_name, (const char *)g_status.rocket_name, sizeof(s->rocket_name) - 1);
     s->sensor = pressure_sensor_name();
     s->board = PYRO_BOARD_NAME;
+    s->board_id = BOARD_SHORT_STR;
 
     /* Raw counts rather than volts, so a marginal reading stays visible. */
     board_pyro_raw_t praw = {0};

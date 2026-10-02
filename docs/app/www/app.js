@@ -6,7 +6,47 @@ var missCount = 0;
 var showAllVersions = false;
 
 var GITHUB_REPO = 'n9wxu/pyro_fw';
-var ASSET_NAME = 'pyro_fw_c_fota_image.bin';
+/* Firmware assets are fw_<board>_fota.bin. The board comes from the device,
+ * never from a guess: all the boards are RP2040, so the wrong image will
+ * run, and its pin map is wrong -- which on a firing board is not a
+ * cosmetic problem. Releases up to v2.2.0 carried one unqualified image,
+ * kept here only as a fallback for updating off those. */
+var LEGACY_ASSET_NAME = 'pyro_fw_c_fota_image.bin';
+var currentBoard = null;
+
+function assetNameFor(board) { return 'fw_' + board + '_fota.bin'; }
+
+/* The board token for a /api/status payload.
+ *
+ * board_id is the token and is what asset names use. Firmware older than
+ * it reported only the display name, so that is reduced to a token as a
+ * fallback -- "Pyro MK1A" to "mk1a". The fallback is deliberately strict:
+ * anything that is not one bare word of letters and digits yields null, so
+ * a decorated name like "Pyro MK1C (simulated)" refuses rather than
+ * inventing a board. */
+function boardIdOf(d) {
+  if (d && d.board_id) return String(d.board_id);
+  if (!d || !d.board) return null;
+  var parts = String(d.board).trim().split(/\s+/);
+  var last = parts[parts.length - 1].toLowerCase();
+  return /^[a-z0-9]+$/.test(last) ? last : null;
+}
+
+/* The asset for this device's board, or null if the release has none.
+ * A board-specific asset always wins over the legacy one: preferring the
+ * legacy asset is exactly how another board's firmware would get flashed. */
+function findAsset(rel) {
+  var assets = rel.assets || [];
+  var i;
+  if (currentBoard) {
+    var want = assetNameFor(currentBoard);
+    for (i = 0; i < assets.length; i++)
+      if (assets[i].name === want) return assets[i];
+  }
+  for (i = 0; i < assets.length; i++)
+    if (assets[i].name === LEGACY_ASSET_NAME) return assets[i];
+  return null;
+}
 var MAX_ALT = {0:800000, 1:8000, 2:26247};
 var UNIT_LABELS = {0:'cm', 1:'m', 2:'ft'};
 var UNIT_NAMES = ['cm','m','ft'];
@@ -124,6 +164,7 @@ function update() {
 
     /* Version info */
     currentVersion = d.fw_version;
+    currentBoard = boardIdOf(d);
     document.getElementById('uFwVer').textContent = d.fw_version;
     document.getElementById('uWebVer').textContent = WEB_VERSION;
 
@@ -556,11 +597,20 @@ function checkUpdate() {
       if (ver === currentVersion) {
         msg.style.color = 'green'; msg.textContent = ' Up to date (v' + ver + ')';
       } else {
-        var asset = rel.assets.find(function(a){return a.name === ASSET_NAME});
-        if (!asset) throw new Error(ASSET_NAME + ' not found');
+        var asset = findAsset(rel);
+        if (!asset) {
+          throw new Error(currentBoard
+            ? 'No ' + assetNameFor(currentBoard) + ' in v' + ver +
+              ' — that release has no image for this board'
+            : 'Device has not reported its board yet');
+        }
+        var forBoard = currentBoard && asset.name === assetNameFor(currentBoard);
         msg.style.color = 'blue';
         msg.innerHTML = ' v' + currentVersion + ' → v' + ver +
-          ' <a href="' + asset.browser_download_url + '">⬇ Download</a> then Upload below';
+          ' <a href="' + asset.browser_download_url + '">⬇ ' + asset.name + '</a>' +
+          (forBoard ? ' (' + currentBoard + ')' : ' <b>— not board-specific, check it is for ' +
+            (currentBoard || 'this board') + '</b>') +
+          ' then Upload below';
       }
     }).catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ' + e.message; });
 }
@@ -582,8 +632,9 @@ function toggleAllVersions() {
         var date = rel.published_at ? rel.published_at.substring(0,10) : '';
         var type = rel.prerelease ? 'beta' : 'release';
         var isCurrent = (ver === currentVersion);
-        var asset = rel.assets.find(function(a){return a.name === ASSET_NAME});
-        var dl = asset ? '<a href="' + asset.browser_download_url + '">⬇</a>' : '—';
+        var asset = findAsset(rel);
+        var dl = asset ? '<a href="' + asset.browser_download_url + '" title="' +
+                 asset.name + '">⬇</a>' : '—';
         html += '<tr class="' + (isCurrent?'current':'') + '"><td>v' + ver + '</td><td>' + date +
           '</td><td>' + type + '</td><td>' + (isCurrent ? '✓ current' : dl) + '</td></tr>';
       });
@@ -625,6 +676,7 @@ function waitForReboot(msg) {
       msg.style.color = 'green';
       msg.textContent = ' Online — v' + d.fw_version;
       currentVersion = d.fw_version;
+      currentBoard = boardIdOf(d);
       pendingConfig = null;
       deviceConfig = null;
       document.getElementById('cfgDirty').style.display = 'none';

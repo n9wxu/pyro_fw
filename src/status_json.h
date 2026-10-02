@@ -36,6 +36,11 @@ typedef struct {
     const char *log_rate; /* 1hz, events or full */
     char rocket_id[9], rocket_name[9];
     const char *sensor, *board;
+    /* board is the display name ("Pyro MK1A"); board_id is the short token
+     * ("mk1a") that names things -- release assets, image descriptors, build
+     * directories. A consumer choosing a firmware image must key off the
+     * token, never off the display string. */
+    const char *board_id;
     int32_t pyro_bus_q, pyro_bus_adc, pyro_vbat_adc; /* -1: none on this board */
 
     uint32_t loop_max_us, loop_overruns, loop_late_max_us, loop_count;
