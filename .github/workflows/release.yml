@@ -1,8 +1,19 @@
 name: Release
 
 on:
+  # A deliberate major or minor release: scripts/bump_version.sh pushes the
+  # tag and this runs from it.
   push:
     tags: ['v*']
+  # The automatic patch release, called by Build once main is green. It is
+  # the same job either way, so there is one definition of what a release
+  # is rather than two that drift.
+  workflow_call:
+    inputs:
+      version:
+        description: The version to release, without the leading v
+        required: true
+        type: string
 
 env:
   PICO_SDK_VERSION: 2.2.0
@@ -32,8 +43,19 @@ jobs:
           git clone --depth 1 --branch ${{ env.PICO_SDK_VERSION }} https://github.com/raspberrypi/pico-sdk.git /tmp/pico-sdk
           cd /tmp/pico-sdk && git submodule update --init lib/tinyusb lib/mbedtls lib/lwip lib/btstack lib/cyw43-driver
 
-      - name: Set version from tag
-        run: echo "${GITHUB_REF_NAME#v}" > VERSION
+      - name: Settle the version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            V="${{ inputs.version }}"          # called by Build
+          else
+            V="${GITHUB_REF_NAME#v}"           # run from a pushed tag
+          fi
+          # A release is the last chance to catch a version that is not one.
+          python3 support/version.py --validate "$V" >/dev/null
+          echo "$V" > VERSION
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "releasing $V"
 
       - name: Build every supported board
         env:
@@ -91,6 +113,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.ver.outputs.version }}
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          prerelease: ${{ contains(steps.ver.outputs.version, 'beta') || contains(steps.ver.outputs.version, 'rc') }}
           files: dist/*
