@@ -19,9 +19,6 @@
 
 /* ── Simulated resources ──────────────────────────────────────────── */
 
-/* The default set, which is also what the WASM UI renders. lua_plat_configure()
- * can replace it, so the simulator honours the same contract the board does
- * and a script written here meets the same resource rules. */
 /* The index into these is the ctx a vtable receives. */
 static int output_val[4];
 static int input_val[4];
@@ -33,10 +30,8 @@ static char cfg_names[4][LUA_NAME_MAX];
 
 /* ── The interfaces ───────────────────────────────────────────────
  *
- * ctx is the slot index, passed as a value rather than a pointer, because
- * here a resource is nothing but its index. Named *_vt: prove_core0.py folds
- * exactly that suffix into the call graph, and the simulator holding to the
- * convention is what keeps the two implementations checkable the same way. */
+ * ctx is the slot index, passed as a value, because here a resource is
+ * nothing but its index. Named *_vt like the board's (DD-061). */
 
 #define SLOT(ctx) ((int)(intptr_t)(ctx))
 #define CTX(i) ((void *)(intptr_t)(i))
@@ -70,15 +65,13 @@ static uint32_t sim_pad(const lua_pin_cfg_t *cfg, int i) {
 }
 
 /* The default set, which is also what the WASM UI renders.
- * lua_plat_configure() replaces it, so the simulator honours the same
- * contract the board does and a script written here meets the same resource
- * rules.
+ * lua_plat_configure() replaces it, so a script written here meets the same
+ * resource rules as on a board.
  *
  * A constructor because on a board the resources exist before anything asks:
  * lua_plat_configure() runs at boot, long before pyro_lua_init(). The WASM
- * host and the host tests start the VM without configuring anything, and a
- * simulated board that came up with an empty table would make them exercise a
- * state the target never has. */
+ * host and the host tests start the VM without configuring anything, and an
+ * empty table would make them exercise a state the target never has. */
 __attribute__((constructor)) static void publish_demo_set(void) {
     lua_iface_reset();
     /* Notional pads, so the simulator spends claims the way the board does
@@ -91,20 +84,14 @@ __attribute__((constructor)) static void publish_demo_set(void) {
     lua_iface_publish(PAD(23), "string", LUA_IF_PIXEL, &sim_pixel_vt, NULL);
 }
 
-int lua_plat_pin_count(void) {
-    return 4;
-}
+/* The UI renders the duty value as brightness rather than a waveform. */
+void lua_plat_pin_service(void) {}
 
-void lua_plat_pin_service(void) {
-    /* Software PWM is a hardware concern; the simulator shows the duty value
-     * directly, which is what the UI renders as brightness. */
-}
-
-int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixels) {
+int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, uint32_t baud, int pixels) {
     (void)baud;
     if (!cfg || n <= 0) {
         publish_demo_set();
-        return 0;
+        return LUA_PLAT_OK;
     }
 
     lua_iface_reset();
@@ -141,7 +128,7 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, unsigned baud, int pixel
         lua_iface_publish(PAD(23), "string", LUA_IF_PIXEL, &sim_pixel_vt, NULL);
     }
     board_lua_publish();
-    return 0;
+    return LUA_PLAT_OK;
 }
 
 /* ── Simulated UART ───────────────────────────────────────────────── */
@@ -277,7 +264,7 @@ uint32_t lua_plat_telem_seq(void) {
     return sim_telem_seq;
 }
 
-/* On the target this hands bytes to core0, which owns the log file. Here
+/* On the target this hands bytes to the flight task, which logs them. Here
  * there is one core and no flash, but the buffer keeps the simulator a
  * faithful bench: a script that floods the log drops output in both places
  * rather than only on hardware. */
@@ -441,8 +428,8 @@ void sim_lua_console_clear(void) {
     console_buf[0] = '\0';
 }
 
-/* Core0 kills core1 and then puts its outputs down. On the simulator there is
- * no second core and no hardware, but the visible state has to match the
+/* The flight task stops the Lua task and then puts its outputs down. The
+ * simulator has no hardware, but the visible state has to match the
  * target's or the sim stops being a faithful bench for the failure. */
 void lua_plat_safe_outputs(void) {
     for (unsigned i = 0; i < sizeof(output_val) / sizeof(output_val[0]); i++) {

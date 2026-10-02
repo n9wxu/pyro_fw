@@ -1,5 +1,5 @@
 /*
- * Lua on core1 — lifecycle, ticks, and the flight snapshot.
+ * Lua on core1 -- lifecycle, ticks, events and the flight snapshot.
  *
  * The Lua task runs pinned to core1 at P, beside the net and storage tasks
  * [DD-073]. This module keeps one sentence true:
@@ -9,18 +9,19 @@
  * Three things discharge it:
  *
  *   1. The Lua task acquires no shared resource. The flight task claims every
- *      PIO state machine, program offset and DMA channel at boot, and the
- *      task writes only the registers it was handed. It allocates nothing
+ *      pad, PIO state machine, program offset and DMA channel at boot, and
+ *      the task writes only the registers it was handed. It allocates nothing
  *      from the system heap -- Lua has its own arena -- and touches no file.
  *
  *   2. The flight task asks, never waits. A tick is requested with a
  *      notification that does not block; a tick still running when the next
- *      is due skips it. Everything back -- console and log text -- goes
- *      through rings the flight task drains without waiting.
+ *      is due skips it. Events and the flight snapshot go one way through
+ *      structures the flight task writes without waiting, and console and log
+ *      text come back through rings it drains without waiting.
  *
  *   3. The stop is unilateral: vTaskSuspend() needs no consent, and what the
- *      VM drove is put down after it. Flash no longer depends on where core1
- *      is: every flash operation parks the other core itself (flash_op.h).
+ *      VM drove is put down after it. Flash does not depend on where the Lua
+ *      task is: every flash operation parks the other core itself [DD-074].
  *
  * SPDX-License-Identifier: MIT
  */
@@ -30,15 +31,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* The flight task publishes and the Lua task reads, through a seqlock, so
- * the flight task never waits and a reader that keeps losing the race pays
- * for it alone. */
+/* Published by the flight task, read by the Lua task, through a seqlock: the
+ * writer never waits, and a reader that keeps losing the race pays for it
+ * alone. */
 typedef struct {
     int32_t pressure_pa;
     int32_t altitude_cm;
     int32_t speed_cms;
     int32_t max_alt_cm;
-    int state;
+    int state; /* flight_state_t */
     uint32_t time_ms;
     int pyro[2];
     /* The booleans in pyro[] round a degraded connector up to "good"; only
@@ -49,19 +50,19 @@ typedef struct {
     uint32_t telem_seq;
 } lua_flight_t;
 
-/* The Lua task's side: a stable snapshot. */
+/* The Lua task's side: the last consistent snapshot. */
 const lua_flight_t *lua_flight_snapshot(void);
 
-/* The flight task's side: publish the current flight state. Never blocks. */
+/* The flight task's side. Never blocks. */
 void lua_core1_publish(const lua_flight_t *f);
 
 /* ── Lifecycle ────────────────────────────────────────────────────── */
 
+/* Written only by the flight task. The values reach /api/lua/console. */
 typedef enum {
-    LUA_C1_OFF = 0, /* never started, or disabled by configuration */
-    LUA_C1_RUNNING, /* VM live                                     */
-    LUA_C1_PARKED,  /* unused since the task model                 */
-    LUA_C1_DEAD,    /* stopped; stays stopped until reboot         */
+    LUA_C1_OFF = 0,     /* never started, or disabled by configuration */
+    LUA_C1_RUNNING = 1, /* started                                     */
+    LUA_C1_DEAD = 3,    /* stopped; stays stopped until reboot         */
 } lua_c1_state_t;
 
 /* Before the scheduler starts: the task, waiting for lua_core1_start(). */
@@ -75,14 +76,20 @@ lua_c1_state_t lua_core1_state(void);
 const char *lua_core1_error(void);
 uint32_t lua_core1_heartbeat(void);
 
+/* Why the task refused to run the script -- the start-up check's first
+ * finding -- or NULL. The Lua task checks the script against the bound
+ * resources before loading it, on its own stack, which is sized for the
+ * parser. */
+const char *lua_core1_refusal(void);
+
 /* ── Ticks ────────────────────────────────────────────────────────
  *
  * The flight task asks for one tick() a period. Never blocks, and does
  * nothing while the last tick is still running: a skipped tick is counted,
- * not queued. budget_us bounds the tick through Lua's instruction hook. */
+ * not queued. budget_us is the tick's time box, events included. */
 void lua_core1_dispatch(uint32_t budget_us);
 
-/* Always true: kept so /api/lua/console keeps its keys. */
+/* Always true: flash does not depend on the Lua task [DD-074]. */
 bool lua_core1_flash_ok(void);
 
 /* The startup beep waits on this, so a board that beeps is running a script
@@ -92,7 +99,8 @@ bool lua_core1_ready(void);
 /* Unilateral, terminal. Safe to call at any time from the flight task. */
 void lua_core1_kill(void);
 
-/* Never blocks; drops the event while the task holds an unconsumed one. */
+/* A flight event for on_event(), delivered before the next tick. Never
+ * blocks; dropped and counted when the queue is full or Lua is not running. */
 void lua_core1_event(const char *name);
 
 /* Drain whatever the script printed, for the web console. Returns bytes copied. */
@@ -110,9 +118,8 @@ uint32_t lua_core1_log_dropped(void);
 /* Watches the heartbeat and stops a wedged task. Never blocks. */
 void lua_core1_service(uint32_t now_ms);
 
-/* The task's 12 kB stack. Both read the kernel's high-water mark: stack_ok is
- * false with 64 bytes or fewer never used. */
-bool lua_core1_stack_ok(void);
+/* The task's stack, from the kernel's high-water mark: bytes never used, and
+ * a stop when C1_STACK_MARGIN_WORDS or fewer are left. */
 uint32_t lua_core1_stack_free(void);
 void lua_core1_check_stack(void);
 
