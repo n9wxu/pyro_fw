@@ -1,6 +1,8 @@
 /*
  * The ground test procedure's schedule (ground_test_seq.c), stepped once a
  * 20 ms loop against a fake clock [GND-TEST-05..11].
+ *
+ * Verifies [GND-TEST-07..11, GND-TEST-13].
  */
 #include "../src/loop_period.h"
 #include "unity.h"
@@ -236,13 +238,14 @@ void test_GT_a_busy_fire_is_asked_again(void) {
     TEST_ASSERT_UINT32_WITHIN(3u * LOOP_PERIOD_MS, log_.fire_ms[0] + GT_TONE_MS + GT_COUNTDOWN_MS, log_.fire_ms[1]);
 }
 
-/* A refusal is recorded and the procedure goes on. */
-void test_GT_a_refusal_is_recorded_and_the_procedure_goes_on(void) {
-    answer = GT_FIRE_REFUSED;
+/* [GND-TEST-13] A fire that energised nothing is recorded and the procedure
+ * goes on. */
+void test_GND_TEST_13_a_fire_that_energised_nothing_is_recorded_and_the_procedure_goes_on(void) {
+    answer = GT_FIRE_FAULT;
     begin_and_release(true, true);
     loop_for(30000u);
-    TEST_ASSERT_EQUAL(GT_FIRE_REFUSED, s.result[0]);
-    TEST_ASSERT_EQUAL(GT_FIRE_REFUSED, s.result[1]);
+    TEST_ASSERT_EQUAL(GT_FIRE_FAULT, s.result[0]);
+    TEST_ASSERT_EQUAL(GT_FIRE_FAULT, s.result[1]);
     TEST_ASSERT_EQUAL(GT_DONE, s.phase);
     TEST_ASSERT_EQUAL(1, sounds_of(GT_SOUND_ALL_CLEAR));
 }
@@ -355,7 +358,7 @@ int main(void) {
     RUN_TEST(test_GT_reasserting_in_the_second_countdown_stops_the_second);
     RUN_TEST(test_GT_the_countdown_is_a_second_a_count);
     RUN_TEST(test_GT_a_busy_fire_is_asked_again);
-    RUN_TEST(test_GT_a_refusal_is_recorded_and_the_procedure_goes_on);
+    RUN_TEST(test_GND_TEST_13_a_fire_that_energised_nothing_is_recorded_and_the_procedure_goes_on);
     RUN_TEST(test_GT_done_is_final);
     RUN_TEST(test_GT_phase_names);
     RUN_TEST(test_GT_SW_switch_to_ground);

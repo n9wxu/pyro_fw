@@ -2,6 +2,8 @@
  * /api/net's rendering (net_stats.c): the network's counters for the bench,
  * so an HTTP outage (G4-N) names what ran out. Keys, their order and their
  * formatting are the API.
+ *
+ * Verifies [WEB-API-13].
  */
 #include "unity.h"
 #include "net_stats.h"

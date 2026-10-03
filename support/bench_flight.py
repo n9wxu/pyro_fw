@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """Fly a profile on a board on the bench (src/bench_flight.h, DD-078).
 
+Verifies on hardware [SYS-SIM-01, SIM-01..04, FLT-BROWN-04].
+
     support/bench_flight.py 192.168.42.1                      3 km, the board's defaults
     support/bench_flight.py 192.168.42.1 --apogee 30000 --boost 4 --drogue 25
     support/bench_flight.py 192.168.42.1 --no-thin            a drogue at one rate
+    support/bench_flight.py 192.168.42.1 --fail drogue        its canopy never opens (SIM-04)
 
 Turns test mode on, starts the profile, and follows /api/sim and /api/status
 once a second until the machine lands and the profile ends. Prints each state
 change, the fires, and what the loop, the flash and the logs counted. Every
 fire on the board is mocked from the start until it reboots.
 
-Exit status 1 when the flight did not land, the drogue did not fire within
-APOGEE_TOL_S of the profile's apogee, the main did not fire, the loop overran
-or a flash operation was refused.
+Exit status 1 when the flight did not land, pyro 1 did not fire within
+APOGEE_TOL_S of the profile's apogee, pyro 2 did not fire, the loop overran
+or a flash operation was refused. With --fail, a board whose re-fire or
+emergency speeds are set must also have fired a channel more than once.
 """
 import argparse
 import json
@@ -26,6 +30,11 @@ APOGEE_TOL_S = 4.0  # the drogue's fire, as seen at this script's 1 s poll
 def get(host, path):
     with urllib.request.urlopen(f"http://{host}{path}", timeout=5) as r:
         return json.loads(r.read())
+
+
+def get_text(host, path):
+    with urllib.request.urlopen(f"http://{host}{path}", timeout=5) as r:
+        return r.read().decode(errors="replace")
 
 
 def post(host, path):
@@ -52,6 +61,8 @@ def main():
     ap.add_argument("--main", type=float, help="m/s (6)")
     ap.add_argument("--pad", type=float, help="seconds on the pad first (5)")
     ap.add_argument("--no-thin", action="store_true", help="the drogue's rate at every height")
+    ap.add_argument("--fail", choices=("drogue", "main", "both"), help="a canopy that never opens")
+    ap.add_argument("--ballistic", type=float, help="m/s with no canopy out (80)")
     ap.add_argument("--timeout", type=float, default=3600.0)
     a = ap.parse_args()
 
@@ -65,8 +76,8 @@ def main():
         print("test mode refused:", code, r)
         return 1
     given = [("apogee", a.apogee), ("boost", a.boost), ("drogue", a.drogue), ("main_alt", a.main_alt),
-             ("main", a.main), ("pad", a.pad), ("thin", 0 if a.no_thin else None)]
-    q = "&".join(f"{k}={v:g}" for k, v in given if v is not None)
+             ("main", a.main), ("pad", a.pad), ("thin", 0 if a.no_thin else None), ("ballistic", a.ballistic)]
+    q = "&".join([f"{k}={v:g}" for k, v in given if v is not None] + ([f"fail={a.fail}"] if a.fail else []))
     path = "/api/sim/flight" + ("?" + q if q else "")
     if len(path) >= 64:
         print(f"{path} is {len(path)} characters; the board takes 63. Leave defaults out.")
@@ -117,8 +128,8 @@ def main():
     st = get(a.host, "/api/status")
     s = get(a.host, "/api/sim")
     print()
-    print(f"profile peak {s['peak_m']:.0f} m; board max_alt {st['max_alt_cm'] / 100:.0f} m "
-          f"(SNS-ALT-02 clamps at 8000); main_forced={st['main_forced']} refires={st['pyro1_refires']}")
+    print(f"profile peak {s['peak_m']:.0f} m; board max_alt {st['max_alt_cm'] / 100:.0f} m; "
+          f"pulses {st['pyro_pulses']} emergency_fire={st['emergency_fire']} resume: {st['resume']}")
     counts = {k: st.get(k, 0) - base[k] for k in base}
     print("during the flight:", ", ".join(f"{k} +{v}" for k, v in counts.items()),
           f"loop_max_us {st['loop_max_us']}, loop_late_max_us {st['loop_late_max_us']}")
@@ -132,9 +143,16 @@ def main():
     ok = st["state"] == "LANDED" and s["fires"][0] >= 1 and s["fires"][1] >= 1
     ok &= counts["loop_overruns"] == 0 and counts["flash_refusals"] == 0
     late = None if fire_t[0] is None else fire_t[0] - s["t_apogee_s"]
-    print(f"drogue {'never fired' if late is None else f'{late:+.1f} s from the profile apogee'} "
+    print(f"pyro 1 {'never fired' if late is None else f'{late:+.1f} s from the profile apogee'} "
           f"(t={s['t_apogee_s']:.1f} s)")
     ok &= late is not None and abs(late) <= APOGEE_TOL_S
+    if a.fail:
+        cfg = get_text(a.host, "/api/config")
+        rules = [k for k in ("pyro1_refire_speed", "pyro2_refire_speed", "emergency_fire_speed")
+                 if f"{k}=0" not in cfg.replace("\r", "").split("\n") and f"{k}=" in cfg]
+        refired = max(st["pyro_pulses"]) > 1
+        print(f"fire rules set: {', '.join(rules) or 'none'}; a channel fired again: {refired}")
+        ok &= refired or not rules
     print("PASS" if ok else "FAIL")
     return 0 if ok else 1
 

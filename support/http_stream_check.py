@@ -2,6 +2,8 @@
 """
 http_stream_check.py -- the HTTP server against a byte stream, on a live board.
 
+Verifies on hardware [WEB-HTTP-01..04, WEB-API-07].
+
 The server must not depend on how TCP happens to cut a request. This sends
 requests over raw sockets in deliberately awkward pieces -- the header block a
 byte at a time, the body in a later write, two requests in one write -- and

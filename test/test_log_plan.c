@@ -3,6 +3,8 @@
  * the log comes out in time order whatever it keeps.
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Verifies [FLT-LOG-07].
  */
 #include "unity.h"
 #include "../src/flight_events.h"

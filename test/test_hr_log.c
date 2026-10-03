@@ -2,6 +2,8 @@
  * The high-rate log (src/sd/hr_log.c) on the host [DD-077]: its real reader
  * and writer, stepped by hand, against FatFs on a RAM disk. A fake IMU
  * numbers its sets in g[0], so a gap anywhere in a log is visible.
+ *
+ * Verifies [SYS-DATA-04, HR-01, HR-02, HR-04..06].
  */
 #include "unity.h"
 #include "hr_log.h"
@@ -14,7 +16,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-void hr_log_test_power_cut(void);
 
 /* ── The world the log sees ───────────────────────────────────────── */
 
@@ -286,7 +287,7 @@ void test_HR_04_a_log_a_power_cut_left_is_kept_under_a_number(void) {
     hr_stats_t s;
     hr_log_get_stats(&s);
     TEST_ASSERT_TRUE(s.logging);
-    hr_log_test_power_cut();
+    hr_log_init(); /* the board restarts with the file as the cut left it */
     hr_reader_begin();
     run(3, true); /* the writer prepares again: next.bin is found holding a log */
     TEST_ASSERT_TRUE(exists("/logs/hr0002.bin"));

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Comprehensive network test for Pyro MK1B with live TUI.
 
+Verifies on hardware [SYS-WEB-02, WEB-NET-01..04].
+
 Usage:
   ./test_network.py                     Interactive mode
   ./test_network.py [options] [host]    Direct mode

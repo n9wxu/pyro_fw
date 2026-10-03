@@ -8,6 +8,8 @@
  * every whole record before the cut.
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Verifies [DAT-02, DAT-03, DAT-06, DAT-07, DAT-10, WEB-API-06, FLT-LOG-06].
  */
 #include "unity.h"
 #include "../src/config.h"

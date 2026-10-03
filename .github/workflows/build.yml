@@ -73,11 +73,14 @@ jobs:
         env:
           CI_BUILD: 1
 
-      - name: Run unit tests
-        run: cd build && ninja host_tests
-
-      - name: Run Lua sandbox tests
-        run: cd build-mk1c && ninja lua_tests
+      # Every host suite, from the one list the local gate runs: the flight
+      # software through the mocked HAL, each module on its own, the boards'
+      # pyro backends against their plants, and the records against the code
+      # (trace_check, trace_matrix, structure_check, wait_check).
+      - name: Run host tests
+        run: scripts/run_host_tests.sh
+        env:
+          CI_BUILD: 1
 
       # Standing guard on the core1 safety rule: core0 must never wait on
       # anything core1 can hold. See docs/core1_hazard.md -- the rule is a
@@ -107,22 +110,19 @@ jobs:
             --error-exitcode=0 \
             --inline-suppr \
             -I src/ \
-            src/flight_states.c src/telemetry_formatter.c src/buzzer.c src/hal.h \
+            $(cat src/flight_sources.txt) src/buzzer.c src/hal.h \
             2>&1 | tee cppcheck-report.txt
           echo "=== Cppcheck summary ==="
           grep -c "error\|warning\|style\|performance\|portability" cppcheck-report.txt || echo "Clean"
 
       - name: Format check (clang-format)
         run: |
-          # Three renames have silently emptied this list before:
-          # hal_hardware.c -> src/hal_common/hal_common.c,
-          # telemetry.c -> src/telemetry_formatter.c, and the boards'
-          # hal_board.c -> board_info.c. A missing file makes
-          # clang-format error out and check nothing, and the step ends in
-          # `|| echo ::warning::`, so it stays green while checking nothing.
-          # Rename a file and you must fix it here, in cppcheck and in pmccabe.
+          # A missing file makes clang-format error out and check nothing, and
+          # the step ends in `|| echo ::warning::`, so it stays green while
+          # checking nothing. The flight software's files come from the list
+          # the build uses; rename any other and it must be fixed here.
           clang-format --dry-run --Werror \
-            src/flight_states.c src/telemetry_formatter.c src/buzzer.c \
+            $(cat src/flight_sources.txt) src/flight_internal.h src/flight_states.h src/buzzer.c \
             src/hal.h src/main_hardware.c \
             src/board_if.h src/board_id.h \
             src/hal_common/hal_common.c src/hal_common/board_defaults.c \
@@ -138,63 +138,15 @@ jobs:
       - name: Cyclomatic complexity (pmccabe)
         run: |
           echo "=== Functions with complexity > 10 ==="
-          pmccabe src/flight_states.c src/telemetry_formatter.c src/buzzer.c | sort -rn | head -20
+          pmccabe $(cat src/flight_sources.txt) src/buzzer.c | sort -rn | head -20
           echo ""
-          OVER=$(pmccabe src/flight_states.c src/telemetry_formatter.c src/buzzer.c | awk '$1 > 15 {print}')
+          OVER=$(pmccabe $(cat src/flight_sources.txt) src/buzzer.c | awk '$1 > 15 {print}')
           if [ -n "$OVER" ]; then
             echo "::error::Functions exceed complexity threshold of 15:"
             echo "$OVER"
             exit 1
           fi
           echo "All functions within complexity limit"
-
-      # On both boards: these compile against the selected board's board_pins.h,
-      # which is exactly where a board-specific assumption hides.
-      - name: Run integration tests
-        run: |
-          cd build && ninja integration_tests
-          cd ../build-mk1c && ninja integration_tests
-          cd ../build-mk1a && ninja integration_tests
-
-      - name: Run closed-loop tests
-        run: cd build && ninja closedloop_tests
-
-      # The pressure chain under a real sensor's noise, booted as the hardware
-      # boots: the only suite where the test HAL is not a perfect sensor.
-      - name: Run pressure chain tests
-        run: cd build && ninja pressure_chain_tests
-
-      # Supersonic flights from a cold sea-level pad and a hot high one, with
-      # static ports that misreport while the rocket is fast.
-      - name: Run Mach lockout tests
-        run: cd build && ninja mach_tests
-
-      # Brownout recovery: a pure decision function, so every case that would
-      # otherwise need a rocket and a loose battery connector runs here.
-      - name: Run brownout recovery tests
-        run: cd build && ninja brownout_tests
-
-      # The HTTP engine against a byte stream: every request split at every
-      # byte, and drained through a small window.
-      - name: Run HTTP stream tests
-        run: cd build && ninja http_tests
-
-      # Who runs each HTTP work unit, and /api/status rendered from a
-      # snapshot, linked alone (DD-061).
-      - name: Run HTTP work unit and status rendering tests
-        run: cd build && ninja http_work_tests && ninja status_json_tests && ninja net_stats_tests && ninja net_txq_tests && ninja mac_random_tests && ninja hr_log_tests && ninja flight_sim_tests
-
-      # The flight log's binary records and their CSV (DD-062).
-      - name: Run flight log format tests
-        run: cd build && ninja flight_log_tests && ninja pressure_trace_tests && ninja log_plan_tests
-
-      # The MS5607's interrupt state machine on a fake bus at each board's
-      # own bus rate: the stamp is the handler's, through a held read and a
-      # late loop, and each conversion is ready before the next loop.
-      - name: Run MS5607 one-shot tests
-        run: |
-          cd build && ninja ms5607_tests
-          cd ../build-mk1c && ninja ms5607_tests
 
       # The records against each other and the code: every cited requirement
       # and DD exists, every requirement has a traceability row, every test a
@@ -218,45 +170,9 @@ jobs:
             python3 support/version.py --check "$LAST" "$CUR"
           fi
 
-      - name: Traceability check
-        run: python3 support/trace_check.py --counts
-
-      # No sleeps: the exec loop is the only clock (DD-053). A ratchet over
-      # the sites not yet converted, which only shrinks.
-      - name: Wait check
-        run: python3 support/wait_check.py
-
       # The bench's pressure judge, on made-up traces (DD-063).
       - name: Pressure trace analyzer self-test
         run: python3 support/pressure_trace.py --selftest
-
-      # A board's pyro backend on the host, against a fake SDK whose sleeps
-      # fail the test.
-      - name: Run board pyro tests
-        run: cd build && ninja board_pyro_tests
-
-      # Every board's sensor bring-up as loop steps, against fake sensors.
-      - name: Run sensor bring-up tests
-        run: cd build && ninja sensor_bringup_tests && ninja bmp280_tests
-
-      # The ground test procedure: its schedule and switch on a fake clock,
-      # then through the flight software booted as the hardware boots (DD-071).
-      - name: Run ground test tests
-        run: cd build && ninja ground_test_seq_tests && ninja ground_test_tests
-
-      - name: Run board self-test decision tests
-        run: cd build && ninja board_selftest_tests
-
-      # Six suites the local gate ran and CI did not (task CI-1).
-      - name: Run pin, beep, buzzer and config tests
-        run: |
-          cd build && ninja pin_caps_tests && ninja beep_tests && ninja pin_assign_tests
-          ninja buzzer_tests && ninja config_tests && ninja config_persistence_tests
-
-      # The firing-network models, MK1C's held to the bench board (DD-054),
-      # and MK1C's real pyro backend run against it (DD-055).
-      - name: Run plant model and MK1C pyro backend tests
-        run: cd build && ninja plant_tests && ninja board_pyro_mk1c_tests
 
       - name: Validate web JS syntax
         run: node --check www/app.js

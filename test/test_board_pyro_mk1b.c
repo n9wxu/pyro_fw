@@ -7,6 +7,8 @@
  * 100k to 3V3, 100 nF at the pin, and PYRO_COMMON_EN the shared low-side
  * gate. An igniter pulls the node to ground only while the common is on; a
  * short to ground pulls it down either way (DD-059).
+ *
+ * Verifies [PYR-CONT-01, PYR-CONT-02, PYR-HEALTH-01].
  */
 #include "../src/loop_period.h"
 #include "unity.h"

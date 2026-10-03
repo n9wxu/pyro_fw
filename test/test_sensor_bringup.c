@@ -5,6 +5,8 @@
  * (sensor_bringup_tests). The loop is the only clock (DD-053): bus recovery,
  * settles and sensor resets are steps a later loop takes, and the fake SDK's
  * sleeps fail the test.
+ *
+ * Verifies [SNS-PRES-01, SYS-ALT-02].
  */
 #include "../src/loop_period.h"
 #include "unity.h"

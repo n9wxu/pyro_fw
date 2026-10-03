@@ -4,6 +4,8 @@
  * can: dropping it left lwIP to find out by its retransmit timer, 3 s and
  * doubling, with the heap held meanwhile (G4-N: 40 % of frames refused under
  * G4's load, the heap out 27,865 times).
+ *
+ * Verifies [WEB-NET-05].
  */
 #include "unity.h"
 #include "net_txq.h"

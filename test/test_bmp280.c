@@ -3,6 +3,8 @@
  * commanded by the loop and taken at the next, on a fake part whose
  * conversions take the time docs/datasheets/BST-BMP280-DS001-26 Table 13
  * (page 18) gives them. Built against test/fake_sdk with MK1A's pins.
+ *
+ * Verifies [SYS-ALT-02, SNS-PRES-06].
  */
 #include "../src/loop_period.h"
 #include "unity.h"

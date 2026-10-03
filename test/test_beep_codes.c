@@ -7,6 +7,8 @@
  * counted, and that no two outcomes sound alike.
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Verifies [BUZ-01, BUZ-02, BUZ-CODE-01..10, BUZ-CODE-13].
  */
 #include "unity.h"
 #include "beep_codes.h"
@@ -39,14 +41,13 @@ void test_ok_to_fly_is_a_chirp_not_a_count(void) {
 }
 
 void test_shipped_pyro_codes_follow_eggtimer(void) {
-    /* Eggtimer Quark: 4 = no Main continuity, 5 = no Drogue. Our pyro1 fires
-       at apogee (drogue) and pyro2 at altitude (main) by default. */
+    /* [BUZ-CODE-13] Eggtimer Quark's two continuity codes, one per channel. */
     beep_table_t t = base();
     TEST_ASSERT_EQUAL(BK_CODE, beep_codes_spec(&t, BR_CHECK_PYRO_1).kind);
-    TEST_ASSERT_EQUAL_MESSAGE(5, beep_codes_spec(&t, BR_CHECK_PYRO_1).d1, "channel 1 is the drogue: 5 beeps");
-    TEST_ASSERT_EQUAL_MESSAGE(4, beep_codes_spec(&t, BR_CHECK_PYRO_2).d1, "channel 2 is the main: 4 beeps");
+    TEST_ASSERT_EQUAL_MESSAGE(5, beep_codes_spec(&t, BR_CHECK_PYRO_1).d1, "pyro 1: 5 beeps");
+    TEST_ASSERT_EQUAL_MESSAGE(4, beep_codes_spec(&t, BR_CHECK_PYRO_2).d1, "pyro 2: 4 beeps");
     /* Eggtimer Classic/TRS: 2 = Altimeter Sensor or Hardware Error. */
-    TEST_ASSERT_EQUAL(2, beep_codes_spec(&t, BR_SYSTEM_FAILURE).d1);
+    TEST_ASSERT_EQUAL(2, beep_codes_spec(&t, BR_GENERAL_FAULT).d1);
 }
 
 void test_shipped_cadence_keeps_talking(void) {
@@ -71,11 +72,11 @@ void test_three_personalities_all_named(void) {
 
 void test_a_zero_beep_count_is_refused(void) {
     beep_table_t t = base();
-    t.p[0].spec[BR_SYSTEM_FAILURE] = (beep_spec_t){BK_CODE, 0, 0};
+    t.p[0].spec[BR_GENERAL_FAULT] = (beep_spec_t){BK_CODE, 0, 0};
     beep_verdict_t v = beep_codes_validate(&t);
     TEST_ASSERT_EQUAL(BEEP_ERR_DIGIT_RANGE, v.err);
     TEST_ASSERT_EQUAL(0, v.personality);
-    TEST_ASSERT_EQUAL(BR_SYSTEM_FAILURE, v.reason);
+    TEST_ASSERT_EQUAL(BR_GENERAL_FAULT, v.reason);
 }
 
 void test_a_count_above_nine_is_refused(void) {
@@ -90,14 +91,14 @@ void test_two_outcomes_that_sound_alike_are_refused(void) {
     /* "Check the pyro" and "OK to fly" sounding the same is the worst case
        this rule exists for. */
     beep_table_t t = base();
-    t.p[0].spec[BR_CHECK_PYRO_1] = t.p[0].spec[BR_SYSTEM_FAILURE];
+    t.p[0].spec[BR_CHECK_PYRO_1] = t.p[0].spec[BR_GENERAL_FAULT];
     TEST_ASSERT_EQUAL(BEEP_ERR_DUPLICATE, beep_codes_validate(&t).err);
 }
 
 void test_two_chirps_are_a_duplicate(void) {
     /* Not just counts: two outcomes both set to chirp are indistinguishable. */
     beep_table_t t = base();
-    t.p[0].spec[BR_SYSTEM_FAILURE] = (beep_spec_t){BK_CHIRP, 0, 0};
+    t.p[0].spec[BR_GENERAL_FAULT] = (beep_spec_t){BK_CHIRP, 0, 0};
     TEST_ASSERT_EQUAL(BEEP_ERR_DUPLICATE, beep_codes_validate(&t).err);
 }
 
@@ -125,32 +126,42 @@ void test_an_active_slot_that_does_not_exist_is_refused(void) {
     TEST_ASSERT_EQUAL(BEEP_ERR_NO_ACTIVE, beep_codes_validate(&t).err);
 }
 
-/* ── Merged pyro channels ─────────────────────────────────────────── */
-
-void test_merging_the_channels_makes_them_one_sound(void) {
+/* [BUZ-02] Silence means a fault, so the one outcome that is not a fault
+ * must be heard. */
+void test_a_silent_ok_to_fly_is_refused(void) {
     beep_table_t t = base();
-    t.p[0].split_pyro = false;
-    TEST_ASSERT_EQUAL_MESSAGE(beep_codes_spec(&t, BR_CHECK_PYRO_1).d1, beep_codes_spec(&t, BR_CHECK_PYRO_2).d1,
-                              "with the channels merged, either one says the same thing");
+    t.p[1].spec[BR_OK_TO_FLY] = (beep_spec_t){BK_SILENT, 0, 0};
+    beep_verdict_t v = beep_codes_validate(&t);
+    TEST_ASSERT_EQUAL(BEEP_ERR_OK_SILENT, v.err);
+    TEST_ASSERT_EQUAL(1, v.personality);
+    TEST_ASSERT_EQUAL(BR_OK_TO_FLY, v.reason);
 }
 
-void test_merged_channels_may_share_a_code(void) {
-    /* Channel 2 is never played when merged, so its spec must not be
-       compared against anything -- otherwise merging would look like a
-       duplicate. */
+/* [BUZ-CODE-01] Four outcomes, in the order they are announced
+ * [BUZ-CODE-02]. */
+void test_the_vocabulary_is_four_outcomes_in_priority_order(void) {
+    TEST_ASSERT_EQUAL(4, BEEP_REASON_COUNT);
+    TEST_ASSERT_TRUE(BR_GENERAL_FAULT < BR_CHECK_PYRO_1 && BR_CHECK_PYRO_1 < BR_CHECK_PYRO_2 &&
+                     BR_CHECK_PYRO_2 < BR_OK_TO_FLY);
+    TEST_ASSERT_EQUAL_STRING("general_fault", beep_codes_key(BR_GENERAL_FAULT));
+}
+
+/* [BUZ-CODE-04] A table stored under the outcome's earlier key keeps its
+ * sound. */
+void test_a_table_stored_before_the_rename_is_still_read(void) {
     beep_table_t t = base();
-    t.p[0].split_pyro = false;
-    t.p[0].spec[BR_CHECK_PYRO_2] = t.p[0].spec[BR_CHECK_PYRO_1];
-    TEST_ASSERT_EQUAL(BEEP_OK, beep_codes_validate(&t).err);
+    char in[] = "[beeps]\r\np0_system_failure=code:7\r\n";
+    beep_codes_parse_ini(in, &t);
+    TEST_ASSERT_EQUAL(7, t.p[0].spec[BR_GENERAL_FAULT].d1);
 }
 
 /* ── Lookup ───────────────────────────────────────────────────────── */
 
 void test_the_active_personality_is_the_one_used(void) {
     beep_table_t t = base();
-    t.p[1].spec[BR_SYSTEM_FAILURE] = (beep_spec_t){BK_CODE, 9, 0};
+    t.p[1].spec[BR_GENERAL_FAULT] = (beep_spec_t){BK_CODE, 9, 0};
     t.active = 1;
-    TEST_ASSERT_EQUAL(9, beep_codes_spec(&t, BR_SYSTEM_FAILURE).d1);
+    TEST_ASSERT_EQUAL(9, beep_codes_spec(&t, BR_GENERAL_FAULT).d1);
 }
 
 void test_an_unreadable_table_still_answers(void) {
@@ -165,7 +176,7 @@ void test_an_unreadable_table_still_answers(void) {
 void test_an_unknown_outcome_says_leave_the_pad(void) {
     beep_table_t t = base();
     beep_spec_t sp = beep_codes_spec(&t, (beep_reason_t)999);
-    TEST_ASSERT_EQUAL_MESSAGE(t.p[0].spec[BR_SYSTEM_FAILURE].d1, sp.d1, "the safe thing to say is 'leave the pad'");
+    TEST_ASSERT_EQUAL_MESSAGE(t.p[0].spec[BR_GENERAL_FAULT].d1, sp.d1, "the safe thing to say is 'leave the pad'");
 }
 
 /* ── File format ──────────────────────────────────────────────────── */
@@ -175,10 +186,9 @@ void test_round_trip_preserves_everything(void) {
     t.active = 2;
     snprintf(t.p[2].name, sizeof(t.p[2].name), "Loud");
     t.p[2].spec[BR_OK_TO_FLY] = (beep_spec_t){BK_TONE, 0, 0};
-    t.p[2].spec[BR_SYSTEM_FAILURE] = (beep_spec_t){BK_CODE, 3, 7};
+    t.p[2].spec[BR_GENERAL_FAULT] = (beep_spec_t){BK_CODE, 3, 7};
     t.p[2].gap_ms = 1500;
     t.p[2].repeat = 4;
-    t.p[2].split_pyro = false;
 
     char buf[1024];
     int n = beep_codes_serialize_ini(&t, buf, (int)sizeof(buf));
@@ -190,11 +200,10 @@ void test_round_trip_preserves_everything(void) {
     TEST_ASSERT_EQUAL(2, back.active);
     TEST_ASSERT_EQUAL_STRING("Loud", back.p[2].name);
     TEST_ASSERT_EQUAL(BK_TONE, back.p[2].spec[BR_OK_TO_FLY].kind);
-    TEST_ASSERT_EQUAL(3, back.p[2].spec[BR_SYSTEM_FAILURE].d1);
-    TEST_ASSERT_EQUAL(7, back.p[2].spec[BR_SYSTEM_FAILURE].d2);
+    TEST_ASSERT_EQUAL(3, back.p[2].spec[BR_GENERAL_FAULT].d1);
+    TEST_ASSERT_EQUAL(7, back.p[2].spec[BR_GENERAL_FAULT].d2);
     TEST_ASSERT_EQUAL(1500, back.p[2].gap_ms);
     TEST_ASSERT_EQUAL(4, back.p[2].repeat);
-    TEST_ASSERT_FALSE(back.p[2].split_pyro);
 }
 
 void test_the_file_reads_the_way_it_sounds(void) {
@@ -217,7 +226,7 @@ void test_a_malformed_value_leaves_the_entry_alone(void) {
     /* A garbled line must not silently mute an outcome. */
     beep_table_t t = base();
     uint8_t before = t.p[0].spec[BR_CHECK_PYRO_1].d1;
-    char in[] = "[beeps]\r\np0_check_pyro_1=code:\r\np0_system_failure=warble\r\np0_ok_to_fly=code:1-2-3\r\n";
+    char in[] = "[beeps]\r\np0_check_pyro_1=code:\r\np0_general_fault=warble\r\np0_ok_to_fly=code:1-2-3\r\n";
     beep_codes_parse_ini(in, &t);
     TEST_ASSERT_EQUAL(before, t.p[0].spec[BR_CHECK_PYRO_1].d1);
     TEST_ASSERT_EQUAL(BK_CHIRP, t.p[0].spec[BR_OK_TO_FLY].kind);
@@ -244,8 +253,9 @@ int main(void) {
     RUN_TEST(test_silence_is_not_a_duplicate);
     RUN_TEST(test_a_wholly_silent_personality_is_refused);
     RUN_TEST(test_an_active_slot_that_does_not_exist_is_refused);
-    RUN_TEST(test_merging_the_channels_makes_them_one_sound);
-    RUN_TEST(test_merged_channels_may_share_a_code);
+    RUN_TEST(test_a_silent_ok_to_fly_is_refused);
+    RUN_TEST(test_the_vocabulary_is_four_outcomes_in_priority_order);
+    RUN_TEST(test_a_table_stored_before_the_rename_is_still_read);
     RUN_TEST(test_the_active_personality_is_the_one_used);
     RUN_TEST(test_an_unreadable_table_still_answers);
     RUN_TEST(test_an_unknown_outcome_says_leave_the_pad);

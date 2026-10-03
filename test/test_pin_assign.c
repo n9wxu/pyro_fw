@@ -5,6 +5,8 @@
  * neither -- and the common, which is the case a per-channel rule gets wrong.
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Verifies [LUA-PAD-01, GND-TEST-12, PYR-HEALTH-02].
  */
 #include "unity.h"
 #include "pin_assign.h"
@@ -363,10 +365,14 @@ void test_PIN_BUZZ_04_cannot_take_a_pad_lua_holds(void) {
     pin_assign_t a;
     pin_assign_defaults(&a);
     a.role[18] = LUA_ROLE_OUT;
+    strcpy(a.name[18], "beacon");
     a.buzzer_pin = 18;
     pin_verdict_t v = pin_assign_validate(&a);
     TEST_ASSERT_EQUAL_MESSAGE(PIN_ERR_BUZZER_BUSY, v.err, "a pad with a Lua role must not also be the buzzer");
     TEST_ASSERT_EQUAL(18, v.pin);
+    /* The refusal says who holds the pad, so the operator goes to the Lua
+     * tab rather than guessing: "busy" alone sent one reading pins.ini. */
+    TEST_ASSERT_EQUAL_STRING("already a Lua out named beacon; set it to off first", v.what);
 }
 
 /* [PIN-BUZZ-01] The sensor bus and the telemetry UART stay out of reach. */
@@ -497,7 +503,20 @@ void test_PIN_GT_06_not_a_pad_already_in_use(void) {
     TEST_ASSERT_EQUAL(19, v.pin);
     a.role[19] = LUA_ROLE_OFF;
     a.buzzer_pin = 18;
-    TEST_ASSERT_EQUAL(PIN_ERR_GT_BUSY, pin_assign_validate(&a).err);
+    v = pin_assign_validate(&a);
+    TEST_ASSERT_EQUAL(PIN_ERR_GT_BUSY, v.err);
+    TEST_ASSERT_EQUAL_STRING("already the buzzer", v.what);
+    /* And the other way about: a Lua role on the switch's pad is told whose
+     * pad it is, not that the pin "cannot take that role". */
+    a.buzzer_pin = PIN_BUZZER_BOARD;
+    a.role[19] = LUA_ROLE_OUT;
+    v = pin_assign_validate(&a);
+    TEST_ASSERT_EQUAL(PIN_ERR_GT_BUSY, v.err);
+    a.gt_wiring = GT_WIRING_NONE;
+    a.buzzer_pin = 19;
+    v = pin_assign_validate(&a);
+    TEST_ASSERT_EQUAL(PIN_ERR_BUZZER_BUSY, v.err);
+    TEST_ASSERT_EQUAL_STRING("already a Lua out; set it to off first", v.what);
 }
 
 void test_PIN_GT_07_ini_round_trip(void) {

@@ -3,6 +3,8 @@
  * bus and clock (ms5607_bus.h). The loop starts a pair -- a pressure, then a
  * temperature -- and takes both a loop later; between the two, only the
  * handler runs, and the stamps are its own.
+ *
+ * Verifies [SNS-PRES-06, SNS-PRES-08, SNS-PRES-14, FLT-RATE-01, DAT-10].
  */
 #include "unity.h"
 #include "ms5607_driver.h"

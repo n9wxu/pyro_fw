@@ -28,15 +28,30 @@ typedef struct {
     bool p2_open;
     bool firing;
     bool fault; /* injectable fault state */
-    int fire_count;
+    int fire_count; /* pulses commanded, energised or not */
     uint8_t last_fire_channel;
-    /* The board takes the call and energises nothing, as MK1C does while its
-     * firing sequence is unimplemented. Counted separately from fire_count,
-     * which counts channels that were actually energised. */
-    bool refuse_fire;
-    int refused_count;
+    /* The board takes the command and energises nothing: its protection has
+     * acted, or its firing path would not come up. */
+    bool energises_nothing;
+    uint32_t pulse_ms; /* how long a pulse energises a channel */
+    uint32_t pulse_start_ms;
     int sample_count; /* hal_pyro_sample() calls; one shared stimulus each */
 } mock_pyro_t;
+
+/* Every pulse commanded, in order. */
+#define MOCK_PULSES_MAX 256
+typedef struct {
+    uint32_t start_ms;
+    uint8_t channel;
+    bool energised;
+} mock_pulse_t;
+extern mock_pulse_t mock_pulses[MOCK_PULSES_MAX];
+extern int mock_pulse_count;
+
+/* [PYR-BOARD-01] What the mocked board permits. */
+#include "../src/hal.h"
+extern hal_pyro_limits_t mock_pyro_limits;
+extern reset_cause_t mock_reset_cause;
 
 #define MOCK_UART_BUF_SIZE 32768
 
@@ -104,19 +119,6 @@ extern uint32_t mock_stall_count, mock_stall_total_ms, mock_stall_min_ms, mock_s
 extern uint32_t mock_stamp_lag_min_ms, mock_stamp_lag_max_ms; /* stamp minus conversion */
 bool mock_core0_stalled(uint32_t now_ms);
 
-/* ── Serial command mock [GND-TEST-01..04, DD-011] ─────────────────── */
-/* Queue serial command strings to be returned by hal_serial_readline().
- * Each enqueued line is returned once on the next hal_serial_readline()
- * call; subsequent calls return false until another line is enqueued. */
-#define MOCK_SERIAL_QUEUE_DEPTH 8
-#define MOCK_SERIAL_LINE_MAX 64
-
-extern char mock_serial_queue[MOCK_SERIAL_QUEUE_DEPTH][MOCK_SERIAL_LINE_MAX];
-extern int mock_serial_queue_count;
-
-/* Enqueue a command string (NUL-terminated, no CR/LF needed) */
-void mock_serial_enqueue(const char *cmd);
-
 /* ── Buzzer tone tracking ──────────────────────────────────────────── */
 /* Counts hal_buzzer_tone_on/off calls so buzzer pattern tests can verify
  * the correct number of transitions without real hardware. */
@@ -132,6 +134,14 @@ extern int mock_buzzer_edges;
 extern bool mock_ground_test_pin;
 
 void mock_reset_all(void);
+/* What a restart loses: everything but the stored files. */
+void mock_power_cycle(void);
+
+/* How often the sensor has been initialised [SNS-REC-01]. */
+extern int mock_pressure_inits;
+
+/* The storage did not come up [FLT-BOOT-14]. */
+extern bool mock_fs_unusable;
 
 /* Whole-file writes, so a test can prove something is written once. */
 extern uint32_t mock_fs_write_count;

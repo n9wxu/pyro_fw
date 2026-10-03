@@ -47,7 +47,20 @@ const DEFAULTS = {
 
 let status = JSON.parse(JSON.stringify(DEFAULTS[MODE]));
 /* Reached over USB, as every real board is. */
-Object.assign(status, {usb_attached: true, test_mode: false, buzzer_active: false});
+Object.assign(status, {usb_attached: true, test_mode: false, buzzer_active: false,
+  resume: 'not resumed: no record', emergency_fire: false, pyro_limited: false,
+  refire_interval_ms: 1000, fire_gap_ms: 3000,
+  pyro_pulses: MODE === 'flown' ? [3, 1] : [0, 0], pyro_fault: [false, false]});
+/* [PYR-BOARD-03, SNS-MAX-01] What the board permits, and its sensor's reach:
+   the general pyro ranges, and a BMP280's 9 km. */
+const LIMITS = {
+  refire_interval_ms: {default: 1000, min: 500, max: 10000, in_force: 1000},
+  fire_gap_ms: {default: 3000, min: 1000, max: 10000, in_force: 3000},
+  sensor: {min_pa: 30000, max_pa: 110000, height_m: 9000}
+};
+let luaScript = '', luaScriptPosts = 0, luaHeartbeat = 0;
+/* The bodies the page posted to /api/config, for the tests to read. */
+let configPosts = [];
 const FLYING = ['ASCENT', 'FALLING', 'DROGUE_DESCENT', 'CHUTE_DESCENT'];
 let configIni = buildIni(status);
 let pendingReboot = false;
@@ -143,14 +156,14 @@ let flightCsv = MODE === 'flown' ? generateFlightCSV() : EMPTY_LOG;
 
 let beepReason = '';
 const BEEP_OUTCOMES = [
-  {key:'system_failure', what:'System failure. Safe the system and leave the pad -- this cannot be fixed at the rocket'},
+  {key:'general_fault',  what:'General fault. Safe the system and take it to the workbench -- this cannot be fixed at the rocket'},
   {key:'check_pyro_1',   what:'Check pyro 1. Its igniter or leads need attention'},
   {key:'check_pyro_2',   what:'Check pyro 2. Its igniter or leads need attention'},
-  {key:'ok_to_fly',      what:'OK to fly. Sensor, filesystem and both pyro channels are good'}
+  {key:'ok_to_fly',      what:'OK to fly. Sensor, storage and every enabled pyro channel are good'}
 ];
 function shippedPersonality(name) {
-  return {name: name, gap: 5000, repeat: 0, split: true, spec: {
-    system_failure: {kind:'code', d1:2, d2:0},
+  return {name: name, gap: 5000, repeat: 0, spec: {
+    general_fault:  {kind:'code', d1:2, d2:0},
     check_pyro_1:   {kind:'code', d1:5, d2:0},
     check_pyro_2:   {kind:'code', d1:4, d2:0},
     ok_to_fly:      {kind:'chirp', d1:0, d2:0}
@@ -192,15 +205,72 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  /* [CFG-10] The file is stored; the running board keeps what it started with. */
   if (req.url === '/api/config' && req.method === 'POST') {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
       configIni = body;
       pendingConfig = body;
+      configPosts.push(body);
       res.writeHead(200, {...cors, 'Content-Type': 'application/json'});
-      res.end(JSON.stringify({applied: false}));
+      res.end(JSON.stringify({status: 'ok', applied: false, reboot_required: true}));
     });
+    return;
+  }
+
+  /* ── The script [LUA-MGT-01, LUA-MGT-02] ─────────────────────────
+   * The check finds a script with "syntax error" in it wanting; the console
+   * says whether the stored script runs and what it printed. */
+  if (req.url === '/api/lua/script' && req.method === 'GET') {
+    res.writeHead(luaScript ? 200 : 404, {...cors, 'Content-Type':'text/plain'});
+    res.end(luaScript);
+    return;
+  }
+  if (req.url === '/api/lua/script' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      luaScript = body;
+      luaScriptPosts++;
+      res.writeHead(201, cors); res.end('Created');
+    });
+    return;
+  }
+  if (req.url === '/api/lua/check' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      const bad = body.indexOf('syntax error') >= 0;
+      res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+      res.end(JSON.stringify(bad
+        ? {green: false, items: [{kind: 1, detail: "line 1: unexpected symbol near 'syntax'"}]}
+        : {green: true, items: [{kind: 0, detail: 'the script matches the pin assignment'}]}));
+    });
+    return;
+  }
+  if (req.url === '/api/lua/console' && req.method === 'GET') {
+    res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+    res.end(JSON.stringify(luaScript
+      ? {status: 'running', heartbeat: ++luaHeartbeat, text: luaHeartbeat === 1 ? 'hello from the script\n' : ''}
+      : {status: 'enabled, no script', heartbeat: 0, text: ''}));
+    return;
+  }
+  if (req.url === '/api/_test/lua' && req.method === 'GET') {
+    res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+    res.end(JSON.stringify({script: luaScript, posts: luaScriptPosts}));
+    return;
+  }
+
+  if (req.url === '/api/limits' && req.method === 'GET') {
+    res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+    res.end(JSON.stringify(LIMITS));
+    return;
+  }
+
+  if (req.url === '/api/_test/config_posts' && req.method === 'GET') {
+    res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+    res.end(JSON.stringify(configPosts));
     return;
   }
 
@@ -254,7 +324,6 @@ const server = http.createServer((req, res) => {
         if (field === 'name') p.name = val;
         else if (field === 'gap') p.gap = +val;
         else if (field === 'repeat') p.repeat = +val;
-        else if (field === 'split') p.split = val === 'true';
         else if (p.spec[field]) {
           const c = val.match(/^code:(\d)(?:-(\d))?$/);
           if (c) {
@@ -396,9 +465,26 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, cors); res.end('ok');
     return;
   }
+  /* What the board reports, set by a test: a fault, an emergency fire. */
+  if (req.url === '/api/_test/status' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      Object.assign(status, JSON.parse(body));
+      res.writeHead(200, cors); res.end('ok');
+    });
+    return;
+  }
   if (req.url === '/api/_test/reset' && req.method === 'POST') {
     flightCsv = MODE === 'flown' ? generateFlightCSV() : EMPTY_LOG;
     status.test_mode = false;
+    status.emergency_fire = false;
+    status.pyro_limited = false;
+    status.pyro_fault = [false, false];
+    configPosts = [];
+    luaScript = '';
+    luaScriptPosts = 0;
+    luaHeartbeat = 0;
     res.writeHead(200, cors); res.end('ok');
     return;
   }

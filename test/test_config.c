@@ -3,6 +3,8 @@
  * [CFG-TABLE-02] Every field survives serialize → parse.
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Verifies [CFG-01..09, SYS-CFG-04].
  */
 #include "unity.h"
 #include "config.h"
@@ -23,8 +25,13 @@ void test_config_defaults(void) {
     TEST_ASSERT_EQUAL(PYRO_MODE_AGL, cfg.pyro2_mode);
     TEST_ASSERT_EQUAL(300, cfg.pyro2_value);
     TEST_ASSERT_EQUAL(1, cfg.units); /* meters */
-    TEST_ASSERT_EQUAL(0, cfg.telem_format);
-    TEST_ASSERT_EQUAL(10, cfg.telem_rate_hz);
+    /* [PYR-REFIRE-01, FLT-EMRG-01] A speed of zero disables its rule; an
+     * interval or a gap of zero takes the board's default [PYR-BOARD-01]. */
+    TEST_ASSERT_EQUAL(0, cfg.pyro1_refire_speed);
+    TEST_ASSERT_EQUAL(0, cfg.pyro2_refire_speed);
+    TEST_ASSERT_EQUAL(0, cfg.emergency_fire_speed);
+    TEST_ASSERT_EQUAL(0, cfg.refire_interval);
+    TEST_ASSERT_EQUAL(0, cfg.fire_gap);
     TEST_ASSERT_EQUAL_MESSAGE(LOG_RATE_1HZ, cfg.log_rate, "one row a second unless asked [DD-064]");
     TEST_ASSERT_FALSE(cfg.lua_enabled);
 }
@@ -50,8 +57,11 @@ void test_config_roundtrip_defaults(void) {
     TEST_ASSERT_EQUAL(original.pyro2_mode, restored.pyro2_mode);
     TEST_ASSERT_EQUAL(original.pyro2_value, restored.pyro2_value);
     TEST_ASSERT_EQUAL(original.units, restored.units);
-    TEST_ASSERT_EQUAL(original.telem_format, restored.telem_format);
-    TEST_ASSERT_EQUAL(original.telem_rate_hz, restored.telem_rate_hz);
+    TEST_ASSERT_EQUAL(original.pyro1_refire_speed, restored.pyro1_refire_speed);
+    TEST_ASSERT_EQUAL(original.pyro2_refire_speed, restored.pyro2_refire_speed);
+    TEST_ASSERT_EQUAL(original.emergency_fire_speed, restored.emergency_fire_speed);
+    TEST_ASSERT_EQUAL(original.refire_interval, restored.refire_interval);
+    TEST_ASSERT_EQUAL(original.fire_gap, restored.fire_gap);
     TEST_ASSERT_EQUAL(original.log_rate, restored.log_rate);
     TEST_ASSERT_EQUAL(original.lua_enabled, restored.lua_enabled);
 }
@@ -70,8 +80,11 @@ void test_config_roundtrip_custom(void) {
     original.pyro2_mode = PYRO_MODE_SPEED;
     original.pyro2_value = 42;
     original.units = 2; /* ft */
-    original.telem_format = 1;
-    original.telem_rate_hz = 5;
+    original.pyro1_refire_speed = 25;
+    original.pyro2_refire_speed = 12;
+    original.emergency_fire_speed = 40;
+    original.refire_interval = 1500;
+    original.fire_gap = 4000;
     original.log_rate = LOG_RATE_EVENTS;
     original.lua_enabled = true;
 
@@ -89,8 +102,11 @@ void test_config_roundtrip_custom(void) {
     TEST_ASSERT_EQUAL(original.pyro2_mode, restored.pyro2_mode);
     TEST_ASSERT_EQUAL(original.pyro2_value, restored.pyro2_value);
     TEST_ASSERT_EQUAL(original.units, restored.units);
-    TEST_ASSERT_EQUAL(original.telem_format, restored.telem_format);
-    TEST_ASSERT_EQUAL(original.telem_rate_hz, restored.telem_rate_hz);
+    TEST_ASSERT_EQUAL(original.pyro1_refire_speed, restored.pyro1_refire_speed);
+    TEST_ASSERT_EQUAL(original.pyro2_refire_speed, restored.pyro2_refire_speed);
+    TEST_ASSERT_EQUAL(original.emergency_fire_speed, restored.emergency_fire_speed);
+    TEST_ASSERT_EQUAL(original.refire_interval, restored.refire_interval);
+    TEST_ASSERT_EQUAL(original.fire_gap, restored.fire_gap);
     TEST_ASSERT_EQUAL(original.log_rate, restored.log_rate);
     TEST_ASSERT_EQUAL(original.lua_enabled, restored.lua_enabled);
 }
@@ -184,10 +200,13 @@ void test_config_parse_bool_values(void) {
 void test_config_parse_new_fields(void) {
     config_t cfg;
     config_set_defaults(&cfg);
-    char ini[] = "landing_timeout=90\r\ntelem_rate_hz=5\r\nlog_rate=full\r\n";
+    char ini[] = "landing_timeout=90\r\npyro1_refire_speed=25\r\nemergency_fire_speed=40\r\nfire_gap=4000\r\n"
+                 "log_rate=full\r\n";
     config_parse_ini(ini, &cfg);
     TEST_ASSERT_EQUAL(90, cfg.landing_timeout);
-    TEST_ASSERT_EQUAL(5, cfg.telem_rate_hz);
+    TEST_ASSERT_EQUAL(25, cfg.pyro1_refire_speed);
+    TEST_ASSERT_EQUAL(40, cfg.emergency_fire_speed);
+    TEST_ASSERT_EQUAL(4000, cfg.fire_gap);
     TEST_ASSERT_EQUAL(LOG_RATE_FULL, cfg.log_rate);
     char events[] = "log_rate=events\r\n";
     config_parse_ini(events, &cfg);
@@ -297,13 +316,16 @@ void test_config_default_name_is_not_truncated(void) {
  * A key in config.ini is a promise that changing it changes what the board
  * does. These four were parsed, stored and read by nothing. */
 
+/* [CFG-SUBSYS-01] */
 void test_config_writes_no_inert_keys(void) {
     const char *ini = config_default_ini();
     TEST_ASSERT_NULL_MESSAGE(strstr(ini, "beep_mode="), "beep_mode is read by nothing");
     TEST_ASSERT_NULL_MESSAGE(strstr(ini, "max_coast_s="), "max_coast_s is read by nothing (DD-022)");
     TEST_ASSERT_NULL_MESSAGE(strstr(ini, "log_enabled="), "log_enabled is read by nothing");
     TEST_ASSERT_NULL_MESSAGE(strstr(ini, "buzzer_startup="), "buzzer_startup is read by nothing");
-    TEST_ASSERT_NOT_NULL(strstr(ini, "telem_rate_hz="));
+    TEST_ASSERT_NULL_MESSAGE(strstr(ini, "telem_rate_hz="), "telemetry is 1 Hz [TEL-03, DD-088]");
+    TEST_ASSERT_NULL_MESSAGE(strstr(ini, "telem_format="), "telemetry is $PYRO [TEL-01, DD-088]");
+    TEST_ASSERT_NOT_NULL(strstr(ini, "emergency_fire_speed=0\r\n"));
     TEST_ASSERT_NOT_NULL(strstr(ini, "log_rate=1hz\r\n"));
     TEST_ASSERT_NULL_MESSAGE(strstr(ini, "log_rate_hz="), "replaced by log_rate [DD-064]");
     TEST_ASSERT_NULL_MESSAGE(strstr(ini, "log_high_rate="), "replaced by log_rate [DD-064]");
@@ -376,13 +398,10 @@ void test_config_merge_lua_tab_keeps_flight_fields(void) {
     TEST_ASSERT_EQUAL(42, merged.pyro1_value);             /* survived */
 }
 
-/* ── The 512-byte budget ──────────────────────────────────────────
+/* ── The budget of config.ini ─────────────────────────────────────
  *
- * hal_config_load() reads into char[512] and http_server.c refuses a merged
- * config that does not fit. Before the legacy keys were dropped from the
- * output a fully populated config serialised to about 525 bytes, so a board
- * with every Lua name filled in could not save at all and answered HTTP 500.
- * Nothing tested the worst case, only the defaults. */
+ * Every reader and writer of the file holds CONFIG_INI_MAX bytes, so the
+ * worst case must fit it with room for the next field. */
 
 void test_config_worst_case_fits_the_budget(void) {
     config_t cfg;
@@ -397,19 +416,19 @@ void test_config_worst_case_fits_the_budget(void) {
     cfg.pyro1_value = 65535;
     cfg.pyro2_value = 65535;
     cfg.units = 0; /* "cm" is shortest, but units is not the driver here */
-    cfg.telem_format = 255;
-    cfg.telem_rate_hz = 255;
+    cfg.pyro1_refire_speed = 65535;
+    cfg.pyro2_refire_speed = 65535;
+    cfg.emergency_fire_speed = 65535;
+    cfg.refire_interval = 65535;
+    cfg.fire_gap = 65535;
     cfg.log_rate = LOG_RATE_EVENTS; /* the longest name */
     cfg.landing_timeout = 255;
     cfg.lua_baud = 65535;
     cfg.lua_pixels = 65535;
-    char buf[512];
+    char buf[CONFIG_INI_MAX];
     int n = config_serialize_ini(&cfg, buf, (int)sizeof(buf));
     TEST_ASSERT_GREATER_THAN_MESSAGE(0, n, "a fully populated config must still serialise");
-    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(512, n, "and must fit what hal_config_load() reads back");
-    /* Headroom, so the next field added does not silently land on the limit.
-       341 bytes today; this fires well before 512. */
-    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(440, n, "config.ini is running out of headroom");
+    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(CONFIG_INI_MAX - 64, n, "config.ini is running out of headroom");
 }
 
 /* ── Serializer overflow ──────────────────────────────────────────── */

@@ -1,5 +1,5 @@
 // @ts-check
-/* H2: the browser demo, as a visitor finds it. docs/sim.html runs the flight
+/* [SYS-PORT-02] The browser demo, as a visitor finds it. docs/sim.html runs the flight
    software compiled to WASM against the page's physics; from power-on it must
    reach the pad, launch, and land.
 

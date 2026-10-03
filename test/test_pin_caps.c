@@ -11,6 +11,8 @@
  * runtime surface every later phase will call.
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Verifies [LUA-PAD-03].
  */
 #include "unity.h"
 #include "pin_model.h"

@@ -6,6 +6,8 @@
  * the bench's hold on the channels (bench_flight.h).
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Verifies [SYS-SIM-01, SIM-01..04].
  */
 #include "unity.h"
 #include "flight_sim.h"
@@ -13,7 +15,7 @@
 #include <math.h>
 
 void setUp(void) {
-    bench_flight_reset();
+    bench_flight_init();
 }
 void tearDown(void) {}
 
@@ -91,7 +93,9 @@ void test_SIM_02_phases_run_in_order_and_it_lands(void) {
     TEST_ASSERT_EQUAL_FLOAT(SEA_PA, fsim_pressure(&s, t + 20.0f));
 }
 
-/* Without thin air, the descent is two constant rates and its time is known. */
+/* Without thin air the descent settles at two rates. It leaves apogee at
+ * rest, which costs about two seconds against a constant 30 m/s, and carries
+ * its speed into the main's height, which gives some of that back. */
 void test_SIM_02_descent_times_at_constant_rates(void) {
     fsim_t s;
     fsim_params_t p = {.apogee_m = 3000.0f,
@@ -108,7 +112,7 @@ void test_SIM_02_descent_times_at_constant_rates(void) {
         t += 0.1f;
     }
     float want = s.t_apogee + 2700.0f / 30.0f + 300.0f / 6.0f;
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, want, s.t_landed);
+    TEST_ASSERT_TRUE(s.t_landed > want && s.t_landed < want + 2.5f);
 }
 
 /* A parachute at 25 km falls several times faster than at the pad. */
@@ -123,7 +127,9 @@ void test_SIM_02_thin_air_speeds_the_drogue(void) {
     float h1 = fsim_altitude(&s, t + 1.0f);
     float rate_high = h0 - h1;
     float ratio = sqrtf(fsim_isa_density(0.0f) / fsim_isa_density(25000.0f));
-    TEST_ASSERT_FLOAT_WITHIN(0.05f * rate_high, p.drogue_ms * ratio, rate_high);
+    /* Falling into denser air it runs a little ahead of the rate it would
+     * settle at. */
+    TEST_ASSERT_TRUE(rate_high >= p.drogue_ms * ratio && rate_high < 1.1f * p.drogue_ms * ratio);
     TEST_ASSERT_TRUE(rate_high > 5.0f * p.drogue_ms);
     while (fsim_altitude(&s, t) > 1000.0f)
         t += 0.1f;
@@ -226,6 +232,73 @@ void test_SIM_02_the_bench_ends_when_both_have_landed(void) {
     TEST_ASSERT_FALSE(bench_flight_pressure(302000000u, true, &pa));
 }
 
+/* ── Canopies that fail [SIM-04] ──────────────────────────────────── */
+
+static float speed_at(fsim_t *s, float t) {
+    return (fsim_altitude(s, t) - fsim_altitude(s, t + 0.5f)) / 0.5f;
+}
+
+static fsim_params_t low(void) {
+    fsim_params_t p = {.apogee_m = 1500.0f,
+                       .boost_s = 2.0f,
+                       .drogue_ms = 25.0f,
+                       .main_alt_m = 300.0f,
+                       .main_ms = 6.0f,
+                       .thin_air = false,
+                       .pad_s = 0.0f};
+    return p;
+}
+
+static float time_to(fsim_t *s, float from_t, float height) {
+    float t = from_t;
+    while (fsim_altitude(s, t) > height && t < 2000.0f)
+        t += 0.1f;
+    return t;
+}
+
+/* The descent leaves apogee at rest and gathers speed under gravity: no
+ * flight software sees a speed appear from nowhere. */
+void test_SIM_04_the_descent_starts_from_rest(void) {
+    fsim_t s;
+    fsim_params_t p = low();
+    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA));
+    float apogee = s.t_apogee;
+    TEST_ASSERT_FLOAT_WITHIN(1.5f, 0.5f * 9.80665f * 1.0f, fsim_altitude(&s, apogee) - fsim_altitude(&s, apogee + 1.0f));
+    TEST_ASSERT_FLOAT_WITHIN(1.0f, p.drogue_ms, speed_at(&s, apogee + 15.0f));
+}
+
+void test_SIM_04_a_failed_drogue_falls_ballistic_until_the_main(void) {
+    fsim_t s;
+    fsim_params_t p = low();
+    p.drogue_fails = true;
+    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA));
+    float t = time_to(&s, s.t_apogee, 500.0f);
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(4.0f, FSIM_BALLISTIC_MS, speed_at(&s, t), "ballistic above the main's height");
+    t = time_to(&s, t, 150.0f);
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(1.0f, p.main_ms, speed_at(&s, t), "and the main's rate below it");
+}
+
+void test_SIM_04_a_failed_main_stays_at_the_drogues_rate(void) {
+    fsim_t s;
+    fsim_params_t p = low();
+    p.main_fails = true;
+    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA));
+    float t = time_to(&s, s.t_apogee, 100.0f);
+    TEST_ASSERT_FLOAT_WITHIN(1.0f, p.drogue_ms, speed_at(&s, t));
+}
+
+void test_SIM_04_with_both_failed_it_falls_ballistic_to_the_ground(void) {
+    fsim_t s;
+    fsim_params_t p = low();
+    p.drogue_fails = p.main_fails = true;
+    p.ballistic_ms = 60.0f;
+    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA));
+    float t = time_to(&s, s.t_apogee, 100.0f);
+    TEST_ASSERT_FLOAT_WITHIN(3.0f, 60.0f, speed_at(&s, t));
+    fsim_altitude(&s, t + 30.0f);
+    TEST_ASSERT_EQUAL_INT(FSIM_LANDED, fsim_phase(&s));
+}
+
 /* [SIM-03] The channels are the bench's from the first start until reboot,
  * a flight stopped part-way included. */
 void test_SIM_03_the_channels_stay_mocked_after_a_stop(void) {
@@ -268,6 +341,10 @@ int main(void) {
     RUN_TEST(test_SIM_01_a_bench_flight_starts_only_from_the_pad_in_test_mode);
     RUN_TEST(test_SIM_02_the_bench_replaces_the_reading_while_it_flies);
     RUN_TEST(test_SIM_02_the_bench_ends_when_both_have_landed);
+    RUN_TEST(test_SIM_04_the_descent_starts_from_rest);
+    RUN_TEST(test_SIM_04_a_failed_drogue_falls_ballistic_until_the_main);
+    RUN_TEST(test_SIM_04_a_failed_main_stays_at_the_drogues_rate);
+    RUN_TEST(test_SIM_04_with_both_failed_it_falls_ballistic_to_the_ground);
     RUN_TEST(test_SIM_03_the_channels_stay_mocked_after_a_stop);
     return UNITY_END();
 }
