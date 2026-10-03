@@ -309,15 +309,28 @@ Departures are from a 9-point running median, so slow drift does not count.
 - **On the MS5607 board, conversions beside a flash operation** sat 15.3 Pa
   rms from their neighbours against 10 Pa for the rest: 41 of them in 68
   programs and 9 erases.
-- **On the BMP280 board the flash test could not be run.** 20.4 s into the
-  beep phase, during the fourth beep code, the BMP280 stopped acknowledging
-  its address. The readings up to that one were ordinary. The collector
-  counted the failures by cause and ran its recovery (bus clear, soft reset,
-  2 ms) over 2500 times in a minute without the part answering. After a
-  restart without removing power, start-up's own bus clear and reset at both
-  addresses did not find it either: the board went to FAULT, `sensor_fail`.
-  So the part itself is off the bus until its power is removed. One
-  occurrence; not yet repeated.
+- **On the BMP280 board flash operations disturb nothing.** Four runs after
+  a power cycle, 59 programs and 8 or 9 erases each: the 62 to 64 conversions
+  marked as flashed sat 2.3 to 3.0 Pa rms from their neighbours, which is
+  the board's ordinary scatter. Discarding them (SNS-PRES-14) gains nothing
+  on this board.
+- **The BMP280 left the bus once.** In the first run, 20.4 s into the beep
+  phase, during the fourth beep code, it stopped acknowledging its address.
+  The readings up to that one were ordinary. The collector counted the
+  failures by cause and ran its recovery (bus clear, soft reset, 2 ms) over
+  2500 times in a minute without the part answering. After a restart without
+  removing power, start-up's own bus clear and reset at both addresses did
+  not find it either: the board went to FAULT, `sensor_fail`. A power cycle
+  brought it back. In four further runs, 16 beep codes, it did not happen
+  again.
+- **The likely cause is the bench's power, not the board in flight (the
+  designer's reading, 2026-10-03):** the buzzer is driven from VUSB, and with
+  no battery fitted the USB supply's limited current lets a beep pull the
+  3.3 V rail down. Every bench board here is on USB alone, through a hub.
+  That fits the temperature code's scatter rising by half during beeps on
+  both sensors, and a rail dip is the one thing that reaches the BMP280's
+  CSB. It is not measured: it needs the rail watched during a beep, or the
+  runs repeated on a battery.
 - **What the design says:** the BMP280 datasheet, page 27, section 5.1: once
   CSB has been pulled low, "the I2C interface is disabled until the next
   power-on-reset". On MK1B's schematic CSB, SDO, VDDIO and VDD of U4 are all

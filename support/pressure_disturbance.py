@@ -4,6 +4,7 @@ pressure_disturbance.py -- does a board's own buzzer or flash disturb its
 pressure sensor? (DD-068, G4-M, docs/pressure_collector.md)
 
     support/pressure_disturbance.py HOST [SAVE.json]     measure one board
+    support/pressure_disturbance.py --flash-first HOST [SAVE.json]
     support/pressure_disturbance.py --analyze SAVE.json...
 
 Takes every conversion from /api/pressure/trace through four phases: 20 s at
@@ -29,7 +30,7 @@ import pressure_trace as pt
 REST_S, BEEPS, BEEP_S, REST2_S, FLASH_S = 20, 4, 5.6, 10, 25
 
 
-def measure(host, save):
+def measure(host, save, flash_first=False):
     def get(path):
         with urllib.request.urlopen(f"http://{host}{path}", timeout=5) as r:
             return r.read()
@@ -70,26 +71,32 @@ def measure(host, save):
 
     t = threading.Thread(target=collector)
     t.start()
-    time.sleep(3)
-    phase[0] = "rest"
-    time.sleep(REST_S)
-    phase[0] = "beep"
-    beeps = []
-    for _ in range(BEEPS):
-        beeps.append(post("/api/beeps/play", b'{"kind":"code","d1":9,"d2":9}', "application/json"))
-        time.sleep(BEEP_S)
-    phase[0] = "settle"
-    time.sleep(3)
-    phase[0] = "rest2"
-    time.sleep(REST2_S)
-    phase[0] = "flash"
-    saves = []
-    end = time.time() + FLASH_S
-    while time.time() < end:
-        saves.append(post("/api/config", config, "text/plain"))
-        time.sleep(0.4)
-    phase[0] = "settle"
-    time.sleep(2)
+    beeps, saves = [], []
+
+    def rest(name, seconds):
+        phase[0] = name
+        time.sleep(seconds)
+
+    def beep():
+        phase[0] = "beep"
+        for _ in range(BEEPS):
+            beeps.append(post("/api/beeps/play", b'{"kind":"code","d1":9,"d2":9}', "application/json"))
+            time.sleep(BEEP_S)
+
+    def flash():
+        phase[0] = "flash"
+        end = time.time() + FLASH_S
+        while time.time() < end:
+            saves.append(post("/api/config", config, "text/plain"))
+            time.sleep(0.4)
+
+    rest("settle", 3)
+    rest("rest", REST_S)
+    (flash if flash_first else beep)()
+    rest("settle", 3)
+    rest("rest2", REST2_S)
+    (beep if flash_first else flash)()
+    rest("settle", 2)
     stop.append(True)
     t.join()
     after = counters()
@@ -125,7 +132,11 @@ def report(d):
               f"{a['pres_recoveries'] - b['pres_recoveries']} recoveries")
     rows = [tuple(r) for r in d["recs"]]
     bmp = b["sensor"] == "BMP280"
-    for ph in ("rest", "beep", "rest2", "flash"):
+    seen = []
+    for r in rows:
+        if r[0] != "settle" and r[0] not in seen:
+            seen.append(r[0])
+    for ph in seen:
         pressures = [r for r in rows if r[0] == ph and chr(r[6]) in "PF"]
         temps = [float(r[4]) for r in pressures] if bmp else [float(r[3]) for r in rows if r[0] == ph and chr(r[6]) in "TG"]
         typical, rms, worst = scatter([r[5] / 100.0 for r in pressures])
@@ -155,9 +166,10 @@ def main():
             with open(path) as f:
                 report(json.load(f))
         return
-    if len(sys.argv) < 2:
+    args = [a for a in sys.argv[1:] if a != "--flash-first"]
+    if not args:
         sys.exit(__doc__)
-    report(measure(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None))
+    report(measure(args[0], args[1] if len(args) > 1 else None, flash_first="--flash-first" in sys.argv))
 
 
 if __name__ == "__main__":
