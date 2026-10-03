@@ -323,14 +323,20 @@ Departures are from a 9-point running median, so slow drift does not count.
   not find it either: the board went to FAULT, `sensor_fail`. A power cycle
   brought it back. In four further runs, 16 beep codes, it did not happen
   again.
-- **The likely cause is the bench's power, not the board in flight (the
-  designer's reading, 2026-10-03):** the buzzer is driven from VUSB, and with
-  no battery fitted the USB supply's limited current lets a beep pull the
-  3.3 V rail down. Every bench board here is on USB alone, through a hub.
-  That fits the temperature code's scatter rising by half during beeps on
-  both sensors, and a rail dip is the one thing that reaches the BMP280's
-  CSB. It is not measured: it needs the rail watched during a beep, or the
-  runs repeated on a battery.
+- **The cause is the bench's power, not the board in flight.** The buzzer is
+  driven from VUSB, and with no battery fitted the USB supply's limited
+  current lets a beep pull the 3.3 V rail down (the designer, 2026-10-03).
+  With a battery fitted to the BMP280 board, four runs:
+
+  | BMP280 MK1B | At rest, rms | Beeping, rms | Worst beeping | Temperature code, rest / beeping |
+  |---|---|---|---|---|
+  | USB alone | 2.4 to 2.5 Pa | 3.1 to 3.4 Pa | 13 to 19 Pa | 32 / 46 to 51 |
+  | Battery fitted | 1.9 to 2.3 Pa | 1.9 to 2.4 Pa | 6 to 10 Pa | 16.5 / 17 to 19 |
+
+  On the battery a beep changes nothing, the sensor is quieter even at rest,
+  and the temperature code's scatter is half what it was. No transfer failed
+  in 16 beep codes. The rail itself was not measured. The MS5607 board has
+  not been run on a battery.
 - **What the design says:** the BMP280 datasheet, page 27, section 5.1: once
   CSB has been pulled low, "the I2C interface is disabled until the next
   power-on-reset". On MK1B's schematic CSB, SDO, VDDIO and VDD of U4 are all
