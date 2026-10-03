@@ -47,7 +47,7 @@ bool board_pyro_raw(board_pyro_raw_t *out) {
 
 /* See THEORY_OF_OPERATION.md "Flash and the fire". */
 bool board_flash_ok(void) {
-    return !sequence_firing();
+    return !sequence_firing() && !tracking_pulse_active();
 }
 
 static void on_tracking_result(const tracking_t *t) {

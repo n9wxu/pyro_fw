@@ -65,7 +65,7 @@ state_event_t flight_detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     flight_take_sample(ctx, &s, PAD_IDLE);
     flight_note_sensor(ctx, &s, now);
 
-    bool launch = launch_detected(&ctx->launch, &s, (float)ctx->ground_pressure);
+    bool launch = launch_detected(&s, (float)ctx->ground_pressure);
     return launch && !flight_grounded_on_usb(ctx) ? SEVT_LAUNCH : SEVT_NONE;
 }
 

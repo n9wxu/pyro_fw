@@ -125,7 +125,7 @@ GROUND_TEST are numbered after LANDED, so recorded state numbers never move.
 ### PAD_IDLE
 - A pressure every 20 ms loop, 50 a second (FLT-RATE-01)
 - Ground reference: follows the weather, excluding samples more than 50 Pa from it, and moves to a new pad after 5 s still (GND-CAL-01, GND-CAL-03, GND-CAL-06)
-- Launch: altitude above 100 ft and speed above 5 m/s, held 100 ms of sample time, and no USB host attached unless test mode is on (FLT-LAUNCH-07, USB-01)
+- Launch: altitude above 100 ft and speed above 5 m/s on the filtered state, with no hold time, and no USB host attached unless test mode is on (FLT-LAUNCH-07, USB-01)
 - On launch: T+0 is the start of the rise (FLT-LAUNCH-03); the reference freezes to the pad before T+0 (GND-CAL-04)
 - Pyro health is read every second and the announcement re-derived: general fault, pyro 1, pyro 2 or OK to fly, in that priority (BUZ-CODE-02); it repeats until launch (BUZ-02)
 - After 10 s the pad record is stored for a resume (FLT-BROWN-01)
@@ -133,7 +133,7 @@ GROUND_TEST are numbered after LANDED, so recorded state numbers never move.
 ### ASCENT
 - Thrust is reported while the filtered acceleration is upward (FLT-ASC-03)
 - Arm pyros once the speed has passed 10 m/s and fallen back below it, above about 30 m (DD-017, FLT-MACH-06)
-- Apogee: no Mach flag, the filtered pressure rising by more than three times its rate's uncertainty and above its lowest value by more than twice the estimate's, held 60 ms (FLT-APO-01, FLT-MACH-05); or apogee under the flag (FLT-MACH-04)
+- Apogee: no Mach flag, the filtered pressure rising by more than three times its rate's uncertainty and above its lowest value by more than twice the estimate's, with no hold time (FLT-APO-01, FLT-MACH-05); or apogee under the flag (FLT-MACH-04)
 - Record peak altitude and apogee time
 
 ### DESCENT (FALLING, DROGUE_DESCENT, CHUTE_DESCENT)

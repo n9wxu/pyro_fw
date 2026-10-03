@@ -151,16 +151,26 @@ match the tracking current is about 0.11 mA on the bench — far under a
 ## Presence test
 
 Every 500 ms, while no fire is in progress, the firmware biases the bus
-(BIAS_BUS only), waits one loop for it to settle, reads the bus and both
-channels, and lets the bias go (`tracking_step()`). A channel reading at least
+(BIAS_BUS only), waits 8 ms for it to settle, reads the bus and both
+channels, and lets the bias go. The loop starts the pulse (`tracking_step()`)
+and a hardware alarm ends it, so the pulse does not wait for the next loop. A channel reading at least
 half the bus has a match across it (`track_channel()`): a match reads about the
 whole bus, a 5 kΩ dirty connector about three quarters, and the raw counts are
 reported so a degraded joint shows. A test whose bus stayed under 200 counts is
 no reading at all.
 
-With 1.1 µF on the bus, one loop is ample settle. The pulse is 20–21 ms where
-DESIGN.md S3 asks 5–10 ms, because the loop ends a phase no sooner than its
-next iteration (task P1: a timer one-shot, decided).
+With 1.1 µF on the bus, 8 ms is ample settle, and it is inside the 5–10 ms
+DESIGN.md S3 asks. The reading is taken in the alarm's interrupt, on the
+loop's own core. If that interrupt lands on one of the loop's own ADC
+conversions, one conversion on each side is wrong and each side's median of
+three drops it. A storage write that has both cores' interrupts off when the
+alarm is due delays the end of the pulse by the length of the write; the
+reading is still taken under the bias. On a board with no hardware alarm free
+the loop ends the pulse instead, at its next iteration.
+
+A fire drops a test in progress: `pyro_fire()` takes the bias off and cancels
+the alarm before it arms the bus. The test serves the pad's announcement and
+the record after a fire. Nothing in flight waits for it.
 
 The test never runs while the bus is live: not during a fire, and after one
 not until the bus has drained cold (DESIGN.md invariants 1 and 7).
@@ -257,7 +267,8 @@ first releases its gate, on the bus the first left charged. Never both at once
 A flash sector erase stalls the loop for tens of milliseconds — longer than the
 pump coasts — and a precharge that stalls reaches its deadline uncharged. So
 `board_flash_ok()` answers false from the command until the gate is released,
-and the main loop opens no storage window meanwhile. The fire takes a few loop
+and while a presence pulse is out, and the main loop opens no storage window
+meanwhile. The fire takes a few loop
 periods; the log's writes wait for them.
 
 ## Pressure sensor

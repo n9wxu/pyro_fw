@@ -12,6 +12,7 @@
 #include "hardware/dma.h"
 #include "hardware/pio.h"
 #include "hardware/watchdog.h"
+#include "hardware/timer.h"
 #include "hardware/structs/watchdog.h"
 
 #include <string.h>
@@ -342,6 +343,50 @@ static uint64_t next_peripheral_event_us(void) {
     return next;
 }
 
+/* ── Hardware alarms ──────────────────────────────────────────────── */
+
+#define N_ALARMS 4
+static struct {
+    bool claimed, armed;
+    uint64_t target_us;
+    hardware_alarm_callback_t callback;
+} alarms[N_ALARMS];
+
+int hardware_alarm_claim_unused(bool required) {
+    (void)required;
+    for (int i = 0; i < N_ALARMS; i++) {
+        if (!alarms[i].claimed) {
+            alarms[i].claimed = true;
+            return i;
+        }
+    }
+    return -1;
+}
+
+void hardware_alarm_set_callback(uint alarm_num, hardware_alarm_callback_t callback) {
+    alarms[alarm_num].callback = callback;
+}
+
+bool hardware_alarm_set_target(uint alarm_num, absolute_time_t t) {
+    alarms[alarm_num].target_us = t._private_us_since_boot;
+    alarms[alarm_num].armed = true;
+    return false;
+}
+
+void hardware_alarm_cancel(uint alarm_num) {
+    alarms[alarm_num].armed = false;
+}
+
+static void alarm_service(void) {
+    for (uint i = 0; i < N_ALARMS; i++) {
+        if (alarms[i].armed && now_us >= alarms[i].target_us) {
+            alarms[i].armed = false;
+            if (alarms[i].callback)
+                alarms[i].callback(i);
+        }
+    }
+}
+
 void shim_advance_us(uint64_t us) {
     while (us > 0) {
         uint64_t h = next_peripheral_event_us();
@@ -355,6 +400,7 @@ void shim_advance_us(uint64_t us) {
         plant_step((double)h * 1e-6);
         dma_service((double)h);
         watchdog_service();
+        alarm_service();
     }
 }
 
@@ -376,5 +422,7 @@ void shim_reset(void) {
     memset(&wd_storage, 0, sizeof(wd_storage));
     wd_deadline_us = 0;
     wd_expired = false;
+    for (int i = 0; i < N_ALARMS; i++)
+        alarms[i].armed = false; /* a claim and its handler outlive the test's reset */
     adc_init();
 }

@@ -117,7 +117,7 @@ fraction of g, at any site elevation. The Mach and g ranges are over
   30 m (FLT-MACH-06).
 - **Apogee, with no flag** (statistical): the filtered pressure rising by
   more than three times its rate's own uncertainty, and above its lowest
-  value by more than twice the estimate's, held 60 ms (FLT-APO-01). The lowest
+  value by more than twice the estimate's, with no hold time (FLT-APO-01). The lowest
   value is tracked only while no flag stands.
 - **Apogee under the flag** (physical, FLT-MACH-04): smooth data, a descent
   slower than the release rate, and under gravity, for 2 s. A port error that
@@ -184,7 +184,7 @@ flag; 0: never) and `peak_lower_bound`.
 | A quadratic fit over a window | The filtered state, with "smooth" from its innovations | The filter measures the noise and follows it at altitude |
 | Flag on clean fits | The filtered rate, and a two-interval raw rate before the first release | Hard boosts |
 | LOCKED is a state | A latch in ASCENT | The state table, telemetry and UI |
-| Launch on p̈ | 100 ft and 5 m/s, held 100 ms | p̈ misses launches under about 2.1-2.4 g net |
+| Launch on p̈ | 100 ft and 5 m/s on the filtered state | p̈ misses launches under about 2.1-2.4 g net |
 | Each channel fires once | The re-fire and emergency rules (PYR-REFIRE-01, FLT-EMRG-01) | DD-082 |
 | Main on p > p_main | The configured modes, each converted to a pressure once | AGL is the same comparison; the others are the operator's choice |
 | The fallback waits for the flag's level | The gravity signature of a descent first; the flag's level as the last resort | A flag set low in the boost would deploy low |

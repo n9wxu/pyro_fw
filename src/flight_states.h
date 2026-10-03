@@ -69,7 +69,6 @@ typedef struct flight_context_t {
     uint16_t channel_adc[2];
     bool announced;
     uint8_t announcement; /* beep_reason_t */
-    launch_detector_t launch;
     bool usb_attached;
     bool test_mode;
 
@@ -93,7 +92,6 @@ typedef struct flight_context_t {
     bool apogee_declared;
     bool under_thrust;
     bool sensor_stuck, sensor_lost;
-    uint32_t apogee_held_since;
     mach_lock_t mach;
     descent_phase_t descent;
     landing_detector_t landing;

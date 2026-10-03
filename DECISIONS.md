@@ -587,6 +587,14 @@ rationale and the alternatives considered.
 - **The bench profile's descent starts from rest (SIM-04):** it gathers speed
   under gravity toward each rate, so a failed canopy is a fall and no speed
   appears from nowhere.
+- **No hold on launch or apogee (task T3, 2026-10-03):** the 100 ms launch
+  hold and the 60 ms apogee hold are removed. With either at zero every pad,
+  flight and Mach test passed, 30 minutes of 30 Pa gusts at 9 Pa of sensor
+  noise included: the filter's own lag and its skipping of one or two bad
+  readings are the guard. `launch_detected()` is a pure function.
+- **MK1C's presence pulse is ended by a hardware alarm (task P1):** 8 ms, not
+  the next 20 ms loop. A fire drops a test in progress, and no storage write
+  starts beside the pulse.
 - **Open:** the three speed defaults are 0 until the modelling study gives
   values; MK1A and MK1B do not meet PYR-ARM-01's 50 ms; MK1C-SD has no script
   (SYS-LUA-01); HAL validation is not built (`docs/hal_validation_apps.md`).

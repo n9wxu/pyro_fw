@@ -35,9 +35,9 @@ FALLING / DROGUE_DESCENT / CHUTE_DESCENT → LANDED on SEVT_LANDING
 
 ### State Transition Criteria
 
-**PAD_IDLE → ASCENT:** 100 ft above the ground reference while climbing at 5 m/s or more, held 100 ms (FLT-LAUNCH-02, FLT-LAUNCH-07), and no USB host attached unless test mode is on (USB-01, USB-08). T+0 is back-dated to the start of the rise (FLT-LAUNCH-03).
+**PAD_IDLE → ASCENT:** 100 ft above the ground reference while climbing at 5 m/s or more, on the filtered state, with no hold (`launch_detected()`, FLT-LAUNCH-02, FLT-LAUNCH-07), and no USB host attached unless test mode is on (USB-01, USB-08). T+0 is back-dated to the start of the rise (FLT-LAUNCH-03).
 
-**ASCENT → FALLING:** the filtered pressure rising by more than three times its rate's uncertainty, and above its lowest value by more than twice the estimate's, held 60 ms (FLT-APO-01, DD-085). Under the Mach flag: a smooth, slow descent under gravity for 2 s, or the pressure smooth and above the flag's (FLT-MACH-04). The Mach flag is described in `docs/mach_lockout.md`.
+**ASCENT → FALLING:** the filtered pressure rising by more than three times its rate's uncertainty, and above its lowest value by more than twice the estimate's, with no hold (FLT-APO-01, DD-085). Under the Mach flag: a smooth, slow descent under gravity for 2 s, or the pressure smooth and above the flag's (FLT-MACH-04). The Mach flag is described in `docs/mach_lockout.md`.
 
 **Descent:** the phase is read from the descent rate settling in a band, never from a firing command (FLT-DESC-01). The fire rules are `fire_control_step()` in `src/fire_control.c`: each channel's own trigger, re-fire, and the emergency fire (DD-082).
 

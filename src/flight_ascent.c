@@ -6,12 +6,10 @@
  */
 #include "flight_internal.h"
 #include "atmosphere.h"
-#include "hold.h"
 #include "mach_lockout.h"
 #include "pressure_processing.h"
 
 #define ARM_SPEED_CMS 1000
-#define APOGEE_HOLD_MS 60u
 #define APOGEE_SIGMAS 3.0f           /* descending by more than the rate's own uncertainty */
 #define APOGEE_RISE_SIGMAS 2.0f      /* and above the lowest pressure by more than the estimate's */
 #define APOGEE_BACKDATE_MAX_MS 1500u /* [PYR-MODE-05] */
@@ -64,7 +62,7 @@ static bool apogee_seen(flight_context_t *ctx, const pp_sample_t *s) {
     bool past_the_minimum = s->pressure_pa > ctx->peak_pa * (1.0f + APOGEE_RISE_SIGMAS * s->log_sigma);
     bool descending = !s->suspect && s->rate > APOGEE_SIGMAS * s->rate_sigma && past_the_minimum;
     bool allowed = ctx->pyros_armed && !ctx->apogee_declared && !ctx->mach.flagged;
-    return held_for(allowed && descending, &ctx->apogee_held_since, s->timestamp_ms, APOGEE_HOLD_MS);
+    return allowed && descending;
 }
 
 static state_event_t follow_mach_lock(flight_context_t *ctx, const pp_sample_t *s) {

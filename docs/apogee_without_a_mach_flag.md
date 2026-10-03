@@ -74,8 +74,9 @@ The last row is the rule in the patch:
    Anything else ends the arc and forgets it.
 2. **A climb seen**: on this arc the rate has shown the rocket climbing, by
    more than three times the rate's own uncertainty.
-3. **Apogee**: on that arc the rate shows a descent, by the same margin, held
-   60 ms.
+3. **Apogee**: on that arc the rate shows a descent, by the same margin. The
+   patch held this 60 ms; task T3 has since removed that hold from the flight
+   code.
 4. **If no climb was seen** on the arc, a descent must hold for 2 s instead.
    This is what fires after a sensor gap or a glitch that spans the apogee
    itself. With 1, 2, 3 or 5 s here no port error in the tests fired early.
@@ -168,7 +169,10 @@ and only for the record at first.
 
 ## To reproduce
 
+The patch is against commit d345755, before the apogee hold was removed.
+
 ```bash
+git checkout d345755
 git apply sim/study/apogee_arc_experiment.patch
 export CI_BUILD=1
 cmake -S . -B build && cmake --build build --target mach_tests

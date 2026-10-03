@@ -66,7 +66,7 @@ flight this unit cannot (DD-081).
 - **FLT-LAUNCH-03**: T+0 shall be the time of the first sample of the rise more than 50 cm above the pad, not the moment of detection. ← FLT-PHASE-01
 - **FLT-LAUNCH-04**: The system shall log a LAUNCH event at the transition. ← FLT-PHASE-01
 - **FLT-LAUNCH-05**: The system shall stop the buzzer upon launch detection. ← FLT-PHASE-01
-- **FLT-LAUNCH-07**: The system shall declare launch, and enter ASCENT, only when a height more than 100 feet above the ground reference and a vertical speed above 5 m/s have held together for 100 ms of sample time, and never while a USB host is attached (USB-01). ← FLT-PHASE-01
+- **FLT-LAUNCH-07**: The system shall declare launch, and enter ASCENT, only when the filtered state shows a height more than 100 feet above the ground reference together with a vertical speed above 5 m/s, and never while a USB host is attached (USB-01). No hold time is added: the filtered state is the guard against noise (SNS-EST-02, SNS-EST-03). ← FLT-PHASE-01, DD-091
 
 ### Ground reference
 - **GND-CAL-01**: The ground reference shall follow the ambient pressure on the pad, as its mean over the last 5 seconds. ← FLT-PHASE-01

@@ -108,8 +108,8 @@ The ground reference follows the weather, holds while the rocket moves, and
 freezes at launch on the pad's own pressure. A board carried to another pad
 reseeds after 5 s still (GND-CAL-06).
 
-Launch is 100 ft above the reference while climbing at 5 m/s or more, held
-100 ms. Time zero is back-dated to the start of the rise (FLT-LAUNCH-03).
+Launch is 100 ft above the reference while climbing at 5 m/s or more, on the
+filtered state (`launch_detected()`), with no hold time. Time zero is back-dated to the start of the rise (FLT-LAUNCH-03).
 
 On USB, with test mode off, no launch is detected, nothing is announced and
 no record is written (USB-01, USB-02).
@@ -121,7 +121,7 @@ climb. The Mach flag (below) may stand meanwhile.
 
 Apogee is declared when the filtered pressure is rising by more than three
 times its rate's own uncertainty and stands above its lowest value by more
-than twice the estimate's, held 60 ms. It is declared after the true apogee,
+than twice the estimate's, with no hold time. It is declared after the true apogee,
 never before it: within 0.5 s to 10 km, 1.5 s at 20 km and 2.5 s at 30 km at
 a sensor noise of 9 Pa (`test_FLT_APO_01_...`).
 

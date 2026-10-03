@@ -114,7 +114,7 @@ which lets it rejoin the flight after any restart in the air (FLT-BROWN-01).
 
 ### In flight
 
-The board declares a launch above 100 ft and 5 m/s, held 100 ms
+The board declares a launch above 100 ft and 5 m/s on its filtered state
 (FLT-LAUNCH-07).
 It arms once the burn is over, finds apogee from the pressure itself, and
 fires each channel as its mode says, then again as the fire rules say. While
@@ -180,7 +180,7 @@ reboots into the new image.
 
 ## Flight States
 1. **BOOT_SETTLE → BOOT_SENSOR → BOOT_CONTINUITY → BOOT_CALIBRATE** - 2.5 s settle, the sensor and storage checked and a flight in progress resumed (FLT-BROWN-02), then pyro health, then a 10-reading ground reference
-2. **PAD_IDLE** - launch at 100 ft and 5 m/s, held 100 ms; never while a USB host is attached, unless test mode is on (USB-01, USB-08)
+2. **PAD_IDLE** - launch at 100 ft and 5 m/s on the filtered state; never while a USB host is attached, unless test mode is on (USB-01, USB-08)
 3. **ASCENT** - the pyros arm once the climb has passed 10 m/s and slowed below it again, above about 30 m (DD-017); apogee is the filtered pressure passing its minimum (FLT-APO-01)
 4. **FALLING, DROGUE_DESCENT, CHUTE_DESCENT** - pyros fire by their modes, then by the re-fire and emergency rules (DD-082); the phase is read from the descent rate (DD-023)
 5. **LANDED** - still for 1 s near the ground, or the landing timeout; the log closes and the altitude beep-out starts

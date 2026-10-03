@@ -17,6 +17,13 @@ static inline uint64_t to_us_since_boot(absolute_time_t t) {
 static inline int64_t absolute_time_diff_us(absolute_time_t from, absolute_time_t to) {
     return (int64_t)to._private_us_since_boot - (int64_t)from._private_us_since_boot;
 }
+static inline absolute_time_t from_us_since_boot(uint64_t us) {
+    absolute_time_t t = {us};
+    return t;
+}
+static inline absolute_time_t make_timeout_time_us(uint64_t us) {
+    return from_us_since_boot(shim_now_us() + us);
+}
 static inline void sleep_us(uint64_t us) { shim_advance_us(us); }
 static inline void sleep_ms(uint32_t ms) { shim_advance_us((uint64_t)ms * 1000u); }
 static inline void busy_wait_us(uint64_t us) { shim_advance_us(us); }

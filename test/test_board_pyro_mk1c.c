@@ -50,9 +50,37 @@ static struct {
     double bus_at_bias_max;  /* the bus when BIAS_BUS went high  */
 } w;
 
+/* The presence test's bias on the bus, edge by edge: a hardware alarm ends
+ * the pulse between loops, so it is watched there as well as at each loop. */
+static bool bias_was_on;
+static uint64_t bias_rose_us, bias_pulse_min_us, bias_pulse_max_us;
+
+static void note_bias(void) {
+    bool on = plant_get_gpio(BOARD_PIN_BIAS_BUS);
+    if (on == bias_was_on)
+        return;
+    bias_was_on = on;
+    if (on) {
+        plant_probe_t p;
+        plant_probe(&p);
+        bias_bus_rises++;
+        bias_rose_us = shim_now_us();
+        if (p.bus_v > w.bus_at_bias_max)
+            w.bus_at_bias_max = p.bus_v;
+        return;
+    }
+    bias_bus_falls++;
+    uint64_t width = shim_now_us() - bias_rose_us;
+    if (bias_pulse_min_us == 0 || width < bias_pulse_min_us)
+        bias_pulse_min_us = width;
+    if (width > bias_pulse_max_us)
+        bias_pulse_max_us = width;
+}
+
 static void watch(uint32_t us) {
     for (uint32_t t = 0; t < us; t += WATCH_US) {
         shim_advance_us(WATCH_US);
+        note_bias();
         uint64_t now = shim_now_us();
         if (plant_get_gpio(BOARD_PIN_FIRE_A) && plant_get_gpio(BOARD_PIN_FIRE_B))
             w.both_gates = true;
@@ -71,7 +99,6 @@ static void watch(uint32_t us) {
 
 /* One pyro_update(), as STAGE 4 of the loop runs it, and the edges it drove. */
 static void update_now(void) {
-    bool bus0 = plant_get_gpio(BOARD_PIN_BIAS_BUS);
     bool a0 = plant_get_gpio(BOARD_PIN_BIAS_A), b0 = plant_get_gpio(BOARD_PIN_BIAS_B);
     const int fire_pin[2] = {BOARD_PIN_FIRE_A, BOARD_PIN_FIRE_B};
     bool f0[2] = {plant_get_gpio(fire_pin[0]), plant_get_gpio(fire_pin[1])};
@@ -84,13 +111,7 @@ static void update_now(void) {
 
     plant_probe_t p;
     plant_probe(&p);
-    if (!bus0 && plant_get_gpio(BOARD_PIN_BIAS_BUS)) {
-        bias_bus_rises++;
-        if (p.bus_v > w.bus_at_bias_max)
-            w.bus_at_bias_max = p.bus_v;
-    }
-    if (bus0 && !plant_get_gpio(BOARD_PIN_BIAS_BUS))
-        bias_bus_falls++;
+    note_bias();
     if ((!a0 && plant_get_gpio(BOARD_PIN_BIAS_A)) || (!b0 && plant_get_gpio(BOARD_PIN_BIAS_B)))
         bias_ch_rises++;
     for (int i = 0; i < 2; i++) {
@@ -146,6 +167,8 @@ static void board_at(bool match1, bool match2, double pack_mv) {
     telemetry[0] = '\0';
     memset(&w, 0, sizeof(w));
     bias_bus_rises = bias_bus_falls = bias_ch_rises = 0;
+    bias_was_on = false;
+    bias_rose_us = bias_pulse_min_us = bias_pulse_max_us = 0;
     longest_update_us = 0;
     pyro_init();
 }
@@ -240,6 +263,38 @@ void test_mk1c_only_the_tracking_test_runs(void) {
     TEST_ASSERT_FALSE_MESSAGE(w.toggle_seen, "the pump never runs outside a fire");
     snprintf(msg, sizeof(msg), "pyro_update() held the loop %llu us", (unsigned long long)longest_update_us);
     TEST_ASSERT_TRUE_MESSAGE(longest_update_us < 200u, msg);
+}
+
+/* The bias pulse is ended by a hardware alarm 8 ms after it starts, not by
+ * the next 20 ms loop: DESIGN.md S3 asks for 5 to 10 ms. */
+void test_mk1c_presence_pulse_is_8_ms(void) {
+    board(true, true);
+    loops(5000u);
+    char msg[96];
+    snprintf(msg, sizeof(msg), "pulses of %llu to %llu us", (unsigned long long)bias_pulse_min_us,
+             (unsigned long long)bias_pulse_max_us);
+    TEST_ASSERT_TRUE_MESSAGE(bias_bus_falls >= 9, msg);
+    TEST_ASSERT_TRUE_MESSAGE(bias_pulse_min_us >= 8000u && bias_pulse_max_us <= 8200u, msg);
+    pyro_continuity_t c1, c2;
+    pyro_get(1, &c1);
+    pyro_get(2, &c2);
+    TEST_ASSERT_TRUE_MESSAGE(c1.good && c2.good, "and the reading taken at its end is the presence reading");
+}
+
+/* A fire that comes while the bus is biased drops the test: the alarm that
+ * would have ended the pulse finds nothing to read. */
+void test_mk1c_a_fire_during_the_presence_pulse_drops_the_test(void) {
+    board(true, false);
+    loops(1100u);
+    int rises = bias_bus_rises;
+    for (int i = 0; i < 100 && bias_bus_rises == rises; i++)
+        loops(LOOP_MS);
+    TEST_ASSERT_TRUE_MESSAGE(plant_get_gpio(BOARD_PIN_BIAS_BUS), "the bus is biased");
+    TEST_ASSERT_FALSE_MESSAGE(board_flash_ok(), "no storage write beside the pulse");
+    TEST_ASSERT_TRUE(accepted(1));
+    TEST_ASSERT_FALSE_MESSAGE(plant_get_gpio(BOARD_PIN_BIAS_BUS), "the bias is dropped at the command");
+    loops(100u);
+    TEST_ASSERT_TRUE(fired(1));
 }
 
 /* ── The fire (DD-056) ────────────────────────────────────────────── */
@@ -531,6 +586,8 @@ int main(void) {
     RUN_TEST(test_mk1c_high_side_short_latches);
     RUN_TEST(test_mk1c_one_bad_tracking_reading_does_not_latch);
     RUN_TEST(test_mk1c_only_the_tracking_test_runs);
+    RUN_TEST(test_mk1c_presence_pulse_is_8_ms);
+    RUN_TEST(test_mk1c_a_fire_during_the_presence_pulse_drops_the_test);
     RUN_TEST(test_mk1c_fires_a_present_channel);
     RUN_TEST(test_mk1c_fires_on_the_measured_bus);
     RUN_TEST(test_mk1c_pump_runs_only_inside_a_fire);
