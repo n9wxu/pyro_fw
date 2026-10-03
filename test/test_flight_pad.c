@@ -154,7 +154,8 @@ void test_CFG_10_a_saved_change_waits_for_the_next_start(void) {
     reach_pad();
     harness_config("[pyro]\nunits=m\npyro2_mode=agl\npyro2_value=150\nfire_gap=5000\n");
     wait_ms(3000);
-    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.01f, 300.0f, ctx.plan.trigger_m[1], "the running board keeps what it started with");
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.01f, 300.0f, ctx.plan.trigger_m[1],
+                                     "the running board keeps what it started with");
     TEST_ASSERT_EQUAL_UINT32(3000, ctx.plan.fire_gap_ms);
     harness_restart(RESET_SOFTWARE);
     reach_pad();
@@ -247,6 +248,27 @@ void test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch(void) {
 }
 
 /* ── The ground reference [GND-CAL-01..07] ────────────────────────── */
+
+/* [FLT-RATE-06] The collector is faster than the loop: three samples waiting
+ * are three steps of this loop, and the newest is the one the flight
+ * software stands on. Taken one a loop they would queue, and every decision
+ * would be made on old data. */
+void test_FLT_RATE_06_every_waiting_sample_is_taken_in_its_loop(void) {
+    to_the_pad(35);
+    reach_pad();
+    while (pp_available())
+        ctx.current_state = dispatch_state(&ctx, now);
+    uint64_t stamp_us = (uint64_t)now * 1000u;
+    for (int i = 0; i < 3; i++) {
+        stamp_us += 18867u;
+        pp_feed_us(pp_ground_pressure() + i, stamp_us);
+    }
+    TEST_ASSERT_EQUAL_INT(3, pp_available());
+    ctx.current_state = dispatch_state(&ctx, now);
+    TEST_ASSERT_EQUAL_INT(0, pp_available());
+    TEST_ASSERT_EQUAL_UINT32((uint32_t)(stamp_us / 1000u), ctx.last_sample);
+    TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
+}
 
 void test_GND_CAL_01_the_reference_follows_the_weather(void) {
     to_the_pad(30);
@@ -423,6 +445,7 @@ int main(void) {
     RUN_TEST(test_GND_CAL_06_a_moved_board_takes_a_new_reference);
     RUN_TEST(test_GND_CAL_06_a_launch_never_moves_the_reference);
     RUN_TEST(test_GND_CAL_07_a_reference_from_under_a_second_is_reported);
+    RUN_TEST(test_FLT_RATE_06_every_waiting_sample_is_taken_in_its_loop);
     RUN_TEST(test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds);
     RUN_TEST(test_USB_01_no_launch_and_no_record_while_attached);
     RUN_TEST(test_USB_02_nothing_is_announced_while_attached);

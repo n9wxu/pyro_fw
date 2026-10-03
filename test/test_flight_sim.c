@@ -174,11 +174,19 @@ void test_SIM_02_the_bench_replaces_the_reading_while_it_flies(void) {
     fsim_params_t p = high();
     uint64_t t0 = 10000000u;
     TEST_ASSERT_EQUAL_INT(BF_STARTED, bench_flight_start(&p, SEA_PA, true, true, t0));
+    pa = SEA_PA;
     TEST_ASSERT_TRUE(bench_flight_pressure(t0 - 5000u, false, &pa));
     TEST_ASSERT_EQUAL_FLOAT_MESSAGE(SEA_PA, pa, "a reading from before the start is the pad's");
     uint64_t apogee_us = t0 + (uint64_t)((p.pad_s + 4.0f + 0.5f) * 1e6f);
+    pa = SEA_PA;
     TEST_ASSERT_TRUE(bench_flight_pressure(apogee_us, false, &pa));
     TEST_ASSERT_TRUE(pa < SEA_PA * 0.9f);
+    /* The sensor's own noise rides on the profile: a reading 7 Pa above the
+     * ground it started at is the profile's pressure and 7 Pa. */
+    float quiet = pa;
+    pa = SEA_PA + 7.0f;
+    TEST_ASSERT_TRUE(bench_flight_pressure(apogee_us, false, &pa));
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, quiet + 7.0f, pa);
     bench_flight_status_t st;
     bench_flight_status(&st);
     TEST_ASSERT_TRUE(st.flying);
@@ -194,16 +202,18 @@ void test_SIM_02_the_bench_ends_when_both_have_landed(void) {
                        .main_ms = 20.0f,
                        .thin_air = false,
                        .pad_s = 0.0f};
-    float pa;
+    float pa = SEA_PA;
     TEST_ASSERT_EQUAL_INT(BF_STARTED, bench_flight_start(&p, SEA_PA, true, true, 0));
     TEST_ASSERT_TRUE(bench_flight_pressure(5000000u, true, &pa));
     bench_flight_status_t st;
     bench_flight_status(&st);
     TEST_ASSERT_TRUE_MESSAGE(st.flying, "the machine said LANDED in the air, and the profile stopped");
+    pa = SEA_PA;
     TEST_ASSERT_TRUE(bench_flight_pressure(300000000u, false, &pa));
     bench_flight_status(&st);
     TEST_ASSERT_EQUAL_INT(FSIM_LANDED, st.phase);
     TEST_ASSERT_TRUE_MESSAGE(st.flying, "the profile landed and stopped before the machine did");
+    pa = SEA_PA;
     TEST_ASSERT_TRUE(bench_flight_pressure(301000000u, true, &pa));
     TEST_ASSERT_EQUAL_FLOAT(SEA_PA, pa);
     TEST_ASSERT_FALSE(bench_flight_pressure(302000000u, true, &pa));
@@ -240,7 +250,8 @@ void test_SIM_04_the_descent_starts_from_rest(void) {
     fsim_params_t p = low();
     TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA));
     float apogee = s.t_apogee;
-    TEST_ASSERT_FLOAT_WITHIN(1.5f, 0.5f * 9.80665f * 1.0f, fsim_altitude(&s, apogee) - fsim_altitude(&s, apogee + 1.0f));
+    TEST_ASSERT_FLOAT_WITHIN(1.5f, 0.5f * 9.80665f * 1.0f,
+                             fsim_altitude(&s, apogee) - fsim_altitude(&s, apogee + 1.0f));
     TEST_ASSERT_FLOAT_WITHIN(1.0f, p.drogue_ms, speed_at(&s, apogee + 15.0f));
 }
 

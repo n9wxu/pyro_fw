@@ -1,335 +1,123 @@
 /*
- * The MS5607 one-shot's interrupt state machine [DD-051, DD-066], on a fake
- * bus and clock (ms5607_bus.h). The loop starts a pair -- a pressure, then a
- * temperature -- and takes both a loop later; between the two, only the
- * handler runs, and the stamps are its own.
+ * The MS5607's arithmetic, which runs in the sensor task on the codes the
+ * collector hands it: the compensation, the temperature carried to each
+ * pressure's own time, and the PROM's CRC.
  *
- * Verifies [SNS-PRES-06, SNS-PRES-08, SNS-PRES-14, FLT-RATE-01, DAT-10].
+ * Figures are from docs/datasheets/MS5607-02BA03_2017-06.pdf and
+ * docs/datasheets/AN520_C-code_MS56xx_004_2011-08.pdf.
+ *
+ * Verifies [SNS-PRES-12, SNS-PRES-15, SNS-PRES-16].
  */
 #include "unity.h"
 #include "ms5607_driver.h"
-#include "ms5607_bus.h"
-#include "loop_period.h"
-#include <stdio.h>
 
-uint64_t fake_bus_now;
-uint32_t fake_bus_adc;
-uint32_t fake_bus_adc_t;
-uint8_t fake_bus_last_cmd;
-bool fake_bus_nack;
-uint8_t fake_bus_cmds[64];
-int fake_bus_ncmds;
-int fake_bus_reads;
-uint64_t fake_bus_alarm_at;
-bool fake_bus_armed;
-bool fake_bus_forced;
-uint8_t fake_bus_address;
-void (*fake_bus_handler)(void);
-uint32_t fake_bus_flash_ops;
-
-uint8_t ms5607_address(void) {
-    return 0x77;
-}
-
-#define CONV_D1 0x48
-#define CONV_D2 0x58
-
-/* A forced interrupt is taken at once: the loop's start preempts itself. */
-static void interrupts(void) {
-    while (fake_bus_forced)
-        fake_bus_handler();
-}
-
-/* Time passes to t, and each alarm fires when it comes due. */
-static void run_to(uint64_t t) {
-    interrupts();
-    while (fake_bus_armed && fake_bus_alarm_at <= t) {
-        if (fake_bus_now < fake_bus_alarm_at)
-            fake_bus_now = fake_bus_alarm_at;
-        fake_bus_armed = false;
-        fake_bus_handler();
-        interrupts();
-    }
-    if (fake_bus_now < t)
-        fake_bus_now = t;
-}
-
-/* A flash erase holds interrupts off until t; what came due meanwhile fires
- * as it ends. */
-static void held_until(uint64_t t) {
-    if (fake_bus_now < t)
-        fake_bus_now = t;
-    run_to(t);
-}
-
-void setUp(void) {
-    TEST_ASSERT_TRUE(ms5607_async_begin());
-    fake_bus_nack = false;
-    run_to(fake_bus_now + 40000u);
-    ms5607_pair_t c;
-    (void)ms5607_async_take(&c);
-    fake_bus_ncmds = 0;
-    fake_bus_reads = 0;
-    fake_bus_adc = 6465444u;
-    fake_bus_adc_t = 8077636u;
-    fake_bus_now = 1000000u;
-}
-
+void setUp(void) {}
 void tearDown(void) {}
 
-/* When the pressure's conversion ends, which is when the temperature's can
- * start: the command, the conversion's worst case, the read. */
-#define D1_READ_END (1000000u + FAKE_BUS_COMMAND_US + MS5607_CONV_DONE_US + FAKE_BUS_READ_US)
-#define D2_AT (D1_READ_END + FAKE_BUS_COMMAND_US + MS5607_HALF_CONV_US)
+/* The datasheet's example part, page 8. */
+static const uint16_t PROM[8] = {0, 46372, 43981, 29059, 27842, 31553, 28165, 0};
 
-/* Started at t: the pressure's command ends at t plus a command, and its
- * reading describes the middle of that conversion. The temperature's is
- * commanded as the pressure is read, and describes the middle of its own. */
-void test_SNS_PRES_08_stamps_are_the_conversions(void) {
-    TEST_ASSERT_EQUAL(MS5607_STARTED, ms5607_async_start());
-    interrupts();
-    TEST_ASSERT_EQUAL(1, fake_bus_ncmds);
-    TEST_ASSERT_EQUAL_HEX8(CONV_D1, fake_bus_cmds[0]);
-    run_to(1000000u + LOOP_PERIOD_US);
-    TEST_ASSERT_EQUAL(2, fake_bus_ncmds);
-    TEST_ASSERT_EQUAL_HEX8(CONV_D2, fake_bus_cmds[1]);
-    ms5607_pair_t c;
-    TEST_ASSERT_TRUE(ms5607_async_take(&c));
-    TEST_ASSERT_TRUE(c.ok);
-    TEST_ASSERT_EQUAL_UINT32(6465444u, c.d1);
-    TEST_ASSERT_EQUAL_UINT32(8077636u, c.d2);
-    TEST_ASSERT_EQUAL_UINT64(1000000u + FAKE_BUS_COMMAND_US + MS5607_HALF_CONV_US, c.d1_at_us);
-    TEST_ASSERT_EQUAL_UINT64(D2_AT, c.d2_at_us);
+static pressure_reading_t compensated(uint32_t d1, uint32_t d2) {
+    pressure_reading_t r;
+    ms5607_compensate_prom(PROM, d1, d2, &r);
+    return r;
 }
 
-/* An erase that holds the pressure's read off 60 ms moves the read, and so
- * the temperature, not the pressure's stamp. */
-void test_SNS_PRES_08_held_read_keeps_its_stamp(void) {
-    ms5607_async_start();
-    interrupts();
-    held_until(1060000u);
-    TEST_ASSERT_EQUAL(1, fake_bus_reads);
-    run_to(1080000u);
-    ms5607_pair_t c;
-    TEST_ASSERT_TRUE(ms5607_async_take(&c));
-    TEST_ASSERT_EQUAL_UINT64(1000000u + FAKE_BUS_COMMAND_US + MS5607_HALF_CONV_US, c.d1_at_us);
-    TEST_ASSERT_TRUE(c.d2_at_us > 1060000u);
+/* The temperature code this part gives at a temperature, by the datasheet's
+ * own first-order line. */
+static uint32_t d2_at(float temp_c) {
+    return (uint32_t)(((int32_t)PROM[5] << 8) + (int32_t)((temp_c * 100.0f - 2000.0f) * 8388608.0f / (float)PROM[6]));
 }
 
-/* A loop that comes to take it 50 ms late changes nothing either. */
-void test_SNS_PRES_08_late_loop_keeps_the_stamps(void) {
-    ms5607_async_start();
-    run_to(1070000u);
-    ms5607_pair_t c;
-    TEST_ASSERT_TRUE(ms5607_async_take(&c));
-    TEST_ASSERT_EQUAL_UINT64(1000000u + FAKE_BUS_COMMAND_US + MS5607_HALF_CONV_US, c.d1_at_us);
-    TEST_ASSERT_EQUAL_UINT64(D2_AT, c.d2_at_us);
-}
-
-/* Each read comes no sooner than the datasheet's 9.04 ms after its command:
- * earlier, the sensor answers 0. */
-void test_SNS_PRES_05_each_read_after_worst_case(void) {
-    ms5607_async_start();
-    interrupts();
-    uint64_t command_end = fake_bus_now;
-    TEST_ASSERT_TRUE(fake_bus_armed);
-    TEST_ASSERT_TRUE(fake_bus_alarm_at >= command_end + 9040u);
-    run_to(fake_bus_alarm_at - 1u);
-    TEST_ASSERT_EQUAL(0, fake_bus_reads);
-    run_to(fake_bus_alarm_at);
-    TEST_ASSERT_EQUAL(1, fake_bus_reads);
-    uint64_t d2_command_end = fake_bus_now;
-    TEST_ASSERT_TRUE(fake_bus_armed);
-    TEST_ASSERT_TRUE(fake_bus_alarm_at >= d2_command_end + 9040u);
-    run_to(fake_bus_alarm_at - 1u);
-    TEST_ASSERT_EQUAL(1, fake_bus_reads);
-    ms5607_pair_t c;
-    TEST_ASSERT_FALSE(ms5607_async_take(&c));
-}
-
-/* One pair at a time: a start while either half is in flight sends nothing. */
-void test_ms5607_busy_until_the_pair_is_read(void) {
-    ms5607_async_start();
-    interrupts();
-    TEST_ASSERT_EQUAL(MS5607_BUSY, ms5607_async_start());
-    run_to(1000000u + 10000u);
-    TEST_ASSERT_EQUAL(MS5607_BUSY, ms5607_async_start());
-    interrupts();
-    TEST_ASSERT_EQUAL(2, fake_bus_ncmds);
-    run_to(1000000u + LOOP_PERIOD_US);
-    ms5607_pair_t c;
-    TEST_ASSERT_TRUE(ms5607_async_take(&c));
-    TEST_ASSERT_EQUAL(MS5607_STARTED, ms5607_async_start());
-    interrupts();
-    TEST_ASSERT_EQUAL(3, fake_bus_ncmds);
-}
-
-/* A command the sensor does not answer ends the pair as failed, arms
- * nothing, and leaves the next start free. */
-void test_ms5607_command_nack(void) {
-    fake_bus_nack = true;
-    TEST_ASSERT_EQUAL(MS5607_STARTED, ms5607_async_start());
-    interrupts();
-    TEST_ASSERT_FALSE(fake_bus_armed);
-    ms5607_pair_t c;
-    TEST_ASSERT_TRUE(ms5607_async_take(&c));
-    TEST_ASSERT_FALSE(c.ok);
-    fake_bus_nack = false;
-    TEST_ASSERT_EQUAL(MS5607_STARTED, ms5607_async_start());
-    run_to(1000000u + LOOP_PERIOD_US);
-    TEST_ASSERT_TRUE(ms5607_async_take(&c));
-    TEST_ASSERT_TRUE(c.ok);
-}
-
-/* The pressure's read unanswered: no temperature is commanded. */
-void test_ms5607_pressure_read_nack(void) {
-    ms5607_async_start();
-    interrupts();
-    fake_bus_nack = true;
-    run_to(1000000u + LOOP_PERIOD_US);
-    TEST_ASSERT_EQUAL(1, fake_bus_ncmds);
-    ms5607_pair_t c;
-    TEST_ASSERT_TRUE(ms5607_async_take(&c));
-    TEST_ASSERT_FALSE(c.ok);
-}
-
-/* The temperature's read unanswered: the pair fails with it. */
-void test_ms5607_temperature_read_nack(void) {
-    ms5607_async_start();
-    run_to(1000000u + 12000u);
-    TEST_ASSERT_EQUAL(2, fake_bus_ncmds);
-    fake_bus_nack = true;
-    run_to(1000000u + LOOP_PERIOD_US);
-    ms5607_pair_t c;
-    TEST_ASSERT_TRUE(ms5607_async_take(&c));
-    TEST_ASSERT_FALSE(c.ok);
-}
-
-void test_ms5607_taken_once(void) {
-    ms5607_async_start();
-    run_to(1000000u + LOOP_PERIOD_US);
-    ms5607_pair_t c;
-    TEST_ASSERT_TRUE(ms5607_async_take(&c));
-    TEST_ASSERT_FALSE(ms5607_async_take(&c));
-}
-
-/* Started at the top of a loop, the pair is ready with half a millisecond to
- * spare before the next top, which is never sooner than a period on. The
- * spare is for the interrupt latency and the work ahead of the pressure task
- * at the top of the loop; a pair not ready is a loop without a sample. */
-void test_ms5607_pair_ready_before_the_next_loop(void) {
-    ms5607_async_start();
-    run_to(1000000u + LOOP_PERIOD_US);
-    TEST_ASSERT_EQUAL(2, fake_bus_reads);
-    uint64_t ready = fake_bus_alarm_at + FAKE_BUS_READ_US;
-    char msg[80];
-    snprintf(msg, sizeof(msg), "ready %llu us into a %u us loop", (unsigned long long)(ready - 1000000u),
-             LOOP_PERIOD_US);
-    TEST_ASSERT_TRUE_MESSAGE(ready + 500u <= 1000000u + LOOP_PERIOD_US, msg);
-}
-
-/* The next pair is started before the one taken is handed back, so whatever
- * the caller does with it cannot delay the next command; and the pair's
- * temperature is on the line by then. */
-void test_ms5607_cycle_notes_the_temperature_and_starts_the_next(void) {
-    ms5607_temps_t t = {0};
-    ms5607_pair_t c;
-    ms5607_start_t started;
-    TEST_ASSERT_FALSE(ms5607_async_cycle(&t, &c, &started));
-    TEST_ASSERT_EQUAL(MS5607_STARTED, started);
-    run_to(1000000u + LOOP_PERIOD_US);
-    TEST_ASSERT_TRUE(ms5607_async_cycle(&t, &c, &started));
-    TEST_ASSERT_TRUE(c.ok);
-    TEST_ASSERT_EQUAL(1, t.n);
-    TEST_ASSERT_EQUAL_UINT32(8077636u, t.d2[0]);
-    TEST_ASSERT_EQUAL(MS5607_STARTED, started);
-    TEST_ASSERT_TRUE(fake_bus_forced);
-}
-
-/* Measured on an MK1B: a pressure's compensation, filter and fit take up to
- * 2.7 ms of the loop. The pair must not cost a sample for it. */
-#define PRESSURE_WORK_US 2700u
-
-void test_ms5607_a_pair_every_loop(void) {
-    ms5607_temps_t t = {0};
-    uint64_t top = fake_bus_now;
-    int busy = 0, pairs = 0;
-    for (int loop = 0; loop < 200; loop++) {
-        ms5607_pair_t c;
-        ms5607_start_t started;
-        bool took = ms5607_async_cycle(&t, &c, &started);
-        interrupts();
-        if (started == MS5607_BUSY)
-            busy++;
-        if (took && c.ok) {
-            pairs++;
-            fake_bus_now += PRESSURE_WORK_US;
-        }
-        top += LOOP_PERIOD_US;
-        run_to(top);
+/* The pressure code that reads pa at this temperature code. */
+static uint32_t d1_reading(float pa, uint32_t d2) {
+    uint32_t lo = 0, hi = 1u << 24;
+    while (hi - lo > 1u) {
+        uint32_t mid = (lo + hi) / 2u;
+        if (compensated(mid, d2).pressure_pa < pa)
+            lo = mid;
+        else
+            hi = mid;
     }
-    char msg[80];
-    snprintf(msg, sizeof(msg), "%d of 200 loops waited; %d pairs", busy, pairs);
-    TEST_ASSERT_EQUAL_MESSAGE(0, busy, msg);
-    TEST_ASSERT_INT_WITHIN_MESSAGE(1, 199, pairs, msg);
+    return hi;
 }
 
-/* A read the sensor did not answer starts nothing: the caller backs off
- * rather than retrying every loop against a missing sensor. */
-void test_ms5607_cycle_holds_off_after_a_failed_read(void) {
-    ms5607_temps_t t = {0};
-    ms5607_pair_t c;
-    ms5607_start_t started;
-    ms5607_async_cycle(&t, &c, &started);
-    interrupts();
-    fake_bus_nack = true;
-    run_to(1000000u + LOOP_PERIOD_US);
-    TEST_ASSERT_TRUE(ms5607_async_cycle(&t, &c, &started));
-    TEST_ASSERT_FALSE(c.ok);
-    TEST_ASSERT_EQUAL(MS5607_HELD, started);
-    TEST_ASSERT_FALSE(fake_bus_forced);
+/* Page 8's worked example: 1100.02 mbar at 20.00 C. */
+void test_SNS_PRES_15_the_datasheets_example(void) {
+    pressure_reading_t r = compensated(6465444u, 8077636u);
+    TEST_ASSERT_EQUAL_FLOAT(110002.0f, r.pressure_pa);
+    TEST_ASSERT_EQUAL_FLOAT(20.0f, r.temperature_c);
 }
 
-/* [DD-068] A flash erase or program disturbs a conversion running beside it
- * (G4-M: 83 % of the temperatures read after one were outliers). Each code
- * says whether one ran between its command and its read. */
-void test_ms5607_flash_during_the_pressure_marks_it(void) {
-    ms5607_async_start();
-    interrupts();
-    fake_bus_flash_ops += 2u;
-    run_to(1000000u + LOOP_PERIOD_US);
-    ms5607_pair_t c;
-    TEST_ASSERT_TRUE(ms5607_async_take(&c));
-    TEST_ASSERT_TRUE(c.ok);
-    TEST_ASSERT_TRUE(c.d1_flashed);
-    TEST_ASSERT_FALSE(c.d2_flashed);
+/* Page 9: at and above 20 C the second order adds nothing. */
+void test_SNS_PRES_15_nothing_changes_at_20_C_and_above(void) {
+    const float warm[] = {20.0f, 45.0f, 85.0f};
+    for (int i = 0; i < 3; i++) {
+        uint32_t d2 = d2_at(warm[i]);
+        int32_t dT = (int32_t)d2 - ((int32_t)PROM[5] << 8);
+        int64_t off = ((int64_t)PROM[2] << 17) + (((int64_t)PROM[4] * dT) >> 6);
+        int64_t sens = ((int64_t)PROM[1] << 16) + (((int64_t)PROM[3] * dT) >> 7);
+        int32_t first_order = (int32_t)((((int64_t)6465444 * sens >> 21) - off) >> 15);
+        TEST_ASSERT_EQUAL_FLOAT((float)first_order, compensated(6465444u, d2).pressure_pa);
+    }
 }
 
-void test_ms5607_flash_during_the_temperature_marks_it(void) {
-    ms5607_async_start();
-    run_to(D1_READ_END + 100u);
-    fake_bus_flash_ops += 2u;
-    run_to(1000000u + LOOP_PERIOD_US);
-    ms5607_pair_t c;
-    TEST_ASSERT_TRUE(ms5607_async_take(&c));
-    TEST_ASSERT_FALSE(c.d1_flashed);
-    TEST_ASSERT_TRUE(c.d2_flashed);
+/* Page 9's low-temperature terms, worked by hand for this part at 0 C:
+ * TEMP - 2000 = -2000, so OFF2 = 61 * 2000^2 / 16 = 15 250 000 and
+ * SENS2 = 2 * 2000^2 = 8 000 000. At the code that read 1013.25 hPa before
+ * them, (D1 * SENS2 / 2^21 - OFF2) / 2^15 is 277 Pa. */
+void test_SNS_PRES_15_the_second_order_below_20_C(void) {
+    uint32_t d2 = d2_at(0.0f);
+    int32_t dT = (int32_t)d2 - ((int32_t)PROM[5] << 8);
+    int64_t off = ((int64_t)PROM[2] << 17) + (((int64_t)PROM[4] * dT) >> 6);
+    int64_t sens = ((int64_t)PROM[1] << 16) + (((int64_t)PROM[3] * dT) >> 7);
+    uint32_t d1 = 0;
+    for (uint32_t lo = 0, hi = 1u << 24; hi - lo > 1u;) {
+        uint32_t mid = (lo + hi) / 2u;
+        int32_t first_order = (int32_t)((((int64_t)mid * sens >> 21) - off) >> 15);
+        if (first_order < 101325)
+            lo = mid;
+        else
+            hi = d1 = mid;
+    }
+    pressure_reading_t r = compensated(d1, d2);
+    TEST_ASSERT_FLOAT_WITHIN(2.0f, 101325.0f - 277.0f, r.pressure_pa);
+    /* T2 = dT^2 / 2^31, and dT is -595 680 at this part's 0 C: 1.65 C. */
+    TEST_ASSERT_FLOAT_WITHIN(0.02f, -1.65f, r.temperature_c);
 }
 
-/* A disturbed temperature never reaches the line: every pressure near it
- * would take its error. */
-void test_ms5607_cycle_skips_a_flashed_temperature(void) {
-    ms5607_temps_t t = {0};
-    ms5607_pair_t c;
-    ms5607_start_t started;
-    ms5607_async_cycle(&t, &c, &started);
-    run_to(D1_READ_END + 100u);
-    fake_bus_flash_ops += 2u;
-    run_to(1000000u + LOOP_PERIOD_US);
-    TEST_ASSERT_TRUE(ms5607_async_cycle(&t, &c, &started));
-    TEST_ASSERT_TRUE(c.d2_flashed);
-    TEST_ASSERT_EQUAL(0, t.n);
-    TEST_ASSERT_EQUAL(MS5607_STARTED, started);
+/* Below -15 C the very-low terms add to them: at -40 C, 4.7 kPa at sea
+ * level's pressure. */
+void test_SNS_PRES_15_the_very_low_terms_below_minus_15_C(void) {
+    uint32_t d2 = d2_at(-40.0f);
+    uint32_t d1 = d1_reading(101325.0f, d2);
+    int32_t dT = (int32_t)d2 - ((int32_t)PROM[5] << 8);
+    int64_t off = ((int64_t)PROM[2] << 17) + (((int64_t)PROM[4] * dT) >> 6);
+    int64_t sens = ((int64_t)PROM[1] << 16) + (((int64_t)PROM[3] * dT) >> 7);
+    int32_t first_order = (int32_t)((((int64_t)d1 * sens >> 21) - off) >> 15);
+    int64_t low = -6000, very_low = -2500;
+    int64_t off2 = ((61 * low * low) >> 4) + 15 * very_low * very_low;
+    int64_t sens2 = 2 * low * low + 8 * very_low * very_low;
+    int32_t second_order = (int32_t)((((int64_t)d1 * (sens - sens2) >> 21) - (off - off2)) >> 15);
+    TEST_ASSERT_FLOAT_WITHIN(1.0f, 101325.0f, compensated(d1, d2).pressure_pa);
+    TEST_ASSERT_INT32_WITHIN(60, second_order, 101325);
+    TEST_ASSERT_TRUE_MESSAGE(first_order - second_order > 4000, "about 4.7 kPa");
+}
+
+/* The line is straight in the pressure code, at any temperature, across
+ * every code the ADC has. */
+void test_SNS_PRES_15_a_straight_line_in_the_pressure_code(void) {
+    const float temps[] = {-40.0f, 0.0f, 20.0f, 85.0f};
+    for (int i = 0; i < 4; i++) {
+        uint32_t d2 = d2_at(temps[i]);
+        float previous = compensated(0u, d2).pressure_pa;
+        float step = compensated(4096u, d2).pressure_pa - previous;
+        for (uint32_t d1 = 4096u; d1 < (1u << 24); d1 += 4096u) {
+            float now = compensated(d1, d2).pressure_pa;
+            TEST_ASSERT_FLOAT_WITHIN(1.0f, step, now - previous);
+            previous = now;
+        }
+    }
 }
 
 /* [SNS-PRES-12] A pressure is compensated with the temperature at its own
@@ -343,29 +131,37 @@ void test_SNS_PRES_12_the_line_interpolates_back(void) {
     TEST_ASSERT_EQUAL_UINT32(8000300u, ms5607_temps_at(&t, 1030000u));
 }
 
-void test_ms5607_begin_addresses_the_sensor(void) {
-    TEST_ASSERT_EQUAL_HEX8(0x77, fake_bus_address);
+/* AN520 page 12: "the resulting calculated CRC should be 0xB". */
+void test_SNS_PRES_16_the_application_notes_example(void) {
+    uint16_t prom[8] = {0x3132, 0x3334, 0x3536, 0x3738, 0x3940, 0x4142, 0x4344, 0x4500};
+    TEST_ASSERT_FALSE_MESSAGE(ms5607_prom_crc_ok(prom), "0 is not this PROM's CRC");
+    prom[7] = 0x450B;
+    TEST_ASSERT_TRUE(ms5607_prom_crc_ok(prom));
+}
+
+/* Bits 4 to 7 of the last word are outside the CRC: AN520 masks its whole
+ * low byte. */
+void test_SNS_PRES_16_one_wrong_bit_in_any_word_is_seen(void) {
+    for (int word = 0; word < 8; word++) {
+        for (int bit = 0; bit < 16; bit++) {
+            if (word == 7 && bit >= 4 && bit < 8)
+                continue;
+            uint16_t prom[8] = {0x3132, 0x3334, 0x3536, 0x3738, 0x3940, 0x4142, 0x4344, 0x450B};
+            prom[word] ^= (uint16_t)(1u << bit);
+            TEST_ASSERT_FALSE(ms5607_prom_crc_ok(prom));
+        }
+    }
 }
 
 int main(void) {
     UNITY_BEGIN();
-    RUN_TEST(test_SNS_PRES_08_stamps_are_the_conversions);
-    RUN_TEST(test_SNS_PRES_08_held_read_keeps_its_stamp);
-    RUN_TEST(test_SNS_PRES_08_late_loop_keeps_the_stamps);
-    RUN_TEST(test_SNS_PRES_05_each_read_after_worst_case);
-    RUN_TEST(test_ms5607_busy_until_the_pair_is_read);
-    RUN_TEST(test_ms5607_command_nack);
-    RUN_TEST(test_ms5607_pressure_read_nack);
-    RUN_TEST(test_ms5607_temperature_read_nack);
-    RUN_TEST(test_ms5607_taken_once);
-    RUN_TEST(test_ms5607_pair_ready_before_the_next_loop);
-    RUN_TEST(test_ms5607_cycle_notes_the_temperature_and_starts_the_next);
-    RUN_TEST(test_ms5607_a_pair_every_loop);
-    RUN_TEST(test_ms5607_cycle_holds_off_after_a_failed_read);
-    RUN_TEST(test_ms5607_flash_during_the_pressure_marks_it);
-    RUN_TEST(test_ms5607_flash_during_the_temperature_marks_it);
-    RUN_TEST(test_ms5607_cycle_skips_a_flashed_temperature);
+    RUN_TEST(test_SNS_PRES_15_the_datasheets_example);
+    RUN_TEST(test_SNS_PRES_15_nothing_changes_at_20_C_and_above);
+    RUN_TEST(test_SNS_PRES_15_the_second_order_below_20_C);
+    RUN_TEST(test_SNS_PRES_15_the_very_low_terms_below_minus_15_C);
+    RUN_TEST(test_SNS_PRES_15_a_straight_line_in_the_pressure_code);
     RUN_TEST(test_SNS_PRES_12_the_line_interpolates_back);
-    RUN_TEST(test_ms5607_begin_addresses_the_sensor);
+    RUN_TEST(test_SNS_PRES_16_the_application_notes_example);
+    RUN_TEST(test_SNS_PRES_16_one_wrong_bit_in_any_word_is_seen);
     return UNITY_END();
 }

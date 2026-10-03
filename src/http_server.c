@@ -32,6 +32,7 @@
 #include "device_status.h"
 #include "version.h"
 #include "flight_states.h"
+#include "pressure_collector.h"
 #include "pressure_processing.h"
 #include "pressure_sensor.h"
 
@@ -82,9 +83,8 @@ extern void hal_telemetry_send(const char *sentence);
 extern uint32_t hal_pressure_interval_min_us(void);
 extern uint32_t hal_pressure_interval_max_us(void);
 extern uint32_t hal_pressure_stamp_lag_max_us(void);
-extern uint32_t hal_pressure_waits(void);
+extern void hal_pressure_collector(collector_stats_t *out);
 extern uint32_t hal_pressure_rate_hz(void);
-extern uint32_t hal_pressure_rejects(void);
 extern uint32_t hal_pressure_flashed(void);
 
 #define CORS_HDR "Access-Control-Allow-Origin: *\r\n"
@@ -862,8 +862,15 @@ static void status_capture(status_snap_t *s) {
     s->refire_interval_ms = fctx ? (uint16_t)fctx->plan.refire_interval_ms : 0u;
     s->fire_gap_ms = fctx ? (uint16_t)fctx->plan.fire_gap_ms : 0u;
     s->pyro_limited = fctx && (fctx->refire_interval_limited || fctx->fire_gap_limited);
-    s->pres_waits = hal_pressure_waits();
-    s->pres_rejects = hal_pressure_rejects();
+    collector_stats_t collector;
+    hal_pressure_collector(&collector);
+    s->pres_rejects = 0;
+    for (int i = 0; i < 4; i++) {
+        s->pres_bus[i] = collector.failed[COLLECTOR_ADDRESS_NACK + i];
+        s->pres_rejects += s->pres_bus[i];
+    }
+    s->pres_recoveries = collector.recoveries;
+    s->pres_dropped = collector.dropped;
     s->pres_flashed = hal_pressure_flashed();
     s->raw_pa = pp_last_raw_pa();
     s->pad_speed_cms = fctx && fctx->current_state == PAD_IDLE ? fctx->speed_cms : 0;

@@ -478,7 +478,7 @@ def check_ram_resident(elf, objdump):
 # through a veneer -- must be in RAM and load no XIP address. An indirect call
 # cannot be followed, so one fails the check.
 RAM_CLOSED = [
-    ("ms5607_alarm_isr", "the MS5607 one-shot's alarm handler [DD-051]"),
+    ("collector_alarm_isr", "the pressure collector's alarm handler [DD-093]"),
     ("flash_op_park", "the lockout helper's spin: interrupts off while the other core writes flash"),
 ]
 

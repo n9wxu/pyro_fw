@@ -70,7 +70,7 @@ static const transition_t transitions[] = {
 };
 #define NUM_TRANSITIONS (int)(sizeof(transitions) / sizeof(transitions[0]))
 
-flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {
+static flight_state_t step(flight_context_t *ctx, uint32_t now) {
     if (ctx->current_state >= STATE_COUNT)
         return PAD_IDLE;
     state_event_t event = detectors[ctx->current_state](ctx, now);
@@ -82,6 +82,22 @@ flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {
         if (transitions[i].action)
             transitions[i].action(ctx, now);
         return transitions[i].to;
+    }
+    return ctx->current_state;
+}
+
+/* [FLT-RATE-06] The collector hands on more samples than there are loops.
+ * Each is a step of its own, in the loop it arrived in: taken one a loop,
+ * they queue, and every decision is made on old data. */
+#define STEPS_A_LOOP_MAX 8
+
+flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {
+    for (int steps = 0; steps < STEPS_A_LOOP_MAX; steps++) {
+        int waiting = pp_available();
+        ctx->current_state = step(ctx, now);
+        bool took_one = pp_available() < waiting;
+        if (!took_one || pp_available() == 0)
+            break;
     }
     return ctx->current_state;
 }

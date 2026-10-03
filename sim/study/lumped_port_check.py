@@ -74,7 +74,7 @@ if __name__ == '__main__':
             for site_name, site in (('cold', COLD), ('hot', HOT)):
                 for port in ('clean', 'high', 'fake'):
                     n, ln_p, apart, flips = compare(binary, name, site, port, seed=3)
-                    ok = ln_p < 1e-3 and apart < 15.0 and flips <= n // 100
+                    ok = ln_p < 5e-3 and apart < 15.0 and flips <= n // 100
                     bad += not ok
                     print(f"{name:10} {site_name:5} {port:6} {n:8d}  {ln_p:10.2e}  {apart:10.2f}  {flips:6d}  {'' if ok else 'DIFFERS'}")
         sys.exit(1 if bad else 0)

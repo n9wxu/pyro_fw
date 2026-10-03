@@ -88,7 +88,8 @@ Pads are owned once: `pin_store_claim_pads()` gives each pad one owner, and `pyr
 | `src/buzzer.c`, `src/beep_codes.c`, `src/beep_store.c` | Non-blocking beep sequencer; outcomes and personalities |
 | `src/hal.h` | Hardware abstraction interface |
 | `src/hal_common/hal_common.c` | Pico SDK HAL implementation, shared by every board |
-| `src/ms5607_oneshot.c`, `src/bmp280_driver.c` | The sensors' per-loop conversions |
+| `src/pressure_collector.c` | The free-running collector: conversions, the queue of four, bus recovery (DD-093) |
+| `src/ms5607_driver.c`, `src/bmp280_driver.c` | Each sensor's detection, description for the collector, and arithmetic |
 | `src/flight_log.c`, `src/log_plan.c` | Binary flight log, CSV rendering, logging plans |
 | `src/http_server.c`, `src/http_conn.c`, `src/http_work.c` | HTTP routes, connections, work units |
 | `src/net_glue.c`, `src/net_txq.c` | USB network, lwIP, mDNS, held frames |
@@ -161,7 +162,7 @@ The flight log (`flight_log.bin` in littlefs) opens at launch and closes at LAND
 The flight context also keeps a ring of the last 64 samples and events; `flight_save_csv()` exports it for the simulator.
 
 ### Pressure
-Each reading is stamped by its driver at the moment it describes, not when the loop reads it (SNS-PRES-08, DD-046): the MS5607's alarm handler, running from RAM, commands a pressure and a temperature each loop and stamps each conversion's middle (DD-051, DD-066); the BMP280 takes one forced conversion a loop, stamped from its command (DD-067). A conversion a flash erase or program ran beside is discarded (DD-068), and every sensor bus transfer gives up within a bound (DD-069).
+Each reading is stamped at the moment it describes, not when the loop reads it (SNS-PRES-08): the pressure collector, one interrupt state machine running from RAM, commands each conversion, waits out the part's worst case on an alarm, reads, and queues the raw codes with the time of each conversion's middle (DD-093). The sensor task takes the queue every loop and compensates. A conversion a flash erase or program ran beside is discarded (DD-068). A failed transfer is counted by cause, and after three in a row the collector clears the bus and resets the part (SNS-COL-04, SNS-COL-05).
 
 The raw readings go straight into one Kalman filter (`pest_update()` in `src/pressure_estimator.c`, DD-085): its state is ln(p / p_ref), its rate and its acceleration, with the sensor's noise measured from the readings. A reading more than six standard deviations from the prediction is skipped unless it is the third in a row. There is no median, no low-pass and no reseed. Every flight comparison is made in pressure, with heights and speeds the operator set converted once against the pad and the 1976 standard atmosphere (`src/atmosphere.c`, SNS-EST-05).
 

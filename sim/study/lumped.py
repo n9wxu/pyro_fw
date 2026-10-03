@@ -94,7 +94,7 @@ class Lumped:
         self.P[1][1] = 0.01
         self.P[2][2] = 0.01
         self.P[3][3] = self.beta_sd ** 2
-        self.t = t
+        self.t = self.used_t = t
         self.r_hat = SIGMA_FLOOR_PA ** 2
         self.e_prev = None
 
@@ -141,6 +141,10 @@ class Lumped:
         P[2][2] += self.kS * self.kS * dt * lam
         P[3][3] += self.kB * self.kB * dt * (lam if self.beta_adapts else 1.0) + 2.0 * pull * self.beta_sd ** 2 + loosen_beta
         x = [h1, v1, s + (self.s_min - s) * fade, lb + (math.log(self.beta0) - lb) * pull]
+        # The model has no ground, and readings supply it. With none, a
+        # prediction that reaches the pad's level stops there.
+        if self.read_since is None and x[0] < 0.0:
+            x[0], x[1] = 0.0, max(x[1], 0.0)
 
         if self.used_t is None or t - self.used_t > GAP_S:
             self.read_since = None

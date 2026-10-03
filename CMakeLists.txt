@@ -336,7 +336,7 @@ add_executable(pyro_fw_c
     src/buzzer.c
     src/ms5607_driver.c
     src/bmp280_driver.c
-    src/ms5607_oneshot.c
+    src/pressure_collector.c
     src/i2c_recover.c
     src/usb_descriptors.c
     src/net_glue.c
@@ -915,22 +915,36 @@ add_custom_target(status_json_tests
     COMMENT "/api/status rendering tests"
 )
 
-# The MS5607 one-shot's interrupt state machine, on a fake bus and clock at
-# the board's own bus rate: test/ms5607_bus.h stands in for
-# src/hal_common/ms5607_bus.h, so -I test comes first. Boards with an MS5607.
-add_custom_target(ms5607_tests
-    COMMAND ${CMAKE_COMMAND} -E echo "Building MS5607 one-shot tests..."
+# The pressure collector's interrupt state machine, on a fake bus, clock and
+# part: test/collector_bus.h stands in for src/hal_common/collector_bus.h, so
+# -I test comes first.
+add_custom_target(collector_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building pressure collector tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/test
-               -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_collector.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_collector.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_collector
+    COMMAND ${CMAKE_COMMAND} -E echo "Running pressure collector tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_collector
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Pressure collector state machine tests"
+)
+
+# The MS5607's arithmetic: compensation, the temperature's line, the PROM's CRC.
+add_custom_target(ms5607_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building MS5607 tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_ms5607.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_oneshot.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_ms5607
-    COMMAND ${CMAKE_COMMAND} -E echo "Running MS5607 one-shot tests..."
+    COMMAND ${CMAKE_COMMAND} -E echo "Running MS5607 tests..."
     COMMAND ${CMAKE_BINARY_DIR}/test_ms5607
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    COMMENT "MS5607 one-shot state machine tests"
+    COMMENT "MS5607 arithmetic tests"
 )
 
 # A board's pyro backend run on the host against test/fake_sdk, whose sleeps

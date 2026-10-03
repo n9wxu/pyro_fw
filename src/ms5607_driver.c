@@ -12,8 +12,7 @@
 #define MS5607_ADDR_CSB_LOW 0x76
 #define MS5607_ADDR_CSB_HIGH 0x77
 
-#define MS5607_CMD_RESET 0x1E
-#define MS5607_CMD_PROM_READ 0xA0 // Base address for PROM
+#define MS5607_CMD_PROM_READ 0xA0 /* the first of eight words */
 
 /* Every transfer is bounded: the SDK's blocking calls wait forever on a part
  * holding SCL low, and detection also runs after a reset in flight. */
@@ -70,8 +69,9 @@ ms5607_detect_result_t ms5607_detect_step(ms5607_detect_t *d, uint32_t now_ms) {
             if ((int32_t)(now_ms - d->due_ms) < 0)
                 return MS5607_DETECT_PENDING;
             d->reloading = false;
-            /* A blank PROM reads all zeros or all ones. */
-            if (ms5607_read_prom() && prom[0] != 0 && prom[0] != 0xFFFF)
+            /* A blank PROM reads all zeros or all ones; all zeros carries a
+             * good CRC. */
+            if (ms5607_read_prom() && prom[0] != 0 && prom[0] != 0xFFFF && ms5607_prom_crc_ok(prom))
                 return MS5607_DETECT_FOUND;
         }
         d->addr++;

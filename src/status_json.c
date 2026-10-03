@@ -138,7 +138,8 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         "\"prev_watchdog\":%s,\"prev_stage\":%ld,\"prev_stage_ms\":%lu,"
         "\"pyro_pulses\":[%u,%u],\"pyro_fault\":[%s,%s],\"emergency_fire\":%s,"
         "\"refire_interval_ms\":%u,\"fire_gap_ms\":%u,\"pyro_limited\":%s,"
-        "\"pres_waits\":%lu,\"pres_rejects\":%lu,\"pres_flashed\":%lu,\"raw_pa\":%ld,\"pad_speed_cms\":%ld,"
+        "\"pres_rejects\":%lu,\"pres_bus\":{\"address_nack\":%lu,\"data_nack\":%lu,\"line_held\":%lu,\"timeout\":%lu},"
+        "\"pres_recoveries\":%lu,\"pres_dropped\":%lu,\"pres_flashed\":%lu,\"raw_pa\":%ld,\"pad_speed_cms\":%ld,"
         "\"ground_degraded\":%s,\"ground_reseeds\":%lu,"
         "\"sample_interval_us\":[%lu,%lu],\"stamp_lag_max_us\":%lu,\"noise_mpa\":%lu,"
         "\"estimator\":\"%s\",\"estimator_explains\":%s,\"peak_lower_bound\":%s,"
@@ -147,12 +148,13 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         (unsigned)s->reset_cause, S(s->resume), B(s->prev_watchdog), (long)s->prev_stage,
         (unsigned long)s->prev_stage_ms, (unsigned)s->pyro_pulses[0], (unsigned)s->pyro_pulses[1], B(s->pyro_fault[0]),
         B(s->pyro_fault[1]), B(s->emergency_fire), (unsigned)s->refire_interval_ms, (unsigned)s->fire_gap_ms,
-        B(s->pyro_limited), (unsigned long)s->pres_waits, (unsigned long)s->pres_rejects,
-        (unsigned long)s->pres_flashed, (long)s->raw_pa, (long)s->pad_speed_cms, B(s->ground_degraded),
-        (unsigned long)s->ground_reseeds, (unsigned long)s->sample_interval_us[0],
-        (unsigned long)s->sample_interval_us[1], (unsigned long)s->stamp_lag_max_us, (unsigned long)s->noise_mpa,
-        S(s->estimator), B(s->estimator_explains), B(s->peak_lower_bound), B(s->usb_attached), B(s->test_mode),
-        B(s->buzzer_active), S(s->beep), sound, s->serial, B(s->serial_assigned), s->hw_id, (unsigned)s->subnet,
-        S(s->mac_source));
+        B(s->pyro_limited), (unsigned long)s->pres_rejects, (unsigned long)s->pres_bus[0],
+        (unsigned long)s->pres_bus[1], (unsigned long)s->pres_bus[2], (unsigned long)s->pres_bus[3],
+        (unsigned long)s->pres_recoveries, (unsigned long)s->pres_dropped, (unsigned long)s->pres_flashed,
+        (long)s->raw_pa, (long)s->pad_speed_cms, B(s->ground_degraded), (unsigned long)s->ground_reseeds,
+        (unsigned long)s->sample_interval_us[0], (unsigned long)s->sample_interval_us[1],
+        (unsigned long)s->stamp_lag_max_us, (unsigned long)s->noise_mpa, S(s->estimator), B(s->estimator_explains),
+        B(s->peak_lower_bound), B(s->usb_attached), B(s->test_mode), B(s->buzzer_active), S(s->beep), sound, s->serial,
+        B(s->serial_assigned), s->hw_id, (unsigned)s->subnet, S(s->mac_source));
     return o.over ? -1 : (int)o.pos;
 }

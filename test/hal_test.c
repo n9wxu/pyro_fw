@@ -62,7 +62,6 @@ bool mock_stamp_at_read = false;
 uint32_t mock_stall_seed = 1;
 uint32_t mock_stall_count, mock_stall_total_ms, mock_stall_min_ms, mock_stall_max_ms;
 uint32_t mock_stamp_lag_min_ms, mock_stamp_lag_max_ms;
-uint32_t mock_pres_rejects;
 
 static struct {
     uint32_t noise_rng, stall_rng;
@@ -112,8 +111,8 @@ static float gaussian(void) {
     return r * cosf(th);
 }
 
-/* What the HAL does with a reading: truncate to whole pascals, and discard one
- * no atmosphere can produce [SNS-PRES-06]. */
+/* What the HAL does with a reading: truncate to whole pascals, and feed it
+ * [SNS-PRES-06]. */
 static void feed_reading_us(float true_pa, uint64_t stamp_us) {
     pp_note_temperature(mock_pressure.temperature_c);
     /* A stuck sensor answers with its last reading, to the pascal. */
@@ -127,10 +126,6 @@ static void feed_reading_us(float true_pa, uint64_t stamp_us) {
     if (mock_glitch_samples > 0) {
         p += (float)mock_glitch_pa;
         mock_glitch_samples--;
-    }
-    if (p < 1.0f || p > 130000.0f) { /* [SNS-PRES-06] only what the part cannot output */
-        mock_pres_rejects++;
-        return;
     }
     pp_feed_us((int32_t)p, stamp_us);
 }
@@ -313,7 +308,6 @@ void mock_reset_all(void) {
     mock_stall_seed = 1;
     mock_stall_count = mock_stall_total_ms = mock_stall_min_ms = mock_stall_max_ms = 0;
     mock_stamp_lag_min_ms = mock_stamp_lag_max_ms = 0;
-    mock_pres_rejects = 0;
     memset(&sm, 0, sizeof(sm));
     /* Every test starts with no pad claimed and both channels the flight
      * software's; a test that wants a release gives Lua the pads first. */

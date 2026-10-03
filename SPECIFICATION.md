@@ -16,7 +16,7 @@ Two-channel rocket flight computer on the RP2040, for three boards: MK1A, MK1B (
 - **USB composite device**: ECM/RNDIS network + vendor reset (picotool support); a frame the endpoint cannot take yet is held (`src/net_txq.c`, DD-070)
 - **mDNS/DNS-SD**: pyro.local hostname, _pyro._tcp service discovery
 - **OTA updates**: A/B bootloader (pico_fota_bootloader), web UI + CLI + GitHub release update
-- **Pressure sensors**: `src/ms5607_driver.c` + `src/ms5607_oneshot.c` (MK1B, MK1C: a pressure and a temperature every loop, read by an alarm handler in RAM, DD-051, DD-066); `src/bmp280_driver.c` (MK1A: one forced conversion a loop, DD-067). Bring-up in `src/pressure_single_sensor.c`, or `boards/mk1b/pressure_board.c` for MK1B's two pads
+- **Pressure sensors**: `src/pressure_collector.c` collects from either sensor, free-running from an alarm handler in RAM (DD-093); `src/ms5607_driver.c` (MK1B, MK1C) and `src/bmp280_driver.c` (MK1A) hold each part's detection, description and arithmetic. Bring-up in `src/pressure_single_sensor.c`, or `boards/mk1b/pressure_board.c` for MK1B's two pads
 - **Pressure processing**: `src/pressure_estimator.c` (one Kalman filter on the raw readings: pressure, its rate, its acceleration, DD-085), `src/pressure_processing.c` (samples, gaps, a stuck sensor), `src/ground_reference.c` and `src/atmosphere.c` (the 1976 standard atmosphere)
 - **Fire rules**: `src/fire_control.c` and `src/fire_plan.c` — each channel's trigger, re-fire, emergency fire, and the gap between pulses (DD-082, DD-084)
 - **Resume**: `src/flight_resume.c` — the pad record `pad.mkr` and the decision to rejoin a flight after any restart (DD-086)

@@ -180,16 +180,14 @@ The speeds come from the board (DD-052): SCL and the MS5607's SDA have 4k7
 pull-ups (R10, R11), which carry fast mode; the BMP280's SDA has only the
 RP2040's own 50–80 kΩ (`docs/datasheets/rp2040-datasheet_2025-02-20.pdf`
 page 617, Table 625), too slow an edge for fast mode, so its probe stays in
-standard mode. The MS5607 then converts a pressure and a temperature every
-loop, read from a one-shot alarm whose handler runs from RAM (DD-051, DD-066):
-the pair is ready 18.6 ms after the top of a 20 ms loop, which only fast mode
-allows. A BMP280 fitted instead converts once a loop, commanded in forced
-mode and taken at the next (DD-067).
+standard mode. The pressure collector then runs whichever was found, free
+(DD-093): the MS5607 a pressure and a temperature every 18.8 ms, or the
+BMP280 a forced conversion every 14.5 ms at its 100 kHz. Its handler runs
+from RAM.
 
-Every transfer gives up rather than wait on a part holding the bus: the
-BMP280's resets, the MS5607's detection and its one-shot's transfers within
-2 ms, the BMP280's reads within twice their own time at 100 kHz and a
-millisecond (DD-069). A conversion a flash erase or program ran beside is
+A transfer that fails is counted by cause on `/api/status`. After three in a
+row the collector clears the bus on the fitted sensor's pad, resets the
+sensor and goes on. A conversion a flash erase or program ran beside is
 discarded, not used, and counted in `pres_flashed` on `/api/status` (DD-068).
 
 ## Telemetry, LED and buzzer
@@ -293,9 +291,9 @@ sector erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
   `test/fake_sdk`, with the sense node modelled from the netlist: the check's
   timing, one reading a second, igniter, empty, short and a bad joint, a fire
   and its fresh reading, and a released enable left alone.
-- `sensor_bringup_tests` and `ms5607_tests` cover the two-pad bring-up, a
-  BMP280 holding the bus (DD-069), and the MS5607 one-shot at this board's
-  400 kHz.
+- `sensor_bringup_tests`, `collector_tests` and `ms5607_tests` cover the
+  two-pad bring-up, a BMP280 holding the bus (DD-069), the collector and the
+  arithmetic.
 - `integration_tests` flies the flight software built for MK1B, the default
   board.
 - `plant_tests` models the sense network from the netlist; it leaves out U5's
@@ -309,6 +307,6 @@ sector erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
   diodes.com
 - `docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf`, `MS5607-02BA03_2017-06.pdf`,
   `UM10204_I2C-bus_Rev7.0_2021-10.pdf`
-- DD-051, DD-052, DD-053, DD-059, DD-065, DD-066, DD-067, DD-068, DD-069,
+- DD-052, DD-053, DD-059, DD-065, DD-068, DD-069, DD-093,
   DD-071 in `DECISIONS.md`
 - Tasks B-U5 and B-BZ in `docs/outstanding_tasks.md`, section 7

@@ -243,6 +243,9 @@ void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
 void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us) {
     uint32_t ms = (uint32_t)(timestamp_us / 1000u);
     uint32_t us = (uint32_t)timestamp_us;
+    /* The estimators take its logarithm. */
+    if (raw_pressure_pa <= 0)
+        return;
     pp.last_raw = raw_pressure_pa;
     bool stuck = watch_for_gap_and_stuck(raw_pressure_pa, us);
     feed_estimators(raw_pressure_pa, us);

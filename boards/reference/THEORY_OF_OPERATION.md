@@ -103,10 +103,10 @@ RP2040's own 50–80 kΩ (RP2040 datasheet page 617, Table 625) are too weak for
 it (DD-052). Read the pull-ups from the design files. The template declares
 100 kHz until that is checked.
 
-An MS5607 wants fast mode: the one-shot converts a pressure and a temperature
-every 20 ms loop, and at 100 kHz the pair is ready only 0.26 ms before the
-next, short of the 0.5 ms `ms5607_tests` asks (DD-066). A BMP280 runs one
-forced conversion a loop at either speed (DD-067).
+An MS5607 wants fast mode: the collector's cycle is a pressure and a
+temperature, 18.8 ms at 400 kHz and 19.9 ms at 100 kHz, against the 20 ms
+loop and FLT-RATE-01's 50 a second (DD-093). A BMP280 is well inside it at
+either speed.
 
 ## What this board declares
 

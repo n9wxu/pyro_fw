@@ -187,6 +187,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **FLT-BOOT-14**: The system shall enter FAULT, and announce general fault, when its storage cannot be used. ← FLT-BOOT-01
 - **FLT-BOOT-15**: `/api/status` shall report every fault found on the pad. The buzzer announces the one of highest priority (BUZ-CODE-02). ← SYS-STATUS-02
 - **FLT-RATE-01**: The system shall take at least 50 pressure readings a second from PAD_IDLE to landing. ← FLT-PHASE-01
+- **FLT-RATE-06**: The flight software shall act on every sample in the loop it arrives in, each as a step of its own, however many a loop brings: no sample waits for a later loop. ← FLT-RATE-01, SNS-COL-03, DD-093
 - **FLT-RATE-05**: Every detector hold and dwell that measures the sensor shall run in sample time, so that lateness in processing changes no decision. ← SNS-PRES-08
 
 ---
@@ -290,13 +291,15 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 
 ### Readings
 - **SNS-PRES-01**: The system shall auto-detect the installed pressure sensor type. ← SYS-ALT-02
-- **SNS-PRES-06**: A reading the sensor cannot produce -- a zero conversion, a failed transfer, or a value outside what the part can output -- shall be discarded and counted. A reading beyond the sensor's rated range, or taken at a temperature beyond its limits, is less accurate and shall still be used. ← SYS-ALT-01, DD-085
+- **SNS-PRES-06**: Every conversion the sensor completes shall be used, whatever its value: a reading beyond the sensor's rated range, or taken at a temperature beyond its limits, is less accurate and is still data. Only a pressure of zero or less, which has no logarithm, is not fed to the estimators. ← SYS-ALT-01, DD-085, DD-093
 - **SNS-PRES-08**: Each sample shall carry the time its pressure was measured, to within 1 ms ‡, unaffected by lateness in processing or by storage activity. ← SYS-ALT-01
 - **SNS-PRES-10**: A whole second of one reading, to the pascal, shall be taken as a failed sensor: a diagnostic bit, a SENSOR_STUCK event and a telemetry line. While it lasts, and for a second after, it counts as no data: nothing shall be decided on it. ← SYS-DEPLOY-04
 - **SNS-PRES-11**: A gap of more than 250 ms between samples shall suspend decisions until a whole second of new samples exists. No sample for 0.5 s in flight shall be reported as a lost sensor: a diagnostic bit, a SENSOR_LOST event and a telemetry line. The flight carries on when samples return. ← SYS-DEPLOY-04
 - **SNS-PRES-13**: The system shall keep the last 256 sensor conversions, with the time each was measured, when it was read, its raw and converted values and how it was classed, and serve them at `/api/pressure/trace`, so a sensor can be judged on the bench for stale reads, gaps and noise. ← SNS-PRES-08
 - **SNS-PRES-14**: A reading the board knows its own storage activity disturbed shall not be used, and shall be counted on `/api/status`. ← SNS-PRES-06
-- **SNS-REC-01**: The flight software shall not attempt to recover a failed sensor in flight. It shall record the failure and go on processing whatever samples arrive. ← SYS-DEPLOY-04, DD-085
+- **SNS-PRES-15**: An MS5607's pressure and temperature shall be compensated to the datasheet's second order below 20 °C. ← SYS-ALT-01, DD-093
+- **SNS-PRES-16**: An MS5607 whose PROM fails its CRC shall not be taken for a sensor. ← SNS-PRES-01, DD-093
+- **SNS-REC-01**: The flight software shall not attempt to recover a failed sensor in flight: it shall record the failure and go on processing whatever samples arrive. Recovering the sensor's bus is the collector's (SNS-COL-05). ← SYS-DEPLOY-04, DD-085, DD-093
 
 ### The estimate
 - **SNS-EST-01**: Every flight decision shall be made on a filtered estimate of the pressure, its rate and its acceleration, formed from the raw readings: the filtered state. ← SYS-ALT-01, DD-085
@@ -308,6 +311,14 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **SNS-EST-07**: Every estimator the build carries shall be given every reading, whichever is obeyed. From launch to landing the flight log shall carry, for each, a row once a second with its height, its speed and whether it explains the readings, and a row when its own apogee rule (FLT-APO-07) is first met. Only the obeyed estimator's apogee is the flight's. ← SNS-EST-06, SYS-DATA-01, DD-092
 - **SNS-EST-08**: An estimator shall report whether its model explains the readings: they agree with its prediction, and it has had 1 s ‡ of them with no gap (SNS-PRES-11). ← SNS-EST-01, DD-092
 - **SNS-EST-09**: Each estimator shall be told when the board pulses a channel. ← SNS-EST-06, DD-092
+
+### The collector
+- **SNS-COL-01**: One collector shall own the sensor and its bus. It shall be driven by interrupts alone and run free: no task starts a conversion. It shall hand on each cycle as the part's raw codes with the time of each conversion (SNS-PRES-08); the arithmetic on them is done outside the interrupt. ← SYS-ALT-01, DD-093
+- **SNS-COL-02**: A read shall follow its own conversion's command by the part's worst-case conversion time, and no read shall be repeated, so that no read can find a conversion unfinished or absent. ← SNS-COL-01
+- **SNS-COL-03**: The collector shall keep the four newest cycles not yet taken. A fifth pushes the oldest out, and each one pushed out is counted on `/api/status`. ← SNS-COL-01, FLT-RT-01
+- **SNS-COL-04**: A bus transfer that fails shall be counted on `/api/status` by its cause: the address not acknowledged, a byte not acknowledged, the data line held, or the transfer not finishing in its time. A transfer not finished shall be aborted. The cycle starts again; a failed cycle is not handed on. ← SNS-COL-01
+- **SNS-COL-05**: After three failed transfers in a row the collector shall clear the bus (nine clocks and a STOP), reset the part, wait out its start-up, and go on; and again after every three more. Each recovery is counted on `/api/status`. ← SNS-COL-04
+- **SNS-COL-06**: The collector's interrupt handler and everything it calls shall run from RAM. The build shall fail otherwise. ← SNS-PRES-08, SNS-COL-01
 
 ### Altitude
 - **SNS-ALT-01**: Altitude shall be reported relative to the launch pad, computed from the ground reference and the current pressure. It shall not be clamped: a point below the pad reads negative, and no ceiling is applied. ← SYS-ALT-01, DD-085
@@ -500,7 +511,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 
 ### Requirements
 - **SIM-01**: A bench flight shall start only from PAD_IDLE with test mode on, and only a profile that can fly. ← SYS-SIM-01
-- **SIM-02**: While one flies, the profile's pressure, from the 1976 US Standard Atmosphere, shall replace each reading after the pressure trace has recorded the sensor's, and the flight shall end once the profile and the flight software have both landed. ← SYS-SIM-01
+- **SIM-02**: While one flies, the profile's pressure, from the 1976 US Standard Atmosphere, carrying each reading's own departure from the ground reference the flight started at, shall replace that reading after the pressure trace has recorded the sensor's, and the flight shall end once the profile and the flight software have both landed. ← SYS-SIM-01
 - **SIM-03**: From the start of a bench flight until the board restarts, every fire shall be mocked and logged as one; a stop shall not give the channels back. ← SYS-SIM-01
 - **SIM-04**: The bench flight shall offer profiles in which a canopy fails, so the re-fire and emergency rules can be seen on a board. ← SYS-SIM-01, PYR-REFIRE-01, FLT-EMRG-01
 
@@ -639,7 +650,7 @@ mechanism, the design record named beside it still holds it.
 - **SNS-PRES-05**: Withdrawn (DD-080). Conversion timing is each sensor driver's (DD-051, DD-067).
 - **SNS-PRES-07**: Withdrawn (DD-080). The median of three (DD-040); the behaviour is SNS-EST-02.
 - **SNS-PRES-09**: Withdrawn (DD-080). The quadratic fit (DD-048); the behaviour is SNS-EST-01 to SNS-EST-04.
-- **SNS-PRES-12**: Withdrawn (DD-080). The MS5607's temperature compensation (DD-066).
+- **SNS-PRES-12**: Withdrawn (DD-080). The MS5607's temperature compensation (DD-066); its second order is SNS-PRES-15.
 - **FLT-RATE-02**: Withdrawn (DD-080). Samples are not delivered in batches.
 - **FLT-RATE-03**: Withdrawn (DD-080). Slower sampling after landing is a design choice under SYS-PWR-01.
 - **FLT-RATE-04**: Withdrawn (DD-080). Covered by HAL-02.

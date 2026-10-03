@@ -189,6 +189,15 @@ static void step(float dt) {
     self.x[LB] = lb + (logf(BETA_PRIOR) - lb) * pull;
 }
 
+/* The model has no ground, and readings supply it. With none, a prediction
+ * that reaches the pad's level stops there: it does not fall on through. */
+static void stop_at_the_ground(void) {
+    if (self.reading_run || self.x[H] >= 0.0f)
+        return;
+    self.x[H] = 0.0f;
+    self.x[V] = fmaxf(self.x[V], 0.0f);
+}
+
 /* Returns the seconds stepped over. */
 static float predict_to(uint32_t t_us) {
     int32_t dt_us = (int32_t)(t_us - self.t_us);
@@ -196,8 +205,10 @@ static float predict_to(uint32_t t_us) {
         return 0.0f;
     self.t_us = t_us;
     float dt = (float)dt_us * 1e-6f;
-    for (float left = dt; left > 0.0f; left -= STEP_MAX_S)
+    for (float left = dt; left > 0.0f; left -= STEP_MAX_S) {
         step(fminf(left, STEP_MAX_S));
+        stop_at_the_ground();
+    }
     return dt;
 }
 

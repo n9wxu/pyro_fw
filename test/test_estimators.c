@@ -146,6 +146,34 @@ void test_SNS_EST_08_a_ballistic_arc_is_explained_over_the_top(void) {
     }
 }
 
+/* A minute with no readings, climbing at 49 m/s when they stopped. An
+ * estimate may carry on over the top by its own model, and it does not fall
+ * through the ground: it is never more than a metre below the pad. It takes
+ * the readings up again when they come back. */
+void test_SNS_EST_08_an_estimate_does_not_fall_through_the_ground(void) {
+    EVERY_ESTIMATOR {
+        on_the_pad(i);
+        (void)read_for(PAD_PA, 5000000u);
+        (void)fly_the_arc_to(0.0f);
+        (void)fly_the_arc_to(ARC_APOGEE_S - 5.0f);
+        float lowest_m = 1e9f;
+        estimate_t after = {0};
+        for (int second = 0; second < 60; second++) {
+            after = nothing_for(1000000u);
+            lowest_m = fminf(lowest_m, atmos_height_above_m(after.pressure_pa, PAD_PA));
+        }
+        char msg[128];
+        snprintf(msg, sizeof(msg), "%s: as low as %.0f m with no readings", e->name, (double)lowest_m);
+        TEST_ASSERT_FALSE_MESSAGE(after.explains, msg);
+        TEST_ASSERT_TRUE_MESSAGE(lowest_m > -1.0f, msg);
+        estimate_t back = read_for(PAD_PA, 10000000u);
+        snprintf(msg, sizeof(msg), "%s: %.0f Pa from the readings 10 s after they returned", e->name,
+                 (double)(back.pressure_pa - PAD_PA));
+        TEST_ASSERT_TRUE_MESSAGE(back.explains, msg);
+        TEST_ASSERT_FLOAT_WITHIN_MESSAGE(20.0f, PAD_PA, back.pressure_pa, msg);
+    }
+}
+
 /* [SNS-EST-09] A charge pressurises the bay by 3 kPa, dying away in 0.2 s.
  * Told of the pulse, the lumped estimator does not take the bay for the air. */
 void test_SNS_EST_09_the_lumped_estimator_sits_out_its_own_charge(void) {
@@ -171,6 +199,7 @@ int main(void) {
     RUN_TEST(test_SNS_EST_08_a_step_no_motion_makes_is_not_explained);
     RUN_TEST(test_SNS_EST_08_a_few_missing_readings_are_not_a_gap);
     RUN_TEST(test_SNS_EST_08_a_ballistic_arc_is_explained_over_the_top);
+    RUN_TEST(test_SNS_EST_08_an_estimate_does_not_fall_through_the_ground);
     RUN_TEST(test_SNS_EST_09_the_lumped_estimator_sits_out_its_own_charge);
     return UNITY_END();
 }

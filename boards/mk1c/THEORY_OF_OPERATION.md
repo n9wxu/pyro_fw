@@ -94,7 +94,7 @@ the first quiescent reading.
 ## The main loop
 
 The shared loop (`src/main_hardware.c`) runs every 20 ms (`src/loop_period.h`,
-DD-065). The MS5607's one-shot conversion is started first; then platform
+DD-065). The pressure collector's queue is taken first; then platform
 services, the flight state machine, and the outputs, where `hal_pyro_update()`
 calls `pyro_update()`. Each `pyro_update()`:
 
@@ -277,16 +277,16 @@ One MS5607 on I2C1, at its fastest, 400 kHz: R3 and R5 (4k7) hold fast mode's
 300 ns rise to about 75 pF (DD-052). Bring-up is the shared single-sensor path,
 `src/pressure_single_sensor.c`: clock the bus free in case the sensor was left
 mid-transfer across a reset, hand it to the I2C block, let the pull-ups settle,
-detect. In flight the sensor converts a pressure and then a temperature every
-loop, started at the top of the loop, each read 9.1 ms after its command by a
-one-shot alarm whose handler runs from RAM (DD-051, DD-066), so a flash write
-cannot delay a read or its timestamp. The pair is ready 18.6 ms after the top,
-1.4 ms before the next; at standard mode it would be 0.26 ms.
+detect. In flight the pressure collector runs the sensor free (DD-093): a
+pressure, then a temperature, each read 9.1 ms after its command by an alarm
+whose handler runs from RAM, so a flash write cannot delay a read or its
+timestamp. A cycle takes 18.8 ms, 53 a second, and up to four wait for the
+20 ms loop.
 
-Every transfer gives up rather than wait on a part holding the bus: detection
-and the one-shot's transfers within 2 ms (DD-069). A conversion a flash erase
-or program ran beside is discarded, not used, and counted in `pres_flashed` on
-`/api/status` (DD-068). The buzzer does not disturb the sensor: on the bench
+A transfer that fails is counted by cause on `/api/status`. After three in a
+row the collector clears the bus, resets the sensor and goes on. A conversion
+a flash erase or program ran beside is discarded, not used, and counted in
+`pres_flashed` on `/api/status` (DD-068). The buzzer does not disturb the sensor: on the bench
 the scatter is 6–7 Pa beeping or not, where MK1B's rises during a beep code
 (DD-068, task B-BZ).
 
@@ -446,8 +446,8 @@ of milliseconds on this class of part). `/api/status` reports `loop_max_us` and
   a misfire, both channels in turn, a high side stuck on, and the flash
   window.
 - `plant_tests` holds the model to the bench measurements.
-- `sensor_bringup_tests` and `ms5607_tests` cover the pressure sensor, the
-  one-shot at this board's 400 kHz.
+- `sensor_bringup_tests`, `collector_tests` and `ms5607_tests` cover the
+  pressure sensor: its detection, the collector and the arithmetic.
 - `flight_boot_tests`, `flight_pad_tests` and `recorded_flight_tests` run the
   flight software built for MK1C.
 - `boards/sim_mk1c` runs the whole flight software against the same model.
@@ -459,8 +459,8 @@ of milliseconds on this class of part). `/api/status` reports `loop_max_us` and
   `rp2040-datasheet_2025-02-20.pdf`, `UM10204_I2C-bus_Rev7.0_2021-10.pdf`,
   `XC6206_ETR0305_004b.pdf` (U6), `LSM6DS3_DocID026899_Rev4_2015-04.pdf`,
   `SD_Physical_Layer_Simplified_v6.00_2017-04.pdf`
-- DD-051 (the MS5607 one-shot), DD-052 (bus speeds), DD-053 (no waits),
+- DD-093 (the pressure collector), DD-052 (bus speeds), DD-053 (no waits),
   DD-054 (the bus as measured), DD-055 (presence and shorts only), DD-056 (the
-  fire), DD-065 (the 20 ms loop), DD-066 (a pair every loop), DD-068
+  fire), DD-065 (the 20 ms loop), DD-068
   (conversions beside a flash operation), DD-069 (bounded transfers), DD-071
   (the ground test switch) in `DECISIONS.md`

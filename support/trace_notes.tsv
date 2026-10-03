@@ -45,3 +45,4 @@ PYR-ARM-01	⚠️	MK1C: about 35 ms. MK1A and MK1B end a pulse from the loop, so
 SYS-LUA-01	⚠️	MK1C-SD is built without a script: J3 carries its SPI bus
 FLT-RT-01		The bound on each board is declared and not yet measured on this revision: `loop_late_max_us` on `/api/status`
 GND-TEST-12		The pulsed read on the buzzer's pad (`gts_tick()`) is platform code: bench check owed, `docs/ground_test_on_buzzer_pad.md`
+SNS-COL-06	✅	CI runs `support/prove_core0.py` on every image: it fails if `collector_alarm_isr` or anything it calls is outside RAM

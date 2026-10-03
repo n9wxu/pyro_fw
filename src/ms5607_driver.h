@@ -4,10 +4,10 @@
  * Detection, at boot: ms5607_detect_step(), once a loop, resets each I2C
  * address in turn and reads its PROM once the reset has reloaded it.
  *
- * One-shot, in flight [DD-051, DD-066]: each loop takes the pair its alarms
- * finished -- a pressure, then a temperature -- and commands the next. The
- * alarm's handler reads the ADC from RAM, so nothing a flash erase does can
- * reach it. The compensation, and the temperature it needs, stay in the loop.
+ * In flight the pressure collector owns the part (pressure_collector.h):
+ * MS5607_PART is what it needs to know of it. Each cycle is a pressure code
+ * and the temperature code converted after it. The arithmetic on them is
+ * here, and runs in the sensor task.
  *
  * Figures are from docs/datasheets/MS5607-02BA03_2017-06.pdf.
  *
@@ -16,33 +16,82 @@
 #ifndef MS5607_DRIVER_H
 #define MS5607_DRIVER_H
 
+#include "pressure_collector.h"
 #include "pressure_sensor.h"
 #include <stdbool.h>
 #include <stdint.h>
 
-/* One conversion at OSR 4096 and its read. A pair is two, which the loop's
- * period must hold [DD-066]. */
-#define MS5607_CONV_MS 10
-
-/* The fastest SCLK its I2C allows (datasheet page 5). A board runs its bus at
- * this or, where its PCB cannot, slower: BOARD_MS5607_I2C_HZ [DD-052]. */
+/* The fastest SCLK its I2C allows (page 5). A board runs its bus at this or,
+ * where its PCB cannot, slower: BOARD_MS5607_I2C_HZ [DD-052]. */
 #define MS5607_I2C_MAX_HZ 400000u
 
-/* OSR 4096's worst case is 9.04 ms (datasheet page 3); a read issued earlier
- * answers 0. Timed from the end of the command. */
+/* OSR 4096's worst case is 9.04 ms (page 3). A read issued earlier answers 0
+ * and spoils the conversion (page 11). */
 #define MS5607_CONV_DONE_US 9100u
 
-/* [SNS-PRES-08] A reading describes the middle of its conversion (OSR 4096
- * takes up to 9.04 ms), not the moment it is read. */
+/* [SNS-PRES-08] A reading describes the middle of its conversion. */
 #define MS5607_HALF_CONV_US 4500u
 
-/* The datasheet's first-order compensation (page 8), from the PROM's C1-C6. */
-static inline void ms5607_compensate_prom(const uint16_t prom[8], uint32_t d1, uint32_t d2,
-                                          pressure_reading_t *out) {
+/* The PROM reloads for 2.8 ms after a reset (pages 10-11). */
+#define MS5607_RESET_MS 3u
+
+#define MS5607_CMD_RESET 0x1Eu
+#define MS5607_CMD_CONVERT_D1 0x48u /* pressure, OSR 4096 */
+#define MS5607_CMD_CONVERT_D2 0x58u /* temperature, OSR 4096 */
+#define MS5607_CMD_ADC_READ 0x00u
+
+enum { MS5607_PRESSURE, MS5607_TEMPERATURE };
+
+#define MS5607_CONVERSION(cmd)                                                                                         \
+    { {(cmd)}, 1, MS5607_CMD_ADC_READ, 3, MS5607_CONV_DONE_US, MS5607_HALF_CONV_US }
+
+static const collector_part_t MS5607_PART = {
+    .steps = 2,
+    .step = {[MS5607_PRESSURE] = MS5607_CONVERSION(MS5607_CMD_CONVERT_D1),
+             [MS5607_TEMPERATURE] = MS5607_CONVERSION(MS5607_CMD_CONVERT_D2)},
+    .reset = {MS5607_CMD_RESET},
+    .reset_len = 1,
+    .reset_us = MS5607_RESET_MS * 1000u,
+};
+
+/* A 24-bit ADC code, most significant byte first. */
+static inline uint32_t ms5607_code(const uint8_t bytes[3]) {
+    return ((uint32_t)bytes[0] << 16) | ((uint32_t)bytes[1] << 8) | bytes[2];
+}
+
+/* The PROM's 4-bit CRC, in the low bits of its last word (page 13; the
+ * algorithm is TE's application note AN520). */
+static inline bool ms5607_prom_crc_ok(const uint16_t prom[8]) {
+    uint16_t remainder = 0;
+    for (int i = 0; i < 16; i++) {
+        uint16_t word = i >> 1 == 7 ? (uint16_t)(prom[7] & 0xFF00u) : prom[i >> 1];
+        remainder ^= (i & 1) ? (uint16_t)(word & 0x00FFu) : (uint16_t)(word >> 8);
+        for (int bit = 0; bit < 8; bit++)
+            remainder = (remainder & 0x8000u) ? (uint16_t)((remainder << 1) ^ 0x3000u) : (uint16_t)(remainder << 1);
+    }
+    return (remainder >> 12) == (prom[7] & 0x000Fu);
+}
+
+/* The datasheet's compensation from the PROM's C1-C6: first order (page 8),
+ * and below 20 C the second order it recommends (page 9). */
+static inline void ms5607_compensate_prom(const uint16_t prom[8], uint32_t d1, uint32_t d2, pressure_reading_t *out) {
     int32_t dT = (int32_t)d2 - ((int32_t)prom[5] << 8);
     int32_t temp = 2000 + (int32_t)(((int64_t)dT * prom[6]) >> 23);
     int64_t off = ((int64_t)prom[2] << 17) + (((int64_t)prom[4] * dT) >> 6);
     int64_t sens = ((int64_t)prom[1] << 16) + (((int64_t)prom[3] * dT) >> 7);
+    if (temp < 2000) {
+        int64_t below_20 = temp - 2000;
+        int64_t off2 = (61 * below_20 * below_20) >> 4;
+        int64_t sens2 = 2 * below_20 * below_20;
+        if (temp < -1500) {
+            int64_t below_minus_15 = temp + 1500;
+            off2 += 15 * below_minus_15 * below_minus_15;
+            sens2 += 8 * below_minus_15 * below_minus_15;
+        }
+        temp -= (int32_t)(((int64_t)dT * dT) >> 31);
+        off -= off2;
+        sens -= sens2;
+    }
     int32_t p = (int32_t)((((int64_t)d1 * sens >> 21) - off) >> 15);
     out->temperature_c = temp / 100.0f;
     out->pressure_pa = (float)p;
@@ -113,9 +162,6 @@ static inline uint32_t ms5607_temps_at(const ms5607_temps_t *t, uint64_t at_us) 
 
 /* ── Detection [DD-053] ─────────────────────────────────────────── */
 
-/* The PROM reloads for 2.8 ms after a reset (datasheet pages 10-11). */
-#define MS5607_RESET_MS 3u
-
 typedef enum { MS5607_DETECT_PENDING, MS5607_DETECT_FOUND, MS5607_DETECT_ABSENT } ms5607_detect_result_t;
 
 typedef struct {
@@ -133,38 +179,5 @@ bool ms5607_compensate(uint32_t d1, uint32_t d2, pressure_reading_t *out);
 
 /* The address ms5607_detect() found the sensor at. */
 uint8_t ms5607_address(void);
-
-/* ── One-shot pair [DD-051, DD-066] ───────────────────────────────── */
-
-/* HELD: the pair taken failed, so nothing was started and the caller backs
- * off. */
-typedef enum { MS5607_STARTED, MS5607_BUSY, MS5607_NOT_BEGUN, MS5607_HELD } ms5607_start_t;
-
-/* A pressure and the temperature converted after it. */
-typedef struct {
-    uint32_t d1, d2;
-    /* [SNS-PRES-08] the middle of each conversion, stamped by the handler
-     * from the hardware timer as it began */
-    uint64_t d1_at_us, d2_at_us;
-    bool ok; /* false: the sensor did not answer, or the bus stuck */
-    /* [DD-068] a flash erase or program ran during that code's conversion */
-    bool d1_flashed, d2_flashed;
-} ms5607_pair_t;
-
-/* Claims a hardware alarm for the one-shot and installs its handler. */
-bool ms5607_async_begin(void);
-
-/* Hands the handler a pair to command. BUSY: the last one is still in
- * flight, and nothing was sent. */
-ms5607_start_t ms5607_async_start(void);
-
-/* The pair the one-shot finished, once. */
-bool ms5607_async_take(ms5607_pair_t *out);
-
-/* Once a loop: takes the finished pair into *out, notes its temperature on
- * *t, and starts the next pair before returning. Whatever the caller then
- * does with the pressure cannot delay the next command. False when nothing
- * was finished. */
-bool ms5607_async_cycle(ms5607_temps_t *t, ms5607_pair_t *out, ms5607_start_t *started);
 
 #endif /* MS5607_DRIVER_H */

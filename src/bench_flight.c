@@ -50,7 +50,7 @@ bool bench_flight_pressure(uint64_t stamp_us, bool landed, float *pa) {
     if (bf.alt_m > bf.peak_m)
         bf.peak_m = bf.alt_m;
     bf.pa = atmos_pressure_pa(bf.sim.pad_msl + bf.alt_m);
-    *pa = bf.pa;
+    *pa = bf.pa + (*pa - bf.ground_pa);
     if (landed && fsim_phase(&bf.sim) == FSIM_LANDED)
         bf.flying = false;
     return true;

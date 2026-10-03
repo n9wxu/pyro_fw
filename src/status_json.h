@@ -23,7 +23,7 @@
  * board_id and board_selftest keys were caught: the bound has to move
  * deliberately, and it has to stay under HTTP_WORK_SIZE, which the
  * _Static_assert in http_server.c checks. */
-#define STATUS_JSON_MAX 3200
+#define STATUS_JSON_MAX 3500
 
 typedef struct {
     const char *state;
@@ -83,7 +83,9 @@ typedef struct {
     bool emergency_fire;                      /* [FLT-EMRG-04] */
     uint16_t refire_interval_ms, fire_gap_ms; /* in force [PYR-BOARD-03] */
     bool pyro_limited;                        /* a configured value was outside the board's range [PYR-BOARD-02] */
-    uint32_t pres_waits, pres_rejects;
+    /* The pressure collector [SNS-COL-04, SNS-COL-05]: transfers that failed, in
+     * all and by cause, bus recoveries, and cycles pushed out of its queue. */
+    uint32_t pres_rejects, pres_bus[4], pres_recoveries, pres_dropped;
     uint32_t pres_flashed; /* [DD-068] readings a flash operation disturbed, not fed on */
     int32_t raw_pa, pad_speed_cms;
     bool ground_degraded;

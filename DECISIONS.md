@@ -559,6 +559,71 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-093: A Free-Running Pressure Collector That Recovers Its Own Bus
+- **Decision:** `src/pressure_collector.c` is one interrupt state machine for
+  either sensor. It commands a conversion, waits out the part's worst-case
+  conversion time on an alarm, reads, and commands the next, with no start
+  from the loop. Each cycle is the part's raw bytes and the time of each
+  conversion. A queue holds four; a fifth pushes the oldest out, counted.
+  The sensor task takes them every loop and does the arithmetic. A sensor is
+  a table (`MS5607_PART`, `BMP280_PART`): its commands, its conversion times,
+  where its result is read, and its reset. Replaces the one-shot of DD-051
+  and DD-066 and the BMP280's loop-driven cycle of DD-067.
+- **Why:** the loop started every conversion, so the collector ran at the
+  loop's rate and a loop that came early found it busy. A read can now only
+  follow its own command's alarm, so a zero code (MS5607 datasheet page 11)
+  is impossible by construction, not caught afterwards.
+- **Rates:** MS5607 at 400 kHz, 18.8 ms a cycle, 53 a second. BMP280, 13.7 ms
+  at 400 kHz and 14.5 ms at MK1B's 100 kHz. All faster than the 20 ms loop.
+- **No wait in the handler:** a transfer is queued whole (the controller's
+  TX FIFO holds sixteen) and its outcome is read at the next alarm. The old
+  handler polled for the STOP.
+- **Recovery is states of the same machine:** a failed transfer is counted by
+  cause and the cycle starts again 1 ms on. A transfer that did not finish is
+  aborted (RP2040 datasheet 4.3.10). Three failures in a row: the pads are
+  taken from the controller, the controller is reset, nine clocks and a STOP
+  go out at 10 us an edge (UM10204 3.1.16), the controller is set up again as
+  it was, the part's reset command is sent, and its start-up is waited out
+  (MS5607 page 12). About 4 ms. SNS-REC-01 is reworded: the flight software
+  still does not recover a sensor; the collector recovers its bus.
+- **No judgement of a value:** the zero check and the 1 Pa to 130 kPa check
+  are gone (SNS-PRES-06). `support/compensation_range.py` shows neither
+  sensor's arithmetic bends, wraps or overflows on any code. What stays is
+  the logarithm's domain: a pressure of zero or less is not fed to the
+  estimators.
+- **Accuracy, in the task:** the MS5607's second-order compensation below
+  20 C (datasheet page 9; 277 Pa at 0 C and sea level), and its PROM's CRC
+  checked at detection (AN520).
+- **What the build's proof caught:** the handler must run from RAM
+  (`support/prove_core0.py`). A `switch` became a jump table in flash, a
+  struct assignment became `memcpy`, and a `%` became a library call. The
+  handler is an if-chain compiled without jump tables, builds each cycle in
+  its queue slot, and wraps its index by comparison.
+- **Unchanged:** a conversion a flash operation ran beside is still marked
+  and not used (DD-068). Detection still uses the SDK's calls, before the
+  collector has the bus.
+- **Every sample in its loop (FLT-RATE-06):** the flight step took one sample
+  a loop. At 53 samples to 50 loops the samples queued, and within 20 s every
+  decision was made on data 1.2 s old. Found on the first bench flight on
+  hardware: launch declared at 80 m instead of 32 m, the ground reference
+  47 m high. `dispatch_state()` now steps once for every sample waiting. The
+  host harness steps every millisecond and could not show it;
+  `test_FLT_RATE_06_...` now does.
+- **The bench profile carries the sensor's noise (SIM-02):** a landed profile
+  was one value repeated, which is a stuck sensor, and the machine never
+  landed. Each reading's own departure from the ground reference now rides
+  on the profile.
+- **On the bench, 2026-10-03:** MK1C, MK1C-SD and MK1B (MS5607) at 53.0 a
+  second, 18.87 ms apart to within 0.1 ms; MK1A (BMP280) at 72.8 a second.
+  No zero, no failed transfer, no cycle pushed out, all three PROMs pass
+  their CRC. A 3 km bench flight on MK1C-SD: launch at 32 m, apogee called
+  at the profile's apogee by both estimators, peak 3000.06 m against 3000,
+  main at 297.8 m against 300, landed at 0.1 m. The recovery states have run
+  on the host's fake bus only.
+- **The cost of believing every value:** half a second of readings 1500 hPa
+  high a second before apogee used to be discarded. They are now followed,
+  and the drogue comes 8.6 s after apogee on that test, never before it.
+
 ### DD-092: Estimators Behind One Interface, All Flown, One Obeyed
 - **Decision:** the filtered state comes from an estimator behind
   `src/estimator.h`: a table of functions and a name. The build carries the
@@ -594,9 +659,15 @@ rationale and the alternatives considered.
   peak, and the web page reads them, and still reads an older log's rows.
 - **The cost:** every reading runs both filters, and each sample carries
   every estimator's state.
-- **Open:** not yet flown on hardware. `lumped` anchors its air at the first
-  reading's pressure and the sensor's temperature then; a long wait on a pad
-  that warms is not yet followed.
+- **A prediction stops at the ground:** the model has no ground. With no
+  readings (a sensor repeating itself), its prediction fell on through, to
+  19 km below the pad after ten minutes. A prediction with no reading behind
+  it now stops at the pad's level.
+- **Flown on the bench 2026-10-03 (DD-093's entry).**
+- **Open:** `lumped` anchors its air at the first reading's pressure and the
+  sensor's temperature then; a long wait on a pad that warms is not yet
+  followed. On the pad its speed reads about 0.5 m/s downward: the thrust
+  term's fade pulls against the readings.
 
 ### DD-091: What Building The 2026-10 Review Settled
 - **Apogee bounds (FLT-APO-01):** measured on the firmware itself, on host

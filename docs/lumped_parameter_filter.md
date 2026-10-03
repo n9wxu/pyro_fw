@@ -267,6 +267,11 @@ reading.
   repeating itself for eight readings near apogee cost 2 s on 2 of 1000
   flights to 10 km. The sweep and the failure cases above are unchanged by
   it.
+- **A second change, from the first bench flight on hardware:** the model
+  has no ground. With readings, they supply it. With none, a prediction that
+  reaches the pad's level now stops there. Left alone it fell on through: 19
+  km below the pad after ten minutes of a sensor repeating itself. The
+  study's sweep and failure cases are unchanged by it.
 - **Flown in the host suites** (`test/test_mach.c`, obeying each estimator):
   never early from a hop to 45 km on the test plant's port errors; 0.09 to
   0.94 s after apogee.

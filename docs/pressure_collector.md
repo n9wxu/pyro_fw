@@ -1,6 +1,10 @@
 # The pressure collector: one source, no judgement
 
-2026-10-03. A design note with options. Nothing in the code has changed.
+2026-10-03. A design note with options. **Decided and built the same day
+(DD-093):** the free-running collector with every reading kept in a queue of
+four, recovery as states of its machine, second-order compensation and the
+PROM's CRC. The code is `src/pressure_collector.c`. Sections 1 to 5 are the
+record of what was found; section 6 records the decisions.
 
 ## The question
 
@@ -259,16 +263,40 @@ are none.
   word is not 0 or 0xFFFF. One corrupt coefficient would give a wrong but
   smooth pressure for the whole flight.
 
-## 6. Decisions for you
+## 6. What was decided
 
-| # | Decision | Recommendation |
+| # | Decision | Taken |
 |---|---|---|
-| 1 | Collector: A, B or C | C |
-| 2 | Remove the 1 Pa to 130 kPa check and the zero check; keep only "p > 0" where the logarithm is taken | yes, with 1 in place |
-| 3 | A reading with a flash operation beside it: discard (today), or pass it on marked | keep discarding on MK1B until its supply is fixed; pass on elsewhere |
-| 4 | In-flight bus recovery as section 4 | yes |
-| 5 | Add second-order compensation | yes |
-| 6 | Check the PROM CRC at start-up; a failure is a sensor fault | yes |
+| 1 | Collector | free-running, every reading kept; a queue of four, the oldest pushed out and counted |
+| 2 | The range check and the zero check | removed; only "p > 0", where the logarithm is taken |
+| 3 | A reading with a flash operation beside it | unchanged: discarded and counted on every board (SNS-PRES-14) |
+| 4 | In-flight bus recovery | built, as states of the collector's machine |
+| 5 | Second-order compensation | built, in the sensor task |
+| 6 | The PROM's CRC at start-up | built; a failure is no sensor |
 
-SNS-PRES-06 would be reworded: it now requires discarding "a zero
-conversion, a failed transfer, or a value outside what the part can output".
+On the bench after the change:
+
+| Board | Sensor | Readings a second | Interval, min / median / max | Zeros | Bus failures |
+|---|---|---|---|---|---|
+| MK1C-SD | MS5607 | 53.0 | 18.87 / 18.87 / 18.96 ms | 0 | 0 |
+| MK1C | MS5607 | 53.1 | 18.87 / 18.87 / 18.92 ms | 0 | 0 |
+| MK1B | MS5607 | 53.1 | 18.87 / 18.87 / 18.95 ms | 0 | 0 |
+| MK1A | BMP280 | 72.8 | 13.74 / 13.74 / 13.81 ms | 0 | 0 |
+
+All three MS5607 parts passed their CRC. The recovery states have run on the
+host's fake bus only: no bench board has had a bus fault to recover from.
+
+A 3 km bench flight on MK1C-SD passed: launch at 32 m, apogee called at the
+profile's apogee, peak 3000.06 m against 3000, main at 297.8 m against 300,
+landing at 0.1 m, no cycle pushed out of the queue. The first attempts
+failed, and found two things the host could not: the flight step took one
+sample a loop from a collector giving 53 (FLT-RATE-06), and a landed bench
+profile was a stuck sensor (SIM-02). Both are fixed (DD-093).
+
+Does the BMP280 build of MK1B show the flash and buzzer disturbance? Not
+known. The bench MK1B carries the MS5607, and every measurement of the
+disturbance (DD-068, G4-M) was made on it. No MK1B with a BMP280 has been
+measured.
+
+SNS-PRES-06 is reworded, and SNS-COL-01 to SNS-COL-06, SNS-PRES-15 and
+SNS-PRES-16 are new.

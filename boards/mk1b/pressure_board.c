@@ -24,9 +24,6 @@ _Static_assert(BOARD_BMP280_I2C_HZ <= BMP280_I2C_MAX_HZ, "faster than the BMP280
 
 #define PULLUP_SETTLE_MS 10u
 
-/* BMP280 datasheet page 24: 0xB6 to register 0xE0 is a soft reset. */
-#define BMP280_REG_RESET 0xE0
-#define BMP280_SOFT_RESET 0xB6
 #define BMP280_ADDR_SDO_LOW 0x76
 #define BMP280_ADDR_SDO_HIGH 0x77
 

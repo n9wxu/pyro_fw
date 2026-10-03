@@ -6,6 +6,7 @@ from a part. Cite the file and page, not memory.
 | File | Part | Revision | Source |
 |---|---|---|---|
 | `MS5607-02BA03_2017-06.pdf` | TE MS5607-02BA03 barometric pressure sensor (MK1B, MK1C) | 06/2017 | farnell.com/datasheets/2917207.pdf, fetched 2026-09-26; TE's later revisions would not download |
+| `AN520_C-code_MS56xx_004_2011-08.pdf` | TE (MEAS Switzerland) application note AN520: C code for the MS56xx, with the PROM's CRC-4 and its test values (page 12) | AN520_004, 09 August 2011 | amsys-sensor.eu/sheets/amsys.fr.an520_e.pdf, fetched 2026-10-03; te.com would not download |
 | `BST-BMP280-DS001-26_2021-10.pdf` | Bosch BMP280 barometric pressure sensor (MK1A, MK1B) | 1.26, 10/2021 | bosch-sensortec.com, bst-bmp280-ds001.pdf, fetched 2026-09-26 |
 | `UM10204_I2C-bus_Rev7.0_2021-10.pdf` | NXP UM10204, the I2C-bus specification and user manual | Rev. 7.0, 1 October 2021 | pololu.com/file/0J435/UM10204.pdf, fetched 2026-09-26; NXP's link would not download |
 | `TPS2595_SLVSE57C_2018-04.pdf` | TI TPS2595x eFuse, including the TPS259570 (MK1C's U9) | SLVSE57C, revised April 2018 | ti.com/lit/ds/symlink/tps2595.pdf, fetched 2026-09-26 |

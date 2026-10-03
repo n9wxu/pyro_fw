@@ -13,7 +13,7 @@ Flying a board? Start with the [Operator's guide](#operators-guide).
 - **Resume** - any restart in flight rejoins the flight from a record made on the pad (DD-086)
 - **Flight Log** - binary records (`flight_log.bin`) written only inside core0's flash window, rendered as CSV on download; three logging plans (DD-062, DD-064)
 - **Real-time Telemetry** - `$PYRO` NMEA on UART0 through an interrupt-driven ring, one message a second; apogee, fire and landing events ride the next message (DD-088)
-- **Pressure Sensing** - MS5607 (MK1B, MK1C) or BMP280 (MK1A), 50 conversions a second, each stamped at its measurement (DD-051, DD-066, DD-067)
+- **Pressure Sensing** - MS5607 (MK1B, MK1C) or BMP280 (MK1A), collected by a free-running interrupt state machine at 53 or more readings a second, each stamped at its measurement; it clears its own bus and resets the part after three failed transfers (DD-093)
 - **Pressure, Rate and Acceleration** - a Kalman filter on the raw readings; every flight comparison is made in pressure, and altitude is computed for people, relative to the pad and unclamped (DD-085)
 - **Estimators** - two filters fly on every reading; `estimator` in config.ini names the one obeyed, and the log shows what the other would have done (DD-092)
 - **Apogee Near Mach 1** - apogee is taken only while the estimator's model explains the readings, which a port error near Mach 1 does not (`docs/lumped_parameter_filter.md`)

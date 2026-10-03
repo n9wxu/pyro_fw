@@ -630,9 +630,11 @@ void test_SNS_PRES_11_lost_under_a_canopy_waits_for_new_samples(void) {
     TEST_ASSERT_TRUE_MESSAGE(r.main && r.main_t >= back + 1.0f, msg);
 }
 
-/* [SNS-PRES-06] guard: readings no atmosphere can produce, half a second of
- * them in coast, are discarded and counted, and deploy nothing early. */
-void test_SNS_PRES_06_readings_the_part_cannot_output_are_discarded(void) {
+/* [SNS-PRES-06] Half a second of readings 1500 hPa high, a second before
+ * apogee: every one is fed on, no estimator explains them, and nothing fires
+ * early. A run that long is followed, and the estimator takes seconds to
+ * come back from it. */
+void test_SNS_PRES_06_wild_readings_are_data_and_decide_nothing(void) {
     const mp_rocket_t *rk = &ROCKETS[SUBSONIC].r;
     flight_conditions_t c;
     memset(&c, 0, sizeof(c));
@@ -641,10 +643,25 @@ void test_SNS_PRES_06_readings_the_part_cannot_output_are_discarded(void) {
     c.glitch_n = 25;
     flown_t r = fly(rk, &COLD, &c, 15, 120.0f);
     char msg[96];
-    snprintf(msg, sizeof(msg), "%u rejected; drogue %+.2f s from apogee", (unsigned)mock_pres_rejects,
-             (double)(r.drogue_t - r.apogee_t));
-    TEST_ASSERT_TRUE_MESSAGE(mock_pres_rejects >= 25, msg);
-    TEST_ASSERT_TRUE_MESSAGE(r.drogue && r.drogue_t >= r.apogee_t && r.drogue_t - r.apogee_t <= 3.5f, msg);
+    snprintf(msg, sizeof(msg), "drogue %d, %+.2f s from apogee", r.drogue, (double)(r.drogue_t - r.apogee_t));
+    TEST_ASSERT_TRUE_MESSAGE(r.drogue && r.drogue_t >= r.apogee_t && r.drogue_t - r.apogee_t <= 10.0f, msg);
+}
+
+/* [SNS-PRES-06] A pressure of zero or less has no logarithm: it is no
+ * reading, and the estimators are whole after it. */
+void test_SNS_PRES_06_a_pressure_with_no_logarithm_is_no_reading(void) {
+    const mp_rocket_t *rk = &ROCKETS[SUBSONIC].r;
+    flight_conditions_t c;
+    memset(&c, 0, sizeof(c));
+    c.glitch_at_s = plant_apogee_s(rk, &COLD) - 3.0f;
+    c.glitch_pa = -300000;
+    c.glitch_n = 5;
+    flown_t r = fly(rk, &COLD, &c, 26, 120.0f);
+    char msg[96];
+    snprintf(msg, sizeof(msg), "drogue %d, %+.2f s from apogee; peak %ld cm", r.drogue,
+             (double)(r.drogue_t - r.apogee_t), (long)r.peak_cm);
+    TEST_ASSERT_TRUE_MESSAGE(r.drogue && r.drogue_t >= r.apogee_t && r.drogue_t - r.apogee_t <= 1.5f, msg);
+    TEST_ASSERT_TRUE_MESSAGE(fabs(r.peak_cm / 100.0 - (double)r.apogee_h) <= 15.0, msg);
 }
 
 /* [SNS-PRES-10, SNS-PRES-11] Each failure is a DIAG bit, which /api/status
@@ -743,7 +760,8 @@ int main(void) {
     RUN_TEST(test_SNS_PRES_10_stuck_in_coast_deploys_nothing);
     RUN_TEST(test_SNS_PRES_11_a_gap_across_apogee_waits_for_new_samples);
     RUN_TEST(test_SNS_PRES_11_lost_under_a_canopy_waits_for_new_samples);
-    RUN_TEST(test_SNS_PRES_06_readings_the_part_cannot_output_are_discarded);
+    RUN_TEST(test_SNS_PRES_06_wild_readings_are_data_and_decide_nothing);
+    RUN_TEST(test_SNS_PRES_06_a_pressure_with_no_logarithm_is_no_reading);
     RUN_TEST(test_SNS_PRES_10_a_failure_is_reported_and_the_flight_goes_on);
     RUN_TEST(test_SNS_PRES_10_a_working_sensor_is_never_stuck);
     RUN_TEST(test_FLT_APO_07_the_same_at_ninety_readings_a_second);

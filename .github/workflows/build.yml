@@ -126,7 +126,9 @@ jobs:
             src/hal.h src/main_hardware.c \
             src/board_if.h src/board_id.h \
             src/hal_common/hal_common.c src/hal_common/board_defaults.c \
-            src/board_support.h src/pressure_single_sensor.c src/bmp280_driver.c \
+            src/board_support.h src/pressure_single_sensor.c src/bmp280_driver.c src/bmp280_driver.h \
+            src/pressure_collector.c src/pressure_collector.h src/hal_common/collector_bus.h \
+            src/ms5607_driver.c src/ms5607_driver.h \
             boards/*/board_info.c boards/*/pyro_*.c boards/*/pyro_*.h boards/mk1b/pressure_board.c \
             boards/mk1c/arm_pump.c boards/mk1c/arm_pump.h \
             src/http_server.c src/http_server.h src/http_conn.c src/http_conn.h \

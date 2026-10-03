@@ -97,7 +97,12 @@ static void typical(status_snap_t *s) {
     s->refire_interval_ms = 1000;
     s->fire_gap_ms = 3000;
     s->pyro_limited = true;
-    s->pres_waits = 7;
+    s->pres_bus[0] = 1;
+    s->pres_bus[1] = 2;
+    s->pres_bus[2] = 3;
+    s->pres_bus[3] = 4;
+    s->pres_recoveries = 5;
+    s->pres_dropped = 7;
     s->pres_flashed = 3;
     s->raw_pa = 101300;
     s->pad_speed_cms = -3;
@@ -189,8 +194,10 @@ static const char *const TYPICAL[][2] = {
     {"refire_interval_ms", "1000"},
     {"fire_gap_ms", "3000"},
     {"pyro_limited", "true"},
-    {"pres_waits", "7"},
     {"pres_rejects", "0"},
+    {"pres_bus", "{\"address_nack\":1,\"data_nack\":2,\"line_held\":3,\"timeout\":4}"},
+    {"pres_recoveries", "5"},
+    {"pres_dropped", "7"},
     {"pres_flashed", "3"},
     {"raw_pa", "101300"},
     {"pad_speed_cms", "-3"},
@@ -340,7 +347,8 @@ void test_SJ_02_the_widest_status_fits_its_bound(void) {
     uint32_t *u32[] = {&s.flight_ms,        &s.uptime_ms,        &s.loop_max_us,        &s.loop_overruns,
                        &s.loop_late_max_us, &s.loop_count,       &s.flash_opens,        &s.flash_skips,
                        &s.flash_refusals,   &s.log_dropped,      &s.flash_erases,       &s.flash_programs,
-                       &s.flash_deferrals,  &s.pyro_mocked,      &s.pres_waits,         &s.pres_rejects,
+                       &s.flash_deferrals,  &s.pyro_mocked,      &s.pres_dropped,       &s.pres_rejects,       &s.pres_recoveries,
+                       &s.pres_bus[0],      &s.pres_bus[1],      &s.pres_bus[2],        &s.pres_bus[3],
                        &s.pres_flashed,
                        &s.ground_reseeds,   &s.stamp_lag_max_us, &s.noise_mpa,
                        &s.http_units[0],    &s.http_units[1],    &s.http_unit_max_us[0], &s.http_unit_max_us[1],
