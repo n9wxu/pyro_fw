@@ -78,6 +78,24 @@ def main():
     rule("SNS-ALT-01", "an altitude is clamped",
          find(flight, r"ALT(ITUDE)?_(MAX|CEILING|CLAMP)|8000\.0f\s*\)|MAX_ALTITUDE_M\b"))
 
+    # [BRD-01] Every board states what the requirements leave to it.
+    declared = ["Pyro faults", "refire_interval", "fire_gap", "Pulse", "Disarm", "Sensor", "Flight log",
+                "flight decision", "Script resources", "Connector labels"]
+    for board in sorted(os.listdir(os.path.join(ROOT, "boards"))):
+        doc = f"boards/{board}/THEORY_OF_OPERATION.md"
+        if board.startswith("sim") or not os.path.exists(os.path.join(ROOT, doc)):
+            continue  # the host simulators are not boards
+        text = read(doc)
+        if "## What this board declares" not in text:
+            failures.append(f"[BRD-01] {doc} has no \"What this board declares\" section")
+            continue
+        section = text.split("## What this board declares", 1)[1].split("\n## ", 1)[0]
+        if "as MK1C" in section:
+            continue  # a variant that declares only what differs
+        for item in declared:
+            if item.lower() not in section.lower():
+                failures.append(f"[BRD-01] {doc} does not declare: {item}")
+
     if failures:
         print("\n".join(failures))
         print(f"\n{len(failures)} violation(s)")

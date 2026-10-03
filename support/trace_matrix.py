@@ -62,7 +62,7 @@ def requirements():
 
 def summary_of(text):
     text = re.sub(r"`", "", text)
-    first = re.split(r"(?<=[a-z0-9)])[.:] ", text, 1)[0].rstrip(".")
+    first = re.split(r"(?<=[a-z0-9)])[.:] ", text, maxsplit=1)[0].rstrip(".")
     if len(first) > 110:
         first = first[:107].rsplit(" ", 1)[0] + "..."
     return first.replace("|", "/")

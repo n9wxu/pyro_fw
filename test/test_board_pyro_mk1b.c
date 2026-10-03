@@ -210,6 +210,19 @@ void test_mk1b_fire_then_a_fresh_reading(void) {
     TEST_ASSERT_EQUAL(0, reads_unsettled);
 }
 
+/* [PYR-HEALTH-01] As fitted, with the AP2192A: the sense nodes are held at
+ * ground whatever is connected, so the board judges nothing and reports
+ * every channel ready, before its first reading and after. */
+void test_mk1b_as_fitted_every_channel_is_ready(void) {
+    pyro_continuity_t c1, c2;
+    pyro_get(1, &c1);
+    TEST_ASSERT_TRUE_MESSAGE(c1.good && !c1.open && !c1.shorted, "ready before a reading");
+    load[1] = L_OPEN;
+    read_both(&c1, &c2);
+    TEST_ASSERT_TRUE(c1.good && !c1.open && !c1.shorted);
+    TEST_ASSERT_TRUE_MESSAGE(c2.good && !c2.open && !c2.shorted, "an empty connector is not judged");
+}
+
 /* A released channel's enable is Lua's pad: the cycle never writes it. */
 void test_mk1b_released_enable_left_alone(void) {
     owns[EN2] = false;
@@ -224,12 +237,19 @@ int main(void) {
     RUN_TEST(test_mk1b_reads_after_the_settle);
     RUN_TEST(test_mk1b_common_raised_only_by_the_loop);
     RUN_TEST(test_mk1b_one_reading_a_second);
-    RUN_TEST(test_mk1b_not_good_before_a_reading);
-    RUN_TEST(test_mk1b_igniter_reads_good);
-    RUN_TEST(test_mk1b_empty_connector_reads_open);
-    RUN_TEST(test_mk1b_short_to_ground_reads_shorted);
-    RUN_TEST(test_mk1b_bad_joint_reads_good_with_its_count);
-    RUN_TEST(test_mk1b_fire_then_a_fresh_reading);
+    /* The board is built for the U5 it carries (board_pins.h): the AP2192A
+     * as fitted, or the base AP2192 the check was designed for. This suite
+     * runs once for each. */
+    if (BOARD_PYRO_U5_DISCHARGES_OUTPUTS) {
+        RUN_TEST(test_mk1b_as_fitted_every_channel_is_ready);
+    } else {
+        RUN_TEST(test_mk1b_not_good_before_a_reading);
+        RUN_TEST(test_mk1b_igniter_reads_good);
+        RUN_TEST(test_mk1b_empty_connector_reads_open);
+        RUN_TEST(test_mk1b_short_to_ground_reads_shorted);
+        RUN_TEST(test_mk1b_bad_joint_reads_good_with_its_count);
+        RUN_TEST(test_mk1b_fire_then_a_fresh_reading);
+    }
     RUN_TEST(test_mk1b_released_enable_left_alone);
     return UNITY_END();
 }

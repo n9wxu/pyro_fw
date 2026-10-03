@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: MIT
  */
 #include "bench_flight.h"
+#include "atmosphere.h"
+#include <string.h>
 
 static struct {
     fsim_t sim;
@@ -47,7 +49,7 @@ bool bench_flight_pressure(uint64_t stamp_us, bool landed, float *pa) {
     bf.alt_m = fsim_altitude(&bf.sim, bf.t_s);
     if (bf.alt_m > bf.peak_m)
         bf.peak_m = bf.alt_m;
-    bf.pa = fsim_isa_pressure(bf.sim.pad_msl + bf.alt_m);
+    bf.pa = atmos_pressure_pa(bf.sim.pad_msl + bf.alt_m);
     *pa = bf.pa;
     if (landed && fsim_phase(&bf.sim) == FSIM_LANDED)
         bf.flying = false;
@@ -93,10 +95,6 @@ void bench_flight_status(bench_flight_status_t *out) {
     out->fires[1] = bf.fires[1];
 }
 
-#ifdef BENCH_FLIGHT_TEST
-#include <string.h>
-
-void bench_flight_reset(void) {
+void bench_flight_init(void) {
     memset(&bf, 0, sizeof(bf));
 }
-#endif

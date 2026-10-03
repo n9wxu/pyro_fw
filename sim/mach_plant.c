@@ -20,7 +20,8 @@ float mp_temp_k(const mp_site_t *s, float h_agl_m) {
     float t0 = s->temp_c + 273.15f;
     float z = s->elev_m + h_agl_m;
     float zt = z < MP_TROPOPAUSE_M ? z : MP_TROPOPAUSE_M;
-    return t0 - MP_LAPSE * (zt - s->elev_m);
+    float warming = z > MP_WARMING_M ? MP_WARMING * (z - MP_WARMING_M) : 0.0f;
+    return t0 - MP_LAPSE * (zt - s->elev_m) + warming;
 }
 
 float mp_pressure_pa(const mp_site_t *s, float h_agl_m) {
@@ -32,7 +33,10 @@ float mp_pressure_pa(const mp_site_t *s, float h_agl_m) {
         return p0 * powf(mp_temp_k(s, h_agl_m) / t0, n);
     float tt = mp_temp_k(s, MP_TROPOPAUSE_M - s->elev_m);
     float pt = p0 * powf(tt / t0, n);
-    return pt * expf(-MP_G * (z - MP_TROPOPAUSE_M) / (MP_R * tt));
+    if (z <= MP_WARMING_M)
+        return pt * expf(-MP_G * (z - MP_TROPOPAUSE_M) / (MP_R * tt));
+    float pw = pt * expf(-MP_G * (MP_WARMING_M - MP_TROPOPAUSE_M) / (MP_R * tt));
+    return pw * powf(tt / mp_temp_k(s, h_agl_m), MP_G / (MP_R * MP_WARMING));
 }
 
 float mp_sound_ms(const mp_site_t *s, float h_agl_m) {
@@ -48,6 +52,7 @@ void mp_launch(mp_state_t *st) {
     st->mach = 0.0f;
     st->max_mach = 0.0f;
     st->canopy = false;
+    st->thin_air = false;
     st->apogee = false;
     st->apogee_t = 0.0f;
     st->apogee_h = 0.0f;
@@ -69,6 +74,8 @@ void mp_step(mp_state_t *st, const mp_site_t *s, const mp_rocket_t *r, float dt)
     if (st->canopy && st->v < 0.0f) {
         /* Toward the canopy's terminal rate, from wherever it opened. */
         float k = MP_G / (r->canopy_ms * r->canopy_ms);
+        if (st->thin_air)
+            k *= rho / (mp_pad_pa(s) / (MP_R * (s->temp_c + 273.15f)));
         a = -MP_G + k * st->v * st->v;
     } else {
         float burning = st->t < r->burn_s ? 1.0f : 0.0f;

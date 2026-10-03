@@ -19,6 +19,8 @@
 #define MP_GAMMA 1.4f
 #define MP_LAPSE 0.0065f         /* K/m, to the tropopause */
 #define MP_TROPOPAUSE_M 11000.0f /* ASL */
+#define MP_WARMING_M 20000.0f    /* ASL: above this the air warms at MP_WARMING */
+#define MP_WARMING 0.001f        /* K/m */
 
 /* The pad: its air temperature, and its elevation above sea level. Its
  * pressure is the standard atmosphere's at that elevation. */
@@ -50,6 +52,7 @@ typedef struct {
     float mach; /* signed like v */
     float max_mach;
     bool canopy; /* a charge has put a canopy out */
+    bool thin_air; /* the canopy's rate is canopy_ms in the pad's air, and faster as the air thins */
     bool apogee;
     float apogee_t, apogee_h;
     bool landed;

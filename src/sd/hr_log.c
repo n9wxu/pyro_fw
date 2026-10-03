@@ -341,7 +341,6 @@ static void begin(const char *reason) {
     sync_now();
 }
 
-
 /* The ring's whole content, in stages; the last one short. */
 static void drain(bool all) {
     while (ring_used() >= STAGE || (all && ring_used() > 0)) {
@@ -421,11 +420,9 @@ static void writer_task(void *arg) {
     }
 }
 
-#ifdef HR_LOG_TEST
-/* A reset mid-log, for the host tests: the file is left as a power cut
- * leaves it -- next.bin, open, its FAT entry as the last sync wrote it -- and
- * the tasks start again. */
-void hr_log_test_power_cut(void) {
+/* ── Control ──────────────────────────────────────────────────────── */
+
+void hr_log_init(void) {
     fil_open = false;
     rec_next = 0;
     st.logging = false;
@@ -433,11 +430,9 @@ void hr_log_test_power_cut(void) {
     manual = false;
     r_head = r_tail = 0;
 }
-#endif
-
-/* ── Control ──────────────────────────────────────────────────────── */
 
 void hr_log_create_tasks(void) {
+    hr_log_init();
     h_writer = xTaskCreateStaticAffinitySet(writer_task, "hrwrite", sizeof(stack_writer) / sizeof(stack_writer[0]),
                                             NULL, PRIO_P, stack_writer, &tcb_writer, CORE1_ONLY);
     h_reader = xTaskCreateStaticAffinitySet(reader_task, "hrread", sizeof(stack_reader) / sizeof(stack_reader[0]), NULL,

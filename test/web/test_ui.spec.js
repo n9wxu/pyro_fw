@@ -489,6 +489,9 @@ test.describe('Pin assignment', () => {
     await expect(page.locator('#gtDrive')).toBeHidden();
     await expect(page.locator('#gtPin option[value="8"]')).toHaveCount(1);
     await expect(page.locator('#gtPin option[value="16"]')).toHaveCount(0); /* the buzzer's */
+    /* GND-TEST-12: the switch may join the buzzer's pad to another, as the driven pad only. */
+    await expect(page.locator('#gtDrive option[value="16"]')).toHaveCount(1);
+    await expect(page.locator('#gtDrive option[value="16"]')).toContainText('the buzzer');
     await expect(page.locator('#gtPin option[value="26"]')).toHaveCount(0); /* a sense pad */
 
     await w.selectOption('pair');

@@ -248,7 +248,7 @@ renumbered: the numbers reach the flight log, telemetry and `/api/status`.
 - **Interactive browser sim**: `docs/sim.html` — UI driving WASM flight computer, with its own JS physics (`docs/physics.js`)
 - **Lua in the browser**: `docs/lua.html` — a user program against the simulated platform
 - **CLI simulator**: `sim/sim_cli.c` — C physics + flight computer
-- **Closed-loop tests**: `test/test_closedloop.c` — 25 tests; seven pyro configurations on four rockets from `test_data/rockets.json`
+- **Flights against their truth**: `test/flight_run.c` flies the flight software beside a rocket (`sim/mach_plant.c`) for the host suites: `test/test_flight_profiles.c`, `test/test_fire_rules.c`, `test/test_mach.c`
 
 ## Building for C projects
 
@@ -266,9 +266,10 @@ flight sim also work as plain C libraries:
 ```bash
 cc -I boards/sim -I sim/ -I src/ \
    sim/physics.c sim/main_sim.c boards/sim/hal_sim.c \
-   src/flight_states.c src/brownout.c src/pad_claim.c src/pyro_release.c \
-   src/beep_codes.c src/beep_store.c src/pressure_processing.c src/pressure_fit.c \
-   src/ground_test.c src/ground_test_seq.c src/config.c \
-   src/telemetry_formatter.c src/buzzer.c \
+   $(cat src/flight_sources.txt) \
+   src/pad_claim.c src/pyro_release.c src/buzzer.c \
    my_app.c -lm -o my_app
 ```
+
+`src/flight_sources.txt` is the flight software's file list: the firmware, the
+host suites, `scripts/build_wasm.sh` and the `sim` target all read it.

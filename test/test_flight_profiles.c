@@ -172,7 +172,7 @@ typedef struct {
 
 void test_FLT_APO_01_apogee_is_never_early_and_soon_after_at_every_height(void) {
     const apogee_case_t cases[] = {{HOP, 0.5f}, {SUBSONIC, 0.5f}, {LOW_DRAG, 0.5f}, {TO_20_KM, 1.5f}, {TO_30_KM, 2.5f}};
-    const float noises[] = {1.2f, 3.0f, 5.0f};
+    const float noises[] = {SENSOR_RMS_PA, 3.0f, NOISY_SENSOR_RMS_PA};
     char bad[512] = "";
     for (unsigned k = 0; k < sizeof(cases) / sizeof(cases[0]); k++) {
         float worst = 0.0f;

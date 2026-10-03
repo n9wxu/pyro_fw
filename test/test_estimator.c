@@ -74,7 +74,7 @@ static float coast(float t) { /* thrown up at 150 m/s from 500 m */
 }
 
 void test_SNS_EST_01_the_state_is_the_pressure_its_rate_and_its_acceleration(void) {
-    const float noises[] = {1.2f, 5.0f};
+    const float noises[] = {SENSOR_RMS_PA, NOISY_SENSOR_RMS_PA};
     for (unsigned n = 0; n < 2; n++) {
         start_filter(1 + n, atmos_pressure_above_pa(PAD_PA, coast(0.0f)), noises[n]);
         float worst_h = 0.0f, worst_v = 0.0f;
@@ -96,7 +96,7 @@ void test_SNS_EST_01_the_state_is_the_pressure_its_rate_and_its_acceleration(voi
 /* The noise is measured, not assumed, and never taken below the quietest
  * sensor fitted. */
 void test_SNS_EST_01_the_sensor_noise_is_tracked(void) {
-    const float noises[] = {1.2f, 2.5f, 5.0f, 12.0f};
+    const float noises[] = {1.2f, 2.5f, NOISY_SENSOR_RMS_PA, 20.0f};
     for (unsigned n = 0; n < 4; n++) {
         start_filter(10 + n, PAD_PA, noises[n]);
         for (int i = 0; i < 1500; i++)
@@ -156,7 +156,7 @@ static float under_canopy_24(float t) {
 /* Steady at 24 m/s, 20 % under a 30 m/s rule: never reported past it, on a
  * quiet sensor or a noisy one. */
 void test_SNS_EST_03_a_steady_descent_below_a_rule_never_reads_past_it(void) {
-    const float noises[] = {1.2f, 5.0f};
+    const float noises[] = {SENSOR_RMS_PA, NOISY_SENSOR_RMS_PA};
     for (unsigned n = 0; n < 2; n++) {
         start_filter(50 + n, atmos_pressure_above_pa(PAD_PA, under_canopy_24(0.0f)), noises[n]);
         float fastest = 0.0f;
@@ -171,10 +171,10 @@ void test_SNS_EST_03_a_steady_descent_below_a_rule_never_reads_past_it(void) {
 }
 
 void test_SNS_EST_03_a_still_board_reads_still(void) {
-    start_filter(60, PAD_PA, 5.0f);
+    start_filter(60, PAD_PA, NOISY_SENSOR_RMS_PA);
     float fastest = 0.0f;
     for (int i = 0; i < 30000; i++) { /* ten minutes */
-        feed(PAD_PA, 5.0f);
+        feed(PAD_PA, NOISY_SENSOR_RMS_PA);
         if (i > 150)
             fastest = fmaxf(fastest, fabsf(speed_ms()));
     }
@@ -195,7 +195,7 @@ static float canopy_lost(float t) {
 }
 
 void test_SNS_EST_04_a_speed_that_passes_a_rule_is_reported_within_two_seconds(void) {
-    const float noises[] = {1.2f, 5.0f};
+    const float noises[] = {SENSOR_RMS_PA, NOISY_SENSOR_RMS_PA};
     for (unsigned n = 0; n < 2; n++) {
         start_filter(70 + n, atmos_pressure_above_pa(PAD_PA, canopy_lost(0.0f)), noises[n]);
         follow(canopy_lost, 0.02f, 20.0f, noises[n]);

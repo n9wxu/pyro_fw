@@ -111,21 +111,40 @@ void hal_tasks_tick(uint32_t now_ms) {
  *
  * Read once a loop, as a task, so however often the flight code asks it gets
  * one reading a loop; across two pads the drive and the pull then change, and
- * settle for a loop before the next read. */
+ * settle for a loop before the next read.
+ *
+ * Where the driven pad is the buzzer's, the level under test is put on it
+ * for the read alone and the buzzer's own level put back: see
+ * docs/ground_test_on_buzzer_pad.md, option A. */
 static struct {
     async_task_t base; /* MUST be first */
     gt_switch_t sw;
     uint8_t pin, drive;
     bool on;
+    bool drive_is_the_buzzers;
 } gts;
+
+/* The read pad as it stands while the buzzer's pad shows the level under
+ * test. The second read is the one kept: the first is the pad's
+ * synchroniser catching up with the edge. */
+static bool read_under_a_pulse(bool test_level) {
+    bool buzzer_level = gpio_get_out_level(gts.drive);
+    gpio_put(gts.drive, test_level);
+    (void)gpio_get(gts.pin);
+    bool read = gpio_get(gts.pin);
+    gpio_put(gts.drive, buzzer_level);
+    return read;
+}
 
 static void gts_tick(async_task_t *base, uint32_t now_ms) {
     base->next_due_ms = now_ms;
-    gt_switch_out_t o = gt_switch_step(&gts.sw, gpio_get(gts.pin));
-    if (gts.sw.pair) {
+    bool read = gts.drive_is_the_buzzers ? read_under_a_pulse(gts.sw.drive_high) : gpio_get(gts.pin);
+    gt_switch_out_t o = gt_switch_step(&gts.sw, read);
+    if (!gts.sw.pair)
+        return;
+    if (!gts.drive_is_the_buzzers)
         gpio_put(gts.drive, o.drive_high);
-        gpio_set_pulls(gts.pin, o.pull_up, !o.pull_up);
-    }
+    gpio_set_pulls(gts.pin, o.pull_up, !o.pull_up);
 }
 
 static void hw_task_register(async_task_t *task);
@@ -137,7 +156,8 @@ void hal_ground_test_configure(uint8_t wiring, uint8_t pin, uint8_t drive_pin) {
     gpio_init(pin);
     gpio_set_dir(pin, GPIO_IN);
     gpio_set_pulls(pin, true, false);
-    if (pair) {
+    gts.drive_is_the_buzzers = pair && drive_pin == board_buzzer_pin();
+    if (pair && !gts.drive_is_the_buzzers) {
         gpio_init(drive_pin);
         gpio_set_dir(drive_pin, GPIO_OUT);
         gpio_put(drive_pin, false);
@@ -229,12 +249,10 @@ uint32_t hal_pressure_stamp_lag_max_us(void) {
     return pres.stamp_lag_max_us;
 }
 
-/* The sensor's own range, 10-1200 mbar. Inside it nothing is judged: a real
- * reading can be anywhere a rocket can go. Outside it the reading is not the
- * atmosphere, and one of them through the IIR is hundreds of metres of
- * altitude -- a launch on the pad, or a trigger in flight. */
-#define PRES_MIN_PA 1000.0f
-#define PRES_MAX_PA 120000.0f
+/* [SNS-PRES-06] Only a value the part cannot output is discarded. A reading
+ * beyond the rated range is less accurate and is still data. */
+#define PRES_MIN_PA 1.0f
+#define PRES_MAX_PA 130000.0f
 
 static bool pres_plausible(const pressure_reading_t *r) {
     return r->pressure_pa >= PRES_MIN_PA && r->pressure_pa <= PRES_MAX_PA;
@@ -569,6 +587,9 @@ static void report_mock(uint8_t channel, const char *what) {
 void hal_pyro_init(void) {
     pyro_release_init(&real_pyro_ops, report_mock);
     pyro_init();
+#if PYRO_HAS_BENCH_FLIGHT
+    bench_flight_init();
+#endif
 }
 
 int hal_pyro_claim_channels(uint32_t (*pads_of)(uint8_t channel)) {
@@ -649,6 +670,10 @@ bool hal_pyro_fault(uint8_t channel) {
     return pyro_ch(channel)->fault(channel);
 }
 
+void hal_pyro_limits(hal_pyro_limits_t *out) {
+    board_pyro_limits(out);
+}
+
 /* ── Buzzer ───────────────────────────────────────────────────────── */
 
 void hal_buzzer_init(void) {
@@ -676,8 +701,6 @@ void hal_buzzer_task_register(async_task_t *task) {
  * ring into the PL011 TX FIFO on each TX-FIFO-half-empty event.
  *
  * Telemetry is best-effort: if the ring is full, remaining bytes are dropped.
- *
- * RX is unchanged: hal_serial_readline() polls the RX FIFO directly.
  */
 
 #define UART_TX_BUF_SIZE 512
@@ -903,7 +926,7 @@ typedef struct {
     uint8_t data[CACHED_MAX];
 } cached_file_t;
 
-static cached_file_t cached[] = {{PAD_MARKER_PATH, 0, -2, {0}}};
+static cached_file_t cached[] = {{PAD_RECORD_PATH, 0, -2, {0}}};
 
 static cached_file_t *cached_find(const char *path) {
     for (unsigned i = 0; i < sizeof(cached) / sizeof(cached[0]); i++)
@@ -1030,7 +1053,7 @@ void hal_fs_close(hal_file_t *f) {
 
 int hal_config_load(config_t *cfg) {
     config_set_defaults(cfg);
-    char buf[512];
+    char buf[CONFIG_INI_MAX];
     int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
     if (n > 0) {
         buf[n] = '\0';
@@ -1044,35 +1067,11 @@ int hal_config_load(config_t *cfg) {
 }
 
 int hal_config_save(const config_t *cfg) {
-    char buf[512];
+    char buf[CONFIG_INI_MAX];
     int n = config_serialize_ini(cfg, buf, (int)sizeof(buf));
     if (n <= 0)
         return -1;
     return hal_fs_write_file("config.ini", buf, n);
-}
-
-/* ── Serial readline (v2, telemetry UART RX) ──────────────────────── */
-
-bool hal_serial_readline(char *buf, int max_len) {
-    static char rx_buf[64];
-    static int rx_len = 0;
-
-    while (uart_is_readable(tuart()) && rx_len < (int)(sizeof(rx_buf) - 1)) {
-        char c = (char)uart_getc(tuart());
-        if (c == '\n' || c == '\r') {
-            if (rx_len > 0) {
-                int n = (rx_len < max_len - 1) ? rx_len : max_len - 1;
-                memcpy(buf, rx_buf, n);
-                buf[n] = '\0';
-                rx_len = 0;
-                return true;
-            }
-            /* empty line — skip */
-        } else {
-            rx_buf[rx_len++] = c;
-        }
-    }
-    return false;
 }
 
 /* Deliberately a no-op: __wfe() is suspected of blocking USB NCM TX, which
@@ -1479,8 +1478,7 @@ void hal_firmware_commit(void) {
     if (board_selftest_result() == BOARD_SELFTEST_FAIL) {
         char line[128];
         snprintf(line, sizeof(line),
-                 "!BOARD MISMATCH this image is " BOARD_SHORT_STR
-                 ", board is %s -- not committing, rolling back\r\n",
+                 "!BOARD MISMATCH this image is " BOARD_SHORT_STR ", board is %s -- not committing, rolling back\r\n",
                  board_selftest_stored());
         hal_telemetry_send(line);
         /* Through the main loop's own reset path rather than arming the

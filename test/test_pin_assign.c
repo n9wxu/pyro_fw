@@ -490,6 +490,34 @@ void test_PIN_GT_05_pads_it_cannot_take(void) {
                               "a firing pad the channel still holds is not a switch");
 }
 
+/* [GND-TEST-12] The switch may join the buzzer's pad to another pad. The
+ * buzzer's pad is the driven one: never the read pad, and never switched to
+ * ground. */
+void test_PIN_GT_08_the_switch_may_join_the_buzzers_pad_to_another(void) {
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    a.buzzer_pin = 18;
+    a.gt_wiring = GT_WIRING_PAIR;
+    a.gt_pin = 19;
+    a.gt_drive_pin = 18;
+    pin_verdict_t v = pin_assign_validate(&a);
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_OK, v.err, v.what);
+    TEST_ASSERT_TRUE_MESSAGE(pin_assign_is_reserved(&a, 18) && pin_assign_is_reserved(&a, 19),
+                             "both pads stay out of the script's reach");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(18, pin_assign_buzzer_pin(&a), "and the buzzer keeps its pad");
+
+    a.gt_pin = 18;
+    a.gt_drive_pin = 19;
+    v = pin_assign_validate(&a);
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_ERR_GT_BUSY, v.err, "the buzzer's pad is never the read pad");
+    TEST_ASSERT_EQUAL_STRING("already the buzzer", v.what);
+
+    a.gt_wiring = GT_WIRING_GROUND;
+    a.gt_pin = 18;
+    v = pin_assign_validate(&a);
+    TEST_ASSERT_EQUAL_MESSAGE(PIN_ERR_GT_BUSY, v.err, "the switch never grounds the buzzer");
+}
+
 /* Not a pad a script holds, nor the buzzer's. */
 void test_PIN_GT_06_not_a_pad_already_in_use(void) {
     pin_assign_t a;
@@ -597,5 +625,6 @@ int main(void) {
     RUN_TEST(test_PIN_GT_05_pads_it_cannot_take);
     RUN_TEST(test_PIN_GT_06_not_a_pad_already_in_use);
     RUN_TEST(test_PIN_GT_07_ini_round_trip);
+    RUN_TEST(test_PIN_GT_08_the_switch_may_join_the_buzzers_pad_to_another);
     return UNITY_END();
 }

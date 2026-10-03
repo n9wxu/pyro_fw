@@ -17,7 +17,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define SENSOR_RMS_PA 1.2f /* MS5607 at OSR 4096 */
+/* The sensor noise a flight is flown at: the quiet end, below either part's
+ * datasheet figure (MS5607 2.4 Pa, BMP280 1.3 Pa), and the noisiest bench
+ * board's measured figure, MK1B's 9 Pa [SNS-EST-03, BRD-01]. */
+#define SENSOR_RMS_PA 1.2f
+#define NOISY_SENSOR_RMS_PA 9.0f
 
 extern flight_context_t ctx;
 

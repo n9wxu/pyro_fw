@@ -1,5 +1,5 @@
 /*
- * Pyro MK1B simulation entry point.
+ * The simulator's entry points.
  *
  * This is the flight computer as a black box. No physics.
  * An external process (JS in browser, C for CLI) drives it:
@@ -30,25 +30,24 @@ void sim_flight_init(const char *config_ini) {
 
 int sim_flight_tick(uint32_t time_ms) {
     sim_set_time(time_ms);
-    sim_clear_pyro_firing();
     /* The same order as main(): the tasks feed the pressure layer, and with
      * no samples calibration times out into FAULT. */
     hal_tasks_tick(time_ms);
     ctx.current_state = dispatch_state(&ctx, time_ms);
     flight_update_outputs(&ctx, time_ms);
-    flight_flash_service(&ctx, time_ms);
+    flight_storage_service(&ctx, time_ms);
     return ctx.current_state;
 }
 
 /* ── API: read outputs ────────────────────────────────────────────── */
 
 int      sim_flight_state(void)         { return ctx.current_state; }
-int32_t  sim_flight_altitude_cm(void)   { return ctx.last_altitude; }
-int32_t  sim_flight_max_alt_cm(void)    { return ctx.max_altitude; }
-int32_t  sim_flight_vspeed_cms(void)    { return ctx.vertical_speed_cms; }
-int32_t  sim_flight_pressure(void)      { return ctx.filtered_pressure; }
-bool     sim_flight_pyro1_fired(void)   { return ctx.pyro1_fired; }
-bool     sim_flight_pyro2_fired(void)   { return ctx.pyro2_fired; }
+int32_t  sim_flight_altitude_cm(void)   { return ctx.altitude_cm; }
+int32_t  sim_flight_max_alt_cm(void)    { return ctx.max_altitude_cm; }
+int32_t  sim_flight_vspeed_cms(void)    { return ctx.speed_cms; }
+int32_t  sim_flight_pressure(void)      { return ctx.pressure_pa; }
+bool     sim_flight_pyro1_fired(void)   { return ctx.fire.channel[0].fired; }
+bool     sim_flight_pyro2_fired(void)   { return ctx.fire.channel[1].fired; }
 bool     sim_flight_armed(void)         { return ctx.pyros_armed; }
 int      sim_flight_samples(void)       { return ctx.buf_count; }
 uint32_t sim_flight_launch_time(void)   { return ctx.launch_time; }

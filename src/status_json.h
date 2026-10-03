@@ -1,7 +1,6 @@
 /*
- * /api/status, in two halves: core0 captures a snapshot in one pass, and
- * status_json() renders it anywhere. The renderer reads nothing but the
- * snapshot, which is what lets core1 run it (DD-061).
+ * /api/status, in two halves: a snapshot taken at one instant of the flight,
+ * and status_json(), which renders nothing but the snapshot [WEB-API-11].
  *
  * Every string pointer names a constant; anything that can change is copied.
  *
@@ -73,21 +72,23 @@ typedef struct {
     const char *faults[STATUS_FAULTS_MAX];
     uint8_t n_faults;
     uint8_t reset_cause;
-    const char *recovery;
+    const char *resume;
     /* How the last boot ended: the watchdog, and the stage or crumb core0
      * was in (src/main_hardware.c has the map); -1: none stamped. */
     bool prev_watchdog;
     int32_t prev_stage;
     uint32_t prev_stage_ms;
-    bool pyro_refused[2];
-    uint8_t pyro1_refires;
-    bool main_forced;
+    uint16_t pyro_pulses[2]; /* [PYR-FIRE-01] every pulse, the first included */
+    bool pyro_fault[2];
+    bool emergency_fire;                      /* [FLT-EMRG-04] */
+    uint16_t refire_interval_ms, fire_gap_ms; /* in force [PYR-BOARD-03] */
+    bool pyro_limited;                        /* a configured value was outside the board's range [PYR-BOARD-02] */
     uint32_t pres_waits, pres_rejects;
     uint32_t pres_flashed; /* [DD-068] readings a flash operation disturbed, not fed on */
     int32_t raw_pa, pad_speed_cms;
     bool ground_degraded;
     uint32_t ground_reseeds;
-    uint32_t sample_interval_us[2], stamp_lag_max_us, fit_sigma_mpa;
+    uint32_t sample_interval_us[2], stamp_lag_max_us, noise_mpa;
     bool mach_lock;
     uint32_t mach_flag_ms;
     bool peak_lower_bound;

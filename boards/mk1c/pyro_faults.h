@@ -20,6 +20,7 @@ bool bus_is_hot(const quiescent_t *q);
 void faults_watch_bus_hot(const quiescent_t *q, bool bus_charged_by_sequence);
 void faults_count_bus_short(const tracking_t *t);
 void faults_latch(bus_fault_t fault);
+void faults_clear(bus_fault_t fault);
 uint8_t faults_latched(void);
 
 #endif

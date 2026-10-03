@@ -84,7 +84,7 @@ flight this unit cannot (DD-081).
 - **FLT-ASC-05**: The system shall log an ARMED event when pyrotechnics are armed. ← PYR-SAFE-04
 - **FLT-ASC-06**: The system shall not arm pyrotechnics while vertical speed exceeds 10 m/s. ← PYR-SAFE-04
 - **FLT-ASC-07**: The system shall not arm pyrotechnics unless a vertical speed above 10 m/s was measured during ASCENT. ← PYR-SAFE-04, SYS-DEPLOY-04
-- **FLT-APO-01**: The system shall declare apogee from the filtered pressure passing its minimum: not before the true apogee, and within 1 s ‡ after it, at every height up to the board's height for proper operation (SNS-MAX-01). ← FLT-PHASE-02, DD-085
+- **FLT-APO-01**: The system shall declare apogee from the filtered pressure passing its minimum: not before the true apogee, and after it within 0.5 s ‡ for an apogee up to 10 km, 1.5 s ‡ up to 20 km and 2.5 s ‡ up to 30 km, at any sensor noise up to the board's declared figure and at every height up to the board's height for proper operation (SNS-MAX-01). ← FLT-PHASE-02, DD-085, DD-091
 - **FLT-APO-02**: The system shall leave ASCENT for descent upon apogee detection. ← FLT-PHASE-02
 - **FLT-APO-03**: The system shall log an APOGEE event at the transition. ← FLT-PHASE-02
 - **FLT-APO-04**: The system shall not detect apogee before pyros are armed. ← FLT-PHASE-02, PYR-SAFE-04
@@ -95,7 +95,7 @@ and the error is smooth, so no filter removes it (`docs/mach_lockout.md`).
 
 - **FLT-MACH-02**: The system shall set the Mach flag when the filtered climb rate exceeds 0.029·p per second (true Mach 0.62 to 0.76), from the first sample of the rise. ← FLT-PHASE-02
 - **FLT-MACH-03**: The system shall release the flag only after the filtered state has, continuously for 1 s ‡, agreed with the readings, been climbing with a rate below 0.022·p per second, and been decelerating with p̈ ≥ 0.0009·p. The peak shall then restart at the current pressure. The release shall be reached at every height up to the board's height for proper operation. ← FLT-MACH-02, DD-085
-- **FLT-MACH-04**: While the flag stands the system shall still find apogee: the filtered pressure passing its minimum and rising continuously for 3 s ‡ shall be declared apogee at any height, the pyrotechnics being armed first if they are not. No apogee rule shall wait for the pressure to return to the level the flag was set at. ← FLT-MACH-02, SYS-DEPLOY-05, DD-085
+- **FLT-MACH-04**: While the flag stands the system shall still find apogee, at any height, the pyrotechnics being armed first if they are not: when the filtered state has, continuously for 2 s ‡, agreed with the readings and shown a slow descent gathering speed under gravity. That rule shall not wait for the pressure to return to the level the flag was set at. As a last resort, where it has not been met, apogee shall be declared when the state agrees with the readings and the pressure has risen above the level the flag was set at. ← FLT-MACH-02, SYS-DEPLOY-05, DD-085, DD-091
 - **FLT-MACH-05**: The system shall not declare apogee from FLT-APO-01 while the flag stands. ← FLT-MACH-02
 - **FLT-MACH-06**: No channel shall arm before the filtered pressure has been below 0.9965·p0 (about 30 m). A flight resumed into ASCENT shall start flagged, at the pressure it rejoined at. ← PYR-SAFE-04, FLT-MACH-02
 - **FLT-MACH-07**: The reported peak shall be the height of the lowest filtered pressure outside the flag, marked a lower bound if the flag was released within 2 s of apogee or never. The web UI's Flight Data summary shall mark its apogee "at least" in the same cases. ← FLT-MACH-02
@@ -160,7 +160,7 @@ and the error is smooth, so no filter removes it (`docs/mach_lockout.md`).
 - **BUZ-CODE-05**: A sound shall be a chirp, a steady tone, a beep count, or silence. ← BUZ-CODE-04
 - **BUZ-CODE-06**: A beep count shall be 1 to 9 per group; a zero cannot be heard and a long count cannot be counted. ← BUZ-CODE-05
 - **BUZ-CODE-07**: No two audible outcomes within a personality shall sound alike. ← BUZ-CODE-04
-- **BUZ-CODE-08**: A personality that is wholly silent shall be refused. ← BUZ-CODE-04
+- **BUZ-CODE-08**: A personality that is wholly silent shall be refused, and so shall one whose OK to fly is silent: silence means a fault (BUZ-02). ← BUZ-CODE-04
 - **BUZ-CODE-09**: The system shall hold three named personalities, one active. ← BUZ-CODE-04
 - **BUZ-CODE-10**: A beep table that fails validation shall be rejected whole and the shipped personalities used. ← BUZ-CODE-04
 - **BUZ-CODE-11**: The outcomes, their meanings and the personalities shall be served to the web interface so the firmware is the only place the vocabulary is written down. ← BUZ-CODE-04
@@ -255,8 +255,8 @@ and the error is smooth, so no filter removes it (`docs/mach_lockout.md`).
 | `units` | cm, m or ft, for every height and speed entered or shown | m |
 | `pyro1_refire_speed`, `pyro2_refire_speed` | PYR-REFIRE-01, in units per second; 0 disables | 0 ‡ |
 | `emergency_fire_speed` | FLT-EMRG-01, in units per second; 0 disables | 0 ‡ |
-| `refire_interval` | time between re-fires of one channel, ms | 1000, board may redefine |
-| `fire_gap` | quiet time between pulses on different channels, ms | 3000, board may redefine |
+| `refire_interval` | time between re-fires of one channel, ms; 0 takes the board's default | 0: the board's, 1000 where it declares none |
+| `fire_gap` | quiet time between pulses on different channels, ms; 0 takes the board's default | 0: the board's, 3000 where it declares none |
 | `log_rate` | 1hz, events or full | 1hz |
 | `landing_timeout` | FLT-LAND-07, seconds | 60 |
 | `lua_enabled`, `lua_baud`, `lua_pixels` | the script and its resources | false, 9600, 0 |

@@ -559,6 +559,38 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-091: What Building The 2026-10 Review Settled
+- **Apogee bounds (FLT-APO-01):** measured on the firmware itself, on host
+  flights from 60 m to 30 km at sensor noise from 1.2 to 9 Pa: apogee is
+  declared never early, and within 0.5 s to 10 km, 1.5 s at 20 km and 2.5 s at
+  30 km. 9 Pa is the noisiest bench board's measured figure (MK1B); the tests
+  fly at it.
+- **Apogee under the Mach flag (FLT-MACH-04):** a plain "pressure rising for
+  N seconds" rule fires early under a large port error, so the rule is the
+  gravity signature: the state agreeing with the readings and descending
+  slowly under gravity for 2 s. The older rule, the pressure back above the
+  level the flag was set at, is kept as a last resort only. Beyond about
+  Mach 2 with the test port model both can still be early: that is outside
+  the envelope the tests cover.
+- **OK to fly must be heard (BUZ-CODE-08):** silence means a fault, so a
+  personality with a silent OK to fly is refused.
+- **The announcement does not wait for the script (SYS-LUA-02):** the pad
+  verdict used to be held until the script had started. It is not.
+- **A commanded restart is not a failed start (LUA-SAFE-01):** the reboot
+  route clears the script's start-up mark before it resets.
+- **A script that fails its check is not saved (LUA-MGT-01):** the page checks
+  first and uploads only a script that passes.
+- **MK1C never abandons a pulse (PYR-ARM-03):** the gate closes at the
+  precharge deadline on whatever the bus has; the timeout is that pulse's own
+  record. U9's latch is released by the enable falling after every fire
+  (TPS2595 datasheet page 23), which is what PYR-FAULT-01 asks.
+- **The bench profile's descent starts from rest (SIM-04):** it gathers speed
+  under gravity toward each rate, so a failed canopy is a fall and no speed
+  appears from nowhere.
+- **Open:** the three speed defaults are 0 until the modelling study gives
+  values; MK1A and MK1B do not meet PYR-ARM-01's 50 ms; MK1C-SD has no script
+  (SYS-LUA-01); HAL validation is not built (`docs/hal_validation_apps.md`).
+
 ### DD-090: Ten Code Requirements, And The HAL As The Test Seam
 - **Decision:** the code itself has requirements (CODE-01..10): structure
   and naming before comments; comments for traceability and for decisions

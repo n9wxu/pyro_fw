@@ -238,20 +238,6 @@ const char *lua_app_status(void) {
     return status_line;
 }
 
-/* Separate from lua_app_ready() so flight_states.c needs no Lua header and a
- * board built without Lua resolves the weak default instead. */
-bool lua_app_ready_or_absent(void) {
-    return lua_app_ready();
-}
-
-bool lua_app_ready(void) {
-    lua_c1_state_t st = lua_core1_state();
-    if (st == LUA_C1_OFF || st == LUA_C1_DEAD) {
-        return true; /* nothing to wait for */
-    }
-    return lua_core1_ready();
-}
-
 void lua_app_init(const config_t *cfg) {
     if (!cfg->lua_enabled) {
         snprintf(status_line, sizeof(status_line), "disabled");
@@ -326,6 +312,10 @@ void lua_app_init(const config_t *cfg) {
     snprintf(status_line, sizeof(status_line), "starting");
 }
 
+void lua_app_restart_commanded(void) {
+    watchdog_hw->scratch[LUA_BOOT_SCRATCH] = 0;
+}
+
 /* ── Main loop ────────────────────────────────────────────────────── */
 
 void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
@@ -376,20 +366,20 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     /* The seqlock write never waits, so this costs a fixed handful of stores
      * whatever the Lua task is doing. */
     lua_flight_t f;
-    f.pressure_pa = ctx->filtered_pressure;
-    f.altitude_cm = ctx->last_altitude;
-    f.speed_cms = ctx->vertical_speed_cms;
-    f.max_alt_cm = ctx->max_altitude;
+    f.pressure_pa = ctx->pressure_pa;
+    f.altitude_cm = ctx->altitude_cm;
+    f.speed_cms = ctx->speed_cms;
+    f.max_alt_cm = ctx->max_altitude_cm;
     f.state = (int)ctx->current_state;
     f.time_ms = now_ms;
-    f.pyro[0] = (ctx->pyro1_continuity_good ? LUA_PYRO_CONTINUITY : 0) | (ctx->pyro1_fired ? LUA_PYRO_FIRED : 0) |
-                (ctx->pyro1_fault ? LUA_PYRO_FAULT : 0) | (ctx->pyros_armed ? LUA_PYRO_ARMED : 0);
-    f.pyro[1] = (ctx->pyro2_continuity_good ? LUA_PYRO_CONTINUITY : 0) | (ctx->pyro2_fired ? LUA_PYRO_FIRED : 0) |
-                (ctx->pyro2_fault ? LUA_PYRO_FAULT : 0) | (ctx->pyros_armed ? LUA_PYRO_ARMED : 0);
-    f.pyro_adc[0] = ctx->pyro1_adc;
-    f.pyro_adc[1] = ctx->pyro2_adc;
+    for (int i = 0; i < 2; i++) {
+        f.pyro[i] = (ctx->channel_ready[i] ? LUA_PYRO_CONTINUITY : 0) |
+                    (ctx->fire.channel[i].fired ? LUA_PYRO_FIRED : 0) | (ctx->channel_fault[i] ? LUA_PYRO_FAULT : 0) |
+                    (ctx->pyros_armed ? LUA_PYRO_ARMED : 0);
+        f.pyro_adc[i] = ctx->channel_adc[i];
+    }
     f.under_thrust = ctx->under_thrust ? 1 : 0;
-    f.apogee_detected = ctx->apogee_detected ? 1 : 0;
+    f.apogee_detected = ctx->apogee_declared ? 1 : 0;
     f.telem_seq = ctx->telemetry_seq;
     lua_core1_publish(&f);
 

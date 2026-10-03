@@ -9,7 +9,7 @@ worked example.
 ## Overview
 
 As shipped the template compiles and links, and it is safe: it reports no
-continuity, refuses every fire, and drives nothing. A board brought up from it
+continuity, has no firing path, and drives nothing. A board brought up from it
 energises nothing until its real pyro backend is written. It assumes an RP2040
 (`PYRO_BOARD_KIND pico`), one pressure sensor on one I2C bus, and a plain-GPIO
 LED, UART and buzzer, and it builds without Lua. CI builds it as shipped
@@ -76,14 +76,19 @@ which has the flight state. A backend that can fire must:
   no check, self-test or boot path raises one.
 - **Report good only when continuity is proven**, with the raw count beside
   the booleans: a degraded match sits between the thresholds, and only the
-  number shows it. The flight gates firing on good, a second barrier behind
-  whatever `pyro_fire()` checks.
+  number shows it. Good is for the pad's announcement.
+- **Withhold no fire.** `pyro_fire()` delivers the pulse whatever the board
+  has measured: no health reading, latched fault or low pack stops it
+  (PYR-FIRE-01, PYR-HEALTH-01). Protection may end a pulse; it is cleared
+  before the next (PYR-FAULT-01). A firing path that needs preparing fires
+  when it is ready or at its deadline (PYR-ARM-03).
 - **Never wait.** `pyro_update()` runs every loop; a settle is a deadline a
   later call checks (`deadline_reached()` in `src/board_support.h`), never a
   sleep. `support/wait_check.py` fails CI on any sleep in `boards/`, and on
   the SDK's blocking I2C transfers: use the `_timeout_us` forms (DD-069).
-- **Answer `pyro_is_firing()` straight after `pyro_fire()`**: that is the
-  flight's acknowledgement, and a board that refuses leaves it false.
+- **Answer `pyro_is_firing()` straight after `pyro_fire()`**: that is what
+  the board observed of the pulse, which the flight records. False means the
+  pulse energised nothing.
 - **Check only presence and shorts** between fires (DD-055).
 
 Name the pins from the netlist, not from a schematic image: on MK1C, GPIO25 is
@@ -102,6 +107,25 @@ An MS5607 wants fast mode: the one-shot converts a pressure and a temperature
 every 20 ms loop, and at 100 kHz the pair is ready only 0.26 ms before the
 next, short of the 0.5 ms `ms5607_tests` asks (DD-066). A BMP280 runs one
 forced conversion a loop at either speed (DD-067).
+
+## What this board declares
+
+The values the requirements leave to the board (BRD-01). A value marked
+*not measured* is owed to this board's HAL validation (BRD-02).
+
+| Item | Declared |
+|---|---|
+| Pyro faults it can reliably detect | none: the stub reports every channel open |
+| `refire_interval` | default 1000 ms, 500 to 10000 ms: the general values (PYR-BOARD-01); declare the board's own in `board_pyro_limits()` |
+| `fire_gap` | default 3000 ms, 1000 to 10000 ms: the general values |
+| Pulse, protection, disarm | none: the stub has no firing path. A real backend declares each |
+| Sensor and height | the sensor `board_pins.h` gives a bus speed for (`src/pressure_sensor.h` has each part's range) |
+| Flight log (DAT-09) | `PYRO_PFB_FS_KB` in `board.cmake` |
+| Delay of a flight decision (FLT-RT-01) | 250 ms, to be measured on the board |
+| Script resources (LUA-PAD-03) | none as shipped: `pin_caps.h` |
+| Connector labels (PIN-LABEL-01) | `pin_caps.h` |
+
+A board copied from this template replaces every row with its own.
 
 ## Build
 

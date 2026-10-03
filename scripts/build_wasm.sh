@@ -111,6 +111,12 @@ for f in lapi lcode lctype ldebug ldo ldump lfunc lgc llex lmem lobject \
     LUA_SRC="$LUA_SRC $LUA_DIR/$f.c"
 done
 
+# The flight software's files, the same list CMake reads [HAL-04].
+FLIGHT_SOURCES=""
+while IFS= read -r f; do
+    [ -n "$f" ] && FLIGHT_SOURCES="$FLIGHT_SOURCES $ROOT/$f"
+done < "$ROOT/src/flight_sources.txt"
+
 emcc -O2 -s WASM=1 \
   -DLUA_USER_H='"pyro_luaconf.h"' \
   -Wno-implicit-fallthrough -Wno-unused-but-set-variable \
@@ -128,22 +134,13 @@ emcc -O2 -s WASM=1 \
   "$ROOT/sim/main_sim.c" \
   "$ROOT/boards/sim/hal_sim.c" \
   "$ROOT/sim/physics.c" \
-  "$ROOT/src/flight_states.c" \
-  "$ROOT/src/brownout.c" \
-  "$ROOT/src/pressure_processing.c" \
-  "$ROOT/src/pressure_fit.c" \
-  "$ROOT/src/telemetry_formatter.c" \
+  $FLIGHT_SOURCES \
   "$ROOT/src/buzzer.c" \
-  "$ROOT/src/config.c" \
-  "$ROOT/src/ground_test.c" \
-  "$ROOT/src/ground_test_seq.c" \
   "$ROOT/src/lua/pyro_lua.c" \
   "$ROOT/src/lua/lua_arena.c" \
   "$ROOT/src/lua/lua_iface.c" \
   "$ROOT/src/pad_claim.c" \
   "$ROOT/src/pyro_release.c" \
-  "$ROOT/src/beep_codes.c" \
-  "$ROOT/src/beep_store.c" \
   "$ROOT/boards/sim/lua_platform_sim.c" \
   $BOARD_SRC \
   $LUA_SRC \

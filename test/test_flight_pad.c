@@ -224,7 +224,7 @@ void test_SNS_EST_02_one_or_two_bad_readings_are_not_a_launch(void) {
 
 /* Half an hour of gusts at 30 Pa rms, on sensors from 1.2 to 5 Pa. */
 void test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch(void) {
-    const float noises[] = {1.2f, 5.0f};
+    const float noises[] = {SENSOR_RMS_PA, NOISY_SENSOR_RMS_PA};
     for (unsigned n = 0; n < 2; n++) {
         to_the_pad(20 + n);
         mock_noise_rms_pa = noises[n];

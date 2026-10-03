@@ -20,13 +20,13 @@ SYS-PWR-01	⚠️	No measurement. Battery sizing is the user's, by characterisat
 HAL-03	✅	Three implementations build in CI: `src/hal_common/`, `test/hal_test.c`, `boards/sim/hal_sim.c`
 HAL-04	✅	`src/flight_sources.txt` is the one list the firmware, the host suites, the simulator and the WASM build compile
 HAL-05	✅	Every flight suite links `test/hal_test.c` and nothing of a board
-HAL-06	⚠️	Not built yet: the plan is `HARDWARE_CI_PLAN.md`
+HAL-06	⚠️	Not built yet: the options are in `docs/hal_validation_apps.md`
 BLD-01	✅	CI builds every board
 BLD-02	✅	CI builds and runs every host suite (`scripts/run_host_tests.sh`)
 BLD-03	✅	CI builds `pyro_sim` and the WASM simulator
 BLD-04	✅	CI: `support/version.py` against `VERSION`
 BLD-05	✅ HW	Hardware: both slots written and booted on MK1A, MK1B and MK1C
-BLD-06	⚠️	Not built yet
+BLD-06	⚠️	Not built yet: `docs/hal_validation_apps.md`
 TST-01	✅	The flight suites drive `flight_init()`, `dispatch_state()` and the HAL only (`test/board_harness.c`); `support/structure_check.py` keeps test-only constructs out of the flight software
 TST-08	✅	`.github/workflows/build.yml`
 TST-09	✅	This file, written by `support/trace_matrix.py`; `support/trace_check.py` in CI
@@ -39,5 +39,9 @@ CODE-06	⚠️	By review: one responsibility a file in `src/flight_sources.txt`;
 CODE-07	⚠️	By review. No automated check
 CODE-08	✅	As TST-01 and TST-09
 CODE-10	⚠️	By review. No automated check
-BRD-01	⚠️	Each `boards/<name>/THEORY_OF_OPERATION.md`
+BRD-01	✅	Each `boards/<name>/THEORY_OF_OPERATION.md`, "What this board declares"; `support/structure_check.py` holds every board to the list. Values marked not measured are owed to BRD-02
 BRD-02	⚠️	Owed with HAL-06
+PYR-ARM-01	⚠️	MK1C: about 35 ms. MK1A and MK1B end a pulse from the loop, so a stopped loop leaves it energised until the watchdog, 1 s: the 50 ms bound is not met on those boards
+SYS-LUA-01	⚠️	MK1C-SD is built without a script: J3 carries its SPI bus
+FLT-RT-01		The bound on each board is declared and not yet measured on this revision: `loop_late_max_us` on `/api/status`
+GND-TEST-12		The pulsed read on the buzzer's pad (`gts_tick()`) is platform code: bench check owed, `docs/ground_test_on_buzzer_pad.md`

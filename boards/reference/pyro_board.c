@@ -1,6 +1,6 @@
 /*
  * Pyro backend -- REFERENCE BOARD (template). A safe stub: it reports no
- * continuity and refuses to fire, so a board brought up from this template
+ * continuity and has no firing path, so a board brought up from this template
  * energises nothing before its real backend is written. See
  * THEORY_OF_OPERATION.md "Pyro backend" for what a real one must do.
  *
@@ -31,7 +31,7 @@ void pyro_get(uint8_t channel, pyro_continuity_t *out) {
 
 void pyro_fire(uint8_t channel) {
     (void)channel;
-    hal_telemetry_send("!PYRO FIRE REFUSED: not implemented\r\n");
+    hal_telemetry_send("!PYRO FIRE: the reference stub has no firing path\r\n");
 }
 
 void pyro_update(uint32_t now_ms) {

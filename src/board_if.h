@@ -31,6 +31,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "hardware/uart.h"
+#include "pyro_limits.h"
 
 /* ── Lifecycle ────────────────────────────────────────────────────── */
 
@@ -72,6 +73,8 @@ void board_buzzer_set_pin(uint8_t pin);
 void board_buzzer_init(void);
 void board_buzzer_on(void);
 void board_buzzer_off(void);
+/* The pad the buzzer is on now, or BOARD_BUZZER_NO_PIN. */
+uint8_t board_buzzer_pin(void);
 
 /* ── Bench diagnostics ────────────────────────────────────────────── */
 
@@ -97,9 +100,15 @@ typedef struct {
 
 bool board_pyro_raw(board_pyro_raw_t *out);
 
+/* ── Pyro limits [PYR-BOARD-01] ───────────────────────────────────── */
+
+/* The board's defaults and ranges for refire_interval and fire_gap, set by
+ * how its protection part recovers. The default is the general values. */
+void board_pyro_limits(pyro_limits_t *out);
+
 /* ── Telemetry UART ───────────────────────────────────────────────── */
 
-/* The UART instance used for telemetry TX and ground-test RX, and its
+/* The UART instance used for telemetry TX, and its
  * IRQ number. hal_common owns the ISR-driven TX ring buffer; the board
  * only says which peripheral and which pins. */
 uart_inst_t *board_uart(void);

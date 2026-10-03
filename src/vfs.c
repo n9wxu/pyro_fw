@@ -5,7 +5,7 @@
  */
 #include "vfs.h"
 #include "lfs_mount.h"
-#include "brownout.h"
+#include "flight_resume.h"
 #include "pin_store.h"
 #include "beep_store.h"
 #include <string.h>
@@ -15,7 +15,7 @@
 
 /* The board's, not the card's: the identity a host knows the board by, and
  * the marker a power-cut board recovers its flight from. */
-static const char *const internal_paths[] = {"serial.txt", PAD_MARKER_PATH};
+static const char *const internal_paths[] = {"serial.txt", PAD_RECORD_PATH};
 
 /* The configuration: the card's copy wins, and littlefs keeps a mirror. */
 static const char *const config_paths[] = {"config.ini", PIN_STORE_PATH, BEEP_STORE_PATH, "lua_user.lua"};

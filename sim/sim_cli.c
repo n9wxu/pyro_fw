@@ -89,16 +89,15 @@ static void compute_burn(physics_t *p, float target_m) {
 
 /* ── Main: drive the simulation ───────────────────────────────────── */
 
-/* The simulator's driver ends each pulse every step; the replay's rows do. */
-static void end_pulse(uint32_t now_ms) {
-    (void)now_ms;
-    sim_clear_pyro_firing();
+/* The replay drives the HAL's clock. */
+static void set_clock(uint32_t now_ms) {
+    sim_set_time(now_ms);
 }
 
 /* pyro_sim --replay <flight_log.csv>: the log's readings through the firmware,
  * its decisions against the log's own [DAT-02]. */
 static int replay_file(const char *path) {
-    replay_row_hook = end_pulse;
+    replay_row_hook = set_clock;
     FILE *f = fopen(path, "r");
     if (!f) {
         printf("cannot open %s\n", path);

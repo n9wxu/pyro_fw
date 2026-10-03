@@ -224,8 +224,8 @@ released pyro pad is one.
 | Condition | What the board does |
 |---|---|
 | an overcurrent or overtemperature in U5 | its flag goes low; `pyro_fault()` is true |
-| an igniter absent or open | reads open — see [Known limits](#known-limits) |
-| a lead shorted to ground | reads shorted — see [Known limits](#known-limits) |
+| an igniter absent or open | reads open with the base AP2192; not judged as fitted — see [Known limits](#known-limits) |
+| a lead shorted to ground | reads shorted with the base AP2192; not judged as fitted — see [Known limits](#known-limits) |
 
 ## Known limits
 
@@ -234,13 +234,16 @@ released pyro pad is one.
   its note 6). Against the 100 kΩ pull-ups that holds both sense nodes at a few
   millivolts whenever a channel is off — which is always, during a check. A
   fitted igniter, an empty connector and a real short all read the same, near
-  0 counts, and the check reports every channel shorted. The flight fires only
-  a channel with continuity (PYR-SAFE-01), so an MK1B that owns its pyros never
-  deploys. The base AP2192, AP2192MPG-13, has no discharge, the same
+  0 counts, so the check cannot judge a channel. The board is built knowing
+  that (`BOARD_PYRO_U5_DISCHARGES_OUTPUTS` in `board_pins.h`) and reports every
+  channel ready, with the count it read: a board that cannot detect a fault
+  treats the channel as ready, and no reading withholds a fire
+  (PYR-HEALTH-01). The pad therefore says OK to fly whatever is connected. The
+  base AP2192, AP2192MPG-13, has no discharge, the same
   pinout, active-high enables and MSOP-8EP drawing, and blocks reverse
   current, so the nodes read high when the battery is below 3.3 V
   (`docs/datasheets/AP2182_AP2192_DS31569_Rev10-2.pdf`, pages 1, 4 and 15);
-  with it the check above works as written.
+  with it, and that define at 0, the check above works as written.
 - **The BMP280 pad has no pull-up**, so a BMP280 board's sensor runs at
   100 kHz.
 - **A beep code disturbs the MS5607 (task B-BZ).** On the bench, while one
@@ -248,6 +251,29 @@ released pyro pad is one.
   drives the same buzzer from VIN through its own AO3400A and shows none. On
   this board the buzzer's FET shares its AO6800 package with the pyro low
   side; the cause is not established.
+
+## What this board declares
+
+The values the requirements leave to the board (BRD-01). A value marked
+*not measured* is owed to this board's HAL validation (BRD-02).
+
+| Item | Declared |
+|---|---|
+| Pyro faults it can reliably detect | an overcurrent or overtemperature in U5, by its flag. Open and shorted are **not** reliably detected while U5 is the AP2192A, whose output discharge holds the sense nodes at 0 V (see [Known limits](#known-limits)): a channel it cannot judge is treated as ready (PYR-HEALTH-01) |
+| `refire_interval` | default 1000 ms, 500 to 10000 ms: the general values (PYR-BOARD-01); this board has not been characterised for its own |
+| `fire_gap` | default 3000 ms, 1000 to 10000 ms: the general values; not characterised |
+| Pulse | 500 ms, ended by the loop |
+| Protection | U5's current limit and thermal shutdown, which recover by themselves, and F2, a 1.5 A PTC on the common, which resets as it cools. The PTC's reset time under a shorted match is *not measured*, and is what this board's `fire_gap` should come from |
+| Disarm when software stops (PYR-ARM-01) | **the watchdog, 1 s.** The loop ends the pulse, so a stopped loop leaves the enable on until the reset. This exceeds the 50 ms bound |
+| Sensor | MS5607 where fitted, else BMP280, found at start-up. MS5607: 10 to 1200 mbar, 2.4 Pa rms at OSR 4096 (`docs/datasheets/MS5607-02BA03_2017-06.pdf`, pages 1 and 4). Measured on this board: 9 Pa, rising to 35 Pa while the buzzer sounds or the flash is written |
+| Height for proper operation (SNS-MAX-01) | 30000 m with the MS5607; 9000 m with the BMP280 |
+| Flight log (DAT-09) | 984 kB of littlefs: about 12 days at `1hz`, 15 min at `full`. `/api/log/space` reports what is free |
+| Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured* on this revision: `loop_late_max_us` on `/api/status` reports it |
+| Script resources (LUA-PAD-03) | the J1 user pad, GPIO8, and a released pyro channel's pads (`pin_caps.h`) |
+| Connector labels (PIN-LABEL-01) | `pin_caps.h` |
+
+The disarm time is this board's hardware: nothing but the processor ends a
+pulse. MK1C's charge pump is what meets PYR-ARM-01.
 
 ## Build
 

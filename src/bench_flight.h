@@ -65,8 +65,7 @@ typedef struct {
 
 void bench_flight_status(bench_flight_status_t *out);
 
-#ifdef BENCH_FLIGHT_TEST
-void bench_flight_reset(void);
-#endif
+/* At start-up: no flight, and the channels are the board's. */
+void bench_flight_init(void);
 
 #endif

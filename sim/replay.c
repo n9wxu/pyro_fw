@@ -9,7 +9,8 @@
 #include <string.h>
 #include "../src/config.h"
 #include "../src/flight_states.h"
-#include "pressure_processing.h"
+#include "../src/hal.h"
+#include "../src/pressure_processing.h"
 
 /* Any time will do for T+0; far from zero, so no stamp is ever 0. */
 #define REPLAY_T0_MS 1000000u
@@ -148,108 +149,105 @@ bool replay_logged_events(const char *csv, replay_events_t *out) {
 
 void (*replay_row_hook)(uint32_t now_ms);
 
+/* ── The firmware, flown on the log's readings ─────────────────────── */
+
+#define SAMPLE_MS 20u
+#define PAD_MS 9000u /* start-up, calibration, and a full ground window */
+
 typedef struct {
     flight_context_t *ctx;
     replay_events_t *out;
-    bool started;
-    /* The previous row: the sample the next reading brings out of the median. */
-    uint32_t prev_ms;
-    int prev_state;
-    int32_t prev_raw;
+    uint32_t now;     /* the loop clock */
+    uint32_t base;    /* loop time of the log's T+0, once the first row is fed */
+    bool flying;      /* the log's rows have begun */
+    int logged_state; /* of the newest row fed */
 } run_t;
 
-/* One pass of the loop for the sample the median has just given, checked
- * against the state the log recorded for it. */
-static void note_decided(run_t *r);
-
-static void step(run_t *r, uint32_t now) {
-    flight_context_t *ctx = r->ctx;
-    if (ctx->current_state == LANDED)
-        return;
-    flight_state_t before = ctx->current_state;
-    ctx->current_state = dispatch_state(ctx, now);
-    flight_update_outputs(ctx, now);
-    r->out->rows++;
-    if (r->out->diverged_ms == 0 && ctx->last_sample - REPLAY_T0_MS == r->prev_ms && (int)before != r->prev_state)
-        r->out->diverged_ms = r->prev_ms;
-    note_decided(r);
-}
-
 static void note_decided(run_t *r) {
-    flight_context_t *ctx = r->ctx;
-    uint32_t t = ctx->last_sample - REPLAY_T0_MS;
-    if (ctx->apogee_detected && r->out->apogee_ms == 0)
+    const flight_context_t *ctx = r->ctx;
+    uint32_t t = r->now - r->base;
+    if (ctx->apogee_declared && r->out->apogee_ms == 0)
         r->out->apogee_ms = t;
-    if (ctx->pyro1_fired && r->out->pyro1_ms == 0)
+    if (ctx->fire.channel[0].fired && r->out->pyro1_ms == 0)
         r->out->pyro1_ms = t;
-    if (ctx->pyro2_fired && r->out->pyro2_ms == 0)
+    if (ctx->fire.channel[1].fired && r->out->pyro2_ms == 0)
         r->out->pyro2_ms = t;
     if (ctx->current_state == LANDED && r->out->landing_ms == 0)
         r->out->landing_ms = t;
+}
+
+/* One pass of the main loop on one reading. */
+static void step(run_t *r, int32_t raw_pa) {
+    flight_context_t *ctx = r->ctx;
+    if (replay_row_hook)
+        replay_row_hook(r->now);
+    pp_feed(raw_pa, r->now);
+    ctx->current_state = dispatch_state(ctx, r->now);
+    flight_update_outputs(ctx, r->now);
+    if (!r->flying)
+        return;
+    r->out->rows++;
+    if (r->out->diverged_ms == 0 && (int)ctx->current_state != r->logged_state && ctx->current_state != PAD_IDLE)
+        r->out->diverged_ms = r->now - r->base;
+    note_decided(r);
+}
+
+/* The log begins at launch, so the board is first stood on a pad at the
+ * log's ground pressure: started, calibrated and left to fill its ground
+ * reference. A pascal of dither keeps the readings from being one value,
+ * which is a stuck sensor [SNS-PRES-10]. */
+static void stand_on_the_pad(run_t *r, int32_t ground_pa) {
+    static const int8_t dither[] = {0, 1, 0, -1};
+    for (uint32_t i = 0; i * SAMPLE_MS < PAD_MS; i++) {
+        r->now = i * SAMPLE_MS;
+        step(r, ground_pa + dither[i % 4u]);
+    }
+}
+
+/* A log's first row is written when the launch is declared, some way into
+ * the climb, and its time says how long ago the rocket left the pad. Those
+ * readings are not in the log, so a steady acceleration from the pad to the
+ * first row stands in for them: a step from the pad to the first row would
+ * read as a rocket far past the Mach flag's speed. */
+static void climb_to_the_first_row(run_t *r, int32_t ground_pa, int32_t first_raw_pa, uint32_t row_ms) {
+    r->base = r->now + SAMPLE_MS;
+    for (uint32_t ms = SAMPLE_MS; ms < row_ms; ms += SAMPLE_MS) {
+        float part = (float)ms / (float)row_ms;
+        r->now = r->base + ms;
+        step(r, ground_pa + (int32_t)((float)(first_raw_pa - ground_pa) * part * part));
+    }
 }
 
 static void feed_row(char **field, const header_t *h, void *arg) {
     run_t *r = (run_t *)arg;
     if (field[h->col[C_EVENT]][0] != '\0' || field[h->col[C_RAW]][0] == '\0')
         return;
-    flight_context_t *ctx = r->ctx;
-    uint32_t now = REPLAY_T0_MS + (uint32_t)strtoul(field[h->col[C_TIME]], NULL, 10);
-    int32_t raw = (int32_t)strtol(field[h->col[C_RAW]], NULL, 10);
-    if (!r->started) {
-        /* The filter starts where the log says it stood, at this row's time:
-         * the reading goes in first, so the resume takes its time as the
-         * filter's last. */
-        int32_t filtered = (int32_t)strtol(field[h->col[C_PRESSURE]], NULL, 10);
-        pp_feed(raw, now);
-        pp_resume_flight(h->ground_pa, filtered);
-        ctx->filtered_pressure = filtered;
-        ctx->last_altitude = pp_pressure_to_altitude_cm(filtered, h->ground_pa);
-        ctx->last_height = pp_pressure_to_height_cm(filtered, h->ground_pa);
-        ctx->last_sample = now;
-        r->started = true;
-        r->prev_ms = now - REPLAY_T0_MS;
-        r->prev_state = (int)strtol(field[h->col[C_STATE]], NULL, 10);
-        r->prev_raw = raw;
-        return;
+    uint32_t row_ms = (uint32_t)strtoul(field[h->col[C_TIME]], NULL, 10);
+    int32_t raw_pa = (int32_t)strtol(field[h->col[C_RAW]], NULL, 10);
+    if (!r->flying) {
+        climb_to_the_first_row(r, h->ground_pa, raw_pa, row_ms);
+        r->flying = true;
     }
-    if (replay_row_hook)
-        replay_row_hook(now);
-    pp_feed(raw, now);
-    step(r, now);
-    r->prev_ms = now - REPLAY_T0_MS;
-    r->prev_state = (int)strtol(field[h->col[C_STATE]], NULL, 10);
-    r->prev_raw = raw;
+    r->now = r->base + row_ms;
+    r->logged_state = (int)strtol(field[h->col[C_STATE]], NULL, 10);
+    step(r, raw_pa);
 }
 
 bool replay_run(const char *csv, replay_events_t *out) {
     memset(out, 0, sizeof(*out));
     header_t h;
     const char *rows = read_header(csv, &h);
-    if (!rows || h.thinned || h.col[C_TIME] < 0 || h.col[C_EVENT] < 0 || h.col[C_RAW] < 0 || h.col[C_PRESSURE] < 0)
+    if (!rows || h.thinned || h.col[C_TIME] < 0 || h.col[C_EVENT] < 0 || h.col[C_RAW] < 0 || h.col[C_STATE] < 0)
         return false;
     static flight_context_t ctx;
-    memset(&ctx, 0, sizeof(ctx));
-    ctx.config = h.cfg;
-    ctx.current_state = ASCENT;
-    ctx.launch_time = REPLAY_T0_MS;
-    ctx.ground_pressure = h.ground_pa;
-    ctx.sensor_type = 1;
-    ctx.fs_ok = true;
-    /* The log is of a flight that had its channels: continuity is not what
-     * a replay is asked. */
-    ctx.pyro1_continuity_good = true;
-    ctx.pyro2_continuity_good = true;
-    pp_init();
-    run_t r = {&ctx, out, false, 0, 0, 0};
+    if (replay_row_hook)
+        replay_row_hook(0);
+    (void)hal_config_save(&h.cfg);
+    flight_init(&ctx);
+    run_t r = {&ctx, out, 0, 0, false, 0};
+    stand_on_the_pad(&r, h.ground_pa);
+    if (ctx.current_state != PAD_IDLE)
+        return false;
     each_row(rows, &h, feed_row, &r);
-    /* The median gives each sample a reading late, so the last one needs one
-     * more reading to come out: its own again, a sample later. */
-    if (r.started) {
-        uint32_t now = REPLAY_T0_MS + r.prev_ms + 20u;
-        if (replay_row_hook)
-            replay_row_hook(now);
-        pp_feed(r.prev_raw, now);
-        step(&r, now);
-    }
     return true;
 }

@@ -258,7 +258,7 @@ int config_serialize_ini(const config_t *cfg, char *buf, int max_len) {
 /* ── Default INI string ───────────────────────────────────────────── */
 
 const char *config_default_ini(void) {
-    static char ini[512];
+    static char ini[CONFIG_INI_MAX];
     static bool done = false;
     if (!done) {
         config_t defaults;

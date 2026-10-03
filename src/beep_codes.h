@@ -31,8 +31,8 @@
  *
  * Three slots. Slot 0 ships as the Eggtimer convention; the other two are the
  * operator's to name and shape. One is active. A personality is a complete
- * configuration -- pattern per outcome, cadence, and whether pyro faults are
- * split per channel -- because those choices only make sense together.
+ * configuration -- pattern per outcome and cadence -- because those choices
+ * only make sense together.
  *
  * Rules, not I/O. beep_store.c owns the file.
  *
@@ -52,11 +52,11 @@
  * unfixable at the pad outranks anything fixable, because adjusting an
  * igniter does not help a board that cannot fly. */
 #define BEEP_REASONS(X)                                                                                                \
-    X(BR_SYSTEM_FAILURE, "system_failure",                                                                             \
-      "System failure. Safe the system and leave the pad -- this cannot be fixed at the rocket")                       \
+    X(BR_GENERAL_FAULT, "general_fault",                                                                               \
+      "General fault. Safe the system and take it to the workbench -- this cannot be fixed at the rocket")             \
     X(BR_CHECK_PYRO_1, "check_pyro_1", "Check pyro 1. Its igniter or leads need attention")                            \
     X(BR_CHECK_PYRO_2, "check_pyro_2", "Check pyro 2. Its igniter or leads need attention")                            \
-    X(BR_OK_TO_FLY, "ok_to_fly", "OK to fly. Sensor, filesystem and both pyro channels are good")
+    X(BR_OK_TO_FLY, "ok_to_fly", "OK to fly. Sensor, storage and every enabled pyro channel are good")
 
 #define X_ENUM(name, key, desc) name,
 typedef enum { BEEP_REASONS(X_ENUM) BEEP_REASON_COUNT } beep_reason_t;
@@ -96,9 +96,8 @@ typedef struct {
     /* Silence must mean something is wrong, not "you missed it". A board that
      * says its state once and stops is indistinguishable from one whose
      * battery died a second later. */
-    uint16_t gap_ms;  /* between re-announcements; 0 = no gap, run together */
-    uint8_t repeat;   /* 0 = until launch, N = N times then stop            */
-    bool split_pyro;  /* false: either channel uses check_pyro_1            */
+    uint16_t gap_ms; /* between re-announcements; 0 = no gap, run together */
+    uint8_t repeat;  /* 0 = until launch, N = N times then stop            */
 } beep_personality_t;
 
 typedef struct {
@@ -109,10 +108,11 @@ typedef struct {
 /* Why a table was refused. */
 typedef enum {
     BEEP_OK = 0,
-    BEEP_ERR_DIGIT_RANGE,  /* a digit outside 1..9: unhearable or uncountable */
-    BEEP_ERR_DUPLICATE,    /* two outcomes sound the same                     */
-    BEEP_ERR_NO_ACTIVE,    /* the active slot is not one that exists          */
-    BEEP_ERR_ALL_SILENT,   /* a personality that says nothing at all          */
+    BEEP_ERR_DIGIT_RANGE, /* a digit outside 1..9: unhearable or uncountable */
+    BEEP_ERR_DUPLICATE,   /* two outcomes sound the same                     */
+    BEEP_ERR_NO_ACTIVE,   /* the active slot is not one that exists          */
+    BEEP_ERR_ALL_SILENT,  /* a personality that says nothing at all          */
+    BEEP_ERR_OK_SILENT,   /* silence means a fault, so OK to fly must be heard [BUZ-02] */
     /* Not a verdict on the table: it was valid and could not be stored. */
     BEEP_ERR_TOO_LARGE, /* serialised, it does not fit beep.ini's budget   */
     BEEP_ERR_STORE,     /* the write to beep.ini failed                    */
@@ -138,8 +138,7 @@ beep_verdict_t beep_codes_validate(const beep_table_t *t);
 /* The active personality. Never NULL. */
 const beep_personality_t *beep_codes_active(const beep_table_t *t);
 
-/* How an outcome sounds under the active personality. Honours split_pyro:
- * with it off, check_pyro_2 is never returned. */
+/* How an outcome sounds under the active personality. */
 beep_spec_t beep_codes_spec(const beep_table_t *t, beep_reason_t r);
 
 const char *beep_codes_key(beep_reason_t r);

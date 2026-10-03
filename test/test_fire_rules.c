@@ -49,7 +49,7 @@ static const mp_rocket_t *rocket(void) {
  * the rocket, and none after. */
 void test_PYR_REFIRE_01_a_working_flight_gets_no_lasting_refire(void) {
     for (uint32_t seed = 1; seed <= 5; seed++) {
-        flight_conditions_t c = {.config = RULES, .rate_ms = {20.0f, 6.0f}, .sensor_rms_pa = 5.0f};
+        flight_conditions_t c = {.config = RULES, .rate_ms = {20.0f, 6.0f}, .sensor_rms_pa = NOISY_SENSOR_RMS_PA};
         flown_t r = fly(rocket(), &ISA, &c, seed, 200.0f);
         char msg[96];
         snprintf(msg, sizeof(msg), "seed %u: %d pulses on pyro 1, %d on pyro 2", (unsigned)seed, pulses_on(&r, 1),

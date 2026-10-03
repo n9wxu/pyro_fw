@@ -8,20 +8,22 @@ Flying a board? Start with the [Operator's guide](#operators-guide).
 ## Features
 - **Dual Pyrotechnic Control** - two channels, each fired only when its own switch and a shared element are both on; the switches differ by board (see Hardware)
 - **Five Firing Modes** - none, fallen distance, AGL altitude, descent speed, timed delay
-- **Fault Detection** - post-fire verification on every board; MK1B's AP2192 flags overcurrent; MK1C latches bus shorts and refuses a fire it cannot make safely
+- **Fault Detection** - every pulse is recorded with what the board saw of it; MK1B's AP2192 flags overcurrent; MK1C reports bus shorts. No reading withholds a fire (PYR-HEALTH-01)
+- **Fire Rules** - a channel fires again while the descent stays too fast, and every channel fires above an emergency speed (PYR-REFIRE-01, FLT-EMRG-01)
+- **Resume** - any restart in flight rejoins the flight from a record made on the pad (DD-086)
 - **Flight Log** - binary records (`flight_log.bin`) written only inside core0's flash window, rendered as CSV on download; three logging plans (DD-062, DD-064)
-- **Real-time Telemetry** - `$PYRO` NMEA or JSON on UART0 through an interrupt-driven ring; `telem_rate_hz` in flight (10 Hz default), 1 Hz on the ground; event sentences at apogee, fire and landing
+- **Real-time Telemetry** - `$PYRO` NMEA on UART0 through an interrupt-driven ring, one message a second; apogee, fire and landing events ride the next message (DD-088)
 - **Pressure Sensing** - MS5607 (MK1B, MK1C) or BMP280 (MK1A), 50 conversions a second, each stamped at its measurement (DD-051, DD-066, DD-067)
-- **Altitude and Speed** - hypsometric altitude against a 5 s ground mean; speed and triggers from a quadratic fit to the last second of pressure (DD-048)
-- **Mach Lockout** - apogee is not believed while the flow past the ports may be supersonic (DD-049)
+- **Pressure, Rate and Acceleration** - one Kalman filter on the raw readings; every flight comparison is made in pressure, and altitude is computed for people, relative to the pad and unclamped (DD-085)
+- **Mach Flag** - apogee is not taken from the pressure minimum while the flow past the ports may be supersonic (`docs/mach_lockout.md`)
 - **Continuity Checking** - presence and shorts, continuously on the pad
 - **Web Interface** - live dashboard and configuration over USB networking
 - **OTA Firmware Updates** - A/B bootloader with automatic rollback
-- **Lua on core1** - user scripts on MK1A, MK1B and MK1C, on pads and pyro channels released to them
+- **Lua scripts** - user scripts on MK1A, MK1B and MK1C, on pads and pyro channels released to them
 - **WASM Simulation** - the flight software runs in a browser against a physics engine
 - **Status Beep Codes** - four outcomes, Eggtimer-style by default, configurable
 - **Altitude Beep-out** - max altitude announced after landing, in cm, m or ft
-- **Ground Test** - serial ARM/FIRE commands on the pad, and a power-up procedure started by a switch (DD-071)
+- **Ground Test** - a power-up procedure started by a switch (DD-087)
 
 ## Hardware
 All three boards are RP2040s. Each has a theory of operation in `boards/<name>/THEORY_OF_OPERATION.md`.
@@ -36,7 +38,7 @@ All three boards are RP2040s. Each has a theory of operation in `boards/<name>/T
 | Buzzer | none fitted; assignable to a pad | BUZZER1 through Q1A | through Q2 |
 | Lua pads | GPIO18, 19 | GPIO8 | GPIO18–21 |
 
-The `reference` board is a template for new hardware: it reports no continuity and refuses every fire. The `sim` boards run the firmware on a host (see WASM Simulation).
+The `reference` board is a template for new hardware: it reports no continuity and has no firing path. The `sim` boards run the firmware on a host (see WASM Simulation).
 
 ## Operator's guide
 
@@ -46,12 +48,14 @@ each board's `boards/<name>/THEORY_OF_OPERATION.md`, carry the detail.
 ### Safety
 
 - **Igniters out on the bench.** On USB the board does not detect a launch
-  and fires nothing by itself (USB-01), but three things do fire on USB:
-  test mode, the ground test switch and the serial `FIRE` command.
-- **MK1B as built cannot fire.** Its U5 (AP2192A) holds both sense nodes at
-  0 V, so every channel reads shorted: the board beeps check pyro 1 and
-  fires neither channel until U5 is the base AP2192 (DD-059, B-U5 in
-  `docs/outstanding_tasks.md`).
+  and fires nothing by itself (USB-01), but two things do fire on USB:
+  test mode and the ground test switch.
+- **MK1B as built cannot sense continuity.** Its U5 (AP2192A) holds both
+  sense nodes at 0 V, so the board cannot judge a channel. It reports each
+  ready and says OK to fly whatever is connected (PYR-HEALTH-01, B-U5 in
+  `docs/outstanding_tasks.md`). Check the igniters by hand on this board.
+- **A fault on the pad does not stop a fire in flight.** The pad verdict is
+  for the operator. Once a fire is decided nothing withholds it.
 - **A channel released to Lua is not checked.** Release both and the board
   says OK to fly with no pyro channel at all.
 - **The pad verdict is only as good as the sensing.** MK1C checks that an
@@ -71,7 +75,7 @@ it is the router address of the new adapter.
 
 While a computer is attached the board treats itself as on the bench: it
 detects no launch, announces nothing but one double chirp on attach, and
-writes no pad marker (USB-01..04). Unplug it and it carries on as on
+writes no pad record (USB-01..04). Unplug it and it carries on as on
 battery.
 
 ### Setting up: the Config tab
@@ -80,13 +84,14 @@ battery.
 |---|---|
 | Rocket ID, Rocket Name | Up to 8 characters each, written into the flight log's header. |
 | Units | cm, meters (default) or feet, for every altitude and speed below and for the altitude beep-out. |
-| Pyro 1 (drogue), Pyro 2 (main) | Each a mode and a value. **Delay**: seconds after apogee (pyro 1's default is 0: at apogee). **AGL**: fires descending through this height above the pad (pyro 2's default is 300 m). **Fallen**: fires this far below the peak. **Speed**: fires when the descent is faster than this. **Disabled**: never fires. |
+| Pyro 1, Pyro 2 | Each a mode and a value. Which recovery device each fires is the operator's wiring. **Delay**: seconds after apogee (pyro 1's default is 0: at apogee). **AGL**: fires descending through this height above the pad (pyro 2's default is 300 m). **Fallen**: fires this far below the peak. **Speed**: fires when the descent is faster than this. **Disabled**: never fires. |
+| Fire rules | **Re-fire speed** per channel: a channel that has fired fires again every re-fire interval while the descent is faster than this. **Emergency fire speed**: any time after apogee, every enabled channel fires, and keeps firing, while the descent is faster than this. A speed of 0 turns its rule off (the default). **Re-fire interval** and **gap between channels** in ms: 0 takes the board's default (1000 ms and 3000 ms), and the page shows the board's range. |
 | Flight log | **1 row a second** (default); **High rate 1**: that, and every sample within 1 s of an event; **High rate 2**: every sample, 50 a second. The estimate beside it is how long a flight fits (DD-062, DD-064). |
 | Release pyro pins to Lua | Gives a channel's pads to a Lua script; that channel then never fires. |
 | Buzzer | Which pad drives the buzzer. MK1A fits none: wire one to a J6 user pad and choose it here. |
 | Ground test | The ground test switch's wiring (see below). |
 
-**Save**, then **Reboot**. Pin changes take effect only after the reboot.
+**Save**, then **Reboot**. A saved change takes effect at the next start (CFG-10); until then the board flies on what it started with.
 
 ### On the pad
 
@@ -99,21 +104,22 @@ and repeats it every 5 s until launch (BUZ-01, BUZ-02):
 | a rapid chirp | OK to fly | fly |
 | 5 beeps | check pyro 1 | fix pyro 1's igniter or leads |
 | 4 beeps | check pyro 2 | fix pyro 2's igniter or leads |
-| 2 beeps | system failure | safe the rocket and walk away: it cannot be fixed at the pad |
+| 2 beeps | general fault | safe the rocket and take it to the workbench: it cannot be fixed at the pad |
 
-These are the shipped sounds; the **Beep Codes** tab changes them. Silence
-means something is wrong: a working board never stops repeating. About ten
-seconds after its checks the board writes a pad marker, which lets it rejoin
-the flight if its power drops out in the air.
+One outcome is announced at a time, in the priority general fault, pyro 1,
+pyro 2 (BUZ-CODE-02). These are the shipped sounds; the **Beep Codes** tab
+changes them. Silence means something is wrong: a working board never stops
+repeating. Ten seconds after reaching the pad the board stores a pad record,
+which lets it rejoin the flight after any restart in the air (FLT-BROWN-01).
 
 ### In flight
 
 The board declares a launch above 100 ft and 5 m/s, held 100 ms
-(FLT-LAUNCH-01, DD-016).
+(FLT-LAUNCH-07).
 It arms once the burn is over, finds apogee from the pressure itself, and
-fires each channel as its mode says. While the rocket may be past about
-Mach 0.62, the Mach lockout holds apogee back until the readings are
-trustworthy again (`docs/mach_lockout.md`). It lands when still for 1 s below
+fires each channel as its mode says, then again as the fire rules say. While
+the rocket may be past about Mach 0.62, the Mach flag holds apogee back until
+the readings are smooth again (`docs/mach_lockout.md`). It lands when still for 1 s below
 30 m, or when the landing timeout (60 s by default) has passed since apogee
 and it is still.
 
@@ -140,7 +146,9 @@ A switch that fires the pyros on the ground, in a fixed, announced order
 
 1. **Wire the switch** and choose its wiring on the Config tab, under
    **Ground test**: a switch from one pad to ground, or a switch across two
-   pads -- on MK1A, the two J6 user pads, GPIO18 and GPIO19.
+   pads -- on MK1A, the two J6 user pads, GPIO18 and GPIO19. The driven pad
+   of the two may be the buzzer's; the switch never grounds the buzzer
+   (GND-TEST-12).
 2. **Power up with the switch closed.** Three long beeps and a pause,
    repeating: the board is in ground test mode.
 3. **Open the switch** (after at least a second). The countdown: five fast
@@ -153,13 +161,7 @@ are not released to Lua. With one channel enabled step 4 is skipped; with
 none, the countdown leads straight to step 5. **Close the switch again to
 stop** before the next fire: the board goes back to step 2, and opening the
 switch again starts over from the first countdown. The board stays in ground
-test mode until it is next powered up. With no buzzer fitted it keeps the same schedule, silently.
-
-### Serial ground test commands
-
-On the telemetry UART (115200 baud), and only on the pad (GND-TEST-01..04):
-`BEEP STATUS`, `BEEP ALT <n>`, `ARM 1` or `ARM 2` then `FIRE 1` or `FIRE 2`
-within 3 s, and `STATUS`.
+test mode until it is next powered up. With no buzzer fitted it keeps the same schedule, silently. A fire is delivered on command: no health reading withholds it (GND-TEST-13).
 
 ### Updating the firmware
 
@@ -170,19 +172,19 @@ reboots into the new image.
 ### Board notes
 
 - **MK1A**: BMP280 sensor; no buzzer fitted (see Buzzer above).
-- **MK1B**: MS5607 sensor. Cannot fire as built (above). Its buzzer disturbs
-  its pressure readings while it sounds (B-BZ).
+- **MK1B**: MS5607 sensor. Cannot sense continuity as built (above). Its
+  buzzer disturbs its pressure readings while it sounds (B-BZ).
 - **MK1C**: MS5607 sensor. Fires from the battery through an electronic
-  fuse; refuses a fire below a 3.0 V pack, or on a channel it has not seen
-  present (PYR-ARM-02).
+  fuse. The gate closes when the bus is charged or at its deadline, whatever
+  the board has measured (PYR-ARM-03).
 
 ## Flight States
-1. **BOOT_SETTLE → BOOT_SENSOR → BOOT_CONTINUITY → BOOT_CALIBRATE** - 2.5 s settle, the sensor and filesystem checked, then continuity, then a 10-reading ground reference
+1. **BOOT_SETTLE → BOOT_SENSOR → BOOT_CONTINUITY → BOOT_CALIBRATE** - 2.5 s settle, the sensor and storage checked and a flight in progress resumed (FLT-BROWN-02), then pyro health, then a 10-reading ground reference
 2. **PAD_IDLE** - launch at 100 ft and 5 m/s, held 100 ms; never while a USB host is attached, unless test mode is on (USB-01, USB-08)
-3. **ASCENT** - the pyros arm once the climb has passed 10 m/s and slowed below it again, above about 30 m (DD-017); apogee comes from the pressure fit
-4. **FALLING, DROGUE_DESCENT, CHUTE_DESCENT** - pyros fire by their modes; the phase is read from the descent rate (DD-023); an emergency ladder answers a canopy that did not work (DD-028)
+3. **ASCENT** - the pyros arm once the climb has passed 10 m/s and slowed below it again, above about 30 m (DD-017); apogee is the filtered pressure passing its minimum (FLT-APO-01)
+4. **FALLING, DROGUE_DESCENT, CHUTE_DESCENT** - pyros fire by their modes, then by the re-fire and emergency rules (DD-082); the phase is read from the descent rate (DD-023)
 5. **LANDED** - still for 1 s near the ground, or the landing timeout; the log closes and the altitude beep-out starts
-6. **FAULT** - terminal: no sensor, no filesystem, or no readings to calibrate from within 10 s
+6. **FAULT** - terminal: no sensor, no storage, or no readings to calibrate from within 10 s
 7. **GROUND_TEST** - terminal until power-off: the switch-started ground test procedure
 
 Apogee is the ASCENT → FALLING transition, not a state. `docs/flight_states.md` has every transition and threshold.
@@ -196,12 +198,14 @@ Apogee is the ASCENT → FALLING transition, not a state. `docs/flight_states.md
 | speed | Downward vertical speed threshold (configured units/second) |
 | delay | Seconds after apogee event |
 
-A channel fires only with continuity (PYR-SAFE-01), and only after apogee (PYR-SAFE-04).
+A channel fires only after apogee (PYR-SAFE-04). Health withholds no fire (PYR-HEALTH-01).
+
+After its first fire a channel fires again every `refire_interval` while the descent is faster than its `pyroN_refire_speed` (PYR-REFIRE-01). Any time after apogee, while the descent is faster than `emergency_fire_speed`, every enabled channel fires and keeps firing (FLT-EMRG-01). A speed of 0 turns its rule off. Pulses never overlap: `fire_gap` of quiet time separates the end of one from the start of the next, a first fire goes before a re-fire, and pyro 1 goes first on a tie (PYR-DEPLOY-02).
 
 ## Configuration
 Three files in littlefs, each edited from the web interface.
 
-**`config.ini`** - the flight settings (Config and Lua tabs, `GET`/`POST /api/config`). A POST is merged over the running configuration and applied at once, on the pad only (CFG-06):
+**`config.ini`** - the flight settings (Config and Lua tabs, `GET`/`POST /api/config`). A POST is merged over the stored file (CFG-06) and takes effect at the next start (CFG-10):
 
 ```ini
 [pyro]
@@ -212,8 +216,11 @@ pyro1_value=0
 pyro2_mode=agl
 pyro2_value=300
 units=m
-telem_format=0
-telem_rate_hz=10
+pyro1_refire_speed=0
+pyro2_refire_speed=0
+emergency_fire_speed=0
+refire_interval=0
+fire_gap=0
 log_rate=1hz
 landing_timeout=60
 lua_enabled=false
@@ -224,7 +231,8 @@ lua_pixels=0
 These are the defaults, written when the file is missing.
 
 - **Units:** `cm`, `m` or `ft` - applies to pyro values and altitude reporting
-- **telem_format:** `0` NMEA, `1` JSON
+- **pyro1_refire_speed, pyro2_refire_speed, emergency_fire_speed:** in units a second; `0` turns the rule off
+- **refire_interval, fire_gap:** milliseconds; `0` takes the board's default (1000 and 3000 where the board declares none). A value outside the board's range is brought into it and reported (`pyro_limited` on `/api/status`). `GET /api/limits` serves the defaults and ranges (PYR-BOARD-03)
 - **log_rate:** `1hz`, `events` or `full` (see Data Logging)
 - **landing_timeout:** seconds of descent before a still rocket counts as landed (FLT-LAND-07)
 
@@ -239,12 +247,12 @@ A beep says what to do. There are four outcomes; the diagnosis behind them is on
 
 | Outcome | Default sound | Means |
 |---------|---------------|-------|
-| ok_to_fly | rapid chirp, never counted | sensor, filesystem and both pyro channels are good |
+| ok_to_fly | rapid chirp, never counted | sensor, storage and every enabled pyro channel are good |
 | check_pyro_1 | 5 beeps | pyro 1's igniter or leads need attention |
 | check_pyro_2 | 4 beeps | pyro 2's igniter or leads need attention |
-| system_failure | 2 beeps | safe the system and leave the pad |
+| general_fault | 2 beeps | safe the system and take it to the workbench |
 
-The defaults follow Eggtimer Rocketry's convention. There are three personality slots: each sets every outcome's sound (chirp, tone, a count of 1-9 in one or two groups, or silent), the gap between repeats, the repeat count, and whether the two channels get separate codes. By default the announcement repeats every 5 s until launch (BUZ-02). A counted beep is 100 ms on, 200 ms off, with 300 ms between groups.
+The defaults follow Eggtimer Rocketry's convention. There are three personality slots: each sets every outcome's sound (chirp, tone, a count of 1-9 in one or two groups, or silent), the gap between repeats and the repeat count. OK to fly may not be silent: silence means a fault. One outcome is announced at a time, general fault first, then pyro 1, then pyro 2 (BUZ-CODE-02). By default the announcement repeats every 5 s until launch (BUZ-02). A counted beep is 100 ms on, 200 ms off, with 300 ms between groups.
 
 With a USB host attached the board plays one double chirp and announces nothing else until detached (USB-02, USB-03); test mode lifts this.
 
@@ -270,11 +278,11 @@ From launch to landing the flight software hands every sample to `hal_log_sample
 - **`events`** - that, and every sample within 1 s of an event
 - **`full`** - every sample, 50 a second; the only plan `pyro_sim --replay` accepts (DAT-08)
 
-Every event row is kept at its own time under each plan. Records go to a 4 KB RAM buffer. Nothing is written to flash for the first 2 s or until the buffer fills (FLT-LOG-05); then core0 writes it inside its flash window and syncs the file once a second, so a flight that never lands keeps its record (FLT-LOG-06).
+Every event row is kept at its own time under each plan. Records go to a 4 KB RAM buffer. The buffer is written and the file synced once a second, so a flight that never lands keeps its record (FLT-LOG-06).
 
 - **CSV export:** `/api/flight.csv` renders the binary log as CSV, with a header naming the board, the configuration, the ground pressure and the log rate
 - **Columns:** `time_ms, pressure_pa, altitude_cm, state, thrust, raw_pa, temp_c, event`
-- **Events:** LAUNCH, ARMED, APOGEE, PYRO1, PYRO2, LANDING, and when they happen the Mach lock's (LOCK, UNLOCK, LOCK_FALLBACK), refusals, faults, failed verifies, MAIN_FORCED, SENSOR_STUCK and SENSOR_LOST
+- **Events:** LAUNCH, ARMED, APOGEE, PYRO1, PYRO2, LANDING, and when they happen the Mach flag's (LOCK, UNLOCK, LOCK_FALLBACK), PYRO1_REFIRE, PYRO2_REFIRE, EMERGENCY_FIRE, RESUMED, faults (PYRO1_FAULT, PYRO2_FAULT), failed verifies (PYRO1_NOPEN, PYRO2_NOPEN), SENSOR_STUCK and SENSOR_LOST
 - **Lua:** a script's `log.line()` and `log.write()` output lands in the log as `LUA` rows, during a flight only; `print()` goes to `/api/lua/console`
 - **Space:** `/api/log/space` reports the room the next flight has; the Config tab turns it into the longest flight the chosen plan holds
 - **Erase:** `POST /api/flight/erase`
@@ -282,32 +290,24 @@ Every event row is kept at its own time under each plan. Records go to a 4 KB RA
 In flight the flight log holds the filesystem: every other file request is answered 423 (DD-058).
 
 ## Telemetry (UART0)
-**Format:** `$PYRO` NMEA sentences (default) or JSON (`telem_format=1`), 115200 baud
+**Format:** `$PYRO` NMEA sentences, 115200 baud. The port accepts no commands (TEL-12); a script on serial pins assigned to it can send another format.
 
 ```
 $PYRO,seq,state,thrust,alt_cm,vel_cms,maxalt_cm,press_pa,time_ms,flags_hex,p1adc,p2adc,0,0*XX\r\n
 ```
 
-- **Rate:** `telem_rate_hz` (default 10, at most 50) in ASCENT and the descent states; 1 Hz in PAD_IDLE and LANDED; none in boot states or GROUND_TEST
+- **Rate:** one message a second in PAD_IDLE, in flight and in LANDED (TEL-03); none in the boot states
 - **State:** 0=PAD_IDLE, 1=ASCENT, 2=FALLING, 3=DROGUE_DESCENT, 4=CHUTE_DESCENT, 5=LANDED
 - **Flags:** bit0=P1_CONT, bit1=P2_CONT, bit2=P1_FIRED, bit3=P2_FIRED, bit4=ARMED, bit5=APOGEE
 - **Last two fields:** always 0
 - **Checksum:** XOR of all bytes between `$` and `*`
 - **Diagnostics:** lines beginning `!` (a FAULT board sends `!FAULT <diagnosis>` every 5 s and no `$PYRO`)
 
-**Event sentences (NMEA format):**
+**Event sentences.** An event is queued and sent ahead of the next message's state sentence, so it is at most a second late (TEL-11):
 ```
 $PYRO_APO,max_alt_cm,flight_time_ms*XX\r\n
 $PYRO_FIRE,channel,alt_cm,flight_time_ms*XX\r\n
 $PYRO_LAND,max_alt_cm,flight_time_ms*XX\r\n
-```
-
-**JSON format** (`telem_format=1`):
-```json
-{"t":"state","seq":42,"st":1,"thr":0,"alt":150000,"spd":2150,"max":150000,"pa":84300,"ms":8500,"fl":19,"a1":12,"a2":15}
-{"t":"apogee","max":152400,"ms":9200}
-{"t":"fire","ch":1,"alt":152400,"ms":9201}
-{"t":"landing","max":152400,"ms":98000}
 ```
 
 **Example (NMEA):**
@@ -319,49 +319,29 @@ See `docs/ground-station-interface-spec.md` for the ground-station contract.
 
 ## Ground Test Interface
 
-### Serial commands
-From a PC or handset on UART0 RX (115200 baud), plain-text commands, read only in PAD_IDLE:
-
-| Command | Description |
-|---------|-------------|
-| `STATUS` or `?` | Send a `$PYRO` sentence now |
-| `BEEP` or `BEEP STATUS` | Replay the pad verdict on the active personality |
-| `BEEP ALT <n>` | Beep out the number n |
-| `ARM 1` or `ARM 2` | Arm a channel that has continuity, for 3 seconds |
-| `FIRE 1` or `FIRE 2` | Fire the armed channel (must ARM first within 3 s) |
-
-Responses are NMEA-style `$GT,...*XX` sentences with XOR checksum:
-```
-$GT,ARMED,1*7D
-$GT,FIRED,1*7E
-$GT,ERR,not_armed*03
-```
-
-Other answers: `GT,DISARMED,timeout`, and `GT,ERR,` with `arm_expired`, `busy` (the other channel's pulse is running), `refused,<n>`, `p1_no_cont`, `p2_no_cont` or `unknown_cmd`.
-
 ### Switch procedure (DD-071)
-A switch assigned in `pins.ini`, either to ground or across two pads. Power up with it closed (held for the last 0.5 s of the settle) and, once the sensor and continuity are checked, the board enters GROUND_TEST and announces it: three long beeps and a pause, repeating. After it has been closed 1 s in the mode, opening it starts the procedure:
+A switch assigned in `pins.ini`, either to ground or across two pads; the driven pad of two may be the buzzer's (GND-TEST-12). Power up with it closed (held for the last 0.5 s of the settle) and, once the sensor and pyro health are checked, the board enters GROUND_TEST and announces it: three long beeps and a pause, repeating. After it has been closed 1 s in the mode, opening it starts the procedure:
 
 1. a countdown, a count a second, five fast beeps down to none; at zero pyro 1 fires;
 2. a 3 s steady tone and a second countdown; at zero pyro 2 fires;
 3. three long beeps, once, then silence until power-off.
 
-A channel whose mode is none, or whose pads are released to Lua, is skipped: with one channel left there is one countdown and no tone; with none, the countdown leads to the all-clear. Closing the switch during a countdown or the tone stops the procedure before the next fire. GROUND_TEST never detects a launch or opens a log. A board with no buzzer fires on the same clock, silently. The bench check with dummy loads is owed (docs/outstanding_tasks.md, GT-1).
+A channel whose mode is none, or whose pads are released to Lua, is skipped: with one channel left there is one countdown and no tone; with none, the countdown leads to the all-clear. Closing the switch during a countdown or the tone stops the procedure before the next fire. A fire is delivered on command, whatever the channel reads (GND-TEST-13). GROUND_TEST runs on the configuration the board started with, and never detects a launch or opens a log. A board with no buzzer fires on the same clock, silently. The bench check with dummy loads is owed (docs/outstanding_tasks.md, GT-1).
 
 ## Safety Features
-1. **Continuity before firing** - a channel without continuity never fires (PYR-SAFE-01)
+1. **Never early** - nothing fires before apogee is declared, and apogee is declared only on measured evidence (PYR-SAFE-04, FLT-APO-01)
 2. **Two-key firing** - a channel's own switch and the shared element must both be on
 3. **Current protection** - MK1A an 8 A fuse, MK1B a 1.5 A PTC and the AP2192's limit, MK1C the eFuse's current limit
-4. **Fault monitoring** - MK1B's FLAG pins; MK1C's short latches and fire preconditions
-5. **Post-fire verification** - 500-600 ms after a fire a channel still reading good is logged as not opened; pyro 1 is then re-fired once if the descent shows no canopy (PYR-VERIFY-01, PYR-REFIRE-01)
-6. **A failed sensor deploys nothing** - a stuck or silent sensor holds every pressure trigger (DD-050)
-7. **USB means grounded** - with a host attached there is no launch detection and no pad marker, unless test mode is on (USB-01, USB-08)
-8. **Ground test safety** - serial: 3 s ARM→FIRE window, PAD_IDLE only; switch: power-up only, after the sensor and continuity checks
+4. **Fault monitoring** - MK1B's FLAG pins; MK1C's bus faults. They are reported and withhold no fire (PYR-HEALTH-01)
+5. **Best effort** - once a fire is decided nothing withholds it; a channel fires again while the descent stays too fast, and every channel fires above the emergency speed (PYR-REFIRE-01, FLT-EMRG-01). After a pulse a channel still reading good is logged as not opened (PYR-VERIFY-01)
+6. **A failed sensor deploys nothing** - a stuck or silent sensor is no data, and nothing is decided on it (SNS-PRES-10, SNS-PRES-11)
+7. **USB means grounded** - with a host attached there is no launch detection and no pad record, unless test mode is on (USB-01, USB-08)
+8. **Ground test safety** - by the switch only, at power-up only, after the sensor and pyro health checks
 
 ## Continuity Detection
 - **MK1A, MK1B:** the shared low side is the stimulus against a 100 kΩ pull-up, read on the 12-bit ADC. With it on, under 500 counts is an igniter and over 3000 open; with it off, a channel still low is shorted (DD-059). MK1A checks every 500 ms, MK1B every second.
-- **MK1B as built cannot sense continuity:** its AP2192A discharges the sense nodes while disabled, so every channel reads shorted and none fires (DD-059, task B-U5).
-- **MK1C:** checks presence and shorts, nothing else (DD-055). Every 500 ms the bus is biased; a channel is present when it reads at least half the bus. A bus that will not rise, or that sits at the pack with nothing armed, latches a short.
+- **MK1B as built cannot sense continuity:** its AP2192A discharges the sense nodes while disabled, so it cannot judge a channel and reports each ready (PYR-HEALTH-01, task B-U5).
+- **MK1C:** checks presence and shorts, nothing else (DD-055). Every 500 ms the bus is biased; a channel is present when it reads at least half the bus. A bus that will not rise, or that sits at the pack with nothing armed, latches a fault, which is reported.
 
 ## WASM Simulation — Use in Other Projects
 
@@ -497,20 +477,20 @@ The A/B bootloader ([pico_fota_bootloader](https://github.com/JZimnol/pico_fota_
 Connect the board via USB. It appears as a network adapter (RNDIS on Windows, ECM on macOS and Linux) with DHCP.
 
 - **Address:** http://pyro.local/, or http://192.168.N.1/, where N is the last octet of the board's MAC (`subnet` on `/api/status`). Each board has its own /24, so several can be attached at once.
-- **Status tab:** live state, altitude, speed, pressure, pyro channels, USB and test mode
-- **Config tab:** guided pyro editor, logging plan with the flight time it holds, pyro release, buzzer pad and ground test switch
+- **Status tab:** live state, altitude, speed, pressure, pyro channels with their pulse counts and faults, emergency fire, whether this start resumed a flight, USB and test mode
+- **Config tab:** guided pyro editor, the fire rules with the board's ranges, logging plan with the flight time it holds, pyro release, buzzer pad and ground test switch
 - **Flight Data tab:** summary, CSV download, erase, altitude graph
 - **Beep Codes tab:** the personalities, with an audition button
-- **Lua tab:** Lua pads, the program editor with check, export and import, and the console
+- **Lua tab:** Lua pads, the program editor with check, save, remove, export and import, and the console. A script that fails its check is not saved (LUA-MGT-01)
 - **Update tab:** firmware and web upload, GitHub release checker
 - **Test mode:** with it on, a board on USB detects a launch, fires and beeps as on battery. It lives in RAM, so every boot starts with it off, and it cannot change from launch to landing (USB-08, DD-038).
 - **APIs** (all CORS enabled):
-  - `GET /api/status`, `/api/net` (network counters, WEB-API-13), `/api/pressure/trace` (the last 256 conversions, DD-063), `/api/log/space`, `/api/flight.csv`, `/api/pins/caps`, `/api/lua/console`
+  - `GET /api/status`, `/api/net` (network counters, WEB-API-13), `/api/pressure/trace` (the last 256 conversions, DD-063), `/api/log/space`, `/api/limits` (the board's pyro timing ranges and its sensor's range, PYR-BOARD-03), `/api/flight.csv`, `/api/pins/caps`, `/api/lua/console`
   - `GET`/`POST /api/config`, `/api/pins`, `/api/beeps`, `/api/lua/script`
   - `POST /api/beeps/play`, `/api/lua/check`, `/api/flight/erase`, `/api/test_mode/on`, `/api/test_mode/off`, `/api/reboot`, `/api/ota`, `/api/serial`, `/www/<file>`
   - `GET /<path>` serves any littlefs file
 
-The API and USB stay live in flight; only the flight log touches the filesystem then, and a request that needs a file is answered 423 (DD-058). Config and pins are taken in PAD_IDLE only (409 otherwise).
+The API and USB stay live in flight; only the flight log touches the filesystem then, and a request that needs a file is answered 423 (DD-058). A saved `config.ini` or `pins.ini` is stored and takes effect at the next start (CFG-10).
 
 ### Network Architecture
 Each tracker advertises a `_pyro._tcp` DNS-SD service via mDNS. A board whose name is taken renames itself `pyro-1`, `pyro-2`, and so on.
@@ -523,10 +503,11 @@ A frame the USB endpoint cannot take yet is held, eight deep, and sent as it fre
 
 ## Testing
 
-The host suites (`test/README.md`) and the Playwright web UI suite (`test/web/run_web_tests.sh`) run in CI on every push, with cppcheck, clang-format, pmccabe, `support/trace_check.py`, `support/wait_check.py` and `support/prove_core0.py`.
+The host suites (`test/README.md`) and the Playwright web UI suite (`test/web/run_web_tests.sh`) run in CI on every push, with cppcheck, clang-format, pmccabe, `support/trace_check.py`, `support/structure_check.py`, `support/wait_check.py` and `support/prove_core0.py`.
 
 ```bash
-cd build && ninja host_tests integration_tests closedloop_tests
+export CI_BUILD=1
+scripts/run_host_tests.sh
 ```
 
 On a live board:

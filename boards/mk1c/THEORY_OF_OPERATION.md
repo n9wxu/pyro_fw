@@ -167,14 +167,17 @@ not until the bus has drained cold (DESIGN.md invariants 1 and 7).
 
 ## Short latches
 
-Three faults latch until reset (invariant 4), each only after agreeing samples
-(invariant 8):
+Two faults latch until reset (invariant 4), each only after agreeing samples
+(invariant 8), and a third is each pulse's own:
 
-| Fault | Seen when | Samples |
-|---|---|---|
-| bus hot | the quiescent bus is above ¾ of the pack, the pack present, and the sequence did not charge it | 3 loops |
-| bus shorted | a presence test's bus stays under 200 counts | 3 tests |
-| precharge timeout | a fire's bus did not reach the pack in time | 1 |
+| Fault | Seen when | Samples | Cleared |
+|---|---|---|---|
+| bus hot | the quiescent bus is above ¾ of the pack, the pack present, and the sequence did not charge it | 3 loops | at reset |
+| bus shorted | a presence test's bus stays under 200 counts | 3 tests | at reset |
+| precharge timeout | a fire's bus did not reach the pack in time | 1 | at the next fire, which reports for itself |
+
+A latched fault is reported and gates nothing: no reading withholds a fire
+(PYR-HEALTH-01, DD-081).
 
 "The sequence charged it" covers a fire and the 100 ms after its pump stops:
 the bus's 1.1 µF bleeds through 1.85 kΩ on a 2 ms constant, so a bus still
@@ -211,24 +214,17 @@ the FIFO holds, then U9's 9.6 ms.
 
 ## Firing sequence
 
-`pyro_fire()` asks `sequence_refusal()` first. A fire is refused, with its reason
-on the telemetry, unless:
-
-- the channel is 1 or 2, and no fire is in progress;
-- no fault is latched;
-- a presence test has run, since this channel last fired, and read it present;
-- the pack is above 3.0 V (an empty 1S cell; U9's own lockout is 2.5 V);
-- the bus is not hot — unless a fire just left it charged, since a second event
-  does not wait for the drain (DESIGN.md 5.3).
-
-A refusal leaves `pyro_is_firing()` false, and the flight records a refusal
-rather than a deployment. Accepted, the fire runs one step per loop:
+`pyro_fire()` starts the sequence whatever the board has measured: an open
+channel, a latched fault, a low pack and a missing presence test are reported
+and withhold nothing (PYR-FIRE-01, PYR-HEALTH-01). The one thing it waits for
+is a sequence already running, since the two channels share the bus and the
+flight serialises them (PYR-DEPLOY-02). The fire runs one step per loop:
 
 | Step | DESIGN.md 7.1 | What happens | Leaves when |
 |---|---|---|---|
 | arm | F0–F1 | the bias drops; the pump starts and is fed | at once |
-| precharge | F2 | each loop re-checks the faults, then feeds the pump; U9 ramps the bus at 0.89 V/ms | the bus is at 90 % of the measured pack, or the timeout |
-| fire | F3, F6 | the gate goes on and the pump stops in the same step | — |
+| precharge | F2 | each loop feeds the pump; U9 ramps the bus at 0.89 V/ms | the bus is at 90 % of the measured pack, or the deadline |
+| fire | F3, F6 | the gate goes on and the pump stops in the same step, on a charged bus or at the deadline on whatever the bus has | — |
 | hold | F7 | the gate stays on | the bus is flat (25 counts between loops) once U9's enable has had 10 ms to collapse, or 30 ms |
 | release | F8 | the gate goes off | — |
 | drain | F9 | the bleed empties the bus; the presence test waits | the bus is cold (50 counts) |
@@ -240,11 +236,17 @@ bridgewire for the 9.6 ms its enable takes to collapse after the pump stops —
 far more than the 15 mJ a match needs (DESIGN.md 1.2, M5). A misfire holds U9
 in its limit for the same 9.6 ms and no longer.
 
-**The precharge timeout** is 1.5 times the pump's 0.4 ms and the ramp to 90 %
-of the measured pack: about 14 ms on 2S. The bus not there by then aborts the
-fire, drives no gate, and latches a fault. A misfire, by contrast, latches
-nothing: it never inhibits the other channel (invariant 12). What follows a
-misfire on the ground (S8) is the flight code's decision.
+**The precharge deadline** is 1.5 times the pump's 0.4 ms and the ramp to 90 %
+of the measured pack: about 14 ms on 2S. The bus not there by then is gated
+anyway, and the timeout is recorded for that pulse: the pulse is never
+abandoned (PYR-ARM-03). A misfire latches nothing: it never inhibits the other
+channel (invariant 12).
+
+**U9's own latch is released by the sequence.** The TPS259570 latches off on
+overtemperature and comes back when EN/UVLO is taken low and raised again
+(`docs/datasheets/TPS2595_SLVSE57C_2018-04.pdf`, page 23, Table 1). The pump
+stopping takes the enable low after every fire, so each pulse starts with the
+part re-enabled (PYR-FAULT-01).
 
 Two channels fire one after the other: the second may start as soon as the
 first releases its gate, on the bus the first left charged. Never both at once
@@ -253,9 +255,9 @@ first releases its gate, on the bus the first left charged. Never both at once
 ## Flash and the fire
 
 A flash sector erase stalls the loop for tens of milliseconds — longer than the
-pump coasts — and a precharge that stalls times out and latches. So
+pump coasts — and a precharge that stalls reaches its deadline uncharged. So
 `board_flash_ok()` answers false from the command until the gate is released,
-and the main loop opens no flash window meanwhile. The fire takes a few loop
+and the main loop opens no storage window meanwhile. The fire takes a few loop
 periods; the log's writes wait for them.
 
 ## Pressure sensor
@@ -348,10 +350,8 @@ ground, so a switch from one J3 user pad to J3.2 suits this board:
 digital pad serves, GPIO22 included, and two of them can carry the two-pad
 wiring (`ground_test=pair`). The switch's pads leave Lua.
 
-The procedure fires through `pyro_fire()`, so the refusals of
-[Firing sequence](#firing-sequence) still apply: a channel the presence test
-has not read present is refused, the refusal is reported, and the procedure
-goes on.
+The procedure fires through `pyro_fire()`, as a flight does: a channel the
+presence test reads open is still fired on command (GND-TEST-13).
 
 ## Faults
 
@@ -359,8 +359,8 @@ goes on.
 |---|---|
 | high side shorted | the quiescent bus reads hot: latched |
 | bus, harness or a low side behind a fitted match shorted to ground | the biased bus will not rise: latched after three tests |
-| a match absent or open | reads open; a fire on it is refused |
-| the bus will not charge during a fire | precharge timeout: aborted, latched |
+| a match absent or open | reads open; a fire on it is still delivered |
+| the bus will not charge during a fire | the gate closes at the deadline; the timeout is recorded for that pulse |
 | U9 will not turn off after a fire | the bus stays hot past the bleed: latched |
 | a misfire | reported by the verify step; nothing latched |
 | the loop stops mid-arm | the pump stalls; the bus disarms within about 35 ms |
@@ -385,6 +385,29 @@ goes on.
   `/serial.txt` (`POST /api/serial`), set while the first is unplugged
   (task ID-1); the second carries 02373331FF2A, subnet 42.
 
+## What this board declares
+
+The values the requirements leave to the board (BRD-01). A value marked
+*not measured* is owed to this board's HAL validation (BRD-02).
+
+| Item | Declared |
+|---|---|
+| Pyro faults it can reliably detect | a match absent or open; the bus shorted to ground, a harness lead or a low side behind a fitted match; the high side shorted or stuck on; a bus that did not charge for a pulse. It cannot tell a short across a channel from a match |
+| `refire_interval` | default 1000 ms, 500 to 10000 ms: the general values (PYR-BOARD-01); this board has not been characterised for its own |
+| `fire_gap` | default 3000 ms, 1000 to 10000 ms: the general values; not characterised |
+| Pulse | U9's current limit, about 4 A for the 9.6 ms its enable takes to collapse; the gate is held 10 to 30 ms |
+| Preparation before a pulse (PYR-ARM-03) | the bus charged to 90 % of the pack, about 9 ms on 2S; the deadline is 1.5 times that, about 14 ms, and the gate closes then whatever the bus has |
+| Protection | U9, TPS259570: 4.05 A current limit, latch-off on overtemperature, released by the enable going low after every fire (PYR-FAULT-01) |
+| Disarm when software stops (PYR-ARM-01) | about 35 ms: the 25 ms the pump's FIFO holds, then U9's 9.6 ms |
+| Sensor | MS5607: 10 to 1200 mbar, 2.4 Pa rms at OSR 4096 (`docs/datasheets/MS5607-02BA03_2017-06.pdf`, pages 1 and 4). Measured on this board: 2 to 4 times that, unaffected by the buzzer or the flash |
+| Height for proper operation (SNS-MAX-01) | 30000 m |
+| Flight log (DAT-09) | 8192 kB of littlefs: about 100 days at `1hz`, 2 h at `full` (50 rows a second of 22 bytes). `/api/log/space` reports what is free |
+| Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured* on this revision: `loop_late_max_us` on `/api/status` reports it |
+| Script resources (LUA-PAD-03) | the four J3 user pads, GPIO18 to GPIO21, and a released pyro channel's pads (`pin_caps.h`) |
+| Connector labels (PIN-LABEL-01) | `pin_caps.h` |
+
+
+
 ## Build
 
 `board.cmake` selects the SDK header, the 16 MB geometry and Lua, and declares
@@ -406,14 +429,16 @@ of milliseconds on this class of part). `/api/status` reports `loop_max_us` and
 
 - `board_pyro_mk1c_tests` runs this directory's real code on the host against
   `sim/hw/` (a Pico SDK stand-in, PIO pump included) and the plant model of the
-  board as measured (`sim/plant/plant_mk1c.c`): presence, the latches, every
-  refusal, a fire on 2S and 1S, the measured trigger, the pump's bounds, a
-  stopped loop, an aborted precharge, a misfire, both channels in turn, a high
-  side stuck on, and the flash window.
+  board as measured (`sim/plant/plant_mk1c.c`): presence, the latches, a fire
+  on 2S and 1S, the measured trigger, the pump's bounds, a stopped loop, a bus
+  that will not charge gated at its deadline, a fire that no reading withholds,
+  a misfire, both channels in turn, a high side stuck on, and the flash
+  window.
 - `plant_tests` holds the model to the bench measurements.
 - `sensor_bringup_tests` and `ms5607_tests` cover the pressure sensor, the
   one-shot at this board's 400 kHz.
-- `integration_tests` flies the flight software built for MK1C.
+- `flight_boot_tests`, `flight_pad_tests` and `recorded_flight_tests` run the
+  flight software built for MK1C.
 - `boards/sim_mk1c` runs the whole flight software against the same model.
 
 ## References

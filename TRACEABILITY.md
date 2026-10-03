@@ -25,7 +25,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | FLT-PHASE-01 | The system shall detect the transition from ground to powered flight | test_recorded_flight.c: test_TST_02_the_recorded_flight_runs_pad_to_landed | ✅ |
 | FLT-PHASE-02 | The system shall detect apogee (peak altitude) | the suite test_recorded_flight.c | ✅ |
 | FLT-PHASE-03 | The system shall detect landing | test_recorded_flight.c: test_TST_02_the_recorded_flight_runs_pad_to_landed | ✅ |
-| FLT-RT-01 | No network, script or storage activity shall delay a flight decision or a pulse by more than the... | test_flight_profiles.c: test_FLT_RATE_05_a_late_loop_changes_no_decision, test_FLT_RT_01_other_activity_delays_no_decision_past_the_bound; the suite test_http_work.c | ✅ |
+| FLT-RT-01 | No network, script or storage activity shall delay a flight decision or a pulse by more than the... | test_flight_profiles.c: test_FLT_RATE_05_a_late_loop_changes_no_decision, test_FLT_RT_01_other_activity_delays_no_decision_past_the_bound; the suite test_http_work.c; The bound on each board is declared and not yet measured on this revision: `loop_late_max_us` on `/api/status` | ✅ |
 | FLT-LAUNCH-02 | The system shall remain in PAD_IDLE while the rocket is at or below 100 feet above the ground reference | test_flight_pad.c: test_CFG_10_a_saved_change_waits_for_the_next_start, test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch, test_FLT_LAUNCH_02_below_100_ft_is_not_a_launch; test_recorded_flight.c: test_TST_02_launch_is_detected_as_the_rocket_leaves | ✅ |
 | FLT-LAUNCH-03 | T+0 shall be the time of the first sample of the rise more than 50 cm above the pad, not the moment of... | test_flight_pad.c: test_CFG_10_a_saved_change_waits_for_the_next_start, test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch; test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order, test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise; test_telemetry.c: test_TEL_11_each_event_is_carried_once_by_the_next_message | ✅ |
 | FLT-LAUNCH-04 | The system shall log a LAUNCH event at the transition | test_flight_pad.c: test_CFG_10_a_saved_change_waits_for_the_next_start, test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch; test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order | ✅ |
@@ -50,7 +50,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | FLT-APO-04 | The system shall not detect apogee before pyros are armed | test_flight_profiles.c: test_PYR_DEPLOY_01_a_low_flight_puts_both_out_on_one_event, test_PYR_SAFE_04_no_fire_before_apogee_whatever_the_triggers | ✅ |
 | FLT-MACH-02 | The system shall set the Mach flag when the filtered climb rate exceeds 0.029·p per second (true Mach 0.62... | test_mach.c: test_SNS_EST_03_a_swinging_canopy_moves_neither_the_main_nor_the_landing, test_FLT_MACH_02_a_subsonic_flight_is_never_flagged, test_FLT_MACH_02_flagged_before_mach_085, test_FLT_MACH_07_the_peak_is_from_outside_the_flag and 1 more | ✅ |
 | FLT-MACH-03 | The system shall release the flag only after the filtered state has, continuously for 1 s ‡, agreed with... | test_mach.c: test_FLT_MACH_02_flagged_before_mach_085, test_FLT_MACH_03_a_mid_mach_flight_releases_after_burnout, test_FLT_MACH_05_no_fire_before_apogee_when_supersonic, test_FLT_MACH_03_released_before_apogee_at_10_km and 4 more | ✅ |
-| FLT-MACH-04 | While the flag stands the system shall still find apogee | test_mach.c: test_FLT_MACH_03_released_before_apogee_at_10_km, test_FLT_MACH_04_apogee_is_found_while_the_flag_stands, test_FLT_MACH_07_the_peak_is_from_outside_the_flag, test_FLT_MACH_02_thresholds | ✅ |
+| FLT-MACH-04 | While the flag stands the system shall still find apogee, at any height, the pyrotechnics being armed... | test_mach.c: test_FLT_MACH_03_released_before_apogee_at_10_km, test_FLT_MACH_04_apogee_is_found_while_the_flag_stands, test_FLT_MACH_07_the_peak_is_from_outside_the_flag, test_FLT_MACH_02_thresholds | ✅ |
 | FLT-MACH-05 | The system shall not declare apogee from FLT-APO-01 while the flag stands | test_mach.c: test_FLT_MACH_03_a_mid_mach_flight_releases_after_burnout, test_FLT_MACH_05_no_fire_before_apogee_when_supersonic, test_FLT_MACH_07_the_peak_is_from_outside_the_flag, test_FLT_MACH_02_thresholds | ✅ |
 | FLT-MACH-06 | No channel shall arm before the filtered pressure has been below 0.9965·p0 (about 30 m) | test_mach.c: test_FLT_MACH_07_the_peak_is_from_outside_the_flag, test_FLT_MACH_02_thresholds | ✅ |
 | FLT-MACH-07 | The reported peak shall be the height of the lowest filtered pressure outside the flag, marked a lower... | test_mach.c: test_FLT_MACH_03_released_before_apogee_at_10_km, test_FLT_MACH_04_apogee_is_found_while_the_flag_stands, test_FLT_MACH_07_the_peak_is_from_outside_the_flag; Web UI: test_ui.spec.js | ✅ |
@@ -102,7 +102,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | BUZ-CODE-05 | A sound shall be a chirp, a steady tone, a beep count, or silence | the suite test_beep_codes.c | ✅ |
 | BUZ-CODE-06 | A beep count shall be 1 to 9 per group; a zero cannot be heard and a long count cannot be counted | the suite test_beep_codes.c | ✅ |
 | BUZ-CODE-07 | No two audible outcomes within a personality shall sound alike | the suite test_beep_codes.c | ✅ |
-| BUZ-CODE-08 | A personality that is wholly silent shall be refused | the suite test_beep_codes.c | ✅ |
+| BUZ-CODE-08 | A personality that is wholly silent shall be refused, and so shall one whose OK to fly is silent | the suite test_beep_codes.c | ✅ |
 | BUZ-CODE-09 | The system shall hold three named personalities, one active | the suite test_beep_codes.c | ✅ |
 | BUZ-CODE-10 | A beep table that fails validation shall be rejected whole and the shipped personalities used | test_buzzer.c: test_BUZ_ACT_04_new_outcome_silences_the_old_one, test_BEEP_STORE_01_write_failure_is_not_a_digit_error; the suite test_beep_codes.c | ✅ |
 | BUZ-CODE-11 | The outcomes, their meanings and the personalities shall be served to the web interface so the firmware is... | Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
@@ -112,7 +112,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | PYR-CONT-01 | The system shall check every enabled channel at least once per second during PAD_IDLE, for the faults the... | test_flight_pad.c: test_BUZ_01_a_clean_board_says_ok_to_fly, test_PYR_CONT_01_health_is_checked_every_second; the suite test_board_pyro_mk1b.c, test_board_pyro_mk1c.c | ✅ |
 | PYR-CONT-02 | The system shall report each enabled channel as ready or as faulted, and shall name what the board... | test_flight_pad.c: test_BUZ_01_a_clean_board_says_ok_to_fly; the suite test_board_pyro_mk1b.c, test_board_pyro_mk1c.c, test_status_json.c | ✅ |
 | PYR-CONT-03 | The pad diagnosis and announcement shall be re-derived at every check, so that a fault which appears or... | test_flight_pad.c: test_BUZ_01_a_clean_board_says_ok_to_fly, test_PYR_CONT_03_a_fault_that_appears_on_the_pad_is_announced | ✅ |
-| PYR-HEALTH-01 | A board that cannot detect a fault on a channel shall treat the channel as ready | test_board_pyro_mk1c.c: test_mk1c_a_failed_pulse_does_not_prevent_the_next; test_fire_rules.c: test_FLT_AIR_01_a_failed_drogue_at_20_km_is_still_seen, test_PYR_HEALTH_01_a_faulted_channel_still_fires; the suite test_board_pyro_mk1b.c | ✅ |
+| PYR-HEALTH-01 | A board that cannot detect a fault on a channel shall treat the channel as ready | test_board_pyro_mk1b.c: test_mk1b_fire_then_a_fresh_reading, test_mk1b_as_fitted_every_channel_is_ready; test_board_pyro_mk1c.c: test_mk1c_a_failed_pulse_does_not_prevent_the_next; test_fire_rules.c: test_FLT_AIR_01_a_failed_drogue_at_20_km_is_still_seen, test_PYR_HEALTH_01_a_faulted_channel_still_fires | ✅ |
 | PYR-HEALTH-02 | Only enabled channels shall count, for firing and for the pad verdict | test_fire_control.c: test_PYR_HEALTH_02_a_channel_that_is_not_enabled_never_fires; test_flight_pad.c: test_PYR_CONT_01_health_is_checked_every_second, test_PYR_HEALTH_02_a_channel_set_to_none_is_not_a_fault, test_PYR_HEALTH_02_a_channel_given_to_the_script_is_not_a_pyro; test_flight_profiles.c: test_CFG_04_a_channel_set_to_none_never_fires; test_ground_test.c: test_GND_TEST_08_only_an_enabled_channel_fires, test_GND_TEST_08_a_channel_given_to_the_script_does_not_fire; the suite test_pin_assign.c | ✅ |
 | FLT-BOOT-01 | The system shall complete its start-up checks before entering PAD_IDLE | test_flight_boot.c: test_FLT_BOOT_01_every_check_runs_before_the_pad | ✅ |
 | FLT-BOOT-02 | The system shall read configuration from persistent storage during start-up | test_flight_boot.c: test_FLT_BOOT_01_every_check_runs_before_the_pad, test_FLT_BOOT_02_the_stored_configuration_is_what_flies | ✅ |
@@ -235,7 +235,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | PYR-FAULT-02 | A board that can sense that its protection acted during a pulse shall record it | test_board_pyro_mk1c.c: test_mk1c_a_stopped_loop_disarms, test_mk1c_a_bus_that_will_not_charge_is_gated_at_the_deadline | ✅ |
 | PYR-FAULT-03 | A fault during a pulse shall be shown to the user in the flight log and on /api/status | the suite test_board_pyro_mk1c.c, test_status_json.c; Web UI: test_ui.spec.js | ✅ |
 | PYR-VERIFY-01 | A board that can sense it shall record, after a pulse, whether the channel opened | the suite test_board_pyro_mk1c.c | ✅ |
-| PYR-ARM-01 | Software that stops running shall leave no channel energised or armed, within the board-declared time,... | the suite test_board_pyro_mk1c.c | ✅ |
+| PYR-ARM-01 | Software that stops running shall leave no channel energised or armed, within the board-declared time,... | the suite test_board_pyro_mk1c.c; MK1C: about 35 ms. MK1A and MK1B end a pulse from the loop, so a stopped loop leaves it energised until the watchdog, 1 s: the 50 ms bound is not met on those boards | ⚠️ |
 | PYR-ARM-03 | A board whose firing path must be made ready before a pulse shall deliver the pulse when the path is ready... | test_board_pyro_mk1c.c: test_mk1c_a_stopped_loop_disarms, test_mk1c_a_bus_that_will_not_charge_is_gated_at_the_deadline | ✅ |
 | PYR-ARM-05 | Storing data shall not shorten, lengthen or interrupt a pulse | the suite test_board_pyro_mk1c.c; `main_hardware.c` shuts the storage window while `board_flash_ok()` is false, by inspection | ✅ |
 | PYR-ARM-06 | A pulse that fails shall leave nothing latched that prevents or delays the other channel's pulse | the suite test_board_pyro_mk1c.c | ✅ |
@@ -292,8 +292,8 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| UN-15 | The user needs to run auxiliary functions -- lights, cameras, payload, serial devices -- from a script,... | Through SYS-LUA-01, SYS-LUA-02 | ✅ |
-| SYS-LUA-01 | Every board shall run an operator-supplied Lua script with access to the flight's state and to the pads... | the suite test_lua.c | ✅ |
+| UN-15 | The user needs to run auxiliary functions -- lights, cameras, payload, serial devices -- from a script,... | Through SYS-LUA-01, SYS-LUA-02 | ⚠️ |
+| SYS-LUA-01 | Every board shall run an operator-supplied Lua script with access to the flight's state and to the pads... | the suite test_lua.c; MK1C-SD is built without a script: J3 carries its SPI bus | ⚠️ |
 | SYS-LUA-02 | No script shall be able to block, prevent, or delay beyond its normal timing any behaviour of the board | the suite test_lua.c; Structure: `support/structure_check.py` | ✅ |
 | LUA-ISO-01 | A script that loops, faults or exhausts its memory shall cost only itself | the suite test_lua.c | ✅ |
 | LUA-ISO-02 | A script shall read the flight's state and never write it | the suite test_lua.c | ✅ |
@@ -322,7 +322,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | GND-TEST-09 | The switch shall count as opened only after it has been held closed for 1 s in ground test mode, and a... | test_ground_test.c: test_GND_TEST_06_usb_does_not_take_the_buzzer, test_GND_TEST_07_the_procedure, test_GND_TEST_09_an_opening_counts_only_after_a_second_held, test_GND_TEST_09_a_bounce_is_not_an_opening; test_ground_test_seq.c: test_GT_no_channel, test_GT_a_release_before_arming_does_nothing, test_GT_a_bounce_is_not_a_release | ✅ |
 | GND-TEST-10 | The switch closed again during a countdown or the tone shall stop the procedure before the next fire, and... | test_ground_test.c: test_GND_TEST_06_usb_does_not_take_the_buzzer, test_GND_TEST_07_the_procedure, test_GND_TEST_10_closing_the_switch_stops_the_procedure; test_ground_test_seq.c: test_GT_a_bounce_is_not_a_release, test_GT_reasserting_aborts_the_countdown, test_GT_reasserting_in_the_tone_stops_the_second | ✅ |
 | GND-TEST-11 | Ground test mode shall last until the next start | test_ground_test.c: test_GND_TEST_10_closing_the_switch_stops_the_procedure, test_GND_TEST_11_never_flies, test_GND_TEST_11_nothing_follows_the_all_clear; test_ground_test_seq.c: test_GND_TEST_13_a_fire_that_energised_nothing_is_recorded_and_the_procedure_goes_on, test_GT_done_is_final | ✅ |
-| GND-TEST-12 | The ground test switch shall be assignable as none, a switch from one pad to ground, or a switch across... | test_ground_test_seq.c: test_GT_phase_names; test_pin_assign.c: test_PIN_BUZZ_07_ini_round_trip, test_PIN_GT_01_default_is_none; Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
+| GND-TEST-12 | The ground test switch shall be assignable as none, a switch from one pad to ground, or a switch across... | test_ground_test_seq.c: test_GT_phase_names; test_pin_assign.c: test_PIN_BUZZ_07_ini_round_trip, test_PIN_GT_01_default_is_none, test_PIN_GT_05_pads_it_cannot_take, test_PIN_GT_08_the_switch_may_join_the_buzzers_pad_to_another; Web UI: test_ui.spec.js; Hardware: `support/api_check.py`; The pulsed read on the buzzer's pad (`gts_tick()`) is platform code: bench check owed, `docs/ground_test_on_buzzer_pad.md` | ✅ |
 | GND-TEST-13 | A ground test fire shall be delivered on command | test_ground_test.c: test_GND_TEST_11_nothing_follows_the_all_clear, test_GND_TEST_13_no_health_reading_withholds_a_fire, test_GND_TEST_13_a_pulse_that_energises_nothing_is_reported_not_refused; test_ground_test_seq.c: test_GT_a_busy_fire_is_asked_again, test_GND_TEST_13_a_fire_that_energised_nothing_is_recorded_and_the_procedure_goes_on | ✅ |
 
 ## 12. On USB
@@ -346,7 +346,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | UN-14 | The user needs to see the board fly a flight, to any altitude it may reach, before it flies one | Through SYS-SIM-01 | ✅ |
 | SYS-SIM-01 | The system shall fly a scripted flight on the bench, to the top of its sensor's range, through its own... | the suite test_flight_sim.c; Hardware: `support/bench_flight.py` | ✅ |
 | SIM-01 | A bench flight shall start only from PAD_IDLE with test mode on, and only a profile that can fly | test_flight_sim.c: test_SIM_01_profiles_that_cannot_fly_are_refused, test_SIM_01_a_bench_flight_starts_only_from_the_pad_in_test_mode; Hardware: `support/bench_flight.py` | ✅ |
-| SIM-02 | While one flies, the profile's pressure, from the 1976 US Standard Atmosphere, shall replace each reading... | test_flight_sim.c: test_SIM_02_isa_pressure_at_the_layer_bases, test_SIM_02_isa_pressure_inside_the_layers, test_SIM_02_isa_density_at_sea_level_and_30_km, test_SIM_02_isa_altitude_inverts_pressure and 7 more; Hardware: `support/bench_flight.py` | ✅ |
+| SIM-02 | While one flies, the profile's pressure, from the 1976 US Standard Atmosphere, shall replace each reading... | test_flight_sim.c: test_SIM_02_the_coast_peaks_at_the_apogee_asked_for, test_SIM_02_phases_run_in_order_and_it_lands, test_SIM_02_descent_times_at_constant_rates, test_SIM_02_thin_air_speeds_the_drogue and 3 more; Hardware: `support/bench_flight.py` | ✅ |
 | SIM-03 | From the start of a bench flight until the board restarts, every fire shall be mocked and logged as one; a... | test_flight_sim.c: test_SIM_04_with_both_failed_it_falls_ballistic_to_the_ground, test_SIM_03_the_channels_stay_mocked_after_a_stop; Hardware: `support/bench_flight.py` | ✅ |
 | SIM-04 | The bench flight shall offer profiles in which a canopy fails, so the re-fire and emergency rules can be... | test_flight_sim.c: test_SIM_02_the_bench_ends_when_both_have_landed, test_SIM_04_the_descent_starts_from_rest, test_SIM_04_a_failed_drogue_falls_ballistic_until_the_main, test_SIM_04_a_failed_main_stays_at_the_drogues_rate and 1 more; Hardware: `support/bench_flight.py` | ✅ |
 
@@ -382,13 +382,13 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | HAL-03 | The HAL interface shall support at least three implementations | Three implementations build in CI: `src/hal_common/`, `test/hal_test.c`, `boards/sim/hal_sim.c` | ✅ |
 | HAL-04 | The same flight logic source files shall compile unchanged for all targets | `src/flight_sources.txt` is the one list the firmware, the host suites, the simulator and the WASM build compile | ✅ |
 | HAL-05 | The HAL shall be the seam for testing | Every flight suite links `test/hal_test.c` and nothing of a board | ✅ |
-| HAL-06 | Each board's HAL shall be validated on hardware, independently of the flight software, with test equipment... | Through BLD-06; Not built yet: the plan is `HARDWARE_CI_PLAN.md` | ⚠️ |
+| HAL-06 | Each board's HAL shall be validated on hardware, independently of the flight software, with test equipment... | Through BLD-06; Not built yet: the options are in `docs/hal_validation_apps.md` | ⚠️ |
 | BLD-01 | The build system shall produce firmware for every supported board | CI builds every board | ✅ |
 | BLD-02 | The build system shall produce host-compiled test executables | CI builds and runs every host suite (`scripts/run_host_tests.sh`) | ✅ |
 | BLD-03 | The build system shall produce a host-compiled flight simulator | CI builds `pyro_sim` and the WASM simulator | ✅ |
 | BLD-04 | The build system shall generate the firmware's version from the VERSION file | CI: `support/version.py` against `VERSION` | ✅ |
 | BLD-05 | The build system shall support A/B firmware images for update | Hardware: both slots written and booted on MK1A, MK1B and MK1C | ✅ HW |
-| BLD-06 | The build system shall produce HAL validation applications, separate from the flight firmware | Not built yet | ⚠️ |
+| BLD-06 | The build system shall produce HAL validation applications, separate from the flight firmware | Not built yet: `docs/hal_validation_apps.md` | ⚠️ |
 | TST-01 | Flight tests shall be black box | Through CODE-08, CODE-09; The flight suites drive `flight_init()`, `dispatch_state()` and the HAL only (`test/board_harness.c`); `support/structure_check.py` keeps test-only constructs out of the flight software | ✅ |
 | TST-02 | Integration tests shall verify complete flight sequences using recorded trajectory data | test_recorded_flight.c: test_TST_02_the_recorded_flight_runs_pad_to_landed, test_TST_02_launch_is_detected_as_the_rocket_leaves, test_TST_02_apogee_is_declared_after_the_recorded_peak_and_soon, test_TST_02_each_channel_fires_once_at_its_event and 1 more | ✅ |
 | TST-03 | Closed-loop tests shall verify flight behavior with physics simulation feedback | test_mach.c: test_TST_03_plant_atmosphere, test_TST_03_plant_mach, test_TST_03_plant_port_error, test_TST_03_plant_charge and 3 more; the suite test_plant.c | ✅ |
@@ -413,7 +413,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| BRD-01 | Each board shall declare, in its theory of operation | Through BRD-02; Each `boards/<name>/THEORY_OF_OPERATION.md` | ⚠️ |
+| BRD-01 | Each board shall declare, in its theory of operation | Through BRD-02; Each `boards/<name>/THEORY_OF_OPERATION.md`, "What this board declares"; `support/structure_check.py` holds every board to the list. Values marked not measured are owed to BRD-02 | ✅ |
 | BRD-02 | A value a board declares shall be confirmed by that board's HAL validation (HAL-06) | Owed with HAL-06 | ⚠️ |
 
 ---
@@ -422,8 +422,8 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host test, a web test or a structural check | 286 |
-| ⚠️ Not verified, or not wholly | 21 |
+| ✅ Verified by a host test, a web test or a structural check | 284 |
+| ⚠️ Not verified, or not wholly | 23 |
 | ❌ Not implemented | 0 |
 | ✅ HW (verified on hardware only) | 13 |
 

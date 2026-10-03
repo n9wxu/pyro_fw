@@ -223,6 +223,11 @@ static void pump_and_efuse(plant_t *p, double dt_s) {
     if (p->en_hold_v < 0.0)
         p->en_hold_v = 0.0;
 
+    /* The latch-off part comes back when EN/UVLO is taken low and raised
+     * again (docs/datasheets/TPS2595_SLVSE57C_2018-04.pdf p.23, Table 1). */
+    if (p->en_hold_v < EFUSE_EN_OFF_V)
+        p->efuse_latched = false;
+
     bool want_on;
     if (p->efuse_latched || p->faults[PF_EFUSE_LATCHED])
         want_on = false;

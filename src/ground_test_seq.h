@@ -69,7 +69,7 @@ typedef enum {
 typedef enum {
     GT_FIRE_NONE,      /* not asked */
     GT_FIRE_BUSY,      /* the other channel's pulse still runs: ask again */
-    GT_FIRE_REFUSED,   /* the board would not fire it */
+    GT_FIRE_FAULT,     /* commanded; the board reported nothing energised */
     GT_FIRE_ENERGISED, /* fired */
 } gt_fire_t;
 

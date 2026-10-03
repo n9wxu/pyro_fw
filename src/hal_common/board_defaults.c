@@ -61,6 +61,10 @@ BOARD_DEFAULT void board_buzzer_set_pin(uint8_t pin) {
     board_buzzer_init();
 }
 
+BOARD_DEFAULT uint8_t board_buzzer_pin(void) {
+    return buzzer_pad;
+}
+
 BOARD_DEFAULT void board_buzzer_on(void) {
     if (buzzer_fitted())
         gpio_put(buzzer_pad, 1);
@@ -82,4 +86,8 @@ BOARD_DEFAULT uart_inst_t *board_uart(void) {
 
 BOARD_DEFAULT uint board_uart_irq(void) {
     return BOARD_UART_IRQ_NUM;
+}
+
+BOARD_DEFAULT void board_pyro_limits(pyro_limits_t *out) {
+    *out = (pyro_limits_t)PYRO_LIMITS_GENERAL;
 }

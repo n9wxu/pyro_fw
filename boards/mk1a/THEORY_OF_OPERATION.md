@@ -200,6 +200,29 @@ the buzzer. With no buzzer the procedure fires on the same schedule, silently.
 - **No host test runs this board's pyro backend** in CI; `boards/sim_mk1a` runs
   it against the plant model.
 
+## What this board declares
+
+The values the requirements leave to the board (BRD-01). A value marked
+*not measured* is owed to this board's HAL validation (BRD-02).
+
+| Item | Declared |
+|---|---|
+| Pyro faults it can reliably detect | a channel open; a lead shorted to ground. Not an overcurrent: there is no fault output |
+| `refire_interval` | default 1000 ms, 500 to 10000 ms: the general values (PYR-BOARD-01); this board has not been characterised for its own |
+| `fire_gap` | default 3000 ms, 1000 to 10000 ms: the general values; not characterised |
+| Pulse | 500 ms, ended by the loop |
+| Protection | F1, an 8 A fuse on the common. It does not reset: a blown fuse ends both channels |
+| Disarm when software stops (PYR-ARM-01) | **the watchdog, 1 s.** The loop ends the pulse, so a stopped loop leaves the high side on until the reset. This exceeds the 50 ms bound |
+| Sensor | BMP280, 300 to 1100 hPa at full accuracy, 1.3 Pa rms at its highest resolution (`docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf`, pages 7 and 12); noise on this board *not measured* |
+| Height for proper operation (SNS-MAX-01) | 9000 m, the sensor's 300 hPa |
+| Flight log (DAT-09) | 8192 kB of littlefs: about 100 days at `1hz`, 2 h at `full` (50 rows a second of 22 bytes). `/api/log/space` reports what is free |
+| Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured* on this revision: `loop_late_max_us` on `/api/status` reports it |
+| Script resources (LUA-PAD-03) | the two J6 user pads, GPIO18 and GPIO19, and a released pyro channel's pads (`pin_caps.h`) |
+| Connector labels (PIN-LABEL-01) | `pin_caps.h` |
+
+The disarm time is this board's hardware: nothing but the processor ends a
+pulse. MK1C's charge pump is what meets PYR-ARM-01.
+
 ## Build
 
 `board.cmake` selects the SDK header, the 16 MB geometry and Lua, and declares

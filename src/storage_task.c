@@ -39,6 +39,6 @@ void storage_task(void *arg) {
         hal_storage_service(now);
         flight_context_t *ctx = flight_get_context();
         if (ctx)
-            flight_flash_service(ctx, now);
+            flight_storage_service(ctx, now);
     }
 }

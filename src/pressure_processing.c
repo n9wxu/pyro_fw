@@ -1,598 +1,87 @@
 /*
- * Pressure processing layer — filter, altitude conversion, ring buffer.
- *
- * See pressure_processing.h for architecture overview.
+ * See pressure_processing.h.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "pressure_processing.h"
-#include "pressure_fit.h"
-#include <string.h>
+#include "atmosphere.h"
+#include "ground_reference.h"
+#include "pressure_estimator.h"
 #include <math.h>
+#include <string.h>
 
-/* ── Internal state ───────────────────────────────────────────────── */
+#define RING_MASK (PP_RING_SIZE - 1)
+#define RISE_M 0.5f           /* [FLT-LAUNCH-03] */
+#define GAP_US 250000u        /* [SNS-PRES-11] */
+#define SUSPECT_US 1000000u   /* decisions wait this long after a gap or a stuck run */
+#define STUCK_SPAN_US 950000u /* [SNS-PRES-10] a second of one reading, less the sampling's jitter */
+#define STUCK_MIN_READINGS 8
+/* A run of one reading this long is already not believed: a working sensor's
+ * noise ends such a run within a few readings, a failed one never does. */
+#define REPEATING_READINGS 8
+#define SMOOTH_SIGMAS 4.0f /* [FLT-MACH-03] */
+#define SMOOTH_US 1000000u
+#define RECENT 3 /* readings kept for the short rate */
 
-typedef enum {
-    PP_IDLE,        /* discarding samples (before calibration starts) */
-    PP_CALIBRATING, /* accumulating ground pressure */
-    PP_RUNNING,     /* filtering and producing altitude */
-} pp_state_t;
+typedef enum { PP_IDLE, PP_CALIBRATING, PP_RUNNING } pp_state_t;
 
 static struct {
     pp_state_t state;
-
-    /* Calibration */
     int32_t cal[PP_CAL_SAMPLES];
     int cal_count;
-    int32_t ground_pressure;
 
-    /* The newest three readings, oldest first [SNS-PRES-07], and the time
-     * of the last median out, so none goes out twice. */
+    pest_t estimator;
+    pest_t estimator_at_run_start; /* as it stood when the present reading first appeared */
+    uint32_t estimator_started_us;
+    gref_t ground;
+
     struct {
-        int32_t pa[3];
-        uint32_t ts[3];
-        uint32_t us[3];
+        int32_t pa[RECENT];
+        uint32_t us[RECENT];
         uint8_t n;
-        bool emitted;
-        uint32_t last_ts;
-    } med;
+    } recent;
 
-    /* The median's output since power-on [FLT-BROWN-02]. */
-    struct {
-        int32_t pa[PP_HIST_SIZE];
-        uint32_t ts[PP_HIST_SIZE];
-        uint32_t us[PP_HIST_SIZE];
-        uint8_t head;
-        uint8_t n;
-    } hist;
-
-    float sigma_sq; /* 0: not measured */
-    uint32_t suspect_until_us; /* fits are suspect before this [SNS-PRES-10/11] */
+    bool have_reading;
+    uint32_t last_us;
+    int32_t stuck_value;
+    uint32_t stuck_since_us;
+    uint16_t stuck_readings;
     bool suspect;
-    pfit_t last_fit; /* the newest sample's, for the bench (pp_last_fit()) */
-    bool last_stuck;
+    bool repeating;
+    uint32_t suspect_until_us;
+    bool rough;
+    uint32_t rough_until_us;
 
-    /* IIR filter state */
-    int32_t filtered_q8; /* pascals x 256 [SNS-PRES-02] */
-    bool filter_initialized;
-    uint32_t last_timestamp;
+    bool risen;
+    uint32_t rise_ms;
 
-    /* Debug copies */
-    int32_t last_raw;
-    int32_t last_filtered;
-    int32_t last_read_raw;
+    int32_t last_raw, last_filtered, last_read_raw;
 
-    /* Ground reference: a rolling mean of the filtered pressure, in blocks so
-     * the window slides without keeping every sample. 20 blocks of 250 ms is
-     * 5 s in 240 bytes rather than 1 kB. */
-    struct {
-        bool tracking;
-        int64_t sum[PP_GROUND_BLOCKS]; /* filtered Pa summed within a block */
-        uint16_t n[PP_GROUND_BLOCKS];
-        uint32_t start[PP_GROUND_BLOCKS]; /* when each block began */
-        float sigma_sq[PP_GROUND_BLOCKS]; /* the fit's noise as each block closed */
-        uint8_t cur;                      /* block being filled */
-        uint32_t block_start_ms;
-        uint8_t filled;        /* blocks that have ever been written */
-        bool degraded;         /* frozen on less than a second of the pad */
-        uint32_t reject_since; /* first of an unbroken run of rejections; 0: none */
-        uint32_t reseeds;
-    } gnd;
-
-    /* Altitude ring buffer */
-    altitude_sample_t ring[PP_RING_SIZE];
-    uint8_t head;
-    uint8_t tail;
-    uint8_t count;
+    pp_sample_t ring[PP_RING_SIZE];
+    uint8_t head, tail, count;
 } pp;
 
-/* ── The ground reference ─────────────────────────────────────────
- *
- * See pressure_processing.h. Blocks, not individual samples: the window only
- * has to track slow atmospheric drift, and a 250 ms step is finer than
- * anything the weather does. */
-
-static void gnd_reset(int32_t seed_pa) {
-    uint32_t reseeds = pp.gnd.reseeds;
-    memset(&pp.gnd, 0, sizeof(pp.gnd));
-    pp.gnd.reseeds = reseeds;
-    pp.gnd.tracking = true;
-    /* Seeded with the calibration result, so the mean is usable from the
-     * first sample rather than climbing out of zero. */
-    pp.gnd.sum[0] = seed_pa;
-    pp.gnd.n[0] = 1;
-    pp.gnd.filled = 1;
+void pp_init(void) {
+    memset(&pp, 0, sizeof(pp));
 }
 
-static void gnd_feed(int32_t filtered_pa, uint32_t now_ms) {
-    if (!pp.gnd.tracking) {
-        return;
-    }
-    /* Not the pad any more. Holding the reference here rather than at the
-     * launch transition is what keeps the frozen value honest: by the time
-     * launch is declared at 100 ft the rocket has been moving for a second,
-     * and a mean that followed it up would under-report the whole flight. */
-    int32_t dev = filtered_pa - pp.ground_pressure;
-    if (dev > PP_GROUND_MAX_DEV_PA || dev < -PP_GROUND_MAX_DEV_PA) {
-        if (pp.gnd.reject_since == 0)
-            pp.gnd.reject_since = now_ms + 1u; /* 0 means none; + 1 keeps a time of 0 possible */
-        return;
-    }
-    pp.gnd.reject_since = 0;
-    if (pp.gnd.block_start_ms == 0) {
-        pp.gnd.block_start_ms = now_ms;
-        pp.gnd.start[pp.gnd.cur] = now_ms;
-    }
-    if (now_ms - pp.gnd.block_start_ms >= PP_GROUND_BLOCK_MS) {
-        pp.gnd.sigma_sq[pp.gnd.cur] = pp.sigma_sq;
-        pp.gnd.cur = (uint8_t)((pp.gnd.cur + 1) % PP_GROUND_BLOCKS);
-        pp.gnd.sum[pp.gnd.cur] = 0;
-        pp.gnd.n[pp.gnd.cur] = 0;
-        pp.gnd.block_start_ms = now_ms;
-        pp.gnd.start[pp.gnd.cur] = now_ms;
-        if (pp.gnd.filled < PP_GROUND_BLOCKS) {
-            pp.gnd.filled++;
-        }
-    }
-    pp.gnd.sum[pp.gnd.cur] += filtered_pa;
-    pp.gnd.n[pp.gnd.cur]++;
+/* ── Calibration ──────────────────────────────────────────────────── */
 
-    int64_t total = 0;
-    uint32_t count = 0;
-    for (int i = 0; i < PP_GROUND_BLOCKS; i++) {
-        total += pp.gnd.sum[i];
-        count += pp.gnd.n[i];
-    }
-    if (count > 0) {
-        pp.ground_pressure = (int32_t)(total / (int64_t)count);
-    }
-}
-
-void pp_ground_track(bool enabled) {
-    pp.gnd.tracking = enabled;
-}
-
-bool pp_ground_tracking(void) {
-    return pp.gnd.tracking;
-}
-
-/* [SNS-PRES-09] σ as it stood a second before t_ms: the first 50 Pa of the
- * climb pass the ground's gate, and a fit through the ignition measures the
- * boost, not the sensor. A second of margin, because a slow rise through
- * the noise can cross T+0's half metre, fall back and cross it again well
- * after the ignition; σ averages over five, so it costs nothing. */
-#define SIGMA_FREEZE_MARGIN_MS 1000u
-
-static void sigma_freeze_before(uint32_t t_ms) {
-    int best = -1;
-    for (int i = 0; i < PP_GROUND_BLOCKS; i++) {
-        if (i == pp.gnd.cur || pp.gnd.n[i] == 0 || pp.gnd.sigma_sq[i] <= 0.0f ||
-            (int32_t)(t_ms - (pp.gnd.start[i] + PP_GROUND_BLOCK_MS + SIGMA_FREEZE_MARGIN_MS)) < 0)
-            continue;
-        if (best < 0 || (int32_t)(pp.gnd.start[i] - pp.gnd.start[best]) > 0)
-            best = i;
-    }
-    if (best >= 0)
-        pp.sigma_sq = pp.gnd.sigma_sq[best];
-}
-
-bool pp_ground_freeze_before(uint32_t t_ms) {
-    pp.gnd.tracking = false;
-    sigma_freeze_before(t_ms);
-    int64_t total = 0;
-    uint32_t count = 0;
-    uint32_t span_ms = 0;
-    for (int i = 0; i < PP_GROUND_BLOCKS; i++) {
-        /* The block being filled has not ended; one that ended after t_ms may
-         * hold the climb. */
-        if (i == pp.gnd.cur || pp.gnd.n[i] == 0 || (int32_t)(t_ms - (pp.gnd.start[i] + PP_GROUND_BLOCK_MS)) < 0)
-            continue;
-        total += pp.gnd.sum[i];
-        count += pp.gnd.n[i];
-        span_ms += PP_GROUND_BLOCK_MS;
-    }
-    if (count > 0)
-        pp.ground_pressure = (int32_t)(total / (int64_t)count);
-    pp.gnd.degraded = span_ms < 1000u;
-    return !pp.gnd.degraded;
-}
-
-uint32_t pp_ground_rejecting_ms(uint32_t now_ms) {
-    return (pp.gnd.tracking && pp.gnd.reject_since) ? now_ms + 1u - pp.gnd.reject_since : 0;
-}
-
-void pp_ground_reseed(void) {
-    pp.ground_pressure = pp.last_filtered;
-    gnd_reset(pp.last_filtered);
-    pp.gnd.reseeds++;
-}
-
-uint32_t pp_ground_reseeds(void) {
-    return pp.gnd.reseeds;
-}
-
-bool pp_ground_degraded(void) {
-    return pp.gnd.degraded;
-}
-
-uint32_t pp_ground_window_ms(void) {
-    return (uint32_t)pp.gnd.filled * PP_GROUND_BLOCK_MS;
-}
-
-/* ── Spike rejection [SNS-PRES-07] ──────────────────────────────────
- *
- * A median of three, between the range check and the filter. A single bad
- * reading -- a flipped bit, a bus glitch -- is a launch on the pad or an
- * apogee in coast if it reaches the filter.
- *
- * The median goes out with the MIDDLE reading's time. On a monotonic signal the
- * median is exactly the middle reading, so the stage costs one sample of
- * latency and distorts nothing: stamping it with the newest reading's time
- * would shift every altitude a sample early. */
-
-static void med_push(int32_t pa, uint32_t ts, uint32_t us) {
-    pp.med.pa[0] = pp.med.pa[1];
-    pp.med.ts[0] = pp.med.ts[1];
-    pp.med.us[0] = pp.med.us[1];
-    pp.med.pa[1] = pp.med.pa[2];
-    pp.med.ts[1] = pp.med.ts[2];
-    pp.med.us[1] = pp.med.us[2];
-    pp.med.pa[2] = pa;
-    pp.med.ts[2] = ts;
-    pp.med.us[2] = us;
-    if (pp.med.n < 3)
-        pp.med.n++;
-}
-
-static int32_t median3(int32_t a, int32_t b, int32_t c) {
-    int32_t lo = a < b ? a : b;
-    int32_t hi = a < b ? b : a;
-    return c < lo ? lo : (c > hi ? hi : c);
-}
-
-/* The median out of the window, if it has one not yet given. Short of three
- * readings -- at power-on, or after a test primes the layer -- the newest
- * goes straight through. */
-static bool med_out(int32_t *pa, uint32_t *ts, uint32_t *us, int32_t *raw) {
-    if (pp.med.n == 0)
-        return false;
-    int i = pp.med.n == 3 ? 1 : 2;
-    int32_t p = pp.med.n == 3 ? median3(pp.med.pa[0], pp.med.pa[1], pp.med.pa[2]) : pp.med.pa[2];
-    uint32_t t = pp.med.ts[i];
-    if (pp.med.emitted && (int32_t)(t - pp.med.last_ts) <= 0)
-        return false;
-    pp.med.emitted = true;
-    pp.med.last_ts = t;
-    *pa = p;
-    *ts = t;
-    *us = pp.med.us[i];
-    *raw = pp.med.pa[i];
-    return true;
-}
-
-static void hist_push(int32_t pa, uint32_t ts, uint32_t us) {
-    pp.hist.pa[pp.hist.head] = pa;
-    pp.hist.ts[pp.hist.head] = ts;
-    pp.hist.us[pp.hist.head] = us;
-    pp.hist.head = (uint8_t)((pp.hist.head + 1u) & (PP_HIST_SIZE - 1u));
-    if (pp.hist.n < PP_HIST_SIZE)
-        pp.hist.n++;
-}
-
-static void sort_i32(int32_t *v, int n) {
+static void sort_ascending(int32_t *v, int n) {
     for (int i = 1; i < n; i++) {
         int32_t x = v[i];
         int j = i - 1;
-        while (j >= 0 && v[j] > x) {
+        for (; j >= 0 && v[j] > x; j--)
             v[j + 1] = v[j];
-            j--;
-        }
         v[j + 1] = x;
     }
 }
 
-bool pp_history_span(uint32_t *oldest_ms, uint32_t *newest_ms) {
-    if (pp.hist.n == 0)
-        return false;
-    unsigned newest = (pp.hist.head + PP_HIST_SIZE - 1u) & (PP_HIST_SIZE - 1u);
-    unsigned oldest = (pp.hist.head + PP_HIST_SIZE - pp.hist.n) & (PP_HIST_SIZE - 1u);
-    *newest_ms = pp.hist.ts[newest];
-    *oldest_ms = pp.hist.ts[oldest];
-    return true;
-}
-
-bool pp_history_median(uint32_t from_ms, uint32_t to_ms, int min_n, int32_t *out_pa) {
-    int32_t v[PP_HIST_SIZE];
-    int n = 0;
-    for (unsigned i = 0; i < pp.hist.n; i++) {
-        unsigned k = (pp.hist.head + PP_HIST_SIZE - 1u - i) & (PP_HIST_SIZE - 1u);
-        uint32_t t = pp.hist.ts[k];
-        if ((int32_t)(t - from_ms) >= 0 && (int32_t)(to_ms - t) >= 0)
-            v[n++] = pp.hist.pa[k];
-    }
-    if (n < min_n || n == 0)
-        return false;
-    sort_i32(v, n);
-    *out_pa = (n & 1) ? v[n / 2] : (int32_t)(((int64_t)v[n / 2 - 1] + v[n / 2]) / 2);
-    return true;
-}
-
-/* The ground reference from calibration's readings: their median, so one bad
- * reading cannot bias it -- and a biased reference stays biased, because the
- * tracker rejects everything 50 Pa from it [GND-CAL-03]. */
-static int32_t cal_median(void) {
+static int32_t calibration_median(void) {
     int32_t v[PP_CAL_SAMPLES];
     memcpy(v, pp.cal, sizeof(v));
-    sort_i32(v, PP_CAL_SAMPLES);
+    sort_ascending(v, PP_CAL_SAMPLES);
     return (v[PP_CAL_SAMPLES / 2 - 1] + v[PP_CAL_SAMPLES / 2]) / 2;
-}
-
-/* ── IIR pressure filter ─────────────────────────────────────────── */
-
-/* [SNS-PRES-02, SNS-PRES-03] First-order IIR, τ = 500 ms, its state in Q8.
- * See IMPLEMENTATION.md "Pressure Filter".
- *
- * Whole pascals would not do: at 20 ms the step is 3.8 % of the difference,
- * which rounds to nothing under 26 Pa, and forcing a 1 Pa step instead made
- * the filter a rate limiter that passed the noise straight through. In Q8 the
- * dead band is a tenth of a pascal. 101 325 Pa x 256 fits in an int32; the
- * product is taken in int64. */
-static int32_t filter_q8(int32_t raw_pressure, uint32_t dt_ms) {
-    if (!pp.filter_initialized) {
-        pp.filtered_q8 = raw_pressure * 256;
-        pp.filter_initialized = true;
-        return pp.filtered_q8;
-    }
-    int64_t diff_q8 = (int64_t)raw_pressure * 256 - pp.filtered_q8;
-    int64_t alpha_q16 = ((int64_t)dt_ms << 16) / (PP_FILTER_TAU_MS + dt_ms);
-    pp.filtered_q8 += (int32_t)((diff_q8 * alpha_q16) / 65536);
-    return pp.filtered_q8;
-}
-
-static int32_t q8_round(int32_t q8) {
-    return (q8 >= 0 ? q8 + 128 : q8 - 128) / 256;
-}
-
-int32_t pp_filter_pressure(int32_t raw_pressure, uint32_t dt_ms) {
-    return q8_round(filter_q8(raw_pressure, dt_ms));
-}
-
-/* ── Altitude conversion ──────────────────────────────────────────── */
-
-#define MAX_ALTITUDE_CM 800000
-
-/* [SNS-ALT-01..03] Hypsometric formula — exact inverse of the ISA
- * troposphere pressure model.
- *
- *   h = 44330 × (1 − (P/P₀)^(1/5.2561))
- */
-/* [SNS-ALT-04] Unclamped, because a clamp stops the altitude and a stopped
- * altitude is a speed of zero: below the pad, a glitch's decay read as
- * apogee; above 8 km, the climb itself did (N26). */
-int32_t pp_pressure_to_height_cm(int32_t pressure_pa, int32_t ground_pressure_pa) {
-    if (pressure_pa <= 0 || ground_pressure_pa <= 0)
-        return 0;
-    float ratio = (float)pressure_pa / (float)ground_pressure_pa;
-    float alt_m = 44330.0f * (1.0f - powf(ratio, 1.0f / 5.2561f));
-    return (int32_t)(alt_m * 100.0f);
-}
-
-static int32_t height_from_q8(int32_t pressure_q8, int32_t ground_pressure_pa) {
-    if (pressure_q8 <= 0 || ground_pressure_pa <= 0)
-        return 0;
-    float ratio = (float)pressure_q8 / (256.0f * (float)ground_pressure_pa);
-    float alt_m = 44330.0f * (1.0f - powf(ratio, 1.0f / 5.2561f));
-    return (int32_t)(alt_m * 100.0f);
-}
-
-/* The 1976 standard's temperature at a pressure, to 32 km: a lapse to
- * 11 km, isothermal to 20 km, then warming at 1 K/km. T = Tb (p / pb)^(-L R / g M). */
-static float isa_temperature(float pa) {
-    if (pa >= 22632.06f)
-        return 288.15f * powf(pa / 101325.0f, 0.190263f);
-    if (pa >= 5474.889f)
-        return 216.65f;
-    if (pa < 868.0187f)
-        pa = 868.0187f;
-    return 216.65f * powf(pa / 5474.889f, -0.0292716f);
-}
-
-/* v_formula = 44330 n r^n pdot / p and v_true = R T pdot / (g M p), with
- * R T0 / g M = 44330 n; v_pad_air = v_true sqrt(rho / rho_pad), rho ~ p / T.
- * Divided by its value at the pad, where the formula's T0 is not the pad's,
- * so a rate at the pad reads as it always has. */
-float pp_air_scale(int32_t pressure_pa, int32_t ground_pressure_pa) {
-    if (pressure_pa <= 0 || ground_pressure_pa <= 0)
-        return 1.0f;
-    float r = (float)pressure_pa / (float)ground_pressure_pa;
-    float t = isa_temperature((float)pressure_pa);
-    float t_pad = isa_temperature((float)ground_pressure_pa);
-    return sqrtf(t * r / t_pad) / powf(r, 1.0f / 5.2561f);
-}
-
-int32_t pp_pressure_to_altitude_cm(int32_t pressure_pa, int32_t ground_pressure_pa) {
-    int32_t alt_cm = pp_pressure_to_height_cm(pressure_pa, ground_pressure_pa);
-    if (alt_cm > MAX_ALTITUDE_CM)
-        alt_cm = MAX_ALTITUDE_CM;
-    if (alt_cm < 0)
-        alt_cm = 0;
-    return alt_cm;
-}
-
-/* ── Ring buffer helpers ──────────────────────────────────────────── */
-
-static void ring_push(int32_t altitude_cm, int32_t height_cm, int32_t rise_cm, uint32_t timestamp_ms,
-                      uint32_t timestamp_us, int32_t raw_pa) {
-    memset(&pp.ring[pp.head], 0, sizeof(pp.ring[pp.head])); /* the fit's fields come after */
-    pp.ring[pp.head].timestamp_us = timestamp_us;
-    pp.ring[pp.head].raw_pa = raw_pa;
-    pp.ring[pp.head].altitude_cm = altitude_cm;
-    pp.ring[pp.head].height_cm = height_cm;
-    pp.ring[pp.head].rise_cm = rise_cm;
-    pp.ring[pp.head].timestamp_ms = timestamp_ms;
-    pp.head = (pp.head + 1) & PP_RING_MASK;
-    if (pp.count < PP_RING_SIZE) {
-        pp.count++;
-    } else {
-        /* Overrun: drop oldest */
-        pp.tail = (pp.tail + 1) & PP_RING_MASK;
-    }
-}
-
-/* ── The fit [DD-048] ─────────────────────────────────────────────── */
-
-pfit_t pp_last_fit(bool *suspect, bool *stuck) {
-    *suspect = pp.suspect;
-    *stuck = pp.last_stuck;
-    return pp.last_fit;
-}
-
-float pp_sigma_pa(void) {
-    if (pp.sigma_sq <= 0.0f)
-        return PP_SIGMA_FLOOR_PA;
-    float s = sqrtf(pp.sigma_sq);
-    return s < PP_SIGMA_FLOOR_PA ? PP_SIGMA_FLOOR_PA : (s > PP_SIGMA_CEIL_PA ? PP_SIGMA_CEIL_PA : s);
-}
-
-void pp_set_sigma(float sigma_pa) {
-    pp.sigma_sq = sigma_pa * sigma_pa;
-}
-
-/* The history's last second, oldest first, and what it says of the sensor:
- * the end of the newest gap in it (0: none), and whether it is all one
- * reading. */
-typedef struct {
-    pfit_t fit;
-    uint32_t gap_end_us;
-    bool stuck;
-} window_t;
-
-static window_t fit_history(void) {
-    static uint32_t t[PP_HIST_SIZE];
-    static int32_t p[PP_HIST_SIZE];
-    window_t w = {.gap_end_us = 0, .stuck = true};
-    unsigned newest = (pp.hist.head + PP_HIST_SIZE - 1u) & (PP_HIST_SIZE - 1u);
-    int n = 0;
-    uint32_t prev_us = 0;
-    bool have_prev = false;
-    for (unsigned i = pp.hist.n; i-- > 0;) {
-        unsigned k = (pp.hist.head + PP_HIST_SIZE - 1u - i) & (PP_HIST_SIZE - 1u);
-        uint32_t us = pp.hist.us[k];
-        /* A gap ending inside the window counts, the one from the last
-         * sample before it too: after a long one the window holds only new
-         * samples, and too few of them. */
-        bool gap = have_prev && us - prev_us > PP_GAP_US;
-        prev_us = us;
-        have_prev = true;
-        if (pp.hist.us[newest] - us > PFIT_WINDOW_US)
-            continue;
-        if (gap)
-            w.gap_end_us = us;
-        t[n] = us;
-        p[n] = pp.hist.pa[k];
-        w.stuck &= n == 0 || p[n] == p[0];
-        n++;
-    }
-    w.fit = pfit_quadratic(t, p, n);
-    /* A whole window of it, give or take the sampling's jitter. */
-    w.stuck &= n >= PFIT_MIN_SAMPLES && t[n - 1] - t[0] >= PFIT_WINDOW_US - 50000u;
-    return w;
-}
-
-/* [SNS-PRES-10, SNS-PRES-11] A gap, or a stuck run, keeps every fit suspect
- * until a whole window of new samples exists: its end plus a window. */
-static bool suspect_after(const window_t *w, uint32_t newest_us) {
-    if (w->gap_end_us && (!pp.suspect || (int32_t)(w->gap_end_us + PFIT_WINDOW_US - pp.suspect_until_us) > 0)) {
-        pp.suspect_until_us = w->gap_end_us + PFIT_WINDOW_US;
-        pp.suspect = true;
-    }
-    if (w->stuck) {
-        pp.suspect_until_us = newest_us + PFIT_WINDOW_US;
-        pp.suspect = true;
-    }
-    if (pp.suspect && (int32_t)(newest_us - pp.suspect_until_us) >= 0)
-        pp.suspect = false;
-    return pp.suspect;
-}
-
-static float short_rate(void) {
-    if (pp.hist.n < 3)
-        return 0.0f;
-    unsigned newest = (pp.hist.head + PP_HIST_SIZE - 1u) & (PP_HIST_SIZE - 1u);
-    unsigned third = (pp.hist.head + PP_HIST_SIZE - 3u) & (PP_HIST_SIZE - 1u);
-    int32_t dt_us = (int32_t)(pp.hist.us[newest] - pp.hist.us[third]);
-    return dt_us > 0 ? (float)(pp.hist.pa[newest] - pp.hist.pa[third]) * 1e6f / (float)dt_us : 0.0f;
-}
-
-/* On the pad the residuals are the sensor: their variance, with the three
- * fitted parameters allowed for, averaged over about five seconds. Not while
- * the ground reference rejects -- the board is being carried. */
-#define SIGMA_AVG_MS 5000.0f
-
-static void measure_sigma(const pfit_t *f, uint32_t dt_ms) {
-    if (!pp.gnd.tracking || pp.gnd.reject_since != 0 || !f->valid || f->n < 2 * PFIT_MIN_SAMPLES)
-        return;
-    float var = f->rms * f->rms * (float)f->n / (float)(f->n - 3);
-    float a = (float)dt_ms / SIGMA_AVG_MS;
-    pp.sigma_sq = pp.sigma_sq <= 0.0f ? var : pp.sigma_sq + (var - pp.sigma_sq) * (a > 1.0f ? 1.0f : a);
-}
-
-/* h = 44330 (1 - r^n), r = p/p0: dh/dp = -44330 n r^n / p, and
- * d2h/dp2 = -44330 n (n - 1) r^n / p^2. Metres and pascals. */
-static void fit_sample(altitude_sample_t *s, uint32_t dt_ms) {
-    window_t w = fit_history();
-    pfit_t f = w.fit;
-    pp.last_fit = f;
-    pp.last_stuck = w.stuck;
-    s->fit_suspect = suspect_after(&w, s->timestamp_us);
-    s->sensor_stuck = w.stuck;
-    if (!s->fit_suspect)
-        measure_sigma(&f, dt_ms);
-    s->short_pdot = short_rate();
-    s->fit_valid = f.valid;
-    s->fit_clean = !s->fit_suspect && pfit_clean(&f, pp_sigma_pa());
-    if (!f.valid || f.p <= 0.0f || pp.ground_pressure <= 0)
-        return;
-    const float n = 1.0f / 5.2561f;
-    float rn = powf(f.p / (float)pp.ground_pressure, n);
-    float d1 = -44330.0f * n * rn / f.p;
-    float d2 = d1 * (n - 1.0f) / f.p;
-    s->fit_pa = f.p;
-    s->fit_pdot = f.pdot;
-    s->fit_pddot = f.pddot;
-    s->fit_height_cm = (int32_t)(44330.0f * (1.0f - rn) * 100.0f);
-    s->speed_cms = (int32_t)(d1 * f.pdot * 100.0f);
-    s->accel_cms2 = (int32_t)((d1 * f.pddot + d2 * f.pdot * f.pdot) * 100.0f);
-}
-
-/* ── Public API ───────────────────────────────────────────────────── */
-
-void pp_init(void) {
-    memset(&pp, 0, sizeof(pp));
-    pp.state = PP_IDLE;
-}
-
-void pp_test_prime(int32_t ground_pressure_pa) {
-    pp.state = PP_RUNNING;
-    pp.ground_pressure = ground_pressure_pa;
-    pp.filter_initialized = false; /* first pp_feed will prime the IIR */
-    /* A previous test's readings, and their times, are not this one's. */
-    memset(&pp.med, 0, sizeof(pp.med));
-    memset(&pp.hist, 0, sizeof(pp.hist));
-    pp.last_timestamp = 0;
-    /* And the ground reference, which otherwise starts empty and would climb
-     * out of zero on the first sample. */
-    gnd_reset(ground_pressure_pa);
-}
-
-void pp_resume_flight(int32_t ground_pa, int32_t start_pa) {
-    pp.state = PP_RUNNING;
-    pp.ground_pressure = ground_pa;
-    pp.filtered_q8 = start_pa * 256;
-    pp.last_filtered = start_pa;
-    pp.filter_initialized = true;
-    pp.last_timestamp = pp.med.last_ts;
-    pp.gnd.tracking = false;
 }
 
 void pp_start_cal(void) {
@@ -604,13 +93,128 @@ bool pp_cal_done(void) {
     return pp.state == PP_RUNNING;
 }
 
-int32_t pp_ground_pressure(void) {
-    return pp.ground_pressure;
+static void calibrate_with(int32_t raw_pa) {
+    pp.cal[pp.cal_count++] = raw_pa;
+    if (pp.cal_count < PP_CAL_SAMPLES)
+        return;
+    gref_seed(&pp.ground, calibration_median());
+    pp.state = PP_RUNNING;
 }
 
-void pp_set_ground_pressure(int32_t pa) {
-    if (pp.state == PP_RUNNING)
-        pp.ground_pressure = pa;
+void pp_resume_flight(int32_t ground_pa) {
+    gref_hold(&pp.ground, ground_pa);
+    pp.state = PP_RUNNING;
+}
+
+/* ── The sensor's own faults ──────────────────────────────────────── */
+
+static void hold_suspect_from(uint32_t from_us) {
+    pp.suspect = true;
+    pp.suspect_until_us = from_us + SUSPECT_US;
+}
+
+static bool watch_for_gap_and_stuck(int32_t raw_pa, uint32_t us) {
+    if (pp.have_reading && us - pp.last_us > GAP_US)
+        hold_suspect_from(us);
+    if (!pp.have_reading || raw_pa != pp.stuck_value) {
+        pp.stuck_value = raw_pa;
+        pp.stuck_since_us = us;
+        pp.stuck_readings = 0;
+    }
+    pp.stuck_readings++;
+    pp.have_reading = true;
+    pp.last_us = us;
+
+    bool stuck = pp.stuck_readings >= STUCK_MIN_READINGS && us - pp.stuck_since_us >= STUCK_SPAN_US;
+    if (stuck)
+        hold_suspect_from(us);
+    if (pp.suspect && (int32_t)(us - pp.suspect_until_us) >= 0)
+        pp.suspect = false;
+    pp.repeating = pp.stuck_readings >= REPEATING_READINGS;
+    return stuck;
+}
+
+static bool smooth_after(float innovation_sigmas, uint32_t us) {
+    if (fabsf(innovation_sigmas) > SMOOTH_SIGMAS) {
+        pp.rough = true;
+        pp.rough_until_us = us + SMOOTH_US;
+    } else if (pp.rough && (int32_t)(us - pp.rough_until_us) >= 0) {
+        pp.rough = false;
+    }
+    return !pp.rough;
+}
+
+/* ── The raw readings' own rate ───────────────────────────────────── */
+
+static void remember(int32_t raw_pa, uint32_t us) {
+    for (int i = 0; i < RECENT - 1; i++) {
+        pp.recent.pa[i] = pp.recent.pa[i + 1];
+        pp.recent.us[i] = pp.recent.us[i + 1];
+    }
+    pp.recent.pa[RECENT - 1] = raw_pa;
+    pp.recent.us[RECENT - 1] = us;
+    if (pp.recent.n < RECENT)
+        pp.recent.n++;
+}
+
+static float short_rate(void) {
+    if (pp.recent.n < RECENT || pp.recent.pa[0] <= 0 || pp.recent.pa[RECENT - 1] <= 0)
+        return 0.0f;
+    int32_t dt_us = (int32_t)(pp.recent.us[RECENT - 1] - pp.recent.us[0]);
+    if (dt_us <= 0)
+        return 0.0f;
+    return logf((float)pp.recent.pa[RECENT - 1] / (float)pp.recent.pa[0]) * 1e6f / (float)dt_us;
+}
+
+/* ── Samples ──────────────────────────────────────────────────────── */
+
+static pp_sample_t *push_sample(void) {
+    pp_sample_t *s = &pp.ring[pp.head];
+    memset(s, 0, sizeof(*s));
+    pp.head = (uint8_t)((pp.head + 1u) & RING_MASK);
+    if (pp.count < PP_RING_SIZE)
+        pp.count++;
+    else
+        pp.tail = (uint8_t)((pp.tail + 1u) & RING_MASK);
+    return s;
+}
+
+static void note_rise(pp_sample_t *s, float ground_pa) {
+    s->risen = (float)s->raw_pa < atmos_pressure_above_pa(ground_pa, RISE_M);
+    if (s->risen && !pp.risen)
+        pp.rise_ms = s->timestamp_ms;
+    pp.risen = s->risen;
+}
+
+static void for_the_operator(pp_sample_t *s, float ground_pa) {
+    float scale_height_m = atmos_scale_height_m(s->pressure_pa);
+    s->altitude_cm = (int32_t)(atmos_height_above_m(s->pressure_pa, ground_pa) * 100.0f);
+    s->speed_cms = (int32_t)(-s->rate * scale_height_m * 100.0f);
+    s->accel_cms2 = (int32_t)(-s->curve * scale_height_m * 100.0f);
+}
+
+static void produce_sample(int32_t raw_pa, uint32_t ms, uint32_t us, bool stuck) {
+    pest_estimate_t e = pest_estimate(&pp.estimator);
+    pp.last_filtered = (int32_t)(e.pressure_pa + 0.5f);
+    gref_feed(&pp.ground, pp.last_filtered, ms);
+    float ground_pa = (float)gref_pressure(&pp.ground);
+
+    pp_sample_t *s = push_sample();
+    s->timestamp_ms = ms;
+    s->timestamp_us = us;
+    s->raw_pa = raw_pa;
+    s->pressure_pa = e.pressure_pa;
+    s->rate = e.rate;
+    s->curve = e.curve;
+    s->rate_sigma = e.rate_sigma;
+    s->log_sigma = e.log_sigma;
+    s->noise_pa = e.noise_pa;
+    s->short_rate = short_rate();
+    s->smooth = smooth_after(e.innovation_sigmas, us);
+    s->suspect = pp.suspect || pp.repeating;
+    s->sensor_stuck = stuck;
+    note_rise(s, ground_pa);
+    for_the_operator(s, ground_pa);
 }
 
 void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
@@ -618,77 +222,88 @@ void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
 }
 
 void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us) {
-    uint32_t timestamp_ms = (uint32_t)(timestamp_us / 1000u);
+    uint32_t ms = (uint32_t)(timestamp_us / 1000u);
+    uint32_t us = (uint32_t)timestamp_us;
     pp.last_raw = raw_pressure_pa;
-    med_push(raw_pressure_pa, timestamp_ms, (uint32_t)timestamp_us);
-    int32_t pa;
-    uint32_t ts, us;
-    int32_t raw;
-    bool fresh = med_out(&pa, &ts, &us, &raw);
-    if (fresh)
-        hist_push(pa, ts, us);
+    remember(raw_pressure_pa, us);
+    bool stuck = watch_for_gap_and_stuck(raw_pressure_pa, us);
 
-    switch (pp.state) {
-    case PP_IDLE:
-        /* Discard — not calibrating yet */
-        return;
-
-    case PP_CALIBRATING:
-        pp.cal[pp.cal_count++] = raw_pressure_pa;
-        if (pp.cal_count >= PP_CAL_SAMPLES) {
-            pp.ground_pressure = cal_median();
-            pp.filtered_q8 = pp.ground_pressure * 256;
-            pp.filter_initialized = true;
-            pp.last_timestamp = pp.med.last_ts;
-            gnd_reset(pp.ground_pressure);
-            pp.state = PP_RUNNING;
-        }
-        return;
-
-    case PP_RUNNING: {
-        if (!fresh)
-            return;
-
-        uint32_t dt = ts - pp.last_timestamp;
-        pp.last_timestamp = ts;
-
-        /* IIR filter */
-        int32_t q8 = filter_q8(pa, dt);
-        int32_t filtered = q8_round(q8);
-        pp.last_filtered = filtered;
-
-        /* Before the altitude, so the reference is this sample's own. */
-        gnd_feed(filtered, ts);
-
-        /* The altitude from the fractional pressure: from the rounded one a
-         * whole pascal is 8 cm, and the speed would step in 4 m/s. */
-        int32_t height_cm = height_from_q8(q8, pp.ground_pressure);
-        int32_t alt_cm = height_cm < 0 ? 0 : (height_cm > MAX_ALTITUDE_CM ? MAX_ALTITUDE_CM : height_cm);
-
-        /* T+0 is read from the reading itself, not the filter: the filter
-         * lags the first half metre by its time constant, and the median's
-         * noise is a tenth of it. */
-        int32_t rise_cm = pp_pressure_to_height_cm(pa, pp.ground_pressure);
-
-        /* Push to ring */
-        ring_push(alt_cm, height_cm, rise_cm, ts, us, raw);
-        fit_sample(&pp.ring[(pp.head + PP_RING_SIZE - 1u) & PP_RING_MASK], dt);
-        return;
+    /* A sensor repeating itself gives no data [SNS-PRES-10]: the estimate
+     * carries on from what it knew, and takes the readings up again when they
+     * move. */
+    if (!pp.estimator.started) {
+        pest_start(&pp.estimator, raw_pressure_pa, us, PEST_NOISE_FLOOR_PA);
+        pp.estimator_started_us = us;
+    } else if (!pp.repeating) {
+        pest_update(&pp.estimator, raw_pressure_pa, us);
+        if (pp.stuck_readings == 1)
+            pp.estimator_at_run_start = pp.estimator;
+    } else if (pp.stuck_readings == REPEATING_READINGS) {
+        pp.estimator = pp.estimator_at_run_start; /* the repeats it had taken as readings are taken back */
     }
-    }
+
+    if (pp.state == PP_CALIBRATING)
+        calibrate_with(raw_pressure_pa);
+    else if (pp.state == PP_RUNNING)
+        produce_sample(raw_pressure_pa, ms, us, stuck);
 }
 
 int pp_available(void) {
     return pp.count;
 }
 
-bool pp_read(altitude_sample_t *out) {
+bool pp_read(pp_sample_t *out) {
     if (pp.count == 0)
         return false;
     *out = pp.ring[pp.tail];
     pp.last_read_raw = out->raw_pa;
-    pp.tail = (pp.tail + 1) & PP_RING_MASK;
+    pp.tail = (uint8_t)((pp.tail + 1u) & RING_MASK);
     pp.count--;
+    return true;
+}
+
+/* ── The ground reference ─────────────────────────────────────────── */
+
+int32_t pp_ground_pressure(void) {
+    return gref_pressure(&pp.ground);
+}
+
+bool pp_ground_tracking(void) {
+    return pp.ground.tracking;
+}
+
+bool pp_ground_freeze_before(uint32_t t_ms) {
+    return gref_freeze_before(&pp.ground, t_ms);
+}
+
+bool pp_ground_degraded(void) {
+    return gref_degraded(&pp.ground);
+}
+
+uint32_t pp_ground_window_ms(void) {
+    return gref_window_ms(&pp.ground);
+}
+
+uint32_t pp_ground_rejecting_ms(uint32_t now_ms) {
+    return gref_rejecting_ms(&pp.ground, now_ms);
+}
+
+void pp_ground_reseed(void) {
+    gref_reseed(&pp.ground, pp.last_filtered);
+}
+
+uint32_t pp_ground_reseeds(void) {
+    return pp.ground.reseeds;
+}
+
+/* ── Status ───────────────────────────────────────────────────────── */
+
+bool pp_estimate_after(uint32_t min_ms, float *pressure_pa, float *rate) {
+    if (!pp.estimator.started || pp.estimator.t_us - pp.estimator_started_us < min_ms * 1000u)
+        return false;
+    pest_estimate_t e = pest_estimate(&pp.estimator);
+    *pressure_pa = e.pressure_pa;
+    *rate = e.rate;
     return true;
 }
 
@@ -702,4 +317,19 @@ int32_t pp_last_read_raw_pa(void) {
 
 int32_t pp_last_filtered_pa(void) {
     return pp.last_filtered;
+}
+
+bool pp_newest(pp_sample_t *out) {
+    if (pp.state != PP_RUNNING || !pp.have_reading)
+        return false;
+    *out = pp.ring[(pp.head + PP_RING_SIZE - 1u) & RING_MASK];
+    return true;
+}
+
+float pp_noise_pa(void) {
+    return pp.estimator.started ? pest_estimate(&pp.estimator).noise_pa : PEST_NOISE_FLOOR_PA;
+}
+
+uint32_t pp_time_of_rise_ms(void) {
+    return pp.rise_ms;
 }

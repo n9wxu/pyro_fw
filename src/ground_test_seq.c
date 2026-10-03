@@ -71,45 +71,61 @@ static void debounce(gt_seq_t *s, bool raw, uint32_t now) {
     }
 }
 
-gt_action_t gt_seq_step(gt_seq_t *s, bool asserted, uint32_t now) {
-    gt_action_t a = {GT_SOUND_NONE, 0};
-    debounce(s, asserted, now);
+/* [GND-TEST-09] The switch counts as opened only once the mode has been
+ * announced for GT_ARM_MS with it closed. */
+static void alert_step(gt_seq_t *s, uint32_t now) {
+    if (s->asserted && now - s->held_since >= GT_ARM_MS)
+        s->armed = true;
+    if (s->armed && !s->asserted)
+        enter(s, GT_COUNTDOWN, now);
+}
+
+static bool phase_has_run(const gt_seq_t *s, uint32_t duration_ms, uint32_t now) {
+    return now - s->phase_ms >= duration_ms;
+}
+
+static void advance(gt_seq_t *s, uint32_t now) {
     switch (s->phase) {
     case GT_ALERT:
-        if (s->asserted && now - s->held_since >= GT_ARM_MS)
-            s->armed = true;
-        if (s->armed && !s->asserted)
-            enter(s, GT_COUNTDOWN, now);
+        alert_step(s, now);
         break;
     case GT_COUNTDOWN:
-        if (s->asserted)
-            abort_to_alert(s, now);
-        else if (now - s->phase_ms >= GT_COUNTDOWN_MS)
+        if (phase_has_run(s, GT_COUNTDOWN_MS, now))
             after(s, 0, now);
         break;
     case GT_TONE:
-        if (s->asserted)
-            abort_to_alert(s, now);
-        else if (now - s->phase_ms >= GT_TONE_MS)
+        if (phase_has_run(s, GT_TONE_MS, now))
             enter(s, GT_COUNTDOWN_2, now);
         break;
     case GT_COUNTDOWN_2:
-        if (s->asserted)
-            abort_to_alert(s, now);
-        else if (now - s->phase_ms >= GT_COUNTDOWN_MS)
+        if (phase_has_run(s, GT_COUNTDOWN_MS, now))
             enter(s, GT_FIRE_2, now);
         break;
     case GT_ALL_CLEAR:
-        if (now - s->phase_ms >= GT_ALL_CLEAR_MS)
+        if (phase_has_run(s, GT_ALL_CLEAR_MS, now))
             enter(s, GT_DONE, now);
         break;
     default:
         break;
     }
-    if (s->phase == GT_FIRE_1)
-        a.fire = 1;
-    else if (s->phase == GT_FIRE_2)
-        a.fire = 2;
+}
+
+/* [GND-TEST-10] */
+static bool stopped_by_the_switch(gt_phase_t p) {
+    return p == GT_COUNTDOWN || p == GT_TONE || p == GT_COUNTDOWN_2;
+}
+
+static uint8_t channel_to_fire(gt_phase_t p) {
+    return p == GT_FIRE_1 ? 1u : p == GT_FIRE_2 ? 2u : 0u;
+}
+
+gt_action_t gt_seq_step(gt_seq_t *s, bool asserted, uint32_t now) {
+    debounce(s, asserted, now);
+    if (s->asserted && stopped_by_the_switch(s->phase))
+        abort_to_alert(s, now);
+    else
+        advance(s, now);
+    gt_action_t a = {GT_SOUND_NONE, channel_to_fire(s->phase)};
     if (!s->sounded) {
         a.sound = sound_of(s->phase);
         s->sounded = true;

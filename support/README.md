@@ -18,14 +18,16 @@ extension installs it.
 |--------|---------|
 | `test_network.py` | Comprehensive network/API test suite with TUI |
 | `http_stream_check.py` | The HTTP server over raw sockets: requests split byte by byte, bodies in later writes, coalesced requests, odd-chunk uploads round-tripped, parallel fetches past a stalled connection (rewrites /www/app.js and index.html with the local copies) |
-| `api_check.py` | Bench check of every HTTP route, the config round trip, the pad diagnosis, silence on USB, and test mode (erases the flight log; about 15 s in test mode) |
+| `api_check.py` | Bench check of every HTTP route, a stored configuration that waits for the next start, the board's limits, silence on USB, and test mode (erases the flight log; about 15 s in test mode) |
 | `pressure_trace.py` | Every pressure conversion a board makes, judged for the faults a sample rate hides (DD-063) |
 | `noise_baseline.py` | A still board's pressure noise and pad speed noise, from `/api/status` |
 | `register_board.py` | Record the attached boards in `boards/BOARD_REGISTRY.json` and report subnet collisions |
-| `bench_flight.py` | Fly a profile on a board through its flight software, channels mocked (DD-078) |
+| `bench_flight.py` | Fly a profile on a board through its flight software, channels mocked, with a canopy that fails if asked (DD-078, SIM-04) |
 | `hr_log.py` | Decode a high-rate log from the SD card into CSV (DD-077) |
 | `prove_core0.py` | Prove from the linked ELF that no flight-critical root can reach a wait core1 can hold |
 | `trace_check.py` | Check the requirements, decisions, traceability and living documents against each other and the code |
+| `trace_matrix.py` | Write `TRACEABILITY.md` from the tests' own citations and `trace_notes.tsv` |
+| `structure_check.py` | Check the requirements that are properties of the source |
 | `wait_check.py` | Fail if any source in `src/` or `boards/` sleeps or busy-waits (DD-053) |
 | `flash_picotool.sh` | Flash bootloader + app via picotool |
 | `upload_fw.sh` | OTA firmware update via HTTP |
@@ -136,13 +138,13 @@ python3 support/pressure_trace.py --analyze save.json...
 python3 support/pressure_trace.py --selftest      # the judge, on made-up traces
 ```
 
-`api_check.py` restores the pyro settings it changes before it exits.
+`api_check.py` restores the stored pyro settings it changes before it exits. A saved change takes effect only at the next start (CFG-10), so the running board is not altered.
 `http_stream_check.py` turns test mode on and off.
 
 `noise_baseline.py` polls for 60 s by default and reports the RMS of `raw_pa`
 about a straight-line fit, so weather drift is not counted, and of
-`pad_speed_cms`, the speed the launch detector reads. The host tests assume
-the MS5607's 1.2 Pa at OSR 4096. Nobody may touch the board while it runs.
+`pad_speed_cms`, the speed the launch detector reads. The host tests fly at 1.2 Pa and at 9 Pa,
+the noisiest bench board's figure (`test/board_harness.h`). Nobody may touch the board while it runs.
 
 `pressure_trace.py` polls `/api/pressure/trace` for 60 s by default and
 reports per board: the rate and the spread of the intervals, repeated codes
@@ -159,17 +161,25 @@ board.
 ```bash
 python3 support/bench_flight.py <board-ip>                       # 3 km, the board's defaults
 python3 support/bench_flight.py <board-ip> --apogee 30000 --boost 4
+python3 support/bench_flight.py <board-ip> --fail drogue          # that canopy never opens
 python3 support/hr_log.py --fetch <board-ip> hr0001              # the high-rate log after it
 ```
 
 `bench_flight.py` turns test mode on, starts the profile (`POST
 /api/sim/flight`), and follows `/api/sim` and `/api/status` until the board
-lands. It fails a flight whose drogue is not within 4 s of the profile's
-apogee, whose main did not fire, or during which the loop overran or a flash
+lands. It fails a flight whose pyro 1 is not within 4 s of the profile's
+apogee, whose pyro 2 did not fire, or during which the loop overran or a flash
 operation was refused. From the start every fire on the board is mocked until
 it reboots, and the board must be rebooted to fly again. `/api/sim` also
-reports the newest pressure fit and the Mach lock, for a flight that goes
+reports the newest pressure estimate and the Mach flag, for a flight that goes
 wrong.
+
+The profile's descent starts from rest at apogee and gathers speed under
+gravity toward each rate. `--fail drogue`, `--fail main` or `--fail both`
+flies a canopy that never opens (SIM-04): the rocket falls toward
+`--ballistic` m/s (80 by default) where that canopy would have held it. With
+a re-fire or emergency speed set in the stored configuration, the script
+also requires that a channel fired more than once.
 
 ## Board Registry
 
@@ -190,8 +200,10 @@ MK1Cs' do: a record is keyed by hw_id and MAC, and the report lists shared ids.
 ## Static Checks (CI)
 
 ```bash
-python3 support/prove_core0.py --core1 core1_main build/pyro_fw_mk1b.elf
+python3 support/prove_core0.py --core1 lua_task build/pyro_fw_mk1b.elf
 python3 support/trace_check.py [--counts]
+python3 support/trace_matrix.py --check
+python3 support/structure_check.py
 python3 support/wait_check.py
 ```
 
@@ -208,6 +220,18 @@ documents cite to `REQUIREMENTS.md`, every DD to `DECISIONS.md`, every live
 requirement to a row in `TRACEABILITY.md`, and every test a row names to the
 code. A function a living document names in backticks with its parentheses,
 in this file too, must exist in the tree.
+
+`trace_matrix.py` writes `TRACEABILITY.md`: a requirement is verified by a
+test named for it or citing it, a suite whose header says `Verifies [...]`, a
+Playwright file or a hardware script that cites it, a rule of
+`structure_check.py`, or a line of `trace_notes.tsv`. `--check` fails when
+the file is out of date.
+
+`structure_check.py` reads the source for the requirements that are
+properties of it: no platform code in the flight software (HAL-01, HAL-02),
+no receive path on the telemetry port (TEL-12), no reload of the
+configuration (CFG-10), no test-only construct (CODE-09), no refused fire
+(PYR-FIRE-01), and each board's declarations (BRD-01).
 
 `wait_check.py` keeps a per-file ratchet of calls not yet converted, which only
 shrinks; it is empty. Bounded waits on a bus or a hardware handshake are

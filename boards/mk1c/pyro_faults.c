@@ -42,6 +42,10 @@ void faults_latch(bus_fault_t fault) {
     faults.latched |= fault;
 }
 
+void faults_clear(bus_fault_t fault) {
+    faults.latched &= (uint8_t)~fault;
+}
+
 uint8_t faults_latched(void) {
     return faults.latched;
 }

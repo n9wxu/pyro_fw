@@ -37,7 +37,7 @@ const char *beep_codes_description(beep_reason_t r) {
  *   ok_to_fly       rapid chirp            Quantum 1.09G / Quark "ready"
  *   check_pyro_1    5 beeps                Quark: 5 = no Drogue continuity
  *   check_pyro_2    4 beeps                Quark: 4 = no Main continuity
- *   system_failure  2 beeps                Classic/TRS: 2 = sensor/hardware
+ *   general_fault   2 beeps                Classic/TRS: 2 = sensor/hardware
  *
  * Channel 1 gets the DROGUE code and channel 2 the MAIN code because that is
  * how the shipped config uses them -- pyro1 fires at apogee, pyro2 at
@@ -53,11 +53,10 @@ static void shipped(beep_personality_t *p, const char *name) {
     p->spec[BR_OK_TO_FLY] = (beep_spec_t){BK_CHIRP, 0, 0};
     p->spec[BR_CHECK_PYRO_1] = (beep_spec_t){BK_CODE, 5, 0};
     p->spec[BR_CHECK_PYRO_2] = (beep_spec_t){BK_CODE, 4, 0};
-    p->spec[BR_SYSTEM_FAILURE] = (beep_spec_t){BK_CODE, 2, 0};
+    p->spec[BR_GENERAL_FAULT] = (beep_spec_t){BK_CODE, 2, 0};
 
     p->gap_ms = 5000; /* re-announce, so silence means something is wrong */
     p->repeat = 0;    /* until launch */
-    p->split_pyro = true;
 }
 
 void beep_codes_defaults(beep_table_t *t) {
@@ -87,13 +86,7 @@ const beep_personality_t *beep_codes_active(const beep_table_t *t) {
 beep_spec_t beep_codes_spec(const beep_table_t *t, beep_reason_t r) {
     const beep_personality_t *p = beep_codes_active(t);
     if (r < 0 || r >= BEEP_REASON_COUNT) {
-        return p->spec[BR_SYSTEM_FAILURE];
-    }
-    /* With the channels merged there is one "check the pyro", so channel 2
-     * resolves to channel 1's sound rather than to a second one nobody
-     * configured. */
-    if (r == BR_CHECK_PYRO_2 && !p->split_pyro) {
-        return p->spec[BR_CHECK_PYRO_1];
+        return p->spec[BR_GENERAL_FAULT];
     }
     return p->spec[r];
 }
@@ -110,6 +103,8 @@ const char *beep_codes_strerror(beep_err_t e) {
         return "the selected personality does not exist";
     case BEEP_ERR_ALL_SILENT:
         return "a personality that says nothing tells an operator nothing";
+    case BEEP_ERR_OK_SILENT:
+        return "OK to fly must be heard: silence means a fault";
     case BEEP_ERR_TOO_LARGE:
         return "the table does not fit beep.ini";
     case BEEP_ERR_STORE:
@@ -129,17 +124,11 @@ static bool spec_same(const beep_spec_t *a, const beep_spec_t *b) {
     return a->d1 == b->d1 && a->d2 == b->d2;
 }
 
-/* Which outcomes a personality can actually produce. With the channels merged
- * check_pyro_2 is never played, so it must not be compared against. */
-static bool reason_live(const beep_personality_t *p, int r) {
-    return !(r == BR_CHECK_PYRO_2 && !p->split_pyro);
-}
-
 /* A beep count that cannot be heard or cannot be counted. Returns the
  * offending outcome, or -1. */
 static int find_bad_count(const beep_personality_t *p) {
     for (int i = 0; i < BEEP_REASON_COUNT; i++) {
-        if (!reason_live(p, i) || p->spec[i].kind != BK_CODE) {
+        if (p->spec[i].kind != BK_CODE) {
             continue;
         }
         uint8_t d1 = p->spec[i].d1, d2 = p->spec[i].d2;
@@ -156,11 +145,11 @@ static int find_bad_count(const beep_personality_t *p) {
  * the pair, or -1. */
 static int find_duplicate(const beep_personality_t *p) {
     for (int i = 0; i < BEEP_REASON_COUNT; i++) {
-        if (!reason_live(p, i) || p->spec[i].kind == BK_SILENT) {
+        if (p->spec[i].kind == BK_SILENT) {
             continue;
         }
         for (int j = i + 1; j < BEEP_REASON_COUNT; j++) {
-            if (!reason_live(p, j) || p->spec[j].kind == BK_SILENT) {
+            if (p->spec[j].kind == BK_SILENT) {
                 continue;
             }
             if (spec_same(&p->spec[i], &p->spec[j])) {
@@ -174,7 +163,7 @@ static int find_duplicate(const beep_personality_t *p) {
 static int count_audible(const beep_personality_t *p) {
     int n = 0;
     for (int i = 0; i < BEEP_REASON_COUNT; i++) {
-        if (reason_live(p, i) && p->spec[i].kind != BK_SILENT) {
+        if (p->spec[i].kind != BK_SILENT) {
             n++;
         }
     }
@@ -193,6 +182,12 @@ static beep_verdict_t check_personality(const beep_personality_t *p, int idx) {
     if (count_audible(p) == 0) {
         v.reason = -1;
         v.err = BEEP_ERR_ALL_SILENT;
+        v.what = beep_codes_strerror(v.err);
+        return v;
+    }
+    if (p->spec[BR_OK_TO_FLY].kind == BK_SILENT) {
+        v.reason = BR_OK_TO_FLY;
+        v.err = BEEP_ERR_OK_SILENT;
         v.what = beep_codes_strerror(v.err);
         return v;
     }
@@ -230,10 +225,9 @@ beep_verdict_t beep_codes_validate(const beep_table_t *t) {
  * p0_name=Default
  * p0_gap=5000
  * p0_repeat=0
- * p0_split=true
  * p0_ok_to_fly=chirp
  * p0_check_pyro_1=code:5
- * p0_system_failure=code:2-2
+ * p0_general_fault=code:2-2
  *
  * A spec reads the way it sounds. "code:5" is five beeps; "code:2-2" is two
  * groups of two. The file is what an operator edits. */
@@ -276,10 +270,6 @@ static void spec_to_str(const beep_spec_t *sp, char *out, int max) {
     }
 }
 
-static bool parse_bool(const char *s) {
-    return strcmp(s, "true") == 0 || strcmp(s, "1") == 0;
-}
-
 /* One field of one personality. Split from the line parser, which was over
  * the complexity limit the project enforces. */
 static void apply_personality_field(beep_personality_t *p, const char *field, const char *val) {
@@ -295,10 +285,9 @@ static void apply_personality_field(beep_personality_t *p, const char *field, co
         p->repeat = (uint8_t)atoi(val);
         return;
     }
-    if (strcmp(field, "split") == 0) {
-        p->split_pyro = parse_bool(val);
-        return;
-    }
+    /* A table stored before the outcome was renamed [BUZ-CODE-04]. */
+    if (strcmp(field, "system_failure") == 0)
+        field = beep_codes_key(BR_GENERAL_FAULT);
     for (int i = 0; i < BEEP_REASON_COUNT; i++) {
         if (strcmp(field, rows[i].key) == 0) {
             beep_spec_t sp;
@@ -376,7 +365,6 @@ int beep_codes_serialize_ini(const beep_table_t *t, char *buf, int max_len) {
         APPEND("p%d_name=%s\r\n", i, p->name);
         APPEND("p%d_gap=%u\r\n", i, (unsigned)p->gap_ms);
         APPEND("p%d_repeat=%u\r\n", i, (unsigned)p->repeat);
-        APPEND("p%d_split=%s\r\n", i, p->split_pyro ? "true" : "false");
         for (int r = 0; r < BEEP_REASON_COUNT; r++) {
             char sv[16];
             spec_to_str(&p->spec[r], sv, (int)sizeof(sv));

@@ -20,7 +20,8 @@
 
 <!-- ── Tab 1: Status ──────────────────────────────────────────── -->
 <div id="tab-status" class="tabpanel">
-  <div id="pendingWarn" class="warn" style="display:none">⚠ Configuration changed but not applied — press Reboot in Config tab</div>
+  <div id="pendingWarn" class="warn" style="display:none">⚠ Configuration saved but not applied — it takes effect at the next start. Press Reboot in the Config tab.</div>
+  <div id="limitWarn" class="warn" style="display:none">⚠ A pyro timing value was outside what this board permits and has been brought into range — see the Config tab.</div>
   <div id="testWarn" class="warn" style="display:none">⚠ Test mode: on USB this board detects a launch, fires its pyros and beeps as it does on battery. A reboot ends it.</div>
   <table class="info" id="statusTable">
     <tr><td class="lbl">State</td><td id="sState" class="val big">—</td></tr>
@@ -30,12 +31,14 @@
     <tr><td class="lbl">Pressure</td><td id="sPa" class="val">—</td></tr>
     <tr><td class="lbl">Flight Time</td><td id="sFt" class="val">—</td></tr>
     <tr><td class="lbl">Uptime</td><td id="sUp" class="val">—</td></tr>
+    <tr><td class="lbl">This start</td><td id="sResume" class="val">—</td></tr>
   </table>
   <h3>Pyro Channels</h3>
   <table class="info">
     <tr><td class="lbl">Pyro 1</td><td id="sP1" class="val">—</td></tr>
     <tr><td class="lbl">Pyro 2</td><td id="sP2" class="val">—</td></tr>
     <tr><td class="lbl">Armed</td><td id="sArm" class="val">—</td></tr>
+    <tr><td class="lbl">Emergency fire</td><td id="sEmrg" class="val">—</td></tr>
   </table>
   <h3>USB</h3>
   <table class="info">
@@ -47,8 +50,10 @@
     <tr><td class="lbl">Rocket ID</td><td id="sCfgId" class="val">—</td></tr>
     <tr><td class="lbl">Rocket Name</td><td id="sCfgName" class="val">—</td></tr>
     <tr><td class="lbl">Units</td><td id="sCfgUnits" class="val">—</td></tr>
-    <tr><td class="lbl">Pyro 1 (Drogue)</td><td id="sCfgP1" class="val">—</td></tr>
-    <tr><td class="lbl">Pyro 2 (Main)</td><td id="sCfgP2" class="val">—</td></tr>
+    <tr><td class="lbl">Pyro 1</td><td id="sCfgP1" class="val">—</td></tr>
+    <tr><td class="lbl">Pyro 2</td><td id="sCfgP2" class="val">—</td></tr>
+    <tr><td class="lbl">Re-fire every</td><td id="sCfgRefire" class="val">—</td></tr>
+    <tr><td class="lbl">Gap between channels</td><td id="sCfgGap" class="val">—</td></tr>
   </table>
 </div>
 
@@ -64,7 +69,7 @@
         <option value="0">cm</option><option value="1">meters</option><option value="2">feet</option>
       </select></td></tr>
   </table>
-  <h3>Pyro 1 — Drogue</h3>
+  <h3>Pyro 1</h3>
   <table class="info">
     <tr><td class="lbl">Mode</td><td>
       <select id="p1mode" onchange="cfgChanged()">
@@ -79,7 +84,7 @@
       <span id="p1unit"></span>
       <span id="p1warn" class="warn-inline"></span></td></tr>
   </table>
-  <h3>Pyro 2 — Main</h3>
+  <h3>Pyro 2</h3>
   <table class="info">
     <tr><td class="lbl">Mode</td><td>
       <select id="p2mode" onchange="cfgChanged()">
@@ -93,6 +98,28 @@
       <input type="number" id="p2val" min="0" max="65535" value="0" oninput="cfgChanged()">
       <span id="p2unit"></span>
       <span id="p2warn" class="warn-inline"></span></td></tr>
+  </table>
+  <h3>Fire rules</h3>
+  <p class="hint">A speed of 0 turns its rule off. A channel fires again while the descent stays faster than its
+     re-fire speed; every enabled channel fires, and keeps firing, while it is faster than the emergency speed.</p>
+  <table class="info">
+    <tr><td class="lbl">Pyro 1 re-fire speed</td><td>
+      <input type="number" id="p1refire" min="0" max="65535" value="0" oninput="cfgChanged()">
+      <span class="speedUnit"></span></td></tr>
+    <tr><td class="lbl">Pyro 2 re-fire speed</td><td>
+      <input type="number" id="p2refire" min="0" max="65535" value="0" oninput="cfgChanged()">
+      <span class="speedUnit"></span></td></tr>
+    <tr><td class="lbl">Emergency fire speed</td><td>
+      <input type="number" id="emrgSpeed" min="0" max="65535" value="0" oninput="cfgChanged()">
+      <span class="speedUnit"></span></td></tr>
+    <tr><td class="lbl">Re-fire interval</td><td>
+      <input type="number" id="refireInterval" min="0" max="65535" value="0" oninput="cfgChanged()"> ms
+      <span id="refireIntervalHint" class="hint"></span>
+      <span id="refireIntervalWarn" class="warn-inline"></span></td></tr>
+    <tr><td class="lbl">Gap between channels</td><td>
+      <input type="number" id="fireGap" min="0" max="65535" value="0" oninput="cfgChanged()"> ms
+      <span id="fireGapHint" class="hint"></span>
+      <span id="fireGapWarn" class="warn-inline"></span></td></tr>
   </table>
   <h3>Flight log</h3>
   <table class="info">
@@ -131,7 +158,7 @@
      effect at the next reboot. <span id="relMsg"></span></p>
 
   <div id="cfgTips" class="tips" style="display:none"></div>
-  <div id="cfgDirty" class="warn" style="display:none">⚠ Changes not applied — press Reboot after saving</div>
+  <div id="cfgDirty" class="warn" style="display:none">⚠ Changes take effect at the next start — Save, then Reboot</div>
   <div class="btnrow">
     <button onclick="cfgDefault()">🏭 Default</button>
     <button onclick="cfgCurrent()">↩ Current</button>
@@ -185,9 +212,6 @@
             </select>
             every <input id="bpGap" type="number" min="0" max="60000" step="500"
                          style="width:5.5em" oninput="beepsCheck()"> ms</td></tr>
-    <tr><td class="lbl">Pyro faults</td>
-        <td><label><input type="checkbox" id="bpSplit" onchange="beepsSelect(true)">
-            tell the channels apart</label></td></tr>
   </table>
 
   <table class="info" id="bpTable"></table>
@@ -228,6 +252,7 @@
     <button onclick="luaCheck()">✓ Check</button>
     <button onclick="luaSave()">💾 Save &amp; Apply</button>
     <button onclick="luaLoad()">↻ Reload</button>
+    <button id="btnLuaRemove" onclick="luaRemove()">🗑 Remove</button>
     <!-- A program that exists only on the device is lost with its
          filesystem: a failed mount formats it, and a flash-geometry change
          moves it. -->

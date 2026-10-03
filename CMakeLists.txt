@@ -274,6 +274,12 @@ if(PYRO_BOARD_KIND STREQUAL "pico" AND TARGET pico_fota_bootloader)
 endif()
 
 
+# The flight software: the same files in the firmware, every host suite and
+# the simulators [HAL-04]. scripts/build_wasm.sh reads the same list.
+file(STRINGS ${CMAKE_CURRENT_LIST_DIR}/src/flight_sources.txt PYRO_FLIGHT_SOURCES)
+set(PYRO_FLIGHT_SOURCES_ABS ${PYRO_FLIGHT_SOURCES})
+list(TRANSFORM PYRO_FLIGHT_SOURCES_ABS PREPEND ${CMAKE_CURRENT_LIST_DIR}/)
+
 if(PYRO_BOARD_KIND STREQUAL "pico")
 # ---- RP2040 firmware image ----------------------------------------
 # Suppress warnings in third-party pico_fota_bootloader
@@ -318,12 +324,6 @@ add_subdirectory(${PYRO_BOARD_DIR} ${CMAKE_BINARY_DIR}/board)
 # repeat both archives on the link line; without it GNU ld's single pass
 # leaves the board's symbols unresolved.
 target_link_libraries(pyro_hal_common PUBLIC pyro_board)
-
-# The flight software: the same files in the firmware, every host suite and
-# the simulators [HAL-04]. scripts/build_wasm.sh reads the same list.
-file(STRINGS ${CMAKE_CURRENT_LIST_DIR}/src/flight_sources.txt PYRO_FLIGHT_SOURCES)
-set(PYRO_FLIGHT_SOURCES_ABS ${PYRO_FLIGHT_SOURCES})
-list(TRANSFORM PYRO_FLIGHT_SOURCES_ABS PREPEND ${CMAKE_CURRENT_LIST_DIR}/)
 
 add_executable(pyro_fw_c 
     src/main_hardware.c
@@ -872,6 +872,7 @@ add_custom_target(flight_sim_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_flight_sim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_sim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/bench_flight.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/atmosphere.c
                ${unity_SOURCE_DIR}/src/unity.c
                -lm
                -o ${CMAKE_BINARY_DIR}/test_flight_sim
@@ -941,8 +942,17 @@ add_custom_target(board_pyro_tests
                ${CMAKE_CURRENT_LIST_DIR}/boards/mk1b/pyro_board.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_board_pyro_mk1b
+    COMMAND ${HOST_CC} -Wall -Wextra -DBOARD_PYRO_U5_DISCHARGES_OUTPUTS=0 -I${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1b -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/src/lua -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_board_pyro_mk1b.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1b/pyro_board.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_board_pyro_mk1b_base_part
     COMMAND ${CMAKE_COMMAND} -E echo "Running board pyro tests..."
     COMMAND ${CMAKE_BINARY_DIR}/test_board_pyro_mk1b
+    COMMAND ${CMAKE_BINARY_DIR}/test_board_pyro_mk1b_base_part
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Board pyro backend tests"
 )

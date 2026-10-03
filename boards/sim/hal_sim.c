@@ -30,6 +30,8 @@ static bool sim_fed;
 static int sim_pyro_fire_count = 0;
 static uint8_t sim_pyro_last_channel = 0;
 static bool sim_pyro_firing = false;
+static uint32_t sim_pulse_start_ms;
+#define SIM_PULSE_MS 500u /* as MK1A's and MK1B's pulse */
 
 /* Continuity — set by user */
 static hal_continuity_t sim_cont1 = {50, true, false, false};
@@ -72,9 +74,9 @@ void sim_set_continuity(int ch, uint16_t adc, bool good, bool open) {
     c->open = open;
     c->shorted = false;
 }
-void sim_clear_pyro_firing(void) {
-    sim_pyro_firing = false;
-}
+/* Kept for callers that end a pulse themselves; the HAL ends it in
+ * hal_pyro_update(). */
+void sim_clear_pyro_firing(void) {}
 int sim_get_pyro_fire_count(void) {
     return sim_pyro_fire_count;
 }
@@ -172,10 +174,12 @@ void hal_pyro_fire(uint8_t channel) {
     sim_pyro_fire_count++;
     sim_pyro_last_channel = channel;
     sim_pyro_firing = true;
+    sim_pulse_start_ms = sim_time;
 }
 
 void hal_pyro_update(uint32_t now_ms) {
-    (void)now_ms;
+    if (sim_pyro_firing && now_ms - sim_pulse_start_ms >= SIM_PULSE_MS)
+        sim_pyro_firing = false;
 }
 bool hal_pyro_is_firing(void) {
     return sim_pyro_firing;
@@ -186,6 +190,10 @@ bool hal_pyro_fault(uint8_t channel) {
 }
 
 #endif /* !PYRO_SIM_BOARD_PYRO */
+
+void hal_pyro_limits(hal_pyro_limits_t *out) {
+    *out = (hal_pyro_limits_t)PYRO_LIMITS_GENERAL;
+}
 
 /* Record a fire for the simulation's own bookkeeping, which is what the
  * JS wrapper reads as sim.pyroFireCount and sim.lastFireChannel.
@@ -282,7 +290,7 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
 
 int hal_config_load(config_t *cfg) {
     config_set_defaults(cfg);
-    char buf[512];
+    char buf[CONFIG_INI_MAX];
     int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
     if (n > 0) {
         buf[n] = '\0';
@@ -295,19 +303,11 @@ int hal_config_load(config_t *cfg) {
 }
 
 int hal_config_save(const config_t *cfg) {
-    char buf[512];
+    char buf[CONFIG_INI_MAX];
     int n = config_serialize_ini(cfg, buf, (int)sizeof(buf));
     if (n <= 0)
         return -1;
     return hal_fs_write_file("config.ini", buf, n);
-}
-
-/* ── Serial readline (sim: no serial input) ──────────────────────── */
-
-bool hal_serial_readline(char *buf, int max_len) {
-    (void)buf;
-    (void)max_len;
-    return false; /* simulation has no serial input */
 }
 
 /* ── Async task runner (sim) ─────────────────────────────────────── */
@@ -317,10 +317,19 @@ bool hal_serial_readline(char *buf, int max_len) {
  * -- quantisation noise that no descent phase can settle on. */
 #define SIM_SAMPLE_MS 20
 
+/* A pascal of dither: the physics gives one exact pressure on the pad, and a
+ * sensor that repeats one reading for a second is a failed one
+ * [SNS-PRES-10]. */
+static int32_t sensor_dither(void) {
+    static uint32_t lcg = 12345u;
+    lcg = lcg * 1664525u + 1013904223u;
+    return (int32_t)((lcg >> 16) % 3u) - 1;
+}
+
 void hal_tasks_tick(uint32_t now_ms) {
     /* Feed pressure_processing so detectors read altitude via pp_read(). */
     if (sim_sensor_type > 0 && (!sim_fed || now_ms - sim_last_feed_ms >= SIM_SAMPLE_MS)) {
-        pp_feed((int32_t)sim_pressure_pa, now_ms);
+        pp_feed((int32_t)sim_pressure_pa + sensor_dither(), now_ms);
         sim_last_feed_ms = now_ms;
         sim_fed = true;
     }

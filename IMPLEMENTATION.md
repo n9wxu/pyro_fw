@@ -15,19 +15,19 @@ Three components:
 - **Engine**: `dispatch_state()` calls the detector → looks up (from, event) in the table → calls the action → returns the new state. A state out of range returns PAD_IDLE.
 
 ### Transition Table
-The table is `transitions[]` in `src/flight_states.c`; `docs/flight_states.md` has the diagram and every state in detail. BOOT_SENSOR, FAULT and GROUND_TEST are numbered after LANDED, so no recorded state number moves.
+The table is `transitions[]` in `src/flight_states.c`; `docs/flight_states.md` has every state, the fire rules and the reasons. BOOT_SENSOR, FAULT and GROUND_TEST are numbered after LANDED, so no recorded state number moves.
 ```
 BOOT_SETTLE     → BOOT_SENSOR      on SEVT_TIMER            (2.5 s settle)
-BOOT_SENSOR     → BOOT_CONTINUITY  on SEVT_DONE             (sensor answered, filesystem mounted)
-BOOT_SENSOR     → ASCENT / FALLING on SEVT_RECOVER_*        (brownout recovery, FLT-BROWN-02)
+BOOT_SENSOR     → BOOT_CONTINUITY  on SEVT_DONE             (sensor answered, storage usable, no flight in progress)
+BOOT_SENSOR     → ASCENT / FALLING on SEVT_RESUME_*         (a flight in progress, FLT-BROWN-02)
 BOOT_SENSOR     → FAULT            on SEVT_FAULT
 BOOT_CONTINUITY → BOOT_CALIBRATE   on SEVT_DONE
-BOOT_CONTINUITY → GROUND_TEST      on SEVT_GROUND_TEST      (switch held at power-up, GND-TEST-05)
-BOOT_CALIBRATE  → PAD_IDLE         on SEVT_CAL_DONE         (10 readings averaged)
+BOOT_CONTINUITY → GROUND_TEST      on SEVT_GROUND_TEST      (switch held at start-up, GND-TEST-05)
+BOOT_CALIBRATE  → PAD_IDLE         on SEVT_CAL_DONE         (10 readings)
 BOOT_CALIBRATE  → FAULT            on SEVT_FAULT            (no samples in 10 s)
 PAD_IDLE        → ASCENT           on SEVT_LAUNCH           (100 ft and 5 m/s)
-ASCENT          → ASCENT           on SEVT_ARMED            (arming gate, DD-017)
-ASCENT          → FALLING          on SEVT_APOGEE           (the fit shows apogee while armed)
+ASCENT          → ASCENT           on SEVT_ARMED
+ASCENT          → FALLING          on SEVT_APOGEE           (the filtered pressure past its minimum)
 FALLING         → DROGUE_DESCENT / CHUTE_DESCENT  on SEVT_DROGUE / SEVT_CHUTE (a settled descent rate)
 DROGUE_DESCENT  → CHUTE_DESCENT on SEVT_CHUTE; → FALLING on SEVT_FREEFALL
 FALLING / DROGUE_DESCENT / CHUTE_DESCENT → LANDED on SEVT_LANDING
@@ -35,29 +35,25 @@ FALLING / DROGUE_DESCENT / CHUTE_DESCENT → LANDED on SEVT_LANDING
 
 ### State Transition Criteria
 
-**PAD_IDLE → ASCENT:** Filtered altitude above 100 ft with vertical speed above 5 m/s, held together for 100 ms (FLT-LAUNCH-01, FLT-LAUNCH-07), and no USB host attached unless test mode is on (USB-01, USB-08). T+0 is backdated to the first sample above 50 cm (FLT-LAUNCH-03).
+**PAD_IDLE → ASCENT:** 100 ft above the ground reference while climbing at 5 m/s or more, held 100 ms (FLT-LAUNCH-02, FLT-LAUNCH-07), and no USB host attached unless test mode is on (USB-01, USB-08). T+0 is back-dated to the start of the rise (FLT-LAUNCH-03).
 
-**ASCENT → FALLING:** Clean fits show the pressure rising for 60 ms, and the fitted pressure has risen to 1.0001 times the lowest a clean fit showed, while the pyros are armed and no Mach lock stands (FLT-APO-01, FLT-MACH-05, DD-048); or the lock's fallback, once clean fits show the rocket falling back past where the lock went up (FLT-MACH-04). The pyros arm once the peak speed has passed 10 m/s and the speed has fallen back below it, above about 30 m (DD-017, FLT-MACH-06). The Mach lockout is described in `docs/mach_lockout.md` (DD-049).
+**ASCENT → FALLING:** the filtered pressure rising by more than three times its rate's uncertainty, and above its lowest value by more than twice the estimate's, held 60 ms (FLT-APO-01, DD-085). Under the Mach flag: a smooth, slow descent under gravity for 2 s, or the pressure smooth and above the flag's (FLT-MACH-04). The Mach flag is described in `docs/mach_lockout.md`.
 
-**Descent:** the phase is read from the descent rate settling in a band, never from a firing command (DD-023).
+**Descent:** the phase is read from the descent rate settling in a band, never from a firing command (FLT-DESC-01). The fire rules are `fire_control_step()` in `src/fire_control.c`: each channel's own trigger, re-fire, and the emergency fire (DD-082).
 
-**→ LANDED:** All three conditions hold for 1 second, from any descent state:
-- Altitude change < 1m between samples
-- Vertical speed < 2 m/s
-- Altitude < 30m AGL
+**→ LANDED:** under 2 m/s for 1 s within 30 m of the ground, from any descent state; or the landing timeout, `landing_timeout` (60 s) after apogee, and still.
 
-Or the landing timeout: `landing_timeout` (60 s) after apogee, and still -- under 2 m/s for 1 s on a sensor that has not failed (FLT-LAND-07).
-
-**BOOT_CONTINUITY → GROUND_TEST:** `hal_ground_test_asserted()` held through the last 500 ms of BOOT_SETTLE (GND-TEST-05, DD-071). A board recovering a flight never takes it.
+**BOOT_CONTINUITY → GROUND_TEST:** `hal_ground_test_asserted()` held through the last 500 ms of BOOT_SETTLE (GND-TEST-05, DD-087). A board resuming a flight never takes it.
 
 ### Hardware Abstraction Layer
-Flight logic files (`flight_states.c`, `telemetry_formatter.c`, `buzzer.c`) contain zero platform-specific code. All hardware interaction goes through `hal.h`:
+The flight software (`src/flight_sources.txt`) contains no platform-specific code and no conditional compilation; `support/structure_check.py` holds it to that. All hardware interaction goes through `hal.h`, which is also the seam every host test mocks (HAL-05):
 
 | HAL Function | Purpose |
 |---|---|
 | `hal_time_ms()` | Current time |
 | `hal_pressure_init()`, `hal_pressure_sensor()` | Sensor bring-up and its result; samples reach the pressure layer from `hal_tasks_tick()` |
-| `hal_pyro_init()`, `hal_pyro_sample()`, `hal_pyro_get()`, `hal_pyro_fire()`, `hal_pyro_update()`, `hal_pyro_fault()` | Pyro channels |
+| `hal_pyro_init()`, `hal_pyro_sample()`, `hal_pyro_get()`, `hal_pyro_fire()`, `hal_pyro_update()`, `hal_pyro_fault()`, `hal_pyro_limits()` | Pyro channels, and what the board permits of their timing |
+| `hal_reset_cause()` | Why the processor started |
 | `hal_buzzer_init()`, `hal_buzzer_tone_on()`, `hal_buzzer_tone_off()` | Buzzer |
 | `hal_telemetry_send()` | UART output |
 | `hal_fs_open()`, `hal_fs_write()`, `hal_fs_close()`, `hal_fs_read_file()`, `hal_fs_write_file()`, `hal_fs_read_cached()` | Filesystem |
@@ -69,37 +65,37 @@ Flight logic files (`flight_states.c`, `telemetry_formatter.c`, `buzzer.c`) cont
 Three implementations: `src/hal_common/hal_common.c` with each board's files in `boards/<name>/` (Pico), `test/hal_test.c` (mocks), `boards/sim/hal_sim.c` (simulation).
 
 ### Tasks
-FreeRTOS SMP on both cores (DD-073, `src/rtos/rtos_tasks.h`). `main()` in `src/main_hardware.c` brings the board up on core0 and starts the scheduler. `flight_task()` runs alone at P on core0, woken every 20 ms (`src/loop_period.h`, DD-065) by an alarm on the hardware timer. In order: `hal_tasks_tick()` (the pressure sensor first, so the MS5607 is commanded at a steady offset); `flight_call_service()` (changes the net task handed over); `dispatch_state()`; `flight_update_outputs()`; Lua's service and its tick request; then a notification to the storage task. The net task (`src/net_task.c`: TinyUSB, lwIP, HTTP's transport and work units, DD-061), the Lua task (`src/lua/lua_core1.c`) and the storage task (`src/storage_task.c`: `hal_storage_service()` and `flight_flash_service()`) share core1 at P. Every flash program or erase runs through `flash_op()` under a lockout that parks the other core (DD-074). The flight task waits only for its period (RTOS-01). The watchdog is twice `PYRO_LOOP_WORST_MS`.
+FreeRTOS SMP on both cores (DD-073, `src/rtos/rtos_tasks.h`). `main()` in `src/main_hardware.c` brings the board up on core0 and starts the scheduler. `flight_task()` runs alone at P on core0, woken every 20 ms (`src/loop_period.h`, DD-065) by an alarm on the hardware timer. In order: `hal_tasks_tick()` (the pressure sensor first, so the MS5607 is commanded at a steady offset); `flight_call_service()` (changes the net task handed over); `dispatch_state()`; `flight_update_outputs()`; Lua's service and its tick request; then a notification to the storage task. The net task (`src/net_task.c`: TinyUSB, lwIP, HTTP's transport and work units, DD-061), the Lua task (`src/lua/lua_core1.c`) and the storage task (`src/storage_task.c`: `hal_storage_service()` and `flight_storage_service()`) share core1 at P. Every flash program or erase runs through `flash_op()` under a lockout that parks the other core (DD-074). The flight task waits only for its period (FLT-RT-01). The watchdog is twice `PYRO_LOOP_WORST_MS`.
 
 Pads are owned once: `pin_store_claim_pads()` gives each pad one owner, and `pyro_release_claim()` and `lua_iface_publish()` install operations only for pads they could claim (DD-020).
 
-### Pyro Fault Detection
-- `hal_pyro_fault(channel)`: MK1B reads its AP2192 FLAG pins (GPIO 17/18, active-low with pull-ups); MK1C reports its latched bus faults; MK1A has no fault output
-- Post-fire continuity verification: ADC re-check 500-600 ms after each fire (PYR-VERIFY-01)
-- Fault events: EVT_PYRO1_FAULT, EVT_PYRO2_FAULT (overcurrent during fire)
-- Verify events: EVT_PYRO1_NOPEN, EVT_PYRO2_NOPEN (pyro didn't open after fire)
-- Refusals: EVT_PYRO1_REFUSED, EVT_PYRO2_REFUSED (the board energised nothing, PYR-FIRE-01)
+### Pyro health and what a pulse records
+- Health is read once a second on the pad and decides the announcement only. No reading withholds a fire (PYR-HEALTH-01, DD-081).
+- `hal_pyro_fault(channel)`: MK1B reads its AP2192 FLAG pins; MK1C reports its bus faults; MK1A has no fault output.
+- Every pulse is recorded: whether the board energised it (`hal_pyro_is_firing()` straight after `hal_pyro_fire()`), a fault during it (EVT_PYRO1_FAULT, EVT_PYRO2_FAULT), and whether the channel read open afterwards (EVT_PYRO1_NOPEN, EVT_PYRO2_NOPEN). Nothing depends on those records (PYR-FIRE-01, PYR-VERIFY-01).
+- Each board declares the faults it can detect, its pulse and its limits in its `THEORY_OF_OPERATION.md`, "What this board declares" (BRD-01).
 
 ### Key Source Files
 | File | Purpose |
 |---|---|
-| `src/flight_states.c` | State machine, detectors, actions, the ring's CSV export |
-| `src/flight_states.h` | Types, context struct, transition table types |
+| `src/flight_sources.txt` | The flight software's file list, one responsibility a file (`docs/flight_states.md` has the table) |
+| `src/flight_states.c`, `src/flight_states.h` | The transition table, the dispatcher, the context |
+| `src/pressure_estimator.c`, `src/pressure_processing.c`, `src/atmosphere.c` | The filtered state, samples and the ground reference, the standard atmosphere |
+| `src/fire_control.c`, `src/fire_plan.c` | The fire rules; the plan from the configuration and the board |
+| `src/flight_resume.c` | The pad record and the resume decision |
+| `src/telemetry.c` | $PYRO NMEA and its queued events |
 | `src/config.c`, `src/config_fields.h` | `config.ini`: X-macro table, parser, serializer |
-| `src/telemetry_formatter.c` | $PYRO NMEA and JSON formatting |
 | `src/buzzer.c`, `src/beep_codes.c`, `src/beep_store.c` | Non-blocking beep sequencer; outcomes and personalities |
 | `src/hal.h` | Hardware abstraction interface |
 | `src/hal_common/hal_common.c` | Pico SDK HAL implementation, shared by every board |
-| `src/pressure_processing.c` | Pressure filter, altitude, ground reference |
-| `src/pressure_fit.c` | The quadratic fit the detectors read |
 | `src/ms5607_oneshot.c`, `src/bmp280_driver.c` | The sensors' per-loop conversions |
 | `src/flight_log.c`, `src/log_plan.c` | Binary flight log, CSV rendering, logging plans |
-| `src/flash_window.c` | The window every flash write runs in |
 | `src/http_server.c`, `src/http_conn.c`, `src/http_work.c` | HTTP routes, connections, work units |
 | `src/net_glue.c`, `src/net_txq.c` | USB network, lwIP, mDNS, held frames |
-| `src/ground_test.c`, `src/ground_test_seq.c`, `src/ground_test_switch.c` | Serial ground test; the switch procedure |
+| `src/ground_test_seq.c`, `src/ground_test_switch.c` | The ground test procedure and its switch |
+| `src/flight_sim.c`, `src/bench_flight.c` | The bench flight's profile and its hold on the channels |
 | `src/pin_assign.c`, `src/pin_store.c`, `src/pad_claim.c` | `pins.ini` and pad ownership |
-| `src/lua/` | Lua on core1 |
+| `src/lua/` | The script |
 | `src/main_hardware.c` | Hardware main loop |
 | `sim/main_sim.c` | Simulation black box (WASM target) |
 | `boards/sim/hal_sim.c` | Simulation HAL |
@@ -126,11 +122,13 @@ MK1A and MK1C (16 MB): two 4076 KB slots from 0x00A000 and 0x405000, and 8 MB of
 | GET | `/api/log/space` | Room for the next flight's log (WEB-API-12) |
 | GET | `/api/flight.csv` | The flight log, rendered as CSV |
 | POST | `/api/flight/erase` | Erase the flight log |
-| GET/POST | `/api/config` | Config INI file; a POST is merged |
+| GET/POST | `/api/config` | Config INI file; a POST is merged and stored, and takes effect at the next start (CFG-10) |
+| GET | `/api/limits` | The board's pyro timing defaults and ranges, what is in force, the sensor's range (PYR-BOARD-03) |
+| GET, POST | `/api/sim`, `/api/sim/flight`, `/api/sim/stop` | The bench flight, where the board has one (SIM-01..04) |
 | GET/POST | `/api/pins` | `pins.ini` |
 | GET | `/api/pins/caps` | The board's capability table and its vocabulary |
 | GET/POST | `/api/beeps` | Beep personalities; `POST /api/beeps/play` auditions one |
-| GET/POST | `/api/lua/script` | The Lua program; `POST /api/lua/check` validates one against the configured resources, `GET /api/lua/console` reads core1's output |
+| GET/POST | `/api/lua/script` | The Lua program; `POST /api/lua/check` validates one against the configured resources, `GET /api/lua/console` reads the script's output |
 | POST | `/api/test_mode/on`, `/api/test_mode/off` | Test mode (USB-08) |
 | POST | `/api/serial` | The board's MAC, into `serial.txt` |
 | POST | `/api/reboot` | Restart device |
@@ -144,10 +142,10 @@ The API is live in flight; a request that needs a file gets 423 while the flight
 ```
 $PYRO,seq,state,thrust,alt_cm,vel_cms,maxalt_cm,press_pa,time_ms,flags,p1adc,p2adc,0,0*XX\r\n
 ```
-`telem_rate_hz` (default 10) in ASCENT and the descent states, 1Hz in PAD_IDLE and LANDED. State codes 0-5: PAD_IDLE, ASCENT, FALLING, DROGUE_DESCENT, CHUTE_DESCENT, LANDED. XOR checksum. `telem_format=1` gives JSON.
+One message a second in PAD_IDLE, in flight and in LANDED (TEL-03). State codes 0-5: PAD_IDLE, ASCENT, FALLING, DROGUE_DESCENT, CHUTE_DESCENT, LANDED. XOR checksum. An apogee, a fire or a landing is queued and carried ahead of the next message's state sentence (TEL-11). The port accepts no commands; another format is a script's, on serial pins assigned to it (TEL-12).
 
 ### Buzzer
-- **Pad:** one of four outcomes (ok_to_fly, check_pyro_1, check_pyro_2, system_failure) under the active personality, repeating every 5 s until launch by default; the diagnosis is on `/api/status`
+- **Pad:** one of four outcomes (general_fault, check_pyro_1, check_pyro_2, ok_to_fly; one at a time, in that priority) under the active personality, repeating every 5 s until launch by default; the diagnosis is on `/api/status`
 - **USB:** one double chirp on attach, and no announcement while a host is attached (USB-02, USB-03)
 - **Landing:** Altitude beep-out in configured units, repeats forever
 - **Ground test:** its own alert, countdowns, tone and all-clear (GND-TEST-06, GND-TEST-07)
@@ -162,27 +160,22 @@ The flight log (`flight_log.bin` in littlefs) opens at launch and closes at LAND
 
 The flight context also keeps a ring of the last 64 samples and events; `flight_save_csv()` exports it for the simulator.
 
-### Pressure Filter
-Each reading is stamped by its driver at the moment it describes, not when the loop reads it (SNS-PRES-08, DD-046): the MS5607's alarm handler, running from RAM, commands a pressure and a temperature each loop and stamps each conversion's middle (DD-051, DD-066); the BMP280 takes one forced conversion a loop, stamped from its command (DD-067). A conversion a flash erase or program ran beside is discarded (DD-068), and every sensor bus transfer gives up within a bound (DD-069). A reading then passes a median of three, stamped with the middle reading's time, so no single outlier reaches the filter (SNS-PRES-07, DD-040). `pp_filter_pressure()` in `src/pressure_processing.c` is then a first-order IIR with a 500 ms time constant (SNS-PRES-02), its state in Q8 fixed point so it has no dead band (DD-044), initialised to the first reading (SNS-PRES-03). Heights come from the fractional pressure. T+0 is read from the median's own reading, which the filter would delay by its time constant (FLT-LAUNCH-03).
+### Pressure
+Each reading is stamped by its driver at the moment it describes, not when the loop reads it (SNS-PRES-08, DD-046): the MS5607's alarm handler, running from RAM, commands a pressure and a temperature each loop and stamps each conversion's middle (DD-051, DD-066); the BMP280 takes one forced conversion a loop, stamped from its command (DD-067). A conversion a flash erase or program ran beside is discarded (DD-068), and every sensor bus transfer gives up within a bound (DD-069).
 
-Altitude is the hypsometric formula against the ground reference (SNS-ALT-01), clamped to 0-8000 m (SNS-ALT-02, SNS-ALT-03). The ground reference is a 5 s mean of the filtered pressure. Launch freezes it to the part of that mean from before T+0 (GND-CAL-01..05, GND-CAL-07).
+The raw readings go straight into one Kalman filter (`pest_update()` in `src/pressure_estimator.c`, DD-085): its state is ln(p / p_ref), its rate and its acceleration, with the sensor's noise measured from the readings. A reading more than six standard deviations from the prediction is skipped unless it is the third in a row. There is no median, no low-pass and no reseed. Every flight comparison is made in pressure, with heights and speeds the operator set converted once against the pad and the 1976 standard atmosphere (`src/atmosphere.c`, SNS-EST-05).
 
-The filter gives what is reported and logged. The detectors read a least-squares quadratic fitted at every sample through the median's output over the last second, against each sample's own time (`src/pressure_fit.c`, SNS-PRES-09, DD-048). Evaluated at the newest sample, it has no lag on a constant acceleration. Its pressure, rate and acceleration become a height, speed and acceleration through the altitude formula's slope at the fitted pressure. A fit is clean when its residuals are what the sensor's noise explains, σ measured on the pad.
-
-### Altitude Limitations
-Altitude is clamped at 8000 m (SNS-ALT-02) and at 0 (SNS-ALT-03) where it is reported. Speed and the trigger heights come from the fit, unclamped (SNS-ALT-04), so neither clamp reads as a stopped rocket.
+Altitude is computed for people, relative to the pad, and is not clamped: a point below the pad reads negative and no ceiling is applied (SNS-ALT-01). Each sensor's rated range and its height for proper operation are in `src/pressure_sensor.h`, and each board declares them (SNS-MAX-01).
 
 ### Ground Test
-Serial commands (`STATUS`, `BEEP`, `ARM`, `FIRE`) are read in PAD_IDLE only (GND-TEST-01..04). The switch procedure is `gt_seq_step()` in `src/ground_test_seq.c`, which owns the schedule and fires on it with or without a buzzer; `gt_switch_step()` reads a switch to ground, or across two pads by driving one and requiring the other to follow both ways (GND-TEST-05..12, DD-071).
+By the switch alone (DD-087). The procedure is `gt_seq_step()` in `src/ground_test_seq.c`, which owns the schedule and fires on it with or without a buzzer; a fire is delivered on command (GND-TEST-13). `gt_switch_step()` reads a switch to ground, or across two pads by driving one and requiring the other to follow both ways; the driven pad may be the buzzer's, pulsed only for the read (GND-TEST-12, `docs/ground_test_on_buzzer_pad.md`).
 
 ### Simulation
 The `sim/` directory contains a WASM-compilable flight computer black box and a shared physics engine. See `sim/README.md` for architecture and integration guide.
 
 ### Testing
-- Host suites: see `test/README.md`; every one runs in CI
+- Host suites: see `test/README.md`; `scripts/run_host_tests.sh` runs every one, locally and in CI
 - Playwright web UI tests in 3 mock server modes, and the browser demo flown from power-on to LANDED
-- 4 safety-critical closed-loop tests (no fire without continuity, both channels on one event for a low flight, no fire during ascent, overcurrent)
-- Requirements traced to integration/closed-loop tests (TRACEABILITY.md)
+- `TRACEABILITY.md` is written by `support/trace_matrix.py` from the tests' own citations
+- `support/structure_check.py`, `support/trace_check.py`, `support/wait_check.py` and `support/prove_core0.py` in CI
 - cppcheck with MISRA addon, clang-format, pmccabe complexity in CI
-- `support/trace_check.py`, `support/wait_check.py` and `support/prove_core0.py` in CI
-- See test/README.md for complete test plan

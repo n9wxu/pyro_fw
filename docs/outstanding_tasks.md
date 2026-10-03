@@ -28,6 +28,7 @@ recorded.
 | 8 | [Documentation and housekeeping](#8-documentation-and-housekeeping) | every document reviewed 2026-09-28; H3: the defects and unmet requirements the review found |
 | 9 | [Deferred, and not planned](#9-deferred-and-not-planned) | F1's bench fire; false-launch reversion |
 | 10 | [Logging and lockups in flight](#10-logging-and-lockups-in-flight) | **your decisions**: the logging design (plan 1, R1, or plan 2, FreeRTOS), the Mach short rate, lwIP's heap |
+| 11 | [The 2026-10 requirements review](#11-the-2026-10-requirements-review) | **your decisions** (R-1 to R-3); bench checks (R-4 to R-8); HAL validation (R-9) |
 
 **G4, the bench check on the four boards** (MK1A 02632D472F0C, MK1B
 02E7253A34C2 and 02E72A403441, MK1C 02373331FFDE): `api_check.py`,
@@ -1495,3 +1496,45 @@ flash write overlapped are discarded (DD-068).
 | R1 | Moving the flight path into RAM | **Analysis, 2026-09-27:** it fits. About 38 KB of code and 2 KB of constants move per board; 50.6 KB of SRAM is free, 7-10 KB left after, once printf leaves the flight path. Recommended: from launch to landing core0 runs only RAM code, and core1 does the log's flash writes as units core0 hands it (Lua pauses during them). The USB and alarm-pool interrupts are masked while a unit is out, an MPU guard faults any missed flash access, and `prove_core0.py` proves the flight closure RAM-closed. About 13-19 engineer-days. The whole image cannot run from RAM: code and constants alone exceed SRAM | your decision |
 | M3 | The Mach short rate and the buzzer | On MK1B a beep code trips FLT-MACH-02's two-interval rate about once in 20 codes (DD-068); MK1C shows no effect. docs/mach_lockout.md already accepts a false flag as the safe direction: the lock releases after a second of clean coast, and near apogee the fallback deploys a second or two late. Options: a 5-sample slope (80 ms, about 20 ms more lag, noise at 35 Pa 5.3 sigma below the threshold); discarding beep-overlapped samples (blinds the pad detector for up to 5.5 s at a time); or the board (a decoupled sensor supply). The flag's rate path exists for 66 g boosts, so its lag is the safety margin | your decision |
 | N1 | lwIP's heap | 8,000 bytes against a 5,840-byte send buffer per connection: two or three streaming connections still exhaust it (4,493 refusals in a G4 round after DD-070). More heap spends RAM R1 would need | your decision |
+
+## 11. The 2026-10 requirements review
+
+The requirements were rewritten (228e722), then the tests, then the code
+(`docs/requirements_review_2026-10-02.md`, DD-080 to DD-091). `TRACEABILITY.md`
+marks each of these ⚠️. Sections 1 to 10 above describe the code before that
+work; where they disagree with the requirements, the requirements stand.
+
+Your decisions:
+
+- **R-1. The three speed defaults.** `pyro1_refire_speed`,
+  `pyro2_refire_speed` and `emergency_fire_speed` default to 0, off, until the
+  modelling study gives values and a maximum safe altitude.
+- **R-2. PYR-ARM-01 on MK1A and MK1B.** Both end a pulse from the loop, so a
+  stopped loop leaves a channel energised until the watchdog, 1 s. The
+  requirement asks for 50 ms, which only MK1C's charge pump meets. Either the
+  bound is MK1C's alone, or those boards need a pulse a hardware timer ends,
+  or a shorter watchdog while a pulse runs.
+- **R-3. SYS-LUA-01 on MK1C-SD.** That build has no script: J3 carries its
+  SPI bus.
+
+Bench checks owed:
+
+- **R-4.** The ground test switch across the buzzer's pad: the pulsed read is
+  unverified on hardware (`docs/ground_test_on_buzzer_pad.md`, its bench list).
+- **R-5.** LUA-SAFE-01: reboot within 15 s of a start with a script; the
+  script must still run. LUA-RUN-01: a script through a bench flight and
+  through ground test mode. LUA-MGT-01: removing the script posts an empty
+  body to `/api/lua/script`.
+- **R-6.** A bench flight with `support/bench_flight.py --fail drogue` and the
+  fire rules set: the re-fires and the emergency fire in the log (SIM-04).
+- **R-7.** MK1C on the bench: a fire with the bus shorted is gated at its
+  deadline and the next fire still delivers (PYR-ARM-03, PYR-FAULT-01). The
+  bench fire itself is still deferred (section 9).
+- **R-8.** Each board's declared values marked *not measured* in its
+  `THEORY_OF_OPERATION.md`: MK1B's PTC reset time, each board's decision
+  delay, MK1A's sensor noise.
+
+To build:
+
+- **R-9.** HAL validation applications (HAL-06, BLD-06, BRD-02): the options
+  are in `docs/hal_validation_apps.md`.

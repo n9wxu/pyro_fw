@@ -1,9 +1,8 @@
 /*
  * The bench flight source (flight_sim.h) [DD-078].
  *
- * The atmosphere against the 1976 US Standard Atmosphere's own tabulated
- * values (NOAA-S/T 76-1562, geopotential altitudes), then the profile, then
- * the bench's hold on the channels (bench_flight.h).
+ * The profile, on the standard atmosphere of atmosphere.h, then the bench's
+ * hold on the channels (bench_flight.h).
  *
  * SPDX-License-Identifier: MIT
  *
@@ -12,6 +11,7 @@
 #include "unity.h"
 #include "flight_sim.h"
 #include "bench_flight.h"
+#include "atmosphere.h"
 #include <math.h>
 
 void setUp(void) {
@@ -20,29 +20,6 @@ void setUp(void) {
 void tearDown(void) {}
 
 #define SEA_PA 101325.0f
-
-void test_SIM_02_isa_pressure_at_the_layer_bases(void) {
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 101325.0f, fsim_isa_pressure(0.0f));
-    TEST_ASSERT_FLOAT_WITHIN(1.0f, 22632.06f, fsim_isa_pressure(11000.0f));
-    TEST_ASSERT_FLOAT_WITHIN(0.5f, 5474.889f, fsim_isa_pressure(20000.0f));
-    TEST_ASSERT_FLOAT_WITHIN(0.2f, 868.0187f, fsim_isa_pressure(32000.0f));
-}
-
-void test_SIM_02_isa_pressure_inside_the_layers(void) {
-    TEST_ASSERT_FLOAT_WITHIN(15.0f, 54019.9f, fsim_isa_pressure(5000.0f));
-    TEST_ASSERT_FLOAT_WITHIN(2.0f, 12044.6f, fsim_isa_pressure(15000.0f));
-    TEST_ASSERT_FLOAT_WITHIN(0.5f, 1171.87f, fsim_isa_pressure(30000.0f));
-}
-
-void test_SIM_02_isa_density_at_sea_level_and_30_km(void) {
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.2250f, fsim_isa_density(0.0f));
-    TEST_ASSERT_FLOAT_WITHIN(0.0002f, 0.01801f, fsim_isa_density(30000.0f));
-}
-
-void test_SIM_02_isa_altitude_inverts_pressure(void) {
-    for (float h = 0.0f; h <= 32000.0f; h += 250.0f)
-        TEST_ASSERT_FLOAT_WITHIN(0.5f, h, fsim_isa_altitude(fsim_isa_pressure(h)));
-}
 
 static fsim_params_t high(void) {
     fsim_params_t p = {.apogee_m = 30000.0f,
@@ -126,7 +103,7 @@ void test_SIM_02_thin_air_speeds_the_drogue(void) {
     float h0 = fsim_altitude(&s, t);
     float h1 = fsim_altitude(&s, t + 1.0f);
     float rate_high = h0 - h1;
-    float ratio = sqrtf(fsim_isa_density(0.0f) / fsim_isa_density(25000.0f));
+    float ratio = 1.0f / atmos_pad_air_ratio(atmos_pressure_pa(25000.0f), SEA_PA);
     /* Falling into denser air it runs a little ahead of the rate it would
      * settle at. */
     TEST_ASSERT_TRUE(rate_high >= p.drogue_ms * ratio && rate_high < 1.1f * p.drogue_ms * ratio);
@@ -144,12 +121,12 @@ void test_SIM_02_a_high_pad_adds_its_own_altitude(void) {
     fsim_t s;
     fsim_params_t p = high();
     p.apogee_m = 20000.0f;
-    float pad_pa = fsim_isa_pressure(1500.0f);
+    float pad_pa = atmos_pressure_pa(1500.0f);
     TEST_ASSERT_TRUE(fsim_start(&s, &p, pad_pa));
     TEST_ASSERT_FLOAT_WITHIN(0.5f, 1500.0f, s.pad_msl);
     TEST_ASSERT_FLOAT_WITHIN(0.5f, pad_pa, fsim_pressure(&s, 0.0f));
     float t_apo = p.pad_s + s.t_apogee;
-    TEST_ASSERT_FLOAT_WITHIN(5.0f, fsim_isa_pressure(21500.0f), fsim_pressure(&s, t_apo));
+    TEST_ASSERT_FLOAT_WITHIN(5.0f, atmos_pressure_pa(21500.0f), fsim_pressure(&s, t_apo));
 }
 
 void test_SIM_01_profiles_that_cannot_fly_are_refused(void) {
@@ -159,7 +136,7 @@ void test_SIM_01_profiles_that_cannot_fly_are_refused(void) {
     TEST_ASSERT_FALSE_MESSAGE(fsim_start(&s, &p, SEA_PA), "above the atmosphere's top");
     p = high();
     p.apogee_m = 31000.0f;
-    TEST_ASSERT_FALSE_MESSAGE(fsim_start(&s, &p, fsim_isa_pressure(1500.0f)), "the pad's altitude counts");
+    TEST_ASSERT_FALSE_MESSAGE(fsim_start(&s, &p, atmos_pressure_pa(1500.0f)), "the pad's altitude counts");
     p = high();
     p.main_alt_m = p.apogee_m;
     TEST_ASSERT_FALSE(fsim_start(&s, &p, SEA_PA));
@@ -328,10 +305,6 @@ void test_SIM_03_the_channels_stay_mocked_after_a_stop(void) {
 
 int main(void) {
     UNITY_BEGIN();
-    RUN_TEST(test_SIM_02_isa_pressure_at_the_layer_bases);
-    RUN_TEST(test_SIM_02_isa_pressure_inside_the_layers);
-    RUN_TEST(test_SIM_02_isa_density_at_sea_level_and_30_km);
-    RUN_TEST(test_SIM_02_isa_altitude_inverts_pressure);
     RUN_TEST(test_SIM_02_the_coast_peaks_at_the_apogee_asked_for);
     RUN_TEST(test_SIM_02_phases_run_in_order_and_it_lands);
     RUN_TEST(test_SIM_02_descent_times_at_constant_rates);

@@ -1,17 +1,8 @@
 /*
- * The Mach lockout's thresholds, in the pressure domain and in integers
- * (DD-049, docs/mach_lockout.md).
+ * The Mach lock's thresholds [FLT-MACH-02..06, DD-049].
  *
- * Every threshold is a pressure ratio. -pdot/p is the climb rate over RT/g,
- * and pddot/p the deceleration over RT/g, so a fixed ratio means the same
- * Mach, or the same fraction of g, at any site elevation; only the air's
- * temperature moves it, and each ratio is chosen for the envelope's worst
- * air, 216 K to 318 K. docs/mach_lockout.md derives each one.
- *
- * The fit's rates arrive as floats and are rounded and clamped here: a spoiled
- * fit's rate can be anything, and 1000 x 1 MPa/s is still inside an int32.
- * No real flight comes near either clamp, so clamping never changes a
- * verdict.
+ * Each is a rate or a curvature of ln(pressure): the same Mach, or the same
+ * fraction of g, at any site elevation. docs/mach_lockout.md derives each.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -19,41 +10,31 @@
 #define MACH_LOCKOUT_H
 
 #include <stdbool.h>
-#include <stdint.h>
 
-#define MACH_RATE_CLAMP 1000000 /* Pa/s */
-#define MACH_ACCEL_CLAMP 200000 /* Pa/s^2 */
+#define MACH_FLAG_RATE 0.029f      /* true Mach 0.62 to 0.76 */
+#define MACH_RELEASE_RATE 0.022f   /* true Mach 0.47 to 0.57 */
+#define MACH_GRAVITY_CURVE 0.0009f /* 0.58 g to 0.85 g */
+#define MACH_ARM_RATIO 0.9965f     /* about 30 m above the pad */
 
-static inline int32_t mach_round_clamp(float x, int32_t lim) {
-    if (x >= (float)lim)
-        return lim;
-    if (x <= -(float)lim)
-        return -lim;
-    return (int32_t)(x < 0.0f ? x - 0.5f : x + 0.5f);
+static inline bool mach_too_fast(float rate) {
+    return -rate > MACH_FLAG_RATE;
 }
 
-/* Flag: -pdot > 0.029 p, true Mach 0.62-0.76 across the envelope. Physical. */
-static inline bool mach_too_fast(int32_t p, float pdot) {
-    return 1000 * -mach_round_clamp(pdot, MACH_RATE_CLAMP) > 29 * p;
+static inline bool mach_slow_ascent(float rate) {
+    return rate < 0.0f && -rate < MACH_RELEASE_RATE;
 }
 
-/* Release, slow: climbing, and -pdot < 0.022 p, true Mach 0.47-0.57.
- * Physical. */
-static inline bool mach_slow_ascent(int32_t p, float pdot) {
-    int32_t r = mach_round_clamp(pdot, MACH_RATE_CLAMP);
-    return r < 0 && 1000 * -r < 22 * p;
+static inline bool mach_slow_descent(float rate) {
+    return rate > 0.0f && rate < MACH_RELEASE_RATE;
 }
 
-/* Release, decelerating: pddot >= 0.0009 p, 0.58-0.85 g, which gravity alone
- * gives any coasting rocket and no thrusting one shows. Physical. */
-static inline bool mach_decelerating(int32_t p, float pddot) {
-    return 10000 * mach_round_clamp(pddot, MACH_ACCEL_CLAMP) >= 9 * p;
+/* Slowing upward, or gathering speed downward, as gravity alone gives. */
+static inline bool mach_under_gravity(float rate, float curve) {
+    return curve + rate * rate >= MACH_GRAVITY_CURVE;
 }
 
-/* Minimum-altitude arm: p < 0.9965 p0, 29-33 m above a 10-45 degree pad.
- * A design constant. */
-static inline bool mach_above_arm_height(int32_t p, int32_t p0) {
-    return 10000 * p < 9965 * p0;
+static inline bool mach_above_arm_height(float pressure_pa, float pad_pa) {
+    return pressure_pa < MACH_ARM_RATIO * pad_pa;
 }
 
 #endif
