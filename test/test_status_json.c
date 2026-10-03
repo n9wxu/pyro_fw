@@ -106,6 +106,8 @@ static void typical(status_snap_t *s) {
     s->sample_interval_us[1] = 10100;
     s->stamp_lag_max_us = 300;
     s->noise_mpa = 2400;
+    s->estimator = "lumped";
+    s->estimator_explains = true;
     s->usb_attached = true;
     s->beep = "ready";
     s->beep_kind = "code";
@@ -197,8 +199,8 @@ static const char *const TYPICAL[][2] = {
     {"sample_interval_us", "[9900,10100]"},
     {"stamp_lag_max_us", "300"},
     {"noise_mpa", "2400"},
-    {"mach_lock", "false"},
-    {"mach_flag_ms", "0"},
+    {"estimator", "\"lumped\""},
+    {"estimator_explains", "true"},
     {"peak_lower_bound", "false"},
     {"usb_attached", "true"},
     {"test_mode", "false"},
@@ -330,7 +332,7 @@ void test_SJ_02_the_widest_status_fits_its_bound(void) {
     static const char *const long40 = "0123456789012345678901234567890123456789";
     status_snap_t s;
     typical(&s);
-    s.state = s.fw_version = s.sensor = s.board = s.board_id = s.resume = s.beep = s.beep_kind = long40;
+    s.state = s.fw_version = s.sensor = s.board = s.board_id = s.resume = s.beep = s.beep_kind = s.estimator = long40;
     s.pyro_mode[0] = s.pyro_mode[1] = long40;
     s.board_selftest = 0; /* "unknown", the widest of the three */
     s.alt_cm = s.max_alt_cm = s.vspeed_cms = s.pressure_pa = s.prev_stage = INT32_MIN;
@@ -340,7 +342,7 @@ void test_SJ_02_the_widest_status_fits_its_bound(void) {
                        &s.flash_refusals,   &s.log_dropped,      &s.flash_erases,       &s.flash_programs,
                        &s.flash_deferrals,  &s.pyro_mocked,      &s.pres_waits,         &s.pres_rejects,
                        &s.pres_flashed,
-                       &s.ground_reseeds,   &s.stamp_lag_max_us, &s.noise_mpa,      &s.mach_flag_ms,
+                       &s.ground_reseeds,   &s.stamp_lag_max_us, &s.noise_mpa,
                        &s.http_units[0],    &s.http_units[1],    &s.http_unit_max_us[0], &s.http_unit_max_us[1],
                        &s.sample_interval_us[0], &s.sample_interval_us[1], &s.prev_stage_ms};
     for (size_t i = 0; i < sizeof(u32) / sizeof(u32[0]); i++) {

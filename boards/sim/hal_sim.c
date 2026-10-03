@@ -385,6 +385,13 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
             (long)altitude_cm, state, under_thrust, (long)pp_last_read_raw_pa(), flight_event_name(event));
 }
 
+bool hal_log_estimator(uint32_t time_ms, const char *text, int len) {
+    if (!sim_log_running || !sim_log_file || len <= 0)
+        return false;
+    fprintf(sim_log_file, "%lu,,,,,,,EST %.*s\n", (unsigned long)time_ms, len, text);
+    return true;
+}
+
 void hal_log_stop(void) {
     if (!sim_log_running)
         return;

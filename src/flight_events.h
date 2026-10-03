@@ -18,10 +18,11 @@
 #define EVT_APOGEE 2
 #define EVT_PYRO1_FIRE 3
 #define EVT_PYRO2_FIRE 4
-#define EVT_MACH_LOCK 5     /* the Mach lockout's flag [FLT-MACH-02] */
-#define EVT_MACH_UNLOCK 6   /* released on a coast's signature [FLT-MACH-03] */
+/* 5, 6 and 8 are in logs written before DD-092 and are no longer written. */
+#define EVT_MACH_LOCK 5
+#define EVT_MACH_UNLOCK 6
 #define EVT_LANDING 7
-#define EVT_MACH_FALLBACK 8 /* apogee found while the flag stood [FLT-MACH-04] */
+#define EVT_MACH_FALLBACK 8
 #define EVT_SENSOR_STUCK 10 /* a whole window of one reading [SNS-PRES-10] */
 #define EVT_ARMED 9
 #define EVT_PYRO1_FAULT 11
@@ -32,11 +33,14 @@
 #define EVT_PYRO1_REFUSED 15
 #define EVT_PYRO2_REFUSED 16
 #define EVT_MAIN_FORCED 17
-#define EVT_SENSOR_LOST 18 /* no sample for 0.5 s in flight [SNS-PRES-11] */
+#define EVT_SENSOR_LOST 18  /* no sample for 0.5 s in flight [SNS-PRES-11] */
 #define EVT_PYRO1_REFIRE 19 /* [PYR-REFIRE-01] */
 #define EVT_PYRO2_REFIRE 20
 #define EVT_EMERGENCY_FIRE 21 /* [FLT-EMRG-04] */
 #define EVT_RESUMED 22        /* [FLT-BROWN-07] */
+/* The row's altitude is the flight's peak [FLT-APO-08]. */
+#define EVT_PEAK 23
+#define EVT_PEAK_AT_LEAST 24
 
 static inline const char *flight_event_name(uint8_t evt) {
     switch (evt) {
@@ -84,6 +88,10 @@ static inline const char *flight_event_name(uint8_t evt) {
         return "EMERGENCY_FIRE";
     case EVT_RESUMED:
         return "RESUMED";
+    case EVT_PEAK:
+        return "PEAK";
+    case EVT_PEAK_AT_LEAST:
+        return "PEAK_AT_LEAST";
     default:
         return "";
     }

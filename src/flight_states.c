@@ -93,6 +93,7 @@ void flight_init(flight_context_t *ctx) {
     buzzer_init();
     beep_store_load(NULL, 0);
     pp_init();
+    pp_obey(estimator_index(ctx->config.estimator));
     ctx->reset_cause = (uint8_t)hal_reset_cause();
     hal_pressure_init();
     int sensor = hal_pressure_sensor();
@@ -161,6 +162,8 @@ void flight_take_sample(flight_context_t *ctx, const pp_sample_t *s, flight_stat
     uint32_t flight_ms = state == PAD_IDLE ? 0u : s->timestamp_ms - ctx->launch_time;
     if (state_is_logged(state))
         hal_log_sample(flight_ms, ctx->pressure_pa, s->altitude_cm, (uint8_t)state, ctx->under_thrust, EVT_NONE);
+    if (flight_state_is_airborne(state))
+        flight_follow_estimators(ctx, s, flight_ms);
 
     flight_sample_t *row = &ctx->flight_buffer[ctx->buf_head];
     *row = (flight_sample_t){flight_ms, ctx->pressure_pa, s->altitude_cm, (uint8_t)state, ctx->under_thrust, EVT_NONE};
@@ -179,6 +182,12 @@ void flight_log_event(flight_context_t *ctx, uint8_t event) {
 
 /* [SNS-PRES-10, SNS-PRES-11, SNS-REC-01] Recorded once each time, and left
  * alone: nothing recovers a sensor in flight. */
+void flight_log_peak(const flight_context_t *ctx) {
+    int32_t peak_pa = ctx->peak_pa > 0.0f ? (int32_t)(ctx->peak_pa + 0.5f) : ctx->pressure_pa;
+    hal_log_sample(ctx->last_sample - ctx->launch_time, peak_pa, ctx->max_altitude_cm, (uint8_t)ctx->current_state, 0,
+                   ctx->peak_lower_bound ? EVT_PEAK_AT_LEAST : EVT_PEAK);
+}
+
 void flight_note_sensor(flight_context_t *ctx, const pp_sample_t *s, uint32_t now) {
     (void)now;
     ctx->sensor_lost = false;

@@ -29,14 +29,16 @@ firmware, the host suites and the simulators all build):
 | `flight_states.c` | the table and the dispatcher |
 | `flight_boot.c` | start-up, the resume decision, the terminal fault |
 | `flight_pad.c` | the pad: health, the announcement, launch, USB |
-| `flight_ascent.c` | arming, the Mach flag, apogee |
+| `flight_ascent.c` | arming, the peak, apogee |
+| `flight_estimators.c` | every estimator followed and logged |
 | `flight_descent.c` | firing, the descent phase, landing |
 | `flight_ground_test.c` | ground test mode |
 | `flight_outputs.c` | telemetry, the pad record |
-| `pressure_estimator.c` | the filtered state: pressure, its rate, its acceleration |
-| `pressure_processing.c` | readings in, samples out: gaps, a stuck sensor, the ground reference |
+| `estimator.h`, `estimator_table.c` | the estimator interface, and the estimators this build carries |
+| `estimator_lumped.c`, `estimator_constacc.c` (with `pressure_estimator.c`) | the two estimators: pressure, its rate, its acceleration, and whether the model explains the readings |
+| `pressure_processing.c` | readings in to every estimator, samples out from the obeyed one: gaps, a stuck sensor, the ground reference |
 | `fire_control.c`, `fire_plan.c` | the fire rules, and the plan the configuration and the board make |
-| `mach_lock.c`, `launch_detector.c`, `landing_detector.c`, `descent_phase.c` | one detector each |
+| `launch_detector.c`, `apogee_detector.c`, `landing_detector.c`, `descent_phase.c` | one detector each |
 | `pad_check.c` | the pad diagnosis and which outcome is announced |
 | `flight_resume.c` | the pad record and the resume decision |
 | `atmosphere.c` | the 1976 standard atmosphere |
@@ -88,8 +90,9 @@ at more than 5 m/s. Any reset cause resumes (FLT-BROWN-02). A board that is
 high and still goes to the pad (FLT-BROWN-03).
 
 A resumed flight takes its ground from the record, assumes no channel has
-fired, and fires each as fresh data meets its trigger. Resumed climbing, it
-starts with the Mach flag set, because its speed history is gone. Resumed
+fired, and fires each as fresh data meets its trigger. Resumed climbing, its
+estimators start again, so apogee waits for them to explain the readings
+(FLT-APO-07). Resumed
 descending, apogee is taken as passed and a DELAY counts in full from the
 resume (FLT-BROWN-06).
 
@@ -117,29 +120,38 @@ no record is written (USB-01, USB-02).
 ## ASCENT
 
 The channels arm once the rocket has passed 30 m and slowed below 10 m/s of
-climb. The Mach flag (below) may stand meanwhile.
+climb.
 
-Apogee is declared when the filtered pressure is rising by more than three
-times its rate's own uncertainty and stands above its lowest value by more
-than twice the estimate's, with no hold time. It is declared after the true apogee,
-never before it: within 0.5 s to 10 km, 1.5 s at 20 km and 2.5 s at 30 km at
-a sensor noise of 9 Pa (`test_FLT_APO_01_...`).
+Apogee is the obeyed estimator going over the top: seen climbing, then seen
+falling, each by more than three times its rate's own uncertainty, with its
+model explaining the readings all the way between (`apogee_detected()`,
+FLT-APO-07). A fall whose climb was not seen that way must last 2 s. There is
+no hold time. It is declared after the true apogee, never before it: within
+0.5 s to 10 km, 1.5 s at 20 km and 2.5 s at 30 km at a sensor noise of 9 Pa
+(`test_FLT_APO_01_...`).
 
-## The Mach flag
+## The estimators
 
-Near Mach 1 the static ports misreport. The flag is set when the rate of
-ln(p) passes 0.029 /s, from the filtered state or, until the first release,
-from the raw two-interval rate. While it stands apogee is not taken from the
-pressure minimum.
+An estimator turns the raw readings into the filtered state. Each sits behind
+`src/estimator.h`: a name and a table of functions. `estimator_table.c` lists
+the ones a build carries, the default first. Every one is given every
+reading. `estimator` in config.ini names the one the flight obeys, read at
+start-up (SNS-EST-06).
 
-It is released after a second of smooth readings (no innovation over four
-standard deviations), a slow ascent (under 0.022 /s), and a deceleration
-consistent with gravity.
+Each reports whether its model explains the readings (SNS-EST-08). Near
+Mach 1 the static ports misreport, and no rocket moves the way those readings
+say, so the model does not explain them. Nothing is decided on such readings,
+and none of them is the peak (FLT-APO-08). That replaces the Mach flag
+(DD-092).
 
-Apogee under the flag needs the gravity signature: smooth, slow, and
-descending under gravity for 2 s. As a last resort the flag also falls when
-the pressure is smooth and has risen above the pressure the flag was set at.
-The reported peak is then a lower bound (FLT-MACH-07).
+From launch to landing the log carries an `EST` row a second for each
+estimator, and a row when each one's own apogee rule is met, whichever is
+obeyed (SNS-EST-07).
+
+| Name | Model |
+|---|---|
+| `lumped` (default) | one equation of motion, pad to ground, learning thrust and drag (`docs/lumped_parameter_filter.md`) |
+| `constacc` | constant acceleration (`docs/descent_speed_estimator.md`) |
 
 ## Descent and firing
 

@@ -1,5 +1,10 @@
 # The Mach flag
 
+**Withdrawn by DD-092 (2026-10-03).** The flag, `src/mach_lock.c` and
+FLT-MACH-02 to FLT-MACH-07 are gone. The problem below stands; what answers it
+now is `docs/lumped_parameter_filter.md` and `docs/flight_states.md`, "The
+estimators". This is the record of the design that flew before.
+
 How the flight computer keeps a supersonic rocket from firing on corrupted
 pressure, and why each number is what it is. The decision records are DD-049
 and DD-085; the requirements are FLT-MACH-02 to FLT-MACH-07; the tests are

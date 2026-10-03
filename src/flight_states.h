@@ -7,6 +7,7 @@
 #ifndef FLIGHT_STATES_H
 #define FLIGHT_STATES_H
 
+#include "apogee_detector.h"
 #include "config.h"
 #include "descent_phase.h"
 #include "fire_control.h"
@@ -15,7 +16,6 @@
 #include "hal.h"
 #include "landing_detector.h"
 #include "launch_detector.h"
-#include "mach_lock.h"
 #include "pad_check.h"
 #include "telemetry.h"
 #include <stdbool.h>
@@ -85,14 +85,19 @@ typedef struct flight_context_t {
     uint32_t last_sample; /* sample time of the newest sample */
     int32_t pressure_pa, altitude_cm, speed_cms;
     int32_t max_altitude_cm, max_speed_cms;
-    float peak_pa; /* the lowest filtered pressure outside the Mach flag; 0: none yet */
+    float peak_pa; /* the lowest filtered pressure the estimator explained; 0: none yet */
     bool peak_lower_bound;
+    /* One per estimator: the obeyed one's is the flight's apogee, the others'
+     * are logged [SNS-EST-07]. */
+    apogee_detector_t apogee_detector[ESTIMATORS_MAX];
+    bool estimator_apogee[ESTIMATORS_MAX]; /* at the newest sample */
+    bool estimator_said_apogee[ESTIMATORS_MAX];
+    uint32_t estimators_logged_ms;
     bool arm_height_passed;
     bool pyros_armed;
     bool apogee_declared;
     bool under_thrust;
     bool sensor_stuck, sensor_lost;
-    mach_lock_t mach;
     descent_phase_t descent;
     landing_detector_t landing;
     uint32_t landed_row_ms;

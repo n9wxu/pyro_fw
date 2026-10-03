@@ -25,7 +25,7 @@ const DEFAULTS = {
     pyro1_adc: 48, pyro2_adc: 52, pyro1_fired: false, pyro2_fired: false,
     armed: false, flight_ms: 0, uptime: 5000, fw_version: '1.3.0',
     pyro1_mode: 'delay', pyro1_value: 0, pyro2_mode: 'agl', pyro2_value: 300,
-    units: 1, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'PYRO001', rocket_name: 'MyRocket', log_rate: '1hz'
+    units: 1, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'PYRO001', rocket_name: 'MyRocket', log_rate: '1hz', estimator: 'lumped'
   },
   configured: {
     state: 'PAD_IDLE', alt_cm: 0, max_alt_cm: 0, vspeed_cms: 0,
@@ -33,7 +33,7 @@ const DEFAULTS = {
     pyro1_adc: 45, pyro2_adc: 50, pyro1_fired: false, pyro2_fired: false,
     armed: false, flight_ms: 0, uptime: 12000, fw_version: '1.3.0',
     pyro1_mode: 'delay', pyro1_value: 2, pyro2_mode: 'agl', pyro2_value: 500,
-    units: 2, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'RACE01', rocket_name: 'Screamer', log_rate: 'full'
+    units: 2, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'RACE01', rocket_name: 'Screamer', log_rate: 'full', estimator: 'lumped'
   },
   flown: {
     state: 'LANDED', alt_cm: 15, max_alt_cm: 304800, vspeed_cms: 0,
@@ -41,7 +41,7 @@ const DEFAULTS = {
     pyro1_adc: 4, pyro2_adc: 6, pyro1_fired: true, pyro2_fired: true,
     armed: false, flight_ms: 32400, uptime: 45000, fw_version: '1.3.0',
     pyro1_mode: 'delay', pyro1_value: 0, pyro2_mode: 'agl', pyro2_value: 500,
-    units: 2, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'RACE01', rocket_name: 'Screamer', log_rate: '1hz'
+    units: 2, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'RACE01', rocket_name: 'Screamer', log_rate: '1hz', estimator: 'lumped'
   }
 };
 
@@ -56,7 +56,8 @@ Object.assign(status, {usb_attached: true, test_mode: false, buzzer_active: fals
 const LIMITS = {
   refire_interval_ms: {default: 1000, min: 500, max: 10000, in_force: 1000},
   fire_gap_ms: {default: 3000, min: 1000, max: 10000, in_force: 3000},
-  sensor: {min_pa: 30000, max_pa: 110000, height_m: 9000}
+  sensor: {min_pa: 30000, max_pa: 110000, height_m: 9000},
+  estimators: ['lumped', 'constacc']
 };
 let luaScript = '', luaScriptPosts = 0, luaHeartbeat = 0;
 /* The bodies the page posted to /api/config, for the tests to read. */
@@ -103,6 +104,20 @@ function generateLockedFlightCSV(unlockMs, fallbackMs) {
   const ev = unlockMs ? 'UNLOCK' : 'LOCK_FALLBACK';
   const at = out.findIndex(l => parseInt(l.split(',')[0]) >= (unlockMs || fallbackMs));
   out.splice(at, 0, (unlockMs || fallbackMs) + ',60000,290000,1,0,60000,21.5,' + ev);
+  return out.join('\n');
+}
+
+/* A flight whose log carries the firmware's own peak (FLT-APO-08): the ports
+   read far higher than the rocket for a while, and the PEAK row does not. */
+function generatePeakFlightCSV(event) {
+  const out = [];
+  for (const line of generateFlightCSV().split('\n')) {
+    const f = line.split(',');
+    const t = parseInt(f[0]);
+    if (line.charAt(0) !== '#' && !isNaN(t) && f.length >= 8 && f[2] !== '' && t >= 1000 && t < 4000) f[2] = '420000';
+    out.push(f.join(','));
+    if ((f[7] || '').trim() === 'APOGEE') out.push(f[0] + ',' + f[1] + ',250000,2,0,' + f[5] + ',21.5,' + event);
+  }
   return out.join('\n');
 }
 
@@ -462,6 +477,11 @@ const server = http.createServer((req, res) => {
     flightCsv = how === 'late' ? generateLockedFlightCSV(7000, 0)
               : how === 'fallback' ? generateLockedFlightCSV(0, 8100)
               : generateLockedFlightCSV(4000, 0);
+    res.writeHead(200, cors); res.end('ok');
+    return;
+  }
+  if (req.url.startsWith('/api/_test/fly_peak/') && req.method === 'POST') {
+    flightCsv = generatePeakFlightCSV(req.url.split('/').pop() === 'bound' ? 'PEAK_AT_LEAST' : 'PEAK');
     res.writeHead(200, cors); res.end('ok');
     return;
   }

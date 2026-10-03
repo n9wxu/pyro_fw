@@ -5,10 +5,14 @@ src/flight_ascent.c
 src/flight_descent.c
 src/flight_ground_test.c
 src/flight_outputs.c
+src/flight_estimators.c
 src/flight_resume.c
 src/fire_control.c
 src/fire_plan.c
-src/mach_lock.c
+src/apogee_detector.c
+src/estimator_table.c
+src/estimator_constacc.c
+src/estimator_lumped.c
 src/descent_phase.c
 src/launch_detector.c
 src/landing_detector.c

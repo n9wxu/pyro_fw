@@ -48,6 +48,7 @@ void flight_deliver_pulse(flight_context_t *ctx, fire_command_t command, const f
         flight_log_event(ctx, EVT_EMERGENCY_FIRE);
     }
     hal_pyro_fire(command.channel);
+    pp_note_pulse();
     bool energised = hal_pyro_is_firing();
     fire_control_pulse_started(&ctx->fire, command.channel, in);
     ctx->verify_done[i] = false;

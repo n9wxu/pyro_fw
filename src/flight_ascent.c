@@ -1,27 +1,21 @@
 /*
- * Ascent: the thrust report, arming, the Mach flag, the peak and apogee
- * [FLT-ASC-01..07, FLT-APO-01..04, FLT-MACH-02..07].
+ * Ascent: the thrust report, arming, the peak and apogee
+ * [FLT-ASC-01..07, FLT-APO-01..08].
  *
  * SPDX-License-Identifier: MIT
  */
 #include "flight_internal.h"
 #include "atmosphere.h"
-#include "mach_lockout.h"
 #include "pressure_processing.h"
 
 #define ARM_SPEED_CMS 1000
-#define APOGEE_SIGMAS 3.0f           /* descending by more than the rate's own uncertainty */
-#define APOGEE_RISE_SIGMAS 2.0f      /* and above the lowest pressure by more than the estimate's */
+#define ARM_PRESSURE_RATIO 0.9965f   /* about 30 m above the pad */
 #define APOGEE_BACKDATE_MAX_MS 1500u /* [PYR-MODE-05] */
-#define PEAK_LOWER_BOUND_MS 2000u    /* [FLT-MACH-07] */
 
-static void note_event(flight_context_t *ctx, uint8_t event, const char *line) {
-    flight_log_event(ctx, event);
-    hal_telemetry_send(line);
-}
-
+/* Only what the estimator explained can be the peak: a port error near Mach 1
+ * reads as height the rocket never had. */
 static void track_peak(flight_context_t *ctx, const pp_sample_t *s) {
-    if (ctx->mach.flagged)
+    if (!s->explains || s->suspect)
         return;
     if (ctx->peak_pa <= 0.0f || s->pressure_pa < ctx->peak_pa)
         ctx->peak_pa = s->pressure_pa;
@@ -39,7 +33,7 @@ static void arm_now(flight_context_t *ctx, uint32_t sample_ms) {
     ctx->armed_time = sample_ms;
 }
 
-/* [FLT-ASC-04..07, FLT-MACH-06] A burn, then a coast: faster than the arming
+/* [FLT-ASC-04..07] A burn, then a coast: faster than the arming
  * speed, then slower, above the arming height, on a sensor giving data. */
 static bool arming_due(const flight_context_t *ctx, const pp_sample_t *s) {
     return !ctx->pyros_armed && ctx->arm_height_passed && !s->suspect && ctx->max_speed_cms >= ARM_SPEED_CMS &&
@@ -56,36 +50,18 @@ static uint32_t time_of_apogee(const pp_sample_t *s) {
     return s->timestamp_ms - (uint32_t)back_ms;
 }
 
-/* [FLT-APO-01] Apogee is the sensor saying the rocket has stopped going up,
- * and nothing else [DD-022]. */
-static bool apogee_seen(flight_context_t *ctx, const pp_sample_t *s) {
-    bool past_the_minimum = s->pressure_pa > ctx->peak_pa * (1.0f + APOGEE_RISE_SIGMAS * s->log_sigma);
-    bool descending = !s->suspect && s->rate > APOGEE_SIGMAS * s->rate_sigma && past_the_minimum;
-    bool allowed = ctx->pyros_armed && !ctx->apogee_declared && !ctx->mach.flagged;
-    return allowed && descending;
+/* [FLT-APO-01] Apogee is the obeyed estimator saying the rocket has gone
+ * over the top, and nothing else [DD-022, DD-092]. */
+static bool apogee_seen(const flight_context_t *ctx) {
+    return ctx->pyros_armed && !ctx->apogee_declared && ctx->estimator_apogee[pp_obeyed()];
 }
 
-static state_event_t follow_mach_lock(flight_context_t *ctx, const pp_sample_t *s) {
-    switch (mach_lock_in_ascent(&ctx->mach, s)) {
-    case MACH_FLAGGED:
-        note_event(ctx, EVT_MACH_LOCK, "!MACH LOCK\r\n");
-        return SEVT_NONE;
-    case MACH_RELEASED:
-        ctx->peak_pa = s->pressure_pa; /* nothing from the flagged span may be the peak */
-        note_event(ctx, EVT_MACH_UNLOCK, "!MACH UNLOCK\r\n");
-        return SEVT_NONE;
-    case MACH_APOGEE:
-        if (!ctx->pyros_armed)
-            arm_now(ctx, s->timestamp_ms);
-        if (ctx->peak_pa <= 0.0f)
-            ctx->peak_pa = s->pressure_pa;
-        ctx->peak_lower_bound = true;
-        ctx->apogee_time = time_of_apogee(s);
-        note_event(ctx, EVT_MACH_FALLBACK, "!MACH FALLBACK\r\n");
-        return SEVT_APOGEE;
-    default:
-        return SEVT_NONE;
-    }
+/* [FLT-APO-08] The peak is a lower bound when the climb to it was not seen. */
+static bool peak_is_a_lower_bound(flight_context_t *ctx, const pp_sample_t *s) {
+    bool unseen = !ctx->apogee_detector[pp_obeyed()].climb_seen || ctx->peak_pa <= 0.0f;
+    if (ctx->peak_pa <= 0.0f)
+        ctx->peak_pa = s->pressure_pa;
+    return unseen;
 }
 
 state_event_t flight_detect_ascent(flight_context_t *ctx, uint32_t now) {
@@ -97,23 +73,20 @@ state_event_t flight_detect_ascent(flight_context_t *ctx, uint32_t now) {
     ctx->under_thrust = s.accel_cms2 > 0;
     if (s.speed_cms > ctx->max_speed_cms)
         ctx->max_speed_cms = s.speed_cms;
-    if (mach_above_arm_height(s.pressure_pa, (float)ctx->ground_pressure))
+    if (s.pressure_pa < ARM_PRESSURE_RATIO * (float)ctx->ground_pressure)
         ctx->arm_height_passed = true;
     flight_take_sample(ctx, &s, ASCENT);
     flight_note_sensor(ctx, &s, now);
 
-    state_event_t lock_event = follow_mach_lock(ctx, &s);
     track_peak(ctx, &s);
     report_peak(ctx, &s);
-    if (lock_event != SEVT_NONE)
-        return lock_event;
     if (arming_due(ctx, &s))
         return SEVT_ARMED;
-    if (!apogee_seen(ctx, &s))
+    if (!apogee_seen(ctx))
         return SEVT_NONE;
     ctx->apogee_time = time_of_apogee(&s);
-    ctx->peak_lower_bound =
-        ctx->mach.released_once && (int32_t)(ctx->apogee_time - ctx->mach.release_ms) < (int32_t)PEAK_LOWER_BOUND_MS;
+    ctx->peak_lower_bound = peak_is_a_lower_bound(ctx, &s);
+    report_peak(ctx, &s);
     return SEVT_APOGEE;
 }
 
@@ -128,6 +101,7 @@ void flight_action_apogee(flight_context_t *ctx, uint32_t now) {
     ctx->under_thrust = false;
     ctx->descent_start_time = now;
     flight_log_event(ctx, EVT_APOGEE);
+    flight_log_peak(ctx);
     telemetry_queue(&ctx->telemetry,
                     (telemetry_event_t){TELEM_EVENT_APOGEE, 0, ctx->max_altitude_cm, now - ctx->launch_time});
 }

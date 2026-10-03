@@ -176,7 +176,7 @@ function update() {
     /* Store device config — update every poll */
     var newCfg = {id:d.rocket_id, name:d.rocket_name, units:u,
       p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value,
-      logRate:d.log_rate || '1hz'};
+      logRate:d.log_rate || '1hz', estimator:d.estimator || ''};
     if (!deviceConfig) {
       deviceConfig = newCfg;
       cfgLoadFromObj(deviceConfig);
@@ -184,7 +184,8 @@ function update() {
       /* Detect device-side change (reboot applied new config) */
       if (deviceConfig.p1mode !== newCfg.p1mode || deviceConfig.p1val !== newCfg.p1val ||
           deviceConfig.p2mode !== newCfg.p2mode || deviceConfig.p2val !== newCfg.p2val ||
-          deviceConfig.units !== newCfg.units || deviceConfig.logRate !== newCfg.logRate) {
+          deviceConfig.units !== newCfg.units || deviceConfig.logRate !== newCfg.logRate ||
+          deviceConfig.estimator !== newCfg.estimator) {
         deviceConfig = newCfg;
         pendingConfig = null;
         cfgLoadFromObj(deviceConfig);
@@ -209,7 +210,22 @@ function loadLimits() {
   return fetch('api/limits').then(function(r) { return r.ok ? r.json() : null; }).then(function(l) {
     limits = l;
     cfgRangeHints();
+    estimatorChoices();
   }).catch(function() {});
+}
+
+/* [SNS-EST-06] The estimators this firmware carries, the first its default. */
+function estimatorChoices() {
+  var sel = document.getElementById('estimator');
+  var names = (limits && limits.estimators) || [];
+  var chosen = sel.value || (deviceConfig && deviceConfig.estimator) || '';
+  sel.innerHTML = '';
+  names.forEach(function(n) {
+    var o = document.createElement('option');
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  });
+  if (names.indexOf(chosen) >= 0) sel.value = chosen;
 }
 
 /* [PYR-BOARD-02] A value outside the board's range is not refused: the board
@@ -386,6 +402,8 @@ function cfgLoadFromObj(c) {
   document.getElementById('p2mode').value = c.p2mode || 'agl';
   document.getElementById('p2val').value = c.p2val || 0;
   document.getElementById('logRate').value = c.logRate || '1hz';
+  var est = document.getElementById('estimator');
+  if (c.estimator) est.value = c.estimator; else est.selectedIndex = 0;
   logEstimate();
   document.getElementById('cfgDirty').style.display = 'none';
   cfgChanged();
@@ -415,7 +433,8 @@ function cfgGetObj() {
     p1val: parseInt(document.getElementById('p1val').value) || 0,
     p2mode: document.getElementById('p2mode').value,
     p2val: parseInt(document.getElementById('p2val').value) || 0,
-    logRate: document.getElementById('logRate').value
+    logRate: document.getElementById('logRate').value,
+    estimator: document.getElementById('estimator').value
   };
 }
 
@@ -430,6 +449,7 @@ function cfgSave() {
     '\r\npyro1_mode=' + c.p1mode + '\r\npyro1_value=' + c.p1val +
     '\r\npyro2_mode=' + c.p2mode + '\r\npyro2_value=' + c.p2val +
     '\r\nunits=' + uname + '\r\nlog_rate=' + c.logRate + '\r\n';
+  if (c.estimator) ini += 'estimator=' + c.estimator + '\r\n';
   RULE_FIELDS.forEach(function(f) {
     ini += f[1] + '=' + (parseInt(document.getElementById(f[0]).value) || 0) + '\r\n';
   });
@@ -519,7 +539,7 @@ function parseFlightCsv(csv) {
     var t = parseInt(parts[col.time_ms]), alt = parseInt(parts[col.altitude_cm]);
     var evt = (parts[col.event] || '').trim();
     if (isNaN(t) || isNaN(alt)) return;
-    data.push({t:t, a:alt});
+    if (evt !== 'PEAK' && evt !== 'PEAK_AT_LEAST') data.push({t:t, a:alt});
     if (evt && !events[evt]) events[evt] = {t:t, alt:alt};
   });
   return {data:data, events:events, meta:meta};
@@ -550,9 +570,11 @@ function updateFlightSummary() {
   if (flightData.length) {
     var end = ev.LANDING ? ev.LANDING : flightData[flightData.length - 1];
     dur = (end.t/1000).toFixed(1) + 's' + (ev.LANDING ? '' : ' (no landing recorded)');
-    /* FLT-MACH-07: while the Mach lock stands the ports' altitude is not the
-       rocket's, so the apogee comes from the rows outside it; a lock let go
-       within 2 s of apogee, or never, may have hidden the top. */
+    /* FLT-APO-08: the firmware's own peak, from its PEAK row. A log written
+       before that row existed has the Mach lock's rows instead: the apogee is
+       then from the rows outside the lock, and a lock let go within 2 s of
+       apogee, or never, may have hidden the top. */
+    var peak = ev.PEAK || ev.PEAK_AT_LEAST;
     var lock = ev.LOCK, unlock = ev.UNLOCK || ev.LOCK_FALLBACK;
     var maxA = 0;
     flightData.forEach(function(p) {
@@ -560,6 +582,7 @@ function updateFlightSummary() {
       if (!locked && p.a > maxA) maxA = p.a;
     });
     var bound = ev.LOCK_FALLBACK || (ev.UNLOCK && ev.APOGEE && ev.APOGEE.t - ev.UNLOCK.t < 2000);
+    if (peak) { maxA = peak.alt; bound = !!ev.PEAK_AT_LEAST; }
     apo = (bound ? 'at least ' : '') + cmToUnit(maxA, u) + ' ' + ul;
   }
   document.getElementById('dDur').textContent = dur;

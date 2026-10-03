@@ -14,8 +14,9 @@ Flying a board? Start with the [Operator's guide](#operators-guide).
 - **Flight Log** - binary records (`flight_log.bin`) written only inside core0's flash window, rendered as CSV on download; three logging plans (DD-062, DD-064)
 - **Real-time Telemetry** - `$PYRO` NMEA on UART0 through an interrupt-driven ring, one message a second; apogee, fire and landing events ride the next message (DD-088)
 - **Pressure Sensing** - MS5607 (MK1B, MK1C) or BMP280 (MK1A), 50 conversions a second, each stamped at its measurement (DD-051, DD-066, DD-067)
-- **Pressure, Rate and Acceleration** - one Kalman filter on the raw readings; every flight comparison is made in pressure, and altitude is computed for people, relative to the pad and unclamped (DD-085)
-- **Mach Flag** - apogee is not taken from the pressure minimum while the flow past the ports may be supersonic (`docs/mach_lockout.md`)
+- **Pressure, Rate and Acceleration** - a Kalman filter on the raw readings; every flight comparison is made in pressure, and altitude is computed for people, relative to the pad and unclamped (DD-085)
+- **Estimators** - two filters fly on every reading; `estimator` in config.ini names the one obeyed, and the log shows what the other would have done (DD-092)
+- **Apogee Near Mach 1** - apogee is taken only while the estimator's model explains the readings, which a port error near Mach 1 does not (`docs/lumped_parameter_filter.md`)
 - **Continuity Checking** - presence and shorts, continuously on the pad
 - **Web Interface** - live dashboard and configuration over USB networking
 - **OTA Firmware Updates** - A/B bootloader with automatic rollback
@@ -62,7 +63,7 @@ each board's `boards/<name>/THEORY_OF_OPERATION.md`, carry the detail.
   igniter is present and not shorted, and nothing more (DD-055).
 - **In flight, the pyros arm late.** They arm only once the board
   has seen the motor burn -- faster than 10 m/s, then slower -- and the
-  rocket is about 30 m up (DD-017, FLT-MACH-06). Use your airframe's own
+  rocket is about 30 m up (DD-017, FLT-ASC-08). Use your airframe's own
   arming switch as well; the firmware's gates are not a substitute.
 
 ### Connecting
@@ -117,9 +118,10 @@ which lets it rejoin the flight after any restart in the air (FLT-BROWN-01).
 The board declares a launch above 100 ft and 5 m/s on its filtered state
 (FLT-LAUNCH-07).
 It arms once the burn is over, finds apogee from the pressure itself, and
-fires each channel as its mode says, then again as the fire rules say. While
-the rocket may be past about Mach 0.62, the Mach flag holds apogee back until
-the readings are smooth again (`docs/mach_lockout.md`). It lands when still for 1 s below
+fires each channel as its mode says, then again as the fire rules say. Apogee
+is the estimator seen climbing and then falling while its model explains the
+readings; near Mach 1 it does not, and nothing is decided
+(`docs/lumped_parameter_filter.md`). It lands when still for 1 s below
 30 m, or when the landing timeout (60 s by default) has passed since apogee
 and it is still.
 
@@ -282,7 +284,8 @@ Every event row is kept at its own time under each plan. Records go to a 4 KB RA
 
 - **CSV export:** `/api/flight.csv` renders the binary log as CSV, with a header naming the board, the configuration, the ground pressure and the log rate
 - **Columns:** `time_ms, pressure_pa, altitude_cm, state, thrust, raw_pa, temp_c, event`
-- **Events:** LAUNCH, ARMED, APOGEE, PYRO1, PYRO2, LANDING, and when they happen the Mach flag's (LOCK, UNLOCK, LOCK_FALLBACK), PYRO1_REFIRE, PYRO2_REFIRE, EMERGENCY_FIRE, RESUMED, faults (PYRO1_FAULT, PYRO2_FAULT), failed verifies (PYRO1_NOPEN, PYRO2_NOPEN), SENSOR_STUCK and SENSOR_LOST
+- **Events:** LAUNCH, ARMED, APOGEE, PYRO1, PYRO2, LANDING, PEAK or PEAK_AT_LEAST with the flight's peak, and when they happen PYRO1_REFIRE, PYRO2_REFIRE, EMERGENCY_FIRE, RESUMED, faults (PYRO1_FAULT, PYRO2_FAULT), failed verifies (PYRO1_NOPEN, PYRO2_NOPEN), SENSOR_STUCK and SENSOR_LOST
+- **Estimators:** an `EST` row a second for each estimator, with its height, speed and whether it explains the readings, and an `EST <name> APOGEE` row when each one's apogee rule is met
 - **Lua:** a script's `log.line()` and `log.write()` output lands in the log as `LUA` rows, during a flight only; `print()` goes to `/api/lua/console`
 - **Space:** `/api/log/space` reports the room the next flight has; the Config tab turns it into the longest flight the chosen plan holds
 - **Erase:** `POST /api/flight/erase`

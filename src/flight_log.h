@@ -24,7 +24,7 @@
 #define FLOG_TEXT_MAX 64
 #define FLOG_BOARD_MAX 32
 
-enum { FLOG_TAG_LUA, FLOG_TAG_MOCK };
+enum { FLOG_TAG_LUA, FLOG_TAG_MOCK, FLOG_TAG_ESTIMATOR };
 
 typedef struct {
     const char *board;

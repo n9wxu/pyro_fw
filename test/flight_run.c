@@ -17,7 +17,7 @@ const mp_site_t HOT = {45.0f, 2000.0f};
 const mp_site_t ISA = {15.0f, 0.0f};
 
 const rocket_t ROCKETS[N_ROCKETS] = {
-    [HOP] = {"hop", {0.3f, 0.02f, 18.0f, 0.8f, 0.0012f, 2.0f, 6.0f}},                /* about 60 m */
+    [HOP] = {"hop", {0.3f, 0.02f, 18.0f, 0.8f, 0.0012f, 2.0f, 6.0f}},              /* about 60 m */
     [SUBSONIC] = {"subsonic", {1.0f, 0.10f, 141.0f, 1.5f, 0.0020f, 2.0f, 20.0f}},  /* Mach 0.50 */
     [MID_MACH] = {"mid-Mach", {1.0f, 0.15f, 220.0f, 1.6f, 0.0020f, 2.0f, 20.0f}},  /* Mach 0.76 */
     [DRAGGY] = {"draggy", {2.0f, 0.60f, 1709.0f, 1.5f, 0.0045f, 3.0f, 20.0f}},     /* Mach 1.50, 66 g */
@@ -53,6 +53,8 @@ static void store_config(const flight_conditions_t *c) {
         n += snprintf(ini + n, sizeof(ini) - (size_t)n, "landing_timeout=0\n");
     if (c->main_m)
         n += snprintf(ini + n, sizeof(ini) - (size_t)n, "pyro2_mode=agl\npyro2_value=%u\n", (unsigned)c->main_m);
+    if (c->estimator)
+        n += snprintf(ini + n, sizeof(ini) - (size_t)n, "estimator=%s\n", c->estimator);
     if (c->config)
         snprintf(ini + n, sizeof(ini) - (size_t)n, "%s", c->config);
     harness_config(ini);
@@ -141,15 +143,13 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
     store_config(c);
     set_board(c);
     mock_pressure.pressure_pa = mp_pad_pa(site);
+    mock_pressure.temperature_c = site->temp_c;
     uint32_t t = 0;
     uint32_t pad = run_to_pad(&t);
     uint32_t ign = pad + (uint32_t)((c->pad_s > 0.0f ? c->pad_s : PAD_S) * 1000.0f);
 
     mp_rocket_t rk = *rocket;
     charges_t charges = charges_of(c, rocket);
-    /* The plant's truth by the millisecond: the flag is judged by the Mach at
-     * its own sample's time, which is the data it used. */
-    static float mach_at[1024], h_at[1024];
     mp_state_t st;
     mp_launch(&st);
     st.thin_air = c->thin_air;
@@ -161,8 +161,6 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
         float tf = ((float)t - (float)ign) / 1000.0f;
         if (tf >= 0.0f)
             mp_step(&st, site, &rk, 0.001f);
-        mach_at[t & 1023u] = st.mach;
-        h_at[t & 1023u] = st.h;
         float static_pa = mp_pressure_pa(site, st.h);
         float sensed = static_pa + mp_port_error_pa(&c->port, st.mach, static_pa);
         if (charge_at >= 0.0f)
@@ -183,6 +181,7 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
         if (ctx.pyros_armed && !res.armed) {
             res.armed = true;
             res.armed_t = tf;
+            res.armed_h = st.h;
         }
         if (res.launched && !ctx.under_thrust && res.thrust_end_t == 0.0f)
             res.thrust_end_t = tf;
@@ -217,21 +216,12 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
                 rk.canopy_ms = rate;
             }
         }
-        if (ctx.mach.flagged && !res.locked) {
-            res.locked = true;
-            bool recent = t - ctx.mach.flag_ms < 1024u;
-            res.flag_t = recent ? ((float)ctx.mach.flag_ms - (float)ign) / 1000.0f : tf;
-            res.flag_mach = recent ? mach_at[ctx.mach.flag_ms & 1023u] : st.mach;
-            res.flag_h = recent ? h_at[ctx.mach.flag_ms & 1023u] : st.h;
+        for (uint8_t i = 0; i < estimator_count(); i++) {
+            if (ctx.estimator_said_apogee[i] && !res.said_apogee[i]) {
+                res.said_apogee[i] = true;
+                res.said_t[i] = tf;
+            }
         }
-        if (res.locked && !ctx.mach.flagged && !ctx.mach.fell_back && !res.released) {
-            res.released = true;
-            res.release_t = tf;
-            res.release_mach = st.mach;
-        }
-        res.fallback |= ctx.mach.fell_back;
-        if (res.locked && st.apogee && res.return_t == 0.0f && static_pa > ctx.mach.flag_pressure_pa)
-            res.return_t = tf;
         float descent = pad_air_descent_ms(site, &st);
         if (descent > res.fastest_descent_ms)
             res.fastest_descent_ms = descent;

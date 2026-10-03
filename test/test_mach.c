@@ -18,7 +18,7 @@
 #include "board_harness.h"
 #include "flight_run.h"
 #include "mach_plant.h"
-#include "../src/mach_lockout.h"
+#include "../src/estimator.h"
 #include "../src/pad_check.h"
 
 void setUp(void) {}
@@ -182,10 +182,10 @@ void test_TST_03_plant_profiles(void) {
     TEST_ASSERT_FLOAT_WITHIN(1.0f, 30.0f, net_g);
 }
 
-/* ── M0: the report, today ────────────────────────────────────────── */
+/* ── M0: the report ───────────────────────────────────────────────── */
 
-/* For each profile, pad and port: did the drogue fire, when against the true
- * apogee, and where the Mach gate let go. What M1 must change is read here. */
+/* For each profile, pad and port: when each estimator's drogue came against
+ * the true apogee, flown obeying it. */
 void test_TST_03_report(void) {
     const mp_site_t *sites[] = {&COLD, &HOT};
     const struct {
@@ -195,34 +195,35 @@ void test_TST_03_report(void) {
                  {"reads high", &PORT_READS_HIGH},
                  {"reads low", &PORT_READS_LOW},
                  {"fakes descent", &PORT_FAKES_DESCENT}};
-    printf("  %-9s %-5s %-13s %-9s %-17s %s\n", "profile", "pad", "ports", "max Mach", "drogue", "lock release");
+    printf("  %-9s %-5s %-13s %-9s drogue from apogee, s:", "profile", "pad", "ports", "max Mach");
+    for (uint8_t e = 0; e < estimator_count(); e++)
+        printf(" %-9s", estimator_at(e)->name);
+    printf("\n");
     for (unsigned i = 0; i < N_ROCKETS; i++) {
         for (int si = 0; si < 2; si++) {
             for (unsigned pi = 0; pi < 4; pi++) {
                 if (pi > 0 && i < DRAGGY && i != BOOST_30G)
                     continue; /* subsonic flights see no port error */
-                flight_conditions_t c;
-                memset(&c, 0, sizeof(c));
-                if (ports[pi].port)
-                    c.port = *ports[pi].port;
-                flown_t r = fly(&ROCKETS[i].r, sites[si], &c, 7, 120.0f);
-                TEST_ASSERT_TRUE_MESSAGE(r.launched, ROCKETS[i].name);
-                char drogue[32], release[64];
-                if (r.drogue)
-                    snprintf(drogue, sizeof(drogue), "%+.2f s at apogee", r.drogue_t - r.apogee_t);
-                else
-                    snprintf(drogue, sizeof(drogue), "never");
-                if (!r.locked)
-                    snprintf(release, sizeof(release), "never locked");
-                else if (r.released)
-                    snprintf(release, sizeof(release), "Mach %.2f, %.1f s before apogee", r.release_mach,
-                             r.apogee_t - r.release_t);
-                else if (r.fallback)
-                    snprintf(release, sizeof(release), "fallback");
-                else
-                    snprintf(release, sizeof(release), "never released");
-                printf("  %-9s %2.0f C  %-13s %-9.2f %-17s %s\n", ROCKETS[i].name, sites[si]->temp_c, ports[pi].name,
-                       r.max_mach, drogue, release);
+                char line[160] = "";
+                float max_mach = 0.0f;
+                for (uint8_t e = 0; e < estimator_count(); e++) {
+                    flight_conditions_t c;
+                    memset(&c, 0, sizeof(c));
+                    c.estimator = estimator_at(e)->name;
+                    c.stop_after_apogee = true;
+                    if (ports[pi].port)
+                        c.port = *ports[pi].port;
+                    flown_t r = fly(&ROCKETS[i].r, sites[si], &c, 7, 400.0f);
+                    TEST_ASSERT_TRUE_MESSAGE(r.launched, ROCKETS[i].name);
+                    max_mach = r.max_mach;
+                    size_t l = strlen(line);
+                    if (r.drogue)
+                        snprintf(line + l, sizeof(line) - l, " %+9.2f", (double)(r.drogue_t - r.apogee_t));
+                    else
+                        snprintf(line + l, sizeof(line) - l, " %9s", "never");
+                }
+                printf("  %-9s %2.0f C  %-13s %-9.2f                       %s\n", ROCKETS[i].name,
+                       (double)sites[si]->temp_c, ports[pi].name, (double)max_mach, line);
             }
         }
     }
@@ -297,259 +298,262 @@ void test_SNS_EST_03_a_swinging_canopy_moves_neither_the_main_nor_the_landing(vo
     TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
 }
 
-/* ── M1: the Mach lockout ─────────────────────────────────────────── */
+/* ── M1: apogee near Mach 1, on every estimator ───────────────────── */
 
 static const mp_site_t *const SITES[] = {&COLD, &HOT};
 
-static void drogue_after_apogee(const flown_t *r, const char *what, char *bad, size_t cap) {
-    if (r->drogue && r->drogue_t >= r->apogee_t && r->drogue_t - r->apogee_t <= 1.5f)
+static void note(char *bad, size_t cap, const char *item) {
+    strncat(bad, item, cap - 1 - strlen(bad));
+}
+
+static void drogue_after_apogee(const flown_t *r, const char *what, float within_s, char *bad, size_t cap) {
+    if (r->drogue && r->drogue_t >= r->apogee_t && r->drogue_t - r->apogee_t <= within_s)
         return;
-    char item[96];
+    char item[112];
     if (r->drogue)
         snprintf(item, sizeof(item), " %s: drogue %+.2f s from apogee;", what, (double)(r->drogue_t - r->apogee_t));
     else
         snprintf(item, sizeof(item), " %s: no drogue;", what);
-    strncat(bad, item, cap - 1 - strlen(bad));
+    note(bad, cap, item);
 }
 
-/* [FLT-MACH-02] A flight that never nears Mach 1 is never locked, and deploys
- * as a plain altimeter would. */
-void test_FLT_MACH_02_a_subsonic_flight_is_never_flagged(void) {
-    char bad[256] = "";
-    for (int si = 0; si < 2; si++) {
-        flight_conditions_t c;
-        memset(&c, 0, sizeof(c));
-        c.stop_after_apogee = true;
-        flown_t r = fly(&ROCKETS[SUBSONIC].r, SITES[si], &c, 3, 120.0f);
-        if (r.locked)
-            strncat(bad, si ? " locked at the hot pad;" : " locked at the cold pad;", sizeof(bad) - 1 - strlen(bad));
-        drogue_after_apogee(&r, si ? "hot" : "cold", bad, sizeof(bad));
-    }
-    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+static flight_conditions_t obeying(uint8_t estimator) {
+    flight_conditions_t c;
+    memset(&c, 0, sizeof(c));
+    c.estimator = estimator_at(estimator)->name;
+    c.stop_after_apogee = true;
+    return c;
 }
 
-/* [FLT-MACH-02] The flag is set while the data is still clean: before Mach
- * 0.85, where a port's error begins -- on a 30 g boost too, whose ignition
- * step spoils the fits for the first second. */
-void test_FLT_MACH_02_flagged_before_mach_085(void) {
-    const unsigned fast[] = {DRAGGY, LOW_DRAG, BOOST_30G};
-    char bad[256] = "";
-    float worst = 0.0f;
-    for (unsigned i = 0; i < 3; i++) {
-        for (int si = 0; si < 2; si++) {
-            flight_conditions_t c;
-            memset(&c, 0, sizeof(c));
-            flown_t r = fly(&ROCKETS[fast[i]].r, SITES[si], &c, 4, ROCKETS[fast[i]].r.burn_s + 2.0f);
-            worst = r.locked && r.flag_mach > worst ? r.flag_mach : worst;
-            if (!r.locked || r.flag_mach >= 0.85f) {
-                char item[64];
-                snprintf(item, sizeof(item), " %s %s: %s Mach %.2f;", ROCKETS[fast[i]].name, si ? "hot" : "cold",
-                         r.locked ? "flagged at" : "never flagged, peak", (double)(r.locked ? r.flag_mach : r.max_mach));
-                strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+/* [FLT-APO-07] A flight that never nears Mach 1 deploys as a plain altimeter
+ * would. */
+void test_FLT_APO_07_a_subsonic_flight_deploys_at_apogee(void) {
+    const unsigned slow[] = {SUBSONIC, MID_MACH};
+    char bad[512] = "";
+    for (uint8_t e = 0; e < estimator_count(); e++) {
+        for (unsigned i = 0; i < 2; i++) {
+            for (int si = 0; si < 2; si++) {
+                flight_conditions_t c = obeying(e);
+                flown_t r = fly(&ROCKETS[slow[i]].r, SITES[si], &c, 3, 120.0f);
+                char what[64];
+                snprintf(what, sizeof(what), "%s %s %s", c.estimator, ROCKETS[slow[i]].name, si ? "hot" : "cold");
+                drogue_after_apogee(&r, what, 1.5f, bad, sizeof(bad));
             }
         }
     }
-    printf("  flagged by Mach %.2f at the latest\n", (double)worst);
     TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
 }
 
-/* [FLT-MACH-03] A peak between the flag and Mach 0.85 is flagged for nothing,
- * and let go soon after burnout: a second for the burnout's step to pass,
- * the slowing below the release speed, then a second of the coast's
- * signature. Within 4 s, and well before apogee. */
-void test_FLT_MACH_03_a_mid_mach_flight_releases_after_burnout(void) {
-    const mp_rocket_t *rk = &ROCKETS[MID_MACH].r;
-    char bad[256] = "";
-    int flagged = 0;
-    for (int si = 0; si < 2; si++) {
-        flight_conditions_t c;
-        memset(&c, 0, sizeof(c));
-        c.stop_after_apogee = true;
-        flown_t r = fly(rk, SITES[si], &c, 5, 120.0f);
-        drogue_after_apogee(&r, si ? "hot" : "cold", bad, sizeof(bad));
-        if (!r.locked)
-            continue;
-        flagged++;
-        printf("  mid-Mach %s: flagged at Mach %.2f, released %.2f s after burnout at Mach %.2f\n", si ? "hot" : "cold",
-               (double)r.flag_mach, (double)(r.release_t - rk->burn_s), (double)r.release_mach);
-        if (!r.released || r.release_t - rk->burn_s > 4.0f || r.apogee_t - r.release_t < 5.0f) {
-            char item[64];
-            snprintf(item, sizeof(item), " %s: released %s;", si ? "hot" : "cold", r.released ? "late" : "never");
-            strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+/* [FLT-ASC-08] Nothing arms below about 30 m, whatever the boost. */
+void test_FLT_ASC_08_nothing_arms_below_30_m(void) {
+    const unsigned profiles[] = {HOP, SUBSONIC, BOOST_30G};
+    for (uint8_t e = 0; e < estimator_count(); e++) {
+        for (unsigned i = 0; i < 3; i++) {
+            flight_conditions_t c = obeying(e);
+            flown_t r = fly(&ROCKETS[profiles[i]].r, &COLD, &c, 25, 120.0f);
+            char msg[96];
+            snprintf(msg, sizeof(msg), "%s %s: armed %d at %.1f m", c.estimator, ROCKETS[profiles[i]].name, r.armed,
+                     (double)r.armed_h);
+            TEST_ASSERT_TRUE_MESSAGE(r.armed && r.armed_h >= 28.0f, msg);
         }
     }
-    TEST_ASSERT_TRUE_MESSAGE(flagged > 0, "the cold pad's Mach 0.76 passes the flag");
-    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
 }
 
-/* [FLT-MACH-05] Supersonic, with the port's error either way or none, the
+/* [FLT-APO-07] Supersonic, with the port's error either way or none, the
  * drogue never fires before the true apogee, and fires within 1.5 s of it. */
-void test_FLT_MACH_05_no_fire_before_apogee_when_supersonic(void) {
+void test_FLT_APO_07_no_fire_before_apogee_when_supersonic(void) {
     const unsigned fast[] = {DRAGGY, LOW_DRAG, BOOST_30G};
     const mp_port_t *ports[] = {NULL, &PORT_READS_HIGH, &PORT_READS_LOW, &PORT_FAKES_DESCENT};
     const char *names[] = {"clean", "high", "low", "fakes descent"};
-    char bad[512] = "";
-    for (unsigned i = 0; i < 3; i++) {
-        for (int si = 0; si < 2; si++) {
-            for (unsigned pi = 0; pi < 4; pi++) {
-                flight_conditions_t c;
-                memset(&c, 0, sizeof(c));
-                if (ports[pi])
-                    c.port = *ports[pi];
-                c.stop_after_apogee = true;
-                flown_t r = fly(&ROCKETS[fast[i]].r, SITES[si], &c, 6, 120.0f);
-                char what[48];
-                snprintf(what, sizeof(what), "%s %s %s", ROCKETS[fast[i]].name, si ? "hot" : "cold", names[pi]);
-                drogue_after_apogee(&r, what, bad, sizeof(bad));
+    char bad[1024] = "";
+    for (uint8_t e = 0; e < estimator_count(); e++) {
+        for (unsigned i = 0; i < 3; i++) {
+            for (int si = 0; si < 2; si++) {
+                for (unsigned pi = 0; pi < 4; pi++) {
+                    flight_conditions_t c = obeying(e);
+                    if (ports[pi])
+                        c.port = *ports[pi];
+                    flown_t r = fly(&ROCKETS[fast[i]].r, SITES[si], &c, 6, 120.0f);
+                    char what[64];
+                    snprintf(what, sizeof(what), "%s %s %s %s", c.estimator, ROCKETS[fast[i]].name, si ? "hot" : "cold",
+                             names[pi]);
+                    drogue_after_apogee(&r, what, 1.5f, bad, sizeof(bad));
+                }
             }
         }
     }
     TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
 }
 
-/* [FLT-MACH-03] At altitude the release margin is thinnest: the low-drag
- * flight to 10 km from the hot, high pad releases before apogee on every
- * seed. */
-void test_FLT_MACH_03_released_before_apogee_at_10_km(void) {
-    int late = 0, never = 0;
-    float least = 1e9f;
+/* [FLT-APO-07] The same port error scaled, both signs, on the fast profiles. */
+void test_FLT_APO_07_no_fire_before_apogee_at_any_size_of_port_error(void) {
+    const unsigned fast[] = {DRAGGY, LOW_DRAG, BOOST_30G};
+    const float scales[] = {0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
+    char bad[1024] = "";
+    for (uint8_t e = 0; e < estimator_count(); e++) {
+        for (unsigned i = 0; i < 3; i++) {
+            for (int sign = -1; sign <= 1; sign += 2) {
+                for (unsigned k = 0; k < sizeof(scales) / sizeof(scales[0]); k++) {
+                    flight_conditions_t c = obeying(e);
+                    c.port = PORT_FAKES_DESCENT;
+                    c.port.sign = (float)sign;
+                    c.port.below *= scales[k];
+                    c.port.above *= scales[k];
+                    c.port.slope *= scales[k];
+                    flown_t r = fly(&ROCKETS[fast[i]].r, &COLD, &c, 11, 120.0f);
+                    char what[64];
+                    snprintf(what, sizeof(what), "%s %s x%+.2g", c.estimator, ROCKETS[fast[i]].name,
+                             (double)(sign * scales[k]));
+                    drogue_after_apogee(&r, what, 1.5f, bad, sizeof(bad));
+                }
+            }
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
+/* [FLT-APO-07] The low-drag flight to 10 km from the hot, high pad, on every
+ * seed, obeying the default estimator. */
+void test_FLT_APO_07_at_10_km_on_every_seed(void) {
+    int early = 0, never = 0;
+    float latest = 0.0f;
     for (uint32_t seed = 1; seed <= 1000; seed++) {
-        flight_conditions_t c;
-        memset(&c, 0, sizeof(c));
-        c.stop_after_apogee = true;
+        flight_conditions_t c = obeying(0);
         flown_t r = fly(&ROCKETS[LOW_DRAG].r, &HOT, &c, seed, 120.0f);
-        if (!r.released) {
+        if (!r.drogue) {
             never++;
             continue;
         }
-        float margin = r.apogee_t - r.release_t;
-        least = margin < least ? margin : least;
-        late += margin <= 0.0f;
+        float late = r.drogue_t - r.apogee_t;
+        early += late < 0.0f;
+        latest = late > latest ? late : latest;
     }
-    printf("  low-drag from the hot pad: released at least %.1f s before apogee over 1000 seeds; %d late, %d never\n",
-           (double)least, late, never);
+    printf("  low-drag from the hot pad, 1000 seeds: %d early, %d never, at most %.2f s after apogee\n", early, never,
+           (double)latest);
+    TEST_ASSERT_EQUAL_INT(0, early);
     TEST_ASSERT_EQUAL_INT(0, never);
-    TEST_ASSERT_EQUAL_INT(0, late);
+    TEST_ASSERT_TRUE(latest <= 1.5f);
 }
 
-/* [FLT-MACH-04] No readings from just after burnout until half a second
- * before apogee: the flag cannot be released. Apogee is still found, from
- * the rocket falling as gravity gives, seconds after the true apogee, and not
- * a minute later when it has fallen back to where the flag was set. The peak
- * is marked a lower bound [FLT-MACH-07]. */
-void test_FLT_MACH_04_apogee_is_found_while_the_flag_stands(void) {
+/* [FLT-APO-07, FLT-APO-08] No readings from just after burnout until half a
+ * second before apogee: the climb is not seen, so the fall must last, and the
+ * peak is marked a lower bound. The default estimator finds it within 5 s. */
+void test_FLT_APO_07_a_fall_whose_climb_was_not_seen_must_last(void) {
     const mp_rocket_t *rk = &ROCKETS[MID_MACH].r;
-    flight_conditions_t c;
-    memset(&c, 0, sizeof(c));
-    c.dropout_at_s = rk->burn_s + 0.5f;
-    c.dropout_s = plant_apogee_s(rk, &COLD) - 0.5f - c.dropout_at_s;
-    flown_t r = fly(rk, &COLD, &c, 8, 200.0f);
-    char msg[200];
-    snprintf(msg, sizeof(msg),
-             "flagged %d released %d found under the flag %d; apogee %.2f s, drogue %.2f s, back past the flag %.2f s",
-             r.locked, r.released, r.fallback, (double)r.apogee_t, (double)r.drogue_t, (double)r.return_t);
-    printf("  no readings through the coast: drogue %.2f s after apogee, %.1f s before the flag's level\n",
-           (double)(r.drogue_t - r.apogee_t), (double)(r.return_t - r.drogue_t));
-    TEST_ASSERT_TRUE_MESSAGE(r.locked && !r.released && r.fallback, msg);
-    TEST_ASSERT_TRUE_MESSAGE(r.drogue && r.drogue_t >= r.apogee_t, msg);
-    TEST_ASSERT_TRUE_MESSAGE(r.drogue_t - r.apogee_t <= 5.0f, msg);
-    TEST_ASSERT_TRUE_MESSAGE(r.return_t == 0.0f || r.drogue_t < r.return_t, msg);
-    TEST_ASSERT_TRUE_MESSAGE(r.peak_lower_bound, msg);
-}
-
-/* [FLT-MACH-07] The reported peak is the lowest filtered pressure outside
- * the flag: a port that reads low while supersonic reads the rocket
- * kilometres high, and none of it may reach the report. A lock that let go
- * within 2 s of apogee marks the peak a lower bound. On the standard
- * atmosphere's pad, where pressure altitude is the true height. */
-void test_FLT_MACH_07_the_peak_is_from_outside_the_flag(void) {
-    const mp_port_t reads_very_low = {-1.0f, 0.06f, 0.15f, 0.09f};
-    flight_conditions_t c;
-    memset(&c, 0, sizeof(c));
-    c.port = reads_very_low;
-    c.stop_after_apogee = true;
-    flown_t r = fly(&ROCKETS[DRAGGY].r, &ISA, &c, 9, 120.0f);
-    char msg[128];
-    snprintf(msg, sizeof(msg), "reported %.0f m, true apogee %.0f m, lower bound %d", r.peak_cm / 100.0,
-             (double)r.apogee_h, r.peak_lower_bound);
-    printf("  draggy, a port reading 15%% of q low: %s\n", msg);
-    TEST_ASSERT_TRUE_MESSAGE(fabs(r.peak_cm / 100.0 - (double)r.apogee_h) <= 5.0, msg);
-    TEST_ASSERT_FALSE_MESSAGE(r.peak_lower_bound, msg);
-
-    /* No readings until 3.3 s before apogee: the release comes inside the
-     * last 2 s. */
-    const mp_rocket_t *mm = &ROCKETS[MID_MACH].r;
-    memset(&c, 0, sizeof(c));
-    c.dropout_at_s = mm->burn_s + 0.5f;
-    c.dropout_s = plant_apogee_s(mm, &ISA) - 5.0f - c.dropout_at_s;
-    c.stop_after_apogee = true;
-    r = fly(mm, &ISA, &c, 10, 120.0f);
-    snprintf(msg, sizeof(msg), "released %d, %.2f s before apogee, lower bound %d", r.released,
-             (double)(r.apogee_t - r.release_t), r.peak_lower_bound);
-    TEST_ASSERT_TRUE_MESSAGE(r.released && r.apogee_t - r.release_t < 2.0f, msg);
-    TEST_ASSERT_TRUE_MESSAGE(r.peak_lower_bound, msg);
-}
-
-/* [FLT-MACH-02..06] Each threshold, a hair either side. */
-void test_FLT_MACH_02_thresholds(void) {
-    TEST_ASSERT_TRUE(mach_too_fast(-0.0291f));
-    TEST_ASSERT_FALSE(mach_too_fast(-0.0289f));
-    TEST_ASSERT_FALSE_MESSAGE(mach_too_fast(0.05f), "a descent is not too fast a climb");
-    TEST_ASSERT_TRUE(mach_slow_ascent(-0.0219f));
-    TEST_ASSERT_FALSE(mach_slow_ascent(-0.0221f));
-    TEST_ASSERT_FALSE(mach_slow_ascent(0.001f));
-    TEST_ASSERT_TRUE(mach_slow_descent(0.0219f));
-    TEST_ASSERT_FALSE(mach_slow_descent(0.0221f));
-    TEST_ASSERT_FALSE(mach_slow_descent(-0.001f));
-    TEST_ASSERT_TRUE(mach_under_gravity(0.0f, 0.00091f));
-    TEST_ASSERT_FALSE(mach_under_gravity(0.0f, 0.00089f));
-    TEST_ASSERT_TRUE_MESSAGE(mach_under_gravity(0.02f, 0.0006f), "the rate's own square counts");
-    TEST_ASSERT_TRUE(mach_above_arm_height(0.9964f * 101325.0f, 101325.0f));
-    TEST_ASSERT_FALSE(mach_above_arm_height(0.9966f * 101325.0f, 101325.0f));
-}
-
-/* What a port's error must do to fake the release: the fakes-descent shape
- * scaled, both signs, on the fast profiles. Reported for
- * docs/mach_lockout.md's risks. The lock must never let go before burnout or
- * while the port's error is live, and the drogue must never come early. */
-void test_FLT_MACH_03_no_release_inside_a_port_error(void) {
-    const unsigned fast[] = {DRAGGY, LOW_DRAG, BOOST_30G};
-    const float scales[] = {0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
-    char bad[512] = "";
-    float worst = 0.0f;
-    printf("  release Mach, by port error (x fakes-descent), cold pad:\n");
-    for (unsigned i = 0; i < 3; i++) {
-        char line[200];
-        snprintf(line, sizeof(line), "    %-9s", ROCKETS[fast[i]].name);
-        for (int sign = -1; sign <= 1; sign += 2) {
-            for (unsigned k = 0; k < sizeof(scales) / sizeof(scales[0]); k++) {
-                flight_conditions_t c;
-                memset(&c, 0, sizeof(c));
-                c.port = PORT_FAKES_DESCENT;
-                c.port.sign = (float)sign;
-                c.port.below *= scales[k];
-                c.port.above *= scales[k];
-                c.port.slope *= scales[k];
-                c.stop_after_apogee = true;
-                flown_t r = fly(&ROCKETS[fast[i]].r, &COLD, &c, 11, 120.0f);
-                float m = fabsf(r.release_mach);
-                worst = r.released && m > worst ? m : worst;
-                size_t l = strlen(line);
-                snprintf(line + l, sizeof(line) - l, " %+.2g:%.2f", (double)(sign * scales[k]), (double)m);
-                char what[48];
-                snprintf(what, sizeof(what), "%s x%+.2g", ROCKETS[fast[i]].name, (double)(sign * scales[k]));
-                if (r.released && (r.release_t < ROCKETS[fast[i]].r.burn_s || m >= 0.85f)) {
-                    strncat(bad, " ", sizeof(bad) - 1 - strlen(bad));
-                    strncat(bad, what, sizeof(bad) - 1 - strlen(bad));
-                    strncat(bad, ": released in the error;", sizeof(bad) - 1 - strlen(bad));
-                }
-                drogue_after_apogee(&r, what, bad, sizeof(bad));
-            }
-        }
-        printf("%s\n", line);
+    for (uint8_t e = 0; e < estimator_count(); e++) {
+        flight_conditions_t c = obeying(e);
+        c.stop_after_apogee = false;
+        c.dropout_at_s = rk->burn_s + 0.5f;
+        c.dropout_s = plant_apogee_s(rk, &COLD) - 0.5f - c.dropout_at_s;
+        flown_t r = fly(rk, &COLD, &c, 8, 200.0f);
+        char msg[200];
+        snprintf(msg, sizeof(msg), "%s: apogee %.2f s, drogue %d at %.2f s, lower bound %d", c.estimator,
+                 (double)r.apogee_t, r.drogue, (double)r.drogue_t, r.peak_lower_bound);
+        printf("  no readings through the coast, %s\n", msg);
+        TEST_ASSERT_TRUE_MESSAGE(r.drogue && r.drogue_t >= r.apogee_t, msg);
+        TEST_ASSERT_TRUE_MESSAGE(r.drogue_t - r.apogee_t >= 2.0f, msg);
+        TEST_ASSERT_TRUE_MESSAGE(r.drogue_t - r.apogee_t <= (e == 0 ? 5.0f : 10.0f), msg);
+        TEST_ASSERT_TRUE_MESSAGE(r.peak_lower_bound, msg);
     }
-    printf("  released by Mach %.2f at the latest\n", (double)worst);
-    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
+/* [FLT-APO-08] The reported peak is the lowest filtered pressure the
+ * estimator explained: a port that reads low while supersonic reads the
+ * rocket kilometres high, and none of it may reach the report. On the
+ * standard atmosphere's pad, where pressure altitude is the true height. */
+void test_FLT_APO_08_the_peak_is_from_what_the_estimator_explained(void) {
+    const mp_port_t reads_very_low = {-1.0f, 0.06f, 0.15f, 0.09f};
+    for (uint8_t e = 0; e < estimator_count(); e++) {
+        flight_conditions_t c = obeying(e);
+        c.port = reads_very_low;
+        flown_t r = fly(&ROCKETS[DRAGGY].r, &ISA, &c, 9, 120.0f);
+        char msg[128];
+        snprintf(msg, sizeof(msg), "%s: reported %.0f m, true apogee %.0f m, lower bound %d", c.estimator,
+                 r.peak_cm / 100.0, (double)r.apogee_h, r.peak_lower_bound);
+        printf("  draggy, a port reading 15%% of q low, %s\n", msg);
+        TEST_ASSERT_TRUE_MESSAGE(fabs(r.peak_cm / 100.0 - (double)r.apogee_h) <= 5.0, msg);
+        TEST_ASSERT_FALSE_MESSAGE(r.peak_lower_bound, msg);
+    }
+}
+
+/* [FLT-APO-08] The peak has a row of its own in the flight log. */
+void test_FLT_APO_08_the_peak_is_logged(void) {
+    flight_conditions_t c = obeying(0);
+    c.stop_after_apogee = false;
+    c.to_landed = true;
+    flown_t r = fly(&ROCKETS[SUBSONIC].r, &ISA, &c, 21, 400.0f);
+    static char log[262144];
+    TEST_ASSERT_TRUE(test_flight_log_csv(log, (int)sizeof(log)) > 0);
+    const char *row = strstr(log, ",PEAK\n");
+    TEST_ASSERT_NOT_NULL_MESSAGE(row, "no PEAK row");
+    while (row > log && row[-1] != '\n')
+        row--;
+    long t_ms, pa, cm;
+    TEST_ASSERT_EQUAL_INT(3, sscanf(row, "%ld,%ld,%ld", &t_ms, &pa, &cm));
+    TEST_ASSERT_EQUAL_INT32(r.peak_cm, cm);
+    TEST_ASSERT_NULL_MESSAGE(strstr(log, "PEAK_AT_LEAST"), "the climb was seen");
+}
+
+/* ── Every estimator flown at once ────────────────────────────────── */
+
+static int rows_with(const char *name, const char *what) {
+    char want[48];
+    snprintf(want, sizeof(want), "%s %s", name, what);
+    int n = 0;
+    for (int i = 0; i < mock_estimator_row_count; i++)
+        n += strncmp(mock_estimator_rows[i], want, strlen(want)) == 0;
+    return n;
+}
+
+/* [SNS-EST-06] The flight obeys the estimator config.ini names: its own
+ * apogee is the flight's. */
+void test_SNS_EST_06_the_flight_obeys_the_configured_estimator(void) {
+    TEST_ASSERT_TRUE_MESSAGE(estimator_count() >= 2, "one estimator cannot show a choice");
+    for (uint8_t e = 0; e < estimator_count(); e++) {
+        flight_conditions_t c = obeying(e);
+        c.port = PORT_READS_HIGH;
+        flown_t r = fly(&ROCKETS[LOW_DRAG].r, &COLD, &c, 22, 120.0f);
+        char msg[160];
+        snprintf(msg, sizeof(msg), "obeying %s: declared %.2f s, its own %d at %.2f s", c.estimator,
+                 (double)r.declared_t, r.said_apogee[e], (double)r.said_t[e]);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(e, pp_obeyed(), msg);
+        TEST_ASSERT_TRUE_MESSAGE(r.apogee_declared && r.said_apogee[e], msg);
+        TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.03f, r.said_t[e], r.declared_t, msg);
+    }
+}
+
+/* [SNS-EST-06] A name no estimator has is the default's. */
+void test_SNS_EST_06_an_unknown_name_is_the_default(void) {
+    flight_conditions_t c;
+    memset(&c, 0, sizeof(c));
+    c.estimator = "nosuch";
+    c.stop_after_apogee = true;
+    flown_t r = fly(&ROCKETS[HOP].r, &COLD, &c, 23, 60.0f);
+    TEST_ASSERT_TRUE(r.launched);
+    TEST_ASSERT_EQUAL_UINT8(0, pp_obeyed());
+    TEST_ASSERT_EQUAL_UINT8(0, estimator_index(NULL));
+}
+
+/* [SNS-EST-07] Every estimator is flown on every reading, whichever is
+ * obeyed: each says its own apogee in the log, and each reports once a
+ * second from launch to landing. */
+void test_SNS_EST_07_every_estimator_is_flown_and_logged(void) {
+    flight_conditions_t c = obeying(0);
+    c.stop_after_apogee = false;
+    c.to_landed = true;
+    flown_t r = fly(&ROCKETS[SUBSONIC].r, &COLD, &c, 24, 400.0f);
+    TEST_ASSERT_TRUE(r.landed_t > 0.0f);
+    for (uint8_t e = 0; e < estimator_count(); e++) {
+        const char *name = estimator_at(e)->name;
+        char msg[128];
+        snprintf(msg, sizeof(msg), "%s: %d APOGEE rows, %d reports in %.0f s; said apogee %+.2f s from the true one",
+                 name, rows_with(name, "APOGEE"), rows_with(name, "cm="), (double)r.touchdown_t,
+                 (double)(r.said_t[e] - r.apogee_t));
+        printf("  %s\n", msg);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(1, rows_with(name, "APOGEE"), msg);
+        TEST_ASSERT_INT_WITHIN_MESSAGE(3, (int)r.touchdown_t, rows_with(name, "cm="), msg);
+        TEST_ASSERT_TRUE_MESSAGE(r.said_apogee[e] && r.said_t[e] >= r.apogee_t, msg);
+    }
 }
 
 /* ── M2: sensor failure in flight ─────────────────────────────────── */
@@ -564,40 +568,37 @@ static bool log_has(const char *event) {
 }
 
 /* [SNS-PRES-10] A sensor that sticks in coast, and stays stuck, deploys
- * nothing: armed on the subsonic flight, locked on the mid-Mach one. */
+ * nothing: just after burnout, or half a second before apogee. */
 void test_SNS_PRES_10_stuck_in_coast_deploys_nothing(void) {
-    const struct {
-        unsigned prof;
-        bool locked;
-    } cases[] = {{SUBSONIC, false}, {MID_MACH, true}};
+    const unsigned profiles[] = {SUBSONIC, MID_MACH};
     char bad[256] = "";
-    for (unsigned i = 0; i < 2; i++) {
-        const mp_rocket_t *rk = &ROCKETS[cases[i].prof].r;
-        flight_conditions_t c;
-        memset(&c, 0, sizeof(c));
-        c.stuck_at_s = cases[i].locked ? rk->burn_s + 0.5f : plant_apogee_s(rk, &COLD) - 0.5f;
-        flown_t r = fly(rk, &COLD, &c, 12, 120.0f);
-        bool state_ok = cases[i].locked ? ctx.mach.flagged || !r.released : ctx.pyros_armed;
-        if (mock_pyro.fire_count != 0 || !state_ok) {
-            char item[96];
-            snprintf(item, sizeof(item), " %s: %d fires, %s;", ROCKETS[cases[i].prof].name, mock_pyro.fire_count,
-                     state_ok ? "as it should be" : (cases[i].locked ? "not locked" : "not armed"));
-            strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+    for (uint8_t e = 0; e < estimator_count(); e++) {
+        for (unsigned i = 0; i < 2; i++) {
+            const mp_rocket_t *rk = &ROCKETS[profiles[i]].r;
+            flight_conditions_t c = obeying(e);
+            c.stop_after_apogee = false;
+            c.stuck_at_s = i ? rk->burn_s + 0.5f : plant_apogee_s(rk, &COLD) - 0.5f;
+            (void)fly(rk, &COLD, &c, 12, 120.0f);
+            if (mock_pyro.fire_count != 0) {
+                char item[96];
+                snprintf(item, sizeof(item), " %s %s: %d fires;", c.estimator, ROCKETS[profiles[i]].name,
+                         mock_pyro.fire_count);
+                note(bad, sizeof(bad), item);
+            }
         }
     }
     TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
 }
 
-/* [SNS-PRES-11] Half a second without samples, across the apogee: no fit is
- * clean until a whole window of new samples exists, so the apogee waits for
- * it. */
+/* [SNS-PRES-11, FLT-APO-07] Half a second without samples, across the apogee:
+ * nothing is decided until a second of new samples exists, and the climb to
+ * this fall was not seen, so the fall must last. */
 void test_SNS_PRES_11_a_gap_across_apogee_waits_for_new_samples(void) {
     const mp_rocket_t *rk = &ROCKETS[SUBSONIC].r;
     flight_conditions_t c;
     memset(&c, 0, sizeof(c));
     c.dropout_at_s = plant_apogee_s(rk, &COLD) - 0.3f;
     c.dropout_s = 0.5f;
-    c.stop_after_apogee = true;
     flown_t r = fly(rk, &COLD, &c, 13, 120.0f);
     float back = c.dropout_at_s + c.dropout_s;
     char msg[128];
@@ -605,6 +606,7 @@ void test_SNS_PRES_11_a_gap_across_apogee_waits_for_new_samples(void) {
              (double)r.drogue_t, (double)r.apogee_t);
     TEST_ASSERT_TRUE_MESSAGE(r.drogue && r.drogue_t >= r.apogee_t, msg);
     TEST_ASSERT_TRUE_MESSAGE(r.drogue_t >= back + 1.0f, msg);
+    TEST_ASSERT_TRUE_MESSAGE(r.drogue_t <= back + 3.5f, msg);
 }
 
 /* [SNS-PRES-11] Two seconds without samples under the drogue, the main set
@@ -637,13 +639,12 @@ void test_SNS_PRES_06_readings_the_part_cannot_output_are_discarded(void) {
     c.glitch_at_s = plant_apogee_s(rk, &COLD) - 1.0f;
     c.glitch_pa = 150000;
     c.glitch_n = 25;
-    c.stop_after_apogee = true;
     flown_t r = fly(rk, &COLD, &c, 15, 120.0f);
     char msg[96];
     snprintf(msg, sizeof(msg), "%u rejected; drogue %+.2f s from apogee", (unsigned)mock_pres_rejects,
              (double)(r.drogue_t - r.apogee_t));
     TEST_ASSERT_TRUE_MESSAGE(mock_pres_rejects >= 25, msg);
-    TEST_ASSERT_TRUE_MESSAGE(r.drogue && r.drogue_t >= r.apogee_t, msg);
+    TEST_ASSERT_TRUE_MESSAGE(r.drogue && r.drogue_t >= r.apogee_t && r.drogue_t - r.apogee_t <= 3.5f, msg);
 }
 
 /* [SNS-PRES-10, SNS-PRES-11] Each failure is a DIAG bit, which /api/status
@@ -689,34 +690,27 @@ void test_SNS_PRES_10_a_working_sensor_is_never_stuck(void) {
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, ctx.diag & DIAG_SENSOR_STUCK, "an hour of real noise read as a stuck sensor");
 }
 
-/* ── T9: the lockout at the MS5607's ~90 Hz ───────────────────────── */
+/* ── T9: at the MS5607's ~90 Hz ───────────────────────────────────── */
 
 /* The fast profiles, both pads, clean ports and the one that fakes a
- * descent: flagged before Mach 0.85, released before apogee, and the drogue
- * after it, sampled every 11 ms as at 20. */
-void test_FLT_MACH_03_the_same_at_ninety_readings_a_second(void) {
+ * descent: the drogue after apogee, sampled every 11 ms as at 20. */
+void test_FLT_APO_07_the_same_at_ninety_readings_a_second(void) {
     const unsigned fast[] = {DRAGGY, LOW_DRAG, BOOST_30G};
     const mp_port_t *ports[] = {NULL, &PORT_FAKES_DESCENT};
-    char bad[512] = "";
-    for (unsigned i = 0; i < 3; i++) {
-        for (int si = 0; si < 2; si++) {
-            for (unsigned pi = 0; pi < 2; pi++) {
-                flight_conditions_t c;
-                memset(&c, 0, sizeof(c));
-                if (ports[pi])
-                    c.port = *ports[pi];
-                c.stop_after_apogee = true;
-                c.interval_ms = 11u;
-                flown_t r = fly(&ROCKETS[fast[i]].r, SITES[si], &c, 20, 120.0f);
-                char what[48];
-                snprintf(what, sizeof(what), "%s %s%s", ROCKETS[fast[i]].name, si ? "hot" : "cold",
-                         pi ? " fakes descent" : "");
-                drogue_after_apogee(&r, what, bad, sizeof(bad));
-                if (!r.locked || r.flag_mach >= 0.85f || !r.released || r.release_t >= r.apogee_t) {
-                    char item[96];
-                    snprintf(item, sizeof(item), " %s: flag Mach %.2f, released %d;", what, (double)r.flag_mach,
-                             r.released);
-                    strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+    char bad[1024] = "";
+    for (uint8_t e = 0; e < estimator_count(); e++) {
+        for (unsigned i = 0; i < 3; i++) {
+            for (int si = 0; si < 2; si++) {
+                for (unsigned pi = 0; pi < 2; pi++) {
+                    flight_conditions_t c = obeying(e);
+                    if (ports[pi])
+                        c.port = *ports[pi];
+                    c.interval_ms = 11u;
+                    flown_t r = fly(&ROCKETS[fast[i]].r, SITES[si], &c, 20, 120.0f);
+                    char what[64];
+                    snprintf(what, sizeof(what), "%s %s %s%s", c.estimator, ROCKETS[fast[i]].name, si ? "hot" : "cold",
+                             pi ? " fakes descent" : "");
+                    drogue_after_apogee(&r, what, 1.5f, bad, sizeof(bad));
                 }
             }
         }
@@ -735,21 +729,23 @@ int main(void) {
     RUN_TEST(test_TST_03_report);
     RUN_TEST(test_PYR_MODE_06_a_charge_in_the_bay_does_not_move_the_main);
     RUN_TEST(test_SNS_EST_03_a_swinging_canopy_moves_neither_the_main_nor_the_landing);
-    RUN_TEST(test_FLT_MACH_02_a_subsonic_flight_is_never_flagged);
-    RUN_TEST(test_FLT_MACH_02_flagged_before_mach_085);
-    RUN_TEST(test_FLT_MACH_03_a_mid_mach_flight_releases_after_burnout);
-    RUN_TEST(test_FLT_MACH_05_no_fire_before_apogee_when_supersonic);
-    RUN_TEST(test_FLT_MACH_03_released_before_apogee_at_10_km);
-    RUN_TEST(test_FLT_MACH_04_apogee_is_found_while_the_flag_stands);
-    RUN_TEST(test_FLT_MACH_07_the_peak_is_from_outside_the_flag);
-    RUN_TEST(test_FLT_MACH_02_thresholds);
-    RUN_TEST(test_FLT_MACH_03_no_release_inside_a_port_error);
+    RUN_TEST(test_FLT_APO_07_a_subsonic_flight_deploys_at_apogee);
+    RUN_TEST(test_FLT_ASC_08_nothing_arms_below_30_m);
+    RUN_TEST(test_FLT_APO_07_no_fire_before_apogee_when_supersonic);
+    RUN_TEST(test_FLT_APO_07_no_fire_before_apogee_at_any_size_of_port_error);
+    RUN_TEST(test_FLT_APO_07_at_10_km_on_every_seed);
+    RUN_TEST(test_FLT_APO_07_a_fall_whose_climb_was_not_seen_must_last);
+    RUN_TEST(test_FLT_APO_08_the_peak_is_from_what_the_estimator_explained);
+    RUN_TEST(test_FLT_APO_08_the_peak_is_logged);
+    RUN_TEST(test_SNS_EST_06_the_flight_obeys_the_configured_estimator);
+    RUN_TEST(test_SNS_EST_06_an_unknown_name_is_the_default);
+    RUN_TEST(test_SNS_EST_07_every_estimator_is_flown_and_logged);
     RUN_TEST(test_SNS_PRES_10_stuck_in_coast_deploys_nothing);
     RUN_TEST(test_SNS_PRES_11_a_gap_across_apogee_waits_for_new_samples);
     RUN_TEST(test_SNS_PRES_11_lost_under_a_canopy_waits_for_new_samples);
     RUN_TEST(test_SNS_PRES_06_readings_the_part_cannot_output_are_discarded);
     RUN_TEST(test_SNS_PRES_10_a_failure_is_reported_and_the_flight_goes_on);
     RUN_TEST(test_SNS_PRES_10_a_working_sensor_is_never_stuck);
-    RUN_TEST(test_FLT_MACH_03_the_same_at_ninety_readings_a_second);
+    RUN_TEST(test_FLT_APO_07_the_same_at_ninety_readings_a_second);
     return UNITY_END();
 }

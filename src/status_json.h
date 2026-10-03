@@ -89,8 +89,8 @@ typedef struct {
     bool ground_degraded;
     uint32_t ground_reseeds;
     uint32_t sample_interval_us[2], stamp_lag_max_us, noise_mpa;
-    bool mach_lock;
-    uint32_t mach_flag_ms;
+    const char *estimator; /* the one obeyed [SNS-EST-06] */
+    bool estimator_explains;
     bool peak_lower_bound;
     bool usb_attached, test_mode, buzzer_active;
 

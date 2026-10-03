@@ -23,6 +23,7 @@ from est_proto import G, R_AIR, isa_T, scale_height, Site
 SIGMA_FLOOR_PA = 1.2
 NOISE_TAU = 2.0
 A0 = 5.0  # m/s^2: the scale below which a_T bends toward zero
+GAP_S = 0.25  # without a used reading for this long, the evidence starts again [SNS-PRES-11]
 
 
 def std_altitude(p):
@@ -71,7 +72,8 @@ class Lumped:
         self.run = 0
         self.fit = 1.0  # running mean of the squared normalised innovation: about 1 while the model explains the readings
         self.nu = 0.0
-        self.read_since = None  # when the present unbroken run of used readings began
+        self.read_since = None  # when the present run of used readings began; a gap of GAP_S ends it
+        self.used_t = None
 
     # The air above the pad: the standard atmosphere through the pad's
     # pressure, or the same lapse from the temperature the sensor read there.
@@ -140,9 +142,10 @@ class Lumped:
         P[3][3] += self.kB * self.kB * dt * (lam if self.beta_adapts else 1.0) + 2.0 * pull * self.beta_sd ** 2 + loosen_beta
         x = [h1, v1, s + (self.s_min - s) * fade, lb + (math.log(self.beta0) - lb) * pull]
 
-        if p_raw is None:  # no reading this time: the model carries on alone, and decides nothing
-            self.x, self.P = x, P
+        if self.used_t is None or t - self.used_t > GAP_S:
             self.read_since = None
+        if p_raw is None:  # no reading this time: the model carries on alone
+            self.x, self.P = x, P
             return
 
         # The reading.
@@ -162,6 +165,7 @@ class Lumped:
         else:
             if self.read_since is None:
                 self.read_since = t
+            self.used_t = t
             if abs(nu) <= self.gate:
                 self.run = 0
                 if self.e_prev is not None:

@@ -245,15 +245,34 @@ close to zero the thrust may go.
 - **Beyond the sensor's range** (45 km) it can be up to 2.4 s early with a
   large port error.
 
-## If adopted
+## The port (DD-092)
 
-1. Port `sim/study/lumped.py` to C beside the present estimator, behind the
-   same `pest_*` interface, and fly both in every host suite.
-2. Feed the pad temperature from the sensor into the atmosphere.
-3. Replace the Mach flag with rules 2 and 3; withdraw FLT-MACH-02 to
-   FLT-MACH-07; reword FLT-APO-01, SNS-EST-02 and PYR-MODE-06.
-4. Take the reported peak from the filter's height at apogee.
-5. Bench flight (DD-078) on MK1C to measure the cost.
+Adopted 2026-10-03. `src/estimator_lumped.c` is `sim/study/lumped.py` in C,
+single precision, behind `src/estimator.h`. It is the default estimator. The
+filter that flew before is `constacc`, beside it, and both fly on every
+reading.
+
+- **Checked against the reference:** `sim/study/lumped_port_check.py` flies
+  54 of the study's flights, replays the readings the reference was fed
+  through the C code, and compares the pressure and the rate wherever both
+  explain the readings. They agree to within 0.5 standard deviations of the
+  rate. At a burnout or a canopy opening neither explains the readings, the
+  filter is thrown about, and a rounding difference grows for a few seconds;
+  nothing is decided there.
+- **The pad's temperature** is the sensor's own at the first reading.
+- **The peak** is the lowest filtered pressure the model explained
+  (FLT-APO-08).
+- **One change to the rules:** the second of evidence starts again after
+  250 ms without a used reading, not after one missing reading. A sensor
+  repeating itself for eight readings near apogee cost 2 s on 2 of 1000
+  flights to 10 km. The sweep and the failure cases above are unchanged by
+  it.
+- **Flown in the host suites** (`test/test_mach.c`, obeying each estimator):
+  never early from a hop to 45 km on the test plant's port errors; 0.09 to
+  0.94 s after apogee.
+- **Cost:** about 7 kB of flash. MK1B's 384 kB slot has about 3 kB spare.
+- **Still owed:** a bench flight (DD-078) on hardware, and the loop time with
+  both filters running.
 
 An accelerometer, on a later MK1D or wired to an MK1C, measures
 `a_T - drag` directly. It would enter the same filter as a second
@@ -266,4 +285,5 @@ cd sim/study
 python3 lumped_study.py            # every section: about 10 minutes
 python3 lumped_tune.py '{"chosen": {"pad_temp_err": 0.0}}' 8
 python3 lumped_trace.py "20 km" cold fake 9.0 1 '{"pad_temp_err": 0.0}' 0 80 50
+python3 lumped_port_check.py       # the C port against lumped.py
 ```

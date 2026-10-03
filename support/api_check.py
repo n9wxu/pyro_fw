@@ -90,7 +90,7 @@ print(f"== {board} {st0['fw_version']} at {HOST}, state {st0['state']}")
 NEW_FIELDS = ("resume", "pyro_pulses", "pyro_fault", "emergency_fire", "refire_interval_ms", "fire_gap_ms",
               "pyro_limited", "usb_attached", "test_mode",
               "buzzer_active", "raw_pa", "pad_speed_cms", "ground_degraded", "ground_reseeds",
-              "sample_interval_us", "stamp_lag_max_us", "noise_mpa", "mach_lock", "mach_flag_ms",
+              "sample_interval_us", "stamp_lag_max_us", "noise_mpa", "estimator", "estimator_explains",
               "peak_lower_bound", "log_rate")
 check("status: new fields present", all(k in st0 for k in NEW_FIELDS),
       ",".join(k for k in NEW_FIELDS if k not in st0))
@@ -118,8 +118,7 @@ for key in ("refire_interval_ms", "fire_gap_ms"):
 check("limits: the sensor's range and height", lim.get("sensor", {}).get("height_m", 0) >= 9000 and
       0 < lim["sensor"]["min_pa"] < lim["sensor"]["max_pa"], str(lim.get("sensor")))
 # M1: a board on the pad is not locked, and has never been flagged.
-check("status: no Mach lock on the pad", st0.get("mach_lock") is False and st0.get("mach_flag_ms") == 0,
-      f'{st0.get("mach_lock")} {st0.get("mach_flag_ms")}')
+check("status: names the estimator it obeys", st0.get("estimator") in ("lumped", "constacc"), f'{st0.get("estimator")}')
 check("status: PAD_IDLE flight time is 0", st0["state"] != "PAD_IDLE" or st0["flight_ms"] == 0, str(st0["flight_ms"]))
 # USB is the only way to reach the API, so this board has a host on its port.
 check("status: usb_attached is true", st0.get("usb_attached") is True, str(st0.get("usb_attached")))

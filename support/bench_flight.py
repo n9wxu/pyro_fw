@@ -111,7 +111,7 @@ def main():
         if st["state"] != state or s["phase"] != phase:
             print(f"{el:7.1f}  {st['state']:15s} profile {s['phase']:7s} t={s['t_s']:7.1f}s "
                   f"alt={s['alt_m']:8.1f} m  {s['pa']:9.1f} Pa  board alt={st['alt_cm'] / 100:8.1f} m "
-                  f"v={st['vspeed_cms'] / 100:7.1f} m/s  lock={st['mach_lock']}")
+                  f"v={st['vspeed_cms'] / 100:7.1f} m/s  explains={st['estimator_explains']}")
             state, phase = st["state"], s["phase"]
         if s["fires"] != fires:
             for ch in (0, 1):

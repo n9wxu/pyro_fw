@@ -17,7 +17,7 @@ recorded.
 |---|---|---|
 | — | [How every task runs](#how-every-task-runs) | read first |
 | 1 | [Commit the work](#1-commit-the-work) | done; G4 last ran 2026-09-28, on 2.1.702 |
-| 2 | [Decisions](#2-decisions) | you; **HA-1: the Mach lockout above 9 km** |
+| 2 | [Decisions](#2-decisions) | HA-1 done (DD-092); its bench flight is owed |
 | 3 | [Safety fixes](#3-safety-fixes) | done |
 | 4 | [The pressure chain and the Mach lockout](#4-the-pressure-chain-and-the-mach-lockout) | done; T5's cost over its limit (T5-C) |
 | 5 | [Other code defects](#5-other-code-defects) | done, except C10, C6 and U6: decided, not yet built |
@@ -147,7 +147,7 @@ are still yours; their tasks wait.
 | T5-C | The fit's cost | **Decided 2026-09-27: leave it.** 2.9 ms on the MS5607 boards against T5's 1.6 ms limit; the loop holds with 0 overruns. | — |
 | N20 | Shared littlefs buffers | **Adopted:** refuse file GETs while the flight log is open. It can be tested on the host, the log can be read after landing, and WEB-API-08 already refuses every writer in flight. | N20 task |
 | LFS-1 | littlefs v2.11.2 to v2.11.3 | **Recommended 2026-09-29:** v2.11.3 fixes data corruption with two handles open on one file (littlefs PR #1194); two uploads of one file at once would open its `.part` twice. v2 is otherwise frozen; the flight log's erase-per-sync is fixed only in the unreleased v3 (`docs/raw_flight_log.md`, "Upstream"). | LFS-1 task |
-| HA-1 | **The Mach flag** | **Studied 2026-10-03, your decision.** `docs/lumped_parameter_filter.md`: one filter with two lumped parameters and one rule, "decide only while the model explains the readings", needs no Mach flag. In a Python study of 736 in-range flights it was never early, with a median lateness of 0.18 s; the filter flying today was early on 3 of 368 and later. Nothing in the flight code has changed. The earlier evaluation is `docs/apogee_without_a_mach_flag.md`. | HA-1 task |
+| HA-1 | **The Mach flag** | **Done 2026-10-03 (DD-092).** The lumped-parameter filter is ported to C (`src/estimator_lumped.c`) behind an estimator interface (`src/estimator.h`). Both estimators fly on every reading; `estimator` in config.ini names the one obeyed, `lumped` by default; the log carries what each reports. The Mach flag is removed. Host flights obeying each estimator are never early from a hop to 45 km. **Owed:** a bench flight on hardware and the loop time with both filters running; MK1B has about 3 kB of slot left. | HA-1 task |
 
 ---
 

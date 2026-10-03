@@ -273,7 +273,7 @@ Based on the flight 4 analysis and the Revision 1.2 protocol update, the followi
 - In flight the $PYRO rate is `telem_rate_hz`: 10 by default, at most 50. PAD and LANDED are 1 Hz.
 - `$PYRO_FIRE` is sent only for a channel the board energised. The one retry of a drogue whose charge did not light (PYR-REFIRE-01) sends a second `$PYRO_FIRE,1`.
 - A power event in flight that the board rejoins while descending enters FALLING with the APOGEE flag set and no `$PYRO_APO`.
-- The same UART also carries diagnostic lines that begin with `!` (`!FAULT`, `!MACH LOCK`, `!GT`, `!SENSOR STUCK` and others) and web-server debug lines that begin with `HTTP:`. Neither begins with `$`.
+- The same UART also carries diagnostic lines that begin with `!` (`!FAULT`, `!GT`, `!SENSOR STUCK` and others) and web-server debug lines that begin with `HTTP:`. Neither begins with `$`.
 
 ### 10.1 Update `state_to_telem_id()` Mapping
 

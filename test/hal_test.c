@@ -115,6 +115,7 @@ static float gaussian(void) {
 /* What the HAL does with a reading: truncate to whole pascals, and discard one
  * no atmosphere can produce [SNS-PRES-06]. */
 static void feed_reading_us(float true_pa, uint64_t stamp_us) {
+    pp_note_temperature(mock_pressure.temperature_c);
     /* A stuck sensor answers with its last reading, to the pascal. */
     if (mock_sensor_stuck) {
         pp_feed_us(pp_last_raw_pa(), stamp_us);
@@ -296,6 +297,7 @@ void mock_reset_all(void) {
      * regardless of whether the previous test reached LANDED. */
     test_log_active = false;
     test_log_file = NULL;
+    mock_estimator_row_count = 0;
     test_file.open = false;
     memset(sim_files, 0, sizeof(sim_files));
     last_pp_feed_ms = 0;
@@ -716,6 +718,19 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
         .event = event,
     };
     log_plan_take(&test_log_plan, &s, test_log_keep, NULL);
+}
+
+char mock_estimator_rows[MOCK_ESTIMATOR_ROWS][FLOG_TEXT_MAX + 1];
+uint32_t mock_estimator_row_ms[MOCK_ESTIMATOR_ROWS];
+int mock_estimator_row_count;
+
+bool hal_log_estimator(uint32_t time_ms, const char *text, int len) {
+    if (!test_log_active || len <= 0 || len > FLOG_TEXT_MAX || mock_estimator_row_count >= MOCK_ESTIMATOR_ROWS)
+        return false;
+    memcpy(mock_estimator_rows[mock_estimator_row_count], text, (size_t)len);
+    mock_estimator_rows[mock_estimator_row_count][len] = '\0';
+    mock_estimator_row_ms[mock_estimator_row_count++] = time_ms;
+    return true;
 }
 
 typedef struct {

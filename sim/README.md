@@ -12,7 +12,7 @@ The simulation library packages the Pyro flight software **and** a rocket physic
 | `pyro_sim --replay <flight_log.csv>` | a logged flight's readings back through the firmware (`sim/replay.c`) |
 | `sim/qemu/` | the real ARM image on an emulated RP2040 (see `sim/qemu/README.md`) |
 
-`sim/mach_plant.c` is the Mach lockout tests' plant, not a simulator build.
+`sim/mach_plant.c` is the flight tests' plant, not a simulator build.
 
 With the fixture, continuity is whatever `sim.setContinuity()` last set and a
 fire is a counter; with a modelled board, a fire counts only when the match
@@ -234,7 +234,7 @@ renumbered: the numbers reach the flight log, telemetry and `/api/status`.
 | `sim/replay.c` | A flight log's readings back through the firmware |
 | `sim/hw/` | The Pico SDK calls a board file makes, for the modelled boards |
 | `sim/plant/` | The board plant models |
-| `sim/mach_plant.c` | The Mach lockout tests' atmosphere, rocket and static ports |
+| `sim/mach_plant.c` | The flight tests' atmosphere, rocket and static ports |
 | `boards/sim/hal_sim.h` | Internal sim HAL accessors |
 | `boards/sim/hal_sim.c` | In-memory HAL implementation |
 | `boards/sim_mk1a`, `sim_mk1b`, `sim_mk1c` | Host boards that build a real pyro backend against its plant |

@@ -30,7 +30,7 @@ Two-channel rocket flight computer on the RP2040, for three boards: MK1A, MK1B (
 - **Config parser**: X-macro INI parser (`src/config_fields.h`, `src/config.c`), web config editor
 - **Beep codes**: four outcomes, three personalities in `beep.ini` (`src/beep_codes.c`, `src/beep_store.c`); altitude beep-out after landing
 - **Telemetry UART**: `src/telemetry.c` — $PYRO NMEA, one message a second; events queued into the next message (DD-088)
-- **Event logging**: LAUNCH, ARMED, APOGEE, PYRO1, PYRO2, LANDING; Mach flag, re-fire, emergency fire, resume, fault, verify and sensor events
+- **Event logging**: LAUNCH, ARMED, APOGEE, PYRO1, PYRO2, LANDING; PEAK, re-fire, emergency fire, resume, fault, verify and sensor events
 - **Pyro health**: read on the pad for the announcement, and recorded for every pulse; MK1B's AP2192 FLAG pins; MK1C's bus faults. No reading withholds a fire (DD-081)
 - **Ground test**: the switch procedure (`src/ground_test_seq.c`, `src/ground_test_switch.c`, DD-087)
 - **WASM simulation**: Flight computer + physics engine compiled to WebAssembly
@@ -102,7 +102,7 @@ BOOT_CALIBRATE ──[10s, no samples]──→ FAULT (terminal)
 
 PAD_IDLE ──[alt>100ft AND pad speed>5m/s, 100 ms]──→ ASCENT
 ASCENT ──[arming gate]──→ ASCENT (self-loop, arms pyros)
-ASCENT ──[the filtered pressure past its minimum, or apogee under the Mach flag]──→ FALLING
+ASCENT ──[seen climbing, then seen falling, the estimator explaining the readings]──→ FALLING
 FALLING ──[rate settled in drogue band]──→ DROGUE_DESCENT
 FALLING / DROGUE_DESCENT ──[rate settled in main band]──→ CHUTE_DESCENT
 DROGUE_DESCENT ──[rate above drogue band, 1 s]──→ FALLING
@@ -132,8 +132,8 @@ GROUND_TEST are numbered after LANDED, so recorded state numbers never move.
 
 ### ASCENT
 - Thrust is reported while the filtered acceleration is upward (FLT-ASC-03)
-- Arm pyros once the speed has passed 10 m/s and fallen back below it, above about 30 m (DD-017, FLT-MACH-06)
-- Apogee: no Mach flag, the filtered pressure rising by more than three times its rate's uncertainty and above its lowest value by more than twice the estimate's, with no hold time (FLT-APO-01, FLT-MACH-05); or apogee under the flag (FLT-MACH-04)
+- Arm pyros once the speed has passed 10 m/s and fallen back below it, above about 30 m (DD-017, FLT-ASC-08)
+- Apogee: the obeyed estimator seen climbing and then seen falling, each by more than three times its rate's uncertainty, with its model explaining the readings throughout; a fall whose climb was not seen that way must last 2 s (FLT-APO-07, DD-092)
 - Record peak altitude and apogee time
 
 ### DESCENT (FALLING, DROGUE_DESCENT, CHUTE_DESCENT)

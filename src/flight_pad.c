@@ -59,7 +59,6 @@ state_event_t flight_detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     pp_sample_t s;
     if (!pp_read(&s))
         return SEVT_NONE;
-    mach_lock_on_pad(&ctx->mach, &s);
     follow_a_moved_board(ctx, &s, now);
     ctx->ground_pressure = pp_ground_pressure();
     flight_take_sample(ctx, &s, PAD_IDLE);
@@ -82,10 +81,6 @@ void flight_action_launch(flight_context_t *ctx, uint32_t now) {
     uint32_t flight_ms = ctx->last_sample - ctx->launch_time;
     hal_log_start(&ctx->config, ctx->ground_pressure);
     hal_log_sample(flight_ms, ctx->pressure_pa, ctx->altitude_cm, ASCENT, 0, EVT_LAUNCH);
-    if (ctx->mach.flagged) {
-        hal_log_sample(flight_ms, ctx->pressure_pa, ctx->altitude_cm, ASCENT, 0, EVT_MACH_LOCK);
-        hal_telemetry_send("!MACH LOCK\r\n");
-    }
 }
 
 /* ── USB [USB-01..08] ─────────────────────────────────────────────── */

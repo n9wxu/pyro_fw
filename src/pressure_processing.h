@@ -12,6 +12,7 @@
 #ifndef PRESSURE_PROCESSING_H
 #define PRESSURE_PROCESSING_H
 
+#include "estimator.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -20,18 +21,22 @@ typedef struct {
     uint32_t timestamp_us; /* the same instant; wraps, so differences only */
     int32_t raw_pa;
 
-    /* The filtered state. rate and curve are of ln(pressure): a rate of
-     * -1/H per metre per second of climb, H the air's scale height. */
+    /* The filtered state, of the estimator the flight obeys. rate and curve
+     * are of ln(pressure): a rate of -1/H per metre per second of climb, H
+     * the air's scale height. */
     float pressure_pa;
     float rate;
     float curve;
     float rate_sigma;
     float log_sigma; /* of ln(pressure) */
     float noise_pa;
+    bool explains; /* the estimator's model accounts for the readings [SNS-EST-08] */
 
-    float short_rate; /* of the newest two intervals of raw readings [FLT-MACH-02] */
-    bool smooth;      /* no reading far from the estimate for the last second [FLT-MACH-03] */
-    bool suspect;     /* a gap or a stuck sensor within the last second [SNS-PRES-10, SNS-PRES-11] */
+    /* Every estimator's state at this reading, in estimator_at()'s order
+     * [SNS-EST-07]. */
+    estimate_t by_estimator[ESTIMATORS_MAX];
+
+    bool suspect; /* a gap or a stuck sensor within the last second [SNS-PRES-10, SNS-PRES-11] */
     bool sensor_stuck;
     bool risen; /* this reading is more than 50 cm above the pad [FLT-LAUNCH-03] */
 
@@ -45,6 +50,14 @@ typedef struct {
 #define PP_CAL_SAMPLES 10 /* [FLT-BOOT-08] */
 
 void pp_init(void);
+/* Which estimator the samples carry as the filtered state, by estimator_at()'s
+ * index [SNS-EST-06]. pp_init() chooses the default. */
+void pp_obey(uint8_t estimator);
+uint8_t pp_obeyed(void);
+/* The sensor's own temperature, for the estimators' first reading. */
+void pp_note_temperature(float temperature_c);
+/* The board has pulsed a pyro channel [SNS-EST-09]. */
+void pp_note_pulse(void);
 void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms);
 void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us); /* [SNS-PRES-08] */
 int pp_available(void);
@@ -69,7 +82,7 @@ void pp_resume_flight(int32_t ground_pa);
 
 /* ── The estimate before calibration, for the resume decision ─────── */
 
-/* False until the estimator has run for min_ms on readings. */
+/* False until the estimators have run for min_ms on readings. */
 bool pp_estimate_after(uint32_t min_ms, float *pressure_pa, float *rate);
 
 /* ── Status ───────────────────────────────────────────────────────── */

@@ -606,6 +606,9 @@ endfunction()
 
 pyro_module_suite(atmosphere_tests test/test_atmosphere.c src/atmosphere.c)
 pyro_module_suite(launch_detector_tests test/test_launch_detector.c src/launch_detector.c src/atmosphere.c)
+pyro_module_suite(apogee_detector_tests test/test_apogee_detector.c src/apogee_detector.c)
+pyro_module_suite(estimators_tests test/test_estimators.c src/estimator_table.c src/estimator_lumped.c
+                  src/estimator_constacc.c src/pressure_estimator.c src/atmosphere.c)
 pyro_module_suite(fire_control_tests test/test_fire_control.c src/fire_control.c src/atmosphere.c)
 
 # Plant tests. Each board model includes its own board's board_pins.h, so

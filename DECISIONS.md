@@ -559,6 +559,45 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-092: Estimators Behind One Interface, All Flown, One Obeyed
+- **Decision:** the filtered state comes from an estimator behind
+  `src/estimator.h`: a table of functions and a name. The build carries the
+  ones `src/estimator_table.c` lists. Every one is fed every reading. The
+  flight obeys the one `estimator` in config.ini names, and logs what the
+  others report and when each would have called apogee.
+- **The two carried:**
+  - `lumped`, the default: one equation of motion from pad to ground,
+    dv/dt = a_T - g - beta (rho/rho_pad) v|v|, learning a_T and beta from the
+    readings (`docs/lumped_parameter_filter.md`). `src/estimator_lumped.c` is
+    the C port of `sim/study/lumped.py`, and
+    `sim/study/lumped_port_check.py` flies both on the same readings.
+  - `constacc`: the constant-acceleration filter of DD-085, unchanged, behind
+    the interface.
+- **Replacing one:** in a build, link another table. In the field, set
+  `estimator` and restart.
+- **The Mach flag is gone (FLT-MACH-02..07 withdrawn):** an estimator says
+  whether its model explains the readings. Apogee is the obeyed estimator
+  seen climbing, then seen falling, explained throughout; a fall whose climb
+  was not seen must last 2 s (FLT-APO-07). A port error near Mach 1 is
+  readings the model does not explain, so nothing is decided on it and none
+  of it is the peak (FLT-APO-08).
+- **One missing reading is not a gap:** the second of evidence an estimator
+  needs starts again only after 250 ms without a used reading. A sensor that
+  repeats itself for eight readings near apogee otherwise cost 2 s, on 2 of
+  1000 flights to 10 km.
+- **Measured, host flights obeying each (`test/test_mach.c`):** hop to 45 km,
+  cold and hot pads, clean ports and three port errors. `lumped`: never
+  early, 0.09 to 0.94 s after apogee. `constacc`: never early, 0.09 to 1.8 s,
+  and later than 2 s on two of the 30 km and 45 km cases.
+- **The log:** `EST` text rows, rationed as script output is. LOCK, UNLOCK
+  and LOCK_FALLBACK are no longer written; PEAK and PEAK_AT_LEAST carry the
+  peak, and the web page reads them, and still reads an older log's rows.
+- **The cost:** every reading runs both filters, and each sample carries
+  every estimator's state.
+- **Open:** not yet flown on hardware. `lumped` anchors its air at the first
+  reading's pressure and the sensor's temperature then; a long wait on a pad
+  that warms is not yet followed.
+
 ### DD-091: What Building The 2026-10 Review Settled
 - **Apogee bounds (FLT-APO-01):** measured on the firmware itself, on host
   flights from 60 m to 30 km at sensor noise from 1.2 to 9 Pa: apogee is

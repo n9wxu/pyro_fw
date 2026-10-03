@@ -292,6 +292,7 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
 
     /* Feed the pressure_processing ring so detectors can read altitude
      * samples via pp_read() — single data path from sensor to FSM. */
+    pp_note_temperature(r->temperature_c);
     pp_feed_us((int32_t)r->pressure_pa, stamp_us);
 
     int idx = p->back.count;
@@ -1416,14 +1417,22 @@ static bool log_tagged(uint32_t time_ms, uint8_t tag, const char *text, int len)
     return true;
 }
 
-bool hal_log_text(uint32_t time_ms, const char *text, int len) {
-    /* Rationed: a script can flood, and script output must not crowd out the
-     * flight samples it is annotating. */
+/* Rationed: a script can flood, and neither script output nor the estimators'
+ * rows may crowd out the flight samples they annotate. */
+static bool log_rationed(uint32_t time_ms, uint8_t tag, const char *text, int len) {
     if (log_used() >= LOG_TEXT_CEILING) {
         log_ring.text_dropped += (uint32_t)(len > 0 ? len : 0);
         return false;
     }
-    return log_tagged(time_ms, FLOG_TAG_LUA, text, len);
+    return log_tagged(time_ms, tag, text, len);
+}
+
+bool hal_log_text(uint32_t time_ms, const char *text, int len) {
+    return log_rationed(time_ms, FLOG_TAG_LUA, text, len);
+}
+
+bool hal_log_estimator(uint32_t time_ms, const char *text, int len) {
+    return log_rationed(time_ms, FLOG_TAG_ESTIMATOR, text, len);
 }
 
 bool hal_log_mock(uint32_t time_ms, const char *what) {

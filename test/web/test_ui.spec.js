@@ -155,6 +155,21 @@ test.describe('New device', () => {
     await expect(page.locator('#logRate')).toHaveValue('1hz');
   });
 
+  /* SNS-EST-06: the choice is of the estimators the board says it carries. */
+  test('estimator: chosen from what the board carries, and saved', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await expect(page.locator('#estimator option')).toHaveText(['lumped', 'constacc']);
+    await expect(page.locator('#estimator')).toHaveValue('lumped');
+    await page.selectOption('#estimator', 'constacc');
+    await expect(page.locator('#cfgDirty')).toBeVisible();
+    await page.click('#btnSaveCfg');
+    await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 5000 });
+    const ini = await (await page.request.get(BASE + '/api/config')).text();
+    expect(ini).toContain('estimator=constacc');
+  });
+
   /* In flight the log holds the filesystem, so the space cannot be read. */
   test('log rate: no estimate while the flight log is written', async ({ page }) => {
     await page.route('**/api/log/space', r => r.fulfill({ status: 423, body: '{"error":"the flight log holds the filesystem"}' }));
@@ -838,9 +853,28 @@ test.describe('Flown device', () => {
     await expect(page.locator('#dApogee')).toContainText('10000');
   });
 
-  /* N27, FLT-MACH-07: while the Mach lock stands the ports' altitude is not
-     the rocket's, so the apogee comes from the rows outside it -- and is only
-     a lower bound if the lock let go within 2 s of apogee, or never did. */
+  /* FLT-APO-08: the summary's apogee is the log's PEAK row, not the highest
+     row, and "at least" when the firmware marked it a lower bound. */
+  test('apogee is the PEAK row', async ({ page, request }) => {
+    await request.post(BASE + '/api/_test/fly_peak/seen');
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Flight Data');
+    await expect(page.locator('#dApogee')).toContainText('8202');
+    await expect(page.locator('#dApogee')).not.toContainText('at least');
+  });
+
+  test('a PEAK_AT_LEAST row makes it a lower bound', async ({ page, request }) => {
+    await request.post(BASE + '/api/_test/fly_peak/bound');
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Flight Data');
+    await expect(page.locator('#dApogee')).toContainText('at least 8202');
+  });
+
+  /* A log written before DD-092 has the Mach lock's rows instead: the apogee
+     comes from the rows outside the lock -- and is only a lower bound if the
+     lock let go within 2 s of apogee, or never did. */
   async function openLocked(page, request, how) {
     await request.post(BASE + '/api/_test/fly_locked/' + how);
     await page.goto(BASE);

@@ -7,7 +7,6 @@
 #include "atmosphere.h"
 #include "ground_reference.h"
 #include "pressure_estimator.h"
-#include <math.h>
 #include <string.h>
 
 #define RING_MASK (PP_RING_SIZE - 1)
@@ -19,9 +18,7 @@
 /* A run of one reading this long is already not believed: a working sensor's
  * noise ends such a run within a few readings, a failed one never does. */
 #define REPEATING_READINGS 8
-#define SMOOTH_SIGMAS 4.0f /* [FLT-MACH-03] */
-#define SMOOTH_US 1000000u
-#define RECENT 3 /* readings kept for the short rate */
+#define KELVIN 273.15f
 
 typedef enum { PP_IDLE, PP_CALIBRATING, PP_RUNNING } pp_state_t;
 
@@ -30,16 +27,13 @@ static struct {
     int32_t cal[PP_CAL_SAMPLES];
     int cal_count;
 
-    pest_t estimator;
-    pest_t estimator_at_run_start; /* as it stood when the present reading first appeared */
-    uint32_t estimator_started_us;
+    uint8_t obeyed;
+    bool estimators_started;
+    uint32_t estimators_started_us;
+    /* Each estimator as it stood when the present reading first appeared. */
+    uint8_t at_run_start[ESTIMATORS_MAX][ESTIMATOR_STATE_MAX];
+    float sensor_k; /* 0: not known */
     gref_t ground;
-
-    struct {
-        int32_t pa[RECENT];
-        uint32_t us[RECENT];
-        uint8_t n;
-    } recent;
 
     bool have_reading;
     uint32_t last_us;
@@ -49,8 +43,6 @@ static struct {
     bool suspect;
     bool repeating;
     uint32_t suspect_until_us;
-    bool rough;
-    uint32_t rough_until_us;
 
     bool risen;
     uint32_t rise_ms;
@@ -63,6 +55,18 @@ static struct {
 
 void pp_init(void) {
     memset(&pp, 0, sizeof(pp));
+}
+
+void pp_obey(uint8_t estimator) {
+    pp.obeyed = estimator < estimator_count() ? estimator : 0;
+}
+
+uint8_t pp_obeyed(void) {
+    return pp.obeyed;
+}
+
+void pp_note_temperature(float temperature_c) {
+    pp.sensor_k = temperature_c + KELVIN;
 }
 
 /* ── Calibration ──────────────────────────────────────────────────── */
@@ -134,36 +138,50 @@ static bool watch_for_gap_and_stuck(int32_t raw_pa, uint32_t us) {
     return stuck;
 }
 
-static bool smooth_after(float innovation_sigmas, uint32_t us) {
-    if (fabsf(innovation_sigmas) > SMOOTH_SIGMAS) {
-        pp.rough = true;
-        pp.rough_until_us = us + SMOOTH_US;
-    } else if (pp.rough && (int32_t)(us - pp.rough_until_us) >= 0) {
-        pp.rough = false;
-    }
-    return !pp.rough;
+/* ── The estimators ───────────────────────────────────────────────── */
+
+static void start_estimators(int32_t raw_pa, uint32_t us) {
+    for (uint8_t i = 0; i < estimator_count(); i++)
+        estimator_at(i)->start(raw_pa, us, pp.sensor_k);
+    pp.estimators_started = true;
+    pp.estimators_started_us = us;
 }
 
-/* ── The raw readings' own rate ───────────────────────────────────── */
-
-static void remember(int32_t raw_pa, uint32_t us) {
-    for (int i = 0; i < RECENT - 1; i++) {
-        pp.recent.pa[i] = pp.recent.pa[i + 1];
-        pp.recent.us[i] = pp.recent.us[i + 1];
-    }
-    pp.recent.pa[RECENT - 1] = raw_pa;
-    pp.recent.us[RECENT - 1] = us;
-    if (pp.recent.n < RECENT)
-        pp.recent.n++;
+static void remember_estimators(void) {
+    for (uint8_t i = 0; i < estimator_count(); i++)
+        memcpy(pp.at_run_start[i], estimator_at(i)->state, estimator_at(i)->state_size);
 }
 
-static float short_rate(void) {
-    if (pp.recent.n < RECENT || pp.recent.pa[0] <= 0 || pp.recent.pa[RECENT - 1] <= 0)
-        return 0.0f;
-    int32_t dt_us = (int32_t)(pp.recent.us[RECENT - 1] - pp.recent.us[0]);
-    if (dt_us <= 0)
-        return 0.0f;
-    return logf((float)pp.recent.pa[RECENT - 1] / (float)pp.recent.pa[0]) * 1e6f / (float)dt_us;
+static void put_estimators_back(void) {
+    for (uint8_t i = 0; i < estimator_count(); i++)
+        memcpy(estimator_at(i)->state, pp.at_run_start[i], estimator_at(i)->state_size);
+}
+
+/* A sensor repeating itself gives no data [SNS-PRES-10]: the repeats the
+ * estimators had taken as readings are taken back, and they carry on from
+ * what they knew until the readings move. */
+static void feed_estimators(int32_t raw_pa, uint32_t us) {
+    if (!pp.estimators_started) {
+        start_estimators(raw_pa, us);
+        return;
+    }
+    if (pp.stuck_readings == REPEATING_READINGS)
+        put_estimators_back();
+    for (uint8_t i = 0; i < estimator_count(); i++) {
+        if (pp.repeating)
+            estimator_at(i)->no_reading(us);
+        else
+            estimator_at(i)->reading(raw_pa, us);
+    }
+    if (pp.stuck_readings == 1)
+        remember_estimators();
+}
+
+void pp_note_pulse(void) {
+    if (!pp.estimators_started)
+        return;
+    for (uint8_t i = 0; i < estimator_count(); i++)
+        estimator_at(i)->pulse(pp.last_us);
 }
 
 /* ── Samples ──────────────────────────────────────────────────────── */
@@ -194,23 +212,24 @@ static void for_the_operator(pp_sample_t *s, float ground_pa) {
 }
 
 static void produce_sample(int32_t raw_pa, uint32_t ms, uint32_t us, bool stuck) {
-    pest_estimate_t e = pest_estimate(&pp.estimator);
-    pp.last_filtered = (int32_t)(e.pressure_pa + 0.5f);
+    pp_sample_t *s = push_sample();
+    for (uint8_t i = 0; i < estimator_count(); i++)
+        estimator_at(i)->estimate(&s->by_estimator[i]);
+    const estimate_t *e = &s->by_estimator[pp.obeyed];
+    pp.last_filtered = (int32_t)(e->pressure_pa + 0.5f);
     gref_feed(&pp.ground, pp.last_filtered, ms);
     float ground_pa = (float)gref_pressure(&pp.ground);
 
-    pp_sample_t *s = push_sample();
     s->timestamp_ms = ms;
     s->timestamp_us = us;
     s->raw_pa = raw_pa;
-    s->pressure_pa = e.pressure_pa;
-    s->rate = e.rate;
-    s->curve = e.curve;
-    s->rate_sigma = e.rate_sigma;
-    s->log_sigma = e.log_sigma;
-    s->noise_pa = e.noise_pa;
-    s->short_rate = short_rate();
-    s->smooth = smooth_after(e.innovation_sigmas, us);
+    s->pressure_pa = e->pressure_pa;
+    s->rate = e->rate;
+    s->curve = e->curve;
+    s->rate_sigma = e->rate_sigma;
+    s->log_sigma = e->log_sigma;
+    s->noise_pa = e->noise_pa;
+    s->explains = e->explains;
     s->suspect = pp.suspect || pp.repeating;
     s->sensor_stuck = stuck;
     note_rise(s, ground_pa);
@@ -225,22 +244,8 @@ void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us) {
     uint32_t ms = (uint32_t)(timestamp_us / 1000u);
     uint32_t us = (uint32_t)timestamp_us;
     pp.last_raw = raw_pressure_pa;
-    remember(raw_pressure_pa, us);
     bool stuck = watch_for_gap_and_stuck(raw_pressure_pa, us);
-
-    /* A sensor repeating itself gives no data [SNS-PRES-10]: the estimate
-     * carries on from what it knew, and takes the readings up again when they
-     * move. */
-    if (!pp.estimator.started) {
-        pest_start(&pp.estimator, raw_pressure_pa, us, PEST_NOISE_FLOOR_PA);
-        pp.estimator_started_us = us;
-    } else if (!pp.repeating) {
-        pest_update(&pp.estimator, raw_pressure_pa, us);
-        if (pp.stuck_readings == 1)
-            pp.estimator_at_run_start = pp.estimator;
-    } else if (pp.stuck_readings == REPEATING_READINGS) {
-        pp.estimator = pp.estimator_at_run_start; /* the repeats it had taken as readings are taken back */
-    }
+    feed_estimators(raw_pressure_pa, us);
 
     if (pp.state == PP_CALIBRATING)
         calibrate_with(raw_pressure_pa);
@@ -298,10 +303,16 @@ uint32_t pp_ground_reseeds(void) {
 
 /* ── Status ───────────────────────────────────────────────────────── */
 
+static estimate_t obeyed_estimate(void) {
+    estimate_t e;
+    estimator_at(pp.obeyed)->estimate(&e);
+    return e;
+}
+
 bool pp_estimate_after(uint32_t min_ms, float *pressure_pa, float *rate) {
-    if (!pp.estimator.started || pp.estimator.t_us - pp.estimator_started_us < min_ms * 1000u)
+    if (!pp.estimators_started || pp.last_us - pp.estimators_started_us < min_ms * 1000u)
         return false;
-    pest_estimate_t e = pest_estimate(&pp.estimator);
+    estimate_t e = obeyed_estimate();
     *pressure_pa = e.pressure_pa;
     *rate = e.rate;
     return true;
@@ -327,7 +338,7 @@ bool pp_newest(pp_sample_t *out) {
 }
 
 float pp_noise_pa(void) {
-    return pp.estimator.started ? pest_estimate(&pp.estimator).noise_pa : PEST_NOISE_FLOOR_PA;
+    return pp.estimators_started ? obeyed_estimate().noise_pa : PEST_NOISE_FLOOR_PA;
 }
 
 uint32_t pp_time_of_rise_ms(void) {

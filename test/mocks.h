@@ -90,6 +90,12 @@ extern uint32_t mock_xip_stall_ms;       /* time added per flash write op */
 extern uint32_t mock_xip_total_stall_ms; /* cumulative stall time */
 extern int mock_xip_stall_count;         /* number of stall events */
 
+/* ── The estimators' log rows [SNS-EST-07] ────────────────────────── */
+#define MOCK_ESTIMATOR_ROWS 512
+extern char mock_estimator_rows[MOCK_ESTIMATOR_ROWS][65];
+extern uint32_t mock_estimator_row_ms[MOCK_ESTIMATOR_ROWS];
+extern int mock_estimator_row_count;
+
 /* ── Sensor model ─────────────────────────────────────────────────── */
 /* Off by default: a test that sets none of these sees the smooth signal it
  * always has. Every reading passes the HAL's own range check, and is

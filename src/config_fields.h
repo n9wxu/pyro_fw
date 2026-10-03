@@ -36,6 +36,7 @@
     X(U16, emergency_fire_speed, "emergency_fire_speed", 0)                                                            \
     X(U16, refire_interval, "refire_interval", 0)                                                                      \
     X(U16, fire_gap, "fire_gap", 0)                                                                                    \
+    X(STR, estimator, "estimator", "lumped")                                                                           \
     X(LOGRATE, log_rate, "log_rate", LOG_RATE_1HZ)                                                                     \
     X(U8, landing_timeout, "landing_timeout", 60)                                                                      \
     X(BOOL, lua_enabled, "lua_enabled", false)                                                                         \

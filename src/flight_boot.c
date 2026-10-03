@@ -49,14 +49,6 @@ static void resume_flight(flight_context_t *ctx, const pad_record_t *record, flo
     hal_log_sample(0, ctx->pressure_pa, ctx->altitude_cm, ASCENT, 0, EVT_RESUMED);
 }
 
-/* [FLT-MACH-06] A flight resumed climbing cannot know its speed history, so
- * it starts flagged, at the pressure it rejoined at. */
-static void resume_flagged(flight_context_t *ctx, float pressure_pa, uint32_t now) {
-    mach_lock_set(&ctx->mach, pressure_pa, now);
-    hal_log_sample(0, ctx->pressure_pa, ctx->altitude_cm, ASCENT, 0, EVT_MACH_LOCK);
-    hal_telemetry_send("!MACH LOCK\r\n");
-}
-
 /* False while the estimate is not yet good enough to decide on. */
 static bool decide_resume(flight_context_t *ctx, uint32_t now, state_event_t *event) {
     *event = SEVT_NONE;
@@ -83,8 +75,6 @@ static bool decide_resume(flight_context_t *ctx, uint32_t now, state_event_t *ev
 
     resume_flight(ctx, &record, pressure_pa, now);
     ctx->speed_cms = speed_cms;
-    if (verdict == RESUME_ASCENT)
-        resume_flagged(ctx, pressure_pa, now);
     *event = verdict == RESUME_ASCENT ? SEVT_RESUME_ASCENT : SEVT_RESUME_DESCENT;
     return true;
 }
@@ -122,6 +112,7 @@ void flight_action_resumed_descent(flight_context_t *ctx, uint32_t now) {
     ctx->armed_time = now;
     ctx->peak_lower_bound = true;
     hal_log_sample(0, ctx->pressure_pa, ctx->altitude_cm, FALLING, 0, EVT_APOGEE);
+    flight_log_peak(ctx);
 }
 
 state_event_t flight_detect_boot_continuity(flight_context_t *ctx, uint32_t now) {

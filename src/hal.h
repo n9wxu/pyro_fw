@@ -172,6 +172,8 @@ int hal_config_save(const config_t *cfg);
 void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa);
 void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
                     uint8_t event);
+/* One line about an estimator, as a text row of its own kind [SNS-EST-07]. */
+bool hal_log_estimator(uint32_t time_ms, const char *text, int len);
 void hal_log_stop(void);
 bool hal_log_active(void);
 

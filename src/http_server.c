@@ -445,15 +445,14 @@ static void serve_api_sim(http_conn_t *hc) {
     bench_flight_status(&s);
     pp_sample_t e;
     bool estimated = pp_newest(&e);
-    const flight_context_t *ctx = flight_get_context();
     int n = snprintf((char *)hc->work, sizeof(hc->work),
                      "{\"flying\":%s,\"mocked\":%s,\"flights\":%lu,\"phase\":\"%s\",\"t_s\":%.2f,\"t_apogee_s\":%.2f,"
                      "\"alt_m\":%.1f,\"peak_m\":%.1f,\"pa\":%.1f,\"ground_pa\":%.1f,\"fires\":[%lu,%lu],"
                      "\"apogee_m\":%.0f,\"boost_s\":%.2f,\"drogue_ms\":%.1f,\"main_alt_m\":%.0f,"
                      "\"main_ms\":%.1f,\"thin_air\":%s,\"pad_s\":%.1f,\"drogue_fails\":%s,\"main_fails\":%s,"
                      "\"estimate\":{\"pa\":%.2f,\"rate\":%.6f,\"curve\":%.7f,\"rate_sigma\":%.6f,\"noise_pa\":%.3f,"
-                     "\"valid\":%s,\"suspect\":%s,\"stuck\":%s,\"smooth\":%s},"
-                     "\"mach_lock\":%s}",
+                     "\"valid\":%s,\"suspect\":%s,\"stuck\":%s,\"explains\":%s},"
+                     "\"estimator\":\"%s\"}",
                      s.flying ? "true" : "false", s.mocked ? "true" : "false", (unsigned long)s.flights,
                      fsim_phase_name(s.phase), (double)s.t_s, (double)s.t_apogee_s, (double)s.alt_m, (double)s.peak_m,
                      (double)s.pa, (double)s.ground_pa, (unsigned long)s.fires[0], (unsigned long)s.fires[1],
@@ -462,7 +461,7 @@ static void serve_api_sim(http_conn_t *hc) {
                      s.p.drogue_fails ? "true" : "false", s.p.main_fails ? "true" : "false", (double)e.pressure_pa,
                      (double)e.rate, (double)e.curve, (double)e.rate_sigma, (double)e.noise_pa,
                      estimated ? "true" : "false", e.suspect ? "true" : "false", e.sensor_stuck ? "true" : "false",
-                     e.smooth ? "true" : "false", ctx && ctx->mach.flagged ? "true" : "false");
+                     e.explains ? "true" : "false", estimator_at(pp_obeyed())->name);
     http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
 }
 #endif
@@ -551,24 +550,36 @@ static void apply_api_beeps(http_conn_t *hc, char *body) {
     http_respond(hc, status, JSON, jb, (uint32_t)jn);
 }
 
-/* GET /api/limits [PYR-BOARD-03, SNS-MAX-01]: the board's defaults and ranges
- * for the pyro timing fields, what is in force, and the fitted sensor's
- * range, so the web interface writes none of them down. */
+static int estimator_names_json(char *dst, int cap) {
+    int n = snprintf(dst, (size_t)cap, "[");
+    for (uint8_t i = 0; i < estimator_count() && n < cap; i++)
+        n += snprintf(dst + n, (size_t)(cap - n), "%s\"%s\"", i ? "," : "", estimator_at(i)->name);
+    if (n < cap)
+        n += snprintf(dst + n, (size_t)(cap - n), "]");
+    return n;
+}
+
+/* GET /api/limits [PYR-BOARD-03, SNS-MAX-01, SNS-EST-06]: the board's defaults
+ * and ranges for the pyro timing fields, what is in force, the fitted
+ * sensor's range and the estimators carried, so the web interface writes
+ * none of them down. */
 static void serve_api_limits(http_conn_t *hc) {
     hal_pyro_limits_t l;
     hal_pyro_limits(&l);
     const flight_context_t *ctx = flight_get_context();
     pressure_sensor_range_t r = pressure_sensor_range((pressure_sensor_type_t)(ctx ? ctx->sensor_type : 0));
-    char jb[320];
-    int jn =
-        snprintf(jb, sizeof(jb),
-                 "{\"refire_interval_ms\":{\"default\":%u,\"min\":%u,\"max\":%u,\"in_force\":%lu},"
-                 "\"fire_gap_ms\":{\"default\":%u,\"min\":%u,\"max\":%u,\"in_force\":%lu},"
-                 "\"sensor\":{\"min_pa\":%ld,\"max_pa\":%ld,\"height_m\":%ld}}",
-                 (unsigned)l.refire_interval_default_ms, (unsigned)l.refire_interval_min_ms,
-                 (unsigned)l.refire_interval_max_ms, (unsigned long)(ctx ? ctx->plan.refire_interval_ms : 0u),
-                 (unsigned)l.fire_gap_default_ms, (unsigned)l.fire_gap_min_ms, (unsigned)l.fire_gap_max_ms,
-                 (unsigned long)(ctx ? ctx->plan.fire_gap_ms : 0u), (long)r.min_pa, (long)r.max_pa, (long)r.height_m);
+    char names[ESTIMATORS_MAX * 12 + 4];
+    (void)estimator_names_json(names, (int)sizeof(names));
+    char jb[400];
+    int jn = snprintf(jb, sizeof(jb),
+                      "{\"refire_interval_ms\":{\"default\":%u,\"min\":%u,\"max\":%u,\"in_force\":%lu},"
+                      "\"fire_gap_ms\":{\"default\":%u,\"min\":%u,\"max\":%u,\"in_force\":%lu},"
+                      "\"sensor\":{\"min_pa\":%ld,\"max_pa\":%ld,\"height_m\":%ld},\"estimators\":%s}",
+                      (unsigned)l.refire_interval_default_ms, (unsigned)l.refire_interval_min_ms,
+                      (unsigned)l.refire_interval_max_ms, (unsigned long)(ctx ? ctx->plan.refire_interval_ms : 0u),
+                      (unsigned)l.fire_gap_default_ms, (unsigned)l.fire_gap_min_ms, (unsigned)l.fire_gap_max_ms,
+                      (unsigned long)(ctx ? ctx->plan.fire_gap_ms : 0u), (long)r.min_pa, (long)r.max_pa,
+                      (long)r.height_m, names);
     http_respond(hc, 200, JSON, jb, (uint32_t)jn);
 }
 
@@ -862,8 +873,9 @@ static void status_capture(status_snap_t *s) {
     s->sample_interval_us[1] = hal_pressure_interval_max_us();
     s->stamp_lag_max_us = hal_pressure_stamp_lag_max_us();
     s->noise_mpa = (uint32_t)(pp_noise_pa() * 1000.0f); /* the sensor noise the estimator tracks */
-    s->mach_lock = fctx && fctx->mach.flagged;          /* [FLT-MACH-02..07] */
-    s->mach_flag_ms = fctx && fctx->mach.flag_ms ? fctx->mach.flag_ms - fctx->launch_time : 0u;
+    pp_sample_t newest;
+    s->estimator = estimator_at(pp_obeyed())->name;
+    s->estimator_explains = pp_newest(&newest) && newest.explains;
     s->peak_lower_bound = fctx && fctx->peak_lower_bound;
     s->usb_attached = fctx && fctx->usb_attached; /* [USB-01..03, USB-08] */
     s->test_mode = fctx && fctx->test_mode;
