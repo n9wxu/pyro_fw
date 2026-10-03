@@ -351,6 +351,17 @@ Departures are from a 9-point running median, so slow drift does not count.
   from their neighbours, 43 Pa at worst, against 2.3 Pa for the rest. That
   is the board, not the bench: discarding them (SNS-PRES-14) is right for
   this sensor on this board, and unnecessary for the BMP280 on it.
+- **MK1C on a battery, four runs:** 2.4 to 2.6 Pa rms at rest, against the
+  6 to 7 Pa it showed on USB alone, and the same while beeping. Conversions
+  beside a flash operation sat 3.4 to 3.9 Pa rms from their neighbours, 12 Pa
+  at worst: a slight disturbance, a quarter of MK1B's.
+
+  | On a battery | At rest, rms | Beeping, rms | Beside a flash operation, rms | Worst beside one |
+  |---|---|---|---|---|
+  | MK1B, MS5607 | 2.3 to 2.4 Pa | 2.4 Pa | 8.5 to 17.0 Pa | 43 Pa |
+  | MK1C, MS5607 | 2.4 to 2.6 Pa | 2.5 to 2.6 Pa | 3.4 to 3.9 Pa | 12 Pa |
+  | MK1B, BMP280 | 1.9 to 2.3 Pa | 1.9 to 2.4 Pa | 2.0 to 2.9 Pa | 7 Pa |
+
 - **The 9 Pa figure is a bench artefact.** DD-091 took 9 Pa, "the noisiest
   bench board's measured figure (MK1B)", as the noise the host tests fly at.
   That board on a battery is 2.3 Pa.
