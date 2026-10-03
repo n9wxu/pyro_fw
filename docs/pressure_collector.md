@@ -293,10 +293,40 @@ failed, and found two things the host could not: the flight step took one
 sample a loop from a collector giving 53 (FLT-RATE-06), and a landed bench
 profile was a stuck sensor (SIM-02). Both are fixed (DD-093).
 
-Does the BMP280 build of MK1B show the flash and buzzer disturbance? Not
-known. The bench MK1B carries the MS5607, and every measurement of the
-disturbance (DD-068, G4-M) was made on it. No MK1B with a BMP280 has been
-measured.
+### A BMP280-fitted MK1B, measured 2026-10-03
+
+A second MK1B, with the BMP280 (serial 0268FFB038CD), was loaded and measured
+with `support/pressure_disturbance.py`, beside the bench MK1B with the MS5607.
+Departures are from a 9-point running median, so slow drift does not count.
+
+| Board | At rest, rms | During beep codes, rms | Worst at rest / beeping | Raw temperature code, rest / beeping |
+|---|---|---|---|---|
+| MK1B, BMP280 | 2.5 Pa | 3.1 Pa | 8 / 14 Pa | 32 / 46 |
+| MK1B, MS5607 | 9.8 Pa | 11.4 Pa | 33 / 45 Pa | 239 / 383 |
+
+- **The beep disturbs both a little, and the same way:** the rms rises by
+  about a fifth on each, and the temperature code's by about half.
+- **On the MS5607 board, conversions beside a flash operation** sat 15.3 Pa
+  rms from their neighbours against 10 Pa for the rest: 41 of them in 68
+  programs and 9 erases.
+- **On the BMP280 board the flash test could not be run.** 20.4 s into the
+  beep phase, during the fourth beep code, the BMP280 stopped acknowledging
+  its address. The readings up to that one were ordinary. The collector
+  counted the failures by cause and ran its recovery (bus clear, soft reset,
+  2 ms) over 2500 times in a minute without the part answering. After a
+  restart without removing power, start-up's own bus clear and reset at both
+  addresses did not find it either: the board went to FAULT, `sensor_fail`.
+  So the part itself is off the bus until its power is removed. One
+  occurrence; not yet repeated.
+- **What the design says:** the BMP280 datasheet, page 27, section 5.1: once
+  CSB has been pulled low, "the I2C interface is disabled until the next
+  power-on-reset". On MK1B's schematic CSB, SDO, VDDIO and VDD of U4 are all
+  on the 3.3 V net, so only a dip of that rail reaches CSB. Whether the beep
+  did that is not established.
+- **What the firmware did not do:** while the sensor was silent on the pad,
+  `/api/status` listed no fault, and the estimator still reported that it
+  explained the readings: its last sample. No requirement asks for a lost
+  sensor to be reported on the pad; SNS-PRES-11 asks it in flight.
 
 SNS-PRES-06 is reworded, and SNS-COL-01 to SNS-COL-06, SNS-PRES-15 and
 SNS-PRES-16 are new.
