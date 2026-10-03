@@ -1,5 +1,7 @@
 # Pyro MK1 Flight Computer Specification
 
+> **Requirements changed 2026-10-02.** `REQUIREMENTS.md` governs, and its review is recorded in `docs/requirements_review_2026-10-02.md` and DD-080 to DD-090. This file describes the firmware as built; where it differs from the requirements, the requirements are right and the code is being brought to them.
+
 ## AI Restart Summary
 
 This section contains everything needed to resume development with a new AI session.

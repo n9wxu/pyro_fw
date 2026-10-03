@@ -559,6 +559,166 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-090: Ten Code Requirements, And The HAL As The Test Seam
+- **Decision:** the code itself has requirements (CODE-01..10): structure
+  and naming before comments; comments for traceability and for decisions
+  the structure does not show, never to teach a subject; named functions
+  before magic values; one responsibility per file; SOLID and DRY; black-box
+  tests traceable to requirements; all code reachable through the published
+  interfaces, with no dead code, no test-only functions and no test
+  constructs that reach hidden functions; pure functions preferred.
+  Libraries from outside the project are exempt and are not modified.
+- **The seam:** the HAL interface is the mockable layer through which all
+  flight code is tested (HAL-05), and it makes a port a new HAL. The HAL is
+  validated separately, on hardware, with test equipment and HAL validation
+  applications (HAL-06, BLD-06).
+- **Why:** given by the user on 2026-10-03, after the requirements review,
+  to govern the review of the tests and the code that follows it.
+
+### DD-089: A Script Cannot Block The Board
+- **Decision:** Lua is a functional requirement on every board (section 10
+  of `REQUIREMENTS.md`). No script may block, prevent or delay any behaviour
+  of the board: starting up, the network, the announcement, logging,
+  telemetry, any flight function (SYS-LUA-02). Whatever script is stored the
+  board starts and serves its web interface (LUA-SAFE-01). A script has full
+  control of the pads the pin assignment gives it, a pyro channel's
+  included, and that use is the operator's. The enabled script always runs,
+  ground test and bench flight included (LUA-RUN-01).
+- **Why:** the user's rulings in the 2026-10 review. A script that could
+  hold up a start would turn a bad upload into a board that cannot be
+  repaired from its own web interface.
+
+### DD-088: Telemetry Is $PYRO Once A Second, And Carries Its Events
+- **Decision:** the downlink is the $PYRO sentence, once a second in every
+  state it is sent in (TEL-03). A flight event is queued and carried by the
+  next message, so it can be up to a second late and none is lost (TEL-11).
+  The configurable format and rate are withdrawn, with `telem_format` and
+  `telem_rate_hz`. The port accepts no commands (TEL-12). A user who needs
+  another format assigns the serial pins to a script.
+- **Why:** the user's rulings in the 2026-10 review. The log may run faster
+  than the downlink; the downlink is for watching a flight, not for
+  reconstructing it.
+
+### DD-087: Ground Test By The Switch Alone, And Configuration At Start-Up
+- **Decision:** the serial ground test commands are removed (GND-TEST-01..04
+  withdrawn). The test switch procedure of DD-071 is the only ground test,
+  and its fires are delivered on command with no health gate (GND-TEST-13).
+  The switch may connect the buzzer's pad to another pad and may not ground
+  the buzzer; pad to pad, the input pad watches the buzzer's own pattern and
+  short pulses find the switch while the buzzer is silent (GND-TEST-12,
+  `docs/ground_test_on_buzzer_pad.md`).
+- **Configuration:** configuration and pin changes take effect at start-up
+  (CFG-10). The web interface writes the file; the running system, ground
+  test mode included, goes on with what it started with.
+- **Why:** the user's rulings in the 2026-10 review. The serial commands
+  needed a computer, which the user need excludes; and a save that only
+  writes a file cannot be refused for the mode the board is in.
+
+### DD-086: Any Restart Resumes A Flight In Progress
+- **Decision:** recovery is no longer tied to a power event (DD-041's
+  premise). After any restart the system resumes if the pad's record exists,
+  the board is above the recorded ground and moving, and no USB host is
+  attached (FLT-BROWN-02). A resumed flight assumes no channel has fired and
+  fires as soon as fresh data meets a trigger; a DELAY counts in full from
+  the resume; the emergency rule applies from the resume (FLT-BROWN-06). All
+  resume state is cleared when the flight lands and when a bench flight
+  ends (FLT-BROWN-04).
+- **Why:** best effort. A watchdog reset in the air used to start cold, take
+  a ground reference at altitude and fire nothing. A fire into a spent
+  igniter is harmless, so nothing about the channels need survive.
+- **Open:** restoring T+0, apogee and the peak by replaying the flight log,
+  if it is fast enough (`docs/resume_from_log.md`).
+
+### DD-085: One Estimator On Raw Pressure, And Every Operation In Pressure
+- **Decision:** the detectors read one filtered state -- pressure, its rate
+  and its acceleration -- formed from the raw readings by a Kalman filter
+  whose correction is limited inside its update (SNS-EST-01, SNS-EST-02).
+  No median and no low-pass stand in front of it. It discards nothing, is
+  not re-seeded and is not loosened at a fire; it trends to data that is
+  stable. Every flight comparison is in pressure, and a height or speed the
+  operator set is converted once (SNS-EST-05). No altitude is clamped, at
+  8000 m or at zero (SNS-ALT-01). This replaces DD-040, DD-044 and DD-048.
+- **Apogee at altitude:** filtered pressure must show the slowing climb,
+  apogee and descent at every height in the sensor's range. A fallback that
+  waits for the pressure to return to the Mach flag's level is rejected: it
+  deployed a good 30 km flight 150 m above the ground (HA-1). FLT-MACH-04 is
+  rewritten and DD-049's fallback with it.
+- **Data is believed:** the board cannot know its sensor is wrong. A reading
+  beyond the rated range is used (SNS-PRES-06). A stuck sensor is a chip
+  failure: it is logged and nothing recovers it in flight (SNS-REC-01).
+- **Why:** the user's rulings in the 2026-10 review, and the evaluation in
+  `docs/kalman_launch_evaluation.md`: a raw filter lets one reading 3 to
+  6 kPa low declare a launch, and limiting the correction stops one or two
+  bad readings of any size at no cost in delay. The design and what remains
+  to be measured are in `docs/descent_speed_estimator.md` and
+  `docs/pressure_domain_flight_math.md`.
+
+### DD-084: A Board Declares Its Constraints
+- **Decision:** the requirements are general, and a board may redefine a
+  default or narrow a range: `refire_interval` and `fire_gap` for its
+  protection part, its sensor's range and noise, its height for proper
+  operation, its log capacity and log details (PYR-BOARD-01..04, DAT-09,
+  SNS-MAX-01, BRD-01). An out-of-range value is brought to the nearest
+  permitted one and reported, never rejected. A constraint may change when
+  a channel is energised; it may never withhold a decided fire.
+- **Why:** MK1A's low-current PTC needs a different gap from MK1C's eFuse,
+  and a configuration file can arrive from another board.
+
+### DD-083: Four Announcements By Priority, And Health That Gates Nothing
+- **Decision:** the pad says one of OK to fly, pyro 1 fault, pyro 2 fault,
+  general fault; silence is also a fault. One is announced at a time:
+  general, then pyro 1, then pyro 2 (BUZ-CODE-02). Each board checks every
+  enabled channel for the faults it can reliably detect; one that can detect
+  none treats the channel as ready (PYR-HEALTH-01). A short cannot be told
+  reliably from a match, so the general verdict is ready or fault and the
+  measurement is named on the status report. Only enabled channels count,
+  and the pin assignment is the source of truth (PYR-HEALTH-02).
+- **Why:** the user's rulings in the 2026-10 review. A general fault goes
+  back to the workbench; a pyro fault may be fixed at the pad, one at a
+  time. Diagnosis is not for the beep.
+
+### DD-082: Re-Fire, Emergency All-Fire, And The Gap, Without Roles
+- **Decision:** after a channel's first fire it fires again every
+  `refire_interval` while the descent speed exceeds that channel's re-fire
+  speed (PYR-REFIRE-01). At any time after apogee, at
+  `emergency_fire_speed`, every enabled channel fires and goes on firing
+  until the speed drops or the flight lands (FLT-EMRG-01). A zero speed
+  disables its rule. The channels are never energised together, and
+  `fire_gap` of quiet separates a pulse on one from a pulse on the other; a
+  first fire goes before a re-fire and pyro 1 before pyro 2
+  (PYR-DEPLOY-02). "Drogue" and "main" leave the requirements. The rules
+  act on the filtered state (FLT-EMRG-05). This replaces DD-028's ladder.
+- **Why:** the user's rulings in the 2026-10 review. Any deployment reduces
+  the damage, and a pulse into a spent igniter is harmless.
+- **Open:** the defaults of the three speeds, zero until the modelling study
+  gives them.
+
+### DD-081: Never Early, Data Believed, Best Effort
+- **Decision:** a fire is decided only on measured evidence that its event
+  has happened: never early, never on an estimate, never on a timer
+  (SYS-DEPLOY-04). Samples that arrive are believed; only their absence
+  suspends a decision. Once decided, nothing withholds the attempt: health,
+  continuity, faults and voltage gate nothing, in flight or in ground test
+  (SYS-DEPLOY-05, PYR-HEALTH-01). PYR-SAFE-01 and PYR-ARM-02 are withdrawn
+  and no fire is refused (PYR-FIRE-01).
+- **Why:** the user's rulings in the 2026-10 review. No correction is
+  possible after launch. A safe flight carries two pyro systems, so this
+  unit prefers no deployment to an early or uninformed one, and never holds
+  a decided one back.
+
+### DD-080: Requirements State Behaviour; Mechanism Is In The Design Record
+- **Decision:** `REQUIREMENTS.md` states behaviour that can be verified from
+  outside and met by any implementation. It dictates no processor, kernel,
+  bus, interrupt or algorithm; the hardware layer may use any of them.
+  Requirements that were mechanisms are withdrawn (Appendix A) and stay in
+  force as design, in the decisions they cite and in each board's theory of
+  operation. The requirements are general, with board values declared
+  beneath them (DD-084). FreeRTOS is the only task model supported, as a
+  design fact (DD-073).
+- **Why:** the user's ruling in the 2026-10 review, recorded in
+  `docs/requirements_review_2026-10-02.md` with every identifier's
+  disposition.
+
 ### DD-079: Descent Rates Are Judged In The Pad's Air
 - **Decision:** the descent bands (a main at 10 m/s or less, a drogue at
   35 m/s or less) and the emergency ladder's evidence read the descent rate

@@ -66,11 +66,11 @@ The $PYRO sentence state field (field 2) must use these exact integer codes. The
 | Code | Name | Thrust | Description | Rate |
 |---|---|---|---|---|
 | 0 | PAD | 0 | On the pad, pre-launch. Altimeter is idle, tracking ground pressure. | 1 Hz |
-| 1 | ASCENT | 1 | **Boost phase.** Motor burning, thrust detected. GS displays this as BOOST. The thrust flag (field 3) must be 1. | 10 Hz |
-| 1 | ASCENT | 0 | **Coast phase.** Motor burned out, still ascending. GS displays this as COAST. The thrust flag (field 3) must be 0. | 10 Hz |
-| 2 | FALLING | 0 | Free-fall after apogee, before drogue fires. The $PYRO_APO event sentence is emitted at the moment of transition into this state. GS displays this as FALLING. | 10 Hz |
-| 3 | DROGUE | 0 | Drogue chute deployed, descending under drogue. GS displays this as DROGUE. | 10 Hz |
-| 4 | CHUTE | 0 | Main chute deployed, slow final descent. GS displays this as CHUTE. | 10 Hz |
+| 1 | ASCENT | 1 | **Boost phase.** Motor burning, thrust detected. GS displays this as BOOST. The thrust flag (field 3) must be 1. | 1 Hz |
+| 1 | ASCENT | 0 | **Coast phase.** Motor burned out, still ascending. GS displays this as COAST. The thrust flag (field 3) must be 0. | 1 Hz |
+| 2 | FALLING | 0 | Free-fall after apogee, before drogue fires. The $PYRO_APO event sentence is emitted at the moment of transition into this state. GS displays this as FALLING. | 1 Hz |
+| 3 | DROGUE | 0 | Drogue chute deployed, descending under drogue. GS displays this as DROGUE. | 1 Hz |
+| 4 | CHUTE | 0 | Main chute deployed, slow final descent. GS displays this as CHUTE. | 1 Hz |
 | 5 | LANDED | 0 | On the ground after flight. GS displays this as LANDED and begins the landing timeout (5 minutes to auto-complete the flight). | 1 Hz |
 
 **Key point on ASCENT:** State code 1 serves double duty. The thrust flag distinguishes boost (thrust=1) from coast (thrust=0). The ground station maps this to two separate display states: BOOST and COAST. The altimeter must set the thrust flag correctly for this mapping to work.
@@ -136,7 +136,7 @@ $PYRO,0200,4,0,30000,-400,240000,90000,55000,3F,0350,0348,0,0*XX
 
 ## 6. Event Sentences
 
-One-shot sentences emitted at key flight events. These are in addition to the periodic $PYRO sentence. Each event sentence is sent exactly once when the event occurs. The tracker uses these to generate LoRa event packets with precise altimeter-measured values.
+One-shot sentences emitted for key flight events. These are in addition to the periodic $PYRO sentence. Each event is queued when it occurs and its sentence is sent exactly once, with the next periodic $PYRO sentence, so it arrives up to 1 s after the event (TEL-11). Its fields carry the event's own altitude and flight time, not the time it was sent. The tracker uses these to generate LoRa event packets with precise altimeter-measured values.
 
 ### 6.1 $PYRO_APO (Apogee)
 
@@ -226,7 +226,7 @@ The altimeter board connects to the tracker board over a wired UART link.
 | Format | 8N1 (8 data bits, no parity, 1 stop bit) |
 | Line termination | CR+LF or LF |
 | Protocol | NMEA-style sentences (`$` prefix, `*` checksum delimiter) |
-| Output format | **Must be NMEA (`telem_format=0`).** The tracker cannot parse JSON. If the altimeter is configured for JSON output (`telem_format=1`), the tracker will detect JSON lines and print a warning to its serial console, but no telemetry data will be forwarded over LoRa. |
+| Output format | NMEA `$PYRO` sentences. pyro_fw has no other format (TEL-01); a different one is a Lua script on the serial pins. |
 
 ---
 
@@ -259,6 +259,8 @@ The `LANDED` state_id changes from 3 to 5. Any downstream system (tracker, DSM, 
 ## 10. Required Changes for Compatibility
 
 Based on the flight 4 analysis and the Revision 1.2 protocol update, the following items need verification and possible changes.
+
+**Requirements changed 2026-10-02** (`REQUIREMENTS.md` TEL-01, TEL-03, TEL-11; DD-088): the downlink is one `$PYRO` sentence a second in every state, event sentences travel with the next periodic sentence, and there is no JSON format and no `telem_format` or `telem_rate_hz` key. The status below describes the firmware before that change and is brought up to date with the code.
 
 **Status in pyro_fw 2.1.702 (2026-09-28)** (`src/telemetry_formatter.c`, `src/flight_states.c`):
 
@@ -297,7 +299,7 @@ Known documentation error: The altimeter README documents the event sentence fie
 
 ### 10.4 Default Telemetry Format
 
-The `telem_format` configuration field must default to 0 (NMEA). If the default is JSON (1), the tracker will not receive any telemetry data. The tracker now detects JSON output and prints a warning, but it cannot parse JSON.
+pyro_fw sends NMEA only (TEL-01). The tracker cannot parse JSON, and the firmware no longer offers it.
 
 ---
 
@@ -350,5 +352,5 @@ Events marked **Both** can be triggered by either an event sentence or a flag tr
 6. Landed = state_id 5. The ground station auto-completes after 5 minutes of continuous state_id 5.
 7. Emit `$PYRO_APO`, `$PYRO_FIRE`, `$PYRO_LAND` event sentences at the appropriate moments.
 8. Flags bits 0-5 must be maintained correctly. The tracker watches for 0→1 transitions.
-9. `telem_format` must default to 0 (NMEA). The tracker cannot parse JSON.
-10. 10 Hz during ASCENT, FALLING, DROGUE, and CHUTE. 1 Hz during PAD and LANDED.
+9. The output is NMEA. The tracker cannot parse JSON.
+10. 1 Hz in every state. An event sentence is sent with the next periodic sentence, up to 1 s after its event.
