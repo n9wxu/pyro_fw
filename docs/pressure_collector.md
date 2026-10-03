@@ -335,8 +335,25 @@ Departures are from a 9-point running median, so slow drift does not count.
 
   On the battery a beep changes nothing, the sensor is quieter even at rest,
   and the temperature code's scatter is half what it was. No transfer failed
-  in 16 beep codes. The rail itself was not measured. The MS5607 board has
-  not been run on a battery.
+  in 16 beep codes. The rail itself was not measured.
+
+  The battery was then moved to the MS5607 board, four runs:
+
+  | MS5607 MK1B | At rest, rms | Beeping, rms | Worst at rest | Beside a flash operation, rms |
+  |---|---|---|---|---|
+  | USB alone | 9.8 Pa | 11.4 Pa | 33 Pa | 15.3 Pa |
+  | Battery fitted | 2.3 to 2.4 Pa | 2.4 Pa | 7 to 9 Pa | 8.5 to 17.0 Pa |
+
+  On the battery this sensor is at its datasheet's 2.4 Pa (page 4), a
+  quarter of what it showed on USB alone, and a beep changes nothing.
+- **Flash operations still disturb the MS5607 on MK1B, battery or not.** The
+  32 to 37 conversions marked as flashed in each run sat 8.5 to 17 Pa rms
+  from their neighbours, 43 Pa at worst, against 2.3 Pa for the rest. That
+  is the board, not the bench: discarding them (SNS-PRES-14) is right for
+  this sensor on this board, and unnecessary for the BMP280 on it.
+- **The 9 Pa figure is a bench artefact.** DD-091 took 9 Pa, "the noisiest
+  bench board's measured figure (MK1B)", as the noise the host tests fly at.
+  That board on a battery is 2.3 Pa.
 - **What the design says:** the BMP280 datasheet, page 27, section 5.1: once
   CSB has been pulled low, "the I2C interface is disabled until the next
   power-on-reset". On MK1B's schematic CSB, SDO, VDDIO and VDD of U4 are all
