@@ -167,6 +167,57 @@ and only for the record at first.
   thresholds that depend on the air's temperature, and it fires early on the
   30 and 45 km flights in its own test report.
 
+### E. One lumped-parameter filter, with no phases (2026-10-03 discussion)
+
+The user's direction: no switched phase models. One filter tracks the
+pressure smoothly from the pad to the ground and adjusts lumped parameters as
+it goes, because a barometer cannot separate mass, drag and thrust.
+
+```
+dv/dt = a_T − g − β · (ρ(h) / ρ_pad) · v · |v|
+```
+
+- **State:** height (as ln p), vertical speed, `a_T`, `β`.
+- **`a_T`**: thrust per unit mass. Never negative. It decays toward zero by
+  itself, so a burn that ends needs no burnout detector.
+- **`β`**: drag area per unit mass, as the pad's air would give it. Never
+  negative. It changes slowly, and is allowed to jump when the readings
+  insist, which is what a canopy opening looks like.
+- **Nothing is switched.** The same equation holds on the pad, in the burn,
+  in the coast, under a canopy and on the ground. Only the two parameters
+  move.
+
+What is separable, slightly:
+
+- Early in the burn the speed is low, drag is small, and `a_T` shows almost
+  alone.
+- In the coast `a_T` is zero, and `β` shows alone.
+- Drag area does not change before deployment and mass changes only by the
+  propellant, so the coast's `β` applies to the burn, less a few percent.
+  With it, the burn's `a_T` can be recovered.
+
+What rejects a port error, with no flag:
+
+- Drag can only slow a rocket toward zero speed. It cannot reverse it.
+- Thrust cannot be negative.
+- So the only thing that turns a climb into a descent is gravity, at 1 g. A
+  reversal faster than that fits no value of `a_T` and `β`, shows as a run of
+  large innovations, and is not followed. This is the arc rule's physics,
+  inside the filter instead of beside it.
+
+What is not yet known, and a Python study on the test flights would show:
+
+- whether the two parameters stay stable through a 30 g burn and a canopy
+  opening without a switch;
+- whether a port error during a supersonic burn is rejected or absorbed as a
+  short rise in `β`;
+- what "data is believed" (SNS-EST-02) becomes, since this filter refuses
+  sustained data that no parameters can explain;
+- the cost in the 384 kB slot of MK1B and in the 20 ms loop.
+
+An accelerometer (a later MK1D, or one wired to an MK1C) measures
+`a_T − drag` directly and makes the parameters separable.
+
 ## To reproduce
 
 The patch is against commit d345755, before the apogee hold was removed.
