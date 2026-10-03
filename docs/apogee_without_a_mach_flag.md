@@ -169,6 +169,10 @@ and only for the record at first.
 
 ### E. One lumped-parameter filter, with no phases (2026-10-03 discussion)
 
+**Studied: `docs/lumped_parameter_filter.md`.** It works and is recommended.
+The claim below that the physics alone rejects a port error did not hold: a
+consistency test is still needed beside the model.
+
 The user's direction: no switched phase models. One filter tracks the
 pressure smoothly from the pad to the ground and adjusts lumped parameters as
 it goes, because a barometer cannot separate mass, drag and thrust.
