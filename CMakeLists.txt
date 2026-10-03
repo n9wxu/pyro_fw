@@ -605,6 +605,7 @@ function(pyro_module_suite target test_source)
 endfunction()
 
 pyro_module_suite(atmosphere_tests test/test_atmosphere.c src/atmosphere.c)
+pyro_module_suite(launch_detector_tests test/test_launch_detector.c src/launch_detector.c src/atmosphere.c)
 pyro_module_suite(fire_control_tests test/test_fire_control.c src/fire_control.c src/atmosphere.c)
 
 # Plant tests. Each board model includes its own board's board_pins.h, so

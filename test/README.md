@@ -51,6 +51,7 @@ than one build: the boot, pad and recorded-flight suites run on all three.
 | `mach_tests` | `test_mach.c` | the Mach flag: supersonic flights, port errors, failed sensors (below) |
 | `recorded_flight_tests` | `test_recorded_flight.c` | the OpenRocket export in `test_data/`, pad to landed (TST-02) |
 | `atmosphere_tests` | `test_atmosphere.c` | the 1976 standard atmosphere (`atmosphere.c`) |
+| `launch_detector_tests` | `test_launch_detector.c` | the launch trigger alone (`launch_detected()`): 100 ft, 5 m/s, 100 ms |
 | `ground_test_tests` | `test_ground_test.c` | ground test mode through the flight software (DD-087) |
 | `ground_test_seq_tests` | `test_ground_test_seq.c` | its schedule and switch, a loop at a time |
 | `buzzer_tests` | `test_buzzer.c` | the pattern player driven through `hal_tasks_tick()`, and the beep store |
