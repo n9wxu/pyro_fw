@@ -5,9 +5,7 @@
  * matters because the board owns the first and an operator owns the second,
  * and validation is the only thing standing between them.
  *
- * Stored in pins.ini rather than config.ini. config.ini serialises to ~451 of
- * the 512 bytes hal_config_load() can read back, and a per-pin table does not
- * fit in 61 bytes. Keeping them apart also means the hardware map and the
+ * Stored in pins.ini rather than config.ini, so the hardware map and the
  * flight settings version independently.
  *
  * SPDX-License-Identifier: MIT

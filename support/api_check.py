@@ -55,6 +55,8 @@ def req(method, path, body=None, timeout=10):
     r = urllib.request.Request(BASE + path, data=data, method=method)
     if data is not None:
         r.add_header("Content-Type", "text/plain")
+    if method == "POST":
+        r.add_header("X-Pyro", "1")  # the board refuses a POST without it
     try:
         with urllib.request.urlopen(r, timeout=timeout) as resp:
             return resp.status, dict(resp.headers), resp.read()
@@ -128,20 +130,38 @@ check("status: usb_attached is true", st0.get("usb_attached") is True, str(st0.g
 if st0["uptime"] > 5000:
     check("status: a board on USB is silent", st0.get("buzzer_active") is False, str(st0.get("buzzer_active")))
 
-# REV-17 / REV-23: every one-shot response is framed and carries CORS.
+# [WEB-HTTP-02, WEB-API-07] Every one-shot response is framed, and grants no
+# other origin access.
 for method, path, want in (("GET", "/www/no_such_file.html", 404), ("POST", "/api/no_such_route", 404),
                            ("GET", "/api/config", 200), ("GET", "/api/pins", 200),
                            ("GET", "/api/pins/caps", 200), ("GET", "/api/beeps", 200),
                            ("GET", "/api/flight.csv", 200), ("GET", "/api/log/space", 200),
                            ("GET", "/api/net", 200), ("GET", "/api/limits", 200)):
     code, hdr, body = req(method, path, "" if method == "POST" else None)
-    cors = hdr.get("Access-Control-Allow-Origin") == "*"
-    check(f"{method} {path} -> {want} with CORS", code == want and cors, f"{code} cors={cors}")
+    same_origin = ("Access-Control-Allow-Origin" not in hdr
+                   and hdr.get("Cross-Origin-Resource-Policy") == "same-origin")
+    check(f"{method} {path} -> {want}, same origin only", code == want and same_origin,
+          f"{code} same_origin={same_origin}")
+
+# Requests from another site's page: a POST without X-Pyro, and a Host that is
+# not the board's.
+r = urllib.request.Request(BASE + "/api/test_mode/off", data=b"", method="POST")
+try:
+    code = urllib.request.urlopen(r, timeout=10).status
+except urllib.error.HTTPError as e:
+    code = e.code
+check("POST without X-Pyro -> 403", code == 403, str(code))
+r = urllib.request.Request(BASE + "/api/status", headers={"Host": "attacker.example"})
+try:
+    code = urllib.request.urlopen(r, timeout=10).status
+except urllib.error.HTTPError as e:
+    code = e.code
+check("a Host that is not the board -> 403", code == 403, str(code))
 code, hdr, body = req("GET", "/www/no_such_file.html")
 check("404 body is framed by Content-Length", hdr.get("Content-Length") == str(len(body)),
       f"len={hdr.get('Content-Length')} body={len(body)}")
 
-# REV-10: the erase endpoint, and the empty log reads as the column header.
+# [WEB-API-09] The erase endpoint, and the empty log reads as the column header.
 code, _, body = req("POST", "/api/flight/erase")
 check("POST /api/flight/erase -> 200", code == 200 and b"erased" in body, f"{code} {body[:60]!r}")
 code, _, body = req("GET", "/api/flight.csv")
@@ -201,6 +221,11 @@ check("the running board keeps the configuration it started with",
 # Restore the stored file.
 orig.setdefault("estimator", st0.get("estimator"))
 restore = "[pyro]\r\n" + "".join(f"{k}={v}\r\n" for k, v in orig.items())
+code, _, body = req("POST", "/api/config", "[pyro]\r\npyro1_mode=delay\r\npyro2_value=70000\r\n")
+_, _, cfg_refused = req("GET", "/api/config")
+check("a value beyond its field is refused with 400 and nothing is stored (SYS-CFG-03)",
+      code == 400 and cfg_refused.decode() == cfg1, f"{code} {body[:80]!r}")
+
 code, _, body = req("POST", "/api/config", restore)
 _, _, cfg2 = req("GET", "/api/config")
 check("stored config restored", code == 200 and f"pyro1_mode={orig.get('pyro1_mode')}" in cfg2.decode() and
@@ -234,6 +259,8 @@ check("no flash refused throughout", st4["flash_refusals"] == 0, str(st4["flash_
 # SNS-COL-04: the sensor answered every transfer, through the beeps and the flash writes above.
 check("no sensor transfer failed throughout", st4["pres_rejects"] == st0["pres_rejects"],
       f'{st4["pres_rejects"] - st0["pres_rejects"]} failed: {st4.get("pres_bus")}, {st4.get("pres_recoveries")} recoveries')
+sensor_faults = [f for f in st4.get("faults", []) if f.startswith("sensor_")]
+check("no sensor fault was latched throughout (SNS-PRES-17)", not sensor_faults, ",".join(sensor_faults))
 
 failed = [r for r in results if not r[1]]
 print(f"== {len(results) - len(failed)}/{len(results)} passed")

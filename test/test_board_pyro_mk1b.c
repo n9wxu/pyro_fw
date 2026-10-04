@@ -231,6 +231,98 @@ void test_mk1b_released_enable_left_alone(void) {
     TEST_ASSERT_EQUAL_UINT32(w, fake_writes[EN2]);
 }
 
+/* [PYR-CONT-01] A fresh reading at least once a second, on the loop's grid. */
+void test_PYR_CONT_01_mk1b_a_reading_at_least_once_a_second(void) {
+    uint32_t last = 0, worst = 0, rose = fake_rose_ms[COMMON];
+    for (uint32_t t = 0; t < 10000u; t += LOOP_PERIOD_MS) {
+        loops(LOOP_PERIOD_MS);
+        if (fake_rose_ms[COMMON] != rose) {
+            rose = fake_rose_ms[COMMON];
+            if (last && rose - last > worst)
+                worst = rose - last;
+            last = rose;
+        }
+    }
+    char m[48];
+    snprintf(m, sizeof(m), "%u ms between readings", (unsigned)worst);
+    TEST_ASSERT_TRUE_MESSAGE(worst > 0 && worst <= 1000u, m);
+}
+
+/* [PYR-FIRE-01] The fire stamps its pulse on the live clock; the loop
+ * updates with the `now` it read at the top of the period. A millisecond
+ * boundary between the two must not end the pulse at once. */
+void test_PYR_FIRE_01_mk1b_pulse_lasts_when_the_fire_clock_leads_the_loop(void) {
+    loops(1500u);
+    uint32_t loop_now = fake_now_ms;
+    fake_now_ms = loop_now + 1u;
+    pyro_fire(1);
+    fake_now_ms = loop_now;
+    pyro_update(loop_now);
+    TEST_ASSERT_TRUE_MESSAGE(pyro_is_firing(), "the pulse ended in the loop that started it");
+    TEST_ASSERT_TRUE(fake_level[EN1] && fake_level[COMMON]);
+    loops(480u);
+    TEST_ASSERT_TRUE_MESSAGE(fake_level[EN1], "the pulse ended before its 500 ms");
+    loops(40u);
+    TEST_ASSERT_FALSE(pyro_is_firing());
+    TEST_ASSERT_FALSE(fake_level[EN1]);
+}
+
+/* [PYR-DEPLOY-02] Only one channel live at a time, whatever the caller does:
+ * a fire mid-pulse is refused, and the running pulse keeps its length. */
+void test_PYR_DEPLOY_02_mk1b_refuses_a_fire_mid_pulse(void) {
+    loops(1500u);
+    pyro_fire(1);
+    loops(200u);
+    pyro_fire(2);
+    TEST_ASSERT_FALSE_MESSAGE(fake_level[EN2], "the second channel was energised over the first");
+    TEST_ASSERT_TRUE_MESSAGE(fake_level[EN1], "the first channel's pulse was cut short");
+    loops(280u);
+    TEST_ASSERT_TRUE(pyro_is_firing());
+    loops(40u);
+    TEST_ASSERT_FALSE(pyro_is_firing());
+    TEST_ASSERT_FALSE(fake_level[EN1] || fake_level[EN2]);
+}
+
+/* No such channel: nothing is driven, nothing acknowledges. */
+void test_PYR_DEPLOY_02_mk1b_refuses_a_channel_out_of_range(void) {
+    loops(1500u);
+    uint32_t w_common = fake_writes[COMMON];
+    pyro_fire(0);
+    TEST_ASSERT_FALSE(pyro_is_firing());
+    pyro_fire(3);
+    TEST_ASSERT_FALSE(pyro_is_firing());
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(w_common, fake_writes[COMMON], "a bad channel drove the common");
+    TEST_ASSERT_FALSE(fake_level[EN1] || fake_level[EN2]);
+}
+
+/* [PYR-VERIFY-01] What the post-fire verify reads: nothing, until a
+ * check has run after the pulse. A reading from before the fire would say
+ * the igniter is still there. */
+void test_PYR_VERIFY_01_mk1b_fired_channel_unknown_until_a_check_after_the_pulse(void) {
+    loops(1500u);
+    pyro_continuity_t c;
+    pyro_get(1, &c);
+    TEST_ASSERT_TRUE(c.good);
+    pyro_fire(1);
+    for (uint32_t t = 0; pyro_is_firing() && t < 1000u; t += LOOP_PERIOD_MS) {
+        pyro_get(1, &c);
+        TEST_ASSERT_FALSE_MESSAGE(c.good || c.open || c.shorted, "the pre-fire reading stands in for a verdict");
+        loops(LOOP_PERIOD_MS);
+    }
+    pyro_get(1, &c);
+    TEST_ASSERT_FALSE_MESSAGE(c.good || c.open, "a verdict before any check after the pulse");
+    pyro_continuity_t c2;
+    pyro_get(2, &c2);
+    TEST_ASSERT_TRUE_MESSAGE(c2.good, "the channel that did not fire keeps its reading");
+    loops(2u * LOOP_PERIOD_MS);
+    pyro_get(1, &c);
+#if BOARD_PYRO_U5_DISCHARGES_OUTPUTS
+    TEST_ASSERT_FALSE_MESSAGE(c.good || c.open, "a board that judges nothing has no verdict on a fired channel");
+#else
+    TEST_ASSERT_TRUE_MESSAGE(c.good, "a misfire, checked after the pulse, reads present");
+#endif
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_mk1b_continuity_never_sleeps);
@@ -251,5 +343,10 @@ int main(void) {
         RUN_TEST(test_mk1b_fire_then_a_fresh_reading);
     }
     RUN_TEST(test_mk1b_released_enable_left_alone);
+    RUN_TEST(test_PYR_CONT_01_mk1b_a_reading_at_least_once_a_second);
+    RUN_TEST(test_PYR_FIRE_01_mk1b_pulse_lasts_when_the_fire_clock_leads_the_loop);
+    RUN_TEST(test_PYR_DEPLOY_02_mk1b_refuses_a_fire_mid_pulse);
+    RUN_TEST(test_PYR_DEPLOY_02_mk1b_refuses_a_channel_out_of_range);
+    RUN_TEST(test_PYR_VERIFY_01_mk1b_fired_channel_unknown_until_a_check_after_the_pulse);
     return UNITY_END();
 }

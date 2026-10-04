@@ -10,7 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../src/beep_store.h"
+#include "../src/board_selftest.h"
 #include "../src/buzzer.h"
+#include "../src/flight_events.h"
 #include "../src/flight_resume.h"
 #include "../src/hal.h"
 #include "../src/pad_claim.h"
@@ -79,6 +81,10 @@ void harness_config(const char *ini) {
     TEST_ASSERT_EQUAL(0, hal_fs_write_file("config.ini", ini, (int)strlen(ini)));
 }
 
+void harness_board_stamp(const char *board) {
+    TEST_ASSERT_EQUAL(0, hal_fs_write_file("board.txt", board, (int)strlen(board)));
+}
+
 void harness_give_to_script(uint8_t channel) {
     pad_claim_reset();
     TEST_ASSERT_TRUE(pad_claim_take(mock_pyro_pads(channel) & ~mock_pyro_pads((uint8_t)(3 - channel)), PAD_LUA));
@@ -92,7 +98,12 @@ void harness_usb(bool attached) {
         usb_at_power_on = attached;
 }
 
+/* A follower of the flight's events starts with the board. */
+static uint32_t followed;
+
 static void power_on(void) {
+    board_selftest_init();
+    followed = 0;
     flight_init(&ctx);
     hal_pyro_claim_channels(mock_pyro_pads);
     flight_set_usb_attached(&ctx, usb_at_power_on, mock_time_ms);
@@ -106,6 +117,15 @@ void harness_restart(reset_cause_t cause) {
     powered = false;
 }
 
+/* As the script's host follows them on a board. */
+static void follow_events(void) {
+    uint8_t event;
+    while (flight_next_event(&ctx, &followed, &event)) {
+        size_t n = strlen(mock_lua_events);
+        snprintf(mock_lua_events + n, sizeof(mock_lua_events) - n, "%s;", flight_event_name(event));
+    }
+}
+
 void tick(uint32_t t) {
     mock_time_ms = t;
     if (!powered)
@@ -117,6 +137,7 @@ void tick(uint32_t t) {
     ctx.current_state = dispatch_state(&ctx, now);
     flight_update_outputs(&ctx, now);
     flight_storage_service(&ctx, now);
+    follow_events();
 }
 
 uint32_t run_to_pad(uint32_t *t) {

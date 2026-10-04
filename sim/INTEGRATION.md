@@ -12,7 +12,7 @@ pyro firing logic, telemetry) is compiled to WebAssembly along with a physics en
 
 The WASM module contains two independent subsystems:
 1. **Flight Computer** — the real firmware (state machine, pyro logic, telemetry, buzzer)
-2. **Physics Engine** — standard atmosphere model, thrust, drag, chute deployment
+2. **Physics Engine** — the U.S. Standard Atmosphere 1976, constant thrust, linear chute damping, chute deployment
 
 The pyro channels are a fixture: continuity is whatever `sim.setContinuity()` last set, and a
 fire is a counter. The module also carries the Lua VM that `docs/lua.html` drives.

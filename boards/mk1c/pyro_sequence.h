@@ -22,7 +22,7 @@ void sequence_step(uint32_t now_ms, const quiescent_t *q);
 fire_step_t sequence_current_step(void);
 bool sequence_firing(void);
 bool sequence_charged_the_bus(uint32_t now_ms);
-bool sequence_fired_since_tracking(uint8_t channel);
+bool sequence_verdict_pending(uint8_t channel);
 void sequence_verify_fired(const tracking_t *t);
 
 #endif

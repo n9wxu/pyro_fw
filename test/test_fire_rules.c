@@ -171,6 +171,43 @@ void test_FLT_AIR_01_a_failed_drogue_at_20_km_is_still_seen(void) {
 
 /* Both channels read faulted, on the pad and all through the flight: the pad
  * says so, and each channel still fires at its trigger. */
+static bool log_has(const char *event) {
+    static char log[262144];
+    if (test_flight_log_csv(log, (int)sizeof(log)) <= 0)
+        return false;
+    char field[40];
+    snprintf(field, sizeof(field), ",%s", event);
+    return strstr(log, field) != NULL;
+}
+
+/* [PYR-VERIFY-01] A charge that lit leaves its channel open: nothing is
+ * recorded against it. */
+void test_PYR_VERIFY_01_a_channel_that_opened_is_not_recorded(void) {
+    flight_conditions_t c = {.stop_after_apogee = true};
+    flown_t r = fly(rocket(), &ISA, &c, 31, 200.0f);
+    TEST_ASSERT_TRUE(r.drogue);
+    TEST_ASSERT_FALSE(log_has("PYRO1_NOPEN"));
+}
+
+/* [PYR-VERIFY-01] The board's verdict on a fired channel comes with its next
+ * check, some loops after the pulse. A channel still closed then is
+ * recorded, however late the verdict. */
+void test_PYR_VERIFY_01_a_verdict_that_comes_late_is_recorded(void) {
+    flight_conditions_t c = {.lights_on_pulse = {-1, 0}, .verdict_after_ms = 200u};
+    flown_t r = fly(rocket(), &ISA, &c, 32, 200.0f);
+    TEST_ASSERT_TRUE(r.drogue);
+    TEST_ASSERT_TRUE_MESSAGE(log_has("PYRO1_NOPEN"), "the channel stayed closed and the log does not say so");
+}
+
+/* [PYR-VERIFY-01] Before the board has a verdict there is nothing to record:
+ * a reading from before the fire is not one. */
+void test_PYR_VERIFY_01_nothing_is_recorded_without_a_verdict(void) {
+    flight_conditions_t c = {.lights_on_pulse = {-1, 0}, .verdict_after_ms = 0x7fffffffu};
+    flown_t r = fly(rocket(), &ISA, &c, 33, 200.0f);
+    TEST_ASSERT_TRUE(r.drogue);
+    TEST_ASSERT_FALSE(log_has("PYRO1_NOPEN"));
+}
+
 void test_PYR_HEALTH_01_a_faulted_channel_still_fires(void) {
     flight_conditions_t c = {.config = RULES, .rate_ms = {20.0f, 6.0f}, .pyro_faulted = {true, true}};
     flown_t r = fly(rocket(), &ISA, &c, 9, 200.0f);
@@ -250,6 +287,9 @@ int main(void) {
     RUN_TEST(test_FLT_EMRG_01_zero_leaves_each_channel_to_its_trigger);
     RUN_TEST(test_FLT_AIR_01_a_good_drogue_at_20_km_is_not_a_failed_one);
     RUN_TEST(test_FLT_AIR_01_a_failed_drogue_at_20_km_is_still_seen);
+    RUN_TEST(test_PYR_VERIFY_01_a_channel_that_opened_is_not_recorded);
+    RUN_TEST(test_PYR_VERIFY_01_a_verdict_that_comes_late_is_recorded);
+    RUN_TEST(test_PYR_VERIFY_01_nothing_is_recorded_without_a_verdict);
     RUN_TEST(test_PYR_HEALTH_01_a_faulted_channel_still_fires);
     RUN_TEST(test_PYR_FIRE_01_a_pulse_that_energises_nothing_is_recorded_not_refused);
     RUN_TEST(test_PYR_BOARD_01_a_board_redefines_the_defaults);

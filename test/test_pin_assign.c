@@ -577,6 +577,28 @@ void test_PIN_GT_07_ini_round_trip(void) {
     TEST_ASSERT_EQUAL(PIN_GT_UNSET, b.gt_pin);
 }
 
+/* [CFG-09] config.ini's tokenizer: blanks around the key and the value are
+ * not part of them, so "pyro1_released = true" releases, as it reads. */
+void test_PIN_INI_blanks_around_key_and_value_are_not_part_of_them(void) {
+    char ini[] = "[pins]\r\n pyro1_released = true \r\n\tp9_name\t=\tmotor\t\r\nbuzzer_pin = 19\n";
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    pin_assign_parse_ini(ini, &a);
+    TEST_ASSERT_TRUE_MESSAGE(a.pyro1_released, "a blank before '=' hid the key");
+    TEST_ASSERT_EQUAL_STRING("motor", a.name[9]);
+    TEST_ASSERT_EQUAL(19, a.buzzer_pin);
+}
+
+/* A pad number past a uint8_t is not one: 275 must not become pad 19. */
+void test_PIN_INI_a_pad_number_never_wraps(void) {
+    char ini[] = "buzzer_pin=275\nground_test_pin=274\n";
+    pin_assign_t a;
+    pin_assign_defaults(&a);
+    pin_assign_parse_ini(ini, &a);
+    TEST_ASSERT_EQUAL(PIN_BUZZER_BOARD, a.buzzer_pin);
+    TEST_ASSERT_EQUAL(PIN_GT_UNSET, a.gt_pin);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_defaults_are_valid_and_release_nothing);
@@ -626,5 +648,7 @@ int main(void) {
     RUN_TEST(test_PIN_GT_06_not_a_pad_already_in_use);
     RUN_TEST(test_PIN_GT_07_ini_round_trip);
     RUN_TEST(test_PIN_GT_08_the_switch_may_join_the_buzzers_pad_to_another);
+    RUN_TEST(test_PIN_INI_blanks_around_key_and_value_are_not_part_of_them);
+    RUN_TEST(test_PIN_INI_a_pad_number_never_wraps);
     return UNITY_END();
 }

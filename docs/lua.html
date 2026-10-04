@@ -136,6 +136,13 @@ end</textarea>
       <button id="evalBtn" class="ghost">Eval</button>
     </div>
     <p class="hint">Errors here do not kill the loaded program &mdash; try <code>output.set('pyro1', true)</code>.</p>
+    <p class="hint">Flight states are <code>flight.PAD_IDLE</code>, <code>ASCENT</code>, <code>FALLING</code>,
+      <code>DROGUE_DESCENT</code> (alias <code>DROGUE</code>), <code>CHUTE_DESCENT</code> (alias <code>CHUTE</code>),
+      <code>LANDED</code>, <code>FAULT</code>, <code>GROUND_TEST</code>, and the four boot states
+      <code>BOOT_SETTLE</code>, <code>BOOT_SENSOR</code>, <code>BOOT_CONTINUITY</code>, <code>BOOT_CALIBRATE</code>
+      &mdash; there is no single <code>flight.BOOT</code>. Numbers are 32-bit; dimmable outputs are
+      software PWM with a 2&nbsp;s period on hardware. A strict-mode <code>_G</code> must let the host read
+      <code>init</code>, <code>tick</code> and <code>on_event</code>, and <code>__gc</code> metamethods are refused.</p>
   </section>
 
   <!-- ── Hardware ────────────────────────────────────────────── -->
@@ -153,10 +160,13 @@ end</textarea>
     <h2 style="margin-top:16px">Flight state &mdash; injected</h2>
     <div class="row">
       <select id="fstate">
-        <option value="0">BOOT</option><option value="1" selected>PAD_IDLE</option>
-        <option value="2">ASCENT</option><option value="3">FALLING</option>
-        <option value="4">DROGUE</option><option value="5">CHUTE</option>
-        <option value="6">LANDED</option>
+        <!-- flight_state_t (src/flight_states.h); scripts compare against flight.<NAME> -->
+        <option value="0">BOOT_SETTLE</option><option value="9">BOOT_SENSOR</option>
+        <option value="1">BOOT_CONTINUITY</option><option value="2">BOOT_CALIBRATE</option>
+        <option value="3" selected>PAD_IDLE</option><option value="4">ASCENT</option>
+        <option value="5">FALLING</option><option value="6">DROGUE_DESCENT</option>
+        <option value="7">CHUTE_DESCENT</option><option value="8">LANDED</option>
+        <option value="10">FAULT</option><option value="11">GROUND_TEST</option>
       </select>
       <label>alt cm <input type="number" id="alt" value="0" style="width:90px"></label>
       <label>spd cm/s <input type="number" id="spd" value="0" style="width:90px"></label>
@@ -165,6 +175,8 @@ end</textarea>
       <button class="ghost" data-evt="LAUNCH">LAUNCH</button>
       <button class="ghost" data-evt="ARMED">ARMED</button>
       <button class="ghost" data-evt="APOGEE">APOGEE</button>
+      <button class="ghost" data-evt="PYRO1">PYRO1</button>
+      <button class="ghost" data-evt="PYRO2">PYRO2</button>
       <button class="ghost" data-evt="LANDING">LANDING</button>
     </div>
 

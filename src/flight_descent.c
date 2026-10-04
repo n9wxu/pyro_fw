@@ -70,10 +70,13 @@ static void observe_pulses(flight_context_t *ctx, uint32_t now_ms) {
             note_fault(ctx, i);
         if (ctx->verify_done[i] || now_ms - c->last_pulse_ms < VERIFY_FROM_MS || hal_pyro_is_firing())
             continue;
-        ctx->verify_done[i] = true;
-        hal_continuity_t reading;
+        hal_continuity_t reading = {0};
         hal_pyro_sample();
         hal_pyro_get((uint8_t)(i + 1), &reading);
+        bool no_verdict_yet = !reading.good && !reading.open && !reading.shorted;
+        if (no_verdict_yet)
+            continue; /* the board's next check has not run: a reading from before the fire is not one */
+        ctx->verify_done[i] = true;
         if (reading.good && !reading.open && !ctx->channel_stayed_closed[i]) {
             ctx->channel_stayed_closed[i] = true;
             flight_log_event(ctx, i == 0 ? EVT_PYRO1_NOPEN : EVT_PYRO2_NOPEN);

@@ -37,6 +37,7 @@
 #include "hardware/structs/vreg_and_chip_reset.h"
 #include "board_identity.h"
 #include "board_selftest.h"
+#include "board_support.h"
 #include "tusb.h"
 #include "bsp/board_api.h"
 #include <lfs.h>
@@ -310,7 +311,7 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
 
 /* ── The collector's cycles, into readings [DD-093] ───────────────── */
 
-/* [SNS-PRES-12] The temperature goes on its line first: the pressure before
+/* [DD-066] The temperature goes on its line first: the pressure before
  * it is compensated at its own time, between this temperature and the last. */
 static void take_ms5607(pres_task_t *p, const collector_raw_t *raw, uint32_t read_us) {
     uint32_t d1 = ms5607_code(raw->data[MS5607_PRESSURE]);
@@ -796,14 +797,26 @@ bool hal_fs_healthy(void) {
     return fs_ok;
 }
 
-/* Once, at boot, before the scheduler: formats a blank board. */
+/* One cache buffer for the whole-file helpers below; littlefs's own lock
+ * serialises each call, and this one serialises the buffer across a whole
+ * open-read-close. Never the flight task's. */
+static uint8_t whole_buf[LFS_FILE_BUF_SIZE];
+static SemaphoreHandle_t whole_mutex;
+static StaticSemaphore_t whole_mutex_buf;
+
+/* Once, at boot, before the scheduler: formats a blank board. The locks are
+ * made here, while one thread runs, so no task can race their creation. */
 int hal_fs_mount(void) {
+    if (!whole_mutex)
+        whole_mutex = xSemaphoreCreateMutexStatic(&whole_mutex_buf);
+    lfs_lock_init();
     if (fs_ok)
         return 0;
     int err = lfs_mount(&g_lfs, &lfs_pico_flash_config);
     if (err < 0) {
-        lfs_format(&g_lfs, &lfs_pico_flash_config);
-        err = lfs_mount(&g_lfs, &lfs_pico_flash_config);
+        err = lfs_format(&g_lfs, &lfs_pico_flash_config);
+        if (err == 0)
+            err = lfs_mount(&g_lfs, &lfs_pico_flash_config);
     }
     fs_ok = (err == 0);
     return err;
@@ -813,20 +826,11 @@ void hal_fs_unmount(void) {
     /* Mounted for the life of the firmware. */
 }
 
-/* One cache buffer for the whole-file helpers below; littlefs's own lock
- * serialises each call, and this one serialises the buffer across a whole
- * open-read-close. Never the flight task's. */
-static uint8_t whole_buf[LFS_FILE_BUF_SIZE];
-static SemaphoreHandle_t whole_mutex;
-static StaticSemaphore_t whole_mutex_buf;
-
 static bool whole_take(void) {
     if (!rtos_running())
         return true;
-    if (rtos_in_flight_task())
+    if (rtos_in_flight_task() || !whole_mutex)
         return false;
-    if (!whole_mutex)
-        whole_mutex = xSemaphoreCreateMutexStatic(&whole_mutex_buf);
     return xSemaphoreTake(whole_mutex, pdMS_TO_TICKS(5000)) == pdTRUE;
 }
 
@@ -1030,18 +1034,28 @@ void hal_fs_close(hal_file_t *f) {
 /* ── Config (v2) ──────────────────────────────────────────────────── */
 
 int hal_config_load(config_t *cfg) {
-    config_set_defaults(cfg);
     char buf[CONFIG_INI_MAX];
-    int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
-    if (n > 0) {
-        buf[n] = '\0';
-        config_parse_ini(buf, cfg);
+    int n = hal_fs_read_file("config.ini", buf, (int)sizeof(buf) - 1);
+    int rejected = 0;
+    char line[96];
+    switch (config_from_file(cfg, buf, (int)sizeof(buf), n, &rejected)) {
+    case CONFIG_FILE_LOADED:
+        if (rejected > 0) {
+            snprintf(line, sizeof(line), "!CFG %d value(s) in config.ini refused; those fields keep defaults\r\n",
+                     rejected);
+            hal_telemetry_send(line);
+        }
         return 0;
+    case CONFIG_FILE_MISSING: {
+        const char *def = config_default_ini();
+        hal_fs_write_file("config.ini", def, (int)strlen(def));
+        return HAL_CONFIG_DEFAULTED;
     }
-    /* No config file — write defaults for next boot */
-    const char *def = config_default_ini();
-    hal_fs_write_file("config.ini", def, (int)strlen(def));
-    return -1;
+    default:
+        snprintf(line, sizeof(line), "!CFG config.ini unreadable (%d): defaults, file kept\r\n", n);
+        hal_telemetry_send(line);
+        return HAL_CONFIG_UNREADABLE;
+    }
 }
 
 int hal_config_save(const config_t *cfg) {
@@ -1171,7 +1185,7 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
 #define LOG_BUF_SIZE 4096u
 #define LOG_MASK (LOG_BUF_SIZE - 1u)
 #define LOG_FLUSH_MS 200u
-#define LOG_HOLDOFF_MAX_MS 2000u /* [FLT-LOG-05] */
+#define LOG_HOLDOFF_MAX_MS 2000u /* [DD-084] */
 
 /* Written at once from here up, without waiting for the flush timer. */
 #define LOG_WATERMARK (LOG_BUF_SIZE - 96u)
@@ -1194,6 +1208,12 @@ _Static_assert((LOG_BUF_SIZE & LOG_MASK) == 0, "the ring's size is a power of tw
 
 enum { LOG_IDLE, LOG_RUNNING, LOG_STOPPING };
 
+/* A stopped log that has not reached its file by then never will: it could
+ * not open, or its writes keep failing. It is given up and its rows counted
+ * as dropped. Held for good, the log would refuse every file call
+ * [WEB-API-08] and starve the storage task's check-in. */
+#define LOG_STOP_MAX_MS 10000u
+
 typedef struct {
     uint8_t buf[LOG_BUF_SIZE];
     volatile uint32_t head; /* the flight task */
@@ -1214,6 +1234,8 @@ typedef struct {
      * or at LOG_HOLDOFF_MAX_MS, after which flushing is periodic. */
     bool launch_holdoff;
     uint32_t started_ms;
+    bool stop_seen;
+    uint32_t stop_seen_ms;
 } log_ring_t;
 
 static log_ring_t log_ring;
@@ -1306,10 +1328,31 @@ static void log_write_out(void) {
     }
 }
 
+/* The storage task's end of a log: the file closed, the filesystem free. */
+static void log_finish(void) {
+    if (log_ring.file_open)
+        vfs_close(&log_ring.file);
+    log_ring.file_open = false;
+    log_ring.stop_seen = false;
+    __dmb();
+    log_ring.state = LOG_IDLE;
+}
+
 static void log_service(uint32_t now_ms) {
     uint8_t st = log_ring.state;
     if (st == LOG_IDLE)
         return;
+
+    if (st == LOG_STOPPING && !log_ring.stop_seen) {
+        log_ring.stop_seen = true;
+        log_ring.stop_seen_ms = now_ms;
+    }
+    if (st == LOG_STOPPING && deadline_reached(now_ms, log_ring.stop_seen_ms + LOG_STOP_MAX_MS)) {
+        log_ring.dropped += log_used();
+        log_ring.tail = log_ring.head;
+        log_finish();
+        return;
+    }
 
     if (!log_ring.file_open) {
         if (!fs_ok || vfs_open(&log_ring.file, FLOG_PATH, VFS_WR, log_file_buf) != 0)
@@ -1340,12 +1383,8 @@ static void log_service(uint32_t now_ms) {
     log_write_out();
     log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
 
-    if (st == LOG_STOPPING && log_ring.tail == log_ring.head) {
-        vfs_close(&log_ring.file);
-        log_ring.file_open = false;
-        __dmb();
-        log_ring.state = LOG_IDLE;
-    }
+    if (st == LOG_STOPPING && log_ring.tail == log_ring.head)
+        log_finish();
 }
 
 /* Weak and empty: most boards queue no flash work of their own. */
@@ -1446,37 +1485,33 @@ static void commit_op(void *arg) {
     pfb_firmware_commit();
 }
 
-void hal_firmware_commit(void) {
-    /* Only an image on its first boot after an update has anything to
-     * commit; every other boot writes no flash here. */
-    if (!pfb_is_after_firmware_update())
-        return;
+/* Said at every boot of a mismatched image, before the reboot into a rollback
+ * where there is one: after it, this image and what it would say are gone. */
+static void report_board_mismatch(const char *what) {
+    char line[128];
+    snprintf(line, sizeof(line), "!BOARD MISMATCH this image is " BOARD_SHORT_STR ", board is %s -- %s\r\n",
+             board_selftest_stored(), what);
+    hal_telemetry_send(line);
+}
 
-    /* An image on hardware it was not built for does not commit, and the
-     * bootloader puts the previous one back on the next reboot. The
-     * previous image is by definition the one that was running on this
-     * board, so rolling back lands somewhere known-good.
-     *
-     * Reported before the reboot and not only after it, because after the
-     * rollback this image is gone and so is anything it would have said.
-     * The reboot is deliberate: waiting for a natural one would leave the
-     * wrong firmware driving the wrong pins for as long as it took. */
-    if (board_selftest_result() == BOARD_SELFTEST_FAIL) {
-        char line[128];
-        snprintf(line, sizeof(line),
-                 "!BOARD MISMATCH this image is " BOARD_SHORT_STR ", board is %s -- not committing, rolling back\r\n",
-                 board_selftest_stored());
-        hal_telemetry_send(line);
-        /* Through the main loop's own reset path rather than arming the
-         * watchdog from here: this runs on the storage task on core1, and
-         * that path already arms once, lets the net task flush what was
-         * just said, and is the way an OTA reboots. */
-        {
-            extern volatile uint8_t pending_reset;
-            pending_reset = 2;
-        }
-        return;
+bool hal_firmware_commit(void) {
+    bool after_update = pfb_is_after_firmware_update();
+    switch (board_selftest_action(board_selftest_result(), after_update)) {
+    case BOARD_IMAGE_ROLL_BACK: {
+        report_board_mismatch("not committing, rolling back");
+        /* The main loop's reset path, which lets the net task flush the line
+         * above and is the way an OTA reboots, rather than the watchdog armed
+         * from here on core1. */
+        extern volatile uint8_t pending_reset;
+        pending_reset = 2;
+        return true;
     }
-
-    flash_op(commit_op, NULL);
+    case BOARD_IMAGE_REFUSE:
+        report_board_mismatch("refusing to arm or fire");
+        return true;
+    case BOARD_IMAGE_RUN:
+    default:
+        /* Only the first boot after an update writes flash here. */
+        return !after_update || flash_op(commit_op, NULL) == 0;
+    }
 }

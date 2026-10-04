@@ -164,6 +164,27 @@ void test_PYR_CONT_01_health_is_checked_every_second(void) {
     TEST_ASSERT_INT_WITHIN(1, 10, mock_pyro.sample_count - before);
 }
 
+void test_PYR_CONT_01_no_second_passes_without_a_check(void) {
+    to_the_pad(50);
+    reach_pad();
+    wait_ms(1500);
+    for (int second = 0; second < 1100; second++) {
+        int before = mock_pyro.sample_count;
+        wait_ms(1000);
+        TEST_ASSERT_GREATER_OR_EQUAL_INT(1, mock_pyro.sample_count - before);
+    }
+}
+
+/* PAD_IDLE would open launch detection again in flight. */
+void test_FLT_PHASE_04_a_state_that_is_no_state_is_a_fault(void) {
+    to_the_pad(51);
+    reach_pad();
+    ctx.current_state = (flight_state_t)(STATE_COUNT + 3);
+    wait_ms(100);
+    TEST_ASSERT_EQUAL(FAULT, ctx.current_state);
+    TEST_ASSERT_TRUE(harness_last_said(BR_GENERAL_FAULT));
+}
+
 /* ── Only enabled channels count [PYR-HEALTH-02] ──────────────────── */
 
 void test_PYR_HEALTH_02_a_channel_set_to_none_is_not_a_fault(void) {
@@ -473,6 +494,8 @@ int main(void) {
     RUN_TEST(test_BUZ_CODE_02_a_general_fault_outranks_a_pyro_fault);
     RUN_TEST(test_PYR_CONT_03_a_fault_that_appears_on_the_pad_is_announced);
     RUN_TEST(test_PYR_CONT_01_health_is_checked_every_second);
+    RUN_TEST(test_PYR_CONT_01_no_second_passes_without_a_check);
+    RUN_TEST(test_FLT_PHASE_04_a_state_that_is_no_state_is_a_fault);
     RUN_TEST(test_PYR_HEALTH_02_a_channel_set_to_none_is_not_a_fault);
     RUN_TEST(test_PYR_HEALTH_02_a_channel_given_to_the_script_is_not_a_pyro);
     RUN_TEST(test_CFG_10_a_saved_change_waits_for_the_next_start);

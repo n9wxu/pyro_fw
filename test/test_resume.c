@@ -191,7 +191,7 @@ void test_FLT_BROWN_06_a_descent_resumed_fires_every_channel_afresh(void) {
 }
 
 /* [FLT-BROWN-06] Restarted below the main's height: both channels at once,
- * pyro 1 first and the gap kept [PYR-GAP-01]. */
+ * pyro 1 first and the gap kept [PYR-DEPLOY-02]. */
 void test_FLT_BROWN_06_a_resume_below_the_main_height_fires_both(void) {
     const mp_rocket_t *r = &ROCKETS[SUBSONIC].r;
     flight_conditions_t probe = {.config = RESUMED_CONFIG, .rate_ms = {20.0f, 6.0f}, .pad_s = 12.0f};
@@ -282,6 +282,38 @@ void test_FLT_BROWN_04_a_landing_clears_the_resume_state(void) {
     TEST_ASSERT_EQUAL_INT(0, mock_pulse_count);
 }
 
+/* A flight scrubbed on the pad leaves its record. The bench it comes back to
+ * is where it ends, so a later start in a lift or on a hill road has nothing
+ * to resume against. */
+void test_FLT_BROWN_08_a_record_left_by_a_scrubbed_flight_is_cleared_on_the_bench(void) {
+    start(70, true, (float)PAD_PA);
+    harness_usb(true);
+    run_to_pad(&now);
+    wait_ms(1000);
+    TEST_ASSERT_FALSE_MESSAGE(pad_record_stored(), "the record is gone");
+    uint32_t writes = mock_fs_write_count;
+    wait_ms(30000);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(writes, mock_fs_write_count, "and cleared once only");
+
+    harness_restart(RESET_POWER_EVENT);
+    uint32_t t = mock_time_ms + 1;
+    for (uint32_t end = t + 20000u; t < end; t++) {
+        mock_pressure.pressure_pa = (float)PAD_PA - 1200.0f + 0.07f * (float)(end - t); /* rising 6 m/s, 100 m up */
+        tick(t);
+    }
+    TEST_ASSERT_EQUAL_STRING("not resumed: no record", flight_resume_text(&ctx));
+    TEST_ASSERT_EQUAL_INT(0, mock_pulse_count);
+}
+
+void test_FLT_BROWN_08_a_bench_with_no_record_writes_nothing(void) {
+    start(71, false, (float)PAD_PA);
+    harness_usb(true);
+    run_to_pad(&now);
+    uint32_t writes = mock_fs_write_count;
+    wait_ms(30000);
+    TEST_ASSERT_EQUAL_UINT32(writes, mock_fs_write_count);
+}
+
 /* The record is held while the flight is in the air, whatever is stored. */
 void test_FLT_BROWN_01_the_record_lasts_the_whole_flight(void) {
     flight_conditions_t c = {.pad_s = 12.0f, .stop_after_apogee = true};
@@ -307,6 +339,8 @@ int main(void) {
     RUN_TEST(test_FLT_BROWN_06_a_climb_resumed_never_fires_before_apogee);
     RUN_TEST(test_FLT_BROWN_06_the_emergency_fire_applies_from_the_resume);
     RUN_TEST(test_FLT_BROWN_04_a_landing_clears_the_resume_state);
+    RUN_TEST(test_FLT_BROWN_08_a_record_left_by_a_scrubbed_flight_is_cleared_on_the_bench);
+    RUN_TEST(test_FLT_BROWN_08_a_bench_with_no_record_writes_nothing);
     RUN_TEST(test_FLT_BROWN_01_the_record_lasts_the_whole_flight);
     return UNITY_END();
 }

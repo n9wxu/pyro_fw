@@ -12,13 +12,13 @@
 
 #define BOARD_HAS_BMP280 1
 
-/* Telemetry: the TRRS jack. */
+/* Telemetry: J1.4, J1.5. */
 #define BOARD_UART_INST    uart0
 #define BOARD_UART_IRQ_NUM UART0_IRQ
 #define BOARD_PIN_UART_TX  0
 #define BOARD_PIN_UART_RX  1
 
-#define BOARD_PIN_LED    25 /* the Pico's own */
+#define BOARD_PIN_LED    25 /* -> R4 1k -> D3 (blue) */
 #define BOARD_PIN_BUZZER 16 /* Q1A's gate: BUZZER1 from VIN */
 
 /* Two sensors' SDA pads on one SCL; a board carries one sensor. See

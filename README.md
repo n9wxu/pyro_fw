@@ -425,7 +425,7 @@ This produces:
 - `pyro_fw_<board>.uf2` — application firmware
 - `pyro_fw_c_fota_image.bin` — OTA update image
 
-A local build increments the patch number in `VERSION`.
+Only a release changes `VERSION`. A build without `CI_BUILD` set reports the version with `+local` appended.
 
 ## Flash Layout
 Set by each board's `board.cmake`.
@@ -571,11 +571,11 @@ git tag v2.0.0
 git push && git push --tags
 ```
 
-GitHub Actions will build the default board, MK1B, and publish `pyro_fw_mk1b.uf2`, `pyro_fw_c_fota_image.bin`, `pico_fota_bootloader.uf2` and `pyro-mk1b-support.zip` as release assets.
+GitHub Actions builds MK1A, MK1B and MK1C and publishes `fw_<board>.uf2`, `fw_<board>_fota.bin` and `fw_<board>_bootloader.uf2` for each, and `pyro-support.zip`, as release assets.
 
 ## Self-Update from GitHub
 
-Update a device to the latest release directly from GitHub. Releases carry MK1B's image, so this is for an MK1B:
+Update a device to the latest release directly from GitHub. The tool takes the release's image for the board the device reports:
 ```bash
 # Check for updates
 python3 support/update_from_release.py --check --host pyro.local
@@ -594,7 +594,7 @@ Without `--host` the tool uses 192.168.7.1. It checks the device's current versi
 Current work, open decisions and bench checks still owed are tracked in [docs/outstanding_tasks.md](docs/outstanding_tasks.md). Among them: MK1B cannot sense continuity until its U5 is changed (B-U5), MK1C's bench fire into a dummy load (F1), and the ground test procedure on the bench (GT-1).
 
 - [REQUIREMENTS.md](REQUIREMENTS.md) and [TRACEABILITY.md](TRACEABILITY.md) - requirements and the tests that verify them
-- [DECISIONS.md](DECISIONS.md) - design decisions, DD-001 to DD-071
+- [DECISIONS.md](DECISIONS.md) - design decisions
 - [IMPLEMENTATION.md](IMPLEMENTATION.md) and [ARCHITECTURE_V2.md](ARCHITECTURE_V2.md) - how the firmware is built
 - [docs/flight_states.md](docs/flight_states.md) - the state machine
 - `boards/<name>/THEORY_OF_OPERATION.md` - each board

@@ -293,6 +293,11 @@ static bool write_out(const void *buf, uint32_t n) {
     if (d > st.write_max_us)
         st.write_max_us = d;
     if (r != FR_OK || put != n) {
+        /* A short write (a full volume) moved the file on by what it put:
+         * moved back, so the retry writes the same bytes in the same place
+         * rather than after a copy of their start. */
+        if (r == FR_OK && put > 0)
+            f_lseek(&fil, f_tell(&fil) - put);
         st.write_errors++;
         fails_in_row++;
         return false;

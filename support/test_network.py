@@ -26,7 +26,12 @@ try:
 except ImportError:
     HAS_SERIAL = False
 
-PICOTOOL = os.path.expanduser("~/.pico-sdk/picotool/2.2.0-a4/picotool/picotool")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pyro_http import find_picotool  # noqa: E402
+
+PICOTOOL = find_picotool() or "picotool"
+# The reply timeout is -W on Linux, where -t is the TTL, and -t on macOS.
+PING_WAIT = "-W" if sys.platform.startswith("linux") else "-t"
 
 parser = argparse.ArgumentParser(description="Pyro MK1B network test")
 parser.add_argument("host", nargs="?", default=None)
@@ -139,7 +144,7 @@ def picotool_reset(host):
     subprocess.run([PICOTOOL, "reboot"], capture_output=True, timeout=10)
     for i in range(20):
         time.sleep(1)
-        r = subprocess.run(["ping", "-c", "1", "-t", "2", host], capture_output=True)
+        r = subprocess.run(["ping", "-c", "1", PING_WAIT, "2", host], capture_output=True)
         if r.returncode == 0:
             log("CMD", f"Device up after {i+1}s")
             time.sleep(1)
@@ -188,7 +193,7 @@ def define_tests():
     add_section("Connectivity")
     idx = add_test("ping")
     def t_ping(h):
-        _, rc, _ = run_cmd(["ping", "-c", "1", "-t", "3", h])
+        _, rc, _ = run_cmd(["ping", "-c", "1", PING_WAIT, "3", h])
         return rc == 0, ""
     plan.append((idx, t_ping))
 
@@ -216,10 +221,10 @@ def define_tests():
         return "[pyro]" in c, f"{len(c)}b"
     plan.append((idx, t_config))
 
-    idx = add_test("CORS header present")
+    idx = add_test("same origin only (no CORS grant)")
     def t_cors(h):
         out = curl_headers(h, "/api/status")
-        return "Access-Control-Allow-Origin" in out, ""
+        return "Access-Control-Allow-Origin" not in out and "Cross-Origin-Resource-Policy: same-origin" in out, ""
     plan.append((idx, t_cors))
 
     add_section("File Serving")
@@ -435,12 +440,12 @@ def collect_diagnostics(host):
     log("DIAG", f"dscacheutil: {out2.strip()[:200]}")
 
     # Ping by name
-    out3, rc3, elapsed3 = run_cmd(["ping", "-c", "1", "-t", "3", host])
+    out3, rc3, elapsed3 = run_cmd(["ping", "-c", "1", PING_WAIT, "3", host])
     log("DIAG", f"ping {host}: rc={rc3} ({elapsed3:.1f}s) {out3.strip()[:200]}")
 
     # If host is a name, also try direct IP
     if not host[0].isdigit():
-        out4, rc4, elapsed4 = run_cmd(["ping", "-c", "1", "-t", "3", "192.168.7.1"])
+        out4, rc4, elapsed4 = run_cmd(["ping", "-c", "1", PING_WAIT, "3", "192.168.7.1"])
         log("DIAG", f"ping 192.168.7.1: rc={rc4} ({elapsed4:.1f}s)")
         if rc4 == 0:
             out5, _, elapsed5 = run_cmd(

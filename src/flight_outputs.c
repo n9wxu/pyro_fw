@@ -96,21 +96,33 @@ static void write_record(const pad_record_t *record) {
     (void)hal_fs_write_file(PAD_RECORD_PATH, (const char *)record, (int)sizeof(*record));
 }
 
-/* [FLT-BROWN-04] Cleared once the log has let go of the storage: an invalid
- * record is written, since the HAL has no delete. */
-static void clear_record_after_flight(flight_context_t *ctx) {
-    if (ctx->record_cleared || hal_log_active())
-        return;
-    ctx->record_cleared = true;
+/* An invalid record, since the HAL has no delete. */
+static void clear_record(void) {
     pad_record_t cleared;
     memset(&cleared, 0, sizeof(cleared));
     write_record(&cleared);
 }
 
+/* [FLT-BROWN-04] Cleared once the log has let go of the storage. */
+static void clear_record_after_flight(flight_context_t *ctx) {
+    if (ctx->record_cleared || hal_log_active())
+        return;
+    ctx->record_cleared = true;
+    clear_record();
+}
+
+/* [FLT-BROWN-08] */
+static void clear_record_on_the_bench(void) {
+    pad_record_t stored;
+    int n = hal_fs_read_cached(PAD_RECORD_PATH, (char *)&stored, (int)sizeof(stored));
+    if (n == (int)sizeof(stored) && pad_record_valid(&stored))
+        clear_record();
+}
+
 /* [FLT-BROWN-01] Kept well before the launch it protects against: nothing
  * is stored at launch, when a connector bouncing is likeliest. */
 static void keep_record_on_pad(flight_context_t *ctx, uint32_t now) {
-    if (flight_grounded_on_usb(ctx) || ctx->record_written || now - ctx->boot_timer < PAD_RECORD_DWELL_MS)
+    if (ctx->record_written || now - ctx->boot_timer < PAD_RECORD_DWELL_MS)
         return;
     ctx->record_written = true;
     pad_record_t record;
@@ -121,6 +133,8 @@ static void keep_record_on_pad(flight_context_t *ctx, uint32_t now) {
 void flight_storage_service(flight_context_t *ctx, uint32_t now) {
     if (ctx->current_state == LANDED)
         clear_record_after_flight(ctx);
+    else if (ctx->current_state == PAD_IDLE && flight_grounded_on_usb(ctx))
+        clear_record_on_the_bench();
     else if (ctx->current_state == PAD_IDLE)
         keep_record_on_pad(ctx, now);
 }

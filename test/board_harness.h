@@ -30,6 +30,8 @@ extern flight_context_t ctx;
 void boot_like_hardware(uint32_t seed);
 /* config.ini as the board will find it at power-on [CFG-10]. */
 void harness_config(const char *ini);
+/* Before power-on: board.txt, the stamp of the image that last ran here. */
+void harness_board_stamp(const char *board);
 void harness_usb(bool attached);
 /* Before power-on: the pin assignment gives this pyro channel's pad to the
  * script [PYR-HEALTH-02]. */

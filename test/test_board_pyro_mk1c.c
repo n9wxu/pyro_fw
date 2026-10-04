@@ -40,14 +40,14 @@ static uint64_t longest_update_us;
 
 /* What the plant did between loop iterations, watched every WATCH_US. */
 static struct {
-    bool both_gates;         /* FIRE_A and FIRE_B high together  */
-    bool toggle_seen;        /* ARM_TOGGLE ever high             */
+    bool both_gates;  /* FIRE_A and FIRE_B high together  */
+    bool toggle_seen; /* ARM_TOGGLE ever high             */
     uint64_t toggle_first_us, toggle_last_us;
-    uint64_t armed_last_us;  /* U9 last seen conducting          */
+    uint64_t armed_last_us; /* U9 last seen conducting          */
     bool fire_seen[2];
-    uint64_t fire_us[2];     /* FIRE_x rising, as the loop drove it */
+    uint64_t fire_us[2]; /* FIRE_x rising, as the loop drove it */
     double bus_at_fire[2], vbat_at_fire[2];
-    double bus_at_bias_max;  /* the bus when BIAS_BUS went high  */
+    double bus_at_bias_max; /* the bus when BIAS_BUS went high  */
 } w;
 
 /* The presence test's bias on the bus, edge by edge: a hardware alarm ends
@@ -360,7 +360,8 @@ void test_mk1c_a_stopped_loop_disarms(void) {
     TEST_ASSERT_TRUE(accepted(1));
     stall(40u);
     char msg[96];
-    snprintf(msg, sizeof(msg), "U9 on %llu us after the loop stopped", (unsigned long long)(w.armed_last_us - accept_us));
+    snprintf(msg, sizeof(msg), "U9 on %llu us after the loop stopped",
+             (unsigned long long)(w.armed_last_us - accept_us));
     TEST_ASSERT_TRUE_MESSAGE(w.armed_last_us > accept_us, "the pump armed the bus");
     TEST_ASSERT_TRUE_MESSAGE(w.armed_last_us <= accept_us + LOOP_PERIOD_US * 5u / 4u + 10000u, msg);
     TEST_ASSERT_FALSE(w.fire_seen[0]);
@@ -533,7 +534,8 @@ void test_mk1c_both_channels_one_after_the_other(void) {
     TEST_ASSERT_TRUE(fired(2));
     TEST_ASSERT_FALSE_MESSAGE(w.both_gates, "never both gates");
     char msg[96];
-    snprintf(msg, sizeof(msg), "second fire %llu us after the first", (unsigned long long)(w.fire_us[1] - w.fire_us[0]));
+    snprintf(msg, sizeof(msg), "second fire %llu us after the first",
+             (unsigned long long)(w.fire_us[1] - w.fire_us[0]));
     TEST_ASSERT_TRUE_MESSAGE(w.fire_us[1] - w.fire_us[0] <= 4u * LOOP_PERIOD_US && 4u * LOOP_PERIOD_US < 100000u, msg);
 }
 
@@ -577,6 +579,39 @@ void test_mk1c_flash_waits_out_a_fire(void) {
     TEST_ASSERT_TRUE_MESSAGE(board_flash_ok(), "flash again once the gate is released");
 }
 
+/* [PYR-ARM-03] The fire is stamped on the live clock, and the loop updates
+ * with the `now` it read at the top of the period: a millisecond boundary
+ * between the two is not a precharge that timed out. */
+void test_PYR_ARM_03_mk1c_fire_clock_ahead_of_the_loop_is_no_timeout(void) {
+    board(true, false);
+    loops(1100u);
+    uint32_t loop_now = (uint32_t)(shim_now_us() / 1000u);
+    shim_advance_us(1000u);
+    pyro_fire(1);
+    TEST_ASSERT_TRUE(pyro_is_firing());
+    pyro_update(loop_now);
+    TEST_ASSERT_FALSE_MESSAGE(pyro_fault(1), "a precharge a millisecond old latched a timeout");
+    loops(100u);
+    TEST_ASSERT_TRUE_MESSAGE(fired(1), "the match took its energy");
+    TEST_ASSERT_FALSE(pyro_fault(1));
+    TEST_ASSERT_NULL_MESSAGE(strstr(telemetry, "precharge timeout"), telemetry);
+}
+
+/* [PYR-VERIFY-01] Between the fire and the next presence test the fired
+ * channel has no verdict, and says so: neither present nor open. */
+void test_PYR_VERIFY_01_mk1c_fired_channel_unknown_until_the_next_presence_test(void) {
+    board(true, true);
+    loops(1100u);
+    TEST_ASSERT_TRUE(accepted(1));
+    pyro_continuity_t c1;
+    pyro_get(1, &c1);
+    TEST_ASSERT_FALSE_MESSAGE(c1.good || c1.open, "a verdict before the presence test that gives it");
+    for (int i = 0; i < 100 && !strstr(telemetry, "F10 ch=1"); i++)
+        loops(LOOP_MS);
+    pyro_get(1, &c1);
+    TEST_ASSERT_TRUE_MESSAGE(c1.open, "the fired channel, tested, reads open");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_mk1c_match_present_and_absent);
@@ -605,5 +640,7 @@ int main(void) {
     RUN_TEST(test_mk1c_bus_stuck_live_after_a_fire_latches);
     RUN_TEST(test_mk1c_fires_on_one_cell);
     RUN_TEST(test_mk1c_flash_waits_out_a_fire);
+    RUN_TEST(test_PYR_ARM_03_mk1c_fire_clock_ahead_of_the_loop_is_no_timeout);
+    RUN_TEST(test_PYR_VERIFY_01_mk1c_fired_channel_unknown_until_the_next_presence_test);
     return UNITY_END();
 }

@@ -4,13 +4,17 @@
  * These are the tests that decide whether the feature is safe to ship. The
  * bindings are the security boundary — RP2040 has no MPU — so every claim
  * made about what a script cannot do is asserted here rather than reasoned
- * about.
+ * about. Invariants Lx are those of
+ * thoughts/shared/plans/2026-09-21-lua-user-programs-core1.md
  *
  * SPDX-License-Identifier: MIT
  *
- * Verifies [SYS-LUA-01, SYS-LUA-02, LUA-ISO-01..04, LUA-PAD-01, LUA-PAD-02, LUA-MGT-01].
+ * Verifies [SYS-LUA-01, SYS-LUA-02, LUA-ISO-01..06, LUA-PAD-01, LUA-PAD-02, LUA-MGT-01, LUA-RUN-02,
+ * LUA-RUN-03].
  */
 #include "unity.h"
+#include "flight_states.h"
+#include "lua_arena.h"
 #include "lua_check.h"
 #include "lua_platform_cfg.h"
 #include "pyro_lua.h"
@@ -20,7 +24,11 @@
  * exactly the way an attacker would produce one. */
 #include "lua.h"
 #include "lauxlib.h"
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* Simulator-side hooks */
 void sim_lua_set_flight(int state, int32_t alt_cm, int32_t speed_cms, int32_t pressure_pa, int32_t max_alt_cm,
@@ -47,7 +55,19 @@ static bool run_eval_ok(const char *src) {
     return pyro_lua_eval(src);
 }
 
+/* A runaway that the limits fail to stop must fail the suite, not hang it. */
+#define TEST_HANG_LIMIT_S 20u
+
+static void on_hang(int sig) {
+    (void)sig;
+    static const char msg[] = "\nFAIL: a test ran past TEST_HANG_LIMIT_S -- a Lua limit did not stop it\n";
+    (void)!write(2, msg, sizeof(msg) - 1);
+    _exit(1);
+}
+
 void setUp(void) {
+    signal(SIGALRM, on_hang);
+    alarm(TEST_HANG_LIMIT_S);
     pyro_lua_init();
     sim_lua_console_clear();
     sim_lua_uart_tx_clear();
@@ -55,6 +75,69 @@ void setUp(void) {
 
 void tearDown(void) {
     pyro_lua_shutdown();
+    alarm(0);
+}
+
+/* Host time a call took, for asserting that a limit bounded it. */
+static uint32_t since_us(uint32_t t0) {
+    return lua_plat_now_us() - t0;
+}
+#define BOUNDED_US 3000000u /* a working limit stops these in milliseconds */
+
+/* The C library's number parsers and the system heap, counted: the lua_tests
+ * build renames them to these in every source it compiles, so a test can
+ * assert the VM never reached them. */
+static int libc_strtod_calls;
+static int system_heap_calls;
+#undef strtof
+#undef strtod
+#undef malloc
+#undef realloc
+float strtof(const char *s, char **end);
+double strtod(const char *s, char **end);
+void *malloc(size_t n);
+void *realloc(void *p, size_t n);
+float counted_strtof(const char *s, char **end) {
+    libc_strtod_calls++;
+    return strtof(s, end);
+}
+double counted_strtod(const char *s, char **end) {
+    libc_strtod_calls++;
+    return strtod(s, end);
+}
+void *counted_malloc(size_t n) {
+    system_heap_calls++;
+    return malloc(n);
+}
+void *counted_realloc(void *p, size_t n) {
+    system_heap_calls++;
+    return realloc(p, n);
+}
+
+/* ── The arena ────────────────────────────────────────────────────── */
+
+static void test_the_arena_grows_a_block_into_the_free_space_after_it(void) {
+    static uint8_t buf[1024] __attribute__((aligned(8)));
+    lua_arena_t a;
+    lua_arena_init(&a, buf, sizeof(buf));
+    void *p = lua_arena_alloc(&a, NULL, 0, 400);
+    TEST_ASSERT_NOT_NULL(p);
+    memset(p, 0x5a, 400);
+    void *q = lua_arena_alloc(&a, p, 400, 800);
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(p, q, "a block with free space after it grows where it is");
+    TEST_ASSERT_EACH_EQUAL_UINT8(0x5a, q, 400);
+    TEST_ASSERT_TRUE(a.stats.in_use >= 800 && a.stats.peak == a.stats.in_use);
+}
+
+static void test_the_arena_takes_back_what_a_shrink_gives_up(void) {
+    static uint8_t buf[1024] __attribute__((aligned(8)));
+    lua_arena_t a;
+    lua_arena_init(&a, buf, sizeof(buf));
+    void *p = lua_arena_alloc(&a, NULL, 0, 800);
+    TEST_ASSERT_NOT_NULL(p);
+    TEST_ASSERT_EQUAL_PTR(p, lua_arena_alloc(&a, p, 800, 96));
+    TEST_ASSERT_TRUE(a.stats.in_use < 200);
+    TEST_ASSERT_NOT_NULL_MESSAGE(lua_arena_alloc(&a, NULL, 0, 600), "the shrunk block's tail is free again");
 }
 
 /* ── The API works at all ─────────────────────────────────────────── */
@@ -116,8 +199,7 @@ static void test_dangerous_base_functions_removed(void) {
 }
 
 static void test_pyro_is_read_only(void) {
-    /* Reading is allowed; there is no setter to call. DESIGN.md 7.1 says a
-     * fire command names an authority and there is no third source. */
+    /* Invariant L11: reading is allowed, and there is no setter to call. */
     sim_lua_set_pyro(1, LUA_PYRO_CONTINUITY | LUA_PYRO_ARMED);
     TEST_ASSERT_TRUE(run("s = pyro.status(1) assert(s.continuity) assert(s.armed) assert(not s.fired)"));
     TEST_ASSERT_TRUE(run("assert(pyro.fire == nil)"));
@@ -167,7 +249,7 @@ static void test_syntax_error_is_reported_not_fatal(void) {
 /* ── State access ─────────────────────────────────────────────────── */
 
 static void test_flight_state_readable(void) {
-    sim_lua_set_flight(2 /* ASCENT */, 123400, 5000, 95000, 200000, 4321);
+    sim_lua_set_flight(ASCENT, 123400, 5000, 95000, 200000, 4321);
     TEST_ASSERT_TRUE(run("assert(flight.state() == flight.ASCENT)"));
     TEST_ASSERT_TRUE(run("assert(sensor.altitude_cm() == 123400)"));
     TEST_ASSERT_TRUE(run("assert(sensor.speed_cms() == 5000)"));
@@ -313,9 +395,9 @@ static void test_plain_find_is_not_capped(void) {
 
 static void test_non_pattern_string_ops_are_untouched(void) {
     /* The cap applies to matching only. These are linear and arena-bounded. */
-    TEST_ASSERT_TRUE(run("local s = ('ab'):rep(1000) assert(#s:upper() == 2000)"));
-    TEST_ASSERT_TRUE(run("local s = ('ab'):rep(1000) assert(#s:sub(1, 500) == 500)"));
-    TEST_ASSERT_TRUE(run("assert(string.format('%d-%s', 7, 'x') == '7-x')"));
+    TEST_ASSERT_TRUE_MESSAGE(run("local s = ('ab'):rep(1000) assert(#s:upper() == 2000)"), pyro_lua_last_error());
+    TEST_ASSERT_TRUE_MESSAGE(run("local s = ('ab'):rep(1000) assert(#s:sub(1, 500) == 500)"), pyro_lua_last_error());
+    TEST_ASSERT_TRUE_MESSAGE(run("assert(string.format('%d-%s', 7, 'x') == '7-x')"), pyro_lua_last_error());
 }
 
 /* ── Restartable pattern matching ─────────────────────────────────
@@ -329,10 +411,10 @@ static void test_long_pattern_gives_the_same_answer(void) {
     /* 400-byte subject, well past the direct-call threshold. Run inside a
      * work unit, which is where the restartable path is reachable. */
     TEST_ASSERT_TRUE_MESSAGE(run("res = nil\n"
-                         "function tick()\n"
-                         "  local s = ('a'):rep(400) .. 'needle' .. ('b'):rep(50)\n"
-                         "  res = { s:find('needle') }\n"
-                         "end\n"),
+                                 "function tick()\n"
+                                 "  local s = ('a'):rep(400) .. 'needle' .. ('b'):rep(50)\n"
+                                 "  res = { s:find('needle') }\n"
+                                 "end\n"),
                              pyro_lua_last_error());
     pyro_lua_status_t st;
     int guard = 0;
@@ -340,8 +422,7 @@ static void test_long_pattern_gives_the_same_answer(void) {
         st = pyro_lua_tick_slice(2000);
     } while (st == PYRO_LUA_YIELD && ++guard < 1000);
     TEST_ASSERT_EQUAL_INT_MESSAGE(PYRO_LUA_DONE, st, pyro_lua_last_error());
-    TEST_ASSERT_TRUE_MESSAGE(pyro_lua_eval("assert(res[1] == 401, 'start '..tostring(res[1]))"),
-                             pyro_lua_last_error());
+    TEST_ASSERT_TRUE_MESSAGE(pyro_lua_eval("assert(res[1] == 401, 'start '..tostring(res[1]))"), pyro_lua_last_error());
     TEST_ASSERT_TRUE(pyro_lua_eval("assert(res[2] == 406, 'end '..tostring(res[2]))"));
 }
 
@@ -382,7 +463,7 @@ static void test_a_pathological_pattern_yields_instead_of_blocking(void) {
  *
  * The restartable path must keep its anchored pattern in the activation. An
  * upvalue of the string.find closure is one object shared by every caller,
- * however the call stack is arranged, and core1 runs on_event() before it
+ * however the call stack is arranged, and the Lua task runs on_event() before it
  * resumes tick(): a handler matching on a 65..128 byte subject would
  * overwrite the pattern the suspended search is using. The search then
  * finishes against the wrong pattern and reports a match, with no error
@@ -410,8 +491,7 @@ static void test_a_suspended_search_survives_an_event_handler(void) {
         st = pyro_lua_tick_slice(2000);
     } while (st == PYRO_LUA_YIELD && ++guard < 10000);
     TEST_ASSERT_EQUAL_INT_MESSAGE(PYRO_LUA_DONE, st, pyro_lua_last_error());
-    TEST_ASSERT_TRUE_MESSAGE(pyro_lua_eval("assert(hit == 2001, 'found at '..tostring(hit))"),
-                             pyro_lua_last_error());
+    TEST_ASSERT_TRUE_MESSAGE(pyro_lua_eval("assert(hit == 2001, 'found at '..tostring(hit))"), pyro_lua_last_error());
 }
 
 static void test_no_match_on_a_long_subject_returns_nil(void) {
@@ -428,7 +508,7 @@ static void test_no_match_on_a_long_subject_returns_nil(void) {
 
 /* ── Time-boxed work units ────────────────────────────────────────
  *
- * The dispatch model: core0 grants core1 a slice of the loop period, the VM
+ * The dispatch model: the flight task grants the Lua task a slice of the loop period, the VM
  * runs until the box expires, yields, and RESUMES there on the next grant.
  * A script that never returns is a legitimate program under this model, not
  * a runaway -- which is the behaviour these pin down. */
@@ -593,8 +673,7 @@ static void test_log_write_and_line(void) {
 
 static void test_log_never_blocks_when_flooded(void) {
     /* A script that outruns the consumer must lose output, not stall: on the
-     * target this ring is the only thing between core1 and a core0 it must
-     * never wait for. */
+     * target the flight task drains this ring and must never wait on it. */
     sim_lua_log_clear();
     uint32_t before = sim_lua_log_dropped();
     TEST_ASSERT_TRUE(run("for i = 1, 400 do log.line('flooding the ring') end"));
@@ -604,7 +683,8 @@ static void test_log_never_blocks_when_flooded(void) {
 
 static void test_script_cannot_reach_the_filesystem(void) {
     /* log.* is the ONLY route to a file, and it is one-way. A script that
-     * could open or read one would be reaching past core0, which owns flash. */
+     * could open or read one would be reaching past the application, which owns
+     * flash (invariant L6). */
     TEST_ASSERT_TRUE(run("assert(log.read == nil)"));
     TEST_ASSERT_TRUE(run("assert(log.open == nil)"));
     TEST_ASSERT_TRUE(run("assert(io == nil)"));
@@ -790,6 +870,327 @@ static void test_publish_claims_the_pad_it_takes(void) {
     iface_restore();
 }
 
+/* ── Flight state constants are flight_state_t ─────────────────────
+ *
+ * flight.state() returns ctx->current_state unchanged, so a script comparing
+ * it against flight.DROGUE acts in whatever state carries DROGUE's number. */
+
+static void test_flight_state_constants_are_flight_state_t(void) {
+    static const struct {
+        const char *name;
+        int value;
+    } expect[] = {
+        {"BOOT_SETTLE", BOOT_SETTLE},
+        {"BOOT_CONTINUITY", BOOT_CONTINUITY},
+        {"BOOT_CALIBRATE", BOOT_CALIBRATE},
+        {"PAD_IDLE", PAD_IDLE},
+        {"ASCENT", ASCENT},
+        {"FALLING", FALLING},
+        {"DROGUE_DESCENT", DROGUE_DESCENT},
+        {"CHUTE_DESCENT", CHUTE_DESCENT},
+        {"LANDED", LANDED},
+        {"BOOT_SENSOR", BOOT_SENSOR},
+        {"FAULT", FAULT},
+        {"GROUND_TEST", GROUND_TEST},
+        {"DROGUE", DROGUE_DESCENT},
+        {"CHUTE", CHUTE_DESCENT},
+    };
+    for (unsigned i = 0; i < sizeof(expect) / sizeof(expect[0]); i++) {
+        char src[96];
+        snprintf(src, sizeof(src), "assert(flight.%s == %d, tostring(flight.%s))", expect[i].name, expect[i].value,
+                 expect[i].name);
+        TEST_ASSERT_TRUE_MESSAGE(run(src), pyro_lua_last_error());
+    }
+}
+
+static void test_flight_boot_is_not_a_single_state(void) {
+    /* Four states are boot; any one number would miss three of them. */
+    TEST_ASSERT_TRUE(run("assert(flight.BOOT == nil)"));
+}
+
+static void test_a_script_acting_on_drogue_does_not_act_in_ascent(void) {
+    sim_lua_set_flight(ASCENT, 0, 0, 101325, 0, 0);
+    TEST_ASSERT_TRUE(run("fired = flight.state() == flight.DROGUE"));
+    TEST_ASSERT_TRUE(run_eval_ok("assert(fired == false)"));
+    sim_lua_set_flight(DROGUE_DESCENT, 0, 0, 101325, 0, 0);
+    TEST_ASSERT_TRUE(run("assert(flight.state() == flight.DROGUE)"));
+}
+
+/* ── Every host entry is protected ────────────────────────────────
+ *
+ * An error outside lua_pcall reaches the panic handler, and Lua calls abort()
+ * when it returns: core1 halts and the flight log stops with it. */
+
+#define STRICT_G "setmetatable(_G, {__index = function(_, k) error('undeclared global ' .. k, 2) end})\n"
+
+static void test_strict_globals_without_init_are_an_error_not_an_abort(void) {
+    TEST_ASSERT_FALSE(run(STRICT_G));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(pyro_lua_last_error(), "undeclared global init"), pyro_lua_last_error());
+}
+
+static void test_strict_globals_without_tick_or_on_event_are_errors_not_aborts(void) {
+    TEST_ASSERT_TRUE_MESSAGE(run("function init() end\n" STRICT_G), pyro_lua_last_error());
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_ERROR, pyro_lua_tick_slice(5000));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(pyro_lua_last_error(), "undeclared global tick"), pyro_lua_last_error());
+    TEST_ASSERT_FALSE(pyro_lua_event("LAUNCH", 5000));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(pyro_lua_last_error(), "undeclared global on_event"), pyro_lua_last_error());
+}
+
+static void test_a_full_arena_after_load_is_an_error_not_an_abort(void) {
+    /* The chunk leaves the arena full; what the host allocates next -- the
+     * name it looks up, the coroutine for tick() -- must fail as an error. */
+    TEST_ASSERT_FALSE(run("head = nil pcall(function() while true do head = {head} end end)"));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(pyro_lua_last_error(), "memory"), pyro_lua_last_error());
+}
+
+/* ── pcall cannot keep a runaway alive ────────────────────────────── */
+
+static void test_pcall_in_a_loop_cannot_outlast_the_budget(void) {
+    uint32_t t0 = lua_plat_now_us();
+    TEST_ASSERT_FALSE(run("while true do pcall(function() while true do end end) end"));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(pyro_lua_last_error(), "budget"), pyro_lua_last_error());
+    TEST_ASSERT_LESS_THAN_UINT32(BOUNDED_US, since_us(t0));
+}
+
+static void test_xpcall_handler_cannot_swallow_the_budget(void) {
+    uint32_t t0 = lua_plat_now_us();
+    TEST_ASSERT_FALSE(run("while true do xpcall(function() while true do end end, function() return 'ok' end) end"));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(pyro_lua_last_error(), "budget"), pyro_lua_last_error());
+    TEST_ASSERT_LESS_THAN_UINT32(BOUNDED_US, since_us(t0));
+}
+
+static void test_pcall_cannot_swallow_an_events_time_box(void) {
+    TEST_ASSERT_TRUE(run("function on_event(e) while true do pcall(function() while true do end end) end end"));
+    uint32_t t0 = lua_plat_now_us();
+    TEST_ASSERT_FALSE(pyro_lua_event("APOGEE", 5000));
+    TEST_ASSERT_LESS_THAN_UINT32(BOUNDED_US, since_us(t0));
+}
+
+static void test_pcall_still_catches_ordinary_errors(void) {
+    TEST_ASSERT_TRUE(run("local ok, e = pcall(error, 'x', 0) assert(not ok and e == 'x')"));
+    TEST_ASSERT_TRUE(run("local ok, a, b = pcall(function() return 1, 2 end) assert(ok and a == 1 and b == 2)"));
+    TEST_ASSERT_TRUE(run("local ok, e = xpcall(error, function(m) return 'h:' .. m end, 'y', 0) assert(e == 'h:y')"));
+}
+
+static void test_a_tick_loop_that_cannot_yield_is_stopped(void) {
+    /* A sort comparator runs under a C call, so the time box cannot suspend
+     * it there; pcall around it must not turn the refusal into a loop. */
+    TEST_ASSERT_TRUE(run("function tick()\n"
+                         "  while true do pcall(table.sort, {3, 2, 1}, function() while true do end end) end\n"
+                         "end\n"));
+    uint32_t t0 = lua_plat_now_us();
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_ERROR, pyro_lua_tick_slice(2000));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(pyro_lua_last_error(), "time box"), pyro_lua_last_error());
+    TEST_ASSERT_LESS_THAN_UINT32(BOUNDED_US, since_us(t0));
+}
+
+static void test_a_short_non_yieldable_section_survives_the_deadline(void) {
+    /* A comparator still running when the box expires is let finish. */
+    TEST_ASSERT_TRUE(run("done = false\n"
+                         "function tick()\n"
+                         "  local t = {} for i = 1, 300 do t[i] = (i * 7919) % 301 end\n"
+                         "  table.sort(t, function(a, b) return a < b end)\n"
+                         "  done = true\n"
+                         "end\n"));
+    pyro_lua_status_t st;
+    int guard = 0;
+    do {
+        st = pyro_lua_tick_slice(1);
+    } while (st == PYRO_LUA_YIELD && ++guard < 100000);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(PYRO_LUA_DONE, st, pyro_lua_last_error());
+    TEST_ASSERT_TRUE(run_eval_ok("assert(done)"));
+}
+
+/* ── Finalisers run with the hook off, so a script may not have one ─ */
+
+static void test_gc_metamethods_are_refused(void) {
+    TEST_ASSERT_FALSE(run("setmetatable({}, {__gc = function() while true do end end})"));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(pyro_lua_last_error(), "__gc"), pyro_lua_last_error());
+    TEST_ASSERT_TRUE(run("local t = setmetatable({}, {__index = function() return 1 end}) assert(t.x == 1)"));
+}
+
+/* ── Matcher work is charged like VM instructions ──────────────────
+ *
+ * A pattern's cost grows with the pattern as well as the subject: each
+ * optional item doubles it. */
+
+#define EXPONENTIAL_MATCH "string.match(('a'):rep(30), ('a?'):rep(30) .. ('a'):rep(30))"
+
+static void test_an_exponential_pattern_on_a_short_subject_is_bounded(void) {
+    uint32_t t0 = lua_plat_now_us();
+    TEST_ASSERT_FALSE(run(EXPONENTIAL_MATCH));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(pyro_lua_last_error(), "budget"), pyro_lua_last_error());
+    TEST_ASSERT_LESS_THAN_UINT32(BOUNDED_US, since_us(t0));
+}
+
+static void test_an_exponential_pattern_in_tick_is_bounded(void) {
+    TEST_ASSERT_TRUE(run("function tick() " EXPONENTIAL_MATCH " end"));
+    uint32_t t0 = lua_plat_now_us();
+    TEST_ASSERT_EQUAL_INT(PYRO_LUA_ERROR, pyro_lua_tick_slice(2000));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(pyro_lua_last_error(), "time box"), pyro_lua_last_error());
+    TEST_ASSERT_LESS_THAN_UINT32(BOUNDED_US, since_us(t0));
+}
+
+static void test_pcall_around_an_exponential_pattern_cannot_outlast_the_budget(void) {
+    uint32_t t0 = lua_plat_now_us();
+    TEST_ASSERT_FALSE(run("while true do pcall(string.match, ('a'):rep(20), ('a?'):rep(20) .. ('a'):rep(20)) end"));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(pyro_lua_last_error(), "budget"), pyro_lua_last_error());
+    TEST_ASSERT_LESS_THAN_UINT32(BOUNDED_US, since_us(t0));
+}
+
+/* ── C recursion stops inside the Lua task's stack ───────────────── */
+
+static void test_deep_pcall_recursion_is_a_lua_error(void) {
+    TEST_ASSERT_FALSE(run("local function f() local ok, e = pcall(f) if not ok then error(e, 0) end end f()"));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(pyro_lua_last_error(), "stack overflow"), pyro_lua_last_error());
+}
+
+static void test_c_recursion_stops_at_the_configured_depth(void) {
+    TEST_ASSERT_TRUE(run("depth = 0 local function f(n) depth = n pcall(f, n + 1) end f(1)"));
+    char src[64];
+    snprintf(src, sizeof(src), "assert(depth < %d, depth)", PYRO_LUA_C_LEVELS);
+    TEST_ASSERT_TRUE_MESSAGE(run_eval_ok(src), pyro_lua_last_error());
+}
+
+static char *nested_parens(int n) {
+    static char src[1024];
+    int k = snprintf(src, sizeof(src), "return ");
+    for (int i = 0; i < n; i++)
+        src[k++] = '(';
+    src[k++] = '1';
+    for (int i = 0; i < n; i++)
+        src[k++] = ')';
+    src[k] = '\0';
+    return src;
+}
+
+static void test_ordinary_nesting_still_compiles_within_the_limit(void) {
+    /* Six blocks deep with a call-heavy expression at the bottom: deeper
+     * than a flight script needs. */
+    TEST_ASSERT_TRUE_MESSAGE(run("local t = 0\n"
+                                 "function tick()\n"
+                                 "  for i = 1, 2 do\n"
+                                 "    if i > 0 then\n"
+                                 "      while t < 1 do\n"
+                                 "        if flight.state() == flight.PAD_IDLE or i == 1 then\n"
+                                 "          do\n"
+                                 "            t = t + math.floor(50 + 50 * math.sin((t + i) / 8))\n"
+                                 "          end\n"
+                                 "        end\n"
+                                 "      end\n"
+                                 "    end\n"
+                                 "  end\n"
+                                 "end\n"),
+                             pyro_lua_last_error());
+    TEST_ASSERT_TRUE_MESSAGE(pyro_lua_tick(), pyro_lua_last_error());
+}
+
+static void test_150_nested_parentheses_are_refused_by_the_parser(void) {
+    TEST_ASSERT_FALSE(run(nested_parens(150)));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(pyro_lua_last_error(), "overflow"), pyro_lua_last_error());
+}
+
+/* ── Numbers are 32-bit ───────────────────────────────────────────── */
+
+static void test_numbers_are_32_bit(void) {
+    TEST_ASSERT_EQUAL_INT(4, (int)sizeof(lua_Number));
+    TEST_ASSERT_EQUAL_INT(4, (int)sizeof(lua_Integer));
+    TEST_ASSERT_TRUE_MESSAGE(run("assert(math.maxinteger == 2147483647)"), pyro_lua_last_error());
+    TEST_ASSERT_TRUE_MESSAGE(run("assert(2.0^24 + 1 == 2.0^24)"), pyro_lua_last_error());
+}
+
+static void test_number_parsing_never_reaches_strtod(void) {
+    /* newlib's strtod allocates from the system heap, which the Lua task may not
+     * touch. */
+    libc_strtod_calls = 0;
+    TEST_ASSERT_TRUE_MESSAGE(run("assert(tonumber('1.5') == 1.5)\n"
+                                 "assert(tonumber('-2.5e2') == -250)\n"
+                                 "assert(tonumber('1E3') == 1000)\n"
+                                 "assert(tonumber('.5') == 0.5 and tonumber('5.') == 5)\n"
+                                 "assert(tonumber(' 12 ') == 12)\n"
+                                 "assert(tonumber('0x10') == 16 and tonumber('0x1p4') == 16)\n"
+                                 "assert(tonumber('1e') == nil and tonumber('.') == nil and tonumber('e5') == nil)\n"
+                                 "assert(tonumber('inf') == nil and tonumber('nan') == nil)\n"
+                                 "assert(tonumber('1e39') == math.huge)\n"
+                                 "assert(math.abs(tonumber('3.14159') - 3.14159) < 1e-6)\n"
+                                 "assert(tonumber('16777216') == 16777216)\n"
+                                 "assert(tonumber('0.1') == 0.1 and 1.25e-3 == 0.00125)\n"),
+                             pyro_lua_last_error());
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, libc_strtod_calls, "the VM parsed a number with the C library");
+}
+
+/* ── Events ───────────────────────────────────────────────────────── */
+
+static void test_events_posted_together_all_reach_on_event(void) {
+    /* The flight task posts; the Lua task delivers before its next tick. Two
+     * events in one period are the normal case at apogee. */
+    TEST_ASSERT_TRUE(run("got = '' function on_event(e) got = got .. e .. ';' end"));
+    TEST_ASSERT_TRUE(pyro_lua_post_event("LAUNCH"));
+    TEST_ASSERT_TRUE(pyro_lua_post_event("APOGEE"));
+    TEST_ASSERT_TRUE(pyro_lua_post_event("PYRO1"));
+    pyro_lua_run_events(0);
+    TEST_ASSERT_TRUE_MESSAGE(run_eval_ok("assert(got == 'LAUNCH;APOGEE;PYRO1;', got)"), pyro_lua_last_error());
+}
+
+static void test_a_full_event_queue_drops_and_counts(void) {
+    TEST_ASSERT_TRUE(run("n = 0 function on_event(e) n = n + 1 end"));
+    uint32_t before = pyro_lua_events_dropped();
+    int posted = 0;
+    for (int i = 0; i < 100; i++)
+        posted += pyro_lua_post_event("LAUNCH") ? 1 : 0;
+    TEST_ASSERT_TRUE(posted < 100);
+    TEST_ASSERT_EQUAL_UINT32((uint32_t)(100 - posted), pyro_lua_events_dropped() - before);
+    pyro_lua_run_events(0);
+    char src[48];
+    snprintf(src, sizeof(src), "assert(n == %d, n)", posted);
+    TEST_ASSERT_TRUE_MESSAGE(run_eval_ok(src), pyro_lua_last_error());
+}
+
+/* ── Software PWM ─────────────────────────────────────────────────── */
+
+static void test_pwm_0_and_100_are_steady_and_duty_is_exact(void) {
+    static const int duties[] = {0, 1, 39, 50, 99, 100};
+    for (unsigned d = 0; d < sizeof(duties) / sizeof(duties[0]); d++) {
+        int high = 0;
+        for (uint32_t phase = 0; phase < LUA_PWM_STEPS; phase++)
+            high += lua_pwm_level(phase, duties[d]) ? 1 : 0;
+        TEST_ASSERT_EQUAL_INT(duties[d] * (int)LUA_PWM_STEPS / 100, high);
+    }
+}
+
+/* ── The checker ──────────────────────────────────────────────────── */
+
+static void test_check_does_not_use_the_system_heap(void) {
+    /* lua_check runs on the net task and at boot; the system heap's mutex is
+     * one the Lua task may hold when it is stopped. */
+    const char *src = "function tick() output.set('beacon', 1) end";
+    lua_chk_env_t env;
+    lua_chk_env_from_platform(&env);
+    system_heap_calls = 0;
+    lua_check(src, strlen(src), &env, &chk);
+    TEST_ASSERT_EQUAL_INT(0, system_heap_calls);
+    TEST_ASSERT_TRUE(chk.green);
+}
+
+static void test_check_refuses_deep_nesting_as_a_syntax_error(void) {
+    const char *src = nested_parens(150);
+    lua_chk_env_t env;
+    lua_chk_env_from_platform(&env);
+    lua_check(src, strlen(src), &env, &chk);
+    TEST_ASSERT_FALSE(chk.green);
+    TEST_ASSERT_TRUE(chk_has(LUA_CHK_SYNTAX));
+}
+
+/* ── Interface table: a refused publish takes nothing ─────────────── */
+
+static void test_a_duplicate_name_leaves_its_pad_free(void) {
+    iface_scratch();
+    TEST_ASSERT_GREATER_OR_EQUAL(0, lua_iface_publish(PAD(9), "winch", LUA_IF_OUTPUT, &probe_vt, NULL));
+    TEST_ASSERT_LESS_THAN(0, lua_iface_publish(PAD(10), "winch", LUA_IF_OUTPUT, &probe_vt, NULL));
+    TEST_ASSERT_EQUAL_MESSAGE(PAD_FREE, pad_claim_owner(10), "a refused publish must not keep its claim");
+    iface_restore();
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_publish_refused_on_a_pad_the_flight_software_holds);
@@ -857,5 +1258,36 @@ int main(void) {
     RUN_TEST(test_check_finds_nested_function_constants);
     RUN_TEST(test_check_catches_the_unassigned_resource);
     RUN_TEST(test_check_does_not_execute_the_script);
+
+    RUN_TEST(test_the_arena_grows_a_block_into_the_free_space_after_it);
+    RUN_TEST(test_the_arena_takes_back_what_a_shrink_gives_up);
+    RUN_TEST(test_flight_state_constants_are_flight_state_t);
+    RUN_TEST(test_flight_boot_is_not_a_single_state);
+    RUN_TEST(test_a_script_acting_on_drogue_does_not_act_in_ascent);
+    RUN_TEST(test_strict_globals_without_init_are_an_error_not_an_abort);
+    RUN_TEST(test_strict_globals_without_tick_or_on_event_are_errors_not_aborts);
+    RUN_TEST(test_a_full_arena_after_load_is_an_error_not_an_abort);
+    RUN_TEST(test_pcall_in_a_loop_cannot_outlast_the_budget);
+    RUN_TEST(test_xpcall_handler_cannot_swallow_the_budget);
+    RUN_TEST(test_pcall_cannot_swallow_an_events_time_box);
+    RUN_TEST(test_pcall_still_catches_ordinary_errors);
+    RUN_TEST(test_a_tick_loop_that_cannot_yield_is_stopped);
+    RUN_TEST(test_a_short_non_yieldable_section_survives_the_deadline);
+    RUN_TEST(test_gc_metamethods_are_refused);
+    RUN_TEST(test_an_exponential_pattern_on_a_short_subject_is_bounded);
+    RUN_TEST(test_an_exponential_pattern_in_tick_is_bounded);
+    RUN_TEST(test_pcall_around_an_exponential_pattern_cannot_outlast_the_budget);
+    RUN_TEST(test_deep_pcall_recursion_is_a_lua_error);
+    RUN_TEST(test_c_recursion_stops_at_the_configured_depth);
+    RUN_TEST(test_ordinary_nesting_still_compiles_within_the_limit);
+    RUN_TEST(test_150_nested_parentheses_are_refused_by_the_parser);
+    RUN_TEST(test_numbers_are_32_bit);
+    RUN_TEST(test_number_parsing_never_reaches_strtod);
+    RUN_TEST(test_events_posted_together_all_reach_on_event);
+    RUN_TEST(test_a_full_event_queue_drops_and_counts);
+    RUN_TEST(test_pwm_0_and_100_are_steady_and_duty_is_exact);
+    RUN_TEST(test_check_does_not_use_the_system_heap);
+    RUN_TEST(test_check_refuses_deep_nesting_as_a_syntax_error);
+    RUN_TEST(test_a_duplicate_name_leaves_its_pad_free);
     return UNITY_END();
 }

@@ -88,6 +88,7 @@ rationale and the alternatives considered.
 ## Safety
 
 ### DD-013: Backup Apogee Timer
+- **Superseded by DD-022:** the timer is removed; no timer may force apogee.
 - **Decision:** Force apogee detection if no apogee detected within a configurable
   time (default 30s, range 10-120s) after pyros are armed.
 - **Rationale:** If the pressure sensor fails or produces garbage during coast,
@@ -558,6 +559,34 @@ rationale and the alternatives considered.
 - **Chirp:** switching test mode off while attached is an attach, so it
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
+
+### DD-095: The Review Of 2026-10-02, Applied To Main
+`docs/code_review_2026-10-02_resolution.md` lists each finding. What it
+decided beyond the fixes themselves:
+- **Two more start-up faults.** An image built for another board is FAULT at
+  every boot (FLT-BOOT-17), not only after an update. A `config.ini` that is
+  there and cannot be read is FAULT and the file is kept (FLT-BOOT-18): only
+  a missing file is written with defaults. Both sound the general fault.
+- **A configuration value its field cannot hold is refused** (SYS-CFG-03).
+  The field keeps what it had; a post carrying one is answered 400 and
+  nothing is stored. Board limits still clamp (PYR-BOARD-02): refusal is for
+  what cannot be represented.
+- **Same origin.** A POST needs `X-Pyro: 1` and a Host that is the board's;
+  no response grants another origin access (WEB-API-07). A browser page
+  from elsewhere cannot set the header without a preflight the board does
+  not answer. A firmware update and BOOTSEL are still never refused for the
+  flight's state (DD-094).
+- **Flight events reach a script through the flight's own record.** The
+  flight keeps its last eight events and the Lua service follows them
+  (LUA-RUN-02); the flight software still calls nothing in Lua (SYS-LUA-02).
+- **The script checker's arena is 16 kB**, static, where the reference used
+  20 kB: MK1C's RAM does not hold 20. A script needing more to compile is
+  refused at save. Nothing in the firmware calls `malloc`.
+- **The bench's side of the application is built for size**: the HTTP
+  server, the status and configuration text. With Lua's numbers truly
+  32-bit, MK1B's image is 374 kB of its 384 kB slot.
+- **The cost:** RAM on the Lua boards is nearly full. MK1C has about 700
+  bytes between its data and the 2 kB heap reservation, which nothing uses.
 
 ### DD-094: Rulings Of 2026-10-03 On The Open Decisions
 The designer's answers to `docs/outstanding_tasks.md` section 2.

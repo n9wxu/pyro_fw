@@ -34,6 +34,11 @@ typedef struct {
      * acted, or its firing path would not come up. */
     bool energises_nothing;
     uint32_t pulse_ms; /* how long a pulse energises a channel */
+    /* A fired channel gives no verdict until this long after its pulse: the
+     * board's next check [PYR-VERIFY-01]. */
+    uint32_t verdict_after_ms;
+    bool has_pulsed[2];
+    uint32_t pulsed_at_ms[2];
     uint32_t pulse_start_ms;
     int sample_count; /* hal_pyro_sample() calls; one shared stimulus each */
 } mock_pyro_t;
@@ -146,7 +151,12 @@ void mock_power_cycle(void);
 extern int mock_pressure_inits;
 
 /* The storage did not come up [FLT-BOOT-14]. */
+/* The flight events a follower of flight_next_event() was given, each followed by ";". */
+extern char mock_lua_events[256];
+
 extern bool mock_fs_unusable;
+/* config.ini is there and its read fails, as on an I/O error. */
+extern bool mock_config_unreadable;
 
 /* Whole-file writes, so a test can prove something is written once. */
 extern uint32_t mock_fs_write_count;

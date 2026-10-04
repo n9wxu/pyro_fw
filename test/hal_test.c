@@ -262,6 +262,8 @@ void mock_reset_all(void) {
     mock_ground_test_pin = false;
     mock_pressure_inits = 0;
     mock_fs_unusable = false;
+    mock_lua_events[0] = '\0';
+    mock_config_unreadable = false;
     mock_fs_write_count = 0;
     mock_fs_locked_count = 0;
     memset(&sim_files, 0, sizeof(sim_files));
@@ -356,9 +358,23 @@ static void test_fire(uint8_t channel) {
     mock_pyro.last_fire_channel = channel;
     mock_pyro.firing = energised;
     mock_pyro.pulse_start_ms = mock_time_ms;
+    if (channel >= 1 && channel <= 2) {
+        mock_pyro.has_pulsed[channel - 1] = true;
+        mock_pyro.pulsed_at_ms[channel - 1] = mock_time_ms;
+    }
+}
+
+static bool verdict_pending(uint8_t channel) {
+    if (channel < 1 || channel > 2 || !mock_pyro.has_pulsed[channel - 1])
+        return false;
+    return mock_time_ms - mock_pyro.pulsed_at_ms[channel - 1] < mock_pyro.pulse_ms + mock_pyro.verdict_after_ms;
 }
 
 static void test_get(uint8_t channel, hal_continuity_t *out) {
+    if (verdict_pending(channel)) {
+        *out = (hal_continuity_t){0};
+        return;
+    }
     if (channel == 1) {
         out->raw_adc = mock_pyro.p1_adc;
         out->good = mock_pyro.p1_good;
@@ -488,7 +504,10 @@ void hal_telemetry_send(const char *sentence) {
     }
 }
 
+char mock_lua_events[256];
+
 bool mock_fs_unusable = false;
+bool mock_config_unreadable = false;
 bool hal_fs_healthy(void) {
     return !mock_fs_unusable;
 }
@@ -525,6 +544,8 @@ int hal_fs_read_cached(const char *path, char *buf, int max_len) {
 int hal_fs_read_file(const char *path, char *buf, int max_len) {
     if (fs_locked())
         return HAL_FS_LOCKED;
+    if (mock_config_unreadable && strcmp(path, "config.ini") == 0)
+        return HAL_FS_ERROR;
     for (int i = 0; i < SIM_FS_MAX_FILES; i++) {
         if (sim_files[i].used && strcmp(sim_files[i].path, path) == 0) {
             int n = sim_files[i].len < max_len ? sim_files[i].len : max_len;
@@ -561,19 +582,19 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
 /* ── Config (v2) ──────────────────────────────────────────────────── */
 
 int hal_config_load(config_t *cfg) {
-    config_set_defaults(cfg);
-    /* Check if config.ini is stored in the mock filesystem */
     char buf[CONFIG_INI_MAX];
-    int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
-    if (n > 0) {
-        buf[n] = '\0';
-        config_parse_ini(buf, cfg);
+    int n = hal_fs_read_file("config.ini", buf, (int)sizeof(buf) - 1);
+    switch (config_from_file(cfg, buf, (int)sizeof(buf), n, NULL)) {
+    case CONFIG_FILE_LOADED:
         return 0;
+    case CONFIG_FILE_MISSING: {
+        const char *def = config_default_ini();
+        hal_fs_write_file("config.ini", def, (int)strlen(def));
+        return HAL_CONFIG_DEFAULTED;
     }
-    /* No file — write defaults so next boot finds them */
-    const char *def = config_default_ini();
-    hal_fs_write_file("config.ini", def, (int)strlen(def));
-    return -1;
+    default:
+        return HAL_CONFIG_UNREADABLE;
+    }
 }
 
 int hal_config_save(const config_t *cfg) {
@@ -613,7 +634,6 @@ void hal_sleep_until_event(void) {
 
 void hal_platform_init(void) {}
 void hal_platform_service(void) {}
-void hal_firmware_commit(void) {}
 
 /* ── Streaming file writes (test) ─────────────────────────────────── */
 

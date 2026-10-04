@@ -1,9 +1,8 @@
 /*
- * Rocket physics engine for simulation.
- *
- * Standard atmosphere model (troposphere + stratosphere),
- * configurable thrust profiles, and drag with density falloff.
- * Used by WASM sim, CLI sim, and closed-loop tests.
+ * The rocket the simulators fly: a vertical point mass with a constant-thrust
+ * burn, linear chute damping, and the U.S. Standard Atmosphere, 1976.
+ * Used by the WASM module (scripts/build_wasm.sh) and the CLI simulator
+ * (sim/sim_cli.c).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -17,87 +16,61 @@
 extern "C" {
 #endif
 
-/* ── Atmosphere ───────────────────────────────────────────────────── */
+/* U.S. Standard Atmosphere, 1976 (NOAA-S/T 76-1562): its defining constants. */
+#define PHYS_G0 9.80665f                   /* m/s², standard gravity */
+#define PHYS_R_STAR 8.31432                /* J/(mol·K), the standard's own gas constant */
+#define PHYS_M0 0.0289644                  /* kg/mol, sea-level mean molar mass */
+#define PHYS_R_AIR (PHYS_R_STAR / PHYS_M0) /* 287.053 J/(kg·K) */
+#define PHYS_SEA_LEVEL_PA 101325.0f
 
-/** Standard atmosphere pressure (Pa) for a given altitude (m).
- *  Accurate through troposphere (0-11km), stratosphere (11-47km),
- *  and mesosphere approximation above 47km. */
+/* Altitudes are geopotential metres. Defined to the top of the standard's
+ * seventh layer, 84 852 m; above it the last layer's temperature is held,
+ * which the standard does not define. */
 float physics_pressure_pa(float alt_m);
+float physics_temperature_k(float alt_m);
+float physics_density_kg_m3(float alt_m);
 
-/* ── Physics state ────────────────────────────────────────────────── */
-
+/* Descent drag is a damping term, a = k·(ρ(h)/ρ0)·|v|, with k in 1/s: the
+ * terminal speed at sea level is g/k. It is not ½ρv²CdA/m; the profiles are
+ * tuned to land at a plausible rate, not to fly a particular airframe. */
 typedef struct {
-    float alt_m;          /* altitude in meters above ground */
-    float vel_ms;         /* velocity in m/s (positive = up) */
-    float thrust_accel;   /* thrust acceleration in m/s² */
-    float burn_time;      /* motor burn time in seconds */
-    float apogee_m;       /* peak altitude reached */
-    float drogue_drag;    /* drogue drag coefficient (default 0.8) */
-    float main_drag;      /* main chute drag coefficient (default 4.0) */
-    float ballistic_drag; /* no-chute drag coefficient (default 0.05) */
+    float alt_m;
+    float vel_ms; /* positive up */
+    float thrust_accel_ms2;
+    float burn_time_s;
+    float apogee_m;
+    float drogue_damping_per_s;
+    float main_damping_per_s;
+    float ballistic_damping_per_s;
     bool drogue_deployed;
     bool main_deployed;
     bool on_ground;
 } physics_state_t;
 
-/** Reset physics state and configure for a target apogee altitude.
- *  Automatically computes thrust and burn time. */
+#define PHYS_STEP_S 0.001f
+
+/* Chooses a thrust for the target apogee and solves the burn time that
+ * reaches it in vacuum. */
 void physics_init(physics_state_t *ps, float target_alt_m);
-
-/** Reset physics state to all zeros */
 void physics_reset(physics_state_t *ps);
-
-/** Set a custom flight profile (thrust acceleration + burn time) */
-void physics_set_profile(physics_state_t *ps, float thrust_accel, float burn_time_s);
-
-/** Set custom drag coefficients */
-void physics_set_drag(physics_state_t *ps, float drogue, float main_chute, float ballistic);
-
-/** Step physics by 1ms. flight_t is seconds since launch. */
-void physics_step(physics_state_t *ps, float flight_t_s);
-
-/** Deploy drogue chute */
+void physics_set_profile(physics_state_t *ps, float thrust_accel_ms2, float burn_time_s);
+void physics_set_damping(physics_state_t *ps, float drogue_per_s, float main_per_s, float ballistic_per_s);
+void physics_step(physics_state_t *ps, float since_launch_s);
 void physics_deploy_drogue(physics_state_t *ps);
-
-/** Deploy main chute */
 void physics_deploy_main(physics_state_t *ps);
 
-/* ── WASM-friendly flat API (no structs across boundary) ──────────── */
-
-/** Initialize physics for a target altitude (meters) */
+/* The same, over one global state, for the WASM boundary (no structs). */
 void physics_wasm_init(float target_alt_m);
-
-/** Reset physics */
 void physics_wasm_reset(void);
-
-/** Step by 1ms. flight_t_s = seconds since launch */
-void physics_wasm_step(float flight_t_s);
-
-/** Deploy drogue */
+void physics_wasm_step(float since_launch_s);
 void physics_wasm_deploy_drogue(void);
-
-/** Deploy main chute */
 void physics_wasm_deploy_main(void);
-
-/** Get current altitude (m) */
 float physics_wasm_alt_m(void);
-
-/** Get current velocity (m/s, positive=up) */
 float physics_wasm_vel_ms(void);
-
-/** Get current pressure (Pa) */
 float physics_wasm_pressure_pa(void);
-
-/** Get peak altitude (m) */
 float physics_wasm_apogee_m(void);
-
-/** Is rocket on the ground? */
 int physics_wasm_on_ground(void);
-
-/** Is drogue deployed? */
 int physics_wasm_drogue_deployed(void);
-
-/** Is main deployed? */
 int physics_wasm_main_deployed(void);
 
 #ifdef __cplusplus

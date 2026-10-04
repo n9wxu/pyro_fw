@@ -64,8 +64,10 @@ let luaScript = '', luaScriptPosts = 0, luaHeartbeat = 0;
 let configPosts = [];
 const FLYING = ['ASCENT', 'FALLING', 'DROGUE_DESCENT', 'CHUTE_DESCENT'];
 let configIni = buildIni(status);
-let pendingReboot = false;
 let pendingConfig = null;
+/* Test hooks: how the next save is answered. */
+let configAnswer = null; /* null or 'refused' */
+let pinsFail = false;
 
 function buildIni(s) {
   return `[pyro]\r\nid=${s.rocket_id}\r\nname=${s.rocket_name}\r\n` +
@@ -85,7 +87,7 @@ function buildIni(s) {
 
 const EMPTY_LOG = 'time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\r\n';
 
-/* A supersonic flight's log (FLT-MACH-07): the Mach lock goes up at 1 s,
+/* A supersonic flight's log: the Mach lock goes up at 1 s,
    and while it stands the ports read the rocket far higher than it is. The
    lock lets go at unlockMs, or never, when fallbackMs gives the lock's
    fallback instead. */
@@ -192,9 +194,19 @@ let pinsIni = '[pins]\r\npyro1_released=true\r\npyro2_released=true\r\n';
 const MIME = {'.html':'text/html','.js':'application/javascript','.css':'text/css'};
 
 const server = http.createServer((req, res) => {
-  const cors = {'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type'};
+  /* As the board: same origin only, so no CORS headers, and no preflight. */
+  const cors = {};
 
-  if (req.method === 'OPTIONS') { res.writeHead(204, cors); res.end(); return; }
+  if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'POST') {
+    res.writeHead(405, {'Allow': 'GET, HEAD, POST'}); res.end('method not allowed'); return;
+  }
+  /* As the board: a POST must carry X-Pyro: 1, which a page on another site
+     cannot send without a preflight. The test hooks are the mock's own. */
+  if (req.method === 'POST' && !req.url.startsWith('/api/_test/') && req.headers['x-pyro'] !== '1') {
+    res.writeHead(403, {'Content-Type': 'application/json'});
+    res.end(JSON.stringify({error: 'a POST needs the X-Pyro: 1 header'}));
+    return;
+  }
 
   /* API routes */
   if (req.url === '/api/status' && req.method === 'GET') {
@@ -225,6 +237,13 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
+      /* [SYS-CFG-03] As the board: a value a field cannot hold stores nothing. */
+      const value = body.match(/^pyro[12]_value=(\d+)/m);
+      if (configAnswer === 'refused' || (value && +value[1] > 65535)) {
+        res.writeHead(400, {...cors, 'Content-Type': 'application/json'});
+        res.end(JSON.stringify({error: '1 value(s) out of range or unreadable'}));
+        return;
+      }
       configIni = body;
       pendingConfig = body;
       configPosts.push(body);
@@ -286,6 +305,31 @@ const server = http.createServer((req, res) => {
   if (req.url === '/api/_test/config_posts' && req.method === 'GET') {
     res.writeHead(200, {...cors, 'Content-Type':'application/json'});
     res.end(JSON.stringify(configPosts));
+    return;
+  }
+
+  /* [WEB-API-04] An image the board will not take: here, one that starts BAD. */
+  if (req.url === '/api/ota' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      if (body.startsWith('BAD')) {
+        res.writeHead(500, {...cors, 'Content-Type': 'text/plain'});
+        res.end('OTA failed: the image did not write');
+        return;
+      }
+      res.writeHead(200, {...cors, 'Content-Type': 'text/plain'});
+      res.end('OTA OK, rebooting...');
+      status._rebooting = Date.now() + 1500;
+      setTimeout(() => { delete status._rebooting; }, 1500);
+    });
+    return;
+  }
+
+  /* The uploaders put the release's VERSION beside the web files. */
+  if (req.url === '/www/version.txt' && req.method === 'GET') {
+    res.writeHead(200, {'Content-Type': 'text/plain'});
+    res.end(fs.readFileSync(path.join(WWW, '..', 'VERSION')));
     return;
   }
 
@@ -407,6 +451,11 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
+      if (pinsFail) {
+        res.writeHead(400, {...cors, 'Content-Type':'application/json'});
+        res.end(JSON.stringify({error: 'that pin is held'}));
+        return;
+      }
       pinsIni = body;
       res.writeHead(200, {...cors, 'Content-Type':'application/json'});
       res.end(JSON.stringify({status:'ok', reboot_required:true}));
@@ -505,6 +554,18 @@ const server = http.createServer((req, res) => {
     luaScript = '';
     luaScriptPosts = 0;
     luaHeartbeat = 0;
+    configAnswer = null;
+    pinsFail = false;
+    res.writeHead(200, cors); res.end('ok');
+    return;
+  }
+  if (req.url === '/api/_test/config_refused' && req.method === 'POST') {
+    configAnswer = 'refused';
+    res.writeHead(200, cors); res.end('ok');
+    return;
+  }
+  if (req.url === '/api/_test/pins_fail' && req.method === 'POST') {
+    pinsFail = true;
     res.writeHead(200, cors); res.end('ok');
     return;
   }

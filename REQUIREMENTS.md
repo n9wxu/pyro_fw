@@ -60,6 +60,7 @@ flight this unit cannot (DD-081).
 - **FLT-PHASE-01**: The system shall detect the transition from ground to powered flight. ← SYS-DEPLOY-01
 - **FLT-PHASE-02**: The system shall detect apogee (peak altitude). ← SYS-DEPLOY-01
 - **FLT-PHASE-03**: The system shall detect landing. ← SYS-DEPLOY-01
+- **FLT-PHASE-04**: A flight state that is none of the defined states shall be FAULT, announced as a general fault. ← SYS-DEPLOY-01
 - **FLT-RT-01**: No network, script or storage activity shall delay a flight decision or a pulse by more than the board-declared bound, which shall not exceed 250 ms. ← SYS-DEPLOY-04, SYS-DEPLOY-05
 
 ### Launch
@@ -138,6 +139,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **FLT-BROWN-05**: `/api/status` shall say whether a start resumed a flight and, if not, why: no record, on USB, at ground level, or no sample in time. ← FLT-BROWN-02
 - **FLT-BROWN-06**: A resumed flight shall measure altitude against the recorded ground, shall assume no channel has fired, and shall fire each enabled channel as soon as fresh sensor data meets its trigger. A flight resumed while descending takes apogee as passed. A DELAY shall count its full value from the resume. The emergency fire applies from the resume. ← FLT-BROWN-02, SYS-DEPLOY-05
 - **FLT-BROWN-07**: A resume shall be recorded as an event in the flight log. ← FLT-BROWN-02, DAT-04
+- **FLT-BROWN-08**: The record shall be cleared when the board sits in PAD_IDLE with a USB host attached and test mode off, so that a flight abandoned on the pad leaves nothing for a later start to resume against. ← FLT-BROWN-02, USB-01
 
 ---
 
@@ -186,6 +188,8 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **FLT-BOOT-13**: The system shall enter FAULT when calibration produces no samples within 10 seconds, rather than proceeding to PAD_IDLE. ← FLT-BOOT-05
 - **FLT-BOOT-14**: The system shall enter FAULT, and announce general fault, when its storage cannot be used. ← FLT-BOOT-01
 - **FLT-BOOT-15**: `/api/status` shall report every fault found on the pad. The buzzer announces the one of highest priority (BUZ-CODE-02). ← SYS-STATUS-02
+- **FLT-BOOT-17**: The system shall enter FAULT, and announce general fault, at every start of an image built for a different board than the one it runs on, as the board's stored stamp shows. ← FLT-BOOT-01, OTA-05
+- **FLT-BOOT-18**: The system shall enter FAULT, and announce general fault, when the configuration file exists and cannot be read. It shall leave the file as it is. ← FLT-BOOT-02, CFG-05
 - **FLT-RATE-01**: The system shall take at least 50 pressure readings a second from PAD_IDLE to landing. ← FLT-PHASE-01
 - **FLT-RATE-06**: The flight software shall act on every sample in the loop it arrives in, each as a step of its own, however many a loop brings: no sample waits for a later loop. ← FLT-RATE-01, SNS-COL-03, DD-093
 - **FLT-RATE-05**: Every detector hold and dwell that measures the sensor shall run in sample time, so that lateness in processing changes no decision. ← SNS-PRES-08
@@ -232,7 +236,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 ### System requirements
 - **SYS-CFG-01**: The system shall store configuration persistently across power cycles. ← UN-4
 - **SYS-CFG-02**: The system shall allow configuration changes without special tools. ← UN-4
-- **SYS-CFG-03**: The system shall validate configuration against the limits of the sensor and of the board. ← UN-4
+- **SYS-CFG-03**: The system shall validate configuration against the limits of the sensor and of the board. ← UN-4 A value that does not parse, or that its field cannot hold, shall be refused and the field left as it was; a configuration posted with such a value shall be answered 400 and not stored.
 
 ### The configuration file
 - **CFG-01**: The system shall store configuration in an INI-format file on persistent storage. ← SYS-CFG-01
@@ -388,6 +392,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-NET-04**: The system shall advertise a DNS-SD service for automatic discovery. ← SYS-WEB-02
 - **WEB-NET-05**: A frame the USB link cannot take yet shall be held and sent in order as soon as it can, not dropped; one shall be refused only when eight wait already or the host has let the device go. ← SYS-WEB-01
 - **WEB-NET-06**: A board shall have a unique network address that survives restarts, without factory programming: one that has none shall draw one at random, with a subnet other than 0, 1 and 255, and keep it. `/api/status` shall say whether the address was drawn or assigned. ← SYS-WEB-02
+- **WEB-NET-07**: A received frame the device cannot hold -- no buffer free, an empty frame, a frame that will not copy, or one arriving while another is held -- shall be handed back to the USB stack so that reception continues, and no frame shall be copied past the endpoint's buffer. ← SYS-WEB-01
 
 ### The API
 - **WEB-API-01**: The system shall serve device status as JSON at `/api/status`. ← SYS-WEB-01
@@ -396,13 +401,14 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-API-04**: The system shall accept firmware updates at `/api/ota` (POST), answer before it restarts, and answer `Expect: 100-continue`. ← SYS-WEB-01
 - **WEB-API-05**: The system shall trigger a device restart at `/api/reboot` (POST). ← SYS-WEB-01
 - **WEB-API-06**: The system shall serve flight data as CSV at `/api/flight.csv`, framed by Content-Length. ← SYS-WEB-01
-- **WEB-API-07**: All API responses shall include CORS headers. ← SYS-WEB-01
+- **WEB-API-07**: The API shall grant no cross-origin access (no `Access-Control-Allow-Origin`; `Cross-Origin-Resource-Policy: same-origin`), shall refuse with 403 a request whose Host is not one of the board's names or its address, and shall refuse with 403 a POST without `X-Pyro: 1`. ← SYS-WEB-01
 - **WEB-API-08**: The web API and USB shall stay live in flight. From launch until the flight's record is safe, only the flight's record shall be stored: any other storage access shall be refused, a web request with 423, and a web transfer that holds the storage when the flight starts shall be dropped. ← SYS-WEB-01
 - **WEB-API-09**: The system shall erase the flight log on request at `/api/flight/erase` (POST), unless the log is being written. ← DAT-06
 - **WEB-API-10**: A request for a file shall be refused with 423 while the flight log is being written. ← WEB-API-08
 - **WEB-API-11**: `/api/status` shall be self-consistent, taken at one instant of the flight, shall keep its keys and their order, and shall be well-formed JSON whatever the configured rocket id and name contain. ← SYS-WEB-01
 - **WEB-API-12**: The system shall report at `/api/log/space` the bytes the next flight's log has room for, the size of a sample record and the log rates, and refuse with 423 while the flight log holds the storage. ← SYS-WEB-01
 - **WEB-API-13**: The system shall report at `/api/net` what the network has in use, has refused and has dropped, and the USB interface's mounts, unmounts, suspends and resumes, so an HTTP outage can be told apart on the bench. ← SYS-WEB-01
+- **WEB-API-14**: A file shall be named by `/`-separated names of letters, digits, `.`, `_` and `-`, none of them `.` or `..`. Any other path shall be refused by every file operation, and by the web server with 400. ← SYS-WEB-01
 
 ### HTTP
 - **WEB-HTTP-01**: The HTTP server shall treat each connection as a byte stream: a request shall be answered the same however TCP divides it into segments, including a header block or body split at any byte and more than one request in a single segment. ← SYS-WEB-01
@@ -433,6 +439,8 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **OTA-03**: The system shall automatically revert to the previous firmware if the new firmware does not reach normal operation on its first start. ← SYS-OTA-02
 - **OTA-04**: A failed or interrupted update shall not affect the currently running firmware. ← SYS-OTA-02
 - **OTA-05**: Firmware built for a different board shall not be kept: the system shall revert to the previous firmware. ← SYS-OTA-02
+- **OTA-06**: An image longer than the download slot shall be refused with 413 before any of it is written, and no write shall reach past the slot's end, where the filesystem begins. ← OTA-04
+- **OTA-07**: An update shall begin by marking the download slot invalid, so that an interrupted transfer is never swapped in on the strength of an earlier image's mark. ← OTA-04
 
 ---
 
@@ -450,11 +458,15 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **LUA-ISO-02**: A script shall read the flight's state and never write it. ← SYS-LUA-02
 - **LUA-ISO-03**: A script shall have no means to fire an enabled pyro channel or to stop one firing. ← SYS-LUA-02
 - **LUA-ISO-04**: A script shall have no access to files. It may add lines to the flight record. ← SYS-LUA-02
+- **LUA-ISO-05**: No construct of the language shall let a script outlast its limits: a limit's error shall pass through the script's own `pcall` and `xpcall`, finalisers (`__gc`) shall be refused, pattern matching shall be charged to the same limits, and an error in any call the host makes into the script shall be reported and never stop the task that runs it. ← LUA-ISO-01
+- **LUA-ISO-06**: A script's numbers shall be 32-bit integers and 32-bit floats on every build, the simulator included, and reading one shall not use the system heap. ← SYS-LUA-01, LUA-ISO-01
 - **LUA-SAFE-01**: Whatever script is stored, the board shall start, reach its pad state and serve its web interface, so a bad script can always be replaced. A script that did nothing wrong shall not be left disabled. ← SYS-LUA-02
 - **LUA-PAD-01**: Every pad shall have one owner, the flight software or the script, set by the pin assignment and fixed until the next start. ← SYS-LUA-01
 - **LUA-PAD-02**: A script shall reach a resource by its assigned name and kind: output, input, serial or pixel. It has full control of the pads assigned to it, a pyro channel's included, and what it does with them is the operator's responsibility. A resource it was not given does not exist for it, and using one fails with a reported error. ← SYS-LUA-01
 - **LUA-PAD-03**: Each board shall declare the resources it offers to scripts. ← SYS-LUA-01
 - **LUA-RUN-01**: The enabled script shall always run: on the pad, in flight, in ground test mode and in a bench flight. ← SYS-LUA-01
+- **LUA-RUN-02**: The script's `on_event()` shall be offered every flight event the flight log records, by its logged name, in order. Offering shall never wait: events beyond the eight that can be held between two script periods are dropped and counted. ← SYS-LUA-01, SYS-LUA-02
+- **LUA-RUN-03**: The state names a script compares against (`flight.<NAME>`) shall carry the flight software's own state values. ← LUA-ISO-02
 - **LUA-MGT-01**: The web interface shall edit, check, save and remove the script. A script that fails its check shall not be saved. ← SYS-LUA-01
 - **LUA-MGT-02**: A console shall show the script's output and errors, and whether the script is running or why it is not. ← SYS-LUA-01
 - **LUA-IO-01**: The web UI shall export the script to a local file and import one back, so a program survives the loss of the storage that holds it. ← SYS-CFG-01

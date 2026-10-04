@@ -1,25 +1,8 @@
 /*
- * A very small nodal solver, sized for a pyro board.
- *
- * Each board model rebuilds its network every step from the current GPIO
- * levels and then solves it. That is more machinery than reading a level
- * out of a lookup table, and it is worth it for one reason: the interesting
- * readings on these boards are the ones where two elements interact. A
- * channel tied to the bus through a match reads 1037 counts, a channel
- * isolated reads 1214, and a shorted TVS reads 1037 as well -- DESIGN.md
- * 4 derives all three from the same divider algebra. A model that solves
- * the network reproduces them, and reproduces the ones nobody tabulated.
- *
- * Integration is backward Euler:
- *
- *     (G + C/dt) v = (C/dt) v_prev + i
- *
- * Backward rather than forward because the networks are stiff: a 10 nF ADC
- * filter against 330 ohm is a 3.3 us constant, while a node's capacitance
- * against its bleed runs to milliseconds and beyond. Forward Euler would
- * need the small step everywhere. Backward Euler is unconditionally stable, so the sim can
- * take the 1 ms step the main loop wants and still settle the fast node
- * correctly.
+ * A nodal solver sized for a pyro board, rebuilt by the board model every
+ * step from the pad levels. Backward Euler, (G + C/dt) v = (C/dt) v_prev + i,
+ * because the networks are stiff (microsecond ADC filters beside
+ * millisecond bleeds) and it is stable at any step.
  *
  * SPDX-License-Identifier: MIT
  */

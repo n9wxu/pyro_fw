@@ -2,9 +2,7 @@
 
 > **Requirements changed 2026-10-02.** `REQUIREMENTS.md` governs, and its review is recorded in `docs/requirements_review_2026-10-02.md` and DD-080 to DD-090. This file describes the firmware as built; where it differs from the requirements, the requirements are right.
 
-## AI Restart Summary
-
-This section contains everything needed to resume development with a new AI session.
+## Summary
 
 ### Project Overview
 Two-channel rocket flight computer on the RP2040, for three boards: MK1A, MK1B (the default build) and MK1C. Logs flight data to littlefs flash, serves a web dashboard via USB network (RNDIS/ECM), fires two pyrotechnic channels for recovery deployment, outputs $PYRO NMEA telemetry via UART (see docs/ground-station-interface-spec.md), and runs user Lua scripts. OTA firmware updates via A/B bootloader. Open work is in `docs/outstanding_tasks.md`; decisions in `DECISIONS.md` (to DD-090).

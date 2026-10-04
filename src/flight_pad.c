@@ -16,7 +16,7 @@
 #define STILL_CMS 100
 
 static bool health_check_due(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_health_check <= HEALTH_CHECK_MS)
+    if (now - ctx->last_health_check < HEALTH_CHECK_MS)
         return false;
     ctx->last_health_check = now;
     return true;
@@ -83,6 +83,7 @@ void flight_action_launch(flight_context_t *ctx, uint32_t now) {
     uint32_t flight_ms = ctx->last_sample - ctx->launch_time;
     hal_log_start(&ctx->config, ctx->ground_pressure);
     hal_log_sample(flight_ms, ctx->pressure_pa, ctx->altitude_cm, ASCENT, 0, EVT_LAUNCH);
+    flight_note_event(ctx, EVT_LAUNCH);
 }
 
 /* ── USB [USB-01..08] ─────────────────────────────────────────────── */

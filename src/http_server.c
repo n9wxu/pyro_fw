@@ -39,6 +39,8 @@
 #if PYRO_HAS_LUA
 #include "lua_app.h"
 #include "lua_core1.h"
+#include "lua_platform_cfg.h"
+#include "pyro_lua.h"
 #endif
 
 #include "flash_op.h"
@@ -58,6 +60,8 @@
 #include "buzzer.h"
 #include "pyro_release.h"
 #include "http_conn.h"
+#include "http_routes.h"
+#include "ota_bounds.h"
 #include "http_server.h"
 #include "http_work.h"
 #include "status_json.h"
@@ -87,7 +91,11 @@ extern void hal_pressure_collector(collector_stats_t *out);
 extern uint32_t hal_pressure_rate_hz(void);
 extern uint32_t hal_pressure_flashed(void);
 
-#define CORS_HDR "Access-Control-Allow-Origin: *\r\n"
+/* [WEB-API-07] Every page that talks to the board is served by the board, so
+ * every legitimate request is same-origin and no Access-Control-Allow-Origin
+ * is sent. Cross-Origin-Resource-Policy keeps another site from embedding a
+ * response. */
+#define COMMON_HDRS "Cross-Origin-Resource-Policy: same-origin\r\n"
 
 #define JSON "application/json"
 #define TEXT "text/plain"
@@ -104,22 +112,6 @@ extern uint32_t hal_pressure_flashed(void);
 #define LINK_POOL_SIZE MEMP_NUM_TCP_PCB
 /* No byte moved either way for this long: the peer is gone. */
 #define HTTP_IDLE_MS 20000u
-
-typedef enum {
-    R_NONE,
-    R_FILE,   /* GET of a littlefs file, streamed by fill() */
-    R_UPLOAD, /* POST of a file: /www/..., the Lua program */
-    R_OTA,
-    R_CONFIG,
-    R_PINS,
-    R_BEEPS,
-    R_SERIAL,
-    R_ERASE,
-    R_BEEP_PLAY,
-    R_LUA_CHECK,
-    R_STATUS, /* answered by HTTP_UNIT_STATUS */
-    R_FLOG,   /* the binary flight log, rendered as CSV by fill() */
-} route_t;
 
 struct conn;
 
@@ -163,21 +155,26 @@ static conn_t *ota_conn; /* the OTA state below is one image at a time */
 
 /* ── OTA firmware update state ────────────────────────────────────── */
 
-/* Download slot flash offset (from linker symbols) */
+/* pico_fota_bootloader's linker symbols: their addresses are the values. The
+ * download slot ends where littlefs begins. */
 extern uint32_t __FLASH_DOWNLOAD_SLOT_START;
+extern uint32_t __FLASH_SWAP_SPACE_LENGTH;
 #define OTA_SLOT_OFF ((uint32_t) & __FLASH_DOWNLOAD_SLOT_START - XIP_BASE)
+#define OTA_SLOT_BYTES ((uint32_t) & __FLASH_SWAP_SPACE_LENGTH)
 
 static uint8_t ota_buf[FLASH_SECTOR_SIZE] __attribute__((aligned(FLASH_PAGE_SIZE)));
 static uint32_t ota_offset; /* bytes written so far */
 static uint16_t ota_buf_fill;
 static bool ota_failed;
-static bool pfb_started; /* the rollback mark, a flash write, once per image */
+static bool pfb_started; /* pfb_begin_op() has run for this image */
 
 /* One sector: an erase and a program, each its own lockout, so the system
  * stops for one operation at a time. */
 static bool ota_flush(void) {
     if (ota_buf_fill == 0)
         return true;
+    if (!ota_sector_fits(ota_offset, FLASH_SECTOR_SIZE, OTA_SLOT_BYTES))
+        return false;
     /* pad to page alignment */
     while (ota_buf_fill & (FLASH_PAGE_SIZE - 1))
         ota_buf[ota_buf_fill++] = 0xFF;
@@ -191,9 +188,16 @@ static bool ota_flush(void) {
 
 /* pico_fota_bootloader's marks mask interrupts and write flash themselves;
  * under the lockout, so the other core is out of XIP meanwhile. */
-static void pfb_commit_op(void *arg) {
+
+/* An image starts with the slot marked invalid: a valid mark left by an
+ * earlier image would swap this one in half-written, should the board reset
+ * mid-transfer. Not pfb_initialize_download_slot(): its whole-slot erase
+ * stops both cores for seconds, and ota_flush() erases each sector as it
+ * writes it. */
+static void pfb_begin_op(void *arg) {
     (void)arg;
     pfb_firmware_commit();
+    pfb_mark_download_slot_as_invalid();
 }
 
 static void pfb_valid_op(void *arg) {
@@ -259,7 +263,6 @@ static bool fs_take(conn_t *c) {
 }
 
 #define OLD_LOG_PATH "flight_log.csv" /* before DD-062: served as it is */
-#define FLIGHT_ERASE_PATH "/api/flight/erase"
 #define CSV_DISPOSITION "Content-Disposition: attachment; filename=\"flight.csv\"\r\n"
 #define EMPTY_LOG_CSV "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\r\n"
 
@@ -348,10 +351,11 @@ static void apply_api_beep_play(http_conn_t *hc, const char *body) {
          * could only detect by listening to silence. */
         jn = snprintf(jb, sizeof(jb), "{\"error\":\"this board has no buzzer fitted\"}");
         status = 409;
+    } else if (!flight_call(beep_play_call, &sp, CALL_MS)) {
+        jn = snprintf(jb, sizeof(jb), "{\"error\":\"the flight task did not take the sound\"}");
+        status = 503;
     } else {
-        /* Once, with no gap: an audition is a sample, not a state. The
-         * buzzer is the flight task's to drive. */
-        flight_call(beep_play_call, &sp, CALL_MS);
+        /* Once, with no gap: an audition is a sample, not a state. */
         jn = snprintf(jb, sizeof(jb), "{\"status\":\"playing\",\"kind\":\"%s\",\"d1\":%u,\"d2\":%u}",
                       beep_codes_kind_name((beep_kind_t)sp.kind), (unsigned)sp.d1, (unsigned)sp.d2);
         status = 200;
@@ -363,8 +367,6 @@ static void apply_api_beep_play(http_conn_t *hc, const char *body) {
 /* POST /api/test_mode/on, /api/test_mode/off [USB-08]. Held in RAM, so a
  * reboot ends it. In flight the flight layer ignores it, and the answer says
  * the mode it kept. */
-#define TEST_MODE_ON_PATH "/api/test_mode/on"
-#define TEST_MODE_OFF_PATH "/api/test_mode/off"
 
 static void test_mode_call(void *arg) {
     flight_set_test_mode(flight_get_context(), *(const bool *)arg, hal_time_ms());
@@ -592,7 +594,14 @@ static void serve_api_limits(http_conn_t *hc) {
 static void apply_api_config(http_conn_t *hc, char *cfgbuf) {
     config_t merged;
     (void)hal_config_load(&merged);
-    config_parse_ini(cfgbuf, &merged);
+    int refused = config_parse_ini(cfgbuf, &merged);
+    if (refused > 0) {
+        /* [SYS-CFG-03] Nothing is saved: a tab's post is one decision. */
+        char err[96];
+        int n = snprintf(err, sizeof(err), "{\"error\":\"%d value(s) out of range or unreadable\"}", refused);
+        http_respond(hc, 400, JSON, err, (uint32_t)n);
+        return;
+    }
     char cfgout[CONFIG_INI_MAX];
     int cfgn = config_serialize_ini(&merged, cfgout, (int)sizeof(cfgout));
     if (cfgn <= 0) {
@@ -750,14 +759,13 @@ static void serve_api_pin_caps(http_conn_t *hc) {
     http_respond(hc, 200, JSON, buf, (uint32_t)pos);
 }
 
-/* /api/status, captured on core0 in one pass; rendered by HTTP_UNIT_STATUS
- * on whichever core takes it. */
-static void status_capture(status_snap_t *s) {
-    extern flight_context_t *flight_get_context(void);
+/* [WEB-API-11] What the flight task owns, taken by the flight task itself at
+ * the head of its period (flight_call()), so the fields agree with one
+ * another. */
+static void status_capture_flight(void *arg) {
     static const char *mode_names[] = {"none", "fallen", "agl", "speed", "delay"};
+    status_snap_t *s = (status_snap_t *)arg;
     const flight_context_t *fctx = flight_get_context();
-    const pin_assign_t *pa = pin_store_current();
-    memset(s, 0, sizeof(*s));
 
     s->state = g_status.state < STATE_NAME_COUNT ? state_names[g_status.state] : "UNKNOWN";
     s->alt_cm = g_status.altitude_cm;
@@ -772,8 +780,6 @@ static void status_capture(status_snap_t *s) {
     s->pyro_fired[1] = g_status.pyro2_fired;
     s->armed = g_status.pyros_armed;
     s->flight_ms = g_status.flight_time_ms;
-    s->uptime_ms = to_ms_since_boot(get_absolute_time());
-    s->fw_version = FW_VERSION;
     s->pyro_mode[0] = g_status.pyro1_mode < 5 ? mode_names[g_status.pyro1_mode] : "?";
     s->pyro_mode[1] = g_status.pyro2_mode < 5 ? mode_names[g_status.pyro2_mode] : "?";
     s->pyro_value[0] = g_status.pyro1_value;
@@ -783,19 +789,6 @@ static void status_capture(status_snap_t *s) {
     memcpy(s->rocket_id, (const char *)g_status.rocket_id, sizeof(s->rocket_id) - 1);
     memcpy(s->rocket_name, (const char *)g_status.rocket_name, sizeof(s->rocket_name) - 1);
     s->sensor = pressure_sensor_name();
-    s->board = PYRO_BOARD_NAME;
-    s->board_id = BOARD_SHORT_STR;
-    switch (board_selftest_result()) {
-    case BOARD_SELFTEST_PASS:
-        s->board_selftest = 1;
-        break;
-    case BOARD_SELFTEST_FAIL:
-        s->board_selftest = 2;
-        break;
-    default:
-        s->board_selftest = 0;
-        break;
-    }
 
     /* Raw counts rather than volts, so a marginal reading stays visible. */
     board_pyro_raw_t praw = {0};
@@ -814,30 +807,6 @@ static void status_capture(status_snap_t *s) {
     for (int i = 0; i < STATUS_STAGE1_PARTS; i++) {
         s->stage1_parts_us[i] = stage1_part_max_us[i];
     }
-    http_work_stats_t ws;
-    http_work_stats(&ws);
-    for (int w = 0; w < 2; w++) {
-        s->http_units[w] = ws.units[w];
-        s->http_unit_max_us[w] = ws.max_us[w];
-    }
-    s->flash_opens = flash_op_lockouts();
-    s->flash_skips = flash_op_timeouts();
-    s->flash_refusals = flash_op_refusals();
-    s->log_dropped = hal_log_dropped();
-    s->flash_erases = flash_op_erases();
-    s->flash_programs = flash_op_programs();
-    s->flash_deferrals = flash_op_waits();
-
-    snprintf(s->pins_reason, sizeof(s->pins_reason), "%s", pin_store_reason());
-    s->pyro_released[0] = pa->pyro1_released;
-    s->pyro_released[1] = pa->pyro2_released;
-    const char *br_name;
-    s->bridge = pin_store_bridge(&s->bridge_ch, &s->bridge_common, &br_name);
-    s->pyro_mocked = pyro_release_mocks();
-    /* What the claim decided, beside what the assignment asked for: a channel
-     * that could not take its pads shows as a disagreement. */
-    s->pyro_real[0] = !pyro_release_is_released(1);
-    s->pyro_real[1] = !pyro_release_is_released(2);
 
     /* The power-up self-test: a board that cannot measure altitude must not
      * report itself healthy. */
@@ -897,12 +866,64 @@ static void status_capture(status_snap_t *s) {
     s->beep_is_code = sp.kind == BK_CODE;
     s->beep_d1 = sp.d1;
     s->beep_d2 = sp.d2;
+}
+
+/* GET /api/status [WEB-API-01, WEB-API-11]: the flight task's half, then what
+ * the net task and the board's identity hold. False when the flight task did
+ * not take the call. */
+static bool status_capture(status_snap_t *s) {
+    memset(s, 0, sizeof(*s));
+    if (!flight_call(status_capture_flight, s, CALL_MS)) {
+        return false;
+    }
+    s->uptime_ms = to_ms_since_boot(get_absolute_time());
+    s->fw_version = FW_VERSION;
+    s->board = PYRO_BOARD_NAME;
+    s->board_id = BOARD_SHORT_STR;
+    switch (board_selftest_result()) {
+    case BOARD_SELFTEST_PASS:
+        s->board_selftest = 1;
+        break;
+    case BOARD_SELFTEST_FAIL:
+        s->board_selftest = 2;
+        break;
+    default:
+        s->board_selftest = 0;
+        break;
+    }
+
+    http_work_stats_t ws;
+    http_work_stats(&ws);
+    for (int w = 0; w < 2; w++) {
+        s->http_units[w] = ws.units[w];
+        s->http_unit_max_us[w] = ws.max_us[w];
+    }
+    s->flash_opens = flash_op_lockouts();
+    s->flash_skips = flash_op_timeouts();
+    s->flash_refusals = flash_op_refusals();
+    s->log_dropped = hal_log_dropped();
+    s->flash_erases = flash_op_erases();
+    s->flash_programs = flash_op_programs();
+    s->flash_deferrals = flash_op_waits();
+
+    const pin_assign_t *pa = pin_store_current();
+    snprintf(s->pins_reason, sizeof(s->pins_reason), "%s", pin_store_reason());
+    s->pyro_released[0] = pa->pyro1_released;
+    s->pyro_released[1] = pa->pyro2_released;
+    const char *br_name;
+    s->bridge = pin_store_bridge(&s->bridge_ch, &s->bridge_common, &br_name);
+    s->pyro_mocked = pyro_release_mocks();
+    /* What the claim decided, beside what the assignment asked for: a channel
+     * that could not take its pads shows as a disagreement. */
+    s->pyro_real[0] = !pyro_release_is_released(1);
+    s->pyro_real[1] = !pyro_release_is_released(2);
 
     snprintf(s->serial, sizeof(s->serial), "%s", board_serial());
     s->serial_assigned = board_serial_assigned();
     strncpy(s->mac_source, board_mac_source(), sizeof(s->mac_source) - 1);
     snprintf(s->hw_id, sizeof(s->hw_id), "%s", board_hw_id());
     s->subnet = board_subnet_octet();
+    return true;
 }
 
 /* Portable: reads its own connection and nothing else. */
@@ -1149,12 +1170,65 @@ static const char DEFAULT_PAGE[] = "<!DOCTYPE html><html><body><h2>" PYRO_BOARD_
                                    "<p>No web files uploaded. POST files to /www/ to set up the UI.</p>"
                                    "<p><a href=\"/api/status\">Status JSON</a></p></body></html>";
 
+#if PYRO_HAS_LUA
+/* GET /api/lua/console: the console ring, drained, and the VM's liveness: a
+ * frozen heartbeat under "running" is a VM stuck where the instruction hook
+ * cannot reach. The buffers are static, off the net task's stack: it is the
+ * only caller. The raw text waits in the connection's work buffer, which the
+ * response then overwrites. */
+#define CONSOLE_TEXT_MAX 900
+_Static_assert(HTTP_WORK_SIZE >= CONSOLE_TEXT_MAX, "the console text is read into the work buffer");
+static void serve_lua_console(http_conn_t *hc) {
+    char *text = (char *)hc->work;
+    static char esc[1024];
+    static char esc_status[192];
+    int n = lua_app_console_read(text, CONSOLE_TEXT_MAX - 1);
+    text[n] = '\0';
+    json_escape(esc, sizeof(esc), text, n);
+    /* A Lua error names its chunk in quotes: [string "check"]:128: */
+    const char *st = lua_app_status();
+    json_escape(esc_status, sizeof(esc_status), st, (int)strlen(st));
+    /* c1_go ahead of c1_seen: a tick dispatched that the VM never took,
+     * which otherwise looks the same as a VM stuck mid-tick. */
+    uint32_t dbg_go, dbg_seen, dbg_skipped, dbg_hb;
+    lua_core1_dispatch_stats(&dbg_go, &dbg_seen, &dbg_skipped, &dbg_hb);
+    uint32_t dbg_loc = lua_core1_loc();
+    char *body = (char *)hc->work;
+    int blen =
+        snprintf(body, sizeof(hc->work),
+                 "{\"status\":\"%s\",\"heartbeat\":%lu,\"log_written\":%lu,"
+                 "\"console_dropped\":%lu,\"log_dropped\":%lu,\"log_refused\":%lu,"
+                 "\"log_active\":%s,"
+                 "\"c1_state\":%d,\"c1_loc\":%lu,\"c1_busy\":%lu,\"c1_go\":%lu,\"c1_seen\":%lu,"
+                 "\"c1_skipped\":%lu,\"c1_ready\":%s,\"events_dropped\":%lu,\"bridge_dropped\":%lu,"
+                 "\"stack_free\":%lu,"
+                 "\"text\":\"%s\"}",
+                 esc_status, (unsigned long)lua_core1_heartbeat(), (unsigned long)lua_app_log_written(),
+                 (unsigned long)lua_core1_console_dropped(), (unsigned long)lua_core1_log_dropped(),
+                 (unsigned long)hal_log_text_dropped(), hal_log_active() ? "true" : "false", (int)lua_core1_state(),
+                 (unsigned long)(dbg_loc & 0xffu), (unsigned long)((dbg_loc >> 8) & 0xffu), (unsigned long)dbg_go,
+                 (unsigned long)dbg_seen, (unsigned long)dbg_skipped, lua_core1_ready() ? "true" : "false",
+                 (unsigned long)pyro_lua_events_dropped(), (unsigned long)lua_plat_bridge_dropped(),
+                 (unsigned long)lua_core1_stack_free(), esc);
+    if (blen < 0 || blen >= (int)sizeof(hc->work)) {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"console exceeds the response buffer\"}");
+        return;
+    }
+    http_respond(hc, 200, JSON, body, (uint32_t)blen);
+}
+#endif
+
+#define BAD_NAME "a file name is letters, digits, '.', '_' and '-', in '/' segments"
+
 static void serve_get(conn_t *c) {
     http_conn_t *hc = &c->h;
     const char *path = hc->path;
 
     if (strcmp(path, "/api/status") == 0) {
-        status_capture(&c->status);
+        if (!status_capture(&c->status)) {
+            http_respond_str(hc, 503, JSON, "{\"error\":\"the flight task did not answer\"}");
+            return;
+        }
         c->route = R_STATUS;
         http_work_offer((int)(c - conns), HTTP_UNIT_STATUS);
 #if PYRO_HAS_LUA
@@ -1163,45 +1237,7 @@ static void serve_get(conn_t *c) {
          * open empty rather than show a 404. */
         serve_file(c, "/" LUA_SCRIPT_PATH, TEXT, NULL, 200, TEXT, "");
     } else if (strcmp(path, "/api/lua/console") == 0) {
-        /* Drains core1's console ring and reports its liveness. The heartbeat
-         * is what tells the operator core1 is still turning over; a frozen
-         * number with a "running" status means the VM is stuck somewhere the
-         * instruction hook cannot reach, and core0 will kill it shortly. */
-        char text[900];
-        int n = lua_app_console_read(text, sizeof(text) - 1);
-        text[n] = '\0';
-        char esc[1024];
-        json_escape(esc, sizeof(esc), text, n);
-
-        /* The status line carries pyro_lua_last_error() verbatim, and a Lua
-         * error names its chunk: [string "check"]:128: ... Unescaped, those
-         * quotes end the JSON string, so the response stops parsing at
-         * exactly the moment it has something to report. */
-        char esc_status[192];
-        const char *st = lua_app_status();
-        json_escape(esc_status, sizeof(esc_status), st, (int)strlen(st));
-        /* "running" with a frozen heartbeat and c1_go ahead of c1_seen means
-         * core0 handed out a unit core1 never claimed. Without these, that
-         * and a VM stuck mid-tick look identical. */
-        uint32_t dbg_go, dbg_seen, dbg_skipped, dbg_hb;
-        lua_core1_dispatch_stats(&dbg_go, &dbg_seen, &dbg_skipped, &dbg_hb);
-        uint32_t dbg_loc = lua_core1_loc();
-        char *body = (char *)hc->work;
-        int blen =
-            snprintf(body, sizeof(hc->work),
-                     "{\"status\":\"%s\",\"heartbeat\":%lu,\"log_written\":%lu,"
-                     "\"console_dropped\":%lu,\"log_dropped\":%lu,\"log_refused\":%lu,"
-                     "\"log_active\":%s,"
-                     "\"c1_state\":%d,\"c1_loc\":%lu,\"c1_busy\":%lu,\"c1_go\":%lu,\"c1_seen\":%lu,"
-                     "\"c1_skipped\":%lu,\"c1_ready\":%s,\"c1_flash_ok\":%s,\"stack_free\":%lu,"
-                     "\"text\":\"%s\"}",
-                     esc_status, (unsigned long)lua_core1_heartbeat(), (unsigned long)lua_app_log_written(),
-                     (unsigned long)lua_core1_console_dropped(), (unsigned long)lua_core1_log_dropped(),
-                     (unsigned long)hal_log_text_dropped(), hal_log_active() ? "true" : "false", (int)lua_core1_state(),
-                     (unsigned long)(dbg_loc & 0xffu), (unsigned long)((dbg_loc >> 8) & 0xffu), (unsigned long)dbg_go,
-                     (unsigned long)dbg_seen, (unsigned long)dbg_skipped, lua_core1_ready() ? "true" : "false",
-                     lua_core1_flash_ok() ? "true" : "false", (unsigned long)lua_core1_stack_free(), esc);
-        http_respond(hc, 200, JSON, body, (uint32_t)blen);
+        serve_lua_console(hc);
 #endif
     } else if (strcmp(path, "/api/beeps") == 0) {
         serve_api_beeps(hc);
@@ -1241,6 +1277,8 @@ static void serve_get(conn_t *c) {
          * change, and without this browsers heuristically cache it and keep
          * showing the previous build. */
         serve_file(c, "/www/index.html", "text/html", WWW_HEADERS, 200, "text/html", DEFAULT_PAGE);
+    } else if (!vfs_path_ok(path)) {
+        http_respond_str(hc, 400, TEXT, BAD_NAME);
     } else {
         serve_file(c, path, content_type_hdr(path), WWW_HEADERS, 404, TEXT, "Not found");
     }
@@ -1354,7 +1392,7 @@ static void apply_erase(http_conn_t *hc) {
     if (rc == VFS_NOENT) {
         rc = old;
     }
-    DBG("POST %s rc=%d", FLIGHT_ERASE_PATH, rc);
+    DBG("POST /api/flight/erase rc=%d", rc);
     if (rc == 0 || rc == VFS_NOENT) {
         http_respond_str(hc, 200, JSON, "{\"status\":\"erased\"}");
     } else {
@@ -1401,157 +1439,149 @@ static void apply_lua_check(http_conn_t *hc) {
 
 /* ── Routing ──────────────────────────────────────────────────────── */
 
-/* The POSTs that carry a body. gather is the most a whole-document route
- * takes into the work buffer; 0 streams the body to on_body instead. */
-typedef struct {
-    const char *path;
-    bool prefix;
-    route_t route;
-    uint32_t gather;
-    bool flash;
-    bool fs; /* littlefs: refused while the flight log holds it */
-} post_route_t;
-
-static const post_route_t post_routes[] = {
-    {"/api/ota", false, R_OTA, 0, true, false},
-    {"/www/", true, R_UPLOAD, 0, true, true},
-#if PYRO_HAS_LUA
-    /* The Lua program rides the same streaming write as a web file. */
-    {"/api/lua/script", false, R_UPLOAD, 0, true, true},
-    {"/api/lua/check", false, R_LUA_CHECK, 2047, false, false},
-#endif
-    {"/api/serial", false, R_SERIAL, 12, true, true},
-    {"/api/config", false, R_CONFIG, CONFIG_INI_MAX - 1, true, true},
-    {"/api/beeps/play", false, R_BEEP_PLAY, 63, false, false},
-    {"/api/beeps", false, R_BEEPS, BEEP_STORE_MAX - 1, true, true},
-    {"/api/pins", false, R_PINS, PIN_STORE_MAX - 1, true, true},
-};
-
-static const post_route_t *find_post_route(const char *path) {
-    for (unsigned i = 0; i < sizeof(post_routes) / sizeof(post_routes[0]); i++) {
-        const post_route_t *r = &post_routes[i];
-        if (r->prefix ? strncmp(path, r->path, strlen(r->path)) == 0 : strcmp(path, r->path) == 0) {
-            return r;
-        }
+#if PYRO_HAS_SD
+static void apply_hr_start(http_conn_t *hc, const char *path) {
+    const char *q = strstr(path, "odr=");
+    if (q) {
+        uint32_t hz = (uint32_t)strtoul(q + 4, NULL, 10);
+        lsm6ds3_odr_t o = hz >= 1660  ? LSM6DS3_ODR_1660
+                          : hz >= 833 ? LSM6DS3_ODR_833
+                          : hz >= 416 ? LSM6DS3_ODR_416
+                          : hz >= 208 ? LSM6DS3_ODR_208
+                                      : LSM6DS3_ODR_104;
+        hr_log_set_odr(o);
     }
-    return NULL;
+    bool ok = hr_log_start("bench");
+    http_respond_str(hc, ok ? 200 : 409, JSON, ok ? "{\"status\":\"logging\"}" : "{\"error\":\"no card\"}");
+}
+
+/* Bring the card up again, and mount it: a card inserted after boot, or one
+ * that failed then. ?crc=0 leaves CMD59 off; ?timeout=ms and ?restarts=n
+ * hold a card that resets on the rail to be measured; ?hz= sets the data
+ * clock. */
+static void apply_sd_init(http_conn_t *hc, const char *path) {
+    sd_set_crc(strstr(path, "crc=0") == NULL);
+    const char *to = strstr(path, "timeout=");
+    sd_set_init_timeout_ms(to ? (uint32_t)strtoul(to + 8, NULL, 10) : 1000u);
+    const char *gap = strstr(path, "gap=");
+    sd_set_poll_gap_ms(gap ? (uint32_t)strtoul(gap + 4, NULL, 10) : 0u);
+    const char *rs = strstr(path, "restarts=");
+    sd_set_init_restarts(rs ? (uint32_t)strtoul(rs + 9, NULL, 10) : 3u);
+    const char *hz = strstr(path, "hz=");
+    sd_set_data_hz(hz ? (uint32_t)strtoul(hz + 3, NULL, 10) : BOARD_SD_SPI_HZ);
+    int rc = sd_start();
+    char jb[64];
+    int jn = snprintf(jb, sizeof(jb), "{\"rc\":%d,\"mounted\":%s}", rc, vfs_sd_mounted() ? "true" : "false");
+    http_respond(hc, 200, JSON, jb, (uint32_t)jn);
+}
+
+static void apply_sd_idle(http_conn_t *hc, const char *path) {
+    const char *q = strstr(path, "ms=");
+    bool ok = sd_clock_idle(q ? (uint32_t)strtoul(q + 3, NULL, 10) : 2000u);
+    http_respond_str(hc, ok ? 200 : 503, JSON, ok ? "{\"status\":\"clocked\"}" : "{\"error\":\"bus\"}");
+}
+#endif
+
+/* The POSTs that act on the path alone, answered at the head. */
+static void apply_path_post(conn_t *c, route_t route) {
+    http_conn_t *hc = &c->h;
+    switch (route) {
+    case R_REBOOT:
+        DBG("POST /api/reboot");
+        c->reboot_when_sent = true;
+        http_respond_str(hc, 200, TEXT, "Rebooting");
+        break;
+    case R_TEST_MODE_ON:
+    case R_TEST_MODE_OFF:
+        apply_api_test_mode(hc, route == R_TEST_MODE_ON);
+        break;
+#if PYRO_HAS_BENCH_FLIGHT
+    case R_SIM_FLIGHT:
+        apply_sim_flight(hc, hc->path);
+        break;
+    case R_SIM_STOP: {
+        bool ok = flight_call(sim_stop_call, NULL, CALL_MS);
+        http_respond_str(hc, ok ? 200 : 503, JSON, ok ? "{\"status\":\"stopped\"}" : "{\"error\":\"busy\"}");
+        break;
+    }
+#endif
+#if PYRO_HAS_SD
+    case R_SD_BENCH:
+        apply_sd_bench(hc, hc->path);
+        break;
+    case R_SD_INIT:
+        apply_sd_init(hc, hc->path);
+        break;
+    case R_SD_IDLE:
+        apply_sd_idle(hc, hc->path);
+        break;
+    case R_HR_START:
+        apply_hr_start(hc, hc->path);
+        break;
+    case R_HR_STOP:
+        hr_log_stop();
+        http_respond_str(hc, 200, JSON, "{\"status\":\"stopping\"}");
+        break;
+#endif
+    default:
+        /* R_ERASE: answered once the body, if any, is discarded. */
+        c->route = route;
+        break;
+    }
+}
+
+/* Per transfer: left latched, a failure would abort every later upload at its
+ * first byte. */
+static void ota_begin(conn_t *c) {
+    ota_conn = c;
+    ota_offset = 0;
+    ota_buf_fill = 0;
+    ota_failed = false;
+    pfb_started = false;
 }
 
 static void route_post(conn_t *c) {
     http_conn_t *hc = &c->h;
     const char *path = hc->path;
 
-    if (strcmp(path, TEST_MODE_ON_PATH) == 0 || strcmp(path, TEST_MODE_OFF_PATH) == 0) {
-        apply_api_test_mode(hc, strcmp(path, TEST_MODE_ON_PATH) == 0);
-        return;
-    }
-#if PYRO_HAS_BENCH_FLIGHT
-    if (strncmp(path, "/api/sim/flight", 15) == 0 && (path[15] == '\0' || path[15] == '?')) {
-        apply_sim_flight(hc, path);
-        return;
-    }
-    if (strcmp(path, "/api/sim/stop") == 0) {
-        bool ok = flight_call(sim_stop_call, NULL, CALL_MS);
-        http_respond_str(hc, ok ? 200 : 503, JSON, ok ? "{\"status\":\"stopped\"}" : "{\"error\":\"busy\"}");
-        return;
-    }
-#endif
-#if PYRO_HAS_SD
-    if (strncmp(path, "/api/sd/bench", 13) == 0 && (path[13] == '\0' || path[13] == '?')) {
-        apply_sd_bench(hc, path);
-        return;
-    }
-    if (strncmp(path, "/api/hr/start", 13) == 0 && (path[13] == '\0' || path[13] == '?')) {
-        const char *q = strstr(path, "odr=");
-        if (q) {
-            uint32_t hz = (uint32_t)strtoul(q + 4, NULL, 10);
-            lsm6ds3_odr_t o = hz >= 1660  ? LSM6DS3_ODR_1660
-                              : hz >= 833 ? LSM6DS3_ODR_833
-                              : hz >= 416 ? LSM6DS3_ODR_416
-                              : hz >= 208 ? LSM6DS3_ODR_208
-                                          : LSM6DS3_ODR_104;
-            hr_log_set_odr(o);
-        }
-        bool ok = hr_log_start("bench");
-        http_respond_str(hc, ok ? 200 : 409, JSON, ok ? "{\"status\":\"logging\"}" : "{\"error\":\"no card\"}");
-        return;
-    }
-    if (strcmp(path, "/api/hr/stop") == 0) {
-        hr_log_stop();
-        http_respond_str(hc, 200, JSON, "{\"status\":\"stopping\"}");
-        return;
-    }
-    if (strncmp(path, "/api/sd/idle", 12) == 0 && (path[12] == '\0' || path[12] == '?')) {
-        const char *q = strstr(path, "ms=");
-        bool ok = sd_clock_idle(q ? (uint32_t)strtoul(q + 3, NULL, 10) : 2000u);
-        http_respond_str(hc, ok ? 200 : 503, JSON, ok ? "{\"status\":\"clocked\"}" : "{\"error\":\"bus\"}");
-        return;
-    }
-    if (strncmp(path, "/api/sd/init", 12) == 0 && (path[12] == '\0' || path[12] == '?')) {
-        /* Bring the card up again, and mount it: a card inserted after boot,
-         * or one that failed then. ?crc=0 leaves CMD59 off; ?timeout=ms and
-         * ?restarts=n hold a card that resets on the rail to be measured;
-         * ?hz= sets the data clock. */
-        sd_set_crc(strstr(path, "crc=0") == NULL);
-        const char *to = strstr(path, "timeout=");
-        sd_set_init_timeout_ms(to ? (uint32_t)strtoul(to + 8, NULL, 10) : 1000u);
-        const char *gap = strstr(path, "gap=");
-        sd_set_poll_gap_ms(gap ? (uint32_t)strtoul(gap + 4, NULL, 10) : 0u);
-        const char *rs = strstr(path, "restarts=");
-        sd_set_init_restarts(rs ? (uint32_t)strtoul(rs + 9, NULL, 10) : 3u);
-        const char *hz = strstr(path, "hz=");
-        sd_set_data_hz(hz ? (uint32_t)strtoul(hz + 3, NULL, 10) : BOARD_SD_SPI_HZ);
-        int rc = sd_start();
-        char jb[64];
-        int jn = snprintf(jb, sizeof(jb), "{\"rc\":%d,\"mounted\":%s}", rc, vfs_sd_mounted() ? "true" : "false");
-        http_respond(hc, 200, JSON, jb, (uint32_t)jn);
-        return;
-    }
-#endif
-    if (strcmp(path, "/api/reboot") == 0) {
-        DBG("POST /api/reboot");
-        c->reboot_when_sent = true;
-        http_respond_str(hc, 200, TEXT, "Rebooting");
-        return;
-    }
-    if (strcmp(path, FLIGHT_ERASE_PATH) == 0) {
-        if (!fs_take(c)) {
-            return;
-        }
-        c->route = R_ERASE;
-        return;
-    }
-
     const post_route_t *r = find_post_route(path);
     if (!r) {
         http_respond_str(hc, 404, TEXT, "Not found");
         return;
     }
+    if (r->route == R_UPLOAD && !vfs_path_ok(path)) {
+        http_respond_str(hc, 400, TEXT, BAD_NAME);
+        return;
+    }
     if (r->fs && !fs_take(c)) {
+        return;
+    }
+    if (r->body == BODY_NONE) {
+        apply_path_post(c, r->route);
         return;
     }
     if (hc->content_length == 0) {
         http_respond_str(hc, 400, TEXT, "this request needs a body");
         return;
     }
-    if (r->route == R_OTA && ota_conn && ota_conn != c) {
-        http_respond_str(hc, 409, TEXT, "another update is in progress");
-        return;
+    if (r->route == R_OTA) {
+        if (ota_conn && ota_conn != c) {
+            http_respond_str(hc, 409, TEXT, "another update is in progress");
+            return;
+        }
+        if (!ota_image_fits(hc->content_length, OTA_SLOT_BYTES)) {
+            http_respond_str(hc, 413, TEXT, "larger than the download slot");
+            return;
+        }
     }
     c->route = r->route;
-    if (r->gather) {
+    if (r->body == BODY_GATHER) {
         http_gather(hc, r->gather);
     } else {
         http_stream(hc);
     }
     if (r->route == R_OTA) {
-        /* Per transfer. Left latched, a failure would abort every later
-         * upload at its first byte. */
-        ota_conn = c;
-        ota_offset = 0;
-        ota_buf_fill = 0;
-        ota_failed = false;
-        pfb_started = false;
+        ota_begin(c);
     } else if (r->route == R_UPLOAD) {
 #if PYRO_HAS_LUA
         if (strcmp(path, "/api/lua/script") == 0) {
@@ -1567,6 +1597,12 @@ static void route_post(conn_t *c) {
 
 static void on_head(http_conn_t *hc) {
     conn_t *c = (conn_t *)hc;
+    uint16_t refusal = http_origin_refusal(hc, board_subnet_octet());
+    if (refusal) {
+        http_respond_str(hc, refusal, TEXT,
+                         refusal == 400 ? "a request names its Host" : "not from this board's own page");
+        return;
+    }
     if (strcmp(hc->method, "POST") == 0) {
         route_post(c);
     } else {
@@ -1578,8 +1614,10 @@ static uint16_t on_body(http_conn_t *hc, const uint8_t *data, uint16_t len) {
     conn_t *c = (conn_t *)hc;
     if (c->route == R_OTA) {
         if (!pfb_started) {
-            flash_op(pfb_commit_op, NULL);
             pfb_started = true;
+            if (flash_op(pfb_begin_op, NULL) != 0) {
+                ota_failed = true;
+            }
         }
         return ota_body(c, data, len);
     }
@@ -1656,7 +1694,7 @@ static bool on_complete(http_conn_t *hc) {
 }
 
 static const http_handlers_t handlers = {
-    .common_headers = CORS_HDR,
+    .common_headers = COMMON_HDRS,
     .on_head = on_head,
     .on_body = on_body,
     .on_complete = on_complete,
@@ -2091,9 +2129,24 @@ bool http_server_work(int32_t remaining_us) {
     return true;
 }
 
+/* Accepts are not limited by lwIP (TCP_LISTEN_BACKLOG is off): on_accept()
+ * refuses once every link is in use. */
 void http_server_init(void) {
     struct tcp_pcb *pcb = tcp_new();
-    tcp_bind(pcb, IP_ADDR_ANY, 80);
-    pcb = tcp_listen_with_backlog(pcb, 8);
-    tcp_accept(pcb, on_accept);
+    if (!pcb) {
+        DBG("listen: no pcb");
+        return;
+    }
+    if (tcp_bind(pcb, IP_ADDR_ANY, 80) != ERR_OK) {
+        DBG("listen: port 80 refused");
+        tcp_close(pcb);
+        return;
+    }
+    struct tcp_pcb *listener = tcp_listen(pcb);
+    if (!listener) {
+        DBG("listen: no listening pcb");
+        tcp_close(pcb);
+        return;
+    }
+    tcp_accept(listener, on_accept);
 }

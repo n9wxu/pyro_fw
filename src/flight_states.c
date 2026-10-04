@@ -7,6 +7,7 @@
 #include "atmosphere.h"
 #include "beep_store.h"
 #include "board_id.h"
+#include "board_selftest.h"
 #include "buzzer.h"
 #include "fire_plan.h"
 #include "flight_resume.h"
@@ -71,8 +72,10 @@ static const transition_t transitions[] = {
 #define NUM_TRANSITIONS (int)(sizeof(transitions) / sizeof(transitions[0]))
 
 static flight_state_t step(flight_context_t *ctx, uint32_t now) {
-    if (ctx->current_state >= STATE_COUNT)
-        return PAD_IDLE;
+    if (ctx->current_state >= STATE_COUNT) {
+        flight_action_fault(ctx, now);
+        return FAULT;
+    }
     state_event_t event = detectors[ctx->current_state](ctx, now);
     if (event == SEVT_NONE)
         return ctx->current_state;
@@ -105,7 +108,8 @@ flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {
 void flight_init(flight_context_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     config_set_defaults(&ctx->config);
-    hal_config_load(&ctx->config);
+    ctx->config_unreadable = hal_config_load(&ctx->config) == HAL_CONFIG_UNREADABLE;
+    ctx->board_mismatch = board_selftest_result() == BOARD_SELFTEST_FAIL;
     buzzer_init();
     beep_store_load(NULL, 0);
     pp_init();
@@ -189,7 +193,24 @@ void flight_take_sample(flight_context_t *ctx, const pp_sample_t *s, flight_stat
 }
 
 /* [DAT-03] An event is a row at the newest sample's time. */
+void flight_note_event(flight_context_t *ctx, uint8_t event) {
+    ctx->events_held[ctx->events_noted % FLIGHT_EVENTS_HELD] = event;
+    ctx->events_noted++;
+}
+
+bool flight_next_event(const flight_context_t *ctx, uint32_t *cursor, uint8_t *event) {
+    uint32_t behind = ctx->events_noted - *cursor;
+    if (behind == 0)
+        return false;
+    if (behind > FLIGHT_EVENTS_HELD)
+        *cursor = ctx->events_noted - FLIGHT_EVENTS_HELD;
+    *event = ctx->events_held[*cursor % FLIGHT_EVENTS_HELD];
+    (*cursor)++;
+    return true;
+}
+
 void flight_log_event(flight_context_t *ctx, uint8_t event) {
+    flight_note_event(ctx, event);
     flight_sample_t *row = newest_row(ctx);
     row->event = event;
     if (hal_log_active() && state_is_logged((flight_state_t)row->state))

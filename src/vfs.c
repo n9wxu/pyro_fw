@@ -91,6 +91,9 @@ static int open_on(int kind, vfs_file_t *f, const char *path, int flags, void *l
 /* A file the card lacks is read from littlefs, so a blank card still serves
  * the web pages and the last flight the board kept. Writes go to the card. */
 int vfs_open(vfs_file_t *f, const char *path, int flags, void *lfs_buf) {
+    f->kind = VFS_NONE;
+    if (!vfs_path_ok(path))
+        return VFS_ERR;
     int kind = vfs_route(path);
     int rc = open_on(kind, f, path, flags, lfs_buf);
     if (rc == VFS_NOENT && kind == VFS_FAT && !(flags & VFS_WR))
@@ -167,6 +170,8 @@ int vfs_rewind(vfs_file_t *f) {
 /* A read of a file the card lacks falls back to internal storage
  * (vfs_open), so a copy left there would come back: both go. */
 int vfs_remove(const char *path) {
+    if (!vfs_path_ok(path))
+        return VFS_ERR;
     int internal = lfs_err(lfs_remove(&g_lfs, path));
 #if PYRO_HAS_SD
     if (vfs_route(path) == VFS_FAT) {
@@ -178,6 +183,8 @@ int vfs_remove(const char *path) {
 }
 
 int vfs_rename(const char *from, const char *to) {
+    if (!vfs_path_ok(from) || !vfs_path_ok(to))
+        return VFS_ERR;
 #if PYRO_HAS_SD
     if (vfs_route(to) == VFS_FAT) {
         /* FatFs will not rename over an existing file; littlefs does. */
@@ -189,6 +196,8 @@ int vfs_rename(const char *from, const char *to) {
 }
 
 int vfs_mkdir(const char *path) {
+    if (!vfs_path_ok(path))
+        return VFS_ERR;
 #if PYRO_HAS_SD
     if (vfs_route(path) == VFS_FAT) {
         FRESULT r = f_mkdir(path);
@@ -200,6 +209,8 @@ int vfs_mkdir(const char *path) {
 }
 
 int32_t vfs_stat_size(const char *path) {
+    if (!vfs_path_ok(path))
+        return VFS_ERR;
 #if PYRO_HAS_SD
     if (vfs_route(path) == VFS_FAT) {
         FILINFO fi;

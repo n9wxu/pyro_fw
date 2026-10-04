@@ -1,52 +1,10 @@
 /*
- * Plant — Pyro MK1A.
- *
- * A different firing architecture from MK1C, and the difference is the
- * whole point of modelling it separately: MK1A has a per-channel HIGH side
- * and ONE shared LOW side, where MK1C has a shared high side and
- * per-channel low sides. Continuity is sensed with no current from the
- * pack at all.
- *
- *          +3V3 ─[R9 100k]─┬── node 1 (igniter 1 high) ──[J3 igniter]──┐
- *                          └─[R5 1k]─ SNS1 (ADC0), C6 100nF            │
- *   VBATT ─[Q6 DMC2053]────┘                                           │
- *                                                                      ├─ node 0
- *          +3V3 ─[R10 100k]─┬── node 2 (igniter 2 high) ──[J4 igniter]─┤  Initiator
- *                           └─[R14 1k]─ SNS2 (ADC1), C5 100nF          │  ground
- *   VBATT ─[Q1 DMC2053]─────┘                                          │
- *                                                                      │
- *                          node 0 ──[F1 8A]──[Q2 AO3400A]── GND        ┘
- *                                             gate = PYRO_LOW
- *
- * ── What the model has to get right ──────────────────────────────
- *
- * boards/mk1a/pyro_board.c states the numbers it expects, and they are the
- * acceptance test:
- *
- *   "against 100k, at 12 bits: a 2 ohm igniter reads 0 counts, a 1k bad
- *    joint 41, a 10k leakage path 372, and a genuine open 4095"
- *
- * and the timing that makes the sense cycle a state machine rather than
- * two sleeps:
- *
- *   "The node going OPEN has to charge C6/C5 (100nF) through R9+R5
- *    (101k). That is a 10.1 ms time constant, so an open channel needs
- *    about 50 ms to read as open."
- *
- * Both fall out of the network. The 100 nF sits on the sense node as node
- * capacitance, so the rise really is 101k x 100nF and firmware that
- * samples before SETTLE_MS reads a partly charged node here exactly as it
- * would on the bench. That is the single most valuable thing this model
- * does for MK1A: the 50 ms settle is a firmware constant justified by an
- * RC, and now the RC is in the loop.
- *
- * ── The sense node during a fire pulse ───────────────────────────
- *
- * board_pins.h warns that a fire pulse puts VBATT on the sense node
- * through R5/R14, "about 5 mA into the RP2040's ADC clamp for the 500 ms
- * of the pulse". The model reproduces the voltage and lets the ADC clamp
- * at full scale; it does not model the clamp current, because nothing in
- * the firmware can see it. The warning stands.
+ * Plant: MK1A's firing network, a high side per channel and one shared low
+ * side, sensed with no current from the pack. See
+ * boards/mk1a/THEORY_OF_OPERATION.md "Pyro circuit" and "Continuity check":
+ * its count table and its 10.1 ms open-channel rise are what
+ * test/test_plant.c holds this model to. The ADC clamp current a fire pulse
+ * drives through R5/R14 is not modelled; only the clamped reading is.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -63,7 +21,6 @@
 #define N_CH2    2
 
 #define R_PULLUP_OHM   100000.0   /* R9 / R10, to +3V3                   */
-#define R_SENSE_OHM      1000.0   /* R5 / R14, the ADC series resistor   */
 #define C_SENSE_F        100e-9   /* C6 / C5                             */
 #define V_LOGIC             3.3
 
@@ -72,18 +29,15 @@
  * is indistinguishable from an open low side, which PF_BUS_SHORT_GND's
  * opposite already covers. */
 #define R_FUSE_OHM          0.01
-
-/* An "off" high side is an ideal open by default. A real one leaks, and on
- * this board the 100 kohm pull-up makes that visible -- see
- * plant_set_highside_leak_ohms(), which a test sets when it wants to ask. */
+#define DMC2053_ON_OHM      0.05   /* Q6 / Q1, the high sides            */
 
 static double highside_ohms(const plant_t *p, int ch) {
     int pin = (ch == 0) ? BOARD_PIN_FIRE1 : BOARD_PIN_FIRE2;
     if (p->faults[PF_HIGH_SIDE_SHORT])
-        return 0.05;
+        return DMC2053_ON_OHM;
     if (plant_gpio(p, pin))
-        return 0.05;
-    return (p->highside_leak_ohms > 0.0) ? p->highside_leak_ohms : 1e11;
+        return DMC2053_ON_OHM;
+    return (p->highside_leak_ohms > 0.0) ? p->highside_leak_ohms : PLANT_OPEN_OHM;
 }
 
 static double lowside_ohms(const plant_t *p) {
@@ -92,8 +46,8 @@ static double lowside_ohms(const plant_t *p) {
      * A one is the canonical name. */
     bool shorted = p->faults[PF_LOWSIDE_A_SHORT] || p->faults[PF_LOWSIDE_B_SHORT];
     if (shorted)
-        return 0.03 + R_FUSE_OHM;
-    return plant_gpio(p, BOARD_PIN_PYRO_LOW) ? (0.03 + R_FUSE_OHM) : 1e11;
+        return PLANT_FET_ON_OHM + R_FUSE_OHM;
+    return plant_gpio(p, BOARD_PIN_PYRO_LOW) ? (PLANT_FET_ON_OHM + R_FUSE_OHM) : PLANT_OPEN_OHM;
 }
 
 static double mk1a_max_dt(plant_t *p) {
@@ -110,35 +64,21 @@ static void mk1a_build(plant_t *p, double dt_s) {
 
     const int node[2] = {N_CH1, N_CH2};
 
-    /* The shared low node. When PYRO_LOW is released it is genuinely
-     * floating -- there is no pull-down on it at all -- which is what makes
-     * phase 2 of the sense cycle a short test: the pull-ups should win on
-     * both channels, and anything that still reads low is a short to
-     * ground. Give it a small stray capacitance so it is a solvable node
-     * rather than a singular one. */
-    net_cap_to_gnd(n, N_COMMON, 1e-9);
+    /* With PYRO_LOW released the shared low node floats: it has no
+     * pull-down, which is what makes the shorts step a test. */
+    net_cap_to_gnd(n, N_COMMON, PLANT_STRAY_F);
     net_res_to_gnd(n, N_COMMON, lowside_ohms(p));
     if (p->faults[PF_BUS_SHORT_GND])
-        net_res_to_gnd(n, N_COMMON, 0.5);
+        net_res_to_gnd(n, N_COMMON, PLANT_HARD_SHORT_OHM);
 
     for (int i = 0; i < 2; i++) {
-        /* R9/R10 pull to +3V3, which as a Norton is a 3.3 V source behind
-         * 100k -- a conductance to ground plus an injected current. This
-         * is the element the whole sense scheme rests on: it is weak
-         * enough that a 2 ohm igniter reads 0 counts and a 10k leakage
-         * path still reads only 372, so a degraded connection lands in the
-         * gap between the thresholds instead of rounding to "good". */
         net_src_through_res(n, node[i], V_LOGIC, R_PULLUP_OHM);
 
-        /* The ADC filter cap hangs on the node through R5/R14. R5 is 1 % of
-         * the pull-up, so the dominant constant is (R_PULLUP + R_SENSE) x
-         * C_SENSE -- the 10.1 ms the firmware sizes SETTLE_MS against. */
+        /* C6/C5 sit behind R5/R14, 1 % of the pull-up: on the node to 1 %. */
         net_cap_to_gnd(n, node[i], C_SENSE_F);
 
-        /* The high side, from the pack. */
         net_src_through_res(n, node[i], plant_pack_v(p), highside_ohms(p, i));
 
-        /* The igniter, from this node down to the shared low node. */
         net_res(n, node[i], N_COMMON, plant_match_ohms(&p->match[i]));
     }
 }
@@ -151,7 +91,7 @@ static void mk1a_post(plant_t *p, double dt_s) {
 
     if (p->faults[PF_PACK_COLLAPSE]) {
         double i = fabs(p->i_a) + fabs(p->i_b);
-        p->pack_sag_v = i * 0.15;
+        p->pack_sag_v = i * PLANT_PACK_SAG_OHM;
     } else {
         p->pack_sag_v = 0.0;
     }

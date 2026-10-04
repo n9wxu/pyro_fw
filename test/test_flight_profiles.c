@@ -50,9 +50,23 @@ void test_PYR_MODE_01_delay_after_apogee(void) {
     TEST_ASSERT_FLOAT_WITHIN(0.25f, 4.0f, r.main_t - r.apogee_t);
 }
 
+/* [LUA-RUN-02] */
+void test_LUA_RUN_02_each_flight_event_is_offered_to_the_script(void) {
+    flight_conditions_t c = {
+        .config = "pyro1_mode=delay\npyro1_value=0\n", .rate_ms = {20.0f, 0.0f}, .to_landed = true};
+    flown_t r = fly(subsonic(), &ISA, &c, 3, 400.0f);
+    TEST_ASSERT_TRUE(r.drogue);
+    const char *launch = strstr(mock_lua_events, "LAUNCH;");
+    TEST_ASSERT_NOT_NULL_MESSAGE(launch, mock_lua_events);
+    const char *apogee = strstr(launch, "APOGEE;");
+    TEST_ASSERT_NOT_NULL_MESSAGE(apogee, mock_lua_events);
+    const char *pyro = strstr(apogee, "PYRO1;");
+    TEST_ASSERT_NOT_NULL_MESSAGE(pyro, mock_lua_events);
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(pyro, "LANDING;"), mock_lua_events);
+}
+
 void test_PYR_MODE_02_agl_at_its_height(void) {
-    flight_conditions_t c = {.config = "pyro1_mode=delay\npyro2_mode=agl\npyro2_value=300\n",
-                             .rate_ms = {20.0f, 6.0f}};
+    flight_conditions_t c = {.config = "pyro1_mode=delay\npyro2_mode=agl\npyro2_value=300\n", .rate_ms = {20.0f, 6.0f}};
     flown_t r = fly(subsonic(), &ISA, &c, 2, 200.0f);
     TEST_ASSERT_TRUE(r.drogue && r.main);
     TEST_ASSERT_FLOAT_WITHIN(AGL_TOL_M, 300.0f, r.main_h);
@@ -112,8 +126,7 @@ void test_CFG_03_a_height_in_feet(void) {
 /* ── One event, both channels [PYR-DEPLOY-01, PYR-DEPLOY-02] ──────── */
 
 void test_PYR_DEPLOY_01_a_low_flight_puts_both_out_on_one_event(void) {
-    flight_conditions_t c = {.config = "pyro1_mode=delay\npyro2_mode=agl\npyro2_value=300\n",
-                             .rate_ms = {6.0f, 6.0f}};
+    flight_conditions_t c = {.config = "pyro1_mode=delay\npyro2_mode=agl\npyro2_value=300\n", .rate_ms = {6.0f, 6.0f}};
     flown_t r = fly(&ROCKETS[HOP].r, &ISA, &c, 8, 60.0f);
     char msg[96];
     snprintf(msg, sizeof(msg), "apogee %.0f m; drogue %d, main %d", (double)r.apogee_h, r.drogue, r.main);
@@ -208,7 +221,8 @@ void test_SNS_MAX_01_best_effort_above_the_sensors_range(void) {
     flown_t r = fly(&ROCKETS[TO_45_KM].r, &ISA, &c, 12, 4000.0f);
     char msg[160];
     snprintf(msg, sizeof(msg), "apogee %.0f m; declared %+.1f s after; drogue %d main %d at %.0f m; state %d",
-             (double)r.apogee_h, (double)(r.declared_t - r.apogee_t), r.drogue, r.main, (double)r.main_h, r.final_state);
+             (double)r.apogee_h, (double)(r.declared_t - r.apogee_t), r.drogue, r.main, (double)r.main_h,
+             r.final_state);
     printf("  45 km: %s\n", msg);
     TEST_ASSERT_TRUE_MESSAGE(r.apogee_h > 40000.0f, msg);
     TEST_ASSERT_TRUE_MESSAGE(r.apogee_declared && r.declared_t >= r.apogee_t, msg);
@@ -341,6 +355,37 @@ void test_DAT_08_a_full_rate_log_replays_to_the_same_events(void) {
     TEST_ASSERT_UINT32_WITHIN_MESSAGE(1000, logged.landing_ms, decided.landing_ms, msg);
 }
 
+static int with_crlf_line_ends(const char *lf, char *crlf, int size) {
+    int n = 0;
+    for (; *lf && n < size - 2; lf++) {
+        if (*lf == '\n')
+            crlf[n++] = '\r';
+        crlf[n++] = *lf;
+    }
+    crlf[n] = '\0';
+    return n;
+}
+
+/* [DAT-08] A log saved through a tool that writes CRLF line ends. */
+void test_DAT_08_a_crlf_log_replays_as_its_lf_twin(void) {
+    flight_conditions_t c = {.config = "log_rate=full\npyro1_mode=delay\npyro2_mode=agl\npyro2_value=40\n",
+                             .rate_ms = {12.0f, 5.0f},
+                             .to_landed = true};
+    (void)fly(&ROCKETS[HOP].r, &ISA, &c, 22, 120.0f);
+    static char lf[4 * 1024 * 1024], crlf[5 * 1024 * 1024];
+    TEST_ASSERT_TRUE(test_flight_log_csv(lf, (int)sizeof(lf)) > 0);
+    with_crlf_line_ends(lf, crlf, (int)sizeof(crlf));
+    replay_events_t from_lf, from_crlf;
+    boot_like_hardware(22);
+    TEST_ASSERT_TRUE(replay_run(lf, &from_lf));
+    boot_like_hardware(22);
+    TEST_ASSERT_TRUE_MESSAGE(replay_run(crlf, &from_crlf), "a CRLF log was refused");
+    TEST_ASSERT_EQUAL_INT(from_lf.rows, from_crlf.rows);
+    TEST_ASSERT_EQUAL_UINT32(from_lf.apogee_ms, from_crlf.apogee_ms);
+    TEST_ASSERT_EQUAL_UINT32(from_lf.pyro2_ms, from_crlf.pyro2_ms);
+    TEST_ASSERT_EQUAL_UINT32(from_lf.landing_ms, from_crlf.landing_ms);
+}
+
 void test_DAT_08_a_thinned_log_is_refused(void) {
     flight_conditions_t c = {.config = "log_rate=1hz\n", .rate_ms = {20.0f, 0.0f}, .to_landed = true};
     (void)fly(subsonic(), &ISA, &c, 21, 300.0f);
@@ -459,13 +504,15 @@ void test_SNS_REC_01_a_failed_sensor_is_logged_and_left_alone(void) {
     flown_t r = fly(subsonic(), &ISA, &c, 26, 200.0f);
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_pressure_inits, "initialised at start-up and never again");
     TEST_ASSERT_TRUE(harness_log_events("SENSOR_STUCK") >= 1);
-    TEST_ASSERT_TRUE_MESSAGE(r.apogee_declared && r.drogue && r.main, "the flight goes on with the samples that arrive");
+    TEST_ASSERT_TRUE_MESSAGE(r.apogee_declared && r.drogue && r.main,
+                             "the flight goes on with the samples that arrive");
     TEST_ASSERT_TRUE(r.drogue_t >= r.apogee_t);
 }
 
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_PYR_MODE_01_delay_after_apogee);
+    RUN_TEST(test_LUA_RUN_02_each_flight_event_is_offered_to_the_script);
     RUN_TEST(test_PYR_MODE_02_agl_at_its_height);
     RUN_TEST(test_PYR_MODE_02_agl_on_both_channels);
     RUN_TEST(test_PYR_MODE_03_fallen_from_the_peak);
@@ -487,6 +534,7 @@ int main(void) {
     RUN_TEST(test_DAT_04_the_events_of_a_flight_in_order);
     RUN_TEST(test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise);
     RUN_TEST(test_DAT_08_a_full_rate_log_replays_to_the_same_events);
+    RUN_TEST(test_DAT_08_a_crlf_log_replays_as_its_lf_twin);
     RUN_TEST(test_DAT_08_a_thinned_log_is_refused);
     RUN_TEST(test_FLT_RATE_05_a_late_loop_changes_no_decision);
     RUN_TEST(test_FLT_RT_01_other_activity_delays_no_decision_past_the_bound);

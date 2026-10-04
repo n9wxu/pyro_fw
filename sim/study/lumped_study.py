@@ -1,4 +1,4 @@
-"""The complete study of the lumped-parameter filter (HA-1, option E).
+"""The complete study of the lumped-parameter filter (DD-092, option E).
 
     python3 sim/study/lumped_study.py [section ...]     sections: sweep track params pad descent failures cost
 

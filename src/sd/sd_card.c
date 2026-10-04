@@ -50,6 +50,22 @@ static uint32_t init_restarts = SD_INIT_RESTARTS;
 static uint32_t data_hz_asked = BOARD_SD_SPI_HZ;
 static char cid_hex[48];
 
+/* Whether this file holds the bus now. wait_ready() lets it go while a card
+ * is busy, and may not get it back: from then on nothing here may drive a
+ * chip select, clock the bus, or give back a bus it does not hold. */
+static bool bus_held;
+
+static bool bus_take(uint32_t timeout_ms) {
+    bus_held = spi_bus_take(timeout_ms);
+    return bus_held;
+}
+
+static void bus_give(void) {
+    if (bus_held)
+        spi_bus_give();
+    bus_held = false;
+}
+
 /* CRC7 over a command's first five bytes, with the end bit. */
 static uint8_t crc7(const uint8_t *d, int n) {
     uint8_t c = 0;
@@ -66,12 +82,16 @@ static uint8_t crc7(const uint8_t *d, int n) {
 }
 
 static void select(void) {
+    if (!bus_held)
+        return;
     gpio_put(BOARD_PIN_SD_CS, 0);
     spi_bus_byte(0xFF);
 }
 
 /* A card releases its data line on the clock after CS rises. */
 static void deselect(void) {
+    if (!bus_held)
+        return;
     gpio_put(BOARD_PIN_SD_CS, 1);
     spi_bus_byte(0xFF);
 }
@@ -97,9 +117,9 @@ static bool wait_ready(uint32_t timeout_us) {
             if (data_hz == 0)
                 st.init_yields++;
             deselect();
-            spi_bus_give();
+            bus_give();
             vTaskDelay(1);
-            if (!spi_bus_take(1000)) {
+            if (!bus_take(1000)) {
                 st.timeouts++;
                 return false;
             }
@@ -207,7 +227,7 @@ static uint32_t csd_sectors(const uint8_t *csd) {
 }
 
 int sd_init_card(void) {
-    if (!spi_bus_take(2000))
+    if (!bus_take(2000))
         return -1;
     spi_bus_setup(INIT_HZ, 0, 0);
     data_hz = 0;
@@ -290,7 +310,8 @@ int sd_init_card(void) {
                 st.init_r1[4] = r58;
             }
         } else {
-            send_cmd(59, 1);
+            if (use_crc)
+                send_cmd(59, 1);
             uint32_t t0 = time_us_32();
             while (send_cmd(ACMD | 41, 0) != 0 && time_us_32() - t0 < INIT_TIMEOUT_US)
                 spi_bus_xfer(NULL, NULL, 8);
@@ -311,7 +332,7 @@ int sd_init_card(void) {
         st.hz = data_hz;
     }
     type = ty;
-    spi_bus_give();
+    bus_give();
     return ty != SD_NONE ? 0 : -1;
 }
 
@@ -319,11 +340,11 @@ int sd_read(uint8_t *buf, uint32_t lba, uint32_t count) {
     if (type == SD_NONE || count == 0)
         return -1;
     uint32_t addr = type == SD_V2_HC ? lba : lba * SD_SECTOR;
-    if (!spi_bus_take(2000))
+    if (!bus_take(2000))
         return -1;
     spi_bus_setup(data_hz, 0, 0);
     bool ok = false;
-    for (int attempt = 0; attempt < RETRIES && !ok; attempt++) {
+    for (int attempt = 0; attempt < RETRIES && !ok && bus_held; attempt++) {
         if (attempt)
             st.retries++;
         uint8_t *p = buf;
@@ -345,7 +366,7 @@ int sd_read(uint8_t *buf, uint32_t lba, uint32_t count) {
     st.reads++;
     if (ok)
         st.sectors_read += count;
-    spi_bus_give();
+    bus_give();
     return ok ? 0 : -1;
 }
 
@@ -354,11 +375,11 @@ int sd_write(const uint8_t *buf, uint32_t lba, uint32_t count) {
         return -1;
     uint32_t addr = type == SD_V2_HC ? lba : lba * SD_SECTOR;
     uint32_t t0 = time_us_32();
-    if (!spi_bus_take(2000))
+    if (!bus_take(2000))
         return -1;
     spi_bus_setup(data_hz, 0, 0);
     bool ok = false;
-    for (int attempt = 0; attempt < RETRIES && !ok; attempt++) {
+    for (int attempt = 0; attempt < RETRIES && !ok && bus_held; attempt++) {
         if (attempt)
             st.retries++;
         const uint8_t *p = buf;
@@ -386,7 +407,7 @@ int sd_write(const uint8_t *buf, uint32_t lba, uint32_t count) {
     st.writes++;
     if (ok)
         st.sectors_written += count;
-    spi_bus_give();
+    bus_give();
     uint32_t d = time_us_32() - t0;
     if (d > st.write_max_us)
         st.write_max_us = d;
@@ -396,13 +417,13 @@ int sd_write(const uint8_t *buf, uint32_t lba, uint32_t count) {
 int sd_sync(void) {
     if (type == SD_NONE)
         return -1;
-    if (!spi_bus_take(2000))
+    if (!bus_take(2000))
         return -1;
     spi_bus_setup(data_hz, 0, 0);
     select();
     bool ok = wait_ready(WRITE_TIMEOUT_US);
     deselect();
-    spi_bus_give();
+    bus_give();
     return ok ? 0 : -1;
 }
 
@@ -423,14 +444,14 @@ bool sd_mounted(void) {
 }
 
 uint8_t sd_bus_probe_imu(void) {
-    if (!spi_bus_take(1000))
+    if (!bus_take(1000))
         return 0;
     spi_bus_setup(1000000u, 1, 1);
     uint8_t tx[2] = {0x80u | 0x0Fu, 0xFF}, rx[2] = {0, 0};
     gpio_put(BOARD_PIN_IMU_CS, 0);
     spi_bus_xfer(tx, rx, 2);
     gpio_put(BOARD_PIN_IMU_CS, 1);
-    spi_bus_give();
+    bus_give();
     return rx[1];
 }
 
@@ -455,7 +476,7 @@ void sd_set_data_hz(uint32_t hz) {
 }
 
 bool sd_clock_idle(uint32_t ms) {
-    if (!spi_bus_take(2000))
+    if (!bus_take(2000))
         return false;
     spi_bus_setup(INIT_HZ, 0, 0);
     gpio_put(BOARD_PIN_SD_CS, 1);
@@ -464,7 +485,7 @@ bool sd_clock_idle(uint32_t ms) {
         spi_bus_byte(0xFF);
     if (data_hz)
         spi_bus_setup(data_hz, 0, 0);
-    spi_bus_give();
+    bus_give();
     return true;
 }
 

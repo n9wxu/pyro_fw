@@ -1,18 +1,21 @@
 /*
- * Config field table — single source of truth for all configuration.
- * Adding a field = one line here. The struct, parser, serializer,
- * defaults, and round-trip test are all generated from this table.
+ * The configuration's one table [SYS-CFG-04]: the struct, the
+ * parser, the serializer, the defaults and the round-trip test all come from
+ * it.
  *
- * X(type, field, key, default_value)
+ * X(type, field, key, default, min, max)
  *
- * Types:
- *   STR   — char[9], truncated to 8 chars  [CFG-07]
- *   U8    — uint8_t
- *   U16   — uint16_t
- *   MODE  — pyro_mode_t (parsed from string: none/delay/agl/fallen/speed)
- *   UNITS — uint8_t (parsed from string: cm/m/ft)
- *   BOOL  — bool (parsed from string: true/false/1/0)
- *   LOGRATE — log_rate_t (parsed from string: 1hz/events/full)
+ *   STR     char[9], truncated to 8 characters [CFG-07]; min, max unused
+ *   U8, U16, U32  an integer in [min, max] [SYS-CFG-03]
+ *   MODE    pyro_mode_t: none/delay/agl/fallen/speed [CFG-04]
+ *   UNITS   config_units_t: cm/m/ft [CFG-03]
+ *   BOOL    true/false/1/0
+ *   LOGRATE log_rate_t: 1hz/events/full [FLT-LOG-07]
+ *
+ * pyro*_value is in the configured units, so the cm ceiling is the field's.
+ * lua_baud's floor keeps the PIO UART's divider, sys_clk / (8 * baud)
+ * (lua_pio.pio), inside its 16-bit integer part (RP2040 datasheet §3.5.5):
+ * 52083 at 125 MHz.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -20,27 +23,25 @@
 #ifndef CONFIG_FIELDS_H
 #define CONFIG_FIELDS_H
 
-/* ── Field table ──────────────────────────────────────────────────── */
-
-/*       type   field          key              default           */
+/*       type     field            key                default           min  max */
 #define CONFIG_FIELDS(X)                                                                                               \
-    X(STR, id, "id", "PYRO001")                                                                                        \
-    X(STR, name, "name", "MyRocket")                                                                                   \
-    X(MODE, pyro1_mode, "pyro1_mode", PYRO_MODE_DELAY)                                                                 \
-    X(U16, pyro1_value, "pyro1_value", 0)                                                                              \
-    X(MODE, pyro2_mode, "pyro2_mode", PYRO_MODE_AGL)                                                                   \
-    X(U16, pyro2_value, "pyro2_value", 300)                                                                            \
-    X(UNITS, units, "units", 1)                                                                                        \
-    X(U16, pyro1_refire_speed, "pyro1_refire_speed", 0)                                                                \
-    X(U16, pyro2_refire_speed, "pyro2_refire_speed", 0)                                                                \
-    X(U16, emergency_fire_speed, "emergency_fire_speed", 0)                                                            \
-    X(U16, refire_interval, "refire_interval", 0)                                                                      \
-    X(U16, fire_gap, "fire_gap", 0)                                                                                    \
-    X(STR, estimator, "estimator", "lumped")                                                                           \
-    X(LOGRATE, log_rate, "log_rate", LOG_RATE_1HZ)                                                                     \
-    X(U8, landing_timeout, "landing_timeout", 60)                                                                      \
-    X(BOOL, lua_enabled, "lua_enabled", false)                                                                         \
-    X(U16, lua_baud, "lua_baud", 9600)                                                                                 \
-    X(U16, lua_pixels, "lua_pixels", 0)
+    X(STR, id, "id", "PYRO001", 0, 0)                                                                                  \
+    X(STR, name, "name", "MyRocket", 0, 0)                                                                             \
+    X(MODE, pyro1_mode, "pyro1_mode", PYRO_MODE_DELAY, 0, 0)                                                           \
+    X(U16, pyro1_value, "pyro1_value", 0, 0, 65535)                                                                    \
+    X(MODE, pyro2_mode, "pyro2_mode", PYRO_MODE_AGL, 0, 0)                                                             \
+    X(U16, pyro2_value, "pyro2_value", 300, 0, 65535)                                                                  \
+    X(UNITS, units, "units", UNITS_M, 0, 0)                                                                            \
+    X(U16, pyro1_refire_speed, "pyro1_refire_speed", 0, 0, 65535)                                                      \
+    X(U16, pyro2_refire_speed, "pyro2_refire_speed", 0, 0, 65535)                                                      \
+    X(U16, emergency_fire_speed, "emergency_fire_speed", 0, 0, 65535)                                                  \
+    X(U16, refire_interval, "refire_interval", 0, 0, 65535)                                                            \
+    X(U16, fire_gap, "fire_gap", 0, 0, 65535)                                                                          \
+    X(STR, estimator, "estimator", "lumped", 0, 0)                                                                     \
+    X(LOGRATE, log_rate, "log_rate", LOG_RATE_1HZ, 0, 0)                                                               \
+    X(U8, landing_timeout, "landing_timeout", 60, 0, 255)                                                              \
+    X(BOOL, lua_enabled, "lua_enabled", false, 0, 0)                                                                   \
+    X(U32, lua_baud, "lua_baud", 9600, 300, 921600)                                                                    \
+    X(U16, lua_pixels, "lua_pixels", 0, 0, 65535)
 
 #endif
