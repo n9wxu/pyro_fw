@@ -309,4 +309,4 @@ sector erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
   `UM10204_I2C-bus_Rev7.0_2021-10.pdf`
 - DD-052, DD-053, DD-059, DD-065, DD-068, DD-069, DD-093,
   DD-071 in `DECISIONS.md`
-- Tasks B-U5 and B-BZ in `docs/outstanding_tasks.md`, section 7
+- Tasks B-U5 and B-BZ in `docs/outstanding_tasks.md`, section 6
