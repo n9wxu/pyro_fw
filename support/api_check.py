@@ -204,7 +204,7 @@ restore = "[pyro]\r\n" + "".join(f"{k}={v}\r\n" for k, v in orig.items())
 code, _, body = req("POST", "/api/config", "[pyro]\r\npyro1_mode=delay\r\npyro2_value=70000\r\n")
 _, _, cfg_refused = req("GET", "/api/config")
 check("a value beyond its field is refused with 400 and nothing is stored (SYS-CFG-03)",
-      code == 400 and cfg_refused == cfg1, f"{code} {body[:80]!r}")
+      code == 400 and cfg_refused.decode() == cfg1, f"{code} {body[:80]!r}")
 
 code, _, body = req("POST", "/api/config", restore)
 _, _, cfg2 = req("GET", "/api/config")
@@ -239,6 +239,8 @@ check("no flash refused throughout", st4["flash_refusals"] == 0, str(st4["flash_
 # SNS-COL-04: the sensor answered every transfer, through the beeps and the flash writes above.
 check("no sensor transfer failed throughout", st4["pres_rejects"] == st0["pres_rejects"],
       f'{st4["pres_rejects"] - st0["pres_rejects"]} failed: {st4.get("pres_bus")}, {st4.get("pres_recoveries")} recoveries')
+sensor_faults = [f for f in st4.get("faults", []) if f.startswith("sensor_")]
+check("no sensor fault was latched throughout (SNS-PRES-17)", not sensor_faults, ",".join(sensor_faults))
 
 failed = [r for r in results if not r[1]]
 print(f"== {len(results) - len(failed)}/{len(results)} passed")
