@@ -6,7 +6,7 @@
  * Figures are from docs/datasheets/MS5607-02BA03_2017-06.pdf and
  * docs/datasheets/AN520_C-code_MS56xx_004_2011-08.pdf.
  *
- * Verifies [SNS-PRES-12, SNS-PRES-15, SNS-PRES-16].
+ * Verifies [SNS-PRES-15, SNS-PRES-16].
  */
 #include "unity.h"
 #include "ms5607_driver.h"
@@ -120,7 +120,7 @@ void test_SNS_PRES_15_a_straight_line_in_the_pressure_code(void) {
     }
 }
 
-/* [SNS-PRES-12] A pressure is compensated with the temperature at its own
+/* [DD-066] A pressure is compensated with the temperature at its own
  * time: between two readings, the line's value there, not the newest's. */
 void test_SNS_PRES_12_the_line_interpolates_back(void) {
     ms5607_temps_t t = {0};

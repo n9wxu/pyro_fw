@@ -1,6 +1,6 @@
 /*
  * Configuration: parser, serializer and defaults, generated from
- * config_fields.h [CFG-TABLE-01, CFG-02, CFG-06..09].
+ * config_fields.h [SYS-CFG-04, CFG-02, CFG-06..09].
  *
  * SPDX-License-Identifier: MIT
  */

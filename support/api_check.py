@@ -128,7 +128,7 @@ check("status: usb_attached is true", st0.get("usb_attached") is True, str(st0.g
 if st0["uptime"] > 5000:
     check("status: a board on USB is silent", st0.get("buzzer_active") is False, str(st0.get("buzzer_active")))
 
-# REV-17 / REV-23: every one-shot response is framed and carries CORS.
+# Every one-shot response is framed and carries CORS.
 for method, path, want in (("GET", "/www/no_such_file.html", 404), ("POST", "/api/no_such_route", 404),
                            ("GET", "/api/config", 200), ("GET", "/api/pins", 200),
                            ("GET", "/api/pins/caps", 200), ("GET", "/api/beeps", 200),
@@ -141,7 +141,7 @@ code, hdr, body = req("GET", "/www/no_such_file.html")
 check("404 body is framed by Content-Length", hdr.get("Content-Length") == str(len(body)),
       f"len={hdr.get('Content-Length')} body={len(body)}")
 
-# REV-10: the erase endpoint, and the empty log reads as the column header.
+# The erase endpoint, and the empty log reads as the column header.
 code, _, body = req("POST", "/api/flight/erase")
 check("POST /api/flight/erase -> 200", code == 200 and b"erased" in body, f"{code} {body[:60]!r}")
 code, _, body = req("GET", "/api/flight.csv")

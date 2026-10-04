@@ -522,7 +522,7 @@ void test_lua_baud_holds_115200(void) {
     TEST_ASSERT_EQUAL_UINT32(115200u, back.lua_baud);
 }
 
-/* ── Reading config.ini [CFG-05, FLT-BOOT-03] ─────────────────────
+/* ── Reading config.ini [CFG-05, FLT-BOOT-18] ─────────────────────
  *
  * Only a file that does not exist is replaced by the defaults. A read that
  * failed -- an I/O error, a lock not had in time, the flight log holding the

@@ -311,7 +311,7 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
 
 /* ── The collector's cycles, into readings [DD-093] ───────────────── */
 
-/* [SNS-PRES-12] The temperature goes on its line first: the pressure before
+/* [DD-066] The temperature goes on its line first: the pressure before
  * it is compensated at its own time, between this temperature and the last. */
 static void take_ms5607(pres_task_t *p, const collector_raw_t *raw, uint32_t read_us) {
     uint32_t d1 = ms5607_code(raw->data[MS5607_PRESSURE]);
@@ -1185,7 +1185,7 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
 #define LOG_BUF_SIZE 4096u
 #define LOG_MASK (LOG_BUF_SIZE - 1u)
 #define LOG_FLUSH_MS 200u
-#define LOG_HOLDOFF_MAX_MS 2000u /* [FLT-LOG-05] */
+#define LOG_HOLDOFF_MAX_MS 2000u /* [DD-084] */
 
 /* Written at once from here up, without waiting for the flush timer. */
 #define LOG_WATERMARK (LOG_BUF_SIZE - 96u)

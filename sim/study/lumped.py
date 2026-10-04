@@ -1,4 +1,4 @@
-"""One lumped-parameter filter for the whole flight (HA-1, option E).
+"""One lumped-parameter filter for the whole flight (DD-092, option E).
 
     dv/dt = a_T - g - beta * (rho(h) / rho_pad) * v * |v|
 

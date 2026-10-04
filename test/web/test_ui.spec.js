@@ -92,7 +92,7 @@ test.describe('New device', () => {
     await expect(page.locator('#dDur')).toHaveText('—');
   });
 
-  /* REV-10: a flight that happens while the page is open must be shown. The
+  /* A flight that happens while the page is open must be shown. The
      tab cached the log for the life of the page. */
   test('a flight recorded while the page is open appears on refresh', async ({ page, request }) => {
     await page.goto(BASE);
@@ -106,7 +106,7 @@ test.describe('New device', () => {
     await request.post(BASE + '/api/_test/reset');
   });
 
-  /* REV-12: a control that changes nothing is not offered. */
+  /* A control that changes nothing is not offered. */
   test('there is no beep mode control', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -114,7 +114,7 @@ test.describe('New device', () => {
     await expect(page.locator('#cfgBeep')).toHaveCount(0);
   });
 
-  /* REV-15: the shipped default name fits its 8-character field. */
+  /* The shipped default name fits its 8-character field. */
   test('the default rocket name is not truncated', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -346,7 +346,7 @@ test.describe('Configured device', () => {
     await expect(page.locator('#cfgUnits')).toHaveValue('2');
   });
 
-  /* REV-19: changing units converts the deployment altitudes. Leaving the
+  /* Changing units converts the deployment altitudes. Leaving the
      number alone turned a 500 ft main into a 500 m main. */
   test('changing units converts the pyro values', async ({ page }) => {
     await page.goto(BASE);
@@ -360,7 +360,7 @@ test.describe('Configured device', () => {
     await expect(page.locator('#p2val')).toHaveValue('499');
   });
 
-  /* REV-20: the 8-character limit is stated, not discovered. */
+  /* The 8-character limit is stated, not discovered. */
   test('the rocket name shows its 8-character limit', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -521,7 +521,7 @@ test.describe('Pin assignment', () => {
     expect(ini).toContain('ground_test_drive_pin=21');
   });
 
-  /* REV-21: one Save on the Config tab. The release no longer has a button of
+  /* One Save on the Config tab. The release no longer has a button of
      its own that an operator has to guess the meaning of. */
   test('the config tab has one save button', async ({ page }) => {
     await page.goto(BASE);
@@ -909,7 +909,7 @@ test.describe('Flown device', () => {
     await expect(page.locator('#dP2')).toContainText('Fired at 28.0s, 500.0 ft');
   });
 
-  /* REV-10: the summary names the flight it describes. */
+  /* The summary names the flight it describes. */
   test('flight data names the flight on screen', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -917,7 +917,7 @@ test.describe('Flown device', () => {
     await expect(page.locator('#dWhich')).toContainText('Screamer (RACE01)');
   });
 
-  /* REV-10: the one log slot can be cleared on purpose. */
+  /* The one log slot can be cleared on purpose. */
   test('the flight log can be erased', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);

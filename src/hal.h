@@ -197,7 +197,7 @@ bool hal_ground_test_asserted(void);
  * test and sim HALs implement this as a no-op. */
 void hal_tasks_tick(uint32_t now_ms);
 
-/* ── Power / sleep [v2, PWR-SLEEP-01] ────────────────────────────── */
+/* ── Power / sleep ────────────────────────────────────────────────── */
 
 /* Sleep the CPU until the next async task is due, a serial input event,
  * or any hardware interrupt (USB, timer).

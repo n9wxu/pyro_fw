@@ -60,6 +60,7 @@ check() {
         fail=1
     fi
 }
+check trace_check_selftest python3 support/trace_check.py --selftest
 check trace_check python3 support/trace_check.py --counts
 check trace_matrix python3 support/trace_matrix.py --check
 check structure_check python3 support/structure_check.py

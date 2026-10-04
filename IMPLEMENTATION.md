@@ -155,7 +155,7 @@ One message a second in PAD_IDLE, in flight and in LANDED (TEL-03). State codes 
 The flight log (`flight_log.bin` in littlefs) opens at launch and closes at LANDED. It holds binary records (`src/flight_log.h`); `/api/flight.csv` renders them as CSV with `flog_csv_read()` (DD-062). The flight code hands every sample to `hal_log_sample()`, and `log_plan_take()` keeps what `log_rate` asks for: a row a second, that plus every sample within 1 s of an event, or every sample (FLT-LOG-07, DD-064). Records go to a 4 KB RAM buffer.
 
 **Flash stalls the CPU.** The RP2040 executes from flash via XIP, and a sector erase (46-73 ms measured, DD-035) stops both cores fetching from it. So:
-- nothing is written until the RAM buffer has filled once or 2 s have passed, which carries the log through the launch-shock window (FLT-LOG-05, DD-027);
+- nothing is written until the RAM buffer has filled once or 2 s have passed, which carries the log through the launch-shock window (DD-084, DD-027);
 - after that the buffer is written, and the file synced once a second, only in core0's flash window between core1 work units (FLT-LOG-06, DD-035), so a flight that never lands keeps its record;
 - from launch until the log lets go, every other file request is refused (`HAL_FS_LOCKED`, HTTP 423, DD-058).
 

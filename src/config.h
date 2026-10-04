@@ -1,6 +1,6 @@
 /*
  * Configuration: the struct, parser and serializer generated from
- * config_fields.h [CFG-TABLE-01, CFG-TABLE-02, SYS-CFG-04].
+ * config_fields.h [CFG-TABLE-02, SYS-CFG-04].
  *
  * SPDX-License-Identifier: MIT
  */
@@ -76,7 +76,7 @@ int config_serialize_ini(const config_t *cfg, char *buf, int max_len);
 /* The default config as INI text (static, do not free). */
 const char *config_default_ini(void);
 
-/* What hal_config_load() makes of config.ini [CFG-05, FLT-BOOT-03]. */
+/* What hal_config_load() makes of config.ini [CFG-05, FLT-BOOT-18]. */
 typedef enum {
     CONFIG_FILE_LOADED,     /* read whole and parsed over the defaults */
     CONFIG_FILE_MISSING,    /* no file: the defaults, to be written for next time */

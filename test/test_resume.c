@@ -191,7 +191,7 @@ void test_FLT_BROWN_06_a_descent_resumed_fires_every_channel_afresh(void) {
 }
 
 /* [FLT-BROWN-06] Restarted below the main's height: both channels at once,
- * pyro 1 first and the gap kept [PYR-GAP-01]. */
+ * pyro 1 first and the gap kept [PYR-DEPLOY-02]. */
 void test_FLT_BROWN_06_a_resume_below_the_main_height_fires_both(void) {
     const mp_rocket_t *r = &ROCKETS[SUBSONIC].r;
     flight_conditions_t probe = {.config = RESUMED_CONFIG, .rate_ms = {20.0f, 6.0f}, .pad_s = 12.0f};

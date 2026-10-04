@@ -85,7 +85,7 @@ function buildIni(s) {
 
 const EMPTY_LOG = 'time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\r\n';
 
-/* A supersonic flight's log (FLT-MACH-07): the Mach lock goes up at 1 s,
+/* A supersonic flight's log: the Mach lock goes up at 1 s,
    and while it stands the ports read the rocket far higher than it is. The
    lock lets go at unlockMs, or never, when fallbackMs gives the lock's
    fallback instead. */

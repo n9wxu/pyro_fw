@@ -1,5 +1,5 @@
 /*
- * The configuration's one table [CFG-TABLE-01, SYS-CFG-04]: the struct, the
+ * The configuration's one table [SYS-CFG-04]: the struct, the
  * parser, the serializer, the defaults and the round-trip test all come from
  * it.
  *
