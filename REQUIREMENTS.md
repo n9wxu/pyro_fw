@@ -186,6 +186,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **FLT-BOOT-13**: The system shall enter FAULT when calibration produces no samples within 10 seconds, rather than proceeding to PAD_IDLE. ← FLT-BOOT-05
 - **FLT-BOOT-14**: The system shall enter FAULT, and announce general fault, when its storage cannot be used. ← FLT-BOOT-01
 - **FLT-BOOT-15**: `/api/status` shall report every fault found on the pad. The buzzer announces the one of highest priority (BUZ-CODE-02). ← SYS-STATUS-02
+- **FLT-BOOT-18**: The system shall enter FAULT, and announce general fault, when the configuration file exists and cannot be read. It shall leave the file as it is. ← FLT-BOOT-02, CFG-05
 - **FLT-RATE-01**: The system shall take at least 50 pressure readings a second from PAD_IDLE to landing. ← FLT-PHASE-01
 - **FLT-RATE-06**: The flight software shall act on every sample in the loop it arrives in, each as a step of its own, however many a loop brings: no sample waits for a later loop. ← FLT-RATE-01, SNS-COL-03, DD-093
 - **FLT-RATE-05**: Every detector hold and dwell that measures the sensor shall run in sample time, so that lateness in processing changes no decision. ← SNS-PRES-08
@@ -232,7 +233,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 ### System requirements
 - **SYS-CFG-01**: The system shall store configuration persistently across power cycles. ← UN-4
 - **SYS-CFG-02**: The system shall allow configuration changes without special tools. ← UN-4
-- **SYS-CFG-03**: The system shall validate configuration against the limits of the sensor and of the board. ← UN-4
+- **SYS-CFG-03**: The system shall validate configuration against the limits of the sensor and of the board. ← UN-4 A value that does not parse, or that its field cannot hold, shall be refused and the field left as it was; a configuration posted with such a value shall be answered 400 and not stored.
 
 ### The configuration file
 - **CFG-01**: The system shall store configuration in an INI-format file on persistent storage. ← SYS-CFG-01

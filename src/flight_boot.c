@@ -96,6 +96,11 @@ state_event_t flight_detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
         ctx->diag |= DIAG_FS_FAIL;
         return SEVT_FAULT;
     }
+    if (ctx->config_unreadable) {
+        hal_telemetry_send("!CFG FAIL - config.ini could not be read\r\n");
+        ctx->diag |= DIAG_CONFIG_UNREADABLE;
+        return SEVT_FAULT;
+    }
     state_event_t resumed;
     if (!decide_resume(ctx, now, &resumed))
         return SEVT_NONE;

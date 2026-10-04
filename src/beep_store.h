@@ -1,12 +1,7 @@
 /*
- * Loading and storing the beep table.
- *
- * Split from beep_codes.c so the rules stay free of file I/O and can be
- * tested on the host -- the same split pin_assign.c and pin_store.c use.
- *
- * In its own file rather than config.ini: thirteen codes do not fit the
- * 512-byte budget that file is read back with, and the hardware map and the
- * flight settings should version independently.
+ * Loading and storing the beep table: the file half of beep_codes.c, as
+ * pin_store.c is pin_assign.c's. In beep.ini, apart from config.ini, so the
+ * beep map and the flight settings version independently.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -16,7 +11,8 @@
 #include "beep_codes.h"
 
 #define BEEP_STORE_PATH "beep.ini"
-/* Three personalities of nine keys each, plus the header. */
+/* BEEP_PERSONALITY_COUNT personalities of BEEP_REASON_COUNT + 4 keys each,
+ * plus the header; test_beep_codes.c serialises the longest into it. */
 #define BEEP_STORE_MAX 1024
 
 /* Load beep.ini, validate it, and publish it as the live table.
@@ -26,7 +22,7 @@
  * means one thing on the board and another in the UI.
  *
  * With no beep.ini at all the shipped codes are written out, so there is a
- * file to edit. Call once at boot.
+ * file to edit; one that cannot be read is left as it is. Call once at boot.
  *
  * reason receives a short phrase for /api/status; "" when the load was
  * clean. */
@@ -36,7 +32,7 @@ void beep_store_load(char *reason, int reason_len);
 const beep_table_t *beep_store_current(void);
 
 /* Validate and write. Nothing is written unless the verdict is BEEP_OK.
- * Must be called inside the flash window. */
+ * Never from the flight task. */
 beep_verdict_t beep_store_save(const beep_table_t *t);
 
 /* Why the last load fell back, or "" when it did not. */

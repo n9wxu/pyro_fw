@@ -130,7 +130,10 @@ bool hal_fs_healthy(void);
 void hal_fs_unmount(void);
 /* [WEB-API-08] From launch until its tail is flushed the flight log holds
  * the filesystem, and every other file call returns this (hal_fs_open(),
- * NULL). -1 is any other failure, and a read's -2 a missing file. */
+ * NULL). HAL_FS_ERROR is any other failure, and HAL_FS_NOENT a read's
+ * missing file: only that one means there is nothing to keep. */
+#define HAL_FS_ERROR (-1)
+#define HAL_FS_NOENT (-2)
 #define HAL_FS_LOCKED (-3)
 int hal_fs_read_file(const char *path, char *buf, int max_len);     /* returns bytes read, <0 on error */
 int hal_fs_write_file(const char *path, const char *data, int len); /* returns 0 on success */
@@ -149,9 +152,10 @@ void hal_fs_close(hal_file_t *f);
 
 /* ── Config [v2: replaces direct hal_fs_* in flight software] ──────── */
 
-/* Load configuration from persistent storage into cfg.
- * Calls config_set_defaults() first, then overlays stored values.
- * Returns 0 on success, -1 if no config file (defaults were used). */
+/* The defaults, overlaid with the stored file. A missing file is written
+ * with the defaults; an unreadable one is left as it is [FLT-BOOT-18]. */
+#define HAL_CONFIG_DEFAULTED (-1)
+#define HAL_CONFIG_UNREADABLE (-2)
 int hal_config_load(config_t *cfg);
 
 /* Save configuration to persistent storage.

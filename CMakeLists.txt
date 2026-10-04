@@ -427,6 +427,12 @@ file(GLOB_RECURSE _pyro_os_sources
     ${TINYUSB_DIR}/lib/networking/*.c)
 set_source_files_properties(${_pyro_os_sources} PROPERTIES COMPILE_OPTIONS "-Os")
 
+# So is the bench's side of the application: the HTTP server and what it
+# parses and prints.
+set_source_files_properties(
+    src/http_server.c src/http_conn.c src/http_work.c src/status_json.c src/config.c src/pin_assign.c
+    PROPERTIES COMPILE_OPTIONS "-Os")
+
 # An SD card on SPI [DD-075, DD-076]: FatFs R0.16 (lib/fatfs) over this
 # firmware's driver (src/sd).
 if(PYRO_HAS_SD)

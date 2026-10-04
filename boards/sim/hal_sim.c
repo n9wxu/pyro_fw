@@ -289,17 +289,19 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
 /* ── Config (v2) ──────────────────────────────────────────────────── */
 
 int hal_config_load(config_t *cfg) {
-    config_set_defaults(cfg);
     char buf[CONFIG_INI_MAX];
-    int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
-    if (n > 0) {
-        buf[n] = '\0';
-        config_parse_ini(buf, cfg);
+    int n = hal_fs_read_file("config.ini", buf, (int)sizeof(buf) - 1);
+    switch (config_from_file(cfg, buf, (int)sizeof(buf), n, NULL)) {
+    case CONFIG_FILE_LOADED:
         return 0;
+    case CONFIG_FILE_MISSING: {
+        const char *def = config_default_ini();
+        hal_fs_write_file("config.ini", def, (int)strlen(def));
+        return HAL_CONFIG_DEFAULTED;
     }
-    const char *def = config_default_ini();
-    hal_fs_write_file("config.ini", def, (int)strlen(def));
-    return -1;
+    default:
+        return HAL_CONFIG_UNREADABLE;
+    }
 }
 
 int hal_config_save(const config_t *cfg) {

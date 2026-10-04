@@ -262,6 +262,7 @@ void mock_reset_all(void) {
     mock_ground_test_pin = false;
     mock_pressure_inits = 0;
     mock_fs_unusable = false;
+    mock_config_unreadable = false;
     mock_fs_write_count = 0;
     mock_fs_locked_count = 0;
     memset(&sim_files, 0, sizeof(sim_files));
@@ -503,6 +504,7 @@ void hal_telemetry_send(const char *sentence) {
 }
 
 bool mock_fs_unusable = false;
+bool mock_config_unreadable = false;
 bool hal_fs_healthy(void) {
     return !mock_fs_unusable;
 }
@@ -539,6 +541,8 @@ int hal_fs_read_cached(const char *path, char *buf, int max_len) {
 int hal_fs_read_file(const char *path, char *buf, int max_len) {
     if (fs_locked())
         return HAL_FS_LOCKED;
+    if (mock_config_unreadable && strcmp(path, "config.ini") == 0)
+        return HAL_FS_ERROR;
     for (int i = 0; i < SIM_FS_MAX_FILES; i++) {
         if (sim_files[i].used && strcmp(sim_files[i].path, path) == 0) {
             int n = sim_files[i].len < max_len ? sim_files[i].len : max_len;
@@ -575,19 +579,19 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
 /* ── Config (v2) ──────────────────────────────────────────────────── */
 
 int hal_config_load(config_t *cfg) {
-    config_set_defaults(cfg);
-    /* Check if config.ini is stored in the mock filesystem */
     char buf[CONFIG_INI_MAX];
-    int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
-    if (n > 0) {
-        buf[n] = '\0';
-        config_parse_ini(buf, cfg);
+    int n = hal_fs_read_file("config.ini", buf, (int)sizeof(buf) - 1);
+    switch (config_from_file(cfg, buf, (int)sizeof(buf), n, NULL)) {
+    case CONFIG_FILE_LOADED:
         return 0;
+    case CONFIG_FILE_MISSING: {
+        const char *def = config_default_ini();
+        hal_fs_write_file("config.ini", def, (int)strlen(def));
+        return HAL_CONFIG_DEFAULTED;
     }
-    /* No file — write defaults so next boot finds them */
-    const char *def = config_default_ini();
-    hal_fs_write_file("config.ini", def, (int)strlen(def));
-    return -1;
+    default:
+        return HAL_CONFIG_UNREADABLE;
+    }
 }
 
 int hal_config_save(const config_t *cfg) {

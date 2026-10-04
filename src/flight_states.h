@@ -61,6 +61,7 @@ typedef struct flight_context_t {
 
     uint8_t sensor_type; /* 0: none answered; SENSOR_PENDING: still being brought up */
     bool storage_ok;
+    bool config_unreadable;
     uint16_t diag; /* DIAG_* of pad_check.h */
 
     /* The pad */

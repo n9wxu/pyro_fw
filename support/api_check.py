@@ -201,6 +201,11 @@ check("the running board keeps the configuration it started with",
 # Restore the stored file.
 orig.setdefault("estimator", st0.get("estimator"))
 restore = "[pyro]\r\n" + "".join(f"{k}={v}\r\n" for k, v in orig.items())
+code, _, body = req("POST", "/api/config", "[pyro]\r\npyro1_mode=delay\r\npyro2_value=70000\r\n")
+_, _, cfg_refused = req("GET", "/api/config")
+check("a value beyond its field is refused with 400 and nothing is stored (SYS-CFG-03)",
+      code == 400 and cfg_refused == cfg1, f"{code} {body[:80]!r}")
+
 code, _, body = req("POST", "/api/config", restore)
 _, _, cfg2 = req("GET", "/api/config")
 check("stored config restored", code == 200 and f"pyro1_mode={orig.get('pyro1_mode')}" in cfg2.decode() and

@@ -592,7 +592,14 @@ static void serve_api_limits(http_conn_t *hc) {
 static void apply_api_config(http_conn_t *hc, char *cfgbuf) {
     config_t merged;
     (void)hal_config_load(&merged);
-    config_parse_ini(cfgbuf, &merged);
+    int refused = config_parse_ini(cfgbuf, &merged);
+    if (refused > 0) {
+        /* [SYS-CFG-03] Nothing is saved: a tab's post is one decision. */
+        char err[96];
+        int n = snprintf(err, sizeof(err), "{\"error\":\"%d value(s) out of range or unreadable\"}", refused);
+        http_respond(hc, 400, JSON, err, (uint32_t)n);
+        return;
+    }
     char cfgout[CONFIG_INI_MAX];
     int cfgn = config_serialize_ini(&merged, cfgout, (int)sizeof(cfgout));
     if (cfgn <= 0) {

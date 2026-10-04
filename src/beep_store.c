@@ -36,18 +36,19 @@ void beep_store_load(char *reason, int reason_len) {
     beep_table_t defaults;
     beep_codes_defaults(&defaults);
 
+    live = defaults;
     char buf[BEEP_STORE_MAX];
     int n = hal_fs_read_file(BEEP_STORE_PATH, buf, (int)sizeof(buf) - 1);
-    if (n <= 0) {
-        /* Write the shipped codes out, so the operator has a file to edit
-         * rather than an absence to guess at -- the same reason pin_store
-         * writes its defaults. At boot the flash window is still open. */
-        live = defaults;
+    if (n == HAL_FS_NOENT) {
+        /* A file to edit rather than an absence to guess at, as pin_store. */
         char out[BEEP_STORE_MAX];
         int w = beep_codes_serialize_ini(&defaults, out, (int)sizeof(out));
         bool wrote = (w > 0) && (hal_fs_write_file(BEEP_STORE_PATH, out, w) == 0);
         snprintf(load_reason, sizeof(load_reason), "no %s; shipped codes%s", BEEP_STORE_PATH,
                  wrote ? " written" : " (could not write)");
+    } else if (n < 0 || n >= (int)sizeof(buf) - 1) {
+        snprintf(load_reason, sizeof(load_reason), "%s %s (%d); shipped codes, file kept", BEEP_STORE_PATH,
+                 n < 0 ? "unreadable" : "too long", n);
     } else {
         buf[n] = '\0';
         beep_table_t from_file = defaults;
@@ -57,7 +58,6 @@ void beep_store_load(char *reason, int reason_len) {
         if (v.err == BEEP_OK) {
             live = from_file;
         } else {
-            live = defaults;
             snprintf(load_reason, sizeof(load_reason), "beep.ini rejected: %s (%s)", beep_codes_strerror(v.err),
                      v.reason >= 0 ? beep_codes_key((beep_reason_t)v.reason) : "table");
         }

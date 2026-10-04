@@ -158,6 +158,19 @@ void test_FLT_BOOT_14_unusable_storage_is_a_terminal_general_fault(void) {
     assert_terminal_general_fault(DIAG_FS_FAIL);
 }
 
+void test_FLT_BOOT_18_an_unreadable_configuration_is_a_fault_and_the_file_is_kept(void) {
+    power_up(15);
+    const char *ini = "[pyro]\npyro2_mode=agl\npyro2_value=123\n";
+    harness_config(ini);
+    mock_config_unreadable = true;
+    run_until_state(FAULT, 20000);
+    char kept[128];
+    TEST_ASSERT_EQUAL_INT_MESSAGE((int)strlen(ini), mock_fs_peek("config.ini", kept, (int)sizeof(kept)),
+                                  "the operator's file is not replaced with defaults");
+    TEST_ASSERT_EQUAL_STRING("config_unreadable", pad_check_fault_name(DIAG_CONFIG_UNREADABLE));
+    assert_terminal_general_fault(DIAG_CONFIG_UNREADABLE);
+}
+
 /* [USB-02] On the bench the fault is diagnosed and not said. */
 void test_USB_02_a_general_fault_is_not_said_on_usb(void) {
     power_up(14);
@@ -181,6 +194,7 @@ int main(void) {
     RUN_TEST(test_FLT_BOOT_12_a_sensor_that_never_finishes_coming_up_is_a_fault);
     RUN_TEST(test_FLT_BOOT_13_a_calibration_with_no_samples_is_a_fault);
     RUN_TEST(test_FLT_BOOT_14_unusable_storage_is_a_terminal_general_fault);
+    RUN_TEST(test_FLT_BOOT_18_an_unreadable_configuration_is_a_fault_and_the_file_is_kept);
     RUN_TEST(test_USB_02_a_general_fault_is_not_said_on_usb);
     return UNITY_END();
 }

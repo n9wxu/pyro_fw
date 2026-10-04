@@ -152,6 +152,8 @@ extern int mock_pressure_inits;
 
 /* The storage did not come up [FLT-BOOT-14]. */
 extern bool mock_fs_unusable;
+/* config.ini is there and its read fails, as on an I/O error. */
+extern bool mock_config_unreadable;
 
 /* Whole-file writes, so a test can prove something is written once. */
 extern uint32_t mock_fs_write_count;

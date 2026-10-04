@@ -46,6 +46,8 @@ const char *pad_check_fault_name(uint16_t diag_bit) {
         return "pyro2_short";
     case DIAG_RESUMED:
         return "flight_resumed";
+    case DIAG_CONFIG_UNREADABLE:
+        return "config_unreadable";
     case DIAG_SENSOR_STUCK:
         return "sensor_stuck";
     case DIAG_SENSOR_LOST:

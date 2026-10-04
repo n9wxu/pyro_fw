@@ -23,35 +23,24 @@ const char *pin_store_reason(void) {
 void pin_store_load(char *reason, int reason_len) {
     load_reason[0] = '\0';
 
-    /* The fallback is the board's own defaults: nothing released, every pyro
-     * pad retained. There is no migration from config.ini any more -- the
-     * lua_p18..p21 keys are gone, and a board without pins.ini is a board
-     * that has not been configured. */
     pin_assign_t defaults;
     pin_assign_defaults(&defaults);
+    live = defaults;
 
+    /* Every fallback is said, so an empty reason means a clean load. */
     char buf[PIN_STORE_MAX];
     int n = hal_fs_read_file(PIN_STORE_PATH, buf, (int)sizeof(buf) - 1);
-    if (n <= 0) {
-        /* Write the defaults out, so the operator has a file to edit rather
-         * than an absence to guess at. The board comes up as designed --
-         * every pyro function retained, no pin on Lua -- and the Lua tab
-         * then shows the pads that are available to assign.
-         *
-         * At boot the flash window is still open (it starts open at reset and
-         * closes at the end of core0's first loop iteration), so this write
-         * lands. If it does not, the board runs on the defaults anyway and
-         * says so; nothing here is load-bearing.
-         *
-         * Said out loud either way, because an empty reason reads as "loaded
-         * cleanly" and makes a file that was never found look like one that
-         * was. */
-        live = defaults;
+    if (n == HAL_FS_NOENT) {
         char out[PIN_STORE_MAX];
         int w = pin_assign_serialize_ini(&defaults, out, (int)sizeof(out));
         bool wrote = (w > 0) && (hal_fs_write_file(PIN_STORE_PATH, out, w) == 0);
         snprintf(load_reason, sizeof(load_reason), "no %s; board defaults%s", PIN_STORE_PATH,
                  wrote ? " written" : " (could not write)");
+    } else if (n < 0 || n >= (int)sizeof(buf) - 1) {
+        /* Unreadable, or longer than it can be: the file is kept for
+         * the next boot, which may read it. */
+        snprintf(load_reason, sizeof(load_reason), "%s %s (%d); board defaults, file kept", PIN_STORE_PATH,
+                 n < 0 ? "unreadable" : "too long", n);
     } else {
         buf[n] = '\0';
         pin_assign_t from_file;
@@ -62,10 +51,7 @@ void pin_store_load(char *reason, int reason_len) {
         if (v.err == PIN_OK) {
             live = from_file;
         } else {
-            /* Whole-file rejection. Falling back to the defaults rather than
-             * to the good rows keeps the pyro channels retained, which is the
-             * safe direction. */
-            live = defaults;
+            /* Not the good rows: the defaults keep the pyro channels retained. */
             snprintf(load_reason, sizeof(load_reason), "pins.ini rejected: %s (pin %u)", pin_assign_strerror(v.err),
                      (unsigned)v.pin);
         }

@@ -12,6 +12,7 @@
  */
 #include "unity.h"
 #include "beep_codes.h"
+#include "beep_store.h"
 #include <string.h>
 
 void setUp(void) {}
@@ -233,6 +234,59 @@ void test_a_malformed_value_leaves_the_entry_alone(void) {
     TEST_ASSERT_EQUAL(BEEP_OK, beep_codes_validate(&t).err);
 }
 
+/* A gap or repeat its field cannot hold is refused, not wrapped: 70000 ms
+ * once became 4464 ms, and repeat=256 became 0, "until launch". */
+void test_a_gap_or_repeat_beyond_its_field_is_refused(void) {
+    beep_table_t t = base();
+    char in[] = "p0_gap=70000\r\np0_repeat=256\r\np1_gap=-1\r\np1_repeat=3x\r\n";
+    beep_codes_parse_ini(in, &t);
+    TEST_ASSERT_EQUAL_MESSAGE(5000, t.p[0].gap_ms, "the gap wrapped");
+    TEST_ASSERT_EQUAL_MESSAGE(0, t.p[0].repeat, "repeat changed");
+    TEST_ASSERT_EQUAL(5000, t.p[1].gap_ms);
+    TEST_ASSERT_EQUAL(0, t.p[1].repeat);
+    t.p[0].repeat = 2;
+    char top[] = "p0_gap=65535\r\np0_repeat=255\r\n";
+    beep_codes_parse_ini(top, &t);
+    TEST_ASSERT_EQUAL(65535, t.p[0].gap_ms);
+    TEST_ASSERT_EQUAL(255, t.p[0].repeat);
+}
+
+/* An empty name reads as a table never loaded, and the board would play the
+ * shipped Default instead of the personality the operator chose. */
+void test_an_empty_name_keeps_the_personality(void) {
+    beep_table_t t = base();
+    t.active = 1;
+    t.p[1].spec[BR_OK_TO_FLY] = (beep_spec_t){BK_TONE, 0, 0};
+    char in[] = "p1_name=\r\n";
+    beep_codes_parse_ini(in, &t);
+    TEST_ASSERT_EQUAL_STRING("Custom 1", t.p[1].name);
+    TEST_ASSERT_EQUAL(BK_TONE, beep_codes_spec(&t, BR_OK_TO_FLY).kind);
+}
+
+/* [CFG-09] The tokenizer config.ini and pins.ini use. */
+void test_blanks_around_key_and_value_are_not_part_of_them(void) {
+    beep_table_t t = base();
+    char in[] = "active = 2 \r\n\tp2_ok_to_fly = tone\t\n";
+    beep_codes_parse_ini(in, &t);
+    TEST_ASSERT_EQUAL(2, t.active);
+    TEST_ASSERT_EQUAL(BK_TONE, t.p[2].spec[BR_OK_TO_FLY].kind);
+}
+
+/* beep_store.c reads beep.ini into BEEP_STORE_MAX - 1 bytes. */
+void test_the_longest_table_fits_beep_store(void) {
+    beep_table_t t = base();
+    for (int i = 0; i < BEEP_PERSONALITY_COUNT; i++) {
+        memset(t.p[i].name, 'W', BEEP_NAME_MAX - 1);
+        t.p[i].name[BEEP_NAME_MAX - 1] = '\0';
+        t.p[i].gap_ms = 65535;
+        t.p[i].repeat = 255;
+        for (int r = 0; r < BEEP_REASON_COUNT; r++)
+            t.p[i].spec[r] = (beep_spec_t){BK_CODE, 9, 9};
+    }
+    char buf[BEEP_STORE_MAX];
+    TEST_ASSERT_GREATER_THAN(0, beep_codes_serialize_ini(&t, buf, BEEP_STORE_MAX - 1));
+}
+
 void test_serialize_refuses_to_overflow(void) {
     beep_table_t t = base();
     char small[32];
@@ -264,5 +318,10 @@ int main(void) {
     RUN_TEST(test_unknown_keys_are_ignored);
     RUN_TEST(test_a_malformed_value_leaves_the_entry_alone);
     RUN_TEST(test_serialize_refuses_to_overflow);
+    RUN_TEST(test_the_longest_table_fits_beep_store);
+    RUN_TEST(test_a_gap_or_repeat_beyond_its_field_is_refused);
+    RUN_TEST(test_an_empty_name_keeps_the_personality);
+    RUN_TEST(test_blanks_around_key_and_value_are_not_part_of_them);
+
     return UNITY_END();
 }

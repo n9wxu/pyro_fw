@@ -1,29 +1,16 @@
 /*
- * Board identity: MAC, serial number, USB serial string and IP subnet.
+ * Board identity: MAC, serial number, USB serial string and IP subnet,
+ * drawn from the RNG once and kept in /serial.txt [DD-072].
  *
- * Boards must not share a MAC, a USB serial or an address. Three identical
- * boards on one host leave one usable board: the rest enumerate and are
- * ignored, and `picotool --ser` cannot target any of them.
+ * /serial.txt and not config.ini: the identity feeds USB descriptors fixed at
+ * tud_init(), long before flight_init() loads the config, and a one-line file
+ * can be read before the mount -- read-only, never formatting a blank board.
  *
- * Drawn from the RNG once, then kept [DD-072]. A board with no /serial.txt
- * draws a MAC at boot (mac_random.h) and the storage path writes it there,
- * tagged "rng", so the address survives reboots and reflashes. The flash
- * chip's unique id cannot serve: MK1C's XT25F128F gives two boards the same
- * one (boards/mk1c/THEORY_OF_OPERATION.md, "Known limits").
+ * The subnet is the MAC's last byte, so two of n boards share one with the
+ * birthday probability over 256 (4% at 5 boards); POST /api/serial assigns a
+ * MAC when two meet on one host.
  *
- * The subnet is the MAC's last byte, 8 bits, so by the birthday bound two
- * boards share one with about 4% probability at 5 boards and 16% at 10,
- * however good the randomness. It only matters when both are plugged into one
- * host, and it is obvious when it happens: POST 12 hex digits to /api/serial
- * and that MAC is used instead, reported as assigned.
- *
- * WHY /serial.txt AND NOT config.ini:
- *
- * The identity must be set before tud_init(), and the config is not loaded
- * until flight_init(), long after. A one-line file can be read with
- * hal_fs_read_file(), which mounts read-only and does NOT format on failure,
- * so a blank board draws a MAC and enumerates instead of waiting out an 8 MB
- * format. It is written once the filesystem is up.
+ * SPDX-License-Identifier: MIT
  */
 #ifndef BOARD_IDENTITY_H
 #define BOARD_IDENTITY_H
@@ -33,9 +20,10 @@
 
 #define BOARD_SERIAL_MAX 16
 
-/* Read /serial.txt, or draw a MAC when there is none. Call once, EARLY --
- * before net_mac_init() and tud_init(), because everything below feeds a USB
- * descriptor or the netif address, and both are fixed at enumeration. */
+/* Read /serial.txt, or draw a MAC when there is none or it does not parse. A
+ * MAC drawn because the file could not be read is used for this boot only and
+ * never written over the file. Call once, before net_mac_init() and
+ * tud_init(): both are fixed at enumeration. */
 void board_identity_init(void);
 
 /* A MAC drawn this boot and not yet in /serial.txt. board_identity_save()
