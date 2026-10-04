@@ -286,9 +286,13 @@ timestamp. A cycle takes 18.8 ms, 53 a second, and up to four wait for the
 A transfer that fails is counted by cause on `/api/status`. After three in a
 row the collector clears the bus, resets the sensor and goes on. A conversion
 a flash erase or program ran beside is discarded, not used, and counted in
-`pres_flashed` on `/api/status` (DD-068). The buzzer does not disturb the sensor: on the bench
-the scatter is 6–7 Pa beeping or not, where MK1B's rises during a beep code
-(DD-068, task B-BZ).
+`pres_flashed` on `/api/status` (DD-068).
+
+Measured 2026-10-03 with a battery fitted (`docs/pressure_collector.md`): the
+sensor's scatter is 2.4 to 2.6 Pa rms, the datasheet's figure, beeping or
+not. A conversion beside a flash operation sits 3.4 to 3.9 Pa rms from its
+neighbours, 12 Pa at worst. On USB alone the scatter read 6 to 7 Pa: judge
+the sensor with a battery fitted.
 
 ## Telemetry, LED and buzzer
 
@@ -410,7 +414,7 @@ The values the requirements leave to the board (BRD-01). A value marked
 | Preparation before a pulse (PYR-ARM-03) | the bus charged to 90 % of the pack, about 9 ms on 2S; the deadline is 1.5 times that, about 14 ms, and the gate closes then whatever the bus has |
 | Protection | U9, TPS259570: 4.05 A current limit, latch-off on overtemperature, released by the enable going low after every fire (PYR-FAULT-01) |
 | Disarm when software stops (PYR-ARM-01) | about 35 ms: the 25 ms the pump's FIFO holds, then U9's 9.6 ms |
-| Sensor | MS5607: 10 to 1200 mbar, 2.4 Pa rms at OSR 4096 (`docs/datasheets/MS5607-02BA03_2017-06.pdf`, pages 1 and 4). Measured on this board: 2 to 4 times that, unaffected by the buzzer or the flash |
+| Sensor | MS5607: 10 to 1200 mbar, 2.4 Pa rms at OSR 4096 (`docs/datasheets/MS5607-02BA03_2017-06.pdf`, pages 1 and 4). Measured on this board with a battery fitted: 2.4 to 2.6 Pa, unaffected by the buzzer, and 3.4 to 3.9 Pa beside a flash operation; on USB alone 6 to 7 Pa |
 | Height for proper operation (SNS-MAX-01) | 30000 m |
 | Flight log (DAT-09) | 8192 kB of littlefs: about 100 days at `1hz`, 2 h at `full` (50 rows a second of 22 bytes). `/api/log/space` reports what is free |
 | Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured* on this revision: `loop_late_max_us` on `/api/status` reports it |

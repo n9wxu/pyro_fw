@@ -164,12 +164,17 @@ int vfs_rewind(vfs_file_t *f) {
     return lfs_err(lfs_file_rewind(&g_lfs, &f->u.lfs));
 }
 
+/* A read of a file the card lacks falls back to internal storage
+ * (vfs_open), so a copy left there would come back: both go. */
 int vfs_remove(const char *path) {
+    int internal = lfs_err(lfs_remove(&g_lfs, path));
 #if PYRO_HAS_SD
-    if (vfs_route(path) == VFS_FAT)
-        return fat_err(f_unlink(path));
+    if (vfs_route(path) == VFS_FAT) {
+        int card = fat_err(f_unlink(path));
+        return card == VFS_NOENT ? internal : card;
+    }
 #endif
-    return lfs_err(lfs_remove(&g_lfs, path));
+    return internal;
 }
 
 int vfs_rename(const char *from, const char *to) {

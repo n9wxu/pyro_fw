@@ -244,11 +244,17 @@ released pyro pad is one.
   with it, and that define at 0, the check above works as written.
 - **The BMP280 pad has no pull-up**, so a BMP280 board's sensor runs at
   100 kHz.
-- **A beep code disturbs the MS5607 (task B-BZ).** On the bench, while one
-  plays, the sensor's scatter rises from about 9 Pa to 31–38 Pa (DD-068). MK1C
-  drives the same buzzer from VIN through its own AO3400A and shows none. On
-  this board the buzzer's FET shares its AO6800 package with the pyro low
-  side; the cause is not established.
+- **On USB alone the sensor is noisier, and a beep disturbs it (task
+  B-BZ).** The buzzer is driven from VUSB, and with no battery the USB
+  supply's limited current lets the 3.3 V rail move. Measured 2026-10-03
+  (`docs/pressure_collector.md`): the MS5607 9.8 Pa rms at rest on USB alone
+  against 2.3 Pa on a battery, the BMP280 2.5 against 2.0; a beep code adds
+  about a fifth on USB alone and nothing on a battery. Once, on USB alone, a
+  BMP280 left the bus during a beep code until its power was removed. Judge
+  this board's sensor with a battery fitted.
+- **A flash operation disturbs the MS5607, battery or not:** a conversion
+  beside one sits 8.5 to 17 Pa rms from its neighbours, 43 Pa at worst. It
+  is discarded (DD-068). The BMP280 shows no such effect.
 
 ## What this board declares
 
@@ -263,7 +269,7 @@ The values the requirements leave to the board (BRD-01). A value marked
 | Pulse | 500 ms, ended by the loop |
 | Protection | U5's current limit and thermal shutdown, which recover by themselves, and F2, a 1.5 A PTC on the common, which resets as it cools. The PTC's reset time under a shorted match is *not measured*, and is what this board's `fire_gap` should come from |
 | Disarm when software stops (PYR-ARM-01) | **the watchdog, 1 s.** The loop ends the pulse, so a stopped loop leaves the enable on until the reset. This exceeds the 50 ms bound |
-| Sensor | MS5607 where fitted, else BMP280, found at start-up. MS5607: 10 to 1200 mbar, 2.4 Pa rms at OSR 4096 (`docs/datasheets/MS5607-02BA03_2017-06.pdf`, pages 1 and 4). Measured on this board: 9 Pa, rising to 35 Pa while the buzzer sounds or the flash is written |
+| Sensor | MS5607 where fitted, else BMP280, found at start-up. MS5607: 10 to 1200 mbar, 2.4 Pa rms at OSR 4096 (`docs/datasheets/MS5607-02BA03_2017-06.pdf`, pages 1 and 4). Measured on this board with a battery fitted: MS5607 2.3 Pa rms, BMP280 2.0 Pa, a beep changing neither; on USB alone 9.8 and 2.5 Pa (`docs/pressure_collector.md`) |
 | Height for proper operation (SNS-MAX-01) | 30000 m with the MS5607; 9000 m with the BMP280 |
 | Flight log (DAT-09) | 984 kB of littlefs: about 12 days at `1hz`, 15 min at `full`. `/api/log/space` reports what is free |
 | Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured* on this revision: `loop_late_max_us` on `/api/status` reports it |

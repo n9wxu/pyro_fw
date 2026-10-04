@@ -98,8 +98,9 @@ check("status: new fields present", all(k in st0 for k in NEW_FIELDS),
 check("status: raw_pa is a pressure", 30000 <= st0.get("raw_pa", 0) <= 110000, str(st0.get("raw_pa")))
 check("status: pad_speed_cms is a pad's speed", abs(st0.get("pad_speed_cms", 99999)) < 2000,
       str(st0.get("pad_speed_cms")))
-# SNS-EST-01: the sensor noise the estimator tracks, between the quietest part's floor and a ceiling.
-check("status: noise_mpa is the pad's measured noise", 1200 <= st0.get("noise_mpa", 0) <= 5000,
+# SNS-EST-01: the sensor noise the estimator tracks, from the quietest part's floor up. A board on USB alone
+# reads 6 to 10 Pa where it reads 2 to 2.6 on a battery (docs/pressure_collector.md).
+check("status: noise_mpa is the pad's measured noise", 1200 <= st0.get("noise_mpa", 0) <= 20000,
       str(st0.get("noise_mpa")))
 # FLT-BROWN-05: a board on USB says why this start did not resume a flight.
 check("status: resume says why this start is not a flight", str(st0.get("resume", "")).startswith("not resumed"),
@@ -117,8 +118,10 @@ for key in ("refire_interval_ms", "fire_gap_ms"):
     check(f"limits: {key} default and in force are inside the board's range", ok, str(r))
 check("limits: the sensor's range and height", lim.get("sensor", {}).get("height_m", 0) >= 9000 and
       0 < lim["sensor"]["min_pa"] < lim["sensor"]["max_pa"], str(lim.get("sensor")))
-# M1: a board on the pad is not locked, and has never been flagged.
-check("status: names the estimator it obeys", st0.get("estimator") in ("lumped", "constacc"), f'{st0.get("estimator")}')
+# SNS-EST-06: the estimators the build carries, and the one obeyed is among them.
+estimators = lim.get("estimators", [])
+check("limits: the estimators carried, and status names the one obeyed", len(estimators) >= 1 and
+      st0.get("estimator") in estimators, f'{estimators} obeying {st0.get("estimator")}')
 check("status: PAD_IDLE flight time is 0", st0["state"] != "PAD_IDLE" or st0["flight_ms"] == 0, str(st0["flight_ms"]))
 # USB is the only way to reach the API, so this board has a host on its port.
 check("status: usb_attached is true", st0.get("usb_attached") is True, str(st0.get("usb_attached")))
@@ -173,15 +176,17 @@ check("net: lwIP's pools, TCP by state, the transport's refusals",
 _, _, cfg0 = req("GET", "/api/config")
 cfg0 = cfg0.decode()
 kv0 = dict(l.split("=", 1) for l in cfg0.replace("\r", "").split("\n") if "=" in l)
-orig = {k: kv0[k] for k in ("pyro1_mode", "pyro1_value", "pyro2_mode", "pyro2_value") if k in kv0}
+orig = {k: kv0[k] for k in ("pyro1_mode", "pyro1_value", "pyro2_mode", "pyro2_value", "estimator") if k in kv0}
 print(f"   stored pyro config: {orig}")
 
-code, _, body = req("POST", "/api/config", "[pyro]\r\npyro1_mode=none\r\npyro1_value=0\r\n")
+other = next((e for e in estimators if e != st0.get("estimator")), st0.get("estimator"))
+code, _, body = req("POST", "/api/config", f"[pyro]\r\npyro1_mode=none\r\npyro1_value=0\r\nestimator={other}\r\n")
 check("POST /api/config is stored and asks for a reboot", code == 200 and b'"reboot_required":true' in body,
       f"{code} {body[:80]!r}")
 _, _, cfg1 = req("GET", "/api/config")
 cfg1 = cfg1.decode()
 check("config.ini keeps pyro1_mode=none", "pyro1_mode=none" in cfg1)
+check("config.ini keeps the estimator chosen (SNS-EST-06)", f"estimator={other}" in cfg1, other)
 check("the merge kept what the post left out", f"pyro2_mode={orig.get('pyro2_mode')}" in cfg1)
 inert = [k for k in ("beep_mode=", "max_coast_s=", "log_enabled=", "buzzer_startup=", "log_rate_hz=",
                      "telem_format=", "telem_rate_hz=") if k in cfg1]
@@ -189,14 +194,17 @@ check("config.ini carries no inert keys after a save", not inert, ",".join(inert
 time.sleep(2.5)
 st1 = status()
 check("the running board keeps the configuration it started with",
-      st1["pyro1_mode"] == st0["pyro1_mode"] and st1["faults"] == st0["faults"] and st1["beep"] == st0["beep"],
+      st1["pyro1_mode"] == st0["pyro1_mode"] and st1["faults"] == st0["faults"] and st1["beep"] == st0["beep"] and
+      st1["estimator"] == st0["estimator"],
       f"pyro1_mode={st1['pyro1_mode']} faults={st1['faults']} beep={st1['beep']}")
 
 # Restore the stored file.
+orig.setdefault("estimator", st0.get("estimator"))
 restore = "[pyro]\r\n" + "".join(f"{k}={v}\r\n" for k, v in orig.items())
 code, _, body = req("POST", "/api/config", restore)
 _, _, cfg2 = req("GET", "/api/config")
-check("stored config restored", code == 200 and f"pyro1_mode={orig.get('pyro1_mode')}" in cfg2.decode())
+check("stored config restored", code == 200 and f"pyro1_mode={orig.get('pyro1_mode')}" in cfg2.decode() and
+      f"estimator={orig.get('estimator')}" in cfg2.decode())
 
 check("still silent after the config changes", status().get("buzzer_active") is False)
 
@@ -223,6 +231,9 @@ st4 = wait_for(lambda s: not s["buzzer_active"], secs=4)
 check("out of test mode, one chirp and then silence", not st4["buzzer_active"] and not st4["test_mode"],
       f"test_mode={st4['test_mode']} buzzer_active={st4['buzzer_active']}")
 check("no flash refused throughout", st4["flash_refusals"] == 0, str(st4["flash_refusals"]))
+# SNS-COL-04: the sensor answered every transfer, through the beeps and the flash writes above.
+check("no sensor transfer failed throughout", st4["pres_rejects"] == st0["pres_rejects"],
+      f'{st4["pres_rejects"] - st0["pres_rejects"]} failed: {st4.get("pres_bus")}, {st4.get("pres_recoveries")} recoveries')
 
 failed = [r for r in results if not r[1]]
 print(f"== {len(results) - len(failed)}/{len(results)} passed")

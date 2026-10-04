@@ -12,7 +12,7 @@ numbers (3, 4 and 10): those sections are in that last version.
 | # | Section | Needs |
 |---|---|---|
 | — | [How every task runs](#how-every-task-runs) | read first |
-| 1 | [To do now](#1-to-do-now) | nothing but the work |
+| 1 | [To do now](#1-to-do-now) | empty |
 | 2 | [Decisions](#2-decisions) | you |
 | 3 | [To build](#3-to-build) | a decision above, or just the work |
 | 4 | [Known limits of the flight software](#4-known-limits-of-the-flight-software) | your judgement on which to take up |
@@ -74,12 +74,11 @@ steps the flight software every millisecond, and the board every 20 ms
 
 ## 1. To do now
 
-| ID | What | Pass |
-|---|---|---|
-| NOW-1 | **Push.** `freertos-sd` is 16 commits ahead of its remote, from 228e722 (the 2026-10 requirements) to DD-093 and the battery measurements. CI has not run on any of them | CI passes on the push |
-| NOW-2 | **G4 on today's firmware.** The boards were updated and traced on 2026-10-03, and bench flights flown, but `api_check.py`, `http_stream_check.py` and `hw_ui_check.js` have not been run since 2.1.702. `api_check.py` was edited for the new status keys and has not met a board | all pass on all five boards |
-| NOW-3 | **The boards' web files.** Each board still serves the pages it was given before the estimator selector and the PEAK rows. `www/` has both | the Config tab on a board shows the estimator, and saves it |
-| NOW-4 | **Stale figures in the documents.** `boards/mk1b/THEORY_OF_OPERATION.md` still gives "9 Pa, rising to 35 Pa while the buzzer sounds" as the board's noise; `boards/mk1c/THEORY_OF_OPERATION.md` 6 to 7 Pa. On a battery both are 2.3 to 2.6 Pa and a beep changes nothing (`docs/pressure_collector.md`) | the boards' documents give the battery figures and say what USB alone does |
+Nothing. The last items here (the push, G4 on 2.2.3, the boards' web files
+and the boards' noise figures) were done on 2026-10-03. G4's result: on all
+five boards `api_check.py` 46 of 46, `http_stream_check.py` 16 of 16,
+`hw_ui_check.js` 10 of 10, no flash refused. What it found is PAD-1, B-BZ and
+L2 below.
 
 ---
 
@@ -87,7 +86,7 @@ steps the flight software every millisecond, and the board every 20 ms
 
 | ID | Question | What is known | Recommendation |
 |---|---|---|---|
-| PAD-1 | **A sensor that stops on the pad raises no fault.** | Seen 2026-10-03: a BMP280 stopped answering on the pad; `/api/status` listed no fault and the estimator still reported its last sample as explained. SNS-PRES-11 asks for a lost sensor to be reported in flight only | Report it on the pad too: no sample for 0.5 s is a general fault, announced and on `/api/status` |
+| PAD-1 | **A sensor that stops on the pad raises no fault.** | Seen twice on 2026-10-03: a BMP280 stopped answering on the pad; `/api/status` listed no fault and the estimator still reported its last sample as explained. The second time the board passed every G4 check with its sensor silent; `api_check.py` now fails on a failed transfer. SNS-PRES-11 asks for a lost sensor to be reported in flight only | Report it on the pad too: no sample for 0.5 s is a general fault, announced and on `/api/status` |
 | FL-1 | **A reading with a flash operation beside it** is discarded on every board (SNS-PRES-14). | Measured on a battery, against each board's ordinary 2 to 2.6 Pa: MK1B's MS5607 8.5 to 17 Pa rms, 43 at worst; MK1C's 3.4 to 3.9 Pa, 12 at worst; MK1B's BMP280 no effect. On MK1C a 30 km bench flight discarded about 4 readings a second | Keep discarding on the MS5607 boards; pass the BMP280's on |
 | NS-1 | **The host tests fly their noisy case at 9 Pa**, "the noisiest bench board's measured figure" (DD-091). | That figure was the USB supply. On a battery the boards measure 1.9 to 2.6 Pa | Keep 9 Pa as margin; reword DD-091 and the tests' comment to say it is margin, not a measurement |
 | SL-1 | **MK1B's slot is nearly full.** | The image is 391,680 bytes of 393,216. DD-092 and DD-093 took about 9 kB | Carry one estimator on MK1B (its table is a file), or fit the larger flash (B-FL) |
@@ -107,7 +106,7 @@ steps the flight software every millisecond, and the board every 20 ms
 | ID | What | Tests first |
 |---|---|---|
 | R-9 | **HAL validation applications** (HAL-06, BLD-06, BRD-02). The options are in `docs/hal_validation_apps.md`. Each board's values marked *not measured* in its `THEORY_OF_OPERATION.md` are owed to it | the option chosen says |
-| L2 | **The log erases flash about once a second in flight.** Each 1 s sync makes the next write copy the partial last block into a freshly erased one. An erase holds the processor: on a 30 km bench flight on MK1C the loop's longest pass was 33 ms, with one overrun. Needs C6 | a bench flight with no loop overrun and no pass over the board's declared bound |
+| L2 | **The log erases flash about once a second in flight.** Each 1 s sync makes the next write copy the partial last block into a freshly erased one. An erase holds the processor: on a 30 km bench flight on MK1C the loop's longest pass was 33 ms, with one overrun; on the pad, 2 or 3 overruns in every 54 erases on MK1A, MK1B and MK1C, and none at rest. G4's "no loop overrun" is not met while flash is erased. Needs C6 | a bench flight with no loop overrun and no pass over the board's declared bound |
 | L3 | **A resumed flight's log.** `hal_common.c` opens `flight_log.bin` for writing without appending, which truncates. A flight resumed after a reset (DD-086) would then lose what was logged before it. Read from the code, not yet shown by a test | host: a flight restarted in ascent keeps its rows from before the restart (FLT-LOG-06) |
 | L4 | **A write failure in flight.** littlefs can take part of a write and still fail it; the retry writes the part again and the record after it is misaligned | host, with a store that fails part-way: the log decodes whole, and the loss is counted (FLT-LOG-08) |
 | REC-1 | **The collector's recovery has cured nothing yet.** Its states run on the host's fake bus. The one real fault it met, a BMP280 off the bus until its power was removed, no recovery could cure | bench: SDA held low on a running board with a wire, then released; `pres_recoveries` rises and readings return |
@@ -138,7 +137,7 @@ that owns the subject.
 | ID | Check | Pass | Needs |
 |---|---|---|---|
 | BAT-1 | MK1A's and MK1C-SD's sensor noise on a battery | `support/pressure_disturbance.py`: the rms at rest, beeping and beside flash operations, as for the other three boards | a battery on each |
-| BAT-2 | The 3.3 V rail during a beep code, on USB alone | the dip, if any, that goes with the BMP280 leaving the bus once in 20 beep codes (`docs/pressure_collector.md`) | a scope; MK1B with the BMP280, no battery |
+| BAT-2 | The 3.3 V rail during a beep code, on USB alone | the dip, if any, that goes with the BMP280 leaving the bus, which it has done twice (`docs/pressure_collector.md`) | a scope; MK1B with the BMP280, no battery |
 | U2 | Unplug a board from USB, then plug it back in | the pad announcement resumes within one repeat period (5 s); plugging back in gives exactly one double chirp | a person, 10 s |
 | REV-06 / REV-08 | Serial ground-test commands; a board in FAULT | FIRE while the other channel pulses answers `GT,ERR,busy`; a FAULT board sends `!FAULT <diagnosis>` every 5 s and no `$PYRO` | a USB-serial adapter on the TRRS jack |
 | REV-18 / N20 | The filesystem lock on hardware (DD-058) | in test mode, once a chamber pump-down declares a launch: `POST /www/x` and `GET /www/app.js` answer 423, `/api/status` 200; a page load across the launch is reset, not left holding a mount; after LANDED the log reads back whole; `POST /api/reboot` in flight reboots | test mode, the chamber |
@@ -164,7 +163,7 @@ that owns the subject.
 | B-U5 | **MK1B cannot sense continuity.** U5 is the AP2192A, whose output discharge holds SENSE1 and SENSE2 near 0 V, so a fitted igniter, an empty connector and a short all read the same. The base AP2192 (AP2192MPG-13) has no discharge and the same pinout: a swap on the same pads, no firmware change (DD-059). Decided 2026-09-27: left as it is until refitted | Bench, on a board with the base part: an empty connector reads open, a 1 ohm load good, a short to ground shorted |
 | B-FL | **MK1B's BOM names the wrong flash**, and its slot is full (SL-1). Both builds' production files give U7 as a 1.8 V W25Q64JW; the boards carry a 3 V W25Q16JV, 2 MB. For the same footprint and boot stage 2, the BY25Q64ESHIG(R), 8 MB, suits on paper (`boards/mk1b/THEORY_OF_OPERATION.md`, "Flash") | A larger chip is a board variant: its `PYRO_FLASH_SIZE_KB`, and a check of its boot stage 2 on the bench |
 | C-U6 | **MK1C's U6 cannot carry an SD card.** The card's draw into the XC6206's foldback limit resets it 28 ms into every initialisation. On the bench the carrier has its own MIC2920A-3.3 | On a board with a larger U6 or a regulator for the card: the card initialises, and its writes leave the MS5607's noise as it is without them |
-| B-BZ | **The buzzer and the 3.3 V rail on USB alone.** The buzzer is driven from VUSB; with no battery a beep disturbs the sensors (MK1B's MS5607 9.8 to 11.4 Pa rms, its BMP280 2.5 to 3.1) and once took a BMP280 off the bus. With a battery it does nothing. A flight has a battery, so this is the bench's concern | Only if operation on USB alone must be clean: BAT-2 first |
+| B-BZ | **The buzzer and the 3.3 V rail on USB alone.** The buzzer is driven from VUSB; with no battery a beep disturbs the sensors (MK1B's MS5607 9.8 to 11.4 Pa rms, its BMP280 2.5 to 3.1) and twice took a BMP280 off the bus until its power was removed, the second time during G4's test mode. With a battery it does nothing. A flight has a battery, so this is the bench's concern | Only if operation on USB alone must be clean: BAT-2 first |
 | — | **An arming path independent of software**, if section 5's check finds a board without one | That check |
 
 ---
@@ -176,6 +175,7 @@ that owns the subject.
 | H3-1 | `docs/wasm/pyro-sim.js` numbers the states as they were before the descent phases (`LANDED: 7`) and calls `_sim_clear_telemetry`, which `scripts/build_wasm.sh` does not export | read 2026-10-03 |
 | H3-2 | `scripts/build_wasm.sh` fails for the `sim_mk1*` variants and leaves out sources they need | reported 2026-09-28, not rerun |
 | H3-4 | `support/install.py`, `update_from_release.py`, `flash_picotool.sh` and `test_network.py` default to 192.168.7.1; a board's address is 192.168.N.1 with N from its identity | read 2026-10-03 |
+| H3-10 | `support/install.py` and `update_from_release.py` do not find a board by itself: they need its address given (H3-4), and `install.py` takes no argument for one | read 2026-10-03 |
 | H3-5 | `support/install.py` looks for the MK1C image, then MK1B's, and never picks MK1A's or MK1C-SD's | read 2026-10-03 |
 | H3-6 | The firmware does not check that an uploaded image is for its board. The web page does, and a release now ships every board's image | read 2026-10-03 |
 | H3-7 | `support/pressure_trace.py` is not executable | checked 2026-10-03 |
