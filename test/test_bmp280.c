@@ -1,10 +1,11 @@
 /*
- * The BMP280 at the loop's rate [DD-067]: one forced conversion a loop,
- * commanded by the loop and taken at the next, on a fake part whose
- * conversions take the time docs/datasheets/BST-BMP280-DS001-26 Table 13
- * (page 18) gives them. Built against test/fake_sdk with MK1A's pins.
+ * The BMP280's detection and arithmetic, on a fake part
+ * (docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf). Its conversions are the
+ * collector's (test_collector.c). Built against test/fake_sdk with MK1A's
+ * pins.
+ *
+ * Verifies [SYS-ALT-02].
  */
-#include "../src/loop_period.h"
 #include "unity.h"
 #include "board_pins.h"
 #include "bmp280_driver.h"
@@ -15,8 +16,6 @@
 void hal_telemetry_send(const char *sentence) {
     (void)sentence;
 }
-
-volatile uint32_t flash_op_seq;
 
 #define SDA BOARD_PIN_I2C_SDA
 #define SCL BOARD_PIN_I2C_SCL
@@ -97,7 +96,8 @@ static int bmp_read(fake_i2c_dev_t *d, uint8_t *dst, size_t len) {
 }
 
 /* A part's calibration, little-endian from 0x88. */
-static const int16_t CALIB[12] = {27504, 26435, -1000, (int16_t)36477, -10685, 3024, 2855, 140, -7, 15500, -14600, 6000};
+static const int16_t CALIB[12] = {27504, 26435, -1000, (int16_t)36477, -10685, 3024,
+                                  2855,  140,   -7,    15500,          -14600, 6000};
 
 void setUp(void) {
     fake_now_ms = 1000;
@@ -121,168 +121,46 @@ void setUp(void) {
 
 void tearDown(void) {}
 
-static uint32_t code_p(const bmp280_reading_t *r) {
-    return r->adc_p;
-}
-
-/* Detection leaves the part asleep with the loop's settings: the loop, not
- * the part's own timer, starts every conversion. */
+/* Detection leaves the part asleep: the collector, not the part's own timer,
+ * starts every conversion. */
 void test_bmp280_detect_leaves_it_asleep(void) {
     TEST_ASSERT_EQUAL_HEX8(0x2C, bmp.regs[0xF4]); /* x1 temperature, x4 pressure, sleep */
     TEST_ASSERT_EQUAL_HEX8(0x00, bmp.regs[0xF5]); /* no filter */
     TEST_ASSERT_FALSE(bmp.running);
     TEST_ASSERT_EQUAL(0, bmp.commands);
+    TEST_ASSERT_EQUAL_HEX8(0x77, bmp280_address());
 }
 
-/* Each loop takes the conversion the last commanded and commands the next:
- * a reading every loop, each from a conversion of its own. */
-void test_bmp280_one_conversion_a_loop(void) {
+/* Section 3.12's worked example (page 23): these codes, with this
+ * calibration, are 100653.27 Pa and 25.08 C. */
+void test_bmp280_the_datasheets_example(void) {
     bmp280_reading_t r;
-    bmp280_start_t started;
-    int took = 0, repeats = 0, busy = 0;
-    uint32_t last = 0;
-    for (int loop = 0; loop < 500; loop++) {
-        if (bmp280_cycle(&r, &started)) {
-            repeats += took > 0 && code_p(&r) == last;
-            last = code_p(&r);
-            took++;
-        }
-        busy += started == BMP280_BUSY;
-        fake_now_ms += LOOP_PERIOD_MS;
+    TEST_ASSERT_TRUE(bmp280_compensate(&bmp.regs[0xF7], &r));
+    TEST_ASSERT_EQUAL_UINT32(ADC_P0, r.adc_p);
+    TEST_ASSERT_EQUAL_UINT32(ADC_T0, r.adc_t);
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 100653.27f, r.reading.pressure_pa);
+    TEST_ASSERT_FLOAT_WITHIN(0.005f, 25.08f, r.reading.temperature_c);
+}
+
+/* Every code the ADC has gives a pressure, and a lower pressure than the
+ * code before it: nothing in the arithmetic bends or wraps. */
+void test_bmp280_every_code_compensates_in_order(void) {
+    float previous = 1e9f;
+    for (uint32_t adc_p = 0; adc_p < (1u << 20); adc_p += 256u) {
+        const uint8_t data[BMP280_DATA_BYTES] = {(uint8_t)(adc_p >> 12), (uint8_t)(adc_p >> 4),
+                                                 (uint8_t)(adc_p << 4),  (uint8_t)(ADC_T0 >> 12),
+                                                 (uint8_t)(ADC_T0 >> 4), (uint8_t)(ADC_T0 << 4)};
+        bmp280_reading_t r;
+        TEST_ASSERT_TRUE(bmp280_compensate(data, &r));
+        TEST_ASSERT_TRUE(r.reading.pressure_pa < previous);
+        previous = r.reading.pressure_pa;
     }
-    TEST_ASSERT_EQUAL(499, took);
-    TEST_ASSERT_EQUAL(0, repeats);
-    TEST_ASSERT_EQUAL(0, busy);
-    TEST_ASSERT_EQUAL_UINT32(500, bmp.commands);
-}
-
-/* [SNS-PRES-08] Stamped at the middle of the pressure's own measurement,
- * from the command that started it: a loop that takes it late moves nothing. */
-void test_bmp280_stamp_is_the_conversions(void) {
-    bmp280_reading_t r;
-    bmp280_start_t started;
-    TEST_ASSERT_FALSE(bmp280_cycle(&r, &started));
-    TEST_ASSERT_EQUAL(BMP280_STARTED, started);
-    uint64_t commanded = now_us();
-    fake_now_ms += 3u * LOOP_PERIOD_MS + 7u;
-    TEST_ASSERT_TRUE(bmp280_cycle(&r, &started));
-    TEST_ASSERT_EQUAL_UINT64(commanded + BMP280_P_MID_US, r.reading.time_us);
-    TEST_ASSERT_EQUAL_UINT32(ADC_P0 + 1u, r.adc_p);
-    TEST_ASSERT_EQUAL_UINT32(ADC_T0 + 1u, r.adc_t);
-    TEST_ASSERT_TRUE(r.reading.pressure_pa > 30000.0f && r.reading.pressure_pa < 110000.0f);
-}
-
-/* At the datasheet's maximum, 13.3 ms, every conversion is done by the next
- * loop, and the part's own timer never runs. */
-void test_bmp280_fresh_at_the_worst_case(void) {
-    bmp.meas_us = BMP280_MEAS_MAX_US;
-    bmp280_reading_t r;
-    bmp280_start_t started;
-    int took = 0, busy = 0;
-    for (int loop = 0; loop < 100; loop++) {
-        took += bmp280_cycle(&r, &started);
-        busy += started == BMP280_BUSY;
-        fake_now_ms += LOOP_PERIOD_MS;
-    }
-    TEST_ASSERT_EQUAL(99, took);
-    TEST_ASSERT_EQUAL(0, busy);
-    TEST_ASSERT_EQUAL_UINT32(bmp.commands, bmp.conversions + (bmp.running ? 1u : 0u));
-}
-
-/* Still measuring: nothing is taken and nothing commanded, so a conversion
- * is never cut short; the next loop takes it. */
-void test_bmp280_busy_takes_and_commands_nothing(void) {
-    bmp.meas_us = LOOP_PERIOD_US + 5000u;
-    bmp280_reading_t r;
-    bmp280_start_t started;
-    bmp280_cycle(&r, &started);
-    fake_now_ms += LOOP_PERIOD_MS;
-    TEST_ASSERT_FALSE(bmp280_cycle(&r, &started));
-    TEST_ASSERT_EQUAL(BMP280_BUSY, started);
-    TEST_ASSERT_EQUAL_UINT32(1, bmp.commands);
-    fake_now_ms += LOOP_PERIOD_MS;
-    TEST_ASSERT_TRUE(bmp280_cycle(&r, &started));
-    TEST_ASSERT_EQUAL_UINT32(ADC_P0 + 1u, r.adc_p);
-    TEST_ASSERT_EQUAL(BMP280_STARTED, started);
-}
-
-/* A read the part does not answer takes nothing and commands nothing; the
- * conversion is still there when it answers again. */
-void test_bmp280_bus_error_keeps_the_conversion(void) {
-    bmp280_reading_t r;
-    bmp280_start_t started;
-    bmp280_cycle(&r, &started);
-    fake_now_ms += LOOP_PERIOD_MS;
-    bmp.nack = true;
-    TEST_ASSERT_FALSE(bmp280_cycle(&r, &started));
-    TEST_ASSERT_EQUAL(BMP280_BUS, started);
-    bmp.nack = false;
-    fake_now_ms += LOOP_PERIOD_MS;
-    TEST_ASSERT_TRUE(bmp280_cycle(&r, &started));
-    TEST_ASSERT_EQUAL_UINT32(ADC_P0 + 1u, r.adc_p);
-    TEST_ASSERT_EQUAL_UINT32(2, bmp.commands);
-}
-
-/* A command the part does not take leaves nothing to read: the next loop
- * commands again rather than reading the old codes as new. */
-void test_bmp280_refused_command_reads_nothing(void) {
-    bmp280_reading_t r;
-    bmp280_start_t started;
-    bmp.nack = true;
-    TEST_ASSERT_FALSE(bmp280_cycle(&r, &started));
-    TEST_ASSERT_EQUAL(BMP280_BUS, started);
-    bmp.nack = false;
-    fake_now_ms += LOOP_PERIOD_MS;
-    TEST_ASSERT_FALSE(bmp280_cycle(&r, &started));
-    TEST_ASSERT_EQUAL(BMP280_STARTED, started);
-    fake_now_ms += LOOP_PERIOD_MS;
-    TEST_ASSERT_TRUE(bmp280_cycle(&r, &started));
-    TEST_ASSERT_EQUAL_UINT32(ADC_P0 + 1u, r.adc_p);
-}
-
-/* [DD-068] A flash erase or program during the conversion marks it; the
- * next, undisturbed, is not. */
-void test_bmp280_flash_during_the_conversion_marks_it(void) {
-    bmp280_reading_t r;
-    bmp280_start_t started;
-    bmp280_cycle(&r, &started);
-    flash_op_seq += 2u;
-    fake_now_ms += LOOP_PERIOD_MS;
-    TEST_ASSERT_TRUE(bmp280_cycle(&r, &started));
-    TEST_ASSERT_TRUE(r.flashed);
-    fake_now_ms += LOOP_PERIOD_MS;
-    TEST_ASSERT_TRUE(bmp280_cycle(&r, &started));
-    TEST_ASSERT_FALSE(r.flashed);
-}
-
-/* A part holding SCL low never finishes a transfer. The SDK's blocking
- * calls wait on it forever, which in flight is a lockup until the watchdog
- * resets the board cold; each transfer here is bounded. */
-void test_bmp280_a_held_bus_costs_a_bounded_wait(void) {
-    bmp280_reading_t r;
-    bmp280_start_t started;
-    bmp280_cycle(&r, &started);
-    fake_now_ms += LOOP_PERIOD_MS;
-    bmp_dev.held = true;
-    fake_slept = NULL;
-    TEST_ASSERT_FALSE(bmp280_cycle(&r, &started));
-    TEST_ASSERT_EQUAL(BMP280_BUS, started);
-    TEST_ASSERT_NULL_MESSAGE(fake_slept, "an unbounded wait");
-    bmp_dev.held = false;
-    fake_now_ms += LOOP_PERIOD_MS;
-    TEST_ASSERT_TRUE(bmp280_cycle(&r, &started));
 }
 
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_bmp280_detect_leaves_it_asleep);
-    RUN_TEST(test_bmp280_one_conversion_a_loop);
-    RUN_TEST(test_bmp280_stamp_is_the_conversions);
-    RUN_TEST(test_bmp280_fresh_at_the_worst_case);
-    RUN_TEST(test_bmp280_busy_takes_and_commands_nothing);
-    RUN_TEST(test_bmp280_bus_error_keeps_the_conversion);
-    RUN_TEST(test_bmp280_refused_command_reads_nothing);
-    RUN_TEST(test_bmp280_flash_during_the_conversion_marks_it);
-    RUN_TEST(test_bmp280_a_held_bus_costs_a_bounded_wait);
+    RUN_TEST(test_bmp280_the_datasheets_example);
+    RUN_TEST(test_bmp280_every_code_compensates_in_order);
     return UNITY_END();
 }

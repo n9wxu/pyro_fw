@@ -2,9 +2,17 @@
  * MK1C's pyro backend, boards/mk1c/pyro_board.c, run on the host against the
  * Pico SDK stand-in in sim/hw/ and the plant model of the board as measured
  * (DD-054). Between fires the firmware checks two things and no more
- * (DD-055): that each pyro is present, and that nothing is shorted. A fire
- * arms the bus with the charge pump, fires on the measured bus, and verifies
- * with the next tracking test (DD-056). Nothing it does blocks.
+ * (DD-055): that each pyro is present, and that nothing is shorted. What it
+ * finds is reported and withholds no fire (DD-081). A fire arms the bus with
+ * the charge pump, closes the gate on the measured bus or at its deadline,
+ * and verifies with the next tracking test (DD-056). Nothing it does blocks.
+ *
+ * Verifies [PYR-FIRE-01, PYR-HEALTH-01, PYR-CONT-01, PYR-CONT-02,
+ * PYR-FAULT-01, PYR-FAULT-02, PYR-FAULT-03, PYR-VERIFY-01, PYR-ARM-01,
+ * PYR-ARM-03, PYR-ARM-05, PYR-ARM-06, PYR-DEPLOY-02, SYS-FAULT-01,
+ * SYS-FAULT-02].
+ *
+ * SPDX-License-Identifier: MIT
  */
 #include "../src/loop_period.h"
 #include "unity.h"
@@ -42,9 +50,37 @@ static struct {
     double bus_at_bias_max;  /* the bus when BIAS_BUS went high  */
 } w;
 
+/* The presence test's bias on the bus, edge by edge: a hardware alarm ends
+ * the pulse between loops, so it is watched there as well as at each loop. */
+static bool bias_was_on;
+static uint64_t bias_rose_us, bias_pulse_min_us, bias_pulse_max_us;
+
+static void note_bias(void) {
+    bool on = plant_get_gpio(BOARD_PIN_BIAS_BUS);
+    if (on == bias_was_on)
+        return;
+    bias_was_on = on;
+    if (on) {
+        plant_probe_t p;
+        plant_probe(&p);
+        bias_bus_rises++;
+        bias_rose_us = shim_now_us();
+        if (p.bus_v > w.bus_at_bias_max)
+            w.bus_at_bias_max = p.bus_v;
+        return;
+    }
+    bias_bus_falls++;
+    uint64_t width = shim_now_us() - bias_rose_us;
+    if (bias_pulse_min_us == 0 || width < bias_pulse_min_us)
+        bias_pulse_min_us = width;
+    if (width > bias_pulse_max_us)
+        bias_pulse_max_us = width;
+}
+
 static void watch(uint32_t us) {
     for (uint32_t t = 0; t < us; t += WATCH_US) {
         shim_advance_us(WATCH_US);
+        note_bias();
         uint64_t now = shim_now_us();
         if (plant_get_gpio(BOARD_PIN_FIRE_A) && plant_get_gpio(BOARD_PIN_FIRE_B))
             w.both_gates = true;
@@ -63,7 +99,6 @@ static void watch(uint32_t us) {
 
 /* One pyro_update(), as STAGE 4 of the loop runs it, and the edges it drove. */
 static void update_now(void) {
-    bool bus0 = plant_get_gpio(BOARD_PIN_BIAS_BUS);
     bool a0 = plant_get_gpio(BOARD_PIN_BIAS_A), b0 = plant_get_gpio(BOARD_PIN_BIAS_B);
     const int fire_pin[2] = {BOARD_PIN_FIRE_A, BOARD_PIN_FIRE_B};
     bool f0[2] = {plant_get_gpio(fire_pin[0]), plant_get_gpio(fire_pin[1])};
@@ -76,13 +111,7 @@ static void update_now(void) {
 
     plant_probe_t p;
     plant_probe(&p);
-    if (!bus0 && plant_get_gpio(BOARD_PIN_BIAS_BUS)) {
-        bias_bus_rises++;
-        if (p.bus_v > w.bus_at_bias_max)
-            w.bus_at_bias_max = p.bus_v;
-    }
-    if (bus0 && !plant_get_gpio(BOARD_PIN_BIAS_BUS))
-        bias_bus_falls++;
+    note_bias();
     if ((!a0 && plant_get_gpio(BOARD_PIN_BIAS_A)) || (!b0 && plant_get_gpio(BOARD_PIN_BIAS_B)))
         bias_ch_rises++;
     for (int i = 0; i < 2; i++) {
@@ -138,6 +167,8 @@ static void board_at(bool match1, bool match2, double pack_mv) {
     telemetry[0] = '\0';
     memset(&w, 0, sizeof(w));
     bias_bus_rises = bias_bus_falls = bias_ch_rises = 0;
+    bias_was_on = false;
+    bias_rose_us = bias_pulse_min_us = bias_pulse_max_us = 0;
     longest_update_us = 0;
     pyro_init();
 }
@@ -234,6 +265,38 @@ void test_mk1c_only_the_tracking_test_runs(void) {
     TEST_ASSERT_TRUE_MESSAGE(longest_update_us < 200u, msg);
 }
 
+/* The bias pulse is ended by a hardware alarm 8 ms after it starts, not by
+ * the next 20 ms loop: DESIGN.md S3 asks for 5 to 10 ms. */
+void test_mk1c_presence_pulse_is_8_ms(void) {
+    board(true, true);
+    loops(5000u);
+    char msg[96];
+    snprintf(msg, sizeof(msg), "pulses of %llu to %llu us", (unsigned long long)bias_pulse_min_us,
+             (unsigned long long)bias_pulse_max_us);
+    TEST_ASSERT_TRUE_MESSAGE(bias_bus_falls >= 9, msg);
+    TEST_ASSERT_TRUE_MESSAGE(bias_pulse_min_us >= 8000u && bias_pulse_max_us <= 8200u, msg);
+    pyro_continuity_t c1, c2;
+    pyro_get(1, &c1);
+    pyro_get(2, &c2);
+    TEST_ASSERT_TRUE_MESSAGE(c1.good && c2.good, "and the reading taken at its end is the presence reading");
+}
+
+/* A fire that comes while the bus is biased drops the test: the alarm that
+ * would have ended the pulse finds nothing to read. */
+void test_mk1c_a_fire_during_the_presence_pulse_drops_the_test(void) {
+    board(true, false);
+    loops(1100u);
+    int rises = bias_bus_rises;
+    for (int i = 0; i < 100 && bias_bus_rises == rises; i++)
+        loops(LOOP_MS);
+    TEST_ASSERT_TRUE_MESSAGE(plant_get_gpio(BOARD_PIN_BIAS_BUS), "the bus is biased");
+    TEST_ASSERT_FALSE_MESSAGE(board_flash_ok(), "no storage write beside the pulse");
+    TEST_ASSERT_TRUE(accepted(1));
+    TEST_ASSERT_FALSE_MESSAGE(plant_get_gpio(BOARD_PIN_BIAS_BUS), "the bias is dropped at the command");
+    loops(100u);
+    TEST_ASSERT_TRUE(fired(1));
+}
+
 /* ── The fire (DD-056) ────────────────────────────────────────────── */
 
 void test_mk1c_fires_a_present_channel(void) {
@@ -303,60 +366,108 @@ void test_mk1c_a_stopped_loop_disarms(void) {
     TEST_ASSERT_FALSE(w.fire_seen[0]);
 }
 
-/* DESIGN.md 7.2: the bus not at 90 % by 1.5 times the slew's time aborts
- * the fire and latches, and the gate is never driven. */
-void test_mk1c_a_short_during_precharge_aborts(void) {
+/* [PYR-ARM-03, PYR-FAULT-02] A bus that has not reached 90 % by 1.5 times
+ * the slew's time: the gate closes at that deadline on whatever the bus has,
+ * and the timeout is recorded. The pulse is never abandoned. */
+void test_mk1c_a_bus_that_will_not_charge_is_gated_at_the_deadline(void) {
     board(true, false);
     loops(1100u);
     TEST_ASSERT_TRUE(accepted(1));
     plant_set_fault(PF_BUS_SHORT_GND, true);
     loops(100u);
-    TEST_ASSERT_FALSE_MESSAGE(w.fire_seen[0], "no gate into a bus that did not charge");
-    TEST_ASSERT_FALSE(fired(1));
+    TEST_ASSERT_TRUE_MESSAGE(w.fire_seen[0], "the gate closed");
+    uint64_t after = w.fire_us[0] - accept_us;
+    char msg[96];
+    snprintf(msg, sizeof(msg), "gated %llu us after the command", (unsigned long long)after);
+    TEST_ASSERT_TRUE_MESSAGE(after <= 2u * LOOP_PERIOD_US + 1000u, msg);
     TEST_ASSERT_FALSE(pyro_is_firing());
-    TEST_ASSERT_TRUE_MESSAGE(pyro_fault(1), "a precharge timeout latches");
-    TEST_ASSERT_TRUE_MESSAGE(w.toggle_last_us <= accept_us + 30000u, "the pump stopped at the timeout");
+    TEST_ASSERT_TRUE_MESSAGE(pyro_fault(1), "what the board observed is recorded");
+    TEST_ASSERT_NOT_NULL(strstr(telemetry, "FIRE bus not charged"));
+    TEST_ASSERT_TRUE_MESSAGE(w.toggle_last_us <= w.fire_us[0], "the pump stopped at the gate");
 }
 
-/* ── Refusals ─────────────────────────────────────────────────────── */
-
-static void assert_refused_quietly(uint8_t ch) {
-    TEST_ASSERT_FALSE_MESSAGE(accepted(ch), "refused");
-    loops(100u);
-    TEST_ASSERT_FALSE_MESSAGE(w.toggle_seen, "the pump never ran");
-    TEST_ASSERT_FALSE_MESSAGE(w.fire_seen[0] || w.fire_seen[1], "no gate");
-    TEST_ASSERT_FALSE(fired(1) || fired(2));
-}
-
-void test_mk1c_refuses_an_open_channel(void) {
+/* [PYR-FAULT-01] A pulse that failed prevents nothing. U9 latched off in
+ * its current limit; the pump stopping takes its enable low, which is what
+ * releases the latch, so the next attempt is delivered and reports for
+ * itself. */
+void test_mk1c_a_failed_pulse_does_not_prevent_the_next(void) {
     board(true, false);
     loops(1100u);
-    assert_refused_quietly(2);
+    TEST_ASSERT_TRUE(accepted(1));
+    plant_set_fault(PF_BUS_SHORT_GND, true);
+    loops(100u);
+    TEST_ASSERT_FALSE(fired(1));
+    plant_set_fault(PF_BUS_SHORT_GND, false);
+    loops(1000u);
+    TEST_ASSERT_TRUE_MESSAGE(accepted(1), "the second attempt is taken");
+    loops(100u);
+    TEST_ASSERT_TRUE_MESSAGE(fired(1), "and delivered");
+    TEST_ASSERT_FALSE_MESSAGE(pyro_fault(1), "the first pulse's timeout is not the second's");
 }
 
-void test_mk1c_refuses_before_a_tracking_test(void) {
+/* ── No reading withholds a fire [PYR-FIRE-01, PYR-HEALTH-01] ─────── */
+
+static void assert_gated(uint8_t ch) {
+    TEST_ASSERT_TRUE_MESSAGE(accepted(ch), "the command is taken");
+    loops(100u);
+    TEST_ASSERT_TRUE_MESSAGE(w.toggle_seen, "the pump ran");
+    TEST_ASSERT_TRUE_MESSAGE(w.fire_seen[ch - 1], "the gate closed");
+    TEST_ASSERT_FALSE(pyro_is_firing());
+    TEST_ASSERT_FALSE_MESSAGE(w.both_gates, "never both gates");
+}
+
+/* The presence test reads channel 2 open: a lead the test cannot see
+ * through may still carry a match. */
+void test_mk1c_fires_a_channel_that_reads_open(void) {
     board(true, false);
-    assert_refused_quietly(1);
+    loops(1100u);
+    pyro_continuity_t c2;
+    pyro_get(2, &c2);
+    TEST_ASSERT_TRUE(c2.open);
+    assert_gated(2);
+    TEST_ASSERT_FALSE_MESSAGE(fired(1), "and only that channel");
 }
 
-void test_mk1c_refuses_with_a_latched_fault(void) {
+/* A flight resumed after a restart fires before any presence test has run
+ * [FLT-BROWN-06]. */
+void test_mk1c_fires_before_a_presence_test(void) {
+    board(true, false);
+    assert_gated(1);
+    TEST_ASSERT_TRUE(fired(1));
+}
+
+void test_mk1c_fires_with_a_latched_fault(void) {
     board(true, false);
     plant_set_fault(PF_HIGH_SIDE_SHORT, true);
     loops(200u);
     TEST_ASSERT_TRUE(pyro_fault(1));
     plant_set_fault(PF_HIGH_SIDE_SHORT, false);
     loops(1100u);
-    assert_refused_quietly(1);
+    TEST_ASSERT_TRUE_MESSAGE(pyro_fault(1), "the fault is still reported");
+    assert_gated(1);
+    TEST_ASSERT_TRUE(fired(1));
 }
 
-/* Invariant 10: the firmware UVLO, before each arm. */
-void test_mk1c_refuses_below_uvlo(void) {
+/* The high side shorted: the bus is already at the pack, so the gate closes
+ * on it at once. */
+void test_mk1c_fires_on_a_bus_that_is_already_live(void) {
+    board(true, false);
+    loops(1100u);
+    plant_set_fault(PF_HIGH_SIDE_SHORT, true);
+    loops(200u);
+    TEST_ASSERT_TRUE(pyro_fault(1));
+    TEST_ASSERT_TRUE(accepted(1));
+    loops(100u);
+    TEST_ASSERT_TRUE_MESSAGE(w.fire_seen[0], "the gate closed");
+    TEST_ASSERT_TRUE(fired(1));
+}
+
+/* A pack below the level the firing path is rated for: the pulse is still
+ * attempted. */
+void test_mk1c_fires_on_a_low_pack(void) {
     board_at(true, false, 2800);
     loops(1100u);
-    pyro_continuity_t c1;
-    pyro_get(1, &c1);
-    TEST_ASSERT_TRUE_MESSAGE(c1.good, "the match reads present");
-    assert_refused_quietly(1);
+    assert_gated(1);
 }
 
 /* ── After the fire ───────────────────────────────────────────────── */
@@ -475,15 +586,19 @@ int main(void) {
     RUN_TEST(test_mk1c_high_side_short_latches);
     RUN_TEST(test_mk1c_one_bad_tracking_reading_does_not_latch);
     RUN_TEST(test_mk1c_only_the_tracking_test_runs);
+    RUN_TEST(test_mk1c_presence_pulse_is_8_ms);
+    RUN_TEST(test_mk1c_a_fire_during_the_presence_pulse_drops_the_test);
     RUN_TEST(test_mk1c_fires_a_present_channel);
     RUN_TEST(test_mk1c_fires_on_the_measured_bus);
     RUN_TEST(test_mk1c_pump_runs_only_inside_a_fire);
     RUN_TEST(test_mk1c_a_stopped_loop_disarms);
-    RUN_TEST(test_mk1c_a_short_during_precharge_aborts);
-    RUN_TEST(test_mk1c_refuses_an_open_channel);
-    RUN_TEST(test_mk1c_refuses_before_a_tracking_test);
-    RUN_TEST(test_mk1c_refuses_with_a_latched_fault);
-    RUN_TEST(test_mk1c_refuses_below_uvlo);
+    RUN_TEST(test_mk1c_a_bus_that_will_not_charge_is_gated_at_the_deadline);
+    RUN_TEST(test_mk1c_a_failed_pulse_does_not_prevent_the_next);
+    RUN_TEST(test_mk1c_fires_a_channel_that_reads_open);
+    RUN_TEST(test_mk1c_fires_before_a_presence_test);
+    RUN_TEST(test_mk1c_fires_with_a_latched_fault);
+    RUN_TEST(test_mk1c_fires_on_a_bus_that_is_already_live);
+    RUN_TEST(test_mk1c_fires_on_a_low_pack);
     RUN_TEST(test_mk1c_fired_channel_reads_open_after);
     RUN_TEST(test_mk1c_misfire_leaves_the_other_channel);
     RUN_TEST(test_mk1c_both_channels_one_after_the_other);

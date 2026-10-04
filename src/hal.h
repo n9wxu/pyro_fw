@@ -2,8 +2,8 @@
  * Hardware Abstraction Layer for the Pyro flight computers.
  *
  * This header defines the complete boundary between flight logic
- * and hardware. Flight code (flight_states.c, telemetry_formatter.c,
- * buzzer.c) includes ONLY this header — no platform-specific headers.
+ * and hardware. Flight code includes ONLY this header — no platform-specific
+ * headers.
  *
  * Three implementations exist:
  *   src/hal_common/hal_common.c  — the RP2040 boards, with boards/<name>/
@@ -19,14 +19,15 @@
 #include <stdbool.h>
 #include "config.h"     /* config_t for hal_config_load/save */
 #include "async_task.h" /* async_task_t for hal_buzzer_task_register */
+#include "pyro_limits.h"
 
 /* ── Time ─────────────────────────────────────────────────────────── */
 
 uint32_t hal_time_ms(void);
 
 /* Why the processor started this time. A brownout reads as a power event and
- * cannot be told from someone connecting the battery -- see brownout.h. */
-#include "brownout.h"
+ * cannot be told from someone connecting the battery -- see flight_resume.h. */
+#include "flight_resume.h"
 reset_cause_t hal_reset_cause(void);
 
 /* ── Pressure sensor ──────────────────────────────────────────────── */
@@ -80,6 +81,9 @@ void hal_pyro_update(uint32_t now_ms);
 bool hal_pyro_is_firing(void);
 bool hal_pyro_fault(uint8_t channel); /* FLAG pin: true = fault during fire */
 
+typedef pyro_limits_t hal_pyro_limits_t;
+void hal_pyro_limits(hal_pyro_limits_t *out); /* [PYR-BOARD-01] */
+
 /* Claim each channel's pads for the flight software and install the real
  * operations for the channels that got them. Call once at boot, after the
  * pads have owners (pin_store_claim_pads()) and before the flight loop.
@@ -132,7 +136,7 @@ int hal_fs_read_file(const char *path, char *buf, int max_len);     /* returns b
 int hal_fs_write_file(const char *path, const char *data, int len); /* returns 0 on success */
 
 /* A small file the flight software reads while it flies -- the pad marker
- * (brownout.h). Never blocks and never waits on the filesystem: the platform
+ * (flight_resume.h). Never blocks and never waits on the filesystem: the platform
  * serves it from RAM, filled at boot and refreshed by hal_fs_write_file().
  * Same returns as hal_fs_read_file(), without HAL_FS_LOCKED. */
 int hal_fs_read_cached(const char *path, char *buf, int max_len);
@@ -154,16 +158,6 @@ int hal_config_load(config_t *cfg);
  * Returns 0 on success, -1 on error. */
 int hal_config_save(const config_t *cfg);
 
-/* ── Serial commands (ground test, DD-011) ────────────────────────── */
-
-/* Non-blocking line read from the RX side of the UART that carries
- * telemetry TX.
- *
- * Returns true when a complete line was read, leaving buf NUL-terminated with
- * any trailing CR or LF stripped. Returns false when no complete line is
- * available yet. */
-bool hal_serial_readline(char *buf, int max_len);
-
 /* ── In-flight data logging ──────────────────────────────────────
  *
  * Fire and forget: every call below buffers into RAM and returns, so none of
@@ -178,6 +172,8 @@ bool hal_serial_readline(char *buf, int max_len);
 void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa);
 void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
                     uint8_t event);
+/* One line about an estimator, as a text row of its own kind [SNS-EST-07]. */
+bool hal_log_estimator(uint32_t time_ms, const char *text, int len);
 void hal_log_stop(void);
 bool hal_log_active(void);
 

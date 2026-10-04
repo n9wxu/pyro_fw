@@ -1,421 +1,431 @@
 # Requirements Traceability Matrix
 
-Requirements are verified through integration and closed-loop tests that exercise
-the complete system through flight scenarios. Unit tests verify implementation
-correctness but are not directly linked to requirements.
+Each live requirement of `REQUIREMENTS.md` and what verifies it. Withdrawn
+requirements (its Appendix A) have no row.
 
-## Verification Tests
+This file is written by `support/trace_matrix.py` from the tests' own
+citations, the rules of `support/structure_check.py`, and the notes in
+`support/trace_notes.tsv`. Edit those, not this.
 
-### Integration Tests (test_integration.c)
-Simulate a complete flight using OpenRocket trajectory data at 1ms resolution.
-
-### Closed-Loop Tests (test_closedloop.c)
-Simulate flights with physics feedback across 7 pyro configurations × 4 altitudes.
-
-### Web UI Tests (test_ui.spec.js)
-Verify web interface behavior against mock server in 3 device modes.
-
----
+- **✅** a host test, a web test or a structural check verifies it.
+- **✅ HW** verified on hardware only: a bench script or a measurement.
+- **⚠️** not verified, or not wholly: the row says what is owed.
 
 ## 1. Recovery Deployment
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| UN-1 | Deploy recovery devices safely | All closed-loop tests | ✅ |
-| SYS-DEPLOY-01 | Fire pyros at configurable events | Closed-loop: all 7 config suites | ✅ |
-| SYS-DEPLOY-02 | Two independent channels | Closed-loop: both channels fire in all suites | ✅ |
-| SYS-DEPLOY-03 | No firing before leaving rail | Closed-loop: test_SYS_DEPLOY_03_no_fire_during_ascent | ✅ |
-| FLT-PHASE-01 | Detect launch | Integration: test_FLT_BOOT_01_all_states | ✅ |
-| FLT-PHASE-02 | Detect apogee | Integration: test_FLT_APO_01_detected | ✅ |
-| FLT-PHASE-03 | Detect landing | Integration: test_FLT_LAND_04_duration | ✅ |
-| PYR-MODE-01 | DELAY mode | Closed-loop: test_PYR_MODE_01_delay_delay | ✅ |
-| PYR-MODE-02 | AGL mode | Closed-loop: test_PYR_MODE_02_delay_agl, test_PYR_MODE_02_agl_agl | ✅ |
-| PYR-MODE-03 | FALLEN mode | Closed-loop: test_PYR_MODE_03_delay_fallen, test_PYR_MODE_03_fallen_agl | ✅ |
-| PYR-MODE-04 | SPEED mode | Closed-loop: test_PYR_MODE_04_delay_speed, test_PYR_MODE_04_speed_agl | ✅ |
-| PYR-SAFE-01 | No fire without continuity | Closed-loop: test_PYR_SAFE_01_no_fire_without_continuity | ✅ |
-| PYR-DEPLOY-01 | Both channels may deploy on one event | Closed-loop: test_PYR_DEPLOY_01_low_flight_fires_both | ✅ |
-| PYR-DEPLOY-02 | Not energised at the same instant, flight or ground test | `flight_pyro_energise()`, DD-021; Integration: test_REV06_ground_test_waits_for_the_other_channel; Board pyro (MK1C): test_mk1c_both_channels_one_after_the_other (never both gates) | ✅ |
-| PYR-FIRE-01 | Fired only when energised; a refusal is recorded once | Unit: test_REV03_refused_fire_is_not_recorded_as_fired; Hardware: `pyro1_refused` on /api/status | ✅ |
-| PYR-MODE-05 | AGL / FALLEN on the fit's height, SPEED on its speed, DELAY from its apogee | Chain: test_T5_speed_and_delay_triggers (SPEED within 1 m/s, DELAY within 0.1 s); Mach: test_T5_ejection (AGL within 8 m); Closed-loop: test_REV05_agl_drogue_fires_at_its_altitude; every AGL channel in the mode suites within 8 m | ✅ |
-| PYR-MODE-06 | Pressure triggers wait out an unclean fit, 2 s at most; believed after a charge if no lower than ballistic | Mach: test_T5_ejection (5 kPa bay charge), test_T5_canopy_swing; Chain: test_T5_descent_glitch; Closed-loop: test_PYR_MODE_02_agl_agl (a main 60 m below a drogue opening at 105 m/s) | ✅ |
-| PYR-SAFE-03 | Single fire per channel | Closed-loop: verified by fire_count | ✅ |
-| PYR-SAFE-04 | No fire before apogee | Closed-loop: drogue fires at/after apogee | ✅ |
-| FLT-LAUNCH-01 | Transition at >100 ft | Unit: test_FLT_LAUNCH_08/09; Integration: test_FLT_BOOT_01_all_states | ✅ |
-| FLT-LAUNCH-02 | Stay at ground level | Integration: PAD_IDLE persists before launch | ✅ |
-| GND-CAL-01 | Ground reference: a 5-second rolling mean | Unit: test_GND_CAL_01_reference_follows_slow_drift; Chain: test_T6_drift (2 hPa/h for an hour, within 1 m) | ✅ |
-| GND-CAL-02 | The reference averages pressure, not altitude | Unit: test_GND_CAL_01_reference_follows_slow_drift (the reference is in pascals) | ✅ |
-| GND-CAL-03 | A sample 50 Pa away is not averaged in | Unit: test_GND_CAL_02_reference_stops_tracking_when_the_rocket_moves | ✅ |
-| GND-CAL-04 | Frozen from before T+0, not snapped | Unit: test_FLT_LAUNCH_09_freezing_keeps_the_hundred_feet; Chain: test_T7_ground_error (within 0.1 m at 2, 5, 15 and 30 g) | ✅ |
-| GND-CAL-07 | A reference on under a second of pad is flagged | Chain: test_T7_early_launch_degraded | ✅ |
-| GND-CAL-06 | Re-seed after a step | Chain: test_T6_step_reseeds (100-300 Pa either way), test_T6_launch_never_reseeds, test_T6_gusts_never_reseed, test_T6_rejecting_starts_at_zero | ✅ |
-| FLT-LAUNCH-03 | T+0 at the first reading above 50 cm | Unit: test_REV07_launch_backdates_to_first_rise; Integration: test_FLT_LAUNCH_03_backdate; Chain: test_T3_latency (within 40 ms of the truth at 2-30 g) | ✅ |
-| FLT-LAUNCH-07 | 100 ft and 5 m/s, held for 100 ms | Unit: test_FLT_LAUNCH_08_ten_metres_is_no_longer_enough, test_FLT_LAUNCH_01_detects_ascent; Chain: test_T3_pad_two_sample_glitch, test_T3_latency, test_T3_durations_not_counts | ✅ |
-| GND-CAL-05 | LAUNCH reports the height reached | Integration: test_REV11_launch_row_reports_the_height_reached | ✅ |
-| FLT-LAUNCH-04 | Log LAUNCH event | Integration: test_DAT_04_events | ✅ |
-| FLT-LAUNCH-05 | Stop buzzer on launch | Integration: test_BUZ_07_03_lifecycle | ✅ |
-| FLT-APO-01 | Apogee on clean fits, rising for 60 ms, 1.0001 above the lowest | Chain: test_T5_apogee (1000 flights, 100 m to 9 km), test_T3_coast_two_sample_glitch, test_T3_latency; Unit: test_FLT_APO_01_detects_apogee; Integration: test_FLT_APO_01_detected | ✅ |
-| FLT-APO-02 | Transition to DESCENT | Integration: test_FLT_BOOT_01_all_states | ✅ |
-| FLT-APO-03 | Log APOGEE event | Integration: test_DAT_04_events | ✅ |
-| FLT-APO-04 | No apogee before armed | Integration: test_FLT_APO_04_no_apogee_before_armed | ✅ |
-| FLT-ASC-01 | Track max altitude | Integration: test_FLT_APO_01_detected (max_altitude > 0) | ✅ |
-| FLT-ASC-02 | Every speed from the fit | Chain: test_T4_pad_speed, test_T11_stalls_change_nothing, test_T5_through_the_clamp, test_T5_speed_and_delay_triggers | ✅ |
-| FLT-ASC-03 | Thrust from the fit's acceleration | Chain: test_T5_under_thrust (ends within 1 s of burnout, one change); Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
-| FLT-ASC-04 | Arm at <10 m/s | Closed-loop: pyros arm and fire in all flights | ✅ |
-| FLT-ASC-05 | Log ARMED event | Integration: test_DAT_04_events | ✅ |
-| FLT-ASC-06 | No arm above 10 m/s | Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
-| FLT-ASC-07 | No arming unless the peak speed passed 10 m/s | Unit: test_FLT_ASC_07_arms_after_ten_metres_a_second; Integration: test_FLT_ASC_03_06_thrust_and_arming | ✅ |
-| FLT-LAND-01 | Stable <1m for 1s | Integration: test_FLT_BOOT_01_all_states reaches LANDED; Chain: test_T4_touchdown (within 3 s, under noise, on the pad's level and 5 m above), test_T11_landing_holds_a_second (the full second, on odd and even sample times) | ✅ |
-| FLT-LAND-02 | Speed <2 m/s | Integration: landing detected at correct time | ✅ |
-| FLT-LAND-03 | Altitude <30m | Integration: landing detected at correct time | ✅ |
-| FLT-LAND-04 | Transition to LANDED | Integration: test_FLT_LAND_04_duration | ✅ |
-| FLT-LAND-05 | Log LANDING event | Integration: test_DAT_04_events | ✅ |
-| FLT-LAND-06 | Stay in LANDED | Integration: state remains LANDED after detection | ✅ |
-| FLT-LAND-07 | Landing timeout, on stillness | Chain: test_N7_no_landing_under_main (no LANDED under a 5 m/s main, and within 3 s of touchdown on the pad's level and 50 m above it) | ✅ |
-| PYR-REFIRE-01 | One drogue retry at 2 s, only if unopened | Closed-loop: test_PYR_REFIRE_01_refire_ballistic | ✅ |
-| PYR-REFIRE-02 | No retry on an opened channel | Closed-loop: test_PYR_REFIRE_02_no_retry_when_opened | ✅ |
-| FLT-EMRG-01 | Main early on evidence the drogue failed | Closed-loop: test_FLT_EMRG_01, test_REV01_failed_drogue_brings_the_main_forward | ✅ |
-| FLT-EMRG-02 | No bare descent-rate trigger | Closed-loop: test_FLT_EMRG_02_freefall_to_trigger_not_overridden | ✅ |
-| FLT-EMRG-03 | Not on the absence of a settled descent | Closed-loop: test_REV01_working_drogue_main_at_its_trigger; `main_forced` false in every mode suite | ✅ |
-| FLT-EMRG-04 | An emergency deployment is recorded | Closed-loop: test_REV16_forced_main_is_in_the_log; Hardware: `main_forced` on /api/status | ✅ |
-| FLT-BROWN-01 | Pad marker at 10 s PAD_IDLE, with σ | Integration: test_BRN_INT_01/02/05; Chain: test_T5_sigma; Brownout: test_BRN_MARK_01/02/03; Hardware: `pad.mkr` present on MK1A/B/C | ✅ |
-| FLT-BROWN-02 | Recover the ground reference, from medians since power-on | Brownout: test_BRN_01..08; Integration: test_BRN_INT_03/04; Chain: test_T1_rejoins_descent, test_T1_rejoins_ascent, test_T1_glitch_on_the_pad | ✅ |
-| FLT-BROWN-03 | A stationary board is never airborne | Brownout: test_BRN_06/07; Chain: test_T1_still_board_stays_cold | ✅ |
-| FLT-BROWN-04 | The marker is spent at landing | Chain: test_T1_marker_invalid_after_landing | ✅ |
-| FLT-BROWN-05 | Why a boot was cold | Chain: test_T1_cold_reasons | ✅ |
-| FLT-BROWN-06 | A recovered flight reads continuity and produces altitude | Chain: test_T1_rejoins_descent (the main fires at 300 m), test_T1_rejoins_ascent (the drogue fires at apogee) | ✅ |
-| FLT-LOG-05 | No flash write through the shock window | Code review: log_flash_service() holdoff | ⚠ untested |
-| FLT-LOG-07 | Three logging plans; binary on disk | Plan: test_PLAN_01..06 (what each keeps, windows that overlap, the log's end, the base rate resuming, a stream faster than the delay line, time order throughout); Integration: test_FLT_LOG_07_the_three_logging_plans (1.0-1.1 s apart; 90+ rows within a second of apogee; 15x more at full; every event in all three); Format: test_FLOG_01..08 | ✅ |
-| FLT-LOG-06 | Log committed every second, in the window | Hardware (MK1C, instrumented bench build): readable while written; reset mid-log keeps rows to 0.5 s before it; flash_refusals 0 | ✅ HW |
-| LUA-IO-01 | Export / import the Lua program | Playwright: lua program exports to a file; imports into the editor | ✅ |
-| LUA-IO-02 | Import does not touch the device | Playwright: imports into the editor without saving; oversized import refused | ✅ |
-| PIN-LABEL-01 | Connector designator per pin | Host: test_PIN_LABEL_01..03; Playwright: pin tables name the connector | ✅ |
-| PIN-BUZZ-01 | Buzzer assignable to a pad | Host: test_PIN_BUZZ_01/02/05/06/07; Playwright: buzzer can be moved | ✅ |
-| PIN-BUZZ-02 | Buzzer pad exclusive against Lua | Host: test_PIN_BUZZ_03/04 | ✅ |
-| FLT-MACH-02 | The flag, set while the data is clean | Mach: test_M1_flag_before_mach_085 (by Mach 0.82), test_M1_subsonic_never_locks; Closed-loop: test_FLT_MACH_02_fast_subsonic_flight_not_locked | ✅ |
-| FLT-MACH-03 | Released on a second of a coast's signature | Mach: test_M1_mid_mach_releases, test_M1_release_at_altitude (1000 seeds), test_M1_port_error_margin, test_M1_integer_forms, test_M1_design_note | ✅ |
-| FLT-MACH-04 | The fallback | Mach: test_M1_fallback | ✅ |
-| FLT-MACH-05 | No apogee while flagged | Mach: test_M1_no_drogue_before_apogee (both pads, both port signs), test_M0_report | ✅ |
-| FLT-MACH-06 | No arming below 30 m; a recovered ascent starts flagged | Chain: test_M1_minimum_altitude_arm, test_M1_recovered_ascent_locked | ✅ |
-| FLT-MACH-07 | The peak from outside the lock | Mach: test_M1_peak_outside_lock; Web: apogee skips the Mach lock, a lock let go near apogee makes it a lower bound, a lock that fell back makes it a lower bound | ✅ |
-| FLT-DESC-01 | Phase from rate, not from command | Closed-loop: test_FLT_DESC_01_phase_without_pyros; Chain: test_N12_drogue_from_below (a drogue speeding up through the main's band is still a drogue) | ✅ |
-| FLT-DESC-02 | Landing from every descent phase | Closed-loop: test_FLT_DESC_02_ballistic_reaches_landed | ✅ |
-| FLT-AIR-01 | Descent rates in the pad's air | Closed-loop: test_FLT_AIR_01_air_scale_is_the_pad_air_rate (against the bench flight's atmosphere, 0-32 km, two pads), test_SIM_02_the_flight_software_flies_a_30_km_profile (no forced main from a working drogue), test_FLT_AIR_01_a_failed_drogue_is_seen_at_30_km, test_FLT_AIR_01_a_high_pad_flies_20_km | ✅ |
-| PYR-ALT-01 | Clamp altitude settings | Closed-loop: Karman suite (AGL > 8000m clamped, pyro still fires) | ✅ |
-| PYR-ALT-02 | Warning beep for range | Integration: test_PYR_ALT_02_cfg_range_beep | ✅ |
-| FLT-RATE-01 | Sample rates | Integration: test_FLT_LAUNCH_01_timing (timing bounds); Chain: test_T9_one_shot_cadence (the one-shot at the loop period: 498 pressures in 10 s at 20 ms, every interval one loop, DD-066); test_ms5607_pair_ready_before_the_next_loop (at each MS5607 board's own bus rate, 400 kHz on MK1B and MK1C, the pair is ready 1.4 ms before the next loop, DD-052), test_ms5607_a_pair_every_loop (2.7 ms of work a pressure, as measured, costs no pair); Hardware (2.1.697, 2026-09-27, `support/pressure_trace.py`, 60 s each): MK1C and both MK1Bs 50.0 pressures a second, a temperature with each, no gaps, no missed slots; MK1A's BMP280, one forced conversion a loop (2.1.701, DD-067), 50.0 a second, consistently good | ✅ |
-| FLT-RATE-02 | Batches of 5 | — the flight software takes one sample a loop; the batch API has no caller (H3 in docs/outstanding_tasks.md) | ❌ |
-| FLT-RATE-03 | 1 Hz while LANDED | — sampling stays at the loop rate; the log keeps a row a second, Chain: test_N18_landed_logs_once_a_second (H3) | ❌ |
-| FLT-RATE-04 | The rate is the HAL's | Chain: test_T9_same_outcomes (the same outcomes at 11 ms and 20 ms), test_T3_durations_not_counts (at 10 ms) | ✅ |
-| FLT-RATE-05 | Holds and dwells in sample time | Chain: test_T11_loop_clock_independent (a loop clock lagging 0-70 ms changes no decision's sample) | ✅ |
+| UN-1 | The user needs recovery devices deployed at the correct flight events to safely recover the rocket | Through SYS-DEPLOY-01, SYS-DEPLOY-02, SYS-DEPLOY-03, SYS-DEPLOY-04, SYS-DEPLOY-05, SYS-DEPLOY-06 | ✅ |
+| SYS-DEPLOY-01 | The system shall fire pyrotechnic charges at configurable flight events | the suite test_recorded_flight.c | ✅ |
+| SYS-DEPLOY-02 | The system shall support two independent pyrotechnic channels | the suite test_recorded_flight.c | ✅ |
+| SYS-DEPLOY-03 | The system shall prevent pyrotechnic firing before the rocket has left the launch rail | test_flight_profiles.c: test_PYR_DEPLOY_01_a_low_flight_puts_both_out_on_one_event, test_PYR_SAFE_04_no_fire_before_apogee_whatever_the_triggers | ✅ |
+| SYS-DEPLOY-04 | A fire shall be decided only on measured evidence that its flight event has happened | test_fire_control.c: test_PYR_MODE_04_speed_fires_at_the_descent_speed, test_SYS_DEPLOY_04_without_data_only_a_delay_fires | ✅ |
+| SYS-DEPLOY-05 | Once a fire is decided nothing shall withhold, abort or indefinitely delay the attempt, and the system... | test_fire_rules.c: test_FLT_AIR_01_a_failed_drogue_at_20_km_is_still_seen | ✅ |
+| SYS-DEPLOY-06 | The system shall resume a flight in progress after any restart | Through FLT-BROWN-01 | ✅ |
+| FLT-PHASE-01 | The system shall detect the transition from ground to powered flight | test_recorded_flight.c: test_TST_02_the_recorded_flight_runs_pad_to_landed | ✅ |
+| FLT-PHASE-02 | The system shall detect apogee (peak altitude) | the suite test_recorded_flight.c | ✅ |
+| FLT-PHASE-03 | The system shall detect landing | test_recorded_flight.c: test_TST_02_the_recorded_flight_runs_pad_to_landed | ✅ |
+| FLT-RT-01 | No network, script or storage activity shall delay a flight decision or a pulse by more than the... | test_flight_profiles.c: test_FLT_RATE_05_a_late_loop_changes_no_decision, test_FLT_RT_01_other_activity_delays_no_decision_past_the_bound; the suite test_http_work.c; The bound on each board is declared and not yet measured on this revision: `loop_late_max_us` on `/api/status` | ✅ |
+| FLT-LAUNCH-02 | The system shall remain in PAD_IDLE while the rocket is at or below 100 feet above the ground reference | test_flight_pad.c: test_CFG_10_a_saved_change_waits_for_the_next_start, test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch, test_FLT_LAUNCH_02_below_100_ft_is_not_a_launch; test_launch_detector.c: test_FLT_LAUNCH_02_below_100_ft_is_not_a_launch; test_recorded_flight.c: test_TST_02_launch_is_detected_as_the_rocket_leaves | ✅ |
+| FLT-LAUNCH-03 | T+0 shall be the time of the first sample of the rise more than 50 cm above the pad, not the moment of... | test_flight_pad.c: test_CFG_10_a_saved_change_waits_for_the_next_start, test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch; test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order, test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise; test_telemetry.c: test_TEL_11_each_event_is_carried_once_by_the_next_message | ✅ |
+| FLT-LAUNCH-04 | The system shall log a LAUNCH event at the transition | test_flight_pad.c: test_CFG_10_a_saved_change_waits_for_the_next_start, test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch; test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order | ✅ |
+| FLT-LAUNCH-05 | The system shall stop the buzzer upon launch detection | test_flight_pad.c: test_CFG_10_a_saved_change_waits_for_the_next_start, test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch | ✅ |
+| FLT-LAUNCH-07 | The system shall declare launch, and enter ASCENT, only when the filtered state shows a height more than... | test_flight_pad.c: test_CFG_10_a_saved_change_waits_for_the_next_start, test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch, test_FLT_LAUNCH_07_a_slow_rise_is_not_a_launch; test_launch_detector.c: test_FLT_LAUNCH_07_high_and_climbing_is_a_launch, test_FLT_LAUNCH_07_slower_than_5_m_s_is_not_a_launch | ✅ |
+| GND-CAL-01 | The ground reference shall follow the ambient pressure on the pad, as its mean over the last 5 seconds | test_flight_pad.c: test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch, test_GND_CAL_01_the_reference_follows_the_weather | ✅ |
+| GND-CAL-03 | A sample more than 50 Pa from the reference shall not move it, so a climbing rocket cannot drag it | test_flight_pad.c: test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch, test_GND_CAL_01_the_reference_follows_the_weather, test_GND_CAL_04_the_reference_freezes_at_the_pads_pressure | ✅ |
+| GND-CAL-04 | The reference shall freeze at launch to the pad's pressure from before T+0, not to the pressure at detection | test_flight_pad.c: test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch, test_GND_CAL_01_the_reference_follows_the_weather, test_GND_CAL_04_the_reference_freezes_at_the_pads_pressure | ✅ |
+| GND-CAL-05 | Altitude at launch detection shall report the height actually reached, not zero | test_flight_pad.c: test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch, test_GND_CAL_01_the_reference_follows_the_weather, test_GND_CAL_04_the_reference_freezes_at_the_pads_pressure; test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order, test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise | ✅ |
+| GND-CAL-06 | When every sample has been more than 50 Pa from the reference for 5 s while the board is still (under 1... | test_flight_pad.c: test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch, test_GND_CAL_04_the_reference_freezes_at_the_pads_pressure, test_GND_CAL_06_a_moved_board_takes_a_new_reference, test_GND_CAL_06_a_launch_never_moves_the_reference | ✅ |
+| GND-CAL-07 | A reference frozen on less than a second of the pad shall be reported as degraded on /api/status | test_flight_pad.c: test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch, test_GND_CAL_06_a_launch_never_moves_the_reference, test_GND_CAL_07_a_reference_from_under_a_second_is_reported | ✅ |
+| FLT-ASC-01 | The system shall track the peak of the flight during ascent | test_recorded_flight.c: test_TST_02_apogee_is_declared_after_the_recorded_peak_and_soon | ✅ |
+| FLT-ASC-02 | Every detector shall take its vertical speed from the filtered state (SNS-EST-01) | the suite test_fire_control.c | ✅ |
+| FLT-ASC-03 | The system shall report the thrust phase while the filtered acceleration is upward | test_flight_profiles.c: test_PYR_SAFE_04_no_fire_before_apogee_whatever_the_triggers, test_FLT_ASC_04_arms_in_the_coast_not_in_the_burn, test_FLT_ASC_03_the_thrust_report_ends_within_a_second_of_burnout | ✅ |
+| FLT-ASC-04 | The system shall arm pyrotechnics when vertical speed drops below 10 m/s | test_flight_profiles.c: test_PYR_SAFE_04_no_fire_before_apogee_whatever_the_triggers, test_FLT_ASC_04_arms_in_the_coast_not_in_the_burn | ✅ |
+| FLT-ASC-05 | The system shall log an ARMED event when pyrotechnics are armed | test_flight_profiles.c: test_PYR_SAFE_04_no_fire_before_apogee_whatever_the_triggers, test_FLT_ASC_04_arms_in_the_coast_not_in_the_burn | ✅ |
+| FLT-ASC-06 | The system shall not arm pyrotechnics while vertical speed exceeds 10 m/s | test_flight_profiles.c: test_PYR_SAFE_04_no_fire_before_apogee_whatever_the_triggers, test_FLT_ASC_04_arms_in_the_coast_not_in_the_burn | ✅ |
+| FLT-ASC-07 | The system shall not arm pyrotechnics unless a vertical speed above 10 m/s was measured during ASCENT | test_flight_profiles.c: test_PYR_SAFE_04_no_fire_before_apogee_whatever_the_triggers, test_FLT_ASC_04_arms_in_the_coast_not_in_the_burn | ✅ |
+| FLT-APO-01 | The system shall declare apogee from the filtered pressure passing its minimum | test_flight_profiles.c: test_FLT_ASC_03_the_thrust_report_ends_within_a_second_of_burnout, test_FLT_APO_01_apogee_is_never_early_and_soon_after_at_every_height; test_recorded_flight.c: test_TST_02_apogee_is_declared_after_the_recorded_peak_and_soon | ✅ |
+| FLT-APO-02 | The system shall leave ASCENT for descent upon apogee detection | test_recorded_flight.c: test_TST_02_the_recorded_flight_runs_pad_to_landed | ✅ |
+| FLT-APO-03 | The system shall log an APOGEE event at the transition | the suite test_recorded_flight.c | ✅ |
+| FLT-APO-04 | The system shall not detect apogee before pyros are armed | test_flight_profiles.c: test_PYR_DEPLOY_01_a_low_flight_puts_both_out_on_one_event, test_PYR_SAFE_04_no_fire_before_apogee_whatever_the_triggers | ✅ |
+| FLT-APO-07 | Apogee shall be declared when the obeyed estimator has been seen climbing and is then seen falling, each... | test_apogee_detector.c: test_FLT_APO_07_over_the_top_is_apogee_at_once, test_FLT_APO_07_a_fall_whose_climb_was_not_seen_must_last_2_s, test_FLT_APO_07_readings_not_explained_forget_the_climb, test_FLT_APO_07_a_suspect_reading_decides_nothing_and_forgets_nothing and 1 more; test_mach.c: test_SNS_EST_03_a_swinging_canopy_moves_neither_the_main_nor_the_landing, test_FLT_APO_07_a_subsonic_flight_deploys_at_apogee, test_FLT_ASC_08_nothing_arms_below_30_m, test_FLT_APO_07_no_fire_before_apogee_when_supersonic and 6 more | ✅ |
+| FLT-APO-08 | The reported peak shall be the height of the lowest filtered pressure the estimator explained, marked a... | test_mach.c: test_FLT_APO_07_at_10_km_on_every_seed, test_FLT_APO_07_a_fall_whose_climb_was_not_seen_must_last, test_FLT_APO_08_the_peak_is_from_what_the_estimator_explained, test_FLT_APO_08_the_peak_is_logged; Web UI: test_ui.spec.js | ✅ |
+| FLT-ASC-08 | No channel shall arm before the filtered pressure has been below 0.9965·p0 (about 30 m) | test_mach.c: test_FLT_APO_07_a_subsonic_flight_deploys_at_apogee, test_FLT_ASC_08_nothing_arms_below_30_m | ✅ |
+| FLT-DESC-01 | The system shall determine the descent phase from the measured descent speed holding steady, not from... | test_flight_profiles.c: test_SNS_ALT_01_below_the_pad_is_a_negative_altitude, test_TST_06_a_canopy_slows_the_descent, test_FLT_DESC_02_a_ballistic_flight_reaches_landed, test_FLT_DESC_01_the_phase_follows_the_rate_not_the_channel | ✅ |
+| FLT-DESC-02 | The system shall detect landing in every descent phase, so that a flight which deployed nothing still... | test_flight_profiles.c: test_FLT_DESC_02_a_ballistic_flight_reaches_landed | ✅ |
+| FLT-AIR-01 | The descent phases and the fire rules (PYR-REFIRE-01, FLT-EMRG-01) shall judge a descent speed as the... | test_atmosphere.c: test_FLT_AIR_01_temperature_at_each_pressure, test_FLT_AIR_01_scale_height_follows_the_temperature, test_FLT_AIR_01_pad_air_ratio; test_fire_control.c: test_PYR_REFIRE_01_each_channel_has_its_own_speed, test_FLT_AIR_01_a_good_canopy_in_thin_air_is_not_refired; test_fire_rules.c: test_FLT_EMRG_01_zero_leaves_each_channel_to_its_trigger, test_FLT_AIR_01_a_good_drogue_at_20_km_is_not_a_failed_one, test_FLT_AIR_01_a_failed_drogue_at_20_km_is_still_seen | ✅ |
+| FLT-LAND-02 | The system shall require vertical speed below 2 m/s, for 1 s of sample time, for landing detection | test_flight_profiles.c: test_SNS_ALT_01_below_the_pad_is_a_negative_altitude, test_TST_06_a_canopy_slows_the_descent, test_FLT_DESC_01_the_phase_follows_the_rate_not_the_channel, test_FLT_LAND_02_a_slow_descent_is_not_a_landing; test_recorded_flight.c: test_TST_02_landing_follows_the_ground_hit | ✅ |
+| FLT-LAND-03 | The system shall require a height below 30 meters above the ground reference for landing detection, except... | test_flight_profiles.c: test_SNS_ALT_01_below_the_pad_is_a_negative_altitude, test_TST_06_a_canopy_slows_the_descent | ✅ |
+| FLT-LAND-04 | The system shall enter LANDED upon landing detection | test_flight_profiles.c: test_SNS_ALT_01_below_the_pad_is_a_negative_altitude, test_TST_06_a_canopy_slows_the_descent | ✅ |
+| FLT-LAND-05 | The system shall log a LANDING event at the transition | test_flight_profiles.c: test_SNS_ALT_01_below_the_pad_is_a_negative_altitude, test_TST_06_a_canopy_slows_the_descent | ✅ |
+| FLT-LAND-06 | The system shall remain in LANDED until the next start | test_flight_profiles.c: test_SNS_ALT_01_below_the_pad_is_a_negative_altitude, test_TST_06_a_canopy_slows_the_descent | ✅ |
+| FLT-LAND-07 | The system shall detect landing at any height once descent has lasted the configured landing_timeout... | test_flight_profiles.c: test_SNS_ALT_01_below_the_pad_is_a_negative_altitude, test_TST_06_a_canopy_slows_the_descent | ✅ |
+| PYR-MODE-01 | The system shall support a DELAY mode that fires N seconds after apogee | test_fire_control.c: test_PYR_MODE_01_delay_counts_from_apogee; test_flight_profiles.c: test_PYR_MODE_01_delay_after_apogee | ✅ |
+| PYR-MODE-02 | The system shall support an AGL mode that fires when the rocket descends below a set height above the... | test_fire_control.c: test_PYR_MODE_02_agl_fires_on_descending_through_the_height; test_flight_profiles.c: test_PYR_MODE_01_delay_after_apogee, test_PYR_MODE_02_agl_at_its_height, test_PYR_MODE_02_agl_on_both_channels | ✅ |
+| PYR-MODE-03 | The system shall support a FALLEN mode that fires when the rocket has descended a set distance from its peak | test_fire_control.c: test_PYR_MODE_03_fallen_measures_from_the_peak; test_flight_profiles.c: test_PYR_MODE_01_delay_after_apogee, test_PYR_MODE_03_fallen_from_the_peak | ✅ |
+| PYR-MODE-04 | The system shall support a SPEED mode that fires when descent speed exceeds a set value | test_fire_control.c: test_PYR_MODE_04_speed_fires_at_the_descent_speed; test_flight_profiles.c: test_PYR_MODE_01_delay_after_apogee, test_PYR_MODE_04_speed_of_descent | ✅ |
+| PYR-MODE-05 | AGL, FALLEN and SPEED shall compare the filtered state, and FALLEN shall measure from the peak (FLT-APO-08) | test_flight_profiles.c: test_PYR_MODE_01_delay_after_apogee | ✅ |
+| PYR-MODE-06 | A charge pressurising the bay, a rise of up to 5 kPa lasting up to 0.5 s ‡, shall not bring a pressure... | test_fire_control.c: test_PYR_DEPLOY_02_two_refiring_channels_take_turns, test_PYR_MODE_06_a_charge_does_not_bring_a_trigger_forward; test_mach.c: test_PYR_MODE_06_a_charge_in_the_bay_does_not_move_the_main | ✅ |
+| PYR-SAFE-03 | No channel shall fire before its own trigger or the emergency fire (FLT-EMRG-01) | test_fire_control.c: test_PYR_SAFE_03_a_channel_fires_once_when_no_rule_asks_again | ✅ |
+| PYR-SAFE-04 | The system shall not fire any pyro before apogee is declared | test_fire_control.c: test_PYR_SAFE_04_nothing_fires_before_apogee; test_flight_profiles.c: test_PYR_DEPLOY_01_a_low_flight_puts_both_out_on_one_event, test_PYR_SAFE_04_no_fire_before_apogee_whatever_the_triggers | ✅ |
+| PYR-DEPLOY-01 | The system shall allow both channels to deploy on a single flight event, so that a low flight can put out... | test_fire_control.c: test_PYR_DEPLOY_02_never_together_and_the_gap_is_quiet_time; test_flight_profiles.c: test_CFG_03_a_height_in_feet, test_PYR_DEPLOY_01_a_low_flight_puts_both_out_on_one_event | ✅ |
+| PYR-DEPLOY-02 | The two channels shall never be energised together, in flight or in ground test | test_fire_control.c: test_PYR_HEALTH_02_a_channel_that_is_not_enabled_never_fires, test_PYR_DEPLOY_02_never_together_and_the_gap_is_quiet_time, test_PYR_DEPLOY_02_a_first_fire_goes_before_a_refire, test_PYR_DEPLOY_02_two_refiring_channels_take_turns; test_fire_rules.c: test_FLT_EMRG_01_no_canopy_fires_everything_and_keeps_firing; test_flight_profiles.c: test_PYR_MODE_02_agl_on_both_channels, test_CFG_03_a_height_in_feet, test_PYR_DEPLOY_01_a_low_flight_puts_both_out_on_one_event; the suite test_board_pyro_mk1c.c; Web UI: test_ui.spec.js | ✅ |
+| PYR-FIRE-01 | Every pulse shall be recorded, in the flight log and on /api/status, with what the board observed of it | test_board_pyro_mk1c.c: test_mk1c_a_failed_pulse_does_not_prevent_the_next; test_fire_rules.c: test_FLT_AIR_01_a_failed_drogue_at_20_km_is_still_seen, test_PYR_FIRE_01_a_pulse_that_energises_nothing_is_recorded_not_refused; the suite test_status_json.c; Web UI: test_ui.spec.js; Structure: `support/structure_check.py` | ✅ |
+| PYR-REFIRE-01 | After a channel's first fire, while the descent speed exceeds that channel's re-fire speed... | test_config.c: test_config_defaults; test_fire_control.c: test_PYR_SAFE_03_a_channel_fires_once_when_no_rule_asks_again, test_PYR_REFIRE_01_refires_every_interval_while_too_fast, test_PYR_REFIRE_01_stops_when_the_descent_slows, test_PYR_REFIRE_01_zero_disables_it and 1 more; test_fire_rules.c: test_PYR_REFIRE_01_a_working_flight_gets_no_lasting_refire, test_PYR_REFIRE_01_a_charge_that_lights_on_the_third_pulse; Web UI: test_ui.spec.js | ✅ |
+| FLT-EMRG-01 | At any time after apogee, when the descent speed reaches emergency_fire_speed, every enabled channel shall... | test_config.c: test_config_defaults; test_fire_control.c: test_FLT_AIR_01_a_good_canopy_in_thin_air_is_not_refired, test_FLT_EMRG_01_every_enabled_channel_fires_whatever_its_trigger, test_FLT_EMRG_01_fires_again_until_the_speed_drops, test_FLT_EMRG_01_zero_disables_it; test_fire_rules.c: test_SNS_EST_04_a_lost_canopy_is_seen_within_two_seconds, test_FLT_EMRG_01_no_canopy_fires_everything_and_keeps_firing, test_FLT_EMRG_01_a_canopy_that_opens_ends_it, test_FLT_EMRG_01_zero_leaves_each_channel_to_its_trigger; Web UI: test_ui.spec.js | ✅ |
+| FLT-EMRG-04 | An emergency fire shall be recorded as one | test_fire_rules.c: test_SNS_EST_04_a_lost_canopy_is_seen_within_two_seconds, test_FLT_EMRG_01_no_canopy_fires_everything_and_keeps_firing; the suite test_status_json.c; Web UI: test_ui.spec.js | ✅ |
+| FLT-EMRG-05 | The re-fire and emergency rules shall act on the filtered state, which is the best knowledge the system... | the suite test_fire_control.c | ✅ |
+| FLT-BROWN-01 | From 10 seconds of PAD_IDLE with no USB host attached (USB-01, USB-04), the system shall hold a record of... | test_flight_pad.c: test_GND_CAL_07_a_reference_from_under_a_second_is_reported, test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds; test_resume.c: test_FLT_BROWN_01_a_damaged_record_is_no_record, test_FLT_BROWN_01_the_record_lasts_the_whole_flight; Hardware: `support/api_check.py` | ✅ |
+| FLT-BROWN-02 | After any restart, whatever its cause, the system shall resume the flight if and only if that record... | test_resume.c: test_FLT_BROWN_02_above_the_ground_and_moving_is_a_flight, test_FLT_BROWN_01_a_damaged_record_is_no_record, test_FLT_BROWN_03_a_still_board_at_altitude_goes_to_the_pad, test_FLT_BROWN_02_two_bad_readings_cannot_decide_it and 1 more | ✅ |
+| FLT-BROWN-03 | The system shall not treat a stationary board as airborne, whatever its apparent altitude | test_resume.c: test_FLT_BROWN_02_above_the_ground_and_moving_is_a_flight, test_FLT_BROWN_03_a_still_board_is_not_airborne, test_FLT_BROWN_05_no_sample_in_time_is_reported, test_FLT_BROWN_03_a_still_board_at_altitude_goes_to_the_pad | ✅ |
+| FLT-BROWN-04 | All resume state shall be cleared when the flight lands and when a bench flight ends, so that no later... | test_resume.c: test_FLT_BROWN_06_the_emergency_fire_applies_from_the_resume, test_FLT_BROWN_04_a_landing_clears_the_resume_state; Hardware: `support/bench_flight.py` | ✅ |
+| FLT-BROWN-05 | /api/status shall say whether a start resumed a flight and, if not, why | test_resume.c: test_FLT_BROWN_05_no_record_is_reported, test_FLT_BROWN_05_at_ground_level_is_reported, test_FLT_BROWN_05_on_usb_is_reported, test_FLT_BROWN_05_no_sample_in_time_is_reported; the suite test_status_json.c; Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
+| FLT-BROWN-06 | A resumed flight shall measure altitude against the recorded ground, shall assume no channel has fired,... | test_board_pyro_mk1c.c: test_mk1c_fires_a_channel_that_reads_open, test_mk1c_fires_before_a_presence_test; test_resume.c: test_FLT_BROWN_02_every_cause_of_restart_resumes_the_flight, test_FLT_BROWN_06_a_descent_resumed_fires_every_channel_afresh, test_FLT_BROWN_06_a_resume_below_the_main_height_fires_both, test_FLT_BROWN_06_a_delay_counts_in_full_from_the_resume and 2 more | ✅ |
+| FLT-BROWN-07 | A resume shall be recorded as an event in the flight log | test_resume.c: test_FLT_BROWN_02_every_cause_of_restart_resumes_the_flight | ✅ |
 
 ## 2. Pre-Flight Status
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| SYS-STATUS-01 | Audible readiness | Integration: test_BUZ_07_03_lifecycle | ✅ |
-| SYS-STATUS-02 | Verify pyro integrity | Integration: continuity checked before flight | ✅ |
-| PYR-CONT-01 | Check every 1s | Unit: test_PYR_CONT_01_continuity_check | ✅ |
-| PYR-CONT-03 | Diagnosis and announcement follow each check | Unit: test_REV04_pad_fault_after_boot_is_announced; Hardware: bench smoke test | ✅ |
-| FLT-BOOT-16 | No fault for a released or disabled channel | Unit: test_REV_NEW_disabled_channel_is_not_a_fault; Hardware: bench smoke test | ✅ |
-| PYR-CONT-02 | Report good/open/short | Web UI: pyro channels show OK/OPEN/FIRED; Board pyro (MK1B): test_mk1b_igniter_reads_good, test_mk1b_empty_connector_reads_open, test_mk1b_short_to_ground_reads_shorted, test_mk1b_bad_joint_reads_good_with_its_count (DD-059) | ✅ |
-| PYR-CONT-04 | MK1C: a short judged on three tracking tests | Board pyro (MK1C): test_mk1c_one_bad_tracking_reading_does_not_latch, test_mk1c_bus_short_latches | ✅ |
-| BUZ-STATUS-01 | Distinct beep codes | Beep: test_shipped_table_is_valid, test_two_outcomes_that_sound_alike_are_refused | ✅ |
-| BUZ-01..02 | Four outcomes, said again on a cadence | Integration: test_BEEP_01_clean_board_says_ok_to_fly, test_BEEP_02_a_pyro_fault_names_its_channel, test_BEEP_03_anything_unfixable_says_system_failure, test_BEEP_04_unfixable_outranks_fixable; Beep: test_shipped_cadence_keeps_talking; Buzzer: test_BUZ_PAT_07_gap_between_passes | ✅ |
-| FLT-BOOT-01 | Non-blocking boot | Integration: test_FLT_BOOT_01_all_states | ✅ |
-| FLT-BOOT-02..03 | Config read, and written when absent | Unit: test_FLT_BOOT_02_reads_config_at_boot, test_FLT_BOOT_03_writes_default_config (the RP2040's hal_config_load() is the same code as the host's) | ✅ |
-| FLT-BOOT-04 | Settle wait | Integration: boot completes in expected time | ✅ |
-| FLT-BOOT-05 | Detect and initialise the sensor | Unit: test_FLT_BOOT_01_reaches_pad_idle | ✅ |
-| FLT-BOOT-06 | Initialise the pyro subsystem | Unit: test_FLT_BOOT_01_reaches_pad_idle | ✅ |
-| FLT-BOOT-07 | Initial continuity check | Integration: test_FLT_BOOT_01_all_states (BOOT_CONTINUITY on the way to PAD_IDLE) | ✅ |
-| FLT-BOOT-08 | Calibrate from the median of 10 readings | Unit: test_FLT_BOOT_08_calibrates_ground; Chain: test_T2_calibration_glitch | ✅ |
-| FLT-BOOT-09 | 2s stabilization | Unit: test_FLT_BOOT_04_settle_wait (2.5 s) | ✅ |
-| FLT-BOOT-11 | The sensor is tested before the pyros | Unit: test_SNS_PRES_01_boot_no_sensor (BOOT_SENSOR first; a failure never reaches the pyro test), test_FLT_BOOT_11_waits_for_the_sensor_bringup (a sensor still being brought up is waited for, not called missing) | ✅ |
-| FLT-BOOT-12 | No sensor: FAULT and system failure | Unit: test_SNS_PRES_01_boot_no_sensor, test_FLT_BOOT_12_bringup_that_never_ends_is_fault; Bring-up: test_bringup_without_a_sensor on every board | ✅ |
-| FLT-BOOT-13 | No calibration samples in 10 s: FAULT | Unit: test_FLT_BOOT_13_no_calibration_samples_is_fault | ✅ |
-| FLT-BOOT-14 | No filesystem: FAULT and system failure | Unit: test_FLT_BOOT_14_no_filesystem_is_fault; Integration: test_BEEP_03_anything_unfixable_says_system_failure (the announcement) | ✅ |
-| FLT-BOOT-15 | Every pad fault reported | Unit: test_REV04_pad_fault_after_boot_is_announced | ✅ |
-| BUZ-CODE-01 | The vocabulary is the pad's actions | Integration: test_BEEP_01..04 | ✅ |
-| BUZ-CODE-02 | Unfixable outranks a pyro fault | Integration: test_BEEP_03_anything_unfixable_says_system_failure, test_BEEP_04_unfixable_outranks_fixable | ✅ |
-| BUZ-CODE-03 | The diagnosis by name on /api/status | Hardware: `faults` on /api/status (`support/api_check.py`) | ✅ HW |
-| BUZ-CODE-04 | Key, meaning and sound per outcome | Beep: test_shipped_table_is_valid, test_three_personalities_all_named | ✅ |
-| BUZ-CODE-05 | Chirp, tone, count or silence | Beep: test_ok_to_fly_is_a_chirp_not_a_count, test_silence_is_not_a_duplicate | ✅ |
-| BUZ-CODE-06 | Counts of 1 to 9 | Beep: test_a_zero_beep_count_is_refused, test_a_count_above_nine_is_refused | ✅ |
-| BUZ-CODE-07 | No two outcomes sound alike | Beep: test_two_outcomes_that_sound_alike_are_refused, test_two_chirps_are_a_duplicate | ✅ |
-| BUZ-CODE-08 | A wholly silent personality is refused | Beep: test_a_wholly_silent_personality_is_refused | ✅ |
-| BUZ-CODE-09 | Three named personalities, one active | Beep: test_three_personalities_all_named, test_the_active_personality_is_the_one_used | ✅ |
-| BUZ-CODE-10 | An invalid table is rejected whole | Beep: test_an_unreadable_table_still_answers; Buzzer: test_BEEP_STORE_01/02 | ✅ |
-| BUZ-CODE-11 | The vocabulary is served to the web UI | Hardware: GET /api/beeps (`support/api_check.py`) | ✅ HW |
-| BUZ-CODE-12 | No beep.ini: the shipped table is written | Buzzer: test_BUZ_CODE_12_missing_table_is_written | ✅ |
-| BUZ-CODE-13 | Eggtimer defaults | Beep: test_shipped_pyro_codes_follow_eggtimer | ✅ |
+| UN-2 | The user needs to verify the system is ready before placing the rocket on the pad | Through SYS-STATUS-01, SYS-STATUS-02 | ✅ |
+| SYS-STATUS-01 | The system shall indicate readiness and faults audibly without requiring a display | Through BUZ-01, BUZ-02, FLT-BOOT-01, SNS-PRES-17 | ✅ |
+| SYS-STATUS-02 | The system shall verify pyrotechnic circuit integrity before flight | Through BUZ-CODE-01, PYR-CONT-01, PYR-CONT-02, PYR-HEALTH-01, PYR-HEALTH-02, FLT-BOOT-07, FLT-BOOT-15 | ✅ |
+| BUZ-01 | The system shall announce one of four outcomes | test_flight_pad.c: test_BUZ_01_a_clean_board_says_ok_to_fly, test_BUZ_01_a_pyro_fault_names_its_channel; the suite test_beep_codes.c | ✅ |
+| BUZ-02 | The announcement shall repeat on a configurable cadence, defaulting to every 5 s until launch, so that... | test_beep_codes.c: test_an_active_slot_that_does_not_exist_is_refused, test_a_silent_ok_to_fly_is_refused; test_buzzer.c: test_BUZ_PAT_04_task_armed_on_play, test_BUZ_PAT_06_repeat_count_2_buz02 | ✅ |
+| BUZ-CODE-01 | The beep vocabulary shall be the set of actions available at the pad | test_beep_codes.c: test_a_silent_ok_to_fly_is_refused, test_the_vocabulary_is_four_outcomes_in_priority_order; Web UI: test_ui.spec.js | ✅ |
+| BUZ-CODE-02 | One outcome shall be announced at a time, by priority | test_beep_codes.c: test_a_silent_ok_to_fly_is_refused, test_the_vocabulary_is_four_outcomes_in_priority_order; test_flight_pad.c: test_BUZ_01_a_clean_board_says_ok_to_fly, test_BUZ_CODE_02_pyro_1_is_announced_before_pyro_2, test_BUZ_CODE_02_a_general_fault_outranks_a_pyro_fault | ✅ |
+| BUZ-CODE-03 | The diagnosis shall be reported by name on /api/status, not encoded in the announcement | the suite test_beep_codes.c, test_status_json.c; Hardware: `support/api_check.py` | ✅ |
+| BUZ-CODE-04 | Each outcome shall carry a stable key, a human-readable meaning, and a configurable sound | test_beep_codes.c: test_the_vocabulary_is_four_outcomes_in_priority_order, test_a_table_stored_before_the_rename_is_still_read | ✅ |
+| BUZ-CODE-05 | A sound shall be a chirp, a steady tone, a beep count, or silence | the suite test_beep_codes.c | ✅ |
+| BUZ-CODE-06 | A beep count shall be 1 to 9 per group; a zero cannot be heard and a long count cannot be counted | the suite test_beep_codes.c | ✅ |
+| BUZ-CODE-07 | No two audible outcomes within a personality shall sound alike | the suite test_beep_codes.c | ✅ |
+| BUZ-CODE-08 | A personality that is wholly silent shall be refused, and so shall one whose OK to fly is silent | the suite test_beep_codes.c | ✅ |
+| BUZ-CODE-09 | The system shall hold three named personalities, one active | the suite test_beep_codes.c | ✅ |
+| BUZ-CODE-10 | A beep table that fails validation shall be rejected whole and the shipped personalities used | test_buzzer.c: test_BUZ_ACT_04_new_outcome_silences_the_old_one, test_BEEP_STORE_01_write_failure_is_not_a_digit_error; the suite test_beep_codes.c | ✅ |
+| BUZ-CODE-11 | The outcomes, their meanings and the personalities shall be served to the web interface so the firmware is... | Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
+| BUZ-CODE-12 | A board with no stored beep table shall store the shipped personalities | test_buzzer.c: test_BEEP_STORE_02_missing_file_reason_reaches_the_caller, test_BUZ_CODE_12_missing_table_is_written | ✅ |
+| BUZ-CODE-13 | The shipped defaults shall follow the Eggtimer Rocketry convention | test_beep_codes.c: test_shipped_pyro_codes_follow_eggtimer | ✅ |
+| BUZ-CODE-14 | A valid beep table that cannot be stored shall be reported as a storage failure, not as a validation failure | the suite test_buzzer.c | ✅ |
+| PYR-CONT-01 | The system shall check every enabled channel at least once per second during PAD_IDLE, for the faults the... | test_flight_pad.c: test_BUZ_01_a_clean_board_says_ok_to_fly, test_PYR_CONT_01_health_is_checked_every_second; the suite test_board_pyro_mk1b.c, test_board_pyro_mk1c.c | ✅ |
+| PYR-CONT-02 | The system shall report each enabled channel as ready or as faulted, and shall name what the board... | test_flight_pad.c: test_BUZ_01_a_clean_board_says_ok_to_fly; the suite test_board_pyro_mk1b.c, test_board_pyro_mk1c.c, test_status_json.c | ✅ |
+| PYR-CONT-03 | The pad diagnosis and announcement shall be re-derived at every check, so that a fault which appears or... | test_flight_pad.c: test_BUZ_01_a_clean_board_says_ok_to_fly, test_PYR_CONT_03_a_fault_that_appears_on_the_pad_is_announced | ✅ |
+| PYR-HEALTH-01 | A board that cannot detect a fault on a channel shall treat the channel as ready | test_board_pyro_mk1b.c: test_mk1b_fire_then_a_fresh_reading, test_mk1b_as_fitted_every_channel_is_ready; test_board_pyro_mk1c.c: test_mk1c_a_failed_pulse_does_not_prevent_the_next; test_fire_rules.c: test_FLT_AIR_01_a_failed_drogue_at_20_km_is_still_seen, test_PYR_HEALTH_01_a_faulted_channel_still_fires | ✅ |
+| PYR-HEALTH-02 | Only enabled channels shall count, for firing and for the pad verdict | test_fire_control.c: test_PYR_HEALTH_02_a_channel_that_is_not_enabled_never_fires; test_flight_pad.c: test_PYR_CONT_01_health_is_checked_every_second, test_PYR_HEALTH_02_a_channel_set_to_none_is_not_a_fault, test_PYR_HEALTH_02_a_channel_given_to_the_script_is_not_a_pyro; test_flight_profiles.c: test_CFG_04_a_channel_set_to_none_never_fires; test_ground_test.c: test_GND_TEST_08_only_an_enabled_channel_fires, test_GND_TEST_08_a_channel_given_to_the_script_does_not_fire; the suite test_pin_assign.c | ✅ |
+| FLT-BOOT-01 | The system shall complete its start-up checks before entering PAD_IDLE | test_flight_boot.c: test_FLT_BOOT_01_every_check_runs_before_the_pad | ✅ |
+| FLT-BOOT-02 | The system shall read configuration from persistent storage during start-up | test_flight_boot.c: test_FLT_BOOT_01_every_check_runs_before_the_pad, test_FLT_BOOT_02_the_stored_configuration_is_what_flies | ✅ |
+| FLT-BOOT-05 | The system shall detect and initialise the pressure sensor during start-up | test_flight_boot.c: test_FLT_BOOT_01_every_check_runs_before_the_pad, test_FLT_BOOT_05_a_sensor_slow_to_answer_is_waited_for | ✅ |
+| FLT-BOOT-06 | The system shall initialise the pyrotechnic subsystem during start-up | test_flight_boot.c: test_FLT_BOOT_01_every_check_runs_before_the_pad | ✅ |
+| FLT-BOOT-07 | The system shall perform an initial pyro health check during start-up | test_flight_boot.c: test_FLT_BOOT_01_every_check_runs_before_the_pad, test_FLT_BOOT_07_a_fault_found_at_start_up_is_the_first_thing_said | ✅ |
+| FLT-BOOT-08 | The system shall calibrate ground pressure from at least 10 readings, so that one bad reading cannot bias it | test_flight_boot.c: test_FLT_BOOT_01_every_check_runs_before_the_pad, test_FLT_BOOT_07_a_fault_found_at_start_up_is_the_first_thing_said, test_FLT_BOOT_08_one_bad_reading_does_not_bias_the_reference | ✅ |
+| FLT-BOOT-12 | The system shall enter a terminal FAULT state, and announce general fault, when no pressure sensor answers | test_flight_boot.c: test_FLT_BOOT_08_one_bad_reading_does_not_bias_the_reference, test_FLT_BOOT_12_no_sensor_is_a_terminal_general_fault, test_FLT_BOOT_12_a_sensor_that_never_finishes_coming_up_is_a_fault | ✅ |
+| FLT-BOOT-13 | The system shall enter FAULT when calibration produces no samples within 10 seconds, rather than... | test_flight_boot.c: test_FLT_BOOT_08_one_bad_reading_does_not_bias_the_reference, test_FLT_BOOT_13_a_calibration_with_no_samples_is_a_fault | ✅ |
+| FLT-BOOT-14 | The system shall enter FAULT, and announce general fault, when its storage cannot be used | test_flight_boot.c: test_FLT_BOOT_08_one_bad_reading_does_not_bias_the_reference, test_FLT_BOOT_14_unusable_storage_is_a_terminal_general_fault | ✅ |
+| FLT-BOOT-15 | /api/status shall report every fault found on the pad | test_flight_pad.c: test_BUZ_CODE_02_pyro_1_is_announced_before_pyro_2; the suite test_status_json.c | ✅ |
+| FLT-RATE-01 | The system shall take at least 50 pressure readings a second from PAD_IDLE to landing | test_collector.c: test_SNS_COL_01_it_runs_with_nothing_starting_it, test_FLT_RATE_01_each_sensor_outruns_the_flight_software | ✅ |
+| FLT-RATE-06 | The flight software shall act on every sample in the loop it arrives in, each as a step of its own,... | test_flight_pad.c: test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch, test_FLT_RATE_06_every_waiting_sample_is_taken_in_its_loop | ✅ |
+| FLT-RATE-05 | Every detector hold and dwell that measures the sensor shall run in sample time, so that lateness in... | test_flight_profiles.c: test_DAT_08_a_thinned_log_is_refused, test_FLT_RATE_05_a_late_loop_changes_no_decision | ✅ |
 
 ## 3. Flight Data Recovery
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| SYS-DATA-01 | Record flight data | Integration: test_DAT_04_events (samples > 100) | ✅ |
-| SYS-DATA-02 | Export standard format | Integration: test_DAT_06_csv_export; Chain: test_T8_columns, test_T8_replay | ✅ |
-| SYS-DATA-03 | Announce max altitude | Integration: test_BUZ_07_03_lifecycle | ✅ |
-| SYS-DATA-04 | The flight's motion on an SD card | Through SD-01, SD-02 (hardware) and HR-01..06 | ⚠️ |
-| DAT-01 | 4096-entry ring buffer | — the ring holds 64 (`FLIGHT_BUF_SIZE`); the flight record is `flight_log.bin`, DD-062 (H3) | ❌ |
-| DAT-02 | Sample fields, at the sample's time | Integration: events have correct fields; Chain: test_T11_log_rows_at_sample_time, test_T8_columns | ✅ |
-| DAT-08 | A high-rate log replays through the firmware | Chain: test_T8_replay (every event to the sample, no state diverging), test_T8_replay_refuses_a_thinned_log | ✅ |
-| DAT-03 | Events tag samples | Integration: test_DAT_04_events | ✅ |
-| DAT-04 | Log all event types | Integration: test_DAT_04_events; Closed-loop: test_REV16_forced_main_is_in_the_log | ✅ |
-| DAT-06 | Kept as binary, exported as CSV | Integration: test_DAT_06_csv_export (flight.csv); Chain: test_T8_columns (the binary log rendered, closed at landing); Format: test_FLOG_02, test_FLOG_06 (a log cut anywhere) | ✅ |
-| DAT-07 | CSV metadata header | Integration: test_DAT_06_csv_export (ID, both channels, max altitude), test_FLT_LOG_07_the_three_logging_plans (the rate); Format: test_FLOG_01; Chain: test_T8_replay (reads the log's own header) | ✅ |
-| BUZ-03..07 | Altitude beep-out | Integration: test_BUZ_07_03_lifecycle | ✅ |
+| UN-3 | The user needs to retrieve flight performance data after recovery | Through SYS-DATA-01, SYS-DATA-02, SYS-DATA-03, SYS-DATA-04 | ✅ |
+| SYS-DATA-01 | The system shall record flight data throughout the flight | the suite test_recorded_flight.c | ✅ |
+| SYS-DATA-02 | The system shall export flight data in a standard format | Through DAT-06, DAT-07 | ✅ |
+| SYS-DATA-03 | The system shall announce maximum altitude audibly after landing | test_flight_profiles.c: test_FLT_RT_01_other_activity_delays_no_decision_past_the_bound; test_recorded_flight.c: test_TST_02_landing_follows_the_ground_hit | ✅ |
+| SYS-DATA-04 | A board with a card and an accelerometer shall record the flight's motion at the accelerometer's rate on... | the suite test_hr_log.c | ✅ |
+| DAT-02 | Each sample shall include | test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order; the suite test_flight_log.c | ✅ |
+| DAT-03 | An event shall be recorded as a sample row at the event's own time | test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order; the suite test_flight_log.c | ✅ |
+| DAT-04 | The system shall log events | test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order | ✅ |
+| DAT-06 | The system shall keep flight data in persistent storage after landing and export it as CSV when it is read... | test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order; the suite test_flight_log.c | ✅ |
+| DAT-07 | The CSV shall include a metadata header with configuration, flight summary and the rate it was logged at | test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order; the suite test_flight_log.c | ✅ |
+| DAT-08 | A flight log written with log_rate=full shall carry what is needed to replay the flight through the... | test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order, test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise, test_DAT_08_a_full_rate_log_replays_to_the_same_events and 1 more | ✅ |
+| DAT-09 | Each board shall hold a flight log of the longest flight it supports, at each log rate, and shall declare... | The room is reported at `/api/log/space` and each board declares its capacity in its `THEORY_OF_OPERATION.md`; no test flies a log to the declared length | ⚠️ |
+| DAT-10 | Any record that holds a pressure not yet converted to altitude shall hold the temperature the sensor... | the suite test_flight_log.c | ✅ |
+| FLT-LOG-06 | A flight that never lands shall keep its record | the suite test_flight_log.c | ✅ |
+| FLT-LOG-07 | The flight log shall keep, by log_rate | the suite test_log_plan.c | ✅ |
+| FLT-LOG-08 | Records the flight log could not keep shall be counted and reported on /api/status | the suite test_status_json.c | ✅ |
+| BUZ-03 | The system shall play an altitude beep-out sequence after landing, holding it while a USB host is attached... | test_flight_profiles.c: test_FLT_RT_01_other_activity_delays_no_decision_past_the_bound, test_BUZ_03_the_peak_is_beeped_out_after_landing, test_BUZ_03_the_beep_out_is_held_on_usb_and_resumes | ✅ |
+| BUZ-04 | The altitude beep-out shall encode each digit of the peak altitude in configured units | test_flight_profiles.c: test_BUZ_03_the_peak_is_beeped_out_after_landing; the suite test_buzzer.c | ✅ |
+| BUZ-05 | The digit 0 shall be encoded as 10 beeps | the suite test_buzzer.c | ✅ |
+| BUZ-06 | The altitude beep-out shall repeat indefinitely | the suite test_buzzer.c | ✅ |
 
 ## 4. Configuration
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| SYS-CFG-01 | Persistent config | Web UI: config persists across reboot | ✅ |
-| SYS-CFG-02 | Config without tools | Web UI: config editor tests | ✅ |
-| SYS-CFG-03 | Validate against limits | Web UI: range warning test | ✅ |
-| CFG-01..09 | INI parsing | Closed-loop: all configs parsed and applied correctly | ✅ |
-| CFG-04 | `none` survives the round trip; unknown modes stored as none | Config: test_config_mode_none_round_trips, test_config_unknown_mode_serialises_as_none; Hardware: bench smoke test | ✅ |
-| CFG-07 | Shipped defaults fit their fields | Config: test_config_default_name_is_not_truncated; compile-time check in config.c | ✅ |
-| SYS-CFG-04 | A new field changes one place | Config: test_config_roundtrip_defaults, test_config_roundtrip_custom run over every field of `config_fields.h` | ✅ |
-| WEB-UI-02 | Guided editor; units convert; limits stated | Web UI: config tab tests, changing units converts the pyro values, the rocket name shows its 8-character limit | ✅ |
-| WEB-UI-03 | Warn if not applied | Web UI: save shows confirmation | ✅ |
+| UN-4 | The user needs to configure the system for different rockets and flight profiles | Through SYS-CFG-01, SYS-CFG-02, SYS-CFG-03, CFG-SUBSYS-01 | ✅ |
+| SYS-CFG-01 | The system shall store configuration persistently across power cycles | test_config_persistence.c: test_SYS_CFG_01_a_saved_configuration_is_read_back, test_SYS_CFG_01_each_save_replaces_the_last | ✅ |
+| SYS-CFG-02 | The system shall allow configuration changes without special tools | Web UI: test_ui.spec.js | ✅ |
+| SYS-CFG-03 | The system shall validate configuration against the limits of the sensor and of the board | Web UI: test_ui.spec.js | ✅ |
+| CFG-01 | The system shall store configuration in an INI-format file on persistent storage | test_config_persistence.c: test_SYS_CFG_01_a_saved_configuration_is_read_back, test_CFG_01_the_file_is_ini_text; the suite test_config.c | ✅ |
+| CFG-02 | The system shall parse the fields of the table below | the suite test_config.c | ✅ |
+| CFG-03 | The system shall support unit settings | test_config.c: test_config_parse_all_units; test_config_persistence.c: test_CFG_03_units_it_cannot_name_are_metres; test_flight_profiles.c: test_CFG_04_a_channel_set_to_none_never_fires, test_CFG_03_a_height_in_feet | ✅ |
+| CFG-04 | The system shall support pyro mode settings | test_config.c: test_config_parse_all_modes, test_config_default_ini_string, test_config_mode_none_round_trips; test_config_persistence.c: test_SYS_CFG_01_each_save_replaces_the_last, test_CFG_05_a_board_with_no_file_starts_on_the_defaults_and_stores_them, test_CFG_04_a_mode_it_cannot_name_is_none; test_flight_profiles.c: test_CFG_04_a_channel_set_to_none_never_fires; Hardware: `support/api_check.py` | ✅ |
+| CFG-05 | The system shall create a default configuration if the config file is missing | test_config_persistence.c: test_SYS_CFG_01_each_save_replaces_the_last, test_CFG_05_a_board_with_no_file_starts_on_the_defaults_and_stores_them; the suite test_config.c | ✅ |
+| CFG-06 | The system shall preserve existing config fields not present in a partial config file | test_config.c: test_config_parse_preserves_unset, test_config_writes_no_inert_keys, test_config_serialize_refuses_to_overflow; Hardware: `support/api_check.py` | ✅ |
+| CFG-07 | The system shall truncate id and name fields to 8 characters | test_config.c: test_config_parse_id_truncated, test_config_unknown_mode_serialises_as_none, test_config_default_name_is_not_truncated | ✅ |
+| CFG-08 | The system shall ignore unknown keys in the config file | test_config.c: test_config_parse_unknown_keys, test_config_parse_comments | ✅ |
+| CFG-09 | The system shall handle both CR+LF and LF line endings | test_config.c: test_config_parse_unix_newlines, test_config_parse_no_trailing_newline | ✅ |
+| CFG-10 | Configuration and pin changes shall take effect at start-up | test_config_persistence.c: test_CFG_03_units_it_cannot_name_are_metres, test_CFG_10_the_running_system_keeps_the_configuration_it_started_with; test_flight_pad.c: test_PYR_HEALTH_02_a_channel_given_to_the_script_is_not_a_pyro, test_CFG_10_a_saved_change_waits_for_the_next_start; test_ground_test.c: test_GND_TEST_13_a_pulse_that_energises_nothing_is_reported_not_refused, test_CFG_10_a_change_saved_in_the_mode_waits_for_the_next_start; Web UI: test_ui.spec.js; Structure: `support/structure_check.py`; Hardware: `support/api_check.py` | ✅ |
+| CFG-TABLE-02 | Every configuration field shall survive a save and a load unchanged | test_config.c: test_config_defaults, test_config_roundtrip_defaults, test_config_serialize_refuses_to_overflow | ✅ |
+| CFG-SUBSYS-01 | Every configuration key shall have an effect | test_config.c: test_config_default_name_is_not_truncated, test_config_writes_no_inert_keys | ✅ |
+| PYR-BOARD-01 | Each board shall declare the default and the permitted range of refire_interval and fire_gap, and may... | test_config.c: test_config_defaults; test_fire_rules.c: test_PYR_FIRE_01_a_pulse_that_energises_nothing_is_recorded_not_refused, test_PYR_BOARD_01_a_board_redefines_the_defaults, test_PYR_BOARD_01_a_configured_value_in_range_is_used | ✅ |
+| PYR-BOARD-02 | A configured value outside its permitted range shall be brought to the nearest permitted value, and the... | test_fire_rules.c: test_PYR_FIRE_01_a_pulse_that_energises_nothing_is_recorded_not_refused, test_PYR_BOARD_02_a_value_out_of_range_is_brought_in_and_reported; the suite test_status_json.c; Web UI: test_ui.spec.js | ✅ |
+| PYR-BOARD-03 | The defaults and ranges in force shall be served to the web interface, so the firmware is the only place... | test_fire_rules.c: test_PYR_FIRE_01_a_pulse_that_energises_nothing_is_recorded_not_refused; the suite test_status_json.c; Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
+| PYR-BOARD-04 | A board constraint may change when and how often a channel is energised | test_fire_rules.c: test_PYR_FIRE_01_a_pulse_that_energises_nothing_is_recorded_not_refused, test_PYR_BOARD_01_a_board_redefines_the_defaults, test_PYR_BOARD_02_a_value_out_of_range_is_brought_in_and_reported | ✅ |
+| PIN-LABEL-01 | Every assignable pin shall carry the connector designator silkscreened on the board, and the web UI shall... | test_pin_caps.c: test_the_default_lua_list_is_consistent, test_PIN_LABEL_01_every_row_is_labelled | ✅ |
+| PIN-BUZZ-01 | The buzzer shall be assignable to any pad the board declares capable of driving one, defaulting to the... | test_pin_assign.c: test_a_pad_the_board_reserves_for_something_else_is_never_given_up, test_PIN_BUZZ_01_default_is_board_not_gpio0, test_PIN_BUZZ_02_digital_user_pad_accepted, test_PIN_BUZZ_04_cannot_take_a_pad_lua_holds and 3 more | ✅ |
+| PIN-BUZZ-02 | A pad driving the buzzer shall be reserved against the script, and a pad holding a script role shall not... | test_pin_assign.c: test_PIN_BUZZ_02_digital_user_pad_accepted, test_PIN_BUZZ_03_buzzer_pad_is_reserved, test_PIN_BUZZ_04_cannot_take_a_pad_lua_holds | ✅ |
+| WEB-UI-02 | The web interface shall provide a guided configuration editor with input validation | Web UI: test_ui.spec.js | ✅ |
+| WEB-UI-03 | The web interface shall warn when configuration has been saved but not applied | Web UI: test_ui.spec.js | ✅ |
 
-## 5. Altitude Measurement
+## 5. Pressure Measurement
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| SYS-ALT-01 | Barometric altitude | Integration: altitude tracks trajectory | ✅ |
-| SYS-ALT-02 | Multiple sensors | — (hardware test only) | ⚠️ |
-| SNS-PRES-01 | Auto-detect sensor | — (hardware test only) | ⚠️ |
-| SNS-PRES-02..03 | Pressure filter, fractional | Unit: test_SNS_PRES_02_filter_smoothing, test_SNS_PRES_03_filter_init; Chain: test_T4_filter_noise (0.17 Pa of 1.2), test_T4_pad_speed (0.22 m/s) | ✅ |
-| SNS-PRES-05 | Conversion read after its worst case | Hardware (MK1C, MK1B): pres_rejects 0 under HTTP load, 18 in 60 s without the timing. The read is now the one-shot's, at the same 9.1 ms (DD-051): test_SNS_PRES_05_each_read_after_worst_case (the pressure and the temperature); `support/prove_core0.py` proves its handler RAM-closed; rechecked on 2.1.681 (2026-09-27): pres_rejects 0 on MK1B and MK1C through the G4 HTTP checks | ✅ |
-| SNS-PRES-07 | A single outlier never reaches the filter | Chain: test_T2_pad_glitch_sweep, test_T2_coast_glitch, test_T2_median_timing | ✅ |
-| SNS-PRES-08 | Each sample stamped by its driver at its measurement | MS5607: test_SNS_PRES_08_stamps_are_the_conversions, test_SNS_PRES_08_held_read_keeps_its_stamp (a read held 60 ms), test_SNS_PRES_08_late_loop_keeps_the_stamps (the handler's state machine on a fake bus); Chain: test_T11_stalls_change_nothing (under the test HAL's model of the stamping); BMP280: test_bmp280_stamp_is_the_conversions (the forced conversion's command, through a late loop, DD-067); bench check owed | ⚠️ |
-| SNS-PRES-09 | A quadratic fit over the last second, and whether it is clean | Chain: test_T5_fit_reference, test_T5_fit_noise, test_T5_clean, test_T5_sigma, test_T5_sigma_ignores_the_launch, test_T9_same_outcomes (the whole second at ~90 Hz); Mach: test_T9_mach_at_90hz; the fit's cost on the RP2040 is a bench check owed | ✅ |
-| SNS-PRES-10 | A stuck sensor: reported, and never a deployment | Mach: test_M2_stuck_in_coast, test_M2_reported, test_M2_real_sensor_never_stuck | ✅ |
-| SNS-PRES-11 | A gap or a lost sensor: a whole window of new samples before any decision | Mach: test_M2_dropout_in_coast, test_M2_lost, test_M2_reported, test_M2_out_of_range | ✅ |
-| SNS-PRES-12 | Each pressure compensated with the temperature at its own time | Chain: test_T9_temperature_at_the_pressures_time (0.70 Pa RMS, 1.00 worst, warming at 1 °C/s; 2.1 Pa RMS with the pair's own temperature as read, DD-066), test_T9_datasheet_example (the datasheet's worked example to the pascal); MS5607: test_SNS_PRES_12_the_line_interpolates_back (between two readings, the line's value; no further back than the oldest) | ✅ |
-| SNS-PRES-14 | A conversion a flash operation ran beside is not used | MS5607: test_ms5607_flash_during_the_pressure_marks_it, test_ms5607_flash_during_the_temperature_marks_it, test_ms5607_cycle_skips_a_flashed_temperature; BMP280: test_bmp280_flash_during_the_conversion_marks_it; Status: test_SJ_01_keys_order_and_formatting_are_the_api (`pres_flashed`); `support/pressure_trace.py --selftest` (a discarded pressure explains its slot); Hardware (2.1.701): G4 on all four boards discards 23-38 conversions each, no rejects, no Mach flag; on the bench MK1B the discarded pressures scattered twice the kept (DD-068) | ✅ |
-| SNS-PRES-13 | Every conversion, served for the bench | Trace: test_PTRACE_01..04 (order, numbering, a wrapped ring says what it lost); `support/pressure_trace.py --selftest`; Hardware: the four bench boards traced (DD-063) | ✅ |
-| SNS-PRES-06 | Impossible readings discarded and counted | Hardware: pres_rejects on /api/status; the false launch they caused did not recur | ✅ HW |
-| SNS-ALT-01..03 | Altitude computation | Integration: max altitude within expected range | ✅ |
-| SNS-ALT-04 | Speed from the unclamped height | Chain: test_N26_apogee_above_8km, test_T3_coast_two_sample_glitch (a glitch's decay below the pad) | ✅ |
+| UN-5 | The user needs accurate altitude measurement for pyro deployment and data recording | Through SYS-ALT-01, SYS-ALT-02 | ✅ |
+| SYS-ALT-01 | The system shall measure altitude using barometric pressure | test_recorded_flight.c: test_TST_02_apogee_is_declared_after_the_recorded_peak_and_soon | ✅ |
+| SYS-ALT-02 | The system shall operate with multiple pressure sensor types | the suite test_bmp280.c, test_sensor_bringup.c | ✅ |
+| SNS-PRES-01 | The system shall auto-detect the installed pressure sensor type | the suite test_sensor_bringup.c | ✅ |
+| SNS-PRES-06 | Every conversion the sensor completes shall be used, whatever its value | test_mach.c: test_SNS_PRES_11_lost_under_a_canopy_waits_for_new_samples, test_SNS_PRES_06_wild_readings_are_data_and_decide_nothing, test_SNS_PRES_06_a_pressure_with_no_logarithm_is_no_reading | ✅ |
+| SNS-PRES-08 | Each sample shall carry the time its pressure was measured, to within 1 ms ‡, unaffected by lateness in... | test_collector.c: test_SNS_COL_02_no_zero_however_the_handler_is_held_off, test_SNS_PRES_08_each_stamp_is_the_middle_of_its_conversion, test_SNS_PRES_08_a_held_read_keeps_its_stamp | ✅ |
+| SNS-PRES-10 | A whole second of one reading, to the pascal, shall be taken as a failed sensor | test_fire_control.c: test_PYR_MODE_04_speed_fires_at_the_descent_speed, test_SYS_DEPLOY_04_without_data_only_a_delay_fires; test_mach.c: test_SNS_EST_07_every_estimator_is_flown_and_logged, test_SNS_PRES_10_stuck_in_coast_deploys_nothing, test_SNS_PRES_06_a_pressure_with_no_logarithm_is_no_reading, test_SNS_PRES_10_a_failure_is_reported_and_the_flight_goes_on and 1 more | ✅ |
+| SNS-PRES-11 | A gap of more than 250 ms between samples shall suspend decisions until a whole second of new samples exists | test_fire_control.c: test_PYR_MODE_04_speed_fires_at_the_descent_speed, test_SYS_DEPLOY_04_without_data_only_a_delay_fires; test_mach.c: test_SNS_PRES_10_stuck_in_coast_deploys_nothing, test_SNS_PRES_11_a_gap_across_apogee_waits_for_new_samples, test_SNS_PRES_11_lost_under_a_canopy_waits_for_new_samples, test_SNS_PRES_06_a_pressure_with_no_logarithm_is_no_reading and 1 more | ✅ |
+| SNS-PRES-13 | The system shall keep the last 256 sensor conversions, with the time each was measured, when it was read,... | the suite test_pressure_trace.c | ✅ |
+| SNS-PRES-14 | A reading the board knows its own storage activity disturbed shall not be used, and shall be counted on... | test_collector.c: test_SNS_COL_03_the_handler_does_not_run_inside_a_take, test_SNS_PRES_14_a_flash_operation_marks_the_conversion_it_ran_beside | ✅ |
+| SNS-PRES-17 | On the pad, a sensor that gives no sample for 0.5 s, or that sticks (SNS-PRES-10), shall be a general fault | test_flight_pad.c: test_BUZ_CODE_02_a_general_fault_outranks_a_pyro_fault, test_SNS_PRES_17_a_sensor_that_stops_on_the_pad_is_a_general_fault, test_SNS_PRES_17_a_stuck_sensor_on_the_pad_is_a_general_fault, test_SNS_PRES_17_a_working_sensor_is_no_fault | ✅ |
+| SNS-PRES-15 | An MS5607's pressure and temperature shall be compensated to the datasheet's second order below 20 °C | test_ms5607.c: test_SNS_PRES_15_the_datasheets_example, test_SNS_PRES_15_nothing_changes_at_20_C_and_above, test_SNS_PRES_15_the_second_order_below_20_C, test_SNS_PRES_15_the_very_low_terms_below_minus_15_C and 1 more | ✅ |
+| SNS-PRES-16 | An MS5607 whose PROM fails its CRC shall not be taken for a sensor | test_ms5607.c: test_SNS_PRES_16_the_application_notes_example, test_SNS_PRES_16_one_wrong_bit_in_any_word_is_seen; test_sensor_bringup.c: test_bringup_without_a_sensor, test_SNS_PRES_16_a_prom_that_fails_its_crc_is_no_sensor | ✅ |
+| SNS-REC-01 | The flight software shall not attempt to recover a failed sensor in flight | test_flight_profiles.c: test_WEB_API_10_other_storage_access_is_refused_until_the_record_is_safe, test_SNS_REC_01_a_failed_sensor_is_logged_and_left_alone; Structure: `support/structure_check.py` | ✅ |
+| SNS-EST-01 | Every flight decision shall be made on a filtered estimate of the pressure, its rate and its acceleration,... | test_estimator.c: test_SNS_EST_01_the_state_is_the_pressure_its_rate_and_its_acceleration, test_SNS_EST_01_the_sensor_noise_is_tracked; Hardware: `support/api_check.py` | ✅ |
+| SNS-EST-02 | One or two consecutive bad readings, of any value the sensor can produce, shall change no decision | test_estimator.c: test_SNS_EST_01_the_sensor_noise_is_tracked, test_SNS_EST_02_one_or_two_bad_readings_leave_the_state_alone, test_SNS_EST_02_a_sustained_run_is_followed; test_flight_pad.c: test_FLT_LAUNCH_07_a_slow_rise_is_not_a_launch, test_SNS_EST_02_one_or_two_bad_readings_are_not_a_launch | ✅ |
+| SNS-EST-03 | Noise alone shall cross no threshold | test_estimator.c: test_SNS_EST_02_a_sustained_run_is_followed, test_SNS_EST_03_a_steady_descent_below_a_rule_never_reads_past_it, test_SNS_EST_03_a_still_board_reads_still; test_fire_rules.c: test_PYR_REFIRE_01_a_working_flight_gets_no_lasting_refire; test_flight_pad.c: test_FLT_LAUNCH_07_a_slow_rise_is_not_a_launch, test_SNS_EST_02_one_or_two_bad_readings_are_not_a_launch, test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch; test_mach.c: test_SNS_EST_03_a_swinging_canopy_moves_neither_the_main_nor_the_landing | ✅ |
+| SNS-EST-04 | The filtered state shall follow a real change | test_estimator.c: test_SNS_EST_03_a_still_board_reads_still, test_SNS_EST_04_a_speed_that_passes_a_rule_is_reported_within_two_seconds; test_fire_rules.c: test_PYR_REFIRE_01_a_charge_that_lights_on_the_third_pulse, test_SNS_EST_04_a_lost_canopy_is_seen_within_two_seconds | ✅ |
+| SNS-EST-05 | Every flight comparison shall be made in pressure | test_atmosphere.c: test_SNS_EST_05_pressure_at_the_standards_altitudes, test_SNS_EST_05_altitude_inverts_pressure, test_SNS_EST_05_a_height_is_measured_from_the_pad; test_estimator.c: test_SNS_EST_04_a_speed_that_passes_a_rule_is_reported_within_two_seconds, test_SNS_EST_05_an_agl_trigger_acts_at_its_height_from_any_pad | ✅ |
+| SNS-EST-06 | The filtered state shall come from one of the estimators the build carries, each behind one interface... | test_estimators.c: test_SNS_EST_06_each_has_a_name_config_can_hold; test_mach.c: test_FLT_APO_08_the_peak_is_logged, test_SNS_EST_06_the_flight_obeys_the_configured_estimator, test_SNS_EST_06_an_unknown_name_is_the_default; Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
+| SNS-EST-07 | Every estimator the build carries shall be given every reading, whichever is obeyed | test_mach.c: test_SNS_EST_06_an_unknown_name_is_the_default, test_SNS_EST_07_every_estimator_is_flown_and_logged | ✅ |
+| SNS-EST-08 | An estimator shall report whether its model explains the readings | test_estimators.c: test_SNS_EST_08_explaining_takes_a_second_of_readings, test_SNS_EST_08_a_step_no_motion_makes_is_not_explained, test_SNS_EST_08_a_few_missing_readings_are_not_a_gap, test_SNS_EST_08_a_ballistic_arc_is_explained_over_the_top and 1 more | ✅ |
+| SNS-EST-09 | Each estimator shall be told when the board pulses a channel | test_estimators.c: test_SNS_EST_08_an_estimate_does_not_fall_through_the_ground, test_SNS_EST_09_the_lumped_estimator_sits_out_its_own_charge | ✅ |
+| SNS-COL-01 | One collector shall own the sensor and its bus | test_collector.c: test_SNS_COL_01_it_runs_with_nothing_starting_it, test_SNS_COL_01_a_cycle_is_each_conversion_in_turn | ✅ |
+| SNS-COL-02 | A read shall follow its own conversion's command by the part's worst-case conversion time, and no read... | test_collector.c: test_SNS_COL_01_a_cycle_is_each_conversion_in_turn, test_SNS_COL_02_every_read_waits_out_the_worst_case, test_SNS_COL_02_no_zero_however_the_handler_is_held_off, test_SNS_COL_02_the_bmp280_is_read_after_its_worst_case and 1 more | ✅ |
+| SNS-COL-03 | The collector shall keep the four newest cycles not yet taken | test_collector.c: test_SNS_PRES_08_a_held_read_keeps_its_stamp, test_SNS_COL_03_a_task_60_ms_late_loses_nothing, test_SNS_COL_03_four_are_kept_and_the_oldest_goes_first, test_SNS_COL_03_a_cycle_is_taken_once and 1 more | ✅ |
+| SNS-COL-04 | A bus transfer that fails shall be counted on /api/status by its cause | test_collector.c: test_SNS_PRES_14_a_flash_operation_marks_the_conversion_it_ran_beside, test_SNS_COL_04_a_failed_transfer_is_counted_by_its_cause, test_SNS_COL_04_a_transfer_that_never_ends_is_aborted, test_SNS_COL_04_a_failed_cycle_is_not_queued; Hardware: `support/api_check.py` | ✅ |
+| SNS-COL-05 | After three failed transfers in a row the collector shall clear the bus (nine clocks and a STOP), reset... | test_collector.c: test_SNS_COL_04_a_failed_cycle_is_not_queued, test_SNS_COL_05_three_failures_clear_the_bus_and_reset_the_part, test_SNS_COL_05_the_part_is_left_to_reload_after_its_reset, test_SNS_COL_05_a_silent_part_is_tried_until_it_answers | ✅ |
+| SNS-COL-06 | The collector's interrupt handler and everything it calls shall run from RAM. The build shall fail otherwise | CI runs `support/prove_core0.py` on every image: it fails if `collector_alarm_isr` or anything it calls is outside RAM | ✅ |
+| SNS-ALT-01 | Altitude shall be reported relative to the launch pad, computed from the ground reference and the current... | test_atmosphere.c: test_SNS_EST_05_a_height_is_measured_from_the_pad, test_SNS_ALT_01_below_the_pad_is_negative; test_flight_profiles.c: test_SNS_MAX_01_best_effort_above_the_sensors_range, test_SNS_ALT_01_the_reported_peak_is_not_clamped, test_SNS_ALT_01_below_the_pad_is_a_negative_altitude; Structure: `support/structure_check.py` | ✅ |
+| SNS-MAX-01 | Each board shall declare its sensor's pressure range and its height for proper operation, the greatest... | test_flight_profiles.c: test_FLT_APO_01_apogee_is_never_early_and_soon_after_at_every_height, test_SNS_MAX_01_best_effort_above_the_sensors_range; Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
 
 ## 6. Telemetry
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| SYS-TEL-01 | Serial telemetry | Integration: test_TEL_01_output | ✅ |
-| TEL-01..02 | NMEA format + checksum | Integration: test_TEL_01_output (checksum verified) | ✅ |
-| TEL-03 | NMEA event sentences ($PYRO_APO, $PYRO_FIRE, $PYRO_LAND) | Integration: test_TEL_03_event_sentences | ✅ |
-| TEL-04 | JSON format (telem_format=1) | Integration: test_TEL_04_json_format | ✅ |
-| TEL-03..05 | Telemetry rates | Integration: ≥10 sentences during flight; Unit: test_REV12_telem_rate_hz_sets_the_flight_cadence | ✅ |
-| TEL-05 | No $PYRO in boot or FAULT | Unit: test_REV08_fault_sends_no_state_sentence | ✅ |
-| TEL-06..10 | Field contents | Integration: test_TEL_01_output | ✅ |
+| UN-6 | The user needs real-time flight data transmitted for ground monitoring | Through SYS-TEL-01 | ✅ |
+| SYS-TEL-01 | The system shall transmit flight data via serial interface during flight | test_recorded_flight.c: test_TST_02_the_recorded_flight_runs_pad_to_landed | ✅ |
+| TEL-01 | The system shall output telemetry in $PYRO NMEA sentence format | test_config.c: test_config_writes_no_inert_keys; test_telemetry.c: test_TEL_01_every_sentence_is_pyro_nmea_with_a_good_checksum | ✅ |
+| TEL-02 | Each telemetry sentence shall include an XOR checksum | test_telemetry.c: test_TEL_01_every_sentence_is_pyro_nmea_with_a_good_checksum | ✅ |
+| TEL-03 | The system shall output one telemetry message a second in PAD_IDLE, in flight and in LANDED | test_config.c: test_config_writes_no_inert_keys; test_telemetry.c: test_TEL_09_the_sequence_counts_every_sentence, test_TEL_03_one_message_a_second_in_every_state, test_TEL_03_one_message_a_second_after_landing | ✅ |
+| TEL-05 | The system shall not output telemetry during start-up or in FAULT. A faulted board shall instead send a... | test_flight_boot.c: test_FLT_BOOT_01_every_check_runs_before_the_pad, test_FLT_BOOT_08_one_bad_reading_does_not_bias_the_reference; test_ground_test.c: test_GND_TEST_05_started_with_the_switch_closed_enters_ground_test | ✅ |
+| TEL-06 | Each sentence shall include | test_telemetry.c: test_TEL_01_every_sentence_is_pyro_nmea_with_a_good_checksum, test_TEL_06_the_sentence_carries_the_flight | ✅ |
+| TEL-07 | The state field shall map | test_telemetry.c: test_TEL_03_one_message_a_second_in_every_state | ✅ |
+| TEL-08 | The flags field shall encode | test_telemetry.c: test_TEL_08_the_flags_follow_the_flight | ✅ |
+| TEL-09 | The sequence number shall increment with each sentence | test_telemetry.c: test_TEL_09_the_sequence_counts_every_sentence | ✅ |
+| TEL-10 | The thrust flag shall only be set during ASCENT when under thrust | test_telemetry.c: test_TEL_10_thrust_is_reported_only_in_the_burn | ✅ |
+| TEL-11 | A flight event -- apogee, a fire, landing -- shall be queued and carried by the next telemetry message, so... | test_telemetry.c: test_TEL_06_the_sentence_carries_the_flight, test_TEL_11_each_event_is_carried_once_by_the_next_message, test_TEL_11_no_event_is_lost_in_an_emergency, test_TEL_11_the_queue_holds_more_than_a_second_of_events | ✅ |
+| TEL-12 | The telemetry port shall accept no commands | Structure: `support/structure_check.py` | ✅ |
 
-## 7. Pyro Fault Protection
+## 7. Pyro Protection
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| PYR-FAULT-01 | Disable at >1.5A | N/A (hardware — AP2192) | ✅ HW |
-| PYR-FAULT-02 | Detect overcurrent | Closed-loop: test_PYR_FAULT_02_overcurrent_detection | ✅ |
-| PYR-FAULT-03 | Indicate overcurrent | Beep codes 2-3/3-3 + flight buffer events | ✅ |
-| PYR-VERIFY-01 | Post-fire verification | check_post_fire_verify() + beep codes 2-4/3-4; Board pyro (MK1C): test_mk1c_fired_channel_reads_open_after (the first tracking test on the drained bus reports the fired channel open) | ✅ |
-| PYR-ARM-01 | The pump only inside a fire; a stopped loop disarms | Board pyro (MK1C): test_mk1c_pump_runs_only_inside_a_fire, test_mk1c_a_stopped_loop_disarms (U9 off within 35 ms at the 20 ms loop), test_mk1c_only_the_tracking_test_runs | ✅ |
-| PYR-ARM-02 | Refused without presence, with a fault, or below UVLO | Board pyro (MK1C): test_mk1c_refuses_an_open_channel, test_mk1c_refuses_before_a_tracking_test, test_mk1c_refuses_with_a_latched_fault, test_mk1c_refuses_below_uvlo | ✅ |
-| PYR-ARM-03 | Fire on the measured bus; a precharge timeout aborts and latches | Board pyro (MK1C): test_mk1c_fires_on_the_measured_bus, test_mk1c_a_short_during_precharge_aborts, test_mk1c_fires_a_present_channel, test_mk1c_fires_on_one_cell; the bench fire into a dummy load is owed | ✅ |
-| PYR-ARM-04 | The pump stops at the gate; the gate held until U9 is off | Board pyro (MK1C): test_mk1c_pump_runs_only_inside_a_fire | ✅ |
-| PYR-ARM-05 | No flash write during a fire | Board pyro (MK1C): test_mk1c_flash_waits_out_a_fire (`board_flash_ok()`); `main_hardware.c` shuts the window on it, by inspection | ✅ |
-| PYR-ARM-06 | A misfire latches nothing; the other channel fires | Board pyro (MK1C): test_mk1c_misfire_leaves_the_other_channel, test_mk1c_both_channels_one_after_the_other | ✅ |
+| UN-7 | The user needs protection against pyrotechnic faults that could damage the system or cause unsafe conditions | Through SYS-FAULT-01, SYS-FAULT-02, SYS-FAULT-03 | ✅ |
+| SYS-FAULT-01 | Each board shall protect its pyro drive against a load that would damage it | the suite test_board_pyro_mk1c.c | ✅ |
+| SYS-FAULT-02 | The system shall detect the pyro fault conditions the board can sense | the suite test_board_pyro_mk1c.c | ✅ |
+| SYS-FAULT-03 | The system shall notify the user of pyro fault conditions | Through PYR-FAULT-03 | ✅ |
+| PYR-FAULT-01 | A board's protection may end a pulse | test_board_pyro_mk1c.c: test_mk1c_a_bus_that_will_not_charge_is_gated_at_the_deadline, test_mk1c_a_failed_pulse_does_not_prevent_the_next | ✅ |
+| PYR-FAULT-02 | A board that can sense that its protection acted during a pulse shall record it | test_board_pyro_mk1c.c: test_mk1c_a_stopped_loop_disarms, test_mk1c_a_bus_that_will_not_charge_is_gated_at_the_deadline | ✅ |
+| PYR-FAULT-03 | A fault during a pulse shall be shown to the user in the flight log and on /api/status | the suite test_board_pyro_mk1c.c, test_status_json.c; Web UI: test_ui.spec.js | ✅ |
+| PYR-VERIFY-01 | A board that can sense it shall record, after a pulse, whether the channel opened | the suite test_board_pyro_mk1c.c | ✅ |
+| PYR-ARM-01 | Software that stops running shall leave no channel energised or armed, within the board-declared time,... | the suite test_board_pyro_mk1c.c; MK1C: about 35 ms. MK1A and MK1B end a pulse from the loop, so a stopped loop leaves it energised until the watchdog, 1 s: the 50 ms bound is not met on those boards | ⚠️ |
+| PYR-ARM-03 | A board whose firing path must be made ready before a pulse shall deliver the pulse when the path is ready... | test_board_pyro_mk1c.c: test_mk1c_a_stopped_loop_disarms, test_mk1c_a_bus_that_will_not_charge_is_gated_at_the_deadline | ✅ |
+| PYR-ARM-05 | Storing data shall not shorten, lengthen or interrupt a pulse | the suite test_board_pyro_mk1c.c; `main_hardware.c` shuts the storage window while `board_flash_ok()` is false, by inspection | ✅ |
+| PYR-ARM-06 | A pulse that fails shall leave nothing latched that prevents or delays the other channel's pulse | the suite test_board_pyro_mk1c.c | ✅ |
 
 ## 8. Web Interface & Network
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| WEB-NET-01..04 | USB network, DHCP, mDNS, DNS-SD | Hardware: support/test_network.py | ⚠️ HW |
-| WEB-API-01 | GET /api/status | Web UI: status tests (3 modes) | ✅ |
-| WEB-API-02 | GET /api/config | Web UI: config loads from device | ✅ |
-| WEB-API-03 | POST /api/config | Web UI: save test | ✅ |
-| WEB-API-04 | POST /api/ota | Hardware: OTA to MK1A/B/C, every littlefs file preserved | ✅ HW |
-| WEB-API-05 | POST /api/reboot | Hardware: 200 with CORS, board back in PAD_IDLE | ✅ HW |
-| WEB-API-06 | GET /api/flight.csv, rendered from the binary log | Format: test_FLOG_04 (any division of the reads), test_FLOG_05 (the counted length is the rendered one); Hardware: the empty log reads as the column header (`support/api_check.py`); a flown log's download is owed on the bench | ⚠️ |
-| WEB-API-07 | CORS headers | Hardware: bench smoke test, every route | ✅ HW |
-| WEB-API-08 | The API live in flight; only the log touches the filesystem | Integration: test_WEB_API_08_only_the_log_touches_the_filesystem_in_flight (a whole flight asks for no other file), test_WEB_API_08_spent_marker_waits_for_the_log; the web server's 423s and the dropped transfer by inspection, bench check owed | ⚠️ |
-| WEB-API-09 | Erase the flight log | Web UI: the flight log can be erased; Hardware: bench smoke test | ✅ |
-| WEB-API-10 | No file served while the log is written | `serve_file()` answers 423 through `hal_fs_enter()`, by inspection; bench check owed (section 6 of docs/outstanding_tasks.md) | ⚠️ |
-| WEB-HTTP-01 | A request is a byte stream | HTTP: test_HTTP_02 (split at every byte), test_HTTP_03 (byte by byte, random), test_HTTP_04, test_HTTP_07; Hardware: `support/http_stream_check.py` 16/16 on MK1A/B/C (4/16 on the old server) | ✅ |
-| WEB-HTTP-02 | Content-Length and Connection: close on every response | HTTP: body_of() asserts both on every test; Hardware: http_stream_check framing checks | ✅ |
-| WEB-HTTP-03 | Flow control, not refusal | HTTP: test_HTTP_12 (a 10 kB body through a 2 kB ring into a sink that refuses 50 times); Hardware: uploads round-trip byte-exact, flash_refusals 0, Lua heartbeat unbroken on MK1C | ✅ |
-| WEB-HTTP-04 | Status codes for bad requests | HTTP: test_HTTP_08, 09, 10, 11; Hardware: 405 and 413 in http_stream_check | ✅ |
-| WEB-HTTP-05 | HTTP work in the net task, stack-neutral | By construction: http_conn.c and net_ring.c build and test on the host with no lwIP; callbacks only queue (http_server.c) | ✅ |
-| WEB-HTTP-06 | The transport moves bytes; units run in the net task | HTTP work: test_WORK_01..05 (in turn, only with a step, the budget, one a period); HTTP: test_HTTP_17 (a step to take); `support/prove_core0.py`: no HTTP handler is reachable from the flight task | ✅ |
-| WEB-API-11 | /api/status from a snapshot; its keys; valid JSON | Status: test_SJ_01 (every key, in order, formatted), test_SJ_02 (the widest fits), test_SJ_03 (a quote in the rocket's name), test_SJ_04 (refused, not truncated), test_SJ_07 (no watchdog, no stage); Hardware: `support/api_check.py` on all four bench boards | ✅ |
-| WEB-NET-05 | A busy endpoint holds the frame | Net: test_TXQ_01_sent_at_once_when_the_endpoint_is_free, test_TXQ_02_a_busy_endpoint_holds_the_frame, test_TXQ_03_order_is_kept, test_TXQ_04_drain_stops_when_the_endpoint_is_busy, test_TXQ_05_full_refuses, test_TXQ_06_not_ready_releases_everything, test_TXQ_07_wraps, test_TXQ_08_flush_releases_everything; Hardware (2.1.700, bench MK1B, one G4 round): 21 of 878 frames refused where 472 of 1182 were (DD-070) | ✅ |
-| WEB-NET-06 | The MAC drawn from the RNG and kept | MAC: test_WEB_NET_06_drawn_mac_is_local_unicast, test_WEB_NET_06_subnet_is_never_0_1_or_255, test_WEB_NET_06_same_seed_different_samples_differ, test_WEB_NET_06_no_repeat_across_many_boards, test_WEB_NET_06_subnet_spreads_evenly, test_WEB_NET_06_file_round_trips_drawn_and_assigned, test_WEB_NET_06_assigned_file_as_the_api_writes_it, test_WEB_NET_06_malformed_files_are_refused_whole; Status: test_SJ_01_keys_order_and_formatting_are_the_api | ✅ |
-| WEB-API-13 | /api/net: the network's counters | Net: test_NET_01_keys_order_and_formatting_are_the_api, test_NET_02_the_widest_fits_its_bound, test_NET_03_too_small_renders_nothing; Hardware: `support/api_check.py` (every pool, eleven states, this request's own connection) | ✅ |
-| WEB-API-12 | /api/log/space | Hardware: `support/api_check.py` (bytes free, 22-byte records, 1 and 50 or 100 rows/s) on the bench boards; Web UI: the mock's answer drives WEB-UI-06's tests | ✅ HW |
-| WEB-UI-01 | Status in config units | Web UI: altitude in meters/feet tests | ✅ |
-| WEB-UI-04 | Flight summary + CSV, from the log, refreshed, named | Web UI: flight data tests, a flight recorded while the page is open appears on refresh; Unit: test_REV09_flight_time_freezes_at_landing | ✅ |
-| WEB-UI-05 | Firmware upload | Web UI: update tab test | ✅ |
-| WEB-UI-06 | The three logging plans, and the longest flight the log holds | Web UI: *log rate: the longest flight the log holds follows the plan*, *log rate: saved with the rest of the tab*, *log rate: no estimate while the flight log is written*; *config tab shows non-default values* | ✅ |
+| UN-8 | The user needs to monitor, configure, and update the system from a computer without special software | Through SYS-WEB-01, SYS-WEB-02 | ✅ |
+| SYS-WEB-01 | The system shall provide a web interface accessible via USB connection | Web UI: test_ui.spec.js | ✅ |
+| SYS-WEB-02 | The system shall be discoverable on the network without manual IP configuration | Hardware: `support/test_network.py` | ✅ HW |
+| WEB-NET-01 | The system shall present a USB network interface to the host computer | Hardware: `support/test_network.py` | ✅ HW |
+| WEB-NET-02 | The system shall serve DHCP and take the address 192.168.N.1, where N is the board's own subnet (WEB-NET-06) | Hardware: `support/test_network.py` | ✅ HW |
+| WEB-NET-03 | The system shall advertise its hostname via mDNS | Hardware: `support/test_network.py` | ✅ HW |
+| WEB-NET-04 | The system shall advertise a DNS-SD service for automatic discovery | Hardware: `support/test_network.py` | ✅ HW |
+| WEB-NET-05 | A frame the USB link cannot take yet shall be held and sent in order as soon as it can, not dropped; one... | the suite test_net_txq.c | ✅ |
+| WEB-NET-06 | A board shall have a unique network address that survives restarts, without factory programming | test_mac_random.c: test_WEB_NET_06_drawn_mac_is_local_unicast, test_WEB_NET_06_subnet_is_never_0_1_or_255, test_WEB_NET_06_same_seed_different_samples_differ, test_WEB_NET_06_no_repeat_across_many_boards and 4 more | ✅ |
+| WEB-API-01 | The system shall serve device status as JSON at /api/status | the suite test_status_json.c; Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
+| WEB-API-02 | The system shall serve the configuration file at /api/config (GET) | Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
+| WEB-API-03 | The system shall accept configuration updates at /api/config (POST) and write to persistent storage | Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
+| WEB-API-04 | The system shall accept firmware updates at /api/ota (POST), answer before it restarts, and answer Expect | Hardware: an update over HTTP to MK1A, MK1B and MK1C, every stored file kept | ✅ HW |
+| WEB-API-05 | The system shall trigger a device restart at /api/reboot (POST) | Hardware: 200 with CORS, and the board back in PAD_IDLE | ✅ HW |
+| WEB-API-06 | The system shall serve flight data as CSV at /api/flight.csv, framed by Content-Length | the suite test_flight_log.c; Web UI: test_ui.spec.js | ✅ |
+| WEB-API-07 | All API responses shall include CORS headers | Hardware: `support/api_check.py`, `support/http_stream_check.py` | ✅ HW |
+| WEB-API-08 | The web API and USB shall stay live in flight | test_flight_profiles.c: test_BUZ_03_the_beep_out_is_held_on_usb_and_resumes, test_WEB_API_08_only_the_flight_record_is_stored_in_flight; The web server answering 423 and dropping a held transfer: by inspection; a bench check in a chamber flight is owed | ✅ |
+| WEB-API-09 | The system shall erase the flight log on request at /api/flight/erase (POST), unless the log is being written | Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
+| WEB-API-10 | A request for a file shall be refused with 423 while the flight log is being written | test_flight_profiles.c: test_BUZ_03_the_beep_out_is_held_on_usb_and_resumes, test_WEB_API_10_other_storage_access_is_refused_until_the_record_is_safe | ✅ |
+| WEB-API-11 | /api/status shall be self-consistent, taken at one instant of the flight, shall keep its keys and their... | the suite test_status_json.c | ✅ |
+| WEB-API-12 | The system shall report at /api/log/space the bytes the next flight's log has room for, the size of a... | Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
+| WEB-API-13 | The system shall report at /api/net what the network has in use, has refused and has dropped, and the USB... | the suite test_net_stats.c | ✅ |
+| WEB-HTTP-01 | The HTTP server shall treat each connection as a byte stream | the suite test_http.c; Hardware: `support/http_stream_check.py` | ✅ |
+| WEB-HTTP-02 | Every response shall be framed by Content-Length and carry Connection | the suite test_http.c; Hardware: `support/http_stream_check.py` | ✅ |
+| WEB-HTTP-03 | The server shall read a request body only as fast as it consumes it, so that TCP flow control, not a... | the suite test_http.c; Hardware: `support/http_stream_check.py` | ✅ |
+| WEB-HTTP-04 | The server shall refuse a malformed or oversized request with its HTTP status | the suite test_http.c; Hardware: `support/http_stream_check.py` | ✅ |
+| WEB-UI-01 | The web interface shall display device status in the configured units | Web UI: test_ui.spec.js | ✅ |
+| WEB-UI-04 | The web interface shall display flight summary data and allow CSV download | Web UI: test_ui.spec.js | ✅ |
+| WEB-UI-05 | The web interface shall support firmware upload and update checking | Web UI: test_ui.spec.js | ✅ |
+| WEB-UI-06 | The Config tab shall offer the three logging plans, and shall estimate the longest flight the log holds... | Web UI: test_ui.spec.js | ✅ |
 
 ## 9. Firmware Update
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| OTA-01..04 | OTA, inactive slot, rollback, safety | — (hardware test only) | ⚠️ HW |
+| UN-9 | The user needs to update firmware safely without risk of bricking the device | Through SYS-OTA-01, SYS-OTA-02 | ⚠️ |
+| SYS-OTA-01 | The system shall support firmware updates without physical access to the board | Through OTA-01, OTA-02 | ✅ |
+| SYS-OTA-02 | The system shall recover from a failed firmware update | Through OTA-03, OTA-04, OTA-05 | ⚠️ |
+| OTA-01 | The system shall support over-the-air firmware updates via HTTP | Hardware: updates to MK1A, MK1B and MK1C through `support/upload_fw.sh` | ✅ HW |
+| OTA-02 | The system shall write new firmware to an inactive slot while continuing to run | Through BLD-05; Hardware: the board serves pages while the image is written | ✅ HW |
+| OTA-03 | The system shall automatically revert to the previous firmware if the new firmware does not reach normal... | Hardware only: an image that never commits is rolled back by the bootloader; no scripted check | ⚠️ |
+| OTA-04 | A failed or interrupted update shall not affect the currently running firmware | Hardware only: no scripted check | ⚠️ |
+| OTA-05 | Firmware built for a different board shall not be kept | the suite test_board_selftest.c | ✅ |
 
-## 10. Ground Test Interface
-
-| Req | Description | Verified By | Status |
-|-----|-------------|-------------|--------|
-| GND-TEST-01 | BEEP STATUS replays last continuity code | Integration: test_GND_TEST_01_beep_status_replay | ✅ |
-| GND-TEST-02 | ARM then FIRE within 3s fires the pyro | Integration: test_GND_TEST_02_arm_fire_sequence | ✅ |
-| GND-TEST-03 | ARM auto-disarms after 3s timeout | Integration: test_GND_TEST_03_auto_disarm | ✅ |
-| GND-TEST-04 | Commands rejected outside PAD_IDLE | Integration: test_GND_TEST_04_only_in_pad_idle | ✅ |
-| GND-TEST-05 | Ground test mode at power-up, after the checks; a recovery wins | Ground test: test_GND_TEST_05_powered_up_asserted_enters_ground_test, test_GND_TEST_05_not_asserted_boots_to_the_pad, test_GND_TEST_05_asserted_briefly_boots_to_the_pad, test_GND_TEST_05_a_recovery_outranks_the_pin | ✅ |
-| GND-TEST-06 | The mode announced; the buzzer the procedure's alone | Ground test: test_GND_TEST_06_usb_does_not_take_the_buzzer; Sequence: test_GT_mode_is_announced; Buzzer: test_BUZ_GT_01_alert | ✅ |
-| GND-TEST-07 | Countdown, pyro 1, tone and countdown, pyro 2, all-clear | Ground test: test_GND_TEST_07_the_procedure; Sequence: test_GT_both_channels, test_GT_the_countdown_is_a_second_a_count; Buzzer: test_BUZ_GT_02_countdown, test_BUZ_GT_03_tone, test_BUZ_GT_04_all_clear; bench check owed (a person, dummy loads) | ✅ |
-| GND-TEST-08 | Only enabled channels; the steps omitted | Ground test: test_GND_TEST_08_only_the_enabled_channels_fire, test_GND_TEST_08_a_released_channel_is_not_enabled; Sequence: test_GT_only_channel_1, test_GT_only_channel_2, test_GT_no_channel | ✅ |
-| GND-TEST-09 | Held 1 s before a release counts; a 100 ms debounce | Sequence: test_GT_a_release_before_arming_does_nothing, test_GT_a_bounce_is_not_a_release | ✅ |
-| GND-TEST-10 | Closed again: the procedure stops before the next fire | Ground test: test_GND_TEST_10_reasserting_aborts; Sequence: test_GT_reasserting_aborts_the_countdown, test_GT_reasserting_in_the_tone_stops_the_second, test_GT_reasserting_in_the_second_countdown_stops_the_second | ✅ |
-| GND-TEST-11 | Terminal until power-up; never flies | Ground test: test_GND_TEST_11_never_flies; Sequence: test_GT_done_is_final | ✅ |
-| GND-TEST-12 | The switch: to ground, or across two pads | Pin assignment: test_PIN_GT_01_default_is_none, test_PIN_GT_02_a_switch_to_ground_on_a_user_pad, test_PIN_GT_03_a_switch_across_two_pads, test_PIN_GT_04_each_wiring_needs_its_pads, test_PIN_GT_05_pads_it_cannot_take, test_PIN_GT_06_not_a_pad_already_in_use, test_PIN_GT_07_ini_round_trip; Switch: test_GT_SW_switch_to_ground, test_GT_SW_two_pads_closed_and_open, test_GT_SW_two_pads_a_stuck_pad_is_not_closed, test_GT_SW_two_pads_drive_alternates; Web UI: the ground test switch is wired to ground or across two pads; bench check owed | ✅ |
-| DD-011 | NMEA-style $GT,... responses with XOR checksum | Integration: test_GND_TEST_02_arm_fire_sequence | ✅ |
-| CFG-HAL-01 | hal_config_load() abstracts config storage | Integration: all tests load config via HAL | ✅ |
-| CFG-HAL-02 | hal_config_save() persists config changes | Integration: hal_test.c implements in-memory save | ✅ |
-| PWR-SLEEP-01 | CPU sleeps between events (hal_sleep_until_event) | Integration: no-op in test; __wfe on hardware | ✅ |
-
-## 11. Portability & Testability
+## 10. Scripting
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| HAL-01 | No #ifdef in flight code | CI: grep verification | ✅ |
-| RTOS-01 | The flight task waits only for its period | `support/prove_core0.py` in CI: every blocking kernel call refused by name on the flight task's graph, the period wait the one allowed edge; Hardware: loop_overruns and flash_skips 0 on the bench boards | ⚠️ |
-| RTOS-02 | Flash operations under a bounded lockout | `support/prove_core0.py` in CI: flash_op_park RAM-resident and RAM-closed, flash_op unreachable from the flight task; Hardware: flash_refusals 0, flash_skips 0 on the bench boards | ⚠️ |
-| HAL-02..04 | HAL interface | CI: all 3 targets build from same source | ✅ |
+| UN-15 | The user needs to run auxiliary functions -- lights, cameras, payload, serial devices -- from a script,... | Through SYS-LUA-01, SYS-LUA-02 | ⚠️ |
+| SYS-LUA-01 | Every board shall run an operator-supplied Lua script with access to the flight's state and to the pads... | the suite test_lua.c; MK1C-SD is built without a script: J3 carries its SPI bus | ⚠️ |
+| SYS-LUA-02 | No script shall be able to block, prevent, or delay beyond its normal timing any behaviour of the board | the suite test_lua.c; Structure: `support/structure_check.py` | ✅ |
+| LUA-ISO-01 | A script that loops, faults or exhausts its memory shall cost only itself | the suite test_lua.c | ✅ |
+| LUA-ISO-02 | A script shall read the flight's state and never write it | the suite test_lua.c | ✅ |
+| LUA-ISO-03 | A script shall have no means to fire an enabled pyro channel or to stop one firing | the suite test_lua.c; Structure: `support/structure_check.py` | ✅ |
+| LUA-ISO-04 | A script shall have no access to files | the suite test_lua.c | ✅ |
+| LUA-SAFE-01 | Whatever script is stored, the board shall start, reach its pad state and serve its web interface, so a... | The start-up gate is in `src/lua/lua_app.c`; a commanded restart now clears its mark (`lua_app_restart_commanded()`). Bench check owed: reboot within 15 s of start, script still runs | ⚠️ |
+| LUA-PAD-01 | Every pad shall have one owner, the flight software or the script, set by the pin assignment and fixed... | the suite test_lua.c, test_pin_assign.c; Web UI: test_ui.spec.js | ✅ |
+| LUA-PAD-02 | A script shall reach a resource by its assigned name and kind | the suite test_lua.c | ✅ |
+| LUA-PAD-03 | Each board shall declare the resources it offers to scripts | the suite test_pin_caps.c; Web UI: test_ui.spec.js | ✅ |
+| LUA-RUN-01 | The enabled script shall always run | `lua_app_service()` is called every loop whatever the flight state, by inspection. Bench check owed: a script running through a bench flight and through ground test mode | ⚠️ |
+| LUA-MGT-01 | The web interface shall edit, check, save and remove the script | the suite test_lua.c; Web UI: test_ui.spec.js | ✅ |
+| LUA-MGT-02 | A console shall show the script's output and errors, and whether the script is running or why it is not | Web UI: test_ui.spec.js | ✅ |
+| LUA-IO-01 | The web UI shall export the script to a local file and import one back, so a program survives the loss of... | Web UI: test_ui.spec.js | ✅ |
+| LUA-IO-02 | An imported program shall land in the editor and not on the device, so a mis-picked file costs nothing... | Web UI: test_ui.spec.js | ✅ |
 
-## 12. Build & Test System
-
-| Req | Description | Verified By | Status |
-|-----|-------------|-------------|--------|
-| BLD-01..05 | Build targets | CI: build succeeds | ✅ |
-| TST-01..03 | Unit/integration/closed-loop | CI: all pass | ✅ |
-| TST-04 | All 4 pyro modes | Closed-loop: 7 config suites | ✅ |
-| TST-05 | 100ft to 100km | Closed-loop: 4 profiles, 65 m to 950 m, from rockets.json (H3) | ❌ |
-| TST-06 | Chute reduces descent | Closed-loop: test_TST_06_chute_effect | ✅ |
-| TST-07 | Web UI tests | CI: Playwright tests | ✅ |
-| TST-08 | CI on every push | GitHub Actions | ✅ |
-| TST-09 | Traceable to requirements | This document | ✅ |
-
----
-
-## 13. Power Management (v2.0)
+## 11. Ground Test
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| PWR-SAMPLE-01 | 50Hz pressure sampling via async task | Integration: all tests use hal_pressure_fifo_* | ✅ |
-| PWR-SAMPLE-02 | 5-sample batch delivery | Integration: flight_process_samples() in all integration runs | ✅ |
-| PWR-TELEM-01 | Async telemetry TX | Host: buzzer_tests / integration (non-blocking send) | ✅ |
-| PWR-BUZZ-01 | Autonomous buzzer via async task | Buzzer: test_BUZ_ACT_01..04, test_BUZ_PAT_01..04, test_BUZ_PAT_06..10 | ✅ |
-| BUZ-CODE-14 | A storage failure is not a validation failure | Buzzer: test_BEEP_STORE_01/02 | ✅ |
-| PWR-SLEEP-01 | CPU sleep between events | Integration: no-op in test; __wfe on hardware | ✅ |
-| PWR-LOG-01 | RAM-buffered async flash logging | Integration: hal_log_sample() called; mock records calls | ✅ |
-| PWR-LOG-02 | hal_log_start() opens file + registers task | Integration: test_FLT_BOOT_01 (log starts on LAUNCH) | ✅ |
-| PWR-LOG-03 | hal_log_sample() is non-blocking | Integration: called 50×/s during flight; no stall | ✅ |
-| PWR-LOG-04 | hal_log_stop() signals flush close | Integration: test_FLT_LAND_04 (log stops on LANDED) | ✅ |
-| PWR-BUZZ-02 | Buzzer: IDLE → ENCODE → PLAYING states | Buzzer: test_BUZ_ACT_01_lifecycle, test_BUZ_ACT_02_stop (active and idle; no test observes ENCODE) | ⚠️ |
-| PWR-BUZZ-03 | Pattern computed at request time | Buzzer: test_BUZ_PAT_02_counted_codes, test_BUZ_PAT_03_altitude_165_digits | ✅ |
-| PWR-TELEM-02 | hal_telemetry_send() O(n), no stall | Buzzer/Integration: verified by non-blocking assertion | ✅ |
-| PWR-TELEM-03 | TX ring ≥ 512 bytes; overflow drops end | Host: hal_test.c mock buffers full sentence | ✅ |
+| UN-12 | The user needs to verify pyro circuits and system behavior on the ground without a computer | Through SYS-TEST-01, USB-08 | ✅ |
+| SYS-TEST-01 | The system shall support a ground test of its pyro channels by a test switch | Through GND-TEST-05, GND-TEST-06, GND-TEST-07, GND-TEST-12, GND-TEST-13 | ✅ |
+| GND-TEST-05 | A board started with its ground test switch closed, and held closed for 0.5 s at the end of the start-up... | test_ground_test.c: test_GND_TEST_05_started_with_the_switch_closed_enters_ground_test, test_GND_TEST_05_started_with_the_switch_open_goes_to_the_pad, test_GND_TEST_05_closed_only_briefly_goes_to_the_pad, test_GND_TEST_05_a_resumed_flight_outranks_the_switch | ✅ |
+| GND-TEST-06 | Ground test mode shall be announced by three long beeps and a pause, repeating | test_buzzer.c: test_BUZ_PAT_10_usb_ok_is_one_double_chirp; test_ground_test.c: test_GND_TEST_05_started_with_the_switch_closed_enters_ground_test, test_GND_TEST_06_usb_does_not_take_the_buzzer; test_ground_test_seq.c: test_GT_mode_is_announced | ✅ |
+| GND-TEST-07 | The switch opened, once it has been held closed in ground test mode, shall start the procedure | test_buzzer.c: test_BUZ_PAT_10_usb_ok_is_one_double_chirp; test_ground_test.c: test_GND_TEST_06_usb_does_not_take_the_buzzer, test_GND_TEST_07_the_procedure; test_ground_test_seq.c: test_GT_mode_is_announced, test_GT_both_channels | ✅ |
+| GND-TEST-08 | Only an enabled channel shall fire | test_buzzer.c: test_BUZ_PAT_10_usb_ok_is_one_double_chirp; test_ground_test.c: test_GND_TEST_06_usb_does_not_take_the_buzzer, test_GND_TEST_07_the_procedure, test_GND_TEST_08_only_an_enabled_channel_fires, test_GND_TEST_08_a_channel_given_to_the_script_does_not_fire; test_ground_test_seq.c: test_GT_the_countdown_is_a_second_a_count, test_GT_only_channel_1, test_GT_only_channel_2, test_GT_no_channel | ✅ |
+| GND-TEST-09 | The switch shall count as opened only after it has been held closed for 1 s in ground test mode, and a... | test_ground_test.c: test_GND_TEST_06_usb_does_not_take_the_buzzer, test_GND_TEST_07_the_procedure, test_GND_TEST_09_an_opening_counts_only_after_a_second_held, test_GND_TEST_09_a_bounce_is_not_an_opening; test_ground_test_seq.c: test_GT_no_channel, test_GT_a_release_before_arming_does_nothing, test_GT_a_bounce_is_not_a_release | ✅ |
+| GND-TEST-10 | The switch closed again during a countdown or the tone shall stop the procedure before the next fire, and... | test_ground_test.c: test_GND_TEST_06_usb_does_not_take_the_buzzer, test_GND_TEST_07_the_procedure, test_GND_TEST_10_closing_the_switch_stops_the_procedure; test_ground_test_seq.c: test_GT_a_bounce_is_not_a_release, test_GT_reasserting_aborts_the_countdown, test_GT_reasserting_in_the_tone_stops_the_second | ✅ |
+| GND-TEST-11 | Ground test mode shall last until the next start | test_ground_test.c: test_GND_TEST_10_closing_the_switch_stops_the_procedure, test_GND_TEST_11_never_flies, test_GND_TEST_11_nothing_follows_the_all_clear; test_ground_test_seq.c: test_GND_TEST_13_a_fire_that_energised_nothing_is_recorded_and_the_procedure_goes_on, test_GT_done_is_final | ✅ |
+| GND-TEST-12 | The ground test switch shall be assignable as none, a switch from one pad to ground, or a switch across... | test_ground_test_seq.c: test_GT_phase_names; test_pin_assign.c: test_PIN_BUZZ_07_ini_round_trip, test_PIN_GT_01_default_is_none, test_PIN_GT_05_pads_it_cannot_take, test_PIN_GT_08_the_switch_may_join_the_buzzers_pad_to_another; Web UI: test_ui.spec.js; Hardware: `support/api_check.py`; The pulsed read on the buzzer's pad (`gts_tick()`) is platform code: bench check owed, `docs/ground_test_on_buzzer_pad.md` | ✅ |
+| GND-TEST-13 | A ground test fire shall be delivered on command | test_ground_test.c: test_GND_TEST_11_nothing_follows_the_all_clear, test_GND_TEST_13_no_health_reading_withholds_a_fire, test_GND_TEST_13_a_pulse_that_energises_nothing_is_reported_not_refused; test_ground_test_seq.c: test_GT_a_busy_fire_is_asked_again, test_GND_TEST_13_a_fire_that_energised_nothing_is_recorded_and_the_procedure_goes_on | ✅ |
 
-## 14. Configuration System (v2.0)
+## 12. On USB
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| CFG-TABLE-01 | X-macro single-table config | Config: test_config_defaults, test_config_roundtrip_defaults (every field from `config_fields.h`) | ✅ |
-| CFG-TABLE-02 | Round-trip serialize → parse | Config: test_config_roundtrip_defaults, test_config_roundtrip_custom | ✅ |
-| CFG-SUBSYS-01 | Each subsystem has configurable params, every key read | Config: test_config_writes_no_inert_keys; Unit: telem_rate_hz; Config: test_config_parse_new_fields (log_rate's three names; an unknown one, and an old log_rate_hz, log at the default); Integration: test_FLT_LOG_07_the_three_logging_plans | ✅ |
+| UN-13 | The user needs a board on the bench, plugged into a computer or a charger, to stay quiet and never behave... | Through SYS-USB-01 | ✅ |
+| SYS-USB-01 | While attached to USB, the system shall not detect a flight and shall not announce its status, unless the... | Through USB-01, USB-02, USB-03, USB-04, USB-05, USB-07, USB-08 | ✅ |
+| USB-01 | While a USB host is attached and test mode is off, the system shall not declare launch, shall not resume a... | test_flight_pad.c: test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds, test_USB_01_no_launch_and_no_record_while_attached; test_resume.c: test_FLT_BROWN_05_on_usb_is_reported; Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
+| USB-02 | While a USB host is attached and test mode is off, the system shall not announce the pad verdict, a... | test_flight_boot.c: test_FLT_BOOT_14_unusable_storage_is_a_terminal_general_fault, test_USB_02_a_general_fault_is_not_said_on_usb; test_flight_pad.c: test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds, test_USB_01_no_launch_and_no_record_while_attached, test_USB_02_nothing_is_announced_while_attached; test_flight_profiles.c: test_FLT_RT_01_other_activity_delays_no_decision_past_the_bound; Hardware: `support/api_check.py` | ✅ |
+| USB-03 | On attach, and on leaving test mode while attached, the system shall play one OK-on-USB double chirp, and... | test_buzzer.c: test_BUZ_PAT_09_altitude_10000, test_BUZ_PAT_10_usb_ok_is_one_double_chirp; test_flight_pad.c: test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds, test_USB_01_no_launch_and_no_record_while_attached, test_USB_03_one_chirp_on_attach_and_the_verdict_on_detach; Hardware: `support/api_check.py` | ✅ |
+| USB-04 | On detach, the system shall resume what it would have been saying, and restart the 10 s dwell of FLT-BROWN-01 | test_flight_pad.c: test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds, test_USB_01_no_launch_and_no_record_while_attached, test_USB_03_one_chirp_on_attach_and_the_verdict_on_detach, test_USB_04_the_record_waits_ten_seconds_from_the_detach; test_flight_profiles.c: test_FLT_RT_01_other_activity_delays_no_decision_past_the_bound | ✅ |
+| USB-05 | From launch to landing, the attach state shall be ignored | test_flight_pad.c: test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds, test_USB_01_no_launch_and_no_record_while_attached, test_USB_05_attachment_is_ignored_in_flight | ✅ |
+| USB-07 | The system shall judge a host attached only on evidence that a host is present, so that every detection... | test_flight_pad.c: test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds, test_USB_01_no_launch_and_no_record_while_attached | ✅ |
+| USB-08 | An operator-selected test mode shall make the system behave on USB as it does on battery | test_flight_pad.c: test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds, test_USB_01_no_launch_and_no_record_while_attached, test_USB_05_attachment_is_ignored_in_flight, test_USB_08_test_mode_flies_on_usb; Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
 
-## 15. Telemetry Formatting (v2.0)
-
-| Req | Description | Verified By | Status |
-|-----|-------------|-------------|--------|
-| TELEM-FMT-01 | telemetry_formatter.c module | Integration: TEL-03 / TEL-04 tests | ✅ |
-| TELEM-FMT-02 | Event + state messages | Integration: test_TEL_03_event_sentences | ✅ |
-| TELEM-FMT-03 | HAL transport is raw bytes | Integration: hal_telemetry_send(const char*) | ✅ |
-
-## 18. SD Card and High-Rate Log
+## 13. Bench Flight
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| SD-01 | SPI mode, CRC, bounded waits, the bus shared | Hardware only. On MK1C-SD with the card on its own regulator (C-U6): 16 MB written with 0 CRC errors, 0 timeouts, 0 retries at 12.5 and 20.8 MHz; the LSM6DS3 read at 1.63 kHz with no FIFO overrun while the card wrote; a card that resets inside ACMD41 brought up again by `POST /api/sd/init` | ⚠️ |
-| SD-02 | Every file on the card, configuration mirrored | Hardware only. On MK1C-SD the flight log routes to the card (`/api/log/space` store `sd`), config.ini and the web pages are served through `vfs.h`, and serial.txt stays in littlefs; the mirror into littlefs by inspection of `vfs.c` | ⚠️ |
-| HR-01 | The next file ready, the second before launch kept | HR log: test_HR_01_between_flights_the_file_is_ready_and_the_ring_keeps_half, test_HR_02_a_flight_is_logged_whole_with_the_second_before_it | ✅ |
-| HR-02 | Every set, every conversion, the state at 10 Hz | HR log: test_HR_02_a_flight_is_logged_whole_with_the_second_before_it; `support/hr_log.py --selftest` | ✅ |
-| HR-03 | Whole 4 kB writes | HR log: test_HR_03_the_log_goes_to_the_card_in_multi_sector_writes | ✅ |
-| HR-04 | A CRC per record, a power cut's log kept | HR log: test_HR_04_a_log_a_power_cut_left_is_kept_under_a_number; `support/hr_log.py --selftest` (a torn last record) | ✅ |
-| HR-05 | Whole records dropped and counted, off the flight path | HR log: test_HR_05_a_full_ring_drops_whole_records_and_counts_them; `support/prove_core0.py` on MK1C-SD in CI | ✅ |
-| HR-06 | A file the card cannot take any more: go on in a new one | HR log: test_HR_06_a_card_mounted_again_under_a_log_goes_on_in_a_new_file, test_HR_06_a_card_that_refuses_writes_for_a_while_loses_one_record; Hardware: MK1C-SD mounted again 40 s into a 1.66 kHz log, the new file's first set 0.9 ms after the old one's last | ✅ |
+| UN-14 | The user needs to see the board fly a flight, to any altitude it may reach, before it flies one | Through SYS-SIM-01 | ✅ |
+| SYS-SIM-01 | The system shall fly a scripted flight on the bench, to the top of its sensor's range, through its own... | the suite test_flight_sim.c; Hardware: `support/bench_flight.py` | ✅ |
+| SIM-01 | A bench flight shall start only from PAD_IDLE with test mode on, and only a profile that can fly | test_flight_sim.c: test_SIM_01_profiles_that_cannot_fly_are_refused, test_SIM_01_a_bench_flight_starts_only_from_the_pad_in_test_mode; Hardware: `support/bench_flight.py` | ✅ |
+| SIM-02 | While one flies, the profile's pressure, from the 1976 US Standard Atmosphere, carrying each reading's own... | test_flight_sim.c: test_SIM_02_the_coast_peaks_at_the_apogee_asked_for, test_SIM_02_phases_run_in_order_and_it_lands, test_SIM_02_descent_times_at_constant_rates, test_SIM_02_thin_air_speeds_the_drogue and 3 more; Hardware: `support/bench_flight.py` | ✅ |
+| SIM-03 | From the start of a bench flight until the board restarts, every fire shall be mocked and logged as one; a... | test_flight_sim.c: test_SIM_04_with_both_failed_it_falls_ballistic_to_the_ground, test_SIM_03_the_channels_stay_mocked_after_a_stop; Hardware: `support/bench_flight.py` | ✅ |
+| SIM-04 | The bench flight shall offer profiles in which a canopy fails, so the re-fire and emergency rules can be... | test_flight_sim.c: test_SIM_02_the_bench_ends_when_both_have_landed, test_SIM_04_the_descent_starts_from_rest, test_SIM_04_a_failed_drogue_falls_ballistic_until_the_main, test_SIM_04_a_failed_main_stays_at_the_drogues_rate and 1 more; Hardware: `support/bench_flight.py` | ✅ |
 
-## 19. Bench Flight
+## 14. Card and High-Rate Log
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| UN-14 | See it fly before it flies | Through SYS-SIM-01 | ✅ |
-| SYS-SIM-01 | A scripted flight on the bench, firing nothing | Through SIM-01..03; Hardware: MK1C-SD flew 1 km, 10 km and 30 km profiles to LANDED with both channels mocked (`support/bench_flight.py`); the 30 km flights found HA-1 | ✅ |
-| SIM-01 | Only from the pad, in test mode | Flight source: test_SIM_01_a_bench_flight_starts_only_from_the_pad_in_test_mode, test_SIM_01_profiles_that_cannot_fly_are_refused | ✅ |
-| SIM-02 | The profile's pressure in the reading's place | Closed-loop: test_SIM_02_a_9_km_supersonic_flight_with_sensor_noise, and test_SIM_02_30_km_with_sensor_noise_finds_apogee, ignored until HA-1; Flight source: test_SIM_02_isa_pressure_at_the_layer_bases, test_SIM_02_isa_pressure_inside_the_layers, test_SIM_02_isa_density_at_sea_level_and_30_km, test_SIM_02_isa_altitude_inverts_pressure, test_SIM_02_the_coast_peaks_at_the_apogee_asked_for, test_SIM_02_phases_run_in_order_and_it_lands, test_SIM_02_descent_times_at_constant_rates, test_SIM_02_thin_air_speeds_the_drogue, test_SIM_02_a_high_pad_adds_its_own_altitude, test_SIM_02_the_bench_replaces_the_reading_while_it_flies, test_SIM_02_the_bench_ends_when_both_have_landed; Closed-loop: test_SIM_02_the_flight_software_flies_a_30_km_profile | ✅ |
-| SIM-03 | Every fire mocked until reboot | Flight source: test_SIM_03_the_channels_stay_mocked_after_a_stop; by inspection, `hal_pyro_fire()` is every fire's one path | ✅ |
+| SD-01 | A card that fails to come up shall leave the board on its internal storage, and shall be retried without a... | Hardware only, on MK1C-SD: the card pulled and refitted, the board on its internal storage meanwhile | ✅ HW |
+| SD-02 | While a card is mounted every file shall live on it, except the board's identity and the resume record | Hardware only, on MK1C-SD: `/api/log/space` store `sd`, config and pages served from the card | ✅ HW |
+| HR-01 | A high-rate log shall open with the second before launch, and launch shall wait on nothing to start it | test_hr_log.c: test_HR_01_between_flights_the_file_is_ready_and_the_ring_keeps_half | ✅ |
+| HR-02 | From launch to landing, and on the bench on request, the high-rate log shall record every accelerometer... | test_hr_log.c: test_HR_02_a_flight_is_logged_whole_with_the_second_before_it | ✅ |
+| HR-04 | Every record shall carry a check of its payload, a log shall be read to its last whole record, and a log a... | test_hr_log.c: test_HR_04_a_log_a_power_cut_left_is_kept_under_a_number | ✅ |
+| HR-05 | A log the card cannot keep up with shall drop whole records and count them, and nothing the logger does... | test_hr_log.c: test_HR_05_a_full_ring_drops_whole_records_and_counts_them | ✅ |
+| HR-06 | A log whose file the card can no longer take shall go on in a new file from the next whole record, with... | test_hr_log.c: test_HR_05_a_full_ring_drops_whole_records_and_counts_them, test_HR_06_a_card_mounted_again_under_a_log_goes_on_in_a_new_file, test_HR_06_a_card_that_refuses_writes_for_a_while_loses_one_record | ✅ |
 
-## 16. On USB
-
-| Req | Description | Verified By | Status |
-|-----|-------------|-------------|--------|
-| UN-13 | Quiet and grounded on the bench | USB-01..05, 07, 08. Not for a charger (USB-06) | ⚠️ |
-| SYS-USB-01 | No flight, no announcement on USB | As UN-13 | ⚠️ |
-| USB-01 | No launch, recovery or marker on USB | Unit: test_USB_01_no_launch_while_attached; Integration: test_USB_INT_01_marker_waits_for_the_cable_to_go, test_USB_INT_02_no_flight_recovery_on_usb; Hardware: 0 flash programs after 50-90 s of PAD_IDLE on MK1A/B/C | ✅ |
-| USB-02 | Nothing announced on USB | Unit: test_USB_02, test_USB_03, test_USB_04, test_USB_05; Hardware: `buzzer_active` false on MK1A/B/C (`support/api_check.py`) | ✅ |
-| USB-03 | One double chirp on attach | Buzzer: test_BUZ_PAT_10_usb_ok_is_one_double_chirp; Unit: test_USB_02; Integration: test_USB_INT_01 | ✅ |
-| USB-04 | Resume on detach | Unit: test_USB_02, test_USB_04, test_USB_05; Integration: test_USB_INT_01. Not on hardware: nobody unplugged a board | ✅ |
-| USB-05 | Ignored in flight | Unit: test_USB_06_ignored_once_airborne | ✅ |
-| USB-06 | A charger counts as USB | No hardware path (DD-037) | ❌ |
-| USB-08 | Test mode flies on USB, RAM only | Unit: test_USB_07_test_mode_flies_on_usb, test_USB_08_test_mode_announces_and_leaving_it_chirps, test_USB_09_test_mode_is_off_at_boot, test_USB_10_test_mode_does_not_change_in_flight; Integration: test_USB_INT_03_test_mode_writes_the_marker_on_usb; Web: 3 tests; Hardware: on MK1A/B/C test mode announced and wrote pad.mkr on USB, went quiet when turned off, and was off after a reboot | ✅ |
-| USB-07 | Errors leave launch detection on | By design: SOF needs a host (DD-037); Hardware: `usb_attached` true on MK1A/B/C with a PC attached | ✅ |
-
----
-
-## 17. User Needs and System Requirements
-
-A user need is verified through the system requirements under it, and is marked ⚠️ if any of them is.
+## 15. Power
 
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
-| UN-2 | Know it is ready before the pad | Through SYS-STATUS-01, SYS-STATUS-02 | ✅ |
-| UN-3 | Flight data after recovery | Through SYS-DATA-01..03 | ✅ |
-| UN-4 | Configure for different rockets | Through SYS-CFG-01..04, CFG-SUBSYS-01 | ✅ |
-| UN-5 | Accurate altitude | Through SYS-ALT-01, SYS-ALT-02; SYS-ALT-02 is hardware only | ⚠️ |
-| UN-6 | Real-time telemetry | Through SYS-TEL-01 | ✅ |
-| UN-7 | Protection against pyro faults | Through SYS-FAULT-01..03 | ✅ |
-| UN-8 | Monitor, configure and update without special software | Through SYS-WEB-01, SYS-WEB-02; SYS-WEB-02 is hardware only | ⚠️ |
-| UN-9 | Update without bricking | Through SYS-OTA-01, SYS-OTA-02; SYS-OTA-02 is hardware only | ⚠️ |
-| UN-10 | Develop without flight hardware | Through SYS-PORT-01, SYS-PORT-02 | ✅ |
-| UN-11 | Long pad time on battery | Through SYS-PWR-01, SYS-PWR-02 | ⚠️ |
-| UN-12 | Ground checks without a computer | Through SYS-TEST-01 | ✅ |
-| SYS-WEB-01 | Web interface over USB | Web UI: the Playwright suite; Hardware: `test/web/hw_ui_check.js` on MK1A/B/C | ✅ |
-| SYS-WEB-02 | Discoverable without configuration | Through WEB-NET-01..04 (hardware only) | ⚠️ HW |
-| SYS-OTA-01 | Update without physical access | Through WEB-API-04 | ✅ HW |
-| SYS-OTA-02 | Recover from a failed update | Through OTA-01..04 (hardware only) | ⚠️ HW |
-| SYS-FAULT-01 | Limit pyro current | Through PYR-FAULT-01 | ✅ HW |
-| SYS-FAULT-02 | Detect pyro faults | Closed-loop: test_PYR_FAULT_02_overcurrent_detection | ✅ |
-| SYS-FAULT-03 | Notify pyro faults | Through PYR-FAULT-03 | ✅ |
-| SYS-PORT-01 | Testable on a host | Every host suite, in CI | ✅ |
-| SYS-PORT-02 | Runnable in a browser | Web: test_sim.spec.js flies docs/sim.html's WASM build from power-on to LANDED; CI checks docs/app against www/ (`scripts/sync_demo.sh --check`) | ✅ |
-| SYS-PWR-01 | Minimise CPU active time | Through PWR-SLEEP-01; no test measures CPU active time | ⚠️ |
-| SYS-PWR-02 | I/O without the CPU | Through PWR-SAMPLE-01/02, PWR-TELEM-01..03, PWR-BUZZ-01, PWR-LOG-01..04 | ✅ |
-| PWR-WAIT-02 | No sensor bus transfer waits without bound | BMP280: test_bmp280_a_held_bus_costs_a_bounded_wait; Bring-up, on every board: test_bringup_a_held_bus_is_bounded, and on MK1B test_bringup_mk1b_held_bmp280_is_bounded (a part holding SCL low, against a fake SDK whose blocking transfers fail the test there); `support/wait_check.py` in CI refuses the SDK's blocking I2C transfers, and `support/prove_core0.py` fails any reachable from a flight root, the task ticks included (DD-069) | ✅ |
-| PWR-WAIT-01 | No sleeps: the exec loop is the only clock | Board pyro: test_mk1b_continuity_never_sleeps, test_mk1b_reads_after_the_settle (MK1B's continuity against a fake SDK whose sleeps fail the test); Bring-up, on every board: test_bringup_finds_its_sensor, test_bringup_recovers_the_bus_first, test_bringup_waits_out_the_reset (bus recovery, settles and sensor resets as loop steps); Board pyro (MK1C): test_mk1c_only_the_tracking_test_runs (the real backend against the plant: nothing it does holds the loop); `support/wait_check.py` in CI, which fails on any sleep or busy-wait in `src/` or `boards/`, and finds none (DD-053, DD-055) | ✅ |
-| PWR-USB-01 | USB serviced autonomously | — (deferred to v2.1; USB is serviced from the main loop) | ⚠️ |
-| SYS-TEST-01 | Ground test over serial | Integration: test_GND_TEST_01..04 | ✅ |
+| UN-11 | The user needs the flight computer to operate on battery for extended pad time | Through SYS-PWR-01 | ⚠️ |
+| SYS-PWR-01 | The system shall minimise its power consumption wherever doing so affects no functional requirement | No measurement. Battery sizing is the user's, by characterisation | ⚠️ |
+
+## 16. Project Requirements
+
+| Req | Description | Verified By | Status |
+|-----|-------------|-------------|--------|
+| UN-10 | Contributors need to develop and test flight software without flight hardware | Through SYS-PORT-01, SYS-PORT-02, SYS-CFG-04, BLD-04, TST-08, TST-09, CODE-01, CODE-03, CODE-04, CODE-05, CODE-06, CODE-07, CODE-10 | ⚠️ |
+| SYS-PORT-01 | The flight software shall be testable on a host computer without hardware | Through HAL-01, HAL-02, HAL-03, HAL-05, HAL-06, BLD-01, BLD-02, TST-01, TST-02, TST-03 | ⚠️ |
+| SYS-PORT-02 | The flight software shall be runnable in a browser-based simulation | Web UI: test_sim.spec.js | ✅ |
+| SYS-CFG-04 | Adding a configuration field shall require a change in one place | the suite test_config.c | ✅ |
+| HAL-01 | Flight logic source files shall contain no platform-specific code or conditional compilation | Structure: `support/structure_check.py` | ✅ |
+| HAL-02 | All hardware interaction shall occur through a defined HAL interface | Structure: `support/structure_check.py` | ✅ |
+| HAL-03 | The HAL interface shall support at least three implementations | Three implementations build in CI: `src/hal_common/`, `test/hal_test.c`, `boards/sim/hal_sim.c` | ✅ |
+| HAL-04 | The same flight logic source files shall compile unchanged for all targets | `src/flight_sources.txt` is the one list the firmware, the host suites, the simulator and the WASM build compile | ✅ |
+| HAL-05 | The HAL shall be the seam for testing | Every flight suite links `test/hal_test.c` and nothing of a board | ✅ |
+| HAL-06 | Each board's HAL shall be validated on hardware, independently of the flight software, with test equipment... | Through BLD-06; Not built yet: the options are in `docs/hal_validation_apps.md` | ⚠️ |
+| BLD-01 | The build system shall produce firmware for every supported board | CI builds every board | ✅ |
+| BLD-02 | The build system shall produce host-compiled test executables | CI builds and runs every host suite (`scripts/run_host_tests.sh`) | ✅ |
+| BLD-03 | The build system shall produce a host-compiled flight simulator | CI builds `pyro_sim` and the WASM simulator | ✅ |
+| BLD-04 | The build system shall generate the firmware's version from the VERSION file | CI: `support/version.py` against `VERSION` | ✅ |
+| BLD-05 | The build system shall support A/B firmware images for update | Hardware: both slots written and booted on MK1A, MK1B and MK1C | ✅ HW |
+| BLD-06 | The build system shall produce HAL validation applications, separate from the flight firmware | Not built yet: `docs/hal_validation_apps.md` | ⚠️ |
+| TST-01 | Flight tests shall be black box | Through CODE-08, CODE-09; The flight suites drive `flight_init()`, `dispatch_state()` and the HAL only (`test/board_harness.c`); `support/structure_check.py` keeps test-only constructs out of the flight software | ✅ |
+| TST-02 | Integration tests shall verify complete flight sequences using recorded trajectory data | test_recorded_flight.c: test_TST_02_the_recorded_flight_runs_pad_to_landed, test_TST_02_launch_is_detected_as_the_rocket_leaves, test_TST_02_apogee_is_declared_after_the_recorded_peak_and_soon, test_TST_02_each_channel_fires_once_at_its_event and 1 more | ✅ |
+| TST-03 | Closed-loop tests shall verify flight behavior with physics simulation feedback | test_mach.c: test_TST_03_plant_atmosphere, test_TST_03_plant_mach, test_TST_03_plant_port_error, test_TST_03_plant_charge and 3 more; the suite test_plant.c | ✅ |
+| TST-04 | Closed-loop tests shall cover all four pyro firing modes, and the re-fire and emergency rules with... | test_flight_profiles.c: test_PYR_MODE_01_delay_after_apogee | ✅ |
+| TST-05 | Closed-loop tests shall cover flights from 100 ft to above each sensor's height for proper operation, and... | test_flight_profiles.c: test_FLT_ASC_03_the_thrust_report_ends_within_a_second_of_burnout, test_FLT_APO_01_apogee_is_never_early_and_soon_after_at_every_height, test_SNS_MAX_01_best_effort_above_the_sensors_range | ✅ |
+| TST-06 | Closed-loop tests shall verify that chute deployment reduces descent rate | test_flight_profiles.c: test_TST_06_a_canopy_slows_the_descent | ✅ |
+| TST-07 | Web UI tests shall verify status display, configuration editing, and firmware update flows | Web UI: test_ui.spec.js | ✅ |
+| TST-08 | All tests shall run in CI on every push to main | `.github/workflows/build.yml` | ✅ |
+| TST-09 | Tests shall be traceable to requirements | Through CODE-02; This file, written by `support/trace_matrix.py`; `support/trace_check.py` in CI | ✅ |
+| CODE-01 | Code structure and naming shall be preferred to comments | By review. No automated check | ⚠️ |
+| CODE-02 | Comments shall carry requirement traceability | `support/trace_check.py`: every cited ID exists; `support/trace_matrix.py`: every row comes from a citation | ✅ |
+| CODE-03 | Comments shall explain to a subject matter expert the implementation decisions that the code's structure... | By review. No automated check | ⚠️ |
+| CODE-04 | A clearly named function shall be preferred to a magic value, however well the value is named | `support/wait_check.py` in CI: no sleep, a wait is a deadline function | ✅ |
+| CODE-05 | Comments shall never teach a topic | By review. No automated check | ⚠️ |
+| CODE-06 | Functional units shall be isolated in files by the single responsibility principle | By review: one responsibility a file in `src/flight_sources.txt`; `pmccabe` bounds a function in CI | ⚠️ |
+| CODE-07 | The code shall be SOLID and DRY | By review. No automated check | ⚠️ |
+| CODE-08 | Tests shall be black box and traceable to requirements | As TST-01 and TST-09 | ✅ |
+| CODE-09 | All code shall be reachable through the published interfaces | Structure: `support/structure_check.py` | ✅ |
+| CODE-10 | Pure functions with no internal state shall be preferred | By review. No automated check | ⚠️ |
+
+## 17. What a Board Declares
+
+| Req | Description | Verified By | Status |
+|-----|-------------|-------------|--------|
+| BRD-01 | Each board shall declare, in its theory of operation | Through BRD-02; Each `boards/<name>/THEORY_OF_OPERATION.md`, "What this board declares"; `support/structure_check.py` holds every board to the list. Values marked not measured are owed to BRD-02 | ✅ |
+| BRD-02 | A value a board declares shall be confirmed by that board's HAL validation (HAL-06) | Owed with HAL-06 | ⚠️ |
 
 ---
 
@@ -423,27 +433,10 @@ A user need is verified through the system requirements under it, and is marked 
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host, web or closed-loop test | 258 |
-| ⚠️ Not directly verified (needs a test or hardware) | 25 |
-| ❌ Not implemented | 5 (USB-06: no hardware path; DAT-01, FLT-RATE-02, FLT-RATE-03, TST-05: H3) |
-| ✅ HW (hardware satisfies) | 11 |
+| ✅ Verified by a host test, a web test or a structural check | 295 |
+| ⚠️ Not verified, or not wholly | 23 |
+| ❌ Not implemented | 0 |
+| ✅ HW (verified on hardware only) | 13 |
 
-Rows of the tables above. `support/trace_check.py --counts` computes them, and CI fails when this table disagrees.
-
-_+8 requirements in v2 Task 2/3 (GND-TEST-01..04, DD-011, CFG-HAL-01..02, PWR-SLEEP-01)_
-_+2 requirements in v2 Task 5 (TEL-03 event sentences, TEL-04 JSON format)_
-_+20 requirements in v2 Tasks 7–10 (PWR-*, CFG-TABLE-*, TELEM-FMT-*), all verified by buzzer/config/integration tests_
-
-### Remaining gaps (hardware or future work only):
-- **DAT-01, FLT-RATE-02, FLT-RATE-03, TST-05**: the code does not do what they say (H3 in docs/outstanding_tasks.md)
-- **FLT-RATE-01..04**: Sample rate precision — hardware timing test
-- **PYR-CONT-01**: Continuity check period — hardware timing test
-- **BUZ-STATUS-01 / BUZ-01..02**: Beep codes / startup chirps — hardware audio test
-- **FLT-BOOT-02..03 / FLT-BOOT-09**: Config load and settle timing — hardware test
-- **SYS-DATA-02 / DAT-06..07**: CSV export format — hardware integration test
-- **SYS-ALT-02 / SNS-PRES-01**: Multi-sensor detection — hardware test
-- **WEB-NET-01..04**: USB network / mDNS / DNS-SD — hardware test
-- **WEB-API-08**: the web server's 423s and the dropped transfer are in http_server.c, verified by inspection; the bench check is a chamber flight in test mode
-- **OTA-01..04**: OTA update flow — hardware test
-- **SD-01, SD-02 / SYS-DATA-04**: the SD card, verified on the bench only
-- **PWR-USB-01**: USB servicing autonomy — deferred to v2.1
+`support/trace_check.py --counts` computes these, and CI fails when this table
+disagrees or when `support/trace_matrix.py --check` finds the file out of date.

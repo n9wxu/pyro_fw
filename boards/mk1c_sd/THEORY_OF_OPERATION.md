@@ -132,6 +132,21 @@ not written in flight; 6,684 snapshots of the flight. No record dropped, no
 FIFO overrun, no loop overrun; the slowest write 103 ms, a programming pause
 the ring absorbed.
 
+## What this board declares
+
+The values the requirements leave to the board (BRD-01). A value marked
+*not measured* is owed to this board's HAL validation (BRD-02).
+
+| Item | Declared |
+|---|---|
+| Pyro, sensor, disarm, decision delay | as MK1C: `boards/mk1c/THEORY_OF_OPERATION.md` |
+| Flight log (DAT-09) | on the card while one is mounted: its free space, reported at `/api/log/space` as store `sd`; otherwise MK1C's 8192 kB |
+| High-rate log | 16.2 MB for a 30 km bench flight (see [The high-rate log](#the-high-rate-log)) |
+| Script resources (LUA-PAD-03) | **none.** J3 carries the SPI bus, so this build has no script. SYS-LUA-01 asks for one on every board: this variant does not meet it |
+| Connector labels (PIN-LABEL-01) | `pin_caps.h` |
+
+
+
 ## Known limits
 
 - The card cannot run from MK1C's own 3.3 V (above, task C-U6).

@@ -134,11 +134,12 @@ fresh reading about 50 ms in.
 ## Pressure sensor
 
 One BMP280 on I2C0 at 400 kHz, its fastest: R1 and R2 (4k7) hold fast mode's
-300 ns rise to about 75 pF (DD-052). It sleeps between conversions: each loop
-takes the forced conversion the last loop commanded and commands the next
-(pressure ×4, temperature ×1, 13.3 ms at most), so every reading is a
-conversion of its own, stamped from its command (DD-067). Every transfer gives
-up within twice its own time on the bus and a millisecond (DD-069). A
+300 ns rise to about 75 pF (DD-052). The pressure collector runs it free
+(DD-093): one forced conversion after another (pressure ×4, temperature ×1,
+13.3 ms at most), each read no sooner than that after its command, about 72
+readings a second. Every reading is a conversion of its own, stamped at its
+middle. A transfer that fails is counted by cause on `/api/status`, and
+after three in a row the collector clears the bus and resets the part. A
 conversion a flash erase or program ran beside is discarded, not used, and
 counted in `pres_flashed` on `/api/status` (DD-068). Bring-up is the shared
 single-sensor path, `src/pressure_single_sensor.c`: clock the bus free — the
@@ -200,6 +201,29 @@ the buzzer. With no buzzer the procedure fires on the same schedule, silently.
 - **No host test runs this board's pyro backend** in CI; `boards/sim_mk1a` runs
   it against the plant model.
 
+## What this board declares
+
+The values the requirements leave to the board (BRD-01). A value marked
+*not measured* is owed to this board's HAL validation (BRD-02).
+
+| Item | Declared |
+|---|---|
+| Pyro faults it can reliably detect | a channel open; a lead shorted to ground. Not an overcurrent: there is no fault output |
+| `refire_interval` | default 1000 ms, 500 to 10000 ms: the general values (PYR-BOARD-01); this board has not been characterised for its own |
+| `fire_gap` | default 3000 ms, 1000 to 10000 ms: the general values; not characterised |
+| Pulse | 500 ms, ended by the loop |
+| Protection | F1, an 8 A fuse on the common. It does not reset: a blown fuse ends both channels |
+| Disarm when software stops (PYR-ARM-01) | **the watchdog, 1 s.** The loop ends the pulse, so a stopped loop leaves the high side on until the reset. This exceeds the 50 ms bound |
+| Sensor | BMP280, 300 to 1100 hPa at full accuracy, 1.3 Pa rms at its highest resolution (`docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf`, pages 7 and 12); noise on this board *not measured* |
+| Height for proper operation (SNS-MAX-01) | 9000 m, the sensor's 300 hPa |
+| Flight log (DAT-09) | 8192 kB of littlefs: about 100 days at `1hz`, 2 h at `full` (50 rows a second of 22 bytes). `/api/log/space` reports what is free |
+| Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured* on this revision: `loop_late_max_us` on `/api/status` reports it |
+| Script resources (LUA-PAD-03) | the two J6 user pads, GPIO18 and GPIO19, and a released pyro channel's pads (`pin_caps.h`) |
+| Connector labels (PIN-LABEL-01) | `pin_caps.h` |
+
+The disarm time is this board's hardware: nothing but the processor ends a
+pulse. MK1C's charge pump is what meets PYR-ARM-01.
+
 ## Build
 
 `board.cmake` selects the SDK header, the 16 MB geometry and Lua, and declares
@@ -228,6 +252,6 @@ erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
 - `docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf`,
   `rp2040-datasheet_2025-02-20.pdf`, `UM10204_I2C-bus_Rev7.0_2021-10.pdf`
 - DD-052 (bus speeds), DD-053 (no waits), DD-059 (MK1B reads as MK1A does),
-  DD-065 (the 20 ms loop), DD-067 (the BMP280 at the loop's rate), DD-068
+  DD-065 (the 20 ms loop), DD-093 (the pressure collector), DD-068
   (conversions beside a flash operation), DD-069 (bounded transfers), DD-071
   (the ground test switch) in `DECISIONS.md`

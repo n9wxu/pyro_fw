@@ -15,9 +15,13 @@
  *          thin_air is set: a parachute falls faster in thin air
  *   main   from main_alt_m, at main_ms
  *
- * Altitudes are above the pad. Pressure is the ISA's at the pad's own
- * altitude plus the profile's, the pad's taken from the pressure it reads,
- * to 32 km (1976 US Standard Atmosphere, the three lowest layers).
+ * The descent starts from rest at apogee and gathers speed under gravity
+ * toward each rate, as a body under a canopy does. A canopy that fails
+ * [SIM-04] leaves the rocket falling toward ballistic_ms instead.
+ *
+ * Altitudes are above the pad. Pressure is the standard atmosphere's
+ * (atmosphere.h) at the pad's own altitude plus the profile's, the pad's
+ * taken from the pressure it reads, to 32 km.
  *
  * Pure: host-tested (test_flight_sim.c).
  *
@@ -37,7 +41,14 @@ typedef struct {
     float main_ms;
     bool thin_air;
     float pad_s;
+    /* [SIM-04] A canopy that never opens: the drogue's leaves the rocket
+     * falling at ballistic_ms to the main's height, the main's leaves it at
+     * whatever it was falling at above. */
+    bool drogue_fails, main_fails;
+    float ballistic_ms; /* 0: FSIM_BALLISTIC_MS */
 } fsim_params_t;
+
+#define FSIM_BALLISTIC_MS 80.0f
 
 typedef enum { FSIM_PAD, FSIM_BOOST, FSIM_COAST, FSIM_DROGUE, FSIM_MAIN, FSIM_LANDED } fsim_phase_t;
 
@@ -45,18 +56,12 @@ typedef struct {
     fsim_params_t p;
     float accel; /* boost, m/s^2 */
     float h_burn, v_burn, t_burn, t_apogee;
-    float pad_msl; /* the pad's ISA altitude, from its pressure */
+    float pad_pa, pad_msl; /* the pad's pressure, and its altitude in the standard atmosphere */
     /* descent, stepped forward as time is asked for */
-    float t_desc, h_desc;
+    float t_desc, h_desc, v_desc;
     fsim_phase_t phase;
     float t_landed;
 } fsim_t;
-
-/* The 1976 US Standard Atmosphere below 32 km: pressure at a geopotential
- * altitude, and back. */
-float fsim_isa_pressure(float h_msl);
-float fsim_isa_altitude(float pa);
-float fsim_isa_density(float h_msl);
 
 /* False for a profile that cannot be flown (no boost, apogee not above the
  * main deployment, a rate of zero). ground_pa: what the pad reads. */

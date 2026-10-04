@@ -26,20 +26,43 @@ run() {
     [ -n "$VERBOSE" ] && printf '%s\n' "$out"
 }
 
-for t in host_tests closedloop_tests pressure_chain_tests mach_tests brownout_tests \
-         http_tests http_work_tests status_json_tests net_stats_tests net_txq_tests mac_random_tests hr_log_tests flight_sim_tests \
-         flight_log_tests pressure_trace_tests log_plan_tests board_pyro_tests \
-         sensor_bringup_tests bmp280_tests ground_test_seq_tests ground_test_tests \
-         pin_caps_tests beep_tests pin_assign_tests buzzer_tests config_tests \
-         config_persistence_tests plant_tests board_pyro_mk1c_tests \
-         integration_tests ms5607_tests; do
+# The flight software through the mocked HAL, then each module on its own.
+for t in flight_boot_tests flight_pad_tests flight_profile_tests fire_rule_tests resume_tests \
+         estimator_tests telemetry_tests mach_tests recorded_flight_tests ground_test_tests \
+         ground_test_seq_tests atmosphere_tests fire_control_tests launch_detector_tests apogee_detector_tests estimators_tests \
+         http_tests http_work_tests status_json_tests net_stats_tests net_txq_tests mac_random_tests \
+         hr_log_tests flight_sim_tests flight_log_tests pressure_trace_tests log_plan_tests \
+         board_pyro_tests board_pyro_mk1c_tests plant_tests sensor_bringup_tests bmp280_tests \
+         ms5607_tests collector_tests board_selftest_tests pin_caps_tests beep_tests pin_assign_tests buzzer_tests \
+         config_tests config_persistence_tests; do
     run "$B" "$t"
 done
+# The flight suites compile against the selected board's board_pins.h, which
+# is where a board-specific assumption hides: start-up, the pad and a whole
+# flight on the other boards too.
+for d in "$C" "$A"; do
+    for t in flight_boot_tests flight_pad_tests recorded_flight_tests; do
+        run "$d" "$t"
+    done
+done
 run "$C" lua_tests
-run "$C" integration_tests
 run "$C" ms5607_tests
-run "$A" integration_tests
 
-python3 support/trace_check.py --counts >/dev/null 2>&1 && echo "ok    trace_check" || { echo "FAIL  trace_check"; fail=1; }
-python3 support/wait_check.py >/dev/null 2>&1 && echo "ok    wait_check" || { echo "FAIL  wait_check"; fail=1; }
+check() {
+    local name=$1
+    shift
+    local out
+    if out=$("$@" 2>&1); then
+        echo "ok    $name"
+    else
+        echo "FAIL  $name"
+        printf '%s\n' "$out" | tail -12 | sed 's/^/      /'
+        fail=1
+    fi
+}
+check trace_check python3 support/trace_check.py --counts
+check trace_matrix python3 support/trace_matrix.py --check
+check structure_check python3 support/structure_check.py
+check wait_check python3 support/wait_check.py
+check lumped_port_check python3 sim/study/lumped_port_check.py
 exit $fail

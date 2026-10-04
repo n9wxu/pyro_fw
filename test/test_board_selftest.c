@@ -9,6 +9,8 @@
  * evidence rolls back good updates.
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Verifies [OTA-05].
  */
 #include "unity.h"
 #include "board_selftest.h"

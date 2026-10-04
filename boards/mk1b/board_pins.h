@@ -38,6 +38,13 @@
 #define BOARD_PIN_PYRO2_FLAG     18 /* <- U5 FLG1, active low           */
 #define BOARD_PIN_PYRO1_SENSE    26
 #define BOARD_PIN_PYRO2_SENSE    27
+/* U5 as fitted is the AP2192A, whose output discharge holds both sense nodes
+ * at ground: this board cannot judge a channel, so it reports each ready
+ * [PYR-HEALTH-01]. 0 for a board with the base AP2192. See
+ * THEORY_OF_OPERATION.md "Known limits". */
+#ifndef BOARD_PYRO_U5_DISCHARGES_OUTPUTS
+#define BOARD_PYRO_U5_DISCHARGES_OUTPUTS 1
+#endif
 #define BOARD_ADC_CH_SENSE1      0
 #define BOARD_ADC_CH_SENSE2      1
 

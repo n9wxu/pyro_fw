@@ -17,7 +17,6 @@ typedef enum {
 } fire_step_t;
 
 void sequence_init(void);
-const char *sequence_refusal(uint8_t channel, const quiescent_t *q, const tracking_t *t);
 void sequence_arm(uint8_t channel, const quiescent_t *q);
 void sequence_step(uint32_t now_ms, const quiescent_t *q);
 fire_step_t sequence_current_step(void);

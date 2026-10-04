@@ -142,17 +142,17 @@ static bool usb_host_active(uint32_t now) {
 
 static void update_status(flight_context_t *ctx, uint32_t now) {
     g_status.state = ctx->current_state;
-    g_status.altitude_cm = ctx->last_altitude;
-    g_status.max_altitude_cm = ctx->max_altitude;
-    g_status.vertical_speed_cms = ctx->vertical_speed_cms;
-    g_status.pressure_pa = ctx->filtered_pressure;
-    g_status.pyro1_fired = ctx->pyro1_fired;
-    g_status.pyro2_fired = ctx->pyro2_fired;
+    g_status.altitude_cm = ctx->altitude_cm;
+    g_status.max_altitude_cm = ctx->max_altitude_cm;
+    g_status.vertical_speed_cms = ctx->speed_cms;
+    g_status.pressure_pa = ctx->pressure_pa;
+    g_status.pyro1_fired = ctx->fire.channel[0].fired;
+    g_status.pyro2_fired = ctx->fire.channel[1].fired;
     g_status.pyros_armed = ctx->pyros_armed;
-    g_status.pyro1_continuity = ctx->pyro1_continuity_good;
-    g_status.pyro2_continuity = ctx->pyro2_continuity_good;
-    g_status.pyro1_adc = ctx->pyro1_adc;
-    g_status.pyro2_adc = ctx->pyro2_adc;
+    g_status.pyro1_continuity = ctx->channel_ready[0];
+    g_status.pyro2_continuity = ctx->channel_ready[1];
+    g_status.pyro1_adc = ctx->channel_adc[0];
+    g_status.pyro2_adc = ctx->channel_adc[1];
     g_status.under_thrust = ctx->under_thrust;
     g_status.flight_time_ms = flight_elapsed_ms(ctx, now);
     g_status.pyro1_mode = ctx->config.pyro1_mode;
@@ -240,7 +240,7 @@ void flight_task(void *arg) {
 
         extern volatile uint8_t pending_reset;
         if (pending_reset == 1)
-            rom_reset_usb_boot(0, 0); /* never returns */
+            rom_reset_usb_boot(0, 0); /* never returns; scratch does not survive it */
 
         /* Arm once: pending_reset stays set, and re-arming every period would
          * reload the countdown faster than it can expire. The net task keeps
@@ -248,6 +248,9 @@ void flight_task(void *arg) {
          * reboots through here too, once its reply is with lwIP. */
         if (pending_reset == 2 && !reset_armed) {
             reset_armed = true;
+#if PYRO_HAS_LUA
+            lua_app_restart_commanded();
+#endif
             watchdog_reboot(0, 0, 100);
         }
 

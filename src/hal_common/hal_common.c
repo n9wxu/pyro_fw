@@ -111,21 +111,40 @@ void hal_tasks_tick(uint32_t now_ms) {
  *
  * Read once a loop, as a task, so however often the flight code asks it gets
  * one reading a loop; across two pads the drive and the pull then change, and
- * settle for a loop before the next read. */
+ * settle for a loop before the next read.
+ *
+ * Where the driven pad is the buzzer's, the level under test is put on it
+ * for the read alone and the buzzer's own level put back: see
+ * docs/ground_test_on_buzzer_pad.md, option A. */
 static struct {
     async_task_t base; /* MUST be first */
     gt_switch_t sw;
     uint8_t pin, drive;
     bool on;
+    bool drive_is_the_buzzers;
 } gts;
+
+/* The read pad as it stands while the buzzer's pad shows the level under
+ * test. The second read is the one kept: the first is the pad's
+ * synchroniser catching up with the edge. */
+static bool read_under_a_pulse(bool test_level) {
+    bool buzzer_level = gpio_get_out_level(gts.drive);
+    gpio_put(gts.drive, test_level);
+    (void)gpio_get(gts.pin);
+    bool read = gpio_get(gts.pin);
+    gpio_put(gts.drive, buzzer_level);
+    return read;
+}
 
 static void gts_tick(async_task_t *base, uint32_t now_ms) {
     base->next_due_ms = now_ms;
-    gt_switch_out_t o = gt_switch_step(&gts.sw, gpio_get(gts.pin));
-    if (gts.sw.pair) {
+    bool read = gts.drive_is_the_buzzers ? read_under_a_pulse(gts.sw.drive_high) : gpio_get(gts.pin);
+    gt_switch_out_t o = gt_switch_step(&gts.sw, read);
+    if (!gts.sw.pair)
+        return;
+    if (!gts.drive_is_the_buzzers)
         gpio_put(gts.drive, o.drive_high);
-        gpio_set_pulls(gts.pin, o.pull_up, !o.pull_up);
-    }
+    gpio_set_pulls(gts.pin, o.pull_up, !o.pull_up);
 }
 
 static void hw_task_register(async_task_t *task);
@@ -137,7 +156,8 @@ void hal_ground_test_configure(uint8_t wiring, uint8_t pin, uint8_t drive_pin) {
     gpio_init(pin);
     gpio_set_dir(pin, GPIO_IN);
     gpio_set_pulls(pin, true, false);
-    if (pair) {
+    gts.drive_is_the_buzzers = pair && drive_pin == board_buzzer_pin();
+    if (pair && !gts.drive_is_the_buzzers) {
         gpio_init(drive_pin);
         gpio_set_dir(drive_pin, GPIO_OUT);
         gpio_put(drive_pin, false);
@@ -193,20 +213,16 @@ typedef struct {
 
     uint64_t last_stamp_us; /* the previous sample's time, for the interval */
     uint32_t interval_min_us, interval_max_us, stamp_lag_max_us;
-    uint32_t waits;   /* loops that found the last conversion still running */
-    uint32_t rejects; /* readings no atmosphere can produce, not fed on */
-    uint32_t flashed; /* [DD-068] readings a flash operation disturbed, not fed on */
+    uint32_t flashed;  /* [DD-068] readings a flash operation disturbed, not fed on */
+    uint32_t cycle_us; /* the collector's, when nothing fails */
 } pres_task_t;
 
 static pres_task_t pres;
 
-uint32_t hal_pressure_waits(void) {
-    return pres.waits;
+void hal_pressure_collector(collector_stats_t *out) {
+    collector_stats(out);
 }
 
-uint32_t hal_pressure_rejects(void) {
-    return pres.rejects;
-}
 uint32_t hal_pressure_flashed(void) {
     return pres.flashed;
 }
@@ -217,27 +233,16 @@ uint32_t hal_pressure_interval_min_us(void) {
     return pres.interval_min_us;
 }
 
-/* Pressure samples a second, and so the full log rate [DD-062]: either
- * sensor converts once a loop [DD-066, DD-067]. 0 before bring-up. */
+/* Pressure samples a second, and so the full log rate [DD-062]: the
+ * collector's own, rounded up [DD-093]. 0 before bring-up. */
 uint32_t hal_pressure_rate_hz(void) {
-    return pres.sensor_type ? 1000u / LOOP_PERIOD_MS : 0u;
+    return pres.cycle_us ? (1000000u + pres.cycle_us - 1u) / pres.cycle_us : 0u;
 }
 uint32_t hal_pressure_interval_max_us(void) {
     return pres.interval_max_us;
 }
 uint32_t hal_pressure_stamp_lag_max_us(void) {
     return pres.stamp_lag_max_us;
-}
-
-/* The sensor's own range, 10-1200 mbar. Inside it nothing is judged: a real
- * reading can be anywhere a rocket can go. Outside it the reading is not the
- * atmosphere, and one of them through the IIR is hundreds of metres of
- * altitude -- a launch on the pad, or a trigger in flight. */
-#define PRES_MIN_PA 1000.0f
-#define PRES_MAX_PA 120000.0f
-
-static bool pres_plausible(const pressure_reading_t *r) {
-    return r->pressure_pa >= PRES_MIN_PA && r->pressure_pa <= PRES_MAX_PA;
 }
 
 /* Append a completed reading to the batch, update the bridge sample,
@@ -274,6 +279,7 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
 
     /* Feed the pressure_processing ring so detectors can read altitude
      * samples via pp_read() — single data path from sensor to FSM. */
+    pp_note_temperature(r->temperature_c);
     pp_feed_us((int32_t)r->pressure_pa, stamp_us);
 
     int idx = p->back.count;
@@ -302,115 +308,64 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
     }
 }
 
-static void pres_reject(pres_task_t *p, const char *why, uint32_t raw, float pa, uint32_t now_ms) {
-    p->rejects++;
-    char dbuf[80];
-    snprintf(dbuf, sizeof(dbuf), "!PRES %s raw=%lu pa=%.0f t=%lu\r\n", why, (unsigned long)raw, (double)pa,
-             (unsigned long)now_ms);
-    hal_telemetry_send(dbuf);
-}
+/* ── The collector's cycles, into readings [DD-093] ───────────────── */
 
-/* [DD-051, DD-066] The pair the last loop started, which the one-shot's
- * handler commanded, stamped and read. The cycle starts the next pair before
- * this work: done first, the compensation, filter and fit (up to 2.7 ms on
- * MK1B) made the next conversion miss the next loop every other loop. */
-static void ms5607_tick(pres_task_t *p, uint32_t now_ms) {
-    ms5607_pair_t c;
-    ms5607_start_t started;
-    bool took = ms5607_async_cycle(&p->temps, &c, &started);
-    uint32_t read_us = (uint32_t)time_us_64();
-    if (started == MS5607_BUSY) {
-        p->waits++;
-        ptrace_note(read_us, read_us, 0, 0, 0, PTRACE_MISSED);
-    }
-    /* HELD: the sensor did not answer; back off rather than retry every loop. */
-    p->base.next_due_ms = (started == MS5607_STARTED || started == MS5607_BUSY) ? now_ms : now_ms + 50;
-    if (!took)
-        return;
-    if (!c.ok) {
-        ptrace_note((uint32_t)c.d1_at_us, read_us, c.d1, 0, 0, PTRACE_BUS);
-        pres_reject(p, "bus", c.d1, 0.0f, now_ms);
-        return;
-    }
-    /* A zero is what the sensor answers to a read during a conversion; the
-     * cycle notes neither a zero temperature nor a disturbed one. */
-    ptrace_note((uint32_t)c.d2_at_us, read_us, c.d2, 0, 0,
-                c.d2 == 0 ? PTRACE_ZERO : (c.d2_flashed ? PTRACE_FLASHED_T : PTRACE_TEMPERATURE));
-    if (c.d2 == 0)
-        pres_reject(p, "zero", 0, 0.0f, now_ms);
-    else if (c.d2_flashed)
+/* [SNS-PRES-12] The temperature goes on its line first: the pressure before
+ * it is compensated at its own time, between this temperature and the last. */
+static void take_ms5607(pres_task_t *p, const collector_raw_t *raw, uint32_t read_us) {
+    uint32_t d1 = ms5607_code(raw->data[MS5607_PRESSURE]);
+    uint32_t d2 = ms5607_code(raw->data[MS5607_TEMPERATURE]);
+    uint64_t d1_at_us = raw->at_us[MS5607_PRESSURE], d2_at_us = raw->at_us[MS5607_TEMPERATURE];
+    bool d2_flashed = raw->flashed[MS5607_TEMPERATURE];
+    ptrace_note((uint32_t)d2_at_us, read_us, d2, 0, 0, d2_flashed ? PTRACE_FLASHED_T : PTRACE_TEMPERATURE);
+    if (d2_flashed)
         p->flashed++;
-    if (c.d1 == 0) {
-        ptrace_note((uint32_t)c.d1_at_us, read_us, 0, 0, 0, PTRACE_ZERO);
-        pres_reject(p, "zero", 0, 0.0f, now_ms);
-        return;
-    }
+    else
+        ms5607_temps_note(&p->temps, d2, d2_at_us);
     if (p->temps.n == 0)
         return;
     pressure_reading_t r;
-    ms5607_compensate(c.d1, ms5607_temps_at(&p->temps, c.d1_at_us), &r);
-    r.time_us = c.d1_at_us;
+    ms5607_compensate(d1, ms5607_temps_at(&p->temps, d1_at_us), &r);
+    r.time_us = d1_at_us;
     int32_t pa_c = (int32_t)lroundf(r.pressure_pa * 100.0f);
-    if (c.d1_flashed) {
-        ptrace_note((uint32_t)c.d1_at_us, read_us, c.d1, 0, pa_c, PTRACE_FLASHED);
+    if (raw->flashed[MS5607_PRESSURE]) {
+        ptrace_note((uint32_t)d1_at_us, read_us, d1, 0, pa_c, PTRACE_FLASHED);
         p->flashed++;
         return;
     }
-    if (!pres_plausible(&r)) {
-        ptrace_note((uint32_t)c.d1_at_us, read_us, c.d1, 0, pa_c, PTRACE_RANGE);
-        pres_reject(p, "range", c.d1, r.pressure_pa, now_ms);
-        return;
-    }
-    ptrace_note((uint32_t)c.d1_at_us, read_us, c.d1, 0, pa_c, PTRACE_PRESSURE);
+    ptrace_note((uint32_t)d1_at_us, read_us, d1, 0, pa_c, PTRACE_PRESSURE);
     pres_append(p, &r);
 }
 
-/*
- * Pressure tick, once a loop.
- *
- * MS5607 (sensor_type == 1) [DD-051, DD-066]: take the pair the last loop
- *   started and start the next, then work on the one taken; the one-shot's
- *   handler commands, stamps and reads each. A pressure and a temperature
- *   every loop: 50 pressures a second at the 20 ms loop.
- *
- * BMP280 (sensor_type == 2) [DD-067]: take the forced conversion the last
- *   loop commanded and command the next. 50 pressures a second.
- */
+#if BOARD_HAS_BMP280
+static void take_bmp280(pres_task_t *p, const collector_raw_t *raw, uint32_t read_us) {
+    bmp280_reading_t r;
+    if (!bmp280_compensate(raw->data[0], &r))
+        return;
+    r.reading.time_us = raw->at_us[0];
+    ptrace_note((uint32_t)r.reading.time_us, read_us, r.adc_p, r.adc_t,
+                (int32_t)lroundf(r.reading.pressure_pa * 100.0f), raw->flashed[0] ? PTRACE_FLASHED : PTRACE_PRESSURE);
+    if (raw->flashed[0])
+        p->flashed++;
+    else
+        pres_append(p, &r.reading);
+}
+#endif
+
+/* Every loop: whatever the collector has finished, oldest first. */
 static void pres_tick(async_task_t *base, uint32_t now_ms) {
     pres_task_t *p = (pres_task_t *)base;
-
-    if (p->sensor_type == 1) {
-        ms5607_tick(p, now_ms);
-
-#if BOARD_HAS_BMP280
-    } else if (p->sensor_type == 2) {
-        /* Only reachable on boards that declare BOARD_HAS_BMP280; elsewhere
-         * pressure_sensor_step() can never report type 2. */
-        bmp280_reading_t r;
-        bmp280_start_t started;
+    collector_raw_t raw;
+    while (collector_take(&raw)) {
         uint32_t read_us = (uint32_t)time_us_64();
-        bool took = bmp280_cycle(&r, &started);
-        if (started == BMP280_BUSY) {
-            p->waits++;
-            ptrace_note(read_us, read_us, 0, 0, 0, PTRACE_MISSED);
-        } else if (started == BMP280_BUS) {
-            ptrace_note(read_us, read_us, 0, 0, 0, PTRACE_BUS);
-        }
-        if (took) {
-            bool ok = pres_plausible(&r.reading);
-            ptrace_note((uint32_t)r.reading.time_us, read_us, r.adc_p, r.adc_t,
-                        (int32_t)lroundf(r.reading.pressure_pa * 100.0f),
-                        r.flashed ? PTRACE_FLASHED : (ok ? PTRACE_PRESSURE : PTRACE_RANGE));
-            if (r.flashed)
-                p->flashed++;
-            else if (ok)
-                pres_append(p, &r.reading);
-            else
-                p->rejects++;
-        }
-        p->base.next_due_ms = now_ms;
+        if (p->sensor_type == PRESSURE_SENSOR_MS5607)
+            take_ms5607(p, &raw, read_us);
+#if BOARD_HAS_BMP280
+        else
+            take_bmp280(p, &raw, read_us);
 #endif
     }
+    p->base.next_due_ms = now_ms;
 }
 
 /* ── Time ─────────────────────────────────────────────────────────── */
@@ -485,6 +440,44 @@ bool hal_pressure_read(hal_pressure_t *out) {
 
 /* ── Pressure FIFO (v2 async batch API) ───────────────────────────── */
 
+/* A board with one sensor names its pads BOARD_PIN_I2C_SDA; MK1B, with a pad
+ * for each sensor, names both. */
+#ifdef BOARD_PIN_MS5607_SDA
+#define MS5607_SDA_PIN BOARD_PIN_MS5607_SDA
+#define BMP280_SDA_PIN BOARD_PIN_BMP280_SDA
+#else
+#define MS5607_SDA_PIN BOARD_PIN_I2C_SDA
+#define BMP280_SDA_PIN BOARD_PIN_I2C_SDA
+#endif
+
+static const collector_part_t *collector_part_of(int sensor_type) {
+#if BOARD_HAS_BMP280
+    if (sensor_type == PRESSURE_SENSOR_BMP280)
+        return &BMP280_PART;
+#endif
+    (void)sensor_type;
+    return &MS5607_PART;
+}
+
+static collector_wiring_t collector_wiring_of(int sensor_type) {
+    collector_wiring_t w = {.i2c = BOARD_I2C_INST == i2c0 ? 0u : 1u, .scl_pin = BOARD_PIN_I2C_SCL};
+#if BOARD_HAS_BMP280
+    if (sensor_type == PRESSURE_SENSOR_BMP280) {
+        w.address = bmp280_address();
+        w.sda_pin = BMP280_SDA_PIN;
+        w.hz = BOARD_BMP280_I2C_HZ;
+        return w;
+    }
+#endif
+#ifdef BOARD_MS5607_I2C_HZ
+    (void)sensor_type;
+    w.address = ms5607_address();
+    w.sda_pin = MS5607_SDA_PIN;
+    w.hz = BOARD_MS5607_I2C_HZ;
+#endif
+    return w;
+}
+
 static bool hal_pressure_fifo_start(void) {
     if (hw_sensor_type <= 0)
         return false;
@@ -492,10 +485,13 @@ static bool hal_pressure_fifo_start(void) {
     pres.base.tick = pres_tick;
     pres.base.next_due_ms = hal_time_ms(); /* run on first tick */
     pres.sensor_type = hw_sensor_type;
-    if (pres.sensor_type == 1 && !ms5607_async_begin()) {
-        hal_telemetry_send("!PRES no hardware alarm free for the MS5607\r\n");
+    const collector_part_t *part = collector_part_of(pres.sensor_type);
+    collector_wiring_t wiring = collector_wiring_of(pres.sensor_type);
+    if (!collector_begin(part, &wiring)) {
+        hal_telemetry_send("!PRES no hardware alarm free for the collector\r\n");
         return false;
     }
+    pres.cycle_us = collector_cycle_us(part, &wiring);
     /* Register once (idempotent — re-calling changes rate but not slot). */
     for (int i = 0; i < hw_task_count; i++)
         if (hw_tasks[i] == &pres.base)
@@ -569,6 +565,9 @@ static void report_mock(uint8_t channel, const char *what) {
 void hal_pyro_init(void) {
     pyro_release_init(&real_pyro_ops, report_mock);
     pyro_init();
+#if PYRO_HAS_BENCH_FLIGHT
+    bench_flight_init();
+#endif
 }
 
 int hal_pyro_claim_channels(uint32_t (*pads_of)(uint8_t channel)) {
@@ -649,6 +648,10 @@ bool hal_pyro_fault(uint8_t channel) {
     return pyro_ch(channel)->fault(channel);
 }
 
+void hal_pyro_limits(hal_pyro_limits_t *out) {
+    board_pyro_limits(out);
+}
+
 /* ── Buzzer ───────────────────────────────────────────────────────── */
 
 void hal_buzzer_init(void) {
@@ -676,8 +679,6 @@ void hal_buzzer_task_register(async_task_t *task) {
  * ring into the PL011 TX FIFO on each TX-FIFO-half-empty event.
  *
  * Telemetry is best-effort: if the ring is full, remaining bytes are dropped.
- *
- * RX is unchanged: hal_serial_readline() polls the RX FIFO directly.
  */
 
 #define UART_TX_BUF_SIZE 512
@@ -903,7 +904,7 @@ typedef struct {
     uint8_t data[CACHED_MAX];
 } cached_file_t;
 
-static cached_file_t cached[] = {{PAD_MARKER_PATH, 0, -2, {0}}};
+static cached_file_t cached[] = {{PAD_RECORD_PATH, 0, -2, {0}}};
 
 static cached_file_t *cached_find(const char *path) {
     for (unsigned i = 0; i < sizeof(cached) / sizeof(cached[0]); i++)
@@ -1030,7 +1031,7 @@ void hal_fs_close(hal_file_t *f) {
 
 int hal_config_load(config_t *cfg) {
     config_set_defaults(cfg);
-    char buf[512];
+    char buf[CONFIG_INI_MAX];
     int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
     if (n > 0) {
         buf[n] = '\0';
@@ -1044,35 +1045,11 @@ int hal_config_load(config_t *cfg) {
 }
 
 int hal_config_save(const config_t *cfg) {
-    char buf[512];
+    char buf[CONFIG_INI_MAX];
     int n = config_serialize_ini(cfg, buf, (int)sizeof(buf));
     if (n <= 0)
         return -1;
     return hal_fs_write_file("config.ini", buf, n);
-}
-
-/* ── Serial readline (v2, telemetry UART RX) ──────────────────────── */
-
-bool hal_serial_readline(char *buf, int max_len) {
-    static char rx_buf[64];
-    static int rx_len = 0;
-
-    while (uart_is_readable(tuart()) && rx_len < (int)(sizeof(rx_buf) - 1)) {
-        char c = (char)uart_getc(tuart());
-        if (c == '\n' || c == '\r') {
-            if (rx_len > 0) {
-                int n = (rx_len < max_len - 1) ? rx_len : max_len - 1;
-                memcpy(buf, rx_buf, n);
-                buf[n] = '\0';
-                rx_len = 0;
-                return true;
-            }
-            /* empty line — skip */
-        } else {
-            rx_buf[rx_len++] = c;
-        }
-    }
-    return false;
 }
 
 /* Deliberately a no-op: __wfe() is suspected of blocking USB NCM TX, which
@@ -1417,14 +1394,22 @@ static bool log_tagged(uint32_t time_ms, uint8_t tag, const char *text, int len)
     return true;
 }
 
-bool hal_log_text(uint32_t time_ms, const char *text, int len) {
-    /* Rationed: a script can flood, and script output must not crowd out the
-     * flight samples it is annotating. */
+/* Rationed: a script can flood, and neither script output nor the estimators'
+ * rows may crowd out the flight samples they annotate. */
+static bool log_rationed(uint32_t time_ms, uint8_t tag, const char *text, int len) {
     if (log_used() >= LOG_TEXT_CEILING) {
         log_ring.text_dropped += (uint32_t)(len > 0 ? len : 0);
         return false;
     }
-    return log_tagged(time_ms, FLOG_TAG_LUA, text, len);
+    return log_tagged(time_ms, tag, text, len);
+}
+
+bool hal_log_text(uint32_t time_ms, const char *text, int len) {
+    return log_rationed(time_ms, FLOG_TAG_LUA, text, len);
+}
+
+bool hal_log_estimator(uint32_t time_ms, const char *text, int len) {
+    return log_rationed(time_ms, FLOG_TAG_ESTIMATOR, text, len);
 }
 
 bool hal_log_mock(uint32_t time_ms, const char *what) {
@@ -1479,8 +1464,7 @@ void hal_firmware_commit(void) {
     if (board_selftest_result() == BOARD_SELFTEST_FAIL) {
         char line[128];
         snprintf(line, sizeof(line),
-                 "!BOARD MISMATCH this image is " BOARD_SHORT_STR
-                 ", board is %s -- not committing, rolling back\r\n",
+                 "!BOARD MISMATCH this image is " BOARD_SHORT_STR ", board is %s -- not committing, rolling back\r\n",
                  board_selftest_stored());
         hal_telemetry_send(line);
         /* Through the main loop's own reset path rather than arming the

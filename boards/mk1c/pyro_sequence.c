@@ -20,7 +20,6 @@ extern void hal_telemetry_send(const char *sentence);
 #define ENABLE_COLLAPSE_MS 10
 #define HOLD_MAX_MS 30
 #define FLAT_BUS_COUNTS 25
-#define PACK_UVLO_COUNTS 1239 /* 3.0 V */
 #define BLEED_BELOW_HOT_MS 100
 
 static const uint8_t gate_pin[2] = {BOARD_PIN_FIRE_A, BOARD_PIN_FIRE_B};
@@ -64,27 +63,8 @@ void sequence_init(void) {
     memset(&seq, 0, sizeof(seq));
 }
 
-const char *sequence_refusal(uint8_t channel, const quiescent_t *q, const tracking_t *t) {
-    if (channel != 1 && channel != 2)
-        return "no such channel";
-    if (sequence_firing())
-        return "a fire is in progress";
-    if (faults_latched() != FAULT_NONE)
-        return "latched fault";
-    if (!t->valid)
-        return "no tracking result yet";
-    if (seq.fired_since_tracking[channel - 1])
-        return "no tracking test since this channel fired";
-    if (track_channel(channel == 1 ? t->a : t->b, t->bus) != TRACK_PRESENT)
-        return "the channel does not read present";
-    if (q->vbat < PACK_UVLO_COUNTS)
-        return "pack below UVLO";
-    if (seq.step == STEP_IDLE && bus_is_hot(q))
-        return "the bus is live with nothing armed";
-    return NULL;
-}
-
 void sequence_arm(uint8_t channel, const quiescent_t *q) {
+    faults_clear(FAULT_PRECHARGE_TIMEOUT); /* [PYR-FAULT-01] each pulse reports its own */
     seq.channel = channel;
     seq.armed_ms = to_ms_since_boot(get_absolute_time());
     seq.timeout_ms = precharge_timeout_ms(q);
@@ -94,23 +74,23 @@ void sequence_arm(uint8_t channel, const quiescent_t *q) {
     report("ARM", q);
 }
 
+static void close_gate(uint32_t now_ms, const quiescent_t *q, const char *what) {
+    gpio_put(gate_pin[seq.channel - 1], 1);
+    disarm(now_ms);
+    seq.fired_ms = now_ms;
+    seq.last_hold_bus = q->bus;
+    seq.step = STEP_HOLD;
+    report(what, q);
+}
+
+/* [PYR-ARM-03] The gate closes on a charged bus, or at the deadline on
+ * whatever the bus has: the pulse is never abandoned. */
 static void precharge_step(uint32_t now_ms, const quiescent_t *q) {
-    if (faults_latched() != FAULT_NONE) {
-        disarm(now_ms);
-        seq.step = STEP_DRAIN;
-        report("ABORT", q);
-    } else if (bus_charged(q)) {
-        gpio_put(gate_pin[seq.channel - 1], 1);
-        disarm(now_ms);
-        seq.fired_ms = now_ms;
-        seq.last_hold_bus = q->bus;
-        seq.step = STEP_HOLD;
-        report("FIRE", q);
+    if (bus_charged(q)) {
+        close_gate(now_ms, q, "FIRE");
     } else if (now_ms - seq.armed_ms >= seq.timeout_ms) {
-        disarm(now_ms);
         faults_latch(FAULT_PRECHARGE_TIMEOUT);
-        seq.step = STEP_DRAIN;
-        report("ABORT precharge timeout", q);
+        close_gate(now_ms, q, "FIRE bus not charged");
     } else {
         arm_pump_feed();
     }

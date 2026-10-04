@@ -32,9 +32,10 @@ uint32_t mock_xip_stall_ms = 0;
 uint32_t mock_xip_total_stall_ms = 0;
 int mock_xip_stall_count = 0;
 
-/* Serial command mock queue [GND-TEST-01..04] */
-char mock_serial_queue[MOCK_SERIAL_QUEUE_DEPTH][MOCK_SERIAL_LINE_MAX];
-int mock_serial_queue_count = 0;
+mock_pulse_t mock_pulses[MOCK_PULSES_MAX];
+int mock_pulse_count = 0;
+
+hal_pyro_limits_t mock_pyro_limits = PYRO_LIMITS_GENERAL;
 
 /* Streaming file handle — declared here so mock_reset_all() can reset it */
 struct hal_file {
@@ -61,7 +62,6 @@ bool mock_stamp_at_read = false;
 uint32_t mock_stall_seed = 1;
 uint32_t mock_stall_count, mock_stall_total_ms, mock_stall_min_ms, mock_stall_max_ms;
 uint32_t mock_stamp_lag_min_ms, mock_stamp_lag_max_ms;
-uint32_t mock_pres_rejects;
 
 static struct {
     uint32_t noise_rng, stall_rng;
@@ -111,9 +111,10 @@ static float gaussian(void) {
     return r * cosf(th);
 }
 
-/* What the HAL does with a reading: truncate to whole pascals, and discard one
- * no atmosphere can produce [SNS-PRES-06]. */
+/* What the HAL does with a reading: truncate to whole pascals, and feed it
+ * [SNS-PRES-06]. */
 static void feed_reading_us(float true_pa, uint64_t stamp_us) {
+    pp_note_temperature(mock_pressure.temperature_c);
     /* A stuck sensor answers with its last reading, to the pascal. */
     if (mock_sensor_stuck) {
         pp_feed_us(pp_last_raw_pa(), stamp_us);
@@ -125,10 +126,6 @@ static void feed_reading_us(float true_pa, uint64_t stamp_us) {
     if (mock_glitch_samples > 0) {
         p += (float)mock_glitch_pa;
         mock_glitch_samples--;
-    }
-    if (p < 1000.0f || p > 120000.0f) {
-        mock_pres_rejects++;
-        return;
     }
     pp_feed_us((int32_t)p, stamp_us);
 }
@@ -263,6 +260,8 @@ bool hal_ground_test_asserted(void) {
 
 void mock_reset_all(void) {
     mock_ground_test_pin = false;
+    mock_pressure_inits = 0;
+    mock_fs_unusable = false;
     mock_fs_write_count = 0;
     mock_fs_locked_count = 0;
     memset(&sim_files, 0, sizeof(sim_files));
@@ -275,13 +274,16 @@ void mock_reset_all(void) {
     mock_pyro.p2_good = true;
     mock_pyro.p1_adc = 50;
     mock_pyro.p2_adc = 50;
+    mock_pyro.pulse_ms = 500;
+    mock_pulse_count = 0;
+    mock_pyro_limits = (hal_pyro_limits_t)PYRO_LIMITS_GENERAL;
+    mock_reset_cause = RESET_POWER_EVENT;
     mock_uart_len = 0;
     mock_uart_buf[0] = '\0';
     mock_time_ms = 0;
     mock_xip_stall_ms = 0;
     mock_xip_total_stall_ms = 0;
     mock_xip_stall_count = 0;
-    mock_serial_queue_count = 0;
     mock_buzzer_tone_on_count = 0;
     mock_buzzer_tone_off_count = 0;
     mock_buzzer_edges = 0;
@@ -290,6 +292,7 @@ void mock_reset_all(void) {
      * regardless of whether the previous test reached LANDED. */
     test_log_active = false;
     test_log_file = NULL;
+    mock_estimator_row_count = 0;
     test_file.open = false;
     memset(sim_files, 0, sizeof(sim_files));
     last_pp_feed_ms = 0;
@@ -305,7 +308,6 @@ void mock_reset_all(void) {
     mock_stall_seed = 1;
     mock_stall_count = mock_stall_total_ms = mock_stall_min_ms = mock_stall_max_ms = 0;
     mock_stamp_lag_min_ms = mock_stamp_lag_max_ms = 0;
-    mock_pres_rejects = 0;
     memset(&sm, 0, sizeof(sm));
     /* Every test starts with no pad claimed and both channels the flight
      * software's; a test that wants a release gives Lua the pads first. */
@@ -314,13 +316,16 @@ void mock_reset_all(void) {
     hal_pyro_claim_channels(mock_pyro_pads);
 }
 
-/* Enqueue a serial command line for hal_serial_readline() to return */
-void mock_serial_enqueue(const char *cmd) {
-    if (mock_serial_queue_count < MOCK_SERIAL_QUEUE_DEPTH) {
-        strncpy(mock_serial_queue[mock_serial_queue_count], cmd, MOCK_SERIAL_LINE_MAX - 1);
-        mock_serial_queue[mock_serial_queue_count][MOCK_SERIAL_LINE_MAX - 1] = '\0';
-        mock_serial_queue_count++;
-    }
+void mock_power_cycle(void) {
+    test_log_active = false;
+    test_log_file = NULL;
+    test_file.open = false;
+    mock_pyro.firing = false;
+    mock_pulse_count = 0;
+    last_pp_feed_ms = 0;
+    pad_claim_reset();
+    hal_pyro_init();
+    hal_pyro_claim_channels(mock_pyro_pads);
 }
 
 /* ── HAL implementation ───────────────────────────────────────────── */
@@ -329,7 +334,10 @@ uint32_t hal_time_ms(void) {
     return mock_time_ms;
 }
 
-void hal_pressure_init(void) {}
+int mock_pressure_inits = 0;
+void hal_pressure_init(void) {
+    mock_pressure_inits++;
+}
 
 int hal_pressure_sensor(void) {
     if (mock_time_ms < mock_pressure.pending_until_ms)
@@ -341,13 +349,13 @@ int hal_pressure_sensor(void) {
  * behaviour the hardware HAL gets is the behaviour these tests exercise. The
  * mocked table is the module's own; what follows is the "real" one. */
 static void test_fire(uint8_t channel) {
-    if (mock_pyro.refuse_fire) {
-        mock_pyro.refused_count++;
-        return;
-    }
+    bool energised = !mock_pyro.energises_nothing;
+    if (mock_pulse_count < MOCK_PULSES_MAX)
+        mock_pulses[mock_pulse_count++] = (mock_pulse_t){mock_time_ms, channel, energised};
     mock_pyro.fire_count++;
     mock_pyro.last_fire_channel = channel;
-    mock_pyro.firing = true;
+    mock_pyro.firing = energised;
+    mock_pyro.pulse_start_ms = mock_time_ms;
 }
 
 static void test_get(uint8_t channel, hal_continuity_t *out) {
@@ -416,10 +424,14 @@ void hal_pyro_fire(uint8_t channel) {
 }
 
 void hal_pyro_update(uint32_t now_ms) {
-    (void)now_ms;
+    if (mock_pyro.firing && now_ms - mock_pyro.pulse_start_ms >= mock_pyro.pulse_ms)
+        mock_pyro.firing = false;
 }
-/* Host tests drive the recovery matrix through brownout_assess() directly;
- * this only has to exist and be settable. */
+
+void hal_pyro_limits(hal_pyro_limits_t *out) {
+    *out = mock_pyro_limits;
+}
+
 reset_cause_t mock_reset_cause = RESET_POWER_EVENT;
 reset_cause_t hal_reset_cause(void) {
     return mock_reset_cause;
@@ -476,10 +488,9 @@ void hal_telemetry_send(const char *sentence) {
     }
 }
 
-/* The host tests have a real filesystem behind them, so the mount cannot fail. Present because
- * hal.h asks for it. */
+bool mock_fs_unusable = false;
 bool hal_fs_healthy(void) {
-    return true;
+    return !mock_fs_unusable;
 }
 
 int hal_fs_mount(void) {
@@ -552,7 +563,7 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
 int hal_config_load(config_t *cfg) {
     config_set_defaults(cfg);
     /* Check if config.ini is stored in the mock filesystem */
-    char buf[512];
+    char buf[CONFIG_INI_MAX];
     int n = hal_fs_read_file("config.ini", buf, sizeof(buf) - 1);
     if (n > 0) {
         buf[n] = '\0';
@@ -566,25 +577,11 @@ int hal_config_load(config_t *cfg) {
 }
 
 int hal_config_save(const config_t *cfg) {
-    char buf[512];
+    char buf[CONFIG_INI_MAX];
     int n = config_serialize_ini(cfg, buf, (int)sizeof(buf));
     if (n <= 0)
         return -1;
     return hal_fs_write_file("config.ini", buf, n);
-}
-
-/* ── Serial readline (v2) ─────────────────────────────────────────── */
-
-bool hal_serial_readline(char *buf, int max_len) {
-    if (mock_serial_queue_count == 0)
-        return false;
-    strncpy(buf, mock_serial_queue[0], max_len - 1);
-    buf[max_len - 1] = '\0';
-    /* Shift queue left */
-    for (int i = 0; i < mock_serial_queue_count - 1; i++)
-        memcpy(mock_serial_queue[i], mock_serial_queue[i + 1], MOCK_SERIAL_LINE_MAX);
-    mock_serial_queue_count--;
-    return true;
 }
 
 /* ── Sleep (v2, no-op in test) ────────────────────────────────────── */
@@ -715,6 +712,19 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
         .event = event,
     };
     log_plan_take(&test_log_plan, &s, test_log_keep, NULL);
+}
+
+char mock_estimator_rows[MOCK_ESTIMATOR_ROWS][FLOG_TEXT_MAX + 1];
+uint32_t mock_estimator_row_ms[MOCK_ESTIMATOR_ROWS];
+int mock_estimator_row_count;
+
+bool hal_log_estimator(uint32_t time_ms, const char *text, int len) {
+    if (!test_log_active || len <= 0 || len > FLOG_TEXT_MAX || mock_estimator_row_count >= MOCK_ESTIMATOR_ROWS)
+        return false;
+    memcpy(mock_estimator_rows[mock_estimator_row_count], text, (size_t)len);
+    mock_estimator_rows[mock_estimator_row_count][len] = '\0';
+    mock_estimator_row_ms[mock_estimator_row_count++] = time_ms;
+    return true;
 }
 
 typedef struct {

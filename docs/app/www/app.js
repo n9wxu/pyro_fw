@@ -47,7 +47,9 @@ function findAsset(rel) {
     if (assets[i].name === LEGACY_ASSET_NAME) return assets[i];
   return null;
 }
-var MAX_ALT = {0:800000, 1:8000, 2:26247};
+/* What the board serves at /api/limits [PYR-BOARD-03, SNS-MAX-01]: null
+   until it answers, and then nothing here is checked against a guess. */
+var limits = null;
 var UNIT_LABELS = {0:'cm', 1:'m', 2:'ft'};
 var UNIT_NAMES = ['cm','m','ft'];
 var MODE_LABELS = {delay:'Delay',agl:'AGL',fallen:'Fallen',speed:'Speed',none:'None'};
@@ -63,7 +65,7 @@ function showTab(name) {
   event.target.classList.add('active');
   if (name === 'data') { loadFlightData(); }
   if (name === 'lua') { luaInit(); }
-  if (name === 'config') { relInit(); loadLogSpace(); }
+  if (name === 'config') { relInit(); loadLogSpace(); loadLimits(); loadFireRules(); }
   if (name === 'beeps') { beepsInit(); }
 }
 
@@ -127,19 +129,25 @@ function update() {
     document.getElementById('sFt').textContent = (d.flight_ms/1000).toFixed(1) + 's';
     document.getElementById('sUp').textContent = (d.uptime/1000).toFixed(0) + 's';
 
-    /* Pyro status. A refusal is the board declining to energise a channel it
-       was told to fire, which is not the same thing as firing it. */
-    function pyroStr(fired, refused, cont, adc, note) {
-      if (fired) return '<span class="pyro-fired">FIRED</span>' + (note || '') + ' (ADC:' + adc + ')';
-      if (refused) return '<span class="pyro-open">REFUSED by the board</span> (ADC:' + adc + ')';
-      if (cont) return '<span class="pyro-ok">OK</span> (ADC:' + adc + ')';
-      return '<span class="pyro-open">OPEN</span> (ADC:' + adc + ')';
+    /* Pyro status [PYR-FIRE-01]: every pulse is counted, and a fault the
+       board saw is shown beside it. Nothing here was withheld. */
+    function pyroStr(fired, pulses, fault, cont, adc) {
+      var seen = fault ? ' <span class="warn-inline">the board reported a fault</span>' : '';
+      if (fired) return '<span class="pyro-fired">FIRED</span>' + (pulses > 1 ? ' ×' + pulses : '') + seen +
+        ' (ADC:' + adc + ')';
+      if (cont) return '<span class="pyro-ok">OK</span>' + seen + ' (ADC:' + adc + ')';
+      return '<span class="pyro-open">FAULT</span>' + seen + ' (ADC:' + adc + ')';
     }
-    document.getElementById('sP1').innerHTML = pyroStr(d.pyro1_fired, d.pyro1_refused, d.pyro1_cont, d.pyro1_adc,
-      d.pyro1_refires ? ' (retried)' : '');
-    document.getElementById('sP2').innerHTML = pyroStr(d.pyro2_fired, d.pyro2_refused, d.pyro2_cont, d.pyro2_adc,
-      d.main_forced ? ' <span class="warn-inline">emergency: brought forward</span>' : '');
+    var pulses = d.pyro_pulses || [0, 0], pfault = d.pyro_fault || [false, false];
+    document.getElementById('sP1').innerHTML = pyroStr(d.pyro1_fired, pulses[0], pfault[0], d.pyro1_cont, d.pyro1_adc);
+    document.getElementById('sP2').innerHTML = pyroStr(d.pyro2_fired, pulses[1], pfault[1], d.pyro2_cont, d.pyro2_adc);
     document.getElementById('sArm').textContent = d.armed ? 'YES' : 'No';
+    document.getElementById('sEmrg').innerHTML = d.emergency_fire
+      ? '<span class="warn-inline">FIRED: the descent was faster than the emergency speed</span>' : 'No';
+    document.getElementById('sResume').textContent = d.resume || '—';
+    document.getElementById('limitWarn').style.display = d.pyro_limited ? 'block' : 'none';
+    document.getElementById('sCfgRefire').textContent = (d.refire_interval_ms || 0) + ' ms';
+    document.getElementById('sCfgGap').textContent = (d.fire_gap_ms || 0) + ' ms';
 
     /* A board on USB is grounded unless it is in test mode [USB-01, USB-08]. */
     var tm = !!d.test_mode;
@@ -152,14 +160,11 @@ function update() {
     document.getElementById('sCfgId').textContent = d.rocket_id || '—';
     document.getElementById('sCfgName').textContent = d.rocket_name || '—';
     document.getElementById('sCfgUnits').textContent = UNIT_NAMES[u] || 'cm';
-    var p1Str = fmtMode(d.pyro1_mode, d.pyro1_value, u);
-    var p2Str = fmtMode(d.pyro2_mode, d.pyro2_value, u);
-    if (pendingConfig) {
-      p1Str = fmtMode(pendingConfig.p1mode, pendingConfig.p1val, pendingConfig.units);
-      p2Str = fmtMode(pendingConfig.p2mode, pendingConfig.p2val, pendingConfig.units);
-    }
-    document.getElementById('sCfgP1').innerHTML = p1Str + (pendingConfig ? ' <span class="warn-inline">not yet applied</span>' : '');
-    document.getElementById('sCfgP2').innerHTML = p2Str + (pendingConfig ? ' <span class="warn-inline">not yet applied</span>' : '');
+    /* [CFG-10] What the board is flying on. A saved change waits for the
+       next start and is flagged, never shown as if it were in force. */
+    var waiting = pendingConfig ? ' <span class="warn-inline">a saved change is waiting for a reboot</span>' : '';
+    document.getElementById('sCfgP1').innerHTML = fmtMode(d.pyro1_mode, d.pyro1_value, u) + waiting;
+    document.getElementById('sCfgP2').innerHTML = fmtMode(d.pyro2_mode, d.pyro2_value, u) + waiting;
     document.getElementById('pendingWarn').style.display = pendingConfig ? 'block' : 'none';
 
     /* Version info */
@@ -171,7 +176,7 @@ function update() {
     /* Store device config — update every poll */
     var newCfg = {id:d.rocket_id, name:d.rocket_name, units:u,
       p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value,
-      logRate:d.log_rate || '1hz'};
+      logRate:d.log_rate || '1hz', estimator:d.estimator || ''};
     if (!deviceConfig) {
       deviceConfig = newCfg;
       cfgLoadFromObj(deviceConfig);
@@ -179,7 +184,8 @@ function update() {
       /* Detect device-side change (reboot applied new config) */
       if (deviceConfig.p1mode !== newCfg.p1mode || deviceConfig.p1val !== newCfg.p1val ||
           deviceConfig.p2mode !== newCfg.p2mode || deviceConfig.p2val !== newCfg.p2val ||
-          deviceConfig.units !== newCfg.units || deviceConfig.logRate !== newCfg.logRate) {
+          deviceConfig.units !== newCfg.units || deviceConfig.logRate !== newCfg.logRate ||
+          deviceConfig.estimator !== newCfg.estimator) {
         deviceConfig = newCfg;
         pendingConfig = null;
         cfgLoadFromObj(deviceConfig);
@@ -193,7 +199,48 @@ function update() {
 
 /* ── Config editor ─────────────────────────────────────────────── */
 function getUnits() { return parseInt(document.getElementById('cfgUnits').value); }
-function getMaxAlt() { return MAX_ALT[getUnits()]; }
+/* The sensor's height for proper operation, in the chosen units; Infinity
+   until the board has said. */
+function getMaxAlt() {
+  if (!limits || !limits.sensor || !limits.sensor.height_m) return Infinity;
+  return Math.round(limits.sensor.height_m * 100 / CM_PER_UNIT[getUnits()]);
+}
+
+function loadLimits() {
+  return fetch('api/limits').then(function(r) { return r.ok ? r.json() : null; }).then(function(l) {
+    limits = l;
+    cfgRangeHints();
+    estimatorChoices();
+  }).catch(function() {});
+}
+
+/* [SNS-EST-06] The estimators this firmware carries, the first its default. */
+function estimatorChoices() {
+  var sel = document.getElementById('estimator');
+  var names = (limits && limits.estimators) || [];
+  var chosen = sel.value || (deviceConfig && deviceConfig.estimator) || '';
+  sel.innerHTML = '';
+  names.forEach(function(n) {
+    var o = document.createElement('option');
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  });
+  if (names.indexOf(chosen) >= 0) sel.value = chosen;
+}
+
+/* [PYR-BOARD-02] A value outside the board's range is not refused: the board
+   brings it in, and the page says what it will use. 0 asks for the default. */
+function cfgRangeHints() {
+  [['refireInterval', 'refire_interval_ms'], ['fireGap', 'fire_gap_ms']].forEach(function(f) {
+    var hint = document.getElementById(f[0] + 'Hint'), warn = document.getElementById(f[0] + 'Warn');
+    var r = limits && limits[f[1]];
+    if (!r) { hint.textContent = ''; warn.textContent = ''; return; }
+    hint.textContent = '0 = this board\'s default, ' + r['default'] + ' ms; ' + r.min + ' to ' + r.max + ' ms';
+    var v = parseInt(document.getElementById(f[0]).value) || 0;
+    warn.textContent = v === 0 || (v >= r.min && v <= r.max) ? ''
+      : '⚠ outside this board\'s range: it will use ' + (v < r.min ? r.min : r.max) + ' ms';
+  });
+}
 
 function cfgChanged() {
   /* Update unit labels */
@@ -203,27 +250,32 @@ function cfgChanged() {
     var vInput = document.getElementById('p'+ch+'val');
     if (mode === 'none') { uSpan.textContent = ''; vInput.disabled = true; vInput.value = 0; }
     else if (mode === 'delay') { uSpan.textContent = 'seconds'; vInput.max = 65535; vInput.disabled = false; }
-    else if (mode === 'speed') { uSpan.textContent = unitLabel(getUnits()) + '/s'; vInput.max = getMaxAlt(); vInput.disabled = false; }
-    else { uSpan.textContent = unitLabel(getUnits()); vInput.max = getMaxAlt(); vInput.disabled = false; }
-    /* Range warning */
+    else if (mode === 'speed') { uSpan.textContent = unitLabel(getUnits()) + '/s'; vInput.max = 65535; vInput.disabled = false; }
+    else { uSpan.textContent = unitLabel(getUnits()); vInput.max = 65535; vInput.disabled = false; }
+    /* [SYS-CFG-03, SNS-MAX-01] A height above the sensor's is not refused:
+       the board works on the data it has, and the page says so. */
     var val = parseInt(vInput.value) || 0;
     var warn = document.getElementById('p'+ch+'warn');
-    warn.textContent = (mode !== 'delay' && val > getMaxAlt()) ?
-      '⚠ Exceeds ' + getMaxAlt() + ' ' + unitLabel(getUnits()) + ' sensor limit' : '';
+    warn.textContent = ((mode === 'agl' || mode === 'fallen') && val > getMaxAlt()) ?
+      '⚠ Above ' + getMaxAlt() + ' ' + unitLabel(getUnits()) + ', this board\'s height for proper operation' : '';
   });
+  document.querySelectorAll('.speedUnit').forEach(function(el) {
+    el.textContent = unitLabel(getUnits()) + '/s (0 = off)';
+  });
+  cfgRangeHints();
   /* Tips */
   var tips = document.getElementById('cfgTips');
   var p1 = document.getElementById('p1mode').value;
   var p2 = document.getElementById('p2mode').value;
   var msgs = [];
   if (p1 === 'delay' && document.getElementById('p1val').value === '0')
-    msgs.push('💡 Delay=0 fires at apogee (typical for drogue)');
+    msgs.push('💡 Delay=0 fires at apogee');
   if (p2 === 'agl') {
     var v = parseInt(document.getElementById('p2val').value) || 0;
     var u = getUnits();
     var low = u===2?200:u===1?60:6000, high = u===2?1000:u===1?300:30000;
-    if (v > 0 && v < low) msgs.push('⚠ AGL very low — main may deploy close to ground');
-    if (v > high) msgs.push('⚠ AGL high — main deploys early, long descent');
+    if (v > 0 && v < low) msgs.push('⚠ AGL very low — this channel may fire close to the ground');
+    if (v > high) msgs.push('⚠ AGL high — this channel fires early, long descent');
   }
   if (p1 === p2 && p1 !== 'delay') msgs.push('💡 Same mode on both — consider different modes for redundancy');
   tips.style.display = msgs.length ? 'block' : 'none';
@@ -298,6 +350,25 @@ function cfgLenHint(id) {
 /* The units the pyro values on screen are written in. */
 var cfgShownUnits = 1;
 
+/* The fire rules [PYR-REFIRE-01, FLT-EMRG-01, PYR-DEPLOY-02]: an input's id
+   and its key in config.ini. The speeds are in the chosen units a second. */
+var SPEED_FIELDS = ['p1refire', 'p2refire', 'emrgSpeed'];
+var RULE_FIELDS = [['p1refire', 'pyro1_refire_speed'], ['p2refire', 'pyro2_refire_speed'],
+                   ['emrgSpeed', 'emergency_fire_speed'], ['refireInterval', 'refire_interval'],
+                   ['fireGap', 'fire_gap']];
+
+/* /api/status carries the rules in force, not the ones stored, so the editor
+   reads them from the stored file. */
+function loadFireRules() {
+  return fetch('api/config').then(function(r) { return r.ok ? r.text() : ''; }).then(function(ini) {
+    RULE_FIELDS.forEach(function(f) {
+      var m = ini.match(new RegExp('^' + f[1] + '=(\\d+)', 'm'));
+      document.getElementById(f[0]).value = m ? m[1] : 0;
+    });
+    cfgRangeHints();
+  }).catch(function() {});
+}
+
 /* A value is a distance or a speed in the chosen units, so changing units
    converts it; leaving the number alone would turn 500 ft into 500 m. */
 function unitsChanged() {
@@ -309,6 +380,10 @@ function unitsChanged() {
       var el = document.getElementById('p'+ch+'val');
       var v = parseInt(el.value) || 0;
       el.value = Math.round(v * CM_PER_UNIT[from] / CM_PER_UNIT[to]);
+    });
+    SPEED_FIELDS.forEach(function(id) {
+      var el = document.getElementById(id);
+      el.value = Math.round((parseInt(el.value) || 0) * CM_PER_UNIT[from] / CM_PER_UNIT[to]);
     });
   }
   cfgShownUnits = to;
@@ -327,6 +402,8 @@ function cfgLoadFromObj(c) {
   document.getElementById('p2mode').value = c.p2mode || 'agl';
   document.getElementById('p2val').value = c.p2val || 0;
   document.getElementById('logRate').value = c.logRate || '1hz';
+  var est = document.getElementById('estimator');
+  if (c.estimator) est.value = c.estimator; else est.selectedIndex = 0;
   logEstimate();
   document.getElementById('cfgDirty').style.display = 'none';
   cfgChanged();
@@ -336,12 +413,15 @@ function cfgLoadFromObj(c) {
 function cfgDefault() {
   cfgLoadFromObj({id:'PYRO001', name:'MyRocket', units:1, p1mode:'delay', p1val:0, p2mode:'agl', p2val:300,
                   logRate:'1hz'});
+  RULE_FIELDS.forEach(function(f) { document.getElementById(f[0]).value = 0; });
+  cfgChanged();
   document.getElementById('cfgDirty').style.display = 'block';
   document.getElementById('cfgDirty').innerHTML = '⚠ Defaults loaded — press <b>Save</b> then <b>Reboot</b> to apply';
 }
 
 function cfgCurrent() {
   if (deviceConfig) cfgLoadFromObj(deviceConfig);
+  loadFireRules();
 }
 
 function cfgGetObj() {
@@ -353,13 +433,14 @@ function cfgGetObj() {
     p1val: parseInt(document.getElementById('p1val').value) || 0,
     p2mode: document.getElementById('p2mode').value,
     p2val: parseInt(document.getElementById('p2val').value) || 0,
-    logRate: document.getElementById('logRate').value
+    logRate: document.getElementById('logRate').value,
+    estimator: document.getElementById('estimator').value
   };
 }
 
-/* One Save for the whole tab. The flight settings go to config.ini and apply
-   at once; the pin release and the buzzer pad go to pins.ini and apply at the
-   next reboot -- two stores, but one decision for the operator. */
+/* One Save for the whole tab. The flight settings go to config.ini, the pin
+   release and the buzzer pad to pins.ini, and both take effect at the next
+   start [CFG-10] -- two stores, but one decision for the operator. */
 function cfgSave() {
   if (relDirty) relSave();
   var c = cfgGetObj();
@@ -368,23 +449,21 @@ function cfgSave() {
     '\r\npyro1_mode=' + c.p1mode + '\r\npyro1_value=' + c.p1val +
     '\r\npyro2_mode=' + c.p2mode + '\r\npyro2_value=' + c.p2val +
     '\r\nunits=' + uname + '\r\nlog_rate=' + c.logRate + '\r\n';
+  if (c.estimator) ini += 'estimator=' + c.estimator + '\r\n';
+  RULE_FIELDS.forEach(function(f) {
+    ini += f[1] + '=' + (parseInt(document.getElementById(f[0]).value) || 0) + '\r\n';
+  });
   var msg = document.getElementById('cfgMsg');
   fetch('api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body:ini})
     .then(function(r) {
       if (r.ok) {
-        return r.json().then(function(data) {
-          if (data.applied) {
-            msg.style.color = 'green';
-            msg.textContent = ' ✓ Config applied successfully!';
-            deviceConfig = c;
-            pendingConfig = null;
-            document.getElementById('cfgDirty').style.display = 'none';
-          } else {
-            msg.style.color = 'orange';
-            msg.textContent = ' Saved — reboot to apply';
-            pendingConfig = c;
-            document.getElementById('cfgDirty').style.display = 'block';
-          }
+        /* [CFG-10] Saving stores the file. The board goes on with what it
+           started with until it starts again. */
+        return r.json().then(function() {
+          msg.style.color = 'orange';
+          msg.textContent = ' Saved — reboot to apply';
+          pendingConfig = c;
+          document.getElementById('cfgDirty').style.display = 'block';
         });
       } else {
         return r.json().catch(function() { return {error: 'Save failed'}; });
@@ -460,7 +539,7 @@ function parseFlightCsv(csv) {
     var t = parseInt(parts[col.time_ms]), alt = parseInt(parts[col.altitude_cm]);
     var evt = (parts[col.event] || '').trim();
     if (isNaN(t) || isNaN(alt)) return;
-    data.push({t:t, a:alt});
+    if (evt !== 'PEAK' && evt !== 'PEAK_AT_LEAST') data.push({t:t, a:alt});
     if (evt && !events[evt]) events[evt] = {t:t, alt:alt};
   });
   return {data:data, events:events, meta:meta};
@@ -491,9 +570,11 @@ function updateFlightSummary() {
   if (flightData.length) {
     var end = ev.LANDING ? ev.LANDING : flightData[flightData.length - 1];
     dur = (end.t/1000).toFixed(1) + 's' + (ev.LANDING ? '' : ' (no landing recorded)');
-    /* FLT-MACH-07: while the Mach lock stands the ports' altitude is not the
-       rocket's, so the apogee comes from the rows outside it; a lock let go
-       within 2 s of apogee, or never, may have hidden the top. */
+    /* FLT-APO-08: the firmware's own peak, from its PEAK row. A log written
+       before that row existed has the Mach lock's rows instead: the apogee is
+       then from the rows outside the lock, and a lock let go within 2 s of
+       apogee, or never, may have hidden the top. */
+    var peak = ev.PEAK || ev.PEAK_AT_LEAST;
     var lock = ev.LOCK, unlock = ev.UNLOCK || ev.LOCK_FALLBACK;
     var maxA = 0;
     flightData.forEach(function(p) {
@@ -501,6 +582,7 @@ function updateFlightSummary() {
       if (!locked && p.a > maxA) maxA = p.a;
     });
     var bound = ev.LOCK_FALLBACK || (ev.UNLOCK && ev.APOGEE && ev.APOGEE.t - ev.UNLOCK.t < 2000);
+    if (peak) { maxA = peak.alt; bound = !!ev.PEAK_AT_LEAST; }
     apo = (bound ? 'at least ' : '') + cmToUnit(maxA, u) + ' ' + ul;
   }
   document.getElementById('dDur').textContent = dur;
@@ -819,15 +901,10 @@ function beepsSelect(keep) {
     document.getElementById('bpName').value = p.name;
     document.getElementById('bpGap').value = p.gap;
     document.getElementById('bpRepeat').value = p.repeat;
-    document.getElementById('bpSplit').checked = p.split;
   }
-  p.split = document.getElementById('bpSplit').checked;
 
   var html = '<tr><th>Sounds like</th><th></th><th></th><th>Means</th></tr>';
   beepCaps.outcomes.forEach(function(o) {
-    /* With the channels merged, channel 2 is never played, so offering a
-       sound for it would be offering something the board cannot say. */
-    if (o.key === 'check_pyro_2' && !p.split) return;
     var sp = p.spec[o.key];
     var k = esc(o.key);
     html += '<tr id="brow' + k + '"><td class="lbl">' +
@@ -858,12 +935,11 @@ function beepsCheck() {
   p.name = document.getElementById('bpName').value;
   p.gap = parseInt(document.getElementById('bpGap').value, 10) || 0;
   p.repeat = parseInt(document.getElementById('bpRepeat').value, 10) || 0;
-  p.split = document.getElementById('bpSplit').checked;
 
   var seen = {}, dupe = null, bad = null, audible = 0;
   beepCaps.outcomes.forEach(function(o) {
     var ke = document.getElementById('bk' + o.key);
-    if (!ke) return;               /* hidden because the channels are merged */
+    if (!ke) return;
     var sp = p.spec[o.key];
     sp.kind = ke.value;
     sp.d1 = parseInt(document.getElementById('bd1' + o.key).value, 10) || 0;
@@ -932,7 +1008,6 @@ function beepsSave() {
     ini += 'p' + i + '_name=' + p.name + '\r\n';
     ini += 'p' + i + '_gap=' + p.gap + '\r\n';
     ini += 'p' + i + '_repeat=' + p.repeat + '\r\n';
-    ini += 'p' + i + '_split=' + (p.split ? 'true' : 'false') + '\r\n';
     beepCaps.outcomes.forEach(function(o) {
       ini += 'p' + i + '_' + o.key + '=' + specToIni(p.spec[o.key]) + '\r\n';
     });
@@ -1250,15 +1325,19 @@ function renderGroundTest() {
   var w = document.getElementById('gtWiring');
   if (!w || !pinCaps.fn) return;
   var digital = pinCaps.fn.digital || 0;
-  function opts(selected) {
-    return pinCaps.pins.filter(function(p) { return (p.f & digital) !== 0; }).map(function(p) {
+  /* [GND-TEST-12] The driven pad may be the buzzer's; the read pad may not. */
+  function opts(selected, withBuzzer) {
+    return pinCaps.pins.filter(function(p) {
+      return (p.f & digital) !== 0 || (withBuzzer && p.p === pinCaps.buzzer_on);
+    }).map(function(p) {
       return '<option value="' + p.p + '"' + (selected === p.p ? ' selected' : '') +
-             '>GPIO' + p.p + (p.lbl ? ' — ' + esc(p.lbl) : '') + '</option>';
+             '>GPIO' + p.p + (p.lbl ? ' — ' + esc(p.lbl) : '') +
+             (withBuzzer && p.p === pinCaps.buzzer_on ? ' (the buzzer)' : '') + '</option>';
     }).join('');
   }
   w.value = pinCaps.ground_test || 'none';
-  document.getElementById('gtPin').innerHTML = opts(pinCaps.gt_pin);
-  document.getElementById('gtDrive').innerHTML = opts(pinCaps.gt_drive_pin);
+  document.getElementById('gtPin').innerHTML = opts(pinCaps.gt_pin, false);
+  document.getElementById('gtDrive').innerHTML = opts(pinCaps.gt_drive_pin, true);
   gtShow();
 }
 
@@ -1434,31 +1513,42 @@ function luaCheck() {
     .catch(function(){ document.getElementById('luChk').textContent = 'check failed'; });
 }
 
+/* [LUA-MGT-01] Checked first, against the resources just chosen: a script
+   that fails its check is not stored. */
 function luaSave() {
   var box = document.getElementById('luChk');
-  box.textContent = 'saving…';
-  /* Config first, so the check on the device runs against the resource set
-     the operator just chose rather than the previous one. */
+  var src = document.getElementById('luSrc').value;
+  box.textContent = 'checking…';
   fetch('api/config', {method:'POST', headers:{'Content-Type':'text/plain'}, body: luaCfgIni()})
     .then(function() {
-      return fetch('api/lua/script', {method:'POST', headers:{'Content-Type':'text/plain'},
-                                       body: document.getElementById('luSrc').value});
-    })
-    .then(function(r) {
-      if (!r.ok) throw new Error('upload rejected');
-      /* The upload replies 201 Created, not JSON. Ask for the verdict
-         separately so it is computed against what is now stored. */
-      return fetch('api/lua/check', {method:'POST', headers:{'Content-Type':'text/plain'},
-                                      body: document.getElementById('luSrc').value});
+      return fetch('api/lua/check', {method:'POST', headers:{'Content-Type':'text/plain'}, body: src});
     })
     .then(function(r){ return r.json(); })
     .then(function(d) {
       luaShowResult(d);
-      box.innerHTML += d.green
-        ? '<div class="warn">Saved. Reboot to load it on core 1.</div>'
-        : '<div class="warn">Saved, but it will not be started until this is green.</div>';
+      if (!d.green) {
+        box.innerHTML += '<div class="warn">Not saved: the script on the board is unchanged.</div>';
+        return null;
+      }
+      return fetch('api/lua/script', {method:'POST', headers:{'Content-Type':'text/plain'}, body: src})
+        .then(function(r) {
+          if (!r.ok) throw new Error('upload rejected');
+          box.innerHTML += '<div class="warn">Saved. Reboot to run it.</div>';
+        });
     })
     .catch(function(){ box.textContent = 'save failed'; });
+}
+
+function luaRemove() {
+  if (!confirm('Remove the script from the board?')) return;
+  var box = document.getElementById('luChk');
+  fetch('api/lua/script', {method:'POST', headers:{'Content-Type':'text/plain'}, body: ''})
+    .then(function(r) {
+      if (!r.ok) throw new Error('refused');
+      document.getElementById('luSrc').value = '';
+      box.innerHTML = '<div class="warn">Removed. Reboot to stop it.</div>';
+    })
+    .catch(function(){ box.textContent = 'remove failed'; });
 }
 
 function luaConPoll() {

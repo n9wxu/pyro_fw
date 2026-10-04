@@ -2,7 +2,14 @@
 const { test, expect } = require('@playwright/test');
 
 /*
- * Web UI tests against mock Pyro server.
+ * Web UI tests against mock Pyro server [TST-07].
+ *
+ * Verifies [SYS-WEB-01, SYS-CFG-02, SYS-CFG-03, WEB-API-01, WEB-API-02,
+ * WEB-API-03, WEB-API-06, WEB-API-09, WEB-API-12, WEB-UI-01, WEB-UI-02,
+ * WEB-UI-03, WEB-UI-04, WEB-UI-05, WEB-UI-06, BUZ-CODE-11, LUA-MGT-01,
+ * LUA-MGT-02, LUA-IO-01, LUA-IO-02, LUA-PAD-01, LUA-PAD-03, GND-TEST-12,
+ * USB-08, PYR-BOARD-02, PYR-BOARD-03, CFG-10].
+ *
  * Server mode is set via PYRO_MODE env var (new/configured/flown).
  * Server started by globalSetup, URL passed via BASE_URL.
  */
@@ -148,6 +155,21 @@ test.describe('New device', () => {
     await expect(page.locator('#logRate')).toHaveValue('1hz');
   });
 
+  /* SNS-EST-06: the choice is of the estimators the board says it carries. */
+  test('estimator: chosen from what the board carries, and saved', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await expect(page.locator('#estimator option')).toHaveText(['lumped', 'constacc']);
+    await expect(page.locator('#estimator')).toHaveValue('lumped');
+    await page.selectOption('#estimator', 'constacc');
+    await expect(page.locator('#cfgDirty')).toBeVisible();
+    await page.click('#btnSaveCfg');
+    await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 5000 });
+    const ini = await (await page.request.get(BASE + '/api/config')).text();
+    expect(ini).toContain('estimator=constacc');
+  });
+
   /* In flight the log holds the filesystem, so the space cannot be read. */
   test('log rate: no estimate while the flight log is written', async ({ page }) => {
     await page.route('**/api/log/space', r => r.fulfill({ status: 423, body: '{"error":"the flight log holds the filesystem"}' }));
@@ -204,6 +226,99 @@ test.describe('Configured device', () => {
     await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 5000 });
   });
 
+  /* CFG-10, WEB-UI-03: a saved change is stored, not in force. The status tab
+     goes on showing what the board is flying on, and says a change waits. */
+  test('a saved change is flagged as waiting for a reboot, not shown as active', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await page.fill('#p2val', '400');
+    await page.click('#btnSaveCfg');
+    await expect(page.locator('#cfgMsg')).toContainText('reboot to apply', { timeout: 5000 });
+    await clickTab(page, 'Status');
+    await expect(page.locator('#pendingWarn')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('#sCfgP2')).toContainText('500');
+    await expect(page.locator('#sCfgP2')).toContainText('waiting for a reboot');
+  });
+
+  /* PYR-REFIRE-01, FLT-EMRG-01, PYR-DEPLOY-02: the fire rules are edited
+     here and saved with the rest of the tab. */
+  test('the fire rules are saved with the rest of the tab', async ({ page, request }) => {
+    await request.post(`${BASE}/api/_test/reset`);
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await page.fill('#p1refire', '80');
+    await page.fill('#emrgSpeed', '130');
+    await page.fill('#fireGap', '4000');
+    await page.click('#btnSaveCfg');
+    await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 5000 });
+    const posts = await (await request.get(`${BASE}/api/_test/config_posts`)).json();
+    const ini = posts[posts.length - 1];
+    expect(ini).toContain('pyro1_refire_speed=80');
+    expect(ini).toContain('pyro2_refire_speed=0');
+    expect(ini).toContain('emergency_fire_speed=130');
+    expect(ini).toContain('refire_interval=0');
+    expect(ini).toContain('fire_gap=4000');
+    expect(ini).not.toContain('telem_');
+  });
+
+  test('the stored fire rules load into the editor', async ({ page, request }) => {
+    await request.post(`${BASE}/api/config`, { data: '[pyro]\r\npyro2_refire_speed=45\r\nrefire_interval=1500\r\n' });
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await expect(page.locator('#p2refire')).toHaveValue('45');
+    await expect(page.locator('#refireInterval')).toHaveValue('1500');
+    await expect(page.locator('#emrgSpeed')).toHaveValue('0');
+  });
+
+  /* PYR-BOARD-02, PYR-BOARD-03: the board's range is the board's to state,
+     and a value outside it is brought in, not refused. */
+  test('a pyro timing value outside the board range says what the board will use', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await expect(page.locator('#fireGapHint')).toContainText('1000 to 10000 ms');
+    await expect(page.locator('#fireGapHint')).toContainText('3000 ms');
+    await page.fill('#fireGap', '200');
+    await expect(page.locator('#fireGapWarn')).toContainText('it will use 1000 ms');
+    await page.fill('#fireGap', '2500');
+    await expect(page.locator('#fireGapWarn')).toHaveText('');
+    await page.fill('#refireInterval', '60000');
+    await expect(page.locator('#refireIntervalWarn')).toContainText('it will use 10000 ms');
+  });
+
+  test('a value the board brought into range is flagged on the status tab', async ({ page, request }) => {
+    await request.post(`${BASE}/api/_test/reset`);
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await expect(page.locator('#limitWarn')).toBeHidden();
+    await request.post(`${BASE}/api/_test/status`, { data: JSON.stringify({ pyro_limited: true }) });
+    await expect(page.locator('#limitWarn')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('#sCfgGap')).toHaveText('3000 ms');
+    await request.post(`${BASE}/api/_test/reset`);
+  });
+
+  /* FLT-BROWN-05: whether this start resumed a flight, and if not, why. */
+  test('the status tab says whether this start resumed a flight', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await expect(page.locator('#sResume')).toHaveText('not resumed: no record');
+  });
+
+  /* A speed is a distance a second in the chosen units, so it converts too. */
+  test('changing units converts the fire rule speeds', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await page.fill('#emrgSpeed', '100');
+    await page.fill('#fireGap', '4000');
+    await page.selectOption('#cfgUnits', '1');
+    await expect(page.locator('#emrgSpeed')).toHaveValue('30');
+    await expect(page.locator('#fireGap')).toHaveValue('4000'); /* milliseconds stay */
+  });
+
   test('save → reboot → config applied', async ({ page }) => {
     test.skip(true, 'Reboot cycle test requires timing stabilization — tracked in #TODO');
   });
@@ -257,15 +372,18 @@ test.describe('Configured device', () => {
     await expect(page.locator('#cfgNameLen')).toHaveText('8 of 8 characters');
   });
 
-  test('range warning for value exceeding sensor limit', async ({ page }) => {
+  /* SYS-CFG-03, SNS-MAX-01: the limit is the board's own, served by it. The
+     mock's sensor reaches 9000 m, 29528 ft. */
+  test('range warning for a height above the board\'s height for proper operation', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Config');
     await page.selectOption('#p2mode', 'agl');
+    await page.fill('#p2val', '29000');
+    await expect(page.locator('#p2warn')).toHaveText('');
     await page.fill('#p2val', '30000');
-    await page.locator('#p2val').dispatchEvent('change');
-    const warn = await page.locator('#p2warn').textContent();
-    expect(warn).toContain('sensor limit');
+    await expect(page.locator('#p2warn')).toContainText('29528 ft');
+    await expect(page.locator('#p2warn')).toContainText('height for proper operation');
   });
 
   /* USB-01: a board reached over USB says it is grounded. */
@@ -386,6 +504,9 @@ test.describe('Pin assignment', () => {
     await expect(page.locator('#gtDrive')).toBeHidden();
     await expect(page.locator('#gtPin option[value="8"]')).toHaveCount(1);
     await expect(page.locator('#gtPin option[value="16"]')).toHaveCount(0); /* the buzzer's */
+    /* GND-TEST-12: the switch may join the buzzer's pad to another, as the driven pad only. */
+    await expect(page.locator('#gtDrive option[value="16"]')).toHaveCount(1);
+    await expect(page.locator('#gtDrive option[value="16"]')).toContainText('the buzzer');
     await expect(page.locator('#gtPin option[value="26"]')).toHaveCount(0); /* a sense pad */
 
     await w.selectOption('pair');
@@ -412,6 +533,53 @@ test.describe('Pin assignment', () => {
   /* [LUA-IO-01/02] A program that lives only on the device is lost with its
      filesystem. Import must land in the editor and not on the device, so a
      mis-picked file costs nothing until Save. */
+  /* LUA-MGT-01: a script that fails its check is not stored. */
+  test('a script that fails its check is not saved', async ({ page, request }) => {
+    await request.post(`${BASE}/api/_test/reset`);
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Lua');
+    await page.fill('#luSrc', 'this is a syntax error');
+    await page.click('text=Save & Apply');
+    await expect(page.locator('#luChk')).toContainText('not ready', { timeout: 5000 });
+    await expect(page.locator('#luChk')).toContainText('Not saved');
+    const lua = await (await request.get(`${BASE}/api/_test/lua`)).json();
+    expect(lua.posts).toBe(0);
+  });
+
+  /* LUA-MGT-01: edit, check, save and remove. */
+  test('a script that passes its check is saved, and can be removed', async ({ page, request }) => {
+    await request.post(`${BASE}/api/_test/reset`);
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Lua');
+    await page.fill('#luSrc', 'function tick() end');
+    await page.click('text=✓ Check');
+    await expect(page.locator('#luChk')).toContainText('ready for flight', { timeout: 5000 });
+    await page.click('text=Save & Apply');
+    await expect(page.locator('#luChk')).toContainText('Saved', { timeout: 5000 });
+    let lua = await (await request.get(`${BASE}/api/_test/lua`)).json();
+    expect(lua.script).toBe('function tick() end');
+    page.once('dialog', d => d.accept());
+    await page.click('#btnLuaRemove');
+    await expect(page.locator('#luChk')).toContainText('Removed', { timeout: 5000 });
+    lua = await (await request.get(`${BASE}/api/_test/lua`)).json();
+    expect(lua.script).toBe('');
+    await expect(page.locator('#luSrc')).toHaveValue('');
+  });
+
+  /* LUA-MGT-02: the console says whether the script runs, and shows what it printed. */
+  test('the console shows the script state and its output', async ({ page, request }) => {
+    await request.post(`${BASE}/api/_test/reset`);
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Lua');
+    await expect(page.locator('#luState')).toHaveText('enabled, no script', { timeout: 5000 });
+    await request.post(`${BASE}/api/lua/script`, { data: 'print("hello from the script")' });
+    await expect(page.locator('#luState')).toHaveText('running', { timeout: 5000 });
+    await expect(page.locator('#luCon')).toContainText('hello from the script');
+  });
+
   test('lua program exports to a file', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -540,9 +708,22 @@ test.describe('Beep codes', () => {
     await waitForStatus(page);
     await clickTab(page, 'Beep Codes');
     const table = page.locator('#bpTable');
-    await expect(table).toContainText('Safe the system and leave the pad');
+    await expect(table).toContainText('take it to the workbench');
     await expect(table).toContainText('Check pyro 1');
+    await expect(table).toContainText('Check pyro 2');
     await expect(table).toContainText('OK to fly');
+  });
+
+  /* BUZ-CODE-01, BUZ-CODE-11: four outcomes, each with its own sound, and
+     they come from the board. */
+  test('the vocabulary is four outcomes, one row each', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Beep Codes');
+    for (const key of ['general_fault', 'check_pyro_1', 'check_pyro_2', 'ok_to_fly'])
+      await expect(page.locator('#brow' + key)).toBeVisible();
+    await expect(page.locator('#bpTable tr')).toHaveCount(5); /* the heading and four outcomes */
+    await expect(page.locator('#bpSplit')).toHaveCount(0);
   });
 
   test('the beep counts hide when the sound is not a count', async ({ page }) => {
@@ -553,17 +734,6 @@ test.describe('Beep codes', () => {
     await expect(page.locator('#bd1ok_to_fly')).toBeHidden();
     await page.selectOption('#bkok_to_fly', 'code');
     await expect(page.locator('#bd1ok_to_fly')).toBeVisible();
-  });
-
-  test('merging the pyro channels removes the second row', async ({ page }) => {
-    await page.goto(BASE);
-    await waitForStatus(page);
-    await clickTab(page, 'Beep Codes');
-    await expect(page.locator('#browcheck_pyro_2')).toBeVisible();
-    await page.uncheck('#bpSplit');
-    /* Channel 2 is never played when merged, so a sound for it would be one
-       the board cannot say. */
-    await expect(page.locator('#browcheck_pyro_2')).toHaveCount(0);
   });
 
   test('two outcomes that sound alike are flagged', async ({ page }) => {
@@ -657,6 +827,23 @@ test.describe('Flown device', () => {
     expect(p2).toContain('FIRED');
   });
 
+  /* PYR-FIRE-01, FLT-EMRG-04, PYR-FAULT-03: every pulse is counted, and what
+     the board saw of it is shown. */
+  test('the status tab counts the pulses and shows an emergency fire and a fault', async ({ page, request }) => {
+    await request.post(`${BASE}/api/_test/reset`);
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await expect(page.locator('#sP1')).toContainText('×3');
+    await expect(page.locator('#sP2')).not.toContainText('×');
+    await expect(page.locator('#sEmrg')).toHaveText('No');
+    await request.post(`${BASE}/api/_test/status`,
+      { data: JSON.stringify({ emergency_fire: true, pyro_fault: [false, true] }) });
+    await expect(page.locator('#sEmrg')).toContainText('FIRED', { timeout: 5000 });
+    await expect(page.locator('#sP2')).toContainText('reported a fault');
+    await expect(page.locator('#sP1')).not.toContainText('reported a fault');
+    await request.post(`${BASE}/api/_test/reset`);
+  });
+
   test('flight data tab shows duration and apogee', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
@@ -666,9 +853,28 @@ test.describe('Flown device', () => {
     await expect(page.locator('#dApogee')).toContainText('10000');
   });
 
-  /* N27, FLT-MACH-07: while the Mach lock stands the ports' altitude is not
-     the rocket's, so the apogee comes from the rows outside it -- and is only
-     a lower bound if the lock let go within 2 s of apogee, or never did. */
+  /* FLT-APO-08: the summary's apogee is the log's PEAK row, not the highest
+     row, and "at least" when the firmware marked it a lower bound. */
+  test('apogee is the PEAK row', async ({ page, request }) => {
+    await request.post(BASE + '/api/_test/fly_peak/seen');
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Flight Data');
+    await expect(page.locator('#dApogee')).toContainText('8202');
+    await expect(page.locator('#dApogee')).not.toContainText('at least');
+  });
+
+  test('a PEAK_AT_LEAST row makes it a lower bound', async ({ page, request }) => {
+    await request.post(BASE + '/api/_test/fly_peak/bound');
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Flight Data');
+    await expect(page.locator('#dApogee')).toContainText('at least 8202');
+  });
+
+  /* A log written before DD-092 has the Mach lock's rows instead: the apogee
+     comes from the rows outside the lock -- and is only a lower bound if the
+     lock let go within 2 s of apogee, or never did. */
   async function openLocked(page, request, how) {
     await request.post(BASE + '/api/_test/fly_locked/' + how);
     await page.goto(BASE);

@@ -31,8 +31,12 @@
     X(MODE, pyro2_mode, "pyro2_mode", PYRO_MODE_AGL)                                                                   \
     X(U16, pyro2_value, "pyro2_value", 300)                                                                            \
     X(UNITS, units, "units", 1)                                                                                        \
-    X(U8, telem_format, "telem_format", 0)                                                                             \
-    X(U8, telem_rate_hz, "telem_rate_hz", 10)                                                                          \
+    X(U16, pyro1_refire_speed, "pyro1_refire_speed", 0)                                                                \
+    X(U16, pyro2_refire_speed, "pyro2_refire_speed", 0)                                                                \
+    X(U16, emergency_fire_speed, "emergency_fire_speed", 0)                                                            \
+    X(U16, refire_interval, "refire_interval", 0)                                                                      \
+    X(U16, fire_gap, "fire_gap", 0)                                                                                    \
+    X(STR, estimator, "estimator", "lumped")                                                                           \
     X(LOGRATE, log_rate, "log_rate", LOG_RATE_1HZ)                                                                     \
     X(U8, landing_timeout, "landing_timeout", 60)                                                                      \
     X(BOOL, lua_enabled, "lua_enabled", false)                                                                         \

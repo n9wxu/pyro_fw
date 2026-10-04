@@ -22,6 +22,10 @@
  * is reported and never fatal: the flight computer runs without Lua. */
 void lua_app_init(const config_t *cfg);
 
+/* A restart the operator asked for is not a start the script killed
+ * [LUA-SAFE-01]. Call before the reset. */
+void lua_app_restart_commanded(void);
+
 /* The flight task's service: publish flight state, watch the Lua task, and
  * drain the script's log ring into the flight log. Touches no file and never
  * blocks.
@@ -60,9 +64,5 @@ uint32_t lua_app_log_written(void);
 
 /* One-line status for /api/status. */
 const char *lua_app_status(void);
-
-/* True when the board is fully up -- Lua running, or Lua not in play. The
- * startup indication waits for this. */
-bool lua_app_ready(void);
 
 #endif

@@ -14,6 +14,8 @@
  *   BUZ-ACT-03  repeat until stopped   — pattern restarts at sentinel
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Verifies [BUZ-02, BUZ-04..06, BUZ-CODE-12, BUZ-CODE-14, GND-TEST-06, GND-TEST-07, USB-03].
  */
 #include "unity.h"
 #include "mocks.h"

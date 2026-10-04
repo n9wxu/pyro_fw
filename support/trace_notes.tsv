@@ -1,0 +1,48 @@
+# id	status	text. An empty status leaves the computed one. Read by support/trace_matrix.py.
+DAT-09	⚠️	The room is reported at `/api/log/space` and each board declares its capacity in its `THEORY_OF_OPERATION.md`; no test flies a log to the declared length
+PYR-ARM-05		`main_hardware.c` shuts the storage window while `board_flash_ok()` is false, by inspection
+WEB-NET-01	✅ HW	
+WEB-NET-02	✅ HW	
+WEB-NET-03	✅ HW	
+WEB-NET-04	✅ HW	
+WEB-API-04	✅ HW	Hardware: an update over HTTP to MK1A, MK1B and MK1C, every stored file kept
+WEB-API-05	✅ HW	Hardware: 200 with CORS, and the board back in PAD_IDLE
+WEB-API-08		The web server answering 423 and dropping a held transfer: by inspection; a bench check in a chamber flight is owed
+OTA-01	✅ HW	Hardware: updates to MK1A, MK1B and MK1C through `support/upload_fw.sh`
+OTA-02	✅ HW	Hardware: the board serves pages while the image is written
+OTA-03	⚠️	Hardware only: an image that never commits is rolled back by the bootloader; no scripted check
+OTA-04	⚠️	Hardware only: no scripted check
+LUA-SAFE-01	⚠️	The start-up gate is in `src/lua/lua_app.c`; a commanded restart now clears its mark (`lua_app_restart_commanded()`). Bench check owed: reboot within 15 s of start, script still runs
+LUA-RUN-01	⚠️	`lua_app_service()` is called every loop whatever the flight state, by inspection. Bench check owed: a script running through a bench flight and through ground test mode
+SD-01	✅ HW	Hardware only, on MK1C-SD: the card pulled and refitted, the board on its internal storage meanwhile
+SD-02	✅ HW	Hardware only, on MK1C-SD: `/api/log/space` store `sd`, config and pages served from the card
+SYS-PWR-01	⚠️	No measurement. Battery sizing is the user's, by characterisation
+HAL-03	✅	Three implementations build in CI: `src/hal_common/`, `test/hal_test.c`, `boards/sim/hal_sim.c`
+HAL-04	✅	`src/flight_sources.txt` is the one list the firmware, the host suites, the simulator and the WASM build compile
+HAL-05	✅	Every flight suite links `test/hal_test.c` and nothing of a board
+HAL-06	⚠️	Not built yet: the options are in `docs/hal_validation_apps.md`
+BLD-01	✅	CI builds every board
+BLD-02	✅	CI builds and runs every host suite (`scripts/run_host_tests.sh`)
+BLD-03	✅	CI builds `pyro_sim` and the WASM simulator
+BLD-04	✅	CI: `support/version.py` against `VERSION`
+BLD-05	✅ HW	Hardware: both slots written and booted on MK1A, MK1B and MK1C
+BLD-06	⚠️	Not built yet: `docs/hal_validation_apps.md`
+TST-01	✅	The flight suites drive `flight_init()`, `dispatch_state()` and the HAL only (`test/board_harness.c`); `support/structure_check.py` keeps test-only constructs out of the flight software
+TST-08	✅	`.github/workflows/build.yml`
+TST-09	✅	This file, written by `support/trace_matrix.py`; `support/trace_check.py` in CI
+CODE-01	⚠️	By review. No automated check
+CODE-02	✅	`support/trace_check.py`: every cited ID exists; `support/trace_matrix.py`: every row comes from a citation
+CODE-03	⚠️	By review. No automated check
+CODE-04	✅	`support/wait_check.py` in CI: no sleep, a wait is a deadline function
+CODE-05	⚠️	By review. No automated check
+CODE-06	⚠️	By review: one responsibility a file in `src/flight_sources.txt`; `pmccabe` bounds a function in CI
+CODE-07	⚠️	By review. No automated check
+CODE-08	✅	As TST-01 and TST-09
+CODE-10	⚠️	By review. No automated check
+BRD-01	✅	Each `boards/<name>/THEORY_OF_OPERATION.md`, "What this board declares"; `support/structure_check.py` holds every board to the list. Values marked not measured are owed to BRD-02
+BRD-02	⚠️	Owed with HAL-06
+PYR-ARM-01	⚠️	MK1C: about 35 ms. MK1A and MK1B end a pulse from the loop, so a stopped loop leaves it energised until the watchdog, 1 s: the 50 ms bound is not met on those boards
+SYS-LUA-01	⚠️	MK1C-SD is built without a script: J3 carries its SPI bus
+FLT-RT-01		The bound on each board is declared and not yet measured on this revision: `loop_late_max_us` on `/api/status`
+GND-TEST-12		The pulsed read on the buzzer's pad (`gts_tick()`) is platform code: bench check owed, `docs/ground_test_on_buzzer_pad.md`
+SNS-COL-06	✅	CI runs `support/prove_core0.py` on every image: it fails if `collector_alarm_isr` or anything it calls is outside RAM

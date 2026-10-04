@@ -2,6 +2,8 @@
  * A MAC drawn from the RNG, and the /serial.txt that keeps it (mac_random.c,
  * DD-072, WEB-NET-06). Two MK1Cs whose flash chips report one id took one
  * derived MAC; a drawn one depends on what the pool was fed, not on the flash.
+ *
+ * Verifies [WEB-NET-06].
  */
 #include "unity.h"
 #include "mac_random.h"

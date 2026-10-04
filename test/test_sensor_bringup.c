@@ -5,6 +5,8 @@
  * (sensor_bringup_tests). The loop is the only clock (DD-053): bus recovery,
  * settles and sensor resets are steps a later loop takes, and the fake SDK's
  * sleeps fail the test.
+ *
+ * Verifies [SNS-PRES-01, SYS-ALT-02].
  */
 #include "../src/loop_period.h"
 #include "unity.h"
@@ -63,7 +65,9 @@ static uint64_t now_us(void) {
 #ifdef HAS_MS5607
 /* ── A fake MS5607: NACKs through the 2.8 ms reload after a reset ─── */
 
-static const uint16_t MS_PROM[8] = {0x0042, 46372, 43981, 29059, 27842, 31553, 28165, 0x0005};
+/* The datasheet's example coefficients, with their CRC in the last word. */
+static const uint16_t MS_PROM[8] = {0x0042, 46372, 43981, 29059, 27842, 31553, 28165, 0x0001};
+static uint16_t ms_prom_fault; /* XORed into the pressure sensitivity as it is read */
 
 static int ms_write(fake_i2c_dev_t *d, const uint8_t *src, size_t len) {
     note_transfer(d->sda);
@@ -88,8 +92,9 @@ static int ms_read(fake_i2c_dev_t *d, uint8_t *dst, size_t len) {
         return PICO_ERROR_GENERIC;
     }
     if (ms_sel >= 0 && len == 2) {
-        dst[0] = (uint8_t)(MS_PROM[ms_sel] >> 8);
-        dst[1] = (uint8_t)MS_PROM[ms_sel];
+        uint16_t word = MS_PROM[ms_sel] ^ (ms_sel == 1 ? ms_prom_fault : 0u);
+        dst[0] = (uint8_t)(word >> 8);
+        dst[1] = (uint8_t)word;
     } else {
         memset(dst, 0, len);
     }
@@ -147,7 +152,8 @@ static fake_i2c_dev_t bmp_dev;
 static void attach_bmp280(void) {
     memset(bmp_regs, 0x11, sizeof(bmp_regs));
     bmp_regs[0xD0] = 0x58;
-    bmp_dev = (fake_i2c_dev_t){.bus = BUS, .addr = 0x77, .sda = BMP_SDA, .scl = SCL, .write = bmp_write, .read = bmp_read};
+    bmp_dev =
+        (fake_i2c_dev_t){.bus = BUS, .addr = 0x77, .sda = BMP_SDA, .scl = SCL, .write = bmp_write, .read = bmp_read};
     fake_i2c_attach(&bmp_dev);
 }
 #endif
@@ -181,6 +187,9 @@ void setUp(void) {
     ms_reload_until = bmp_start_until = 0;
     ms_early = bmp_early = 0;
     ms_sel = 0;
+#ifdef HAS_MS5607
+    ms_prom_fault = 0;
+#endif
 }
 
 void tearDown(void) {}
@@ -260,6 +269,16 @@ void test_bringup_without_a_sensor(void) {
     TEST_ASSERT_TRUE(loops <= 60);
 }
 
+#ifdef HAS_MS5607
+/* [SNS-PRES-16] One wrong bit in a coefficient: the part answers, and is not
+ * taken for a sensor. */
+void test_SNS_PRES_16_a_prom_that_fails_its_crc_is_no_sensor(void) {
+    attach_ms5607();
+    ms_prom_fault = 0x0100;
+    TEST_ASSERT_EQUAL(PRESSURE_SENSOR_NONE, bring_up(NULL));
+}
+#endif
+
 #if defined(HAS_MS5607) && defined(HAS_BMP280)
 /* MK1B: the BMP280 pad is probed first, in standard mode, and a BMP280 there
  * is the sensor. */
@@ -293,6 +312,9 @@ int main(void) {
     RUN_TEST(test_bringup_at_the_boards_speed);
     RUN_TEST(test_bringup_a_held_bus_is_bounded);
     RUN_TEST(test_bringup_without_a_sensor);
+#ifdef HAS_MS5607
+    RUN_TEST(test_SNS_PRES_16_a_prom_that_fails_its_crc_is_no_sensor);
+#endif
 #if defined(HAS_MS5607) && defined(HAS_BMP280)
     RUN_TEST(test_bringup_mk1b_bmp280);
     RUN_TEST(test_bringup_mk1b_held_bmp280_is_bounded);

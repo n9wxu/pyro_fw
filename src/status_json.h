@@ -1,7 +1,6 @@
 /*
- * /api/status, in two halves: core0 captures a snapshot in one pass, and
- * status_json() renders it anywhere. The renderer reads nothing but the
- * snapshot, which is what lets core1 run it (DD-061).
+ * /api/status, in two halves: a snapshot taken at one instant of the flight,
+ * and status_json(), which renders nothing but the snapshot [WEB-API-11].
  *
  * Every string pointer names a constant; anything that can change is copied.
  *
@@ -24,7 +23,7 @@
  * board_id and board_selftest keys were caught: the bound has to move
  * deliberately, and it has to stay under HTTP_WORK_SIZE, which the
  * _Static_assert in http_server.c checks. */
-#define STATUS_JSON_MAX 3200
+#define STATUS_JSON_MAX 3500
 
 typedef struct {
     const char *state;
@@ -73,23 +72,27 @@ typedef struct {
     const char *faults[STATUS_FAULTS_MAX];
     uint8_t n_faults;
     uint8_t reset_cause;
-    const char *recovery;
+    const char *resume;
     /* How the last boot ended: the watchdog, and the stage or crumb core0
      * was in (src/main_hardware.c has the map); -1: none stamped. */
     bool prev_watchdog;
     int32_t prev_stage;
     uint32_t prev_stage_ms;
-    bool pyro_refused[2];
-    uint8_t pyro1_refires;
-    bool main_forced;
-    uint32_t pres_waits, pres_rejects;
+    uint16_t pyro_pulses[2]; /* [PYR-FIRE-01] every pulse, the first included */
+    bool pyro_fault[2];
+    bool emergency_fire;                      /* [FLT-EMRG-04] */
+    uint16_t refire_interval_ms, fire_gap_ms; /* in force [PYR-BOARD-03] */
+    bool pyro_limited;                        /* a configured value was outside the board's range [PYR-BOARD-02] */
+    /* The pressure collector [SNS-COL-04, SNS-COL-05]: transfers that failed, in
+     * all and by cause, bus recoveries, and cycles pushed out of its queue. */
+    uint32_t pres_rejects, pres_bus[4], pres_recoveries, pres_dropped;
     uint32_t pres_flashed; /* [DD-068] readings a flash operation disturbed, not fed on */
     int32_t raw_pa, pad_speed_cms;
     bool ground_degraded;
     uint32_t ground_reseeds;
-    uint32_t sample_interval_us[2], stamp_lag_max_us, fit_sigma_mpa;
-    bool mach_lock;
-    uint32_t mach_flag_ms;
+    uint32_t sample_interval_us[2], stamp_lag_max_us, noise_mpa;
+    const char *estimator; /* the one obeyed [SNS-EST-06] */
+    bool estimator_explains;
     bool peak_lower_bound;
     bool usb_attached, test_mode, buzzer_active;
 

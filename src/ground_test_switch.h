@@ -8,6 +8,11 @@
  * both ways; open, it follows its pull. A read pad touching ground or the
  * supply follows one way only, so it is never taken for a closed switch.
  *
+ * The driven pad may be the buzzer's. The platform then shows the level under
+ * test on it only for the instant of the read, so the buzzer keeps its own
+ * pattern and the same two follows decide. The buzzer's pad is never the read
+ * pad and never switched to ground.
+ *
  * Portable: the platform moves the pins, this decides what they mean.
  *
  * SPDX-License-Identifier: MIT

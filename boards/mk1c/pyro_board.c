@@ -4,8 +4,9 @@
  * THEORY_OF_OPERATION.md "Firing bus".
  *
  * Between fires the board checks presence and shorts, nothing else
- * [DD-055]; a fire is the sequence in pyro_sequence.c [DD-056]. Only that
- * sequence raises a gate or feeds the arm pump.
+ * [DD-055], and what it finds is reported and gates nothing [DD-081]. A fire
+ * is the sequence in pyro_sequence.c [DD-056]. Only that sequence raises a
+ * gate or feeds the arm pump.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -46,7 +47,7 @@ bool board_pyro_raw(board_pyro_raw_t *out) {
 
 /* See THEORY_OF_OPERATION.md "Flash and the fire". */
 bool board_flash_ok(void) {
-    return !sequence_firing();
+    return !sequence_firing() && !tracking_pulse_active();
 }
 
 static void on_tracking_result(const tracking_t *t) {
@@ -101,14 +102,11 @@ void pyro_get(uint8_t channel, pyro_continuity_t *out) {
     out->shorted = false; /* a short is the bus's: pyro_fault() */
 }
 
+/* [PYR-FIRE-01, PYR-HEALTH-01] No reading withholds a fire. One sequence
+ * runs at a time: the caller serialises the channels [PYR-DEPLOY-02]. */
 void pyro_fire(uint8_t channel) {
-    const char *why = sequence_refusal(channel, &quiescent, tracking_result());
-    if (why) {
-        char line[112];
-        snprintf(line, sizeof(line), "!PYRO FIRE REFUSED ch=%u: %s\r\n", channel, why);
-        hal_telemetry_send(line);
+    if ((channel != 1 && channel != 2) || sequence_firing())
         return;
-    }
     tracking_abandon();
     sequence_arm(channel, &quiescent);
 }

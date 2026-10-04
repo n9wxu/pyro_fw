@@ -20,6 +20,8 @@
  * against its own board's board_pins.h and links all three.
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Verifies [TST-03].
  */
 #include "unity.h"
 #include "plant.h"

@@ -1,13 +1,11 @@
 /*
- * Replaying a flight log through the firmware.
+ * Replaying a flight log through the firmware [DAT-08].
  *
- * A log carries each sample's own raw reading (raw_pa): the middle reading of
- * the median window that produced the sample. So the rows are the flight's
- * readings, one each, in order, and feeding them back through the pressure
- * layer reproduces the same medians and the same filter. The detectors then
- * decide again, and their decisions can be set against the log's own event
- * rows -- which is how a change to the filter or the detectors is checked
- * against a real flight [DAT-02].
+ * A log written with log_rate=full carries each sample's raw reading, so the
+ * rows are the flight's readings in order. The firmware is started on a pad
+ * at the log's ground pressure and then flown on those readings, and what it
+ * decides is set against the log's own event rows: how a change to the
+ * estimator or the detectors is checked against a real flight.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -27,13 +25,13 @@ typedef struct {
 /* The events the log itself records. */
 bool replay_logged_events(const char *csv, replay_events_t *out);
 
-/* The events the firmware decides from the log's readings, starting in ASCENT
- * with the log's configuration and ground pressure. false if the log has no
- * raw_pa column, or was written at a row a second [DAT-08]. */
+/* The events the firmware decides from the log's readings, with the log's
+ * configuration and ground pressure. false if the log has no raw_pa column,
+ * or was written at a row a second. */
 bool replay_run(const char *csv, replay_events_t *out);
 
-/* Called before each row with its time: what a HAL's own tick would do, such
- * as end a pyro pulse. NULL for none. */
+/* Called before each reading with its time, to set the HAL's clock and do
+ * what its own tick would do, such as end a pyro pulse. */
 extern void (*replay_row_hook)(uint32_t now_ms);
 
 #endif

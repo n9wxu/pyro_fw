@@ -112,10 +112,13 @@ typedef struct {
 } hr_stats_t;
 
 /* Before the scheduler: the two tasks. */
+/* The state a start finds: nothing open, nothing queued. A log a power cut
+ * left on the card is found and kept by the writer [HR-04]. */
+void hr_log_init(void);
 void hr_log_create_tasks(void);
 
-/* One pass of each task's loop, for the host tests: the reader's every 10 ms,
- * the writer's whenever the reader wakes it. */
+/* One pass of each task's loop: the reader's every 10 ms, the writer's
+ * whenever the reader wakes it. */
 void hr_reader_begin(void);
 void hr_reader_step(void);
 void hr_writer_step(void);

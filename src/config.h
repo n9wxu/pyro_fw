@@ -58,6 +58,9 @@ typedef struct {
 /* ── API ──────────────────────────────────────────────────────────── */
 
 /* Set all fields to compile-time defaults */
+/* config.ini is never larger than this: what a load reads and a save may write. */
+#define CONFIG_INI_MAX 640
+
 void config_set_defaults(config_t *cfg);
 
 /* Parse INI text into cfg (preserves unset fields) [CFG-02, CFG-06..09] */

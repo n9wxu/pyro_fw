@@ -8,6 +8,8 @@
  * link.
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Verifies [WEB-API-01, WEB-API-11, BUZ-CODE-03, PYR-CONT-02, FLT-BOOT-15, FLT-BROWN-05, FLT-EMRG-04, PYR-FIRE-01, PYR-FAULT-03, PYR-BOARD-02, PYR-BOARD-03, FLT-LOG-08].
  */
 #include "unity.h"
 #include "../src/status_json.h"
@@ -84,13 +86,23 @@ static void typical(status_snap_t *s) {
     s->faults[1] = "cfg_range";
     s->n_faults = 2;
     s->reset_cause = 1;
-    s->recovery = "cold boot";
+    s->resume = "not resumed: no record";
     s->prev_watchdog = true;
     s->prev_stage = 96;
     s->prev_stage_ms = 204511;
-    s->pyro_refused[1] = true;
-    s->pyro1_refires = 1;
-    s->pres_waits = 7;
+    s->pyro_pulses[0] = 3;
+    s->pyro_pulses[1] = 1;
+    s->pyro_fault[1] = true;
+    s->emergency_fire = true;
+    s->refire_interval_ms = 1000;
+    s->fire_gap_ms = 3000;
+    s->pyro_limited = true;
+    s->pres_bus[0] = 1;
+    s->pres_bus[1] = 2;
+    s->pres_bus[2] = 3;
+    s->pres_bus[3] = 4;
+    s->pres_recoveries = 5;
+    s->pres_dropped = 7;
     s->pres_flashed = 3;
     s->raw_pa = 101300;
     s->pad_speed_cms = -3;
@@ -98,7 +110,9 @@ static void typical(status_snap_t *s) {
     s->sample_interval_us[0] = 9900;
     s->sample_interval_us[1] = 10100;
     s->stamp_lag_max_us = 300;
-    s->fit_sigma_mpa = 2400;
+    s->noise_mpa = 2400;
+    s->estimator = "lumped";
+    s->estimator_explains = true;
     s->usb_attached = true;
     s->beep = "ready";
     s->beep_kind = "code";
@@ -170,16 +184,20 @@ static const char *const TYPICAL[][2] = {
     {"fs_ok", "true"},
     {"faults", "[\"p2_open\",\"cfg_range\"]"},
     {"reset_cause", "1"},
-    {"recovery", "\"cold boot\""},
+    {"resume", "\"not resumed: no record\""},
     {"prev_watchdog", "true"},
     {"prev_stage", "96"},
     {"prev_stage_ms", "204511"},
-    {"pyro1_refused", "false"},
-    {"pyro2_refused", "true"},
-    {"pyro1_refires", "1"},
-    {"main_forced", "false"},
-    {"pres_waits", "7"},
+    {"pyro_pulses", "[3,1]"},
+    {"pyro_fault", "[false,true]"},
+    {"emergency_fire", "true"},
+    {"refire_interval_ms", "1000"},
+    {"fire_gap_ms", "3000"},
+    {"pyro_limited", "true"},
     {"pres_rejects", "0"},
+    {"pres_bus", "{\"address_nack\":1,\"data_nack\":2,\"line_held\":3,\"timeout\":4}"},
+    {"pres_recoveries", "5"},
+    {"pres_dropped", "7"},
     {"pres_flashed", "3"},
     {"raw_pa", "101300"},
     {"pad_speed_cms", "-3"},
@@ -187,9 +205,9 @@ static const char *const TYPICAL[][2] = {
     {"ground_reseeds", "2"},
     {"sample_interval_us", "[9900,10100]"},
     {"stamp_lag_max_us", "300"},
-    {"fit_sigma_mpa", "2400"},
-    {"mach_lock", "false"},
-    {"mach_flag_ms", "0"},
+    {"noise_mpa", "2400"},
+    {"estimator", "\"lumped\""},
+    {"estimator_explains", "true"},
     {"peak_lower_bound", "false"},
     {"usb_attached", "true"},
     {"test_mode", "false"},
@@ -321,7 +339,7 @@ void test_SJ_02_the_widest_status_fits_its_bound(void) {
     static const char *const long40 = "0123456789012345678901234567890123456789";
     status_snap_t s;
     typical(&s);
-    s.state = s.fw_version = s.sensor = s.board = s.board_id = s.recovery = s.beep = s.beep_kind = long40;
+    s.state = s.fw_version = s.sensor = s.board = s.board_id = s.resume = s.beep = s.beep_kind = s.estimator = long40;
     s.pyro_mode[0] = s.pyro_mode[1] = long40;
     s.board_selftest = 0; /* "unknown", the widest of the three */
     s.alt_cm = s.max_alt_cm = s.vspeed_cms = s.pressure_pa = s.prev_stage = INT32_MIN;
@@ -329,9 +347,10 @@ void test_SJ_02_the_widest_status_fits_its_bound(void) {
     uint32_t *u32[] = {&s.flight_ms,        &s.uptime_ms,        &s.loop_max_us,        &s.loop_overruns,
                        &s.loop_late_max_us, &s.loop_count,       &s.flash_opens,        &s.flash_skips,
                        &s.flash_refusals,   &s.log_dropped,      &s.flash_erases,       &s.flash_programs,
-                       &s.flash_deferrals,  &s.pyro_mocked,      &s.pres_waits,         &s.pres_rejects,
+                       &s.flash_deferrals,  &s.pyro_mocked,      &s.pres_dropped,       &s.pres_rejects,       &s.pres_recoveries,
+                       &s.pres_bus[0],      &s.pres_bus[1],      &s.pres_bus[2],        &s.pres_bus[3],
                        &s.pres_flashed,
-                       &s.ground_reseeds,   &s.stamp_lag_max_us, &s.fit_sigma_mpa,      &s.mach_flag_ms,
+                       &s.ground_reseeds,   &s.stamp_lag_max_us, &s.noise_mpa,
                        &s.http_units[0],    &s.http_units[1],    &s.http_unit_max_us[0], &s.http_unit_max_us[1],
                        &s.sample_interval_us[0], &s.sample_interval_us[1], &s.prev_stage_ms};
     for (size_t i = 0; i < sizeof(u32) / sizeof(u32[0]); i++) {
@@ -344,7 +363,8 @@ void test_SJ_02_the_widest_status_fits_its_bound(void) {
         s.stage1_parts_us[i] = UINT32_MAX;
     }
     s.pyro_adc[0] = s.pyro_adc[1] = s.pyro_value[0] = s.pyro_value[1] = UINT16_MAX;
-    s.units = s.reset_cause = s.pyro1_refires = s.subnet = s.bridge_ch = s.bridge_common = UINT8_MAX;
+    s.pyro_pulses[0] = s.pyro_pulses[1] = s.refire_interval_ms = s.fire_gap_ms = UINT16_MAX;
+    s.units = s.reset_cause = s.subnet = s.bridge_ch = s.bridge_common = UINT8_MAX;
     s.beep_d1 = s.beep_d2 = UINT8_MAX;
     memset(s.rocket_id, '"', 8);
     memset(s.rocket_name, '\\', 8);

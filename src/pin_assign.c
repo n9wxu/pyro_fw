@@ -192,7 +192,37 @@ static pin_verdict_t ok(void) {
 }
 
 static pin_verdict_t fail(pin_err_t e, uint8_t pin) {
-    pin_verdict_t v = {e, pin, pin_assign_strerror(e)};
+    pin_verdict_t v = {e, pin, ""};
+    snprintf(v.what, sizeof(v.what), "%s", pin_assign_strerror(e));
+    return v;
+}
+
+/* Which of the pad's possible holders is asking, so the answer names one of
+ * the others: the buzzer check must not be told the pad is the buzzer. */
+typedef enum { FOR_ROLE, FOR_BUZZER, FOR_GT } asking_t;
+
+/* A refusal that names what holds the pad -- the Lua role and its name, the
+ * buzzer, the switch, or the board function -- so the operator goes to the
+ * right tab instead of to pins.ini. The UI appends the pad number. */
+static pin_verdict_t held(pin_err_t e, const pin_assign_t *a, uint8_t pin, asking_t asking) {
+    pin_verdict_t v = {e, pin, ""};
+    const pin_cap_t *c = pin_caps_find(pin);
+    if (asking != FOR_ROLE && pin < PIN_ASSIGN_MAX_GPIO && a->role[pin] != LUA_ROLE_OFF) {
+        const char *role = role_to_name(a->role[pin]);
+        if (a->name[pin][0]) {
+            snprintf(v.what, sizeof(v.what), "already a Lua %s named %s; set it to off first", role, a->name[pin]);
+        } else {
+            snprintf(v.what, sizeof(v.what), "already a Lua %s; set it to off first", role);
+        }
+    } else if (asking != FOR_BUZZER && pin_assign_buzzer_pin(a) == pin) {
+        snprintf(v.what, sizeof(v.what), "already the buzzer");
+    } else if (asking != FOR_GT && is_gt_pad(a, pin)) {
+        snprintf(v.what, sizeof(v.what), "already the ground test switch");
+    } else if (c && c->label) {
+        snprintf(v.what, sizeof(v.what), "the board's %s", c->label);
+    } else {
+        snprintf(v.what, sizeof(v.what), "%s", pin_assign_strerror(e));
+    }
     return v;
 }
 
@@ -214,7 +244,7 @@ static pin_verdict_t check_buzzer(const pin_assign_t *a) {
      * is_reserved() is deliberate: is_reserved() now answers true FOR the
      * buzzer pad, so it cannot be the test for whether the pad was free. */
     if (a->buzzer_pin < PIN_ASSIGN_MAX_GPIO && a->role[a->buzzer_pin] != LUA_ROLE_OFF) {
-        return fail(PIN_ERR_BUZZER_BUSY, a->buzzer_pin);
+        return held(PIN_ERR_BUZZER_BUSY, a, a->buzzer_pin, FOR_BUZZER);
     }
     if (c->group != PG_NONE) {
         bool released = (c->group == PG_CH1)   ? a->pyro1_released
@@ -228,13 +258,14 @@ static pin_verdict_t check_buzzer(const pin_assign_t *a) {
      * -- stays reserved. Only a pad carrying FN_BUZZER is exempt, because that
      * pad IS a buzzer pad. */
     if ((c->functions & FN_BOARD_RESERVED) && !(c->functions & FN_BUZZER) && c->group == PG_NONE) {
-        return fail(PIN_ERR_BUZZER_BUSY, a->buzzer_pin);
+        return held(PIN_ERR_BUZZER_BUSY, a, a->buzzer_pin, FOR_BUZZER);
     }
     return ok();
 }
 
-/* One pad of the ground test switch: a plain digital pad that nothing else
- * has -- no script, not the buzzer, nothing the board holds. */
+/* A pad of the ground test switch that is the switch's alone: a plain
+ * digital pad that nothing else has -- no script, not the buzzer, nothing
+ * the board holds. */
 static pin_verdict_t check_gt_pad(const pin_assign_t *a, uint8_t pin) {
     if (pin == PIN_GT_UNSET) {
         return fail(PIN_ERR_GT_INCOMPLETE, 0);
@@ -247,10 +278,10 @@ static pin_verdict_t check_gt_pad(const pin_assign_t *a, uint8_t pin) {
         return fail(PIN_ERR_GT_NOT_CAPABLE, pin);
     }
     if (pin < PIN_ASSIGN_MAX_GPIO && a->role[pin] != LUA_ROLE_OFF) {
-        return fail(PIN_ERR_GT_BUSY, pin);
+        return held(PIN_ERR_GT_BUSY, a, pin, FOR_GT);
     }
     if (pin_assign_buzzer_pin(a) == pin) {
-        return fail(PIN_ERR_GT_BUSY, pin);
+        return held(PIN_ERR_GT_BUSY, a, pin, FOR_GT);
     }
     if (c->group != PG_NONE) {
         bool released = (c->group == PG_CH1)   ? a->pyro1_released
@@ -260,7 +291,7 @@ static pin_verdict_t check_gt_pad(const pin_assign_t *a, uint8_t pin) {
             return fail(PIN_ERR_PYRO_RETAINED, pin);
         }
     } else if (c->functions & FN_BOARD_RESERVED) {
-        return fail(PIN_ERR_GT_BUSY, pin);
+        return held(PIN_ERR_GT_BUSY, a, pin, FOR_GT);
     }
     return ok();
 }
@@ -275,6 +306,12 @@ static pin_verdict_t check_ground_test(const pin_assign_t *a) {
     }
     if (a->gt_drive_pin == a->gt_pin) {
         return fail(PIN_ERR_GT_INCOMPLETE, a->gt_pin);
+    }
+    /* [GND-TEST-12] The switch may join the buzzer's pad to another pad: the
+     * buzzer's is then the driven one. It may never be the read pad, and the
+     * switch may never ground it. */
+    if (a->gt_drive_pin != PIN_GT_UNSET && a->gt_drive_pin == pin_assign_buzzer_pin(a)) {
+        return ok();
     }
     return check_gt_pad(a, a->gt_drive_pin);
 }
@@ -320,7 +357,7 @@ pin_verdict_t pin_assign_validate(const pin_assign_t *a) {
             if (c->group == PG_CH1 || c->group == PG_CH2) {
                 return fail(PIN_ERR_PYRO_RETAINED, pin);
             }
-            return fail(PIN_ERR_NOT_CAPABLE, pin);
+            return held(PIN_ERR_NOT_CAPABLE, a, pin, FOR_ROLE);
         }
 
         if (role == LUA_ROLE_BRIDGE) {
@@ -464,7 +501,7 @@ int pin_assign_serialize_ini(const pin_assign_t *a, char *buf, int max_len) {
     }
     APPEND("ground_test=%s\r\n", a->gt_wiring == GT_WIRING_GROUND ? "ground"
                                  : a->gt_wiring == GT_WIRING_PAIR ? "pair"
-                                                               : "none");
+                                                                  : "none");
     if (a->gt_pin != PIN_GT_UNSET) {
         APPEND("ground_test_pin=%u\r\n", (unsigned)a->gt_pin);
     }

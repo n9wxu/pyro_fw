@@ -37,7 +37,10 @@ bf_start_t bench_flight_start(const fsim_params_t *p, float ground_pa, bool on_p
 /* The profile stops feeding pressure; the channels stay mocked. */
 void bench_flight_stop(void);
 
-/* The profile's pressure at a reading's own time, in place of the reading.
+/* The profile's pressure at a reading's own time, in place of the reading,
+ * carrying the reading's own departure from the ground the flight started
+ * at: the board's real noise flies the profile, and a landed profile is not
+ * one value repeated, which is a stuck sensor [SNS-PRES-10].
  * landed: the flight machine is in LANDED, which ends the profile once it
  * has landed too. False, and *pa untouched, when none is flying. */
 bool bench_flight_pressure(uint64_t stamp_us, bool landed, float *pa);
@@ -65,8 +68,7 @@ typedef struct {
 
 void bench_flight_status(bench_flight_status_t *out);
 
-#ifdef BENCH_FLIGHT_TEST
-void bench_flight_reset(void);
-#endif
+/* At start-up: no flight, and the channels are the board's. */
+void bench_flight_init(void);
 
 #endif

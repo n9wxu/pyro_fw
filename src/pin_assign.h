@@ -94,8 +94,8 @@ typedef enum {
 
 typedef struct {
     pin_err_t err;
-    uint8_t pin;      /* the pin the problem is about, when it has one */
-    const char *what; /* a short phrase for the operator               */
+    uint8_t pin;   /* the pin the problem is about, when it has one */
+    char what[64]; /* for the operator: what holds the pad, or the rule */
 } pin_verdict_t;
 
 /* Start from the board's defaults: nothing released, and every pin the board

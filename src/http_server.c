@@ -32,7 +32,9 @@
 #include "device_status.h"
 #include "version.h"
 #include "flight_states.h"
+#include "pressure_collector.h"
 #include "pressure_processing.h"
+#include "pressure_sensor.h"
 
 #if PYRO_HAS_LUA
 #include "lua_app.h"
@@ -50,7 +52,7 @@
 #include "rtos_tasks.h"
 #include "buzzer.h"
 #include "pin_store.h"
-#include "brownout.h"
+#include "flight_resume.h"
 #include "beep_store.h"
 #include "pin_caps.h"
 #include "buzzer.h"
@@ -76,15 +78,13 @@ extern void hal_telemetry_send(const char *sentence);
         hal_telemetry_send(_b);                                                                                        \
     } while (0)
 
-extern const char *pressure_sensor_name(void);
 /* hal_common.c: sensor reads deferred for an unfinished conversion, and
  * readings refused as impossible. The second must stay at zero. */
 extern uint32_t hal_pressure_interval_min_us(void);
 extern uint32_t hal_pressure_interval_max_us(void);
 extern uint32_t hal_pressure_stamp_lag_max_us(void);
-extern uint32_t hal_pressure_waits(void);
+extern void hal_pressure_collector(collector_stats_t *out);
 extern uint32_t hal_pressure_rate_hz(void);
-extern uint32_t hal_pressure_rejects(void);
 extern uint32_t hal_pressure_flashed(void);
 
 #define CORS_HDR "Access-Control-Allow-Origin: *\r\n"
@@ -384,9 +384,10 @@ static void apply_api_test_mode(http_conn_t *hc, bool on) {
 }
 
 #if PYRO_HAS_BENCH_FLIGHT
-/* POST /api/sim/flight?apogee=&boost=&drogue=&main_alt=&main=&thin=&pad=,
- * POST /api/sim/stop, GET /api/sim [SIM-01, DD-078]. Metres, seconds and
- * metres a second; thin=0 holds the drogue's rate at every height. */
+/* POST /api/sim/flight?apogee=&boost=&drogue=&main_alt=&main=&thin=&pad=
+ * &fail=&ballistic=, POST /api/sim/stop, GET /api/sim [SIM-01, SIM-04,
+ * DD-078]. Metres, seconds and metres a second; thin=0 holds the drogue's
+ * rate at every height; fail is drogue, main or both. */
 typedef struct {
     fsim_params_t p;
     bf_start_t rc;
@@ -409,14 +410,24 @@ static float query_f(const char *path, const char *key, float dflt) {
     return q ? strtof(q + strlen(key), NULL) : dflt;
 }
 
+static bool query_is(const char *path, const char *key, const char *value) {
+    const char *q = strstr(path, key);
+    size_t n = strlen(value);
+    return q && strncmp(q + strlen(key), value, n) == 0 && (q[strlen(key) + n] == '&' || q[strlen(key) + n] == '\0');
+}
+
 static void apply_sim_flight(http_conn_t *hc, const char *path) {
+    bool both = query_is(path, "fail=", "both");
     sim_start_t a = {.p = {.apogee_m = query_f(path, "apogee=", 3000.0f),
                            .boost_s = query_f(path, "boost=", 2.0f),
                            .drogue_ms = query_f(path, "drogue=", 25.0f),
                            .main_alt_m = query_f(path, "main_alt=", 300.0f),
                            .main_ms = query_f(path, "main=", 6.0f),
                            .thin_air = query_f(path, "thin=", 1.0f) != 0.0f,
-                           .pad_s = query_f(path, "pad=", 5.0f)},
+                           .pad_s = query_f(path, "pad=", 5.0f),
+                           .drogue_fails = both || query_is(path, "fail=", "drogue"),
+                           .main_fails = both || query_is(path, "fail=", "main"),
+                           .ballistic_ms = query_f(path, "ballistic=", 0.0f)},
                      .rc = BF_BAD_PROFILE};
     if (!flight_call(sim_start_call, &a, CALL_MS)) {
         http_respond_str(hc, 503, JSON, "{\"error\":\"the flight task did not take the start\"}");
@@ -432,26 +443,25 @@ static void apply_sim_flight(http_conn_t *hc, const char *path) {
 static void serve_api_sim(http_conn_t *hc) {
     bench_flight_status_t s;
     bench_flight_status(&s);
-    bool suspect, stuck;
-    pfit_t f = pp_last_fit(&suspect, &stuck);
-    const flight_context_t *ctx = flight_get_context();
+    pp_sample_t e;
+    bool estimated = pp_newest(&e);
     int n = snprintf((char *)hc->work, sizeof(hc->work),
                      "{\"flying\":%s,\"mocked\":%s,\"flights\":%lu,\"phase\":\"%s\",\"t_s\":%.2f,\"t_apogee_s\":%.2f,"
                      "\"alt_m\":%.1f,\"peak_m\":%.1f,\"pa\":%.1f,\"ground_pa\":%.1f,\"fires\":[%lu,%lu],"
                      "\"apogee_m\":%.0f,\"boost_s\":%.2f,\"drogue_ms\":%.1f,\"main_alt_m\":%.0f,"
-                     "\"main_ms\":%.1f,\"thin_air\":%s,\"pad_s\":%.1f,"
-                     "\"fit\":{\"pa\":%.2f,\"pdot\":%.3f,\"pddot\":%.4f,\"rms\":%.3f,\"worst\":%.3f,\"n\":%u,"
-                     "\"valid\":%s,\"suspect\":%s,\"stuck\":%s,\"sigma\":%.3f},"
-                     "\"mach_lock\":%s,\"release_since\":%lu,\"fit_clean\":%s}",
+                     "\"main_ms\":%.1f,\"thin_air\":%s,\"pad_s\":%.1f,\"drogue_fails\":%s,\"main_fails\":%s,"
+                     "\"estimate\":{\"pa\":%.2f,\"rate\":%.6f,\"curve\":%.7f,\"rate_sigma\":%.6f,\"noise_pa\":%.3f,"
+                     "\"valid\":%s,\"suspect\":%s,\"stuck\":%s,\"explains\":%s},"
+                     "\"estimator\":\"%s\"}",
                      s.flying ? "true" : "false", s.mocked ? "true" : "false", (unsigned long)s.flights,
                      fsim_phase_name(s.phase), (double)s.t_s, (double)s.t_apogee_s, (double)s.alt_m, (double)s.peak_m,
                      (double)s.pa, (double)s.ground_pa, (unsigned long)s.fires[0], (unsigned long)s.fires[1],
                      (double)s.p.apogee_m, (double)s.p.boost_s, (double)s.p.drogue_ms, (double)s.p.main_alt_m,
-                     (double)s.p.main_ms, s.p.thin_air ? "true" : "false", (double)s.p.pad_s, (double)f.p,
-                     (double)f.pdot, (double)f.pddot, (double)f.rms, (double)f.worst, (unsigned)f.n,
-                     f.valid ? "true" : "false", suspect ? "true" : "false", stuck ? "true" : "false",
-                     (double)pp_sigma_pa(), ctx && ctx->mach_lock ? "true" : "false",
-                     (unsigned long)(ctx ? ctx->release_since : 0), ctx && ctx->fit_clean ? "true" : "false");
+                     (double)s.p.main_ms, s.p.thin_air ? "true" : "false", (double)s.p.pad_s,
+                     s.p.drogue_fails ? "true" : "false", s.p.main_fails ? "true" : "false", (double)e.pressure_pa,
+                     (double)e.rate, (double)e.curve, (double)e.rate_sigma, (double)e.noise_pa,
+                     estimated ? "true" : "false", e.suspect ? "true" : "false", e.sensor_stuck ? "true" : "false",
+                     e.explains ? "true" : "false", estimator_at(pp_obeyed())->name);
     http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
 }
 #endif
@@ -492,9 +502,8 @@ static void serve_api_beeps(http_conn_t *hc) {
         const beep_personality_t *p = &t->p[i];
         char nm[BEEP_NAME_MAX * 2 + 2];
         json_escape(nm, (int)sizeof(nm), p->name, (int)strlen(p->name));
-        pos += snprintf(buf + pos, cap - (size_t)pos,
-                        "%s{\"name\":\"%s\",\"gap\":%u,\"repeat\":%u,\"split\":%s,\"spec\":{", i ? "," : "", nm,
-                        (unsigned)p->gap_ms, (unsigned)p->repeat, p->split_pyro ? "true" : "false");
+        pos += snprintf(buf + pos, cap - (size_t)pos, "%s{\"name\":\"%s\",\"gap\":%u,\"repeat\":%u,\"spec\":{",
+                        i ? "," : "", nm, (unsigned)p->gap_ms, (unsigned)p->repeat);
         for (int r = 0; r < BEEP_REASON_COUNT && pos > 0 && pos < (int)cap; r++) {
             pos +=
                 snprintf(buf + pos, cap - (size_t)pos, "%s\"%s\":{\"kind\":\"%s\",\"d1\":%u,\"d2\":%u}", r ? "," : "",
@@ -541,118 +550,87 @@ static void apply_api_beeps(http_conn_t *hc, char *body) {
     http_respond(hc, status, JSON, jb, (uint32_t)jn);
 }
 
-typedef struct {
-    config_t cfg;
-    int rc;
-} config_apply_t;
-
-static void config_apply_call(void *arg) {
-    config_apply_t *ap = (config_apply_t *)arg;
-    ap->rc = flight_config_apply(flight_get_context(), &ap->cfg);
+static int estimator_names_json(char *dst, int cap) {
+    int n = snprintf(dst, (size_t)cap, "[");
+    for (uint8_t i = 0; i < estimator_count() && n < cap; i++)
+        n += snprintf(dst + n, (size_t)(cap - n), "%s\"%s\"", i ? "," : "", estimator_at(i)->name);
+    if (n < cap)
+        n += snprintf(dst + n, (size_t)(cap - n), "]");
+    return n;
 }
 
-/* Apply a complete config.ini body and answer. */
+/* GET /api/limits [PYR-BOARD-03, SNS-MAX-01, SNS-EST-06]: the board's defaults
+ * and ranges for the pyro timing fields, what is in force, the fitted
+ * sensor's range and the estimators carried, so the web interface writes
+ * none of them down. */
+static void serve_api_limits(http_conn_t *hc) {
+    hal_pyro_limits_t l;
+    hal_pyro_limits(&l);
+    const flight_context_t *ctx = flight_get_context();
+    pressure_sensor_range_t r = pressure_sensor_range((pressure_sensor_type_t)(ctx ? ctx->sensor_type : 0));
+    char names[ESTIMATORS_MAX * 12 + 4];
+    (void)estimator_names_json(names, (int)sizeof(names));
+    char jb[400];
+    int jn = snprintf(jb, sizeof(jb),
+                      "{\"refire_interval_ms\":{\"default\":%u,\"min\":%u,\"max\":%u,\"in_force\":%lu},"
+                      "\"fire_gap_ms\":{\"default\":%u,\"min\":%u,\"max\":%u,\"in_force\":%lu},"
+                      "\"sensor\":{\"min_pa\":%ld,\"max_pa\":%ld,\"height_m\":%ld},\"estimators\":%s}",
+                      (unsigned)l.refire_interval_default_ms, (unsigned)l.refire_interval_min_ms,
+                      (unsigned)l.refire_interval_max_ms, (unsigned long)(ctx ? ctx->plan.refire_interval_ms : 0u),
+                      (unsigned)l.fire_gap_default_ms, (unsigned)l.fire_gap_min_ms, (unsigned)l.fire_gap_max_ms,
+                      (unsigned long)(ctx ? ctx->plan.fire_gap_ms : 0u), (long)r.min_pa, (long)r.max_pa,
+                      (long)r.height_m, names);
+    http_respond(hc, 200, JSON, jb, (uint32_t)jn);
+}
+
+/* [CFG-10] Store a config.ini body and answer. The running system goes on
+ * with the configuration it started with.
+ *
+ * Merged over the stored file, never replacing it [CFG-06]: each tab posts
+ * only its own keys, and config_parse_ini() ignores keys it does not know
+ * [CFG-08]. */
 static void apply_api_config(http_conn_t *hc, char *cfgbuf) {
-    extern flight_state_t flight_get_state(void);
-    flight_state_t state = flight_get_state();
-
-    if (state != PAD_IDLE) {
-        /* Reject config changes - device not ready */
-        DBG("POST /api/config REJECT state=%u (need PAD_IDLE=3)", (unsigned)state);
-        char err_msg[160];
-        int n = snprintf(err_msg, sizeof(err_msg),
-                         "{\"error\":\"Device not ready (state=%s)\","
-                         "\"state\":\"%s\",\"reboot_required\":true}",
-                         state_names[state < STATE_NAME_COUNT ? state : 0],
-                         state_names[state < STATE_NAME_COUNT ? state : 0]);
-        http_respond(hc, 409, JSON, err_msg, (uint32_t)n);
+    config_t merged;
+    (void)hal_config_load(&merged);
+    config_parse_ini(cfgbuf, &merged);
+    char cfgout[CONFIG_INI_MAX];
+    int cfgn = config_serialize_ini(&merged, cfgout, (int)sizeof(cfgout));
+    if (cfgn <= 0) {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"Merged config exceeds the config.ini budget\"}");
         return;
-    } else {
-        /* Merge, never replace (REQUIREMENTS.md CFG-06).
-         *
-         * The body is a PARTIAL config: the Config tab posts eight keys
-         * and the Lua tab posts only the lua_* ones. Writing it verbatim
-         * left config.ini holding just those keys, and hal_config_load()
-         * starts from config_set_defaults(), so every field the other tab
-         * owns reverted. Saving config wiped the Lua pin roles and saving
-         * Lua reset the rocket id, name and both pyro modes.
-         *
-         * Parsing over the running config and re-serialising also gives
-         * CFG-08 for free: config_parse_ini() ignores keys it does not
-         * know, so an unknown key neither lands nor destroys anything. */
-        config_t merged = flight_get_context()->config;
-        config_parse_ini(cfgbuf, &merged);
-        char cfgout[512];
-        int cfgn = config_serialize_ini(&merged, cfgout, (int)sizeof(cfgout));
-        if (cfgn <= 0) {
-            /* Does not fit what hal_config_load() can read back, so
-             * writing it would produce a file the board cannot parse. */
-            http_respond_str(hc, 500, JSON, "{\"error\":\"Merged config exceeds the 512-byte budget\"}");
-            return;
-        }
-
-        int wr = hal_fs_write_file("config.ini", cfgout, cfgn);
-        DBG("POST /api/config write=%d", wr);
-        if (wr != 0) {
-            http_respond_str(hc, 500, TEXT, "config.ini write failed");
-            return;
-        }
-        /* Read back as the next boot will, then applied by the flight task,
-         * which owns the running config. */
-        static config_apply_t ap;
-        config_set_defaults(&ap.cfg);
-        ap.rc = hal_config_load(&ap.cfg) < 0 ? -2 : 0;
-        if (ap.rc == 0 && !flight_call(config_apply_call, &ap, CALL_MS))
-            ap.rc = -4;
-        if (ap.rc == 0) {
-            DBG("POST /api/config OK (applied)");
-            http_respond_str(hc, 200, JSON, "{\"status\":\"ok\",\"applied\":true}");
-        } else {
-            DBG("POST /api/config WARN reload_result=%d", ap.rc);
-            http_respond_str(hc, 500, JSON, "{\"error\":\"Config saved but reload failed\",\"reboot_required\":true}");
-        }
     }
+    int wr = hal_fs_write_file("config.ini", cfgout, cfgn);
+    DBG("POST /api/config write=%d", wr);
+    if (wr != 0) {
+        http_respond_str(hc, 500, TEXT, "config.ini write failed");
+        return;
+    }
+    http_respond_str(hc, 200, JSON, "{\"status\":\"ok\",\"applied\":false,\"reboot_required\":true}");
 }
 
-/* Apply a complete pins.ini body and answer. */
+/* [CFG-10] Store a pins.ini body and answer; it takes effect at the next
+ * start. Merged over the stored assignment, as /api/config merges. */
 static void apply_api_pins(http_conn_t *hc, char *body) {
-    extern flight_state_t flight_get_state(void);
-    flight_state_t st = flight_get_state();
+    /* static, not a local: pin_assign_t is about 300 bytes, and nothing else
+     * runs this -- the net task is the only caller. */
+    static pin_assign_t merged;
+    merged = *pin_store_current();
+    pin_assign_parse_ini(body, &merged);
 
-    if (st != PAD_IDLE) {
-        /* Same interlock as /api/config: a pin map that changes under a flying
-         * board would move the pyro pins mid-flight. */
-        char jb[160];
-        int jn = snprintf(jb, sizeof(jb), "{\"error\":\"Device not ready (state=%s)\",\"reboot_required\":true}",
-                          state_names[st < STATE_NAME_COUNT ? st : 0]);
-        http_respond(hc, 409, JSON, jb, (uint32_t)jn);
+    pin_verdict_t v = pin_store_save(&merged);
+    char jb[224];
+    int jn;
+    uint16_t status;
+    if (v.err == PIN_OK) {
+        jn = snprintf(jb, sizeof(jb), "{\"status\":\"ok\",\"reboot_required\":true}");
+        status = 200;
     } else {
-        /* Merged over the live assignment for the same reason /api/config
-         * merges (CFG-06): a partial post must not silently release a channel
-         * by omitting its key.
-         *
-         * static, not a local: pin_assign_t is about 300 bytes, and nothing
-         * else runs this -- the net task is the only caller. */
-        static pin_assign_t merged;
-        merged = *pin_store_current();
-        pin_assign_parse_ini(body, &merged);
-
-        pin_verdict_t v = pin_store_save(&merged);
-        char jb[224];
-        int jn;
-        uint16_t status;
-        if (v.err == PIN_OK) {
-            jn = snprintf(jb, sizeof(jb), "{\"status\":\"ok\",\"reboot_required\":true}");
-            status = 200;
-        } else {
-            char esc[160];
-            json_escape(esc, (int)sizeof(esc), v.what, (int)strlen(v.what));
-            jn =
-                snprintf(jb, sizeof(jb), "{\"error\":\"%s\",\"pin\":%u,\"code\":%d}", esc, (unsigned)v.pin, (int)v.err);
-            status = 400;
-        }
-        http_respond(hc, status, JSON, jb, (uint32_t)jn);
+        char esc[160];
+        json_escape(esc, (int)sizeof(esc), v.what, (int)strlen(v.what));
+        jn = snprintf(jb, sizeof(jb), "{\"error\":\"%s\",\"pin\":%u,\"code\":%d}", esc, (unsigned)v.pin, (int)v.err);
+        status = 400;
     }
+    http_respond(hc, status, JSON, jb, (uint32_t)jn);
 }
 
 /* ── GET /api/pins/caps ───────────────────────────────────────────
@@ -776,7 +754,6 @@ static void serve_api_pin_caps(http_conn_t *hc) {
  * on whichever core takes it. */
 static void status_capture(status_snap_t *s) {
     extern flight_context_t *flight_get_context(void);
-    extern beep_reason_t beep_reason_for_diag(uint16_t diag);
     static const char *mode_names[] = {"none", "fallen", "agl", "speed", "delay"};
     const flight_context_t *fctx = flight_get_context();
     const pin_assign_t *pa = pin_store_current();
@@ -809,9 +786,15 @@ static void status_capture(status_snap_t *s) {
     s->board = PYRO_BOARD_NAME;
     s->board_id = BOARD_SHORT_STR;
     switch (board_selftest_result()) {
-    case BOARD_SELFTEST_PASS:  s->board_selftest = 1; break;
-    case BOARD_SELFTEST_FAIL:  s->board_selftest = 2; break;
-    default:                   s->board_selftest = 0; break;
+    case BOARD_SELFTEST_PASS:
+        s->board_selftest = 1;
+        break;
+    case BOARD_SELFTEST_FAIL:
+        s->board_selftest = 2;
+        break;
+    default:
+        s->board_selftest = 0;
+        break;
     }
 
     /* Raw counts rather than volts, so a marginal reading stays visible. */
@@ -859,35 +842,47 @@ static void status_capture(status_snap_t *s) {
     /* The power-up self-test: a board that cannot measure altitude must not
      * report itself healthy. */
     s->sensor_ok = fctx && fctx->sensor_type && fctx->sensor_type != SENSOR_PENDING;
-    s->fs_ok = fctx && fctx->fs_ok;
+    s->fs_ok = fctx && fctx->storage_ok;
     uint16_t diag = fctx ? fctx->diag : 0;
     for (uint16_t bit = 1; bit != 0 && s->n_faults < STATUS_FAULTS_MAX; bit <<= 1) {
-        if ((diag & bit) && *flight_diag_name(bit)) {
-            s->faults[s->n_faults++] = flight_diag_name(bit);
+        if ((diag & bit) && *pad_check_fault_name(bit)) {
+            s->faults[s->n_faults++] = pad_check_fault_name(bit);
         }
     }
     s->reset_cause = fctx ? (uint8_t)fctx->reset_cause : 0u;
-    s->recovery = fctx ? flight_recovery_text(fctx) : brownout_recovery_name(RECOVER_COLD);
+    s->resume = fctx ? flight_resume_text(fctx) : resume_verdict_name(RESUME_NOT_FLYING);
     s->prev_watchdog = boot_prev_watchdog;
     s->prev_stage = boot_prev_stage;
     s->prev_stage_ms = boot_prev_stage_ms;
-    s->pyro_refused[0] = fctx && fctx->pyro1_refused;
-    s->pyro_refused[1] = fctx && fctx->pyro2_refused;
-    s->pyro1_refires = fctx ? (uint8_t)fctx->pyro1_refires : 0u;
-    s->main_forced = fctx && fctx->main_forced;
-    s->pres_waits = hal_pressure_waits();
-    s->pres_rejects = hal_pressure_rejects();
+    for (int i = 0; i < 2; i++) {
+        s->pyro_pulses[i] = fctx ? fctx->fire.channel[i].pulses : 0u;
+        s->pyro_fault[i] = fctx && fctx->channel_fault[i];
+    }
+    s->emergency_fire = fctx && fctx->emergency_fire;
+    s->refire_interval_ms = fctx ? (uint16_t)fctx->plan.refire_interval_ms : 0u;
+    s->fire_gap_ms = fctx ? (uint16_t)fctx->plan.fire_gap_ms : 0u;
+    s->pyro_limited = fctx && (fctx->refire_interval_limited || fctx->fire_gap_limited);
+    collector_stats_t collector;
+    hal_pressure_collector(&collector);
+    s->pres_rejects = 0;
+    for (int i = 0; i < 4; i++) {
+        s->pres_bus[i] = collector.failed[COLLECTOR_ADDRESS_NACK + i];
+        s->pres_rejects += s->pres_bus[i];
+    }
+    s->pres_recoveries = collector.recoveries;
+    s->pres_dropped = collector.dropped;
     s->pres_flashed = hal_pressure_flashed();
     s->raw_pa = pp_last_raw_pa();
-    s->pad_speed_cms = fctx ? fctx->pad_speed_cms : 0;
+    s->pad_speed_cms = fctx && fctx->current_state == PAD_IDLE ? fctx->speed_cms : 0;
     s->ground_degraded = pp_ground_degraded(); /* [GND-CAL-07] */
     s->ground_reseeds = pp_ground_reseeds();
     s->sample_interval_us[0] = hal_pressure_interval_min_us(); /* [SNS-PRES-08] */
     s->sample_interval_us[1] = hal_pressure_interval_max_us();
     s->stamp_lag_max_us = hal_pressure_stamp_lag_max_us();
-    s->fit_sigma_mpa = (uint32_t)(pp_sigma_pa() * 1000.0f); /* [SNS-PRES-09] */
-    s->mach_lock = fctx && fctx->mach_lock;                 /* [FLT-MACH-02..07] */
-    s->mach_flag_ms = fctx && fctx->mach_flag_ms ? fctx->mach_flag_ms - fctx->launch_time : 0u;
+    s->noise_mpa = (uint32_t)(pp_noise_pa() * 1000.0f); /* the sensor noise the estimator tracks */
+    pp_sample_t newest;
+    s->estimator = estimator_at(pp_obeyed())->name;
+    s->estimator_explains = pp_newest(&newest) && newest.explains;
     s->peak_lower_bound = fctx && fctx->peak_lower_bound;
     s->usb_attached = fctx && fctx->usb_attached; /* [USB-01..03, USB-08] */
     s->test_mode = fctx && fctx->test_mode;
@@ -895,7 +890,7 @@ static void status_capture(status_snap_t *s) {
 
     /* What the buzzer says, or would say off USB, so it can be read rather
      * than counted. */
-    beep_reason_t r = beep_reason_for_diag(diag);
+    beep_reason_t r = pad_check_announcement(diag);
     beep_spec_t sp = beep_for(r);
     s->beep = beep_codes_key(r);
     s->beep_kind = beep_codes_kind_name((beep_kind_t)sp.kind);
@@ -1063,13 +1058,13 @@ static void serve_api_sd(conn_t *c) {
                      (unsigned long)s.writes, (unsigned long)s.sectors_read, (unsigned long)s.sectors_written,
                      (unsigned long)s.crc_errors, (unsigned long)s.cmd_errors, (unsigned long)s.timeouts,
                      (unsigned long)s.retries, (unsigned long)s.busy_max_us, (unsigned long)s.write_max_us,
-                     s.init_r1[0], s.init_r1[1], s.init_r1[2], s.init_r1[3], s.init_r1[4], s.init_r1[5],
-                     s.init_r7[0], s.init_r7[1], s.init_r7[2], s.init_r7[3], s.init_ocr[0], s.init_ocr[1],
-                     s.init_ocr[2], s.init_ocr[3], (unsigned)sd_bus_probe_imu(), (unsigned)s.cmd55_first,
-                     (unsigned)s.acmd41_first, (unsigned long)s.acmd41_polls, (unsigned long)s.acmd41_ones,
-                     (unsigned long)s.acmd41_other_ms, (unsigned)s.acmd41_other, (unsigned)s.after_r58,
-                     (unsigned)s.after_r0, (unsigned)s.restarts, (unsigned)s.fail_ms[0], (unsigned)s.fail_ms[1],
-                     (unsigned)s.fail_ms[2], (unsigned)s.fail_ms[3], (unsigned long)s.init_yields);
+                     s.init_r1[0], s.init_r1[1], s.init_r1[2], s.init_r1[3], s.init_r1[4], s.init_r1[5], s.init_r7[0],
+                     s.init_r7[1], s.init_r7[2], s.init_r7[3], s.init_ocr[0], s.init_ocr[1], s.init_ocr[2],
+                     s.init_ocr[3], (unsigned)sd_bus_probe_imu(), (unsigned)s.cmd55_first, (unsigned)s.acmd41_first,
+                     (unsigned long)s.acmd41_polls, (unsigned long)s.acmd41_ones, (unsigned long)s.acmd41_other_ms,
+                     (unsigned)s.acmd41_other, (unsigned)s.after_r58, (unsigned)s.after_r0, (unsigned)s.restarts,
+                     (unsigned)s.fail_ms[0], (unsigned)s.fail_ms[1], (unsigned)s.fail_ms[2], (unsigned)s.fail_ms[3],
+                     (unsigned long)s.init_yields);
     http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
 }
 
@@ -1077,25 +1072,25 @@ static void serve_api_sd(conn_t *c) {
 static void serve_api_hr(http_conn_t *hc) {
     hr_stats_t s;
     hr_log_get_stats(&s);
-    int n = snprintf(
-        (char *)hc->work, sizeof(hc->work),
-        "{\"logging\":%s,\"prepared\":%s,\"preparing\":%s,\"card\":%s,\"imu_ok\":%s,\"odr_hz\":%lu,"
-        "\"file\":\"%s\",\"file_bytes\":%lu,\"expanded_bytes\":%lu,\"ring_used\":%lu,\"ring_max\":%lu,"
-        "\"dropped_records\":%lu,\"dropped_bytes\":%lu,\"imu_sets\":%lu,\"imu_reads\":%lu,"
-        "\"imu_overruns\":%lu,\"imu_backlog_max\":%lu,\"imu_read_fails\":%lu,\"pres_records\":%lu,"
-        "\"flight_records\":%lu,\"writes\":%lu,\"write_max_us\":%lu,\"write_errors\":%lu,\"syncs\":%lu,"
-        "\"sync_max_us\":%lu,\"prepare_us\":%lu,\"logs\":%lu,\"reopens\":%lu,\"bytes_total\":%lu,"
-        "\"last_g\":[%d,%d,%d],\"last_a\":[%d,%d,%d]}",
-        s.logging ? "true" : "false", s.prepared ? "true" : "false", s.preparing ? "true" : "false",
-        s.card ? "true" : "false", s.imu_ok ? "true" : "false", (unsigned long)s.odr_hz, s.file,
-        (unsigned long)s.file_bytes, (unsigned long)s.expanded_bytes, (unsigned long)s.ring_used,
-        (unsigned long)s.ring_max, (unsigned long)s.dropped_records, (unsigned long)s.dropped_bytes,
-        (unsigned long)s.imu_sets, (unsigned long)s.imu_reads, (unsigned long)s.imu_overruns,
-        (unsigned long)s.imu_backlog_max, (unsigned long)s.imu_read_fails, (unsigned long)s.pres_records,
-        (unsigned long)s.flight_records, (unsigned long)s.writes, (unsigned long)s.write_max_us,
-        (unsigned long)s.write_errors, (unsigned long)s.syncs, (unsigned long)s.sync_max_us,
-        (unsigned long)s.prepare_us, (unsigned long)s.logs, (unsigned long)s.reopens, (unsigned long)s.bytes_total, s.last.g[0], s.last.g[1],
-        s.last.g[2], s.last.a[0], s.last.a[1], s.last.a[2]);
+    int n = snprintf((char *)hc->work, sizeof(hc->work),
+                     "{\"logging\":%s,\"prepared\":%s,\"preparing\":%s,\"card\":%s,\"imu_ok\":%s,\"odr_hz\":%lu,"
+                     "\"file\":\"%s\",\"file_bytes\":%lu,\"expanded_bytes\":%lu,\"ring_used\":%lu,\"ring_max\":%lu,"
+                     "\"dropped_records\":%lu,\"dropped_bytes\":%lu,\"imu_sets\":%lu,\"imu_reads\":%lu,"
+                     "\"imu_overruns\":%lu,\"imu_backlog_max\":%lu,\"imu_read_fails\":%lu,\"pres_records\":%lu,"
+                     "\"flight_records\":%lu,\"writes\":%lu,\"write_max_us\":%lu,\"write_errors\":%lu,\"syncs\":%lu,"
+                     "\"sync_max_us\":%lu,\"prepare_us\":%lu,\"logs\":%lu,\"reopens\":%lu,\"bytes_total\":%lu,"
+                     "\"last_g\":[%d,%d,%d],\"last_a\":[%d,%d,%d]}",
+                     s.logging ? "true" : "false", s.prepared ? "true" : "false", s.preparing ? "true" : "false",
+                     s.card ? "true" : "false", s.imu_ok ? "true" : "false", (unsigned long)s.odr_hz, s.file,
+                     (unsigned long)s.file_bytes, (unsigned long)s.expanded_bytes, (unsigned long)s.ring_used,
+                     (unsigned long)s.ring_max, (unsigned long)s.dropped_records, (unsigned long)s.dropped_bytes,
+                     (unsigned long)s.imu_sets, (unsigned long)s.imu_reads, (unsigned long)s.imu_overruns,
+                     (unsigned long)s.imu_backlog_max, (unsigned long)s.imu_read_fails, (unsigned long)s.pres_records,
+                     (unsigned long)s.flight_records, (unsigned long)s.writes, (unsigned long)s.write_max_us,
+                     (unsigned long)s.write_errors, (unsigned long)s.syncs, (unsigned long)s.sync_max_us,
+                     (unsigned long)s.prepare_us, (unsigned long)s.logs, (unsigned long)s.reopens,
+                     (unsigned long)s.bytes_total, s.last.g[0], s.last.g[1], s.last.g[2], s.last.a[0], s.last.a[1],
+                     s.last.a[2]);
     http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
 }
 
@@ -1216,6 +1211,8 @@ static void serve_get(conn_t *c) {
         serve_file(c, "/" PIN_STORE_PATH, TEXT, NULL, 404, TEXT, "No pins.ini");
     } else if (strcmp(path, "/api/config") == 0) {
         serve_file(c, "config.ini", TEXT, NULL, 404, TEXT, "No config.ini");
+    } else if (strcmp(path, "/api/limits") == 0) {
+        serve_api_limits(hc);
     } else if (strcmp(path, "/api/flight.csv") == 0) {
         serve_flight_csv(c);
     } else if (strcmp(path, "/api/log/space") == 0) {
@@ -1424,7 +1421,7 @@ static const post_route_t post_routes[] = {
     {"/api/lua/check", false, R_LUA_CHECK, 2047, false, false},
 #endif
     {"/api/serial", false, R_SERIAL, 12, true, true},
-    {"/api/config", false, R_CONFIG, 511, true, true},
+    {"/api/config", false, R_CONFIG, CONFIG_INI_MAX - 1, true, true},
     {"/api/beeps/play", false, R_BEEP_PLAY, 63, false, false},
     {"/api/beeps", false, R_BEEPS, BEEP_STORE_MAX - 1, true, true},
     {"/api/pins", false, R_PINS, PIN_STORE_MAX - 1, true, true},
@@ -1468,7 +1465,7 @@ static void route_post(conn_t *c) {
         const char *q = strstr(path, "odr=");
         if (q) {
             uint32_t hz = (uint32_t)strtoul(q + 4, NULL, 10);
-            lsm6ds3_odr_t o = hz >= 1660 ? LSM6DS3_ODR_1660
+            lsm6ds3_odr_t o = hz >= 1660  ? LSM6DS3_ODR_1660
                               : hz >= 833 ? LSM6DS3_ODR_833
                               : hz >= 416 ? LSM6DS3_ODR_416
                               : hz >= 208 ? LSM6DS3_ODR_208

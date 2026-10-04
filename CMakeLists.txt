@@ -143,7 +143,7 @@ include(FetchContent)
 FetchContent_Declare(
     littlefs
     GIT_REPOSITORY https://github.com/littlefs-project/littlefs
-    GIT_TAG v2.11.2
+    GIT_TAG v2.11.3
 )
 
 # Lua 5.4 for user programs on core1. Only fetched for boards that want it.
@@ -274,6 +274,12 @@ if(PYRO_BOARD_KIND STREQUAL "pico" AND TARGET pico_fota_bootloader)
 endif()
 
 
+# The flight software: the same files in the firmware, every host suite and
+# the simulators [HAL-04]. scripts/build_wasm.sh reads the same list.
+file(STRINGS ${CMAKE_CURRENT_LIST_DIR}/src/flight_sources.txt PYRO_FLIGHT_SOURCES)
+set(PYRO_FLIGHT_SOURCES_ABS ${PYRO_FLIGHT_SOURCES})
+list(TRANSFORM PYRO_FLIGHT_SOURCES_ABS PREPEND ${CMAKE_CURRENT_LIST_DIR}/)
+
 if(PYRO_BOARD_KIND STREQUAL "pico")
 # ---- RP2040 firmware image ----------------------------------------
 # Suppress warnings in third-party pico_fota_bootloader
@@ -325,19 +331,12 @@ add_executable(pyro_fw_c
     src/board_identity.c
     src/board_selftest.c
     src/mac_random.c
-    src/flight_states.c
-    src/brownout.c
-    src/pressure_processing.c
-    src/pressure_fit.c
-    src/ground_test.c
-    src/ground_test_seq.c
+    ${PYRO_FLIGHT_SOURCES}
     src/ground_test_switch.c
-    src/config.c
-    src/telemetry_formatter.c
     src/buzzer.c
     src/ms5607_driver.c
     src/bmp280_driver.c
-    src/ms5607_oneshot.c
+    src/pressure_collector.c
     src/i2c_recover.c
     src/usb_descriptors.c
     src/net_glue.c
@@ -361,8 +360,6 @@ add_executable(pyro_fw_c
     src/pin_caps.c
     src/pin_assign.c
     src/pin_store.c
-    src/beep_codes.c
-    src/beep_store.c
     # TinyUSB networking helpers
     ${TINYUSB_DIR}/lib/networking/dhserver.c
     ${TINYUSB_DIR}/lib/networking/dnserver.c
@@ -539,195 +536,80 @@ endif() # PYRO_BOARD_KIND pico
 # Find host C compiler (not the ARM cross-compiler)
 find_program(HOST_CC NAMES gcc cc PATHS /usr/bin /usr/local/bin NO_CMAKE_FIND_ROOT_PATH)
 
-add_custom_target(host_tests
-    COMMAND ${CMAKE_COMMAND} -E echo "Building host tests..."
-    COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
-               -I${CMAKE_CURRENT_LIST_DIR}/test
-               -I${unity_SOURCE_DIR}/src
-               ${CMAKE_CURRENT_LIST_DIR}/test/test_flight_states.c
-               ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/log_plan.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
-               ${unity_SOURCE_DIR}/src/unity.c
-               -lm
-               -o ${CMAKE_BINARY_DIR}/test_flight_states
-    COMMAND ${CMAKE_COMMAND} -E echo "Running tests..."
-    COMMAND ${CMAKE_BINARY_DIR}/test_flight_states
-    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    COMMENT "Host unit tests"
+# What the mocked HAL links beside the flight software.
+set(PYRO_TEST_HAL_SOURCES
+    ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/log_plan.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
 )
 
-add_custom_target(integration_tests
-    COMMAND ${CMAKE_COMMAND} -E echo "Building integration tests..."
-    COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
-               -I${CMAKE_CURRENT_LIST_DIR}/test
-               -I${unity_SOURCE_DIR}/src
-               ${CMAKE_CURRENT_LIST_DIR}/test/test_integration.c
-               ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/log_plan.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
-               ${unity_SOURCE_DIR}/src/unity.c
-               -lm
-               -o ${CMAKE_BINARY_DIR}/test_integration
-    COMMAND ${CMAKE_COMMAND} -E echo "Running integration tests..."
-    COMMAND ${CMAKE_BINARY_DIR}/test_integration
-    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    COMMENT "Integration tests with OpenRocket data"
-)
+# A suite of the flight software against the mocked HAL [HAL-05, TST-01]:
+#   pyro_flight_suite(<target> <test.c> [more sources, relative to the tree])
+function(pyro_flight_suite target test_source)
+    set(extra "")
+    foreach(source ${ARGN})
+        list(APPEND extra ${CMAKE_CURRENT_LIST_DIR}/${source})
+    endforeach()
+    add_custom_target(${target}
+        COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
+                   -I${CMAKE_CURRENT_LIST_DIR}/test -I${CMAKE_CURRENT_LIST_DIR}/sim
+                   -I${unity_SOURCE_DIR}/src
+                   ${CMAKE_CURRENT_LIST_DIR}/${test_source}
+                   ${extra}
+                   ${PYRO_TEST_HAL_SOURCES}
+                   ${PYRO_FLIGHT_SOURCES_ABS}
+                   ${unity_SOURCE_DIR}/src/unity.c
+                   -lm
+                   -o ${CMAKE_BINARY_DIR}/test_${target}
+        COMMAND ${CMAKE_BINARY_DIR}/test_${target}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+        COMMENT "${target}"
+    )
+endfunction()
 
-add_custom_target(closedloop_tests
-    COMMAND ${CMAKE_COMMAND} -E echo "Building closed-loop tests..."
-    COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
-               -I${CMAKE_CURRENT_LIST_DIR}/test
-               -I${unity_SOURCE_DIR}/src
-               ${CMAKE_CURRENT_LIST_DIR}/test/test_closedloop.c
-               ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/log_plan.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_sim.c
-               ${unity_SOURCE_DIR}/src/unity.c
-               -lm
-               -o ${CMAKE_BINARY_DIR}/test_closedloop
-    COMMAND ${CMAKE_COMMAND} -E echo "Running closed-loop tests..."
-    COMMAND ${CMAKE_BINARY_DIR}/test_closedloop
-    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    COMMENT "Closed-loop simulation tests"
-)
+# The board harness powers the flight software on and steps its main loop;
+# flight_run flies it against a plant that says what really happened.
+set(PYRO_HARNESS test/board_harness.c)
+set(PYRO_FLOWN test/board_harness.c test/flight_run.c sim/mach_plant.c)
 
-add_custom_target(pressure_chain_tests
-    COMMAND ${CMAKE_COMMAND} -E echo "Building pressure chain tests..."
-    COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
-               -I${CMAKE_CURRENT_LIST_DIR}/test
-               -I${unity_SOURCE_DIR}/src
-               ${CMAKE_CURRENT_LIST_DIR}/test/test_pressure_chain.c
-               ${CMAKE_CURRENT_LIST_DIR}/test/board_harness.c
-               ${CMAKE_CURRENT_LIST_DIR}/sim/replay.c
-               ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/log_plan.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
-               ${unity_SOURCE_DIR}/src/unity.c
-               -lm
-               -o ${CMAKE_BINARY_DIR}/test_pressure_chain
-    COMMAND ${CMAKE_COMMAND} -E echo "Running pressure chain tests..."
-    COMMAND ${CMAKE_BINARY_DIR}/test_pressure_chain
-    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    COMMENT "The pressure chain under sensor noise, booted as the hardware boots"
-)
+pyro_flight_suite(flight_boot_tests test/test_flight_boot.c ${PYRO_HARNESS})
+pyro_flight_suite(flight_pad_tests test/test_flight_pad.c ${PYRO_FLOWN})
+pyro_flight_suite(recorded_flight_tests test/test_recorded_flight.c ${PYRO_HARNESS})
+pyro_flight_suite(flight_profile_tests test/test_flight_profiles.c ${PYRO_FLOWN} sim/replay.c)
+pyro_flight_suite(fire_rule_tests test/test_fire_rules.c ${PYRO_FLOWN})
+pyro_flight_suite(resume_tests test/test_resume.c ${PYRO_FLOWN})
+pyro_flight_suite(estimator_tests test/test_estimator.c ${PYRO_FLOWN})
+pyro_flight_suite(telemetry_tests test/test_telemetry.c ${PYRO_FLOWN})
+pyro_flight_suite(mach_tests test/test_mach.c ${PYRO_FLOWN})
+pyro_flight_suite(ground_test_tests test/test_ground_test.c ${PYRO_HARNESS})
+pyro_flight_suite(buzzer_tests test/test_buzzer.c src/buzzer.c)
+pyro_flight_suite(config_persistence_tests test/test_config_persistence.c src/buzzer.c)
 
-# The ground test through the flight software, booted as the hardware boots
-# (DD-071).
-add_custom_target(ground_test_tests
-    COMMAND ${CMAKE_COMMAND} -E echo "Building ground test tests..."
-    COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
-               -I${CMAKE_CURRENT_LIST_DIR}/test
-               -I${unity_SOURCE_DIR}/src
-               ${CMAKE_CURRENT_LIST_DIR}/test/test_ground_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/test/board_harness.c
-               ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/log_plan.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
-               ${unity_SOURCE_DIR}/src/unity.c
-               -lm
-               -o ${CMAKE_BINARY_DIR}/test_ground_test
-    COMMAND ${CMAKE_COMMAND} -E echo "Running ground test tests..."
-    COMMAND ${CMAKE_BINARY_DIR}/test_ground_test
-    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    COMMENT "The ground test, booted as the hardware boots"
-)
+# Pure modules, each through its own header.
+function(pyro_module_suite target test_source)
+    set(sources "")
+    foreach(source ${ARGN})
+        list(APPEND sources ${CMAKE_CURRENT_LIST_DIR}/${source})
+    endforeach()
+    add_custom_target(${target}
+        COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src -I${unity_SOURCE_DIR}/src
+                   ${CMAKE_CURRENT_LIST_DIR}/${test_source} ${sources}
+                   ${unity_SOURCE_DIR}/src/unity.c -lm
+                   -o ${CMAKE_BINARY_DIR}/test_${target}
+        COMMAND ${CMAKE_BINARY_DIR}/test_${target}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+        COMMENT "${target}"
+    )
+endfunction()
 
-add_custom_target(mach_tests
-    COMMAND ${CMAKE_COMMAND} -E echo "Building Mach lockout tests..."
-    COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
-               -I${CMAKE_CURRENT_LIST_DIR}/test
-               -I${CMAKE_CURRENT_LIST_DIR}/sim
-               -I${unity_SOURCE_DIR}/src
-               ${CMAKE_CURRENT_LIST_DIR}/test/test_mach.c
-               ${CMAKE_CURRENT_LIST_DIR}/test/board_harness.c
-               ${CMAKE_CURRENT_LIST_DIR}/sim/mach_plant.c
-               ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/log_plan.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
-               ${unity_SOURCE_DIR}/src/unity.c
-               -lm
-               -o ${CMAKE_BINARY_DIR}/test_mach
-    COMMAND ${CMAKE_COMMAND} -E echo "Running Mach lockout tests..."
-    COMMAND ${CMAKE_BINARY_DIR}/test_mach
-    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    COMMENT "The Mach lockout against supersonic flights and failed sensors"
-)
+pyro_module_suite(atmosphere_tests test/test_atmosphere.c src/atmosphere.c)
+pyro_module_suite(launch_detector_tests test/test_launch_detector.c src/launch_detector.c src/atmosphere.c)
+pyro_module_suite(apogee_detector_tests test/test_apogee_detector.c src/apogee_detector.c)
+pyro_module_suite(estimators_tests test/test_estimators.c src/estimator_table.c src/estimator_lumped.c
+                  src/estimator_constacc.c src/pressure_estimator.c src/atmosphere.c)
+pyro_module_suite(fire_control_tests test/test_fire_control.c src/fire_control.c src/atmosphere.c)
 
 # Plant tests. Each board model includes its own board's board_pins.h, so
 # the three cannot share one include path -- they are compiled separately
@@ -769,18 +651,9 @@ add_custom_target(sim
                ${CMAKE_CURRENT_LIST_DIR}/sim/main_sim.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/replay.c
                ${PYRO_HOST_HAL_SOURCES}
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
+               ${PYRO_FLIGHT_SOURCES_ABS}
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
                -lm
                -o ${CMAKE_BINARY_DIR}/pyro_sim
@@ -808,7 +681,6 @@ add_custom_target(lua_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_check.c
                ${CMAKE_CURRENT_LIST_DIR}/src/lua/lua_iface.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
                ${CMAKE_CURRENT_LIST_DIR}/boards/sim/lua_platform_sim.c
                ${PYRO_LUA_SOURCES}
                ${unity_SOURCE_DIR}/src/unity.c
@@ -859,24 +731,6 @@ add_custom_target(pin_caps_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_pin_caps
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Pin capability table tests"
-)
-
-# Brownout recovery: the decision matrix. Pure, like pin_assign's rules and
-# beep_codes -- every case here would otherwise need a rocket and a loose
-# battery connector to reproduce.
-add_custom_target(brownout_tests
-    COMMAND ${CMAKE_COMMAND} -E echo "Building brownout recovery tests..."
-    COMMAND ${HOST_CC} -Wall -Wextra
-               -I${CMAKE_CURRENT_LIST_DIR}/src
-               -I${unity_SOURCE_DIR}/src
-               ${CMAKE_CURRENT_LIST_DIR}/test/test_brownout.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
-               ${unity_SOURCE_DIR}/src/unity.c
-               -o ${CMAKE_BINARY_DIR}/test_brownout
-    COMMAND ${CMAKE_COMMAND} -E echo "Running brownout recovery tests..."
-    COMMAND ${CMAKE_BINARY_DIR}/test_brownout
-    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    COMMENT "Brownout recovery decision tests"
 )
 
 # The HTTP engine over a byte stream: no lwIP, no littlefs.
@@ -977,7 +831,7 @@ add_custom_target(net_txq_tests
 # a RAM disk [DD-077].
 add_custom_target(hr_log_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building high-rate log tests..."
-    COMMAND ${HOST_CC} -Wall -Wextra -Wno-unused-parameter -DHR_LOG_TEST -DPYRO_HAS_SD=1
+    COMMAND ${HOST_CC} -Wall -Wextra -Wno-unused-parameter -DPYRO_HAS_SD=1
                -I${CMAKE_CURRENT_LIST_DIR}/test/fake_rtos
                -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1c_sd
                -I${CMAKE_CURRENT_LIST_DIR}/src/sd -I${CMAKE_CURRENT_LIST_DIR}/lib/fatfs
@@ -1017,11 +871,12 @@ add_custom_target(mac_random_tests
 # The bench flight source: the atmosphere, the profile and the bench (DD-078).
 add_custom_target(flight_sim_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building flight source tests..."
-    COMMAND ${HOST_CC} -Wall -Wextra -DBENCH_FLIGHT_TEST -I${CMAKE_CURRENT_LIST_DIR}/src
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_flight_sim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/flight_sim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/bench_flight.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/atmosphere.c
                ${unity_SOURCE_DIR}/src/unity.c
                -lm
                -o ${CMAKE_BINARY_DIR}/test_flight_sim
@@ -1060,22 +915,36 @@ add_custom_target(status_json_tests
     COMMENT "/api/status rendering tests"
 )
 
-# The MS5607 one-shot's interrupt state machine, on a fake bus and clock at
-# the board's own bus rate: test/ms5607_bus.h stands in for
-# src/hal_common/ms5607_bus.h, so -I test comes first. Boards with an MS5607.
-add_custom_target(ms5607_tests
-    COMMAND ${CMAKE_COMMAND} -E echo "Building MS5607 one-shot tests..."
+# The pressure collector's interrupt state machine, on a fake bus, clock and
+# part: test/collector_bus.h stands in for src/hal_common/collector_bus.h, so
+# -I test comes first.
+add_custom_target(collector_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building pressure collector tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/test
-               -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_collector.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_collector.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_collector
+    COMMAND ${CMAKE_COMMAND} -E echo "Running pressure collector tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_collector
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Pressure collector state machine tests"
+)
+
+# The MS5607's arithmetic: compensation, the temperature's line, the PROM's CRC.
+add_custom_target(ms5607_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building MS5607 tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_ms5607.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_oneshot.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_ms5607
-    COMMAND ${CMAKE_COMMAND} -E echo "Running MS5607 one-shot tests..."
+    COMMAND ${CMAKE_COMMAND} -E echo "Running MS5607 tests..."
     COMMAND ${CMAKE_BINARY_DIR}/test_ms5607
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    COMMENT "MS5607 one-shot state machine tests"
+    COMMENT "MS5607 arithmetic tests"
 )
 
 # A board's pyro backend run on the host against test/fake_sdk, whose sleeps
@@ -1091,8 +960,17 @@ add_custom_target(board_pyro_tests
                ${CMAKE_CURRENT_LIST_DIR}/boards/mk1b/pyro_board.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_board_pyro_mk1b
+    COMMAND ${HOST_CC} -Wall -Wextra -DBOARD_PYRO_U5_DISCHARGES_OUTPUTS=0 -I${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk
+               -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1b -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${CMAKE_CURRENT_LIST_DIR}/src/lua -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_board_pyro_mk1b.c
+               ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c
+               ${CMAKE_CURRENT_LIST_DIR}/boards/mk1b/pyro_board.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_board_pyro_mk1b_base_part
     COMMAND ${CMAKE_COMMAND} -E echo "Running board pyro tests..."
     COMMAND ${CMAKE_BINARY_DIR}/test_board_pyro_mk1b
+    COMMAND ${CMAKE_BINARY_DIR}/test_board_pyro_mk1b_base_part
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Board pyro backend tests"
 )
@@ -1248,33 +1126,6 @@ add_custom_target(pin_assign_tests
     COMMENT "Pin assignment rule tests"
 )
 
-add_custom_target(buzzer_tests
-    COMMAND ${CMAKE_COMMAND} -E echo "Building buzzer pattern tests..."
-    COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
-               -I${CMAKE_CURRENT_LIST_DIR}/test
-               -I${unity_SOURCE_DIR}/src
-               ${CMAKE_CURRENT_LIST_DIR}/test/test_buzzer.c
-               ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/log_plan.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
-               ${unity_SOURCE_DIR}/src/unity.c
-               -lm
-               -o ${CMAKE_BINARY_DIR}/test_buzzer
-    COMMAND ${CMAKE_COMMAND} -E echo "Running buzzer tests..."
-    COMMAND ${CMAKE_BINARY_DIR}/test_buzzer
-    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    COMMENT "Buzzer pattern player unit tests"
-)
-
 add_custom_target(config_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building config tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
@@ -1287,36 +1138,5 @@ add_custom_target(config_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_config
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Config module tests (round-trip, parser, serializer)"
-)
-
-add_custom_target(config_persistence_tests
-    COMMAND ${CMAKE_COMMAND} -E echo "Building config persistence tests..."
-    COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
-               -I${CMAKE_CURRENT_LIST_DIR}/test
-               -I${unity_SOURCE_DIR}/src
-               ${CMAKE_CURRENT_LIST_DIR}/test/test_config_persistence.c
-               ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/log_plan.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/brownout.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/flight_states.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_codes.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/beep_store.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_processing.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/pressure_fit.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/ground_test_seq.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/config.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/telemetry_formatter.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
-               ${unity_SOURCE_DIR}/src/unity.c
-               -lm
-               -o ${CMAKE_BINARY_DIR}/test_config_persistence
-    COMMAND ${CMAKE_COMMAND} -E echo "Running config persistence tests..."
-    COMMAND ${CMAKE_BINARY_DIR}/test_config_persistence
-    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    COMMENT "Config persistence and runtime reload tests"
 )
 

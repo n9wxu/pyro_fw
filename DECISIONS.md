@@ -559,6 +559,355 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-094: Rulings Of 2026-10-03 On The Open Decisions
+The designer's answers to `docs/outstanding_tasks.md` section 2.
+- **Any fault found before launch sounds a fault (SNS-PRES-17).** A sensor
+  that stops or sticks on the pad is a general fault, announced and named,
+  until the board is restarted. Seen twice on the bench: a BMP280 left the
+  bus and the board went on saying OK to fly.
+- **Readings beside a flash operation (FL-1):** the data is left as it is
+  pending a discussion of the root cause. Nothing changed.
+- **The tests' 9 Pa is margin (NS-1).** Boards on a battery measure 1.9 to
+  2.6 Pa; 9 Pa was MK1B on USB alone. The tests still fly at it.
+- **MK1B's slot (SL-1):** a larger flash is on the way. While the image fits,
+  nothing changes.
+- **The three speed defaults stay 0 (R-1).**
+- **Every pyro pulse is ended by hardware (R-2):** a hardware timer, or a
+  fully defined PIO one-shot, for all pyro operations on every board. To
+  build.
+- **Every build runs a script (R-3):** the default script is a hello world
+  that prints the flight's events as they change and claims no I/O, so
+  MK1C-SD, whose J3 carries its SPI bus, runs one too. To build.
+- **The flight log is prepared on the bench (C6).** A Log tab downloads,
+  erases and prepares the log. Preparing creates an empty binary log for a
+  chosen duration at the chosen rate, 1 Hz and 2 minutes by default: the file
+  is opened, erased and closed on the bench. On the pad it is opened before
+  OK to fly sounds, so the pad is quick. A start-up is the pad unless USB is
+  found; then every file is closed and the board is USB's. In test mode the
+  log records the test. A written log stays until the user clears it on the
+  bench. To build.
+- **A firmware update and BOOTSEL are obeyed in flight (L5).** Normally
+  impossible, and wanted in a chamber test to stop a run and reload.
+- **A board's address (ID-1):** every board first takes its address from its
+  identity, which is the flash's id, not a serial number, and two boards can
+  share it. When a board first registers, the web page sees that it has no
+  stored MAC and gives it a random one, which gives it a random address. The
+  MAC is kept in littlefs: it survives a firmware update, and after a whole
+  flash erase the web page assigns one again. To build.
+- **littlefs goes to v2.11.3 now (LFS-1)**, and to v3 once the fork's
+  changes are ready.
+
+### DD-093: A Free-Running Pressure Collector That Recovers Its Own Bus
+- **Decision:** `src/pressure_collector.c` is one interrupt state machine for
+  either sensor. It commands a conversion, waits out the part's worst-case
+  conversion time on an alarm, reads, and commands the next, with no start
+  from the loop. Each cycle is the part's raw bytes and the time of each
+  conversion. A queue holds four; a fifth pushes the oldest out, counted.
+  The sensor task takes them every loop and does the arithmetic. A sensor is
+  a table (`MS5607_PART`, `BMP280_PART`): its commands, its conversion times,
+  where its result is read, and its reset. Replaces the one-shot of DD-051
+  and DD-066 and the BMP280's loop-driven cycle of DD-067.
+- **Why:** the loop started every conversion, so the collector ran at the
+  loop's rate and a loop that came early found it busy. A read can now only
+  follow its own command's alarm, so a zero code (MS5607 datasheet page 11)
+  is impossible by construction, not caught afterwards.
+- **Rates:** MS5607 at 400 kHz, 18.8 ms a cycle, 53 a second. BMP280, 13.7 ms
+  at 400 kHz and 14.5 ms at MK1B's 100 kHz. All faster than the 20 ms loop.
+- **No wait in the handler:** a transfer is queued whole (the controller's
+  TX FIFO holds sixteen) and its outcome is read at the next alarm. The old
+  handler polled for the STOP.
+- **Recovery is states of the same machine:** a failed transfer is counted by
+  cause and the cycle starts again 1 ms on. A transfer that did not finish is
+  aborted (RP2040 datasheet 4.3.10). Three failures in a row: the pads are
+  taken from the controller, the controller is reset, nine clocks and a STOP
+  go out at 10 us an edge (UM10204 3.1.16), the controller is set up again as
+  it was, the part's reset command is sent, and its start-up is waited out
+  (MS5607 page 12). About 4 ms. SNS-REC-01 is reworded: the flight software
+  still does not recover a sensor; the collector recovers its bus.
+- **No judgement of a value:** the zero check and the 1 Pa to 130 kPa check
+  are gone (SNS-PRES-06). `support/compensation_range.py` shows neither
+  sensor's arithmetic bends, wraps or overflows on any code. What stays is
+  the logarithm's domain: a pressure of zero or less is not fed to the
+  estimators.
+- **Accuracy, in the task:** the MS5607's second-order compensation below
+  20 C (datasheet page 9; 277 Pa at 0 C and sea level), and its PROM's CRC
+  checked at detection (AN520).
+- **What the build's proof caught:** the handler must run from RAM
+  (`support/prove_core0.py`). A `switch` became a jump table in flash, a
+  struct assignment became `memcpy`, and a `%` became a library call. The
+  handler is an if-chain compiled without jump tables, builds each cycle in
+  its queue slot, and wraps its index by comparison.
+- **Unchanged:** a conversion a flash operation ran beside is still marked
+  and not used (DD-068). Detection still uses the SDK's calls, before the
+  collector has the bus.
+- **Every sample in its loop (FLT-RATE-06):** the flight step took one sample
+  a loop. At 53 samples to 50 loops the samples queued, and within 20 s every
+  decision was made on data 1.2 s old. Found on the first bench flight on
+  hardware: launch declared at 80 m instead of 32 m, the ground reference
+  47 m high. `dispatch_state()` now steps once for every sample waiting. The
+  host harness steps every millisecond and could not show it;
+  `test_FLT_RATE_06_...` now does.
+- **The bench profile carries the sensor's noise (SIM-02):** a landed profile
+  was one value repeated, which is a stuck sensor, and the machine never
+  landed. Each reading's own departure from the ground reference now rides
+  on the profile.
+- **On the bench, 2026-10-03:** MK1C, MK1C-SD and MK1B (MS5607) at 53.0 a
+  second, 18.87 ms apart to within 0.1 ms; MK1A (BMP280) at 72.8 a second.
+  No zero, no failed transfer, no cycle pushed out, all three PROMs pass
+  their CRC. A 3 km bench flight on MK1C-SD: launch at 32 m, apogee called
+  at the profile's apogee by both estimators, peak 3000.06 m against 3000,
+  main at 297.8 m against 300, landed at 0.1 m. The recovery states have run
+  on the host's fake bus only.
+- **The cost of believing every value:** half a second of readings 1500 hPa
+  high a second before apogee used to be discarded. They are now followed,
+  and the drogue comes 8.6 s after apogee on that test, never before it.
+
+### DD-092: Estimators Behind One Interface, All Flown, One Obeyed
+- **Decision:** the filtered state comes from an estimator behind
+  `src/estimator.h`: a table of functions and a name. The build carries the
+  ones `src/estimator_table.c` lists. Every one is fed every reading. The
+  flight obeys the one `estimator` in config.ini names, and logs what the
+  others report and when each would have called apogee.
+- **The two carried:**
+  - `lumped`, the default: one equation of motion from pad to ground,
+    dv/dt = a_T - g - beta (rho/rho_pad) v|v|, learning a_T and beta from the
+    readings (`docs/lumped_parameter_filter.md`). `src/estimator_lumped.c` is
+    the C port of `sim/study/lumped.py`, and
+    `sim/study/lumped_port_check.py` flies both on the same readings.
+  - `constacc`: the constant-acceleration filter of DD-085, unchanged, behind
+    the interface.
+- **Replacing one:** in a build, link another table. In the field, set
+  `estimator` and restart.
+- **The Mach flag is gone (FLT-MACH-02..07 withdrawn):** an estimator says
+  whether its model explains the readings. Apogee is the obeyed estimator
+  seen climbing, then seen falling, explained throughout; a fall whose climb
+  was not seen must last 2 s (FLT-APO-07). A port error near Mach 1 is
+  readings the model does not explain, so nothing is decided on it and none
+  of it is the peak (FLT-APO-08).
+- **One missing reading is not a gap:** the second of evidence an estimator
+  needs starts again only after 250 ms without a used reading. A sensor that
+  repeats itself for eight readings near apogee otherwise cost 2 s, on 2 of
+  1000 flights to 10 km.
+- **Measured, host flights obeying each (`test/test_mach.c`):** hop to 45 km,
+  cold and hot pads, clean ports and three port errors. `lumped`: never
+  early, 0.09 to 0.94 s after apogee. `constacc`: never early, 0.09 to 1.8 s,
+  and later than 2 s on two of the 30 km and 45 km cases.
+- **The log:** `EST` text rows, rationed as script output is. LOCK, UNLOCK
+  and LOCK_FALLBACK are no longer written; PEAK and PEAK_AT_LEAST carry the
+  peak, and the web page reads them, and still reads an older log's rows.
+- **The cost:** every reading runs both filters, and each sample carries
+  every estimator's state.
+- **A prediction stops at the ground:** the model has no ground. With no
+  readings (a sensor repeating itself), its prediction fell on through, to
+  19 km below the pad after ten minutes. A prediction with no reading behind
+  it now stops at the pad's level.
+- **Flown on the bench 2026-10-03 (DD-093's entry).**
+- **Open:** `lumped` anchors its air at the first reading's pressure and the
+  sensor's temperature then; a long wait on a pad that warms is not yet
+  followed. On the pad its speed reads about 0.5 m/s downward: the thrust
+  term's fade pulls against the readings.
+
+### DD-091: What Building The 2026-10 Review Settled
+- **Apogee bounds (FLT-APO-01):** measured on the firmware itself, on host
+  flights from 60 m to 30 km at sensor noise from 1.2 to 9 Pa: apogee is
+  declared never early, and within 0.5 s to 10 km, 1.5 s at 20 km and 2.5 s at
+  30 km. 9 Pa is the noisiest bench board's measured figure (MK1B); the tests
+  fly at it. (DD-094: that figure was the USB supply; 9 Pa is kept as
+  margin.)
+- **Apogee under the Mach flag (FLT-MACH-04):** a plain "pressure rising for
+  N seconds" rule fires early under a large port error, so the rule is the
+  gravity signature: the state agreeing with the readings and descending
+  slowly under gravity for 2 s. The older rule, the pressure back above the
+  level the flag was set at, is kept as a last resort only. Beyond about
+  Mach 2 with the test port model both can still be early: that is outside
+  the envelope the tests cover.
+- **OK to fly must be heard (BUZ-CODE-08):** silence means a fault, so a
+  personality with a silent OK to fly is refused.
+- **The announcement does not wait for the script (SYS-LUA-02):** the pad
+  verdict used to be held until the script had started. It is not.
+- **A commanded restart is not a failed start (LUA-SAFE-01):** the reboot
+  route clears the script's start-up mark before it resets.
+- **A script that fails its check is not saved (LUA-MGT-01):** the page checks
+  first and uploads only a script that passes.
+- **MK1C never abandons a pulse (PYR-ARM-03):** the gate closes at the
+  precharge deadline on whatever the bus has; the timeout is that pulse's own
+  record. U9's latch is released by the enable falling after every fire
+  (TPS2595 datasheet page 23), which is what PYR-FAULT-01 asks.
+- **The bench profile's descent starts from rest (SIM-04):** it gathers speed
+  under gravity toward each rate, so a failed canopy is a fall and no speed
+  appears from nowhere.
+- **No hold on launch or apogee (task T3, 2026-10-03):** the 100 ms launch
+  hold and the 60 ms apogee hold are removed. With either at zero every pad,
+  flight and Mach test passed, 30 minutes of 30 Pa gusts at 9 Pa of sensor
+  noise included: the filter's own lag and its skipping of one or two bad
+  readings are the guard. `launch_detected()` is a pure function.
+- **MK1C's presence pulse is ended by a hardware alarm (task P1):** 8 ms, not
+  the next 20 ms loop. A fire drops a test in progress, and no storage write
+  starts beside the pulse.
+- **Open:** the three speed defaults are 0 until the modelling study gives
+  values; MK1A and MK1B do not meet PYR-ARM-01's 50 ms; MK1C-SD has no script
+  (SYS-LUA-01); HAL validation is not built (`docs/hal_validation_apps.md`).
+
+### DD-090: Ten Code Requirements, And The HAL As The Test Seam
+- **Decision:** the code itself has requirements (CODE-01..10): structure
+  and naming before comments; comments for traceability and for decisions
+  the structure does not show, never to teach a subject; named functions
+  before magic values; one responsibility per file; SOLID and DRY; black-box
+  tests traceable to requirements; all code reachable through the published
+  interfaces, with no dead code, no test-only functions and no test
+  constructs that reach hidden functions; pure functions preferred.
+  Libraries from outside the project are exempt and are not modified.
+- **The seam:** the HAL interface is the mockable layer through which all
+  flight code is tested (HAL-05), and it makes a port a new HAL. The HAL is
+  validated separately, on hardware, with test equipment and HAL validation
+  applications (HAL-06, BLD-06).
+- **Why:** given by the user on 2026-10-03, after the requirements review,
+  to govern the review of the tests and the code that follows it.
+
+### DD-089: A Script Cannot Block The Board
+- **Decision:** Lua is a functional requirement on every board (section 10
+  of `REQUIREMENTS.md`). No script may block, prevent or delay any behaviour
+  of the board: starting up, the network, the announcement, logging,
+  telemetry, any flight function (SYS-LUA-02). Whatever script is stored the
+  board starts and serves its web interface (LUA-SAFE-01). A script has full
+  control of the pads the pin assignment gives it, a pyro channel's
+  included, and that use is the operator's. The enabled script always runs,
+  ground test and bench flight included (LUA-RUN-01).
+- **Why:** the user's rulings in the 2026-10 review. A script that could
+  hold up a start would turn a bad upload into a board that cannot be
+  repaired from its own web interface.
+
+### DD-088: Telemetry Is $PYRO Once A Second, And Carries Its Events
+- **Decision:** the downlink is the $PYRO sentence, once a second in every
+  state it is sent in (TEL-03). A flight event is queued and carried by the
+  next message, so it can be up to a second late and none is lost (TEL-11).
+  The configurable format and rate are withdrawn, with `telem_format` and
+  `telem_rate_hz`. The port accepts no commands (TEL-12). A user who needs
+  another format assigns the serial pins to a script.
+- **Why:** the user's rulings in the 2026-10 review. The log may run faster
+  than the downlink; the downlink is for watching a flight, not for
+  reconstructing it.
+
+### DD-087: Ground Test By The Switch Alone, And Configuration At Start-Up
+- **Decision:** the serial ground test commands are removed (GND-TEST-01..04
+  withdrawn). The test switch procedure of DD-071 is the only ground test,
+  and its fires are delivered on command with no health gate (GND-TEST-13).
+  The switch may connect the buzzer's pad to another pad and may not ground
+  the buzzer; pad to pad, the input pad watches the buzzer's own pattern and
+  short pulses find the switch while the buzzer is silent (GND-TEST-12,
+  `docs/ground_test_on_buzzer_pad.md`).
+- **Configuration:** configuration and pin changes take effect at start-up
+  (CFG-10). The web interface writes the file; the running system, ground
+  test mode included, goes on with what it started with.
+- **Why:** the user's rulings in the 2026-10 review. The serial commands
+  needed a computer, which the user need excludes; and a save that only
+  writes a file cannot be refused for the mode the board is in.
+
+### DD-086: Any Restart Resumes A Flight In Progress
+- **Decision:** recovery is no longer tied to a power event (DD-041's
+  premise). After any restart the system resumes if the pad's record exists,
+  the board is above the recorded ground and moving, and no USB host is
+  attached (FLT-BROWN-02). A resumed flight assumes no channel has fired and
+  fires as soon as fresh data meets a trigger; a DELAY counts in full from
+  the resume; the emergency rule applies from the resume (FLT-BROWN-06). All
+  resume state is cleared when the flight lands and when a bench flight
+  ends (FLT-BROWN-04).
+- **Why:** best effort. A watchdog reset in the air used to start cold, take
+  a ground reference at altitude and fire nothing. A fire into a spent
+  igniter is harmless, so nothing about the channels need survive.
+- **Open:** restoring T+0, apogee and the peak by replaying the flight log,
+  if it is fast enough (`docs/resume_from_log.md`).
+
+### DD-085: One Estimator On Raw Pressure, And Every Operation In Pressure
+- **Decision:** the detectors read one filtered state -- pressure, its rate
+  and its acceleration -- formed from the raw readings by a Kalman filter
+  whose correction is limited inside its update (SNS-EST-01, SNS-EST-02).
+  No median and no low-pass stand in front of it. It discards nothing, is
+  not re-seeded and is not loosened at a fire; it trends to data that is
+  stable. Every flight comparison is in pressure, and a height or speed the
+  operator set is converted once (SNS-EST-05). No altitude is clamped, at
+  8000 m or at zero (SNS-ALT-01). This replaces DD-040, DD-044 and DD-048.
+- **Apogee at altitude:** filtered pressure must show the slowing climb,
+  apogee and descent at every height in the sensor's range. A fallback that
+  waits for the pressure to return to the Mach flag's level is rejected: it
+  deployed a good 30 km flight 150 m above the ground (HA-1). FLT-MACH-04 is
+  rewritten and DD-049's fallback with it.
+- **Data is believed:** the board cannot know its sensor is wrong. A reading
+  beyond the rated range is used (SNS-PRES-06). A stuck sensor is a chip
+  failure: it is logged and nothing recovers it in flight (SNS-REC-01).
+- **Why:** the user's rulings in the 2026-10 review, and the evaluation in
+  `docs/kalman_launch_evaluation.md`: a raw filter lets one reading 3 to
+  6 kPa low declare a launch, and limiting the correction stops one or two
+  bad readings of any size at no cost in delay. The design and what remains
+  to be measured are in `docs/descent_speed_estimator.md` and
+  `docs/pressure_domain_flight_math.md`.
+
+### DD-084: A Board Declares Its Constraints
+- **Decision:** the requirements are general, and a board may redefine a
+  default or narrow a range: `refire_interval` and `fire_gap` for its
+  protection part, its sensor's range and noise, its height for proper
+  operation, its log capacity and log details (PYR-BOARD-01..04, DAT-09,
+  SNS-MAX-01, BRD-01). An out-of-range value is brought to the nearest
+  permitted one and reported, never rejected. A constraint may change when
+  a channel is energised; it may never withhold a decided fire.
+- **Why:** MK1A's low-current PTC needs a different gap from MK1C's eFuse,
+  and a configuration file can arrive from another board.
+
+### DD-083: Four Announcements By Priority, And Health That Gates Nothing
+- **Decision:** the pad says one of OK to fly, pyro 1 fault, pyro 2 fault,
+  general fault; silence is also a fault. One is announced at a time:
+  general, then pyro 1, then pyro 2 (BUZ-CODE-02). Each board checks every
+  enabled channel for the faults it can reliably detect; one that can detect
+  none treats the channel as ready (PYR-HEALTH-01). A short cannot be told
+  reliably from a match, so the general verdict is ready or fault and the
+  measurement is named on the status report. Only enabled channels count,
+  and the pin assignment is the source of truth (PYR-HEALTH-02).
+- **Why:** the user's rulings in the 2026-10 review. A general fault goes
+  back to the workbench; a pyro fault may be fixed at the pad, one at a
+  time. Diagnosis is not for the beep.
+
+### DD-082: Re-Fire, Emergency All-Fire, And The Gap, Without Roles
+- **Decision:** after a channel's first fire it fires again every
+  `refire_interval` while the descent speed exceeds that channel's re-fire
+  speed (PYR-REFIRE-01). At any time after apogee, at
+  `emergency_fire_speed`, every enabled channel fires and goes on firing
+  until the speed drops or the flight lands (FLT-EMRG-01). A zero speed
+  disables its rule. The channels are never energised together, and
+  `fire_gap` of quiet separates a pulse on one from a pulse on the other; a
+  first fire goes before a re-fire and pyro 1 before pyro 2
+  (PYR-DEPLOY-02). "Drogue" and "main" leave the requirements. The rules
+  act on the filtered state (FLT-EMRG-05). This replaces DD-028's ladder.
+- **Why:** the user's rulings in the 2026-10 review. Any deployment reduces
+  the damage, and a pulse into a spent igniter is harmless.
+- **Open:** the defaults of the three speeds, zero until the modelling study
+  gives them.
+
+### DD-081: Never Early, Data Believed, Best Effort
+- **Decision:** a fire is decided only on measured evidence that its event
+  has happened: never early, never on an estimate, never on a timer
+  (SYS-DEPLOY-04). Samples that arrive are believed; only their absence
+  suspends a decision. Once decided, nothing withholds the attempt: health,
+  continuity, faults and voltage gate nothing, in flight or in ground test
+  (SYS-DEPLOY-05, PYR-HEALTH-01). PYR-SAFE-01 and PYR-ARM-02 are withdrawn
+  and no fire is refused (PYR-FIRE-01).
+- **Why:** the user's rulings in the 2026-10 review. No correction is
+  possible after launch. A safe flight carries two pyro systems, so this
+  unit prefers no deployment to an early or uninformed one, and never holds
+  a decided one back.
+
+### DD-080: Requirements State Behaviour; Mechanism Is In The Design Record
+- **Decision:** `REQUIREMENTS.md` states behaviour that can be verified from
+  outside and met by any implementation. It dictates no processor, kernel,
+  bus, interrupt or algorithm; the hardware layer may use any of them.
+  Requirements that were mechanisms are withdrawn (Appendix A) and stay in
+  force as design, in the decisions they cite and in each board's theory of
+  operation. The requirements are general, with board values declared
+  beneath them (DD-084). FreeRTOS is the only task model supported, as a
+  design fact (DD-073).
+- **Why:** the user's ruling in the 2026-10 review, recorded in
+  `docs/requirements_review_2026-10-02.md` with every identifier's
+  disposition.
+
 ### DD-079: Descent Rates Are Judged In The Pad's Air
 - **Decision:** the descent bands (a main at 10 m/s or less, a drogue at
   35 m/s or less) and the emergency ladder's evidence read the descent rate

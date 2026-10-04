@@ -105,7 +105,28 @@ FLIGHT_ROOTS = [
     "pyro_update",
     "hal_pyro_fire",
     "hal_pyro_sample",
-    "action_launch",
+    # dispatch_state() calls these through its tables.
+    "flight_action_apogee",
+    "flight_action_armed",
+    "flight_action_fault",
+    "flight_action_ground_test",
+    "flight_action_landing",
+    "flight_action_launch",
+    "flight_action_on_pad",
+    "flight_action_resumed_descent",
+    "flight_action_start_calibration",
+    "flight_detect_ascent",
+    "flight_detect_boot_calibrate",
+    "flight_detect_boot_continuity",
+    "flight_detect_boot_sensor",
+    "flight_detect_boot_settle",
+    "flight_detect_chute_descent",
+    "flight_detect_drogue_descent",
+    "flight_detect_falling",
+    "flight_detect_fault",
+    "flight_detect_ground_test",
+    "flight_detect_landed",
+    "flight_detect_pad_idle",
     "hal_log_start",
     "hal_log_sample",
     "watchdog_update",
@@ -457,7 +478,7 @@ def check_ram_resident(elf, objdump):
 # through a veneer -- must be in RAM and load no XIP address. An indirect call
 # cannot be followed, so one fails the check.
 RAM_CLOSED = [
-    ("ms5607_alarm_isr", "the MS5607 one-shot's alarm handler [DD-051]"),
+    ("collector_alarm_isr", "the pressure collector's alarm handler [DD-093]"),
     ("flash_op_park", "the lockout helper's spin: interrupts off while the other core writes flash"),
 ]
 

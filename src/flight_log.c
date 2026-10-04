@@ -14,7 +14,7 @@ enum { REC_HEADER = 'H', REC_SAMPLE = 'S', REC_TEXT = 'T' };
 #define HDR_FIXED 30
 #define TEXT_FIXED 7 /* type, time, tag, len */
 
-static const char *const TAG_NAMES[] = {"LUA", "MOCK"};
+static const char *const TAG_NAMES[] = {"LUA", "MOCK", "EST"};
 
 static void put16(uint8_t *p, uint16_t v) {
     p[0] = (uint8_t)v;

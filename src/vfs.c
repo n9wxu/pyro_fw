@@ -5,7 +5,7 @@
  */
 #include "vfs.h"
 #include "lfs_mount.h"
-#include "brownout.h"
+#include "flight_resume.h"
 #include "pin_store.h"
 #include "beep_store.h"
 #include <string.h>
@@ -15,7 +15,7 @@
 
 /* The board's, not the card's: the identity a host knows the board by, and
  * the marker a power-cut board recovers its flight from. */
-static const char *const internal_paths[] = {"serial.txt", PAD_MARKER_PATH};
+static const char *const internal_paths[] = {"serial.txt", PAD_RECORD_PATH};
 
 /* The configuration: the card's copy wins, and littlefs keeps a mirror. */
 static const char *const config_paths[] = {"config.ini", PIN_STORE_PATH, BEEP_STORE_PATH, "lua_user.lua"};
@@ -164,12 +164,17 @@ int vfs_rewind(vfs_file_t *f) {
     return lfs_err(lfs_file_rewind(&g_lfs, &f->u.lfs));
 }
 
+/* A read of a file the card lacks falls back to internal storage
+ * (vfs_open), so a copy left there would come back: both go. */
 int vfs_remove(const char *path) {
+    int internal = lfs_err(lfs_remove(&g_lfs, path));
 #if PYRO_HAS_SD
-    if (vfs_route(path) == VFS_FAT)
-        return fat_err(f_unlink(path));
+    if (vfs_route(path) == VFS_FAT) {
+        int card = fat_err(f_unlink(path));
+        return card == VFS_NOENT ? internal : card;
+    }
 #endif
-    return lfs_err(lfs_remove(&g_lfs, path));
+    return internal;
 }
 
 int vfs_rename(const char *from, const char *to) {

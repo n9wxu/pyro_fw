@@ -7,6 +7,8 @@
  * depend on any of that: TCP is a stream.
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Verifies [WEB-HTTP-01..04].
  */
 #include "unity.h"
 #include "../src/http_conn.h"

@@ -3,6 +3,8 @@
  * saying when records were lost to the ring wrapping.
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Verifies [SNS-PRES-13].
  */
 #include "unity.h"
 #include "../src/pressure_trace.h"

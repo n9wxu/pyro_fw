@@ -124,9 +124,19 @@ void pyro_init(void) {
 
 void pyro_sample(void) {}
 
+/* [PYR-HEALTH-01] A board that cannot judge a channel reports it ready, with
+ * the count it read. */
+static pyro_continuity_t ready_unjudged(uint8_t channel) {
+    return (pyro_continuity_t){.raw_adc = check.complete ? check.result[channel - 1].raw_adc : 0, .good = true};
+}
+
 void pyro_get(uint8_t channel, pyro_continuity_t *out) {
     if (channel != 1 && channel != 2)
         return;
+    if (BOARD_PYRO_U5_DISCHARGES_OUTPUTS) {
+        *out = ready_unjudged(channel);
+        return;
+    }
     if (!check.complete) {
         *out = (pyro_continuity_t){.raw_adc = 0, .good = false, .open = true, .shorted = false};
         return;

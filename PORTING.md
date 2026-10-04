@@ -36,7 +36,7 @@ on the bench.
 | Need | What the RP2040 boards do | Decided in |
 |---|---|---|
 | A loop every 20 ms that never sleeps | `src/main_hardware.c`, period in `src/loop_period.h`; every settle is a deadline a later iteration checks | DD-053, DD-065 |
-| A pressure every loop, stamped at its conversion | MS5607: a pressure and a temperature a loop, commanded and read by a timer interrupt whose handler runs from RAM. BMP280: one forced conversion a loop | SNS-PRES-08, DD-051, DD-066, DD-067 |
+| At least 50 pressures a second, stamped at their conversions | The pressure collector: a timer interrupt whose handler runs from RAM commands, times and reads each conversion of either sensor, and recovers its own bus | SNS-PRES-08, SNS-COL-01..06, DD-093 |
 | I2C as fast as the sensor and the PCB allow, every transfer bounded | 400 kHz where the pull-ups carry fast mode; the SDK's `_timeout_us` transfers, never the blocking ones | DD-052, DD-069 |
 | Two pyro channels, each with a continuity sense | MK1A, MK1B: a switched high side per channel, one shared low side, a 100 kΩ pull-up on each sense node. MK1C: an eFuse armed by a charge pump, a low side per channel, bias injection and four ADC inputs | DD-055, DD-059 |
 | A 12-bit ADC | the continuity thresholds are 12-bit counts: on MK1A and MK1B good under 500, open over 3000 | DD-059 |

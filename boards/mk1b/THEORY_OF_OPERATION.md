@@ -180,16 +180,14 @@ The speeds come from the board (DD-052): SCL and the MS5607's SDA have 4k7
 pull-ups (R10, R11), which carry fast mode; the BMP280's SDA has only the
 RP2040's own 50–80 kΩ (`docs/datasheets/rp2040-datasheet_2025-02-20.pdf`
 page 617, Table 625), too slow an edge for fast mode, so its probe stays in
-standard mode. The MS5607 then converts a pressure and a temperature every
-loop, read from a one-shot alarm whose handler runs from RAM (DD-051, DD-066):
-the pair is ready 18.6 ms after the top of a 20 ms loop, which only fast mode
-allows. A BMP280 fitted instead converts once a loop, commanded in forced
-mode and taken at the next (DD-067).
+standard mode. The pressure collector then runs whichever was found, free
+(DD-093): the MS5607 a pressure and a temperature every 18.8 ms, or the
+BMP280 a forced conversion every 14.5 ms at its 100 kHz. Its handler runs
+from RAM.
 
-Every transfer gives up rather than wait on a part holding the bus: the
-BMP280's resets, the MS5607's detection and its one-shot's transfers within
-2 ms, the BMP280's reads within twice their own time at 100 kHz and a
-millisecond (DD-069). A conversion a flash erase or program ran beside is
+A transfer that fails is counted by cause on `/api/status`. After three in a
+row the collector clears the bus on the fitted sensor's pad, resets the
+sensor and goes on. A conversion a flash erase or program ran beside is
 discarded, not used, and counted in `pres_flashed` on `/api/status` (DD-068).
 
 ## Telemetry, LED and buzzer
@@ -224,8 +222,8 @@ released pyro pad is one.
 | Condition | What the board does |
 |---|---|
 | an overcurrent or overtemperature in U5 | its flag goes low; `pyro_fault()` is true |
-| an igniter absent or open | reads open — see [Known limits](#known-limits) |
-| a lead shorted to ground | reads shorted — see [Known limits](#known-limits) |
+| an igniter absent or open | reads open with the base AP2192; not judged as fitted — see [Known limits](#known-limits) |
+| a lead shorted to ground | reads shorted with the base AP2192; not judged as fitted — see [Known limits](#known-limits) |
 
 ## Known limits
 
@@ -234,20 +232,52 @@ released pyro pad is one.
   its note 6). Against the 100 kΩ pull-ups that holds both sense nodes at a few
   millivolts whenever a channel is off — which is always, during a check. A
   fitted igniter, an empty connector and a real short all read the same, near
-  0 counts, and the check reports every channel shorted. The flight fires only
-  a channel with continuity (PYR-SAFE-01), so an MK1B that owns its pyros never
-  deploys. The base AP2192, AP2192MPG-13, has no discharge, the same
+  0 counts, so the check cannot judge a channel. The board is built knowing
+  that (`BOARD_PYRO_U5_DISCHARGES_OUTPUTS` in `board_pins.h`) and reports every
+  channel ready, with the count it read: a board that cannot detect a fault
+  treats the channel as ready, and no reading withholds a fire
+  (PYR-HEALTH-01). The pad therefore says OK to fly whatever is connected. The
+  base AP2192, AP2192MPG-13, has no discharge, the same
   pinout, active-high enables and MSOP-8EP drawing, and blocks reverse
   current, so the nodes read high when the battery is below 3.3 V
   (`docs/datasheets/AP2182_AP2192_DS31569_Rev10-2.pdf`, pages 1, 4 and 15);
-  with it the check above works as written.
+  with it, and that define at 0, the check above works as written.
 - **The BMP280 pad has no pull-up**, so a BMP280 board's sensor runs at
   100 kHz.
-- **A beep code disturbs the MS5607 (task B-BZ).** On the bench, while one
-  plays, the sensor's scatter rises from about 9 Pa to 31–38 Pa (DD-068). MK1C
-  drives the same buzzer from VIN through its own AO3400A and shows none. On
-  this board the buzzer's FET shares its AO6800 package with the pyro low
-  side; the cause is not established.
+- **On USB alone the sensor is noisier, and a beep disturbs it (task
+  B-BZ).** The buzzer is driven from VUSB, and with no battery the USB
+  supply's limited current lets the 3.3 V rail move. Measured 2026-10-03
+  (`docs/pressure_collector.md`): the MS5607 9.8 Pa rms at rest on USB alone
+  against 2.3 Pa on a battery, the BMP280 2.5 against 2.0; a beep code adds
+  about a fifth on USB alone and nothing on a battery. Once, on USB alone, a
+  BMP280 left the bus during a beep code until its power was removed. Judge
+  this board's sensor with a battery fitted.
+- **A flash operation disturbs the MS5607, battery or not:** a conversion
+  beside one sits 8.5 to 17 Pa rms from its neighbours, 43 Pa at worst. It
+  is discarded (DD-068). The BMP280 shows no such effect.
+
+## What this board declares
+
+The values the requirements leave to the board (BRD-01). A value marked
+*not measured* is owed to this board's HAL validation (BRD-02).
+
+| Item | Declared |
+|---|---|
+| Pyro faults it can reliably detect | an overcurrent or overtemperature in U5, by its flag. Open and shorted are **not** reliably detected while U5 is the AP2192A, whose output discharge holds the sense nodes at 0 V (see [Known limits](#known-limits)): a channel it cannot judge is treated as ready (PYR-HEALTH-01) |
+| `refire_interval` | default 1000 ms, 500 to 10000 ms: the general values (PYR-BOARD-01); this board has not been characterised for its own |
+| `fire_gap` | default 3000 ms, 1000 to 10000 ms: the general values; not characterised |
+| Pulse | 500 ms, ended by the loop |
+| Protection | U5's current limit and thermal shutdown, which recover by themselves, and F2, a 1.5 A PTC on the common, which resets as it cools. The PTC's reset time under a shorted match is *not measured*, and is what this board's `fire_gap` should come from |
+| Disarm when software stops (PYR-ARM-01) | **the watchdog, 1 s.** The loop ends the pulse, so a stopped loop leaves the enable on until the reset. This exceeds the 50 ms bound |
+| Sensor | MS5607 where fitted, else BMP280, found at start-up. MS5607: 10 to 1200 mbar, 2.4 Pa rms at OSR 4096 (`docs/datasheets/MS5607-02BA03_2017-06.pdf`, pages 1 and 4). Measured on this board with a battery fitted: MS5607 2.3 Pa rms, BMP280 2.0 Pa, a beep changing neither; on USB alone 9.8 and 2.5 Pa (`docs/pressure_collector.md`) |
+| Height for proper operation (SNS-MAX-01) | 30000 m with the MS5607; 9000 m with the BMP280 |
+| Flight log (DAT-09) | 984 kB of littlefs: about 12 days at `1hz`, 15 min at `full`. `/api/log/space` reports what is free |
+| Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured* on this revision: `loop_late_max_us` on `/api/status` reports it |
+| Script resources (LUA-PAD-03) | the J1 user pad, GPIO8, and a released pyro channel's pads (`pin_caps.h`) |
+| Connector labels (PIN-LABEL-01) | `pin_caps.h` |
+
+The disarm time is this board's hardware: nothing but the processor ends a
+pulse. MK1C's charge pump is what meets PYR-ARM-01.
 
 ## Build
 
@@ -267,9 +297,9 @@ sector erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
   `test/fake_sdk`, with the sense node modelled from the netlist: the check's
   timing, one reading a second, igniter, empty, short and a bad joint, a fire
   and its fresh reading, and a released enable left alone.
-- `sensor_bringup_tests` and `ms5607_tests` cover the two-pad bring-up, a
-  BMP280 holding the bus (DD-069), and the MS5607 one-shot at this board's
-  400 kHz.
+- `sensor_bringup_tests`, `collector_tests` and `ms5607_tests` cover the
+  two-pad bring-up, a BMP280 holding the bus (DD-069), the collector and the
+  arithmetic.
 - `integration_tests` flies the flight software built for MK1B, the default
   board.
 - `plant_tests` models the sense network from the netlist; it leaves out U5's
@@ -283,6 +313,6 @@ sector erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
   diodes.com
 - `docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf`, `MS5607-02BA03_2017-06.pdf`,
   `UM10204_I2C-bus_Rev7.0_2021-10.pdf`
-- DD-051, DD-052, DD-053, DD-059, DD-065, DD-066, DD-067, DD-068, DD-069,
+- DD-052, DD-053, DD-059, DD-065, DD-068, DD-069, DD-093,
   DD-071 in `DECISIONS.md`
-- Tasks B-U5 and B-BZ in `docs/outstanding_tasks.md`, section 7
+- Tasks B-U5 and B-BZ in `docs/outstanding_tasks.md`, section 6

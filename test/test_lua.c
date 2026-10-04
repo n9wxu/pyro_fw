@@ -7,6 +7,8 @@
  * about.
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Verifies [SYS-LUA-01, SYS-LUA-02, LUA-ISO-01..04, LUA-PAD-01, LUA-PAD-02, LUA-MGT-01].
  */
 #include "unity.h"
 #include "lua_check.h"

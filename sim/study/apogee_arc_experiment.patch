@@ -1,0 +1,137 @@
+diff --git a/src/apogee_detector.c b/src/apogee_detector.c
+new file mode 100644
+index 0000000..567bcc5
+--- /dev/null
++++ b/src/apogee_detector.c
+@@ -0,0 +1,33 @@
++/*
++ * See apogee_detector.h.
++ *
++ * SPDX-License-Identifier: MIT
++ */
++#include "apogee_detector.h"
++#include "hold.h"
++#include <math.h>
++
++#ifndef UNSEEN_CLIMB_HOLD_MS
++#define UNSEEN_CLIMB_HOLD_MS 2000u
++#endif
++#define ARC_CURVE_MAX 0.005f /* d2(ln p)/dt2 of about 3.5 g: no rocket near apogee has it */
++#define MOVING_SIGMAS 3.0f   /* a rate beyond its own uncertainty */
++#define TOP_HOLD_MS 60u
++
++/* The estimate agrees with the readings and curves no harder than a body
++ * near the top of its flight can. */
++static bool on_an_arc(const pp_sample_t *s) {
++    return s->smooth && !s->suspect && fabsf(s->curve) < ARC_CURVE_MAX;
++}
++
++bool apogee_detected(apogee_detector_t *d, const pp_sample_t *s) {
++    if (!on_an_arc(s)) {
++        *d = (apogee_detector_t){0};
++        return false;
++    }
++    float moving = MOVING_SIGMAS * s->rate_sigma;
++    if (s->rate < -moving)
++        d->climb_seen = true;
++    uint32_t hold_ms = d->climb_seen ? TOP_HOLD_MS : UNSEEN_CLIMB_HOLD_MS;
++    return held_for(s->rate > moving, &d->descending_since, s->timestamp_ms, hold_ms);
++}
+diff --git a/src/apogee_detector.h b/src/apogee_detector.h
+new file mode 100644
+index 0000000..d383a5d
+--- /dev/null
++++ b/src/apogee_detector.h
+@@ -0,0 +1,22 @@
++/*
++ * Apogee [FLT-APO-01]: the filtered state passing over the top of a
++ * ballistic arc. See docs/apogee_without_a_mach_flag.md.
++ *
++ * SPDX-License-Identifier: MIT
++ */
++#ifndef APOGEE_DETECTOR_H
++#define APOGEE_DETECTOR_H
++
++#include "pressure_processing.h"
++#include <stdbool.h>
++#include <stdint.h>
++
++typedef struct {
++    bool climb_seen;           /* this arc has shown the rocket climbing */
++    uint32_t descending_since; /* 0: not descending on this arc */
++} apogee_detector_t;
++
++/* Once a sample. True when this sample declares apogee. */
++bool apogee_detected(apogee_detector_t *d, const pp_sample_t *s);
++
++#endif
+diff --git a/src/flight_ascent.c b/src/flight_ascent.c
+index 2a9f68d..5d59bfd 100644
+--- a/src/flight_ascent.c
++++ b/src/flight_ascent.c
+@@ -5,6 +5,7 @@
+  * SPDX-License-Identifier: MIT
+  */
+ #include "flight_internal.h"
++#include "apogee_detector.h"
+ #include "atmosphere.h"
+ #include "hold.h"
+ #include "mach_lockout.h"
+@@ -61,10 +62,8 @@ static uint32_t time_of_apogee(const pp_sample_t *s) {
+ /* [FLT-APO-01] Apogee is the sensor saying the rocket has stopped going up,
+  * and nothing else [DD-022]. */
+ static bool apogee_seen(flight_context_t *ctx, const pp_sample_t *s) {
+-    bool past_the_minimum = s->pressure_pa > ctx->peak_pa * (1.0f + APOGEE_RISE_SIGMAS * s->log_sigma);
+-    bool descending = !s->suspect && s->rate > APOGEE_SIGMAS * s->rate_sigma && past_the_minimum;
+-    bool allowed = ctx->pyros_armed && !ctx->apogee_declared && !ctx->mach.flagged;
+-    return held_for(allowed && descending, &ctx->apogee_held_since, s->timestamp_ms, APOGEE_HOLD_MS);
++    bool seen = apogee_detected(&ctx->apogee, s);
++    return ctx->pyros_armed && !ctx->apogee_declared && seen;
+ }
+ 
+ static state_event_t follow_mach_lock(flight_context_t *ctx, const pp_sample_t *s) {
+diff --git a/src/flight_sources.txt b/src/flight_sources.txt
+index 7c10414..8ebf540 100644
+--- a/src/flight_sources.txt
++++ b/src/flight_sources.txt
+@@ -9,6 +9,7 @@ src/flight_resume.c
+ src/fire_control.c
+ src/fire_plan.c
+ src/mach_lock.c
++src/apogee_detector.c
+ src/descent_phase.c
+ src/launch_detector.c
+ src/landing_detector.c
+diff --git a/src/flight_states.h b/src/flight_states.h
+index 60a1b70..180c994 100644
+--- a/src/flight_states.h
++++ b/src/flight_states.h
+@@ -7,6 +7,7 @@
+ #ifndef FLIGHT_STATES_H
+ #define FLIGHT_STATES_H
+ 
++#include "apogee_detector.h"
+ #include "config.h"
+ #include "descent_phase.h"
+ #include "fire_control.h"
+@@ -93,7 +94,7 @@ typedef struct flight_context_t {
+     bool apogee_declared;
+     bool under_thrust;
+     bool sensor_stuck, sensor_lost;
+-    uint32_t apogee_held_since;
++    apogee_detector_t apogee;
+     mach_lock_t mach;
+     descent_phase_t descent;
+     landing_detector_t landing;
+diff --git a/src/mach_lock.c b/src/mach_lock.c
+index 85cf9de..2e19917 100644
+--- a/src/mach_lock.c
++++ b/src/mach_lock.c
+@@ -24,6 +24,7 @@ void mach_lock_set(mach_lock_t *m, float pressure_pa, uint32_t sample_ms) {
+  * After a release only the filtered rate does, so one bad reading cannot
+  * lock out the apogee just ahead. */
+ static bool flag_due(const mach_lock_t *m, const pp_sample_t *s) {
++    return false; /* EXPERIMENT */
+     if (s->suspect)
+         return false;
+     if (m->released_once)

@@ -1,20 +1,15 @@
 /*
- * BMP280, one forced conversion a loop [DD-067], on the board's sensor bus
- * (BOARD_I2C_INST). Built into every image and empty unless the board fits
- * one (BOARD_HAS_BMP280).
+ * BMP280: detection on the board's sensor bus (BOARD_I2C_INST), and the
+ * compensation. Built into every image and empty unless the board fits one
+ * (BOARD_HAS_BMP280).
  *
  * SPDX-License-Identifier: MIT
  */
 #include "board_pins.h"
 #if BOARD_HAS_BMP280
 #include "bmp280_driver.h"
-#include "flash_op.h"
 #include "hardware/i2c.h"
-#include "hardware/timer.h"
-#include "loop_period.h"
 #include <stdio.h>
-
-_Static_assert(BMP280_MEAS_MAX_US < LOOP_PERIOD_US, "a conversion a loop");
 
 #define I2C_PORT BOARD_I2C_INST
 
@@ -22,20 +17,11 @@ _Static_assert(BMP280_MEAS_MAX_US < LOOP_PERIOD_US, "a conversion a loop");
 #define BMP280_ADDR_SDO_HIGH 0x77
 
 #define BMP280_REG_ID 0xD0
-#define BMP280_REG_RESET 0xE0
-#define BMP280_REG_STATUS 0xF3
-#define BMP280_REG_CTRL_MEAS 0xF4
 #define BMP280_REG_CONFIG 0xF5
-#define BMP280_REG_PRESS_MSB 0xF7
 #define BMP280_REG_CALIB 0x88
 
 #define BMP280_CHIP_ID 0x58
-
-/* Temperature x1, pressure x4: asleep, and one forced conversion (page 25). */
-#define BMP280_CTRL_MEAS_X1_X4_SLEEP 0x2C
-#define BMP280_CTRL_MEAS_X1_X4_FORCED 0x2D
-#define BMP280_CONFIG_NO_FILTER 0x00
-#define BMP280_STATUS_MEASURING 0x08 /* page 24 */
+#define BMP280_CONFIG_NO_FILTER 0x00 /* also what a reset leaves */
 
 static uint8_t bmp280_addr = 0;
 static uint16_t dig_T1;
@@ -43,9 +29,6 @@ static int16_t dig_T2, dig_T3;
 static uint16_t dig_P1;
 static int16_t dig_P2, dig_P3, dig_P4, dig_P5, dig_P6, dig_P7, dig_P8, dig_P9;
 static int32_t t_fine;
-static bool pending; /* a conversion commanded and not yet taken */
-static uint64_t commanded_us;
-static uint32_t commanded_flash_ops;
 
 /* Every transfer is bounded: the SDK's blocking calls wait forever on a part
  * holding SCL low, and the loop reads this part in flight. The bound is twice
@@ -88,11 +71,14 @@ static bool bmp280_read_calibration(void) {
     return true;
 }
 
+uint8_t bmp280_address(void) {
+    return bmp280_addr;
+}
+
 extern void hal_telemetry_send(const char *sentence);
 
 bool bmp280_detect(void) {
     char buf[64];
-    pending = false;
     for (uint8_t addr = BMP280_ADDR_SDO_LOW; addr <= BMP280_ADDR_SDO_HIGH; addr++) {
         bmp280_addr = addr;
         snprintf(buf, sizeof(buf), "!BMP280 try addr=0x%02X\r\n", addr);
@@ -124,9 +110,8 @@ bool bmp280_detect(void) {
     return false;
 }
 
-/* Bosch's 64-bit integer compensation, datasheet section 3.11.3, page 21,
- * from the six data bytes at 0xF7. */
-static bool compensate(const uint8_t *data, bmp280_reading_t *r) {
+/* Bosch's 64-bit integer compensation, datasheet section 3.11.3, page 21. */
+bool bmp280_compensate(const uint8_t data[BMP280_DATA_BYTES], bmp280_reading_t *r) {
     int32_t adc_P = ((int32_t)data[0] << 12) | ((int32_t)data[1] << 4) | (data[2] >> 4);
     int32_t adc_T = ((int32_t)data[3] << 12) | ((int32_t)data[4] << 4) | (data[5] >> 4);
     r->adc_p = (uint32_t)adc_P;
@@ -157,34 +142,6 @@ static bool compensate(const uint8_t *data, bmp280_reading_t *r) {
     r->reading.temperature_c = T / 100.0f;
     r->reading.pressure_pa = p / 256.0f;
     return true;
-}
-
-bool bmp280_cycle(bmp280_reading_t *r, bmp280_start_t *started) {
-    bool took = false;
-    if (pending) {
-        uint8_t d[10]; /* status at 0xF3 through the data's last byte at 0xFC */
-        if (!bmp280_read_reg(BMP280_REG_STATUS, d, sizeof(d))) {
-            *started = BMP280_BUS;
-            return false;
-        }
-        if (d[0] & BMP280_STATUS_MEASURING) {
-            *started = BMP280_BUSY;
-            return false;
-        }
-        pending = false;
-        r->reading.time_us = commanded_us + BMP280_P_MID_US;
-        r->flashed = flash_op_seq != commanded_flash_ops;
-        took = compensate(&d[4], r);
-    }
-    if (!bmp280_write_reg(BMP280_REG_CTRL_MEAS, BMP280_CTRL_MEAS_X1_X4_FORCED)) {
-        *started = BMP280_BUS;
-        return took;
-    }
-    commanded_us = time_us_64();
-    commanded_flash_ops = flash_op_seq;
-    pending = true;
-    *started = BMP280_STARTED;
-    return took;
 }
 
 #endif /* BOARD_HAS_BMP280 */

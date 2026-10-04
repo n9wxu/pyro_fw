@@ -52,9 +52,12 @@ static const char *B(bool b) {
  * a char* would let STATUS_JSON_MAX have to assume an arbitrary one. */
 static const char *selftest_name(uint8_t v) {
     switch (v) {
-    case 1:  return "pass";
-    case 2:  return "fail";
-    default: return "unknown";
+    case 1:
+        return "pass";
+    case 2:
+        return "fail";
+    default:
+        return "unknown";
     }
 }
 
@@ -106,8 +109,8 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         B(s->pyro_cont[0]), B(s->pyro_cont[1]), (unsigned)s->pyro_adc[0], (unsigned)s->pyro_adc[1], B(s->pyro_fired[0]),
         B(s->pyro_fired[1]), B(s->armed), (unsigned long)s->flight_ms, (unsigned long)s->uptime_ms, S(s->fw_version),
         S(s->pyro_mode[0]), (unsigned)s->pyro_value[0], S(s->pyro_mode[1]), (unsigned)s->pyro_value[1],
-        (unsigned)s->units, S(s->log_rate), id, name, S(s->sensor), S(s->board), S(s->board_id), selftest_name(s->board_selftest), (long)s->pyro_bus_q,
-        (long)s->pyro_bus_adc, (long)s->pyro_vbat_adc);
+        (unsigned)s->units, S(s->log_rate), id, name, S(s->sensor), S(s->board), S(s->board_id),
+        selftest_name(s->board_selftest), (long)s->pyro_bus_q, (long)s->pyro_bus_adc, (long)s->pyro_vbat_adc);
     put(&o,
         "\"loop_max_us\":%lu,\"loop_overruns\":%lu,\"loop_late_max_us\":%lu,\"loop_count\":%lu,"
         "\"stage_max_us\":[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu],\"stage1_parts_us\":[%lu,%lu,%lu,%lu],"
@@ -131,23 +134,27 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         put(&o, "%s\"%s\"", i ? "," : "", S(s->faults[i]));
     }
     put(&o,
-        "],\"reset_cause\":%u,\"recovery\":\"%s\","
+        "],\"reset_cause\":%u,\"resume\":\"%s\","
         "\"prev_watchdog\":%s,\"prev_stage\":%ld,\"prev_stage_ms\":%lu,"
-        "\"pyro1_refused\":%s,\"pyro2_refused\":%s,\"pyro1_refires\":%u,\"main_forced\":%s,"
-        "\"pres_waits\":%lu,\"pres_rejects\":%lu,\"pres_flashed\":%lu,\"raw_pa\":%ld,\"pad_speed_cms\":%ld,"
+        "\"pyro_pulses\":[%u,%u],\"pyro_fault\":[%s,%s],\"emergency_fire\":%s,"
+        "\"refire_interval_ms\":%u,\"fire_gap_ms\":%u,\"pyro_limited\":%s,"
+        "\"pres_rejects\":%lu,\"pres_bus\":{\"address_nack\":%lu,\"data_nack\":%lu,\"line_held\":%lu,\"timeout\":%lu},"
+        "\"pres_recoveries\":%lu,\"pres_dropped\":%lu,\"pres_flashed\":%lu,\"raw_pa\":%ld,\"pad_speed_cms\":%ld,"
         "\"ground_degraded\":%s,\"ground_reseeds\":%lu,"
-        "\"sample_interval_us\":[%lu,%lu],\"stamp_lag_max_us\":%lu,\"fit_sigma_mpa\":%lu,"
-        "\"mach_lock\":%s,\"mach_flag_ms\":%lu,\"peak_lower_bound\":%s,"
+        "\"sample_interval_us\":[%lu,%lu],\"stamp_lag_max_us\":%lu,\"noise_mpa\":%lu,"
+        "\"estimator\":\"%s\",\"estimator_explains\":%s,\"peak_lower_bound\":%s,"
         "\"usb_attached\":%s,\"test_mode\":%s,\"buzzer_active\":%s,\"beep\":\"%s\",\"beep_sound\":\"%s\","
         "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u,\"mac_source\":\"%s\"}",
-        (unsigned)s->reset_cause, S(s->recovery), B(s->prev_watchdog), (long)s->prev_stage,
-        (unsigned long)s->prev_stage_ms, B(s->pyro_refused[0]), B(s->pyro_refused[1]), (unsigned)s->pyro1_refires,
-        B(s->main_forced), (unsigned long)s->pres_waits, (unsigned long)s->pres_rejects, (unsigned long)s->pres_flashed,
+        (unsigned)s->reset_cause, S(s->resume), B(s->prev_watchdog), (long)s->prev_stage,
+        (unsigned long)s->prev_stage_ms, (unsigned)s->pyro_pulses[0], (unsigned)s->pyro_pulses[1], B(s->pyro_fault[0]),
+        B(s->pyro_fault[1]), B(s->emergency_fire), (unsigned)s->refire_interval_ms, (unsigned)s->fire_gap_ms,
+        B(s->pyro_limited), (unsigned long)s->pres_rejects, (unsigned long)s->pres_bus[0],
+        (unsigned long)s->pres_bus[1], (unsigned long)s->pres_bus[2], (unsigned long)s->pres_bus[3],
+        (unsigned long)s->pres_recoveries, (unsigned long)s->pres_dropped, (unsigned long)s->pres_flashed,
         (long)s->raw_pa, (long)s->pad_speed_cms, B(s->ground_degraded), (unsigned long)s->ground_reseeds,
         (unsigned long)s->sample_interval_us[0], (unsigned long)s->sample_interval_us[1],
-        (unsigned long)s->stamp_lag_max_us, (unsigned long)s->fit_sigma_mpa, B(s->mach_lock),
-        (unsigned long)s->mach_flag_ms, B(s->peak_lower_bound), B(s->usb_attached), B(s->test_mode),
-        B(s->buzzer_active), S(s->beep), sound, s->serial, B(s->serial_assigned), s->hw_id, (unsigned)s->subnet,
-        S(s->mac_source));
+        (unsigned long)s->stamp_lag_max_us, (unsigned long)s->noise_mpa, S(s->estimator), B(s->estimator_explains),
+        B(s->peak_lower_bound), B(s->usb_attached), B(s->test_mode), B(s->buzzer_active), S(s->beep), sound, s->serial,
+        B(s->serial_assigned), s->hw_id, (unsigned)s->subnet, S(s->mac_source));
     return o.over ? -1 : (int)o.pos;
 }

@@ -36,4 +36,24 @@ pressure_sensor_type_t pressure_sensor_step(uint32_t now_ms);
 
 const char *pressure_sensor_name(void);
 
+/* [SNS-MAX-01] What the fitted part can report, and the greatest apogee to
+ * which the bounds of FLT-APO-01 and FLT-MACH-03 hold on it. The ranges are
+ * the parts' own: docs/datasheets/MS5607-02BA03_2017-06.pdf p.4 (extended
+ * range) and BST-BMP280-DS001-26_2021-10.pdf p.7. */
+typedef struct {
+    int32_t min_pa, max_pa;
+    int32_t height_m;
+} pressure_sensor_range_t;
+
+static inline pressure_sensor_range_t pressure_sensor_range(pressure_sensor_type_t type) {
+    switch (type) {
+    case PRESSURE_SENSOR_MS5607:
+        return (pressure_sensor_range_t){1000, 120000, 30000};
+    case PRESSURE_SENSOR_BMP280:
+        return (pressure_sensor_range_t){30000, 110000, 9000};
+    default:
+        return (pressure_sensor_range_t){0, 0, 0};
+    }
+}
+
 #endif

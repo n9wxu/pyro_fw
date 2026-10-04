@@ -34,6 +34,11 @@ function check(name, ok, detail) {
   check('no beep mode control (REV-12)', (await page.locator('#cfgBeep').count()) === 0);
   check('one Save button on the Config tab (REV-21)',
         (await page.locator('#tab-config button:has-text("Save")').count()) === 1);
+  const status = await (await page.request.get(BASE + '/api/status')).json();
+  const offered = await page.locator('#estimator option').allTextContents();
+  check('the Config tab offers the estimators and shows the one obeyed (SNS-EST-06)',
+        offered.length >= 1 && (await page.locator('#estimator').inputValue()) === status.estimator,
+        `${offered.join(', ')}; obeying ${status.estimator}`);
   check('name field states its limit (REV-20)',
         (await page.locator('#cfgNameLen').textContent()).includes('8'),
         await page.locator('#cfgNameLen').textContent());
