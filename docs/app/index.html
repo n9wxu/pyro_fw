@@ -10,17 +10,17 @@
 <h2>🚀 <span id="sBoard">Pyro</span></h2>
 
 <div class="tabs">
-  <button class="tab active" onclick="showTab('status')">Status</button>
-  <button class="tab" onclick="showTab('config')">Config</button>
-  <button class="tab" onclick="showTab('data')">Flight Data</button>
-  <button class="tab" onclick="showTab('beeps')">Beep Codes</button>
-  <button class="tab" onclick="showTab('lua')">Lua</button>
-  <button class="tab" onclick="showTab('update')">Update</button>
+  <button class="tab active" onclick="showTab('status', this)">Status</button>
+  <button class="tab" onclick="showTab('config', this)">Config</button>
+  <button class="tab" onclick="showTab('data', this)">Flight Data</button>
+  <button class="tab" onclick="showTab('beeps', this)">Beep Codes</button>
+  <button class="tab" onclick="showTab('lua', this)">Lua</button>
+  <button class="tab" onclick="showTab('update', this)">Update</button>
 </div>
 
 <!-- ── Tab 1: Status ──────────────────────────────────────────── -->
 <div id="tab-status" class="tabpanel">
-  <div id="pendingWarn" class="warn" style="display:none">⚠ Configuration saved but not applied — it takes effect at the next start. Press Reboot in the Config tab.</div>
+  <div id="pendingWarn" class="warn" style="display:none">⚠ Configuration saved but not applied — it takes effect at the next start. Press Reboot in the Config tab.<span id="pendingWhat"></span></div>
   <div id="limitWarn" class="warn" style="display:none">⚠ A pyro timing value was outside what this board permits and has been brought into range — see the Config tab.</div>
   <div id="testWarn" class="warn" style="display:none">⚠ Test mode: on USB this board detects a launch, fires its pyros and beeps as it does on battery. A reboot ends it.</div>
   <table class="info" id="statusTable">

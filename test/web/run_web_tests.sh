@@ -31,7 +31,7 @@ for MODE in new configured flown; do
   wait $SERVER_PID 2>/dev/null || true
 done
 
-# H2: the browser demo, served as GitHub Pages serves docs/.
+# The browser demo, served as GitHub Pages serves docs/.
 echo "══════════════════════════════════════════"
 echo "  Testing: browser simulator"
 echo "══════════════════════════════════════════"

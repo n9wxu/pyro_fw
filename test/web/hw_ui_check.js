@@ -39,7 +39,7 @@ function check(name, ok, detail) {
   check('the Config tab offers the estimators and shows the one obeyed (SNS-EST-06)',
         offered.length >= 1 && (await page.locator('#estimator').inputValue()) === status.estimator,
         `${offered.join(', ')}; obeying ${status.estimator}`);
-  check('name field states its limit',
+  check('name field states its limit [WEB-UI-02]',
         (await page.locator('#cfgNameLen').textContent()).includes('8'),
         await page.locator('#cfgNameLen').textContent());
 
@@ -52,7 +52,7 @@ function check(name, ok, detail) {
     const after = parseInt(await page.locator('#p2val').inputValue());
     const cm = { 0: 1, 1: 100, 2: 30.48 };
     const want = Math.round(before * cm[units] / cm[to]);
-    check('changing units converts the main altitude', after === want,
+    check('changing units converts the main altitude [WEB-UI-02]', after === want,
           `${before} ${['cm', 'm', 'ft'][units]} -> ${after} ${['cm', 'm', 'ft'][to]}`);
   }
 
@@ -60,8 +60,8 @@ function check(name, ok, detail) {
   await page.waitForFunction(() => document.getElementById('dWhich').textContent.indexOf('Loading') < 0,
                              { timeout: 10000 });
   const which = await page.locator('#dWhich').textContent();
-  check('flight data tab reads the board\'s log', which.length > 0, which);
-  check('erase button present', (await page.locator('#btnEraseFlight').count()) === 1);
+  check('flight data tab reads the board\'s log [WEB-UI-04]', which.length > 0, which);
+  check('erase button present [WEB-API-09]', (await page.locator('#btnEraseFlight').count()) === 1);
 
   await browser.close();
   console.log(failures ? `${failures} failed` : 'all passed');
