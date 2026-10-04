@@ -88,6 +88,7 @@ rationale and the alternatives considered.
 ## Safety
 
 ### DD-013: Backup Apogee Timer
+- **Superseded by DD-022:** the timer is removed; no timer may force apogee.
 - **Decision:** Force apogee detection if no apogee detected within a configurable
   time (default 30s, range 10-120s) after pyros are armed.
 - **Rationale:** If the pressure sensor fails or produces garbage during coast,

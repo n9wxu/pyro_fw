@@ -4,20 +4,26 @@ The safety rule for putting Lua on core1 is one sentence:
 
 > **core0 must never wait on anything core1 can hold.**
 
-This document proves the rule can be violated — not by argument, but by an
-experiment anyone can rerun. Nothing here needs a board attached. The design
-that discharges it is in `src/flash_window.h` and `src/lua/lua_core1.h`.
+This document proves the rule can be violated -- not by argument, but by an
+experiment anyone can rerun. Nothing here needs a board attached.
 
-**Status, 2026-09-28 (2.1.702).** Every remedy below is in place:
-`LFS_NO_MALLOC` with static buffers (`src/littlefs_driver.c`), the flash
-window, core1 idling in RAM, and the unilateral kill. MK1A, MK1B and MK1C all
-build Lua, so every hardware image links `pico_multicore`, and CI runs
-`support/prove_core0.py --core1 core1_main` over each. The result below is the
-MK1C image before `LFS_NO_MALLOC`. With Lua on MK1C both of its builds link
-`pico_multicore`, so the A/B now needs a board built without Lua, such as the
-reference template.
+**Status, 2026-10-02.** The hazards proven here still define the rule, but
+the design that discharges them has changed, and the sections marked
+*superseded* below describe the earlier one. Lua now runs as a FreeRTOS task
+pinned to core1 beside the net and storage tasks (DD-073); a flash operation
+parks the other core itself (DD-074, `src/flash_op.h`), so there is no flash
+window and no core1 idle loop in RAM; and the Lua task is stopped with
+`vTaskSuspend()`, not a PSM force-off. The current argument is in
+`src/lua/lua_core1.h`. `LFS_NO_MALLOC` with static buffers
+(`src/littlefs_driver.c`) is in place, the Lua VM allocates from its own arena
+(`src/lua/lua_arena.c`), and CI runs `support/prove_core0.py --core1
+lua_task` over every image that builds Lua.
 
 ## The experiment
+
+*Historical: run before `LFS_NO_MALLOC`, when `-DPYRO_LINK_MULTICORE` was a
+build option. Every image now links `pico_multicore` through the FreeRTOS SMP
+port, so the A/B needs a board built without Lua and without the kernel.*
 
 Build the same firmware twice. The only difference is one line in the link
 list: `pico_multicore`. No source file changes. `multicore_launch_core1()` is
@@ -117,7 +123,7 @@ returns.
 (checked: no path from `snprintf`/`vfprintf` to `__wrap_malloc`), so the whole
 exposure is littlefs. That is a small, fixable surface — see below.
 
-## Second, independent hazard: XIP
+## Second, independent hazard: XIP (remedy superseded by DD-074)
 
 `src/littlefs_driver.c` and `src/http_server.c` erase and program flash under:
 
@@ -222,18 +228,21 @@ every capability core1 gains, and a call graph cannot settle it.
    doing too, but is not sufficient alone: `lfs_file_open` allocates as
    well.
 
-2. **Lua must not allocate through the system heap.** Already true — the arena
-   in `src/lua/lua_arena.c` exists for this, and is why Lua gets its own heap
+2. **Lua must not allocate through the system heap.** The arena in
+   `src/lua/lua_arena.c` exists for this, and is why Lua gets its own heap
    rather than a memory cap on the shared one.
 
-3. **Flash writes are scheduled, never negotiated.** Core0 writes flash only
+3. *Superseded by DD-074: a flash operation parks the other core itself.*
+   **Flash writes are scheduled, never negotiated.** Core0 writes flash only
    at a point in its own period where core1 is already idling in RAM, because
    core0 has not handed it work since the previous dispatch. Core0 reads
    whether core1 is there and never waits for it to get there. Asking core1 to
    stop needs a cooperative core1, and any wait for consent is a wait core0
    might not escape. See `src/flash_window.h`.
 
-4. **The core1 kill is unilateral and terminal: PSM `frce_off`, then core0
+4. *Superseded by DD-073: the kill is `vTaskSuspend()` of the Lua task,
+   still unilateral and terminal.* **The core1 kill is unilateral and
+   terminal: PSM `frce_off`, then core0
    puts core1's outputs down.** There is no relaunch, so nothing reacquires
    what core1 held, and `multicore_reset_core1()` is unusable because it ends
    in `multicore_fifo_pop_blocking()`. Core1 stays in reset until the next
