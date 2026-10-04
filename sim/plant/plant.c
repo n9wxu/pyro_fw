@@ -1,8 +1,6 @@
 /*
- * Board plant — shared core. The board-specific networks are in
- * plant_mk1a.c, plant_mk1b.c and plant_mk1c.c; what lives here is the
- * dispatch, the GPIO and ADC plumbing, and the e-match, which is the same
- * device on all three boards.
+ * The plant's shared core: dispatch to the board models, the pads and the
+ * ADC, and the e-match, the same device on every board.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -41,14 +39,13 @@ double plant_match_ohms(const plant_match_t *m) {
     case MATCH_PRESENT:     r = (m->r_ohm > 0.0) ? m->r_ohm : 1.0; break;
     case MATCH_SHORT:       r = 1e-3; break;
     case MATCH_SPENT_SHORT: r = 1e-3; break;
-    case MATCH_SPENT_OPEN:  r = 1e11; break;
+    case MATCH_SPENT_OPEN:  r = PLANT_OPEN_OHM; break;
     case MATCH_ABSENT:
-    default:                r = 1e11; break;
+    default:                r = PLANT_OPEN_OHM; break;
     }
     if (m->leak_ohm > 0.0) {
-        /* A dirty connector or a tracking path, in parallel with whatever
-         * the match itself is doing. DESIGN.md calls out 5 kohm as the
-         * value that passes a naive presence threshold. */
+        /* A dirty connector in parallel; DESIGN.md 4's 5 kohm is the one that
+         * passes a naive presence threshold. */
         r = (r * m->leak_ohm) / (r + m->leak_ohm);
     }
     return r;
@@ -69,31 +66,25 @@ static void match_integrate(plant_t *p, int idx, double i_a, double dt_s) {
         m->no_fire_exposure_s += dt_s;
 
     if (m->fired) {
-        /* Stop integrating, but KEEP energy_j: it is the record of how
-         * much went into the bridgewire to light it, which is the number a
-         * margin test against M5 wants. Zeroing it here destroyed the only
-         * evidence the pulse ever produced. */
+        /* energy_j is kept: what lit it, for a margin test against M5. */
         m->all_fire_run_s = 0.0;
         return;
     }
     if (m->state != MATCH_PRESENT) {
-        /* Nothing in circuit to heat. */
         m->all_fire_run_s = 0.0;
         m->energy_j = 0.0;
         return;
     }
 
-    /* Energy criterion. The leak term is what makes a pulse longer than
-     * thermal_tau_s cost more total energy than a short one -- the whole
-     * argument in DESIGN.md 7.3 for firing from the capacitor rather than
-     * from a current-limited supply. */
+    /* Energy, leaking at thermal_tau_s: a pulse longer than tau costs more
+     * than a short one (DESIGN.md 7.3, the case for a capacitor discharge). */
     double p_w = ia * ia * ((m->r_ohm > 0.0) ? m->r_ohm : 1.0);
     double tau = (m->thermal_tau_s > 0.0) ? m->thermal_tau_s : 0.003;
     m->energy_j += (p_w - m->energy_j / tau) * dt_s;
     if (m->energy_j < 0.0)
         m->energy_j = 0.0;
 
-    /* Sustained-current criterion. */
+    /* Or the all-fire current, held (M4 and its time qualifier). */
     if (ia >= m->all_fire_a)
         m->all_fire_run_s += dt_s;
     else
@@ -114,8 +105,8 @@ static void match_integrate(plant_t *p, int idx, double i_a, double dt_s) {
 
 double plant_fet_ohms(const plant_t *p, bool gate_high, plant_fault_t short_fault) {
     if (short_fault < PF_COUNT && p->faults[short_fault])
-        return 0.03; /* drain-source short: conducting whatever the gate does */
-    return gate_high ? 0.03 : 1e11;
+        return PLANT_FET_ON_OHM;
+    return gate_high ? PLANT_FET_ON_OHM : PLANT_OPEN_OHM;
 }
 
 /* ── Pack ────────────────────────────────────────────────────────── */
@@ -150,10 +141,8 @@ const char *plant_fault_name(plant_fault_t f) {
     return fault_names[f];
 }
 
-/* Which faults have an element to inject into on which board. A sweep over
- * the whole enum uses this to skip rather than to silently pass: reporting
- * "not detected" for a fault that was never injected is the one result a
- * coverage table must never contain. */
+/* A sweep skips a fault the board has no element for, rather than report it
+ * undetected. */
 bool plant_fault_applies(plant_board_t board, plant_fault_t f) {
     switch (f) {
     case PF_HIGH_SIDE_SHORT:
@@ -203,11 +192,8 @@ void plant_clear_faults(void) {
 
 plant_t *plant_instance(void) {
     if (!g_inited) {
-        /* Nothing has chosen a board yet. Take whichever model is in this
-         * build -- in a simulator build there is exactly one, so there is
-         * no ambiguity to get wrong. The glue calls plant_init() explicitly
-         * before the board file's first gpio_put(); this only covers a
-         * caller that reads the plant before that. */
+        /* Read before the glue's plant_init(): a simulator build links one
+         * model, so take it. */
         if (plant_have_board(PLANT_MK1C))      plant_init(PLANT_MK1C);
         else if (plant_have_board(PLANT_MK1B)) plant_init(PLANT_MK1B);
         else                                    plant_init(PLANT_MK1A);
@@ -230,10 +216,8 @@ bool plant_have_board(plant_board_t board) {
 void plant_init(plant_board_t board) {
     const plant_ops_t *ops = plant_have_board(board) ? registry[board] : NULL;
     if (!ops) {
-        /* This build does not contain that board's model. Fail loudly:
-         * silently substituting another board's network would produce
-         * plausible numbers for the wrong hardware, which is the one
-         * failure mode a model like this must never have. */
+        /* Never another board's network: plausible numbers for the wrong
+         * hardware. */
         fprintf(stderr, "plant_init: no model for board %d in this build\n", (int)board);
         abort();
     }
@@ -250,16 +234,17 @@ void plant_reset(void) {
 
     memset(p->gpio_level, 0, sizeof(p->gpio_level));
     memset(p->gpio_is_out, 0, sizeof(p->gpio_is_out));
+    memset(p->gpio_pulled_up, 0, sizeof(p->gpio_pulled_up));
     memset(p->adc_filt, 0, sizeof(p->adc_filt));
     memset(p->adc_primed, 0, sizeof(p->adc_primed));
     memset(p->faults, 0, sizeof(p->faults));
 
-    /* 2S, the pack MK1C's levels are tabulated against. A 1S test calls
-     * plant_set_pack_mv(4200). */
+    /* 2S, the pack MK1C's levels are tabulated against. */
     p->pack_mv = 8400.0;
     p->pack_sag_v = 0.0;
     p->bus_pulldown_override = 0.0;
     p->highside_leak_ohms = 0.0;
+    p->mk1b_u5_discharges = true;
     p->c_bus_f = 1.1e-6; /* C115 and the bus's strays; no bulk capacitor: the bench decay (DD-054) */
 
     plant_match_defaults(&p->match[0]);
@@ -280,8 +265,7 @@ void plant_reset(void) {
     if (ops->reset)
         ops->reset(p);
 
-    /* Settle the network so the first ADC read is a real quiescent level
-     * and not a zero that happens to look like one. */
+    /* Settled, so the first ADC read is the quiescent level. */
     for (int k = 0; k < 200; k++)
         plant_step(0.001);
     p->t_s = 0.0;
@@ -295,7 +279,7 @@ const char *plant_board_name(void) { return plant_instance()->ops->name; }
 bool plant_gpio(const plant_t *p, int gpio) {
     if (gpio < 0 || gpio >= PLANT_NGPIO)
         return false;
-    return p->gpio_level[gpio];
+    return p->gpio_is_out[gpio] ? p->gpio_level[gpio] : p->gpio_pulled_up[gpio];
 }
 
 void plant_set_gpio(int gpio, bool level) {
@@ -312,6 +296,13 @@ void plant_set_gpio_dir(int gpio, bool out) {
     p->gpio_is_out[gpio] = out;
 }
 
+void plant_set_gpio_pull_up(int gpio, bool up) {
+    plant_t *p = plant_instance();
+    if (gpio < 0 || gpio >= PLANT_NGPIO)
+        return;
+    p->gpio_pulled_up[gpio] = up;
+}
+
 bool plant_get_gpio(int gpio) {
     plant_t *p = plant_instance();
     if (gpio < 0 || gpio >= PLANT_NGPIO)
@@ -319,21 +310,24 @@ bool plant_get_gpio(int gpio) {
     bool level;
     if (p->ops->gpio_in && p->ops->gpio_in(p, gpio, &level))
         return level;
-    return p->gpio_level[gpio];
+    return plant_gpio(p, gpio);
 }
 
 /* ── ADC ─────────────────────────────────────────────────────────── */
+
+#define ADC_VREF_V 3.3
+#define ADC_FULL_SCALE 4095.0
+#define ADC_CH_TEMP_SENSOR 4
+/* RP2040 datasheet §4.9.5: the sensor reads 0.706 V at 27 °C. */
+#define TEMP_SENSOR_27C_COUNTS (uint16_t)(0.706 * ADC_FULL_SCALE / ADC_VREF_V + 0.5)
 
 uint16_t plant_adc_counts(int adc_ch) {
     plant_t *p = plant_instance();
     if (adc_ch < 0 || adc_ch > 4)
         return 0;
 
-    /* Channel 4 is the RP2040's internal temperature sensor. Report the
-     * count for roughly 27 C so anything that reads it gets a plausible
-     * number rather than a floating node. */
-    if (adc_ch == 4)
-        return 890;
+    if (adc_ch == ADC_CH_TEMP_SENSOR)
+        return TEMP_SENSOR_27C_COUNTS;
 
     adc_tap_t t = p->ops->adc_tap(adc_ch);
     if (!t.valid)
@@ -341,13 +335,11 @@ uint16_t plant_adc_counts(int adc_ch) {
 
     double v = p->adc_filt[adc_ch];
 
-    /* The RP2040 ADC is 12 bit against 3.3 V, and its input clamps. A node
-     * above the reference reads full scale -- which is exactly what MK1A's
-     * sense pin does during a fire pulse, and the model should say so
-     * rather than reporting an impossible count. */
-    double counts = v * 4095.0 / 3.3;
+    /* The input clamps: a node above the reference reads full scale, as
+     * MK1A's sense pin does during a fire pulse. */
+    double counts = v * ADC_FULL_SCALE / ADC_VREF_V;
     if (counts < 0.0) counts = 0.0;
-    if (counts > 4095.0) counts = 4095.0;
+    if (counts > ADC_FULL_SCALE) counts = ADC_FULL_SCALE;
     return (uint16_t)(counts + 0.5);
 }
 
@@ -358,10 +350,8 @@ void plant_step(double dt_s) {
     if (dt_s <= 0.0)
         return;
 
-    /* Cap the step so a long sleep_ms() in board code does not integrate
-     * the charge pump or the match in one lump. Backward Euler stays stable
-     * at any step, but the pump's per-edge charge transfer and the match's
-     * energy leak are rate processes that want resolving. */
+    /* Backward Euler is stable at any step; the cap resolves the pump's
+     * edges and the match's energy leak. */
     while (dt_s > 0.0) {
         double max_dt = p->ops->max_dt ? p->ops->max_dt(p) : 200e-6;
         double h = (dt_s > max_dt) ? max_dt : dt_s;
@@ -375,14 +365,11 @@ void plant_step(double dt_s) {
         match_integrate(p, 0, p->i_a, h);
         match_integrate(p, 1, p->i_b, h);
 
-        /* Tap filters. First order, outside the network -- see adc_tap_t. */
         for (int ch = 0; ch < 4; ch++) {
             adc_tap_t t = p->ops->adc_tap(ch);
             if (!t.valid)
                 continue;
-            /* node < 0 means the tap is not on a solved node. SNS_VBAT is
-             * the case that exists: it hangs on the pack, which the model
-             * treats as a source rather than as an unknown. */
+            /* node < 0: the tap is on the pack (MK1C's SNS_VBAT), a source. */
             double src = (t.node < 0) ? plant_pack_v(p) : p->net.v[t.node];
             double target = src * t.ratio;
             if (!p->adc_primed[ch]) {
@@ -391,7 +378,7 @@ void plant_step(double dt_s) {
             } else if (t.tau_s <= 0.0) {
                 p->adc_filt[ch] = target;
             } else {
-                double a = h / (t.tau_s + h); /* backward Euler, same as the net */
+                double a = h / (t.tau_s + h); /* backward Euler, as the net */
                 p->adc_filt[ch] += (target - p->adc_filt[ch]) * a;
             }
         }
@@ -405,6 +392,7 @@ void plant_step(double dt_s) {
 void plant_set_pack_mv(double mv) { plant_instance()->pack_mv = mv; }
 void plant_set_bus_pulldown_ohms(double ohms) { plant_instance()->bus_pulldown_override = ohms; }
 void plant_set_highside_leak_ohms(double ohms) { plant_instance()->highside_leak_ohms = ohms; }
+void plant_set_mk1b_u5(plant_mk1b_u5_t part) { plant_instance()->mk1b_u5_discharges = part == MK1B_U5_AP2192A; }
 
 plant_match_t *plant_match(int ch) {
     plant_t *p = plant_instance();

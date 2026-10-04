@@ -1,6 +1,5 @@
 /*
- * Nodal solver. See net_solve.h for why it exists and why it integrates
- * backward.
+ * See net_solve.h.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -9,10 +8,8 @@
 #include <math.h>
 #include <string.h>
 
-/* Below this a resistance is treated as a short and above it as an open.
- * The bounds matter because board models compute resistances from switch
- * states: a conducting AO3400A is 30 mohm and an open one is "infinite",
- * and the solver has to stay conditioned across that. */
+/* The conditioning bounds: a conducting FET is 30 mohm, an open one
+ * PLANT_OPEN_OHM. */
 #define R_MIN 1e-4   /* 100 uohm: below this, a short                 */
 #define R_MAX 1e12   /* 1 Tohm:   above this, no connection at all    */
 

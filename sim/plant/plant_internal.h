@@ -12,6 +12,12 @@
 
 #define PLANT_NGPIO 30
 
+#define PLANT_OPEN_OHM 1e11       /* an open: large, finite, so net_res() takes it */
+#define PLANT_FET_ON_OHM 0.03     /* AO3400A at a 3.3 V gate */
+#define PLANT_HARD_SHORT_OHM 0.5  /* PF_BUS_SHORT_GND */
+#define PLANT_PACK_SAG_OHM 0.15   /* PF_PACK_COLLAPSE: a small LiPo under a pulse */
+#define PLANT_STRAY_F 1e-9        /* keeps a floating node solvable */
+
 /* Where an ADC channel taps the network.
  *
  * ratio is the divider between the node and the pin. tau_s is the filter
@@ -65,8 +71,9 @@ struct plant {
 
     net_t net;
 
-    bool gpio_level[PLANT_NGPIO];
+    bool gpio_level[PLANT_NGPIO]; /* the output latch */
     bool gpio_is_out[PLANT_NGPIO];
+    bool gpio_pulled_up[PLANT_NGPIO]; /* else pulled down, the pad's reset state */
 
     double adc_filt[5];   /* per-channel tap voltage, after the lag        */
     bool   adc_primed[5];
@@ -74,6 +81,7 @@ struct plant {
     double pack_mv;
     double bus_pulldown_override; /* 0 = use the design network */
     double highside_leak_ohms;    /* 0 = an ideal open                */
+    bool mk1b_u5_discharges;      /* AP2192A fitted, not the AP2192    */
     double pack_sag_v;    /* PF_PACK_COLLAPSE: droop under load            */
     double c_bus_f;
 
@@ -118,11 +126,12 @@ void plant_register(plant_board_t board, const plant_ops_t *ops);
 /* Helpers the board models share. */
 double plant_pack_v(const plant_t *p);
 double plant_match_ohms(const plant_match_t *m);  /* including leak_ohm */
+/* The level a pad presents to the board: the latch if the pin is an output,
+ * else its pull. */
 bool   plant_gpio(const plant_t *p, int gpio);
 
-/* A logic-level FET's channel resistance, chosen by its gate level and by
- * whether a drain-source short has been injected. AO3400A on-resistance at
- * a 3.3 V gate is about 30 mohm. */
+/* A logic-level FET's channel resistance, by its gate level, or on whatever
+ * the gate if a drain-source short has been injected. */
 double plant_fet_ohms(const plant_t *p, bool gate_high, plant_fault_t short_fault);
 
 #endif

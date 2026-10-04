@@ -1,37 +1,17 @@
 /*
- * A host stand-in for the part of the Pico SDK that the pyro board files
- * touch, backed by sim/plant/.
+ * A host stand-in for the Pico SDK functions the boards' pyro files call,
+ * backed by sim/plant/, so the real files run unmodified. Not an RP2040
+ * emulator.
  *
- * This is not an RP2040 emulator. It is the smallest surface that lets
- * boards/mk1a|mk1b|mk1c/pyro_board.c compile and run unmodified on the
- * host: about thirty functions across GPIO, the ADC, DMA, PIO and the
- * timers. Running the real board file is the whole point -- the thresholds,
- * the settle times, the median-of-3, the state machine that replaced two
- * sleeps -- none of that is exercised by a reimplementation.
+ * Virtual time advances only when board code does something that takes
+ * time (sleep_ms(), busy_wait_us(), adc_read()'s 2 us conversion: RP2040
+ * datasheet §4.9, 96 cycles of the 48 MHz ADC clock), and every advance
+ * steps the plant. The PIO pump and an ADC-to-DMA capture run inside the
+ * advance, as they run beside the CPU: the pump coasts until its FIFO
+ * drains, and a capture holds its pre-trigger baseline.
  *
- * ── The clock is the interesting part ────────────────────────────
- *
- * Virtual time advances only when the board code does something that takes
- * time, and every advance steps the plant. That is what makes the model
- * answer like hardware instead of like a table:
- *
- *   sleep_ms(8)      advances 8 ms, so a bias node settles 8 ms worth
- *   adc_read()       advances 2 us, one 96-cycle conversion at 48 MHz
- *   busy_wait_us(n)  advances n us
- *
- * adc_read() costing time is load-bearing rather than pedantic: code that
- * times anything by counting conversions measures zero with a free one.
- * Priced at 2 us, it measures what it measures on the bench.
- *
- * ── Two peripherals run in the background ────────────────────────
- *
- * The PIO state machine and an armed ADC-to-DMA capture both keep running
- * while the CPU is doing something else, so both are driven from inside
- * the time advance rather than from their own API calls. For the pump that
- * is what reproduces the coast DESIGN.md's passive-disarm argument depends
- * on: when the CPU stops pushing, the SM keeps toggling until the FIFO
- * drains and only then stalls. For a capture it is what puts a
- * pre-trigger baseline in the buffer.
+ * The pads behave as the SDK's: gpio_init() makes a pin an input with its
+ * latch low, and a pin drives the plant only as an output.
  *
  * SPDX-License-Identifier: MIT
  */

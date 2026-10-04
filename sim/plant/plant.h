@@ -1,34 +1,12 @@
 /*
- * Board plant models — the electrical half of the simulator.
- *
- * sim/physics.c models the rocket. This models the BOARD: the firing bus,
- * the sense dividers, the bias injectors, the switches and the e-match. It
- * exists so the real board code under boards/<name>/pyro_board.c can run on
- * the host against something that answers like hardware, instead of against
- * the fixture in boards/sim/hal_sim.c where continuity is whatever the test
- * last wrote.
- *
- * The plant is driven by sim/hw/, a shim for the small part of the Pico SDK
- * that the board code touches. gpio_put() lands here as plant_set_gpio();
- * adc_read() lands here as plant_adc_counts(). Nothing in boards/ changes.
- *
- *   sim/physics.c ──pressure──► flight_states.c
- *                                     │ pyro_fire()
- *                                     ▼
- *                        boards/mk1c/pyro_board.c   (the real file)
- *                                     │ gpio_put / adc_read
- *                                     ▼
- *                        sim/hw/rp2040_shim.c
- *                                     │
- *                                     ▼
- *                        sim/plant/plant_mk1c.c ──fired──► physics deploy
- *
- * Every board's model is a resistive network with node capacitance, solved
- * by backward Euler in net_solve.c. That choice is what makes the RC settle
- * times real rather than asserted: MK1A's 10.1 ms open-channel rise and
- * MK1C's bias-release decay both fall out of the network instead of being
- * hardcoded, so firmware that samples too early reads the wrong number here
- * exactly as it would on the bench.
+ * The board plants: each board's firing and sense network, for its real
+ * pyro_board.c to run against through the SDK stand-in in sim/hw/. A
+ * resistive network with node capacitance, solved by backward Euler
+ * (net_solve.h), so settle times come out of the RC rather than a table.
+ * See sim/plant/README.md "What is modelled" and "What is not modelled".
+ * "DESIGN.md" is the MK1C design record (pyro_mk1c/DESIGN.md, on the author's
+ * machine and not in this repository); its section and row numbers are cited as they
+ * stood when the model was written.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -40,12 +18,9 @@
 
 /* ── The e-match ──────────────────────────────────────────────────
  *
- * Properties and their limits come from the approval gate in
- * ~/Documents/pyro_mk1c/DESIGN.md 1.2, rows M1-M13. The row is named on
- * each field so a value here can be checked against the table it came
- * from. Defaults are the TYPICAL column; a margin test should set the
- * worst-case end itself, because DESIGN.md is explicit that a typical
- * value must never carry a margin calculation. */
+ * Each field names its row of DESIGN.md 1.2's e-match approval gate,
+ * M1-M13. The defaults are the typical column; a margin test sets the
+ * worst case itself. */
 typedef enum {
     MATCH_ABSENT = 0,  /* nothing in the connector                        */
     MATCH_PRESENT,     /* a bridgewire of r_ohm                           */
@@ -57,46 +32,26 @@ typedef enum {
 typedef struct {
     match_state_t state;
     double r_ohm;       /* M1  bridgewire, new: 0.8 / 1.0 / 1.6           */
-    double leak_ohm;    /* a dirty connector in parallel; 0 = none.
-                         * DESIGN.md calls out 5 kohm as the reading that
-                         * passes a naive threshold.                      */
+    double leak_ohm;    /* a dirty connector in parallel; 0 = none       */
     double no_fire_a;   /* M2  no-fire current, 100 mA minimum            */
     double all_fire_a;  /* M4  all-fire current, 1 A maximum              */
-    double all_fire_hold_s; /* the time qualifier on M4. An all-fire
-                         * current is a current held for a duration; the
-                         * datasheet value without its qualifier is not a
-                         * criterion. Default 50 ms.                      */
+    double all_fire_hold_s; /* M4's time qualifier; default 50 ms        */
     double fire_energy_j; /* M5 ignition energy, 15 mJ maximum            */
     double thermal_tau_s; /* M6 bridgewire thermal constant, 3 ms minimum */
 
-    /* What it becomes once it fires. M7 says open is typical and M13 says
-     * a short is the worst case; the S8 approach doctrine in DESIGN.md
-     * treats both as "still present", so a test that cares must be able to
-     * choose. */
+    /* What it becomes once fired: M7's typical open or M13's worst-case
+     * short. */
     match_state_t spent_as;
 
     /* ── integrator state ───────────────────────────────────────── */
-    /* Ignition has two independent criteria, because M4 and M5 describe
-     * two different regimes and neither implies the other:
-     *
-     *   energy   -- a fast pulse. Energy accumulates in the bridgewire and
-     *               leaks at thermal_tau_s, so a pulse shorter than tau is
-     *               adiabatic and a slow one is not. This is the criterion
-     *               DESIGN.md 7.3 argues the capacitor discharge satisfies.
-     *   sustained -- a current at or above all_fire_a held for
-     *               all_fire_hold_s: a slow drive, under the energy of a
-     *               fast pulse but over the all-fire current.
-     *
-     * A model with only the energy criterion never fires a slow drive, and
-     * one with only the current criterion never fires on a 1 ms pulse. */
+    /* Ignition on either of two criteria, since M4 and M5 are different
+     * regimes: energy (M5, leaking at thermal_tau_s) fires a fast pulse,
+     * and all_fire_a held for all_fire_hold_s (M4) fires a slow drive. */
     double energy_j;  /* accumulated in the bridgewire, leaked at tau     */
     double all_fire_run_s; /* time so far at or above all_fire_a          */
     double last_i_a;  /* last solved current, for reporting              */
     bool   fired;     /* latched: energy crossed fire_energy_j           */
-    double no_fire_exposure_s; /* M3: cumulative time above no_fire_a.
-                                * A test can assert the board never sat a
-                                * match above its no-fire current for longer
-                                * than the datasheet's qualifier.        */
+    double no_fire_exposure_s; /* M3: cumulative time above no_fire_a      */
 } plant_match_t;
 
 /* Fill with the M-row typicals: 1.0 ohm, 100 mA no-fire, 1 A all-fire,
@@ -105,11 +60,9 @@ void plant_match_defaults(plant_match_t *m);
 
 /* ── Injected faults ─────────────────────────────────────────────
  *
- * Named for the DESIGN.md 8.2 row or the 8.1 symptom each one produces.
- * Not every fault applies to every board; plant_set_fault() ignores one
- * the selected board has no element for, and plant_fault_applies() says
- * whether it does, so a sweep over the whole enum can skip cleanly rather
- * than silently reporting a pass for a fault it never injected. */
+ * Named for the DESIGN.md 8.2 row or 8.1 symptom each produces.
+ * plant_set_fault() ignores one the board has no element for;
+ * plant_fault_applies() says which. */
 typedef enum {
     PF_HIGH_SIDE_SHORT = 0, /* 8.1: bus at pack voltage, pump stopped     */
     PF_BUS_SHORT_GND,       /* 8.1: bus will not rise under its own bias  */
@@ -136,13 +89,11 @@ typedef enum { PLANT_MK1A = 0, PLANT_MK1B, PLANT_MK1C } plant_board_t;
 
 typedef struct plant plant_t;
 
-/* One plant per process. The firmware is a singleton (its board state is
- * file-static), so a second instance could not be wired to it anyway. */
+/* One plant per process, as the firmware's board state is file-static. */
 plant_t *plant_instance(void);
 void     plant_init(plant_board_t board);
 
-/* Whether this build contains a model for that board. A simulator build
- * links one; the plant test binary links all three. */
+/* A simulator build links one model; the plant tests link all three. */
 bool     plant_have_board(plant_board_t board);
 void     plant_reset(void);
 plant_board_t plant_board(void);
@@ -153,34 +104,31 @@ const char   *plant_board_name(void);
 void     plant_set_gpio(int gpio, bool level);  /* gpio_put()          */
 bool     plant_get_gpio(int gpio);              /* gpio_get()          */
 void     plant_set_gpio_dir(int gpio, bool out);/* gpio_set_dir()      */
+void     plant_set_gpio_pull_up(int gpio, bool up); /* else pulled down  */
 uint16_t plant_adc_counts(int adc_ch);          /* adc_read(), 0-4095  */
 
-/* Advance the network by dt seconds. The shim calls this from every
- * function that consumes time -- sleep_ms(), busy_wait_us(), and the
- * simulated main-loop tick -- so a blocking settle in board code settles
- * the model too. */
+/* Advance by dt seconds. The shim calls it from everything that takes time. */
 void plant_step(double dt_s);
 
 /* ── Test-facing controls ────────────────────────────────────────── */
 
 void plant_set_pack_mv(double mv);      /* 1S 4200, 2S 8400 (DESIGN.md 1.1) */
 
-/* Override the bus pull-down with a measured value, in ohms; 0 restores the
- * one the schematic implies. For asking what the firmware does when the
- * as-built board does not match the design -- see the bench decay-constant
- * note at the top of plant_mk1c.c. */
+/* MK1C's bus pull-down, in ohms, for a board that does not match the design;
+ * 0 restores the schematic's. */
 void plant_set_bus_pulldown_ohms(double ohms);
 
-/* Off-state leakage of a high-side switch, in ohms; 0 (the default) means
- * an ideal open.
- *
- * Default ideal because the levels the board files tabulate were computed
- * that way, and a model that quietly added leakage would disagree with
- * them for a reason no one could see. It matters on MK1A and MK1B, where
- * the pull-up is 100 kohm: a DMC2053 leaking a microamp at 8.4 V is about
- * 8 Mohm, which lifts a 10 kohm-leakage reading by 9 counts. Set it when
- * asking what a leaking high side would do. */
+/* Off-state leakage of a high-side switch, in ohms; 0 (the default) is an
+ * ideal open, as the board files' tabulated levels assume. Against MK1A's
+ * and MK1B's 100 kohm pull-ups a DMC2053 leaking 1 uA at 8.4 V (8 Mohm)
+ * lifts a 10 kohm reading by 9 counts. */
 void plant_set_highside_leak_ohms(double ohms);
+/* MK1B's U5 as fitted (the default) or as the netlist draws it. The
+ * AP2192A discharges its disabled outputs, which holds both sense nodes
+ * near 0 V (DD-059). */
+typedef enum { MK1B_U5_AP2192A = 0, MK1B_U5_AP2192 } plant_mk1b_u5_t;
+void plant_set_mk1b_u5(plant_mk1b_u5_t part);
+
 void plant_set_fault(plant_fault_t f, bool on);
 bool plant_get_fault(plant_fault_t f);
 bool plant_fault_applies(plant_board_t board, plant_fault_t f);
@@ -205,11 +153,8 @@ typedef struct {
 
 void plant_probe(plant_probe_t *out);
 
-/* Rising-edge count of each match's fired latch, so a closed-loop driver
- * can deploy a chute in sim/physics.c the moment the plant says the match
- * actually took its energy -- rather than when the firmware merely
- * commanded a fire, which is the distinction this whole model exists to
- * make. */
+/* Fires the plant counted: a match that took its energy, not a fire the
+ * firmware commanded. */
 int plant_fire_events(void);
 int plant_last_fire_channel(void);
 

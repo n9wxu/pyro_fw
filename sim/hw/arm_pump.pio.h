@@ -1,15 +1,8 @@
 /*
  * Host stand-in for the header pioasm generates from
- * boards/mk1c/arm_pump.pio.
- *
- * The real generated header carries the assembled instruction words. The
- * shim's PIO model is behavioural rather than instruction-level (see
- * rp2040_shim.h), so what it needs from this file is the program's shape
- * and its init function, with the same signature the .pio file's c-sdk
- * block declares -- boards/mk1c/pyro_board.c calls it directly.
- *
- * Kept in step with the .pio by hand. If the pump's timing changes there,
- * the 50-clocks-per-cycle constant in rp2040_shim.c changes with it.
+ * boards/mk1c/arm_pump.pio: the program's length and its init function, with
+ * the .pio's c-sdk signature. Kept in step with the .pio by hand, with
+ * ARM_PUMP_CLOCKS_PER_CYCLE in rp2040_shim.c.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -18,8 +11,6 @@
 
 #include "hardware/pio.h"
 
-/* 4 instructions: pull, mov, set, set, jmp -- the length is all the shim
- * uses it for. */
 static const pio_program_t arm_pump_program = {.length = 5};
 
 static inline pio_sm_config arm_pump_program_get_default_config(uint offset) {

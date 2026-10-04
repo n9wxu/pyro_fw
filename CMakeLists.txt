@@ -639,8 +639,10 @@ add_custom_target(plant_tests
                -I${CMAKE_CURRENT_LIST_DIR}/boards/mk1c
                ${CMAKE_CURRENT_LIST_DIR}/sim/plant/plant_mk1c.c -o ${CMAKE_BINARY_DIR}/plant_mk1c.o
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/sim/plant
+               -I${CMAKE_CURRENT_LIST_DIR}/sim/hw
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_plant.c
+               ${CMAKE_CURRENT_LIST_DIR}/sim/hw/rp2040_shim.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/plant/net_solve.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/plant/plant.c
                ${CMAKE_BINARY_DIR}/plant_mk1a.o
