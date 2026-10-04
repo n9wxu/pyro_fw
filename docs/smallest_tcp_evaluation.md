@@ -23,6 +23,10 @@ that this firmware would be the first to need.
 Meanwhile lwIP's configuration is wasteful, and two open items (N1 and
 RAM-1) can be closed this week without changing stacks.
 
+**Since measured:** the spike below ran smallest_tcp on the MK1C-SD. On
+macOS the first obstacle does not appear, and downloads run at about 90 % of
+lwIP's speed. See "Spike results" at the end.
+
 ## What the firmware asks of a stack
 
 | Need | Where | lwIP today | smallest_tcp 0.1.10 |
@@ -169,6 +173,167 @@ flash, with no new code. The pool figure needs proving on the bench:
 
 Not recommended: B without D. It risks trading a memory problem that
 configuration can fix for a download speed that only stack work can.
+
+## Spike results (2026-10-04)
+
+Option D was built on the branch `smallest-tcp-spike` and run on the
+MK1C-SD at 192.168.42.1, against a macOS host. lwIP is still the default for
+every build.
+
+**The result:** smallest_tcp 0.1.10 serves this firmware's HTTP on hardware,
+passes the bench scripts, and on macOS downloads at about 90 % of lwIP's
+speed. macOS acknowledges a lone segment at once, so the one-segment rule
+costs little there. Linux and Windows were not available and are not
+measured. The evidence supports option B, switching as it is, with that one
+reservation.
+
+### What was built
+
+| Piece | Where | Size |
+|---|---|---|
+| Build option | `-DPYRO_NET_STACK=smallest_tcp`; the stack fetched at v0.1.10 (9293992), IPv4 only, `-Os` | `CMakeLists.txt` |
+| USB driver, DHCP, mDNS, timers | `src/net_glue_stcp.c` in place of `net_glue.c` | 325 lines |
+| HTTP transport | `src/http_transport_stcp.inc`, included by `http_server.c` in place of the lwIP adapter | 327 lines |
+| Bench routes | `-DPYRO_NET_BENCH=ON`: `GET /api/net/blob?n=`, `POST /api/net/sink`, bytes with no storage behind them, for either stack | off by default |
+
+- **The buffers are the rings.** The stack's receive and transmit operations
+  are written over the exchange's own 2 kB rings. `tcp_buf_saw.c` is not
+  linked. A sent byte stays in the tx ring until it is acknowledged.
+- **Sixteen links, four exchanges,** as with lwIP. A link with no exchange
+  advertises a zero window; given one, its window opens to the ring.
+- **A frame the endpoint cannot take is queued,** in an 8 kB byte queue, so
+  the driver refuses nothing in ordinary use.
+- **DHCP and mDNS** are the stack's own. The DNS answer for `pyro.local` on
+  port 53 is not built; macOS resolves the name by mDNS.
+- **`/api/net`** keeps its keys. The pool figures are zero; the TCP states
+  are numbered as lwIP's are.
+- **The spike image is never committed.** Any reset returns the board to the
+  image it was updated from, and an image that has served no request in two
+  minutes resets itself. Both were tested.
+
+### Throughput
+
+Method: `curl` and `support/net_bench.py` on macOS over the board's USB network,
+full speed. The bench routes on both images, so storage plays no part.
+Ranges are over 3 to 5 runs.
+
+| Measurement | lwIP | smallest_tcp |
+|---|---|---|
+| Download, 74 kB | 445 to 474 kB/s | 390 to 476 kB/s |
+| Download, 1 MB | 528 to 531 kB/s | 457 to 480 kB/s |
+| Upload, 300 kB | 652 to 668 kB/s | 536 to 577 kB/s |
+| Eight downloads of 74 kB at once | 516 kB/s | 577 to 592 kB/s |
+| OTA of the 296 kB image | 2.60 to 2.65 s | 2.80 s |
+| Ping, average of 20 | 1.16 ms | 0.88 to 1.00 ms |
+
+### The delayed acknowledgement
+
+From a `tcpdump` capture of a 74 kB download on the spike, 72 data segments:
+
+| Interval | Minimum | Median | Maximum |
+|---|---|---|---|
+| macOS acknowledges a lone segment | 35 µs | 62 µs | 286 µs |
+| The board sends its next segment | 1.2 ms | 2.2 ms | 3.3 ms |
+
+- macOS did not delay one acknowledgement, of full segments or short ones.
+- The board's turnaround is the limit, and it is the USB link: a 1,514-byte
+  frame takes over a millisecond at full speed. lwIP's segments leave at
+  the same 2 ms spacing.
+- The ring wraps, so segments alternate 1,460 and 588 bytes. That, not the
+  host, is the 10 % against lwIP.
+- **Linux and Windows are not measured.** Both are known to delay an
+  acknowledgement in some cases, so this result does not carry over. The
+  spike image and a host are all that measuring needs.
+
+### Footprint
+
+MK1C-SD images without the bench routes, from the linker maps.
+
+| | lwIP | smallest_tcp | Difference |
+|---|---|---|---|
+| Update image | 295,936 B | 263,168 B | 32,768 B less |
+| Stack code and constants | 48,584 B | 19,741 B | |
+| TinyUSB DHCP, DNS, RNDIS helpers | 2,118 B | 680 B | |
+| RAM, data and bss, whole image | 222,272 B | 183,792 B | 38,480 B less |
+| RAM inside the stack | 50,761 B | 0 | |
+| RAM the glue adds | 0 | 13,062 B | |
+
+The glue's RAM is two 1,514-byte frame buffers, the 8 kB transmit queue,
+and sixteen links of 124 bytes. The first estimate of 45 kB saved did not
+count the queue.
+
+### Function
+
+| Check | Result |
+|---|---|
+| `support/api_check.py` | 51 of 51 |
+| `support/http_stream_check.py` | 20 of 20 with sixteen links; with eight, the ninth socket was refused |
+| `test/web/hw_ui_check.js`, a real browser | all passed |
+| Eight fetches at once | 8 of 8 whole |
+| DHCP | the host took 192.168.42.2 from the stack's server |
+| mDNS | `pyro.local` resolves to the board; `_pyro._tcp` is browsable |
+| OTA received by the spike image | written, answered, rebooted into the new image |
+| Reboot of the spike image | back on the lwIP image |
+| No request for two minutes | the image reset itself; back on the lwIP image |
+| Host gate, default build | every suite passes; `prove_core0` passes on the spike image |
+
+Not tested: a replug (no hands), suspend and resume, a name conflict on
+mDNS, RNDIS (Windows), and the card's files (see below).
+
+### Faults and findings in smallest_tcp
+
+| # | What | Where | Effect here |
+|---|---|---|---|
+| 1 | `net_init` is the application's name too | `include/net.h` | Link clash. The spike renames the stack's with `-Dnet_init=stcp_net_init`. A stack-wide prefix would avoid it |
+| 2 | mDNS reads the IP header from `net->rx.buf` | `src/mdns.c:1588-1594` | A driver that hands `eth_input()` its own buffer, which `mac-hal.md` allows, breaks mDNS. The spike copies each frame into `rx.buf` |
+| 3 | A segment before the window is dropped whole, its acknowledgement with it | `src/tcp.c:900-905` | When both ends close at once, the peer repeats its FIN with the ACK of ours on it; the stack discards it and stays in CLOSING until its FIN times out a second later. Seen with Python's client. The spike reuses a link once it reaches CLOSING |
+| 4 | No accept queue | by design | The ninth socket was refused with eight links. Sixteen links cost 2 kB and cure it |
+| 5 | A frame the driver refuses is a lost segment | `src/tcp.c:386-405` | With a 4 kB queue, eight fetches at once refused 1 to 3 frames, each a 1 s wait: 1.54 s against 1.02 s. With 8 kB, none |
+| 6 | `next_segment()` wants one contiguous run | `include/tcp_buf.h` | Over a ring, every wrap is a short segment. A ring-aware call, or two runs, would send full segments |
+
+A zero window in the SYN-ACK, opened by a window update a moment later,
+worked with macOS without a visible delay.
+
+### Seen on the board, not laid to the stack
+
+- **One spike boot of 18 reset at once** and the board returned to lwIP. The
+  same was seen earlier today with lwIP images on this board.
+- **One spike boot of 18 found no pressure sensor** and came up in FAULT.
+  The next boots found it.
+- **The card stopped answering under lwIP v2.2.5.** After one whole 709 kB
+  download of `/logs/hr0013.bin`, reads failed: files answered 404, uploads
+  500, and one download ended at 47 kB with status 200. `/api/sd` counted
+  timeouts and 76 retries. A reboot cleared it. This is why the throughput
+  figures use the bench routes.
+- **lwIP's own counters in the baseline run:** the receive pool peaked at 5
+  of 24 buffers, and the heap refused 3,839 allocations. Both support
+  option A.
+
+### What remains for a real port
+
+1. Measure Linux and Windows with the spike image.
+2. A DNS answer on port 53, or a ruling that mDNS is enough.
+3. `/api/net`, `net_stats.c` and the scripts' checks rewritten for what
+   this stack can report.
+4. `rndis_reports.c` from TinyUSB still includes an lwIP header; lwIP's
+   include path is kept for that one file.
+5. A host test of the transport against the real stack, which the lwIP
+   adapter never had.
+6. The transport as its own source file, and the lwIP adapter out of
+   `http_server.c`, in place of the `#if` and the included file.
+7. The other boards: the RAM gained is what the Lua boards lack.
+8. Replug, suspend and resume, and an mDNS conflict, on the bench.
+9. Findings 1 to 3 and 6 taken up in smallest_tcp.
+
+### Verdict
+
+Against macOS the stop-and-wait transmit is not the obstacle this note
+expected: downloads run at 87 to 90 % of lwIP's speed, uploads at 82 to
+86 %, and several at once run faster. The stack ran on hardware at the
+first attempt. Option B, switching as it is, is supported by what was
+measured. Option C, the sliding-window buffer first, is needed only if
+Linux or Windows turn out to delay their acknowledgements on this link,
+which one afternoon with each host will show.
 
 ## Sources
 
