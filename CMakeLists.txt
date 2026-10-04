@@ -453,10 +453,8 @@ endif()
 add_dependencies(pyro_fw_c generate_version)
 
 pico_set_program_name(pyro_fw_c "${BOARD_DISPLAY_NAME}")
-# The version is NOT set here. scripts/gen_version.sh rewrites src/version.h
-# on every local build, so the number does not exist at configure time --
-# this line used to carry a hardcoded "0.1" that never matched a shipped
-# build. src/board_binary_info.c emits it from FW_VERSION instead.
+# The version is not set here: scripts/gen_version.sh writes src/version.h at
+# build time, and src/board_binary_info.c emits FW_VERSION.
 
 # Board identity comes from boards/<name>/board_pins.h via src/board_id.h,
 # so no board name is passed on the command line.

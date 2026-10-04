@@ -28,7 +28,7 @@ would not link.
 ## Running
 
 ```bash
-export CI_BUILD=1               # a local build otherwise bumps VERSION
+export CI_BUILD=1               # without it the image reports VERSION+local
 scripts/run_host_tests.sh       # every suite CI runs: build, build-mk1c, build-mk1a
 cmake --build build --target flight_profile_tests   # one suite
 ```

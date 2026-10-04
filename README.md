@@ -425,7 +425,7 @@ This produces:
 - `pyro_fw_<board>.uf2` — application firmware
 - `pyro_fw_c_fota_image.bin` — OTA update image
 
-A local build increments the patch number in `VERSION`.
+Only a release changes `VERSION`. A build without `CI_BUILD` set reports the version with `+local` appended.
 
 ## Flash Layout
 Set by each board's `board.cmake`.
