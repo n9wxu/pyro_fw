@@ -60,6 +60,7 @@ flight this unit cannot (DD-081).
 - **FLT-PHASE-01**: The system shall detect the transition from ground to powered flight. ← SYS-DEPLOY-01
 - **FLT-PHASE-02**: The system shall detect apogee (peak altitude). ← SYS-DEPLOY-01
 - **FLT-PHASE-03**: The system shall detect landing. ← SYS-DEPLOY-01
+- **FLT-PHASE-04**: A flight state that is none of the defined states shall be FAULT, announced as a general fault. ← SYS-DEPLOY-01
 - **FLT-RT-01**: No network, script or storage activity shall delay a flight decision or a pulse by more than the board-declared bound, which shall not exceed 250 ms. ← SYS-DEPLOY-04, SYS-DEPLOY-05
 
 ### Launch
@@ -138,6 +139,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **FLT-BROWN-05**: `/api/status` shall say whether a start resumed a flight and, if not, why: no record, on USB, at ground level, or no sample in time. ← FLT-BROWN-02
 - **FLT-BROWN-06**: A resumed flight shall measure altitude against the recorded ground, shall assume no channel has fired, and shall fire each enabled channel as soon as fresh sensor data meets its trigger. A flight resumed while descending takes apogee as passed. A DELAY shall count its full value from the resume. The emergency fire applies from the resume. ← FLT-BROWN-02, SYS-DEPLOY-05
 - **FLT-BROWN-07**: A resume shall be recorded as an event in the flight log. ← FLT-BROWN-02, DAT-04
+- **FLT-BROWN-08**: The record shall be cleared when the board sits in PAD_IDLE with a USB host attached and test mode off, so that a flight abandoned on the pad leaves nothing for a later start to resume against. ← FLT-BROWN-02, USB-01
 
 ---
 
@@ -186,6 +188,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **FLT-BOOT-13**: The system shall enter FAULT when calibration produces no samples within 10 seconds, rather than proceeding to PAD_IDLE. ← FLT-BOOT-05
 - **FLT-BOOT-14**: The system shall enter FAULT, and announce general fault, when its storage cannot be used. ← FLT-BOOT-01
 - **FLT-BOOT-15**: `/api/status` shall report every fault found on the pad. The buzzer announces the one of highest priority (BUZ-CODE-02). ← SYS-STATUS-02
+- **FLT-BOOT-17**: The system shall enter FAULT, and announce general fault, at every start of an image built for a different board than the one it runs on, as the board's stored stamp shows. ← FLT-BOOT-01, OTA-05
 - **FLT-BOOT-18**: The system shall enter FAULT, and announce general fault, when the configuration file exists and cannot be read. It shall leave the file as it is. ← FLT-BOOT-02, CFG-05
 - **FLT-RATE-01**: The system shall take at least 50 pressure readings a second from PAD_IDLE to landing. ← FLT-PHASE-01
 - **FLT-RATE-06**: The flight software shall act on every sample in the loop it arrives in, each as a step of its own, however many a loop brings: no sample waits for a later loop. ← FLT-RATE-01, SNS-COL-03, DD-093

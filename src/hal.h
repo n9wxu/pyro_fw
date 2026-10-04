@@ -209,7 +209,6 @@ void hal_sleep_until_event(void);
 
 void hal_platform_init(void);
 void hal_platform_service(void);
-void hal_firmware_commit(void);
 
 /* [GND-TEST-12] The ground test switch's pads, from pins.ini (GT_WIRING_* in
  * ground_test_switch.h), once they are claimed. Nothing is read before this, and

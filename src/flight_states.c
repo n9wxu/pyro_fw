@@ -7,6 +7,7 @@
 #include "atmosphere.h"
 #include "beep_store.h"
 #include "board_id.h"
+#include "board_selftest.h"
 #include "buzzer.h"
 #include "fire_plan.h"
 #include "flight_resume.h"
@@ -71,8 +72,10 @@ static const transition_t transitions[] = {
 #define NUM_TRANSITIONS (int)(sizeof(transitions) / sizeof(transitions[0]))
 
 static flight_state_t step(flight_context_t *ctx, uint32_t now) {
-    if (ctx->current_state >= STATE_COUNT)
-        return PAD_IDLE;
+    if (ctx->current_state >= STATE_COUNT) {
+        flight_action_fault(ctx, now);
+        return FAULT;
+    }
     state_event_t event = detectors[ctx->current_state](ctx, now);
     if (event == SEVT_NONE)
         return ctx->current_state;
@@ -106,6 +109,7 @@ void flight_init(flight_context_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     config_set_defaults(&ctx->config);
     ctx->config_unreadable = hal_config_load(&ctx->config) == HAL_CONFIG_UNREADABLE;
+    ctx->board_mismatch = board_selftest_result() == BOARD_SELFTEST_FAIL;
     buzzer_init();
     beep_store_load(NULL, 0);
     pp_init();

@@ -350,7 +350,6 @@ void hal_sleep_until_event(void) {
 
 void hal_platform_init(void) {}
 void hal_platform_service(void) {}
-void hal_firmware_commit(void) {}
 
 /* ── In-flight data logging [v2-9] (sim: write to flight_sim.csv) ── */
 

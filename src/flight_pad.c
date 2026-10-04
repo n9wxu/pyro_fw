@@ -16,7 +16,7 @@
 #define STILL_CMS 100
 
 static bool health_check_due(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_health_check <= HEALTH_CHECK_MS)
+    if (now - ctx->last_health_check < HEALTH_CHECK_MS)
         return false;
     ctx->last_health_check = now;
     return true;

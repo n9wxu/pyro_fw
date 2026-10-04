@@ -33,7 +33,7 @@ for t in flight_boot_tests flight_pad_tests flight_profile_tests fire_rule_tests
          http_tests http_work_tests status_json_tests net_stats_tests net_txq_tests mac_random_tests \
          hr_log_tests flight_sim_tests flight_log_tests pressure_trace_tests log_plan_tests \
          board_pyro_tests board_pyro_mk1c_tests plant_tests sensor_bringup_tests bmp280_tests \
-         ms5607_tests collector_tests board_selftest_tests pin_caps_tests beep_tests pin_assign_tests buzzer_tests \
+         ms5607_tests collector_tests board_selftest_tests pin_caps_tests beep_tests pin_assign_tests buzzer_tests beep_out_tests \
          config_tests config_persistence_tests; do
     run "$B" "$t"
 done

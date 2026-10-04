@@ -631,7 +631,6 @@ void hal_sleep_until_event(void) {
 
 void hal_platform_init(void) {}
 void hal_platform_service(void) {}
-void hal_firmware_commit(void) {}
 
 /* ── Streaming file writes (test) ─────────────────────────────────── */
 

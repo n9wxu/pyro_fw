@@ -26,3 +26,4 @@ src/ground_test_seq.c
 src/config.c
 src/beep_codes.c
 src/beep_store.c
+src/board_selftest.c

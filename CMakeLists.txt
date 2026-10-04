@@ -329,7 +329,6 @@ add_executable(pyro_fw_c
     src/main_hardware.c
     src/board_binary_info.c
     src/board_identity.c
-    src/board_selftest.c
     src/mac_random.c
     ${PYRO_FLIGHT_SOURCES}
     src/ground_test_switch.c
@@ -1125,6 +1124,22 @@ add_custom_target(beep_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_beep_codes
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Beep code vocabulary tests"
+)
+
+# The altitude beep-out, heard from the buzzer pin: buzzer.c alone on a HAL
+# that records tone edges.
+add_custom_target(beep_out_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building beep-out tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra -I${PYRO_BOARD_DIR} -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_beep_out.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_beep_out
+    COMMAND ${CMAKE_COMMAND} -E echo "Running beep-out tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_beep_out
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Altitude beep-out tests"
 )
 
 # Pin assignment rules. Same reason as pin_caps_tests for pinning to MK1A:

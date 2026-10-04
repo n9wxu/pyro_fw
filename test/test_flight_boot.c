@@ -8,6 +8,7 @@
 #include "mocks.h"
 #include <string.h>
 #include "board_harness.h"
+#include "board_pins.h"
 #include "../src/pad_check.h"
 #include "../src/pressure_processing.h"
 
@@ -171,6 +172,25 @@ void test_FLT_BOOT_18_an_unreadable_configuration_is_a_fault_and_the_file_is_kep
     assert_terminal_general_fault(DIAG_CONFIG_UNREADABLE);
 }
 
+/* The stamp of the image that ran here before is another board's. */
+void test_FLT_BOOT_17_an_image_built_for_another_board_is_a_terminal_general_fault(void) {
+    power_up(16);
+    harness_board_stamp("another");
+    run_until_state(FAULT, 20000);
+    TEST_ASSERT_EQUAL_STRING("board_mismatch", pad_check_fault_name(DIAG_BOARD_MISMATCH));
+    assert_terminal_general_fault(DIAG_BOARD_MISMATCH);
+}
+
+void test_FLT_BOOT_17_a_board_with_its_own_stamp_or_none_reaches_the_pad(void) {
+    power_up(17);
+    run_to_pad(&now);
+    TEST_ASSERT_FALSE(ctx.diag & DIAG_BOARD_MISMATCH);
+    power_up(18);
+    harness_board_stamp(BOARD_SHORT_STR);
+    run_to_pad(&now);
+    TEST_ASSERT_FALSE(ctx.diag & DIAG_BOARD_MISMATCH);
+}
+
 /* [USB-02] On the bench the fault is diagnosed and not said. */
 void test_USB_02_a_general_fault_is_not_said_on_usb(void) {
     power_up(14);
@@ -195,6 +215,8 @@ int main(void) {
     RUN_TEST(test_FLT_BOOT_13_a_calibration_with_no_samples_is_a_fault);
     RUN_TEST(test_FLT_BOOT_14_unusable_storage_is_a_terminal_general_fault);
     RUN_TEST(test_FLT_BOOT_18_an_unreadable_configuration_is_a_fault_and_the_file_is_kept);
+    RUN_TEST(test_FLT_BOOT_17_an_image_built_for_another_board_is_a_terminal_general_fault);
+    RUN_TEST(test_FLT_BOOT_17_a_board_with_its_own_stamp_or_none_reaches_the_pad);
     RUN_TEST(test_USB_02_a_general_fault_is_not_said_on_usb);
     return UNITY_END();
 }
