@@ -104,6 +104,8 @@ if [ ! -d "$LUA_DIR" ]; then
     mkdir -p "$ROOT/build-wasm-lua"
     git clone --depth 1 --branch v5.4.6 https://github.com/lua/lua.git "$LUA_DIR"
 fi
+# The firmware's patch; pyro_luaconf.h refuses an unpatched tree.
+(cd "$LUA_DIR" && cmake -P "$ROOT/src/lua/lua_patch.cmake")
 LUA_SRC=""
 for f in lapi lcode lctype ldebug ldo ldump lfunc lgc llex lmem lobject \
          lopcodes lparser lstate lstring ltable ltm lundump lvm lzio \

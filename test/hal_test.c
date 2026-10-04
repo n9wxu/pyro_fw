@@ -262,6 +262,7 @@ void mock_reset_all(void) {
     mock_ground_test_pin = false;
     mock_pressure_inits = 0;
     mock_fs_unusable = false;
+    mock_lua_events[0] = '\0';
     mock_config_unreadable = false;
     mock_fs_write_count = 0;
     mock_fs_locked_count = 0;
@@ -502,6 +503,8 @@ void hal_telemetry_send(const char *sentence) {
         mock_uart_buf[mock_uart_len] = '\0';
     }
 }
+
+char mock_lua_events[256];
 
 bool mock_fs_unusable = false;
 bool mock_config_unreadable = false;

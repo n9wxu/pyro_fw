@@ -454,11 +454,15 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **LUA-ISO-02**: A script shall read the flight's state and never write it. ← SYS-LUA-02
 - **LUA-ISO-03**: A script shall have no means to fire an enabled pyro channel or to stop one firing. ← SYS-LUA-02
 - **LUA-ISO-04**: A script shall have no access to files. It may add lines to the flight record. ← SYS-LUA-02
+- **LUA-ISO-05**: No construct of the language shall let a script outlast its limits: a limit's error shall pass through the script's own `pcall` and `xpcall`, finalisers (`__gc`) shall be refused, pattern matching shall be charged to the same limits, and an error in any call the host makes into the script shall be reported and never stop the task that runs it. ← LUA-ISO-01
+- **LUA-ISO-06**: A script's numbers shall be 32-bit integers and 32-bit floats on every build, the simulator included, and reading one shall not use the system heap. ← SYS-LUA-01, LUA-ISO-01
 - **LUA-SAFE-01**: Whatever script is stored, the board shall start, reach its pad state and serve its web interface, so a bad script can always be replaced. A script that did nothing wrong shall not be left disabled. ← SYS-LUA-02
 - **LUA-PAD-01**: Every pad shall have one owner, the flight software or the script, set by the pin assignment and fixed until the next start. ← SYS-LUA-01
 - **LUA-PAD-02**: A script shall reach a resource by its assigned name and kind: output, input, serial or pixel. It has full control of the pads assigned to it, a pyro channel's included, and what it does with them is the operator's responsibility. A resource it was not given does not exist for it, and using one fails with a reported error. ← SYS-LUA-01
 - **LUA-PAD-03**: Each board shall declare the resources it offers to scripts. ← SYS-LUA-01
 - **LUA-RUN-01**: The enabled script shall always run: on the pad, in flight, in ground test mode and in a bench flight. ← SYS-LUA-01
+- **LUA-RUN-02**: The script's `on_event()` shall be offered every flight event the flight log records, by its logged name, in order. Offering shall never wait: events beyond the eight that can be held between two script periods are dropped and counted. ← SYS-LUA-01, SYS-LUA-02
+- **LUA-RUN-03**: The state names a script compares against (`flight.<NAME>`) shall carry the flight software's own state values. ← LUA-ISO-02
 - **LUA-MGT-01**: The web interface shall edit, check, save and remove the script. A script that fails its check shall not be saved. ← SYS-LUA-01
 - **LUA-MGT-02**: A console shall show the script's output and errors, and whether the script is running or why it is not. ← SYS-LUA-01
 - **LUA-IO-01**: The web UI shall export the script to a local file and import one back, so a program survives the loss of the storage that holds it. ← SYS-CFG-01

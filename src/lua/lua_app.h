@@ -1,10 +1,7 @@
 /*
- * Application glue for Lua — the only file that knows both the flight
- * software and the VM exist.
- *
- * Keeping this separate means flight_states.c and hal_common.c never include
- * a Lua header, and the feature can be compiled out entirely by not linking
- * this object.
+ * Application glue for Lua -- the only file that knows both the flight
+ * software and the VM exist, so flight_states.c and hal_common.c never
+ * include a Lua header and a board without Lua does not link this object.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -17,9 +14,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Resolve config into platform resources, load the stored script and launch
- * core1. Call once at boot, on core0, before the flight loop. A failure here
- * is reported and never fatal: the flight computer runs without Lua. */
+/* Resolve config into platform resources and read the stored script; the
+ * Lua task starts it from the flight task's periods. Call once at boot, on
+ * core0, before the scheduler. A failure here is reported and never fatal:
+ * the flight computer runs without Lua. */
 void lua_app_init(const config_t *cfg);
 
 /* A restart the operator asked for is not a start the script killed
@@ -38,15 +36,11 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms);
  * work; never blocks. */
 void lua_app_dispatch(void);
 
-/* Flight events, forwarded to the script's on_event(). */
-void lua_app_event(const char *name);
-
 /* Script storage in littlefs. */
 #define LUA_SCRIPT_PATH "lua_user.lua"
 #define LUA_SCRIPT_MAX 8192
 
 int lua_app_script_read(char *buf, int max);
-bool lua_app_script_write(const char *src, int len);
 
 /* Validate a script against the resource set a given configuration would
  * grant -- not against what is currently bound, which is the previous

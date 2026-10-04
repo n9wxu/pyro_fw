@@ -60,6 +60,7 @@ void flight_read_pyro_health(flight_context_t *ctx);
 
 /* The newest sample, into the context, the ring and the flight log. */
 void flight_take_sample(flight_context_t *ctx, const pp_sample_t *s, flight_state_t state);
+void flight_note_event(flight_context_t *ctx, uint8_t event); /* [LUA-RUN-02] */
 void flight_log_event(flight_context_t *ctx, uint8_t event);
 /* [FLT-APO-08] The peak, as its own row. */
 void flight_log_peak(const flight_context_t *ctx);

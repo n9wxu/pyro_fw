@@ -193,7 +193,24 @@ void flight_take_sample(flight_context_t *ctx, const pp_sample_t *s, flight_stat
 }
 
 /* [DAT-03] An event is a row at the newest sample's time. */
+void flight_note_event(flight_context_t *ctx, uint8_t event) {
+    ctx->events_held[ctx->events_noted % FLIGHT_EVENTS_HELD] = event;
+    ctx->events_noted++;
+}
+
+bool flight_next_event(const flight_context_t *ctx, uint32_t *cursor, uint8_t *event) {
+    uint32_t behind = ctx->events_noted - *cursor;
+    if (behind == 0)
+        return false;
+    if (behind > FLIGHT_EVENTS_HELD)
+        *cursor = ctx->events_noted - FLIGHT_EVENTS_HELD;
+    *event = ctx->events_held[*cursor % FLIGHT_EVENTS_HELD];
+    (*cursor)++;
+    return true;
+}
+
 void flight_log_event(flight_context_t *ctx, uint8_t event) {
+    flight_note_event(ctx, event);
     flight_sample_t *row = newest_row(ctx);
     row->event = event;
     if (hal_log_active() && state_is_logged((flight_state_t)row->state))

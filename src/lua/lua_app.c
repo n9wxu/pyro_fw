@@ -7,6 +7,7 @@
 #include "hal.h"
 #include "flash_op.h"
 #include "hal_storage.h"
+#include "flight_events.h"
 #include "flight_states.h"
 #include "lua_core1.h"
 #include "lua_platform.h"
@@ -23,8 +24,6 @@ static int script_len;
 static char status_line[96] = "off";
 static bool launch_pending;
 static uint32_t launch_at_ms;
-/* Both "started, not yet RUNNING" and "never started" leave the state at
- * LUA_C1_OFF, and conflating them overwrites the message saying which. */
 static bool launched;
 
 /* ── Safe boot ────────────────────────────────────────────────────
@@ -37,34 +36,35 @@ static bool launched;
  * Scratch registers survive a watchdog reset but not a power cycle or a RUN
  * reset, so either one clears the latch and no operator has to remember to.
  * Needs the boot watchdog in main_hardware.c, or the board hangs and nothing
- * reads the marker. */
+ * reads the marker.
+ *
+ * Scratch 4..7 belong to the SDK -- watchdog_enable() writes
+ * WATCHDOG_NON_REBOOT_MAGIC to scratch[4] and watchdog_reboot() puts its
+ * vector in 4..7 -- and 0..1 hold the flight task's stage, so the marker
+ * takes 3 and the phase 2. */
 #define LUA_BOOT_MARK 0x4C554131u /* "LUA1" */
-#define LUA_BOOT_SCRATCH                                                                                               \
-    3 /* 4..7 belong to the SDK: watchdog_enable() writes                                                              \
-       * WATCHDOG_NON_REBOOT_MAGIC to scratch[4] and                                                                   \
-       * watchdog_reboot() puts its vector in 4..7, so a                                                               \
-       * marker there is overwritten or misread. 0..3 are                                                              \
-       * unused by both the SDK and the bootloader. */
+#define LUA_BOOT_SCRATCH 3
 #define LUA_PHASE_SCRATCH 2
 #define LUA_SETTLE_MS 15000u
 
-/* One tick()'s budget, through the instruction hook. The Lua task shares
- * core1 with the net and storage tasks a tick at a time, so this bounds how
- * long one script step holds its share, not the flight. */
+/* From the first flight period. Keeps a user program out of the window
+ * between power-on and the first HTTP response, which is the only route in
+ * to replace a program that wedges the board. */
+#define LUA_LAUNCH_DELAY_MS 2000u
+
+/* One tick()'s time box, events included. The Lua task shares core1 with the
+ * net and storage tasks a tick at a time, so this bounds how long one script
+ * step holds its share, not the flight. */
 #define LUA_TICK_BUDGET_US 5000u
 
-/* Covers compiling the script and running init(), where a script may do real
- * work. Not unlimited: a script that never finishes starting holds its share
- * of core1 from the net and storage tasks for nothing. */
+/* Covers the start-up check, compiling the script and running init(). A
+ * script that never finishes starting holds its share of core1 for nothing. */
 #define LUA_BOOT_LIMIT_MS 5000u
 
 /* How long both sides of a half-bridge are held off between transitions, in
- * PIO cycles at 125 MHz -- 250 cycles is 2 us.
- *
- * A FET turns off in finite time, so this gap is what keeps a momentarily
- * conducting pair from becoming a shoot-through across VBAT. Generous for the
- * parts these boards fit, and tunable because the right value depends on
- * them: phase 5 measures it. */
+ * PIO cycles at 125 MHz -- 250 cycles is 2 us. A FET turns off in finite
+ * time, so this gap is what keeps a momentarily conducting pair from becoming
+ * a shoot-through across VBAT. Generous for the parts these boards fit. */
 #define PYRO_BRIDGE_DEADTIME_CYCLES 250u
 
 /* Survives a watchdog reboot, so the next boot can report what the flight
@@ -74,13 +74,17 @@ static bool launched;
 #define PH_LAUNCHED 3u
 #define PH_SETTLED 4u
 #define PH_KILLED 5u
+#define PH_STARTED 17u
+#define PH_REPORTED 18u
+#define PHASE_TAG 0x50480000u /* "PH" */
+#define STAGE_TAG 0x53540000u /* "ST", main_hardware.c's BOOT() */
 
 static uint32_t boot_phase;
 static uint32_t last_stage;
 static uint32_t last_stage_ms;
 
 static void phase(uint32_t p) {
-    watchdog_hw->scratch[LUA_PHASE_SCRATCH] = 0x50480000u | p;
+    watchdog_hw->scratch[LUA_PHASE_SCRATCH] = PHASE_TAG | p;
 }
 
 /* ── Config -> platform ───────────────────────────────────────────── */
@@ -97,24 +101,9 @@ int lua_app_script_read(char *buf, int max) {
     return n;
 }
 
-bool lua_app_script_write(const char *src, int len) {
-    if (len < 0 || len > LUA_SCRIPT_MAX - 1) {
-        return false;
-    }
-    return hal_fs_write_file(LUA_SCRIPT_PATH, src, len) == 0;
-}
-
-/* The environment a script will actually get, built from the live pin
- * assignment rather than from config.ini.
- *
- * This used to read the lua_p18..p21 config keys. Those are gone -- pins.ini
- * superseded them -- and reading them was already wrong for two reasons: they
- * were MK1C-shaped four-entry positional slots, so on MK1B they described
- * pads that do not exist, and they could not describe a released pyro pad at
- * all.
- *
- * Binds nothing, so the check reports a verdict for the assignment as stored
- * rather than for whatever the running VM happens to hold. */
+/* The environment a script will get, from the stored pin assignment. Binds
+ * nothing, so the verdict is for the assignment as saved rather than for
+ * whatever the running VM holds. */
 static void env_from_assignment(const config_t *cfg, lua_chk_env_t *env) {
     memset(env, 0, sizeof(*env));
 
@@ -130,6 +119,7 @@ static void env_from_assignment(const config_t *cfg, lua_chk_env_t *env) {
             continue;
         case LUA_ROLE_OUT:
         case LUA_ROLE_PWM:
+        case LUA_ROLE_BRIDGE: /* the pair is one output to a script */
             env->has_output = true;
             break;
         case LUA_ROLE_IN:
@@ -139,10 +129,6 @@ static void env_from_assignment(const config_t *cfg, lua_chk_env_t *env) {
         case LUA_ROLE_RX:
             env->has_serial = true;
             break;
-        case LUA_ROLE_BRIDGE:
-            /* A bridge is one output to a script; the pair is named once. */
-            env->has_output = true;
-            break;
         default:
             break;
         }
@@ -151,8 +137,8 @@ static void env_from_assignment(const config_t *cfg, lua_chk_env_t *env) {
         }
     }
 
-    /* The bridge is not in the pad list -- it consumes two released pyro pads
-     * and is configured separately. Its name still has to resolve. */
+    /* The bridge is configured apart from the pad list, on two released pyro
+     * pads; its name still has to resolve. */
     uint8_t br_ch, br_common;
     const char *br_name;
     if (pin_store_bridge(&br_ch, &br_common, &br_name) && br_name && br_name[0]) {
@@ -179,20 +165,16 @@ int lua_app_console_read(char *buf, int max) {
 
 /* ── Script log ───────────────────────────────────────────────────
  *
- * A script's log() output goes into the flight log as event rows, so it is
- * written by the storage task with the samples.
- *
- * Do not open a file here. A second file contends with the flight log for
- * hal_fs_open()'s single streaming handle, which the flight log holds for
- * the whole of a flight.
- *
- * Logging therefore happens only during a flight. On the ground a script's
- * output goes to /api/lua/console, which needs no flash. */
+ * A script's log() output goes into the flight log as event rows, written by
+ * the storage task with the samples. Do not open a file here: a second file
+ * contends with the flight log for hal_fs_open()'s single streaming handle,
+ * which the flight log holds for the whole flight. So logging happens only
+ * in flight; on the ground a script's output goes to /api/lua/console. */
 
-/* Sized to fit inside hal_log_text()'s 80-byte row, of which the widest
- * timestamp plus the ",,,,,,,LUA " prefix take 21 and the newline one. Anything
- * over 57 is truncated there, and only once the flight time reaches ten digits
- * of milliseconds, which is 27 hours of flight. */
+/* Fits hal_log_text()'s 80-byte row, of which the widest timestamp plus the
+ * ",,,,,,,LUA " prefix take 21 and the newline one. Anything over 57 is
+ * truncated there, and only once the flight time reaches ten digits of
+ * milliseconds, which is 27 hours of flight. */
 #define LUA_LINE_MAX 56
 
 static char line_buf[LUA_LINE_MAX];
@@ -229,7 +211,6 @@ static void log_drain(uint32_t now_ms) {
     }
 }
 
-/* Bytes of script output the flight log actually took. */
 uint32_t lua_app_log_written(void) {
     return log_written;
 }
@@ -244,23 +225,24 @@ void lua_app_init(const config_t *cfg) {
         return;
     }
 
-    /* From the live pin assignment rather than the lua_p* config keys. With
-     * no pins.ini those keys are what the assignment was migrated FROM, so a
-     * board that has never seen this feature keeps the pins it had. */
     lua_pin_cfg_t pins[LUA_CFG_MAX];
     int n_pins = pin_store_lua_pins(pins, LUA_CFG_MAX);
 
-    /* The bridge is wired after the board's own pads, because its two pins
-     * are not in LUA_PIN_LIST -- they only became available when
-     * configuration released the channel. */
+    /* The bridge is wired after the board's own pads: its two pins became
+     * available only when configuration released the channel. */
     uint8_t br_ch = 0, br_common = 0;
     const char *br_name = NULL;
     bool want_bridge = pin_store_bridge(&br_ch, &br_common, &br_name);
 
-    if (lua_plat_configure(pins, n_pins, cfg->lua_baud, cfg->lua_pixels) != 0) {
-        /* Unreachable by the budget in the board platform file. If it ever
-         * happens it is a build-time mistake, not an operating condition, so
-         * say so plainly rather than degrading quietly. */
+    int rc = lua_plat_configure(pins, n_pins, cfg->lua_baud, cfg->lua_pixels);
+    if (rc == LUA_PLAT_BAD_BAUD) {
+        snprintf(status_line, sizeof(status_line), "not started: lua_baud %lu is unusable",
+                 (unsigned long)cfg->lua_baud);
+        return;
+    }
+    if (rc != LUA_PLAT_OK) {
+        /* Unreachable by the budget in lua_pio_platform.c: a build-time
+         * mistake, not an operating condition, so say so plainly. */
         snprintf(status_line, sizeof(status_line), "resource claim failed (firmware bug)");
         return;
     }
@@ -277,21 +259,10 @@ void lua_app_init(const config_t *cfg) {
         return;
     }
 
-    /* So a script that cannot match the configuration fails on the bench
-     * rather than in the air. */
-    lua_chk_result_t chk;
-    lua_chk_env_t env;
-    lua_chk_env_from_platform(&env); /* at boot the two agree, by definition */
-    lua_check(script_buf, (size_t)script_len, &env, &chk);
-    if (!chk.green) {
-        snprintf(status_line, sizeof(status_line), "not started: %s", chk.items[0].detail);
-        return;
-    }
-
     uint32_t prev = watchdog_hw->scratch[LUA_PHASE_SCRATCH];
-    boot_phase = ((prev & 0xffff0000u) == 0x50480000u) ? (prev & 0xffffu) : 0u;
+    boot_phase = ((prev & 0xffff0000u) == PHASE_TAG) ? (prev & 0xffffu) : 0u;
     uint32_t st = watchdog_hw->scratch[0];
-    last_stage = ((st & 0xffff0000u) == 0x53540000u) ? (st & 0xffffu) : 0u;
+    last_stage = ((st & 0xffff0000u) == STAGE_TAG) ? (st & 0xffffu) : 0u;
     last_stage_ms = watchdog_hw->scratch[1];
 
     if (watchdog_hw->scratch[LUA_BOOT_SCRATCH] == LUA_BOOT_MARK) {
@@ -303,9 +274,8 @@ void lua_app_init(const config_t *cfg) {
         return;
     }
 
-    /* Launching inside init would put a user program between power-on and
-     * the first HTTP response, so a program that wedges the board would also
-     * block the only route in to replace it. */
+    /* The script is checked against the bound resources by the Lua task,
+     * whose stack is sized for the parser; this one is the 2 kB boot stack. */
     launch_pending = true;
     launch_at_ms = 0;
     phase(PH_PRELAUNCH);
@@ -318,53 +288,22 @@ void lua_app_restart_commanded(void) {
 
 /* ── Main loop ────────────────────────────────────────────────────── */
 
-void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
-    if (launch_pending) {
-        if (launch_at_ms == 0) {
-            launch_at_ms = now_ms + 2000u;
-            return;
-        }
-        if ((int32_t)(now_ms - launch_at_ms) < 0) {
-            return;
-        }
-        launch_pending = false;
-        watchdog_hw->scratch[LUA_BOOT_SCRATCH] = LUA_BOOT_MARK;
-        phase(PH_LAUNCHED);
-        launched = true;
-        flash_op_crumb(60);
-        lua_core1_start(script_buf, script_len);
-        flash_op_crumb(61);
-        phase(17);
-        snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)",
-                 lua_iface_count_kind(LUA_IF_OUTPUT), lua_iface_count_kind(LUA_IF_INPUT),
-                 lua_iface_count_kind(LUA_IF_SERIAL), lua_iface_count_kind(LUA_IF_PIXEL));
-        phase(18);
-        return;
-    }
+static void launch(void) {
+    launch_pending = false;
+    watchdog_hw->scratch[LUA_BOOT_SCRATCH] = LUA_BOOT_MARK;
+    phase(PH_LAUNCHED);
+    launched = true;
+    flash_op_crumb(60);
+    lua_core1_start(script_buf, script_len);
+    flash_op_crumb(61);
+    phase(PH_STARTED);
+    snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)",
+             lua_iface_count_kind(LUA_IF_OUTPUT), lua_iface_count_kind(LUA_IF_INPUT),
+             lua_iface_count_kind(LUA_IF_SERIAL), lua_iface_count_kind(LUA_IF_PIXEL));
+    phase(PH_REPORTED);
+}
 
-    if (lua_core1_state() == LUA_C1_OFF) {
-        /* Launched and not RUNNING means wedged in pyro_lua_init() or
-         * pyro_lua_load(). */
-        if (launched && strncmp(status_line, "stuck", 5) != 0) {
-            uint32_t loc = lua_core1_loc();
-            snprintf(status_line, sizeof(status_line), "stuck before RUNNING [loc=%lu hb=%lu stackfree=%lu]",
-                     (unsigned long)(loc & 0xff), (unsigned long)lua_core1_heartbeat(),
-                     (unsigned long)lua_core1_stack_free());
-        }
-        return;
-    }
-
-    /* Clear the safe-boot marker once the board has demonstrably survived
-     * with the script running. A later crash is then a crash, not a bad boot. */
-    if (now_ms > LUA_SETTLE_MS && watchdog_hw->scratch[LUA_BOOT_SCRATCH] == LUA_BOOT_MARK) {
-        watchdog_hw->scratch[LUA_BOOT_SCRATCH] = 0;
-        phase(PH_SETTLED);
-    }
-
-    lua_core1_check_stack();
-
-    /* The seqlock write never waits, so this costs a fixed handful of stores
-     * whatever the Lua task is doing. */
+static void publish_flight(const flight_context_t *ctx, uint32_t now_ms) {
     lua_flight_t f;
     f.pressure_pa = ctx->pressure_pa;
     f.altitude_cm = ctx->altitude_cm;
@@ -382,20 +321,58 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     f.apogee_detected = ctx->apogee_declared ? 1 : 0;
     f.telem_seq = ctx->telemetry_seq;
     lua_core1_publish(&f);
+}
 
+/* [LUA-RUN-02] */
+static void offer_events(const flight_context_t *ctx) {
+    static uint32_t offered;
+    uint8_t event;
+    while (flight_next_event(ctx, &offered, &event))
+        lua_core1_event(flight_event_name(event));
+}
+
+void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
+    if (launch_pending) {
+        if (launch_at_ms == 0) {
+            launch_at_ms = now_ms + LUA_LAUNCH_DELAY_MS;
+        } else if ((int32_t)(now_ms - launch_at_ms) >= 0) {
+            launch();
+        }
+        return;
+    }
+    if (lua_core1_state() == LUA_C1_OFF) {
+        return;
+    }
+
+    /* Clear the safe-boot marker once the board has demonstrably survived
+     * with the script running. A later crash is then a crash, not a bad boot. */
+    if (now_ms > LUA_SETTLE_MS && watchdog_hw->scratch[LUA_BOOT_SCRATCH] == LUA_BOOT_MARK) {
+        watchdog_hw->scratch[LUA_BOOT_SCRATCH] = 0;
+        phase(PH_SETTLED);
+    }
+
+    lua_core1_check_stack();
+    publish_flight(ctx, now_ms); /* the seqlock write never waits */
+    offer_events(ctx);
     lua_core1_service(now_ms);
-    /* [DAT-02, N11] The flight log's time column is flight time, since T+0,
-     * for every row: not uptime, which the sample rows beside it do not use. */
+    /* [DAT-02] The flight log's time column is flight time, since T+0, for
+     * every row, as for the sample rows beside it. */
     log_drain(flight_elapsed_ms(ctx, now_ms));
 
-    /* A startup that runs this long is not going to finish. */
+    const char *refused = lua_core1_refusal();
+    if (refused && lua_core1_state() == LUA_C1_RUNNING) {
+        snprintf(status_line, sizeof(status_line), "not started: %s", refused);
+        lua_core1_kill();
+        return;
+    }
+
     if (!lua_core1_ready() && launched && (int32_t)(now_ms - (launch_at_ms + LUA_BOOT_LIMIT_MS)) >= 0 &&
         lua_core1_state() == LUA_C1_RUNNING) {
         snprintf(status_line, sizeof(status_line), "killed: startup exceeded %lums", (unsigned long)LUA_BOOT_LIMIT_MS);
         lua_core1_kill();
     }
 
-    if (lua_core1_state() == LUA_C1_DEAD && strncmp(status_line, "stopped", 7) != 0) {
+    if (lua_core1_state() == LUA_C1_DEAD && !refused && strncmp(status_line, "stopped", 7) != 0) {
         phase(PH_KILLED);
         uint32_t ok, rq, ak, hb;
         lua_core1_dispatch_stats(&ok, &rq, &ak, &hb);
@@ -408,15 +385,11 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     }
 }
 
-/* Once a period, after the flight work: asks the Lua task for a tick.
- * Returning without asking is normal while it is still starting. */
+/* Once a period, after the flight work. Returning without asking is normal
+ * while the script is still starting. */
 void lua_app_dispatch(void) {
     if (!lua_core1_ready()) {
         return;
     }
     lua_core1_dispatch(LUA_TICK_BUDGET_US);
-}
-
-void lua_app_event(const char *name) {
-    lua_core1_event(name);
 }

@@ -1,21 +1,15 @@
 ;
-; PIO programs for Lua user pins — Pyro MK1C (J3: GPIO18/19/20/21)
+; PIO programs for Lua user pins, on pio1 (LUA_PIO_INST in each board's
+; pin_caps.h).
 ;
-; Every Lua-reachable pin is either plain SIO or GPIO_FUNC_PIO1. It is never
-; set to a peripheral function. That is not a stylistic choice: on RP2040 the
-; peripheral function of a pin is fixed by the pin number, and J3 carries
-; GPIO18/19, whose I2C function is *i2c1* -- the same instance as the MS5607
-; pressure sensor on GPIO6/7. A Lua pin placed in GPIO_FUNC_I2C would join the
-; flight sensor's bus.
-;
-; Routing everything through PIO removes that reachability rather than
-; checking for it. There is no code path from a Lua binding to
+; A Lua-reachable pin is plain SIO or GPIO_FUNC_PIO1, never a peripheral
+; function: RP2040 fixes a pin's peripheral by pin number, and GPIO18/19's
+; I2C function is i2c1 -- on MK1C the MS5607's instance. Routing serial and
+; LED timing through PIO leaves no path from a Lua binding to
 ; gpio_set_function(..., GPIO_FUNC_I2C | GPIO_FUNC_UART | GPIO_FUNC_SPI).
 ;
-; pio0 belongs to core0 (the ARM_TOGGLE charge pump). Lua gets pio1, all of
-; it, and every state machine and program offset is claimed at boot on core0
-; before core1 exists -- see LUA_PIO_INSTRUCTION_BUDGET in lua_platform_mk1c.c
-; for why acquisition cannot fail.
+; Every state machine and program offset is claimed at boot on core0; see
+; the resource budget in lua_pio_platform.c for why acquisition cannot fail.
 ;
 ; SPDX-License-Identifier: MIT
 ;

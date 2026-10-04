@@ -151,6 +151,9 @@ void mock_power_cycle(void);
 extern int mock_pressure_inits;
 
 /* The storage did not come up [FLT-BOOT-14]. */
+/* The flight events a follower of flight_next_event() was given, each followed by ";". */
+extern char mock_lua_events[256];
+
 extern bool mock_fs_unusable;
 /* config.ini is there and its read fails, as on an I/O error. */
 extern bool mock_config_unreadable;

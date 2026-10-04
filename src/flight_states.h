@@ -40,6 +40,7 @@ typedef enum {
 } flight_state_t;
 
 #define SENSOR_PENDING 0xFFu
+#define FLIGHT_EVENTS_HELD 8u
 
 typedef struct {
     uint32_t time_ms;
@@ -119,6 +120,9 @@ typedef struct flight_context_t {
     flight_sample_t flight_buffer[FLIGHT_BUF_SIZE];
     uint16_t buf_head, buf_count;
 
+    uint8_t events_held[FLIGHT_EVENTS_HELD]; /* [LUA-RUN-02] */
+    uint32_t events_noted;
+
     /* Ground test [GND-TEST-05..13] */
     bool gt_held;
     uint32_t gt_held_since;
@@ -127,6 +131,9 @@ typedef struct flight_context_t {
 } flight_context_t;
 
 void flight_init(flight_context_t *ctx);
+/* [LUA-RUN-02] The flight's events in order, to a follower holding its own
+ * cursor (0 to start). One more than FLIGHT_EVENTS_HELD behind loses the oldest. */
+bool flight_next_event(const flight_context_t *ctx, uint32_t *cursor, uint8_t *event);
 flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now);
 void flight_update_outputs(flight_context_t *ctx, uint32_t now);
 /* The storage writes the flight software owes; call where a write may run. */

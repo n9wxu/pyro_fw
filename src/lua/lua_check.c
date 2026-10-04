@@ -1,42 +1,51 @@
 /*
- * Static validation — see lua_check.h for what this is and is not.
+ * Static validation -- see lua_check.h for what this is and is not.
  *
  * The method is to compile the chunk and walk its constant tables. Lua interns
  * every string literal into Proto->k, and nested functions hang off Proto->p,
  * so a recursive walk yields every literal in the program without executing
  * any of it. Resource names arrive at the API as strings, so for real scripts
- * that walk is exactly the set of names the program can use.
+ * that walk is the set of names the program can use.
  *
  * The comparison runs in the direction that admits no false positives: for
- * each resource the platform provides, ask whether its name appears in the
- * chunk. Present and enabled is fine. Present and not enabled is the gap this
- * exists to find. Asking the other question -- "is this string a resource
- * name?" -- would need dataflow to avoid flagging every message the script
- * sends, so the unknown-name check is deliberately narrow: identifier-shaped
- * constants that sit next to a known API namespace and match nothing.
+ * each resource the configuration provides, ask whether its name appears in
+ * the chunk. The other question -- "is this string a resource name?" -- would
+ * need dataflow to avoid flagging every message the script sends, so the
+ * unknown-name check is deliberately narrow: a near miss of a real name.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "lua_check.h"
+#include "lua_arena.h"
 #include "lua_platform.h"
 #include "lua.h"
 #include "lauxlib.h"
 #include "lobject.h"
 #include "lstate.h"
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
-/* Seen-string collector. Bounded: a chunk with more distinct literals than
- * this is past the point where a per-name report is useful. */
+/* What lua_check() compiles in: less than the VM's 32 kB arena, which must
+ * also hold the environment and the running program. A script too big for
+ * it is reported as "not enough memory". Half as much again on a 64-bit
+ * host, as for the VM's arena (pyro_lua.c). */
+#ifndef LUA_CHECK_SCRATCH_BYTES
+#define LUA_CHECK_SCRATCH_BYTES (16 * 1024 * (sizeof(void *) == 8 ? 3 : 2) / 2)
+#endif
+
+/* Distinct literals remembered. Beyond this a per-name report stops being
+ * useful; longer strings cannot be names (LUA_NAME_MAX) or API words. */
 #define SEEN_MAX 128
-#define SEEN_LEN 24
-#define LUA_NAME_SCAN SEEN_LEN
+#define SEEN_LEN 12
 
 typedef struct {
     char s[SEEN_MAX][SEEN_LEN];
     int n;
 } seen_t;
+
+#define SEEN_BYTES ((sizeof(seen_t) + 7u) & ~(size_t)7u)
 
 static void seen_add(seen_t *sn, const char *s) {
     if (sn->n >= SEEN_MAX || strlen(s) >= SEEN_LEN) {
@@ -47,9 +56,7 @@ static void seen_add(seen_t *sn, const char *s) {
             return;
         }
     }
-    strncpy(sn->s[sn->n], s, SEEN_LEN - 1);
-    sn->s[sn->n][SEEN_LEN - 1] = '\0';
-    sn->n++;
+    strcpy(sn->s[sn->n++], s);
 }
 
 static bool seen_has(const seen_t *sn, const char *s) {
@@ -61,6 +68,7 @@ static bool seen_has(const seen_t *sn, const char *s) {
     return false;
 }
 
+/* Recursion is bounded by the parser's own nesting limit (LUAI_MAXCCALLS). */
 static void walk(const Proto *p, seen_t *sn) {
     for (int i = 0; i < p->sizek; i++) {
         const TValue *v = &p->k[i];
@@ -107,23 +115,17 @@ static bool is_api_word(const char *s) {
     return false;
 }
 
-/* Levenshtein distance, capped. Decides whether an unrecognised string is a
- * near-miss of a real resource name.
- *
- * The test is "close to something real" rather than "looks like a word".
- * Flagging any identifier-shaped constant that matches nothing reports the
- * 'hi' in serial.write('radio', 'hi') as a possible typo, and a checker that
- * cries wolf on message text is one operators learn to ignore.
- *
- * That trades recall for precision. The sandbox is what makes a genuinely
- * wrong name safe, so this only has to catch the plausible mistake. */
+/* Levenshtein distance, capped. "Close to something real" rather than "looks
+ * like a word": flagging every identifier-shaped constant would report the
+ * 'hi' in serial.write('radio', 'hi'), and a checker that cries wolf on
+ * message text is one operators learn to ignore. */
 static int edit_distance(const char *a, const char *b, int cap) {
     int la = (int)strlen(a), lb = (int)strlen(b);
     if (la - lb > cap || lb - la > cap) {
         return cap + 1;
     }
-    int prev[LUA_NAME_SCAN], cur[LUA_NAME_SCAN];
-    if (lb + 1 > LUA_NAME_SCAN) {
+    int prev[SEEN_LEN], cur[SEEN_LEN];
+    if (lb + 1 > SEEN_LEN) {
         return cap + 1;
     }
     for (int j = 0; j <= lb; j++) {
@@ -149,11 +151,11 @@ static int edit_distance(const char *a, const char *b, int cap) {
     return prev[lb];
 }
 
+/* Three characters minimum: below that almost anything is within edit
+ * distance 1 of almost anything else. */
 static bool identifier_shaped(const char *s) {
-    /* Three characters minimum: below that almost anything is within edit
-     * distance 1 of almost anything else. */
     size_t n = strlen(s);
-    if (n < 3 || n > 8) {
+    if (n < 3 || n > LUA_NAME_MAX - 1) {
         return false;
     }
     for (const char *p = s; *p; p++) {
@@ -162,6 +164,15 @@ static bool identifier_shaped(const char *s) {
         }
     }
     return true;
+}
+
+static bool provides(const lua_chk_env_t *env, const char *s) {
+    for (int i = 0; i < env->n; i++) {
+        if (env->names[i][0] && strcmp(env->names[i], s) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void lua_chk_env_from_platform(lua_chk_env_t *env) {
@@ -178,50 +189,54 @@ void lua_chk_env_from_platform(lua_chk_env_t *env) {
     env->has_pixel = lua_iface_count_kind(LUA_IF_PIXEL) > 0;
 }
 
-void lua_check(const char *src, size_t len, const lua_chk_env_t *env, lua_chk_result_t *out) {
+/* Compiles into sn. Returns false, with the reason added, if it did not. */
+static bool collect_literals(void *mem, size_t mem_len, const char *src, size_t len, seen_t *sn,
+                             lua_chk_result_t *out) {
+    lua_arena_t arena;
+    lua_arena_init(&arena, mem, mem_len);
+    lua_State *L = lua_newstate(lua_arena_alloc, &arena);
+    if (!L) {
+        add(out, LUA_CHK_SYNTAX, "no memory to compile");
+        return false;
+    }
+    if (luaL_loadbufferx(L, src, len, "check", "t") != LUA_OK) {
+        const char *e = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : NULL;
+        add(out, LUA_CHK_SYNTAX, "%s", e ? e : "syntax error");
+        lua_close(L);
+        return false;
+    }
+    const LClosure *cl = (const LClosure *)lua_topointer(L, -1);
+    walk(cl->p, sn);
+    lua_close(L);
+    return true;
+}
+
+void lua_check_in(void *mem, size_t mem_len, const char *src, size_t len, const lua_chk_env_t *env,
+                  lua_chk_result_t *out) {
     memset(out, 0, sizeof(*out));
     out->green = true;
 
-    lua_State *L = luaL_newstate();
-    if (!L) {
+    if (mem_len <= SEEN_BYTES) {
         add(out, LUA_CHK_SYNTAX, "no memory to compile");
         return;
     }
-    if (luaL_loadbufferx(L, src, len, "check", "t") != LUA_OK) {
-        const char *e = lua_tostring(L, -1);
-        add(out, LUA_CHK_SYNTAX, "%s", e ? e : "syntax error");
-        lua_close(L);
+    seen_t *sn = mem;
+    sn->n = 0;
+    if (!collect_literals((uint8_t *)mem + SEEN_BYTES, mem_len - SEEN_BYTES, src, len, sn, out)) {
         return;
     }
 
-    seen_t sn;
-    sn.n = 0;
-    const LClosure *cl = (const LClosure *)lua_topointer(L, -1);
-    walk(cl->p, &sn);
-    lua_close(L);
-
-    /* Direction 1: every name the configuration grants. Exact, no heuristic. */
-    seen_t provided;
-    provided.n = 0;
-    for (int i = 0; i < env->n; i++) {
-        if (env->names[i][0]) {
-            seen_add(&provided, env->names[i]);
-        }
-    }
-
-    /* Direction 2: identifier-shaped constants that name nothing. A typo like
-     * output.set('beacn', ...) lands here. Reported as a warning because the
-     * shape test is a heuristic -- a bare word in a message would also match. */
-    for (int i = 0; i < sn.n; i++) {
-        const char *s = sn.s[i];
-        if (!identifier_shaped(s) || is_api_word(s) || seen_has(&provided, s)) {
+    /* Identifier-shaped constants within one edit of a real name: a typo like
+     * output.set('beacn', ...). A warning, since a bare word in a message
+     * could match too. */
+    for (int i = 0; i < sn->n; i++) {
+        const char *s = sn->s[i];
+        if (!identifier_shaped(s) || is_api_word(s) || provides(env, s)) {
             continue;
         }
-        /* Only report it if it is within one edit of a name that exists.
-         * Anything further away is far more likely to be message text. */
-        for (int j = 0; j < provided.n; j++) {
-            if (edit_distance(s, provided.s[j], 1) <= 1) {
-                add(out, LUA_CHK_UNKNOWN, "'%s' matches no resource -- did you mean '%s'?", s, provided.s[j]);
+        for (int j = 0; j < env->n; j++) {
+            if (env->names[j][0] && edit_distance(s, env->names[j], 1) <= 1) {
+                add(out, LUA_CHK_UNKNOWN, "'%s' matches no resource -- did you mean '%s'?", s, env->names[j]);
                 break;
             }
         }
@@ -229,20 +244,29 @@ void lua_check(const char *src, size_t len, const lua_chk_env_t *env, lua_chk_re
 
     /* The gap that matters: the script uses the API but configuration granted
      * nothing of that kind. */
-    if (seen_has(&sn, "serial") && !env->has_serial) {
+    if (seen_has(sn, "serial") && !env->has_serial) {
         add(out, LUA_CHK_MISSING, "script uses serial.*, but no pin is assigned TX or RX");
     }
-    if (seen_has(&sn, "pixel") && !env->has_pixel) {
+    if (seen_has(sn, "pixel") && !env->has_pixel) {
         add(out, LUA_CHK_MISSING, "script uses pixel.*, but no pin is assigned the LED string");
     }
-    if (seen_has(&sn, "output") && !env->has_output) {
+    if (seen_has(sn, "output") && !env->has_output) {
         add(out, LUA_CHK_MISSING, "script uses output.*, but no pin is assigned an output");
     }
-    if (seen_has(&sn, "input") && !env->has_input) {
+    if (seen_has(sn, "input") && !env->has_input) {
         add(out, LUA_CHK_MISSING, "script uses input.*, but no pin is assigned an input");
     }
 
     if (out->count == 0) {
-        add(out, LUA_CHK_OK, "%d resources, all references resolved", provided.n);
+        int named = 0;
+        for (int i = 0; i < env->n; i++) {
+            named += env->names[i][0] ? 1 : 0;
+        }
+        add(out, LUA_CHK_OK, "%d resources, all references resolved", named);
     }
+}
+
+void lua_check(const char *src, size_t len, const lua_chk_env_t *env, lua_chk_result_t *out) {
+    static uint8_t scratch[LUA_CHECK_SCRATCH_BYTES] __attribute__((aligned(8)));
+    lua_check_in(scratch, sizeof(scratch), src, len, env, out);
 }
