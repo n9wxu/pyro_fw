@@ -60,6 +60,7 @@ static const char *read_header(const char *csv, header_t *h) {
         size_t len = (size_t)(eol - p) < sizeof(line) - 1 ? (size_t)(eol - p) : sizeof(line) - 1;
         memcpy(line, p, len);
         line[len] = '\0';
+        line[strcspn(line, "\r")] = '\0';
         char mode[16];
         unsigned value;
         if (sscanf(line, "# Pyro1: %15s %u", mode, &value) == 2) {

@@ -355,6 +355,37 @@ void test_DAT_08_a_full_rate_log_replays_to_the_same_events(void) {
     TEST_ASSERT_UINT32_WITHIN_MESSAGE(1000, logged.landing_ms, decided.landing_ms, msg);
 }
 
+static int with_crlf_line_ends(const char *lf, char *crlf, int size) {
+    int n = 0;
+    for (; *lf && n < size - 2; lf++) {
+        if (*lf == '\n')
+            crlf[n++] = '\r';
+        crlf[n++] = *lf;
+    }
+    crlf[n] = '\0';
+    return n;
+}
+
+/* [DAT-08] A log saved through a tool that writes CRLF line ends. */
+void test_DAT_08_a_crlf_log_replays_as_its_lf_twin(void) {
+    flight_conditions_t c = {.config = "log_rate=full\npyro1_mode=delay\npyro2_mode=agl\npyro2_value=40\n",
+                             .rate_ms = {12.0f, 5.0f},
+                             .to_landed = true};
+    (void)fly(&ROCKETS[HOP].r, &ISA, &c, 22, 120.0f);
+    static char lf[4 * 1024 * 1024], crlf[5 * 1024 * 1024];
+    TEST_ASSERT_TRUE(test_flight_log_csv(lf, (int)sizeof(lf)) > 0);
+    with_crlf_line_ends(lf, crlf, (int)sizeof(crlf));
+    replay_events_t from_lf, from_crlf;
+    boot_like_hardware(22);
+    TEST_ASSERT_TRUE(replay_run(lf, &from_lf));
+    boot_like_hardware(22);
+    TEST_ASSERT_TRUE_MESSAGE(replay_run(crlf, &from_crlf), "a CRLF log was refused");
+    TEST_ASSERT_EQUAL_INT(from_lf.rows, from_crlf.rows);
+    TEST_ASSERT_EQUAL_UINT32(from_lf.apogee_ms, from_crlf.apogee_ms);
+    TEST_ASSERT_EQUAL_UINT32(from_lf.pyro2_ms, from_crlf.pyro2_ms);
+    TEST_ASSERT_EQUAL_UINT32(from_lf.landing_ms, from_crlf.landing_ms);
+}
+
 void test_DAT_08_a_thinned_log_is_refused(void) {
     flight_conditions_t c = {.config = "log_rate=1hz\n", .rate_ms = {20.0f, 0.0f}, .to_landed = true};
     (void)fly(subsonic(), &ISA, &c, 21, 300.0f);
@@ -503,6 +534,7 @@ int main(void) {
     RUN_TEST(test_DAT_04_the_events_of_a_flight_in_order);
     RUN_TEST(test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise);
     RUN_TEST(test_DAT_08_a_full_rate_log_replays_to_the_same_events);
+    RUN_TEST(test_DAT_08_a_crlf_log_replays_as_its_lf_twin);
     RUN_TEST(test_DAT_08_a_thinned_log_is_refused);
     RUN_TEST(test_FLT_RATE_05_a_late_loop_changes_no_decision);
     RUN_TEST(test_FLT_RT_01_other_activity_delays_no_decision_past_the_bound);
