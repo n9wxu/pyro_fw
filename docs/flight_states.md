@@ -128,7 +128,8 @@ model explaining the readings all the way between (`apogee_detected()`,
 FLT-APO-07). A fall whose climb was not seen that way must last 2 s. There is
 no hold time. It is declared after the true apogee, never before it: within
 0.5 s to 10 km, 1.5 s at 20 km and 2.5 s at 30 km at a sensor noise of 9 Pa
-(`test_FLT_APO_01_...`).
+(`test_FLT_APO_01_...`). The boards measure 1.9 to 2.6 Pa on a battery; 9 Pa
+is the tests' margin (DD-094).
 
 ## The estimators
 

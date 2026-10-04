@@ -88,7 +88,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | Req | Description | Verified By | Status |
 |-----|-------------|-------------|--------|
 | UN-2 | The user needs to verify the system is ready before placing the rocket on the pad | Through SYS-STATUS-01, SYS-STATUS-02 | ✅ |
-| SYS-STATUS-01 | The system shall indicate readiness and faults audibly without requiring a display | Through BUZ-01, BUZ-02, FLT-BOOT-01 | ✅ |
+| SYS-STATUS-01 | The system shall indicate readiness and faults audibly without requiring a display | Through BUZ-01, BUZ-02, FLT-BOOT-01, SNS-PRES-17 | ✅ |
 | SYS-STATUS-02 | The system shall verify pyrotechnic circuit integrity before flight | Through BUZ-CODE-01, PYR-CONT-01, PYR-CONT-02, PYR-HEALTH-01, PYR-HEALTH-02, FLT-BOOT-07, FLT-BOOT-15 | ✅ |
 | BUZ-01 | The system shall announce one of four outcomes | test_flight_pad.c: test_BUZ_01_a_clean_board_says_ok_to_fly, test_BUZ_01_a_pyro_fault_names_its_channel; the suite test_beep_codes.c | ✅ |
 | BUZ-02 | The announcement shall repeat on a configurable cadence, defaulting to every 5 s until launch, so that... | test_beep_codes.c: test_an_active_slot_that_does_not_exist_is_refused, test_a_silent_ok_to_fly_is_refused; test_buzzer.c: test_BUZ_PAT_04_task_armed_on_play, test_BUZ_PAT_06_repeat_count_2_buz02 | ✅ |
@@ -194,6 +194,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | SNS-PRES-11 | A gap of more than 250 ms between samples shall suspend decisions until a whole second of new samples exists | test_fire_control.c: test_PYR_MODE_04_speed_fires_at_the_descent_speed, test_SYS_DEPLOY_04_without_data_only_a_delay_fires; test_mach.c: test_SNS_PRES_10_stuck_in_coast_deploys_nothing, test_SNS_PRES_11_a_gap_across_apogee_waits_for_new_samples, test_SNS_PRES_11_lost_under_a_canopy_waits_for_new_samples, test_SNS_PRES_06_a_pressure_with_no_logarithm_is_no_reading and 1 more | ✅ |
 | SNS-PRES-13 | The system shall keep the last 256 sensor conversions, with the time each was measured, when it was read,... | the suite test_pressure_trace.c | ✅ |
 | SNS-PRES-14 | A reading the board knows its own storage activity disturbed shall not be used, and shall be counted on... | test_collector.c: test_SNS_COL_03_the_handler_does_not_run_inside_a_take, test_SNS_PRES_14_a_flash_operation_marks_the_conversion_it_ran_beside | ✅ |
+| SNS-PRES-17 | On the pad, a sensor that gives no sample for 0.5 s, or that sticks (SNS-PRES-10), shall be a general fault | test_flight_pad.c: test_BUZ_CODE_02_a_general_fault_outranks_a_pyro_fault, test_SNS_PRES_17_a_sensor_that_stops_on_the_pad_is_a_general_fault, test_SNS_PRES_17_a_stuck_sensor_on_the_pad_is_a_general_fault, test_SNS_PRES_17_a_working_sensor_is_no_fault | ✅ |
 | SNS-PRES-15 | An MS5607's pressure and temperature shall be compensated to the datasheet's second order below 20 °C | test_ms5607.c: test_SNS_PRES_15_the_datasheets_example, test_SNS_PRES_15_nothing_changes_at_20_C_and_above, test_SNS_PRES_15_the_second_order_below_20_C, test_SNS_PRES_15_the_very_low_terms_below_minus_15_C and 1 more | ✅ |
 | SNS-PRES-16 | An MS5607 whose PROM fails its CRC shall not be taken for a sensor | test_ms5607.c: test_SNS_PRES_16_the_application_notes_example, test_SNS_PRES_16_one_wrong_bit_in_any_word_is_seen; test_sensor_bringup.c: test_bringup_without_a_sensor, test_SNS_PRES_16_a_prom_that_fails_its_crc_is_no_sensor | ✅ |
 | SNS-REC-01 | The flight software shall not attempt to recover a failed sensor in flight | test_flight_profiles.c: test_WEB_API_10_other_storage_access_is_refused_until_the_record_is_safe, test_SNS_REC_01_a_failed_sensor_is_logged_and_left_alone; Structure: `support/structure_check.py` | ✅ |
@@ -432,7 +433,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host test, a web test or a structural check | 294 |
+| ✅ Verified by a host test, a web test or a structural check | 295 |
 | ⚠️ Not verified, or not wholly | 23 |
 | ❌ Not implemented | 0 |
 | ✅ HW (verified on hardware only) | 13 |

@@ -57,8 +57,10 @@ state_event_t flight_detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     check_pad(ctx, now);
 
     pp_sample_t s;
-    if (!pp_read(&s))
+    if (!pp_read(&s)) {
+        flight_note_no_sample(ctx, now);
         return SEVT_NONE;
+    }
     follow_a_moved_board(ctx, &s, now);
     ctx->ground_pressure = pp_ground_pressure();
     flight_take_sample(ctx, &s, PAD_IDLE);

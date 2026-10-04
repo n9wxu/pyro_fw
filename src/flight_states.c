@@ -196,14 +196,15 @@ void flight_log_event(flight_context_t *ctx, uint8_t event) {
         hal_log_sample(row->time_ms, row->pressure_pa, row->altitude_cm, row->state, row->under_thrust, event);
 }
 
-/* [SNS-PRES-10, SNS-PRES-11, SNS-REC-01] Recorded once each time, and left
- * alone: nothing recovers a sensor in flight. */
 void flight_log_peak(const flight_context_t *ctx) {
     int32_t peak_pa = ctx->peak_pa > 0.0f ? (int32_t)(ctx->peak_pa + 0.5f) : ctx->pressure_pa;
     hal_log_sample(ctx->last_sample - ctx->launch_time, peak_pa, ctx->max_altitude_cm, (uint8_t)ctx->current_state, 0,
                    ctx->peak_lower_bound ? EVT_PEAK_AT_LEAST : EVT_PEAK);
 }
 
+/* [SNS-PRES-10, SNS-PRES-11, SNS-PRES-17, SNS-REC-01] Recorded once each
+ * time, and left alone: nothing recovers a sensor in flight, and on the pad
+ * the fault stands until the board is restarted. */
 void flight_note_sensor(flight_context_t *ctx, const pp_sample_t *s, uint32_t now) {
     (void)now;
     ctx->sensor_lost = false;

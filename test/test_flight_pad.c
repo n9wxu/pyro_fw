@@ -102,8 +102,49 @@ void test_BUZ_CODE_02_a_general_fault_outranks_a_pyro_fault(void) {
     TEST_ASSERT_EQUAL(BR_CHECK_PYRO_1, pad_check_announcement(DIAG_P1_SHORT | DIAG_P2_OPEN));
     TEST_ASSERT_EQUAL(BR_CHECK_PYRO_2, pad_check_announcement(DIAG_P2_OPEN));
     TEST_ASSERT_EQUAL(BR_OK_TO_FLY, pad_check_announcement(0));
-    /* What is not a pad fault changes nothing said. */
-    TEST_ASSERT_EQUAL(BR_OK_TO_FLY, pad_check_announcement(DIAG_RESUMED | DIAG_SENSOR_STUCK | DIAG_SENSOR_LOST));
+    /* A flight that was resumed is not a fault. */
+    TEST_ASSERT_EQUAL(BR_OK_TO_FLY, pad_check_announcement(DIAG_RESUMED));
+    /* [SNS-PRES-17] A sensor that stuck or stopped is one nobody can correct at the rocket. */
+    TEST_ASSERT_EQUAL(BR_GENERAL_FAULT, pad_check_announcement(DIAG_SENSOR_STUCK | DIAG_P1_OPEN));
+    TEST_ASSERT_EQUAL(BR_GENERAL_FAULT, pad_check_announcement(DIAG_SENSOR_LOST));
+}
+
+/* [SNS-PRES-17] The sensor stops answering on the pad: after half a second
+ * the board says general fault and names it, and goes on saying so when the
+ * sensor comes back, until it is restarted. */
+void test_SNS_PRES_17_a_sensor_that_stops_on_the_pad_is_a_general_fault(void) {
+    to_the_pad(36);
+    reach_pad();
+    TEST_ASSERT_TRUE(harness_last_said(BR_OK_TO_FLY));
+    mock_pressure.sensor_type = 0;
+    wait_ms(400);
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, ctx.diag & DIAG_SENSOR_LOST, "a gap shorter than half a second is not a lost sensor");
+    wait_ms(1500);
+    TEST_ASSERT_TRUE((ctx.diag & DIAG_SENSOR_LOST) != 0);
+    TEST_ASSERT_TRUE(harness_last_said(BR_GENERAL_FAULT));
+    mock_pressure.sensor_type = 2;
+    wait_ms(3000);
+    TEST_ASSERT_TRUE_MESSAGE(harness_last_said(BR_GENERAL_FAULT), "a sensor that came back is still one that stopped");
+    TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
+}
+
+/* [SNS-PRES-17] So is one that repeats itself for a second. */
+void test_SNS_PRES_17_a_stuck_sensor_on_the_pad_is_a_general_fault(void) {
+    to_the_pad(37);
+    reach_pad();
+    mock_sensor_stuck = true;
+    wait_ms(2500);
+    TEST_ASSERT_TRUE((ctx.diag & DIAG_SENSOR_STUCK) != 0);
+    TEST_ASSERT_TRUE(harness_last_said(BR_GENERAL_FAULT));
+}
+
+/* A board newly on the pad has had no sample yet: that is not a lost sensor. */
+void test_SNS_PRES_17_a_working_sensor_is_no_fault(void) {
+    to_the_pad(38);
+    reach_pad();
+    wait_ms(60000);
+    TEST_ASSERT_EQUAL_UINT16(0, ctx.diag & (DIAG_SENSOR_LOST | DIAG_SENSOR_STUCK));
+    TEST_ASSERT_TRUE(harness_last_said(BR_OK_TO_FLY));
 }
 
 void test_PYR_CONT_03_a_fault_that_appears_on_the_pad_is_announced(void) {
@@ -446,6 +487,9 @@ int main(void) {
     RUN_TEST(test_GND_CAL_06_a_launch_never_moves_the_reference);
     RUN_TEST(test_GND_CAL_07_a_reference_from_under_a_second_is_reported);
     RUN_TEST(test_FLT_RATE_06_every_waiting_sample_is_taken_in_its_loop);
+    RUN_TEST(test_SNS_PRES_17_a_sensor_that_stops_on_the_pad_is_a_general_fault);
+    RUN_TEST(test_SNS_PRES_17_a_stuck_sensor_on_the_pad_is_a_general_fault);
+    RUN_TEST(test_SNS_PRES_17_a_working_sensor_is_no_fault);
     RUN_TEST(test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds);
     RUN_TEST(test_USB_01_no_launch_and_no_record_while_attached);
     RUN_TEST(test_USB_02_nothing_is_announced_while_attached);

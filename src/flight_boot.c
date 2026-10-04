@@ -141,6 +141,7 @@ state_event_t flight_detect_boot_calibrate(flight_context_t *ctx, uint32_t now) 
 /* The pad record's dwell is time on the pad, so it starts here. */
 void flight_action_on_pad(flight_context_t *ctx, uint32_t now) {
     ctx->boot_timer = now;
+    ctx->last_sample = now; /* the pad's first sample is not yet late [SNS-PRES-17] */
     ctx->ground_pressure = pp_ground_pressure();
     ctx->pressure_pa = ctx->ground_pressure;
 }

@@ -143,7 +143,7 @@ include(FetchContent)
 FetchContent_Declare(
     littlefs
     GIT_REPOSITORY https://github.com/littlefs-project/littlefs
-    GIT_TAG v2.11.2
+    GIT_TAG v2.11.3
 )
 
 # Lua 5.4 for user programs on core1. Only fetched for boards that want it.

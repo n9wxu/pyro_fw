@@ -559,6 +559,44 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-094: Rulings Of 2026-10-03 On The Open Decisions
+The designer's answers to `docs/outstanding_tasks.md` section 2.
+- **Any fault found before launch sounds a fault (SNS-PRES-17).** A sensor
+  that stops or sticks on the pad is a general fault, announced and named,
+  until the board is restarted. Seen twice on the bench: a BMP280 left the
+  bus and the board went on saying OK to fly.
+- **Readings beside a flash operation (FL-1):** the data is left as it is
+  pending a discussion of the root cause. Nothing changed.
+- **The tests' 9 Pa is margin (NS-1).** Boards on a battery measure 1.9 to
+  2.6 Pa; 9 Pa was MK1B on USB alone. The tests still fly at it.
+- **MK1B's slot (SL-1):** a larger flash is on the way. While the image fits,
+  nothing changes.
+- **The three speed defaults stay 0 (R-1).**
+- **Every pyro pulse is ended by hardware (R-2):** a hardware timer, or a
+  fully defined PIO one-shot, for all pyro operations on every board. To
+  build.
+- **Every build runs a script (R-3):** the default script is a hello world
+  that prints the flight's events as they change and claims no I/O, so
+  MK1C-SD, whose J3 carries its SPI bus, runs one too. To build.
+- **The flight log is prepared on the bench (C6).** A Log tab downloads,
+  erases and prepares the log. Preparing creates an empty binary log for a
+  chosen duration at the chosen rate, 1 Hz and 2 minutes by default: the file
+  is opened, erased and closed on the bench. On the pad it is opened before
+  OK to fly sounds, so the pad is quick. A start-up is the pad unless USB is
+  found; then every file is closed and the board is USB's. In test mode the
+  log records the test. A written log stays until the user clears it on the
+  bench. To build.
+- **A firmware update and BOOTSEL are obeyed in flight (L5).** Normally
+  impossible, and wanted in a chamber test to stop a run and reload.
+- **A board's address (ID-1):** every board first takes its address from its
+  identity, which is the flash's id, not a serial number, and two boards can
+  share it. When a board first registers, the web page sees that it has no
+  stored MAC and gives it a random one, which gives it a random address. The
+  MAC is kept in littlefs: it survives a firmware update, and after a whole
+  flash erase the web page assigns one again. To build.
+- **littlefs goes to v2.11.3 now (LFS-1)**, and to v3 once the fork's
+  changes are ready.
+
 ### DD-093: A Free-Running Pressure Collector That Recovers Its Own Bus
 - **Decision:** `src/pressure_collector.c` is one interrupt state machine for
   either sensor. It commands a conversion, waits out the part's worst-case
@@ -674,7 +712,8 @@ rationale and the alternatives considered.
   flights from 60 m to 30 km at sensor noise from 1.2 to 9 Pa: apogee is
   declared never early, and within 0.5 s to 10 km, 1.5 s at 20 km and 2.5 s at
   30 km. 9 Pa is the noisiest bench board's measured figure (MK1B); the tests
-  fly at it.
+  fly at it. (DD-094: that figure was the USB supply; 9 Pa is kept as
+  margin.)
 - **Apogee under the Mach flag (FLT-MACH-04):** a plain "pressure rising for
   N seconds" rule fires early under a large port error, so the rule is the
   gravity signature: the state agreeing with the readings and descending

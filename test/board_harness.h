@@ -18,8 +18,9 @@
 #include <stdint.h>
 
 /* The sensor noise a flight is flown at: the quiet end, below either part's
- * datasheet figure (MS5607 2.4 Pa, BMP280 1.3 Pa), and the noisiest bench
- * board's measured figure, MK1B's 9 Pa [SNS-EST-03, BRD-01]. */
+ * datasheet figure (MS5607 2.4 Pa, BMP280 1.3 Pa), and a noisy end kept as
+ * margin: boards on a battery measure 1.9 to 2.6 Pa, and 9 Pa is what MK1B
+ * read on USB alone [SNS-EST-03, BRD-01, DD-094]. */
 #define SENSOR_RMS_PA 1.2f
 #define NOISY_SENSOR_RMS_PA 9.0f
 

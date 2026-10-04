@@ -25,7 +25,8 @@
 #define DIAG_PYRO_1 (DIAG_P1_OPEN | DIAG_P1_SHORT)
 #define DIAG_PYRO_2 (DIAG_P2_OPEN | DIAG_P2_SHORT)
 #define DIAG_PYRO_ANY (DIAG_PYRO_1 | DIAG_PYRO_2)
-#define DIAG_GENERAL (DIAG_SENSOR_FAIL | DIAG_FS_FAIL)
+/* What cannot be corrected at the rocket [BUZ-CODE-02, SNS-PRES-17]. */
+#define DIAG_GENERAL (DIAG_SENSOR_FAIL | DIAG_FS_FAIL | DIAG_SENSOR_STUCK | DIAG_SENSOR_LOST)
 
 /* The pyro faults of the enabled channels, as DIAG_* bits. */
 uint16_t pad_check_pyro_faults(const hal_continuity_t reading[2], const bool enabled[2]);
