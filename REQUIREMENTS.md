@@ -392,6 +392,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-NET-04**: The system shall advertise a DNS-SD service for automatic discovery. ← SYS-WEB-02
 - **WEB-NET-05**: A frame the USB link cannot take yet shall be held and sent in order as soon as it can, not dropped; one shall be refused only when eight wait already or the host has let the device go. ← SYS-WEB-01
 - **WEB-NET-06**: A board shall have a unique network address that survives restarts, without factory programming: one that has none shall draw one at random, with a subnet other than 0, 1 and 255, and keep it. `/api/status` shall say whether the address was drawn or assigned. ← SYS-WEB-02
+- **WEB-NET-07**: A received frame the device cannot hold -- no buffer free, an empty frame, a frame that will not copy, or one arriving while another is held -- shall be handed back to the USB stack so that reception continues, and no frame shall be copied past the endpoint's buffer. ← SYS-WEB-01
 
 ### The API
 - **WEB-API-01**: The system shall serve device status as JSON at `/api/status`. ← SYS-WEB-01
@@ -400,13 +401,14 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-API-04**: The system shall accept firmware updates at `/api/ota` (POST), answer before it restarts, and answer `Expect: 100-continue`. ← SYS-WEB-01
 - **WEB-API-05**: The system shall trigger a device restart at `/api/reboot` (POST). ← SYS-WEB-01
 - **WEB-API-06**: The system shall serve flight data as CSV at `/api/flight.csv`, framed by Content-Length. ← SYS-WEB-01
-- **WEB-API-07**: All API responses shall include CORS headers. ← SYS-WEB-01
+- **WEB-API-07**: The API shall grant no cross-origin access (no `Access-Control-Allow-Origin`; `Cross-Origin-Resource-Policy: same-origin`), shall refuse with 403 a request whose Host is not one of the board's names or its address, and shall refuse with 403 a POST without `X-Pyro: 1`. ← SYS-WEB-01
 - **WEB-API-08**: The web API and USB shall stay live in flight. From launch until the flight's record is safe, only the flight's record shall be stored: any other storage access shall be refused, a web request with 423, and a web transfer that holds the storage when the flight starts shall be dropped. ← SYS-WEB-01
 - **WEB-API-09**: The system shall erase the flight log on request at `/api/flight/erase` (POST), unless the log is being written. ← DAT-06
 - **WEB-API-10**: A request for a file shall be refused with 423 while the flight log is being written. ← WEB-API-08
 - **WEB-API-11**: `/api/status` shall be self-consistent, taken at one instant of the flight, shall keep its keys and their order, and shall be well-formed JSON whatever the configured rocket id and name contain. ← SYS-WEB-01
 - **WEB-API-12**: The system shall report at `/api/log/space` the bytes the next flight's log has room for, the size of a sample record and the log rates, and refuse with 423 while the flight log holds the storage. ← SYS-WEB-01
 - **WEB-API-13**: The system shall report at `/api/net` what the network has in use, has refused and has dropped, and the USB interface's mounts, unmounts, suspends and resumes, so an HTTP outage can be told apart on the bench. ← SYS-WEB-01
+- **WEB-API-14**: A file shall be named by `/`-separated names of letters, digits, `.`, `_` and `-`, none of them `.` or `..`. Any other path shall be refused by every file operation, and by the web server with 400. ← SYS-WEB-01
 
 ### HTTP
 - **WEB-HTTP-01**: The HTTP server shall treat each connection as a byte stream: a request shall be answered the same however TCP divides it into segments, including a header block or body split at any byte and more than one request in a single segment. ← SYS-WEB-01
@@ -437,6 +439,8 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **OTA-03**: The system shall automatically revert to the previous firmware if the new firmware does not reach normal operation on its first start. ← SYS-OTA-02
 - **OTA-04**: A failed or interrupted update shall not affect the currently running firmware. ← SYS-OTA-02
 - **OTA-05**: Firmware built for a different board shall not be kept: the system shall revert to the previous firmware. ← SYS-OTA-02
+- **OTA-06**: An image longer than the download slot shall be refused with 413 before any of it is written, and no write shall reach past the slot's end, where the filesystem begins. ← OTA-04
+- **OTA-07**: An update shall begin by marking the download slot invalid, so that an interrupted transfer is never swapped in on the strength of an earlier image's mark. ← OTA-04
 
 ---
 

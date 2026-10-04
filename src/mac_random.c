@@ -7,23 +7,22 @@
 #include <stdio.h>
 #include <string.h>
 
-/* splitmix64's finaliser: every input bit reaches every output bit. */
-static uint64_t mix64(uint64_t z) {
+uint64_t mac_mix64(uint64_t z) {
     z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
     z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
     return z ^ (z >> 31);
 }
 
 void mac_pool_init(mac_pool_t *p, uint64_t seed) {
-    p->a = mix64(seed ^ 0x9E3779B97F4A7C15ull);
-    p->b = mix64(p->a ^ 0x632BE59BD9B4E019ull);
+    p->a = mac_mix64(seed ^ 0x9E3779B97F4A7C15ull);
+    p->b = mac_mix64(p->a ^ 0x632BE59BD9B4E019ull);
     p->n = 0;
 }
 
 void mac_pool_add(mac_pool_t *p, uint32_t sample) {
     p->n++;
-    p->a = mix64(p->a ^ ((uint64_t)sample << 32 | p->n));
-    p->b = mix64(p->b + p->a);
+    p->a = mac_mix64(p->a ^ ((uint64_t)sample << 32 | p->n));
+    p->b = mac_mix64(p->b + p->a);
 }
 
 static bool bad_subnet(uint8_t o) {
@@ -31,13 +30,13 @@ static bool bad_subnet(uint8_t o) {
 }
 
 void mac_pool_draw(mac_pool_t *p, uint8_t out[MAC_BYTES]) {
-    uint64_t r = mix64(p->a ^ mix64(p->b));
+    uint64_t r = mac_mix64(p->a ^ mac_mix64(p->b));
     out[0] = 0x02u;
     for (int i = 1; i < MAC_BYTES; i++) {
         out[i] = (uint8_t)(r >> (8 * i));
     }
     while (bad_subnet(out[MAC_BYTES - 1])) {
-        r = mix64(r);
+        r = mac_mix64(r);
         out[MAC_BYTES - 1] = (uint8_t)r;
     }
 }

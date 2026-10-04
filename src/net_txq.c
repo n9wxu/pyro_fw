@@ -43,3 +43,21 @@ net_tx_result_t net_tx_offer(net_txq_t *q, const net_tx_ops_t *ops, void *frame)
     q->n++;
     return NET_TX_HELD;
 }
+
+bool net_rx_take(void **slot, const net_rx_ops_t *ops, const uint8_t *src, uint16_t size) {
+    if (*slot || size == 0)
+        return false;
+    void *f = ops->alloc(size);
+    if (!f)
+        return false;
+    if (!ops->fill(f, src, size)) {
+        ops->release(f);
+        return false;
+    }
+    *slot = f;
+    return true;
+}
+
+uint16_t net_tx_copy_len(uint32_t frame_len, uint16_t cap) {
+    return frame_len <= cap ? (uint16_t)frame_len : 0u;
+}

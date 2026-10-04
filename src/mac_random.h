@@ -27,6 +27,9 @@ typedef struct {
     uint32_t n;
 } mac_pool_t;
 
+/* splitmix64's finaliser: every input bit reaches every output bit. */
+uint64_t mac_mix64(uint64_t z);
+
 void mac_pool_init(mac_pool_t *p, uint64_t seed);
 
 /* One sample; any width, any quality. */
