@@ -560,6 +560,38 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-096: lwIP Holds What The Rings Do Not
+- **Decision:** lwIP's memory is sized to the HTTP engine's rings, not to
+  its own defaults. A connection's bytes wait in its two 2 kB rings; lwIP
+  holds two segments each way beyond them (`TCP_SND_BUF`, `TCP_WND`). The
+  receive pool is 12 buffers, where it was 24; the heap is 20,000 bytes,
+  where it was 8,000; the segment pool is 32. Asserts are compiled out and
+  IP reassembly and fragmentation are off: one link, one MTU.
+- **Why:** the heap was 8,000 bytes against a 5,840-byte send buffer for
+  each connection, so two or three streams exhausted it (N1, DD-070), while
+  36 kB sat in a receive pool whose high-water mark was 12 under two
+  uploads at once.
+- **Measured on MK1C,** one load round (the stream check, twelve fetches
+  three at a time, six at once, two 200 kB uploads beside a fetch):
+
+  | | Before | After |
+  |---|---|---|
+  | Heap refusals | 5,483 | 0 to 2 |
+  | Heap high-water mark | 7,916 of 8,000 | 17,540 of 20,000 |
+  | Receive pool high-water mark | 12 of 24 | 8 of 12 |
+  | A 74 kB file, one stream | 0.14 s | 0.15 s |
+  | Flash, MK1B image | 374,272 | 358,144 |
+  | RAM, MK1C (data + bss) | 253,236 | 246,644 |
+
+  The two refusals left are a write of about 2 kB finding no single free
+  block; the transport offers it again on its next pass.
+- **Two segments, not one or four:** a host that acknowledges every second
+  segment answers a pair at once, and four each way bought no speed on a
+  link whose round trip is a millisecond.
+- **What it does not change:** 16 connections may still be open against 4
+  exchanges. `docs/smallest_tcp_evaluation.md` has the case for replacing
+  the stack; this makes the memory fit either way.
+
 ### DD-095: The Review Of 2026-10-02, Applied To Main
 `docs/code_review_2026-10-02_resolution.md` lists each finding. What it
 decided beyond the fixes themselves:
