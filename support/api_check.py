@@ -55,6 +55,8 @@ def req(method, path, body=None, timeout=10):
     r = urllib.request.Request(BASE + path, data=data, method=method)
     if data is not None:
         r.add_header("Content-Type", "text/plain")
+    if method == "POST":
+        r.add_header("X-Pyro", "1")  # the board refuses a POST without it
     try:
         with urllib.request.urlopen(r, timeout=timeout) as resp:
             return resp.status, dict(resp.headers), resp.read()
@@ -128,20 +130,38 @@ check("status: usb_attached is true", st0.get("usb_attached") is True, str(st0.g
 if st0["uptime"] > 5000:
     check("status: a board on USB is silent", st0.get("buzzer_active") is False, str(st0.get("buzzer_active")))
 
-# Every one-shot response is framed and carries CORS.
+# [WEB-HTTP-02, WEB-API-07] Every one-shot response is framed, and grants no
+# other origin access.
 for method, path, want in (("GET", "/www/no_such_file.html", 404), ("POST", "/api/no_such_route", 404),
                            ("GET", "/api/config", 200), ("GET", "/api/pins", 200),
                            ("GET", "/api/pins/caps", 200), ("GET", "/api/beeps", 200),
                            ("GET", "/api/flight.csv", 200), ("GET", "/api/log/space", 200),
                            ("GET", "/api/net", 200), ("GET", "/api/limits", 200)):
     code, hdr, body = req(method, path, "" if method == "POST" else None)
-    cors = hdr.get("Access-Control-Allow-Origin") == "*"
-    check(f"{method} {path} -> {want} with CORS", code == want and cors, f"{code} cors={cors}")
+    same_origin = ("Access-Control-Allow-Origin" not in hdr
+                   and hdr.get("Cross-Origin-Resource-Policy") == "same-origin")
+    check(f"{method} {path} -> {want}, same origin only", code == want and same_origin,
+          f"{code} same_origin={same_origin}")
+
+# Requests from another site's page: a POST without X-Pyro, and a Host that is
+# not the board's.
+r = urllib.request.Request(BASE + "/api/test_mode/off", data=b"", method="POST")
+try:
+    code = urllib.request.urlopen(r, timeout=10).status
+except urllib.error.HTTPError as e:
+    code = e.code
+check("POST without X-Pyro -> 403", code == 403, str(code))
+r = urllib.request.Request(BASE + "/api/status", headers={"Host": "attacker.example"})
+try:
+    code = urllib.request.urlopen(r, timeout=10).status
+except urllib.error.HTTPError as e:
+    code = e.code
+check("a Host that is not the board -> 403", code == 403, str(code))
 code, hdr, body = req("GET", "/www/no_such_file.html")
 check("404 body is framed by Content-Length", hdr.get("Content-Length") == str(len(body)),
       f"len={hdr.get('Content-Length')} body={len(body)}")
 
-# The erase endpoint, and the empty log reads as the column header.
+# [WEB-API-09] The erase endpoint, and the empty log reads as the column header.
 code, _, body = req("POST", "/api/flight/erase")
 check("POST /api/flight/erase -> 200", code == 200 and b"erased" in body, f"{code} {body[:60]!r}")
 code, _, body = req("GET", "/api/flight.csv")

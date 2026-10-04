@@ -1,245 +1,222 @@
 #!/usr/bin/env python3
-"""Pyro MK1B Installer — flash firmware and upload web files.
+"""Install firmware and web files on a Pyro board.
 
-Run from the downloaded artifact directory:
-  python3 install.py
+Run from a checkout, or from the release's pyro-support.zip with the board's
+images beside it:
+
+  python3 support/install.py [--board mk1c] [--host 192.168.N.1]
+
+The board is the one the device reports on /api/status; with no device
+answering, --board names it, and a --board that disagrees with the device is
+refused. Images are the release's fw_<board>.uf2, fw_<board>_fota.bin and
+fw_<board>_bootloader.uf2, or a local build's pyro_fw_<board>.uf2 and the
+pyro_fw_c_fota_image.bin beside it. Every board is an RP2040, so another
+board's image installs and runs, with the wrong pin map.
+
+Exits non-zero when anything did not install.
 """
-import subprocess, sys, os, time, glob
+import argparse
+import glob
+import os
+import shutil
+import subprocess
+import sys
+import time
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_DIR = os.path.dirname(SCRIPT_DIR)  # parent of support/
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pyro_http import BoardError, board_id_of, find_picotool, get_json, ping, post, wait_down, wait_up  # noqa: E402
 
-# Find files relative to base directory — return the newest match by mtime
-# so that stale build_test/ or build/host/ artifacts are not picked up over
-# a freshly-built build/.
-def find(pattern):
-    matches = glob.glob(os.path.join(BASE_DIR, "**", pattern), recursive=True)
-    if not matches:
-        return None
-    return max(matches, key=os.path.getmtime)
-
-BOOTLOADER = find("pico_fota_bootloader.uf2")
-APP_UF2 = find("pyro_fw_mk1c.uf2") or find("pyro_fw_mk1b.uf2") or find("pyro_fw_c.uf2")
-FOTA_BIN = find("pyro_fw_c_fota_image.bin")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WWW_DIR = os.path.join(BASE_DIR, "www") if os.path.isdir(os.path.join(BASE_DIR, "www")) else None
+VERSION_FILE = os.path.join(BASE_DIR, "VERSION")
+VERSION = open(VERSION_FILE).read().strip() if os.path.exists(VERSION_FILE) else None
 
-VERSION = "unknown"
-vf = os.path.join(BASE_DIR, "VERSION")
-if os.path.exists(vf):
-    VERSION = open(vf).read().strip()
 
-HOST = "192.168.7.1"
+def newest(pattern):
+    matches = glob.glob(os.path.join(BASE_DIR, "**", pattern), recursive=True)
+    return max(matches, key=os.path.getmtime) if matches else None
+
+
+def images_for(board):
+    """The bootloader, application and OTA images for board, each or None."""
+    app = newest(f"fw_{board}.uf2")
+    if app:
+        return {"bootloader": newest(f"fw_{board}_bootloader.uf2"), "app": app,
+                "fota": newest(f"fw_{board}_fota.bin")}
+    app = newest(f"pyro_fw_{board}.uf2")
+    if not app:
+        return {"bootloader": None, "app": None, "fota": None}
+    d = os.path.dirname(app)
+    fota = os.path.join(d, "pyro_fw_c_fota_image.bin")
+    boot = os.path.join(d, "_deps", "pico_fota_bootloader-build", "pico_fota_bootloader.uf2")
+    return {"bootloader": boot if os.path.exists(boot) else None, "app": app,
+            "fota": fota if os.path.exists(fota) else None}
+
 
 def run(cmd, timeout=30):
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return r.stdout + r.stderr, r.returncode
     except subprocess.TimeoutExpired:
-        return "", 1
+        return "timed out", 1
     except FileNotFoundError:
         return "command not found", 127
 
-def ping(host):
-    _, rc = run(["ping", "-c", "1", "-t", "2", host])
-    return rc == 0
 
-def curl_post(url, filepath):
-    with open(filepath, "rb") as f:
-        data = f.read()
+def upload_www(host):
+    """Every file in www/, then VERSION as /www/version.txt, which the page
+    shows as the web files' version. Returns how many failed."""
+    files = sorted(f for f in glob.glob(os.path.join(WWW_DIR, "*")) if os.path.isfile(f))
+    uploads = [(os.path.basename(f), open(f, "rb").read()) for f in files]
+    if VERSION:
+        uploads.append(("version.txt", (VERSION + "\n").encode()))
+    failed = 0
+    for name, data in uploads:
+        try:
+            post(host, f"/www/{name}", data, timeout=30)
+            print(f"    ✓ /www/{name}")
+        except BoardError as e:
+            print(f"    ✗ /www/{name}: {e}")
+            failed += 1
+    return failed
+
+
+def came_back(host, board):
+    """The board's status once it answers again, checked against board."""
+    print("  Waiting for the board...", flush=True)
+    status = wait_up(host, timeout_s=60)
+    if not status:
+        print(f"  ✗ no answer from {host}")
+        return None
+    got = board_id_of(status)
+    print(f"  up: {got or '?'} v{status.get('fw_version', '?')}")
+    if got != board:
+        print(f"  ✗ the board reports {got!r}, not {board!r}")
+        return None
+    return status
+
+
+def finish(host, board):
+    if not came_back(host, board):
+        return 1
+    if not WWW_DIR:
+        print("\n✓ Firmware installed (no web files found).")
+        return 0
+    print("\nUploading web files...")
+    if upload_www(host):
+        print("\n✗ Some web files did not upload.")
+        return 1
+    print("\n✓ Installation complete!")
+    return 0
+
+
+def flash_bootsel(images):
+    print("\n1. Hold BOOTSEL and plug in USB")
+    input("   Press Enter when the Pico drive appears...")
+    drive = next((m for d in ["/Volumes/RPI-RP2", "/media/*/RPI-RP2", "/mnt/*/RPI-RP2"] for m in glob.glob(d)), None)
+    drive = drive or input("   Enter Pico drive path: ").strip()
+    if not os.path.isdir(drive):
+        print(f"Error: {drive} not found")
+        return False
+    print(f"\n2. Copying the bootloader to {drive}...")
+    shutil.copy2(images["bootloader"], drive)
+    print("\n3. Hold BOOTSEL and plug in USB again")
+    input("   Press Enter when the Pico drive appears...")
+    print(f"\n4. Copying the application to {drive}...")
+    shutil.copy2(images["app"], drive)
+    return True
+
+
+def flash_picotool(images):
+    picotool = find_picotool()
+    if not picotool:
+        print("Error: picotool not found on PATH or under ~/.pico-sdk")
+        return False
+    print("\nFlashing via picotool...")
+    out, rc = run([picotool, "reboot", "-u", "-f", "--vid", "0x2E8A", "--pid", "0x4002"])
+    if rc != 0:
+        input("  picotool could not reach the board — hold BOOTSEL, plug in USB, then press Enter...")
+    else:
+        time.sleep(2)
+    for what in ("bootloader", "app"):
+        print(f"  Loading the {what}...")
+        out, rc = run([picotool, "load", images[what]])
+        if rc != 0:
+            print(f"  Error: {out}")
+            return False
+    run([picotool, "reboot"])
+    return True
+
+
+def flash_ota(host, images):
+    print("\nUploading firmware via OTA...")
     try:
-        import urllib.request
-        req = urllib.request.Request(url, data=data,
-            headers={"Content-Type": "application/octet-stream"}, method="POST")
-        urllib.request.urlopen(req, timeout=120)
-        return True
-    except:
-        return True  # device reboots mid-response
+        print("  " + post(host, "/api/ota", open(images["fota"], "rb").read(), timeout=120).strip())
+    except BoardError as e:
+        print(f"  ✗ the board refused the image: {e}")
+        return False
+    if not wait_down(host, timeout_s=20):
+        print("  ✗ the board did not restart")
+        return False
+    return True
 
-def upload_www(host, www_dir):
-    ok = 0
-    for f in sorted(glob.glob(os.path.join(www_dir, "*"))):
-        if os.path.isfile(f):
-            name = os.path.basename(f)
-            try:
-                with open(f, "rb") as fh:
-                    data = fh.read()
-                import urllib.request
-                req = urllib.request.Request(f"http://{host}/www/{name}",
-                    data=data, method="POST")
-                urllib.request.urlopen(req, timeout=10)
-                print(f"    ✓ /www/{name}")
-                ok += 1
-            except Exception as e:
-                print(f"    ✗ /www/{name}: {e}")
-    return ok
-
-def wait_for_device(host, timeout=20):
-    print(f"  Waiting for device...", end="", flush=True)
-    for i in range(timeout):
-        time.sleep(1)
-        print(".", end="", flush=True)
-        if ping(host):
-            print(f" up!")
-            return True
-    print(" timeout")
-    return False
 
 def main():
-    print("=" * 50)
-    print(f"  Pyro MK1B Installer v{VERSION}")
-    print("=" * 50)
-    print()
+    ap = argparse.ArgumentParser(description="Install firmware and web files on a Pyro board")
+    ap.add_argument("--host", default="192.168.7.1", help="the board's address (192.168.N.1 or pyro.local)")
+    ap.add_argument("--board", help="mk1a, mk1b, mk1c...; required when no board answers")
+    args = ap.parse_args()
 
-    # Show what we found
-    print("Files found:")
-    print(f"  Bootloader: {BOOTLOADER or 'NOT FOUND'}")
-    print(f"  App (UF2):  {APP_UF2 or 'NOT FOUND'}")
-    print(f"  App (OTA):  {FOTA_BIN or 'NOT FOUND'}")
-    print(f"  Web files:  {WWW_DIR or 'NOT FOUND'}")
-    print()
+    print("=" * 50)
+    print(f"  Pyro installer v{VERSION or 'unknown'}")
+    print("=" * 50)
 
-    # Check if device is already running
-    device_up = ping(HOST)
+    device_up = ping(args.host)
+    status = get_json(args.host) if device_up else None
+    reported = board_id_of(status)
+    if args.board and reported and args.board != reported:
+        print(f"Refused: the board at {args.host} is {reported}, not {args.board}.")
+        return 1
+    board = args.board or reported
+    if not board:
+        print(f"No board answers at {args.host}: name it with --board.")
+        return 1
+
+    images = images_for(board)
+    print(f"\nBoard: {board}" + (f" at {args.host}, v{status.get('fw_version', '?')}" if status else ""))
+    print(f"  Bootloader: {images['bootloader'] or 'NOT FOUND'}")
+    print(f"  App (UF2):  {images['app'] or 'NOT FOUND'}")
+    print(f"  App (OTA):  {images['fota'] or 'NOT FOUND'}")
+    print(f"  Web files:  {WWW_DIR or 'NOT FOUND'}\n")
 
     if device_up:
-        print(f"Device found at {HOST}")
-        print()
-        print("Options:")
-        print("  1. OTA update (firmware + web files)")
-        print("  2. Web files only")
-        print("  3. Full flash via picotool (bootloader + app + web)")
-        print("  4. Exit")
-        choice = input("\nSelect [1]: ").strip() or "1"
+        print("  1. OTA update (firmware + web files)\n  2. Web files only\n"
+              "  3. Full flash via picotool (bootloader + app + web)\n  4. Exit")
+        choice = {"1": "ota", "2": "www", "3": "picotool"}.get(input("\nSelect [1]: ").strip() or "1")
     else:
-        print(f"No device found at {HOST}")
-        print()
-        print("Options:")
-        print("  1. Full flash via BOOTSEL (hold BOOTSEL button, plug USB)")
-        print("  2. Full flash via picotool")
-        print("  3. Exit")
-        choice = input("\nSelect [1]: ").strip() or "1"
+        print(f"No board answers at {args.host}.")
+        print("  1. Full flash via BOOTSEL (hold BOOTSEL, plug USB)\n  2. Full flash via picotool\n  3. Exit")
+        choice = {"1": "bootsel", "2": "picotool"}.get(input("\nSelect [1]: ").strip() or "1")
+    if not choice:
+        return 0
 
-        if choice == "3":
-            return
-        if choice == "1":
-            if not BOOTLOADER or not APP_UF2:
-                print("Error: UF2 files not found"); return
-            print("\n1. Hold BOOTSEL and plug in USB")
-            input("   Press Enter when the Pico drive appears...")
-            # Find mounted Pico drive
-            pico_drive = None
-            for d in ["/Volumes/RPI-RP2", "/media/*/RPI-RP2", "/mnt/*/RPI-RP2"]:
-                matches = glob.glob(d)
-                if matches:
-                    pico_drive = matches[0]
-                    break
-            if not pico_drive:
-                pico_drive = input("   Enter Pico drive path: ").strip()
-            if not os.path.isdir(pico_drive):
-                print(f"Error: {pico_drive} not found"); return
-
-            print(f"\n2. Copying bootloader to {pico_drive}...")
-            import shutil
-            shutil.copy2(BOOTLOADER, pico_drive)
-            print("   Done. Device will reboot.")
-            print("\n3. Hold BOOTSEL and plug in USB again")
-            input("   Press Enter when the Pico drive appears...")
-
-            print(f"\n4. Copying application to {pico_drive}...")
-            shutil.copy2(APP_UF2, pico_drive)
-            print("   Done. Device will reboot.")
-
-            came_up = wait_for_device(HOST, timeout=60)
-            if came_up and WWW_DIR:
-                print("\n5. Uploading web files...")
-                upload_www(HOST, WWW_DIR)
-                print("\n✓ Installation complete!")
-            elif came_up:
-                print("\n✓ Firmware installed (no web files found).")
-            else:
-                print("\n  Web files NOT uploaded — run option 2 once the device is reachable.")
-            return
-
-        # choice == "2" falls through to picotool below
-        choice = "3"
-
-    # OTA update
-    if choice == "1" and device_up:
-        if not FOTA_BIN:
-            print("Error: OTA binary not found"); return
-        print(f"\nUploading firmware via OTA...")
-        curl_post(f"http://{HOST}/api/ota", FOTA_BIN)
-        print("  Firmware uploaded, device rebooting...")
-        time.sleep(3)
-        came_up = wait_for_device(HOST, timeout=60)
-        if came_up and WWW_DIR:
-            print("\nUploading web files...")
-            upload_www(HOST, WWW_DIR)
-            print("\n✓ Update complete!")
-        elif came_up:
-            print("\n✓ Firmware updated (no web files found).")
-        else:
-            print("\n  Web files NOT uploaded — run option 2 once the device is reachable.")
-        return
-
-    # Web files only
-    if choice == "2" and device_up:
+    if choice == "www":
         if not WWW_DIR:
-            print("Error: www directory not found"); return
-        print("\nUploading web files...")
-        upload_www(HOST, WWW_DIR)
-        print("\n✓ Web files updated!")
-        return
+            print("Error: www directory not found")
+            return 1
+        return 1 if upload_www(args.host) else 0
 
-    # Picotool flash
-    if choice == "3":
-        picotool = None
-        for p in ["picotool", os.path.expanduser("~/.pico-sdk/picotool/2.2.0-a4/picotool/picotool")]:
-            out, rc = run([p, "version"])
-            if rc != 127:
-                picotool = p
-                break
-        if not picotool:
-            print("Error: picotool not found"); return
-        if not BOOTLOADER or not APP_UF2:
-            print("Error: UF2 files not found"); return
+    need = ["fota"] if choice == "ota" else ["bootloader", "app"]
+    missing = [k for k in need if not images[k]]
+    if missing:
+        print(f"Error: no {', '.join(missing)} image for {board}")
+        return 1
+    flashed = {"ota": lambda: flash_ota(args.host, images), "bootsel": lambda: flash_bootsel(images),
+               "picotool": lambda: flash_picotool(images)}[choice]()
+    if not flashed:
+        return 1
+    return finish(args.host, board)
 
-        print(f"\nFlashing via picotool...")
-        print("  Forcing BOOTSEL...")
-        out, rc = run([picotool, "reboot", "-u", "-f", "--vid", "0x2E8A", "--pid", "0x4002"])
-        if rc != 0:
-            input("  picotool couldn't reach device — hold BOOTSEL, plug in USB, then press Enter...")
-        else:
-            time.sleep(2)
-
-        print("  Loading bootloader...")
-        out, rc = run([picotool, "load", BOOTLOADER])
-        if rc != 0:
-            print(f"  Error: {out}"); return
-
-        print("  Loading application...")
-        out, rc = run([picotool, "load", APP_UF2])
-        if rc != 0:
-            print(f"  Error: {out}"); return
-
-        print("  Rebooting...")
-        run([picotool, "reboot"])
-
-        came_up = wait_for_device(HOST, timeout=60)
-        if came_up and WWW_DIR:
-            print("\nUploading web files...")
-            upload_www(HOST, WWW_DIR)
-            print("\n✓ Installation complete!")
-        elif came_up:
-            print("\n✓ Firmware installed (no web files found).")
-        else:
-            print("\n  Web files NOT uploaded — run option 2 once the device is reachable.")
-        return
-
-    if choice == "4":
-        return
-
-    print("Invalid selection")
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

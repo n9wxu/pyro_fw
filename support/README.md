@@ -80,7 +80,7 @@ With options and no host it tests `pyro.local`.
 | Section | Tests |
 |---------|-------|
 | Connectivity | ping |
-| HTTP API | status JSON, config INI, CORS headers |
+| HTTP API | status JSON, config INI, same-origin headers |
 | File Serving | index.html, app.js, style.css with size validation |
 | File Consistency | 5x repeated downloads, size comparison |
 | Error Handling | 404 response |
@@ -258,8 +258,11 @@ octet the warning at the end means nothing.
 ```
 
 Uploads `build/pyro_fw_c_fota_image.bin` (by default) to `http://pyro.local/api/ota`,
-the A/B bootloader's download slot. Device reboots automatically. The image
-name does not carry the board: send each board its own build's.
+the A/B bootloader's download slot, with the `X-Pyro: 1` header the board asks
+of a POST (DD-083). Device reboots automatically. The image name does not
+carry the board: send each board its own build's. An image for another board
+refuses to arm or fire and declines to commit, so the bootloader puts the
+previous one back (DD-081).
 
 ### Via BOOTSEL (first time only)
 
@@ -274,12 +277,16 @@ name does not carry the board: send each board its own build's.
 python3 support/install.py
 ```
 
-Run from a downloaded CI artifact. It pings `192.168.7.1`: with a board there
-it offers OTA with the web files, the web files alone, or a full picotool
-flash; without one, a BOOTSEL copy or picotool. It takes the newest matching
-file anywhere under the directory above `support/`, prefers
-`pyro_fw_mk1c.uf2` to `pyro_fw_mk1b.uf2` and never picks `pyro_fw_mk1a.uf2`,
-so give it one board's files.
+Run from a checkout, or from a release's `pyro-support.zip` with the board's
+images beside it. The board is the one the device reports on `/api/status`
+(`--host`, default `192.168.7.1`); with no device answering, `--board` names
+it, and a `--board` that disagrees with the device is refused. With a board
+answering it offers OTA with the web files, the web files alone, or a full
+picotool flash; without one, a BOOTSEL copy or picotool. It takes the newest
+`fw_<board>.uf2`, `fw_<board>_fota.bin` and `fw_<board>_bootloader.uf2`
+anywhere under the directory above `support/`, or else a local build's
+`pyro_fw_<board>.uf2` and the `pyro_fw_c_fota_image.bin` beside it. It exits
+non-zero when anything did not install.
 
 ## Web Files
 
@@ -288,7 +295,9 @@ so give it one board's files.
 ```
 
 Uploads `www/` directory contents to the device's littlefs filesystem, one
-`POST /www/<name>` each (default host `pyro.local`).
+`POST /www/<name>` each (default host `pyro.local`), then `VERSION` as
+`/www/version.txt`, which the page shows as the web files' version. The
+installer uploads the same files.
 
 ## Self-Update from GitHub Releases
 

@@ -76,6 +76,8 @@ def framed(status, hdrs, body):
 
 def request(method, path, body=b"", extra=""):
     h = f"{method} {path} HTTP/1.1\r\nHost: {HOST}\r\n{extra}"
+    if method == "POST":
+        h += "X-Pyro: 1\r\n"  # the board refuses a POST without it
     if body or method == "POST":
         h += f"Content-Length: {len(body)}\r\n"
     return h.encode() + b"\r\n" + body
@@ -116,9 +118,20 @@ check(f"{len(big_head)}-byte header block", st == 200 and framed(st, h, b))
 
 st, h, b = exchange([b"PUT /api/status HTTP/1.1\r\n\r\n"])
 check("unsupported method -> 405 with Allow", st == 405 and "allow" in h, f"{st} {h.get('allow')}")
-st, h, b = exchange([b"POST /api/config HTTP/1.1\r\nContent-Length: 99999\r\n\r\n"])
+st, h, b = exchange([f"POST /api/config HTTP/1.1\r\nHost: {HOST}\r\nX-Pyro: 1\r\n"
+                      "Content-Length: 99999\r\n\r\n".encode()])
 check("oversized body -> 413 before it is sent", st == 413 and framed(st, h, b), f"{st}")
-st, h, b = exchange([b"HEAD /api/status HTTP/1.1\r\n\r\n"])
+st, h, b = exchange([f"POST /api/ota HTTP/1.1\r\nHost: {HOST}\r\nX-Pyro: 1\r\n"
+                      "Content-Length: 16777216\r\n\r\n".encode()])
+check("an image longer than the download slot -> 413 before it is sent (OTA-06)", st == 413 and framed(st, h, b),
+      f"{st}")
+st, h, b = exchange([f"POST /api/reboot HTTP/1.1\r\nHost: {HOST}\r\nX-Pyro: 1\r\n\r\n".encode()])
+check("a POST with no Content-Length -> 411 (WEB-HTTP-04)", st == 411, f"{st}")
+st, h, b = exchange([request("POST", "/www/../stream_check.txt", b"x")])
+check("an upload whose path climbs out of /www -> 400 (WEB-API-14)", st == 400, f"{st} {b[:60]!r}")
+st, h, b = exchange([request("GET", "/www/../config.ini")])
+check("a GET whose path climbs out of /www -> 400 (WEB-API-14)", st == 400, f"{st} {b[:60]!r}")
+st, h, b = exchange([request("HEAD", "/api/status")])
 check("HEAD: headers, no body", st == 200 and b == b"" and int(h.get("content-length", 0)) > 500)
 
 # ── Uploads round-trip, in odd pieces ───────────────────────────────

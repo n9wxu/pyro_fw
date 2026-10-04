@@ -38,7 +38,8 @@ def get_text(host, path):
 
 
 def post(host, path):
-    req = urllib.request.Request(f"http://{host}{path}", data=b"", method="POST")
+    req = urllib.request.Request(f"http://{host}{path}", data=b"", method="POST",
+                                 headers={"X-Pyro": "1"})  # the board refuses a POST without it
     try:
         with urllib.request.urlopen(req, timeout=5) as r:
             return r.status, json.loads(r.read() or b"{}")
