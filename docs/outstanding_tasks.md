@@ -91,8 +91,11 @@ closed; R-2, R-3, C6 and ID-1 are section 3's to build.
 
 | ID | Question | What is known | Recommendation |
 |---|---|---|---|
-| FL-1 | **A reading with a flash operation beside it** is discarded on every board (SNS-PRES-14). Your ruling: "Leave the data. Discussion on root-cause to follow." Nothing is changed until that discussion | Measured on a battery, against each board's ordinary 2 to 2.6 Pa: MK1B's MS5607 8.5 to 17 Pa rms, 43 at worst; MK1C's 3.4 to 3.9 Pa, 12 at worst; MK1B's BMP280 no effect. On MK1C a 30 km bench flight discarded about 4 readings a second | To confirm: whether "leave the data" means keep discarding, as today, or keep the readings |
+| FL-1 | **A reading with a flash operation beside it** is discarded on every board (SNS-PRES-14). Your ruling: "Leave the data. Discussion on root-cause to follow." Nothing is changed until that discussion | Measured on a battery, against each board's ordinary 2 to 2.6 Pa: MK1B's MS5607 8.5 to 17 Pa rms, 43 at worst; MK1C's 3.4 to 3.9 Pa, 12 at worst; MK1B's BMP280 no effect. On MK1C a 30 km bench flight discarded about 4 readings a second | To confirm: whether "leave the data" means keep discarding, as today, or keep the readings. A consequence seen 2026-10-04: uploading the web files writes flash for longer than 0.5 s, every reading in that time is discarded, and the pad latches `sensor_lost` (SNS-PRES-17) until a restart. MK1A, MK1B and MK1C do it; MK1C-SD, whose files are on the card, does not |
 | N1 | **lwIP's heap.** | 8,000 bytes against a 5,840-byte send buffer per connection: two or three streaming connections exhaust it (4,493 refusals in one G4 round after DD-070) | — |
+| GT-1 | **A ground-test abort re-runs channel 1** (review, Low). GND-TEST-10 restarts the whole procedure | — | Rule whether an aborted test resumes at the channel it reached |
+| RS-1 | **Resume timing** (review, Low). A resumed flight waits the 2.5 s settle, and the 4 s resume deadline is shorter than the 5 s the sensor is given to come up (DD-086) | — | Decide the three times together |
+| RAM-1 | **RAM on the Lua boards is nearly full** (DD-095). MK1C has about 700 bytes spare; a 2 kB heap is reserved that nothing uses | `arm-none-eabi-size`, the map's `.heap` | Set `PICO_HEAP_SIZE` to what newlib's own start-up needs, after proving nothing reaches `_sbrk` |
 
 ---
 
@@ -152,6 +155,10 @@ that owns the subject.
 | R-7 | MK1C: a fire with the bus shorted | gated at its deadline, and the next fire still delivers (PYR-ARM-03, PYR-FAULT-01) | MK1C, a short on the firing bus |
 | P1 | MK1C's presence pulse | 8 ms on BIAS_BUS | a scope |
 | — | The arming path independent of software | with the mechanical disconnect in, a commanded ground-test FIRE puts no current through a dummy load, on each board | a dummy load and a meter |
+| CR-36 | The Lua pyro bridge's hold level and dead band | each side holds its commanded level; neither overlaps the other | a scope on a bridge pad |
+| CR-35 | Lua PWM at 0, 50 and 100 | steady low, 2 s period at half, steady high | a scope or an LED |
+| CR-13 | A board whose `board.txt` names another board | FAULT, `board_mismatch` on `/api/status`, `!BOARD MISMATCH` on the UART | a board to restamp and restore |
+| SD-OTA | MK1C-SD refused one update | the update from a working-tree 2.2.3 image to the review branch rolled back once; from v2.2.4 it took. Repeat from each release | the release images |
 
 ---
 
@@ -173,7 +180,6 @@ that owns the subject.
 | ID | What | Checked |
 |---|---|---|
 | H3-1 | `docs/wasm/pyro-sim.js` numbers the states as they were before the descent phases (`LANDED: 7`) and calls `_sim_clear_telemetry`, which `scripts/build_wasm.sh` does not export | read 2026-10-03 |
-| H3-2 | `scripts/build_wasm.sh` fails for the `sim_mk1*` variants and leaves out sources they need | reported 2026-09-28, not rerun |
 | H3-4 | `support/install.py`, `update_from_release.py`, `flash_picotool.sh` and `test_network.py` default to 192.168.7.1; a board's address is 192.168.N.1 with N from its identity | read 2026-10-03 |
 | H3-10 | `support/install.py` and `update_from_release.py` do not find a board by itself: they need its address given (H3-4), and `install.py` takes no argument for one | read 2026-10-03 |
 | H3-5 | `support/install.py` looks for the MK1C image, then MK1B's, and never picks MK1A's or MK1C-SD's | read 2026-10-03 |
@@ -182,6 +188,10 @@ that owns the subject.
 | H3-8 | `hal_pressure_fifo_get()` and its 5-sample batches in `hal_common.c` have no caller | checked 2026-10-03 |
 | H4-1 | `support/pressure_trace.py` still reports zeros, range rejects and missed slots, which the firmware no longer produces (DD-093), and nothing in it shows the collector's failures by cause | read 2026-10-03 |
 | H4-2 | `src/flight_events.h` keeps events 5, 6 and 8 (LOCK, UNLOCK, LOCK_FALLBACK) for logs written before DD-092, and `www/app.js` still reads them | by decision; remove both when no such log is of interest |
+| REL-1 | `release.yml` does not build or publish `mk1c_sd` | read 2026-10-04 |
+| WEB-1 | `test/web/mock_server.js` serves a "Mach lock" flight log, which DD-092 removed; `luaRemove()` in `www/app.js` posts an empty body the board answers 400 | read 2026-10-04 |
+| DOC-1 | Review sections 3 and 3.5: the comment pass and the file splits are done only in the files the review fixes touched; `HARDWARE_CI_PLAN.md` and the flasher agent's notes show POSTs without `X-Pyro` | `docs/code_review_2026-10-02_resolution.md` |
+| SD-2 | `FF_FS_LOCK 0` (review, Low): setting it to 6 failed four power-cut cases in `hr_log_tests` | tried 2026-10-04 |
 
 ---
 
