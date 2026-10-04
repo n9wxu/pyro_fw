@@ -10,6 +10,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include <string.h>
+#include "pyro_sim.h"
 #include "../src/hal.h"
 #include "../src/flight_states.h"
 #include "../src/buzzer.h"
@@ -17,16 +18,12 @@
 
 static flight_context_t ctx;
 
-/* ── API: init ────────────────────────────────────────────────────── */
-
 void sim_flight_init(const char *config_ini) {
     sim_reset();
     if (config_ini && config_ini[0])
         hal_fs_write_file("config.ini", config_ini, strlen(config_ini));
     flight_init(&ctx);
 }
-
-/* ── API: tick — call once per millisecond (or per step) ──────────── */
 
 int sim_flight_tick(uint32_t time_ms) {
     sim_set_time(time_ms);
@@ -52,6 +49,10 @@ bool     sim_flight_armed(void)         { return ctx.pyros_armed; }
 int      sim_flight_samples(void)       { return ctx.buf_count; }
 uint32_t sim_flight_launch_time(void)   { return ctx.launch_time; }
 
-const flight_context_t *sim_flight_ctx(void) { return &ctx; }
+const flight_context_t *sim_flight_ctx(void) {
+    return &ctx;
+}
 
-void sim_flight_save_csv(void) { flight_save_csv(&ctx); }
+void sim_flight_save_csv(void) {
+    flight_save_csv(&ctx);
+}

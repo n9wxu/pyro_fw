@@ -612,6 +612,17 @@ pyro_module_suite(estimators_tests test/test_estimators.c src/estimator_table.c 
                   src/estimator_constacc.c src/pressure_estimator.c src/atmosphere.c)
 pyro_module_suite(fire_control_tests test/test_fire_control.c src/fire_control.c src/atmosphere.c)
 
+# The simulators' rocket and its atmosphere against USSA76.
+add_custom_target(physics_tests
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/sim -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_physics.c ${CMAKE_CURRENT_LIST_DIR}/sim/physics.c
+               ${unity_SOURCE_DIR}/src/unity.c -lm
+               -o ${CMAKE_BINARY_DIR}/test_physics_tests
+    COMMAND ${CMAKE_BINARY_DIR}/test_physics_tests
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "physics_tests"
+)
+
 # Plant tests. Each board model includes its own board's board_pins.h, so
 # the three cannot share one include path -- they are compiled separately
 # and linked together, which is also the only build that has all three
@@ -651,6 +662,7 @@ add_custom_target(sim
                ${CMAKE_CURRENT_LIST_DIR}/sim/sim_cli.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/main_sim.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/replay.c
+               ${CMAKE_CURRENT_LIST_DIR}/sim/physics.c
                ${PYRO_HOST_HAL_SOURCES}
                ${PYRO_FLIGHT_SOURCES_ABS}
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c

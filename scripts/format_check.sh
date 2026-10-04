@@ -18,7 +18,8 @@ FILES="$(cat src/flight_sources.txt) src/flight_internal.h src/flight_states.h s
     src/http_server.c src/http_server.h src/http_conn.c src/http_conn.h
     src/http_work.c src/http_work.h src/status_json.c src/status_json.h
     src/flight_log.c src/flight_log.h src/pressure_trace.c src/pressure_trace.h
-    src/log_plan.c src/log_plan.h"
+    src/log_plan.c src/log_plan.h
+    sim/physics.c sim/physics.h sim/sim_cli.c sim/pyro_sim.h test/test_physics.c"
 
 if [ "$1" = "--fix" ]; then
     # shellcheck disable=SC2086

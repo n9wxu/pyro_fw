@@ -28,7 +28,7 @@ run() {
 
 # The flight software through the mocked HAL, then each module on its own.
 for t in flight_boot_tests flight_pad_tests flight_profile_tests fire_rule_tests resume_tests \
-         estimator_tests telemetry_tests mach_tests recorded_flight_tests ground_test_tests \
+         estimator_tests telemetry_tests mach_tests physics_tests recorded_flight_tests ground_test_tests \
          ground_test_seq_tests atmosphere_tests fire_control_tests launch_detector_tests apogee_detector_tests estimators_tests \
          http_tests http_work_tests status_json_tests net_stats_tests net_txq_tests mac_random_tests \
          hr_log_tests flight_sim_tests flight_log_tests pressure_trace_tests log_plan_tests \
