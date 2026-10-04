@@ -1,5 +1,5 @@
 /*
- * The altitude beep-out [GND-TEST-01], heard from the buzzer pin: buzzer.c
+ * The altitude beep-out [BUZ-04], heard from the buzzer pin: buzzer.c
  * run against a HAL that records each tone edge, and the digits read back
  * the way a flier counts them -- a long beep, then each digit's beeps, ten for
  * a zero.
