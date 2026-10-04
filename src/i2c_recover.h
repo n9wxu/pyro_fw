@@ -2,10 +2,11 @@
  * Frees an I2C bus a CPU reset left mid-transfer: nine SCL clocks, then a
  * STOP on each SDA, one edge a step [DD-053]. A sensor stays powered across
  * the reset and can be holding SDA low; clocking it through the rest of its
- * byte lets go. Both lines are plain GPIOs throughout, and inputs with
- * pull-ups at the end, before the I2C peripheral takes them.
+ * byte lets go. Both lines are GPIOs worked open drain throughout, and inputs
+ * with pull-ups at the end, before the I2C peripheral takes them.
  *
- * I2C has no lowest clock rate, so a step a loop is as good as any.
+ * I2C has no lowest clock rate (UM10204 Rev.7 Table 11, fSCL min 0), so a
+ * step a loop is as good as any.
  *
  * SPDX-License-Identifier: MIT
  */
