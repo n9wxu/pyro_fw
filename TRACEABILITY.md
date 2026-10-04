@@ -168,7 +168,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | CFG-04 | The system shall support pyro mode settings | test_config.c: test_config_parse_all_modes, test_config_default_ini_string, test_config_mode_none_round_trips, test_SYS_CFG_03_every_bounded_field_refuses_beyond_its_row and 1 more; test_config_persistence.c: test_SYS_CFG_01_each_save_replaces_the_last, test_CFG_05_a_board_with_no_file_starts_on_the_defaults_and_stores_them, test_CFG_04_a_mode_it_cannot_name_is_none; test_flight_profiles.c: test_CFG_04_a_channel_set_to_none_never_fires; Hardware: `support/api_check.py` | ✅ |
 | CFG-05 | The system shall create a default configuration if the config file is missing | test_config.c: test_lua_baud_holds_115200, test_CFG_05_only_a_missing_file_is_rewritten, test_CFG_05_a_file_that_filled_the_buffer_is_not_parsed, test_CFG_05_a_long_commented_file_is_read_whole; test_config_persistence.c: test_SYS_CFG_01_each_save_replaces_the_last, test_CFG_05_a_board_with_no_file_starts_on_the_defaults_and_stores_them | ✅ |
 | CFG-06 | The system shall preserve existing config fields not present in a partial config file | test_config.c: test_config_parse_preserves_unset, test_config_writes_no_inert_keys, test_config_serialize_refuses_to_overflow; Hardware: `support/api_check.py` | ✅ |
-| CFG-07 | The system shall truncate id and name fields to 8 characters | test_config.c: test_config_parse_id_truncated, test_config_unknown_mode_serialises_as_none, test_config_default_name_is_not_truncated | ✅ |
+| CFG-07 | The system shall truncate id and name fields to 8 characters | test_config.c: test_config_parse_id_truncated, test_config_unknown_mode_serialises_as_none, test_config_default_name_is_not_truncated; Web UI: test_ui.spec.js | ✅ |
 | CFG-08 | The system shall ignore unknown keys in the config file | test_config.c: test_config_parse_unknown_keys, test_config_parse_comments | ✅ |
 | CFG-09 | The system shall handle both CR+LF and LF line endings | test_beep_codes.c: test_an_empty_name_keeps_the_personality, test_blanks_around_key_and_value_are_not_part_of_them; test_config.c: test_config_parse_unix_newlines, test_config_parse_no_trailing_newline, test_CFG_04_an_unnamed_mode_is_none_and_reported, test_CFG_09_blanks_around_key_and_value_are_not_part_of_them and 1 more; test_pin_assign.c: test_PIN_GT_07_ini_round_trip, test_PIN_INI_blanks_around_key_and_value_are_not_part_of_them | ✅ |
 | CFG-10 | Configuration and pin changes shall take effect at start-up | test_config_persistence.c: test_CFG_03_units_it_cannot_name_are_metres, test_CFG_10_the_running_system_keeps_the_configuration_it_started_with; test_flight_pad.c: test_PYR_HEALTH_02_a_channel_given_to_the_script_is_not_a_pyro, test_CFG_10_a_saved_change_waits_for_the_next_start; test_ground_test.c: test_GND_TEST_13_a_pulse_that_energises_nothing_is_reported_not_refused, test_CFG_10_a_change_saved_in_the_mode_waits_for_the_next_start; Web UI: test_ui.spec.js; Structure: `support/structure_check.py`; Hardware: `support/api_check.py` | ✅ |
@@ -266,25 +266,27 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | WEB-NET-02 | The system shall serve DHCP and take the address 192.168.N.1, where N is the board's own subnet (WEB-NET-06) | Hardware: `support/test_network.py` | ✅ HW |
 | WEB-NET-03 | The system shall advertise its hostname via mDNS | Hardware: `support/test_network.py` | ✅ HW |
 | WEB-NET-04 | The system shall advertise a DNS-SD service for automatic discovery | Hardware: `support/test_network.py` | ✅ HW |
-| WEB-NET-05 | A frame the USB link cannot take yet shall be held and sent in order as soon as it can, not dropped; one... | the suite test_net_txq.c | ✅ |
+| WEB-NET-05 | A frame the USB link cannot take yet shall be held and sent in order as soon as it can, not dropped; one... | — | ⚠️ |
 | WEB-NET-06 | A board shall have a unique network address that survives restarts, without factory programming | test_mac_random.c: test_WEB_NET_06_drawn_mac_is_local_unicast, test_WEB_NET_06_subnet_is_never_0_1_or_255, test_WEB_NET_06_same_seed_different_samples_differ, test_WEB_NET_06_no_repeat_across_many_boards and 4 more | ✅ |
+| WEB-NET-07 | A received frame the device cannot hold -- no buffer free, an empty frame, a frame that will not copy, or... | test_net_txq.c: test_WEB_NET_07_a_frame_is_held_until_lwip_takes_it, test_WEB_NET_07_with_no_buffer_the_frame_is_handed_back, test_WEB_NET_07_an_empty_frame_is_handed_back, test_WEB_NET_07_a_frame_that_will_not_copy_is_handed_back_and_its_buffer_freed and 2 more | ✅ |
 | WEB-API-01 | The system shall serve device status as JSON at /api/status | the suite test_status_json.c; Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
 | WEB-API-02 | The system shall serve the configuration file at /api/config (GET) | Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
 | WEB-API-03 | The system shall accept configuration updates at /api/config (POST) and write to persistent storage | Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
 | WEB-API-04 | The system shall accept firmware updates at /api/ota (POST), answer before it restarts, and answer Expect | Hardware: an update over HTTP to MK1A, MK1B and MK1C, every stored file kept | ✅ HW |
 | WEB-API-05 | The system shall trigger a device restart at /api/reboot (POST) | Hardware: 200 with CORS, and the board back in PAD_IDLE | ✅ HW |
 | WEB-API-06 | The system shall serve flight data as CSV at /api/flight.csv, framed by Content-Length | the suite test_flight_log.c; Web UI: test_ui.spec.js | ✅ |
-| WEB-API-07 | All API responses shall include CORS headers | Hardware: `support/api_check.py`, `support/http_stream_check.py` | ✅ HW |
-| WEB-API-08 | The web API and USB shall stay live in flight | test_flight_profiles.c: test_BUZ_03_the_beep_out_is_held_on_usb_and_resumes, test_WEB_API_08_only_the_flight_record_is_stored_in_flight; The web server answering 423 and dropping a held transfer: by inspection; a bench check in a chamber flight is owed | ✅ |
+| WEB-API-07 | The API shall grant no cross-origin access (no Access-Control-Allow-Origin; Cross-Origin-Resource-Policy | test_http.c: test_WEB_HTTP_04_a_post_with_no_content_length_is_411, test_WEB_API_07_a_request_naming_another_host_is_refused, test_WEB_API_07_a_post_without_the_x_pyro_header_is_refused, test_WEB_API_07_the_board_answers_to_its_names_and_its_own_address; Hardware: `support/api_check.py`, `support/http_stream_check.py` | ✅ |
+| WEB-API-08 | The web API and USB shall stay live in flight | test_flight_profiles.c: test_BUZ_03_the_beep_out_is_held_on_usb_and_resumes, test_WEB_API_08_only_the_flight_record_is_stored_in_flight; test_http.c: test_OTA_06_no_sector_is_written_past_the_slot_end, test_WEB_API_08_every_route_that_touches_storage_waits_for_the_flight_log; The web server answering 423 and dropping a held transfer: by inspection; a bench check in a chamber flight is owed | ✅ |
 | WEB-API-09 | The system shall erase the flight log on request at /api/flight/erase (POST), unless the log is being written | Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
 | WEB-API-10 | A request for a file shall be refused with 423 while the flight log is being written | test_flight_profiles.c: test_BUZ_03_the_beep_out_is_held_on_usb_and_resumes, test_WEB_API_10_other_storage_access_is_refused_until_the_record_is_safe | ✅ |
 | WEB-API-11 | /api/status shall be self-consistent, taken at one instant of the flight, shall keep its keys and their... | the suite test_status_json.c | ✅ |
 | WEB-API-12 | The system shall report at /api/log/space the bytes the next flight's log has room for, the size of a... | Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
 | WEB-API-13 | The system shall report at /api/net what the network has in use, has refused and has dropped, and the USB... | the suite test_net_stats.c | ✅ |
+| WEB-API-14 | A file shall be named by /-separated names of letters, digits, ., _ and -, none of them . or ... Any other... | test_http.c: test_WEB_API_07_the_board_answers_to_its_names_and_its_own_address, test_WEB_API_14_a_path_that_climbs_out_or_hides_its_name_is_refused; Hardware: `support/http_stream_check.py` | ✅ |
 | WEB-HTTP-01 | The HTTP server shall treat each connection as a byte stream | the suite test_http.c; Hardware: `support/http_stream_check.py` | ✅ |
-| WEB-HTTP-02 | Every response shall be framed by Content-Length and carry Connection | the suite test_http.c; Hardware: `support/http_stream_check.py` | ✅ |
+| WEB-HTTP-02 | Every response shall be framed by Content-Length and carry Connection | the suite test_http.c; Hardware: `support/api_check.py`, `support/http_stream_check.py` | ✅ |
 | WEB-HTTP-03 | The server shall read a request body only as fast as it consumes it, so that TCP flow control, not a... | the suite test_http.c; Hardware: `support/http_stream_check.py` | ✅ |
-| WEB-HTTP-04 | The server shall refuse a malformed or oversized request with its HTTP status | the suite test_http.c; Hardware: `support/http_stream_check.py` | ✅ |
+| WEB-HTTP-04 | The server shall refuse a malformed or oversized request with its HTTP status | test_http.c: test_HTTP_18_a_unit_answers_away_from_the_service_call, test_WEB_HTTP_04_a_post_with_no_content_length_is_411; Hardware: `support/http_stream_check.py` | ✅ |
 | WEB-UI-01 | The web interface shall display device status in the configured units | Web UI: test_ui.spec.js | ✅ |
 | WEB-UI-04 | The web interface shall display flight summary data and allow CSV download | Web UI: test_ui.spec.js | ✅ |
 | WEB-UI-05 | The web interface shall support firmware upload and update checking | Web UI: test_ui.spec.js | ✅ |
@@ -300,8 +302,10 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | OTA-01 | The system shall support over-the-air firmware updates via HTTP | Hardware: updates to MK1A, MK1B and MK1C through `support/upload_fw.sh` | ✅ HW |
 | OTA-02 | The system shall write new firmware to an inactive slot while continuing to run | Through BLD-05; Hardware: the board serves pages while the image is written | ✅ HW |
 | OTA-03 | The system shall automatically revert to the previous firmware if the new firmware does not reach normal... | Hardware only: an image that never commits is rolled back by the bootloader; no scripted check | ⚠️ |
-| OTA-04 | A failed or interrupted update shall not affect the currently running firmware | Hardware only: no scripted check | ⚠️ |
+| OTA-04 | A failed or interrupted update shall not affect the currently running firmware | Through OTA-06, OTA-07; Hardware only: no scripted check | ⚠️ |
 | OTA-05 | Firmware built for a different board shall not be kept | the suite test_board_selftest.c | ✅ |
+| OTA-06 | An image longer than the download slot shall be refused with 413 before any of it is written, and no write... | test_http.c: test_WEB_API_14_a_path_that_climbs_out_or_hides_its_name_is_refused, test_OTA_06_an_image_larger_than_the_download_slot_is_refused, test_OTA_06_no_sector_is_written_past_the_slot_end; Hardware: `support/http_stream_check.py` | ✅ |
+| OTA-07 | An update shall begin by marking the download slot invalid, so that an interrupted transfer is never... | — | ⚠️ |
 
 ## 10. Scripting
 
@@ -441,10 +445,10 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host test, a web test or a structural check | 303 |
-| ⚠️ Not verified, or not wholly | 23 |
+| ✅ Verified by a host test, a web test or a structural check | 306 |
+| ⚠️ Not verified, or not wholly | 25 |
 | ❌ Not implemented | 0 |
-| ✅ HW (verified on hardware only) | 13 |
+| ✅ HW (verified on hardware only) | 12 |
 
 `support/trace_check.py --counts` computes these, and CI fails when this table
 disagrees or when `support/trace_matrix.py --check` finds the file out of date.

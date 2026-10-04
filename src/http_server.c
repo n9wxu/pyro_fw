@@ -1174,12 +1174,15 @@ static const char DEFAULT_PAGE[] = "<!DOCTYPE html><html><body><h2>" PYRO_BOARD_
 /* GET /api/lua/console: the console ring, drained, and the VM's liveness: a
  * frozen heartbeat under "running" is a VM stuck where the instruction hook
  * cannot reach. The buffers are static, off the net task's stack: it is the
- * only caller. */
+ * only caller. The raw text waits in the connection's work buffer, which the
+ * response then overwrites. */
+#define CONSOLE_TEXT_MAX 900
+_Static_assert(HTTP_WORK_SIZE >= CONSOLE_TEXT_MAX, "the console text is read into the work buffer");
 static void serve_lua_console(http_conn_t *hc) {
-    static char text[900];
+    char *text = (char *)hc->work;
     static char esc[1024];
     static char esc_status[192];
-    int n = lua_app_console_read(text, sizeof(text) - 1);
+    int n = lua_app_console_read(text, CONSOLE_TEXT_MAX - 1);
     text[n] = '\0';
     json_escape(esc, sizeof(esc), text, n);
     /* A Lua error names its chunk in quotes: [string "check"]:128: */
