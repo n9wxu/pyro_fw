@@ -187,6 +187,22 @@ if(PYRO_BOARD_KIND STREQUAL "pico")
     )
 endif()
 
+# The network stack. smallest_tcp is a spike [docs/smallest_tcp_evaluation.md]:
+# its sources are compiled into the firmware target below, so its own
+# CMakeLists is not read (SOURCE_SUBDIR names nothing).
+set(PYRO_NET_STACK "lwip" CACHE STRING "The TCP/IP stack: lwip, or smallest_tcp (a spike)")
+if(PYRO_NET_STACK STREQUAL "smallest_tcp")
+    FetchContent_Declare(
+        smallest_tcp
+        GIT_REPOSITORY https://github.com/n9wxu/smallest_tcp.git
+        GIT_TAG 9293992a93d0f121b586798dfe8a40fff427f03a # v0.1.10
+        SOURCE_SUBDIR pyro_reads_no_cmake
+    )
+    FetchContent_MakeAvailable(smallest_tcp)
+elseif(NOT PYRO_NET_STACK STREQUAL "lwip")
+    message(FATAL_ERROR "PYRO_NET_STACK is lwip or smallest_tcp, not '${PYRO_NET_STACK}'")
+endif()
+
 if(PYRO_BOARD_KIND STREQUAL "pico")
     FetchContent_MakeAvailable(littlefs unity pico_fota_bootloader freertos_kernel)
 else()
@@ -323,7 +339,56 @@ add_subdirectory(${PYRO_BOARD_DIR} ${CMAKE_BINARY_DIR}/board)
 # leaves the board's symbols unresolved.
 target_link_libraries(pyro_hal_common PUBLIC pyro_board)
 
-add_executable(pyro_fw_c 
+if(PYRO_NET_STACK STREQUAL "smallest_tcp")
+    set(_stcp ${smallest_tcp_SOURCE_DIR}/src)
+    set(PYRO_STCP_SOURCES
+        ${_stcp}/net.c ${_stcp}/net_cksum.c ${_stcp}/eth.c ${_stcp}/arp.c ${_stcp}/ipv4.c ${_stcp}/icmp.c
+        ${_stcp}/igmp.c ${_stcp}/udp.c ${_stcp}/tcp.c ${_stcp}/dhcpv4_server.c ${_stcp}/mdns.c ${_stcp}/dns_wire.c)
+    set(PYRO_NET_SOURCES
+        src/net_glue_stcp.c
+        ${PYRO_STCP_SOURCES}
+        ${TINYUSB_DIR}/lib/networking/rndis_reports.c)
+else()
+    set(PYRO_NET_SOURCES
+        src/net_glue.c
+        ${TINYUSB_DIR}/lib/networking/rndis_reports.c
+        ${TINYUSB_DIR}/lib/networking/dhserver.c
+        ${TINYUSB_DIR}/lib/networking/dnserver.c
+        ${LWIP_DIR}/src/core/altcp.c
+        ${LWIP_DIR}/src/core/altcp_alloc.c
+        ${LWIP_DIR}/src/core/altcp_tcp.c
+        ${LWIP_DIR}/src/core/def.c
+        ${LWIP_DIR}/src/core/dns.c
+        ${LWIP_DIR}/src/core/inet_chksum.c
+        ${LWIP_DIR}/src/core/init.c
+        ${LWIP_DIR}/src/core/ip.c
+        ${LWIP_DIR}/src/core/mem.c
+        ${LWIP_DIR}/src/core/memp.c
+        ${LWIP_DIR}/src/core/netif.c
+        ${LWIP_DIR}/src/core/pbuf.c
+        ${LWIP_DIR}/src/core/raw.c
+        ${LWIP_DIR}/src/core/stats.c
+        ${LWIP_DIR}/src/core/sys.c
+        ${LWIP_DIR}/src/core/tcp.c
+        ${LWIP_DIR}/src/core/tcp_in.c
+        ${LWIP_DIR}/src/core/tcp_out.c
+        ${LWIP_DIR}/src/core/timeouts.c
+        ${LWIP_DIR}/src/core/udp.c
+        ${LWIP_DIR}/src/core/ipv4/autoip.c
+        ${LWIP_DIR}/src/core/ipv4/dhcp.c
+        ${LWIP_DIR}/src/core/ipv4/etharp.c
+        ${LWIP_DIR}/src/core/ipv4/icmp.c
+        ${LWIP_DIR}/src/core/ipv4/igmp.c
+        ${LWIP_DIR}/src/core/ipv4/ip4.c
+        ${LWIP_DIR}/src/core/ipv4/ip4_addr.c
+        ${LWIP_DIR}/src/core/ipv4/ip4_frag.c
+        ${LWIP_DIR}/src/netif/ethernet.c
+        ${LWIP_DIR}/src/apps/mdns/mdns.c
+        ${LWIP_DIR}/src/apps/mdns/mdns_out.c
+        ${LWIP_DIR}/src/apps/mdns/mdns_domain.c)
+endif()
+
+add_executable(pyro_fw_c
     src/main_hardware.c
     src/board_binary_info.c
     src/board_identity.c
@@ -336,7 +401,6 @@ add_executable(pyro_fw_c
     src/pressure_collector.c
     src/i2c_recover.c
     src/usb_descriptors.c
-    src/net_glue.c
     src/http_server.c
     src/http_conn.c
     src/http_work.c
@@ -357,44 +421,7 @@ add_executable(pyro_fw_c
     src/pin_caps.c
     src/pin_assign.c
     src/pin_store.c
-    # TinyUSB networking helpers
-    ${TINYUSB_DIR}/lib/networking/dhserver.c
-    ${TINYUSB_DIR}/lib/networking/dnserver.c
-    ${TINYUSB_DIR}/lib/networking/rndis_reports.c
-    # lwIP core
-    ${LWIP_DIR}/src/core/altcp.c
-    ${LWIP_DIR}/src/core/altcp_alloc.c
-    ${LWIP_DIR}/src/core/altcp_tcp.c
-    ${LWIP_DIR}/src/core/def.c
-    ${LWIP_DIR}/src/core/dns.c
-    ${LWIP_DIR}/src/core/inet_chksum.c
-    ${LWIP_DIR}/src/core/init.c
-    ${LWIP_DIR}/src/core/ip.c
-    ${LWIP_DIR}/src/core/mem.c
-    ${LWIP_DIR}/src/core/memp.c
-    ${LWIP_DIR}/src/core/netif.c
-    ${LWIP_DIR}/src/core/pbuf.c
-    ${LWIP_DIR}/src/core/raw.c
-    ${LWIP_DIR}/src/core/stats.c
-    ${LWIP_DIR}/src/core/sys.c
-    ${LWIP_DIR}/src/core/tcp.c
-    ${LWIP_DIR}/src/core/tcp_in.c
-    ${LWIP_DIR}/src/core/tcp_out.c
-    ${LWIP_DIR}/src/core/timeouts.c
-    ${LWIP_DIR}/src/core/udp.c
-    ${LWIP_DIR}/src/core/ipv4/autoip.c
-    ${LWIP_DIR}/src/core/ipv4/dhcp.c
-    ${LWIP_DIR}/src/core/ipv4/etharp.c
-    ${LWIP_DIR}/src/core/ipv4/icmp.c
-    ${LWIP_DIR}/src/core/ipv4/igmp.c
-    ${LWIP_DIR}/src/core/ipv4/ip4.c
-    ${LWIP_DIR}/src/core/ipv4/ip4_addr.c
-    ${LWIP_DIR}/src/core/ipv4/ip4_frag.c
-    ${LWIP_DIR}/src/netif/ethernet.c
-    # lwIP mDNS
-    ${LWIP_DIR}/src/apps/mdns/mdns.c
-    ${LWIP_DIR}/src/apps/mdns/mdns_out.c
-    ${LWIP_DIR}/src/apps/mdns/mdns_domain.c
+    ${PYRO_NET_SOURCES}
  )
 
  target_link_libraries(pyro_fw_c
@@ -423,6 +450,24 @@ file(GLOB_RECURSE _pyro_os_sources
     ${TINYUSB_DIR}/src/*.c
     ${TINYUSB_DIR}/lib/networking/*.c)
 set_source_files_properties(${_pyro_os_sources} PROPERTIES COMPILE_OPTIONS "-Os")
+
+# GET /api/net/blob?n= and POST /api/net/sink: bytes with no storage behind
+# them, to measure a stack by. Off in every released image.
+option(PYRO_NET_BENCH "Network throughput routes, for the bench" OFF)
+if(PYRO_NET_BENCH)
+    target_compile_definitions(pyro_fw_c PRIVATE PYRO_NET_BENCH=1)
+endif()
+
+if(PYRO_NET_STACK STREQUAL "smallest_tcp")
+    # net_init: the stack's and the firmware's are two functions (net_stcp.h).
+    set_source_files_properties(${PYRO_STCP_SOURCES} PROPERTIES
+        COMPILE_OPTIONS "-Os"
+        COMPILE_DEFINITIONS "net_init=stcp_net_init")
+    target_compile_definitions(pyro_fw_c PRIVATE
+        PYRO_NET_SMALLEST_TCP=1 NET_USE_IPV4=1 NET_USE_IPV6=0 NET_USE_UDP=1 NET_USE_TCP=1)
+    target_compile_definitions(pyro_hal_common PRIVATE PYRO_NET_SMALLEST_TCP=1)
+    target_include_directories(pyro_fw_c PRIVATE ${smallest_tcp_SOURCE_DIR}/include)
+endif()
 
 # So is the bench's side of the application: the HTTP server and what it
 # parses and prints.

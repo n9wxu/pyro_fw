@@ -40,6 +40,9 @@ typedef enum {
     R_SD_IDLE,
     R_HR_START,
     R_HR_STOP,
+    /* PYRO_NET_BENCH: the network alone, no storage behind it */
+    R_NET_BLOB,
+    R_NET_SINK,
 } route_t;
 
 typedef enum {
@@ -67,6 +70,9 @@ typedef struct {
 
 static const post_route_t post_routes[] = {
     {"/api/ota", MATCH_EXACT, R_OTA, BODY_STREAM, 0, false},
+#if PYRO_NET_BENCH
+    {"/api/net/sink", MATCH_EXACT, R_NET_SINK, BODY_STREAM, 0, false},
+#endif
     {"/www/", MATCH_PREFIX, R_UPLOAD, BODY_STREAM, 0, true},
 #if PYRO_HAS_LUA
     {"/api/lua/script", MATCH_EXACT, R_UPLOAD, BODY_STREAM, 0, true},

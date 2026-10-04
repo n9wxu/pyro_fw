@@ -16,10 +16,14 @@
  * else; every other step is a work unit (http_work.h), run by
  * http_server_work().
  */
+#if PYRO_NET_SMALLEST_TCP
+#include "net_stcp.h"
+#else
 #include "lwip/tcp.h"
 #include "lwip/memp.h"
 #include "lwip/stats.h"
 #include "lwip/priv/tcp_priv.h"
+#endif
 #include "board_id.h"
 #include "board_if.h"
 #include <string.h>
@@ -109,12 +113,30 @@ extern uint32_t hal_pressure_flashed(void);
  * application, so TCP flow control holds the sender back. */
 
 #define CONN_POOL_SIZE 4
-#define LINK_POOL_SIZE MEMP_NUM_TCP_PCB
 /* No byte moved either way for this long: the peer is gone. */
 #define HTTP_IDLE_MS 20000u
 
 struct conn;
 
+#if PYRO_NET_SMALLEST_TCP
+/* A link is one of the stack's connections, listening until a peer takes it
+ * (http_transport_stcp.inc). */
+#define LINK_POOL_SIZE 16
+typedef enum { LINK_LISTENING, LINK_WAITING, LINK_BOUND, LINK_DRAINING } link_phase_t;
+
+typedef struct {
+    tcp_conn_t tcp; /* MUST be first: the stack's event hands it back */
+    uint8_t phase;
+    bool closing;       /* our FIN is queued behind the tx ring */
+    bool moved;         /* a byte went either way since the last pass */
+    uint16_t in_flight; /* of the tx ring, sent and not yet acknowledged */
+    bool counted_wait;
+    uint32_t seq;
+    uint32_t last_ms;
+    struct conn *conn;
+} link_t;
+#else
+#define LINK_POOL_SIZE MEMP_NUM_TCP_PCB
 typedef struct {
     struct tcp_pcb *pcb;  /* NULL: free */
     struct pbuf *pending; /* received, not yet in the rx ring */
@@ -124,6 +146,7 @@ typedef struct {
     uint32_t last_ms;
     struct conn *conn;
 } link_t;
+#endif
 
 typedef struct conn {
     http_conn_t h; /* MUST be first: the handlers cast back */
@@ -142,6 +165,7 @@ typedef struct conn {
             flog_csv_t csv;
             uint32_t len;
         } flog;
+        uint32_t bench_bytes; /* PYRO_NET_BENCH: left to send, or taken */
     };
 } conn_t;
 
@@ -972,6 +996,14 @@ static void serve_file(conn_t *c, const char *path, const char *ctype, const cha
 
 static uint16_t fill(http_conn_t *hc, uint8_t *dst, uint16_t max) {
     conn_t *c = (conn_t *)hc;
+#if PYRO_NET_BENCH
+    if (c->route == R_NET_BLOB) {
+        uint16_t n = c->bench_bytes < max ? (uint16_t)c->bench_bytes : max;
+        memset(dst, 'p', n);
+        c->bench_bytes -= n;
+        return n;
+    }
+#endif
     if (c->route == R_FLOG) {
         return (uint16_t)flog_csv_read(&c->flog.csv, (char *)dst, max);
     }
@@ -1255,6 +1287,13 @@ static void serve_get(conn_t *c) {
         serve_log_space(c);
     } else if (strcmp(path, "/api/net") == 0) {
         serve_api_net(hc);
+#if PYRO_NET_BENCH
+    } else if (strncmp(path, "/api/net/blob?n=", 16) == 0) {
+        /* GET /api/net/blob?n=<bytes>: that many bytes from nowhere. */
+        c->bench_bytes = (uint32_t)strtoul(path + 16, NULL, 10);
+        c->route = R_NET_BLOB;
+        http_respond_stream(hc, 200, "application/octet-stream", c->bench_bytes, "");
+#endif
 #if PYRO_HAS_BENCH_FLIGHT
     } else if (strcmp(path, "/api/sim") == 0) {
         serve_api_sim(hc);
@@ -1575,6 +1614,9 @@ static void route_post(conn_t *c) {
         }
     }
     c->route = r->route;
+#if PYRO_NET_BENCH
+    c->bench_bytes = 0;
+#endif
     if (r->body == BODY_GATHER) {
         http_gather(hc, r->gather);
     } else {
@@ -1621,6 +1663,12 @@ static uint16_t on_body(http_conn_t *hc, const uint8_t *data, uint16_t len) {
         }
         return ota_body(c, data, len);
     }
+#if PYRO_NET_BENCH
+    if (c->route == R_NET_SINK) {
+        c->bench_bytes += len;
+        return len;
+    }
+#endif
     return upload_body(c, data, len);
 }
 
@@ -1651,6 +1699,13 @@ static bool on_complete(http_conn_t *hc) {
     }
 
     switch (c->route) {
+#if PYRO_NET_BENCH
+    case R_NET_SINK: {
+        int n = snprintf(body, 48, "{\"bytes\":%lu}", (unsigned long)c->bench_bytes);
+        http_respond(hc, 200, JSON, body, (uint32_t)n);
+        break;
+    }
+#endif
     case R_UPLOAD:
         upload_complete(c);
         break;
@@ -1712,6 +1767,9 @@ extern volatile uint32_t net_usb_events[4];
 /* G4-N: what refused, for /api/net. */
 static uint32_t net_accept_refused, net_write_fails, net_idle_aborts, net_last_accept_ms;
 
+#if PYRO_NET_SMALLEST_TCP
+static uint32_t stcp_retransmits;
+#else
 static void net_pool(net_pool_t *o, const struct stats_mem *m) {
     o->used = m->used;
     o->max = m->max;
@@ -1761,6 +1819,7 @@ static void serve_api_net(http_conn_t *hc) {
     int n = net_json(&s, (char *)hc->work, sizeof(hc->work));
     http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
 }
+#endif
 
 static int slot_of(const conn_t *c) {
     return (int)(c - conns);
@@ -1812,6 +1871,7 @@ static void conn_bind(conn_t *c, link_t *l) {
     l->conn = c;
 }
 
+#if !PYRO_NET_SMALLEST_TCP
 /* Every byte not yet acknowledged to lwIP, acknowledged and dropped. Without
  * this tcp_close() sends RST, and a client can lose the response it has not
  * read yet. Anything arriving after the close is swallowed by lwIP. */
@@ -2067,6 +2127,8 @@ static void transport_link(link_t *l, uint32_t now) {
     }
 }
 
+#endif /* !PYRO_NET_SMALLEST_TCP */
+
 /* Nothing hands units to another task now; kept so a connection can never be
  * stranded in the held state. */
 static void take_back_from_worker(void) {
@@ -2091,6 +2153,9 @@ uint32_t http_work_clock_us(void) {
     return time_us_32();
 }
 
+#if PYRO_NET_SMALLEST_TCP
+#include "http_transport_stcp.inc"
+#else
 void http_server_transport(void) {
     uint32_t now = hal_time_ms();
     take_back_from_worker();
@@ -2101,6 +2166,7 @@ void http_server_transport(void) {
         }
     }
 }
+#endif
 
 void http_server_period(void) {
     http_work_period();
@@ -2129,6 +2195,7 @@ bool http_server_work(int32_t remaining_us) {
     return true;
 }
 
+#if !PYRO_NET_SMALLEST_TCP
 /* Accepts are not limited by lwIP (TCP_LISTEN_BACKLOG is off): on_accept()
  * refuses once every link is in use. */
 void http_server_init(void) {
@@ -2150,3 +2217,4 @@ void http_server_init(void) {
     }
     tcp_accept(listener, on_accept);
 }
+#endif
