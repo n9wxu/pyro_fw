@@ -74,11 +74,13 @@ steps the flight software every millisecond, and the board every 20 ms
 
 ## 1. To do now
 
-Nothing. The last items here (the push, G4 on 2.2.3, the boards' web files
-and the boards' noise figures) were done on 2026-10-03. G4's result: on all
-five boards `api_check.py` 46 of 46, `http_stream_check.py` 16 of 16,
-`hw_ui_check.js` 10 of 10, no flash refused. What it found is PAD-1, B-BZ and
-L2 below.
+Nothing. Done on 2026-10-03: the branch is pushed and CI passes on it
+(`freertos-sd` is now one of the workflow's branches); G4 ran on 2.2.3, with
+`api_check.py` 47 of 47, `http_stream_check.py` 16 of 16 and `hw_ui_check.js`
+10 of 10 on MK1A, MK1B, MK1C and MK1C-SD, and no flash refused; the boards
+serve today's web files; the boards' documents carry the battery noise
+figures. The MK1B with the BMP280 could not be checked on the last build:
+its sensor is off the bus until its power is cycled (B-BZ).
 
 ---
 
