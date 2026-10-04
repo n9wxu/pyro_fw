@@ -6,6 +6,7 @@
 #include "board_pins.h"
 #include "pyro_faults.h"
 #include "pyro_sense.h"
+#include "board_support.h"
 #include "hardware/gpio.h"
 #include "pico/time.h"
 #include <stdio.h>
@@ -88,7 +89,7 @@ static void close_gate(uint32_t now_ms, const quiescent_t *q, const char *what) 
 static void precharge_step(uint32_t now_ms, const quiescent_t *q) {
     if (bus_charged(q)) {
         close_gate(now_ms, q, "FIRE");
-    } else if (now_ms - seq.armed_ms >= seq.timeout_ms) {
+    } else if (deadline_reached(now_ms, seq.armed_ms + seq.timeout_ms)) {
         faults_latch(FAULT_PRECHARGE_TIMEOUT);
         close_gate(now_ms, q, "FIRE bus not charged");
     } else {
@@ -97,9 +98,9 @@ static void precharge_step(uint32_t now_ms, const quiescent_t *q) {
 }
 
 static void hold_step(uint32_t now_ms, const quiescent_t *q) {
-    uint32_t held_ms = now_ms - seq.fired_ms;
     bool flat = bus_change(q) <= FLAT_BUS_COUNTS;
-    if ((held_ms >= ENABLE_COLLAPSE_MS && flat) || held_ms >= HOLD_MAX_MS) {
+    if ((deadline_reached(now_ms, seq.fired_ms + ENABLE_COLLAPSE_MS) && flat) ||
+        deadline_reached(now_ms, seq.fired_ms + HOLD_MAX_MS)) {
         gpio_put(gate_pin[seq.channel - 1], 0);
         seq.fired_since_tracking[seq.channel - 1] = true;
         seq.step = STEP_DRAIN;
@@ -143,8 +144,9 @@ bool sequence_charged_the_bus(uint32_t now_ms) {
     return seq.step == STEP_DRAIN && (int32_t)(now_ms - seq.disarmed_ms) < BLEED_BELOW_HOT_MS;
 }
 
-bool sequence_fired_since_tracking(uint8_t channel) {
-    return seq.fired_since_tracking[channel - 1];
+/* From the arm until the presence test after the fire, if there is one. */
+bool sequence_verdict_pending(uint8_t channel) {
+    return seq.fired_since_tracking[channel - 1] || (seq.step != STEP_IDLE && seq.channel == channel);
 }
 
 static void report_verdict(uint8_t channel, uint16_t counts, uint16_t bus) {

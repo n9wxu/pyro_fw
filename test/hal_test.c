@@ -356,9 +356,23 @@ static void test_fire(uint8_t channel) {
     mock_pyro.last_fire_channel = channel;
     mock_pyro.firing = energised;
     mock_pyro.pulse_start_ms = mock_time_ms;
+    if (channel >= 1 && channel <= 2) {
+        mock_pyro.has_pulsed[channel - 1] = true;
+        mock_pyro.pulsed_at_ms[channel - 1] = mock_time_ms;
+    }
+}
+
+static bool verdict_pending(uint8_t channel) {
+    if (channel < 1 || channel > 2 || !mock_pyro.has_pulsed[channel - 1])
+        return false;
+    return mock_time_ms - mock_pyro.pulsed_at_ms[channel - 1] < mock_pyro.pulse_ms + mock_pyro.verdict_after_ms;
 }
 
 static void test_get(uint8_t channel, hal_continuity_t *out) {
+    if (verdict_pending(channel)) {
+        *out = (hal_continuity_t){0};
+        return;
+    }
     if (channel == 1) {
         out->raw_adc = mock_pyro.p1_adc;
         out->good = mock_pyro.p1_good;

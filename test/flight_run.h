@@ -45,6 +45,7 @@ typedef struct {
      * that energises nothing takes each command and its protection ends it. */
     bool pyro_faulted[2];
     bool energises_nothing;
+    uint32_t verdict_after_ms;   /* how long after a pulse the board has a verdict on its channel */
     const pyro_limits_t *limits; /* NULL: the general ones */
 
     mp_port_t port;     /* all zero: clean ports */

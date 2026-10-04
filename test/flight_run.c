@@ -70,6 +70,7 @@ static void set_board(const flight_conditions_t *c) {
         mock_pyro.p2_open = true;
     }
     mock_pyro.energises_nothing = c->energises_nothing;
+    mock_pyro.verdict_after_ms = c->verdict_after_ms;
     mock_stall_model = c->stalls;
     if (c->limits)
         mock_pyro_limits = *c->limits;
@@ -208,6 +209,13 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
             }
             if (!pulse_lights(&charges, pulse))
                 continue;
+            if (pulse->channel == 1) { /* a lit charge leaves its channel open */
+                mock_pyro.p1_good = false;
+                mock_pyro.p1_open = true;
+            } else {
+                mock_pyro.p2_good = false;
+                mock_pyro.p2_open = true;
+            }
             if (c->charge.peak_pa > 0.0f)
                 charge_at = tf;
             float rate = charges.rate_ms[pulse->channel - 1];
