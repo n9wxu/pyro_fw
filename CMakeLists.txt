@@ -1,6 +1,8 @@
-# Generated Cmake Pico project file
+# The pyro flight computer: firmware for the board PYRO_BOARD names, the host
+# test suites and the simulator.
 
-cmake_minimum_required(VERSION 3.13)
+# 3.18: FetchContent_Declare(SOURCE_SUBDIR) with FetchContent_MakeAvailable.
+cmake_minimum_required(VERSION 3.18)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
@@ -39,7 +41,7 @@ endif()
 # before it is initialised and others only after:
 #
 #     board.cmake     included HERE, before the SDK is initialised. Sets
-#                     PICO_BOARD_KIND, BOARD_DISPLAY_NAME, PICO_BOARD,
+#                     PYRO_BOARD_KIND, BOARD_DISPLAY_NAME, PICO_BOARD,
 #                     PICO_BOARD_HEADER_DIRS and the flash geometry, which
 #                     pico_fota_bootloader consumes when it generates its
 #                     linker script at FetchContent time.
@@ -170,7 +172,7 @@ set(PFB_RESERVED_FILESYSTEM_SIZE_KB ${PYRO_PFB_FS_KB} CACHE STRING "" FORCE)
 FetchContent_Declare(
     pico_fota_bootloader
     GIT_REPOSITORY https://github.com/JZimnol/pico_fota_bootloader.git
-    GIT_TAG master
+    GIT_TAG 266cd6eb29205a6231afd9cf74bab915f063e707 # master, 2026-07-23
 )
 
 # FreeRTOS SMP [DD-073]. SOURCE_SUBDIR adds only the RP2040 port, which adds

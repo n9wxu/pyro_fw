@@ -60,3 +60,6 @@ test-results/
 playwright-report/
 build-wasm-lua/
 __pycache__/
+
+# Written to the working directory by boards/sim/hal_sim.c
+flight_sim.csv

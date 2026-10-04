@@ -64,5 +64,6 @@ check trace_check python3 support/trace_check.py --counts
 check trace_matrix python3 support/trace_matrix.py --check
 check structure_check python3 support/structure_check.py
 check wait_check python3 support/wait_check.py
+check format_check scripts/format_check.sh
 check lumped_port_check python3 sim/study/lumped_port_check.py
 exit $fail
