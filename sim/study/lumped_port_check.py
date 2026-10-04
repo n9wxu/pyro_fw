@@ -40,7 +40,11 @@ def build(out):
                           [os.path.join(ROOT, s) for s in SOURCES] + ['-lm'])
 
 
+PAD_READINGS = 500  # ten seconds on the pad, before any flight is thrown about
+
+
 def compare(binary, name, site, port, seed):
+    """Flies one flight through both. Returns what the totals are made of."""
     lumped_fly_Lumped = sys.modules['lumped_fly'].Lumped
     sys.modules['lumped_fly'].Lumped = Recorded
     try:
@@ -51,30 +55,48 @@ def compare(binary, name, site, port, seed):
     f = r['filter']
     text = ''.join(f"{t} {p} {k}\n" for t, p, k in f.fed)
     out = subprocess.run([binary, 'lumped', str(site.t0)], input=text, capture_output=True, text=True, check=True).stdout
-    worst_ln_p = 0.0
-    flips = apart = compared = 0
-    for (p_ref, rate_ref, sig_ref, exp_ref), line in zip(f.said, out.splitlines()):
+    t = {'readings': len(f.said), 'flips': 0, 'compared': 0, 'apart': 0, 'worst_ln_p': 0.0, 'pad_ln_p': 0.0, 'pad_rate': 0.0}
+    for i, ((p_ref, rate_ref, sig_ref, exp_ref), line) in enumerate(zip(f.said, out.splitlines())):
         _, p, rate, _, sig, _, explains = line.split()
-        flips += int(explains) != int(exp_ref)
+        ln_p = abs(math.log(float(p) / p_ref))
+        sigmas = abs(float(rate) - rate_ref) / max(sig_ref, 1e-9)
+        if i < PAD_READINGS:
+            t['pad_ln_p'] = max(t['pad_ln_p'], ln_p)
+            t['pad_rate'] = max(t['pad_rate'], sigmas)
+        t['flips'] += int(explains) != int(exp_ref)
         if not (exp_ref and int(explains)):
             continue
-        worst_ln_p = max(worst_ln_p, abs(math.log(float(p) / p_ref)))
-        compared += 1
-        apart += abs(float(rate) - rate_ref) > 0.5 * sig_ref
-    return len(f.said), worst_ln_p, 100.0 * apart / max(compared, 1), flips
+        t['worst_ln_p'] = max(t['worst_ln_p'], ln_p)
+        t['compared'] += 1
+        t['apart'] += sigmas > 0.5
+    return t
 
 
 if __name__ == '__main__':
     with tempfile.TemporaryDirectory() as d:
         binary = os.path.join(d, 'estimator_replay')
         build(binary)
-        bad = 0
-        print(f"{'flight':10} {'site':5} {'port':6} readings  worst ln p   rate apart by half a sigma, %  explains differs")
+        total = {'readings': 0, 'flips': 0, 'compared': 0, 'apart': 0}
+        worst_ln_p = pad_ln_p = pad_rate = 0.0
+        print(f"{'flight':10} {'site':5} {'port':6} readings  worst ln p  rate apart %  explains differs")
         for name in ROCKETS:
             for site_name, site in (('cold', COLD), ('hot', HOT)):
                 for port in ('clean', 'high', 'fake'):
-                    n, ln_p, apart, flips = compare(binary, name, site, port, seed=3)
-                    ok = ln_p < 5e-3 and apart < 15.0 and flips <= n // 100
-                    bad += not ok
-                    print(f"{name:10} {site_name:5} {port:6} {n:8d}  {ln_p:10.2e}  {apart:10.2f}  {flips:6d}  {'' if ok else 'DIFFERS'}")
-        sys.exit(1 if bad else 0)
+                    t = compare(binary, name, site, port, seed=3)
+                    for k in total:
+                        total[k] += t[k]
+                    worst_ln_p = max(worst_ln_p, t['worst_ln_p'])
+                    pad_ln_p, pad_rate = max(pad_ln_p, t['pad_ln_p']), max(pad_rate, t['pad_rate'])
+                    print(f"{name:10} {site_name:5} {port:6} {t['readings']:8d}  {t['worst_ln_p']:10.2e}  "
+                          f"{100.0 * t['apart'] / max(t['compared'], 1):10.2f}  {t['flips']:6d}")
+        apart = 100.0 * total['apart'] / max(total['compared'], 1)
+        flips = 100.0 * total['flips'] / total['readings']
+        print(f"\non the pad, before any flight: ln p within {pad_ln_p:.1e}, rate within {pad_rate:.3f} sigma")
+        print(f"over {total['readings']} readings: where both explain them, {apart:.2f} % have rates half a sigma apart, "
+              f"ln p within {worst_ln_p:.1e}; {flips:.2f} % disagree on explaining")
+        # The same arithmetic, so on the pad they agree closely. In flight a
+        # rounding difference grows at each burnout and canopy, differently
+        # on each compiler and library: the totals are held, not each flight.
+        ok = pad_ln_p < 5e-5 and pad_rate < 0.1 and apart < 5.0 and flips < 2.0 and worst_ln_p < 2e-2
+        print("PASS" if ok else "FAIL")
+        sys.exit(0 if ok else 1)

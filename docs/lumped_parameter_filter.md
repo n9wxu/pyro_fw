@@ -254,11 +254,13 @@ reading.
 
 - **Checked against the reference:** `sim/study/lumped_port_check.py` flies
   54 of the study's flights, replays the readings the reference was fed
-  through the C code, and compares the pressure and the rate wherever both
-  explain the readings. They agree to within 0.5 standard deviations of the
-  rate. At a burnout or a canopy opening neither explains the readings, the
-  filter is thrown about, and a rounding difference grows for a few seconds;
-  nothing is decided there.
+  through the C code, and compares the two. On the pad they agree to a few
+  parts in a million. Over 875,000 readings, where both explain them, 0.17 %
+  have rates more than half a standard deviation apart, and they disagree
+  on explaining 0.04 % of the time. At a burnout or a canopy opening neither
+  explains the readings, the filter is thrown about, and a rounding
+  difference grows for a few seconds, differently on each compiler; nothing
+  is decided there. The check holds the totals, not each flight.
 - **The pad's temperature** is the sensor's own at the first reading.
 - **The peak** is the lowest filtered pressure the model explained
   (FLT-APO-08).

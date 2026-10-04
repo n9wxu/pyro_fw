@@ -51,7 +51,14 @@ run "$C" ms5607_tests
 check() {
     local name=$1
     shift
-    if "$@" >/dev/null 2>&1; then echo "ok    $name"; else echo "FAIL  $name"; fail=1; fi
+    local out
+    if out=$("$@" 2>&1); then
+        echo "ok    $name"
+    else
+        echo "FAIL  $name"
+        printf '%s\n' "$out" | tail -12 | sed 's/^/      /'
+        fail=1
+    fi
 }
 check trace_check python3 support/trace_check.py --counts
 check trace_matrix python3 support/trace_matrix.py --check
