@@ -25,7 +25,8 @@ RAM-1) can be closed this week without changing stacks.
 
 **Since measured:** the spike below ran smallest_tcp on the MK1C-SD. On
 macOS the first obstacle does not appear, and downloads run at about 90 % of
-lwIP's speed. See "Spike results" at the end.
+lwIP's speed. See "Spike results" at the end, and "Spike results with
+0.1.11" after it for the stack's next release.
 
 ## What the firmware asks of a stack
 
@@ -311,6 +312,8 @@ worked with macOS without a visible delay.
 
 ### What remains for a real port
 
+Brought up to date in the 0.1.11 section.
+
 1. Measure Linux and Windows with the spike image.
 2. A DNS answer on port 53, or a ruling that mDNS is enough.
 3. `/api/net`, `net_stats.c` and the scripts' checks rewritten for what
@@ -327,6 +330,8 @@ worked with macOS without a visible delay.
 
 ### Verdict
 
+Brought up to date in the 0.1.11 section.
+
 Against macOS the stop-and-wait transmit is not the obstacle this note
 expected: downloads run at 87 to 90 % of lwIP's speed, uploads at 82 to
 86 %, and several at once run faster. The stack ran on hardware at the
@@ -334,6 +339,196 @@ first attempt. Option B, switching as it is, is supported by what was
 measured. Option C, the sliding-window buffer first, is needed only if
 Linux or Windows turn out to delay their acknowledgements on this link,
 which one afternoon with each host will show.
+
+## Spike results with 0.1.11 (2026-10-05)
+
+smallest_tcp 0.1.11 (d07d611) answers the five issues filed from the first
+spike. The spike was moved to it and measured again on the MK1C-SD, by the
+same methods, against macOS.
+
+**The result:** the situation has improved. Three of the five issues are
+fixed on hardware, one is fixed in part, and one is fixed but frees no RAM.
+The spike now sends full segments, needs a 256-byte transmit queue in place
+of 8 kB, and uses 8 kB less RAM. A 1 MB download runs at 505 kB/s: 95 % of
+lwIP as released, 83 % of the tuned lwIP of pull request 55. Three new
+faults were found in the stack, two of them the reason a queue is still
+needed.
+
+### The five issues
+
+| Issue | 0.1.11's change | On hardware |
+|---|---|---|
+| 1. mDNS read `net->rx.buf` | it asks UDP for the destination | **Fixed.** Frames go to `eth_input()` in TinyUSB's own buffer, and `pyro.local` and `_pyro._tcp` still resolve. The copy of every received frame is gone. No RAM is freed: see finding 11 |
+| 2. A refused frame was a lost segment | a SYN, data or FIN goes at the next tick | **Fixed in part.** Data alone is sent again at once: thousands of refusals, no stall. A FIN refused behind its data, and a bare acknowledgement, still cost 1 s and 5 s: findings 7 and 8. The queue shrinks from 8,192 to 256 bytes, not to none |
+| 3. `net_init` clashed | `NET_API_PREFIX` renames every external name | **Fixed,** with four `#undef`s: finding 10 |
+| 4. A ring wrap made a short segment | `copy_segment()` | **Works,** and was not the cause. The short segments came from the stack sending what an acknowledgement left in the ring before the handler refilled it. Holding a part-segment in the transport cures it; that needed finding 9's workaround |
+| 5. The ACK on a repeated FIN was dropped | it is taken first | **Fixed.** Three closes that crossed each reached TIME-WAIT at once, with no FIN sent again. The reuse-at-CLOSING workaround is removed |
+| mDNS tiebreak | `MDNS_TIEBREAK 0` | 1,116 bytes less. The spike builds with it off |
+
+"The next tick" here is the next pass of the net task: the glue calls
+`tcp_tick()` every pass, with zero elapsed time when no millisecond has gone
+by, and the task runs again within a millisecond or on the next USB event.
+
+### Throughput
+
+| Measurement | lwIP 2.2.5 | Tuned lwIP (PR 55) | 0.1.10 spike | 0.1.11 spike |
+|---|---|---|---|---|
+| Download, 74 kB | 445 to 474 kB/s | 458 to 587 kB/s | 390 to 476 kB/s | 442 to 500 kB/s |
+| Download, 1 MB | 528 to 531 kB/s | 600 to 622 kB/s | 457 to 480 kB/s | 504 to 505 kB/s |
+| Upload, 300 kB | 652 to 668 kB/s | 643 to 647 kB/s | 536 to 577 kB/s | 540 to 546 kB/s |
+| Eight downloads of 74 kB at once | 516 kB/s | 535 kB/s | 577 to 592 kB/s | 543 to 545 kB/s |
+| OTA received by the image | 296 kB in 2.60 to 2.65 s | 279 kB in 2.49 to 2.55 s | 296 kB in 2.80 s | 296 kB in 2.80 s |
+| Ping, average of 20 | 1.16 ms | 1.10 ms | 0.88 to 1.00 ms | 0.93 ms |
+
+The 0.1.10 spike had an 8 kB transmit queue; the 0.1.11 spike has 256 bytes.
+
+### Segments and acknowledgements
+
+A 74 kB download, captured with `tcpdump`.
+
+| | 0.1.10 spike | 0.1.11, `copy_segment()` alone | 0.1.11, part-segments held |
+|---|---|---|---|
+| Data segments | 73 | 74 | 51 |
+| Of 1,460 bytes | 36 | 36 | 50 |
+| Of 588 bytes | 36 | 36 | 0 |
+| macOS acknowledges, median | 62 µs | 46 µs | 40 µs |
+| macOS acknowledges, longest | 286 µs | 132 µs | 68 µs |
+| Board's next segment, median | 2.2 ms | 2.3 ms | 2.7 ms |
+
+- **The first note's diagnosis was wrong.** The 588-byte segments were not
+  the ring's wrap. An acknowledgement frees 1,460 bytes of a 2,048-byte
+  ring, and the stack at once sends the 588 that remain, before the handler
+  has refilled it.
+- **macOS does delay acknowledgements.** With part-segments held, the full
+  segments went out without PSH, and macOS held the acknowledgement of about
+  one in fifteen for 100 ms. Downloads fell to 140 kB/s. The first spike
+  escaped this because every second segment carried PSH. With PSH on every
+  segment the delay is gone (finding 9).
+- So the obstacle this note first expected is real on macOS too, and PSH is
+  what avoids it. Linux and Windows are still not measured.
+
+### The transmit queue
+
+Each queue size was built and run: 30 status requests, three downloads of
+each size, three uploads, and eight downloads at once three times.
+
+| Queue | Result |
+|---|---|
+| None | Stalls of 5 s: two status requests of five, an upload of three, and every eight-at-once run (10 to 15 s). Each response's FIN left a second late |
+| 64 bytes | Single transfers clean. Two eight-at-once runs of three stalled 5 s |
+| 256 bytes | No stall in any run. Both check scripts pass |
+| 8,192 bytes, the first spike's | No stall |
+
+The queue now holds only what the stack does not send again: bare
+acknowledgements, window updates, and a FIN behind its data. RAM freed
+against the first spike: 7,936 bytes.
+
+### Footprint
+
+MK1C-SD images without the bench routes, from the linker maps.
+
+| | lwIP 2.2.5 | Tuned lwIP | 0.1.10 spike | 0.1.11 spike |
+|---|---|---|---|---|
+| Update image | 295,936 B | 278,528 B | 263,168 B | 262,400 B |
+| Stack code and constants | 48,584 B | 32,721 B | 19,741 B | 18,737 B |
+| RAM, data and bss, whole image | 222,272 B | 215,368 B | 183,792 B | 175,888 B |
+| RAM inside the stack | 50,761 B | 44,041 B | 0 | 0 |
+| RAM the glue adds, net of the lwIP glue's | 0 | 0 | 13,062 B | 5,132 B |
+
+Against the tuned lwIP that main will carry, the 0.1.11 spike is 16.1 kB
+smaller in flash and 39.5 kB smaller in RAM.
+
+The stack's flash by module, 0.1.11, IPv4 only, `MDNS_TIEBREAK 0`:
+
+| Module | Bytes |
+|---|---|
+| mdns | 6,909 |
+| tcp | 4,504 |
+| dhcpv4_server | 1,736 |
+| dns_wire | 1,152 |
+| ipv4 | 1,100 |
+| udp | 736 |
+| net | 646 |
+| icmp | 588 |
+| arp | 482 |
+| igmp | 460 |
+| eth | 258 |
+| net_cksum | 166 |
+| Total | 18,737 |
+
+With the tiebreak the total is 19,853. The glue's RAM is two 1,514-byte
+frame buffers, sixteen links of 124 bytes, the 258-byte queue, and the
+stack's own records.
+
+### Function
+
+| Check | Result |
+|---|---|
+| `support/api_check.py` | 51 of 51 |
+| `support/http_stream_check.py` | 20 of 20 |
+| `test/web/hw_ui_check.js` | all passed |
+| Eight fetches at once | 8 of 8 whole, three runs |
+| Ping | 20 of 20 |
+| DHCP | the host holds 192.168.42.2 from the stack's server |
+| mDNS | `pyro.local` resolves to 192.168.42.1; `pyro._pyro._tcp` resolves to it on port 80 |
+| OTA received by the spike image | written, answered, rebooted into the new image |
+| Host gate, default lwIP build; `prove_core0` on the spike image | pass |
+
+### New findings in 0.1.11
+
+Numbered on from the first spike's six.
+
+| # | What | Where | Effect here |
+|---|---|---|---|
+| 7 | A FIN the driver refuses is not the FIN sent again. `send_unsent()` calls `resend_unacked()`, which sends the data in flight a second time; the FIN waits for the retransmission timeout | `src/tcp.c:1132`, `src/tcp.c:1179` | With no queue, every response ended with a repeated data segment and a FIN a second late. Seen in a capture. The stack does not record which frame was refused |
+| 8 | A bare acknowledgement the driver refuses is not sent again: only a SYN, data or a FIN sets `unsent` | `src/tcp.c:215` | A lost window update leaves the host at a closed window until its own probe, 5 s on macOS. This is the stall with no queue or 64 bytes |
+| 9 | PSH is set only on the segment that empties the transmit buffer | `src/tcp.c:401` | With one segment in flight every segment is the last until acknowledged. Without PSH macOS delays about one acknowledgement in fifteen by 100 ms. The transport shows the stack one segment at a time through `queued()`, so each carries PSH, and closes only when the last is in flight |
+| 10 | `NET_API_PREFIX` renames the application's own functions of the same names in any file that includes the stack's headers | `include/net_rename.h:84`, `:89`, `:90`, `:166` | `http_conn_init`, `http_reason`, `http_server_init` and `net_init` are this firmware's. `net_stcp.h` undefines the four macros after the includes. The HTTP module's names are renamed though it is not linked |
+| 11 | `net_init()` still requires a receive buffer, and takes the receive MSS from its size | `src/net.c:43`, `src/tcp.c:107` | A driver that hands over its own buffer never uses it, yet must give 1,514 bytes for an MSS of 1,460. Those bytes cannot be freed |
+
+Nothing in the stack was patched.
+
+### What remains for a real port (updated)
+
+1. Measure Linux and Windows with the spike image and `support/net_bench.py`.
+2. In smallest_tcp: findings 7, 8 and 9. With 7 and 8 fixed the transmit
+   queue goes; with 9 fixed the transport's `queued()` workaround goes.
+   Finding 11 would free 1.5 kB more.
+3. A DNS answer on port 53, or a ruling that mDNS is enough.
+4. `/api/net`, `net_stats.c` and the scripts' checks rewritten for what this
+   stack can report.
+5. `rndis_reports.c` from TinyUSB still includes an lwIP header.
+6. A host test of the transport against the real stack.
+7. The transport as its own source file, and the lwIP adapter out of
+   `http_server.c`.
+8. The hold of a part-segment waits on the handler. A handler that stops
+   filling without finishing would hold its last bytes; the real port needs
+   a time limit there.
+9. The other boards, and replug, suspend and resume, and an mDNS conflict on
+   the bench.
+
+### Verdict (updated)
+
+The situation has improved. Option B, switching as it is, is still what the
+macOS evidence supports, and the margin is better known:
+
+- **Speed.** Downloads are 95 % of lwIP 2.2.5 and 83 % of the tuned lwIP.
+  Uploads are 82 to 84 % of either. The gap to the tuned lwIP is the price of one
+  segment in flight on a full-speed USB link, about a millisecond a segment.
+- **Memory.** 39.5 kB of RAM and 16.1 kB of flash less than the tuned lwIP.
+- **Risk.** The delayed acknowledgement is now seen on macOS and avoided by
+  PSH. Whether PSH also avoids it on Linux and Windows is the one
+  measurement still owed before a decision.
+- **The stack.** Three faults remain open in it (7, 8, 9), each worked
+  around in the spike in a few lines and 256 bytes.
+
+If speed matters more than memory, the tuned lwIP is the faster today and
+option C, a sliding window, is what would close the gap.
+
+### Seen on the board in this round
+
+The MK1C-SD came up at every boot of this round, five of the spike and
+seven of lwIP, and the sensor was found each time.
 
 ## Sources
 
