@@ -9,12 +9,15 @@
 #ifndef NET_STCP_H
 #define NET_STCP_H
 
-/* The stack's net_init() and the firmware's (hal_common.c) are different
- * functions; CMake renames the stack's in its own sources the same way. */
-#define net_init stcp_net_init
 #include "net.h"
 #include "tcp.h"
+/* NET_API_PREFIX (stcp_, from CMake) makes a macro of every external name of
+ * the stack, its HTTP module's among them. These four are also the
+ * firmware's own functions, and keep their names. */
 #undef net_init
+#undef http_conn_init
+#undef http_reason
+#undef http_server_init
 
 net_t *net_stcp(void);
 

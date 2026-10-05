@@ -5,8 +5,8 @@
  *
  * The stack's buffer operations are written over the exchange's own rings
  * (net_ring.h), so a byte is copied once each way: from the received frame
- * into the rx ring, and from the tx ring into the frame sent. A sent byte
- * stays in the tx ring until it is acknowledged.
+ * into the rx ring, and from the tx ring into the frame sent, across the
+ * ring's wrap. A sent byte stays in the tx ring until it is acknowledged.
  *
  * A link has no buffer of its own. Until it is given an exchange its window
  * is zero, which holds its sender; given one, the window opens to the rx
@@ -19,6 +19,8 @@
 #define DRAIN_WINDOW 1460u
 /* A link we have closed, whose peer never finishes: taken back. */
 #define DRAIN_MS 5000u
+
+void tud_event_hook_cb(uint8_t rhport, uint32_t eventid, bool in_isr); /* wakes the net task */
 
 static net_t *stcp;
 static tcp_conn_t *stcp_table[LINK_POOL_SIZE];
@@ -74,15 +76,28 @@ static uint16_t tx_write(void *ctx, const uint8_t *data, uint16_t len) {
     return 0; /* the handlers fill the ring themselves */
 }
 
-/* One segment in flight is the stack's rule; a ring that wraps gives a short
- * one. */
-static uint16_t tx_next_segment(void *ctx, const uint8_t **data, uint16_t mss) {
+/* The response has bytes the handler has not put in the tx ring yet. */
+static bool more_to_come(const http_conn_t *hc) {
+    return hc->phase == HTTP_SEND && (hc->out_left > 0 || (hc->streaming && hc->stream_left > 0));
+}
+
+/* One segment in flight is the stack's rule. Copied out, so a ring that
+ * wraps still gives a full one; and a part of one waits for the handler to
+ * fill the ring, which an acknowledgement has only just emptied. */
+static uint16_t tx_copy_segment(void *ctx, uint8_t *dst, uint16_t mss) {
     link_t *l = link_of(ctx);
     if (l->phase != LINK_BOUND || l->in_flight > 0)
         return 0;
-    uint16_t span = net_ring_read_span(&l->conn->h.tx, data);
-    l->in_flight = span < mss ? span : mss;
-    return l->in_flight;
+    const net_ring_t *r = &l->conn->h.tx;
+    if (r->len < mss && more_to_come(&l->conn->h))
+        return 0;
+    uint16_t n = r->len < mss ? r->len : mss;
+    uint16_t to_end = (uint16_t)(r->cap - r->tail);
+    uint16_t first = n < to_end ? n : to_end;
+    memcpy(dst, r->buf + r->tail, first);
+    memcpy(dst + first, r->buf, (size_t)(n - first));
+    l->in_flight = n;
+    return n;
 }
 
 static void tx_ack(void *ctx, uint32_t bytes) {
@@ -98,9 +113,22 @@ static uint16_t tx_in_flight(const void *ctx) {
     return ((const link_t *)ctx)->in_flight;
 }
 
+/* The stack is shown one segment at a time, the one tx_copy_segment() would
+ * give. It sets PSH only on the segment that empties what it is shown, and
+ * with one segment in flight every segment is the last until it is
+ * acknowledged: macOS holds the acknowledgement of a full segment without
+ * PSH for 100 ms, about one time in fifteen. */
 static uint16_t tx_queued(const void *ctx) {
     const link_t *l = (const link_t *)ctx;
-    return l->phase == LINK_BOUND ? net_ring_readable(&l->conn->h.tx) : 0;
+    if (l->phase != LINK_BOUND)
+        return 0;
+    if (l->in_flight > 0)
+        return l->in_flight;
+    uint16_t held = net_ring_readable(&l->conn->h.tx);
+    uint16_t mss = l->tcp.snd_mss;
+    if (held < mss)
+        return more_to_come(&l->conn->h) ? 0 : held;
+    return mss;
 }
 
 static uint16_t tx_writable(const void *ctx) {
@@ -113,8 +141,15 @@ static void tx_mark_retransmit(void *ctx) {
     stcp_retransmits++;
 }
 
-static const tcp_txbuf_ops_t tx_ops = {tx_write,  tx_next_segment, tx_ack,           tx_in_flight,
-                                       tx_queued, tx_writable,     tx_mark_retransmit};
+static const tcp_txbuf_ops_t tx_ops = {
+    .write = tx_write,
+    .ack = tx_ack,
+    .in_flight = tx_in_flight,
+    .queued = tx_queued,
+    .writable = tx_writable,
+    .mark_retransmit = tx_mark_retransmit,
+    .copy_segment = tx_copy_segment,
+};
 
 /* ── /api/net ─────────────────────────────────────────────────────── */
 
@@ -255,11 +290,16 @@ static void transport_bound(link_t *l, tcp_state_t st, uint32_t now) {
     }
     if (l->in_flight == 0 && net_ring_readable(&hc->tx) > 0)
         tcp_output(stcp, &l->tcp);
+    /* The handler fills the ring after this pass: come straight back for
+     * what it adds, without the task's wait. */
+    if (l->in_flight == 0 && more_to_come(hc) && http_conn_wants_service(hc))
+        tud_event_hook_cb(0, 0, false);
 
     if (hc->failed) {
         link_abort(l);
-    } else if (http_conn_done(hc)) {
-        /* Its FIN follows the bytes still in the tx ring. */
+    } else if (http_conn_done(hc) && net_ring_readable(&hc->tx) == l->in_flight) {
+        /* Once the last of the tx ring is on its way: the stack sends a FIN
+         * behind what tx_queued() shows it, and that is one segment. */
         tcp_close(stcp, &l->tcp);
         l->closing = true;
     } else if (now - l->last_ms > HTTP_IDLE_MS) {
@@ -294,10 +334,7 @@ static void transport_link(link_t *l, uint32_t now) {
         transport_bound(l, st, now);
         break;
     default: /* LINK_DRAINING */
-        /* CLOSING too: both FINs have crossed, and the stack discards the
-         * peer's repeated FIN with the acknowledgement of ours on it, so it
-         * would sit there until its FIN timed out. */
-        if (st == TCP_CLOSED || st == TCP_TIME_WAIT || st == TCP_CLOSING) {
+        if (st == TCP_CLOSED || st == TCP_TIME_WAIT) {
             link_listen(l);
         } else if (now - l->last_ms > DRAIN_MS) {
             tcp_abort(stcp, &l->tcp);

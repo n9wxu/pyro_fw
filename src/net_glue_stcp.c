@@ -25,9 +25,12 @@
 _Static_assert(FRAME_MAX == 1514, "a whole Ethernet frame: an IP MTU of 1500");
 
 static net_t net;
+/* Never written: frames reach the stack in TinyUSB's own buffer. net_init()
+ * wants one all the same, and takes the receive MSS from its size. */
 static uint8_t rx_frame[FRAME_MAX];
 static uint8_t tx_frame[FRAME_MAX];
-static uint16_t rx_waiting; /* bytes of rx_frame the stack has not seen yet */
+static const uint8_t *rx_waiting; /* TinyUSB's frame the stack has not seen yet */
+static uint16_t rx_waiting_len;
 
 volatile uint32_t net_rx_count;
 volatile uint32_t net_rx_drop;
@@ -45,12 +48,17 @@ net_t *net_stcp(void) {
 
 /* ── Transmit ─────────────────────────────────────────────────────────
  *
- * TCP takes a frame the driver refuses for a lost segment, and finds out by
- * its retransmission timer, a second at best. So a frame the endpoint cannot
- * take yet is copied here and sent in order once it can. */
+ * A SYN, data or a FIN the endpoint cannot take yet goes again at the
+ * stack's next tick (smallest_tcp 0.1.11). Anything else it refuses is lost: a
+ * bare acknowledgement, a window update, a DHCP or mDNS answer. Frames held
+ * here, if PYRO_STCP_TXQ_BYTES gives any room, are copied and sent in order
+ * once the endpoint can take them. */
 
-#define TXQ_BYTES 8192u
-static uint8_t txq[TXQ_BYTES];
+#ifndef PYRO_STCP_TXQ_BYTES
+#define PYRO_STCP_TXQ_BYTES 256
+#endif
+#define TXQ_BYTES ((uint16_t)(PYRO_STCP_TXQ_BYTES))
+static uint8_t txq[PYRO_STCP_TXQ_BYTES + 2];
 static uint16_t txq_head, txq_tail;
 static uint32_t settle_until_ms; /* 0: the host has had its time since the mount */
 
@@ -150,24 +158,24 @@ static const net_mac_t usb_mac = {mac_init, mac_send, mac_poll, mac_peek, mac_di
 
 /* ── Receive ──────────────────────────────────────────────────────────
  *
- * TinyUSB holds its endpoint until tud_network_recv_renew(), so one frame
- * waits at a time. It is copied into the stack's own receive buffer: mdns.c
- * reads the IP header of the frame it is handed from net->rx.buf. */
+ * TinyUSB holds its endpoint, and the frame in its buffer, until
+ * tud_network_recv_renew(): one frame waits at a time, and the stack reads
+ * it where it lies. */
 
 bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
-    if (rx_waiting != 0 || size == 0 || size > FRAME_MAX) {
+    if (rx_waiting != NULL || size == 0 || size > FRAME_MAX) {
         net_rx_drop++;
         return false;
     }
-    memcpy(rx_frame, src, size);
-    rx_waiting = size;
+    rx_waiting = src;
+    rx_waiting_len = size;
     net_rx_count++;
     return true;
 }
 
 void tud_network_init_cb(void) {
     txq_head = txq_tail = 0;
-    rx_waiting = 0;
+    rx_waiting = NULL;
 }
 
 /* ── mDNS: pyro.local and _pyro._tcp, renamed on a conflict ───────── */
@@ -295,18 +303,21 @@ uint32_t net_last_http_us;
 void net_service(void) {
     static uint32_t ticked_ms;
     txq_drain();
-    if (rx_waiting != 0) {
-        uint16_t len = rx_waiting;
-        eth_input(&net, rx_frame, len);
-        rx_waiting = 0;
+    if (rx_waiting != NULL) {
+        eth_input(&net, (uint8_t *)(uintptr_t)rx_waiting, rx_waiting_len);
+        rx_waiting = NULL;
         tud_network_recv_renew();
     }
+    /* Every pass, with whatever time has gone by, none included: the tick is
+     * also when TCP sends again what the endpoint was too busy to take. */
     uint32_t now = to_ms_since_boot(get_absolute_time());
     uint32_t elapsed = now - ticked_ms;
     if (elapsed > 0) {
         ticked_ms = now;
         net_tick(&net, elapsed);
         mdns_tick(&mdns, elapsed);
+    } else {
+        tcp_tick(&net, 0);
     }
     uint32_t t0 = time_us_32();
     http_server_transport();

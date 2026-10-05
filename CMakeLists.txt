@@ -195,7 +195,7 @@ if(PYRO_NET_STACK STREQUAL "smallest_tcp")
     FetchContent_Declare(
         smallest_tcp
         GIT_REPOSITORY https://github.com/n9wxu/smallest_tcp.git
-        GIT_TAG 9293992a93d0f121b586798dfe8a40fff427f03a # v0.1.10
+        GIT_TAG d07d611c1664364e561f71ea2dd393d6000dc7df # v0.1.11
         SOURCE_SUBDIR pyro_reads_no_cmake
     )
     FetchContent_MakeAvailable(smallest_tcp)
@@ -459,12 +459,16 @@ if(PYRO_NET_BENCH)
 endif()
 
 if(PYRO_NET_STACK STREQUAL "smallest_tcp")
-    # net_init: the stack's and the firmware's are two functions (net_stcp.h).
-    set_source_files_properties(${PYRO_STCP_SOURCES} PROPERTIES
-        COMPILE_OPTIONS "-Os"
-        COMPILE_DEFINITIONS "net_init=stcp_net_init")
+    # NET_API_PREFIX: the stack's net_init() and the firmware's are two
+    # functions (net_stcp.h). MDNS_TIEBREAK 0: no other host probes for the
+    # board's names on a point-to-point link.
+    set(PYRO_STCP_TXQ_BYTES 256 CACHE STRING "Bytes of frames held for a busy endpoint; 0: none")
+    set(PYRO_STCP_MDNS_TIEBREAK 0 CACHE STRING "mDNS simultaneous-probe tiebreaking")
+    set_source_files_properties(${PYRO_STCP_SOURCES} PROPERTIES COMPILE_OPTIONS "-Os")
     target_compile_definitions(pyro_fw_c PRIVATE
-        PYRO_NET_SMALLEST_TCP=1 NET_USE_IPV4=1 NET_USE_IPV6=0 NET_USE_UDP=1 NET_USE_TCP=1)
+        PYRO_NET_SMALLEST_TCP=1 NET_USE_IPV4=1 NET_USE_IPV6=0 NET_USE_UDP=1 NET_USE_TCP=1
+        NET_API_PREFIX=stcp_ MDNS_TIEBREAK=${PYRO_STCP_MDNS_TIEBREAK}
+        PYRO_STCP_TXQ_BYTES=${PYRO_STCP_TXQ_BYTES})
     target_compile_definitions(pyro_hal_common PRIVATE PYRO_NET_SMALLEST_TCP=1)
     target_include_directories(pyro_fw_c PRIVATE ${smallest_tcp_SOURCE_DIR}/include)
 endif()
