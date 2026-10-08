@@ -259,6 +259,11 @@ check("no flash refused throughout", st4["flash_refusals"] == 0, str(st4["flash_
 # SNS-COL-04: the sensor answered every transfer, through the beeps and the flash writes above.
 check("no sensor transfer failed throughout", st4["pres_rejects"] == st0["pres_rejects"],
       f'{st4["pres_rejects"] - st0["pres_rejects"]} failed: {st4.get("pres_bus")}, {st4.get("pres_recoveries")} recoveries')
+_, _, net_end = req("GET", "/api/net")
+net_end = json.loads(net_end)
+check("lwIP refused no memory throughout", net_end["heap"][2] == 0 and net_end["pbuf_pool"][2] == 0
+      and net_end["tcp_seg"][2] == 0 and net_end["tcp_pcb"][2] == 0,
+      f'heap {net_end["heap"]} pbuf_pool {net_end["pbuf_pool"]} tcp_seg {net_end["tcp_seg"]} tcp_pcb {net_end["tcp_pcb"]}')
 sensor_faults = [f for f in st4.get("faults", []) if f.startswith("sensor_")]
 check("no sensor fault was latched throughout (SNS-PRES-17)", not sensor_faults, ",".join(sensor_faults))
 
