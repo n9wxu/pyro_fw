@@ -582,9 +582,16 @@ rationale and the alternatives considered.
   it, and `/api/serial` parts them.
 - **The bench's new addresses:** MK1C 02BB65F06D47 (192.168.71.1),
   MK1B-8MB 0237CA1FB1A0 (192.168.160.1) and 0265BA5C7AFC (192.168.252.1).
-  MK1A (13) and MK1C-SD (42) keep the MACs assigned to them. The values are
-  pinned in `test_mac_random.c`: a change to the derivation moves every
-  board.
+  MK1A (13) and MK1C-SD (42) keep the MACs assigned to them.
+- **No address is fixed anywhere,** at the user's direction ("do not
+  hardcode the MAC. I cannot promise to plug the same HW into the test
+  fixture"). `test_mac_random.c` checks, on made-up IDs, that every bit of
+  an ID moves the MAC and that IDs differing only in their last bytes spread
+  evenly over the subnets. `install.py` and `update_from_release.py` take
+  the one board attached unless `--host` names another (`attached_board()`
+  in `support/pyro_http.py`), and `flash_picotool.sh` waits for whichever
+  link comes up new. So no test fails if the derivation changes, and a
+  change moves every board's address: it is a review matter.
 
 ### DD-098: The Flash Chip Says Its Size And Its Whole Unique ID
 - **Decision:** at boot, before the scheduler, the firmware reads the flash
@@ -601,7 +608,9 @@ rationale and the alternatives considered.
   mounted nor formatted (FLT-BOOT-19); `/api/ota` answers 409 (OTA-08); the
   board is in FAULT, named `board_mismatch`, now checked before the
   filesystem; after an update the image declines to commit and rolls back,
-  and after a `picotool load` it stays down. Closes FS-1.
+  and after a `picotool load` it stays down. Closes FS-1. The rollback is
+  not tried on hardware, by the user's decision ("leave the rollback
+  untested", 2026-10-14).
 - **Why the chip and not the stamp:** the stamp lives in the filesystem,
   which on such a chip lies past its end; the chip wraps the address onto
   its start, and the failed mount used to format over the bootloader. The
@@ -660,7 +669,10 @@ rationale and the alternatives considered.
   `http_stream_check.py` 20 of 20, `pressure_trace.py` good with 7.3 Pa rms
   on USB alone, no flash refused, no loop overrun.
 - **Not yet:** a 1 ohm load reading good and a short reading shorted
-  (section 5's B-U5); the release does not carry the board (REL-1).
+  (section 5's B-U5).
+- **Released** after v2.2.7, as `fw_mk1b_8mb.uf2`,
+  `fw_mk1b_8mb_bootloader.uf2` and `fw_mk1b_8mb_fota.bin`, at the user's
+  direction ("Add MK1B-8MB to the release").
 
 ### DD-096: lwIP Holds What The Rings Do Not
 - **Decision:** lwIP's memory is sized to the HTTP engine's rings, not to

@@ -1,9 +1,9 @@
 # Outstanding tasks
 
-What is still open on `main`, as of 2026-10-13 (v2.2.6). Nothing here is done.
+What is still open on `main`, as of 2026-10-14 (v2.2.7). Nothing here is done.
 
 Finished work is not listed. Its record is `DECISIONS.md` (DD-001 to
-DD-096), `docs/code_review_2026-09-24_resolution.md`,
+DD-099), `docs/code_review_2026-09-24_resolution.md`,
 `docs/code_review_2026-10-02_resolution.md`, and this file's own
 history: `git show 3d4a008:docs/outstanding_tasks.md` is the last version
 that carried every completed task. Items keep the IDs they were given where
@@ -40,7 +40,8 @@ only as their chips report them. MK1C and the MK1B-8MBs take their addresses
 from their flash IDs (DD-099); MK1A and MK1C-SD keep the ones assigned to
 them. A `+local` image is a local build: by the
 end of the day every board in the table ran the `flash-identity` branch
-(DD-098), and the release carries neither MK1C-SD nor MK1B-8MB (REL-1).
+(DD-098), the code v2.2.7 released. Releases after v2.2.7 carry MK1B-8MB;
+MK1C-SD is still not released (REL-1).
 
 ---
 
@@ -188,15 +189,13 @@ that owns the subject.
 | ID | What | Checked |
 |---|---|---|
 | H3-1 | `docs/wasm/pyro-sim.js` numbers the states as they were before the descent phases (`LANDED: 7`) and calls `_sim_clear_telemetry`, which `scripts/build_wasm.sh` does not export | read 2026-10-03 |
-| H3-4 | `support/install.py`, `update_from_release.py`, `flash_picotool.sh` and `test_network.py` default to 192.168.7.1; a board's address is 192.168.N.1 with N from its identity | read 2026-10-03 |
-| H3-10 | `support/install.py` and `update_from_release.py` do not find a board by itself: they need its address given (H3-4), and `install.py` takes no argument for one | read 2026-10-03 |
 | H3-5 | `support/install.py` looks for the MK1C image, then MK1B's, and never picks MK1A's or MK1C-SD's | read 2026-10-03 |
 | H3-6 | The firmware does not check that an uploaded image is for its board. The web page does, and a release now ships every board's image | read 2026-10-03 |
 | H3-7 | `support/pressure_trace.py` is not executable | checked 2026-10-03 |
 | H3-8 | `hal_pressure_fifo_get()` and its 5-sample batches in `hal_common.c` have no caller | checked 2026-10-03 |
 | H4-1 | `support/pressure_trace.py` still reports zeros, range rejects and missed slots, which the firmware no longer produces (DD-093), and nothing in it shows the collector's failures by cause | read 2026-10-03 |
 | H4-2 | `src/flight_events.h` keeps events 5, 6 and 8 (LOCK, UNLOCK, LOCK_FALLBACK) for logs written before DD-092, and `www/app.js` still reads them | by decision; remove both when no such log is of interest |
-| REL-1 | `release.yml` does not build or publish `mk1c_sd` or `mk1b_8mb`, so neither board can update from a release | read 2026-10-04; `mk1b_8mb` 2026-10-13 |
+| REL-1 | `release.yml` does not build or publish `mk1c_sd`, so it cannot update from a release | read 2026-10-04; `mk1b_8mb` added 2026-10-14 |
 | WEB-1 | `test/web/mock_server.js` serves a "Mach lock" flight log, which DD-092 removed; `luaRemove()` in `www/app.js` posts an empty body the board answers 400 | read 2026-10-04 |
 | DOC-1 | Review sections 3 and 3.5: the comment pass and the file splits are done only in the files the review fixes touched; `HARDWARE_CI_PLAN.md` and the flasher agent's notes show POSTs without `X-Pyro` | `docs/code_review_2026-10-02_resolution.md` |
 | SD-2 | `FF_FS_LOCK 0` (review, Low): setting it to 6 failed four power-cut cases in `hr_log_tests` | tried 2026-10-04 |

@@ -6,6 +6,8 @@ images beside it:
 
   python3 support/install.py [--board mk1c] [--host 192.168.N.1]
 
+With no --host, the board is the one attached; with several, --host names it.
+
 The board is the one the device reports on /api/status; with no device
 answering, --board names it, and a --board that disagrees with the device is
 refused. Images are the release's fw_<board>.uf2, fw_<board>_fota.bin and
@@ -24,7 +26,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pyro_http import BoardError, board_id_of, find_picotool, get_json, ping, post, wait_down, wait_up  # noqa: E402
+from pyro_http import (BoardError, attached_board, board_id_of, find_picotool, get_json, ping, post,  # noqa: E402
+                       wait_down, wait_up)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WWW_DIR = os.path.join(BASE_DIR, "www") if os.path.isdir(os.path.join(BASE_DIR, "www")) else None
@@ -96,8 +99,26 @@ def came_back(host, board):
     return status
 
 
+def appeared(timeout_s=60):
+    """The board just flashed, once its link is up: its address follows its
+    flash chip, so it is not known before it boots."""
+    print("  Waiting for the board's link...", flush=True)
+    end = time.monotonic() + timeout_s
+    while time.monotonic() < end:
+        try:
+            host = attached_board()
+        except BoardError as e:
+            print(f"  ✗ {e}")
+            return None
+        if host:
+            return host
+        time.sleep(1)
+    print("  ✗ no board came up")
+    return None
+
+
 def finish(host, board):
-    if not came_back(host, board):
+    if not host or not came_back(host, board):
         return 1
     if not WWW_DIR:
         print("\n✓ Firmware installed (no web files found).")
@@ -163,7 +184,7 @@ def flash_ota(host, images):
 
 def main():
     ap = argparse.ArgumentParser(description="Install firmware and web files on a Pyro board")
-    ap.add_argument("--host", default="192.168.7.1", help="the board's address (192.168.N.1 or pyro.local)")
+    ap.add_argument("--host", help="the board's address (192.168.N.1 or pyro.local); default: the one attached")
     ap.add_argument("--board", help="mk1a, mk1b, mk1c...; required when no board answers")
     args = ap.parse_args()
 
@@ -171,19 +192,24 @@ def main():
     print(f"  Pyro installer v{VERSION or 'unknown'}")
     print("=" * 50)
 
-    device_up = ping(args.host)
-    status = get_json(args.host) if device_up else None
+    try:
+        host = attached_board(args.host)
+    except BoardError as e:
+        print(f"Refused: {e}")
+        return 1
+    device_up = bool(host) and ping(host)
+    status = get_json(host) if device_up else None
     reported = board_id_of(status)
     if args.board and reported and args.board != reported:
-        print(f"Refused: the board at {args.host} is {reported}, not {args.board}.")
+        print(f"Refused: the board at {host} is {reported}, not {args.board}.")
         return 1
     board = args.board or reported
     if not board:
-        print(f"No board answers at {args.host}: name it with --board.")
+        print(f"No board answers{' at ' + host if host else ''}: name it with --board.")
         return 1
 
     images = images_for(board)
-    print(f"\nBoard: {board}" + (f" at {args.host}, v{status.get('fw_version', '?')}" if status else ""))
+    print(f"\nBoard: {board}" + (f" at {host}, v{status.get('fw_version', '?')}" if status else ""))
     print(f"  Bootloader: {images['bootloader'] or 'NOT FOUND'}")
     print(f"  App (UF2):  {images['app'] or 'NOT FOUND'}")
     print(f"  App (OTA):  {images['fota'] or 'NOT FOUND'}")
@@ -194,7 +220,7 @@ def main():
               "  3. Full flash via picotool (bootloader + app + web)\n  4. Exit")
         choice = {"1": "ota", "2": "www", "3": "picotool"}.get(input("\nSelect [1]: ").strip() or "1")
     else:
-        print(f"No board answers at {args.host}.")
+        print(f"No board answers{' at ' + host if host else ''}.")
         print("  1. Full flash via BOOTSEL (hold BOOTSEL, plug USB)\n  2. Full flash via picotool\n  3. Exit")
         choice = {"1": "bootsel", "2": "picotool"}.get(input("\nSelect [1]: ").strip() or "1")
     if not choice:
@@ -204,18 +230,18 @@ def main():
         if not WWW_DIR:
             print("Error: www directory not found")
             return 1
-        return 1 if upload_www(args.host) else 0
+        return 1 if upload_www(host) else 0
 
     need = ["fota"] if choice == "ota" else ["bootloader", "app"]
     missing = [k for k in need if not images[k]]
     if missing:
         print(f"Error: no {', '.join(missing)} image for {board}")
         return 1
-    flashed = {"ota": lambda: flash_ota(args.host, images), "bootsel": lambda: flash_bootsel(images),
+    flashed = {"ota": lambda: flash_ota(host, images), "bootsel": lambda: flash_bootsel(images),
                "picotool": lambda: flash_picotool(images)}[choice]()
     if not flashed:
         return 1
-    return finish(args.host, board)
+    return finish(host or appeared(), board)
 
 
 if __name__ == "__main__":

@@ -1,12 +1,13 @@
 # Pyro Support Tools
 
 Scripts for flashing, testing, and managing the Pyro flight computers (MK1A,
-MK1B, MK1C).
+MK1B, MK1B-8MB, MK1C).
 
 Each board is a point-to-point USB network at `192.168.<n>.1`, the third octet
-the last byte of its MAC (DD-072); `register_board.py` lists them. `pyro.local`
-finds one board. Scripts that default to `192.168.7.1` reach only a board
-whose octet happens to be 7: pass the address.
+the last byte of its MAC, which comes from its flash chip's unique ID (DD-099);
+`register_board.py` lists them. No address is fixed, so no script assumes one:
+`install.py` and `update_from_release.py` take the one board attached unless
+`--host` names another, and `pyro.local` finds one board.
 
 `flash_picotool.sh` and `test_network.py` run picotool from
 `~/.pico-sdk/picotool/2.2.0-a4/picotool/picotool`, where the Pico VS Code
@@ -44,10 +45,10 @@ extension installs it.
 python3 support/test_network.py
 
 # Direct mode
-python3 support/test_network.py 192.168.7.1
+python3 support/test_network.py 192.168.<n>.1
 
 # Full test suite, don't stop on failure
-python3 support/test_network.py --all 192.168.7.1
+python3 support/test_network.py --all 192.168.<n>.1
 ```
 
 With options and no host it tests `pyro.local`.
@@ -250,8 +251,8 @@ outside it.
 Loads the bootloader and the first `pyro_fw_mk1*.uf2` in `build_dir` (default
 `build`). A board already in BOOTSEL is loaded as it is; one running firmware
 with the vendor reset interface is forced into BOOTSEL first. It reboots the
-board and waits up to 15 s for `192.168.7.1` to answer a ping, so on any other
-octet the warning at the end means nothing.
+board and waits up to 15 s for a board link that was not up before the reboot
+to answer a ping.
 
 ### Via OTA
 
@@ -281,7 +282,7 @@ python3 support/install.py
 
 Run from a checkout, or from a release's `pyro-support.zip` with the board's
 images beside it. The board is the one the device reports on `/api/status`
-(`--host`, default `192.168.7.1`); with no device answering, `--board` names
+(`--host`, default the one attached); with no device answering, `--board` names
 it, and a `--board` that disagrees with the device is refused. With a board
 answering it offers OTA with the web files, the web files alone, or a full
 picotool flash; without one, a BOOTSEL copy or picotool. It takes the newest
@@ -317,15 +318,15 @@ python3 support/update_from_release.py --version 2.0.0
 python3 support/update_from_release.py --force
 ```
 
-`--host` names the board (default `192.168.7.1`), and `--beta` includes
-prereleases.
+`--host` names the board (default the one attached; with several, it must),
+and `--beta` includes prereleases.
 
 The tool:
 1. Queries the device's current version **and board** via `/api/status`
 2. Checks GitHub releases API for the latest (or specified) version
 3. Downloads `fw_<board>_fota.bin` from the release -- the image for
    the board the device reported, since the boards do not take each other's
-   firmware (mk1b is a 2 MB part, mk1a and mk1c are 16 MB). If the device
+   firmware (mk1b is a 2 MB part, mk1b_8mb 8 MB, mk1a and mk1c 16 MB). If the device
    does not report a board, pass `--board`. Releases up to v2.2.0 carried a
    single unqualified `pyro_fw_c_fota_image.bin`, which is still accepted as
    a fallback.
@@ -333,6 +334,6 @@ The tool:
 5. Waits for reboot and verifies the new version
 
 A release carries `fw_<board>.uf2`, `fw_<board>_fota.bin` and
-`fw_<board>_bootloader.uf2` for MK1A, MK1B and MK1C
+`fw_<board>_bootloader.uf2` for MK1A, MK1B, MK1B-8MB and MK1C
 (`.github/workflows/release.yml`).
 Configure the GitHub repo by editing `REPO` at the top of the script.

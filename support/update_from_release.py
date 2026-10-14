@@ -5,7 +5,7 @@ Usage:
   ./update_from_release.py                  Check and update from the latest release
   ./update_from_release.py --check          Check only, don't update
   ./update_from_release.py --version 1.2.0  Update to a specific version
-  ./update_from_release.py --host IP        The board's address
+  ./update_from_release.py --host IP        The board's address; default: the one attached
 
 The image is the release's fw_<board>_fota.bin for the board the device
 reports: the boards do not take each other's firmware. Releases up to v2.2.0
@@ -22,7 +22,7 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pyro_http import BoardError, board_id_of, get_json, post, wait_down, wait_up  # noqa: E402
+from pyro_http import BoardError, attached_board, board_id_of, get_json, post, wait_down, wait_up  # noqa: E402
 
 REPO = "n9wxu/pyro_fw"
 API_URL = f"https://api.github.com/repos/{REPO}/releases"
@@ -120,7 +120,7 @@ def push_ota(host, filepath):
 
 def main():
     ap = argparse.ArgumentParser(description="Update a Pyro board from GitHub releases")
-    ap.add_argument("--host", default="192.168.7.1", help="Device address")
+    ap.add_argument("--host", help="Device address; default: the one attached")
     ap.add_argument("--board", help="Override the board the device reports (mk1a, mk1b, mk1c)")
     ap.add_argument("--check", action="store_true", help="Check only, don't update")
     ap.add_argument("--version", help="Update to specific version (e.g. 1.2.0)")
@@ -128,10 +128,18 @@ def main():
     ap.add_argument("--beta", action="store_true", help="Include beta/prerelease versions")
     args = ap.parse_args()
 
-    print(f"Pyro firmware update\nDevice: {args.host}\n")
-    status = get_json(args.host)
+    try:
+        host = attached_board(args.host)
+    except BoardError as e:
+        print(f"Error: {e}")
+        return 1
+    if not host:
+        print("Error: no board attached; name one with --host")
+        return 1
+    print(f"Pyro firmware update\nDevice: {host}\n")
+    status = get_json(host)
     if not status:
-        print(f"Error: no answer from {args.host}")
+        print(f"Error: no answer from {host}")
         return 1
     current = status.get("fw_version", "unknown")
     reported = board_id_of(status)
@@ -169,13 +177,13 @@ def main():
     if not filepath:
         return 1
     try:
-        if not push_ota(args.host, filepath):
+        if not push_ota(host, filepath):
             return 1
     finally:
         os.unlink(filepath)
 
     print("  Waiting for the board...", flush=True)
-    status = wait_up(args.host, timeout_s=60)
+    status = wait_up(host, timeout_s=60)
     if not status:
         print("\n✗ The board did not come back; check it by hand.")
         return 1

@@ -23,7 +23,7 @@ env:
   # mk1c_sd is not in the supported set yet, so neither is listed. Adding a
   # board here is all it takes -- the steps below loop over this list and
   # name every artifact after the board it came from.
-  PYRO_RELEASE_BOARDS: mk1a mk1b mk1c
+  PYRO_RELEASE_BOARDS: mk1a mk1b mk1b_8mb mk1c
 
 jobs:
   release:
@@ -73,9 +73,9 @@ jobs:
             # Two of the three artifacts have the same filename whatever
             # board produced them, and the bootloader's CONTENTS differ per
             # board because the flash geometry does -- mk1b is a 2 MB part,
-            # mk1a and mk1c are 16 MB. Publishing them unrenamed would have
-            # each board's upload overwrite the last and leave one set of
-            # binaries labelled as if it fitted all three.
+            # mk1b_8mb 8 MB, mk1a and mk1c 16 MB. Publishing them unrenamed
+            # would have each board's upload overwrite the last and leave one
+            # set of binaries labelled as if it fitted them all.
             # pyro_fw_$BOARD.bin and pyro_fw_c_fota_image.bin are
             # byte-identical, so only the OTA-named one is shipped.
             cp "build-$BOARD/pyro_fw_$BOARD.uf2"       "dist/fw_$BOARD.uf2"
@@ -96,13 +96,17 @@ jobs:
               [ -s "dist/$f" ] || { echo "::error::missing or empty dist/$f"; exit 1; }
             done
           done
-          # The bootloaders must differ between a 2 MB board and a 16 MB one.
-          # If they match, a board was built against the wrong flash geometry
-          # and the artifacts would be silently wrong rather than absent.
-          if cmp -s dist/fw_mk1b_bootloader.uf2 dist/fw_mk1c_bootloader.uf2; then
-            echo "::error::mk1b and mk1c bootloaders are identical -- flash geometry did not take"
-            exit 1
-          fi
+          # The bootloaders must differ between boards of different flash
+          # sizes: 2, 8 and 16 MB. If two match, a board was built against
+          # the wrong flash geometry and the artifacts would be silently
+          # wrong rather than absent.
+          for PAIR in mk1b:mk1b_8mb mk1b:mk1c mk1b_8mb:mk1c; do
+            A=${PAIR%:*} B=${PAIR#*:}
+            if cmp -s "dist/fw_${A}_bootloader.uf2" "dist/fw_${B}_bootloader.uf2"; then
+              echo "::error::$A and $B bootloaders are identical -- flash geometry did not take"
+              exit 1
+            fi
+          done
           echo "all boards present and distinct"
 
       - name: Package support tools and web files
