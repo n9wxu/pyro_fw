@@ -560,6 +560,39 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-097: The Refitted MK1B Is A Board Of Its Own
+- **Decision:** an MK1B refitted with an 8 MB BY25Q64ESHIG at U7 and the
+  base AP2192 (AP2192MPG-13) at U5 is the board `mk1b_8mb`, "Pyro
+  MK1B-8MB". It builds MK1B's sources against the stock `pico` header with
+  the flash size changed, keeps 4096 kB of littlefs and two 1900 kB
+  application slots, and defines `BOARD_PYRO_U5_DISCHARGES_OUTPUTS` 0, so
+  the continuity check judges each channel (B-FL, B-U5).
+- **Why a board and not a setting:** the flash map is fixed when the
+  bootloader is linked. The 8 MB image keeps littlefs from 4 MB; on MK1B's
+  2 MB chip that address wraps to 0, the first boot's mount fails, and
+  `hal_fs_mount()` formats over the bootloader. The two images must not be
+  confused, and every check that keeps images apart keys on the board id.
+- **The web page reads a board id with an underscore.** Its filename check
+  took `[a-z0-9]+`, so `fw_mk1b_8mb_fota.bin` did not parse, and on an MK1B
+  drew a caution that could be confirmed past rather than a refusal.
+  MK1C-SD's images never parsed either. `update_from_release.py` and
+  `install.py` already name images by the id the device reports. A hand-run
+  `curl` or `picotool load` checks nothing: task FS-1.
+- **The build refuses a flash size its SDK header does not give.**
+  `PYRO_FLASH_SIZE_KB` fed only the geometry message, while the
+  bootloader's slots come from the header's `PICO_FLASH_SIZE_BYTES`; a
+  header left at 2 MB configured cleanly against an 8 MB declaration and
+  printed a slot map the bootloader would not use. The configure now fails.
+- **4096 kB of littlefs:** half the chip, as MK1A and MK1C keep half of
+  theirs. The slots hold five times today's image (359,168 bytes).
+- **Measured 2026-10-13 on the first board (0244102D6F98):** it boots on the
+  W25Q080 boot stage 2; both empty connectors read open, 3451 and 3511
+  counts, the first MK1B to see one; `api_check.py` 52 of 52,
+  `http_stream_check.py` 20 of 20, `pressure_trace.py` good with 7.3 Pa rms
+  on USB alone, no flash refused, no loop overrun.
+- **Not yet:** a 1 ohm load reading good and a short reading shorted
+  (section 5's B-U5); the release does not carry the board (REL-1).
+
 ### DD-096: lwIP Holds What The Rings Do Not
 - **Decision:** lwIP's memory is sized to the HTTP engine's rings, not to
   its own defaults. A connection's bytes wait in its two 2 kB rings; lwIP

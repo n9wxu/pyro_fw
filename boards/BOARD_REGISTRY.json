@@ -3,7 +3,7 @@
     {
       "board": "Pyro MK1A",
       "first_seen": "2026-10-13",
-      "fw_version": "2.2.5",
+      "fw_version": "2.2.6",
       "hw_id": "E46214B0632D472F",
       "last_seen": "2026-10-13",
       "mac": "02632D472F0D",
@@ -13,7 +13,7 @@
     {
       "board": "Pyro MK1B",
       "first_seen": "2026-10-13",
-      "fw_version": "2.2.3",
+      "fw_version": "2.2.6",
       "hw_id": "E66364D1E71FAE2F",
       "last_seen": "2026-10-13",
       "mac": "0268FFB038CD",
@@ -23,7 +23,7 @@
     {
       "board": "Pyro MK1B",
       "first_seen": "2026-09-21",
-      "fw_version": "2.2.5",
+      "fw_version": "2.2.6",
       "hw_id": "E66364D1E7253A34",
       "last_seen": "2026-10-13",
       "mac": "02E7253A34C2",
@@ -41,6 +41,16 @@
       "subnet": 65
     },
     {
+      "board": "Pyro MK1B-8MB",
+      "first_seen": "2026-10-13",
+      "fw_version": "2.2.6+local",
+      "hw_id": "35343239330594F3",
+      "last_seen": "2026-10-13",
+      "mac": "0244102D6F98",
+      "mac_source": "rng",
+      "subnet": 152
+    },
+    {
       "board": "Pyro MK1C",
       "first_seen": "2026-09-21",
       "fw_version": "2.1.702",
@@ -53,7 +63,7 @@
     {
       "board": "Pyro MK1C-SD",
       "first_seen": "2026-09-29",
-      "fw_version": "2.2.5",
+      "fw_version": "2.2.6+local",
       "hw_id": "41503459373331FF",
       "last_seen": "2026-10-13",
       "mac": "02373331FF2A",

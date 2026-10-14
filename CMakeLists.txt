@@ -473,6 +473,15 @@ target_compile_definitions(pyro_fw_c PRIVATE PYRO_LOOP_WORST_MS=${PYRO_LOOP_WORS
 # linker asserts do NOT catch an empty @PICO_FLASH_SIZE_BYTES@ substitution,
 # which silently yields a negative flash size (see the note in each board's sdk/ header).
 # Check it here, where the failure is legible.
+if("${PICO_FLASH_SIZE_BYTES}" STREQUAL "")
+    message(FATAL_ERROR "The SDK board header '${PICO_BOARD}' gives no "
+        "pico_board_cmake_set_default(PICO_FLASH_SIZE_BYTES, ...) line")
+endif()
+math(EXPR _pyro_sdk_flash_kb "${PICO_FLASH_SIZE_BYTES} / 1024")
+if(NOT _pyro_sdk_flash_kb EQUAL PYRO_FLASH_SIZE_KB)
+    message(FATAL_ERROR "boards/${PYRO_BOARD}/board.cmake gives ${PYRO_FLASH_SIZE_KB}KB of flash and "
+        "the SDK board header '${PICO_BOARD}' ${_pyro_sdk_flash_kb}KB; the A/B slots are built from the header")
+endif()
 math(EXPR _pyro_usable_kb "${PYRO_FLASH_SIZE_KB} - ${PYRO_PFB_FS_KB}")
 math(EXPR _pyro_swap_kb   "(${_pyro_usable_kb} - 36 - 4) / 2")
 math(EXPR _pyro_swap_rem  "(${_pyro_usable_kb} - 36 - 4) % 8")
