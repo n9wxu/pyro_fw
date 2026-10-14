@@ -4,6 +4,9 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# npx must find this directory's Playwright: from anywhere else it fetches a
+# second copy, and the two refuse each other's test.describe().
+cd "$SCRIPT_DIR"
 PORT=3456
 PASS=0
 FAIL=0
