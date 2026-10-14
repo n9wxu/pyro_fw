@@ -57,14 +57,30 @@
       "subnet": 152
     },
     {
+      "board": "Pyro MK1B-8MB",
+      "first_seen": "2026-10-13",
+      "flash_jedec": "684017",
+      "flash_kb": 8192,
+      "flash_uid": "35343239330604F4FFFC82D6FF361D20",
+      "fw_version": "2.2.6+local",
+      "hw_id": "35343239330604F4",
+      "last_seen": "2026-10-13",
+      "mac": "02C5AA0564F9",
+      "mac_source": "rng",
+      "subnet": 249
+    },
+    {
       "board": "Pyro MK1C",
-      "first_seen": "2026-09-21",
-      "fw_version": "2.1.702",
+      "first_seen": "2026-10-13",
+      "flash_jedec": "0B4018",
+      "flash_kb": 16384,
+      "flash_uid": "41503459373331FFFFFFFF15003D0025",
+      "fw_version": "2.2.6+local",
       "hw_id": "41503459373331FF",
-      "last_seen": "2026-09-29",
-      "mac": "02373331FFDE",
-      "mac_source": "derived",
-      "subnet": 222
+      "last_seen": "2026-10-13",
+      "mac": "023F85B06B21",
+      "mac_source": "rng",
+      "subnet": 33
     },
     {
       "board": "Pyro MK1C-SD",

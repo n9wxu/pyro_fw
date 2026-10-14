@@ -151,9 +151,11 @@ def main():
             print(f"  192.168.{octet}.x  " + ", ".join(f"{b['board']}/{b['hw_id'][:8]}" for b in boards))
         print("  Fix: POST 12 hex digits to /api/serial on one of them, then reboot.")
 
+    # The whole QSPI serial where the firmware reports it: hw_id is the SDK's
+    # first 8 bytes, which two XT25F128F chips share [WEB-API-15].
     shared = {}
     for b in reg["boards"]:
-        shared.setdefault(b.get("hw_id"), []).append(b)
+        shared.setdefault(b.get("flash_uid") or b.get("hw_id"), []).append(b)
     shared = {k: v for k, v in shared.items() if k and len(v) > 1}
     if shared:
         print("\nSHARED FLASH IDS -- these derive one identity; each after the first needs /serial.txt:")

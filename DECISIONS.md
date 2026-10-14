@@ -596,9 +596,12 @@ rationale and the alternatives considered.
   | MK1A | EF4018 | 16384 | E46214B0632D472F |
   | MK1C-SD | 0B4018 | 16384 | 41503459373331FF FFFFFF1500640027 |
   | MK1B-8MB | 684017 | 8192 | 35343239330594F3 FFFCA50EFF851D20 |
+  | MK1B-8MB, the second | 684017 | 8192 | 35343239330604F4 FFFC82D6FF361D20 |
+  | MK1C | 0B4018 | 16384 | 41503459373331FF FFFFFF15003D0025 |
 
-  The second halves, which the SDK never read, are not blank. Whether two
-  MK1Cs' differ is not yet seen: the first MK1C was not attached.
+  The two MK1Cs share the 8 bytes the SDK reads and differ in the last
+  four of their 16: the whole ID tells them apart. The user then decided
+  identity should come from it (ID-2).
 
 ### DD-097: The Refitted MK1B Is A Board Of Its Own
 - **Decision:** an MK1B refitted with an 8 MB BY25Q64ESHIG at U7 and the
