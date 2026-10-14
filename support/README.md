@@ -4,7 +4,7 @@ Scripts for flashing, testing, and managing the Pyro flight computers (MK1A,
 MK1B, MK1C).
 
 Each board is a point-to-point USB network at `192.168.<n>.1`, the third octet
-derived from its flash chip's id; `register_board.py` lists them. `pyro.local`
+the last byte of its MAC (DD-072); `register_board.py` lists them. `pyro.local`
 finds one board. Scripts that default to `192.168.7.1` reach only a board
 whose octet happens to be 7: pass the address.
 
@@ -194,8 +194,10 @@ Discovery reads the host's own interfaces: a board hands the host
 registry is a record, not an allocator; deleting it loses nothing that running
 this again with the boards attached does not rebuild. Two boards on one octet
 cannot share a host: POST 12 hex digits to `/api/serial` on one of them and
-reboot it. The same fixes two boards whose flash chips report one id, as two
-MK1Cs' do: a record is keyed by hw_id and MAC, and the report lists shared ids.
+reboot it. A record is keyed by the flash chip's whole unique ID
+(`flash_uid`, DD-098), so a reworked board, with a new chip, is a new record;
+firmware too old to report it is keyed by `hw_id` and MAC. `hw_id` is the
+SDK's first 8 bytes of that ID, which two MK1Cs share; their whole IDs differ.
 
 ## Static Checks (CI)
 

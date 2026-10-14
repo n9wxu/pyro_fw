@@ -14,36 +14,6 @@
       "subnet": 13
     },
     {
-      "board": "Pyro MK1B",
-      "first_seen": "2026-10-13",
-      "fw_version": "2.2.6",
-      "hw_id": "E66364D1E71FAE2F",
-      "last_seen": "2026-10-13",
-      "mac": "0268FFB038CD",
-      "mac_source": "rng",
-      "subnet": 205
-    },
-    {
-      "board": "Pyro MK1B",
-      "first_seen": "2026-09-21",
-      "fw_version": "2.2.6",
-      "hw_id": "E66364D1E7253A34",
-      "last_seen": "2026-10-13",
-      "mac": "02E7253A34C2",
-      "mac_source": "override",
-      "subnet": 194
-    },
-    {
-      "board": "Pyro MK1B",
-      "first_seen": "2026-09-29",
-      "fw_version": "2.1.702",
-      "hw_id": "E66364D1E72A4034",
-      "last_seen": "2026-09-29",
-      "mac": "02E72A403441",
-      "mac_source": "derived",
-      "subnet": 65
-    },
-    {
       "board": "Pyro MK1B-8MB",
       "first_seen": "2026-10-13",
       "flash_jedec": "684017",

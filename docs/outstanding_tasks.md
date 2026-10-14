@@ -28,16 +28,17 @@ The bench boards on 2026-10-13, all updated to 2.2.6 that day.
 | Board | Sensor | Serial | Address | Firmware | State |
 |---|---|---|---|---|---|
 | MK1A | BMP280 | 02632D472F0D | 192.168.13.1 | 2.2.6+local | PAD_IDLE, no igniters |
-| MK1B | MS5607 | 02E7253A34C2 | 192.168.194.1 | 2.2.6 | PAD_IDLE, channels released to Lua; unplugged later that day |
-| MK1B | BMP280 | 0268FFB038CD | 192.168.205.1 | 2.2.6 | FAULT `sensor_fail`: the BMP280 does not acknowledge its address. No restart since 2026-10-10 had removed its power: a RUN-pin reset then, the update since (B-BZ, REC-1). Unplugged later that day |
 | MK1B-8MB, the second refit | MS5607 | 02C5AA0564F9 | 192.168.249.1 | 2.2.6+local | PAD_IDLE, no igniters, both channels open (3981, 3970) |
 | MK1B-8MB (DD-097) | MS5607 | 0244102D6F98 | 192.168.152.1 | 2.2.6+local | PAD_IDLE, no igniters, both channels open |
 | MK1C | MS5607 | 023F85B06B21 | 192.168.33.1 | 2.2.6+local | PAD_IDLE, no igniters; found in BOOTSEL and reloaded over it |
 | MK1C-SD (the J3 SPI test board) | MS5607 | 02373331FF2A | 192.168.42.1 | 2.2.6+local | PAD_IDLE, no igniters |
 
-A `+local` image is a local build. By the end of the day MK1A, MK1C-SD and
-MK1B-8MB ran the `flash-identity` branch (DD-098); the release carries
-neither MK1C-SD nor MK1B-8MB (REL-1).
+Half the MK1Bs have been reworked to MK1B-8MB; the rest keep 2 MB and the
+AP2192A, and none of them was attached at the end of the day. A reworked
+board has a new flash chip and so a new identity: the registry keeps MK1Bs
+only as their chips report them. A `+local` image is a local build: by the
+end of the day every board in the table ran the `flash-identity` branch
+(DD-098), and the release carries neither MK1C-SD nor MK1B-8MB (REL-1).
 
 ---
 

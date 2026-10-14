@@ -17,9 +17,11 @@ What it is for:
   - noticing a flash swap. The identity belongs to the flash chip, not the
     PCB, so a reflowed board arrives as a new hw_id and an old one goes quiet.
 
-A record is keyed by hw_id AND mac: boards that share a hw_id are told apart
-by their /serial.txt. Giving a board a serial therefore starts a new record
-and leaves the old one quiet, as a flash swap does.
+A record is keyed by the flash chip's whole unique ID, flash_uid, where the
+firmware reports it (DD-098): a new serial keeps the record, a new chip
+starts one. Older firmware reports only hw_id, the SDK's first 8 bytes of
+that ID, which two XT25F128F chips share; its records are keyed by hw_id AND
+mac, so boards that share a hw_id are told apart by their /serial.txt.
 
 Discovery uses the host's own interface addresses. Each board is a
 point-to-point USB link running a DHCP server that hands the host
@@ -100,7 +102,10 @@ def main():
         return 1
 
     reg = load(args.registry)
-    by_key = {(b.get("hw_id"), b.get("mac")): b for b in reg["boards"] if b.get("hw_id")}
+    def key_of(b):
+        return b.get("flash_uid") or (b.get("hw_id"), b.get("mac"))
+
+    by_key = {key_of(b): b for b in reg["boards"] if b.get("hw_id")}
     today = datetime.date.today().isoformat()
     seen, changed = [], 0
 
@@ -114,7 +119,7 @@ def main():
             print(f"  {host:<16} {st.get('board','?')} -- firmware predates hw_id; reflash to register")
             continue
 
-        key = (hw, st.get("serial"))
+        key = st.get("flash_uid") or (hw, st.get("serial"))
         rec = by_key.get(key, {})
         was = dict(rec)
         rec.update({
