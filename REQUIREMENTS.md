@@ -392,7 +392,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-NET-03**: The system shall advertise its hostname via mDNS. ← SYS-WEB-02
 - **WEB-NET-04**: The system shall advertise a DNS-SD service for automatic discovery. ← SYS-WEB-02
 - **WEB-NET-05**: A frame the USB link cannot take yet shall be held and sent in order as soon as it can, not dropped; one shall be refused only when eight wait already or the host has let the device go. ← SYS-WEB-01
-- **WEB-NET-06**: A board shall have a unique network address that survives restarts, without factory programming: one that has none shall draw one at random, with a subnet other than 0, 1 and 255, and keep it. `/api/status` shall say whether the address was drawn or assigned. ← SYS-WEB-02
+- **WEB-NET-06**: A board shall have a network address that survives restarts and a blank flash, without factory programming: derived from its flash chip's whole unique ID, with a subnet other than 0, 1 and 255, unless an operator assigned one. `/api/status` shall say whether the address was derived or assigned. ← SYS-WEB-02
 - **WEB-NET-07**: A received frame the device cannot hold -- no buffer free, an empty frame, a frame that will not copy, or one arriving while another is held -- shall be handed back to the USB stack so that reception continues, and no frame shall be copied past the endpoint's buffer. ← SYS-WEB-01
 
 ### The API

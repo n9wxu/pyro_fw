@@ -9,7 +9,7 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Verifies [FLT-BOOT-17, WEB-API-15].
+ * Verifies [FLT-BOOT-17, WEB-API-15, WEB-NET-06].
  */
 #include "unity.h"
 #include "flash_chip.h"
@@ -100,6 +100,19 @@ static void test_FC_09_a_winbond_id_is_reported_at_its_own_length(void) {
     TEST_ASSERT_EQUAL_STRING("E66364D1E7253A34", hex);
 }
 
+/* The bytes the board's identity is derived from [WEB-NET-06]. */
+static void test_FC_11_the_whole_id_is_given_at_its_length(void) {
+    static const uint8_t uid[16] = {0x41, 0x50, 0x34, 0x59, 0x37, 0x33, 0x31, 0xFF,
+                                    0xFF, 0xFF, 0xFF, 0x15, 0x00, 0x3D, 0x00, 0x25};
+    uint8_t got[FLASH_CHIP_UID_MAX];
+
+    flash_chip_set(XT25F128F, uid);
+    TEST_ASSERT_EQUAL_INT(16, flash_chip_uid(got));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(uid, got, 16);
+    flash_chip_set(W25Q16JV, uid);
+    TEST_ASSERT_EQUAL_INT(8, flash_chip_uid(got));
+}
+
 /* Before the boot read, or on the host: nothing known, nothing refused. */
 static void test_FC_10_no_read_is_unknown(void) {
     static const uint8_t none[3] = {0, 0, 0};
@@ -124,5 +137,6 @@ int main(void) {
     RUN_TEST(test_FC_08_the_chip_read_at_boot_is_reported);
     RUN_TEST(test_FC_09_a_winbond_id_is_reported_at_its_own_length);
     RUN_TEST(test_FC_10_no_read_is_unknown);
+    RUN_TEST(test_FC_11_the_whole_id_is_given_at_its_length);
     return UNITY_END();
 }

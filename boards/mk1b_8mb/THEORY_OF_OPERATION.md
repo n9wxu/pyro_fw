@@ -36,8 +36,8 @@ board boots and runs from it.
 Its unique ID is 128 bits (page 45). The SDK reads the first 64, which on the
 first board are 35343239330594F3, ASCII "5429" then four bytes: the half that
 two MK1Cs' XT25F128F chips share. `/api/status` reports all 128 as
-`flash_uid` (DD-098). The MAC is drawn at random (DD-072), so a shared half
-does not share an address.
+`flash_uid` (DD-098), and the MAC and subnet are derived from all 128
+(DD-099).
 
 **An MK1B image and an MK1B-8MB image must not be swapped.** On a 2 MB chip
 the 8 MB image's filesystem address, 4 MB, wraps to 0: the first boot finds

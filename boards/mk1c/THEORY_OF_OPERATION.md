@@ -38,7 +38,7 @@ DESIGN.md 7.1 run one step per loop iteration (DD-056).
 | Item | Part | Notes |
 |---|---|---|
 | MCU | RP2040, QFN-56, 12 MHz crystal | bare chip; its own SDK header, `sdk/pyro_mk1c.h` |
-| Flash | XT25F128FWOIGT-W, 16 MB | 8 MB littlefs, the rest two OTA slots behind `pico_fota_bootloader` |
+| Flash | XT25F128FWOIGT-W, 16 MB | 8 MB littlefs, the rest two OTA slots behind `pico_fota_bootloader`. Its unique ID is 128 bits (`docs/datasheets/XT25F128F-W_Rev0.6_2022-02-26.pdf`, p. 23); the SDK reads the first 64, which two chips share, and the board's identity is derived from all 128 (DD-098, DD-099) |
 | High side | U9 TPS259570 eFuse | current limit 4.05 A (R_ILIM 499 Ω); output ramp 0.89 V/ms (C_dVdT 47 nF); latches off on overtemperature |
 | Arm pump | C101 10 nF, BAT54S, C_HOLD 100 nF, R_BLEED_EN 100 kΩ | ARM_TOGGLE → U9 EN/UVLO |
 | Low sides | Q103, Q104 AO3400A | gates through R108/R113 100 Ω |
@@ -391,18 +391,6 @@ presence test reads open is still fired on command (GND-TEST-13).
 - **No ~FLT, no ILM**, so DESIGN.md 7.2's capacitance check and the FLT abort
   have no source; the precharge timeout covers a loaded bus.
 - **The presence pulse is 20–21 ms**, not 5–10 (task P1).
-- **Two MK1Cs share one identity.** The second board, flashed 2026-09-28,
-  derives the first's MAC, USB serial and subnet (02373331FFDE, 222). The MAC
-  takes the flash id's last four bytes and a fold of all eight, so the two
-  XT25F128F ids match there at least. The first reads 41503459373331FF, ASCII
-  "AP4Y731" then FF. The chip's unique ID is 128 bits, unique to each device
-  (`docs/datasheets/XT25F128F-W_Rev0.6_2022-02-26.pdf`, p. 23); the SDK reads
-  the first 64, the half the two share; the last four bytes differ, 003D0025
-  and 00640027. `/api/status` reports all 128 as `flash_uid` (DD-098), and
-  task ID-2 derives the identity from them. A host enumerates the
-  second board and gives it no interface. Each MK1C after the first needs a
-  `/serial.txt` (`POST /api/serial`), set while the first is unplugged
-  (task ID-1); the second carries 02373331FF2A, subnet 42.
 
 ## What this board declares
 

@@ -1,12 +1,13 @@
 /*
- * A MAC drawn from the RNG, and the /serial.txt that keeps it (mac_random.c,
- * DD-072, WEB-NET-06). Two MK1Cs whose flash chips report one id took one
- * derived MAC; a drawn one depends on what the pool was fed, not on the flash.
+ * The board's MAC: derived from the flash chip's whole unique ID (DD-099),
+ * unless /serial.txt holds one an operator assigned (mac_random.c,
+ * WEB-NET-06). The pool's mixing is DD-072's; the ID is now all it is fed.
  *
  * Verifies [WEB-NET-06].
  */
 #include "unity.h"
 #include "mac_random.h"
+#include <stdio.h>
 #include <string.h>
 
 void setUp(void) {}
@@ -91,21 +92,106 @@ void test_WEB_NET_06_subnet_spreads_evenly(void) {
     }
 }
 
-void test_WEB_NET_06_file_round_trips_drawn_and_assigned(void) {
+/* What DD-072's firmware wrote for a drawn MAC: recognised, so it can give
+ * way to the flash ID. */
+void test_WEB_NET_06_a_drawn_file_is_recognised(void) {
     const uint8_t mac[MAC_BYTES] = {0x02, 0x37, 0x33, 0x31, 0xFF, 0x2A};
-    char buf[MAC_FILE_MAX];
     uint8_t got[MAC_BYTES];
     bool drawn = false;
-
-    TEST_ASSERT_GREATER_THAN(0, mac_file_format(mac, true, buf, sizeof(buf)));
-    TEST_ASSERT_EQUAL_STRING("02373331FF2A\nrng\n", buf);
-    TEST_ASSERT_TRUE(mac_file_parse(buf, got, &drawn));
+    TEST_ASSERT_TRUE(mac_file_parse("02373331FF2A\nrng\n", got, &drawn));
     TEST_ASSERT_EQUAL_HEX8_ARRAY(mac, got, MAC_BYTES);
     TEST_ASSERT_TRUE(drawn);
+}
 
-    TEST_ASSERT_GREATER_THAN(0, mac_file_format(mac, false, buf, sizeof(buf)));
-    TEST_ASSERT_TRUE(mac_file_parse(buf, got, &drawn));
-    TEST_ASSERT_FALSE(drawn);
+/* The bench's chips, read whole (DD-098). */
+static const uint8_t MK1A_W25Q128JV[8] = {0xE4, 0x62, 0x14, 0xB0, 0x63, 0x2D, 0x47, 0x2F};
+static const uint8_t MK1C_XT25F[16] = {0x41, 0x50, 0x34, 0x59, 0x37, 0x33, 0x31, 0xFF,
+                                       0xFF, 0xFF, 0xFF, 0x15, 0x00, 0x3D, 0x00, 0x25};
+static const uint8_t MK1C_SD_XT25F[16] = {0x41, 0x50, 0x34, 0x59, 0x37, 0x33, 0x31, 0xFF,
+                                          0xFF, 0xFF, 0xFF, 0x15, 0x00, 0x64, 0x00, 0x27};
+static const uint8_t MK1B_8MB_BY25[16] = {0x35, 0x34, 0x32, 0x39, 0x33, 0x05, 0x94, 0xF3,
+                                          0xFF, 0xFC, 0xA5, 0x0E, 0xFF, 0x85, 0x1D, 0x20};
+static const uint8_t MK1B_8MB_2_BY25[16] = {0x35, 0x34, 0x32, 0x39, 0x33, 0x06, 0x04, 0xF4,
+                                            0xFF, 0xFC, 0x82, 0xD6, 0xFF, 0x36, 0x1D, 0x20};
+
+static void assert_mac(const char *want, const uint8_t *uid, int len) {
+    uint8_t m[MAC_BYTES];
+    char got[13];
+    mac_from_uid(uid, len, m);
+    for (int i = 0; i < MAC_BYTES; i++)
+        snprintf(got + i * 2, 3, "%02X", m[i]);
+    TEST_ASSERT_EQUAL_STRING(want, got);
+}
+
+/* Pinned: a change here moves every board's address. */
+void test_WEB_NET_06_each_bench_chip_derives_its_own_mac(void) {
+    assert_mac("02F2B4B8D80D", MK1A_W25Q128JV, 8);
+    assert_mac("02BB65F06D47", MK1C_XT25F, 16);
+    assert_mac("02F391188C48", MK1C_SD_XT25F, 16);
+    assert_mac("0237CA1FB1A0", MK1B_8MB_BY25, 16);
+    assert_mac("0265BA5C7AFC", MK1B_8MB_2_BY25, 16);
+}
+
+/* The MK1C case: the SDK's 8 bytes are the same, the whole IDs are not. */
+void test_WEB_NET_06_two_ids_that_share_8_bytes_get_two_macs(void) {
+    uint8_t a[MAC_BYTES], b[MAC_BYTES];
+    mac_from_uid(MK1C_XT25F, 16, a);
+    mac_from_uid(MK1C_SD_XT25F, 16, b);
+    TEST_ASSERT_FALSE(memcmp(a, b, MAC_BYTES) == 0);
+    TEST_ASSERT_NOT_EQUAL(a[5], b[5]);
+}
+
+/* No storage: a blank flash, or any boot, gives the same address. */
+void test_WEB_NET_06_one_id_gives_one_mac_at_every_boot(void) {
+    uint8_t a[MAC_BYTES], b[MAC_BYTES];
+    mac_from_uid(MK1B_8MB_BY25, 16, a);
+    mac_from_uid(MK1B_8MB_BY25, 16, b);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(a, b, MAC_BYTES);
+    TEST_ASSERT_EQUAL_HEX8(0x02, a[0]);
+}
+
+void test_WEB_NET_06_an_id_is_not_its_own_first_half(void) {
+    uint8_t a[MAC_BYTES], b[MAC_BYTES];
+    mac_from_uid(MK1C_XT25F, 8, a);
+    mac_from_uid(MK1C_XT25F, 16, b);
+    TEST_ASSERT_FALSE(memcmp(a, b, MAC_BYTES) == 0);
+}
+
+void test_WEB_NET_06_a_derived_subnet_is_never_0_1_or_255(void) {
+    uint8_t uid[16] = {0};
+    for (uint32_t k = 0; k < 20000; k++) {
+        uint8_t m[MAC_BYTES];
+        memcpy(uid + 12, &k, sizeof(k));
+        mac_from_uid(uid, 16, m);
+        TEST_ASSERT_NOT_EQUAL(0, m[5]);
+        TEST_ASSERT_NOT_EQUAL(1, m[5]);
+        TEST_ASSERT_NOT_EQUAL(255, m[5]);
+    }
+}
+
+/* An operator's MAC is kept: it is how two boards that meet on one subnet
+ * are parted. */
+void test_WEB_NET_06_an_assigned_file_wins(void) {
+    const uint8_t want[MAC_BYTES] = {0x02, 0x37, 0x33, 0x31, 0xFF, 0x2A};
+    uint8_t m[MAC_BYTES];
+    TEST_ASSERT_TRUE(mac_choose("02373331FF2A", MK1C_SD_XT25F, 16, m));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(want, m, MAC_BYTES);
+}
+
+void test_WEB_NET_06_a_drawn_file_gives_way_to_the_flash_id(void) {
+    uint8_t m[MAC_BYTES], want[MAC_BYTES];
+    mac_from_uid(MK1B_8MB_BY25, 16, want);
+    TEST_ASSERT_FALSE(mac_choose("0244102D6F98\nrng\n", MK1B_8MB_BY25, 16, m));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(want, m, MAC_BYTES);
+}
+
+void test_WEB_NET_06_no_file_or_a_bad_one_takes_the_flash_id(void) {
+    uint8_t m[MAC_BYTES], want[MAC_BYTES];
+    mac_from_uid(MK1C_XT25F, 16, want);
+    TEST_ASSERT_FALSE(mac_choose(NULL, MK1C_XT25F, 16, m));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(want, m, MAC_BYTES);
+    TEST_ASSERT_FALSE(mac_choose("not a mac", MK1C_XT25F, 16, m));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(want, m, MAC_BYTES);
 }
 
 /* What /api/serial writes: twelve digits, nothing else. */
@@ -137,7 +223,15 @@ int main(void) {
     RUN_TEST(test_WEB_NET_06_same_seed_different_samples_differ);
     RUN_TEST(test_WEB_NET_06_no_repeat_across_many_boards);
     RUN_TEST(test_WEB_NET_06_subnet_spreads_evenly);
-    RUN_TEST(test_WEB_NET_06_file_round_trips_drawn_and_assigned);
+    RUN_TEST(test_WEB_NET_06_a_drawn_file_is_recognised);
+    RUN_TEST(test_WEB_NET_06_each_bench_chip_derives_its_own_mac);
+    RUN_TEST(test_WEB_NET_06_two_ids_that_share_8_bytes_get_two_macs);
+    RUN_TEST(test_WEB_NET_06_one_id_gives_one_mac_at_every_boot);
+    RUN_TEST(test_WEB_NET_06_an_id_is_not_its_own_first_half);
+    RUN_TEST(test_WEB_NET_06_a_derived_subnet_is_never_0_1_or_255);
+    RUN_TEST(test_WEB_NET_06_an_assigned_file_wins);
+    RUN_TEST(test_WEB_NET_06_a_drawn_file_gives_way_to_the_flash_id);
+    RUN_TEST(test_WEB_NET_06_no_file_or_a_bad_one_takes_the_flash_id);
     RUN_TEST(test_WEB_NET_06_assigned_file_as_the_api_writes_it);
     RUN_TEST(test_WEB_NET_06_malformed_files_are_refused_whole);
     return UNITY_END();

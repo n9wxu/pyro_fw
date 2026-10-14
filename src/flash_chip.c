@@ -47,6 +47,12 @@ uint32_t flash_chip_bytes(void) {
     return flash_chip_capacity(jedec_id);
 }
 
+int flash_chip_uid(uint8_t out[FLASH_CHIP_UID_MAX]) {
+    int n = flash_chip_uid_len(jedec_id);
+    memcpy(out, uid_bytes, (size_t)n);
+    return n;
+}
+
 static void hex(char *out, size_t cap, const uint8_t *b, int n) {
     if (cap == 0)
         return;

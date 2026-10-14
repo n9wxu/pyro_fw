@@ -560,6 +560,32 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-099: Identity From The Flash Chip's Whole Serial
+- **Decision:** at the user's direction ("update the random MAC to use the
+  full serial numbers to ensure a fully unique serial number across all
+  flash devices"; "use the board flash ID's to seed the subnet byte"), the
+  MAC, and with it the USB serial and the subnet, is derived from the flash
+  chip's whole unique ID (DD-098): DD-072's pool, fed the ID and nothing
+  else (`mac_from_uid()`). The subnet is still the MAC's last byte and still
+  never 0, 1 or 255. `/api/status` reports `mac_source` `flash` or
+  `assigned`.
+- **What is kept:** a MAC an operator assigned through `/api/serial` wins,
+  because it is how two boards that meet on one subnet are parted. A MAC
+  DD-072 drew and kept is ignored: the flash ID replaces it.
+- **Why:** DD-072 drew at random because two MK1Cs took one identity from
+  the SDK's 8 bytes. The whole IDs differ (DD-098), so the reason is gone,
+  and a derived identity needs no storage: a blank flash keeps its address,
+  which ends ID-1's change of address at the second boot, and ID-1's web
+  page draw is not needed.
+- **What it does not fix:** the subnet is one byte, so two boards share one
+  at the birthday rate, about 4 % at 5 boards. `register_board.py` reports
+  it, and `/api/serial` parts them.
+- **The bench's new addresses:** MK1C 02BB65F06D47 (192.168.71.1),
+  MK1B-8MB 0237CA1FB1A0 (192.168.160.1) and 0265BA5C7AFC (192.168.252.1).
+  MK1A (13) and MK1C-SD (42) keep the MACs assigned to them. The values are
+  pinned in `test_mac_random.c`: a change to the derivation moves every
+  board.
+
 ### DD-098: The Flash Chip Says Its Size And Its Whole Unique ID
 - **Decision:** at boot, before the scheduler, the firmware reads the flash
   chip's JEDEC ID (9Fh) and its unique ID (4Bh), and `/api/status` reports

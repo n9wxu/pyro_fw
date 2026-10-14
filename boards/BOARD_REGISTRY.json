@@ -22,9 +22,9 @@
       "fw_version": "2.2.6+local",
       "hw_id": "35343239330594F3",
       "last_seen": "2026-10-13",
-      "mac": "0244102D6F98",
-      "mac_source": "rng",
-      "subnet": 152
+      "mac": "0237CA1FB1A0",
+      "mac_source": "derived",
+      "subnet": 160
     },
     {
       "board": "Pyro MK1B-8MB",
@@ -35,9 +35,9 @@
       "fw_version": "2.2.6+local",
       "hw_id": "35343239330604F4",
       "last_seen": "2026-10-13",
-      "mac": "02C5AA0564F9",
-      "mac_source": "rng",
-      "subnet": 249
+      "mac": "0265BA5C7AFC",
+      "mac_source": "derived",
+      "subnet": 252
     },
     {
       "board": "Pyro MK1C",
@@ -48,9 +48,9 @@
       "fw_version": "2.2.6+local",
       "hw_id": "41503459373331FF",
       "last_seen": "2026-10-13",
-      "mac": "023F85B06B21",
-      "mac_source": "rng",
-      "subnet": 33
+      "mac": "02BB65F06D47",
+      "mac_source": "derived",
+      "subnet": 71
     },
     {
       "board": "Pyro MK1C-SD",

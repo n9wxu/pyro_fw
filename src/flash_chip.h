@@ -38,6 +38,9 @@ void flash_chip_set(const uint8_t jedec[3], const uint8_t uid[FLASH_CHIP_UID_MAX
 
 uint32_t flash_chip_bytes(void);
 
+/* The unique ID's bytes, at the maker's length, which is returned. */
+int flash_chip_uid(uint8_t out[FLASH_CHIP_UID_MAX]);
+
 /* The hardware read, on the target: once, before the scheduler. */
 void flash_chip_read(void);
 

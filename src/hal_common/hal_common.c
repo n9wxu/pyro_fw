@@ -1398,9 +1398,7 @@ __attribute__((weak)) void board_flash_service(uint32_t now_ms) {
 }
 
 void hal_storage_service(uint32_t now_ms) {
-    if (board_identity_unsaved() && !hal_log_active())
-        board_identity_save();
-    else if (board_selftest_unsaved() && !hal_log_active())
+    if (board_selftest_unsaved() && !hal_log_active())
         board_selftest_save();
     log_service(now_ms);
     board_flash_service(now_ms);
