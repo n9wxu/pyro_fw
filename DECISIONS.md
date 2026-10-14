@@ -560,6 +560,108 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-099: Identity From The Flash Chip's Whole Serial
+- **Decision:** at the user's direction ("update the random MAC to use the
+  full serial numbers to ensure a fully unique serial number across all
+  flash devices"; "use the board flash ID's to seed the subnet byte"), the
+  MAC, and with it the USB serial and the subnet, is derived from the flash
+  chip's whole unique ID (DD-098): DD-072's pool, fed the ID and nothing
+  else (`mac_from_uid()`). The subnet is still the MAC's last byte and still
+  never 0, 1 or 255. `/api/status` reports `mac_source` `flash` or
+  `assigned`.
+- **What is kept:** a MAC an operator assigned through `/api/serial` wins,
+  because it is how two boards that meet on one subnet are parted. A MAC
+  DD-072 drew and kept is ignored: the flash ID replaces it.
+- **Why:** DD-072 drew at random because two MK1Cs took one identity from
+  the SDK's 8 bytes. The whole IDs differ (DD-098), so the reason is gone,
+  and a derived identity needs no storage: a blank flash keeps its address,
+  which ends ID-1's change of address at the second boot, and ID-1's web
+  page draw is not needed.
+- **What it does not fix:** the subnet is one byte, so two boards share one
+  at the birthday rate, about 4 % at 5 boards. `register_board.py` reports
+  it, and `/api/serial` parts them.
+- **The bench's new addresses:** MK1C 02BB65F06D47 (192.168.71.1),
+  MK1B-8MB 0237CA1FB1A0 (192.168.160.1) and 0265BA5C7AFC (192.168.252.1).
+  MK1A (13) and MK1C-SD (42) keep the MACs assigned to them. The values are
+  pinned in `test_mac_random.c`: a change to the derivation moves every
+  board.
+
+### DD-098: The Flash Chip Says Its Size And Its Whole Unique ID
+- **Decision:** at boot, before the scheduler, the firmware reads the flash
+  chip's JEDEC ID (9Fh) and its unique ID (4Bh), and `/api/status` reports
+  them as `flash_jedec`, `flash_kb` and `flash_uid` (`src/flash_chip.c`,
+  `src/flash_chip_read.c`). The JEDEC ID's third byte is the log2 of the
+  capacity; outside 10h to 19h it is no size, and the chip is unknown. The
+  unique ID is read at its maker's length: 8 bytes for Winbond
+  (`W25Q16JV_RevI_2024-12-24.pdf`, p. 46), 16 for XTX
+  (`XT25F128F-W_Rev0.6_2022-02-26.pdf`, p. 23) and BYTe
+  (`BY25Q64ES_Rev2.9_2024-10-29.pdf`, p. 45).
+- **A chip smaller than the image's flash map makes the image another
+  board's** (FLT-BOOT-17). The self-test fails; the filesystem is neither
+  mounted nor formatted (FLT-BOOT-19); `/api/ota` answers 409 (OTA-08); the
+  board is in FAULT, named `board_mismatch`, now checked before the
+  filesystem; after an update the image declines to commit and rolls back,
+  and after a `picotool load` it stays down. Closes FS-1.
+- **Why the chip and not the stamp:** the stamp lives in the filesystem,
+  which on such a chip lies past its end; the chip wraps the address onto
+  its start, and the failed mount used to format over the bootloader. The
+  download slot wraps there too, so an update cannot be taken either.
+- **An unknown chip decides nothing,** as a missing stamp decides nothing: a
+  part whose third byte is not a size (Adesto's AT25SF128A answers 1F 89 01)
+  must not stop a board.
+- **Why the whole unique ID:** the SDK reads 8 bytes
+  (`FLASH_UNIQUE_ID_SIZE_BYTES`). XTX's and BYTe's IDs are 128 bits, unique
+  to each device by their datasheets, and the 8 bytes kept are the half two
+  chips can share: both MK1Cs read 41503459373331FF, ASCII "AP4Y731". That
+  collision is what DD-072's drawn MAC answered. `hw_id`, the MAC and the
+  subnet are left as they are; where identity should come from is ID-2.
+- **Read on the bench, 2026-10-13:**
+
+  | Board | `flash_jedec` | `flash_kb` | `flash_uid` |
+  |---|---|---|---|
+  | MK1A | EF4018 | 16384 | E46214B0632D472F |
+  | MK1C-SD | 0B4018 | 16384 | 41503459373331FF FFFFFF1500640027 |
+  | MK1B-8MB | 684017 | 8192 | 35343239330594F3 FFFCA50EFF851D20 |
+  | MK1B-8MB, the second | 684017 | 8192 | 35343239330604F4 FFFC82D6FF361D20 |
+  | MK1C | 0B4018 | 16384 | 41503459373331FF FFFFFF15003D0025 |
+
+  The two MK1Cs share the 8 bytes the SDK reads and differ in the last
+  four of their 16: the whole ID tells them apart. The user then decided
+  identity should come from it (ID-2).
+
+### DD-097: The Refitted MK1B Is A Board Of Its Own
+- **Decision:** an MK1B refitted with an 8 MB BY25Q64ESHIG at U7 and the
+  base AP2192 (AP2192MPG-13) at U5 is the board `mk1b_8mb`, "Pyro
+  MK1B-8MB". It builds MK1B's sources against the stock `pico` header with
+  the flash size changed, keeps 4096 kB of littlefs and two 1900 kB
+  application slots, and defines `BOARD_PYRO_U5_DISCHARGES_OUTPUTS` 0, so
+  the continuity check judges each channel (B-FL, B-U5).
+- **Why a board and not a setting:** the flash map is fixed when the
+  bootloader is linked. The 8 MB image keeps littlefs from 4 MB; on MK1B's
+  2 MB chip that address wraps to 0, the first boot's mount fails, and
+  `hal_fs_mount()` formats over the bootloader. The two images must not be
+  confused, and every check that keeps images apart keys on the board id.
+- **The web page reads a board id with an underscore.** Its filename check
+  took `[a-z0-9]+`, so `fw_mk1b_8mb_fota.bin` did not parse, and on an MK1B
+  drew a caution that could be confirmed past rather than a refusal.
+  MK1C-SD's images never parsed either. `update_from_release.py` and
+  `install.py` already name images by the id the device reports. A hand-run
+  `curl` or `picotool load` checks nothing: task FS-1.
+- **The build refuses a flash size its SDK header does not give.**
+  `PYRO_FLASH_SIZE_KB` fed only the geometry message, while the
+  bootloader's slots come from the header's `PICO_FLASH_SIZE_BYTES`; a
+  header left at 2 MB configured cleanly against an 8 MB declaration and
+  printed a slot map the bootloader would not use. The configure now fails.
+- **4096 kB of littlefs:** half the chip, as MK1A and MK1C keep half of
+  theirs. The slots hold five times today's image (359,168 bytes).
+- **Measured 2026-10-13 on the first board (0244102D6F98):** it boots on the
+  W25Q080 boot stage 2; both empty connectors read open, 3451 and 3511
+  counts, the first MK1B to see one; `api_check.py` 52 of 52,
+  `http_stream_check.py` 20 of 20, `pressure_trace.py` good with 7.3 Pa rms
+  on USB alone, no flash refused, no loop overrun.
+- **Not yet:** a 1 ohm load reading good and a short reading shorted
+  (section 5's B-U5); the release does not carry the board (REL-1).
+
 ### DD-096: lwIP Holds What The Rings Do Not
 - **Decision:** lwIP's memory is sized to the HTTP engine's rings, not to
   its own defaults. A connection's bytes wait in its two 2 kB rings; lwIP

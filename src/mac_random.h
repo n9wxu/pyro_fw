@@ -1,13 +1,13 @@
 /*
- * A MAC drawn from the RNG, and the /serial.txt that keeps it [DD-072].
+ * The board's MAC, from its flash chip's whole unique ID [DD-099], and the
+ * /serial.txt that may hold one an operator assigned.
  *
- * The RP2040 has no hardware RNG. The ring oscillator's random bit is usable
- * while the system runs from the crystal (rp2040-datasheet_2025-02-20.pdf,
- * section 2.17.5, page 223), but no figure is given for its entropy, so many
- * more samples are pooled than the 40 bits a MAC needs, together with the
- * ADC's noisy low bits, and mixed through a 64-bit finaliser.
+ * The pool is DD-072's, which drew from the ADC and the ring oscillator; it
+ * is now fed the ID alone, so one chip gives one MAC at every boot and on a
+ * blank flash. The SDK's 8-byte ID is not enough: two XT25F128F chips share
+ * those 8 bytes and differ in the last 4 of their 16 (DD-098).
  *
- * Pure: the samples come from the caller, so the host tests drive it.
+ * Pure: the ID comes from the caller, so the host tests drive it.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -40,12 +40,16 @@ void mac_pool_add(mac_pool_t *p, uint32_t sample);
  * the commonest home LAN's. */
 void mac_pool_draw(mac_pool_t *p, uint8_t out[MAC_BYTES]);
 
-/* /serial.txt: twelve hex digits, then "rng" on a second line when the MAC was
- * drawn rather than assigned. Trailing whitespace is tolerated, since the file
+/* /serial.txt: twelve hex digits, then "rng" on a second line for a MAC
+ * DD-072's firmware drew. Trailing whitespace is tolerated, since the file
  * may be written by hand. False, and *out untouched, for anything else. */
 bool mac_file_parse(const char *text, uint8_t out[MAC_BYTES], bool *drawn);
 
-/* Returns the length written, excluding the terminator. */
-int mac_file_format(const uint8_t mac[MAC_BYTES], bool drawn, char *out, int max);
+/* The MAC a unique ID of len bytes derives. */
+void mac_from_uid(const uint8_t *uid, int len, uint8_t out[MAC_BYTES]);
+
+/* The board's MAC: one an operator assigned in /serial.txt, or else the
+ * ID's. text is the file, or NULL for none. True when assigned. */
+bool mac_choose(const char *text, const uint8_t *uid, int len, uint8_t out[MAC_BYTES]);
 
 #endif

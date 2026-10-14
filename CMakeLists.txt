@@ -328,6 +328,8 @@ add_executable(pyro_fw_c
     src/board_binary_info.c
     src/board_identity.c
     src/mac_random.c
+    src/flash_chip.c
+    src/flash_chip_read.c
     ${PYRO_FLIGHT_SOURCES}
     src/ground_test_switch.c
     src/buzzer.c
@@ -473,6 +475,15 @@ target_compile_definitions(pyro_fw_c PRIVATE PYRO_LOOP_WORST_MS=${PYRO_LOOP_WORS
 # linker asserts do NOT catch an empty @PICO_FLASH_SIZE_BYTES@ substitution,
 # which silently yields a negative flash size (see the note in each board's sdk/ header).
 # Check it here, where the failure is legible.
+if("${PICO_FLASH_SIZE_BYTES}" STREQUAL "")
+    message(FATAL_ERROR "The SDK board header '${PICO_BOARD}' gives no "
+        "pico_board_cmake_set_default(PICO_FLASH_SIZE_BYTES, ...) line")
+endif()
+math(EXPR _pyro_sdk_flash_kb "${PICO_FLASH_SIZE_BYTES} / 1024")
+if(NOT _pyro_sdk_flash_kb EQUAL PYRO_FLASH_SIZE_KB)
+    message(FATAL_ERROR "boards/${PYRO_BOARD}/board.cmake gives ${PYRO_FLASH_SIZE_KB}KB of flash and "
+        "the SDK board header '${PICO_BOARD}' ${_pyro_sdk_flash_kb}KB; the A/B slots are built from the header")
+endif()
 math(EXPR _pyro_usable_kb "${PYRO_FLASH_SIZE_KB} - ${PYRO_PFB_FS_KB}")
 math(EXPR _pyro_swap_kb   "(${_pyro_usable_kb} - 36 - 4) / 2")
 math(EXPR _pyro_swap_rem  "(${_pyro_usable_kb} - 36 - 4) % 8")
@@ -721,6 +732,23 @@ endif()
 # checkable without a filesystem or a board -- including the two asymmetric
 # ones that matter: a mismatch must refuse to commit, and no evidence must
 # not refuse.
+# What the flash chip says of itself: its size, its unique ID's length, and
+# whether the image's flash map fits it [FLT-BOOT-17, WEB-API-15].
+add_custom_target(flash_chip_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building flash chip tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra
+               -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_flash_chip.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flash_chip.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_flash_chip
+    COMMAND ${CMAKE_COMMAND} -E echo "Running flash chip tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_flash_chip
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flash chip identity tests"
+)
+
 add_custom_target(board_selftest_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building board self-test tests..."
     COMMAND ${HOST_CC} -Wall -Wextra

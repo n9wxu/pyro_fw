@@ -91,14 +91,15 @@ state_event_t flight_detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
         ctx->diag |= DIAG_SENSOR_FAIL;
         return SEVT_FAULT;
     }
-    if (!ctx->storage_ok) {
-        hal_telemetry_send("!FS FAIL - filesystem did not mount\r\n");
-        ctx->diag |= DIAG_FS_FAIL;
-        return SEVT_FAULT;
-    }
+    /* Before the filesystem: a chip too small for the image leaves it unmounted. */
     if (ctx->board_mismatch) {
         hal_telemetry_send("!BOARD MISMATCH - this image is for another board\r\n");
         ctx->diag |= DIAG_BOARD_MISMATCH;
+        return SEVT_FAULT;
+    }
+    if (!ctx->storage_ok) {
+        hal_telemetry_send("!FS FAIL - filesystem did not mount\r\n");
+        ctx->diag |= DIAG_FS_FAIL;
         return SEVT_FAULT;
     }
     if (ctx->config_unreadable) {

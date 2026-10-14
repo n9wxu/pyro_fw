@@ -61,6 +61,7 @@
 #include "pyro_release.h"
 #include "http_conn.h"
 #include "http_routes.h"
+#include "flash_chip.h"
 #include "ota_bounds.h"
 #include "http_server.h"
 #include "http_work.h"
@@ -921,6 +922,9 @@ static bool status_capture(status_snap_t *s) {
     snprintf(s->serial, sizeof(s->serial), "%s", board_serial());
     s->serial_assigned = board_serial_assigned();
     strncpy(s->mac_source, board_mac_source(), sizeof(s->mac_source) - 1);
+    flash_chip_jedec_hex(s->flash_jedec, sizeof(s->flash_jedec));
+    s->flash_kb = flash_chip_bytes() / 1024u;
+    flash_chip_uid_hex(s->flash_uid, sizeof(s->flash_uid));
     snprintf(s->hw_id, sizeof(s->hw_id), "%s", board_hw_id());
     s->subnet = board_subnet_octet();
     return true;
@@ -1571,6 +1575,12 @@ static void route_post(conn_t *c) {
         }
         if (!ota_image_fits(hc->content_length, OTA_SLOT_BYTES)) {
             http_respond_str(hc, 413, TEXT, "larger than the download slot");
+            return;
+        }
+        if (!ota_slot_on_chip(OTA_SLOT_OFF, OTA_SLOT_BYTES, flash_chip_bytes())) {
+            http_respond_str(hc, 409, TEXT,
+                             "this image's download slot is past the end of the flash chip: load the right image "
+                             "over BOOTSEL");
             return;
         }
     }

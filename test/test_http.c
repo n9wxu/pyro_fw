@@ -673,6 +673,20 @@ void test_OTA_06_no_sector_is_written_past_the_slot_end(void) {
     TEST_ASSERT_FALSE(ota_sector_fits(UINT32_MAX - 100, 4096, SLOT));
 }
 
+/* [OTA-08] MK1B-8MB's download slot, 2028 kB from 2068 kB, is past the end
+ * of MK1B's 2 MB chip, which wraps the address onto its bootloader. */
+void test_OTA_08_a_download_slot_past_the_chip_end_is_refused(void) {
+    const uint32_t mb = 1024u * 1024u;
+    const uint32_t off_8mb = (40u + 2028u) * 1024u, len_8mb = 2028u * 1024u;
+    const uint32_t off_2mb = (40u + 512u) * 1024u, len_2mb = 512u * 1024u;
+    TEST_ASSERT_FALSE(ota_slot_on_chip(off_8mb, len_8mb, 2 * mb));
+    TEST_ASSERT_TRUE(ota_slot_on_chip(off_8mb, len_8mb, 8 * mb));
+    TEST_ASSERT_TRUE(ota_slot_on_chip(off_2mb, len_2mb, 2 * mb));
+    TEST_ASSERT_TRUE(ota_slot_on_chip(off_2mb, len_2mb, 8 * mb));
+    TEST_ASSERT_FALSE(ota_slot_on_chip(UINT32_MAX - 10, 4096, 16 * mb));
+    TEST_ASSERT_TRUE_MESSAGE(ota_slot_on_chip(off_8mb, len_8mb, 0), "a chip that says no size is no evidence");
+}
+
 /* ── The POST routes ──────────────────────────────────────────────── */
 
 /* [WEB-API-08] The card's bench, mount, clock and log starts could re-mount
@@ -728,6 +742,7 @@ int main(void) {
     RUN_TEST(test_WEB_API_14_a_path_that_climbs_out_or_hides_its_name_is_refused);
     RUN_TEST(test_OTA_06_an_image_larger_than_the_download_slot_is_refused);
     RUN_TEST(test_OTA_06_no_sector_is_written_past_the_slot_end);
+    RUN_TEST(test_OTA_08_a_download_slot_past_the_chip_end_is_refused);
     RUN_TEST(test_WEB_API_08_every_route_that_touches_storage_waits_for_the_flight_log);
     RUN_TEST(test_HTTP_19_a_query_route_matches_only_its_path);
     return UNITY_END();

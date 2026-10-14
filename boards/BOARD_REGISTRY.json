@@ -2,53 +2,68 @@
   "boards": [
     {
       "board": "Pyro MK1A",
-      "first_seen": "2026-09-21",
-      "fw_version": "2.1.702",
+      "first_seen": "2026-10-13",
+      "flash_jedec": "EF4018",
+      "flash_kb": 16384,
+      "flash_uid": "E46214B0632D472F",
+      "fw_version": "2.2.6+local",
       "hw_id": "E46214B0632D472F",
-      "last_seen": "2026-09-29",
-      "mac": "02632D472F0C",
-      "mac_source": "derived",
-      "subnet": 12
+      "last_seen": "2026-10-13",
+      "mac": "02632D472F0D",
+      "mac_source": "override",
+      "subnet": 13
     },
     {
-      "board": "Pyro MK1B",
-      "first_seen": "2026-09-21",
-      "fw_version": "2.1.702",
-      "hw_id": "E66364D1E7253A34",
-      "last_seen": "2026-09-29",
-      "mac": "02E7253A34C2",
+      "board": "Pyro MK1B-8MB",
+      "first_seen": "2026-10-13",
+      "flash_jedec": "684017",
+      "flash_kb": 8192,
+      "flash_uid": "35343239330594F3FFFCA50EFF851D20",
+      "fw_version": "2.2.6+local",
+      "hw_id": "35343239330594F3",
+      "last_seen": "2026-10-13",
+      "mac": "0237CA1FB1A0",
       "mac_source": "derived",
-      "subnet": 194
+      "subnet": 160
     },
     {
-      "board": "Pyro MK1B",
-      "first_seen": "2026-09-29",
-      "fw_version": "2.1.702",
-      "hw_id": "E66364D1E72A4034",
-      "last_seen": "2026-09-29",
-      "mac": "02E72A403441",
+      "board": "Pyro MK1B-8MB",
+      "first_seen": "2026-10-13",
+      "flash_jedec": "684017",
+      "flash_kb": 8192,
+      "flash_uid": "35343239330604F4FFFC82D6FF361D20",
+      "fw_version": "2.2.6+local",
+      "hw_id": "35343239330604F4",
+      "last_seen": "2026-10-13",
+      "mac": "0265BA5C7AFC",
       "mac_source": "derived",
-      "subnet": 65
+      "subnet": 252
     },
     {
       "board": "Pyro MK1C",
-      "first_seen": "2026-09-29",
-      "fw_version": "2.1.703",
+      "first_seen": "2026-10-13",
+      "flash_jedec": "0B4018",
+      "flash_kb": 16384,
+      "flash_uid": "41503459373331FFFFFFFF15003D0025",
+      "fw_version": "2.2.6+local",
       "hw_id": "41503459373331FF",
-      "last_seen": "2026-09-29",
+      "last_seen": "2026-10-13",
+      "mac": "02BB65F06D47",
+      "mac_source": "derived",
+      "subnet": 71
+    },
+    {
+      "board": "Pyro MK1C-SD",
+      "first_seen": "2026-09-29",
+      "flash_jedec": "0B4018",
+      "flash_kb": 16384,
+      "flash_uid": "41503459373331FFFFFFFF1500640027",
+      "fw_version": "2.2.6+local",
+      "hw_id": "41503459373331FF",
+      "last_seen": "2026-10-13",
       "mac": "02373331FF2A",
       "mac_source": "override",
       "subnet": 42
-    },
-    {
-      "board": "Pyro MK1C",
-      "first_seen": "2026-09-21",
-      "fw_version": "2.1.702",
-      "hw_id": "41503459373331FF",
-      "last_seen": "2026-09-29",
-      "mac": "02373331FFDE",
-      "mac_source": "derived",
-      "subnet": 222
     }
   ]
 }

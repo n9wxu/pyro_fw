@@ -13,7 +13,7 @@ test mode gives it its voice and its pad record back until it is turned off
 /api/status carries the pulse, fault, resume and emergency fields.
 
 Verifies on hardware [WEB-API-01, WEB-API-02, WEB-API-03, WEB-API-07,
-WEB-API-12, BUZ-CODE-03, BUZ-CODE-11, FLT-BROWN-01, FLT-BROWN-05].
+WEB-API-12, WEB-API-15, BUZ-CODE-03, BUZ-CODE-11, FLT-BROWN-01, FLT-BROWN-05].
 
 ERASES THE FLIGHT LOG, stores a changed pyro1 mode for a few seconds, and
 holds the board in test mode for about 15 s -- long enough to write the pad
@@ -27,6 +27,7 @@ Usage:
 SPDX-License-Identifier: MIT
 """
 import json
+import re
 import struct
 import sys
 import time
@@ -125,6 +126,13 @@ estimators = lim.get("estimators", [])
 check("limits: the estimators carried, and status names the one obeyed", len(estimators) >= 1 and
       st0.get("estimator") in estimators, f'{estimators} obeying {st0.get("estimator")}')
 check("status: PAD_IDLE flight time is 0", st0["state"] != "PAD_IDLE" or st0["flight_ms"] == 0, str(st0["flight_ms"]))
+# [WEB-API-15] The chip names itself: a capacity from its JEDEC ID that holds
+# this image, and a unique ID of 8 or 16 bytes.
+jedec, fkb, fuid = st0.get("flash_jedec", ""), st0.get("flash_kb", 0), st0.get("flash_uid", "")
+check("status: the flash chip's JEDEC ID and capacity", re.fullmatch(r"[0-9A-F]{6}", jedec or "") is not None and
+      fkb >= 2048 and fkb & (fkb - 1) == 0, f"{jedec} {fkb} kB")
+check("status: the flash chip's whole unique ID", re.fullmatch(r"[0-9A-F]{16}|[0-9A-F]{32}", fuid or "") is not None,
+      fuid)
 # USB is the only way to reach the API, so this board has a host on its port.
 check("status: usb_attached is true", st0.get("usb_attached") is True, str(st0.get("usb_attached")))
 if st0["uptime"] > 5000:

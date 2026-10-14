@@ -17,9 +17,11 @@ What it is for:
   - noticing a flash swap. The identity belongs to the flash chip, not the
     PCB, so a reflowed board arrives as a new hw_id and an old one goes quiet.
 
-A record is keyed by hw_id AND mac: boards that share a hw_id are told apart
-by their /serial.txt. Giving a board a serial therefore starts a new record
-and leaves the old one quiet, as a flash swap does.
+A record is keyed by the flash chip's whole unique ID, flash_uid, where the
+firmware reports it (DD-098): a new serial keeps the record, a new chip
+starts one. Older firmware reports only hw_id, the SDK's first 8 bytes of
+that ID, which two XT25F128F chips share; its records are keyed by hw_id AND
+mac, so boards that share a hw_id are told apart by their /serial.txt.
 
 Discovery uses the host's own interface addresses. Each board is a
 point-to-point USB link running a DHCP server that hands the host
@@ -69,7 +71,8 @@ def query(host, timeout=4.0):
 
 def mac_source(st):
     """"rng" (drawn, DD-072), "override" (assigned through /api/serial), or
-    "derived" from firmware that predates the draw."""
+    "derived" from the flash chip: its whole ID since DD-099, before DD-072
+    its first 8 bytes."""
     src = st.get("mac_source")
     if src == "rng":
         return "rng"
@@ -100,7 +103,10 @@ def main():
         return 1
 
     reg = load(args.registry)
-    by_key = {(b.get("hw_id"), b.get("mac")): b for b in reg["boards"] if b.get("hw_id")}
+    def key_of(b):
+        return b.get("flash_uid") or (b.get("hw_id"), b.get("mac"))
+
+    by_key = {key_of(b): b for b in reg["boards"] if b.get("hw_id")}
     today = datetime.date.today().isoformat()
     seen, changed = [], 0
 
@@ -114,7 +120,7 @@ def main():
             print(f"  {host:<16} {st.get('board','?')} -- firmware predates hw_id; reflash to register")
             continue
 
-        key = (hw, st.get("serial"))
+        key = st.get("flash_uid") or (hw, st.get("serial"))
         rec = by_key.get(key, {})
         was = dict(rec)
         rec.update({
@@ -126,6 +132,10 @@ def main():
             "fw_version": st.get("fw_version"),
             "last_seen": today,
         })
+        # The chip's own word on its part and size, and its whole unique ID [WEB-API-15].
+        for k in ("flash_jedec", "flash_kb", "flash_uid"):
+            if k in st:
+                rec[k] = st[k]
         rec.setdefault("first_seen", today)
         if key not in by_key:
             reg["boards"].append(rec)
@@ -147,9 +157,11 @@ def main():
             print(f"  192.168.{octet}.x  " + ", ".join(f"{b['board']}/{b['hw_id'][:8]}" for b in boards))
         print("  Fix: POST 12 hex digits to /api/serial on one of them, then reboot.")
 
+    # The whole QSPI serial where the firmware reports it: hw_id is the SDK's
+    # first 8 bytes, which two XT25F128F chips share [WEB-API-15].
     shared = {}
     for b in reg["boards"]:
-        shared.setdefault(b.get("hw_id"), []).append(b)
+        shared.setdefault(b.get("flash_uid") or b.get("hw_id"), []).append(b)
     shared = {k: v for k, v in shared.items() if k and len(v) > 1}
     if shared:
         print("\nSHARED FLASH IDS -- these derive one identity; each after the first needs /serial.txt:")

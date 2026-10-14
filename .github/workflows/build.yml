@@ -64,6 +64,14 @@ jobs:
         env:
           CI_BUILD: 1
 
+      - name: Build (mk1b_8mb)
+        run: |
+          mkdir build-mk1b_8mb && cd build-mk1b_8mb
+          cmake -G Ninja -DPICO_SDK_PATH=/tmp/pico-sdk -DPYRO_BOARD=mk1b_8mb ..
+          ninja
+        env:
+          CI_BUILD: 1
+
       # Every board declares PYRO_LOOP_WORST_MS; the reference template is what
       # a new board is copied from, so it has to keep building as shipped.
       - name: Build (reference template)
@@ -93,7 +101,7 @@ jobs:
       # __not_in_flash_func() keeps an out-of-line copy.
       - name: Prove the flight task cannot be hung
         run: |
-          for elf in build/pyro_fw_*.elf build-mk1c/pyro_fw_*.elf build-mk1a/pyro_fw_*.elf build-mk1c_sd/pyro_fw_*.elf; do
+          for elf in build/pyro_fw_*.elf build-mk1c/pyro_fw_*.elf build-mk1a/pyro_fw_*.elf build-mk1c_sd/pyro_fw_*.elf build-mk1b_8mb/pyro_fw_*.elf; do
             echo "--- $elf"
             python3 support/prove_core0.py --core1 lua_task "$elf"
           done

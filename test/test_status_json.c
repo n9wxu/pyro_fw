@@ -9,7 +9,7 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Verifies [WEB-API-01, WEB-API-11, BUZ-CODE-03, PYR-CONT-02, FLT-BOOT-15, FLT-BROWN-05, FLT-EMRG-04, PYR-FIRE-01, PYR-FAULT-03, PYR-BOARD-02, PYR-BOARD-03, FLT-LOG-08].
+ * Verifies [WEB-API-01, WEB-API-11, BUZ-CODE-03, PYR-CONT-02, FLT-BOOT-15, FLT-BROWN-05, FLT-EMRG-04, PYR-FIRE-01, PYR-FAULT-03, PYR-BOARD-02, PYR-BOARD-03, FLT-LOG-08, WEB-API-15].
  */
 #include "unity.h"
 #include "../src/status_json.h"
@@ -124,6 +124,9 @@ static void typical(status_snap_t *s) {
     strcpy(s->hw_id, "E6614104031F5A2B");
     s->subnet = 11;
     strcpy(s->mac_source, "assigned");
+    strcpy(s->flash_jedec, "0B4018");
+    s->flash_kb = 16384;
+    strcpy(s->flash_uid, "41503459373331FF0102030405060708");
 }
 
 /* Today's /api/status, key for key and in order, for typical(). */
@@ -219,6 +222,9 @@ static const char *const TYPICAL[][2] = {
     {"hw_id", "\"E6614104031F5A2B\""},
     {"subnet", "11"},
     {"mac_source", "\"assigned\""},
+    {"flash_jedec", "\"0B4018\""},
+    {"flash_kb", "16384"},
+    {"flash_uid", "\"41503459373331FF0102030405060708\""},
 };
 
 static void compose(char *out, size_t cap, const char *const kv[][2], size_t n) {
@@ -372,6 +378,9 @@ void test_SJ_02_the_widest_status_fits_its_bound(void) {
     s.pins_reason[sizeof(s.pins_reason) - 1] = '\0';
     memset(s.serial, 'F', sizeof(s.serial) - 1);
     memset(s.hw_id, 'F', sizeof(s.hw_id) - 1);
+    memset(s.flash_jedec, 'F', sizeof(s.flash_jedec) - 1);
+    memset(s.flash_uid, 'F', sizeof(s.flash_uid) - 1);
+    s.flash_kb = UINT32_MAX;
     for (int i = 0; i < STATUS_FAULTS_MAX; i++) {
         s.faults[i] = "a_fault_named_at_length_24";
     }

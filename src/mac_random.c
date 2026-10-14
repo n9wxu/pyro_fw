@@ -1,10 +1,9 @@
 /*
- * A MAC drawn from the RNG. See mac_random.h.
+ * The board's MAC. See mac_random.h.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "mac_random.h"
-#include <stdio.h>
 #include <string.h>
 
 uint64_t mac_mix64(uint64_t z) {
@@ -85,8 +84,24 @@ bool mac_file_parse(const char *text, uint8_t out[MAC_BYTES], bool *drawn) {
     return true;
 }
 
-int mac_file_format(const uint8_t mac[MAC_BYTES], bool drawn, char *out, int max) {
-    int n = snprintf(out, (size_t)max, "%02X%02X%02X%02X%02X%02X\n%s", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
-                     drawn ? "rng\n" : "");
-    return (n < 0 || n >= max) ? 0 : n;
+/* Big-endian words, the last zero-padded; the length seeds the pool, so an
+ * ID is not its own first half. */
+void mac_from_uid(const uint8_t *uid, int len, uint8_t out[MAC_BYTES]) {
+    mac_pool_t p;
+    mac_pool_init(&p, (uint64_t)len);
+    for (int i = 0; i < len; i += 4) {
+        uint32_t w = 0;
+        for (int j = 0; j < 4; j++)
+            w = (w << 8) | (i + j < len ? uid[i + j] : 0u);
+        mac_pool_add(&p, w);
+    }
+    mac_pool_draw(&p, out);
+}
+
+bool mac_choose(const char *text, const uint8_t *uid, int len, uint8_t out[MAC_BYTES]) {
+    bool drawn = true;
+    if (text && mac_file_parse(text, out, &drawn) && !drawn)
+        return true;
+    mac_from_uid(uid, len, out);
+    return false;
 }

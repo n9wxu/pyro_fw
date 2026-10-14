@@ -15,6 +15,7 @@
 static char stored[TOKEN_MAX];
 static board_selftest_t verdict = BOARD_SELFTEST_UNKNOWN;
 static bool unsaved;
+static flash_fit_t flash_fit;
 
 board_selftest_t board_selftest_verdict(const char *s, const char *compiled) {
     /* No compiled-in token is a build problem, not a board one: FAIL here
@@ -58,10 +59,22 @@ void board_selftest_init(void) {
     }
 
     verdict = board_selftest_verdict(stored, BOARD_SHORT_STR);
+    if (flash_fit == FLASH_FIT_TOO_SMALL) {
+        verdict = BOARD_SELFTEST_FAIL;
+        return;
+    }
     /* Stamp a board that has none. Never over a stamp that disagrees -- it
      * is the evidence -- nor over one that could not be read, which may be
      * the same stamp. */
     unsaved = stored[0] == '\0' && (n >= 0 || n == HAL_FS_NOENT);
+}
+
+void board_selftest_flash_fit(flash_fit_t fit) {
+    flash_fit = fit;
+}
+
+bool board_selftest_flash_too_small(void) {
+    return flash_fit == FLASH_FIT_TOO_SMALL;
 }
 
 board_selftest_t board_selftest_result(void) {

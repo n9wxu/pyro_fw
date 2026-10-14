@@ -843,9 +843,9 @@ function toggleAllVersions() {
 function imageFromName(name) {
   var n = String(name || '');
   var m;
-  if ((m = /^fw_([a-z0-9]+)_fota\.bin$/i.exec(n)))       return {board: m[1].toLowerCase(), kind: 'fota'};
-  if ((m = /^fw_([a-z0-9]+)_bootloader\.uf2$/i.exec(n)))  return {board: m[1].toLowerCase(), kind: 'bootloader'};
-  if ((m = /^fw_([a-z0-9]+)\.uf2$/i.exec(n)))             return {board: m[1].toLowerCase(), kind: 'uf2'};
+  if ((m = /^fw_([a-z0-9_]+)_fota\.bin$/i.exec(n)))       return {board: m[1].toLowerCase(), kind: 'fota'};
+  if ((m = /^fw_([a-z0-9_]+)_bootloader\.uf2$/i.exec(n)))  return {board: m[1].toLowerCase(), kind: 'bootloader'};
+  if ((m = /^fw_([a-z0-9_]+)\.uf2$/i.exec(n)))             return {board: m[1].toLowerCase(), kind: 'uf2'};
   /* Releases up to v2.2.0 shipped one unqualified image for one board. */
   if (/^pyro_fw_c_fota_image\.bin$/i.test(n))             return {board: null, kind: 'fota'};
   if (/\.uf2$/i.test(n))                                  return {board: null, kind: 'uf2'};

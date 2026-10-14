@@ -103,9 +103,12 @@ typedef struct {
 
     char serial[16];
     bool serial_assigned;
-    char mac_source[12]; /* "rng" or "assigned" [DD-072] */
+    char mac_source[12]; /* "flash" or "assigned" [DD-099] */
     char hw_id[17];
     uint8_t subnet;
+    char flash_jedec[7];
+    uint32_t flash_kb; /* the size the chip declares; 0 if it does not */
+    char flash_uid[33];
 } status_snap_t;
 
 /* Returns the length written, NUL-terminated, or -1 when it does not fit:

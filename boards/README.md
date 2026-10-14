@@ -12,6 +12,7 @@ up, and its code points there instead of carrying the explanation:
 |---|---|---|
 | [`mk1a`](mk1a/THEORY_OF_OPERATION.md) | bare RP2040, 16 MB flash | a switched high side per channel, one shared low side |
 | [`mk1b`](mk1b/THEORY_OF_OPERATION.md) | bare RP2040 on the stock `pico` header, 2 MB of flash used | the same topology on AP2192 high-side switches |
+| [`mk1b_8mb`](mk1b_8mb/THEORY_OF_OPERATION.md) | MK1B, refitted: an 8 MB flash and the base AP2192 | MK1B's, with continuity judged |
 | [`mk1c`](mk1c/THEORY_OF_OPERATION.md) | bare RP2040, 16 MB flash | a TPS259570 eFuse armed by a charge pump; a low side per channel |
 | [`mk1c_sd`](mk1c_sd/THEORY_OF_OPERATION.md) | MK1C, with J3 and J1.6 as an SPI bus: an SD card and an LSM6DS3 | MK1C's |
 | [`reference`](reference/THEORY_OF_OPERATION.md) | template (`pico`) | safe stubs: no continuity, refuses to fire |
