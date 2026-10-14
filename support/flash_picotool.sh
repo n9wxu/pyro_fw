@@ -40,6 +40,14 @@ $PICOTOOL load "$BL" || exit 1
 echo "Loading application..."
 $PICOTOOL load "$APP" || exit 1
 
+# A board's address follows its flash chip (DD-099), so the one to wait for
+# is whichever link was not up while this board sat in BOOTSEL.
+boards() {
+    { ip -4 -o addr 2>/dev/null || ifconfig 2>/dev/null; } |
+        sed -n 's/.*inet 192\.168\.\([0-9]*\)\.2[^0-9].*/192.168.\1.1/p' | sort -u
+}
+BEFORE=$(boards)
+
 echo "Rebooting to application..."
 $PICOTOOL reboot || exit 1
 
@@ -48,6 +56,9 @@ if [ "$(uname)" = Linux ]; then WAIT=-W; else WAIT=-t; fi
 echo "Done. Waiting for network..."
 for i in $(seq 1 15); do
     sleep 1
-    ping -c 1 $WAIT 2 192.168.7.1 >/dev/null 2>&1 && { echo "Device up after ${i}s"; exit 0; }
+    for ip in $(boards); do
+        echo "$BEFORE" | grep -qxF "$ip" && continue
+        ping -c 1 $WAIT 2 "$ip" >/dev/null 2>&1 && { echo "Device up at $ip after ${i}s"; exit 0; }
+    done
 done
 echo "Warning: device not responding on network"

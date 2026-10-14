@@ -83,7 +83,8 @@ MK1B's, it is because the refit does not touch what sets it. A value marked
 
 `cmake -B build-mk1b_8mb -DPYRO_BOARD=mk1b_8mb`. The images are
 `pyro_fw_mk1b_8mb.uf2` and its bootloader, and `pyro_fw_c_fota_image.bin`
-for the network. The release does not carry them (REL-1).
+for the network. Releases after v2.2.7 carry them as `fw_mk1b_8mb.uf2`,
+`fw_mk1b_8mb_bootloader.uf2` and `fw_mk1b_8mb_fota.bin`.
 
 ## Tests
 

@@ -35,30 +35,15 @@ import argparse
 import datetime
 import json
 import os
-import re
-import subprocess
 import sys
 import urllib.error
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pyro_http import discover  # noqa: E402
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_REGISTRY = os.path.join(REPO, "boards", "BOARD_REGISTRY.json")
-
-
-def interfaces():
-    """This host's addresses as `ip` prints them (Linux), or ifconfig."""
-    for cmd in (["ip", "-4", "-o", "addr"], ["ifconfig"]):
-        try:
-            return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
-        except (OSError, subprocess.CalledProcessError):
-            continue
-    return ""
-
-
-def discover():
-    """Board addresses, from this host's own interfaces."""
-    # 192.168.<n>.2 on a local interface means a board at 192.168.<n>.1
-    return sorted({f"192.168.{m}.1" for m in re.findall(r"inet 192\.168\.(\d+)\.2\b", interfaces())})
 
 
 def query(host, timeout=4.0):

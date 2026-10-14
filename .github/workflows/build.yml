@@ -235,6 +235,7 @@ jobs:
             VERSION
             www/
             support/install.py
+            support/pyro_http.py
             support/upload_www.sh
             support/upload_fw.sh
             support/flash_picotool.sh

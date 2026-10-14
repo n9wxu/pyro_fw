@@ -8,6 +8,7 @@ import glob
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import time
@@ -56,6 +57,34 @@ def board_id_of(status):
         return None
     last = name.split()[-1].lower()
     return last if last.isalnum() else None
+
+
+def interfaces():
+    """This host's addresses as `ip` prints them (Linux), or ifconfig."""
+    for cmd in (["ip", "-4", "-o", "addr"], ["ifconfig"]):
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+        except (OSError, subprocess.CalledProcessError):
+            continue
+    return ""
+
+
+def discover():
+    """Board addresses, from this host's own interfaces."""
+    # 192.168.<n>.2 on a local interface means a board at 192.168.<n>.1
+    return sorted({f"192.168.{m}.1" for m in re.findall(r"inet 192\.168\.(\d+)\.2\b", interfaces())})
+
+
+def attached_board(host=None):
+    """host, else the one board attached, else None when none is. A board's
+    address follows its flash chip (DD-099), so no address is assumed.
+    Raises BoardError when several are attached and none was named."""
+    if host:
+        return host
+    found = discover()
+    if len(found) > 1:
+        raise BoardError(f"{len(found)} boards attached ({', '.join(found)}): name one with --host")
+    return found[0] if found else None
 
 
 def ping(host, wait_s=2):

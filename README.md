@@ -571,7 +571,7 @@ git tag v2.0.0
 git push && git push --tags
 ```
 
-GitHub Actions builds MK1A, MK1B and MK1C and publishes `fw_<board>.uf2`, `fw_<board>_fota.bin` and `fw_<board>_bootloader.uf2` for each, and `pyro-support.zip`, as release assets.
+GitHub Actions builds MK1A, MK1B, MK1B-8MB and MK1C and publishes `fw_<board>.uf2`, `fw_<board>_fota.bin` and `fw_<board>_bootloader.uf2` for each, and `pyro-support.zip`, as release assets.
 
 ## Self-Update from GitHub
 

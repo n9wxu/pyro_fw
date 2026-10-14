@@ -27,7 +27,7 @@ except ImportError:
     HAS_SERIAL = False
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pyro_http import find_picotool  # noqa: E402
+from pyro_http import discover, find_picotool  # noqa: E402
 
 PICOTOOL = find_picotool() or "picotool"
 # The reply timeout is -W on Linux, where -t is the TTL, and -t on macOS.
@@ -443,15 +443,16 @@ def collect_diagnostics(host):
     out3, rc3, elapsed3 = run_cmd(["ping", "-c", "1", PING_WAIT, "3", host])
     log("DIAG", f"ping {host}: rc={rc3} ({elapsed3:.1f}s) {out3.strip()[:200]}")
 
-    # If host is a name, also try direct IP
+    # If host is a name, also try each attached board's address
     if not host[0].isdigit():
-        out4, rc4, elapsed4 = run_cmd(["ping", "-c", "1", PING_WAIT, "3", "192.168.7.1"])
-        log("DIAG", f"ping 192.168.7.1: rc={rc4} ({elapsed4:.1f}s)")
-        if rc4 == 0:
-            out5, _, elapsed5 = run_cmd(
-                ["curl", "-s", "-w", "\n%{http_code}", "--max-time", "3",
-                 "http://192.168.7.1/api/status"])
-            log("DIAG", f"curl 192.168.7.1: {elapsed5:.1f}s {out5.strip()[:200]}")
+        for ip in discover():
+            out4, rc4, elapsed4 = run_cmd(["ping", "-c", "1", PING_WAIT, "3", ip])
+            log("DIAG", f"ping direct {ip}: rc={rc4} ({elapsed4:.1f}s)")
+            if rc4 == 0:
+                out5, _, elapsed5 = run_cmd(
+                    ["curl", "-s", "-w", "\n%{http_code}", "--max-time", "3",
+                     f"http://{ip}/api/status"])
+                log("DIAG", f"curl {ip}: {elapsed5:.1f}s {out5.strip()[:200]}")
 
     # Network interfaces
     out6, _, _ = run_cmd(["ifconfig"], timeout=3)
@@ -585,8 +586,8 @@ def analyze_log(filepath):
     if not any("UART" in l for l in lines):
         print("  ℹ No UART data — rerun with --uart for device-side diagnostics")
     if any("Resolving timed out" in l or "dns-sd result" in l and "0b" in l for l in lines):
-        print("  ⚠ mDNS resolution failed — try with direct IP (192.168.7.1)")
-    if diag_info and any("ping 192.168.7.1: rc=0" in d for d in diag_info):
+        print("  ⚠ mDNS resolution failed — try the board's address, 192.168.<n>.1")
+    if diag_info and any("ping direct" in d and "rc=0" in d for d in diag_info):
         if any("(empty)" in c for _, _, ctx in failures for c in ctx):
             print("  ℹ Direct IP reachable but host failed — likely mDNS issue, not device")
     print()
