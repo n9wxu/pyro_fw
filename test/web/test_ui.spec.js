@@ -970,6 +970,24 @@ test.describe('Flown device', () => {
     await expect(page.locator('#fwmsg')).toContainText('Refused');
   });
 
+  /* MK1B-8MB keeps its filesystem where MK1B's flash ends. */
+  test('OTA refuses an image for a board whose name has an underscore', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Update');
+
+    var alerted = null;
+    page.on('dialog', async d => { alerted = d.message(); await d.dismiss(); });
+
+    await page.setInputFiles('#fwfile', {
+      name: 'fw_mk1b_8mb_fota.bin', mimeType: 'application/octet-stream',
+      buffer: Buffer.from('not really firmware')
+    });
+    await page.click('text=⬆ Upload Firmware');
+    await expect.poll(() => alerted).toContain('is for mk1b_8mb');
+    await expect(page.locator('#fwmsg')).toContainText('Refused');
+  });
+
   test('OTA refuses a .uf2, which is the BOOTSEL path', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
