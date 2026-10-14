@@ -9,7 +9,7 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Verifies [OTA-05].
+ * Verifies [OTA-05, FLT-BOOT-17, FLT-BOOT-19].
  */
 #include "unity.h"
 #include "board_selftest.h"
@@ -42,7 +42,9 @@ static void boot_with_stamp(const char *text, int rc) {
     board_selftest_init();
 }
 
-void setUp(void) {}
+void setUp(void) {
+    board_selftest_flash_fit(FLASH_FIT_UNKNOWN);
+}
 void tearDown(void) {}
 
 static void test_BST_01_matching_stamp_passes(void) {
@@ -133,6 +135,37 @@ static void test_BST_09_a_stamp_that_could_not_be_read_is_kept(void) {
     TEST_ASSERT_EQUAL(BOARD_SELFTEST_UNKNOWN, board_selftest_result());
 }
 
+/* A chip smaller than the image's flash map is another board's image
+ * whatever the stamp says: its filesystem and download slot lie past the
+ * chip's end [FLT-BOOT-17]. */
+static void test_BST_10_a_chip_too_small_for_the_map_fails(void) {
+    board_selftest_flash_fit(FLASH_FIT_TOO_SMALL);
+    boot_with_stamp(BOARD_SHORT_STR, 0);
+    TEST_ASSERT_EQUAL(BOARD_SELFTEST_FAIL, board_selftest_result());
+    TEST_ASSERT_TRUE(board_selftest_flash_too_small());
+    TEST_ASSERT_EQUAL(BOARD_IMAGE_ROLL_BACK, board_selftest_action(board_selftest_result(), true));
+    TEST_ASSERT_EQUAL(BOARD_IMAGE_REFUSE, board_selftest_action(board_selftest_result(), false));
+}
+
+/* Nothing may be written to a chip the map does not fit, a stamp least. */
+static void test_BST_11_a_chip_too_small_is_never_stamped(void) {
+    board_selftest_flash_fit(FLASH_FIT_TOO_SMALL);
+    boot_with_stamp("", HAL_FS_NOENT);
+    TEST_ASSERT_FALSE(board_selftest_unsaved());
+    TEST_ASSERT_EQUAL(BOARD_SELFTEST_FAIL, board_selftest_result());
+}
+
+/* A chip that does not say its size is no evidence. */
+static void test_BST_12_an_unknown_chip_decides_nothing(void) {
+    board_selftest_flash_fit(FLASH_FIT_UNKNOWN);
+    boot_with_stamp(BOARD_SHORT_STR, 0);
+    TEST_ASSERT_EQUAL(BOARD_SELFTEST_PASS, board_selftest_result());
+    TEST_ASSERT_FALSE(board_selftest_flash_too_small());
+    board_selftest_flash_fit(FLASH_FIT_OK);
+    boot_with_stamp("", HAL_FS_NOENT);
+    TEST_ASSERT_TRUE(board_selftest_unsaved());
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_BST_01_matching_stamp_passes);
@@ -144,5 +177,8 @@ int main(void) {
     RUN_TEST(test_BST_07_a_mismatch_never_flies);
     RUN_TEST(test_BST_08_a_hand_flashed_wrong_image_is_refused);
     RUN_TEST(test_BST_09_a_stamp_that_could_not_be_read_is_kept);
+    RUN_TEST(test_BST_10_a_chip_too_small_for_the_map_fails);
+    RUN_TEST(test_BST_11_a_chip_too_small_is_never_stamped);
+    RUN_TEST(test_BST_12_an_unknown_chip_decides_nothing);
     return UNITY_END();
 }

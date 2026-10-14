@@ -395,7 +395,10 @@ presence test reads open is still fired on command (GND-TEST-13).
   derives the first's MAC, USB serial and subnet (02373331FFDE, 222). The MAC
   takes the flash id's last four bytes and a fold of all eight, so the two
   XT25F128F ids match there at least. The first reads 41503459373331FF, ASCII
-  "AP4Y731" then FF: a lot code, it seems, not a die's. A host enumerates the
+  "AP4Y731" then FF. The chip's unique ID is 128 bits, unique to each device
+  (`docs/datasheets/XT25F128F-W_Rev0.6_2022-02-26.pdf`, p. 23); the SDK reads
+  the first 64, the half the two share. `/api/status` reports all 128 as
+  `flash_uid` (DD-098; decision ID-2). A host enumerates the
   second board and gives it no interface. Each MK1C after the first needs a
   `/serial.txt` (`POST /api/serial`), set while the first is unplugged
   (task ID-1); the second carries 02373331FF2A, subnet 42.

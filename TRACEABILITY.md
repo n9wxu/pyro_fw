@@ -123,8 +123,9 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | FLT-BOOT-13 | The system shall enter FAULT when calibration produces no samples within 10 seconds, rather than... | test_flight_boot.c: test_FLT_BOOT_08_one_bad_reading_does_not_bias_the_reference, test_FLT_BOOT_13_a_calibration_with_no_samples_is_a_fault | ✅ |
 | FLT-BOOT-14 | The system shall enter FAULT, and announce general fault, when its storage cannot be used | test_flight_boot.c: test_FLT_BOOT_08_one_bad_reading_does_not_bias_the_reference, test_FLT_BOOT_14_unusable_storage_is_a_terminal_general_fault | ✅ |
 | FLT-BOOT-15 | /api/status shall report every fault found on the pad | test_flight_pad.c: test_BUZ_CODE_02_pyro_1_is_announced_before_pyro_2; the suite test_status_json.c | ✅ |
-| FLT-BOOT-17 | The system shall enter FAULT, and announce general fault, at every start of an image built for a different... | test_flight_boot.c: test_FLT_BOOT_17_an_image_built_for_another_board_is_a_terminal_general_fault, test_FLT_BOOT_17_a_board_with_its_own_stamp_or_none_reaches_the_pad | ✅ |
+| FLT-BOOT-17 | The system shall enter FAULT, and announce general fault, at every start of an image built for a different... | test_board_selftest.c: test_BST_09_a_stamp_that_could_not_be_read_is_kept, test_BST_10_a_chip_too_small_for_the_map_fails; test_flight_boot.c: test_FLT_BOOT_18_an_unreadable_configuration_is_a_fault_and_the_file_is_kept, test_FLT_BOOT_17_a_mismatch_whose_filesystem_did_not_mount_names_the_mismatch, test_FLT_BOOT_17_an_image_built_for_another_board_is_a_terminal_general_fault, test_FLT_BOOT_17_a_board_with_its_own_stamp_or_none_reaches_the_pad; the suite test_flash_chip.c | ✅ |
 | FLT-BOOT-18 | The system shall enter FAULT, and announce general fault, when the configuration file exists and cannot be... | test_config.c: test_lua_baud_holds_115200, test_CFG_05_only_a_missing_file_is_rewritten; test_flight_boot.c: test_FLT_BOOT_18_an_unreadable_configuration_is_a_fault_and_the_file_is_kept | ✅ |
+| FLT-BOOT-19 | The system shall neither mount nor format the filesystem on a flash chip that declares less capacity than... | test_flight_boot.c: test_FLT_BOOT_18_an_unreadable_configuration_is_a_fault_and_the_file_is_kept, test_FLT_BOOT_17_a_mismatch_whose_filesystem_did_not_mount_names_the_mismatch; the suite test_board_selftest.c | ✅ |
 | FLT-RATE-01 | The system shall take at least 50 pressure readings a second from PAD_IDLE to landing | test_collector.c: test_SNS_COL_01_it_runs_with_nothing_starting_it, test_FLT_RATE_01_each_sensor_outruns_the_flight_software | ✅ |
 | FLT-RATE-06 | The flight software shall act on every sample in the loop it arrives in, each as a step of its own,... | test_flight_pad.c: test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch, test_FLT_RATE_06_every_waiting_sample_is_taken_in_its_loop | ✅ |
 | FLT-RATE-05 | Every detector hold and dwell that measures the sensor shall run in sample time, so that lateness in... | test_flight_profiles.c: test_DAT_08_a_thinned_log_is_refused, test_FLT_RATE_05_a_late_loop_changes_no_decision | ✅ |
@@ -276,13 +277,14 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | WEB-API-05 | The system shall trigger a device restart at /api/reboot (POST) | Hardware: 200 with CORS, and the board back in PAD_IDLE | ✅ HW |
 | WEB-API-06 | The system shall serve flight data as CSV at /api/flight.csv, framed by Content-Length | the suite test_flight_log.c; Web UI: test_ui.spec.js | ✅ |
 | WEB-API-07 | The API shall grant no cross-origin access (no Access-Control-Allow-Origin; Cross-Origin-Resource-Policy | test_http.c: test_WEB_HTTP_04_a_post_with_no_content_length_is_411, test_WEB_API_07_a_request_naming_another_host_is_refused, test_WEB_API_07_a_post_without_the_x_pyro_header_is_refused, test_WEB_API_07_the_board_answers_to_its_names_and_its_own_address; Hardware: `support/api_check.py`, `support/http_stream_check.py` | ✅ |
-| WEB-API-08 | The web API and USB shall stay live in flight | test_flight_profiles.c: test_BUZ_03_the_beep_out_is_held_on_usb_and_resumes, test_WEB_API_08_only_the_flight_record_is_stored_in_flight; test_http.c: test_OTA_06_no_sector_is_written_past_the_slot_end, test_WEB_API_08_every_route_that_touches_storage_waits_for_the_flight_log; The web server answering 423 and dropping a held transfer: by inspection; a bench check in a chamber flight is owed | ✅ |
+| WEB-API-08 | The web API and USB shall stay live in flight | test_flight_profiles.c: test_BUZ_03_the_beep_out_is_held_on_usb_and_resumes, test_WEB_API_08_only_the_flight_record_is_stored_in_flight; test_http.c: test_OTA_08_a_download_slot_past_the_chip_end_is_refused, test_WEB_API_08_every_route_that_touches_storage_waits_for_the_flight_log; The web server answering 423 and dropping a held transfer: by inspection; a bench check in a chamber flight is owed | ✅ |
 | WEB-API-09 | The system shall erase the flight log on request at /api/flight/erase (POST), unless the log is being written | Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
 | WEB-API-10 | A request for a file shall be refused with 423 while the flight log is being written | test_flight_profiles.c: test_BUZ_03_the_beep_out_is_held_on_usb_and_resumes, test_WEB_API_10_other_storage_access_is_refused_until_the_record_is_safe | ✅ |
 | WEB-API-11 | /api/status shall be self-consistent, taken at one instant of the flight, shall keep its keys and their... | the suite test_status_json.c | ✅ |
 | WEB-API-12 | The system shall report at /api/log/space the bytes the next flight's log has room for, the size of a... | Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
 | WEB-API-13 | The system shall report at /api/net what the network has in use, has refused and has dropped, and the USB... | the suite test_net_stats.c | ✅ |
 | WEB-API-14 | A file shall be named by /-separated names of letters, digits, ., _ and -, none of them . or ... Any other... | test_http.c: test_WEB_API_07_the_board_answers_to_its_names_and_its_own_address, test_WEB_API_14_a_path_that_climbs_out_or_hides_its_name_is_refused; Hardware: `support/http_stream_check.py` | ✅ |
+| WEB-API-15 | The system shall report at /api/status the flash chip's JEDEC ID, the capacity it declares, and its whole... | the suite test_flash_chip.c, test_status_json.c; Hardware: `support/api_check.py` | ✅ |
 | WEB-HTTP-01 | The HTTP server shall treat each connection as a byte stream | the suite test_http.c; Hardware: `support/http_stream_check.py` | ✅ |
 | WEB-HTTP-02 | Every response shall be framed by Content-Length and carry Connection | the suite test_http.c; Hardware: `support/api_check.py`, `support/http_stream_check.py` | ✅ |
 | WEB-HTTP-03 | The server shall read a request body only as fast as it consumes it, so that TCP flow control, not a... | the suite test_http.c; Hardware: `support/http_stream_check.py` | ✅ |
@@ -302,10 +304,11 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | OTA-01 | The system shall support over-the-air firmware updates via HTTP | Hardware: updates to MK1A, MK1B and MK1C through `support/upload_fw.sh` | ✅ HW |
 | OTA-02 | The system shall write new firmware to an inactive slot while continuing to run | Through BLD-05; Hardware: the board serves pages while the image is written | ✅ HW |
 | OTA-03 | The system shall automatically revert to the previous firmware if the new firmware does not reach normal... | Hardware only: an image that never commits is rolled back by the bootloader; no scripted check | ⚠️ |
-| OTA-04 | A failed or interrupted update shall not affect the currently running firmware | Through OTA-06, OTA-07; Hardware only: no scripted check | ⚠️ |
+| OTA-04 | A failed or interrupted update shall not affect the currently running firmware | Through FLT-BOOT-19, OTA-06, OTA-07, OTA-08; Hardware only: no scripted check | ⚠️ |
 | OTA-05 | Firmware built for a different board shall not be kept | the suite test_board_selftest.c | ✅ |
 | OTA-06 | An image longer than the download slot shall be refused with 413 before any of it is written, and no write... | test_http.c: test_WEB_API_14_a_path_that_climbs_out_or_hides_its_name_is_refused, test_OTA_06_an_image_larger_than_the_download_slot_is_refused, test_OTA_06_no_sector_is_written_past_the_slot_end; Hardware: `support/http_stream_check.py` | ✅ |
 | OTA-07 | An update shall begin by marking the download slot invalid, so that an interrupted transfer is never... | — | ⚠️ |
+| OTA-08 | An update shall be refused with 409, before any of it is written, while the download slot lies past the... | test_http.c: test_OTA_06_no_sector_is_written_past_the_slot_end, test_OTA_08_a_download_slot_past_the_chip_end_is_refused | ✅ |
 
 ## 10. Scripting
 
@@ -445,7 +448,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host test, a web test or a structural check | 306 |
+| ✅ Verified by a host test, a web test or a structural check | 309 |
 | ⚠️ Not verified, or not wholly | 25 |
 | ❌ Not implemented | 0 |
 | ✅ HW (verified on hardware only) | 12 |

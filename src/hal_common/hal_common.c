@@ -9,6 +9,7 @@
 #include "flight_events.h"
 #include "flash_op.h"
 #include "hal_storage.h"
+#include "flash_chip.h"
 #include "lfs_mount.h"
 #include "vfs.h"
 #if PYRO_HAS_SD
@@ -810,6 +811,8 @@ int hal_fs_mount(void) {
     if (!whole_mutex)
         whole_mutex = xSemaphoreCreateMutexStatic(&whole_mutex_buf);
     lfs_lock_init();
+    if (board_selftest_flash_too_small())
+        return -1; /* a failed mount would format over the bootloader [FLT-BOOT-19] */
     if (fs_ok)
         return 0;
     int err = lfs_mount(&g_lfs, &lfs_pico_flash_config);
@@ -1101,6 +1104,8 @@ void hal_platform_init(void) {
      * Reads /serial.txt via hal_fs_read_file(), which mounts read-only and
      * does NOT format on failure -- so a blank board draws a MAC and
      * enumerates instead of waiting out an 8 MB format. */
+    flash_chip_read();
+    board_selftest_flash_fit(flash_chip_fit(flash_chip_bytes(), PICO_FLASH_SIZE_BYTES));
     board_identity_init();
     board_selftest_init();
     net_mac_init();
@@ -1489,8 +1494,13 @@ static void commit_op(void *arg) {
  * where there is one: after it, this image and what it would say are gone. */
 static void report_board_mismatch(const char *what) {
     char line[128];
-    snprintf(line, sizeof(line), "!BOARD MISMATCH this image is " BOARD_SHORT_STR ", board is %s -- %s\r\n",
-             board_selftest_stored(), what);
+    if (board_selftest_flash_too_small())
+        snprintf(line, sizeof(line),
+                 "!BOARD MISMATCH this image is " BOARD_SHORT_STR " for %lu kB of flash, the chip has %lu kB -- %s\r\n",
+                 (unsigned long)(PICO_FLASH_SIZE_BYTES / 1024u), (unsigned long)(flash_chip_bytes() / 1024u), what);
+    else
+        snprintf(line, sizeof(line), "!BOARD MISMATCH this image is " BOARD_SHORT_STR ", board is %s -- %s\r\n",
+                 board_selftest_stored(), what);
     hal_telemetry_send(line);
 }
 

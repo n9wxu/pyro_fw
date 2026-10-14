@@ -3,7 +3,10 @@
     {
       "board": "Pyro MK1A",
       "first_seen": "2026-10-13",
-      "fw_version": "2.2.6",
+      "flash_jedec": "EF4018",
+      "flash_kb": 16384,
+      "flash_uid": "E46214B0632D472F",
+      "fw_version": "2.2.6+local",
       "hw_id": "E46214B0632D472F",
       "last_seen": "2026-10-13",
       "mac": "02632D472F0D",
@@ -43,6 +46,9 @@
     {
       "board": "Pyro MK1B-8MB",
       "first_seen": "2026-10-13",
+      "flash_jedec": "684017",
+      "flash_kb": 8192,
+      "flash_uid": "35343239330594F3FFFCA50EFF851D20",
       "fw_version": "2.2.6+local",
       "hw_id": "35343239330594F3",
       "last_seen": "2026-10-13",
@@ -63,6 +69,9 @@
     {
       "board": "Pyro MK1C-SD",
       "first_seen": "2026-09-29",
+      "flash_jedec": "0B4018",
+      "flash_kb": 16384,
+      "flash_uid": "41503459373331FFFFFFFF1500640027",
       "fw_version": "2.2.6+local",
       "hw_id": "41503459373331FF",
       "last_seen": "2026-10-13",

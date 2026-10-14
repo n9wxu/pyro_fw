@@ -188,8 +188,9 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **FLT-BOOT-13**: The system shall enter FAULT when calibration produces no samples within 10 seconds, rather than proceeding to PAD_IDLE. ← FLT-BOOT-05
 - **FLT-BOOT-14**: The system shall enter FAULT, and announce general fault, when its storage cannot be used. ← FLT-BOOT-01
 - **FLT-BOOT-15**: `/api/status` shall report every fault found on the pad. The buzzer announces the one of highest priority (BUZ-CODE-02). ← SYS-STATUS-02
-- **FLT-BOOT-17**: The system shall enter FAULT, and announce general fault, at every start of an image built for a different board than the one it runs on, as the board's stored stamp shows. ← FLT-BOOT-01, OTA-05
+- **FLT-BOOT-17**: The system shall enter FAULT, and announce general fault, at every start of an image built for a different board than the one it runs on, as the board's stored stamp shows, or as its flash chip shows by declaring less capacity than the image's flash map. ← FLT-BOOT-01, OTA-05
 - **FLT-BOOT-18**: The system shall enter FAULT, and announce general fault, when the configuration file exists and cannot be read. It shall leave the file as it is. ← FLT-BOOT-02, CFG-05
+- **FLT-BOOT-19**: The system shall neither mount nor format the filesystem on a flash chip that declares less capacity than the image's flash map: the filesystem's addresses lie past the chip's end, which the chip wraps onto the bootloader. ← FLT-BOOT-17, OTA-04
 - **FLT-RATE-01**: The system shall take at least 50 pressure readings a second from PAD_IDLE to landing. ← FLT-PHASE-01
 - **FLT-RATE-06**: The flight software shall act on every sample in the loop it arrives in, each as a step of its own, however many a loop brings: no sample waits for a later loop. ← FLT-RATE-01, SNS-COL-03, DD-093
 - **FLT-RATE-05**: Every detector hold and dwell that measures the sensor shall run in sample time, so that lateness in processing changes no decision. ← SNS-PRES-08
@@ -409,6 +410,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-API-12**: The system shall report at `/api/log/space` the bytes the next flight's log has room for, the size of a sample record and the log rates, and refuse with 423 while the flight log holds the storage. ← SYS-WEB-01
 - **WEB-API-13**: The system shall report at `/api/net` what the network has in use, has refused and has dropped, and the USB interface's mounts, unmounts, suspends and resumes, so an HTTP outage can be told apart on the bench. ← SYS-WEB-01
 - **WEB-API-14**: A file shall be named by `/`-separated names of letters, digits, `.`, `_` and `-`, none of them `.` or `..`. Any other path shall be refused by every file operation, and by the web server with 400. ← SYS-WEB-01
+- **WEB-API-15**: The system shall report at `/api/status` the flash chip's JEDEC ID, the capacity it declares, and its whole unique ID at the length its datasheet gives. ← SYS-WEB-01
 
 ### HTTP
 - **WEB-HTTP-01**: The HTTP server shall treat each connection as a byte stream: a request shall be answered the same however TCP divides it into segments, including a header block or body split at any byte and more than one request in a single segment. ← SYS-WEB-01
@@ -441,6 +443,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **OTA-05**: Firmware built for a different board shall not be kept: the system shall revert to the previous firmware. ← SYS-OTA-02
 - **OTA-06**: An image longer than the download slot shall be refused with 413 before any of it is written, and no write shall reach past the slot's end, where the filesystem begins. ← OTA-04
 - **OTA-07**: An update shall begin by marking the download slot invalid, so that an interrupted transfer is never swapped in on the strength of an earlier image's mark. ← OTA-04
+- **OTA-08**: An update shall be refused with 409, before any of it is written, while the download slot lies past the end of the flash chip as the chip declares it. ← OTA-04
 
 ---
 

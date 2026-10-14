@@ -328,6 +328,8 @@ add_executable(pyro_fw_c
     src/board_binary_info.c
     src/board_identity.c
     src/mac_random.c
+    src/flash_chip.c
+    src/flash_chip_read.c
     ${PYRO_FLIGHT_SOURCES}
     src/ground_test_switch.c
     src/buzzer.c
@@ -730,6 +732,23 @@ endif()
 # checkable without a filesystem or a board -- including the two asymmetric
 # ones that matter: a mismatch must refuse to commit, and no evidence must
 # not refuse.
+# What the flash chip says of itself: its size, its unique ID's length, and
+# whether the image's flash map fits it [FLT-BOOT-17, WEB-API-15].
+add_custom_target(flash_chip_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building flash chip tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra
+               -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_flash_chip.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flash_chip.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_flash_chip
+    COMMAND ${CMAKE_COMMAND} -E echo "Running flash chip tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_flash_chip
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flash chip identity tests"
+)
+
 add_custom_target(board_selftest_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building board self-test tests..."
     COMMAND ${HOST_CC} -Wall -Wextra

@@ -33,18 +33,20 @@ bytes (`docs/datasheets/BY25Q64ES_Rev2.9_2024-10-29.pdf`, pages 15, 29, 36
 and 45). Its USON8 4x3 mm package fits MK1B's footprint (page 79). The first
 board boots and runs from it.
 
-Its unique ID begins with ASCII: the first board's is 35343239330594F3,
-"5429" then four bytes. MK1C's XT25F128F ids share their ASCII part across
-chips, and two MK1Cs took one identity from it. Here the MAC is drawn at
-random (DD-072), so a shared id does not share an address, but
-`support/register_board.py` reports one if it appears.
+Its unique ID is 128 bits (page 45). The SDK reads the first 64, which on the
+first board are 35343239330594F3, ASCII "5429" then four bytes: the half that
+two MK1Cs' XT25F128F chips share. `/api/status` reports all 128 as
+`flash_uid` (DD-098). The MAC is drawn at random (DD-072), so a shared half
+does not share an address.
 
 **An MK1B image and an MK1B-8MB image must not be swapped.** On a 2 MB chip
 the 8 MB image's filesystem address, 4 MB, wraps to 0: the first boot finds
 no filesystem there and formats over the bootloader (`hal_fs_mount()`). The
 web page refuses the other board's file by name; the scripts in `support/`
-pick images by the board the device reports. A hand-run `curl` or
-`picotool load` checks nothing (task FS-1).
+pick images by the board the device reports. And the image itself reads the
+chip's size from its JEDEC ID at boot (DD-098): on a chip smaller than its
+flash map it mounts and formats nothing, takes no update, reports
+`board_mismatch`, and after an update rolls back.
 
 ## Continuity check
 

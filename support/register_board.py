@@ -126,6 +126,10 @@ def main():
             "fw_version": st.get("fw_version"),
             "last_seen": today,
         })
+        # The chip's own word on its part and size, and its whole unique ID [WEB-API-15].
+        for k in ("flash_jedec", "flash_kb", "flash_uid"):
+            if k in st:
+                rec[k] = st[k]
         rec.setdefault("first_seen", today)
         if key not in by_key:
             reg["boards"].append(rec)

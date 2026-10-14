@@ -560,6 +560,46 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-098: The Flash Chip Says Its Size And Its Whole Unique ID
+- **Decision:** at boot, before the scheduler, the firmware reads the flash
+  chip's JEDEC ID (9Fh) and its unique ID (4Bh), and `/api/status` reports
+  them as `flash_jedec`, `flash_kb` and `flash_uid` (`src/flash_chip.c`,
+  `src/flash_chip_read.c`). The JEDEC ID's third byte is the log2 of the
+  capacity; outside 10h to 19h it is no size, and the chip is unknown. The
+  unique ID is read at its maker's length: 8 bytes for Winbond
+  (`W25Q16JV_RevI_2024-12-24.pdf`, p. 46), 16 for XTX
+  (`XT25F128F-W_Rev0.6_2022-02-26.pdf`, p. 23) and BYTe
+  (`BY25Q64ES_Rev2.9_2024-10-29.pdf`, p. 45).
+- **A chip smaller than the image's flash map makes the image another
+  board's** (FLT-BOOT-17). The self-test fails; the filesystem is neither
+  mounted nor formatted (FLT-BOOT-19); `/api/ota` answers 409 (OTA-08); the
+  board is in FAULT, named `board_mismatch`, now checked before the
+  filesystem; after an update the image declines to commit and rolls back,
+  and after a `picotool load` it stays down. Closes FS-1.
+- **Why the chip and not the stamp:** the stamp lives in the filesystem,
+  which on such a chip lies past its end; the chip wraps the address onto
+  its start, and the failed mount used to format over the bootloader. The
+  download slot wraps there too, so an update cannot be taken either.
+- **An unknown chip decides nothing,** as a missing stamp decides nothing: a
+  part whose third byte is not a size (Adesto's AT25SF128A answers 1F 89 01)
+  must not stop a board.
+- **Why the whole unique ID:** the SDK reads 8 bytes
+  (`FLASH_UNIQUE_ID_SIZE_BYTES`). XTX's and BYTe's IDs are 128 bits, unique
+  to each device by their datasheets, and the 8 bytes kept are the half two
+  chips can share: both MK1Cs read 41503459373331FF, ASCII "AP4Y731". That
+  collision is what DD-072's drawn MAC answered. `hw_id`, the MAC and the
+  subnet are left as they are; where identity should come from is ID-2.
+- **Read on the bench, 2026-10-13:**
+
+  | Board | `flash_jedec` | `flash_kb` | `flash_uid` |
+  |---|---|---|---|
+  | MK1A | EF4018 | 16384 | E46214B0632D472F |
+  | MK1C-SD | 0B4018 | 16384 | 41503459373331FF FFFFFF1500640027 |
+  | MK1B-8MB | 684017 | 8192 | 35343239330594F3 FFFCA50EFF851D20 |
+
+  The second halves, which the SDK never read, are not blank. Whether two
+  MK1Cs' differ is not yet seen: the first MK1C was not attached.
+
 ### DD-097: The Refitted MK1B Is A Board Of Its Own
 - **Decision:** an MK1B refitted with an 8 MB BY25Q64ESHIG at U7 and the
   base AP2192 (AP2192MPG-13) at U5 is the board `mk1b_8mb`, "Pyro

@@ -10,7 +10,10 @@
  * of a firmware that has this. littlefs survives an OTA, a UF2 and a picotool
  * flash alike, so the stamp from the image that ran before is there to compare
  * against at every boot. Not a hardware probe: a sensor that does not answer
- * is equally a dead sensor on the right board.
+ * is equally a dead sensor on the right board. The one probe taken is the
+ * flash chip's size, which cannot be wrong that way: a chip smaller than the
+ * image's flash map is another board's, and its filesystem and download
+ * slot lie past the chip's end, where the chip wraps onto the bootloader.
  *
  * On FAIL the flight software goes to FAULT [FLT-BOOT-17] and says so,
  * at every boot. After an OTA it also declines to commit and reboots, and
@@ -23,6 +26,7 @@
 #ifndef BOARD_SELFTEST_H
 #define BOARD_SELFTEST_H
 
+#include "flash_chip.h"
 #include <stdbool.h>
 
 typedef enum {
@@ -46,9 +50,17 @@ board_selftest_t board_selftest_verdict(const char *stored, const char *compiled
  * update. */
 board_image_action_t board_selftest_action(board_selftest_t verdict, bool after_update);
 
+/* The flash chip's size against the image's flash map, given before
+ * board_selftest_init(). */
+void board_selftest_flash_fit(flash_fit_t fit);
+
 /* Read the stamp and settle the verdict. Safe before hal_fs_mount(), the
  * same way board_identity_init() reads /serial.txt. */
 void board_selftest_init(void);
+
+/* The image's flash map runs past the chip's end: mount nothing, format
+ * nothing, take no update [FLT-BOOT-19, OTA-08]. */
+bool board_selftest_flash_too_small(void);
 
 board_selftest_t board_selftest_result(void);
 

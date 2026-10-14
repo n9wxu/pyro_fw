@@ -172,6 +172,17 @@ void test_FLT_BOOT_18_an_unreadable_configuration_is_a_fault_and_the_file_is_kep
     assert_terminal_general_fault(DIAG_CONFIG_UNREADABLE);
 }
 
+/* A chip smaller than the image's flash map leaves the filesystem unmounted
+ * and the image another board's: the fault named is the cause, not the
+ * filesystem it protects [FLT-BOOT-17, FLT-BOOT-19]. */
+void test_FLT_BOOT_17_a_mismatch_whose_filesystem_did_not_mount_names_the_mismatch(void) {
+    power_up(17);
+    harness_board_stamp("another");
+    mock_fs_unusable = true;
+    run_until_state(FAULT, 20000);
+    assert_terminal_general_fault(DIAG_BOARD_MISMATCH);
+}
+
 /* The stamp of the image that ran here before is another board's. */
 void test_FLT_BOOT_17_an_image_built_for_another_board_is_a_terminal_general_fault(void) {
     power_up(16);
@@ -216,6 +227,7 @@ int main(void) {
     RUN_TEST(test_FLT_BOOT_14_unusable_storage_is_a_terminal_general_fault);
     RUN_TEST(test_FLT_BOOT_18_an_unreadable_configuration_is_a_fault_and_the_file_is_kept);
     RUN_TEST(test_FLT_BOOT_17_an_image_built_for_another_board_is_a_terminal_general_fault);
+    RUN_TEST(test_FLT_BOOT_17_a_mismatch_whose_filesystem_did_not_mount_names_the_mismatch);
     RUN_TEST(test_FLT_BOOT_17_a_board_with_its_own_stamp_or_none_reaches_the_pad);
     RUN_TEST(test_USB_02_a_general_fault_is_not_said_on_usb);
     return UNITY_END();
