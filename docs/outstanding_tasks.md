@@ -29,7 +29,7 @@ records them in `boards/BOARD_REGISTRY.json`.
 |---|---|---|---|---|---|
 | MK1A | BMP280 | 02632D472F0D | 192.168.13.1 | 2.2.5 | PAD_IDLE, no igniters |
 | MK1B | MS5607 | 02E7253A34C2 | 192.168.194.1 | 2.2.5 | PAD_IDLE, channels released to Lua |
-| MK1B | BMP280 | 0268FFB038CD | 192.168.205.1 | 2.2.3 | FAULT `sensor_fail`: the BMP280 does not acknowledge its address, three days after a power-up (B-BZ, REC-1) |
+| MK1B | BMP280 | 0268FFB038CD | 192.168.205.1 | 2.2.3 | FAULT `sensor_fail`: the BMP280 does not acknowledge its address. The last boot, three days earlier, was a RUN-pin reset (`reset_cause` 1), so the sensor's power was probably never removed (B-BZ, REC-1) |
 | MK1B, larger flash and a new high-side switch at U5 (B-FL, B-U5) | — | none; BOOTSEL serial E0C9125B0D9B | — | none | in BOOTSEL, flash erased; the parts fitted are not yet recorded |
 | MK1C | MS5607 | 023F85B06B21 | 192.168.33.1 | — | not attached |
 | MK1C-SD (the J3 SPI test board) | MS5607 | 02373331FF2A | 192.168.42.1 | 2.2.5 | PAD_IDLE, no igniters |
