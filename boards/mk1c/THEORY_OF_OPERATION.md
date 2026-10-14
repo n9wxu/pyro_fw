@@ -416,7 +416,7 @@ The values the requirements leave to the board (BRD-01). A value marked
 | Disarm when software stops (PYR-ARM-01) | about 35 ms: the 25 ms the pump's FIFO holds, then U9's 9.6 ms |
 | Sensor | MS5607: 10 to 1200 mbar, 2.4 Pa rms at OSR 4096 (`docs/datasheets/MS5607-02BA03_2017-06.pdf`, pages 1 and 4). Measured on this board with a battery fitted: 2.4 to 2.6 Pa, unaffected by the buzzer, and 3.4 to 3.9 Pa beside a flash operation; on USB alone 6 to 7 Pa |
 | Height for proper operation (SNS-MAX-01) | 30000 m |
-| Flight log (DAT-09) | 8192 kB of littlefs: about 100 days at `1hz`, 2 h at `full` (50 rows a second of 22 bytes). `/api/log/space` reports what is free |
+| Flight log (DAT-09) | 8192 kB of littlefs: about 100 hours at `1hz`, 2 h at `full` (50 rows a second of 22 bytes). `/api/log/space` reports what is free |
 | Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured* on this revision: `loop_late_max_us` on `/api/status` reports it |
 | Script resources (LUA-PAD-03) | the four J3 user pads, GPIO18 to GPIO21, and a released pyro channel's pads (`pin_caps.h`) |
 | Connector labels (PIN-LABEL-01) | `pin_caps.h` |
