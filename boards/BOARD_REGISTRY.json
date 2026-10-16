@@ -15,6 +15,20 @@
     },
     {
       "board": "Pyro MK1B-8MB",
+      "first_seen": "2026-10-16",
+      "flash_jedec": "684017",
+      "flash_kb": 8192,
+      "flash_uid": "35343239330518F3FFFC8305C3151D20",
+      "fw_version": "2.2.8+local",
+      "hw_id": "35343239330518F3",
+      "label": "8",
+      "last_seen": "2026-10-16",
+      "mac": "02B5911B397E",
+      "mac_source": "derived",
+      "subnet": 126
+    },
+    {
+      "board": "Pyro MK1B-8MB",
       "first_seen": "2026-10-15",
       "flash_jedec": "684017",
       "flash_kb": 8192,
