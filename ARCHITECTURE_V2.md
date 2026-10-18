@@ -136,7 +136,6 @@ X-macro table is the single source of truth (`src/config_fields.h`):
     X(UNITS,   units,           "units",           1) \
     X(U8,      telem_format,    "telem_format",    0) \
     X(U8,      telem_rate_hz,   "telem_rate_hz",   10) \
-    X(LOGRATE, log_rate,        "log_rate",        LOG_RATE_1HZ) \
     X(U8,      landing_timeout, "landing_timeout", 60) \
     X(BOOL,    lua_enabled,     "lua_enabled",     false) \
     X(U16,     lua_baud,        "lua_baud",        9600) \
@@ -200,7 +199,6 @@ The larger fixed buffers, from the code:
 | Component | Size |
 |---|---|
 | Flight log buffer (`hal_common.c`) | 4,096 bytes |
-| Log plan delay line (`log_plan.h`, 128 rows) | ~3 KB |
 | Pressure trace (`pressure_trace.h`, 256 records) | 6,144 bytes |
 | lwIP heap (`MEM_SIZE`) | 8,000 bytes |
 | Telemetry TX ring | 512 bytes |

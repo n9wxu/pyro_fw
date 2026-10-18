@@ -90,7 +90,7 @@ Pads are owned once: `pin_store_claim_pads()` gives each pad one owner, and `pyr
 | `src/hal_common/hal_common.c` | Pico SDK HAL implementation, shared by every board |
 | `src/pressure_collector.c` | The free-running collector: conversions, the queue of four, bus recovery (DD-093) |
 | `src/ms5607_driver.c`, `src/bmp280_driver.c` | Each sensor's detection, description for the collector, and arithmetic |
-| `src/flight_log.c`, `src/log_plan.c` | Binary flight log, CSV rendering, logging plans |
+| `src/flight_log.c` | Binary flight log, CSV rendering |
 | `src/http_server.c`, `src/http_conn.c`, `src/http_work.c` | HTTP routes, connections, work units |
 | `src/net_glue.c`, `src/net_txq.c` | USB network, lwIP, mDNS, held frames |
 | `src/ground_test_seq.c`, `src/ground_test_switch.c` | The ground test procedure and its switch |
@@ -152,7 +152,7 @@ One message a second in PAD_IDLE, in flight and in LANDED (TEL-03). State codes 
 - **Ground test:** its own alert, countdowns, tone and all-clear (GND-TEST-06, GND-TEST-07)
 
 ### Flight Log
-The flight log (`flight_log.bin` on the flash) opens at launch and closes at LANDED, written only into erased pages: only the storage task's cleanup erases, a sector a second while no flight log is open (DD-100). It holds binary records (`src/flight_log.h`); `/api/flight.csv` renders them as CSV with `flog_csv_read()` (DD-062). The flight code hands every sample to `hal_log_sample()`, and `log_plan_take()` keeps what `log_rate` asks for: a row a second, that plus every sample within 1 s of an event, or every sample (FLT-LOG-07, DD-064). Records go to a 4 KB RAM buffer.
+The flight log (`flight_log.bin` on the flash) opens at launch and closes at LANDED, written only into erased pages: only the storage task's cleanup erases, a sector a second while no flight log is open (DD-100). It holds binary records (`src/flight_log.h`); `/api/flight.csv` renders them as CSV with `flog_csv_read()` (DD-062). The flight code hands every sample to `hal_log_sample()`, and the log keeps each one (FLT-LOG-07, DD-101). Records go to a 4 KB RAM buffer.
 
 **Flash stalls the CPU.** The RP2040 executes from flash via XIP, and a sector erase (46-73 ms measured, DD-035) stops both cores fetching from it. So:
 - nothing is written until the RAM buffer has filled once or 2 s have passed, which carries the log through the launch-shock window (DD-084, DD-027);

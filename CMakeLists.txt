@@ -146,7 +146,7 @@ include(FetchContent)
 # erased flash; only its cleanup erases.
 FetchContent_Declare(
     alfs
-    GIT_REPOSITORY git@github.com:n9wxu/alfs.git
+    GIT_REPOSITORY https://github.com/n9wxu/alfs.git
     GIT_TAG b5d946be8155c0976abb6cab4e50dd2069a6690f # experiment/v6-frames, format 6
 )
 
@@ -343,7 +343,6 @@ add_executable(pyro_fw_c
     src/net_stats.c
     src/net_txq.c
     src/flight_log.c
-    src/log_plan.c
     src/pressure_trace.c
     src/net_ring.c
     src/reset_interface.c
@@ -550,7 +549,6 @@ find_program(HOST_CC NAMES gcc cc PATHS /usr/bin /usr/local/bin NO_CMAKE_FIND_RO
 set(PYRO_TEST_HAL_SOURCES
     ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
     ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/log_plan.c
     ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
     ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
 )
@@ -825,21 +823,6 @@ add_custom_target(flight_log_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_flight_log
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Flight log format tests"
-)
-
-# The three logging plans: what each keeps, in time order (DD-064).
-add_custom_target(log_plan_tests
-    COMMAND ${CMAKE_COMMAND} -E echo "Building logging plan tests..."
-    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
-               -I${unity_SOURCE_DIR}/src
-               ${CMAKE_CURRENT_LIST_DIR}/test/test_log_plan.c
-               ${CMAKE_CURRENT_LIST_DIR}/src/log_plan.c
-               ${unity_SOURCE_DIR}/src/unity.c
-               -o ${CMAKE_BINARY_DIR}/test_log_plan
-    COMMAND ${CMAKE_COMMAND} -E echo "Running logging plan tests..."
-    COMMAND ${CMAKE_BINARY_DIR}/test_log_plan
-    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    COMMENT "Logging plan tests"
 )
 
 # The pressure trace's ring, as /api/pressure/trace reads it.

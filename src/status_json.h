@@ -37,7 +37,6 @@ typedef struct {
     const char *pyro_mode[2];
     uint16_t pyro_value[2];
     uint8_t units;
-    const char *log_rate; /* 1hz, events or full */
     char rocket_id[9], rocket_name[9];
     const char *sensor, *board;
     /* board is the display name ("Pyro MK1A"); board_id is the short token

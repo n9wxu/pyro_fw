@@ -254,7 +254,7 @@ The native simulator is the `sim` target of a host board:
 ```bash
 cmake -B build-sim -DPYRO_BOARD=sim && cmake --build build-sim --target sim
 ./build-sim/pyro_sim [apogee_m]                   # default 1524
-./build-sim/pyro_sim --replay flight_log.csv      # a flight logged with log_rate=full
+./build-sim/pyro_sim --replay flight_log.csv      # a flight log, as /api/flight.csv gives it
 ```
 
 It writes `flight_sim.csv` into the working directory. The physics engine and

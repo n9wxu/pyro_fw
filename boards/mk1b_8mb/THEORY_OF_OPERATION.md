@@ -74,7 +74,7 @@ MK1B's, it is because the refit does not touch what sets it. A value marked
 | Disarm when software stops (PYR-ARM-01) | **the watchdog, 1 s**, as MK1B: the loop ends the pulse. This exceeds the 50 ms bound |
 | Sensor | MS5607 where fitted, else BMP280, found at start-up; ranges and heights as MK1B's. The first board's MS5607 on USB alone: 7.3 Pa rms (`support/pressure_trace.py`); *not measured* on a battery |
 | Height for proper operation (SNS-MAX-01) | 30000 m with the MS5607; 9000 m with the BMP280 |
-| Flight log (DAT-09) | 4096 kB of files, 16,383 pages, 3,866,388 bytes free when blank: about 4.5 hours at `1hz`, 55 min at `full`; a sync each second stores a partial page [FLT-LOG-06], so a second takes a page at `1hz` and five at `full`, whose rows would fill four and a half. `/api/log/space` reports the bytes free |
+| Flight log (DAT-09) | 4096 kB of files, 16,383 pages, 3,866,388 bytes free when blank: about 39 minutes of flight. Every sample is a 22-byte row, up to 69 a second from this board's MS5607, beside a row a second for each estimator; each second's sync stores its partial page [FLT-LOG-06], so a second takes about seven pages. `/api/log/space` reports the seconds the next flight has |
 | Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured*: `loop_late_max_us` on `/api/status` reports it |
 | Script resources (LUA-PAD-03) | MK1B's: the J1 user pad, GPIO8, and a released pyro channel's pads (`../mk1b/pin_caps.h`) |
 | Connector labels (PIN-LABEL-01) | `../mk1b/pin_caps.h` |

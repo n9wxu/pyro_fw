@@ -216,7 +216,7 @@ The values the requirements leave to the board (BRD-01). A value marked
 | Disarm when software stops (PYR-ARM-01) | **the watchdog, 1 s.** The loop ends the pulse, so a stopped loop leaves the high side on until the reset. This exceeds the 50 ms bound |
 | Sensor | BMP280, 300 to 1100 hPa at full accuracy, 1.3 Pa rms at its highest resolution (`docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf`, pages 7 and 12); noise on this board *not measured* |
 | Height for proper operation (SNS-MAX-01) | 9000 m, the sensor's 300 hPa |
-| Flight log (DAT-09) | 8192 kB of files, 32,767 pages: about 9 hours at `1hz`, 1.8 h at `full` (50 rows a second of 22 bytes); a sync each second stores a partial page [FLT-LOG-06], so a second takes a page at `1hz` and five at `full`, whose rows would fill four and a half. `/api/log/space` reports the bytes free |
+| Flight log (DAT-09) | 8192 kB of files, 32,767 pages: about 1.5 hours of flight. Every sample is a 22-byte row, about 50 a second, beside a row a second for each estimator; each second's sync stores its partial page [FLT-LOG-06], so a second takes about six pages (5.9 measured on MK1C). `/api/log/space` reports the seconds the next flight has |
 | Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured* on this revision: `loop_late_max_us` on `/api/status` reports it |
 | Script resources (LUA-PAD-03) | the two J6 user pads, GPIO18 and GPIO19, and a released pyro channel's pads (`pin_caps.h`) |
 | Connector labels (PIN-LABEL-01) | `pin_caps.h` |

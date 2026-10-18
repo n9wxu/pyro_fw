@@ -39,13 +39,6 @@ const char *config_units_name(uint8_t u) {
     return u < COUNT_OF(UNITS_NAMES) ? UNITS_NAMES[u] : UNITS_NAMES[UNITS_M];
 }
 
-static const char *const LOG_RATE_NAMES[] = {
-    [LOG_RATE_1HZ] = "1hz", [LOG_RATE_EVENTS] = "events", [LOG_RATE_FULL] = "full"};
-
-const char *config_log_rate_name(uint8_t rate) {
-    return rate < COUNT_OF(LOG_RATE_NAMES) ? LOG_RATE_NAMES[rate] : LOG_RATE_NAMES[LOG_RATE_1HZ];
-}
-
 /* ── Value parsers: false, and *out untouched, for a value that does not
  *    parse or is out of range ────────────────────────────────────────── */
 
@@ -111,7 +104,6 @@ static bool parse_uint(const char *s, uint32_t min, uint32_t max, uint32_t *out)
 #define X_CHECK_MODE(field, key, def, min, max)
 #define X_CHECK_UNITS(field, key, def, min, max)
 #define X_CHECK_BOOL(field, key, def, min, max)
-#define X_CHECK_LOGRATE(field, key, def, min, max)
 #define X_CHECK(type, field, key, def, min, max) X_CHECK_##type(field, key, def, min, max)
 CONFIG_FIELDS(X_CHECK)
 #undef X_CHECK
@@ -128,7 +120,6 @@ void config_set_defaults(config_t *cfg) {
 #define X_DEF_MODE X_DEF_VALUE
 #define X_DEF_UNITS X_DEF_VALUE
 #define X_DEF_BOOL X_DEF_VALUE
-#define X_DEF_LOGRATE X_DEF_VALUE
 #define X_DEFAULTS(type, field, key, def, min, max) X_DEF_##type(field, def)
     CONFIG_FIELDS(X_DEFAULTS)
 #undef X_DEFAULTS
@@ -159,9 +150,6 @@ static void config_parse_pair(const char *key, const char *val, void *arg) {
     if ((ok = parse_name(val, UNITS_NAMES, COUNT_OF(UNITS_NAMES), &b)))                                                \
         cfg->field = b;
 #define X_PARSE_BOOL(field) ok = parse_bool(val, &cfg->field);
-#define X_PARSE_LOGRATE(field)                                                                                         \
-    if ((ok = parse_name(val, LOG_RATE_NAMES, COUNT_OF(LOG_RATE_NAMES), &b)))                                          \
-        cfg->field = b;
 #define X_PARSE_ONE_STR(field, min, max) X_PARSE_STR(field)
 #define X_PARSE_ONE_U8(field, min, max) X_PARSE_INT(field, min, max)
 #define X_PARSE_ONE_U16(field, min, max) X_PARSE_INT(field, min, max)
@@ -169,7 +157,6 @@ static void config_parse_pair(const char *key, const char *val, void *arg) {
 #define X_PARSE_ONE_MODE(field, min, max) X_PARSE_MODE(field)
 #define X_PARSE_ONE_UNITS(field, min, max) X_PARSE_UNITS(field)
 #define X_PARSE_ONE_BOOL(field, min, max) X_PARSE_BOOL(field)
-#define X_PARSE_ONE_LOGRATE(field, min, max) X_PARSE_LOGRATE(field)
 #define X_PARSE(type, field, key_str, def, min, max)                                                                   \
     if (strcmp(key, key_str) == 0) {                                                                                   \
         X_PARSE_ONE_##type(field, min, max) goto done;                                                                 \
@@ -230,7 +217,6 @@ int config_serialize_ini(const config_t *cfg, char *buf, int max_len) {
 #define X_SER_MODE(key, v) APPEND("%s=%s\r\n", key, config_mode_name(v));
 #define X_SER_UNITS(key, v) APPEND("%s=%s\r\n", key, config_units_name(v));
 #define X_SER_BOOL(key, v) APPEND("%s=%s\r\n", key, (v) ? "true" : "false");
-#define X_SER_LOGRATE(key, v) APPEND("%s=%s\r\n", key, config_log_rate_name(v));
 #define X_SERIALIZE(type, field, key, def, min, max) X_SER_##type(key, cfg->field)
     CONFIG_FIELDS(X_SERIALIZE)
 #undef X_SERIALIZE

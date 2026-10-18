@@ -11,7 +11,7 @@ Flying a board? Start with the [Operator's guide](#operators-guide).
 - **Fault Detection** - every pulse is recorded with what the board saw of it; MK1B's AP2192 flags overcurrent; MK1C reports bus shorts. No reading withholds a fire (PYR-HEALTH-01)
 - **Fire Rules** - a channel fires again while the descent stays too fast, and every channel fires above an emergency speed (PYR-REFIRE-01, FLT-EMRG-01)
 - **Resume** - any restart in flight rejoins the flight from a record made on the pad (DD-086)
-- **Flight Log** - binary records (`flight_log.bin`) written only inside core0's flash window, rendered as CSV on download; three logging plans (DD-062, DD-064)
+- **Flight Log** - binary records (`flight_log.bin`) written only inside core0's flash window, rendered as CSV on download; every sample of the flight (DD-062, DD-101)
 - **Real-time Telemetry** - `$PYRO` NMEA on UART0 through an interrupt-driven ring, one message a second; apogee, fire and landing events ride the next message (DD-088)
 - **Pressure Sensing** - MS5607 (MK1B, MK1C) or BMP280 (MK1A), collected by a free-running interrupt state machine at 53 or more readings a second, each stamped at its measurement; it clears its own bus and resets the part after three failed transfers (DD-093)
 - **Pressure, Rate and Acceleration** - a Kalman filter on the raw readings; every flight comparison is made in pressure, and altitude is computed for people, relative to the pad and unclamped (DD-085)
@@ -87,7 +87,7 @@ battery.
 | Units | cm, meters (default) or feet, for every altitude and speed below and for the altitude beep-out. |
 | Pyro 1, Pyro 2 | Each a mode and a value. Which recovery device each fires is the operator's wiring. **Delay**: seconds after apogee (pyro 1's default is 0: at apogee). **AGL**: fires descending through this height above the pad (pyro 2's default is 300 m). **Fallen**: fires this far below the peak. **Speed**: fires when the descent is faster than this. **Disabled**: never fires. |
 | Fire rules | **Re-fire speed** per channel: a channel that has fired fires again every re-fire interval while the descent is faster than this. **Emergency fire speed**: any time after apogee, every enabled channel fires, and keeps firing, while the descent is faster than this. A speed of 0 turns its rule off (the default). **Re-fire interval** and **gap between channels** in ms: 0 takes the board's default (1000 ms and 3000 ms), and the page shows the board's range. |
-| Flight log | **1 row a second** (default); **High rate 1**: that, and every sample within 1 s of an event; **High rate 2**: every sample, 50 a second. The estimate beside it is how long a flight fits (DD-062, DD-064). |
+| Flight log | How long a flight the log holds, at every sample (DD-101). |
 | Release pyro pins to Lua | Gives a channel's pads to a Lua script; that channel then never fires. |
 | Buzzer | Which pad drives the buzzer. MK1A fits none: wire one to a J6 user pad and choose it here. |
 | Ground test | The ground test switch's wiring (see below). |
@@ -223,7 +223,6 @@ pyro2_refire_speed=0
 emergency_fire_speed=0
 refire_interval=0
 fire_gap=0
-log_rate=1hz
 landing_timeout=60
 lua_enabled=false
 lua_baud=9600
@@ -235,7 +234,6 @@ These are the defaults, written when the file is missing.
 - **Units:** `cm`, `m` or `ft` - applies to pyro values and altitude reporting
 - **pyro1_refire_speed, pyro2_refire_speed, emergency_fire_speed:** in units a second; `0` turns the rule off
 - **refire_interval, fire_gap:** milliseconds; `0` takes the board's default (1000 and 3000 where the board declares none). A value outside the board's range is brought into it and reported (`pyro_limited` on `/api/status`). `GET /api/limits` serves the defaults and ranges (PYR-BOARD-03)
-- **log_rate:** `1hz`, `events` or `full` (see Data Logging)
 - **landing_timeout:** seconds of descent before a still rocket counts as landed (FLT-LAND-07)
 
 **`pins.ini`** - the hardware map (Config and Lua tabs, `/api/pins`): pyro channels released to Lua (`pyro1_released`, `pyro2_released`), `buzzer_pin`, the ground test switch (`ground_test=none|ground|pair`, `ground_test_pin`, `ground_test_drive_pin`), and each Lua pad's role and name. `GET /api/pins/caps` serves the board's capability table and the vocabulary to read it, so the UI holds no board knowledge. A change takes effect at the next reboot.
@@ -274,20 +272,14 @@ With a USB host attached the board plays one double chirp and announces nothing 
 | Buzzer | none | 16 | 11 |
 
 ## Data Logging
-From launch to landing the flight software hands every sample to `hal_log_sample()`. The log's plan decides what `flight_log.bin` keeps (FLT-LOG-07):
+From launch to landing the flight software hands every sample to `hal_log_sample()`, and `flight_log.bin` keeps each one: a row every flight cycle, 50 a second, so `pyro_sim --replay` can fly the log again (FLT-LOG-07, DAT-08, DD-101). Every event row is kept at its own time. Records go to a 4 KB RAM buffer. The buffer is written and the file synced once a second, so a flight that never lands keeps its record (FLT-LOG-06).
 
-- **`1hz`** (default) - a sample row a second
-- **`events`** - that, and every sample within 1 s of an event
-- **`full`** - every sample, 50 a second; the only plan `pyro_sim --replay` accepts (DAT-08)
-
-Every event row is kept at its own time under each plan. Records go to a 4 KB RAM buffer. The buffer is written and the file synced once a second, so a flight that never lands keeps its record (FLT-LOG-06).
-
-- **CSV export:** `/api/flight.csv` renders the binary log as CSV, with a header naming the board, the configuration, the ground pressure and the log rate
+- **CSV export:** `/api/flight.csv` renders the binary log as CSV, with a header naming the board, the configuration and the ground pressure, and saying every sample was kept
 - **Columns:** `time_ms, pressure_pa, altitude_cm, state, thrust, raw_pa, temp_c, event`
 - **Events:** LAUNCH, ARMED, APOGEE, PYRO1, PYRO2, LANDING, PEAK or PEAK_AT_LEAST with the flight's peak, and when they happen PYRO1_REFIRE, PYRO2_REFIRE, EMERGENCY_FIRE, RESUMED, faults (PYRO1_FAULT, PYRO2_FAULT), failed verifies (PYRO1_NOPEN, PYRO2_NOPEN), SENSOR_STUCK and SENSOR_LOST
 - **Estimators:** an `EST` row a second for each estimator, with its height, speed and whether it explains the readings, and an `EST <name> APOGEE` row when each one's apogee rule is met
 - **Lua:** a script's `log.line()` and `log.write()` output lands in the log as `LUA` rows, during a flight only; `print()` goes to `/api/lua/console`
-- **Space:** `/api/log/space` reports the room the next flight has; the Config tab turns it into the longest flight the chosen plan holds
+- **Space:** `/api/log/space` reports the room the next flight has and the seconds of flight it holds, each second costing what its sync stores; the Config tab shows that time
 - **Erase:** `POST /api/flight/erase`
 
 In flight the flight log holds the filesystem: every other file request is answered 423 (DD-058).
@@ -481,7 +473,7 @@ Connect the board via USB. It appears as a network adapter (RNDIS on Windows, EC
 
 - **Address:** http://pyro.local/, or http://192.168.N.1/, where N is the last octet of the board's MAC (`subnet` on `/api/status`). Each board has its own /24, so several can be attached at once.
 - **Status tab:** live state, altitude, speed, pressure, pyro channels with their pulse counts and faults, emergency fire, whether this start resumed a flight, USB and test mode
-- **Config tab:** guided pyro editor, the fire rules with the board's ranges, logging plan with the flight time it holds, pyro release, buzzer pad and ground test switch
+- **Config tab:** guided pyro editor, the fire rules with the board's ranges, the flight time the log holds, pyro release, buzzer pad and ground test switch
 - **Flight Data tab:** summary, CSV download, erase, altitude graph
 - **Beep Codes tab:** the personalities, with an audition button
 - **Lua tab:** Lua pads, the program editor with check, save, remove, export and import, and the console. A script that fails its check is not saved (LUA-MGT-01)

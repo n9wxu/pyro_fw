@@ -50,7 +50,6 @@
 #include "http_server.h"
 #include "flight_log.h"
 #include "ground_test_switch.h"
-#include "log_plan.h"
 #include "pressure_trace.h"
 #include "loop_period.h"
 #if PYRO_HAS_BENCH_FLIGHT
@@ -1211,7 +1210,6 @@ typedef struct {
 
 static log_ring_t log_ring;
 static uint8_t log_file_buf[VFS_BUF_SIZE];
-static log_plan_t log_plan;
 
 static uint32_t log_used(void) {
     return log_ring.head - log_ring.tail;
@@ -1229,8 +1227,7 @@ static bool log_put(const uint8_t *rec, uint32_t n) {
     return true;
 }
 
-static void log_keep(void *ctx, const flog_sample_t *s) {
-    (void)ctx;
+static void log_keep(const flog_sample_t *s) {
     uint8_t rec[FLOG_SAMPLE_BYTES + 8];
     int n = flog_put_sample(rec, (int)sizeof(rec), s);
     if (n <= 0 || !log_put(rec, (uint32_t)n))
@@ -1260,11 +1257,9 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
         .pyro2_value = cfg->pyro2_value,
         .units = cfg->units,
         .ground_pa = ground_pressure_pa,
-        .rate = cfg->log_rate,
     };
     int n = flog_put_header(log_ring.buf, (int)LOG_BUF_SIZE, &h);
     log_ring.head = n > 0 ? (uint32_t)n : 0u;
-    log_plan_init(&log_plan, cfg->log_rate);
     __dmb();
     log_ring.state = LOG_RUNNING;
 }
@@ -1406,7 +1401,7 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
         .thrust = under_thrust,
         .event = event,
     };
-    log_plan_take(&log_plan, &s, log_keep, NULL);
+    log_keep(&s);
 }
 
 /* A text row: script output, or a note about something the firmware did not
@@ -1456,7 +1451,6 @@ uint32_t hal_log_text_dropped(void) {
 void hal_log_stop(void) {
     if (log_ring.state != LOG_RUNNING)
         return;
-    log_plan_finish(&log_plan, log_keep, NULL);
     __dmb();
     log_ring.state = LOG_STOPPING;
 }

@@ -94,7 +94,7 @@ NEW_FIELDS = ("resume", "pyro_pulses", "pyro_fault", "emergency_fire", "refire_i
               "pyro_limited", "usb_attached", "test_mode",
               "buzzer_active", "raw_pa", "pad_speed_cms", "ground_degraded", "ground_reseeds",
               "sample_interval_us", "stamp_lag_max_us", "noise_mpa", "estimator", "estimator_explains",
-              "peak_lower_bound", "log_rate")
+              "peak_lower_bound")
 check("status: new fields present", all(k in st0 for k in NEW_FIELDS),
       ",".join(k for k in NEW_FIELDS if k not in st0))
 # T0: the sensor's own reading, and the speed the launch detector reads.
@@ -176,12 +176,14 @@ code, _, body = req("GET", "/api/flight.csv")
 check("erased log reads as the bare column header", body.strip() == b"time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event",
       repr(body[:80]))
 
-# DD-062: the room the next flight's log has, in bytes and binary records.
+# WEB-API-12: the room the next flight's log has, and the seconds of flight it
+# holds at every sample, which a second's sync can only shorten.
 _, _, body = req("GET", "/api/log/space")
 sp = json.loads(body)
-check("log space: bytes free, record size and the two rates",
-      sp.get("bytes_free", 0) > 0 and sp.get("record_bytes") == 22 and sp.get("rates_hz", [0])[0] == 1
-      and 40 <= sp.get("rates_hz", [0, 0])[1] <= 100, str(sp))
+check("log space: bytes free, record size, sample rate and seconds",
+      sp.get("bytes_free", 0) > 0 and sp.get("record_bytes") == 22 and 40 <= sp.get("rate_hz", 0) <= 100
+      and 0 < sp.get("seconds", 0) * sp.get("rate_hz", 0) * 22 <= sp.get("bytes_free", 0), str(sp))
+check("status: no log rate (FLT-LOG-07)", "log_rate" not in st0)
 
 # GND-TEST-12: the ground test switch's wiring and pads, as pins.ini has them.
 _, _, body = req("GET", "/api/pins/caps")
@@ -216,7 +218,7 @@ cfg1 = cfg1.decode()
 check("config.ini keeps pyro1_mode=none", "pyro1_mode=none" in cfg1)
 check("config.ini keeps the estimator chosen (SNS-EST-06)", f"estimator={other}" in cfg1, other)
 check("the merge kept what the post left out", f"pyro2_mode={orig.get('pyro2_mode')}" in cfg1)
-inert = [k for k in ("beep_mode=", "max_coast_s=", "log_enabled=", "buzzer_startup=", "log_rate_hz=",
+inert = [k for k in ("beep_mode=", "max_coast_s=", "log_enabled=", "buzzer_startup=", "log_rate", "log_high_rate=",
                      "telem_format=", "telem_rate_hz=") if k in cfg1]
 check("config.ini carries no inert keys after a save", not inert, ",".join(inert))
 time.sleep(2.5)

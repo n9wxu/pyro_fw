@@ -214,11 +214,11 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **DAT-04**: The system shall log events: LAUNCH, ARMED, APOGEE, PYRO1_FIRE, PYRO2_FIRE, LANDING, and when they occur PYRO1/2_REFIRE, EMERGENCY_FIRE, PYRO1/2_NOPEN, PYRO1/2_FAULT, SENSOR_STUCK, SENSOR_LOST, RESUMED, and PEAK or PEAK_AT_LEAST (FLT-APO-08). ← SYS-DATA-01
 - **DAT-06**: The system shall keep flight data in persistent storage after landing and export it as CSV when it is read (WEB-API-06). ← SYS-DATA-02
 - **DAT-07**: The CSV shall include a metadata header with configuration, flight summary and the rate it was logged at. ← SYS-DATA-02
-- **DAT-08**: A flight log written with `log_rate=full` shall carry what is needed to replay the flight through the estimator and the detectors, and `pyro_sim --replay` shall do so and set the replay's events against the log's. It shall refuse a log that kept fewer samples. ← DAT-02
-- **DAT-09**: Each board shall hold a flight log of the longest flight it supports, at each log rate, and shall declare that capacity. ← SYS-DATA-01, DD-084
+- **DAT-08**: The flight log shall carry what is needed to replay the flight through the estimator and the detectors, and `pyro_sim --replay` shall do so and set the replay's events against the log's. It shall refuse a log whose header says it kept fewer samples. ← DAT-02
+- **DAT-09**: Each board shall hold a flight log of the longest flight it supports, and shall declare that capacity. ← SYS-DATA-01, DD-084
 - **DAT-10**: Any record that holds a pressure not yet converted to altitude shall hold the temperature the sensor measured with it. Converted outputs need none. ← SYS-DATA-01
 - **FLT-LOG-06**: A flight that never lands shall keep its record: no more than the last second shall be lost. ← SYS-DATA-01
-- **FLT-LOG-07**: The flight log shall keep, by `log_rate`: a sample row a second (`1hz`, the default); that and every sample within 1 s of each event (`events`); or every sample (`full`). It shall keep every event row at its own time under each, in time order. ← SYS-DATA-01
+- **FLT-LOG-07**: The flight log shall keep a row for every sample of every flight cycle, and every event row at its own time, in time order. ← SYS-DATA-01, DD-101
 - **FLT-LOG-08**: Records the flight log could not keep shall be counted and reported on `/api/status`. ← SYS-DATA-01
 
 ### After landing
@@ -264,7 +264,6 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 | `refire_interval` | time between re-fires of one channel, ms; 0 takes the board's default | 0: the board's, 1000 where it declares none |
 | `fire_gap` | quiet time between pulses on different channels, ms; 0 takes the board's default | 0: the board's, 3000 where it declares none |
 | `estimator` | the estimator the flight obeys (SNS-EST-06): lumped or constacc | lumped |
-| `log_rate` | 1hz, events or full | 1hz |
 | `landing_timeout` | FLT-LAND-07, seconds | 60 |
 | `lua_enabled`, `lua_baud`, `lua_pixels` | the script and its resources | false, 9600, 0 |
 
@@ -407,7 +406,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-API-09**: The system shall erase the flight log on request at `/api/flight/erase` (POST), unless the log is being written. ← DAT-06
 - **WEB-API-10**: A request for a file shall be refused with 423 while the flight log is being written. ← WEB-API-08
 - **WEB-API-11**: `/api/status` shall be self-consistent, taken at one instant of the flight, shall keep its keys and their order, and shall be well-formed JSON whatever the configured rocket id and name contain. ← SYS-WEB-01
-- **WEB-API-12**: The system shall report at `/api/log/space` the bytes the next flight's log has room for, the size of a sample record and the log rates, and refuse with 423 while the flight log holds the storage. ← SYS-WEB-01
+- **WEB-API-12**: The system shall report at `/api/log/space` the bytes the next flight's log has room for, the size of a sample record, the samples a second, and the seconds of flight that room holds with each second's sync, and refuse with 423 while the flight log holds the storage. ← SYS-WEB-01
 - **WEB-API-13**: The system shall report at `/api/net` what the network has in use, has refused and has dropped, and the USB interface's mounts, unmounts, suspends and resumes, so an HTTP outage can be told apart on the bench. ← SYS-WEB-01
 - **WEB-API-14**: A file shall be named by `/`-separated names of letters, digits, `.`, `_` and `-`, none of them `.` or `..`. Any other path shall be refused by every file operation, and by the web server with 400. ← SYS-WEB-01
 - **WEB-API-15**: The system shall report at `/api/status` the flash chip's JEDEC ID, the capacity it declares, and its whole unique ID at the length its datasheet gives. ← SYS-WEB-01
@@ -422,7 +421,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-UI-01**: The web interface shall display device status in the configured units. ← SYS-WEB-01
 - **WEB-UI-04**: The web interface shall display flight summary data and allow CSV download. The summary shall come from the flight log alone, be re-read whenever it is shown, and name the flight it describes; flight time shall stop at the landing. ← SYS-WEB-01
 - **WEB-UI-05**: The web interface shall support firmware upload and update checking. ← SYS-WEB-01
-- **WEB-UI-06**: The Config tab shall offer the three logging plans, and shall estimate the longest flight the log holds under the plan chosen, updating as the choice changes. ← SYS-WEB-01
+- **WEB-UI-06**: The Config tab shall show the longest flight the log holds. ← SYS-WEB-01
 
 ---
 

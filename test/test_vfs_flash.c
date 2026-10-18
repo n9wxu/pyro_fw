@@ -286,6 +286,27 @@ static void test_space_from_the_files(void) {
     TEST_ASSERT_EQUAL(free0, free1);
 }
 
+/* [WEB-API-12] A sync stores its partial page [FLT-LOG-06], so each second
+ * of a log takes whole pages, as vfs_flash_synced_cost() says. */
+static void test_WEB_API_12_a_synced_second_takes_whole_pages(void) {
+    static uint8_t d[1100];
+    fill(d, sizeof(d), 12);
+    uint64_t free0, free1, total;
+    TEST_ASSERT_EQUAL(0, vfs_flash_space(&free0, &total));
+    vfs_flash_file_t f;
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&f, "log.bin", VFS_FLASH_WRITE, wbuf));
+    for (int s = 0; s < 4; s++) {
+        TEST_ASSERT_EQUAL((int)sizeof(d), vfs_flash_write(&f, d, sizeof(d)));
+        TEST_ASSERT_EQUAL(0, vfs_flash_sync(&f));
+    }
+    TEST_ASSERT_EQUAL(0, vfs_flash_close(&f));
+    TEST_ASSERT_EQUAL(0, vfs_flash_space(&free1, &total));
+    TEST_ASSERT_EQUAL(5u * 236u, vfs_flash_synced_cost(sizeof(d)));
+    TEST_ASSERT_EQUAL(free0 - 4u * vfs_flash_synced_cost(sizeof(d)), free1);
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("log.bin"));
+    clean_all();
+}
+
 static void test_names(void) {
     vfs_flash_file_t f;
     TEST_ASSERT_EQUAL(VFS_FLASH_ERR, vfs_flash_open(&f, "", VFS_FLASH_WRITE, wbuf));
@@ -306,6 +327,7 @@ int main(void) {
     RUN_TEST(test_cleanup_frees_what_files_left);
     RUN_TEST(test_cleanup_waits_for_readers);
     RUN_TEST(test_space_from_the_files);
+    RUN_TEST(test_WEB_API_12_a_synced_second_takes_whole_pages);
     RUN_TEST(test_names);
     return UNITY_END();
 }

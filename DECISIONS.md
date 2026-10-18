@@ -560,6 +560,36 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-101: Every Sample Logged
+- **Decision:** at the user's direction ("The 1hz and 50hz log capacity is
+  roughly the same. Drop the 1hz logging and log every flight cycle"), the
+  flight log keeps a row for every sample, every flight cycle, and every
+  event row at its own time [FLT-LOG-07]. `log_rate`, its three plans
+  (DD-064) and `src/log_plan.c` are gone.
+- **Why the capacities are close:** the log syncs every second
+  [FLT-LOG-06], and on alfs a sync stores its partial page (DD-100), so a row
+  a second took a page a second. Every sample takes about six: measured on
+  MK1C on 2026-10-18, 1,042 pages over a 177.5 s bench flight, 5.9 a second,
+  for 1,210 bytes a second of samples (50.9 a second), estimator rows and the
+  script's rows. MK1A and MK1C hold about 1.5 hours. MK1B's MS5607 gives 69
+  samples a second, so a second there takes about seven pages: MK1B-8MB holds
+  about 39 minutes, MK1B 9.
+- **The format stands:** the header keeps its plan byte, always 2, and the
+  CSV its `# Log rate: every sample` line, which the replay reads; a CSV
+  whose header says it kept a row a second is refused [DAT-08]. A
+  `config.ini` that names `log_rate` loads whole, and its next save drops the
+  key [CFG-08].
+- **`/api/log/space`** reports `rate_hz`, the samples a second, and
+  `seconds`: the room over what a second of samples takes on the store once
+  synced, whole pages on the flash (`vfs_synced_cost()`). The Config tab shows
+  that time and has no plan to choose [WEB-UI-06, WEB-API-12]. `/api/status`
+  carries no `log_rate`.
+- **What it costs in flight:** each sync's programs overlap two pressure
+  conversions, which are discarded (DD-068): a 57 ms gap in the samples about
+  once a second, 743 conversions of the flight's, about 5%. The flight steps
+  on every sample it has [FLT-RATE-06].
+- **RAM:** the plan's delay line, 128 rows (3 KB), is gone.
+
 ### DD-100: The Board's Files On alfs; Only The Cleanup Erases
 - **Decision:** at the user's direction ("build and test this version.
   Integrate into the pyro_fw and test on hardware"), the board's own files
@@ -1650,6 +1680,7 @@ The designer's answers to `docs/outstanding_tasks.md` section 2.
 - **Only `full` replays** [DAT-08]; the log's header names the plan.
 - **`log_high_rate`, a few hours old, is not carried over:** a `config.ini`
   that names it logs at `1hz`, like one that names `log_rate_hz`.
+- **Superseded by DD-101:** every sample is logged, and `log_rate` is gone.
 
 ### DD-063: Every Pressure Conversion, Traced; 100 Hz Checked On Each Sensor
 - **Decision:** at the user's direction -- "We need to verify that 100hz

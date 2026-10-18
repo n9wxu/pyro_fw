@@ -65,6 +65,10 @@ int32_t vfs_flash_stat_size(const char *name);
  * every page no file holds, the pages the cleanup will erase among them. */
 int vfs_flash_space(uint64_t *free_bytes, uint64_t *total_bytes);
 
+/* The room bytes take when a sync follows them: whole pages, since a sync
+ * stores its partial page. */
+uint32_t vfs_flash_synced_cost(uint32_t bytes);
+
 /* One sector erased, if one holds nothing live: 1 when there may be more, 0
  * when the area is clean, <0 on a fault. Never waits for the lock, and waits
  * while a file is open for reading: 1 then too. */

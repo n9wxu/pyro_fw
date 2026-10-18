@@ -34,7 +34,6 @@ void test_config_defaults(void) {
     TEST_ASSERT_EQUAL(0, cfg.emergency_fire_speed);
     TEST_ASSERT_EQUAL(0, cfg.refire_interval);
     TEST_ASSERT_EQUAL(0, cfg.fire_gap);
-    TEST_ASSERT_EQUAL_MESSAGE(LOG_RATE_1HZ, cfg.log_rate, "one row a second unless asked [DD-064]");
     TEST_ASSERT_FALSE(cfg.lua_enabled);
 }
 
@@ -64,7 +63,6 @@ void test_config_roundtrip_defaults(void) {
     TEST_ASSERT_EQUAL(original.emergency_fire_speed, restored.emergency_fire_speed);
     TEST_ASSERT_EQUAL(original.refire_interval, restored.refire_interval);
     TEST_ASSERT_EQUAL(original.fire_gap, restored.fire_gap);
-    TEST_ASSERT_EQUAL(original.log_rate, restored.log_rate);
     TEST_ASSERT_EQUAL(original.lua_enabled, restored.lua_enabled);
 }
 
@@ -87,7 +85,6 @@ void test_config_roundtrip_custom(void) {
     original.emergency_fire_speed = 40;
     original.refire_interval = 1500;
     original.fire_gap = 4000;
-    original.log_rate = LOG_RATE_EVENTS;
     original.lua_enabled = true;
 
     char buf[512];
@@ -109,7 +106,6 @@ void test_config_roundtrip_custom(void) {
     TEST_ASSERT_EQUAL(original.emergency_fire_speed, restored.emergency_fire_speed);
     TEST_ASSERT_EQUAL(original.refire_interval, restored.refire_interval);
     TEST_ASSERT_EQUAL(original.fire_gap, restored.fire_gap);
-    TEST_ASSERT_EQUAL(original.log_rate, restored.log_rate);
     TEST_ASSERT_EQUAL(original.lua_enabled, restored.lua_enabled);
 }
 
@@ -202,26 +198,25 @@ void test_config_parse_bool_values(void) {
 void test_config_parse_new_fields(void) {
     config_t cfg;
     config_set_defaults(&cfg);
-    char ini[] = "landing_timeout=90\r\npyro1_refire_speed=25\r\nemergency_fire_speed=40\r\nfire_gap=4000\r\n"
-                 "log_rate=full\r\n";
+    char ini[] = "landing_timeout=90\r\npyro1_refire_speed=25\r\nemergency_fire_speed=40\r\nfire_gap=4000\r\n";
     config_parse_ini(ini, &cfg);
     TEST_ASSERT_EQUAL(90, cfg.landing_timeout);
     TEST_ASSERT_EQUAL(25, cfg.pyro1_refire_speed);
     TEST_ASSERT_EQUAL(40, cfg.emergency_fire_speed);
     TEST_ASSERT_EQUAL(4000, cfg.fire_gap);
-    TEST_ASSERT_EQUAL(LOG_RATE_FULL, cfg.log_rate);
-    char events[] = "log_rate=events\r\n";
-    config_parse_ini(events, &cfg);
-    TEST_ASSERT_EQUAL(LOG_RATE_EVENTS, cfg.log_rate);
-    char junk[] = "log_rate=fast\r\n";
-    TEST_ASSERT_EQUAL(1, config_parse_ini(junk, &cfg));
-    TEST_ASSERT_EQUAL_MESSAGE(LOG_RATE_EVENTS, cfg.log_rate, "a rate it does not know keeps the one it had");
+}
 
-    /* A config.ini from before DD-062 names a rate: it logs at the default. */
+/* [FLT-LOG-07, CFG-08] Every sample is logged: a config.ini that names a log
+ * rate loads whole, and its next save drops the key. */
+void test_config_a_log_rate_is_an_unknown_key(void) {
+    config_t cfg;
     config_set_defaults(&cfg);
-    char old[] = "log_rate_hz=50\r\n";
-    config_parse_ini(old, &cfg);
-    TEST_ASSERT_EQUAL(LOG_RATE_1HZ, cfg.log_rate);
+    char ini[] = "log_rate=1hz\r\nlog_rate_hz=50\r\nlog_high_rate=true\r\nlanding_timeout=90\r\n";
+    TEST_ASSERT_EQUAL_MESSAGE(0, config_parse_ini(ini, &cfg), "no value is rejected");
+    TEST_ASSERT_EQUAL(90, cfg.landing_timeout);
+    char buf[CONFIG_INI_MAX];
+    TEST_ASSERT_GREATER_THAN(0, config_serialize_ini(&cfg, buf, (int)sizeof(buf)));
+    TEST_ASSERT_NULL(strstr(buf, "log_"));
 }
 
 void test_config_parse_all_modes(void) { /* [CFG-04] */
@@ -325,9 +320,8 @@ void test_config_writes_no_inert_keys(void) {
     TEST_ASSERT_NULL_MESSAGE(strstr(ini, "telem_rate_hz="), "telemetry is 1 Hz [TEL-03, DD-088]");
     TEST_ASSERT_NULL_MESSAGE(strstr(ini, "telem_format="), "telemetry is $PYRO [TEL-01, DD-088]");
     TEST_ASSERT_NOT_NULL(strstr(ini, "emergency_fire_speed=0\r\n"));
-    TEST_ASSERT_NOT_NULL(strstr(ini, "log_rate=1hz\r\n"));
-    TEST_ASSERT_NULL_MESSAGE(strstr(ini, "log_rate_hz="), "replaced by log_rate [DD-064]");
-    TEST_ASSERT_NULL_MESSAGE(strstr(ini, "log_high_rate="), "replaced by log_rate [DD-064]");
+    TEST_ASSERT_NULL_MESSAGE(strstr(ini, "log_rate"), "every sample is logged [FLT-LOG-07, DD-101]");
+    TEST_ASSERT_NULL_MESSAGE(strstr(ini, "log_high_rate="), "every sample is logged [FLT-LOG-07, DD-101]");
 }
 
 /* ── CFG-06: a partial file must not reset what it omits ──────────── */
@@ -420,7 +414,6 @@ void test_config_worst_case_fits_the_budget(void) {
     cfg.emergency_fire_speed = 65535;
     cfg.refire_interval = 65535;
     cfg.fire_gap = 65535;
-    cfg.log_rate = LOG_RATE_EVENTS; /* the longest name */
     cfg.landing_timeout = 255;
     cfg.lua_baud = 921600;
     cfg.lua_pixels = 65535;
@@ -606,6 +599,7 @@ int main(void) {
     RUN_TEST(test_config_parse_id_truncated);
     RUN_TEST(test_config_parse_bool_values);
     RUN_TEST(test_config_parse_new_fields);
+    RUN_TEST(test_config_a_log_rate_is_an_unknown_key);
     RUN_TEST(test_config_parse_all_modes);
     RUN_TEST(test_config_parse_all_units);
 

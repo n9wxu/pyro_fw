@@ -45,7 +45,6 @@ static void typical(status_snap_t *s) {
     s->pyro_mode[1] = "agl";
     s->pyro_value[1] = 150;
     s->units = 1;
-    s->log_rate = "events";
     strcpy(s->rocket_id, "R1");
     strcpy(s->rocket_name, "Test");
     s->sensor = "MS5607";
@@ -151,7 +150,6 @@ static const char *const TYPICAL[][2] = {
     {"pyro2_mode", "\"agl\""},
     {"pyro2_value", "150"},
     {"units", "1"},
-    {"log_rate", "\"events\""},
     {"rocket_id", "\"R1\""},
     {"rocket_name", "\"Test\""},
     {"sensor", "\"MS5607\""},

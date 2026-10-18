@@ -289,6 +289,13 @@ int vfs_flash_space(uint64_t *free_bytes, uint64_t *total_bytes) {
     return 0;
 }
 
+uint32_t vfs_flash_synced_cost(uint32_t bytes) {
+    if (!area_of)
+        return bytes;
+    uint32_t page = area_of->page_size - PAGE_KEEPS;
+    return (bytes + page - 1u) / page * page;
+}
+
 int vfs_flash_clean(void) {
     if (!writable || !dirty)
         return 0;

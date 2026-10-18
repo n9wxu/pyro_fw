@@ -81,6 +81,9 @@ int vfs_route(const char *path);
 /* Bytes free and in all, on the store a path goes to. */
 int vfs_space(const char *path, uint64_t *free_bytes, uint64_t *total_bytes);
 
+/* The room bytes written and then synced take there, as vfs_space() counts. */
+uint32_t vfs_synced_cost(const char *path, uint32_t bytes);
+
 /* True while an SD card is mounted and taking files. */
 bool vfs_sd_mounted(void);
 

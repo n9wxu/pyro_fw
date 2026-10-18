@@ -327,12 +327,53 @@ void test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise(void) {
     TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.25f, r.launch_t, logged, msg);
 }
 
-/* [DAT-08] A full-rate log, replayed through the firmware, decides the same
- * flight. */
-void test_DAT_08_a_full_rate_log_replays_to_the_same_events(void) {
-    flight_conditions_t c = {.config = "log_rate=full\npyro1_mode=delay\npyro2_mode=agl\npyro2_value=40\n",
-                             .rate_ms = {12.0f, 5.0f},
-                             .to_landed = true};
+/* [FLT-LOG-07] Every sample from launch to landing is a row, and every event
+ * row sits at its own time, in time order. */
+void test_FLT_LOG_07_every_sample_is_a_row(void) {
+    flight_conditions_t c = {.rate_ms = {20.0f, 0.0f}, .to_landed = true};
+    flown_t r = fly(subsonic(), &ISA, &c, 23, 300.0f);
+    TEST_ASSERT_EQUAL_INT(LANDED, r.final_state);
+    static char csv[4 * 1024 * 1024];
+    TEST_ASSERT_TRUE(test_flight_log_csv(csv, (int)sizeof(csv)) > 0);
+    const char *p = strstr(csv, "time_ms,");
+    TEST_ASSERT_NOT_NULL(p);
+    p = strchr(p, '\n') + 1;
+    long last = -1, first_sample = -1, last_sample = -1, gap = 0;
+    int samples = 0, out_of_order = 0;
+    bool launch = false, apogee = false, landing = false;
+    for (const char *eol; (eol = strchr(p, '\n')) != NULL; p = eol + 1) {
+        long t = strtol(p, NULL, 10);
+        const char *event = eol;
+        while (event > p && event[-1] != ',')
+            event--;
+        size_t ev_len = (size_t)(eol - event);
+        out_of_order += t < last;
+        last = t;
+        if (ev_len == 0) {
+            if (last_sample >= 0 && t - last_sample > gap)
+                gap = t - last_sample;
+            if (first_sample < 0)
+                first_sample = t;
+            last_sample = t;
+            samples++;
+        }
+        launch |= ev_len == 6 && strncmp(event, "LAUNCH", 6) == 0;
+        apogee |= ev_len == 6 && strncmp(event, "APOGEE", 6) == 0;
+        landing |= ev_len == 7 && strncmp(event, "LANDING", 7) == 0;
+    }
+    char msg[96];
+    snprintf(msg, sizeof(msg), "%d sample rows from %ld to %ld ms, the widest gap %ld ms", samples, first_sample,
+             last_sample, gap);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, out_of_order, msg);
+    TEST_ASSERT_TRUE_MESSAGE(launch && apogee && landing, msg);
+    TEST_ASSERT_TRUE_MESSAGE(gap > 0 && gap <= 20, msg);
+    TEST_ASSERT_EQUAL_INT_MESSAGE((last_sample - first_sample) / 20 + 1, samples, msg);
+}
+
+/* [DAT-08] A log replayed through the firmware decides the same flight. */
+void test_DAT_08_a_log_replays_to_the_same_events(void) {
+    flight_conditions_t c = {
+        .config = "pyro1_mode=delay\npyro2_mode=agl\npyro2_value=40\n", .rate_ms = {12.0f, 5.0f}, .to_landed = true};
     flown_t r = fly(&ROCKETS[HOP].r, &ISA, &c, 20, 120.0f);
     TEST_ASSERT_EQUAL_INT(LANDED, r.final_state);
     static char csv[4 * 1024 * 1024];
@@ -368,9 +409,8 @@ static int with_crlf_line_ends(const char *lf, char *crlf, int size) {
 
 /* [DAT-08] A log saved through a tool that writes CRLF line ends. */
 void test_DAT_08_a_crlf_log_replays_as_its_lf_twin(void) {
-    flight_conditions_t c = {.config = "log_rate=full\npyro1_mode=delay\npyro2_mode=agl\npyro2_value=40\n",
-                             .rate_ms = {12.0f, 5.0f},
-                             .to_landed = true};
+    flight_conditions_t c = {
+        .config = "pyro1_mode=delay\npyro2_mode=agl\npyro2_value=40\n", .rate_ms = {12.0f, 5.0f}, .to_landed = true};
     (void)fly(&ROCKETS[HOP].r, &ISA, &c, 22, 120.0f);
     static char lf[4 * 1024 * 1024], crlf[5 * 1024 * 1024];
     TEST_ASSERT_TRUE(test_flight_log_csv(lf, (int)sizeof(lf)) > 0);
@@ -386,14 +426,22 @@ void test_DAT_08_a_crlf_log_replays_as_its_lf_twin(void) {
     TEST_ASSERT_EQUAL_UINT32(from_lf.landing_ms, from_crlf.landing_ms);
 }
 
+/* [DAT-08] A log whose header says it kept a row a second is refused, rather
+ * than decided from a fiftieth of the readings. */
 void test_DAT_08_a_thinned_log_is_refused(void) {
-    flight_conditions_t c = {.config = "log_rate=1hz\n", .rate_ms = {20.0f, 0.0f}, .to_landed = true};
+    flight_conditions_t c = {.rate_ms = {20.0f, 0.0f}, .to_landed = true};
     (void)fly(subsonic(), &ISA, &c, 21, 300.0f);
-    static char csv[1024 * 1024];
+    static char csv[4 * 1024 * 1024], thinned[4 * 1024 * 1024];
     TEST_ASSERT_TRUE(test_flight_log_csv(csv, (int)sizeof(csv)) > 0);
+    const char *rate = strstr(csv, "# Log rate: every sample\n");
+    TEST_ASSERT_NOT_NULL(rate);
+    snprintf(thinned, sizeof(thinned), "%.*s# Log rate: 1 row/s\n%s", (int)(rate - csv), csv,
+             rate + strlen("# Log rate: every sample\n"));
     replay_events_t decided;
     boot_like_hardware(21);
-    TEST_ASSERT_FALSE(replay_run(csv, &decided));
+    TEST_ASSERT_TRUE_MESSAGE(replay_run(csv, &decided), "the log as written replays");
+    boot_like_hardware(21);
+    TEST_ASSERT_FALSE(replay_run(thinned, &decided));
 }
 
 /* ── Processing lateness changes nothing [FLT-RATE-05] ────────────── */
@@ -533,7 +581,8 @@ int main(void) {
     RUN_TEST(test_FLT_LAND_02_a_slow_descent_is_not_a_landing);
     RUN_TEST(test_DAT_04_the_events_of_a_flight_in_order);
     RUN_TEST(test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise);
-    RUN_TEST(test_DAT_08_a_full_rate_log_replays_to_the_same_events);
+    RUN_TEST(test_FLT_LOG_07_every_sample_is_a_row);
+    RUN_TEST(test_DAT_08_a_log_replays_to_the_same_events);
     RUN_TEST(test_DAT_08_a_crlf_log_replays_as_its_lf_twin);
     RUN_TEST(test_DAT_08_a_thinned_log_is_refused);
     RUN_TEST(test_FLT_RATE_05_a_late_loop_changes_no_decision);

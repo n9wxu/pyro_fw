@@ -217,7 +217,7 @@ function update() {
     /* Store device config — update every poll */
     var newCfg = {id:d.rocket_id, name:d.rocket_name, units:u,
       p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value,
-      logRate:d.log_rate || '1hz', estimator:d.estimator || ''};
+      estimator:d.estimator || ''};
     if (!deviceConfig) {
       deviceConfig = newCfg;
       cfgLoadFromObj(deviceConfig);
@@ -225,7 +225,7 @@ function update() {
       /* Detect device-side change (reboot applied new config) */
       if (deviceConfig.p1mode !== newCfg.p1mode || deviceConfig.p1val !== newCfg.p1val ||
           deviceConfig.p2mode !== newCfg.p2mode || deviceConfig.p2val !== newCfg.p2val ||
-          deviceConfig.units !== newCfg.units || deviceConfig.logRate !== newCfg.logRate ||
+          deviceConfig.units !== newCfg.units ||
           deviceConfig.estimator !== newCfg.estimator) {
         deviceConfig = newCfg;
         pendingConfig = null;
@@ -326,39 +326,14 @@ function cfgChanged() {
   document.getElementById('cfgDirty').style.display = 'block';
 }
 
-/* ── The flight log's plan, and the longest flight it holds [DD-064] ──
-   The board says how much room the next log has, how big a row is and how
-   fast its sensor samples; the estimate is that room at the plan chosen. The
-   plan that keeps every sample around events is estimated for LOG_EVENTS
-   events, each two seconds at the full rate. */
-var LOG_EVENTS = 10;
-var logSpace = null;
-
+/* ── The longest flight the log holds [WEB-UI-06] ──
+   The board works it out from the room the next log has and the bytes a
+   second of samples takes on its store. */
 function fmtDuration(s) {
   if (s >= 2 * 86400) return (s / 86400).toFixed(1) + ' days';
   if (s >= 2 * 3600) return (s / 3600).toFixed(1) + ' h';
   if (s >= 120) return Math.round(s / 60) + ' min';
   return Math.round(s) + ' s';
-}
-
-function logEstimate() {
-  var el = document.getElementById('logEst');
-  if (!el || !logSpace) return;
-  var plan = document.getElementById('logRate').value;
-  var full = logSpace.rates_hz[1];
-  if (!full) { el.textContent = 'No estimate until the pressure sensor is running.'; return; }
-  var rows = logSpace.bytes_free / logSpace.record_bytes;
-  var text;
-  if (plan === 'full') {
-    text = fmtDuration(rows / full) + ' of flight at ' + full + ' rows/s';
-  } else if (plan === 'events') {
-    var secs = Math.max(0, rows - LOG_EVENTS * 2 * (full - 1));
-    text = fmtDuration(secs) + ' of flight at 1 row/s, with ' + full + ' rows/s for 2 s around each event (' +
-      LOG_EVENTS + ' events allowed for)';
-  } else {
-    text = fmtDuration(rows) + ' of flight at 1 row/s';
-  }
-  el.textContent = 'The log holds about ' + text + '. Lua log lines take room too.';
 }
 
 function loadLogSpace() {
@@ -367,18 +342,13 @@ function loadLogSpace() {
     if (!r.ok) throw r.status;
     return r.json();
   }).then(function(d) {
-    logSpace = d;
-    logEstimate();
+    el.textContent = !d.rate_hz ? 'No estimate until the pressure sensor is running.'
+      : 'The log holds about ' + fmtDuration(d.seconds) + ' of flight at ' + d.rate_hz +
+        ' rows/s. Script and estimator rows take room too.';
   }).catch(function(code) {
-    logSpace = null;
     el.textContent = code === 423 ? 'No estimate while the flight log is being written.'
                                   : 'Could not read the space left for the flight log.';
   });
-}
-
-function logRateChanged() {
-  logEstimate();
-  document.getElementById('cfgDirty').style.display = 'block';
 }
 
 /* The firmware keeps 8 characters of the id and the name (CFG-07); say so
@@ -473,18 +443,15 @@ function cfgLoadFromObj(c) {
   document.getElementById('p1val').value = c.p1val || 0;
   document.getElementById('p2mode').value = c.p2mode || 'agl';
   document.getElementById('p2val').value = c.p2val || 0;
-  document.getElementById('logRate').value = c.logRate || '1hz';
   var est = document.getElementById('estimator');
   if (c.estimator) est.value = c.estimator; else est.selectedIndex = 0;
-  logEstimate();
   document.getElementById('cfgDirty').style.display = 'none';
   cfgChanged();
   document.getElementById('cfgDirty').style.display = 'none';
 }
 
 function cfgDefault() {
-  cfgLoadFromObj({id:'PYRO001', name:'MyRocket', units:1, p1mode:'delay', p1val:0, p2mode:'agl', p2val:300,
-                  logRate:'1hz'});
+  cfgLoadFromObj({id:'PYRO001', name:'MyRocket', units:1, p1mode:'delay', p1val:0, p2mode:'agl', p2val:300});
   RULE_FIELDS.forEach(function(f) { document.getElementById(f[0]).value = 0; });
   cfgChanged();
   document.getElementById('cfgDirty').style.display = 'block';
@@ -505,7 +472,6 @@ function cfgGetObj() {
     p1val: parseInt(document.getElementById('p1val').value) || 0,
     p2mode: document.getElementById('p2mode').value,
     p2val: parseInt(document.getElementById('p2val').value) || 0,
-    logRate: document.getElementById('logRate').value,
     estimator: document.getElementById('estimator').value
   };
 }
@@ -526,7 +492,7 @@ function cfgSave() {
   var ini = '[pyro]\r\nid=' + c.id + '\r\nname=' + c.name +
     '\r\npyro1_mode=' + c.p1mode + '\r\npyro1_value=' + c.p1val +
     '\r\npyro2_mode=' + c.p2mode + '\r\npyro2_value=' + c.p2val +
-    '\r\nunits=' + UNIT_NAMES[c.units] + '\r\nlog_rate=' + c.logRate + '\r\n';
+    '\r\nunits=' + UNIT_NAMES[c.units] + '\r\n';
   if (c.estimator) ini += 'estimator=' + c.estimator + '\r\n';
   RULE_FIELDS.forEach(function(f) {
     ini += f[1] + '=' + (parseInt(document.getElementById(f[0]).value) || 0) + '\r\n';
@@ -575,7 +541,6 @@ function cfgFromIni(txt, base) {
     else if (k === 'pyro2_mode') c.p2mode = v;
     else if (k === 'pyro2_value') c.p2val = parseInt(v) || 0;
     else if (k === 'units' && UNIT_NAMES.indexOf(v) >= 0) c.units = UNIT_NAMES.indexOf(v);
-    else if (k === 'log_rate') c.logRate = v;
     else if (k === 'estimator') c.estimator = v;
   });
   return c;

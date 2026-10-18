@@ -122,36 +122,27 @@ test.describe('New device', () => {
     await expect(page.locator('#cfgName')).toHaveValue('MyRocket');
   });
 
-  /* WEB-UI-06, DD-064: the longest flight the log holds, for the plan chosen.
-     The mock reports 7,900,000 bytes free, 22-byte records and 100 rows/s. */
-  test('log rate: the longest flight the log holds follows the plan', async ({ page }) => {
+  /* WEB-UI-06: the longest flight the log holds. The mock reports 3,347 s at
+     100 rows/s. */
+  test('log: the longest flight the log holds', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Config');
-    await expect(page.locator('#logRate')).toHaveValue('1hz');
-    await expect(page.locator('#logEst')).toContainText('4.2 days');
-    await expect(page.locator('#logEst')).toContainText('1 row/s');
-    await page.selectOption('#logRate', 'full');
-    await expect(page.locator('#logEst')).toContainText('60 min');
+    await expect(page.locator('#logEst')).toContainText('56 min');
     await expect(page.locator('#logEst')).toContainText('100 rows/s');
-    await expect(page.locator('#cfgDirty')).toBeVisible();
-    /* 359,090 rows, less 10 events x 2 s x 99 extra rows: 4.1 days. */
-    await page.selectOption('#logRate', 'events');
-    await expect(page.locator('#logEst')).toContainText('4.1 days');
-    await expect(page.locator('#logEst')).toContainText('each event');
+    await expect(page.locator('#cfgDirty')).toBeHidden();
   });
 
-  test('log rate: saved with the rest of the tab', async ({ page }) => {
+  test('log: a save writes no log rate', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Config');
-    await page.selectOption('#logRate', 'events');
+    await page.fill('#cfgName', 'Saved1');
     await page.click('#btnSaveCfg');
     await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 5000 });
     const ini = await (await page.request.get(BASE + '/api/config')).text();
-    expect(ini).toContain('log_rate=events');
-    await page.click('button:has-text("Default")');
-    await expect(page.locator('#logRate')).toHaveValue('1hz');
+    expect(ini).toContain('name=Saved1');
+    expect(ini).not.toContain('log_rate');
   });
 
   /* SNS-EST-06: the choice is of the estimators the board says it carries. */
@@ -170,7 +161,7 @@ test.describe('New device', () => {
   });
 
   /* In flight the log holds the filesystem, so the space cannot be read. */
-  test('log rate: no estimate while the flight log is written', async ({ page }) => {
+  test('log: no estimate while the flight log is written', async ({ page }) => {
     await page.route('**/api/log/space', r => r.fulfill({ status: 423, body: '{"error":"the flight log holds the filesystem"}' }));
     await page.goto(BASE);
     await waitForStatus(page);
@@ -202,7 +193,6 @@ test.describe('Configured device', () => {
     await expect(page.locator('#p2mode')).toHaveValue('agl');
     await expect(page.locator('#p2val')).toHaveValue('500');
     await expect(page.locator('#cfgUnits')).toHaveValue('2');
-    await expect(page.locator('#logRate')).toHaveValue('full');
   });
 
   test('active config shows custom settings', async ({ page }) => {

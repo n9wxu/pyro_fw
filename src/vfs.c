@@ -242,6 +242,15 @@ int vfs_space(const char *path, uint64_t *free_bytes, uint64_t *total_bytes) {
     return vfs_flash_space(free_bytes, total_bytes);
 }
 
+uint32_t vfs_synced_cost(const char *path, uint32_t bytes) {
+#if PYRO_HAS_SD
+    if (vfs_route(path) == VFS_FAT)
+        return bytes;
+#endif
+    (void)path;
+    return vfs_flash_synced_cost(bytes);
+}
+
 /* ── Mirroring the configuration into the flash ────────────────── */
 
 #if PYRO_HAS_SD

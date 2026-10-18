@@ -20,7 +20,7 @@ Two-channel rocket flight computer on the RP2040, for three boards: MK1A, MK1B (
 - **Resume**: `src/flight_resume.c` — the pad record `pad.mkr` and the decision to rejoin a flight after any restart (DD-086)
 - **Pyro backends**: `boards/<board>/pyro_board.c` behind `src/pyro.h`; MK1C's split into measure, faults and sequence files, with its PIO arm pump
 - **Files**: alfs behind `src/vfs_flash.c`, its driver `src/fs_flash.c` — 984 KB on MK1B, 8 MB on MK1A and MK1C (DD-100)
-- **Flight log**: `src/flight_log.c` (binary records, CSV on read) and `src/log_plan.c` (the `log_rate` plans), written by `src/hal_common/hal_common.c` through `src/flash_op.c`
+- **Flight log**: `src/flight_log.c` (binary records, CSV on read), every sample, written by `src/hal_common/hal_common.c` through `src/flash_op.c`
 - **Pin assignment**: `pins.ini` (`src/pin_assign.c`, `src/pin_store.c`), each board's `pin_caps.h`, one owner per pad (`src/pad_claim.c`, DD-020)
 - **Lua**: `src/lua/` — Lua 5.4, on MK1A, MK1B and MK1C (`PYRO_HAS_LUA` in `boards/<board>/board.cmake`)
 - **CI/CD**: GitHub Actions build + release pipeline
@@ -176,7 +176,6 @@ pyro2_refire_speed=0
 emergency_fire_speed=0
 refire_interval=0
 fire_gap=0
-log_rate=1hz
 landing_timeout=60
 lua_enabled=false
 lua_baud=9600
@@ -196,7 +195,6 @@ lua_pixels=0
 | emergency_fire_speed | units/s; 0 off | 0 |
 | refire_interval | ms; 0 takes the board's default (1000) | 0 |
 | fire_gap | ms of quiet time between pulses; 0 takes the board's default (3000) | 0 |
-| log_rate | 1hz/events/full | 1hz |
 | landing_timeout | seconds | 60 |
 | lua_enabled | true/false | false |
 | lua_baud | a Lua serial role's baud | 9600 |

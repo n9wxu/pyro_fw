@@ -129,13 +129,8 @@
   </table>
   <h3>Flight log</h3>
   <table class="info">
-    <tr><td class="lbl">Logging rate</td>
-        <td><select id="logRate" onchange="logRateChanged()">
-              <option value="1hz">1 row a second</option>
-              <option value="events">High rate 1: 1 row a second, every sample within 1 s of an event</option>
-              <option value="full">High rate 2: every sample (the flight can be replayed)</option>
-            </select>
-            <div class="hint" id="logEst">Reading the space left for the log…</div></td></tr>
+    <tr><td class="lbl">Every sample</td>
+        <td><div class="hint" id="logEst">Reading the space left for the log…</div></td></tr>
   </table>
   <h3>Release pyro pins to Lua</h3>
   <p class="hint" id="relHint">Loading the board's capability table…</p>
@@ -163,8 +158,6 @@
   <p class="hint" id="relBtns" style="display:none">Saved with the rest of this tab. A release takes
      effect at the next reboot. <span id="relMsg"></span></p>
 
-  <div id="cfgTips" class="tips" style="display:none"></div>
-  <div id="cfgDirty" class="warn" style="display:none">⚠ Changes take effect at the next start — Save, then Reboot</div>
   <div class="btnrow">
     <button onclick="cfgDefault()">🏭 Default</button>
     <button onclick="cfgCurrent()">↩ Current</button>
@@ -174,6 +167,10 @@
   </div>
   <input type="file" id="cfgFile" accept=".ini,.txt" style="display:none" onchange="cfgFileSelected()">
   <span id="cfgMsg"></span>
+  <!-- Below the buttons: a field's change fires as Save is pressed, and a
+       banner appearing above would move Save from under the click. -->
+  <div id="cfgDirty" class="warn" style="display:none">⚠ Changes take effect at the next start — Save, then Reboot</div>
+  <div id="cfgTips" class="tips" style="display:none"></div>
 </div>
 
 <!-- ── Tab 3: Flight Data ─────────────────────────────────────── -->
