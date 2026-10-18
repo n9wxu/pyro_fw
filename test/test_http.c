@@ -634,7 +634,7 @@ void test_WEB_API_07_the_board_answers_to_its_names_and_its_own_address(void) {
 
 /* ── Paths ────────────────────────────────────────────────────────── */
 
-/* [WEB-API-14] littlefs resolves "..": /www/../config.ini names the config. */
+/* [WEB-API-14] FatFs resolves "..": on a card /www/../config.ini names the config. */
 void test_WEB_API_14_a_path_that_climbs_out_or_hides_its_name_is_refused(void) {
     static const char *const ok[] = {"/www/index.html", "www/app.js", "config.ini", "/lua_user.lua",
                                      "/www/a-b_c.1.css", "flight_log.bin.part", "/www"};
@@ -656,7 +656,7 @@ void test_WEB_API_14_a_path_that_climbs_out_or_hides_its_name_is_refused(void) {
 
 #define SLOT (64u * 4096u)
 
-/* Past the download slot is littlefs. */
+/* Past the download slot are the files. */
 void test_OTA_06_an_image_larger_than_the_download_slot_is_refused(void) {
     TEST_ASSERT_TRUE(ota_image_fits(1, SLOT));
     TEST_ASSERT_TRUE(ota_image_fits(SLOT, SLOT));

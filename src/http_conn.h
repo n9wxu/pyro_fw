@@ -22,7 +22,7 @@
 #define HTTP_RX_RING 2048
 #define HTTP_TX_RING 2048
 /* The largest gathered body or rendered response, and big enough to be a
- * littlefs file cache (FLASH_SECTOR_SIZE) for a streamed file. */
+ * streamed file's buffer (VFS_BUF_SIZE). */
 #define HTTP_WORK_SIZE 5120
 #define HTTP_LINE_MAX 256 /* request line, or a header line worth reading */
 #define HTTP_METHOD_MAX 8

@@ -36,7 +36,7 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms);
  * work; never blocks. */
 void lua_app_dispatch(void);
 
-/* Script storage in littlefs. */
+/* The script's file. */
 #define LUA_SCRIPT_PATH "lua_user.lua"
 #define LUA_SCRIPT_MAX 8192
 

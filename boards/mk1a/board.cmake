@@ -9,7 +9,7 @@ set(PICO_BOARD pyro_mk1a CACHE STRING "Board type" FORCE)
 list(APPEND PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_LIST_DIR}/sdk)
 
 set(PYRO_FLASH_SIZE_KB 16384) # W25Q128JVS
-set(PYRO_PFB_FS_KB     8192)  # littlefs
+set(PYRO_PFB_FS_KB     8192)  # the files
 
 set(PYRO_HAS_LUA 1) # the two J6 pads, GPIO18/19
 

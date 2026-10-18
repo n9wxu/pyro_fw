@@ -99,7 +99,7 @@ endforeach()
 
 if(PYRO_BOARD_KIND STREQUAL "pico")
     message(STATUS "Pyro target board: ${PYRO_BOARD} (${BOARD_DISPLAY_NAME}), kind=pico, "
-                   "flash ${PYRO_FLASH_SIZE_KB}KB, littlefs ${PYRO_PFB_FS_KB}KB")
+                   "flash ${PYRO_FLASH_SIZE_KB}KB, files ${PYRO_PFB_FS_KB}KB")
     math(EXPR _pyro_wdog_ms "2 * ${PYRO_LOOP_WORST_MS}")
     message(STATUS "  loop budget: ${PYRO_LOOP_WORST_MS}ms worst case, watchdog ${_pyro_wdog_ms}ms")
 else()
@@ -142,10 +142,12 @@ endif()
 # ====================================================================================
 include(FetchContent)
 
+# The flash filesystem [DD-100]: files of linked pages, written only into
+# erased flash; only its cleanup erases.
 FetchContent_Declare(
-    littlefs
-    GIT_REPOSITORY https://github.com/littlefs-project/littlefs
-    GIT_TAG v2.11.3
+    alfs
+    GIT_REPOSITORY git@github.com:n9wxu/alfs.git
+    GIT_TAG ee21719d25e5be725eb7b23aeaf461f9dfa6fd1e # experiment/v6-frames, format 6
 )
 
 # Lua 5.4 for user programs on core1. Only fetched for boards that want it.
@@ -188,9 +190,9 @@ if(PYRO_BOARD_KIND STREQUAL "pico")
 endif()
 
 if(PYRO_BOARD_KIND STREQUAL "pico")
-    FetchContent_MakeAvailable(littlefs unity pico_fota_bootloader freertos_kernel)
+    FetchContent_MakeAvailable(alfs unity pico_fota_bootloader freertos_kernel)
 else()
-    FetchContent_MakeAvailable(littlefs unity) # no bootloader on a host build
+    FetchContent_MakeAvailable(alfs unity) # no bootloader on a host build
 endif()
 if(PYRO_HAS_LUA)
     FetchContent_MakeAvailable(lua)
@@ -250,7 +252,7 @@ if(PYRO_HAS_LUA)
     target_include_directories(pyro_lua PUBLIC ${CMAKE_CURRENT_LIST_DIR}/src/lua ${CMAKE_CURRENT_LIST_DIR}/src)
     target_link_libraries(pyro_lua PUBLIC lua_lib)
 endif()
-message("littlefs is here: ${littlefs_SOURCE_DIR}")
+message("alfs is here: ${alfs_SOURCE_DIR}")
 
 # ── Board identification in the bootloader ───────────────────────────
 #
@@ -284,20 +286,15 @@ if(PYRO_BOARD_KIND STREQUAL "pico")
 get_target_property(_pfb_sources pico_fota_bootloader_lib SOURCES)
 set_source_files_properties(${_pfb_sources} PROPERTIES COMPILE_OPTIONS "-Wno-array-bounds")
 
-add_library(littlefs_lib STATIC
-    ${littlefs_SOURCE_DIR}/lfs.c
-    ${littlefs_SOURCE_DIR}/lfs_util.c
+# alfs uses no memory but what src/vfs_flash.c hands it, and no lock of its
+# own: src/fs_flash.c's serialises every call.
+add_library(alfs_lib STATIC
+    ${alfs_SOURCE_DIR}/alfs_flash.c
+    ${alfs_SOURCE_DIR}/alfs_fs.c
 )
-target_include_directories(littlefs_lib PUBLIC
-  ${littlefs_SOURCE_DIR}
+target_include_directories(alfs_lib PUBLIC
+  ${alfs_SOURCE_DIR}
 )
-target_compile_options(littlefs_lib INTERFACE -Wno-unused-function -Wno-null-dereference)
-target_link_libraries(littlefs_lib INTERFACE hardware_flash)
-
-# Static buffers keep littlefs off the heap, whose lock pico_multicore (linked
-# by the FreeRTOS port) makes a mutex; src/littlefs_driver.c supplies them.
-# LFS_THREADSAFE: one mount shared by every task, locked per call.
-target_compile_definitions(littlefs_lib PUBLIC LFS_NO_MALLOC LFS_THREADSAFE)
 
 # ====================================================================================
 
@@ -350,7 +347,8 @@ add_executable(pyro_fw_c
     src/pressure_trace.c
     src/net_ring.c
     src/reset_interface.c
-    src/littlefs_driver.c
+    src/fs_flash.c
+    src/vfs_flash.c
     src/flash_op.c
     src/vfs.c
     src/rtos/rtos_tasks.c
@@ -410,7 +408,7 @@ add_executable(pyro_fw_c
         hardware_watchdog
         tinyusb_device
         tinyusb_board
-        littlefs_lib
+        alfs_lib
         pico_fota_bootloader_lib
         hardware_flash
         FreeRTOS-Kernel-Static
@@ -500,7 +498,7 @@ endif()
 if(_pyro_slot_kb LESS_EQUAL 0)
     message(FATAL_ERROR "No room for an application slot (${_pyro_slot_kb}KB)")
 endif()
-message(STATUS "  flash map: app slot ${_pyro_slot_kb}KB x2, littlefs ${PYRO_PFB_FS_KB}KB")
+message(STATUS "  flash map: app slot ${_pyro_slot_kb}KB x2, files ${PYRO_PFB_FS_KB}KB")
 
 # Distinct artifact names so an MK1B image is never flashed to an MK1C board
 set_target_properties(pyro_fw_c PROPERTIES OUTPUT_NAME "pyro_fw_${PYRO_BOARD}")
@@ -523,7 +521,7 @@ target_include_directories(pyro_fw_c PRIVATE
 )
 
 target_include_directories(pyro_fw_c SYSTEM PUBLIC
-        ${littlefs_SOURCE_DIR}
+        ${alfs_SOURCE_DIR}
 )
 
 # Suppress warnings from lwIP and networking code
@@ -781,7 +779,7 @@ add_custom_target(pin_caps_tests
     COMMENT "Pin capability table tests"
 )
 
-# The HTTP engine over a byte stream: no lwIP, no littlefs.
+# The HTTP engine over a byte stream: no lwIP, no filesystem.
 add_custom_target(http_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building HTTP stream tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
@@ -873,6 +871,25 @@ add_custom_target(net_txq_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_net_txq
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "USB network transmit queue tests"
+)
+
+# The board's own files, src/vfs_flash.c over alfs, on a RAM flash that
+# behaves as NOR does and counts its erases [DD-100].
+add_custom_target(vfs_flash_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building flash file tests..."
+    COMMAND ${HOST_CC} -std=c99 -Wall -Wextra -Werror
+               -I${CMAKE_CURRENT_LIST_DIR}/src -I${alfs_SOURCE_DIR}
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_vfs_flash.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/vfs_flash.c
+               ${alfs_SOURCE_DIR}/alfs_fs.c
+               ${alfs_SOURCE_DIR}/alfs_flash.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_vfs_flash
+    COMMAND ${CMAKE_COMMAND} -E echo "Running flash file tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_vfs_flash
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flash file tests"
 )
 
 # The high-rate log, its real reader and writer stepped by hand, on FatFs over

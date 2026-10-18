@@ -185,6 +185,47 @@ int flash_op_program(uint32_t offset, const uint8_t *data, uint32_t len) {
     return rc;
 }
 
+#define CMD_WRITE_ENABLE 0x06u
+#define CMD_PAGE_PROGRAM 0x02u
+#define CMD_READ_STATUS 0x05u
+#define STATUS_BUSY 0x01u
+
+/* The page program's command, address and data; filled under the lockout,
+ * which one operation holds at a time. */
+static uint8_t page_cmd[4u + FLASH_PAGE_SIZE];
+
+/* Every instruction from the program command until the busy bit clears is
+ * fetched from RAM: the chip answers no XIP read while it programs, though
+ * flash_do_cmd() hands XIP back after each command. */
+static void __no_inline_not_in_flash_func(do_program_bytes)(void *a) {
+    const span_t *sp = (const span_t *)a;
+    volatile uint8_t *cmdp = page_cmd; /* volatile: no memcpy() call, which lives in flash */
+    cmdp[0] = CMD_PAGE_PROGRAM;
+    cmdp[1] = (uint8_t)(sp->off >> 16);
+    cmdp[2] = (uint8_t)(sp->off >> 8);
+    cmdp[3] = (uint8_t)sp->off;
+    for (uint32_t i = 0; i < sp->len; i++)
+        cmdp[4u + i] = sp->data[i];
+    uint8_t cmd[2] = {CMD_WRITE_ENABLE, 0};
+    flash_do_cmd(cmd, cmd, 1);
+    flash_do_cmd(page_cmd, page_cmd, 4u + sp->len);
+    do {
+        cmd[0] = CMD_READ_STATUS;
+        cmd[1] = 0;
+        flash_do_cmd(cmd, cmd, 2);
+    } while (cmd[1] & STATUS_BUSY);
+}
+
+int flash_op_program_bytes(uint32_t offset, const uint8_t *data, uint32_t len) {
+    if (!len || len > FLASH_PAGE_SIZE || (offset % FLASH_PAGE_SIZE) + len > FLASH_PAGE_SIZE)
+        return -4;
+    span_t sp = {offset, data, len};
+    int rc = flash_op(do_program_bytes, &sp);
+    if (rc == 0)
+        programs++;
+    return rc;
+}
+
 uint32_t flash_op_lockouts(void) {
     return lockouts;
 }

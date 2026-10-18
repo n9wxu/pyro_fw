@@ -43,6 +43,11 @@ int flash_op(flash_op_fn fn, void *arg);
 int flash_op_erase(uint32_t offset, uint32_t len);
 int flash_op_program(uint32_t offset, const uint8_t *data, uint32_t len);
 
+/* One page program of exactly len bytes, inside one page: the page's other
+ * bytes are not touched, as they are by flash_op_program()'s whole pages.
+ * The filesystem's driver (fs_flash.c). */
+int flash_op_program_bytes(uint32_t offset, const uint8_t *data, uint32_t len);
+
 /* Creates the lockout helpers. Before the scheduler starts. */
 void flash_op_init(void);
 

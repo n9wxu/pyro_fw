@@ -83,7 +83,7 @@ static inline void stage_enter(uint8_t n, uint32_t now) {
  *
  *   60-61  around lua_core1_start()          (lua_app.c)
  *   80-82  an HTTP unit in the net task      (http_server.c)
- *   95-98  around one sector erase / program (littlefs_driver.c)
+ *   95-98  around one sector erase / program (fs_flash.c)
  *
  * flash_op_crumb() is the same store, callable from those files. 201-203 are
  * an RTOS assertion, a stack overflow and a panic (rtos_tasks.c), with the

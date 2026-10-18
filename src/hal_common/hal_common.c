@@ -10,7 +10,7 @@
 #include "flash_op.h"
 #include "hal_storage.h"
 #include "flash_chip.h"
-#include "lfs_mount.h"
+#include "fs_lock.h"
 #include "vfs.h"
 #if PYRO_HAS_SD
 #include "sd_card.h"
@@ -41,7 +41,6 @@
 #include "board_support.h"
 #include "tusb.h"
 #include "bsp/board_api.h"
-#include <lfs.h>
 #include <pico_fota_bootloader/core.h>
 #include "pressure_sensor.h"
 #include "pressure_processing.h"
@@ -767,12 +766,7 @@ void hal_telemetry_send(const char *sentence) {
 
 /* ── Filesystem ───────────────────────────────────────────────────── */
 
-lfs_t g_lfs;
 static bool fs_ok;
-
-bool lfs_mounted(void) {
-    return fs_ok;
-}
 
 /* [WEB-API-08, DD-058] File uses other than the flight log's, open now. None
  * may start while the log holds the filesystem. */
@@ -798,29 +792,25 @@ bool hal_fs_healthy(void) {
     return fs_ok;
 }
 
-/* One cache buffer for the whole-file helpers below; littlefs's own lock
- * serialises each call, and this one serialises the buffer across a whole
+/* One buffer for the whole-file helpers below; the store's lock serialises
+ * each call, and this one serialises the buffer across a whole
  * open-read-close. Never the flight task's. */
-static uint8_t whole_buf[LFS_FILE_BUF_SIZE];
+static uint8_t whole_buf[VFS_BUF_SIZE];
 static SemaphoreHandle_t whole_mutex;
 static StaticSemaphore_t whole_mutex_buf;
 
-/* Once, at boot, before the scheduler: formats a blank board. The locks are
- * made here, while one thread runs, so no task can race their creation. */
+/* Once, at boot, before the scheduler. The locks are made here, while one
+ * thread runs, so no task can race their creation. A blank area mounts with
+ * no file, and one holding anything else too: the cleanup erases it. */
 int hal_fs_mount(void) {
     if (!whole_mutex)
         whole_mutex = xSemaphoreCreateMutexStatic(&whole_mutex_buf);
-    lfs_lock_init();
+    fs_lock_init();
     if (board_selftest_flash_too_small())
-        return -1; /* a failed mount would format over the bootloader [FLT-BOOT-19] */
+        return -1; /* its cleanup would erase past the chip's end, into the bootloader [FLT-BOOT-19] */
     if (fs_ok)
         return 0;
-    int err = lfs_mount(&g_lfs, &lfs_pico_flash_config);
-    if (err < 0) {
-        err = lfs_format(&g_lfs, &lfs_pico_flash_config);
-        if (err == 0)
-            err = lfs_mount(&g_lfs, &lfs_pico_flash_config);
-    }
+    int err = vfs_mount(true);
     fs_ok = (err == 0);
     return err;
 }
@@ -842,19 +832,6 @@ static void whole_give(void) {
         xSemaphoreGive(whole_mutex);
 }
 
-static int read_from(lfs_t *lfs, const char *path, char *buf, int max_len) {
-    lfs_file_t f;
-    struct lfs_file_config fc = {.buffer = whole_buf};
-    int err = lfs_file_opencfg(lfs, &f, path, LFS_O_RDONLY, &fc);
-    if (err == LFS_ERR_NOENT)
-        return -2;
-    if (err != LFS_ERR_OK)
-        return -1;
-    lfs_ssize_t n = lfs_file_read(lfs, &f, buf, max_len);
-    lfs_file_close(lfs, &f);
-    return (int)n;
-}
-
 static int read_vfs(const char *path, char *buf, int max_len) {
     vfs_file_t f;
     int err = vfs_open(&f, path, VFS_RD, whole_buf);
@@ -868,20 +845,9 @@ static int read_vfs(const char *path, char *buf, int max_len) {
 static int read_file(const char *path, char *buf, int max_len) {
     if (!whole_take())
         return -1;
-    int n;
-    if (fs_ok) {
-        n = read_vfs(path, buf, max_len);
-    } else {
-        /* Before hal_fs_mount(): board_identity_init() reads /serial.txt
-         * this way. Read-only, and never formats, so a blank board draws a
-         * MAC and enumerates instead of waiting out an 8 MB format. */
-        lfs_t lfs;
-        n = -1;
-        if (lfs_mount(&lfs, &lfs_pico_flash_config) == LFS_ERR_OK) {
-            n = read_from(&lfs, path, buf, max_len);
-            lfs_unmount(&lfs);
-        }
-    }
+    /* Before hal_fs_mount(), board_identity_init() reads /serial.txt through
+     * a mount that cannot write. */
+    int n = (fs_ok || vfs_mount(false) == 0) ? read_vfs(path, buf, max_len) : -1;
     whole_give();
     return n;
 }
@@ -969,11 +935,11 @@ static int write_file(const char *path, const char *data, int len) {
     int rc = -1;
     if (vfs_open(&f, path, VFS_WR, whole_buf) == 0) {
         bool wrote = vfs_write(&f, data, (uint32_t)len) == len;
-        /* Close commits: on littlefs a failed close leaves the previous file
+        /* Close commits: a close that fails leaves the previous file
          * whole. */
         rc = (vfs_close(&f) == 0 && wrote) ? 0 : -1;
     }
-    /* A configuration file written to the card is copied into littlefs. */
+    /* A configuration file written to the card is copied into the flash. */
     if (rc == 0)
         vfs_mirror_one(path);
     whole_give();
@@ -1129,7 +1095,7 @@ void hal_platform_init(void) {
 #if PYRO_HAS_SD
     /* Before flight_init() loads the configuration, which is the card's when
      * there is one [DD-076]. No card, or one that will not mount: every file
-     * stays in littlefs. */
+     * stays on the flash. */
     if (sd_start() == 0)
         vfs_mirror();
 #endif
@@ -1200,10 +1166,10 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
  * lines rather than a single altitude reading. */
 #define LOG_TEXT_CEILING (LOG_BUF_SIZE / 2u)
 
-/* How much flight a power loss can take with it. littlefs publishes what a
- * file holds only on sync or close, and the log closes at LANDED, so a flight
- * that never lands -- a crash, a battery that lets go on impact -- would
- * leave an empty file. */
+/* How much flight a power loss can take with it [FLT-LOG-06]. A sync stores
+ * the bytes the file's buffer holds, which a whole page would otherwise wait
+ * for, and the log closes at LANDED, so a flight that never lands -- a crash,
+ * a battery that lets go on impact -- loses at most this. */
 #define LOG_SYNC_MS 1000u
 
 /* The largest record the producer builds: a text row. */
@@ -1244,7 +1210,7 @@ typedef struct {
 } log_ring_t;
 
 static log_ring_t log_ring;
-static uint8_t log_file_buf[LFS_FILE_BUF_SIZE];
+static uint8_t log_file_buf[VFS_BUF_SIZE];
 static log_plan_t log_plan;
 
 static uint32_t log_used(void) {
@@ -1360,7 +1326,12 @@ static void log_service(uint32_t now_ms) {
     }
 
     if (!log_ring.file_open) {
-        if (!fs_ok || vfs_open(&log_ring.file, FLOG_PATH, VFS_WR, log_file_buf) != 0)
+        if (!fs_ok)
+            return;
+        /* The last flight's log goes first, so a reset in this flight finds
+         * this flight's: a write replaces a file only when it closes. */
+        vfs_remove(FLOG_PATH);
+        if (vfs_open(&log_ring.file, FLOG_PATH, VFS_WR, log_file_buf) != 0)
             return; /* the next pass retries; the ring keeps the rows */
         log_ring.file_open = true;
         log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
@@ -1401,6 +1372,10 @@ void hal_storage_service(uint32_t now_ms) {
     if (board_selftest_unsaved() && !hal_log_active())
         board_selftest_save();
     log_service(now_ms);
+    /* A sector a pass, never in flight: the next flight finds every page it
+     * needs erased, and its log appends without an erase. */
+    if (fs_ok && !hal_log_active())
+        vfs_clean();
     board_flash_service(now_ms);
 }
 

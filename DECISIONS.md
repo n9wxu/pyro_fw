@@ -560,6 +560,38 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-100: The Board's Files On alfs; Only The Cleanup Erases
+- **Decision:** at the user's direction ("build and test this version.
+  Integrate into the pyro_fw and test on hardware"), the board's own files
+  live on alfs (github.com/n9wxu/alfs, format 6) in place of littlefs, in the
+  same area at the top of flash. `src/vfs_flash.c` puts alfs behind
+  `vfs.h`, so no caller changed; `src/fs_flash.c` is its driver and the
+  store's lock.
+- **What a file is:** a chain of pages found by its name (at most 31
+  bytes). A write replaces a file whole: the new copy is written beside the
+  old and takes its place when it closes, so a write that dies part-way
+  leaves the old file. A rename is a copy. A sync stores the partial page
+  too [FLT-LOG-06], at the cost of the rest of that page.
+- **Erases:** a write takes only erased pages, and only `vfs_clean()`
+  erases: a sector a pass of the storage task, never while the flight log
+  holds the filesystem, so a log in flight appends without an erase (the
+  user's rulings of 2026-10-14). The flight log's open removes the last
+  flight's log first, so a reset in flight finds this flight's.
+- **Programs are exact:** alfs programs only the bytes it means, which
+  `flash_range_program()`'s whole pages cannot do, so
+  `flash_op_program_bytes()` sends the page program itself, from RAM. Its
+  driver asks again when `flash_op()` refuses for a board's pyro sequence
+  or a helper that would not park, up to a deadline; alfs takes a failed
+  program for a bad sector.
+- **Mount:** reads every page's header once, at boot, before the scheduler;
+  writes nothing, so the reads before `hal_fs_mount()` use it read-only. A
+  blank area, and one holding littlefs, mounts with no file, and the
+  cleanup erases what it holds.
+- **What a board loses when it changes to this firmware:** its files: the
+  configuration, the pin and beep tables, the web pages, the script, an
+  assigned MAC and the flight log. They are saved off the board before, and
+  put back after (`install.py` for the pages).
+
 ### DD-099: Identity From The Flash Chip's Whole Serial
 - **Decision:** at the user's direction ("update the random MAC to use the
   full serial numbers to ensure a fully unique serial number across all

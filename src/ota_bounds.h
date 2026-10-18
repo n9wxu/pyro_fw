@@ -1,6 +1,6 @@
 /*
- * The OTA image's bound [OTA-06]: the download slot, past which lies
- * littlefs. Checked against Content-Length before a byte is written, and
+ * The OTA image's bound [OTA-06]: the download slot, past which lie the
+ * files. Checked against Content-Length before a byte is written, and
  * again for each sector, so no length the client claims reaches past it.
  *
  * SPDX-License-Identifier: MIT

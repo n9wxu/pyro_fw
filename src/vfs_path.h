@@ -1,7 +1,7 @@
 /*
  * The paths a file call takes [WEB-API-14]: '/'-separated names of letters,
  * digits, '.', '_' and '-', with an optional leading '/'. Nothing else
- * reaches a store: littlefs and FatFs resolve "." and "..", so
+ * reaches a store: FatFs resolves "." and "..", so on a card
  * "/www/../config.ini" names config.ini, past the merge and the validation
  * /api/config applies [CFG-06, SYS-CFG-03]; '%', '\\' and an empty name have
  * no use here.

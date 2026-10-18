@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "vfs.h"
-#include "lfs_mount.h"
+#include "fs_flash.h"
 #include "flight_resume.h"
 #include "pin_store.h"
 #include "beep_store.h"
@@ -17,7 +17,7 @@
  * the marker a power-cut board recovers its flight from. */
 static const char *const internal_paths[] = {"serial.txt", PAD_RECORD_PATH};
 
-/* The configuration: the card's copy wins, and littlefs keeps a mirror. */
+/* The configuration: the card's copy wins, and the flash keeps a mirror. */
 static const char *const config_paths[] = {"config.ini", PIN_STORE_PATH, BEEP_STORE_PATH, "lua_user.lua"};
 
 static const char *bare(const char *path) {
@@ -49,11 +49,15 @@ bool vfs_sd_mounted(void) {
 int vfs_route(const char *path) {
     if (vfs_sd_mounted() && !in_list(path, internal_paths, sizeof(internal_paths) / sizeof(internal_paths[0])))
         return VFS_FAT;
-    return VFS_LFS;
+    return VFS_FLASH;
 }
 
-static int lfs_err(int e) {
-    return e == LFS_ERR_NOENT ? VFS_NOENT : (e < 0 ? VFS_ERR : e);
+int vfs_mount(bool writable) {
+    return vfs_flash_mount(&fs_area, &fs_driver, writable);
+}
+
+int vfs_clean(void) {
+    return vfs_flash_clean();
 }
 
 #if PYRO_HAS_SD
@@ -62,7 +66,7 @@ static int fat_err(FRESULT r) {
 }
 #endif
 
-static int open_on(int kind, vfs_file_t *f, const char *path, int flags, void *lfs_buf) {
+static int open_on(int kind, vfs_file_t *f, const char *path, int flags, void *buf) {
     f->kind = VFS_NONE;
 #if PYRO_HAS_SD
     if (kind == VFS_FAT) {
@@ -77,27 +81,25 @@ static int open_on(int kind, vfs_file_t *f, const char *path, int flags, void *l
     }
 #endif
     (void)kind;
-    int lf = LFS_O_RDONLY;
+    int mode = VFS_FLASH_READ;
     if (flags & VFS_WR)
-        lf = LFS_O_WRONLY | LFS_O_CREAT | ((flags & VFS_APPEND) ? LFS_O_APPEND : LFS_O_TRUNC);
-    f->lcfg = (struct lfs_file_config){.buffer = lfs_buf};
-    int e = lfs_file_opencfg(&g_lfs, &f->u.lfs, path, lf, &f->lcfg);
-    if (e < 0)
-        return lfs_err(e);
-    f->kind = VFS_LFS;
-    return 0;
+        mode = (flags & VFS_APPEND) ? VFS_FLASH_APPEND : VFS_FLASH_WRITE;
+    int rc = vfs_flash_open(&f->u.flash, bare(path), mode, buf);
+    if (rc == 0)
+        f->kind = VFS_FLASH;
+    return rc;
 }
 
-/* A file the card lacks is read from littlefs, so a blank card still serves
+/* A file the card lacks is read from the flash, so a blank card still serves
  * the web pages and the last flight the board kept. Writes go to the card. */
-int vfs_open(vfs_file_t *f, const char *path, int flags, void *lfs_buf) {
+int vfs_open(vfs_file_t *f, const char *path, int flags, void *buf) {
     f->kind = VFS_NONE;
     if (!vfs_path_ok(path))
         return VFS_ERR;
     int kind = vfs_route(path);
-    int rc = open_on(kind, f, path, flags, lfs_buf);
+    int rc = open_on(kind, f, path, flags, buf);
     if (rc == VFS_NOENT && kind == VFS_FAT && !(flags & VFS_WR))
-        rc = open_on(VFS_LFS, f, path, flags, lfs_buf);
+        rc = open_on(VFS_FLASH, f, path, flags, buf);
     return rc;
 }
 
@@ -108,9 +110,9 @@ int vfs_read(vfs_file_t *f, void *buf, uint32_t n) {
         return f_read(&f->u.fat, buf, n, &got) == FR_OK ? (int)got : VFS_ERR;
     }
 #endif
-    if (f->kind != VFS_LFS)
+    if (f->kind != VFS_FLASH)
         return VFS_ERR;
-    return lfs_err((int)lfs_file_read(&g_lfs, &f->u.lfs, buf, n));
+    return vfs_flash_read(&f->u.flash, buf, n);
 }
 
 int vfs_write(vfs_file_t *f, const void *buf, uint32_t n) {
@@ -120,9 +122,9 @@ int vfs_write(vfs_file_t *f, const void *buf, uint32_t n) {
         return f_write(&f->u.fat, buf, n, &put) == FR_OK ? (int)put : VFS_ERR;
     }
 #endif
-    if (f->kind != VFS_LFS)
+    if (f->kind != VFS_FLASH)
         return VFS_ERR;
-    return lfs_err((int)lfs_file_write(&g_lfs, &f->u.lfs, buf, n));
+    return vfs_flash_write(&f->u.flash, buf, n);
 }
 
 int vfs_sync(vfs_file_t *f) {
@@ -130,9 +132,9 @@ int vfs_sync(vfs_file_t *f) {
     if (f->kind == VFS_FAT)
         return fat_err(f_sync(&f->u.fat));
 #endif
-    if (f->kind != VFS_LFS)
+    if (f->kind != VFS_FLASH)
         return VFS_ERR;
-    return lfs_err(lfs_file_sync(&g_lfs, &f->u.lfs));
+    return vfs_flash_sync(&f->u.flash);
 }
 
 int vfs_close(vfs_file_t *f) {
@@ -141,8 +143,8 @@ int vfs_close(vfs_file_t *f) {
     if (f->kind == VFS_FAT)
         rc = fat_err(f_close(&f->u.fat));
 #endif
-    if (f->kind == VFS_LFS)
-        rc = lfs_err(lfs_file_close(&g_lfs, &f->u.lfs));
+    if (f->kind == VFS_FLASH)
+        rc = vfs_flash_close(&f->u.flash);
     f->kind = VFS_NONE;
     return rc;
 }
@@ -152,9 +154,9 @@ int32_t vfs_size(vfs_file_t *f) {
     if (f->kind == VFS_FAT)
         return (int32_t)f_size(&f->u.fat);
 #endif
-    if (f->kind != VFS_LFS)
+    if (f->kind != VFS_FLASH)
         return VFS_ERR;
-    return lfs_err((int)lfs_file_size(&g_lfs, &f->u.lfs));
+    return vfs_flash_size(&f->u.flash);
 }
 
 int vfs_rewind(vfs_file_t *f) {
@@ -162,9 +164,9 @@ int vfs_rewind(vfs_file_t *f) {
     if (f->kind == VFS_FAT)
         return fat_err(f_lseek(&f->u.fat, 0));
 #endif
-    if (f->kind != VFS_LFS)
+    if (f->kind != VFS_FLASH)
         return VFS_ERR;
-    return lfs_err(lfs_file_rewind(&g_lfs, &f->u.lfs));
+    return vfs_flash_rewind(&f->u.flash);
 }
 
 /* A read of a file the card lacks falls back to internal storage
@@ -172,7 +174,7 @@ int vfs_rewind(vfs_file_t *f) {
 int vfs_remove(const char *path) {
     if (!vfs_path_ok(path))
         return VFS_ERR;
-    int internal = lfs_err(lfs_remove(&g_lfs, path));
+    int internal = vfs_flash_remove(bare(path));
 #if PYRO_HAS_SD
     if (vfs_route(path) == VFS_FAT) {
         int card = fat_err(f_unlink(path));
@@ -187,12 +189,12 @@ int vfs_rename(const char *from, const char *to) {
         return VFS_ERR;
 #if PYRO_HAS_SD
     if (vfs_route(to) == VFS_FAT) {
-        /* FatFs will not rename over an existing file; littlefs does. */
+        /* FatFs will not rename over an existing file. */
         f_unlink(to);
         return fat_err(f_rename(from, to));
     }
 #endif
-    return lfs_err(lfs_rename(&g_lfs, from, to));
+    return vfs_flash_rename(bare(from), bare(to));
 }
 
 int vfs_mkdir(const char *path) {
@@ -204,8 +206,7 @@ int vfs_mkdir(const char *path) {
         return (r == FR_OK || r == FR_EXIST) ? 0 : VFS_ERR;
     }
 #endif
-    int e = lfs_mkdir(&g_lfs, path);
-    return (e == LFS_ERR_OK || e == LFS_ERR_EXIST) ? 0 : VFS_ERR;
+    return 0; /* the flash's names carry their own '/' */
 }
 
 int32_t vfs_stat_size(const char *path) {
@@ -221,9 +222,7 @@ int32_t vfs_stat_size(const char *path) {
             return VFS_ERR;
     }
 #endif
-    struct lfs_info info;
-    int e = lfs_stat(&g_lfs, path, &info);
-    return e < 0 ? lfs_err(e) : (int32_t)info.size;
+    return vfs_flash_stat_size(bare(path));
 }
 
 int vfs_space(const char *path, uint64_t *free_bytes, uint64_t *total_bytes) {
@@ -240,30 +239,24 @@ int vfs_space(const char *path, uint64_t *free_bytes, uint64_t *total_bytes) {
     }
 #endif
     (void)path;
-    lfs_ssize_t used = lfs_fs_size(&g_lfs);
-    if (used < 0)
-        return VFS_ERR;
-    uint64_t block = lfs_pico_flash_config.block_size;
-    *total_bytes = (uint64_t)lfs_pico_flash_config.block_count * block;
-    *free_bytes = (uint64_t)(lfs_pico_flash_config.block_count - (uint32_t)used) * block;
-    return 0;
+    return vfs_flash_space(free_bytes, total_bytes);
 }
 
-/* ── Mirroring the configuration into littlefs ─────────────────── */
+/* ── Mirroring the configuration into the flash ────────────────── */
 
 #if PYRO_HAS_SD
 #define MIRROR_CHUNK 256
 
 static uint8_t mirror_a[MIRROR_CHUNK], mirror_b[MIRROR_CHUNK];
-static uint8_t mirror_lfs_buf[LFS_FILE_BUF_SIZE];
+static uint8_t mirror_buf[VFS_BUF_SIZE];
 
-/* True when the card's file and littlefs's differ, or littlefs has none. */
+/* True when the card's file and the flash's differ, or the flash has none. */
 static bool differs(const char *path) {
     vfs_file_t card, own;
     if (open_on(VFS_FAT, &card, path, VFS_RD, NULL) != 0)
         return false; /* nothing on the card: nothing to copy */
     bool diff = true;
-    if (open_on(VFS_LFS, &own, path, VFS_RD, mirror_lfs_buf) == 0) {
+    if (open_on(VFS_FLASH, &own, path, VFS_RD, mirror_buf) == 0) {
         diff = vfs_size(&card) != vfs_size(&own);
         while (!diff) {
             int a = vfs_read(&card, mirror_a, MIRROR_CHUNK);
@@ -291,7 +284,7 @@ static bool copy_in(const char *path) {
     vfs_file_t card, own;
     if (open_on(VFS_FAT, &card, path, VFS_RD, NULL) != 0)
         return false;
-    bool ok = open_on(VFS_LFS, &own, part, VFS_WR, mirror_lfs_buf) == 0;
+    bool ok = open_on(VFS_FLASH, &own, part, VFS_WR, mirror_buf) == 0;
     bool opened = ok;
     while (ok) {
         int n = vfs_read(&card, mirror_a, MIRROR_CHUNK);
@@ -305,17 +298,17 @@ static bool copy_in(const char *path) {
         ok = (vfs_close(&own) == 0) && ok;
     vfs_close(&card);
     if (ok)
-        ok = lfs_rename(&g_lfs, part, bare(path)) == LFS_ERR_OK;
+        ok = vfs_flash_rename(part, bare(path)) == 0;
     if (!ok && opened)
-        lfs_remove(&g_lfs, part);
+        vfs_flash_remove(part);
     return ok;
 }
 
-/* littlefs's copy onto the card, for a card that has none: a blank card in
+/* The flash's copy onto the card, for a card that has none: a blank card in
  * a configured board takes the board's configuration rather than defaults. */
 static bool copy_out(const char *path) {
     vfs_file_t own, card;
-    if (open_on(VFS_LFS, &own, path, VFS_RD, mirror_lfs_buf) != 0)
+    if (open_on(VFS_FLASH, &own, path, VFS_RD, mirror_buf) != 0)
         return false;
     bool ok = open_on(VFS_FAT, &card, path, VFS_WR, NULL) == 0;
     bool opened = ok;

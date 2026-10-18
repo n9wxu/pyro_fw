@@ -147,7 +147,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | DAT-08 | A flight log written with log_rate=full shall carry what is needed to replay the flight through the... | test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order, test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise, test_DAT_08_a_full_rate_log_replays_to_the_same_events and 2 more | ✅ |
 | DAT-09 | Each board shall hold a flight log of the longest flight it supports, at each log rate, and shall declare... | The room is reported at `/api/log/space` and each board declares its capacity in its `THEORY_OF_OPERATION.md`; no test flies a log to the declared length | ⚠️ |
 | DAT-10 | Any record that holds a pressure not yet converted to altitude shall hold the temperature the sensor... | the suite test_flight_log.c | ✅ |
-| FLT-LOG-06 | A flight that never lands shall keep its record | the suite test_flight_log.c | ✅ |
+| FLT-LOG-06 | A flight that never lands shall keep its record | test_vfs_flash.c: test_FLT_LOG_06_a_sync_survives_a_reset; the suite test_flight_log.c | ✅ |
 | FLT-LOG-07 | The flight log shall keep, by log_rate | the suite test_log_plan.c | ✅ |
 | FLT-LOG-08 | Records the flight log could not keep shall be counted and reported on /api/status | the suite test_status_json.c | ✅ |
 | BUZ-03 | The system shall play an altitude beep-out sequence after landing, holding it while a USB host is attached... | test_flight_profiles.c: test_FLT_RT_01_other_activity_delays_no_decision_past_the_bound, test_BUZ_03_the_peak_is_beeped_out_after_landing, test_BUZ_03_the_beep_out_is_held_on_usb_and_resumes | ✅ |

@@ -678,7 +678,7 @@ int hal_fs_write(hal_file_t *f, const char *data, int len) {
 
 void hal_fs_close(hal_file_t *f) {
     if (f) {
-        xip_stall(); /* simulate littlefs metadata commit */
+        xip_stall(); /* simulate a flash program */
         f->open = false;
     }
 }

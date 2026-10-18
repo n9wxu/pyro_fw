@@ -157,7 +157,7 @@ static conn_t *ota_conn; /* the OTA state below is one image at a time */
 /* ── OTA firmware update state ────────────────────────────────────── */
 
 /* pico_fota_bootloader's linker symbols: their addresses are the values. The
- * download slot ends where littlefs begins. */
+ * download slot ends where the files begin. */
 extern uint32_t __FLASH_DOWNLOAD_SLOT_START;
 extern uint32_t __FLASH_SWAP_SPACE_LENGTH;
 #define OTA_SLOT_OFF ((uint32_t) & __FLASH_DOWNLOAD_SLOT_START - XIP_BASE)
@@ -951,8 +951,8 @@ const http_unit_fn http_unit_vt[] = {
 
 #define WWW_HEADERS "Cache-Control: no-store, must-revalidate\r\n"
 
-/* Stream a file, framed by its size. The work buffer is littlefs's cache for
- * it when the file is internal. Answers fb_status/fb_body when there is no
+/* Stream a file, framed by its size. The work buffer is the file's buffer
+ * when the file is on the flash. Answers fb_status/fb_body when there is no
  * such file. */
 static void serve_file(conn_t *c, const char *path, const char *ctype, const char *extra, uint16_t fb_status,
                        const char *fb_ctype, const char *fb_body) {
@@ -1342,7 +1342,7 @@ static void upload_complete(conn_t *c) {
     if (!ok) {
         vfs_remove(part);
     } else {
-        /* The Lua program is configuration: littlefs keeps a copy. */
+        /* The Lua program is configuration: the flash keeps a copy. */
         vfs_mirror_one(c->dest);
     }
     DBG("POST %s done ok=%d", c->dest, (int)ok);

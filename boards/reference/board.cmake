@@ -24,7 +24,7 @@ set(PICO_BOARD pico CACHE STRING "Board type" FORCE)
 # TODO: must match PICO_FLASH_SIZE_BYTES for this board.
 set(PYRO_FLASH_SIZE_KB 2048)
 
-# TODO: littlefs reservation, carved off the top of flash.
+# TODO: the files' reservation, carved off the top of flash.
 # The top level checks that (flash - fs - 40) is a multiple of 8, so the
 # bootloader's A/B slots land on a 4k boundary. A bad value fails the
 # configure with the arithmetic shown.
