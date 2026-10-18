@@ -26,6 +26,7 @@ extension installs it.
 | `bench_flight.py` | Fly a profile on a board through its flight software, channels mocked, with a canopy that fails if asked (DD-078, SIM-04) |
 | `hr_log.py` | Decode a high-rate log from the SD card into CSV (DD-077) |
 | `prove_core0.py` | Prove from the linked ELF that no flight-critical root can reach a wait core1 can hold |
+| `prove_flight_ram.py` | Measure from the linked ELF what the flight path, launch to landing, fetches and reads from flash: its functions, their size, indirect branches and flash loads |
 | `trace_check.py` | Check the requirements, decisions, traceability and living documents against each other and the code |
 | `trace_matrix.py` | Write `TRACEABILITY.md` from the tests' own citations and `trace_notes.tsv` |
 | `structure_check.py` | Check the requirements that are properties of the source |
