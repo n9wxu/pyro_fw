@@ -19,4 +19,8 @@ void fs_lock_init(void);
 bool fs_lock(void);
 void fs_unlock(void);
 
+/* The lock if it is free now; work that can wait for another pass takes it
+ * this way, and never waits behind a long call. */
+bool fs_try_lock(void);
+
 #endif

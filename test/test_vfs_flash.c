@@ -21,6 +21,9 @@ bool fs_lock(void) {
     return true;
 }
 void fs_unlock(void) {}
+bool fs_try_lock(void) {
+    return true;
+}
 
 static int ram_read(void *ctx, uint32_t addr, void *buf, uint32_t len) {
     (void)ctx;
@@ -140,6 +143,20 @@ static void test_write_read_size(void) {
     TEST_ASSERT_EQUAL(0, prog_faults);
 }
 
+/* One read fills the buffer across pages, as hal_fs_read_file() reads a
+ * configuration file. */
+static void test_one_read_takes_the_whole_file(void) {
+    static uint8_t d[1000], got[1024];
+    fill(d, sizeof(d), 10);
+    TEST_ASSERT_EQUAL(0, write_whole("config.ini", d, sizeof(d)));
+    vfs_flash_file_t f;
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&f, "config.ini", VFS_FLASH_READ, rbuf));
+    TEST_ASSERT_EQUAL(sizeof(d), vfs_flash_read(&f, got, sizeof(got)));
+    TEST_ASSERT_EQUAL_MEMORY(d, got, sizeof(d));
+    TEST_ASSERT_EQUAL(0, vfs_flash_read(&f, got, sizeof(got)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_close(&f));
+}
+
 /* The old file reads until the new one closes, and the new one after. */
 static void test_replace_whole(void) {
     static uint8_t a[700], b[900], got[1000];
@@ -253,6 +270,22 @@ static void test_cleanup_waits_for_readers(void) {
     clean_all();
 }
 
+/* Space is the area's pages less those the files hold: a 3,000-byte file
+ * takes a first page of 185 bytes and twelve of 236. */
+static void test_space_from_the_files(void) {
+    static uint8_t d[3000];
+    fill(d, sizeof(d), 11);
+    uint64_t free0, free1, total;
+    TEST_ASSERT_EQUAL(0, vfs_flash_space(&free0, &total));
+    TEST_ASSERT_EQUAL((AREA / PAGE - 1u) * 236u, total);
+    TEST_ASSERT_EQUAL(0, write_whole("space.bin", d, sizeof(d)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_space(&free1, &total));
+    TEST_ASSERT_EQUAL(free0 - 13u * 236u, free1);
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("space.bin"));
+    TEST_ASSERT_EQUAL(0, vfs_flash_space(&free1, &total));
+    TEST_ASSERT_EQUAL(free0, free1);
+}
+
 static void test_names(void) {
     vfs_flash_file_t f;
     TEST_ASSERT_EQUAL(VFS_FLASH_ERR, vfs_flash_open(&f, "", VFS_FLASH_WRITE, wbuf));
@@ -265,12 +298,14 @@ int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_mount_read_only_then_writable);
     RUN_TEST(test_write_read_size);
+    RUN_TEST(test_one_read_takes_the_whole_file);
     RUN_TEST(test_replace_whole);
     RUN_TEST(test_remove);
     RUN_TEST(test_rename_over);
     RUN_TEST(test_FLT_LOG_06_a_sync_survives_a_reset);
     RUN_TEST(test_cleanup_frees_what_files_left);
     RUN_TEST(test_cleanup_waits_for_readers);
+    RUN_TEST(test_space_from_the_files);
     RUN_TEST(test_names);
     return UNITY_END();
 }

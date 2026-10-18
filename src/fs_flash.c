@@ -100,3 +100,11 @@ void fs_unlock(void) {
     if (rtos_running() && fs_mutex)
         xSemaphoreGive(fs_mutex);
 }
+
+bool fs_try_lock(void) {
+    if (!rtos_running())
+        return true;
+    if (rtos_in_flight_task() || !fs_mutex)
+        return false;
+    return xSemaphoreTake(fs_mutex, 0) == pdTRUE;
+}

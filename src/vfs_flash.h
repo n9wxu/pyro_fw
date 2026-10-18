@@ -61,12 +61,13 @@ int vfs_flash_remove(const char *name);
 int vfs_flash_rename(const char *from, const char *to);
 int32_t vfs_flash_stat_size(const char *name);
 
-/* Free counts the pages the cleanup will free as well as the erased ones. */
+/* From the files' own sizes, a read a file, never the whole area: free is
+ * every page no file holds, the pages the cleanup will erase among them. */
 int vfs_flash_space(uint64_t *free_bytes, uint64_t *total_bytes);
 
 /* One sector erased, if one holds nothing live: 1 when there may be more, 0
- * when the area is clean, <0 on a fault. Waits while a file is open for
- * reading. */
+ * when the area is clean, <0 on a fault. Never waits for the lock, and waits
+ * while a file is open for reading: 1 then too. */
 int vfs_flash_clean(void);
 
 #endif

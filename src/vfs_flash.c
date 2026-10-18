@@ -14,9 +14,15 @@
 #define PAGE_MAX 256u
 #define CHUNK 64u
 
+/* What alfs's format 6 keeps in a page beside its data: the header, the byte
+ * count and the check; and on a file's first page its frame block. */
+#define PAGE_KEEPS 20u
+#define FIRST_PAGE_KEEPS 71u
+
 static alfs_fs_t store;
 static alfs_rec_t cache[CACHE_RECORDS];
 static uint8_t scratch[PAGE_MAX];
+static const alfs_area_t *area_of;
 static bool mounted, writable;
 
 /* Pages a replaced or removed file left may wait for the cleanup. */
@@ -37,6 +43,7 @@ int vfs_flash_mount(const alfs_area_t *area, const alfs_driver_t *drv, bool w) {
         fs_unlock();
         if (rc != ALFS_OK)
             return VFS_FLASH_ERR;
+        area_of = area;
         mounted = true;
     }
     writable = writable || w;
@@ -80,12 +87,20 @@ int vfs_flash_open(vfs_flash_file_t *f, const char *name, int mode, void *buf) {
     return 0;
 }
 
+/* Across pages until n or the end, as a caller reading a whole file in one
+ * call expects: alfs gives one page's data a call. */
 int vfs_flash_read(vfs_flash_file_t *f, void *buf, uint32_t n) {
     if (f->mode != VFS_FLASH_READ || !fs_lock())
         return VFS_FLASH_ERR;
-    int32_t k = alfs_file_read(&store, &f->u.r, buf, n);
+    uint32_t got = 0;
+    int32_t k = 1;
+    while (got < n && k > 0) {
+        k = alfs_file_read(&store, &f->u.r, (uint8_t *)buf + got, n - got);
+        if (k > 0)
+            got += (uint32_t)k;
+    }
     fs_unlock();
-    return k < 0 ? VFS_FLASH_ERR : (int)k;
+    return k < 0 ? VFS_FLASH_ERR : (int)got;
 }
 
 int vfs_flash_write(vfs_flash_file_t *f, const void *buf, uint32_t n) {
@@ -241,24 +256,44 @@ int32_t vfs_flash_stat_size(const char *name) {
     return size;
 }
 
+/* The pages file info holds: a closed file's count, or, for one a reset left
+ * open, its bytes counted and set in pages. */
+static uint32_t pages_of(const alfs_file_info_t *info) {
+    if (info->closed)
+        return info->pages;
+    uint32_t first = area_of->page_size - FIRST_PAGE_KEEPS, rest = area_of->page_size - PAGE_KEEPS;
+    alfs_reader_t r;
+    int32_t size = 0;
+    if (alfs_file_open_read(&store, &r, info->name, copy_rblk, sizeof(copy_rblk)) == ALFS_OK) {
+        size = count_rest(&r);
+        alfs_file_close_read(&store, &r);
+    }
+    if (size <= (int32_t)first)
+        return 1u;
+    return 1u + ((uint32_t)size - first + rest - 1u) / rest;
+}
+
 int vfs_flash_space(uint64_t *free_bytes, uint64_t *total_bytes) {
-    alfs_fs_status_t st;
     if (!mounted || !fs_lock())
         return VFS_FLASH_ERR;
-    int rc = alfs_fs_status(&store, &st);
+    uint32_t pages = area_of->size / area_of->page_size - 1u, page = area_of->page_size - PAGE_KEEPS;
+    uint32_t held = 0, after = 0;
+    alfs_file_info_t info;
+    while (alfs_file_list(&store, after, &info) == ALFS_OK) {
+        after = info.id;
+        held += pages_of(&info);
+    }
     fs_unlock();
-    if (rc != ALFS_OK)
-        return VFS_FLASH_ERR;
-    *total_bytes = (uint64_t)st.pages * st.data_per_page;
-    *free_bytes = (uint64_t)(st.free + st.dead) * st.data_per_page;
+    *total_bytes = (uint64_t)pages * page;
+    *free_bytes = (uint64_t)(held < pages ? pages - held : 0u) * page;
     return 0;
 }
 
 int vfs_flash_clean(void) {
     if (!writable || !dirty)
         return 0;
-    if (!fs_lock())
-        return VFS_FLASH_ERR;
+    if (!fs_try_lock())
+        return 1;
     int rc = alfs_fs_cleanup(&store, 1);
     if (rc == ALFS_CLEAN)
         dirty = false;
