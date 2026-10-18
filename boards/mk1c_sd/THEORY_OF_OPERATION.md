@@ -16,7 +16,7 @@ Built on the bench as a wire-wrapped test board on the second MK1C (serial
 | J3, GPIO18-21 | Lua's pads | SPI0 |
 | J1.6, GPIO22 | spare | the LSM6DS3's chip select |
 | Lua | on core1 | off (`PYRO_HAS_LUA 0`): its pads are the bus |
-| Files | littlefs | the SD card while one is mounted, littlefs otherwise (DD-076) |
+| Files | the flash | the SD card while one is mounted, the flash otherwise (DD-076) |
 | High-rate log | none | the IMU, every conversion and the flight, on the card (DD-077) |
 | Bench flight | yes | yes (DD-078) |
 
@@ -65,9 +65,9 @@ limits: reads 100 ms, write busy 250 ms, 500 ms on SDXC (PDF page 97), and
 the card's initialisation by 1 s. FatFs R0.16 runs over it, with exFAT, long
 names and `f_expand` (`lib/fatfs`, `src/sd/ffconf.h`).
 
-`sd_start()` runs at boot, after littlefs is mounted. A card that answers is
+`sd_start()` runs at boot, after the flash's files are mounted. A card that answers is
 mounted and `vfs_mirror()` brings the configuration into line (DD-076); one
-that does not leaves the board on littlefs. `POST /api/sd/init` tries again
+that does not leaves the board on the flash. `POST /api/sd/init` tries again
 without a reboot, and `GET /api/sd` reports the card, the FAT and the
 driver's counters, with the last initialisation's responses.
 

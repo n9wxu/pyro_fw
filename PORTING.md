@@ -43,7 +43,7 @@ on the bench.
 | Firing outputs down before anything slow starts | `board_early_init()`, before USB, networking and the filesystem | — |
 | A buzzer, an LED and a UART at 115200 | plain GPIO; the UART's transmit drained by an interrupt, its receive taking ground test commands | — |
 | A ground test switch, optional | any one digital pad to ground, or two pads | DD-071 |
-| Storage for config, scripts, web files and the flight log | littlefs on the program flash: 984 KB on MK1B, 8 MB on MK1A and MK1C. An erase or program stalls execute-in-place, so in flight only the log writes, and a conversion beside a flash operation is discarded | DD-058, DD-068 |
+| Storage for config, scripts, web files and the flight log | alfs on the program flash: 984 KB on MK1B, 8 MB on MK1A and MK1C. An erase or program stalls execute-in-place, so in flight only the log writes, into erased pages, and a conversion beside a flash operation is discarded | DD-058, DD-068, DD-100 |
 | A USB device | CDC-ECM/RNDIS networking under lwIP, serving the HTTP API and the web interface; picotool's reset interface | — |
 | Updates in the field | two A/B slots behind `pico_fota_bootloader`, written over HTTP | — |
 | A watchdog | twice the board's worst loop, `PYRO_LOOP_WORST_MS` | — |
@@ -55,7 +55,7 @@ built: `docs/log_storage_options.md`.
 ## What the RP2040 images use
 
 `arm-none-eabi-size` on the 2.1.678 images (2026-09-25), each with USB
-networking, HTTP, littlefs and Lua:
+networking, HTTP, the filesystem and Lua:
 
 | Board | Code and constants | RAM (data and bss) | Application slot |
 |---|---|---|---|
@@ -63,7 +63,7 @@ networking, HTTP, littlefs and Lua:
 | MK1B | 350 KB | 182 KB | 384 KB |
 | MK1C | 358 KB | 186 KB | 3948 KB |
 
-The RP2040 has 264 KB of RAM. A slot is (flash − littlefs − 40 KB) / 2 − 128 KB,
+The RP2040 has 264 KB of RAM. A slot is (flash − files − 40 KB) / 2 − 128 KB,
 from the board's `board.cmake`; the top level prints it at configure. MK1B's is
 the tight one, which is why the Lua interpreter is built for size.
 

@@ -14,7 +14,7 @@ First built 2026-10-13: serial 0244102D6F98, 192.168.152.1, with an MS5607.
 |---|---|---|
 | U7 | W25Q16JV, 2 MB | BY25Q64ESHIG, 8 MB |
 | SDK board header | the stock `pico` | `sdk/pyro_mk1b_8mb.h`: `pico`, with 8 MB |
-| littlefs | 984 kB, from 1064 kB | 4096 kB, from 4 MB |
+| Files | 984 kB, from 1064 kB | 4096 kB, from 4 MB |
 | Application slots | 384 kB each | 1900 kB each |
 | U5 | AP2192A: its output discharge holds the sense nodes at 0 V | AP2192: no discharge |
 | Continuity | not judged; every channel reported ready | judged: igniter, open or short |
@@ -74,7 +74,7 @@ MK1B's, it is because the refit does not touch what sets it. A value marked
 | Disarm when software stops (PYR-ARM-01) | **the watchdog, 1 s**, as MK1B: the loop ends the pulse. This exceeds the 50 ms bound |
 | Sensor | MS5607 where fitted, else BMP280, found at start-up; ranges and heights as MK1B's. The first board's MS5607 on USB alone: 7.3 Pa rms (`support/pressure_trace.py`); *not measured* on a battery |
 | Height for proper operation (SNS-MAX-01) | 30000 m with the MS5607; 9000 m with the BMP280 |
-| Flight log (DAT-09) | 4096 kB of littlefs, 4,169,728 bytes free when blank: about 52 hours at `1hz`, 58 min at `full`. `/api/log/space` reports what is free |
+| Flight log (DAT-09) | 4096 kB of files, 16,383 pages, 3,866,388 bytes free when blank: about 4.5 hours at `1hz`, 55 min at `full`; a sync each second stores a partial page [FLT-LOG-06], so a second takes a page at `1hz` and five at `full`, whose rows would fill four and a half. `/api/log/space` reports the bytes free |
 | Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured*: `loop_late_max_us` on `/api/status` reports it |
 | Script resources (LUA-PAD-03) | MK1B's: the J1 user pad, GPIO8, and a released pyro channel's pads (`../mk1b/pin_caps.h`) |
 | Connector labels (PIN-LABEL-01) | `../mk1b/pin_caps.h` |

@@ -147,7 +147,7 @@ include(FetchContent)
 FetchContent_Declare(
     alfs
     GIT_REPOSITORY git@github.com:n9wxu/alfs.git
-    GIT_TAG ee21719d25e5be725eb7b23aeaf461f9dfa6fd1e # experiment/v6-frames, format 6
+    GIT_TAG b5d946be8155c0976abb6cab4e50dd2069a6690f # experiment/v6-frames, format 6
 )
 
 # Lua 5.4 for user programs on core1. Only fetched for boards that want it.

@@ -57,7 +57,7 @@ After recovery, plug in and download your CSV with one click. View it in Excel, 
 
 - **Connection**: USB CDC-ECM network device (no drivers needed on macOS/Linux, RNDIS for Windows)
 - **Address**: `http://pyro.local/` via mDNS or the board's own DNS, or `http://192.168.N.1/`, where N comes from the board's MAC so each board has a subnet of its own (`subnet` on `/api/status`)
-- **Storage**: littlefs on internal flash with built-in wear leveling
+- **Storage**: alfs on internal flash: files written only into erased pages; a cleanup erases what replaced files leave (DD-100)
 - **Firmware overhead**: ~48KB code, ~20KB RAM additional
 - **Protocol**: Standard HTTP — works with any browser, curl, wget, or scripts
 - **Tabs**: Status, Config, Flight Data, Beep Codes, Lua, and Update, which installs firmware and web files over the same link

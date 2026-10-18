@@ -32,7 +32,7 @@ All three boards are RP2040s. Each has a theory of operation in `boards/<name>/T
 | | MK1A | MK1B | MK1C |
 |---|---|---|---|
 | Form | bare RP2040 | bare RP2040 | bare RP2040 |
-| Flash | 16 MB, 8 MB littlefs | 2 MB (W25Q16JV), 984 KB littlefs | 16 MB, 8 MB littlefs |
+| Flash | 16 MB, 8 MB of files | 2 MB (W25Q16JV), 984 KB of files | 16 MB, 8 MB of files |
 | Pressure | BMP280, I2C0 at 400 kHz | an MS5607 or a BMP280 pad, I2C1 | MS5607, I2C1 at 400 kHz |
 | Channel switch | a MOSFET high side per channel | U5 AP2192 high side per channel | Q103/Q104 low side per channel |
 | Shared element | Q2 low side, 8 A fuse | Q1B low side, 1.5 A PTC | U9 TPS259570 eFuse bus, armed by a PIO charge pump |
@@ -205,7 +205,7 @@ A channel fires only after apogee (PYR-SAFE-04). Health withholds no fire (PYR-H
 After its first fire a channel fires again every `refire_interval` while the descent is faster than its `pyroN_refire_speed` (PYR-REFIRE-01). Any time after apogee, while the descent is faster than `emergency_fire_speed`, every enabled channel fires and keeps firing (FLT-EMRG-01). A speed of 0 turns its rule off. Pulses never overlap: `fire_gap` of quiet time separates the end of one from the start of the next, a first fire goes before a re-fire, and pyro 1 goes first on a tie (PYR-DEPLOY-02).
 
 ## Configuration
-Three files in littlefs, each edited from the web interface.
+Three files on the flash, each edited from the web interface.
 
 **`config.ini`** - the flight settings (Config and Lua tabs, `GET`/`POST /api/config`). A POST is merged over the stored file (CFG-06) and takes effect at the next start (CFG-10):
 
@@ -436,7 +436,7 @@ MK1B and the reference template (2 MB):
 0x009000  Info block             4 KB   (swap flags, rollback state)
 0x00A000  App Slot A           512 KB   (active firmware)
 0x08A000  App Slot B           512 KB   (OTA download target)
-0x10A000  LittleFS             984 KB   (config, web files, flight data)
+0x10A000  Files (alfs)         984 KB   (config, web files, flight data)
 0x200000  End of flash
 ```
 
@@ -446,7 +446,7 @@ MK1A and MK1C (16 MB):
 0x009000  Info block             4 KB
 0x00A000  App Slot A          4076 KB
 0x405000  App Slot B          4076 KB
-0x800000  LittleFS            8192 KB
+0x800000  Files (alfs)        8192 KB
 0x1000000 End of flash
 ```
 
@@ -491,7 +491,7 @@ Connect the board via USB. It appears as a network adapter (RNDIS on Windows, EC
   - `GET /api/status`, `/api/net` (network counters, WEB-API-13), `/api/pressure/trace` (the last 256 conversions, DD-063), `/api/log/space`, `/api/limits` (the board's pyro timing ranges and its sensor's range, PYR-BOARD-03), `/api/flight.csv`, `/api/pins/caps`, `/api/lua/console`
   - `GET`/`POST /api/config`, `/api/pins`, `/api/beeps`, `/api/lua/script`
   - `POST /api/beeps/play`, `/api/lua/check`, `/api/flight/erase`, `/api/test_mode/on`, `/api/test_mode/off`, `/api/reboot`, `/api/ota`, `/api/serial`, `/www/<file>`
-  - `GET /<path>` serves any littlefs file
+  - `GET /<path>` serves any file on the flash
 
 The API and USB stay live in flight; only the flight log touches the filesystem then, and a request that needs a file is answered 423 (DD-058). A saved `config.ini` or `pins.ini` is stored and takes effect at the next start (CFG-10).
 

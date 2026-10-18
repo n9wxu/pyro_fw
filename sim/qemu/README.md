@@ -90,9 +90,9 @@ the machine's own multicore path and a BMP280 (`415ed4d`):
 | `hw/sensor/bmp280.c` | A barometer. It bisects Bosch's compensation to produce the raw value that maps to a chosen pressure, rather than inverting it by algebra and drifting from what the driver computes. |
 
 Plus: the machine's flash array default raised to 16 MiB with a `flash-size`
-machine property, since MK1A puts littlefs at the 8 MB mark and a short
-array faults inside `lfs_mount()` — which surfaces as a lockup in the fault
-handler with nothing pointing at the flash.
+machine property, since MK1A puts its files at the 8 MB mark and a short
+array faults inside the mount's scan — which surfaces as a lockup in the
+fault handler with nothing pointing at the flash.
 
 **Watch for the atomic aliases.** RP2040 peripherals alias at +0x1000 /
 +0x2000 / +0x3000 for XOR / set / clear, and the SDK reaches them almost
@@ -103,7 +103,7 @@ address silently returns zero for everything. Use
 
 ## What works
 
-MK1A boots FreeRTOS SMP on both cores, mounts littlefs, finds its
+MK1A boots FreeRTOS SMP on both cores, mounts its files, finds its
 barometer, flies, and fires both channels:
 
 ```
@@ -175,11 +175,11 @@ is left of the original list:
   programming rules and busy faults.
 
 Lua itself still does not run: `lua_core1_start()` needs a script, and the
-emulated littlefs is empty. The way in is a pre-built littlefs image laid
+emulated flash holds no files. The way in is an image of the files laid
 into the flash array at the filesystem offset, so a script is present at
-boot without needing the web interface (item 2 — do not wait for it).
-littlefs is vendored under `_deps/littlefs-src`, so a small host writer can
-build the image; `littlefs-python` is the other option.
+boot without needing the web interface (item 2 — do not wait for it). alfs
+is under `_deps/alfs-src` and runs on the host, so a small host writer can
+build the image.
 
 ### 2. Web interface — needs a USB network bridge
 

@@ -38,7 +38,7 @@ DESIGN.md 7.1 run one step per loop iteration (DD-056).
 | Item | Part | Notes |
 |---|---|---|
 | MCU | RP2040, QFN-56, 12 MHz crystal | bare chip; its own SDK header, `sdk/pyro_mk1c.h` |
-| Flash | XT25F128FWOIGT-W, 16 MB | 8 MB littlefs, the rest two OTA slots behind `pico_fota_bootloader`. Its unique ID is 128 bits (`docs/datasheets/XT25F128F-W_Rev0.6_2022-02-26.pdf`, p. 23); the SDK reads the first 64, which two chips share, and the board's identity is derived from all 128 (DD-098, DD-099) |
+| Flash | XT25F128FWOIGT-W, 16 MB | 8 MB of files, the rest two OTA slots behind `pico_fota_bootloader`. Its unique ID is 128 bits (`docs/datasheets/XT25F128F-W_Rev0.6_2022-02-26.pdf`, p. 23); the SDK reads the first 64, which two chips share, and the board's identity is derived from all 128 (DD-098, DD-099) |
 | High side | U9 TPS259570 eFuse | current limit 4.05 A (R_ILIM 499 Ω); output ramp 0.89 V/ms (C_dVdT 47 nF); latches off on overtemperature |
 | Arm pump | C101 10 nF, BAT54S, C_HOLD 100 nF, R_BLEED_EN 100 kΩ | ARM_TOGGLE → U9 EN/UVLO |
 | Low sides | Q103, Q104 AO3400A | gates through R108/R113 100 Ω |
@@ -408,7 +408,7 @@ The values the requirements leave to the board (BRD-01). A value marked
 | Disarm when software stops (PYR-ARM-01) | about 35 ms: the 25 ms the pump's FIFO holds, then U9's 9.6 ms |
 | Sensor | MS5607: 10 to 1200 mbar, 2.4 Pa rms at OSR 4096 (`docs/datasheets/MS5607-02BA03_2017-06.pdf`, pages 1 and 4). Measured on this board with a battery fitted: 2.4 to 2.6 Pa, unaffected by the buzzer, and 3.4 to 3.9 Pa beside a flash operation; on USB alone 6 to 7 Pa |
 | Height for proper operation (SNS-MAX-01) | 30000 m |
-| Flight log (DAT-09) | 8192 kB of littlefs: about 100 hours at `1hz`, 2 h at `full` (50 rows a second of 22 bytes). `/api/log/space` reports what is free |
+| Flight log (DAT-09) | 8192 kB of files, 32,767 pages: about 9 hours at `1hz`, 1.8 h at `full` (50 rows a second of 22 bytes); a sync each second stores a partial page [FLT-LOG-06], so a second takes a page at `1hz` and five at `full`, whose rows would fill four and a half. `/api/log/space` reports the bytes free |
 | Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured* on this revision: `loop_late_max_us` on `/api/status` reports it |
 | Script resources (LUA-PAD-03) | the four J3 user pads, GPIO18 to GPIO21, and a released pyro channel's pads (`pin_caps.h`) |
 | Connector labels (PIN-LABEL-01) | `pin_caps.h` |

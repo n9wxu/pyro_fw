@@ -297,7 +297,7 @@ non-zero when anything did not install.
 ./support/upload_www.sh [host]
 ```
 
-Uploads `www/` directory contents to the device's littlefs filesystem, one
+Uploads `www/` directory contents to the device's filesystem, one
 `POST /www/<name>` each (default host `pyro.local`), then `VERSION` as
 `/www/version.txt`, which the page shows as the web files' version. The
 installer uploads the same files.
