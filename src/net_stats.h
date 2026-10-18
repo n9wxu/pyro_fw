@@ -1,7 +1,8 @@
 /*
- * /api/net: the network's counters, for the bench. An HTTP outage (G4-N)
- * leaves nothing on the board to say what ran out; these say which of lwIP's
- * pools, which TCP states, and which transport step refused.
+ * /api/net: the network's counters, for the bench [WEB-API-13]. An HTTP
+ * outage leaves nothing on the board to say what went wrong; these say which
+ * TCP states the links are in, what was sent again, what the transport
+ * refused, and what the USB link carried.
  *
  * A snapshot, rendered by net_json(), which touches nothing else, so the
  * host tests the API it produces.
@@ -15,24 +16,16 @@
 #include <stdint.h>
 
 /* The widest rendering, with room to spare. */
-#define NET_JSON_MAX 1024
-
-/* One of lwIP's pools: in use, its high-water mark, allocations refused. */
-typedef struct {
-    uint32_t used, max, err;
-} net_pool_t;
+#define NET_JSON_MAX 640
 
 typedef struct {
-    net_pool_t heap, tcp_pcb, tcp_seg, pbuf_pool;
-    uint32_t tcp_xmit, tcp_recv, tcp_drop, tcp_memerr;
-    uint32_t icmp_recv, icmp_xmit;
-    uint16_t states[11]; /* connections in each TCP state, CLOSED through TIME_WAIT */
-    uint32_t sndq_max;   /* the longest send queue, in segments */
-    uint32_t nrtx_max;   /* the most retransmissions any connection is on */
-    uint32_t accepts, accept_refused, write_fails, conn_full, http_err, idle_aborts;
+    uint16_t states[11];  /* links in each TCP state, CLOSED through TIME_WAIT */
+    uint32_t retransmits; /* segments sent again */
+    uint32_t nrtx_max;    /* the most retransmissions any link is on */
+    uint32_t accepts, conn_full, http_err, idle_aborts, served;
     uint32_t rx_frames, rx_drops;
     uint32_t tx_sent, tx_held, tx_refused; /* held: waited for the endpoint (net_txq.h) */
-    uint32_t usb[4]; /* mounts, unmounts, suspends, resumes */
+    uint32_t usb[4];                       /* mounts, unmounts, suspends, resumes */
     uint32_t last_accept_ms;
 } net_snap_t;
 

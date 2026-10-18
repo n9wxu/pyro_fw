@@ -93,15 +93,6 @@ static inline void stage_enter(uint8_t n, uint32_t now) {
 #include "lua_app.h"
 #endif
 
-/* Network diagnostic counters (defined in net_glue.c / http_server.c) */
-extern volatile uint32_t net_rx_count;
-extern volatile uint32_t net_rx_drop;
-extern volatile uint32_t net_tx_fail;
-extern volatile uint32_t net_tx_ok;
-volatile uint32_t net_http_accept;
-volatile uint32_t net_http_err;
-volatile uint32_t net_conn_full;
-
 volatile device_status_t g_status = {0};
 
 /* How the last boot ended, read before anything here restamps the scratch
@@ -201,7 +192,7 @@ void flight_task(void *arg) {
     flight_context_t *ctx = (flight_context_t *)arg;
     bool reset_armed = false; /* see the pending_reset handling below */
 
-    /* After USB, lwIP and the filesystem, which are slow enough to trip it.
+    /* After USB, the network stack and the filesystem, which are slow enough to trip it.
      * The safe-boot latch in lua_app.c cannot fire without this. */
     watchdog_enable(WATCHDOG_MS, true);
     period_start();
@@ -245,7 +236,7 @@ void flight_task(void *arg) {
         /* Arm once: pending_reset stays set, and re-arming every period would
          * reload the countdown faster than it can expire. The net task keeps
          * running meanwhile, so the HTTP response flushes first. An OTA
-         * reboots through here too, once its reply is with lwIP. */
+         * reboots through here too, once its reply is on its way. */
         if (pending_reset == 2 && !reset_armed) {
             reset_armed = true;
 #if PYRO_HAS_LUA

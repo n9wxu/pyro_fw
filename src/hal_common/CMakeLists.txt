@@ -23,7 +23,6 @@ target_include_directories(pyro_hal_common PUBLIC
     ${PYRO_BOARD_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/../..            # project root
     ${CMAKE_CURRENT_LIST_DIR}/../rtos          # rtos_tasks.h, FreeRTOSConfig.h
-    ${LWIP_DIR}/src/include
     ${TINYUSB_DIR}/lib/networking
     ${PICO_SDK_PATH}/src/common/pico_usb_reset_interface_headers/include
 )

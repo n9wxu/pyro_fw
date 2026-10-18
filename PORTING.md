@@ -44,7 +44,7 @@ on the bench.
 | A buzzer, an LED and a UART at 115200 | plain GPIO; the UART's transmit drained by an interrupt, its receive taking ground test commands | — |
 | A ground test switch, optional | any one digital pad to ground, or two pads | DD-071 |
 | Storage for config, scripts, web files and the flight log | alfs on the program flash: 984 KB on MK1B, 8 MB on MK1A and MK1C. An erase or program stalls execute-in-place, so in flight only the log writes, into erased pages, and a conversion beside a flash operation is discarded | DD-058, DD-068, DD-100 |
-| A USB device | CDC-ECM/RNDIS networking under lwIP, serving the HTTP API and the web interface; picotool's reset interface | — |
+| A USB device | CDC-ECM/RNDIS networking under smallest_tcp, serving the HTTP API and the web interface; picotool's reset interface | — |
 | Updates in the field | two A/B slots behind `pico_fota_bootloader`, written over HTTP | — |
 | A watchdog | twice the board's worst loop, `PYRO_LOOP_WORST_MS` | — |
 | A second core, optional | Lua scripts on core1 (`PYRO_HAS_LUA`) | — |

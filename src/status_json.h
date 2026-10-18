@@ -56,7 +56,7 @@ typedef struct {
 
     uint32_t loop_max_us, loop_overruns, loop_late_max_us, loop_count;
     uint32_t stage_max_us[STATUS_STAGES];
-    uint32_t stage1_parts_us[STATUS_STAGE1_PARTS]; /* TinyUSB, lwIP, HTTP transport, mDNS */
+    uint32_t stage1_parts_us[STATUS_STAGE1_PARTS]; /* TinyUSB, the stack, HTTP transport, mDNS */
     uint32_t http_units[2], http_unit_max_us[2];   /* core0, core1 */
     uint32_t flash_opens, flash_skips, flash_refusals, log_dropped;
     uint32_t flash_erases, flash_programs, flash_deferrals;

@@ -10,9 +10,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-void http_server_init(void);
+struct http_exchanges;
 
-/* Bytes between lwIP and the connections; no handler runs. */
+/* The exchanges, for the transport (http_transport.h). */
+const struct http_exchanges *http_server_exchanges(void);
+
+/* Bytes between the stack and the exchanges; no handler runs. */
 void http_server_transport(void);
 
 /* A period's slack begins. */

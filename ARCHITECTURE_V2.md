@@ -8,14 +8,14 @@ cooperative tasks the loop steps, with nothing waiting (DD-053). The flight
 software reads one sample at a time from the pressure layer and emits events.
 The HAL handles buffering, transport and storage. Every flash write runs in a
 window the loop opens between core1's work units. The loop's slack serves USB,
-lwIP and HTTP. On the boards with Lua, core1 runs Lua and the HTTP units
+smallest_tcp and HTTP. On the boards with Lua, core1 runs Lua and the HTTP units
 core0 hands it (DD-061).
 
 ## Design Principles
 
 1. Flight software reaches the hardware only through `hal.h` — no UART, GPIO, flash or filesystem calls of its own.
 2. I/O runs without the loop waiting for it — the MS5607's conversions are an alarm handler's, telemetry TX is an interrupt's, the buzzer and the BMP280 are tasks stepped once a loop.
-3. The exec loop is the only clock — nothing sleeps or busy-waits; anything that waits parks on a deadline a later iteration checks (DD-053). The slack is spent on USB, lwIP and HTTP, not sleep.
+3. The exec loop is the only clock — nothing sleeps or busy-waits; anything that waits parks on a deadline a later iteration checks (DD-053). The slack is spent on USB, the network stack and HTTP, not sleep.
 4. Config changes are one-line operations — X-macro table generates struct, parser, serializer, defaults, and test.
 5. Telemetry is event-driven — formatter is a separate module, HAL is raw transport.
 6. Flash is written only in the window — core1 is idle and no XIP fetch can meet a program or erase (DD-035).
@@ -161,7 +161,7 @@ lua_app_init(&ctx.config);              /* launches core1 */
 
 while (1) {                             /* every LOOP_PERIOD_MS */
     hal_tasks_tick(now);                /* sensor first, then the buzzer and the switch */
-    hal_platform_service();             /* TinyUSB, lwIP, HTTP transport, mDNS */
+    hal_platform_service();             /* TinyUSB, the stack, HTTP transport, mDNS */
     ctx.current_state = dispatch_state(&ctx, now);
     flight_update_outputs(&ctx, now);   /* telemetry, pyro update */
     lua_app_service(&ctx, now);
@@ -200,7 +200,7 @@ The larger fixed buffers, from the code:
 |---|---|
 | Flight log buffer (`hal_common.c`) | 4,096 bytes |
 | Pressure trace (`pressure_trace.h`, 256 records) | 6,144 bytes |
-| lwIP heap (`MEM_SIZE`) | 8,000 bytes |
+| Network frame buffers (`net_glue.c`) | 3,028 bytes |
 | Telemetry TX ring | 512 bytes |
 | Flight ring (64 samples) | 1,024 bytes |
 | Pressure layer ring (`PP_RING_SIZE`) | 64 samples |

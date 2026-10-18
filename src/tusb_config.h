@@ -1,8 +1,6 @@
 #ifndef TUSB_CONFIG_H
 #define TUSB_CONFIG_H
 
-#include "lwipopts.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif

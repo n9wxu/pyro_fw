@@ -560,6 +560,44 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-102: smallest_tcp In Place Of lwIP
+- **Decision:** at the user's direction ("Replace lwip with smallest_tcp.
+  This should reduce flash and ram usage"), the USB network runs on
+  smallest_tcp v0.1.12 (github.com/n9wxu/smallest_tcp), IPv4 only, and lwIP
+  and TinyUSB's DHCP and DNS servers are gone from the image.
+- **Where:** `src/net_glue.c` carries TinyUSB's frames to and from the stack
+  and runs its one-client DHCP server and its mDNS responder;
+  `src/http_transport.c` is HTTP's sixteen links, the stack's buffer
+  operations written over each exchange's own rings, so a byte is copied
+  once each way and a sent byte stays in the tx ring until it is
+  acknowledged; `src/http_server.c` lends its four exchanges through
+  `http_exchanges_t`. The transport is tested on the host against the real
+  stack, with a second instance of it as the browser
+  (`test/test_http_transport.c`).
+- **What it saves:** MK1C's update image 333,568 bytes against 349,440;
+  RAM (data and bss) about 39 kB less, the stack holding no heap and no
+  pools: two 1,514-byte frame buffers, the links' records and a 256-byte
+  transmit queue.
+- **Held frames [WEB-NET-05]:** the stack sends a refused SYN, data or FIN
+  again at its next pass, but not a bare acknowledgement or a window update;
+  a lost window update leaves a host at a shut window until its own probe.
+  Those go into 256 bytes and leave in order. Without them a slow upload over
+  a busy endpoint took four times as long in the host test.
+- **What the stack lacks, worked around here** (smallest_tcp issues 7 to 11,
+  open): one segment in flight, so the transport shows the stack one segment
+  at a time and each carries PSH (macOS otherwise delays one acknowledgement
+  in fifteen by 100 ms); `NET_API_PREFIX` renames the firmware's own
+  `net_init()`, `http_conn_init()`, `http_reason()` and `http_server_init()`
+  in files that include the stack, which `src/net_stcp.h` undoes; the stack
+  wants a receive buffer it never writes.
+- **What changes for the host:** `pyro.local` resolves by mDNS alone; there
+  is no DNS answer on port 53. DHCP serves the one host on the link
+  192.168.N.2. `/api/net` reports TCP's links by state, retransmissions, the
+  transport's counts and the frames each way, in place of lwIP's pools
+  [WEB-API-13].
+- **TinyUSB's RNDIS replies** take one constant from lwIP's ethernet header;
+  `src/net_shim/netif/ethernet.h` gives it, and TinyUSB is unchanged.
+
 ### DD-101: Every Sample Logged
 - **Decision:** at the user's direction ("The 1hz and 50hz log capacity is
   roughly the same. Drop the 1hz logging and log every flight cycle"), the

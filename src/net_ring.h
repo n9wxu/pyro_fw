@@ -13,8 +13,7 @@
  *                    readable = net_ring_readable available = net_ring_writable
  *   tcp_txbuf_ops_t  write   = net_ring_write    writable  = net_ring_writable
  *
- * The TX ring there also keeps sent bytes until they are ACKed; lwIP keeps
- * its own copy instead, so here a byte leaves the ring once lwIP has it.
+ * The TX ring keeps sent bytes until they are ACKed (http_transport.c).
  *
  * SPDX-License-Identifier: MIT
  */

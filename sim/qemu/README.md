@@ -183,17 +183,17 @@ build the image.
 
 ### 2. Web interface — needs a USB network bridge
 
-The firmware serves its web UI over lwIP on USB ECM (TinyUSB device stack).
+The firmware serves its web UI over smallest_tcp on USB ECM (TinyUSB device stack).
 The RFC machine has "USB DPRAM and shallow USB controller register storage"
 and explicitly no "device and host transactions, endpoint state machines".
-So the guest never enumerates, and every frame lwIP sends is refused as not
+So the guest never enumerates, and every frame the stack sends is refused as not
 ready (`NET_TX_NOT_READY`, `src/net_txq.h`).
 
 Closing it means a **USB device-mode controller that terminates ECM inside
 the device model** and passes Ethernet frames to a QEMU `-netdev`:
 
 ```
-  guest lwIP  <->  TinyUSB  <->  rp2040_usb device model
+  guest stack <->  TinyUSB  <->  rp2040_usb device model
                                      | ECM terminated here
                                  qemu_send_packet / receive
                                      |

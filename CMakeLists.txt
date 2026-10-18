@@ -150,6 +150,16 @@ FetchContent_Declare(
     GIT_TAG b5d946be8155c0976abb6cab4e50dd2069a6690f # experiment/v6-frames, format 6
 )
 
+# The TCP/IP stack [DD-102]: its sources are compiled into the firmware and
+# the host tests below, so its own CMakeLists is not read (SOURCE_SUBDIR
+# names nothing).
+FetchContent_Declare(
+    smallest_tcp
+    GIT_REPOSITORY https://github.com/n9wxu/smallest_tcp.git
+    GIT_TAG 9a73b60b32b1249aecec89ef061a43fb981f3c47 # v0.1.12
+    SOURCE_SUBDIR pyro_reads_no_cmake
+)
+
 # Lua 5.4 for user programs on core1. Only fetched for boards that want it.
 if(PYRO_HAS_LUA)
     FetchContent_Declare(
@@ -190,10 +200,21 @@ if(PYRO_BOARD_KIND STREQUAL "pico")
 endif()
 
 if(PYRO_BOARD_KIND STREQUAL "pico")
-    FetchContent_MakeAvailable(alfs unity pico_fota_bootloader freertos_kernel)
+    FetchContent_MakeAvailable(alfs smallest_tcp unity pico_fota_bootloader freertos_kernel)
 else()
-    FetchContent_MakeAvailable(alfs unity) # no bootloader on a host build
+    FetchContent_MakeAvailable(alfs smallest_tcp unity) # no bootloader on a host build
 endif()
+
+# The stack's IPv4 modules the board serves with, and how they are built:
+# NET_API_PREFIX keeps its net_init() and the firmware's apart (net_stcp.h);
+# MDNS_TIEBREAK 0, since no other host probes for the board's names on a
+# point-to-point link.
+set(_stcp ${smallest_tcp_SOURCE_DIR}/src)
+set(PYRO_STCP_SOURCES
+    ${_stcp}/net.c ${_stcp}/net_cksum.c ${_stcp}/eth.c ${_stcp}/arp.c ${_stcp}/ipv4.c ${_stcp}/icmp.c
+    ${_stcp}/igmp.c ${_stcp}/udp.c ${_stcp}/tcp.c ${_stcp}/dhcpv4_server.c ${_stcp}/mdns.c ${_stcp}/dns_wire.c)
+set(PYRO_STCP_DEFINES
+    NET_USE_IPV4=1 NET_USE_IPV6=0 NET_USE_UDP=1 NET_USE_TCP=1 NET_API_PREFIX=stcp_ MDNS_TIEBREAK=0)
 if(PYRO_HAS_LUA)
     FetchContent_MakeAvailable(lua)
 endif()
@@ -298,7 +319,6 @@ target_include_directories(alfs_lib PUBLIC
 
 # ====================================================================================
 
-set(LWIP_DIR ${PICO_SDK_PATH}/lib/lwip)
 set(TINYUSB_DIR ${PICO_SDK_PATH}/lib/tinyusb)
 
 # Generate version.h on every build
@@ -337,6 +357,7 @@ add_executable(pyro_fw_c
     src/usb_descriptors.c
     src/net_glue.c
     src/http_server.c
+    src/http_transport.c
     src/http_conn.c
     src/http_work.c
     src/status_json.c
@@ -357,43 +378,8 @@ add_executable(pyro_fw_c
     src/pin_assign.c
     src/pin_store.c
     # TinyUSB networking helpers
-    ${TINYUSB_DIR}/lib/networking/dhserver.c
-    ${TINYUSB_DIR}/lib/networking/dnserver.c
     ${TINYUSB_DIR}/lib/networking/rndis_reports.c
-    # lwIP core
-    ${LWIP_DIR}/src/core/altcp.c
-    ${LWIP_DIR}/src/core/altcp_alloc.c
-    ${LWIP_DIR}/src/core/altcp_tcp.c
-    ${LWIP_DIR}/src/core/def.c
-    ${LWIP_DIR}/src/core/dns.c
-    ${LWIP_DIR}/src/core/inet_chksum.c
-    ${LWIP_DIR}/src/core/init.c
-    ${LWIP_DIR}/src/core/ip.c
-    ${LWIP_DIR}/src/core/mem.c
-    ${LWIP_DIR}/src/core/memp.c
-    ${LWIP_DIR}/src/core/netif.c
-    ${LWIP_DIR}/src/core/pbuf.c
-    ${LWIP_DIR}/src/core/raw.c
-    ${LWIP_DIR}/src/core/stats.c
-    ${LWIP_DIR}/src/core/sys.c
-    ${LWIP_DIR}/src/core/tcp.c
-    ${LWIP_DIR}/src/core/tcp_in.c
-    ${LWIP_DIR}/src/core/tcp_out.c
-    ${LWIP_DIR}/src/core/timeouts.c
-    ${LWIP_DIR}/src/core/udp.c
-    ${LWIP_DIR}/src/core/ipv4/autoip.c
-    ${LWIP_DIR}/src/core/ipv4/dhcp.c
-    ${LWIP_DIR}/src/core/ipv4/etharp.c
-    ${LWIP_DIR}/src/core/ipv4/icmp.c
-    ${LWIP_DIR}/src/core/ipv4/igmp.c
-    ${LWIP_DIR}/src/core/ipv4/ip4.c
-    ${LWIP_DIR}/src/core/ipv4/ip4_addr.c
-    ${LWIP_DIR}/src/core/ipv4/ip4_frag.c
-    ${LWIP_DIR}/src/netif/ethernet.c
-    # lwIP mDNS
-    ${LWIP_DIR}/src/apps/mdns/mdns.c
-    ${LWIP_DIR}/src/apps/mdns/mdns_out.c
-    ${LWIP_DIR}/src/apps/mdns/mdns_domain.c
+    ${PYRO_STCP_SOURCES}
  )
 
  target_link_libraries(pyro_fw_c
@@ -414,20 +400,24 @@ add_executable(pyro_fw_c
         )
 target_include_directories(pyro_fw_c PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/rtos)
 
-# The third-party stacks for size: FreeRTOS, lwIP and TinyUSB are not on the
-# flight task's path, and at -O3 MK1B's 384 kB slot does not hold them.
+# The third-party stacks for size: FreeRTOS, smallest_tcp and TinyUSB are not
+# on the flight task's path, and at -O3 MK1B's 384 kB slot does not hold them.
 file(GLOB_RECURSE _pyro_os_sources
     ${freertos_kernel_SOURCE_DIR}/*.c
-    ${LWIP_DIR}/src/*.c
     ${TINYUSB_DIR}/src/*.c
     ${TINYUSB_DIR}/lib/networking/*.c)
-set_source_files_properties(${_pyro_os_sources} PROPERTIES COMPILE_OPTIONS "-Os")
+set_source_files_properties(${_pyro_os_sources} ${PYRO_STCP_SOURCES} PROPERTIES COMPILE_OPTIONS "-Os")
+target_compile_definitions(pyro_fw_c PRIVATE ${PYRO_STCP_DEFINES})
+# TinyUSB's RNDIS replies take one constant from lwIP's ethernet header;
+# src/net_shim gives it without lwIP.
+set_source_files_properties(${TINYUSB_DIR}/lib/networking/rndis_reports.c
+    PROPERTIES INCLUDE_DIRECTORIES ${CMAKE_CURRENT_LIST_DIR}/src/net_shim)
 
 # So is the bench's side of the application: the HTTP server and what it
 # parses and prints.
 set_source_files_properties(
-    src/http_server.c src/http_conn.c src/http_work.c src/status_json.c src/config.c src/pin_assign.c
-    PROPERTIES COMPILE_OPTIONS "-Os")
+    src/http_server.c src/http_transport.c src/http_conn.c src/http_work.c src/status_json.c src/config.c
+    src/pin_assign.c src/net_glue.c PROPERTIES COMPILE_OPTIONS "-Os")
 
 # An SD card on SPI [DD-075, DD-076]: FatFs R0.16 (lib/fatfs) over this
 # firmware's driver (src/sd).
@@ -514,7 +504,7 @@ target_include_directories(pyro_fw_c PRIVATE
         # pin_assign.h needs. It pulls in no Lua headers, so a board built
         # without Lua can still see it.
         ${CMAKE_CURRENT_LIST_DIR}/src/lua
-        ${LWIP_DIR}/src/include
+        ${smallest_tcp_SOURCE_DIR}/include
         ${TINYUSB_DIR}/lib/networking
         ${PICO_SDK_PATH}/src/common/pico_usb_reset_interface_headers/include
 )
@@ -523,7 +513,7 @@ target_include_directories(pyro_fw_c SYSTEM PUBLIC
         ${alfs_SOURCE_DIR}
 )
 
-# Suppress warnings from lwIP and networking code
+# Suppress warnings from the stack and the networking code
 target_compile_options(pyro_fw_c PRIVATE
         -Wno-null-dereference
         -Wno-conversion
@@ -777,7 +767,7 @@ add_custom_target(pin_caps_tests
     COMMENT "Pin capability table tests"
 )
 
-# The HTTP engine over a byte stream: no lwIP, no filesystem.
+# The HTTP engine over a byte stream: no stack, no filesystem.
 add_custom_target(http_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building HTTP stream tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
@@ -842,6 +832,27 @@ add_custom_target(pressure_trace_tests
 
 # /api/status from a snapshot, linked alone: the renderer reads nothing else.
 # The USB network's transmit queue, against a fake endpoint (G4-N).
+# HTTP over smallest_tcp: the transport against the real stack, with a second
+# instance of it as the browser [DD-102].
+list(TRANSFORM PYRO_STCP_DEFINES PREPEND "-D" OUTPUT_VARIABLE _stcp_flags)
+add_custom_target(http_transport_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building HTTP transport tests..."
+    COMMAND ${HOST_CC} -Wall -Wextra ${_stcp_flags} -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${smallest_tcp_SOURCE_DIR}/include -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_http_transport.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/http_transport.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/http_conn.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/net_ring.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/net_txq.c
+               ${PYRO_STCP_SOURCES} ${_stcp}/tcp_buf_saw.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_http_transport
+    COMMAND ${CMAKE_COMMAND} -E echo "Running HTTP transport tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_http_transport
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "HTTP transport over smallest_tcp tests"
+)
+
 add_custom_target(net_txq_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building network transmit queue tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src

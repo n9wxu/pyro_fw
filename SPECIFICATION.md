@@ -9,7 +9,7 @@ Two-channel rocket flight computer on the RP2040, for three boards: MK1A, MK1B (
 
 ### Current Implementation Status
 - **Event-driven state machine**: `src/flight_states.c` — a detector per state, a transition table, actions; twelve states (`docs/flight_states.md`). The flight software is the files of `src/flight_sources.txt`, one responsibility each
-- **Main loop**: `src/main_hardware.c` — one iteration every 20 ms (`src/loop_period.h`, DD-065); the slack runs USB, lwIP and HTTP work units
+- **Main loop**: `src/main_hardware.c` — one iteration every 20 ms (`src/loop_period.h`, DD-065); the slack runs USB, the network stack and HTTP work units
 - **HTTP web interface**: `src/http_server.c`, `src/http_conn.c`, `src/http_work.c` + `src/net_glue.c` — handlers run as work units in the slack or on core1 (DD-061); dashboard at pyro.local / 192.168.N.1
 - **USB composite device**: ECM/RNDIS network + vendor reset (picotool support); a frame the endpoint cannot take yet is held (`src/net_txq.c`, DD-070)
 - **mDNS/DNS-SD**: pyro.local hostname, _pyro._tcp service discovery
@@ -82,8 +82,8 @@ The other boards' maps are in `boards/<board>/board_pins.h` and their theories o
 ```
 Flash, MK1B:       2 MB  = bootloader 36 KB + info 4 KB + 2 x 512 KB slots + 984 KB of files
 Flash, MK1A/MK1C: 16 MB  = bootloader 36 KB + info 4 KB + 2 x 4076 KB slots + 8 MB of files
-RAM: 264 KB. Fixed buffers include the flight log's 4 KB, its 128-row delay line (3 KB),
-     the pressure trace (256 records, 6 KB), lwIP's 8,000-byte heap, and the flight ring (64 samples, 1 KB)
+RAM: 264 KB. Fixed buffers include the flight log's 4 KB, the pressure trace (256 records, 6 KB),
+     the network's two frame buffers (3 KB), and the flight ring (64 samples, 1 KB)
 ```
 
 ---

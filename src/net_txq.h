@@ -1,14 +1,19 @@
 /*
- * The USB network's transmit queue [G4-N].
+ * The USB network's frames [WEB-NET-05, WEB-NET-07, DD-102].
  *
- * A frame the endpoint cannot take yet is held, by reference, and sent in
- * order as soon as it can. Dropped instead, lwIP learns of it only by its
- * retransmit timer, 3 s and doubling, and the heap stays held meanwhile:
- * under G4's load 40 % of frames were refused and the heap ran out 27,865
- * times. lwIP does not retransmit a segment a driver still holds.
+ * Sent: a frame the endpoint cannot take yet is copied and held, in
+ * NET_TXQ_BYTES, and sent in order as soon as it can. smallest_tcp sends a
+ * refused SYN, data or FIN again at its next pass, but not a bare
+ * acknowledgement or a window update, and a lost window update holds a host
+ * at a shut window until its own probe, seconds later. Those frames are
+ * small; a full segment never fits, and TCP has it.
  *
- * Portable: the endpoint and the frames' references are the caller's, so the
- * host tests this against a fake one.
+ * Received: TinyUSB holds its endpoint, and the frame in its buffer, until
+ * tud_network_recv_renew(), so one frame waits at a time, read where it
+ * lies.
+ *
+ * Portable: the endpoint is the caller's, so the host tests this against a
+ * fake one.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -18,50 +23,51 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define NET_TXQ_N 8
+#define NET_TXQ_BYTES 256
 
 typedef struct {
-    void *frame[NET_TXQ_N];
-    uint8_t head, n;
+    uint8_t buf[NET_TXQ_BYTES]; /* each frame its length, two bytes, then itself */
+    uint16_t head, tail;
+    uint8_t n;
 } net_txq_t;
 
 typedef struct {
-    bool (*ready)(void);           /* the host has configured the device */
-    bool (*can_send)(void *frame); /* the endpoint takes this frame now */
-    void (*send)(void *frame);     /* copies it out; the caller keeps it */
-    void (*hold)(void *frame);     /* a reference while it waits */
-    void (*release)(void *frame);
+    bool (*ready)(void);                              /* the host has configured the device */
+    bool (*can_send)(uint16_t len);                   /* the endpoint takes a frame this long now */
+    void (*send)(const uint8_t *frame, uint16_t len); /* copies it out */
 } net_tx_ops_t;
 
 typedef enum {
     NET_TX_SENT,      /* gone */
-    NET_TX_HELD,      /* waiting for the endpoint */
-    NET_TX_FULL,      /* refused: lwIP's retransmit has it */
+    NET_TX_HELD,      /* copied, waiting for the endpoint */
+    NET_TX_FULL,      /* refused: it does not fit */
     NET_TX_NOT_READY, /* refused: the link is gone, and the queue with it */
 } net_tx_result_t;
 
-net_tx_result_t net_tx_offer(net_txq_t *q, const net_tx_ops_t *ops, void *frame);
+net_tx_result_t net_tx_offer(net_txq_t *q, const net_tx_ops_t *ops, const uint8_t *frame, uint16_t len);
 
-/* Sends what the endpoint takes, oldest first. Once a loop and after the
- * transport. */
+/* Sends what the endpoint takes, oldest first. */
 void net_tx_drain(net_txq_t *q, const net_tx_ops_t *ops);
 
-/* Releases everything held: the link it was for is gone. */
-void net_tx_flush(net_txq_t *q, const net_tx_ops_t *ops);
+/* Drops everything held: the link it was for is gone. */
+void net_tx_flush(net_txq_t *q);
+
+uint8_t net_tx_held(const net_txq_t *q);
 
 /* ── Received frames ──────────────────────────────────────────────── */
 
 typedef struct {
-    void *(*alloc)(uint16_t size);                                /* NULL: none free */
-    bool (*fill)(void *frame, const uint8_t *src, uint16_t size); /* copies size bytes */
-    void (*release)(void *frame);
-} net_rx_ops_t;
+    const uint8_t *frame; /* NULL: none waits */
+    uint16_t len;
+} net_rx_slot_t;
 
-/* A frame the endpoint received, copied into *slot, which holds one at a
- * time. True only when *slot now holds it: TinyUSB then waits for
- * tud_network_recv_renew(), which comes once lwIP has the frame, and after a
+/* The endpoint's frame, held in its own buffer. True only when the slot now
+ * holds it: TinyUSB then waits for tud_network_recv_renew(), and after a
  * false it renews the endpoint itself (TinyUSB's ecm_rndis_device.c). */
-bool net_rx_take(void **slot, const net_rx_ops_t *ops, const uint8_t *src, uint16_t size);
+bool net_rx_take(net_rx_slot_t *s, const uint8_t *src, uint16_t size, uint16_t max);
+
+/* The stack has read it. */
+void net_rx_done(net_rx_slot_t *s);
 
 /* What may be copied into a cap-byte endpoint buffer: the whole frame, or 0
  * when it does not fit. */

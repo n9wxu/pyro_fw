@@ -196,9 +196,10 @@ check("pins caps: the ground test switch", pc.get("ground_test") in ("none", "gr
 # accepts and an established connection are at least one.
 _, _, body = req("GET", "/api/net")
 nt = json.loads(body)
-check("net: lwIP's pools, TCP by state, the transport's refusals",
-      all(len(nt.get(k, [])) == 3 for k in ("heap", "tcp_pcb", "tcp_seg", "pbuf_pool"))
-      and len(nt.get("states", [])) == 11 and nt["states"][4] >= 1 and nt.get("accepts", 0) >= 1
+check("net: TCP links by state, retransmissions, the transport's counts (WEB-API-13)",
+      len(nt.get("states", [])) == 11 and sum(nt["states"]) == 16 and nt["states"][4] >= 1
+      and all(k in nt for k in ("retransmits", "nrtx_max", "conn_full", "http_err", "idle_aborts", "served"))
+      and nt.get("accepts", 0) >= 1 and len(nt.get("rx", [])) == 2 and len(nt.get("tx", [])) == 3
       and len(nt.get("usb", [])) == 4 and nt["usb"][0] >= 1, str(nt)[:160])
 
 # CFG-04, CFG-06, CFG-10: a save is merged into the stored file, writes no
@@ -271,9 +272,8 @@ check("no sensor transfer failed throughout", st4["pres_rejects"] == st0["pres_r
       f'{st4["pres_rejects"] - st0["pres_rejects"]} failed: {st4.get("pres_bus")}, {st4.get("pres_recoveries")} recoveries')
 _, _, net_end = req("GET", "/api/net")
 net_end = json.loads(net_end)
-check("lwIP refused no memory throughout", net_end["heap"][2] == 0 and net_end["pbuf_pool"][2] == 0
-      and net_end["tcp_seg"][2] == 0 and net_end["tcp_pcb"][2] == 0,
-      f'heap {net_end["heap"]} pbuf_pool {net_end["pbuf_pool"]} tcp_seg {net_end["tcp_seg"]} tcp_pcb {net_end["tcp_pcb"]}')
+check("no received frame was dropped throughout (WEB-NET-07)", net_end["rx"][1] == nt["rx"][1],
+      f'rx {nt["rx"]} -> {net_end["rx"]}')
 sensor_faults = [f for f in st4.get("faults", []) if f.startswith("sensor_")]
 check("no sensor fault was latched throughout (SNS-PRES-17)", not sensor_faults, ",".join(sensor_faults))
 
