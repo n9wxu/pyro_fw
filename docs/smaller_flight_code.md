@@ -43,11 +43,12 @@ other figure says how it was measured.
   second (estimate): the MS5607 at OSR 2048 for both conversions (about 101
   pairs a second), the BMP280 forced at x2 (101 to 110 a second).
 - **With the smaller version, flight-in-RAM fits once lwIP is replaced.**
-  smallest_tcp gives back 38,480 bytes of RAM (measured on the spike,
-  `docs/smallest_tcp_evaluation.md` on `origin/smallest-tcp-spike`). Free RAM
-  then reaches about 66 kB on MK1C against about 42 kB needed (estimate):
-  about 24 kB of margin. Without smallest_tcp, the smaller version is still
-  about 15 kB short. Today's path does not fit even with smallest_tcp.
+  smallest_tcp gives back 39,216 bytes of RAM (measured on the MK1B image,
+  DD-102), and the flight log held for the host in test mode takes 8,192
+  (`src/log_live.c`, DD-103). Free RAM then reaches about 58 kB on MK1C
+  against about 42 kB needed (estimate): about 16 kB of margin. Without
+  smallest_tcp, the smaller version is still about 23 kB short. Today's path
+  does not fit even with smallest_tcp.
 
 The changes that matter most, measured on MK1C as code taken off the
 launch-to-landing path:
@@ -860,12 +861,13 @@ with a 10 ms period.
 | + RAM back from the smaller path (measured) | | 10,296 |
 | = Free, lwIP kept | 16,848 | 27,144 |
 | Shortfall, lwIP kept | 49,310 | about 14,800 |
-| + smallest_tcp (38,480, measured on the spike) | 55,328 | 65,624 |
-| Margin with smallest_tcp | -10,830 | **about +23,700** |
+| + smallest_tcp (39,216, measured, DD-102) | 56,064 | 66,360 |
+| − the flight log held for the host (8,192, `src/log_live.c`, DD-103) | 47,872 | 58,168 |
+| Margin with smallest_tcp | -18,286 | **about +16,300** |
 
 The free space grows by 10,296 bytes where `.bss` and `.data` shrink by
 10,136: the start of `.bss` moves with its alignment. MK1B and MK1A come out
-alike (about +26 kB with smallest_tcp). Without smallest_tcp, the last 15 kB
+alike (about +18 kB with smallest_tcp). Without smallest_tcp, the last 15 kB
 would have to come from Lua's script checker (16,384 bytes of static
 scratch, used only when a script is saved), the pressure trace (6,144) or
 the storage stack after its high-water mark is measured.
