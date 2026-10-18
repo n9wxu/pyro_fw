@@ -403,6 +403,16 @@ void hal_log_stop(void) {
     sim_log_running = false;
 }
 
+static bool log_to_host;
+
+void hal_log_to_host(bool on) {
+    log_to_host = on;
+}
+
+bool hal_log_held_for_host(void) {
+    return log_to_host;
+}
+
 bool hal_log_active(void) {
     return sim_log_running;
 }

@@ -410,6 +410,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-API-13**: The system shall report at `/api/net` the TCP connections by state, their retransmissions, what the network has refused and has dropped, and the USB interface's mounts, unmounts, suspends and resumes, so an HTTP outage can be told apart on the bench. ← SYS-WEB-01
 - **WEB-API-14**: A file shall be named by `/`-separated names of letters, digits, `.`, `_` and `-`, none of them `.` or `..`. Any other path shall be refused by every file operation, and by the web server with 400. ← SYS-WEB-01
 - **WEB-API-15**: The system shall report at `/api/status` the flash chip's JEDEC ID, the capacity it declares, and its whole unique ID at the length its datasheet gives. ← SYS-WEB-01
+- **WEB-API-16**: The system shall serve at `/api/flight/live?since=N` the flight log held for the host (USB-09) from byte N: the offset of the first byte it returns, the offset the log has reached, then the bytes. Bytes no longer held shall be skipped, so the host can count what it lost. ← USB-09
 
 ### HTTP
 - **WEB-HTTP-01**: The HTTP server shall treat each connection as a byte stream: a request shall be answered the same however TCP divides it into segments, including a header block or body split at any byte and more than one request in a single segment. ← SYS-WEB-01
@@ -513,6 +514,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **USB-05**: From launch to landing, the attach state shall be ignored. ← SYS-USB-01
 - **USB-07**: The system shall judge a host attached only on evidence that a host is present, so that every detection error leaves launch detection on. ← SYS-USB-01, SYS-DEPLOY-01
 - **USB-08**: An operator-selected test mode shall make the system behave on USB as it does on battery: launch detection, deployment, the resume record and every announcement. It shall start off at every start, shall not change from launch to landing, shall be set from the web interface after a confirmation, and shall be reported on `/api/status`. ← SYS-USB-01, UN-12
+- **USB-09**: Test mode shall offer to keep the flight log off the flash: chosen as test mode is set, the log is held in RAM for the host to read as it is written (WEB-API-16), and nothing is written to the flash from launch to landing. The choice shall start off at every start, shall not change from launch to landing, and shall be reported on `/api/status`. ← USB-08, DD-103
 
 ---
 

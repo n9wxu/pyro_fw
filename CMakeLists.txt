@@ -364,6 +364,7 @@ add_executable(pyro_fw_c
     src/net_stats.c
     src/net_txq.c
     src/flight_log.c
+    src/log_live.c
     src/pressure_trace.c
     src/net_ring.c
     src/reset_interface.c
@@ -667,6 +668,7 @@ add_custom_target(sim
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
                -lm
                -o ${CMAKE_BINARY_DIR}/pyro_sim
     COMMAND ${CMAKE_COMMAND} -E echo "Simulator built: ${CMAKE_BINARY_DIR}/pyro_sim"
@@ -851,6 +853,18 @@ add_custom_target(http_transport_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_http_transport
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "HTTP transport over smallest_tcp tests"
+)
+
+# The flight log held for the host in test mode [USB-09].
+add_custom_target(log_live_tests
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_log_live.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/log_live.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_log_live
+    COMMAND ${CMAKE_BINARY_DIR}/test_log_live
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flight log held for the host tests"
 )
 
 add_custom_target(net_txq_tests

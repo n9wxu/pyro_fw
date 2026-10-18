@@ -15,6 +15,7 @@
  */
 #include "http_transport.h"
 #include "net_glue.h"
+#include "log_live.h"
 #include "board_id.h"
 #include "board_if.h"
 #include <string.h>
@@ -340,15 +341,15 @@ static void apply_api_beep_play(http_conn_t *hc, const char *body) {
     http_respond(hc, status, JSON, jb, (uint32_t)jn);
 }
 
-/* POST /api/test_mode/on, /api/test_mode/off [USB-08]. Held in RAM, so a
- * reboot ends it. In flight the flight layer ignores it, and the answer says
- * the mode it kept. */
+/* POST /api/test_mode/on[?log=host], /api/test_mode/off [USB-08, USB-09].
+ * Held in RAM, so a reboot ends it. In flight the flight layer ignores it, a
+ * running log keeps where it goes, and the answer says the mode kept. */
 
 static void test_mode_call(void *arg) {
     flight_set_test_mode(flight_get_context(), *(const bool *)arg, hal_time_ms());
 }
 
-static void apply_api_test_mode(http_conn_t *hc, bool on) {
+static void apply_api_test_mode(http_conn_t *hc, bool on, bool log_to_host) {
     flight_context_t *ctx = flight_get_context();
     if (!ctx) {
         http_respond_str(hc, 503, JSON, "{\"error\":\"not ready\"}");
@@ -358,7 +359,11 @@ static void apply_api_test_mode(http_conn_t *hc, bool on) {
         http_respond_str(hc, 503, JSON, "{\"error\":\"the flight task did not take the change\"}");
         return;
     }
-    http_respond_str(hc, 200, JSON, ctx->test_mode ? "{\"test_mode\":true}" : "{\"test_mode\":false}");
+    hal_log_to_host(ctx->test_mode && log_to_host);
+    char body[48];
+    int n = snprintf(body, sizeof(body), "{\"test_mode\":%s,\"test_log\":\"%s\"}", ctx->test_mode ? "true" : "false",
+                     hal_log_held_for_host() ? "host" : "flash");
+    http_respond(hc, 200, JSON, body, (uint32_t)n);
 }
 
 #if PYRO_HAS_BENCH_FLIGHT
@@ -830,6 +835,7 @@ static void status_capture_flight(void *arg) {
     s->peak_lower_bound = fctx && fctx->peak_lower_bound;
     s->usb_attached = fctx && fctx->usb_attached; /* [USB-01..03, USB-08] */
     s->test_mode = fctx && fctx->test_mode;
+    s->test_log_host = hal_log_held_for_host();
     s->buzzer_active = buzzer_is_active();
 
     /* What the buzzer says, or would say off USB, so it can be read rather
@@ -1012,6 +1018,28 @@ static bool flight_csv_count(conn_t *c) {
 #define LOG_SPACE_RESERVE_BYTES (16u * 1024u)
 
 static void serve_api_net(http_conn_t *hc);
+
+/* [WEB-API-16] The flight log held for the host from ?since=N: the offset of
+ * the first byte returned and the offset the log has reached, little-endian,
+ * then the bytes (log_live.h). */
+#define LIVE_HEAD 8u
+
+static void put_le32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
+
+static void serve_flight_live(http_conn_t *hc, const char *path) {
+    const char *q = strstr(path, "since=");
+    uint32_t since = q ? (uint32_t)strtoul(q + 6, NULL, 10) : 0u;
+    uint32_t first, end;
+    uint32_t n = log_live_read(since, hc->work + LIVE_HEAD, sizeof(hc->work) - LIVE_HEAD, &first, &end);
+    put_le32(hc->work, first);
+    put_le32(hc->work + 4, end);
+    http_respond(hc, 200, "application/octet-stream", hc->work, LIVE_HEAD + n);
+}
 
 static void serve_log_space(conn_t *c) {
     http_conn_t *hc = &c->h;
@@ -1256,6 +1284,8 @@ static void serve_get(conn_t *c) {
         uint32_t since = q ? (uint32_t)strtoul(q + 6, NULL, 10) : 0u;
         int n = ptrace_read(since, hc->work, (int)sizeof(hc->work));
         http_respond(hc, 200, "application/octet-stream", hc->work, (uint32_t)n);
+    } else if (strncmp(path, "/api/flight/live", 16) == 0 && (path[16] == '\0' || path[16] == '?')) {
+        serve_flight_live(hc, path);
     } else if (strcmp(path, "/") == 0) {
         /* no-store: the UI is re-uploaded whenever the firmware or web files
          * change, and without this browsers heuristically cache it and keep
@@ -1477,7 +1507,7 @@ static void apply_path_post(conn_t *c, route_t route) {
         break;
     case R_TEST_MODE_ON:
     case R_TEST_MODE_OFF:
-        apply_api_test_mode(hc, route == R_TEST_MODE_ON);
+        apply_api_test_mode(hc, route == R_TEST_MODE_ON, strstr(hc->path, "log=host") != NULL);
         break;
 #if PYRO_HAS_BENCH_FLIGHT
     case R_SIM_FLIGHT:

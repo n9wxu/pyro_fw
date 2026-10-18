@@ -50,6 +50,7 @@
 #include "http_server.h"
 #include "flight_log.h"
 #include "net_glue.h"
+#include "log_live.h"
 #include "ground_test_switch.h"
 #include "pressure_trace.h"
 #include "loop_period.h"
@@ -1180,6 +1181,7 @@ enum { LOG_IDLE, LOG_RUNNING, LOG_STOPPING };
 typedef struct {
     uint8_t buf[LOG_BUF_SIZE];
     volatile uint32_t head; /* the flight task */
+    bool to_host;           /* [USB-09] this log goes to log_live.h, not the flash */
     volatile uint32_t tail; /* the storage task */
     volatile uint8_t state; /* see above */
     uint32_t dropped;       /* sample bytes the ring could not hold */
@@ -1203,6 +1205,15 @@ typedef struct {
 
 static log_ring_t log_ring;
 static uint8_t log_file_buf[VFS_BUF_SIZE];
+static volatile bool log_host_next; /* the next log's to_host */
+
+void hal_log_to_host(bool on) {
+    log_host_next = on;
+}
+
+bool hal_log_held_for_host(void) {
+    return log_ring.state != LOG_IDLE ? log_ring.to_host : log_host_next;
+}
 
 static uint32_t log_used(void) {
     return log_ring.head - log_ring.tail;
@@ -1240,6 +1251,7 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
      * task is idle on the ring until the state below says RUNNING. */
     log_ring.dropped = 0;
     log_ring.head = log_ring.tail = 0;
+    log_ring.to_host = log_host_next;
     flog_header_t h = {
         .board = PYRO_BOARD_NAME,
         .id = cfg->id,
@@ -1287,9 +1299,26 @@ static void log_write_out(void) {
     }
 }
 
+/* [USB-09] Everything the ring holds, into the RAM the host reads; nothing
+ * waits, so nothing is held back. */
+static void log_hand_to_host(void) {
+    uint32_t h = log_ring.head;
+    __dmb();
+    while (log_ring.tail != h) {
+        uint32_t t = log_ring.tail;
+        uint32_t off = t & LOG_MASK;
+        uint32_t span = h - t;
+        if (span > LOG_BUF_SIZE - off)
+            span = LOG_BUF_SIZE - off;
+        log_live_write(log_ring.buf + off, span);
+        __dmb();
+        log_ring.tail = t + span;
+    }
+}
+
 /* The storage task's end of a log: the file closed, the filesystem free. */
 static void log_finish(void) {
-    if (log_ring.file_open)
+    if (log_ring.file_open && !log_ring.to_host)
         vfs_close(&log_ring.file);
     log_ring.file_open = false;
     log_ring.stop_seen = false;
@@ -1310,6 +1339,17 @@ static void log_service(uint32_t now_ms) {
         log_ring.dropped += log_used();
         log_ring.tail = log_ring.head;
         log_finish();
+        return;
+    }
+
+    if (log_ring.to_host) {
+        if (!log_ring.file_open) {
+            log_live_reset();
+            log_ring.file_open = true; /* the host's RAM stands in for the file */
+        }
+        log_hand_to_host();
+        if (st == LOG_STOPPING)
+            log_finish();
         return;
     }
 

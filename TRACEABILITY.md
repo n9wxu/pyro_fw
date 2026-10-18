@@ -285,6 +285,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | WEB-API-13 | The system shall report at /api/net the TCP connections by state, their retransmissions, what the network... | test_http_transport.c: test_an_idle_link_is_let_go, test_WEB_API_13_links_are_counted_by_state; the suite test_net_stats.c; Hardware: `support/api_check.py` | ✅ |
 | WEB-API-14 | A file shall be named by /-separated names of letters, digits, ., _ and -, none of them . or ... Any other... | test_http.c: test_WEB_API_07_the_board_answers_to_its_names_and_its_own_address, test_WEB_API_14_a_path_that_climbs_out_or_hides_its_name_is_refused; Hardware: `support/http_stream_check.py` | ✅ |
 | WEB-API-15 | The system shall report at /api/status the flash chip's JEDEC ID, the capacity it declares, and its whole... | the suite test_flash_chip.c, test_status_json.c; Hardware: `support/api_check.py` | ✅ |
+| WEB-API-16 | The system shall serve at /api/flight/live?since=N the flight log held for the host (USB-09) from byte N:... | test_log_live.c: test_WEB_API_16_what_was_written_is_read_whole, test_WEB_API_16_a_read_from_n_returns_what_came_after, test_WEB_API_16_a_bounded_read_continues_where_it_stopped; Hardware: `support/bench_flight.py` | ✅ |
 | WEB-HTTP-01 | The HTTP server shall treat each connection as a byte stream | test_http_transport.c: test_WEB_HTTP_02_a_request_is_answered_and_closed, test_WEB_HTTP_01_a_download_larger_than_the_ring_arrives_whole, test_WEB_HTTP_01_more_browsers_than_exchanges_are_all_served; the suite test_http.c; Hardware: `support/http_stream_check.py` | ✅ |
 | WEB-HTTP-02 | Every response shall be framed by Content-Length and carry Connection | test_http_transport.c: test_WEB_HTTP_02_a_request_is_answered_and_closed; the suite test_http.c; Hardware: `support/api_check.py`, `support/http_stream_check.py` | ✅ |
 | WEB-HTTP-03 | The server shall read a request body only as fast as it consumes it, so that TCP flow control, not a... | test_http_transport.c: test_WEB_HTTP_01_a_download_larger_than_the_ring_arrives_whole, test_WEB_HTTP_03_an_upload_is_read_only_as_fast_as_it_is_taken; the suite test_http.c; Hardware: `support/http_stream_check.py` | ✅ |
@@ -364,6 +365,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | USB-05 | From launch to landing, the attach state shall be ignored | test_flight_pad.c: test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds, test_USB_01_no_launch_and_no_record_while_attached, test_USB_05_attachment_is_ignored_in_flight | ✅ |
 | USB-07 | The system shall judge a host attached only on evidence that a host is present, so that every detection... | test_flight_pad.c: test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds, test_USB_01_no_launch_and_no_record_while_attached | ✅ |
 | USB-08 | An operator-selected test mode shall make the system behave on USB as it does on battery | test_flight_pad.c: test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds, test_USB_01_no_launch_and_no_record_while_attached, test_USB_05_attachment_is_ignored_in_flight, test_USB_08_test_mode_flies_on_usb; Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
+| USB-09 | Test mode shall offer to keep the flight log off the flash | test_log_live.c: test_USB_09_the_oldest_bytes_go_when_the_ring_is_full, test_USB_09_a_write_longer_than_the_ring_keeps_its_end, test_USB_09_a_new_log_starts_at_zero; Hardware: `support/bench_flight.py` | ✅ |
 
 ## 13. Bench Flight
 
@@ -448,7 +450,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host test, a web test or a structural check | 310 |
+| ✅ Verified by a host test, a web test or a structural check | 312 |
 | ⚠️ Not verified, or not wholly | 24 |
 | ❌ Not implemented | 0 |
 | ✅ HW (verified on hardware only) | 12 |

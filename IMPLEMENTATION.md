@@ -123,6 +123,7 @@ MK1A and MK1C (16 MB): two 4076 KB slots from 0x00A000 and 0x405000, and 8 MB of
 | GET | `/api/log/space` | Room for the next flight's log (WEB-API-12) |
 | GET | `/api/flight.csv` | The flight log, rendered as CSV |
 | POST | `/api/flight/erase` | Erase the flight log |
+| GET | `/api/flight/live?since=N` | The flight log held for the host in test mode, from byte N (WEB-API-16) |
 | GET/POST | `/api/config` | Config INI file; a POST is merged and stored, and takes effect at the next start (CFG-10) |
 | GET | `/api/limits` | The board's pyro timing defaults and ranges, what is in force, the sensor's range (PYR-BOARD-03) |
 | GET, POST | `/api/sim`, `/api/sim/flight`, `/api/sim/stop` | The bench flight, where the board has one (SIM-01..04) |
@@ -130,7 +131,7 @@ MK1A and MK1C (16 MB): two 4076 KB slots from 0x00A000 and 0x405000, and 8 MB of
 | GET | `/api/pins/caps` | The board's capability table and its vocabulary |
 | GET/POST | `/api/beeps` | Beep personalities; `POST /api/beeps/play` auditions one |
 | GET/POST | `/api/lua/script` | The Lua program; `POST /api/lua/check` validates one against the configured resources, `GET /api/lua/console` reads the script's output |
-| POST | `/api/test_mode/on`, `/api/test_mode/off` | Test mode (USB-08) |
+| POST | `/api/test_mode/on[?log=host]`, `/api/test_mode/off` | Test mode, and the log to the host in place of the flash (USB-08, USB-09) |
 | POST | `/api/serial` | The board's MAC, into `serial.txt` |
 | POST | `/api/reboot` | Restart device |
 | POST | `/api/ota` | Firmware update |
@@ -152,7 +153,7 @@ One message a second in PAD_IDLE, in flight and in LANDED (TEL-03). State codes 
 - **Ground test:** its own alert, countdowns, tone and all-clear (GND-TEST-06, GND-TEST-07)
 
 ### Flight Log
-The flight log (`flight_log.bin` on the flash) opens at launch and closes at LANDED, written only into erased pages: only the storage task's cleanup erases, a sector a second while no flight log is open (DD-100). It holds binary records (`src/flight_log.h`); `/api/flight.csv` renders them as CSV with `flog_csv_read()` (DD-062). The flight code hands every sample to `hal_log_sample()`, and the log keeps each one (FLT-LOG-07, DD-101). Records go to a 4 KB RAM buffer.
+The flight log (`flight_log.bin` on the flash) opens at launch and closes at LANDED, written only into erased pages: only the storage task's cleanup erases, a sector a second while no flight log is open (DD-100). It holds binary records (`src/flight_log.h`); `/api/flight.csv` renders them as CSV with `flog_csv_read()` (DD-062). The flight code hands every sample to `hal_log_sample()`, and the log keeps each one (FLT-LOG-07, DD-101). Records go to a 4 KB RAM buffer. In test mode set with `?log=host`, the storage task hands them to an 8 KB ring in RAM (`src/log_live.c`) in place of the file, read by offset at `/api/flight/live` (USB-09, DD-103).
 
 **Flash stalls the CPU.** The RP2040 executes from flash via XIP, and a sector erase (46-73 ms measured, DD-035) stops both cores fetching from it. So:
 - nothing is written until the RAM buffer has filled once or 2 s have passed, which carries the log through the launch-shock window (DD-084, DD-027);

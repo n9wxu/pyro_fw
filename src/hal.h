@@ -181,6 +181,12 @@ bool hal_log_estimator(uint32_t time_ms, const char *text, int len);
 void hal_log_stop(void);
 bool hal_log_active(void);
 
+/* [USB-09] The next flight's log held in RAM for the host (log_live.h) in
+ * place of the flash; a log already running keeps where it goes. */
+void hal_log_to_host(bool on);
+/* Where the log goes: the running one's, or the next one's. */
+bool hal_log_held_for_host(void);
+
 /* ── Ground test pin [GND-TEST-05, GND-TEST-12] ────────────────────
  *
  * Whether the ground test switch is closed now. False where no ground test

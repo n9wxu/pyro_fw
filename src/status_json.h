@@ -94,6 +94,7 @@ typedef struct {
     bool estimator_explains;
     bool peak_lower_bound;
     bool usb_attached, test_mode, buzzer_active;
+    bool test_log_host; /* [USB-09] the flight log goes to the host, not the flash */
 
     const char *beep;      /* the outcome's key */
     const char *beep_kind; /* how it sounds: a kind, or a code of d1[-d2] beeps */

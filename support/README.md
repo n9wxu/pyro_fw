@@ -162,6 +162,7 @@ board.
 ```bash
 python3 support/bench_flight.py <board-ip>                       # 3 km, the board's defaults
 python3 support/bench_flight.py <board-ip> --apogee 30000 --boost 4
+python3 support/bench_flight.py <board-ip> --host-log f.bin     # the log to the host, nothing to the flash (USB-09)
 python3 support/bench_flight.py <board-ip> --fail drogue          # that canopy never opens
 python3 support/hr_log.py --fetch <board-ip> hr0001              # the high-rate log after it
 ```

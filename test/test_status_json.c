@@ -113,6 +113,7 @@ static void typical(status_snap_t *s) {
     s->estimator = "lumped";
     s->estimator_explains = true;
     s->usb_attached = true;
+    s->test_log_host = true;
     s->beep = "ready";
     s->beep_kind = "code";
     s->beep_is_code = true;
@@ -212,6 +213,7 @@ static const char *const TYPICAL[][2] = {
     {"peak_lower_bound", "false"},
     {"usb_attached", "true"},
     {"test_mode", "false"},
+    {"test_log", "\"host\""},
     {"buzzer_active", "false"},
     {"beep", "\"ready\""},
     {"beep_sound", "\"3-2\""},

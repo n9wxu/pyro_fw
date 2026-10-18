@@ -560,6 +560,29 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-103: The Flight Log To The Host In Test Mode
+- **Decision:** at the user's direction ("Give the USB flight test mode the
+  option to prevent logging to flash and log to network"), test mode set
+  with `POST /api/test_mode/on?log=host` holds the next flight's log in RAM
+  for the host in place of the flash [USB-09]. The choice lives with test
+  mode: it starts off at every start, a log already running keeps where it
+  goes, and `/api/status` reports it (`test_log`).
+- **How the host reads it:** the storage task hands the log's ring to an
+  8 KB ring (`src/log_live.c`) in place of the file; `GET
+  /api/flight/live?since=N` returns the offset of the first byte, the offset
+  the log has reached, then the bytes [WEB-API-16]. A host that falls more
+  than the ring behind finds the oldest bytes gone and can count them. A
+  poll is an ordinary request, framed by Content-Length [WEB-HTTP-02].
+- **The bench:** `support/bench_flight.py --host-log FILE` polls it once a
+  second and saves the binary log; `pyro_sim --csv FILE` renders it with the
+  board's own renderer, and `pyro_sim --replay` flies it again.
+- **Measured on MK1C, 2026-10-18,** a 3 km bench flight: 223,622 bytes to
+  the host, none lost, 9,416 sample rows, the widest gap 19 ms; no flash
+  program or erase from launch to landing; the loop's lateness at most
+  0.6 ms against 12 ms with the log written to the flash. Six programs
+  follow at LANDED. The replay of the saved log decides apogee 19 ms from
+  the log's and pyro 2 and landing at the same millisecond.
+
 ### DD-102: smallest_tcp In Place Of lwIP
 - **Decision:** at the user's direction ("Replace lwip with smallest_tcp.
   This should reduce flash and ram usage"), the USB network runs on

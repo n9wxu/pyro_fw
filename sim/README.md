@@ -10,6 +10,7 @@ The simulation library packages the Pyro flight software **and** a rocket physic
 | `sim` target, `PYRO_BOARD=sim` | `pyro_sim`, the same flight software natively, flown by `sim/sim_cli.c` on `sim/physics.c` |
 | `sim` target, `PYRO_BOARD=sim_mk1a`, `sim_mk1b`, `sim_mk1c` | `pyro_sim` with the real `boards/<board>/` pyro backend against `sim/plant/` (see `sim/plant/README.md`) |
 | `pyro_sim --replay <flight_log.csv>` | a logged flight's readings back through the firmware (`sim/replay.c`) |
+| `pyro_sim --csv <flight_log.bin>` | a binary flight log as the board renders it at `/api/flight.csv`; for a log a bench flight sent to the host (USB-09) |
 | `sim/qemu/` | the real ARM image on an emulated RP2040 (see `sim/qemu/README.md`) |
 
 `sim/mach_plant.c` is the flight tests' plant, not a simulator build.
@@ -227,7 +228,7 @@ renumbered: the numbers reach the flight log, telemetry and `/api/status`.
 | `sim/physics.c` | The rocket: U.S. Standard Atmosphere 1976, constant thrust, linear chute damping |
 | `sim/pyro_sim.h` | Flight computer simulation C API |
 | `sim/main_sim.c` | High-level sim lifecycle functions |
-| `sim/sim_cli.c` | `pyro_sim`'s driver, on `sim/physics.c`, and `--replay` |
+| `sim/sim_cli.c` | `pyro_sim`'s driver, on `sim/physics.c`, `--replay` and `--csv` |
 | `sim/replay.c` | A flight log's readings back through the firmware |
 | `sim/hw/` | The Pico SDK calls a board file makes, for the modelled boards |
 | `sim/plant/` | The board plant models |
