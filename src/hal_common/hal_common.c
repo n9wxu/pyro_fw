@@ -1267,6 +1267,9 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     log_ring.head = n > 0 ? (uint32_t)n : 0u;
     __dmb();
     log_ring.state = LOG_RUNNING;
+#if PYRO_FLIGHT_RAM
+    flash_op_flight_begin(); /* [FLT-RT-03] */
+#endif
 }
 
 /* The storage task's side from here to hal_storage_service(). A failure costs
@@ -1291,6 +1294,12 @@ static void log_write_out(void) {
         if (span > LOG_BUF_SIZE - off)
             span = LOG_BUF_SIZE - off;
         int n = vfs_write(&log_ring.file, log_ring.buf + off, span);
+        if (n == VFS_NOSPC) {
+            /* [FLT-LOG-10] No erased page left: one sector a removed file
+             * left, erased in the writer's slots. */
+            vfs_clean();
+            return;
+        }
         if (n <= 0)
             return; /* the bytes stay: the next pass retries */
         __dmb();
@@ -1486,6 +1495,9 @@ void hal_log_stop(void) {
         return;
     __dmb();
     log_ring.state = LOG_STOPPING;
+#if PYRO_FLIGHT_RAM
+    flash_op_flight_end(); /* before the flight task runs from flash again */
+#endif
 }
 
 bool hal_log_active(void) {

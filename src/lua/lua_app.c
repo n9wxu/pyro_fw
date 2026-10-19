@@ -52,11 +52,6 @@ static bool launched;
  * to replace a program that wedges the board. */
 #define LUA_LAUNCH_DELAY_MS 2000u
 
-/* One tick()'s time box, events included. The Lua task shares core1 with the
- * net and storage tasks a tick at a time, so this bounds how long one script
- * step holds its share, not the flight. */
-#define LUA_TICK_BUDGET_US 5000u
-
 /* Covers the start-up check, compiling the script and running init(). A
  * script that never finishes starting holds its share of core1 for nothing. */
 #define LUA_BOOT_LIMIT_MS 5000u
@@ -391,5 +386,5 @@ void lua_app_dispatch(void) {
     if (!lua_core1_ready()) {
         return;
     }
-    lua_core1_dispatch(LUA_TICK_BUDGET_US);
+    lua_core1_dispatch();
 }

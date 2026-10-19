@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: MIT
  */
 #include "flash_op.h"
+#include "core1_frame.h"
+#include "flash_chip.h"
+#include "flash_slot.h"
 #include "rtos_tasks.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -38,6 +41,13 @@ static StackType_t helper_stack[2][HELPER_STACK_WORDS];
 
 volatile uint32_t flash_op_seq;
 static volatile uint32_t lockouts, timeouts, refusals, waits, erases, programs, max_us;
+
+/* From launch to landing. flight is the flight task's, piece_busy core1's,
+ * and both change under lk_lock: a piece starts only while flight holds,
+ * and flight ends only while no piece runs. */
+static volatile bool flight, piece_busy;
+static TaskHandle_t writer;
+static flash_op_slot_stats_t slot_stats;
 
 __attribute__((weak)) bool board_flash_ok(void) {
     return true;
@@ -110,6 +120,13 @@ int flash_op(flash_op_fn fn, void *arg) {
         refusals++;
         return -1;
     }
+    /* Before the raise to T, which under mode 0 would stop the flight task;
+     * the claim below checks again under the lock. */
+    if (flight) {
+        slot_stats.flight_refusals++;
+        refusals++;
+        return -4;
+    }
     if (!board_flash_ok()) {
         waits++;
         for (uint32_t i = 0; i < BOARD_WAIT_MS && !board_flash_ok(); i++)
@@ -125,8 +142,16 @@ int flash_op(flash_op_fn fn, void *arg) {
     uint other = get_core_num() ^ 1u;
 
     uint32_t s = spin_lock_blocking(lk_lock);
-    lk[other] = LK_WANTED;
+    bool flying = flight;
+    if (!flying)
+        lk[other] = LK_WANTED;
     spin_unlock(lk_lock, s);
+    if (flying) {
+        vTaskPrioritySet(NULL, prio);
+        slot_stats.flight_refusals++;
+        refusals++;
+        return -4;
+    }
     xTaskNotifyGive(helper[other]);
 
     int rc = 0;
@@ -216,16 +241,6 @@ static void __no_inline_not_in_flash_func(do_program_bytes)(void *a) {
     } while (cmd[1] & STATUS_BUSY);
 }
 
-int flash_op_program_bytes(uint32_t offset, const uint8_t *data, uint32_t len) {
-    if (!len || len > FLASH_PAGE_SIZE || (offset % FLASH_PAGE_SIZE) + len > FLASH_PAGE_SIZE)
-        return -4;
-    span_t sp = {offset, data, len};
-    int rc = flash_op(do_program_bytes, &sp);
-    if (rc == 0)
-        programs++;
-    return rc;
-}
-
 uint32_t flash_op_lockouts(void) {
     return lockouts;
 }
@@ -250,4 +265,227 @@ uint32_t flash_op_max_us(void) {
 
 void flash_op_crumb(unsigned n) {
     watchdog_hw->scratch[0] = 0x53540000u | (uint32_t)n;
+}
+
+/* ── From launch to landing ───────────────────────────────────────── */
+
+/* A piece that cannot suspend ends inside its slot by the datasheet; this
+ * is the bound on a chip that has stopped answering, so core1 never spins
+ * with its interrupts off for good. */
+#define PIECE_HARD_MAX_US 20000u
+
+/* A suspend lands in tSUS; this bounds the wait on a chip that does not. */
+#define SUSPEND_HARD_MAX_US 1000u
+
+#define CMD_ERASE_SECTOR 0x20u
+#define CMD_SUSPEND 0x75u
+#define CMD_RESUME 0x7Au
+#define CMD_READ_STATUS2 0x35u
+#define STATUS2_SUSPENDED 0x84u /* SUS (S15); on XT25F128F a program's SUS2 (S10) too */
+
+typedef struct {
+    flash_slot_kind_t kind;
+    uint32_t off;
+    const uint8_t *data;
+    uint32_t len;
+    const flash_piece_t *p;
+    uint32_t settle_us;
+} piece_args_t;
+
+static uint8_t __no_inline_not_in_flash_func(chip_status)(uint8_t cmd) {
+    uint8_t buf[2] = {cmd, 0};
+    flash_do_cmd(buf, buf, 2);
+    return buf[1];
+}
+
+static void __no_inline_not_in_flash_func(chip_cmd)(uint8_t cmd) {
+    uint8_t buf[1] = {cmd};
+    flash_do_cmd(buf, buf, 1);
+}
+
+static void __no_inline_not_in_flash_func(chip_start)(const piece_args_t *a) {
+    volatile uint8_t *cmdp = page_cmd; /* volatile: no memcpy() call, which lives in flash */
+    uint32_t n = 4u;
+    cmdp[0] = a->kind == SLOT_ERASE ? CMD_ERASE_SECTOR : CMD_PAGE_PROGRAM;
+    cmdp[1] = (uint8_t)(a->off >> 16);
+    cmdp[2] = (uint8_t)(a->off >> 8);
+    cmdp[3] = (uint8_t)a->off;
+    if (a->kind == SLOT_PROGRAM) {
+        for (uint32_t i = 0; i < a->len; i++)
+            cmdp[4u + i] = a->data[i];
+        n += a->len;
+    }
+    chip_cmd(CMD_WRITE_ENABLE);
+    flash_do_cmd(page_cmd, page_cmd, n);
+}
+
+/* From the first command until the operation has ended or is suspended the
+ * chip answers no XIP read, so every instruction is fetched from RAM; the
+ * caller has core1's interrupts off. flash_do_cmd() gives XIP back after
+ * each command, and the last command here finds the chip idle. */
+static int __no_inline_not_in_flash_func(run_piece)(const piece_args_t *a) {
+    if (a->p->resume)
+        chip_cmd(CMD_RESUME);
+    else
+        chip_start(a);
+    uint32_t t0 = timer_hw->timerawl;
+    for (;;) {
+        if (!(chip_status(CMD_READ_STATUS) & STATUS_BUSY))
+            return PIECE_DONE;
+        uint32_t now = timer_hw->timerawl;
+        if (a->p->may_suspend && (int32_t)(now - a->p->suspend_at) >= 0 && (int32_t)(now - a->p->suspend_from) >= 0)
+            break;
+        if ((uint32_t)(now - t0) > PIECE_HARD_MAX_US)
+            return -6;
+    }
+    chip_cmd(CMD_SUSPEND);
+    uint32_t ts = timer_hw->timerawl;
+    while ((uint32_t)(timer_hw->timerawl - ts) < a->settle_us) {
+        __asm volatile("nop");
+    }
+    while (chip_status(CMD_READ_STATUS) & STATUS_BUSY) {
+        if ((uint32_t)(timer_hw->timerawl - ts) > SUSPEND_HARD_MAX_US)
+            return -7;
+    }
+    return (chip_status(CMD_READ_STATUS2) & STATUS2_SUSPENDED) ? PIECE_SUSPENDED : PIECE_DONE;
+}
+
+void flash_op_flight_begin(void) {
+    uint32_t s = spin_lock_blocking(lk_lock);
+    flight = true;
+    spin_unlock(lk_lock, s);
+}
+
+void flash_op_flight_end(void) {
+    uint32_t t0 = timer_hw->timerawl;
+    for (;;) {
+        uint32_t s = spin_lock_blocking(lk_lock);
+        bool idle = !piece_busy || (uint32_t)(timer_hw->timerawl - t0) > PIECE_HARD_MAX_US;
+        if (idle)
+            flight = false;
+        spin_unlock(lk_lock, s);
+        if (idle)
+            return;
+    }
+}
+
+bool flash_op_in_flight(void) {
+    return flight;
+}
+
+void flash_op_set_writer(void *task) {
+    writer = (TaskHandle_t)task;
+}
+
+typedef struct {
+    flash_slot_kind_t kind;
+    uint32_t off;
+    const uint8_t *data;
+    uint32_t len;
+} whole_args_t;
+
+/* After a resume the operation runs to its end: the lockout's case, after
+ * landing. */
+static void __no_inline_not_in_flash_func(do_resume_finish)(void *a) {
+    (void)a;
+    chip_cmd(CMD_RESUME);
+    while (chip_status(CMD_READ_STATUS) & STATUS_BUSY) {
+    }
+}
+
+static void do_whole(void *a) {
+    const whole_args_t *w = (const whole_args_t *)a;
+    span_t sp = {w->off, w->data, w->len};
+    if (w->kind == SLOT_ERASE)
+        do_erase(&sp);
+    else
+        do_program_bytes(&sp);
+}
+
+static uint32_t io_now(void *ctx) {
+    (void)ctx;
+    return timer_hw->timerawl;
+}
+
+static uint32_t io_t0(void *ctx) {
+    (void)ctx;
+    return core1_frame_t0();
+}
+
+static void io_next_slot(void *ctx) {
+    (void)ctx;
+    slot_stats.slot_waits++;
+    core1_frame_writer_done();
+    core1_frame_wait(2u * LOOP_PERIOD_MS);
+}
+
+static bool io_in_flight(void *ctx) {
+    (void)ctx;
+    return flight;
+}
+
+static int io_whole(void *ctx, flash_slot_kind_t kind, bool resume, uint32_t addr, const uint8_t *data, uint32_t len) {
+    (void)ctx;
+    whole_args_t w = {kind, addr, data, len};
+    return flash_op(resume ? do_resume_finish : do_whole, &w);
+}
+
+static int io_piece(void *ctx, flash_slot_kind_t kind, uint32_t addr, const uint8_t *data, uint32_t len,
+                    const flash_piece_t *p) {
+    uint32_t s = spin_lock_blocking(lk_lock);
+    bool go = flight;
+    if (go)
+        piece_busy = true;
+    spin_unlock(lk_lock, s);
+    if (!go)
+        return io_whole(ctx, kind, p->resume, addr, data, len);
+    const flash_timing_t *t = (const flash_timing_t *)ctx;
+    piece_args_t a = {kind, addr, data, len, p, t ? t->suspend_us : 0u};
+    uint32_t irq = save_and_disable_interrupts();
+    uint32_t t0 = timer_hw->timerawl;
+    int rc = run_piece(&a);
+    flash_op_seq++;
+    uint32_t d = timer_hw->timerawl - t0;
+    piece_busy = false;
+    restore_interrupts(irq);
+    slot_stats.pieces++;
+    if (rc == PIECE_SUSPENDED)
+        slot_stats.suspends++;
+    if (d > slot_stats.piece_max_us)
+        slot_stats.piece_max_us = d;
+    return rc;
+}
+
+static int slot_op(flash_slot_kind_t kind, uint32_t off, const uint8_t *data, uint32_t len) {
+    if (flight && xTaskGetCurrentTaskHandle() != writer) {
+        slot_stats.flight_refusals++;
+        refusals++;
+        return -4;
+    }
+    uint8_t jedec[3];
+    flash_chip_jedec(jedec);
+    const flash_timing_t *t = flash_timing_for(jedec);
+    flash_slot_io_t io = {(void *)t, io_now, io_t0, io_next_slot, io_in_flight, io_piece, io_whole};
+    int rc = flash_slot_run(&io, t, kind, off, data, len);
+    if (rc == 0) {
+        if (kind == SLOT_ERASE)
+            erases++;
+        else
+            programs++;
+    }
+    return rc;
+}
+
+int flash_op_slot_erase(uint32_t offset) {
+    return slot_op(SLOT_ERASE, offset, NULL, FLASH_SECTOR_SIZE);
+}
+
+int flash_op_slot_program(uint32_t offset, const uint8_t *data, uint32_t len) {
+    if (!len || len > FLASH_PAGE_SIZE || (offset % FLASH_PAGE_SIZE) + len > FLASH_PAGE_SIZE)
+        return -4;
+    return slot_op(SLOT_PROGRAM, offset, data, len);
+}
+
+void flash_op_slot_stats(flash_op_slot_stats_t *out) {
+    *out = slot_stats;
 }

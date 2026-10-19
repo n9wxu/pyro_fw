@@ -28,7 +28,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | FLT-PHASE-04 | A flight state that is none of the defined states shall be FAULT, announced as a general fault | test_flight_pad.c: test_FLT_PHASE_04_a_state_that_is_no_state_is_a_fault | ✅ |
 | FLT-RT-01 | No network, script or storage activity shall delay a flight decision or a pulse by more than the... | test_flight_profiles.c: test_FLT_RATE_05_a_late_loop_changes_no_decision, test_FLT_RT_01_other_activity_delays_no_decision_past_the_bound; the suite test_http_work.c; The bound on each board is declared and not yet measured on this revision: `loop_late_max_us` on `/api/status` | ✅ |
 | FLT-RT-02 | From launch to landing, the flight task, every interrupt handler on its core and every kernel path they... | — | ⚠️ |
-| FLT-RT-03 | From launch to landing no flash operation shall stop or delay the flight task | Through FLT-LOG-09 | ⚠️ |
+| FLT-RT-03 | From launch to landing no flash operation shall stop or delay the flight task | Through FLT-LOG-09 | ✅ |
 | FLT-RT-04 | The flight task shall run every 10 ms | Structure: `support/structure_check.py` | ✅ |
 | FLT-LAUNCH-02 | The system shall remain in PAD_IDLE while the rocket is at or below 100 feet above the ground reference | test_flight_pad.c: test_CFG_10_a_saved_change_waits_for_the_next_start, test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch, test_FLT_LAUNCH_02_below_100_ft_is_not_a_launch; test_launch_detector.c: test_FLT_LAUNCH_02_below_100_ft_is_not_a_launch; test_recorded_flight.c: test_TST_02_launch_is_detected_as_the_rocket_leaves | ✅ |
 | FLT-LAUNCH-03 | T+0 shall be the time of the first sample of the rise more than 50 cm above the pad, not the moment of... | test_flight_pad.c: test_CFG_10_a_saved_change_waits_for_the_next_start, test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch; test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order, test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise; test_telemetry.c: test_TEL_11_each_event_is_carried_once_by_the_next_message | ✅ |
@@ -153,8 +153,8 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | FLT-LOG-06 | A flight that never lands shall keep its record | test_vfs_flash.c: test_FLT_LOG_06_a_sync_survives_a_reset, test_space_from_the_files, test_WEB_API_12_a_synced_second_takes_whole_pages; the suite test_flight_log.c | ✅ |
 | FLT-LOG-07 | The flight log shall keep a row for every sample of every flight cycle, and every event row at its own... | test_config.c: test_config_parse_new_fields, test_config_a_log_rate_is_an_unknown_key, test_config_writes_no_inert_keys; test_flight_log.c: test_FLOG_01_the_header_renders_with_every_sample_kept; test_flight_profiles.c: test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise, test_FLT_LOG_07_every_sample_is_a_row; Hardware: `support/api_check.py` | ✅ |
 | FLT-LOG-08 | Records the flight log could not keep shall be counted and reported on /api/status | the suite test_status_json.c | ✅ |
-| FLT-LOG-09 | The flight log's writer shall have the first 3 ms of each period, and shall start a flash operation only... | Through FLT-LOG-10 | ⚠️ |
-| FLT-LOG-10 | From launch to landing the writer shall erase only when the log has no erased page left to write | — | ⚠️ |
+| FLT-LOG-09 | The flight log's writer shall have the first 3 ms of each period, and shall start a flash operation only... | test_flash_slot.c: test_FLT_LOG_09_every_fitted_part_is_known, test_FLT_LOG_09_an_unlisted_part_has_no_figures, test_FLT_LOG_09_every_listed_program_fits_an_empty_slot, test_FLT_LOG_09_the_writer_has_the_first_3_ms and 6 more | ✅ |
+| FLT-LOG-10 | From launch to landing the writer shall erase only when the log has no erased page left to write | test_flash_slot.c: test_FLT_LOG_10_an_erase_is_suspended_at_each_slot_end_and_resumed, test_FLT_LOG_10_an_unlisted_parts_erase_is_refused_in_flight, test_FLT_LOG_10_an_erase_suspended_at_landing_is_finished_whole, test_FLT_LOG_10_a_chip_that_never_finishes_is_given_up; test_vfs_flash.c: test_WEB_API_12_a_synced_second_takes_whole_pages, test_FLT_LOG_10_a_log_out_of_erased_pages_says_so_and_a_cleanup_makes_room | ✅ |
 | BUZ-03 | The system shall play an altitude beep-out sequence after landing, holding it while a USB host is attached... | test_flight_profiles.c: test_FLT_RT_01_other_activity_delays_no_decision_past_the_bound, test_BUZ_03_the_peak_is_beeped_out_after_landing, test_BUZ_03_the_beep_out_is_held_on_usb_and_resumes | ✅ |
 | BUZ-04 | The altitude beep-out shall encode each digit of the peak altitude in configured units | test_buzzer.c: test_BUZ_PAT_02_counted_codes, test_BUZ_PAT_03_altitude_165_digits, test_BUZ_PAT_07_gap_between_passes, test_BUZ_PAT_08_altitude_1000_zero_digits and 1 more; test_flight_profiles.c: test_BUZ_03_the_peak_is_beeped_out_after_landing | ✅ |
 | BUZ-05 | The digit 0 shall be encoded as 10 beeps | test_buzzer.c: test_BUZ_PAT_07_gap_between_passes, test_BUZ_PAT_08_altitude_1000_zero_digits, test_BUZ_PAT_09_altitude_10000 | ✅ |
@@ -336,7 +336,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | LUA-RUN-01 | The enabled script shall always run | `lua_app_service()` is called every loop whatever the flight state, by inspection. Bench check owed: a script running through a bench flight and through ground test mode | ⚠️ |
 | LUA-RUN-02 | The script's on_event() shall be offered every flight event the flight log records, by its logged name, in... | test_flight_profiles.c: test_PYR_MODE_01_delay_after_apogee, test_LUA_RUN_02_each_flight_event_is_offered_to_the_script; the suite test_lua.c | ✅ |
 | LUA-RUN-03 | The state names a script compares against (flight.<NAME>) shall carry the flight software's own state values | the suite test_lua.c | ✅ |
-| LUA-RUN-04 | The script shall have up to 6.5 ms of each period, from the end of the log writer's slot, or from the... | — | ⚠️ |
+| LUA-RUN-04 | The script shall have up to 6.5 ms of each period, from the end of the log writer's slot, or from the... | test_flash_slot.c: test_LUA_RUN_04_lua_has_6_5_ms_ending_by_9_5 | ✅ |
 | LUA-MGT-01 | The web interface shall edit, check, save and remove the script | the suite test_lua.c; Web UI: test_ui.spec.js | ✅ |
 | LUA-MGT-02 | A console shall show the script's output and errors, and whether the script is running or why it is not | Web UI: test_ui.spec.js | ✅ |
 | LUA-IO-01 | The web UI shall export the script to a local file and import one back, so a program survives the loss of... | Web UI: test_ui.spec.js | ✅ |
@@ -456,8 +456,8 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host test, a web test or a structural check | 313 |
-| ⚠️ Not verified, or not wholly | 29 |
+| ✅ Verified by a host test, a web test or a structural check | 317 |
+| ⚠️ Not verified, or not wholly | 25 |
 | ❌ Not implemented | 0 |
 | ✅ HW (verified on hardware only) | 12 |
 

@@ -371,8 +371,11 @@ add_executable(pyro_fw_c
     src/fs_flash.c
     src/vfs_flash.c
     src/flash_op.c
+    src/flash_slot.c
+    src/flash_timing.c
     src/vfs.c
     src/rtos/rtos_tasks.c
+    src/rtos/core1_frame.c
     src/net_task.c
     src/storage_task.c
     src/pin_caps.c
@@ -865,6 +868,20 @@ add_custom_target(log_live_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_log_live
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Flight log held for the host tests"
+)
+
+# The log writer's flash operations inside its slots [FLT-LOG-09, FLT-LOG-10,
+# LUA-RUN-04].
+add_custom_target(flash_slot_tests
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_flash_slot.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flash_slot.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flash_timing.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_flash_slot
+    COMMAND ${CMAKE_BINARY_DIR}/test_flash_slot
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flash operations in the log writer's slots tests"
 )
 
 add_custom_target(net_txq_tests

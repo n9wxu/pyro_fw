@@ -58,6 +58,8 @@
 #include "http_conn.h"
 #include "http_routes.h"
 #include "flash_chip.h"
+#include "flash_timing.h"
+#include "core1_frame.h"
 #include "ota_bounds.h"
 #include "http_server.h"
 #include "http_work.h"
@@ -886,6 +888,23 @@ static bool status_capture(status_snap_t *s) {
     s->flash_erases = flash_op_erases();
     s->flash_programs = flash_op_programs();
     s->flash_deferrals = flash_op_waits();
+    uint8_t jedec[3];
+    flash_chip_jedec(jedec);
+    const flash_timing_t *ft = flash_timing_for(jedec);
+    s->flash_part = ft ? ft->part : "";
+    s->flash_in_flight = flash_op_in_flight();
+    core1_frame_stats_t fr;
+    core1_frame_stats(&fr);
+    s->frame_writer_max_us = fr.writer_max_us;
+    s->frame_writer_overruns = fr.writer_overruns;
+    s->lua_skipped = fr.lua_skipped;
+    flash_op_slot_stats_t ss;
+    flash_op_slot_stats(&ss);
+    s->slot_pieces = ss.pieces;
+    s->slot_suspends = ss.suspends;
+    s->slot_waits = ss.slot_waits;
+    s->flight_refusals = ss.flight_refusals;
+    s->piece_max_us = ss.piece_max_us;
 
     const pin_assign_t *pa = pin_store_current();
     snprintf(s->pins_reason, sizeof(s->pins_reason), "%s", pin_store_reason());

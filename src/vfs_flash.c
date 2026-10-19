@@ -109,7 +109,7 @@ int vfs_flash_write(vfs_flash_file_t *f, const void *buf, uint32_t n) {
     int32_t k = alfs_file_write(&store, &f->u.w, buf, n);
     fs_unlock();
     if (k < 0)
-        return VFS_FLASH_ERR;
+        return k == ALFS_ENOSPC ? VFS_FLASH_NOSPC : VFS_FLASH_ERR;
     f->written += (uint32_t)k;
     return (int)k;
 }

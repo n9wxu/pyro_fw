@@ -40,6 +40,7 @@ enum { VFS_NONE = 0, VFS_FLASH, VFS_FAT };
 
 /* Errors: VFS_NOENT for no such file, VFS_ERR for anything else, a path
  * vfs_path_ok() refuses included. */
+#define VFS_NOSPC VFS_FLASH_NOSPC
 #define VFS_NOENT VFS_FLASH_NOENT
 #define VFS_ERR VFS_FLASH_ERR
 

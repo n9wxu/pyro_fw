@@ -8,6 +8,7 @@
 #include "task.h"
 #include "semphr.h"
 #include "flash_op.h"
+#include "core1_frame.h"
 #if PYRO_HAS_SD
 #include "hr_log.h"
 #endif
@@ -92,13 +93,6 @@ void flight_call_service(void) {
     call_state = CALL_DONE;
 }
 
-/* ── Hand-offs ────────────────────────────────────────────────────── */
-
-void rtos_notify_storage(void) {
-    if (h_storage)
-        xTaskNotifyGive(h_storage);
-}
-
 /* ── The storage task's check-in ──────────────────────────────────── */
 
 /* A pass of the storage task takes at most one sector erase, 400 ms, and
@@ -143,6 +137,8 @@ void rtos_start(struct flight_context_t *ctx) {
         xTaskCreateStaticAffinitySet(net_task, "net", NET_STACK_WORDS, NULL, PRIO_P, stack_net, &tcb_net, CORE1_ONLY);
     h_storage = xTaskCreateStaticAffinitySet(storage_task, "storage", STORAGE_STACK_WORDS, NULL, PRIO_P, stack_storage,
                                              &tcb_storage, CORE1_ONLY);
+    core1_frame_attach_storage(h_storage);
+    flash_op_set_writer(h_storage);
 #if PYRO_HAS_LUA
     lua_task_create();
 #endif

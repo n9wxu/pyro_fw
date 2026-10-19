@@ -22,6 +22,7 @@
 #include "hal_storage.h"
 #include "flash_op.h"
 #include "rtos_tasks.h"
+#include "core1_frame.h"
 #include "pin_store.h"
 #include "board_if.h"
 #include "flight_states.h"
@@ -207,7 +208,11 @@ void flight_task(void *arg) {
         if (fires - fires_seen > 1u)
             loop_overruns += fires - fires_seen - 1u;
         fires_seen = fires;
-        uint32_t late = (uint32_t)(time_us_64() - (period_target_us - LOOP_PERIOD_US));
+        uint64_t period_t0 = period_target_us - LOOP_PERIOD_US;
+        /* Core1's frame starts with the period: the log writer's slot, then
+         * Lua's [FLT-LOG-09, LUA-RUN-04]. Never waits. */
+        core1_frame_begin((uint32_t)period_t0);
+        uint32_t late = (uint32_t)(time_us_64() - period_t0);
         if (late < LOOP_PERIOD_US && late > loop_late_max_us)
             loop_late_max_us = late;
 
@@ -262,11 +267,6 @@ void flight_task(void *arg) {
         lua_app_service(ctx, now);
         lua_app_dispatch();
 #endif
-
-        /* The flight log's ring and the pad marker are the storage task's to
-         * write: wake it. Never waits. */
-        STAGE(7);
-        rtos_notify_storage();
 
         STAGE(STAGE_SLACK);
         uint32_t work_us = time_us_32() - iter_t0;

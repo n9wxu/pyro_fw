@@ -23,7 +23,7 @@
  * board_id and board_selftest keys were caught: the bound has to move
  * deliberately, and it has to stay under HTTP_WORK_SIZE, which the
  * _Static_assert in http_server.c checks. */
-#define STATUS_JSON_MAX 3500
+#define STATUS_JSON_MAX 3800
 
 typedef struct {
     const char *state;
@@ -109,6 +109,13 @@ typedef struct {
     char flash_jedec[7];
     uint32_t flash_kb; /* the size the chip declares; 0 if it does not */
     char flash_uid[33];
+    /* Core1's frame and the log writer's slots [FLT-LOG-09, FLT-LOG-10,
+     * LUA-RUN-04]: the part the writer plans by ("" when unlisted), whether
+     * the flight's flash operations run in slots now, and their counts. */
+    const char *flash_part;
+    bool flash_in_flight;
+    uint32_t frame_writer_max_us, frame_writer_overruns, lua_skipped;
+    uint32_t slot_pieces, slot_suspends, slot_waits, flight_refusals, piece_max_us;
 } status_snap_t;
 
 /* Returns the length written, NUL-terminated, or -1 when it does not fit:

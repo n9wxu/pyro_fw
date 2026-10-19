@@ -38,6 +38,9 @@ void flash_chip_set(const uint8_t jedec[3], const uint8_t uid[FLASH_CHIP_UID_MAX
 
 uint32_t flash_chip_bytes(void);
 
+/* The JEDEC ID's three bytes, as read at boot. */
+void flash_chip_jedec(uint8_t out[3]);
+
 /* The unique ID's bytes, at the maker's length, which is returned. */
 int flash_chip_uid(uint8_t out[FLASH_CHIP_UID_MAX]);
 
