@@ -201,7 +201,7 @@ requestAnimationFrame(frame);
 
 `flight_state_t` in `src/flight_states.h`: states are appended, never renumbered. The
 descent phase comes from the measured rate, not from which pyro fired (DD-023). Pressure is
-read every 20 ms of simulated time in every state (DD-065).
+read every 20 ms of simulated time in every state.
 
 The boot sequence runs automatically and reaches PAD_IDLE about 2.7 s after power-on. The
 flight computer detects launch at 100 ft above the ground reference while climbing faster than

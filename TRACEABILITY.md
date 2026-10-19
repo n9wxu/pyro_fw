@@ -29,7 +29,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | FLT-RT-01 | No network, script or storage activity shall delay a flight decision or a pulse by more than the... | test_flight_profiles.c: test_FLT_RATE_05_a_late_loop_changes_no_decision, test_FLT_RT_01_other_activity_delays_no_decision_past_the_bound; the suite test_http_work.c; The bound on each board is declared and not yet measured on this revision: `loop_late_max_us` on `/api/status` | ✅ |
 | FLT-RT-02 | From launch to landing, the flight task, every interrupt handler on its core and every kernel path they... | — | ⚠️ |
 | FLT-RT-03 | From launch to landing no flash operation shall stop or delay the flight task | Through FLT-LOG-09 | ⚠️ |
-| FLT-RT-04 | The flight task shall run every 10 ms | — | ⚠️ |
+| FLT-RT-04 | The flight task shall run every 10 ms | Structure: `support/structure_check.py` | ✅ |
 | FLT-LAUNCH-02 | The system shall remain in PAD_IDLE while the rocket is at or below 100 feet above the ground reference | test_flight_pad.c: test_CFG_10_a_saved_change_waits_for_the_next_start, test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch, test_FLT_LAUNCH_02_below_100_ft_is_not_a_launch; test_launch_detector.c: test_FLT_LAUNCH_02_below_100_ft_is_not_a_launch; test_recorded_flight.c: test_TST_02_launch_is_detected_as_the_rocket_leaves | ✅ |
 | FLT-LAUNCH-03 | T+0 shall be the time of the first sample of the rise more than 50 cm above the pad, not the moment of... | test_flight_pad.c: test_CFG_10_a_saved_change_waits_for_the_next_start, test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch; test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order, test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise; test_telemetry.c: test_TEL_11_each_event_is_carried_once_by_the_next_message | ✅ |
 | FLT-LAUNCH-04 | The system shall log a LAUNCH event at the transition | test_flight_pad.c: test_CFG_10_a_saved_change_waits_for_the_next_start, test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch; test_flight_profiles.c: test_FLT_LAND_02_a_slow_descent_is_not_a_landing, test_DAT_04_the_events_of_a_flight_in_order | ✅ |
@@ -456,8 +456,8 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host test, a web test or a structural check | 312 |
-| ⚠️ Not verified, or not wholly | 30 |
+| ✅ Verified by a host test, a web test or a structural check | 313 |
+| ⚠️ Not verified, or not wholly | 29 |
 | ❌ Not implemented | 0 |
 | ✅ HW (verified on hardware only) | 12 |
 

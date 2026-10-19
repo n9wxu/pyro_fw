@@ -75,6 +75,8 @@ def main():
     rule("PYR-FIRE-01", "a fire is refused",
          find(sources + ["boards/mk1a/pyro_board.c", "boards/mk1b/pyro_board.c", "boards/mk1c/pyro_board.c",
                          "boards/mk1c/pyro_sequence.c"], r"REFUSED|_refusal\b|refuse_fire"))
+    rule("FLT-RT-04", "the flight task's period is not 10 ms",
+         [] if re.search(r"#define LOOP_PERIOD_MS 10u\b", read("src/loop_period.h")) else ["src/loop_period.h"])
     rule("SNS-ALT-01", "an altitude is clamped",
          find(flight, r"ALT(ITUDE)?_(MAX|CEILING|CLAMP)|8000\.0f\s*\)|MAX_ALTITUDE_M\b"))
 

@@ -32,8 +32,7 @@
 #include "hardware/structs/watchdog.h"
 #include "hardware/structs/usb.h"
 
-/* Each period takes the MS5607 conversion the last one commanded and
- * commands the next [DD-051]; the period is loop_period.h's [DD-065]. */
+/* The period is loop_period.h's [FLT-RT-04, DD-104]. */
 #include "loop_period.h"
 
 /* Twice the board's declared worst case, so a board that exceeds its own

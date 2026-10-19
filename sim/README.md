@@ -117,7 +117,7 @@ PAD_IDLE comes about 2.7 s after power-on, and the ground reference is a 5 s
 rolling mean (GND-CAL-01), so the example ignites at 9 s, as `sim/sim_cli.c`
 does. Ignite before PAD_IDLE and the board calibrates on the way up, reading
 every altitude low. The HAL feeds the pressure layer one reading per 20 ms of
-simulated time, the hardware's loop (DD-065), so tick at least that often.
+simulated time, so tick at least that often.
 
 ### 3. Use with script tags (no modules)
 

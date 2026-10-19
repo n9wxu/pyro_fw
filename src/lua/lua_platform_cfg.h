@@ -67,7 +67,7 @@ int lua_plat_configure_bridge(uint8_t channel_pin, uint8_t common_pin, const cha
 uint32_t lua_plat_bridge_dropped(void);
 
 /* Software PWM: the Lua task advances one phase per tick, so the period is
- * LUA_PWM_STEPS ticks -- 2 s at the 20 ms loop (loop_period.h). A duty of 0
+ * LUA_PWM_STEPS ticks -- 1 s at the 10 ms loop (loop_period.h). A duty of 0
  * and of 100 are steady levels. */
 #define LUA_PWM_STEPS 100u
 

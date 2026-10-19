@@ -2,7 +2,7 @@
 
 ## Overview
 
-Core0 runs one loop every 20 ms (`src/loop_period.h`, DD-065). The sensors,
+Core0 runs one loop every 10 ms (`src/loop_period.h`, DD-104). The sensors,
 telemetry TX and the buzzer run on their own: interrupt handlers and
 cooperative tasks the loop steps, with nothing waiting (DD-053). The flight
 software reads one sample at a time from the pressure layer and emits events.

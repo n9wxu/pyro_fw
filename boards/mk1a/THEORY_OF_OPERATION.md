@@ -69,8 +69,8 @@ inputs, and starts the first continuity check.
 
 ## The main loop
 
-The shared loop (`src/main_hardware.c`) runs every 20 ms (`src/loop_period.h`,
-DD-065) and calls `pyro_update()` from its outputs stage. `pyro_update()` either
+The shared loop (`src/main_hardware.c`) runs every 10 ms (`src/loop_period.h`,
+DD-104) and calls `pyro_update()` from its outputs stage. `pyro_update()` either
 ends a fire pulse or advances the continuity check by one step. Nothing waits
 (DD-053): every settle is a deadline a later iteration checks.
 
@@ -116,7 +116,7 @@ first check completes, every channel reads open.
 
 **The settle is the slow edge.** Going low is fast (1 kΩ into 100 nF,
 100 µs), but reading open means charging C6/C5 through 101 kΩ, a 10.1 ms
-constant; 50 ms is five of them. That cannot be a wait inside a 20 ms loop, so
+constant; 50 ms is five of them. That cannot be a wait inside a 10 ms loop, so
 each step parks on a deadline. Holding the low side on only 50 ms in 500 keeps
 the exposure small if a high side ever leaks.
 
@@ -252,6 +252,6 @@ erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
 - `docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf`,
   `rp2040-datasheet_2025-02-20.pdf`, `UM10204_I2C-bus_Rev7.0_2021-10.pdf`
 - DD-052 (bus speeds), DD-053 (no waits), DD-059 (MK1B reads as MK1A does),
-  DD-065 (the 20 ms loop), DD-093 (the pressure collector), DD-068
+  DD-104 (the 10 ms loop), DD-093 (the pressure collector), DD-068
   (conversions beside a flash operation), DD-069 (bounded transfers), DD-071
   (the ground test switch) in `DECISIONS.md`
