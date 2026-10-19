@@ -9,7 +9,10 @@
  *                         tPP p. 55; tSE p. 56, revised to 800 ms
  *   BY25Q64ES (MK1B-8MB)  BY25Q64ES_Rev2.9_2024-10-29.pdf: erase suspend only,
  *                         and a program allowed while suspended, p. 62; tESL,
- *                         tERS, tPP, tSE p. 71-72, the slower of its tables
+ *                         tERS, tPP, tSE p. 71-72, the slower of its tables.
+ *                         Its erase, resumed and suspended in each slot on
+ *                         MK1B-8MB, had not ended after 2,000 slots: by
+ *                         measurement it does not suspend [FLT-LOG-10].
  *
  * SPDX-License-Identifier: MIT
  */
@@ -27,7 +30,7 @@ static const part_t parts[] = {
     {{0xEF, 0x40, 0x18}, {"W25Q128JV", 3000u, 400000u, 20u, 20u, true, true}},
     {{0xEF, 0x70, 0x18}, {"W25Q128JV", 3000u, 400000u, 20u, 20u, true, true}},
     {{0x0B, 0x40, 0x18}, {"XT25F128F", 2000u, 800000u, 20u, 500u, true, true}},
-    {{0x68, 0x40, 0x17}, {"BY25Q64ES", 2400u, 400000u, 35u, 20u, false, true}},
+    {{0x68, 0x40, 0x17}, {"BY25Q64ES", 2400u, 400000u, 35u, 20u, false, false}},
 };
 
 const flash_timing_t *flash_timing_for(const uint8_t jedec[3]) {

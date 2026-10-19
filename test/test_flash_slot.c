@@ -254,7 +254,8 @@ void test_FLT_LOG_09_a_piece_that_can_suspend_is_told_when(void) {
 
 /* Every listed part, at its datasheet's worst program and erase, begun
  * anywhere in a frame: no piece runs past the writer's slot, none begins
- * outside it, and the chip ignores no suspend. */
+ * outside it, and the chip ignores no suspend. An erase that does not end
+ * in pieces runs none [FLT-LOG-10]. */
 void test_FLT_LOG_09_no_piece_runs_past_the_writers_slot(void) {
     const uint8_t *all[] = {W25Q16JV, W25Q128JV, XT25F128F, BY25Q64ES};
     for (unsigned i = 0; i < 4; i++) {
@@ -262,12 +263,14 @@ void test_FLT_LOG_09_no_piece_runs_past_the_writers_slot(void) {
         for (uint32_t start = 0; start < LOOP_PERIOD_US; start += 37u) {
             for (int k = 0; k < 2; k++) {
                 flash_slot_kind_t kind = k ? SLOT_ERASE : SLOT_PROGRAM;
+                bool refused = kind == SLOT_ERASE && !t->erase_suspends;
                 fresh(all[i], k ? t->erase_max_us : t->program_max_us, start);
-                TEST_ASSERT_EQUAL_INT_MESSAGE(0, flash_slot_run(&io, chip.t, kind, 0, NULL, 0), t->part);
+                TEST_ASSERT_EQUAL_INT_MESSAGE(refused ? FLASH_SLOT_EREFUSED : 0,
+                                              flash_slot_run(&io, chip.t, kind, 0, NULL, 0), t->part);
                 TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, chip.over_us, t->part);
                 TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, chip.piece_in_slot, t->part);
                 TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, chip.ignored, t->part);
-                TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, chip.starts, t->part);
+                TEST_ASSERT_EQUAL_UINT32_MESSAGE(refused ? 0u : 1u, chip.starts, t->part);
             }
         }
     }
