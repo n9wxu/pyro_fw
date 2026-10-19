@@ -32,7 +32,11 @@ static bool dirty = true;
 static uint8_t copy_rblk[PAGE_MAX], copy_wblk[PAGE_MAX];
 
 static int err(int rc) {
-    return rc == ALFS_ENOENT ? VFS_FLASH_NOENT : (rc < 0 ? VFS_FLASH_ERR : rc);
+    if (rc == ALFS_ENOENT)
+        return VFS_FLASH_NOENT;
+    if (rc == ALFS_ENOSPC)
+        return VFS_FLASH_NOSPC;
+    return rc < 0 ? VFS_FLASH_ERR : rc;
 }
 
 int vfs_flash_mount(const alfs_area_t *area, const alfs_driver_t *drv, bool w) {
@@ -109,7 +113,7 @@ int vfs_flash_write(vfs_flash_file_t *f, const void *buf, uint32_t n) {
     int32_t k = alfs_file_write(&store, &f->u.w, buf, n);
     fs_unlock();
     if (k < 0)
-        return k == ALFS_ENOSPC ? VFS_FLASH_NOSPC : VFS_FLASH_ERR;
+        return err((int)k);
     f->written += (uint32_t)k;
     return (int)k;
 }

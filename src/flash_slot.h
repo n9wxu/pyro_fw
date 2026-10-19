@@ -25,9 +25,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* The command's own time on the bus, the poll's step and the clock's
- * resolution, against the slot's end. */
-#define FLASH_SLOT_MARGIN_US 100u
+/* What a piece costs beside the chip's own time, measured on MK1C: each
+ * command through the SDK's flash_do_cmd() hands XIP back, about 100 us.
+ * A start is the write enable and the command, and the end is seen a poll
+ * late; a suspend is the poll that sees its time, the command, its settle
+ * and the polls until the chip reads idle. */
+#define FLASH_SLOT_START_US 300u
+#define FLASH_SLOT_SUSPEND_US 500u
 
 /* Slots one operation may take: the slowest listed erase, 800 ms, over the
  * slot's useful part, with room to spare. Past it the operation is given up. */

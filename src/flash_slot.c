@@ -18,12 +18,12 @@ bool flash_slot_plan(const flash_timing_t *t, flash_slot_kind_t kind, bool resum
     out->resume = resume;
     out->may_suspend = suspends;
     if (suspends) {
-        out->suspend_from = now + t->resume_hold_us;
-        out->suspend_at = slot_end - t->suspend_us - FLASH_SLOT_MARGIN_US;
+        out->suspend_from = now + FLASH_SLOT_START_US + t->resume_hold_us;
+        out->suspend_at = slot_end - t->suspend_us - FLASH_SLOT_SUSPEND_US;
         return before_or_at(out->suspend_from, out->suspend_at);
     }
     out->suspend_from = out->suspend_at = 0;
-    return kind == SLOT_PROGRAM && before_or_at(now + t->program_max_us + FLASH_SLOT_MARGIN_US, slot_end);
+    return kind == SLOT_PROGRAM && before_or_at(now + FLASH_SLOT_START_US + t->program_max_us, slot_end);
 }
 
 /* A part with no figures: its program alone, whole, from a slot's start. */

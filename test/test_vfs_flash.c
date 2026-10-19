@@ -325,6 +325,10 @@ static void test_FLT_LOG_10_a_log_out_of_erased_pages_says_so_and_a_cleanup_make
         rc = vfs_flash_write(&f, chunk, sizeof(chunk));
     TEST_ASSERT_EQUAL(VFS_FLASH_NOSPC, rc);
     TEST_ASSERT_EQUAL_MESSAGE(e0, erases, "a write erased");
+    vfs_flash_file_t g;
+    TEST_ASSERT_EQUAL_MESSAGE(VFS_FLASH_NOSPC, vfs_flash_open(&g, "next_log.bin", VFS_FLASH_WRITE, rbuf),
+                              "an open with no erased page says so too");
+    TEST_ASSERT_EQUAL(e0, erases);
     TEST_ASSERT_EQUAL(1, vfs_flash_clean());
     TEST_ASSERT_EQUAL(e0 + 1u, erases);
     TEST_ASSERT_EQUAL((int)sizeof(chunk), vfs_flash_write(&f, chunk, sizeof(chunk)));

@@ -14,7 +14,11 @@
 #include <string.h>
 
 #define WAKE_US 30u /* the writer's wake after the period's start */
-#define CMD_US 20u  /* a command on the bus */
+/* What a piece costs beside the chip's own time, as measured on MK1C: each
+ * command through the SDK's flash_do_cmd() hands XIP back, about 100 us. */
+#define START_US 200u   /* write enable and the command */
+#define POLL_US 100u    /* a status poll: the end is seen this late at most */
+#define SUSPEND_US 400u /* the suspend, its settle and the polls after it */
 
 static const uint8_t W25Q16JV[3] = {0xEF, 0x40, 0x15};
 static const uint8_t W25Q128JV[3] = {0xEF, 0x40, 0x18};
@@ -87,26 +91,26 @@ static int piece(void *v, flash_slot_kind_t kind, uint32_t addr, const uint8_t *
         c->work_left = c->work_total;
         c->starts++;
     }
+    c->now += START_US;
     c->resumed_at = c->now;
-    c->now += CMD_US;
     int rc = PIECE_DONE;
     uint32_t at = p->suspend_at;
     if ((int32_t)(p->suspend_from - at) > 0)
         at = p->suspend_from;
     if (!p->may_suspend || (int32_t)(c->now + c->work_left - at) <= 0) {
-        c->now += c->work_left;
+        c->now += c->work_left + POLL_US;
         c->work_left = 0;
     } else {
         uint32_t ran = (int32_t)(at - c->now) > 0 ? at - c->now : 0u;
         c->work_left -= ran;
-        c->now += ran;
+        c->now += ran + POLL_US;
         bool can = (kind == SLOT_ERASE) ? c->t->erase_suspends : c->t->program_suspends;
         if (!can || c->now - c->resumed_at < c->t->resume_hold_us) {
             c->ignored++;
             c->now += c->work_left;
             c->work_left = 0;
         } else {
-            c->now += c->t->suspend_us;
+            c->now += c->t->suspend_us + SUSPEND_US;
             c->suspended = true;
             c->suspends++;
             rc = PIECE_SUSPENDED;
@@ -132,7 +136,7 @@ static int whole(void *v, flash_slot_kind_t kind, bool resume, uint32_t addr, co
         c->work_left = c->work_total;
         c->starts++;
     }
-    c->now += CMD_US + c->work_left;
+    c->now += START_US + c->work_left;
     c->work_left = 0;
     return PIECE_DONE;
 }
@@ -171,8 +175,10 @@ void test_FLT_LOG_09_every_listed_program_fits_an_empty_slot(void) {
     for (unsigned i = 0; i < 4; i++) {
         const flash_timing_t *t = flash_timing_for(all[i]);
         TEST_ASSERT_TRUE_MESSAGE(t->erase_suspends, t->part);
-        uint32_t need = t->program_suspends ? t->resume_hold_us + t->suspend_us : t->program_max_us;
-        TEST_ASSERT_TRUE_MESSAGE(WAKE_US + CMD_US + need + FLASH_SLOT_MARGIN_US <= FRAME_WRITER_US, t->part);
+        uint32_t need = t->program_suspends
+                            ? FLASH_SLOT_START_US + t->resume_hold_us + t->suspend_us + FLASH_SLOT_SUSPEND_US
+                            : FLASH_SLOT_START_US + t->program_max_us;
+        TEST_ASSERT_TRUE_MESSAGE(WAKE_US + need <= FRAME_WRITER_US, t->part);
     }
 }
 
@@ -206,9 +212,9 @@ void test_FLT_LOG_09_a_program_that_cannot_suspend_starts_only_where_it_fits(voi
     flash_piece_t p;
     TEST_ASSERT_TRUE(flash_slot_plan(t, SLOT_PROGRAM, false, t0 + 100u, end, &p));
     TEST_ASSERT_FALSE(p.may_suspend);
-    TEST_ASSERT_TRUE(flash_slot_plan(t, SLOT_PROGRAM, false, end - t->program_max_us - FLASH_SLOT_MARGIN_US, end, &p));
-    TEST_ASSERT_FALSE(
-        flash_slot_plan(t, SLOT_PROGRAM, false, end - t->program_max_us - FLASH_SLOT_MARGIN_US + 1u, end, &p));
+    uint32_t last = end - t->program_max_us - FLASH_SLOT_START_US;
+    TEST_ASSERT_TRUE(flash_slot_plan(t, SLOT_PROGRAM, false, last, end, &p));
+    TEST_ASSERT_FALSE(flash_slot_plan(t, SLOT_PROGRAM, false, last + 1u, end, &p));
 }
 
 /* A piece that can suspend starts while its hold and its suspend still fit,
@@ -219,9 +225,9 @@ void test_FLT_LOG_09_a_piece_that_can_suspend_is_told_when(void) {
     flash_piece_t p;
     TEST_ASSERT_TRUE(flash_slot_plan(t, SLOT_ERASE, true, t0 + 50u, end, &p));
     TEST_ASSERT_TRUE(p.may_suspend && p.resume);
-    TEST_ASSERT_EQUAL_UINT32(end - t->suspend_us - FLASH_SLOT_MARGIN_US, p.suspend_at);
-    TEST_ASSERT_EQUAL_UINT32(t0 + 50u + t->resume_hold_us, p.suspend_from);
-    uint32_t last = end - t->suspend_us - FLASH_SLOT_MARGIN_US - t->resume_hold_us;
+    TEST_ASSERT_EQUAL_UINT32(end - t->suspend_us - FLASH_SLOT_SUSPEND_US, p.suspend_at);
+    TEST_ASSERT_EQUAL_UINT32(t0 + 50u + FLASH_SLOT_START_US + t->resume_hold_us, p.suspend_from);
+    uint32_t last = end - t->suspend_us - FLASH_SLOT_SUSPEND_US - t->resume_hold_us - FLASH_SLOT_START_US;
     TEST_ASSERT_TRUE(flash_slot_plan(t, SLOT_ERASE, true, last, end, &p));
     TEST_ASSERT_FALSE(flash_slot_plan(t, SLOT_ERASE, true, last + 1u, end, &p));
 }
@@ -235,7 +241,7 @@ void test_FLT_LOG_09_no_piece_runs_past_the_writers_slot(void) {
     const uint8_t *all[] = {W25Q16JV, W25Q128JV, XT25F128F, BY25Q64ES};
     for (unsigned i = 0; i < 4; i++) {
         const flash_timing_t *t = flash_timing_for(all[i]);
-        for (uint32_t start = 0; start < LOOP_PERIOD_US; start += 700u) {
+        for (uint32_t start = 0; start < LOOP_PERIOD_US; start += 37u) {
             for (int k = 0; k < 2; k++) {
                 flash_slot_kind_t kind = k ? SLOT_ERASE : SLOT_PROGRAM;
                 fresh(all[i], k ? t->erase_max_us : t->program_max_us, start);
@@ -281,7 +287,7 @@ void test_FLT_LOG_09_an_unlisted_parts_program_runs_whole_from_a_slots_start(voi
     TEST_ASSERT_EQUAL_UINT32(t0 + LOOP_PERIOD_US, chip.t0);
     TEST_ASSERT_EQUAL_UINT32(1u, chip.pieces);
     TEST_ASSERT_EQUAL_UINT32(0u, chip.suspends);
-    TEST_ASSERT_EQUAL_UINT32(chip.t0 + WAKE_US + CMD_US + 3000u, chip.now);
+    TEST_ASSERT_EQUAL_UINT32(chip.t0 + WAKE_US + START_US + 3000u + POLL_US, chip.now);
 }
 
 /* Landing in the middle of an erase: the rest runs whole, under the lockout
