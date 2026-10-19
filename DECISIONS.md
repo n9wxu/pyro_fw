@@ -560,6 +560,35 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-104: The Flight Path In RAM, Core1 In Slots
+- **Decision:** at the user's direction -- "Move all flight code (launch to
+  landing) to RAM so no flash executed after launch until after landing",
+  and then: "lua can run from flash in flight. Logging has a small flash
+  interruption. If erases are needed in flight (insufficient reservation)
+  then the erase will use suspend/resume to keep the lua code steady. Give
+  the logger 3ms of every 10 and lua 6.5ms of every 10 so the total
+  non-critical flight code takes 9.5ms giving 0.5ms of buffer. Critical
+  flight code runs in ram so it cannot be disturbed by the flash
+  operations."
+  - The flight task, every interrupt handler core0 takes, the idle tasks and
+    the kernel paths they take run from RAM [FLT-RT-02].
+  - From launch to landing a flash operation runs on core1 with core1's
+    interrupts off, and nothing else: no priority raised, no lockout of
+    core0 [FLT-RT-03]. Core1's tasks -- the log writer, Lua, the network,
+    the timer daemon -- run from flash and wait while it lasts.
+  - The period is 10 ms [FLT-RT-04], and core1 runs in its frames: the log
+    writer from the period's start for 3 ms, then Lua's tick, at most
+    6.5 ms and done by 9.5 ms; 0.5 ms spare [FLT-LOG-09, LUA-RUN-04].
+  - A flash operation starts in the writer's slot only if, by the chip's
+    datasheet, it ends or can be suspended before the slot does. From
+    launch to landing an erase comes only when the log has no erased page
+    left; it is suspended at the end of each slot and resumed in the next
+    [FLT-LOG-10].
+- **The period:** 10 ms where DD-065 made it 20. The collector runs free of
+  the loop (DD-093), so the sample rate is unchanged; a period now steps
+  none or one sample. MK1C's arm pump is sized from the period
+  (`boards/mk1c/arm_pump.h`).
+
 ### DD-103: The Flight Log To The Host In Test Mode
 - **Decision:** at the user's direction ("Give the USB flight test mode the
   option to prevent logging to flash and log to network"), test mode set
@@ -1712,6 +1741,7 @@ The designer's answers to `docs/outstanding_tasks.md` section 2.
   a fire lands about 40 ms after the pulse, inside the 100 ms verify window.
 - **Supersedes** DD-063's "the 10 ms loop stays", which was the finding the
   user weighed.
+- **Superseded by DD-104:** the period is 10 ms.
 
 ### DD-064: Three Logging Plans
 - **Decision:** at the user's direction -- "Default is 1hz logging with

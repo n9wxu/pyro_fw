@@ -62,6 +62,9 @@ flight this unit cannot (DD-081).
 - **FLT-PHASE-03**: The system shall detect landing. ← SYS-DEPLOY-01
 - **FLT-PHASE-04**: A flight state that is none of the defined states shall be FAULT, announced as a general fault. ← SYS-DEPLOY-01
 - **FLT-RT-01**: No network, script or storage activity shall delay a flight decision or a pulse by more than the board-declared bound, which shall not exceed 250 ms. ← SYS-DEPLOY-04, SYS-DEPLOY-05
+- **FLT-RT-02**: From launch to landing, the flight task, every interrupt handler on its core and every kernel path they take shall fetch no instruction and read no data from the boot flash. The build shall fail otherwise. ← FLT-RT-01, DD-104
+- **FLT-RT-03**: From launch to landing no flash operation shall stop or delay the flight task. ← FLT-RT-01, DD-104
+- **FLT-RT-04**: The flight task shall run every 10 ms. ← FLT-RT-01, DD-104
 
 ### Launch
 - **FLT-LAUNCH-02**: The system shall remain in PAD_IDLE while the rocket is at or below 100 feet above the ground reference. ← FLT-PHASE-01
@@ -220,6 +223,8 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **FLT-LOG-06**: A flight that never lands shall keep its record: no more than the last second shall be lost. ← SYS-DATA-01
 - **FLT-LOG-07**: The flight log shall keep a row for every sample of every flight cycle, and every event row at its own time, in time order. ← SYS-DATA-01, DD-101
 - **FLT-LOG-08**: Records the flight log could not keep shall be counted and reported on `/api/status`. ← SYS-DATA-01
+- **FLT-LOG-09**: The flight log's writer shall have the first 3 ms of each period, and shall start a flash operation only when the operation will end, or can be suspended, within those 3 ms. ← FLT-RT-03, SYS-LUA-02, DD-104
+- **FLT-LOG-10**: From launch to landing the writer shall erase only when the log has no erased page left to write. An erase shall be suspended at the end of each of the writer's slots and resumed in its next. ← FLT-LOG-09, DD-104
 
 ### After landing
 - **BUZ-03**: The system shall play an altitude beep-out sequence after landing, holding it while a USB host is attached and resuming it when the host goes (USB-02, USB-04). ← SYS-DATA-03
@@ -470,6 +475,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **LUA-RUN-01**: The enabled script shall always run: on the pad, in flight, in ground test mode and in a bench flight. ← SYS-LUA-01
 - **LUA-RUN-02**: The script's `on_event()` shall be offered every flight event the flight log records, by its logged name, in order. Offering shall never wait: events beyond the eight that can be held between two script periods are dropped and counted. ← SYS-LUA-01, SYS-LUA-02
 - **LUA-RUN-03**: The state names a script compares against (`flight.<NAME>`) shall carry the flight software's own state values. ← LUA-ISO-02
+- **LUA-RUN-04**: The script shall have up to 6.5 ms of each period, from the end of the log writer's slot, or from the writer giving its slot up, and ending by 9.5 ms into the period. ← SYS-LUA-01, SYS-LUA-02, DD-104
 - **LUA-MGT-01**: The web interface shall edit, check, save and remove the script. A script that fails its check shall not be saved. ← SYS-LUA-01
 - **LUA-MGT-02**: A console shall show the script's output and errors, and whether the script is running or why it is not. ← SYS-LUA-01
 - **LUA-IO-01**: The web UI shall export the script to a local file and import one back, so a program survives the loss of the storage that holds it. ← SYS-CFG-01
