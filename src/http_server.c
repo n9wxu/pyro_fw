@@ -1503,6 +1503,22 @@ static void apply_erase(http_conn_t *hc) {
     }
 }
 
+/* [WEB-API-17] From every store; the board's own files are refused at the
+ * head. */
+static void apply_delete(http_conn_t *hc) {
+    int rc = vfs_remove(delete_target(hc->path));
+    DBG("POST %s rc=%d", hc->path, rc);
+    if (rc == 0) {
+        http_respond_str(hc, 200, JSON, "{\"status\":\"deleted\"}");
+    } else if (rc == VFS_NOENT) {
+        http_respond_str(hc, 404, JSON, "{\"error\":\"no such file\"}");
+    } else if (rc == VFS_BUSY) {
+        http_respond_str(hc, 409, JSON, "{\"error\":\"the file is open\"}");
+    } else {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"could not delete\"}");
+    }
+}
+
 #if PYRO_HAS_LUA
 /* Validate a script against the LIVE resource set without running a line of
  * it: the editor's as-you-go check. The authoritative one runs on the stored
@@ -1627,7 +1643,7 @@ static void apply_path_post(conn_t *c, route_t route) {
         break;
 #endif
     default:
-        /* R_ERASE: answered once the body, if any, is discarded. */
+        /* R_ERASE, R_DELETE: answered once the body, if any, is discarded. */
         c->route = route;
         break;
     }
@@ -1652,8 +1668,12 @@ static void route_post(conn_t *c) {
         http_respond_str(hc, 404, TEXT, "Not found");
         return;
     }
-    if (r->route == R_UPLOAD && !vfs_path_ok(path)) {
+    if ((r->route == R_UPLOAD && !vfs_path_ok(path)) || (r->route == R_DELETE && !vfs_path_ok(delete_target(path)))) {
         http_respond_str(hc, 400, TEXT, BAD_NAME);
+        return;
+    }
+    if (r->route == R_DELETE && vfs_is_internal(delete_target(path))) {
+        http_respond_str(hc, 403, JSON, "{\"error\":\"the board's own file\"}");
         return;
     }
     if (r->fs && !fs_take(c)) {
@@ -1794,6 +1814,9 @@ static bool on_complete(http_conn_t *hc) {
     }
     case R_ERASE:
         apply_erase(hc);
+        break;
+    case R_DELETE:
+        apply_delete(hc);
         break;
     default:
         http_respond_str(hc, 404, TEXT, "Not found");

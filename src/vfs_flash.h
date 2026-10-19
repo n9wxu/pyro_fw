@@ -8,6 +8,11 @@
  * vfs_flash_clean(): a write takes only erased pages, and the pages a
  * replaced or removed file leaves wait for the cleanup.
  *
+ * A writer whose close fails stays open in alfs, which only a mount lets go.
+ * Once no other file is open the store is mounted again, as a restart
+ * mounts it, and the file is as a power cut would have left it; a remove of
+ * it asked for meanwhile is done then [WEB-API-18].
+ *
  * Every call takes the store's lock (fs_lock.h), held for the one call.
  * Names arrive bare, without a leading '/'.
  *
@@ -20,6 +25,7 @@
 #include <stdint.h>
 #include "alfs_fs.h"
 
+#define VFS_FLASH_BUSY (-4)  /* the file is open */
 #define VFS_FLASH_NOSPC (-3) /* no erased page left: a cleanup makes room */
 #define VFS_FLASH_NOENT (-2)
 #define VFS_FLASH_ERR (-1)
@@ -57,6 +63,8 @@ int vfs_flash_close(vfs_flash_file_t *f);
 int32_t vfs_flash_size(vfs_flash_file_t *f);
 int vfs_flash_rewind(vfs_flash_file_t *f);
 
+/* VFS_FLASH_BUSY while the file is open, but for a writer whose close
+ * failed: its remove is done when it is let go. */
 int vfs_flash_remove(const char *name);
 /* A copy under the new name, then the old name removed. */
 int vfs_flash_rename(const char *from, const char *to);

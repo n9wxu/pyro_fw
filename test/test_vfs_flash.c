@@ -438,6 +438,57 @@ static void test_WEB_API_18_a_log_that_cannot_close_reads_as_a_power_cut_left_it
     TEST_ASSERT_EQUAL(0, vfs_flash_remove("flight_log.bin"));
 }
 
+/* Data no other file holds at any offset, so damage() finds it alone. */
+static void fill_unique(uint8_t *p, uint32_t n, uint32_t seed) {
+    uint32_t x = seed * 2654435761u;
+    for (uint32_t i = 0; i < n; i++) {
+        x = x * 1103515245u + 12345u;
+        p[i] = (uint8_t)(x >> 16);
+    }
+}
+
+/* Clears a bit of the stored copy of some bytes of data, so the page that
+ * holds them fails its check: the first run of 8 found in one page. */
+static void damage(const uint8_t *data, uint32_t len) {
+    for (uint32_t at = 0; at + 8u <= len; at += 8u) {
+        for (uint32_t a = 0; a + 8u <= AREA; a++) {
+            if (memcmp(chip + a, data + at, 8) == 0 && chip[a] != 0) {
+                chip[a] &= (uint8_t)(chip[a] - 1u);
+                return;
+            }
+        }
+    }
+    TEST_FAIL_MESSAGE("the data is not on the chip");
+}
+
+/* [WEB-API-18] A part file with a damaged page does not replace the file it
+ * was uploaded for: that reads as it was, and where there was none there is
+ * none. */
+static void test_WEB_API_18_a_rename_that_cannot_copy_leaves_the_file_as_it_was(void) {
+    static uint8_t old[300], neu[3000], other[3000], got[4000];
+    fill_unique(old, sizeof(old), 21);
+    fill_unique(neu, sizeof(neu), 22);
+    fill_unique(other, sizeof(other), 23);
+    clean_all();
+    TEST_ASSERT_EQUAL(0, write_whole("www/kept.js", old, sizeof(old)));
+    TEST_ASSERT_EQUAL(0, write_whole("www/kept.js.part", neu, sizeof(neu)));
+    damage(neu + 1500, 200);
+    TEST_ASSERT_NOT_EQUAL(0, vfs_flash_rename("www/kept.js.part", "www/kept.js"));
+    TEST_ASSERT_EQUAL(sizeof(old), read_whole("www/kept.js", got, sizeof(got)));
+    TEST_ASSERT_EQUAL_MEMORY(old, got, sizeof(old));
+    TEST_ASSERT_EQUAL(0, write_whole("www/fresh.js.part", other, sizeof(other)));
+    damage(other + 1500, 200);
+    TEST_ASSERT_NOT_EQUAL(0, vfs_flash_rename("www/fresh.js.part", "www/fresh.js"));
+    TEST_ASSERT_EQUAL(VFS_FLASH_NOENT, read_whole("www/fresh.js", got, sizeof(got)));
+    TEST_ASSERT_EQUAL(ALFS_ENOENT, read_after_reset("www/fresh.js", got, sizeof(got)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/kept.js.part"));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/fresh.js.part"));
+    TEST_ASSERT_EQUAL(0, write_whole("www/kept.js", neu, sizeof(neu)));
+    TEST_ASSERT_EQUAL(sizeof(neu), read_whole("www/kept.js", got, sizeof(got)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/kept.js"));
+    clean_all();
+}
+
 static void test_names(void) {
     vfs_flash_file_t f;
     TEST_ASSERT_EQUAL(VFS_FLASH_ERR, vfs_flash_open(&f, "", VFS_FLASH_WRITE, wbuf));
@@ -464,6 +515,7 @@ int main(void) {
     RUN_TEST(test_WEB_API_18_a_write_that_cannot_close_is_let_go_without_a_restart);
     RUN_TEST(test_WEB_API_18_a_failed_write_is_let_go_when_no_other_file_is_open);
     RUN_TEST(test_WEB_API_18_a_log_that_cannot_close_reads_as_a_power_cut_left_it);
+    RUN_TEST(test_WEB_API_18_a_rename_that_cannot_copy_leaves_the_file_as_it_was);
     RUN_TEST(test_names);
     return UNITY_END();
 }
