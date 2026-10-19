@@ -132,6 +132,7 @@ def main():
     code, r = post(a.host, path)
     if code != 200:
         print("start refused:", code, r)
+        post(a.host, "/api/test_mode/off")  # as it was: a board that cannot fly is left on the pad
         return 1
     print(f"flying {q}")
 
