@@ -51,6 +51,7 @@ The HTTP server is two halves (DD-039, DD-061):
 - `GET|POST /api/pins`, `GET /api/pins/caps` — the pin assignment, applied at the next reboot, and what the board offers; a POST in PAD_IDLE only
 - `GET|POST /api/beeps` — the beep table; `POST /api/beeps/play` — one sound, played once, in PAD_IDLE only
 - `GET /api/flight.csv`, `POST /api/flight/erase`, `GET /api/log/space` — the flight log, rendered as CSV from its binary records (WEB-API-06, WEB-API-09, WEB-API-12)
+- `POST /api/delete/<path>` — a file removed from every store: 404 none, 409 open, 403 the board's identity and pad record (WEB-API-17)
 - `GET /api/pressure/trace?since=N` — every pressure conversion since N, in binary (SNS-PRES-13)
 - `GET /api/net` — TCP's links by state, retransmissions, what the transport refused and the frames each way (WEB-API-13)
 - `POST /api/test_mode/on[?log=host]`, `POST /api/test_mode/off` — fly on USB as on battery; held in RAM (USB-08). With `?log=host` the flight log goes to RAM for the host, not to the flash (USB-09)

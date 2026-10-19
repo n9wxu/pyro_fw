@@ -280,7 +280,7 @@ From launch to landing the flight software hands every sample to `hal_log_sample
 - **Estimators:** an `EST` row a second for each estimator, with its height, speed and whether it explains the readings, and an `EST <name> APOGEE` row when each one's apogee rule is met
 - **Lua:** a script's `log.line()` and `log.write()` output lands in the log as `LUA` rows, during a flight only; `print()` goes to `/api/lua/console`
 - **Space:** `/api/log/space` reports the room the next flight has and the seconds of flight it holds, each second costing what its sync stores; the Config tab shows that time
-- **Erase:** `POST /api/flight/erase`
+- **Erase:** `POST /api/flight/erase`; any other file: `POST /api/delete/<path>`
 
 In flight the flight log holds the filesystem: every other file request is answered 423 (DD-058).
 
@@ -482,7 +482,7 @@ Connect the board via USB. It appears as a network adapter (RNDIS on Windows, EC
 - **APIs** (all CORS enabled):
   - `GET /api/status`, `/api/net` (network counters, WEB-API-13), `/api/pressure/trace` (the last 256 conversions, DD-063), `/api/log/space`, `/api/limits` (the board's pyro timing ranges and its sensor's range, PYR-BOARD-03), `/api/flight.csv`, `/api/pins/caps`, `/api/lua/console`
   - `GET`/`POST /api/config`, `/api/pins`, `/api/beeps`, `/api/lua/script`
-  - `POST /api/beeps/play`, `/api/lua/check`, `/api/flight/erase`, `/api/test_mode/on[?log=host]`, `/api/test_mode/off`, `/api/reboot`, `/api/ota`, `/api/serial`, `/www/<file>`
+  - `POST /api/beeps/play`, `/api/lua/check`, `/api/flight/erase`, `/api/delete/<path>`, `/api/test_mode/on[?log=host]`, `/api/test_mode/off`, `/api/reboot`, `/api/ota`, `/api/serial`, `/www/<file>`
   - `GET /<path>` serves any file on the flash
 
 The API and USB stay live in flight; only the flight log touches the filesystem then, and a request that needs a file is answered 423 (DD-058). A saved `config.ini` or `pins.ini` is stored and takes effect at the next start (CFG-10).

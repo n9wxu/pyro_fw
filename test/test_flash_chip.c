@@ -125,7 +125,7 @@ static void test_FC_10_no_read_is_unknown(void) {
     TEST_ASSERT_EQUAL_STRING("000000", hex);
 }
 
-/* ── An operation a reset left suspended [FLT-LOG-11] ──────────────── */
+/* ── An operation a reset left suspended ─────────────────────────── */
 
 #define FOREVER 0xFFFFFFFFu
 

@@ -33,6 +33,14 @@ bytes (`docs/datasheets/BY25Q64ES_Rev2.9_2024-10-29.pdf`, pages 15, 29, 36
 and 45). Its USON8 4x3 mm package fits MK1B's footprint (page 79). The first
 board boots and runs from it.
 
+Its datasheet suspends an erase (page 62), but an erase resumed and
+suspended in each 3 ms slot of the flight's log writer had not ended after
+2,000 slots, and the chip still held it suspended, which makes it ignore
+every later erase until it is resumed or powered off. So this board does
+not erase in flight (DD-104, FLT-LOG-10): its log has the room the pad's
+cleanup erased before launch. Its program cannot be suspended, and starts
+in a slot's first 300 us.
+
 Its unique ID is 128 bits (page 45). The SDK reads the first 64, which on the
 first board are 35343239330594F3, ASCII "5429" then four bytes: the half that
 two MK1Cs' XT25F128F chips share. `/api/status` reports all 128 as
@@ -84,7 +92,9 @@ MK1B's, it is because the refit does not touch what sets it. A value marked
 `cmake -B build-mk1b_8mb -DPYRO_BOARD=mk1b_8mb`. The images are
 `pyro_fw_mk1b_8mb.uf2` and its bootloader, and `pyro_fw_c_fota_image.bin`
 for the network. Releases after v2.2.7 carry them as `fw_mk1b_8mb.uf2`,
-`fw_mk1b_8mb_bootloader.uf2` and `fw_mk1b_8mb_fota.bin`.
+`fw_mk1b_8mb_bootloader.uf2` and `fw_mk1b_8mb_fota.bin`. It is built with
+the bench flight (`PYRO_HAS_BENCH_FLIGHT`, DD-078): `support/bench_flight.py`
+flies it.
 
 ## Tests
 

@@ -560,6 +560,32 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-105: A File Deleted; A Failed Write Let Go
+- **Decision:** at the user's direction ("add a delete api ... add support
+  to clean up a failed write"):
+  - `POST /api/delete/<path>` removes a file from every store that holds it
+    [WEB-API-17]: 200; 404 for none; 409 while it is open; 400 for a name
+    WEB-API-14 refuses; 403 for the board's identity (`serial.txt`) and its
+    pad record (`pad.mkr`), which the board keeps on its own flash whatever
+    a card holds. In flight it is refused with 423, as every storage route.
+  - A writer whose close fails stays open in alfs, and only a mount lets it
+    go. `src/vfs_flash.c` counts the handles open, and once none is it
+    mounts the store again, as a restart mounts it: the failed file is as a
+    power cut would have left it, a log read to its last synced page, and
+    an upload's part file, which the upload then removes, goes
+    [WEB-API-18]. A remove asked for while another file is open is done at
+    that mount. A rename whose copy fails is let go the same way, and
+    removed where it would have been the name's only copy, so the file the
+    upload was for reads as it did.
+- **Why a mount:** alfs has no call that gives up a writer, and the library
+  is used as it is. A mount reaches the state a restart reaches, which
+  alfs's power-loss tests cover.
+- **Measured, 2026-10-19:** `support/failed_write_check.py` uploads past the
+  room the board reports. MK1C refused it after 7.9 MB, twice; MK1B-8MB
+  after 4.0 MB. On each the part file was gone, its name took a new upload
+  within a second, and the board had not restarted. The upload's pages wait
+  for the pad's cleanup, a sector a second: half an hour for MK1C's 8 MB.
+
 ### DD-104: The Flight Path In RAM, Core1 In Slots
 - **Decision:** at the user's direction -- "Move all flight code (launch to
   landing) to RAM so no flash executed after launch until after landing",
@@ -580,10 +606,18 @@ rationale and the alternatives considered.
     writer from the period's start for 3 ms, then Lua's tick, at most
     6.5 ms and done by 9.5 ms; 0.5 ms spare [FLT-LOG-09, LUA-RUN-04].
   - A flash operation starts in the writer's slot only if, by the chip's
-    datasheet, it ends or can be suspended before the slot does. From
-    launch to landing an erase comes only when the log has no erased page
-    left; it is suspended at the end of each slot and resumed in the next
-    [FLT-LOG-10].
+    datasheet, it ends or can be suspended before the slot does. One that
+    waits for a slot starts at the slot's start, from an alarm interrupt on
+    core1: the writer's task shares core1 with the network task at its
+    priority, which a notification does not preempt, and wakes up to a
+    millisecond into the slot. From launch to landing an erase comes only
+    when the log has no erased page left, and only on a part whose erase
+    ends in pieces; it is suspended at the end of each slot and resumed in
+    the next [FLT-LOG-10].
+  - A chip holding an erase suspended takes no other erase, and holds it
+    through a reboot of the RP2040. An operation the chip holds suspended is
+    run to its end at every start, and on the ground by the first operation
+    after a flight that gave one up [FLT-LOG-11].
 - **The period:** 10 ms where DD-065 made it 20. The collector runs free of
   the loop (DD-093), so the sample rate is unchanged; a period now steps
   none or one sample. MK1C's arm pump is sized from the period
@@ -610,8 +644,8 @@ rationale and the alternatives considered.
   program at start-up; the sample ring holds 16 (no more than four ever
   wait, FLT-RATE-06); the host log's ring holds 4 KB, 2.5 to 3 s of log;
   and the SDK's default alarm pool, whose interrupt would run on core0, is
-  off, since nothing schedules in it. Room left in main RAM: MK1C 4.1 kB,
-  MK1B and MK1B-8MB 6.6 kB, MK1A 8.4 kB.
+  off, since nothing schedules in it. Room left in main RAM: MK1C 3.7 kB,
+  MK1B-8MB 4.8 kB with its bench flight, MK1B 6.7 kB, MK1A 8.2 kB.
 - **What flight refuses:** every flash operation but the writer's; a
   mailbox call (`flight_call()`) whose function lives in flash; a reset
   asked for over USB, which waits for landing. Entering flight stops the
@@ -622,8 +656,11 @@ rationale and the alternatives considered.
 - **The chips:** `src/flash_timing.c` holds the worst-case figures of the
   four fitted parts. W25Q16JV and W25Q128JV suspend a program or an erase,
   tSUS 20 us. XT25F128F does too, but a suspend may not follow a resume by
-  less than 500 us, and an erase can take 800 ms. BY25Q64ES suspends only an
-  erase, so its program, 2.4 ms at worst, starts only where it fits. A part
+  less than 500 us, and an erase can take 800 ms. BY25Q64ES's datasheet
+  suspends only an erase, and on MK1B-8MB that erase, resumed and suspended
+  in each slot, had not ended after 2,000 slots: it does not erase in
+  flight, and its log has the room erased before launch. Its program,
+  2.4 ms at worst, starts only in a slot's first 300 us. A part
   not in the table programs whole from a slot's start and does not erase in
   flight. A piece also pays about 100 us a command through the SDK's
   `flash_do_cmd()`: the plan keeps 300 us for a start and 500 us for a
@@ -635,11 +672,20 @@ rationale and the alternatives considered.
   pieces, the longest piece 2.95 ms; Lua lost no tick. Pressure conversions
   a flash operation ran beside, discarded (DD-068): 6 to 11 a second of the
   106, pressures and temperatures together.
+- **Measured on MK1B-8MB, 2026-10-19,** 500 m bench flights on five
+  starts: every slot waited for ran its piece, 1,264 to 1,273 programs a
+  flight, nothing dropped. Before the slot alarm the writer woke 0.3 to
+  1 ms into its slot on three starts of the five, the tick's phase against
+  the period being fixed for a start, and each of those flights lost about
+  100 kB of its log. Its erase is the measurement above.
+- **Measured on MK1C, 2026-10-19,** with the slot alarm: a 3 km flight
+  after an upload had filled the filesystem, 52 erases in flight in 488
+  suspended pieces, nothing dropped, no loop overrun.
 - **Open:** the writer's own processing between pieces can run past its
   slot -- about four frames a second in a flight, and most of a frame when
   alfs searches a nearly full filesystem for a free page -- and Lua shares
-  core1 with it then. MK1B-8MB's in-flight path is proven but not flown: it
-  has no bench flight.
+  core1 with it then: on MK1C with the filesystem full, 33 Lua ticks given
+  no time. FLT-LOG-11's finish is tested on the host only.
 
 ### DD-103: The Flight Log To The Host In Test Mode
 - **Decision:** at the user's direction ("Give the USB flight test mode the
@@ -1316,8 +1362,8 @@ The designer's answers to `docs/outstanding_tasks.md` section 2.
   gives 278.4 K): a main set for 300 m fires at 290 m.
 
 ### DD-078: A Flight On The Bench
-- **Decision:** on a board built with `PYRO_HAS_BENCH_FLIGHT` (MK1C and
-  MK1C-SD), `POST /api/sim/flight` flies a profile (`src/flight_sim.h`):
+- **Decision:** on a board built with `PYRO_HAS_BENCH_FLIGHT` (MK1C,
+  MK1C-SD and MK1B-8MB), `POST /api/sim/flight` flies a profile (`src/flight_sim.h`):
   on the pad, a constant-acceleration boost sized for the apogee asked for,
   a ballistic coast, a drogue whose rate scales as sqrt(rho0 / rho), a main
   from its altitude, landing. Its pressure, from the 1976 US Standard
