@@ -182,7 +182,6 @@ void test_FLT_LOG_09_every_listed_program_fits_an_empty_slot(void) {
     const uint8_t *all[] = {W25Q16JV, W25Q128JV, XT25F128F, BY25Q64ES};
     for (unsigned i = 0; i < 4; i++) {
         const flash_timing_t *t = flash_timing_for(all[i]);
-        TEST_ASSERT_TRUE_MESSAGE(t->erase_suspends, t->part);
         uint32_t need = t->program_suspends
                             ? FLASH_SLOT_START_US + t->resume_hold_us + t->suspend_us + FLASH_SLOT_SUSPEND_US
                             : FLASH_SLOT_START_US + t->program_max_us;
@@ -288,6 +287,18 @@ void test_FLT_LOG_10_an_erase_is_suspended_at_each_slot_end_and_resumed(void) {
     TEST_ASSERT_EQUAL_UINT32(0u, chip.ignored);
 }
 
+/* [FLT-LOG-10] BY25Q64ES's erase, resumed and suspended in each slot on
+ * MK1B-8MB, had not ended after 2,000 slots, and the chip held it suspended
+ * after: refused in flight. MK1C's XT25F128F ends its erase in about ten
+ * slots. */
+void test_FLT_LOG_10_a_part_whose_erase_does_not_end_in_pieces_does_not_erase_in_flight(void) {
+    TEST_ASSERT_FALSE(flash_timing_for(BY25Q64ES)->erase_suspends);
+    TEST_ASSERT_TRUE(flash_timing_for(XT25F128F)->erase_suspends);
+    fresh(BY25Q64ES, 50000u, IRQ_US);
+    TEST_ASSERT_EQUAL_INT(FLASH_SLOT_EREFUSED, flash_slot_run(&io, chip.t, SLOT_ERASE, 0, NULL, 0));
+    TEST_ASSERT_EQUAL_UINT32(0u, chip.starts);
+}
+
 /* An unlisted part's erase cannot be planned into a slot: refused in
  * flight rather than run past it. */
 void test_FLT_LOG_10_an_unlisted_parts_erase_is_refused_in_flight(void) {
@@ -358,6 +369,7 @@ int main(void) {
     RUN_TEST(test_FLT_LOG_09_a_piece_that_can_suspend_is_told_when);
     RUN_TEST(test_FLT_LOG_09_no_piece_runs_past_the_writers_slot);
     RUN_TEST(test_FLT_LOG_10_an_erase_is_suspended_at_each_slot_end_and_resumed);
+    RUN_TEST(test_FLT_LOG_10_a_part_whose_erase_does_not_end_in_pieces_does_not_erase_in_flight);
     RUN_TEST(test_FLT_LOG_10_an_unlisted_parts_erase_is_refused_in_flight);
     RUN_TEST(test_FLT_LOG_09_an_unlisted_parts_program_runs_whole_from_a_slots_start);
     RUN_TEST(test_FLT_LOG_10_an_erase_suspended_at_landing_is_finished_whole);
