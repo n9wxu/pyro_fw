@@ -59,7 +59,8 @@ bool rtos_in_flight_task(void);
  * State the flight task owns -- the running config, test mode, the buzzer --
  * is changed only by the flight task. Another task hands it a function to
  * run at the head of its next period and waits, at most timeout_ms, for it
- * to have run. False: it did not run and will not. */
+ * to have run. False: it did not run and will not. From the first period
+ * airborne until landing only a function in RAM runs [FLT-RT-02]. */
 typedef void (*flight_call_fn)(void *arg);
 bool flight_call(flight_call_fn fn, void *arg, uint32_t timeout_ms);
 void flight_call_service(void); /* the flight task only */

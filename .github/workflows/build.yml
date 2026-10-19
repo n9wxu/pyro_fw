@@ -106,6 +106,16 @@ jobs:
             python3 support/prove_core0.py --core1 lua_task "$elf"
           done
 
+      # [FLT-RT-02] From the first period airborne until landing the flight
+      # task, core0's interrupts and the kernel paths they take run from RAM,
+      # so the log writer's flash operations cannot disturb them. The link
+      # places the path (support/flight_ram_link.py); this proves the image.
+      - name: Prove the flight path runs from RAM
+        run: |
+          for elf in build/pyro_fw_*.elf build-mk1c/pyro_fw_*.elf build-mk1a/pyro_fw_*.elf build-mk1c_sd/pyro_fw_*.elf build-mk1b_8mb/pyro_fw_*.elf build-ref/pyro_fw_*.elf; do
+            python3 support/prove_flight_ram.py --strict "$elf"
+          done
+
       # Informational: --error-exitcode=0 reports findings and never fails
       # the build.
       - name: Static analysis (cppcheck, informational)

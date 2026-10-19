@@ -11,7 +11,7 @@ Flying a board? Start with the [Operator's guide](#operators-guide).
 - **Fault Detection** - every pulse is recorded with what the board saw of it; MK1B's AP2192 flags overcurrent; MK1C reports bus shorts. No reading withholds a fire (PYR-HEALTH-01)
 - **Fire Rules** - a channel fires again while the descent stays too fast, and every channel fires above an emergency speed (PYR-REFIRE-01, FLT-EMRG-01)
 - **Resume** - any restart in flight rejoins the flight from a record made on the pad (DD-086)
-- **Flight Log** - binary records (`flight_log.bin`) written only inside core0's flash window, rendered as CSV on download; every sample of the flight (DD-062, DD-101)
+- **Flight Log** - binary records (`flight_log.bin`) written in the log writer's 3 ms of each period while the flight path runs from RAM, rendered as CSV on download; every sample of the flight (DD-062, DD-101, DD-104)
 - **Real-time Telemetry** - `$PYRO` NMEA on UART0 through an interrupt-driven ring, one message a second; apogee, fire and landing events ride the next message (DD-088)
 - **Pressure Sensing** - MS5607 (MK1B, MK1C) or BMP280 (MK1A), collected by a free-running interrupt state machine at 53 or more readings a second, each stamped at its measurement; it clears its own bus and resets the part after three failed transfers (DD-093)
 - **Pressure, Rate and Acceleration** - a Kalman filter on the raw readings; every flight comparison is made in pressure, and altitude is computed for people, relative to the pad and unclamped (DD-085)

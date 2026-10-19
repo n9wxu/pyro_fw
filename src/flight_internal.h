@@ -54,7 +54,6 @@ void flight_action_ground_test(flight_context_t *ctx, uint32_t now);
 /* ── Shared by the detectors ──────────────────────────────────────── */
 
 bool flight_grounded_on_usb(const flight_context_t *ctx); /* [USB-01, USB-08] */
-bool flight_state_is_airborne(flight_state_t state);
 void flight_make_plan(flight_context_t *ctx);
 void flight_read_pyro_health(flight_context_t *ctx);
 

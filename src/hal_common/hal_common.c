@@ -49,6 +49,7 @@
 #include "pyro_release.h"
 #include "http_server.h"
 #include "flight_log.h"
+#include "small_fmt.h"
 #include "net_glue.h"
 #include "log_live.h"
 #include "ground_test_switch.h"
@@ -548,14 +549,14 @@ static const pyro_ch_ops_t real_pyro_ops = {real_fire, real_get, real_fault};
  * did not happen. */
 static void report_mock(uint8_t channel, const char *what) {
     char note[48];
-    snprintf(note, sizeof(note), "pyro%u %s: released to Lua", (unsigned)channel, what);
+    small_snprintf(note, sizeof(note), "pyro%u %s: released to Lua", (unsigned)channel, what);
     /* [DAT-02, N11] On the flight log's clock, since T+0, like every other row. */
     const flight_context_t *fc = flight_get_context();
     uint32_t now = to_ms_since_boot(get_absolute_time());
     hal_log_mock(fc ? flight_elapsed_ms(fc, now) : now, note);
 
     char line[64];
-    snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
+    small_snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
     hal_telemetry_send(line);
 }
 
@@ -594,10 +595,10 @@ static void bench_fire(uint8_t channel) {
     bench_flight_fire(channel, now);
     const flight_context_t *fc = flight_get_context();
     char note[40];
-    snprintf(note, sizeof(note), "pyro%u fire: bench flight", (unsigned)channel);
+    small_snprintf(note, sizeof(note), "pyro%u fire: bench flight", (unsigned)channel);
     hal_log_mock(fc ? flight_elapsed_ms(fc, now) : now, note);
     char line[56];
-    snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
+    small_snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
     hal_telemetry_send(line);
 }
 #endif
@@ -1267,9 +1268,6 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     log_ring.head = n > 0 ? (uint32_t)n : 0u;
     __dmb();
     log_ring.state = LOG_RUNNING;
-#if PYRO_FLIGHT_RAM
-    flash_op_flight_begin(); /* [FLT-RT-03] */
-#endif
 }
 
 /* The storage task's side from here to hal_storage_service(). A failure costs
@@ -1363,12 +1361,18 @@ static void log_service(uint32_t now_ms) {
     }
 
     if (!log_ring.file_open) {
-        if (!fs_ok)
+        /* [FLT-RT-03] A flight log opens once the flight's flash operations
+         * run in slots, from the first period airborne; its rows wait in the
+         * ring meanwhile. A log stopped before then opens under the lockout. */
+        if (!fs_ok || (PYRO_FLIGHT_RAM && st == LOG_RUNNING && !flash_op_in_flight()))
             return;
         /* The last flight's log goes first, so a reset in this flight finds
          * this flight's: a write replaces a file only when it closes. */
         vfs_remove(FLOG_PATH);
-        if (vfs_open(&log_ring.file, FLOG_PATH, VFS_WR, log_file_buf) != 0)
+        int rc = vfs_open(&log_ring.file, FLOG_PATH, VFS_WR, log_file_buf);
+        if (rc == VFS_NOSPC)
+            vfs_clean(); /* [FLT-LOG-10] no erased page for the log's first */
+        if (rc != 0)
             return; /* the next pass retries; the ring keeps the rows */
         log_ring.file_open = true;
         log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
@@ -1502,6 +1506,10 @@ void hal_log_stop(void) {
 
 bool hal_log_active(void) {
     return log_ring.state != LOG_IDLE;
+}
+
+bool hal_log_running(void) {
+    return log_ring.state == LOG_RUNNING;
 }
 
 /* pico_fota_bootloader rolls back to the previous image unless the new one

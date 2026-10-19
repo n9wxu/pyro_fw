@@ -58,6 +58,15 @@ if(PYRO_HAS_BENCH_FLIGHT)
     target_sources(pyro_hal_common PRIVATE ../flight_sim.c ../bench_flight.c)
 endif()
 
+# [FLT-RT-02, DD-104] From the first period airborne until landing core0
+# runs only from RAM and the log writer's flash operations take no lockout.
+# Set where the image links its flight path into RAM.
+if(PYRO_FLIGHT_RAM)
+    target_compile_definitions(pyro_hal_common PUBLIC PYRO_FLIGHT_RAM=1)
+else()
+    target_compile_definitions(pyro_hal_common PUBLIC PYRO_FLIGHT_RAM=0)
+endif()
+
 # A panic stamps the watchdog scratch and stops, without printing: see
 # pyro_panic() in src/rtos/rtos_tasks.c.
 target_compile_definitions(pyro_hal_common PUBLIC PICO_PANIC_FUNCTION=pyro_panic)

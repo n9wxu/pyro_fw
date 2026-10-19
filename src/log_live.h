@@ -15,9 +15,9 @@
 
 #include <stdint.h>
 
-/* Seconds of the log, at 1.2 to 1.6 kB a second, for a host that reads it
- * once a second. */
-#define LOG_LIVE_BYTES 8192u
+/* Two and a half to three seconds of the log, at 1.3 to 1.6 kB a second,
+ * for a host that reads it once a second. */
+#define LOG_LIVE_BYTES 4096u
 
 /* A new log, from offset 0. */
 void log_live_reset(void);

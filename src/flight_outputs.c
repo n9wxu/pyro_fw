@@ -6,9 +6,9 @@
  * SPDX-License-Identifier: MIT
  */
 #include "flight_internal.h"
+#include "small_fmt.h"
 #include "flight_resume.h"
 #include "pressure_processing.h"
-#include <stdio.h>
 #include <string.h>
 
 #define TELEMETRY_MS 1000u    /* [TEL-03] */
@@ -39,12 +39,12 @@ static void report_fault(flight_context_t *ctx, uint32_t now) {
     if (ctx->last_telemetry != 0 && now - ctx->last_telemetry < FAULT_REPORT_MS)
         return;
     char line[96];
-    int n = snprintf(line, sizeof(line), "!FAULT");
+    int n = small_snprintf(line, sizeof(line), "!FAULT");
     for (uint16_t bit = 1; bit != 0 && n < (int)sizeof(line) - 24; bit <<= 1) {
         if ((ctx->diag & bit) && *pad_check_fault_name(bit))
-            n += snprintf(line + n, sizeof(line) - (size_t)n, " %s", pad_check_fault_name(bit));
+            n += small_snprintf(line + n, sizeof(line) - (size_t)n, " %s", pad_check_fault_name(bit));
     }
-    snprintf(line + n, sizeof(line) - (size_t)n, "\r\n");
+    small_snprintf(line + n, sizeof(line) - (size_t)n, "\r\n");
     hal_telemetry_send(line);
     ctx->last_telemetry = now;
 }

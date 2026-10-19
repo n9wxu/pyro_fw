@@ -744,105 +744,173 @@ static void serve_api_pin_caps(http_conn_t *hc) {
 
 /* [WEB-API-11] What the flight task owns, taken by the flight task itself at
  * the head of its period (flight_call()), so the fields agree with one
- * another. */
-static void status_capture_flight(void *arg) {
-    static const char *mode_names[] = {"none", "fallen", "agl", "speed", "delay"};
-    status_snap_t *s = (status_snap_t *)arg;
-    const flight_context_t *fctx = flight_get_context();
+ * another. Numbers only, copied: it runs in flight, from RAM [FLT-RT-02],
+ * and the net task names them (status_name_flight()). */
+typedef struct {
+    device_status_t st;
+    bool have_ctx, storage_ok, emergency_fire, limited, peak_lower_bound, usb_attached, test_mode;
+    uint8_t current_state, sensor_type, reset_cause, resume, not_resumed;
+    uint16_t diag, pulses[2];
+    bool channel_fault[2];
+    uint32_t refire_interval_ms, fire_gap_ms;
+    int32_t speed_cms;
+    bool raw_ok;
+    board_pyro_raw_t praw;
+    uint32_t loop_max_us, loop_overruns, loop_late_max_us, loop_count;
+    uint32_t stage_max_us[STATUS_STAGES], stage1_parts_us[STATUS_STAGE1_PARTS];
+    collector_stats_t collector;
+    uint32_t pres_flashed, ground_reseeds, interval_min_us, interval_max_us, stamp_lag_max_us;
+    int32_t raw_pa;
+    bool ground_degraded, explains, held_for_host, buzzer_active;
+    float noise_pa;
+    uint8_t obeyed;
+} flight_take_t;
 
-    s->state = g_status.state < STATE_NAME_COUNT ? state_names[g_status.state] : "UNKNOWN";
-    s->alt_cm = g_status.altitude_cm;
-    s->max_alt_cm = g_status.max_altitude_cm;
-    s->vspeed_cms = g_status.vertical_speed_cms;
-    s->pressure_pa = g_status.pressure_pa;
-    s->pyro_cont[0] = g_status.pyro1_continuity;
-    s->pyro_cont[1] = g_status.pyro2_continuity;
-    s->pyro_adc[0] = g_status.pyro1_adc;
-    s->pyro_adc[1] = g_status.pyro2_adc;
-    s->pyro_fired[0] = g_status.pyro1_fired;
-    s->pyro_fired[1] = g_status.pyro2_fired;
-    s->armed = g_status.pyros_armed;
-    s->flight_ms = g_status.flight_time_ms;
-    s->pyro_mode[0] = g_status.pyro1_mode < 5 ? mode_names[g_status.pyro1_mode] : "?";
-    s->pyro_mode[1] = g_status.pyro2_mode < 5 ? mode_names[g_status.pyro2_mode] : "?";
-    s->pyro_value[0] = g_status.pyro1_value;
-    s->pyro_value[1] = g_status.pyro2_value;
-    s->units = g_status.units;
-    memcpy(s->rocket_id, (const char *)g_status.rocket_id, sizeof(s->rocket_id) - 1);
-    memcpy(s->rocket_name, (const char *)g_status.rocket_name, sizeof(s->rocket_name) - 1);
+static void status_take_flight(void *arg) {
+    flight_take_t *t = (flight_take_t *)arg;
+    const flight_context_t *fctx = flight_get_context();
+    t->st = *(const device_status_t *)&g_status;
+    t->have_ctx = fctx != NULL;
+    if (fctx) {
+        t->current_state = (uint8_t)fctx->current_state;
+        t->sensor_type = (uint8_t)fctx->sensor_type;
+        t->storage_ok = fctx->storage_ok;
+        t->diag = fctx->diag;
+        t->reset_cause = (uint8_t)fctx->reset_cause;
+        t->resume = fctx->resume;
+        t->not_resumed = fctx->not_resumed;
+        for (int i = 0; i < 2; i++) {
+            t->pulses[i] = fctx->fire.channel[i].pulses;
+            t->channel_fault[i] = fctx->channel_fault[i];
+        }
+        t->emergency_fire = fctx->emergency_fire;
+        t->refire_interval_ms = fctx->plan.refire_interval_ms;
+        t->fire_gap_ms = fctx->plan.fire_gap_ms;
+        t->limited = fctx->refire_interval_limited || fctx->fire_gap_limited;
+        t->speed_cms = fctx->speed_cms;
+        t->peak_lower_bound = fctx->peak_lower_bound;
+        t->usb_attached = fctx->usb_attached; /* [USB-01..03, USB-08] */
+        t->test_mode = fctx->test_mode;
+    }
+    /* Raw counts rather than volts, so a marginal reading stays visible. */
+    t->raw_ok = board_pyro_raw(&t->praw);
+    t->loop_max_us = loop_max_us;
+    t->loop_overruns = loop_overruns;
+    t->loop_late_max_us = loop_late_max_us;
+    t->loop_count = loop_count;
+    for (int i = 0; i < STATUS_STAGES; i++)
+        t->stage_max_us[i] = stage_max_us[i];
+    for (int i = 0; i < STATUS_STAGE1_PARTS; i++)
+        t->stage1_parts_us[i] = stage1_part_max_us[i];
+    hal_pressure_collector(&t->collector);
+    t->pres_flashed = hal_pressure_flashed();
+    t->raw_pa = pp_last_raw_pa();
+    t->ground_degraded = pp_ground_degraded(); /* [GND-CAL-07] */
+    t->ground_reseeds = pp_ground_reseeds();
+    t->interval_min_us = hal_pressure_interval_min_us(); /* [SNS-PRES-08] */
+    t->interval_max_us = hal_pressure_interval_max_us();
+    t->stamp_lag_max_us = hal_pressure_stamp_lag_max_us();
+    t->noise_pa = pp_noise_pa(); /* the sensor noise the estimator tracks */
+    t->obeyed = (uint8_t)pp_obeyed();
+    pp_sample_t newest;
+    t->explains = pp_newest(&newest) && newest.explains;
+    t->held_for_host = hal_log_held_for_host();
+    t->buzzer_active = buzzer_is_active();
+}
+
+/* The net task's half: the take, named. */
+static void status_name_flight(status_snap_t *s, const flight_take_t *t) {
+    static const char *mode_names[] = {"none", "fallen", "agl", "speed", "delay"};
+    const device_status_t *g = &t->st;
+    s->state = g->state < STATE_NAME_COUNT ? state_names[g->state] : "UNKNOWN";
+    s->alt_cm = g->altitude_cm;
+    s->max_alt_cm = g->max_altitude_cm;
+    s->vspeed_cms = g->vertical_speed_cms;
+    s->pressure_pa = g->pressure_pa;
+    s->pyro_cont[0] = g->pyro1_continuity;
+    s->pyro_cont[1] = g->pyro2_continuity;
+    s->pyro_adc[0] = g->pyro1_adc;
+    s->pyro_adc[1] = g->pyro2_adc;
+    s->pyro_fired[0] = g->pyro1_fired;
+    s->pyro_fired[1] = g->pyro2_fired;
+    s->armed = g->pyros_armed;
+    s->flight_ms = g->flight_time_ms;
+    s->pyro_mode[0] = g->pyro1_mode < 5 ? mode_names[g->pyro1_mode] : "?";
+    s->pyro_mode[1] = g->pyro2_mode < 5 ? mode_names[g->pyro2_mode] : "?";
+    s->pyro_value[0] = g->pyro1_value;
+    s->pyro_value[1] = g->pyro2_value;
+    s->units = g->units;
+    memcpy(s->rocket_id, g->rocket_id, sizeof(s->rocket_id) - 1);
+    memcpy(s->rocket_name, g->rocket_name, sizeof(s->rocket_name) - 1);
     s->sensor = pressure_sensor_name();
 
-    /* Raw counts rather than volts, so a marginal reading stays visible. */
-    board_pyro_raw_t praw = {0};
-    bool raw = board_pyro_raw(&praw);
-    s->pyro_bus_q = raw ? (int32_t)praw.bus_quiescent : -1;
-    s->pyro_bus_adc = raw ? (int32_t)praw.bus_biased : -1;
-    s->pyro_vbat_adc = raw ? (int32_t)praw.vbat : -1;
+    s->pyro_bus_q = t->raw_ok ? (int32_t)t->praw.bus_quiescent : -1;
+    s->pyro_bus_adc = t->raw_ok ? (int32_t)t->praw.bus_biased : -1;
+    s->pyro_vbat_adc = t->raw_ok ? (int32_t)t->praw.vbat : -1;
 
-    s->loop_max_us = loop_max_us;
-    s->loop_overruns = loop_overruns;
-    s->loop_late_max_us = loop_late_max_us;
-    s->loop_count = loop_count;
-    for (int i = 0; i < STATUS_STAGES; i++) {
-        s->stage_max_us[i] = stage_max_us[i];
-    }
-    for (int i = 0; i < STATUS_STAGE1_PARTS; i++) {
-        s->stage1_parts_us[i] = stage1_part_max_us[i];
-    }
+    s->loop_max_us = t->loop_max_us;
+    s->loop_overruns = t->loop_overruns;
+    s->loop_late_max_us = t->loop_late_max_us;
+    s->loop_count = t->loop_count;
+    for (int i = 0; i < STATUS_STAGES; i++)
+        s->stage_max_us[i] = t->stage_max_us[i];
+    for (int i = 0; i < STATUS_STAGE1_PARTS; i++)
+        s->stage1_parts_us[i] = t->stage1_parts_us[i];
 
     /* The power-up self-test: a board that cannot measure altitude must not
      * report itself healthy. */
-    s->sensor_ok = fctx && fctx->sensor_type && fctx->sensor_type != SENSOR_PENDING;
-    s->fs_ok = fctx && fctx->storage_ok;
-    uint16_t diag = fctx ? fctx->diag : 0;
+    s->sensor_ok = t->have_ctx && t->sensor_type && t->sensor_type != SENSOR_PENDING;
+    s->fs_ok = t->have_ctx && t->storage_ok;
     for (uint16_t bit = 1; bit != 0 && s->n_faults < STATUS_FAULTS_MAX; bit <<= 1) {
-        if ((diag & bit) && *pad_check_fault_name(bit)) {
+        if ((t->diag & bit) && *pad_check_fault_name(bit)) {
             s->faults[s->n_faults++] = pad_check_fault_name(bit);
         }
     }
-    s->reset_cause = fctx ? (uint8_t)fctx->reset_cause : 0u;
-    s->resume = fctx ? flight_resume_text(fctx) : resume_verdict_name(RESUME_NOT_FLYING);
+    s->reset_cause = t->reset_cause;
+    if (!t->have_ctx)
+        s->resume = resume_verdict_name(RESUME_NOT_FLYING);
+    else if (t->resume == RESUME_NOT_FLYING)
+        s->resume = not_resumed_name((not_resumed_t)t->not_resumed);
+    else
+        s->resume = resume_verdict_name((resume_verdict_t)t->resume);
     s->prev_watchdog = boot_prev_watchdog;
     s->prev_stage = boot_prev_stage;
     s->prev_stage_ms = boot_prev_stage_ms;
     for (int i = 0; i < 2; i++) {
-        s->pyro_pulses[i] = fctx ? fctx->fire.channel[i].pulses : 0u;
-        s->pyro_fault[i] = fctx && fctx->channel_fault[i];
+        s->pyro_pulses[i] = t->pulses[i];
+        s->pyro_fault[i] = t->channel_fault[i];
     }
-    s->emergency_fire = fctx && fctx->emergency_fire;
-    s->refire_interval_ms = fctx ? (uint16_t)fctx->plan.refire_interval_ms : 0u;
-    s->fire_gap_ms = fctx ? (uint16_t)fctx->plan.fire_gap_ms : 0u;
-    s->pyro_limited = fctx && (fctx->refire_interval_limited || fctx->fire_gap_limited);
-    collector_stats_t collector;
-    hal_pressure_collector(&collector);
+    s->emergency_fire = t->emergency_fire;
+    s->refire_interval_ms = (uint16_t)t->refire_interval_ms;
+    s->fire_gap_ms = (uint16_t)t->fire_gap_ms;
+    s->pyro_limited = t->limited;
     s->pres_rejects = 0;
     for (int i = 0; i < 4; i++) {
-        s->pres_bus[i] = collector.failed[COLLECTOR_ADDRESS_NACK + i];
+        s->pres_bus[i] = t->collector.failed[COLLECTOR_ADDRESS_NACK + i];
         s->pres_rejects += s->pres_bus[i];
     }
-    s->pres_recoveries = collector.recoveries;
-    s->pres_dropped = collector.dropped;
-    s->pres_flashed = hal_pressure_flashed();
-    s->raw_pa = pp_last_raw_pa();
-    s->pad_speed_cms = fctx && fctx->current_state == PAD_IDLE ? fctx->speed_cms : 0;
-    s->ground_degraded = pp_ground_degraded(); /* [GND-CAL-07] */
-    s->ground_reseeds = pp_ground_reseeds();
-    s->sample_interval_us[0] = hal_pressure_interval_min_us(); /* [SNS-PRES-08] */
-    s->sample_interval_us[1] = hal_pressure_interval_max_us();
-    s->stamp_lag_max_us = hal_pressure_stamp_lag_max_us();
-    s->noise_mpa = (uint32_t)(pp_noise_pa() * 1000.0f); /* the sensor noise the estimator tracks */
-    pp_sample_t newest;
-    s->estimator = estimator_at(pp_obeyed())->name;
-    s->estimator_explains = pp_newest(&newest) && newest.explains;
-    s->peak_lower_bound = fctx && fctx->peak_lower_bound;
-    s->usb_attached = fctx && fctx->usb_attached; /* [USB-01..03, USB-08] */
-    s->test_mode = fctx && fctx->test_mode;
-    s->test_log_host = hal_log_held_for_host();
-    s->buzzer_active = buzzer_is_active();
+    s->pres_recoveries = t->collector.recoveries;
+    s->pres_dropped = t->collector.dropped;
+    s->pres_flashed = t->pres_flashed;
+    s->raw_pa = t->raw_pa;
+    s->pad_speed_cms = t->have_ctx && t->current_state == PAD_IDLE ? t->speed_cms : 0;
+    s->ground_degraded = t->ground_degraded;
+    s->ground_reseeds = t->ground_reseeds;
+    s->sample_interval_us[0] = t->interval_min_us;
+    s->sample_interval_us[1] = t->interval_max_us;
+    s->stamp_lag_max_us = t->stamp_lag_max_us;
+    s->noise_mpa = (uint32_t)(t->noise_pa * 1000.0f);
+    s->estimator = estimator_at(t->obeyed)->name;
+    s->estimator_explains = t->explains;
+    s->peak_lower_bound = t->peak_lower_bound;
+    s->usb_attached = t->usb_attached;
+    s->test_mode = t->test_mode;
+    s->test_log_host = t->held_for_host;
+    s->buzzer_active = t->buzzer_active;
 
     /* What the buzzer says, or would say off USB, so it can be read rather
      * than counted. */
-    beep_reason_t r = pad_check_announcement(diag);
+    beep_reason_t r = pad_check_announcement(t->diag);
     beep_spec_t sp = beep_for(r);
     s->beep = beep_codes_key(r);
     s->beep_kind = beep_codes_kind_name((beep_kind_t)sp.kind);
@@ -856,9 +924,11 @@ static void status_capture_flight(void *arg) {
  * not take the call. */
 static bool status_capture(status_snap_t *s) {
     memset(s, 0, sizeof(*s));
-    if (!flight_call(status_capture_flight, s, CALL_MS)) {
+    flight_take_t take;
+    if (!flight_call(status_take_flight, &take, CALL_MS)) {
         return false;
     }
+    status_name_flight(s, &take);
     s->uptime_ms = to_ms_since_boot(get_absolute_time());
     s->fw_version = FW_VERSION;
     s->board = PYRO_BOARD_NAME;
