@@ -337,6 +337,107 @@ static void test_FLT_LOG_10_a_log_out_of_erased_pages_says_so_and_a_cleanup_make
     clean_all();
 }
 
+/* Writes into a file until the area has no erased page left for it. */
+static void fill_to_the_end(vfs_flash_file_t *f, uint32_t seed) {
+    static uint8_t chunk[200];
+    fill(chunk, sizeof(chunk), seed);
+    int rc = 0;
+    for (int i = 0; i < 2000 && rc >= 0; i++)
+        rc = vfs_flash_write(f, chunk, sizeof(chunk));
+    TEST_ASSERT_EQUAL(VFS_FLASH_NOSPC, rc);
+}
+
+/* [WEB-API-17] A file open is not deleted; closed, it is, once. */
+static void test_WEB_API_17_a_file_open_is_not_deleted(void) {
+    static uint8_t d[100];
+    fill(d, sizeof(d), 15);
+    TEST_ASSERT_EQUAL(0, write_whole("www/del.txt", d, sizeof(d)));
+    vfs_flash_file_t r;
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&r, "www/del.txt", VFS_FLASH_READ, rbuf));
+    TEST_ASSERT_EQUAL(VFS_FLASH_BUSY, vfs_flash_remove("www/del.txt"));
+    TEST_ASSERT_EQUAL(0, vfs_flash_close(&r));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/del.txt"));
+    TEST_ASSERT_EQUAL(VFS_FLASH_NOENT, vfs_flash_remove("www/del.txt"));
+}
+
+/* [WEB-API-18] An upload's part file that cannot close for want of a page:
+ * no restart, and it goes, the file it would have replaced is as it was,
+ * its pages are erased, and the space is back. */
+static void test_WEB_API_18_a_write_that_cannot_close_is_let_go_without_a_restart(void) {
+    static uint8_t old[600], got[1000];
+    fill(old, sizeof(old), 16);
+    clean_all();
+    TEST_ASSERT_EQUAL(0, write_whole("www/page.html", old, sizeof(old)));
+    uint64_t free0, free1, total;
+    TEST_ASSERT_EQUAL(0, vfs_flash_space(&free0, &total));
+    vfs_flash_file_t f;
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&f, "www/page.html.part", VFS_FLASH_WRITE, wbuf));
+    fill_to_the_end(&f, 17);
+    TEST_ASSERT_EQUAL(VFS_FLASH_NOSPC, vfs_flash_close(&f));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/page.html.part"));
+    TEST_ASSERT_EQUAL(ALFS_ENOENT, read_after_reset("www/page.html.part", got, sizeof(got)));
+    TEST_ASSERT_EQUAL(sizeof(old), read_whole("www/page.html", got, sizeof(got)));
+    TEST_ASSERT_EQUAL_MEMORY(old, got, sizeof(old));
+    unsigned e0 = erases;
+    clean_all();
+    TEST_ASSERT_TRUE_MESSAGE(erases > e0, "the failed file's pages are erased");
+    TEST_ASSERT_EQUAL(0, vfs_flash_space(&free1, &total));
+    TEST_ASSERT_EQUAL(free0, free1);
+    TEST_ASSERT_EQUAL(0, write_whole("www/page.html.part", old, sizeof(old)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/page.html.part"));
+}
+
+/* [WEB-API-18] While another file is open the failed one waits, and a
+ * delete asked for meanwhile is done when the last file closes. */
+static void test_WEB_API_18_a_failed_write_is_let_go_when_no_other_file_is_open(void) {
+    static uint8_t got[1000];
+    clean_all();
+    int32_t page_size = vfs_flash_stat_size("www/page.html");
+    TEST_ASSERT_TRUE(page_size > 0);
+    vfs_flash_file_t r, f;
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&r, "www/page.html", VFS_FLASH_READ, rbuf));
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&f, "www/big.bin.part", VFS_FLASH_WRITE, wbuf));
+    fill_to_the_end(&f, 18);
+    TEST_ASSERT_EQUAL(VFS_FLASH_NOSPC, vfs_flash_close(&f));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/big.bin.part"));
+    unsigned e0 = erases;
+    TEST_ASSERT_EQUAL(1, vfs_flash_clean());
+    TEST_ASSERT_EQUAL(e0, erases);
+    TEST_ASSERT_EQUAL(page_size, vfs_flash_read(&r, got, sizeof(got)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_close(&r));
+    TEST_ASSERT_EQUAL(ALFS_ENOENT, read_after_reset("www/big.bin.part", got, sizeof(got)));
+    clean_all();
+    TEST_ASSERT_TRUE(erases > e0);
+    TEST_ASSERT_EQUAL(page_size, read_whole("www/page.html", got, sizeof(got)));
+}
+
+/* [WEB-API-18, FLT-LOG-06] A log that cannot close reads as a power cut
+ * would have left it, every synced byte kept, and the next log starts. */
+static void test_WEB_API_18_a_log_that_cannot_close_reads_as_a_power_cut_left_it(void) {
+    static uint8_t rows[22 * 50], got[AREA], again[AREA];
+    fill(rows, sizeof(rows), 19);
+    vfs_flash_remove("flight_log.bin");
+    clean_all();
+    vfs_flash_file_t f;
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&f, "flight_log.bin", VFS_FLASH_WRITE, wbuf));
+    for (uint32_t s = 0; s < 50; s++) {
+        TEST_ASSERT_EQUAL(22, vfs_flash_write(&f, rows + 22u * s, 22));
+        TEST_ASSERT_EQUAL(0, vfs_flash_sync(&f));
+    }
+    fill_to_the_end(&f, 20);
+    TEST_ASSERT_EQUAL(VFS_FLASH_NOSPC, vfs_flash_close(&f));
+    int32_t n = read_whole("flight_log.bin", got, sizeof(got));
+    TEST_ASSERT_TRUE(n >= (int32_t)sizeof(rows));
+    TEST_ASSERT_EQUAL_MEMORY(rows, got, sizeof(rows));
+    TEST_ASSERT_EQUAL(n, read_after_reset("flight_log.bin", again, sizeof(again)));
+    TEST_ASSERT_EQUAL(n, vfs_flash_stat_size("flight_log.bin"));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("flight_log.bin"));
+    clean_all();
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&f, "flight_log.bin", VFS_FLASH_WRITE, wbuf));
+    TEST_ASSERT_EQUAL(0, vfs_flash_close(&f));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("flight_log.bin"));
+}
+
 static void test_names(void) {
     vfs_flash_file_t f;
     TEST_ASSERT_EQUAL(VFS_FLASH_ERR, vfs_flash_open(&f, "", VFS_FLASH_WRITE, wbuf));
@@ -359,6 +460,10 @@ int main(void) {
     RUN_TEST(test_space_from_the_files);
     RUN_TEST(test_WEB_API_12_a_synced_second_takes_whole_pages);
     RUN_TEST(test_FLT_LOG_10_a_log_out_of_erased_pages_says_so_and_a_cleanup_makes_room);
+    RUN_TEST(test_WEB_API_17_a_file_open_is_not_deleted);
+    RUN_TEST(test_WEB_API_18_a_write_that_cannot_close_is_let_go_without_a_restart);
+    RUN_TEST(test_WEB_API_18_a_failed_write_is_let_go_when_no_other_file_is_open);
+    RUN_TEST(test_WEB_API_18_a_log_that_cannot_close_reads_as_a_power_cut_left_it);
     RUN_TEST(test_names);
     return UNITY_END();
 }
