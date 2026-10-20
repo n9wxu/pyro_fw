@@ -466,7 +466,7 @@ static int slot_piece(void *ctx, flash_slot_kind_t kind, uint32_t addr, const ui
     uint32_t irq = save_and_disable_interrupts();
     uint32_t t0 = timer_hw->timerawl;
     int rc = run_piece(&a);
-    held_suspended = rc == PIECE_SUSPENDED || rc == PIECE_ESUSPEND;
+    held_suspended = flash_slot_held(held_suspended, p->resume, rc == PIECE_SUSPENDED || rc == PIECE_ESUSPEND);
     flash_op_seq++;
     uint32_t d = timer_hw->timerawl - t0;
     piece_busy = false;

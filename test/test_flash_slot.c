@@ -5,7 +5,7 @@
  * suspend issued sooner than tRS after a start or resume is ignored, and a
  * suspend takes up to tSUS to land.
  *
- * Verifies [FLT-LOG-09, FLT-LOG-10, LUA-RUN-04].
+ * Verifies [FLT-LOG-09, FLT-LOG-10, FLT-LOG-11, LUA-RUN-04].
  */
 #include "unity.h"
 #include "core1_frame.h"
@@ -360,6 +360,27 @@ void test_FLT_LOG_10_a_chip_that_never_finishes_is_given_up(void) {
     TEST_ASSERT_EQUAL_UINT32(FLASH_SLOT_MAX_PIECES, chip.pieces);
 }
 
+/* A chip holding an erase suspended ignores a new erase, and the piece
+ * reads as ended at once: what it held is held still, for the next start or
+ * the ground to finish. Only the operation resumed to its end lets go. */
+void test_FLT_LOG_11_a_piece_started_while_one_is_held_does_not_let_it_go(void) {
+    TEST_ASSERT_TRUE(flash_slot_held(true, false, false));
+    TEST_ASSERT_TRUE(flash_slot_held(true, false, true));
+}
+
+void test_FLT_LOG_11_a_piece_left_suspended_is_held(void) {
+    TEST_ASSERT_TRUE(flash_slot_held(false, false, true));
+    TEST_ASSERT_TRUE(flash_slot_held(true, true, true));
+}
+
+void test_FLT_LOG_11_the_held_operation_resumed_to_its_end_is_let_go(void) {
+    TEST_ASSERT_FALSE(flash_slot_held(true, true, false));
+}
+
+void test_FLT_LOG_11_a_piece_that_ends_holds_nothing_new(void) {
+    TEST_ASSERT_FALSE(flash_slot_held(false, false, false));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_FLT_LOG_09_every_fitted_part_is_known);
@@ -379,5 +400,9 @@ int main(void) {
     RUN_TEST(test_FLT_LOG_09_on_the_pad_an_operation_runs_whole);
     RUN_TEST(test_FLT_LOG_09_a_failed_piece_is_the_operations_failure);
     RUN_TEST(test_FLT_LOG_10_a_chip_that_never_finishes_is_given_up);
+    RUN_TEST(test_FLT_LOG_11_a_piece_started_while_one_is_held_does_not_let_it_go);
+    RUN_TEST(test_FLT_LOG_11_a_piece_left_suspended_is_held);
+    RUN_TEST(test_FLT_LOG_11_the_held_operation_resumed_to_its_end_is_let_go);
+    RUN_TEST(test_FLT_LOG_11_a_piece_that_ends_holds_nothing_new);
     return UNITY_END();
 }
