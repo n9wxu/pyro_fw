@@ -496,32 +496,27 @@ static void test_USB_10_the_cleanup_waits_only_off_usb(void) {
     TEST_ASSERT_EQUAL_UINT32(1000u, vfs_flash_clean_wait_ms(false));
 }
 
-/* [WEB-API-19] Read from the pages themselves: a replaced file's old pages
- * are unused until the cleanup erases their sectors, and the cleanup says
- * when it has none left to erase. */
-static void test_WEB_API_19_the_survey_tells_files_erased_and_unused_apart(void) {
+/* [WEB-API-19] The cleanup's state, read from no page: sectors left to
+ * erase once a file is replaced, none once it has erased them, and how many
+ * it erased. */
+static void test_WEB_API_19_the_cleanup_says_what_is_left_and_what_it_erased(void) {
     static uint8_t d[2 * SECTOR];
-    vfs_flash_survey_t a, b, c;
+    vfs_flash_cleanup_t a, b;
     clean_all();
+    vfs_flash_cleanup_state(&a);
+    TEST_ASSERT_FALSE(a.cleaning);
     fill(d, sizeof(d), 41);
-    TEST_ASSERT_EQUAL(0, write_whole("survey.bin", d, sizeof(d)));
-    TEST_ASSERT_EQUAL(0, vfs_flash_survey(&a));
-    TEST_ASSERT_TRUE(a.in_files >= sizeof(d));
-    TEST_ASSERT_TRUE(a.in_files + a.erased + a.unused <= a.bytes);
-    TEST_ASSERT_EQUAL_UINT32(0u, a.bad_sectors);
-
-    TEST_ASSERT_EQUAL(0, write_whole("survey.bin", d, sizeof(d)));
-    TEST_ASSERT_EQUAL(0, vfs_flash_survey(&b));
-    TEST_ASSERT_EQUAL_UINT32(a.in_files, b.in_files);
-    TEST_ASSERT_TRUE(b.unused >= a.unused + sizeof(d));
-    TEST_ASSERT_TRUE(b.cleaning);
-
+    TEST_ASSERT_EQUAL(0, write_whole("twice.bin", d, sizeof(d)));
+    TEST_ASSERT_EQUAL(0, write_whole("twice.bin", d, sizeof(d)));
+    vfs_flash_cleanup_state(&a);
+    TEST_ASSERT_TRUE(a.cleaning);
+    unsigned e0 = erases;
     clean_all();
-    TEST_ASSERT_EQUAL(0, vfs_flash_survey(&c));
-    TEST_ASSERT_FALSE(c.cleaning);
-    TEST_ASSERT_TRUE(c.unused + SECTOR <= b.unused);
-    TEST_ASSERT_TRUE(c.erased >= b.erased + SECTOR);
-    TEST_ASSERT_EQUAL(0, vfs_flash_remove("survey.bin"));
+    vfs_flash_cleanup_state(&b);
+    TEST_ASSERT_FALSE(b.cleaning);
+    TEST_ASSERT_TRUE(erases > e0);
+    TEST_ASSERT_EQUAL_UINT32(a.erased + (erases - e0), b.erased);
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("twice.bin"));
     clean_all();
 }
 
@@ -606,7 +601,7 @@ int main(void) {
     RUN_TEST(test_WEB_API_18_a_log_that_cannot_close_reads_as_a_power_cut_left_it);
     RUN_TEST(test_WEB_API_18_a_rename_that_cannot_copy_leaves_the_file_as_it_was);
     RUN_TEST(test_USB_10_the_cleanup_waits_only_off_usb);
-    RUN_TEST(test_WEB_API_19_the_survey_tells_files_erased_and_unused_apart);
+    RUN_TEST(test_WEB_API_19_the_cleanup_says_what_is_left_and_what_it_erased);
     RUN_TEST(test_WEB_API_19_the_list_gives_each_files_name_and_size);
     RUN_TEST(test_names);
     return UNITY_END();

@@ -205,14 +205,16 @@ const FS_FILES = [
   {path: '/flight_log.bin', bytes: null, closed: false, board: false}
 ];
 let fsFiles = JSON.parse(JSON.stringify(FS_FILES));
-let fsUnused = 0;
-const FS_CLEAN_STEP = 16384;
+let fsUnused = 0, fsCleaned = 0;
+const FS_SECTOR = 4096, FS_CLEAN_STEP = 4;  /* sectors erased between reports */
 
 function fsReport() {
   const inFiles = fsFiles.reduce((n, f) => n + (f.bytes || 248), 0);
-  const report = {store: 'flash', bytes: FS_BYTES, in_files: inFiles, erased: FS_BYTES - inFiles - fsUnused,
-                  unused: fsUnused, bad_sectors: 0, cleanup: fsUnused ? 'fast' : 'done', files: fsFiles};
-  fsUnused = Math.max(0, fsUnused - FS_CLEAN_STEP);
+  const report = {store: 'flash', bytes: FS_BYTES, in_files: inFiles, free: FS_BYTES - inFiles,
+                  cleanup: fsUnused ? 'fast' : 'done', cleaned_sectors: fsCleaned, files: fsFiles};
+  const step = Math.min(FS_CLEAN_STEP, Math.ceil(fsUnused / FS_SECTOR));
+  fsCleaned += step;
+  fsUnused = Math.max(0, fsUnused - step * FS_SECTOR);
   return report;
 }
 
@@ -601,6 +603,7 @@ const server = http.createServer((req, res) => {
     pinsFail = false;
     fsFiles = JSON.parse(JSON.stringify(FS_FILES));
     fsUnused = 0;
+    fsCleaned = 0;
     res.writeHead(200, cors); res.end('ok');
     return;
   }

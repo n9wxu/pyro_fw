@@ -1215,10 +1215,11 @@ test.describe('Filesystem', () => {
 
   test('the store\'s space and each file at its size', async ({ page }) => {
     await expect(page.locator('#fsTotal')).toHaveText('3.88 MB');
-    await expect(page.locator('#fsBad')).toHaveText('0');
+    await expect(page.locator('#fsUsed')).toHaveText('78.5 kB');
+    await expect(page.locator('#fsFree')).toHaveText('3.80 MB');
     await expect(row(page, '/www/app.js')).toContainText('59.6 kB');
     await expect(row(page, '/config.ini')).toContainText('812 B');
-    await expect(page.locator('#fsClean')).toContainText('Every unused page is erased');
+    await expect(page.locator('#fsClean')).toContainText('Nothing left for the cleanup to erase');
   });
 
   test('a file downloads from its link', async ({ page }) => {
@@ -1243,14 +1244,15 @@ test.describe('Filesystem', () => {
     await expect(row(page, '/www/index.html')).toHaveCount(1);
   });
 
-  test('a confirmed delete removes the file and the cleanup is followed down', async ({ page }) => {
+  test('a confirmed delete removes the file and the cleanup is followed until done', async ({ page }) => {
     page.once('dialog', d => d.accept());
     await row(page, '/www/app.js').locator('button:has-text("Delete")').click();
     await expect(page.locator('#fsMsg')).toContainText('deleted');
     await expect(row(page, '/www/app.js')).toHaveCount(0);
     await expect(page.locator('#fsClean')).toContainText('full speed');
-    await expect(page.locator('#fsClean')).toContainText('Every unused page is erased', { timeout: 15000 });
-    await expect(page.locator('#fsUnused')).toHaveText('0 B');
+    await expect(page.locator('#fsClean')).toContainText('4 sectors so far', { timeout: 5000 });
+    await expect(page.locator('#fsClean')).toContainText('Nothing left for the cleanup to erase', { timeout: 15000 });
+    await expect(page.locator('#fsClean')).toContainText('15 sectors');
   });
 
   test('locked while the flight log is written', async ({ page }) => {

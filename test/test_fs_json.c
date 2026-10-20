@@ -16,7 +16,7 @@ static char buf[HTTP_WORK_SIZE];
 void setUp(void) {}
 void tearDown(void) {}
 
-static const fs_space_t SPACE = {4063232u, 120320u, 3500000u, 442912u, 1u, "fast"};
+static const fs_space_t SPACE = {4063232u, 120320u, 3942912u, 312u, "fast"};
 
 void test_WEB_API_19_the_store_and_each_file(void) {
     fs_json_t j;
@@ -25,8 +25,8 @@ void test_WEB_API_19_the_store_and_each_file(void) {
     fs_json_file(&j, "serial.txt", 13u, true, true);
     fs_json_file(&j, "flight_log.bin", 0u, false, false);
     int n = fs_json_end(&j);
-    const char *want = "{\"store\":\"flash\",\"bytes\":4063232,\"in_files\":120320,\"erased\":3500000,"
-                       "\"unused\":442912,\"bad_sectors\":1,\"cleanup\":\"fast\",\"files\":["
+    const char *want = "{\"store\":\"flash\",\"bytes\":4063232,\"in_files\":120320,\"free\":3942912,"
+                       "\"cleanup\":\"fast\",\"cleaned_sectors\":312,\"files\":["
                        "{\"path\":\"/config.ini\",\"bytes\":812,\"closed\":true,\"board\":false},"
                        "{\"path\":\"/serial.txt\",\"bytes\":13,\"closed\":true,\"board\":true},"
                        "{\"path\":\"/flight_log.bin\",\"bytes\":null,\"closed\":false,\"board\":false}]}";
@@ -36,18 +36,18 @@ void test_WEB_API_19_the_store_and_each_file(void) {
 }
 
 void test_WEB_API_19_a_store_with_no_file(void) {
-    fs_space_t s = {65536u, 0u, 65536u, 0u, 0u, "done"};
+    fs_space_t s = {65536u, 0u, 65536u, 0u, "done"};
     fs_json_t j;
     fs_json_begin(&j, buf, (int)sizeof(buf), &s);
     TEST_ASSERT_TRUE(fs_json_end(&j) > 0);
-    TEST_ASSERT_NOT_NULL(strstr(buf, "\"cleanup\":\"done\",\"files\":[]}"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"cleanup\":\"done\",\"cleaned_sectors\":0,\"files\":[]}"));
     assert_json(buf);
 }
 
 /* The most files the store holds, each with the longest name and size,
  * fits the connection's work buffer. */
 void test_WEB_API_19_the_widest_report_fits_the_work_buffer(void) {
-    fs_space_t s = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, "slow"};
+    fs_space_t s = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, "slow"};
     fs_json_t j;
     fs_json_begin(&j, buf, (int)sizeof(buf), &s);
     char name[ALFS_NAME_MAX + 1];

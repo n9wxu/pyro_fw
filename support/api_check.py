@@ -208,9 +208,9 @@ check("upload /www/api_check_fs.txt -> 201", code == 201, str(code))
 code, fs = fs_report()
 check("GET /api/fs -> 200", code == 200 and isinstance(fs.get("files"), list), str(code))
 if fs:
-    check("its files, erased and unused bytes fit its size",
-          fs["in_files"] + fs["erased"] + fs["unused"] <= fs["bytes"] and fs["in_files"] > 0,
-          f'{fs["in_files"]} + {fs["erased"]} + {fs["unused"]} of {fs["bytes"]}')
+    check("its files and its free bytes make its size",
+          fs["in_files"] + fs["free"] == fs["bytes"] and fs["in_files"] > 0,
+          f'{fs["in_files"]} + {fs["free"]} of {fs["bytes"]}')
     check("its cleanup on USB is fast or done", fs["cleanup"] in ("fast", "done"), fs["cleanup"])
     up = [f for f in fs["files"] if f["path"] == "/www/api_check_fs.txt"]
     check("a file uploaded is listed at its size", len(up) == 1 and up[0]["bytes"] == 123 and up[0]["closed"],
