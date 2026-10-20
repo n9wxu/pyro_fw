@@ -193,6 +193,29 @@ let pinsIni = '[pins]\r\npyro1_released=true\r\npyro2_released=true\r\n';
 
 const MIME = {'.html':'text/html','.js':'application/javascript','.css':'text/css'};
 
+/* [WEB-API-19] The flash store: its files, and the pages a delete leaves
+   for the cleanup, which each report shows a step further down. */
+const FS_BYTES = 4063232;
+const FS_FILES = [
+  {path: '/config.ini', bytes: 812, closed: true, board: false},
+  {path: '/serial.txt', bytes: 13, closed: true, board: true},
+  {path: '/pad.mkr', bytes: 20, closed: true, board: true},
+  {path: '/www/index.html', bytes: 18234, closed: true, board: false},
+  {path: '/www/app.js', bytes: 61022, closed: true, board: false},
+  {path: '/flight_log.bin', bytes: null, closed: false, board: false}
+];
+let fsFiles = JSON.parse(JSON.stringify(FS_FILES));
+let fsUnused = 0;
+const FS_CLEAN_STEP = 16384;
+
+function fsReport() {
+  const inFiles = fsFiles.reduce((n, f) => n + (f.bytes || 248), 0);
+  const report = {store: 'flash', bytes: FS_BYTES, in_files: inFiles, erased: FS_BYTES - inFiles - fsUnused,
+                  unused: fsUnused, bad_sectors: 0, cleanup: fsUnused ? 'fast' : 'done', files: fsFiles};
+  fsUnused = Math.max(0, fsUnused - FS_CLEAN_STEP);
+  return report;
+}
+
 const server = http.createServer((req, res) => {
   /* As the board: same origin only, so no CORS headers, and no preflight. */
   const cors = {};
@@ -507,6 +530,26 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.url === '/api/fs' && req.method === 'GET') {
+    res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+    res.end(JSON.stringify(fsReport()));
+    return;
+  }
+
+  /* [WEB-API-17] */
+  if (req.url.startsWith('/api/delete/') && req.method === 'POST') {
+    const target = req.url.slice('/api/delete'.length);
+    const i = fsFiles.findIndex(f => f.path === target);
+    const code = i < 0 ? 404 : fsFiles[i].board ? 403 : 200;
+    if (code === 200) {
+      fsUnused += fsFiles[i].bytes || 248;
+      fsFiles.splice(i, 1);
+    }
+    res.writeHead(code, {...cors, 'Content-Type':'application/json'});
+    res.end(JSON.stringify(code === 200 ? {status: 'deleted'} : {error: code === 404 ? 'no such file' : "the board's own file"}));
+    return;
+  }
+
   if (req.url === '/api/flight/erase' && req.method === 'POST') {
     flightCsv = EMPTY_LOG;
     res.writeHead(200, {...cors, 'Content-Type':'application/json'});
@@ -556,6 +599,8 @@ const server = http.createServer((req, res) => {
     luaHeartbeat = 0;
     configAnswer = null;
     pinsFail = false;
+    fsFiles = JSON.parse(JSON.stringify(FS_FILES));
+    fsUnused = 0;
     res.writeHead(200, cors); res.end('ok');
     return;
   }

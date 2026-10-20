@@ -489,6 +489,95 @@ static void test_WEB_API_18_a_rename_that_cannot_copy_leaves_the_file_as_it_was(
     clean_all();
 }
 
+/* [USB-10] On USB with test mode off the cleanup takes the next sector at
+ * once; otherwise a second after the last. */
+static void test_USB_10_the_cleanup_waits_only_off_usb(void) {
+    TEST_ASSERT_EQUAL_UINT32(0u, vfs_flash_clean_wait_ms(true));
+    TEST_ASSERT_EQUAL_UINT32(1000u, vfs_flash_clean_wait_ms(false));
+}
+
+/* [WEB-API-19] Read from the pages themselves: a replaced file's old pages
+ * are unused until the cleanup erases their sectors, and the cleanup says
+ * when it has none left to erase. */
+static void test_WEB_API_19_the_survey_tells_files_erased_and_unused_apart(void) {
+    static uint8_t d[2 * SECTOR];
+    vfs_flash_survey_t a, b, c;
+    clean_all();
+    fill(d, sizeof(d), 41);
+    TEST_ASSERT_EQUAL(0, write_whole("survey.bin", d, sizeof(d)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_survey(&a));
+    TEST_ASSERT_TRUE(a.in_files >= sizeof(d));
+    TEST_ASSERT_TRUE(a.in_files + a.erased + a.unused <= a.bytes);
+    TEST_ASSERT_EQUAL_UINT32(0u, a.bad_sectors);
+
+    TEST_ASSERT_EQUAL(0, write_whole("survey.bin", d, sizeof(d)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_survey(&b));
+    TEST_ASSERT_EQUAL_UINT32(a.in_files, b.in_files);
+    TEST_ASSERT_TRUE(b.unused >= a.unused + sizeof(d));
+    TEST_ASSERT_TRUE(b.cleaning);
+
+    clean_all();
+    TEST_ASSERT_EQUAL(0, vfs_flash_survey(&c));
+    TEST_ASSERT_FALSE(c.cleaning);
+    TEST_ASSERT_TRUE(c.unused + SECTOR <= b.unused);
+    TEST_ASSERT_TRUE(c.erased >= b.erased + SECTOR);
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("survey.bin"));
+    clean_all();
+}
+
+typedef struct {
+    int n;
+    char name[8][ALFS_NAME_MAX + 1];
+    uint32_t size[8];
+    bool closed[8];
+} listed_t;
+
+static void note_file(void *ctx, const char *name, uint32_t size, bool closed) {
+    listed_t *l = ctx;
+    if (l->n < 8) {
+        strcpy(l->name[l->n], name);
+        l->size[l->n] = size;
+        l->closed[l->n] = closed;
+    }
+    l->n++;
+}
+
+static int find(const listed_t *l, const char *name, bool closed) {
+    for (int i = 0; i < l->n && i < 8; i++)
+        if (strcmp(l->name[i], name) == 0 && l->closed[i] == closed)
+            return i;
+    return -1;
+}
+
+/* [WEB-API-19] Every file by its name: its size once closed, and a file
+ * still being written as not closed. */
+static void test_WEB_API_19_the_list_gives_each_files_name_and_size(void) {
+    static uint8_t d[700];
+    fill(d, sizeof(d), 43);
+    TEST_ASSERT_EQUAL(0, write_whole("www/a.txt", d, 100));
+    TEST_ASSERT_EQUAL(0, write_whole("b.txt", d, sizeof(d)));
+    vfs_flash_file_t w;
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&w, "c.bin", VFS_FLASH_WRITE, wbuf));
+    TEST_ASSERT_EQUAL(10, vfs_flash_write(&w, d, 10));
+
+    listed_t l = {0};
+    int n = vfs_flash_list(note_file, &l);
+    TEST_ASSERT_EQUAL(l.n, n);
+    int a = find(&l, "www/a.txt", true), b = find(&l, "b.txt", true), c = find(&l, "c.bin", false);
+    TEST_ASSERT_TRUE(a >= 0 && b >= 0 && c >= 0);
+    TEST_ASSERT_EQUAL_UINT32(100u, l.size[a]);
+    TEST_ASSERT_EQUAL_UINT32(sizeof(d), l.size[b]);
+
+    TEST_ASSERT_EQUAL(0, vfs_flash_close(&w));
+    memset(&l, 0, sizeof(l));
+    vfs_flash_list(note_file, &l);
+    TEST_ASSERT_TRUE(find(&l, "c.bin", true) >= 0);
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/a.txt"));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("b.txt"));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("c.bin"));
+    clean_all();
+}
+
 static void test_names(void) {
     vfs_flash_file_t f;
     TEST_ASSERT_EQUAL(VFS_FLASH_ERR, vfs_flash_open(&f, "", VFS_FLASH_WRITE, wbuf));
@@ -516,6 +605,9 @@ int main(void) {
     RUN_TEST(test_WEB_API_18_a_failed_write_is_let_go_when_no_other_file_is_open);
     RUN_TEST(test_WEB_API_18_a_log_that_cannot_close_reads_as_a_power_cut_left_it);
     RUN_TEST(test_WEB_API_18_a_rename_that_cannot_copy_leaves_the_file_as_it_was);
+    RUN_TEST(test_USB_10_the_cleanup_waits_only_off_usb);
+    RUN_TEST(test_WEB_API_19_the_survey_tells_files_erased_and_unused_apart);
+    RUN_TEST(test_WEB_API_19_the_list_gives_each_files_name_and_size);
     RUN_TEST(test_names);
     return UNITY_END();
 }

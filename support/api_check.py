@@ -10,11 +10,12 @@ its sensor's range (PYR-BOARD-03, SNS-MAX-01); a board reached this way is on
 USB, so it reports usb_attached and its buzzer is silent (USB-01..03), and
 test mode gives it its voice and its pad record back until it is turned off
 (USB-08); no inert key is written; the flight log can be erased (WEB-API-09)
-and a file deleted, but not the board's own (WEB-API-17);
+and a file deleted, but not the board's own (WEB-API-17); /api/fs lists the
+flash store's files and space, a file uploaded at its size (WEB-API-19);
 /api/status carries the pulse, fault, resume and emergency fields.
 
 Verifies on hardware [WEB-API-01, WEB-API-02, WEB-API-03, WEB-API-07,
-WEB-API-12, WEB-API-15, WEB-API-17, BUZ-CODE-03, BUZ-CODE-11, FLT-BROWN-01, FLT-BROWN-05].
+WEB-API-12, WEB-API-15, WEB-API-17, WEB-API-19, BUZ-CODE-03, BUZ-CODE-11, FLT-BROWN-01, FLT-BROWN-05].
 
 ERASES THE FLIGHT LOG, stores a changed pyro1 mode for a few seconds, and
 holds the board in test mode for about 15 s -- long enough to write the pad
@@ -192,6 +193,38 @@ for own in ("serial.txt", "pad.mkr"):
     check(f"a delete of the board's {own} -> 403", code == 403, str(code))
 code, _, _ = req("POST", "/api/delete/www/../config.ini")
 check("a delete of a bad name -> 400", code == 400, str(code))
+
+
+def fs_report():
+    code, _, body = req("GET", "/api/fs")
+    return code, json.loads(body) if code == 200 else {}
+
+
+# [WEB-API-19] The flash store: its space, and each file at its size, the
+# board's own marked. On USB with test mode off the cleanup is fast or done
+# (USB-10).
+code, _, _ = req("POST", "/www/api_check_fs.txt", "x" * 123)
+check("upload /www/api_check_fs.txt -> 201", code == 201, str(code))
+code, fs = fs_report()
+check("GET /api/fs -> 200", code == 200 and isinstance(fs.get("files"), list), str(code))
+if fs:
+    check("its files, erased and unused bytes fit its size",
+          fs["in_files"] + fs["erased"] + fs["unused"] <= fs["bytes"] and fs["in_files"] > 0,
+          f'{fs["in_files"]} + {fs["erased"]} + {fs["unused"]} of {fs["bytes"]}')
+    check("its cleanup on USB is fast or done", fs["cleanup"] in ("fast", "done"), fs["cleanup"])
+    up = [f for f in fs["files"] if f["path"] == "/www/api_check_fs.txt"]
+    check("a file uploaded is listed at its size", len(up) == 1 and up[0]["bytes"] == 123 and up[0]["closed"],
+          str(up))
+    own = [f["path"] for f in fs["files"] if f["board"]]
+    check("only the board's own files are marked its", set(own) <= {"/serial.txt", "/pad.mkr"}, str(own))
+    closed = [f for f in fs["files"] if f["closed"] and f["path"] == "/config.ini"]
+    if closed:
+        code, _, body = req("GET", "/config.ini")
+        check("a listed file reads at its listed size", code == 200 and len(body) == closed[0]["bytes"],
+              f"{code} {len(body)} of {closed[0]['bytes']}")
+req("POST", "/api/delete/www/api_check_fs.txt")
+_, fs = fs_report()
+check("a deleted file is listed no more", fs and not [f for f in fs["files"] if f["path"] == "/www/api_check_fs.txt"])
 
 # WEB-API-12: the room the next flight's log has, and the seconds of flight it
 # holds at every sample, which a second's sync can only shorten.

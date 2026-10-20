@@ -1034,6 +1034,20 @@ add_custom_target(net_stats_tests
     COMMENT "/api/net rendering tests"
 )
 
+add_custom_target(fs_json_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building /api/fs rendering tests..."
+    COMMAND ${HOST_CC} -std=c99 -Wall -Wextra -Werror -I${CMAKE_CURRENT_LIST_DIR}/src -I${alfs_SOURCE_DIR}
+               -I${CMAKE_CURRENT_LIST_DIR}/test -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_fs_json.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/fs_json.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_fs_json
+    COMMAND ${CMAKE_COMMAND} -E echo "Running /api/fs rendering tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_fs_json
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "/api/fs rendering tests"
+)
+
 add_custom_target(status_json_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building status rendering tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
