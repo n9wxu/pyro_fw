@@ -144,6 +144,8 @@ void flight_set_test_mode(flight_context_t *ctx, bool on, uint32_t now);        
 
 flight_context_t *flight_get_context(void);
 flight_state_t flight_get_state(void);
+/* [USB-01] A USB host attached and test mode off: no launch can be declared. */
+bool flight_is_grounded_on_usb(void);
 
 /* Flight time: running while airborne, frozen at the landing [WEB-UI-04]. */
 uint32_t flight_elapsed_ms(const flight_context_t *ctx, uint32_t now);

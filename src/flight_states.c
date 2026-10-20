@@ -133,6 +133,10 @@ flight_state_t flight_get_state(void) {
     return g_flight_ctx ? g_flight_ctx->current_state : BOOT_SETTLE;
 }
 
+bool flight_is_grounded_on_usb(void) {
+    return g_flight_ctx && flight_grounded_on_usb(g_flight_ctx);
+}
+
 /* ── Shared by the detectors ──────────────────────────────────────── */
 
 bool flight_grounded_on_usb(const flight_context_t *ctx) {

@@ -59,6 +59,7 @@
 #include "http_routes.h"
 #include "flash_chip.h"
 #include "flash_timing.h"
+#include "fs_json.h"
 #include "core1_frame.h"
 #include "ota_bounds.h"
 #include "http_server.h"
@@ -1155,6 +1156,35 @@ static void serve_log_space(conn_t *c) {
     http_respond(hc, 200, JSON, buf, (uint32_t)n);
 }
 
+static void fs_list_one(void *ctx, const char *name, uint32_t size, bool closed) {
+    fs_json_file((fs_json_t *)ctx, name, size, closed, vfs_is_internal(name));
+}
+
+/* GET /api/fs [WEB-API-19]: the flash store, then each file, written into the
+ * work buffer as the store lists them. */
+static void serve_api_fs(conn_t *c) {
+    http_conn_t *hc = &c->h;
+    if (!fs_take(c)) {
+        return;
+    }
+    vfs_flash_survey_t v;
+    if (vfs_flash_survey(&v) != 0) {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"no filesystem\"}");
+        return;
+    }
+    fs_space_t s = {v.bytes,  v.in_files,    v.erased,
+                    v.unused, v.bad_sectors, !v.cleaning ? "done" : flight_is_grounded_on_usb() ? "fast" : "slow"};
+    fs_json_t j;
+    fs_json_begin(&j, (char *)hc->work, (int)sizeof(hc->work), &s);
+    vfs_flash_list(fs_list_one, &j);
+    int n = fs_json_end(&j);
+    if (n < 0) {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"the list does not fit\"}");
+        return;
+    }
+    http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
+}
+
 #if PYRO_HAS_SD
 /* GET /api/sd: the card, its FAT and the driver's counters [DD-075]. */
 static void serve_api_sd(conn_t *c) {
@@ -1354,6 +1384,8 @@ static void serve_get(conn_t *c) {
         serve_flight_csv(c);
     } else if (strcmp(path, "/api/log/space") == 0) {
         serve_log_space(c);
+    } else if (strcmp(path, "/api/fs") == 0) {
+        serve_api_fs(c);
     } else if (strcmp(path, "/api/net") == 0) {
         serve_api_net(hc);
 #if PYRO_HAS_BENCH_FLIGHT

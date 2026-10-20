@@ -380,6 +380,7 @@ add_executable(pyro_fw_c
     src/http_conn.c
     src/http_work.c
     src/status_json.c
+    src/fs_json.c
     src/net_stats.c
     src/net_txq.c
     src/flight_log.c
@@ -439,7 +440,7 @@ set_source_files_properties(${TINYUSB_DIR}/lib/networking/rndis_reports.c
 # So is the bench's side of the application: the HTTP server and what it
 # parses and prints.
 set_source_files_properties(
-    src/http_server.c src/http_transport.c src/http_conn.c src/http_work.c src/status_json.c src/config.c
+    src/http_server.c src/http_transport.c src/http_conn.c src/http_work.c src/status_json.c src/fs_json.c src/config.c
     src/pin_assign.c src/net_glue.c PROPERTIES COMPILE_OPTIONS "-Os")
 
 # An SD card on SPI [DD-075, DD-076]: FatFs R0.16 (lib/fatfs) over this

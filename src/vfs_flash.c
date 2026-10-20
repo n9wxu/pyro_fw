@@ -7,10 +7,6 @@
 #include "fs_lock.h"
 #include <string.h>
 
-/* A board's files are its configuration, web pages, script, identity and
- * flight log, about a dozen; a power cut can leave a second copy of one. */
-#define CACHE_RECORDS 48
-
 #define PAGE_MAX 256u
 #define CHUNK 64u
 
@@ -20,7 +16,7 @@
 #define FIRST_PAGE_KEEPS 71u
 
 static alfs_fs_t store;
-static alfs_rec_t cache[CACHE_RECORDS];
+static alfs_rec_t cache[VFS_FLASH_FILES_MAX];
 static uint8_t scratch[PAGE_MAX];
 static const alfs_area_t *area_of;
 static const alfs_driver_t *drv_of;
@@ -57,7 +53,7 @@ int vfs_flash_mount(const alfs_area_t *area, const alfs_driver_t *drv, bool w) {
     if (!mounted) {
         if (area->page_size > PAGE_MAX || !fs_lock())
             return VFS_FLASH_ERR;
-        int rc = alfs_fs_mount(&store, area, drv, scratch, cache, CACHE_RECORDS);
+        int rc = alfs_fs_mount(&store, area, drv, scratch, cache, VFS_FLASH_FILES_MAX);
         fs_unlock();
         if (rc != ALFS_OK)
             return VFS_FLASH_ERR;
@@ -98,7 +94,7 @@ static void let_go(void) {
     if (!nfailed || held)
         return;
     memset(&store, 0, sizeof(store));
-    if (alfs_fs_mount(&store, area_of, drv_of, scratch, cache, CACHE_RECORDS) != ALFS_OK)
+    if (alfs_fs_mount(&store, area_of, drv_of, scratch, cache, VFS_FLASH_FILES_MAX) != ALFS_OK)
         return;
     for (uint8_t i = 0; i < nfailed && i < FAILED_NAMES; i++) {
         if (failed[i].remove)
@@ -375,6 +371,38 @@ uint32_t vfs_flash_synced_cost(uint32_t bytes) {
         return bytes;
     uint32_t page = area_of->page_size - PAGE_KEEPS;
     return (bytes + page - 1u) / page * page;
+}
+
+int vfs_flash_survey(vfs_flash_survey_t *out) {
+    if (!mounted || !fs_lock())
+        return VFS_FLASH_ERR;
+    alfs_fs_status_t st;
+    int rc = alfs_fs_status(&store, &st);
+    fs_unlock();
+    if (rc != ALFS_OK)
+        return err(rc);
+    out->bytes = st.pages * st.data_per_page;
+    out->in_files = st.live * st.data_per_page;
+    out->erased = st.free * st.data_per_page;
+    out->unused = st.dead * st.data_per_page;
+    out->bad_sectors = st.bad;
+    out->cleaning = writable && (dirty || nfailed);
+    return 0;
+}
+
+int vfs_flash_list(vfs_flash_each_t each, void *ctx) {
+    if (!mounted || !fs_lock())
+        return VFS_FLASH_ERR;
+    int n = 0;
+    uint32_t after = 0;
+    alfs_file_info_t info;
+    while (alfs_file_list(&store, after, &info) == ALFS_OK) {
+        after = info.id;
+        each(ctx, info.name, info.closed ? info.size : 0u, info.closed);
+        n++;
+    }
+    fs_unlock();
+    return n;
 }
 
 int vfs_flash_clean(void) {

@@ -33,6 +33,11 @@
 /* A file's block: alfs keeps a writer's bytes in it until a page fills. */
 #define VFS_FLASH_BUF_SIZE 1024
 
+/* The files the store keeps track of: a board's configuration, web pages,
+ * script, identity and flight log are about a dozen, and a power cut can
+ * leave a second copy of one. */
+#define VFS_FLASH_FILES_MAX 48
+
 enum { VFS_FLASH_READ = 1, VFS_FLASH_WRITE, VFS_FLASH_APPEND };
 
 typedef struct {
@@ -82,5 +87,30 @@ uint32_t vfs_flash_synced_cost(uint32_t bytes);
  * when the area is clean, <0 on a fault. Never waits for the lock, and waits
  * while a file is open for reading: 1 then too. */
 int vfs_flash_clean(void);
+
+/* [USB-10] The wait between the pad's cleanup steps: none while a USB host
+ * is attached and test mode is off, where no launch can be declared; a
+ * second otherwise, so an erase stalls the pad no more than once a second. */
+#define VFS_FLASH_CLEAN_PERIOD_MS 1000u
+static inline uint32_t vfs_flash_clean_wait_ms(bool grounded_on_usb) {
+    return grounded_on_usb ? 0u : VFS_FLASH_CLEAN_PERIOD_MS;
+}
+
+/* [WEB-API-19] The store as its pages are now, in bytes of file data: what
+ * the files hold, what is erased, and what no file needs but is not yet
+ * erased -- some of it in sectors files still share, which the cleanup
+ * erases once those files go. cleaning: it has sectors left to erase.
+ * Reads every page's header. */
+typedef struct {
+    uint32_t bytes, in_files, erased, unused, bad_sectors;
+    bool cleaning;
+} vfs_flash_survey_t;
+int vfs_flash_survey(vfs_flash_survey_t *out);
+
+/* Each file, under the store's lock: its name, its size once closed (0
+ * before), and whether it is closed. The count, or <0. each must not call
+ * into the store. */
+typedef void (*vfs_flash_each_t)(void *ctx, const char *name, uint32_t size, bool closed);
+int vfs_flash_list(vfs_flash_each_t each, void *ctx);
 
 #endif
