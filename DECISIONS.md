@@ -617,7 +617,10 @@ rationale and the alternatives considered.
   - A chip holding an erase suspended takes no other erase, and holds it
     through a reboot of the RP2040. An operation the chip holds suspended is
     run to its end at every start, and on the ground by the first operation
-    after a flight that gave one up [FLT-LOG-11].
+    after a flight that gave one up [FLT-LOG-11]. An erase it ignores reads
+    as ended at once, so a piece started afresh never lets go of what is
+    held; only the held operation resumed to its end does
+    (`flash_slot_held()`).
 - **The period:** 10 ms where DD-065 made it 20. The collector runs free of
   the loop (DD-093), so the sample rate is unchanged; a period now steps
   none or one sample. MK1C's arm pump is sized from the period
@@ -685,7 +688,14 @@ rationale and the alternatives considered.
   slot -- about four frames a second in a flight, and most of a frame when
   alfs searches a nearly full filesystem for a free page -- and Lua shares
   core1 with it then: on MK1C with the filesystem full, 33 Lua ticks given
-  no time. FLT-LOG-11's finish is tested on the host only.
+  no time. On MK1B-8MB, a 1500 m flight begun as the pad's cleanup started
+  on a 4 MB refused upload, in an image built with BY25Q64ES's erase in
+  pieces turned back on, overran 965 frames, the longest 9.99 ms, and
+  dropped the log from 18 s on (149 kB); no erase began. FLT-LOG-11's
+  finish is tested on the host only: that flight was to leave an erase
+  suspended. `/api/log/space` counts pages awaiting the cleanup as room,
+  which a part that does not erase in flight cannot use: 2,272 s reported
+  on MK1B-8MB with a few sectors erased.
 
 ### DD-103: The Flight Log To The Host In Test Mode
 - **Decision:** at the user's direction ("Give the USB flight test mode the
