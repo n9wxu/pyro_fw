@@ -6,13 +6,15 @@ Uploads a file larger than the room the board reports, which the board
 refuses part-way. Then, without a restart: the part file is gone, a delete of
 the name finds no file, a small upload of the same name is taken once the
 cleanup has erased a sector, and it reads back whole. The board's uptime runs
-on throughout.
+on throughout, and the sensor's readings beside a minute of flash writes keep
+the pad's sensor check satisfied.
 
-Verifies on hardware [WEB-API-18].
+Verifies on hardware [WEB-API-18, SNS-PRES-14].
 
 Leaves the board's storage holding the upload's pages until the pad's cleanup
 erases them, a sector a second: about half an hour for 8 MB of files. A
-flight before then erases in flight (FLT-LOG-10). Refuses to run on a board
+flight before then erases in flight where its part can, and where it cannot
+has only the room already erased (FLT-LOG-10). Refuses to run on a board
 that is not in PAD_IDLE.
 
 Usage:
@@ -111,5 +113,8 @@ check("and is deleted", code == 200, str(code))
 st1 = status()
 check("no restart", st1["uptime"] > st0["uptime"] and st1["reset_cause"] == st0["reset_cause"],
       f"uptime {st0['uptime']} -> {st1['uptime']}")
+latched = [f for f in st1["faults"] if f.startswith("sensor_") and f not in st0["faults"]]
+check("no sensor fault was latched (SNS-PRES-17)", not latched,
+      f"{','.join(latched) or 'none'}; readings beside a flash operation +{st1['pres_flashed'] - st0['pres_flashed']}")
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

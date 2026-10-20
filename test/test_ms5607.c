@@ -6,7 +6,7 @@
  * Figures are from docs/datasheets/MS5607-02BA03_2017-06.pdf and
  * docs/datasheets/AN520_C-code_MS56xx_004_2011-08.pdf.
  *
- * Verifies [SNS-PRES-15, SNS-PRES-16].
+ * Verifies [SNS-PRES-14, SNS-PRES-15, SNS-PRES-16].
  */
 #include "unity.h"
 #include "ms5607_driver.h"
@@ -131,6 +131,42 @@ void test_SNS_PRES_12_the_line_interpolates_back(void) {
     TEST_ASSERT_EQUAL_UINT32(8000300u, ms5607_temps_at(&t, 1030000u));
 }
 
+/* One collector cycle: its codes, MSB first, and the middle of each
+ * conversion, a temperature 9.1 ms after its pressure. */
+static collector_raw_t cycle(uint32_t d1, uint32_t d2, uint64_t at_us, bool d1_flashed, bool d2_flashed) {
+    collector_raw_t raw = {0};
+    const uint32_t code[2] = {d1, d2};
+    for (int i = 0; i < 2; i++) {
+        raw.data[i][0] = (uint8_t)(code[i] >> 16);
+        raw.data[i][1] = (uint8_t)(code[i] >> 8);
+        raw.data[i][2] = (uint8_t)code[i];
+        raw.at_us[i] = at_us + (uint64_t)i * MS5607_CONV_DONE_US;
+    }
+    raw.flashed[MS5607_PRESSURE] = d1_flashed;
+    raw.flashed[MS5607_TEMPERATURE] = d2_flashed;
+    return raw;
+}
+
+/* A flash operation beside either conversion, or both, changes nothing
+ * the cycle gives, nor what the cycles after it give. The first cycle's
+ * temperature is the line's only one, so its pressure takes it as read. */
+void test_SNS_PRES_14_a_cycle_a_flash_operation_ran_beside_reads_as_any_other(void) {
+    static const bool beside[8][2] = {{1, 1}, {1, 0}, {0, 1}, {0, 0}, {0, 0}, {0, 1}, {0, 0}, {1, 0}};
+    ms5607_temps_t quiet = {0}, flashed = {0};
+    for (int i = 0; i < 8; i++) {
+        uint32_t d1 = 6465444u + 311u * (uint32_t)i, d2 = 8077636u + 37u * (uint32_t)i;
+        uint64_t at_us = 1000000u + 18200u * (uint64_t)i;
+        collector_raw_t a = cycle(d1, d2, at_us, false, false);
+        collector_raw_t b = cycle(d1, d2, at_us, beside[i][0], beside[i][1]);
+        ms5607_pair_t want = ms5607_cycle(&quiet, &a);
+        ms5607_pair_t got = ms5607_cycle(&flashed, &b);
+        if (i == 0)
+            TEST_ASSERT_EQUAL_UINT32(d2, got.d2);
+        TEST_ASSERT_EQUAL_UINT32(want.d1, got.d1);
+        TEST_ASSERT_EQUAL_UINT32(want.d2, got.d2);
+    }
+}
+
 /* AN520 page 12: "the resulting calculated CRC should be 0xB". */
 void test_SNS_PRES_16_the_application_notes_example(void) {
     uint16_t prom[8] = {0x3132, 0x3334, 0x3536, 0x3738, 0x3940, 0x4142, 0x4344, 0x4500};
@@ -161,6 +197,7 @@ int main(void) {
     RUN_TEST(test_SNS_PRES_15_the_very_low_terms_below_minus_15_C);
     RUN_TEST(test_SNS_PRES_15_a_straight_line_in_the_pressure_code);
     RUN_TEST(test_SNS_PRES_12_the_line_interpolates_back);
+    RUN_TEST(test_SNS_PRES_14_a_cycle_a_flash_operation_ran_beside_reads_as_any_other);
     RUN_TEST(test_SNS_PRES_16_the_application_notes_example);
     RUN_TEST(test_SNS_PRES_16_one_wrong_bit_in_any_word_is_seen);
     return UNITY_END();

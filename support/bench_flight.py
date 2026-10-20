@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fly a profile on a board on the bench (src/bench_flight.h, DD-078).
 
-Verifies on hardware [SYS-SIM-01, SIM-01..04, FLT-BROWN-04].
+Verifies on hardware [SYS-SIM-01, SIM-01..04, FLT-BROWN-04, FLT-LOG-07, SNS-PRES-14].
 
     support/bench_flight.py 192.168.42.1                      3 km, the board's defaults
     support/bench_flight.py 192.168.42.1 --apogee 30000 --boost 4 --drogue 25
@@ -15,18 +15,22 @@ change, the fires, and what the loop, the flash and the logs counted. Every
 fire on the board is mocked from the start until it reboots.
 
 Exit status 1 when the flight did not land, pyro 1 did not fire within
-APOGEE_TOL_S of the profile's apogee, pyro 2 did not fire, the loop overran
-or a flash operation was refused. With --host-log, also when a byte of the
-log was lost or the flash was written. With --fail, a board whose re-fire or
+APOGEE_TOL_S of the profile's apogee, pyro 2 did not fire, the loop overran,
+a flash operation was refused, or the log is missing a reading: a step
+between sample rows from launch on wider than GAP_OF_MEDIAN times the median
+step. A reading a flash operation ran beside is one of them. With --host-log,
+also when a byte of the log was lost or the flash was written. With --fail, a board whose re-fire or
 emergency speeds are set must also have fired a channel more than once.
 """
 import argparse
 import json
+import statistics
 import sys
 import time
 import urllib.request
 
 APOGEE_TOL_S = 4.0  # the drogue's fire, as seen at this script's 1 s poll
+GAP_OF_MEDIAN = 1.5  # one reading missing is twice the median step
 
 
 def get(host, path):
@@ -34,9 +38,37 @@ def get(host, path):
         return json.loads(r.read())
 
 
-def get_bytes(host, path):
-    with urllib.request.urlopen(f"http://{host}{path}", timeout=5) as r:
+def get_bytes(host, path, timeout=5):
+    with urllib.request.urlopen(f"http://{host}{path}", timeout=timeout) as r:
         return r.read()
+
+
+def sample_times(d):
+    """Each sample row's time, from the binary records (src/flight_log.h)."""
+    i, times = 4, []
+    if d[:4] != b"PYL1":
+        return times
+    while i < len(d):
+        kind = d[i]
+        if kind == ord("H"):
+            i += 2 + d[i + 1]
+        elif kind == ord("S") and i + 22 <= len(d):
+            if d[i + 21] == 0:
+                times.append(int.from_bytes(d[i + 1:i + 5], "little"))
+            i += 22
+        elif kind == ord("T") and i + 7 <= len(d):
+            i += 7 + d[i + 6]
+        else:
+            break
+    return times
+
+
+def steps(times):
+    """The widest step between sample rows from launch on, and the median.
+    The rows kept from the pad all read 0."""
+    t = [x for x in times if x > 0]
+    iv = [b - a for a, b in zip(t, t[1:])]
+    return (max(iv), statistics.median(iv)) if iv else (0, 0)
 
 
 class HostLog:
@@ -56,23 +88,7 @@ class HostLog:
                 return
 
     def samples(self):
-        """Each sample row's time, from the binary records (src/flight_log.h)."""
-        d, i, times = self.data, 4, []
-        if d[:4] != b"PYL1":
-            return times
-        while i < len(d):
-            kind = d[i]
-            if kind == ord("H"):
-                i += 2 + d[i + 1]
-            elif kind == ord("S") and i + 22 <= len(d):
-                if d[i + 21] == 0:
-                    times.append(int.from_bytes(d[i + 1:i + 5], "little"))
-                i += 22
-            elif kind == ord("T") and i + 7 <= len(d):
-                i += 7 + d[i + 6]
-            else:
-                break
-        return times
+        return sample_times(self.data)
 
 
 def get_text(host, path):
@@ -116,7 +132,7 @@ def main():
         print(f"the board is in {st['state']}; reboot it to fly again")
         return 1
     base = {k: st.get(k, 0) for k in ("loop_overruns", "flash_refusals", "flash_skips", "log_dropped",
-                                      "flash_programs", "flash_erases")}
+                                      "flash_programs", "flash_erases", "pres_flashed")}
     code, r = post(a.host, "/api/test_mode/on" + ("?log=host" if a.host_log else ""))
     if code != 200 or not r.get("test_mode") or (a.host_log and r.get("test_log") != "host"):
         print("test mode refused:", code, r)
@@ -198,17 +214,22 @@ def main():
         pass
     ok = st["state"] == "LANDED" and s["fires"][0] >= 1 and s["fires"][1] >= 1
     ok &= counts["loop_overruns"] == 0 and counts["flash_refusals"] == 0
+    time.sleep(2)  # the storage task hands the log's end over once LANDED has finalised
     if live:
-        time.sleep(2)  # the storage task hands the log's end over once LANDED has finalised
         live.fetch()
         with open(a.host_log, "wb") as f:
             f.write(live.data)
         t = live.samples()
-        gap = max((b - a_ for a_, b in zip(t, t[1:])), default=0)
         written = in_flight[-1] - in_flight[0] if in_flight else 0
-        print(f"host log: {len(live.data)} bytes to {a.host_log}, {live.lost} lost, {len(t)} sample rows, "
-              f"the widest gap {gap} ms; flash programs and erases from launch to landing {written}")
-        ok &= live.lost == 0 and len(t) > 0 and written == 0
+        print(f"host log: {len(live.data)} bytes to {a.host_log}, {live.lost} lost, "
+              f"flash programs and erases from launch to landing {written}")
+        ok &= live.lost == 0 and written == 0
+    else:
+        t = sample_times(get_bytes(a.host, "/flight_log.bin", timeout=60))
+    widest, median = steps(t)
+    print(f"log: {len(t)} sample rows, the widest step {widest} ms against a median {median:g} ms; "
+          f"readings a flash operation ran beside +{counts['pres_flashed']}")
+    ok &= len(t) > 0 and 0 < widest <= GAP_OF_MEDIAN * median
     late = None if fire_t[0] is None else fire_t[0] - s["t_apogee_s"]
     print(f"pyro 1 {'never fired' if late is None else f'{late:+.1f} s from the profile apogee'} "
           f"(t={s['t_apogee_s']:.1f} s)")
