@@ -128,6 +128,7 @@ MK1A and MK1C (16 MB): two 4076 KB slots from 0x00A000 and 0x405000, and 8 MB of
 | GET | `/api/pressure/trace` | The last 256 conversions, binary (SNS-PRES-13) |
 | GET | `/api/log/space` | Room for the next flight's log (WEB-API-12) |
 | GET | `/api/fs` | The flash store's space and each file, the cleanup's state and pace (WEB-API-19) |
+| GET | `/api/fs/scan?sector=K&count=N` | How many pages of each of up to 128 sectors read erased (WEB-API-20) |
 | GET | `/api/flight.csv` | The flight log, rendered as CSV |
 | POST | `/api/flight/erase` | Erase the flight log |
 | POST | `/api/delete/<path>` | Delete a file from every store; the board's identity and pad record refused (WEB-API-17) |

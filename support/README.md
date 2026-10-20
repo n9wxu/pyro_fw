@@ -19,7 +19,7 @@ extension installs it.
 |--------|---------|
 | `test_network.py` | Comprehensive network/API test suite with TUI |
 | `http_stream_check.py` | The HTTP server over raw sockets: requests split byte by byte, bodies in later writes, coalesced requests, odd-chunk uploads round-tripped, parallel fetches past a stalled connection (rewrites /www/app.js and index.html with the local copies) |
-| `api_check.py` | Bench check of every HTTP route, a stored configuration that waits for the next start, the board's limits, silence on USB, test mode, a file deleted, and /api/fs listing a file uploaded at its size (erases the flight log; about 15 s in test mode) |
+| `api_check.py` | Bench check of every HTTP route, a stored configuration that waits for the next start, the board's limits, silence on USB, test mode, a file deleted, /api/fs listing a file uploaded at its size, and a scan of every sector (erases the flight log; about 15 s in test mode) |
 | `failed_write_check.py` | An upload past the board's room, refused part-way and let go without a restart: its part file gone, its name taken again, the cleanup done at five sectors a second or more on USB, and no sensor fault latched by the readings beside the writes and erases (WEB-API-18, SNS-PRES-14, USB-10) |
 | `pressure_trace.py` | Every pressure conversion a board makes, judged for the faults a sample rate hides (DD-063) |
 | `noise_baseline.py` | A still board's pressure noise and pad speed noise, from `/api/status` |

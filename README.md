@@ -478,11 +478,11 @@ Connect the board via USB. It appears as a network adapter (RNDIS on Windows, EC
 - **Flight Data tab:** summary, CSV download, erase, altitude graph
 - **Beep Codes tab:** the personalities, with an audition button
 - **Lua tab:** Lua pads, the program editor with check, save, remove, export and import, and the console. A script that fails its check is not saved (LUA-MGT-01)
-- **Filesystem tab:** the flash's size, the bytes in files and the bytes free, every file with a download link and a delete that asks first (none for the board's own), and the cleanup followed until it is done (WEB-UI-07)
+- **Filesystem tab:** the flash's size, the bytes in files and the bytes free, split into erased and not yet erased by a scan of the flash the page keeps; every file with a download link and a delete that asks first (none for the board's own); and the cleanup followed until it is done (WEB-UI-07)
 - **Update tab:** firmware and web upload, GitHub release checker
 - **Test mode:** with it on, a board on USB detects a launch, fires and beeps as on battery. It lives in RAM, so every boot starts with it off, and it cannot change from launch to landing (USB-08, DD-038). Set with `?log=host`, the flight log is held in RAM for the host to read as it is written, at `/api/flight/live?since=N`, and nothing is written to the flash from launch to landing (USB-09, DD-103).
 - **APIs** (same origin only, WEB-API-07):
-  - `GET /api/status`, `/api/net` (network counters, WEB-API-13), `/api/pressure/trace` (the last 256 conversions, DD-063), `/api/log/space`, `/api/fs` (the flash store and its files, WEB-API-19), `/api/limits` (the board's pyro timing ranges and its sensor's range, PYR-BOARD-03), `/api/flight.csv`, `/api/pins/caps`, `/api/lua/console`
+  - `GET /api/status`, `/api/net` (network counters, WEB-API-13), `/api/pressure/trace` (the last 256 conversions, DD-063), `/api/log/space`, `/api/fs` (the flash store and its files, WEB-API-19), `/api/fs/scan?sector=K&count=N` (each sector's erased pages, WEB-API-20), `/api/limits` (the board's pyro timing ranges and its sensor's range, PYR-BOARD-03), `/api/flight.csv`, `/api/pins/caps`, `/api/lua/console`
   - `GET`/`POST /api/config`, `/api/pins`, `/api/beeps`, `/api/lua/script`
   - `POST /api/beeps/play`, `/api/lua/check`, `/api/flight/erase`, `/api/delete/<path>`, `/api/test_mode/on[?log=host]`, `/api/test_mode/off`, `/api/reboot`, `/api/ota`, `/api/serial`, `/www/<file>`
   - `GET /<path>` serves any file on the flash
