@@ -419,7 +419,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-API-16**: The system shall serve at `/api/flight/live?since=N` the flight log held for the host (USB-09) from byte N: the offset of the first byte it returns, the offset the log has reached, then the bytes. Bytes no longer held shall be skipped, so the host can count what it lost. ← USB-09
 - **WEB-API-17**: The system shall delete a file on request at `/api/delete/<path>` (POST), from every store that holds it: 200 when deleted, 404 when there was none, 409 while the file is open. The board's identity and its pad record belong to the board and shall be refused with 403. ← SYS-WEB-01
 - **WEB-API-18**: A file whose write or close fails shall be let go without a restart. Once no other file is open, the storage shall be as a restart would leave it: the failed file as a power cut would have left it, and every write, delete and cleanup taken. An upload that fails shall leave nothing of itself, and the file it would have replaced as it was. ← SYS-WEB-01
-- **WEB-API-19**: The system shall report at `/api/fs` the board's flash store: its size, the bytes its files hold, the bytes erased and ready, the bytes no file needs that are not yet erased, the sectors found bad, and whether the cleanup has sectors left to erase and at what pace (USB-10); and each file's path, its size once closed, and whether it belongs to the board (WEB-API-17). It shall refuse with 423 while the flight log holds the storage. ← SYS-WEB-01, DD-107
+- **WEB-API-19**: The system shall report at `/api/fs` the board's flash store: its size, the bytes its files hold, the bytes free (pages the cleanup has yet to erase among them), and whether the cleanup has sectors left to erase, at what pace (USB-10), and how many it has erased since the start; and each file's path, its size once closed, and whether it belongs to the board (WEB-API-17). It shall answer from the files' own records, without reading the store's pages, and refuse with 423 while the flight log holds the storage. ← SYS-WEB-01, DD-107
 
 ### HTTP
 - **WEB-HTTP-01**: The HTTP server shall treat each connection as a byte stream: a request shall be answered the same however TCP divides it into segments, including a header block or body split at any byte and more than one request in a single segment. ← SYS-WEB-01
@@ -432,7 +432,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-UI-04**: The web interface shall display flight summary data and allow CSV download. The summary shall come from the flight log alone, be re-read whenever it is shown, and name the flight it describes; flight time shall stop at the landing. ← SYS-WEB-01
 - **WEB-UI-05**: The web interface shall support firmware upload and update checking. ← SYS-WEB-01
 - **WEB-UI-06**: The Config tab shall show the longest flight the log holds. ← SYS-WEB-01
-- **WEB-UI-07**: The web interface shall have a Filesystem tab that shows `/api/fs`, downloads any file, and deletes a file once the operator confirms, offering no delete for the board's own files. While the cleanup has bytes to erase, the tab shall follow them down. ← SYS-WEB-01, WEB-API-19
+- **WEB-UI-07**: The web interface shall have a Filesystem tab that shows `/api/fs`, downloads any file, and deletes a file once the operator confirms, offering no delete for the board's own files. While the cleanup has sectors left to erase, the tab shall follow it until it is done. ← SYS-WEB-01, WEB-API-19
 
 ---
 
