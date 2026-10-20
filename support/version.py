@@ -3,10 +3,11 @@
 
     MAJOR.MINOR.PATCH
 
-A patch bump is automatic: CI cuts one from every green push to main, so
-the released version and the code on main never drift apart. Major and
-minor bumps are deliberate, and when one happens everything below it goes
-to zero:
+Every green push to main is released, so the released version and the
+code on main never drift apart: VERSION as it stands while it has no tag
+(a bump made by pull request), otherwise its next patch. Major and minor
+bumps are deliberate, and when one happens everything below it goes to
+zero:
 
     major   X.Y.Z -> (X+1).0.0
     minor   X.Y.Z -> X.(Y+1).0
@@ -22,6 +23,8 @@ build rather than shipping.
     ./support/version.py --next minor            next minor from VERSION
     ./support/version.py --set 3.0.0             write it, if the step is legal
     ./support/version.py --check 2.2.7 2.3.0     is that step legal?
+    git tag -l 'v*' | ./support/version.py --release
+                                                 what a push to main releases
     ./support/version.py --selftest              the rules, exhaustively
 """
 import argparse
@@ -86,6 +89,22 @@ def step_level(old, new):
 
 def is_legal(old, new):
     return step_level(old, new) is not None
+
+
+def release_version(current, tagged):
+    """The version a green push to main releases, or None.
+
+    `tagged` holds the versions already released. None means VERSION's
+    next patch is tagged too: VERSION is behind the releases.
+    """
+    parts = parse(current)
+    if parts is None:
+        raise ValueError("not a version: %r" % (current,))
+    released = {parse(t) for t in tagged} - {None}
+    if parts not in released:
+        return format_version(parts)
+    following = next_version(current, "patch")
+    return None if parse(following) in released else following
 
 
 def read_version(path=VERSION_FILE):
@@ -153,6 +172,21 @@ def selftest():
         print("  %s  %s -> %-8s rejected%s" % ("pass" if ok else "FAIL", old, new,
                                                "" if ok else " BUT ALLOWED AS %s" % got))
 
+    # What a green push to main releases, given the versions already tagged.
+    tagged = {"2.2.8", "2.2.9"}
+    releases = [
+        ("2.2.9", "2.2.10"),   # released already: its next patch
+        ("2.3.0", "2.3.0"),    # a minor bump by pull request, as it stands
+        ("3.0.0", "3.0.0"),    # a major bump, likewise
+        ("2.2.10", "2.2.10"),  # a patch set by pull request, likewise
+        ("2.2.8", None),       # its next patch is tagged: behind the releases
+    ]
+    for cur, want in releases:
+        got = release_version(cur, tagged)
+        ok = got == want
+        bad += not ok
+        print("  %s  release from %-8s = %-8s want %s" % ("pass" if ok else "FAIL", cur, got, want))
+
     # Every bump must zero everything below it, for any starting point.
     for major in range(3):
         for minor in range(3):
@@ -175,6 +209,8 @@ def main():
     ap.add_argument("--set", metavar="VERSION", help="write VERSION, if the step from the current one is legal")
     ap.add_argument("--check", nargs=2, metavar=("OLD", "NEW"), help="is that step legal?")
     ap.add_argument("--current", action="store_true", help="print the current version")
+    ap.add_argument("--release", action="store_true",
+                    help="print what a push to main releases, given the release tags on stdin")
     ap.add_argument("--validate", metavar="VERSION", help="exit 0 if that is a well-formed version")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
@@ -204,6 +240,17 @@ def main():
 
     if args.current:
         print(read_version())
+        return 0
+
+    if args.release:
+        tagged = [t.strip()[1:] for t in sys.stdin if t.strip().startswith("v")]
+        current = read_version()
+        version = release_version(current, tagged)
+        if version is None:
+            print("VERSION %s is behind the releases: v%s is tagged"
+                  % (current, next_version(current, "patch")), file=sys.stderr)
+            return 1
+        print(version)
         return 0
 
     if args.next:

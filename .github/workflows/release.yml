@@ -5,9 +5,9 @@ on:
   # tag and this runs from it.
   push:
     tags: ['v*']
-  # The automatic patch release, called by Build once main is green. It is
-  # the same job either way, so there is one definition of what a release
-  # is rather than two that drift.
+  # The release of every green push to main, called by Build. It is the
+  # same job either way, so there is one definition of what a release is
+  # rather than two that drift.
   workflow_call:
     inputs:
       version:
