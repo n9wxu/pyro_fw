@@ -99,4 +99,13 @@ int flash_slot_run(const flash_slot_io_t *io, const flash_timing_t *t, flash_slo
 #define FLASH_SLOT_ETIME (-62)
 #define FLASH_SLOT_EREFUSED (-63)
 
+/* [FLT-LOG-11] Whether the chip may hold an operation suspended that no
+ * piece will resume, after a piece that resumed one or started afresh and
+ * was left suspended or not. A chip holding an erase suspended ignores a new
+ * erase, which then reads as ended at once, so only a resumed piece that
+ * ends lets go. */
+static inline bool flash_slot_held(bool held, bool resumed, bool left_suspended) {
+    return left_suspended || (held && !resumed);
+}
+
 #endif
