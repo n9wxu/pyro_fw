@@ -7,10 +7,6 @@
 #include "fs_lock.h"
 #include <string.h>
 
-/* A board's files are its configuration, web pages, script, identity and
- * flight log, about a dozen; a power cut can leave a second copy of one. */
-#define CACHE_RECORDS 48
-
 #define PAGE_MAX 256u
 #define CHUNK 64u
 
@@ -20,7 +16,7 @@
 #define FIRST_PAGE_KEEPS 71u
 
 static alfs_fs_t store;
-static alfs_rec_t cache[CACHE_RECORDS];
+static alfs_rec_t cache[VFS_FLASH_FILES_MAX];
 static uint8_t scratch[PAGE_MAX];
 static const alfs_area_t *area_of;
 static const alfs_driver_t *drv_of;
@@ -39,6 +35,7 @@ static uint8_t nfailed;
 
 /* Pages a replaced or removed file left may wait for the cleanup. */
 static bool dirty = true;
+static uint32_t cleaned; /* sectors the cleanup erased */
 
 /* A rename's reader and writer, and a size's reader, under the lock. */
 static uint8_t copy_rblk[PAGE_MAX], copy_wblk[PAGE_MAX];
@@ -57,7 +54,7 @@ int vfs_flash_mount(const alfs_area_t *area, const alfs_driver_t *drv, bool w) {
     if (!mounted) {
         if (area->page_size > PAGE_MAX || !fs_lock())
             return VFS_FLASH_ERR;
-        int rc = alfs_fs_mount(&store, area, drv, scratch, cache, CACHE_RECORDS);
+        int rc = alfs_fs_mount(&store, area, drv, scratch, cache, VFS_FLASH_FILES_MAX);
         fs_unlock();
         if (rc != ALFS_OK)
             return VFS_FLASH_ERR;
@@ -98,7 +95,7 @@ static void let_go(void) {
     if (!nfailed || held)
         return;
     memset(&store, 0, sizeof(store));
-    if (alfs_fs_mount(&store, area_of, drv_of, scratch, cache, CACHE_RECORDS) != ALFS_OK)
+    if (alfs_fs_mount(&store, area_of, drv_of, scratch, cache, VFS_FLASH_FILES_MAX) != ALFS_OK)
         return;
     for (uint8_t i = 0; i < nfailed && i < FAILED_NAMES; i++) {
         if (failed[i].remove)
@@ -377,6 +374,67 @@ uint32_t vfs_flash_synced_cost(uint32_t bytes) {
     return (bytes + page - 1u) / page * page;
 }
 
+void vfs_flash_cleanup_state(vfs_flash_cleanup_t *out) {
+    out->cleaning = writable && (dirty || nfailed);
+    out->erased = cleaned;
+}
+
+void vfs_flash_geometry(vfs_flash_geometry_t *out) {
+    *out = (vfs_flash_geometry_t){0, 0, 0};
+    if (!area_of)
+        return;
+    out->sectors = area_of->size / area_of->sector_size;
+    out->sector_pages = area_of->sector_size / area_of->page_size;
+    out->page_bytes = area_of->page_size - PAGE_KEEPS;
+}
+
+/* The head first: a page in use shows it there. Under the lock. */
+static bool page_erased(uint32_t addr) {
+    for (uint32_t off = 0; off < area_of->page_size; off += CHUNK) {
+        if (drv_of->read(drv_of->ctx, addr + off, copy_rblk, CHUNK) != 0)
+            return false;
+        for (uint32_t i = 0; i < CHUNK; i++)
+            if (copy_rblk[i] != 0xFFu)
+                return false;
+    }
+    return true;
+}
+
+int vfs_flash_scan(uint32_t sector, uint32_t count, uint8_t *erased) {
+    if (!mounted || !fs_lock())
+        return VFS_FLASH_ERR;
+    vfs_flash_geometry_t g;
+    vfs_flash_geometry(&g);
+    uint32_t left = sector < g.sectors ? g.sectors - sector : 0u;
+    uint32_t n = count < left ? count : left;
+    if (n > VFS_FLASH_SCAN_MAX)
+        n = VFS_FLASH_SCAN_MAX;
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t base = area_of->start + (sector + k) * area_of->sector_size;
+        uint8_t e = 0;
+        for (uint32_t p = 0; p < g.sector_pages; p++)
+            e = (uint8_t)(e + page_erased(base + p * area_of->page_size));
+        erased[k] = e;
+    }
+    fs_unlock();
+    return (int)n;
+}
+
+int vfs_flash_list(vfs_flash_each_t each, void *ctx) {
+    if (!mounted || !fs_lock())
+        return VFS_FLASH_ERR;
+    int n = 0;
+    uint32_t after = 0;
+    alfs_file_info_t info;
+    while (alfs_file_list(&store, after, &info) == ALFS_OK) {
+        after = info.id;
+        each(ctx, info.name, info.closed ? info.size : 0u, info.closed);
+        n++;
+    }
+    fs_unlock();
+    return n;
+}
+
 int vfs_flash_clean(void) {
     if (!writable || (!dirty && !nfailed))
         return 0;
@@ -386,6 +444,8 @@ int vfs_flash_clean(void) {
     int rc = alfs_fs_cleanup(&store, 1);
     if (rc == ALFS_CLEAN)
         dirty = false;
+    else if (rc == ALFS_OK)
+        cleaned++; /* one sector a step */
     fs_unlock();
     if (rc == ALFS_CLEAN)
         return 0;

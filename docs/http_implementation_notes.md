@@ -52,6 +52,8 @@ The HTTP server is two halves (DD-039, DD-061):
 - `GET|POST /api/beeps` — the beep table; `POST /api/beeps/play` — one sound, played once, in PAD_IDLE only
 - `GET /api/flight.csv`, `POST /api/flight/erase`, `GET /api/log/space` — the flight log, rendered as CSV from its binary records (WEB-API-06, WEB-API-09, WEB-API-12)
 - `POST /api/delete/<path>` — a file removed from every store: 404 none, 409 open, 403 the board's identity and pad record (WEB-API-17)
+- `GET /api/fs` — the flash store from its file table, then each file as the store lists it, written into the connection's work buffer (`src/fs_json.c`); 423 in flight (WEB-API-19)
+- `GET /api/fs/scan?sector=K&count=N` — how many pages of each of up to 128 sectors read all 1s; 423 in flight (WEB-API-20)
 - `GET /api/pressure/trace?since=N` — every pressure conversion since N, in binary (SNS-PRES-13)
 - `GET /api/net` — TCP's links by state, retransmissions, what the transport refused and the frames each way (WEB-API-13)
 - `POST /api/test_mode/on[?log=host]`, `POST /api/test_mode/off` — fly on USB as on battery; held in RAM (USB-08). With `?log=host` the flight log goes to RAM for the host, not to the flash (USB-09)

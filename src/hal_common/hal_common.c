@@ -1398,11 +1398,6 @@ __attribute__((weak)) void board_flash_service(uint32_t now_ms) {
     (void)now_ms;
 }
 
-/* An erase stops both cores and disturbs the pressure conversion beside it
- * [DD-106]: one a second leaves the rest of each second's readings
- * undisturbed, boot calibration's ten among them. */
-#define CLEAN_PERIOD_MS 1000u
-
 static uint32_t next_clean_ms;
 
 /* Never in flight: the next flight finds every page it needs erased, and its
@@ -1410,7 +1405,7 @@ static uint32_t next_clean_ms;
 static void clean_service(uint32_t now_ms) {
     if (!fs_ok || hal_log_active() || !deadline_reached(now_ms, next_clean_ms))
         return;
-    next_clean_ms = now_ms + CLEAN_PERIOD_MS;
+    next_clean_ms = now_ms + vfs_flash_clean_wait_ms(flight_is_grounded_on_usb());
     vfs_clean();
 }
 

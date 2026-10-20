@@ -380,6 +380,7 @@ add_executable(pyro_fw_c
     src/http_conn.c
     src/http_work.c
     src/status_json.c
+    src/fs_json.c
     src/net_stats.c
     src/net_txq.c
     src/flight_log.c
@@ -439,7 +440,7 @@ set_source_files_properties(${TINYUSB_DIR}/lib/networking/rndis_reports.c
 # So is the bench's side of the application: the HTTP server and what it
 # parses and prints.
 set_source_files_properties(
-    src/http_server.c src/http_transport.c src/http_conn.c src/http_work.c src/status_json.c src/config.c
+    src/http_server.c src/http_transport.c src/http_conn.c src/http_work.c src/status_json.c src/fs_json.c src/config.c
     src/pin_assign.c src/net_glue.c PROPERTIES COMPILE_OPTIONS "-Os")
 
 # An SD card on SPI [DD-075, DD-076]: FatFs R0.16 (lib/fatfs) over this
@@ -1032,6 +1033,20 @@ add_custom_target(net_stats_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_net_stats
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "/api/net rendering tests"
+)
+
+add_custom_target(fs_json_tests
+    COMMAND ${CMAKE_COMMAND} -E echo "Building /api/fs rendering tests..."
+    COMMAND ${HOST_CC} -std=c99 -Wall -Wextra -Werror -I${CMAKE_CURRENT_LIST_DIR}/src -I${alfs_SOURCE_DIR}
+               -I${CMAKE_CURRENT_LIST_DIR}/test -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_fs_json.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/fs_json.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_fs_json
+    COMMAND ${CMAKE_COMMAND} -E echo "Running /api/fs rendering tests..."
+    COMMAND ${CMAKE_BINARY_DIR}/test_fs_json
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "/api/fs rendering tests"
 )
 
 add_custom_target(status_json_tests

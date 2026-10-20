@@ -59,6 +59,7 @@
 #include "http_routes.h"
 #include "flash_chip.h"
 #include "flash_timing.h"
+#include "fs_json.h"
 #include "core1_frame.h"
 #include "ota_bounds.h"
 #include "http_server.h"
@@ -1155,6 +1156,62 @@ static void serve_log_space(conn_t *c) {
     http_respond(hc, 200, JSON, buf, (uint32_t)n);
 }
 
+static void fs_list_one(void *ctx, const char *name, uint32_t size, bool closed) {
+    fs_json_file((fs_json_t *)ctx, name, size, closed, vfs_is_internal(name));
+}
+
+/* GET /api/fs [WEB-API-19]: the flash store from its files' records, then
+ * each file, written into the work buffer as the store lists them. */
+static void serve_api_fs(conn_t *c) {
+    http_conn_t *hc = &c->h;
+    if (!fs_take(c)) {
+        return;
+    }
+    uint64_t free_b = 0, total_b = 0;
+    if (vfs_flash_space(&free_b, &total_b) != 0) {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"no filesystem\"}");
+        return;
+    }
+    vfs_flash_cleanup_t k;
+    vfs_flash_cleanup_state(&k);
+    const char *pace = !k.cleaning ? "done" : flight_is_grounded_on_usb() ? "fast" : "slow";
+    vfs_flash_geometry_t g;
+    vfs_flash_geometry(&g);
+    fs_space_t s = {(uint32_t)total_b, (uint32_t)(total_b - free_b),
+                    (uint32_t)free_b,  k.erased,
+                    g.sectors,         g.sector_pages,
+                    g.page_bytes,      pace};
+    fs_json_t j;
+    fs_json_begin(&j, (char *)hc->work, (int)sizeof(hc->work), &s);
+    vfs_flash_list(fs_list_one, &j);
+    int n = fs_json_end(&j);
+    if (n < 0) {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"the list does not fit\"}");
+        return;
+    }
+    http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
+}
+
+/* GET /api/fs/scan?sector=K&count=N [WEB-API-20]: each sector's erased
+ * pages, read from the flash. */
+static void serve_api_fs_scan(conn_t *c, const char *path) {
+    http_conn_t *hc = &c->h;
+    if (!fs_take(c)) {
+        return;
+    }
+    const char *k = strstr(path, "sector="), *n = strstr(path, "count=");
+    uint32_t sector = k ? (uint32_t)strtoul(k + 7, NULL, 10) : 0u;
+    uint32_t count = n ? (uint32_t)strtoul(n + 6, NULL, 10) : VFS_FLASH_SCAN_MAX;
+    uint8_t erased[VFS_FLASH_SCAN_MAX];
+    int got = vfs_flash_scan(sector, count, erased);
+    int len = got < 0 ? -1 : fs_json_scan((char *)hc->work, (int)sizeof(hc->work), sector, erased, got);
+    if (len < 0) {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"no filesystem\"}");
+        return;
+    }
+    http_respond(hc, 200, JSON, hc->work, (uint32_t)len);
+}
+
 #if PYRO_HAS_SD
 /* GET /api/sd: the card, its FAT and the driver's counters [DD-075]. */
 static void serve_api_sd(conn_t *c) {
@@ -1354,6 +1411,10 @@ static void serve_get(conn_t *c) {
         serve_flight_csv(c);
     } else if (strcmp(path, "/api/log/space") == 0) {
         serve_log_space(c);
+    } else if (strcmp(path, "/api/fs") == 0) {
+        serve_api_fs(c);
+    } else if (strncmp(path, "/api/fs/scan", 12) == 0 && (path[12] == '\0' || path[12] == '?')) {
+        serve_api_fs_scan(c, path);
     } else if (strcmp(path, "/api/net") == 0) {
         serve_api_net(hc);
 #if PYRO_HAS_BENCH_FLIGHT

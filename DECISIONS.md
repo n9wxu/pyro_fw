@@ -560,6 +560,63 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-107: The Cleanup At The Flash's Pace On USB; A Filesystem Tab
+- **Decision:** at the user's direction -- "Erase at full speed when on
+  usb. Provide a filesystem maintenance tab on the web ui.":
+  - On USB with test mode off, where no launch can be declared (USB-01),
+    the pad's cleanup takes the next sector at each pass of the storage
+    task, one after another. Otherwise it erases one a second
+    [USB-10] (`vfs_flash_clean_wait_ms()`).
+  - `GET /api/fs` reports the flash store: its size, the bytes in files,
+    the bytes free (pages the cleanup has yet to erase among them), the
+    cleanup's state (`done`, or erasing `fast` or `slow`) and the sectors
+    it has erased since the start; the store's sectors, their pages and the
+    file bytes a page holds; and each file's path, its size once closed,
+    and whether it is the board's own (WEB-API-17). It answers from the
+    file table and the cleanup's own count, and is refused with 423 in
+    flight [WEB-API-19].
+  - `GET /api/fs/scan?sector=K&count=N` reads up to 128 sectors and gives
+    how many pages of each read erased, all 1s: a check of the flash, not
+    of alfs's format [WEB-API-20].
+  - The Filesystem tab shows the report, downloads a file, deletes one once
+    the operator confirms (none of the board's own), and reads `/api/fs`
+    again every 2 s until the cleanup is done. At the user's direction --
+    "the web ui can scan the alfs and keep track of the status in the ui
+    memory" -- it scans the store 128 sectors a request when first shown,
+    when asked and once the cleanup is done, keeps the result in the page,
+    and splits the free bytes into erased and not yet erased, counting each
+    sector the cleanup erases since the scan as erased [WEB-UI-07].
+- **Why one a second off USB:** an erase on the pad stops both cores: 50 to
+  70 ms with no pressure reading, launch detection and the ground
+  reference held. The longest erases the datasheets allow, 400 ms
+  (BY25Q64ES) and 800 ms (XT25F128F), back to back, would come near the
+  watchdog's 1 s.
+- **Why the page scans:** `alfs_fs_status()` tells erased pages from pages
+  awaiting the cleanup only by reading every erased page whole, in one
+  call: 5.8 s on MK1C and 2.0 s on MK1B-8MB, holding the store's lock and
+  the network task. Read a chunk a request, the same pages take 2.4 s on
+  MK1C in 16 requests, each under a quarter of a second, and no request
+  waits behind the whole.
+- **Why the cleanup does not wait for transfers:** uploads are small --
+  configuration and Lua scripts -- and the big transfers are log
+  downloads, during which alfs's cleanup already waits, a reader being
+  open.
+- **Measured, 2026-10-19:**
+
+  | | MK1C | MK1B-8MB |
+  |---|---|---|
+  | After a refused upload, sectors erased | 1,891 in 49 s | 810 in 29 s |
+  | The same at one a second | 32 minutes | 14 minutes |
+  | `GET /api/fs` | 8 ms | 7 ms |
+  | A scan of every sector | 2.4 s, 16 requests | 0.8 s, 8 requests |
+  | `support/api_check.py` | 74/74 | 74/74 |
+
+  No sensor fault latched on either through the erases. An upload made
+  while the cleanup erases runs slower: 1 MB to MK1B-8MB took 30.7 s with
+  the cleanup idle and 49.7 s while it erased. Every upload leaves its part
+  file's pages for the cleanup (a rename is a copy, DD-100), so an upload
+  close behind another meets it.
+
 ### DD-106: Every Reading Used; One A Flash Operation Ran Beside Counted
 - **Decision:** at the user's direction -- "Take a note of the noise, but
   keep all samples. For now let us assume the noise is mitigated with the

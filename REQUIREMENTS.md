@@ -419,6 +419,8 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-API-16**: The system shall serve at `/api/flight/live?since=N` the flight log held for the host (USB-09) from byte N: the offset of the first byte it returns, the offset the log has reached, then the bytes. Bytes no longer held shall be skipped, so the host can count what it lost. ← USB-09
 - **WEB-API-17**: The system shall delete a file on request at `/api/delete/<path>` (POST), from every store that holds it: 200 when deleted, 404 when there was none, 409 while the file is open. The board's identity and its pad record belong to the board and shall be refused with 403. ← SYS-WEB-01
 - **WEB-API-18**: A file whose write or close fails shall be let go without a restart. Once no other file is open, the storage shall be as a restart would leave it: the failed file as a power cut would have left it, and every write, delete and cleanup taken. An upload that fails shall leave nothing of itself, and the file it would have replaced as it was. ← SYS-WEB-01
+- **WEB-API-19**: The system shall report at `/api/fs` the board's flash store: its size, the bytes its files hold, the bytes free (pages the cleanup has yet to erase among them), and whether the cleanup has sectors left to erase, at what pace (USB-10), and how many it has erased since the start; its sectors, the pages a sector holds and the file bytes a page holds; and each file's path, its size once closed, and whether it belongs to the board (WEB-API-17). It shall answer from the files' own records, without reading the store's pages, and refuse with 423 while the flight log holds the storage. ← SYS-WEB-01, DD-107
+- **WEB-API-20**: The system shall report at `/api/fs/scan?sector=K&count=N` how many pages of each of N sectors of the flash store, from sector K, read erased, read from the flash itself, up to 128 sectors a request. It shall refuse with 423 while the flight log holds the storage. ← WEB-API-19, DD-107
 
 ### HTTP
 - **WEB-HTTP-01**: The HTTP server shall treat each connection as a byte stream: a request shall be answered the same however TCP divides it into segments, including a header block or body split at any byte and more than one request in a single segment. ← SYS-WEB-01
@@ -431,6 +433,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-UI-04**: The web interface shall display flight summary data and allow CSV download. The summary shall come from the flight log alone, be re-read whenever it is shown, and name the flight it describes; flight time shall stop at the landing. ← SYS-WEB-01
 - **WEB-UI-05**: The web interface shall support firmware upload and update checking. ← SYS-WEB-01
 - **WEB-UI-06**: The Config tab shall show the longest flight the log holds. ← SYS-WEB-01
+- **WEB-UI-07**: The web interface shall have a Filesystem tab that shows `/api/fs`, downloads any file, and deletes a file once the operator confirms, offering no delete for the board's own files. While the cleanup has sectors left to erase, the tab shall follow it until it is done. The tab shall scan the store a chunk of sectors at a time (WEB-API-20) when first shown, when asked, and once the cleanup is done; keep what it found in the page; and show the free bytes as erased and not yet erased, counting each sector the cleanup erases since the scan as erased. ← SYS-WEB-01, WEB-API-19, WEB-API-20
 
 ---
 
@@ -524,6 +527,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **USB-07**: The system shall judge a host attached only on evidence that a host is present, so that every detection error leaves launch detection on. ← SYS-USB-01, SYS-DEPLOY-01
 - **USB-08**: An operator-selected test mode shall make the system behave on USB as it does on battery: launch detection, deployment, the resume record and every announcement. It shall start off at every start, shall not change from launch to landing, shall be set from the web interface after a confirmation, and shall be reported on `/api/status`. ← SYS-USB-01, UN-12
 - **USB-09**: Test mode shall offer to keep the flight log off the flash: chosen as test mode is set, the log is held in RAM for the host to read as it is written (WEB-API-16), and nothing is written to the flash from launch to landing. The choice shall start off at every start, shall not change from launch to landing, and shall be reported on `/api/status`. ← USB-08, DD-103
+- **USB-10**: While a USB host is attached and test mode is off, the pad's cleanup shall erase the unused sectors of the board's flash store one after another, as fast as the flash erases them. Otherwise it shall erase one a second, so that an erase stalls the pad no more than once a second. ← USB-01, DD-107
 
 ---
 

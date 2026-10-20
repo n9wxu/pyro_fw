@@ -5,17 +5,16 @@ failed_write_check.py -- an upload the storage cannot finish, on a live board.
 Uploads a file larger than the room the board reports, which the board
 refuses part-way. Then, without a restart: the part file is gone, a delete of
 the name finds no file, a small upload of the same name is taken once the
-cleanup has erased a sector, and it reads back whole. The board's uptime runs
-on throughout, and the sensor's readings beside a minute of flash writes keep
-the pad's sensor check satisfied.
+cleanup has erased a sector, and it reads back whole. The cleanup, on USB with
+test mode off, erases the upload's pages one sector after another until
+/api/fs says it is done: at least five sectors a second, five times its pace
+off USB. The board's uptime runs on throughout, and the sensor's readings
+beside the flash writes and the erases keep the pad's sensor check satisfied.
 
-Verifies on hardware [WEB-API-18, SNS-PRES-14].
+Verifies on hardware [WEB-API-18, SNS-PRES-14, USB-10].
 
-Leaves the board's storage holding the upload's pages until the pad's cleanup
-erases them, a sector a second: about half an hour for 8 MB of files. A
-flight before then erases in flight where its part can, and where it cannot
-has only the room already erased (FLT-LOG-10). Refuses to run on a board
-that is not in PAD_IDLE.
+Waits up to CLEAN_WAIT_S for the cleanup: about a minute and a half for 4 MB.
+Refuses to run on a board that is not in PAD_IDLE.
 
 Usage:
     support/failed_write_check.py 192.168.71.1
@@ -33,6 +32,8 @@ import urllib.request
 HOST = sys.argv[1]
 NAME = "/www/failed_write_check.bin"
 CHUNK = 64 * 1024
+CLEAN_WAIT_S = 600
+FAST_PER_S = 5.0  # sectors a second, five times the pace off USB (USB-10)
 results = []
 
 
@@ -109,6 +110,18 @@ code, body = req("GET", NAME)
 check("and reads back whole", code == 200 and body == small, f"{code} {len(body)} bytes")
 code, _ = req("POST", "/api/delete" + NAME)
 check("and is deleted", code == 200, str(code))
+
+e0, t0 = status()["flash_erases"], time.time()
+fs = {}
+while time.time() - t0 < CLEAN_WAIT_S:
+    fs = json.loads(req("GET", "/api/fs")[1])
+    if fs.get("cleanup") == "done":
+        break
+    time.sleep(2)
+erased, took = status()["flash_erases"] - e0, time.time() - t0
+check("the cleanup finishes on USB", fs.get("cleanup") == "done", f"{fs.get('cleanup')} after {took:.0f} s")
+check(f"at {FAST_PER_S:g} sectors a second or more (USB-10)", erased >= FAST_PER_S * max(took - 2, 1),
+      f"{erased} sectors in {took:.0f} s")
 
 st1 = status()
 check("no restart", st1["uptime"] > st0["uptime"] and st1["reset_cause"] == st0["reset_cause"],

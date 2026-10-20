@@ -15,6 +15,7 @@
   <button class="tab" onclick="showTab('data', this)">Flight Data</button>
   <button class="tab" onclick="showTab('beeps', this)">Beep Codes</button>
   <button class="tab" onclick="showTab('lua', this)">Lua</button>
+  <button class="tab" onclick="showTab('files', this)">Filesystem</button>
   <button class="tab" onclick="showTab('update', this)">Update</button>
 </div>
 
@@ -272,6 +273,31 @@
   <div class="btnrow">
     <button onclick="luaConClear()">Clear</button>
     <label><input type="checkbox" id="luFollow" checked> follow</label>
+  </div>
+</div>
+
+<!-- ── Filesystem ─────────────────────────────────────────────── -->
+<div id="tab-files" class="tabpanel" style="display:none">
+  <h3>Flash storage</h3>
+  <p class="hint" id="fsHint">Loading the flash storage…</p>
+  <table class="info">
+    <tr><td class="lbl">Size</td><td id="fsTotal" class="val">—</td></tr>
+    <tr><td class="lbl">In files</td><td id="fsUsed" class="val">—</td></tr>
+    <tr><td class="lbl">Free</td><td id="fsFree" class="val">—</td></tr>
+    <tr><td class="lbl">&nbsp;&nbsp;erased, ready</td><td id="fsErased" class="val">—</td></tr>
+    <tr><td class="lbl">&nbsp;&nbsp;not yet erased</td><td id="fsUnused" class="val">—</td></tr>
+  </table>
+  <p class="hint">Free counts the pages a replaced or deleted file left, until the cleanup erases them.
+    The split comes from a scan of the flash, kept in this page, with each sector the cleanup erases since
+    counted as erased.</p>
+  <p class="hint" id="fsScan"></p>
+  <p class="hint" id="fsClean"></p>
+  <h3>Files</h3>
+  <table class="info" id="fsFiles"></table>
+  <div class="btnrow">
+    <button onclick="fsLoad()">↻ Refresh</button>
+    <button onclick="fsScanStart()">🔍 Rescan</button>
+    <span id="fsMsg"></span>
   </div>
 </div>
 

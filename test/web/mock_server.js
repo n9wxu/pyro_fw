@@ -193,6 +193,45 @@ let pinsIni = '[pins]\r\npyro1_released=true\r\npyro2_released=true\r\n';
 
 const MIME = {'.html':'text/html','.js':'application/javascript','.css':'text/css'};
 
+/* [WEB-API-19, WEB-API-20] The flash store: its files, and each sector's
+   erased pages. The sectors files hold are at the front; a delete leaves
+   some for the cleanup, which each report shows a few sectors further on. */
+const FS_SECTORS = 1024, FS_SECTOR_PAGES = 16, FS_PAGE_BYTES = 236;
+const FS_SECTOR_BYTES = FS_SECTOR_PAGES * FS_PAGE_BYTES, FS_BYTES = FS_SECTORS * FS_SECTOR_BYTES;
+const FS_CLEAN_STEP = 4;  /* sectors erased between reports */
+const FS_FILES = [
+  {path: '/config.ini', bytes: 812, closed: true, board: false},
+  {path: '/serial.txt', bytes: 13, closed: true, board: true},
+  {path: '/pad.mkr', bytes: 20, closed: true, board: true},
+  {path: '/www/index.html', bytes: 18234, closed: true, board: false},
+  {path: '/www/app.js', bytes: 61022, closed: true, board: false},
+  {path: '/flight_log.bin', bytes: null, closed: false, board: false}
+];
+let fsFiles, fsCleaned, fsMap;
+
+function fsInFiles() { return fsFiles.reduce((n, f) => n + (f.bytes || FS_PAGE_BYTES), 0); }
+function fsNeeded() { return Math.ceil(fsInFiles() / FS_SECTOR_BYTES); }
+function fsWritten() { return fsMap.filter(e => e === 0).length; }
+
+function fsReset() {
+  fsFiles = JSON.parse(JSON.stringify(FS_FILES));
+  fsCleaned = 0;
+  fsMap = new Array(FS_SECTORS).fill(FS_SECTOR_PAGES);
+  for (let k = 0; k < fsNeeded(); k++) fsMap[k] = 0;
+}
+fsReset();
+
+function fsReport() {
+  const report = {store: 'flash', bytes: FS_BYTES, in_files: fsInFiles(), free: FS_BYTES - fsInFiles(),
+                  cleanup: fsWritten() > fsNeeded() ? 'fast' : 'done', cleaned_sectors: fsCleaned,
+                  sectors: FS_SECTORS, sector_pages: FS_SECTOR_PAGES, page_bytes: FS_PAGE_BYTES, files: fsFiles};
+  for (let i = 0; i < FS_CLEAN_STEP && fsWritten() > fsNeeded(); i++) {
+    fsMap[fsWritten() - 1] = FS_SECTOR_PAGES;
+    fsCleaned++;
+  }
+  return report;
+}
+
 const server = http.createServer((req, res) => {
   /* As the board: same origin only, so no CORS headers, and no preflight. */
   const cors = {};
@@ -507,6 +546,31 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.url.startsWith('/api/fs/scan') && req.method === 'GET') {
+    const q = new URL(req.url, 'http://board').searchParams;
+    const from = parseInt(q.get('sector')) || 0, count = Math.min(parseInt(q.get('count')) || 0, 128);
+    res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+    res.end(JSON.stringify({sector: from, erased: fsMap.slice(from, from + count)}));
+    return;
+  }
+
+  if (req.url === '/api/fs' && req.method === 'GET') {
+    res.writeHead(200, {...cors, 'Content-Type':'application/json'});
+    res.end(JSON.stringify(fsReport()));
+    return;
+  }
+
+  /* [WEB-API-17] */
+  if (req.url.startsWith('/api/delete/') && req.method === 'POST') {
+    const target = req.url.slice('/api/delete'.length);
+    const i = fsFiles.findIndex(f => f.path === target);
+    const code = i < 0 ? 404 : fsFiles[i].board ? 403 : 200;
+    if (code === 200) fsFiles.splice(i, 1);
+    res.writeHead(code, {...cors, 'Content-Type':'application/json'});
+    res.end(JSON.stringify(code === 200 ? {status: 'deleted'} : {error: code === 404 ? 'no such file' : "the board's own file"}));
+    return;
+  }
+
   if (req.url === '/api/flight/erase' && req.method === 'POST') {
     flightCsv = EMPTY_LOG;
     res.writeHead(200, {...cors, 'Content-Type':'application/json'});
@@ -556,6 +620,7 @@ const server = http.createServer((req, res) => {
     luaHeartbeat = 0;
     configAnswer = null;
     pinsFail = false;
+    fsReset();
     res.writeHead(200, cors); res.end('ok');
     return;
   }
