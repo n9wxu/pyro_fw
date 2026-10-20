@@ -153,6 +153,21 @@ def selftest():
         print("  %s  %s -> %-8s rejected%s" % ("pass" if ok else "FAIL", old, new,
                                                "" if ok else " BUT ALLOWED AS %s" % got))
 
+    # What a green push to main releases, given the versions already tagged.
+    tagged = {"2.2.8", "2.2.9"}
+    releases = [
+        ("2.2.9", "2.2.10"),   # released already: its next patch
+        ("2.3.0", "2.3.0"),    # a minor bump by pull request, as it stands
+        ("3.0.0", "3.0.0"),    # a major bump, likewise
+        ("2.2.10", "2.2.10"),  # a patch set by pull request, likewise
+        ("2.2.8", None),       # its next patch is tagged: behind the releases
+    ]
+    for cur, want in releases:
+        got = release_version(cur, tagged)
+        ok = got == want
+        bad += not ok
+        print("  %s  release from %-8s = %-8s want %s" % ("pass" if ok else "FAIL", cur, got, want))
+
     # Every bump must zero everything below it, for any starting point.
     for major in range(3):
         for minor in range(3):
