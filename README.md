@@ -418,7 +418,7 @@ This produces:
 - `pyro_fw_<board>.uf2` — application firmware
 - `pyro_fw_c_fota_image.bin` — OTA update image
 
-Only a release changes `VERSION`. A build without `CI_BUILD` set reports the version with `+local` appended.
+`VERSION` is the release: every green push to main releases it as it stands while it has no tag, which is how a minor or major bump arrives (`support/version.py --set 2.3.0` in a pull request), and otherwise releases its next patch. A build without `CI_BUILD` set reports the version with `+local` appended.
 
 ## Flash Layout
 Set by each board's `board.cmake`.

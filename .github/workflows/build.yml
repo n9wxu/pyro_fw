@@ -253,19 +253,20 @@ jobs:
             support/test_network.py
             support/README.md
 
-  # Every green push to main is released as a patch. The bump is committed
-  # with a skip-ci marker, and the release workflow is called rather than
-  # triggered by the tag: a tag pushed with GITHUB_TOKEN starts no workflow.
-  # The marker is spelled only in the step below, never in prose: GitHub
-  # matches it anywhere in a commit message.
-  patch-release:
+  # Every green push to main is released: VERSION as it stands while it has
+  # no tag (a bump made by pull request), otherwise its next patch. A patch
+  # bump is committed with a skip-ci marker, and the release workflow is
+  # called rather than triggered by the tag: a tag pushed with GITHUB_TOKEN
+  # starts no workflow. The marker is spelled only in the step below, never
+  # in prose: GitHub matches it anywhere in a commit message.
+  tag-release:
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     concurrency:
-      group: patch-release
+      group: tag-release
       cancel-in-progress: false
     outputs:
       version: ${{ steps.bump.outputs.version }}
@@ -274,16 +275,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Bump the patch version
+      - name: The version to release
         id: bump
         run: |
           set -e
           CUR=$(python3 support/version.py --current)
-          NEW=$(python3 support/version.py --next patch)
-          if git rev-parse -q --verify "refs/tags/v$NEW" >/dev/null; then
-            echo "::error::tag v$NEW already exists; VERSION is behind the tags"
+          NEW=$(git tag -l 'v*' | python3 support/version.py --release) || {
+            echo "::error::VERSION $CUR is behind the tags"
             exit 1
-          fi
+          }
           python3 support/version.py --set "$NEW"
           echo "$CUR -> $NEW"
           echo "version=$NEW" >> "$GITHUB_OUTPUT"
@@ -294,16 +294,18 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add VERSION
-          git commit -m "chore(release): v$VERSION [skip ci]"
+          if ! git diff --quiet VERSION; then
+            git add VERSION
+            git commit -m "chore(release): v$VERSION [skip ci]"
+            git push origin HEAD:main
+          fi
           git tag -a "v$VERSION" -m "v$VERSION"
-          git push origin HEAD:main
           git push origin "v$VERSION"
 
   release:
-    needs: patch-release
+    needs: tag-release
     permissions:
       contents: write
     uses: ./.github/workflows/release.yml
     with:
-      version: ${{ needs.patch-release.outputs.version }}
+      version: ${{ needs.tag-release.outputs.version }}
