@@ -379,6 +379,47 @@ void vfs_flash_cleanup_state(vfs_flash_cleanup_t *out) {
     out->erased = cleaned;
 }
 
+void vfs_flash_geometry(vfs_flash_geometry_t *out) {
+    *out = (vfs_flash_geometry_t){0, 0, 0};
+    if (!area_of)
+        return;
+    out->sectors = area_of->size / area_of->sector_size;
+    out->sector_pages = area_of->sector_size / area_of->page_size;
+    out->page_bytes = area_of->page_size - PAGE_KEEPS;
+}
+
+/* The head first: a page in use shows it there. Under the lock. */
+static bool page_erased(uint32_t addr) {
+    for (uint32_t off = 0; off < area_of->page_size; off += CHUNK) {
+        if (drv_of->read(drv_of->ctx, addr + off, copy_rblk, CHUNK) != 0)
+            return false;
+        for (uint32_t i = 0; i < CHUNK; i++)
+            if (copy_rblk[i] != 0xFFu)
+                return false;
+    }
+    return true;
+}
+
+int vfs_flash_scan(uint32_t sector, uint32_t count, uint8_t *erased) {
+    if (!mounted || !fs_lock())
+        return VFS_FLASH_ERR;
+    vfs_flash_geometry_t g;
+    vfs_flash_geometry(&g);
+    uint32_t left = sector < g.sectors ? g.sectors - sector : 0u;
+    uint32_t n = count < left ? count : left;
+    if (n > VFS_FLASH_SCAN_MAX)
+        n = VFS_FLASH_SCAN_MAX;
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t base = area_of->start + (sector + k) * area_of->sector_size;
+        uint8_t e = 0;
+        for (uint32_t p = 0; p < g.sector_pages; p++)
+            e = (uint8_t)(e + page_erased(base + p * area_of->page_size));
+        erased[k] = e;
+    }
+    fs_unlock();
+    return (int)n;
+}
+
 int vfs_flash_list(vfs_flash_each_t each, void *ctx) {
     if (!mounted || !fs_lock())
         return VFS_FLASH_ERR;

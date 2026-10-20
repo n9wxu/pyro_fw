@@ -15,10 +15,11 @@
 #include <stdint.h>
 
 /* Bytes of file data, free counting pages the cleanup has yet to erase;
- * cleanup "done", or erasing "fast" (USB-10) or "slow"; the sectors it has
- * erased since the start. */
+ * the sectors the cleanup has erased since the start; the store's sectors,
+ * their pages and the file bytes a page holds; cleanup "done", or erasing
+ * "fast" (USB-10) or "slow". */
 typedef struct {
-    uint32_t bytes, in_files, free, cleaned;
+    uint32_t bytes, in_files, free, cleaned, sectors, sector_pages, page_bytes;
     const char *cleanup;
 } fs_space_t;
 
@@ -33,5 +34,8 @@ void fs_json_begin(fs_json_t *j, char *buf, int cap, const fs_space_t *s);
 void fs_json_file(fs_json_t *j, const char *name, uint32_t size, bool closed, bool board);
 /* The length, or -1 when the report did not fit. */
 int fs_json_end(fs_json_t *j);
+
+/* [WEB-API-20] A chunk of the scan: the length, or -1 when it did not fit. */
+int fs_json_scan(char *buf, int cap, uint32_t sector, const uint8_t *erased, int n);
 
 #endif

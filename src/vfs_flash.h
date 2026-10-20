@@ -104,6 +104,20 @@ typedef struct {
 } vfs_flash_cleanup_t;
 void vfs_flash_cleanup_state(vfs_flash_cleanup_t *out);
 
+/* [WEB-API-19] The store's sectors, the pages a sector holds, and the file
+ * bytes a page holds, as vfs_flash_space() counts them. Zeros before a
+ * mount. */
+typedef struct {
+    uint32_t sectors, sector_pages, page_bytes;
+} vfs_flash_geometry_t;
+void vfs_flash_geometry(vfs_flash_geometry_t *out);
+
+/* [WEB-API-20] How many pages of each of count sectors from sector read
+ * erased, all 1s, from the flash itself; at most VFS_FLASH_SCAN_MAX. The
+ * sectors scanned, fewer at the store's end, or <0. */
+#define VFS_FLASH_SCAN_MAX 128u
+int vfs_flash_scan(uint32_t sector, uint32_t count, uint8_t *erased);
+
 /* Each file, under the store's lock: its name, its size once closed (0
  * before), and whether it is closed. The count, or <0. each must not call
  * into the store. */

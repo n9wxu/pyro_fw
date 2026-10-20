@@ -30,9 +30,10 @@ void fs_json_begin(fs_json_t *j, char *buf, int cap, const fs_space_t *s) {
     *j = (fs_json_t){buf, cap, 0, true, cap <= 0};
     put(j,
         "{\"store\":\"flash\",\"bytes\":%lu,\"in_files\":%lu,\"free\":%lu,\"cleanup\":\"%s\","
-        "\"cleaned_sectors\":%lu,\"files\":[",
+        "\"cleaned_sectors\":%lu,\"sectors\":%lu,\"sector_pages\":%lu,\"page_bytes\":%lu,\"files\":[",
         (unsigned long)s->bytes, (unsigned long)s->in_files, (unsigned long)s->free, s->cleanup,
-        (unsigned long)s->cleaned);
+        (unsigned long)s->cleaned, (unsigned long)s->sectors, (unsigned long)s->sector_pages,
+        (unsigned long)s->page_bytes);
 }
 
 void fs_json_file(fs_json_t *j, const char *name, uint32_t size, bool closed, bool board) {
@@ -50,4 +51,12 @@ void fs_json_file(fs_json_t *j, const char *name, uint32_t size, bool closed, bo
 int fs_json_end(fs_json_t *j) {
     put(j, "]}");
     return j->overflow ? -1 : j->len;
+}
+
+int fs_json_scan(char *buf, int cap, uint32_t sector, const uint8_t *erased, int n) {
+    fs_json_t j = {buf, cap, 0, true, cap <= 0};
+    put(&j, "{\"sector\":%lu,\"erased\":[", (unsigned long)sector);
+    for (int i = 0; i < n; i++)
+        put(&j, "%s%u", i ? "," : "", (unsigned)erased[i]);
+    return fs_json_end(&j);
 }
