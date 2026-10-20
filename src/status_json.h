@@ -85,7 +85,7 @@ typedef struct {
     /* The pressure collector [SNS-COL-04, SNS-COL-05]: transfers that failed, in
      * all and by cause, bus recoveries, and cycles pushed out of its queue. */
     uint32_t pres_rejects, pres_bus[4], pres_recoveries, pres_dropped;
-    uint32_t pres_flashed; /* [DD-068] readings a flash operation disturbed, not fed on */
+    uint32_t pres_flashed; /* [DD-106] readings a flash operation ran beside, used like any other */
     int32_t raw_pa, pad_speed_cms;
     bool ground_degraded;
     uint32_t ground_reseeds;

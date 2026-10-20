@@ -188,7 +188,7 @@ from RAM.
 A transfer that fails is counted by cause on `/api/status`. After three in a
 row the collector clears the bus on the fitted sensor's pad, resets the
 sensor and goes on. A conversion a flash erase or program ran beside is
-discarded, not used, and counted in `pres_flashed` on `/api/status` (DD-068).
+used like any other, and counted in `pres_flashed` on `/api/status` (DD-106).
 
 ## Telemetry, LED and buzzer
 
@@ -254,7 +254,8 @@ released pyro pad is one.
   this board's sensor with a battery fitted.
 - **A flash operation disturbs the MS5607, battery or not:** a conversion
   beside one sits 8.5 to 17 Pa rms from its neighbours, 43 Pa at worst. It
-  is discarded (DD-068). The BMP280 shows no such effect.
+  is used, and the flight's filters are taken to absorb it (DD-106). The
+  BMP280 shows no such effect.
 
 ## What this board declares
 

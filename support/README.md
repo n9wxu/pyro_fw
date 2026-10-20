@@ -20,7 +20,7 @@ extension installs it.
 | `test_network.py` | Comprehensive network/API test suite with TUI |
 | `http_stream_check.py` | The HTTP server over raw sockets: requests split byte by byte, bodies in later writes, coalesced requests, odd-chunk uploads round-tripped, parallel fetches past a stalled connection (rewrites /www/app.js and index.html with the local copies) |
 | `api_check.py` | Bench check of every HTTP route, a stored configuration that waits for the next start, the board's limits, silence on USB, test mode, and a file deleted (erases the flight log; about 15 s in test mode) |
-| `failed_write_check.py` | An upload past the board's room, refused part-way and let go without a restart: its part file gone, its name taken again (WEB-API-18; leaves the room to the pad's cleanup, half an hour for 8 MB) |
+| `failed_write_check.py` | An upload past the board's room, refused part-way and let go without a restart: its part file gone, its name taken again, no sensor fault latched by the readings beside its writes (WEB-API-18, SNS-PRES-14; leaves the room to the pad's cleanup, half an hour for 8 MB) |
 | `pressure_trace.py` | Every pressure conversion a board makes, judged for the faults a sample rate hides (DD-063) |
 | `noise_baseline.py` | A still board's pressure noise and pad speed noise, from `/api/status` |
 | `register_board.py` | Record the attached boards in `boards/BOARD_REGISTRY.json` and report subnet collisions |
@@ -153,7 +153,7 @@ the noisiest bench board's figure (`test/board_harness.h`). Nobody may touch the
 `pressure_trace.py` polls `/api/pressure/trace` for 60 s by default and
 reports per board: the rate and the spread of the intervals, repeated codes
 against the count chance gives, rejects and missed slots, conversions a flash
-operation ran beside (DD-068, counted, not a fault), the lag from the driver's
+operation ran beside (DD-106, counted, not a fault), the lag from the driver's
 stamp to the loop, and the noise. A record lost to the ring fails the capture,
 not the sensor.
 
@@ -173,11 +173,12 @@ python3 support/hr_log.py --fetch <board-ip> hr0001              # the high-rate
 `bench_flight.py` turns test mode on, starts the profile (`POST
 /api/sim/flight`), and follows `/api/sim` and `/api/status` until the board
 lands. It fails a flight whose pyro 1 is not within 4 s of the profile's
-apogee, whose pyro 2 did not fire, or during which the loop overran or a flash
-operation was refused. From the start every fire on the board is mocked until
-it reboots, and the board must be rebooted to fly again. `/api/sim` also
-reports the newest pressure estimate and the Mach flag, for a flight that goes
-wrong.
+apogee, whose pyro 2 did not fire, during which the loop overran or a flash
+operation was refused, or whose log misses a reading: a step between sample
+rows wider than 1.5 times the median (FLT-LOG-07, SNS-PRES-14). From the start
+every fire on the board is mocked until it reboots, and the board must be
+rebooted to fly again. `/api/sim` also reports the newest pressure estimate
+and the estimator flying, for a flight that goes wrong.
 
 The profile's descent starts from rest at apogee and gathers speed under
 gravity toward each rate. `--fail drogue`, `--fail main` or `--fail both`

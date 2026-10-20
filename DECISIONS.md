@@ -560,6 +560,51 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-106: Every Reading Used; One A Flash Operation Ran Beside Counted
+- **Decision:** at the user's direction -- "Take a note of the noise, but
+  keep all samples. For now let us assume the noise is mitigated with the
+  filters." -- a conversion a flash erase or program ran beside is used like
+  any other [SNS-PRES-14]. DD-068's mark stays and does nothing else: the
+  reading is counted (`pres_flashed` on `/api/status`) and traced ('F' a
+  pressure, 'G' a temperature). An MS5607 cycle's temperature always goes on
+  the line, and its pressure is always compensated and fed (`ms5607_cycle()`
+  in `src/ms5607_driver.h`).
+- **The noise it lets in,** from `docs/pressure_collector.md`: departures
+  from a 9-point running median, the MS5607s on a battery, the BMP280 on USB
+  alone.
+
+  | Sensor | At rest, rms | Beside a flash operation, rms | Worst beside one |
+  |---|---|---|---|
+  | MK1B, MS5607 | 2.3 to 2.4 Pa | 8.5 to 17.0 Pa | 43 Pa |
+  | MK1C, MS5607 | 2.4 to 2.6 Pa | 3.4 to 3.9 Pa | 12 Pa |
+  | MK1B, BMP280 | 2.5 Pa | 2.3 to 3.0 Pa | -- |
+
+- **Taken on trust:** that the flight's filters absorb it. The host flights
+  put 1.2 and 9 Pa rms on every reading (`test/board_harness.h`) and no
+  disturbed reading among them. A bench flight replaces the sensor's
+  pressure with the profile's, so it shows every reading arriving, not what
+  their noise does. MK1B's MS5607 is the case that matters, and no board on
+  the bench has it and flies: both MK1B-8MBs carry BMP280s.
+- **What it gains:** no reading is missing [FLT-LOG-07]. On MK1B-8MB each
+  second's sync programs pages in consecutive periods, and every conversion
+  beside them was dropped.
+- **Measured, 2026-10-19,** `support/bench_flight.py --apogee 500` on
+  MK1B-8MB (BMP280, a reading each 14.5 ms):
+
+  | | Readings beside a flash operation | Log rows | Widest step between rows |
+  |---|---|---|---|
+  | Each one dropped | 931 | 3,988 | 363 ms, 3 s after launch; 73 to 146 ms, 5 to 10 readings, about once a second |
+  | Each one used | 1,074 | 4,898 | 15 ms |
+
+  MK1C's 3 km flight, every one used: 1,477 beside a flash operation, 9,422
+  rows, the widest step 19 ms, one reading. A minute of uploads on MK1B-8MB
+  (`support/failed_write_check.py`) latched `sensor_lost` [SNS-PRES-17]
+  when each one was dropped. Used, no fault: 1,857 readings beside the
+  writes on MK1B-8MB, and 14,307 beside MK1C's 2.3 minutes of them.
+- **Unchanged:** an erase on the pad stops both cores (DD-100), so no
+  conversion runs during it: a gap in the readings of up to about 60 ms,
+  once a second while the cleanup has sectors to erase.
+
 ### DD-105: A File Deleted; A Failed Write Let Go
 - **Decision:** at the user's direction ("add a delete api ... add support
   to clean up a failed write"):
@@ -673,8 +718,8 @@ rationale and the alternatives considered.
   97 us late, Lua's tick every period (100 a second). A 5 km flight with
   too little erased room: 60 sector erases in flight in 690 suspended
   pieces, the longest piece 2.95 ms; Lua lost no tick. Pressure conversions
-  a flash operation ran beside, discarded (DD-068): 6 to 11 a second of the
-  106, pressures and temperatures together.
+  a flash operation ran beside (DD-106): 6 to 11 a second of the 106,
+  pressures and temperatures together.
 - **Measured on MK1B-8MB, 2026-10-19,** 500 m bench flights on five
   starts: every slot waited for ran its piece, 1,264 to 1,273 programs a
   flight, nothing dropped. Before the slot alarm the writer woke 0.3 to
@@ -785,7 +830,7 @@ rationale and the alternatives considered.
 - **What it costs in flight:** each sync's programs overlap two pressure
   conversions, which are discarded (DD-068): a 57 ms gap in the samples about
   once a second, 743 conversions of the flight's, about 5%. The flight steps
-  on every sample it has [FLT-RATE-06].
+  on every sample it has [FLT-RATE-06]. DD-106 uses them.
 - **RAM:** the plan's delay line, 128 rows (3 KB), is gone.
 
 ### DD-100: The Board's Files On alfs; Only The Cleanup Erases
@@ -1747,6 +1792,8 @@ The designer's answers to `docs/outstanding_tasks.md` section 2.
   MK1B's buzzer disturbs its sensor and MK1C's does not is not established.
   Through G4 on all four boards (2.1.701): 23-38 conversions discarded
   each, no pressure rejects, no Mach flag.
+- **Superseded by DD-106:** every conversion is used; the mark counts and
+  traces it.
 
 ### DD-067: The BMP280 At The Loop's Rate
 - **Decision:** at the user's direction -- "S1 needs to make the BMP280
