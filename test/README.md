@@ -143,7 +143,7 @@ bus, or when the bound is shorter than the transfer at the bus's rate.
 - `bmp280_tests` runs the BMP280 driver on MK1A's pins: one forced conversion
   a loop, taken at the next (DD-067), on a fake part timed from the
   datasheet's Table 13. A conversion a flash operation ran beside is marked
-  (DD-068), and a held bus costs a bounded wait.
+  (DD-106), and a held bus costs a bounded wait.
 
 ## MK1C's firing bus as measured (DD-054, DD-055, DD-056)
 

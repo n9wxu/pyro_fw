@@ -140,8 +140,8 @@ One BMP280 on I2C0 at 400 kHz, its fastest: R1 and R2 (4k7) hold fast mode's
 readings a second. Every reading is a conversion of its own, stamped at its
 middle. A transfer that fails is counted by cause on `/api/status`, and
 after three in a row the collector clears the bus and resets the part. A
-conversion a flash erase or program ran beside is discarded, not used, and
-counted in `pres_flashed` on `/api/status` (DD-068). Bring-up is the shared
+conversion a flash erase or program ran beside is used like any other, and
+counted in `pres_flashed` on `/api/status` (DD-106). Bring-up is the shared
 single-sensor path, `src/pressure_single_sensor.c`: clock the bus free — the
 sensor stays powered across a CPU reset and can be left holding SDA low — hand
 it to the I2C block, let the pull-ups settle, detect.

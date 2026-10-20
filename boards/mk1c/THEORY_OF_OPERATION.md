@@ -285,8 +285,8 @@ loop.
 
 A transfer that fails is counted by cause on `/api/status`. After three in a
 row the collector clears the bus, resets the sensor and goes on. A conversion
-a flash erase or program ran beside is discarded, not used, and counted in
-`pres_flashed` on `/api/status` (DD-068).
+a flash erase or program ran beside is used like any other, and counted in
+`pres_flashed` on `/api/status` (DD-106).
 
 Measured 2026-10-03 with a battery fitted (`docs/pressure_collector.md`): the
 sensor's scatter is 2.4 to 2.6 Pa rms, the datasheet's figure, beeping or

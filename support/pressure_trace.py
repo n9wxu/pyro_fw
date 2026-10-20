@@ -19,7 +19,8 @@ Polls /api/pressure/trace (src/pressure_trace.h) and reports, per board:
              that compensate outside 1-120 kPa, and missed slots (the loop
              found the conversion still running)
   flashed    conversions a flash erase or program ran beside, which the
-             firmware discards (DD-068): counted, not a fault
+             firmware uses like any other (DD-106): counted, not a fault,
+             and left out of this report's figures for the sensor
   lag        from the driver's stamp to the loop reading it
   noise      the sample-to-sample scatter, in pascals
 
@@ -109,7 +110,7 @@ def analyze(recs, lost):
         kinds[chr(r[5])] = kinds.get(chr(r[5]), 0) + 1
     # One pass: the pressures, and what sat between each and the one before.
     # A temperature explains one missing slot, and so does each pressure
-    # discarded for a flash operation [DD-068].
+    # a flash operation ran beside [DD-106].
     p, t_between, f_between, seen_t, seen_f = [], [], [], False, 0
     for r in recs:
         k = chr(r[5])
@@ -210,7 +211,7 @@ def report(name, a):
           f"(chance {a['stale_chance']:.1f}); "
           f"zeros {k['Z']}, bus {k['B']}, range {k['R']}, missed {k['W']}, lost {a['lost']}")
     if k["F"] or k["G"]:
-        print(f"   discarded for a flash operation (DD-068): {k['F']} pressures, {k['G']} temperatures")
+        print(f"   beside a flash operation (DD-106): {k['F']} pressures, {k['G']} temperatures")
     print(f"   lag min/median/max {a['lag_ms'][0]:.2f}/{a['lag_ms'][1]:.2f}/{a['lag_ms'][2]:.2f} ms; "
           f"noise {a['noise_pa']:.2f} Pa")
 

@@ -153,7 +153,7 @@ the noisiest bench board's figure (`test/board_harness.h`). Nobody may touch the
 `pressure_trace.py` polls `/api/pressure/trace` for 60 s by default and
 reports per board: the rate and the spread of the intervals, repeated codes
 against the count chance gives, rejects and missed slots, conversions a flash
-operation ran beside (DD-068, counted, not a fault), the lag from the driver's
+operation ran beside (DD-106, counted, not a fault), the lag from the driver's
 stamp to the loop, and the noise. A record lost to the ring fails the capture,
 not the sensor.
 
