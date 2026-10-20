@@ -70,7 +70,6 @@ than one build: the boot, pad and recorded-flight suites run on all three.
 | `hr_log_tests` | `test_hr_log.c` | the high-rate log on a fake card and IMU, its tasks run by hand (`test/fake_rtos`, DD-077) |
 | `flight_sim_tests` | `test_flight_sim.c` | the bench flight: its atmosphere and profile, canopies that fail, its hold on the channels (DD-078) |
 | `flight_log_tests` | `test_flight_log.c` | the flight log's binary records and the CSV they render as (DD-062) |
-| `log_plan_tests` | `test_log_plan.c` | the three logging plans, in time order (DD-064) |
 | `pressure_trace_tests` | `test_pressure_trace.c` | the ring `/api/pressure/trace` reads (DD-063) |
 | `ms5607_tests` | `test_ms5607.c` | the MS5607 one-shot on a fake bus and clock; only for a board with an MS5607 |
 | `bmp280_tests` | `test_bmp280.c` | the BMP280 at the loop's rate |
@@ -120,10 +119,10 @@ does. `support/noise_baseline.py <board-ip>` measures a board's real noise.
 rate: `test/ms5607_bus.h` stands in for `src/hal_common/ms5607_bus.h`, and the
 suite refuses to build for a board with no MS5607 (MK1A).
 
-`test_DAT_08_a_full_rate_log_replays_to_the_same_events` flies a flight, reads
-back its log, and replays the log's readings through `sim/replay.c`. The same
-code is `pyro_sim --replay <flight_log.csv>` (build `sim` with
-`PYRO_BOARD=sim`), for real flights logged with `log_rate=full` (DAT-08).
+`test_DAT_08_a_log_replays_to_the_same_events` flies a flight, reads back its
+log, and replays the log's readings through `sim/replay.c`. The same code is
+`pyro_sim --replay <flight_log.csv>` (build `sim` with `PYRO_BOARD=sim`), for
+real flights (DAT-08).
 
 ## Board files on the host (DD-053)
 

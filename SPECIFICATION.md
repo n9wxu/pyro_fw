@@ -5,7 +5,7 @@
 ## Summary
 
 ### Project Overview
-Two-channel rocket flight computer on the RP2040, for three boards: MK1A, MK1B (the default build) and MK1C. Logs flight data to littlefs flash, serves a web dashboard via USB network (RNDIS/ECM), fires two pyrotechnic channels for recovery deployment, outputs $PYRO NMEA telemetry via UART (see docs/ground-station-interface-spec.md), and runs user Lua scripts. OTA firmware updates via A/B bootloader. Open work is in `docs/outstanding_tasks.md`; decisions in `DECISIONS.md` (to DD-090).
+Two-channel rocket flight computer on the RP2040, for three boards: MK1A, MK1B (the default build) and MK1C. Logs flight data to its flash, serves a web dashboard via USB network (RNDIS/ECM), fires two pyrotechnic channels for recovery deployment, outputs $PYRO NMEA telemetry via UART (see docs/ground-station-interface-spec.md), and runs user Lua scripts. OTA firmware updates via A/B bootloader. Open work is in `docs/outstanding_tasks.md`; decisions in `DECISIONS.md` (to DD-090).
 
 ### Current Implementation Status
 - **Event-driven state machine**: `src/flight_states.c` — a detector per state, a transition table, actions; twelve states (`docs/flight_states.md`). The flight software is the files of `src/flight_sources.txt`, one responsibility each
@@ -19,8 +19,8 @@ Two-channel rocket flight computer on the RP2040, for three boards: MK1A, MK1B (
 - **Fire rules**: `src/fire_control.c` and `src/fire_plan.c` — each channel's trigger, re-fire, emergency fire, and the gap between pulses (DD-082, DD-084)
 - **Resume**: `src/flight_resume.c` — the pad record `pad.mkr` and the decision to rejoin a flight after any restart (DD-086)
 - **Pyro backends**: `boards/<board>/pyro_board.c` behind `src/pyro.h`; MK1C's split into measure, faults and sequence files, with its PIO arm pump
-- **littlefs driver**: `src/littlefs_driver.c` — 984 KB on MK1B, 8 MB on MK1A and MK1C
-- **Flight log**: `src/flight_log.c` (binary records, CSV on read) and `src/log_plan.c` (the `log_rate` plans), written by `src/hal_common/hal_common.c` through `src/flash_op.c`
+- **Files**: alfs behind `src/vfs_flash.c`, its driver `src/fs_flash.c` — 984 KB on MK1B, 8 MB on MK1A and MK1C (DD-100)
+- **Flight log**: `src/flight_log.c` (binary records, CSV on read), every sample, written by `src/hal_common/hal_common.c` through `src/flash_op.c`
 - **Pin assignment**: `pins.ini` (`src/pin_assign.c`, `src/pin_store.c`), each board's `pin_caps.h`, one owner per pad (`src/pad_claim.c`, DD-020)
 - **Lua**: `src/lua/` — Lua 5.4, on MK1A, MK1B and MK1C (`PYRO_HAS_LUA` in `boards/<board>/board.cmake`)
 - **CI/CD**: GitHub Actions build + release pipeline
@@ -41,7 +41,7 @@ cmake -B build-mk1c -DPYRO_BOARD=mk1c && cmake --build build-mk1c
 # OTA: ./support/upload_fw.sh [bin] [host]
 # Test: python3 support/test_network.py --all pyro.local
 ```
-Dependencies: Pico SDK 2.2.0, installed separately; littlefs v2.11.2, Unity v2.6.0, Lua v5.4.6 (boards with Lua) and pico_fota_bootloader (master) via FetchContent.
+Dependencies: Pico SDK 2.2.0, installed separately; alfs (format 6), Unity v2.6.0, Lua v5.4.6 (boards with Lua) and pico_fota_bootloader (master) via FetchContent.
 
 ### Key Design Decisions
 1. Integers for what is stored and reported (Pa, cm, ms); the estimator and the atmosphere use single-precision float. Every flight comparison is made in pressure (SNS-EST-05)
@@ -80,8 +80,8 @@ The other boards' maps are in `boards/<board>/board_pins.h` and their theories o
 
 ### Memory
 ```
-Flash, MK1B:       2 MB  = bootloader 36 KB + info 4 KB + 2 x 512 KB slots + 984 KB littlefs
-Flash, MK1A/MK1C: 16 MB  = bootloader 36 KB + info 4 KB + 2 x 4076 KB slots + 8 MB littlefs
+Flash, MK1B:       2 MB  = bootloader 36 KB + info 4 KB + 2 x 512 KB slots + 984 KB of files
+Flash, MK1A/MK1C: 16 MB  = bootloader 36 KB + info 4 KB + 2 x 4076 KB slots + 8 MB of files
 RAM: 264 KB. Fixed buffers include the flight log's 4 KB, its 128-row delay line (3 KB),
      the pressure trace (256 records, 6 KB), lwIP's 8,000-byte heap, and the flight ring (64 samples, 1 KB)
 ```
@@ -176,7 +176,6 @@ pyro2_refire_speed=0
 emergency_fire_speed=0
 refire_interval=0
 fire_gap=0
-log_rate=1hz
 landing_timeout=60
 lua_enabled=false
 lua_baud=9600
@@ -196,7 +195,6 @@ lua_pixels=0
 | emergency_fire_speed | units/s; 0 off | 0 |
 | refire_interval | ms; 0 takes the board's default (1000) | 0 |
 | fire_gap | ms of quiet time between pulses; 0 takes the board's default (3000) | 0 |
-| log_rate | 1hz/events/full | 1hz |
 | landing_timeout | seconds | 60 |
 | lua_enabled | true/false | false |
 | lua_baud | a Lua serial role's baud | 9600 |

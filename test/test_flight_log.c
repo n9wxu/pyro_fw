@@ -66,12 +66,11 @@ static const flog_header_t HDR = {
     .pyro2_value = 300,
     .units = 1,
     .ground_pa = 101325,
-    .rate = LOG_RATE_1HZ,
 };
 
 static const char *const HDR_CSV = "# Pyro MK1C Flight Data\n# ID: PYRO001\n# Name: MyRocket\n"
                                    "# Pyro1: delay 0\n# Pyro2: agl 300\n# Units: m\n# Ground Pa: 101325\n"
-                                   "# Log rate: 1 row/s\n"
+                                   "# Log rate: every sample\n"
                                    "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n";
 
 static void put(int n) {
@@ -115,13 +114,15 @@ void setUp(void) {
 void tearDown(void) {
 }
 
-void test_FLOG_01_the_header_renders_as_the_old_header_with_the_rate(void) {
+/* [FLT-LOG-07, DAT-08] The header's plan byte says every sample is kept, and
+ * so does the CSV the replay reads. */
+void test_FLOG_01_the_header_renders_with_every_sample_kept(void) {
     header(&HDR);
+    TEST_ASSERT_EQUAL_UINT8(2, bin[FLOG_MAGIC_LEN + 29]);
     render(bin_len, 4096, 0);
     TEST_ASSERT_EQUAL_STRING(HDR_CSV, csv);
 
     flog_header_t h = HDR;
-    h.rate = LOG_RATE_FULL;
     h.units = 2;
     h.pyro1_mode = PYRO_MODE_SPEED;
     h.pyro1_value = 15;
@@ -130,10 +131,6 @@ void test_FLOG_01_the_header_renders_as_the_old_header_with_the_rate(void) {
     render(bin_len, 4096, 0);
     TEST_ASSERT_NOT_NULL(strstr(csv, "# Pyro1: speed 15\n"));
     TEST_ASSERT_NOT_NULL(strstr(csv, "# Units: ft\n# Ground Pa: -3\n# Log rate: every sample\n"));
-    h.rate = LOG_RATE_EVENTS;
-    header(&h);
-    render(bin_len, 4096, 0);
-    TEST_ASSERT_NOT_NULL(strstr(csv, "# Log rate: 1 row/s, every sample within 1 s of an event\n"));
 }
 
 void test_FLOG_02_samples_render_as_the_old_rows(void) {
@@ -235,7 +232,7 @@ void test_FLOG_08_records_are_their_stated_size_and_never_overflow(void) {
 
 int main(void) {
     UNITY_BEGIN();
-    RUN_TEST(test_FLOG_01_the_header_renders_as_the_old_header_with_the_rate);
+    RUN_TEST(test_FLOG_01_the_header_renders_with_every_sample_kept);
     RUN_TEST(test_FLOG_02_samples_render_as_the_old_rows);
     RUN_TEST(test_FLOG_03_text_rows_are_cleaned_and_bounded);
     RUN_TEST(test_FLOG_04_the_text_does_not_depend_on_how_it_is_read);

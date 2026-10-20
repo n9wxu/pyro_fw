@@ -25,13 +25,6 @@ typedef enum {
     UNITS_FT = 2,
 } config_units_t;
 
-/* The flight log's plan [FLT-LOG-07, DD-064]; log_plan.h says what each keeps. */
-typedef enum {
-    LOG_RATE_1HZ = 0,
-    LOG_RATE_EVENTS = 1,
-    LOG_RATE_FULL = 2,
-} log_rate_t;
-
 /* The longest config.ini the board reads back, and so the longest it writes. */
 #define CONFIG_INI_MAX 1024
 
@@ -44,7 +37,6 @@ typedef enum {
 #define X_FIELD_MODE(field) uint8_t field;
 #define X_FIELD_UNITS(field) uint8_t field;
 #define X_FIELD_BOOL(field) bool field;
-#define X_FIELD_LOGRATE(field) uint8_t field;
 #define X_STRUCT(type, field, key, def, min, max) X_FIELD_##type(field)
 
 typedef struct {
@@ -59,7 +51,6 @@ typedef struct {
 #undef X_FIELD_MODE
 #undef X_FIELD_UNITS
 #undef X_FIELD_BOOL
-#undef X_FIELD_LOGRATE
 
 void config_set_defaults(config_t *cfg);
 
@@ -94,9 +85,6 @@ config_file_t config_from_file(config_t *cfg, char *buf, int buf_size, int n, in
  * table every writer of a mode name uses, so a log header cannot disagree
  * with the file that configured it. */
 const char *config_mode_name(uint8_t mode);
-
-/* The config.ini spelling of a log rate: 1hz/events/full. */
-const char *config_log_rate_name(uint8_t rate);
 
 /* The config.ini spelling of a unit: cm/m/ft. */
 const char *config_units_name(uint8_t units);

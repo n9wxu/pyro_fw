@@ -1,7 +1,7 @@
 /*
  * The flight log on disk: binary records, rendered as CSV when it is read
- * (DD-062). The CSV is the text the log used to be stored as, plus a line
- * saying the rate it was written at.
+ * (DD-062). The CSV's header says every sample was kept, which the replay
+ * checks [DAT-08].
  *
  * A file is the magic, one header record, then sample and text records in
  * the order they were written. Multi-byte fields are little-endian. A record
@@ -33,7 +33,6 @@ typedef struct {
     uint16_t pyro1_value, pyro2_value;
     uint8_t units;
     int32_t ground_pa;
-    uint8_t rate; /* log_rate_t */
 } flog_header_t;
 
 typedef struct {

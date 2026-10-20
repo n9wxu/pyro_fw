@@ -560,6 +560,68 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-101: Every Sample Logged
+- **Decision:** at the user's direction ("The 1hz and 50hz log capacity is
+  roughly the same. Drop the 1hz logging and log every flight cycle"), the
+  flight log keeps a row for every sample, every flight cycle, and every
+  event row at its own time [FLT-LOG-07]. `log_rate`, its three plans
+  (DD-064) and `src/log_plan.c` are gone.
+- **Why the capacities are close:** the log syncs every second
+  [FLT-LOG-06], and on alfs a sync stores its partial page (DD-100), so a row
+  a second took a page a second. Every sample takes about six: measured on
+  MK1C on 2026-10-18, 1,042 pages over a 177.5 s bench flight, 5.9 a second,
+  for 1,210 bytes a second of samples (50.9 a second), estimator rows and the
+  script's rows. MK1A and MK1C hold about 1.5 hours. MK1B's MS5607 gives 69
+  samples a second, so a second there takes about seven pages: MK1B-8MB holds
+  about 39 minutes, MK1B 9.
+- **The format stands:** the header keeps its plan byte, always 2, and the
+  CSV its `# Log rate: every sample` line, which the replay reads; a CSV
+  whose header says it kept a row a second is refused [DAT-08]. A
+  `config.ini` that names `log_rate` loads whole, and its next save drops the
+  key [CFG-08].
+- **`/api/log/space`** reports `rate_hz`, the samples a second, and
+  `seconds`: the room over what a second of samples takes on the store once
+  synced, whole pages on the flash (`vfs_synced_cost()`). The Config tab shows
+  that time and has no plan to choose [WEB-UI-06, WEB-API-12]. `/api/status`
+  carries no `log_rate`.
+- **What it costs in flight:** each sync's programs overlap two pressure
+  conversions, which are discarded (DD-068): a 57 ms gap in the samples about
+  once a second, 743 conversions of the flight's, about 5%. The flight steps
+  on every sample it has [FLT-RATE-06].
+- **RAM:** the plan's delay line, 128 rows (3 KB), is gone.
+
+### DD-100: The Board's Files On alfs; Only The Cleanup Erases
+- **Decision:** at the user's direction ("build and test this version.
+  Integrate into the pyro_fw and test on hardware"), the board's own files
+  live on alfs (github.com/n9wxu/alfs, format 6) in place of littlefs, in the
+  same area at the top of flash. `src/vfs_flash.c` puts alfs behind
+  `vfs.h`, so no caller changed; `src/fs_flash.c` is its driver and the
+  store's lock.
+- **What a file is:** a chain of pages found by its name (at most 31
+  bytes). A write replaces a file whole: the new copy is written beside the
+  old and takes its place when it closes, so a write that dies part-way
+  leaves the old file. A rename is a copy. A sync stores the partial page
+  too [FLT-LOG-06], at the cost of the rest of that page.
+- **Erases:** a write takes only erased pages, and only `vfs_clean()`
+  erases: a sector a pass of the storage task, never while the flight log
+  holds the filesystem, so a log in flight appends without an erase (the
+  user's rulings of 2026-10-14). The flight log's open removes the last
+  flight's log first, so a reset in flight finds this flight's.
+- **Programs are exact:** alfs programs only the bytes it means, which
+  `flash_range_program()`'s whole pages cannot do, so
+  `flash_op_program_bytes()` sends the page program itself, from RAM. Its
+  driver asks again when `flash_op()` refuses for a board's pyro sequence
+  or a helper that would not park, up to a deadline; alfs takes a failed
+  program for a bad sector.
+- **Mount:** reads every page's header once, at boot, before the scheduler;
+  writes nothing, so the reads before `hal_fs_mount()` use it read-only. A
+  blank area, and one holding littlefs, mounts with no file, and the
+  cleanup erases what it holds.
+- **What a board loses when it changes to this firmware:** its files: the
+  configuration, the pin and beep tables, the web pages, the script, an
+  assigned MAC and the flight log. They are saved off the board before, and
+  put back after (`install.py` for the pages).
+
 ### DD-099: Identity From The Flash Chip's Whole Serial
 - **Decision:** at the user's direction ("update the random MAC to use the
   full serial numbers to ensure a fully unique serial number across all
@@ -1618,6 +1680,7 @@ The designer's answers to `docs/outstanding_tasks.md` section 2.
 - **Only `full` replays** [DAT-08]; the log's header names the plan.
 - **`log_high_rate`, a few hours old, is not carried over:** a `config.ini`
   that names it logs at `1hz`, like one that names `log_rate_hz`.
+- **Superseded by DD-101:** every sample is logged, and `log_rate` is gone.
 
 ### DD-063: Every Pressure Conversion, Traced; 100 Hz Checked On Each Sensor
 - **Decision:** at the user's direction -- "We need to verify that 100hz

@@ -22,7 +22,7 @@ Every loss errs late. None can fire early.
 
 ## Option: restore from the log
 
-The flight log holds every event row at its own time under every log rate
+The flight log holds every sample and every event row at its own time
 (FLT-LOG-07): LAUNCH, ARMED, APOGEE, each fire. Replaying the events alone
 would give back T+0, the apogee time, the peak, the phase and the channels
 fired, and the flight would continue as one record.
@@ -31,8 +31,8 @@ What has to be true for it to be used:
 
 - **Fast enough.** The replay has a time budget inside the restart. If it
   is not finished, the flight resumes on the baseline. The budget and the
-  read time per board and per log rate are to be measured; a full-rate log
-  late in a long flight is the worst case, and reading events without
+  read time per board are to be measured; a log late in a long flight is
+  the worst case, and reading events without
   walking every sample row may need an index or a scan from the end.
 - **This flight's log.** The record must be tied to the resume state, so a
   log left by an earlier flight is never replayed. Clearing all resume
@@ -51,6 +51,6 @@ What has to be true for it to be used:
 ## To measure
 
 - Time from restart to first decision, baseline and with replay, on each
-  board's storage, at each log rate, at 1, 10 and 30 minutes into a flight.
+  board's storage, at 1, 10 and 30 minutes into a flight.
 - DELAY and FALLEN lateness on the baseline against the restored flight,
   for a restart at each phase.

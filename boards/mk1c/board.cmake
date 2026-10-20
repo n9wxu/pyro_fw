@@ -10,7 +10,7 @@ set(PICO_BOARD pyro_mk1c CACHE STRING "Board type" FORCE)
 list(APPEND PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_LIST_DIR}/sdk)
 
 set(PYRO_FLASH_SIZE_KB 16384) # XT25F128FWOIGT-W
-set(PYRO_PFB_FS_KB     8192)  # littlefs
+set(PYRO_PFB_FS_KB     8192)  # the files
 
 set(PYRO_HAS_LUA 1) # core1, on the four J3 pads, GPIO18-21
 set(PYRO_HAS_BENCH_FLIGHT 1) # POST /api/sim/flight [DD-078]

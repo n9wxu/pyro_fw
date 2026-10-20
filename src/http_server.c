@@ -157,7 +157,7 @@ static conn_t *ota_conn; /* the OTA state below is one image at a time */
 /* ── OTA firmware update state ────────────────────────────────────── */
 
 /* pico_fota_bootloader's linker symbols: their addresses are the values. The
- * download slot ends where littlefs begins. */
+ * download slot ends where the files begin. */
 extern uint32_t __FLASH_DOWNLOAD_SLOT_START;
 extern uint32_t __FLASH_SWAP_SPACE_LENGTH;
 #define OTA_SLOT_OFF ((uint32_t) & __FLASH_DOWNLOAD_SLOT_START - XIP_BASE)
@@ -786,7 +786,6 @@ static void status_capture_flight(void *arg) {
     s->pyro_value[0] = g_status.pyro1_value;
     s->pyro_value[1] = g_status.pyro2_value;
     s->units = g_status.units;
-    s->log_rate = config_log_rate_name(fctx ? fctx->config.log_rate : LOG_RATE_1HZ);
     memcpy(s->rocket_id, (const char *)g_status.rocket_id, sizeof(s->rocket_id) - 1);
     memcpy(s->rocket_name, (const char *)g_status.rocket_name, sizeof(s->rocket_name) - 1);
     s->sensor = pressure_sensor_name();
@@ -951,8 +950,8 @@ const http_unit_fn http_unit_vt[] = {
 
 #define WWW_HEADERS "Cache-Control: no-store, must-revalidate\r\n"
 
-/* Stream a file, framed by its size. The work buffer is littlefs's cache for
- * it when the file is internal. Answers fb_status/fb_body when there is no
+/* Stream a file, framed by its size. The work buffer is the file's buffer
+ * when the file is on the flash. Answers fb_status/fb_body when there is no
  * such file. */
 static void serve_file(conn_t *c, const char *path, const char *ctype, const char *extra, uint16_t fb_status,
                        const char *fb_ctype, const char *fb_body) {
@@ -1033,7 +1032,8 @@ static bool flight_csv_count(conn_t *c) {
 
 /* [WEB-API-12, DD-062] The room the next flight's log has: what is free, and
  * the current log's own, which the next launch replaces, on whichever store
- * the log goes to. Some is kept back for the filesystem's own metadata. */
+ * the log goes to. Some is kept back for the filesystem's own metadata. The
+ * seconds it holds are a second's samples as the store keeps them synced. */
 #define LOG_SPACE_RESERVE_BYTES (16u * 1024u)
 
 static void serve_api_net(http_conn_t *hc);
@@ -1050,11 +1050,16 @@ static void serve_log_space(conn_t *c) {
     }
     int32_t log_bytes = vfs_stat_size(FLOG_PATH);
     int64_t room = (int64_t)free_b - LOG_SPACE_RESERVE_BYTES + (log_bytes > 0 ? log_bytes : 0);
+    if (room < 0)
+        room = 0;
+    uint32_t rate = hal_pressure_rate_hz();
+    uint32_t second = rate ? vfs_synced_cost(FLOG_PATH, rate * FLOG_SAMPLE_BYTES) : 0u;
     char *buf = (char *)hc->work;
     int n = snprintf(buf, sizeof(hc->work),
-                     "{\"bytes_free\":%llu,\"record_bytes\":%u,\"rates_hz\":[1,%lu],\"store\":\"%s\"}",
-                     (unsigned long long)(room > 0 ? room : 0), (unsigned)FLOG_SAMPLE_BYTES,
-                     (unsigned long)hal_pressure_rate_hz(), vfs_route(FLOG_PATH) == VFS_FAT ? "sd" : "flash");
+                     "{\"bytes_free\":%llu,\"record_bytes\":%u,\"rate_hz\":%lu,\"seconds\":%llu,\"store\":\"%s\"}",
+                     (unsigned long long)room, (unsigned)FLOG_SAMPLE_BYTES, (unsigned long)rate,
+                     (unsigned long long)(second ? (uint64_t)room / second : 0u),
+                     vfs_route(FLOG_PATH) == VFS_FAT ? "sd" : "flash");
     http_respond(hc, 200, JSON, buf, (uint32_t)n);
 }
 
@@ -1342,7 +1347,7 @@ static void upload_complete(conn_t *c) {
     if (!ok) {
         vfs_remove(part);
     } else {
-        /* The Lua program is configuration: littlefs keeps a copy. */
+        /* The Lua program is configuration: the flash keeps a copy. */
         vfs_mirror_one(c->dest);
     }
     DBG("POST %s done ok=%d", c->dest, (int)ok);

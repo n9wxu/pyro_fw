@@ -61,7 +61,7 @@ What a board need not write:
 - **The pressure sensor's bring-up**, for one sensor on one bus:
   `src/pressure_single_sensor.c` picks the sensor from whichever bus speed
   `board_pins.h` declares, `BOARD_MS5607_I2C_HZ` or `BOARD_BMP280_I2C_HZ`.
-- **Everything else** — the UART's interrupt-driven ring, littlefs, config,
+- **Everything else** — the UART's interrupt-driven ring, the files, config,
   flight logging, USB, networking — lives in `src/hal_common/` and `src/`.
 
 ## Pyro backend
@@ -139,7 +139,7 @@ A board copied from this template replaces every row with its own.
   negative flash size that still links. And it must not name
   `PICO_DEFAULT_LED_PIN` unless that pin really is an LED, because TinyUSB's
   BSP drives it as an output (`boards/mk1c/sdk/pyro_mk1c.h`).
-- **`PYRO_PFB_FS_KB`** is the littlefs reservation; the top level checks the
+- **`PYRO_PFB_FS_KB`** is the files' reservation; the top level checks the
   A/B slot arithmetic and fails the configure with it shown.
 - **`PYRO_LOOP_WORST_MS`** is the loop's worst case; the watchdog is twice it.
   Measure `loop_max_us` on `/api/status` under the worst load you can provoke —

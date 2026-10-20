@@ -93,7 +93,7 @@ self.addEventListener('fetch', e => {
 
   /* DD-062: an MK1B's room for its next log, as a bench board reported it. */
   if (path === '/api/log/space' && e.request.method === 'GET') {
-    e.respondWith(new Response(JSON.stringify({bytes_free: 892928, record_bytes: 22, rates_hz: [1, 100]}),
+    e.respondWith(new Response(JSON.stringify({bytes_free: 892928, record_bytes: 22, rate_hz: 50, seconds: 756, store: 'flash'}),
                                {headers: {'Content-Type': 'application/json'}}));
     return;
   }

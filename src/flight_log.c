@@ -10,8 +10,10 @@
 enum { REC_HEADER = 'H', REC_SAMPLE = 'S', REC_TEXT = 'T' };
 
 /* type, len, id[8], name[8], pyro1 mode+value, pyro2 mode+value, units,
- * ground_pa, rate, then the board name */
+ * ground_pa, plan, then the board name. The plan is always every sample
+ * [FLT-LOG-07]. */
 #define HDR_FIXED 30
+#define PLAN_EVERY_SAMPLE 2
 #define TEXT_FIXED 7 /* type, time, tag, len */
 
 static const char *const TAG_NAMES[] = {"LUA", "MOCK", "EST"};
@@ -62,7 +64,7 @@ int flog_put_header(uint8_t *dst, int cap, const flog_header_t *h) {
     put16(p + 22, h->pyro2_value);
     p[24] = h->units;
     put32(p + 25, (uint32_t)h->ground_pa);
-    p[29] = h->rate;
+    p[29] = PLAN_EVERY_SAMPLE;
     memcpy(p + HDR_FIXED, h->board, (size_t)board);
     return n;
 }
@@ -147,17 +149,6 @@ static char *put_str(char *o, const char *s) {
     return o;
 }
 
-static const char *rate_line(uint8_t rate) {
-    switch (rate) {
-    case LOG_RATE_FULL:
-        return "every sample";
-    case LOG_RATE_EVENTS:
-        return "1 row/s, every sample within 1 s of an event";
-    default:
-        return "1 row/s";
-    }
-}
-
 static int render_header(flog_csv_t *r) {
     uint8_t h[HDR_FIXED - 2 + FLOG_BOARD_MAX];
     uint8_t lead[2];
@@ -175,14 +166,14 @@ static int render_header(flog_csv_t *r) {
     uint8_t units = h[22];
     int n = snprintf(r->line, sizeof(r->line),
                      "# %s Flight Data\n# ID: %s\n# Name: %s\n# Pyro1: %s %u\n# Pyro2: %s %u\n# Units: %s\n"
-                     "# Ground Pa: %ld\n# Log rate: %s\n"
+                     "# Ground Pa: %ld\n# Log rate: every sample\n"
                      "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n",
                      board, id, name, config_mode_name(h[16]), (unsigned)get16(h + 17), config_mode_name(h[19]),
                      (unsigned)get16(h + 20),
                      units == 2   ? "ft"
                      : units == 1 ? "m"
                                   : "cm",
-                     (long)(int32_t)get32(h + 23), rate_line(h[27]));
+                     (long)(int32_t)get32(h + 23));
     return n > 0 && n < (int)sizeof(r->line) ? n : 0;
 }
 

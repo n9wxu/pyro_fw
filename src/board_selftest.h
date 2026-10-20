@@ -7,7 +7,7 @@
  * image was compiled for, so it cannot help.
  *
  * The evidence is a stamp, board.txt, that each board writes on its first boot
- * of a firmware that has this. littlefs survives an OTA, a UF2 and a picotool
+ * of a firmware that has this. The files survive an OTA, a UF2 and a picotool
  * flash alike, so the stamp from the image that ran before is there to compare
  * against at every boot. Not a hardware probe: a sensor that does not answer
  * is equally a dead sensor on the right board. The one probe taken is the

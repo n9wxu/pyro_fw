@@ -32,7 +32,7 @@ a weak pull-up. The AP2192 adds a fault flag per channel that MK1A lacks.
 | Item | Part | Notes |
 |---|---|---|
 | MCU | U6 RP2040, QFN-56, 12 MHz crystal Y1 | bare chip on the SDK's own `pico` board header: GPIO25 is the LED here too |
-| Flash | U7, a W25Q16JVUUIQ (2 MB, 3 V) by its marking, on a USON-8 4x3 mm footprint | 984 KB littlefs, the rest two OTA slots; see "Flash" below |
+| Flash | U7, a W25Q16JVUUIQ (2 MB, 3 V) by its marking, on a USON-8 4x3 mm footprint | 984 KB of files, the rest two OTA slots; see "Flash" below |
 | High sides | U5 AP2192AMPG-13 (LCSC C507872) | EN1/EN2 gate OUT1/OUT2; FLG1/FLG2 open drain |
 | Low side | Q1B, the second FET of an AO6800 | gate `sw_gnd` |
 | Fuse | F2, 1.5 A PTC | resets |
@@ -271,7 +271,7 @@ The values the requirements leave to the board (BRD-01). A value marked
 | Disarm when software stops (PYR-ARM-01) | **the watchdog, 1 s.** The loop ends the pulse, so a stopped loop leaves the enable on until the reset. This exceeds the 50 ms bound |
 | Sensor | MS5607 where fitted, else BMP280, found at start-up. MS5607: 10 to 1200 mbar, 2.4 Pa rms at OSR 4096 (`docs/datasheets/MS5607-02BA03_2017-06.pdf`, pages 1 and 4). Measured on this board with a battery fitted: MS5607 2.3 Pa rms, BMP280 2.0 Pa, a beep changing neither; on USB alone 9.8 and 2.5 Pa (`docs/pressure_collector.md`) |
 | Height for proper operation (SNS-MAX-01) | 30000 m with the MS5607; 9000 m with the BMP280 |
-| Flight log (DAT-09) | 984 kB of littlefs: about 12 hours at `1hz`, 15 min at `full`. `/api/log/space` reports what is free |
+| Flight log (DAT-09) | 984 kB of files, 3,935 pages: about 9 minutes of flight. Every sample is a 22-byte row, up to 69 a second from this board's MS5607, beside a row a second for each estimator; each second's sync stores its partial page [FLT-LOG-06], so a second takes about seven pages. `/api/log/space` reports the seconds the next flight has |
 | Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured* on this revision: `loop_late_max_us` on `/api/status` reports it |
 | Script resources (LUA-PAD-03) | the J1 user pad, GPIO8, and a released pyro channel's pads (`pin_caps.h`) |
 | Connector labels (PIN-LABEL-01) | `pin_caps.h` |

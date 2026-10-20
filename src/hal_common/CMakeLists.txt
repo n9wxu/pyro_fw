@@ -36,7 +36,7 @@ target_link_libraries(pyro_hal_common PUBLIC
     hardware_irq
     hardware_i2c
     hardware_watchdog
-    littlefs_lib
+    alfs_lib
     tinyusb_device            # hal_platform_init() drives tud_init/tud_task
     tinyusb_board             # bsp/board_api.h board_init()
     pico_fota_bootloader_lib  # pfb_firmware_commit() on a good boot

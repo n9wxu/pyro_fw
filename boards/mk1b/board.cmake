@@ -7,7 +7,7 @@ set(BOARD_DISPLAY_NAME "Pyro MK1B")
 set(PICO_BOARD pico CACHE STRING "Board type" FORCE) # a bare RP2040 the stock header describes
 
 set(PYRO_FLASH_SIZE_KB 2048)
-set(PYRO_PFB_FS_KB     984)  # littlefs
+set(PYRO_PFB_FS_KB     984)  # the files
 
 set(PYRO_HAS_LUA 1) # the J1 pad, GPIO8
 

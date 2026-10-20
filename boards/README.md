@@ -79,7 +79,7 @@ A board writes none of the rest:
   pads `pins.ini` names, and any `pin_caps.h` row with `FN_DIGITAL` can be one,
   a pyro pad once its channel is released.
 - The UART's interrupt-driven ring, the async task runner, config persistence
-  and flight logging are `src/hal_common/`'s, over the littlefs driver, USB
+  and flight logging are `src/hal_common/`'s, over the flash filesystem, USB
   and networking in `src/`.
 
 ### Sensor bus speeds

@@ -1,8 +1,8 @@
 /*
  * Replaying a flight log through the firmware [DAT-08].
  *
- * A log written with log_rate=full carries each sample's raw reading, so the
- * rows are the flight's readings in order. The firmware is started on a pad
+ * The flight log carries each sample's raw reading, so the rows are the
+ * flight's readings in order. The firmware is started on a pad
  * at the log's ground pressure and then flown on those readings, and what it
  * decides is set against the log's own event rows: how a change to the
  * estimator or the detectors is checked against a real flight.
@@ -27,7 +27,7 @@ bool replay_logged_events(const char *csv, replay_events_t *out);
 
 /* The events the firmware decides from the log's readings, with the log's
  * configuration and ground pressure. false if the log has no raw_pa column,
- * or was written at a row a second. */
+ * or its header says it kept a row a second. */
 bool replay_run(const char *csv, replay_events_t *out);
 
 /* Called before each reading with its time, to set the HAL's clock and do

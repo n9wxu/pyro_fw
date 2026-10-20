@@ -343,8 +343,8 @@ def vtable_targets(elf, objdump):
     covering less -- which is how a check becomes a rubber stamp.
 
     Scoped to symbols named *_vt rather than to every address-taken function.
-    The broad reading folds in core0's HTTP route table and the littlefs
-    callbacks, which reach flash legitimately, and the check then fails on
+    The broad reading folds in core0's HTTP route table and the flash
+    driver's callbacks, which reach flash legitimately, and the check then fails on
     everything and means nothing. So the naming is load-bearing, and enforced
     below: an image that links lua_iface_publish and exposes no *_vt has
     renamed its way out of coverage, and that fails. So does an image that

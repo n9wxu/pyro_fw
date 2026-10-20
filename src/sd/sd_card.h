@@ -25,7 +25,7 @@
 typedef enum { SD_NONE = 0, SD_V1, SD_V2_SC, SD_V2_HC } sd_type_t;
 
 /* Brings a card up and mounts its FAT, once, at boot. 0, or <0 with no card
- * or one that will not answer; the board then keeps every file in littlefs. */
+ * or one that will not answer; the board then keeps every file on the flash. */
 int sd_start(void);
 
 /* True while a card is mounted and taking files. */
