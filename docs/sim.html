@@ -513,6 +513,16 @@
             /* DD-062: the simulator's log is one 64 KB file (boards/sim/hal_sim.c). */
             if (path === '/api/log/space' && method === 'GET')
                 return { body: JSON.stringify({bytes_free: 65536, record_bytes: 22, rates_hz: [1, 50]}) };
+            /* WEB-API-19, WEB-API-20: the same 64 KB, holding nothing the page can list. */
+            if (path === '/api/fs' && method === 'GET')
+                return { body: JSON.stringify({store: 'flash', bytes: 65536, in_files: 0, free: 65536,
+                    cleanup: 'done', cleaned_sectors: 0, sectors: 16, sector_pages: 16, page_bytes: 256,
+                    files: []}) };
+            if (path.indexOf('/api/fs/scan') === 0 && method === 'GET') {
+                var from = parseInt((path.match(/sector=(\d+)/) || [0, 0])[1], 10);
+                var n = Math.max(0, Math.min(16 - from, 128));
+                return { body: JSON.stringify({sector: from, erased: new Array(n).fill(16)}) };
+            }
             return { status: 404, body: 'Not found', contentType: 'text/plain' };
         }
 
