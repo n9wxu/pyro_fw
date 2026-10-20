@@ -281,6 +281,7 @@ From launch to landing the flight software hands every sample to `hal_log_sample
 - **Lua:** a script's `log.line()` and `log.write()` output lands in the log as `LUA` rows, during a flight only; `print()` goes to `/api/lua/console`
 - **Space:** `/api/log/space` reports the room the next flight has and the seconds of flight it holds, each second costing what its sync stores; the Config tab shows that time
 - **Erase:** `POST /api/flight/erase`; any other file: `POST /api/delete/<path>`
+- **Cleanup:** the pages a replaced or deleted file leaves are erased by the pad's cleanup: on USB with test mode off, one sector after another at the flash's pace; otherwise one a second, so an erase stalls the pad no more than once a second (USB-10)
 
 In flight the flight log holds the filesystem: every other file request is answered 423 (DD-058).
 
@@ -477,10 +478,11 @@ Connect the board via USB. It appears as a network adapter (RNDIS on Windows, EC
 - **Flight Data tab:** summary, CSV download, erase, altitude graph
 - **Beep Codes tab:** the personalities, with an audition button
 - **Lua tab:** Lua pads, the program editor with check, save, remove, export and import, and the console. A script that fails its check is not saved (LUA-MGT-01)
+- **Filesystem tab:** the flash's size, the bytes in files and the bytes free, every file with a download link and a delete that asks first (none for the board's own), and the cleanup followed until it is done (WEB-UI-07)
 - **Update tab:** firmware and web upload, GitHub release checker
 - **Test mode:** with it on, a board on USB detects a launch, fires and beeps as on battery. It lives in RAM, so every boot starts with it off, and it cannot change from launch to landing (USB-08, DD-038). Set with `?log=host`, the flight log is held in RAM for the host to read as it is written, at `/api/flight/live?since=N`, and nothing is written to the flash from launch to landing (USB-09, DD-103).
-- **APIs** (all CORS enabled):
-  - `GET /api/status`, `/api/net` (network counters, WEB-API-13), `/api/pressure/trace` (the last 256 conversions, DD-063), `/api/log/space`, `/api/limits` (the board's pyro timing ranges and its sensor's range, PYR-BOARD-03), `/api/flight.csv`, `/api/pins/caps`, `/api/lua/console`
+- **APIs** (same origin only, WEB-API-07):
+  - `GET /api/status`, `/api/net` (network counters, WEB-API-13), `/api/pressure/trace` (the last 256 conversions, DD-063), `/api/log/space`, `/api/fs` (the flash store and its files, WEB-API-19), `/api/limits` (the board's pyro timing ranges and its sensor's range, PYR-BOARD-03), `/api/flight.csv`, `/api/pins/caps`, `/api/lua/console`
   - `GET`/`POST /api/config`, `/api/pins`, `/api/beeps`, `/api/lua/script`
   - `POST /api/beeps/play`, `/api/lua/check`, `/api/flight/erase`, `/api/delete/<path>`, `/api/test_mode/on[?log=host]`, `/api/test_mode/off`, `/api/reboot`, `/api/ota`, `/api/serial`, `/www/<file>`
   - `GET /<path>` serves any file on the flash

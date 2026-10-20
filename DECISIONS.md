@@ -560,6 +560,47 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-107: The Cleanup At The Flash's Pace On USB; A Filesystem Tab
+- **Decision:** at the user's direction -- "Erase at full speed when on
+  usb. Provide a filesystem maintenance tab on the web ui.":
+  - On USB with test mode off, where no launch can be declared (USB-01),
+    the pad's cleanup takes the next sector at each pass of the storage
+    task, one after another. Otherwise it erases one a second
+    [USB-10] (`vfs_flash_clean_wait_ms()`).
+  - `GET /api/fs` reports the flash store: its size, the bytes in files,
+    the bytes free (pages the cleanup has yet to erase among them), the
+    cleanup's state (`done`, or erasing `fast` or `slow`) and the sectors
+    it has erased since the start; and each file's path, its size once
+    closed, and whether it is the board's own (WEB-API-17). It answers from
+    the file table and the cleanup's own count, and is refused with 423 in
+    flight [WEB-API-19].
+  - The Filesystem tab shows that, downloads a file, deletes one once the
+    operator confirms (none of the board's own), and reads `/api/fs` again
+    every 2 s until the cleanup is done [WEB-UI-07].
+- **Why one a second off USB:** an erase on the pad stops both cores: 50 to
+  70 ms with no pressure reading, launch detection and the ground
+  reference held. The longest erases the datasheets allow, 400 ms
+  (BY25Q64ES) and 800 ms (XT25F128F), back to back, would come near the
+  watchdog's 1 s.
+- **Why no erased bytes:** `alfs_fs_status()` tells erased pages from
+  pages awaiting the cleanup only by reading every erased page whole: 5.8 s
+  on MK1C and 2.0 s on MK1B-8MB, holding the store's lock and the network
+  task. alfs keeps no cheaper count, and adding one is a change to alfs.
+- **Measured, 2026-10-19:**
+
+  | | MK1C | MK1B-8MB |
+  |---|---|---|
+  | After a refused upload, sectors erased | 1,891 in 49 s | 810 in 29 s |
+  | The same at one a second | 32 minutes | 14 minutes |
+  | `GET /api/fs` | 8 ms | 7 ms |
+  | `support/api_check.py` | 70/70 | 70/70 |
+
+  No sensor fault latched on either through the erases. An upload made
+  while the cleanup erases runs slower: 1 MB to MK1B-8MB took 30.7 s with
+  the cleanup idle and 49.7 s while it erased. Every upload leaves its part
+  file's pages for the cleanup (a rename is a copy, DD-100), so an upload
+  close behind another meets it.
+
 ### DD-106: Every Reading Used; One A Flash Operation Ran Beside Counted
 - **Decision:** at the user's direction -- "Take a note of the noise, but
   keep all samples. For now let us assume the noise is mitigated with the

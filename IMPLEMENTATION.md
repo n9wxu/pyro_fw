@@ -127,6 +127,7 @@ MK1A and MK1C (16 MB): two 4076 KB slots from 0x00A000 and 0x405000, and 8 MB of
 | GET | `/api/net` | TCP links by state, retransmissions, transport counts, frames (WEB-API-13) |
 | GET | `/api/pressure/trace` | The last 256 conversions, binary (SNS-PRES-13) |
 | GET | `/api/log/space` | Room for the next flight's log (WEB-API-12) |
+| GET | `/api/fs` | The flash store's space and each file, the cleanup's state and pace (WEB-API-19) |
 | GET | `/api/flight.csv` | The flight log, rendered as CSV |
 | POST | `/api/flight/erase` | Erase the flight log |
 | POST | `/api/delete/<path>` | Delete a file from every store; the board's identity and pad record refused (WEB-API-17) |
@@ -160,7 +161,7 @@ One message a second in PAD_IDLE, in flight and in LANDED (TEL-03). State codes 
 - **Ground test:** its own alert, countdowns, tone and all-clear (GND-TEST-06, GND-TEST-07)
 
 ### Flight Log
-The flight log (`flight_log.bin` on the flash) opens in the first period airborne and closes at LANDED, written only into erased pages (DD-100). On the ground the storage task's cleanup erases a sector a second while no flight log is open; in flight the writer erases one only when the log finds no erased page (FLT-LOG-10). It holds binary records (`src/flight_log.h`); `/api/flight.csv` renders them as CSV with `flog_csv_read()` (DD-062). The flight code hands every sample to `hal_log_sample()`, and the log keeps each one (FLT-LOG-07, DD-101). Records go to a 4 KB RAM buffer. In test mode set with `?log=host`, the storage task hands them to a 4 KB ring in RAM (`src/log_live.c`) in place of the file, read by offset at `/api/flight/live` (USB-09, DD-103).
+The flight log (`flight_log.bin` on the flash) opens in the first period airborne and closes at LANDED, written only into erased pages (DD-100). On the ground the storage task's cleanup erases while no flight log is open: on USB with test mode off a sector at each of its passes, otherwise a sector a second (USB-10); in flight the writer erases one only when the log finds no erased page (FLT-LOG-10). It holds binary records (`src/flight_log.h`); `/api/flight.csv` renders them as CSV with `flog_csv_read()` (DD-062). The flight code hands every sample to `hal_log_sample()`, and the log keeps each one (FLT-LOG-07, DD-101). Records go to a 4 KB RAM buffer. In test mode set with `?log=host`, the storage task hands them to a 4 KB ring in RAM (`src/log_live.c`) in place of the file, read by offset at `/api/flight/live` (USB-09, DD-103).
 
 **Flash stalls whatever fetches from it.** The RP2040 executes from flash via XIP, and a program or an erase stops it answering. So:
 - nothing is written until the RAM buffer has filled once or 2 s have passed, which carries the log through the launch-shock window (DD-084, DD-027);
