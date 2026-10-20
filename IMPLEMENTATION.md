@@ -65,7 +65,7 @@ The flight software (`src/flight_sources.txt`) contains no platform-specific cod
 Three implementations: `src/hal_common/hal_common.c` with each board's files in `boards/<name>/` (Pico), `test/hal_test.c` (mocks), `boards/sim/hal_sim.c` (simulation).
 
 ### Tasks
-FreeRTOS SMP on both cores (DD-073, `src/rtos/rtos_tasks.h`). `main()` in `src/main_hardware.c` brings the board up on core0 and starts the scheduler. `flight_task()` runs alone at P on core0, woken every 20 ms (`src/loop_period.h`, DD-065) by an alarm on the hardware timer. In order: `hal_tasks_tick()` (the pressure sensor first, so the MS5607 is commanded at a steady offset); `flight_call_service()` (changes the net task handed over); `dispatch_state()`; `flight_update_outputs()`; Lua's service and its tick request; then a notification to the storage task. The net task (`src/net_task.c`: TinyUSB, lwIP, HTTP's transport and work units, DD-061), the Lua task (`src/lua/lua_core1.c`) and the storage task (`src/storage_task.c`: `hal_storage_service()` and `flight_storage_service()`) share core1 at P. Every flash program or erase runs through `flash_op()` under a lockout that parks the other core (DD-074). The flight task waits only for its period (FLT-RT-01). The watchdog is twice `PYRO_LOOP_WORST_MS`.
+FreeRTOS SMP on both cores (DD-073, `src/rtos/rtos_tasks.h`). `main()` in `src/main_hardware.c` brings the board up on core0 and starts the scheduler. `flight_task()` runs alone at P on core0, woken every 20 ms (`src/loop_period.h`, DD-065) by an alarm on the hardware timer. In order: `hal_tasks_tick()` (the pressure sensor first, so the MS5607 is commanded at a steady offset); `flight_call_service()` (changes the net task handed over); `dispatch_state()`; `flight_update_outputs()`; Lua's service and its tick request; then a notification to the storage task. The net task (`src/net_task.c`: TinyUSB, smallest_tcp, HTTP's transport and work units, DD-061), the Lua task (`src/lua/lua_core1.c`) and the storage task (`src/storage_task.c`: `hal_storage_service()` and `flight_storage_service()`) share core1 at P. Every flash program or erase runs through `flash_op()` under a lockout that parks the other core (DD-074). The flight task waits only for its period (FLT-RT-01). The watchdog is twice `PYRO_LOOP_WORST_MS`.
 
 Pads are owned once: `pin_store_claim_pads()` gives each pad one owner, and `pyro_release_claim()` and `lua_iface_publish()` install operations only for pads they could claim (DD-020).
 
@@ -92,7 +92,7 @@ Pads are owned once: `pin_store_claim_pads()` gives each pad one owner, and `pyr
 | `src/ms5607_driver.c`, `src/bmp280_driver.c` | Each sensor's detection, description for the collector, and arithmetic |
 | `src/flight_log.c` | Binary flight log, CSV rendering |
 | `src/http_server.c`, `src/http_conn.c`, `src/http_work.c` | HTTP routes, connections, work units |
-| `src/net_glue.c`, `src/net_txq.c` | USB network, lwIP, mDNS, held frames |
+| `src/net_glue.c`, `src/net_txq.c`, `src/http_transport.c` | USB network over smallest_tcp, DHCP, mDNS, held frames; HTTP's links (DD-102) |
 | `src/ground_test_seq.c`, `src/ground_test_switch.c` | The ground test procedure and its switch |
 | `src/flight_sim.c`, `src/bench_flight.c` | The bench flight's profile and its hold on the channels |
 | `src/pin_assign.c`, `src/pin_store.c`, `src/pad_claim.c` | `pins.ini` and pad ownership |
@@ -118,7 +118,7 @@ MK1A and MK1C (16 MB): two 4076 KB slots from 0x00A000 and 0x405000, and 8 MB of
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/status` | JSON device state |
-| GET | `/api/net` | lwIP pools, TCP connections, transport refusals (WEB-API-13) |
+| GET | `/api/net` | TCP links by state, retransmissions, transport counts, frames (WEB-API-13) |
 | GET | `/api/pressure/trace` | The last 256 conversions, binary (SNS-PRES-13) |
 | GET | `/api/log/space` | Room for the next flight's log (WEB-API-12) |
 | GET | `/api/flight.csv` | The flight log, rendered as CSV |

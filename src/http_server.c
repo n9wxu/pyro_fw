@@ -5,21 +5,16 @@
  * core1 at P, beside Lua and storage, never on the flight task. What changes
  * flight state goes through flight_call() (rtos_tasks.h).
  *
- * Two halves. The routes below answer one request on an http_conn_t, which
- * parses from an rx ring and writes to a tx ring (http_conn.h) and never sees
- * a segment. The lwIP adapter at the bottom moves bytes between lwIP and
- * those rings: it queues what arrives, hands it over as the parser consumes
- * it -- which is also what reopens the TCP window -- and feeds tx to lwIP as
- * its send buffer allows.
+ * The routes below answer one request on an http_conn_t, which parses from
+ * an rx ring and writes to a tx ring (http_conn.h) and never sees a segment.
+ * The transport (http_transport.h) moves bytes between the stack and those
+ * rings, and takes an exchange from here for each connected link.
  *
- * lwIP callbacks only queue. http_server_transport() moves bytes and nothing
- * else; every other step is a work unit (http_work.h), run by
- * http_server_work().
+ * http_server_transport() moves bytes and nothing else; every other step is
+ * a work unit (http_work.h), run by http_server_work().
  */
-#include "lwip/tcp.h"
-#include "lwip/memp.h"
-#include "lwip/stats.h"
-#include "lwip/priv/tcp_priv.h"
+#include "http_transport.h"
+#include "net_glue.h"
 #include "board_id.h"
 #include "board_if.h"
 #include <string.h>
@@ -101,34 +96,16 @@ extern uint32_t hal_pressure_flashed(void);
 #define JSON "application/json"
 #define TEXT "text/plain"
 
-/* ── Connections ──────────────────────────────────────────────────────
+/* ── Exchanges ────────────────────────────────────────────────────────
  *
- * A link is one lwIP pcb; a conn is one HTTP exchange, with its rings. A pcb
- * gets a conn when it first sends something, so the idle sockets a browser
- * opens speculatively cost a link and nothing more. While every conn is busy,
- * what a link receives waits in its pbuf queue, unacknowledged to the
- * application, so TCP flow control holds the sender back. */
+ * A conn is one HTTP exchange, with its rings, lent to a connected link by
+ * the transport (http_transport.h). */
 
 #define CONN_POOL_SIZE 4
-#define LINK_POOL_SIZE MEMP_NUM_TCP_PCB
-/* No byte moved either way for this long: the peer is gone. */
-#define HTTP_IDLE_MS 20000u
-
-struct conn;
-
-typedef struct {
-    struct tcp_pcb *pcb;  /* NULL: free */
-    struct pbuf *pending; /* received, not yet in the rx ring */
-    bool fin;             /* the peer has closed its side */
-    bool counted_wait;
-    uint32_t seq; /* accept order: waiting links are served in turn */
-    uint32_t last_ms;
-    struct conn *conn;
-} link_t;
 
 typedef struct conn {
     http_conn_t h; /* MUST be first: the handlers cast back */
-    link_t *link;  /* NULL: free */
+    bool linked;   /* lent to a link */
     route_t route;
     vfs_file_t file;
     bool file_open;
@@ -149,9 +126,7 @@ typedef struct conn {
 _Static_assert(CONN_POOL_SIZE == HTTP_WORK_SLOTS, "a work slot is a connection");
 _Static_assert(STATUS_JSON_MAX <= HTTP_WORK_SIZE, "the status is rendered into the work buffer");
 
-static link_t links[LINK_POOL_SIZE];
 static conn_t conns[CONN_POOL_SIZE];
-static uint32_t link_seq;
 static conn_t *ota_conn; /* the OTA state below is one image at a time */
 
 /* ── OTA firmware update state ────────────────────────────────────── */
@@ -282,7 +257,7 @@ static const char *state_names[] = {"BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALI
  * does, rather than being taken on trust. */
 extern volatile uint32_t loop_count, loop_max_us, loop_overruns, loop_late_max_us;
 extern volatile uint32_t stage_max_us[];
-extern volatile uint32_t stage1_part_max_us[]; /* hal_common.c: TinyUSB, lwIP, HTTP transport, mDNS */
+extern volatile uint32_t stage1_part_max_us[]; /* hal_common.c: TinyUSB, the stack, HTTP transport, mDNS */
 extern volatile bool boot_prev_watchdog;       /* main_hardware.c */
 extern volatile int32_t boot_prev_stage;
 extern volatile uint32_t boot_prev_stage_ms;
@@ -1716,63 +1691,30 @@ static const http_handlers_t handlers = {
     .fill = fill,
 };
 
-/* ── The lwIP adapter ─────────────────────────────────────────────── */
+/* ── The transport's view ─────────────────────────────────────────── */
 
-extern volatile uint32_t net_http_accept;
-extern volatile uint32_t net_http_err;
-extern volatile uint32_t net_conn_full;
-extern volatile uint32_t net_rx_count, net_rx_drop, net_tx_fail, net_tx_ok, net_tx_held;
-extern volatile uint32_t net_usb_events[4];
-
-/* G4-N: what refused, for /api/net. */
-static uint32_t net_accept_refused, net_write_fails, net_idle_aborts, net_last_accept_ms;
-
-static void net_pool(net_pool_t *o, const struct stats_mem *m) {
-    o->used = m->used;
-    o->max = m->max;
-    o->err = m->err;
-}
-
-/* GET /api/net: lwIP's pools and TCP's connections by state, and what the
- * transport refused (net_stats.h). */
+/* GET /api/net: TCP's links by state, what was sent again, what the
+ * transport refused, and the frames each way (net_stats.h). */
 static void serve_api_net(http_conn_t *hc) {
     net_snap_t s;
     memset(&s, 0, sizeof(s));
-    net_pool(&s.heap, &lwip_stats.mem);
-    net_pool(&s.tcp_pcb, lwip_stats.memp[MEMP_TCP_PCB]);
-    net_pool(&s.tcp_seg, lwip_stats.memp[MEMP_TCP_SEG]);
-    net_pool(&s.pbuf_pool, lwip_stats.memp[MEMP_PBUF_POOL]);
-    s.tcp_xmit = lwip_stats.tcp.xmit;
-    s.tcp_recv = lwip_stats.tcp.recv;
-    s.tcp_drop = lwip_stats.tcp.drop;
-    s.tcp_memerr = lwip_stats.tcp.memerr;
-    s.icmp_recv = lwip_stats.icmp.recv;
-    s.icmp_xmit = lwip_stats.icmp.xmit;
-    struct tcp_pcb *const lists[2] = {tcp_active_pcbs, tcp_tw_pcbs};
-    for (int i = 0; i < 2; i++) {
-        for (struct tcp_pcb *p = lists[i]; p; p = p->next) {
-            if ((unsigned)p->state < sizeof(s.states) / sizeof(s.states[0]))
-                s.states[p->state]++;
-            if (p->snd_queuelen > s.sndq_max)
-                s.sndq_max = p->snd_queuelen;
-            if (p->nrtx > s.nrtx_max)
-                s.nrtx_max = p->nrtx;
-        }
-    }
-    s.accepts = net_http_accept;
-    s.accept_refused = net_accept_refused;
-    s.write_fails = net_write_fails;
-    s.conn_full = net_conn_full;
-    s.http_err = net_http_err;
-    s.idle_aborts = net_idle_aborts;
-    s.rx_frames = net_rx_count;
-    s.rx_drops = net_rx_drop;
-    s.tx_sent = net_tx_ok;
-    s.tx_held = net_tx_held;
-    s.tx_refused = net_tx_fail;
+    http_transport_states(s.states, &s.nrtx_max);
+    const http_transport_counts_t *t = http_transport_counts();
+    const net_link_counts_t *l = net_link_counts();
+    s.retransmits = t->retransmits;
+    s.accepts = t->accepts;
+    s.conn_full = t->conn_full;
+    s.http_err = t->http_err;
+    s.idle_aborts = t->idle_aborts;
+    s.served = t->served;
+    s.last_accept_ms = t->last_accept_ms;
+    s.rx_frames = l->rx_frames;
+    s.rx_drops = l->rx_drops;
+    s.tx_sent = l->tx_sent;
+    s.tx_held = l->tx_held;
+    s.tx_refused = l->tx_refused;
     for (int i = 0; i < 4; i++)
-        s.usb[i] = net_usb_events[i];
-    s.last_accept_ms = net_last_accept_ms;
+        s.usb[i] = l->usb[i];
     int n = net_json(&s, (char *)hc->work, sizeof(hc->work));
     http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
 }
@@ -1803,18 +1745,15 @@ static void conn_release(conn_t *c) {
         ota_conn = NULL;
     }
     if (c->reboot_when_sent) {
-        /* The main loop arms a 100 ms watchdog and keeps servicing lwIP, so
-         * the reply now in lwIP's hands reaches the client. */
+        /* The main loop arms a 100 ms watchdog and keeps the net task
+         * running, so the reply on its way reaches the client. */
         extern volatile uint8_t pending_reset;
         pending_reset = 2;
     }
-    if (c->link) {
-        c->link->conn = NULL;
-    }
-    c->link = NULL;
+    c->linked = false;
 }
 
-static void conn_bind(conn_t *c, link_t *l) {
+static void conn_bind(conn_t *c) {
     http_conn_init(&c->h);
     c->route = R_NONE;
     c->file_open = false;
@@ -1823,263 +1762,56 @@ static void conn_bind(conn_t *c, link_t *l) {
     c->reboot_when_sent = false;
     c->orphan = false;
     c->dest[0] = '\0';
-    c->link = l;
-    l->conn = c;
+    c->linked = true;
 }
 
-/* Every byte not yet acknowledged to lwIP, acknowledged and dropped. Without
- * this tcp_close() sends RST, and a client can lose the response it has not
- * read yet. Anything arriving after the close is swallowed by lwIP. */
-static void link_drop_rx(link_t *l) {
-    uint32_t n = 0;
-    if (l->conn) {
-        n += net_ring_readable(&l->conn->h.rx);
-        net_ring_clear(&l->conn->h.rx);
+static conn_t *conn_of(const http_conn_t *hc) {
+    return (conn_t *)hc;
+}
+
+static http_conn_t *x_take(void) {
+    for (int i = 0; i < CONN_POOL_SIZE; i++) {
+        conn_t *c = &conns[i];
+        if (!c->linked && !c->orphan && !http_work_held(i)) {
+            conn_bind(c);
+            return &c->h;
+        }
     }
-    if (l->pending) {
-        n += l->pending->tot_len;
-        pbuf_free(l->pending);
-        l->pending = NULL;
-    }
-    while (n > 0 && l->pcb) {
-        u16_t k = n > 0xFFFFu ? 0xFFFFu : (u16_t)n;
-        tcp_recved(l->pcb, k);
-        n -= k;
-    }
+    return NULL;
 }
 
-static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err);
-static err_t on_sent(void *arg, struct tcp_pcb *pcb, u16_t len);
-static void on_err(void *arg, err_t err);
-
-static void link_attach(link_t *l) {
-    tcp_arg(l->pcb, l);
-    tcp_recv(l->pcb, on_recv);
-    tcp_sent(l->pcb, on_sent);
-    tcp_err(l->pcb, on_err);
-}
-
-static void link_detach(link_t *l) {
-    tcp_arg(l->pcb, NULL);
-    tcp_recv(l->pcb, NULL);
-    tcp_sent(l->pcb, NULL);
-    tcp_err(l->pcb, NULL);
-}
-
-/* A connection the worker holds is only unlinked here; it is released once
- * the worker gives it back (take_back_from_worker()). */
-static void link_free(link_t *l) {
-    conn_t *c = l->conn;
-    if (c && http_work_held(slot_of(c))) {
+/* An exchange the worker holds is only unlinked; it is released once the
+ * worker gives it back (take_back_from_worker()). */
+static void x_give_back(http_conn_t *hc) {
+    conn_t *c = conn_of(hc);
+    if (http_work_held(slot_of(c))) {
         c->orphan = true;
-        c->link = NULL;
-        l->conn = NULL;
-    } else if (c) {
+        c->linked = false;
+    } else {
         conn_release(c);
     }
-    if (l->pending) {
-        pbuf_free(l->pending);
-        l->pending = NULL;
-    }
-    l->pcb = NULL;
 }
 
-/* Returns false when lwIP could not take the FIN yet; asked again next pass. */
-static bool link_close(link_t *l) {
-    link_drop_rx(l);
-    link_detach(l);
-    if (tcp_close(l->pcb) != ERR_OK) {
-        link_attach(l);
-        return false;
-    }
-    link_free(l);
-    return true;
+static bool x_held(const http_conn_t *hc) {
+    return http_work_held(slot_of(conn_of(hc)));
 }
 
-static void link_abort(link_t *l) {
-    net_http_err++;
-    link_detach(l);
-    tcp_abort(l->pcb);
-    link_free(l);
+/* [WEB-API-08, DD-058] A request holding the filesystem lets go when the
+ * flight log takes it. */
+static bool x_must_let_go(const http_conn_t *hc) {
+    return conn_of(hc)->fs_held && hal_fs_locked();
 }
 
-static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) {
-    link_t *l = (link_t *)arg;
-    if (!l) {
-        if (p) {
-            tcp_recved(pcb, p->tot_len);
-            pbuf_free(p);
-        }
-        return ERR_OK;
-    }
-    if (!p) {
-        l->fin = true;
-        return ERR_OK;
-    }
-    if (err != ERR_OK) {
-        pbuf_free(p);
-        return ERR_OK;
-    }
-    if (l->pending) {
-        pbuf_cat(l->pending, p);
-    } else {
-        l->pending = p;
-    }
-    l->last_ms = hal_time_ms();
-    return ERR_OK;
+void tud_event_hook_cb(uint8_t rhport, uint32_t eventid, bool in_isr); /* wakes the net task */
+
+static void x_wake(void) {
+    tud_event_hook_cb(0, 0, false);
 }
 
-static err_t on_sent(void *arg, struct tcp_pcb *pcb, u16_t len) {
-    (void)pcb;
-    (void)len;
-    link_t *l = (link_t *)arg;
-    if (l) {
-        l->last_ms = hal_time_ms();
-    }
-    return ERR_OK;
-}
+static const http_exchanges_t exchanges = {x_take, x_give_back, x_held, x_must_let_go, x_wake};
 
-/* lwIP has already freed the pcb. */
-static void on_err(void *arg, err_t err) {
-    (void)err;
-    link_t *l = (link_t *)arg;
-    if (l) {
-        net_http_err++;
-        link_free(l);
-    }
-}
-
-static err_t on_accept(void *arg, struct tcp_pcb *pcb, err_t err) {
-    (void)arg;
-    if (err != ERR_OK || !pcb) {
-        net_accept_refused++;
-        return ERR_VAL;
-    }
-    link_t *l = NULL;
-    for (int i = 0; i < LINK_POOL_SIZE; i++) {
-        if (!links[i].pcb) {
-            l = &links[i];
-            break;
-        }
-    }
-    if (!l) {
-        tcp_abort(pcb);
-        return ERR_ABRT;
-    }
-    net_http_accept++;
-    net_last_accept_ms = hal_time_ms();
-    *l = (link_t){.pcb = pcb, .seq = ++link_seq, .last_ms = net_last_accept_ms};
-    tcp_nagle_disable(pcb);
-    link_attach(l);
-    return ERR_OK;
-}
-
-/* Free exchanges go to links that have sent something, in the order they
- * connected. */
-static void attach_waiting(void) {
-    for (;;) {
-        conn_t *c = NULL;
-        for (int i = 0; i < CONN_POOL_SIZE && !c; i++) {
-            if (!conns[i].link && !conns[i].orphan && !http_work_held(i)) {
-                c = &conns[i];
-            }
-        }
-        link_t *oldest = NULL;
-        for (int i = 0; i < LINK_POOL_SIZE; i++) {
-            link_t *l = &links[i];
-            if (l->pcb && !l->conn && l->pending && (!oldest || (int32_t)(l->seq - oldest->seq) < 0)) {
-                oldest = l;
-            }
-        }
-        if (!oldest) {
-            return;
-        }
-        if (!c) {
-            if (!oldest->counted_wait) {
-                net_conn_full++;
-                oldest->counted_wait = true;
-            }
-            return;
-        }
-        conn_bind(c, oldest);
-    }
-}
-
-/* Bytes between lwIP and the rings, and the decision to close. No handler
- * runs here. */
-static void transport_link(link_t *l, uint32_t now) {
-    struct tcp_pcb *pcb = l->pcb;
-    conn_t *c = l->conn;
-    if (!c) {
-        if (l->fin && !l->pending) {
-            link_close(l);
-        } else if (!l->pending && now - l->last_ms > HTTP_IDLE_MS) {
-            link_abort(l); /* a socket opened speculatively and never used */
-        }
-        return;
-    }
-    if (http_work_held(slot_of(c))) {
-        return; /* core1 is writing its rings */
-    }
-    http_conn_t *hc = &c->h;
-
-    /* [WEB-API-08, DD-058] The log takes the filesystem at launch. A request
-     * that took it before then lets go now, so the log can mount; its client
-     * sees the connection reset. */
-    if (c->fs_held && hal_fs_locked()) {
-        link_abort(l);
-        return;
-    }
-
-    while (l->pending && net_ring_writable(&hc->rx) > 0) {
-        uint8_t *p;
-        uint16_t span = net_ring_write_span(&hc->rx, &p);
-        uint16_t n = pbuf_copy_partial(l->pending, p, span, 0);
-        net_ring_commit(&hc->rx, n);
-        l->pending = pbuf_free_header(l->pending, n);
-    }
-    hc->rx_eof = l->fin && !l->pending;
-
-    /* The window reopens by what the parser took, not by what arrived:
-     * a request waiting on the flash window holds its sender back. */
-    uint32_t used = http_conn_take_consumed(hc);
-    if (used > 0) {
-        l->last_ms = now;
-    }
-    while (used > 0) {
-        u16_t k = used > 0xFFFFu ? 0xFFFFu : (u16_t)used;
-        tcp_recved(pcb, k);
-        used -= k;
-    }
-
-    bool wrote = false;
-    while (net_ring_readable(&hc->tx) > 0) {
-        const uint8_t *p;
-        uint16_t span = net_ring_read_span(&hc->tx, &p);
-        u16_t room = tcp_sndbuf(pcb);
-        uint16_t n = span < room ? span : room;
-        if (n == 0)
-            break;
-        if (tcp_write(pcb, p, n, TCP_WRITE_FLAG_COPY) != ERR_OK) {
-            net_write_fails++;
-            break;
-        }
-        net_ring_discard(&hc->tx, n);
-        wrote = true;
-    }
-    if (wrote) {
-        tcp_output(pcb);
-        l->last_ms = now;
-    }
-
-    if (hc->failed) {
-        link_abort(l);
-    } else if (http_conn_done(hc) && net_ring_readable(&hc->tx) == 0) {
-        link_close(l);
-    } else if (now - l->last_ms > HTTP_IDLE_MS) {
-        net_idle_aborts++;
-        link_abort(l);
-    }
+const struct http_exchanges *http_server_exchanges(void) {
+    return &exchanges;
 }
 
 /* Nothing hands units to another task now; kept so a connection can never be
@@ -2107,14 +1839,8 @@ uint32_t http_work_clock_us(void) {
 }
 
 void http_server_transport(void) {
-    uint32_t now = hal_time_ms();
     take_back_from_worker();
-    attach_waiting();
-    for (int i = 0; i < LINK_POOL_SIZE; i++) {
-        if (links[i].pcb) {
-            transport_link(&links[i], now);
-        }
-    }
+    http_transport_pass(hal_time_ms());
 }
 
 void http_server_period(void) {
@@ -2124,7 +1850,7 @@ void http_server_period(void) {
 bool http_server_work(int32_t remaining_us) {
     bool runnable[CONN_POOL_SIZE];
     for (int i = 0; i < CONN_POOL_SIZE; i++) {
-        runnable[i] = conns[i].link && !http_work_held(i) && http_conn_wants_service(&conns[i].h);
+        runnable[i] = conns[i].linked && !http_work_held(i) && http_conn_wants_service(&conns[i].h);
     }
     uint8_t unit;
     int i = http_work_next(runnable, remaining_us, &unit);
@@ -2142,26 +1868,4 @@ bool http_server_work(int32_t remaining_us) {
     flash_op_crumb(82);
     http_work_note(HTTP_ON_CORE0, time_us_32() - t0);
     return true;
-}
-
-/* Accepts are not limited by lwIP (TCP_LISTEN_BACKLOG is off): on_accept()
- * refuses once every link is in use. */
-void http_server_init(void) {
-    struct tcp_pcb *pcb = tcp_new();
-    if (!pcb) {
-        DBG("listen: no pcb");
-        return;
-    }
-    if (tcp_bind(pcb, IP_ADDR_ANY, 80) != ERR_OK) {
-        DBG("listen: port 80 refused");
-        tcp_close(pcb);
-        return;
-    }
-    struct tcp_pcb *listener = tcp_listen(pcb);
-    if (!listener) {
-        DBG("listen: no listening pcb");
-        tcp_close(pcb);
-        return;
-    }
-    tcp_accept(listener, on_accept);
 }

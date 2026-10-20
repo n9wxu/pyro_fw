@@ -49,6 +49,7 @@
 #include "pyro_release.h"
 #include "http_server.h"
 #include "flight_log.h"
+#include "net_glue.h"
 #include "ground_test_switch.h"
 #include "pressure_trace.h"
 #include "loop_period.h"
@@ -61,11 +62,6 @@
 /* ── External dependencies ────────────────────────────────────────── */
 
 /* Network (net_glue.c / http_server.c) */
-void net_init(void);
-void net_start(void);
-void net_mdns_poll(void);
-void net_mac_init(void);
-void net_service(void);
 
 /* ── Hardware-internal pressure types ─────────────────────────────── */
 /* These are implementation details of the hardware HAL, not exposed
@@ -1049,7 +1045,7 @@ void hal_platform_init(void) {
 
     /* Puts the pyro outputs down before anything slow runs; without it the
      * firing pins keep their reset state until pyro_init(), which is after
-     * USB enumeration, lwIP and the filesystem mount. */
+     * USB enumeration, the network stack and the filesystem mount. */
     board_early_init();
 
     /* Watchdog initialization removed - watchdog_reboot() handles enabling
@@ -1084,8 +1080,6 @@ void hal_platform_init(void) {
     uart_tx_ring_init();        /* v2-10: non-blocking TX via ISR ring buffer */
 
     net_init();
-    net_start();
-    http_server_init();
 
     /* Mounted once, for good: every task shares this mount. */
     hal_fs_mount();
@@ -1103,7 +1097,7 @@ void hal_platform_init(void) {
      * resets the peripheral and recovers the bus itself. */
 }
 
-/* The net task's pass, by part: TinyUSB, lwIP, HTTP transport, mDNS. */
+/* The net task's pass, by part: TinyUSB, the stack, HTTP transport, mDNS. */
 volatile uint32_t stage1_part_max_us[4];
 
 static void note_part(int part, uint32_t us) {
@@ -1112,7 +1106,6 @@ static void note_part(int part, uint32_t us) {
 }
 
 void hal_platform_service(void) {
-    extern uint32_t net_last_http_us;
     uint32_t t0 = time_us_32();
     tud_task();
     uint32_t t1 = time_us_32();

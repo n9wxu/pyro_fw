@@ -4,7 +4,7 @@
  *   task            core  prio  does
  *   lockout helper  0, 1  T     parks its core for a flash operation (flash_op.h)
  *   flight          0     P     the 20 ms step, woken by a hardware-timer alarm
- *   net             1     P     TinyUSB, lwIP, HTTP
+ *   net             1     P     TinyUSB, smallest_tcp, HTTP
  *   lua             1     P     the VM (lua_core1.h)
  *   storage         1     P     the flight log, queued file work
  *   timer daemon    1     P     the SDK's interop

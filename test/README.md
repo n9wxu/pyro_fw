@@ -62,10 +62,11 @@ than one build: the boot, pad and recorded-flight suites run on all three.
 | `pin_assign_tests` | `test_pin_assign.c` | pin assignment rules: the release matrix, the common, the buzzer and ground test pads |
 | `lua_tests` | `test_lua.c` | the Lua sandbox and its limits, on `boards/sim/lua_platform_sim.c` |
 | `http_tests` | `test_http.c` | the HTTP engine as a byte stream (below) |
+| `http_transport_tests` | `test_http_transport.c` | HTTP over smallest_tcp, against the real stack at both ends (DD-102) |
 | `http_work_tests` | `test_http_work.c` | who runs each HTTP work unit, and within what budget (DD-061) |
 | `status_json_tests` | `test_status_json.c` | `/api/status` rendered from a snapshot, `status_json.c` linked alone |
 | `net_stats_tests` | `test_net_stats.c` | `/api/net`'s rendering |
-| `net_txq_tests` | `test_net_txq.c` | the USB network's transmit queue against a fake endpoint (DD-070) |
+| `net_txq_tests` | `test_net_txq.c` | the USB network's held frames against a fake endpoint (WEB-NET-05, WEB-NET-07) |
 | `mac_random_tests` | `test_mac_random.c` | the MAC drawn from the RNG, and `/serial.txt` (DD-072) |
 | `hr_log_tests` | `test_hr_log.c` | the high-rate log on a fake card and IMU, its tasks run by hand (`test/fake_rtos`, DD-077) |
 | `flight_sim_tests` | `test_flight_sim.c` | the bench flight: its atmosphere and profile, canopies that fail, its hold on the channels (DD-078) |

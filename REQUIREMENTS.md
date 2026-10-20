@@ -390,9 +390,9 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-NET-02**: The system shall serve DHCP and take the address 192.168.N.1, where N is the board's own subnet (WEB-NET-06). ← SYS-WEB-01
 - **WEB-NET-03**: The system shall advertise its hostname via mDNS. ← SYS-WEB-02
 - **WEB-NET-04**: The system shall advertise a DNS-SD service for automatic discovery. ← SYS-WEB-02
-- **WEB-NET-05**: A frame the USB link cannot take yet shall be held and sent in order as soon as it can, not dropped; one shall be refused only when eight wait already or the host has let the device go. ← SYS-WEB-01
+- **WEB-NET-05**: A frame the USB link cannot take yet shall be held, up to 256 bytes of held frames, and sent in order as soon as it can, not dropped. A frame that does not fit shall be refused; a refused TCP segment carrying a SYN, data or a FIN shall be sent again at the stack's next pass. Every held frame shall be dropped when the host lets the device go. ← SYS-WEB-01, DD-102
 - **WEB-NET-06**: A board shall have a network address that survives restarts and a blank flash, without factory programming: derived from its flash chip's whole unique ID, with a subnet other than 0, 1 and 255, unless an operator assigned one. `/api/status` shall say whether the address was derived or assigned. ← SYS-WEB-02
-- **WEB-NET-07**: A received frame the device cannot hold -- no buffer free, an empty frame, a frame that will not copy, or one arriving while another is held -- shall be handed back to the USB stack so that reception continues, and no frame shall be copied past the endpoint's buffer. ← SYS-WEB-01
+- **WEB-NET-07**: A received frame the device cannot hold -- an empty frame, one longer than an Ethernet frame, or one arriving while another is held -- shall be handed back to the USB stack so that reception continues, and no frame shall be copied past the endpoint's buffer. ← SYS-WEB-01
 
 ### The API
 - **WEB-API-01**: The system shall serve device status as JSON at `/api/status`. ← SYS-WEB-01
@@ -407,7 +407,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-API-10**: A request for a file shall be refused with 423 while the flight log is being written. ← WEB-API-08
 - **WEB-API-11**: `/api/status` shall be self-consistent, taken at one instant of the flight, shall keep its keys and their order, and shall be well-formed JSON whatever the configured rocket id and name contain. ← SYS-WEB-01
 - **WEB-API-12**: The system shall report at `/api/log/space` the bytes the next flight's log has room for, the size of a sample record, the samples a second, and the seconds of flight that room holds with each second's sync, and refuse with 423 while the flight log holds the storage. ← SYS-WEB-01
-- **WEB-API-13**: The system shall report at `/api/net` what the network has in use, has refused and has dropped, and the USB interface's mounts, unmounts, suspends and resumes, so an HTTP outage can be told apart on the bench. ← SYS-WEB-01
+- **WEB-API-13**: The system shall report at `/api/net` the TCP connections by state, their retransmissions, what the network has refused and has dropped, and the USB interface's mounts, unmounts, suspends and resumes, so an HTTP outage can be told apart on the bench. ← SYS-WEB-01
 - **WEB-API-14**: A file shall be named by `/`-separated names of letters, digits, `.`, `_` and `-`, none of them `.` or `..`. Any other path shall be refused by every file operation, and by the web server with 400. ← SYS-WEB-01
 - **WEB-API-15**: The system shall report at `/api/status` the flash chip's JEDEC ID, the capacity it declares, and its whole unique ID at the length its datasheet gives. ← SYS-WEB-01
 
