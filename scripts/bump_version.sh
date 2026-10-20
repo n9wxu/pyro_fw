@@ -5,9 +5,11 @@
 #   ./scripts/bump_version.sh major      2.2.7 -> 3.0.0
 #   ./scripts/bump_version.sh patch      2.2.7 -> 2.2.8  (CI does this itself)
 #
-# A patch bump is automatic: CI cuts one from every green push to main, so
-# this script is really for the deliberate ones. It is here for patch too
-# so there is one way to do it when CI cannot.
+# A patch bump is automatic: CI cuts one from every green push to main.
+# A minor or major bump usually arrives by pull request instead: set
+# VERSION with support/version.py --set, and CI releases it as it stands.
+# This script releases from main directly, pushing to it; it does patch
+# too so there is one way to do it when CI cannot.
 #
 # What it does NOT do is decide anything. support/version.py owns the rules
 # -- a bump zeroes everything below it -- and refuses a step that breaks
