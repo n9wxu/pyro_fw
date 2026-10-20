@@ -11,11 +11,12 @@ USB, so it reports usb_attached and its buzzer is silent (USB-01..03), and
 test mode gives it its voice and its pad record back until it is turned off
 (USB-08); no inert key is written; the flight log can be erased (WEB-API-09)
 and a file deleted, but not the board's own (WEB-API-17); /api/fs lists the
-flash store's files and space, a file uploaded at its size (WEB-API-19);
+flash store's files and space, a file uploaded at its size (WEB-API-19), and
+its scan covers every sector a chunk at a time (WEB-API-20);
 /api/status carries the pulse, fault, resume and emergency fields.
 
 Verifies on hardware [WEB-API-01, WEB-API-02, WEB-API-03, WEB-API-07,
-WEB-API-12, WEB-API-15, WEB-API-17, WEB-API-19, BUZ-CODE-03, BUZ-CODE-11, FLT-BROWN-01, FLT-BROWN-05].
+WEB-API-12, WEB-API-15, WEB-API-17, WEB-API-19, WEB-API-20, BUZ-CODE-03, BUZ-CODE-11, FLT-BROWN-01, FLT-BROWN-05].
 
 ERASES THE FLIGHT LOG, stores a changed pyro1 mode for a few seconds, and
 holds the board in test mode for about 15 s -- long enough to write the pad
@@ -225,6 +226,30 @@ if fs:
 req("POST", "/api/delete/www/api_check_fs.txt")
 _, fs = fs_report()
 check("a deleted file is listed no more", fs and not [f for f in fs["files"] if f["path"] == "/www/api_check_fs.txt"])
+
+# [WEB-API-20] Every sector's erased pages, read from the flash a chunk at a
+# time; none counted past its sector's pages, nor more than the free bytes
+# hold (the scan also reads the store's first page, which no file holds).
+if fs:
+    sectors, per, page = fs["sectors"], fs["sector_pages"], fs["page_bytes"]
+    sector, erased, chunks, whole, t0 = 0, 0, 0, True, time.time()
+    while sector < sectors:
+        code, _, body = req("GET", f"/api/fs/scan?sector={sector}&count=128")
+        sc = json.loads(body) if code == 200 else {}
+        got = sc.get("erased", [])
+        if sc.get("sector") != sector or not got or any(not 0 <= e <= per for e in got):
+            whole = False
+            break
+        sector, erased, chunks = sector + len(got), erased + sum(got), chunks + 1
+    check("a scan of every sector, a chunk at a time", whole and sector == sectors,
+          f"{sector} of {sectors} sectors in {chunks} requests, {time.time() - t0:.1f} s")
+    check("its erased pages fit the free bytes", erased * page <= fs["free"] + page,
+          f"{erased} pages of {page} bytes against {fs['free']} free")
+    _, _, body = req("GET", f"/api/fs/scan?sector={sectors - 1}&count=128")
+    check("a scan stops at the last sector", len(json.loads(body).get("erased", [])) == 1, body[:60])
+    _, _, body = req("GET", "/api/fs/scan?sector=0&count=1000")
+    check("a scan gives at most 128 sectors a request", len(json.loads(body).get("erased", [])) == min(128, sectors),
+          f"{len(json.loads(body).get('erased', []))}")
 
 # WEB-API-12: the room the next flight's log has, and the seconds of flight it
 # holds at every sample, which a second's sync can only shorten.

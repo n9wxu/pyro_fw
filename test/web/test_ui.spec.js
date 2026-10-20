@@ -8,7 +8,7 @@ const { test, expect } = require('@playwright/test');
  * WEB-API-03, WEB-API-06, WEB-API-09, WEB-API-12, WEB-UI-01, WEB-UI-02,
  * WEB-UI-03, WEB-UI-04, WEB-UI-05, WEB-UI-06, BUZ-CODE-11, LUA-MGT-01,
  * LUA-MGT-02, LUA-IO-01, LUA-IO-02, LUA-PAD-01, LUA-PAD-03, GND-TEST-12,
- * USB-08, PYR-BOARD-02, PYR-BOARD-03, CFG-10, WEB-API-17, WEB-API-19, WEB-UI-07].
+ * USB-08, PYR-BOARD-02, PYR-BOARD-03, CFG-10, WEB-API-17, WEB-API-19, WEB-API-20, WEB-UI-07].
  *
  * Server mode is set via PYRO_MODE env var (new/configured/flown).
  * Server started by globalSetup, URL passed via BASE_URL.
@@ -1214,12 +1214,28 @@ test.describe('Filesystem', () => {
   }
 
   test('the store\'s space and each file at its size', async ({ page }) => {
-    await expect(page.locator('#fsTotal')).toHaveText('3.88 MB');
+    await expect(page.locator('#fsTotal')).toHaveText('3.69 MB');
     await expect(page.locator('#fsUsed')).toHaveText('78.5 kB');
-    await expect(page.locator('#fsFree')).toHaveText('3.80 MB');
+    await expect(page.locator('#fsFree')).toHaveText('3.61 MB');
     await expect(row(page, '/www/app.js')).toContainText('59.6 kB');
     await expect(row(page, '/config.ini')).toContainText('812 B');
     await expect(page.locator('#fsClean')).toContainText('Nothing left for the cleanup to erase');
+  });
+
+  /* [WEB-API-20] Scanned a chunk at a time, and kept in the page. */
+  test('the scan splits the free bytes into erased and not yet erased', async ({ page }) => {
+    await expect(page.locator('#fsScan')).toContainText('Scanned 1024 sectors', { timeout: 5000 });
+    await expect(page.locator('#fsErased')).toHaveText('3.61 MB');
+    await expect(page.locator('#fsUnused')).toHaveText('2.7 kB');
+  });
+
+  test('a rescan reads the flash again', async ({ page }) => {
+    await expect(page.locator('#fsScan')).toContainText('Scanned 1024 sectors', { timeout: 5000 });
+    let scans = 0;
+    page.on('request', r => { if (r.url().includes('/api/fs/scan')) scans++; });
+    await page.click('#tab-files button:has-text("Rescan")');
+    await expect(page.locator('#fsScan')).toContainText('Scanned 1024 sectors', { timeout: 5000 });
+    expect(scans).toBe(8);
   });
 
   test('a file downloads from its link', async ({ page }) => {
@@ -1245,14 +1261,18 @@ test.describe('Filesystem', () => {
   });
 
   test('a confirmed delete removes the file and the cleanup is followed until done', async ({ page }) => {
+    await expect(page.locator('#fsScan')).toContainText('Scanned 1024 sectors', { timeout: 5000 });
     page.once('dialog', d => d.accept());
     await row(page, '/www/app.js').locator('button:has-text("Delete")').click();
     await expect(page.locator('#fsMsg')).toContainText('deleted');
     await expect(row(page, '/www/app.js')).toHaveCount(0);
     await expect(page.locator('#fsClean')).toContainText('full speed');
     await expect(page.locator('#fsClean')).toContainText('4 sectors so far', { timeout: 5000 });
+    await expect(page.locator('#fsErased')).toHaveText('3.62 MB');
     await expect(page.locator('#fsClean')).toContainText('Nothing left for the cleanup to erase', { timeout: 15000 });
-    await expect(page.locator('#fsClean')).toContainText('15 sectors');
+    await expect(page.locator('#fsClean')).toContainText('16 sectors');
+    await expect(page.locator('#fsErased')).toHaveText('3.67 MB', { timeout: 5000 });
+    await expect(page.locator('#fsUnused')).toHaveText('3.3 kB');
   });
 
   test('locked while the flight log is written', async ({ page }) => {

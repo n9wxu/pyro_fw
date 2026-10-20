@@ -520,6 +520,62 @@ static void test_WEB_API_19_the_cleanup_says_what_is_left_and_what_it_erased(voi
     clean_all();
 }
 
+/* Pages of a sector that read all 1s on the RAM flash. */
+static uint8_t erased_pages_on_chip(uint32_t sector) {
+    uint8_t n = 0;
+    for (uint32_t p = 0; p < SECTOR / PAGE; p++) {
+        bool blank = true;
+        for (uint32_t i = 0; i < PAGE; i++)
+            blank &= chip[sector * SECTOR + p * PAGE + i] == 0xFFu;
+        n = (uint8_t)(n + blank);
+    }
+    return n;
+}
+
+/* [WEB-API-19] Its sectors, their pages, and the file bytes a page holds,
+ * by which the space is counted. */
+static void test_WEB_API_19_the_stores_geometry(void) {
+    vfs_flash_geometry_t g;
+    vfs_flash_geometry(&g);
+    TEST_ASSERT_EQUAL_UINT32(AREA / SECTOR, g.sectors);
+    TEST_ASSERT_EQUAL_UINT32(SECTOR / PAGE, g.sector_pages);
+    TEST_ASSERT_TRUE(g.page_bytes > 0 && g.page_bytes < PAGE);
+    uint64_t free_b, total;
+    TEST_ASSERT_EQUAL(0, vfs_flash_space(&free_b, &total));
+    TEST_ASSERT_EQUAL_UINT64(0, total % g.page_bytes);
+    TEST_ASSERT_TRUE(total / g.page_bytes <= (uint64_t)g.sectors * g.sector_pages);
+}
+
+/* [WEB-API-20] The pages that read erased, sector by sector, as the flash
+ * holds them: a file's pages do not, and the sectors the cleanup erases
+ * once it is gone do, whole. */
+static void test_WEB_API_20_the_scan_counts_each_sectors_erased_pages(void) {
+    static uint8_t d[3 * SECTOR];
+    uint8_t got[AREA / SECTOR];
+    unsigned with = 0, without = 0;
+    fill(d, sizeof(d), 47);
+    TEST_ASSERT_EQUAL(0, write_whole("scan.bin", d, sizeof(d)));
+    TEST_ASSERT_EQUAL(AREA / SECTOR, vfs_flash_scan(0, AREA / SECTOR, got));
+    for (uint32_t k = 0; k < AREA / SECTOR; k++) {
+        TEST_ASSERT_EQUAL_UINT8(erased_pages_on_chip(k), got[k]);
+        with += got[k];
+    }
+    TEST_ASSERT_TRUE(with + sizeof(d) / PAGE < AREA / PAGE);
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("scan.bin"));
+    clean_all();
+    TEST_ASSERT_EQUAL(AREA / SECTOR, vfs_flash_scan(0, AREA / SECTOR, got));
+    for (uint32_t k = 0; k < AREA / SECTOR; k++)
+        without += got[k];
+    TEST_ASSERT_TRUE(without >= with + 2u * (SECTOR / PAGE));
+}
+
+static void test_WEB_API_20_a_scan_stops_at_the_stores_end(void) {
+    uint8_t got[4];
+    TEST_ASSERT_EQUAL(1, vfs_flash_scan(AREA / SECTOR - 1u, 4, got));
+    TEST_ASSERT_EQUAL_UINT8(erased_pages_on_chip(AREA / SECTOR - 1u), got[0]);
+    TEST_ASSERT_EQUAL(0, vfs_flash_scan(AREA / SECTOR, 4, got));
+}
+
 typedef struct {
     int n;
     char name[8][ALFS_NAME_MAX + 1];
@@ -603,6 +659,9 @@ int main(void) {
     RUN_TEST(test_USB_10_the_cleanup_waits_only_off_usb);
     RUN_TEST(test_WEB_API_19_the_cleanup_says_what_is_left_and_what_it_erased);
     RUN_TEST(test_WEB_API_19_the_list_gives_each_files_name_and_size);
+    RUN_TEST(test_WEB_API_19_the_stores_geometry);
+    RUN_TEST(test_WEB_API_20_the_scan_counts_each_sectors_erased_pages);
+    RUN_TEST(test_WEB_API_20_a_scan_stops_at_the_stores_end);
     RUN_TEST(test_names);
     return UNITY_END();
 }

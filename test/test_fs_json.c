@@ -1,7 +1,7 @@
 /*
  * /api/fs as the board writes it: the flash store and each of its files.
  *
- * Verifies [WEB-API-19].
+ * Verifies [WEB-API-19, WEB-API-20].
  */
 #include "unity.h"
 #include "fs_json.h"
@@ -16,7 +16,7 @@ static char buf[HTTP_WORK_SIZE];
 void setUp(void) {}
 void tearDown(void) {}
 
-static const fs_space_t SPACE = {4063232u, 120320u, 3942912u, 312u, "fast"};
+static const fs_space_t SPACE = {4063232u, 120320u, 3942912u, 312u, 1024u, 16u, 236u, "fast"};
 
 void test_WEB_API_19_the_store_and_each_file(void) {
     fs_json_t j;
@@ -26,7 +26,8 @@ void test_WEB_API_19_the_store_and_each_file(void) {
     fs_json_file(&j, "flight_log.bin", 0u, false, false);
     int n = fs_json_end(&j);
     const char *want = "{\"store\":\"flash\",\"bytes\":4063232,\"in_files\":120320,\"free\":3942912,"
-                       "\"cleanup\":\"fast\",\"cleaned_sectors\":312,\"files\":["
+                       "\"cleanup\":\"fast\",\"cleaned_sectors\":312,\"sectors\":1024,\"sector_pages\":16,"
+                       "\"page_bytes\":236,\"files\":["
                        "{\"path\":\"/config.ini\",\"bytes\":812,\"closed\":true,\"board\":false},"
                        "{\"path\":\"/serial.txt\",\"bytes\":13,\"closed\":true,\"board\":true},"
                        "{\"path\":\"/flight_log.bin\",\"bytes\":null,\"closed\":false,\"board\":false}]}";
@@ -36,18 +37,18 @@ void test_WEB_API_19_the_store_and_each_file(void) {
 }
 
 void test_WEB_API_19_a_store_with_no_file(void) {
-    fs_space_t s = {65536u, 0u, 65536u, 0u, "done"};
+    fs_space_t s = {65536u, 0u, 65536u, 0u, 16u, 16u, 236u, "done"};
     fs_json_t j;
     fs_json_begin(&j, buf, (int)sizeof(buf), &s);
     TEST_ASSERT_TRUE(fs_json_end(&j) > 0);
-    TEST_ASSERT_NOT_NULL(strstr(buf, "\"cleanup\":\"done\",\"cleaned_sectors\":0,\"files\":[]}"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"page_bytes\":236,\"files\":[]}"));
     assert_json(buf);
 }
 
 /* The most files the store holds, each with the longest name and size,
  * fits the connection's work buffer. */
 void test_WEB_API_19_the_widest_report_fits_the_work_buffer(void) {
-    fs_space_t s = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, "slow"};
+    fs_space_t s = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, "slow"};
     fs_json_t j;
     fs_json_begin(&j, buf, (int)sizeof(buf), &s);
     char name[ALFS_NAME_MAX + 1];
@@ -83,6 +84,29 @@ void test_WEB_API_19_a_report_that_does_not_fit_is_refused_in_its_buffer(void) {
         TEST_ASSERT_EQUAL_CHAR('#', buf[i]);
 }
 
+/* [WEB-API-20] A chunk of the scan: where it starts, and each sector's
+ * erased pages. */
+void test_WEB_API_20_a_scan_chunk(void) {
+    static const uint8_t erased[3] = {16u, 0u, 3u};
+    int n = fs_json_scan(buf, (int)sizeof(buf), 128u, erased, 3);
+    TEST_ASSERT_EQUAL_STRING("{\"sector\":128,\"erased\":[16,0,3]}", buf);
+    TEST_ASSERT_EQUAL_INT((int)strlen(buf), n);
+    assert_json(buf);
+}
+
+void test_WEB_API_20_the_widest_chunk_fits_the_work_buffer(void) {
+    static uint8_t erased[VFS_FLASH_SCAN_MAX];
+    memset(erased, 255, sizeof(erased));
+    int n = fs_json_scan(buf, (int)sizeof(buf), 0xFFFFFFFFu, erased, VFS_FLASH_SCAN_MAX);
+    TEST_ASSERT_TRUE(n > 0 && n < (int)sizeof(buf));
+    assert_json(buf);
+}
+
+void test_WEB_API_20_a_chunk_that_does_not_fit_is_refused(void) {
+    static const uint8_t erased[3] = {16u, 0u, 3u};
+    TEST_ASSERT_EQUAL_INT(-1, fs_json_scan(buf, 20, 128u, erased, 3));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_WEB_API_19_the_store_and_each_file);
@@ -90,5 +114,8 @@ int main(void) {
     RUN_TEST(test_WEB_API_19_the_widest_report_fits_the_work_buffer);
     RUN_TEST(test_WEB_API_19_a_name_outside_the_path_rules_shows_question_marks);
     RUN_TEST(test_WEB_API_19_a_report_that_does_not_fit_is_refused_in_its_buffer);
+    RUN_TEST(test_WEB_API_20_a_scan_chunk);
+    RUN_TEST(test_WEB_API_20_the_widest_chunk_fits_the_work_buffer);
+    RUN_TEST(test_WEB_API_20_a_chunk_that_does_not_fit_is_refused);
     return UNITY_END();
 }
