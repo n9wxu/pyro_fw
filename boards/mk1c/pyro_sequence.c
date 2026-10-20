@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "pyro_sequence.h"
+#include "small_fmt.h"
 #include "arm_pump.h"
 #include "board_pins.h"
 #include "pyro_faults.h"
@@ -9,7 +10,6 @@
 #include "board_support.h"
 #include "hardware/gpio.h"
 #include "pico/time.h"
-#include <stdio.h>
 #include <string.h>
 
 extern void hal_telemetry_send(const char *sentence);
@@ -35,7 +35,7 @@ static struct {
 
 static void report(const char *what, const quiescent_t *q) {
     char line[112];
-    snprintf(line, sizeof(line), "!PYRO %s ch=%u bus=%u vbat=%u\r\n", what, seq.channel, q->bus, q->vbat);
+    small_snprintf(line, sizeof(line), "!PYRO %s ch=%u bus=%u vbat=%u\r\n", what, seq.channel, q->bus, q->vbat);
     hal_telemetry_send(line);
 }
 
@@ -152,11 +152,11 @@ bool sequence_verdict_pending(uint8_t channel) {
 static void report_verdict(uint8_t channel, uint16_t counts, uint16_t bus) {
     track_t t = track_channel(counts, bus);
     char line[112];
-    snprintf(line, sizeof(line), "!PYRO F10 ch=%u %s (%u, bus %u)\r\n", channel,
-             t == TRACK_OPEN      ? "open: fired"
-             : t == TRACK_PRESENT ? "still present: misfire, treat as live"
-                                  : "unverified: the bus did not rise",
-             counts, bus);
+    small_snprintf(line, sizeof(line), "!PYRO F10 ch=%u %s (%u, bus %u)\r\n", channel,
+                   t == TRACK_OPEN      ? "open: fired"
+                   : t == TRACK_PRESENT ? "still present: misfire, treat as live"
+                                        : "unverified: the bus did not rise",
+                   counts, bus);
     hal_telemetry_send(line);
 }
 

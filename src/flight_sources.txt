@@ -18,6 +18,7 @@ src/launch_detector.c
 src/landing_detector.c
 src/pad_check.c
 src/telemetry.c
+src/small_fmt.c
 src/pressure_processing.c
 src/pressure_estimator.c
 src/ground_reference.c

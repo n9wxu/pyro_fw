@@ -20,6 +20,7 @@
 #include <stdint.h>
 #include "alfs_fs.h"
 
+#define VFS_FLASH_NOSPC (-3) /* no erased page left: a cleanup makes room */
 #define VFS_FLASH_NOENT (-2)
 #define VFS_FLASH_ERR (-1)
 

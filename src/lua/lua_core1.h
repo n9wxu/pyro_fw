@@ -21,7 +21,9 @@
  *
  *   3. The stop is unilateral: vTaskSuspend() needs no consent, and what the
  *      VM drove is put down after it. Flash does not depend on where the Lua
- *      task is: every flash operation parks the other core itself [DD-074].
+ *      task is: on the ground every flash operation parks the other core
+ *      itself [DD-074], and in flight the log writer's run on core1, where
+ *      the Lua task waits them out [DD-104].
  *
  * SPDX-License-Identifier: MIT
  */
@@ -86,8 +88,9 @@ const char *lua_core1_refusal(void);
  *
  * The flight task asks for one tick() a period. Never blocks, and does
  * nothing while the last tick is still running: a skipped tick is counted,
- * not queued. budget_us is the tick's time box, events included. */
-void lua_core1_dispatch(uint32_t budget_us);
+ * not queued. The tick runs in Lua's slot of core1's frame, events
+ * included [LUA-RUN-04, core1_frame.h]. */
+void lua_core1_dispatch(void);
 
 /* The startup beep waits on this, so a board that beeps is running a script
  * rather than compiling one. */

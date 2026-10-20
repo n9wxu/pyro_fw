@@ -22,6 +22,7 @@
 #include "hal_storage.h"
 #include "flash_op.h"
 #include "rtos_tasks.h"
+#include "core1_frame.h"
 #include "pin_store.h"
 #include "board_if.h"
 #include "flight_states.h"
@@ -32,8 +33,7 @@
 #include "hardware/structs/watchdog.h"
 #include "hardware/structs/usb.h"
 
-/* Each period takes the MS5607 conversion the last one commanded and
- * commands the next [DD-051]; the period is loop_period.h's [DD-065]. */
+/* The period is loop_period.h's [FLT-RT-04, DD-104]. */
 #include "loop_period.h"
 
 /* Twice the board's declared worst case, so a board that exceeds its own
@@ -188,16 +188,40 @@ static void period_start(void) {
     hardware_alarm_set_target((uint)period_alarm, from_us_since_boot(period_target_us));
 }
 
-void flight_task(void *arg) {
-    flight_context_t *ctx = (flight_context_t *)arg;
-    bool reset_armed = false; /* see the pending_reset handling below */
-
+/* Before the loop, and so before any flight. */
+static void __attribute__((noinline)) flight_task_start(void) {
     /* After USB, the network stack and the filesystem, which are slow enough to trip it.
      * The safe-boot latch in lua_app.c cannot fire without this. */
     watchdog_enable(WATCHDOG_MS, true);
     period_start();
     stage_mark_us = time_us_32();
     stage_cur = STAGE_SLACK;
+}
+
+/* A reset asked for over USB: BOOTSEL at once, or a reboot armed once --
+ * pending_reset stays set, and re-arming every period would reload the
+ * countdown faster than it can expire. The net task keeps running
+ * meanwhile, so the HTTP response flushes first. An OTA reboots through
+ * here too, once its reply is on its way. Returns whether a reboot is
+ * armed. */
+static bool __attribute__((noinline)) service_reset(bool armed) {
+    extern volatile uint8_t pending_reset;
+    if (pending_reset == 1)
+        rom_reset_usb_boot(0, 0); /* never returns; scratch does not survive it */
+    if (pending_reset == 2 && !armed) {
+#if PYRO_HAS_LUA
+        lua_app_restart_commanded();
+#endif
+        watchdog_reboot(0, 0, 100);
+        return true;
+    }
+    return armed;
+}
+
+void flight_task(void *arg) {
+    flight_context_t *ctx = (flight_context_t *)arg;
+    bool reset_armed = false;
+    flight_task_start();
     uint32_t fires_seen = 0;
 
     for (;;) {
@@ -208,7 +232,25 @@ void flight_task(void *arg) {
         if (fires - fires_seen > 1u)
             loop_overruns += fires - fires_seen - 1u;
         fires_seen = fires;
-        uint32_t late = (uint32_t)(time_us_64() - (period_target_us - LOOP_PERIOD_US));
+        uint64_t period_t0 = period_target_us - LOOP_PERIOD_US;
+#if PYRO_FLIGHT_RAM
+        /* [FLT-RT-03] A period that starts airborne with the log running runs
+         * only from RAM [FLT-RT-02], so from it until landing the writer's
+         * flash operations need no lockout. Landing ends this itself, before
+         * the flight task runs from flash again. */
+        if (flight_state_is_airborne(ctx->current_state) && hal_log_running()) {
+            if (!flash_op_in_flight()) {
+                buzzer_stop(); /* silent in flight, a resumed flight's too [FLT-LAUNCH-05] */
+                flash_op_flight_begin();
+            }
+        } else if (flash_op_in_flight()) {
+            flash_op_flight_end();
+        }
+#endif
+        /* Core1's frame starts with the period: the log writer's slot, then
+         * Lua's [FLT-LOG-09, LUA-RUN-04]. Never waits. */
+        core1_frame_begin((uint32_t)period_t0);
+        uint32_t late = (uint32_t)(time_us_64() - period_t0);
         if (late < LOOP_PERIOD_US && late > loop_late_max_us)
             loop_late_max_us = late;
 
@@ -229,21 +271,10 @@ void flight_task(void *arg) {
         STAGE(2);
         hal_tasks_tick(now);
 
-        extern volatile uint8_t pending_reset;
-        if (pending_reset == 1)
-            rom_reset_usb_boot(0, 0); /* never returns; scratch does not survive it */
-
-        /* Arm once: pending_reset stays set, and re-arming every period would
-         * reload the countdown faster than it can expire. The net task keeps
-         * running meanwhile, so the HTTP response flushes first. An OTA
-         * reboots through here too, once its reply is on its way. */
-        if (pending_reset == 2 && !reset_armed) {
-            reset_armed = true;
-#if PYRO_HAS_LUA
-            lua_app_restart_commanded();
-#endif
-            watchdog_reboot(0, 0, 100);
-        }
+        /* Both resets run from flash: one asked for in flight waits for
+         * landing [FLT-RT-02]. */
+        if (!flash_op_in_flight())
+            reset_armed = service_reset(reset_armed);
 
         /* Changes another task handed over: config, test mode, a buzzer
          * audition. Applied here, before the flight software reads them. */
@@ -263,11 +294,6 @@ void flight_task(void *arg) {
         lua_app_service(ctx, now);
         lua_app_dispatch();
 #endif
-
-        /* The flight log's ring and the pad marker are the storage task's to
-         * write: wake it. Never waits. */
-        STAGE(7);
-        rtos_notify_storage();
 
         STAGE(STAGE_SLACK);
         uint32_t work_us = time_us_32() - iter_t0;

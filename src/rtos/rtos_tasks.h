@@ -3,10 +3,13 @@
  *
  *   task            core  prio  does
  *   lockout helper  0, 1  T     parks its core for a flash operation (flash_op.h)
- *   flight          0     P     the 20 ms step, woken by a hardware-timer alarm
+ *   flight          0     P     the 10 ms step, woken by a hardware-timer alarm
  *   net             1     P     TinyUSB, smallest_tcp, HTTP
- *   lua             1     P     the VM (lua_core1.h)
- *   storage         1     P     the flight log, queued file work
+ *   lua             1     P     the VM (lua_core1.h), in its slot of core1's frame
+ *   storage         1     P     the flight log, queued file work: the frame's writer
+ *
+ * Core1's frame is the period: the log writer from its start for up to
+ * 3 ms, then Lua's tick for up to 6.5 ms (core1_frame.h, DD-104).
  *   timer daemon    1     P     the SDK's interop
  *
  * Mode 0 (configRUN_MULTIPLE_PRIORITIES 0): while anything runs at T, nothing
@@ -56,14 +59,11 @@ bool rtos_in_flight_task(void);
  * State the flight task owns -- the running config, test mode, the buzzer --
  * is changed only by the flight task. Another task hands it a function to
  * run at the head of its next period and waits, at most timeout_ms, for it
- * to have run. False: it did not run and will not. */
+ * to have run. False: it did not run and will not. From the first period
+ * airborne until landing only a function in RAM runs [FLT-RT-02]. */
 typedef void (*flight_call_fn)(void *arg);
 bool flight_call(flight_call_fn fn, void *arg, uint32_t timeout_ms);
 void flight_call_service(void); /* the flight task only */
-
-/* ── Hand-offs from the flight task: never block ──────────────────── */
-void rtos_notify_storage(void);
-void rtos_notify_lua(void);
 
 /* The storage task checks in every pass. On the ground a storage task that
  * stops checking in lets the watchdog reset the board; in flight it is

@@ -560,6 +560,110 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-104: The Flight Path In RAM, Core1 In Slots
+- **Decision:** at the user's direction -- "Move all flight code (launch to
+  landing) to RAM so no flash executed after launch until after landing",
+  and then: "lua can run from flash in flight. Logging has a small flash
+  interruption. If erases are needed in flight (insufficient reservation)
+  then the erase will use suspend/resume to keep the lua code steady. Give
+  the logger 3ms of every 10 and lua 6.5ms of every 10 so the total
+  non-critical flight code takes 9.5ms giving 0.5ms of buffer. Critical
+  flight code runs in ram so it cannot be disturbed by the flash
+  operations."
+  - The flight task, every interrupt handler core0 takes, the idle tasks and
+    the kernel paths they take run from RAM [FLT-RT-02].
+  - From the first period airborne until landing a flash operation runs on
+    core1 with core1's interrupts off, and nothing else: no priority raised,
+    no lockout of core0 [FLT-RT-03]. Core1's tasks -- the log writer, Lua,
+    the network, the timer daemon -- run from flash and wait while it lasts.
+  - The period is 10 ms [FLT-RT-04], and core1 runs in its frames: the log
+    writer from the period's start for 3 ms, then Lua's tick, at most
+    6.5 ms and done by 9.5 ms; 0.5 ms spare [FLT-LOG-09, LUA-RUN-04].
+  - A flash operation starts in the writer's slot only if, by the chip's
+    datasheet, it ends or can be suspended before the slot does. From
+    launch to landing an erase comes only when the log has no erased page
+    left; it is suspended at the end of each slot and resumed in the next
+    [FLT-LOG-10].
+- **The period:** 10 ms where DD-065 made it 20. The collector runs free of
+  the loop (DD-093), so the sample rate is unchanged; a period now steps
+  none or one sample. MK1C's arm pump is sized from the period
+  (`boards/mk1c/arm_pump.h`).
+- **Placement:** `support/flight_ram_link.py` runs every firmware link. It
+  links once, has `support/prove_flight_ram.py` find the flight path in
+  that image -- every function the roots reach by direct branch, through
+  the tables they read and through the pointers named for run time -- and
+  the read-only sections those functions refer to by relocation, then links
+  again with those sections renamed `.time_critical.flight.*`, which the
+  linker script copies to RAM at start-up. Objects of the SDK, the kernel
+  and the C library are renamed in copies; their sources are not touched.
+  The SDK's assembly float, double, divider and memory shims go whole, by
+  their `PICO_*_IN_RAM` switches. CI proves every image with `--strict`:
+  no function of the path, no read-only byte it reads and no indirect
+  branch it makes is left in flash or uncovered.
+- **What the path gave up to fit:** MK1C's path is 299 functions and
+  42.5 kB of code. To fit beside the rest of RAM: telemetry, the
+  estimator rows, the fire diagnostics and the script's status line are
+  written by `src/small_fmt.c`, an integer formatter whose output is the C
+  library's character for character, so the library's printf stays in
+  flash; `/api/status` is taken by the flight task as numbers and named by
+  the net task; MK1C claims its presence alarm and loads its arm pump's
+  program at start-up; the sample ring holds 16 (no more than four ever
+  wait, FLT-RATE-06); the host log's ring holds 4 KB, 2.5 to 3 s of log;
+  and the SDK's default alarm pool, whose interrupt would run on core0, is
+  off, since nothing schedules in it. Room left in main RAM: MK1C 4.1 kB,
+  MK1B and MK1B-8MB 6.6 kB, MK1A 8.4 kB.
+- **What flight refuses:** every flash operation but the writer's; a
+  mailbox call (`flight_call()`) whose function lives in flash; a reset
+  asked for over USB, which waits for landing. Entering flight stops the
+  buzzer, silent from launch already (FLT-LAUNCH-05). Flight begins at the
+  head of the first period that starts airborne with the log running, and
+  the log opens only then; landing ends it, waiting out a piece in
+  progress, before the flight task runs from flash again.
+- **The chips:** `src/flash_timing.c` holds the worst-case figures of the
+  four fitted parts. W25Q16JV and W25Q128JV suspend a program or an erase,
+  tSUS 20 us. XT25F128F does too, but a suspend may not follow a resume by
+  less than 500 us, and an erase can take 800 ms. BY25Q64ES suspends only an
+  erase, so its program, 2.4 ms at worst, starts only where it fits. A part
+  not in the table programs whole from a slot's start and does not erase in
+  flight. A piece also pays about 100 us a command through the SDK's
+  `flash_do_cmd()`: the plan keeps 300 us for a start and 500 us for a
+  suspend.
+- **Measured on MK1C, 2026-10-18,** bench flights in test mode on the flash
+  log: from launch to landing no lockout, no loop overrun, the loop at most
+  97 us late, Lua's tick every period (100 a second). A 5 km flight with
+  too little erased room: 60 sector erases in flight in 690 suspended
+  pieces, the longest piece 2.95 ms; Lua lost no tick. Pressure conversions
+  a flash operation ran beside, discarded (DD-068): 6 to 11 a second of the
+  106, pressures and temperatures together.
+- **Open:** the writer's own processing between pieces can run past its
+  slot -- about four frames a second in a flight, and most of a frame when
+  alfs searches a nearly full filesystem for a free page -- and Lua shares
+  core1 with it then. MK1B-8MB's in-flight path is proven but not flown: it
+  has no bench flight.
+
+### DD-103: The Flight Log To The Host In Test Mode
+- **Decision:** at the user's direction ("Give the USB flight test mode the
+  option to prevent logging to flash and log to network"), test mode set
+  with `POST /api/test_mode/on?log=host` holds the next flight's log in RAM
+  for the host in place of the flash [USB-09]. The choice lives with test
+  mode: it starts off at every start, a log already running keeps where it
+  goes, and `/api/status` reports it (`test_log`).
+- **How the host reads it:** the storage task hands the log's ring to a
+  ring of its own (`src/log_live.c`, 4 KB, DD-104) in place of the file; `GET
+  /api/flight/live?since=N` returns the offset of the first byte, the offset
+  the log has reached, then the bytes [WEB-API-16]. A host that falls more
+  than the ring behind finds the oldest bytes gone and can count them. A
+  poll is an ordinary request, framed by Content-Length [WEB-HTTP-02].
+- **The bench:** `support/bench_flight.py --host-log FILE` polls it once a
+  second and saves the binary log; `pyro_sim --csv FILE` renders it with the
+  board's own renderer, and `pyro_sim --replay` flies it again.
+- **Measured on MK1C, 2026-10-18,** a 3 km bench flight: 223,622 bytes to
+  the host, none lost, 9,416 sample rows, the widest gap 19 ms; no flash
+  program or erase from launch to landing; the loop's lateness at most
+  0.6 ms against 12 ms with the log written to the flash. Six programs
+  follow at LANDED. The replay of the saved log decides apogee 19 ms from
+  the log's and pyro 2 and landing at the same millisecond.
+
 ### DD-102: smallest_tcp In Place Of lwIP
 - **Decision:** at the user's direction ("Replace lwip with smallest_tcp.
   This should reduce flash and ram usage"), the USB network runs on
@@ -1689,6 +1793,7 @@ The designer's answers to `docs/outstanding_tasks.md` section 2.
   a fire lands about 40 ms after the pulse, inside the 100 ms verify window.
 - **Supersedes** DD-063's "the 10 ms loop stays", which was the finding the
   user weighed.
+- **Superseded by DD-104:** the period is 10 ms.
 
 ### DD-064: Three Logging Plans
 - **Decision:** at the user's direction -- "Default is 1hz logging with

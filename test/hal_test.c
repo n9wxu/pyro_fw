@@ -773,6 +773,16 @@ void hal_log_stop(void) {
     test_log_active = false;
 }
 
+static bool test_log_to_host;
+
+void hal_log_to_host(bool on) {
+    test_log_to_host = on;
+}
+
+bool hal_log_held_for_host(void) {
+    return test_log_to_host;
+}
+
 bool hal_log_active(void) {
     return test_log_active;
 }

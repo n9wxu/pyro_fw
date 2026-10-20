@@ -42,6 +42,9 @@ void board_flash_service(uint32_t now_ms);
 
 uint32_t hal_log_dropped(void);
 
+/* The flight log takes rows: from launch until landing stops it. */
+bool hal_log_running(void);
+
 /* One line of script output, appended to the flight log as an event row.
  *
  * Returns false when the line was not recorded. No flight being logged is the

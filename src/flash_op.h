@@ -22,8 +22,9 @@
  * up. The SDK's flash_safe_execute() gets this right only when its caller is
  * already at T, and creates a task per call; the helpers here exist once.
  *
- * Never from the flight task or an interrupt: refused and counted. Before
- * the scheduler starts only core0 runs, and an operation runs directly.
+ * Never from the flight task or an interrupt, and never from launch to
+ * landing (below): refused and counted. Before the scheduler starts only
+ * core0 runs, and an operation runs directly.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -36,20 +37,46 @@
 typedef void (*flash_op_fn)(void *arg);
 
 /* 0, or <0: refused (the flight task, an interrupt, a board that says no for
- * too long) or a helper that would not park. */
+ * too long, a flight in progress) or a helper that would not park. */
 int flash_op(flash_op_fn fn, void *arg);
 
 /* Offsets from the start of flash, as flash_range_*() take them. */
 int flash_op_erase(uint32_t offset, uint32_t len);
 int flash_op_program(uint32_t offset, const uint8_t *data, uint32_t len);
 
-/* One page program of exactly len bytes, inside one page: the page's other
- * bytes are not touched, as they are by flash_op_program()'s whole pages.
- * The filesystem's driver (fs_flash.c). */
-int flash_op_program_bytes(uint32_t offset, const uint8_t *data, uint32_t len);
-
 /* Creates the lockout helpers. Before the scheduler starts. */
 void flash_op_init(void);
+
+/* ── From launch to landing [FLT-RT-03, FLT-LOG-09, DD-104] ──────────
+ *
+ * The flight task's core runs only from RAM (FLT-RT-02), so a flash
+ * operation needs no lockout: the log writer's run on core1 with core1's
+ * interrupts off, in pieces inside its slots (flash_slot.h), and stop
+ * nothing on core0. Every other operation is refused until landing.
+ *
+ * Begin and end are the flight task's, at launch and at landing; end waits
+ * out a piece in progress, a slot's length at most, before the flight task
+ * runs from flash again. */
+void flash_op_flight_begin(void);
+void flash_op_flight_end(void);
+bool flash_op_in_flight(void);
+
+/* The task whose operations run in slots: the storage task. */
+void flash_op_set_writer(void *task);
+
+/* One sector erase, or one program of exactly len bytes inside one page,
+ * whose other bytes it leaves alone, by the writer: in pieces inside its
+ * slots from launch to landing, whole under the lockout otherwise. 0, or <0
+ * as flash_op() and flash_slot_run(). */
+int flash_op_slot_erase(uint32_t offset);
+int flash_op_slot_program(uint32_t offset, const uint8_t *data, uint32_t len);
+
+/* /api/status: pieces run in slots, of which suspended; slots given up
+ * waiting; operations refused in flight; the longest piece. */
+typedef struct {
+    uint32_t pieces, suspends, slot_waits, flight_refusals, piece_max_us;
+} flash_op_slot_stats_t;
+void flash_op_slot_stats(flash_op_slot_stats_t *out);
 
 /* Weak and always true. A board whose pyro sequence is paced by the flight
  * task says no while it runs: an erase stops the flight task for tens of

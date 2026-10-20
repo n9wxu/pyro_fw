@@ -4,6 +4,7 @@
  *
  * Usage: pyro_sim [apogee_m]
  *        pyro_sim --replay <flight_log.csv>
+ *        pyro_sim --csv <flight_log.bin>
  *
  * SPDX-License-Identifier: MIT
  */
@@ -15,6 +16,7 @@
 #include "pyro_sim.h"
 #include "replay.h"
 
+#include "../src/flight_log.h"
 #include "../src/flight_states.h"
 #include "../src/hal.h"
 
@@ -64,17 +66,49 @@ static int replay_file(const char *path) {
     return 0;
 }
 
+/* pyro_sim --csv <flight_log.bin>: a binary log as the board renders it at
+ * /api/flight.csv; one a bench flight kept off the flash [USB-09] has no
+ * other renderer. */
+static int file_read(void *ctx, uint8_t *dst, int n) {
+    return (int)fread(dst, 1, (size_t)n, (FILE *)ctx);
+}
+
+static int csv_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        printf("cannot open %s\n", path);
+        return 1;
+    }
+    flog_csv_t r;
+    flog_csv_init(&r, file_read, f);
+    char buf[4096];
+    int n, total = 0;
+    while ((n = flog_csv_read(&r, buf, (int)sizeof(buf))) > 0) {
+        fwrite(buf, 1, (size_t)n, stdout);
+        total += n;
+    }
+    fclose(f);
+    if (total == 0) {
+        fprintf(stderr, "%s: not a flight log\n", path);
+        return 1;
+    }
+    return 0;
+}
+
 #define DEFAULT_APOGEE_M 1524.0f
 #define HIGH_FLIGHT_M 50000.0f
 
 static int usage(void) {
-    printf("usage: pyro_sim [apogee_m]\n       pyro_sim --replay <flight_log.csv>\n");
+    printf("usage: pyro_sim [apogee_m]\n       pyro_sim --replay <flight_log.csv>\n"
+           "       pyro_sim --csv <flight_log.bin>\n");
     return 2;
 }
 
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--replay") == 0)
         return argc == 3 ? replay_file(argv[2]) : usage();
+    if (argc > 1 && strcmp(argv[1], "--csv") == 0)
+        return argc == 3 ? csv_file(argv[2]) : usage();
     float target = DEFAULT_APOGEE_M;
     if (argc > 1) {
         char *end;

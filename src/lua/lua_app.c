@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "lua_app.h"
+#include "small_fmt.h"
 #include "hal.h"
 #include "flash_op.h"
 #include "hal_storage.h"
@@ -51,11 +52,6 @@ static bool launched;
  * between power-on and the first HTTP response, which is the only route in
  * to replace a program that wedges the board. */
 #define LUA_LAUNCH_DELAY_MS 2000u
-
-/* One tick()'s time box, events included. The Lua task shares core1 with the
- * net and storage tasks a tick at a time, so this bounds how long one script
- * step holds its share, not the flight. */
-#define LUA_TICK_BUDGET_US 5000u
 
 /* Covers the start-up check, compiling the script and running init(). A
  * script that never finishes starting holds its share of core1 for nothing. */
@@ -297,7 +293,7 @@ static void launch(void) {
     lua_core1_start(script_buf, script_len);
     flash_op_crumb(61);
     phase(PH_STARTED);
-    snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)",
+    small_snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)",
              lua_iface_count_kind(LUA_IF_OUTPUT), lua_iface_count_kind(LUA_IF_INPUT),
              lua_iface_count_kind(LUA_IF_SERIAL), lua_iface_count_kind(LUA_IF_PIXEL));
     phase(PH_REPORTED);
@@ -361,14 +357,15 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
 
     const char *refused = lua_core1_refusal();
     if (refused && lua_core1_state() == LUA_C1_RUNNING) {
-        snprintf(status_line, sizeof(status_line), "not started: %s", refused);
+        small_snprintf(status_line, sizeof(status_line), "not started: %s", refused);
         lua_core1_kill();
         return;
     }
 
     if (!lua_core1_ready() && launched && (int32_t)(now_ms - (launch_at_ms + LUA_BOOT_LIMIT_MS)) >= 0 &&
         lua_core1_state() == LUA_C1_RUNNING) {
-        snprintf(status_line, sizeof(status_line), "killed: startup exceeded %lums", (unsigned long)LUA_BOOT_LIMIT_MS);
+        small_snprintf(status_line, sizeof(status_line), "killed: startup exceeded %lums",
+                       (unsigned long)LUA_BOOT_LIMIT_MS);
         lua_core1_kill();
     }
 
@@ -377,11 +374,11 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
         uint32_t ok, rq, ak, hb;
         lua_core1_dispatch_stats(&ok, &rq, &ak, &hb);
         uint32_t loc = lua_core1_loc();
-        snprintf(status_line, sizeof(status_line),
-                 "stopped: %s [ok=%lu req=%lu ack=%lu hb=%lu loc=%lu failloc=%lu preq=%lu stack=%lu]",
-                 lua_core1_error(), (unsigned long)ok, (unsigned long)rq, (unsigned long)ak, (unsigned long)hb,
-                 (unsigned long)(loc & 0xff), (unsigned long)((loc >> 8) & 0xff), (unsigned long)((loc >> 16) & 0xff),
-                 (unsigned long)lua_core1_stack_free());
+        small_snprintf(status_line, sizeof(status_line),
+                       "stopped: %s [ok=%lu req=%lu ack=%lu hb=%lu loc=%lu failloc=%lu preq=%lu stack=%lu]",
+                       lua_core1_error(), (unsigned long)ok, (unsigned long)rq, (unsigned long)ak, (unsigned long)hb,
+                       (unsigned long)(loc & 0xff), (unsigned long)((loc >> 8) & 0xff),
+                       (unsigned long)((loc >> 16) & 0xff), (unsigned long)lua_core1_stack_free());
     }
 }
 
@@ -391,5 +388,5 @@ void lua_app_dispatch(void) {
     if (!lua_core1_ready()) {
         return;
     }
-    lua_core1_dispatch(LUA_TICK_BUDGET_US);
+    lua_core1_dispatch();
 }

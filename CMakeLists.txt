@@ -272,6 +272,9 @@ if(PYRO_HAS_LUA)
     )
     target_include_directories(pyro_lua PUBLIC ${CMAKE_CURRENT_LIST_DIR}/src/lua ${CMAKE_CURRENT_LIST_DIR}/src)
     target_link_libraries(pyro_lua PUBLIC lua_lib)
+    # A section a function, as the SDK's own: the flight task posts events
+    # through pyro_lua.c, and that function alone runs from RAM [FLT-RT-02].
+    target_compile_options(pyro_lua PRIVATE -ffunction-sections -fdata-sections)
 endif()
 message("alfs is here: ${alfs_SOURCE_DIR}")
 
@@ -330,6 +333,19 @@ add_custom_target(generate_version ALL
 )
 
 # Board support and the board-independent HAL. Must come after pico_sdk_init().
+# [FLT-RT-02, DD-104] The flight path into RAM: support/flight_ram_link.py
+# links once, finds the path in that image with prove_flight_ram.py, and links
+# again with its sections renamed into .data. CI's prover fails an image
+# whose path reaches flash.
+option(PYRO_FLIGHT_RAM "Link the flight path into RAM" ON)
+if(PYRO_FLIGHT_RAM)
+    # The SDK's default alarm pool takes its interrupt on core0, where nothing
+    # may run from flash in flight, and nothing here schedules in it: off,
+    # in the bootloader library's copy of pico_time too. A sleep outside a
+    # task then waits on the clock, and a timed lock polls.
+    add_compile_definitions(PICO_TIME_DEFAULT_ALARM_POOL_DISABLED=1)
+    target_compile_definitions(pico_fota_bootloader_lib PRIVATE PICO_TIME_DEFAULT_ALARM_POOL_DISABLED=1)
+endif()
 add_subdirectory(src/hal_common)
 add_subdirectory(${PYRO_BOARD_DIR} ${CMAKE_BINARY_DIR}/board)
 
@@ -339,6 +355,9 @@ add_subdirectory(${PYRO_BOARD_DIR} ${CMAKE_BINARY_DIR}/board)
 # repeat both archives on the link line; without it GNU ld's single pass
 # leaves the board's symbols unresolved.
 target_link_libraries(pyro_hal_common PUBLIC pyro_board)
+
+# The flight path's formatter runs from RAM [FLT-RT-02]: built for size.
+set_source_files_properties(src/small_fmt.c PROPERTIES COMPILE_OPTIONS "-Os")
 
 add_executable(pyro_fw_c 
     src/main_hardware.c
@@ -364,14 +383,18 @@ add_executable(pyro_fw_c
     src/net_stats.c
     src/net_txq.c
     src/flight_log.c
+    src/log_live.c
     src/pressure_trace.c
     src/net_ring.c
     src/reset_interface.c
     src/fs_flash.c
     src/vfs_flash.c
     src/flash_op.c
+    src/flash_slot.c
+    src/flash_timing.c
     src/vfs.c
     src/rtos/rtos_tasks.c
+    src/rtos/core1_frame.c
     src/net_task.c
     src/storage_task.c
     src/pin_caps.c
@@ -488,6 +511,18 @@ if(_pyro_slot_kb LESS_EQUAL 0)
     message(FATAL_ERROR "No room for an application slot (${_pyro_slot_kb}KB)")
 endif()
 message(STATUS "  flash map: app slot ${_pyro_slot_kb}KB x2, files ${PYRO_PFB_FS_KB}KB")
+
+if(PYRO_FLIGHT_RAM)
+    # The SDK's assembly shims the flight path calls go whole: the list
+    # cannot split a file whose sections branch to each other short.
+    target_compile_definitions(pyro_fw_c PRIVATE PICO_FLOAT_IN_RAM=1 PICO_DOUBLE_IN_RAM=1 PICO_DIVIDER_IN_RAM=1
+        PICO_INT64_OPS_IN_RAM=1 PICO_MEM_IN_RAM=1)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set_property(TARGET pyro_fw_c PROPERTY RULE_LAUNCH_LINK
+        "${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/support/flight_ram_link.py ${CMAKE_OBJCOPY} --")
+    set_property(TARGET pyro_fw_c APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/support/flight_ram_link.py
+        ${CMAKE_CURRENT_LIST_DIR}/support/prove_flight_ram.py ${CMAKE_CURRENT_LIST_DIR}/support/prove_core0.py)
+endif()
 
 # Distinct artifact names so an MK1B image is never flashed to an MK1C board
 set_target_properties(pyro_fw_c PROPERTIES OUTPUT_NAME "pyro_fw_${PYRO_BOARD}")
@@ -667,6 +702,7 @@ add_custom_target(sim
                ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
                ${CMAKE_CURRENT_LIST_DIR}/src/buzzer.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
                -lm
                -o ${CMAKE_BINARY_DIR}/pyro_sim
     COMMAND ${CMAKE_COMMAND} -E echo "Simulator built: ${CMAKE_BINARY_DIR}/pyro_sim"
@@ -851,6 +887,44 @@ add_custom_target(http_transport_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_http_transport
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "HTTP transport over smallest_tcp tests"
+)
+
+# The flight log held for the host in test mode [USB-09].
+add_custom_target(log_live_tests
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_log_live.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/log_live.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_log_live
+    COMMAND ${CMAKE_BINARY_DIR}/test_log_live
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flight log held for the host tests"
+)
+
+# The flight path's formatter, against the C library's [FLT-RT-02].
+add_custom_target(small_fmt_tests
+    COMMAND ${HOST_CC} -Wall -Wextra -Wno-format-truncation -I${CMAKE_CURRENT_LIST_DIR}/src -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_small_fmt.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/small_fmt.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_small_fmt
+    COMMAND ${CMAKE_BINARY_DIR}/test_small_fmt
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flight path formatter tests"
+)
+
+# The log writer's flash operations inside its slots [FLT-LOG-09, FLT-LOG-10,
+# LUA-RUN-04].
+add_custom_target(flash_slot_tests
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_flash_slot.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flash_slot.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/flash_timing.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_flash_slot
+    COMMAND ${CMAKE_BINARY_DIR}/test_flash_slot
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flash operations in the log writer's slots tests"
 )
 
 add_custom_target(net_txq_tests
@@ -1149,6 +1223,7 @@ add_custom_target(board_pyro_mk1c_tests
                ${CMAKE_CURRENT_LIST_DIR}/boards/mk1c/pyro_faults.c
                ${CMAKE_CURRENT_LIST_DIR}/boards/mk1c/pyro_sequence.c
                ${CMAKE_CURRENT_LIST_DIR}/boards/mk1c/arm_pump.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/small_fmt.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/hw/rp2040_shim.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/plant/net_solve.c
                ${CMAKE_CURRENT_LIST_DIR}/sim/plant/plant.c

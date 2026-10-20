@@ -53,7 +53,8 @@ The HTTP server is two halves (DD-039, DD-061):
 - `GET /api/flight.csv`, `POST /api/flight/erase`, `GET /api/log/space` — the flight log, rendered as CSV from its binary records (WEB-API-06, WEB-API-09, WEB-API-12)
 - `GET /api/pressure/trace?since=N` — every pressure conversion since N, in binary (SNS-PRES-13)
 - `GET /api/net` — TCP's links by state, retransmissions, what the transport refused and the frames each way (WEB-API-13)
-- `POST /api/test_mode/on`, `POST /api/test_mode/off` — fly on USB as on battery; held in RAM (USB-08)
+- `POST /api/test_mode/on[?log=host]`, `POST /api/test_mode/off` — fly on USB as on battery; held in RAM (USB-08). With `?log=host` the flight log goes to RAM for the host, not to the flash (USB-09)
+- `GET /api/flight/live?since=N` — the flight log held for the host from byte N: two little-endian offsets, the first byte's and the log's end, then the bytes (WEB-API-16)
 - `POST /api/ota`, `POST /api/reboot` — a firmware image into the download slot, then a reboot once the answer is on its way (WEB-API-04, WEB-API-05)
 - `POST /api/serial` — the board's serial, which is its MAC, applied at the next reboot
 - `POST /www/<file>` — a web file upload

@@ -65,7 +65,10 @@ The flight software (`src/flight_sources.txt`) contains no platform-specific cod
 Three implementations: `src/hal_common/hal_common.c` with each board's files in `boards/<name>/` (Pico), `test/hal_test.c` (mocks), `boards/sim/hal_sim.c` (simulation).
 
 ### Tasks
-FreeRTOS SMP on both cores (DD-073, `src/rtos/rtos_tasks.h`). `main()` in `src/main_hardware.c` brings the board up on core0 and starts the scheduler. `flight_task()` runs alone at P on core0, woken every 20 ms (`src/loop_period.h`, DD-065) by an alarm on the hardware timer. In order: `hal_tasks_tick()` (the pressure sensor first, so the MS5607 is commanded at a steady offset); `flight_call_service()` (changes the net task handed over); `dispatch_state()`; `flight_update_outputs()`; Lua's service and its tick request; then a notification to the storage task. The net task (`src/net_task.c`: TinyUSB, smallest_tcp, HTTP's transport and work units, DD-061), the Lua task (`src/lua/lua_core1.c`) and the storage task (`src/storage_task.c`: `hal_storage_service()` and `flight_storage_service()`) share core1 at P. Every flash program or erase runs through `flash_op()` under a lockout that parks the other core (DD-074). The flight task waits only for its period (FLT-RT-01). The watchdog is twice `PYRO_LOOP_WORST_MS`.
+FreeRTOS SMP on both cores (DD-073, `src/rtos/rtos_tasks.h`). `main()` in `src/main_hardware.c` brings the board up on core0 and starts the scheduler. `flight_task()` runs alone at P on core0, woken every 10 ms (`src/loop_period.h`, DD-104) by an alarm on the hardware timer. In order: the start of core1's frame (`core1_frame_begin()`, which wakes the storage task); `hal_tasks_tick()`; `flight_call_service()` (changes the net task handed over); `dispatch_state()`; `flight_update_outputs()`; Lua's service and its tick request. The net task (`src/net_task.c`: TinyUSB, smallest_tcp, HTTP's transport and work units, DD-061), the Lua task (`src/lua/lua_core1.c`) and the storage task (`src/storage_task.c`: `hal_storage_service()` and `flight_storage_service()`) share core1 at P. Core1 runs in the period's frame (`src/core1_frame.h`, DD-104): the storage task writes the flight log from the period's start for up to 3 ms and then gives the frame up; Lua's tick starts then, or at 3 ms, and runs for up to 6.5 ms, ending by 9.5 ms. On the ground every flash program or erase runs through `flash_op()` under a lockout that parks the other core (DD-074). The log writer's go through `flash_op_slot_program()` and `flash_op_slot_erase()`, which in flight run each in pieces inside the writer's slot, on core1 alone, by the chip's datasheet figures (`src/flash_slot.c`, `src/flash_timing.c`); an erase is suspended at the slot's end and resumed in the next. In flight an erase comes only when the log finds no erased page (`VFS_NOSPC`), one sector a time. The flight task waits only for its period (FLT-RT-01). The watchdog is twice `PYRO_LOOP_WORST_MS`.
+
+### The flight path in RAM
+From the head of the first period that starts airborne with the flight log running until landing, core0 runs only from RAM (FLT-RT-02, FLT-RT-03, DD-104): the flight task, its interrupt handlers, the idle tasks, the kernel paths they take, and every read-only byte they read. `support/flight_ram_link.py` runs every firmware link: it links once, has `support/prove_flight_ram.py` find the path in that image, and links again with the path's sections renamed `.time_critical.flight.*`, which the linker script copies to RAM; `<image>.flight_ram.txt` beside the image lists them. CI proves each image with `prove_flight_ram.py --strict`. The flight task enters flight (`flash_op_flight_begin()`) at the head of its period and leaves it in `hal_log_stop()` at landing; meanwhile every flash operation but the writer's is refused, a mailbox call whose function lives in flash is refused, and a reset asked for over USB waits. `/api/status` reports `flash_in_flight`, the writer's part (`flash_part`), the frame (`frame`: the writer's longest hold, its overruns, Lua ticks given no time) and the pieces (`slots`: run, suspended, slots waited, operations refused in flight, the longest).
 
 Pads are owned once: `pin_store_claim_pads()` gives each pad one owner, and `pyro_release_claim()` and `lua_iface_publish()` install operations only for pads they could claim (DD-020).
 
@@ -91,6 +94,9 @@ Pads are owned once: `pin_store_claim_pads()` gives each pad one owner, and `pyr
 | `src/pressure_collector.c` | The free-running collector: conversions, the queue of four, bus recovery (DD-093) |
 | `src/ms5607_driver.c`, `src/bmp280_driver.c` | Each sensor's detection, description for the collector, and arithmetic |
 | `src/flight_log.c` | Binary flight log, CSV rendering |
+| `src/flash_op.c`, `src/flash_slot.c`, `src/flash_timing.c` | Flash operations: the ground's lockout, the flight's pieces in the writer's slots, the chips' figures (DD-074, DD-104) |
+| `src/core1_frame.h`, `src/rtos/core1_frame.c` | Core1's frame: the writer's slot, then Lua's (DD-104) |
+| `src/small_fmt.c` | The flight path's text formatter, integers only, the C library's output |
 | `src/http_server.c`, `src/http_conn.c`, `src/http_work.c` | HTTP routes, connections, work units |
 | `src/net_glue.c`, `src/net_txq.c`, `src/http_transport.c` | USB network over smallest_tcp, DHCP, mDNS, held frames; HTTP's links (DD-102) |
 | `src/ground_test_seq.c`, `src/ground_test_switch.c` | The ground test procedure and its switch |
@@ -123,6 +129,7 @@ MK1A and MK1C (16 MB): two 4076 KB slots from 0x00A000 and 0x405000, and 8 MB of
 | GET | `/api/log/space` | Room for the next flight's log (WEB-API-12) |
 | GET | `/api/flight.csv` | The flight log, rendered as CSV |
 | POST | `/api/flight/erase` | Erase the flight log |
+| GET | `/api/flight/live?since=N` | The flight log held for the host in test mode, from byte N (WEB-API-16) |
 | GET/POST | `/api/config` | Config INI file; a POST is merged and stored, and takes effect at the next start (CFG-10) |
 | GET | `/api/limits` | The board's pyro timing defaults and ranges, what is in force, the sensor's range (PYR-BOARD-03) |
 | GET, POST | `/api/sim`, `/api/sim/flight`, `/api/sim/stop` | The bench flight, where the board has one (SIM-01..04) |
@@ -130,7 +137,7 @@ MK1A and MK1C (16 MB): two 4076 KB slots from 0x00A000 and 0x405000, and 8 MB of
 | GET | `/api/pins/caps` | The board's capability table and its vocabulary |
 | GET/POST | `/api/beeps` | Beep personalities; `POST /api/beeps/play` auditions one |
 | GET/POST | `/api/lua/script` | The Lua program; `POST /api/lua/check` validates one against the configured resources, `GET /api/lua/console` reads the script's output |
-| POST | `/api/test_mode/on`, `/api/test_mode/off` | Test mode (USB-08) |
+| POST | `/api/test_mode/on[?log=host]`, `/api/test_mode/off` | Test mode, and the log to the host in place of the flash (USB-08, USB-09) |
 | POST | `/api/serial` | The board's MAC, into `serial.txt` |
 | POST | `/api/reboot` | Restart device |
 | POST | `/api/ota` | Firmware update |
@@ -152,11 +159,11 @@ One message a second in PAD_IDLE, in flight and in LANDED (TEL-03). State codes 
 - **Ground test:** its own alert, countdowns, tone and all-clear (GND-TEST-06, GND-TEST-07)
 
 ### Flight Log
-The flight log (`flight_log.bin` on the flash) opens at launch and closes at LANDED, written only into erased pages: only the storage task's cleanup erases, a sector a second while no flight log is open (DD-100). It holds binary records (`src/flight_log.h`); `/api/flight.csv` renders them as CSV with `flog_csv_read()` (DD-062). The flight code hands every sample to `hal_log_sample()`, and the log keeps each one (FLT-LOG-07, DD-101). Records go to a 4 KB RAM buffer.
+The flight log (`flight_log.bin` on the flash) opens in the first period airborne and closes at LANDED, written only into erased pages (DD-100). On the ground the storage task's cleanup erases a sector a second while no flight log is open; in flight the writer erases one only when the log finds no erased page (FLT-LOG-10). It holds binary records (`src/flight_log.h`); `/api/flight.csv` renders them as CSV with `flog_csv_read()` (DD-062). The flight code hands every sample to `hal_log_sample()`, and the log keeps each one (FLT-LOG-07, DD-101). Records go to a 4 KB RAM buffer. In test mode set with `?log=host`, the storage task hands them to a 4 KB ring in RAM (`src/log_live.c`) in place of the file, read by offset at `/api/flight/live` (USB-09, DD-103).
 
-**Flash stalls the CPU.** The RP2040 executes from flash via XIP, and a sector erase (46-73 ms measured, DD-035) stops both cores fetching from it. So:
+**Flash stalls whatever fetches from it.** The RP2040 executes from flash via XIP, and a program or an erase stops it answering. So:
 - nothing is written until the RAM buffer has filled once or 2 s have passed, which carries the log through the launch-shock window (DD-084, DD-027);
-- after that the buffer is written, and the file synced once a second, only in core0's flash window between core1 work units (FLT-LOG-06, DD-035), so a flight that never lands keeps its record;
+- after that the buffer is written, and the file synced once a second, in the writer's slots (FLT-LOG-06, FLT-LOG-09), so a flight that never lands keeps its record; core0 runs from RAM meanwhile and does not stop;
 - from launch until the log lets go, every other file request is refused (`HAL_FS_LOCKED`, HTTP 423, DD-058).
 
 The flight context also keeps a ring of the last 64 samples and events; `flight_save_csv()` exports it for the simulator.

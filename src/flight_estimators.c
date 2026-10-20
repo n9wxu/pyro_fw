@@ -5,9 +5,9 @@
  * SPDX-License-Identifier: MIT
  */
 #include "flight_internal.h"
+#include "small_fmt.h"
 #include "atmosphere.h"
 #include "pressure_processing.h"
-#include <stdio.h>
 
 #define REPORT_MS 1000u
 
@@ -21,14 +21,14 @@ static void report(const flight_context_t *ctx, const pp_sample_t *s, uint8_t i,
     long height_cm = (long)(atmos_height_above_m(e->pressure_pa, (float)ctx->ground_pressure) * 100.0f);
     long speed_cms = (long)(-e->rate * atmos_scale_height_m(e->pressure_pa) * 100.0f);
     char row[FLIGHT_ESTIMATOR_ROW_MAX];
-    int n = snprintf(row, sizeof(row), "%s cm=%ld cm/s=%ld explains=%d", estimator_at(i)->name, height_cm, speed_cms,
-                     e->explains);
+    int n = small_snprintf(row, sizeof(row), "%s cm=%ld cm/s=%ld explains=%d", estimator_at(i)->name, height_cm,
+                           speed_cms, e->explains);
     log_row(flight_ms, row, n);
 }
 
 static void say_apogee(uint8_t i, uint32_t flight_ms) {
     char row[FLIGHT_ESTIMATOR_ROW_MAX];
-    int n = snprintf(row, sizeof(row), "%s APOGEE", estimator_at(i)->name);
+    int n = small_snprintf(row, sizeof(row), "%s APOGEE", estimator_at(i)->name);
     log_row(flight_ms, row, n);
 }
 

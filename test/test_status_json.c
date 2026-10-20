@@ -113,6 +113,7 @@ static void typical(status_snap_t *s) {
     s->estimator = "lumped";
     s->estimator_explains = true;
     s->usb_attached = true;
+    s->test_log_host = true;
     s->beep = "ready";
     s->beep_kind = "code";
     s->beep_is_code = true;
@@ -126,6 +127,16 @@ static void typical(status_snap_t *s) {
     strcpy(s->flash_jedec, "0B4018");
     s->flash_kb = 16384;
     strcpy(s->flash_uid, "41503459373331FF0102030405060708");
+    s->flash_part = "XT25F128F";
+    s->flash_in_flight = true;
+    s->frame_writer_max_us = 2950;
+    s->frame_writer_overruns = 1;
+    s->lua_skipped = 2;
+    s->slot_pieces = 300;
+    s->slot_suspends = 290;
+    s->slot_waits = 310;
+    s->flight_refusals = 4;
+    s->piece_max_us = 2880;
 }
 
 /* Today's /api/status, key for key and in order, for typical(). */
@@ -212,6 +223,7 @@ static const char *const TYPICAL[][2] = {
     {"peak_lower_bound", "false"},
     {"usb_attached", "true"},
     {"test_mode", "false"},
+    {"test_log", "\"host\""},
     {"buzzer_active", "false"},
     {"beep", "\"ready\""},
     {"beep_sound", "\"3-2\""},
@@ -223,6 +235,10 @@ static const char *const TYPICAL[][2] = {
     {"flash_jedec", "\"0B4018\""},
     {"flash_kb", "16384"},
     {"flash_uid", "\"41503459373331FF0102030405060708\""},
+    {"flash_part", "\"XT25F128F\""},
+    {"flash_in_flight", "true"},
+    {"frame", "{\"writer_max_us\":2950,\"writer_overruns\":1,\"lua_skipped\":2}"},
+    {"slots", "{\"pieces\":300,\"suspends\":290,\"waits\":310,\"flight_refusals\":4,\"piece_max_us\":2880}"},
 };
 
 static void compose(char *out, size_t cap, const char *const kv[][2], size_t n) {
@@ -344,6 +360,7 @@ void test_SJ_02_the_widest_status_fits_its_bound(void) {
     status_snap_t s;
     typical(&s);
     s.state = s.fw_version = s.sensor = s.board = s.board_id = s.resume = s.beep = s.beep_kind = s.estimator = long40;
+    s.flash_part = long40;
     s.pyro_mode[0] = s.pyro_mode[1] = long40;
     s.board_selftest = 0; /* "unknown", the widest of the three */
     s.alt_cm = s.max_alt_cm = s.vspeed_cms = s.pressure_pa = s.prev_stage = INT32_MIN;
@@ -356,7 +373,9 @@ void test_SJ_02_the_widest_status_fits_its_bound(void) {
                        &s.pres_flashed,
                        &s.ground_reseeds,   &s.stamp_lag_max_us, &s.noise_mpa,
                        &s.http_units[0],    &s.http_units[1],    &s.http_unit_max_us[0], &s.http_unit_max_us[1],
-                       &s.sample_interval_us[0], &s.sample_interval_us[1], &s.prev_stage_ms};
+                       &s.sample_interval_us[0], &s.sample_interval_us[1], &s.prev_stage_ms,
+                       &s.frame_writer_max_us, &s.frame_writer_overruns, &s.lua_skipped,
+                       &s.slot_pieces, &s.slot_suspends, &s.slot_waits, &s.flight_refusals, &s.piece_max_us};
     for (size_t i = 0; i < sizeof(u32) / sizeof(u32[0]); i++) {
         *u32[i] = UINT32_MAX;
     }

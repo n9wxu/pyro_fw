@@ -26,6 +26,8 @@ extension installs it.
 | `bench_flight.py` | Fly a profile on a board through its flight software, channels mocked, with a canopy that fails if asked (DD-078, SIM-04) |
 | `hr_log.py` | Decode a high-rate log from the SD card into CSV (DD-077) |
 | `prove_core0.py` | Prove from the linked ELF that no flight-critical root can reach a wait core1 can hold |
+| `prove_flight_ram.py` | Prove from the linked ELF that the flight path, from the first period airborne to landing, fetches and reads nothing from flash (`--strict`); `--list` its functions, `--why FN` how it reaches one, `--emit` the sections that place it [FLT-RT-02] |
+| `flight_ram_link.py` | The firmware's link: links once, finds the flight path, links again with it renamed into RAM (CMake's RULE_LAUNCH_LINK) [FLT-RT-02] |
 | `trace_check.py` | Check the requirements, decisions, traceability and living documents against each other and the code |
 | `trace_matrix.py` | Write `TRACEABILITY.md` from the tests' own citations and `trace_notes.tsv` |
 | `structure_check.py` | Check the requirements that are properties of the source |
@@ -162,6 +164,7 @@ board.
 ```bash
 python3 support/bench_flight.py <board-ip>                       # 3 km, the board's defaults
 python3 support/bench_flight.py <board-ip> --apogee 30000 --boost 4
+python3 support/bench_flight.py <board-ip> --host-log f.bin     # the log to the host, nothing to the flash (USB-09)
 python3 support/bench_flight.py <board-ip> --fail drogue          # that canopy never opens
 python3 support/hr_log.py --fetch <board-ip> hr0001              # the high-rate log after it
 ```

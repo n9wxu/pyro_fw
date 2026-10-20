@@ -79,7 +79,7 @@ static const post_route_t post_routes[] = {
     {"/api/pins", MATCH_EXACT, R_PINS, BODY_GATHER, PIN_STORE_MAX - 1, true},
     {"/api/flight/erase", MATCH_EXACT, R_ERASE, BODY_NONE, 0, true},
     {"/api/reboot", MATCH_EXACT, R_REBOOT, BODY_NONE, 0, false},
-    {"/api/test_mode/on", MATCH_EXACT, R_TEST_MODE_ON, BODY_NONE, 0, false},
+    {"/api/test_mode/on", MATCH_QUERY, R_TEST_MODE_ON, BODY_NONE, 0, false},
     {"/api/test_mode/off", MATCH_EXACT, R_TEST_MODE_OFF, BODY_NONE, 0, false},
 #if PYRO_HAS_BENCH_FLIGHT
     {"/api/sim/flight", MATCH_QUERY, R_SIM_FLIGHT, BODY_NONE, 0, false},

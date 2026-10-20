@@ -9,7 +9,7 @@ Two-channel rocket flight computer on the RP2040, for three boards: MK1A, MK1B (
 
 ### Current Implementation Status
 - **Event-driven state machine**: `src/flight_states.c` — a detector per state, a transition table, actions; twelve states (`docs/flight_states.md`). The flight software is the files of `src/flight_sources.txt`, one responsibility each
-- **Main loop**: `src/main_hardware.c` — one iteration every 20 ms (`src/loop_period.h`, DD-065); the slack runs USB, the network stack and HTTP work units
+- **Main loop**: `src/main_hardware.c` — the flight task, one iteration every 10 ms (`src/loop_period.h`, DD-104), in RAM from the first period airborne to landing (FLT-RT-02); core1 runs the log writer, then Lua, in each period's frame (FLT-LOG-09, LUA-RUN-04), and USB, the network stack and HTTP beside them
 - **HTTP web interface**: `src/http_server.c`, `src/http_conn.c`, `src/http_work.c` + `src/net_glue.c` — handlers run as work units in the slack or on core1 (DD-061); dashboard at pyro.local / 192.168.N.1
 - **USB composite device**: ECM/RNDIS network + vendor reset (picotool support); a frame the endpoint cannot take yet is held (`src/net_txq.c`, DD-070)
 - **mDNS/DNS-SD**: pyro.local hostname, _pyro._tcp service discovery
@@ -45,7 +45,7 @@ Dependencies: Pico SDK 2.2.0, installed separately; alfs (format 6), Unity v2.6.
 
 ### Key Design Decisions
 1. Integers for what is stored and reported (Pa, cm, ms); the estimator and the atmosphere use single-precision float. Every flight comparison is made in pressure (SNS-EST-05)
-2. Every flash program or erase runs through `flash_op()`, which parks the other core (DD-074)
+2. On the ground every flash program or erase runs through `flash_op()`, which parks the other core (DD-074); in flight only the log writer's run, in pieces inside its slot on core1, and core0 runs from RAM (FLT-RT-03, DD-104)
 3. Apogee is an event, not a state (twelve states; see docs/flight_states.md)
 4. T+0 is backdated to the start of the rise, not the detection threshold (FLT-LAUNCH-03)
 5. The exec loop is the only clock: nothing sleeps or busy-waits (DD-053)
@@ -121,7 +121,7 @@ GROUND_TEST are numbered after LANDED, so recorded state numbers never move.
 - A board resuming a flight keeps flying whatever the switch says
 
 ### PAD_IDLE
-- A pressure every 20 ms loop, 50 a second (FLT-RATE-01)
+- At least 50 pressures a second, each stepped in the loop it arrives in (FLT-RATE-01, FLT-RATE-06)
 - Ground reference: follows the weather, excluding samples more than 50 Pa from it, and moves to a new pad after 5 s still (GND-CAL-01, GND-CAL-03, GND-CAL-06)
 - Launch: altitude above 100 ft and speed above 5 m/s on the filtered state, with no hold time, and no USB host attached unless test mode is on (FLT-LAUNCH-07, USB-01)
 - On launch: T+0 is the start of the rise (FLT-LAUNCH-03); the reference freezes to the pad before T+0 (GND-CAL-04)

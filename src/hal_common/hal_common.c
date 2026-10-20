@@ -49,7 +49,9 @@
 #include "pyro_release.h"
 #include "http_server.h"
 #include "flight_log.h"
+#include "small_fmt.h"
 #include "net_glue.h"
+#include "log_live.h"
 #include "ground_test_switch.h"
 #include "pressure_trace.h"
 #include "loop_period.h"
@@ -547,14 +549,14 @@ static const pyro_ch_ops_t real_pyro_ops = {real_fire, real_get, real_fault};
  * did not happen. */
 static void report_mock(uint8_t channel, const char *what) {
     char note[48];
-    snprintf(note, sizeof(note), "pyro%u %s: released to Lua", (unsigned)channel, what);
+    small_snprintf(note, sizeof(note), "pyro%u %s: released to Lua", (unsigned)channel, what);
     /* [DAT-02, N11] On the flight log's clock, since T+0, like every other row. */
     const flight_context_t *fc = flight_get_context();
     uint32_t now = to_ms_since_boot(get_absolute_time());
     hal_log_mock(fc ? flight_elapsed_ms(fc, now) : now, note);
 
     char line[64];
-    snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
+    small_snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
     hal_telemetry_send(line);
 }
 
@@ -593,10 +595,10 @@ static void bench_fire(uint8_t channel) {
     bench_flight_fire(channel, now);
     const flight_context_t *fc = flight_get_context();
     char note[40];
-    snprintf(note, sizeof(note), "pyro%u fire: bench flight", (unsigned)channel);
+    small_snprintf(note, sizeof(note), "pyro%u fire: bench flight", (unsigned)channel);
     hal_log_mock(fc ? flight_elapsed_ms(fc, now) : now, note);
     char line[56];
-    snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
+    small_snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
     hal_telemetry_send(line);
 }
 #endif
@@ -1180,6 +1182,7 @@ enum { LOG_IDLE, LOG_RUNNING, LOG_STOPPING };
 typedef struct {
     uint8_t buf[LOG_BUF_SIZE];
     volatile uint32_t head; /* the flight task */
+    bool to_host;           /* [USB-09] this log goes to log_live.h, not the flash */
     volatile uint32_t tail; /* the storage task */
     volatile uint8_t state; /* see above */
     uint32_t dropped;       /* sample bytes the ring could not hold */
@@ -1203,6 +1206,15 @@ typedef struct {
 
 static log_ring_t log_ring;
 static uint8_t log_file_buf[VFS_BUF_SIZE];
+static volatile bool log_host_next; /* the next log's to_host */
+
+void hal_log_to_host(bool on) {
+    log_host_next = on;
+}
+
+bool hal_log_held_for_host(void) {
+    return log_ring.state != LOG_IDLE ? log_ring.to_host : log_host_next;
+}
 
 static uint32_t log_used(void) {
     return log_ring.head - log_ring.tail;
@@ -1240,6 +1252,7 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
      * task is idle on the ring until the state below says RUNNING. */
     log_ring.dropped = 0;
     log_ring.head = log_ring.tail = 0;
+    log_ring.to_host = log_host_next;
     flog_header_t h = {
         .board = PYRO_BOARD_NAME,
         .id = cfg->id,
@@ -1279,6 +1292,12 @@ static void log_write_out(void) {
         if (span > LOG_BUF_SIZE - off)
             span = LOG_BUF_SIZE - off;
         int n = vfs_write(&log_ring.file, log_ring.buf + off, span);
+        if (n == VFS_NOSPC) {
+            /* [FLT-LOG-10] No erased page left: one sector a removed file
+             * left, erased in the writer's slots. */
+            vfs_clean();
+            return;
+        }
         if (n <= 0)
             return; /* the bytes stay: the next pass retries */
         __dmb();
@@ -1287,9 +1306,26 @@ static void log_write_out(void) {
     }
 }
 
+/* [USB-09] Everything the ring holds, into the RAM the host reads; nothing
+ * waits, so nothing is held back. */
+static void log_hand_to_host(void) {
+    uint32_t h = log_ring.head;
+    __dmb();
+    while (log_ring.tail != h) {
+        uint32_t t = log_ring.tail;
+        uint32_t off = t & LOG_MASK;
+        uint32_t span = h - t;
+        if (span > LOG_BUF_SIZE - off)
+            span = LOG_BUF_SIZE - off;
+        log_live_write(log_ring.buf + off, span);
+        __dmb();
+        log_ring.tail = t + span;
+    }
+}
+
 /* The storage task's end of a log: the file closed, the filesystem free. */
 static void log_finish(void) {
-    if (log_ring.file_open)
+    if (log_ring.file_open && !log_ring.to_host)
         vfs_close(&log_ring.file);
     log_ring.file_open = false;
     log_ring.stop_seen = false;
@@ -1313,13 +1349,30 @@ static void log_service(uint32_t now_ms) {
         return;
     }
 
+    if (log_ring.to_host) {
+        if (!log_ring.file_open) {
+            log_live_reset();
+            log_ring.file_open = true; /* the host's RAM stands in for the file */
+        }
+        log_hand_to_host();
+        if (st == LOG_STOPPING)
+            log_finish();
+        return;
+    }
+
     if (!log_ring.file_open) {
-        if (!fs_ok)
+        /* [FLT-RT-03] A flight log opens once the flight's flash operations
+         * run in slots, from the first period airborne; its rows wait in the
+         * ring meanwhile. A log stopped before then opens under the lockout. */
+        if (!fs_ok || (PYRO_FLIGHT_RAM && st == LOG_RUNNING && !flash_op_in_flight()))
             return;
         /* The last flight's log goes first, so a reset in this flight finds
          * this flight's: a write replaces a file only when it closes. */
         vfs_remove(FLOG_PATH);
-        if (vfs_open(&log_ring.file, FLOG_PATH, VFS_WR, log_file_buf) != 0)
+        int rc = vfs_open(&log_ring.file, FLOG_PATH, VFS_WR, log_file_buf);
+        if (rc == VFS_NOSPC)
+            vfs_clean(); /* [FLT-LOG-10] no erased page for the log's first */
+        if (rc != 0)
             return; /* the next pass retries; the ring keeps the rows */
         log_ring.file_open = true;
         log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
@@ -1446,10 +1499,17 @@ void hal_log_stop(void) {
         return;
     __dmb();
     log_ring.state = LOG_STOPPING;
+#if PYRO_FLIGHT_RAM
+    flash_op_flight_end(); /* before the flight task runs from flash again */
+#endif
 }
 
 bool hal_log_active(void) {
     return log_ring.state != LOG_IDLE;
+}
+
+bool hal_log_running(void) {
+    return log_ring.state == LOG_RUNNING;
 }
 
 /* pico_fota_bootloader rolls back to the previous image unless the new one
