@@ -211,7 +211,7 @@ typedef struct {
 
     uint64_t last_stamp_us; /* the previous sample's time, for the interval */
     uint32_t interval_min_us, interval_max_us, stamp_lag_max_us;
-    uint32_t flashed;  /* [DD-068] readings a flash operation disturbed, not fed on */
+    uint32_t flashed;  /* [DD-106] readings a flash operation ran beside, used like any other */
     uint32_t cycle_us; /* the collector's, when nothing fails */
 } pres_task_t;
 
@@ -308,30 +308,20 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
 
 /* ── The collector's cycles, into readings [DD-093] ───────────────── */
 
-/* [DD-066] The temperature goes on its line first: the pressure before
- * it is compensated at its own time, between this temperature and the last. */
+/* [DD-066] The cycle's temperature goes on its line first: its pressure is
+ * compensated at its own time, between this temperature and the last.
+ * [DD-106] A conversion a flash operation ran beside is counted. */
 static void take_ms5607(pres_task_t *p, const collector_raw_t *raw, uint32_t read_us) {
-    uint32_t d1 = ms5607_code(raw->data[MS5607_PRESSURE]);
-    uint32_t d2 = ms5607_code(raw->data[MS5607_TEMPERATURE]);
-    uint64_t d1_at_us = raw->at_us[MS5607_PRESSURE], d2_at_us = raw->at_us[MS5607_TEMPERATURE];
-    bool d2_flashed = raw->flashed[MS5607_TEMPERATURE];
-    ptrace_note((uint32_t)d2_at_us, read_us, d2, 0, 0, d2_flashed ? PTRACE_FLASHED_T : PTRACE_TEMPERATURE);
-    if (d2_flashed)
-        p->flashed++;
-    else
-        ms5607_temps_note(&p->temps, d2, d2_at_us);
-    if (p->temps.n == 0)
-        return;
+    ms5607_pair_t codes = ms5607_cycle(&p->temps, raw);
+    bool d1_flashed = raw->flashed[MS5607_PRESSURE], d2_flashed = raw->flashed[MS5607_TEMPERATURE];
+    ptrace_note((uint32_t)raw->at_us[MS5607_TEMPERATURE], read_us, ms5607_code(raw->data[MS5607_TEMPERATURE]), 0, 0,
+                d2_flashed ? PTRACE_FLASHED_T : PTRACE_TEMPERATURE);
     pressure_reading_t r;
-    ms5607_compensate(d1, ms5607_temps_at(&p->temps, d1_at_us), &r);
-    r.time_us = d1_at_us;
-    int32_t pa_c = (int32_t)lroundf(r.pressure_pa * 100.0f);
-    if (raw->flashed[MS5607_PRESSURE]) {
-        ptrace_note((uint32_t)d1_at_us, read_us, d1, 0, pa_c, PTRACE_FLASHED);
-        p->flashed++;
-        return;
-    }
-    ptrace_note((uint32_t)d1_at_us, read_us, d1, 0, pa_c, PTRACE_PRESSURE);
+    ms5607_compensate(codes.d1, codes.d2, &r);
+    r.time_us = raw->at_us[MS5607_PRESSURE];
+    ptrace_note((uint32_t)r.time_us, read_us, codes.d1, 0, (int32_t)lroundf(r.pressure_pa * 100.0f),
+                d1_flashed ? PTRACE_FLASHED : PTRACE_PRESSURE);
+    p->flashed += (uint32_t)d1_flashed + (uint32_t)d2_flashed;
     pres_append(p, &r);
 }
 
@@ -343,10 +333,8 @@ static void take_bmp280(pres_task_t *p, const collector_raw_t *raw, uint32_t rea
     r.reading.time_us = raw->at_us[0];
     ptrace_note((uint32_t)r.reading.time_us, read_us, r.adc_p, r.adc_t,
                 (int32_t)lroundf(r.reading.pressure_pa * 100.0f), raw->flashed[0] ? PTRACE_FLASHED : PTRACE_PRESSURE);
-    if (raw->flashed[0])
-        p->flashed++;
-    else
-        pres_append(p, &r.reading);
+    p->flashed += (uint32_t)raw->flashed[0];
+    pres_append(p, &r.reading);
 }
 #endif
 
@@ -1410,9 +1398,9 @@ __attribute__((weak)) void board_flash_service(uint32_t now_ms) {
     (void)now_ms;
 }
 
-/* An erase stops both cores and spoils the pressure conversion beside it
- * [DD-068]: one a second leaves the sensor the rest of each second, at boot
- * calibration's ten samples among them. */
+/* An erase stops both cores and disturbs the pressure conversion beside it
+ * [DD-106]: one a second leaves the rest of each second's readings
+ * undisturbed, boot calibration's ten among them. */
 #define CLEAN_PERIOD_MS 1000u
 
 static uint32_t next_clean_ms;
