@@ -26,6 +26,12 @@ from a part. Cite the file and page, not memory.
 | `XC6206_ETR0305_004b.pdf` | Torex XC6206 LDO; the XC6206P332MR is MK1C's U6, the 3.3 V rail | ETR0305_004b | wmsc.lcsc.com (LCSC C5446), fetched 2026-09-28; torexsemi.com refused |
 | `MIC2920A_Micrel_2005-02.pdf` | Micrel MIC2920A 400 mA LDO; the MIC2920A-3.3 feeds the MK1C J3 test board's SD card (C-U6) | Micrel, February 2005 | ww1.microchip.com/downloads/en/DeviceDoc/mic2920.pdf, fetched 2026-09-29 |
 | `SD_Physical_Layer_Simplified_v6.00_2017-04.pdf` | SD Association Physical Layer Simplified Specification | Version 6.00, April 10, 2017 | academy.cba.mit.edu/classes/networking_communications/SD/SD.pdf, fetched 2026-09-28; sdcard.org would not download |
+| `FM25V20A_001-90261_RevJ_2023-12-22.pdf` | Infineon FM25V20A 2 Mbit SPI F-RAM, 40 MHz, industrial (a candidate flight-log memory) | 001-90261 Rev. *J, 2023-12-22 | infineon.com/assets/row/public/documents/10/49/infineon-fm25v20a-2-mbit-256k-8-serial-spi-f-ram-serial-spi-256k-8-40-mhz-industrial-datasheet-en.pdf, fetched 2026-10-14 |
+| `CY15B104QN_002-19436_RevO_2023-06-05.pdf` | Infineon Excelon LP CY15B104QN/CY15V104QN 4 Mbit SPI F-RAM (a candidate flight-log memory) | 002-19436 Rev. *O, 2023-06-05 | infineon.com/dgdl/Infineon-CY15B104QN_CY15V104QN_Excelon(TM)_LP_4-Mbit_(512K_X_8)_Serial_(SPI)_F-RAM-DataSheet-v12_00-EN.pdf, fetched 2026-10-14 |
+| `MB85RS2MTA_DS501-00032-6v1_2025-07.pdf` | RAMXEED (formerly Fujitsu) MB85RS2MTA 2 Mbit SPI FeRAM (a candidate flight-log memory) | DS501-00032-6v1-E, 2025.07 | ramxeed.com/assets/images/products/datasheet/FeRAM/s3/MB85RS2MTA-DS6v1-E.pdf, fetched 2026-10-14 |
+| `MB85RS4MT_DS501-00053-3v1_2025-07.pdf` | RAMXEED MB85RS4MT 4 Mbit SPI FeRAM (a candidate flight-log memory) | DS501-00053-3v1-E, 2025.07 | ramxeed.com/assets/images/products/datasheet/FeRAM/s3/MB85RS4MT-DS3v1-E.pdf, fetched 2026-10-14 |
+| `MR20H40_MR25H40_Rev12.6_2020-08-07.pdf` | Everspin MR20H40/MR25H40 4 Mbit SPI MRAM (a candidate flight-log memory) | Revision 12.6, 7 August 2020 | everspin.com/sites/default/files/EST00459_MR2xH40_Datasheet_Rev12.6_08092020.pdf, fetched 2026-10-14 |
+| `MR25H10_Rev9.5_2018-03-23.pdf` | Everspin MR25H10 1 Mbit SPI MRAM (a candidate flight-log memory) | Rev. 9.5, 23 March 2018 | everspin.com/sites/default/files/MR25H10_Datasheet.pdf, fetched 2026-10-14 |
 
 MS5607, page 3: conversion time at OSR 4096 is 7.40 / 8.22 / 9.04 ms (min /
 typ / max). Page 4 (pressure output): RMS resolution 0.024 mbar (2.4 Pa) at
@@ -171,3 +177,78 @@ registers", so a burst read from 3Eh returns successive FIFO words. Section
 Page 88: over SPI the FIFO status should be read in step with a data-ready
 or watermark interrupt; with no interrupt pin wired, a read takes only whole
 patterns, aligned by FIFO_PATTERN.
+
+Erase suspend on the boards' flash parts (for `docs/flash_stall_options.md`).
+W25Q16JV, page 40, and W25Q128JV, page 43: 75h suspends a sector or block
+erase, or a page program, and the array may then be read or programmed
+outside the suspended sector; erase instructions and Write Status are
+refused meanwhile; a power cut while suspended may corrupt the suspended
+sector. Pages 64 and 66: tSUS 20 us, both the time to suspend and the
+least time between a resume and the next suspend; 64 KB block erase 150 ms
+typical, 2,000 ms at most. XT25F128F, page 43: 75H suspends a program or
+erase. Pages 55-56: tSUS 20 us, tRS (resume to next suspend) 500 us at
+least; page program 0.4 / 2 ms; sector erase 40 / 800 ms; 64 KB block
+erase 0.25 / 1.6 s. Page 36: fewer than 256 bytes program "without having
+any effects on the other bytes of the same page". BY25Q64ES, page 62:
+erase suspend only (7.4.7). Page 71 (-40 to 85 C): tESL 30 us; tERS
+printed 0.22 us; page program 0.45 / 2.4 ms; sector erase 35 / 300 ms;
+64 KB block erase 0.18 / 2 s. Page 72 (to 105 C): tESL 35 us, tERS 20 us.
+Pages 56-57: partial page programs as the XT25F128F's.
+
+RP2040, page 130 (section 2.8, the bootrom's boot sequence): "If watchdog
+scratch registers set to indicate pre-loaded code exists in SRAM, jump to
+that code", so SRAM keeps its contents through a watchdog reset. Page 546:
+the scratch registers persist through a soft reset, but a RUN-pin toggle or
+a cycle of the digital supply resets them.
+
+FM25V20A, page 1: 256K x 8, 40 MHz, VDD 2.0-3.6 V, SOIC and DFN. Pages 2
+and 14: writes at bus speed, each byte as its eighth clock ends; no write
+delay, no polling. Page 18: -40 to +85 C. Page 19: 2.4/3 mA (typ/max) at
+40 MHz; standby 100/150 uA at 25 C, 250 uA at 85 C; sleep 3/5 uA. Page 20:
+retention 10 years at 85 C, 38 at 75 C, 151 at 65 C; endurance 10^14.
+Page 24: 40 MHz at 2.7-3.6 V, 25 MHz below. Page 25: 1 ms from VDD(min) to
+the first access. Page 27: the 208-mil SOIC, body 5.13-5.33 mm,
+7.75-8.26 mm across the leads, 2.03 mm high at most. Page 28: DFN
+5 x 6 x 0.75 mm. Nothing on shock or vibration.
+
+CY15B104QN, page 1: 512K x 8, 10^15 cycles, up to 50 MHz; SOIC, GQFN
+(NRND) and UFLGA. Page 18: 4Ch reads an 8-byte unique ID. Page 23:
+1.8-3.6 V, -40 to +85 C. Page 24: 2.4/3 mA at 40 MHz, 3/3.7 mA at 50 MHz.
+Page 25: standby 2.6 uA typical, 70 uA at most at 85 C; deep power-down
+0.8 uA, hibernate 0.1 uA typical. Page 27: retention 10 years at 85 C, 141
+at 70 C, 151 at 60 C, 160 at 50 C. Page 33: 450 us from VDD(min) to the
+first access. Page 34: CY15B104QN-50SXI is the 50 MHz SOIC (EIAJ). Page
+36: the same 208-mil SOIC outline as the FM25V20A's (001-85261).
+
+MB85RS2MTA, page 1: 256K x 8, 40 MHz, 1.7-3.6 V, -40 to +85 C, "takes no
+wait time"; the features give 10^14 cycles, the description above them
+10^13. Page 13: 1.9/2.3 mA at 40 MHz; standby 50 uA, sleep 10 uA at most;
+CS pulled up inside, 18/33/80 kohm. Page 14: 40 MHz at 2.7-3.6 V. Page 17:
+CS held 250 us at power-on; 10^14 reads and writes; retention 10 years at
+85 C, 95 at 55 C; program after reflow. Page 21: SOP-8 150 mil, 3.90 x
+4.90 mm, 1.75 mm high (MB85RS2MTAPNF). Page 22: SOP-8 208 mil, 5.30 x
+5.65 mm (MB85RS2MTAPF).
+
+MB85RS4MT, page 1: 512K x 8, 40 MHz, 1.8-3.6 V, -40 to +85 C, SOP-8
+208 mil only; the description says 10^13 cycles, page 17 10^14. Page 13:
+1.8/2.6 mA at 40 MHz; standby 10/50 uA; sleep 5/8 uA. Page 17: retention
+10 years at 85 C, 95 at 55 C, over 200 at 35 C; 250 us at power-on. Page
+21: 5.30 x 5.65 mm, 1.73 mm high.
+
+MR2xH40, page 1: 512K x 8; MR25H40 40 MHz, MR20H40 50 MHz; no write
+delays, unlimited endurance, retention over 20 years with no temperature
+given; DFN 5 x 6 mm. Page 15: magnetic field 12,000 A/m at most, writing
+or not. Page 16: 3.0-3.6 V; -40 to +85 C industrial, +125 C AEC-Q100
+Grade 1. Page 17: at 40 MHz reads draw 12/17 mA and writes 28/42 mA;
+standby 90/180 uA, sleep 15/40 uA. Page 19: 400 us after power-up. Page
+25: MR25H40CDF is industrial in the small-flag DFN; the CDC (8-DFN) is not
+for new designs.
+
+MR25H10, page 1: 1 Mbit, 40 MHz, no write delays, unlimited endurance,
+retention over 20 years; DFN 5 x 6 mm. Page 10: 12,000 A/m at most. Page
+11: 2.7-3.6 V industrial, 3.0-3.6 V AEC-Q100; writes 23/27 mA at 40 MHz;
+standby 90/115 uA, sleep 7/30 uA.
+
+RP2040, PDF page 238 (printed 237, Table 279): SPI0 RX/CSn/SCK/TX repeat
+on GPIO0-7, 16-23; SPI1 on GPIO8-15, 24-29. PDF page 506: a master's peak
+bit rate is clk_peri / 2, 62.5 Mbps at 133 MHz.
