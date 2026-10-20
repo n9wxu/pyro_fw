@@ -35,6 +35,7 @@ static uint8_t nfailed;
 
 /* Pages a replaced or removed file left may wait for the cleanup. */
 static bool dirty = true;
+static uint32_t cleaned; /* sectors the cleanup erased */
 
 /* A rename's reader and writer, and a size's reader, under the lock. */
 static uint8_t copy_rblk[PAGE_MAX], copy_wblk[PAGE_MAX];
@@ -373,21 +374,9 @@ uint32_t vfs_flash_synced_cost(uint32_t bytes) {
     return (bytes + page - 1u) / page * page;
 }
 
-int vfs_flash_survey(vfs_flash_survey_t *out) {
-    if (!mounted || !fs_lock())
-        return VFS_FLASH_ERR;
-    alfs_fs_status_t st;
-    int rc = alfs_fs_status(&store, &st);
-    fs_unlock();
-    if (rc != ALFS_OK)
-        return err(rc);
-    out->bytes = st.pages * st.data_per_page;
-    out->in_files = st.live * st.data_per_page;
-    out->erased = st.free * st.data_per_page;
-    out->unused = st.dead * st.data_per_page;
-    out->bad_sectors = st.bad;
+void vfs_flash_cleanup_state(vfs_flash_cleanup_t *out) {
     out->cleaning = writable && (dirty || nfailed);
-    return 0;
+    out->erased = cleaned;
 }
 
 int vfs_flash_list(vfs_flash_each_t each, void *ctx) {
@@ -414,6 +403,8 @@ int vfs_flash_clean(void) {
     int rc = alfs_fs_cleanup(&store, 1);
     if (rc == ALFS_CLEAN)
         dirty = false;
+    else if (rc == ALFS_OK)
+        cleaned++; /* one sector a step */
     fs_unlock();
     if (rc == ALFS_CLEAN)
         return 0;

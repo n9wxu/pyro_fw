@@ -96,16 +96,13 @@ static inline uint32_t vfs_flash_clean_wait_ms(bool grounded_on_usb) {
     return grounded_on_usb ? 0u : VFS_FLASH_CLEAN_PERIOD_MS;
 }
 
-/* [WEB-API-19] The store as its pages are now, in bytes of file data: what
- * the files hold, what is erased, and what no file needs but is not yet
- * erased -- some of it in sectors files still share, which the cleanup
- * erases once those files go. cleaning: it has sectors left to erase.
- * Reads every page's header. */
+/* [WEB-API-19] The cleanup, read from no page: whether it has sectors left
+ * to erase, and the sectors it has erased since the mount. */
 typedef struct {
-    uint32_t bytes, in_files, erased, unused, bad_sectors;
     bool cleaning;
-} vfs_flash_survey_t;
-int vfs_flash_survey(vfs_flash_survey_t *out);
+    uint32_t erased;
+} vfs_flash_cleanup_t;
+void vfs_flash_cleanup_state(vfs_flash_cleanup_t *out);
 
 /* Each file, under the store's lock: its name, its size once closed (0
  * before), and whether it is closed. The count, or <0. each must not call

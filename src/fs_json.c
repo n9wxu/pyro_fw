@@ -29,10 +29,10 @@ static bool path_char(char c) {
 void fs_json_begin(fs_json_t *j, char *buf, int cap, const fs_space_t *s) {
     *j = (fs_json_t){buf, cap, 0, true, cap <= 0};
     put(j,
-        "{\"store\":\"flash\",\"bytes\":%lu,\"in_files\":%lu,\"erased\":%lu,\"unused\":%lu,\"bad_sectors\":%lu,"
-        "\"cleanup\":\"%s\",\"files\":[",
-        (unsigned long)s->bytes, (unsigned long)s->in_files, (unsigned long)s->erased, (unsigned long)s->unused,
-        (unsigned long)s->bad_sectors, s->cleanup);
+        "{\"store\":\"flash\",\"bytes\":%lu,\"in_files\":%lu,\"free\":%lu,\"cleanup\":\"%s\","
+        "\"cleaned_sectors\":%lu,\"files\":[",
+        (unsigned long)s->bytes, (unsigned long)s->in_files, (unsigned long)s->free, s->cleanup,
+        (unsigned long)s->cleaned);
 }
 
 void fs_json_file(fs_json_t *j, const char *name, uint32_t size, bool closed, bool board) {

@@ -14,9 +14,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Bytes of file data; cleanup "done", or erasing "fast" (USB-10) or "slow". */
+/* Bytes of file data, free counting pages the cleanup has yet to erase;
+ * cleanup "done", or erasing "fast" (USB-10) or "slow"; the sectors it has
+ * erased since the start. */
 typedef struct {
-    uint32_t bytes, in_files, erased, unused, bad_sectors;
+    uint32_t bytes, in_files, free, cleaned;
     const char *cleanup;
 } fs_space_t;
 

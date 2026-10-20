@@ -1160,20 +1160,22 @@ static void fs_list_one(void *ctx, const char *name, uint32_t size, bool closed)
     fs_json_file((fs_json_t *)ctx, name, size, closed, vfs_is_internal(name));
 }
 
-/* GET /api/fs [WEB-API-19]: the flash store, then each file, written into the
- * work buffer as the store lists them. */
+/* GET /api/fs [WEB-API-19]: the flash store from its files' records, then
+ * each file, written into the work buffer as the store lists them. */
 static void serve_api_fs(conn_t *c) {
     http_conn_t *hc = &c->h;
     if (!fs_take(c)) {
         return;
     }
-    vfs_flash_survey_t v;
-    if (vfs_flash_survey(&v) != 0) {
+    uint64_t free_b = 0, total_b = 0;
+    if (vfs_flash_space(&free_b, &total_b) != 0) {
         http_respond_str(hc, 500, JSON, "{\"error\":\"no filesystem\"}");
         return;
     }
-    fs_space_t s = {v.bytes,  v.in_files,    v.erased,
-                    v.unused, v.bad_sectors, !v.cleaning ? "done" : flight_is_grounded_on_usb() ? "fast" : "slow"};
+    vfs_flash_cleanup_t k;
+    vfs_flash_cleanup_state(&k);
+    const char *pace = !k.cleaning ? "done" : flight_is_grounded_on_usb() ? "fast" : "slow";
+    fs_space_t s = {(uint32_t)total_b, (uint32_t)(total_b - free_b), (uint32_t)free_b, k.erased, pace};
     fs_json_t j;
     fs_json_begin(&j, (char *)hc->work, (int)sizeof(hc->work), &s);
     vfs_flash_list(fs_list_one, &j);

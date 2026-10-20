@@ -1665,10 +1665,10 @@ function fmtBytes(n) {
 }
 
 function fsCleanText(d) {
-  if (d.cleanup === 'fast') return 'The cleanup is erasing at full speed while on USB.';
-  if (d.cleanup === 'slow') return 'The cleanup is erasing one sector a second, as on the pad.';
-  if (d.unused) return 'Nothing more to erase now: the rest share sectors with files, and are erased once those files go.';
-  return 'Every unused page is erased.';
+  var n = d.cleaned_sectors + (d.cleaned_sectors === 1 ? ' sector' : ' sectors');
+  if (d.cleanup === 'fast') return 'The cleanup is erasing at full speed while on USB: ' + n + ' so far.';
+  if (d.cleanup === 'slow') return 'The cleanup is erasing one sector a second, as on the pad: ' + n + ' so far.';
+  return 'Nothing left for the cleanup to erase (' + n + ' since the board started).';
 }
 
 function fsRow(f) {
@@ -1705,9 +1705,7 @@ function fsLoad() {
     hint.textContent = d.files.length + (d.files.length === 1 ? ' file' : ' files') + ' on the board\'s flash.';
     document.getElementById('fsTotal').textContent = fmtBytes(d.bytes);
     document.getElementById('fsUsed').textContent = fmtBytes(d.in_files);
-    document.getElementById('fsFree').textContent = fmtBytes(d.erased);
-    document.getElementById('fsUnused').textContent = fmtBytes(d.unused);
-    document.getElementById('fsBad').textContent = d.bad_sectors;
+    document.getElementById('fsFree').textContent = fmtBytes(d.free);
     document.getElementById('fsClean').textContent = fsCleanText(d);
     var table = document.getElementById('fsFiles');
     table.textContent = '';
