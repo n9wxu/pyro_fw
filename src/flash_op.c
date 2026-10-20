@@ -12,6 +12,7 @@
 #include "task.h"
 #include "hardware/flash.h"
 #include "hardware/sync.h"
+#include "hardware/timer.h"
 #include "hardware/structs/timer.h"
 #include "hardware/structs/watchdog.h"
 #include "pico/platform.h"
@@ -48,6 +49,21 @@ static volatile uint32_t lockouts, timeouts, refusals, waits, erases, programs, 
 static volatile bool flight, piece_busy;
 static TaskHandle_t writer;
 static flash_op_slot_stats_t slot_stats;
+
+/* [FLT-LOG-11] A piece left the chip holding an operation suspended: only
+ * that operation's own next piece resumes it, and the first operation on
+ * the ground finishes it should the flight have given it up. */
+static volatile bool held_suspended;
+
+static void __no_inline_not_in_flash_func(held_cmd)(void *ctx, uint8_t *buf, size_t n) {
+    (void)ctx;
+    flash_do_cmd(buf, buf, n);
+}
+
+static uint32_t __no_inline_not_in_flash_func(held_now)(void *ctx) {
+    (void)ctx;
+    return timer_hw->timerawl;
+}
 
 __attribute__((weak)) bool board_flash_ok(void) {
     return true;
@@ -103,6 +119,11 @@ static bool wait_state(uint core, uint8_t want, uint32_t limit_us) {
 static void run_direct(flash_op_fn fn, void *arg) {
     uint32_t irq = save_and_disable_interrupts();
     uint32_t t0 = timer_hw->timerawl;
+    if (held_suspended) {
+        flash_chip_io_t io = {NULL, held_cmd, held_now};
+        flash_chip_finish_suspended(&io, FLASH_CHIP_FINISH_MAX_US);
+        held_suspended = false;
+    }
     fn(arg);
     flash_op_seq++;
     uint32_t d = timer_hw->timerawl - t0;
@@ -212,8 +233,6 @@ int flash_op_program(uint32_t offset, const uint8_t *data, uint32_t len) {
 
 #define CMD_WRITE_ENABLE 0x06u
 #define CMD_PAGE_PROGRAM 0x02u
-#define CMD_READ_STATUS 0x05u
-#define STATUS_BUSY 0x01u
 
 /* The page program's command, address and data; filled under the lockout,
  * which one operation holds at a time. */
@@ -235,10 +254,10 @@ static void __no_inline_not_in_flash_func(do_program_bytes)(void *a) {
     flash_do_cmd(cmd, cmd, 1);
     flash_do_cmd(page_cmd, page_cmd, 4u + sp->len);
     do {
-        cmd[0] = CMD_READ_STATUS;
+        cmd[0] = FLASH_CMD_READ_STATUS;
         cmd[1] = 0;
         flash_do_cmd(cmd, cmd, 2);
-    } while (cmd[1] & STATUS_BUSY);
+    } while (cmd[1] & FLASH_STATUS_BUSY);
 }
 
 uint32_t flash_op_lockouts(void) {
@@ -277,11 +296,11 @@ void flash_op_crumb(unsigned n) {
 /* A suspend lands in tSUS; this bounds the wait on a chip that does not. */
 #define SUSPEND_HARD_MAX_US 1000u
 
+#define PIECE_ENDLESS (-6)  /* a piece that cannot suspend has not ended */
+#define PIECE_ESUSPEND (-7) /* a suspend that has not landed: the chip may hold it yet */
+
 #define CMD_ERASE_SECTOR 0x20u
 #define CMD_SUSPEND 0x75u
-#define CMD_RESUME 0x7Au
-#define CMD_READ_STATUS2 0x35u
-#define STATUS2_SUSPENDED 0x84u /* SUS (S15); on XT25F128F a program's SUS2 (S10) too */
 
 typedef struct {
     flash_slot_kind_t kind;
@@ -325,29 +344,29 @@ static void __no_inline_not_in_flash_func(chip_start)(const piece_args_t *a) {
  * each command, and the last command here finds the chip idle. */
 static int __no_inline_not_in_flash_func(run_piece)(const piece_args_t *a) {
     if (a->p->resume)
-        chip_cmd(CMD_RESUME);
+        chip_cmd(FLASH_CMD_RESUME);
     else
         chip_start(a);
     uint32_t t0 = timer_hw->timerawl;
     for (;;) {
-        if (!(chip_status(CMD_READ_STATUS) & STATUS_BUSY))
+        if (!(chip_status(FLASH_CMD_READ_STATUS) & FLASH_STATUS_BUSY))
             return PIECE_DONE;
         uint32_t now = timer_hw->timerawl;
         if (a->p->may_suspend && (int32_t)(now - a->p->suspend_at) >= 0 && (int32_t)(now - a->p->suspend_from) >= 0)
             break;
         if ((uint32_t)(now - t0) > PIECE_HARD_MAX_US)
-            return -6;
+            return PIECE_ENDLESS;
     }
     chip_cmd(CMD_SUSPEND);
     uint32_t ts = timer_hw->timerawl;
     while ((uint32_t)(timer_hw->timerawl - ts) < a->settle_us) {
         __asm volatile("nop");
     }
-    while (chip_status(CMD_READ_STATUS) & STATUS_BUSY) {
+    while (chip_status(FLASH_CMD_READ_STATUS) & FLASH_STATUS_BUSY) {
         if ((uint32_t)(timer_hw->timerawl - ts) > SUSPEND_HARD_MAX_US)
-            return -7;
+            return PIECE_ESUSPEND;
     }
-    return (chip_status(CMD_READ_STATUS2) & STATUS2_SUSPENDED) ? PIECE_SUSPENDED : PIECE_DONE;
+    return (chip_status(FLASH_CMD_READ_STATUS2) & FLASH_STATUS2_SUSPENDED) ? PIECE_SUSPENDED : PIECE_DONE;
 }
 
 void flash_op_flight_begin(void) {
@@ -373,6 +392,15 @@ bool flash_op_in_flight(void) {
     return flight;
 }
 
+bool flash_op_can_erase(void) {
+    if (!flight)
+        return true;
+    uint8_t jedec[3];
+    flash_chip_jedec(jedec);
+    const flash_timing_t *t = flash_timing_for(jedec);
+    return t && t->erase_suspends;
+}
+
 void flash_op_set_writer(void *task) {
     writer = (TaskHandle_t)task;
 }
@@ -388,8 +416,8 @@ typedef struct {
  * landing. */
 static void __no_inline_not_in_flash_func(do_resume_finish)(void *a) {
     (void)a;
-    chip_cmd(CMD_RESUME);
-    while (chip_status(CMD_READ_STATUS) & STATUS_BUSY) {
+    chip_cmd(FLASH_CMD_RESUME);
+    while (chip_status(FLASH_CMD_READ_STATUS) & FLASH_STATUS_BUSY) {
     }
 }
 
@@ -412,13 +440,6 @@ static uint32_t io_t0(void *ctx) {
     return core1_frame_t0();
 }
 
-static void io_next_slot(void *ctx) {
-    (void)ctx;
-    slot_stats.slot_waits++;
-    core1_frame_writer_done();
-    core1_frame_wait(2u * LOOP_PERIOD_MS);
-}
-
 static bool io_in_flight(void *ctx) {
     (void)ctx;
     return flight;
@@ -430,20 +451,22 @@ static int io_whole(void *ctx, flash_slot_kind_t kind, bool resume, uint32_t add
     return flash_op(resume ? do_resume_finish : do_whole, &w);
 }
 
-static int io_piece(void *ctx, flash_slot_kind_t kind, uint32_t addr, const uint8_t *data, uint32_t len,
-                    const flash_piece_t *p) {
+/* FLASH_SLOT_NOT_YET once the flight has ended. */
+static int slot_piece(void *ctx, flash_slot_kind_t kind, uint32_t addr, const uint8_t *data, uint32_t len,
+                      const flash_piece_t *p) {
     uint32_t s = spin_lock_blocking(lk_lock);
     bool go = flight;
     if (go)
         piece_busy = true;
     spin_unlock(lk_lock, s);
     if (!go)
-        return io_whole(ctx, kind, p->resume, addr, data, len);
+        return FLASH_SLOT_NOT_YET;
     const flash_timing_t *t = (const flash_timing_t *)ctx;
     piece_args_t a = {kind, addr, data, len, p, t ? t->suspend_us : 0u};
     uint32_t irq = save_and_disable_interrupts();
     uint32_t t0 = timer_hw->timerawl;
     int rc = run_piece(&a);
+    held_suspended = flash_slot_held(held_suspended, p->resume, rc == PIECE_SUSPENDED || rc == PIECE_ESUSPEND);
     flash_op_seq++;
     uint32_t d = timer_hw->timerawl - t0;
     piece_busy = false;
@@ -456,6 +479,95 @@ static int io_piece(void *ctx, flash_slot_kind_t kind, uint32_t addr, const uint
     return rc;
 }
 
+static int io_piece(void *ctx, flash_slot_kind_t kind, uint32_t addr, const uint8_t *data, uint32_t len,
+                    const flash_piece_t *p) {
+    int rc = slot_piece(ctx, kind, addr, data, len, p);
+    return rc == FLASH_SLOT_NOT_YET ? io_whole(ctx, kind, p->resume, addr, data, len) : rc;
+}
+
+/*
+ * [FLT-LOG-09] A piece that waits for a slot starts at the slot's start,
+ * from an alarm whose interrupt is core1's: the writer's task shares core1
+ * with tasks of its own priority, which its notification does not preempt,
+ * and wakes up to a millisecond into the slot; BY25Q64ES's program, which
+ * cannot suspend, has FLASH_SLOT_START_US to start. At the slot's start no
+ * piece runs, so the flash reads.
+ */
+#define SLOT_ARM_MIN_US 50u
+#define SLOT_WAITS 4u /* periods, each ended early by the frame's own start */
+
+static int slot_alarm = -1;
+static const flash_slot_req_t *volatile slot_req;
+static volatile uint32_t slot_start;
+static volatile int slot_rc;
+static volatile bool slot_ran;
+
+static void slot_isr(uint alarm) {
+    (void)alarm;
+    const flash_slot_req_t *r = slot_req;
+    if (!r)
+        return;
+    flash_slot_io_t io = {r->io->ctx, io_now, io_t0, NULL, io_in_flight, slot_piece, NULL};
+    flash_slot_req_t here = *r;
+    here.io = &io;
+    slot_rc = flash_slot_try(&here, slot_start);
+    slot_req = NULL;
+    slot_ran = true;
+    BaseType_t woken = pdFALSE;
+    vTaskNotifyGiveFromISR(writer, &woken);
+    portYIELD_FROM_ISR(woken);
+}
+
+/* Claimed from core1, so its interrupt is core1's. */
+static bool slot_alarm_ready(void) {
+    if (slot_alarm < 0) {
+        int a = hardware_alarm_claim_unused(false);
+        if (a < 0)
+            return false;
+        hardware_alarm_set_callback((uint)a, slot_isr);
+        slot_alarm = a;
+    }
+    return true;
+}
+
+/* The next slot's start far enough ahead to arm, as a time since boot. */
+static uint64_t next_slot_start(uint32_t *t0) {
+    uint64_t now = time_us_64();
+    uint32_t at = core1_frame_t0() + LOOP_PERIOD_US;
+    while ((int32_t)(at - (uint32_t)now) < (int32_t)SLOT_ARM_MIN_US)
+        at += LOOP_PERIOD_US;
+    *t0 = at;
+    return now + (uint32_t)(at - (uint32_t)now);
+}
+
+static int io_at_slot_start(void *ctx, const flash_slot_req_t *r) {
+    (void)ctx;
+    slot_stats.slot_waits++;
+    core1_frame_writer_done();
+    if (!slot_alarm_ready()) {
+        core1_frame_wait(2u * LOOP_PERIOD_MS);
+        return flash_slot_try(r, core1_frame_t0());
+    }
+    uint32_t t0;
+    uint64_t at = next_slot_start(&t0);
+    slot_ran = false;
+    slot_start = t0;
+    slot_req = r;
+    while (hardware_alarm_set_target((uint)slot_alarm, from_us_since_boot(at))) {
+        at += LOOP_PERIOD_US;
+        slot_start = t0 += LOOP_PERIOD_US;
+    }
+    for (uint32_t i = 0; i < SLOT_WAITS && !slot_ran; i++)
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(LOOP_PERIOD_MS));
+    uint32_t irq = save_and_disable_interrupts();
+    if (!slot_ran) {
+        hardware_alarm_cancel((uint)slot_alarm);
+        slot_req = NULL;
+    }
+    restore_interrupts(irq);
+    return slot_ran ? slot_rc : FLASH_SLOT_NOT_YET;
+}
+
 static int slot_op(flash_slot_kind_t kind, uint32_t off, const uint8_t *data, uint32_t len) {
     if (flight && xTaskGetCurrentTaskHandle() != writer) {
         slot_stats.flight_refusals++;
@@ -465,7 +577,7 @@ static int slot_op(flash_slot_kind_t kind, uint32_t off, const uint8_t *data, ui
     uint8_t jedec[3];
     flash_chip_jedec(jedec);
     const flash_timing_t *t = flash_timing_for(jedec);
-    flash_slot_io_t io = {(void *)t, io_now, io_t0, io_next_slot, io_in_flight, io_piece, io_whole};
+    flash_slot_io_t io = {(void *)t, io_now, io_t0, io_at_slot_start, io_in_flight, io_piece, io_whole};
     int rc = flash_slot_run(&io, t, kind, off, data, len);
     if (rc == 0) {
         if (kind == SLOT_ERASE)

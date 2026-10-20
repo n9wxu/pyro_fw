@@ -17,6 +17,13 @@
 
 #define FLASH_CHIP_UID_MAX 16
 
+/* Status and resume, as every part flash_timing.h lists takes them. */
+#define FLASH_CMD_READ_STATUS 0x05u
+#define FLASH_CMD_READ_STATUS2 0x35u
+#define FLASH_CMD_RESUME 0x7Au
+#define FLASH_STATUS_BUSY 0x01u
+#define FLASH_STATUS2_SUSPENDED 0x84u /* SUS (S15); on XT25F128F a program's SUS2 (S10) too */
+
 typedef enum {
     FLASH_FIT_UNKNOWN = 0, /* the chip does not say its size: no evidence */
     FLASH_FIT_OK,
@@ -46,6 +53,25 @@ int flash_chip_uid(uint8_t out[FLASH_CHIP_UID_MAX]);
 
 /* The hardware read, on the target: once, before the scheduler. */
 void flash_chip_read(void);
+
+/* A command to the chip: n bytes of buf out and n back into it, as the SDK's
+ * flash_do_cmd() does. */
+typedef struct {
+    void *ctx;
+    void (*cmd)(void *ctx, uint8_t *buf, size_t n);
+    uint32_t (*now_us)(void *ctx);
+} flash_chip_io_t;
+
+/* The slowest listed erase, 800 ms, run whole, and room. */
+#define FLASH_CHIP_FINISH_MAX_US 1000000u
+
+/* [FLT-LOG-11] An erase or a program the chip holds suspended, resumed and
+ * waited for until it ends: 1 when there was one, 0 when none, -1 when it
+ * had not ended by max_us. Only for a part flash_timing.h lists: 35h is not
+ * a status read on every maker's. On the target it runs from RAM, as io's
+ * calls and io itself must: until the operation ends the chip answers no
+ * read. */
+int flash_chip_finish_suspended(const flash_chip_io_t *io, uint32_t max_us);
 
 /* Upper-case hex, NUL-terminated: 6 digits for the JEDEC ID, 16 or 32 for
  * the unique ID. */

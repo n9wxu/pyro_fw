@@ -8,6 +8,13 @@
 #include <stdio.h>
 #include <string.h>
 
+#if defined(PICO_ON_DEVICE) && PICO_ON_DEVICE
+#include "pico.h"
+#define IN_RAM(f) __no_inline_not_in_flash_func(f)
+#else
+#define IN_RAM(f) f
+#endif
+
 /* 64 kB to 32 MB. Outside it the byte is not a size: 00 and FF are no chip,
  * and Adesto's AT25SF128A answers 1F 89 01. */
 #define CAPACITY_LOG2_MIN 0x10u
@@ -71,4 +78,23 @@ void flash_chip_jedec_hex(char *out, size_t cap) {
 
 void flash_chip_uid_hex(char *out, size_t cap) {
     hex(out, cap, uid_bytes, flash_chip_uid_len(jedec_id));
+}
+
+static uint8_t IN_RAM(status)(const flash_chip_io_t *io, uint8_t cmd) {
+    uint8_t buf[2] = {cmd, 0};
+    io->cmd(io->ctx, buf, 2);
+    return buf[1];
+}
+
+int IN_RAM(flash_chip_finish_suspended)(const flash_chip_io_t *io, uint32_t max_us) {
+    if (!(status(io, FLASH_CMD_READ_STATUS2) & FLASH_STATUS2_SUSPENDED))
+        return 0;
+    uint8_t resume = FLASH_CMD_RESUME;
+    io->cmd(io->ctx, &resume, 1);
+    uint32_t t0 = io->now_us(io->ctx);
+    while (status(io, FLASH_CMD_READ_STATUS) & FLASH_STATUS_BUSY) {
+        if (io->now_us(io->ctx) - t0 > max_us)
+            return -1;
+    }
+    return 1;
 }

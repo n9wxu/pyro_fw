@@ -9,7 +9,7 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Verifies [FLT-BOOT-17, WEB-API-15, WEB-NET-06].
+ * Verifies [FLT-BOOT-17, WEB-API-15, WEB-NET-06, FLT-LOG-11].
  */
 #include "unity.h"
 #include "flash_chip.h"
@@ -125,6 +125,77 @@ static void test_FC_10_no_read_is_unknown(void) {
     TEST_ASSERT_EQUAL_STRING("000000", hex);
 }
 
+/* ── An operation a reset left suspended ─────────────────────────── */
+
+#define FOREVER 0xFFFFFFFFu
+
+/* A chip's status registers as 05h and 35h read them: an operation running
+ * for so many polls, and one suspended, by its SUS bit; 7Ah resumes one. */
+static struct {
+    uint32_t now, cmds, resumes, busy;
+    uint8_t sus; /* SR2's suspend bits */
+    uint32_t resumed_busy;
+} chip;
+
+static void chip_cmd(void *ctx, uint8_t *buf, size_t n) {
+    (void)ctx;
+    chip.now += 100u;
+    chip.cmds++;
+    if (buf[0] == 0x35u && n >= 2) {
+        buf[1] = chip.sus;
+    } else if (buf[0] == 0x05u && n >= 2) {
+        buf[1] = chip.busy ? 0x01u : 0x00u;
+        if (chip.busy && chip.busy != FOREVER)
+            chip.busy--;
+    } else if (buf[0] == 0x7Au && chip.sus && !chip.busy) {
+        chip.sus = 0;
+        chip.busy = chip.resumed_busy;
+        chip.resumes++;
+    }
+}
+
+static uint32_t chip_now(void *ctx) {
+    (void)ctx;
+    return chip.now;
+}
+
+static const flash_chip_io_t chip_io = {NULL, chip_cmd, chip_now};
+
+static void chip_holding(uint8_t sus, uint32_t polls_after_resume) {
+    memset(&chip, 0, sizeof(chip));
+    chip.sus = sus;
+    chip.resumed_busy = polls_after_resume;
+}
+
+static void test_FLT_LOG_11_an_erase_left_suspended_is_run_to_its_end(void) {
+    chip_holding(0x80u, 7u);
+    TEST_ASSERT_EQUAL_INT(1, flash_chip_finish_suspended(&chip_io, FLASH_CHIP_FINISH_MAX_US));
+    TEST_ASSERT_EQUAL_UINT32(1u, chip.resumes);
+    TEST_ASSERT_EQUAL_UINT8(0u, chip.sus);
+    TEST_ASSERT_EQUAL_UINT32(0u, chip.busy);
+}
+
+/* XT25F128F holds a suspended program in SUS2, S10. */
+static void test_FLT_LOG_11_a_program_left_suspended_is_run_to_its_end(void) {
+    chip_holding(0x04u, 3u);
+    TEST_ASSERT_EQUAL_INT(1, flash_chip_finish_suspended(&chip_io, FLASH_CHIP_FINISH_MAX_US));
+    TEST_ASSERT_EQUAL_UINT32(1u, chip.resumes);
+    TEST_ASSERT_EQUAL_UINT32(0u, chip.busy);
+}
+
+static void test_FLT_LOG_11_with_nothing_suspended_nothing_is_resumed(void) {
+    chip_holding(0u, 0u);
+    TEST_ASSERT_EQUAL_INT(0, flash_chip_finish_suspended(&chip_io, FLASH_CHIP_FINISH_MAX_US));
+    TEST_ASSERT_EQUAL_UINT32(0u, chip.resumes);
+    TEST_ASSERT_EQUAL_UINT32(1u, chip.cmds);
+}
+
+static void test_FLT_LOG_11_a_chip_that_never_ends_is_given_up(void) {
+    chip_holding(0x80u, FOREVER);
+    TEST_ASSERT_EQUAL_INT(-1, flash_chip_finish_suspended(&chip_io, 5000u));
+    TEST_ASSERT_TRUE(chip.now <= 5000u + 300u);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_FC_01_capacity_from_the_third_byte);
@@ -138,5 +209,9 @@ int main(void) {
     RUN_TEST(test_FC_09_a_winbond_id_is_reported_at_its_own_length);
     RUN_TEST(test_FC_10_no_read_is_unknown);
     RUN_TEST(test_FC_11_the_whole_id_is_given_at_its_length);
+    RUN_TEST(test_FLT_LOG_11_an_erase_left_suspended_is_run_to_its_end);
+    RUN_TEST(test_FLT_LOG_11_a_program_left_suspended_is_run_to_its_end);
+    RUN_TEST(test_FLT_LOG_11_with_nothing_suspended_nothing_is_resumed);
+    RUN_TEST(test_FLT_LOG_11_a_chip_that_never_ends_is_given_up);
     return UNITY_END();
 }

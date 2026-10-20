@@ -224,7 +224,8 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **FLT-LOG-07**: The flight log shall keep a row for every sample of every flight cycle, and every event row at its own time, in time order. ← SYS-DATA-01, DD-101
 - **FLT-LOG-08**: Records the flight log could not keep shall be counted and reported on `/api/status`. ← SYS-DATA-01
 - **FLT-LOG-09**: The flight log's writer shall have the first 3 ms of each period, and shall start a flash operation only when the operation will end, or can be suspended, within those 3 ms. ← FLT-RT-03, SYS-LUA-02, DD-104
-- **FLT-LOG-10**: From launch to landing the writer shall erase only when the log has no erased page left to write. An erase shall be suspended at the end of each of the writer's slots and resumed in its next. ← FLT-LOG-09, DD-104
+- **FLT-LOG-10**: From launch to landing the writer shall erase only when the log has no erased page left to write. An erase shall be suspended at the end of each of the writer's slots and resumed in its next. A part whose erase does not reach its end in such pieces shall not erase from launch to landing. ← FLT-LOG-09, DD-104
+- **FLT-LOG-11**: An erase or a program the flash chip holds suspended shall be resumed and run to its end before the flash is next written: at every start, since a reset can leave one, and on the ground after a flight that gave one up. A chip holding an erase suspended takes no other erase. ← FLT-LOG-10, DD-104
 
 ### After landing
 - **BUZ-03**: The system shall play an altitude beep-out sequence after landing, holding it while a USB host is attached and resuming it when the host goes (USB-02, USB-04). ← SYS-DATA-03
@@ -416,6 +417,8 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 - **WEB-API-14**: A file shall be named by `/`-separated names of letters, digits, `.`, `_` and `-`, none of them `.` or `..`. Any other path shall be refused by every file operation, and by the web server with 400. ← SYS-WEB-01
 - **WEB-API-15**: The system shall report at `/api/status` the flash chip's JEDEC ID, the capacity it declares, and its whole unique ID at the length its datasheet gives. ← SYS-WEB-01
 - **WEB-API-16**: The system shall serve at `/api/flight/live?since=N` the flight log held for the host (USB-09) from byte N: the offset of the first byte it returns, the offset the log has reached, then the bytes. Bytes no longer held shall be skipped, so the host can count what it lost. ← USB-09
+- **WEB-API-17**: The system shall delete a file on request at `/api/delete/<path>` (POST), from every store that holds it: 200 when deleted, 404 when there was none, 409 while the file is open. The board's identity and its pad record belong to the board and shall be refused with 403. ← SYS-WEB-01
+- **WEB-API-18**: A file whose write or close fails shall be let go without a restart. Once no other file is open, the storage shall be as a restart would leave it: the failed file as a power cut would have left it, and every write, delete and cleanup taken. An upload that fails shall leave nothing of itself, and the file it would have replaced as it was. ← SYS-WEB-01
 
 ### HTTP
 - **WEB-HTTP-01**: The HTTP server shall treat each connection as a byte stream: a request shall be answered the same however TCP divides it into segments, including a header block or body split at any byte and more than one request in a single segment. ← SYS-WEB-01

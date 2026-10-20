@@ -19,7 +19,8 @@ extension installs it.
 |--------|---------|
 | `test_network.py` | Comprehensive network/API test suite with TUI |
 | `http_stream_check.py` | The HTTP server over raw sockets: requests split byte by byte, bodies in later writes, coalesced requests, odd-chunk uploads round-tripped, parallel fetches past a stalled connection (rewrites /www/app.js and index.html with the local copies) |
-| `api_check.py` | Bench check of every HTTP route, a stored configuration that waits for the next start, the board's limits, silence on USB, and test mode (erases the flight log; about 15 s in test mode) |
+| `api_check.py` | Bench check of every HTTP route, a stored configuration that waits for the next start, the board's limits, silence on USB, test mode, and a file deleted (erases the flight log; about 15 s in test mode) |
+| `failed_write_check.py` | An upload past the board's room, refused part-way and let go without a restart: its part file gone, its name taken again (WEB-API-18; leaves the room to the pad's cleanup, half an hour for 8 MB) |
 | `pressure_trace.py` | Every pressure conversion a board makes, judged for the faults a sample rate hides (DD-063) |
 | `noise_baseline.py` | A still board's pressure noise and pad speed noise, from `/api/status` |
 | `register_board.py` | Record the attached boards in `boards/BOARD_REGISTRY.json` and report subnet collisions |

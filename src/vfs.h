@@ -38,8 +38,9 @@ enum { VFS_NONE = 0, VFS_FLASH, VFS_FAT };
 #define VFS_WR 0x02     /* create, or replace whole */
 #define VFS_APPEND 0x04 /* with VFS_WR: create, keep, write at the end */
 
-/* Errors: VFS_NOENT for no such file, VFS_ERR for anything else, a path
- * vfs_path_ok() refuses included. */
+/* Errors: VFS_NOENT for no such file, VFS_BUSY for a file open, VFS_ERR for
+ * anything else, a path vfs_path_ok() refuses included. */
+#define VFS_BUSY VFS_FLASH_BUSY
 #define VFS_NOSPC VFS_FLASH_NOSPC
 #define VFS_NOENT VFS_FLASH_NOENT
 #define VFS_ERR VFS_FLASH_ERR
@@ -72,6 +73,10 @@ int32_t vfs_size(vfs_file_t *f);
 int vfs_rewind(vfs_file_t *f);
 
 int vfs_remove(const char *path); /* VFS_NOENT when there was none */
+
+/* The board's, not the card's, and always on the flash: its identity and its
+ * pad record. */
+bool vfs_is_internal(const char *path);
 int vfs_rename(const char *from, const char *to); /* on the flash, a copy */
 int vfs_mkdir(const char *path);         /* 0 also when it exists */
 int32_t vfs_stat_size(const char *path); /* size, or VFS_NOENT / VFS_ERR */

@@ -9,11 +9,12 @@ keeps the one it started with (CFG-10); the board serves its pyro limits and
 its sensor's range (PYR-BOARD-03, SNS-MAX-01); a board reached this way is on
 USB, so it reports usb_attached and its buzzer is silent (USB-01..03), and
 test mode gives it its voice and its pad record back until it is turned off
-(USB-08); no inert key is written; the flight log can be erased (WEB-API-09);
+(USB-08); no inert key is written; the flight log can be erased (WEB-API-09)
+and a file deleted, but not the board's own (WEB-API-17);
 /api/status carries the pulse, fault, resume and emergency fields.
 
 Verifies on hardware [WEB-API-01, WEB-API-02, WEB-API-03, WEB-API-07,
-WEB-API-12, WEB-API-15, BUZ-CODE-03, BUZ-CODE-11, FLT-BROWN-01, FLT-BROWN-05].
+WEB-API-12, WEB-API-15, WEB-API-17, BUZ-CODE-03, BUZ-CODE-11, FLT-BROWN-01, FLT-BROWN-05].
 
 ERASES THE FLIGHT LOG, stores a changed pyro1 mode for a few seconds, and
 holds the board in test mode for about 15 s -- long enough to write the pad
@@ -175,6 +176,22 @@ check("POST /api/flight/erase -> 200", code == 200 and b"erased" in body, f"{cod
 code, _, body = req("GET", "/api/flight.csv")
 check("erased log reads as the bare column header", body.strip() == b"time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event",
       repr(body[:80]))
+
+# [WEB-API-17] A file uploaded, deleted and gone; the board's own files and a
+# bad name refused.
+code, _, _ = req("POST", "/www/api_check_delete.txt", "delete me")
+check("upload /www/api_check_delete.txt -> 201", code == 201, str(code))
+code, _, body = req("POST", "/api/delete/www/api_check_delete.txt")
+check("POST /api/delete/<file> -> 200", code == 200 and b"deleted" in body, f"{code} {body[:60]!r}")
+code, _, _ = req("GET", "/www/api_check_delete.txt")
+check("a deleted file reads 404", code == 404, str(code))
+code, _, _ = req("POST", "/api/delete/www/api_check_delete.txt")
+check("a delete of no file -> 404", code == 404, str(code))
+for own in ("serial.txt", "pad.mkr"):
+    code, _, _ = req("POST", "/api/delete/" + own)
+    check(f"a delete of the board's {own} -> 403", code == 403, str(code))
+code, _, _ = req("POST", "/api/delete/www/../config.ini")
+check("a delete of a bad name -> 400", code == 400, str(code))
 
 # WEB-API-12: the room the next flight's log has, and the seconds of flight it
 # holds at every sample, which a second's sync can only shorten.

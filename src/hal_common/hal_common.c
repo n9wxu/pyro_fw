@@ -1294,8 +1294,9 @@ static void log_write_out(void) {
         int n = vfs_write(&log_ring.file, log_ring.buf + off, span);
         if (n == VFS_NOSPC) {
             /* [FLT-LOG-10] No erased page left: one sector a removed file
-             * left, erased in the writer's slots. */
-            vfs_clean();
+             * left, erased in the writer's slots, where the part can. */
+            if (flash_op_can_erase())
+                vfs_clean();
             return;
         }
         if (n <= 0)
@@ -1370,7 +1371,7 @@ static void log_service(uint32_t now_ms) {
          * this flight's: a write replaces a file only when it closes. */
         vfs_remove(FLOG_PATH);
         int rc = vfs_open(&log_ring.file, FLOG_PATH, VFS_WR, log_file_buf);
-        if (rc == VFS_NOSPC)
+        if (rc == VFS_NOSPC && flash_op_can_erase())
             vfs_clean(); /* [FLT-LOG-10] no erased page for the log's first */
         if (rc != 0)
             return; /* the next pass retries; the ring keeps the rows */

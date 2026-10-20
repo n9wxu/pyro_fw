@@ -5,7 +5,7 @@
  * suspend issued sooner than tRS after a start or resume is ignored, and a
  * suspend takes up to tSUS to land.
  *
- * Verifies [FLT-LOG-09, FLT-LOG-10, LUA-RUN-04].
+ * Verifies [FLT-LOG-09, FLT-LOG-10, FLT-LOG-11, LUA-RUN-04].
  */
 #include "unity.h"
 #include "core1_frame.h"
@@ -13,7 +13,10 @@
 #include "flash_timing.h"
 #include <string.h>
 
-#define WAKE_US 30u /* the writer's wake after the period's start */
+#define IRQ_US 30u /* the slot-start interrupt, after the period's start */
+/* The writer's task behind core1's other tasks of its priority, which its
+ * notification does not preempt: as late as this on MK1B-8MB. */
+#define TASK_WAKE_US 900u
 /* What a piece costs beside the chip's own time, as measured on MK1C: each
  * command through the SDK's flash_do_cmd() hands XIP back, about 100 us. */
 #define START_US 200u   /* write enable and the command */
@@ -54,15 +57,20 @@ static bool in_flight(void *c) {
     return ((chip_t *)c)->flight;
 }
 
-/* The writer gives the frame up: Lua has the rest, and the next frame's
- * slot begins at its period. */
-static void next_slot(void *v) {
+/* The writer gives the frame up: Lua has the rest. The next frame's slot
+ * begins at its period, where an interrupt runs the request on time; the
+ * writer's task wakes later. */
+static int at_slot_start(void *v, const flash_slot_req_t *r) {
     chip_t *c = v;
     while ((int32_t)(c->t0 + LOOP_PERIOD_US - c->now) <= 0)
         c->t0 += LOOP_PERIOD_US;
     c->t0 += LOOP_PERIOD_US;
-    c->now = c->t0 + WAKE_US;
+    c->now = c->t0 + IRQ_US;
     c->slots++;
+    int rc = flash_slot_try(r, c->t0);
+    if ((int32_t)(c->t0 + TASK_WAKE_US - c->now) > 0)
+        c->now = c->t0 + TASK_WAKE_US;
+    return rc;
 }
 
 static void note_end(chip_t *c) {
@@ -141,7 +149,7 @@ static int whole(void *v, flash_slot_kind_t kind, bool resume, uint32_t addr, co
     return PIECE_DONE;
 }
 
-static const flash_slot_io_t io = {&chip, now_us, slot_t0, next_slot, in_flight, piece, whole};
+static const flash_slot_io_t io = {&chip, now_us, slot_t0, at_slot_start, in_flight, piece, whole};
 
 static void fresh(const uint8_t jedec[3], uint32_t work_us, uint32_t start_in_frame_us) {
     memset(&chip, 0, sizeof(chip));
@@ -174,11 +182,10 @@ void test_FLT_LOG_09_every_listed_program_fits_an_empty_slot(void) {
     const uint8_t *all[] = {W25Q16JV, W25Q128JV, XT25F128F, BY25Q64ES};
     for (unsigned i = 0; i < 4; i++) {
         const flash_timing_t *t = flash_timing_for(all[i]);
-        TEST_ASSERT_TRUE_MESSAGE(t->erase_suspends, t->part);
         uint32_t need = t->program_suspends
                             ? FLASH_SLOT_START_US + t->resume_hold_us + t->suspend_us + FLASH_SLOT_SUSPEND_US
                             : FLASH_SLOT_START_US + t->program_max_us;
-        TEST_ASSERT_TRUE_MESSAGE(WAKE_US + need <= FRAME_WRITER_US, t->part);
+        TEST_ASSERT_TRUE_MESSAGE(IRQ_US + need <= FRAME_WRITER_US, t->part);
     }
 }
 
@@ -219,6 +226,17 @@ void test_FLT_LOG_09_a_program_that_cannot_suspend_starts_only_where_it_fits(voi
 
 /* A piece that can suspend starts while its hold and its suspend still fit,
  * and is told to suspend in time for the suspend to land inside the slot. */
+/* [FLT-LOG-09] A program that cannot suspend, asked for too late in a slot,
+ * starts at the next slot's start however late the writer's task wakes. */
+void test_FLT_LOG_09_a_piece_that_waited_starts_at_its_slots_start(void) {
+    fresh(BY25Q64ES, 2000u, 2500u);
+    TEST_ASSERT_EQUAL(0, flash_slot_run(&io, chip.t, SLOT_PROGRAM, 0, NULL, 256));
+    TEST_ASSERT_EQUAL(1, chip.slots);
+    TEST_ASSERT_EQUAL(1, chip.pieces);
+    TEST_ASSERT_EQUAL(0, chip.piece_in_slot);
+    TEST_ASSERT_EQUAL(0, chip.over_us);
+}
+
 void test_FLT_LOG_09_a_piece_that_can_suspend_is_told_when(void) {
     const flash_timing_t *t = flash_timing_for(XT25F128F);
     uint32_t t0 = 5000u, end = t0 + FRAME_WRITER_US;
@@ -236,7 +254,8 @@ void test_FLT_LOG_09_a_piece_that_can_suspend_is_told_when(void) {
 
 /* Every listed part, at its datasheet's worst program and erase, begun
  * anywhere in a frame: no piece runs past the writer's slot, none begins
- * outside it, and the chip ignores no suspend. */
+ * outside it, and the chip ignores no suspend. An erase that does not end
+ * in pieces runs none [FLT-LOG-10]. */
 void test_FLT_LOG_09_no_piece_runs_past_the_writers_slot(void) {
     const uint8_t *all[] = {W25Q16JV, W25Q128JV, XT25F128F, BY25Q64ES};
     for (unsigned i = 0; i < 4; i++) {
@@ -244,12 +263,14 @@ void test_FLT_LOG_09_no_piece_runs_past_the_writers_slot(void) {
         for (uint32_t start = 0; start < LOOP_PERIOD_US; start += 37u) {
             for (int k = 0; k < 2; k++) {
                 flash_slot_kind_t kind = k ? SLOT_ERASE : SLOT_PROGRAM;
+                bool refused = kind == SLOT_ERASE && !t->erase_suspends;
                 fresh(all[i], k ? t->erase_max_us : t->program_max_us, start);
-                TEST_ASSERT_EQUAL_INT_MESSAGE(0, flash_slot_run(&io, chip.t, kind, 0, NULL, 0), t->part);
+                TEST_ASSERT_EQUAL_INT_MESSAGE(refused ? FLASH_SLOT_EREFUSED : 0,
+                                              flash_slot_run(&io, chip.t, kind, 0, NULL, 0), t->part);
                 TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, chip.over_us, t->part);
                 TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, chip.piece_in_slot, t->part);
                 TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, chip.ignored, t->part);
-                TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, chip.starts, t->part);
+                TEST_ASSERT_EQUAL_UINT32_MESSAGE(refused ? 0u : 1u, chip.starts, t->part);
             }
         }
     }
@@ -259,7 +280,7 @@ void test_FLT_LOG_09_no_piece_runs_past_the_writers_slot(void) {
  * resumed in the next, and finished, with every frame's rest left to Lua. */
 void test_FLT_LOG_10_an_erase_is_suspended_at_each_slot_end_and_resumed(void) {
     const flash_timing_t *t = flash_timing_for(XT25F128F);
-    fresh(XT25F128F, t->erase_max_us, WAKE_US);
+    fresh(XT25F128F, t->erase_max_us, IRQ_US);
     TEST_ASSERT_EQUAL_INT(0, flash_slot_run(&io, t, SLOT_ERASE, 0, NULL, 0));
     TEST_ASSERT_EQUAL_UINT32(0u, chip.work_left);
     TEST_ASSERT_TRUE(chip.suspends > 250u);
@@ -269,10 +290,22 @@ void test_FLT_LOG_10_an_erase_is_suspended_at_each_slot_end_and_resumed(void) {
     TEST_ASSERT_EQUAL_UINT32(0u, chip.ignored);
 }
 
+/* [FLT-LOG-10] BY25Q64ES's erase, resumed and suspended in each slot on
+ * MK1B-8MB, had not ended after 2,000 slots, and the chip held it suspended
+ * after: refused in flight. MK1C's XT25F128F ends its erase in about ten
+ * slots. */
+void test_FLT_LOG_10_a_part_whose_erase_does_not_end_in_pieces_does_not_erase_in_flight(void) {
+    TEST_ASSERT_FALSE(flash_timing_for(BY25Q64ES)->erase_suspends);
+    TEST_ASSERT_TRUE(flash_timing_for(XT25F128F)->erase_suspends);
+    fresh(BY25Q64ES, 50000u, IRQ_US);
+    TEST_ASSERT_EQUAL_INT(FLASH_SLOT_EREFUSED, flash_slot_run(&io, chip.t, SLOT_ERASE, 0, NULL, 0));
+    TEST_ASSERT_EQUAL_UINT32(0u, chip.starts);
+}
+
 /* An unlisted part's erase cannot be planned into a slot: refused in
  * flight rather than run past it. */
 void test_FLT_LOG_10_an_unlisted_parts_erase_is_refused_in_flight(void) {
-    fresh(UNLISTED, 50000u, WAKE_US);
+    fresh(UNLISTED, 50000u, IRQ_US);
     TEST_ASSERT_EQUAL_INT(FLASH_SLOT_EREFUSED, flash_slot_run(&io, NULL, SLOT_ERASE, 0, NULL, 0));
     TEST_ASSERT_EQUAL_UINT32(0u, chip.starts);
 }
@@ -287,14 +320,14 @@ void test_FLT_LOG_09_an_unlisted_parts_program_runs_whole_from_a_slots_start(voi
     TEST_ASSERT_EQUAL_UINT32(t0 + LOOP_PERIOD_US, chip.t0);
     TEST_ASSERT_EQUAL_UINT32(1u, chip.pieces);
     TEST_ASSERT_EQUAL_UINT32(0u, chip.suspends);
-    TEST_ASSERT_EQUAL_UINT32(chip.t0 + WAKE_US + START_US + 3000u + POLL_US, chip.now);
+    TEST_ASSERT_EQUAL_UINT32(chip.t0 + IRQ_US + START_US + 3000u + POLL_US, chip.now);
 }
 
 /* Landing in the middle of an erase: the rest runs whole, under the lockout
  * the pad's operations use, and the erase is finished. */
 void test_FLT_LOG_10_an_erase_suspended_at_landing_is_finished_whole(void) {
     const flash_timing_t *t = flash_timing_for(W25Q128JV);
-    fresh(W25Q128JV, t->erase_max_us, WAKE_US);
+    fresh(W25Q128JV, t->erase_max_us, IRQ_US);
     chip.leave_flight_after = 3u;
     TEST_ASSERT_EQUAL_INT(0, flash_slot_run(&io, t, SLOT_ERASE, 0, NULL, 0));
     TEST_ASSERT_EQUAL_UINT32(3u, chip.pieces);
@@ -314,7 +347,7 @@ void test_FLT_LOG_09_on_the_pad_an_operation_runs_whole(void) {
 
 void test_FLT_LOG_09_a_failed_piece_is_the_operations_failure(void) {
     const flash_timing_t *t = flash_timing_for(W25Q16JV);
-    fresh(W25Q16JV, t->erase_max_us, WAKE_US);
+    fresh(W25Q16JV, t->erase_max_us, IRQ_US);
     chip.fail_at = 4;
     TEST_ASSERT_EQUAL_INT(-5, flash_slot_run(&io, t, SLOT_ERASE, 0, NULL, 0));
 }
@@ -322,9 +355,30 @@ void test_FLT_LOG_09_a_failed_piece_is_the_operations_failure(void) {
 /* A chip that never finishes is given up, never waited on for good. */
 void test_FLT_LOG_10_a_chip_that_never_finishes_is_given_up(void) {
     const flash_timing_t *t = flash_timing_for(W25Q16JV);
-    fresh(W25Q16JV, 1000000000u, WAKE_US);
+    fresh(W25Q16JV, 1000000000u, IRQ_US);
     TEST_ASSERT_EQUAL_INT(FLASH_SLOT_ETIME, flash_slot_run(&io, t, SLOT_ERASE, 0, NULL, 0));
     TEST_ASSERT_EQUAL_UINT32(FLASH_SLOT_MAX_PIECES, chip.pieces);
+}
+
+/* A chip holding an erase suspended ignores a new erase, and the piece
+ * reads as ended at once: what it held is held still, for the next start or
+ * the ground to finish. Only the operation resumed to its end lets go. */
+void test_FLT_LOG_11_a_piece_started_while_one_is_held_does_not_let_it_go(void) {
+    TEST_ASSERT_TRUE(flash_slot_held(true, false, false));
+    TEST_ASSERT_TRUE(flash_slot_held(true, false, true));
+}
+
+void test_FLT_LOG_11_a_piece_left_suspended_is_held(void) {
+    TEST_ASSERT_TRUE(flash_slot_held(false, false, true));
+    TEST_ASSERT_TRUE(flash_slot_held(true, true, true));
+}
+
+void test_FLT_LOG_11_the_held_operation_resumed_to_its_end_is_let_go(void) {
+    TEST_ASSERT_FALSE(flash_slot_held(true, true, false));
+}
+
+void test_FLT_LOG_11_a_piece_that_ends_holds_nothing_new(void) {
+    TEST_ASSERT_FALSE(flash_slot_held(false, false, false));
 }
 
 int main(void) {
@@ -335,14 +389,20 @@ int main(void) {
     RUN_TEST(test_LUA_RUN_04_lua_has_6_5_ms_ending_by_9_5);
     RUN_TEST(test_FLT_LOG_09_the_writer_has_the_first_3_ms);
     RUN_TEST(test_FLT_LOG_09_a_program_that_cannot_suspend_starts_only_where_it_fits);
+    RUN_TEST(test_FLT_LOG_09_a_piece_that_waited_starts_at_its_slots_start);
     RUN_TEST(test_FLT_LOG_09_a_piece_that_can_suspend_is_told_when);
     RUN_TEST(test_FLT_LOG_09_no_piece_runs_past_the_writers_slot);
     RUN_TEST(test_FLT_LOG_10_an_erase_is_suspended_at_each_slot_end_and_resumed);
+    RUN_TEST(test_FLT_LOG_10_a_part_whose_erase_does_not_end_in_pieces_does_not_erase_in_flight);
     RUN_TEST(test_FLT_LOG_10_an_unlisted_parts_erase_is_refused_in_flight);
     RUN_TEST(test_FLT_LOG_09_an_unlisted_parts_program_runs_whole_from_a_slots_start);
     RUN_TEST(test_FLT_LOG_10_an_erase_suspended_at_landing_is_finished_whole);
     RUN_TEST(test_FLT_LOG_09_on_the_pad_an_operation_runs_whole);
     RUN_TEST(test_FLT_LOG_09_a_failed_piece_is_the_operations_failure);
     RUN_TEST(test_FLT_LOG_10_a_chip_that_never_finishes_is_given_up);
+    RUN_TEST(test_FLT_LOG_11_a_piece_started_while_one_is_held_does_not_let_it_go);
+    RUN_TEST(test_FLT_LOG_11_a_piece_left_suspended_is_held);
+    RUN_TEST(test_FLT_LOG_11_the_held_operation_resumed_to_its_end_is_let_go);
+    RUN_TEST(test_FLT_LOG_11_a_piece_that_ends_holds_nothing_new);
     return UNITY_END();
 }

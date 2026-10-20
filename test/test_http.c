@@ -696,12 +696,25 @@ void test_WEB_API_08_every_route_that_touches_storage_waits_for_the_flight_log(v
                                           "/api/config",       "/api/beeps",       "/api/pins",
                                           "/api/flight/erase", "/api/sd/bench",    "/api/sd/bench?kb=1",
                                           "/api/sd/init",      "/api/sd/init?crc=0", "/api/sd/idle?ms=5",
-                                          "/api/hr/start",     "/api/hr/start?odr=833"};
+                                          "/api/hr/start",     "/api/hr/start?odr=833", "/api/delete/www/a.bin"};
     for (unsigned i = 0; i < sizeof(storage) / sizeof(storage[0]); i++) {
         const post_route_t *r = find_post_route(storage[i]);
         TEST_ASSERT_NOT_NULL_MESSAGE(r, storage[i]);
         TEST_ASSERT_TRUE_MESSAGE(r->fs, storage[i]);
     }
+}
+
+/* [WEB-API-17] A delete names its file after the route. */
+void test_WEB_API_17_a_delete_names_its_file_after_the_route(void) {
+    const post_route_t *r = find_post_route("/api/delete/www/index.html");
+    TEST_ASSERT_NOT_NULL(r);
+    TEST_ASSERT_EQUAL(R_DELETE, r->route);
+    TEST_ASSERT_EQUAL(BODY_NONE, r->body);
+    TEST_ASSERT_EQUAL_STRING("/www/index.html", delete_target("/api/delete/www/index.html"));
+    TEST_ASSERT_TRUE(vfs_path_ok(delete_target("/api/delete/www/index.html")));
+    TEST_ASSERT_FALSE(vfs_path_ok(delete_target("/api/delete/www/../serial.txt")));
+    TEST_ASSERT_NULL(find_post_route("/api/delete"));
+    TEST_ASSERT_NULL(find_post_route("/api/deleteme"));
 }
 
 void test_HTTP_19_a_query_route_matches_only_its_path(void) {
@@ -744,6 +757,7 @@ int main(void) {
     RUN_TEST(test_OTA_06_no_sector_is_written_past_the_slot_end);
     RUN_TEST(test_OTA_08_a_download_slot_past_the_chip_end_is_refused);
     RUN_TEST(test_WEB_API_08_every_route_that_touches_storage_waits_for_the_flight_log);
+    RUN_TEST(test_WEB_API_17_a_delete_names_its_file_after_the_route);
     RUN_TEST(test_HTTP_19_a_query_route_matches_only_its_path);
     return UNITY_END();
 }

@@ -61,6 +61,11 @@ void flash_op_flight_begin(void);
 void flash_op_flight_end(void);
 bool flash_op_in_flight(void);
 
+/* Whether an erase asked for now can run: on the ground always; from launch
+ * to landing only on a part whose erase ends in suspended pieces
+ * [FLT-LOG-10]. An erase refused is a sector the filesystem takes for bad. */
+bool flash_op_can_erase(void);
+
 /* The task whose operations run in slots: the storage task. */
 void flash_op_set_writer(void *task);
 

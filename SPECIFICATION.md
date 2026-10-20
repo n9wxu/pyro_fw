@@ -50,7 +50,7 @@ Dependencies: Pico SDK 2.2.0, installed separately; alfs (format 6), Unity v2.6.
 4. T+0 is backdated to the start of the rise, not the detection threshold (FLT-LAUNCH-03)
 5. The exec loop is the only clock: nothing sleeps or busy-waits (DD-053)
 6. All pyro modes available on both channels
-7. The only file deletion is the flight log's erase (`POST /api/flight/erase`)
+7. Files are deleted by `POST /api/delete/<path>` and the flight log by `POST /api/flight/erase`; the board's identity and pad record cannot be deleted (WEB-API-17). A write that fails is let go without a restart (WEB-API-18)
 8. The state machine is a detector table indexed by state and a transition table; an out-of-range state returns PAD_IDLE
 9. A pad has one owner, pyro or Lua, and the claim is what installs its operations (DD-020)
 10. The API and USB stay live in flight; only the flight log touches the filesystem (DD-058)

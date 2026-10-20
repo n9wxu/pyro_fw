@@ -23,7 +23,19 @@ static alfs_fs_t store;
 static alfs_rec_t cache[CACHE_RECORDS];
 static uint8_t scratch[PAGE_MAX];
 static const alfs_area_t *area_of;
+static const alfs_driver_t *drv_of;
 static bool mounted, writable;
+
+/* Handles open, which a mount would forget. */
+static uint8_t held;
+
+/* Writers whose close failed: alfs holds each open [WEB-API-18]. */
+#define FAILED_NAMES 4
+static struct {
+    char name[ALFS_NAME_MAX + 1];
+    bool remove; /* asked for while it waited */
+} failed[FAILED_NAMES];
+static uint8_t nfailed;
 
 /* Pages a replaced or removed file left may wait for the cleanup. */
 static bool dirty = true;
@@ -36,6 +48,8 @@ static int err(int rc) {
         return VFS_FLASH_NOENT;
     if (rc == ALFS_ENOSPC)
         return VFS_FLASH_NOSPC;
+    if (rc == ALFS_EOPEN)
+        return VFS_FLASH_BUSY;
     return rc < 0 ? VFS_FLASH_ERR : rc;
 }
 
@@ -48,6 +62,7 @@ int vfs_flash_mount(const alfs_area_t *area, const alfs_driver_t *drv, bool w) {
         if (rc != ALFS_OK)
             return VFS_FLASH_ERR;
         area_of = area;
+        drv_of = drv;
         mounted = true;
     }
     writable = writable || w;
@@ -56,6 +71,41 @@ int vfs_flash_mount(const alfs_area_t *area, const alfs_driver_t *drv, bool w) {
 
 bool vfs_flash_mounted(void) {
     return mounted;
+}
+
+static void fail(const char *name, bool remove) {
+    if (nfailed < FAILED_NAMES) {
+        memcpy(failed[nfailed].name, name, strlen(name) + 1);
+        failed[nfailed].remove = remove;
+    }
+    nfailed++;
+}
+
+static bool remove_when_let_go(const char *name) {
+    for (uint8_t i = 0; i < nfailed && i < FAILED_NAMES; i++) {
+        if (strcmp(failed[i].name, name) == 0) {
+            failed[i].remove = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* The failed writers let go as a restart would: a mount, which finds every
+ * file closed, then the removes asked for. A mount that fails leaves the
+ * store unmounted, every call refused, until the next tries again. */
+static void let_go(void) {
+    if (!nfailed || held)
+        return;
+    memset(&store, 0, sizeof(store));
+    if (alfs_fs_mount(&store, area_of, drv_of, scratch, cache, CACHE_RECORDS) != ALFS_OK)
+        return;
+    for (uint8_t i = 0; i < nfailed && i < FAILED_NAMES; i++) {
+        if (failed[i].remove)
+            alfs_file_delete(&store, failed[i].name);
+    }
+    nfailed = 0;
+    dirty = true;
 }
 
 static int open_write(vfs_flash_file_t *f, const char *name, int mode) {
@@ -84,6 +134,8 @@ int vfs_flash_open(vfs_flash_file_t *f, const char *name, int mode, void *buf) {
         return VFS_FLASH_ERR;
     int rc = mode == VFS_FLASH_READ ? alfs_file_open_read(&store, &f->u.r, name, buf, VFS_FLASH_BUF_SIZE)
                                     : open_write(f, name, mode);
+    if (rc == ALFS_OK)
+        held++;
     fs_unlock();
     if (rc != ALFS_OK)
         return err(rc);
@@ -139,10 +191,14 @@ int vfs_flash_close(vfs_flash_file_t *f) {
         rc = alfs_file_close(&store, &f->u.w);
         for (int i = 0; i < CLOSE_CLEANUPS && rc == ALFS_ENOSPC && alfs_fs_cleanup(&store, 1) == ALFS_OK; i++)
             rc = alfs_file_close(&store, &f->u.w);
+        if (rc != ALFS_OK)
+            fail(f->name, false);
         dirty = true;
     }
-    fs_unlock();
     f->mode = 0;
+    held--;
+    let_go();
+    fs_unlock();
     return err(rc);
 }
 
@@ -158,8 +214,10 @@ static int32_t count_rest(alfs_reader_t *r) {
 static int reopen(vfs_flash_file_t *f) {
     alfs_file_close_read(&store, &f->u.r);
     int rc = alfs_file_open_read(&store, &f->u.r, f->name, f->buf, VFS_FLASH_BUF_SIZE);
-    if (rc != ALFS_OK)
+    if (rc != ALFS_OK) {
         f->mode = 0;
+        held--;
+    }
     return rc;
 }
 
@@ -192,16 +250,31 @@ int vfs_flash_rewind(vfs_flash_file_t *f) {
 int vfs_flash_remove(const char *name) {
     if (!writable || !fs_lock())
         return VFS_FLASH_ERR;
-    int rc = alfs_file_delete(&store, name);
+    int rc = ALFS_OK;
+    if (remove_when_let_go(name))
+        let_go();
+    else
+        rc = alfs_file_delete(&store, name);
     dirty = true;
     fs_unlock();
     return err(rc);
 }
 
+/* `to` has a closed copy, which a copy not closed leaves as it is. */
+static bool has_closed(const char *to) {
+    alfs_reader_t r;
+    if (alfs_file_open_read(&store, &r, to, copy_wblk, sizeof(copy_wblk)) != ALFS_OK)
+        return false;
+    bool closed = r.size != ALFS_SIZE_OPEN;
+    alfs_file_close_read(&store, &r);
+    return closed;
+}
+
 /*
  * A closed file's bytes into a new copy of `to`, reserved to its size. A copy
- * that comes up short stays open and is never closed: closing it would
- * replace `to` with the part. Only a damaged page in `from` cuts it short,
+ * that comes up short is never closed, since closing it would replace `to`
+ * with the part: it fails, and goes when let go unless `to` had a closed
+ * copy, which reads as before. Only a damaged page in `from` cuts it short,
  * since the reservation holds every byte.
  */
 static int copy(const char *from, const char *to) {
@@ -211,6 +284,7 @@ static int copy(const char *from, const char *to) {
     int rc = alfs_file_open_read(&store, &r, from, copy_rblk, sizeof(copy_rblk));
     if (rc != ALFS_OK)
         return rc;
+    bool replaces = has_closed(to);
     if (r.size == ALFS_SIZE_OPEN)
         rc = ALFS_EINVAL;
     if (rc == ALFS_OK)
@@ -231,6 +305,8 @@ static int copy(const char *from, const char *to) {
     }
     if (rc == ALFS_OK && opened)
         rc = alfs_file_close(&store, &w);
+    if (rc != ALFS_OK && opened)
+        fail(to, !replaces);
     alfs_file_close_read(&store, &r);
     return rc;
 }
@@ -242,6 +318,7 @@ int vfs_flash_rename(const char *from, const char *to) {
     if (rc == ALFS_OK)
         rc = alfs_file_delete(&store, from);
     dirty = true;
+    let_go();
     fs_unlock();
     return err(rc);
 }
@@ -301,10 +378,11 @@ uint32_t vfs_flash_synced_cost(uint32_t bytes) {
 }
 
 int vfs_flash_clean(void) {
-    if (!writable || !dirty)
+    if (!writable || (!dirty && !nfailed))
         return 0;
     if (!fs_try_lock())
         return 1;
+    let_go();
     int rc = alfs_fs_cleanup(&store, 1);
     if (rc == ALFS_CLEAN)
         dirty = false;

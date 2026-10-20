@@ -30,6 +30,7 @@ typedef enum {
     R_LUA_CHECK,
     /* POSTs that act on the path alone */
     R_ERASE,
+    R_DELETE,
     R_REBOOT,
     R_TEST_MODE_ON,
     R_TEST_MODE_OFF,
@@ -65,6 +66,13 @@ typedef struct {
     bool fs;
 } post_route_t;
 
+/* [WEB-API-17] The file a delete names follows the route. */
+#define DELETE_ROUTE "/api/delete"
+
+static inline const char *delete_target(const char *path) {
+    return path + sizeof(DELETE_ROUTE) - 1u;
+}
+
 static const post_route_t post_routes[] = {
     {"/api/ota", MATCH_EXACT, R_OTA, BODY_STREAM, 0, false},
     {"/www/", MATCH_PREFIX, R_UPLOAD, BODY_STREAM, 0, true},
@@ -78,6 +86,7 @@ static const post_route_t post_routes[] = {
     {"/api/beeps", MATCH_EXACT, R_BEEPS, BODY_GATHER, BEEP_STORE_MAX - 1, true},
     {"/api/pins", MATCH_EXACT, R_PINS, BODY_GATHER, PIN_STORE_MAX - 1, true},
     {"/api/flight/erase", MATCH_EXACT, R_ERASE, BODY_NONE, 0, true},
+    {DELETE_ROUTE "/", MATCH_PREFIX, R_DELETE, BODY_NONE, 0, true},
     {"/api/reboot", MATCH_EXACT, R_REBOOT, BODY_NONE, 0, false},
     {"/api/test_mode/on", MATCH_QUERY, R_TEST_MODE_ON, BODY_NONE, 0, false},
     {"/api/test_mode/off", MATCH_EXACT, R_TEST_MODE_OFF, BODY_NONE, 0, false},
