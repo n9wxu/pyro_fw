@@ -160,6 +160,18 @@ static inline uint32_t ms5607_temps_at(const ms5607_temps_t *t, uint64_t at_us) 
     return (uint32_t)((int64_t)t->d2[newest] + (int64_t)(d >= 0.0f ? d + 0.5f : d - 0.5f));
 }
 
+/* One collector cycle: its temperature goes on the line first, and its
+ * pressure takes the line's temperature at its own time, between this
+ * temperature and the last. The codes ms5607_compensate() takes. */
+typedef struct {
+    uint32_t d1, d2;
+} ms5607_pair_t;
+
+static inline ms5607_pair_t ms5607_cycle(ms5607_temps_t *t, const collector_raw_t *raw) {
+    ms5607_temps_note(t, ms5607_code(raw->data[MS5607_TEMPERATURE]), raw->at_us[MS5607_TEMPERATURE]);
+    return (ms5607_pair_t){ms5607_code(raw->data[MS5607_PRESSURE]), ms5607_temps_at(t, raw->at_us[MS5607_PRESSURE])};
+}
+
 /* ── Detection [DD-053] ─────────────────────────────────────────── */
 
 typedef enum { MS5607_DETECT_PENDING, MS5607_DETECT_FOUND, MS5607_DETECT_ABSENT } ms5607_detect_result_t;

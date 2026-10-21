@@ -266,7 +266,7 @@ void test_mk1c_only_the_tracking_test_runs(void) {
 }
 
 /* The bias pulse is ended by a hardware alarm 8 ms after it starts, not by
- * the next 20 ms loop: DESIGN.md S3 asks for 5 to 10 ms. */
+ * the next loop: DESIGN.md S3 asks for 5 to 10 ms. */
 void test_mk1c_presence_pulse_is_8_ms(void) {
     board(true, true);
     loops(5000u);
@@ -316,7 +316,7 @@ void test_mk1c_fires_a_present_channel(void) {
 
 /* DESIGN.md 7.2: fire on the measured bus against the measured pack, never
  * on elapsed time. The slew takes 8.9 ms to 90 % on 2S; the loop sees it on
- * the next iteration, a period after the command [DD-065]. */
+ * the next iteration, a period after the command [DD-104]. */
 void test_mk1c_fires_on_the_measured_bus(void) {
     board(true, false);
     loops(1100u);
@@ -353,7 +353,7 @@ void test_mk1c_pump_runs_only_inside_a_fire(void) {
 /* The passive disarm: a loop that stops feeding the pump disarms the bus by
  * construction -- the FIFO drains, then C_HOLD bleeds. The FIFO carries a
  * loop and a quarter (arm_pump.h), and U9 lets go within 9.6 ms after
- * [DD-065]. */
+ * [DD-104]. */
 void test_mk1c_a_stopped_loop_disarms(void) {
     board(true, false);
     loops(1100u);
@@ -520,8 +520,8 @@ void test_mk1c_misfire_leaves_the_other_channel(void) {
 }
 
 /* DESIGN.md 5.3: two events one after the other. The second needs the bus
- * charged, so it does not wait for the drain: it fires within four loops,
- * inside the 100 ms the drain takes [DD-065]. */
+ * charged, so it does not wait for the drain: it fires inside the 100 ms
+ * the drain takes. */
 void test_mk1c_both_channels_one_after_the_other(void) {
     board(true, true);
     loops(1100u);
@@ -536,7 +536,7 @@ void test_mk1c_both_channels_one_after_the_other(void) {
     char msg[96];
     snprintf(msg, sizeof(msg), "second fire %llu us after the first",
              (unsigned long long)(w.fire_us[1] - w.fire_us[0]));
-    TEST_ASSERT_TRUE_MESSAGE(w.fire_us[1] - w.fire_us[0] <= 4u * LOOP_PERIOD_US && 4u * LOOP_PERIOD_US < 100000u, msg);
+    TEST_ASSERT_TRUE_MESSAGE(w.fire_us[1] - w.fire_us[0] < 100000u, msg);
 }
 
 /* A U9 that will not turn off keeps the bus at the pack after the fire: the

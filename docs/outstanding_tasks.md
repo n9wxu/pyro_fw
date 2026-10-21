@@ -14,7 +14,7 @@ numbers (3, 4 and 10): those sections are in that last version.
 |---|---|---|
 | — | [How every task runs](#how-every-task-runs) | read first |
 | 1 | [To do now](#1-to-do-now) | empty |
-| 2 | [Decisions](#2-decisions) | you: three left |
+| 2 | [Decisions](#2-decisions) | you: two left |
 | 3 | [To build](#3-to-build) | a decision above, or just the work |
 | 4 | [Known limits of the flight software](#4-known-limits-of-the-flight-software) | your judgement on which to take up |
 | 5 | [Bench checks](#5-bench-checks) | a person or equipment |
@@ -103,7 +103,6 @@ closed; R-2, R-3 and C6 are section 3's to build. ID-1 gave way to DD-099.
 
 | ID | Question | What is known | Recommendation |
 |---|---|---|---|
-| FL-1 | **A reading with a flash operation beside it** is discarded on every board (SNS-PRES-14). Your ruling: "Leave the data. Discussion on root-cause to follow." Nothing is changed until that discussion | Measured on a battery, against each board's ordinary 2 to 2.6 Pa: MK1B's MS5607 8.5 to 17 Pa rms, 43 at worst; MK1C's 3.4 to 3.9 Pa, 12 at worst; MK1B's BMP280 no effect. On MK1C a 30 km bench flight discarded about 4 readings a second | To confirm: whether "leave the data" means keep discarding, as today, or keep the readings. A consequence seen 2026-10-04: uploading the web files writes flash for longer than 0.5 s, every reading in that time is discarded, and the pad latches `sensor_lost` (SNS-PRES-17) until a restart. MK1A, MK1B and MK1C do it; MK1C-SD, whose files are on the card, does not |
 | GT-1 | **A ground-test abort re-runs channel 1** (review, Low). GND-TEST-10 restarts the whole procedure | — | Rule whether an aborted test resumes at the channel it reached |
 | RS-1 | **Resume timing** (review, Low). A resumed flight waits the 2.5 s settle, and the 4 s resume deadline is shorter than the 5 s the sensor is given to come up (DD-086) | — | Decide the three times together |
 
@@ -138,6 +137,7 @@ requirement. Say which to take up.
 | EST-4 | The lumped filter anchors its air at the first reading's pressure and the sensor's temperature then | a long wait on a pad that warms is not followed (DD-092) |
 | EST-5 | `constacc`, the other estimator, is late at height | no apogee within 2 s at 30 km from a cold pad and 45 km from a hot one; 7.7 s after a coast with no readings (`test/test_mach.c`'s report) |
 | EST-6 | Beyond the sensor's range, with a port error larger than the air's own pressure, apogee can be early | the Python study's 45 km flights: up to 2.4 s (`docs/lumped_parameter_filter.md`) |
+| EST-7 | A reading a flash operation ran beside is used, noise and all (DD-106) | MK1B's MS5607 beside one: 8.5 to 17 Pa rms, 43 Pa at worst, against 2.3 Pa at rest. The host flights put 1.2 and 9 Pa on every reading and no disturbed one; that the filters absorb it is taken on trust. No bench board has an MS5607 and flies: both MK1B-8MBs carry BMP280s. A host flight with the measured disturbance on the readings each sync overlaps would test it |
 
 ---
 

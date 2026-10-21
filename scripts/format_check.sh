@@ -16,9 +16,11 @@ FILES="$(cat src/flight_sources.txt) src/flight_internal.h src/flight_states.h s
     $(ls boards/*/board_info.c boards/*/pyro_*.c boards/*/pyro_*.h) boards/mk1b/pressure_board.c
     boards/mk1c/arm_pump.c boards/mk1c/arm_pump.h
     src/http_server.c src/http_server.h src/http_conn.c src/http_conn.h
-    src/http_work.c src/http_work.h src/status_json.c src/status_json.h
+    src/http_work.c src/http_work.h src/status_json.c src/status_json.h src/fs_json.c src/fs_json.h
     src/flight_log.c src/flight_log.h src/pressure_trace.c src/pressure_trace.h
     src/flash_chip.c src/flash_chip.h src/flash_chip_read.c
+    src/flash_slot.c src/flash_slot.h src/flash_timing.c src/flash_timing.h
+    src/core1_frame.h src/rtos/core1_frame.c test/test_flash_slot.c
     sim/physics.c sim/physics.h sim/sim_cli.c sim/pyro_sim.h test/test_physics.c"
 
 if [ "$1" = "--fix" ]; then

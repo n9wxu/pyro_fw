@@ -23,7 +23,6 @@ target_include_directories(pyro_hal_common PUBLIC
     ${PYRO_BOARD_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/../..            # project root
     ${CMAKE_CURRENT_LIST_DIR}/../rtos          # rtos_tasks.h, FreeRTOSConfig.h
-    ${LWIP_DIR}/src/include
     ${TINYUSB_DIR}/lib/networking
     ${PICO_SDK_PATH}/src/common/pico_usb_reset_interface_headers/include
 )
@@ -57,6 +56,15 @@ endif()
 if(PYRO_HAS_BENCH_FLIGHT)
     target_compile_definitions(pyro_hal_common PUBLIC PYRO_HAS_BENCH_FLIGHT=1)
     target_sources(pyro_hal_common PRIVATE ../flight_sim.c ../bench_flight.c)
+endif()
+
+# [FLT-RT-02, DD-104] From the first period airborne until landing core0
+# runs only from RAM and the log writer's flash operations take no lockout.
+# Set where the image links its flight path into RAM.
+if(PYRO_FLIGHT_RAM)
+    target_compile_definitions(pyro_hal_common PUBLIC PYRO_FLIGHT_RAM=1)
+else()
+    target_compile_definitions(pyro_hal_common PUBLIC PYRO_FLIGHT_RAM=0)
 endif()
 
 # A panic stamps the watchdog scratch and stops, without printing: see

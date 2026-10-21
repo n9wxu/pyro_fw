@@ -104,8 +104,8 @@ it (DD-052). Read the pull-ups from the design files. The template declares
 100 kHz until that is checked.
 
 An MS5607 wants fast mode: the collector's cycle is a pressure and a
-temperature, 18.8 ms at 400 kHz and 19.9 ms at 100 kHz, against the 20 ms
-loop and FLT-RATE-01's 50 a second (DD-093). A BMP280 is well inside it at
+temperature, 18.8 ms at 400 kHz and 19.9 ms at 100 kHz, against
+FLT-RATE-01's 50 a second (DD-093). A BMP280 is well inside it at
 either speed.
 
 ## What this board declares

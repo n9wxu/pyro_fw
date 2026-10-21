@@ -93,8 +93,8 @@ the first quiescent reading.
 
 ## The main loop
 
-The shared loop (`src/main_hardware.c`) runs every 20 ms (`src/loop_period.h`,
-DD-065). The pressure collector's queue is taken first; then platform
+The shared loop (`src/main_hardware.c`) runs every 10 ms (`src/loop_period.h`,
+DD-104). The pressure collector's queue is taken first; then platform
 services, the flight state machine, and the outputs, where `hal_pyro_update()`
 calls `pyro_update()`. Each `pyro_update()`:
 
@@ -281,12 +281,12 @@ detect. In flight the pressure collector runs the sensor free (DD-093): a
 pressure, then a temperature, each read 9.1 ms after its command by an alarm
 whose handler runs from RAM, so a flash write cannot delay a read or its
 timestamp. A cycle takes 18.8 ms, 53 a second, and up to four wait for the
-20 ms loop.
+loop.
 
 A transfer that fails is counted by cause on `/api/status`. After three in a
 row the collector clears the bus, resets the sensor and goes on. A conversion
-a flash erase or program ran beside is discarded, not used, and counted in
-`pres_flashed` on `/api/status` (DD-068).
+a flash erase or program ran beside is used like any other, and counted in
+`pres_flashed` on `/api/status` (DD-106).
 
 Measured 2026-10-03 with a battery fitted (`docs/pressure_collector.md`): the
 sensor's scatter is 2.4 to 2.6 Pa rms, the datasheet's figure, beeping or
@@ -457,6 +457,6 @@ of milliseconds on this class of part). `/api/status` reports `loop_max_us` and
   `SD_Physical_Layer_Simplified_v6.00_2017-04.pdf`
 - DD-093 (the pressure collector), DD-052 (bus speeds), DD-053 (no waits),
   DD-054 (the bus as measured), DD-055 (presence and shorts only), DD-056 (the
-  fire), DD-065 (the 20 ms loop), DD-068
+  fire), DD-104 (the 10 ms loop), DD-068
   (conversions beside a flash operation), DD-069 (bounded transfers), DD-071
   (the ground test switch) in `DECISIONS.md`

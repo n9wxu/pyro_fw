@@ -8,9 +8,11 @@
 #include "task.h"
 #include "semphr.h"
 #include "flash_op.h"
+#include "core1_frame.h"
 #if PYRO_HAS_SD
 #include "hr_log.h"
 #endif
+#include "hardware/regs/addressmap.h"
 #include "hardware/structs/watchdog.h"
 #include "hardware/sync.h"
 #include "pico/time.h"
@@ -42,7 +44,7 @@ bool rtos_in_flight_task(void) {
 
 /* ── The mailbox ──────────────────────────────────────────────────── */
 
-enum { CALL_NONE, CALL_PENDING, CALL_RUNNING, CALL_DONE };
+enum { CALL_NONE, CALL_PENDING, CALL_RUNNING, CALL_DONE, CALL_REFUSED };
 
 static SemaphoreHandle_t call_mutex;
 static StaticSemaphore_t call_mutex_buf;
@@ -63,12 +65,12 @@ bool flight_call(flight_call_fn fn, void *arg, uint32_t timeout_ms) {
     call_arg = arg;
     __dmb();
     call_state = CALL_PENDING;
-    while (call_state != CALL_DONE && (xTaskGetTickCount() - t0) < pdMS_TO_TICKS(timeout_ms))
+    while (call_state < CALL_DONE && (xTaskGetTickCount() - t0) < pdMS_TO_TICKS(timeout_ms))
         vTaskDelay(pdMS_TO_TICKS(1));
     /* Withdrawn only while still pending: once the flight task has taken it,
      * it runs, and this waits for it. */
     uint32_t s = spin_lock_blocking(call_lock);
-    bool ran = call_state != CALL_PENDING;
+    bool ran = call_state != CALL_PENDING && call_state != CALL_REFUSED;
     if (!ran)
         call_state = CALL_NONE;
     spin_unlock(call_lock, s);
@@ -79,24 +81,26 @@ bool flight_call(flight_call_fn fn, void *arg, uint32_t timeout_ms) {
     return ran;
 }
 
+/* [FLT-RT-02] From the first period airborne until landing the flight task
+ * runs only from RAM: a call that lives in flash is refused until then. */
+static bool may_run(flight_call_fn fn) {
+    uintptr_t a = (uintptr_t)fn;
+    return !flash_op_in_flight() || (a >= SRAM_BASE && a < SRAM_END);
+}
+
 void flight_call_service(void) {
     uint32_t s = spin_lock_blocking(call_lock);
-    bool take = call_state == CALL_PENDING;
+    bool take = call_state == CALL_PENDING && may_run(call_fn);
     if (take)
         call_state = CALL_RUNNING;
+    else if (call_state == CALL_PENDING)
+        call_state = CALL_REFUSED;
     spin_unlock(call_lock, s);
     if (!take)
         return;
     call_fn(call_arg);
     __dmb();
     call_state = CALL_DONE;
-}
-
-/* ── Hand-offs ────────────────────────────────────────────────────── */
-
-void rtos_notify_storage(void) {
-    if (h_storage)
-        xTaskNotifyGive(h_storage);
 }
 
 /* ── The storage task's check-in ──────────────────────────────────── */
@@ -143,6 +147,8 @@ void rtos_start(struct flight_context_t *ctx) {
         xTaskCreateStaticAffinitySet(net_task, "net", NET_STACK_WORDS, NULL, PRIO_P, stack_net, &tcb_net, CORE1_ONLY);
     h_storage = xTaskCreateStaticAffinitySet(storage_task, "storage", STORAGE_STACK_WORDS, NULL, PRIO_P, stack_storage,
                                              &tcb_storage, CORE1_ONLY);
+    core1_frame_attach_storage(h_storage);
+    flash_op_set_writer(h_storage);
 #if PYRO_HAS_LUA
     lua_task_create();
 #endif

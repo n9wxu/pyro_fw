@@ -11,6 +11,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "pyro.h"
+#include "small_fmt.h"
 #include "arm_pump.h"
 #include "board_if.h"
 #include "board_pins.h"
@@ -20,7 +21,6 @@
 #include "pyro_measure.h"
 #include "pyro_sense.h"
 #include "pyro_sequence.h"
-#include <stdio.h>
 
 extern void hal_telemetry_send(const char *sentence);
 
@@ -61,11 +61,11 @@ static void report_status(uint32_t now_ms) {
     last_report_ms = now_ms;
     const tracking_t *t = tracking_result();
     char line[160];
-    snprintf(line, sizeof(line),
-             "!PYRO q[vbat=%u bus=%u a=%u b=%u] trk[bus=%u a=%u b=%u] vbat=%lumV seq=%u flt=0x%02x\r\n", quiescent.vbat,
-             quiescent.bus, quiescent.a, quiescent.b, t->bus, t->a, t->b,
-             (unsigned long)counts_to_node_mv(quiescent.vbat), (unsigned)sequence_current_step(),
-             (unsigned)faults_latched());
+    small_snprintf(line, sizeof(line),
+                   "!PYRO q[vbat=%u bus=%u a=%u b=%u] trk[bus=%u a=%u b=%u] vbat=%lumV seq=%u flt=0x%02x\r\n",
+                   quiescent.vbat, quiescent.bus, quiescent.a, quiescent.b, t->bus, t->a, t->b,
+                   (unsigned long)counts_to_node_mv(quiescent.vbat), (unsigned)sequence_current_step(),
+                   (unsigned)faults_latched());
     hal_telemetry_send(line);
 }
 

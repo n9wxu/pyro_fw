@@ -115,8 +115,8 @@ flags up. The first continuity check starts from `pyro_update()`, never from
 
 ## The main loop
 
-The shared loop (`src/main_hardware.c`) runs every 20 ms (`src/loop_period.h`,
-DD-065) and calls `pyro_update()` from its outputs stage. `pyro_update()`
+The shared loop (`src/main_hardware.c`) runs every 10 ms (`src/loop_period.h`,
+DD-104) and calls `pyro_update()` from its outputs stage. `pyro_update()`
 either ends a fire pulse or advances the continuity check. Nothing waits
 (DD-053).
 
@@ -141,7 +141,7 @@ Once a second, in two steps:
 | Step | Common | Reads |
 |---|---|---|
 | shorts | off, after the idle second | a channel still low has a path to ground bypassing the low side: a short |
-| presence | on for its 10 ms settle, read at the next loop, 20 ms on | a channel pulled low has an igniter; one left high is open |
+| presence | on for its 10 ms settle, read at the next loop, 10 ms on | a channel pulled low has an igniter; one left high is open |
 
 The node behaves as MK1A's: against the 100 kΩ pull-up a fitted igniter reads
 about 0 counts, a 1 kΩ bad joint 41, a 10 kΩ leak 372, and nothing 4095. A
@@ -188,7 +188,7 @@ from RAM.
 A transfer that fails is counted by cause on `/api/status`. After three in a
 row the collector clears the bus on the fitted sensor's pad, resets the
 sensor and goes on. A conversion a flash erase or program ran beside is
-discarded, not used, and counted in `pres_flashed` on `/api/status` (DD-068).
+used like any other, and counted in `pres_flashed` on `/api/status` (DD-106).
 
 ## Telemetry, LED and buzzer
 
@@ -254,7 +254,8 @@ released pyro pad is one.
   this board's sensor with a battery fitted.
 - **A flash operation disturbs the MS5607, battery or not:** a conversion
   beside one sits 8.5 to 17 Pa rms from its neighbours, 43 Pa at worst. It
-  is discarded (DD-068). The BMP280 shows no such effect.
+  is used, and the flight's filters are taken to absorb it (DD-106). The
+  BMP280 shows no such effect.
 
 ## What this board declares
 
@@ -313,6 +314,6 @@ sector erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
   diodes.com
 - `docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf`, `MS5607-02BA03_2017-06.pdf`,
   `UM10204_I2C-bus_Rev7.0_2021-10.pdf`
-- DD-052, DD-053, DD-059, DD-065, DD-068, DD-069, DD-093,
+- DD-052, DD-053, DD-059, DD-068, DD-069, DD-093, DD-104,
   DD-071 in `DECISIONS.md`
 - Tasks B-U5 and B-BZ in `docs/outstanding_tasks.md`, section 6

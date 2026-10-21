@@ -40,11 +40,12 @@ static int fs_read(void *ctx, uint32_t addr, void *buf, uint32_t len) {
     return 0;
 }
 
-/* flash_op() says no while a board's pyro sequence runs past its wait, and
- * when the other core's helper would not park. Neither is the chip's fault,
- * and alfs takes a failed program for one, so the driver asks again, up to a
- * deadline past any fire sequence [DD-056]. The flight task and interrupts
- * are refused for good, and never call here. */
+/* On the ground flash_op() says no while a board's pyro sequence runs past
+ * its wait, and when the other core's helper would not park. Neither is the
+ * chip's fault, and alfs takes a failed program for one, so the driver asks
+ * again, up to a deadline past any fire sequence [DD-056]. The flight task
+ * and interrupts are refused for good, and never call here. From launch to
+ * landing the log writer's operations run in its slots [FLT-LOG-09]. */
 #define REFUSAL_TRIES 8
 
 static bool refused_for_now(int rc) {
@@ -56,7 +57,7 @@ static int fs_prog(void *ctx, uint32_t addr, const void *buf, uint32_t len) {
     int rc = -1;
     flash_op_crumb(97);
     for (int i = 0; i < REFUSAL_TRIES && (i == 0 || refused_for_now(rc)); i++)
-        rc = flash_op_program_bytes(addr, (const uint8_t *)buf, len);
+        rc = flash_op_slot_program(addr, (const uint8_t *)buf, len);
     flash_op_crumb(98);
     return rc;
 }
@@ -66,7 +67,7 @@ static int fs_erase(void *ctx, uint32_t addr) {
     int rc = -1;
     flash_op_crumb(95);
     for (int i = 0; i < REFUSAL_TRIES && (i == 0 || refused_for_now(rc)); i++)
-        rc = flash_op_erase(addr, FLASH_SECTOR_SIZE);
+        rc = flash_op_slot_erase(addr);
     flash_op_crumb(96);
     return rc;
 }

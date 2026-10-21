@@ -52,24 +52,24 @@ static void pulse_end_isr(uint alarm) {
     take_reading();
 }
 
-/* Claimed from the loop, so the alarm's interrupt belongs to the loop's core
- * and never runs beside it. */
 static bool have_alarm(void) {
-    if (!tracking.alarm_asked) {
-        tracking.alarm_asked = true;
-        tracking.alarm = hardware_alarm_claim_unused(false);
-        if (tracking.alarm != NO_ALARM)
-            hardware_alarm_set_callback((uint)tracking.alarm, pulse_end_isr);
-    }
     return tracking.alarm != NO_ALARM;
 }
 
+/* At start-up, on the flight task's core, so the alarm's interrupt belongs
+ * to that core and never runs beside it; and before any flight, so the
+ * flight path claims nothing [FLT-RT-02]. */
 void tracking_init(void) {
     int alarm = tracking.alarm;
     bool asked = tracking.alarm_asked;
     memset(&tracking, 0, sizeof(tracking));
     tracking.alarm = asked ? alarm : NO_ALARM;
-    tracking.alarm_asked = asked;
+    tracking.alarm_asked = true;
+    if (!asked) {
+        tracking.alarm = hardware_alarm_claim_unused(false);
+        if (tracking.alarm != NO_ALARM)
+            hardware_alarm_set_callback((uint)tracking.alarm, pulse_end_isr);
+    }
 }
 
 static void begin_pulse(uint32_t now_ms) {

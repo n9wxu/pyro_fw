@@ -560,6 +560,309 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-107: The Cleanup At The Flash's Pace On USB; A Filesystem Tab
+- **Decision:** at the user's direction -- "Erase at full speed when on
+  usb. Provide a filesystem maintenance tab on the web ui.":
+  - On USB with test mode off, where no launch can be declared (USB-01),
+    the pad's cleanup takes the next sector at each pass of the storage
+    task, one after another. Otherwise it erases one a second
+    [USB-10] (`vfs_flash_clean_wait_ms()`).
+  - `GET /api/fs` reports the flash store: its size, the bytes in files,
+    the bytes free (pages the cleanup has yet to erase among them), the
+    cleanup's state (`done`, or erasing `fast` or `slow`) and the sectors
+    it has erased since the start; the store's sectors, their pages and the
+    file bytes a page holds; and each file's path, its size once closed,
+    and whether it is the board's own (WEB-API-17). It answers from the
+    file table and the cleanup's own count, and is refused with 423 in
+    flight [WEB-API-19].
+  - `GET /api/fs/scan?sector=K&count=N` reads up to 128 sectors and gives
+    how many pages of each read erased, all 1s: a check of the flash, not
+    of alfs's format [WEB-API-20].
+  - The Filesystem tab shows the report, downloads a file, deletes one once
+    the operator confirms (none of the board's own), and reads `/api/fs`
+    again every 2 s until the cleanup is done. At the user's direction --
+    "the web ui can scan the alfs and keep track of the status in the ui
+    memory" -- it scans the store 128 sectors a request when first shown,
+    when asked and once the cleanup is done, keeps the result in the page,
+    and splits the free bytes into erased and not yet erased, counting each
+    sector the cleanup erases since the scan as erased [WEB-UI-07].
+- **Why one a second off USB:** an erase on the pad stops both cores: 50 to
+  70 ms with no pressure reading, launch detection and the ground
+  reference held. The longest erases the datasheets allow, 400 ms
+  (BY25Q64ES) and 800 ms (XT25F128F), back to back, would come near the
+  watchdog's 1 s.
+- **Why the page scans:** `alfs_fs_status()` tells erased pages from pages
+  awaiting the cleanup only by reading every erased page whole, in one
+  call: 5.8 s on MK1C and 2.0 s on MK1B-8MB, holding the store's lock and
+  the network task. Read a chunk a request, the same pages take 2.4 s on
+  MK1C in 16 requests, each under a quarter of a second, and no request
+  waits behind the whole.
+- **Why the cleanup does not wait for transfers:** uploads are small --
+  configuration and Lua scripts -- and the big transfers are log
+  downloads, during which alfs's cleanup already waits, a reader being
+  open.
+- **Measured, 2026-10-19:**
+
+  | | MK1C | MK1B-8MB |
+  |---|---|---|
+  | After a refused upload, sectors erased | 1,891 in 49 s | 810 in 29 s |
+  | The same at one a second | 32 minutes | 14 minutes |
+  | `GET /api/fs` | 8 ms | 7 ms |
+  | A scan of every sector | 2.4 s, 16 requests | 0.8 s, 8 requests |
+  | `support/api_check.py` | 74/74 | 74/74 |
+
+  No sensor fault latched on either through the erases. An upload made
+  while the cleanup erases runs slower: 1 MB to MK1B-8MB took 30.7 s with
+  the cleanup idle and 49.7 s while it erased. Every upload leaves its part
+  file's pages for the cleanup (a rename is a copy, DD-100), so an upload
+  close behind another meets it.
+
+### DD-106: Every Reading Used; One A Flash Operation Ran Beside Counted
+- **Decision:** at the user's direction -- "Take a note of the noise, but
+  keep all samples. For now let us assume the noise is mitigated with the
+  filters." -- a conversion a flash erase or program ran beside is used like
+  any other [SNS-PRES-14]. DD-068's mark stays and does nothing else: the
+  reading is counted (`pres_flashed` on `/api/status`) and traced ('F' a
+  pressure, 'G' a temperature). An MS5607 cycle's temperature always goes on
+  the line, and its pressure is always compensated and fed (`ms5607_cycle()`
+  in `src/ms5607_driver.h`).
+- **The noise it lets in,** from `docs/pressure_collector.md`: departures
+  from a 9-point running median, the MS5607s on a battery, the BMP280 on USB
+  alone.
+
+  | Sensor | At rest, rms | Beside a flash operation, rms | Worst beside one |
+  |---|---|---|---|
+  | MK1B, MS5607 | 2.3 to 2.4 Pa | 8.5 to 17.0 Pa | 43 Pa |
+  | MK1C, MS5607 | 2.4 to 2.6 Pa | 3.4 to 3.9 Pa | 12 Pa |
+  | MK1B, BMP280 | 2.5 Pa | 2.3 to 3.0 Pa | -- |
+
+- **Taken on trust:** that the flight's filters absorb it. The host flights
+  put 1.2 and 9 Pa rms on every reading (`test/board_harness.h`) and no
+  disturbed reading among them. A bench flight replaces the sensor's
+  pressure with the profile's, so it shows every reading arriving, not what
+  their noise does. MK1B's MS5607 is the case that matters, and no board on
+  the bench has it and flies: both MK1B-8MBs carry BMP280s.
+- **What it gains:** no reading is missing [FLT-LOG-07]. On MK1B-8MB each
+  second's sync programs pages in consecutive periods, and every conversion
+  beside them was dropped.
+- **Measured, 2026-10-19,** `support/bench_flight.py --apogee 500` on
+  MK1B-8MB (BMP280, a reading each 14.5 ms):
+
+  | | Readings beside a flash operation | Log rows | Widest step between rows |
+  |---|---|---|---|
+  | Each one dropped | 931 | 3,988 | 363 ms, 3 s after launch; 73 to 146 ms, 5 to 10 readings, about once a second |
+  | Each one used | 1,074 | 4,898 | 15 ms |
+
+  MK1C's 3 km flight, every one used: 1,477 beside a flash operation, 9,422
+  rows, the widest step 19 ms, one reading. A minute of uploads on MK1B-8MB
+  (`support/failed_write_check.py`) latched `sensor_lost` [SNS-PRES-17]
+  when each one was dropped. Used, no fault: 1,857 readings beside the
+  writes on MK1B-8MB, and 14,307 beside MK1C's 2.3 minutes of them.
+- **Unchanged:** an erase on the pad stops both cores (DD-100), so no
+  conversion runs during it: a gap in the readings of up to about 60 ms,
+  once a second while the cleanup has sectors to erase.
+
+### DD-105: A File Deleted; A Failed Write Let Go
+- **Decision:** at the user's direction ("add a delete api ... add support
+  to clean up a failed write"):
+  - `POST /api/delete/<path>` removes a file from every store that holds it
+    [WEB-API-17]: 200; 404 for none; 409 while it is open; 400 for a name
+    WEB-API-14 refuses; 403 for the board's identity (`serial.txt`) and its
+    pad record (`pad.mkr`), which the board keeps on its own flash whatever
+    a card holds. In flight it is refused with 423, as every storage route.
+  - A writer whose close fails stays open in alfs, and only a mount lets it
+    go. `src/vfs_flash.c` counts the handles open, and once none is it
+    mounts the store again, as a restart mounts it: the failed file is as a
+    power cut would have left it, a log read to its last synced page, and
+    an upload's part file, which the upload then removes, goes
+    [WEB-API-18]. A remove asked for while another file is open is done at
+    that mount. A rename whose copy fails is let go the same way, and
+    removed where it would have been the name's only copy, so the file the
+    upload was for reads as it did.
+- **Why a mount:** alfs has no call that gives up a writer, and the library
+  is used as it is. A mount reaches the state a restart reaches, which
+  alfs's power-loss tests cover.
+- **Measured, 2026-10-19:** `support/failed_write_check.py` uploads past the
+  room the board reports. MK1C refused it after 7.9 MB, twice; MK1B-8MB
+  after 4.0 MB. On each the part file was gone, its name took a new upload
+  within a second, and the board had not restarted. The upload's pages wait
+  for the pad's cleanup, a sector a second: half an hour for MK1C's 8 MB.
+
+### DD-104: The Flight Path In RAM, Core1 In Slots
+- **Decision:** at the user's direction -- "Move all flight code (launch to
+  landing) to RAM so no flash executed after launch until after landing",
+  and then: "lua can run from flash in flight. Logging has a small flash
+  interruption. If erases are needed in flight (insufficient reservation)
+  then the erase will use suspend/resume to keep the lua code steady. Give
+  the logger 3ms of every 10 and lua 6.5ms of every 10 so the total
+  non-critical flight code takes 9.5ms giving 0.5ms of buffer. Critical
+  flight code runs in ram so it cannot be disturbed by the flash
+  operations."
+  - The flight task, every interrupt handler core0 takes, the idle tasks and
+    the kernel paths they take run from RAM [FLT-RT-02].
+  - From the first period airborne until landing a flash operation runs on
+    core1 with core1's interrupts off, and nothing else: no priority raised,
+    no lockout of core0 [FLT-RT-03]. Core1's tasks -- the log writer, Lua,
+    the network, the timer daemon -- run from flash and wait while it lasts.
+  - The period is 10 ms [FLT-RT-04], and core1 runs in its frames: the log
+    writer from the period's start for 3 ms, then Lua's tick, at most
+    6.5 ms and done by 9.5 ms; 0.5 ms spare [FLT-LOG-09, LUA-RUN-04].
+  - A flash operation starts in the writer's slot only if, by the chip's
+    datasheet, it ends or can be suspended before the slot does. One that
+    waits for a slot starts at the slot's start, from an alarm interrupt on
+    core1: the writer's task shares core1 with the network task at its
+    priority, which a notification does not preempt, and wakes up to a
+    millisecond into the slot. From launch to landing an erase comes only
+    when the log has no erased page left, and only on a part whose erase
+    ends in pieces; it is suspended at the end of each slot and resumed in
+    the next [FLT-LOG-10].
+  - A chip holding an erase suspended takes no other erase, and holds it
+    through a reboot of the RP2040. An operation the chip holds suspended is
+    run to its end at every start, and on the ground by the first operation
+    after a flight that gave one up [FLT-LOG-11]. An erase it ignores reads
+    as ended at once, so a piece started afresh never lets go of what is
+    held; only the held operation resumed to its end does
+    (`flash_slot_held()`).
+- **The period:** 10 ms where DD-065 made it 20. The collector runs free of
+  the loop (DD-093), so the sample rate is unchanged; a period now steps
+  none or one sample. MK1C's arm pump is sized from the period
+  (`boards/mk1c/arm_pump.h`).
+- **Placement:** `support/flight_ram_link.py` runs every firmware link. It
+  links once, has `support/prove_flight_ram.py` find the flight path in
+  that image -- every function the roots reach by direct branch, through
+  the tables they read and through the pointers named for run time -- and
+  the read-only sections those functions refer to by relocation, then links
+  again with those sections renamed `.time_critical.flight.*`, which the
+  linker script copies to RAM at start-up. Objects of the SDK, the kernel
+  and the C library are renamed in copies; their sources are not touched.
+  A C library built without a section per function, as Ubuntu's newlib
+  is, keeps each function in its member's `.text`; such a member is
+  renamed whole when every function in it is on the path. The SDK's
+  assembly float, double, divider and memory shims go whole, by their
+  `PICO_*_IN_RAM` switches. CI proves every image with `--strict`:
+  no function of the path, no read-only byte it reads and no indirect
+  branch it makes is left in flash or uncovered.
+- **What the path gave up to fit:** MK1C's path is 299 functions and
+  42.5 kB of code. To fit beside the rest of RAM: telemetry, the
+  estimator rows, the fire diagnostics and the script's status line are
+  written by `src/small_fmt.c`, an integer formatter whose output is the C
+  library's character for character, so the library's printf stays in
+  flash; `/api/status` is taken by the flight task as numbers and named by
+  the net task; MK1C claims its presence alarm and loads its arm pump's
+  program at start-up; the sample ring holds 16 (no more than four ever
+  wait, FLT-RATE-06); the host log's ring holds 4 KB, 2.5 to 3 s of log;
+  and the SDK's default alarm pool, whose interrupt would run on core0, is
+  off, since nothing schedules in it. Room left in main RAM: MK1C 3.7 kB,
+  MK1B-8MB 4.8 kB with its bench flight, MK1B 6.7 kB, MK1A 8.2 kB.
+- **What flight refuses:** every flash operation but the writer's; a
+  mailbox call (`flight_call()`) whose function lives in flash; a reset
+  asked for over USB, which waits for landing. Entering flight stops the
+  buzzer, silent from launch already (FLT-LAUNCH-05). Flight begins at the
+  head of the first period that starts airborne with the log running, and
+  the log opens only then; landing ends it, waiting out a piece in
+  progress, before the flight task runs from flash again.
+- **The chips:** `src/flash_timing.c` holds the worst-case figures of the
+  four fitted parts. W25Q16JV and W25Q128JV suspend a program or an erase,
+  tSUS 20 us. XT25F128F does too, but a suspend may not follow a resume by
+  less than 500 us, and an erase can take 800 ms. BY25Q64ES's datasheet
+  suspends only an erase, and on MK1B-8MB that erase, resumed and suspended
+  in each slot, had not ended after 2,000 slots: it does not erase in
+  flight, and its log has the room erased before launch. Its program,
+  2.4 ms at worst, starts only in a slot's first 300 us. A part
+  not in the table programs whole from a slot's start and does not erase in
+  flight. A piece also pays about 100 us a command through the SDK's
+  `flash_do_cmd()`: the plan keeps 300 us for a start and 500 us for a
+  suspend.
+- **Measured on MK1C, 2026-10-18,** bench flights in test mode on the flash
+  log: from launch to landing no lockout, no loop overrun, the loop at most
+  97 us late, Lua's tick every period (100 a second). A 5 km flight with
+  too little erased room: 60 sector erases in flight in 690 suspended
+  pieces, the longest piece 2.95 ms; Lua lost no tick. Pressure conversions
+  a flash operation ran beside (DD-106): 6 to 11 a second of the 106,
+  pressures and temperatures together.
+- **Measured on MK1B-8MB, 2026-10-19,** 500 m bench flights on five
+  starts: every slot waited for ran its piece, 1,264 to 1,273 programs a
+  flight, nothing dropped. Before the slot alarm the writer woke 0.3 to
+  1 ms into its slot on three starts of the five, the tick's phase against
+  the period being fixed for a start, and each of those flights lost about
+  100 kB of its log. Its erase is the measurement above.
+- **Measured on MK1C, 2026-10-19,** with the slot alarm: a 3 km flight
+  after an upload had filled the filesystem, 52 erases in flight in 488
+  suspended pieces, nothing dropped, no loop overrun.
+- **Open:** the writer's own processing between pieces can run past its
+  slot -- about four frames a second in a flight, and most of a frame when
+  alfs searches a nearly full filesystem for a free page -- and Lua shares
+  core1 with it then: on MK1C with the filesystem full, 33 Lua ticks given
+  no time. On MK1B-8MB, a 1500 m flight begun as the pad's cleanup started
+  on a 4 MB refused upload, in an image built with BY25Q64ES's erase in
+  pieces turned back on, overran 965 frames, the longest 9.99 ms, and
+  dropped the log from 18 s on (149 kB); no erase began. FLT-LOG-11's
+  finish is tested on the host only: that flight was to leave an erase
+  suspended. `/api/log/space` counts pages awaiting the cleanup as room,
+  which a part that does not erase in flight cannot use: 2,272 s reported
+  on MK1B-8MB with a few sectors erased.
+
+### DD-103: The Flight Log To The Host In Test Mode
+- **Decision:** at the user's direction ("Give the USB flight test mode the
+  option to prevent logging to flash and log to network"), test mode set
+  with `POST /api/test_mode/on?log=host` holds the next flight's log in RAM
+  for the host in place of the flash [USB-09]. The choice lives with test
+  mode: it starts off at every start, a log already running keeps where it
+  goes, and `/api/status` reports it (`test_log`).
+- **How the host reads it:** the storage task hands the log's ring to a
+  ring of its own (`src/log_live.c`, 4 KB, DD-104) in place of the file; `GET
+  /api/flight/live?since=N` returns the offset of the first byte, the offset
+  the log has reached, then the bytes [WEB-API-16]. A host that falls more
+  than the ring behind finds the oldest bytes gone and can count them. A
+  poll is an ordinary request, framed by Content-Length [WEB-HTTP-02].
+- **The bench:** `support/bench_flight.py --host-log FILE` polls it once a
+  second and saves the binary log; `pyro_sim --csv FILE` renders it with the
+  board's own renderer, and `pyro_sim --replay` flies it again.
+- **Measured on MK1C, 2026-10-18,** a 3 km bench flight: 223,622 bytes to
+  the host, none lost, 9,416 sample rows, the widest gap 19 ms; no flash
+  program or erase from launch to landing; the loop's lateness at most
+  0.6 ms against 12 ms with the log written to the flash. Six programs
+  follow at LANDED. The replay of the saved log decides apogee 19 ms from
+  the log's and pyro 2 and landing at the same millisecond.
+
+### DD-102: smallest_tcp In Place Of lwIP
+- **Decision:** at the user's direction ("Replace lwip with smallest_tcp.
+  This should reduce flash and ram usage"), the USB network runs on
+  smallest_tcp v0.1.12 (github.com/n9wxu/smallest_tcp), IPv4 only, and lwIP
+  and TinyUSB's DHCP and DNS servers are gone from the image.
+- **Where:** `src/net_glue.c` carries TinyUSB's frames to and from the stack
+  and runs its one-client DHCP server and its mDNS responder;
+  `src/http_transport.c` is HTTP's sixteen links, the stack's buffer
+  operations written over each exchange's own rings, so a byte is copied
+  once each way and a sent byte stays in the tx ring until it is
+  acknowledged; `src/http_server.c` lends its four exchanges through
+  `http_exchanges_t`. The transport is tested on the host against the real
+  stack, with a second instance of it as the browser
+  (`test/test_http_transport.c`).
+- **What it saves:** MK1C's update image 333,568 bytes against 349,440;
+  RAM (data and bss) about 39 kB less, the stack holding no heap and no
+  pools: two 1,514-byte frame buffers, the links' records and a 256-byte
+  transmit queue.
+- **Held frames [WEB-NET-05]:** the stack sends a refused SYN, data or FIN
+  again at its next pass, but not a bare acknowledgement or a window update;
+  a lost window update leaves a host at a shut window until its own probe.
+  Those go into 256 bytes and leave in order. Without them a slow upload over
+  a busy endpoint took four times as long in the host test.
+- **What the stack lacks, worked around here** (smallest_tcp issues 7 to 11,
+  open): one segment in flight, so the transport shows the stack one segment
+  at a time and each carries PSH (macOS otherwise delays one acknowledgement
+  in fifteen by 100 ms); `NET_API_PREFIX` renames the firmware's own
+  `net_init()`, `http_conn_init()`, `http_reason()` and `http_server_init()`
+  in files that include the stack, which `src/net_stcp.h` undoes; the stack
+  wants a receive buffer it never writes.
+- **What changes for the host:** `pyro.local` resolves by mDNS alone; there
+  is no DNS answer on port 53. DHCP serves the one host on the link
+  192.168.N.2. `/api/net` reports TCP's links by state, retransmissions, the
+  transport's counts and the frames each way, in place of lwIP's pools
+  [WEB-API-13].
+- **TinyUSB's RNDIS replies** take one constant from lwIP's ethernet header;
+  `src/net_shim/netif/ethernet.h` gives it, and TinyUSB is unchanged.
+
 ### DD-101: Every Sample Logged
 - **Decision:** at the user's direction ("The 1hz and 50hz log capacity is
   roughly the same. Drop the 1hz logging and log every flight cycle"), the
@@ -587,7 +890,7 @@ rationale and the alternatives considered.
 - **What it costs in flight:** each sync's programs overlap two pressure
   conversions, which are discarded (DD-068): a 57 ms gap in the samples about
   once a second, 743 conversions of the flight's, about 5%. The flight steps
-  on every sample it has [FLT-RATE-06].
+  on every sample it has [FLT-RATE-06]. DD-106 uses them.
 - **RAM:** the plan's delay line, 128 rows (3 KB), is gone.
 
 ### DD-100: The Board's Files On alfs; Only The Cleanup Erases
@@ -1174,8 +1477,8 @@ The designer's answers to `docs/outstanding_tasks.md` section 2.
   gives 278.4 K): a main set for 300 m fires at 290 m.
 
 ### DD-078: A Flight On The Bench
-- **Decision:** on a board built with `PYRO_HAS_BENCH_FLIGHT` (MK1C and
-  MK1C-SD), `POST /api/sim/flight` flies a profile (`src/flight_sim.h`):
+- **Decision:** on a board built with `PYRO_HAS_BENCH_FLIGHT` (MK1C,
+  MK1C-SD and MK1B-8MB), `POST /api/sim/flight` flies a profile (`src/flight_sim.h`):
   on the pad, a constant-acceleration boost sized for the apogee asked for,
   a ballistic coast, a drogue whose rate scales as sqrt(rho0 / rho), a main
   from its altitude, landing. Its pressure, from the 1976 US Standard
@@ -1549,6 +1852,8 @@ The designer's answers to `docs/outstanding_tasks.md` section 2.
   MK1B's buzzer disturbs its sensor and MK1C's does not is not established.
   Through G4 on all four boards (2.1.701): 23-38 conversions discarded
   each, no pressure rejects, no Mach flag.
+- **Superseded by DD-106:** every conversion is used; the mark counts and
+  traces it.
 
 ### DD-067: The BMP280 At The Loop's Rate
 - **Decision:** at the user's direction -- "S1 needs to make the BMP280
@@ -1651,6 +1956,7 @@ The designer's answers to `docs/outstanding_tasks.md` section 2.
   a fire lands about 40 ms after the pulse, inside the 100 ms verify window.
 - **Supersedes** DD-063's "the 10 ms loop stays", which was the finding the
   user weighed.
+- **Superseded by DD-104:** the period is 10 ms.
 
 ### DD-064: Three Logging Plans
 - **Decision:** at the user's direction -- "Default is 1hz logging with

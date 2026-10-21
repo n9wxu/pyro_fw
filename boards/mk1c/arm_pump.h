@@ -14,7 +14,7 @@
 
 /* Toggle cycles per pushed word. The four FIFO words and the one running
  * carry the pump across a loop and a quarter: a feed a little late does not
- * let U9 drop out mid-precharge. 5 ms a word at a 20 ms loop. */
+ * let U9 drop out mid-precharge. 2.5 ms a word at a 10 ms loop. */
 #define ARM_PUMP_WORDS 5u
 #define ARM_PUMP_BURST ((LOOP_PERIOD_US * 5u / 4u) / (ARM_PUMP_WORDS * ARM_PUMP_PERIOD_US))
 

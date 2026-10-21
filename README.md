@@ -11,7 +11,7 @@ Flying a board? Start with the [Operator's guide](#operators-guide).
 - **Fault Detection** - every pulse is recorded with what the board saw of it; MK1B's AP2192 flags overcurrent; MK1C reports bus shorts. No reading withholds a fire (PYR-HEALTH-01)
 - **Fire Rules** - a channel fires again while the descent stays too fast, and every channel fires above an emergency speed (PYR-REFIRE-01, FLT-EMRG-01)
 - **Resume** - any restart in flight rejoins the flight from a record made on the pad (DD-086)
-- **Flight Log** - binary records (`flight_log.bin`) written only inside core0's flash window, rendered as CSV on download; every sample of the flight (DD-062, DD-101)
+- **Flight Log** - binary records (`flight_log.bin`) written in the log writer's 3 ms of each period while the flight path runs from RAM, rendered as CSV on download; every sample of the flight (DD-062, DD-101, DD-104)
 - **Real-time Telemetry** - `$PYRO` NMEA on UART0 through an interrupt-driven ring, one message a second; apogee, fire and landing events ride the next message (DD-088)
 - **Pressure Sensing** - MS5607 (MK1B, MK1C) or BMP280 (MK1A), collected by a free-running interrupt state machine at 53 or more readings a second, each stamped at its measurement; it clears its own bus and resets the part after three failed transfers (DD-093)
 - **Pressure, Rate and Acceleration** - a Kalman filter on the raw readings; every flight comparison is made in pressure, and altitude is computed for people, relative to the pad and unclamped (DD-085)
@@ -280,7 +280,8 @@ From launch to landing the flight software hands every sample to `hal_log_sample
 - **Estimators:** an `EST` row a second for each estimator, with its height, speed and whether it explains the readings, and an `EST <name> APOGEE` row when each one's apogee rule is met
 - **Lua:** a script's `log.line()` and `log.write()` output lands in the log as `LUA` rows, during a flight only; `print()` goes to `/api/lua/console`
 - **Space:** `/api/log/space` reports the room the next flight has and the seconds of flight it holds, each second costing what its sync stores; the Config tab shows that time
-- **Erase:** `POST /api/flight/erase`
+- **Erase:** `POST /api/flight/erase`; any other file: `POST /api/delete/<path>`
+- **Cleanup:** the pages a replaced or deleted file leaves are erased by the pad's cleanup: on USB with test mode off, one sector after another at the flash's pace; otherwise one a second, so an erase stalls the pad no more than once a second (USB-10)
 
 In flight the flight log holds the filesystem: every other file request is answered 423 (DD-058).
 
@@ -417,7 +418,7 @@ This produces:
 - `pyro_fw_<board>.uf2` — application firmware
 - `pyro_fw_c_fota_image.bin` — OTA update image
 
-Only a release changes `VERSION`. A build without `CI_BUILD` set reports the version with `+local` appended.
+`VERSION` is the release: every green push to main releases it as it stands while it has no tag, which is how a minor or major bump arrives (`support/version.py --set 2.3.0` in a pull request), and otherwise releases its next patch. A build without `CI_BUILD` set reports the version with `+local` appended.
 
 ## Flash Layout
 Set by each board's `board.cmake`.
@@ -477,12 +478,13 @@ Connect the board via USB. It appears as a network adapter (RNDIS on Windows, EC
 - **Flight Data tab:** summary, CSV download, erase, altitude graph
 - **Beep Codes tab:** the personalities, with an audition button
 - **Lua tab:** Lua pads, the program editor with check, save, remove, export and import, and the console. A script that fails its check is not saved (LUA-MGT-01)
+- **Filesystem tab:** the flash's size, the bytes in files and the bytes free, split into erased and not yet erased by a scan of the flash the page keeps; every file with a download link and a delete that asks first (none for the board's own); and the cleanup followed until it is done (WEB-UI-07)
 - **Update tab:** firmware and web upload, GitHub release checker
-- **Test mode:** with it on, a board on USB detects a launch, fires and beeps as on battery. It lives in RAM, so every boot starts with it off, and it cannot change from launch to landing (USB-08, DD-038).
-- **APIs** (all CORS enabled):
-  - `GET /api/status`, `/api/net` (network counters, WEB-API-13), `/api/pressure/trace` (the last 256 conversions, DD-063), `/api/log/space`, `/api/limits` (the board's pyro timing ranges and its sensor's range, PYR-BOARD-03), `/api/flight.csv`, `/api/pins/caps`, `/api/lua/console`
+- **Test mode:** with it on, a board on USB detects a launch, fires and beeps as on battery. It lives in RAM, so every boot starts with it off, and it cannot change from launch to landing (USB-08, DD-038). Set with `?log=host`, the flight log is held in RAM for the host to read as it is written, at `/api/flight/live?since=N`, and nothing is written to the flash from launch to landing (USB-09, DD-103).
+- **APIs** (same origin only, WEB-API-07):
+  - `GET /api/status`, `/api/net` (network counters, WEB-API-13), `/api/pressure/trace` (the last 256 conversions, DD-063), `/api/log/space`, `/api/fs` (the flash store and its files, WEB-API-19), `/api/fs/scan?sector=K&count=N` (each sector's erased pages, WEB-API-20), `/api/limits` (the board's pyro timing ranges and its sensor's range, PYR-BOARD-03), `/api/flight.csv`, `/api/pins/caps`, `/api/lua/console`
   - `GET`/`POST /api/config`, `/api/pins`, `/api/beeps`, `/api/lua/script`
-  - `POST /api/beeps/play`, `/api/lua/check`, `/api/flight/erase`, `/api/test_mode/on`, `/api/test_mode/off`, `/api/reboot`, `/api/ota`, `/api/serial`, `/www/<file>`
+  - `POST /api/beeps/play`, `/api/lua/check`, `/api/flight/erase`, `/api/delete/<path>`, `/api/test_mode/on[?log=host]`, `/api/test_mode/off`, `/api/reboot`, `/api/ota`, `/api/serial`, `/www/<file>`
   - `GET /<path>` serves any file on the flash
 
 The API and USB stay live in flight; only the flight log touches the filesystem then, and a request that needs a file is answered 423 (DD-058). A saved `config.ini` or `pins.ini` is stored and takes effect at the next start (CFG-10).

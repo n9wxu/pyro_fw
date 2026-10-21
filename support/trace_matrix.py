@@ -26,7 +26,7 @@ ID_RE = re.compile(r"\b([A-Z]{2,6}(?:-[A-Z]{2,7})?)-(\d{1,3})(?:\.\.(\d{1,3}))?\
 TEST_RE = re.compile(r"^(?:static\s+)?void\s+(test_[A-Za-z0-9_]+)\s*\(void\)", re.M)
 NAMED_RE = re.compile(r"^test_([A-Z]+(?:_[A-Z]+)?)_(\d+)_")
 HARDWARE_SCRIPTS = ["api_check.py", "http_stream_check.py", "bench_flight.py", "pressure_trace.py",
-                    "noise_baseline.py", "test_network.py", "hr_log.py"]
+                    "noise_baseline.py", "test_network.py", "hr_log.py", "failed_write_check.py"]
 MAX_NAMED = 4
 OK, HW, GAP = "✅", "✅ HW", "⚠️"
 
@@ -80,6 +80,9 @@ def gather(known):
         found = list(TEST_RE.finditer(text))
         for i, m in enumerate(found):
             body_end = found[i + 1].start() if i + 1 < len(found) else len(text)
+            ahead = text[:body_end].rstrip()
+            if ahead.endswith("*/"):
+                body_end = ahead.rfind("/*")  # the next test's own comment
             before = text[:m.start()].rstrip()
             comment = before[before.rfind("/*"):] if before.endswith("*/") else ""
             cited = ids_in(comment + text[m.start():body_end], known)

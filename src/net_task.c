@@ -1,5 +1,5 @@
 /*
- * The net task: TinyUSB, lwIP and HTTP, pinned to core1 at P [DD-073].
+ * The net task: TinyUSB, smallest_tcp and HTTP, pinned to core1 at P [DD-073].
  *
  * It owns the USB interrupt as well as the stack: tud_init() runs here, so the
  * interrupt lands on core1 beside tud_task(). TinyUSB built OPT_OS_NONE guards
@@ -7,7 +7,7 @@
  * two must share a core.
  *
  * It sleeps until TinyUSB queues an event (tud_event_hook_cb) or a tick
- * passes, for lwIP's timers and HTTP's rings.
+ * passes, for the stack's timers and HTTP's rings.
  *
  * SPDX-License-Identifier: MIT
  */

@@ -15,6 +15,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "rtos_tasks.h"
+#include "core1_frame.h"
 #include "hardware/sync.h"
 #include "pico/time.h"
 #include "hardware/structs/watchdog.h"
@@ -155,12 +156,13 @@ static StaticTask_t lua_task_tcb;
 static volatile bool started;
 static volatile uint32_t ticks_asked; /* the flight task writes */
 static volatile uint32_t ticks_done;  /* the Lua task writes */
+static volatile uint32_t tick_t0;     /* the flight task: the frame the tick was asked in */
 static volatile uint32_t tick_budget_us;
 static volatile uint8_t c1_busy; /* a tick is running */
 static volatile uint8_t c1_ready;
 static uint32_t dispatch_skipped;
 
-void lua_core1_dispatch(uint32_t budget_us) {
+void lua_core1_dispatch(void) {
     if (c1_state != LUA_C1_RUNNING || !c1_ready) {
         return;
     }
@@ -170,7 +172,7 @@ void lua_core1_dispatch(uint32_t budget_us) {
         dispatch_skipped++;
         return;
     }
-    tick_budget_us = budget_us;
+    tick_t0 = core1_frame_t0();
     __dmb();
     ticks_asked++;
     xTaskNotifyGive(lua_task_h);
@@ -253,6 +255,11 @@ static void lua_task(void *arg) {
         if (ticks_done == ticks_asked) {
             continue;
         }
+        tick_budget_us = core1_frame_lua_slot(tick_t0);
+        if (!tick_budget_us) {
+            ticks_done = ticks_asked;
+            continue;
+        }
         c1_busy = 1;
         heartbeat++;
         uint32_t start_us = lua_plat_now_us();
@@ -291,6 +298,7 @@ uint32_t lua_core1_stack_free(void) {
 void lua_task_create(void) {
     lua_task_h = xTaskCreateStaticAffinitySet(lua_task, "lua", C1_STACK_WORDS, NULL, PRIO_P, c1_stack, &lua_task_tcb,
                                               CORE1_ONLY);
+    core1_frame_attach_lua(lua_task_h);
 }
 
 bool lua_core1_start(const char *script, int len) {

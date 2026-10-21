@@ -19,13 +19,16 @@ extension installs it.
 |--------|---------|
 | `test_network.py` | Comprehensive network/API test suite with TUI |
 | `http_stream_check.py` | The HTTP server over raw sockets: requests split byte by byte, bodies in later writes, coalesced requests, odd-chunk uploads round-tripped, parallel fetches past a stalled connection (rewrites /www/app.js and index.html with the local copies) |
-| `api_check.py` | Bench check of every HTTP route, a stored configuration that waits for the next start, the board's limits, silence on USB, and test mode (erases the flight log; about 15 s in test mode) |
+| `api_check.py` | Bench check of every HTTP route, a stored configuration that waits for the next start, the board's limits, silence on USB, test mode, a file deleted, /api/fs listing a file uploaded at its size, and a scan of every sector (erases the flight log; about 15 s in test mode) |
+| `failed_write_check.py` | An upload past the board's room, refused part-way and let go without a restart: its part file gone, its name taken again, the cleanup done at five sectors a second or more on USB, and no sensor fault latched by the readings beside the writes and erases (WEB-API-18, SNS-PRES-14, USB-10) |
 | `pressure_trace.py` | Every pressure conversion a board makes, judged for the faults a sample rate hides (DD-063) |
 | `noise_baseline.py` | A still board's pressure noise and pad speed noise, from `/api/status` |
 | `register_board.py` | Record the attached boards in `boards/BOARD_REGISTRY.json` and report subnet collisions |
 | `bench_flight.py` | Fly a profile on a board through its flight software, channels mocked, with a canopy that fails if asked (DD-078, SIM-04) |
 | `hr_log.py` | Decode a high-rate log from the SD card into CSV (DD-077) |
 | `prove_core0.py` | Prove from the linked ELF that no flight-critical root can reach a wait core1 can hold |
+| `prove_flight_ram.py` | Prove from the linked ELF that the flight path, from the first period airborne to landing, fetches and reads nothing from flash (`--strict`); `--list` its functions, `--why FN` how it reaches one, `--emit` the sections that place it [FLT-RT-02] |
+| `flight_ram_link.py` | The firmware's link: links once, finds the flight path, links again with it renamed into RAM (CMake's RULE_LAUNCH_LINK) [FLT-RT-02] |
 | `trace_check.py` | Check the requirements, decisions, traceability and living documents against each other and the code |
 | `trace_matrix.py` | Write `TRACEABILITY.md` from the tests' own citations and `trace_notes.tsv` |
 | `structure_check.py` | Check the requirements that are properties of the source |
@@ -150,7 +153,7 @@ the noisiest bench board's figure (`test/board_harness.h`). Nobody may touch the
 `pressure_trace.py` polls `/api/pressure/trace` for 60 s by default and
 reports per board: the rate and the spread of the intervals, repeated codes
 against the count chance gives, rejects and missed slots, conversions a flash
-operation ran beside (DD-068, counted, not a fault), the lag from the driver's
+operation ran beside (DD-106, counted, not a fault), the lag from the driver's
 stamp to the loop, and the noise. A record lost to the ring fails the capture,
 not the sensor.
 
@@ -162,6 +165,7 @@ board.
 ```bash
 python3 support/bench_flight.py <board-ip>                       # 3 km, the board's defaults
 python3 support/bench_flight.py <board-ip> --apogee 30000 --boost 4
+python3 support/bench_flight.py <board-ip> --host-log f.bin     # the log to the host, nothing to the flash (USB-09)
 python3 support/bench_flight.py <board-ip> --fail drogue          # that canopy never opens
 python3 support/hr_log.py --fetch <board-ip> hr0001              # the high-rate log after it
 ```
@@ -169,11 +173,12 @@ python3 support/hr_log.py --fetch <board-ip> hr0001              # the high-rate
 `bench_flight.py` turns test mode on, starts the profile (`POST
 /api/sim/flight`), and follows `/api/sim` and `/api/status` until the board
 lands. It fails a flight whose pyro 1 is not within 4 s of the profile's
-apogee, whose pyro 2 did not fire, or during which the loop overran or a flash
-operation was refused. From the start every fire on the board is mocked until
-it reboots, and the board must be rebooted to fly again. `/api/sim` also
-reports the newest pressure estimate and the Mach flag, for a flight that goes
-wrong.
+apogee, whose pyro 2 did not fire, during which the loop overran or a flash
+operation was refused, or whose log misses a reading: a step between sample
+rows wider than 1.5 times the median (FLT-LOG-07, SNS-PRES-14). From the start
+every fire on the board is mocked until it reboots, and the board must be
+rebooted to fly again. `/api/sim` also reports the newest pressure estimate
+and the estimator flying, for a flight that goes wrong.
 
 The profile's descent starts from rest at apogee and gathers speed under
 gravity toward each rate. `--fail drogue`, `--fail main` or `--fail both`

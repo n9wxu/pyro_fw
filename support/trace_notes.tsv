@@ -46,3 +46,9 @@ SYS-LUA-01	⚠️	MK1C-SD is built without a script: J3 carries its SPI bus
 FLT-RT-01		The bound on each board is declared and not yet measured on this revision: `loop_late_max_us` on `/api/status`
 GND-TEST-12		The pulsed read on the buzzer's pad (`gts_tick()`) is platform code: bench check owed, `docs/ground_test_on_buzzer_pad.md`
 SNS-COL-06	✅	CI runs `support/prove_core0.py` on every image: it fails if `collector_alarm_isr` or anything it calls is outside RAM
+FLT-RT-02	✅	CI runs `support/prove_flight_ram.py --strict` on every image: it fails if the flight path, from the first period airborne to landing, reaches flash by a function, a read-only byte or an uncovered indirect branch
+FLT-RT-03	✅ HW	MK1C bench flights, 2026-10-18 (DD-104): from launch to landing no lockout and no loop overrun, the loop at most 97 us late, with 3,000 programs and 60 erases in flight
+FLT-LOG-09		Host tests above; on MK1B-8MB, 2026-10-19, five starts: every slot the writer waited for ran its piece, nothing dropped (DD-104)
+FLT-LOG-10	✅	Host tests above; on MK1C, 2026-10-18, 60 erases in flight in 690 suspended pieces, the longest 2.95 ms, and 2026-10-19, 52 in 488, nothing dropped; MK1B-8MB's BY25Q64ES ended no erase in 2,000 slots, so it erases none in flight (DD-104)
+FLT-LOG-11		Host tests above; not yet seen on a board (DD-104)
+WEB-API-18		Host tests above; on MK1C twice and MK1B-8MB once, 2026-10-19, an upload past the room refused, let go, its name taken again, no restart (DD-105)

@@ -106,6 +106,7 @@ function showTab(name, button) {
   if (name === 'lua') { luaInit(); }
   if (name === 'config') { relInit(); loadLogSpace(); loadLimits(); loadFireRules(); }
   if (name === 'beeps') { beepsInit(); }
+  if (name === 'files') { fsLoad(); }
 }
 
 /* ── Unit conversion ───────────────────────────────────────────── */
@@ -1652,6 +1653,147 @@ function luaConPoll() {
 }
 
 function luaConClear() { document.getElementById('luCon').textContent = ''; }
+
+/* ── Filesystem [WEB-UI-07] ─────────────────────────────────────── */
+var FS_FOLLOW_MS = 2000;  /* while the cleanup erases */
+var FS_SCAN_CHUNK = 128;  /* sectors a request, the board's most [WEB-API-20] */
+var fsTimer = null;
+var fsLast = null;        /* the last /api/fs */
+var fsScan = null;        /* the last scan: erased bytes, and the report it began from */
+var fsScanning = false;
+
+function fmtBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' kB';
+  return (n / 1048576).toFixed(2) + ' MB';
+}
+
+function fsCleanText(d) {
+  var n = d.cleaned_sectors + (d.cleaned_sectors === 1 ? ' sector' : ' sectors');
+  if (d.cleanup === 'fast') return 'The cleanup is erasing at full speed while on USB: ' + n + ' so far.';
+  if (d.cleanup === 'slow') return 'The cleanup is erasing one sector a second, as on the pad: ' + n + ' so far.';
+  return 'Nothing left for the cleanup to erase (' + n + ' since the board started).';
+}
+
+function fmtAge(ms) {
+  var s = Math.round(ms / 1000);
+  return s < 120 ? s + ' s ago' : Math.round(s / 60) + ' min ago';
+}
+
+/* Erased as the scan found it, with each sector the cleanup has erased since
+   counted as erased, and the bytes files have grown by since taken off. */
+function fsSplit(d) {
+  if (!fsScan) return null;
+  var erased = fsScan.erased + (d.cleaned_sectors - fsScan.from.cleaned_sectors) * d.sector_pages * d.page_bytes
+             - Math.max(0, d.in_files - fsScan.from.in_files);
+  erased = Math.max(0, Math.min(d.free, erased));
+  return {erased: erased, unused: d.free - erased};
+}
+
+function fsShowSplit() {
+  var sp = fsLast && fsSplit(fsLast);
+  document.getElementById('fsErased').textContent = sp ? fmtBytes(sp.erased) : '—';
+  document.getElementById('fsUnused').textContent = sp ? fmtBytes(sp.unused) : '—';
+  if (fsScan && !fsScanning)
+    document.getElementById('fsScan').textContent =
+      'Scanned ' + fsScan.from.sectors + ' sectors ' + fmtAge(Date.now() - fsScan.at) + '.';
+}
+
+/* [WEB-API-20] A chunk of sectors at a time, so the board answers every
+   other request between them. */
+function fsScanStart() {
+  if (fsScanning || !fsLast) return;
+  fsScanning = true;
+  var from = fsLast, el = document.getElementById('fsScan'), pages = 0, sector = 0;
+  function next() {
+    if (sector >= from.sectors) {
+      fsScan = {erased: pages * from.page_bytes, from: from, at: Date.now()};
+      fsScanning = false;
+      fsShowSplit();
+      return;
+    }
+    el.textContent = 'Scanning the flash: ' + sector + ' of ' + from.sectors + ' sectors…';
+    return fetch('api/fs/scan?sector=' + sector + '&count=' + FS_SCAN_CHUNK).then(function(r) {
+      if (!r.ok) throw r.status;
+      return r.json();
+    }).then(function(c) {
+      if (!c.erased.length) throw 'no sectors';
+      c.erased.forEach(function(e) { pages += e; });
+      sector += c.erased.length;
+      return next();
+    });
+  }
+  Promise.resolve(next()).catch(function(code) {
+    fsScanning = false;
+    el.textContent = code === 423 ? 'The flight log holds the storage; no scan until after landing.'
+                                  : 'The scan stopped at sector ' + sector + '.';
+  });
+}
+
+function fsRow(f) {
+  var tr = document.createElement('tr');
+  var name = document.createElement('td');
+  var a = document.createElement('a');
+  a.href = f.path;
+  a.download = f.path.split('/').pop();
+  a.textContent = f.path;
+  name.appendChild(a);
+  var size = document.createElement('td');
+  size.textContent = f.closed ? fmtBytes(f.bytes) : 'being written';
+  var act = document.createElement('td');
+  if (f.board) {
+    act.textContent = 'the board\'s';
+    act.className = 'hint';
+  } else {
+    var b = document.createElement('button');
+    b.textContent = '🗑 Delete';
+    b.onclick = function() { fsDelete(f.path); };
+    act.appendChild(b);
+  }
+  tr.appendChild(name); tr.appendChild(size); tr.appendChild(act);
+  return tr;
+}
+
+function fsLoad() {
+  clearTimeout(fsTimer);
+  var hint = document.getElementById('fsHint');
+  return fetch('api/fs').then(function(r) {
+    if (!r.ok) throw r.status;
+    return r.json();
+  }).then(function(d) {
+    var finished = fsLast && fsLast.cleanup !== 'done' && d.cleanup === 'done';
+    fsLast = d;
+    hint.textContent = d.files.length + (d.files.length === 1 ? ' file' : ' files') + ' on the board\'s flash.';
+    document.getElementById('fsTotal').textContent = fmtBytes(d.bytes);
+    document.getElementById('fsUsed').textContent = fmtBytes(d.in_files);
+    document.getElementById('fsFree').textContent = fmtBytes(d.free);
+    fsShowSplit();
+    if (!fsScan || finished) fsScanStart();
+    document.getElementById('fsClean').textContent = fsCleanText(d);
+    var table = document.getElementById('fsFiles');
+    table.textContent = '';
+    d.files.forEach(function(f) { table.appendChild(fsRow(f)); });
+    if (d.cleanup !== 'done' && document.getElementById('tab-files').style.display !== 'none')
+      fsTimer = setTimeout(fsLoad, FS_FOLLOW_MS);
+  }).catch(function(code) {
+    hint.textContent = code === 423 ? 'The flight log holds the storage; the files return after landing.'
+                                    : 'Could not read the flash storage.';
+  });
+}
+
+function fsDelete(path) {
+  var msg = document.getElementById('fsMsg');
+  if (!confirm('Delete ' + path + ' from the board?')) return;
+  post('api/delete' + path)
+    .then(function(r) {
+      var why = {404: 'it was already gone', 409: 'it is open; try again', 403: 'it is the board\'s own',
+                 423: 'the flight log holds the storage'}[r.status];
+      msg.style.color = r.ok ? 'green' : 'red';
+      msg.textContent = r.ok ? ' ✓ deleted ' + path : ' ✗ ' + path + ': ' + (why || 'HTTP ' + r.status);
+      return fsLoad();
+    })
+    .catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ✗ ' + e.message; });
+}
 
 /* ── Init ──────────────────────────────────────────────────────── */
 update();

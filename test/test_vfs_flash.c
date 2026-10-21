@@ -307,6 +307,328 @@ static void test_WEB_API_12_a_synced_second_takes_whole_pages(void) {
     clean_all();
 }
 
+/* [FLT-LOG-10] A log that runs out of erased pages says so, and erases
+ * nothing itself; one cleanup step erases a sector removed files left, and
+ * the log goes on into it. */
+static void test_FLT_LOG_10_a_log_out_of_erased_pages_says_so_and_a_cleanup_makes_room(void) {
+    static uint8_t d[4u * 16u * 236u], chunk[200];
+    fill(d, sizeof(d), 13);
+    fill(chunk, sizeof(chunk), 14);
+    clean_all();
+    TEST_ASSERT_EQUAL(0, write_whole("dead.bin", d, sizeof(d)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("dead.bin"));
+    unsigned e0 = erases;
+    vfs_flash_file_t f;
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&f, "flight_log.bin", VFS_FLASH_WRITE, wbuf));
+    int rc = 0;
+    for (int i = 0; i < 2000 && rc >= 0; i++)
+        rc = vfs_flash_write(&f, chunk, sizeof(chunk));
+    TEST_ASSERT_EQUAL(VFS_FLASH_NOSPC, rc);
+    TEST_ASSERT_EQUAL_MESSAGE(e0, erases, "a write erased");
+    vfs_flash_file_t g;
+    TEST_ASSERT_EQUAL_MESSAGE(VFS_FLASH_NOSPC, vfs_flash_open(&g, "next_log.bin", VFS_FLASH_WRITE, rbuf),
+                              "an open with no erased page says so too");
+    TEST_ASSERT_EQUAL(e0, erases);
+    TEST_ASSERT_EQUAL(1, vfs_flash_clean());
+    TEST_ASSERT_EQUAL(e0 + 1u, erases);
+    TEST_ASSERT_EQUAL((int)sizeof(chunk), vfs_flash_write(&f, chunk, sizeof(chunk)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_close(&f));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("flight_log.bin"));
+    clean_all();
+}
+
+/* Writes into a file until the area has no erased page left for it. */
+static void fill_to_the_end(vfs_flash_file_t *f, uint32_t seed) {
+    static uint8_t chunk[200];
+    fill(chunk, sizeof(chunk), seed);
+    int rc = 0;
+    for (int i = 0; i < 2000 && rc >= 0; i++)
+        rc = vfs_flash_write(f, chunk, sizeof(chunk));
+    TEST_ASSERT_EQUAL(VFS_FLASH_NOSPC, rc);
+}
+
+/* [WEB-API-17] A file open is not deleted; closed, it is, once. */
+static void test_WEB_API_17_a_file_open_is_not_deleted(void) {
+    static uint8_t d[100];
+    fill(d, sizeof(d), 15);
+    TEST_ASSERT_EQUAL(0, write_whole("www/del.txt", d, sizeof(d)));
+    vfs_flash_file_t r;
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&r, "www/del.txt", VFS_FLASH_READ, rbuf));
+    TEST_ASSERT_EQUAL(VFS_FLASH_BUSY, vfs_flash_remove("www/del.txt"));
+    TEST_ASSERT_EQUAL(0, vfs_flash_close(&r));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/del.txt"));
+    TEST_ASSERT_EQUAL(VFS_FLASH_NOENT, vfs_flash_remove("www/del.txt"));
+}
+
+/* [WEB-API-18] An upload's part file that cannot close for want of a page:
+ * no restart, and it goes, the file it would have replaced is as it was,
+ * its pages are erased, and the space is back. */
+static void test_WEB_API_18_a_write_that_cannot_close_is_let_go_without_a_restart(void) {
+    static uint8_t old[600], got[1000];
+    fill(old, sizeof(old), 16);
+    clean_all();
+    TEST_ASSERT_EQUAL(0, write_whole("www/page.html", old, sizeof(old)));
+    uint64_t free0, free1, total;
+    TEST_ASSERT_EQUAL(0, vfs_flash_space(&free0, &total));
+    vfs_flash_file_t f;
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&f, "www/page.html.part", VFS_FLASH_WRITE, wbuf));
+    fill_to_the_end(&f, 17);
+    TEST_ASSERT_EQUAL(VFS_FLASH_NOSPC, vfs_flash_close(&f));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/page.html.part"));
+    TEST_ASSERT_EQUAL(ALFS_ENOENT, read_after_reset("www/page.html.part", got, sizeof(got)));
+    TEST_ASSERT_EQUAL(sizeof(old), read_whole("www/page.html", got, sizeof(got)));
+    TEST_ASSERT_EQUAL_MEMORY(old, got, sizeof(old));
+    unsigned e0 = erases;
+    clean_all();
+    TEST_ASSERT_TRUE_MESSAGE(erases > e0, "the failed file's pages are erased");
+    TEST_ASSERT_EQUAL(0, vfs_flash_space(&free1, &total));
+    TEST_ASSERT_EQUAL(free0, free1);
+    TEST_ASSERT_EQUAL(0, write_whole("www/page.html.part", old, sizeof(old)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/page.html.part"));
+}
+
+/* [WEB-API-18] While another file is open the failed one waits, and a
+ * delete asked for meanwhile is done when the last file closes. */
+static void test_WEB_API_18_a_failed_write_is_let_go_when_no_other_file_is_open(void) {
+    static uint8_t got[1000];
+    clean_all();
+    int32_t page_size = vfs_flash_stat_size("www/page.html");
+    TEST_ASSERT_TRUE(page_size > 0);
+    vfs_flash_file_t r, f;
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&r, "www/page.html", VFS_FLASH_READ, rbuf));
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&f, "www/big.bin.part", VFS_FLASH_WRITE, wbuf));
+    fill_to_the_end(&f, 18);
+    TEST_ASSERT_EQUAL(VFS_FLASH_NOSPC, vfs_flash_close(&f));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/big.bin.part"));
+    unsigned e0 = erases;
+    TEST_ASSERT_EQUAL(1, vfs_flash_clean());
+    TEST_ASSERT_EQUAL(e0, erases);
+    TEST_ASSERT_EQUAL(page_size, vfs_flash_read(&r, got, sizeof(got)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_close(&r));
+    TEST_ASSERT_EQUAL(ALFS_ENOENT, read_after_reset("www/big.bin.part", got, sizeof(got)));
+    clean_all();
+    TEST_ASSERT_TRUE(erases > e0);
+    TEST_ASSERT_EQUAL(page_size, read_whole("www/page.html", got, sizeof(got)));
+}
+
+/* [WEB-API-18, FLT-LOG-06] A log that cannot close reads as a power cut
+ * would have left it, every synced byte kept, and the next log starts. */
+static void test_WEB_API_18_a_log_that_cannot_close_reads_as_a_power_cut_left_it(void) {
+    static uint8_t rows[22 * 50], got[AREA], again[AREA];
+    fill(rows, sizeof(rows), 19);
+    vfs_flash_remove("flight_log.bin");
+    clean_all();
+    vfs_flash_file_t f;
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&f, "flight_log.bin", VFS_FLASH_WRITE, wbuf));
+    for (uint32_t s = 0; s < 50; s++) {
+        TEST_ASSERT_EQUAL(22, vfs_flash_write(&f, rows + 22u * s, 22));
+        TEST_ASSERT_EQUAL(0, vfs_flash_sync(&f));
+    }
+    fill_to_the_end(&f, 20);
+    TEST_ASSERT_EQUAL(VFS_FLASH_NOSPC, vfs_flash_close(&f));
+    int32_t n = read_whole("flight_log.bin", got, sizeof(got));
+    TEST_ASSERT_TRUE(n >= (int32_t)sizeof(rows));
+    TEST_ASSERT_EQUAL_MEMORY(rows, got, sizeof(rows));
+    TEST_ASSERT_EQUAL(n, read_after_reset("flight_log.bin", again, sizeof(again)));
+    TEST_ASSERT_EQUAL(n, vfs_flash_stat_size("flight_log.bin"));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("flight_log.bin"));
+    clean_all();
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&f, "flight_log.bin", VFS_FLASH_WRITE, wbuf));
+    TEST_ASSERT_EQUAL(0, vfs_flash_close(&f));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("flight_log.bin"));
+}
+
+/* Data no other file holds at any offset, so damage() finds it alone. */
+static void fill_unique(uint8_t *p, uint32_t n, uint32_t seed) {
+    uint32_t x = seed * 2654435761u;
+    for (uint32_t i = 0; i < n; i++) {
+        x = x * 1103515245u + 12345u;
+        p[i] = (uint8_t)(x >> 16);
+    }
+}
+
+/* Clears a bit of the stored copy of some bytes of data, so the page that
+ * holds them fails its check: the first run of 8 found in one page. */
+static void damage(const uint8_t *data, uint32_t len) {
+    for (uint32_t at = 0; at + 8u <= len; at += 8u) {
+        for (uint32_t a = 0; a + 8u <= AREA; a++) {
+            if (memcmp(chip + a, data + at, 8) == 0 && chip[a] != 0) {
+                chip[a] &= (uint8_t)(chip[a] - 1u);
+                return;
+            }
+        }
+    }
+    TEST_FAIL_MESSAGE("the data is not on the chip");
+}
+
+/* [WEB-API-18] A part file with a damaged page does not replace the file it
+ * was uploaded for: that reads as it was, and where there was none there is
+ * none. */
+static void test_WEB_API_18_a_rename_that_cannot_copy_leaves_the_file_as_it_was(void) {
+    static uint8_t old[300], neu[3000], other[3000], got[4000];
+    fill_unique(old, sizeof(old), 21);
+    fill_unique(neu, sizeof(neu), 22);
+    fill_unique(other, sizeof(other), 23);
+    clean_all();
+    TEST_ASSERT_EQUAL(0, write_whole("www/kept.js", old, sizeof(old)));
+    TEST_ASSERT_EQUAL(0, write_whole("www/kept.js.part", neu, sizeof(neu)));
+    damage(neu + 1500, 200);
+    TEST_ASSERT_NOT_EQUAL(0, vfs_flash_rename("www/kept.js.part", "www/kept.js"));
+    TEST_ASSERT_EQUAL(sizeof(old), read_whole("www/kept.js", got, sizeof(got)));
+    TEST_ASSERT_EQUAL_MEMORY(old, got, sizeof(old));
+    TEST_ASSERT_EQUAL(0, write_whole("www/fresh.js.part", other, sizeof(other)));
+    damage(other + 1500, 200);
+    TEST_ASSERT_NOT_EQUAL(0, vfs_flash_rename("www/fresh.js.part", "www/fresh.js"));
+    TEST_ASSERT_EQUAL(VFS_FLASH_NOENT, read_whole("www/fresh.js", got, sizeof(got)));
+    TEST_ASSERT_EQUAL(ALFS_ENOENT, read_after_reset("www/fresh.js", got, sizeof(got)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/kept.js.part"));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/fresh.js.part"));
+    TEST_ASSERT_EQUAL(0, write_whole("www/kept.js", neu, sizeof(neu)));
+    TEST_ASSERT_EQUAL(sizeof(neu), read_whole("www/kept.js", got, sizeof(got)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/kept.js"));
+    clean_all();
+}
+
+/* [USB-10] On USB with test mode off the cleanup takes the next sector at
+ * once; otherwise a second after the last. */
+static void test_USB_10_the_cleanup_waits_only_off_usb(void) {
+    TEST_ASSERT_EQUAL_UINT32(0u, vfs_flash_clean_wait_ms(true));
+    TEST_ASSERT_EQUAL_UINT32(1000u, vfs_flash_clean_wait_ms(false));
+}
+
+/* [WEB-API-19] The cleanup's state, read from no page: sectors left to
+ * erase once a file is replaced, none once it has erased them, and how many
+ * it erased. */
+static void test_WEB_API_19_the_cleanup_says_what_is_left_and_what_it_erased(void) {
+    static uint8_t d[2 * SECTOR];
+    vfs_flash_cleanup_t a, b;
+    clean_all();
+    vfs_flash_cleanup_state(&a);
+    TEST_ASSERT_FALSE(a.cleaning);
+    fill(d, sizeof(d), 41);
+    TEST_ASSERT_EQUAL(0, write_whole("twice.bin", d, sizeof(d)));
+    TEST_ASSERT_EQUAL(0, write_whole("twice.bin", d, sizeof(d)));
+    vfs_flash_cleanup_state(&a);
+    TEST_ASSERT_TRUE(a.cleaning);
+    unsigned e0 = erases;
+    clean_all();
+    vfs_flash_cleanup_state(&b);
+    TEST_ASSERT_FALSE(b.cleaning);
+    TEST_ASSERT_TRUE(erases > e0);
+    TEST_ASSERT_EQUAL_UINT32(a.erased + (erases - e0), b.erased);
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("twice.bin"));
+    clean_all();
+}
+
+/* Pages of a sector that read all 1s on the RAM flash. */
+static uint8_t erased_pages_on_chip(uint32_t sector) {
+    uint8_t n = 0;
+    for (uint32_t p = 0; p < SECTOR / PAGE; p++) {
+        bool blank = true;
+        for (uint32_t i = 0; i < PAGE; i++)
+            blank &= chip[sector * SECTOR + p * PAGE + i] == 0xFFu;
+        n = (uint8_t)(n + blank);
+    }
+    return n;
+}
+
+/* [WEB-API-19] Its sectors, their pages, and the file bytes a page holds,
+ * by which the space is counted. */
+static void test_WEB_API_19_the_stores_geometry(void) {
+    vfs_flash_geometry_t g;
+    vfs_flash_geometry(&g);
+    TEST_ASSERT_EQUAL_UINT32(AREA / SECTOR, g.sectors);
+    TEST_ASSERT_EQUAL_UINT32(SECTOR / PAGE, g.sector_pages);
+    TEST_ASSERT_TRUE(g.page_bytes > 0 && g.page_bytes < PAGE);
+    uint64_t free_b, total;
+    TEST_ASSERT_EQUAL(0, vfs_flash_space(&free_b, &total));
+    TEST_ASSERT_EQUAL_UINT64(0, total % g.page_bytes);
+    TEST_ASSERT_TRUE(total / g.page_bytes <= (uint64_t)g.sectors * g.sector_pages);
+}
+
+/* [WEB-API-20] The pages that read erased, sector by sector, as the flash
+ * holds them: a file's pages do not, and the sectors the cleanup erases
+ * once it is gone do, whole. */
+static void test_WEB_API_20_the_scan_counts_each_sectors_erased_pages(void) {
+    static uint8_t d[3 * SECTOR];
+    uint8_t got[AREA / SECTOR];
+    unsigned with = 0, without = 0;
+    fill(d, sizeof(d), 47);
+    TEST_ASSERT_EQUAL(0, write_whole("scan.bin", d, sizeof(d)));
+    TEST_ASSERT_EQUAL(AREA / SECTOR, vfs_flash_scan(0, AREA / SECTOR, got));
+    for (uint32_t k = 0; k < AREA / SECTOR; k++) {
+        TEST_ASSERT_EQUAL_UINT8(erased_pages_on_chip(k), got[k]);
+        with += got[k];
+    }
+    TEST_ASSERT_TRUE(with + sizeof(d) / PAGE < AREA / PAGE);
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("scan.bin"));
+    clean_all();
+    TEST_ASSERT_EQUAL(AREA / SECTOR, vfs_flash_scan(0, AREA / SECTOR, got));
+    for (uint32_t k = 0; k < AREA / SECTOR; k++)
+        without += got[k];
+    TEST_ASSERT_TRUE(without >= with + 2u * (SECTOR / PAGE));
+}
+
+static void test_WEB_API_20_a_scan_stops_at_the_stores_end(void) {
+    uint8_t got[4];
+    TEST_ASSERT_EQUAL(1, vfs_flash_scan(AREA / SECTOR - 1u, 4, got));
+    TEST_ASSERT_EQUAL_UINT8(erased_pages_on_chip(AREA / SECTOR - 1u), got[0]);
+    TEST_ASSERT_EQUAL(0, vfs_flash_scan(AREA / SECTOR, 4, got));
+}
+
+typedef struct {
+    int n;
+    char name[8][ALFS_NAME_MAX + 1];
+    uint32_t size[8];
+    bool closed[8];
+} listed_t;
+
+static void note_file(void *ctx, const char *name, uint32_t size, bool closed) {
+    listed_t *l = ctx;
+    if (l->n < 8) {
+        strcpy(l->name[l->n], name);
+        l->size[l->n] = size;
+        l->closed[l->n] = closed;
+    }
+    l->n++;
+}
+
+static int find(const listed_t *l, const char *name, bool closed) {
+    for (int i = 0; i < l->n && i < 8; i++)
+        if (strcmp(l->name[i], name) == 0 && l->closed[i] == closed)
+            return i;
+    return -1;
+}
+
+/* [WEB-API-19] Every file by its name: its size once closed, and a file
+ * still being written as not closed. */
+static void test_WEB_API_19_the_list_gives_each_files_name_and_size(void) {
+    static uint8_t d[700];
+    fill(d, sizeof(d), 43);
+    TEST_ASSERT_EQUAL(0, write_whole("www/a.txt", d, 100));
+    TEST_ASSERT_EQUAL(0, write_whole("b.txt", d, sizeof(d)));
+    vfs_flash_file_t w;
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&w, "c.bin", VFS_FLASH_WRITE, wbuf));
+    TEST_ASSERT_EQUAL(10, vfs_flash_write(&w, d, 10));
+
+    listed_t l = {0};
+    int n = vfs_flash_list(note_file, &l);
+    TEST_ASSERT_EQUAL(l.n, n);
+    int a = find(&l, "www/a.txt", true), b = find(&l, "b.txt", true), c = find(&l, "c.bin", false);
+    TEST_ASSERT_TRUE(a >= 0 && b >= 0 && c >= 0);
+    TEST_ASSERT_EQUAL_UINT32(100u, l.size[a]);
+    TEST_ASSERT_EQUAL_UINT32(sizeof(d), l.size[b]);
+
+    TEST_ASSERT_EQUAL(0, vfs_flash_close(&w));
+    memset(&l, 0, sizeof(l));
+    vfs_flash_list(note_file, &l);
+    TEST_ASSERT_TRUE(find(&l, "c.bin", true) >= 0);
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("www/a.txt"));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("b.txt"));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("c.bin"));
+    clean_all();
+}
+
 static void test_names(void) {
     vfs_flash_file_t f;
     TEST_ASSERT_EQUAL(VFS_FLASH_ERR, vfs_flash_open(&f, "", VFS_FLASH_WRITE, wbuf));
@@ -328,6 +650,18 @@ int main(void) {
     RUN_TEST(test_cleanup_waits_for_readers);
     RUN_TEST(test_space_from_the_files);
     RUN_TEST(test_WEB_API_12_a_synced_second_takes_whole_pages);
+    RUN_TEST(test_FLT_LOG_10_a_log_out_of_erased_pages_says_so_and_a_cleanup_makes_room);
+    RUN_TEST(test_WEB_API_17_a_file_open_is_not_deleted);
+    RUN_TEST(test_WEB_API_18_a_write_that_cannot_close_is_let_go_without_a_restart);
+    RUN_TEST(test_WEB_API_18_a_failed_write_is_let_go_when_no_other_file_is_open);
+    RUN_TEST(test_WEB_API_18_a_log_that_cannot_close_reads_as_a_power_cut_left_it);
+    RUN_TEST(test_WEB_API_18_a_rename_that_cannot_copy_leaves_the_file_as_it_was);
+    RUN_TEST(test_USB_10_the_cleanup_waits_only_off_usb);
+    RUN_TEST(test_WEB_API_19_the_cleanup_says_what_is_left_and_what_it_erased);
+    RUN_TEST(test_WEB_API_19_the_list_gives_each_files_name_and_size);
+    RUN_TEST(test_WEB_API_19_the_stores_geometry);
+    RUN_TEST(test_WEB_API_20_the_scan_counts_each_sectors_erased_pages);
+    RUN_TEST(test_WEB_API_20_a_scan_stops_at_the_stores_end);
     RUN_TEST(test_names);
     return UNITY_END();
 }

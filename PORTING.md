@@ -35,7 +35,7 @@ on the bench.
 
 | Need | What the RP2040 boards do | Decided in |
 |---|---|---|
-| A loop every 20 ms that never sleeps | `src/main_hardware.c`, period in `src/loop_period.h`; every settle is a deadline a later iteration checks | DD-053, DD-065 |
+| A loop every 10 ms that never sleeps | `src/main_hardware.c`, period in `src/loop_period.h`; every settle is a deadline a later iteration checks | DD-053, DD-104 |
 | At least 50 pressures a second, stamped at their conversions | The pressure collector: a timer interrupt whose handler runs from RAM commands, times and reads each conversion of either sensor, and recovers its own bus | SNS-PRES-08, SNS-COL-01..06, DD-093 |
 | I2C as fast as the sensor and the PCB allow, every transfer bounded | 400 kHz where the pull-ups carry fast mode; the SDK's `_timeout_us` transfers, never the blocking ones | DD-052, DD-069 |
 | Two pyro channels, each with a continuity sense | MK1A, MK1B: a switched high side per channel, one shared low side, a 100 kΩ pull-up on each sense node. MK1C: an eFuse armed by a charge pump, a low side per channel, bias injection and four ADC inputs | DD-055, DD-059 |
@@ -43,8 +43,8 @@ on the bench.
 | Firing outputs down before anything slow starts | `board_early_init()`, before USB, networking and the filesystem | — |
 | A buzzer, an LED and a UART at 115200 | plain GPIO; the UART's transmit drained by an interrupt, its receive taking ground test commands | — |
 | A ground test switch, optional | any one digital pad to ground, or two pads | DD-071 |
-| Storage for config, scripts, web files and the flight log | alfs on the program flash: 984 KB on MK1B, 8 MB on MK1A and MK1C. An erase or program stalls execute-in-place, so in flight only the log writes, into erased pages, and a conversion beside a flash operation is discarded | DD-058, DD-068, DD-100 |
-| A USB device | CDC-ECM/RNDIS networking under lwIP, serving the HTTP API and the web interface; picotool's reset interface | — |
+| Storage for config, scripts, web files and the flight log | alfs on the program flash: 984 KB on MK1B, 8 MB on MK1A and MK1C. An erase or program stalls execute-in-place, so in flight only the log writes, into erased pages, and a conversion beside a flash operation is counted | DD-058, DD-100, DD-106 |
+| A USB device | CDC-ECM/RNDIS networking under smallest_tcp, serving the HTTP API and the web interface; picotool's reset interface | — |
 | Updates in the field | two A/B slots behind `pico_fota_bootloader`, written over HTTP | — |
 | A watchdog | twice the board's worst loop, `PYRO_LOOP_WORST_MS` | — |
 | A second core, optional | Lua scripts on core1 (`PYRO_HAS_LUA`) | — |

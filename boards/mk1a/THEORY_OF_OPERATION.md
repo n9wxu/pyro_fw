@@ -69,8 +69,8 @@ inputs, and starts the first continuity check.
 
 ## The main loop
 
-The shared loop (`src/main_hardware.c`) runs every 20 ms (`src/loop_period.h`,
-DD-065) and calls `pyro_update()` from its outputs stage. `pyro_update()` either
+The shared loop (`src/main_hardware.c`) runs every 10 ms (`src/loop_period.h`,
+DD-104) and calls `pyro_update()` from its outputs stage. `pyro_update()` either
 ends a fire pulse or advances the continuity check by one step. Nothing waits
 (DD-053): every settle is a deadline a later iteration checks.
 
@@ -116,7 +116,7 @@ first check completes, every channel reads open.
 
 **The settle is the slow edge.** Going low is fast (1 kΩ into 100 nF,
 100 µs), but reading open means charging C6/C5 through 101 kΩ, a 10.1 ms
-constant; 50 ms is five of them. That cannot be a wait inside a 20 ms loop, so
+constant; 50 ms is five of them. That cannot be a wait inside a 10 ms loop, so
 each step parks on a deadline. Holding the low side on only 50 ms in 500 keeps
 the exposure small if a high side ever leaks.
 
@@ -140,8 +140,8 @@ One BMP280 on I2C0 at 400 kHz, its fastest: R1 and R2 (4k7) hold fast mode's
 readings a second. Every reading is a conversion of its own, stamped at its
 middle. A transfer that fails is counted by cause on `/api/status`, and
 after three in a row the collector clears the bus and resets the part. A
-conversion a flash erase or program ran beside is discarded, not used, and
-counted in `pres_flashed` on `/api/status` (DD-068). Bring-up is the shared
+conversion a flash erase or program ran beside is used like any other, and
+counted in `pres_flashed` on `/api/status` (DD-106). Bring-up is the shared
 single-sensor path, `src/pressure_single_sensor.c`: clock the bus free — the
 sensor stays powered across a CPU reset and can be left holding SDA low — hand
 it to the I2C block, let the pull-ups settle, detect.
@@ -252,6 +252,6 @@ erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
 - `docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf`,
   `rp2040-datasheet_2025-02-20.pdf`, `UM10204_I2C-bus_Rev7.0_2021-10.pdf`
 - DD-052 (bus speeds), DD-053 (no waits), DD-059 (MK1B reads as MK1A does),
-  DD-065 (the 20 ms loop), DD-093 (the pressure collector), DD-068
+  DD-104 (the 10 ms loop), DD-093 (the pressure collector), DD-068
   (conversions beside a flash operation), DD-069 (bounded transfers), DD-071
   (the ground test switch) in `DECISIONS.md`

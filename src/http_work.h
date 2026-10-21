@@ -1,7 +1,7 @@
 /*
  * HTTP work units, and who runs them.
  *
- * The transport only moves bytes between lwIP and each connection's rings.
+ * The transport only moves bytes between the stack and each connection's rings.
  * Everything else a connection needs -- parsing, routing, rendering, reading
  * a file, writing flash -- is a unit: one bounded step on one connection.
  * Core0 runs units from the loop's slack, after the flight work, never from

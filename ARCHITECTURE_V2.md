@@ -2,23 +2,24 @@
 
 ## Overview
 
-Core0 runs one loop every 20 ms (`src/loop_period.h`, DD-065). The sensors,
+Core0 runs one loop every 10 ms (`src/loop_period.h`, DD-104). The sensors,
 telemetry TX and the buzzer run on their own: interrupt handlers and
 cooperative tasks the loop steps, with nothing waiting (DD-053). The flight
 software reads one sample at a time from the pressure layer and emits events.
-The HAL handles buffering, transport and storage. Every flash write runs in a
-window the loop opens between core1's work units. The loop's slack serves USB,
-lwIP and HTTP. On the boards with Lua, core1 runs Lua and the HTTP units
-core0 hands it (DD-061).
+The HAL handles buffering, transport and storage. From the first period
+airborne to landing the loop and core0's interrupts run from RAM, and core1
+runs in each period's frame: the log writer's 3 ms, whose flash operations
+stop nothing on core0, then Lua's tick (DD-104). USB, smallest_tcp and HTTP
+share core1 with them.
 
 ## Design Principles
 
 1. Flight software reaches the hardware only through `hal.h` — no UART, GPIO, flash or filesystem calls of its own.
 2. I/O runs without the loop waiting for it — the MS5607's conversions are an alarm handler's, telemetry TX is an interrupt's, the buzzer and the BMP280 are tasks stepped once a loop.
-3. The exec loop is the only clock — nothing sleeps or busy-waits; anything that waits parks on a deadline a later iteration checks (DD-053). The slack is spent on USB, lwIP and HTTP, not sleep.
+3. The exec loop is the only clock — nothing sleeps or busy-waits; anything that waits parks on a deadline a later iteration checks (DD-053). The slack is spent on USB, the network stack and HTTP, not sleep.
 4. Config changes are one-line operations — X-macro table generates struct, parser, serializer, defaults, and test.
 5. Telemetry is event-driven — formatter is a separate module, HAL is raw transport.
-6. Flash is written only in the window — core1 is idle and no XIP fetch can meet a program or erase (DD-035).
+6. A flash write never meets an XIP fetch: on the ground the other core is parked for it (DD-074); in flight core0 runs from RAM and the write runs on core1 in the writer's slot (DD-104).
 
 ## How It Works
 
@@ -28,11 +29,11 @@ core0 hands it (DD-061).
 | Processing | Each reading goes straight into the pressure layer's ring; the detectors take it with `pp_read()`, one sample per dispatch |
 | Telemetry | `telemetry_formatter.c` builds NMEA or JSON; `hal_telemetry_send()` queues it on a 512-byte ring drained by the UART TX interrupt |
 | Buzzer | `buzzer.c` encodes a pattern; its task steps it from `hal_tasks_tick()` |
-| Data log | `hal_log_sample()` into a 4 KB RAM buffer; written and synced in the flash window (DD-035, DD-062) |
+| Data log | `hal_log_sample()` into a 4 KB RAM buffer; written and synced in the writer's slots (DD-062, DD-104) |
 | Config | `hal_config_load()` returns a `config_t` built from the X-macro table |
 | USB | `tud_task()` in the loop's platform stage and throughout the slack |
 | HTTP | the transport moves bytes at the loop's head; handlers are work units in the slack or on core1 (DD-061) |
-| Flash writes | only inside the window core0 opens once core1 is idle (`src/flash_window.h`) |
+| Flash writes | on the ground under a lockout that parks the other core; in flight the writer's alone, in pieces inside its slot (`src/flash_op.h`, `src/flash_slot.h`) |
 | CPU sleep | none: `hal_sleep_until_event()` is empty on the hardware |
 
 ## HAL Interface
@@ -161,7 +162,7 @@ lua_app_init(&ctx.config);              /* launches core1 */
 
 while (1) {                             /* every LOOP_PERIOD_MS */
     hal_tasks_tick(now);                /* sensor first, then the buzzer and the switch */
-    hal_platform_service();             /* TinyUSB, lwIP, HTTP transport, mDNS */
+    hal_platform_service();             /* TinyUSB, the stack, HTTP transport, mDNS */
     ctx.current_state = dispatch_state(&ctx, now);
     flight_update_outputs(&ctx, now);   /* telemetry, pyro update */
     lua_app_service(&ctx, now);
@@ -188,7 +189,7 @@ while (1) {                             /* every LOOP_PERIOD_MS */
 | UART telemetry TX | UART TX interrupt | Data in ring | Per FIFO refill |
 | USB (tud_task) | Loop | Platform stage and the slack | Slack time |
 | Buzzer pattern | Loop task | Step deadline | A GPIO write per step |
-| Flash log writes | Loop, flash window | 200 ms after the holdoff, a full buffer, or the 1 s sync | Tens of ms per sector erase |
+| Flash log writes | Storage task, the writer's slot | 200 ms after the holdoff, a full buffer, or the 1 s sync | Under 3 ms a slot; an erase in suspended pieces |
 | HTTP handlers | Work units | Slack, or core1's grant | Bounded per unit |
 | Flight software | Loop | Every period | Per sample |
 
@@ -200,7 +201,7 @@ The larger fixed buffers, from the code:
 |---|---|
 | Flight log buffer (`hal_common.c`) | 4,096 bytes |
 | Pressure trace (`pressure_trace.h`, 256 records) | 6,144 bytes |
-| lwIP heap (`MEM_SIZE`) | 8,000 bytes |
+| Network frame buffers (`net_glue.c`) | 3,028 bytes |
 | Telemetry TX ring | 512 bytes |
 | Flight ring (64 samples) | 1,024 bytes |
 | Pressure layer ring (`PP_RING_SIZE`) | 64 samples |
@@ -217,6 +218,6 @@ The larger fixed buffers, from the code:
 | 5 | Telemetry formatter module | Built: `src/telemetry_formatter.c`, NMEA and JSON |
 | 6+7 | Buzzer pattern player | Built: an `async_task_t` stepped by `hal_tasks_tick()` |
 | 8 | Batch flight processing | Replaced: `dispatch_state()` takes one sample per call through `pp_read()` |
-| 9 | Fire-and-forget flight log | Built: `hal_log_start()`, `hal_log_sample()`, `hal_log_stop()`; binary records, written in the flash window |
+| 9 | Fire-and-forget flight log | Built: `hal_log_start()`, `hal_log_sample()`, `hal_log_stop()`; binary records, written in the writer's slots |
 | 10 | Non-blocking UART TX | Built as an interrupt-driven 512-byte ring, not DMA |
 | — | USB on core1 or a timer | Not built: USB runs in the loop; core1 runs Lua and HTTP units |

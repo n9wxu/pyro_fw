@@ -23,7 +23,7 @@
  * board_id and board_selftest keys were caught: the bound has to move
  * deliberately, and it has to stay under HTTP_WORK_SIZE, which the
  * _Static_assert in http_server.c checks. */
-#define STATUS_JSON_MAX 3500
+#define STATUS_JSON_MAX 3800
 
 typedef struct {
     const char *state;
@@ -56,7 +56,7 @@ typedef struct {
 
     uint32_t loop_max_us, loop_overruns, loop_late_max_us, loop_count;
     uint32_t stage_max_us[STATUS_STAGES];
-    uint32_t stage1_parts_us[STATUS_STAGE1_PARTS]; /* TinyUSB, lwIP, HTTP transport, mDNS */
+    uint32_t stage1_parts_us[STATUS_STAGE1_PARTS]; /* TinyUSB, the stack, HTTP transport, mDNS */
     uint32_t http_units[2], http_unit_max_us[2];   /* core0, core1 */
     uint32_t flash_opens, flash_skips, flash_refusals, log_dropped;
     uint32_t flash_erases, flash_programs, flash_deferrals;
@@ -85,7 +85,7 @@ typedef struct {
     /* The pressure collector [SNS-COL-04, SNS-COL-05]: transfers that failed, in
      * all and by cause, bus recoveries, and cycles pushed out of its queue. */
     uint32_t pres_rejects, pres_bus[4], pres_recoveries, pres_dropped;
-    uint32_t pres_flashed; /* [DD-068] readings a flash operation disturbed, not fed on */
+    uint32_t pres_flashed; /* [DD-106] readings a flash operation ran beside, used like any other */
     int32_t raw_pa, pad_speed_cms;
     bool ground_degraded;
     uint32_t ground_reseeds;
@@ -94,6 +94,7 @@ typedef struct {
     bool estimator_explains;
     bool peak_lower_bound;
     bool usb_attached, test_mode, buzzer_active;
+    bool test_log_host; /* [USB-09] the flight log goes to the host, not the flash */
 
     const char *beep;      /* the outcome's key */
     const char *beep_kind; /* how it sounds: a kind, or a code of d1[-d2] beeps */
@@ -108,6 +109,13 @@ typedef struct {
     char flash_jedec[7];
     uint32_t flash_kb; /* the size the chip declares; 0 if it does not */
     char flash_uid[33];
+    /* Core1's frame and the log writer's slots [FLT-LOG-09, FLT-LOG-10,
+     * LUA-RUN-04]: the part the writer plans by ("" when unlisted), whether
+     * the flight's flash operations run in slots now, and their counts. */
+    const char *flash_part;
+    bool flash_in_flight;
+    uint32_t frame_writer_max_us, frame_writer_overruns, lua_skipped;
+    uint32_t slot_pieces, slot_suspends, slot_waits, flight_refusals, piece_max_us;
 } status_snap_t;
 
 /* Returns the length written, NUL-terminated, or -1 when it does not fit:

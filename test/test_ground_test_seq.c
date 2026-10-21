@@ -1,6 +1,6 @@
 /*
  * The ground test procedure's schedule (ground_test_seq.c), stepped once a
- * 20 ms loop against a fake clock [GND-TEST-05..11].
+ * loop against a fake clock [GND-TEST-05..11].
  *
  * Verifies [GND-TEST-07..11, GND-TEST-13].
  */

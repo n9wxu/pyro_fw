@@ -5,21 +5,17 @@
  * core1 at P, beside Lua and storage, never on the flight task. What changes
  * flight state goes through flight_call() (rtos_tasks.h).
  *
- * Two halves. The routes below answer one request on an http_conn_t, which
- * parses from an rx ring and writes to a tx ring (http_conn.h) and never sees
- * a segment. The lwIP adapter at the bottom moves bytes between lwIP and
- * those rings: it queues what arrives, hands it over as the parser consumes
- * it -- which is also what reopens the TCP window -- and feeds tx to lwIP as
- * its send buffer allows.
+ * The routes below answer one request on an http_conn_t, which parses from
+ * an rx ring and writes to a tx ring (http_conn.h) and never sees a segment.
+ * The transport (http_transport.h) moves bytes between the stack and those
+ * rings, and takes an exchange from here for each connected link.
  *
- * lwIP callbacks only queue. http_server_transport() moves bytes and nothing
- * else; every other step is a work unit (http_work.h), run by
- * http_server_work().
+ * http_server_transport() moves bytes and nothing else; every other step is
+ * a work unit (http_work.h), run by http_server_work().
  */
-#include "lwip/tcp.h"
-#include "lwip/memp.h"
-#include "lwip/stats.h"
-#include "lwip/priv/tcp_priv.h"
+#include "http_transport.h"
+#include "net_glue.h"
+#include "log_live.h"
 #include "board_id.h"
 #include "board_if.h"
 #include <string.h>
@@ -62,6 +58,9 @@
 #include "http_conn.h"
 #include "http_routes.h"
 #include "flash_chip.h"
+#include "flash_timing.h"
+#include "fs_json.h"
+#include "core1_frame.h"
 #include "ota_bounds.h"
 #include "http_server.h"
 #include "http_work.h"
@@ -101,34 +100,16 @@ extern uint32_t hal_pressure_flashed(void);
 #define JSON "application/json"
 #define TEXT "text/plain"
 
-/* ── Connections ──────────────────────────────────────────────────────
+/* ── Exchanges ────────────────────────────────────────────────────────
  *
- * A link is one lwIP pcb; a conn is one HTTP exchange, with its rings. A pcb
- * gets a conn when it first sends something, so the idle sockets a browser
- * opens speculatively cost a link and nothing more. While every conn is busy,
- * what a link receives waits in its pbuf queue, unacknowledged to the
- * application, so TCP flow control holds the sender back. */
+ * A conn is one HTTP exchange, with its rings, lent to a connected link by
+ * the transport (http_transport.h). */
 
 #define CONN_POOL_SIZE 4
-#define LINK_POOL_SIZE MEMP_NUM_TCP_PCB
-/* No byte moved either way for this long: the peer is gone. */
-#define HTTP_IDLE_MS 20000u
-
-struct conn;
-
-typedef struct {
-    struct tcp_pcb *pcb;  /* NULL: free */
-    struct pbuf *pending; /* received, not yet in the rx ring */
-    bool fin;             /* the peer has closed its side */
-    bool counted_wait;
-    uint32_t seq; /* accept order: waiting links are served in turn */
-    uint32_t last_ms;
-    struct conn *conn;
-} link_t;
 
 typedef struct conn {
     http_conn_t h; /* MUST be first: the handlers cast back */
-    link_t *link;  /* NULL: free */
+    bool linked;   /* lent to a link */
     route_t route;
     vfs_file_t file;
     bool file_open;
@@ -149,9 +130,7 @@ typedef struct conn {
 _Static_assert(CONN_POOL_SIZE == HTTP_WORK_SLOTS, "a work slot is a connection");
 _Static_assert(STATUS_JSON_MAX <= HTTP_WORK_SIZE, "the status is rendered into the work buffer");
 
-static link_t links[LINK_POOL_SIZE];
 static conn_t conns[CONN_POOL_SIZE];
-static uint32_t link_seq;
 static conn_t *ota_conn; /* the OTA state below is one image at a time */
 
 /* ── OTA firmware update state ────────────────────────────────────── */
@@ -282,7 +261,7 @@ static const char *state_names[] = {"BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALI
  * does, rather than being taken on trust. */
 extern volatile uint32_t loop_count, loop_max_us, loop_overruns, loop_late_max_us;
 extern volatile uint32_t stage_max_us[];
-extern volatile uint32_t stage1_part_max_us[]; /* hal_common.c: TinyUSB, lwIP, HTTP transport, mDNS */
+extern volatile uint32_t stage1_part_max_us[]; /* hal_common.c: TinyUSB, the stack, HTTP transport, mDNS */
 extern volatile bool boot_prev_watchdog;       /* main_hardware.c */
 extern volatile int32_t boot_prev_stage;
 extern volatile uint32_t boot_prev_stage_ms;
@@ -365,15 +344,15 @@ static void apply_api_beep_play(http_conn_t *hc, const char *body) {
     http_respond(hc, status, JSON, jb, (uint32_t)jn);
 }
 
-/* POST /api/test_mode/on, /api/test_mode/off [USB-08]. Held in RAM, so a
- * reboot ends it. In flight the flight layer ignores it, and the answer says
- * the mode it kept. */
+/* POST /api/test_mode/on[?log=host], /api/test_mode/off [USB-08, USB-09].
+ * Held in RAM, so a reboot ends it. In flight the flight layer ignores it, a
+ * running log keeps where it goes, and the answer says the mode kept. */
 
 static void test_mode_call(void *arg) {
     flight_set_test_mode(flight_get_context(), *(const bool *)arg, hal_time_ms());
 }
 
-static void apply_api_test_mode(http_conn_t *hc, bool on) {
+static void apply_api_test_mode(http_conn_t *hc, bool on, bool log_to_host) {
     flight_context_t *ctx = flight_get_context();
     if (!ctx) {
         http_respond_str(hc, 503, JSON, "{\"error\":\"not ready\"}");
@@ -383,7 +362,11 @@ static void apply_api_test_mode(http_conn_t *hc, bool on) {
         http_respond_str(hc, 503, JSON, "{\"error\":\"the flight task did not take the change\"}");
         return;
     }
-    http_respond_str(hc, 200, JSON, ctx->test_mode ? "{\"test_mode\":true}" : "{\"test_mode\":false}");
+    hal_log_to_host(ctx->test_mode && log_to_host);
+    char body[48];
+    int n = snprintf(body, sizeof(body), "{\"test_mode\":%s,\"test_log\":\"%s\"}", ctx->test_mode ? "true" : "false",
+                     hal_log_held_for_host() ? "host" : "flash");
+    http_respond(hc, 200, JSON, body, (uint32_t)n);
 }
 
 #if PYRO_HAS_BENCH_FLIGHT
@@ -762,104 +745,173 @@ static void serve_api_pin_caps(http_conn_t *hc) {
 
 /* [WEB-API-11] What the flight task owns, taken by the flight task itself at
  * the head of its period (flight_call()), so the fields agree with one
- * another. */
-static void status_capture_flight(void *arg) {
-    static const char *mode_names[] = {"none", "fallen", "agl", "speed", "delay"};
-    status_snap_t *s = (status_snap_t *)arg;
-    const flight_context_t *fctx = flight_get_context();
+ * another. Numbers only, copied: it runs in flight, from RAM [FLT-RT-02],
+ * and the net task names them (status_name_flight()). */
+typedef struct {
+    device_status_t st;
+    bool have_ctx, storage_ok, emergency_fire, limited, peak_lower_bound, usb_attached, test_mode;
+    uint8_t current_state, sensor_type, reset_cause, resume, not_resumed;
+    uint16_t diag, pulses[2];
+    bool channel_fault[2];
+    uint32_t refire_interval_ms, fire_gap_ms;
+    int32_t speed_cms;
+    bool raw_ok;
+    board_pyro_raw_t praw;
+    uint32_t loop_max_us, loop_overruns, loop_late_max_us, loop_count;
+    uint32_t stage_max_us[STATUS_STAGES], stage1_parts_us[STATUS_STAGE1_PARTS];
+    collector_stats_t collector;
+    uint32_t pres_flashed, ground_reseeds, interval_min_us, interval_max_us, stamp_lag_max_us;
+    int32_t raw_pa;
+    bool ground_degraded, explains, held_for_host, buzzer_active;
+    float noise_pa;
+    uint8_t obeyed;
+} flight_take_t;
 
-    s->state = g_status.state < STATE_NAME_COUNT ? state_names[g_status.state] : "UNKNOWN";
-    s->alt_cm = g_status.altitude_cm;
-    s->max_alt_cm = g_status.max_altitude_cm;
-    s->vspeed_cms = g_status.vertical_speed_cms;
-    s->pressure_pa = g_status.pressure_pa;
-    s->pyro_cont[0] = g_status.pyro1_continuity;
-    s->pyro_cont[1] = g_status.pyro2_continuity;
-    s->pyro_adc[0] = g_status.pyro1_adc;
-    s->pyro_adc[1] = g_status.pyro2_adc;
-    s->pyro_fired[0] = g_status.pyro1_fired;
-    s->pyro_fired[1] = g_status.pyro2_fired;
-    s->armed = g_status.pyros_armed;
-    s->flight_ms = g_status.flight_time_ms;
-    s->pyro_mode[0] = g_status.pyro1_mode < 5 ? mode_names[g_status.pyro1_mode] : "?";
-    s->pyro_mode[1] = g_status.pyro2_mode < 5 ? mode_names[g_status.pyro2_mode] : "?";
-    s->pyro_value[0] = g_status.pyro1_value;
-    s->pyro_value[1] = g_status.pyro2_value;
-    s->units = g_status.units;
-    memcpy(s->rocket_id, (const char *)g_status.rocket_id, sizeof(s->rocket_id) - 1);
-    memcpy(s->rocket_name, (const char *)g_status.rocket_name, sizeof(s->rocket_name) - 1);
+static void status_take_flight(void *arg) {
+    flight_take_t *t = (flight_take_t *)arg;
+    const flight_context_t *fctx = flight_get_context();
+    t->st = *(const device_status_t *)&g_status;
+    t->have_ctx = fctx != NULL;
+    if (fctx) {
+        t->current_state = (uint8_t)fctx->current_state;
+        t->sensor_type = (uint8_t)fctx->sensor_type;
+        t->storage_ok = fctx->storage_ok;
+        t->diag = fctx->diag;
+        t->reset_cause = (uint8_t)fctx->reset_cause;
+        t->resume = fctx->resume;
+        t->not_resumed = fctx->not_resumed;
+        for (int i = 0; i < 2; i++) {
+            t->pulses[i] = fctx->fire.channel[i].pulses;
+            t->channel_fault[i] = fctx->channel_fault[i];
+        }
+        t->emergency_fire = fctx->emergency_fire;
+        t->refire_interval_ms = fctx->plan.refire_interval_ms;
+        t->fire_gap_ms = fctx->plan.fire_gap_ms;
+        t->limited = fctx->refire_interval_limited || fctx->fire_gap_limited;
+        t->speed_cms = fctx->speed_cms;
+        t->peak_lower_bound = fctx->peak_lower_bound;
+        t->usb_attached = fctx->usb_attached; /* [USB-01..03, USB-08] */
+        t->test_mode = fctx->test_mode;
+    }
+    /* Raw counts rather than volts, so a marginal reading stays visible. */
+    t->raw_ok = board_pyro_raw(&t->praw);
+    t->loop_max_us = loop_max_us;
+    t->loop_overruns = loop_overruns;
+    t->loop_late_max_us = loop_late_max_us;
+    t->loop_count = loop_count;
+    for (int i = 0; i < STATUS_STAGES; i++)
+        t->stage_max_us[i] = stage_max_us[i];
+    for (int i = 0; i < STATUS_STAGE1_PARTS; i++)
+        t->stage1_parts_us[i] = stage1_part_max_us[i];
+    hal_pressure_collector(&t->collector);
+    t->pres_flashed = hal_pressure_flashed();
+    t->raw_pa = pp_last_raw_pa();
+    t->ground_degraded = pp_ground_degraded(); /* [GND-CAL-07] */
+    t->ground_reseeds = pp_ground_reseeds();
+    t->interval_min_us = hal_pressure_interval_min_us(); /* [SNS-PRES-08] */
+    t->interval_max_us = hal_pressure_interval_max_us();
+    t->stamp_lag_max_us = hal_pressure_stamp_lag_max_us();
+    t->noise_pa = pp_noise_pa(); /* the sensor noise the estimator tracks */
+    t->obeyed = (uint8_t)pp_obeyed();
+    pp_sample_t newest;
+    t->explains = pp_newest(&newest) && newest.explains;
+    t->held_for_host = hal_log_held_for_host();
+    t->buzzer_active = buzzer_is_active();
+}
+
+/* The net task's half: the take, named. */
+static void status_name_flight(status_snap_t *s, const flight_take_t *t) {
+    static const char *mode_names[] = {"none", "fallen", "agl", "speed", "delay"};
+    const device_status_t *g = &t->st;
+    s->state = g->state < STATE_NAME_COUNT ? state_names[g->state] : "UNKNOWN";
+    s->alt_cm = g->altitude_cm;
+    s->max_alt_cm = g->max_altitude_cm;
+    s->vspeed_cms = g->vertical_speed_cms;
+    s->pressure_pa = g->pressure_pa;
+    s->pyro_cont[0] = g->pyro1_continuity;
+    s->pyro_cont[1] = g->pyro2_continuity;
+    s->pyro_adc[0] = g->pyro1_adc;
+    s->pyro_adc[1] = g->pyro2_adc;
+    s->pyro_fired[0] = g->pyro1_fired;
+    s->pyro_fired[1] = g->pyro2_fired;
+    s->armed = g->pyros_armed;
+    s->flight_ms = g->flight_time_ms;
+    s->pyro_mode[0] = g->pyro1_mode < 5 ? mode_names[g->pyro1_mode] : "?";
+    s->pyro_mode[1] = g->pyro2_mode < 5 ? mode_names[g->pyro2_mode] : "?";
+    s->pyro_value[0] = g->pyro1_value;
+    s->pyro_value[1] = g->pyro2_value;
+    s->units = g->units;
+    memcpy(s->rocket_id, g->rocket_id, sizeof(s->rocket_id) - 1);
+    memcpy(s->rocket_name, g->rocket_name, sizeof(s->rocket_name) - 1);
     s->sensor = pressure_sensor_name();
 
-    /* Raw counts rather than volts, so a marginal reading stays visible. */
-    board_pyro_raw_t praw = {0};
-    bool raw = board_pyro_raw(&praw);
-    s->pyro_bus_q = raw ? (int32_t)praw.bus_quiescent : -1;
-    s->pyro_bus_adc = raw ? (int32_t)praw.bus_biased : -1;
-    s->pyro_vbat_adc = raw ? (int32_t)praw.vbat : -1;
+    s->pyro_bus_q = t->raw_ok ? (int32_t)t->praw.bus_quiescent : -1;
+    s->pyro_bus_adc = t->raw_ok ? (int32_t)t->praw.bus_biased : -1;
+    s->pyro_vbat_adc = t->raw_ok ? (int32_t)t->praw.vbat : -1;
 
-    s->loop_max_us = loop_max_us;
-    s->loop_overruns = loop_overruns;
-    s->loop_late_max_us = loop_late_max_us;
-    s->loop_count = loop_count;
-    for (int i = 0; i < STATUS_STAGES; i++) {
-        s->stage_max_us[i] = stage_max_us[i];
-    }
-    for (int i = 0; i < STATUS_STAGE1_PARTS; i++) {
-        s->stage1_parts_us[i] = stage1_part_max_us[i];
-    }
+    s->loop_max_us = t->loop_max_us;
+    s->loop_overruns = t->loop_overruns;
+    s->loop_late_max_us = t->loop_late_max_us;
+    s->loop_count = t->loop_count;
+    for (int i = 0; i < STATUS_STAGES; i++)
+        s->stage_max_us[i] = t->stage_max_us[i];
+    for (int i = 0; i < STATUS_STAGE1_PARTS; i++)
+        s->stage1_parts_us[i] = t->stage1_parts_us[i];
 
     /* The power-up self-test: a board that cannot measure altitude must not
      * report itself healthy. */
-    s->sensor_ok = fctx && fctx->sensor_type && fctx->sensor_type != SENSOR_PENDING;
-    s->fs_ok = fctx && fctx->storage_ok;
-    uint16_t diag = fctx ? fctx->diag : 0;
+    s->sensor_ok = t->have_ctx && t->sensor_type && t->sensor_type != SENSOR_PENDING;
+    s->fs_ok = t->have_ctx && t->storage_ok;
     for (uint16_t bit = 1; bit != 0 && s->n_faults < STATUS_FAULTS_MAX; bit <<= 1) {
-        if ((diag & bit) && *pad_check_fault_name(bit)) {
+        if ((t->diag & bit) && *pad_check_fault_name(bit)) {
             s->faults[s->n_faults++] = pad_check_fault_name(bit);
         }
     }
-    s->reset_cause = fctx ? (uint8_t)fctx->reset_cause : 0u;
-    s->resume = fctx ? flight_resume_text(fctx) : resume_verdict_name(RESUME_NOT_FLYING);
+    s->reset_cause = t->reset_cause;
+    if (!t->have_ctx)
+        s->resume = resume_verdict_name(RESUME_NOT_FLYING);
+    else if (t->resume == RESUME_NOT_FLYING)
+        s->resume = not_resumed_name((not_resumed_t)t->not_resumed);
+    else
+        s->resume = resume_verdict_name((resume_verdict_t)t->resume);
     s->prev_watchdog = boot_prev_watchdog;
     s->prev_stage = boot_prev_stage;
     s->prev_stage_ms = boot_prev_stage_ms;
     for (int i = 0; i < 2; i++) {
-        s->pyro_pulses[i] = fctx ? fctx->fire.channel[i].pulses : 0u;
-        s->pyro_fault[i] = fctx && fctx->channel_fault[i];
+        s->pyro_pulses[i] = t->pulses[i];
+        s->pyro_fault[i] = t->channel_fault[i];
     }
-    s->emergency_fire = fctx && fctx->emergency_fire;
-    s->refire_interval_ms = fctx ? (uint16_t)fctx->plan.refire_interval_ms : 0u;
-    s->fire_gap_ms = fctx ? (uint16_t)fctx->plan.fire_gap_ms : 0u;
-    s->pyro_limited = fctx && (fctx->refire_interval_limited || fctx->fire_gap_limited);
-    collector_stats_t collector;
-    hal_pressure_collector(&collector);
+    s->emergency_fire = t->emergency_fire;
+    s->refire_interval_ms = (uint16_t)t->refire_interval_ms;
+    s->fire_gap_ms = (uint16_t)t->fire_gap_ms;
+    s->pyro_limited = t->limited;
     s->pres_rejects = 0;
     for (int i = 0; i < 4; i++) {
-        s->pres_bus[i] = collector.failed[COLLECTOR_ADDRESS_NACK + i];
+        s->pres_bus[i] = t->collector.failed[COLLECTOR_ADDRESS_NACK + i];
         s->pres_rejects += s->pres_bus[i];
     }
-    s->pres_recoveries = collector.recoveries;
-    s->pres_dropped = collector.dropped;
-    s->pres_flashed = hal_pressure_flashed();
-    s->raw_pa = pp_last_raw_pa();
-    s->pad_speed_cms = fctx && fctx->current_state == PAD_IDLE ? fctx->speed_cms : 0;
-    s->ground_degraded = pp_ground_degraded(); /* [GND-CAL-07] */
-    s->ground_reseeds = pp_ground_reseeds();
-    s->sample_interval_us[0] = hal_pressure_interval_min_us(); /* [SNS-PRES-08] */
-    s->sample_interval_us[1] = hal_pressure_interval_max_us();
-    s->stamp_lag_max_us = hal_pressure_stamp_lag_max_us();
-    s->noise_mpa = (uint32_t)(pp_noise_pa() * 1000.0f); /* the sensor noise the estimator tracks */
-    pp_sample_t newest;
-    s->estimator = estimator_at(pp_obeyed())->name;
-    s->estimator_explains = pp_newest(&newest) && newest.explains;
-    s->peak_lower_bound = fctx && fctx->peak_lower_bound;
-    s->usb_attached = fctx && fctx->usb_attached; /* [USB-01..03, USB-08] */
-    s->test_mode = fctx && fctx->test_mode;
-    s->buzzer_active = buzzer_is_active();
+    s->pres_recoveries = t->collector.recoveries;
+    s->pres_dropped = t->collector.dropped;
+    s->pres_flashed = t->pres_flashed;
+    s->raw_pa = t->raw_pa;
+    s->pad_speed_cms = t->have_ctx && t->current_state == PAD_IDLE ? t->speed_cms : 0;
+    s->ground_degraded = t->ground_degraded;
+    s->ground_reseeds = t->ground_reseeds;
+    s->sample_interval_us[0] = t->interval_min_us;
+    s->sample_interval_us[1] = t->interval_max_us;
+    s->stamp_lag_max_us = t->stamp_lag_max_us;
+    s->noise_mpa = (uint32_t)(t->noise_pa * 1000.0f);
+    s->estimator = estimator_at(t->obeyed)->name;
+    s->estimator_explains = t->explains;
+    s->peak_lower_bound = t->peak_lower_bound;
+    s->usb_attached = t->usb_attached;
+    s->test_mode = t->test_mode;
+    s->test_log_host = t->held_for_host;
+    s->buzzer_active = t->buzzer_active;
 
     /* What the buzzer says, or would say off USB, so it can be read rather
      * than counted. */
-    beep_reason_t r = pad_check_announcement(diag);
+    beep_reason_t r = pad_check_announcement(t->diag);
     beep_spec_t sp = beep_for(r);
     s->beep = beep_codes_key(r);
     s->beep_kind = beep_codes_kind_name((beep_kind_t)sp.kind);
@@ -873,9 +925,11 @@ static void status_capture_flight(void *arg) {
  * not take the call. */
 static bool status_capture(status_snap_t *s) {
     memset(s, 0, sizeof(*s));
-    if (!flight_call(status_capture_flight, s, CALL_MS)) {
+    flight_take_t take;
+    if (!flight_call(status_take_flight, &take, CALL_MS)) {
         return false;
     }
+    status_name_flight(s, &take);
     s->uptime_ms = to_ms_since_boot(get_absolute_time());
     s->fw_version = FW_VERSION;
     s->board = PYRO_BOARD_NAME;
@@ -905,6 +959,23 @@ static bool status_capture(status_snap_t *s) {
     s->flash_erases = flash_op_erases();
     s->flash_programs = flash_op_programs();
     s->flash_deferrals = flash_op_waits();
+    uint8_t jedec[3];
+    flash_chip_jedec(jedec);
+    const flash_timing_t *ft = flash_timing_for(jedec);
+    s->flash_part = ft ? ft->part : "";
+    s->flash_in_flight = flash_op_in_flight();
+    core1_frame_stats_t fr;
+    core1_frame_stats(&fr);
+    s->frame_writer_max_us = fr.writer_max_us;
+    s->frame_writer_overruns = fr.writer_overruns;
+    s->lua_skipped = fr.lua_skipped;
+    flash_op_slot_stats_t ss;
+    flash_op_slot_stats(&ss);
+    s->slot_pieces = ss.pieces;
+    s->slot_suspends = ss.suspends;
+    s->slot_waits = ss.slot_waits;
+    s->flight_refusals = ss.flight_refusals;
+    s->piece_max_us = ss.piece_max_us;
 
     const pin_assign_t *pa = pin_store_current();
     snprintf(s->pins_reason, sizeof(s->pins_reason), "%s", pin_store_reason());
@@ -1038,6 +1109,28 @@ static bool flight_csv_count(conn_t *c) {
 
 static void serve_api_net(http_conn_t *hc);
 
+/* [WEB-API-16] The flight log held for the host from ?since=N: the offset of
+ * the first byte returned and the offset the log has reached, little-endian,
+ * then the bytes (log_live.h). */
+#define LIVE_HEAD 8u
+
+static void put_le32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
+
+static void serve_flight_live(http_conn_t *hc, const char *path) {
+    const char *q = strstr(path, "since=");
+    uint32_t since = q ? (uint32_t)strtoul(q + 6, NULL, 10) : 0u;
+    uint32_t first, end;
+    uint32_t n = log_live_read(since, hc->work + LIVE_HEAD, sizeof(hc->work) - LIVE_HEAD, &first, &end);
+    put_le32(hc->work, first);
+    put_le32(hc->work + 4, end);
+    http_respond(hc, 200, "application/octet-stream", hc->work, LIVE_HEAD + n);
+}
+
 static void serve_log_space(conn_t *c) {
     http_conn_t *hc = &c->h;
     if (!fs_take(c)) {
@@ -1061,6 +1154,62 @@ static void serve_log_space(conn_t *c) {
                      (unsigned long long)(second ? (uint64_t)room / second : 0u),
                      vfs_route(FLOG_PATH) == VFS_FAT ? "sd" : "flash");
     http_respond(hc, 200, JSON, buf, (uint32_t)n);
+}
+
+static void fs_list_one(void *ctx, const char *name, uint32_t size, bool closed) {
+    fs_json_file((fs_json_t *)ctx, name, size, closed, vfs_is_internal(name));
+}
+
+/* GET /api/fs [WEB-API-19]: the flash store from its files' records, then
+ * each file, written into the work buffer as the store lists them. */
+static void serve_api_fs(conn_t *c) {
+    http_conn_t *hc = &c->h;
+    if (!fs_take(c)) {
+        return;
+    }
+    uint64_t free_b = 0, total_b = 0;
+    if (vfs_flash_space(&free_b, &total_b) != 0) {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"no filesystem\"}");
+        return;
+    }
+    vfs_flash_cleanup_t k;
+    vfs_flash_cleanup_state(&k);
+    const char *pace = !k.cleaning ? "done" : flight_is_grounded_on_usb() ? "fast" : "slow";
+    vfs_flash_geometry_t g;
+    vfs_flash_geometry(&g);
+    fs_space_t s = {(uint32_t)total_b, (uint32_t)(total_b - free_b),
+                    (uint32_t)free_b,  k.erased,
+                    g.sectors,         g.sector_pages,
+                    g.page_bytes,      pace};
+    fs_json_t j;
+    fs_json_begin(&j, (char *)hc->work, (int)sizeof(hc->work), &s);
+    vfs_flash_list(fs_list_one, &j);
+    int n = fs_json_end(&j);
+    if (n < 0) {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"the list does not fit\"}");
+        return;
+    }
+    http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
+}
+
+/* GET /api/fs/scan?sector=K&count=N [WEB-API-20]: each sector's erased
+ * pages, read from the flash. */
+static void serve_api_fs_scan(conn_t *c, const char *path) {
+    http_conn_t *hc = &c->h;
+    if (!fs_take(c)) {
+        return;
+    }
+    const char *k = strstr(path, "sector="), *n = strstr(path, "count=");
+    uint32_t sector = k ? (uint32_t)strtoul(k + 7, NULL, 10) : 0u;
+    uint32_t count = n ? (uint32_t)strtoul(n + 6, NULL, 10) : VFS_FLASH_SCAN_MAX;
+    uint8_t erased[VFS_FLASH_SCAN_MAX];
+    int got = vfs_flash_scan(sector, count, erased);
+    int len = got < 0 ? -1 : fs_json_scan((char *)hc->work, (int)sizeof(hc->work), sector, erased, got);
+    if (len < 0) {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"no filesystem\"}");
+        return;
+    }
+    http_respond(hc, 200, JSON, hc->work, (uint32_t)len);
 }
 
 #if PYRO_HAS_SD
@@ -1262,6 +1411,10 @@ static void serve_get(conn_t *c) {
         serve_flight_csv(c);
     } else if (strcmp(path, "/api/log/space") == 0) {
         serve_log_space(c);
+    } else if (strcmp(path, "/api/fs") == 0) {
+        serve_api_fs(c);
+    } else if (strncmp(path, "/api/fs/scan", 12) == 0 && (path[12] == '\0' || path[12] == '?')) {
+        serve_api_fs_scan(c, path);
     } else if (strcmp(path, "/api/net") == 0) {
         serve_api_net(hc);
 #if PYRO_HAS_BENCH_FLIGHT
@@ -1281,6 +1434,8 @@ static void serve_get(conn_t *c) {
         uint32_t since = q ? (uint32_t)strtoul(q + 6, NULL, 10) : 0u;
         int n = ptrace_read(since, hc->work, (int)sizeof(hc->work));
         http_respond(hc, 200, "application/octet-stream", hc->work, (uint32_t)n);
+    } else if (strncmp(path, "/api/flight/live", 16) == 0 && (path[16] == '\0' || path[16] == '?')) {
+        serve_flight_live(hc, path);
     } else if (strcmp(path, "/") == 0) {
         /* no-store: the UI is re-uploaded whenever the firmware or web files
          * change, and without this browsers heuristically cache it and keep
@@ -1409,6 +1564,22 @@ static void apply_erase(http_conn_t *hc) {
     }
 }
 
+/* [WEB-API-17] From every store; the board's own files are refused at the
+ * head. */
+static void apply_delete(http_conn_t *hc) {
+    int rc = vfs_remove(delete_target(hc->path));
+    DBG("POST %s rc=%d", hc->path, rc);
+    if (rc == 0) {
+        http_respond_str(hc, 200, JSON, "{\"status\":\"deleted\"}");
+    } else if (rc == VFS_NOENT) {
+        http_respond_str(hc, 404, JSON, "{\"error\":\"no such file\"}");
+    } else if (rc == VFS_BUSY) {
+        http_respond_str(hc, 409, JSON, "{\"error\":\"the file is open\"}");
+    } else {
+        http_respond_str(hc, 500, JSON, "{\"error\":\"could not delete\"}");
+    }
+}
+
 #if PYRO_HAS_LUA
 /* Validate a script against the LIVE resource set without running a line of
  * it: the editor's as-you-go check. The authoritative one runs on the stored
@@ -1502,7 +1673,7 @@ static void apply_path_post(conn_t *c, route_t route) {
         break;
     case R_TEST_MODE_ON:
     case R_TEST_MODE_OFF:
-        apply_api_test_mode(hc, route == R_TEST_MODE_ON);
+        apply_api_test_mode(hc, route == R_TEST_MODE_ON, strstr(hc->path, "log=host") != NULL);
         break;
 #if PYRO_HAS_BENCH_FLIGHT
     case R_SIM_FLIGHT:
@@ -1533,7 +1704,7 @@ static void apply_path_post(conn_t *c, route_t route) {
         break;
 #endif
     default:
-        /* R_ERASE: answered once the body, if any, is discarded. */
+        /* R_ERASE, R_DELETE: answered once the body, if any, is discarded. */
         c->route = route;
         break;
     }
@@ -1558,8 +1729,12 @@ static void route_post(conn_t *c) {
         http_respond_str(hc, 404, TEXT, "Not found");
         return;
     }
-    if (r->route == R_UPLOAD && !vfs_path_ok(path)) {
+    if ((r->route == R_UPLOAD && !vfs_path_ok(path)) || (r->route == R_DELETE && !vfs_path_ok(delete_target(path)))) {
         http_respond_str(hc, 400, TEXT, BAD_NAME);
+        return;
+    }
+    if (r->route == R_DELETE && vfs_is_internal(delete_target(path))) {
+        http_respond_str(hc, 403, JSON, "{\"error\":\"the board's own file\"}");
         return;
     }
     if (r->fs && !fs_take(c)) {
@@ -1701,6 +1876,9 @@ static bool on_complete(http_conn_t *hc) {
     case R_ERASE:
         apply_erase(hc);
         break;
+    case R_DELETE:
+        apply_delete(hc);
+        break;
     default:
         http_respond_str(hc, 404, TEXT, "Not found");
         break;
@@ -1716,63 +1894,30 @@ static const http_handlers_t handlers = {
     .fill = fill,
 };
 
-/* ── The lwIP adapter ─────────────────────────────────────────────── */
+/* ── The transport's view ─────────────────────────────────────────── */
 
-extern volatile uint32_t net_http_accept;
-extern volatile uint32_t net_http_err;
-extern volatile uint32_t net_conn_full;
-extern volatile uint32_t net_rx_count, net_rx_drop, net_tx_fail, net_tx_ok, net_tx_held;
-extern volatile uint32_t net_usb_events[4];
-
-/* G4-N: what refused, for /api/net. */
-static uint32_t net_accept_refused, net_write_fails, net_idle_aborts, net_last_accept_ms;
-
-static void net_pool(net_pool_t *o, const struct stats_mem *m) {
-    o->used = m->used;
-    o->max = m->max;
-    o->err = m->err;
-}
-
-/* GET /api/net: lwIP's pools and TCP's connections by state, and what the
- * transport refused (net_stats.h). */
+/* GET /api/net: TCP's links by state, what was sent again, what the
+ * transport refused, and the frames each way (net_stats.h). */
 static void serve_api_net(http_conn_t *hc) {
     net_snap_t s;
     memset(&s, 0, sizeof(s));
-    net_pool(&s.heap, &lwip_stats.mem);
-    net_pool(&s.tcp_pcb, lwip_stats.memp[MEMP_TCP_PCB]);
-    net_pool(&s.tcp_seg, lwip_stats.memp[MEMP_TCP_SEG]);
-    net_pool(&s.pbuf_pool, lwip_stats.memp[MEMP_PBUF_POOL]);
-    s.tcp_xmit = lwip_stats.tcp.xmit;
-    s.tcp_recv = lwip_stats.tcp.recv;
-    s.tcp_drop = lwip_stats.tcp.drop;
-    s.tcp_memerr = lwip_stats.tcp.memerr;
-    s.icmp_recv = lwip_stats.icmp.recv;
-    s.icmp_xmit = lwip_stats.icmp.xmit;
-    struct tcp_pcb *const lists[2] = {tcp_active_pcbs, tcp_tw_pcbs};
-    for (int i = 0; i < 2; i++) {
-        for (struct tcp_pcb *p = lists[i]; p; p = p->next) {
-            if ((unsigned)p->state < sizeof(s.states) / sizeof(s.states[0]))
-                s.states[p->state]++;
-            if (p->snd_queuelen > s.sndq_max)
-                s.sndq_max = p->snd_queuelen;
-            if (p->nrtx > s.nrtx_max)
-                s.nrtx_max = p->nrtx;
-        }
-    }
-    s.accepts = net_http_accept;
-    s.accept_refused = net_accept_refused;
-    s.write_fails = net_write_fails;
-    s.conn_full = net_conn_full;
-    s.http_err = net_http_err;
-    s.idle_aborts = net_idle_aborts;
-    s.rx_frames = net_rx_count;
-    s.rx_drops = net_rx_drop;
-    s.tx_sent = net_tx_ok;
-    s.tx_held = net_tx_held;
-    s.tx_refused = net_tx_fail;
+    http_transport_states(s.states, &s.nrtx_max);
+    const http_transport_counts_t *t = http_transport_counts();
+    const net_link_counts_t *l = net_link_counts();
+    s.retransmits = t->retransmits;
+    s.accepts = t->accepts;
+    s.conn_full = t->conn_full;
+    s.http_err = t->http_err;
+    s.idle_aborts = t->idle_aborts;
+    s.served = t->served;
+    s.last_accept_ms = t->last_accept_ms;
+    s.rx_frames = l->rx_frames;
+    s.rx_drops = l->rx_drops;
+    s.tx_sent = l->tx_sent;
+    s.tx_held = l->tx_held;
+    s.tx_refused = l->tx_refused;
     for (int i = 0; i < 4; i++)
-        s.usb[i] = net_usb_events[i];
-    s.last_accept_ms = net_last_accept_ms;
+        s.usb[i] = l->usb[i];
     int n = net_json(&s, (char *)hc->work, sizeof(hc->work));
     http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
 }
@@ -1803,18 +1948,15 @@ static void conn_release(conn_t *c) {
         ota_conn = NULL;
     }
     if (c->reboot_when_sent) {
-        /* The main loop arms a 100 ms watchdog and keeps servicing lwIP, so
-         * the reply now in lwIP's hands reaches the client. */
+        /* The main loop arms a 100 ms watchdog and keeps the net task
+         * running, so the reply on its way reaches the client. */
         extern volatile uint8_t pending_reset;
         pending_reset = 2;
     }
-    if (c->link) {
-        c->link->conn = NULL;
-    }
-    c->link = NULL;
+    c->linked = false;
 }
 
-static void conn_bind(conn_t *c, link_t *l) {
+static void conn_bind(conn_t *c) {
     http_conn_init(&c->h);
     c->route = R_NONE;
     c->file_open = false;
@@ -1823,263 +1965,56 @@ static void conn_bind(conn_t *c, link_t *l) {
     c->reboot_when_sent = false;
     c->orphan = false;
     c->dest[0] = '\0';
-    c->link = l;
-    l->conn = c;
+    c->linked = true;
 }
 
-/* Every byte not yet acknowledged to lwIP, acknowledged and dropped. Without
- * this tcp_close() sends RST, and a client can lose the response it has not
- * read yet. Anything arriving after the close is swallowed by lwIP. */
-static void link_drop_rx(link_t *l) {
-    uint32_t n = 0;
-    if (l->conn) {
-        n += net_ring_readable(&l->conn->h.rx);
-        net_ring_clear(&l->conn->h.rx);
+static conn_t *conn_of(const http_conn_t *hc) {
+    return (conn_t *)hc;
+}
+
+static http_conn_t *x_take(void) {
+    for (int i = 0; i < CONN_POOL_SIZE; i++) {
+        conn_t *c = &conns[i];
+        if (!c->linked && !c->orphan && !http_work_held(i)) {
+            conn_bind(c);
+            return &c->h;
+        }
     }
-    if (l->pending) {
-        n += l->pending->tot_len;
-        pbuf_free(l->pending);
-        l->pending = NULL;
-    }
-    while (n > 0 && l->pcb) {
-        u16_t k = n > 0xFFFFu ? 0xFFFFu : (u16_t)n;
-        tcp_recved(l->pcb, k);
-        n -= k;
-    }
+    return NULL;
 }
 
-static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err);
-static err_t on_sent(void *arg, struct tcp_pcb *pcb, u16_t len);
-static void on_err(void *arg, err_t err);
-
-static void link_attach(link_t *l) {
-    tcp_arg(l->pcb, l);
-    tcp_recv(l->pcb, on_recv);
-    tcp_sent(l->pcb, on_sent);
-    tcp_err(l->pcb, on_err);
-}
-
-static void link_detach(link_t *l) {
-    tcp_arg(l->pcb, NULL);
-    tcp_recv(l->pcb, NULL);
-    tcp_sent(l->pcb, NULL);
-    tcp_err(l->pcb, NULL);
-}
-
-/* A connection the worker holds is only unlinked here; it is released once
- * the worker gives it back (take_back_from_worker()). */
-static void link_free(link_t *l) {
-    conn_t *c = l->conn;
-    if (c && http_work_held(slot_of(c))) {
+/* An exchange the worker holds is only unlinked; it is released once the
+ * worker gives it back (take_back_from_worker()). */
+static void x_give_back(http_conn_t *hc) {
+    conn_t *c = conn_of(hc);
+    if (http_work_held(slot_of(c))) {
         c->orphan = true;
-        c->link = NULL;
-        l->conn = NULL;
-    } else if (c) {
+        c->linked = false;
+    } else {
         conn_release(c);
     }
-    if (l->pending) {
-        pbuf_free(l->pending);
-        l->pending = NULL;
-    }
-    l->pcb = NULL;
 }
 
-/* Returns false when lwIP could not take the FIN yet; asked again next pass. */
-static bool link_close(link_t *l) {
-    link_drop_rx(l);
-    link_detach(l);
-    if (tcp_close(l->pcb) != ERR_OK) {
-        link_attach(l);
-        return false;
-    }
-    link_free(l);
-    return true;
+static bool x_held(const http_conn_t *hc) {
+    return http_work_held(slot_of(conn_of(hc)));
 }
 
-static void link_abort(link_t *l) {
-    net_http_err++;
-    link_detach(l);
-    tcp_abort(l->pcb);
-    link_free(l);
+/* [WEB-API-08, DD-058] A request holding the filesystem lets go when the
+ * flight log takes it. */
+static bool x_must_let_go(const http_conn_t *hc) {
+    return conn_of(hc)->fs_held && hal_fs_locked();
 }
 
-static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) {
-    link_t *l = (link_t *)arg;
-    if (!l) {
-        if (p) {
-            tcp_recved(pcb, p->tot_len);
-            pbuf_free(p);
-        }
-        return ERR_OK;
-    }
-    if (!p) {
-        l->fin = true;
-        return ERR_OK;
-    }
-    if (err != ERR_OK) {
-        pbuf_free(p);
-        return ERR_OK;
-    }
-    if (l->pending) {
-        pbuf_cat(l->pending, p);
-    } else {
-        l->pending = p;
-    }
-    l->last_ms = hal_time_ms();
-    return ERR_OK;
+void tud_event_hook_cb(uint8_t rhport, uint32_t eventid, bool in_isr); /* wakes the net task */
+
+static void x_wake(void) {
+    tud_event_hook_cb(0, 0, false);
 }
 
-static err_t on_sent(void *arg, struct tcp_pcb *pcb, u16_t len) {
-    (void)pcb;
-    (void)len;
-    link_t *l = (link_t *)arg;
-    if (l) {
-        l->last_ms = hal_time_ms();
-    }
-    return ERR_OK;
-}
+static const http_exchanges_t exchanges = {x_take, x_give_back, x_held, x_must_let_go, x_wake};
 
-/* lwIP has already freed the pcb. */
-static void on_err(void *arg, err_t err) {
-    (void)err;
-    link_t *l = (link_t *)arg;
-    if (l) {
-        net_http_err++;
-        link_free(l);
-    }
-}
-
-static err_t on_accept(void *arg, struct tcp_pcb *pcb, err_t err) {
-    (void)arg;
-    if (err != ERR_OK || !pcb) {
-        net_accept_refused++;
-        return ERR_VAL;
-    }
-    link_t *l = NULL;
-    for (int i = 0; i < LINK_POOL_SIZE; i++) {
-        if (!links[i].pcb) {
-            l = &links[i];
-            break;
-        }
-    }
-    if (!l) {
-        tcp_abort(pcb);
-        return ERR_ABRT;
-    }
-    net_http_accept++;
-    net_last_accept_ms = hal_time_ms();
-    *l = (link_t){.pcb = pcb, .seq = ++link_seq, .last_ms = net_last_accept_ms};
-    tcp_nagle_disable(pcb);
-    link_attach(l);
-    return ERR_OK;
-}
-
-/* Free exchanges go to links that have sent something, in the order they
- * connected. */
-static void attach_waiting(void) {
-    for (;;) {
-        conn_t *c = NULL;
-        for (int i = 0; i < CONN_POOL_SIZE && !c; i++) {
-            if (!conns[i].link && !conns[i].orphan && !http_work_held(i)) {
-                c = &conns[i];
-            }
-        }
-        link_t *oldest = NULL;
-        for (int i = 0; i < LINK_POOL_SIZE; i++) {
-            link_t *l = &links[i];
-            if (l->pcb && !l->conn && l->pending && (!oldest || (int32_t)(l->seq - oldest->seq) < 0)) {
-                oldest = l;
-            }
-        }
-        if (!oldest) {
-            return;
-        }
-        if (!c) {
-            if (!oldest->counted_wait) {
-                net_conn_full++;
-                oldest->counted_wait = true;
-            }
-            return;
-        }
-        conn_bind(c, oldest);
-    }
-}
-
-/* Bytes between lwIP and the rings, and the decision to close. No handler
- * runs here. */
-static void transport_link(link_t *l, uint32_t now) {
-    struct tcp_pcb *pcb = l->pcb;
-    conn_t *c = l->conn;
-    if (!c) {
-        if (l->fin && !l->pending) {
-            link_close(l);
-        } else if (!l->pending && now - l->last_ms > HTTP_IDLE_MS) {
-            link_abort(l); /* a socket opened speculatively and never used */
-        }
-        return;
-    }
-    if (http_work_held(slot_of(c))) {
-        return; /* core1 is writing its rings */
-    }
-    http_conn_t *hc = &c->h;
-
-    /* [WEB-API-08, DD-058] The log takes the filesystem at launch. A request
-     * that took it before then lets go now, so the log can mount; its client
-     * sees the connection reset. */
-    if (c->fs_held && hal_fs_locked()) {
-        link_abort(l);
-        return;
-    }
-
-    while (l->pending && net_ring_writable(&hc->rx) > 0) {
-        uint8_t *p;
-        uint16_t span = net_ring_write_span(&hc->rx, &p);
-        uint16_t n = pbuf_copy_partial(l->pending, p, span, 0);
-        net_ring_commit(&hc->rx, n);
-        l->pending = pbuf_free_header(l->pending, n);
-    }
-    hc->rx_eof = l->fin && !l->pending;
-
-    /* The window reopens by what the parser took, not by what arrived:
-     * a request waiting on the flash window holds its sender back. */
-    uint32_t used = http_conn_take_consumed(hc);
-    if (used > 0) {
-        l->last_ms = now;
-    }
-    while (used > 0) {
-        u16_t k = used > 0xFFFFu ? 0xFFFFu : (u16_t)used;
-        tcp_recved(pcb, k);
-        used -= k;
-    }
-
-    bool wrote = false;
-    while (net_ring_readable(&hc->tx) > 0) {
-        const uint8_t *p;
-        uint16_t span = net_ring_read_span(&hc->tx, &p);
-        u16_t room = tcp_sndbuf(pcb);
-        uint16_t n = span < room ? span : room;
-        if (n == 0)
-            break;
-        if (tcp_write(pcb, p, n, TCP_WRITE_FLAG_COPY) != ERR_OK) {
-            net_write_fails++;
-            break;
-        }
-        net_ring_discard(&hc->tx, n);
-        wrote = true;
-    }
-    if (wrote) {
-        tcp_output(pcb);
-        l->last_ms = now;
-    }
-
-    if (hc->failed) {
-        link_abort(l);
-    } else if (http_conn_done(hc) && net_ring_readable(&hc->tx) == 0) {
-        link_close(l);
-    } else if (now - l->last_ms > HTTP_IDLE_MS) {
-        net_idle_aborts++;
-        link_abort(l);
-    }
+const struct http_exchanges *http_server_exchanges(void) {
+    return &exchanges;
 }
 
 /* Nothing hands units to another task now; kept so a connection can never be
@@ -2107,14 +2042,8 @@ uint32_t http_work_clock_us(void) {
 }
 
 void http_server_transport(void) {
-    uint32_t now = hal_time_ms();
     take_back_from_worker();
-    attach_waiting();
-    for (int i = 0; i < LINK_POOL_SIZE; i++) {
-        if (links[i].pcb) {
-            transport_link(&links[i], now);
-        }
-    }
+    http_transport_pass(hal_time_ms());
 }
 
 void http_server_period(void) {
@@ -2124,7 +2053,7 @@ void http_server_period(void) {
 bool http_server_work(int32_t remaining_us) {
     bool runnable[CONN_POOL_SIZE];
     for (int i = 0; i < CONN_POOL_SIZE; i++) {
-        runnable[i] = conns[i].link && !http_work_held(i) && http_conn_wants_service(&conns[i].h);
+        runnable[i] = conns[i].linked && !http_work_held(i) && http_conn_wants_service(&conns[i].h);
     }
     uint8_t unit;
     int i = http_work_next(runnable, remaining_us, &unit);
@@ -2142,26 +2071,4 @@ bool http_server_work(int32_t remaining_us) {
     flash_op_crumb(82);
     http_work_note(HTTP_ON_CORE0, time_us_32() - t0);
     return true;
-}
-
-/* Accepts are not limited by lwIP (TCP_LISTEN_BACKLOG is off): on_accept()
- * refuses once every link is in use. */
-void http_server_init(void) {
-    struct tcp_pcb *pcb = tcp_new();
-    if (!pcb) {
-        DBG("listen: no pcb");
-        return;
-    }
-    if (tcp_bind(pcb, IP_ADDR_ANY, 80) != ERR_OK) {
-        DBG("listen: port 80 refused");
-        tcp_close(pcb);
-        return;
-    }
-    struct tcp_pcb *listener = tcp_listen(pcb);
-    if (!listener) {
-        DBG("listen: no listening pcb");
-        tcp_close(pcb);
-        return;
-    }
-    tcp_accept(listener, on_accept);
 }

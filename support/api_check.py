@@ -9,11 +9,14 @@ keeps the one it started with (CFG-10); the board serves its pyro limits and
 its sensor's range (PYR-BOARD-03, SNS-MAX-01); a board reached this way is on
 USB, so it reports usb_attached and its buzzer is silent (USB-01..03), and
 test mode gives it its voice and its pad record back until it is turned off
-(USB-08); no inert key is written; the flight log can be erased (WEB-API-09);
+(USB-08); no inert key is written; the flight log can be erased (WEB-API-09)
+and a file deleted, but not the board's own (WEB-API-17); /api/fs lists the
+flash store's files and space, a file uploaded at its size (WEB-API-19), and
+its scan covers every sector a chunk at a time (WEB-API-20);
 /api/status carries the pulse, fault, resume and emergency fields.
 
 Verifies on hardware [WEB-API-01, WEB-API-02, WEB-API-03, WEB-API-07,
-WEB-API-12, WEB-API-15, BUZ-CODE-03, BUZ-CODE-11, FLT-BROWN-01, FLT-BROWN-05].
+WEB-API-12, WEB-API-15, WEB-API-17, WEB-API-19, WEB-API-20, BUZ-CODE-03, BUZ-CODE-11, FLT-BROWN-01, FLT-BROWN-05].
 
 ERASES THE FLIGHT LOG, stores a changed pyro1 mode for a few seconds, and
 holds the board in test mode for about 15 s -- long enough to write the pad
@@ -176,6 +179,78 @@ code, _, body = req("GET", "/api/flight.csv")
 check("erased log reads as the bare column header", body.strip() == b"time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event",
       repr(body[:80]))
 
+# [WEB-API-17] A file uploaded, deleted and gone; the board's own files and a
+# bad name refused.
+code, _, _ = req("POST", "/www/api_check_delete.txt", "delete me")
+check("upload /www/api_check_delete.txt -> 201", code == 201, str(code))
+code, _, body = req("POST", "/api/delete/www/api_check_delete.txt")
+check("POST /api/delete/<file> -> 200", code == 200 and b"deleted" in body, f"{code} {body[:60]!r}")
+code, _, _ = req("GET", "/www/api_check_delete.txt")
+check("a deleted file reads 404", code == 404, str(code))
+code, _, _ = req("POST", "/api/delete/www/api_check_delete.txt")
+check("a delete of no file -> 404", code == 404, str(code))
+for own in ("serial.txt", "pad.mkr"):
+    code, _, _ = req("POST", "/api/delete/" + own)
+    check(f"a delete of the board's {own} -> 403", code == 403, str(code))
+code, _, _ = req("POST", "/api/delete/www/../config.ini")
+check("a delete of a bad name -> 400", code == 400, str(code))
+
+
+def fs_report():
+    code, _, body = req("GET", "/api/fs")
+    return code, json.loads(body) if code == 200 else {}
+
+
+# [WEB-API-19] The flash store: its space, and each file at its size, the
+# board's own marked. On USB with test mode off the cleanup is fast or done
+# (USB-10).
+code, _, _ = req("POST", "/www/api_check_fs.txt", "x" * 123)
+check("upload /www/api_check_fs.txt -> 201", code == 201, str(code))
+code, fs = fs_report()
+check("GET /api/fs -> 200", code == 200 and isinstance(fs.get("files"), list), str(code))
+if fs:
+    check("its files and its free bytes make its size",
+          fs["in_files"] + fs["free"] == fs["bytes"] and fs["in_files"] > 0,
+          f'{fs["in_files"]} + {fs["free"]} of {fs["bytes"]}')
+    check("its cleanup on USB is fast or done", fs["cleanup"] in ("fast", "done"), fs["cleanup"])
+    up = [f for f in fs["files"] if f["path"] == "/www/api_check_fs.txt"]
+    check("a file uploaded is listed at its size", len(up) == 1 and up[0]["bytes"] == 123 and up[0]["closed"],
+          str(up))
+    own = [f["path"] for f in fs["files"] if f["board"]]
+    check("only the board's own files are marked its", set(own) <= {"/serial.txt", "/pad.mkr"}, str(own))
+    closed = [f for f in fs["files"] if f["closed"] and f["path"] == "/config.ini"]
+    if closed:
+        code, _, body = req("GET", "/config.ini")
+        check("a listed file reads at its listed size", code == 200 and len(body) == closed[0]["bytes"],
+              f"{code} {len(body)} of {closed[0]['bytes']}")
+req("POST", "/api/delete/www/api_check_fs.txt")
+_, fs = fs_report()
+check("a deleted file is listed no more", fs and not [f for f in fs["files"] if f["path"] == "/www/api_check_fs.txt"])
+
+# [WEB-API-20] Every sector's erased pages, read from the flash a chunk at a
+# time; none counted past its sector's pages, nor more than the free bytes
+# hold (the scan also reads the store's first page, which no file holds).
+if fs:
+    sectors, per, page = fs["sectors"], fs["sector_pages"], fs["page_bytes"]
+    sector, erased, chunks, whole, t0 = 0, 0, 0, True, time.time()
+    while sector < sectors:
+        code, _, body = req("GET", f"/api/fs/scan?sector={sector}&count=128")
+        sc = json.loads(body) if code == 200 else {}
+        got = sc.get("erased", [])
+        if sc.get("sector") != sector or not got or any(not 0 <= e <= per for e in got):
+            whole = False
+            break
+        sector, erased, chunks = sector + len(got), erased + sum(got), chunks + 1
+    check("a scan of every sector, a chunk at a time", whole and sector == sectors,
+          f"{sector} of {sectors} sectors in {chunks} requests, {time.time() - t0:.1f} s")
+    check("its erased pages fit the free bytes", erased * page <= fs["free"] + page,
+          f"{erased} pages of {page} bytes against {fs['free']} free")
+    _, _, body = req("GET", f"/api/fs/scan?sector={sectors - 1}&count=128")
+    check("a scan stops at the last sector", len(json.loads(body).get("erased", [])) == 1, body[:60])
+    _, _, body = req("GET", "/api/fs/scan?sector=0&count=1000")
+    check("a scan gives at most 128 sectors a request", len(json.loads(body).get("erased", [])) == min(128, sectors),
+          f"{len(json.loads(body).get('erased', []))}")
+
 # WEB-API-12: the room the next flight's log has, and the seconds of flight it
 # holds at every sample, which a second's sync can only shorten.
 _, _, body = req("GET", "/api/log/space")
@@ -196,9 +271,10 @@ check("pins caps: the ground test switch", pc.get("ground_test") in ("none", "gr
 # accepts and an established connection are at least one.
 _, _, body = req("GET", "/api/net")
 nt = json.loads(body)
-check("net: lwIP's pools, TCP by state, the transport's refusals",
-      all(len(nt.get(k, [])) == 3 for k in ("heap", "tcp_pcb", "tcp_seg", "pbuf_pool"))
-      and len(nt.get("states", [])) == 11 and nt["states"][4] >= 1 and nt.get("accepts", 0) >= 1
+check("net: TCP links by state, retransmissions, the transport's counts (WEB-API-13)",
+      len(nt.get("states", [])) == 11 and sum(nt["states"]) == 16 and nt["states"][4] >= 1
+      and all(k in nt for k in ("retransmits", "nrtx_max", "conn_full", "http_err", "idle_aborts", "served"))
+      and nt.get("accepts", 0) >= 1 and len(nt.get("rx", [])) == 2 and len(nt.get("tx", [])) == 3
       and len(nt.get("usb", [])) == 4 and nt["usb"][0] >= 1, str(nt)[:160])
 
 # CFG-04, CFG-06, CFG-10: a save is merged into the stored file, writes no
@@ -271,9 +347,8 @@ check("no sensor transfer failed throughout", st4["pres_rejects"] == st0["pres_r
       f'{st4["pres_rejects"] - st0["pres_rejects"]} failed: {st4.get("pres_bus")}, {st4.get("pres_recoveries")} recoveries')
 _, _, net_end = req("GET", "/api/net")
 net_end = json.loads(net_end)
-check("lwIP refused no memory throughout", net_end["heap"][2] == 0 and net_end["pbuf_pool"][2] == 0
-      and net_end["tcp_seg"][2] == 0 and net_end["tcp_pcb"][2] == 0,
-      f'heap {net_end["heap"]} pbuf_pool {net_end["pbuf_pool"]} tcp_seg {net_end["tcp_seg"]} tcp_pcb {net_end["tcp_pcb"]}')
+check("no received frame was dropped throughout (WEB-NET-07)", net_end["rx"][1] == nt["rx"][1],
+      f'rx {nt["rx"]} -> {net_end["rx"]}')
 sensor_faults = [f for f in st4.get("faults", []) if f.startswith("sensor_")]
 check("no sensor fault was latched throughout (SNS-PRES-17)", not sensor_faults, ",".join(sensor_faults))
 

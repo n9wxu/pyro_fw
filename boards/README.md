@@ -97,7 +97,7 @@ The MS5607's one-shot converts a pressure and a temperature every 20 ms loop:
 at 400 kHz the pair is ready 18.6 ms into the loop, at 100 kHz only 0.26 ms
 before the next (DD-066), so an MS5607 board wants fast mode. Every sensor
 transfer is bounded (DD-069), and a conversion a flash operation ran beside is
-discarded (DD-068).
+used like any other, and counted (DD-106).
 
 ### pin_caps.h
 

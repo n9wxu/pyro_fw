@@ -38,6 +38,10 @@ bool vfs_is_config(const char *path) {
     return in_list(path, config_paths, sizeof(config_paths) / sizeof(config_paths[0]));
 }
 
+bool vfs_is_internal(const char *path) {
+    return in_list(path, internal_paths, sizeof(internal_paths) / sizeof(internal_paths[0]));
+}
+
 bool vfs_sd_mounted(void) {
 #if PYRO_HAS_SD
     return sd_mounted();
@@ -47,7 +51,7 @@ bool vfs_sd_mounted(void) {
 }
 
 int vfs_route(const char *path) {
-    if (vfs_sd_mounted() && !in_list(path, internal_paths, sizeof(internal_paths) / sizeof(internal_paths[0])))
+    if (vfs_sd_mounted() && !vfs_is_internal(path))
         return VFS_FAT;
     return VFS_FLASH;
 }
@@ -62,7 +66,11 @@ int vfs_clean(void) {
 
 #if PYRO_HAS_SD
 static int fat_err(FRESULT r) {
-    return (r == FR_NO_FILE || r == FR_NO_PATH) ? VFS_NOENT : (r == FR_OK ? 0 : VFS_ERR);
+    if (r == FR_NO_FILE || r == FR_NO_PATH)
+        return VFS_NOENT;
+    if (r == FR_LOCKED)
+        return VFS_BUSY;
+    return r == FR_OK ? 0 : VFS_ERR;
 }
 #endif
 

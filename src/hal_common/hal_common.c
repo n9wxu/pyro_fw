@@ -49,6 +49,9 @@
 #include "pyro_release.h"
 #include "http_server.h"
 #include "flight_log.h"
+#include "small_fmt.h"
+#include "net_glue.h"
+#include "log_live.h"
 #include "ground_test_switch.h"
 #include "pressure_trace.h"
 #include "loop_period.h"
@@ -61,11 +64,6 @@
 /* ── External dependencies ────────────────────────────────────────── */
 
 /* Network (net_glue.c / http_server.c) */
-void net_init(void);
-void net_start(void);
-void net_mdns_poll(void);
-void net_mac_init(void);
-void net_service(void);
 
 /* ── Hardware-internal pressure types ─────────────────────────────── */
 /* These are implementation details of the hardware HAL, not exposed
@@ -213,7 +211,7 @@ typedef struct {
 
     uint64_t last_stamp_us; /* the previous sample's time, for the interval */
     uint32_t interval_min_us, interval_max_us, stamp_lag_max_us;
-    uint32_t flashed;  /* [DD-068] readings a flash operation disturbed, not fed on */
+    uint32_t flashed;  /* [DD-106] readings a flash operation ran beside, used like any other */
     uint32_t cycle_us; /* the collector's, when nothing fails */
 } pres_task_t;
 
@@ -310,30 +308,20 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
 
 /* ── The collector's cycles, into readings [DD-093] ───────────────── */
 
-/* [DD-066] The temperature goes on its line first: the pressure before
- * it is compensated at its own time, between this temperature and the last. */
+/* [DD-066] The cycle's temperature goes on its line first: its pressure is
+ * compensated at its own time, between this temperature and the last.
+ * [DD-106] A conversion a flash operation ran beside is counted. */
 static void take_ms5607(pres_task_t *p, const collector_raw_t *raw, uint32_t read_us) {
-    uint32_t d1 = ms5607_code(raw->data[MS5607_PRESSURE]);
-    uint32_t d2 = ms5607_code(raw->data[MS5607_TEMPERATURE]);
-    uint64_t d1_at_us = raw->at_us[MS5607_PRESSURE], d2_at_us = raw->at_us[MS5607_TEMPERATURE];
-    bool d2_flashed = raw->flashed[MS5607_TEMPERATURE];
-    ptrace_note((uint32_t)d2_at_us, read_us, d2, 0, 0, d2_flashed ? PTRACE_FLASHED_T : PTRACE_TEMPERATURE);
-    if (d2_flashed)
-        p->flashed++;
-    else
-        ms5607_temps_note(&p->temps, d2, d2_at_us);
-    if (p->temps.n == 0)
-        return;
+    ms5607_pair_t codes = ms5607_cycle(&p->temps, raw);
+    bool d1_flashed = raw->flashed[MS5607_PRESSURE], d2_flashed = raw->flashed[MS5607_TEMPERATURE];
+    ptrace_note((uint32_t)raw->at_us[MS5607_TEMPERATURE], read_us, ms5607_code(raw->data[MS5607_TEMPERATURE]), 0, 0,
+                d2_flashed ? PTRACE_FLASHED_T : PTRACE_TEMPERATURE);
     pressure_reading_t r;
-    ms5607_compensate(d1, ms5607_temps_at(&p->temps, d1_at_us), &r);
-    r.time_us = d1_at_us;
-    int32_t pa_c = (int32_t)lroundf(r.pressure_pa * 100.0f);
-    if (raw->flashed[MS5607_PRESSURE]) {
-        ptrace_note((uint32_t)d1_at_us, read_us, d1, 0, pa_c, PTRACE_FLASHED);
-        p->flashed++;
-        return;
-    }
-    ptrace_note((uint32_t)d1_at_us, read_us, d1, 0, pa_c, PTRACE_PRESSURE);
+    ms5607_compensate(codes.d1, codes.d2, &r);
+    r.time_us = raw->at_us[MS5607_PRESSURE];
+    ptrace_note((uint32_t)r.time_us, read_us, codes.d1, 0, (int32_t)lroundf(r.pressure_pa * 100.0f),
+                d1_flashed ? PTRACE_FLASHED : PTRACE_PRESSURE);
+    p->flashed += (uint32_t)d1_flashed + (uint32_t)d2_flashed;
     pres_append(p, &r);
 }
 
@@ -345,10 +333,8 @@ static void take_bmp280(pres_task_t *p, const collector_raw_t *raw, uint32_t rea
     r.reading.time_us = raw->at_us[0];
     ptrace_note((uint32_t)r.reading.time_us, read_us, r.adc_p, r.adc_t,
                 (int32_t)lroundf(r.reading.pressure_pa * 100.0f), raw->flashed[0] ? PTRACE_FLASHED : PTRACE_PRESSURE);
-    if (raw->flashed[0])
-        p->flashed++;
-    else
-        pres_append(p, &r.reading);
+    p->flashed += (uint32_t)raw->flashed[0];
+    pres_append(p, &r.reading);
 }
 #endif
 
@@ -551,14 +537,14 @@ static const pyro_ch_ops_t real_pyro_ops = {real_fire, real_get, real_fault};
  * did not happen. */
 static void report_mock(uint8_t channel, const char *what) {
     char note[48];
-    snprintf(note, sizeof(note), "pyro%u %s: released to Lua", (unsigned)channel, what);
+    small_snprintf(note, sizeof(note), "pyro%u %s: released to Lua", (unsigned)channel, what);
     /* [DAT-02, N11] On the flight log's clock, since T+0, like every other row. */
     const flight_context_t *fc = flight_get_context();
     uint32_t now = to_ms_since_boot(get_absolute_time());
     hal_log_mock(fc ? flight_elapsed_ms(fc, now) : now, note);
 
     char line[64];
-    snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
+    small_snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
     hal_telemetry_send(line);
 }
 
@@ -597,10 +583,10 @@ static void bench_fire(uint8_t channel) {
     bench_flight_fire(channel, now);
     const flight_context_t *fc = flight_get_context();
     char note[40];
-    snprintf(note, sizeof(note), "pyro%u fire: bench flight", (unsigned)channel);
+    small_snprintf(note, sizeof(note), "pyro%u fire: bench flight", (unsigned)channel);
     hal_log_mock(fc ? flight_elapsed_ms(fc, now) : now, note);
     char line[56];
-    snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
+    small_snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
     hal_telemetry_send(line);
 }
 #endif
@@ -1049,7 +1035,7 @@ void hal_platform_init(void) {
 
     /* Puts the pyro outputs down before anything slow runs; without it the
      * firing pins keep their reset state until pyro_init(), which is after
-     * USB enumeration, lwIP and the filesystem mount. */
+     * USB enumeration, the network stack and the filesystem mount. */
     board_early_init();
 
     /* Watchdog initialization removed - watchdog_reboot() handles enabling
@@ -1084,8 +1070,6 @@ void hal_platform_init(void) {
     uart_tx_ring_init();        /* v2-10: non-blocking TX via ISR ring buffer */
 
     net_init();
-    net_start();
-    http_server_init();
 
     /* Mounted once, for good: every task shares this mount. */
     hal_fs_mount();
@@ -1103,7 +1087,7 @@ void hal_platform_init(void) {
      * resets the peripheral and recovers the bus itself. */
 }
 
-/* The net task's pass, by part: TinyUSB, lwIP, HTTP transport, mDNS. */
+/* The net task's pass, by part: TinyUSB, the stack, HTTP transport, mDNS. */
 volatile uint32_t stage1_part_max_us[4];
 
 static void note_part(int part, uint32_t us) {
@@ -1112,7 +1096,6 @@ static void note_part(int part, uint32_t us) {
 }
 
 void hal_platform_service(void) {
-    extern uint32_t net_last_http_us;
     uint32_t t0 = time_us_32();
     tud_task();
     uint32_t t1 = time_us_32();
@@ -1187,6 +1170,7 @@ enum { LOG_IDLE, LOG_RUNNING, LOG_STOPPING };
 typedef struct {
     uint8_t buf[LOG_BUF_SIZE];
     volatile uint32_t head; /* the flight task */
+    bool to_host;           /* [USB-09] this log goes to log_live.h, not the flash */
     volatile uint32_t tail; /* the storage task */
     volatile uint8_t state; /* see above */
     uint32_t dropped;       /* sample bytes the ring could not hold */
@@ -1210,6 +1194,15 @@ typedef struct {
 
 static log_ring_t log_ring;
 static uint8_t log_file_buf[VFS_BUF_SIZE];
+static volatile bool log_host_next; /* the next log's to_host */
+
+void hal_log_to_host(bool on) {
+    log_host_next = on;
+}
+
+bool hal_log_held_for_host(void) {
+    return log_ring.state != LOG_IDLE ? log_ring.to_host : log_host_next;
+}
 
 static uint32_t log_used(void) {
     return log_ring.head - log_ring.tail;
@@ -1247,6 +1240,7 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
      * task is idle on the ring until the state below says RUNNING. */
     log_ring.dropped = 0;
     log_ring.head = log_ring.tail = 0;
+    log_ring.to_host = log_host_next;
     flog_header_t h = {
         .board = PYRO_BOARD_NAME,
         .id = cfg->id,
@@ -1286,6 +1280,13 @@ static void log_write_out(void) {
         if (span > LOG_BUF_SIZE - off)
             span = LOG_BUF_SIZE - off;
         int n = vfs_write(&log_ring.file, log_ring.buf + off, span);
+        if (n == VFS_NOSPC) {
+            /* [FLT-LOG-10] No erased page left: one sector a removed file
+             * left, erased in the writer's slots, where the part can. */
+            if (flash_op_can_erase())
+                vfs_clean();
+            return;
+        }
         if (n <= 0)
             return; /* the bytes stay: the next pass retries */
         __dmb();
@@ -1294,9 +1295,26 @@ static void log_write_out(void) {
     }
 }
 
+/* [USB-09] Everything the ring holds, into the RAM the host reads; nothing
+ * waits, so nothing is held back. */
+static void log_hand_to_host(void) {
+    uint32_t h = log_ring.head;
+    __dmb();
+    while (log_ring.tail != h) {
+        uint32_t t = log_ring.tail;
+        uint32_t off = t & LOG_MASK;
+        uint32_t span = h - t;
+        if (span > LOG_BUF_SIZE - off)
+            span = LOG_BUF_SIZE - off;
+        log_live_write(log_ring.buf + off, span);
+        __dmb();
+        log_ring.tail = t + span;
+    }
+}
+
 /* The storage task's end of a log: the file closed, the filesystem free. */
 static void log_finish(void) {
-    if (log_ring.file_open)
+    if (log_ring.file_open && !log_ring.to_host)
         vfs_close(&log_ring.file);
     log_ring.file_open = false;
     log_ring.stop_seen = false;
@@ -1320,13 +1338,30 @@ static void log_service(uint32_t now_ms) {
         return;
     }
 
+    if (log_ring.to_host) {
+        if (!log_ring.file_open) {
+            log_live_reset();
+            log_ring.file_open = true; /* the host's RAM stands in for the file */
+        }
+        log_hand_to_host();
+        if (st == LOG_STOPPING)
+            log_finish();
+        return;
+    }
+
     if (!log_ring.file_open) {
-        if (!fs_ok)
+        /* [FLT-RT-03] A flight log opens once the flight's flash operations
+         * run in slots, from the first period airborne; its rows wait in the
+         * ring meanwhile. A log stopped before then opens under the lockout. */
+        if (!fs_ok || (PYRO_FLIGHT_RAM && st == LOG_RUNNING && !flash_op_in_flight()))
             return;
         /* The last flight's log goes first, so a reset in this flight finds
          * this flight's: a write replaces a file only when it closes. */
         vfs_remove(FLOG_PATH);
-        if (vfs_open(&log_ring.file, FLOG_PATH, VFS_WR, log_file_buf) != 0)
+        int rc = vfs_open(&log_ring.file, FLOG_PATH, VFS_WR, log_file_buf);
+        if (rc == VFS_NOSPC && flash_op_can_erase())
+            vfs_clean(); /* [FLT-LOG-10] no erased page for the log's first */
+        if (rc != 0)
             return; /* the next pass retries; the ring keeps the rows */
         log_ring.file_open = true;
         log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
@@ -1363,11 +1398,6 @@ __attribute__((weak)) void board_flash_service(uint32_t now_ms) {
     (void)now_ms;
 }
 
-/* An erase stops both cores and spoils the pressure conversion beside it
- * [DD-068]: one a second leaves the sensor the rest of each second, at boot
- * calibration's ten samples among them. */
-#define CLEAN_PERIOD_MS 1000u
-
 static uint32_t next_clean_ms;
 
 /* Never in flight: the next flight finds every page it needs erased, and its
@@ -1375,7 +1405,7 @@ static uint32_t next_clean_ms;
 static void clean_service(uint32_t now_ms) {
     if (!fs_ok || hal_log_active() || !deadline_reached(now_ms, next_clean_ms))
         return;
-    next_clean_ms = now_ms + CLEAN_PERIOD_MS;
+    next_clean_ms = now_ms + vfs_flash_clean_wait_ms(flight_is_grounded_on_usb());
     vfs_clean();
 }
 
@@ -1453,10 +1483,17 @@ void hal_log_stop(void) {
         return;
     __dmb();
     log_ring.state = LOG_STOPPING;
+#if PYRO_FLIGHT_RAM
+    flash_op_flight_end(); /* before the flight task runs from flash again */
+#endif
 }
 
 bool hal_log_active(void) {
     return log_ring.state != LOG_IDLE;
+}
+
+bool hal_log_running(void) {
+    return log_ring.state == LOG_RUNNING;
 }
 
 /* pico_fota_bootloader rolls back to the previous image unless the new one
