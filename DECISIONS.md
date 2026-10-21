@@ -560,6 +560,39 @@ rationale and the alternatives considered.
   chirps. Switching it on resumes the pad announcement, which confirms it by
   ear.
 
+### DD-108: A File Is Written Only Once The Cleanup Is Done
+- **Decision:** at the user's direction -- "The file API and the UI should
+  understand when erase is over so it is safe to write.":
+  - A request that writes a file to the flash store (`/www/<file>`,
+    `/api/lua/script`, `/api/config`, `/api/pins`, `/api/beeps`,
+    `/api/serial`; the routes marked `writes` in `src/http_routes.h`) is
+    answered 503 while the cleanup has sectors left to erase, before any
+    of it is written: `{"error":...,"erasing":true}` and `Retry-After: 1`
+    [WEB-API-21]. In flight the 423 of DD-058 comes first.
+  - Deletes, the flight log's erase and firmware updates go through: none
+    needs an erased page.
+  - The page's every POST goes through one function, `post()`. A refusal
+    for the erase is held there: the page shows that it waits for the
+    flash to be erased, reads `/api/fs` until the cleanup is done, and
+    sends the same request again [WEB-UI-08].
+  - `support/pyro_http.py`'s `post()` and `support/upload_www.sh` wait and
+    send again the same way.
+- **Why:** a write takes only erased pages (DD-100), and an upload takes
+  them twice, its part file and then the copy a rename makes. Started
+  while the cleanup still has sectors to erase, it can run out partway and
+  fail, leaving the file as it was (WEB-API-18). The most the cleanup has
+  to erase is just after a board's first start on alfs, when the whole
+  store holds what was there before.
+- **Why "the cleanup is done" and not "the file fits":** the board cannot
+  tell the free pages that are erased from those awaiting the cleanup
+  without reading them (DD-107), and an upload's size counts twice. The
+  cleanup's own state is known at no cost, and once it is done every free
+  page is erased.
+- **What it costs:** every close leaves the cleanup a pass to make, which
+  reads the store to find nothing left: 0.9 s on MK1B-8MB and 2.6 s on
+  MK1C after a 100-byte upload, measured 2026-10-21. A write behind
+  another waits that long.
+
 ### DD-107: The Cleanup At The Flash's Pace On USB; A Filesystem Tab
 - **Decision:** at the user's direction -- "Erase at full speed when on
   usb. Provide a filesystem maintenance tab on the web ui.":
