@@ -208,14 +208,20 @@ const FS_FILES = [
   {path: '/flight_log.bin', bytes: null, closed: false, board: false}
 ];
 let fsFiles, fsCleaned, fsMap;
+/* [WEB-API-21] The routes that write a file, refused while the cleanup erases. */
+const FS_WRITES = ['/api/config', '/api/pins', '/api/beeps', '/api/lua/script', '/api/serial'];
+let fsErasingRefusals = 0;
 
 function fsInFiles() { return fsFiles.reduce((n, f) => n + (f.bytes || FS_PAGE_BYTES), 0); }
 function fsNeeded() { return Math.ceil(fsInFiles() / FS_SECTOR_BYTES); }
 function fsWritten() { return fsMap.filter(e => e === 0).length; }
 
+function fsErasing() { return fsWritten() > fsNeeded(); }
+
 function fsReset() {
   fsFiles = JSON.parse(JSON.stringify(FS_FILES));
   fsCleaned = 0;
+  fsErasingRefusals = 0;
   fsMap = new Array(FS_SECTORS).fill(FS_SECTOR_PAGES);
   for (let k = 0; k < fsNeeded(); k++) fsMap[k] = 0;
 }
@@ -223,7 +229,7 @@ fsReset();
 
 function fsReport() {
   const report = {store: 'flash', bytes: FS_BYTES, in_files: fsInFiles(), free: FS_BYTES - fsInFiles(),
-                  cleanup: fsWritten() > fsNeeded() ? 'fast' : 'done', cleaned_sectors: fsCleaned,
+                  cleanup: fsErasing() ? 'fast' : 'done', cleaned_sectors: fsCleaned,
                   sectors: FS_SECTORS, sector_pages: FS_SECTOR_PAGES, page_bytes: FS_PAGE_BYTES, files: fsFiles};
   for (let i = 0; i < FS_CLEAN_STEP && fsWritten() > fsNeeded(); i++) {
     fsMap[fsWritten() - 1] = FS_SECTOR_PAGES;
@@ -244,6 +250,14 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && !req.url.startsWith('/api/_test/') && req.headers['x-pyro'] !== '1') {
     res.writeHead(403, {'Content-Type': 'application/json'});
     res.end(JSON.stringify({error: 'a POST needs the X-Pyro: 1 header'}));
+    return;
+  }
+
+  /* [WEB-API-21] As the board: a write waits for the cleanup. */
+  if (req.method === 'POST' && (FS_WRITES.includes(req.url) || req.url.startsWith('/www/')) && fsErasing()) {
+    fsErasingRefusals++;
+    res.writeHead(503, {'Content-Type': 'application/json', 'Retry-After': '1'});
+    res.end(JSON.stringify({error: 'the cleanup is erasing the flash', erasing: true}));
     return;
   }
 
@@ -622,6 +636,18 @@ const server = http.createServer((req, res) => {
     pinsFail = false;
     fsReset();
     res.writeHead(200, cors); res.end('ok');
+    return;
+  }
+  /* The cleanup has this many sectors to erase, beyond the files'. */
+  if (req.url.startsWith('/api/_test/erase/') && req.method === 'POST') {
+    const n = parseInt(req.url.split('/').pop()) || 0;
+    for (let k = fsNeeded(); k < Math.min(fsNeeded() + n, FS_SECTORS); k++) fsMap[k] = 0;
+    res.writeHead(200, cors); res.end('ok');
+    return;
+  }
+  if (req.url === '/api/_test/erasing' && req.method === 'GET') {
+    res.writeHead(200, {...cors, 'Content-Type': 'application/json'});
+    res.end(JSON.stringify({erasing: fsErasing(), refusals: fsErasingRefusals}));
     return;
   }
   if (req.url === '/api/_test/config_refused' && req.method === 'POST') {
