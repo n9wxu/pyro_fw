@@ -1,5 +1,5 @@
 /*
- * The $PYRO downlink [TEL-01..12, DD-088]. The sentence formats are in
+ * The $PYRO downlink [TEL-01..03, TEL-05..12, DD-088]. The sentence formats are in
  * docs/ground-station-interface-spec.md.
  *
  * SPDX-License-Identifier: MIT

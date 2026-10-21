@@ -97,7 +97,7 @@ static inline void ms5607_compensate_prom(const uint16_t prom[8], uint32_t d1, u
     out->pressure_pa = (float)p;
 }
 
-/* ── Temperature, every loop [DD-066] ─────────────────────────────────
+/* ── Temperature, every cycle [DD-093] ────────────────────────────────
  *
  * Each pressure is compensated with the temperature at its own time, on the
  * line through the last MS5607_TEMPS readings: between the last loop's and

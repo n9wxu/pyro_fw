@@ -55,9 +55,8 @@ def query(host, timeout=4.0):
 
 
 def mac_source(st):
-    """"rng" (drawn, DD-072), "override" (assigned through /api/serial), or
-    "derived" from the flash chip: its whole ID since DD-099, before DD-072
-    its first 8 bytes."""
+    """"rng" (drawn at random), "override" (assigned through /api/serial), or
+    "derived" from the flash chip's unique ID (DD-099)."""
     src = st.get("mac_source")
     if src == "rng":
         return "rng"

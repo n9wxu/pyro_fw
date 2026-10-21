@@ -1,6 +1,6 @@
 /*
  * Descent: the fire rules, the descent phase and the landing
- * [PYR-MODE-01..06, PYR-FIRE-01, PYR-REFIRE-01, FLT-EMRG-01..05,
+ * [PYR-MODE-01..06, PYR-FIRE-01, PYR-REFIRE-01, FLT-EMRG-01, FLT-EMRG-04, FLT-EMRG-05,
  * FLT-DESC-01, FLT-DESC-02, FLT-LAND-02..07, PYR-VERIFY-01].
  *
  * SPDX-License-Identifier: MIT

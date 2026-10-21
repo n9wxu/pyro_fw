@@ -1,6 +1,6 @@
 /*
- * BMP280 pressure sensor: forced conversions, one after another [DD-067,
- * DD-093], so every reading is a conversion of its own and its time is known.
+ * BMP280 pressure sensor: forced conversions, one after another [DD-093],
+ * so every reading is a conversion of its own and its time is known.
  *
  * In flight the pressure collector owns the part (pressure_collector.h):
  * BMP280_PART is what it needs to know of it. The arithmetic on a cycle's

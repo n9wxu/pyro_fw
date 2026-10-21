@@ -188,8 +188,9 @@ void test_mk1b_bad_joint_reads_good_with_its_count(void) {
     TEST_ASSERT_EQUAL_UINT16(41u, c1.raw_adc);
 }
 
-/* The pulse runs its 500 ms; then a fresh reading lands inside the post-fire
- * verify window, which opens as the pulse ends and runs 100 ms. */
+/* The pulse runs its 500 ms; the common stays on after it, so a fresh
+ * presence reading lands a loop later, and no short reading
+ * (boards/mk1b/THEORY_OF_OPERATION.md "Firing"). */
 void test_mk1b_fire_then_a_fresh_reading(void) {
     loops(1500u);
     pyro_fire(1);
@@ -205,7 +206,7 @@ void test_mk1b_fire_then_a_fresh_reading(void) {
     loops(2u * LOOP_PERIOD_MS);
     pyro_continuity_t c;
     pyro_get(1, &c);
-    TEST_ASSERT_TRUE_MESSAGE(c.open, "no fresh reading within 50 ms of the pulse");
+    TEST_ASSERT_TRUE_MESSAGE(c.open, "no fresh reading within two loops of the pulse");
     TEST_ASSERT_FALSE_MESSAGE(c.shorted, "the common, on through the pulse, is no short");
     TEST_ASSERT_EQUAL(0, reads_unsettled);
 }

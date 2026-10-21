@@ -1,8 +1,8 @@
 /*
  * On the pad: the announcement and the pyro health behind it, the ground
  * reference, the launch, the pad record, and a board on USB
- * [BUZ-01, BUZ-CODE-02, PYR-CONT-01..03, PYR-HEALTH-01/02, GND-CAL-01..07,
- * FLT-LAUNCH-02..07, FLT-BROWN-01, USB-01..08, CFG-10].
+ * [BUZ-01, BUZ-CODE-02, PYR-CONT-01..03, PYR-HEALTH-01/02, GND-CAL-01, GND-CAL-03..07,
+ * FLT-LAUNCH-02..05, FLT-LAUNCH-07, FLT-BROWN-01, USB-01..05, USB-07, USB-08, CFG-10].
  *
  * SPDX-License-Identifier: MIT
  */
@@ -225,7 +225,7 @@ void test_CFG_10_a_saved_change_waits_for_the_next_start(void) {
     TEST_ASSERT_EQUAL_UINT32(5000, ctx.plan.fire_gap_ms);
 }
 
-/* ── Launch [FLT-LAUNCH-02..07] ───────────────────────────────────── */
+/* ── Launch [FLT-LAUNCH-02..05, FLT-LAUNCH-07] ────────────────────── */
 
 void test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch(void) {
     to_the_pad(9);
@@ -309,7 +309,7 @@ void test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch(void) {
     }
 }
 
-/* ── The ground reference [GND-CAL-01..07] ────────────────────────── */
+/* ── The ground reference [GND-CAL-01, GND-CAL-03..07] ────────────── */
 
 /* [FLT-RATE-06] The collector is faster than the loop: three samples waiting
  * are three steps of this loop, and the newest is the one the flight
@@ -408,7 +408,7 @@ void test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds(void) {
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(writes, mock_fs_write_count, "and once only");
 }
 
-/* ── On USB [USB-01..08] ──────────────────────────────────────────── */
+/* ── On USB [USB-01..05, USB-07, USB-08] ──────────────────────────── */
 
 void test_USB_01_no_launch_and_no_record_while_attached(void) {
     to_the_pad(50);

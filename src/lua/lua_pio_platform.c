@@ -152,7 +152,7 @@ void lua_plat_pin_service(void) {
  *
  * Named *_vt because prove_core0.py folds exactly these symbols into the call
  * graph; renaming one drops whatever it points at out of the core1 proof
- * (DD-061). */
+ * (DD-018). */
 
 static void out_set(void *ctx, int value) {
     out_t *o = ctx;

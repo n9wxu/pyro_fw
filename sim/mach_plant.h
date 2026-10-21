@@ -1,11 +1,12 @@
 /*
- * A plant for the Mach lockout's tests: a real atmosphere at any pad, a
- * rocket that can go supersonic, and the pressure its static ports report.
+ * A plant for the host flight tests: a real atmosphere at any pad, a rocket
+ * that can go supersonic, and the pressure its static ports report.
  *
  * physics.c drives the browser simulator and stays as it is. This one is for
- * the host tests, where the pad's temperature and elevation matter: every
- * threshold of the lockout is a pressure ratio whose Mach meaning depends on
- * the air's temperature (docs/mach-lockout-prompt.md).
+ * the host tests, where the pad's temperature and elevation matter: the
+ * ports' error follows Mach, which follows the air's temperature, and apogee
+ * waits for readings the estimator's model explains (FLT-APO-07, DD-092;
+ * docs/mach_lockout.md).
  *
  * SPDX-License-Identifier: MIT
  */

@@ -14,8 +14,7 @@
  * Every entry from the host into the VM runs under lua_pcall, so nothing a
  * script does can raise outside protection (§4.4).
  *
- * Implements invariants L4, L5, L7, L8 and L11 of
- * thoughts/shared/plans/2026-09-21-lua-user-programs-core1.md
+ * Implements [LUA-PAD-02, LUA-ISO-01, LUA-ISO-02, LUA-ISO-03, LUA-ISO-05].
  *
  * SPDX-License-Identifier: MIT
  */

@@ -1,6 +1,6 @@
 /*
  * The fire rules, flown [SYS-DEPLOY-05, PYR-FIRE-01, PYR-REFIRE-01,
- * FLT-EMRG-01..05, PYR-DEPLOY-02, PYR-HEALTH-01, PYR-BOARD-01..04, TST-04]:
+ * FLT-EMRG-01, FLT-EMRG-04, FLT-EMRG-05, PYR-DEPLOY-02, PYR-HEALTH-01, PYR-BOARD-01..04, TST-04]:
  * charges that do not light, canopies that fail, and what the board does
  * about each.
  *

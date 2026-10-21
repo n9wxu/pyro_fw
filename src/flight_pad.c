@@ -1,7 +1,7 @@
 /*
  * On the pad: the pyro health check and its announcement, the ground
  * reference, and the launch [PYR-CONT-01..03, BUZ-01, BUZ-02, GND-CAL-06,
- * FLT-LAUNCH-02..07, USB-01..04].
+ * FLT-LAUNCH-02..05, FLT-LAUNCH-07, USB-01..04].
  *
  * SPDX-License-Identifier: MIT
  */
@@ -86,7 +86,7 @@ void flight_action_launch(flight_context_t *ctx, uint32_t now) {
     flight_note_event(ctx, EVT_LAUNCH);
 }
 
-/* ── USB [USB-01..08] ─────────────────────────────────────────────── */
+/* ── USB [USB-01..05, USB-07, USB-08] ────────────────────────────── */
 
 static void grounding_changed(flight_context_t *ctx, bool was_grounded, uint32_t now) {
     bool grounded = flight_grounded_on_usb(ctx);

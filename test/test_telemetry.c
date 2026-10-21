@@ -1,6 +1,6 @@
 /*
  * The downlink of a whole flight, read as a ground station reads it
- * [TEL-01..11, DD-088]. The sentence formats are in
+ * [TEL-01..03, TEL-05..11, DD-088]. The sentence formats are in
  * docs/ground-station-interface-spec.md.
  *
  * SPDX-License-Identifier: MIT

@@ -4,8 +4,7 @@
  * These are the tests that decide whether the feature is safe to ship. The
  * bindings are the security boundary — RP2040 has no MPU — so every claim
  * made about what a script cannot do is asserted here rather than reasoned
- * about. Invariants Lx are those of
- * thoughts/shared/plans/2026-09-21-lua-user-programs-core1.md
+ * about.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -199,7 +198,7 @@ static void test_dangerous_base_functions_removed(void) {
 }
 
 static void test_pyro_is_read_only(void) {
-    /* Invariant L11: reading is allowed, and there is no setter to call. */
+    /* [LUA-ISO-02] Reading is allowed, and there is no setter to call. */
     sim_lua_set_pyro(1, LUA_PYRO_CONTINUITY | LUA_PYRO_ARMED);
     TEST_ASSERT_TRUE(run("s = pyro.status(1) assert(s.continuity) assert(s.armed) assert(not s.fired)"));
     TEST_ASSERT_TRUE(run("assert(pyro.fire == nil)"));
@@ -655,7 +654,7 @@ static void test_pyro_status_carries_the_raw_count(void) {
 }
 
 static void test_pyro_is_still_read_only_with_adc_added(void) {
-    /* Invariant L11 -- adding a field must not have added a setter. */
+    /* [LUA-ISO-02] Adding a field must not have added a setter. */
     TEST_ASSERT_TRUE(run("assert(pyro.fire == nil)"));
     TEST_ASSERT_TRUE(run("assert(pyro.arm == nil)"));
     TEST_ASSERT_TRUE(run("assert(pyro.set == nil)"));
@@ -684,7 +683,7 @@ static void test_log_never_blocks_when_flooded(void) {
 static void test_script_cannot_reach_the_filesystem(void) {
     /* log.* is the ONLY route to a file, and it is one-way. A script that
      * could open or read one would be reaching past the application, which owns
-     * flash (invariant L6). */
+     * flash [LUA-ISO-04]. */
     TEST_ASSERT_TRUE(run("assert(log.read == nil)"));
     TEST_ASSERT_TRUE(run("assert(log.open == nil)"));
     TEST_ASSERT_TRUE(run("assert(io == nil)"));

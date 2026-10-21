@@ -314,7 +314,7 @@ int hal_config_save(const config_t *cfg) {
 
 /* ── Async task runner (sim) ─────────────────────────────────────── */
 
-/* The sensor's rate on the hardware (FLT-RATE-01, DD-001). Fed every tick
+/* The sensor's rate on the hardware (FLT-RATE-01, DD-093). Fed every tick
  * instead, the speed becomes a difference of pressures one millisecond apart
  * -- quantisation noise that no descent phase can settle on. */
 #define SIM_SAMPLE_MS 20

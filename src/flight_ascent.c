@@ -1,6 +1,6 @@
 /*
  * Ascent: the thrust report, arming, the peak and apogee
- * [FLT-ASC-01..07, FLT-APO-01..08].
+ * [FLT-ASC-01..07, FLT-APO-01..04, FLT-APO-07, FLT-APO-08].
  *
  * SPDX-License-Identifier: MIT
  */

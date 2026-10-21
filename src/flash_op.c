@@ -18,10 +18,9 @@
 #include "pico/platform.h"
 
 /* A parked helper frees itself after this, whatever the caller does. Longer
- * than any single operation here: a 4 kB sector erase is 400 ms at most
- * (W25Q128JV_RevH_2021-03-10.pdf, page 66, MK1A; W25Q16JV_RevI_2024-12-24.pdf,
- * page 64, MK1B; MK1C's XT25F128F has no datasheet in docs/datasheets), and
- * nothing erases more at once. */
+ * than any single operation here: a 4 kB sector erase is 800 ms at most on
+ * MK1C's XT25F128F (XT25F128F-W_Rev0.6_2022-02-26.pdf, page 56), the slowest
+ * of the fitted parts (flash_timing.c), and nothing erases more at once. */
 #define PARK_MAX_US 1500000u
 
 /* A helper that has not parked by this is not going to: refuse the operation. */

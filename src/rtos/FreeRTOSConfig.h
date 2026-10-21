@@ -1,7 +1,6 @@
 /*
- * FreeRTOS SMP on the RP2040 [DD-073]. The design is
- * docs/log_storage_plan2_freertos.md (plan 2), and rtos_tasks.h names the
- * tasks and their priorities.
+ * FreeRTOS SMP on the RP2040 [DD-073]. rtos_tasks.h names the tasks and
+ * their priorities.
  *
  * SPDX-License-Identifier: MIT
  */

@@ -1,5 +1,5 @@
 /*
- * The pad's pressure [GND-CAL-01..07].
+ * The pad's pressure [GND-CAL-01, GND-CAL-03..07].
  *
  * SPDX-License-Identifier: MIT
  */

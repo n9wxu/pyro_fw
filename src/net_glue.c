@@ -215,7 +215,7 @@ void net_mac_init(void) {
 /* TCP's initial sequence numbers and mDNS's probe delays: they must differ
  * from boot to boot, not be secret. The ring oscillator's random bit
  * (rp2040-datasheet_2025-02-20.pdf, section 2.17.5, page 223) and the timer
- * [DD-072]. */
+ * [DD-102]. */
 static void seed_from_ring_oscillator(void) {
     uint8_t entropy[16];
     for (unsigned i = 0; i < sizeof(entropy); i++) {

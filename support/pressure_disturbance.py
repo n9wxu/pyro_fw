@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 pressure_disturbance.py -- does a board's own buzzer or flash disturb its
-pressure sensor? (DD-068, G4-M, docs/pressure_collector.md)
+pressure sensor? (DD-106, G4-M, docs/pressure_collector.md)
 
     support/pressure_disturbance.py HOST [SAVE.json]     measure one board
     support/pressure_disturbance.py --flash-first HOST [SAVE.json]

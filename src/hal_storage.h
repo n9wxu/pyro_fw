@@ -25,9 +25,9 @@ bool hal_fs_locked(void);
 int hal_fs_enter(void);
 void hal_fs_leave(void);
 
-/* The storage task's pass: the flight log's ring into its file, a drawn MAC
- * into /serial.txt, and whatever flash work the board queued. Never from the
- * flight task. */
+/* The storage task's pass: the board's self-test stamp, the flight log's ring
+ * into its file, the filesystem's cleanup, and whatever flash work the board
+ * queued. Never from the flight task. */
 void hal_storage_service(uint32_t now_ms);
 
 /* Commit an image on its first boot after an update, so pico_fota_bootloader
