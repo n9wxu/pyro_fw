@@ -167,10 +167,10 @@ bool mock_core0_stalled(uint32_t now_ms) {
     return mock_stall_model && (int32_t)(now_ms - sm.stall_until) < 0;
 }
 
-/* One loop of the hardware's (DD-051, DD-066): take the pair commanded at the
- * last loop -- a pressure its one-shot read 9.1 ms in, then a temperature --
- * and command the next. A pressure is the reading at the middle of its
- * conversion, 4.5 ms in; a stall that held interrupts off delays the take. */
+/* One loop of the stall model: take the reading commanded at the last loop
+ * and command the next. A reading is the pressure 4 ms into its conversion,
+ * stamped 4.5 ms in, the middle of an MS5607 conversion (DD-093); a stall
+ * delays the take, not the stamp. */
 #define ONE_SHOT_LOOP_MS LOOP_PERIOD_MS
 
 static void one_shot_loop(uint32_t now) {

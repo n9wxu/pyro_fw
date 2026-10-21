@@ -134,7 +134,7 @@ def analyze(recs, lost):
     span = sum(iv) / 1e6
     nominal = statistics.median(iv)
     backwards = sum(1 for d in iv if d <= 0)
-    # Paired with every pressure [DD-066], a temperature takes no slot.
+    # Paired with every pressure [DD-093], a temperature takes no slot.
     paired = kinds["T"] >= 0.9 * len(p)
     gaps = [d for d, t, f in zip(iv, t_between, f_between)
             if d > (1.5 + f + (1 if t and not paired else 0)) * nominal]

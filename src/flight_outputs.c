@@ -1,6 +1,6 @@
 /*
  * What the flight software sends and stores each loop: the pyro backend's
- * step, the telemetry, and the pad record [TEL-03..12, FLT-BROWN-01,
+ * step, the telemetry, and the pad record [TEL-03, TEL-05..12, FLT-BROWN-01,
  * FLT-BROWN-04].
  *
  * SPDX-License-Identifier: MIT

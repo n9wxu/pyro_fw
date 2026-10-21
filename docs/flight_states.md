@@ -15,11 +15,15 @@ The rules everything below follows:
 
 ## How it runs
 
-`dispatch_state()` runs once a loop. It calls the detector of the current
-state, which returns an event or none; the transition table maps
-(state, event) to the next state and an action. `flight_update_outputs()` then
-sends what is due on the telemetry port, and `flight_storage_service()` does
-the storage the flight software owes, where the platform says a write may run.
+The flight task runs every 10 ms (`LOOP_PERIOD_MS`, FLT-RT-04). Each period
+`dispatch_state()` steps the machine once for every sample waiting, up to
+eight (FLT-RATE-06). A step calls the detector of the current state, which
+returns an event or none; the transition table maps (state, event) to the
+next state and an action. `flight_update_outputs()` then sends what is due on
+the telemetry port. `flight_storage_service()` keeps the pad record; it runs
+on the storage task, in the log writer's slot at the head of core1's frame
+(FLT-LOG-09). From launch to landing the flight task runs from RAM and no
+flash operation stops it (FLT-RT-02, FLT-RT-03, DD-104).
 
 The files, one responsibility each (`src/flight_sources.txt` is the list the
 firmware, the host suites and the simulators all build):
@@ -39,8 +43,15 @@ firmware, the host suites and the simulators all build):
 | `pressure_processing.c` | readings in to every estimator, samples out from the obeyed one: gaps, a stuck sensor, the ground reference |
 | `fire_control.c`, `fire_plan.c` | the fire rules, and the plan the configuration and the board make |
 | `launch_detector.c`, `apogee_detector.c`, `landing_detector.c`, `descent_phase.c` | one detector each |
+| `ground_reference.c` | the pad's pressure |
 | `pad_check.c` | the pad diagnosis and which outcome is announced |
 | `flight_resume.c` | the pad record and the resume decision |
+| `ground_test_seq.c` | the ground test procedure, in time |
+| `telemetry.c` | the `$PYRO` downlink |
+| `small_fmt.c` | the formatter for the text the flight path writes |
+| `config.c` | the configuration |
+| `beep_codes.c`, `beep_store.c` | what the buzzer says, and the beep table's file |
+| `board_selftest.c` | whether the image is on the board it was built for |
 | `atmosphere.c` | the 1976 standard atmosphere |
 
 Every comparison is made in pressure (SNS-EST-05). An altitude is computed for
@@ -55,26 +66,30 @@ clamped, and may be negative.
 | BOOT_SENSOR | sensor and storage good, no flight in progress | BOOT_CONTINUITY |
 | BOOT_SENSOR | a flight in progress, climbing | ASCENT |
 | BOOT_SENSOR | a flight in progress, descending | FALLING |
-| BOOT_SENSOR | no sensor, or no storage | FAULT |
+| BOOT_SENSOR | no sensor, an image for another board, no storage, or an unreadable `config.ini` | FAULT |
 | BOOT_CONTINUITY | health read | BOOT_CALIBRATE |
 | BOOT_CONTINUITY | the ground test switch held closed | GROUND_TEST |
 | BOOT_CALIBRATE | ten readings | PAD_IDLE |
 | BOOT_CALIBRATE | none in 10 s | FAULT |
 | PAD_IDLE | launch | ASCENT |
 | ASCENT | apogee | FALLING |
-| FALLING, DROGUE_DESCENT, CHUTE_DESCENT | the measured rate changes band | each other |
+| FALLING | the rate settled in the drogue's band | DROGUE_DESCENT |
+| FALLING, DROGUE_DESCENT | the rate settled in the main's band | CHUTE_DESCENT |
+| DROGUE_DESCENT | faster than the drogue's band for 1 s | FALLING |
 | FALLING, DROGUE_DESCENT, CHUTE_DESCENT | landing | LANDED |
 
 FAULT, GROUND_TEST and LANDED are left only by a restart.
 
 ## The filtered state
 
-One Kalman filter runs on the raw readings (`pest_update()`, DD-085). Its
-state is ln(p / p_ref), its rate and its acceleration. The sensor's noise is
-measured from the readings, not assumed. A reading more than six of its own
-standard deviations from the prediction is skipped, unless it is the third in
-a row: one or two bad readings change nothing, and a run of readings is data
-and is followed (SNS-EST-02). Nothing else filters, gates or reseeds.
+The obeyed estimator (below) gives the filtered state from the raw readings:
+the filtered pressure, the rate and curvature of ln(pressure), and whether
+its model explains the readings (`src/estimator.h`, DD-085, DD-092). Each
+estimator measures the sensor's noise from the readings, and does not assume
+it. A reading more than six of its own standard deviations from the
+prediction is skipped, unless it is the third in a row: one or two bad
+readings change nothing, and a run of readings is data and is followed
+(SNS-EST-02). Nothing else filters, gates or reseeds.
 
 Speeds for the descent bands and the fire rules are judged as the pad's air
 would give them (FLT-AIR-01): a canopy in thin air falls faster and is not a
@@ -92,12 +107,12 @@ high and still goes to the pad (FLT-BROWN-03).
 A resumed flight takes its ground from the record, assumes no channel has
 fired, and fires each as fresh data meets its trigger. Resumed climbing, its
 estimators start again, so apogee waits for them to explain the readings
-(FLT-APO-07). Resumed
-descending, apogee is taken as passed and a DELAY counts in full from the
-resume (FLT-BROWN-06).
+(FLT-APO-07). Resumed descending, apogee is taken as passed and a DELAY
+counts in full from the resume (FLT-BROWN-06).
 
-The record is written after 10 s on the pad and cleared when the flight's log
-is closed (FLT-BROWN-01, FLT-BROWN-04).
+The record is written after 10 s on the pad, cleared when the flight's log
+is closed, and cleared on the bench, with a USB host attached and test mode
+off (FLT-BROWN-01, FLT-BROWN-04, FLT-BROWN-08).
 
 ## PAD_IDLE
 
@@ -111,21 +126,23 @@ The ground reference follows the weather, holds while the rocket moves, and
 freezes at launch on the pad's own pressure. A board carried to another pad
 reseeds after 5 s still (GND-CAL-06).
 
-Launch is 100 ft above the reference while climbing at 5 m/s or more, on the
-filtered state (`launch_detected()`), with no hold time. Time zero is back-dated to the start of the rise (FLT-LAUNCH-03).
+Launch is 100 ft above the reference while climbing faster than 5 m/s, on
+the filtered state (`launch_detected()`), with no hold time. Time zero is
+back-dated to the start of the rise (FLT-LAUNCH-03).
 
 On USB, with test mode off, no launch is detected, nothing is announced and
 no record is written (USB-01, USB-02).
 
 ## ASCENT
 
-The channels arm once the rocket has passed 30 m and slowed below 10 m/s of
-climb.
+The channels arm once the rocket has passed about 30 m (0.9965 of the pad's
+pressure) and, having climbed faster than 10 m/s, slows below it (FLT-ASC-07,
+FLT-ASC-08).
 
-Apogee is the obeyed estimator going over the top: seen climbing, then seen
-falling, each by more than three times its rate's own uncertainty, with its
-model explaining the readings all the way between (`apogee_detected()`,
-FLT-APO-07). A fall whose climb was not seen that way must last 2 s. There is
+Apogee is the obeyed estimator going over the top, once the channels are
+armed (FLT-APO-04): seen climbing, then seen falling, each by more than three
+times its rate's own uncertainty, with its model explaining the readings all
+the way between (`apogee_detected()`, FLT-APO-07). A fall whose climb was not seen that way must last 2 s. There is
 no hold time. It is declared after the true apogee, never before it: within
 0.5 s to 10 km, 1.5 s at 20 km and 2.5 s at 30 km at a sensor noise of 9 Pa
 (`test_FLT_APO_01_...`). The boards measure 1.9 to 2.6 Pa on a battery; 9 Pa
@@ -142,8 +159,7 @@ start-up (SNS-EST-06).
 Each reports whether its model explains the readings (SNS-EST-08). Near
 Mach 1 the static ports misreport, and no rocket moves the way those readings
 say, so the model does not explain them. Nothing is decided on such readings,
-and none of them is the peak (FLT-APO-08). That replaces the Mach flag
-(DD-092).
+and none of them is the peak (FLT-APO-08).
 
 From launch to landing the log carries an `EST` row a second for each
 estimator, and a row when each one's own apogee rule is met, whichever is
@@ -157,7 +173,12 @@ obeyed (SNS-EST-07).
 ## Descent and firing
 
 The state names a measured rate band, not a channel: FALLING above 35 m/s,
-DROGUE_DESCENT to 10 m/s, CHUTE_DESCENT below, with hysteresis and a dwell.
+DROGUE_DESCENT to 10 m/s, CHUTE_DESCENT below. A rate counts once it has held
+in one band, steady to within a quarter of itself (at least 2.5 m/s), for
+1.2 s: free fall gains about 12 m/s in that time, which no canopy's rate
+tolerates (`descent_phase_settled()`). DROGUE_DESCENT returns to FALLING when
+the descent is faster than 35 m/s for 1 s. CHUTE_DESCENT is left only for
+LANDED.
 
 `fire_control_step()` is the fire rules, a pure function of the plan, the
 sample and its own state:
@@ -166,14 +187,16 @@ sample and its own state:
   DELAY after apogee, AGL at a height, FALLEN a distance from the peak, SPEED
   at a descent speed. Nothing fires before apogee (PYR-SAFE-04).
 - **Re-fire.** A channel that has fired fires again every `refire_interval`
-  while the descent is faster than its `pyroN_refire_speed` (PYR-REFIRE-01).
+  while the descent is faster than its `pyro1_refire_speed` or
+  `pyro2_refire_speed` (PYR-REFIRE-01).
 - **Emergency fire.** Any time after apogee, while the descent is faster than
   `emergency_fire_speed`, every enabled channel fires, and goes on firing,
   whatever its own trigger (FLT-EMRG-01).
 - A speed of zero turns its rule off. All three default to zero.
 - **One at a time.** A pulse never overlaps another, and `fire_gap` of quiet
   time separates the end of one from the start of the next. A first fire goes
-  before a re-fire, and pyro 1 before pyro 2 on a tie (PYR-DEPLOY-02).
+  before a re-fire; between re-fires the channel that has waited longer goes;
+  on a tie, pyro 1 (PYR-DEPLOY-02).
 - For 2 s after a pulse the state is bounded to free fall, so a charge's
   pressure in the bay cannot bring a trigger forward (PYR-MODE-06).
 
@@ -185,8 +208,9 @@ Every pulse is recorded with what the board observed of it: energised or not,
 a fault, and whether the channel then read open. Nothing depends on those
 records (PYR-FIRE-01, PYR-VERIFY-01).
 
-Landing is under 2 m/s for a second within 30 m of the ground, or the landing
-timeout. The peak is then beeped out, the log closed and the pad record
+Landing is under 2 m/s for a second within 30 m of the ground or, once
+`landing_timeout` has passed since apogee, under 2 m/s for a second at any
+height. The peak is then beeped out, the log closed and the pad record
 cleared.
 
 ## A failed sensor
@@ -202,9 +226,10 @@ it; a DELAY, which needs no data once apogee is known, still fires
 
 Entered only from start-up with the switch held closed. The switch opened
 starts a countdown; pyro 1 fires at zero, then a tone, a second countdown and
-pyro 2, then the all-clear (`gt_seq_step()`). Closing the switch again stops
-it before the next fire. A fire is delivered on command: no health reading
-withholds it (GND-TEST-13). The mode runs on the configuration the board
+pyro 2, then the all-clear (`gt_seq_step()`). A channel the configuration
+does not enable is skipped, with its tone and countdown. Closing the switch
+again stops it before the next fire. A fire is delivered on command: no
+health reading withholds it (GND-TEST-13). The mode runs on the configuration the board
 started with and never flies.
 
 ## Telemetry

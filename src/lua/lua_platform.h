@@ -2,8 +2,7 @@
  * What the platform provides to Lua.
  *
  * This is the whole surface a script can reach. It contains no pin numbers,
- * no peripheral instances and no SDK types (invariant L5 of
- * thoughts/shared/plans/2026-09-21-lua-user-programs-core1.md): resources
+ * no peripheral instances and no SDK types [LUA-PAD-02]: resources
  * are reached by name, so a script cannot express access to something
  * configuration did not grant it.
  *

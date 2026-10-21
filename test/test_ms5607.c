@@ -120,7 +120,7 @@ void test_SNS_PRES_15_a_straight_line_in_the_pressure_code(void) {
     }
 }
 
-/* [DD-066] A pressure is compensated with the temperature at its own
+/* [DD-093] A pressure is compensated with the temperature at its own
  * time: between two readings, the line's value there, not the newest's. */
 void test_SNS_PRES_12_the_line_interpolates_back(void) {
     ms5607_temps_t t = {0};

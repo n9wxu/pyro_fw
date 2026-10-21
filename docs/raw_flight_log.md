@@ -1,203 +1,110 @@
 # A Pre-Erased Flight Log On The QSPI Flash
 
-Status: options for a decision (task C6, plan phase G). 2026-09-29.
+The flight log is `flight_log.bin`, a file on the board's flash store: alfs,
+format 6, in the area at the top of flash, behind `src/vfs.h` (DD-100). A
+flight only programs it. Every page the log takes was erased on the ground by
+the cleanup, and from launch to landing nothing erases unless the log has no
+erased page left (FLT-LOG-10).
 
-The question: can the flight log be a 2 MB area, erased before flight and
-aligned with the flash's sectors, so that flight only programs it?
+The log keeps a row for every sample and every event row at its own time
+(FLT-LOG-07, DD-101), and a flight that never lands loses at most its last
+second (FLT-LOG-06).
 
-Yes, outside littlefs, or inside a patched one (below). Unpatched, no:
-littlefs has no preallocation, and it
-never writes into a block a committed file points to. Every append after a
-sync allocates a fresh block, erases it and copies the partly filled last
-block into it (`lfs_ctz_extend()`, `build/_deps/littlefs-src/lfs.c` line
-2921, reached from `lfs_file_flushedwrite()` once `lfs_file_flush()` has
-cleared `LFS_F_WRITING`, line 3420). Overwriting a placeholder file of 0xFF
-is the same copy-on-write. That is why the flight log's once-a-second sync
-(DD-035, FLT-LOG-06) costs an erase a second.
-
-## Or: extend littlefs
-
-The alternative to a raw area is to take the cost out of littlefs itself,
-with two patches to littlefs 2.11.2. The disk format does not change: an
-unpatched littlefs reads what they write. No layout change, no reformat, and
-the flight log stays a file.
-
-**Patch 1: append in place.** After a sync, the next append finds the
-file's last block (`lfs_ctz_find()`) and then erases a new block and copies
-the partial one into it (`lfs_ctz_extend()`), because littlefs cannot assume
-the rest of the block is still erased. On a NOR flash that allows programming
-the rest of a partly programmed page (W25Q128JV, PDF page 37), the append
-can go on in the same block: the cache is loaded with the partial program
-unit's existing bytes, and the write carries on from where the file ends.
-Nothing committed is touched -- the directory still says the old size until
-the next sync -- so a power cut mid-append leaves the committed file whole.
-A block whose tail is not erased, because a power cut left bytes past the
-committed size, fails the program's read-back, and littlefs already answers
-`LFS_ERR_CORRUPT` from a data program by copying the block to a fresh one
-(`lfs_file_relocate()`): the fallback is the cost we pay today, once. The
-flash driver programs only bytes still 0xFF, so no bit is programmed twice.
-
-With it, an erase happens only when a 4 kB block fills: at a row a second,
-one every 3 minutes instead of every second; at every sample, one every
-3.7 s.
-
-**Patch 2: reserve.** A call that takes N free blocks for an open file and
-erases them -- on the pad, paced, as D2 -- and that `lfs_ctz_extend()` then
-uses in order instead of allocating and erasing. The allocator sees a
-block as used only if a file reaches it (`lfs_fs_traverse_()`), so the open
-file's reserved list must be reported there too; a power cut frees them, as
-nothing committed points to them. RAM: one word a block, 2 kB for 2 MB.
-With both patches a flight writes no data erase at all. The directory's
-commits are appends already: littlefs 2.11 tracks the erased state of a
-metadata block (its FCRC), so they erase only when a metadata block fills
-and compacts -- every few hundred syncs, less with the log in a directory of
-its own.
-
-**The cost is proving them.** littlefs is the boards' filesystem: its
-configuration, its pages, its identity. The patches must pass littlefs's
-own test suite with its power-loss simulation, and new power-loss tests for
-an append in place and for reserved blocks, before a board runs them. And we
-carry a fork of littlefs until upstream has an equivalent.
-
-| | Raw area | Patched littlefs |
-|---|---|---|
-| Flash layout | changes (D1): a reformat or a move of every file | unchanged |
-| Flight log | a second storage path, rendered from the area | the same file and API |
-| Data erases in flight | none | patch 1: one per 4 kB of log; patch 2: none |
-| Code risk | ours alone, small | a filesystem fork; power-loss proof needed |
-| Needs the chip to allow partial page programs | yes | yes |
-
-Patch 1 alone takes most of the gain for the least change: one erase in
-three minutes at the default logging rate. But see "Upstream": v2 is
-frozen, and v3 does both of these things itself.
-
-## Upstream (littlefs-project/littlefs, read 2026-09-29)
-
-The problem is known and open in v2, and solved in v3, which is not released.
-
-| Where | What it says |
-|---|---|
-| Issue #344 (2019, open) | geky: littlefs "freezes the file's blocks", so the next write copies the last block. "On NOR flash, where you can program a byte at a time, littlefs could simply continue to write data to the file without copying the block... as cheap as a single metadata update" -- but not when a sync has written a padded program unit. Ideas: continue only when the synced size is `prog_size`-aligned, or keep the file's tail inline in the metadata. Not done: "a rather niche optimization". Asked again in May 2025; unanswered. |
-| Issue #374 (2020, open) | "lfs is erasing a block on every append." geky: littlefs does not assume the erase value (an encrypted device may not read 0xFF), so it cannot tell a tail is still erased; a per-file "end block erased" flag was considered. Dec 2024: pre-erase needs "a block map which can store this... a work-in-progress". |
-| Issue #581 (2021, closed) | "Each append requires a full rewrite of the block when you sync the file." Mitigations: inline files (a file under `cache_size` and 1/8 of a block lives in the metadata log), or fewer syncs. Inlining small appends: "medium priority", not soon "unless someone contributes an implementation". |
-| PR #692 (2022, open) | `lfs_file_reserve()`: a contiguous run of blocks held as a file, written by the application directly -- the raw area, inside littlefs. A new record type (a disk version bump), +11% code, no read or write through littlefs. geky pointed it at the B-tree rewrite, "~1/2 year out" (Jan 2024). |
-| PR #1056 (2024, open) | ArduPilot: skip the read-back of programs while logging. Deferred for v3. Not the copy. |
-| PR #1111 (2025, open) v3-alpha | "Better logging: No more sync-padding issues" -- a sync stores the tail inline in the file's B-tree, so no block is rewritten after it. "Pre-erased block tracking" through an on-disk block map, "should significantly reduce the latency of file writes in the critical path". Also `lfs3_file_fruncate` for logs. Marked "INCOMPLETE AND UNSTABLE"; the alpha's disk version is 0.0, which v3 will refuse; v2 to v3 migration is a stretch goal. |
-| Issue #1114, v3 discussion | Apr 2026: "~2-3 months minimum" of work left. No release since. |
-| v2.11.3 release (Mar 2026) | "littlefs2 status: feature freeze." Fixes data corruption with two handles open on one file (PR #1194). |
-
-What that means here:
-
-- A v2 patch (patches 1 and 2 above) would never go upstream: v2 is frozen.
-  We would carry it until we move to v3, which does the same thing its own
-  way and makes the patch obsolete.
-- v3 is the real answer, later: both costs gone, with a new disk format
-  every board would have to migrate to, and more code (MK1B has 2.5 kB
-  left).
-- The raw area is our own small code, independent of littlefs, and can stay
-  or go when v3 arrives. With v2 frozen, it is now the better of the two
-  options for today.
-- Separately: take v2.11.3. Two uploads of one file at once would open one
-  `.part` file twice, the case #1194 fixes.
-
-## What it would change
-
-| | Today, littlefs | Pre-erased area |
-|---|---|---|
-| Per second at one row a second | one 4 kB erase, up to 4 kB copied, the metadata committed | one partial-page program |
-| Longest stop of the flight core per write | 45 ms typical, 400 ms at most (a sector erase) | 0.4 ms typical, 3 ms at most (a page program) |
-| Measured | by 4 minutes into the first 30 km bench flight, counted since boot: 238 erases, 762 programs, 609 conversions discarded (DD-068) | -- |
-
-Times: W25Q128JV (MK1A), PDF page 66. Partial page programming: page 37 --
-"less than 256 bytes (a partial page) can be programmed without having any
-effect on other bytes within the same page". The RP2040 SDK programs whole
-256-byte pages, so a partial program is a page of 0xFF around the new bytes:
-0xFF leaves a programmed bit as it is.
-
-MK1C's XT25F128F is not in `docs/datasheets`; its program and erase times,
-and whether it allows partial page programs, must be read from its datasheet
-before MK1C uses this.
-
-Boards with an SD card do not need it: FatFs appends in place and the card
-erases on its own time.
+On a board with an SD card mounted the log is a file on the card (DD-076),
+and none of this applies: FatFs appends in place and the card erases on its
+own time.
 
 ## Decisions
 
 ### D1. Where the area comes from
 
-The flash maps today (CMakeLists.txt, the pfb linker script): a 36 kB
-bootloader, 4 kB of OTA state, two application slots, then littlefs at the
-end.
+The log shares the flash store with the board's other files -- the
+configuration, the pin and beep tables, the web pages, the script, the pad
+marker. The store is the area pico_fota_bootloader leaves above its 36 kB
+bootloader, 4 kB of OTA state and two application slots (`PYRO_PFB_FS_KB` in
+each `boards/<name>/board.cmake`, `src/fs_flash.c`). The log's room is what
+the other files leave, and `/api/log/space` reports it (WEB-API-12).
 
-| Board | Flash | Slots | littlefs | Image today |
-|---|---|---|---|---|
-| MK1A, MK1C | 16 MB | 2 x 3948 kB | 8 MB | about 400 kB |
-| MK1B | 2 MB | 2 x 384 kB | 984 kB | about 392 kB |
-
-- **A. Shrink littlefs (8 MB to 6 MB) and put the area after it.** The OTA
-  slots do not move, so an OTA update installs it. littlefs's geometry
-  changes, so the first boot must move its files -- the configuration, the
-  pins, the beeps, the web pages; all small -- into a newly formatted, smaller
-  filesystem, or lose them. Recommended for MK1A and MK1C.
-- **B. Take the top of the slots,** which hold a 400 kB image in 3.9 MB.
-  Changing the slots moves the bootloader's layout: every board needs a
-  BOOTSEL flash, and pico_fota_bootloader's swap would have to be read for
-  what it copies and erases.
-- **C. MK1B:** its whole flash is 2 MB. At most about 512 kB, from littlefs
-  (984 kB to about 470 kB, if the web pages fit), which holds 6 hours at a
-  row a second or 8 minutes at every sample.
+| Board | Flash | Store | Log, every sample (DD-101) |
+|---|---|---|---|
+| MK1A | W25Q128JV, 16 MB | 8 MB | about 1.5 hours |
+| MK1C | XT25F128F, 16 MB | 8 MB | about 1.5 hours |
+| MK1B-8MB | BY25Q64ES, 8 MB | 4 MB | about 39 minutes |
+| MK1B | W25Q16JV, 2 MB | 984 kB | about 9 minutes |
 
 ### D2. When to erase
 
-2 MB is 512 sectors: 23 s of erase stops at 45 ms each, and up to 205 s at
-400 ms. Every one stops the flight core, as today's erases do.
+Only the cleanup erases (`vfs_clean()`): one sector a pass of the storage
+task, and never while the flight log holds the filesystem (`clean_service()`
+in `src/hal_common/hal_common.c`). On USB with test mode off it takes the next
+sector at each pass; otherwise one a second (`vfs_flash_clean_wait_ms()`,
+USB-10, DD-107). On the ground an erase stops both cores (`flash_op()`,
+DD-074): 50 to 70 ms with no pressure reading, launch detection and the
+ground reference held.
 
-- **A. At boot and after landing, a sector at a time on the storage task,
-  never in flight.** Paced -- say one every 200 ms -- a full area takes about
-  2 minutes, most of it while the board is on the bench. A launch before the
-  area is ready flies into what is erased; the rest waits for landing.
-  Recommended.
-- **B. 64 kB blocks:** 32 erases of 150 ms (2 s at most). Fewer stops, each
-  long enough to delay a launch detection by up to 2 s on the pad.
-- **C. Erase on the bench only** (USB attached), refusing to arm without an
-  erased area: nothing erases on the pad, but a board powered up on the pad
-  with a used area has no log.
+From launch to landing the writer erases only when the log has no erased
+page left, and only on a part whose erase ends in suspended pieces: one
+sector, suspended at the end of each of the writer's slots and resumed in
+the next (FLT-LOG-10, `src/flash_slot.c`). BY25Q64ES's erase does not end in
+such pieces, so MK1B-8MB does not erase in flight and its log has the room
+erased before launch (`src/flash_timing.c`, DD-104). An erase or program the
+chip holds suspended is run to its end at every start and on the ground
+after a flight that gave one up (FLT-LOG-11).
 
 ### D3. How often to program
 
-- **A. Each second, a partial page:** the loss at a power cut stays one
-  second, as FLT-LOG-06 asks; one program a second. Recommended, once the
-  XT25F128F allows it.
-- **B. Whole pages only:** at a row a second a page fills in 12 s, which a
-  power cut can take; at every sample, four pages a second.
-- **C. With either, time the program into the MS5607's idle stretch** so
-  DD-068 discards nothing: the plan-2 option DD-073 set aside for
-  discarding. More work: the storage task would wait for the sensor's cycle.
+The flight task puts each record into a 4 kB ring in RAM and never waits.
+The storage task, the writer of core1's frame (FLT-LOG-09), writes the ring
+out every 200 ms and syncs the file every second (FLT-LOG-06). A sync stores
+the partial page too, at the cost of the rest of that page (DD-100), so the
+log takes about six pages a second: 5.9 measured on MK1C over a 177.5 s bench
+flight (DD-101).
+
+alfs programs only the bytes it means. Each program is one page program of
+exactly those bytes, leaving the page's other bytes alone
+(`flash_op_slot_program()`, `src/flash_op.h`). From the first period airborne
+until landing it runs on core1 with core1's interrupts off, in the writer's
+first 3 ms of the period, and starts only when by the chip's datasheet it
+ends or can be suspended before the slot does (`src/flash_slot.h`);
+BY25Q64ES's program, 2.4 ms at worst, starts only in the slot's first
+300 us. Nothing on core0 stops for it (FLT-RT-03).
+
+The log's file opens at the head of the first period airborne, and its rows
+wait in the ring until then (DD-104). Its first write waits until the ring
+fills or 2 s have passed since the file opened, so the launch shock passes
+with the flash idle (DD-027). A conversion a program ran beside is used like any other and
+counted, `pres_flashed` on `/api/status` (DD-106).
 
 ### D4. One flight or two
 
-C6 decided to keep two flights. Two 1 MB halves, alternating: each holds
-13 hours at a row a second, 16 minutes at every sample (22-byte records,
-`flight_log.h`). Or one 2 MB area for the newest flight only.
+One. The log's open removes the last flight's log first, so a reset in
+flight finds this flight's: a write replaces a file only when it closes
+(DD-100). `POST /api/flight/erase` removes it on purpose.
 
 ### D5. How it is read
 
-- **A. Rendered straight from the area:** `/api/flight.csv` reads it through
-  the flight log's existing renderer; nothing is copied, and nothing in
-  littlefs is written after landing. Recommended.
-- **B. Copied into a littlefs file after landing:** the file API stays as it
-  is; the copy costs 2 MB of littlefs writes on the ground.
+`GET /api/flight.csv` renders the file as CSV as it is read
+(`flog_csv_read()`, `src/flight_log.c`), framed by Content-Length: the
+server counts the rendered length first, then streams the same rendering
+(DD-062). It is refused with 423 while the log holds the storage
+(WEB-API-10). In test mode with `log=host` the log goes to RAM for the host
+in place of the flash, read at `/api/flight/live` (USB-09, DD-103).
 
 ## The format
 
-The flight log's records (`flight_log.h`), each framed with a length and a
-CRC as the high-rate log's are (DD-077), after a header naming the flight.
-The end is the first record that is erased (0xFF) or fails its CRC, so a
-power cut costs at most the record being programmed, and a boot finds where
-a log stopped without any metadata.
+The records are in `src/flight_log.h` (DD-062). A file is the magic `PYL1`,
+one header record, then sample and text records in the order they were
+written; multi-byte fields are little-endian.
 
-## What it does not change
+| Record | Type byte | Fields |
+|---|---|---|
+| Header | `H` | length, ID and name (8 bytes each), each channel's mode and value, units, ground pressure, the plan byte (always 2, every sample), the board's name |
+| Sample | `S` | time, pressure, altitude, the raw reading, temperature in tenths of a degree, state, thrust, event: 22 bytes with the type |
+| Text | `T` | time, tag (Lua, mock, estimator), length, up to 64 characters |
 
-DD-068 still discards a conversion a program ran beside, unless D3-C:
-about one a second, against two to three a second today. The pad marker stays
-in littlefs, written on the pad.
+The CSV's header says `# Log rate: every sample`, which `pyro_sim --replay`
+reads; it refuses a log whose header says it kept fewer (DAT-08).
+
+The end is where the file's stored bytes end: a reader gets the log to its
+last synced page (DD-105), and a record cut short there ends the log, with
+everything before it rendered.

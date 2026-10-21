@@ -820,8 +820,8 @@ add_custom_target(http_tests
     COMMENT "HTTP stream parser and framing tests"
 )
 
-# Who runs the HTTP work units: core0's turn and budget, and the worker's
-# exclusive hold on the connections it takes (DD-061).
+# The HTTP work units' turn and budget, and a worker's exclusive hold on the
+# connections it takes (DD-073).
 add_custom_target(http_work_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building HTTP work unit tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
@@ -987,7 +987,7 @@ add_custom_target(hr_log_tests
     COMMENT "High-rate log tests"
 )
 
-# A MAC drawn from the RNG and the /serial.txt that keeps it [DD-072].
+# The MAC from the flash chip's unique ID, and the /serial.txt that may assign one [DD-099].
 add_custom_target(mac_random_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building MAC draw tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
@@ -1206,8 +1206,8 @@ add_custom_target(ground_test_seq_tests
     COMMENT "Ground test sequence tests"
 )
 
-# The BMP280 at the loop's rate: one forced conversion a loop (DD-067), on a
-# fake part timed from the datasheet, with MK1A's pins.
+# The BMP280's forced conversions (DD-093), on a fake part timed from the
+# datasheet, with MK1A's pins.
 add_custom_target(bmp280_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building BMP280 tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk

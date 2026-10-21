@@ -50,10 +50,9 @@ cmake --build build-sim-mk1c --target board_pyro_mk1c_tests
 fixture. `plant_tests` and `board_pyro_mk1c_tests` build in any configured
 tree, since each compiles its own board's files.
 
-`scripts/build_wasm.sh` takes `PYRO_BOARD=sim_mk1a|sim_mk1b|sim_mk1c`, but
-those builds do not compile: it puts `boards/sim` ahead of the board's own
-`board_pins.h`, and leaves out MK1B's `pin_store_sim.c` and MK1C's
-`pyro_measure.c`, `pyro_faults.c`, `pyro_sequence.c` and `arm_pump.c`.
+`PYRO_BOARD=sim_mk1a|sim_mk1b|sim_mk1c ./scripts/build_wasm.sh` builds the
+same board for the browser, as `docs/wasm/pyro_<board>.js` and `.wasm`, from
+the sources and defines in the board's `board.cmake`.
 
 ## What is modelled
 
@@ -97,8 +96,9 @@ slow drive, since neither implies the other.
   a short, and a FET is either 30 mΩ or open.
 - **MK1B's AP2192A.** The part fitted discharges its outputs while disabled,
   which holds both sense nodes near 0 V (DD-059, task B-U5). The model is the
-  board as fitted, so a simulated MK1B reads every channel shorted and never
-  fires; `plant_set_mk1b_u5(MK1B_U5_AP2192)` models the netlist's part.
+  board as fitted: the sense nodes read 0 V whatever is connected, MK1B's
+  backend judges no channel and reports each ready, and a fire lights its
+  match. `plant_set_mk1b_u5(MK1B_U5_AP2192)` models the netlist's part.
 - **The RP2040 itself.** `sim/hw/` is about sixty functions — GPIO, the ADC
   and its FIFO, DMA, the PIO state machine MK1C's pump runs on, the watchdog —
   not an emulator. There is no interrupt model and no core 1.

@@ -225,7 +225,7 @@ renumbered: the numbers reach the flight log, telemetry and `/api/status`.
 | File | Purpose |
 |------|---------|
 | `sim/physics.h` | Physics engine C API |
-| `sim/physics.c` | The rocket: U.S. Standard Atmosphere 1976, constant thrust, linear chute damping |
+| `sim/physics.c` | The rocket: U.S. Standard Atmosphere 1976, constant thrust, linear chute damping; `physics_tests` holds it to the published atmosphere |
 | `sim/pyro_sim.h` | Flight computer simulation C API |
 | `sim/main_sim.c` | High-level sim lifecycle functions |
 | `sim/sim_cli.c` | `pyro_sim`'s driver, on `sim/physics.c`, `--replay` and `--csv` |
@@ -233,6 +233,7 @@ renumbered: the numbers reach the flight log, telemetry and `/api/status`.
 | `sim/hw/` | The Pico SDK calls a board file makes, for the modelled boards |
 | `sim/plant/` | The board plant models |
 | `sim/mach_plant.c` | The flight tests' atmosphere, rocket and static ports |
+| `sim/study/` | The estimator studies, in Python; `lumped_port_check.py`, in `scripts/run_host_tests.sh`, holds `src/estimator_lumped.c` to the study's filter |
 | `boards/sim/hal_sim.h` | Internal sim HAL accessors |
 | `boards/sim/hal_sim.c` | In-memory HAL implementation |
 | `boards/sim_mk1a`, `sim_mk1b`, `sim_mk1c` | Host boards that build a real pyro backend against its plant |

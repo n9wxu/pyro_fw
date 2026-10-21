@@ -6,14 +6,15 @@ if a comment's `See THEORY_OF_OPERATION.md "..."` names a heading this file
 does not have.
 
 The design is `~/Documents/pyro_mk1b/pyro_mk1b.kicad_sch`; the pins and the
-sense network below were read from its netlist
-(`kicad-cli sch export netlist --format kicadsexpr`), as was the model in
-`sim/plant/plant_mk1b.c`. Where a part differs, the table gives the part the
-two JLCPCB builds' BOMs fit (`jlcpcbV1/`, `jlcpcbV2/` beside the schematic).
+sense network below, and the model in `sim/plant/plant_mk1b.c`, come from its
+netlist (`kicad-cli sch export netlist --format kicadsexpr`). Where a part
+differs, the table gives the part the two JLCPCB builds' BOMs fit
+(`jlcpcbV1/`, `jlcpcbV2/` beside the schematic).
 
 > **As built, MK1B cannot sense continuity.** Both JLCPCB builds fit U5 as the
 > AP2192**A**, whose outputs discharge to ground while disabled and hold the
-> sense nodes near 0 V. See [Known limits](#known-limits) and task B-U5.
+> sense nodes near 0 V. See [Known limits](#known-limits); MK1B-8MB
+> (`../mk1b_8mb/THEORY_OF_OPERATION.md`) is the refit that can.
 
 ## Overview
 
@@ -32,7 +33,7 @@ a weak pull-up. The AP2192 adds a fault flag per channel that MK1A lacks.
 | Item | Part | Notes |
 |---|---|---|
 | MCU | U6 RP2040, QFN-56, 12 MHz crystal Y1 | bare chip on the SDK's own `pico` board header: GPIO25 is the LED here too |
-| Flash | U7, a W25Q16JVUUIQ (2 MB, 3 V) by its marking, on a USON-8 4x3 mm footprint | 984 KB of files, the rest two OTA slots; see "Flash" below |
+| Flash | U7, a W25Q16JVUUIQ (2 MB, 3 V) by its marking, on a USON-8 4x3 mm footprint | 984 kB of files at the top (alfs, DD-100), below them the bootloader and two 384 kB OTA slots; see "Flash" below |
 | High sides | U5 AP2192AMPG-13 (LCSC C507872) | EN1/EN2 gate OUT1/OUT2; FLG1/FLG2 open drain |
 | Low side | Q1B, the second FET of an AO6800 | gate `sw_gnd` |
 | Fuse | F2, 1.5 A PTC | resets |
@@ -48,34 +49,35 @@ The chip on U7 is marked Q16JVUUIQ: a Winbond W25Q16JV, 16 Mbit, 2.7-3.6 V,
 in the USON 4x3 mm package (`docs/datasheets/W25Q16JV_RevI_2024-12-24.pdf`,
 page 70). It is powered from +3.3 V. Both builds' production files name
 W25Q64JWUUIQ (LCSC C6604692) for U7 instead, a 1.7-1.95 V part that would be
-out of its ratings on this rail; it is not what was fitted. The firmware
+out of its ratings on this rail; it is not the part fitted. The firmware
 takes the chip as 2 MB (`PYRO_FLASH_SIZE_KB` in `board.cmake`) and the
 SDK's `pico` header's W25Q080 boot stage 2.
 
 A replacement has to suit the W25Q080 boot stage 2 as well as the
 footprint. That boot stage reads status register 2 with 35h, sets its QE
 bit (bit 1) with a two-byte 01h, and leaves the chip in continuous EBh
-reads (mode bits A0h, M5-4 = 10); the SDK reads the unique ID, and with it
-the board's name and addresses, with 4Bh and four dummy bytes.
+reads (mode bits A0h, M5-4 = 10); the firmware reads the unique ID, from
+which the board's MAC, subnet and USB serial come (DD-099), with 4Bh and four
+dummy bytes (`src/flash_chip_read.c`).
 
 - BYTe Semiconductor BY25Q64ESHIG(R), 8 MB, 2.7-3.6 V: does all four
   (`docs/datasheets/BY25Q64ES_Rev2.9_2024-10-29.pdf`, pages 15, 29, 36 and
-  45), and its USON8 4x3 package matches the UU one (page 79). Not yet run
-  on a board.
+  45), and its USON8 4x3 package matches the UU one (page 79). MK1B-8MB is
+  an MK1B with it fitted (DD-097).
 - GigaDevice GD25Q-E parts, among them the GD25Q32ENIGR (4 MB) and the
   GD25Q64ENIGR (8 MB): an 01h longer than one byte is not executed
   (GD25Q64E, section 7.4), so QE is never set. They need another boot stage
   2: the SDK's AT25SF128A one writes status register 2 with 31h.
 - ISSI parts keep QE in status register 1, bit 6; the SDK's IS25LP080
   boot stage 2 exists for them.
-- Winbond's W25Q32JV, the other 3 V part in the UU package, is no longer
-  made.
+- Winbond's W25Q32JV, the other 3 V part in the UU package, is out of
+  production.
 
-No 16 MB 3 V part was found for this footprint.
+No 16 MB 3 V part is known in this footprint.
 
-The KiCad design as it now stands names U9, an XTX XT25F128FWOIGT-W
-(LCSC C3202839: 16 MB, 2.7-3.6 V) on a WSON-8 6x5 mm footprint, in place of
-U7. No board built from it has been seen.
+The KiCad design names U9, an XTX XT25F128FWOIGT-W (LCSC C3202839: 16 MB,
+2.7-3.6 V) on a WSON-8 6x5 mm footprint, where the JLCPCB builds have U7. No
+board on the bench is built from it.
 
 ## Pins
 
@@ -160,9 +162,12 @@ stamp a Lua output low on every check.
 `pyro_fire()` turns the common and the channel's enable on and starts a
 500 ms pulse; the check is suspended, since the pulse owns the common. When the
 pulse ends, the enable goes off and the common stays on as the stimulus, so a
-fresh presence reading lands a loop or two later, about 40 ms — inside the
-flight's post-fire verify window, which opens as the pulse ends and runs
-100 ms. With the common on there is no short reading; the last one stands.
+fresh presence reading lands a loop or two later, 10 to 20 ms. With the common
+on there is no short reading; the last one stands. Until that reading
+`pyro_get()` gives the fired channel no verdict, neither good, open nor
+shorted, and the flight's post-fire verify waits for one (PYR-VERIFY-01).
+While U5 is the AP2192A (`BOARD_PYRO_U5_DISCHARGES_OUTPUTS`) the board judges
+nothing, and a fired channel has no verdict at all.
 
 ## Pressure sensor
 
@@ -227,7 +232,7 @@ released pyro pad is one.
 
 ## Known limits
 
-- **U5 is the AP2192A (task B-U5).** The A variant discharges each output to
+- **U5 is the AP2192A (DD-059).** The A variant discharges each output to
   ground through about 100 Ω while it is disabled (DS32193 page 4, R_DIS, and
   its note 6). Against the 100 kΩ pull-ups that holds both sense nodes at a few
   millivolts whenever a channel is off — which is always, during a check. A
@@ -241,17 +246,19 @@ released pyro pad is one.
   pinout, active-high enables and MSOP-8EP drawing, and blocks reverse
   current, so the nodes read high when the battery is below 3.3 V
   (`docs/datasheets/AP2182_AP2192_DS31569_Rev10-2.pdf`, pages 1, 4 and 15);
-  with it, and that define at 0, the check above works as written.
+  with it, and that define at 0, the check above works as written. MK1B-8MB
+  is that refit (DD-097).
 - **The BMP280 pad has no pull-up**, so a BMP280 board's sensor runs at
   100 kHz.
 - **On USB alone the sensor is noisier, and a beep disturbs it (task
-  B-BZ).** The buzzer is driven from VUSB, and with no battery the USB
+  B-BZ).** The buzzer runs from VIN, which on USB alone the USB supply
+  reaches only through the TP4057 charger (U1), and with no battery that
   supply's limited current lets the 3.3 V rail move. Measured 2026-10-03
   (`docs/pressure_collector.md`): the MS5607 9.8 Pa rms at rest on USB alone
   against 2.3 Pa on a battery, the BMP280 2.5 against 2.0; a beep code adds
-  about a fifth on USB alone and nothing on a battery. Once, on USB alone, a
-  BMP280 left the bus during a beep code until its power was removed. Judge
-  this board's sensor with a battery fitted.
+  about a fifth on USB alone and nothing on a battery. On USB alone a beep
+  code can take a BMP280 off the bus until its power is removed. Judge this
+  board's sensor with a battery fitted.
 - **A flash operation disturbs the MS5607, battery or not:** a conversion
   beside one sits 8.5 to 17 Pa rms from its neighbours, 43 Pa at worst. It
   is used, and the flight's filters are taken to absorb it (DD-106). The
@@ -272,7 +279,7 @@ The values the requirements leave to the board (BRD-01). A value marked
 | Disarm when software stops (PYR-ARM-01) | **the watchdog, 1 s.** The loop ends the pulse, so a stopped loop leaves the enable on until the reset. This exceeds the 50 ms bound |
 | Sensor | MS5607 where fitted, else BMP280, found at start-up. MS5607: 10 to 1200 mbar, 2.4 Pa rms at OSR 4096 (`docs/datasheets/MS5607-02BA03_2017-06.pdf`, pages 1 and 4). Measured on this board with a battery fitted: MS5607 2.3 Pa rms, BMP280 2.0 Pa, a beep changing neither; on USB alone 9.8 and 2.5 Pa (`docs/pressure_collector.md`) |
 | Height for proper operation (SNS-MAX-01) | 30000 m with the MS5607; 9000 m with the BMP280 |
-| Flight log (DAT-09) | 984 kB of files, 3,935 pages: about 9 minutes of flight. Every sample is a 22-byte row, up to 69 a second from this board's MS5607, beside a row a second for each estimator; each second's sync stores its partial page [FLT-LOG-06], so a second takes about seven pages. `/api/log/space` reports the seconds the next flight has |
+| Flight log (DAT-09) | 984 kB of files, 3,935 pages: about 9 minutes of flight. Every sample is a 22-byte row, up to 69 a second from a BMP280 (53 from an MS5607), beside a row a second for each estimator; each second's sync stores its partial page [FLT-LOG-06], so a second takes about seven pages. `/api/log/space` reports the seconds the next flight has |
 | Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured* on this revision: `loop_late_max_us` on `/api/status` reports it |
 | Script resources (LUA-PAD-03) | the J1 user pad, GPIO8, and a released pyro channel's pads (`pin_caps.h`) |
 | Connector labels (PIN-LABEL-01) | `pin_caps.h` |
@@ -301,10 +308,10 @@ sector erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
 - `sensor_bringup_tests`, `collector_tests` and `ms5607_tests` cover the
   two-pad bring-up, a BMP280 holding the bus (DD-069), the collector and the
   arithmetic.
-- `integration_tests` flies the flight software built for MK1B, the default
-  board.
-- `plant_tests` models the sense network from the netlist; it leaves out U5's
-  discharge.
+- `flight_boot_tests`, `flight_pad_tests` and the other flight suites run the
+  flight software built for MK1B, the default board.
+- `plant_tests` models the sense network from the netlist, with U5 as fitted,
+  the AP2192A, or the base AP2192 (`plant_set_mk1b_u5()`).
 - `boards/sim_mk1b` runs the real `pyro_board.c` against the plant.
 
 ## References
@@ -314,6 +321,6 @@ sector erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
   diodes.com
 - `docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf`, `MS5607-02BA03_2017-06.pdf`,
   `UM10204_I2C-bus_Rev7.0_2021-10.pdf`
-- DD-052, DD-053, DD-059, DD-068, DD-069, DD-093, DD-104,
-  DD-071 in `DECISIONS.md`
-- Tasks B-U5 and B-BZ in `docs/outstanding_tasks.md`, section 6
+- DD-052, DD-053, DD-059, DD-069, DD-071, DD-093, DD-097, DD-099, DD-100,
+  DD-104, DD-106 in `DECISIONS.md`
+- Task B-BZ in `docs/outstanding_tasks.md`

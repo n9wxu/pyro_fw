@@ -3,8 +3,7 @@
  *
  * Lua must not call malloc. The SDK guards malloc with a mutex whose
  * mutex_enter_blocking() has no timeout, so a Lua task stopped inside malloc
- * would leave every later caller waiting forever. Plan invariant L2:
- * thoughts/shared/plans/2026-09-21-lua-user-programs-core1.md
+ * would leave every later caller waiting forever [LUA-ISO-01, SYS-LUA-02].
  *
  * So Lua gets its own heap: one static array, a first-fit list with
  * coalescing, and a hard ceiling. Exhaustion returns NULL, Lua raises "not

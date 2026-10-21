@@ -52,7 +52,7 @@ What a board need not write:
   drives them as plain GPIO on the pins `board_pins.h` names. Each is weak: a
   board with other hardware behind one — a piezo driver, a PWM slice —
   defines its own and that one links.
-- **`board_flash_ok()`**, weak and always true in `src/flash_window.c`. A
+- **`board_flash_ok()`**, weak and always true in `src/flash_op.c`. A
   board whose firing sequence is paced by the loop answers false while it
   runs, as MK1C does: a flash erase stalls the loop (DD-056).
 - **The ground test switch.** `src/hal_common/` reads it on whichever pads
@@ -131,16 +131,17 @@ A board copied from this template replaces every row with its own.
 
 - **The SDK board header.** The stock `pico` header declares 2 MB of flash and
   an LED on GPIO25, and leaves the crystal at the SDK's default 12 MHz; MK1B
-  fits it, bare RP2040 as it is.
-  MK1A has its own for its 16 MB, MK1C for its 16 MB and because its GPIO25 is
-  not an LED. An own header must carry
+  fits it, bare RP2040 as it is. MK1A has its own for its 16 MB, MK1B-8MB
+  for its 8 MB, and MK1C for its 16 MB and because its GPIO25 is not an LED.
+  An own header must carry
   `pico_board_cmake_set_default(PICO_FLASH_SIZE_BYTES, ...)` as well as the
   `#define`: without the directive the bootloader's linker script gets a
   negative flash size that still links. And it must not name
   `PICO_DEFAULT_LED_PIN` unless that pin really is an LED, because TinyUSB's
   BSP drives it as an output (`boards/mk1c/sdk/pyro_mk1c.h`).
-- **`PYRO_PFB_FS_KB`** is the files' reservation; the top level checks the
-  A/B slot arithmetic and fails the configure with it shown.
+- **`PYRO_PFB_FS_KB`** is the files' reservation, at the top of flash (alfs,
+  DD-100); the top level checks the A/B slot arithmetic and fails the
+  configure with it shown.
 - **`PYRO_LOOP_WORST_MS`** is the loop's worst case; the watchdog is twice it.
   Measure `loop_max_us` on `/api/status` under the worst load you can provoke —
   a log flush during an OTA upload — and set it to that, rounded up.
@@ -148,10 +149,12 @@ A board copied from this template replaces every row with its own.
 ## Tests
 
 A board's backend runs on the host against a stand-in SDK: `test/fake_sdk` for
-a pin-level test (`board_pyro_tests` does MK1B), or `sim/hw/` with a plant model
-in `sim/plant/` for one that needs the circuit's physics
-(`board_pyro_mk1c_tests`). `sensor_bringup_tests` builds once per board. Add the
-new board to both, and a `boards/sim_<name>` package to run the flight software
-against the plant. `ms5607_tests` and `integration_tests` build against the
-selected board's package, so run them in the new board's build directory, and
-add the board to `.github/workflows/build.yml`.
+a pin-level test (`board_pyro_tests` does MK1B, `board_pyro_mk1a_tests` MK1A),
+or `sim/hw/` with a plant model in `sim/plant/` for one that needs the
+circuit's physics (`board_pyro_mk1c_tests`). `sensor_bringup_tests` builds once
+per board. Add the new board to both, and a `boards/sim_<name>` package to run
+the flight software against the plant. The flight suites (`flight_boot_tests`,
+`flight_pad_tests`, `recorded_flight_tests` and the rest), `lua_tests`,
+`beep_tests` and `config_tests` build against the selected board's package, so
+run them in the new board's build directory, and add the board to
+`scripts/run_host_tests.sh` and `.github/workflows/build.yml`.

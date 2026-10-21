@@ -89,10 +89,11 @@ void flash_op_slot_stats(flash_op_slot_stats_t *out);
  * waits for it, bounded. */
 bool board_flash_ok(void);
 
-/* [DD-068] Advanced by every erase and program, before interrupts return.
+/* [DD-106] Advanced by every erase and program, before interrupts return.
  * An operation's current disturbs a pressure conversion running beside it
- * (G4-M), so a sensor notes this as a conversion starts and compares it as
- * the conversion is read. A plain RAM word: the MS5607's handler reads it. */
+ * (G4-M), so the pressure collector notes this as a conversion starts and
+ * compares it as the conversion is read. A plain RAM word: the collector's
+ * alarm handler reads it (collector_bus.h). */
 extern volatile uint32_t flash_op_seq;
 
 /* /api/status. */

@@ -1,18 +1,17 @@
 /*
- * HTTP work units, and who runs them.
+ * HTTP work units, and their turn.
  *
  * The transport only moves bytes between the stack and each connection's rings.
  * Everything else a connection needs -- parsing, routing, rendering, reading
  * a file, writing flash -- is a unit: one bounded step on one connection.
- * Core0 runs units from the loop's slack, after the flight work, never from
- * the loop's head. A portable unit touches nothing but its own connection:
- * one core0 had no room for, core1 runs with its next grant, before its Lua
- * slice. See DD-061.
+ * The net task runs them, a few between transport passes, each connection in
+ * turn (net_task.c, http_server_work()). See DD-073.
  *
- * Ownership is whole-connection and changes hands only on core0: core0 hands
- * units over before it grants core1 its slice, and takes them back once
- * core1 is idle again. While core1 holds a connection, core0 leaves it
- * alone, so the rings need no cross-core protocol.
+ * A portable unit touches nothing but its own connection, so a worker may run
+ * it. Ownership is whole-connection and changes hands only in the task that
+ * runs units: while the worker holds a connection that task leaves it alone,
+ * so the rings need no cross-task protocol. The firmware claims nothing for a
+ * worker; http_work_reclaim() keeps a connection from staying held.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -25,17 +24,17 @@
 #define HTTP_WORK_SLOTS 4
 #define HTTP_UNIT_NONE 0xFFu
 
-/* What one unit may cost. Core0 starts one only with this much of the period
- * left, except the first of each period, so HTTP progresses under any load.
+/* What one unit may cost. After a period's first unit, one starts only with
+ * this much of remaining_us left, so HTTP progresses under any load.
  * The /api/status render, the costliest unit that writes no flash, measured
  * 1.6 ms on MK1C. */
 #define HTTP_UNIT_BUDGET_US 2000u
 
-/* The same unit on core1, which fetches from flash while core0 does: 3.8 ms,
- * measured under G4. What the claim charges a grant per unit. */
+/* What http_work_claim() charges a grant per unit: the same render on core1
+ * while core0 also fetches from flash, 3.8 ms, measured under G4. */
 #define HTTP_WORKER_UNIT_US 4000u
 
-/* Of a core1 grant, what units may not take: the Lua slice's floor. */
+/* Of a grant, what claimed units may not take: the worker's own floor. */
 #define HTTP_WORKER_LUA_MIN_US 1000u
 
 enum { HTTP_ON_CORE0 = 0, HTTP_ON_WORKER = 1 };
@@ -50,9 +49,9 @@ extern uint32_t http_work_clock_us(void);
 
 void http_work_reset(void);
 
-/* ── core0 ────────────────────────────────────────────────────────── */
+/* ── the task that runs units ─────────────────────────────────────── */
 
-/* A period's slack begins. */
+/* A period begins: its first unit runs whatever remaining_us. */
 void http_work_period(void);
 
 /* The slot's next step is the portable unit `unit`. Ignored while the slot
@@ -65,8 +64,8 @@ bool http_work_cancel(int slot);
 bool http_work_pending(int slot);
 bool http_work_held(int slot);
 
-/* The slot core0 runs next, in turn, or -1. runnable[i]: the connection has
- * a step for core0. *unit is the portable unit to run, or HTTP_UNIT_NONE for
+/* The slot to run next, in turn, or -1. runnable[i]: the connection has a
+ * step of its own. *unit is the portable unit to run, or HTTP_UNIT_NONE for
  * the connection's own step. */
 int http_work_next(const bool runnable[HTTP_WORK_SLOTS], int32_t remaining_us, uint8_t *unit);
 
@@ -81,7 +80,7 @@ uint8_t http_work_reclaim(bool worker_idle, uint8_t *lost);
 
 void http_work_note(int who, uint32_t us);
 
-/* ── the worker (core1) ───────────────────────────────────────────── */
+/* ── the worker ───────────────────────────────────────────────────── */
 
 /* Runs every unit it was handed. */
 void http_work_run(void);

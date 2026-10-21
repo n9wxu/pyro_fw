@@ -7,8 +7,8 @@ does not have.
 
 The design is the schematic `~/Documents/Pyro_mk1a.pdf`. There is no KiCad
 source for this board to export a netlist from (`~/Documents/pyro/` is a
-different design); every GPIO here was checked against the schematic on
-2026-09-26.
+different design); every GPIO here is checked against the schematic
+(2026-09-26).
 
 ## Overview
 
@@ -27,7 +27,7 @@ battery at all.
 | Item | Part | Notes |
 |---|---|---|
 | MCU | RP2040, QFN-56, 12 MHz crystal Y1 | bare chip; its own SDK header, `sdk/pyro_mk1a.h` |
-| Flash | W25Q128JVS, 16 MB | 8 MB of files, the rest two OTA slots |
+| Flash | W25Q128JVS, 16 MB | 8 MB of files at the top (alfs, DD-100), below them the bootloader and two OTA slots |
 | High sides | Q6, Q1 DMC2053UVT dual MOSFETs | one per channel; 1 kΩ gate pull-downs |
 | Low side | Q2 AO3400A | shared; 1 kΩ gate pull-down |
 | Fuse | F1, 8 A | does not reset |
@@ -125,11 +125,11 @@ the exposure small if a high side ever leaks.
 `pyro_fire()` turns the low side and the channel's high side on and starts a
 500 ms pulse; the check is suspended, since the pulse owns the low side. When
 the pulse ends, the high side goes off and a new check starts **at once**, with
-the low side still on. The flight's post-fire verify window opens as the pulse
-ends and looks for the channel gone open; resuming the check anywhere else
-would leave the pre-fire reading latched through that window, and a channel
-still reading good there counts as a failed verify. Starting at once lands a
-fresh reading about 50 ms in.
+the low side still on, so a whole check after the pulse has its verdict about
+100 ms later. Until then `pyro_get()` gives the fired channel no verdict,
+neither good, open nor shorted: a reading from before the fire would say the
+igniter is still there. The flight's post-fire verify waits for the verdict
+(PYR-VERIFY-01).
 
 ## Pressure sensor
 
@@ -179,8 +179,11 @@ and low each loop and the read pad is pulled the other way, so the switch
 reads closed only when the read pad follows both ways; a pad touching ground
 or 3V3 never does. A switch from one pad to J6.5 is `ground_test=ground`.
 
-The switch's pads leave Lua: `pins.ini` is refused if they carry a Lua role or
-the buzzer. With no buzzer the procedure fires on the same schedule, silently.
+The switch's pads leave Lua: `pins.ini` is refused if they carry a Lua role.
+The switch may join the buzzer's pad to another, the buzzer's pad then being
+the one driven; the buzzer's pad is never the one read, and a switch to
+ground never takes it (GND-TEST-12). With no buzzer the procedure fires on
+the same schedule, silently.
 
 ## Faults
 
@@ -198,8 +201,6 @@ the buzzer. With no buzzer the procedure fires on the same schedule, silently.
   into the RP2040's ADC clamp for the 500 ms of the pulse. It is survivable, and
   firmware cannot change it.
 - **No fault output**, so an overcurrent is invisible to the firmware.
-- **No host test runs this board's pyro backend** in CI; `boards/sim_mk1a` runs
-  it against the plant model.
 
 ## What this board declares
 
@@ -216,7 +217,7 @@ The values the requirements leave to the board (BRD-01). A value marked
 | Disarm when software stops (PYR-ARM-01) | **the watchdog, 1 s.** The loop ends the pulse, so a stopped loop leaves the high side on until the reset. This exceeds the 50 ms bound |
 | Sensor | BMP280, 300 to 1100 hPa at full accuracy, 1.3 Pa rms at its highest resolution (`docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf`, pages 7 and 12); noise on this board *not measured* |
 | Height for proper operation (SNS-MAX-01) | 9000 m, the sensor's 300 hPa |
-| Flight log (DAT-09) | 8192 kB of files, 32,767 pages: about 1.5 hours of flight. Every sample is a 22-byte row, about 50 a second, beside a row a second for each estimator; each second's sync stores its partial page [FLT-LOG-06], so a second takes about six pages (5.9 measured on MK1C). `/api/log/space` reports the seconds the next flight has |
+| Flight log (DAT-09) | 8192 kB of files, 32,767 pages: about 70 minutes of flight. Every sample is a 22-byte row, about 72 a second from the BMP280, beside a row a second for each estimator; each second's sync stores its partial page [FLT-LOG-06], so a second takes about eight pages. *Not measured* on this board. `/api/log/space` reports the seconds the next flight has |
 | Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured* on this revision: `loop_late_max_us` on `/api/status` reports it |
 | Script resources (LUA-PAD-03) | the two J6 user pads, GPIO18 and GPIO19, and a released pyro channel's pads (`pin_caps.h`) |
 | Connector labels (PIN-LABEL-01) | `pin_caps.h` |
@@ -238,12 +239,17 @@ erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
 
 ## Tests and models
 
+- `board_pyro_mk1a_tests` runs the real `pyro_board.c` on the host against
+  `test/fake_sdk`: igniters reading good, the pulse's length, a fire refused
+  mid-pulse, and a fired channel with no verdict until a check after its
+  pulse.
 - `plant_tests` models this board's sense network (`sim/plant/plant_mk1a.c`):
   the counts above and how long a just-opened channel takes to read open.
 - `sensor_bringup_tests` runs the bring-up against a fake BMP280.
-- `bmp280_tests` runs the forced-mode cycle against a fake part timed from the
-  datasheet: a conversion a loop, its stamp, a held bus.
-- `integration_tests` flies the flight software built for MK1A.
+- `bmp280_tests` runs the detection and the arithmetic against a fake part;
+  `collector_tests` holds each read to the datasheet's worst-case conversion.
+- `flight_boot_tests`, `flight_pad_tests` and `recorded_flight_tests` run the
+  flight software built for MK1A.
 - `boards/sim_mk1a` runs the real `pyro_board.c` against the plant.
 
 ## References
@@ -252,6 +258,6 @@ erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
 - `docs/datasheets/BST-BMP280-DS001-26_2021-10.pdf`,
   `rp2040-datasheet_2025-02-20.pdf`, `UM10204_I2C-bus_Rev7.0_2021-10.pdf`
 - DD-052 (bus speeds), DD-053 (no waits), DD-059 (MK1B reads as MK1A does),
-  DD-104 (the 10 ms loop), DD-093 (the pressure collector), DD-068
+  DD-104 (the 10 ms loop), DD-093 (the pressure collector), DD-106
   (conversions beside a flash operation), DD-069 (bounded transfers), DD-071
-  (the ground test switch) in `DECISIONS.md`
+  (the ground test switch), DD-100 (the files) in `DECISIONS.md`

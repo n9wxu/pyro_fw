@@ -197,7 +197,7 @@ static bool hal_pressure_fifo_start(void);
 typedef struct {
     async_task_t base;    /* MUST be first */
     int sensor_type;      /* 1=MS5607  2=BMP280 */
-    ms5607_temps_t temps; /* MS5607: the temperature, carried to each pressure [DD-051] */
+    ms5607_temps_t temps; /* MS5607: the temperature, carried to each pressure [DD-093] */
 
     /* Ping-pong batch buffers.  back is filled by the tick function;
      * front is promoted atomically when full and read by the consumer. */
@@ -308,7 +308,7 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
 
 /* ── The collector's cycles, into readings [DD-093] ───────────────── */
 
-/* [DD-066] The cycle's temperature goes on its line first: its pressure is
+/* [DD-093] The cycle's temperature goes on its line first: its pressure is
  * compensated at its own time, between this temperature and the last.
  * [DD-106] A conversion a flash operation ran beside is counted. */
 static void take_ms5607(pres_task_t *p, const collector_raw_t *raw, uint32_t read_us) {
@@ -1132,13 +1132,13 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
  * STOPPING -> IDLE. Both counters only grow, so used = head - tail. */
 
 /* Binary records (flight_log.h), rendered as CSV only when downloaded
- * [DD-062]. 4 kB holds 1.9 s of samples at 100 Hz, enough to span the launch
- * shock window below; at a row a second it would hold three minutes, so the
- * holdoff also ends on a timer. */
+ * [DD-062], a sample record for every sample [DD-101]. 4 kB holds 186 of
+ * them, over 2.5 s at the fastest sensor's 73 a second, enough to span the
+ * launch shock window below [DD-027]. */
 #define LOG_BUF_SIZE 4096u
 #define LOG_MASK (LOG_BUF_SIZE - 1u)
 #define LOG_FLUSH_MS 200u
-#define LOG_HOLDOFF_MAX_MS 2000u /* [DD-084] */
+#define LOG_HOLDOFF_MAX_MS 2000u /* [DD-027] */
 
 /* Written at once from here up, without waiting for the flush timer. */
 #define LOG_WATERMARK (LOG_BUF_SIZE - 96u)

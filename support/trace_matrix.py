@@ -161,8 +161,7 @@ def build():
         rows[rid] = "; ".join(parts) if parts else "—"
 
     lines = ["# Requirements Traceability Matrix", "",
-             "Each live requirement of `REQUIREMENTS.md` and what verifies it. Withdrawn",
-             "requirements (its Appendix A) have no row.", "",
+             "Each requirement of `REQUIREMENTS.md` and what verifies it.", "",
              "This file is written by `support/trace_matrix.py` from the tests' own",
              "citations, the rules of `support/structure_check.py`, and the notes in",
              "`support/trace_notes.tsv`. Edit those, not this.", "",

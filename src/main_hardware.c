@@ -265,9 +265,8 @@ void flight_task(void *arg) {
             watchdog_update();
         }
 
-        /* First: the MS5607 is commanded at a steady offset from the period,
-         * so the conversion's one-shot has read it before the next period
-         * comes to take it. */
+        /* First: the cycles the pressure collector queued, so the flight
+         * software steps on each this period [DD-093, FLT-RATE-06]. */
         STAGE(2);
         hal_tasks_tick(now);
 

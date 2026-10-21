@@ -2,8 +2,7 @@
 """
 prove_core0.py -- prove (or disprove) that the flight task can be hung.
 
-Under FreeRTOS [DD-073] the rule is plan 2's (docs/log_storage_plan2_freertos.md,
-section 8):
+Under FreeRTOS the rule is DD-073's:
 
     the flight task never waits on anything another task can hold. Its only
     blocking call is the wait for its next period.
@@ -210,7 +209,7 @@ def build_graph(elf):
             if (fn, callee) in ALLOWED_EDGES:
                 continue
             callers[callee].add(fn)
-    spin_sites.discard("spin_locks_reset")  # the recovery, not a hazard
+    spin_sites.discard("spin_locks_reset")  # releases every lock; acquires none
     return callers, spin_sites
 
 
@@ -292,9 +291,9 @@ CORE1_FORBIDDEN = {
     "flash_range_program": "the Lua task touches no file and no flash",
     "multicore_fifo_pop_blocking": "unbounded wait on core0",
     "multicore_fifo_push_blocking": "unbounded wait on core0",
-    # A core1 that blocks here stops answering park requests, so core0 kills
-    # it and every flash write pays the full park timeout first. Found the
-    # hard way: pixel.show() waited on a WS2812 DMA that stopped completing.
+    # The instruction budget acts between Lua instructions, never inside a C
+    # call: a binding that waits here without bound, as pixel.show() would on
+    # a WS2812 DMA that stops completing, holds the Lua task past its budget.
     "dma_channel_wait_for_finish_blocking": "unbounded wait on a peripheral",
     "pio_sm_put_blocking": "unbounded wait on a PIO FIFO",
     "pio_sm_get_blocking": "unbounded wait on a PIO FIFO",
@@ -337,18 +336,16 @@ def vtable_targets(elf, objdump):
     """Functions reachable through a vtable core1 dispatches on.
 
     The call graph above is built from `bl` instructions, so a call through a
-    function pointer is invisible to it. That was harmless while core1 reached
-    hardware only through direct calls; lua_iface.c dispatches on stored
-    pointers, and a graph that cannot see past the cut keeps passing while
-    covering less -- which is how a check becomes a rubber stamp.
+    function pointer is invisible to it. lua_iface.c dispatches on stored
+    pointers, and a graph that cannot see past them keeps passing while
+    covering less.
 
-    Scoped to symbols named *_vt rather than to every address-taken function.
-    The broad reading folds in core0's HTTP route table and the flash
-    driver's callbacks, which reach flash legitimately, and the check then fails on
-    everything and means nothing. So the naming is load-bearing, and enforced
-    below: an image that links lua_iface_publish and exposes no *_vt has
-    renamed its way out of coverage, and that fails. So does an image that
-    links http_work_run, core1's HTTP work units, without http_unit_vt."""
+    Scoped to symbols named *_vt rather than to every address-taken function:
+    the broad reading folds in the flash driver's callbacks, which reach flash
+    legitimately, and the check then fails on everything. So the naming is
+    load-bearing, and enforced below: an image that links lua_iface_publish and
+    exposes no *_vt fails, and so does an image that links http_work_run, the
+    HTTP work units, without http_unit_vt."""
     syms = subprocess.run([objdump, "-t", elf], capture_output=True, text=True).stdout
     funcs, tables, have_publish, have_units = {}, [], False, False
     for line in syms.splitlines():
@@ -426,13 +423,10 @@ def check_core1(elf, entry, callers):
 # disappears, and the code that was supposed to run from RAM runs from XIP --
 # silently, with the source still saying __not_in_flash_func.
 #
-# That is not a theoretical failure. lua_core1_idle_wait() is core1's idle
-# spin, and core0's whole flash policy rests on it being in RAM: core0 erases
-# flash while core1 sits in that loop. Inlined into core1_main() it became a
-# tight loop of XIP reads, and an erase that overlapped it never returned --
-# the bootrom polls a status register it cannot read while another master is
-# hammering the QSPI bus. Core0 stopped inside flash_range_program() and the
-# watchdog took the board down, only ever with Lua running.
+# flash_op_park() is the lockout helper's spin [DD-074]: the other core has
+# XIP down for a program or an erase while it runs. Fetched from XIP, the spin
+# contends for the QSPI bus with the bootrom polling the flash's status
+# register, and the operation never returns.
 #
 # So the placement is checked here rather than trusted. Each entry is
 # (symbol, why it has to be in RAM).
@@ -595,8 +589,10 @@ def report(elf, roots, core1_entry=None):
         print("\nnote: these take a hardware spin lock, which this tool cannot check by")
         print("      call graph -- the acquire is inlined and emits no symbol. The SDK's")
         print("      safety argument is that such sections are short and never block, so")
-        print("      the other core always finishes. Killing core1 mid-section breaks that")
-        print("      argument, and spin_locks_reset() must follow any unilateral kill.")
+        print("      the other core always finishes. The Lua task's stop, vTaskSuspend(),")
+        print("      and a flash operation's lockout helper (DD-074) each reach a core by")
+        print("      an interrupt, so neither lands inside a section run with interrupts")
+        print("      off.")
         for root, site, path in spins:
             print(f"      {root} -> ... -> {site}  ({len(path)} frames)")
     if xip:

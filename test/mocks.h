@@ -112,17 +112,18 @@ extern uint32_t mock_noise_seed;         /* the same seed gives the same noise *
 extern int32_t mock_glitch_pa;           /* added to each of the next ... */
 extern int mock_glitch_samples;          /* ... this many readings */
 
-/* The MS5607's schedule on the hardware (DD-051, DD-065): each loop takes the
- * conversion its one-shot finished and commands the next, the temperature
- * once in ten. A reading is the pressure at the middle of its conversion,
- * 4.5 ms in, taken 5.5 ms later -- or later still if a stall holds the loop.
- * mock_one_shot runs the schedule alone; mock_stall_model adds core0's stalls,
- * 40-73 ms, about 1.3 times a second (DD-035). While one lasts nothing on core0
- * runs: a driver checks mock_core0_stalled() before dispatching. */
+/* The stall model, for FLT-RT-01's test: a stall delays when a reading is
+ * taken, not the time it carries. Each loop takes the conversion commanded
+ * at the last one and commands the next. A reading is the pressure 4 ms into
+ * its conversion, stamped 4.5 ms in, the middle of an MS5607 conversion
+ * (DD-093), and taken a loop later, or at the end of a stall that holds the
+ * loop. mock_one_shot runs the schedule alone; mock_stall_model adds stalls
+ * of 40-73 ms, about 1.3 a second. While one lasts nothing on core0 runs: a
+ * driver checks mock_core0_stalled() before dispatching. */
 extern bool mock_one_shot;
 extern bool mock_stall_model;
-/* true: stamped at the read, as hal_common.c stamped before T11; false: at the
- * conversion, as it does since. */
+/* true: stamped at the take; false: at the conversion's middle, as the
+ * collector stamps (DD-093). */
 extern bool mock_stamp_at_read;
 extern uint32_t mock_stall_seed;
 extern uint32_t mock_stall_count, mock_stall_total_ms, mock_stall_min_ms, mock_stall_max_ms;

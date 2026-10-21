@@ -42,8 +42,8 @@
 /* TODO [DD-052]: as fast as the sensor allows (MS5607_I2C_MAX_HZ) if this
  * PCB's pull-ups allow it: fast mode's 300 ns rise needs Rp <= 300 ns /
  * (0.8473 * Cb), 4k7 to about 75 pF. Standard mode until that is checked.
- * The one-shot's pair wants fast mode [DD-066]: in standard mode it is ready
- * 0.26 ms before the next loop, under the 0.5 ms ms5607_tests asks. */
+ * The collector's cycle wants fast mode [DD-093]: in standard mode it is
+ * 19.94 ms (collector_cycle_us()), 60 us inside FLT-RATE-01's 50 a second. */
 #define BOARD_MS5607_I2C_HZ 100000u
 
 /* ── Pyro ────────────────────────────────────────────────────────────

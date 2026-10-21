@@ -1,24 +1,27 @@
-# Apogee without a Mach flag
+# Apogee through a static-port error: the physics and the options
 
 Task HA-1, 2026-10-03: "Remove all lockout restrictions. Reevaluate the
 behavior of the mach-lockout on the bench with the new filters. Forget the
 previous concerns and take a fresh look at the physics and limitations."
 
+The firmware carries the answer (DD-092). The apogee rule below, rules 2 to 4
+of the arc, is `apogee_detected()` for every estimator (FLT-APO-07). The arc
+itself, rule 1, is how `constacc` says whether its model explains the
+readings. Option E is `lumped`, the default estimator
+(`docs/lumped_parameter_filter.md`).
+
 ## Bottom line
 
-- With clean static ports, the estimator of DD-085 needs no Mach flag at any
-  height. Apogee is declared 0.15 to 2.7 s after the true one from 60 m to
-  45 km with the flag removed, the same as with it.
-- With static ports that misreport near Mach 1, removing the flag and adding
-  nothing fires 11 to 101 s before apogee on every supersonic flight tested.
-- The flag as built is not safe either. On four of the fastest test flights it
-  fires 69 to 97 s before apogee through its own last-resort rule.
-- A rule with no flag and no speed thresholds does better than both in the
-  host tests: apogee must be the top of a ballistic arc. It fired after apogee
-  on every flight, every port error and every scale of port error tested.
-- Nothing has been changed in the flight code. The experiment is
-  `sim/study/apogee_arc_experiment.patch`. The choice is between the options
-  at the end.
+- With clean static ports, the estimator of DD-085 needs no lockout at any
+  height: apogee is declared 0.15 to 2.7 s after the true one from 60 m to
+  45 km.
+- With static ports that misreport near Mach 1, a rule with neither a
+  lockout nor the arc test fires 11 to 101 s before apogee on every
+  supersonic flight tested.
+- A rule with no flag and no speed thresholds fires after apogee on every
+  flight, every port error and every scale of port error tested: apogee must
+  be the top of a ballistic arc.
+- The experiment is `sim/study/apogee_arc_experiment.patch`.
 
 ## The physics
 
@@ -62,7 +65,6 @@ times in both signs.
 
 | Apogee rule | Clean ports | Port errors, 54 report flights | Port error sweep, 36 flights |
 |---|---|---|---|
-| The flag as built (FLT-MACH-02 to FLT-MACH-07) | +0.15 to +2.7 s | 4 early, by 69 to 97 s, at 30 and 45 km | none early |
 | No flag, nothing added | +0.15 to +2.7 s | 40 early, by 11 to 101 s | early |
 | No flag; apogee only when smooth and curving under about 3.5 g | +0.15 to +2.7 s | none early | 1 early, by 30 s |
 | No flag; apogee only on an arc on which a climb was seen (the patch) | +0.15 to +2.7 s | none early; +0.15 to +2.9 s | none early |
@@ -75,8 +77,7 @@ The last row is the rule in the patch:
 2. **A climb seen**: on this arc the rate has shown the rocket climbing, by
    more than three times the rate's own uncertainty.
 3. **Apogee**: on that arc the rate shows a descent, by the same margin. The
-   patch held this 60 ms; task T3 has since removed that hold from the flight
-   code.
+   patch holds this 60 ms; `apogee_detected()` holds nothing.
 4. **If no climb was seen** on the arc, a descent must hold for 2 s instead.
    This is what fires after a sensor gap or a glitch that spans the apogee
    itself. With 1, 2, 3 or 5 s here no port error in the tests fired early.
@@ -86,53 +87,56 @@ dependence on the level the flag was set at.
 
 ## Limitations found
 
-- **The reported peak.** With no flag, a port that reads low leaves a false
-  lowest pressure, and the reported maximum altitude is wrong: 3157 m for a
-  true 1526 m in `test_FLT_MACH_07_...`. The peak should come from the top of
-  the arc at apogee, not from the lowest pressure seen. FALLEN mode measures
-  from the same peak.
-- **A gap across apogee.** Two tests that lose the sensor across apogee
-  (`test_SNS_PRES_11_a_gap_across_apogee_...`,
-  `test_SNS_PRES_06_...`) run too short to see rule 4 fire. They need a longer
-  window, not a different rule.
+- **The reported peak.** A port that reads low leaves a false lowest
+  pressure: taken as the peak, it reads 3157 m for a true 1526 m. The peak
+  is the lowest filtered pressure the estimator explained (FLT-APO-08,
+  `test_FLT_APO_08_the_peak_is_from_what_the_estimator_explained`), and
+  FALLEN measures from it.
+- **A gap across apogee.** Half a second without samples across apogee
+  leaves the climb unseen, so the fall must last 2 s, and nothing is decided
+  until a second of new samples exists: the test holds the drogue to 1 to
+  3.5 s after the samples return
+  (`test_SNS_PRES_11_a_gap_across_apogee_waits_for_new_samples`).
 - **The model is the limit.** "None early" is against `mp_port_error_pa()`.
   No flight data of a real port error is in the tree. A port error that
   builds slowly and smoothly enough to stay under 3.5 g and under 4 standard
   deviations would pass rule 1. That takes an error growing over ten seconds
   or more, which a Mach transition is not.
-- **Arming is separate.** The channels arm once the rocket has passed 30 m
-  and slowed below 10 m/s (FLT-ASC-04). That rule reads the same apparent
-  speed and was left alone.
+- **Arming is separate.** The channels arm once the rocket has passed 30 m,
+  passed 10 m/s and slowed below it (FLT-ASC-04, FLT-ASC-08), and apogee is
+  taken once they are armed. That rule reads the same apparent speed.
 
 ## Does the estimator already model a ballistic flight with drag?
 
-No. `pest_update()` in `src/pressure_estimator.c` is kinematic: its state is
-ln(p), its rate and its curvature, and its only assumption is that the
-curvature changes slowly (a white-jerk process noise, `JERK_PSD`). It has no
+`constacc` does not. `pest_update()` in `src/pressure_estimator.c` is
+kinematic: its state is ln(p), its rate and its curvature, and its only
+assumption is that the curvature changes slowly (a white-jerk process noise, `JERK_PSD`). It has no
 gravity and no drag. It reports whatever acceleration the readings show,
 which is why it follows a port error.
 
 The arc rule above uses the physics outside the filter, as a test on the
 filter's output. Putting the physics inside the filter is the other way to
-do it, and is option B.
+do it: option B with switched phases, option E with none. `lumped` is E.
 
 ## Options
 
 ### A. The arc rule (the patch)
 
-Remove the flag and every rule tied to it. Apogee is the top of an arc on
-which a climb was seen. Take the peak from the top of the arc.
+In the firmware: `apogee_detected()` is rules 2 to 4, and `constacc`'s
+"explains" is rule 1 (`src/estimator_constacc.c`). Apogee is the top of an
+arc on which a climb was seen; the peak is the lowest pressure explained
+(FLT-APO-08).
 
-- For: smallest change; no thresholds in Mach; measured safe against every
-  port error in the tests, including the four the flag gets wrong; nothing
-  changes for a subsonic flight.
+- For: no thresholds in Mach; measured safe against every port error in
+  the tests; nothing changes for a subsonic flight.
 - Against: the filter itself still believes the port error, so the altitude
   and speed it reports during the transition are wrong, and the telemetry
   shows them.
-- Withdraws FLT-MACH-02 to FLT-MACH-07, the `mach_lock` and `mach_flag_ms`
-  status keys and the LOCK events. FLT-APO-01 gains the arc.
+- FLT-APO-07 is the arc (DD-092).
 
 ### B. A flight model in the filter
+
+Not built: E carries the model with no switches.
 
 State: height, vertical speed and a drag coefficient the filter discovers.
 Prediction: dv/dt = -g - k v |v| with the density from the standard
@@ -153,6 +157,8 @@ its whole length, shows as a run of large innovations, and is not followed.
 
 ### C. A, then B for the coast only
 
+Not built.
+
 The arc rule decides apogee. A model-based predictor runs beside the
 kinematic filter from burnout to apogee, only to flag when the two disagree,
 and only for the record at first.
@@ -163,15 +169,15 @@ and only for the record at first.
 
 ### D. Keep the flag
 
-- Against: it is the most complicated of the four, it is the only one with
-  thresholds that depend on the air's temperature, and it fires early on the
-  30 and 45 km flights in its own test report.
+Not in the firmware: DD-092 withdraws it. Its thresholds depend on the air's
+temperature, and it is the most complicated of A to D.
 
-### E. One lumped-parameter filter, with no phases (2026-10-03 discussion)
+### E. One lumped-parameter filter, with no phases
 
-**Studied: `docs/lumped_parameter_filter.md`.** It works and is recommended.
-The claim below that the physics alone rejects a port error did not hold: a
-consistency test is still needed beside the model.
+In the firmware: `lumped`, the default estimator (DD-092), studied in
+`docs/lumped_parameter_filter.md`. The physics alone does not reject a port
+error: a consistency test, "the model explains the readings", stands beside
+the model.
 
 The user's direction: no switched phase models. One filter tracks the
 pressure smoothly from the pad to the ground and adjusts lumped parameters as
@@ -205,26 +211,27 @@ What rejects a port error, with no flag:
 - Drag can only slow a rocket toward zero speed. It cannot reverse it.
 - Thrust cannot be negative.
 - So the only thing that turns a climb into a descent is gravity, at 1 g. A
-  reversal faster than that fits no value of `a_T` and `β`, shows as a run of
-  large innovations, and is not followed. This is the arc rule's physics,
-  inside the filter instead of beside it.
+  reversal faster than that fits no value of `a_T` and `β` and shows as a run
+  of large innovations. The filter still follows a sustained run; the
+  consistency test reads the innovations, and nothing is decided until the
+  model explains the readings again.
 
-What is not yet known, and a Python study on the test flights would show:
+What the study answers (`docs/lumped_parameter_filter.md`):
 
-- whether the two parameters stay stable through a 30 g burn and a canopy
-  opening without a switch;
-- whether a port error during a supersonic burn is rejected or absorbed as a
-  short rise in `β`;
-- what "data is believed" (SNS-EST-02) becomes, since this filter refuses
-  sustained data that no parameters can explain;
-- the cost in the 384 kB slot of MK1B and in the 20 ms loop.
+- the two parameters are not reliably identified through a hard burn, but
+  height and speed are tracked well, and a canopy's drag is found;
+- a port error is rejected by the consistency test, not by the physics;
+- "data is believed" (SNS-EST-02) holds: a sustained run is followed, and a
+  decision waits until the model explains it (SNS-EST-08);
+- the cost: about 7 kB of flash; the loop time with both filters running is
+  not measured.
 
 An accelerometer (a later MK1D, or one wired to an MK1C) measures
 `a_T − drag` directly and makes the parameters separable.
 
 ## To reproduce
 
-The patch is against commit d345755, before the apogee hold was removed.
+The patch applies to commit d345755.
 
 ```bash
 git checkout d345755
@@ -234,6 +241,5 @@ cmake -S . -B build && cmake --build build --target mach_tests
 git checkout -- src && rm src/apogee_detector.[ch]
 ```
 
-The patch still links `mach_lock.c` with its flag switched off, so the tests
-that assert the flag's own behaviour fail under it. Those tests go with the
-flag.
+At that commit the patch links the Mach flag's code with the flag switched
+off, so the tests that assert the flag's own behaviour fail under it.

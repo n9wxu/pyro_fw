@@ -1,6 +1,6 @@
 /*
  * Start-up: the checks before the pad, and the terminal fault when one of
- * them cannot pass [FLT-BOOT-01..08, FLT-BOOT-12..14, TEL-05, USB-02].
+ * them cannot pass [FLT-BOOT-01, FLT-BOOT-02, FLT-BOOT-05..08, FLT-BOOT-12..14, TEL-05, USB-02].
  *
  * SPDX-License-Identifier: MIT
  */
@@ -43,7 +43,7 @@ static int lines_with(const char *text) {
     return n;
 }
 
-/* ── The checks, in order [FLT-BOOT-01..08] ───────────────────────── */
+/* ── The checks, in order [FLT-BOOT-01, FLT-BOOT-02, FLT-BOOT-05..08] ─── */
 
 void test_FLT_BOOT_01_every_check_runs_before_the_pad(void) {
     power_up(1);

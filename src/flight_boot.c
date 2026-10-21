@@ -1,7 +1,7 @@
 /*
  * Start-up: the settle, the sensor and storage checks, the resume decision,
  * the first pyro health check and the ground calibration
- * [FLT-BOOT-01..08, FLT-BOOT-12..15, FLT-BROWN-02..07, GND-TEST-05].
+ * [FLT-BOOT-01, FLT-BOOT-02, FLT-BOOT-05..08, FLT-BOOT-12..15, FLT-BROWN-02..07, GND-TEST-05].
  *
  * SPDX-License-Identifier: MIT
  */

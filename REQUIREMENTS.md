@@ -22,7 +22,7 @@ Each derived requirement traces to its parent with `← parent_id`.
   narrow a range. It may never withhold a decided fire.
 - **‡** marks a value that is provisional until the modelling study
   (`docs/descent_speed_estimator.md`) or a bench measurement confirms it.
-- **Withdrawn** identifiers are listed in Appendix A and are never reused.
+- An identifier is never reused.
 
 ### Terms
 
@@ -243,7 +243,7 @@ taken only from what it can (`docs/lumped_parameter_filter.md`).
 ### System requirements
 - **SYS-CFG-01**: The system shall store configuration persistently across power cycles. ← UN-4
 - **SYS-CFG-02**: The system shall allow configuration changes without special tools. ← UN-4
-- **SYS-CFG-03**: The system shall validate configuration against the limits of the sensor and of the board. ← UN-4 A value that does not parse, or that its field cannot hold, shall be refused and the field left as it was; a configuration posted with such a value shall be answered 400 and not stored.
+- **SYS-CFG-03**: The system shall validate configuration against the limits of the sensor and of the board. A value that does not parse, or that its field cannot hold, shall be refused and the field left as it was; a configuration posted with such a value shall be answered 400 and not stored. ← UN-4
 
 ### The configuration file
 - **CFG-01**: The system shall store configuration in an INI-format file on persistent storage. ← SYS-CFG-01
@@ -637,94 +637,3 @@ are not rewritten or modified as part of this firmware.
 
 - **BRD-01**: Each board shall declare, in its theory of operation: the pyro faults it can reliably detect; its defaults and ranges for the pyro fields (PYR-BOARD-01); its pulse length and how its protection acts; its time to disarm when software stops (PYR-ARM-01); its sensor, the sensor's pressure range and noise, and its height for proper operation (SNS-MAX-01); its flight log capacity (DAT-09); its bound on the delay of a flight decision (FLT-RT-01); the resources it offers to scripts (LUA-PAD-03); and its connector labels (PIN-LABEL-01). ← SYS-CFG-03, DD-084
 - **BRD-02**: A value a board declares shall be confirmed by that board's HAL validation (HAL-06). ← BRD-01
-
----
-
-## Appendix A. Withdrawn
-
-An identifier here is no longer a requirement. Where the text was a
-mechanism, the design record named beside it still holds it.
-
-### Replaced by the rules of the 2026-10 review
-- **PYR-SAFE-01**: Withdrawn (DD-081). Pyro health is announced on the pad and gates no fire (PYR-HEALTH-01).
-- **PYR-REFIRE-02**: Withdrawn (DD-082). A re-fire is decided on descent speed alone (PYR-REFIRE-01).
-- **FLT-EMRG-02**: Withdrawn (DD-082). The emergency fire acts on descent speed at any time after apogee (FLT-EMRG-01).
-- **FLT-EMRG-03**: Withdrawn (DD-082). The fire rules compare absolute speeds, so no judgement of a settled descent remains.
-- **PYR-ARM-02**: Withdrawn (DD-081). No fire is refused (PYR-FIRE-01).
-- **PYR-ALT-01**: Withdrawn (DD-085). No setting is clamped.
-- **PYR-ALT-02**: Withdrawn (DD-083). A setting is not a pad fault and has no beep.
-- **BUZ-STATUS-01**: Withdrawn (DD-083). The diagnosis is not in the sound (BUZ-CODE-03).
-- **FLT-BOOT-11**: Withdrawn (DD-083). The order of the checks is replaced by the priority of the announcement (BUZ-CODE-02).
-- **FLT-BOOT-16**: Withdrawn (DD-083). Replaced by the one definition of an enabled channel (PYR-HEALTH-02).
-- **SNS-ALT-02**: Withdrawn (DD-085). Nothing is clamped to 8000 m.
-- **SNS-ALT-03**: Withdrawn (DD-085). Altitude is relative to the pad and may be negative.
-- **SNS-ALT-04**: Withdrawn (DD-085). It fenced in the two clamps.
-- **GND-CAL-02**: Withdrawn (DD-085). Every operation is in pressure (SNS-EST-05).
-- **FLT-LAND-01**: Withdrawn (DD-081). Its test rejected nothing at fifty samples a second; FLT-LAND-02 carries the stillness.
-- **FLT-LAUNCH-01**: Withdrawn (DD-081). Folded into FLT-LAUNCH-07.
-- **DAT-01**: Withdrawn (DD-084). Capacity is stated as flight duration (DAT-09).
-- **TEL-04**: Withdrawn (DD-088). Folded into TEL-03: one message a second in every state.
-- **TELEM-FMT-01**: Withdrawn (DD-088). The format is $PYRO; another format is a script on the serial pins (TEL-12).
-- **TELEM-FMT-02**: Withdrawn (DD-088). Events are queued into the telemetry (TEL-11).
-- **TELEM-FMT-03**: Withdrawn (DD-088).
-- **GND-TEST-01**: Withdrawn (DD-087). The serial ground test commands are removed.
-- **GND-TEST-02**: Withdrawn (DD-087).
-- **GND-TEST-03**: Withdrawn (DD-087).
-- **GND-TEST-04**: Withdrawn (DD-087).
-- **USB-06**: Withdrawn (DD-037). No board can see a charger: VBUS reaches only the charger IC.
-- **BUZ-07**: Withdrawn (DD-080). A duplicate of FLT-LAUNCH-05.
-- **FLT-BOOT-03**: Withdrawn (DD-080). A duplicate of CFG-05.
-- **SYS-PWR-02**: Withdrawn (DD-080). SYS-PWR-01 is the whole of the power requirement.
-
-### Mechanism, held in the design record
-- **SNS-PRES-02**: Withdrawn (DD-080). The low-pass filter; the estimator is DD-085's.
-- **SNS-PRES-03**: Withdrawn (DD-080). The low-pass filter's first value.
-- **SNS-PRES-05**: Withdrawn (DD-080). Conversion timing is each sensor driver's (DD-051, DD-067).
-- **SNS-PRES-07**: Withdrawn (DD-080). The median of three (DD-040); the behaviour is SNS-EST-02.
-- **SNS-PRES-09**: Withdrawn (DD-080). The quadratic fit (DD-048); the behaviour is SNS-EST-01 to SNS-EST-04.
-- **SNS-PRES-12**: Withdrawn (DD-080). The MS5607's temperature compensation (DD-066); its second order is SNS-PRES-15.
-- **FLT-RATE-02**: Withdrawn (DD-080). Samples are not delivered in batches.
-- **FLT-RATE-03**: Withdrawn (DD-080). Slower sampling after landing is a design choice under SYS-PWR-01.
-- **FLT-RATE-04**: Withdrawn (DD-080). Covered by HAL-02.
-- **FLT-BOOT-04**: Withdrawn (DD-080). The sensor's power-on wait is the driver's.
-- **FLT-BOOT-09**: Withdrawn (DD-080). The sensor's settling time is the driver's.
-- **FLT-LOG-05**: Withdrawn (DD-080). When a board first writes its log after launch is a board log constraint (DD-084).
-- **PYR-CONT-04**: Withdrawn (DD-080). MK1C's tracking test is in `boards/mk1c/THEORY_OF_OPERATION.md`.
-- **PYR-ARM-04**: Withdrawn (DD-080). MK1C's pump and gate sequence is in `boards/mk1c/THEORY_OF_OPERATION.md` (DD-056).
-- **WEB-HTTP-05**: Withdrawn (DD-080). Where the HTTP work runs (DD-073).
-- **WEB-HTTP-06**: Withdrawn (DD-080). Where the HTTP work runs (DD-073).
-- **RTOS-01**: Withdrawn (DD-080). The task model (DD-073); the behaviour is FLT-RT-01.
-- **RTOS-02**: Withdrawn (DD-080). How a flash operation is made safe (DD-074); the behaviour is FLT-RT-01.
-- **PWR-SAMPLE-01**: Withdrawn (DD-080).
-- **PWR-SAMPLE-02**: Withdrawn (DD-080).
-- **PWR-TELEM-01**: Withdrawn (DD-080).
-- **PWR-TELEM-02**: Withdrawn (DD-080).
-- **PWR-TELEM-03**: Withdrawn (DD-080).
-- **PWR-BUZZ-01**: Withdrawn (DD-080).
-- **PWR-BUZZ-02**: Withdrawn (DD-080).
-- **PWR-BUZZ-03**: Withdrawn (DD-080).
-- **PWR-USB-01**: Withdrawn (DD-080).
-- **PWR-SLEEP-01**: Withdrawn (DD-080).
-- **PWR-WAIT-01**: Withdrawn (DD-080). The no-sleep rule is a design rule (DD-053) with its own check.
-- **PWR-WAIT-02**: Withdrawn (DD-080). Bounded bus transfers (DD-069).
-- **PWR-LOG-01**: Withdrawn (DD-080). The behaviour is FLT-LOG-06 and FLT-RT-01.
-- **PWR-LOG-02**: Withdrawn (DD-080).
-- **PWR-LOG-03**: Withdrawn (DD-080).
-- **PWR-LOG-04**: Withdrawn (DD-080).
-- **CFG-TABLE-01**: Withdrawn (DD-080). The field table is how SYS-CFG-04 is met.
-- **HR-03**: Withdrawn (DD-080). The card's write size (DD-077).
-
-### Withdrawn before the review
-- **PYR-SAFE-02**: Withdrawn (DD-021). Both channels may deploy on one event (PYR-DEPLOY-01).
-- **FLT-LAUNCH-06**: Withdrawn (DD-016). There is no separate gain-within-a-window test.
-- **FLT-APO-05**: Withdrawn (DD-022). No timer may force apogee.
-- **FLT-APO-06**: Withdrawn (DD-022).
-- **FLT-MACH-01**: Withdrawn (DD-049). FLT-MACH-02..07 replace it.
-- **FLT-MACH-02**: Withdrawn (DD-092). There is no Mach flag; FLT-APO-07 and SNS-EST-08 replace FLT-MACH-02 to FLT-MACH-05.
-- **FLT-MACH-03**: Withdrawn (DD-092).
-- **FLT-MACH-04**: Withdrawn (DD-092).
-- **FLT-MACH-05**: Withdrawn (DD-092).
-- **FLT-MACH-06**: Withdrawn (DD-092). The arming height is FLT-ASC-08. A resumed flight starts with no climb seen (FLT-APO-07).
-- **FLT-MACH-07**: Withdrawn (DD-092). The peak is FLT-APO-08.
-- **SNS-PRES-04**: Withdrawn (DD-044).
-- **WEB-HTTP-07**: Withdrawn (DD-073).

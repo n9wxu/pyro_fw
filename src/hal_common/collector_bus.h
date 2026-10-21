@@ -58,7 +58,7 @@ __force_inline static uint64_t collector_bus_now_us(void) {
     }
 }
 
-/* [DD-068] Compared across a conversion: a change is a flash operation that
+/* [DD-106] Compared across a conversion: a change is a flash operation that
  * ran beside it. */
 __force_inline static uint32_t collector_bus_flash_ops(void) {
     return flash_op_seq;

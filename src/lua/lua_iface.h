@@ -8,8 +8,7 @@
  * A wrong combination is not rejected, it is absent: lua_iface_find() takes
  * the kind it wants, so output.set() on a pad published as an input finds
  * nothing, because no output vtable was ever installed for it. Checks can be
- * forgotten; a missing pointer cannot be called. Invariants L4 and L5 of
- * thoughts/shared/plans/2026-09-21-lua-user-programs-core1.md
+ * forgotten; a missing pointer cannot be called [LUA-PAD-02].
  *
  * SPDX-License-Identifier: MIT
  */

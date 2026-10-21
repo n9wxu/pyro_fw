@@ -1,9 +1,10 @@
 # One lumped-parameter filter for the whole flight
 
 The study asked for under task HA-1 on 2026-10-03: "Do a complete study. I
-prefer a single 'simple' model over layers of special cases." It follows
-`docs/apogee_without_a_mach_flag.md`, option E. Nothing in the flight code
-has changed. The filter, its harness and every number below are in
+prefer a single 'simple' model over layers of special cases." It answers
+`docs/apogee_without_a_mach_flag.md`, option E. The filter is in the firmware
+as `lumped`, the default estimator ("The port (DD-092)" below). The reference
+filter, its harness and every number in the study are in
 `sim/study/lumped*.py`; the raw output is `sim/study/lumped_results.txt`.
 
 ## Bottom line
@@ -13,23 +14,22 @@ has changed. The filter, its harness and every number below are in
   sensor's range, with and without static-port errors, at 1.2 and 9 Pa of
   sensor noise, it declared apogee early on none, with a median lateness of
   0.18 s and a worst case of 5.1 s.
-- **It is better than the filter flying today where it matters most.** Near
-  apogee its speed error is about half (0.55 against 1.03 m/s rms), and its
-  apogee is about twice as prompt (median 0.18 against 0.42 s).
-- **It replaces the Mach flag and five other special cases** with one rule:
-  decide only while the model explains the readings.
-- **The physics alone does not reject a port error.** I said earlier that it
-  would. It does not: with the "model explains the readings" check removed,
-  224 of 368 flights fired early. The model makes that check sharp. The check
-  is still what does the rejecting.
+- **Near apogee its speed error is about half the kinematic filter's**
+  (0.55 against 1.03 m/s rms): the constant-acceleration filter of DD-085,
+  `constacc`, in Python.
+- **One rule covers the transonic span:** decide only while the model
+  explains the readings. No flag, phase or Mach number is in it.
+- **The physics alone does not reject a port error.** With the "model
+  explains the readings" check removed, 224 of 368 flights fire early. The
+  model makes that check sharp; the check does the rejecting.
 - **The two parameters are not reliably identified.** Height and speed are
   tracked well. The drag and thrust values the filter settles on are often
-  wrong, most of all on hard-boost rockets. They are lumped, as you said.
-- **It needs the pad temperature.** With the standard atmosphere instead, 4
-  of 736 flights were early by up to 0.10 s on the hot pad. The sensor already
-  measures temperature.
-- **Recommendation:** adopt it, as a port to C tested against the same
-  flights the firmware's own suites fly, before any flight code depends on it.
+  wrong, most of all on hard-boost rockets. They are lumped.
+- **It needs the pad temperature.** With the standard atmosphere in its place,
+  4 of 736 flights are early by up to 0.10 s on the hot pad. The sensor
+  measures a temperature with every pressure.
+- **In the firmware** (DD-092): `src/estimator_lumped.c`, checked against
+  `sim/study/lumped.py` and flown in the firmware's own suites.
 
 ## The model
 
@@ -47,14 +47,14 @@ State: height above the pad, vertical speed, and two parameters.
 The same equation holds on the pad (where `a_T` settles at 1 g), in the burn,
 in the coast, under a canopy and on the ground. Nothing is switched. The
 measurement is the raw pressure, as ln p, through the atmosphere anchored at
-the pad's pressure and temperature. The code is `sim/study/lumped.py`, 180
-lines.
+the pad's pressure and temperature. The code is `sim/study/lumped.py`, about
+200 lines.
 
-Two things make the two parameters "slightly separable", as you put it:
+Two things make the two parameters "slightly separable", in the user's words:
 
 - **Time scale.** Thrust is brief and drag persists. Left with no evidence,
-  `a_T` fades in 3 s, and `beta` keeps what it has learned. This one line was
-  the largest single improvement in the study (below).
+  `a_T` fades in 3 s, and `beta` keeps what it has learned. This one line
+  matters more than any other part of the filter (below).
 - **Speed.** Drag goes with the square of the speed and vanishes at apogee;
   `a_T` does not depend on speed.
 
@@ -62,29 +62,32 @@ Two things make the two parameters "slightly separable", as you put it:
 
 Three rules read the filter. None has a phase or a Mach number in it.
 
-1. **Launch:** 100 ft above the pad and climbing at 5 m/s, as today.
+1. **Launch:** 100 ft above the pad and climbing at 5 m/s (FLT-LAUNCH-07).
 2. **Apogee:** the filter has been seen climbing, then is seen falling, by
    more than three times its own uncertainty in speed, with the model
    explaining the readings all the way. If the climb was not seen (a sensor
-   gap across apogee, a resume), the fall must last 2 s.
+   gap across apogee, a resume), the fall must last 2 s (FLT-APO-07).
 3. **"The model explains the readings":** the running mean of the squared,
-   normalised innovation is under 4, and the last second of readings was
-   used. This is the test every decision waits on.
+   normalised innovation is under 4, and the filter has used a second of
+   readings with no gap of more than 250 ms (SNS-EST-08). This is the test
+   every decision waits on.
 
-## What it replaces
+## What runs beside it
 
-| Today, in the flight code | With this filter |
+Rule 3 is the only consistency test (DD-092). Beside the filter the flight
+keeps:
+
+| In the flight code | What it does |
 |---|---|
-| The Mach flag: set, release, fallback, peak restart (FLT-MACH-02 to FLT-MACH-07) | rule 3 |
-| The raw two-interval rate that sets the flag in a hard boost | nothing |
-| "Smooth for a second" in the release | rule 3 |
-| The 2 s free-fall bound after a charge (PYR-MODE-06) | the bay's readings are not used for 1 s after the board's own pulse |
-| The arming gate on speed (FLT-ASC-04) | not needed for apogee; kept only if the ARMED event is wanted |
-| Thrust flag from the sign of the acceleration | `a_T` above 1 g |
+| The arming gate (FLT-ASC-04, FLT-ASC-08) | arms above about 30 m, after 10 m/s was passed and the speed fell below it; apogee is taken once armed |
+| The bound to free fall for 2 s after a pulse (PYR-MODE-06) | holds what the triggers read; the filter itself takes no readings for 1 s after the board's own pulse and loosens its drag |
+| The thrust report (FLT-ASC-03) | the sign of the filtered acceleration |
 
-What stays outside the filter, as today: discarding a reading the part cannot
-produce, the stuck-sensor test (eight identical readings), and the skip of
-one or two readings more than six standard deviations off.
+Outside the filter: a pressure of zero or less, which has no logarithm, is
+not fed (SNS-PRES-06), and a run of eight identical readings is taken back
+from the estimators, a second of one being a stuck sensor (SNS-PRES-10).
+Inside it: one or two readings more than six standard deviations off are
+skipped, and the third in a row is used (SNS-EST-02).
 
 ## Results
 
@@ -101,12 +104,7 @@ the declared one.
 | Same, pad temperature read 10 K high | 736 | 0 | 0 | 0.21 s | 0.59 s | 4.75 s |
 | Same, pad temperature read 10 K low | 736 | 0 | 0 | 0.16 s | 0.39 s | 0.91 s |
 | Same, standard atmosphere instead of the pad temperature | 736 | 4, by up to 0.10 s | 0 | 0.17 s | 0.42 s | 0.99 s |
-| The filter flying today, with its Mach flag (Python port) | 368 | 3 | 0 | 0.42 s | 1.53 s | 3.30 s |
 | 45 km, past the sensor's range | 128 | 16, by up to 2.4 s | 0 | 0.80 s | 1.43 s | 2.85 s |
-
-On the firmware itself (`test_TST_03_report`) the Mach flag fires 69 to 97 s
-early on four of the 30 km and 45 km port-error flights. The lumped filter's
-worst at 45 km is 2.4 s early.
 
 ### The port error scaled from 0.1 to 4 times, both signs
 
@@ -120,15 +118,15 @@ back they showed a smooth fall for seconds, which is what a real descent
 shows. No real port can do this, and no filter that believes data can tell
 it from a descent.
 
-### Speed, against the filter flying today (m/s rms, clean ports)
+### Speed, against the kinematic filter (m/s rms, clean ports)
 
 | | Coast | Last 3 s before apogee |
 |---|---|---|
 | Lumped filter, mean over the rockets | 3.21 | 0.55 |
-| Kinematic filter of today | 4.44 | 1.03 |
-| 30 km at 9 Pa: lumped / today | 2.10 / 4.63 | 1.33 / 4.23 |
-| 66 g boost at 9 Pa: lumped / today | 11.97 / 24.59 | 0.36 / 0.74 |
-| 30 g boost at 9 Pa: lumped / today | 15.24 / 8.76 | 0.39 / 0.71 |
+| Kinematic filter (`constacc` in Python), mean over the rockets | 4.44 | 1.03 |
+| 30 km at 9 Pa: lumped / kinematic | 2.10 / 4.63 | 1.33 / 4.23 |
+| 66 g boost at 9 Pa: lumped / kinematic | 11.97 / 24.59 | 0.36 / 0.74 |
+| 30 g boost at 9 Pa: lumped / kinematic | 15.24 / 8.76 | 0.39 / 0.71 |
 
 The coast figure is dominated by one or two seconds after burnout, where the
 filter is still moving thrust out and drag in. Rule 3 is false during it.
@@ -199,58 +197,57 @@ Each row removes or changes one thing, on the 368 in-range flights.
 | Thrust fades in 1 s instead of 3, standard atmosphere | 107, by up to 1.2 s | | |
 | Thrust fades in 1 s, pad temperature known | 0 | 0.16 s | 0.64 s |
 
-Every other tuning value was halved and doubled with no early fire
-(`sim/study/lumped_tune.py`). Two were fragile until rule 2 was written as
-"seen climbing, then seen falling": the memory of the fit check, and how
-close to zero the thrust may go.
+Every other tuning value, halved and doubled, gives no early fire
+(`sim/study/lumped_tune.py`). Two are fragile without rule 2's "seen
+climbing, then seen falling": the memory of the fit check, and how close to
+zero the thrust may go.
 
-## What I got wrong on the way, and why it matters
+## What the design rests on
 
-1. **"The physics rejects a port error by itself."** It does not. A port
-   error looks to this model like a sudden stop followed by a fall, which a
-   rocket can do. What gives the error away is that the readings then fall
-   faster than gravity allows, which shows as large innovations. Rule 3 reads
-   that. So the single model needs one consistency test beside it. It does
-   not need a lockout.
-2. **Clamps and projections.** The first filter held the parameters positive
-   with clamps and corrected the covariance by hand. It fired early on 85 of
-   216 flights. Writing the limits into how the parameters are expressed
-   removed all of that code and most of the failures.
+1. **The physics does not reject a port error by itself.** A port error
+   looks to this model like a sudden stop followed by a fall, which a rocket
+   can do. What gives the error away is that the readings then fall faster
+   than gravity allows, which shows as large innovations. Rule 3 reads that.
+   So the single model needs one consistency test beside it. It does not
+   need a lockout.
+2. **Limits in the parameters' form, not clamps.** Held positive by clamps,
+   with the covariance corrected by hand, the parameters fire early on 85 of
+   216 flights. Written into how the parameters are expressed (`a_T` through
+   ln(1 + e^s), `beta` as ln(beta)), the limits need no such code and most of
+   the failures go.
 3. **Thrust and drag cancel.** With both free, the filter can settle on a
    huge thrust balanced by a huge drag and stay there: 31 s late on one
-   flight. The 3 s fade on thrust is what breaks the tie.
+   flight. The 3 s fade on thrust breaks the tie.
 4. **A decision from a prediction.** With the readings gone for tens of
-   seconds the model ran alone and declared an apogee. Rule 3 now needs a
-   second of used readings. This is your first rule: a fire needs measured
-   evidence.
+   seconds the model runs alone, and on its own it can declare an apogee.
+   Rule 3 needs a second of used readings: a fire needs measured evidence
+   (DD-081).
 5. **The temperature.** On the hot pad the standard atmosphere makes gravity
    look 15 % too strong, and the filter then needs a small constant "thrust"
-   to fit. Giving it the pad temperature removes the need.
+   to fit. The pad temperature removes the need.
 
 ## Limits
 
-- **It is a Python study.** The firmware's own suites (`test/flight_run.c`)
-  have more cases: restarts, late loops, stalls, ground test. None has been
-  flown on this filter.
-- **The port model is the only evidence** about port errors, as before.
+- **The study is in Python.** The firmware's own suites (`test/flight_run.c`)
+  have more cases: restarts, late loops, stalls, ground test. They fly the C
+  port, the default estimator.
+- **The port model is the only evidence** about port errors.
 - **Cost is estimated, not measured.** State 3 to 4, covariance 6 to 10
   terms, and about six more transcendental calls a reading. In Python it is
-  1.7 times the kinematic filter. On an RP2040 with no floating-point unit
-  that is likely under a millisecond of the 20 ms loop; MK1B's 384 kB slot
-  has about 10 kB spare.
+  1.7 times the kinematic filter. The C port's prediction and update are
+  estimated at about 40,000 cycles a reading, against the 10 ms loop.
 - **The pad speed in gusts** needs the height test to stay as it is.
-- **"Data is believed"** (rule 2 of the review, SNS-EST-02) needs one more
-  sentence: a sustained run of readings is followed, and a decision waits
-  until the model explains it.
+- **"Data is believed"** (SNS-EST-02) reads with SNS-EST-08: a sustained run
+  of readings is followed, and a decision waits until the model explains
+  it.
 - **Beyond the sensor's range** (45 km) it can be up to 2.4 s early with a
   large port error.
 
 ## The port (DD-092)
 
-Adopted 2026-10-03. `src/estimator_lumped.c` is `sim/study/lumped.py` in C,
-single precision, behind `src/estimator.h`. It is the default estimator. The
-filter that flew before is `constacc`, beside it, and both fly on every
-reading.
+`src/estimator_lumped.c` is `sim/study/lumped.py` in C, single precision,
+behind `src/estimator.h`. It is the default estimator. `constacc` flies beside
+it, and both are fed every reading (SNS-EST-07).
 
 - **Checked against the reference:** `sim/study/lumped_port_check.py` flies
   54 of the study's flights, replays the readings the reference was fed
@@ -264,22 +261,22 @@ reading.
 - **The pad's temperature** is the sensor's own at the first reading.
 - **The peak** is the lowest filtered pressure the model explained
   (FLT-APO-08).
-- **One change to the rules:** the second of evidence starts again after
-  250 ms without a used reading, not after one missing reading. A sensor
-  repeating itself for eight readings near apogee cost 2 s on 2 of 1000
-  flights to 10 km. The sweep and the failure cases above are unchanged by
-  it.
-- **A second change, from the first bench flight on hardware:** the model
-  has no ground. With readings, they supply it. With none, a prediction that
-  reaches the pad's level now stops there. Left alone it fell on through: 19
-  km below the pad after ten minutes of a sensor repeating itself. The
-  study's sweep and failure cases are unchanged by it.
+- **The second of evidence** starts again after 250 ms without a used
+  reading, not at one missing reading. Restarted at one, it costs 2 s on 2 of
+  1000 flights to 10 km, where a sensor repeats itself for eight readings
+  near apogee. The sweep and the failure cases above hold with it.
+- **The model has no ground.** With readings, they supply it. With none, a
+  prediction that reaches the pad's level stops there
+  (`stop_at_the_ground()`). Without the stop, ten minutes of a sensor
+  repeating itself carry the prediction 19 km below the pad. The study's
+  sweep and failure cases hold with it.
 - **Flown in the host suites** (`test/test_mach.c`, obeying each estimator):
   never early from a hop to 45 km on the test plant's port errors; 0.09 to
   0.94 s after apogee.
-- **Cost:** about 7 kB of flash. MK1B's 384 kB slot has about 3 kB spare.
-- **Still owed:** a bench flight (DD-078) on hardware, and the loop time with
-  both filters running.
+- **Cost:** about 7 kB of flash.
+- **Flown on the bench** (DD-078), 2026-10-03: a 3 km flight on MK1C-SD,
+  apogee called at the profile's apogee by both estimators (DD-093).
+- **Still owed:** the loop time with both filters running.
 
 An accelerometer, on a later MK1D or wired to an MK1C, measures
 `a_T - drag` directly. It would enter the same filter as a second

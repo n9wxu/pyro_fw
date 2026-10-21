@@ -1,7 +1,7 @@
 /*
  * The board's MAC: derived from the flash chip's whole unique ID (DD-099),
  * unless /serial.txt holds one an operator assigned (mac_random.c,
- * WEB-NET-06). The pool's mixing is DD-072's; the ID is now all it is fed.
+ * WEB-NET-06). The pool is fed the ID alone.
  *
  * Verifies [WEB-NET-06].
  */
@@ -95,8 +95,8 @@ void test_WEB_NET_06_subnet_spreads_evenly(void) {
     }
 }
 
-/* What DD-072's firmware wrote for a drawn MAC: recognised, so it can give
- * way to the flash ID. */
+/* A file holding a MAC drawn at random: recognised, so it can give way to
+ * the flash ID (DD-099). */
 void test_WEB_NET_06_a_drawn_file_is_recognised(void) {
     const uint8_t mac[MAC_BYTES] = {0x02, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E};
     uint8_t got[MAC_BYTES];

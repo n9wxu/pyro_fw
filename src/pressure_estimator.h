@@ -1,8 +1,10 @@
 /*
- * The one estimator of the pressure [SNS-EST-01, SNS-EST-02, DD-085].
+ * The constant-acceleration Kalman filter on the raw pressure readings
+ * [SNS-EST-01, SNS-EST-02, DD-085]: `constacc`, one of the estimators behind
+ * estimator.h [DD-092].
  *
- * A Kalman filter on the raw readings. Its design and what it was measured
- * against are in docs/descent_speed_estimator.md.
+ * Its design and what it was measured against are in
+ * docs/descent_speed_estimator.md.
  *
  * SPDX-License-Identifier: MIT
  */

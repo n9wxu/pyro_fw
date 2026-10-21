@@ -38,7 +38,7 @@ DESIGN.md 7.1 run one step per loop iteration (DD-056).
 | Item | Part | Notes |
 |---|---|---|
 | MCU | RP2040, QFN-56, 12 MHz crystal | bare chip; its own SDK header, `sdk/pyro_mk1c.h` |
-| Flash | XT25F128FWOIGT-W, 16 MB | 8 MB of files, the rest two OTA slots behind `pico_fota_bootloader`. Its unique ID is 128 bits (`docs/datasheets/XT25F128F-W_Rev0.6_2022-02-26.pdf`, p. 23); the SDK reads the first 64, which two chips share, and the board's identity is derived from all 128 (DD-098, DD-099) |
+| Flash | XT25F128FWOIGT-W, 16 MB | 8 MB of files at the top (alfs, DD-100), below them `pico_fota_bootloader` and two OTA slots. Its unique ID is 128 bits (`docs/datasheets/XT25F128F-W_Rev0.6_2022-02-26.pdf`, p. 23); the SDK reads the first 64, the half two chips can share, and the board's identity is derived from all 128 (DD-098, DD-099) |
 | High side | U9 TPS259570 eFuse | current limit 4.05 A (R_ILIM 499 Ω); output ramp 0.89 V/ms (C_dVdT 47 nF); latches off on overtemperature |
 | Arm pump | C101 10 nF, BAT54S, C_HOLD 100 nF, R_BLEED_EN 100 kΩ | ARM_TOGGLE → U9 EN/UVLO |
 | Low sides | Q103, Q104 AO3400A | gates through R108/R113 100 Ω |
@@ -88,8 +88,9 @@ which drives ARM_TOGGLE, both gates and all three bias pins low before USB,
 networking or the filesystem start. The pads' reset state (input, pull-down)
 already holds them there; this makes it explicit. `pyro_init()` repeats it,
 claims the four ADC inputs, loads the arm pump's PIO program and claims its
-state machine — at boot, so a full PIO fails there and not at a fire — and takes
-the first quiescent reading.
+state machine and the hardware alarm that ends a presence pulse — at boot, so
+a full PIO fails there and not at a fire — and takes the first quiescent
+reading.
 
 ## The main loop
 
@@ -212,14 +213,14 @@ bleed's current at 10 kHz. Stopping the toggle **is** the disarm: C_HOLD bleeds
 and U9 turns off within 9.6 ms (DESIGN.md 5.1).
 
 The toggle comes from a PIO state machine that is FIFO-paced (`arm_pump.pio`):
-each word pushed buys one burst of 50 cycles (5 ms), and the machine stalls when
-the words run out. A free-running PWM would keep a dead processor armed; this
-cannot run past what the firmware last pushed. `arm_pump_feed()` tops the FIFO
-up once a loop, never waiting. Four FIFO words and the one running hold 25 ms,
-a loop and a quarter, which carries the pump across a loop period and bounds
-how far it runs past the last check (`arm_pump.h` sizes the burst from the
-period). A loop that stops leaves the bus disarmed within about 35 ms: the 25 ms
-the FIFO holds, then U9's 9.6 ms.
+each word pushed buys one burst of 25 cycles (2.5 ms), and the machine stalls
+when the words run out. A free-running PWM would keep a dead processor armed;
+this cannot run past what the firmware last pushed. `arm_pump_feed()` tops the
+FIFO up once a loop, never waiting. Four FIFO words and the one running hold
+12.5 ms, a loop and a quarter, which carries the pump across a loop period and
+bounds how far it runs past the last check (`arm_pump.h` sizes the burst from
+the period). A loop that stops leaves the bus disarmed within about 22 ms: the
+12.5 ms the FIFO holds, then U9's 9.6 ms.
 `arm_pump_stop()` disables the machine and returns the pad to plain GPIO, low.
 
 ## Firing sequence
@@ -238,7 +239,7 @@ flight serialises them (PYR-DEPLOY-02). The fire runs one step per loop:
 | hold | F7 | the gate stays on | the bus is flat (25 counts between loops) once U9's enable has had 10 ms to collapse, or 30 ms |
 | release | F8 | the gate goes off | — |
 | drain | F9 | the bleed empties the bus; the presence test waits | the bus is cold (50 counts) |
-| verify | F10 | the next presence test reports `open: fired` or `still present: misfire, treat as live` | — |
+| verify | F10 | the presence test that runs as the bus goes cold reports `open: fired`, `still present: misfire, treat as live`, or `unverified: the bus did not rise` | — |
 
 **The pulse is U9's current limit.** No bulk capacitor is fitted, so there is
 no stored charge to dump: with the gate on, U9 drives about 4 A into a 1 Ω
@@ -264,12 +265,14 @@ first releases its gate, on the bus the first left charged. Never both at once
 
 ## Flash and the fire
 
-A flash sector erase stalls the loop for tens of milliseconds — longer than the
-pump coasts — and a precharge that stalls reaches its deadline uncharged. So
-`board_flash_ok()` answers false from the command until the gate is released,
-and while a presence pulse is out, and the main loop opens no storage window
-meanwhile. The fire takes a few loop
-periods; the log's writes wait for them.
+On the ground a flash operation stops both cores (DD-100), and a sector erase
+stalls the loop for tens of milliseconds — longer than the pump coasts — so a
+precharge that stalls reaches its deadline uncharged. So `board_flash_ok()`
+answers false from the command until the gate is released, and while a
+presence pulse is out, and `flash_op()` waits for it (`src/flash_op.c`). The
+fire takes a few loop periods; the storage waits for them. In flight a flash
+operation runs on core1 alone, beside a flight path that runs from RAM
+(DD-104), and does not stall the loop.
 
 ## Pressure sensor
 
@@ -277,11 +280,12 @@ One MS5607 on I2C1, at its fastest, 400 kHz: R3 and R5 (4k7) hold fast mode's
 300 ns rise to about 75 pF (DD-052). Bring-up is the shared single-sensor path,
 `src/pressure_single_sensor.c`: clock the bus free in case the sensor was left
 mid-transfer across a reset, hand it to the I2C block, let the pull-ups settle,
-detect. In flight the pressure collector runs the sensor free (DD-093): a
-pressure, then a temperature, each read 9.1 ms after its command by an alarm
-whose handler runs from RAM, so a flash write cannot delay a read or its
-timestamp. A cycle takes 18.8 ms, 53 a second, and up to four wait for the
-loop.
+detect. The pressure collector runs the sensor free (DD-093): a pressure,
+then a temperature, each read 9.1 ms after its command by an alarm whose
+handler runs from RAM, so in flight a flash write on core1 delays neither a
+read nor its timestamp (DD-104). On the ground an erase stops both cores, and
+the readings pause for it, up to about 60 ms (DD-106). A cycle takes 18.8 ms,
+53 a second, and up to four wait for the loop.
 
 A transfer that fails is counted by cause on `/api/status`. After three in a
 row the collector clears the bus, resets the sensor and goes on. A conversion
@@ -291,7 +295,7 @@ a flash erase or program ran beside is used like any other, and counted in
 Measured 2026-10-03 with a battery fitted (`docs/pressure_collector.md`): the
 sensor's scatter is 2.4 to 2.6 Pa rms, the datasheet's figure, beeping or
 not. A conversion beside a flash operation sits 3.4 to 3.9 Pa rms from its
-neighbours, 12 Pa at worst. On USB alone the scatter read 6 to 7 Pa: judge
+neighbours, 12 Pa at worst. On USB alone the scatter is 6 to 7 Pa: judge
 the sensor with a battery fitted.
 
 ## Telemetry, LED and buzzer
@@ -334,18 +338,19 @@ The `mk1c_sd` variant gives them to SPI0 and a C driver instead, with Lua
 off (`../mk1c_sd/THEORY_OF_OPERATION.md`, DD-075). SPI0 is not I2C1, so
 nothing there touches the sensor's bus.
 
-The test board wired on 2026-09-28 carries an SD card on J3, its CS on GPIO21,
-and an LSM6DS3 on the same SCK, MOSI and MISO, its CS on GPIO22. It needs:
+The MK1C-SD test board carries an SD card on J3, its CS on GPIO21, and an
+LSM6DS3 on the same SCK, MOSI and MISO, its CS on GPIO22. It needs:
 
 - **4.7 kΩ pull-ups on both chip selects.** A pad resets with its 50–80 kΩ
   pull-down on (RP2040 pages 302 and 616): without them both parts are
   selected together until firmware drives the lines.
 - **A pull-up on MISO.** Against the pull-down an absent card reads 0x00, a
   plausible reply to CMD0; against a pull-up it reads 0xFF.
-- **10 µF and 100 nF at the card.** A card may draw 100 mA in SPI mode (SD
-  simplified 6.00, PDF page 36) from U6, an XC6206 rated 200 mA with up to
-  680 mV of dropout at 100 mA (XC6206 page 5). That rail also feeds the MS5607
-  and the ADC.
+- **A 3.3 V regulator of its own for the card.** A card may draw 100 mA in
+  SPI mode (SD simplified 6.00, PDF page 36). U6, the XC6206 on J3.1, is
+  rated 200 mA with up to 680 mV of dropout at 100 mA (XC6206 page 5), and a
+  card on it resets at every initialisation; that rail also feeds the MS5607
+  and the ADC (`../mk1c_sd/THEORY_OF_OPERATION.md`, task C-U6).
 
 Bring-up, in order: both chip selects high; the LSM6DS3 selected and
 I2C_disable set, CTRL4_C (13h) bit 2, because deselected its I2C block listens
@@ -378,7 +383,7 @@ presence test reads open is still fired on command (GND-TEST-13).
 | the bus will not charge during a fire | the gate closes at the deadline; the timeout is recorded for that pulse |
 | U9 will not turn off after a fire | the bus stays hot past the bleed: latched |
 | a misfire | reported by the verify step; nothing latched |
-| the loop stops mid-arm | the pump stalls; the bus disarms within about 35 ms |
+| the loop stops mid-arm | the pump stalls; the bus disarms within about 22 ms |
 | the processor resets mid-pulse | the pads' pull-downs open the gates; the match's TVS takes the transient (DESIGN.md 5.4) |
 
 ## Known limits
@@ -390,7 +395,6 @@ presence test reads open is still fired on command (GND-TEST-13).
   (DD-055).
 - **No ~FLT, no ILM**, so DESIGN.md 7.2's capacitance check and the FLT abort
   have no source; the precharge timeout covers a loaded bus.
-- **The presence pulse is 20–21 ms**, not 5–10 (task P1).
 
 ## What this board declares
 
@@ -405,15 +409,13 @@ The values the requirements leave to the board (BRD-01). A value marked
 | Pulse | U9's current limit, about 4 A for the 9.6 ms its enable takes to collapse; the gate is held 10 to 30 ms |
 | Preparation before a pulse (PYR-ARM-03) | the bus charged to 90 % of the pack, about 9 ms on 2S; the deadline is 1.5 times that, about 14 ms, and the gate closes then whatever the bus has |
 | Protection | U9, TPS259570: 4.05 A current limit, latch-off on overtemperature, released by the enable going low after every fire (PYR-FAULT-01) |
-| Disarm when software stops (PYR-ARM-01) | about 35 ms: the 25 ms the pump's FIFO holds, then U9's 9.6 ms |
+| Disarm when software stops (PYR-ARM-01) | about 22 ms: the 12.5 ms the pump's FIFO holds, then U9's 9.6 ms |
 | Sensor | MS5607: 10 to 1200 mbar, 2.4 Pa rms at OSR 4096 (`docs/datasheets/MS5607-02BA03_2017-06.pdf`, pages 1 and 4). Measured on this board with a battery fitted: 2.4 to 2.6 Pa, unaffected by the buzzer, and 3.4 to 3.9 Pa beside a flash operation; on USB alone 6 to 7 Pa |
 | Height for proper operation (SNS-MAX-01) | 30000 m |
-| Flight log (DAT-09) | 8192 kB of files, 32,767 pages: about 1.5 hours of flight. Every sample is a 22-byte row, about 50 a second, beside a row a second for each estimator; each second's sync stores its partial page [FLT-LOG-06], so a second takes about six pages (5.9 measured on MK1C). `/api/log/space` reports the seconds the next flight has |
+| Flight log (DAT-09) | 8192 kB of files, 32,767 pages: about 1.5 hours of flight. Every sample is a 22-byte row, 53 a second, beside a row a second for each estimator; each second's sync stores its partial page [FLT-LOG-06], so a second takes about six pages (5.9 measured). `/api/log/space` reports the seconds the next flight has |
 | Delay of a flight decision (FLT-RT-01) | 250 ms declared. *Not measured* on this revision: `loop_late_max_us` on `/api/status` reports it |
 | Script resources (LUA-PAD-03) | the four J3 user pads, GPIO18 to GPIO21, and a released pyro channel's pads (`pin_caps.h`) |
 | Connector labels (PIN-LABEL-01) | `pin_caps.h` |
-
-
 
 ## Build
 
@@ -457,6 +459,7 @@ of milliseconds on this class of part). `/api/status` reports `loop_max_us` and
   `SD_Physical_Layer_Simplified_v6.00_2017-04.pdf`
 - DD-093 (the pressure collector), DD-052 (bus speeds), DD-053 (no waits),
   DD-054 (the bus as measured), DD-055 (presence and shorts only), DD-056 (the
-  fire), DD-104 (the 10 ms loop), DD-068
+  fire), DD-104 (the 10 ms loop and the flight path in RAM), DD-106
   (conversions beside a flash operation), DD-069 (bounded transfers), DD-071
-  (the ground test switch) in `DECISIONS.md`
+  (the ground test switch), DD-100 (the files), DD-098 and DD-099 (the
+  identity) in `DECISIONS.md`

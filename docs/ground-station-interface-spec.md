@@ -16,11 +16,9 @@ The tracker firmware, the Data Source Manager (DSM), and the ground station web 
 
 ## 2. Background: The State Mismatch Problem
 
-During a pressure chamber test (flight 4), the ground station displayed incorrect flight phase labels and then triggered a false signal-loss alert while the tracker was still transmitting normally. Root cause analysis traced the problem to a mismatch between the flight state numbers the altimeter was transmitting and the numbers the ground station expects.
+The ground station knows six state codes (Section 4). A code that names another phase shows the wrong flight phase, and a code it does not know shows no recognised state, which its health monitoring takes for signal loss while the tracker is still transmitting.
 
-The ground station uses a 5-state scheme (codes 0 through 4). The altimeter was transmitting a different set of state codes. When the altimeter entered its descent phase, the ground station interpreted the state code as LANDED. Unknown state codes for subsequent phases caused the display to show no recognized state, which the health monitoring interpreted as signal loss.
-
-The fix: The altimeter must transmit the `state_id` values defined in Section 3 below, using the thrust flag to differentiate boost from coast. This is a change to the `state_to_telem_id()` mapping function, not to the altimeter's internal state machine.
+So the altimeter transmits the `state_id` values of Section 4, using the thrust flag to tell boost from coast, through a mapping from its internal states (Section 3). The mapping is the contract; the altimeter's internal state machine is its own.
 
 ---
 
@@ -32,30 +30,30 @@ This is the most important concept in this document. The altimeter has two indep
 
 **Layer 2 — Reported Telemetry State (`state_id`):** The single integer in the $PYRO sentence (field 2) that the tracker, DSM, and ground station all parse. This is a fixed contract with exactly 6 valid values (0–5). These values must not change — they are baked into the tracker firmware, the DSM parsers, and the ground station.
 
-The mapping function `state_to_telem_id()` is the bridge between these two layers. It takes any internal state and returns one of the 6 telemetry codes. Every internal state must have a mapping. Any unmapped state that leaks to the serial output will break the ground station.
+The mapping function is the bridge between these two layers; in pyro_fw it is `telemetry_state_id()` in `src/flight_outputs.c`. It takes any internal state and returns one of the 6 telemetry codes. Every internal state must have a mapping. Any unmapped state that leaks to the serial output will break the ground station.
 
 **Apogee is an event, not a state.** Apogee is the instantaneous moment of transition from ascent to descent. It is communicated via the `$PYRO_APO` event sentence and the `APOGEE` flag bit (bit 5). There is no `state_id` value for apogee — the periodic $PYRO sentence transitions directly from state_id 1 (ASCENT) to state_id 2 (FALLING) at that moment.
 
 ### 3.1 Example: A Richer Internal State Machine
 
-To illustrate, here is a hypothetical example of how a more granular internal state machine could map to the 4 telemetry codes. The internal states listed here are just examples — the altimeter developer is free to define whatever internal states make sense for the flight logic.
+To illustrate, here is a hypothetical example of how a more granular internal state machine could map to the 6 telemetry codes. The internal states listed here are just examples — the altimeter developer is free to define whatever internal states make sense for the flight logic.
 
 | Internal State (example) | Description | state_id | Thrust |
 |---|---|---|---|
-| `BOOT_SETTLE` | Sensor warm-up, not ready | Don't send **or** 0 | 0 |
-| `BOOT_CALIBRATE` | Sampling ground pressure baseline | Don't send **or** 0 | 0 |
-| `PAD_IDLE` | Ready on pad, waiting for launch | 0 | 0 |
-| `BOOST` | Motor burning, accelerating | 1 | 1 |
-| `COAST` | Motor burned out, still ascending | 1 | 0 |
-| `FALLING` | Post-apogee, no chute deployed yet | 2 | 0 |
-| `DROGUE_DESCENT` | Descending on drogue chute | 3 | 0 |
-| `MAIN_DESCENT` | Main chute deployed, slow descent | 4 | 0 |
-| `LANDED` | On the ground, velocity near zero | 5 | 0 |
-| `LANDED_LOWPOWER` | Landed, reduced telemetry rate | 5 | 0 |
+| BOOT_SETTLE | Sensor warm-up, not ready | Don't send **or** 0 | 0 |
+| BOOT_CALIBRATE | Sampling ground pressure baseline | Don't send **or** 0 | 0 |
+| PAD_IDLE | Ready on pad, waiting for launch | 0 | 0 |
+| BOOST | Motor burning, accelerating | 1 | 1 |
+| COAST | Motor burned out, still ascending | 1 | 0 |
+| FALLING | Post-apogee, no chute deployed yet | 2 | 0 |
+| DROGUE_DESCENT | Descending on drogue chute | 3 | 0 |
+| MAIN_DESCENT | Main chute deployed, slow descent | 4 | 0 |
+| LANDED | On the ground, velocity near zero | 5 | 0 |
+| LANDED_LOWPOWER | Landed, reduced telemetry rate | 5 | 0 |
 
-**Key takeaway:** The number of internal states can grow freely — add STAGING, BALLISTIC_DESCENT, ERROR_RECOVERY, or whatever the flight logic needs. The only constraint is that `state_to_telem_id()` must map every internal state to one of the 6 telemetry codes (0–5). The ground station never sees the internal states; it only sees what comes out of this mapping function.
+**Key takeaway:** The number of internal states can grow freely — add STAGING, BALLISTIC_DESCENT, ERROR_RECOVERY, or whatever the flight logic needs. The only constraint is that the mapping function must map every internal state to one of the 6 telemetry codes (0–5). The ground station never sees the internal states; it only sees what comes out of this mapping function.
 
-**What went wrong in flight 4:** The altimeter transmitted its raw internal state codes directly on serial, bypassing the mapping. Internal states beyond the original four appeared as unrecognized numbers on the ground station, causing incorrect display and broken lifecycle logic.
+**An unmapped state:** an internal state number sent on serial without the mapping reads on the ground station as an unrecognised code: the display is wrong and the flight lifecycle (Section 11) breaks.
 
 ---
 
@@ -77,13 +75,13 @@ The $PYRO sentence state field (field 2) must use these exact integer codes. The
 
 **Key point on FALLING:** State code 2 begins the moment apogee is detected. The $PYRO_APO event sentence must be emitted simultaneously with the first FALLING telemetry sentence (or immediately before). Apogee is never a state_id value — see Section 3.
 
-As discussed in Section 3, the altimeter's internal state machine can have as many states as it needs. Only the `state_id` field output by `state_to_telem_id()` must use these 6 codes.
+As discussed in Section 3, the altimeter's internal state machine can have as many states as it needs. Only the `state_id` field output by the mapping function must use these 6 codes.
 
 ---
 
 ## 5. $PYRO Sentence Format
 
-The primary telemetry sentence. Sent at the rate specified in the state table above. NMEA-style with XOR checksum.
+The primary telemetry sentence. Sent at the rate specified in the state table above: pyro_fw sends one a second in PAD_IDLE, in flight and in LANDED (TEL-03), and none during start-up, in FAULT or in ground test (TEL-05, DD-031). NMEA-style with XOR checksum.
 
 ```
 $PYRO,seq,state,thrust,alt_cm,vel_cms,max_alt_cm,press_pa,time_ms,flags,p1_adc,p2_adc,batt,temp*XX
@@ -91,52 +89,54 @@ $PYRO,seq,state,thrust,alt_cm,vel_cms,max_alt_cm,press_pa,time_ms,flags,p1_adc,p
 
 | # | Field | Type | Description |
 |---|---|---|---|
-| 1 | `seq` | uint16 | Sequence counter, increments each sentence |
+| 1 | `seq` | uint16 | Sequence counter, increments each $PYRO sentence (TEL-09) |
 | 2 | `state` | uint8 | Flight state code (0-5, see Section 4) |
 | 3 | `thrust` | uint8 | Thrust flag: 1 = motor burning, 0 = no thrust |
-| 4 | `alt_cm` | int32 | Altitude above ground level in centimeters |
-| 5 | `vel_cms` | int32 | Vertical velocity in centimeters/second (positive = up) |
+| 4 | `alt_cm` | int32 | Altitude above the pad in centimeters, not clamped: below the pad reads negative (SNS-ALT-01) |
+| 5 | vel_cms | int32 | Vertical velocity in centimeters/second (positive = up) |
 | 6 | `max_alt_cm` | int32 | Maximum altitude reached during this flight (cm) |
-| 7 | `press_pa` | int32 | Raw barometric pressure in Pascals |
-| 8 | `time_ms` | uint32 | Flight time in milliseconds since launch detection (0 on pad) |
+| 7 | `press_pa` | int32 | Filtered barometric pressure in pascals, from the estimator the flight obeys |
+| 8 | `time_ms` | uint32 | Flight time in milliseconds from T+0, the first sample of the rise, backdated from launch detection; 0 on the pad; held at its landing value in LANDED. A flight resumed after a restart counts from the resume |
 | 9 | `flags` | hex | Status flags as 2-character hex (see Section 7) |
-| 10 | `p1_adc` | uint16 | Pyro channel 1 ADC reading (continuity sense) |
-| 11 | `p2_adc` | uint16 | Pyro channel 2 ADC reading (continuity sense) |
-| 12 | `batt` | uint16 | Battery ADC reading (0 if not implemented) |
-| 13 | `temp` | int16 | Temperature in deci-degrees C (0 if not implemented) |
+| 10 | `p1_adc` | uint16 | Pyro channel 1 ADC reading (continuity sense), the last taken on the pad |
+| 11 | `p2_adc` | uint16 | Pyro channel 2 ADC reading (continuity sense), the last taken on the pad |
+| 12 | batt | uint16 | Battery ADC reading (0 if not implemented; pyro_fw sends 0) |
+| 13 | temp | int16 | Temperature in deci-degrees C (0 if not implemented; pyro_fw sends 0) |
+
+pyro_fw writes decimal fields with no leading zeros and `flags` as two uppercase hex digits.
 
 **Checksum:** Standard NMEA XOR checksum over all characters between `$` and `*` (exclusive), formatted as two uppercase hex digits after the asterisk.
 
 **Example (pad idle):**
 ```
-$PYRO,0001,0,0,0,0,0,101325,0,03,0350,0348,0,0*5A
+$PYRO,1,0,0,0,0,0,101325,0,03,350,348,0,0*07
 ```
 
 **Example (boost):**
 ```
-$PYRO,0042,1,1,15000,28000,15000,84200,2100,13,0350,0348,0,0*7B
+$PYRO,42,1,1,15000,28000,15000,99500,2100,13,350,348,0,0*39
 ```
 
 **Example (falling — just after apogee):**
 ```
-$PYRO,0100,2,0,240000,-200,240000,72000,18500,3F,0350,0348,0,0*XX
+$PYRO,100,2,0,240000,-200,240000,75600,18500,37,350,348,0,0*11
 ```
 
 **Example (drogue descent):**
 ```
-$PYRO,0150,3,0,180000,-1500,240000,75000,25000,3F,0350,0348,0,0*XX
+$PYRO,150,3,0,180000,-1500,240000,81500,25000,37,350,348,0,0*2F
 ```
 
 **Example (main chute descent):**
 ```
-$PYRO,0200,4,0,30000,-400,240000,90000,55000,3F,0350,0348,0,0*XX
+$PYRO,200,4,0,30000,-400,240000,97700,55000,3F,350,348,0,0*57
 ```
 
 ---
 
 ## 6. Event Sentences
 
-One-shot sentences emitted for key flight events. These are in addition to the periodic $PYRO sentence. Each event is queued when it occurs and its sentence is sent exactly once, with the next periodic $PYRO sentence, so it arrives up to 1 s after the event (TEL-11). Its fields carry the event's own altitude and flight time, not the time it was sent. The tracker uses these to generate LoRa event packets with precise altimeter-measured values.
+One-shot sentences emitted for key flight events. These are in addition to the periodic $PYRO sentence. Each event is queued when it occurs and its sentence is sent exactly once, just ahead of the next periodic $PYRO sentence, oldest first, so it arrives up to 1 s after the event (TEL-11). Its fields carry the event's own altitude and flight time, not the time it was sent. The tracker uses these to generate LoRa event packets with precise altimeter-measured values.
 
 ### 6.1 $PYRO_APO (Apogee)
 
@@ -151,9 +151,11 @@ $PYRO_APO,max_alt_cm,flight_time_ms*XX
 | `max_alt_cm` | Peak altitude at apogee in centimeters |
 | `flight_time_ms` | Flight time at apogee in milliseconds since launch |
 
+A flight resumed after a restart while descending (FLT-BROWN-06) enters FALLING with the APOGEE flag set and sends no $PYRO_APO.
+
 ### 6.2 $PYRO_FIRE (Pyro Channel Fired)
 
-Sent when a pyro channel fires. One sentence per channel.
+Sent for each pulse the flight commands on a channel: its first fire, each re-fire (PYR-REFIRE-01) and each emergency fire (FLT-EMRG-01).
 
 ```
 $PYRO_FIRE,channel,alt_cm,flight_time_ms*XX
@@ -180,39 +182,41 @@ $PYRO_LAND,max_alt_cm,flight_time_ms*XX
 
 All event sentences use the same NMEA XOR checksum as $PYRO. The tracker parses these independently from the periodic $PYRO sentence. Event sentences provide the authoritative altimeter-measured values for the event timeline; the periodic $PYRO sentence continues at its normal rate.
 
-Field orders are specified in Sections 6.1-6.3 above. Verify your altimeter code matches these, not the altimeter README (see Section 10.3).
+Field orders are specified in Sections 6.1-6.3 above; pyro_fw sends them in these orders (`src/telemetry.c`).
 
 ---
 
 ## 7. Flags Bitfield
 
-The flags field (field 9) is a hex-encoded bitfield. The altimeter currently uses bits 0 through 5 (transmitted as 2-character hex, e.g. `3F`). The tracker has infrastructure to receive and forward 16-bit extended flags (4-character hex), but the altimeter does not set bits 6-11 yet.
+The flags field (field 9) is a hex-encoded bitfield. pyro_fw sets bits 0 through 5 and transmits them as 2-character hex, e.g. `3F`. The tracker receives and forwards 16-bit extended flags (4-character hex); pyro_fw sets none of bits 6-11.
 
 ### 7.1 Base Flags (bits 0-5) — Currently Implemented
 
 | Bit | Name | Hex Mask | Meaning |
 |---|---|---|---|
-| 0 | `P1_CONT` | `0x01` | Pyro channel 1 continuity detected (e-match connected) |
-| 1 | `P2_CONT` | `0x02` | Pyro channel 2 continuity detected |
-| 2 | `P1_FIRED` | `0x04` | Pyro channel 1 has fired |
-| 3 | `P2_FIRED` | `0x08` | Pyro channel 2 has fired |
-| 4 | `ARMED` | `0x10` | Pyro system is armed |
-| 5 | `APOGEE` | `0x20` | Apogee has been detected |
+| 0 | P1_CONT | `0x01` | Pyro channel 1 continuity detected (e-match connected) |
+| 1 | P2_CONT | `0x02` | Pyro channel 2 continuity detected |
+| 2 | P1_FIRED | `0x04` | Pyro channel 1 has fired: the flight has commanded a pulse on it |
+| 3 | P2_FIRED | `0x08` | Pyro channel 2 has fired |
+| 4 | ARMED | `0x10` | Pyro system is armed |
+| 5 | APOGEE | `0x20` | Apogee has been detected, or a resumed flight took it as passed |
+
+pyro_fw reads continuity on the pad. From launch, bits 0 and 1, like `p1_adc` and `p2_adc`, hold the last pad reading.
 
 ### 7.2 Extended Flags (bits 6-11) — Future / Optional
 
-The tracker firmware has infrastructure to detect and relay these extended flags. They are not currently set by the altimeter but are defined here for future implementation. If the altimeter sets any of these bits, the flags field should be transmitted as 4-character hex (e.g. `023F`) instead of 2-character.
+The tracker firmware detects and relays these extended flags. pyro_fw does not set them. An altimeter that sets any of these bits transmits the flags field as 4-character hex (e.g. `023F`) instead of 2-character.
 
 | Bit | Name | Hex Mask | Meaning |
 |---|---|---|---|
-| 6 | `P1_FAIL` | `0x0040` | Pyro 1 failure declared by altimeter |
-| 7 | `P2_FAIL` | `0x0080` | Pyro 2 failure declared |
-| 8 | `DROGUE_OK` | `0x0100` | Drogue deployment confirmed |
-| 9 | `DROGUE_FAIL` | `0x0200` | Drogue deployment failed |
-| 10 | `MAIN_OK` | `0x0400` | Main chute deployment confirmed |
-| 11 | `MAIN_FAIL` | `0x0800` | Main chute deployment failed |
+| 6 | P1_FAIL | `0x0040` | Pyro 1 failure declared by altimeter |
+| 7 | P2_FAIL | `0x0080` | Pyro 2 failure declared |
+| 8 | DROGUE_OK | `0x0100` | Drogue deployment confirmed |
+| 9 | DROGUE_FAIL | `0x0200` | Drogue deployment failed |
+| 10 | MAIN_OK | `0x0400` | Main chute deployment confirmed |
+| 11 | MAIN_FAIL | `0x0800` | Main chute deployment failed |
 
-The tracker's `parse_hex_word()` function already handles both 2-character and 4-character hex. No tracker changes are needed to support extended flags.
+The tracker's hex parser handles both 2-character and 4-character hex.
 
 ---
 
@@ -224,60 +228,50 @@ The altimeter board connects to the tracker board over a wired UART link.
 |---|---|
 | Baud rate | 115200 |
 | Format | 8N1 (8 data bits, no parity, 1 stop bit) |
-| Line termination | CR+LF or LF |
+| Line termination | CR+LF or LF; pyro_fw sends CR+LF |
 | Protocol | NMEA-style sentences (`$` prefix, `*` checksum delimiter) |
-| Output format | NMEA `$PYRO` sentences. pyro_fw has no other format (TEL-01); a different one is a Lua script on the serial pins. |
+| Output format | NMEA `$PYRO` sentences. pyro_fw has no other format (TEL-01); a different one is a Lua script on the serial pins (TEL-12). |
+
+pyro_fw's port accepts no commands (TEL-12). The same UART also carries diagnostic lines that begin with `!` (`!FAULT` every 5 s from a faulted board, `!GT` in ground test, `!SENSOR STUCK` and others) and web-server debug lines that begin with `HTTP:`. Neither begins with `$`.
 
 ---
 
 ## 9. Required Altimeter State Mapping
 
-**Status in pyro_fw 2.1.702 (2026-09-28): done.** The single DESCENT internal state is split into three. `flight_state_t` has twelve states, and `state_to_telem_id()` in `src/flight_states.c` maps the six that send a $PYRO sentence; the boot states, FAULT and GROUND_TEST send none.
+`flight_state_t` (`src/flight_states.h`) has twelve states, and `telemetry_state_id()` in `src/flight_outputs.c` maps the six that send a $PYRO sentence (TEL-07); the boot states, FAULT and GROUND_TEST send none (TEL-05, DD-031).
 
-| Internal State | state_id | GS Interprets As | Status |
+| Internal State | state_id | GS Interprets As | Note |
 |---|---|---|---|
-| `PAD_IDLE` | 0 | PAD | Correct |
-| `ASCENT` | 1 | BOOST or COAST | Correct (uses thrust flag) |
-| `FALLING` | 2 | FALLING | Correct |
-| `DROGUE_DESCENT` | 3 | DROGUE | Correct |
-| `CHUTE_DESCENT` | 4 | CHUTE | Correct |
-| `LANDED` | 5 | LANDED | Correct (code 3 before Revision 1.2) |
+| `PAD_IDLE` | 0 | PAD | |
+| `ASCENT` | 1 | BOOST or COAST | The thrust flag tells them apart |
+| `FALLING` | 2 | FALLING | |
+| `DROGUE_DESCENT` | 3 | DROGUE | |
+| `CHUTE_DESCENT` | 4 | CHUTE | |
+| `LANDED` | 5 | LANDED | |
 | `BOOT_SETTLE`, `BOOT_SENSOR`, `BOOT_CONTINUITY`, `BOOT_CALIBRATE`, `FAULT`, `GROUND_TEST` | — | — | No $PYRO sentence |
 
-**The DESCENT internal state must be replaced with three states** corresponding to the three phases of descent:
+The three descent states:
 
-- **FALLING** (state_id 2): Entered immediately at apogee detection. The rocket is in free-fall before drogue fires. The `$PYRO_APO` event sentence is emitted on this transition.
-- **DROGUE** (state_id 3): Entered when pyro channel 1 fires and drogue deployment is confirmed. Descent rate is higher than main chute.
-- **CHUTE** (state_id 4): Entered when pyro channel 2 fires and main chute deployment is confirmed. Slow final descent.
+- **FALLING** (state_id 2): entered at apogee detection, with the `$PYRO_APO` event sentence. The rocket is in free-fall, or faster than any canopy's band.
+- **DROGUE** (state_id 3): the measured descent rate holds steady in the drogue's band.
+- **CHUTE** (state_id 4): the measured descent rate holds steady in the main chute's band.
 
-pyro_fw enters DROGUE_DESCENT and CHUTE_DESCENT when the measured descent rate settles in a canopy's band, whichever channel fired, and returns from DROGUE_DESCENT to FALLING when a drogue stops slowing the rocket: state_id can go from 3 back to 2. A flight with no canopy goes from 2 straight to 5 (`docs/flight_states.md`).
-
-The `LANDED` state_id changes from 3 to 5. Any downstream system (tracker, DSM, ground station) that checks `state_id == 3` for landed must be updated to check `state_id == 5`.
+pyro_fw names the descent state from the measured descent rate, whichever channel fired (FLT-DESC-01), and returns from DROGUE_DESCENT to FALLING when a drogue stops slowing the rocket: state_id can go from 3 back to 2. Landing is detected in every descent state (FLT-DESC-02), so a flight with no canopy goes from 2 straight to 5 (`docs/flight_states.md`).
 
 ---
 
 ## 10. Required Changes for Compatibility
 
-Based on the flight 4 analysis and the Revision 1.2 protocol update, the following items need verification and possible changes.
+An altimeter is compatible when it meets the items below. pyro_fw meets each (`src/telemetry.c`, `src/flight_outputs.c`; DD-088):
 
-**Requirements changed 2026-10-02** (`REQUIREMENTS.md` TEL-01, TEL-03, TEL-11; DD-088): the downlink is one `$PYRO` sentence a second in every state, event sentences travel with the next periodic sentence, and there is no JSON format and no `telem_format` or `telem_rate_hz` key. The status below describes the firmware before that change and is brought up to date with the code.
-
-**Status in pyro_fw 2.1.702 (2026-09-28)** (`src/telemetry_formatter.c`, `src/flight_states.c`):
-
-- 10.1: done; see Section 9.
-- 10.2: the thrust flag is 1 in ASCENT while the pressure fit shows upward acceleration, so it falls to 0 at burnout.
+- 10.1: Section 9.
+- 10.2: the thrust flag is 1 in ASCENT while the pressure fit shows upward acceleration, so it falls to 0 at burnout, and it is 0 in every other state (TEL-10).
 - 10.3: `$PYRO_APO,max_alt_cm,flight_time_ms`, `$PYRO_FIRE,channel,alt_cm,flight_time_ms` and `$PYRO_LAND,max_alt_cm,flight_time_ms`, as Sections 6.1-6.3.
-- 10.4: `telem_format` defaults to 0.
-- `press_pa` is the filtered pressure, not the raw reading. `batt` and `temp` are always 0. Decimal fields carry no leading zeros; `flags` is always two hex digits.
-- `time_ms` counts from T+0, the first sample of the rise, backdated from launch detection, and stops at landing.
-- In flight the $PYRO rate is `telem_rate_hz`: 10 by default, at most 50. PAD and LANDED are 1 Hz.
-- `$PYRO_FIRE` is sent only for a channel the board energised. The one retry of a drogue whose charge did not light (PYR-REFIRE-01) sends a second `$PYRO_FIRE,1`.
-- A power event in flight that the board rejoins while descending enters FALLING with the APOGEE flag set and no `$PYRO_APO`.
-- The same UART also carries diagnostic lines that begin with `!` (`!FAULT`, `!GT`, `!SENSOR STUCK` and others) and web-server debug lines that begin with `HTTP:`. Neither begins with `$`.
+- 10.4: NMEA only (TEL-01).
 
-### 10.1 Update `state_to_telem_id()` Mapping
+### 10.1 The State Mapping
 
-The `state_to_telem_id()` function must map ALL internal states to the 6 valid $PYRO codes (0–5), as described in Section 3. Any unmapped state that leaks to the serial output will break the ground station display.
+The mapping function must map ALL internal states to the 6 valid $PYRO codes (0–5), as described in Section 3. Any unmapped state that leaks to the serial output will break the ground station display.
 
 Mapping rules:
 
@@ -295,11 +289,11 @@ The thrust flag must transition from 1 to 0 during ascent when motor burnout is 
 
 ### 10.3 Verify Event Sentence Field Order
 
-Known documentation error: The altimeter README documents the event sentence field orders differently from the actual code. The tracker firmware parses the fields in the order specified in this document (Sections 6.1-6.3). Verify that the altimeter's code matches these field orders, not the README.
+The tracker firmware parses the fields in the order specified in this document (Sections 6.1-6.3). pyro_fw's `src/telemetry.c` and its README give the same order.
 
 ### 10.4 Default Telemetry Format
 
-pyro_fw sends NMEA only (TEL-01). The tracker cannot parse JSON, and the firmware no longer offers it.
+pyro_fw sends NMEA only (TEL-01); the tracker cannot parse JSON.
 
 ---
 

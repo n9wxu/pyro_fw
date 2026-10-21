@@ -31,7 +31,7 @@ static char cfg_names[4][LUA_NAME_MAX];
 /* ── The interfaces ───────────────────────────────────────────────
  *
  * ctx is the slot index, passed as a value, because here a resource is
- * nothing but its index. Named *_vt like the board's (DD-061). */
+ * nothing but its index. Named *_vt like the board's (DD-018). */
 
 #define SLOT(ctx) ((int)(intptr_t)(ctx))
 #define CTX(i) ((void *)(intptr_t)(i))

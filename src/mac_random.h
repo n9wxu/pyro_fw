@@ -2,9 +2,8 @@
  * The board's MAC, from its flash chip's whole unique ID [DD-099], and the
  * /serial.txt that may hold one an operator assigned.
  *
- * The pool is DD-072's, which drew from the ADC and the ring oscillator; it
- * is now fed the ID alone, so one chip gives one MAC at every boot and on a
- * blank flash. The SDK's 8-byte ID is not enough: two XT25F128F chips share
+ * The pool is fed the ID alone, so one chip gives one MAC at every boot and
+ * on a blank flash. The SDK's 8-byte ID is not enough: two XT25F128F chips share
  * those 8 bytes and differ in the last 4 of their 16 (DD-098).
  *
  * Pure: the ID comes from the caller, so the host tests drive it.
@@ -41,7 +40,7 @@ void mac_pool_add(mac_pool_t *p, uint32_t sample);
 void mac_pool_draw(mac_pool_t *p, uint8_t out[MAC_BYTES]);
 
 /* /serial.txt: twelve hex digits, then "rng" on a second line for a MAC
- * DD-072's firmware drew. Trailing whitespace is tolerated, since the file
+ * drawn at random, which DD-099 ignores. Trailing whitespace is tolerated, since the file
  * may be written by hand. False, and *out untouched, for anything else. */
 bool mac_file_parse(const char *text, uint8_t out[MAC_BYTES], bool *drawn);
 
