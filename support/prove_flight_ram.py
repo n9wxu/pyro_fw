@@ -437,6 +437,19 @@ class Objects:
 # in RAM (CMakeLists.txt), and the list leaves them out.
 WHOLE_FILES = re.compile(r"\.S\.o$")
 
+# A C library built without -ffunction-sections (Ubuntu's newlib) keeps each
+# function in its member's .text.
+C_LIBRARY = re.compile(r"^lib[cgm](_nano)?\.a:")
+
+
+def whole_member(img, cl, sec):
+    """A C library member's .text, holding no function off the path."""
+    if unplaced(sec[2]) != ".text" or not C_LIBRARY.match(section_entry(sec)):
+        return False
+    lo = bisect.bisect_left(img.fn_starts, sec[0])
+    hi = bisect.bisect_left(img.fn_starts, sec[0] + sec[1])
+    return all(f in cl.code for f in img.fn_starts[lo:hi])
+
 
 def placement(img, cl, objs):
     """The input sections that put the closure, and what it reads, in RAM."""
@@ -448,7 +461,7 @@ def placement(img, cl, objs):
         if sec and WHOLE_FILES.search(sec[3]):
             continue
         name = unplaced(sec[2]) if sec else ""
-        if not name.startswith(".text."):
+        if not (name.startswith(".text.") or (sec and whole_member(img, cl, sec))):
             sys.exit(f"no input section of its own for {img.fns[a][0]} at 0x{a:08x}")
         entry = section_entry(sec)
         pats.append(entry)

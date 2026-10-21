@@ -735,8 +735,11 @@ rationale and the alternatives considered.
   again with those sections renamed `.time_critical.flight.*`, which the
   linker script copies to RAM at start-up. Objects of the SDK, the kernel
   and the C library are renamed in copies; their sources are not touched.
-  The SDK's assembly float, double, divider and memory shims go whole, by
-  their `PICO_*_IN_RAM` switches. CI proves every image with `--strict`:
+  A C library built without a section per function, as Ubuntu's newlib
+  is, keeps each function in its member's `.text`; such a member is
+  renamed whole when every function in it is on the path. The SDK's
+  assembly float, double, divider and memory shims go whole, by their
+  `PICO_*_IN_RAM` switches. CI proves every image with `--strict`:
   no function of the path, no read-only byte it reads and no indirect
   branch it makes is left in flash or uncovered.
 - **What the path gave up to fit:** MK1C's path is 299 functions and
