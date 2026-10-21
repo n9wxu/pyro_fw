@@ -8,7 +8,7 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Verifies [WEB-HTTP-01..04].
+ * Verifies [WEB-HTTP-01..04, WEB-API-21].
  */
 #include "unity.h"
 #include "../src/http_conn.h"
@@ -50,6 +50,8 @@ static void on_head(http_conn_t *c) {
         http_gather(c, 100);
     } else if (strcmp(c->method, "POST") == 0 && strcmp(c->path, "/upload") == 0) {
         http_stream(c);
+    } else if (strcmp(c->method, "POST") == 0 && strcmp(c->path, "/erasing") == 0) {
+        http_respond_str_with(c, 503, "application/json", "{\"erasing\":true}", "Retry-After: 1\r\n");
     } else if (strcmp(c->method, "POST") == 0 && strcmp(c->path, "/slow") == 0) {
         /* body discarded; on_complete answers */
     } else if (strcmp(c->method, "GET") == 0 && strncmp(c->path, "/later", 6) == 0) {
@@ -717,6 +719,44 @@ void test_WEB_API_17_a_delete_names_its_file_after_the_route(void) {
     TEST_ASSERT_NULL(find_post_route("/api/deleteme"));
 }
 
+/* [WEB-API-21] A file written into the flash store takes erased pages. */
+void test_WEB_API_21_every_route_that_writes_a_file_waits_for_the_cleanup(void) {
+    static const char *const writes[] = {"/www/index.html", "/api/lua/script", "/api/serial",
+                                         "/api/config",     "/api/beeps",      "/api/pins"};
+    for (unsigned i = 0; i < sizeof(writes) / sizeof(writes[0]); i++) {
+        const post_route_t *r = find_post_route(writes[i]);
+        TEST_ASSERT_NOT_NULL_MESSAGE(r, writes[i]);
+        TEST_ASSERT_TRUE_MESSAGE(r->writes, writes[i]);
+    }
+}
+
+void test_WEB_API_21_deletes_erases_and_updates_do_not_wait_for_it(void) {
+    static const char *const others[] = {"/api/delete/www/a.bin", "/api/flight/erase", "/api/ota",
+                                         "/api/reboot",           "/api/test_mode/on", "/api/test_mode/off",
+                                         "/api/beeps/play",       "/api/lua/check",    "/api/sim/flight",
+                                         "/api/sd/bench",         "/api/hr/start"};
+    for (unsigned i = 0; i < sizeof(others) / sizeof(others[0]); i++) {
+        const post_route_t *r = find_post_route(others[i]);
+        TEST_ASSERT_NOT_NULL_MESSAGE(r, others[i]);
+        TEST_ASSERT_FALSE_MESSAGE(r->writes, others[i]);
+    }
+}
+
+/* The refusal is made from the head: it says so, asks again in a second,
+ * and takes nothing of the body. */
+void test_WEB_API_21_a_refusal_asks_again_in_a_second_and_takes_no_body(void) {
+    run_whole("POST /erasing HTTP/1.1\r\nContent-Length: 10\r\n\r\n0123456789");
+    out[out_len] = '\0';
+    TEST_ASSERT_EQUAL(503, status_of(out));
+    const char *end = strstr(out, "\r\n\r\n");
+    const char *ra = strstr(out, "\r\nRetry-After: 1\r\n");
+    TEST_ASSERT_TRUE_MESSAGE(ra && ra < end, "Retry-After is a header");
+    uint32_t bl;
+    const char *body = body_of(out, out_len, &bl);
+    TEST_ASSERT_EQUAL_STRING_LEN("{\"erasing\":true}", body, bl);
+    TEST_ASSERT_EQUAL_UINT32(0, sink_len);
+}
+
 void test_HTTP_19_a_query_route_matches_only_its_path(void) {
     TEST_ASSERT_NULL(find_post_route("/api/sd/benchmark"));
     TEST_ASSERT_NULL(find_post_route("/api/test_mode/maybe"));
@@ -758,6 +798,9 @@ int main(void) {
     RUN_TEST(test_OTA_08_a_download_slot_past_the_chip_end_is_refused);
     RUN_TEST(test_WEB_API_08_every_route_that_touches_storage_waits_for_the_flight_log);
     RUN_TEST(test_WEB_API_17_a_delete_names_its_file_after_the_route);
+    RUN_TEST(test_WEB_API_21_every_route_that_writes_a_file_waits_for_the_cleanup);
+    RUN_TEST(test_WEB_API_21_deletes_erases_and_updates_do_not_wait_for_it);
+    RUN_TEST(test_WEB_API_21_a_refusal_asks_again_in_a_second_and_takes_no_body);
     RUN_TEST(test_HTTP_19_a_query_route_matches_only_its_path);
     return UNITY_END();
 }

@@ -1,8 +1,10 @@
 """Reaching a board over its USB network, for the support scripts.
 
 A POST carries X-Pyro: 1, which the board requires of every POST
-(http_origin_refusal() in src/http_conn.c). A refusal (HTTP 400 and up) or no
-answer raises BoardError, so a failure is never taken for success.
+(http_origin_refusal() in src/http_conn.c). A write the board refuses while
+its cleanup erases is sent again once the cleanup is done [WEB-API-21]. Any
+other refusal (HTTP 400 and up) or no answer raises BoardError, so a failure
+is never taken for success.
 """
 import glob
 import json
@@ -22,17 +24,43 @@ class BoardError(Exception):
     pass
 
 
+ERASE_WAIT_S = 120  # longer than a whole store's cleanup at the flash's pace
+
+
+def erase_refusal(code, body):
+    """The board's 503 for a write while its cleanup erases."""
+    try:
+        return code == 503 and json.loads(body).get("erasing") is True
+    except (ValueError, AttributeError):
+        return False
+
+
+def cleanup_done(host, timeout_s=ERASE_WAIT_S):
+    """True once /api/fs reports the cleanup done."""
+    end = time.monotonic() + timeout_s
+    while time.monotonic() < end:
+        fs = get_json(host, "/api/fs", timeout=10)
+        if fs and fs.get("cleanup") == "done":
+            return True
+        time.sleep(1)
+    return False
+
+
 def post(host, path, data=b"", content_type="application/octet-stream", timeout=10):
     """POST and return the body. Raises BoardError on a refusal or no answer."""
     headers = dict(POST_HEADERS, **{"Content-Type": content_type})
-    req = urllib.request.Request(f"http://{host}{path}", data=data, method="POST", headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.read().decode(errors="replace")
-    except urllib.error.HTTPError as e:  # before URLError, which it subclasses
-        raise BoardError(f"HTTP {e.code}: {e.read().decode(errors='replace').strip()}") from e
-    except (urllib.error.URLError, OSError) as e:
-        raise BoardError(f"no answer from {host}: {e}") from e
+    end = time.monotonic() + ERASE_WAIT_S
+    while True:
+        req = urllib.request.Request(f"http://{host}{path}", data=data, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read().decode(errors="replace")
+        except urllib.error.HTTPError as e:  # before URLError, which it subclasses
+            body = e.read().decode(errors="replace").strip()
+            if not (erase_refusal(e.code, body) and cleanup_done(host, end - time.monotonic())):
+                raise BoardError(f"HTTP {e.code}: {body}") from e
+        except (urllib.error.URLError, OSError) as e:
+            raise BoardError(f"no answer from {host}: {e}") from e
 
 
 def get_json(host, path="/api/status", timeout=5):

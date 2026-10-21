@@ -127,6 +127,8 @@ void http_stream(http_conn_t *c);
  * anywhere; up to HTTP_WORK_SIZE bytes. */
 void http_respond(http_conn_t *c, uint16_t status, const char *ctype, const void *body, uint32_t len);
 void http_respond_str(http_conn_t *c, uint16_t status, const char *ctype, const char *body);
+/* extra is more header lines, each ending in CRLF. */
+void http_respond_str_with(http_conn_t *c, uint16_t status, const char *ctype, const char *body, const char *extra);
 
 /* A response whose len-byte body comes from the fill handler. extra is more
  * header lines, each ending in CRLF, or NULL. */

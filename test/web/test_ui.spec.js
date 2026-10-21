@@ -1281,3 +1281,40 @@ test.describe('Filesystem', () => {
     await expect(page.locator('#fsHint')).toContainText('flight log');
   });
 });
+
+/* [WEB-UI-08] A change the board refuses while its cleanup erases is held,
+   shown, and sent again once the cleanup is done. */
+test.describe('Erasing', () => {
+  test.skip(process.env.PYRO_MODE !== 'configured', 'configured mode only');
+  test.beforeEach(async ({ page, request }) => {
+    await request.post(BASE + '/api/_test/reset');
+    await page.goto(BASE);
+    await waitForStatus(page);
+  });
+
+  test('a save waits for the erase, says so, and goes once it is done', async ({ page, request }) => {
+    await clickTab(page, 'Config');
+    await page.fill('#cfgName', 'Erased1');
+    await request.post(BASE + '/api/_test/erase/12');
+    await page.click('#btnSaveCfg');
+    await expect(page.locator('#eraseWait')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('#eraseWait')).toContainText('erasing');
+    await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 10000 });
+    await expect(page.locator('#eraseWait')).toBeHidden();
+    const posts = await (await request.get(BASE + '/api/_test/config_posts')).json();
+    expect(posts.length).toBe(1);
+    expect(posts[0]).toContain('name=Erased1');
+    const e = await (await request.get(BASE + '/api/_test/erasing')).json();
+    expect(e.refusals).toBeGreaterThan(0);
+    expect(e.erasing).toBe(false);
+  });
+
+  test('every change goes the same way: a beep table', async ({ page, request }) => {
+    await clickTab(page, 'Beep Codes');
+    await request.post(BASE + '/api/_test/erase/12');
+    await page.click('#btnSaveBeeps');
+    await expect(page.locator('#eraseWait')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('#bpMsg')).toContainText('saved', { timeout: 10000 });
+    await expect(page.locator('#eraseWait')).toBeHidden();
+  });
+});

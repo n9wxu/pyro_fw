@@ -40,6 +40,7 @@ The HTTP server is two halves (DD-039, DD-061):
 - A malformed or oversized request gets its status: 400, 405, 411, 413, 414 or 431 (WEB-HTTP-04)
 - A link whose peer is gone gives its exchange back; a link that moves no byte for 20 s is aborted
 - A request that writes flash holds the flash window and waits for it with its bytes in the ring (`flash_window.h`). Uploads, the Lua program, config, pins, beeps, the serial, the log erase and OTA do
+- A request that writes a file into the flash store (a route marked `writes`) answers 503 from its head while the cleanup has sectors left to erase: `"erasing":true` and `Retry-After: 1`, none of its body taken (WEB-API-21, DD-108). In flight the 423 below comes first.
 - From launch until the flight log closes, the log alone holds the filesystem: a request that needs the filesystem answers 423, and one that held it at launch is reset (WEB-API-08, DD-058). The rest of the API stays live
 - A frame the USB endpoint cannot take yet is copied into 256 bytes and sent in order as the endpoint frees; a SYN, data or a FIN that does not fit the stack sends again at its next pass (WEB-NET-05)
 

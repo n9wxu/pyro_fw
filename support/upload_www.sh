@@ -11,11 +11,21 @@ ROOT="$(dirname "$0")/.."
 DIR="$ROOT/www"
 failed=0
 
+# [WEB-API-21] A write while the board's cleanup erases is refused with 503
+# and sent again a second later, for up to two minutes.
 upload() { # name file
     echo "  /www/$1"
-    curl --fail-with-body -sS -o /dev/null -X POST "http://$HOST/www/$1" \
-        -H "X-Pyro: 1" -H "Content-Type: application/octet-stream" \
-        --data-binary "@$2" --max-time 30 || { echo "    failed"; failed=1; }
+    for _ in $(seq 120); do
+        code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://$HOST/www/$1" \
+            -H "X-Pyro: 1" -H "Content-Type: application/octet-stream" \
+            --data-binary "@$2" --max-time 30) || code=000
+        [ "$code" = 503 ] || break
+        sleep 1
+    done
+    case "$code" in
+        2??) ;;
+        *) echo "    failed (HTTP $code)"; failed=1 ;;
+    esac
 }
 
 echo "Uploading web files to $HOST..."

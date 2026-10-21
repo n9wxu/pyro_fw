@@ -12,11 +12,14 @@ test mode gives it its voice and its pad record back until it is turned off
 (USB-08); no inert key is written; the flight log can be erased (WEB-API-09)
 and a file deleted, but not the board's own (WEB-API-17); /api/fs lists the
 flash store's files and space, a file uploaded at its size (WEB-API-19), and
-its scan covers every sector a chunk at a time (WEB-API-20);
-/api/status carries the pulse, fault, resume and emergency fields.
+its scan covers every sector a chunk at a time (WEB-API-20); a write while the
+cleanup erases is refused before any of it is written, and a delete is not
+(WEB-API-21); /api/status carries the pulse, fault, resume and emergency
+fields. Every other write waits for the cleanup and is sent again.
 
 Verifies on hardware [WEB-API-01, WEB-API-02, WEB-API-03, WEB-API-07,
-WEB-API-12, WEB-API-15, WEB-API-17, WEB-API-19, WEB-API-20, BUZ-CODE-03, BUZ-CODE-11, FLT-BROWN-01, FLT-BROWN-05].
+WEB-API-12, WEB-API-15, WEB-API-17, WEB-API-19, WEB-API-20, WEB-API-21, BUZ-CODE-03, BUZ-CODE-11, FLT-BROWN-01,
+FLT-BROWN-05].
 
 ERASES THE FLIGHT LOG, stores a changed pyro1 mode for a few seconds, and
 holds the board in test mode for about 15 s -- long enough to write the pad
@@ -54,7 +57,40 @@ def marker_valid(mk):
             and 0 < sigma <= 100000 and total == want)
 
 
-def req(method, path, body=None, timeout=10):
+ERASE_WAIT_S = 120  # longer than a whole store's cleanup at the flash's pace
+
+
+def erasing(code, body):
+    """[WEB-API-21] The board's refusal of a write while its cleanup erases."""
+    try:
+        return code == 503 and json.loads(body).get("erasing") is True
+    except ValueError:
+        return False
+
+
+def cleanup_done(secs=ERASE_WAIT_S):
+    """True once /api/fs reports the cleanup done."""
+    end = time.time() + secs
+    while time.time() < end:
+        code, _, body = send("GET", "/api/fs")
+        if code == 200 and json.loads(body).get("cleanup") == "done":
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def req(method, path, body=None, timeout=10, wait=True):
+    """A write refused for the cleanup is sent again once it is done, unless
+    wait is False."""
+    end = time.time() + ERASE_WAIT_S
+    while True:
+        code, hdr, out = send(method, path, body, timeout)
+        if not (wait and erasing(code, out) and time.time() < end):
+            return code, hdr, out
+        cleanup_done(end - time.time())
+
+
+def send(method, path, body=None, timeout=10):
     data = body.encode() if isinstance(body, str) else body
     r = urllib.request.Request(BASE + path, data=data, method=method)
     if data is not None:
@@ -226,6 +262,26 @@ if fs:
 req("POST", "/api/delete/www/api_check_fs.txt")
 _, fs = fs_report()
 check("a deleted file is listed no more", fs and not [f for f in fs["files"] if f["path"] == "/www/api_check_fs.txt"])
+
+# [WEB-API-21] A write while the cleanup erases is refused before any of it is
+# written, and a delete is not. Every close leaves the cleanup a pass to make,
+# so a write right behind another meets it.
+check("the cleanup finishes", cleanup_done())
+code, _, _ = req("POST", "/www/api_check_erase_a.txt", "a" * 100, wait=False)
+check("a write once the cleanup is done -> 201", code == 201, str(code))
+code, hdr, body = req("POST", "/www/api_check_erase_b.txt", "b" * 100, wait=False)
+check("a write right behind it, while the cleanup erases -> 503", erasing(code, body), f"{code} {body[:80]!r}")
+check("the refusal asks again in a second", hdr.get("Retry-After") == "1", str(hdr.get("Retry-After")))
+code, _, _ = req("POST", "/api/delete/www/api_check_erase_a.txt", wait=False)
+check("a delete is not refused for the cleanup", code == 200, str(code))
+code, _, _ = req("GET", "/www/api_check_erase_b.txt")
+check("nothing of the refused write is kept", code == 404, str(code))
+t0 = time.time()
+done = cleanup_done()
+code, _, _ = req("POST", "/www/api_check_erase_b.txt", "b" * 100, wait=False)
+check("the same write once /api/fs reports the cleanup done -> 201", done and code == 201,
+      f"{code} after {time.time() - t0:.1f} s")
+req("POST", "/api/delete/www/api_check_erase_b.txt")
 
 # [WEB-API-20] Every sector's erased pages, read from the flash a chunk at a
 # time; none counted past its sector's pages, nor more than the free bytes

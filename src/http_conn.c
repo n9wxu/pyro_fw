@@ -69,11 +69,12 @@ static void begin_response(http_conn_t *c, uint16_t status, const char *ctype, u
     }
 }
 
-void http_respond(http_conn_t *c, uint16_t status, const char *ctype, const void *body, uint32_t len) {
+static void respond(http_conn_t *c, uint16_t status, const char *ctype, const void *body, uint32_t len,
+                    const char *extra) {
     if (c->responded) {
         return;
     }
-    begin_response(c, status, ctype, len, NULL);
+    begin_response(c, status, ctype, len, extra);
     if (c->head_only || c->failed || len == 0) {
         return;
     }
@@ -96,8 +97,16 @@ void http_respond(http_conn_t *c, uint16_t status, const char *ctype, const void
     c->out_left = left;
 }
 
+void http_respond(http_conn_t *c, uint16_t status, const char *ctype, const void *body, uint32_t len) {
+    respond(c, status, ctype, body, len, NULL);
+}
+
 void http_respond_str(http_conn_t *c, uint16_t status, const char *ctype, const char *body) {
-    http_respond(c, status, ctype, body, (uint32_t)strlen(body));
+    respond(c, status, ctype, body, (uint32_t)strlen(body), NULL);
+}
+
+void http_respond_str_with(http_conn_t *c, uint16_t status, const char *ctype, const char *body, const char *extra) {
+    respond(c, status, ctype, body, (uint32_t)strlen(body), extra);
 }
 
 void http_respond_stream(http_conn_t *c, uint16_t status, const char *ctype, uint32_t len, const char *extra) {

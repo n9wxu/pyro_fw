@@ -296,6 +296,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | WEB-API-18 | A file whose write or close fails shall be let go without a restart | test_vfs_flash.c: test_WEB_API_18_a_write_that_cannot_close_is_let_go_without_a_restart, test_WEB_API_18_a_failed_write_is_let_go_when_no_other_file_is_open, test_WEB_API_18_a_log_that_cannot_close_reads_as_a_power_cut_left_it, test_WEB_API_18_a_rename_that_cannot_copy_leaves_the_file_as_it_was; Hardware: `support/failed_write_check.py`; Host tests above; on MK1C twice and MK1B-8MB once, 2026-10-19, an upload past the room refused, let go, its name taken again, no restart (DD-105) | ✅ |
 | WEB-API-19 | The system shall report at /api/fs the board's flash store | test_fs_json.c: test_WEB_API_19_the_store_and_each_file, test_WEB_API_19_a_store_with_no_file, test_WEB_API_19_the_widest_report_fits_the_work_buffer, test_WEB_API_19_a_name_outside_the_path_rules_shows_question_marks and 1 more; test_vfs_flash.c: test_WEB_API_19_the_cleanup_says_what_is_left_and_what_it_erased, test_WEB_API_19_the_stores_geometry, test_WEB_API_19_the_list_gives_each_files_name_and_size; Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
 | WEB-API-20 | The system shall report at /api/fs/scan?sector=K&count=N how many pages of each of N sectors of the flash... | test_fs_json.c: test_WEB_API_20_a_scan_chunk, test_WEB_API_20_the_widest_chunk_fits_the_work_buffer, test_WEB_API_20_a_chunk_that_does_not_fit_is_refused; test_vfs_flash.c: test_WEB_API_20_the_scan_counts_each_sectors_erased_pages, test_WEB_API_20_a_scan_stops_at_the_stores_end; Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
+| WEB-API-21 | A request that writes a file to the board's flash store shall be refused with 503 while the cleanup has... | test_http.c: test_WEB_API_21_every_route_that_writes_a_file_waits_for_the_cleanup, test_WEB_API_21_deletes_erases_and_updates_do_not_wait_for_it, test_WEB_API_21_a_refusal_asks_again_in_a_second_and_takes_no_body; Hardware: `support/api_check.py`, `support/failed_write_check.py`, `support/http_stream_check.py` | ✅ |
 | WEB-HTTP-01 | The HTTP server shall treat each connection as a byte stream | test_http_transport.c: test_WEB_HTTP_02_a_request_is_answered_and_closed, test_WEB_HTTP_01_a_download_larger_than_the_ring_arrives_whole, test_WEB_HTTP_01_more_browsers_than_exchanges_are_all_served; the suite test_http.c; Hardware: `support/http_stream_check.py` | ✅ |
 | WEB-HTTP-02 | Every response shall be framed by Content-Length and carry Connection | test_http_transport.c: test_WEB_HTTP_02_a_request_is_answered_and_closed; the suite test_http.c; Hardware: `support/api_check.py`, `support/http_stream_check.py` | ✅ |
 | WEB-HTTP-03 | The server shall read a request body only as fast as it consumes it, so that TCP flow control, not a... | test_http_transport.c: test_WEB_HTTP_03_an_upload_is_read_only_as_fast_as_it_is_taken; the suite test_http.c; Hardware: `support/http_stream_check.py` | ✅ |
@@ -305,6 +306,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | WEB-UI-05 | The web interface shall support firmware upload and update checking | Web UI: test_ui.spec.js | ✅ |
 | WEB-UI-06 | The Config tab shall show the longest flight the log holds | Web UI: test_ui.spec.js | ✅ |
 | WEB-UI-07 | The web interface shall have a Filesystem tab that shows /api/fs, downloads any file, and deletes a file... | Web UI: test_ui.spec.js | ✅ |
+| WEB-UI-08 | A change the web interface sends that the board refuses for the cleanup (WEB-API-21) shall be held | Web UI: test_ui.spec.js | ✅ |
 
 ## 9. Firmware Update
 
@@ -463,7 +465,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host test, a web test or a structural check | 324 |
+| ✅ Verified by a host test, a web test or a structural check | 326 |
 | ⚠️ Not verified, or not wholly | 24 |
 | ❌ Not implemented | 0 |
 | ✅ HW (verified on hardware only) | 13 |

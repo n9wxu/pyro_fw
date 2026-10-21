@@ -61,7 +61,7 @@ After recovery, plug in and download your CSV with one click. View it in Excel, 
 - **Firmware overhead**: ~48KB code, ~20KB RAM additional
 - **Protocol**: Standard HTTP — works with any browser, curl, wget, or scripts
 - **Tabs**: Status, Config, Flight Data, Beep Codes, Lua, and Update, which installs firmware and web files over the same link
-- **Simultaneous access**: Firmware reads config while you browse. No conflicts. From launch until the flight log closes, the log alone holds the filesystem: file requests answer 423, and the status API stays live (DD-058).
+- **Simultaneous access**: Firmware reads config while you browse. No conflicts. From launch until the flight log closes, the log alone holds the filesystem: file requests answer 423, and the status API stays live (DD-058). A change saved while the board erases its flash is held, with a note saying so, and sent once the erase is done (WEB-UI-08).
 - **Boards**: MK1A and MK1C serve the same pages.
 
 ---

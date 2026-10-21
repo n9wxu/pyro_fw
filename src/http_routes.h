@@ -64,6 +64,9 @@ typedef struct {
     /* [WEB-API-08] It touches the filesystem or the card, so it is refused
      * while the flight log holds them. */
     bool fs;
+    /* [WEB-API-21] It writes a file into the flash store, which takes erased
+     * pages, so it is refused while the cleanup erases. */
+    bool writes;
 } post_route_t;
 
 /* [WEB-API-17] The file a delete names follows the route. */
@@ -74,32 +77,32 @@ static inline const char *delete_target(const char *path) {
 }
 
 static const post_route_t post_routes[] = {
-    {"/api/ota", MATCH_EXACT, R_OTA, BODY_STREAM, 0, false},
-    {"/www/", MATCH_PREFIX, R_UPLOAD, BODY_STREAM, 0, true},
+    {"/api/ota", MATCH_EXACT, R_OTA, BODY_STREAM, 0, false, false},
+    {"/www/", MATCH_PREFIX, R_UPLOAD, BODY_STREAM, 0, true, true},
 #if PYRO_HAS_LUA
-    {"/api/lua/script", MATCH_EXACT, R_UPLOAD, BODY_STREAM, 0, true},
-    {"/api/lua/check", MATCH_EXACT, R_LUA_CHECK, BODY_GATHER, 2047, false},
+    {"/api/lua/script", MATCH_EXACT, R_UPLOAD, BODY_STREAM, 0, true, true},
+    {"/api/lua/check", MATCH_EXACT, R_LUA_CHECK, BODY_GATHER, 2047, false, false},
 #endif
-    {"/api/serial", MATCH_EXACT, R_SERIAL, BODY_GATHER, 12, true},
-    {"/api/config", MATCH_EXACT, R_CONFIG, BODY_GATHER, CONFIG_INI_MAX - 1, true},
-    {"/api/beeps/play", MATCH_EXACT, R_BEEP_PLAY, BODY_GATHER, 63, false},
-    {"/api/beeps", MATCH_EXACT, R_BEEPS, BODY_GATHER, BEEP_STORE_MAX - 1, true},
-    {"/api/pins", MATCH_EXACT, R_PINS, BODY_GATHER, PIN_STORE_MAX - 1, true},
-    {"/api/flight/erase", MATCH_EXACT, R_ERASE, BODY_NONE, 0, true},
-    {DELETE_ROUTE "/", MATCH_PREFIX, R_DELETE, BODY_NONE, 0, true},
-    {"/api/reboot", MATCH_EXACT, R_REBOOT, BODY_NONE, 0, false},
-    {"/api/test_mode/on", MATCH_QUERY, R_TEST_MODE_ON, BODY_NONE, 0, false},
-    {"/api/test_mode/off", MATCH_EXACT, R_TEST_MODE_OFF, BODY_NONE, 0, false},
+    {"/api/serial", MATCH_EXACT, R_SERIAL, BODY_GATHER, 12, true, true},
+    {"/api/config", MATCH_EXACT, R_CONFIG, BODY_GATHER, CONFIG_INI_MAX - 1, true, true},
+    {"/api/beeps/play", MATCH_EXACT, R_BEEP_PLAY, BODY_GATHER, 63, false, false},
+    {"/api/beeps", MATCH_EXACT, R_BEEPS, BODY_GATHER, BEEP_STORE_MAX - 1, true, true},
+    {"/api/pins", MATCH_EXACT, R_PINS, BODY_GATHER, PIN_STORE_MAX - 1, true, true},
+    {"/api/flight/erase", MATCH_EXACT, R_ERASE, BODY_NONE, 0, true, false},
+    {DELETE_ROUTE "/", MATCH_PREFIX, R_DELETE, BODY_NONE, 0, true, false},
+    {"/api/reboot", MATCH_EXACT, R_REBOOT, BODY_NONE, 0, false, false},
+    {"/api/test_mode/on", MATCH_QUERY, R_TEST_MODE_ON, BODY_NONE, 0, false, false},
+    {"/api/test_mode/off", MATCH_EXACT, R_TEST_MODE_OFF, BODY_NONE, 0, false, false},
 #if PYRO_HAS_BENCH_FLIGHT
-    {"/api/sim/flight", MATCH_QUERY, R_SIM_FLIGHT, BODY_NONE, 0, false},
-    {"/api/sim/stop", MATCH_EXACT, R_SIM_STOP, BODY_NONE, 0, false},
+    {"/api/sim/flight", MATCH_QUERY, R_SIM_FLIGHT, BODY_NONE, 0, false, false},
+    {"/api/sim/stop", MATCH_EXACT, R_SIM_STOP, BODY_NONE, 0, false, false},
 #endif
 #if PYRO_HAS_SD
-    {"/api/sd/bench", MATCH_QUERY, R_SD_BENCH, BODY_NONE, 0, true},
-    {"/api/sd/init", MATCH_QUERY, R_SD_INIT, BODY_NONE, 0, true},
-    {"/api/sd/idle", MATCH_QUERY, R_SD_IDLE, BODY_NONE, 0, true},
-    {"/api/hr/start", MATCH_QUERY, R_HR_START, BODY_NONE, 0, true},
-    {"/api/hr/stop", MATCH_EXACT, R_HR_STOP, BODY_NONE, 0, false},
+    {"/api/sd/bench", MATCH_QUERY, R_SD_BENCH, BODY_NONE, 0, true, false},
+    {"/api/sd/init", MATCH_QUERY, R_SD_INIT, BODY_NONE, 0, true, false},
+    {"/api/sd/idle", MATCH_QUERY, R_SD_IDLE, BODY_NONE, 0, true, false},
+    {"/api/hr/start", MATCH_QUERY, R_HR_START, BODY_NONE, 0, true, false},
+    {"/api/hr/stop", MATCH_EXACT, R_HR_STOP, BODY_NONE, 0, false, false},
 #endif
 };
 

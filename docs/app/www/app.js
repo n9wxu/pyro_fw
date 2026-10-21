@@ -62,11 +62,55 @@ var POLL_MS = 1000;
 var ANSWER_MS = 3000;  /* a status request not answered by then is abandoned */
 
 /* Every POST: the board refuses one without X-Pyro, which a page on another
-   site cannot send without a preflight the board does not grant. */
+   site cannot send without a preflight the board does not grant.
+   [WEB-UI-08] One it refuses while its cleanup erases (WEB-API-21) is held,
+   shown, and sent again once /api/fs reports the cleanup done. */
+var ERASE_POLL_MS = 1000;
+var eraseWaits = 0;
+
 function post(path, body, type) {
   var headers = {'X-Pyro': '1'};
   if (type) headers['Content-Type'] = type;
-  return fetch(path, {method: 'POST', headers: headers, body: body === undefined ? '' : body});
+  function send() {
+    return fetch(path, {method: 'POST', headers: headers, body: body === undefined ? '' : body});
+  }
+  function attempt(waiting) {
+    return send().then(function(r) {
+      return eraseRefusal(r).then(function(erasing) {
+        if (!erasing) {
+          if (waiting) eraseWaitShown(-1);
+          return r;
+        }
+        if (!waiting) eraseWaitShown(1);
+        return untilErased().then(function() { return attempt(true); });
+      });
+    }, function(e) {
+      if (waiting) eraseWaitShown(-1);
+      throw e;
+    });
+  }
+  return attempt(false);
+}
+
+function eraseRefusal(r) {
+  if (r.status !== 503) return Promise.resolve(false);
+  return r.clone().json().then(function(d) { return d.erasing === true; }, function() { return false; });
+}
+
+function untilErased() {
+  return new Promise(function(done) {
+    (function poll() {
+      getTimed('api/fs').then(function(r) { return r.json(); })
+        .then(function(fs) {
+          if (fs.cleanup === 'done') done(); else setTimeout(poll, ERASE_POLL_MS);
+        }, function() { setTimeout(poll, ERASE_POLL_MS); });
+    })();
+  });
+}
+
+function eraseWaitShown(delta) {
+  eraseWaits += delta;
+  document.getElementById('eraseWait').style.display = eraseWaits > 0 ? '' : 'none';
 }
 
 /* A GET abandoned after ANSWER_MS, so a board that stops answering cannot

@@ -230,6 +230,22 @@ static void respond_fs_locked(http_conn_t *hc) {
     http_respond_str(hc, 423, JSON, "{\"error\":\"the flight log holds the filesystem\"}");
 }
 
+/* [WEB-API-21, DD-108] A file written now could need pages the cleanup has
+ * yet to erase, and run out partway: the client sends it again once
+ * /api/fs reports the cleanup done. */
+static bool fs_erasing(void) {
+    vfs_flash_cleanup_t cl;
+    vfs_flash_cleanup_state(&cl);
+    return cl.cleaning;
+}
+
+static void respond_fs_erasing(http_conn_t *hc) {
+    http_respond_str_with(hc, 503, JSON,
+                          "{\"error\":\"the cleanup is erasing the flash; send it again once /api/fs reports it "
+                          "done\",\"erasing\":true}",
+                          "Retry-After: 1\r\n");
+}
+
 static bool fs_take(conn_t *c) {
     if (c->fs_held) {
         return true;
@@ -1738,6 +1754,10 @@ static void route_post(conn_t *c) {
         return;
     }
     if (r->fs && !fs_take(c)) {
+        return;
+    }
+    if (r->writes && fs_erasing()) {
+        respond_fs_erasing(hc);
         return;
     }
     if (r->body == BODY_NONE) {

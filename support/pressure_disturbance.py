@@ -124,7 +124,8 @@ def scatter(xs):
 def report(d):
     b, a = d["before"], d["after"]
     print(f"== {b['board']} ({b['sensor']}) {d['host']}: {len(d['beeps'])} beep codes {sorted(set(map(str, d['beeps'])))}, "
-          f"{len(d['saves'])} config saves, {a['flash_programs'] - b['flash_programs']} flash programs, "
+          f"{d['saves'].count(200)} of {len(d['saves'])} config saves taken (the rest waited for the cleanup, "
+          f"WEB-API-21), {a['flash_programs'] - b['flash_programs']} flash programs, "
           f"{a['flash_erases'] - b['flash_erases']} erases, {a['pres_flashed'] - b['pres_flashed']} readings marked flashed")
     failed = a["pres_rejects"] - b["pres_rejects"]
     if failed:
