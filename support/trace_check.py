@@ -23,9 +23,8 @@ Pointers:
     comment wraps it across lines or names several headings;
   - a `docs/....md` path named in a comment exists.
 
-The reviews, their prompts and the task list are not checked for IDs: a
-review cites what the code used to say, and the task list names requirements
-that do not exist yet.
+The task list is not checked for IDs: it names requirements that do not
+exist yet.
 """
 import os
 import re
@@ -41,18 +40,14 @@ SELF = os.path.join("support", "trace_check.py")  # its --selftest cites bad IDs
 
 # Cited IDs are checked here. Each is a record of the current code.
 ID_DOCS = ["REQUIREMENTS.md", "TRACEABILITY.md", "DECISIONS.md", "IMPLEMENTATION.md",
-           "docs/flight_states.md", "docs/code_review_2026-09-24_resolution.md",
-           "test/README.md", "support/README.md"]
+           "docs/flight_states.md", "test/README.md", "support/README.md"]
 
 # Where a withdrawn requirement may still be named: its own definition, and
 # the decisions that withdrew it.
-WITHDRAWN_MAY_APPEAR = {"REQUIREMENTS.md", "DECISIONS.md", "docs/code_review_2026-09-24_resolution.md"}
+WITHDRAWN_MAY_APPEAR = {"REQUIREMENTS.md", "DECISIONS.md"}
 
 # ID-shaped tokens from outside standards and part numbers, not requirements.
 EXTERNAL_FAMILIES = {"UTF", "CRC", "QFN", "BSD", "SHA", "RFC", "ISO", "IEC", "IEEE"}
-# A document whose own records carry another ID scheme.
-DOC_FAMILIES = {"docs/code_review_2026-09-24_resolution.md": {"REV"}}
-
 # The decisions rule on tasks by their labels (HA-1, ID-1), which are shaped
 # like requirement IDs and are not.
 TASK_LABEL_DOCS = {"DECISIONS.md"}
@@ -175,7 +170,7 @@ def expand_test_ref(base, suffix):
 
 def id_problems(path, text, reqs, withdrawn, dds, check_withdrawn):
     families = {r.rsplit("-", 1)[0] for r in reqs}
-    allowed = EXTERNAL_FAMILIES | DOC_FAMILIES.get(path, set())
+    allowed = EXTERNAL_FAMILIES
     problems = []
     for lineno, line in enumerate(text.splitlines(), 1):
         for fam, lo, hi in ID_RE.findall(line):
@@ -364,8 +359,6 @@ def selftest():
         ("an ID that does not exist", ids("/* PYR-SAFE-09 */"), 1),
         ("an unknown family", ids("/* BUZ-PAT-01 */"), 1),
         ("a task tag used as a requirement", ids("/* fixed in REV-12 */"), 1),
-        ("a review's own document may cite its IDs",
-         ids("REV-12", path="docs/code_review_2026-09-24_resolution.md", check_withdrawn=False), 0),
         ("an outside standard's ID", ids("/* UTF-8, CRC-16 */"), 0),
         ("a withdrawn ID", ids("/* PYR-SAFE-02 */"), 1),
         ("a range across a withdrawn ID names its live members", ids("/* [PYR-SAFE-01..03] */"), 0),

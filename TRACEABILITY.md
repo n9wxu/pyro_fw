@@ -1,7 +1,6 @@
 # Requirements Traceability Matrix
 
-Each live requirement of `REQUIREMENTS.md` and what verifies it. Withdrawn
-requirements (its Appendix A) have no row.
+Each requirement of `REQUIREMENTS.md` and what verifies it.
 
 This file is written by `support/trace_matrix.py` from the tests' own
 citations, the rules of `support/structure_check.py`, and the notes in
@@ -332,9 +331,9 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | SYS-LUA-01 | Every board shall run an operator-supplied Lua script with access to the flight's state and to the pads... | the suite test_lua.c; MK1C-SD is built without a script: J3 carries its SPI bus | ⚠️ |
 | SYS-LUA-02 | No script shall be able to block, prevent, or delay beyond its normal timing any behaviour of the board | the suite test_lua.c; Structure: `support/structure_check.py` | ✅ |
 | LUA-ISO-01 | A script that loops, faults or exhausts its memory shall cost only itself | the suite test_lua.c | ✅ |
-| LUA-ISO-02 | A script shall read the flight's state and never write it | the suite test_lua.c | ✅ |
+| LUA-ISO-02 | A script shall read the flight's state and never write it | test_lua.c: test_pyro_is_read_only, test_pyro_is_still_read_only_with_adc_added | ✅ |
 | LUA-ISO-03 | A script shall have no means to fire an enabled pyro channel or to stop one firing | the suite test_lua.c; Structure: `support/structure_check.py` | ✅ |
-| LUA-ISO-04 | A script shall have no access to files | the suite test_lua.c | ✅ |
+| LUA-ISO-04 | A script shall have no access to files | test_lua.c: test_script_cannot_reach_the_filesystem | ✅ |
 | LUA-ISO-05 | No construct of the language shall let a script outlast its limits | the suite test_lua.c | ✅ |
 | LUA-ISO-06 | A script's numbers shall be 32-bit integers and 32-bit floats on every build, the simulator included, and... | the suite test_lua.c | ✅ |
 | LUA-SAFE-01 | Whatever script is stored, the board shall start, reach its pad state and serve its web interface, so a... | The start-up gate is in `src/lua/lua_app.c`; a commanded restart now clears its mark (`lua_app_restart_commanded()`). Bench check owed: reboot within 15 s of start, script still runs | ⚠️ |
