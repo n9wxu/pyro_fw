@@ -2,16 +2,17 @@
 """
 failed_write_check.py -- an upload the storage cannot finish, on a live board.
 
-Uploads a file larger than the room the board reports, which the board
-refuses part-way. Then, without a restart: the part file is gone, a delete of
-the name finds no file, a small upload of the same name is taken once the
-cleanup has erased a sector, and it reads back whole. The cleanup, on USB with
-test mode off, erases the upload's pages one sector after another until
+Once the cleanup is done, uploads a file larger than the room the board
+reports, which the board refuses part-way. Then, without a restart: the part
+file is gone, and a delete of the name finds no file. A small upload of the
+same name while the cleanup erases the upload's pages is refused for it. The
+cleanup, on USB with test mode off, erases them one sector after another until
 /api/fs says it is done: at least five sectors a second, five times its pace
-off USB. The board's uptime runs on throughout, and the sensor's readings
-beside the flash writes and the erases keep the pad's sensor check satisfied.
+off USB. Then the small upload is taken, and reads back whole. The board's
+uptime runs on throughout, and the sensor's readings beside the flash writes
+and the erases keep the pad's sensor check satisfied.
 
-Verifies on hardware [WEB-API-18, SNS-PRES-14, USB-10].
+Verifies on hardware [WEB-API-18, WEB-API-21, SNS-PRES-14, USB-10].
 
 Waits up to CLEAN_WAIT_S for the cleanup: about a minute and a half for 4 MB.
 Refuses to run on a board that is not in PAD_IDLE.
@@ -80,10 +81,22 @@ def upload_too_big(size):
         c.close()
 
 
+def cleanup_done(secs=CLEAN_WAIT_S):
+    """/api/fs once it reports the cleanup done, or the last report."""
+    fs, t = {}, time.time()
+    while time.time() - t < secs:
+        fs = json.loads(req("GET", "/api/fs")[1])
+        if fs.get("cleanup") == "done":
+            break
+        time.sleep(2)
+    return fs
+
+
 st0 = status()
 if st0["state"] != "PAD_IDLE":
     sys.exit(f"{HOST} is in {st0['state']}; run this on the pad only")
 print(f"== {st0['board']} {st0['fw_version']} at {HOST}")
+cleanup_done()
 space = json.loads(req("GET", "/api/log/space")[1])
 size = space["bytes_free"] + 256 * 1024
 print(f"room {space['bytes_free']} bytes; uploading {size}")
@@ -99,29 +112,24 @@ code, _ = req("POST", "/api/delete" + NAME)
 check("a delete of its name finds none", code == 404, str(code))
 
 small = os.urandom(1024)
-code, waited = None, 0
-for waited in range(30):  # the cleanup erases a sector a second
-    code, _ = req("POST", NAME, small)
-    if code == 201:
-        break
-    time.sleep(1)
-check("a small upload of its name is taken", code == 201, f"{code} after {waited} s")
-code, body = req("GET", NAME)
-check("and reads back whole", code == 200 and body == small, f"{code} {len(body)} bytes")
-code, _ = req("POST", "/api/delete" + NAME)
-check("and is deleted", code == 200, str(code))
+code, body = req("POST", NAME, small)
+erasing = code == 503 and json.loads(body).get("erasing") is True
+check("a small upload of its name while the cleanup erases is refused for it", erasing,
+      f"{code} {body[:60]!r}")
 
 e0, t0 = status()["flash_erases"], time.time()
-fs = {}
-while time.time() - t0 < CLEAN_WAIT_S:
-    fs = json.loads(req("GET", "/api/fs")[1])
-    if fs.get("cleanup") == "done":
-        break
-    time.sleep(2)
+fs = cleanup_done()
 erased, took = status()["flash_erases"] - e0, time.time() - t0
 check("the cleanup finishes on USB", fs.get("cleanup") == "done", f"{fs.get('cleanup')} after {took:.0f} s")
 check(f"at {FAST_PER_S:g} sectors a second or more (USB-10)", erased >= FAST_PER_S * max(took - 2, 1),
       f"{erased} sectors in {took:.0f} s")
+
+code, _ = req("POST", NAME, small)
+check("then the small upload is taken", code == 201, str(code))
+code, body = req("GET", NAME)
+check("and reads back whole", code == 200 and body == small, f"{code} {len(body)} bytes")
+code, _ = req("POST", "/api/delete" + NAME)
+check("and is deleted", code == 200, str(code))
 
 st1 = status()
 check("no restart", st1["uptime"] > st0["uptime"] and st1["reset_cause"] == st0["reset_cause"],

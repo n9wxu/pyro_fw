@@ -88,6 +88,17 @@ def status_json():
     return json.loads(b)
 
 
+def cleanup_done(secs=120):
+    """[WEB-API-21] A write waits until /api/fs reports the cleanup done."""
+    end = time.time() + secs
+    while time.time() < end:
+        st, h, b = exchange([request("GET", "/api/fs")])
+        if st == 200 and json.loads(b).get("cleanup") == "done":
+            return True
+        time.sleep(0.5)
+    return False
+
+
 st0 = status_json()
 if st0["state"] != "PAD_IDLE":
     sys.exit(f"{HOST} is in {st0['state']}; run this on the pad only")
@@ -118,6 +129,7 @@ check(f"{len(big_head)}-byte header block", st == 200 and framed(st, h, b))
 
 st, h, b = exchange([b"PUT /api/status HTTP/1.1\r\n\r\n"])
 check("unsupported method -> 405 with Allow", st == 405 and "allow" in h, f"{st} {h.get('allow')}")
+cleanup_done()
 st, h, b = exchange([f"POST /api/config HTTP/1.1\r\nHost: {HOST}\r\nX-Pyro: 1\r\n"
                       "Content-Length: 99999\r\n\r\n".encode()])
 check("oversized body -> 413 before it is sent", st == 413 and framed(st, h, b), f"{st}")
@@ -144,6 +156,7 @@ for name in ("app.js", "index.html"):
         n = random.choice((1, 7, 536, 1460, 3000, 5000))
         pieces.append(upload[i:i + n])
         i += n
+    cleanup_done()
     t0 = time.time()
     st, h, b = exchange(pieces)
     check(f"upload /www/{name} ({len(data)} B in {len(pieces)} writes)", st == 201, f"{st} {b!r} {time.time() - t0:.1f}s")
