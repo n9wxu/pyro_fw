@@ -590,8 +590,16 @@ rationale and the alternatives considered.
   page is erased.
 - **What it costs:** every close leaves the cleanup a pass to make, which
   reads the store to find nothing left: 0.9 s on MK1B-8MB and 2.6 s on
-  MK1C after a 100-byte upload, measured 2026-10-21. A write behind
-  another waits that long.
+  MK1C after a 100-byte upload. A write behind another waits that long.
+- **Measured, 2026-10-21:**
+
+  | | MK1C | MK1B-8MB |
+  |---|---|---|
+  | The cleanup's pass after a 100-byte upload | 2.6 s | 0.9 s |
+  | `upload_www.sh`, four files | 19 s | 12 s |
+  | After an upload past the room, a write refused for the erase; the cleanup then done | 1,888 sectors in 49 s | 833 sectors in 30 s |
+  | `support/api_check.py` | 81/81 | 81/81 |
+  | `support/failed_write_check.py` | 12/12 | 12/12 |
 
 ### DD-107: The Cleanup At The Flash's Pace On USB; A Filesystem Tab
 - **Decision:** at the user's direction -- "Erase at full speed when on
