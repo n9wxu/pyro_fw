@@ -147,7 +147,7 @@ MK1A and MK1C (16 MB): two 4076 KB slots from 0x00A000 and 0x405000, and 8 MB of
 | POST | `/www/<file>` | Upload a web file |
 | GET | `/<path>` | Any file on the flash |
 
-The API is live in flight; a request that needs a file gets 423 while the flight log holds the filesystem (DD-058, WEB-API-10).
+The API is live in flight; a request that needs a file gets 423 while the flight log holds the filesystem (DD-058, WEB-API-10). A route marked `writes` in `src/http_routes.h` gets 503 with `Retry-After: 1` while the cleanup has sectors left to erase (WEB-API-21, DD-108).
 
 ### Telemetry ($PYRO NMEA)
 ```

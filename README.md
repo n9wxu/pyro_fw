@@ -487,7 +487,7 @@ Connect the board via USB. It appears as a network adapter (RNDIS on Windows, EC
   - `POST /api/beeps/play`, `/api/lua/check`, `/api/flight/erase`, `/api/delete/<path>`, `/api/test_mode/on[?log=host]`, `/api/test_mode/off`, `/api/reboot`, `/api/ota`, `/api/serial`, `/www/<file>`
   - `GET /<path>` serves any file on the flash
 
-The API and USB stay live in flight; only the flight log touches the filesystem then, and a request that needs a file is answered 423 (DD-058). A saved `config.ini` or `pins.ini` is stored and takes effect at the next start (CFG-10).
+The API and USB stay live in flight; only the flight log touches the filesystem then, and a request that needs a file is answered 423 (DD-058). A request that writes a file while the cleanup erases is answered 503 with `Retry-After: 1` before any of it is written; the page holds the change, says it waits for the erase, and sends it again once `/api/fs` reports the cleanup done (WEB-API-21, WEB-UI-08, DD-108). A saved `config.ini` or `pins.ini` is stored and takes effect at the next start (CFG-10).
 
 ### Network Architecture
 Each tracker advertises a `_pyro._tcp` DNS-SD service via mDNS. A board whose name is taken renames itself `pyro-1`, `pyro-2`, and so on.

@@ -9,6 +9,10 @@ the last byte of its MAC, which comes from its flash chip's unique ID (DD-099);
 `install.py` and `update_from_release.py` take the one board attached unless
 `--host` names another, and `pyro.local` finds one board.
 
+A write the board refuses while its cleanup erases (503, WEB-API-21) is sent
+again once `/api/fs` reports the cleanup done: `pyro_http.py`'s `post()`,
+`upload_www.sh` and the bench checks all wait for it.
+
 `flash_picotool.sh` and `test_network.py` run picotool from
 `~/.pico-sdk/picotool/2.2.0-a4/picotool/picotool`, where the Pico VS Code
 extension installs it.
@@ -19,8 +23,8 @@ extension installs it.
 |--------|---------|
 | `test_network.py` | Comprehensive network/API test suite with TUI |
 | `http_stream_check.py` | The HTTP server over raw sockets: requests split byte by byte, bodies in later writes, coalesced requests, odd-chunk uploads round-tripped, parallel fetches past a stalled connection (rewrites /www/app.js and index.html with the local copies) |
-| `api_check.py` | Bench check of every HTTP route, a stored configuration that waits for the next start, the board's limits, silence on USB, test mode, a file deleted, /api/fs listing a file uploaded at its size, and a scan of every sector (erases the flight log; about 15 s in test mode) |
-| `failed_write_check.py` | An upload past the board's room, refused part-way and let go without a restart: its part file gone, its name taken again, the cleanup done at five sectors a second or more on USB, and no sensor fault latched by the readings beside the writes and erases (WEB-API-18, SNS-PRES-14, USB-10) |
+| `api_check.py` | Bench check of every HTTP route, a stored configuration that waits for the next start, the board's limits, silence on USB, test mode, a file deleted, /api/fs listing a file uploaded at its size, a scan of every sector, and a write refused while the cleanup erases (erases the flight log; about 15 s in test mode) |
+| `failed_write_check.py` | An upload past the board's room, refused part-way and let go without a restart: its part file gone, a write of its name refused while the cleanup erases, the cleanup done at five sectors a second or more on USB, its name taken again, and no sensor fault latched by the readings beside the writes and erases (WEB-API-18, WEB-API-21, SNS-PRES-14, USB-10) |
 | `pressure_trace.py` | Every pressure conversion a board makes, judged for the faults a sample rate hides (DD-063) |
 | `noise_baseline.py` | A still board's pressure noise and pad speed noise, from `/api/status` |
 | `register_board.py` | Record the attached boards in `boards/BOARD_REGISTRY.json` and report subnet collisions |
