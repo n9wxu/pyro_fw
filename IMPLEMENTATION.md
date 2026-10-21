@@ -37,7 +37,7 @@ FALLING / DROGUE_DESCENT / CHUTE_DESCENT → LANDED on SEVT_LANDING
 
 **PAD_IDLE → ASCENT:** 100 ft above the ground reference while climbing at 5 m/s or more, on the filtered state, with no hold (`launch_detected()`, FLT-LAUNCH-02, FLT-LAUNCH-07), and no USB host attached unless test mode is on (USB-01, USB-08). T+0 is back-dated to the start of the rise (FLT-LAUNCH-03).
 
-**ASCENT → FALLING:** the obeyed estimator seen climbing and then seen falling, each by more than three times its rate's uncertainty, with its model explaining the readings throughout; a fall whose climb was not seen that way must last 2 s (FLT-APO-07, DD-092). There is no hold and no Mach flag: a port error near Mach 1 is readings the model does not explain (SNS-EST-08). Every estimator the build carries is flown and logged; `estimator` in config.ini names the one obeyed (`src/estimator.h`, SNS-EST-06, SNS-EST-07).
+**ASCENT → FALLING:** the obeyed estimator seen climbing and then seen falling, each by more than three times its rate's uncertainty, with its model explaining the readings throughout; a fall whose climb was not seen that way must last 2 s (FLT-APO-07, DD-092). A port error near Mach 1 is readings the model does not explain, and nothing is decided on them (SNS-EST-08). Every estimator the build carries is flown and logged; `estimator` in config.ini names the one obeyed (`src/estimator.h`, SNS-EST-06, SNS-EST-07).
 
 **Descent:** the phase is read from the descent rate settling in a band, never from a firing command (FLT-DESC-01). The fire rules are `fire_control_step()` in `src/fire_control.c`: each channel's own trigger, re-fire, and the emergency fire (DD-082).
 
@@ -65,7 +65,7 @@ The flight software (`src/flight_sources.txt`) contains no platform-specific cod
 Three implementations: `src/hal_common/hal_common.c` with each board's files in `boards/<name>/` (Pico), `test/hal_test.c` (mocks), `boards/sim/hal_sim.c` (simulation).
 
 ### Tasks
-FreeRTOS SMP on both cores (DD-073, `src/rtos/rtos_tasks.h`). `main()` in `src/main_hardware.c` brings the board up on core0 and starts the scheduler. `flight_task()` runs alone at P on core0, woken every 10 ms (`src/loop_period.h`, DD-104) by an alarm on the hardware timer. In order: the start of core1's frame (`core1_frame_begin()`, which wakes the storage task); `hal_tasks_tick()`; `flight_call_service()` (changes the net task handed over); `dispatch_state()`; `flight_update_outputs()`; Lua's service and its tick request. The net task (`src/net_task.c`: TinyUSB, smallest_tcp, HTTP's transport and work units, DD-061), the Lua task (`src/lua/lua_core1.c`) and the storage task (`src/storage_task.c`: `hal_storage_service()` and `flight_storage_service()`) share core1 at P. Core1 runs in the period's frame (`src/core1_frame.h`, DD-104): the storage task writes the flight log from the period's start for up to 3 ms and then gives the frame up; Lua's tick starts then, or at 3 ms, and runs for up to 6.5 ms, ending by 9.5 ms. On the ground every flash program or erase runs through `flash_op()` under a lockout that parks the other core (DD-074). The log writer's go through `flash_op_slot_program()` and `flash_op_slot_erase()`, which in flight run each in pieces inside the writer's slot, on core1 alone, by the chip's datasheet figures (`src/flash_slot.c`, `src/flash_timing.c`); a piece that waits for a slot is started at the slot's start by an alarm interrupt on core1, and an erase is suspended at the slot's end and resumed in the next. In flight an erase comes only when the log finds no erased page (`VFS_NOSPC`), one sector a time, and only on a part whose erase ends in pieces (`flash_op_can_erase()`; not BY25Q64ES). An operation the chip holds suspended is finished at every start (`flash_chip_finish_suspended()`) and before the first ground operation after a flight that gave one up (FLT-LOG-11). The flight task waits only for its period (FLT-RT-01). The watchdog is twice `PYRO_LOOP_WORST_MS`.
+FreeRTOS SMP on both cores (DD-073, `src/rtos/rtos_tasks.h`). `main()` in `src/main_hardware.c` brings the board up on core0 and starts the scheduler. `flight_task()` runs alone at P on core0, woken every 10 ms (`src/loop_period.h`, DD-104) by an alarm on the hardware timer. In order: the start of core1's frame (`core1_frame_begin()`, which wakes the storage task); `hal_tasks_tick()`; `flight_call_service()` (changes other tasks handed over); `dispatch_state()`; `flight_update_outputs()`; Lua's service and its tick request. The net task (`src/net_task.c`: TinyUSB, smallest_tcp, HTTP's transport and work units, DD-073), the Lua task (`src/lua/lua_core1.c`) and the storage task (`src/storage_task.c`: `hal_storage_service()` and `flight_storage_service()`) share core1 at P. Core1 runs in the period's frame (`src/core1_frame.h`, DD-104): the storage task writes the flight log from the period's start for up to 3 ms and then gives the frame up; Lua's tick starts then, or at 3 ms, and runs for up to 6.5 ms, ending by 9.5 ms. On the ground every flash program or erase runs through `flash_op()` under a lockout that parks the other core (DD-074). The log writer's go through `flash_op_slot_program()` and `flash_op_slot_erase()`, which in flight run each in pieces inside the writer's slot, on core1 alone, by the chip's datasheet figures (`src/flash_slot.c`, `src/flash_timing.c`); a piece that waits for a slot is started at the slot's start by an alarm interrupt on core1, and an erase is suspended at the slot's end and resumed in the next. In flight an erase comes only when the log finds no erased page (`VFS_NOSPC`), one sector a time, and only on a part whose erase ends in pieces (`flash_op_can_erase()`; not BY25Q64ES). An operation the chip holds suspended is finished at every start (`flash_chip_finish_suspended()`) and before the first ground operation after a flight that gave one up (FLT-LOG-11). The flight task waits only for its period (FLT-RT-01). The watchdog is twice `PYRO_LOOP_WORST_MS`.
 
 ### The flight path in RAM
 From the head of the first period that starts airborne with the flight log running until landing, core0 runs only from RAM (FLT-RT-02, FLT-RT-03, DD-104): the flight task, its interrupt handlers, the idle tasks, the kernel paths they take, and every read-only byte they read. `support/flight_ram_link.py` runs every firmware link: it links once, has `support/prove_flight_ram.py` find the path in that image, and links again with the path's sections renamed `.time_critical.flight.*`, which the linker script copies to RAM; `<image>.flight_ram.txt` beside the image lists them. CI proves each image with `prove_flight_ram.py --strict`. The flight task enters flight (`flash_op_flight_begin()`) at the head of its period and leaves it in `hal_log_stop()` at landing; meanwhile every flash operation but the writer's is refused, a mailbox call whose function lives in flash is refused, and a reset asked for over USB waits. `/api/status` reports `flash_in_flight`, the writer's part (`flash_part`), the frame (`frame`: the writer's longest hold, its overruns, Lua ticks given no time) and the pieces (`slots`: run, suspended, slots waited, operations refused in flight, the longest).
@@ -83,7 +83,8 @@ Pads are owned once: `pin_store_claim_pads()` gives each pad one owner, and `pyr
 |---|---|
 | `src/flight_sources.txt` | The flight software's file list, one responsibility a file (`docs/flight_states.md` has the table) |
 | `src/flight_states.c`, `src/flight_states.h` | The transition table, the dispatcher, the context |
-| `src/pressure_estimator.c`, `src/pressure_processing.c`, `src/atmosphere.c` | The filtered state, samples and the ground reference, the standard atmosphere |
+| `src/estimator.h`, `src/estimator_table.c`, `src/estimator_lumped.c`, `src/estimator_constacc.c` | The estimators: one interface, the table the build carries, the lumped filter, the constant-acceleration filter (DD-092) |
+| `src/pressure_estimator.c`, `src/pressure_processing.c`, `src/atmosphere.c` | The constant-acceleration Kalman filter, samples and the ground reference, the standard atmosphere |
 | `src/fire_control.c`, `src/fire_plan.c` | The fire rules; the plan from the configuration and the board |
 | `src/flight_resume.c` | The pad record and the resume decision |
 | `src/telemetry.c` | $PYRO NMEA and its queued events |
@@ -94,6 +95,8 @@ Pads are owned once: `pin_store_claim_pads()` gives each pad one owner, and `pyr
 | `src/pressure_collector.c` | The free-running collector: conversions, the queue of four, bus recovery (DD-093) |
 | `src/ms5607_driver.c`, `src/bmp280_driver.c` | Each sensor's detection, description for the collector, and arithmetic |
 | `src/flight_log.c` | Binary flight log, CSV rendering |
+| `src/vfs.c`, `src/vfs_flash.c`, `src/fs_flash.c` | Every file through one interface, the SD card first where there is one; alfs on the flash, its driver and the store's lock (DD-076, DD-100) |
+| `src/rtos/rtos_tasks.c`, `src/net_task.c`, `src/storage_task.c` | The tasks, their cores and priorities; the net task; the storage task (DD-073) |
 | `src/flash_op.c`, `src/flash_slot.c`, `src/flash_timing.c` | Flash operations: the ground's lockout, the flight's pieces in the writer's slots, the chips' figures (DD-074, DD-104) |
 | `src/core1_frame.h`, `src/rtos/core1_frame.c` | Core1's frame: the writer's slot, then Lua's (DD-104) |
 | `src/small_fmt.c` | The flight path's text formatter, integers only, the C library's output |
@@ -103,7 +106,7 @@ Pads are owned once: `pin_store_claim_pads()` gives each pad one owner, and `pyr
 | `src/flight_sim.c`, `src/bench_flight.c` | The bench flight's profile and its hold on the channels |
 | `src/pin_assign.c`, `src/pin_store.c`, `src/pad_claim.c` | `pins.ini` and pad ownership |
 | `src/lua/` | The script |
-| `src/main_hardware.c` | Hardware main loop |
+| `src/main_hardware.c` | `main()` and the flight task |
 | `sim/main_sim.c` | Simulation black box (WASM target) |
 | `boards/sim/hal_sim.c` | Simulation HAL |
 | `sim/physics.c` | Shared physics engine |
@@ -118,7 +121,7 @@ MK1B (2 MB):
 0x08A000  App Slot B           512 KB
 0x10A000  Files (alfs)         984 KB
 ```
-MK1A and MK1C (16 MB): two 4076 KB slots from 0x00A000 and 0x405000, and 8 MB of files from 0x800000. Each board's `board.cmake` sets the geometry.
+MK1B-8MB (8 MB): two 2028 KB slots from 0x00A000 and 0x205000, and 4 MB of files from 0x400000. MK1A, MK1C and MK1C-SD (16 MB): two 4076 KB slots from 0x00A000 and 0x405000, and 8 MB of files from 0x800000. Each board's `board.cmake` sets the geometry.
 
 ### HTTP API
 | Method | Path | Description |
@@ -136,6 +139,7 @@ MK1A and MK1C (16 MB): two 4076 KB slots from 0x00A000 and 0x405000, and 8 MB of
 | GET/POST | `/api/config` | Config INI file; a POST is merged and stored, and takes effect at the next start (CFG-10) |
 | GET | `/api/limits` | The board's pyro timing defaults and ranges, what is in force, the sensor's range (PYR-BOARD-03) |
 | GET, POST | `/api/sim`, `/api/sim/flight`, `/api/sim/stop` | The bench flight, where the board has one (SIM-01..04) |
+| GET, POST | `/api/sd`, `/api/sd/bench`, `/api/sd/init`, `/api/sd/idle`, `/api/hr`, `/api/hr/start`, `/api/hr/stop` | MK1C-SD's card and its high-rate log (DD-075, DD-077) |
 | GET/POST | `/api/pins` | `pins.ini` |
 | GET | `/api/pins/caps` | The board's capability table and its vocabulary |
 | GET/POST | `/api/beeps` | Beep personalities; `POST /api/beeps/play` auditions one |
@@ -166,7 +170,7 @@ The flight log (`flight_log.bin` on the flash) opens in the first period airborn
 
 **Flash stalls whatever fetches from it.** The RP2040 executes from flash via XIP, and a program or an erase stops it answering. So:
 - nothing is written until the RAM buffer has filled once or 2 s have passed, which carries the log through the launch-shock window (DD-084, DD-027);
-- after that the buffer is written, and the file synced once a second, in the writer's slots (FLT-LOG-06, FLT-LOG-09), so a flight that never lands keeps its record; core0 runs from RAM meanwhile and does not stop;
+- after that the buffer is written every 200 ms, or as soon as it is nearly full, and the file synced once a second, in the writer's slots (FLT-LOG-06, FLT-LOG-09), so a flight that never lands keeps its record; core0 runs from RAM meanwhile and does not stop;
 - from launch until the log lets go, every other file request is refused (`HAL_FS_LOCKED`, HTTP 423, DD-058).
 
 The flight context also keeps a ring of the last 64 samples and events; `flight_save_csv()` exports it for the simulator.
@@ -174,7 +178,7 @@ The flight context also keeps a ring of the last 64 samples and events; `flight_
 ### Pressure
 Each reading is stamped at the moment it describes, not when the loop reads it (SNS-PRES-08): the pressure collector, one interrupt state machine running from RAM, commands each conversion, waits out the part's worst case on an alarm, reads, and queues the raw codes with the time of each conversion's middle (DD-093). The sensor task takes the queue every loop and compensates. A conversion a flash erase or program ran beside is used like any other, and counted (DD-106). A failed transfer is counted by cause, and after three in a row the collector clears the bus and resets the part (SNS-COL-04, SNS-COL-05).
 
-The raw readings go straight into one Kalman filter (`pest_update()` in `src/pressure_estimator.c`, DD-085): its state is ln(p / p_ref), its rate and its acceleration, with the sensor's noise measured from the readings. A reading more than six standard deviations from the prediction is skipped unless it is the third in a row. There is no median, no low-pass and no reseed. Every flight comparison is made in pressure, with heights and speeds the operator set converted once against the pad and the 1976 standard atmosphere (`src/atmosphere.c`, SNS-EST-05).
+The raw readings go straight into every estimator the build carries (`src/estimator.h`, DD-092), and the flight obeys the one `estimator` in config.ini names. `lumped`, the default, is an extended Kalman filter on height, speed and the thrust and drag it learns from the readings (`src/estimator_lumped.c`, `docs/lumped_parameter_filter.md`). `constacc` is a Kalman filter on ln(p / p_ref), its rate and its acceleration, with the sensor's noise measured from the readings (`pest_update()` in `src/pressure_estimator.c`, DD-085). Each skips a reading more than six standard deviations from its prediction unless it is the third in a row. Every flight comparison is made in pressure, with heights and speeds the operator set converted once against the pad and the 1976 standard atmosphere (`src/atmosphere.c`, SNS-EST-05).
 
 Altitude is computed for people, relative to the pad, and is not clamped: a point below the pad reads negative and no ceiling is applied (SNS-ALT-01). Each sensor's rated range and its height for proper operation are in `src/pressure_sensor.h`, and each board declares them (SNS-MAX-01).
 
@@ -188,5 +192,5 @@ The `sim/` directory contains a WASM-compilable flight computer black box and a 
 - Host suites: see `test/README.md`; `scripts/run_host_tests.sh` runs every one, locally and in CI
 - Playwright web UI tests in 3 mock server modes, and the browser demo flown from power-on to LANDED
 - `TRACEABILITY.md` is written by `support/trace_matrix.py` from the tests' own citations
-- `support/structure_check.py`, `support/trace_check.py`, `support/wait_check.py` and `support/prove_core0.py` in CI
-- cppcheck with MISRA addon, clang-format, pmccabe complexity in CI
+- `support/structure_check.py`, `support/trace_check.py`, `support/wait_check.py`, `support/prove_core0.py` and `support/prove_flight_ram.py --strict` in CI
+- clang-format and pmccabe complexity as gates in CI; cppcheck with the MISRA addon reports and does not fail the build

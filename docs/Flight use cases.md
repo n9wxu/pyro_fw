@@ -1,14 +1,15 @@
 Flight use cases
 
-**Status, 2026-09-28 (2.1.702).** These are still the intended flights. Where the firmware and the web pages differ from the stories:
-- The rocket name takes up to 8 characters, so SKYSTREAK (9) does not fit.
-- The Config tab has no Beep Mode; the Beep Codes tab holds the personalities.
-- One Save on the Config tab saves the release choices with the rest. A release takes effect at the next reboot.
+These are the intended flights. Where the firmware and the web pages differ from the stories:
+- The rocket name and ID take up to 8 characters each (CFG-07), so SKYSTREAK (9) does not fit.
+- Units offer cm, meters and feet (CFG-03).
+- The Config tab names the channels Pyro 1 and Pyro 2. "Drogue" and "main" are the operator's wiring (DD-082).
+- The Config tab has no Beep Mode; the Beep Codes tab holds the personalities. The shipped personality repeats until launch, every 5 s; twice is a choice on that tab.
+- One Save on the Config tab saves the release choices with the rest. Every saved change takes effect at the next start, so the tab asks for Save, then Reboot (CFG-10).
 - The Flight Data tab has an Erase flight log button.
-- Units still offer cm, with meters and feet.
-- Launch is declared at 100 ft and 5 m/s, held 100 ms. The log's T+0 is the first sample 50 cm above the pad (FLT-LAUNCH-03, FLT-LAUNCH-07).
-- A 0 s delay fires at apogee detection, about 0.4 s after the peak.
-- The emergency main fires once the drogue has had 2 s and the rocket has then fallen faster than 35 m/s for 1 s without being slowed (FLT-EMRG-01, DD-028): about 3 s, as in the third story.
+- Launch is declared when the filtered state shows more than 100 ft above the pad and a climb faster than 5 m/s, with no hold time (FLT-LAUNCH-07). The log's T+0 is the first sample of the rise more than 50 cm above the pad (FLT-LAUNCH-03).
+- A 0 s delay fires as apogee is declared, within 0.5 s after the peak for a flight up to 10 km (FLT-APO-01).
+- The emergency fire is off unless `emergency_fire_speed` is set; it defaults to 0. Set, it fires every enabled channel, pyro 1 and pyro 2 alike, once the descent after apogee reaches that speed in the pad's air, and fires them again every `refire_interval` until the speed falls below it or the rocket lands (FLT-EMRG-01, FLT-AIR-01). It acts on speed alone. Falling free from apogee, the rocket passes 30 m/s about 3 s after apogee, as in the third story.
 
 # Happy Path
 I attach a new pyro mk1c to a usb port on a pc.  I point a browser at pyro.local and see the Pyro MK1C web pages.  The status shows pad_idle and the altitude is 0.0m.

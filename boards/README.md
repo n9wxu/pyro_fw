@@ -11,7 +11,7 @@ up, and its code points there instead of carrying the explanation:
 | Board | Hardware | Pyro architecture |
 |---|---|---|
 | [`mk1a`](mk1a/THEORY_OF_OPERATION.md) | bare RP2040, 16 MB flash | a switched high side per channel, one shared low side |
-| [`mk1b`](mk1b/THEORY_OF_OPERATION.md) | bare RP2040 on the stock `pico` header, 2 MB of flash used | the same topology on AP2192 high-side switches |
+| [`mk1b`](mk1b/THEORY_OF_OPERATION.md) | bare RP2040 on the stock `pico` header, 2 MB flash | the same topology on AP2192 high-side switches |
 | [`mk1b_8mb`](mk1b_8mb/THEORY_OF_OPERATION.md) | MK1B, refitted: an 8 MB flash and the base AP2192 | MK1B's, with continuity judged |
 | [`mk1c`](mk1c/THEORY_OF_OPERATION.md) | bare RP2040, 16 MB flash | a TPS259570 eFuse armed by a charge pump; a low side per channel |
 | [`mk1c_sd`](mk1c_sd/THEORY_OF_OPERATION.md) | MK1C, with J3 and J1.6 as an SPI bus: an SD card and an LSM6DS3 | MK1C's |
@@ -68,7 +68,7 @@ A board writes none of the rest:
   LED, telemetry UART, buzzer, `board_pyro_raw()` — as plain GPIO on the pins
   `board_pins.h` names. Each is weak: a board whose hardware differs defines
   its own, and that one links.
-- `src/flash_window.c` holds a weak `board_flash_ok()`, always true. A board
+- `src/flash_op.c` holds a weak `board_flash_ok()`, always true. A board
   whose firing sequence is paced by the loop answers false while it runs, as
   MK1C's does, since a flash erase stalls the loop (DD-056).
 - `src/pressure_single_sensor.c` brings up one sensor on one bus, whichever
@@ -93,9 +93,9 @@ Table 625) are too weak for it. Read the pull-ups from the board's design
 files, not from memory. The bring-up fails the build if a speed exceeds its
 device's.
 
-The MS5607's one-shot converts a pressure and a temperature every 20 ms loop:
-at 400 kHz the pair is ready 18.6 ms into the loop, at 100 kHz only 0.26 ms
-before the next (DD-066), so an MS5607 board wants fast mode. Every sensor
+The pressure collector runs the MS5607 free of the loop (DD-093): a pressure
+and a temperature, 18.8 ms a cycle at 400 kHz and 19.9 ms at 100 kHz, against
+FLT-RATE-01's 50 a second, so an MS5607 board wants fast mode. Every sensor
 transfer is bounded (DD-069), and a conversion a flash operation ran beside is
 used like any other, and counted (DD-106).
 
@@ -145,8 +145,8 @@ really is an LED (MK1A's does); otherwise it leaves it undefined and lets
 `board_hw_init()` drive the LED.
 
 **A custom SDK board header needs the CMake directive as well as the
-`#define`.** `cmake/generic_board.cmake` greps board headers for
-`pico_board_cmake_set_default(PICO_FLASH_SIZE_BYTES, ...)` to set the
+`#define`.** The Pico SDK's `cmake/generic_board.cmake` greps board headers
+for `pico_board_cmake_set_default(PICO_FLASH_SIZE_BYTES, ...)` to set the
 CMake-side variable, and `pico_fota_bootloader` substitutes
 `@PICO_FLASH_SIZE_BYTES@` from it. Omit the directive and you get
 `__FLASH_SIZE =  - __FILESYSTEM_SIZE` — an empty substitution producing a

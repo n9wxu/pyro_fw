@@ -1,9 +1,9 @@
 # Resuming a flight: fresh data, and what the log could restore
 
-Raised in the requirements review on 2026-10-02. Any restart checks whether
-a flight is in progress and resumes it. This note sets out the baseline the
-user ruled on and the option of restoring state by replaying the flight
-log. Nothing here is started.
+Any restart checks whether a flight is in progress and resumes it
+(FLT-BROWN-02, DD-086). This note sets out what a resumed flight loses, and
+the option DD-086 holds open: restoring state by replaying the flight log.
+The option is not built.
 
 ## Baseline (ruled)
 
@@ -15,8 +15,9 @@ about the channels need be stored. What the baseline loses:
 |---|---|---|
 | Time of apogee | DELAY counts in full from the resume | late |
 | Peak pressure | FALLEN measures from the resume point | late |
-| Whether apogee was declared | resumed in descent it is taken as passed; resumed climbing it starts under the Mach flag | late |
+| Whether apogee was declared | resumed in descent it is taken as passed; resumed climbing, the estimators start again and apogee waits for them to explain the readings (FLT-APO-07) | late |
 | T+0, peak, fire and re-fire counts | the summary and the altitude beep-out are of the part after the restart | — |
+| The log written before the restart | the resumed flight's log, as it opens, removes it (`flight_log.bin`) | — |
 
 Every loss errs late. None can fire early.
 
@@ -32,15 +33,17 @@ What has to be true for it to be used:
 - **Fast enough.** The replay has a time budget inside the restart. If it
   is not finished, the flight resumes on the baseline. The budget and the
   read time per board are to be measured; a log late in a long flight is
-  the worst case, and reading events without
-  walking every sample row may need an index or a scan from the end.
+  the worst case, and reading events without walking every sample row may
+  need an index or a scan from the end.
 - **This flight's log.** The record must be tied to the resume state, so a
   log left by an earlier flight is never replayed. Clearing all resume
-  state after a flight is what guarantees it.
-- **A torn tail.** The log is committed about once a second, so the last
-  second before the restart may be missing or incomplete. An event lost
-  there falls back to the baseline for that item: a fire not seen is a
-  channel fired again, harmlessly.
+  state after a flight is what guarantees it. The replay reads the log
+  before the resumed flight's log opens and removes it.
+- **A torn tail.** The log is synced every second (FLT-LOG-06), and a
+  restart finds it as its last sync left it (DD-105), so the last second
+  before the restart may be missing. An event lost there falls back to the
+  baseline for that item: a fire not seen is a channel fired again,
+  harmlessly.
 - **The outage is not measured.** The board has no clock across a restart.
   Taking the outage as zero makes every restored timer run long, so DELAY
   can still only be late.

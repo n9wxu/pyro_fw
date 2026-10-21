@@ -10,12 +10,13 @@ the last byte of its MAC, which comes from its flash chip's unique ID (DD-099);
 `--host` names another, and `pyro.local` finds one board.
 
 A write the board refuses while its cleanup erases (503, WEB-API-21) is sent
-again once `/api/fs` reports the cleanup done: `pyro_http.py`'s `post()`,
-`upload_www.sh` and the bench checks all wait for it.
+again: `pyro_http.py`'s `post()` and the bench checks send it once `/api/fs`
+reports the cleanup done, and `upload_www.sh` sends it each second for up to
+two minutes.
 
-`flash_picotool.sh` and `test_network.py` run picotool from
-`~/.pico-sdk/picotool/2.2.0-a4/picotool/picotool`, where the Pico VS Code
-extension installs it.
+`flash_picotool.sh`, `install.py` and `test_network.py` run the picotool on
+`PATH`, or else the newest under `~/.pico-sdk/picotool/`, where the Pico VS
+Code extension installs it.
 
 ## Scripts
 
@@ -27,6 +28,8 @@ extension installs it.
 | `failed_write_check.py` | An upload past the board's room, refused part-way and let go without a restart: its part file gone, a write of its name refused while the cleanup erases, the cleanup done at five sectors a second or more on USB, its name taken again, and no sensor fault latched by the readings beside the writes and erases (WEB-API-18, WEB-API-21, SNS-PRES-14, USB-10) |
 | `pressure_trace.py` | Every pressure conversion a board makes, judged for the faults a sample rate hides (DD-063) |
 | `noise_baseline.py` | A still board's pressure noise and pad speed noise, from `/api/status` |
+| `pressure_disturbance.py` | Whether a board's own buzzer or flash writes disturb its pressure sensor: every conversion through rest, beeps, rest and config saves (DD-106) |
+| `compensation_range.py` | Both sensors' compensation, integer for integer as the firmware does it, over every ADC code and past the rated ranges (`docs/pressure_collector.md`) |
 | `register_board.py` | Record the attached boards in `boards/BOARD_REGISTRY.json` and report subnet collisions |
 | `bench_flight.py` | Fly a profile on a board through its flight software, channels mocked, with a canopy that fails if asked (DD-078, SIM-04) |
 | `hr_log.py` | Decode a high-rate log from the SD card into CSV (DD-077) |
@@ -42,6 +45,8 @@ extension installs it.
 | `upload_www.sh` | Upload web files to device |
 | `install.py` | Interactive installer: BOOTSEL, picotool or OTA, then the web files |
 | `update_from_release.py` | Update firmware from GitHub releases |
+| `pyro_http.py` | The scripts' shared board access: discovery, picotool, and a POST with `X-Pyro: 1` that waits out the cleanup |
+| `version.py` | The version number rules CI and the release job apply (`--selftest`, `--check`, `--next`, `--release`) |
 
 ## Test Suite (test_network.py)
 
@@ -134,12 +139,13 @@ The log contains everything needed for diagnosis without device access.
 
 ## Bench Checks
 
-Each capture takes the board's address. `api_check.py`, `http_stream_check.py`
-and `noise_baseline.py` want the board in PAD_IDLE.
+Each capture takes the board's address. `api_check.py`, `http_stream_check.py`,
+`failed_write_check.py` and `noise_baseline.py` want the board in PAD_IDLE.
 
 ```bash
 python3 support/api_check.py <board-ip>           # every route; erases the flight log
 python3 support/http_stream_check.py <board-ip>   # the server as a byte stream
+python3 support/failed_write_check.py <board-ip>  # an upload past the room, and the cleanup after it
 python3 support/noise_baseline.py <board-ip> [seconds]
 python3 support/pressure_trace.py <board-ip> [seconds [save.json]]
 python3 support/pressure_trace.py --analyze save.json...
@@ -206,13 +212,14 @@ this again with the boards attached does not rebuild. Two boards on one octet
 cannot share a host: POST 12 hex digits to `/api/serial` on one of them and
 reboot it. A record is keyed by the flash chip's whole unique ID
 (`flash_uid`, DD-098), so a reworked board, with a new chip, is a new record;
-firmware too old to report it is keyed by `hw_id` and MAC. `hw_id` is the
+firmware that does not report it is keyed by `hw_id` and MAC. `hw_id` is the
 SDK's first 8 bytes of that ID, which two MK1Cs share; their whole IDs differ.
 
 ## Static Checks (CI)
 
 ```bash
 python3 support/prove_core0.py --core1 lua_task build/pyro_fw_mk1b.elf
+python3 support/prove_flight_ram.py --strict build/pyro_fw_mk1b.elf
 python3 support/trace_check.py [--counts]
 python3 support/trace_matrix.py --check
 python3 support/structure_check.py
@@ -225,7 +232,12 @@ reaches an unbounded wait, or, with `--core1`, if core1's entry acquires
 anything. `--root` adds a root. It follows an indirect call only through a
 table whose symbol ends in `_vt`. A pass means no root calls such a wait: spin
 lock acquires are inlined, so they are reported by address, never failed. CI
-runs it on MK1B's, MK1C's and MK1A's ELF.
+runs it on every board's ELF but the reference template's.
+
+`prove_flight_ram.py` follows the flight path from its roots through the
+linked ELF and its link map, and with `--strict` exits 1 if anything on it
+fetches or reads from flash (FLT-RT-02). The link that places the path in
+RAM is `flight_ram_link.py`'s. CI runs it on every board's ELF.
 
 `trace_check.py` holds every requirement ID the code, tests and living
 documents cite to `REQUIREMENTS.md`, every DD to `DECISIONS.md`, every live
@@ -242,12 +254,16 @@ the file is out of date.
 `structure_check.py` reads the source for the requirements that are
 properties of it: no platform code in the flight software (HAL-01, HAL-02),
 no receive path on the telemetry port (TEL-12), no reload of the
-configuration (CFG-10), no test-only construct (CODE-09), no refused fire
-(PYR-FIRE-01), and each board's declarations (BRD-01).
+configuration (CFG-10), no test-only construct (CODE-09), no wait on or call
+into the script (SYS-LUA-02), no fire from the script interface
+(LUA-ISO-03), no sensor reset from the flight software (SNS-REC-01), no
+refused fire (PYR-FIRE-01), the flight task's 10 ms period (FLT-RT-04), no
+clamped altitude (SNS-ALT-01), and each board's declarations (BRD-01).
 
-`wait_check.py` keeps a per-file ratchet of calls not yet converted, which only
-shrinks; it is empty. Bounded waits on a bus or a hardware handshake are
-outside it.
+`wait_check.py` fails on any call in `src/` or `boards/` to the SDK's sleeps,
+busy-waits, blocking DMA and PIO waits, or blocking I2C transfers; its
+per-file allowance is empty. Bounded waits on a bus or a hardware handshake
+are outside it.
 
 ## Flashing
 
@@ -271,7 +287,7 @@ to answer a ping.
 
 Uploads `build/pyro_fw_c_fota_image.bin` (by default) to `http://pyro.local/api/ota`,
 the A/B bootloader's download slot, with the `X-Pyro: 1` header the board asks
-of a POST (DD-083). Device reboots automatically. The image name does not
+of a POST (WEB-API-07). Device reboots automatically. The image name does not
 carry the board: send each board its own build's. An image for another board
 refuses to arm or fire and declines to commit, so the bootloader puts the
 previous one back (DD-081).
@@ -336,9 +352,9 @@ The tool:
 3. Downloads `fw_<board>_fota.bin` from the release -- the image for
    the board the device reported, since the boards do not take each other's
    firmware (mk1b is a 2 MB part, mk1b_8mb 8 MB, mk1a and mk1c 16 MB). If the device
-   does not report a board, pass `--board`. Releases up to v2.2.0 carried a
-   single unqualified `pyro_fw_c_fota_image.bin`, which is still accepted as
-   a fallback.
+   does not report a board, pass `--board`. A release with no image for the
+   board is tried for an unqualified `pyro_fw_c_fota_image.bin`, the one
+   image of releases up to v2.2.0.
 4. Pushes it to the device via `/api/ota`
 5. Waits for reboot and verifies the new version
 

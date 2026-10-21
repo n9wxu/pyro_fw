@@ -14,8 +14,8 @@ The WASM module contains two independent subsystems:
 1. **Flight Computer** — the real firmware (state machine, pyro logic, telemetry, buzzer)
 2. **Physics Engine** — the U.S. Standard Atmosphere 1976, constant thrust, linear chute damping, chute deployment
 
-The pyro channels are a fixture: continuity is whatever `sim.setContinuity()` last set, and a
-fire is a counter. The module also carries the Lua VM that `docs/lua.html` drives.
+In the default build the pyro channels are a fixture: continuity is whatever `sim.setContinuity()`
+last set, and a fire is a counter. The module also carries the Lua VM that `docs/lua.html` drives.
 
 ## Files to Copy
 
@@ -32,7 +32,8 @@ If these files are stale or missing, rebuild them:
 cd pyro_fw && ./scripts/build_wasm.sh
 ```
 This requires the [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html).
-`PYRO_BOARD=sim_mk1a|sim_mk1b|sim_mk1c` builds of this script do not compile; the default does.
+`PYRO_BOARD=sim_mk1a|sim_mk1b|sim_mk1c ./scripts/build_wasm.sh` builds `docs/wasm/pyro_<board>.js`
+and `.wasm` instead: that board's real pyro backend against its plant model (`sim/plant/README.md`).
 
 ## Integration Pattern
 
@@ -205,7 +206,7 @@ read every 20 ms of simulated time in every state.
 
 The boot sequence runs automatically and reaches PAD_IDLE about 2.7 s after power-on. The
 flight computer detects launch at 100 ft above the ground reference while climbing faster than
-5 m/s, both held for 100 ms (FLT-LAUNCH-07). No explicit "launch" command is needed — just
+5 m/s, with no hold time (FLT-LAUNCH-07). No explicit "launch" command is needed — just
 start feeding decreasing pressure (increasing altitude) from the physics engine, after the
 5 s ground reference has filled. Ignite before PAD_IDLE and the board calibrates on the way
 up, reading every altitude low.
@@ -229,7 +230,7 @@ Units: `cm`, `m`, or `ft` (set via `units=ft` in config).
 2. Add a canvas and start/reset buttons
 3. Use the loop pattern above with `requestAnimationFrame`
 4. Plot `phys.altM` vs time on the canvas
-5. Show `sim.stateName`, `sim.altitudeCm`, `sim.maxAltCm` in the UI
+5. Show the state named from `sim.state` (Flight States), `sim.altitudeCm`, `sim.maxAltCm` in the UI
 
 ### "Run the sim headlessly for testing"
 ```javascript
@@ -265,8 +266,8 @@ sim.tick(t);
 | `WASM load timeout` | Ensure `pyro.js` and `pyro.wasm` are served from the same directory |
 | Flight computer stays in BOOT | Let it run for ~3000ms (PAD_IDLE at ~2.7 s) |
 | State 10 (FAULT) | Sensor type 0 at boot: no sensor, no flight (FLT-BOOT-12) |
-| Pyros don't fire | Check: (1) continuity set, (2) armed: the climb passed 10 m/s, (3) apogee detected, (4) config mode/value correct |
-| State stuck at PAD_IDLE | Launch needs 100 ft and a climb faster than 5 m/s, held 100 ms |
+| Pyros don't fire | Check: (1) armed: the climb passed 10 m/s, (2) apogee detected, (3) config mode/value correct. Continuity never withholds a fire (PYR-FIRE-01) |
+| State stuck at PAD_IDLE | Launch needs 100 ft and a climb faster than 5 m/s (FLT-LAUNCH-07) |
 | Two pyros fire simultaneously | By design they don't — P2 waits for P1's pulse to end (PYR-DEPLOY-02) |
 
 ## Source Repository
@@ -278,4 +279,4 @@ Key files:
 - `sim/physics.h` — Physics engine C API
 - `sim/README.md` — Detailed architecture, API tables and the other simulator builds
 - `docs/sim.html` — Working example (interactive browser simulation)
-- `test/test_closedloop.c` — 25 closed-loop tests, with their own physics and four rocket profiles
+- `test/flight_run.c` — the host flight suites' closed loop: the firmware beside a rocket (`sim/mach_plant.c`), nine rocket profiles

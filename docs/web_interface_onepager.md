@@ -31,38 +31,27 @@ Pyro 2: AGL 300m (main)
 Units: meters
 ```
 
-Click **Save**. Done. The board takes changes only while it sits on the pad, merges them into its running configuration — keys it does not know are ignored — and applies them at once. A pin released to Lua takes effect at the next reboot.
+Click **Save**, then **Reboot**. The board merges your changes into its stored configuration — keys it does not know are ignored — and flies with them from its next start (CFG-10). Until then the Status tab says a saved change is waiting. While a flight is in progress, the file is refused and the flight keeps the configuration it started with.
 
 ### Download Flight Data
 
 After recovery, plug in and download your CSV with one click. View it in Excel, MATLAB, or any tool you prefer. The Flight Data tab also plots the altitude profile, summarises apogee and both pyro events, and erases the log when you are done.
 
----
+### Look After The Flash
 
-### Web interface compared with a USB drive
-
-| | USB Drive (traditional) | Web Interface (Pyro MK1B) |
-|---|---|---|
-| **Setup** | Plug in, find drive in Finder | Plug in, open browser |
-| **Edit config** | Open file in text editor, save, eject | Edit in browser, click Save |
-| **See device status** | ❌ Not possible | ✅ Live dashboard |
-| **Verify pyro continuity** | ❌ Need separate tool | ✅ Shown on dashboard |
-| **Risk of corruption** | ⚠️ Must eject safely | ✅ No corruption possible |
-| **Special software** | None | None |
-| **Works on** | macOS, Windows, Linux | macOS, Windows, Linux |
+The Filesystem tab shows the board's flash store: its size, what its files hold, and what is free, split into erased and ready and not yet erased. It lists every file, to download, or to delete once you confirm; the board's own files cannot be deleted. While the board's cleanup erases what deleted and replaced files left, the tab follows it until it is done (WEB-UI-07).
 
 ---
 
 ### Technical Details
 
 - **Connection**: USB CDC-ECM network device (no drivers needed on macOS/Linux, RNDIS for Windows)
-- **Address**: `http://pyro.local/` via mDNS or the board's own DNS, or `http://192.168.N.1/`, where N comes from the board's MAC so each board has a subnet of its own (`subnet` on `/api/status`)
-- **Storage**: alfs on internal flash: files written only into erased pages; a cleanup erases what replaced files leave (DD-100)
-- **Firmware overhead**: ~48KB code, ~20KB RAM additional
+- **Address**: `http://pyro.local/` via mDNS, or `http://192.168.N.1/`, where N comes from the board's MAC so each board has a subnet of its own (`subnet` on `/api/status`)
+- **Storage**: alfs on internal flash: files written only into erased pages; a cleanup erases what deleted and replaced files leave (DD-100)
 - **Protocol**: Standard HTTP — works with any browser, curl, wget, or scripts
-- **Tabs**: Status, Config, Flight Data, Beep Codes, Lua, and Update, which installs firmware and web files over the same link
-- **Simultaneous access**: Firmware reads config while you browse. No conflicts. From launch until the flight log closes, the log alone holds the filesystem: file requests answer 423, and the status API stays live (DD-058). A change saved while the board erases its flash is held, with a note saying so, and sent once the erase is done (WEB-UI-08).
-- **Boards**: MK1A and MK1C serve the same pages.
+- **Tabs**: Status, Config, Flight Data, Beep Codes, Lua, Filesystem, and Update, which installs firmware and web files over the same link
+- **Simultaneous access**: From launch until the flight log closes, the log alone holds the filesystem: file requests answer 423, and the status API stays live (DD-058). A change saved while the board erases its flash is held, with a note saying so, and sent once the erase is done (WEB-UI-08).
+- **Boards**: every board serves the same pages.
 
 ---
 

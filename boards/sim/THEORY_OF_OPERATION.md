@@ -95,5 +95,7 @@ PYRO_BOARD=sim_mk1c ./scripts/build_wasm.sh
 
 The host test suites build their own HAL (`test/hal_test.c`) rather than this
 one, so each can drive the flight software sample by sample. The simulator
-boards are for running flights; `board_pyro_mk1c_tests` and `board_pyro_tests`
-are where the board files are tested against the same stand-ins.
+boards are for running flights. The board files are tested elsewhere:
+`board_pyro_mk1c_tests` runs MK1C's against the same `sim/hw/` and plant, and
+`board_pyro_tests` and `board_pyro_mk1a_tests` run MK1B's and MK1A's against
+`test/fake_sdk`.

@@ -3,8 +3,8 @@
 Options for HAL-06 and BLD-06: each board's HAL validated on hardware,
 independently of the flight software, by an application built for that
 purpose. BRD-02 depends on it: every value a board declares in its
-`THEORY_OF_OPERATION.md` is to be confirmed by that validation. Nothing here
-is built yet.
+`THEORY_OF_OPERATION.md` is to be confirmed by that validation. None of
+these is built.
 
 ## What has to be validated
 
@@ -32,7 +32,7 @@ software. It runs a script of HAL calls and reports over the telemetry UART.
 
 - For: it is what HAL-06 says, the HAL with nothing above it. A fault found is
   the HAL's.
-- Against: `hal_common` today pulls in the storage task, FreeRTOS and the
+- Against: `hal_common` pulls in the storage task, FreeRTOS and the
   network for its own services, so the image needs most of the firmware's
   link closure, or `hal_common` needs splitting first. The telemetry port
   takes no commands (TEL-12 is the flight firmware's rule, not this image's,
@@ -46,7 +46,7 @@ Routes under `/api/validate/` that call the HAL directly, refused unless the
 board is on USB in PAD_IDLE with test mode on.
 
 - For: no second image; a host script drives it and collects results, as
-  `support/api_check.py` and `support/bench_flight.py` already do.
+  `support/api_check.py` and `support/bench_flight.py` do.
 - Against: it is not independent of the flight software, which HAL-06 asks
   for, and it puts fire-on-command code in the flight image. CODE-09 forbids
   test-only constructs in flight code; a validation route is one.
@@ -82,8 +82,8 @@ and the result.
    energised until the watchdog, 1 s. PYR-ARM-01 asks for 50 ms. Is the bound
    to be met on those boards (a hardware timer that ends the pulse, or a
    shorter watchdog while a pulse runs), or is it MK1C's alone?
-2. MK1B's PTC reset time under a shorted match sets its `fire_gap`. It has not
-   been measured.
+2. MK1B's PTC reset time under a shorted match sets its `fire_gap`. It is
+   unmeasured.
 3. The pulsed read of the ground test switch on the buzzer's pad is
    unverified on hardware (`docs/ground_test_on_buzzer_pad.md`, its bench
    list).

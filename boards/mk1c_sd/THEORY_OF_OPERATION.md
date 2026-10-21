@@ -6,8 +6,8 @@ bus, the arm pump, the sensing, the MS5607, the buzzer -- is MK1C's, from
 `../mk1c/`, and `../mk1c/THEORY_OF_OPERATION.md` describes it. This file
 covers what differs.
 
-Built on the bench as a wire-wrapped test board on the second MK1C (serial
-02373331FF2A, 192.168.42.1), 2026-09-29.
+The board is a wire-wrapped test board on the second MK1C (serial
+02373331FF2A, 192.168.42.1), built 2026-09-29.
 
 ## What changes from MK1C
 
@@ -72,18 +72,18 @@ without a reboot, and `GET /api/sd` reports the card, the FAT and the
 driver's counters, with the last initialisation's responses.
 
 **The card needs its own 3.3 V.** On J3.1, MK1C's rail from U6 (an XC6206
-fed from VIN), the card reset 28-29 ms into every initialisation: it
-answered CMD0, CMD8 and CMD59, then about 37 "idle" answers to ACMD41, then
+fed from VIN), the card resets 28-29 ms into every initialisation: it
+answers CMD0, CMD8 and CMD59, then about 37 "idle" answers to ACMD41, then
 nothing until CMD0. A card in SPI mode returns to SD mode only through a
-power cycle (SD simplified 6.00, section 7.2.1, PDF page 228), so each was a
-power-on reset. While it reset, the MS5607 on the same rail read 10 Pa low
+power cycle (SD simplified 6.00, section 7.2.1, PDF page 228), so each is a
+power-on reset. While it resets, the MS5607 on the same rail reads 10 Pa low
 with twice its noise; the same clock with the card deselected
-(`POST /api/sd/idle?ms=`) moved nothing, and a battery on VIN changed
+(`POST /api/sd/idle?ms=`) moves nothing, and a battery on VIN changes
 nothing. U6 is rated 200 mA and folds back to about 100 mA once pulled down
 (XC6206, PDF pages 1 and 5), and a card's 100 mA is an average over a second
 (SD simplified, PDF page 86).
 
-On the test board the card now has a MIC2920A-3.3 of its own, fed from VIN
+On the test board the card has a MIC2920A-3.3 of its own, fed from VIN
 (J1.3), its ground MK1C's, with 22 µF at the card. It comes up at once: an
 SDHC card of 15.6 GB, ready on its first ACMD41.
 
@@ -124,13 +124,11 @@ dropped and no FIFO overrun, the slowest 4 kB write 9 ms, the ring at most
 17 kB of 32. A remount 40 s in moved the log to a new file whose first set
 came 0.9 ms after the old one's last (HR-06).
 
-A 30 km bench flight (DD-078), launch to landing: 16.2 MB, 1,088,033 sets
-over 668 s at the sensor's 1627.8 Hz, every one 614.33 µs after the last in
-the decoded timeline; 33,421 pressure conversions, one every 20.0 ms with
-none missed, since the flight log is on the card and the internal flash is
-not written in flight; 6,684 snapshots of the flight. No record dropped, no
-FIFO overrun, no loop overrun; the slowest write 103 ms, a programming pause
-the ring absorbed.
+A 30 km bench flight (DD-078), launch to landing, measured 2026-09-29:
+16.2 MB, 1,088,033 sets over 668 s at the sensor's 1627.8 Hz, every one
+614.33 µs after the last in the decoded timeline; 6,684 snapshots of the
+flight. No record dropped, no FIFO overrun, no loop overrun; the slowest
+write 103 ms, a programming pause the ring absorbed.
 
 ## What this board declares
 
@@ -145,10 +143,8 @@ The values the requirements leave to the board (BRD-01). A value marked
 | Script resources (LUA-PAD-03) | **none.** J3 carries the SPI bus, so this build has no script. SYS-LUA-01 asks for one on every board: this variant does not meet it |
 | Connector labels (PIN-LABEL-01) | `pin_caps.h` |
 
-
-
 ## Known limits
 
 - The card cannot run from MK1C's own 3.3 V (above, task C-U6).
-- No Lua: J3 was Lua's.
+- No Lua: J3, Lua's pads on MK1C, carries the bus.
 - The bus is wire-wrapped; the clocks are set for it, not for a PCB.

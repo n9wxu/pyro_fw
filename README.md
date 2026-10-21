@@ -13,7 +13,7 @@ Flying a board? Start with the [Operator's guide](#operators-guide).
 - **Resume** - any restart in flight rejoins the flight from a record made on the pad (DD-086)
 - **Flight Log** - binary records (`flight_log.bin`) written in the log writer's 3 ms of each period while the flight path runs from RAM, rendered as CSV on download; every sample of the flight (DD-062, DD-101, DD-104)
 - **Real-time Telemetry** - `$PYRO` NMEA on UART0 through an interrupt-driven ring, one message a second; apogee, fire and landing events ride the next message (DD-088)
-- **Pressure Sensing** - MS5607 (MK1B, MK1C) or BMP280 (MK1A), collected by a free-running interrupt state machine at 53 or more readings a second, each stamped at its measurement; it clears its own bus and resets the part after three failed transfers (DD-093)
+- **Pressure Sensing** - MS5607 (MK1C) or BMP280 (MK1A), either on MK1B, collected by a free-running interrupt state machine at 53 or more readings a second, each stamped at its measurement; it clears its own bus and resets the part after three failed transfers (DD-093)
 - **Pressure, Rate and Acceleration** - a Kalman filter on the raw readings; every flight comparison is made in pressure, and altitude is computed for people, relative to the pad and unclamped (DD-085)
 - **Estimators** - two filters fly on every reading; `estimator` in config.ini names the one obeyed, and the log shows what the other would have done (DD-092)
 - **Apogee Near Mach 1** - apogee is taken only while the estimator's model explains the readings, which a port error near Mach 1 does not (`docs/lumped_parameter_filter.md`)
@@ -27,7 +27,7 @@ Flying a board? Start with the [Operator's guide](#operators-guide).
 - **Ground Test** - a power-up procedure started by a switch (DD-087)
 
 ## Hardware
-All three boards are RP2040s. Each has a theory of operation in `boards/<name>/THEORY_OF_OPERATION.md`.
+Every board is an RP2040. Each has a theory of operation in `boards/<name>/THEORY_OF_OPERATION.md`.
 
 | | MK1A | MK1B | MK1C |
 |---|---|---|---|
@@ -38,6 +38,8 @@ All three boards are RP2040s. Each has a theory of operation in `boards/<name>/T
 | Shared element | Q2 low side, 8 A fuse | Q1B low side, 1.5 A PTC | U9 TPS259570 eFuse bus, armed by a PIO charge pump |
 | Buzzer | none fitted; assignable to a pad | BUZZER1 through Q1A | through Q2 |
 | Lua pads | GPIO18, 19 | GPIO8 | GPIO18–21 |
+
+Two boards are variants of these. **MK1B-8MB** is an MK1B refitted with an 8 MB flash (4 MB of files) and the base AP2192, which lets it judge continuity (DD-097). **MK1C-SD** is an MK1C whose J3 pads and J1.6 are an SPI bus for an SD card and an LSM6DS3; it has no Lua (DD-075).
 
 The `reference` board is a template for new hardware: it reports no continuity and has no firing path. The `sim` boards run the firmware on a host (see WASM Simulation).
 
@@ -51,10 +53,11 @@ each board's `boards/<name>/THEORY_OF_OPERATION.md`, carry the detail.
 - **Igniters out on the bench.** On USB the board does not detect a launch
   and fires nothing by itself (USB-01), but two things do fire on USB:
   test mode and the ground test switch.
-- **MK1B as built cannot sense continuity.** Its U5 (AP2192A) holds both
+- **MK1B with its AP2192A cannot sense continuity.** Its U5 holds both
   sense nodes at 0 V, so the board cannot judge a channel. It reports each
-  ready and says OK to fly whatever is connected (PYR-HEALTH-01, B-U5 in
-  `docs/outstanding_tasks.md`). Check the igniters by hand on this board.
+  ready and says OK to fly whatever is connected (PYR-HEALTH-01). Check the
+  igniters by hand on this board. MK1B-8MB, with the base AP2192, judges
+  continuity (DD-097).
 - **A fault on the pad does not stop a fire in flight.** The pad verdict is
   for the operator. Once a fire is decided nothing withholds it.
 - **A channel released to Lua is not checked.** Release both and the board
@@ -87,6 +90,7 @@ battery.
 | Units | cm, meters (default) or feet, for every altitude and speed below and for the altitude beep-out. |
 | Pyro 1, Pyro 2 | Each a mode and a value. Which recovery device each fires is the operator's wiring. **Delay**: seconds after apogee (pyro 1's default is 0: at apogee). **AGL**: fires descending through this height above the pad (pyro 2's default is 300 m). **Fallen**: fires this far below the peak. **Speed**: fires when the descent is faster than this. **Disabled**: never fires. |
 | Fire rules | **Re-fire speed** per channel: a channel that has fired fires again every re-fire interval while the descent is faster than this. **Emergency fire speed**: any time after apogee, every enabled channel fires, and keeps firing, while the descent is faster than this. A speed of 0 turns its rule off (the default). **Re-fire interval** and **gap between channels** in ms: 0 takes the board's default (1000 ms and 3000 ms), and the page shows the board's range. |
+| Estimator | The one apogee and every trigger act on. Every estimator the firmware carries is flown and logged (DD-092). |
 | Flight log | How long a flight the log holds, at every sample (DD-101). |
 | Release pyro pins to Lua | Gives a channel's pads to a Lua script; that channel then never fires. |
 | Buzzer | Which pad drives the buzzer. MK1A fits none: wire one to a J6 user pad and choose it here. |
@@ -174,11 +178,18 @@ reboots into the new image.
 ### Board notes
 
 - **MK1A**: BMP280 sensor; no buzzer fitted (see Buzzer above).
-- **MK1B**: MS5607 sensor. Cannot sense continuity as built (above). Its
-  buzzer disturbs its pressure readings while it sounds (B-BZ).
+- **MK1B**: an MS5607 or a BMP280. Cannot sense continuity with its AP2192A
+  (above). On USB alone, with no battery, its buzzer disturbs its pressure
+  readings while it sounds (B-BZ).
+- **MK1B-8MB**: MK1B's, and it judges continuity. An MK1B image and an
+  MK1B-8MB image are not interchangeable: take the one named for the board.
 - **MK1C**: MS5607 sensor. Fires from the battery through an electronic
   fuse. The gate closes when the bus is charged or at its deadline, whatever
   the board has measured (PYR-ARM-03).
+- **MK1C-SD**: MK1C's, with no Lua. Its files go to the SD card while one is
+  mounted, and the card keeps a high-rate log of the IMU and every
+  conversion (DD-076, DD-077). The card needs a 3.3 V supply of its own
+  (C-U6).
 
 ## Flight States
 1. **BOOT_SETTLE → BOOT_SENSOR → BOOT_CONTINUITY → BOOT_CALIBRATE** - 2.5 s settle, the sensor and storage checked and a flight in progress resumed (FLT-BROWN-02), then pyro health, then a 10-reading ground reference
@@ -223,6 +234,7 @@ pyro2_refire_speed=0
 emergency_fire_speed=0
 refire_interval=0
 fire_gap=0
+estimator=lumped
 landing_timeout=60
 lua_enabled=false
 lua_baud=9600
@@ -234,6 +246,7 @@ These are the defaults, written when the file is missing.
 - **Units:** `cm`, `m` or `ft` - applies to pyro values and altitude reporting
 - **pyro1_refire_speed, pyro2_refire_speed, emergency_fire_speed:** in units a second; `0` turns the rule off
 - **refire_interval, fire_gap:** milliseconds; `0` takes the board's default (1000 and 3000 where the board declares none). A value outside the board's range is brought into it and reported (`pyro_limited` on `/api/status`). `GET /api/limits` serves the defaults and ranges (PYR-BOARD-03)
+- **estimator:** the estimator the flight obeys, `lumped` or `constacc`; a name no estimator has selects the first, `lumped` (SNS-EST-06)
 - **landing_timeout:** seconds of descent before a still rocket counts as landed (FLT-LAND-07)
 
 **`pins.ini`** - the hardware map (Config and Lua tabs, `/api/pins`): pyro channels released to Lua (`pyro1_released`, `pyro2_released`), `buzzer_pin`, the ground test switch (`ground_test=none|ground|pair`, `ground_test_pin`, `ground_test_drive_pin`), and each Lua pad's role and name. `GET /api/pins/caps` serves the board's capability table and the vocabulary to read it, so the UI holds no board knowledge. A change takes effect at the next reboot.
@@ -272,7 +285,7 @@ With a USB host attached the board plays one double chirp and announces nothing 
 | Buzzer | none | 16 | 11 |
 
 ## Data Logging
-From launch to landing the flight software hands every sample to `hal_log_sample()`, and `flight_log.bin` keeps each one: a row every flight cycle, 50 a second, so `pyro_sim --replay` can fly the log again (FLT-LOG-07, DAT-08, DD-101). Every event row is kept at its own time. Records go to a 4 KB RAM buffer. The buffer is written and the file synced once a second, so a flight that never lands keeps its record (FLT-LOG-06).
+From launch to landing the flight software hands every sample to `hal_log_sample()`, and `flight_log.bin` keeps each one: a row for every sample, 53 a second from an MS5607 and about 70 from a BMP280, so `pyro_sim --replay` can fly the log again (FLT-LOG-07, DAT-08, DD-101). Every event row is kept at its own time. Records go to a 4 KB RAM buffer, written out every 200 ms in the log writer's slot, and the file is synced once a second, so a flight that never lands keeps its record (FLT-LOG-06).
 
 - **CSV export:** `/api/flight.csv` renders the binary log as CSV, with a header naming the board, the configuration and the ground pressure, and saying every sample was kept
 - **Columns:** `time_ms, pressure_pa, altitude_cm, state, thrust, raw_pa, temp_c, event`
@@ -336,7 +349,7 @@ A channel whose mode is none, or whose pads are released to Lua, is skipped: wit
 
 ## Continuity Detection
 - **MK1A, MK1B:** the shared low side is the stimulus against a 100 kΩ pull-up, read on the 12-bit ADC. With it on, under 500 counts is an igniter and over 3000 open; with it off, a channel still low is shorted (DD-059). MK1A checks every 500 ms, MK1B every second.
-- **MK1B as built cannot sense continuity:** its AP2192A discharges the sense nodes while disabled, so it cannot judge a channel and reports each ready (PYR-HEALTH-01, task B-U5).
+- **MK1B with its AP2192A cannot sense continuity:** the AP2192A discharges the sense nodes while disabled, so the board cannot judge a channel and reports each ready (PYR-HEALTH-01). MK1B-8MB's base AP2192 does not discharge them, and it judges each channel as MK1A does (DD-097).
 - **MK1C:** checks presence and shorts, nothing else (DD-055). Every 500 ms the bus is biased; a channel is present when it reads at least half the bus. A bus that will not rise, or that sits at the pack with nothing armed, latches a fault, which is reported.
 
 ## WASM Simulation — Use in Other Projects
@@ -433,7 +446,17 @@ MK1B and the reference template (2 MB):
 0x200000  End of flash
 ```
 
-MK1A and MK1C (16 MB):
+MK1B-8MB (8 MB):
+```
+0x000000  Bootloader           36 KB
+0x009000  Info block             4 KB
+0x00A000  App Slot A          2028 KB
+0x205000  App Slot B          2028 KB
+0x400000  Files (alfs)        4096 KB
+0x800000  End of flash
+```
+
+MK1A, MK1C and MK1C-SD (16 MB):
 ```
 0x000000  Bootloader           36 KB
 0x009000  Info block             4 KB
@@ -442,6 +465,8 @@ MK1A and MK1C (16 MB):
 0x800000  Files (alfs)        8192 KB
 0x1000000 End of flash
 ```
+
+An application may fill its slot less 128 KB: 384 KB on MK1B, 1900 KB on MK1B-8MB, 3948 KB on the 16 MB boards. The top level prints the map at configure.
 
 ## Initial Flash (one-time via BOOTSEL)
 1. Hold BOOTSEL, plug in USB
@@ -455,18 +480,18 @@ After the initial flash, use picotool for all subsequent flashing (no BOOTSEL bu
 ```bash
 ./support/flash_picotool.sh [build_dir]
 ```
-This forces BOOTSEL via the vendor reset interface, loads both bootloader and app, and reboots. It then pings 192.168.7.1 for 15 s; a board on another subnet is up but reported as not responding.
+This forces BOOTSEL via the vendor reset interface, loads both bootloader and app, and reboots. It then waits up to 15 s for a USB network link that was not up before and pings the board at its address (DD-099).
 
 ## OTA Firmware Updates
 For routine updates without reflashing the bootloader:
 ```bash
 ./support/upload_fw.sh [path_to_bin] [host]
 ```
-Or use the "Firmware Update" button in the web interface at http://pyro.local/. The image is not checked against the board: send one built for it.
+Or use **Upload Firmware** on the web interface's Update tab at http://pyro.local/. `/api/ota` takes any image. The page refuses another board's image by its file name (`fw_<board>_fota.bin`), and an image started on a board it was not built for -- the board's `board.txt` stamp names another, or the flash chip is smaller than the image's map -- goes to FAULT, and after an update does not commit and rolls back (FLT-BOOT-17, DD-098).
 
 The A/B bootloader ([pico_fota_bootloader](https://github.com/JZimnol/pico_fota_bootloader)) provides:
 - **Safe updates** — new firmware is written to the inactive slot while the device keeps running
-- **Automatic rollback** — if new firmware doesn't call `pfb_firmware_commit()`, the bootloader reverts on next reboot; the firmware commits once it has started USB, networking and the filesystem
+- **Automatic rollback** — if new firmware doesn't call `pfb_firmware_commit()`, the bootloader reverts on next reboot; the storage task commits once every task has run for 5 s (DD-073)
 - **No bricking** — a failed or interrupted OTA leaves the current firmware intact
 
 ## Web Interface
@@ -496,11 +521,11 @@ Each tracker advertises a `_pyro._tcp` DNS-SD service via mDNS. A board whose na
 
 **Multiple devices:** A data collection server browses for `_pyro._tcp` to discover all attached trackers automatically.
 
-A frame the USB endpoint cannot take yet is held, eight deep, and sent as it frees (DD-070).
+A frame the USB endpoint cannot take yet is held, in 256 bytes, and sent in order as soon as it can be (DD-102).
 
 ## Testing
 
-The host suites (`test/README.md`) and the Playwright web UI suite (`test/web/run_web_tests.sh`) run in CI on every push, with cppcheck, clang-format, pmccabe, `support/trace_check.py`, `support/structure_check.py`, `support/wait_check.py` and `support/prove_core0.py`.
+The host suites (`test/README.md`) and the Playwright web UI suite (`test/web/run_web_tests.sh`) run in CI (`.github/workflows/build.yml`), with cppcheck, clang-format, pmccabe, `support/trace_check.py`, `support/structure_check.py`, `support/wait_check.py`, `support/prove_core0.py` and `support/prove_flight_ram.py`.
 
 ```bash
 export CI_BUILD=1
@@ -547,25 +572,18 @@ All development and deployment scripts are in the `support/` directory:
 | `support/register_board.py` | Record attached boards in `boards/BOARD_REGISTRY.json` |
 | `support/trace_check.py` | Requirement, decision and function names agree with the code |
 | `support/wait_check.py` | No sleep or busy-wait in the firmware (DD-053) |
-| `support/prove_core0.py` | Core1 cannot hang core0; the MS5607 handler is RAM-only |
+| `support/prove_core0.py` | Core1 cannot hang core0; the pressure collector's handler is RAM-only |
+| `support/prove_flight_ram.py` | The flight path runs from RAM from launch to landing (FLT-RT-02) |
 
 ## Releasing
 
 Releases are automated via GitHub Actions:
 
-- **Every push to main or lua-all-boards** builds MK1B, MK1C, MK1A and the reference template, runs the tests and uploads MK1B's artifacts
-- **Git tags** (`v*`) create a GitHub Release with downloadable binaries
+- **Every pull request to main**, and every push to main, lua-all-boards or freertos-sd, builds MK1B, MK1C, MK1A, MK1C-SD, MK1B-8MB and the reference template, runs the tests and uploads MK1B's artifacts (`.github/workflows/build.yml`)
+- **Every green push to main** is released: `VERSION` as it stands while it has no tag, otherwise its next patch, which CI commits and tags
+- **A minor or major release** arrives by pull request, with `VERSION` set by `support/version.py --set 2.4.0`; `scripts/bump_version.sh minor` releases from main directly, and a pushed `v*` tag runs the release too (`.github/workflows/release.yml`)
 
-To create a release:
-```bash
-# Set version in VERSION file
-echo "2.0.0" > VERSION
-git add VERSION && git commit -m "release: v2.0.0"
-git tag v2.0.0
-git push && git push --tags
-```
-
-GitHub Actions builds MK1A, MK1B, MK1B-8MB and MK1C and publishes `fw_<board>.uf2`, `fw_<board>_fota.bin` and `fw_<board>_bootloader.uf2` for each, and `pyro-support.zip`, as release assets.
+The release builds MK1A, MK1B, MK1B-8MB and MK1C and publishes `fw_<board>.uf2`, `fw_<board>_fota.bin` and `fw_<board>_bootloader.uf2` for each, and `pyro-support.zip`, as release assets.
 
 ## Self-Update from GitHub
 
@@ -581,19 +599,18 @@ python3 support/update_from_release.py --host pyro.local
 python3 support/update_from_release.py --host pyro.local --version 2.0.0
 ```
 
-Without `--host` the tool uses 192.168.7.1. It checks the device's current version, compares with GitHub releases, downloads the OTA binary, pushes it to the device, and verifies the update.
+Without `--host` the tool takes the one board attached. It checks the device's current version, compares with GitHub releases, downloads the OTA binary, pushes it to the device, and verifies the update.
 
 ## Development Status
 
-Current work, open decisions and bench checks still owed are tracked in [docs/outstanding_tasks.md](docs/outstanding_tasks.md). Among them: MK1B cannot sense continuity until its U5 is changed (B-U5), MK1C's bench fire into a dummy load (F1), and the ground test procedure on the bench (GT-1).
+Current work, open decisions and bench checks still owed are tracked in [docs/outstanding_tasks.md](docs/outstanding_tasks.md). Among them: MK1B-8MB's continuity check on the bench (B-U5), MK1C's bench fire into a dummy load (F1), and the ground test procedure on the bench (GT-1).
 
 - [REQUIREMENTS.md](REQUIREMENTS.md) and [TRACEABILITY.md](TRACEABILITY.md) - requirements and the tests that verify them
 - [DECISIONS.md](DECISIONS.md) - design decisions
-- [IMPLEMENTATION.md](IMPLEMENTATION.md) and [ARCHITECTURE_V2.md](ARCHITECTURE_V2.md) - how the firmware is built
+- [IMPLEMENTATION.md](IMPLEMENTATION.md) and [ARCHITECTURE.md](ARCHITECTURE.md) - how the firmware is built
 - [docs/flight_states.md](docs/flight_states.md) - the state machine
 - `boards/<name>/THEORY_OF_OPERATION.md` - each board
 - [SPECIFICATION.md](SPECIFICATION.md) - a summary for resuming work
-- [STATUS.md](STATUS.md) - a record of findings to 2026-09-24
 
 ## License
 See LICENSE file for details.
