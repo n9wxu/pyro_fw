@@ -2,6 +2,19 @@
   "boards": [
     {
       "board": "Pyro MK1A",
+      "first_seen": "2026-10-21",
+      "flash_jedec": "204018",
+      "flash_kb": 16384,
+      "flash_uid": "2B240515112296C9",
+      "fw_version": "2.3.1",
+      "hw_id": "2B240515112296C9",
+      "last_seen": "2026-10-21",
+      "mac": "021C783001BA",
+      "mac_source": "derived",
+      "subnet": 186
+    },
+    {
+      "board": "Pyro MK1A",
       "first_seen": "2026-10-13",
       "flash_jedec": "EF4018",
       "flash_kb": 16384,
@@ -26,6 +39,19 @@
       "mac": "02B5911B397E",
       "mac_source": "derived",
       "subnet": 126
+    },
+    {
+      "board": "Pyro MK1B-8MB",
+      "first_seen": "2026-10-21",
+      "flash_jedec": "684017",
+      "flash_kb": 8192,
+      "flash_uid": "35343239330524F54EFCFF1821FF1D20",
+      "fw_version": "2.3.1",
+      "hw_id": "35343239330524F5",
+      "last_seen": "2026-10-21",
+      "mac": "02281F8E8348",
+      "mac_source": "derived",
+      "subnet": 72
     },
     {
       "board": "Pyro MK1B-8MB",
@@ -54,6 +80,32 @@
       "mac": "02F138C09E07",
       "mac_source": "derived",
       "subnet": 7
+    },
+    {
+      "board": "Pyro MK1B-8MB",
+      "first_seen": "2026-10-21",
+      "flash_jedec": "684017",
+      "flash_kb": 8192,
+      "flash_uid": "35343239330564F5FFFC67F2606F1D20",
+      "fw_version": "2.3.1",
+      "hw_id": "35343239330564F5",
+      "last_seen": "2026-10-21",
+      "mac": "02865D3459EC",
+      "mac_source": "derived",
+      "subnet": 236
+    },
+    {
+      "board": "Pyro MK1B-8MB",
+      "first_seen": "2026-10-21",
+      "flash_jedec": "684017",
+      "flash_kb": 8192,
+      "flash_uid": "35343239330578F365FCFF16FFFF1D20",
+      "fw_version": "2.3.1",
+      "hw_id": "35343239330578F3",
+      "last_seen": "2026-10-21",
+      "mac": "0262F43C5F26",
+      "mac_source": "derived",
+      "subnet": 38
     },
     {
       "board": "Pyro MK1B-8MB",
