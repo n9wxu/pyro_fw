@@ -11,7 +11,9 @@
 #include "../src/pressure_processing.h"
 #include "../src/board_id.h"
 #include "../src/flight_events.h"
+#include "../src/flight_states.h"
 #include "../src/flight_log.h"
+#include "../src/log_pad_ring.h"
 #include "../src/loop_period.h"
 #include "mocks.h"
 #include <string.h>
@@ -46,6 +48,7 @@ static struct hal_file test_file;
 /* In-flight log state — declared here so mock_reset_all() can reset it */
 static hal_file_t *test_log_file = NULL;
 static bool test_log_active = false;
+static log_pad_ring_t test_log_pad;
 
 /* ── Sensor model ─────────────────────────────────────────────────── */
 
@@ -293,6 +296,7 @@ void mock_reset_all(void) {
      * regardless of whether the previous test reached LANDED. */
     test_log_active = false;
     test_log_file = NULL;
+    log_pad_clear(&test_log_pad);
     mock_estimator_row_count = 0;
     test_file.open = false;
     memset(sim_files, 0, sizeof(sim_files));
@@ -684,7 +688,18 @@ void hal_fs_close(hal_file_t *f) {
 
 /* ── In-flight data logging [v2-9] ───────────────────────────────── */
 
-void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
+void hal_log_pad(uint32_t t_ms, int32_t pressure_pa) {
+    if (!test_log_active)
+        log_pad_push(&test_log_pad, t_ms, pressure_pa, pp_last_read_raw_pa(),
+                     (int16_t)lroundf(mock_pressure.temperature_c * 10.0f));
+}
+
+static void test_log_keep(const flog_sample_t *s) {
+    uint8_t rec[FLOG_SAMPLE_BYTES];
+    hal_fs_write(test_log_file, (const char *)rec, flog_put_sample(rec, (int)sizeof(rec), s));
+}
+
+void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_ms) {
     if (test_log_active)
         return;
     test_log_file = hal_fs_open(FLOG_PATH, false);
@@ -700,13 +715,19 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
         .pyro2_value = cfg->pyro2_value,
         .units = cfg->units,
         .ground_pa = ground_pressure_pa,
+        .estimator = cfg->estimator,
+        .model_decides = cfg->model_decides,
     };
     uint8_t rec[128];
     hal_fs_write(test_log_file, (const char *)rec, flog_put_header(rec, (int)sizeof(rec), &h));
+    flog_sample_t s;
+    for (uint16_t i = 0; log_pad_row(&test_log_pad, i, t0_ms, ground_pressure_pa, PAD_IDLE, &s); i++)
+        test_log_keep(&s);
+    log_pad_clear(&test_log_pad);
     test_log_active = true;
 }
 
-void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
+void hal_log_sample(int32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
                     uint8_t event) {
     if (!test_log_active || !test_log_file)
         return;
@@ -720,8 +741,7 @@ void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, 
         .thrust = under_thrust,
         .event = event,
     };
-    uint8_t rec[FLOG_SAMPLE_BYTES];
-    hal_fs_write(test_log_file, (const char *)rec, flog_put_sample(rec, (int)sizeof(rec), &s));
+    test_log_keep(&s);
 }
 
 char mock_estimator_rows[MOCK_ESTIMATOR_ROWS][FLOG_TEXT_MAX + 1];

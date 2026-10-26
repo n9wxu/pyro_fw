@@ -37,9 +37,12 @@ pressure_sensor_type_t pressure_sensor_step(uint32_t now_ms);
 const char *pressure_sensor_name(void);
 
 /* [SNS-MAX-01] What the fitted part can report, and the greatest apogee to
- * which the bounds of FLT-APO-01 hold on it. The ranges are
- * the parts' own: docs/datasheets/MS5607-02BA03_2017-06.pdf p.4 (extended
- * range) and BST-BMP280-DS001-26_2021-10.pdf p.7. */
+ * which the bounds of FLT-APO-01 hold on it: the lesser of the part's range
+ * and the design's ceiling. The ranges are the parts' own:
+ * docs/datasheets/MS5607-02BA03_2017-06.pdf p.4 (extended range) and
+ * BST-BMP280-DS001-26_2021-10.pdf p.7. */
+#define DESIGN_CEILING_M 9144 /* 30,000 ft: above it the noise needs more filtering than apogee allows [DD-111] */
+
 typedef struct {
     int32_t min_pa, max_pa;
     int32_t height_m;
@@ -48,7 +51,7 @@ typedef struct {
 static inline pressure_sensor_range_t pressure_sensor_range(pressure_sensor_type_t type) {
     switch (type) {
     case PRESSURE_SENSOR_MS5607:
-        return (pressure_sensor_range_t){1000, 120000, 30000};
+        return (pressure_sensor_range_t){1000, 120000, DESIGN_CEILING_M};
     case PRESSURE_SENSOR_BMP280:
         return (pressure_sensor_range_t){30000, 110000, 9000};
     default:

@@ -128,6 +128,12 @@
     <tr><td class="lbl">The flight obeys</td>
         <td><select id="estimator" onchange="cfgChanged()"></select>
             <div class="hint">Every estimator is flown and logged. Apogee and every trigger act on this one.</div></td></tr>
+    <tr><td class="lbl">Apogee is decided by</td>
+        <td><select id="modelDecides" onchange="cfgChanged()">
+              <option value="true">the estimator, the simple filter standing in</option>
+              <option value="false">the simple filter alone</option>
+            </select>
+            <div class="hint">The simple filter follows the raw readings and needs no model of the flight. Alone, it suits a pressure chamber; above about Mach 0.8 a static port's error can fool it.</div></td></tr>
   </table>
   <h3>Flight log</h3>
   <table class="info">

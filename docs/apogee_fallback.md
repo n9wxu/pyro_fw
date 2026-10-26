@@ -80,9 +80,9 @@ scale sweep, 0.1 to 4 times, both signs, on the three fast ones. 696 flights,
 ## 1. The log starts at T+0
 
 T+0 is already the first sample of the rise more than 50 cm above the pad
-(FLT-LAUNCH-03). The log starts at detection instead (`flight_action_launch`,
-`src/flight_pad.c`): 100 ft and 5 m/s on the filtered state (FLT-LAUNCH-07).
-The samples between are not written.
+(FLT-LAUNCH-03). Launch is declared at 15 m and 15 m/s on the filtered state
+(FLT-LAUNCH-07), and the log opens with the pad's last samples before it
+(DAT-11), so it starts on the ground.
 
 In the chamber log the first row is T+151 ms at 42 m (filtered), and its raw
 reading is already about 160 m. On a slow rocket the gap is seconds.
@@ -150,6 +150,14 @@ locked : until |speed| has been under V for H, then released for the flight
 The simple filter declares only once released. Under the ceiling every
 flight's lockout releases.
 
+The firmware (DD-109) does not latch it: the lockout is open only while the
+speed has been under 50 m/s for the last 3 s, and the stand-in also needs
+that speed to be a fall. The latched form below fails in `mach_tests`: the
+low-drag rocket with the port error at −2 times shows a fake top, a fake
+hover that opens the lockout, then a fast fake fall that handed the decision
+over 28 s before the true apogee. The tables in this section are the Python
+study's latched form.
+
 | V, H | Subsonic (96): early | Mach ≥ 0.8, clean (96): early | Mach ≥ 0.8, port errors (504): early | worst |
 |---|---|---|---|---|
 | no lockout | 0 | 0 | 318 | −39.1 s |
@@ -197,7 +205,7 @@ under one condition, over the 696 flights:
 | Unexplained, climb never measured above 150 m/s | 0 | 94 | −14.5 s |
 | Unexplained, speed lockout 100 m/s for 1 s released | 0 | 66 | −30.6 s |
 | Unexplained, speed lockout 50 m/s for 2 s released | 0 | 1 | −28.4 s |
-| **Unexplained, speed lockout 50 m/s for 3 s released** | **0** | **0** | |
+| **Unexplained, speed lockout 50 m/s for 3 s released** (latched; DD-109 does not latch) | **0** | **0** | |
 
 And the model filter's own fall as the fallback, no simple filter
 (`apogee_fallback.py flights`, 684 flights):

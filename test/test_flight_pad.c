@@ -227,7 +227,7 @@ void test_CFG_10_a_saved_change_waits_for_the_next_start(void) {
 
 /* ── Launch [FLT-LAUNCH-02..05, FLT-LAUNCH-07] ────────────────────── */
 
-void test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch(void) {
+void test_FLT_LAUNCH_07_a_fast_climb_past_15_m_is_a_launch(void) {
     to_the_pad(9);
     reach_pad();
     wait_ms(6000);
@@ -237,15 +237,15 @@ void test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch(void) {
     TEST_ASSERT_EQUAL_INT(1, harness_log_events("LAUNCH"));
 }
 
-void test_FLT_LAUNCH_02_below_100_ft_is_not_a_launch(void) {
+void test_FLT_LAUNCH_02_below_15_m_is_not_a_launch(void) {
     to_the_pad(10);
     reach_pad();
     wait_ms(6000);
-    /* Thrown 25 m up and caught: fast, but never 100 ft. */
+    /* Thrown 13 m up and caught: fast, but never 15 m. */
     uint32_t start = now;
     for (; now < start + 4500u; now++) {
         float t = (float)(now - start) / 1000.0f;
-        float h = 22.0f * t - 4.9f * t * t;
+        float h = 16.0f * t - 4.9f * t * t;
         mock_pressure.pressure_pa = atmos_pressure_above_pa(PAD_PA, h > 0.0f ? h : 0.0f);
         tick(now);
     }
@@ -285,7 +285,7 @@ void test_SNS_EST_02_one_or_two_bad_readings_are_not_a_launch(void) {
     }
 }
 
-/* Half an hour of gusts at 30 Pa rms, on sensors from 1.2 to 5 Pa. */
+/* Half an hour of gusts at 40 Pa rms, on sensors from 1.2 to 9 Pa. */
 void test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch(void) {
     const float noises[] = {SENSOR_RMS_PA, NOISY_SENSOR_RMS_PA};
     for (unsigned n = 0; n < 2; n++) {
@@ -294,7 +294,7 @@ void test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch(void) {
         reach_pad();
         uint32_t rng = 12345u + n;
         float gust = 0.0f;
-        const float keep = expf(-0.001f / 3.0f), drive = 30.0f * sqrtf(1.0f - keep * keep);
+        const float keep = expf(-0.001f / 3.0f), drive = 40.0f * sqrtf(1.0f - keep * keep);
         for (uint32_t end = now + 1800000u; now < end; now++) {
             rng = rng * 1664525u + 1013904223u;
             /* The sum of three uniforms, scaled to unit variance. */
@@ -499,8 +499,8 @@ int main(void) {
     RUN_TEST(test_PYR_HEALTH_02_a_channel_set_to_none_is_not_a_fault);
     RUN_TEST(test_PYR_HEALTH_02_a_channel_given_to_the_script_is_not_a_pyro);
     RUN_TEST(test_CFG_10_a_saved_change_waits_for_the_next_start);
-    RUN_TEST(test_FLT_LAUNCH_07_a_climb_past_100_ft_is_a_launch);
-    RUN_TEST(test_FLT_LAUNCH_02_below_100_ft_is_not_a_launch);
+    RUN_TEST(test_FLT_LAUNCH_07_a_fast_climb_past_15_m_is_a_launch);
+    RUN_TEST(test_FLT_LAUNCH_02_below_15_m_is_not_a_launch);
     RUN_TEST(test_FLT_LAUNCH_07_a_slow_rise_is_not_a_launch);
     RUN_TEST(test_SNS_EST_02_one_or_two_bad_readings_are_not_a_launch);
     RUN_TEST(test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch);

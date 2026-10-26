@@ -9,7 +9,8 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Verifies [WEB-API-01, WEB-API-11, BUZ-CODE-03, PYR-CONT-02, FLT-BOOT-15, FLT-BROWN-05, FLT-EMRG-04, PYR-FIRE-01, PYR-FAULT-03, PYR-BOARD-02, PYR-BOARD-03, FLT-LOG-08, WEB-API-15].
+ * Verifies [WEB-API-01, WEB-API-11, BUZ-CODE-03, PYR-CONT-02, FLT-BOOT-15, FLT-BROWN-05, FLT-EMRG-04, PYR-FIRE-01,
+ * PYR-FAULT-03, PYR-BOARD-02, PYR-BOARD-03, FLT-LOG-08, WEB-API-15].
  */
 #include "unity.h"
 #include "../src/status_json.h"
@@ -24,8 +25,7 @@ void setUp(void) {
     memset(buf, 0x55, sizeof(buf));
 }
 
-void tearDown(void) {
-}
+void tearDown(void) {}
 
 static void typical(status_snap_t *s) {
     memset(s, 0, sizeof(*s));
@@ -113,6 +113,7 @@ static void typical(status_snap_t *s) {
     s->noise_mpa = 2400;
     s->estimator = "lumped";
     s->estimator_explains = true;
+    s->model_decides = true;
     s->usb_attached = true;
     s->test_log_host = true;
     s->beep = "ready";
@@ -221,6 +222,7 @@ static const char *const TYPICAL[][2] = {
     {"noise_mpa", "2400"},
     {"estimator", "\"lumped\""},
     {"estimator_explains", "true"},
+    {"model_decides", "true"},
     {"peak_lower_bound", "false"},
     {"usb_attached", "true"},
     {"test_mode", "false"},
@@ -273,17 +275,46 @@ void test_SJ_02_the_widest_status_fits_its_bound(void) {
     s.board_selftest = 0; /* "unknown", the widest of the three */
     s.alt_cm = s.max_alt_cm = s.vspeed_cms = s.pressure_pa = s.prev_stage = INT32_MIN;
     s.raw_pa = s.pad_speed_cms = s.pyro_bus_q = s.pyro_bus_adc = s.pyro_vbat_adc = INT32_MIN;
-    uint32_t *u32[] = {&s.flight_ms,        &s.uptime_ms,        &s.loop_max_us,        &s.loop_overruns,
-                       &s.loop_late_max_us, &s.loop_count,       &s.flash_opens,        &s.flash_skips,
-                       &s.flash_refusals,   &s.log_dropped,      &s.flash_erases,       &s.flash_programs,
-                       &s.flash_deferrals,  &s.pyro_mocked,      &s.pres_dropped,       &s.pres_rejects,       &s.pres_recoveries,
-                       &s.pres_bus[0],      &s.pres_bus[1],      &s.pres_bus[2],        &s.pres_bus[3],
+    uint32_t *u32[] = {&s.flight_ms,
+                       &s.uptime_ms,
+                       &s.loop_max_us,
+                       &s.loop_overruns,
+                       &s.loop_late_max_us,
+                       &s.loop_count,
+                       &s.flash_opens,
+                       &s.flash_skips,
+                       &s.flash_refusals,
+                       &s.log_dropped,
+                       &s.flash_erases,
+                       &s.flash_programs,
+                       &s.flash_deferrals,
+                       &s.pyro_mocked,
+                       &s.pres_dropped,
+                       &s.pres_rejects,
+                       &s.pres_recoveries,
+                       &s.pres_bus[0],
+                       &s.pres_bus[1],
+                       &s.pres_bus[2],
+                       &s.pres_bus[3],
                        &s.pres_flashed,
-                       &s.ground_reseeds,   &s.stamp_lag_max_us, &s.noise_mpa,
-                       &s.http_units[0],    &s.http_units[1],    &s.http_unit_max_us[0], &s.http_unit_max_us[1],
-                       &s.sample_interval_us[0], &s.sample_interval_us[1], &s.prev_stage_ms,
-                       &s.frame_writer_max_us, &s.frame_writer_overruns, &s.lua_skipped,
-                       &s.slot_pieces, &s.slot_suspends, &s.slot_waits, &s.flight_refusals, &s.piece_max_us};
+                       &s.ground_reseeds,
+                       &s.stamp_lag_max_us,
+                       &s.noise_mpa,
+                       &s.http_units[0],
+                       &s.http_units[1],
+                       &s.http_unit_max_us[0],
+                       &s.http_unit_max_us[1],
+                       &s.sample_interval_us[0],
+                       &s.sample_interval_us[1],
+                       &s.prev_stage_ms,
+                       &s.frame_writer_max_us,
+                       &s.frame_writer_overruns,
+                       &s.lua_skipped,
+                       &s.slot_pieces,
+                       &s.slot_suspends,
+                       &s.slot_waits,
+                       &s.flight_refusals,
+                       &s.piece_max_us};
     for (size_t i = 0; i < sizeof(u32) / sizeof(u32[0]); i++) {
         *u32[i] = UINT32_MAX;
     }
@@ -378,7 +409,10 @@ void test_SJ_06_escaping_truncates_rather_than_overflows(void) {
     memset(out, 0x55, sizeof(out));
     json_escape(out, (int)sizeof(out), "\"\"\"\"\"\"\"\"\"\"\"\"", 12);
     TEST_ASSERT_LESS_THAN_size_t(sizeof(out), strlen(out));
-    json_escape(out, (int)sizeof(out), "a\x01\x1f" "b\n", 5);
+    json_escape(out, (int)sizeof(out),
+                "a\x01\x1f"
+                "b\n",
+                5);
     TEST_ASSERT_EQUAL_STRING("ab\\n", out);
 }
 

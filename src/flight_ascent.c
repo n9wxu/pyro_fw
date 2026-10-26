@@ -1,6 +1,6 @@
 /*
  * Ascent: the thrust report, arming, the peak and apogee
- * [FLT-ASC-01..07, FLT-APO-01..04, FLT-APO-07, FLT-APO-08].
+ * [FLT-ASC-01..07, FLT-APO-01..04, FLT-APO-07..10].
  *
  * SPDX-License-Identifier: MIT
  */
@@ -40,6 +40,8 @@ static bool arming_due(const flight_context_t *ctx, const pp_sample_t *s) {
            s->speed_cms < ARM_SPEED_CMS;
 }
 
+typedef enum { APOGEE_NOT_YET, APOGEE_BY_MODEL, APOGEE_BY_SIMPLE } apogee_by_t;
+
 /* Where the filtered rate crossed zero, if that is recent [PYR-MODE-05]. */
 static uint32_t time_of_apogee(const pp_sample_t *s) {
     if (s->curve <= 0.0f)
@@ -50,10 +52,27 @@ static uint32_t time_of_apogee(const pp_sample_t *s) {
     return s->timestamp_ms - (uint32_t)back_ms;
 }
 
-/* [FLT-APO-01] Apogee is the obeyed estimator saying the rocket has gone
- * over the top, and nothing else [DD-022, DD-092]. */
-static bool apogee_seen(const flight_context_t *ctx) {
-    return ctx->pyros_armed && !ctx->apogee_declared && ctx->estimator_apogee[pp_obeyed()];
+/* The simple filter's top, if that is recent [PYR-MODE-05]. */
+static uint32_t time_of_simple_apogee(const flight_context_t *ctx, const pp_sample_t *s) {
+    uint32_t top = simple_apogee_lowest_ms(&ctx->simple);
+    return s->timestamp_ms - top <= APOGEE_BACKDATE_MAX_MS ? top : s->timestamp_ms;
+}
+
+/* [FLT-APO-07, FLT-APO-09, FLT-APO-10] With the model filter deciding, its
+ * own rule; the simple filter stands in only while the model does not
+ * explain the readings, the speed lockout has released and the medians are
+ * falling. Taken out of the decision, the simple filter alone [DD-109]. */
+static apogee_by_t apogee_seen(const flight_context_t *ctx, const pp_sample_t *s) {
+    if (!ctx->pyros_armed || ctx->apogee_declared)
+        return APOGEE_NOT_YET;
+    bool simple = simple_apogee_met(&ctx->simple, s->timestamp_ms);
+    if (!ctx->config.model_decides)
+        return simple ? APOGEE_BY_SIMPLE : APOGEE_NOT_YET;
+    if (ctx->estimator_apogee[pp_obeyed()])
+        return APOGEE_BY_MODEL;
+    bool falling = simple_apogee_speed_ms(&ctx->simple) < 0.0f;
+    bool stands_in = simple && !s->explains && simple_apogee_released(&ctx->simple) && falling;
+    return stands_in ? APOGEE_BY_SIMPLE : APOGEE_NOT_YET;
 }
 
 /* [FLT-APO-08] The peak is a lower bound when the climb to it was not seen. */
@@ -82,10 +101,18 @@ state_event_t flight_detect_ascent(flight_context_t *ctx, uint32_t now) {
     report_peak(ctx, &s);
     if (arming_due(ctx, &s))
         return SEVT_ARMED;
-    if (!apogee_seen(ctx))
+    apogee_by_t by = apogee_seen(ctx, &s);
+    if (by == APOGEE_NOT_YET)
         return SEVT_NONE;
-    ctx->apogee_time = time_of_apogee(&s);
-    ctx->peak_lower_bound = peak_is_a_lower_bound(ctx, &s);
+    if (by == APOGEE_BY_SIMPLE) {
+        ctx->apogee_time = time_of_simple_apogee(ctx, &s);
+        ctx->peak_pa = simple_apogee_lowest_pa(&ctx->simple);
+        ctx->peak_lower_bound = false;
+    } else {
+        ctx->apogee_time = time_of_apogee(&s);
+        ctx->peak_lower_bound = peak_is_a_lower_bound(ctx, &s);
+    }
+    ctx->apogee_by_simple = by == APOGEE_BY_SIMPLE;
     report_peak(ctx, &s);
     return SEVT_APOGEE;
 }
@@ -101,6 +128,7 @@ void flight_action_apogee(flight_context_t *ctx, uint32_t now) {
     ctx->under_thrust = false;
     ctx->descent_start_time = now;
     flight_log_event(ctx, EVT_APOGEE);
+    flight_log_apogee_by(ctx);
     flight_log_peak(ctx);
     telemetry_queue(&ctx->telemetry,
                     (telemetry_event_t){TELEM_EVENT_APOGEE, 0, ctx->max_altitude_cm, now - ctx->launch_time});

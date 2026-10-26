@@ -151,6 +151,7 @@ static void update_status(flight_context_t *ctx, uint32_t now) {
     g_status.pyro2_mode = ctx->config.pyro2_mode;
     g_status.pyro2_value = ctx->config.pyro2_value;
     g_status.units = ctx->config.units;
+    g_status.model_decides = ctx->config.model_decides;
     memcpy((char *)g_status.rocket_id, ctx->config.id, 9);
     memcpy((char *)g_status.rocket_name, ctx->config.name, 9);
 }

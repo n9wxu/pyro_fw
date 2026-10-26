@@ -168,13 +168,14 @@ int hal_config_save(const config_t *cfg);
  * them blocks the flight software or reaches flash. The platform decides
  * when the buffer is written.
  *
- * The flight code calls hal_log_start() at LAUNCH, hal_log_sample() for each
- * ASCENT, DESCENT and LANDED sample, and hal_log_stop() once LANDED has
- * finalised. Nothing calls these during PAD_IDLE.
- *
- * See REQUIREMENTS.md v2-9. */
-void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa);
-void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
+ * The flight code calls hal_log_pad() for each PAD_IDLE sample, which the
+ * platform holds in a log_pad_ring.h ring; hal_log_start() at LAUNCH, which
+ * writes the header and the ring's samples from 1 s before T+0 (t0_ms, on the
+ * samples' clock); hal_log_sample() for each ASCENT, DESCENT and LANDED
+ * sample; and hal_log_stop() once LANDED has finalised [DAT-11]. */
+void hal_log_pad(uint32_t t_ms, int32_t pressure_pa);
+void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_ms);
+void hal_log_sample(int32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
                     uint8_t event);
 /* One line about an estimator, as a text row of its own kind [SNS-EST-07]. */
 bool hal_log_estimator(uint32_t time_ms, const char *text, int len);

@@ -34,7 +34,7 @@ pressure h above the pad's pressure altitude.
 
 | Setting | Compared in flight | Where |
 |---|---|---|
-| Launch: 100 ft and 5 m/s | p < p(pad + 30.48 m), and -rate · RT/g > 5 m/s | `launch_detected()` |
+| Launch: 15 m and 15 m/s | p < p(pad + 15 m), and -rate · RT/g > 15 m/s | `launch_detected()` |
 | T+0: 50 cm | the raw reading < p(pad + 0.5 m) | `src/pressure_processing.c` |
 | Arming: about 30 m | p < 0.9965 p_pad (FLT-ASC-08) | `src/flight_ascent.c` |
 | AGL trigger | p ≥ p(pad + h) | `fire_control_step()` |

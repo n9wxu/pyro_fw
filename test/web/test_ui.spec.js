@@ -160,6 +160,20 @@ test.describe('New device', () => {
     expect(ini).toContain('estimator=constacc');
   });
 
+  /* FLT-APO-09: the model filter can be taken out of the decision. */
+  test('apogee: the model decides by default, and the simple filter alone can be chosen', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Config');
+    await expect(page.locator('#modelDecides')).toHaveValue('true');
+    await page.selectOption('#modelDecides', 'false');
+    await expect(page.locator('#cfgDirty')).toBeVisible();
+    await page.click('#btnSaveCfg');
+    await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 5000 });
+    const ini = await (await page.request.get(BASE + '/api/config')).text();
+    expect(ini).toContain('model_decides=false');
+  });
+
   /* In flight the log holds the filesystem, so the space cannot be read. */
   test('log: no estimate while the flight log is written', async ({ page }) => {
     await page.route('**/api/log/space', r => r.fulfill({ status: 423, body: '{"error":"the flight log holds the filesystem"}' }));

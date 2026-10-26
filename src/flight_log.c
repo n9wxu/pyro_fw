@@ -11,8 +11,10 @@ enum { REC_HEADER = 'H', REC_SAMPLE = 'S', REC_TEXT = 'T' };
 
 /* type, len, id[8], name[8], pyro1 mode+value, pyro2 mode+value, units,
  * ground_pa, plan, then the board name. The plan is always every sample
- * [FLT-LOG-07]. */
-#define HDR_FIXED 30
+ * [FLT-LOG-07]. Version 2 puts the estimator[8] and model_decides between
+ * the plan and the board name. */
+#define HDR_FIXED_V1 30
+#define HDR_FIXED 39
 #define PLAN_EVERY_SAMPLE 2
 #define TEXT_FIXED 7 /* type, time, tag, len */
 
@@ -65,6 +67,8 @@ int flog_put_header(uint8_t *dst, int cap, const flog_header_t *h) {
     p[24] = h->units;
     put32(p + 25, (uint32_t)h->ground_pa);
     p[29] = PLAN_EVERY_SAMPLE;
+    put_str8(p + 30, h->estimator);
+    p[38] = h->model_decides ? 1u : 0u;
     memcpy(p + HDR_FIXED, h->board, (size_t)board);
     return n;
 }
@@ -74,7 +78,7 @@ int flog_put_sample(uint8_t *dst, int cap, const flog_sample_t *s) {
         return 0;
     }
     dst[0] = REC_SAMPLE;
-    put32(dst + 1, s->time_ms);
+    put32(dst + 1, (uint32_t)s->time_ms);
     put32(dst + 5, (uint32_t)s->pressure_pa);
     put32(dst + 9, (uint32_t)s->altitude_cm);
     put32(dst + 13, (uint32_t)s->raw_pa);
@@ -149,16 +153,24 @@ static char *put_str(char *o, const char *s) {
     return o;
 }
 
-static int render_header(flog_csv_t *r) {
+/* The estimator and the deciding filter, which version 1 did not record. */
+static int render_decider(char *dst, int cap, const uint8_t *h) {
+    char estimator[9] = {0};
+    memcpy(estimator, h + 28, 8);
+    return snprintf(dst, (size_t)cap, "# Estimator: %s\n# Apogee decided by: %s\n", estimator,
+                    h[36] ? "estimator" : "simple filter");
+}
+
+static int render_header(flog_csv_t *r, int fixed) {
     uint8_t h[HDR_FIXED - 2 + FLOG_BOARD_MAX];
     uint8_t lead[2];
-    if (!take(r, lead, 2) || lead[0] != REC_HEADER || lead[1] < HDR_FIXED - 2 || lead[1] > sizeof(h) ||
+    if (!take(r, lead, 2) || lead[0] != REC_HEADER || lead[1] < fixed - 2 || lead[1] > fixed - 2 + FLOG_BOARD_MAX ||
         !take(r, h, lead[1])) {
         return 0;
     }
     char board[FLOG_BOARD_MAX + 1];
-    int board_len = lead[1] - (HDR_FIXED - 2);
-    memcpy(board, h + HDR_FIXED - 2, (size_t)board_len);
+    int board_len = lead[1] - (fixed - 2);
+    memcpy(board, h + fixed - 2, (size_t)board_len);
     board[board_len] = '\0';
     char id[9] = {0}, name[9] = {0};
     memcpy(id, h, 8);
@@ -166,14 +178,18 @@ static int render_header(flog_csv_t *r) {
     uint8_t units = h[22];
     int n = snprintf(r->line, sizeof(r->line),
                      "# %s Flight Data\n# ID: %s\n# Name: %s\n# Pyro1: %s %u\n# Pyro2: %s %u\n# Units: %s\n"
-                     "# Ground Pa: %ld\n# Log rate: every sample\n"
-                     "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n",
+                     "# Ground Pa: %ld\n# Log rate: every sample\n",
                      board, id, name, config_mode_name(h[16]), (unsigned)get16(h + 17), config_mode_name(h[19]),
                      (unsigned)get16(h + 20),
                      units == 2   ? "ft"
                      : units == 1 ? "m"
                                   : "cm",
                      (long)(int32_t)get32(h + 23));
+    if (n > 0 && fixed == HDR_FIXED)
+        n += render_decider(r->line + n, (int)sizeof(r->line) - n, h);
+    if (n > 0 && n < (int)sizeof(r->line))
+        n += snprintf(r->line + n, sizeof(r->line) - (size_t)n,
+                      "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n");
     return n > 0 && n < (int)sizeof(r->line) ? n : 0;
 }
 
@@ -185,7 +201,7 @@ static int render_sample(flog_csv_t *r) {
     int16_t temp = (int16_t)get16(s + 16);
     uint32_t t_abs = temp < 0 ? 0u - (uint32_t)(int32_t)temp : (uint32_t)temp;
     char *o = r->line;
-    o = put_u32(o, get32(s));
+    o = put_i32(o, (int32_t)get32(s));
     *o++ = ',';
     o = put_i32(o, (int32_t)get32(s + 4));
     *o++ = ',';
@@ -235,8 +251,11 @@ static bool next_line(flog_csv_t *r) {
     if (!r->started) {
         uint8_t magic[FLOG_MAGIC_LEN];
         r->started = true;
-        if (take(r, magic, FLOG_MAGIC_LEN) && memcmp(magic, FLOG_MAGIC, FLOG_MAGIC_LEN) == 0) {
-            n = render_header(r);
+        if (take(r, magic, FLOG_MAGIC_LEN)) {
+            if (memcmp(magic, FLOG_MAGIC, FLOG_MAGIC_LEN) == 0)
+                n = render_header(r, HDR_FIXED);
+            else if (memcmp(magic, FLOG_MAGIC_V1, FLOG_MAGIC_LEN) == 0)
+                n = render_header(r, HDR_FIXED_V1);
         }
     } else {
         uint8_t type;

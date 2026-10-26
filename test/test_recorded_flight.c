@@ -127,8 +127,10 @@ void test_TST_02_the_recorded_flight_runs_pad_to_landed(void) {
 void test_TST_02_launch_is_detected_as_the_rocket_leaves(void) {
     fly_the_recording();
     TEST_ASSERT_TRUE_MESSAGE(seen.launch_s > 0.0f, "not before ignition");
-    TEST_ASSERT_TRUE_MESSAGE(recorded_height_m(seen.launch_s) >= 30.0f, "above 100 ft [FLT-LAUNCH-02]");
-    TEST_ASSERT_TRUE(recorded_height_m(seen.launch_s) < 45.0f);
+    char msg[64];
+    snprintf(msg, sizeof(msg), "declared at %.1f m [FLT-LAUNCH-02]", (double)recorded_height_m(seen.launch_s));
+    TEST_ASSERT_TRUE_MESSAGE(recorded_height_m(seen.launch_s) >= 15.0f, msg);
+    TEST_ASSERT_TRUE_MESSAGE(recorded_height_m(seen.launch_s) < 30.0f, msg);
 }
 
 void test_TST_02_apogee_is_declared_after_the_recorded_peak_and_soon(void) {

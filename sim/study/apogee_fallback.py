@@ -63,7 +63,7 @@ class Watch(Flight):
         if f.x is None:
             return
         if self.state == 'PAD':
-            if f.h() > 30.48 and f.v() > 5.0:
+            if f.h() > 15.0 and f.v() > 15.0:
                 self.state = 'ASCENT'; self.launch_t = t
             return
         self.max_v = max(self.max_v, f.v())

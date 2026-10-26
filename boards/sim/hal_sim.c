@@ -11,6 +11,8 @@
 #include "../src/pressure_processing.h"
 #include "../src/config.h"
 #include "../src/flight_events.h"
+#include "../src/flight_states.h"
+#include "../src/log_pad_ring.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -356,7 +358,19 @@ void hal_platform_service(void) {}
 static FILE *sim_log_file = NULL;
 static bool sim_log_running = false;
 
-void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
+static log_pad_ring_t sim_log_pad;
+
+void hal_log_pad(uint32_t t_ms, int32_t pressure_pa) {
+    if (!sim_log_running)
+        log_pad_push(&sim_log_pad, t_ms, pressure_pa, pp_last_read_raw_pa(), 150);
+}
+
+static void sim_log_keep(const flog_sample_t *s) {
+    fprintf(sim_log_file, "%ld,%ld,%ld,%u,%u,%ld,15.0,%s\n", (long)s->time_ms, (long)s->pressure_pa,
+            (long)s->altitude_cm, s->state, s->thrust, (long)s->raw_pa, flight_event_name(s->event));
+}
+
+void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_ms) {
     if (sim_log_running)
         return;
     sim_log_file = fopen("flight_sim.csv", "w");
@@ -365,25 +379,29 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
     fprintf(sim_log_file,
             "# Pyro MK1B Flight Data\n# ID: %.8s\n# Name: %.8s\n"
             "# Pyro1: %s %u\n# Pyro2: %s %u\n"
-            "# Units: %s\n# Ground Pa: %ld\n"
+            "# Units: %s\n# Ground Pa: %ld\n# Estimator: %.8s\n# Apogee decided by: %s\n"
             "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n",
             cfg->id, cfg->name, config_mode_name(cfg->pyro1_mode), cfg->pyro1_value, config_mode_name(cfg->pyro2_mode),
             cfg->pyro2_value,
             cfg->units == 2   ? "ft"
             : cfg->units == 1 ? "m"
                               : "cm",
-            (long)ground_pressure_pa);
+            (long)ground_pressure_pa, cfg->estimator, cfg->model_decides ? "estimator" : "simple filter");
+    flog_sample_t s;
+    for (uint16_t i = 0; log_pad_row(&sim_log_pad, i, t0_ms, ground_pressure_pa, PAD_IDLE, &s); i++)
+        sim_log_keep(&s);
+    log_pad_clear(&sim_log_pad);
     sim_log_running = true;
 }
 
-void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
+/* The simulator models no temperature: the column holds the standard
+ * atmosphere's at the pad. */
+void hal_log_sample(int32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
                     uint8_t event) {
     if (!sim_log_running || !sim_log_file)
         return;
-    /* The simulator models no temperature: the column holds the standard
-     * atmosphere's at the pad. */
-    fprintf(sim_log_file, "%lu,%ld,%ld,%u,%u,%ld,15.0,%s\n", (unsigned long)time_ms, (long)pressure_pa,
-            (long)altitude_cm, state, under_thrust, (long)pp_last_read_raw_pa(), flight_event_name(event));
+    flog_sample_t s = {time_ms, pressure_pa, altitude_cm, pp_last_read_raw_pa(), 150, state, under_thrust, event};
+    sim_log_keep(&s);
 }
 
 bool hal_log_estimator(uint32_t time_ms, const char *text, int len) {

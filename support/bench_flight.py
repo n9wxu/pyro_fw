@@ -46,7 +46,7 @@ def get_bytes(host, path, timeout=5):
 def sample_times(d):
     """Each sample row's time, from the binary records (src/flight_log.h)."""
     i, times = 4, []
-    if d[:4] != b"PYL1":
+    if d[:4] not in (b"PYL1", b"PYL2"):
         return times
     while i < len(d):
         kind = d[i]
@@ -54,7 +54,7 @@ def sample_times(d):
             i += 2 + d[i + 1]
         elif kind == ord("S") and i + 22 <= len(d):
             if d[i + 21] == 0:
-                times.append(int.from_bytes(d[i + 1:i + 5], "little"))
+                times.append(int.from_bytes(d[i + 1:i + 5], "little", signed=True))
             i += 22
         elif kind == ord("T") and i + 7 <= len(d):
             i += 7 + d[i + 6]
@@ -64,9 +64,9 @@ def sample_times(d):
 
 
 def steps(times):
-    """The widest step between sample rows from launch on, and the median.
-    The rows kept from the pad all read 0."""
-    t = [x for x in times if x > 0]
+    """The widest step between sample rows from the first, and the median.
+    The log opens on the pad, before T+0 [DAT-11]."""
+    t = times
     iv = [b - a for a, b in zip(t, t[1:])]
     return (max(iv), statistics.median(iv)) if iv else (0, 0)
 

@@ -8,6 +8,7 @@
 #define FLIGHT_STATES_H
 
 #include "apogee_detector.h"
+#include "simple_apogee.h"
 #include "config.h"
 #include "descent_phase.h"
 #include "fire_control.h"
@@ -88,13 +89,16 @@ typedef struct flight_context_t {
     uint32_t last_sample; /* sample time of the newest sample */
     int32_t pressure_pa, altitude_cm, speed_cms;
     int32_t max_altitude_cm, max_speed_cms;
-    float peak_pa; /* the lowest filtered pressure the estimator explained; 0: none yet */
+    float peak_pa; /* the lowest filtered pressure the estimator explained, or the simple filter's top; 0: none yet */
     bool peak_lower_bound;
     /* One per estimator: the obeyed one's is the flight's apogee, the others'
      * are logged [SNS-EST-07]. */
     apogee_detector_t apogee_detector[ESTIMATORS_MAX];
     bool estimator_apogee[ESTIMATORS_MAX]; /* at the newest sample */
     bool estimator_said_apogee[ESTIMATORS_MAX];
+    simple_apogee_t simple; /* [FLT-APO-09] */
+    bool simple_said_apogee;
+    bool apogee_by_simple; /* the simple filter declared it [FLT-APO-11] */
     uint32_t estimators_logged_ms;
     bool arm_height_passed;
     bool pyros_armed;
