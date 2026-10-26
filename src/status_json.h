@@ -92,6 +92,7 @@ typedef struct {
     uint32_t sample_interval_us[2], stamp_lag_max_us, noise_mpa;
     const char *estimator; /* the one obeyed [SNS-EST-06] */
     bool estimator_explains;
+    bool model_decides; /* false: the simple filter alone decides apogee [FLT-APO-09] */
     bool peak_lower_bound;
     bool usb_attached, test_mode, buzzer_active;
     bool test_log_host; /* [USB-09] the flight log goes to the host, not the flash */

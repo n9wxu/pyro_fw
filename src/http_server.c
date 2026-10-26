@@ -929,6 +929,7 @@ static void status_name_flight(status_snap_t *s, const flight_take_t *t) {
     s->noise_mpa = (uint32_t)(t->noise_pa * 1000.0f);
     s->estimator = estimator_at(t->obeyed)->name;
     s->estimator_explains = t->explains;
+    s->model_decides = g->model_decides;
     s->peak_lower_bound = t->peak_lower_bound;
     s->usb_attached = t->usb_attached;
     s->test_mode = t->test_mode;

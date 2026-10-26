@@ -142,7 +142,7 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         "\"pres_recoveries\":%lu,\"pres_dropped\":%lu,\"pres_flashed\":%lu,\"raw_pa\":%ld,\"pad_speed_cms\":%ld,"
         "\"ground_degraded\":%s,\"ground_reseeds\":%lu,"
         "\"sample_interval_us\":[%lu,%lu],\"stamp_lag_max_us\":%lu,\"noise_mpa\":%lu,"
-        "\"estimator\":\"%s\",\"estimator_explains\":%s,\"peak_lower_bound\":%s,"
+        "\"estimator\":\"%s\",\"estimator_explains\":%s,\"model_decides\":%s,\"peak_lower_bound\":%s,"
         "\"usb_attached\":%s,\"test_mode\":%s,\"test_log\":\"%s\",\"buzzer_active\":%s,\"beep\":\"%s\","
         "\"beep_sound\":\"%s\","
         "\"serial\":\"%s\",\"serial_assigned\":%s,\"hw_id\":\"%s\",\"subnet\":%u,\"mac_source\":\"%s\","
@@ -156,9 +156,9 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         (long)s->raw_pa, (long)s->pad_speed_cms, B(s->ground_degraded), (unsigned long)s->ground_reseeds,
         (unsigned long)s->sample_interval_us[0], (unsigned long)s->sample_interval_us[1],
         (unsigned long)s->stamp_lag_max_us, (unsigned long)s->noise_mpa, S(s->estimator), B(s->estimator_explains),
-        B(s->peak_lower_bound), B(s->usb_attached), B(s->test_mode), s->test_log_host ? "host" : "flash",
-        B(s->buzzer_active), S(s->beep), sound, s->serial, B(s->serial_assigned), s->hw_id, (unsigned)s->subnet,
-        S(s->mac_source), s->flash_jedec, (unsigned long)s->flash_kb, s->flash_uid);
+        B(s->model_decides), B(s->peak_lower_bound), B(s->usb_attached), B(s->test_mode),
+        s->test_log_host ? "host" : "flash", B(s->buzzer_active), S(s->beep), sound, s->serial, B(s->serial_assigned),
+        s->hw_id, (unsigned)s->subnet, S(s->mac_source), s->flash_jedec, (unsigned long)s->flash_kb, s->flash_uid);
     put(&o,
         "\"flash_part\":\"%s\",\"flash_in_flight\":%s,"
         "\"frame\":{\"writer_max_us\":%lu,\"writer_overruns\":%lu,\"lua_skipped\":%lu},"

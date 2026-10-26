@@ -49,6 +49,7 @@
 #include "pyro_release.h"
 #include "http_server.h"
 #include "flight_log.h"
+#include "log_pad_ring.h"
 #include "small_fmt.h"
 #include "net_glue.h"
 #include "log_live.h"
@@ -1134,7 +1135,9 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
 /* Binary records (flight_log.h), rendered as CSV only when downloaded
  * [DD-062], a sample record for every sample [DD-101]. 4 kB holds 186 of
  * them, over 2.5 s at the fastest sensor's 73 a second, enough to span the
- * launch shock window below [DD-027]. */
+ * launch shock window below [DD-027]. The header and the pad's rows
+ * [DAT-11] do not pass through it: the storage task writes them first, from
+ * where hal_log_start() left them. */
 #define LOG_BUF_SIZE 4096u
 #define LOG_MASK (LOG_BUF_SIZE - 1u)
 #define LOG_FLUSH_MS 200u
@@ -1231,7 +1234,26 @@ uint32_t hal_log_dropped(void) {
     return log_ring.dropped;
 }
 
-void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
+/* The log's opening, written by the storage task before the ring's rows:
+ * the header, then the pad's samples, frozen at launch [DAT-11]. */
+static struct {
+    log_pad_ring_t pad;
+    uint8_t header[FLOG_MAGIC_LEN + 40 + FLOG_BOARD_MAX];
+    uint16_t header_len;
+    bool header_done;
+    uint16_t next_row;
+    uint16_t part; /* bytes of the record being written that are out */
+    uint32_t t0_ms;
+    int32_t ground_pa;
+} log_open;
+
+void hal_log_pad(uint32_t t_ms, int32_t pressure_pa) {
+    if (log_ring.state == LOG_IDLE)
+        log_pad_push(&log_open.pad, t_ms, pressure_pa, pp_last_read_raw_pa(),
+                     (int16_t)lroundf(pres.last.temperature_c * 10.0f));
+}
+
+void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_ms) {
     if (log_ring.state != LOG_IDLE)
         return;
 
@@ -1251,9 +1273,16 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa) {
         .pyro2_value = cfg->pyro2_value,
         .units = cfg->units,
         .ground_pa = ground_pressure_pa,
+        .estimator = cfg->estimator,
+        .model_decides = cfg->model_decides,
     };
-    int n = flog_put_header(log_ring.buf, (int)LOG_BUF_SIZE, &h);
-    log_ring.head = n > 0 ? (uint32_t)n : 0u;
+    int n = flog_put_header(log_open.header, (int)sizeof(log_open.header), &h);
+    log_open.header_len = n > 0 ? (uint16_t)n : 0u;
+    log_open.header_done = false;
+    log_open.next_row = 0;
+    log_open.part = 0;
+    log_open.t0_ms = t0_ms;
+    log_open.ground_pa = ground_pressure_pa;
     __dmb();
     log_ring.state = LOG_RUNNING;
 }
@@ -1269,8 +1298,53 @@ static void log_sync_if_due(uint32_t now_ms) {
     log_ring.next_sync_ms = now_ms + LOG_SYNC_MS;
 }
 
+/* What is left of one record; true once all of it is out. A record is
+ * built the same way every pass, so a write cut short goes on from where it
+ * stopped. */
+static bool log_write_record(bool to_host, const uint8_t *rec, uint16_t len) {
+    if (to_host) {
+        log_live_write(rec + log_open.part, (uint32_t)(len - log_open.part));
+        log_open.part = 0;
+        return true;
+    }
+    int n = vfs_write(&log_ring.file, rec + log_open.part, (uint32_t)(len - log_open.part));
+    if (n == VFS_NOSPC && flash_op_can_erase())
+        vfs_clean(); /* [FLT-LOG-10] */
+    if (n <= 0)
+        return false;
+    log_ring.unsynced = true;
+    log_open.part = (uint16_t)(log_open.part + n);
+    if (log_open.part < len)
+        return false;
+    log_open.part = 0;
+    return true;
+}
+
+/* The header and the pad's rows, ahead of the ring's; false while some are
+ * still to go. */
+static bool log_write_opening(bool to_host) {
+    if (!log_open.header_done) {
+        if (!log_write_record(to_host, log_open.header, log_open.header_len))
+            return false;
+        log_open.header_done = true;
+    }
+    flog_sample_t s;
+    while (log_pad_row(&log_open.pad, log_open.next_row, log_open.t0_ms, log_open.ground_pa, PAD_IDLE, &s)) {
+        uint8_t rec[FLOG_SAMPLE_BYTES];
+        int n = flog_put_sample(rec, (int)sizeof(rec), &s);
+        if (!log_write_record(to_host, rec, (uint16_t)n))
+            return false;
+        log_open.next_row++;
+    }
+    log_pad_clear(&log_open.pad);
+    log_open.next_row = 0;
+    return true;
+}
+
 /* Everything the ring holds now, in at most two spans. */
 static void log_write_out(void) {
+    if (!log_write_opening(false))
+        return;
     uint32_t h = log_ring.head;
     __dmb();
     while (log_ring.tail != h) {
@@ -1298,6 +1372,7 @@ static void log_write_out(void) {
 /* [USB-09] Everything the ring holds, into the RAM the host reads; nothing
  * waits, so nothing is held back. */
 static void log_hand_to_host(void) {
+    (void)log_write_opening(true);
     uint32_t h = log_ring.head;
     __dmb();
     while (log_ring.tail != h) {
@@ -1312,8 +1387,14 @@ static void log_hand_to_host(void) {
     }
 }
 
+static bool log_opening_done(void) {
+    return log_open.header_done && log_pad_count(&log_open.pad) == 0;
+}
+
 /* The storage task's end of a log: the file closed, the filesystem free. */
 static void log_finish(void) {
+    log_pad_clear(&log_open.pad);
+    log_open.next_row = log_open.part = 0;
     if (log_ring.file_open && !log_ring.to_host)
         vfs_close(&log_ring.file);
     log_ring.file_open = false;
@@ -1344,7 +1425,7 @@ static void log_service(uint32_t now_ms) {
             log_ring.file_open = true; /* the host's RAM stands in for the file */
         }
         log_hand_to_host();
-        if (st == LOG_STOPPING)
+        if (st == LOG_STOPPING && log_opening_done())
             log_finish();
         return;
     }
@@ -1389,7 +1470,7 @@ static void log_service(uint32_t now_ms) {
     log_write_out();
     log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
 
-    if (st == LOG_STOPPING && log_ring.tail == log_ring.head)
+    if (st == LOG_STOPPING && log_ring.tail == log_ring.head && log_opening_done())
         log_finish();
 }
 
@@ -1417,7 +1498,7 @@ void hal_storage_service(uint32_t now_ms) {
     board_flash_service(now_ms);
 }
 
-void hal_log_sample(uint32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
+void hal_log_sample(int32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
                     uint8_t event) {
     if (log_ring.state != LOG_RUNNING)
         return;

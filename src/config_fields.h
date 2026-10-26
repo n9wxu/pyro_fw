@@ -37,6 +37,7 @@
     X(U16, refire_interval, "refire_interval", 0, 0, 65535)                                                            \
     X(U16, fire_gap, "fire_gap", 0, 0, 65535)                                                                          \
     X(STR, estimator, "estimator", "lumped", 0, 0)                                                                     \
+    X(BOOL, model_decides, "model_decides", true, 0, 0)                                                                \
     X(U8, landing_timeout, "landing_timeout", 60, 0, 255)                                                              \
     X(BOOL, lua_enabled, "lua_enabled", false, 0, 0)                                                                   \
     X(U32, lua_baud, "lua_baud", 9600, 300, 921600)                                                                    \

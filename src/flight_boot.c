@@ -44,7 +44,7 @@ static void resume_flight(flight_context_t *ctx, const pad_record_t *record, flo
     ctx->pressure_pa = (int32_t)pressure_pa;
     ctx->altitude_cm = (int32_t)(atmos_height_above_m(pressure_pa, (float)record->ground_pressure_pa) * 100.0f);
     ctx->max_altitude_cm = ctx->altitude_cm;
-    hal_log_start(&ctx->config, ctx->ground_pressure);
+    hal_log_start(&ctx->config, ctx->ground_pressure, now);
     hal_log_sample(0, ctx->pressure_pa, ctx->altitude_cm, ASCENT, 0, EVT_LAUNCH);
     hal_log_sample(0, ctx->pressure_pa, ctx->altitude_cm, ASCENT, 0, EVT_RESUMED);
 }

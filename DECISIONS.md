@@ -23,14 +23,31 @@ sequence has gaps.
 
 ### DD-016: Strengthened Launch Confirmation
 - **Decision:** launch needs both, on the filtered state: a pressure below
-  the pad's pressure at 100 ft, and a climb faster than 5 m/s
+  the pad's pressure at 15 m, and a climb faster than 15 m/s
   (`launch_detected()`; FLT-LAUNCH-02, FLT-LAUNCH-07). No launch is declared
   while a USB host is attached and test mode is off (USB-01). T+0 is the
   first sample of the rise more than 50 cm above the pad (FLT-LAUNCH-03).
 - **Why:** barometric drift, a weather front and a board warming on the pad
-  move the pressure slowly, and none of them climbs at 5 m/s; a real rocket
-  100 ft up is travelling far faster. The speed is the filtered state's
-  (DD-085), so no separate test of height gained within a window is needed.
+  move the pressure slowly, and none of them climbs at 15 m/s; a real rocket
+  15 m up is travelling faster. The speed is the filtered state's (DD-085),
+  so no separate test of height gained within a window is needed.
+- **Why 15 m and 15 m/s:** at the user's direction -- "1s detection delay.
+  This should be worst case with faster launches detecting quicker." Wind
+  gusts on the pad are real pressure, which no filter removes: a gust of
+  δp moves the port's pressure by about Cp·ρ·V·σ_V. In the harness, 30
+  minutes of gusts on three seeds, at 1.2 and 9 Pa of sensor noise:
+
+  | Height, speed | 5:1 rocket declared | Gusts with no false launch |
+  |---|---|---|
+  | 5 m, 15 m/s | 0.74 s | 25 Pa rms |
+  | 10 m, 15 m/s | 0.86 s | 30 Pa rms |
+  | 15 m, 15 m/s | 1.00 s | 40 Pa rms |
+  | 30.48 m, 5 m/s | 1.40 s | 60 Pa rms |
+
+  40 Pa rms is a 19 mph mean wind at 30 % turbulence on the side of a tube
+  (Cp 1.5), and 23 mph on a port facing the wind (Cp 1): the NAR's 20 mph
+  launch limit [SNS-EST-03]. The 5:1 rocket's 1 s is from ignition, about
+  0.85 s from T+0; faster rockets are declared from 0.34 s [FLT-LAUNCH-08].
 
 ### DD-017: Arming Requires Confirmed Motor Burn
 - **Decision:** the pyros arm once the climb has been faster than 10 m/s and
@@ -41,8 +58,8 @@ sequence has gaps.
   (DD-085).
 - **Why:** after a false launch from drift the speed is about zero. Without
   the gate the board would arm at once, see the speed at zero, declare
-  apogee and fire on the ground. A rocket still climbing at 10 m/s at the
-  launch detector's 100 ft reaches about 35 m, so the height gate keeps
+  apogee and fire on the ground. A rocket that only just meets the launch
+  rule, 15 m/s at 15 m, coasts to about 26 m, so the height gate keeps
   arming off the pad. Arming needs only "slower than 10 m/s", so a rocket
   already descending arms: a sensor that fails near apogee delays arming and
   cannot close its window for good. A suspect sample (DD-050) arms nothing.
@@ -59,6 +76,111 @@ sequence has gaps.
   descends at 3 to 6 m/s: a timeout keyed on "below 5 m/s" would declare a
   rocket still under its main landed in the air and close its log with the
   descent unrecorded.
+
+### DD-109: A Simple Filter Beside The Estimator, Standing In Or Deciding Alone
+- **Decision:** at the user's direction -- "Need a simple filter (no mach
+  lockout) that will ALWAYS detect apogee for simple flights", "Need the
+  kahlman filter that always runs as an estimator but can be disabled from
+  the decision loop", "Even when the kahlman filter is active (and in the
+  decision loop) it can detect when it is not converging and allow the
+  simple filter to save the day", and "A simple mach lockout is just
+  watching for the measured speed to drop below a threshold for a few
+  seconds":
+  - The simple filter (`src/simple_apogee.c`) takes the median of the last
+    three raw readings the sensor is believed on, from launch. Its apogee is
+    that median standing 2 m below the lowest median since launch for 0.5 s,
+    once a median has been 30 m above the pad (FLT-APO-09). Its top, for
+    the peak and for DELAY, is the last time the median stood at its lowest
+    (FLT-APO-08, PYR-MODE-05).
+  - Its speed is the change in the median's height over 0.5 s, taken every
+    100 ms. Its lockout is that speed under 50 m/s for the last 3 s; a
+    faster speed closes it again.
+  - `model_decides` in config.ini, true by default: the obeyed estimator's
+    apogee (FLT-APO-07) is the flight's, and the simple filter's stands in
+    while the estimator does not explain the readings, the lockout is open
+    and the speed is a fall (FLT-APO-10). False: the simple filter's alone.
+    The estimators run and log either way.
+  - The log carries an `EST simple` row a second and `EST simple APOGEE`
+    when its rule is met, and `EST apogee by <name>` at the declaration
+    (FLT-APO-11).
+- **Why:** a hand-run pressure chamber flight on an MK1B-8MB climbed and
+  fell faster than any flight, the estimator never explained it, and the
+  board declared neither apogee nor landing. A flight the model cannot
+  explain still has a top. The study (`docs/apogee_fallback.md`,
+  `sim/study/simple_apogee.py`) measured the choices:
+  - The median of three and the 0.5 s hold were early on none of the
+    subsonic sim flights at 9, 20 and 35 Pa of noise, with and without an
+    ejection spike, 1.0 to 1.2 s late. The hold is set by noise: under
+    0.5 s, 35 Pa makes it early. At the user's word, "The ejection pressure
+    spike will decay instantly when the rocket separates", a spike is not
+    what sets it.
+  - Standing in on "not explained" alone hands over early on port-error
+    flights, which leave the estimator unexplained for up to 18 s. With the
+    lockout it was early on none of the 696 sim flights under the board's
+    ceiling.
+  - The lockout closes again on a fast speed and the stand-in needs a fall:
+    in `mach_tests` a port error twice the model's showed a fake top, a
+    hover that opened a latched lockout, then a fast fake fall 28 s before
+    the true apogee.
+- **Proven by:** `simple_apogee_tests`; `chamber_flight_tests` (the chamber
+  flight declares apogee 0.5 s after its top with the simple filter alone,
+  and once back on the ground with the estimator deciding, and lands both
+  ways); `mach_tests` unchanged.
+
+### DD-110: The Log Starts On The Pad
+- **Decision:** at the user's direction -- "We need to show a log starting
+  at ground level. This needs a pre-launch ring-buffer large enough to
+  detect all flights and still have a ground record. Changing the log
+  format is fine.":
+  - Each PAD_IDLE sample goes into a ring of 110 (`src/log_pad_ring.c`),
+    nine bytes each: the filtered pressure, the raw reading as its
+    difference, the low 16 bits of its time and its temperature as a
+    difference from the ring's first. A gap of a second empties it.
+  - At launch the HAL freezes the ring with T+0 and the ground. The storage
+    task writes the header and then the ring's rows, timed from T+0 and in
+    PAD_IDLE, before the log ring's rows [DAT-11]. They never pass through
+    the 4 kB log ring, so the launch's holdoff on flash writes [DD-027] is
+    unchanged.
+  - The format is version 2, `PYL2`: a sample's time is signed, and the
+    header carries the estimator obeyed and `model_decides`, rendered as
+    `# Estimator:` and `# Apogee decided by:` [DAT-07, DAT-08]. `PYL1` logs
+    still render.
+  - The replay takes the estimator and the deciding filter from the header,
+    and feeds a log that starts on the pad from its first row, with no
+    climb made up to the launch.
+- **The slowest rocket:** at the user's direction -- a 1 g climb "will
+  not reach a speed where the fins can stabilize it before it runs out of
+  launch rail (approximately 1.7m)": the design is for 5:1 thrust to weight
+  or more, 11.5 m/s at the end of a 1.7 m rail [FLT-LAUNCH-08]. The launch
+  rule (DD-016) declares such a rocket within 1 s of T+0.
+- **Why 110:** 1 s of climb and 0.5 s of pad at the fastest sensor's 73
+  readings a second. With the flight path in RAM (DD-104) MK1C has little
+  RAM below its stacks; 110 entries are 1 kB, and hold 2.2 s at the
+  MS5607's 50 readings a second.
+- **Proven by:** `log_pad_ring_tests`; `flight_profile_tests`
+  (`test_FLT_LAUNCH_08_the_slowest_rocket_is_seen_leaving_within_1_s`,
+  `test_DAT_11_the_log_starts_on_the_ground` with a 5:1 rocket, and the
+  replay); `flight_log_tests` (signed times, the version 2 header, a
+  version 1 log).
+
+### DD-111: The Design's Ceiling Is 30,000 ft
+- **Decision:** at the user's direction -- "The 30,000 ft ceiling is the new
+  hardlimit for these designs. This is limited by the noise budget. At
+  higher altitudes the noise needs more filtering than the time allowed.":
+  a board's height for proper operation (SNS-MAX-01) is the lesser of its
+  sensor's range and 9,144 m (`DESIGN_CEILING_M`, `src/pressure_sensor.h`).
+  The MS5607 boards report 9,144 m on `/api/limits`; the BMP280 keeps its
+  own 9,000 m. FLT-APO-01's bound is 0.5 s to that height. Above it the
+  flight goes on with the data it has, never declaring apogee early.
+- **Why:** at 9 Pa of noise a speed taken over 0.5 s carries about 27 m/s of
+  noise at 20 km and 133 m/s at 30 km, where a pascal is 7.7 m
+  (`docs/apogee_fallback.md`). The speed lockout and the apogee rules need
+  more filtering there than the time near apogee allows.
+- **Proven by:** `flight_profile_tests`
+  (`test_FLT_APO_01_apogee_is_never_early_and_soon_after_at_every_height`
+  to the ceiling and just past it;
+  `test_SNS_MAX_01_above_the_ceiling_apogee_is_never_early` at 20 and
+  30 km).
 
 ## Configuration & Features
 

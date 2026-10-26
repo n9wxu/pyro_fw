@@ -9,6 +9,7 @@
 #include "mocks.h"
 #include <math.h>
 #include <stdio.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include "board_harness.h"
@@ -184,7 +185,8 @@ typedef struct {
 } apogee_case_t;
 
 void test_FLT_APO_01_apogee_is_never_early_and_soon_after_at_every_height(void) {
-    const apogee_case_t cases[] = {{HOP, 0.5f}, {SUBSONIC, 0.5f}, {LOW_DRAG, 0.5f}, {TO_20_KM, 1.5f}, {TO_30_KM, 2.5f}};
+    /* Up to the ceiling, and the low-drag rocket's 9.5 km just past it. */
+    const apogee_case_t cases[] = {{HOP, 0.5f}, {SUBSONIC, 0.5f}, {MID_MACH, 0.5f}, {LOW_DRAG, 0.5f}};
     const float noises[] = {SENSOR_RMS_PA, 3.0f, NOISY_SENSOR_RMS_PA};
     char bad[512] = "";
     for (unsigned k = 0; k < sizeof(cases) / sizeof(cases[0]); k++) {
@@ -206,6 +208,27 @@ void test_FLT_APO_01_apogee_is_never_early_and_soon_after_at_every_height(void) 
         }
         printf("  %-9s apogee declared at most %.2f s after the true one\n", ROCKETS[cases[k].rocket].name,
                (double)worst);
+    }
+    TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
+}
+
+/* [SNS-MAX-01, TST-05] Above the ceiling apogee is still declared, and never
+ * before the true one. */
+void test_SNS_MAX_01_above_the_ceiling_apogee_is_never_early(void) {
+    const int rockets[] = {TO_20_KM, TO_30_KM};
+    char bad[256] = "";
+    for (unsigned k = 0; k < 2; k++) {
+        for (uint32_t seed = 1; seed <= 4; seed++) {
+            flight_conditions_t c = {.sensor_rms_pa = NOISY_SENSOR_RMS_PA, .thin_air = true};
+            const mp_rocket_t *rk = &ROCKETS[rockets[k]].r;
+            flown_t r = fly(rk, &ISA, &c, seed, plant_apogee_s(rk, &ISA) + 10.0f);
+            if (!r.apogee_declared || r.declared_t < r.apogee_t) {
+                char item[64];
+                snprintf(item, sizeof(item), " %s seed %u: declared %d at %+.2f s;", ROCKETS[rockets[k]].name,
+                         (unsigned)seed, r.apogee_declared, (double)(r.declared_t - r.apogee_t));
+                strncat(bad, item, sizeof(bad) - 1 - strlen(bad));
+            }
+        }
     }
     TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
 }
@@ -314,8 +337,8 @@ void test_DAT_04_the_events_of_a_flight_in_order(void) {
 }
 
 /* [FLT-LAUNCH-03, GND-CAL-05] The log's time is since the rocket left the
- * pad: the LAUNCH row is at the detection, a second or so into the flight,
- * and at the height reached by then, not zero. */
+ * pad: the LAUNCH row is at the detection, half a second or so into the
+ * flight, and at the height reached by then, not zero. */
 void test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise(void) {
     flight_conditions_t c = {.stop_after_apogee = true};
     flown_t r = fly(subsonic(), &ISA, &c, 19, 200.0f);
@@ -323,7 +346,7 @@ void test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise(void) {
     char msg[96];
     snprintf(msg, sizeof(msg), "declared %.2f s after ignition at %.0f m; the log's LAUNCH row is at %.2f s",
              (double)r.launch_t, (double)r.launch_h, (double)logged);
-    TEST_ASSERT_TRUE_MESSAGE(r.launch_h > 30.48f && r.launch_h < 60.0f, msg);
+    TEST_ASSERT_TRUE_MESSAGE(r.launch_h > 15.0f && r.launch_h < 30.0f, msg);
     TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.25f, r.launch_t, logged, msg);
 }
 
@@ -338,7 +361,7 @@ void test_FLT_LOG_07_every_sample_is_a_row(void) {
     const char *p = strstr(csv, "time_ms,");
     TEST_ASSERT_NOT_NULL(p);
     p = strchr(p, '\n') + 1;
-    long last = -1, first_sample = -1, last_sample = -1, gap = 0;
+    long last = LONG_MIN, first_sample = LONG_MIN, last_sample = LONG_MIN, gap = 0;
     int samples = 0, out_of_order = 0;
     bool launch = false, apogee = false, landing = false;
     for (const char *eol; (eol = strchr(p, '\n')) != NULL; p = eol + 1) {
@@ -350,9 +373,9 @@ void test_FLT_LOG_07_every_sample_is_a_row(void) {
         out_of_order += t < last;
         last = t;
         if (ev_len == 0) {
-            if (last_sample >= 0 && t - last_sample > gap)
+            if (last_sample != LONG_MIN && t - last_sample > gap)
                 gap = t - last_sample;
-            if (first_sample < 0)
+            if (first_sample == LONG_MIN)
                 first_sample = t;
             last_sample = t;
             samples++;
@@ -557,6 +580,55 @@ void test_SNS_REC_01_a_failed_sensor_is_logged_and_left_alone(void) {
     TEST_ASSERT_TRUE(r.drogue_t >= r.apogee_t);
 }
 
+/* The slowest rocket designed for: 5:1 off the pad, 11.5 m/s at the end of
+ * a 1.7 m rail [FLT-LAUNCH-08]. */
+static const mp_rocket_t five_to_one = {2.5f, 0.5f, 123.0f, 3.0f, 0.004f, 1.0f, 20.0f};
+
+/* Seconds from T+0 to the LAUNCH row. */
+static float seen_leaving_s(const mp_rocket_t *rocket, float sensor_rms_pa) {
+    flight_conditions_t c = {.sensor_rms_pa = sensor_rms_pa, .stop_after_apogee = true};
+    flown_t r = fly(rocket, &ISA, &c, 29, 120.0f);
+    TEST_ASSERT_TRUE(r.launched);
+    return harness_log_event_time("LAUNCH");
+}
+
+void test_FLT_LAUNCH_08_the_slowest_rocket_is_seen_leaving_within_1_s(void) {
+    const float noises[] = {SENSOR_RMS_PA, NOISY_SENSOR_RMS_PA};
+    for (unsigned n = 0; n < 2; n++) {
+        float slowest = seen_leaving_s(&five_to_one, noises[n]);
+        float faster = seen_leaving_s(subsonic(), noises[n]);
+        char msg[96];
+        snprintf(msg, sizeof(msg), "%.1f Pa: 5:1 seen %.2f s after T+0, subsonic %.2f s", (double)noises[n],
+                 (double)slowest, (double)faster);
+        TEST_ASSERT_TRUE_MESSAGE(slowest >= 0.0f && slowest <= 1.0f, msg);
+        TEST_ASSERT_TRUE_MESSAGE(faster >= 0.0f && faster < slowest, msg);
+    }
+}
+
+/* [DAT-11] The log opens on the pad: rows before T+0, at the ground, for a
+ * brisk rocket and for the slowest designed for. */
+static void starts_on_the_ground(const mp_rocket_t *rocket, const char *what) {
+    flight_conditions_t c = {.stop_after_apogee = true};
+    flown_t r = fly(rocket, &ISA, &c, 29, 120.0f);
+    TEST_ASSERT_TRUE_MESSAGE(r.launched, what);
+    static char csv[1024 * 1024];
+    TEST_ASSERT_TRUE(test_flight_log_csv(csv, (int)sizeof(csv)) > 0);
+    const char *row = strchr(strstr(csv, "time_ms,"), '\n') + 1;
+    long t = 0, alt_cm = 0, state = 0;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(3, sscanf(row, "%ld,%*ld,%ld,%ld", &t, &alt_cm, &state), what);
+    char msg[128];
+    snprintf(msg, sizeof(msg), "%s: launch declared %.2f s in, the first row at %ld ms, %ld cm, state %ld", what,
+             (double)r.launch_t, t, alt_cm, state);
+    TEST_ASSERT_TRUE_MESSAGE(t <= -500, msg);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(PAD_IDLE, state, msg);
+    TEST_ASSERT_TRUE_MESSAGE(labs(alt_cm) < 200, msg);
+}
+
+void test_DAT_11_the_log_starts_on_the_ground(void) {
+    starts_on_the_ground(subsonic(), "subsonic");
+    starts_on_the_ground(&five_to_one, "5:1 thrust to weight");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_PYR_MODE_01_delay_after_apogee);
@@ -572,6 +644,7 @@ int main(void) {
     RUN_TEST(test_FLT_ASC_04_arms_in_the_coast_not_in_the_burn);
     RUN_TEST(test_FLT_ASC_03_the_thrust_report_ends_within_a_second_of_burnout);
     RUN_TEST(test_FLT_APO_01_apogee_is_never_early_and_soon_after_at_every_height);
+    RUN_TEST(test_SNS_MAX_01_above_the_ceiling_apogee_is_never_early);
     RUN_TEST(test_SNS_MAX_01_best_effort_above_the_sensors_range);
     RUN_TEST(test_SNS_ALT_01_the_reported_peak_is_not_clamped);
     RUN_TEST(test_SNS_ALT_01_below_the_pad_is_a_negative_altitude);
@@ -582,6 +655,8 @@ int main(void) {
     RUN_TEST(test_DAT_04_the_events_of_a_flight_in_order);
     RUN_TEST(test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise);
     RUN_TEST(test_FLT_LOG_07_every_sample_is_a_row);
+    RUN_TEST(test_FLT_LAUNCH_08_the_slowest_rocket_is_seen_leaving_within_1_s);
+    RUN_TEST(test_DAT_11_the_log_starts_on_the_ground);
     RUN_TEST(test_DAT_08_a_log_replays_to_the_same_events);
     RUN_TEST(test_DAT_08_a_crlf_log_replays_as_its_lf_twin);
     RUN_TEST(test_DAT_08_a_thinned_log_is_refused);

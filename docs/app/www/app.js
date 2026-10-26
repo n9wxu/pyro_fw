@@ -262,7 +262,7 @@ function update() {
     /* Store device config — update every poll */
     var newCfg = {id:d.rocket_id, name:d.rocket_name, units:u,
       p1mode:d.pyro1_mode, p1val:d.pyro1_value, p2mode:d.pyro2_mode, p2val:d.pyro2_value,
-      estimator:d.estimator || ''};
+      estimator:d.estimator || '', modelDecides:d.model_decides !== false};
     if (!deviceConfig) {
       deviceConfig = newCfg;
       cfgLoadFromObj(deviceConfig);
@@ -271,7 +271,8 @@ function update() {
       if (deviceConfig.p1mode !== newCfg.p1mode || deviceConfig.p1val !== newCfg.p1val ||
           deviceConfig.p2mode !== newCfg.p2mode || deviceConfig.p2val !== newCfg.p2val ||
           deviceConfig.units !== newCfg.units ||
-          deviceConfig.estimator !== newCfg.estimator) {
+          deviceConfig.estimator !== newCfg.estimator ||
+          deviceConfig.modelDecides !== newCfg.modelDecides) {
         deviceConfig = newCfg;
         pendingConfig = null;
         cfgLoadFromObj(deviceConfig);
@@ -490,6 +491,7 @@ function cfgLoadFromObj(c) {
   document.getElementById('p2val').value = c.p2val || 0;
   var est = document.getElementById('estimator');
   if (c.estimator) est.value = c.estimator; else est.selectedIndex = 0;
+  document.getElementById('modelDecides').value = c.modelDecides === false ? 'false' : 'true';
   document.getElementById('cfgDirty').style.display = 'none';
   cfgChanged();
   document.getElementById('cfgDirty').style.display = 'none';
@@ -517,7 +519,8 @@ function cfgGetObj() {
     p1val: parseInt(document.getElementById('p1val').value) || 0,
     p2mode: document.getElementById('p2mode').value,
     p2val: parseInt(document.getElementById('p2val').value) || 0,
-    estimator: document.getElementById('estimator').value
+    estimator: document.getElementById('estimator').value,
+    modelDecides: document.getElementById('modelDecides').value !== 'false'
   };
 }
 
@@ -539,6 +542,7 @@ function cfgSave() {
     '\r\npyro2_mode=' + c.p2mode + '\r\npyro2_value=' + c.p2val +
     '\r\nunits=' + UNIT_NAMES[c.units] + '\r\n';
   if (c.estimator) ini += 'estimator=' + c.estimator + '\r\n';
+  ini += 'model_decides=' + (c.modelDecides ? 'true' : 'false') + '\r\n';
   RULE_FIELDS.forEach(function(f) {
     ini += f[1] + '=' + (parseInt(document.getElementById(f[0]).value) || 0) + '\r\n';
   });
@@ -732,7 +736,10 @@ function drawGraph() {
     return;
   }
 
+  /* [DAT-11] The log opens on the pad, before T+0. */
+  var minT = Math.min(0, flightData[0].t);
   var maxT = flightData[flightData.length-1].t;
+  var spanT = maxT - minT || 1;
   var maxA = 0;
   flightData.forEach(function(p) { if (p.a > maxA) maxA = p.a; });
   if (maxA === 0) maxA = 100;
@@ -755,14 +762,14 @@ function drawGraph() {
   }
   for (var i = 0; i <= 5; i++) {
     var x = pad.l + (i/5)*gw;
-    ctx.fillText((maxT * i/5 / 1000).toFixed(0) + 's', x - 8, H - 5);
+    ctx.fillText(((minT + spanT * i/5) / 1000).toFixed(0) + 's', x - 8, H - 5);
   }
 
   /* Altitude line */
   ctx.strokeStyle = '#2266cc'; ctx.lineWidth = 2;
   ctx.beginPath();
   flightData.forEach(function(p, idx) {
-    var x = pad.l + (p.t / maxT) * gw;
+    var x = pad.l + ((p.t - minT) / spanT) * gw;
     var y = pad.t + gh - (p.a / maxA) * gh;
     if (idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   });

@@ -4,7 +4,8 @@
  * checks [DAT-08].
  *
  * A file is the magic, one header record, then sample and text records in
- * the order they were written. Multi-byte fields are little-endian. A record
+ * the order they were written. A sample's time is signed: the log opens on
+ * the pad's last second before T+0 [DAT-11]. Multi-byte fields are little-endian. A record
  * cut short by a power loss ends the log; everything before it renders.
  *
  * SPDX-License-Identifier: MIT
@@ -16,7 +17,8 @@
 #include <stdint.h>
 
 #define FLOG_PATH "flight_log.bin"
-#define FLOG_MAGIC "PYL1"
+#define FLOG_MAGIC "PYL2"
+#define FLOG_MAGIC_V1 "PYL1" /* read, never written: no estimator in its header */
 #define FLOG_MAGIC_LEN 4
 
 /* A sample record, type byte included: what the capacity estimate divides by. */
@@ -33,10 +35,12 @@ typedef struct {
     uint16_t pyro1_value, pyro2_value;
     uint8_t units;
     int32_t ground_pa;
+    const char *estimator; /* up to 8 characters [SNS-EST-06] */
+    bool model_decides;    /* [FLT-APO-09] */
 } flog_header_t;
 
 typedef struct {
-    uint32_t time_ms;
+    int32_t time_ms; /* from T+0: the pad's rows are before it [DAT-11] */
     int32_t pressure_pa, altitude_cm, raw_pa;
     int16_t temp_dc; /* tenths of a degree C */
     uint8_t state, thrust, event;

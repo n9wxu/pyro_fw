@@ -102,7 +102,7 @@ BOOT_CONTINUITY ──→ BOOT_CALIBRATE ──[10 samples]──→ PAD_IDLE
 BOOT_CONTINUITY ──[ground test switch held at power-up]──→ GROUND_TEST (terminal)
 BOOT_CALIBRATE ──[10s, no samples]──→ FAULT (terminal)
 
-PAD_IDLE ──[alt>100ft AND speed>5m/s]──→ ASCENT
+PAD_IDLE ──[alt>15m AND speed>15m/s]──→ ASCENT
 ASCENT ──[arming gate]──→ ASCENT (self-loop, arms pyros)
 ASCENT ──[seen climbing, then seen falling, the estimator explaining the readings]──→ FALLING
 FALLING ──[rate settled in drogue band]──→ DROGUE_DESCENT
@@ -127,7 +127,7 @@ GROUND_TEST are numbered after LANDED, so recorded state numbers never move.
 ### PAD_IDLE
 - At least 50 pressures a second, each stepped in the loop it arrives in (FLT-RATE-01, FLT-RATE-06)
 - Ground reference: follows the weather, excluding samples more than 50 Pa from it, and moves to a new pad after 5 s still (GND-CAL-01, GND-CAL-03, GND-CAL-06)
-- Launch: altitude above 100 ft and speed above 5 m/s on the filtered state, with no hold time, and no USB host attached unless test mode is on (FLT-LAUNCH-07, USB-01)
+- Launch: altitude above 15 m and speed above 15 m/s on the filtered state, with no hold time, and no USB host attached unless test mode is on (FLT-LAUNCH-07, USB-01)
 - On launch: T+0 is the start of the rise (FLT-LAUNCH-03); the reference freezes to the pad before T+0 (GND-CAL-04)
 - Pyro health is read every second and the announcement re-derived: general fault, pyro 1, pyro 2 or OK to fly, in that priority (BUZ-CODE-02); it repeats until launch (BUZ-02)
 - After 10 s the pad record is stored for a resume (FLT-BROWN-01)

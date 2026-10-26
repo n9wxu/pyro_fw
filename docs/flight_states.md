@@ -126,7 +126,7 @@ The ground reference follows the weather, holds while the rocket moves, and
 freezes at launch on the pad's own pressure. A board carried to another pad
 reseeds after 5 s still (GND-CAL-06).
 
-Launch is 100 ft above the reference while climbing faster than 5 m/s, on
+Launch is 15 m above the reference while climbing faster than 15 m/s, on
 the filtered state (`launch_detected()`), with no hold time. Time zero is
 back-dated to the start of the rise (FLT-LAUNCH-03).
 
@@ -158,8 +158,18 @@ start-up (SNS-EST-06).
 
 Each reports whether its model explains the readings (SNS-EST-08). Near
 Mach 1 the static ports misreport, and no rocket moves the way those readings
-say, so the model does not explain them. Nothing is decided on such readings,
-and none of them is the peak (FLT-APO-08).
+say, so the model does not explain them. The estimator's apogee is not
+decided on such readings, and none of them is its peak (FLT-APO-07,
+FLT-APO-08).
+
+Beside the estimators runs the simple filter (`src/simple_apogee.c`): the
+median of the last three raw readings, and apogee as that median standing
+2 m below its lowest point for 0.5 s (FLT-APO-09). With `model_decides` true
+(the default) it stands in for the estimator only while the estimator does
+not explain the readings, its own speed has been under 50 m/s for the last
+3 s, and that speed is a fall (FLT-APO-10). With `model_decides` false it
+decides alone. The log says which declared apogee (FLT-APO-11). The study is
+`docs/apogee_fallback.md`.
 
 From launch to landing the log carries an `EST` row a second for each
 estimator, and a row when each one's own apogee rule is met, whichever is

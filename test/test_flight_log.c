@@ -9,7 +9,7 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Verifies [DAT-02, DAT-03, DAT-06, DAT-07, DAT-10, WEB-API-06, FLT-LOG-06].
+ * Verifies [DAT-02, DAT-03, DAT-06, DAT-07, DAT-11, DAT-10, WEB-API-06, FLT-LOG-06].
  */
 #include "unity.h"
 #include "../src/config.h"
@@ -66,12 +66,17 @@ static const flog_header_t HDR = {
     .pyro2_value = 300,
     .units = 1,
     .ground_pa = 101325,
+    .estimator = "lumped",
+    .model_decides = true,
 };
 
-static const char *const HDR_CSV = "# Pyro MK1C Flight Data\n# ID: PYRO001\n# Name: MyRocket\n"
-                                   "# Pyro1: delay 0\n# Pyro2: agl 300\n# Units: m\n# Ground Pa: 101325\n"
-                                   "# Log rate: every sample\n"
-                                   "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n";
+#define HDR_CSV_V1                                                                                                     \
+    "# Pyro MK1C Flight Data\n# ID: PYRO001\n# Name: MyRocket\n"                                                       \
+    "# Pyro1: delay 0\n# Pyro2: agl 300\n# Units: m\n# Ground Pa: 101325\n"                                            \
+    "# Log rate: every sample\n"
+#define COLUMNS "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n"
+
+static const char *const HDR_CSV = HDR_CSV_V1 "# Estimator: lumped\n# Apogee decided by: estimator\n" COLUMNS;
 
 static void put(int n) {
     TEST_ASSERT_GREATER_THAN_INT(0, n);
@@ -83,7 +88,7 @@ static void header(const flog_header_t *h) {
     put(flog_put_header(bin, (int)sizeof(bin), h));
 }
 
-static void sample(uint32_t t, int32_t p, int32_t a, uint8_t st, uint8_t th, int32_t raw, int16_t temp, uint8_t ev) {
+static void sample(int32_t t, int32_t p, int32_t a, uint8_t st, uint8_t th, int32_t raw, int16_t temp, uint8_t ev) {
     flog_sample_t s = {t, p, a, raw, temp, st, th, ev};
     put(flog_put_sample(bin + bin_len, (int)sizeof(bin) - bin_len, &s));
 }
@@ -93,16 +98,17 @@ static void a_flight(char *want, size_t cap) {
     header(&HDR);
     size_t w = (size_t)snprintf(want, cap, "%s", HDR_CSV);
     for (int i = 0; i < 60; i++) {
-        uint32_t t = (uint32_t)i * 1000u;
+        int32_t t = i * 1000;
         uint8_t ev = i == 0 ? EVT_LAUNCH : i == 30 ? EVT_APOGEE : EVT_NONE;
         sample(t, 101325 - i * 97, i * 815 - 40, 4 + (i > 30), i < 3, 101320 - i * 96, (int16_t)(231 - i * 9), ev);
-        w += (size_t)snprintf(want + w, cap - w, "%lu,%ld,%ld,%u,%u,%ld,%s%d.%d,%s\n", (unsigned long)t,
-                              (long)(101325 - i * 97), (long)(i * 815 - 40), 4u + (i > 30), (unsigned)(i < 3),
-                              (long)(101320 - i * 96), (231 - i * 9) < 0 ? "-" : "", abs(231 - i * 9) / 10,
-                              abs(231 - i * 9) % 10, flight_event_name(ev));
+        w += (size_t)snprintf(want + w, cap - w, "%ld,%ld,%ld,%u,%u,%ld,%s%d.%d,%s\n", (long)t, (long)(101325 - i * 97),
+                              (long)(i * 815 - 40), 4u + (i > 30), (unsigned)(i < 3), (long)(101320 - i * 96),
+                              (231 - i * 9) < 0 ? "-" : "", abs(231 - i * 9) / 10, abs(231 - i * 9) % 10,
+                              flight_event_name(ev));
         if (i % 20 == 5) {
-            put(flog_put_text(bin + bin_len, (int)sizeof(bin) - bin_len, t, FLOG_TAG_LUA, "servo,open\n", 11));
-            w += (size_t)snprintf(want + w, cap - w, "%lu,,,,,,,LUA servo open \n", (unsigned long)t);
+            put(flog_put_text(bin + bin_len, (int)sizeof(bin) - bin_len, (uint32_t)t, FLOG_TAG_LUA, "servo,open\n",
+                              11));
+            w += (size_t)snprintf(want + w, cap - w, "%ld,,,,,,,LUA servo open \n", (long)t);
         }
     }
 }
@@ -111,8 +117,7 @@ void setUp(void) {
     bin_len = 0;
 }
 
-void tearDown(void) {
-}
+void tearDown(void) {}
 
 /* [FLT-LOG-07, DAT-08] The header's plan byte says every sample is kept, and
  * so does the CSV the replay reads. */
@@ -136,13 +141,13 @@ void test_FLOG_01_the_header_renders_with_every_sample_kept(void) {
 void test_FLOG_02_samples_render_as_the_old_rows(void) {
     header(&HDR);
     sample(0, 101325, 0, 3, 0, 101330, 235, EVT_NONE);
-    sample(4294967295u, INT32_MIN, -2147483647, 10, 1, INT32_MAX, -32768, EVT_APOGEE);
+    sample(INT32_MIN, INT32_MIN, -2147483647, 10, 1, INT32_MAX, -32768, EVT_APOGEE);
     sample(12, 1, -1, 4, 1, 0, -5, EVT_MAIN_FORCED);
     sample(13, 2, 2, 4, 0, 7, 0, EVT_LANDING);
     render(bin_len, 4096, 0);
     const char *rows = csv + strlen(HDR_CSV);
     TEST_ASSERT_EQUAL_STRING("0,101325,0,3,0,101330,23.5,\n"
-                             "4294967295,-2147483648,-2147483647,10,1,2147483647,-3276.8,APOGEE\n"
+                             "-2147483648,-2147483648,-2147483647,10,1,2147483647,-3276.8,APOGEE\n"
                              "12,1,-1,4,1,0,-0.5,MAIN_FORCED\n"
                              "13,2,2,4,0,7,0.0,LANDING\n",
                              rows);
@@ -150,7 +155,10 @@ void test_FLOG_02_samples_render_as_the_old_rows(void) {
 
 void test_FLOG_03_text_rows_are_cleaned_and_bounded(void) {
     header(&HDR);
-    put(flog_put_text(bin + bin_len, (int)sizeof(bin) - bin_len, 77, FLOG_TAG_LUA, "a,b\tc\x7f" "d\xff", 8));
+    put(flog_put_text(bin + bin_len, (int)sizeof(bin) - bin_len, 77, FLOG_TAG_LUA,
+                      "a,b\tc\x7f"
+                      "d\xff",
+                      8));
     put(flog_put_text(bin + bin_len, (int)sizeof(bin) - bin_len, 78, FLOG_TAG_MOCK, "pyro1 fire", 10));
     char longtext[200];
     memset(longtext, 'x', sizeof(longtext));
@@ -230,6 +238,48 @@ void test_FLOG_08_records_are_their_stated_size_and_never_overflow(void) {
     TEST_ASSERT_GREATER_THAN_INT(0, flog_put_header(big, (int)sizeof(big), &h));
 }
 
+/* [DAT-11] The pad's rows come before T+0, so a time is signed. */
+void test_DAT_11_a_row_before_t0_renders_its_negative_time(void) {
+    header(&HDR);
+    sample(-1000, 101325, 0, 3, 0, 101326, 215, EVT_NONE);
+    sample(-20, 101324, 8, 3, 0, 101300, 215, EVT_NONE);
+    sample(0, 101310, 120, 4, 1, 101250, 215, EVT_LAUNCH);
+    render(bin_len, 4096, 0);
+    TEST_ASSERT_EQUAL_STRING("-1000,101325,0,3,0,101326,21.5,\n-20,101324,8,3,0,101300,21.5,\n"
+                             "0,101310,120,4,1,101250,21.5,LAUNCH\n",
+                             csv + strlen(HDR_CSV));
+}
+
+/* [DAT-08] The header names the estimator and which filter decided, for the
+ * replay. */
+void test_DAT_08_the_header_names_the_estimator_and_the_deciding_filter(void) {
+    flog_header_t h = HDR;
+    h.estimator = "constacc";
+    h.model_decides = false;
+    header(&h);
+    render(bin_len, 4096, 0);
+    TEST_ASSERT_NOT_NULL(strstr(csv, "# Estimator: constacc\n# Apogee decided by: simple filter\n" COLUMNS));
+}
+
+/* A log written before the estimator was in the header still renders. */
+void test_DAT_08_a_version_1_log_renders_as_it_did(void) {
+    header(&HDR);
+    /* Version 1: no estimator[8] or model_decides between the plan and the board. */
+    static uint8_t v1[sizeof(bin)];
+    memcpy(v1, "PYL1", FLOG_MAGIC_LEN);
+    int rec = FLOG_MAGIC_LEN;
+    memcpy(v1 + rec, bin + rec, 30);
+    v1[rec + 1] = (uint8_t)(bin[rec + 1] - 9);
+    int board = bin_len - rec - 39;
+    memcpy(v1 + rec + 30, bin + rec + 39, (size_t)board);
+    int v1_len = rec + 30 + board;
+    flog_sample_t s = {0, 101325, 0, 101330, 235, 4, 1, EVT_LAUNCH};
+    v1_len += flog_put_sample(v1 + v1_len, (int)sizeof(v1) - v1_len, &s);
+    memcpy(bin, v1, (size_t)v1_len);
+    render(v1_len, 4096, 0);
+    TEST_ASSERT_EQUAL_STRING(HDR_CSV_V1 COLUMNS "0,101325,0,4,1,101330,23.5,LAUNCH\n", csv);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_FLOG_01_the_header_renders_with_every_sample_kept);
@@ -240,5 +290,8 @@ int main(void) {
     RUN_TEST(test_FLOG_06_a_log_cut_anywhere_renders_its_whole_records);
     RUN_TEST(test_FLOG_07_a_file_that_is_not_a_log_renders_nothing);
     RUN_TEST(test_FLOG_08_records_are_their_stated_size_and_never_overflow);
+    RUN_TEST(test_DAT_11_a_row_before_t0_renders_its_negative_time);
+    RUN_TEST(test_DAT_08_the_header_names_the_estimator_and_the_deciding_filter);
+    RUN_TEST(test_DAT_08_a_version_1_log_renders_as_it_did);
     return UNITY_END();
 }

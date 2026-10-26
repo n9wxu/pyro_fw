@@ -62,7 +62,7 @@ Two things make the two parameters "slightly separable", in the user's words:
 
 Three rules read the filter. None has a phase or a Mach number in it.
 
-1. **Launch:** 100 ft above the pad and climbing at 5 m/s (FLT-LAUNCH-07).
+1. **Launch:** 15 m above the pad and climbing at 15 m/s (FLT-LAUNCH-07).
 2. **Apogee:** the filter has been seen climbing, then is seen falling, by
    more than three times its own uncertainty in speed, with the model
    explaining the readings all the way. If the climb was not seen (a sensor
@@ -70,7 +70,8 @@ Three rules read the filter. None has a phase or a Mach number in it.
 3. **"The model explains the readings":** the running mean of the squared,
    normalised innovation is under 4, and the filter has used a second of
    readings with no gap of more than 250 ms (SNS-EST-08). This is the test
-   every decision waits on.
+   the estimator's apogee waits on. While it fails, the simple filter may
+   stand in (FLT-APO-10, `docs/apogee_fallback.md`).
 
 ## What runs beside it
 

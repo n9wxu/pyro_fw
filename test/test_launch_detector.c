@@ -1,6 +1,6 @@
 /*
- * The launch trigger alone [FLT-LAUNCH-02, FLT-LAUNCH-07]: 100 ft above the
- * pad and climbing at 5 m/s or more, on the filtered state.
+ * The launch trigger alone [FLT-LAUNCH-02, FLT-LAUNCH-07]: 15 m above the
+ * pad and climbing at 15 m/s or more, on the filtered state.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -27,23 +27,23 @@ void test_FLT_LAUNCH_07_high_and_climbing_is_a_launch(void) {
     TEST_ASSERT_TRUE(launch_at(3000.0f, 300.0f));
 }
 
-void test_FLT_LAUNCH_02_below_100_ft_is_not_a_launch(void) {
+void test_FLT_LAUNCH_02_below_15_m_is_not_a_launch(void) {
     TEST_ASSERT_FALSE(launch_at(0.0f, 200.0f));
-    TEST_ASSERT_FALSE(launch_at(30.0f, 200.0f));
-    TEST_ASSERT_TRUE_MESSAGE(launch_at(31.0f, 200.0f), "and just above it is");
+    TEST_ASSERT_FALSE(launch_at(14.5f, 200.0f));
+    TEST_ASSERT_TRUE_MESSAGE(launch_at(15.5f, 200.0f), "and just above it is");
 }
 
-void test_FLT_LAUNCH_07_slower_than_5_m_s_is_not_a_launch(void) {
-    TEST_ASSERT_FALSE(launch_at(500.0f, 4.9f));
+void test_FLT_LAUNCH_07_slower_than_15_m_s_is_not_a_launch(void) {
+    TEST_ASSERT_FALSE(launch_at(500.0f, 14.9f));
     TEST_ASSERT_FALSE(launch_at(500.0f, 0.0f));
     TEST_ASSERT_FALSE_MESSAGE(launch_at(500.0f, -30.0f), "nor is a descent");
-    TEST_ASSERT_TRUE(launch_at(500.0f, 5.1f));
+    TEST_ASSERT_TRUE(launch_at(500.0f, 15.1f));
 }
 
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_FLT_LAUNCH_07_high_and_climbing_is_a_launch);
-    RUN_TEST(test_FLT_LAUNCH_02_below_100_ft_is_not_a_launch);
-    RUN_TEST(test_FLT_LAUNCH_07_slower_than_5_m_s_is_not_a_launch);
+    RUN_TEST(test_FLT_LAUNCH_02_below_15_m_is_not_a_launch);
+    RUN_TEST(test_FLT_LAUNCH_07_slower_than_15_m_s_is_not_a_launch);
     return UNITY_END();
 }

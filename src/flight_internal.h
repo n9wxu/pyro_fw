@@ -65,6 +65,7 @@ void flight_log_event(flight_context_t *ctx, uint8_t event);
 void flight_log_peak(const flight_context_t *ctx);
 #define FLIGHT_ESTIMATOR_ROW_MAX 64
 void flight_follow_estimators(flight_context_t *ctx, const pp_sample_t *s, uint32_t flight_ms);
+void flight_log_apogee_by(const flight_context_t *ctx);
 void flight_note_sensor(flight_context_t *ctx, const pp_sample_t *s, uint32_t now);
 void flight_note_no_sample(flight_context_t *ctx, uint32_t now);
 

@@ -25,7 +25,7 @@ BOOT_CONTINUITY → BOOT_CALIBRATE   on SEVT_DONE
 BOOT_CONTINUITY → GROUND_TEST      on SEVT_GROUND_TEST      (switch held at start-up, GND-TEST-05)
 BOOT_CALIBRATE  → PAD_IDLE         on SEVT_CAL_DONE         (10 readings)
 BOOT_CALIBRATE  → FAULT            on SEVT_FAULT            (no samples in 10 s)
-PAD_IDLE        → ASCENT           on SEVT_LAUNCH           (100 ft and 5 m/s)
+PAD_IDLE        → ASCENT           on SEVT_LAUNCH           (15 m and 15 m/s)
 ASCENT          → ASCENT           on SEVT_ARMED
 ASCENT          → FALLING          on SEVT_APOGEE           (the filtered pressure past its minimum)
 FALLING         → DROGUE_DESCENT / CHUTE_DESCENT  on SEVT_DROGUE / SEVT_CHUTE (a settled descent rate)
@@ -35,7 +35,7 @@ FALLING / DROGUE_DESCENT / CHUTE_DESCENT → LANDED on SEVT_LANDING
 
 ### State Transition Criteria
 
-**PAD_IDLE → ASCENT:** 100 ft above the ground reference while climbing at 5 m/s or more, on the filtered state, with no hold (`launch_detected()`, FLT-LAUNCH-02, FLT-LAUNCH-07), and no USB host attached unless test mode is on (USB-01, USB-08). T+0 is back-dated to the start of the rise (FLT-LAUNCH-03).
+**PAD_IDLE → ASCENT:** 15 m above the ground reference while climbing at 15 m/s or more, on the filtered state, with no hold (`launch_detected()`, FLT-LAUNCH-02, FLT-LAUNCH-07), and no USB host attached unless test mode is on (USB-01, USB-08). T+0 is back-dated to the start of the rise (FLT-LAUNCH-03).
 
 **ASCENT → FALLING:** the obeyed estimator seen climbing and then seen falling, each by more than three times its rate's uncertainty, with its model explaining the readings throughout; a fall whose climb was not seen that way must last 2 s (FLT-APO-07, DD-092). A port error near Mach 1 is readings the model does not explain, and nothing is decided on them (SNS-EST-08). Every estimator the build carries is flown and logged; `estimator` in config.ini names the one obeyed (`src/estimator.h`, SNS-EST-06, SNS-EST-07).
 

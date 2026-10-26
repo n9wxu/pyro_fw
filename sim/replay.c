@@ -73,6 +73,13 @@ static const char *read_header(const char *csv, header_t *h) {
             /* config.ini names the unit, as the header does. */
             size_t k = strlen(ini);
             snprintf(ini + k, sizeof(ini) - k, "units=%s\n", line + 9);
+        } else if (strncmp(line, "# Estimator: ", 13) == 0) {
+            size_t k = strlen(ini);
+            snprintf(ini + k, sizeof(ini) - k, "estimator=%s\n", line + 13);
+        } else if (strncmp(line, "# Apogee decided by: ", 21) == 0) {
+            size_t k = strlen(ini);
+            snprintf(ini + k, sizeof(ini) - k, "model_decides=%s\n",
+                     strcmp(line + 21, "simple filter") == 0 ? "false" : "true");
         } else if (strncmp(line, "# Ground Pa: ", 13) == 0) {
             h->ground_pa = (int32_t)strtol(line + 13, NULL, 10);
         } else if (strncmp(line, "# Log rate: ", 12) == 0) {
@@ -123,7 +130,7 @@ static void each_row(const char *rows, const header_t *h, row_fn fn, void *arg) 
 static void note_logged(char **field, const header_t *h, void *arg) {
     replay_events_t *out = (replay_events_t *)arg;
     const char *ev = field[h->col[C_EVENT]];
-    uint32_t t = (uint32_t)strtoul(field[h->col[C_TIME]], NULL, 10);
+    uint32_t t = (uint32_t)strtol(field[h->col[C_TIME]], NULL, 10);
     if (ev[0] == '\0') {
         out->rows++;
         return;
@@ -205,14 +212,19 @@ static void stand_on_the_pad(run_t *r, int32_t ground_pa) {
     }
 }
 
-/* A log's first row is written when the launch is declared, some way into
- * the climb, and its time says how long ago the rocket left the pad. Those
- * readings are not in the log, so a steady acceleration from the pad to the
- * first row stands in for them: a step from the pad to the first row would
- * read as a rocket far past the Mach flag's speed. */
-static void climb_to_the_first_row(run_t *r, int32_t ground_pa, int32_t first_raw_pa, uint32_t row_ms) {
+/* A log from before DAT-11 starts at the launch's declaration, some way into
+ * the climb, and its first row's time says how long ago the rocket left the
+ * pad. Those readings are not in the log, so a steady acceleration from the
+ * pad to the first row stands in for them: a step from the pad to the first
+ * row would read as a rocket far past the Mach flag's speed. A log that
+ * starts on the pad, at or before T+0, needs none. */
+static void climb_to_the_first_row(run_t *r, int32_t ground_pa, int32_t first_raw_pa, int32_t row_ms) {
+    if (row_ms <= 0) {
+        r->base = r->now + SAMPLE_MS - (uint32_t)row_ms;
+        return;
+    }
     r->base = r->now + SAMPLE_MS;
-    for (uint32_t ms = SAMPLE_MS; ms < row_ms; ms += SAMPLE_MS) {
+    for (uint32_t ms = SAMPLE_MS; ms < (uint32_t)row_ms; ms += SAMPLE_MS) {
         float part = (float)ms / (float)row_ms;
         r->now = r->base + ms;
         step(r, ground_pa + (int32_t)((float)(first_raw_pa - ground_pa) * part * part));
@@ -223,13 +235,13 @@ static void feed_row(char **field, const header_t *h, void *arg) {
     run_t *r = (run_t *)arg;
     if (field[h->col[C_EVENT]][0] != '\0' || field[h->col[C_RAW]][0] == '\0')
         return;
-    uint32_t row_ms = (uint32_t)strtoul(field[h->col[C_TIME]], NULL, 10);
+    int32_t row_ms = (int32_t)strtol(field[h->col[C_TIME]], NULL, 10);
     int32_t raw_pa = (int32_t)strtol(field[h->col[C_RAW]], NULL, 10);
     if (!r->flying) {
         climb_to_the_first_row(r, h->ground_pa, raw_pa, row_ms);
         r->flying = true;
     }
-    r->now = r->base + row_ms;
+    r->now = r->base + (uint32_t)row_ms;
     r->logged_state = (int)strtol(field[h->col[C_STATE]], NULL, 10);
     step(r, raw_pa);
 }

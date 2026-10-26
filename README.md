@@ -16,7 +16,7 @@ Flying a board? Start with the [Operator's guide](#operators-guide).
 - **Pressure Sensing** - MS5607 (MK1C) or BMP280 (MK1A), either on MK1B, collected by a free-running interrupt state machine at 53 or more readings a second, each stamped at its measurement; it clears its own bus and resets the part after three failed transfers (DD-093)
 - **Pressure, Rate and Acceleration** - a Kalman filter on the raw readings; every flight comparison is made in pressure, and altitude is computed for people, relative to the pad and unclamped (DD-085)
 - **Estimators** - two filters fly on every reading; `estimator` in config.ini names the one obeyed, and the log shows what the other would have done (DD-092)
-- **Apogee Near Mach 1** - apogee is taken only while the estimator's model explains the readings, which a port error near Mach 1 does not (`docs/lumped_parameter_filter.md`)
+- **Apogee Near Mach 1** - the estimator's apogee is taken only while its model explains the readings, which a port error near Mach 1 does not (`docs/lumped_parameter_filter.md`); a simple filter on the raw readings stands in once the measured speed has been low for 3 s, or decides alone with `model_decides=false` (`docs/apogee_fallback.md`)
 - **Continuity Checking** - presence and shorts, continuously on the pad
 - **Web Interface** - live dashboard and configuration over USB networking
 - **OTA Firmware Updates** - A/B bootloader with automatic rollback
@@ -119,7 +119,7 @@ which lets it rejoin the flight after any restart in the air (FLT-BROWN-01).
 
 ### In flight
 
-The board declares a launch above 100 ft and 5 m/s on its filtered state
+The board declares a launch above 15 m and 15 m/s on its filtered state
 (FLT-LAUNCH-07).
 It arms once the burn is over, finds apogee from the pressure itself, and
 fires each channel as its mode says, then again as the fire rules say. Apogee
@@ -193,7 +193,7 @@ reboots into the new image.
 
 ## Flight States
 1. **BOOT_SETTLE → BOOT_SENSOR → BOOT_CONTINUITY → BOOT_CALIBRATE** - 2.5 s settle, the sensor and storage checked and a flight in progress resumed (FLT-BROWN-02), then pyro health, then a 10-reading ground reference
-2. **PAD_IDLE** - launch at 100 ft and 5 m/s on the filtered state; never while a USB host is attached, unless test mode is on (USB-01, USB-08)
+2. **PAD_IDLE** - launch at 15 m and 15 m/s on the filtered state; never while a USB host is attached, unless test mode is on (USB-01, USB-08)
 3. **ASCENT** - the pyros arm once the climb has passed 10 m/s and slowed below it again, above about 30 m (DD-017); apogee is the filtered pressure passing its minimum (FLT-APO-01)
 4. **FALLING, DROGUE_DESCENT, CHUTE_DESCENT** - pyros fire by their modes, then by the re-fire and emergency rules (DD-082); the phase is read from the descent rate (DD-023)
 5. **LANDED** - still for 1 s near the ground, or the landing timeout; the log closes and the altitude beep-out starts
@@ -290,7 +290,7 @@ From launch to landing the flight software hands every sample to `hal_log_sample
 - **CSV export:** `/api/flight.csv` renders the binary log as CSV, with a header naming the board, the configuration and the ground pressure, and saying every sample was kept
 - **Columns:** `time_ms, pressure_pa, altitude_cm, state, thrust, raw_pa, temp_c, event`
 - **Events:** LAUNCH, ARMED, APOGEE, PYRO1, PYRO2, LANDING, PEAK or PEAK_AT_LEAST with the flight's peak, and when they happen PYRO1_REFIRE, PYRO2_REFIRE, EMERGENCY_FIRE, RESUMED, faults (PYRO1_FAULT, PYRO2_FAULT), failed verifies (PYRO1_NOPEN, PYRO2_NOPEN), SENSOR_STUCK and SENSOR_LOST
-- **Estimators:** an `EST` row a second for each estimator, with its height, speed and whether it explains the readings, and an `EST <name> APOGEE` row when each one's apogee rule is met
+- **Estimators:** an `EST` row a second for each estimator, with its height, speed and whether it explains the readings, and an `EST <name> APOGEE` row when each one's apogee rule is met; the same for the simple filter (`EST simple`, with whether its speed lockout has released), and `EST apogee by <name>` at the declaration
 - **Lua:** a script's `log.line()` and `log.write()` output lands in the log as `LUA` rows, during a flight only; `print()` goes to `/api/lua/console`
 - **Space:** `/api/log/space` reports the room the next flight has and the seconds of flight it holds, each second costing what its sync stores; the Config tab shows that time
 - **Erase:** `POST /api/flight/erase`; any other file: `POST /api/delete/<path>`

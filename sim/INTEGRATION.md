@@ -205,8 +205,8 @@ descent phase comes from the measured rate, not from which pyro fired (DD-023). 
 read every 20 ms of simulated time in every state.
 
 The boot sequence runs automatically and reaches PAD_IDLE about 2.7 s after power-on. The
-flight computer detects launch at 100 ft above the ground reference while climbing faster than
-5 m/s, with no hold time (FLT-LAUNCH-07). No explicit "launch" command is needed — just
+flight computer detects launch at 15 m above the ground reference while climbing faster than
+15 m/s, with no hold time (FLT-LAUNCH-07). No explicit "launch" command is needed — just
 start feeding decreasing pressure (increasing altitude) from the physics engine, after the
 5 s ground reference has filled. Ignite before PAD_IDLE and the board calibrates on the way
 up, reading every altitude low.
@@ -267,7 +267,7 @@ sim.tick(t);
 | Flight computer stays in BOOT | Let it run for ~3000ms (PAD_IDLE at ~2.7 s) |
 | State 10 (FAULT) | Sensor type 0 at boot: no sensor, no flight (FLT-BOOT-12) |
 | Pyros don't fire | Check: (1) armed: the climb passed 10 m/s, (2) apogee detected, (3) config mode/value correct. Continuity never withholds a fire (PYR-FIRE-01) |
-| State stuck at PAD_IDLE | Launch needs 100 ft and a climb faster than 5 m/s (FLT-LAUNCH-07) |
+| State stuck at PAD_IDLE | Launch needs 15 m and a climb faster than 15 m/s (FLT-LAUNCH-07) |
 | Two pyros fire simultaneously | By design they don't — P2 waits for P1's pulse to end (PYR-DEPLOY-02) |
 
 ## Source Repository

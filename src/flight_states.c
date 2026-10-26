@@ -184,6 +184,8 @@ void flight_take_sample(flight_context_t *ctx, const pp_sample_t *s, flight_stat
     ctx->speed_cms = s->speed_cms;
 
     uint32_t flight_ms = state == PAD_IDLE ? 0u : s->timestamp_ms - ctx->launch_time;
+    if (state == PAD_IDLE)
+        hal_log_pad(s->timestamp_ms, ctx->pressure_pa); /* [DAT-11] */
     if (state_is_logged(state))
         hal_log_sample(flight_ms, ctx->pressure_pa, s->altitude_cm, (uint8_t)state, ctx->under_thrust, EVT_NONE);
     if (flight_state_is_airborne(state))

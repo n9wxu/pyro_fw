@@ -8,7 +8,7 @@
  *
  * Whatever the estimator's own model, it reports in the same terms: the
  * filtered pressure, the rate and curvature of ln(pressure), and whether its
- * model explains the readings. Nothing is decided while it does not.
+ * model explains the readings. Its apogee is not decided while it does not.
  *
  * SPDX-License-Identifier: MIT
  */
