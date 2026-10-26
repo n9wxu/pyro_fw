@@ -679,6 +679,7 @@ test.describe('Pin assignment', () => {
 
 test.describe('Beep codes', () => {
   test.skip(process.env.PYRO_MODE !== 'configured', 'configured mode only');
+  test.afterEach(async ({ request }) => { await request.post(BASE + '/api/_test/reset'); });
 
   test('the shipped personality is the Eggtimer convention', async ({ page }) => {
     await page.goto(BASE);
@@ -777,6 +778,18 @@ test.describe('Beep codes', () => {
     await clickTab(page, 'Beep Codes');
     await page.selectOption('#bpSel', '1');
     await page.selectOption('#bkok_to_fly', 'tone');
+    await page.click('button:has-text("Eggtimer defaults")');
+    await expect(page.locator('#bkok_to_fly')).toHaveValue('chirp');
+  });
+
+  test('Eggtimer defaults restore a saved slot 0', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await clickTab(page, 'Beep Codes');
+    await page.selectOption('#bpSel', '0');
+    await page.selectOption('#bkok_to_fly', 'tone');
+    await page.click('#btnSaveBeeps');
+    await expect(page.locator('#bpMsg')).toContainText('saved', { timeout: 5000 });
     await page.click('button:has-text("Eggtimer defaults")');
     await expect(page.locator('#bkok_to_fly')).toHaveValue('chirp');
   });

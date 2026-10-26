@@ -468,9 +468,26 @@ static void serve_api_sim(http_conn_t *hc) {
 }
 #endif
 
+static int append_personality(char *buf, size_t cap, int pos, const char *lead, const beep_personality_t *p) {
+    char nm[BEEP_NAME_MAX * 2 + 2];
+    json_escape(nm, (int)sizeof(nm), p->name, (int)strlen(p->name));
+    pos += snprintf(buf + pos, cap - (size_t)pos, "%s{\"name\":\"%s\",\"gap\":%u,\"repeat\":%u,\"spec\":{", lead, nm,
+                    (unsigned)p->gap_ms, (unsigned)p->repeat);
+    for (int r = 0; r < BEEP_REASON_COUNT && pos > 0 && pos < (int)cap; r++) {
+        pos += snprintf(buf + pos, cap - (size_t)pos, "%s\"%s\":{\"kind\":\"%s\",\"d1\":%u,\"d2\":%u}", r ? "," : "",
+                        beep_codes_key((beep_reason_t)r), beep_codes_kind_name((beep_kind_t)p->spec[r].kind),
+                        (unsigned)p->spec[r].d1, (unsigned)p->spec[r].d2);
+    }
+    if (pos > 0 && pos < (int)cap) {
+        pos += snprintf(buf + pos, cap - (size_t)pos, "}}");
+    }
+    return pos;
+}
+
 /* ── GET /api/beeps ───────────────────────────────────────────────
  *
- * The outcomes, their meanings, the three personalities and which is active.
+ * The outcomes, their meanings, the three personalities, which is active and
+ * the shipped personality the UI restores from.
  * Same vocabulary-travels-with-the-data shape as /api/pins/caps, so app.js
  * holds no copy: adding an outcome or a pattern kind grows a row without
  * touching the UI. */
@@ -501,23 +518,16 @@ static void serve_api_beeps(http_conn_t *hc) {
         pos += snprintf(buf + pos, cap - (size_t)pos, "],\"personalities\":[");
     }
     for (int i = 0; i < BEEP_PERSONALITY_COUNT && pos > 0 && pos < (int)cap; i++) {
-        const beep_personality_t *p = &t->p[i];
-        char nm[BEEP_NAME_MAX * 2 + 2];
-        json_escape(nm, (int)sizeof(nm), p->name, (int)strlen(p->name));
-        pos += snprintf(buf + pos, cap - (size_t)pos, "%s{\"name\":\"%s\",\"gap\":%u,\"repeat\":%u,\"spec\":{",
-                        i ? "," : "", nm, (unsigned)p->gap_ms, (unsigned)p->repeat);
-        for (int r = 0; r < BEEP_REASON_COUNT && pos > 0 && pos < (int)cap; r++) {
-            pos +=
-                snprintf(buf + pos, cap - (size_t)pos, "%s\"%s\":{\"kind\":\"%s\",\"d1\":%u,\"d2\":%u}", r ? "," : "",
-                         beep_codes_key((beep_reason_t)r), beep_codes_kind_name((beep_kind_t)p->spec[r].kind),
-                         (unsigned)p->spec[r].d1, (unsigned)p->spec[r].d2);
-        }
-        if (pos > 0 && pos < (int)cap) {
-            pos += snprintf(buf + pos, cap - (size_t)pos, "}}");
-        }
+        pos = append_personality(buf, cap, pos, i ? "," : "", &t->p[i]);
+    }
+
+    static beep_table_t shipped;
+    beep_codes_defaults(&shipped);
+    if (pos > 0 && pos < (int)cap) {
+        pos = append_personality(buf, cap, pos, "],\"shipped\":", &shipped.p[0]);
     }
     if (pos > 0 && pos < (int)cap) {
-        pos += snprintf(buf + pos, cap - (size_t)pos, "]}");
+        pos += snprintf(buf + pos, cap - (size_t)pos, "}");
     }
 
     if (pos < 0 || pos >= (int)cap) {

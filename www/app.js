@@ -1158,13 +1158,13 @@ function beepsSave() {
     .catch(function(e) { msg.style.color = 'red'; msg.textContent = ' ✗ ' + e.message; });
 }
 
-/* Put the Eggtimer convention back into the personality being edited. It is
-   slot 0's shipped content, which the firmware sends; the operator still has
-   to press Save. */
+/* Put the Eggtimer convention back into the personality being edited. The
+   firmware sends its shipped personality; the operator still has to press
+   Save. */
 function beepsDefaults() {
   if (!beepCaps) return;
   var i = +document.getElementById('bpSel').value;
-  beepEdit[i] = JSON.parse(JSON.stringify(beepCaps.personalities[0]));
+  beepEdit[i] = JSON.parse(JSON.stringify(beepCaps.shipped));
   beepEdit[i].name = document.getElementById('bpName').value || beepEdit[i].name;
   beepsSelect();
   var msg = document.getElementById('bpMsg');

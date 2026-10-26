@@ -186,8 +186,12 @@ function shippedPersonality(name) {
     ok_to_fly:      {kind:'chirp', d1:0, d2:0}
   }};
 }
-let beepActive = 0;
-let beepPersonalities = [shippedPersonality('Default'), shippedPersonality('Custom 1'), shippedPersonality('Custom 2')];
+let beepActive, beepPersonalities;
+function beepsReset() {
+  beepActive = 0;
+  beepPersonalities = [shippedPersonality('Default'), shippedPersonality('Custom 1'), shippedPersonality('Custom 2')];
+}
+beepsReset();
 
 let pinsIni = '[pins]\r\npyro1_released=true\r\npyro2_released=true\r\n';
 
@@ -396,7 +400,8 @@ const server = http.createServer((req, res) => {
       digit_min: 1, digit_max: 9, has_buzzer: true, active: beepActive, reason: beepReason,
       kinds: ['silent','chirp','tone','code'],
       outcomes: BEEP_OUTCOMES,
-      personalities: beepPersonalities
+      personalities: beepPersonalities,
+      shipped: shippedPersonality('Default')
     }));
     return;
   }
@@ -634,6 +639,7 @@ const server = http.createServer((req, res) => {
     luaHeartbeat = 0;
     configAnswer = null;
     pinsFail = false;
+    beepsReset();
     fsReset();
     res.writeHead(200, cors); res.end('ok');
     return;
