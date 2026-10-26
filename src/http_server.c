@@ -275,7 +275,7 @@ static const char *state_names[] = {"BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALI
 /* Main-loop pacing counters (main_hardware.c). Reported so the budget a
  * board declares in board.cmake can be checked against what it actually
  * does, rather than being taken on trust. */
-extern volatile uint32_t loop_count, loop_max_us, loop_overruns, loop_late_max_us;
+extern volatile uint32_t loop_count, loop_max_us, loop_overruns, loop_overruns_ground, loop_late_max_us;
 extern volatile uint32_t stage_max_us[];
 extern volatile uint32_t stage1_part_max_us[]; /* hal_common.c: TinyUSB, the stack, HTTP transport, mDNS */
 extern volatile bool boot_prev_watchdog;       /* main_hardware.c */
@@ -783,7 +783,7 @@ typedef struct {
     int32_t speed_cms;
     bool raw_ok;
     board_pyro_raw_t praw;
-    uint32_t loop_max_us, loop_overruns, loop_late_max_us, loop_count;
+    uint32_t loop_max_us, loop_overruns, loop_overruns_ground, loop_late_max_us, loop_count;
     uint32_t stage_max_us[STATUS_STAGES], stage1_parts_us[STATUS_STAGE1_PARTS];
     collector_stats_t collector;
     uint32_t pres_flashed, ground_reseeds, interval_min_us, interval_max_us, stamp_lag_max_us;
@@ -823,6 +823,7 @@ static void status_take_flight(void *arg) {
     t->raw_ok = board_pyro_raw(&t->praw);
     t->loop_max_us = loop_max_us;
     t->loop_overruns = loop_overruns;
+    t->loop_overruns_ground = loop_overruns_ground;
     t->loop_late_max_us = loop_late_max_us;
     t->loop_count = loop_count;
     for (int i = 0; i < STATUS_STAGES; i++)
@@ -877,6 +878,7 @@ static void status_name_flight(status_snap_t *s, const flight_take_t *t) {
 
     s->loop_max_us = t->loop_max_us;
     s->loop_overruns = t->loop_overruns;
+    s->loop_overruns_ground = t->loop_overruns_ground;
     s->loop_late_max_us = t->loop_late_max_us;
     s->loop_count = t->loop_count;
     for (int i = 0; i < STATUS_STAGES; i++)

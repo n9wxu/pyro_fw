@@ -131,32 +131,19 @@ static void run_direct(flash_op_fn fn, void *arg) {
         max_us = d;
 }
 
-int flash_op(flash_op_fn fn, void *arg) {
-    if (!rtos_running()) {
-        run_direct(fn, arg);
-        return 0;
-    }
-    if (__get_current_exception() != 0 || rtos_in_flight_task()) {
-        refusals++;
-        return -1;
-    }
-    /* Before the raise to T, which under mode 0 would stop the flight task;
-     * the claim below checks again under the lock. */
-    if (flight) {
-        slot_stats.flight_refusals++;
-        refusals++;
-        return -4;
-    }
-    if (!board_flash_ok()) {
-        waits++;
-        for (uint32_t i = 0; i < BOARD_WAIT_MS && !board_flash_ok(); i++)
-            vTaskDelay(pdMS_TO_TICKS(1));
-        if (!board_flash_ok()) {
-            refusals++;
-            return -2;
-        }
-    }
+/* Whether the board allows an operation now, waiting for it, bounded. */
+static bool board_ready(void) {
+    if (board_flash_ok())
+        return true;
+    waits++;
+    for (uint32_t i = 0; i < BOARD_WAIT_MS && !board_flash_ok(); i++)
+        vTaskDelay(pdMS_TO_TICKS(1));
+    return board_flash_ok();
+}
 
+/* Steps 1 to 4 of flash_op.h: body runs with the other core parked. 0; -4
+ * a flight began first; -3 the helper did not park, and body did not run. */
+static int locked_out(void (*body)(void *), void *arg) {
     UBaseType_t prio = uxTaskPriorityGet(NULL);
     vTaskPrioritySet(NULL, PRIO_T);
     uint other = get_core_num() ^ 1u;
@@ -168,8 +155,6 @@ int flash_op(flash_op_fn fn, void *arg) {
     spin_unlock(lk_lock, s);
     if (flying) {
         vTaskPrioritySet(NULL, prio);
-        slot_stats.flight_refusals++;
-        refusals++;
         return -4;
     }
     xTaskNotifyGive(helper[other]);
@@ -189,12 +174,49 @@ int flash_op(flash_op_fn fn, void *arg) {
         }
     }
     if (rc == 0) {
-        run_direct(fn, arg);
+        body(arg);
         lockouts++;
         lk[other] = LK_RELEASE;
         wait_state(other, LK_IDLE, PARK_WAIT_US);
     }
     vTaskPrioritySet(NULL, prio);
+    return rc;
+}
+
+typedef struct {
+    flash_op_fn fn;
+    void *arg;
+} direct_t;
+
+static void direct_body(void *v) {
+    const direct_t *d = (const direct_t *)v;
+    run_direct(d->fn, d->arg);
+}
+
+int flash_op(flash_op_fn fn, void *arg) {
+    if (!rtos_running()) {
+        run_direct(fn, arg);
+        return 0;
+    }
+    if (__get_current_exception() != 0 || rtos_in_flight_task()) {
+        refusals++;
+        return -1;
+    }
+    /* Before the raise to T, which under mode 0 would stop the flight task;
+     * the claim checks again under the lock. */
+    int rc = flight ? -4 : 0;
+    if (rc == 0 && !board_ready()) {
+        refusals++;
+        return -2;
+    }
+    if (rc == 0) {
+        direct_t d = {fn, arg};
+        rc = locked_out(direct_body, &d);
+    }
+    if (rc == -4) {
+        slot_stats.flight_refusals++;
+        refusals++;
+    }
     return rc;
 }
 
@@ -439,9 +461,15 @@ static uint32_t io_t0(void *ctx) {
     return core1_frame_t0();
 }
 
-static bool io_in_flight(void *ctx) {
-    (void)ctx;
-    return flight;
+/* What the slot io's hooks are given: the part's figures, and whether this
+ * operation is the writer's erase that runs in pieces on the ground. */
+typedef struct {
+    const flash_timing_t *t;
+    bool ground;
+} slot_ctx_t;
+
+static bool io_sliced(void *ctx) {
+    return flight || ((const slot_ctx_t *)ctx)->ground;
 }
 
 static int io_whole(void *ctx, flash_slot_kind_t kind, bool resume, uint32_t addr, const uint8_t *data, uint32_t len) {
@@ -450,22 +478,12 @@ static int io_whole(void *ctx, flash_slot_kind_t kind, bool resume, uint32_t add
     return flash_op(resume ? do_resume_finish : do_whole, &w);
 }
 
-/* FLASH_SLOT_NOT_YET once the flight has ended. */
-static int slot_piece(void *ctx, flash_slot_kind_t kind, uint32_t addr, const uint8_t *data, uint32_t len,
-                      const flash_piece_t *p) {
-    uint32_t s = spin_lock_blocking(lk_lock);
-    bool go = flight;
-    if (go)
-        piece_busy = true;
-    spin_unlock(lk_lock, s);
-    if (!go)
-        return FLASH_SLOT_NOT_YET;
-    const flash_timing_t *t = (const flash_timing_t *)ctx;
-    piece_args_t a = {kind, addr, data, len, p, t ? t->suspend_us : 0u};
+/* One piece, from RAM with this core's interrupts off. */
+static int run_piece_counted(const piece_args_t *a) {
     uint32_t irq = save_and_disable_interrupts();
     uint32_t t0 = timer_hw->timerawl;
-    int rc = run_piece(&a);
-    held_suspended = flash_slot_held(held_suspended, p->resume, rc == PIECE_SUSPENDED || rc == PIECE_ESUSPEND);
+    int rc = run_piece(a);
+    held_suspended = flash_slot_held(held_suspended, a->p->resume, rc == PIECE_SUSPENDED || rc == PIECE_ESUSPEND);
     flash_op_seq++;
     uint32_t d = timer_hw->timerawl - t0;
     piece_busy = false;
@@ -478,10 +496,61 @@ static int slot_piece(void *ctx, flash_slot_kind_t kind, uint32_t addr, const ui
     return rc;
 }
 
+/* FLASH_SLOT_NOT_YET once the flight has ended. */
+static int slot_piece(void *ctx, flash_slot_kind_t kind, uint32_t addr, const uint8_t *data, uint32_t len,
+                      const flash_piece_t *p) {
+    uint32_t s = spin_lock_blocking(lk_lock);
+    bool go = flight;
+    if (go)
+        piece_busy = true;
+    spin_unlock(lk_lock, s);
+    if (!go)
+        return FLASH_SLOT_NOT_YET;
+    const flash_timing_t *t = ((const slot_ctx_t *)ctx)->t;
+    piece_args_t a = {kind, addr, data, len, p, t ? t->suspend_us : 0u};
+    return run_piece_counted(&a);
+}
+
+/* [FLT-RT-06] A ground piece runs with core0 parked, planned again once it
+ * is: the park takes its time out of the slot. */
+typedef struct {
+    const flash_timing_t *t;
+    flash_slot_kind_t kind;
+    bool resume;
+    uint32_t addr;
+    const uint8_t *data;
+    uint32_t len;
+    int rc;
+} ground_piece_t;
+
+static void ground_piece_body(void *v) {
+    ground_piece_t *g = (ground_piece_t *)v;
+    flash_piece_t p;
+    if (!flash_slot_plan(g->t, g->kind, g->resume, timer_hw->timerawl, core1_frame_t0() + FRAME_WRITER_US, &p)) {
+        g->rc = FLASH_SLOT_NOT_YET;
+        return;
+    }
+    piece_args_t a = {g->kind, g->addr, g->data, g->len, &p, g->t->suspend_us};
+    g->rc = run_piece_counted(&a);
+}
+
+/* A park refused or not landed issues no command: the next slot tries
+ * again, and a launch meanwhile hands the rest to the flight's slots. */
+static int ground_piece(const slot_ctx_t *c, flash_slot_kind_t kind, uint32_t addr, const uint8_t *data, uint32_t len,
+                        const flash_piece_t *p) {
+    if (flight || !board_ready())
+        return FLASH_SLOT_NOT_YET;
+    ground_piece_t g = {c->t, kind, p->resume, addr, data, len, FLASH_SLOT_NOT_YET};
+    return locked_out(ground_piece_body, &g) == 0 ? g.rc : FLASH_SLOT_NOT_YET;
+}
+
 static int io_piece(void *ctx, flash_slot_kind_t kind, uint32_t addr, const uint8_t *data, uint32_t len,
                     const flash_piece_t *p) {
     int rc = slot_piece(ctx, kind, addr, data, len, p);
-    return rc == FLASH_SLOT_NOT_YET ? io_whole(ctx, kind, p->resume, addr, data, len) : rc;
+    if (rc != FLASH_SLOT_NOT_YET)
+        return rc;
+    const slot_ctx_t *c = (const slot_ctx_t *)ctx;
+    return c->ground ? ground_piece(c, kind, addr, data, len, p) : io_whole(ctx, kind, p->resume, addr, data, len);
 }
 
 /*
@@ -506,7 +575,7 @@ static void slot_isr(uint alarm) {
     const flash_slot_req_t *r = slot_req;
     if (!r)
         return;
-    flash_slot_io_t io = {r->io->ctx, io_now, io_t0, NULL, io_in_flight, slot_piece, NULL};
+    flash_slot_io_t io = {r->io->ctx, io_now, io_t0, NULL, io_sliced, slot_piece, NULL};
     flash_slot_req_t here = *r;
     here.io = &io;
     slot_rc = flash_slot_try(&here, slot_start);
@@ -539,11 +608,13 @@ static uint64_t next_slot_start(uint32_t *t0) {
     return now + (uint32_t)(at - (uint32_t)now);
 }
 
+/* On the ground the piece parks core0, which an interrupt cannot wait for:
+ * it starts from the writer's task, as soon as that wakes into the slot. */
 static int io_at_slot_start(void *ctx, const flash_slot_req_t *r) {
     (void)ctx;
     slot_stats.slot_waits++;
     core1_frame_writer_done();
-    if (!slot_alarm_ready()) {
+    if (!flight || !slot_alarm_ready()) {
         core1_frame_wait(2u * LOOP_PERIOD_MS);
         return flash_slot_try(r, core1_frame_t0());
     }
@@ -576,7 +647,11 @@ static int slot_op(flash_slot_kind_t kind, uint32_t off, const uint8_t *data, ui
     uint8_t jedec[3];
     flash_chip_jedec(jedec);
     const flash_timing_t *t = flash_timing_for(jedec);
-    flash_slot_io_t io = {(void *)t, io_now, io_t0, io_at_slot_start, io_in_flight, io_piece, io_whole};
+    /* A chip holding an operation suspended runs this one whole, which
+     * finishes the held one first [FLT-LOG-11]. */
+    slot_ctx_t c = {t, !flight && xTaskGetCurrentTaskHandle() == writer && !held_suspended &&
+                           flash_slot_ground_sliced(t, kind)};
+    flash_slot_io_t io = {&c, io_now, io_t0, io_at_slot_start, io_sliced, io_piece, io_whole};
     int rc = flash_slot_run(&io, t, kind, off, data, len);
     if (rc == 0) {
         if (kind == SLOT_ERASE)

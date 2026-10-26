@@ -35,7 +35,8 @@ set(PYRO_PFB_FS_KB 984)
 # Worst-case duration of one core0 iteration, in milliseconds. The shared
 # main loop derives the watchdog timeout from this (2x) and counts every
 # iteration that misses the deadline, so the number is checkable rather
-# than asserted: /api/status reports loop_max_us and loop_overruns.
+# than asserted: /api/status reports loop_max_us, loop_overruns and
+# loop_overruns_ground.
 #
 # Conservative placeholder. Measure your board with /api/status
 # (loop_max_us) under the worst case you can provoke -- a log flush during

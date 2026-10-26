@@ -40,7 +40,7 @@ int flash_slot_run(const flash_slot_io_t *io, const flash_timing_t *t, flash_slo
                    const uint8_t *data, uint32_t len) {
     flash_slot_req_t r = {io, t, kind, false, addr, data, len};
     for (uint32_t n = 0; n < FLASH_SLOT_MAX_PIECES; n++) {
-        if (!io->in_flight(io->ctx))
+        if (!io->sliced(io->ctx))
             return io->whole(io->ctx, kind, r.resume, addr, data, len);
         if (!t && kind == SLOT_ERASE)
             return FLASH_SLOT_EREFUSED;

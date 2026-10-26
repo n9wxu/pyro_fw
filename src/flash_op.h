@@ -71,8 +71,10 @@ void flash_op_set_writer(void *task);
 
 /* One sector erase, or one program of exactly len bytes inside one page,
  * whose other bytes it leaves alone, by the writer: in pieces inside its
- * slots from launch to landing, whole under the lockout otherwise. 0, or <0
- * as flash_op() and flash_slot_run(). */
+ * slots from launch to landing; on the ground the writer's erase, where the
+ * part's erase suspends, in the same pieces with core0 parked for each
+ * [FLT-RT-06]; whole under the lockout otherwise. 0, or <0 as flash_op() and
+ * flash_slot_run(). */
 int flash_op_slot_erase(uint32_t offset);
 int flash_op_slot_program(uint32_t offset, const uint8_t *data, uint32_t len);
 

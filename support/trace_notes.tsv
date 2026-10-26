@@ -52,3 +52,5 @@ FLT-LOG-09		Host tests above; on MK1B-8MB, 2026-10-19, five starts: every slot t
 FLT-LOG-10	✅	Host tests above; on MK1C, 2026-10-18, 60 erases in flight in 690 suspended pieces, the longest 2.95 ms, and 2026-10-19, 52 in 488, nothing dropped; MK1B-8MB's BY25Q64ES ended no erase in 2,000 slots, so it erases none in flight (DD-104)
 FLT-LOG-11		Host tests above; not yet seen on a board (DD-104)
 WEB-API-18		Host tests above; on MK1C twice and MK1B-8MB once, 2026-10-19, an upload past the room refused, let go, its name taken again, no restart (DD-105)
+FLT-RT-06		Tested on the host; a bench run on a part whose erase suspends (MK1A, MK1B, MK1C) is owed (DD-112)
+FLT-RT-05	✅ HW	MK1B-8MB bench flights, 2026-10-26 (DD-112): loop_overruns 0 in flight; the landing cleanup's whole erases counted 145 to 151 loop_overruns_ground

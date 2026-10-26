@@ -112,15 +112,16 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         (unsigned)s->units, id, name, S(s->sensor), S(s->board), S(s->board_id), selftest_name(s->board_selftest),
         (long)s->pyro_bus_q, (long)s->pyro_bus_adc, (long)s->pyro_vbat_adc);
     put(&o,
-        "\"loop_max_us\":%lu,\"loop_overruns\":%lu,\"loop_late_max_us\":%lu,\"loop_count\":%lu,"
+        "\"loop_max_us\":%lu,\"loop_overruns\":%lu,\"loop_overruns_ground\":%lu,\"loop_late_max_us\":%lu,\"loop_"
+        "count\":%lu,"
         "\"stage_max_us\":[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu],\"stage1_parts_us\":[%lu,%lu,%lu,%lu],"
         "\"http_units\":[%lu,%lu],\"http_unit_max_us\":[%lu,%lu],",
-        (unsigned long)s->loop_max_us, (unsigned long)s->loop_overruns, (unsigned long)s->loop_late_max_us,
-        (unsigned long)s->loop_count, (unsigned long)st[0], (unsigned long)st[1], (unsigned long)st[2],
-        (unsigned long)st[3], (unsigned long)st[4], (unsigned long)st[5], (unsigned long)st[6], (unsigned long)st[7],
-        (unsigned long)st[8], (unsigned long)p1[0], (unsigned long)p1[1], (unsigned long)p1[2], (unsigned long)p1[3],
-        (unsigned long)s->http_units[0], (unsigned long)s->http_units[1], (unsigned long)s->http_unit_max_us[0],
-        (unsigned long)s->http_unit_max_us[1]);
+        (unsigned long)s->loop_max_us, (unsigned long)s->loop_overruns, (unsigned long)s->loop_overruns_ground,
+        (unsigned long)s->loop_late_max_us, (unsigned long)s->loop_count, (unsigned long)st[0], (unsigned long)st[1],
+        (unsigned long)st[2], (unsigned long)st[3], (unsigned long)st[4], (unsigned long)st[5], (unsigned long)st[6],
+        (unsigned long)st[7], (unsigned long)st[8], (unsigned long)p1[0], (unsigned long)p1[1], (unsigned long)p1[2],
+        (unsigned long)p1[3], (unsigned long)s->http_units[0], (unsigned long)s->http_units[1],
+        (unsigned long)s->http_unit_max_us[0], (unsigned long)s->http_unit_max_us[1]);
     put(&o,
         "\"flash_opens\":%lu,\"flash_skips\":%lu,\"flash_refusals\":%lu,\"log_dropped\":%lu,"
         "\"flash_erases\":%lu,\"flash_programs\":%lu,\"flash_deferrals\":%lu,"

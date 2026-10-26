@@ -57,6 +57,7 @@ static void typical(status_snap_t *s) {
     s->pyro_vbat_adc = 2900;
     s->loop_max_us = 4000;
     s->loop_overruns = 2;
+    s->loop_overruns_ground = 5;
     s->loop_late_max_us = 150;
     s->loop_count = 99999;
     for (int i = 0; i < STATUS_STAGES; i++) {
@@ -174,6 +175,7 @@ static const char *const TYPICAL[][2] = {
     {"pyro_vbat_adc", "2900"},
     {"loop_max_us", "4000"},
     {"loop_overruns", "2"},
+    {"loop_overruns_ground", "5"},
     {"loop_late_max_us", "150"},
     {"loop_count", "99999"},
     {"stage_max_us", "[1,2,3,4,5,6,7,8,9]"},
@@ -279,6 +281,7 @@ void test_SJ_02_the_widest_status_fits_its_bound(void) {
                        &s.uptime_ms,
                        &s.loop_max_us,
                        &s.loop_overruns,
+                       &s.loop_overruns_ground,
                        &s.loop_late_max_us,
                        &s.loop_count,
                        &s.flash_opens,

@@ -131,8 +131,8 @@ def main():
     if st["state"] != "PAD_IDLE":
         print(f"the board is in {st['state']}; reboot it to fly again")
         return 1
-    base = {k: st.get(k, 0) for k in ("loop_overruns", "flash_refusals", "flash_skips", "log_dropped",
-                                      "flash_programs", "flash_erases", "pres_flashed")}
+    base = {k: st.get(k, 0) for k in ("loop_overruns", "loop_overruns_ground", "flash_refusals", "flash_skips",
+                                      "log_dropped", "flash_programs", "flash_erases", "pres_flashed")}
     code, r = post(a.host, "/api/test_mode/on" + ("?log=host" if a.host_log else ""))
     if code != 200 or not r.get("test_mode") or (a.host_log and r.get("test_log") != "host"):
         print("test mode refused:", code, r)

@@ -38,9 +38,12 @@ Only the cleanup erases (`vfs_clean()`): one sector a pass of the storage
 task, and never while the flight log holds the filesystem (`clean_service()`
 in `src/hal_common/hal_common.c`). On USB with test mode off it takes the next
 sector at each pass; otherwise one a second (`vfs_flash_clean_wait_ms()`,
-USB-10, DD-107). On the ground an erase stops both cores (`flash_op()`,
-DD-074): 50 to 70 ms with no pressure reading, launch detection and the
-ground reference held.
+USB-10, DD-107). On a part whose erase suspends, the cleanup's erase runs in
+the writer's slots in pieces, each stopping core0 for at most the 3 ms slot
+(FLT-RT-06, DD-112). On BY25Q64ES (MK1B-8MB) an erase runs whole and stops
+both cores (`flash_op()`, DD-074): 50 to 70 ms with no pressure reading,
+launch detection and the ground reference held, and the periods it costs
+counted as `loop_overruns_ground` (FLT-RT-05).
 
 From launch to landing the writer erases only when the log has no erased
 page left, and only on a part whose erase ends in suspended pieces: one

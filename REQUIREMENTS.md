@@ -65,6 +65,8 @@ flight this unit cannot (DD-081).
 - **FLT-RT-02**: From launch to landing, the flight task, every interrupt handler on its core and every kernel path they take shall fetch no instruction and read no data from the boot flash. The build shall fail otherwise. ← FLT-RT-01, DD-104
 - **FLT-RT-03**: From launch to landing no flash operation shall stop or delay the flight task. ← FLT-RT-01, DD-104
 - **FLT-RT-04**: The flight task shall run every 10 ms. ← FLT-RT-01, DD-104
+- **FLT-RT-05**: Every period the flight task misses shall be counted on `/api/status`, whatever kept it from running, its core's interrupts being off included: from launch to landing as `loop_overruns`, on the ground as `loop_overruns_ground`. ← FLT-RT-04, DD-112
+- **FLT-RT-06**: On the ground, the log writer's erase on a part whose erase suspends shall stop the flight task's core for no longer than one of the writer's slots at a time. ← FLT-RT-04, DD-112
 
 ### Launch
 - **FLT-LAUNCH-02**: The system shall remain in PAD_IDLE while the rocket is at or below 15 m above the ground reference. ← FLT-PHASE-01

@@ -690,6 +690,57 @@ sequence has gaps.
   that does not erase in flight cannot use: 2,272 s reported on MK1B-8MB
   with a few sectors erased.
 
+### DD-112: Missed Periods Counted; Ground Erases In Pieces
+- **Decision:** at the user's direction, after a bench soak showed the
+  landing's cleanup erases stopping core0 for 26 to 42 ms with no overrun
+  counted -- "dig into the landing loop", then, of counting honestly,
+  slicing ground erases, or both: "do C".
+  - The period's alarm counts every period of its grid, fired or skipped
+    (`loop_periods_skipped()`, `src/loop_period.h`), so a period lost to
+    core0's interrupts being off is counted like one lost to a late wake.
+    After a skip the alarm re-arms a period from now, so the next period's
+    start, and core1's frame with it, is never dated in the past.
+    The flight task counts a missed period as `loop_overruns` when the
+    period before it was airborne, else as `loop_overruns_ground`
+    [FLT-RT-05]. A bench flight fails on the first only.
+  - On the ground the log writer's erase, on a part whose erase suspends,
+    runs in the pieces it runs in from launch to landing, in the writer's
+    slots, with core0 parked for each piece rather than for the whole erase
+    (`flash_slot_ground_sliced()`) [FLT-RT-06]. The park comes from the
+    writer's task, not the slot's alarm: an interrupt cannot wait for
+    core0's helper to park. The piece is planned again once core0 is
+    parked, since the park takes its time out of the slot; a park refused
+    or not landed issues no command and the next slot tries again. A
+    launch in the middle hands the rest to the flight's slots.
+  - Everything else on the ground runs whole under the lockout: a program,
+    an erase on BY25Q64ES (MK1B-8MB) or a part not in the table, an erase
+    while the chip holds another suspended (which finishes the held one
+    first, FLT-LOG-11), and every operation of another task -- an upload,
+    a configuration save.
+- **Why:** `period_isr()` runs on core0. A lockout parks core0 with its
+  interrupts off, so the alarm fired once when they came back and skipped
+  the grid forward: the flight task saw one period where four had passed,
+  and `loop_overruns` stayed 0. Every flight's landing starts the cleanup of
+  the last flight's log, 57 to 65 sector erases, each stopping core0 for a
+  whole erase -- 40 to 45 ms on MK1B-8MB -- and the pad's cleanup after a
+  start does the same. On a part whose erase suspends, a piece stops core0
+  for at most the writer's 3 ms slot, and the flight task's period's work
+  (about 1.7 ms) still ends well inside its 10 ms.
+- **What it costs:** an erase in pieces takes many periods: a 45 ms erase
+  in pieces of about 1 to 1.3 ms of chip time is 35 to 45 periods. The
+  cleanup paces itself between sectors already (`vfs_flash_clean_wait_ms()`).
+  A launch in the middle of a ground erase leaves the writer in it until
+  it ends in the flight's slots, the case FLT-LOG-10 already takes in
+  flight; the log's ring holds about 2.7 s.
+- **Proven by:** `test_loop_period.c` (FLT-RT-05) and
+  `test_flash_slot.c`'s FLT-RT-06 tests, on the host.
+- **Measured on MK1B-8MB, 2026-10-26,** three bench flights: every one
+  passed with `loop_overruns` 0; the landing's cleanup, 67 or 68 erases run
+  whole on BY25Q64ES, counted 145 to 151 `loop_overruns_ground`; the pad's
+  periods before launch 2 or 3; the loop at most 584 us late.
+- **Open:** no bench board with a part whose erase suspends answered on
+  2026-10-26; FLT-RT-06 is owed a bench run on MK1A, MK1B or MK1C.
+
 ### DD-103: The Flight Log To The Host In Test Mode
 - **Decision:** at the user's direction ("Give the USB flight test mode the
   option to prevent logging to flash and log to network"), test mode set

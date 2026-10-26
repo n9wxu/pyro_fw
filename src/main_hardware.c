@@ -52,9 +52,10 @@
 #define STAGE_SLACK 8
 
 volatile uint32_t loop_count;
-volatile uint32_t loop_max_us;      /* longest period of work, the wait excluded */
-volatile uint32_t loop_overruns;    /* periods whose wake came after the next one */
-volatile uint32_t loop_late_max_us; /* worst delay from the alarm to the wake    */
+volatile uint32_t loop_max_us;          /* longest period of work, the wait excluded */
+volatile uint32_t loop_overruns;        /* periods missed from launch to landing */
+volatile uint32_t loop_overruns_ground; /* periods missed on the ground          */
+volatile uint32_t loop_late_max_us;     /* worst delay from the alarm to the wake    */
 volatile uint32_t stage_max_us[STAGE_COUNT];
 
 static uint32_t stage_mark_us;
@@ -158,10 +159,12 @@ static void update_status(flight_context_t *ctx, uint32_t now) {
 
 /* ── The period ───────────────────────────────────────────────────────
  *
- * The alarm re-arms itself on a fixed grid. A wake the flight task has not
- * reached by the next alarm is counted as an overrun, and the grid skips
- * forward rather than catching up: adding periods to a missed target would
- * compress the periods after it. */
+ * The alarm re-arms itself on a fixed grid, and skips forward rather than
+ * catching up: adding periods to a missed target would compress the periods
+ * after it. period_fires counts the periods, fired or skipped, so a wake the
+ * flight task has not reached by the next alarm and an alarm held off by its
+ * core's interrupts being off both show as more than one period between
+ * wakes [FLT-RT-05]. */
 static TaskHandle_t flight_h;
 static int period_alarm = -1;
 static volatile uint64_t period_target_us;
@@ -169,12 +172,11 @@ static volatile uint32_t period_fires;
 
 static void period_isr(uint alarm) {
     uint64_t now = time_us_64();
-    uint64_t next = period_target_us + LOOP_PERIOD_US;
-    if ((int64_t)(next - now) < 200)
-        next = now + LOOP_PERIOD_US;
+    uint32_t skipped = loop_periods_skipped(period_target_us, now);
+    uint64_t next = skipped ? now + LOOP_PERIOD_US : period_target_us + LOOP_PERIOD_US;
     period_target_us = next;
     hardware_alarm_set_target(alarm, from_us_since_boot(next));
-    period_fires++;
+    period_fires += 1u + skipped;
     BaseType_t woken = pdFALSE;
     vTaskNotifyGiveFromISR(flight_h, &woken);
     portYIELD_FROM_ISR(woken);
@@ -230,8 +232,11 @@ void flight_task(void *arg) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         uint32_t fires = period_fires;
-        if (fires - fires_seen > 1u)
-            loop_overruns += fires - fires_seen - 1u;
+        uint32_t missed = fires - fires_seen - 1u;
+        if (missed && flight_state_is_airborne(ctx->current_state))
+            loop_overruns += missed;
+        else
+            loop_overruns_ground += missed;
         fires_seen = fires;
         uint64_t period_t0 = period_target_us - LOOP_PERIOD_US;
 #if PYRO_FLIGHT_RAM

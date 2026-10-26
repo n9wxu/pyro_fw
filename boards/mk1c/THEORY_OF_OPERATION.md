@@ -283,8 +283,10 @@ mid-transfer across a reset, hand it to the I2C block, let the pull-ups settle,
 detect. The pressure collector runs the sensor free (DD-093): a pressure,
 then a temperature, each read 9.1 ms after its command by an alarm whose
 handler runs from RAM, so in flight a flash write on core1 delays neither a
-read nor its timestamp (DD-104). On the ground an erase stops both cores, and
-the readings pause for it, up to about 60 ms (DD-106). A cycle takes 18.8 ms,
+read nor its timestamp (DD-104). On the ground the cleanup's erase runs in
+the writer's slots in pieces, stopping core0 for at most 3 ms each
+(FLT-RT-06, DD-112); an upload's or a configuration save's erase stops both
+cores, and the readings pause for it, up to about 60 ms (DD-106). A cycle takes 18.8 ms,
 53 a second, and up to four wait for the loop.
 
 A transfer that fails is counted by cause on `/api/status`. After three in a
@@ -421,8 +423,9 @@ The values the requirements leave to the board (BRD-01). A value marked
 
 `board.cmake` selects the SDK header, the 16 MB geometry and Lua, and declares
 the loop budget, `PYRO_LOOP_WORST_MS` (500 ms: a sector erase can take hundreds
-of milliseconds on this class of part). `/api/status` reports `loop_max_us` and
-`loop_overruns`, so the budget is checked rather than asserted.
+of milliseconds on this class of part). `/api/status` reports `loop_max_us`,
+`loop_overruns` and `loop_overruns_ground`, so the budget is checked rather
+than asserted.
 
 | File | Holds |
 |---|---|

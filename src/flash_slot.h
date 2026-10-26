@@ -17,6 +17,11 @@
  * waits for the next slot and runs whole from its start, and its erase is
  * refused until landing.
  *
+ * [FLT-RT-06] On the ground the writer's erase runs in the same pieces,
+ * where the part's erase suspends, so core0, parked for each piece, is
+ * stopped for one slot at most rather than for the whole erase. Everything
+ * else on the ground runs whole.
+ *
  * The sequencing here is plain C over the io below; the target's io runs
  * each piece from RAM with core1's interrupts off (flash_op.c).
  *
@@ -56,6 +61,12 @@ typedef struct {
 bool flash_slot_plan(const flash_timing_t *t, flash_slot_kind_t kind, bool resume, uint32_t now, uint32_t slot_end,
                      flash_piece_t *out);
 
+/* [FLT-RT-06] Whether the writer's operation runs in pieces on the ground:
+ * an erase, on a part whose erase suspends. */
+static inline bool flash_slot_ground_sliced(const flash_timing_t *t, flash_slot_kind_t kind) {
+    return t && kind == SLOT_ERASE && t->erase_suspends;
+}
+
 /* <0: the chip or the bus failed. FLASH_SLOT_NOT_YET: no piece fits the slot. */
 enum { PIECE_DONE = 0, PIECE_SUSPENDED = 1, FLASH_SLOT_NOT_YET = 2 };
 
@@ -80,7 +91,7 @@ typedef struct flash_slot_io {
     /* The slot is given up: flash_slot_try(r, its start) runs at the next
      * slot's start, and what it returned comes back. */
     int (*at_slot_start)(void *ctx, const flash_slot_req_t *r);
-    bool (*in_flight)(void *ctx); /* false: the rest runs whole, under the lockout */
+    bool (*sliced)(void *ctx); /* false: the rest runs whole, under the lockout */
     int (*piece)(void *ctx, flash_slot_kind_t kind, uint32_t addr, const uint8_t *data, uint32_t len,
                  const flash_piece_t *p);
     int (*whole)(void *ctx, flash_slot_kind_t kind, bool resume, uint32_t addr, const uint8_t *data, uint32_t len);
