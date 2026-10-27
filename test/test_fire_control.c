@@ -418,11 +418,12 @@ void test_PYR_DEPLOY_02_two_refiring_channels_take_turns(void) {
     }
 }
 
-/* ── A charge in the bay [PYR-MODE-06] ────────────────────────────── */
+/* ── A separation's shock [PYR-MODE-06] ──────────────────────────── */
 
-/* The first charge pressurises the bay: for a moment the pressure reads the
- * rocket hundreds of metres lower and falling at hundreds of metres a
- * second. Neither a trigger nor a speed rule may act on it. */
+/* The first separation shocks the readings: for a moment the pressure reads
+ * the rocket hundreds of metres lower and falling at hundreds of metres a
+ * second. Neither a trigger nor a speed rule may act on it, held here ten
+ * times longer than any shock lasts. */
 void test_PYR_MODE_06_a_charge_does_not_bring_a_trigger_forward(void) {
     rig_t r;
     rig_start(&r);
@@ -434,7 +435,7 @@ void test_PYR_MODE_06_a_charge_does_not_bring_a_trigger_forward(void) {
     rig_apogee(&r);
     rig_run(&r, 100);
     TEST_ASSERT_EQUAL_INT(1, r.pulses);
-    /* The bay, 400 m "lower" and "falling" at 300 m/s, for half a second. */
+    /* 400 m "lower" and "falling" at 300 m/s, for half a second. */
     float true_height = r.height_m;
     for (int i = 0; i < 25; i++) {
         r.height_m = true_height - 400.0f;
@@ -444,7 +445,7 @@ void test_PYR_MODE_06_a_charge_does_not_bring_a_trigger_forward(void) {
             r.pulsing = false;
         fire_inputs_t in = rig_inputs(&r);
         fire_command_t c = fire_control_step(&r.state, &r.plan, &in);
-        TEST_ASSERT_EQUAL_MESSAGE(FIRE_NONE, c.kind, "nothing fires on the charge's pressure");
+        TEST_ASSERT_EQUAL_MESSAGE(FIRE_NONE, c.kind, "nothing fires on the shock");
     }
     r.height_m = true_height;
     r.speed_ms = 20.0f;

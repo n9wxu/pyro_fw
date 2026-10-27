@@ -17,6 +17,32 @@
 /* The quietest sensor fitted: the tracked noise is never taken below it. */
 #define PEST_NOISE_FLOOR_PA 1.2f
 
+/* A reading is never weighed as surer than this, in height: what the model
+ * leaves out -- gusts, the airframe, the ports -- is metres, not the
+ * sensor's decimetres [DD-113]. */
+#define PEST_HEIGHT_NOISE_M 0.5f
+
+/* [SNS-EST-02] Readings far from the prediction are not used for the first
+ * 50 ms of their run: the shock of a separation, ours or another board's,
+ * lasts that long [DD-113]. A run that goes on is data. */
+#define PEST_BAD_RUN_US 50000u
+
+/* One past the time the run began, as hold.h keeps it; 0: no run. */
+typedef struct {
+    uint32_t since_us;
+} pest_bad_run_t;
+
+/* True when a reading this far off, at t_us, is not to be used. */
+static inline bool pest_bad_run_rejects(pest_bad_run_t *r, bool far, uint32_t t_us) {
+    if (!far) {
+        r->since_us = 0;
+        return false;
+    }
+    if (r->since_us == 0)
+        r->since_us = t_us + 1u;
+    return t_us + 1u - r->since_us < PEST_BAD_RUN_US;
+}
+
 typedef struct {
     bool started;
     float ref_pa; /* the state is ln(p / ref_pa), which keeps a float exact enough */
@@ -26,7 +52,8 @@ typedef struct {
     float noise_var_pa2;
     float last_innovation;
     bool have_last_innovation;
-    uint8_t outlier_run;
+    pest_bad_run_t bad_run;
+    bool rejected; /* the newest reading was in a bad run, and not used */
     float innovation_sigmas;
 } pest_t;
 

@@ -134,6 +134,9 @@
               <option value="false">the simple filter alone</option>
             </select>
             <div class="hint">The simple filter follows the raw readings and needs no model of the flight. Alone, it suits a pressure chamber; above about Mach 0.8 a static port's error can fool it.</div></td></tr>
+    <tr><td class="lbl">Apogee lockout</td><td>
+      <input type="number" id="apogeeLockout" min="0" max="65535" value="0" oninput="cfgChanged()"> s
+      <div class="hint">No apogee until this long after launch; 0 for none. For a supersonic flight, past the time it is above Mach 0.8.</div></td></tr>
   </table>
   <h3>Flight log</h3>
   <table class="info">

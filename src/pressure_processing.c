@@ -140,16 +140,18 @@ static bool watch_for_gap_and_stuck(int32_t raw_pa, uint32_t us) {
 
 /* ── The estimators ───────────────────────────────────────────────── */
 
+static void remember_estimators(void) {
+    for (uint8_t i = 0; i < estimator_count(); i++)
+        memcpy(pp.at_run_start[i], estimator_at(i)->state, estimator_at(i)->state_size);
+}
+
+/* The first reading may already be the start of a run. */
 static void start_estimators(int32_t raw_pa, uint32_t us) {
     for (uint8_t i = 0; i < estimator_count(); i++)
         estimator_at(i)->start(raw_pa, us, pp.sensor_k);
     pp.estimators_started = true;
     pp.estimators_started_us = us;
-}
-
-static void remember_estimators(void) {
-    for (uint8_t i = 0; i < estimator_count(); i++)
-        memcpy(pp.at_run_start[i], estimator_at(i)->state, estimator_at(i)->state_size);
+    remember_estimators();
 }
 
 static void put_estimators_back(void) {

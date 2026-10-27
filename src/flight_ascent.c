@@ -1,16 +1,20 @@
 /*
  * Ascent: the thrust report, arming, the peak and apogee
- * [FLT-ASC-01..07, FLT-APO-01..04, FLT-APO-07..10].
+ * [FLT-ASC-01..07, FLT-APO-01..04, FLT-APO-07..10, FLT-APO-12].
  *
  * SPDX-License-Identifier: MIT
  */
 #include "flight_internal.h"
 #include "atmosphere.h"
 #include "pressure_processing.h"
+#include "hold.h"
+#include <math.h>
 
 #define ARM_SPEED_CMS 1000
 #define ARM_PRESSURE_RATIO 0.9965f   /* about 30 m above the pad */
 #define APOGEE_BACKDATE_MAX_MS 1500u /* [PYR-MODE-05] */
+#define STILL_SIGMAS 2.0f
+#define STILL_HOLD_MS 2000u
 
 /* Only what the estimator explained can be the peak: a port error near Mach 1
  * reads as height the rocket never had. */
@@ -58,12 +62,14 @@ static uint32_t time_of_simple_apogee(const flight_context_t *ctx, const pp_samp
     return s->timestamp_ms - top <= APOGEE_BACKDATE_MAX_MS ? top : s->timestamp_ms;
 }
 
-/* [FLT-APO-07, FLT-APO-09, FLT-APO-10] With the model filter deciding, its
- * own rule; the simple filter stands in only while the model does not
- * explain the readings, the speed lockout has released and the medians are
- * falling. Taken out of the decision, the simple filter alone [DD-109]. */
-static apogee_by_t apogee_seen(const flight_context_t *ctx, const pp_sample_t *s) {
+/* [FLT-APO-07, FLT-APO-09, FLT-APO-10, FLT-APO-12] Once the user's lockout
+ * has run, the obeyed estimator's apogee, the simple filter's standing in
+ * where the model is blind to the top; with `model_decides` false, the simple
+ * filter's alone [DD-109, DD-113]. */
+static apogee_by_t apogee_seen(flight_context_t *ctx, const pp_sample_t *s) {
     if (!ctx->pyros_armed || ctx->apogee_declared)
+        return APOGEE_NOT_YET;
+    if (s->timestamp_ms - ctx->launch_time < (uint32_t)ctx->config.apogee_lockout * 1000u)
         return APOGEE_NOT_YET;
     bool simple = simple_apogee_met(&ctx->simple, s->timestamp_ms);
     if (!ctx->config.model_decides)
@@ -71,8 +77,10 @@ static apogee_by_t apogee_seen(const flight_context_t *ctx, const pp_sample_t *s
     if (ctx->estimator_apogee[pp_obeyed()])
         return APOGEE_BY_MODEL;
     bool falling = simple_apogee_speed_ms(&ctx->simple) < 0.0f;
-    bool stands_in = simple && !s->explains && simple_apogee_released(&ctx->simple) && falling;
-    return stands_in ? APOGEE_BY_SIMPLE : APOGEE_NOT_YET;
+    bool still = s->explains && fabsf(s->rate) <= STILL_SIGMAS * s->rate_sigma;
+    bool still_held = held_for(still, &ctx->model_still_since, s->timestamp_ms, STILL_HOLD_MS);
+    bool model_blind = s->explains ? still_held : falling;
+    return simple && simple_apogee_released(&ctx->simple) && model_blind ? APOGEE_BY_SIMPLE : APOGEE_NOT_YET;
 }
 
 /* [FLT-APO-08] The peak is a lower bound when the climb to it was not seen. */

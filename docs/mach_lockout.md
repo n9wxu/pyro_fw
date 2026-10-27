@@ -4,8 +4,9 @@ How the flight computer keeps a supersonic rocket from firing on corrupted
 pressure. There is no Mach flag: each estimator says whether its model
 explains the readings, and its apogee is not decided on readings it does
 not explain, and none of them is its peak (DD-092; SNS-EST-08, FLT-APO-07,
-FLT-APO-08). The simple filter stands in for it only after 3 s of measured
-speed under 50 m/s (FLT-APO-10, DD-109). The estimators are in `docs/flight_states.md`, "The
+FLT-APO-08), and the readings must track its height (DD-113). The simple
+filter stands in for it only after 3 s of measured speed under 50 m/s
+(FLT-APO-10, DD-109). The estimators are in `docs/flight_states.md`, "The
 estimators", and `docs/lumped_parameter_filter.md`. The host tests are
 `mach_tests` (`test/test_mach.c`) on the plant in `sim/mach_plant.c`.
 
@@ -96,7 +97,7 @@ toward zero, so its p̈ is positive.
 ## The estimator
 
 Both estimators run on the raw readings, every one (SNS-EST-07); the flight
-obeys the one `estimator` names, `lumped` by default.
+obeys the one `estimator` names, `constacc` by default.
 
 - `constacc` is a constant-acceleration Kalman filter on ln p
   (`src/pressure_estimator.c`, `docs/descent_speed_estimator.md`). It
@@ -108,10 +109,10 @@ obeys the one `estimator` names, `lumped` by default.
   innovations.
 
 Each tracks the sensor's noise from its innovations, never below 1.2 Pa. A
-step in the pressure -- a shock crossing the ports, an ejection charge --
-ends the explanation until the readings agree with the model again. That is
-the intended behaviour. After the board's own pulse `lumped` takes no
-readings for 1 s: the charge pressurises the bay.
+step in the pressure -- a shock crossing the ports -- ends the explanation
+until the readings agree with the model again. That is the intended
+behaviour. A separation's shock, up to 50 ms, is set aside and ends nothing
+(SNS-EST-02): the sensor sits behind the bay's pressure bulkhead.
 
 ## The machine
 
@@ -143,7 +144,7 @@ No flag and no state for one. What the flight carries:
 | Apogee waits while the model does not explain the readings | DD-092 |
 | Apogee is the top of a climb that was seen | FLT-APO-07 |
 | A fall whose climb was not seen lasts 2 s before it is apogee | A level set low in the boost would deploy low |
-| Launch at 15 m and 15 m/s on the filtered state (FLT-LAUNCH-07) | A rule on p̈ misses launches under about 2.1-2.4 g net |
+| Launch at 15 m on the filtered state (FLT-LAUNCH-07) | A rule on p̈ misses launches under about 2.1-2.4 g net |
 | The re-fire and emergency rules (PYR-REFIRE-01, FLT-EMRG-01) | DD-082 |
 | The configured modes, each compared in pressure (SNS-EST-05) | AGL is that comparison; the others are the operator's choice |
 

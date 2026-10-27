@@ -37,7 +37,6 @@ enum { H, V, S, LB };
 #define LN_BETA_MAX 1.6094f  /* ln 5 */
 #define SPEED_NOISE 0.25f    /* (m/s)^2 per second */
 #define GATE_SIGMAS 6.0f
-#define OUTLIER_RUN_MAX 2
 #define FIT_TAU_S 1.0f
 #define FIT_LIMIT 4.0f
 #define ADAPT_TAU_S 0.2f
@@ -47,8 +46,8 @@ enum { H, V, S, LB };
 #define EVIDENCE_US 1000000u
 #define GAP_US 250000u /* [SNS-PRES-11] */
 #define STEP_MAX_S 0.1f
-#define PULSE_BLANK_US 1000000u /* a charge pressurises the bay */
-#define PULSE_LOOSENS 4.0f      /* variance added to ln(beta): something has deployed */
+#define PULSE_BLANK_US PEST_BAD_RUN_US /* the shock of separation */
+#define PULSE_LOOSENS 4.0f             /* variance added to ln(beta): something has deployed */
 #define TROPOPAUSE_M 11000.0f
 #define STRATOSPHERE_M 20000.0f
 #define LAPSE 0.0065f
@@ -69,7 +68,7 @@ static struct {
     float noise_var_pa2;
     float last_innovation;
     bool have_last_innovation;
-    uint8_t outlier_run;
+    pest_bad_run_t bad_run;
     float fit, misfit; /* running means of the squared innovation, in sigmas */
     bool reading_run;  /* readings used with no gap between them */
     uint32_t reading_run_since_us, reading_used_us;
@@ -251,9 +250,8 @@ static void take(float reading_pa, float dt) {
     float sigmas = innovation / sqrtf(variance);
     bool far = fabsf(sigmas) > GATE_SIGMAS;
 
-    /* One or two readings far off are not used, and say nothing of the model. */
-    if (far && self.outlier_run < OUTLIER_RUN_MAX) {
-        self.outlier_run++;
+    /* A bad run is not used, and says nothing of the model. */
+    if (pest_bad_run_rejects(&self.bad_run, far, self.t_us)) {
         self.have_last_innovation = false;
         return;
     }
@@ -266,7 +264,6 @@ static void take(float reading_pa, float dt) {
     }
     self.reading_used_us = self.t_us;
     if (!far) {
-        self.outlier_run = 0;
         track_noise(innovation, reading_pa, dt);
     }
     self.last_innovation = innovation;

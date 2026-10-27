@@ -48,8 +48,12 @@ typedef struct {
     uint32_t verdict_after_ms;   /* how long after a pulse the board has a verdict on its channel */
     const pyro_limits_t *limits; /* NULL: the general ones */
 
-    mp_port_t port;     /* all zero: clean ports */
-    mp_charge_t charge; /* what a charge that lights adds to the bay's pressure */
+    mp_port_t port;   /* all zero: clean ports */
+    mp_shock_t shock; /* what separation does to the readings when a charge lights */
+    /* Another board's charge in the same airframe: its shock, after the true
+     * apogee by foreign_after_s, and the rocket's canopy out [FLT-APO-01]. */
+    mp_shock_t foreign;
+    float foreign_after_s;
 
     float dropout_at_s, dropout_s; /* no readings */
     float stuck_at_s, stuck_s;     /* stuck_s 0: for good */

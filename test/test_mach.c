@@ -1,9 +1,8 @@
 /*
  * Flights with a truth beside them [TST-03]: supersonic and subsonic rockets
  * from a cold sea-level pad and a hot high one, with static ports that
- * misreport while the rocket is fast, ejection charges that pressurise the
- * bay, and sensors that stop or stick. The firmware flies each one through
- * the board harness, and the plant says what really happened.
+ * misreport while the rocket is fast, the shock of a separation, and sensors that stop or stick. The firmware flies
+ * each one through the board harness, and the plant says what really happened.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -110,11 +109,12 @@ void test_TST_03_plant_port_error(void) {
     TEST_ASSERT_TRUE_MESSAGE(faked, "yet its sensed pressure rises: it reads as falling");
 }
 
-void test_TST_03_plant_charge(void) {
-    const mp_charge_t c = {3000.0f, 0.2f};
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, mp_charge_pa(&c, -0.1f));
-    TEST_ASSERT_EQUAL_FLOAT(3000.0f, mp_charge_pa(&c, 0.0f));
-    TEST_ASSERT_FLOAT_WITHIN(1.0f, 3000.0f / 2.71828f, mp_charge_pa(&c, 0.2f));
+void test_TST_03_plant_shock(void) {
+    const mp_shock_t s = {-3000.0f, 0.04f};
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, mp_shock_pa(&s, -0.01f));
+    TEST_ASSERT_EQUAL_FLOAT(-3000.0f, mp_shock_pa(&s, 0.0f));
+    TEST_ASSERT_EQUAL_FLOAT(-3000.0f, mp_shock_pa(&s, 0.039f));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, mp_shock_pa(&s, 0.04f));
 }
 
 void test_TST_03_plant_sensor_failures(void) {
@@ -233,21 +233,20 @@ void test_TST_03_report(void) {
 
 #define MAIN_TOL_M 8.0f
 
-/* The drogue's charge pressurises the bay at apogee: to the pressure layer the
- * rocket has dropped hundreds of metres in an instant. Pressure triggers wait
- * for a clean fit, up to 2 s, so the main 100 m below still fires where it is
- * set. */
-void test_PYR_MODE_06_a_charge_in_the_bay_does_not_move_the_main(void) {
+/* The drogue's separation shocks the readings at apogee: to the pressure
+ * layer the rocket has moved hundreds of metres in an instant. The main 100 m
+ * below still fires where it is set. */
+void test_PYR_MODE_06_a_separation_shock_does_not_move_the_main(void) {
     const mp_rocket_t *r = &ROCKETS[SUBSONIC].r;
     uint16_t main_m = (uint16_t)(plant_apogee_m(r, &ISA) - 100.0f);
-    const mp_charge_t charges[] = {{0.0f, 0.0f}, {1000.0f, 0.1f}, {5000.0f, 0.3f}};
+    const mp_shock_t charges[] = {{0.0f, 0.0f}, {1000.0f, 0.02f}, {5000.0f, 0.05f}, {-5000.0f, 0.05f}};
     char bad[256] = "";
     float worst = 0.0f;
     for (unsigned k = 0; k < sizeof(charges) / sizeof(charges[0]); k++) {
         for (uint32_t seed = 1; seed <= 10; seed++) {
             flight_conditions_t c;
             memset(&c, 0, sizeof(c));
-            c.charge = charges[k];
+            c.shock = charges[k];
             c.main_m = main_m;
             flown_t res = fly(r, &ISA, &c, seed, 120.0f);
             float err = res.main ? res.main_h - (float)main_m : 1e6f;
@@ -261,8 +260,8 @@ void test_PYR_MODE_06_a_charge_in_the_bay_does_not_move_the_main(void) {
             }
         }
     }
-    printf("  main at %u m, through charges of up to 5 kPa: within %.1f m%s%s\n", (unsigned)main_m, (double)worst,
-           bad[0] ? "; wrong:" : "", bad);
+    printf("  main at %u m, through separation shocks of up to 5 kPa: within %.1f m%s%s\n", (unsigned)main_m,
+           (double)worst, bad[0] ? "; wrong:" : "", bad);
     TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
 }
 
@@ -740,11 +739,11 @@ int main(void) {
     RUN_TEST(test_TST_03_plant_atmosphere);
     RUN_TEST(test_TST_03_plant_mach);
     RUN_TEST(test_TST_03_plant_port_error);
-    RUN_TEST(test_TST_03_plant_charge);
+    RUN_TEST(test_TST_03_plant_shock);
     RUN_TEST(test_TST_03_plant_sensor_failures);
     RUN_TEST(test_TST_03_plant_profiles);
     RUN_TEST(test_TST_03_report);
-    RUN_TEST(test_PYR_MODE_06_a_charge_in_the_bay_does_not_move_the_main);
+    RUN_TEST(test_PYR_MODE_06_a_separation_shock_does_not_move_the_main);
     RUN_TEST(test_SNS_EST_03_a_swinging_canopy_moves_neither_the_main_nor_the_landing);
     RUN_TEST(test_FLT_APO_07_a_subsonic_flight_deploys_at_apogee);
     RUN_TEST(test_FLT_ASC_08_nothing_arms_below_30_m);

@@ -86,10 +86,11 @@ The obeyed estimator (below) gives the filtered state from the raw readings:
 the filtered pressure, the rate and curvature of ln(pressure), and whether
 its model explains the readings (`src/estimator.h`, DD-085, DD-092). Each
 estimator measures the sensor's noise from the readings, and does not assume
-it. A reading more than six of its own standard deviations from the
-prediction is skipped, unless it is the third in a row: one or two bad
-readings change nothing, and a run of readings is data and is followed
-(SNS-EST-02). Nothing else filters, gates or reseeds.
+it, but weighs no reading as surer than 0.5 m of height (DD-113). A
+reading more than six of its own standard deviations from the prediction is
+set aside for the first 50 ms of its run: a separation's shock changes
+nothing, and a longer run is data and is followed (SNS-EST-02). Nothing
+else filters, gates or reseeds.
 
 Speeds for the descent bands and the fire rules are judged as the pad's air
 would give them (FLT-AIR-01): a canopy in thin air falls faster and is not a
@@ -126,8 +127,8 @@ The ground reference follows the weather, holds while the rocket moves, and
 freezes at launch on the pad's own pressure. A board carried to another pad
 reseeds after 5 s still (GND-CAL-06).
 
-Launch is 15 m above the reference while climbing faster than 15 m/s, on
-the filtered state (`launch_detected()`), with no hold time. Time zero is
+Launch is 15 m above the reference on the filtered state
+(`launch_detected()`), with no speed test and no hold time. Time zero is
 back-dated to the start of the rise (FLT-LAUNCH-03).
 
 On USB, with test mode off, no launch is detected, nothing is announced and
@@ -165,9 +166,10 @@ FLT-APO-08).
 Beside the estimators runs the simple filter (`src/simple_apogee.c`): the
 median of the last three raw readings, and apogee as that median standing
 2 m below its lowest point for 0.5 s (FLT-APO-09). With `model_decides` true
-(the default) it stands in for the estimator only while the estimator does
-not explain the readings, its own speed has been under 50 m/s for the last
-3 s, and that speed is a fall (FLT-APO-10). With `model_decides` false it
+(the default) it stands in for the estimator once its own speed has been
+under 50 m/s for the last 3 s, and either the estimator does not explain the
+readings and that speed is a fall, or the estimator explains them and has
+seen the board still for 2 s (FLT-APO-10). With `model_decides` false it
 decides alone. The log says which declared apogee (FLT-APO-11). The study is
 `docs/apogee_fallback.md`.
 
@@ -177,8 +179,8 @@ obeyed (SNS-EST-07).
 
 | Name | Model |
 |---|---|
-| `lumped` (default) | one equation of motion, pad to ground, learning thrust and drag (`docs/lumped_parameter_filter.md`) |
-| `constacc` | constant acceleration (`docs/descent_speed_estimator.md`) |
+| `constacc` (default) | constant acceleration (`docs/descent_speed_estimator.md`) |
+| `lumped` | one equation of motion, pad to ground, learning thrust and drag (`docs/lumped_parameter_filter.md`) |
 
 ## Descent and firing
 
@@ -207,8 +209,8 @@ sample and its own state:
   time separates the end of one from the start of the next. A first fire goes
   before a re-fire; between re-fires the channel that has waited longer goes;
   on a tie, pyro 1 (PYR-DEPLOY-02).
-- For 2 s after a pulse the state is bounded to free fall, so a charge's
-  pressure in the bay cannot bring a trigger forward (PYR-MODE-06).
+- For 2 s after a pulse the state is bounded to free fall, so the
+  separation's shock cannot bring a trigger forward (PYR-MODE-06).
 
 `refire_interval` and `fire_gap` come from the configuration, within the range
 the board declares; zero takes the board's default (`fire_plan_from()`,

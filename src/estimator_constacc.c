@@ -38,8 +38,8 @@ static void start(int32_t reading_pa, uint32_t t_us, float pad_temp_k) {
 static void reading(int32_t reading_pa, uint32_t t_us) {
     bool after_a_gap = t_us - self.filter.t_us > GAP_US;
     pest_update(&self.filter, reading_pa, t_us);
-    bool off_the_arc =
-        after_a_gap || fabsf(self.filter.innovation_sigmas) > ROUGH_SIGMAS || fabsf(self.filter.curve) >= ARC_CURVE_MAX;
+    bool off_the_arc = after_a_gap || fabsf(self.filter.curve) >= ARC_CURVE_MAX ||
+                       (!self.filter.rejected && fabsf(self.filter.innovation_sigmas) > ROUGH_SIGMAS);
     if (off_the_arc)
         hold_rough_from(t_us);
     else if (self.rough && (int32_t)(t_us - self.rough_until_us) >= 0)

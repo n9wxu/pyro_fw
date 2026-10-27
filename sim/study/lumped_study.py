@@ -221,8 +221,7 @@ def descent(pool):
         ('no canopy at all (ballistic)', 'subsonic', {'lights': False}),
         ('no canopy at all, from 20 km', '20 km', {'lights': False}),
         ('canopy lost at 500 m', 'low-drag', {'lost_below': 500.0}),
-        ('bay charge 3 kPa at each fire', 'subsonic', {'charge': (3000.0, 0.2), 'main': 5.0}),
-        ('bay charge 3 kPa, readings used at once', 'subsonic', {'charge': (3000.0, 0.2), 'main': 5.0, 'blank_s': 0.0}),
+        ('separation shock 5 kPa for 40 ms at each fire', 'subsonic', {'shock': (5000.0, 0.04), 'main': 5.0}),
     ]
     args = [(lab, n, sg, seed, kw) for lab, n, kw in cases for sg in (1.2, 9.0) for seed in (1, 2)]
     rs = pool.map(descent_one, args)

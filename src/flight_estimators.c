@@ -59,8 +59,9 @@ void flight_follow_estimators(flight_context_t *ctx, const pp_sample_t *s, uint3
         ctx->estimators_logged_ms = s->timestamp_ms;
     follow_simple(ctx, s, flight_ms, report_due);
     for (uint8_t i = 0; i < estimator_count(); i++) {
-        ctx->estimator_apogee[i] =
-            apogee_detected(&ctx->apogee_detector[i], &s->by_estimator[i], !s->suspect, s->timestamp_ms);
+        bool met =
+            apogee_detected(&ctx->apogee_detector[i], &s->by_estimator[i], s->raw_pa, !s->suspect, s->timestamp_ms);
+        ctx->estimator_apogee[i] = met && ctx->pyros_armed;
         if (ctx->estimator_apogee[i] && !ctx->estimator_said_apogee[i]) {
             ctx->estimator_said_apogee[i] = true;
             say_apogee(i, flight_ms);

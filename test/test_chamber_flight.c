@@ -1,9 +1,9 @@
 /*
  * A pressure chamber run by hand, flown through the flight software
  * [FLT-APO-08..11, PYR-MODE-05]: the recorded raw readings in test_data/. Its
- * climb and its fall are faster than any flight, so the model filter never
- * explains them; the simple filter must still find the top, and the flight
- * must still land.
+ * climb and its fall are faster than any flight. Whichever filter decides, the
+ * top must be found and the flight must land; and so after a fall too fast
+ * for the model to explain at all.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -64,6 +64,18 @@ static float recorded_pa(float t_s) {
     return pad_pa;
 }
 
+/* The recorded climb, then a fall at 5 g to the pad: past any arc the model
+ * explains, and faster than the simple filter's lockout until it stops. */
+#define FAST_FALL_MSS (5.0f * 9.80665f)
+
+static float fast_fall_pa(float t_s) {
+    if (t_s <= top_s)
+        return recorded_pa(t_s);
+    float fall_s = t_s - top_s;
+    float h = atmos_height_above_m(top_pa, pad_pa) - 0.5f * FAST_FALL_MSS * fall_s * fall_s;
+    return h > 0.0f ? atmos_pressure_above_pa(pad_pa, h) : pad_pa;
+}
+
 static struct {
     float apogee_s, landed_s;
     uint32_t start_ms;
@@ -80,7 +92,7 @@ static float height_of(float pa) {
     return atmos_height_above_m(pa, pad_pa);
 }
 
-static void fly_the_chamber(bool model_decides) {
+static void fly(float (*profile_pa)(float t_s), bool model_decides) {
     load_recording();
     boot_like_hardware(5);
     mock_pressure.pressure_pa = pad_pa;
@@ -94,13 +106,17 @@ static void fly_the_chamber(bool model_decides) {
     seen.start_ms = start;
     for (; t < start + 150000u; t++) {
         float flight_s = ((float)t - (float)start) / 1000.0f;
-        mock_pressure.pressure_pa = recorded_pa(flight_s);
+        mock_pressure.pressure_pa = profile_pa(flight_s);
         tick(t);
         if (ctx.apogee_declared && seen.apogee_s < 0.0f)
             seen.apogee_s = flight_s;
         if (ctx.current_state == LANDED && seen.landed_s < 0.0f)
             seen.landed_s = flight_s;
     }
+}
+
+static void fly_the_chamber(bool model_decides) {
+    fly(recorded_pa, model_decides);
 }
 
 void test_FLT_APO_09_with_the_simple_filter_deciding_the_chamber_flight_has_its_apogee(void) {
@@ -119,6 +135,14 @@ void test_FLT_APO_10_with_the_model_deciding_the_chamber_flight_still_has_its_ap
     TEST_ASSERT_TRUE_MESSAGE(seen.apogee_s > 0.0f, "declared");
     TEST_ASSERT_TRUE_MESSAGE(seen.apogee_s >= top_s, "not before the lowest reading");
     TEST_ASSERT_TRUE_MESSAGE(seen.landed_s > 0.0f, "and it lands");
+}
+
+void test_FLT_APO_10_after_a_fall_the_model_never_explained_the_simple_filter_stands_in(void) {
+    fly(fast_fall_pa, true);
+    TEST_ASSERT_TRUE_MESSAGE(seen.apogee_s > 0.0f, "declared");
+    TEST_ASSERT_TRUE_MESSAGE(ctx.apogee_by_simple, "by the simple filter");
+    TEST_ASSERT_TRUE_MESSAGE(seen.landed_s > seen.apogee_s, "and it lands");
+    TEST_ASSERT_EQUAL_INT(1, harness_log_events("LANDING"));
 }
 
 void test_FLT_APO_08_the_peak_is_the_simple_filters_top(void) {
@@ -140,14 +164,17 @@ void test_FLT_APO_11_the_log_says_which_filter_declared_apogee(void) {
     TEST_ASSERT_TRUE(logged("apogee by simple"));
     TEST_ASSERT_TRUE(logged("simple APOGEE"));
     TEST_ASSERT_TRUE(logged("simple cm="));
-    fly_the_chamber(true);
+    fly(fast_fall_pa, true);
     TEST_ASSERT_TRUE(logged("apogee by simple"));
+    fly_the_chamber(true);
+    TEST_ASSERT_TRUE(logged(ctx.apogee_by_simple ? "apogee by simple" : "apogee by constacc"));
 }
 
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_FLT_APO_09_with_the_simple_filter_deciding_the_chamber_flight_has_its_apogee);
     RUN_TEST(test_FLT_APO_10_with_the_model_deciding_the_chamber_flight_still_has_its_apogee);
+    RUN_TEST(test_FLT_APO_10_after_a_fall_the_model_never_explained_the_simple_filter_stands_in);
     RUN_TEST(test_FLT_APO_08_the_peak_is_the_simple_filters_top);
     RUN_TEST(test_PYR_MODE_05_delay_counts_from_the_simple_filters_top);
     RUN_TEST(test_FLT_APO_11_the_log_says_which_filter_declared_apogee);

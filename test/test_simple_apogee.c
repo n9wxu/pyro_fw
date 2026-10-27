@@ -75,8 +75,8 @@ void test_FLT_APO_09_a_single_reading_off_is_not_seen(void) {
 }
 
 void test_FLT_APO_09_an_ejection_spike_shorter_than_the_hold_is_not_apogee(void) {
-    /* A charge pressurises the tube until the rocket separates: 400 ms of
-     * readings 30 kPa high, still climbing. */
+    /* 400 ms of readings 30 kPa high, still climbing: eight times the longest
+     * separation shock. */
     simple_apogee_t f;
     simple_apogee_start(&f, PAD_PA);
     uint32_t ms = 1000;

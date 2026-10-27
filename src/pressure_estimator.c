@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "pressure_estimator.h"
+#include "atmosphere.h"
 #include <math.h>
 
 /* White-jerk process noise: 7 m^2/s^5 over the square of an 8 km scale
@@ -11,10 +12,8 @@
  * with the pressure, which lengthens the averaging as the air thins. */
 #define JERK_PSD 1.09375e-7f
 
-/* A reading this far from the prediction is not used, unless it is the third
- * in a row: one or two are bad readings, a run is data [SNS-EST-02]. */
+/* A reading this far from the prediction is a bad one (pest_bad_run_rejects()). */
 #define OUTLIER_SIGMAS 6.0f
-#define OUTLIER_RUN_MAX 2
 
 #define NOISE_TRACK_S 2.0f
 #define INITIAL_RATE_VAR 1e-6f
@@ -22,6 +21,14 @@
 
 static float squared(float x) {
     return x * x;
+}
+
+/* The variance of ln(reading): the tracked sensor noise, or the height
+ * floor where that is larger. */
+static float reading_var(const pest_t *f, float pressure_pa) {
+    float sensor = f->noise_var_pa2 / squared(pressure_pa);
+    float floor = squared(PEST_HEIGHT_NOISE_M / atmos_scale_height_m(pressure_pa));
+    return sensor > floor ? sensor : floor;
 }
 
 void pest_start(pest_t *f, int32_t reading_pa, uint32_t t_us, float noise_pa) {
@@ -33,14 +40,15 @@ void pest_start(pest_t *f, int32_t reading_pa, uint32_t t_us, float noise_pa) {
     f->rate = 0.0f;
     f->curve = 0.0f;
     f->noise_var_pa2 = squared(noise_pa > PEST_NOISE_FLOOR_PA ? noise_pa : PEST_NOISE_FLOOR_PA);
-    f->var_pp = f->noise_var_pa2 / squared(p);
+    f->var_pp = reading_var(f, p);
     f->var_pr = 0.0f;
     f->var_pc = 0.0f;
     f->var_rr = INITIAL_RATE_VAR;
     f->var_rc = 0.0f;
     f->var_cc = INITIAL_CURVE_VAR;
     f->have_last_innovation = false;
-    f->outlier_run = 0;
+    f->bad_run = (pest_bad_run_t){0};
+    f->rejected = false;
     f->innovation_sigmas = 0.0f;
 }
 
@@ -104,17 +112,15 @@ void pest_update(pest_t *f, int32_t reading_pa, uint32_t t_us) {
 
     float reading = (float)reading_pa;
     float innovation = logf(reading / f->ref_pa) - f->log_p;
-    float innovation_var = f->var_pp + f->noise_var_pa2 / squared(reading);
+    float innovation_var = f->var_pp + reading_var(f, reading);
     f->innovation_sigmas = innovation / sqrtf(innovation_var);
     bool outlier = fabsf(f->innovation_sigmas) > OUTLIER_SIGMAS;
-
-    if (outlier && f->outlier_run < OUTLIER_RUN_MAX) {
-        f->outlier_run++;
+    f->rejected = pest_bad_run_rejects(&f->bad_run, outlier, t_us);
+    if (f->rejected) {
         f->have_last_innovation = false;
         return;
     }
     if (!outlier) {
-        f->outlier_run = 0;
         track_noise(f, innovation, reading, dt);
     } else {
         f->last_innovation = innovation;

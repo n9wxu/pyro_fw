@@ -54,10 +54,10 @@ class Lumped:
     """Tunables are the keyword arguments; the study varies them."""
 
     def __init__(self, k_s=1.0, k_beta=0.2, beta0=1e-3, beta_sd=2.0, beta_tau=60.0, q_v=0.25,
-                 gate=6.0, run_max=2, fit_tau=1.0, inflate_cap=1e4, s_min=-3.0, thrust_tau=3.0, pad_temp_err=None, free_fall_bound=False, adapt_tau=0.2, beta_adapts=False):
+                 gate=6.0, bad_run_s=0.05, fit_tau=1.0, inflate_cap=1e4, s_min=-3.0, thrust_tau=3.0, pad_temp_err=None, free_fall_bound=False, adapt_tau=0.2, beta_adapts=False):
         self.kS, self.kB, self.q_v = k_s, k_beta, q_v
         self.beta0, self.beta_sd, self.beta_tau = beta0, beta_sd, beta_tau
-        self.gate, self.run_max = gate, run_max
+        self.gate, self.bad_run_s = gate, bad_run_s
         self.fit_tau, self.inflate_cap = fit_tau, inflate_cap
         self.s_min = s_min
         self.thrust_tau = thrust_tau
@@ -69,7 +69,7 @@ class Lumped:
         self.true_pad_temp_c = None
         self.air = None
         self.x = None
-        self.run = 0
+        self.bad_since = None  # when the present run of readings far off began
         self.fit = 1.0  # running mean of the squared normalised innovation: about 1 while the model explains the readings
         self.nu = 0.0
         self.read_since = None  # when the present run of used readings began; a gap of GAP_S ends it
@@ -159,19 +159,23 @@ class Lumped:
         S = Hm * Hm * P[0][0] + self.r_hat / (p_raw * p_raw)
         nu = e / math.sqrt(S)
         self.nu = nu
-        skipped = abs(nu) > self.gate and self.run < self.run_max
+        far = abs(nu) > self.gate
+        if not far:
+            self.bad_since = None
+        elif self.bad_since is None:
+            self.bad_since = t
+        skipped = far and t - self.bad_since < self.bad_run_s
         if not skipped:  # a reading that is not used says nothing about the model
             self.misfit += min(1.0, dt / self.adapt_tau) * (min(nu * nu, 1e4) - self.misfit)
             self.fit += min(1.0, dt / self.fit_tau) * (min(nu * nu, 1e4) - self.fit)
         if skipped:
-            self.run += 1  # one or two readings far off: not used
+            # a separation's shock, up to 50 ms far off: not used
             self.e_prev = None
         else:
             if self.read_since is None:
                 self.read_since = t
             self.used_t = t
-            if abs(nu) <= self.gate:
-                self.run = 0
+            if not far:
                 if self.e_prev is not None:
                     d = (e - self.e_prev) * p_raw
                     self.r_hat = max(SIGMA_FLOOR_PA ** 2, self.r_hat + min(1.0, dt / NOISE_TAU) * (0.5 * d * d - self.r_hat))

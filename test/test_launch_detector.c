@@ -1,6 +1,6 @@
 /*
  * The launch trigger alone [FLT-LAUNCH-02, FLT-LAUNCH-07]: 15 m above the
- * pad and climbing at 15 m/s or more, on the filtered state.
+ * pad on the filtered state, whatever its speed.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -33,17 +33,23 @@ void test_FLT_LAUNCH_02_below_15_m_is_not_a_launch(void) {
     TEST_ASSERT_TRUE_MESSAGE(launch_at(15.5f, 200.0f), "and just above it is");
 }
 
-void test_FLT_LAUNCH_07_slower_than_15_m_s_is_not_a_launch(void) {
-    TEST_ASSERT_FALSE(launch_at(500.0f, 14.9f));
-    TEST_ASSERT_FALSE(launch_at(500.0f, 0.0f));
-    TEST_ASSERT_FALSE_MESSAGE(launch_at(500.0f, -30.0f), "nor is a descent");
-    TEST_ASSERT_TRUE(launch_at(500.0f, 15.1f));
+/* The pad speed swings in gusts; the height alone decides. */
+void test_FLT_LAUNCH_07_the_speed_plays_no_part(void) {
+    TEST_ASSERT_TRUE(launch_at(20.0f, 1.0f));
+    TEST_ASSERT_TRUE(launch_at(20.0f, -5.0f));
+    TEST_ASSERT_FALSE(launch_at(10.0f, 100.0f));
+}
+
+void test_FLT_LAUNCH_07_no_estimate_is_no_launch(void) {
+    pp_sample_t s = {0};
+    TEST_ASSERT_FALSE(launch_detected(&s, PAD_PA));
 }
 
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_FLT_LAUNCH_07_high_and_climbing_is_a_launch);
     RUN_TEST(test_FLT_LAUNCH_02_below_15_m_is_not_a_launch);
-    RUN_TEST(test_FLT_LAUNCH_07_slower_than_15_m_s_is_not_a_launch);
+    RUN_TEST(test_FLT_LAUNCH_07_the_speed_plays_no_part);
+    RUN_TEST(test_FLT_LAUNCH_07_no_estimate_is_no_launch);
     return UNITY_END();
 }

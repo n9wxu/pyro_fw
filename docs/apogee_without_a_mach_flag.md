@@ -7,7 +7,7 @@ previous concerns and take a fresh look at the physics and limitations."
 The firmware carries the answer (DD-092). The apogee rule below, rules 2 to 4
 of the arc, is `apogee_detected()` for every estimator (FLT-APO-07). The arc
 itself, rule 1, is how `constacc` says whether its model explains the
-readings. Option E is `lumped`, the default estimator
+readings. Option E is `lumped`, which logs beside the default, `constacc`
 (`docs/lumped_parameter_filter.md`).
 
 ## Bottom line
@@ -174,7 +174,7 @@ temperature, and it is the most complicated of A to D.
 
 ### E. One lumped-parameter filter, with no phases
 
-In the firmware: `lumped`, the default estimator (DD-092), studied in
+In the firmware: `lumped`, logged beside `constacc` (DD-092, DD-113), studied in
 `docs/lumped_parameter_filter.md`. The physics alone does not reject a port
 error: a consistency test, "the model explains the readings", stands beside
 the model.

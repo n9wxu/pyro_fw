@@ -98,7 +98,8 @@ typedef struct flight_context_t {
     bool estimator_said_apogee[ESTIMATORS_MAX];
     simple_apogee_t simple; /* [FLT-APO-09] */
     bool simple_said_apogee;
-    bool apogee_by_simple; /* the simple filter declared it [FLT-APO-11] */
+    bool apogee_by_simple;      /* the simple filter declared it [FLT-APO-11] */
+    uint32_t model_still_since; /* hold.h: the obeyed estimator explains and sees no motion */
     uint32_t estimators_logged_ms;
     bool arm_height_passed;
     bool pyros_armed;

@@ -114,8 +114,6 @@ float mp_port_error_pa(const mp_port_t *e, float mach, float static_pa) {
     return e->sign * c * q;
 }
 
-float mp_charge_pa(const mp_charge_t *c, float since_fire_s) {
-    if (since_fire_s < 0.0f)
-        return 0.0f;
-    return c->peak_pa * expf(-since_fire_s / c->tau_s);
+float mp_shock_pa(const mp_shock_t *s, float since_fire_s) {
+    return since_fire_s >= 0.0f && since_fire_s < s->duration_s ? s->peak_pa : 0.0f;
 }

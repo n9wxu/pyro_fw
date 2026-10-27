@@ -413,7 +413,7 @@ var cfgShownUnits = 1;
 var SPEED_FIELDS = ['p1refire', 'p2refire', 'emrgSpeed'];
 var RULE_FIELDS = [['p1refire', 'pyro1_refire_speed'], ['p2refire', 'pyro2_refire_speed'],
                    ['emrgSpeed', 'emergency_fire_speed'], ['refireInterval', 'refire_interval'],
-                   ['fireGap', 'fire_gap']];
+                   ['fireGap', 'fire_gap'], ['apogeeLockout', 'apogee_lockout']];
 
 /* /api/status carries the rules in force, not the ones stored, so the editor
    reads them from the stored file. */

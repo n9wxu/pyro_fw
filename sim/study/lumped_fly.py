@@ -69,8 +69,8 @@ class Flight:
 
 
 def fly(rk, site=ISA, sigma=3.0, port=None, seed=1, pad_s=12.0, canopy=20.0, main=None, main_agl=300.0,
-        lights=True, charge=None, glitch=None, dropout=None, until=None, trace=None, tune=None, loosen=4.0,
-        stop_at_apogee=True, lost_below=None, stuck=None, blank_s=1.0):
+        lights=True, shock=None, glitch=None, dropout=None, until=None, trace=None, tune=None, loosen=4.0,
+        stop_at_apogee=True, lost_below=None, stuck=None, blank_s=0.05):
     rng = random.Random(seed)
     pl = Plant(site, rk)
     d = Flight(**(tune or {}))
@@ -88,8 +88,8 @@ def fly(rk, site=ISA, sigma=3.0, port=None, seed=1, pad_s=12.0, canopy=20.0, mai
             for _ in range(20): pl.step(0.001)
         ps = site.pressure(pl.h)
         sensed = ps + port_error(port, pl.mach, ps) + rng.gauss(0, sigma)
-        if charge and fired_t is not None:
-            sensed += charge[0] * math.exp(-(tf - fired_t) / charge[1])
+        if shock and fired_t is not None and 0.0 <= tf - fired_t < shock[1]:
+            sensed += shock[0]  # the separation's shock: the sensor is behind the bulkhead
         if glitch and glitch[0] <= tf < glitch[0] + glitch[2] * DT: sensed += glitch[1]
         loosen_now = 0.0
         impossible = not (1.0 <= sensed <= 130000.0)   # the HAL discards what the part cannot output
@@ -106,8 +106,8 @@ def fly(rk, site=ISA, sigma=3.0, port=None, seed=1, pad_s=12.0, canopy=20.0, mai
         same = same + 1 if whole is not None and whole == last_whole else 0
         last_whole = whole
         if same >= 7: missing = True
-        # A charge pressurises the bay: for blank_s after the board's own pulse
-        # the bay is not the atmosphere, and its readings are not used.
+        # The separation's shock: for blank_s after the board's own pulse the
+        # readings are not the atmosphere's, and are not used.
         if fired_t is not None and 0.0 <= tf - fired_t < blank_s: missing = True
         if impossible: res['impossible_s'] = res.get('impossible_s', 0.0) + DT
         d.step(None if missing else whole, t, loosen_now)

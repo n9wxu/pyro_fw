@@ -4,7 +4,7 @@ The descent speed that the re-fire thresholds and the emergency fire speed
 compare, and the estimator behind it, with the options for it. The
 decisions are DD-085, one Kalman
 filter on the raw readings, which is `constacc`, and DD-092, estimators
-behind one interface with `lumped` the default. This document is
+behind one interface with `constacc` the default (DD-113). This document is
 `constacc`'s design (`src/pressure_estimator.c`, `src/estimator_constacc.c`).
 
 ## What exists
@@ -12,10 +12,10 @@ behind one interface with `lumped` the default. This document is
 Two estimators behind `src/estimator.h`, both fed every reading; the flight
 obeys the one `estimator` in config.ini names (SNS-EST-06, SNS-EST-07):
 
-- `lumped`, the default: one equation of motion from the pad to the ground,
-  learning a lumped thrust and drag (`docs/lumped_parameter_filter.md`).
-- `constacc`: a Kalman filter on ln p, its rate and its curvature (this
-  document).
+- `constacc`, the default: a Kalman filter on ln p, its rate and its
+  curvature (this document).
+- `lumped`: one equation of motion from the pad to the ground, learning a
+  lumped thrust and drag (`docs/lumped_parameter_filter.md`).
 
 The fire rules' descent speed is the obeyed estimator's rate of ln p times
 RT/g at its pressure, scaled to the pad's air by sqrt(rho / rho_pad)
@@ -169,7 +169,10 @@ height.
   between successive innovations is the noise the filter is seeing. Tracked
   over about 2 s, it widens the trust interval when the sensor is noisier
   than on the pad, near its limits or in rough air, and narrows it again.
-  1.2 Pa (`PEST_NOISE_FLOOR_PA`) is the starting value and a floor.
+  1.2 Pa (`PEST_NOISE_FLOOR_PA`) is the starting value and a floor. A
+  reading is never weighed as surer than 0.5 m of height
+  (`PEST_HEIGHT_NOISE_M`): what the model leaves out -- gusts, the airframe,
+  the ports -- is metres (DD-113).
 
 The filter is not loosened at a fire. Smoothing a
 deployment's deceleration does not matter: the fire rules ask whether the
@@ -195,13 +198,14 @@ and the curvature of ln p is under 0.005 s⁻², about 3.5 g
 - **Start.** At the first reading, at rest, with the noise at its floor
   (`pest_start()`).
 - **Raw readings, innovation limited.** No filter stands in front. A reading
-  more than 6 σ from the prediction is not used unless it is the third in a
-  row: one or two are bad readings, a run is data (SNS-EST-02). In the host
+  more than 6 σ from the prediction is not used for the first 50 ms of its
+  run: a separation's shock lasts that long, and a longer run is data
+  (SNS-EST-02, DD-113). A reading set aside says nothing of the model. In the host
   evaluation (`sim/study/kf_launch.py`, `sim/study/kf_extra.py`), a single
   reading 3 to 6 kPa low declares a launch through a raw filter at pad-quiet
   tunings, and holding each innovation to a few of its standard deviations
-  inside the update stops one or two bad readings of any size at no cost in
-  delay.
+  inside the update stops a short run of bad readings of any size at no
+  cost in delay.
 - **The data wins, without a re-seed.** The board cannot know that its
   sensor is wrong. A Kalman filter trends toward data that is stable, so
   after a discontinuity it follows the readings by its own gain. Nothing

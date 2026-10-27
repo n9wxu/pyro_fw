@@ -7,7 +7,7 @@ These are the intended flights. Where the firmware and the web pages differ from
 - The Config tab has no Beep Mode; the Beep Codes tab holds the personalities. The shipped personality repeats until launch, every 5 s; twice is a choice on that tab.
 - One Save on the Config tab saves the release choices with the rest. Every saved change takes effect at the next start, so the tab asks for Save, then Reboot (CFG-10).
 - The Flight Data tab has an Erase flight log button.
-- Launch is declared when the filtered state shows more than 15 m above the pad and a climb faster than 15 m/s, with no hold time (FLT-LAUNCH-07). The log's T+0 is the first sample of the rise more than 50 cm above the pad (FLT-LAUNCH-03).
+- Launch is declared when the filtered state shows more than 15 m above the pad, with no speed test and no hold time (FLT-LAUNCH-07). The log's T+0 is the first sample of the rise more than 50 cm above the pad (FLT-LAUNCH-03).
 - A 0 s delay fires as apogee is declared, within 0.5 s after the peak for a flight up to 10 km (FLT-APO-01).
 - The emergency fire is off unless `emergency_fire_speed` is set; it defaults to 0. Set, it fires every enabled channel, pyro 1 and pyro 2 alike, once the descent after apogee reaches that speed in the pad's air, and fires them again every `refire_interval` until the speed falls below it or the rocket lands (FLT-EMRG-01, FLT-AIR-01). It acts on speed alone. Falling free from apogee, the rocket passes 30 m/s about 3 s after apogee, as in the third story.
 

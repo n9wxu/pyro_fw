@@ -174,22 +174,25 @@ void test_SNS_EST_08_an_estimate_does_not_fall_through_the_ground(void) {
     }
 }
 
-/* [SNS-EST-09] A charge pressurises the bay by 3 kPa, dying away in 0.2 s.
- * Told of the pulse, the lumped estimator does not take the bay for the air. */
-void test_SNS_EST_09_the_lumped_estimator_sits_out_its_own_charge(void) {
-    on_the_pad(estimator_index("lumped"));
-    TEST_ASSERT_EQUAL_STRING("lumped", e->name);
-    (void)read_for(PAD_PA, 5000000u);
-    e->pulse(t_us);
-    float furthest_pa = 0.0f;
-    for (int k = 0; k < 50; k++) {
-        float bay_pa = PAD_PA + 3000.0f * expf(-(float)k * 0.02f / 0.2f);
-        estimate_t now = read_for(bay_pa, STEP_US);
-        furthest_pa = fmaxf(furthest_pa, fabsf(now.pressure_pa - PAD_PA));
-        TEST_ASSERT_FALSE_MESSAGE(now.explains && k > 15, "nothing is decided inside the charge");
-    }
-    TEST_ASSERT_TRUE_MESSAGE(furthest_pa < 30.0f, "the estimate followed the bay");
-    TEST_ASSERT_TRUE(read_for(PAD_PA, 2000000u).explains);
+/* [SNS-EST-02, SNS-EST-09] At a fire the separation shocks the readings, by
+ * up to 5 kPa either way for up to 40 ms. Told of the pulse, no estimator
+ * moves with them, and each still explains the readings after. */
+void test_SNS_EST_09_a_separation_shock_moves_no_estimate(void) {
+    const float shocks_pa[] = {5000.0f, -5000.0f, 1000.0f};
+    for (uint8_t i = 0; i < estimator_count(); i++)
+        for (unsigned k = 0; k < sizeof(shocks_pa) / sizeof(shocks_pa[0]); k++) {
+            on_the_pad(i);
+            (void)read_for(PAD_PA, 5000000u);
+            e->pulse(t_us);
+            estimate_t during = read_for(PAD_PA + shocks_pa[k], 40000u);
+            estimate_t after = read_for(PAD_PA, STEP_US);
+            char msg[96];
+            snprintf(msg, sizeof(msg), "%s through %+.0f Pa: moved %.0f Pa", e->name, (double)shocks_pa[k],
+                     (double)(during.pressure_pa - PAD_PA));
+            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(30.0f, PAD_PA, during.pressure_pa, msg);
+            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(30.0f, PAD_PA, after.pressure_pa, msg);
+            TEST_ASSERT_TRUE_MESSAGE(read_for(PAD_PA, 200000u).explains, msg);
+        }
 }
 
 int main(void) {
@@ -200,6 +203,6 @@ int main(void) {
     RUN_TEST(test_SNS_EST_08_a_few_missing_readings_are_not_a_gap);
     RUN_TEST(test_SNS_EST_08_a_ballistic_arc_is_explained_over_the_top);
     RUN_TEST(test_SNS_EST_08_an_estimate_does_not_fall_through_the_ground);
-    RUN_TEST(test_SNS_EST_09_the_lumped_estimator_sits_out_its_own_charge);
+    RUN_TEST(test_SNS_EST_09_a_separation_shock_moves_no_estimate);
     return UNITY_END();
 }

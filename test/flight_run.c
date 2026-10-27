@@ -155,7 +155,7 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
     mp_launch(&st);
     st.thin_air = c->thin_air;
     int seen = 0;
-    float charge_at = -1.0f;
+    float shock_at = -1.0f, foreign_at = -1.0f;
     bool glitched = false, lost = false, restarted = false;
     loop_lag_ms = c->loop_lag;
     for (; t < ign + (uint32_t)(until_s * 1000.0f); t++) {
@@ -164,8 +164,15 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
             mp_step(&st, site, &rk, 0.001f);
         float static_pa = mp_pressure_pa(site, st.h);
         float sensed = static_pa + mp_port_error_pa(&c->port, st.mach, static_pa);
-        if (charge_at >= 0.0f)
-            sensed += mp_charge_pa(&c->charge, tf - charge_at);
+        if (shock_at >= 0.0f)
+            sensed += mp_shock_pa(&c->shock, tf - shock_at);
+        if (c->foreign.duration_s > 0.0f && st.apogee && foreign_at < 0.0f && tf >= st.apogee_t + c->foreign_after_s) {
+            foreign_at = tf;
+            if (!lost)
+                st.canopy = true;
+        }
+        if (foreign_at >= 0.0f)
+            sensed += mp_shock_pa(&c->foreign, tf - foreign_at);
         mock_pressure.pressure_pa = sensed;
         set_sensor(c, rocket, &st, tf, &glitched);
         if (c->canopy_lost_below_m > 0.0f && st.apogee && st.canopy && !lost && st.h < c->canopy_lost_below_m) {
@@ -216,8 +223,8 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
                 mock_pyro.p2_good = false;
                 mock_pyro.p2_open = true;
             }
-            if (c->charge.peak_pa > 0.0f)
-                charge_at = tf;
+            if (c->shock.duration_s > 0.0f)
+                shock_at = tf;
             float rate = charges.rate_ms[pulse->channel - 1];
             if (rate > 0.0f && !lost && (!st.canopy || rate < rk.canopy_ms)) {
                 st.canopy = true;

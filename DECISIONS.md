@@ -21,33 +21,27 @@ sequence has gaps.
 
 ## Safety
 
-### DD-016: Strengthened Launch Confirmation
-- **Decision:** launch needs both, on the filtered state: a pressure below
-  the pad's pressure at 15 m, and a climb faster than 15 m/s
-  (`launch_detected()`; FLT-LAUNCH-02, FLT-LAUNCH-07). No launch is declared
+### DD-016: Launch On Height Alone
+- **Decision:** launch is a filtered pressure below the pad's pressure at
+  15 m (`launch_detected()`; FLT-LAUNCH-02, FLT-LAUNCH-07), as AltOS
+  declares a barometer-only launch on height alone. No launch is declared
   while a USB host is attached and test mode is off (USB-01). T+0 is the
   first sample of the rise more than 50 cm above the pad (FLT-LAUNCH-03).
-- **Why:** barometric drift, a weather front and a board warming on the pad
-  move the pressure slowly, and none of them climbs at 15 m/s; a real rocket
-  15 m up is travelling faster. The speed is the filtered state's (DD-085),
-  so no separate test of height gained within a window is needed.
-- **Why 15 m and 15 m/s:** at the user's direction -- "1s detection delay.
-  This should be worst case with faster launches detecting quicker." Wind
-  gusts on the pad are real pressure, which no filter removes: a gust of
-  δp moves the port's pressure by about Cp·ρ·V·σ_V. In the harness, 30
-  minutes of gusts on three seeds, at 1.2 and 9 Pa of sensor noise:
-
-  | Height, speed | 5:1 rocket declared | Gusts with no false launch |
-  |---|---|---|
-  | 5 m, 15 m/s | 0.74 s | 25 Pa rms |
-  | 10 m, 15 m/s | 0.86 s | 30 Pa rms |
-  | 15 m, 15 m/s | 1.00 s | 40 Pa rms |
-  | 30.48 m, 5 m/s | 1.40 s | 60 Pa rms |
-
-  40 Pa rms is a 19 mph mean wind at 30 % turbulence on the side of a tube
-  (Cp 1.5), and 23 mph on a port facing the wind (Cp 1): the NAR's 20 mph
-  launch limit [SNS-EST-03]. The 5:1 rocket's 1 s is from ignition, about
-  0.85 s from T+0; faster rockets are declared from 0.34 s [FLT-LAUNCH-08].
+- **Why no speed:** on the pad the filtered speed swings by up to 24 m/s in
+  gusts (`docs/lumped_parameter_filter.md`), and the height is what holds a
+  launch back; AltOS's own code ignores the barometer's speed on the pad as
+  "quite noisy". Barometric drift, a weather front and a board warming on
+  the pad move the pressure slowly and never by 15 m. Arming (DD-017) keeps
+  a false launch from firing anything. A filtered pressure of zero is no
+  estimate and no launch.
+- **Why 15 m:** at the user's direction -- "1s detection delay. This should
+  be worst case with faster launches detecting quicker." In the harness the
+  5:1 rocket of FLT-LAUNCH-08 is declared 0.80 to 0.84 s after T+0 at 9 and
+  1.2 Pa of noise, a subsonic one 0.44 to 0.48 s after. Gusts on the pad are
+  real pressure, which no filter removes: 30 minutes at 40 Pa rms declares
+  no launch on either sensor, 60 Pa rms does. 40 Pa rms is a 19 mph mean
+  wind at 30 % turbulence on the side of a tube (Cp 1.5), and 23 mph on a
+  port facing the wind (Cp 1): the NAR's 20 mph launch limit [SNS-EST-03].
 
 ### DD-017: Arming Requires Confirmed Motor Burn
 - **Decision:** the pyros arm once the climb has been faster than 10 m/s and
@@ -59,8 +53,8 @@ sequence has gaps.
 - **Why:** after a false launch from drift the speed is about zero. Without
   the gate the board would arm at once, see the speed at zero, declare
   apogee and fire on the ground. A rocket that only just meets the launch
-  rule, 15 m/s at 15 m, coasts to about 26 m, so the height gate keeps
-  arming off the pad. Arming needs only "slower than 10 m/s", so a rocket
+  rule at 15 m is past it within a second, and a false launch never climbs
+  to 30 m, so the height gate keeps arming off the pad. Arming needs only "slower than 10 m/s", so a rocket
   already descending arms: a sensor that fails near apogee delays arming and
   cannot close its window for good. A suspect sample (DD-050) arms nothing.
 
@@ -96,10 +90,11 @@ sequence has gaps.
     100 ms. Its lockout is that speed under 50 m/s for the last 3 s; a
     faster speed closes it again.
   - `model_decides` in config.ini, true by default: the obeyed estimator's
-    apogee (FLT-APO-07) is the flight's, and the simple filter's stands in
-    while the estimator does not explain the readings, the lockout is open
-    and the speed is a fall (FLT-APO-10). False: the simple filter's alone.
-    The estimators run and log either way.
+    apogee (FLT-APO-07) is the flight's. The simple filter's stands in once
+    the lockout is open and either the estimator does not explain the
+    readings and the speed is a fall, or the estimator explains them and
+    has seen the board still for 2 s (FLT-APO-10, DD-113). False: the simple
+    filter's alone. The estimators run and log either way.
   - The log carries an `EST simple` row a second and `EST simple APOGEE`
     when its rule is met, and `EST apogee by <name>` at the declaration
     (FLT-APO-11).
@@ -122,10 +117,16 @@ sequence has gaps.
     in `mach_tests` a port error twice the model's showed a fake top, a
     hover that opened a latched lockout, then a fast fake fall 28 s before
     the true apogee.
+  - The board still for 2 s: a fall faster than any the model explains,
+    to the ground, opens the lockout only once the board is still. By then
+    the model explains the readings and sees no fall, and without this the
+    flight would declare neither apogee nor landing (issue 78). A real fall
+    under gravity is one the model explains, so this is a chamber's case.
 - **Proven by:** `simple_apogee_tests`; `chamber_flight_tests` (the chamber
   flight declares apogee 0.5 s after its top with the simple filter alone,
-  and once back on the ground with the estimator deciding, and lands both
-  ways); `mach_tests` unchanged.
+  and on its fall with the estimator deciding; a 5 g fall to the ground has
+  the simple filter's apogee once the board is still; all land);
+  `mach_tests` unchanged.
 
 ### DD-110: The Log Starts On The Pad
 - **Decision:** at the user's direction -- "We need to show a log starting
@@ -181,6 +182,98 @@ sequence has gaps.
   to the ceiling and just past it;
   `test_SNS_MAX_01_above_the_ceiling_apogee_is_never_early` at 20 and
   30 km).
+
+### DD-113: The Filters Tuned Against AltOS
+- **Decision:** at the user's direction on the comparison with AltOS
+  (issue 78) -- "take the recommendations." -- and on what the replay of
+  AltOS's flights showed -- "drogue fire cannot pressurize the sensor bay.
+  There is a pressure bulkhead. Fix the model.":
+  - `constacc` is the default estimator; `lumped` logs beside it (DD-092).
+  - No reading is weighed as surer than 0.5 m of height
+    (`PEST_HEIGHT_NOISE_M`), whatever the sensor's own noise: what the model
+    leaves out is metres, not the sensor's decimetres. The tracked noise
+    stays the sensor's (`noise_pa`).
+  - A reading 6σ from the prediction is set aside for the first 50 ms of
+    its run, however many readings that is; a longer run is data
+    (`pest_bad_run_rejects()`, both estimators; SNS-EST-02). A reading set
+    aside says nothing of the model: `constacc` does not count it against
+    explaining the readings.
+  - Apogee (FLT-APO-07): the fall of AltOS's rule, and its error check,
+    added to the model's: the readings must track the filtered height, the
+    average of their squared difference decaying with a time constant of
+    0.16 s staying under (10 m)², or the square of three times the sensor's
+    noise where the air is thin. A reading set aside is no difference. The
+    climb and the fall are judged at 2σ of the rate.
+  - The simple filter also stands in when the model explains the readings
+    and has seen the board still for 2 s (FLT-APO-10, DD-109).
+  - Launch is on height alone (DD-016).
+  - `apogee_lockout`, seconds after T+0, holds any apogee, as AltOS's
+    does (FLT-APO-12).
+  - The sim's charge is a separation's shock: readings off by up to 5 kPa
+    either way for up to 50 ms, at the board's own fire or another board's
+    (`mp_shock_t`, PYR-MODE-06). The sensor sits behind the bay's pressure
+    bulkhead, so no charge pressurises its air. After its own pulse
+    `lumped` sets readings aside for those 50 ms.
+- **Why 0.5 m:** host flights with the floor and the fall margin varied,
+  all suites:
+
+  | Floor | Margin | Result |
+  |---|---|---|
+  | 0.3 m | 2σ | the chamber flight has no apogee; two Mach cases fail |
+  | 0.4 m | 2σ | one port-error flight deploys nothing |
+  | **0.5 m** | **2σ** | **every suite passes** |
+  | 0.7 m | 2σ | the thrust report ends 1.08 s after burnout |
+  | 1 m | 2σ | as 0.7 m, and a still board's speed is past 1 m/s |
+  | 6 m (AltOS's) | 1σ to 3σ | landing, canopy, thrust and below-pad tests fail; at 2σ and 3σ apogee is past 0.5 s |
+  | any | 0 | early on every subsonic profile, by 0.01 to 0.31 s |
+
+  The sensor on a battery is 2.3 to 2.6 Pa, about 0.2 m. The 6σ gate is
+  widened by the floor, not removed: removed, one reading of any value
+  would move a decision (SNS-EST-02).
+- **Why the model's checks stay beside AltOS's:** AltOS's rule alone, fall
+  below zero and the error check, was early on every subsonic profile; with
+  port errors near Mach 1, up to 2 s early, and 30 s early on a low-drag
+  flight, because an error that grows smoothly never trips a 10 m check.
+  Without "explains" the 30 s case stays; without the climb seen, a port
+  error twice the model's fires 32 s early. Baro-only AltOS boards lean on
+  the user's lockout for those flights.
+- **Why the stand-in stays:** with the simple filter removed, port-error
+  flights the model never explains deployed nothing at floors of 0.4, 0.7
+  and 1 m. Standing in without the "not explained" condition fires 1.3 to
+  2 s early on port errors; on a model that has seen the board still for
+  less than 2 s, 0.15 s early at a real top.
+- **Why 50 ms:** AltOS's 100-a-second logs show the separation, by its own
+  charge or the motor's, as a shock of 40 to 90 g with the pressure off by
+  1 to 5 kPa for 10 to 40 ms, then back on the arc. Set aside by count, two
+  readings, a 40 ms shock at the fastest sensor's 73 a second is three.
+  Another board's separation at the true top, a backup altimeter's, held
+  apogee 3 s with the shock counted against the model, and holds it at
+  most 0.15 s now (`flight_profile_tests`). At the user's word, a shock under
+  the gate that leaves the model unexplained for about 1 s is acceptable:
+  "1s is OK".
+- **AltOS's flights (`altos_flight_tests`):** fifteen TeleMetrum logs
+  (`test_data/altos/`, GNU GPL version 2 or later, kept as AltOS ships
+  them). Launch is declared on every one; apogee from 0.08 s before AltOS's
+  own, from its accelerometer, to 3.9 s after, 7 of 15 within 1 s. The
+  later ones follow a separation at the top whose shock is under the gate
+  on that sensor's 15 Pa of noise. Past AltOS's charge its log thins to ten
+  rows a second, and a replay places an apogee there only to within
+  seconds.
+- **A stuck sensor from the first reading:** the estimators are put back to
+  where a run of repeated readings began. A run that began with the first
+  reading put them back to nothing, a filtered pressure of zero, and the
+  board never launched; the snapshot is taken at the start.
+- **The cost of the floor:** a ballistic impact settles the speed later;
+  LANDED comes within 4 s of touchdown, at the user's word: "4s for landing
+  detection is fine."
+- **Proven by:** `estimator_tests`, `estimators_tests`
+  (`test_SNS_EST_09_a_separation_shock_moves_no_estimate`),
+  `apogee_detector_tests`, `launch_detector_tests`, `flight_pad_tests`
+  (`test_SNS_PRES_10_a_sensor_stuck_from_its_first_reading_keeps_that_reading`),
+  `flight_profile_tests`
+  (`test_FLT_APO_01_another_boards_separation_at_the_top_does_not_delay_apogee`,
+  `test_FLT_APO_12_apogee_waits_for_the_users_lockout`), `mach_tests`,
+  `chamber_flight_tests`, `altos_flight_tests`, `lumped_port_check`.
 
 ## Configuration & Features
 
@@ -1052,29 +1145,31 @@ in `docs/outstanding_tasks.md`.
   flight obeys the one `estimator` in config.ini names, and logs what the
   others report and when each would have called apogee [SNS-EST-06..09].
 - **The two carried:**
-  - `lumped`, the default: one equation of motion from pad to ground,
+  - `constacc`, the default: the constant-acceleration Kalman filter of
+    DD-085, behind the interface, tuned as DD-113 sets out.
+  - `lumped`: one equation of motion from pad to ground,
     dv/dt = a_T - g - beta (rho/rho_pad) v|v|, learning a_T and beta from the
     readings (`docs/lumped_parameter_filter.md`). `src/estimator_lumped.c` is
     the C port of `sim/study/lumped.py`, and
-    `sim/study/lumped_port_check.py` flies both on the same readings.
-  - `constacc`: the constant-acceleration Kalman filter of DD-085, behind
-    the interface.
+    `sim/study/lumped_port_check.py` flies both on the same readings. It
+    has flown only in simulation, and logs beside `constacc` until it has
+    real flights.
 - **Replacing one:** in a build, link another table. In the field, set
   `estimator` and restart.
 - **Apogee is the model's verdict:** an estimator says whether its model
   explains the readings (SNS-EST-08). Apogee is the obeyed estimator seen
-  climbing, then seen falling, explained throughout; a fall whose climb was
-  not seen must last 2 s (FLT-APO-07). A port error near Mach 1 is readings
+  climbing, then seen falling, explained throughout, with the readings
+  tracking its height; a fall whose climb was not seen must last 2 s
+  (FLT-APO-07, DD-113). A port error near Mach 1 is readings
   the model does not explain, so nothing is decided on it and none of it is
   the peak (FLT-APO-08). There is no Mach flag.
 - **One missing reading is not a gap:** the second of evidence an estimator
   needs starts again only after 250 ms without a used reading. A sensor that
   repeats itself for eight readings near apogee would otherwise cost 2 s, on
   2 of 1000 flights to 10 km.
-- **Measured, host flights obeying each (`test/test_mach.c`):** hop to 45 km,
-  cold and hot pads, clean ports and three port errors. `lumped`: never
-  early, 0.09 to 0.94 s after apogee. `constacc`: never early, 0.09 to 1.8 s,
-  and later than 2 s on two of the 30 km and 45 km cases (task EST-5).
+- **Measured:** host flights obeying each, hop to 45 km, cold and hot pads,
+  clean ports and three port errors (`test/test_mach.c`): never early with
+  either. The tuning in force and its measurements are DD-113's.
 - **The log:** `EST` text rows, rationed as script output is. PEAK and
   PEAK_AT_LEAST carry the peak, and the web page reads them. Events 5, 6 and
   8 (LOCK, UNLOCK, LOCK_FALLBACK) are not written; the page reads them in a
@@ -1115,8 +1210,8 @@ in `docs/outstanding_tasks.md`.
   appears from nowhere.
 - **No hold on launch or apogee (task T3, 2026-10-03):** with none, every pad,
   flight and Mach test passes, 30 minutes of 30 Pa gusts at 9 Pa of sensor
-  noise included: the filter's own lag and its skipping of one or two bad
-  readings are the guard. `launch_detected()` is a pure function.
+  noise included: the filter's own lag and its setting aside of bad readings
+  for 50 ms are the guard. `launch_detected()` is a pure function.
 - **MK1C's presence pulse is ended by a hardware alarm (task P1):** 8 ms, not
   the next period. A fire drops a test in progress, and no storage write
   starts beside the pulse.
@@ -1219,8 +1314,9 @@ in `docs/outstanding_tasks.md`.
   failure: it is logged and nothing recovers it in flight (SNS-REC-01).
 - **Why:** the user's rulings in the 2026-10 review. A filter on raw
   readings with an unlimited correction lets one reading 3 to 6 kPa low
-  declare a launch; limiting the correction stops one or two bad readings
-  of any size at no cost in delay. The design and what remains to be
+  declare a launch; setting aside readings far from the prediction for
+  50 ms stops a separation's shock of any size at no cost in delay
+  (DD-113). The design and what remains to be
   measured are in `docs/descent_speed_estimator.md` and
   `docs/pressure_domain_flight_math.md`.
 
