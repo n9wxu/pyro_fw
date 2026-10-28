@@ -721,7 +721,8 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
     uint8_t rec[128];
     hal_fs_write(test_log_file, (const char *)rec, flog_put_header(rec, (int)sizeof(rec), &h));
     flog_sample_t s;
-    for (uint16_t i = 0; log_pad_row(&test_log_pad, i, t0_ms, ground_pressure_pa, PAD_IDLE, &s); i++)
+    air_t air = air_over_pad((float)ground_pressure_pa, pp_pad_k());
+    for (uint16_t i = 0; log_pad_row(&test_log_pad, i, t0_ms, &air, PAD_IDLE, &s); i++)
         test_log_keep(&s);
     log_pad_clear(&test_log_pad);
     test_log_active = true;

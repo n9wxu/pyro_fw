@@ -52,7 +52,7 @@ typedef struct {
     float h, v; /* above the pad; up is positive */
     float mach; /* signed like v */
     float max_mach;
-    bool canopy; /* a charge has put a canopy out */
+    bool canopy;   /* a charge has put a canopy out */
     bool thin_air; /* the canopy's rate is canopy_ms in the pad's air, and faster as the air thins */
     bool apogee;
     float apogee_t, apogee_h;
@@ -74,13 +74,14 @@ typedef struct {
 
 float mp_port_error_pa(const mp_port_t *e, float mach, float static_pa);
 
-/* An ejection charge pressurises the avionics bay: peak_pa, decaying with
- * tau_s, from the moment it fires. */
+/* The shock of separation when an ejection charge lights, on the readings of
+ * a sensor behind the bay's bulkhead: they stand off by peak_pa, of either
+ * sign, for duration_s. Flight logs show up to 5 kPa for up to 40 ms. */
 typedef struct {
     float peak_pa;
-    float tau_s;
-} mp_charge_t;
+    float duration_s;
+} mp_shock_t;
 
-float mp_charge_pa(const mp_charge_t *c, float since_fire_s);
+float mp_shock_pa(const mp_shock_t *s, float since_fire_s);
 
 #endif

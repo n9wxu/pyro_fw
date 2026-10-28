@@ -12,9 +12,8 @@ rockets of `test/flight_run.c` (`fly()`), from a 60 m hop to 45 km, in
 A canopy's terminal rate goes as 1/sqrt(rho): a drogue that settles at
 25 m/s over the pad falls at about 200 m/s at 30 km. The descent phases and
 the fire rules judge a descent speed as the pad's air would give it: the
-rate times RT/g, scaled by sqrt(rho / rho_pad), with the 1976 US Standard
-Atmosphere's temperature at each pressure (FLT-AIR-01,
-`atmos_pad_air_ratio()`). The scale is 1 at the pad, 0.95 1 km above a
+true speed scaled by sqrt(rho / rho_pad), the density of the pad's air at
+each height (FLT-AIR-01, DD-114, `air_pad_ratio()`). The scale is 1 at the pad, 0.95 1 km above a
 sea-level pad, 0.27 at 20 km and 0.12 at 30 km. A good drogue at 20 km is not
 taken for a failed one, and a failing one is still caught there
 (`test_FLT_AIR_01_a_good_drogue_at_20_km_is_not_a_failed_one`,
@@ -56,11 +55,11 @@ air:
 
 So the same sensor noise in pascals is about 70 times the noise in speed at
 30 km that it is on a sea-level pad. The estimators average longer as the air
-thins, with no schedule keyed to height: `constacc`'s measurement weight
-falls with the pressure (`src/pressure_estimator.c`), and `lumped` measures
-its height through the same atmosphere, so a reading's weight in height
-falls the same way. The apogee rule's margin is three times the rate's own
-uncertainty, so a noisier rate makes apogee later, not earlier.
+thins, with no schedule keyed to height: each tracks the sensor's noise in
+pascals, and a reading's weight in altitude falls with the square of its
+metres per pascal (`src/altitude_filter.c`, `src/estimator_lumped.c`). The
+apogee rule's margin is twice the speed's own uncertainty, so a noisier
+speed makes apogee later, not earlier.
 
 ### A fall whose climb was not seen
 
@@ -71,19 +70,18 @@ It lasts 2 s before it is apogee (FLT-APO-07).
 Heights come from the 1976 US Standard Atmosphere's layers
 (`src/atmosphere.c`): the troposphere's lapse to 11 km, isothermal to 20 km,
 warming above. Above 11 km the air stops cooling, so a height there needs
-the layers above the troposphere. A speed is the rate of ln p times RT/g
-with the layer's temperature (`atmos_scale_height_m()`). No reported height
-is clamped (SNS-ALT-01, `test_SNS_ALT_01_the_reported_peak_is_not_clamped`).
-The decisions compare pressures (SNS-EST-05), so a height reaches a decision
-only through a setting the operator gave in metres or feet.
+the layers above the troposphere, and so does a speed. No reported height is
+clamped (SNS-ALT-01, `test_SNS_ALT_01_the_reported_peak_is_not_clamped`).
 
-## 4. A high pad reads its AGL triggers about 3 % low (accuracy)
+## 4. AGL triggers in the pad's air (accuracy)
 
-An AGL setting is compared in pressure, through the standard atmosphere from
-the pad's own pressure (SNS-EST-05, `atmos_pressure_above_pa()`): the air
-above a high pad is taken as the standard's air above that pressure. From
-pads at sea level, 1000 m and 2000 m in the standard atmosphere, mains set for
-150, 300 and 600 m fire within 3 % of their height
-(`test_SNS_EST_05_an_agl_trigger_acts_at_its_height_from_any_pad`). On a day
-15 K from standard a height is about 5 % out, as on every barometric
-altimeter.
+An AGL setting is compared with the height in the pad's air: the standard
+atmosphere offset at every height by the pad's temperature (SNS-EST-05,
+DD-114, `air_height_m()`). From pads at sea level, 1000 m and 2000 m in the
+standard atmosphere, mains set for 150, 300 and 600 m fire within 3 % of their
+height (`test_SNS_EST_05_an_agl_trigger_acts_at_its_height_from_any_pad`);
+from a pad 5 K colder than the standard at sea level and one 32 K warmer at
+2000 m, within 1 % and 1 m
+(`test_SNS_EST_05_an_agl_trigger_acts_at_its_height_in_air_off_the_standard`).
+With `standard_atmosphere` set, a day 15 K from standard is about 5 % out, as
+on every barometric altimeter.

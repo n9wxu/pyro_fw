@@ -54,6 +54,11 @@ extern gt_sound_t harness_gt_sounds[32];
 extern int harness_gt_sound_n;
 bool harness_last_said(beep_reason_t reason);
 
+/* Heights above a pad, and back, in the pad's air as the board takes it:
+ * the mock sensor's temperature there [DD-114]. */
+float harness_height_m(float pad_pa, float pressure_pa);
+float harness_pressure_pa(float pad_pa, float height_m);
+
 void write_pad_record(int32_t ground_pa);
 bool pad_record_stored(void);
 

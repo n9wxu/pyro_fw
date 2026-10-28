@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: MIT
  */
 #include "fire_control.h"
-#include "atmosphere.h"
 #include "config.h"
 #include <math.h>
 
@@ -15,11 +14,11 @@ void fire_control_reset(fire_state_t *s) {
     *s = (fire_state_t){0};
 }
 
-/* ── What the rules may believe after a charge [PYR-MODE-06] ───────── */
+/* ── What the rules may believe after a pulse [PYR-MODE-06] ────────── */
 
 typedef struct {
-    float pressure_pa;
-    float rate;
+    float height_m;
+    float speed;
 } believed_t;
 
 static bool guard_running(const fire_state_t *s, const fire_inputs_t *in) {
@@ -27,27 +26,26 @@ static bool guard_running(const fire_state_t *s, const fire_inputs_t *in) {
 }
 
 static believed_t believed_state(const fire_state_t *s, const fire_inputs_t *in) {
-    believed_t b = {in->pressure_pa, in->rate};
+    believed_t b = {in->height_m, in->speed};
     if (!guard_running(s, in))
         return b;
     float dt = (float)(in->now_ms - s->guard_from_ms) / 1000.0f;
-    float fall_curve = G0 / atmos_scale_height_m(in->pressure_pa);
-    float free_fall_rate = s->guard_rate + fall_curve * dt;
-    float free_fall_pa = expf(s->guard_log_pressure + s->guard_rate * dt + 0.5f * fall_curve * dt * dt);
-    if (b.rate > free_fall_rate)
-        b.rate = free_fall_rate;
-    if (b.pressure_pa > free_fall_pa)
-        b.pressure_pa = free_fall_pa;
+    float free_fall_speed = s->guard_speed - G0 * dt;
+    float free_fall_m = s->guard_height_m + s->guard_speed * dt - 0.5f * G0 * dt * dt;
+    if (b.speed < free_fall_speed)
+        b.speed = free_fall_speed;
+    if (b.height_m < free_fall_m)
+        b.height_m = free_fall_m;
     return b;
 }
 
 static float true_descent_ms(const believed_t *b) {
-    return b->rate * atmos_scale_height_m(b->pressure_pa);
+    return -b->speed;
 }
 
 float fire_control_descent_speed_ms(const fire_state_t *s, const fire_inputs_t *in) {
     believed_t b = believed_state(s, in);
-    return true_descent_ms(&b) * atmos_pad_air_ratio(b.pressure_pa, in->pad_pa);
+    return true_descent_ms(&b) * in->pad_ratio;
 }
 
 /* ── First fires: each channel's own trigger [PYR-MODE-01..05] ─────── */
@@ -57,10 +55,9 @@ static bool trigger_met(const fire_plan_t *plan, int i, const fire_inputs_t *in,
     case PYRO_MODE_DELAY:
         return in->now_ms - in->apogee_ms >= plan->trigger_delay_ms[i];
     case PYRO_MODE_AGL:
-        return in->state_known && b->pressure_pa >= atmos_pressure_above_pa(in->pad_pa, plan->trigger_m[i]);
+        return in->state_known && b->height_m <= plan->trigger_m[i];
     case PYRO_MODE_FALLEN:
-        return in->state_known &&
-               b->pressure_pa >= atmos_pressure_pa(atmos_altitude_m(in->peak_pa) - plan->trigger_m[i]);
+        return in->state_known && b->height_m <= in->peak_m - plan->trigger_m[i];
     case PYRO_MODE_SPEED:
         return in->state_known && true_descent_ms(b) >= plan->trigger_ms[i];
     default:
@@ -133,7 +130,7 @@ fire_command_t fire_control_step(fire_state_t *s, const fire_plan_t *plan, const
         return none;
 
     believed_t b = believed_state(s, in);
-    float descent_ms = true_descent_ms(&b) * atmos_pad_air_ratio(b.pressure_pa, in->pad_pa);
+    float descent_ms = true_descent_ms(&b) * in->pad_ratio;
     fire_kind_t owes[2] = {owed(s, plan, 0, in, &b, descent_ms), owed(s, plan, 1, in, &b, descent_ms)};
 
     int i = first_in_line(s, owes);
@@ -146,16 +143,11 @@ void fire_control_pulse_started(fire_state_t *s, uint8_t channel, const fire_inp
     if (channel != 1 && channel != 2)
         return;
     fire_channel_t *c = &s->channel[channel - 1];
-    /* The guard keeps the state from before the first charge of a burst:
-     * a later pulse inside the window sees pressure the first one raised. */
-    if (!guard_running(s, in)) {
-        s->guard_log_pressure = logf(in->pressure_pa);
-        s->guard_rate = in->rate > 0.0f ? in->rate : 0.0f;
-    } else {
-        believed_t b = believed_state(s, in);
-        s->guard_log_pressure = logf(b.pressure_pa);
-        s->guard_rate = b.rate > 0.0f ? b.rate : 0.0f;
-    }
+    /* The guard keeps the state from before the first pulse of a burst: a
+     * later pulse inside the window may read the first one's shock. */
+    believed_t b = believed_state(s, in);
+    s->guard_height_m = b.height_m;
+    s->guard_speed = b.speed < 0.0f ? b.speed : 0.0f;
     s->charge_guard = true;
     s->guard_from_ms = in->now_ms;
     c->fired = true;

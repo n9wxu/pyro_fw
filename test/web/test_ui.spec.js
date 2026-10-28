@@ -254,10 +254,14 @@ test.describe('Configured device', () => {
     await page.fill('#p1refire', '80');
     await page.fill('#emrgSpeed', '130');
     await page.fill('#fireGap', '4000');
+    await page.fill('#apogeeLockout', '6');
+    await page.selectOption('#standardAtmosphere', 'true');
     await page.click('#btnSaveCfg');
     await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 5000 });
     const posts = await (await request.get(`${BASE}/api/_test/config_posts`)).json();
     const ini = posts[posts.length - 1];
+    expect(ini).toContain('apogee_lockout=6');
+    expect(ini).toContain('standard_atmosphere=true');
     expect(ini).toContain('pyro1_refire_speed=80');
     expect(ini).toContain('pyro2_refire_speed=0');
     expect(ini).toContain('emergency_fire_speed=130');

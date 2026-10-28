@@ -97,7 +97,7 @@ void test_GND_TEST_05_a_resumed_flight_outranks_the_switch(void) {
     mock_ground_test_pin = true;
     memset(saw, 0, sizeof(saw));
     for (t = 0; t < 6000u; t++) {
-        mock_pressure.pressure_pa = atmos_pressure_above_pa(PAD_PA, 300.0f - 0.010f * (float)t);
+        mock_pressure.pressure_pa = harness_pressure_pa(PAD_PA, 300.0f - 0.010f * (float)t);
         tick(t);
         saw[ctx.current_state] = true;
     }
@@ -217,7 +217,7 @@ void test_GND_TEST_11_never_flies(void) {
     power_up(true, BOTH);
     run_for(6000u);
     for (int i = 0; i < 20000; i++) {
-        mock_pressure.pressure_pa = atmos_pressure_above_pa(PAD_PA, (float)i * 0.05f);
+        mock_pressure.pressure_pa = harness_pressure_pa(PAD_PA, (float)i * 0.05f);
         run_for(1u);
     }
     TEST_ASSERT_EQUAL(GROUND_TEST, ctx.current_state);

@@ -54,7 +54,7 @@ static void climb(float accel_ms2, uint32_t ms) {
     uint32_t start = now;
     for (uint32_t end = now + ms; now < end; now++) {
         float t = (float)(now - start) / 1000.0f;
-        mock_pressure.pressure_pa = atmos_pressure_above_pa(PAD_PA, 0.5f * accel_ms2 * t * t);
+        mock_pressure.pressure_pa = harness_pressure_pa(PAD_PA, 0.5f * accel_ms2 * t * t);
         tick(now);
     }
 }
@@ -118,7 +118,8 @@ void test_SNS_PRES_17_a_sensor_that_stops_on_the_pad_is_a_general_fault(void) {
     TEST_ASSERT_TRUE(harness_last_said(BR_OK_TO_FLY));
     mock_pressure.sensor_type = 0;
     wait_ms(400);
-    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, ctx.diag & DIAG_SENSOR_LOST, "a gap shorter than half a second is not a lost sensor");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, ctx.diag & DIAG_SENSOR_LOST,
+                                     "a gap shorter than half a second is not a lost sensor");
     wait_ms(1500);
     TEST_ASSERT_TRUE((ctx.diag & DIAG_SENSOR_LOST) != 0);
     TEST_ASSERT_TRUE(harness_last_said(BR_GENERAL_FAULT));
@@ -136,6 +137,35 @@ void test_SNS_PRES_17_a_stuck_sensor_on_the_pad_is_a_general_fault(void) {
     wait_ms(2500);
     TEST_ASSERT_TRUE((ctx.diag & DIAG_SENSOR_STUCK) != 0);
     TEST_ASSERT_TRUE(harness_last_said(BR_GENERAL_FAULT));
+}
+
+/* A sensor repeating itself from its very first reading: the estimators
+ * carry on from that reading, not from nothing. */
+void test_SNS_PRES_10_a_sensor_stuck_from_its_first_reading_keeps_that_reading(void) {
+    to_the_pad(39);
+    mock_noise_rms_pa = 0.0f;
+    reach_pad();
+    wait_ms(5000);
+    TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
+    TEST_ASSERT_INT_WITHIN(2, (int32_t)mock_pressure.pressure_pa, pp_last_filtered_pa());
+}
+
+/* [SNS-PRES-06] A pressure of zero or less has no altitude: it is not fed. */
+void test_SNS_PRES_06_a_reading_of_zero_or_less_is_not_a_reading(void) {
+    to_the_pad(37);
+    reach_pad();
+    wait_ms(2000);
+    float pad_pa = mock_pressure.pressure_pa;
+    mock_noise_rms_pa = 0.0f;
+    mock_pressure.pressure_pa = 0.0f;
+    wait_ms(100);
+    mock_pressure.pressure_pa = -5.0f;
+    wait_ms(100);
+    TEST_ASSERT_INT_WITHIN(5, (int32_t)pad_pa, pp_last_filtered_pa());
+    TEST_ASSERT_INT_WITHIN(5, (int32_t)pad_pa, pp_last_raw_pa());
+    mock_pressure.pressure_pa = pad_pa;
+    wait_ms(2000);
+    TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
 }
 
 /* A board newly on the pad has had no sample yet: that is not a lost sensor. */
@@ -246,7 +276,7 @@ void test_FLT_LAUNCH_02_below_15_m_is_not_a_launch(void) {
     for (; now < start + 4500u; now++) {
         float t = (float)(now - start) / 1000.0f;
         float h = 16.0f * t - 4.9f * t * t;
-        mock_pressure.pressure_pa = atmos_pressure_above_pa(PAD_PA, h > 0.0f ? h : 0.0f);
+        mock_pressure.pressure_pa = harness_pressure_pa(PAD_PA, h > 0.0f ? h : 0.0f);
         tick(now);
     }
     TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
@@ -259,7 +289,7 @@ void test_FLT_LAUNCH_07_a_slow_rise_is_not_a_launch(void) {
     wait_ms(6000);
     uint32_t start = now;
     for (; now < start + 60000u; now++) {
-        mock_pressure.pressure_pa = atmos_pressure_above_pa(PAD_PA, (float)(now - start) / 1000.0f);
+        mock_pressure.pressure_pa = harness_pressure_pa(PAD_PA, (float)(now - start) / 1000.0f);
         tick(now);
     }
     TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
@@ -512,6 +542,8 @@ int main(void) {
     RUN_TEST(test_FLT_RATE_06_every_waiting_sample_is_taken_in_its_loop);
     RUN_TEST(test_SNS_PRES_17_a_sensor_that_stops_on_the_pad_is_a_general_fault);
     RUN_TEST(test_SNS_PRES_17_a_stuck_sensor_on_the_pad_is_a_general_fault);
+    RUN_TEST(test_SNS_PRES_10_a_sensor_stuck_from_its_first_reading_keeps_that_reading);
+    RUN_TEST(test_SNS_PRES_06_a_reading_of_zero_or_less_is_not_a_reading);
     RUN_TEST(test_SNS_PRES_17_a_working_sensor_is_no_fault);
     RUN_TEST(test_FLT_BROWN_01_the_pad_is_recorded_after_ten_seconds);
     RUN_TEST(test_USB_01_no_launch_and_no_record_while_attached);

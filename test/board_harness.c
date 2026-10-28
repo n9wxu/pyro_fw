@@ -16,7 +16,8 @@
 #include "../src/flight_resume.h"
 #include "../src/hal.h"
 #include "../src/pad_claim.h"
-#include "../src/pressure_estimator.h"
+#include "../src/altitude_filter.h"
+#include "../src/atmosphere.h"
 
 /* ── The buzzer, as asked ─────────────────────────────────────────── */
 
@@ -154,11 +155,30 @@ bool booting(void) {
     return ctx.current_state == BOOT_SETTLE || ctx.current_state == BOOT_SENSOR;
 }
 
+/* ── The pad's air ────────────────────────────────────────────────── */
+
+static air_t harness_air(float pad_pa) {
+    return air_over_pad(pad_pa, mock_pressure.temperature_c + 273.15f);
+}
+
+float harness_height_m(float pad_pa, float pressure_pa) {
+    air_t air = harness_air(pad_pa);
+    return air_height_m(&air, atmos_altitude_m(pressure_pa));
+}
+
+float harness_pressure_pa(float pad_pa, float height_m) {
+    air_t air = harness_air(pad_pa);
+    return atmos_pressure_pa(air_altitude_m(&air, height_m));
+}
+
 /* ── The pad record ───────────────────────────────────────────────── */
 
+/* As the pad would have written it: its pressure, the quietest sensor's
+ * noise, and the sensor's temperature. */
 void write_pad_record(int32_t ground_pa) {
     pad_record_t r;
-    pad_record_fill(&r, ground_pa, (uint32_t)(PEST_NOISE_FLOOR_PA * 1000.0f));
+    pad_record_fill(&r, ground_pa, (uint32_t)(AF_NOISE_FLOOR_PA * 1000.0f),
+                    (uint32_t)((mock_pressure.temperature_c + 273.15f) * 100.0f + 0.5f));
     TEST_ASSERT_EQUAL(0, hal_fs_write_file(PAD_RECORD_PATH, (const char *)&r, (int)sizeof(r)));
 }
 

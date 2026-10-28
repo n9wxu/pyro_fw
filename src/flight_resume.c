@@ -6,24 +6,27 @@
 #include "flight_resume.h"
 
 #define PAD_RECORD_MAGIC 0x50594d31u /* "PYM1" */
-#define PAD_RECORD_VERSION 3u
+#define PAD_RECORD_VERSION 4u
 #define RESUME_HEIGHT_CM 3000 /* above the recorded ground by more than the launch height */
 #define RESUME_SPEED_CMS 500  /* nothing in flight is slower; weather on a pad is */
 #define GROUND_PA_MIN 50000
 #define GROUND_PA_MAX 110000
 #define NOISE_MPA_MAX 100000u
+#define PAD_CK_MAX 40000u /* 127 C: the sensor's own limit is 85 C */
 
 /* Not a CRC: the failure to catch is a half-written or erased sector reading
  * back as plausible values. */
 static uint32_t record_sum(const pad_record_t *r) {
-    return r->magic ^ (r->version * 2654435761u) ^ (uint32_t)r->ground_pressure_pa ^ (r->noise_mpa * 40503u);
+    return r->magic ^ (r->version * 2654435761u) ^ (uint32_t)r->ground_pressure_pa ^ (r->noise_mpa * 40503u) ^
+           (r->pad_ck * 2246822519u);
 }
 
-void pad_record_fill(pad_record_t *r, int32_t ground_pressure_pa, uint32_t noise_mpa) {
+void pad_record_fill(pad_record_t *r, int32_t ground_pressure_pa, uint32_t noise_mpa, uint32_t pad_ck) {
     r->magic = PAD_RECORD_MAGIC;
     r->version = PAD_RECORD_VERSION;
     r->ground_pressure_pa = ground_pressure_pa;
     r->noise_mpa = noise_mpa;
+    r->pad_ck = pad_ck;
     r->sum = record_sum(r);
 }
 
@@ -32,7 +35,7 @@ bool pad_record_valid(const pad_record_t *r) {
         return false;
     if (r->ground_pressure_pa < GROUND_PA_MIN || r->ground_pressure_pa > GROUND_PA_MAX)
         return false;
-    if (r->noise_mpa == 0 || r->noise_mpa > NOISE_MPA_MAX)
+    if (r->noise_mpa == 0 || r->noise_mpa > NOISE_MPA_MAX || r->pad_ck > PAD_CK_MAX)
         return false;
     return r->sum == record_sum(r);
 }

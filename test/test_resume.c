@@ -37,11 +37,14 @@ void test_FLT_BROWN_03_a_still_board_is_not_airborne(void) {
 
 void test_FLT_BROWN_01_a_damaged_record_is_no_record(void) {
     pad_record_t r;
-    pad_record_fill(&r, PAD_PA, 1200);
+    pad_record_fill(&r, PAD_PA, 1200, 28815);
     TEST_ASSERT_TRUE(pad_record_valid(&r));
     pad_record_t torn = r;
     torn.ground_pressure_pa ^= 0x100;
     TEST_ASSERT_FALSE(pad_record_valid(&torn));
+    torn = r;
+    torn.pad_ck ^= 0x100;
+    TEST_ASSERT_FALSE_MESSAGE(pad_record_valid(&torn), "the pad's temperature is the record's too");
     memset(&torn, 0xFF, sizeof(torn)); /* an erased sector */
     TEST_ASSERT_FALSE(pad_record_valid(&torn));
     memset(&torn, 0, sizeof(torn));

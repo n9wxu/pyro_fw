@@ -44,7 +44,8 @@ static void check_pad(flight_context_t *ctx, uint32_t now) {
 
 /* [GND-CAL-06] */
 static void follow_a_moved_board(flight_context_t *ctx, const pp_sample_t *s, uint32_t now) {
-    bool still = s->speed_cms < STILL_CMS && s->speed_cms > -STILL_CMS;
+    float speed_cms = s->speed * 100.0f;
+    bool still = speed_cms < STILL_CMS && speed_cms > -STILL_CMS;
     if (pp_ground_rejecting_ms(s->timestamp_ms) < GROUND_RESEED_MS || !still)
         return;
     pp_ground_reseed();
@@ -66,7 +67,7 @@ state_event_t flight_detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     flight_take_sample(ctx, &s, PAD_IDLE);
     flight_note_sensor(ctx, &s, now);
 
-    bool launch = launch_detected(&s, (float)ctx->ground_pressure);
+    bool launch = launch_detected(&s);
     return launch && !flight_grounded_on_usb(ctx) ? SEVT_LAUNCH : SEVT_NONE;
 }
 
@@ -77,7 +78,7 @@ void flight_action_launch(flight_context_t *ctx, uint32_t now) {
     ctx->launch_time = pp_time_of_rise_ms();
     (void)pp_ground_freeze_before(ctx->launch_time);
     ctx->ground_pressure = pp_ground_pressure();
-    ctx->altitude_cm = (int32_t)(atmos_height_above_m((float)ctx->pressure_pa, (float)ctx->ground_pressure) * 100.0f);
+    ctx->altitude_cm = (int32_t)(pp_height_m((float)ctx->pressure_pa) * 100.0f);
     ctx->under_thrust = true;
 
     uint32_t flight_ms = ctx->last_sample - ctx->launch_time;

@@ -60,30 +60,50 @@ float atmos_pressure_pa(float altitude_m) {
     return l->base_pa * powf(l->base_k / temperature_k, G0 / (R_AIR * l->lapse_k_per_m));
 }
 
-float atmos_temperature_k(float pressure_pa) {
-    if (pressure_pa <= 0.0f)
-        return LAYERS[0].base_k;
-    const layer_t *l = layer_of_pressure(pressure_pa);
-    if (isothermal(l))
-        return l->base_k;
-    return l->base_k * powf(pressure_pa / l->base_pa, -R_AIR * l->lapse_k_per_m / G0);
+float atmos_temperature_at_k(float altitude_m) {
+    const layer_t *l = layer_of_altitude(altitude_m);
+    return l->base_k + l->lapse_k_per_m * (altitude_m - l->base_m);
 }
 
-float atmos_height_above_m(float pressure_pa, float pad_pa) {
-    return atmos_altitude_m(pressure_pa) - atmos_altitude_m(pad_pa);
+float atmos_m_per_pa(float altitude_m, float pressure_pa) {
+    return R_AIR * atmos_temperature_at_k(altitude_m) / (G0 * pressure_pa);
 }
 
-float atmos_pressure_above_pa(float pad_pa, float height_m) {
-    return atmos_pressure_pa(atmos_altitude_m(pad_pa) + height_m);
+air_t air_over_pad(float pad_pa, float pad_k) {
+    air_t a = {.pad_pa = pad_pa, .pad_altitude_m = atmos_altitude_m(pad_pa)};
+    float standard_k = atmos_temperature_at_k(a.pad_altitude_m);
+    a.offset_k = pad_k > 0.0f && pad_pa > 0.0f ? pad_k - standard_k : 0.0f;
+    a.pad_k = standard_k + a.offset_k;
+    return a;
 }
 
-float atmos_scale_height_m(float pressure_pa) {
-    return R_AIR * atmos_temperature_k(pressure_pa) / G0;
+/* dz = (R T / g) d(ln p), T the standard's plus the offset: the standard's
+ * altitude, and the offset's share. */
+float air_height_m(const air_t *a, float altitude_m) {
+    if (a->offset_k == 0.0f)
+        return altitude_m - a->pad_altitude_m;
+    float offset_m = R_AIR * a->offset_k / G0 * logf(a->pad_pa / atmos_pressure_pa(altitude_m));
+    return altitude_m - a->pad_altitude_m + offset_m;
 }
 
-float atmos_pad_air_ratio(float pressure_pa, float pad_pa) {
-    if (pressure_pa <= 0.0f || pad_pa <= 0.0f)
+float air_scale(const air_t *a, float altitude_m) {
+    return 1.0f + a->offset_k / atmos_temperature_at_k(altitude_m);
+}
+
+float air_pad_ratio(const air_t *a, float altitude_m) {
+    if (a->pad_pa <= 0.0f)
         return 1.0f;
-    float density_ratio = (pressure_pa / atmos_temperature_k(pressure_pa)) / (pad_pa / atmos_temperature_k(pad_pa));
-    return sqrtf(density_ratio);
+    float density = atmos_pressure_pa(altitude_m) / (atmos_temperature_at_k(altitude_m) + a->offset_k);
+    return sqrtf(density / (a->pad_pa / a->pad_k));
+}
+
+#define INVERSE_STEPS 4
+
+float air_altitude_m(const air_t *a, float height_m) {
+    float altitude_m = a->pad_altitude_m + height_m;
+    if (a->offset_k == 0.0f)
+        return altitude_m;
+    for (int i = 0; i < INVERSE_STEPS; i++)
+        altitude_m -= (air_height_m(a, altitude_m) - height_m) / air_scale(a, altitude_m);
+    return altitude_m;
 }

@@ -6,7 +6,7 @@
 #include "pressure_processing.h"
 #include "atmosphere.h"
 #include "ground_reference.h"
-#include "pressure_estimator.h"
+#include "altitude_filter.h"
 #include <string.h>
 
 #define RING_MASK (PP_RING_SIZE - 1)
@@ -33,7 +33,11 @@ static struct {
     /* Each estimator as it stood when the present reading first appeared. */
     uint8_t at_run_start[ESTIMATORS_MAX][ESTIMATOR_STATE_MAX];
     float sensor_k; /* 0: not known */
+    float pad_k;    /* the sensor's temperature on the pad, until the ground is frozen */
+    bool standard_air;
     gref_t ground;
+    air_t air;
+    float air_pad_k; /* the pad_k the air was made from */
 
     bool have_reading;
     uint32_t last_us;
@@ -67,6 +71,27 @@ uint8_t pp_obeyed(void) {
 
 void pp_note_temperature(float temperature_c) {
     pp.sensor_k = temperature_c + KELVIN;
+    if (pp.ground.tracking)
+        pp.pad_k = pp.sensor_k;
+}
+
+void pp_use_standard_air(bool standard) {
+    pp.standard_air = standard;
+}
+
+float pp_pad_k(void) {
+    return pp.standard_air ? 0.0f : pp.pad_k;
+}
+
+/* The pad's pressure and temperature as they stand: both move until the
+ * ground is frozen at launch. */
+static void follow_the_pad(void) {
+    float pad_pa = (float)gref_pressure(&pp.ground);
+    float pad_k = pp_pad_k();
+    if (pad_pa == pp.air.pad_pa && pad_k == pp.air_pad_k)
+        return;
+    pp.air = air_over_pad(pad_pa, pad_k);
+    pp.air_pad_k = pad_k;
 }
 
 /* ── Calibration ──────────────────────────────────────────────────── */
@@ -105,8 +130,10 @@ static void calibrate_with(int32_t raw_pa) {
     pp.state = PP_RUNNING;
 }
 
-void pp_resume_flight(int32_t ground_pa) {
+void pp_resume_flight(int32_t ground_pa, float pad_k) {
     gref_hold(&pp.ground, ground_pa);
+    pp.pad_k = pad_k;
+    follow_the_pad();
     pp.state = PP_RUNNING;
 }
 
@@ -140,16 +167,18 @@ static bool watch_for_gap_and_stuck(int32_t raw_pa, uint32_t us) {
 
 /* ── The estimators ───────────────────────────────────────────────── */
 
-static void start_estimators(int32_t raw_pa, uint32_t us) {
-    for (uint8_t i = 0; i < estimator_count(); i++)
-        estimator_at(i)->start(raw_pa, us, pp.sensor_k);
-    pp.estimators_started = true;
-    pp.estimators_started_us = us;
-}
-
 static void remember_estimators(void) {
     for (uint8_t i = 0; i < estimator_count(); i++)
         memcpy(pp.at_run_start[i], estimator_at(i)->state, estimator_at(i)->state_size);
+}
+
+/* The first reading may already be the start of a run. */
+static void start_estimators(float altitude_m, float m_per_pa, uint32_t us) {
+    for (uint8_t i = 0; i < estimator_count(); i++)
+        estimator_at(i)->start(altitude_m, m_per_pa, us, pp.sensor_k);
+    pp.estimators_started = true;
+    pp.estimators_started_us = us;
+    remember_estimators();
 }
 
 static void put_estimators_back(void) {
@@ -160,9 +189,9 @@ static void put_estimators_back(void) {
 /* A sensor repeating itself gives no data [SNS-PRES-10]: the repeats the
  * estimators had taken as readings are taken back, and they carry on from
  * what they knew until the readings move. */
-static void feed_estimators(int32_t raw_pa, uint32_t us) {
+static void feed_estimators(float altitude_m, float m_per_pa, uint32_t us) {
     if (!pp.estimators_started) {
-        start_estimators(raw_pa, us);
+        start_estimators(altitude_m, m_per_pa, us);
         return;
     }
     if (pp.stuck_readings == REPEATING_READINGS)
@@ -171,7 +200,7 @@ static void feed_estimators(int32_t raw_pa, uint32_t us) {
         if (pp.repeating)
             estimator_at(i)->no_reading(us);
         else
-            estimator_at(i)->reading(raw_pa, us);
+            estimator_at(i)->reading(altitude_m, m_per_pa, us);
     }
     if (pp.stuck_readings == 1)
         remember_estimators();
@@ -197,43 +226,44 @@ static pp_sample_t *push_sample(void) {
     return s;
 }
 
-static void note_rise(pp_sample_t *s, float ground_pa) {
-    s->risen = (float)s->raw_pa < atmos_pressure_above_pa(ground_pa, RISE_M);
+static void note_rise(pp_sample_t *s) {
+    s->risen = s->raw_height_m > RISE_M;
     if (s->risen && !pp.risen)
         pp.rise_ms = s->timestamp_ms;
     pp.risen = s->risen;
 }
 
-static void for_the_operator(pp_sample_t *s, float ground_pa) {
-    float scale_height_m = atmos_scale_height_m(s->pressure_pa);
-    s->altitude_cm = (int32_t)(atmos_height_above_m(s->pressure_pa, ground_pa) * 100.0f);
-    s->speed_cms = (int32_t)(-s->rate * scale_height_m * 100.0f);
-    s->accel_cms2 = (int32_t)(-s->curve * scale_height_m * 100.0f);
+/* [DD-114] The obeyed estimator's altitude, as height above the pad and
+ * true speeds in the pad's air. */
+static void in_the_pads_air(pp_sample_t *s, const estimate_t *e) {
+    float scale = air_scale(&pp.air, e->altitude_m);
+    s->height_m = air_height_m(&pp.air, e->altitude_m);
+    s->speed = e->speed * scale;
+    s->accel = e->accel * scale;
+    s->speed_sigma = e->speed_sigma * scale;
+    s->pad_ratio = air_pad_ratio(&pp.air, e->altitude_m);
+    s->raw_height_m = air_height_m(&pp.air, s->raw_altitude_m);
 }
 
-static void produce_sample(int32_t raw_pa, uint32_t ms, uint32_t us, bool stuck) {
+static void produce_sample(int32_t raw_pa, float raw_altitude_m, uint32_t ms, uint32_t us, bool stuck) {
     pp_sample_t *s = push_sample();
     for (uint8_t i = 0; i < estimator_count(); i++)
         estimator_at(i)->estimate(&s->by_estimator[i]);
     const estimate_t *e = &s->by_estimator[pp.obeyed];
-    pp.last_filtered = (int32_t)(e->pressure_pa + 0.5f);
+    s->pressure_pa = atmos_pressure_pa(e->altitude_m);
+    pp.last_filtered = (int32_t)(s->pressure_pa + 0.5f);
     gref_feed(&pp.ground, pp.last_filtered, ms);
-    float ground_pa = (float)gref_pressure(&pp.ground);
+    follow_the_pad();
 
     s->timestamp_ms = ms;
     s->timestamp_us = us;
     s->raw_pa = raw_pa;
-    s->pressure_pa = e->pressure_pa;
-    s->rate = e->rate;
-    s->curve = e->curve;
-    s->rate_sigma = e->rate_sigma;
-    s->log_sigma = e->log_sigma;
-    s->noise_pa = e->noise_pa;
+    s->raw_altitude_m = raw_altitude_m;
     s->explains = e->explains;
     s->suspect = pp.suspect || pp.repeating;
     s->sensor_stuck = stuck;
-    note_rise(s, ground_pa);
-    for_the_operator(s, ground_pa);
+    in_the_pads_air(s, e);
+    note_rise(s);
 }
 
 void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
@@ -243,17 +273,18 @@ void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms) {
 void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us) {
     uint32_t ms = (uint32_t)(timestamp_us / 1000u);
     uint32_t us = (uint32_t)timestamp_us;
-    /* The estimators take its logarithm. */
+    /* No altitude belongs to it. */
     if (raw_pressure_pa <= 0)
         return;
     pp.last_raw = raw_pressure_pa;
     bool stuck = watch_for_gap_and_stuck(raw_pressure_pa, us);
-    feed_estimators(raw_pressure_pa, us);
+    float altitude_m = atmos_altitude_m((float)raw_pressure_pa);
+    feed_estimators(altitude_m, atmos_m_per_pa(altitude_m, (float)raw_pressure_pa), us);
 
     if (pp.state == PP_CALIBRATING)
         calibrate_with(raw_pressure_pa);
     else if (pp.state == PP_RUNNING)
-        produce_sample(raw_pressure_pa, ms, us, stuck);
+        produce_sample(raw_pressure_pa, altitude_m, ms, us, stuck);
 }
 
 int pp_available(void) {
@@ -272,6 +303,18 @@ bool pp_read(pp_sample_t *out) {
 
 /* ── The ground reference ─────────────────────────────────────────── */
 
+float pp_height_m(float pressure_pa) {
+    return pp_altitude_height_m(atmos_altitude_m(pressure_pa));
+}
+
+float pp_altitude_height_m(float altitude_m) {
+    return air_height_m(&pp.air, altitude_m);
+}
+
+float pp_pressure_at_m(float height_m) {
+    return atmos_pressure_pa(air_altitude_m(&pp.air, height_m));
+}
+
 int32_t pp_ground_pressure(void) {
     return gref_pressure(&pp.ground);
 }
@@ -281,7 +324,9 @@ bool pp_ground_tracking(void) {
 }
 
 bool pp_ground_freeze_before(uint32_t t_ms) {
-    return gref_freeze_before(&pp.ground, t_ms);
+    bool ok = gref_freeze_before(&pp.ground, t_ms);
+    follow_the_pad();
+    return ok;
 }
 
 bool pp_ground_degraded(void) {
@@ -312,12 +357,12 @@ static estimate_t obeyed_estimate(void) {
     return e;
 }
 
-bool pp_estimate_after(uint32_t min_ms, float *pressure_pa, float *rate) {
+bool pp_estimate_after(uint32_t min_ms, float *altitude_m, float *speed) {
     if (!pp.estimators_started || pp.last_us - pp.estimators_started_us < min_ms * 1000u)
         return false;
     estimate_t e = obeyed_estimate();
-    *pressure_pa = e.pressure_pa;
-    *rate = e.rate;
+    *altitude_m = e.altitude_m;
+    *speed = e.speed;
     return true;
 }
 
@@ -341,7 +386,10 @@ bool pp_newest(pp_sample_t *out) {
 }
 
 float pp_noise_pa(void) {
-    return pp.estimators_started ? obeyed_estimate().noise_pa : PEST_NOISE_FLOOR_PA;
+    if (!pp.estimators_started)
+        return AF_NOISE_FLOOR_PA;
+    estimate_t e = obeyed_estimate();
+    return e.noise_m / atmos_m_per_pa(e.altitude_m, atmos_pressure_pa(e.altitude_m));
 }
 
 uint32_t pp_time_of_rise_ms(void) {

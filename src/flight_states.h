@@ -89,7 +89,10 @@ typedef struct flight_context_t {
     uint32_t last_sample; /* sample time of the newest sample */
     int32_t pressure_pa, altitude_cm, speed_cms;
     int32_t max_altitude_cm, max_speed_cms;
-    float peak_pa; /* the lowest filtered pressure the estimator explained, or the simple filter's top; 0: none yet */
+    /* The highest the estimator explained, or the simple filter's top, and its
+     * pressure for the log. */
+    bool have_peak;
+    float peak_m, peak_pa;
     bool peak_lower_bound;
     /* One per estimator: the obeyed one's is the flight's apogee, the others'
      * are logged [SNS-EST-07]. */
@@ -98,7 +101,8 @@ typedef struct flight_context_t {
     bool estimator_said_apogee[ESTIMATORS_MAX];
     simple_apogee_t simple; /* [FLT-APO-09] */
     bool simple_said_apogee;
-    bool apogee_by_simple; /* the simple filter declared it [FLT-APO-11] */
+    bool apogee_by_simple;      /* the simple filter declared it [FLT-APO-11] */
+    uint32_t model_still_since; /* hold.h: the obeyed estimator explains and sees no motion */
     uint32_t estimators_logged_ms;
     bool arm_height_passed;
     bool pyros_armed;

@@ -80,7 +80,7 @@ scale sweep, 0.1 to 4 times, both signs, on the three fast ones. 696 flights,
 ## 1. The log starts at T+0
 
 T+0 is already the first sample of the rise more than 50 cm above the pad
-(FLT-LAUNCH-03). Launch is declared at 15 m and 15 m/s on the filtered state
+(FLT-LAUNCH-03). Launch is declared at 15 m on the filtered state
 (FLT-LAUNCH-07), and the log opens with the pad's last samples before it
 (DAT-11), so it starts on the ground.
 
@@ -125,10 +125,11 @@ but a spike can make it late by up to 12.7 s. FLT-APO-01 allows the model
 filter 0.5 s.
 
 - **Spikes:** a hold of 0.3 s or more rejects every 20 ms spike at every size
-  and time. A spike lasting longer is the board's own charge in a closed bay,
-  which it knows of (SNS-EST-09): the model filter skips 1 s of readings after
-  each pulse and the pyro rules bound the state to free fall for 2 s
-  (PYR-MODE-06). A motor's ejection is not announced; it ends at separation.
+  and time. A separation's shock lasts up to 50 ms, whichever charge made it:
+  the sensor sits behind the bay's pressure bulkhead, so no charge pressurises
+  its air. The estimators set aside readings far off for 50 ms (SNS-EST-02),
+  and the pyro rules bound the state to free fall for 2 s after the board's
+  own pulse (PYR-MODE-06).
 - **The rise could follow the board's measured noise** (`pp_noise_pa()`)
   instead of a fixed 2 m, so a quiet board declares sooner. Not studied.
 
@@ -152,7 +153,8 @@ flight's lockout releases.
 
 The firmware (DD-109) does not latch it: the lockout is open only while the
 speed has been under 50 m/s for the last 3 s, and the stand-in also needs
-that speed to be a fall. The latched form below fails in `mach_tests`: the
+that speed to be a fall while the model does not explain the readings, or
+the model to have seen the board still for 2 s while it does (DD-113). The latched form below fails in `mach_tests`: the
 low-drag rocket with the port error at −2 times shows a fake top, a fake
 hover that opens the lockout, then a fast fake fall that handed the decision
 over 28 s before the true apogee. The tables in this section are the Python

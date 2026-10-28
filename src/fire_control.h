@@ -32,11 +32,11 @@ typedef struct {
     uint32_t now_ms; /* sample time */
     bool apogee_declared;
     uint32_t apogee_ms;
-    bool state_known; /* false while the sensor gives no data [SNS-PRES-10, SNS-PRES-11] */
-    float pressure_pa;
-    float rate; /* d(ln p)/dt: positive descending */
-    float pad_pa;
-    float peak_pa;     /* the lowest pressure of the flight */
+    bool state_known;  /* false while the sensor gives no data [SNS-PRES-10, SNS-PRES-11] */
+    float height_m;    /* above the pad, in the pad's air [DD-114] */
+    float speed;       /* m/s, up is positive */
+    float pad_ratio;   /* sqrt(rho / rho_pad) here [FLT-AIR-01] */
+    float peak_m;      /* the flight's highest */
     bool pulse_active; /* a channel is energised now */
 } fire_inputs_t;
 
@@ -63,7 +63,7 @@ typedef struct {
      * it, the rules see nothing lower or faster than free fall from here. */
     bool charge_guard;
     uint32_t guard_from_ms;
-    float guard_log_pressure, guard_rate;
+    float guard_height_m, guard_speed;
 } fire_state_t;
 
 void fire_control_reset(fire_state_t *s);

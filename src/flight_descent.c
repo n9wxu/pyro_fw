@@ -18,10 +18,10 @@ fire_inputs_t flight_fire_inputs(const flight_context_t *ctx, const pp_sample_t 
         .apogee_declared = ctx->apogee_declared,
         .apogee_ms = ctx->apogee_time,
         .state_known = s != NULL && !s->suspect,
-        .pressure_pa = s ? s->pressure_pa : (float)ctx->pressure_pa,
-        .rate = s ? s->rate : 0.0f,
-        .pad_pa = (float)ctx->ground_pressure,
-        .peak_pa = ctx->peak_pa > 0.0f ? ctx->peak_pa : (float)ctx->pressure_pa,
+        .height_m = s ? s->height_m : (float)ctx->altitude_cm / 100.0f,
+        .speed = s ? s->speed : 0.0f,
+        .pad_ratio = s ? s->pad_ratio : 1.0f,
+        .peak_m = ctx->have_peak ? ctx->peak_m : (float)ctx->altitude_cm / 100.0f,
         .pulse_active = hal_pyro_is_firing(),
     };
     return in;
@@ -113,7 +113,7 @@ static bool descend(flight_context_t *ctx, uint32_t now, flight_state_t state, p
 }
 
 static bool landed(flight_context_t *ctx, const pp_sample_t *s, uint32_t now) {
-    return landing_detected(&ctx->landing, s, (float)ctx->ground_pressure, now - ctx->descent_start_time,
+    return landing_detected(&ctx->landing, s, now - ctx->descent_start_time,
                             (uint32_t)ctx->config.landing_timeout * 1000u);
 }
 

@@ -9,7 +9,7 @@
 #include "pressure_processing.h"
 #include <stdbool.h>
 
-/* A pure function of the filtered state and the pad's pressure. */
-bool launch_detected(const pp_sample_t *s, float pad_pa);
+/* A pure function of the filtered state. */
+bool launch_detected(const pp_sample_t *s);
 
 #endif

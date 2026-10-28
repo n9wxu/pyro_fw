@@ -9,13 +9,15 @@
  * sim/study/lumped.py is the reference this is checked against.
  *
  * The air is the standard atmosphere's layers through the pad's pressure and
- * the sensor's temperature there.
+ * the sensor's temperature there: the model's height is true metres, and it
+ * reports its state as altitudes [DD-114]. Each reading is the pressure its
+ * altitude is.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "estimator.h"
 #include "atmosphere.h"
-#include "pressure_estimator.h"
+#include "altitude_filter.h"
 #include <math.h>
 #include <string.h>
 
@@ -37,7 +39,6 @@ enum { H, V, S, LB };
 #define LN_BETA_MAX 1.6094f  /* ln 5 */
 #define SPEED_NOISE 0.25f    /* (m/s)^2 per second */
 #define GATE_SIGMAS 6.0f
-#define OUTLIER_RUN_MAX 2
 #define FIT_TAU_S 1.0f
 #define FIT_LIMIT 4.0f
 #define ADAPT_TAU_S 0.2f
@@ -47,8 +48,8 @@ enum { H, V, S, LB };
 #define EVIDENCE_US 1000000u
 #define GAP_US 250000u /* [SNS-PRES-11] */
 #define STEP_MAX_S 0.1f
-#define PULSE_BLANK_US 1000000u /* a charge pressurises the bay */
-#define PULSE_LOOSENS 4.0f      /* variance added to ln(beta): something has deployed */
+#define PULSE_BLANK_US BAD_RUN_US /* the shock of separation */
+#define PULSE_LOOSENS 4.0f        /* variance added to ln(beta): something has deployed */
 #define TROPOPAUSE_M 11000.0f
 #define STRATOSPHERE_M 20000.0f
 #define LAPSE 0.0065f
@@ -57,11 +58,11 @@ enum { H, V, S, LB };
 typedef struct {
     float pad_m, pad_k, pad_pa; /* the pad's standard altitude, and the air there */
     float tropopause_k, tropopause_pa, stratosphere_pa;
-} air_t;
+} model_air_t;
 
 static struct {
     bool started;
-    air_t air;
+    model_air_t air;
     float density_pad; /* as p / T */
     float x[N];
     float p[N][N];
@@ -69,7 +70,7 @@ static struct {
     float noise_var_pa2;
     float last_innovation;
     bool have_last_innovation;
-    uint8_t outlier_run;
+    bad_run_t bad_run;
     float fit, misfit; /* running means of the squared innovation, in sigmas */
     bool reading_run;  /* readings used with no gap between them */
     uint32_t reading_run_since_us, reading_used_us;
@@ -81,7 +82,7 @@ _Static_assert(sizeof(self) <= ESTIMATOR_STATE_MAX, "raise ESTIMATOR_STATE_MAX")
 
 /* ── The air above the pad ────────────────────────────────────────── */
 
-static void air_from_pad(air_t *a, float pad_pa, float pad_k) {
+static void model_air_from_pad(model_air_t *a, float pad_pa, float pad_k) {
     a->pad_pa = pad_pa;
     a->pad_k = pad_k;
     a->pad_m = atmos_altitude_m(pad_pa);
@@ -90,7 +91,7 @@ static void air_from_pad(air_t *a, float pad_pa, float pad_k) {
     a->stratosphere_pa = a->tropopause_pa * expf(-G0 * (STRATOSPHERE_M - TROPOPAUSE_M) / (R_AIR * a->tropopause_k));
 }
 
-static float air_temperature_k(const air_t *a, float h) {
+static float model_air_temperature_k(const model_air_t *a, float h) {
     float z = a->pad_m + h;
     if (z <= TROPOPAUSE_M)
         return a->pad_k - LAPSE * h;
@@ -99,9 +100,9 @@ static float air_temperature_k(const air_t *a, float h) {
     return a->tropopause_k + STRATO_LAPSE * (z - STRATOSPHERE_M);
 }
 
-static float air_pressure_pa(const air_t *a, float h) {
+static float model_air_pressure_pa(const model_air_t *a, float h) {
     float z = a->pad_m + h;
-    float k = air_temperature_k(a, h);
+    float k = model_air_temperature_k(a, h);
     if (z <= TROPOPAUSE_M)
         return a->pad_pa * powf(k / a->pad_k, G0 / (R_AIR * LAPSE));
     if (z <= STRATOSPHERE_M)
@@ -125,9 +126,9 @@ static float thrust_of(float s) {
 
 /* The drag coefficient at this height: beta, by the air's density there. */
 static float drag_at(float h, float ln_beta, float *scale_height_m) {
-    float k = air_temperature_k(&self.air, h);
+    float k = model_air_temperature_k(&self.air, h);
     *scale_height_m = R_AIR * k / G0;
-    return expf(ln_beta) * (air_pressure_pa(&self.air, h) / k) / self.density_pad;
+    return expf(ln_beta) * (model_air_pressure_pa(&self.air, h) / k) / self.density_pad;
 }
 
 static void propagate_covariance(const float f[N][N]) {
@@ -239,21 +240,20 @@ static void track_noise(float innovation, float reading_pa, float dt) {
     if (self.have_last_innovation) {
         float d = (innovation - self.last_innovation) * reading_pa;
         self.noise_var_pa2 += fminf(1.0f, dt / NOISE_TAU_S) * (0.5f * d * d - self.noise_var_pa2);
-        self.noise_var_pa2 = fmaxf(self.noise_var_pa2, PEST_NOISE_FLOOR_PA * PEST_NOISE_FLOOR_PA);
+        self.noise_var_pa2 = fmaxf(self.noise_var_pa2, AF_NOISE_FLOOR_PA * AF_NOISE_FLOOR_PA);
     }
 }
 
 static void take(float reading_pa, float dt) {
-    float predicted_pa = air_pressure_pa(&self.air, self.x[H]);
-    float gain_h = -G0 / (R_AIR * air_temperature_k(&self.air, self.x[H])); /* d(ln p)/dh */
+    float predicted_pa = model_air_pressure_pa(&self.air, self.x[H]);
+    float gain_h = -G0 / (R_AIR * model_air_temperature_k(&self.air, self.x[H])); /* d(ln p)/dh */
     float innovation = log1pf((reading_pa - predicted_pa) / predicted_pa);
     float variance = gain_h * gain_h * self.p[H][H] + self.noise_var_pa2 / (reading_pa * reading_pa);
     float sigmas = innovation / sqrtf(variance);
     bool far = fabsf(sigmas) > GATE_SIGMAS;
 
-    /* One or two readings far off are not used, and say nothing of the model. */
-    if (far && self.outlier_run < OUTLIER_RUN_MAX) {
-        self.outlier_run++;
+    /* A bad run is not used, and says nothing of the model. */
+    if (bad_run_rejects(&self.bad_run, far, self.t_us)) {
         self.have_last_innovation = false;
         return;
     }
@@ -266,7 +266,6 @@ static void take(float reading_pa, float dt) {
     }
     self.reading_used_us = self.t_us;
     if (!far) {
-        self.outlier_run = 0;
         track_noise(innovation, reading_pa, dt);
     }
     self.last_innovation = innovation;
@@ -276,19 +275,20 @@ static void take(float reading_pa, float dt) {
 
 /* ── The interface ────────────────────────────────────────────────── */
 
-static void start(int32_t reading_pa, uint32_t t_us, float pad_temp_k) {
+static void start(float altitude_m, float m_per_pa, uint32_t t_us, float pad_temp_k) {
+    (void)m_per_pa;
     memset(&self, 0, sizeof(self));
-    float pad_pa = (float)reading_pa;
-    air_from_pad(&self.air, pad_pa, pad_temp_k > 0.0f ? pad_temp_k : atmos_temperature_k(pad_pa));
+    float pad_pa = atmos_pressure_pa(altitude_m);
+    model_air_from_pad(&self.air, pad_pa, pad_temp_k > 0.0f ? pad_temp_k : atmos_temperature_at_k(altitude_m));
     self.density_pad = pad_pa / self.air.pad_k;
     self.x[S] = logf(expm1f(G0 / A0)); /* at rest: the pad holds it up at 1 g */
     self.x[LB] = logf(BETA_PRIOR);
-    float h_sigma = (R_AIR * self.air.pad_k / G0) * PEST_NOISE_FLOOR_PA / pad_pa;
+    float h_sigma = (R_AIR * self.air.pad_k / G0) * AF_NOISE_FLOOR_PA / pad_pa;
     self.p[H][H] = h_sigma * h_sigma;
     self.p[V][V] = 0.01f;
     self.p[S][S] = 0.01f;
     self.p[LB][LB] = BETA_PRIOR_SD * BETA_PRIOR_SD;
-    self.noise_var_pa2 = PEST_NOISE_FLOOR_PA * PEST_NOISE_FLOOR_PA;
+    self.noise_var_pa2 = AF_NOISE_FLOOR_PA * AF_NOISE_FLOOR_PA;
     self.fit = self.misfit = 1.0f;
     self.t_us = self.reading_used_us = t_us;
     self.started = true;
@@ -305,7 +305,8 @@ static void no_reading(uint32_t t_us) {
     end_run_at_a_gap();
 }
 
-static void reading(int32_t reading_pa, uint32_t t_us) {
+static void reading(float altitude_m, float m_per_pa, uint32_t t_us) {
+    (void)m_per_pa;
     if (self.blanked && (int32_t)(t_us - self.blank_until_us) < 0) {
         no_reading(t_us);
         return;
@@ -315,7 +316,7 @@ static void reading(int32_t reading_pa, uint32_t t_us) {
     if (dt <= 0.0f)
         return;
     end_run_at_a_gap();
-    take((float)reading_pa, dt);
+    take(atmos_pressure_pa(altitude_m), dt);
     keep_parameters_in_range();
 }
 
@@ -325,17 +326,21 @@ static void pulse(uint32_t t_us) {
     self.loosen_beta = PULSE_LOOSENS;
 }
 
+/* Metres of the model's height to metres of altitude: the standard's
+ * temperature there over the model's air. */
 static void estimate(estimate_t *out) {
     float h = self.x[H], v = self.x[V];
     float scale_height_m;
     float k = drag_at(h, self.x[LB], &scale_height_m);
     float accel = thrust_of(self.x[S]) - G0 - k * v * fabsf(v);
-    out->pressure_pa = air_pressure_pa(&self.air, h);
-    out->rate = -v / scale_height_m;
-    out->curve = -accel / scale_height_m;
-    out->rate_sigma = sqrtf(fmaxf(self.p[V][V], 0.0f)) / scale_height_m;
-    out->log_sigma = sqrtf(fmaxf(self.p[H][H], 0.0f)) / scale_height_m;
-    out->noise_pa = sqrtf(self.noise_var_pa2);
+    float pressure_pa = model_air_pressure_pa(&self.air, h);
+    out->altitude_m = atmos_altitude_m(pressure_pa);
+    float per_m = atmos_temperature_at_k(out->altitude_m) / model_air_temperature_k(&self.air, h);
+    out->speed = v * per_m;
+    out->accel = accel * per_m;
+    out->speed_sigma = sqrtf(fmaxf(self.p[V][V], 0.0f)) * per_m;
+    out->altitude_sigma = sqrtf(fmaxf(self.p[H][H], 0.0f)) * per_m;
+    out->noise_m = sqrtf(self.noise_var_pa2) * atmos_m_per_pa(out->altitude_m, pressure_pa);
     out->explains = self.fit < FIT_LIMIT && self.reading_run && self.t_us - self.reading_run_since_us >= EVIDENCE_US;
 }
 

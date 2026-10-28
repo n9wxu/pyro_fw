@@ -11,8 +11,8 @@ extern const estimator_vt estimator_constacc_vt;
 extern const estimator_vt estimator_lumped_vt;
 
 static const estimator_vt *const estimators_vt[] = {
-    &estimator_lumped_vt,
     &estimator_constacc_vt,
+    &estimator_lumped_vt,
 };
 #define COUNT (uint8_t)(sizeof(estimators_vt) / sizeof(estimators_vt[0]))
 _Static_assert(sizeof(estimators_vt) / sizeof(estimators_vt[0]) <= ESTIMATORS_MAX, "raise ESTIMATORS_MAX");

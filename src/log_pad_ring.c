@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: MIT
  */
 #include "log_pad_ring.h"
-#include "atmosphere.h"
 
 #define GAP_MS 1000u
 
@@ -34,7 +33,7 @@ uint16_t log_pad_count(const log_pad_ring_t *r) {
     return r->count;
 }
 
-bool log_pad_row(const log_pad_ring_t *r, uint16_t i, uint32_t t0_ms, int32_t ground_pa, uint8_t state,
+bool log_pad_row(const log_pad_ring_t *r, uint16_t i, uint32_t t0_ms, const air_t *air, uint8_t state,
                  flog_sample_t *out) {
     if (i >= r->count)
         return false;
@@ -43,7 +42,7 @@ bool log_pad_row(const log_pad_ring_t *r, uint16_t i, uint32_t t0_ms, int32_t gr
     *out = (flog_sample_t){
         .time_ms = (int16_t)(uint16_t)(e->t_ms - (uint16_t)t0_ms),
         .pressure_pa = e->pressure_pa,
-        .altitude_cm = (int32_t)(atmos_height_above_m((float)e->pressure_pa, (float)ground_pa) * 100.0f),
+        .altitude_cm = (int32_t)(air_height_m(air, atmos_altitude_m((float)e->pressure_pa)) * 100.0f),
         .raw_pa = e->pressure_pa + e->raw_less_pressure_pa,
         .temp_dc = (int16_t)(r->first_temp_dc + r->temp_less_first_dc[at]),
         .state = state,

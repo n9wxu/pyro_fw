@@ -53,17 +53,22 @@ static void rig_start(rig_t *r) {
     r->now_ms = 100000;
 }
 
+/* sqrt(rho / rho_pad) this high over a standard pad [FLT-AIR-01]. */
+static float pad_ratio_at(float height_m) {
+    air_t air = air_over_pad(PAD_PA, 0.0f);
+    return air_pad_ratio(&air, air_altitude_m(&air, height_m));
+}
+
 static fire_inputs_t rig_inputs(const rig_t *r) {
-    float pa = atmos_pressure_above_pa(PAD_PA, r->height_m);
     fire_inputs_t in = {
         .now_ms = r->now_ms,
         .apogee_declared = r->apogee,
         .apogee_ms = r->apogee_ms,
         .state_known = r->known,
-        .pressure_pa = pa,
-        .rate = r->speed_ms / atmos_scale_height_m(pa),
-        .pad_pa = PAD_PA,
-        .peak_pa = atmos_pressure_above_pa(PAD_PA, r->peak_m),
+        .height_m = r->height_m,
+        .speed = -r->speed_ms,
+        .pad_ratio = pad_ratio_at(r->height_m),
+        .peak_m = r->peak_m,
         .pulse_active = r->pulsing,
     };
     return in;
@@ -277,7 +282,7 @@ void test_FLT_AIR_01_a_good_canopy_in_thin_air_is_not_refired(void) {
     r.plan.emergency_ms = 50.0f;
     r.height_m = 30000.0f;
     r.peak_m = 30000.0f;
-    float thin = atmos_pad_air_ratio(atmos_pressure_above_pa(PAD_PA, 30000.0f), PAD_PA);
+    float thin = pad_ratio_at(30000.0f);
     r.speed_ms = 25.0f / thin;
     TEST_ASSERT_TRUE_MESSAGE(r.speed_ms > 100.0f, "the true speed is far above both rules' speeds");
     rig_apogee(&r);
@@ -418,11 +423,12 @@ void test_PYR_DEPLOY_02_two_refiring_channels_take_turns(void) {
     }
 }
 
-/* ── A charge in the bay [PYR-MODE-06] ────────────────────────────── */
+/* ── A separation's shock [PYR-MODE-06] ──────────────────────────── */
 
-/* The first charge pressurises the bay: for a moment the pressure reads the
- * rocket hundreds of metres lower and falling at hundreds of metres a
- * second. Neither a trigger nor a speed rule may act on it. */
+/* The first separation shocks the readings: for a moment the pressure reads
+ * the rocket hundreds of metres lower and falling at hundreds of metres a
+ * second. Neither a trigger nor a speed rule may act on it, held here ten
+ * times longer than any shock lasts. */
 void test_PYR_MODE_06_a_charge_does_not_bring_a_trigger_forward(void) {
     rig_t r;
     rig_start(&r);
@@ -434,7 +440,7 @@ void test_PYR_MODE_06_a_charge_does_not_bring_a_trigger_forward(void) {
     rig_apogee(&r);
     rig_run(&r, 100);
     TEST_ASSERT_EQUAL_INT(1, r.pulses);
-    /* The bay, 400 m "lower" and "falling" at 300 m/s, for half a second. */
+    /* 400 m "lower" and "falling" at 300 m/s, for half a second. */
     float true_height = r.height_m;
     for (int i = 0; i < 25; i++) {
         r.height_m = true_height - 400.0f;
@@ -444,7 +450,7 @@ void test_PYR_MODE_06_a_charge_does_not_bring_a_trigger_forward(void) {
             r.pulsing = false;
         fire_inputs_t in = rig_inputs(&r);
         fire_command_t c = fire_control_step(&r.state, &r.plan, &in);
-        TEST_ASSERT_EQUAL_MESSAGE(FIRE_NONE, c.kind, "nothing fires on the charge's pressure");
+        TEST_ASSERT_EQUAL_MESSAGE(FIRE_NONE, c.kind, "nothing fires on the shock");
     }
     r.height_m = true_height;
     r.speed_ms = 20.0f;

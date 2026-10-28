@@ -4,13 +4,9 @@
  * SPDX-License-Identifier: MIT
  */
 #include "launch_detector.h"
-#include "atmosphere.h"
 
 #define LAUNCH_HEIGHT_M 15.0f
-#define LAUNCH_SPEED_MS 15.0f
 
-bool launch_detected(const pp_sample_t *s, float pad_pa) {
-    bool high = s->pressure_pa < atmos_pressure_above_pa(pad_pa, LAUNCH_HEIGHT_M);
-    bool climbing = -s->rate * atmos_scale_height_m(s->pressure_pa) > LAUNCH_SPEED_MS;
-    return high && climbing;
+bool launch_detected(const pp_sample_t *s) {
+    return s->height_m > LAUNCH_HEIGHT_M;
 }

@@ -4,8 +4,9 @@ How the flight computer keeps a supersonic rocket from firing on corrupted
 pressure. There is no Mach flag: each estimator says whether its model
 explains the readings, and its apogee is not decided on readings it does
 not explain, and none of them is its peak (DD-092; SNS-EST-08, FLT-APO-07,
-FLT-APO-08). The simple filter stands in for it only after 3 s of measured
-speed under 50 m/s (FLT-APO-10, DD-109). The estimators are in `docs/flight_states.md`, "The
+FLT-APO-08), and the readings must track its height (DD-113). The simple
+filter stands in for it only after 3 s of measured speed under 50 m/s
+(FLT-APO-10, DD-109). The estimators are in `docs/flight_states.md`, "The
 estimators", and `docs/lumped_parameter_filter.md`. The host tests are
 `mach_tests` (`test/test_mach.c`) on the plant in `sim/mach_plant.c`.
 
@@ -42,53 +43,46 @@ the rocket, so neither can be tuned per flight.
    rocket's motion produces a port error: its readings break from the
    prediction, the model stops explaining them, and apogee waits.
 2. **Apogee is the top of a climb that was seen.** The obeyed estimator must
-   be seen climbing and then seen falling, each by more than three standard
-   deviations of its rate, explaining the readings throughout (FLT-APO-07,
+   be seen climbing and then seen falling, each by more than two standard
+   deviations of its speed, explaining the readings throughout (FLT-APO-07,
    `apogee_detected()`). Losing the explanation forgets the climb. A fall
    whose climb was not seen lasts 2 s before it is apogee.
-3. **The peak is only what was explained.** The reported peak is the lowest
-   filtered pressure the estimator explained, marked a lower bound when the
+3. **The peak is only what was explained.** The reported peak is the highest
+   filtered height the estimator explained, marked a lower bound when the
    climb to apogee was not seen (FLT-APO-08).
 
 None of the rules has a Mach number, a release or a fallback in it. A port
 error that makes a boost look like a fall breaks the arc it would need, and
 the climb to a real apogee is seen again once the readings settle.
 
-## Physics in raw pressure
+## Physics in altitude
 
-The hydrostatic equation, dp/dz = -ρg with ρ = p/(RT), makes the fractional
-pressure rate proportional to the vertical speed:
+The hydrostatic equation, dp/dz = -ρg with ρ = p/(RT), turns each reading
+into an altitude, and the estimators report its speed and acceleration
+(DD-114). g = 9.80665 m/s², R = 287.05 J/(kg·K), γ = 1.4. One unit of Mach is
+√(γRT): 357 m/s at 318 K and 295 m/s at 216 K. The envelope is a 10-45 °C
+pad, 0-2000 m elevation, to 30 km, so the local air runs from 216 K at the
+tropopause to 318 K on a hot pad.
 
-  -ṗ/p = g·v/(R·T)
-
-g = 9.80665 m/s², R = 287.05 J/(kg·K), γ = 1.4. The estimators report the
-rate of ln p, which is ṗ/p, and its curvature; a speed is the rate times
-RT/g at that pressure (`atmos_scale_height_m()`). One unit of Mach is
--ṗ/p = g·√(γ/(RT)): 0.0384 s⁻¹ at 318 K and 0.0465 s⁻¹ at 216 K. The envelope
-is a 10-45 °C pad, 0-2000 m elevation, to 30 km, so the local air runs from
-216 K at the tropopause to 318 K on a hot pad.
-
-Decelerating upward, p̈/p ≈ g·a/(R·T): 1 g is 0.00105-0.00155 in p̈/p.
-
-Sign convention: climbing, ṗ is negative. A coasting rocket's -ṗ shrinks
-toward zero, so its p̈ is positive.
+Sign convention: climbing, the speed is positive. A coasting rocket's speed
+shrinks toward zero, and near apogee its acceleration is -1 g.
 
 ## Thresholds
 
 | Purpose | Comparison | Where |
 |---|---|---|
-| `constacc` explains | for the last second, no reading more than 4 σ from its prediction, no gap of more than 250 ms, and the curvature of ln p under 0.005 s⁻², about 3.5 g | `src/estimator_constacc.c` |
+| `constacc` explains | for the last second, no reading more than 4 σ from its prediction, no gap of more than 250 ms, and its acceleration under 3.5 g | `src/estimator_constacc.c` |
 | `lumped` explains | the running mean, over about a second, of the squared normalised innovation under 4, and a second of used readings with no gap of more than 250 ms | `src/estimator_lumped.c` |
-| A reading not used | more than 6 σ from the prediction, unless it is the third in a row | both estimators |
-| Climbing, falling | the rate beyond three times its own standard deviation | `src/apogee_detector.c` |
+| A reading not used | more than 6 σ from the prediction, for the first 50 ms of a run (SNS-EST-02) | both estimators |
+| Climbing, falling | the speed beyond twice its own standard deviation | `src/apogee_detector.c` |
 | A fall whose climb was not seen | 2 s | `src/apogee_detector.c` |
-| Arming | below 0.9965 p_pad, about 30 m, having passed 10 m/s and then slowed below it | `src/flight_ascent.c` (FLT-ASC-04, FLT-ASC-08) |
+| Arming | above 30 m, having passed 10 m/s and then slowed below it | `src/flight_ascent.c` (FLT-ASC-04, FLT-ASC-08) |
 
-- **The curvature bound** (physical). Near apogee the speed is near zero,
+- **The acceleration bound** (physical). Near apogee the speed is near zero,
   drag with it, and only gravity acts: 1 g. A port error that turns a climb
   into an apparent fall within a second or two needs far more
   (`docs/apogee_without_a_mach_flag.md`).
-- **The 3-sigma margin** (statistical). It widens with the rate's own
+- **The 2-sigma margin** (statistical). It widens with the speed's own
   uncertainty, so more noise makes apogee later, not earlier.
 - **Arming** (design constant). Apogee is taken once the channels are armed,
   and no channel arms below about 30 m (FLT-ASC-08).
@@ -96,10 +90,10 @@ toward zero, so its p̈ is positive.
 ## The estimator
 
 Both estimators run on the raw readings, every one (SNS-EST-07); the flight
-obeys the one `estimator` names, `lumped` by default.
+obeys the one `estimator` names, `constacc` by default.
 
-- `constacc` is a constant-acceleration Kalman filter on ln p
-  (`src/pressure_estimator.c`, `docs/descent_speed_estimator.md`). It
+- `constacc` is a constant-acceleration Kalman filter on the readings'
+  altitudes (`src/altitude_filter.c`, `docs/descent_speed_estimator.md`). It
   follows whatever acceleration the readings show, so a port error moves
   its state, and its "explains" test is what keeps a decision off it.
 - `lumped` carries one equation of motion with a lumped thrust and drag
@@ -108,10 +102,10 @@ obeys the one `estimator` names, `lumped` by default.
   innovations.
 
 Each tracks the sensor's noise from its innovations, never below 1.2 Pa. A
-step in the pressure -- a shock crossing the ports, an ejection charge --
-ends the explanation until the readings agree with the model again. That is
-the intended behaviour. After the board's own pulse `lumped` takes no
-readings for 1 s: the charge pressurises the bay.
+step in the pressure -- a shock crossing the ports -- ends the explanation
+until the readings agree with the model again. That is the intended
+behaviour. A separation's shock, up to 50 ms, is set aside and ends nothing
+(SNS-EST-02): the sensor sits behind the bay's pressure bulkhead.
 
 ## The machine
 
@@ -123,8 +117,8 @@ No flag and no state for one. What the flight carries:
   estimator's apogee is the flight's. `/api/status` shows the obeyed one and
   whether it explains (`estimator`, `estimator_explains`).
 - **The reported peak** (`max_alt_cm`: telemetry, status, the landing's
-  beep-out) is the height of the lowest filtered pressure the obeyed
-  estimator explained, on samples the sensor's own faults do not make
+  beep-out) is the highest filtered height the obeyed estimator explained,
+  on samples the sensor's own faults do not make
   suspect (FLT-APO-08). It is marked a lower bound when the climb to apogee
   was not seen: the log carries PEAK or PEAK_AT_LEAST, and `/api/status`
   shows `peak_lower_bound`.
@@ -143,9 +137,9 @@ No flag and no state for one. What the flight carries:
 | Apogee waits while the model does not explain the readings | DD-092 |
 | Apogee is the top of a climb that was seen | FLT-APO-07 |
 | A fall whose climb was not seen lasts 2 s before it is apogee | A level set low in the boost would deploy low |
-| Launch at 15 m and 15 m/s on the filtered state (FLT-LAUNCH-07) | A rule on p̈ misses launches under about 2.1-2.4 g net |
+| Launch at 15 m on the filtered state (FLT-LAUNCH-07) | A rule on p̈ misses launches under about 2.1-2.4 g net |
 | The re-fire and emergency rules (PYR-REFIRE-01, FLT-EMRG-01) | DD-082 |
-| The configured modes, each compared in pressure (SNS-EST-05) | AGL is that comparison; the others are the operator's choice |
+| The configured modes, each compared on heights in the pad's air (SNS-EST-05) | AGL is that comparison; the others are the operator's choice |
 
 ## Assumptions and remaining risks
 

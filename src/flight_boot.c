@@ -33,16 +33,16 @@ static bool not_resumed(flight_context_t *ctx, not_resumed_t why) {
     return true;
 }
 
-static void resume_flight(flight_context_t *ctx, const pad_record_t *record, float pressure_pa, uint32_t now) {
-    pp_resume_flight(record->ground_pressure_pa);
+static void resume_flight(flight_context_t *ctx, const pad_record_t *record, float altitude_m, uint32_t now) {
+    pp_resume_flight(record->ground_pressure_pa, (float)record->pad_ck / 100.0f);
     flight_make_plan(ctx);
     flight_read_pyro_health(ctx);
     ctx->diag |= DIAG_RESUMED;
     ctx->ground_pressure = record->ground_pressure_pa;
     ctx->launch_time = now;
     ctx->last_sample = now;
-    ctx->pressure_pa = (int32_t)pressure_pa;
-    ctx->altitude_cm = (int32_t)(atmos_height_above_m(pressure_pa, (float)record->ground_pressure_pa) * 100.0f);
+    ctx->pressure_pa = (int32_t)atmos_pressure_pa(altitude_m);
+    ctx->altitude_cm = (int32_t)(pp_altitude_height_m(altitude_m) * 100.0f);
     ctx->max_altitude_cm = ctx->altitude_cm;
     hal_log_start(&ctx->config, ctx->ground_pressure, now);
     hal_log_sample(0, ctx->pressure_pa, ctx->altitude_cm, ASCENT, 0, EVT_LAUNCH);
@@ -61,11 +61,12 @@ static bool decide_resume(flight_context_t *ctx, uint32_t now, state_event_t *ev
     if (now - ctx->boot_timer >= RESUME_DEADLINE_MS)
         return not_resumed(ctx, NOT_RESUMED_NO_SAMPLE);
 
-    float pressure_pa, rate;
-    if (!pp_estimate_after(RESUME_ESTIMATE_MS, &pressure_pa, &rate))
+    float altitude_m, speed;
+    if (!pp_estimate_after(RESUME_ESTIMATE_MS, &altitude_m, &speed))
         return false;
-    int32_t height_cm = (int32_t)(atmos_height_above_m(pressure_pa, (float)record.ground_pressure_pa) * 100.0f);
-    int32_t speed_cms = (int32_t)(-rate * atmos_scale_height_m(pressure_pa) * 100.0f);
+    air_t air = air_over_pad((float)record.ground_pressure_pa, (float)record.pad_ck / 100.0f);
+    int32_t height_cm = (int32_t)(air_height_m(&air, altitude_m) * 100.0f);
+    int32_t speed_cms = (int32_t)(speed * air_scale(&air, altitude_m) * 100.0f);
     resume_verdict_t verdict = resume_assess(true, height_cm, speed_cms);
     ctx->resume = (uint8_t)verdict;
     if (verdict == RESUME_NOT_FLYING)
@@ -73,7 +74,7 @@ static bool decide_resume(flight_context_t *ctx, uint32_t now, state_event_t *ev
     if (verdict == RESUME_STILL)
         return true;
 
-    resume_flight(ctx, &record, pressure_pa, now);
+    resume_flight(ctx, &record, altitude_m, now);
     ctx->speed_cms = speed_cms;
     *event = verdict == RESUME_ASCENT ? SEVT_RESUME_ASCENT : SEVT_RESUME_DESCENT;
     return true;

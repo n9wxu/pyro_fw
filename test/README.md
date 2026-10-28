@@ -52,9 +52,11 @@ than one build: the boot, pad and recorded-flight suites run on all three.
 | `telemetry_tests` | `test_telemetry.c` | the downlink of a whole flight, read as a ground station reads it |
 | `mach_tests` | `test_mach.c` | the Mach flag: supersonic flights, port errors, failed sensors (below) |
 | `recorded_flight_tests` | `test_recorded_flight.c` | the OpenRocket export in `test_data/`, pad to landed (TST-02) |
+| `chamber_flight_tests` | `test_chamber_flight.c` | a pressure chamber run in `test_data/`, and a fall too fast for the model (FLT-APO-08..11) |
+| `altos_flight_tests` | `test_altos_flights.c` | fifteen real flights from AltOS in `test_data/altos/`: launch, and apogee against AltOS's own (TST-02) |
 | `atmosphere_tests` | `test_atmosphere.c` | the 1976 standard atmosphere (`atmosphere.c`) |
 | `physics_tests` | `test_physics.c` | the simulators' rocket (`sim/physics.c`) and its atmosphere against the published tables |
-| `launch_detector_tests` | `test_launch_detector.c` | the launch trigger alone (`launch_detected()`): 100 ft and 5 m/s |
+| `launch_detector_tests` | `test_launch_detector.c` | the launch trigger alone (`launch_detected()`): 15 m above the pad |
 | `ground_test_tests` | `test_ground_test.c` | ground test mode through the flight software (DD-087) |
 | `ground_test_seq_tests` | `test_ground_test_seq.c` | its schedule and switch, a loop at a time |
 | `buzzer_tests` | `test_buzzer.c` | the pattern player driven through `hal_tasks_tick()`, and the beep store |

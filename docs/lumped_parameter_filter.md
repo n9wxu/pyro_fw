@@ -3,7 +3,8 @@
 The study asked for under task HA-1 on 2026-10-03: "Do a complete study. I
 prefer a single 'simple' model over layers of special cases." It answers
 `docs/apogee_without_a_mach_flag.md`, option E. The filter is in the firmware
-as `lumped`, the default estimator ("The port (DD-092)" below). The reference
+as `lumped`, which logs beside the default, `constacc` ("The port (DD-092)"
+below). The reference
 filter, its harness and every number in the study are in
 `sim/study/lumped*.py`; the raw output is `sim/study/lumped_results.txt`.
 
@@ -62,7 +63,8 @@ Two things make the two parameters "slightly separable", in the user's words:
 
 Three rules read the filter. None has a phase or a Mach number in it.
 
-1. **Launch:** 15 m above the pad and climbing at 15 m/s (FLT-LAUNCH-07).
+1. **Launch:** 15 m above the pad and climbing at 15 m/s, the study's rule;
+   the firmware's is the height alone (FLT-LAUNCH-07).
 2. **Apogee:** the filter has been seen climbing, then is seen falling, by
    more than three times its own uncertainty in speed, with the model
    explaining the readings all the way. If the climb was not seen (a sensor
@@ -139,8 +141,6 @@ filter is still moving thrust out and drag in. Rule 3 is false during it.
 | Canopy at 20 m/s, from 760 m, 20 km and 30 km | 0.3 to 0.7 m/s | 5.1 m/s |
 | No canopy at all, to 385 m/s | 0.2 to 0.7 m/s | 3.5 m/s |
 | Canopy lost at 500 m | 35 m/s reported 1.7 s after the loss | |
-| Drogue then main, with a 3 kPa charge in the bay at each fire | 1.9 m/s | 19 m/s, in the second after the main opens |
-| The same with the bay's readings used at once | 36 to 51 m/s | 1954 m/s |
 
 SNS-EST-04 asks for a lost canopy to be seen within 2 s: 1.7 s.
 
@@ -231,7 +231,7 @@ zero the thrust may go.
 
 - **The study is in Python.** The firmware's own suites (`test/flight_run.c`)
   have more cases: restarts, late loops, stalls, ground test. They fly the C
-  port, the default estimator.
+  port as well as the default estimator.
 - **The port model is the only evidence** about port errors.
 - **Cost is estimated, not measured.** State 3 to 4, covariance 6 to 10
   terms, and about six more transcendental calls a reading. In Python it is
@@ -247,20 +247,22 @@ zero the thrust may go.
 ## The port (DD-092)
 
 `src/estimator_lumped.c` is `sim/study/lumped.py` in C, single precision,
-behind `src/estimator.h`. It is the default estimator. `constacc` flies beside
-it, and both are fed every reading (SNS-EST-07).
+behind `src/estimator.h`. It flies beside `constacc`, the default, and both
+are fed every reading (SNS-EST-07). Until it has real flights it logs and is
+not obeyed (DD-113).
 
 - **Checked against the reference:** `sim/study/lumped_port_check.py` flies
   54 of the study's flights, replays the readings the reference was fed
   through the C code, and compares the two. On the pad they agree to a few
-  parts in a million. Over 875,000 readings, where both explain them, 0.17 %
-  have rates more than half a standard deviation apart, and they disagree
-  on explaining 0.04 % of the time. At a burnout or a canopy opening neither
+  parts in a million. Over 875,000 readings, where both explain them, 1.3 %
+  have rates more than half a standard deviation apart, nearly all on the
+  draggy flights with a port that fakes a descent, and they disagree on
+  explaining 0.07 % of the time. At a burnout or a canopy opening neither
   explains the readings, the filter is thrown about, and a rounding
   difference grows for a few seconds, differently on each compiler; nothing
   is decided there. The check holds the totals, not each flight.
 - **The pad's temperature** is the sensor's own at the first reading.
-- **The peak** is the lowest filtered pressure the model explained
+- **The peak** is the highest filtered height the model explained
   (FLT-APO-08).
 - **The second of evidence** starts again after 250 ms without a used
   reading, not at one missing reading. Restarted at one, it costs 2 s on 2 of

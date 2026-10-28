@@ -398,7 +398,7 @@ typedef struct {
 static void sim_start_call(void *arg) {
     sim_start_t *a = arg;
     const flight_context_t *ctx = flight_get_context();
-    a->rc = bench_flight_start(&a->p, (float)pp_ground_pressure(), flight_get_state() == PAD_IDLE,
+    a->rc = bench_flight_start(&a->p, (float)pp_ground_pressure(), pp_pad_k(), flight_get_state() == PAD_IDLE,
                                ctx && ctx->test_mode, time_us_64());
 }
 
@@ -452,7 +452,7 @@ static void serve_api_sim(http_conn_t *hc) {
                      "\"alt_m\":%.1f,\"peak_m\":%.1f,\"pa\":%.1f,\"ground_pa\":%.1f,\"fires\":[%lu,%lu],"
                      "\"apogee_m\":%.0f,\"boost_s\":%.2f,\"drogue_ms\":%.1f,\"main_alt_m\":%.0f,"
                      "\"main_ms\":%.1f,\"thin_air\":%s,\"pad_s\":%.1f,\"drogue_fails\":%s,\"main_fails\":%s,"
-                     "\"estimate\":{\"pa\":%.2f,\"rate\":%.6f,\"curve\":%.7f,\"rate_sigma\":%.6f,\"noise_pa\":%.3f,"
+                     "\"estimate\":{\"pa\":%.2f,\"height_m\":%.2f,\"speed\":%.3f,\"accel\":%.3f,\"speed_sigma\":%.3f,"
                      "\"valid\":%s,\"suspect\":%s,\"stuck\":%s,\"explains\":%s},"
                      "\"estimator\":\"%s\"}",
                      s.flying ? "true" : "false", s.mocked ? "true" : "false", (unsigned long)s.flights,
@@ -461,7 +461,7 @@ static void serve_api_sim(http_conn_t *hc) {
                      (double)s.p.apogee_m, (double)s.p.boost_s, (double)s.p.drogue_ms, (double)s.p.main_alt_m,
                      (double)s.p.main_ms, s.p.thin_air ? "true" : "false", (double)s.p.pad_s,
                      s.p.drogue_fails ? "true" : "false", s.p.main_fails ? "true" : "false", (double)e.pressure_pa,
-                     (double)e.rate, (double)e.curve, (double)e.rate_sigma, (double)e.noise_pa,
+                     (double)e.height_m, (double)e.speed, (double)e.accel, (double)e.speed_sigma,
                      estimated ? "true" : "false", e.suspect ? "true" : "false", e.sensor_stuck ? "true" : "false",
                      e.explains ? "true" : "false", estimator_at(pp_obeyed())->name);
     http_respond(hc, 200, JSON, hc->work, (uint32_t)n);

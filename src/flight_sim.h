@@ -30,6 +30,7 @@
 #ifndef FLIGHT_SIM_H
 #define FLIGHT_SIM_H
 
+#include "atmosphere.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -56,7 +57,7 @@ typedef struct {
     fsim_params_t p;
     float accel; /* boost, m/s^2 */
     float h_burn, v_burn, t_burn, t_apogee;
-    float pad_pa, pad_msl; /* the pad's pressure, and its altitude in the standard atmosphere */
+    air_t air; /* the pad's, as the board's heights take it [DD-114] */
     /* descent, stepped forward as time is asked for */
     float t_desc, h_desc, v_desc;
     fsim_phase_t phase;
@@ -64,14 +65,15 @@ typedef struct {
 } fsim_t;
 
 /* False for a profile that cannot be flown (no boost, apogee not above the
- * main deployment, a rate of zero). ground_pa: what the pad reads. */
-bool fsim_start(fsim_t *s, const fsim_params_t *p, float ground_pa);
+ * main deployment, a rate of zero). ground_pa: what the pad reads; pad_k:
+ * the pad's temperature the board's heights are in, 0 for the standard's. */
+bool fsim_start(fsim_t *s, const fsim_params_t *p, float ground_pa, float pad_k);
 
 /* Altitude above the pad t seconds after start. Descent is integrated
  * forward, so t must not go backwards once the descent has begun. */
 float fsim_altitude(fsim_t *s, float t);
 
-/* The pressure there. */
+/* The pressure there, in the pad's air. */
 float fsim_pressure(fsim_t *s, float t);
 
 fsim_phase_t fsim_phase(const fsim_t *s);

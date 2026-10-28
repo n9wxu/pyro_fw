@@ -28,10 +28,11 @@ typedef struct {
     uint32_t version;
     int32_t ground_pressure_pa;
     uint32_t noise_mpa; /* the sensor noise measured on the pad, in mPa */
+    uint32_t pad_ck;    /* the pad's temperature the heights were in, centikelvin; 0: the standard's */
     uint32_t sum;
 } pad_record_t;
 
-void pad_record_fill(pad_record_t *r, int32_t ground_pressure_pa, uint32_t noise_mpa);
+void pad_record_fill(pad_record_t *r, int32_t ground_pressure_pa, uint32_t noise_mpa, uint32_t pad_ck);
 bool pad_record_valid(const pad_record_t *r);
 
 typedef enum {
