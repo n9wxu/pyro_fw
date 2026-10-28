@@ -121,6 +121,7 @@ CUTS = {
     ("flight_set_usb_attached", "buzzer_play_altitude"): "it returns at once while airborne",
     ("buzzer_play_altitude", "buzzer_tick"): "stored for the buzzer's task, which ticks it after landing",
     ("buzzer_play_spec", "buzzer_tick"): "stored for the buzzer's task: a fault ends flight first",
+    ("follow_the_pad", "air_over_pad"): "the pad's pressure and temperature are frozen at launch: it returns first",
 }
 
 # Paths that end the program: followed no further.
