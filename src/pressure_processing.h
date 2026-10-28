@@ -20,17 +20,18 @@ typedef struct {
     uint32_t timestamp_ms;
     uint32_t timestamp_us; /* the same instant; wraps, so differences only */
     int32_t raw_pa;
+    float raw_altitude_m; /* the reading's altitude (atmosphere.h) */
+    float raw_height_m;   /* and its height above the pad */
 
-    /* The filtered state, of the estimator the flight obeys. rate and curve
-     * are of ln(pressure): a rate of -1/H per metre per second of climb, H
-     * the air's scale height. */
-    float pressure_pa;
-    float rate;
-    float curve;
-    float rate_sigma;
-    float log_sigma; /* of ln(pressure) */
-    float noise_pa;
-    bool explains; /* the estimator's model accounts for the readings [SNS-EST-08] */
+    /* The filtered state, of the estimator the flight obeys: above the pad,
+     * in the pad's air, never clamped [SNS-ALT-01, DD-114]. */
+    float pressure_pa; /* of the filtered altitude, for the log */
+    float height_m;
+    float speed; /* m/s, up is positive */
+    float accel;
+    float speed_sigma;
+    float pad_ratio; /* sqrt(rho / rho_pad) here [FLT-AIR-01] */
+    bool explains;   /* the estimator's model accounts for the readings [SNS-EST-08] */
 
     /* Every estimator's state at this reading, in estimator_at()'s order
      * [SNS-EST-07]. */
@@ -39,11 +40,6 @@ typedef struct {
     bool suspect; /* a gap or a stuck sensor within the last second [SNS-PRES-10, SNS-PRES-11] */
     bool sensor_stuck;
     bool risen; /* this reading is more than 50 cm above the pad [FLT-LAUNCH-03] */
-
-    /* For the operator: relative to the pad, never clamped [SNS-ALT-01]. */
-    int32_t altitude_cm;
-    int32_t speed_cms; /* up is positive */
-    int32_t accel_cms2;
 } pp_sample_t;
 
 /* Samples between intake and the flight's steps. The collector holds four
@@ -57,8 +53,10 @@ void pp_init(void);
  * index [SNS-EST-06]. pp_init() chooses the default. */
 void pp_obey(uint8_t estimator);
 uint8_t pp_obeyed(void);
-/* The sensor's own temperature, for the estimators' first reading. */
+/* The sensor's own temperature: on the pad, the pad's air [DD-114]. */
 void pp_note_temperature(float temperature_c);
+/* Heights in the standard atmosphere, not the pad's air [CFG-08]. */
+void pp_use_standard_air(bool standard);
 /* The board has pulsed a pyro channel [SNS-EST-09]. */
 void pp_note_pulse(void);
 void pp_feed(int32_t raw_pressure_pa, uint32_t timestamp_ms);
@@ -81,12 +79,18 @@ uint32_t pp_ground_reseeds(void);
 
 /* Samples against a ground known beforehand, without calibrating
  * [FLT-BROWN-06]. */
-void pp_resume_flight(int32_t ground_pa);
+void pp_resume_flight(int32_t ground_pa, float pad_k);
+float pp_pad_k(void); /* the pad's temperature the heights are in; 0: the standard's */
+/* A pressure's height above the pad, in the pad's air, an altitude's, and
+ * the pressure at a height. */
+float pp_height_m(float pressure_pa);
+float pp_altitude_height_m(float altitude_m);
+float pp_pressure_at_m(float height_m);
 
 /* ── The estimate before calibration, for the resume decision ─────── */
 
 /* False until the estimators have run for min_ms on readings. */
-bool pp_estimate_after(uint32_t min_ms, float *pressure_pa, float *rate);
+bool pp_estimate_after(uint32_t min_ms, float *altitude_m, float *speed);
 
 /* ── Status ───────────────────────────────────────────────────────── */
 

@@ -1244,7 +1244,7 @@ static struct {
     uint16_t next_row;
     uint16_t part; /* bytes of the record being written that are out */
     uint32_t t0_ms;
-    int32_t ground_pa;
+    air_t air;
 } log_open;
 
 void hal_log_pad(uint32_t t_ms, int32_t pressure_pa) {
@@ -1282,7 +1282,7 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
     log_open.next_row = 0;
     log_open.part = 0;
     log_open.t0_ms = t0_ms;
-    log_open.ground_pa = ground_pressure_pa;
+    log_open.air = air_over_pad((float)ground_pressure_pa, pp_pad_k());
     __dmb();
     log_ring.state = LOG_RUNNING;
 }
@@ -1329,7 +1329,7 @@ static bool log_write_opening(bool to_host) {
         log_open.header_done = true;
     }
     flog_sample_t s;
-    while (log_pad_row(&log_open.pad, log_open.next_row, log_open.t0_ms, log_open.ground_pa, PAD_IDLE, &s)) {
+    while (log_pad_row(&log_open.pad, log_open.next_row, log_open.t0_ms, &log_open.air, PAD_IDLE, &s)) {
         uint8_t rec[FLOG_SAMPLE_BYTES];
         int n = flog_put_sample(rec, (int)sizeof(rec), &s);
         if (!log_write_record(to_host, rec, (uint16_t)n))

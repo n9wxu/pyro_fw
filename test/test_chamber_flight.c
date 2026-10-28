@@ -72,8 +72,8 @@ static float fast_fall_pa(float t_s) {
     if (t_s <= top_s)
         return recorded_pa(t_s);
     float fall_s = t_s - top_s;
-    float h = atmos_height_above_m(top_pa, pad_pa) - 0.5f * FAST_FALL_MSS * fall_s * fall_s;
-    return h > 0.0f ? atmos_pressure_above_pa(pad_pa, h) : pad_pa;
+    float h = harness_height_m(pad_pa, top_pa) - 0.5f * FAST_FALL_MSS * fall_s * fall_s;
+    return h > 0.0f ? harness_pressure_pa(pad_pa, h) : pad_pa;
 }
 
 static struct {
@@ -89,7 +89,7 @@ static bool logged(const char *row) {
 }
 
 static float height_of(float pa) {
-    return atmos_height_above_m(pa, pad_pa);
+    return harness_height_m(pad_pa, pa);
 }
 
 static void fly(float (*profile_pa)(float t_s), bool model_decides) {

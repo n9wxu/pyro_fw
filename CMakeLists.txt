@@ -646,7 +646,7 @@ pyro_module_suite(apogee_detector_tests test/test_apogee_detector.c src/apogee_d
 pyro_module_suite(simple_apogee_tests test/test_simple_apogee.c src/simple_apogee.c src/atmosphere.c)
 pyro_module_suite(log_pad_ring_tests test/test_log_pad_ring.c src/log_pad_ring.c src/atmosphere.c)
 pyro_module_suite(estimators_tests test/test_estimators.c src/estimator_table.c src/estimator_lumped.c
-                  src/estimator_constacc.c src/pressure_estimator.c src/atmosphere.c)
+                  src/estimator_constacc.c src/altitude_filter.c src/atmosphere.c)
 pyro_module_suite(fire_control_tests test/test_fire_control.c src/fire_control.c src/atmosphere.c)
 
 # The simulators' rocket and its atmosphere against USSA76.

@@ -47,8 +47,7 @@ motion. Something else has to: what a rocket can physically do.
 
 **What a rocket can do near apogee.** At the top of a flight the speed is
 near zero, so drag is near zero and the only force is gravity. The
-deceleration is 1 g. In the estimator's own units that is a curvature of
-ln(p) of g / H, about 0.0012 to 0.0016 /s², at every height. A port error
+deceleration is 1 g, at every height. A port error
 turning a 300 m/s climb into an apparent fall in two seconds needs 15 g or
 more, and it arrives as a break the estimator's innovations show.
 
@@ -89,7 +88,7 @@ dependence on the level the flag was set at.
 
 - **The reported peak.** A port that reads low leaves a false lowest
   pressure: taken as the peak, it reads 3157 m for a true 1526 m. The peak
-  is the lowest filtered pressure the estimator explained (FLT-APO-08,
+  is the highest filtered height the estimator explained (FLT-APO-08,
   `test_FLT_APO_08_the_peak_is_from_what_the_estimator_explained`), and
   FALLEN measures from it.
 - **A gap across apogee.** Half a second without samples across apogee
@@ -108,9 +107,9 @@ dependence on the level the flag was set at.
 
 ## Does the estimator already model a ballistic flight with drag?
 
-`constacc` does not. `pest_update()` in `src/pressure_estimator.c` is
-kinematic: its state is ln(p), its rate and its curvature, and its only
-assumption is that the curvature changes slowly (a white-jerk process noise, `JERK_PSD`). It has no
+`constacc` does not. `af_update()` in `src/altitude_filter.c` is
+kinematic: its state is altitude, its speed and its acceleration, and its only
+assumption is that the acceleration changes slowly (a white-jerk process noise, `JERK_PSD`). It has no
 gravity and no drag. It reports whatever acceleration the readings show,
 which is why it follows a port error.
 

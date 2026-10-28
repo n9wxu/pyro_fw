@@ -53,17 +53,22 @@ static void rig_start(rig_t *r) {
     r->now_ms = 100000;
 }
 
+/* sqrt(rho / rho_pad) this high over a standard pad [FLT-AIR-01]. */
+static float pad_ratio_at(float height_m) {
+    air_t air = air_over_pad(PAD_PA, 0.0f);
+    return air_pad_ratio(&air, air_altitude_m(&air, height_m));
+}
+
 static fire_inputs_t rig_inputs(const rig_t *r) {
-    float pa = atmos_pressure_above_pa(PAD_PA, r->height_m);
     fire_inputs_t in = {
         .now_ms = r->now_ms,
         .apogee_declared = r->apogee,
         .apogee_ms = r->apogee_ms,
         .state_known = r->known,
-        .pressure_pa = pa,
-        .rate = r->speed_ms / atmos_scale_height_m(pa),
-        .pad_pa = PAD_PA,
-        .peak_pa = atmos_pressure_above_pa(PAD_PA, r->peak_m),
+        .height_m = r->height_m,
+        .speed = -r->speed_ms,
+        .pad_ratio = pad_ratio_at(r->height_m),
+        .peak_m = r->peak_m,
         .pulse_active = r->pulsing,
     };
     return in;
@@ -277,7 +282,7 @@ void test_FLT_AIR_01_a_good_canopy_in_thin_air_is_not_refired(void) {
     r.plan.emergency_ms = 50.0f;
     r.height_m = 30000.0f;
     r.peak_m = 30000.0f;
-    float thin = atmos_pad_air_ratio(atmos_pressure_above_pa(PAD_PA, 30000.0f), PAD_PA);
+    float thin = pad_ratio_at(30000.0f);
     r.speed_ms = 25.0f / thin;
     TEST_ASSERT_TRUE_MESSAGE(r.speed_ms > 100.0f, "the true speed is far above both rules' speeds");
     rig_apogee(&r);

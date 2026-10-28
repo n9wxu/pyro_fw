@@ -17,7 +17,6 @@ typedef struct {
 
 /* descent_ms is how long the descent has lasted; timeout_ms of 0 turns the
  * timeout off. */
-bool landing_detected(landing_detector_t *d, const pp_sample_t *s, float pad_pa, uint32_t descent_ms,
-                      uint32_t timeout_ms);
+bool landing_detected(landing_detector_t *d, const pp_sample_t *s, uint32_t descent_ms, uint32_t timeout_ms);
 
 #endif

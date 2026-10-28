@@ -39,8 +39,8 @@ firmware, the host suites and the simulators all build):
 | `flight_ground_test.c` | ground test mode |
 | `flight_outputs.c` | telemetry, the pad record |
 | `estimator.h`, `estimator_table.c` | the estimator interface, and the estimators this build carries |
-| `estimator_lumped.c`, `estimator_constacc.c` (with `pressure_estimator.c`) | the two estimators: pressure, its rate, its acceleration, and whether the model explains the readings |
-| `pressure_processing.c` | readings in to every estimator, samples out from the obeyed one: gaps, a stuck sensor, the ground reference |
+| `estimator_lumped.c`, `estimator_constacc.c` (with `altitude_filter.c`) | the two estimators: altitude, its speed, its acceleration, and whether the model explains the readings |
+| `pressure_processing.c` | readings in to every estimator as altitudes, samples out from the obeyed one as heights in the pad's air: gaps, a stuck sensor, the ground reference |
 | `fire_control.c`, `fire_plan.c` | the fire rules, and the plan the configuration and the board make |
 | `launch_detector.c`, `apogee_detector.c`, `landing_detector.c`, `descent_phase.c` | one detector each |
 | `ground_reference.c` | the pad's pressure |
@@ -52,11 +52,11 @@ firmware, the host suites and the simulators all build):
 | `config.c` | the configuration |
 | `beep_codes.c`, `beep_store.c` | what the buzzer says, and the beep table's file |
 | `board_selftest.c` | whether the image is on the board it was built for |
-| `atmosphere.c` | the 1976 standard atmosphere |
+| `atmosphere.c` | the 1976 standard atmosphere, and the pad's air |
 
-Every comparison is made in pressure (SNS-EST-05). An altitude is computed for
-people: telemetry, the log, `/api/status`. It is relative to the pad, is not
-clamped, and may be negative.
+Every comparison is made on a height above the pad or a speed, in the pad's
+air (SNS-EST-05, DD-114), and the same heights go to telemetry, the log and
+`/api/status`. A height is not clamped, and may be negative.
 
 ## Transition table
 
@@ -83,9 +83,11 @@ FAULT, GROUND_TEST and LANDED are left only by a restart.
 ## The filtered state
 
 The obeyed estimator (below) gives the filtered state from the raw readings:
-the filtered pressure, the rate and curvature of ln(pressure), and whether
-its model explains the readings (`src/estimator.h`, DD-085, DD-092). Each
-estimator measures the sensor's noise from the readings, and does not assume
+the filtered altitude, its speed and its acceleration, and whether its model
+explains the readings (`src/estimator.h`, DD-085, DD-092), and
+`pressure_processing.c` turns them to a height above the pad and true speeds
+in the pad's air (DD-114). Each estimator measures the sensor's noise from
+the readings, in pascals, and does not assume
 it, but weighs no reading as surer than 0.5 m of height (DD-113). A
 reading more than six of its own standard deviations from the prediction is
 set aside for the first 50 ms of its run: a separation's shock changes
@@ -136,8 +138,8 @@ no record is written (USB-01, USB-02).
 
 ## ASCENT
 
-The channels arm once the rocket has passed about 30 m (0.9965 of the pad's
-pressure) and, having climbed faster than 10 m/s, slows below it (FLT-ASC-07,
+The channels arm once the rocket has passed 30 m and, having climbed faster
+than 10 m/s, slows below it (FLT-ASC-07,
 FLT-ASC-08).
 
 Apogee is the obeyed estimator going over the top, once the channels are

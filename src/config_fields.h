@@ -39,6 +39,7 @@
     X(STR, estimator, "estimator", "constacc", 0, 0)                                                                   \
     X(BOOL, model_decides, "model_decides", true, 0, 0)                                                                \
     X(U16, apogee_lockout, "apogee_lockout", 0, 0, 65535)                                                              \
+    X(BOOL, standard_atmosphere, "standard_atmosphere", false, 0, 0)                                                   \
     X(U8, landing_timeout, "landing_timeout", 60, 0, 255)                                                              \
     X(BOOL, lua_enabled, "lua_enabled", false, 0, 0)                                                                   \
     X(U32, lua_baud, "lua_baud", 9600, 300, 921600)                                                                    \

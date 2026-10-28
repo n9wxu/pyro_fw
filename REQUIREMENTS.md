@@ -29,10 +29,11 @@ Each derived requirement traces to its parent with `← parent_id`.
 - **Enabled channel**: a pyro channel whose pads the pin assignment gives to
   the flight software and whose configured mode is other than none.
 - **Flight**: from launch declared to landing declared.
-- **Filtered state**: the obeyed estimator's estimate of the pressure, its
-  rate and its acceleration (SNS-EST-01, SNS-EST-06). Every flight comparison
-  is made in pressure.
-- **Descent speed**: the filtered descent rate, expressed as the speed the
+- **Filtered state**: the obeyed estimator's estimate of the altitude, its
+  speed and its acceleration (SNS-EST-01, SNS-EST-06). Every flight
+  comparison is made on its height above the pad, in the pad's air
+  (SNS-EST-05).
+- **Descent speed**: the filtered descent speed, expressed as the speed the
   same body would have in the pad's air (FLT-AIR-01).
 - **Pulse**: one energising of one channel.
 - **Sample time**: time counted on the samples' own stamps (SNS-PRES-08).
@@ -104,18 +105,18 @@ filter on the raw readings runs beside it and stands in when the model does
 not converge, or decides alone when `model_decides` is false
 (`docs/apogee_fallback.md`).
 
-- **FLT-APO-07**: The obeyed estimator's apogee shall be declared when it is seen falling by more than two standard deviations of its rate, with its model explaining the readings, after it was seen climbing by as much with its model explaining them since; and while the readings track its filtered height: the average of their squared difference, decaying with a time constant of 0.16 s ‡, stays under (10 m)² ‡ or the square of three times the sensor's noise, whichever is larger. A reading SNS-EST-02 sets aside is no difference. A fall whose climb was not seen that way shall last 2 s ‡ before it is apogee. ← FLT-APO-01, SYS-DEPLOY-04, DD-092, DD-113
-- **FLT-APO-08**: The reported peak shall be the height of the lowest filtered pressure the estimator explained, marked a lower bound when the climb to apogee was not seen; for an apogee the simple filter declared, the height of its lowest median. The flight log shall carry it as a PEAK row, or PEAK_AT_LEAST for a lower bound, and the web UI's Flight Data summary shall show that row's height, marked "at least" for a lower bound. ← FLT-ASC-01, DD-092
-- **FLT-APO-09**: A simple filter shall run from launch on the median of the last three raw readings the sensor is believed on. Its apogee is that median standing more than 2 m ‡ below the lowest median since launch for 0.5 s ‡, once a median has been more than 30 m above the pad; a new lowest median starts the 0.5 s again. It shall not declare before the true apogee, and on a flight below Mach 0.8 it shall declare within 1.5 s ‡ after it, at up to 35 Pa ‡ of sensor noise. With `model_decides` false its apogee is the flight's. ← FLT-APO-01, SYS-DEPLOY-04, DD-109
-- **FLT-APO-10**: With `model_decides` true, the flight's apogee shall be the obeyed estimator's (FLT-APO-07), or the simple filter's once its speed over 0.5 s has been under 50 m/s ‡ for the last 3 s ‡ and either the obeyed estimator does not explain the readings and that speed is a fall, or the estimator explains them and has seen no motion of more than two standard deviations of its rate for 2 s ‡. ← FLT-APO-01, SYS-DEPLOY-04, DD-109, DD-113
+- **FLT-APO-07**: The obeyed estimator's apogee shall be declared when it is seen falling by more than two standard deviations of its speed, with its model explaining the readings, after it was seen climbing by as much with its model explaining them since; and while the readings track its filtered altitude: the average of their squared difference, decaying with a time constant of 0.16 s ‡, stays under (10 m)² ‡ or the square of three times the sensor's noise, whichever is larger. A reading SNS-EST-02 sets aside is no difference. A fall whose climb was not seen that way shall last 2 s ‡ before it is apogee. ← FLT-APO-01, SYS-DEPLOY-04, DD-092, DD-113
+- **FLT-APO-08**: The reported peak shall be the highest filtered height the estimator explained, marked a lower bound when the climb to apogee was not seen; for an apogee the simple filter declared, its highest median. The flight log shall carry it as a PEAK row, or PEAK_AT_LEAST for a lower bound, and the web UI's Flight Data summary shall show that row's height, marked "at least" for a lower bound. ← FLT-ASC-01, DD-092
+- **FLT-APO-09**: A simple filter shall run from launch on the median of the heights of the last three raw readings the sensor is believed on. Its apogee is that median standing more than 2 m ‡ below the highest median since launch for 0.5 s ‡, once a median has been more than 30 m above the pad; a new highest median starts the 0.5 s again. It shall not declare before the true apogee, and on a flight below Mach 0.8 it shall declare within 1.5 s ‡ after it, at up to 35 Pa ‡ of sensor noise. With `model_decides` false its apogee is the flight's. ← FLT-APO-01, SYS-DEPLOY-04, DD-109
+- **FLT-APO-10**: With `model_decides` true, the flight's apogee shall be the obeyed estimator's (FLT-APO-07), or the simple filter's once its speed over 0.5 s has been under 50 m/s ‡ for the last 3 s ‡ and either the obeyed estimator does not explain the readings and that speed is a fall, or the estimator explains them and has seen no motion of more than two standard deviations of its speed for 2 s ‡. ← FLT-APO-01, SYS-DEPLOY-04, DD-109, DD-113
 - **FLT-APO-11**: The flight log shall say which filter declared apogee, as a row `apogee by` the estimator's name or `simple`; and from launch to landing it shall carry a row once a second with the simple filter's height, speed and whether its speed has been under 50 m/s for 3 s, and a row when its apogee rule is first met. ← SYS-DATA-01, DD-109
 - **FLT-APO-12**: No apogee shall be declared until `apogee_lockout` seconds have passed since T+0; 0, the default, is no lockout. ← FLT-APO-01, DD-113
-- **FLT-ASC-08**: No channel shall arm before the filtered pressure has been below 0.9965·p0 (about 30 m). ← PYR-SAFE-04
+- **FLT-ASC-08**: No channel shall arm before the filtered height has been more than 30 m ‡ above the pad. ← PYR-SAFE-04
 
 ### Descent and landing
 - **FLT-DESC-01**: The system shall determine the descent phase from the measured descent speed holding steady, not from which channel has been commanded. ← FLT-PHASE-02
 - **FLT-DESC-02**: The system shall detect landing in every descent phase, so that a flight which deployed nothing still closes its flight log. ← FLT-PHASE-02
-- **FLT-AIR-01**: The descent phases and the fire rules (PYR-REFIRE-01, FLT-EMRG-01) shall judge a descent speed as the pad's air would give it: the measured rate corrected to the atmosphere's own slope and scaled by sqrt(rho / rho_pad), with the 1976 US Standard Atmosphere's temperature at each pressure. A working canopy in thin air shall not be read as a failed one, and a canopy failing at any height shall still be. ← FLT-EMRG-01, FLT-DESC-01, DD-079
+- **FLT-AIR-01**: The descent phases and the fire rules (PYR-REFIRE-01, FLT-EMRG-01) shall judge a descent speed as the pad's air would give it: the true speed (SNS-EST-05) scaled by sqrt(rho / rho_pad), with the density of the pad's air at each height. A working canopy in thin air shall not be read as a failed one, and a canopy failing at any height shall still be. ← FLT-EMRG-01, FLT-DESC-01, DD-079
 - **FLT-LAND-02**: The system shall require vertical speed below 2 m/s, for 1 s of sample time, for landing detection. ← FLT-PHASE-03
 - **FLT-LAND-03**: The system shall require a height below 30 meters above the ground reference for landing detection, except under FLT-LAND-07. ← FLT-PHASE-03
 - **FLT-LAND-04**: The system shall enter LANDED upon landing detection. ← FLT-PHASE-03
@@ -128,8 +129,8 @@ not converge, or decides alone when `model_decides` is false
 - **PYR-MODE-02**: The system shall support an AGL mode that fires when the rocket descends below a set height above the ground reference. ← SYS-DEPLOY-01
 - **PYR-MODE-03**: The system shall support a FALLEN mode that fires when the rocket has descended a set distance from its peak. ← SYS-DEPLOY-01
 - **PYR-MODE-04**: The system shall support a SPEED mode that fires when descent speed exceeds a set value. ← SYS-DEPLOY-01
-- **PYR-MODE-05**: AGL, FALLEN and SPEED shall compare the filtered state, and FALLEN shall measure from the peak (FLT-APO-08). DELAY shall count from the time the filtered rate crossed zero, or from the declaration when no crossing was seen; for an apogee the simple filter declared, from the last time its median stood at its lowest, when that was within 1.5 s. ← PYR-MODE-01, PYR-MODE-02, PYR-MODE-03, PYR-MODE-04
-- **PYR-MODE-06**: The shock of a separation, readings off by up to 5 kPa ‡ either way for up to 50 ms ‡ at a fire, shall not bring a pressure trigger forward. The sensor sits behind the bay's pressure bulkhead, so a charge does not pressurise its air: a trigger shall not act on a height lower than free fall from the state before the charge allows. ← PYR-MODE-05, SYS-DEPLOY-04, DD-113
+- **PYR-MODE-05**: AGL, FALLEN and SPEED shall compare the filtered state, and FALLEN shall measure from the peak (FLT-APO-08). DELAY shall count from the time the filtered speed crossed zero, or from the declaration when no crossing was seen; for an apogee the simple filter declared, from the last time its median stood at its highest, when that was within 1.5 s. ← PYR-MODE-01, PYR-MODE-02, PYR-MODE-03, PYR-MODE-04
+- **PYR-MODE-06**: The shock of a separation, readings off by up to 5 kPa ‡ either way for up to 50 ms ‡ at a fire, shall not bring a trigger forward. The sensor sits behind the bay's pressure bulkhead, so a charge does not pressurise its air: a trigger shall not act on a height lower than free fall from the state before the charge allows. ← PYR-MODE-05, SYS-DEPLOY-04, DD-113
 
 ### Firing
 - **PYR-SAFE-03**: No channel shall fire before its own trigger or the emergency fire (FLT-EMRG-01). After its first fire a channel shall fire again only under PYR-REFIRE-01 and FLT-EMRG-01. ← SYS-DEPLOY-02
@@ -143,7 +144,7 @@ not converge, or decides alone when `model_decides` is false
 - **FLT-EMRG-05**: The re-fire and emergency rules shall act on the filtered state, which is the best knowledge the system has, and shall not wait on any further judgement of the data. ← FLT-EMRG-01, PYR-REFIRE-01, SYS-DEPLOY-04
 
 ### Resume
-- **FLT-BROWN-01**: From 10 seconds of PAD_IDLE with no USB host attached (USB-01, USB-04), the system shall hold a record of the pad's ground pressure and sensor noise that survives a restart, so that nothing needs to be stored at launch. ← SYS-DEPLOY-06
+- **FLT-BROWN-01**: From 10 seconds of PAD_IDLE with no USB host attached (USB-01, USB-04), the system shall hold a record of the pad's ground pressure, its temperature and the sensor noise that survives a restart, so that nothing needs to be stored at launch. ← SYS-DEPLOY-06
 - **FLT-BROWN-02**: After any restart, whatever its cause, the system shall resume the flight if and only if that record exists, the barometer shows the board above the recorded ground and moving, and no USB host is attached (USB-01). The level and the speed shall be judged across at least 0.5 s of readings, so that two bad readings cannot decide it. ← FLT-BROWN-01, DD-086
 - **FLT-BROWN-03**: The system shall not treat a stationary board as airborne, whatever its apparent altitude. ← FLT-BROWN-02
 - **FLT-BROWN-04**: All resume state shall be cleared when the flight lands and when a bench flight ends, so that no later start resumes against it. ← FLT-BROWN-02
@@ -281,6 +282,7 @@ not converge, or decides alone when `model_decides` is false
 | `estimator` | the estimator the flight obeys (SNS-EST-06): lumped or constacc | constacc |
 | `model_decides` | true: the estimator decides apogee, the simple filter standing in (FLT-APO-10); false: the simple filter alone (FLT-APO-09) | true |
 | `apogee_lockout` | FLT-APO-12, seconds after T+0 before any apogee | 0 |
+| `standard_atmosphere` | SNS-EST-05, true: heights in the 1976 standard's air; false: in the pad's | false |
 | `landing_timeout` | FLT-LAND-07, seconds | 60 |
 | `lua_enabled`, `lua_baud`, `lua_pixels` | the script and its resources | false, 9600, 0 |
 
@@ -312,7 +314,7 @@ not converge, or decides alone when `model_decides` is false
 
 ### Readings
 - **SNS-PRES-01**: The system shall auto-detect the installed pressure sensor type. ← SYS-ALT-02
-- **SNS-PRES-06**: Every conversion the sensor completes shall be used, whatever its value: a reading beyond the sensor's rated range, or taken at a temperature beyond its limits, is less accurate and is still data. Only a pressure of zero or less, which has no logarithm, is not fed to the estimators. ← SYS-ALT-01, DD-085, DD-093
+- **SNS-PRES-06**: Every conversion the sensor completes shall be used, whatever its value: a reading beyond the sensor's rated range, or taken at a temperature beyond its limits, is less accurate and is still data. Only a pressure of zero or less, which has no altitude, is not fed to the estimators. ← SYS-ALT-01, DD-085, DD-093
 - **SNS-PRES-08**: Each sample shall carry the time its pressure was measured, to within 1 ms ‡, unaffected by lateness in processing or by storage activity. ← SYS-ALT-01
 - **SNS-PRES-10**: A whole second of one reading, to the pascal, shall be taken as a failed sensor: a diagnostic bit, a SENSOR_STUCK event and a telemetry line. While it lasts, and for a second after, it counts as no data: nothing shall be decided on it. ← SYS-DEPLOY-04
 - **SNS-PRES-11**: A gap of more than 250 ms between samples shall suspend decisions until a whole second of new samples exists. No sample for 0.5 s in flight shall be reported as a lost sensor: a diagnostic bit, a SENSOR_LOST event and a telemetry line. The flight carries on when samples return. ← SYS-DEPLOY-04
@@ -324,11 +326,11 @@ not converge, or decides alone when `model_decides` is false
 - **SNS-REC-01**: The flight software shall not attempt to recover a failed sensor in flight: it shall record the failure and go on processing whatever samples arrive. Recovering the sensor's bus is the collector's (SNS-COL-05). ← SYS-DEPLOY-04, DD-085, DD-093
 
 ### The estimate
-- **SNS-EST-01**: Every flight decision shall be made on a filtered estimate of the pressure, its rate and its acceleration, formed from the raw readings: the filtered state. ← SYS-ALT-01, DD-085
+- **SNS-EST-01**: Every flight decision shall be made on a filtered estimate of the altitude, its speed and its acceleration, formed from the raw readings' altitudes in the 1976 US Standard Atmosphere: the filtered state. ← SYS-ALT-01, DD-085, DD-114
 - **SNS-EST-02**: Bad readings lasting up to 50 ms ‡, of any value the sensor can produce, shall change no decision: the shock of a separation, the board's own or another's, lasts that long. A run lasting longer is data and shall be followed. ← SNS-EST-01, SYS-DEPLOY-04, DD-113
 - **SNS-EST-03**: Noise alone shall cross no threshold. A board on a pad, in gusts of 40 Pa rms (a gusty 20 mph wind, the NAR's launch limit), shall declare no launch, and a rocket descending steadily 20 % ‡ below a fire rule's speed shall not trip it, at any sensor noise up to the board's declared figure. ← SNS-EST-01
 - **SNS-EST-04**: The filtered state shall follow a real change: a descent speed that passes a fire rule's threshold shall be reported as past it within 2 s ‡. ← SNS-EST-01, SYS-DEPLOY-05
-- **SNS-EST-05**: Every flight comparison shall be made in pressure. A height or a speed the operator set shall be converted to pressure once, against the pad's own pressure and the 1976 US Standard Atmosphere, and an AGL trigger shall act within 3 % ‡ of its set height in that atmosphere from any pad between sea level and 2000 m. ← SNS-EST-01, DD-085
+- **SNS-EST-05**: Every flight comparison shall be made on a height above the pad or a speed, in the pad's air: the 1976 US Standard Atmosphere offset at every height by the pad's temperature, which the sensor reads on the pad until launch, or the standard itself when `standard_atmosphere` is set. An AGL trigger shall act within 3 % ‡ of its set height from any pad between sea level and 2000 m in the standard's air, and within 1 % ‡ and 1 m ‡ from a pad whose air is up to 32 K ‡ off the standard's. ← SNS-EST-01, DD-085, DD-114
 - **SNS-EST-06**: The filtered state shall come from one of the estimators the build carries, each behind one interface (`src/estimator.h`). `estimator` in config.ini names the one the flight obeys, read at start-up; a name no estimator has selects the default. `/api/status` shall name the estimator obeyed. ← SNS-EST-01, SYS-CFG-02, DD-092
 - **SNS-EST-07**: Every estimator the build carries shall be given every reading, whichever is obeyed. From launch to landing the flight log shall carry, for each, a row once a second with its height, its speed and whether it explains the readings, and a row when its own apogee rule (FLT-APO-07) is first met. Only the obeyed estimator's apogee is the flight's. ← SNS-EST-06, SYS-DATA-01, DD-092
 - **SNS-EST-08**: An estimator shall report whether its model explains the readings: they agree with its prediction, and it has had 1 s ‡ of them with no gap (SNS-PRES-11). ← SNS-EST-01, DD-092
@@ -343,7 +345,7 @@ not converge, or decides alone when `model_decides` is false
 - **SNS-COL-06**: The collector's interrupt handler and everything it calls shall run from RAM. The build shall fail otherwise. ← SNS-PRES-08, SNS-COL-01
 
 ### Altitude
-- **SNS-ALT-01**: Altitude shall be reported relative to the launch pad, computed from the ground reference and the current pressure. It shall not be clamped: a point below the pad reads negative, and no ceiling is applied. ← SYS-ALT-01, DD-085
+- **SNS-ALT-01**: Altitude shall be reported relative to the launch pad, as the height above the ground reference in the pad's air (SNS-EST-05). It shall not be clamped: a point below the pad reads negative, and no ceiling is applied. ← SYS-ALT-01, DD-085
 - **SNS-MAX-01**: Each board shall declare its sensor's pressure range and its height for proper operation, the greatest apogee at which FLT-APO-01 holds: the lesser of the height its sensor's range reaches and 30,000 ft (9,144 m), above which the sensor's noise needs more filtering than the time apogee allows. Above that height the system shall go on operating on the data it has; a reported altitude there may be inaccurate, and that shall not affect the flight. ← SYS-ALT-01, SYS-DEPLOY-05, DD-111
 
 ---

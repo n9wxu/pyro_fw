@@ -88,7 +88,7 @@ static void fly_the_recording(void) {
     int counted = 0;
     for (; t < ignition + (uint32_t)((ground_hit_s + 20.0f) * 1000.0f); t++) {
         float flight_s = ((float)t - (float)ignition) / 1000.0f;
-        mock_pressure.pressure_pa = atmos_pressure_above_pa(PAD_PA, recorded_height_m(flight_s));
+        mock_pressure.pressure_pa = harness_pressure_pa(PAD_PA, recorded_height_m(flight_s));
         tick(t);
         seen.states[ctx.current_state] = true;
         if (ctx.current_state == ASCENT && seen.launch_s < 0.0f)

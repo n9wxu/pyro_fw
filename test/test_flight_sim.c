@@ -9,6 +9,7 @@
  * Verifies [SYS-SIM-01, SIM-01..04].
  */
 #include "unity.h"
+#include "standard_air.h"
 #include "flight_sim.h"
 #include "bench_flight.h"
 #include "atmosphere.h"
@@ -35,7 +36,7 @@ static fsim_params_t high(void) {
 void test_SIM_02_the_coast_peaks_at_the_apogee_asked_for(void) {
     fsim_t s;
     fsim_params_t p = high();
-    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA));
+    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA, 0.0f));
     float peak = 0.0f, t_peak = 0.0f;
     for (float t = 0.0f; t < 120.0f; t += 0.01f) {
         float h = fsim_altitude(&s, t);
@@ -51,7 +52,7 @@ void test_SIM_02_the_coast_peaks_at_the_apogee_asked_for(void) {
 void test_SIM_02_phases_run_in_order_and_it_lands(void) {
     fsim_t s;
     fsim_params_t p = high();
-    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA));
+    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA, 0.0f));
     fsim_phase_t last = FSIM_PAD;
     int changes = 0;
     float t = 0.0f;
@@ -82,7 +83,7 @@ void test_SIM_02_descent_times_at_constant_rates(void) {
                        .main_ms = 6.0f,
                        .thin_air = false,
                        .pad_s = 0.0f};
-    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA));
+    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA, 0.0f));
     float t = 0.0f;
     while (fsim_phase(&s) != FSIM_LANDED && t < 1000.0f) {
         fsim_altitude(&s, t);
@@ -96,14 +97,15 @@ void test_SIM_02_descent_times_at_constant_rates(void) {
 void test_SIM_02_thin_air_speeds_the_drogue(void) {
     fsim_t s;
     fsim_params_t p = high();
-    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA));
+    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA, 0.0f));
     float t = p.pad_s + s.t_apogee;
     while (fsim_altitude(&s, t) > 25000.0f)
         t += 0.1f;
     float h0 = fsim_altitude(&s, t);
     float h1 = fsim_altitude(&s, t + 1.0f);
     float rate_high = h0 - h1;
-    float ratio = 1.0f / atmos_pad_air_ratio(atmos_pressure_pa(25000.0f), SEA_PA);
+    air_t sea = air_over_pad(SEA_PA, 0.0f);
+    float ratio = 1.0f / air_pad_ratio(&sea, 25000.0f);
     /* Falling into denser air it runs a little ahead of the rate it would
      * settle at. */
     TEST_ASSERT_TRUE(rate_high >= p.drogue_ms * ratio && rate_high < 1.1f * p.drogue_ms * ratio);
@@ -115,6 +117,20 @@ void test_SIM_02_thin_air_speeds_the_drogue(void) {
     TEST_ASSERT_FLOAT_WITHIN(2.0f, p.drogue_ms, h0 - h1);
 }
 
+/* A warm pad: the pressures are those the board's heights, in the pad's air,
+ * read as the profile [DD-114]. */
+void test_SIM_02_a_warm_pad_flies_in_its_own_air(void) {
+    fsim_t s;
+    fsim_params_t p = high();
+    p.apogee_m = 3000.0f;
+    float pad_k = 303.15f;
+    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA, pad_k));
+    air_t air = air_over_pad(SEA_PA, pad_k);
+    float apogee_pa = fsim_pressure(&s, p.pad_s + s.t_apogee);
+    TEST_ASSERT_FLOAT_WITHIN(1.0f, 3000.0f, air_height_m(&air, atmos_altitude_m(apogee_pa)));
+    TEST_ASSERT_TRUE_MESSAGE(standard_height_above_m(apogee_pa, SEA_PA) < 2900.0f, "the standard reads warm air short");
+}
+
 /* A pad at altitude: the profile is above it, and the pressure is the ISA's
  * at the sum. */
 void test_SIM_02_a_high_pad_adds_its_own_altitude(void) {
@@ -122,8 +138,8 @@ void test_SIM_02_a_high_pad_adds_its_own_altitude(void) {
     fsim_params_t p = high();
     p.apogee_m = 20000.0f;
     float pad_pa = atmos_pressure_pa(1500.0f);
-    TEST_ASSERT_TRUE(fsim_start(&s, &p, pad_pa));
-    TEST_ASSERT_FLOAT_WITHIN(0.5f, 1500.0f, s.pad_msl);
+    TEST_ASSERT_TRUE(fsim_start(&s, &p, pad_pa, 0.0f));
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, 1500.0f, s.air.pad_altitude_m);
     TEST_ASSERT_FLOAT_WITHIN(0.5f, pad_pa, fsim_pressure(&s, 0.0f));
     float t_apo = p.pad_s + s.t_apogee;
     TEST_ASSERT_FLOAT_WITHIN(5.0f, atmos_pressure_pa(21500.0f), fsim_pressure(&s, t_apo));
@@ -133,38 +149,38 @@ void test_SIM_01_profiles_that_cannot_fly_are_refused(void) {
     fsim_t s;
     fsim_params_t p = high();
     p.apogee_m = 32500.0f;
-    TEST_ASSERT_FALSE_MESSAGE(fsim_start(&s, &p, SEA_PA), "above the atmosphere's top");
+    TEST_ASSERT_FALSE_MESSAGE(fsim_start(&s, &p, SEA_PA, 0.0f), "above the atmosphere's top");
     p = high();
     p.apogee_m = 31000.0f;
-    TEST_ASSERT_FALSE_MESSAGE(fsim_start(&s, &p, atmos_pressure_pa(1500.0f)), "the pad's altitude counts");
+    TEST_ASSERT_FALSE_MESSAGE(fsim_start(&s, &p, atmos_pressure_pa(1500.0f), 0.0f), "the pad's altitude counts");
     p = high();
     p.main_alt_m = p.apogee_m;
-    TEST_ASSERT_FALSE(fsim_start(&s, &p, SEA_PA));
+    TEST_ASSERT_FALSE(fsim_start(&s, &p, SEA_PA, 0.0f));
     p = high();
     p.boost_s = 0.0f;
-    TEST_ASSERT_FALSE(fsim_start(&s, &p, SEA_PA));
+    TEST_ASSERT_FALSE(fsim_start(&s, &p, SEA_PA, 0.0f));
     p = high();
     p.drogue_ms = 0.0f;
-    TEST_ASSERT_FALSE(fsim_start(&s, &p, SEA_PA));
+    TEST_ASSERT_FALSE(fsim_start(&s, &p, SEA_PA, 0.0f));
     p = high();
     p.main_ms = -1.0f;
-    TEST_ASSERT_FALSE(fsim_start(&s, &p, SEA_PA));
+    TEST_ASSERT_FALSE(fsim_start(&s, &p, SEA_PA, 0.0f));
     p = high();
-    TEST_ASSERT_FALSE(fsim_start(&s, &p, 0.0f));
+    TEST_ASSERT_FALSE(fsim_start(&s, &p, 0.0f, 0.0f));
 }
 
 /* [SIM-01] Only from the pad, in test mode, one at a time, and a profile
  * that can fly. */
 void test_SIM_01_a_bench_flight_starts_only_from_the_pad_in_test_mode(void) {
     fsim_params_t p = high();
-    TEST_ASSERT_EQUAL_INT(BF_NOT_ON_PAD, bench_flight_start(&p, SEA_PA, false, true, 0));
-    TEST_ASSERT_EQUAL_INT(BF_NOT_TESTING, bench_flight_start(&p, SEA_PA, true, false, 0));
+    TEST_ASSERT_EQUAL_INT(BF_NOT_ON_PAD, bench_flight_start(&p, SEA_PA, 0.0f, false, true, 0));
+    TEST_ASSERT_EQUAL_INT(BF_NOT_TESTING, bench_flight_start(&p, SEA_PA, 0.0f, true, false, 0));
     p.boost_s = 0.0f;
-    TEST_ASSERT_EQUAL_INT(BF_BAD_PROFILE, bench_flight_start(&p, SEA_PA, true, true, 0));
+    TEST_ASSERT_EQUAL_INT(BF_BAD_PROFILE, bench_flight_start(&p, SEA_PA, 0.0f, true, true, 0));
     TEST_ASSERT_FALSE_MESSAGE(bench_flight_mocked(), "a refused start took the channels");
     p = high();
-    TEST_ASSERT_EQUAL_INT(BF_STARTED, bench_flight_start(&p, SEA_PA, true, true, 0));
-    TEST_ASSERT_EQUAL_INT(BF_RUNNING, bench_flight_start(&p, SEA_PA, true, true, 0));
+    TEST_ASSERT_EQUAL_INT(BF_STARTED, bench_flight_start(&p, SEA_PA, 0.0f, true, true, 0));
+    TEST_ASSERT_EQUAL_INT(BF_RUNNING, bench_flight_start(&p, SEA_PA, 0.0f, true, true, 0));
 }
 
 void test_SIM_02_the_bench_replaces_the_reading_while_it_flies(void) {
@@ -173,7 +189,7 @@ void test_SIM_02_the_bench_replaces_the_reading_while_it_flies(void) {
     TEST_ASSERT_EQUAL_FLOAT(12345.0f, pa);
     fsim_params_t p = high();
     uint64_t t0 = 10000000u;
-    TEST_ASSERT_EQUAL_INT(BF_STARTED, bench_flight_start(&p, SEA_PA, true, true, t0));
+    TEST_ASSERT_EQUAL_INT(BF_STARTED, bench_flight_start(&p, SEA_PA, 0.0f, true, true, t0));
     pa = SEA_PA;
     TEST_ASSERT_TRUE(bench_flight_pressure(t0 - 5000u, false, &pa));
     TEST_ASSERT_EQUAL_FLOAT_MESSAGE(SEA_PA, pa, "a reading from before the start is the pad's");
@@ -203,7 +219,7 @@ void test_SIM_02_the_bench_ends_when_both_have_landed(void) {
                        .thin_air = false,
                        .pad_s = 0.0f};
     float pa = SEA_PA;
-    TEST_ASSERT_EQUAL_INT(BF_STARTED, bench_flight_start(&p, SEA_PA, true, true, 0));
+    TEST_ASSERT_EQUAL_INT(BF_STARTED, bench_flight_start(&p, SEA_PA, 0.0f, true, true, 0));
     TEST_ASSERT_TRUE(bench_flight_pressure(5000000u, true, &pa));
     bench_flight_status_t st;
     bench_flight_status(&st);
@@ -248,7 +264,7 @@ static float time_to(fsim_t *s, float from_t, float height) {
 void test_SIM_04_the_descent_starts_from_rest(void) {
     fsim_t s;
     fsim_params_t p = low();
-    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA));
+    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA, 0.0f));
     float apogee = s.t_apogee;
     TEST_ASSERT_FLOAT_WITHIN(1.5f, 0.5f * 9.80665f * 1.0f,
                              fsim_altitude(&s, apogee) - fsim_altitude(&s, apogee + 1.0f));
@@ -259,7 +275,7 @@ void test_SIM_04_a_failed_drogue_falls_ballistic_until_the_main(void) {
     fsim_t s;
     fsim_params_t p = low();
     p.drogue_fails = true;
-    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA));
+    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA, 0.0f));
     float t = time_to(&s, s.t_apogee, 500.0f);
     TEST_ASSERT_FLOAT_WITHIN_MESSAGE(4.0f, FSIM_BALLISTIC_MS, speed_at(&s, t), "ballistic above the main's height");
     t = time_to(&s, t, 150.0f);
@@ -270,7 +286,7 @@ void test_SIM_04_a_failed_main_stays_at_the_drogues_rate(void) {
     fsim_t s;
     fsim_params_t p = low();
     p.main_fails = true;
-    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA));
+    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA, 0.0f));
     float t = time_to(&s, s.t_apogee, 100.0f);
     TEST_ASSERT_FLOAT_WITHIN(1.0f, p.drogue_ms, speed_at(&s, t));
 }
@@ -280,7 +296,7 @@ void test_SIM_04_with_both_failed_it_falls_ballistic_to_the_ground(void) {
     fsim_params_t p = low();
     p.drogue_fails = p.main_fails = true;
     p.ballistic_ms = 60.0f;
-    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA));
+    TEST_ASSERT_TRUE(fsim_start(&s, &p, SEA_PA, 0.0f));
     float t = time_to(&s, s.t_apogee, 100.0f);
     TEST_ASSERT_FLOAT_WITHIN(3.0f, 60.0f, speed_at(&s, t));
     fsim_altitude(&s, t + 30.0f);
@@ -292,7 +308,7 @@ void test_SIM_04_with_both_failed_it_falls_ballistic_to_the_ground(void) {
 void test_SIM_03_the_channels_stay_mocked_after_a_stop(void) {
     fsim_params_t p = high();
     TEST_ASSERT_FALSE(bench_flight_mocked());
-    TEST_ASSERT_EQUAL_INT(BF_STARTED, bench_flight_start(&p, SEA_PA, true, true, 0));
+    TEST_ASSERT_EQUAL_INT(BF_STARTED, bench_flight_start(&p, SEA_PA, 0.0f, true, true, 0));
     TEST_ASSERT_TRUE(bench_flight_mocked());
     TEST_ASSERT_FALSE(bench_flight_fired(1));
     TEST_ASSERT_FALSE(bench_flight_firing(1000u));
@@ -322,6 +338,7 @@ int main(void) {
     RUN_TEST(test_SIM_02_thin_air_speeds_the_drogue);
     RUN_TEST(test_SIM_02_a_high_pad_adds_its_own_altitude);
     RUN_TEST(test_SIM_01_profiles_that_cannot_fly_are_refused);
+    RUN_TEST(test_SIM_02_a_warm_pad_flies_in_its_own_air);
     RUN_TEST(test_SIM_01_a_bench_flight_starts_only_from_the_pad_in_test_mode);
     RUN_TEST(test_SIM_02_the_bench_replaces_the_reading_while_it_flies);
     RUN_TEST(test_SIM_02_the_bench_ends_when_both_have_landed);

@@ -22,8 +22,8 @@ sequence has gaps.
 ## Safety
 
 ### DD-016: Launch On Height Alone
-- **Decision:** launch is a filtered pressure below the pad's pressure at
-  15 m (`launch_detected()`; FLT-LAUNCH-02, FLT-LAUNCH-07), as AltOS
+- **Decision:** launch is a filtered height more than 15 m above the pad
+  (`launch_detected()`; FLT-LAUNCH-02, FLT-LAUNCH-07), as AltOS
   declares a barometer-only launch on height alone. No launch is declared
   while a USB host is attached and test mode is off (USB-01). T+0 is the
   first sample of the rise more than 50 cm above the pad (FLT-LAUNCH-03).
@@ -32,7 +32,7 @@ sequence has gaps.
   launch back; AltOS's own code ignores the barometer's speed on the pad as
   "quite noisy". Barometric drift, a weather front and a board warming on
   the pad move the pressure slowly and never by 15 m. Arming (DD-017) keeps
-  a false launch from firing anything. A filtered pressure of zero is no
+  a false launch from firing anything. A height that is not a number is no
   estimate and no launch.
 - **Why 15 m:** at the user's direction -- "1s detection delay. This should
   be worst case with faster launches detecting quicker." In the harness the
@@ -45,8 +45,8 @@ sequence has gaps.
 
 ### DD-017: Arming Requires Confirmed Motor Burn
 - **Decision:** the pyros arm once the climb has been faster than 10 m/s and
-  is now slower than that, after the filtered pressure has been below
-  0.9965·p0, about 30 m above the pad, and on a sample that is not suspect
+  is now slower than that, after the filtered height has been more than
+  30 m above the pad, and on a sample that is not suspect
   (`arming_due()` in `src/flight_ascent.c`; FLT-ASC-04..08). Apogee is not
   declared before arming (FLT-APO-04). The speeds are the filtered state's
   (DD-085).
@@ -80,13 +80,13 @@ sequence has gaps.
   simple filter to save the day", and "A simple mach lockout is just
   watching for the measured speed to drop below a threshold for a few
   seconds":
-  - The simple filter (`src/simple_apogee.c`) takes the median of the last
-    three raw readings the sensor is believed on, from launch. Its apogee is
-    that median standing 2 m below the lowest median since launch for 0.5 s,
-    once a median has been 30 m above the pad (FLT-APO-09). Its top, for
-    the peak and for DELAY, is the last time the median stood at its lowest
-    (FLT-APO-08, PYR-MODE-05).
-  - Its speed is the change in the median's height over 0.5 s, taken every
+  - The simple filter (`src/simple_apogee.c`) takes the median of the
+    heights of the last three raw readings the sensor is believed on, from
+    launch. Its apogee is that median standing 2 m below the highest median
+    since launch for 0.5 s, once a median has been 30 m above the pad
+    (FLT-APO-09). Its top, for the peak and for DELAY, is the last time the
+    median stood at its highest (FLT-APO-08, PYR-MODE-05).
+  - Its speed is the change in the median over 0.5 s, taken every
     100 ms. Its lockout is that speed under 50 m/s for the last 3 s; a
     faster speed closes it again.
   - `model_decides` in config.ini, true by default: the obeyed estimator's
@@ -190,12 +190,12 @@ sequence has gaps.
   There is a pressure bulkhead. Fix the model.":
   - `constacc` is the default estimator; `lumped` logs beside it (DD-092).
   - No reading is weighed as surer than 0.5 m of height
-    (`PEST_HEIGHT_NOISE_M`), whatever the sensor's own noise: what the model
+    (`AF_READING_NOISE_M`), whatever the sensor's own noise: what the model
     leaves out is metres, not the sensor's decimetres. The tracked noise
-    stays the sensor's (`noise_pa`).
+    stays the sensor's, in pascals (DD-114).
   - A reading 6σ from the prediction is set aside for the first 50 ms of
     its run, however many readings that is; a longer run is data
-    (`pest_bad_run_rejects()`, both estimators; SNS-EST-02). A reading set
+    (`bad_run_rejects()`, both estimators; SNS-EST-02). A reading set
     aside says nothing of the model: `constacc` does not count it against
     explaining the readings.
   - Apogee (FLT-APO-07): the fall of AltOS's rule, and its error check,
@@ -203,7 +203,7 @@ sequence has gaps.
     average of their squared difference decaying with a time constant of
     0.16 s staying under (10 m)², or the square of three times the sensor's
     noise where the air is thin. A reading set aside is no difference. The
-    climb and the fall are judged at 2σ of the rate.
+    climb and the fall are judged at 2σ of the speed.
   - The simple filter also stands in when the model explains the readings
     and has seen the board still for 2 s (FLT-APO-10, DD-109).
   - Launch is on height alone (DD-016).
@@ -274,6 +274,77 @@ sequence has gaps.
   (`test_FLT_APO_01_another_boards_separation_at_the_top_does_not_delay_apogee`,
   `test_FLT_APO_12_apogee_waits_for_the_users_lockout`), `mach_tests`,
   `chamber_flight_tests`, `altos_flight_tests`, `lumped_port_check`.
+
+### DD-114: Altitudes Inside, Heights In The Pad's Air
+- **Decision:** at the user's direction -- "switch the entire design to
+  altitude. Accept the in-flight temperature lag." and "pad-anchored
+  temperature (selectable 1976 standard)":
+  - Each reading becomes an altitude, the 1976 standard's height of its
+    pressure (`atmos_altitude_m()`), and the estimators filter altitudes.
+    `constacc` is constant acceleration in altitude with white jerk of
+    7 m²/s⁵. Each estimator tracks the sensor's noise in pascals and weighs
+    a reading by its metres per pascal (`atmos_m_per_pa()`).
+  - `lumped` keeps its own air, from the pad's pressure and the sensor's
+    temperature at its first reading, and its model in true metres
+    (DD-092). It takes each altitude as the pressure it is and reports its
+    state as altitudes.
+  - The pad's air is the standard atmosphere offset at every height by the
+    pad's temperature less the standard's there (`air_over_pad()`). The
+    offset follows the sensor's temperature on the pad and is frozen with
+    the ground at launch; in flight the sensor's temperature moves no height.
+    `standard_atmosphere=true` makes the offset 0. A height above the pad is
+    the difference of the altitudes plus (R ΔT / g) ln(p_pad / p); a speed
+    is the altitude's speed times 1 + ΔT / T (`air_height_m()`,
+    `air_scale()`).
+  - Every decision compares heights above the pad and speeds in the pad's
+    air (`pressure_processing.c`): launch at 15 m, T+0 at 0.5 m on the raw
+    reading, arming at 30 m, AGL and FALLEN triggers, SPEED, landing within
+    30 m, the descent bands and the fire rules' speeds in the pad's air
+    (FLT-AIR-01), and the bound to free fall after a pulse (PYR-MODE-06).
+  - Apogee is decided in each estimator's own altitudes (FLT-APO-07): the
+    top is a shape, which no temperature moves. The simple filter follows
+    the raw readings' heights.
+  - The pad record keeps the pad's temperature (FLT-BROWN-01); the flight
+    log keeps pressures, the measurements, beside the heights; the bench
+    flight's pressures are its profile in the board's pad air.
+  - The sensor's temperature is read with every pressure, in flight too:
+    "Just keeping all data all the time is probably best for simplicity."
+- **Why heights in the pad's air:** "The altitude vs pressure was about
+  temperature compensation in flight." A height set in metres needs the
+  air's temperature between the pad and the height, and the pad's is the
+  nearest measure of it. AGL triggers fire within 1 % and 1 m of their
+  height from a pad 5 K colder than the standard at sea level and one 32 K
+  warmer at 2000 m; on the standard's temperature they would be about 2 %
+  and 11 % out (`test_SNS_EST_05_an_agl_trigger_acts_at_its_height_in_air_off_the_standard`).
+  What sun on the airframe and the board's own heat add on the pad remains.
+- **Why the estimators filter standard altitudes:** a pad temperature that
+  moves before launch would move every height the estimators hold. The
+  standard's altitude of a pressure never moves, and a restart in flight
+  takes it up again with nothing but the pressure.
+- **Why the noise stays in pascals:** the sensor's noise is pascals at
+  every height. Tracked in metres, it grew to 37 to 46 m² while a port
+  error held the readings far up in thin air and stayed there for seconds,
+  and `constacc` fired 0.25 s early on a port error twice the model's
+  (`test_FLT_APO_07_no_fire_before_apogee_at_any_size_of_port_error`).
+- **Why `lumped` keeps its air:** its gravity and drag act on true metres.
+  On the standard's air it fired early four times in its study
+  (`docs/lumped_parameter_filter.md`), and fed altitudes as its height it
+  stayed at its greatest drag after a port error four times the model's and
+  deployed 1.67 s late.
+- **Why every cycle's temperature:** the MS5607 compensates each pressure
+  with its die's temperature, about 241 Pa a kelvin with the datasheet's
+  coefficients. In AltOS's flights the die moved 0.0 to 0.8 K from launch to
+  apogee and up to 2.2 K by the main, 45 m at the main if held at its launch
+  value. Fewer temperatures buy time only for a faster loop on the ascent,
+  which is not built.
+- **Proven by:** `atmosphere_tests`, `estimator_tests`, `estimators_tests`,
+  `apogee_detector_tests`, `simple_apogee_tests`, `launch_detector_tests`,
+  `fire_control_tests`, `log_pad_ring_tests`, `flight_sim_tests`
+  (`test_SIM_02_a_warm_pad_flies_in_its_own_air`), `resume_tests`,
+  `flight_pad_tests`
+  (`test_SNS_PRES_06_a_reading_of_zero_or_less_is_not_a_reading`),
+  `flight_profile_tests`, `mach_tests`, `chamber_flight_tests`,
+  `recorded_flight_tests`, `altos_flight_tests`, `lumped_port_check`.
 
 ## Configuration & Features
 
@@ -1295,17 +1366,17 @@ in `docs/outstanding_tasks.md`.
   if it is fast enough (`docs/resume_from_log.md`); a resumed flight's log
   (task L3); the resume's timing (task RS-1).
 
-### DD-085: One Estimator On Raw Pressure, And Every Operation In Pressure
-- **Decision:** the detectors read one filtered state -- pressure, its rate
+### DD-085: One Estimator On The Raw Readings
+- **Decision:** the detectors read one filtered state -- altitude, its speed
   and its acceleration -- formed from the raw readings by a Kalman filter
   whose correction is limited inside its update (SNS-EST-01, SNS-EST-02).
   No median and no low-pass stand in front of it. It discards nothing, is
   not re-seeded and is not loosened at a fire; it trends to data that is
-  stable. Every flight comparison is in pressure, and a height or speed the
-  operator set is converted once (SNS-EST-05). No altitude is clamped, at
-  8000 m or at zero (SNS-ALT-01). DD-092 puts this filter, `constacc`,
-  behind the estimator interface beside `lumped`.
-- **Apogee at altitude:** filtered pressure must show the slowing climb,
+  stable. Every flight comparison is a height above the pad or a speed, in
+  the pad's air (DD-114, SNS-EST-05). No altitude is clamped, at 8000 m or
+  at zero (SNS-ALT-01). DD-092 puts this filter, `constacc`, behind the
+  estimator interface beside `lumped`.
+- **Apogee at altitude:** the filtered state must show the slowing climb,
   apogee and descent at every height in the sensor's range. No fallback
   waits for the pressure to return to an earlier level: one would deploy a
   good 30 km flight 150 m above the ground (HA-1).
@@ -1318,7 +1389,7 @@ in `docs/outstanding_tasks.md`.
   50 ms stops a separation's shock of any size at no cost in delay
   (DD-113). The design and what remains to be
   measured are in `docs/descent_speed_estimator.md` and
-  `docs/pressure_domain_flight_math.md`.
+  `docs/flight_math.md`.
 
 ### DD-084: A Board Declares Its Constraints
 - **Decision:** the requirements are general, and a board may redefine a
@@ -1389,11 +1460,9 @@ in `docs/outstanding_tasks.md`.
 - **Decision:** the descent bands (a main at 10 m/s or less, a drogue at
   35 m/s or less, DD-023) and the fire rules' speeds read the descent speed
   as the same canopy would give it in the pad's air [FLT-AIR-01]: the true
-  speed, the rate of ln(pressure) times the air's scale height RT/g at that
-  pressure (`atmos_scale_height_m()`), times sqrt(rho / rho_pad)
-  (`atmos_pad_air_ratio()`), with the 1976 US Standard Atmosphere's
-  temperature at each pressure. The ratio is 1 at the pad, 0.95 1 km above a
-  sea-level pad, and 0.22 at 30 km.
+  speed (DD-114) times sqrt(rho / rho_pad) (`air_pad_ratio()`), the density
+  of the pad's air at each height. The ratio is 1 at the pad, 0.95 1 km
+  above a sea-level pad, and 0.22 at 30 km.
 - **Why:** a parachute's terminal rate goes as 1/sqrt(rho): a drogue that
   settles at 25 m/s over the pad falls at about 200 m/s at 30 km. Read raw,
   a working canopy high up is past any speed set for the pad, and the
@@ -1402,8 +1471,8 @@ in `docs/outstanding_tasks.md`.
 - **Why the atmosphere's slope:** the standard altitude formula,
   h = 44330 (1 - (p/p0)^(1/5.2561)), is the troposphere's. Above 11 km the
   air stops cooling and that formula reads short: 25.3 km at a true 30 km,
-  and a speed 0.54 of the true one. The scale height at each pressure gives
-  the true speed.
+  and a speed 0.54 of the true one. The standard's layers give the altitude
+  and its speed.
 - **Pinned by** `test_FLT_AIR_01_a_good_canopy_in_thin_air_is_not_refired`.
 
 ### DD-078: A Flight On The Bench

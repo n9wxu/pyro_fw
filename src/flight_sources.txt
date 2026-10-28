@@ -22,7 +22,7 @@ src/pad_check.c
 src/telemetry.c
 src/small_fmt.c
 src/pressure_processing.c
-src/pressure_estimator.c
+src/altitude_filter.c
 src/ground_reference.c
 src/atmosphere.c
 src/ground_test_seq.c

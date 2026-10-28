@@ -114,6 +114,7 @@ void flight_init(flight_context_t *ctx) {
     beep_store_load(NULL, 0);
     pp_init();
     pp_obey(estimator_index(ctx->config.estimator));
+    pp_use_standard_air(ctx->config.standard_atmosphere);
     ctx->reset_cause = (uint8_t)hal_reset_cause();
     hal_pressure_init();
     int sensor = hal_pressure_sensor();
@@ -180,19 +181,20 @@ static flight_sample_t *newest_row(flight_context_t *ctx) {
 void flight_take_sample(flight_context_t *ctx, const pp_sample_t *s, flight_state_t state) {
     ctx->last_sample = s->timestamp_ms;
     ctx->pressure_pa = (int32_t)(s->pressure_pa + 0.5f);
-    ctx->altitude_cm = s->altitude_cm;
-    ctx->speed_cms = s->speed_cms;
+    ctx->altitude_cm = (int32_t)(s->height_m * 100.0f);
+    ctx->speed_cms = (int32_t)(s->speed * 100.0f);
 
     uint32_t flight_ms = state == PAD_IDLE ? 0u : s->timestamp_ms - ctx->launch_time;
     if (state == PAD_IDLE)
         hal_log_pad(s->timestamp_ms, ctx->pressure_pa); /* [DAT-11] */
     if (state_is_logged(state))
-        hal_log_sample(flight_ms, ctx->pressure_pa, s->altitude_cm, (uint8_t)state, ctx->under_thrust, EVT_NONE);
+        hal_log_sample(flight_ms, ctx->pressure_pa, ctx->altitude_cm, (uint8_t)state, ctx->under_thrust, EVT_NONE);
     if (flight_state_is_airborne(state))
         flight_follow_estimators(ctx, s, flight_ms);
 
     flight_sample_t *row = &ctx->flight_buffer[ctx->buf_head];
-    *row = (flight_sample_t){flight_ms, ctx->pressure_pa, s->altitude_cm, (uint8_t)state, ctx->under_thrust, EVT_NONE};
+    *row =
+        (flight_sample_t){flight_ms, ctx->pressure_pa, ctx->altitude_cm, (uint8_t)state, ctx->under_thrust, EVT_NONE};
     ctx->buf_head = (uint16_t)((ctx->buf_head + 1u) % FLIGHT_BUF_SIZE);
     if (ctx->buf_count < FLIGHT_BUF_SIZE)
         ctx->buf_count++;
@@ -224,7 +226,7 @@ void flight_log_event(flight_context_t *ctx, uint8_t event) {
 }
 
 void flight_log_peak(const flight_context_t *ctx) {
-    int32_t peak_pa = ctx->peak_pa > 0.0f ? (int32_t)(ctx->peak_pa + 0.5f) : ctx->pressure_pa;
+    int32_t peak_pa = ctx->have_peak ? (int32_t)(ctx->peak_pa + 0.5f) : ctx->pressure_pa;
     hal_log_sample(ctx->last_sample - ctx->launch_time, peak_pa, ctx->max_altitude_cm, (uint8_t)ctx->current_state, 0,
                    ctx->peak_lower_bound ? EVT_PEAK_AT_LEAST : EVT_PEAK);
 }

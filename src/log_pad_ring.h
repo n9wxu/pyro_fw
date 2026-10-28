@@ -19,6 +19,7 @@
 #ifndef LOG_PAD_RING_H
 #define LOG_PAD_RING_H
 
+#include "atmosphere.h"
 #include "flight_log.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -43,9 +44,9 @@ void log_pad_clear(log_pad_ring_t *r);
 void log_pad_push(log_pad_ring_t *r, uint32_t t_ms, int32_t pressure_pa, int32_t raw_pa, int16_t temp_dc);
 uint16_t log_pad_count(const log_pad_ring_t *r);
 
-/* The i-th oldest as a log row: timed from t0, its height above ground_pa
+/* The i-th oldest as a log row: timed from t0, its height in the pad's air
  * and the given state. False past the newest. */
-bool log_pad_row(const log_pad_ring_t *r, uint16_t i, uint32_t t0_ms, int32_t ground_pa, uint8_t state,
+bool log_pad_row(const log_pad_ring_t *r, uint16_t i, uint32_t t0_ms, const air_t *air, uint8_t state,
                  flog_sample_t *out);
 
 #endif

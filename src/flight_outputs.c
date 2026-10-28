@@ -126,7 +126,8 @@ static void keep_record_on_pad(flight_context_t *ctx, uint32_t now) {
         return;
     ctx->record_written = true;
     pad_record_t record;
-    pad_record_fill(&record, pp_ground_pressure(), (uint32_t)(pp_noise_pa() * 1000.0f));
+    pad_record_fill(&record, pp_ground_pressure(), (uint32_t)(pp_noise_pa() * 1000.0f),
+                    (uint32_t)(pp_pad_k() * 100.0f + 0.5f));
     write_record(&record);
 }
 

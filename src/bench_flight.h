@@ -32,7 +32,8 @@ typedef enum {
 } bf_start_t;
 
 /* ground_pa: the flight software's own ground reference. */
-bf_start_t bench_flight_start(const fsim_params_t *p, float ground_pa, bool on_pad, bool test_mode, uint64_t now_us);
+bf_start_t bench_flight_start(const fsim_params_t *p, float ground_pa, float pad_k, bool on_pad, bool test_mode,
+                              uint64_t now_us);
 
 /* The profile stops feeding pressure; the channels stay mocked. */
 void bench_flight_stop(void);

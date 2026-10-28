@@ -1,31 +1,35 @@
 /*
  * The apogee rule alone [FLT-APO-07]: seen climbing, then seen falling, with
  * the estimator explaining the readings and the readings close to the
- * filtered height throughout.
+ * filtered altitude throughout.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "unity.h"
 #include "../src/apogee_detector.h"
-#include "../src/atmosphere.h"
 
 void setUp(void) {}
 void tearDown(void) {}
 
-#define PA 90000.0f
-#define SIGMA 0.0001f
+#define ALTITUDE_M 1000.0f
+#define SIGMA_MS 0.8f
 #define STEP_MS 20u
 
-#define AT(r, explained)                                                                                               \
-    { .pressure_pa = PA, .rate = (r) * SIGMA, .rate_sigma = SIGMA, .noise_pa = 2.0f, .explains = explained }
-static const estimate_t CLIMBING = AT(-10.0f, true);
-static const estimate_t FALLING = AT(+10.0f, true);
-static const estimate_t NEAR_THE_TOP = AT(+1.5f, true);
-static const estimate_t NOT_EXPLAINED = AT(+10.0f, false);
+/* sigmas: the speed in its own standard deviations, up positive. */
+#define AT(sigmas, explained)                                                                                          \
+    {.altitude_m = ALTITUDE_M,                                                                                         \
+     .speed = (sigmas) * SIGMA_MS,                                                                                     \
+     .speed_sigma = SIGMA_MS,                                                                                          \
+     .noise_m = 0.2f,                                                                                                  \
+     .explains = explained}
+static const estimate_t CLIMBING = AT(+10.0f, true);
+static const estimate_t FALLING = AT(-10.0f, true);
+static const estimate_t NEAR_THE_TOP = AT(-1.5f, true);
+static const estimate_t NOT_EXPLAINED = AT(-10.0f, false);
 
-/* A reading this many metres above the filtered height. */
-static int32_t reading_off_by(const estimate_t *e, float m) {
-    return (int32_t)atmos_pressure_above_pa(e->pressure_pa, m);
+/* A reading this many metres above the filtered altitude. */
+static float reading_off_by(const estimate_t *e, float m) {
+    return e->altitude_m + m;
 }
 
 /* Feeds the same estimate for a time, its readings off by off_m; true if
@@ -88,7 +92,7 @@ void test_FLT_APO_07_a_fall_interrupted_starts_its_2_s_again(void) {
     TEST_ASSERT_TRUE(fed(&d, &FALLING, true, &ms, 600));
 }
 
-/* A port error near Mach 1 throws the readings off the filtered height, and
+/* A port error near Mach 1 throws the readings off the filtered altitude, and
  * builds on the way up. */
 void test_FLT_APO_07_readings_far_from_the_filter_hold_apogee_until_they_settle(void) {
     apogee_detector_t d = {0};
@@ -117,11 +121,12 @@ void test_FLT_APO_07_readings_within_10_m_of_the_filter_are_tracking(void) {
     TEST_ASSERT_TRUE(fed_off(&d, &FALLING, 8.0f, true, &ms, STEP_MS));
 }
 
-/* Where the air is thin the sensor's own noise is tens of metres. */
+/* Where the air is thin the sensor's own noise is tens of metres: 9 Pa at
+ * 1.2 kPa. */
 void test_FLT_APO_07_in_thin_air_the_bound_allows_for_the_sensors_noise(void) {
     estimate_t climbing = CLIMBING, falling = FALLING;
-    climbing.pressure_pa = falling.pressure_pa = 1200.0f;
-    climbing.noise_pa = falling.noise_pa = 9.0f;
+    climbing.altitude_m = falling.altitude_m = 30000.0f;
+    climbing.noise_m = falling.noise_m = 50.0f;
     apogee_detector_t d = {0};
     uint32_t ms = 1000;
     TEST_ASSERT_FALSE(fed_off(&d, &climbing, 60.0f, true, &ms, 3000));

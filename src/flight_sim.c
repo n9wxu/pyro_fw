@@ -10,14 +10,13 @@
 #define G0 9.80665f
 #define TOP_M 32000.0f /* the profile's ceiling: the top of the standard's third layer */
 
-bool fsim_start(fsim_t *s, const fsim_params_t *p, float ground_pa) {
+bool fsim_start(fsim_t *s, const fsim_params_t *p, float ground_pa, float pad_k) {
     if (p->boost_s <= 0.0f || p->apogee_m <= p->main_alt_m || p->main_alt_m < 0.0f || p->drogue_ms <= 0.0f ||
         p->main_ms <= 0.0f || p->pad_s < 0.0f || ground_pa <= 0.0f)
         return false;
     s->p = *p;
-    s->pad_pa = ground_pa;
-    s->pad_msl = atmos_altitude_m(ground_pa);
-    if (s->pad_msl + p->apogee_m > TOP_M)
+    s->air = air_over_pad(ground_pa, pad_k);
+    if (s->air.pad_altitude_m + p->apogee_m > TOP_M)
         return false;
     /* apogee = a tb^2 / 2 + (a tb)^2 / 2g, solved for a. */
     float tb = p->boost_s;
@@ -45,7 +44,7 @@ static float terminal_rate(const fsim_t *s, float h) {
         return s->p.main_fails ? above_main : s->p.main_ms;
     if (!s->p.thin_air)
         return above_main;
-    return above_main / atmos_pad_air_ratio(atmos_pressure_pa(s->pad_msl + h), s->pad_pa);
+    return above_main / air_pad_ratio(&s->air, air_altitude_m(&s->air, h));
 }
 
 /* Drag as the square of the speed, in balance with gravity at the terminal
@@ -86,7 +85,7 @@ float fsim_altitude(fsim_t *s, float t) {
 }
 
 float fsim_pressure(fsim_t *s, float t) {
-    return atmos_pressure_pa(s->pad_msl + fsim_altitude(s, t));
+    return atmos_pressure_pa(air_altitude_m(&s->air, fsim_altitude(s, t)));
 }
 
 fsim_phase_t fsim_phase(const fsim_t *s) {

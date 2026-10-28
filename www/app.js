@@ -423,6 +423,8 @@ function loadFireRules() {
       var m = ini.match(new RegExp('^' + f[1] + '=(\\d+)', 'm'));
       document.getElementById(f[0]).value = m ? m[1] : 0;
     });
+    var std = ini.match(/^standard_atmosphere=(\w+)/m);
+    document.getElementById('standardAtmosphere').value = std && (std[1] === 'true' || std[1] === '1') ? 'true' : 'false';
     cfgRangeHints();
   }).catch(function() {});
 }
@@ -500,6 +502,7 @@ function cfgLoadFromObj(c) {
 function cfgDefault() {
   cfgLoadFromObj({id:'PYRO001', name:'MyRocket', units:1, p1mode:'delay', p1val:0, p2mode:'agl', p2val:300});
   RULE_FIELDS.forEach(function(f) { document.getElementById(f[0]).value = 0; });
+  document.getElementById('standardAtmosphere').value = 'false';
   cfgChanged();
   document.getElementById('cfgDirty').style.display = 'block';
   document.getElementById('cfgDirty').innerHTML = '⚠ Defaults loaded — press <b>Save</b> then <b>Reboot</b> to apply';
@@ -543,6 +546,7 @@ function cfgSave() {
     '\r\nunits=' + UNIT_NAMES[c.units] + '\r\n';
   if (c.estimator) ini += 'estimator=' + c.estimator + '\r\n';
   ini += 'model_decides=' + (c.modelDecides ? 'true' : 'false') + '\r\n';
+  ini += 'standard_atmosphere=' + document.getElementById('standardAtmosphere').value + '\r\n';
   RULE_FIELDS.forEach(function(f) {
     ini += f[1] + '=' + (parseInt(document.getElementById(f[0]).value) || 0) + '\r\n';
   });

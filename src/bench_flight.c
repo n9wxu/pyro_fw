@@ -19,14 +19,15 @@ static struct {
     uint32_t pulse_ms;
 } bf;
 
-bf_start_t bench_flight_start(const fsim_params_t *p, float ground_pa, bool on_pad, bool test_mode, uint64_t now_us) {
+bf_start_t bench_flight_start(const fsim_params_t *p, float ground_pa, float pad_k, bool on_pad, bool test_mode,
+                              uint64_t now_us) {
     if (bf.flying)
         return BF_RUNNING;
     if (!on_pad)
         return BF_NOT_ON_PAD;
     if (!test_mode)
         return BF_NOT_TESTING;
-    if (!fsim_start(&bf.sim, p, ground_pa))
+    if (!fsim_start(&bf.sim, p, ground_pa, pad_k))
         return BF_BAD_PROFILE;
     bf.flying = bf.mocked = true;
     bf.t0_us = now_us;
@@ -49,7 +50,7 @@ bool bench_flight_pressure(uint64_t stamp_us, bool landed, float *pa) {
     bf.alt_m = fsim_altitude(&bf.sim, bf.t_s);
     if (bf.alt_m > bf.peak_m)
         bf.peak_m = bf.alt_m;
-    bf.pa = atmos_pressure_pa(bf.sim.pad_msl + bf.alt_m);
+    bf.pa = atmos_pressure_pa(air_altitude_m(&bf.sim.air, bf.alt_m));
     *pa = bf.pa + (*pa - bf.ground_pa);
     if (landed && fsim_phase(&bf.sim) == FSIM_LANDED)
         bf.flying = false;

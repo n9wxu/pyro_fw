@@ -14,7 +14,7 @@ Flying a board? Start with the [Operator's guide](#operators-guide).
 - **Flight Log** - binary records (`flight_log.bin`) written in the log writer's 3 ms of each period while the flight path runs from RAM, rendered as CSV on download; every sample of the flight (DD-062, DD-101, DD-104)
 - **Real-time Telemetry** - `$PYRO` NMEA on UART0 through an interrupt-driven ring, one message a second; apogee, fire and landing events ride the next message (DD-088)
 - **Pressure Sensing** - MS5607 (MK1C) or BMP280 (MK1A), either on MK1B, collected by a free-running interrupt state machine at 53 or more readings a second, each stamped at its measurement; it clears its own bus and resets the part after three failed transfers (DD-093)
-- **Pressure, Rate and Acceleration** - a Kalman filter on the raw readings; every flight comparison is made in pressure, and altitude is computed for people, relative to the pad and unclamped (DD-085)
+- **Altitude, Speed and Acceleration** - a Kalman filter on the readings' altitudes; every flight comparison is made on heights above the pad in the pad's air, from the sensor's temperature on the pad, and the same heights are reported, unclamped (DD-085, DD-114)
 - **Estimators** - two filters fly on every reading; `estimator` in config.ini names the one obeyed, and the log shows what the other would have done (DD-092)
 - **Apogee Near Mach 1** - the estimator's apogee is taken only while its model explains the readings, which a port error near Mach 1 does not (`docs/lumped_parameter_filter.md`); a simple filter on the raw readings stands in once the measured speed has been low for 3 s, or decides alone with `model_decides=false` (`docs/apogee_fallback.md`)
 - **Continuity Checking** - presence and shorts, continuously on the pad
@@ -234,7 +234,10 @@ pyro2_refire_speed=0
 emergency_fire_speed=0
 refire_interval=0
 fire_gap=0
-estimator=lumped
+estimator=constacc
+model_decides=true
+apogee_lockout=0
+standard_atmosphere=false
 landing_timeout=60
 lua_enabled=false
 lua_baud=9600
@@ -246,7 +249,10 @@ These are the defaults, written when the file is missing.
 - **Units:** `cm`, `m` or `ft` - applies to pyro values and altitude reporting
 - **pyro1_refire_speed, pyro2_refire_speed, emergency_fire_speed:** in units a second; `0` turns the rule off
 - **refire_interval, fire_gap:** milliseconds; `0` takes the board's default (1000 and 3000 where the board declares none). A value outside the board's range is brought into it and reported (`pyro_limited` on `/api/status`). `GET /api/limits` serves the defaults and ranges (PYR-BOARD-03)
-- **estimator:** the estimator the flight obeys, `lumped` or `constacc`; a name no estimator has selects the first, `lumped` (SNS-EST-06)
+- **estimator:** the estimator the flight obeys, `constacc` or `lumped`; a name no estimator has selects the first, `constacc` (SNS-EST-06)
+- **model_decides:** `true`, the estimator decides apogee with the simple filter standing in; `false`, the simple filter alone (FLT-APO-09, FLT-APO-10)
+- **apogee_lockout:** seconds after T+0 before any apogee; `0` is none (FLT-APO-12)
+- **standard_atmosphere:** `false`, heights are in the pad's air, from the sensor's temperature on the pad; `true`, in the 1976 standard's (SNS-EST-05)
 - **landing_timeout:** seconds of descent before a still rocket counts as landed (FLT-LAND-07)
 
 **`pins.ini`** - the hardware map (Config and Lua tabs, `/api/pins`): pyro channels released to Lua (`pyro1_released`, `pyro2_released`), `buzzer_pin`, the ground test switch (`ground_test=none|ground|pair`, `ground_test_pin`, `ground_test_drive_pin`), and each Lua pad's role and name. `GET /api/pins/caps` serves the board's capability table and the vocabulary to read it, so the UI holds no board knowledge. A change takes effect at the next reboot.

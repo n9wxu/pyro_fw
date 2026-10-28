@@ -25,9 +25,9 @@ BOOT_CONTINUITY → BOOT_CALIBRATE   on SEVT_DONE
 BOOT_CONTINUITY → GROUND_TEST      on SEVT_GROUND_TEST      (switch held at start-up, GND-TEST-05)
 BOOT_CALIBRATE  → PAD_IDLE         on SEVT_CAL_DONE         (10 readings)
 BOOT_CALIBRATE  → FAULT            on SEVT_FAULT            (no samples in 10 s)
-PAD_IDLE        → ASCENT           on SEVT_LAUNCH           (15 m and 15 m/s)
+PAD_IDLE        → ASCENT           on SEVT_LAUNCH           (15 m)
 ASCENT          → ASCENT           on SEVT_ARMED
-ASCENT          → FALLING          on SEVT_APOGEE           (the filtered pressure past its minimum)
+ASCENT          → FALLING          on SEVT_APOGEE           (the filtered altitude past its top)
 FALLING         → DROGUE_DESCENT / CHUTE_DESCENT  on SEVT_DROGUE / SEVT_CHUTE (a settled descent rate)
 DROGUE_DESCENT  → CHUTE_DESCENT on SEVT_CHUTE; → FALLING on SEVT_FREEFALL
 FALLING / DROGUE_DESCENT / CHUTE_DESCENT → LANDED on SEVT_LANDING
@@ -84,7 +84,7 @@ Pads are owned once: `pin_store_claim_pads()` gives each pad one owner, and `pyr
 | `src/flight_sources.txt` | The flight software's file list, one responsibility a file (`docs/flight_states.md` has the table) |
 | `src/flight_states.c`, `src/flight_states.h` | The transition table, the dispatcher, the context |
 | `src/estimator.h`, `src/estimator_table.c`, `src/estimator_lumped.c`, `src/estimator_constacc.c` | The estimators: one interface, the table the build carries, the lumped filter, the constant-acceleration filter (DD-092) |
-| `src/pressure_estimator.c`, `src/pressure_processing.c`, `src/atmosphere.c` | The constant-acceleration Kalman filter, samples and the ground reference, the standard atmosphere |
+| `src/altitude_filter.c`, `src/pressure_processing.c`, `src/atmosphere.c` | The constant-acceleration Kalman filter, samples and the ground reference, the standard atmosphere and the pad's air |
 | `src/fire_control.c`, `src/fire_plan.c` | The fire rules; the plan from the configuration and the board |
 | `src/flight_resume.c` | The pad record and the resume decision |
 | `src/telemetry.c` | $PYRO NMEA and its queued events |
@@ -178,9 +178,9 @@ The flight context also keeps a ring of the last 64 samples and events; `flight_
 ### Pressure
 Each reading is stamped at the moment it describes, not when the loop reads it (SNS-PRES-08): the pressure collector, one interrupt state machine running from RAM, commands each conversion, waits out the part's worst case on an alarm, reads, and queues the raw codes with the time of each conversion's middle (DD-093). The sensor task takes the queue every loop and compensates. A conversion a flash erase or program ran beside is used like any other, and counted (DD-106). A failed transfer is counted by cause, and after three in a row the collector clears the bus and resets the part (SNS-COL-04, SNS-COL-05).
 
-The raw readings go straight into every estimator the build carries (`src/estimator.h`, DD-092), and the flight obeys the one `estimator` in config.ini names. `lumped`, the default, is an extended Kalman filter on height, speed and the thrust and drag it learns from the readings (`src/estimator_lumped.c`, `docs/lumped_parameter_filter.md`). `constacc` is a Kalman filter on ln(p / p_ref), its rate and its acceleration, with the sensor's noise measured from the readings (`pest_update()` in `src/pressure_estimator.c`, DD-085). Each skips a reading more than six standard deviations from its prediction unless it is the third in a row. Every flight comparison is made in pressure, with heights and speeds the operator set converted once against the pad and the 1976 standard atmosphere (`src/atmosphere.c`, SNS-EST-05).
+Each reading becomes an altitude, the 1976 standard atmosphere's height of its pressure, and goes straight into every estimator the build carries (`src/estimator.h`, DD-092, DD-114); the flight obeys the one `estimator` in config.ini names. `constacc`, the default, is a Kalman filter on the altitude, its speed and its acceleration, with the sensor's noise measured from the readings in pascals (`af_update()` in `src/altitude_filter.c`, DD-085). `lumped` is an extended Kalman filter on height, speed and the thrust and drag it learns from the readings, in its own air from the pad (`src/estimator_lumped.c`, `docs/lumped_parameter_filter.md`). Each sets aside a reading more than six standard deviations from its prediction for the first 50 ms of its run (SNS-EST-02). `src/pressure_processing.c` turns the obeyed estimate into a height above the pad and true speeds in the pad's air, the standard atmosphere offset by the pad's temperature (`src/atmosphere.c`), and every flight comparison is made on them (SNS-EST-05).
 
-Altitude is computed for people, relative to the pad, and is not clamped: a point below the pad reads negative and no ceiling is applied (SNS-ALT-01). Each sensor's rated range and its height for proper operation are in `src/pressure_sensor.h`, and each board declares them (SNS-MAX-01).
+A height is relative to the pad and is not clamped: a point below the pad reads negative and no ceiling is applied (SNS-ALT-01). Each sensor's rated range and its height for proper operation are in `src/pressure_sensor.h`, and each board declares them (SNS-MAX-01).
 
 ### Ground Test
 By the switch alone (DD-087). The procedure is `gt_seq_step()` in `src/ground_test_seq.c`, which owns the schedule and fires on it with or without a buzzer; a fire is delivered on command (GND-TEST-13). `gt_switch_step()` reads a switch to ground, or across two pads by driving one and requiring the other to follow both ways; the driven pad may be the buzzer's, pulsed only for the read (GND-TEST-12, `docs/ground_test_on_buzzer_pad.md`).

@@ -137,6 +137,12 @@
     <tr><td class="lbl">Apogee lockout</td><td>
       <input type="number" id="apogeeLockout" min="0" max="65535" value="0" oninput="cfgChanged()"> s
       <div class="hint">No apogee until this long after launch; 0 for none. For a supersonic flight, past the time it is above Mach 0.8.</div></td></tr>
+    <tr><td class="lbl">Heights are in</td>
+        <td><select id="standardAtmosphere" onchange="cfgChanged()">
+              <option value="false">the pad's air, from its temperature</option>
+              <option value="true">the 1976 standard atmosphere</option>
+            </select>
+            <div class="hint">The sensor's temperature on the pad, held from launch, sets how tall the air is: the same pressure is 300 m above the pad on a 15 °C day and 320 m on a 35 °C one. Sun on the airframe or a warm bay is in that temperature too.</div></td></tr>
   </table>
   <h3>Flight log</h3>
   <table class="info">

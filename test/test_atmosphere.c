@@ -1,6 +1,7 @@
 /*
- * The standard atmosphere the flight comparisons are converted with
- * [SNS-EST-05, FLT-AIR-01], against the 1976 standard's published values.
+ * The standard atmosphere the readings are converted with, against the 1976
+ * standard's published values, and the pad's air the heights are in
+ * [SNS-EST-05, FLT-AIR-01, DD-114].
  *
  * SPDX-License-Identifier: MIT
  */
@@ -32,55 +33,83 @@ void test_SNS_EST_05_altitude_inverts_pressure(void) {
         TEST_ASSERT_FLOAT_WITHIN(2.0f + 0.0005f * STANDARD[i].m, STANDARD[i].m, atmos_altitude_m(STANDARD[i].pa));
 }
 
-void test_FLT_AIR_01_temperature_at_each_pressure(void) {
+void test_FLT_AIR_01_temperature_at_each_altitude(void) {
     for (int i = 0; i < N_STANDARD; i++)
-        TEST_ASSERT_FLOAT_WITHIN(0.1f, STANDARD[i].k, atmos_temperature_k(STANDARD[i].pa));
+        TEST_ASSERT_FLOAT_WITHIN(0.1f, STANDARD[i].k, atmos_temperature_at_k(STANDARD[i].m));
 }
 
-/* A height above the pad is the difference of two standard altitudes, so a
- * high pad is as right as a sea-level one. */
+/* R T / (g p): 8.32 cm a pascal at sea level, 53 cm at 15 km. */
+void test_SNS_EST_05_metres_per_pascal_follow_the_air(void) {
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.08324f, atmos_m_per_pa(0.0f, 101325.0f));
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.5265f, atmos_m_per_pa(15000.0f, 12044.6f));
+}
+
+/* In the standard's own air a height above the pad is the difference of two
+ * altitudes, so a high pad is as right as a sea-level one. */
 void test_SNS_EST_05_a_height_is_measured_from_the_pad(void) {
     const float pads_m[] = {0.0f, 500.0f, 1500.0f, 2000.0f};
     const float heights_m[] = {30.48f, 150.0f, 300.0f, 1000.0f, 9000.0f, 25000.0f};
     for (int i = 0; i < 4; i++) {
-        float pad_pa = atmos_pressure_pa(pads_m[i]);
+        air_t air = air_over_pad(atmos_pressure_pa(pads_m[i]), 0.0f);
         for (int j = 0; j < 6; j++) {
-            float pa = atmos_pressure_above_pa(pad_pa, heights_m[j]);
-            TEST_ASSERT_FLOAT_WITHIN(0.5f + 0.001f * heights_m[j], heights_m[j], atmos_height_above_m(pa, pad_pa));
-            TEST_ASSERT_FLOAT_WITHIN(0.001f * pa, atmos_pressure_pa(pads_m[i] + heights_m[j]), pa);
+            float pa = atmos_pressure_pa(pads_m[i] + heights_m[j]);
+            float h = air_height_m(&air, atmos_altitude_m(pa));
+            TEST_ASSERT_FLOAT_WITHIN(0.5f + 0.001f * heights_m[j], heights_m[j], h);
         }
     }
 }
 
 /* [SNS-ALT-01] Below the pad is a negative height. */
 void test_SNS_ALT_01_below_the_pad_is_negative(void) {
-    float pad_pa = atmos_pressure_pa(1000.0f);
-    TEST_ASSERT_FLOAT_WITHIN(0.5f, -50.0f, atmos_height_above_m(atmos_pressure_pa(950.0f), pad_pa));
+    air_t air = air_over_pad(atmos_pressure_pa(1000.0f), 0.0f);
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, -50.0f, air_height_m(&air, 950.0f));
 }
 
-void test_FLT_AIR_01_scale_height_follows_the_temperature(void) {
-    TEST_ASSERT_FLOAT_WITHIN(5.0f, 8434.5f, atmos_scale_height_m(101325.0f));
-    TEST_ASSERT_FLOAT_WITHIN(5.0f, 6341.6f, atmos_scale_height_m(12044.6f));
+/* [DD-114] Air 15 K warmer than the standard's is that much thinner with
+ * height: the same pressures are 5 % higher. A pad with no temperature is
+ * the standard's. */
+void test_SNS_EST_05_a_warm_pads_air_stands_taller(void) {
+    air_t warm = air_over_pad(101325.0f, 288.15f + 15.0f);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 15.0f, warm.offset_k);
+    TEST_ASSERT_FLOAT_WITHIN(0.3f, 300.0f * (303.15f / 288.15f), air_height_m(&warm, 300.0f));
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.0f + 15.0f / 288.15f, air_scale(&warm, 0.0f));
+    air_t none = air_over_pad(101325.0f, 0.0f);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, none.offset_k);
+    TEST_ASSERT_EQUAL_FLOAT(300.0f, air_height_m(&none, 300.0f));
+}
+
+/* The altitude at a height, for the bench's own flights, inverts the height. */
+void test_SNS_EST_05_a_height_inverts_to_its_altitude(void) {
+    const float pad_k[] = {0.0f, 263.15f, 318.15f};
+    const float heights_m[] = {-20.0f, 15.0f, 300.0f, 3000.0f, 12000.0f, 25000.0f};
+    for (int i = 0; i < 3; i++) {
+        air_t air = air_over_pad(atmos_pressure_pa(1500.0f), pad_k[i]);
+        for (int j = 0; j < 6; j++)
+            TEST_ASSERT_FLOAT_WITHIN(0.05f, heights_m[j], air_height_m(&air, air_altitude_m(&air, heights_m[j])));
+    }
 }
 
 /* A canopy's terminal rate goes as 1/sqrt(rho): the ratio is 1 at the pad and
  * falls with the air. */
 void test_FLT_AIR_01_pad_air_ratio(void) {
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.0f, atmos_pad_air_ratio(101325.0f, 101325.0f));
+    air_t sea = air_over_pad(101325.0f, 0.0f);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.0f, air_pad_ratio(&sea, 0.0f));
     float rho_30km = 1171.87f / (287.05287f * 226.65f), rho_0 = 1.2250f;
-    TEST_ASSERT_FLOAT_WITHIN(0.002f, sqrtf(rho_30km / rho_0), atmos_pad_air_ratio(1171.87f, 101325.0f));
-    float high_pad = atmos_pressure_pa(1500.0f);
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.0f, atmos_pad_air_ratio(high_pad, high_pad));
+    TEST_ASSERT_FLOAT_WITHIN(0.002f, sqrtf(rho_30km / rho_0), air_pad_ratio(&sea, 30000.0f));
+    air_t warm_high = air_over_pad(atmos_pressure_pa(1500.0f), 303.15f);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.0f, air_pad_ratio(&warm_high, 1500.0f));
 }
 
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_SNS_EST_05_pressure_at_the_standards_altitudes);
     RUN_TEST(test_SNS_EST_05_altitude_inverts_pressure);
-    RUN_TEST(test_FLT_AIR_01_temperature_at_each_pressure);
+    RUN_TEST(test_FLT_AIR_01_temperature_at_each_altitude);
+    RUN_TEST(test_SNS_EST_05_metres_per_pascal_follow_the_air);
     RUN_TEST(test_SNS_EST_05_a_height_is_measured_from_the_pad);
     RUN_TEST(test_SNS_ALT_01_below_the_pad_is_negative);
-    RUN_TEST(test_FLT_AIR_01_scale_height_follows_the_temperature);
+    RUN_TEST(test_SNS_EST_05_a_warm_pads_air_stands_taller);
+    RUN_TEST(test_SNS_EST_05_a_height_inverts_to_its_altitude);
     RUN_TEST(test_FLT_AIR_01_pad_air_ratio);
     return UNITY_END();
 }

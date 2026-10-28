@@ -1,14 +1,16 @@
 /*
  * The estimator interface [SNS-EST-06..09, DD-092].
  *
- * An estimator turns the raw pressure readings into the filtered state every
- * decision is made on. Several are built in (estimator_table.c). All of them
- * are fed every reading; the flight obeys one, chosen by `estimator` in
- * config.ini at start-up, and logs what the others would have done.
+ * An estimator turns the readings, as altitudes (atmosphere.h), into the
+ * filtered state every decision is made on. Several are built in
+ * (estimator_table.c). All of them are fed every reading; the flight obeys
+ * one, chosen by `estimator` in config.ini at start-up, and logs what the
+ * others would have done.
  *
  * Whatever the estimator's own model, it reports in the same terms: the
- * filtered pressure, the rate and curvature of ln(pressure), and whether its
- * model explains the readings. Its apogee is not decided while it does not.
+ * filtered altitude, its speed and acceleration, and whether its model
+ * explains the readings. Its apogee is not decided while it does not
+ * [DD-114].
  *
  * SPDX-License-Identifier: MIT
  */
@@ -19,12 +21,12 @@
 #include <stdint.h>
 
 typedef struct {
-    float pressure_pa;
-    float rate;       /* d(ln p)/dt, 1/s: negative while climbing */
-    float curve;      /* d2(ln p)/dt2, 1/s^2 */
-    float rate_sigma; /* one standard deviation of rate */
-    float log_sigma;  /* one standard deviation of ln(pressure) */
-    float noise_pa;   /* the sensor noise being tracked */
+    float altitude_m;
+    float speed;       /* m/s of altitude, up is positive */
+    float accel;       /* m/s^2 */
+    float speed_sigma; /* one standard deviation of speed */
+    float altitude_sigma;
+    float noise_m; /* the sensor noise being tracked, as altitude here */
     /* The model accounts for the readings, and has had a second of them to
      * account for. */
     bool explains;
@@ -32,10 +34,11 @@ typedef struct {
 
 typedef struct estimator_vt {
     const char *name; /* as config.ini names it: at most 8 characters */
-    /* The first reading. pad_temp_k is the sensor's own temperature then, or
-     * 0 when it is not known. */
-    void (*start)(int32_t reading_pa, uint32_t t_us, float pad_temp_k);
-    void (*reading)(int32_t reading_pa, uint32_t t_us);
+    /* m_per_pa is the reading's metres of altitude per pascal: the sensor's
+     * noise is in pascals. pad_temp_k is the sensor's own temperature at the
+     * first reading, or 0 when it is not known. */
+    void (*start)(float altitude_m, float m_per_pa, uint32_t t_us, float pad_temp_k);
+    void (*reading)(float altitude_m, float m_per_pa, uint32_t t_us);
     /* Time has passed and the sensor gave nothing usable. */
     void (*no_reading)(uint32_t t_us);
     /* The board has just pulsed a pyro channel. */

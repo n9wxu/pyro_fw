@@ -5,21 +5,19 @@
  * SPDX-License-Identifier: MIT
  */
 #include "unity.h"
-#include "../src/atmosphere.h"
 #include "../src/launch_detector.h"
+#include <math.h>
 
 void setUp(void) {}
 void tearDown(void) {}
 
-#define PAD_PA 101325.0f
-
 /* The filtered state the trigger reads: a height above the pad and a climb
- * speed, as the estimator reports them. */
+ * speed. */
 static bool launch_at(float height_m, float climb_ms) {
     pp_sample_t s = {0};
-    s.pressure_pa = atmos_pressure_above_pa(PAD_PA, height_m);
-    s.rate = -climb_ms / atmos_scale_height_m(s.pressure_pa);
-    return launch_detected(&s, PAD_PA);
+    s.height_m = height_m;
+    s.speed = climb_ms;
+    return launch_detected(&s);
 }
 
 void test_FLT_LAUNCH_07_high_and_climbing_is_a_launch(void) {
@@ -42,7 +40,8 @@ void test_FLT_LAUNCH_07_the_speed_plays_no_part(void) {
 
 void test_FLT_LAUNCH_07_no_estimate_is_no_launch(void) {
     pp_sample_t s = {0};
-    TEST_ASSERT_FALSE(launch_detected(&s, PAD_PA));
+    TEST_ASSERT_FALSE(launch_detected(&s));
+    TEST_ASSERT_FALSE_MESSAGE(launch_at(NAN, 0.0f), "nor a height that is not a number");
 }
 
 int main(void) {

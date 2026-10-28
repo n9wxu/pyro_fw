@@ -16,7 +16,7 @@ Two-channel rocket flight computer on the RP2040, for three boards and two varia
 - **mDNS/DNS-SD**: pyro.local hostname, _pyro._tcp service discovery
 - **OTA updates**: A/B bootloader (pico_fota_bootloader), web UI + CLI + GitHub release update
 - **Pressure sensors**: `src/pressure_collector.c` collects from either sensor, free-running from an alarm handler in RAM (DD-093); `src/ms5607_driver.c` (MK1C, MK1B) and `src/bmp280_driver.c` (MK1A, MK1B) hold each part's detection, description and arithmetic. Bring-up in `src/pressure_single_sensor.c`, or `boards/mk1b/pressure_board.c` for MK1B's two pads
-- **Pressure processing**: two estimators behind `src/estimator.h`, both fed every reading and one obeyed (DD-092): `src/estimator_lumped.c` (an extended Kalman filter with lumped thrust and drag, the default) and `src/estimator_constacc.c` (the constant-acceleration Kalman filter of `src/pressure_estimator.c`, DD-085); `src/pressure_processing.c` (samples, gaps, a stuck sensor; every reading used, DD-106), `src/ground_reference.c` and `src/atmosphere.c` (the 1976 standard atmosphere)
+- **Pressure processing**: two estimators behind `src/estimator.h`, both fed every reading and one obeyed (DD-092): `src/estimator_constacc.c` (the constant-acceleration Kalman filter of `src/altitude_filter.c`, the default, DD-085) and `src/estimator_lumped.c` (an extended Kalman filter with lumped thrust and drag); `src/pressure_processing.c` (readings to altitudes, samples as heights in the pad's air, gaps, a stuck sensor; every reading used, DD-106, DD-114), `src/ground_reference.c` and `src/atmosphere.c` (the 1976 standard atmosphere, and the pad's air)
 - **Fire rules**: `src/fire_control.c` and `src/fire_plan.c` — each channel's trigger, re-fire, emergency fire, and the gap between pulses (DD-082, DD-084)
 - **Resume**: `src/flight_resume.c` — the pad record `pad.mkr` and the decision to rejoin a flight after any restart (DD-086)
 - **Pyro backends**: `boards/<board>/pyro_board.c` behind `src/pyro.h`; MK1C's split into measure, faults and sequence files, with its PIO arm pump
@@ -45,7 +45,7 @@ cmake -B build-mk1c -DPYRO_BOARD=mk1c && cmake --build build-mk1c
 Dependencies: Pico SDK 2.2.0, installed separately; alfs (format 6), smallest_tcp v0.1.12, FreeRTOS-Kernel V11.3.1, Unity v2.6.0, Lua v5.4.6 (boards with Lua) and pico_fota_bootloader (master) via FetchContent.
 
 ### Key Design Decisions
-1. Integers for what is stored and reported (Pa, cm, ms); the estimator and the atmosphere use single-precision float. Every flight comparison is made in pressure (SNS-EST-05)
+1. Integers for what is stored and reported (Pa, cm, ms); the estimator and the atmosphere use single-precision float. Every flight comparison is made on a height above the pad or a speed, in the pad's air (SNS-EST-05)
 2. On the ground every flash program or erase runs through `flash_op()`, which parks the other core (DD-074); in flight only the log writer's run, in pieces inside its slot on core1, and core0 runs from RAM (FLT-RT-03, DD-104)
 3. Apogee is an event, not a state (twelve states; see docs/flight_states.md)
 4. T+0 is backdated to the start of the rise, not the detection threshold (FLT-LAUNCH-03)
@@ -160,10 +160,10 @@ GROUND_TEST are numbered after LANDED, so recorded state numbers never move.
 | 3 | speed | speed | configured units/s | descent faster than this |
 | 4 | delay | time | seconds | time since apogee >= value |
 
-Fires only after apogee (PYR-SAFE-04), and never both at the same instant (PYR-DEPLOY-02). Health withholds no fire (PYR-HEALTH-01). Each trigger is converted to a pressure once, against the pad, and compared with the filtered state (SNS-EST-05). MK1A and MK1B fire a non-blocking 500 ms pulse; MK1C runs its firing sequence a loop step at a time and closes its gate at the deadline whatever the bus has (DD-056, PYR-ARM-03). No fire is refused (PYR-FIRE-01).
+Fires only after apogee (PYR-SAFE-04), and never both at the same instant (PYR-DEPLOY-02). Health withholds no fire (PYR-HEALTH-01). Each trigger is compared with the filtered state's height above the pad or its speed, in the pad's air (SNS-EST-05). MK1A and MK1B fire a non-blocking 500 ms pulse; MK1C runs its firing sequence a loop step at a time and closes its gate at the deadline whatever the bus has (DD-056, PYR-ARM-03). No fire is refused (PYR-FIRE-01).
 
 ## Vertical Speed
-The filtered rate of ln(p), times the atmosphere's scale height at that pressure (FLT-ASC-02, DD-085).
+The filtered altitude's speed, in the pad's air (FLT-ASC-02, DD-085, DD-114).
 
 ## Configuration (config.ini)
 ```ini
@@ -180,7 +180,10 @@ pyro2_refire_speed=0
 emergency_fire_speed=0
 refire_interval=0
 fire_gap=0
-estimator=lumped
+estimator=constacc
+model_decides=true
+apogee_lockout=0
+standard_atmosphere=false
 landing_timeout=60
 lua_enabled=false
 lua_baud=9600
@@ -200,7 +203,10 @@ lua_pixels=0
 | emergency_fire_speed | units/s; 0 off | 0 |
 | refire_interval | ms; 0 takes the board's default (1000) | 0 |
 | fire_gap | ms of quiet time between pulses; 0 takes the board's default (3000) | 0 |
-| estimator | lumped/constacc; any other name takes the default (SNS-EST-06) | lumped |
+| estimator | constacc/lumped; any other name takes the default (SNS-EST-06) | constacc |
+| model_decides | true: the estimator decides apogee, the simple filter standing in; false: the simple filter alone (FLT-APO-09, FLT-APO-10) | true |
+| apogee_lockout | seconds after T+0 before any apogee (FLT-APO-12) | 0 |
+| standard_atmosphere | true: heights in the 1976 standard's air; false: in the pad's (SNS-EST-05) | false |
 | landing_timeout | seconds, 0-255 | 60 |
 | lua_enabled | true/false | false |
 | lua_baud | a Lua serial role's baud, 300-921600 | 9600 |

@@ -388,7 +388,8 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
                               : "cm",
             (long)ground_pressure_pa, cfg->estimator, cfg->model_decides ? "estimator" : "simple filter");
     flog_sample_t s;
-    for (uint16_t i = 0; log_pad_row(&sim_log_pad, i, t0_ms, ground_pressure_pa, PAD_IDLE, &s); i++)
+    air_t air = air_over_pad((float)ground_pressure_pa, pp_pad_k());
+    for (uint16_t i = 0; log_pad_row(&sim_log_pad, i, t0_ms, &air, PAD_IDLE, &s); i++)
         sim_log_keep(&s);
     log_pad_clear(&sim_log_pad);
     sim_log_running = true;

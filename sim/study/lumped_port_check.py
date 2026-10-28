@@ -18,7 +18,7 @@ from lumped_fly import fly, ROCKETS, PORTS, COLD, HOT, ISA
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 SOURCES = ['test/estimator_replay.c', 'src/estimator_table.c', 'src/estimator_constacc.c', 'src/estimator_lumped.c',
-           'src/pressure_estimator.c', 'src/atmosphere.c']
+           'src/altitude_filter.c', 'src/atmosphere.c']
 
 
 class Recorded(Lumped):
