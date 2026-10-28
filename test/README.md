@@ -71,6 +71,7 @@ than one build: the boot, pad and recorded-flight suites run on all three.
 | `status_json_tests` | `test_status_json.c` | `/api/status` rendered from a snapshot, `status_json.c` linked alone |
 | `fs_json_tests` | `test_fs_json.c` | `/api/fs`'s rendering: the flash store and each of its files |
 | `vfs_flash_tests` | `test_vfs_flash.c` | the board's files, `vfs_flash.c` over alfs, on a RAM flash that keeps NOR's rules and counts its erases (DD-100) |
+| `loop_period_tests` | `test_loop_period.c` | the periods the flight task's alarm skips when it fires late, each a missed period |
 | `flash_slot_tests` | `test_flash_slot.c` | the log writer's flash operations inside their slots, against a chip that keeps its datasheet's suspend rules |
 | `flash_chip_tests` | `test_flash_chip.c` | what a flash chip says of itself: capacity, unique ID length, whether the image's flash map fits |
 | `small_fmt_tests` | `test_small_fmt.c` | the flight path's formatter, `small_fmt.c`, against the C library's (FLT-RT-02) |

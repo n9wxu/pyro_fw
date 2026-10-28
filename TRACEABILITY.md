@@ -29,6 +29,8 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | FLT-RT-02 | From launch to landing, the flight task, every interrupt handler on its core and every kernel path they... | test_small_fmt.c: test_FLT_RT_02_the_telemetry_sentences_are_the_librarys, test_FLT_RT_02_the_log_and_diagnostic_rows_are_the_librarys, test_FLT_RT_02_a_short_buffer_is_cut_as_the_library_cuts_it, test_FLT_RT_02_the_rest_of_the_conversions; CI runs `support/prove_flight_ram.py --strict` on every image: it fails if the flight path, from the first period airborne to landing, reaches flash by a function, a read-only byte or an uncovered indirect branch | ✅ |
 | FLT-RT-03 | From launch to landing no flash operation shall stop or delay the flight task | Through FLT-LOG-09; MK1C bench flights, 2026-10-18 (DD-104): from launch to landing no lockout and no loop overrun, the loop at most 97 us late, with 3,000 programs and 60 erases in flight | ✅ HW |
 | FLT-RT-04 | The flight task shall run every 10 ms | Structure: `support/structure_check.py` | ✅ |
+| FLT-RT-05 | Every period the flight task misses shall be counted on /api/status, whatever kept it from running, its... | test_loop_period.c: test_FLT_RT_05_an_alarm_on_time_skips_nothing, test_FLT_RT_05_a_late_alarm_that_leaves_time_to_arm_skips_nothing, test_FLT_RT_05_an_alarm_too_late_to_arm_the_next_skips_it, test_FLT_RT_05_an_alarm_held_off_by_an_erase_counts_every_period_it_passed and 1 more; MK1B-8MB bench flights, 2026-10-26 (DD-112): loop_overruns 0 in flight; the landing cleanup's whole erases counted 145 to 151 loop_overruns_ground | ✅ HW |
+| FLT-RT-06 | On the ground, the log writer's erase on a part whose erase suspends shall stop the flight task's core for... | test_flash_slot.c: test_FLT_RT_06_on_the_ground_an_erase_is_sliced_where_the_part_suspends_it, test_FLT_RT_06_a_ground_erase_stops_core0_for_one_slot_at_most, test_FLT_RT_06_a_ground_erase_goes_on_in_pieces_through_launch; Tested on the host; a bench run on a part whose erase suspends (MK1A, MK1B, MK1C) is owed (DD-112) | ✅ |
 | FLT-LAUNCH-02 | The system shall remain in PAD_IDLE while the rocket is at or below 15 m above the ground reference | test_flight_pad.c: test_FLT_LAUNCH_07_a_fast_climb_past_15_m_is_a_launch, test_FLT_LAUNCH_02_below_15_m_is_not_a_launch; test_launch_detector.c: test_FLT_LAUNCH_02_below_15_m_is_not_a_launch; test_recorded_flight.c: test_TST_02_launch_is_detected_as_the_rocket_leaves | ✅ |
 | FLT-LAUNCH-03 | T+0 shall be the time of the first sample of the rise more than 50 cm above the pad, not the moment of... | test_flight_pad.c: test_FLT_LAUNCH_07_a_fast_climb_past_15_m_is_a_launch; test_flight_profiles.c: test_DAT_04_the_events_of_a_flight_in_order, test_FLT_LAUNCH_03_time_zero_is_the_start_of_the_rise; test_telemetry.c: test_TEL_11_each_event_is_carried_once_by_the_next_message | ✅ |
 | FLT-LAUNCH-04 | The system shall log a LAUNCH event at the transition | test_flight_pad.c: test_FLT_LAUNCH_07_a_fast_climb_past_15_m_is_a_launch; test_flight_profiles.c: test_DAT_04_the_events_of_a_flight_in_order | ✅ |
@@ -469,10 +471,10 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host test, a web test or a structural check | 331 |
+| ✅ Verified by a host test, a web test or a structural check | 332 |
 | ⚠️ Not verified, or not wholly | 24 |
 | ❌ Not implemented | 0 |
-| ✅ HW (verified on hardware only) | 13 |
+| ✅ HW (verified on hardware only) | 14 |
 
 `support/trace_check.py --counts` computes these, and CI fails when this table
 disagrees or when `support/trace_matrix.py --check` finds the file out of date.

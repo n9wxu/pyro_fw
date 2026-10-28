@@ -54,7 +54,7 @@ typedef struct {
     uint8_t board_selftest;
     int32_t pyro_bus_q, pyro_bus_adc, pyro_vbat_adc; /* -1: none on this board */
 
-    uint32_t loop_max_us, loop_overruns, loop_late_max_us, loop_count;
+    uint32_t loop_max_us, loop_overruns, loop_overruns_ground, loop_late_max_us, loop_count;
     uint32_t stage_max_us[STATUS_STAGES];
     uint32_t stage1_parts_us[STATUS_STAGE1_PARTS]; /* TinyUSB, the stack, HTTP transport, mDNS */
     uint32_t http_units[2], http_unit_max_us[2];   /* core0, core1 */

@@ -931,6 +931,17 @@ add_custom_target(flash_slot_tests
     COMMENT "Flash operations in the log writer's slots tests"
 )
 
+# The periods the flight task's alarm skips [FLT-RT-05].
+add_custom_target(loop_period_tests
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_loop_period.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_loop_period
+    COMMAND ${CMAKE_BINARY_DIR}/test_loop_period
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flight task period tests"
+)
+
 add_custom_target(net_txq_tests
     COMMAND ${CMAKE_COMMAND} -E echo "Building network transmit queue tests..."
     COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src

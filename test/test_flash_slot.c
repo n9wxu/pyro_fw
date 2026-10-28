@@ -5,7 +5,7 @@
  * suspend issued sooner than tRS after a start or resume is ignored, and a
  * suspend takes up to tSUS to land.
  *
- * Verifies [FLT-LOG-09, FLT-LOG-10, FLT-LOG-11, LUA-RUN-04].
+ * Verifies [FLT-LOG-09, FLT-LOG-10, FLT-LOG-11, FLT-RT-06, LUA-RUN-04].
  */
 #include "unity.h"
 #include "core1_frame.h"
@@ -36,11 +36,14 @@ typedef struct {
     uint32_t work_total; /* what each new operation takes */
     uint32_t resumed_at;
     bool suspended, flight;
+    bool ground;                 /* the writer's erase in pieces on the ground */
     uint32_t leave_flight_after; /* pieces; 0: never */
+    uint32_t launch_after;       /* pieces, from the ground; 0: never */
     int fail_at;                 /* the piece that fails; 0: none */
     /* what happened */
     uint32_t pieces, suspends, slots, wholes, starts;
     uint32_t over_us;       /* the most a piece ran past its slot's end */
+    uint32_t piece_max_us;  /* the longest piece: core0 parked, on the ground */
     uint32_t ignored;       /* suspends the chip ignored */
     uint32_t piece_in_slot; /* pieces that began outside the writer's slot */
 } chip_t;
@@ -53,8 +56,8 @@ static uint32_t now_us(void *c) {
 static uint32_t slot_t0(void *c) {
     return ((chip_t *)c)->t0;
 }
-static bool in_flight(void *c) {
-    return ((chip_t *)c)->flight;
+static bool sliced(void *c) {
+    return ((chip_t *)c)->flight || ((chip_t *)c)->ground;
 }
 
 /* The writer gives the frame up: Lua has the rest. The next frame's slot
@@ -86,6 +89,7 @@ static int piece(void *v, flash_slot_kind_t kind, uint32_t addr, const uint8_t *
     (void)data;
     (void)len;
     chip_t *c = v;
+    uint32_t began = c->now;
     c->pieces++;
     if (frame_writer_left_us(c->t0, c->now) == 0)
         c->piece_in_slot++;
@@ -125,8 +129,14 @@ static int piece(void *v, flash_slot_kind_t kind, uint32_t addr, const uint8_t *
         }
     }
     note_end(c);
+    if (c->now - began > c->piece_max_us)
+        c->piece_max_us = c->now - began;
     if (c->leave_flight_after && c->pieces >= c->leave_flight_after)
         c->flight = false;
+    if (c->launch_after && c->pieces >= c->launch_after) {
+        c->flight = true;
+        c->ground = false;
+    }
     return rc;
 }
 
@@ -149,7 +159,7 @@ static int whole(void *v, flash_slot_kind_t kind, bool resume, uint32_t addr, co
     return PIECE_DONE;
 }
 
-static const flash_slot_io_t io = {&chip, now_us, slot_t0, at_slot_start, in_flight, piece, whole};
+static const flash_slot_io_t io = {&chip, now_us, slot_t0, at_slot_start, sliced, piece, whole};
 
 static void fresh(const uint8_t jedec[3], uint32_t work_us, uint32_t start_in_frame_us) {
     memset(&chip, 0, sizeof(chip));
@@ -336,13 +346,59 @@ void test_FLT_LOG_10_an_erase_suspended_at_landing_is_finished_whole(void) {
     TEST_ASSERT_EQUAL_UINT32(1u, chip.starts);
 }
 
-/* On the pad nothing is sliced: the operation runs whole. */
+/* On the pad a part whose erase does not suspend erases whole. */
 void test_FLT_LOG_09_on_the_pad_an_operation_runs_whole(void) {
     fresh(BY25Q64ES, 400000u, 9000u);
     chip.flight = false;
     TEST_ASSERT_EQUAL_INT(0, flash_slot_run(&io, chip.t, SLOT_ERASE, 0, NULL, 0));
     TEST_ASSERT_EQUAL_UINT32(0u, chip.pieces);
     TEST_ASSERT_EQUAL_UINT32(1u, chip.wholes);
+}
+
+/* [FLT-RT-06] On the ground the writer erases in pieces wherever the part's
+ * erase suspends; BY25Q64ES, an unlisted part and every program run whole. */
+void test_FLT_RT_06_on_the_ground_an_erase_is_sliced_where_the_part_suspends_it(void) {
+    TEST_ASSERT_TRUE(flash_slot_ground_sliced(flash_timing_for(W25Q16JV), SLOT_ERASE));
+    TEST_ASSERT_TRUE(flash_slot_ground_sliced(flash_timing_for(W25Q128JV), SLOT_ERASE));
+    TEST_ASSERT_TRUE(flash_slot_ground_sliced(flash_timing_for(XT25F128F), SLOT_ERASE));
+    TEST_ASSERT_FALSE(flash_slot_ground_sliced(flash_timing_for(BY25Q64ES), SLOT_ERASE));
+    TEST_ASSERT_FALSE(flash_slot_ground_sliced(flash_timing_for(UNLISTED), SLOT_ERASE));
+    TEST_ASSERT_FALSE(flash_slot_ground_sliced(flash_timing_for(W25Q16JV), SLOT_PROGRAM));
+}
+
+/* [FLT-RT-06] A ground erase stops core0 for one piece at a time, each
+ * inside the writer's slot, never for the whole erase. */
+void test_FLT_RT_06_a_ground_erase_stops_core0_for_one_slot_at_most(void) {
+    static const uint8_t *const parts[] = {W25Q16JV, W25Q128JV, XT25F128F};
+    for (unsigned i = 0; i < sizeof(parts) / sizeof(parts[0]); i++) {
+        const flash_timing_t *t = flash_timing_for(parts[i]);
+        fresh(parts[i], 45000u, IRQ_US);
+        chip.flight = false;
+        chip.ground = flash_slot_ground_sliced(t, SLOT_ERASE);
+        TEST_ASSERT_EQUAL_INT(0, flash_slot_run(&io, t, SLOT_ERASE, 0, NULL, 0));
+        TEST_ASSERT_EQUAL_UINT32(0u, chip.work_left);
+        TEST_ASSERT_EQUAL_UINT32(0u, chip.wholes);
+        TEST_ASSERT_TRUE(chip.pieces > 1u);
+        TEST_ASSERT_TRUE(chip.piece_max_us <= FRAME_WRITER_US);
+        TEST_ASSERT_EQUAL_UINT32(0u, chip.over_us);
+        TEST_ASSERT_EQUAL_UINT32(0u, chip.ignored);
+    }
+}
+
+/* [FLT-RT-06] Launch in the middle of a ground erase: its pieces go on in
+ * the flight's slots, and it ends. */
+void test_FLT_RT_06_a_ground_erase_goes_on_in_pieces_through_launch(void) {
+    const flash_timing_t *t = flash_timing_for(XT25F128F);
+    fresh(XT25F128F, 45000u, IRQ_US);
+    chip.flight = false;
+    chip.ground = true;
+    chip.launch_after = 3u;
+    TEST_ASSERT_EQUAL_INT(0, flash_slot_run(&io, t, SLOT_ERASE, 0, NULL, 0));
+    TEST_ASSERT_TRUE(chip.flight);
+    TEST_ASSERT_TRUE(chip.pieces > 3u);
+    TEST_ASSERT_EQUAL_UINT32(1u, chip.starts);
+    TEST_ASSERT_EQUAL_UINT32(0u, chip.wholes);
+    TEST_ASSERT_EQUAL_UINT32(0u, chip.work_left);
 }
 
 void test_FLT_LOG_09_a_failed_piece_is_the_operations_failure(void) {
@@ -398,6 +454,9 @@ int main(void) {
     RUN_TEST(test_FLT_LOG_09_an_unlisted_parts_program_runs_whole_from_a_slots_start);
     RUN_TEST(test_FLT_LOG_10_an_erase_suspended_at_landing_is_finished_whole);
     RUN_TEST(test_FLT_LOG_09_on_the_pad_an_operation_runs_whole);
+    RUN_TEST(test_FLT_RT_06_on_the_ground_an_erase_is_sliced_where_the_part_suspends_it);
+    RUN_TEST(test_FLT_RT_06_a_ground_erase_stops_core0_for_one_slot_at_most);
+    RUN_TEST(test_FLT_RT_06_a_ground_erase_goes_on_in_pieces_through_launch);
     RUN_TEST(test_FLT_LOG_09_a_failed_piece_is_the_operations_failure);
     RUN_TEST(test_FLT_LOG_10_a_chip_that_never_finishes_is_given_up);
     RUN_TEST(test_FLT_LOG_11_a_piece_started_while_one_is_held_does_not_let_it_go);

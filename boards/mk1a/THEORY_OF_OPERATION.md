@@ -229,7 +229,8 @@ pulse. MK1C's charge pump is what meets PYR-ARM-01.
 
 `board.cmake` selects the SDK header, the 16 MB geometry and Lua, and declares
 the loop budget, `PYRO_LOOP_WORST_MS` (500 ms, dominated by a flash sector
-erase). `/api/status` reports `loop_max_us` and `loop_overruns`.
+erase). `/api/status` reports `loop_max_us`, `loop_overruns` and
+`loop_overruns_ground`.
 
 | File | Holds |
 |---|---|
