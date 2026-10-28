@@ -84,8 +84,9 @@ float pp_pad_k(void) {
 }
 
 /* The pad's pressure and temperature as they stand: both move until the
- * ground is frozen at launch. */
-static void follow_the_pad(void) {
+ * ground is frozen at launch. Not inlined: the flight-RAM proof cuts its
+ * call to air_over_pad by name. */
+static void __attribute__((noinline)) follow_the_pad(void) {
     float pad_pa = (float)gref_pressure(&pp.ground);
     float pad_k = pp_pad_k();
     if (pad_pa == pp.air.pad_pa && pad_k == pp.air_pad_k)
