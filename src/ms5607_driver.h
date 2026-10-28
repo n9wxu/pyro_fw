@@ -42,13 +42,23 @@
 
 enum { MS5607_PRESSURE, MS5607_TEMPERATURE };
 
-#define MS5607_CONVERSION(cmd)                                                                                         \
-    { {(cmd)}, 1, MS5607_CMD_ADC_READ, 3, MS5607_CONV_DONE_US, MS5607_HALF_CONV_US }
-
 static const collector_part_t MS5607_PART = {
     .steps = 2,
-    .step = {[MS5607_PRESSURE] = MS5607_CONVERSION(MS5607_CMD_CONVERT_D1),
-             [MS5607_TEMPERATURE] = MS5607_CONVERSION(MS5607_CMD_CONVERT_D2)},
+    .step =
+        {
+            [MS5607_PRESSURE] = {.command = {MS5607_CMD_CONVERT_D1},
+                                 .command_len = 1,
+                                 .read_register = MS5607_CMD_ADC_READ,
+                                 .read_len = 3,
+                                 .convert_us = MS5607_CONV_DONE_US,
+                                 .middle_us = MS5607_HALF_CONV_US},
+            [MS5607_TEMPERATURE] = {.command = {MS5607_CMD_CONVERT_D2},
+                                    .command_len = 1,
+                                    .read_register = MS5607_CMD_ADC_READ,
+                                    .read_len = 3,
+                                    .convert_us = MS5607_CONV_DONE_US,
+                                    .middle_us = MS5607_HALF_CONV_US},
+        },
     .reset = {MS5607_CMD_RESET},
     .reset_len = 1,
     .reset_us = MS5607_RESET_MS * 1000u,
