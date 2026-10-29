@@ -150,9 +150,9 @@ test.describe('New device', () => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Config');
-    await expect(page.locator('#estimator option')).toHaveText(['lumped', 'constacc']);
-    await expect(page.locator('#estimator')).toHaveValue('lumped');
-    await page.selectOption('#estimator', 'constacc');
+    await expect(page.locator('#estimator option')).toHaveText(['constacc']);
+    await expect(page.locator('#estimator')).toHaveValue('constacc');
+    await page.selectOption('#modelDecides', 'false');
     await expect(page.locator('#cfgDirty')).toBeVisible();
     await page.click('#btnSaveCfg');
     await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 5000 });

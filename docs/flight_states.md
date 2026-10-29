@@ -39,7 +39,7 @@ firmware, the host suites and the simulators all build):
 | `flight_ground_test.c` | ground test mode |
 | `flight_outputs.c` | telemetry, the pad record |
 | `estimator.h`, `estimator_table.c` | the estimator interface, and the estimators this build carries |
-| `estimator_lumped.c`, `estimator_constacc.c` (with `altitude_filter.c`) | the two estimators: altitude, its speed, its acceleration, and whether the model explains the readings |
+| `estimator_constacc.c` (with `altitude_filter.c`) | the estimator: altitude, its speed, its acceleration, and whether the model explains the readings |
 | `pressure_processing.c` | readings in to every estimator as altitudes, samples out from the obeyed one as heights in the pad's air: gaps, a stuck sensor, the ground reference |
 | `fire_control.c`, `fire_plan.c` | the fire rules, and the plan the configuration and the board make |
 | `launch_detector.c`, `apogee_detector.c`, `landing_detector.c`, `descent_phase.c` | one detector each |
@@ -181,8 +181,7 @@ obeyed (SNS-EST-07).
 
 | Name | Model |
 |---|---|
-| `constacc` (default) | constant acceleration (`docs/descent_speed_estimator.md`) |
-| `lumped` | one equation of motion, pad to ground, learning thrust and drag (`docs/lumped_parameter_filter.md`) |
+| `constacc` | constant acceleration (`docs/descent_speed_estimator.md`) |
 
 ## Descent and firing
 

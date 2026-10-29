@@ -5,10 +5,9 @@ behavior of the mach-lockout on the bench with the new filters. Forget the
 previous concerns and take a fresh look at the physics and limitations."
 
 The firmware carries the answer (DD-092). The apogee rule below, rules 2 to 4
-of the arc, is `apogee_detected()` for every estimator (FLT-APO-07). The arc
-itself, rule 1, is how `constacc` says whether its model explains the
-readings. Option E is `lumped`, which logs beside the default, `constacc`
-(`docs/lumped_parameter_filter.md`).
+of the arc, is `apogee_detected()` (FLT-APO-07). The arc itself, rule 1, is
+how `constacc` says whether its model explains the readings. Option E is not
+carried (DD-115).
 
 ## Bottom line
 
@@ -115,7 +114,7 @@ which is why it follows a port error.
 
 The arc rule above uses the physics outside the filter, as a test on the
 filter's output. Putting the physics inside the filter is the other way to
-do it: option B with switched phases, option E with none. `lumped` is E.
+do it: option B with switched phases, option E with none.
 
 ## Options
 
@@ -173,8 +172,9 @@ temperature, and it is the most complicated of A to D.
 
 ### E. One lumped-parameter filter, with no phases
 
-In the firmware: `lumped`, logged beside `constacc` (DD-092, DD-113), studied in
-`docs/lumped_parameter_filter.md`. The physics alone does not reject a port
+Studied in Python (`sim/study/lumped.py`) and not carried: obeyed, it was
+sure of a climb past the top on a port error twice the plant's, and held the
+drogue 1.85 s past apogee (DD-115). The physics alone does not reject a port
 error: a consistency test, "the model explains the readings", stands beside
 the model.
 
@@ -215,15 +215,13 @@ What rejects a port error, with no flag:
   consistency test reads the innovations, and nothing is decided until the
   model explains the readings again.
 
-What the study answers (`docs/lumped_parameter_filter.md`):
+What the study answers (`sim/study/lumped.py`):
 
 - the two parameters are not reliably identified through a hard burn, but
   height and speed are tracked well, and a canopy's drag is found;
 - a port error is rejected by the consistency test, not by the physics;
 - "data is believed" (SNS-EST-02) holds: a sustained run is followed, and a
   decision waits until the model explains it (SNS-EST-08);
-- the cost: about 7 kB of flash; the loop time with both filters running is
-  not measured.
 
 An accelerometer (a later MK1D, or one wired to an MK1C) measures
 `a_T − drag` directly and makes the parameters separable.

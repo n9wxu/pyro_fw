@@ -14,7 +14,6 @@ src/simple_apogee.c
 src/log_pad_ring.c
 src/estimator_table.c
 src/estimator_constacc.c
-src/estimator_lumped.c
 src/descent_phase.c
 src/launch_detector.c
 src/landing_detector.c

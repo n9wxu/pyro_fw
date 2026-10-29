@@ -233,7 +233,7 @@ renumbered: the numbers reach the flight log, telemetry and `/api/status`.
 | `sim/hw/` | The Pico SDK calls a board file makes, for the modelled boards |
 | `sim/plant/` | The board plant models |
 | `sim/mach_plant.c` | The flight tests' atmosphere, rocket and static ports |
-| `sim/study/` | The estimator studies, in Python; `lumped_port_check.py`, in `scripts/run_host_tests.sh`, holds `src/estimator_lumped.c` to the study's filter |
+| `sim/study/` | The estimator studies, in Python; `lumped.py` and `lumped_fly.py` are the filter and the flights `simple_apogee.py` and `apogee_fallback.py` fly (`docs/apogee_fallback.md`) |
 | `boards/sim/hal_sim.h` | Internal sim HAL accessors |
 | `boards/sim/hal_sim.c` | In-memory HAL implementation |
 | `boards/sim_mk1a`, `sim_mk1b`, `sim_mk1c` | Host boards that build a real pyro backend against its plant |

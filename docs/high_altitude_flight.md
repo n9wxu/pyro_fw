@@ -30,9 +30,8 @@ On the host, at sensor noise of 1.2, 3 and 9 Pa, four seeds each: apogee is
 never early, and is declared within 0.5 s of the true one to 10 km, 1.5 s at
 20 km and 2.5 s at 30 km (FLT-APO-01,
 `test_FLT_APO_01_apogee_is_never_early_and_soon_after_at_every_height`).
-Obeying each estimator, with clean ports and three port errors, from a hop to
-45 km: `lumped` is never early and 0.09 to 0.94 s after apogee; `constacc` is
-never early and 0.09 to 1.8 s after it, later than 2 s on two of the 30 km
+With clean ports and three port errors, from a hop to 45 km, `constacc` is
+never early and 0.09 to 1.8 s after apogee, later than 2 s on two of the 30 km
 and 45 km cases (DD-092).
 
 Above the sensor's range the flight goes on with the data it has
@@ -54,10 +53,10 @@ air:
 | 30 km | 0.18 |
 
 So the same sensor noise in pascals is about 70 times the noise in speed at
-30 km that it is on a sea-level pad. The estimators average longer as the air
-thins, with no schedule keyed to height: each tracks the sensor's noise in
+30 km that it is on a sea-level pad. The estimator averages longer as the air
+thins, with no schedule keyed to height: it tracks the sensor's noise in
 pascals, and a reading's weight in altitude falls with the square of its
-metres per pascal (`src/altitude_filter.c`, `src/estimator_lumped.c`). The
+metres per pascal (`src/altitude_filter.c`). The
 apogee rule's margin is twice the speed's own uncertainty, so a noisier
 speed makes apogee later, not earlier.
 

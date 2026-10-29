@@ -9,13 +9,9 @@ behind one interface with `constacc` the default (DD-113). This document is
 
 ## What exists
 
-Two estimators behind `src/estimator.h`, both fed every reading; the flight
-obeys the one `estimator` in config.ini names (SNS-EST-06, SNS-EST-07):
-
-- `constacc`, the default: a Kalman filter on the readings' altitude, its
-  speed and its acceleration (this document).
-- `lumped`: one equation of motion from the pad to the ground, learning a
-  lumped thrust and drag (`docs/lumped_parameter_filter.md`).
+One estimator behind `src/estimator.h`, fed every reading, and the one the
+flight obeys (SNS-EST-06, SNS-EST-07, DD-115): `constacc`, a Kalman filter on
+the readings' altitude, its speed and its acceleration (this document).
 
 The fire rules' descent speed is the obeyed estimator's speed in the pad's
 air (DD-114), scaled by sqrt(rho / rho_pad) (FLT-AIR-01,
@@ -72,9 +68,8 @@ mass, motor or drag.
   A deployment is a step in it. Pressure is clean and subsonic.
 
 So with pressure alone no model of the rocket is known before flight.
-`constacc` assumes only that the acceleration changes slowly. `lumped` learns
-a lumped thrust and drag from the readings as it flies. Each says when its
-model does not explain the readings (SNS-EST-08).
+`constacc` assumes only that the acceleration changes slowly, and says when
+its model does not explain the readings (SNS-EST-08).
 
 An accelerometer changes this. Acceleration measured on the board does not
 pass through the static ports. Integrated, it is a speed and a height
@@ -115,10 +110,10 @@ Nothing in it is scheduled:
 
 ### C. B with a descent model
 
-Not built as written. `lumped` carries a drag term through the whole flight,
-a = a_T - g - beta (ρ/ρ_pad) v|v|, learns it from the readings, and loosens it
-at each pulse (`docs/lumped_parameter_filter.md`). The fire rules compare the
-present speed, not a predicted terminal one.
+Not built. The Python study `sim/study/lumped.py` carries a drag term through
+the whole flight, a = a_T - g - beta (ρ/ρ_pad) v|v|, and learns it from the
+readings (DD-115). The fire rules compare the present speed, not a predicted
+terminal one.
 
 ### D. Accelerometer and pressure fused, on boards that have both
 
@@ -236,8 +231,7 @@ The central requirement, ruled 2026-10-02: the filtered state must show the
 slowing climb, apogee and descent at every height in the sensor's range
 (DD-085). FLT-APO-01 states the bounds.
 
-The host prototype of `constacc` is `sim/study/est_proto.py`; `lumped`'s
-study is `docs/lumped_parameter_filter.md`. The plant is `sim/mach_plant.c`:
-a rocket that can go supersonic, the standard atmosphere's layers above any
+The host prototype of `constacc` is `sim/study/est_proto.py`. The plant is
+`sim/mach_plant.c`: a rocket that can go supersonic, the standard atmosphere's layers above any
 pad, and the pressure its static ports report. The firmware's own suites fly
-both estimators on it (`test/test_mach.c`, `test/test_flight_profiles.c`).
+the estimator on it (`test/test_mach.c`, `test/test_flight_profiles.c`).

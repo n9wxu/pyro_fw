@@ -58,19 +58,16 @@ For 2 s after the board's own pulse the height and speed the triggers read
 are held to free fall from the state before it, so the shock of the
 separation cannot bring a trigger forward (PYR-MODE-06).
 
-Apogee is decided in each estimator's own altitudes: the top is a shape, which
+Apogee is decided in the estimator's own altitudes: the top is a shape, which
 no temperature moves.
 
-## The estimators
+## The estimator
 
 - **`constacc`** carries altitude, speed and acceleration, with white jerk of
   7 m²/s⁵ (`src/altitude_filter.c`). It tracks the sensor's noise in pascals
   and weighs each reading by its metres per pascal (`atmos_m_per_pa()`),
-  never as surer than 0.5 m (DD-113).
-- **`lumped`** keeps its own air, from the pad's pressure and the sensor's
-  temperature at its first reading, and its model in true metres; each
-  reading is the pressure its altitude is, and it reports its state as
-  altitudes (`docs/lumped_parameter_filter.md`).
+  never as surer than 0.5 m (DD-113). It is the one the build carries
+  (DD-115).
 
 ## What the pad's temperature does not remove
 

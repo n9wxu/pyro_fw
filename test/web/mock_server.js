@@ -25,7 +25,7 @@ const DEFAULTS = {
     pyro1_adc: 48, pyro2_adc: 52, pyro1_fired: false, pyro2_fired: false,
     armed: false, flight_ms: 0, uptime: 5000, fw_version: '1.3.0',
     pyro1_mode: 'delay', pyro1_value: 0, pyro2_mode: 'agl', pyro2_value: 300,
-    units: 1, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'PYRO001', rocket_name: 'MyRocket', estimator: 'lumped', model_decides: true
+    units: 1, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'PYRO001', rocket_name: 'MyRocket', estimator: 'constacc', model_decides: true
   },
   configured: {
     state: 'PAD_IDLE', alt_cm: 0, max_alt_cm: 0, vspeed_cms: 0,
@@ -33,7 +33,7 @@ const DEFAULTS = {
     pyro1_adc: 45, pyro2_adc: 50, pyro1_fired: false, pyro2_fired: false,
     armed: false, flight_ms: 0, uptime: 12000, fw_version: '1.3.0',
     pyro1_mode: 'delay', pyro1_value: 2, pyro2_mode: 'agl', pyro2_value: 500,
-    units: 2, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'RACE01', rocket_name: 'Screamer', estimator: 'lumped', model_decides: true
+    units: 2, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'RACE01', rocket_name: 'Screamer', estimator: 'constacc', model_decides: true
   },
   flown: {
     state: 'LANDED', alt_cm: 15, max_alt_cm: 304800, vspeed_cms: 0,
@@ -41,7 +41,7 @@ const DEFAULTS = {
     pyro1_adc: 4, pyro2_adc: 6, pyro1_fired: true, pyro2_fired: true,
     armed: false, flight_ms: 32400, uptime: 45000, fw_version: '1.3.0',
     pyro1_mode: 'delay', pyro1_value: 0, pyro2_mode: 'agl', pyro2_value: 500,
-    units: 2, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'RACE01', rocket_name: 'Screamer', estimator: 'lumped', model_decides: true
+    units: 2, board: 'Pyro MK1B', board_id: 'mk1b', rocket_id: 'RACE01', rocket_name: 'Screamer', estimator: 'constacc', model_decides: true
   }
 };
 
@@ -57,7 +57,7 @@ const LIMITS = {
   refire_interval_ms: {default: 1000, min: 500, max: 10000, in_force: 1000},
   fire_gap_ms: {default: 3000, min: 1000, max: 10000, in_force: 3000},
   sensor: {min_pa: 30000, max_pa: 110000, height_m: 9000},
-  estimators: ['lumped', 'constacc']
+  estimators: ['constacc']
 };
 let luaScript = '', luaScriptPosts = 0, luaHeartbeat = 0;
 /* The bodies the page posted to /api/config, for the tests to read. */
@@ -126,7 +126,7 @@ function generatePeakFlightCSV(event) {
 function generateFlightCSV() {
   let lines = ['# Pyro MK1B Flight Data', '# ID: RACE01', '# Name: Screamer', '# Pyro1: delay 0',
                '# Pyro2: agl 500', '# Units: ft', '# Ground Pa: 101325',
-               '# Estimator: lumped', '# Apogee decided by: estimator',
+               '# Estimator: constacc', '# Apogee decided by: estimator',
                'time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event'];
   const g = 101325;
   const pts = [
