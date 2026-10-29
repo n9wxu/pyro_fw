@@ -25,8 +25,10 @@ async function waitForStatus(page) {
   }, { timeout: 5000 });
 }
 
-function clickTab(page, name) {
-  return page.click(`.tab:has-text("${name}")`);
+/* What is typed before a panel's values arrive is overwritten: wait for them. */
+async function clickTab(page, name) {
+  await page.click(`.tab:has-text("${name}")`);
+  await page.waitForSelector('.tabpanel[aria-busy="true"]', { state: 'detached' });
 }
 
 /* ══════════════════════════════════════════════════════════════════

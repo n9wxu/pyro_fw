@@ -146,11 +146,21 @@ function showTab(name, button) {
   document.querySelectorAll('.tab').forEach(function(el) { el.classList.remove('active'); });
   document.getElementById('tab-' + name).style.display = 'block';
   if (button) button.classList.add('active');
-  if (name === 'data') { loadFlightData(); }
-  if (name === 'lua') { luaInit(); }
-  if (name === 'config') { relInit(); loadLogSpace(); loadLimits(); loadFireRules(); }
-  if (name === 'beeps') { beepsInit(); }
-  if (name === 'files') { fsLoad(); }
+  var loads = [];
+  if (name === 'data') loads = [loadFlightData()];
+  if (name === 'lua') loads = [luaInit()];
+  if (name === 'config') loads = [relInit(), loadLogSpace(), loadLimits(), loadFireRules()];
+  if (name === 'beeps') loads = [beepsInit()];
+  if (name === 'files') loads = [fsLoad()];
+  busyUntil(document.getElementById('tab-' + name), loads);
+}
+
+/* A panel is busy until what it shows has arrived: what is typed before
+   then would be overwritten. */
+function busyUntil(panel, loads) {
+  panel.setAttribute('aria-busy', 'true');
+  var done = function() { panel.setAttribute('aria-busy', 'false'); };
+  Promise.all(loads).then(done, done);
 }
 
 /* ── Unit conversion ───────────────────────────────────────────── */
@@ -384,7 +394,7 @@ function fmtDuration(s) {
 
 function loadLogSpace() {
   var el = document.getElementById('logEst');
-  fetch('/api/log/space').then(function(r) {
+  return fetch('/api/log/space').then(function(r) {
     if (!r.ok) throw r.status;
     return r.json();
   }).then(function(d) {
@@ -1004,7 +1014,7 @@ function kindLabel(k) { return KIND_LABEL[k] || k; }
 function beepsInit() {
   if (beepsReady) return;
   beepsReady = true;
-  beepsFetch().then(renderBeeps).catch(function(e) {
+  return beepsFetch().then(renderBeeps).catch(function(e) {
     document.getElementById('bpHint').textContent = 'could not read the beep table: ' + e.message;
   });
 }
@@ -1527,7 +1537,7 @@ var relReady = false;
 function relInit() {
   if (relReady) return;
   relReady = true;
-  pinsFetch().then(renderRelease).catch(function(e) {
+  return pinsFetch().then(renderRelease).catch(function(e) {
     document.getElementById('relHint').textContent =
       'could not read the capability table: ' + e.message;
   });
@@ -1537,15 +1547,14 @@ var luaReady = false;
 var luaConTimer = null;
 
 function luaInit() {
-  if (!luaReady) {
-    luaReady = true;
-    luaLoad();
-  }
   if (!luaConTimer) luaConTimer = setInterval(luaConPoll, 1000);
+  if (luaReady) return;
+  luaReady = true;
+  return luaLoad();
 }
 
 function luaLoad() {
-  fetch('/api/config').then(function(r){return r.text()}).then(function(t) {
+  var cfg = fetch('/api/config').then(function(r){return r.text()}).then(function(t) {
     var kv = {};
     t.split('\n').forEach(function(line) {
       var i = line.indexOf('=');
@@ -1558,13 +1567,14 @@ function luaLoad() {
   /* Pin roles live in pins.ini, not here. The lua_p18..p21 keys this used to
      read are migration-only now: the firmware consults them once, when a
      board has no pins.ini yet. */
-  pinsFetch().then(renderLuaPins).catch(function(e) {
+  var pins = pinsFetch().then(renderLuaPins).catch(function(e) {
     document.getElementById('luaPinsHint').textContent =
       'could not read the capability table: ' + e.message;
   });
-  fetch('/api/lua/script').then(function(r){return r.ok?r.text():''}).then(function(t) {
+  var script = fetch('/api/lua/script').then(function(r){return r.ok?r.text():''}).then(function(t) {
     document.getElementById('luSrc').value = t;
   });
+  return Promise.all([cfg, pins, script]);
 }
 
 /* ── Export / import the program ───────────────────────────────────
