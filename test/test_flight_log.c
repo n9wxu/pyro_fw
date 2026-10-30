@@ -66,7 +66,7 @@ static const flog_header_t HDR = {
     .pyro2_value = 300,
     .units = 1,
     .ground_pa = 101325,
-    .estimator = "lumped",
+    .estimator = "constacc",
     .model_decides = true,
 };
 
@@ -76,7 +76,7 @@ static const flog_header_t HDR = {
     "# Log rate: every sample\n"
 #define COLUMNS "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n"
 
-static const char *const HDR_CSV = HDR_CSV_V1 "# Estimator: lumped\n# Apogee decided by: estimator\n" COLUMNS;
+static const char *const HDR_CSV = HDR_CSV_V1 "# Estimator: constacc\n# Apogee decided by: estimator\n" COLUMNS;
 
 static void put(int n) {
     TEST_ASSERT_GREATER_THAN_INT(0, n);

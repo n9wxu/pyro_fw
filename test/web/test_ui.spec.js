@@ -25,8 +25,10 @@ async function waitForStatus(page) {
   }, { timeout: 5000 });
 }
 
-function clickTab(page, name) {
-  return page.click(`.tab:has-text("${name}")`);
+/* What is typed before a panel's values arrive is overwritten: wait for them. */
+async function clickTab(page, name) {
+  await page.click(`.tab:has-text("${name}")`);
+  await page.waitForSelector('.tabpanel[aria-busy="true"]', { state: 'detached' });
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -150,9 +152,9 @@ test.describe('New device', () => {
     await page.goto(BASE);
     await waitForStatus(page);
     await clickTab(page, 'Config');
-    await expect(page.locator('#estimator option')).toHaveText(['lumped', 'constacc']);
-    await expect(page.locator('#estimator')).toHaveValue('lumped');
-    await page.selectOption('#estimator', 'constacc');
+    await expect(page.locator('#estimator option')).toHaveText(['constacc']);
+    await expect(page.locator('#estimator')).toHaveValue('constacc');
+    await page.selectOption('#modelDecides', 'false');
     await expect(page.locator('#cfgDirty')).toBeVisible();
     await page.click('#btnSaveCfg');
     await expect(page.locator('#cfgMsg')).toContainText('Saved', { timeout: 5000 });

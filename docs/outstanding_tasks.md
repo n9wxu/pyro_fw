@@ -50,7 +50,7 @@ Everything is complete when CI passes on the last push.
 
 | | What | Pass |
 |---|---|---|
-| G1 | `scripts/run_host_tests.sh`: every host suite CI runs, the trace, structure and wait checks, and the lumped filter's port check | all pass |
+| G1 | `scripts/run_host_tests.sh`: every host suite CI runs, and the trace, structure and wait checks | all pass |
 | G2 | `test/web/run_web_tests.sh`, all three mock modes and the browser simulator | all pass |
 | G3 | Build MK1A, MK1B, MK1B-8MB, MK1C, MK1C-SD and the reference template; `support/prove_core0.py` and `support/prove_flight_ram.py --strict` on each image, as CI runs them | builds; the proofs pass |
 | G4 | Update the bench boards over the network; `support/api_check.py`, `support/http_stream_check.py` and `test/web/hw_ui_check.js` on each; `support/pressure_trace.py` on each | all pass; no loop overrun, no flash refusal, no failed sensor transfer |
@@ -98,12 +98,9 @@ requirement. Say which to take up.
 
 | ID | Limit | Measured |
 |---|---|---|
-| EST-1 | The lumped filter's speed on the pad reads about 0.5 m/s downward | every bench board. Its thrust term fades toward zero and the readings pull it back. The pad's "still" test is 1 m/s |
 | EST-2 | A sensor gap of more than 250 ms just before apogee delays apogee | up to 3.5 s on the host: the second of evidence starts again, the climb goes unseen, and so the fall must last 2 s (FLT-APO-07) |
 | EST-3 | A run of wild readings is followed | half a second of readings 1500 hPa high, a second before apogee: the drogue 8.6 s after apogee, never before (DD-093) |
-| EST-4 | The lumped filter anchors its air at the first reading's pressure and the sensor's temperature then | a long wait on a pad that warms is not followed (DD-092) |
-| EST-5 | `constacc`, the other estimator, is late at height | no apogee within 2 s at 30 km from a cold pad and 45 km from a hot one; 7.7 s after a coast with no readings (`test/test_mach.c`'s report) |
-| EST-6 | Beyond the sensor's range, with a port error larger than the air's own pressure, apogee can be early | the Python study's 45 km flights: up to 2.4 s (`docs/lumped_parameter_filter.md`) |
+| EST-5 | `constacc` is late at height | no apogee within 2 s at 30 km from a cold pad and 45 km from a hot one; 7.7 s after a coast with no readings (`test/test_mach.c`'s report) |
 | EST-7 | A reading a flash operation ran beside is used, noise and all (DD-106) | MK1B's MS5607 beside one: 8.5 to 17 Pa rms, 43 Pa at worst, against 2.3 Pa at rest. The host flights put 1.2 and 9 Pa on every reading and no disturbed one; that the filters absorb it is taken on trust. No MK1B on the bench with an MS5607 flies: both MK1B-8MBs carry BMP280s. A host flight with the measured disturbance on the readings each sync overlaps would test it |
 
 ---

@@ -102,7 +102,7 @@ flight this unit cannot (DD-081).
 Near and above Mach 1 the pressure a rocket's ports sense is not the air's,
 and the error is smooth, so no filter removes it. The estimator's own model
 says when it cannot account for the readings (SNS-EST-08), and its apogee is
-taken only from what it can (`docs/lumped_parameter_filter.md`). A simple
+taken only from what it can (`docs/mach_lockout.md`). A simple
 filter on the raw readings runs beside it and stands in when the model does
 not converge, or decides alone when `model_decides` is false
 (`docs/apogee_fallback.md`).
@@ -281,7 +281,7 @@ not converge, or decides alone when `model_decides` is false
 | `emergency_fire_speed` | FLT-EMRG-01, in units per second; 0 disables | 0 ‡ |
 | `refire_interval` | time between re-fires of one channel, ms; 0 takes the board's default | 0: the board's, 1000 where it declares none |
 | `fire_gap` | quiet time between pulses on different channels, ms; 0 takes the board's default | 0: the board's, 3000 where it declares none |
-| `estimator` | the estimator the flight obeys (SNS-EST-06): lumped or constacc | constacc |
+| `estimator` | the estimator the flight obeys (SNS-EST-06): constacc | constacc |
 | `model_decides` | true: the estimator decides apogee, the simple filter standing in (FLT-APO-10); false: the simple filter alone (FLT-APO-09) | true |
 | `apogee_lockout` | FLT-APO-12, seconds after T+0 before any apogee | 0 |
 | `standard_atmosphere` | SNS-EST-05, true: heights in the 1976 standard's air; false: in the pad's | false |

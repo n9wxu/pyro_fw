@@ -1,13 +1,13 @@
 # The Mach flag
 
 How the flight computer keeps a supersonic rocket from firing on corrupted
-pressure. There is no Mach flag: each estimator says whether its model
+pressure. There is no Mach flag: the estimator says whether its model
 explains the readings, and its apogee is not decided on readings it does
 not explain, and none of them is its peak (DD-092; SNS-EST-08, FLT-APO-07,
 FLT-APO-08), and the readings must track its height (DD-113). The simple
 filter stands in for it only after 3 s of measured speed under 50 m/s
-(FLT-APO-10, DD-109). The estimators are in `docs/flight_states.md`, "The
-estimators", and `docs/lumped_parameter_filter.md`. The host tests are
+(FLT-APO-10, DD-109). The estimator is in `docs/flight_states.md`, "The
+estimators". The host tests are
 `mach_tests` (`test/test_mach.c`) on the plant in `sim/mach_plant.c`.
 
 ## The problem
@@ -58,7 +58,7 @@ the climb to a real apogee is seen again once the readings settle.
 ## Physics in altitude
 
 The hydrostatic equation, dp/dz = -ρg with ρ = p/(RT), turns each reading
-into an altitude, and the estimators report its speed and acceleration
+into an altitude, and the estimator reports its speed and acceleration
 (DD-114). g = 9.80665 m/s², R = 287.05 J/(kg·K), γ = 1.4. One unit of Mach is
 √(γRT): 357 m/s at 318 K and 295 m/s at 216 K. The envelope is a 10-45 °C
 pad, 0-2000 m elevation, to 30 km, so the local air runs from 216 K at the
@@ -72,8 +72,7 @@ shrinks toward zero, and near apogee its acceleration is -1 g.
 | Purpose | Comparison | Where |
 |---|---|---|
 | `constacc` explains | for the last second, no reading more than 4 σ from its prediction, no gap of more than 250 ms, and its acceleration under 3.5 g | `src/estimator_constacc.c` |
-| `lumped` explains | the running mean, over about a second, of the squared normalised innovation under 4, and a second of used readings with no gap of more than 250 ms | `src/estimator_lumped.c` |
-| A reading not used | more than 6 σ from the prediction, for the first 50 ms of a run (SNS-EST-02) | both estimators |
+| A reading not used | more than 6 σ from the prediction, for the first 50 ms of a run (SNS-EST-02) | `src/bad_run.h` |
 | Climbing, falling | the speed beyond twice its own standard deviation | `src/apogee_detector.c` |
 | A fall whose climb was not seen | 2 s | `src/apogee_detector.c` |
 | Arming | above 30 m, having passed 10 m/s and then slowed below it | `src/flight_ascent.c` (FLT-ASC-04, FLT-ASC-08) |
@@ -89,19 +88,15 @@ shrinks toward zero, and near apogee its acceleration is -1 g.
 
 ## The estimator
 
-Both estimators run on the raw readings, every one (SNS-EST-07); the flight
-obeys the one `estimator` names, `constacc` by default.
+The estimator runs on the raw readings, every one (SNS-EST-07): `constacc`,
+the one the build carries (DD-115).
 
 - `constacc` is a constant-acceleration Kalman filter on the readings'
   altitudes (`src/altitude_filter.c`, `docs/descent_speed_estimator.md`). It
   follows whatever acceleration the readings show, so a port error moves
   its state, and its "explains" test is what keeps a decision off it.
-- `lumped` carries one equation of motion with a lumped thrust and drag
-  (`docs/lumped_parameter_filter.md`). A reversal faster than gravity fits
-  no thrust and drag it can hold, so a port error's readings show as large
-  innovations.
 
-Each tracks the sensor's noise from its innovations, never below 1.2 Pa. A
+It tracks the sensor's noise from its innovations, never below 1.2 Pa. A
 step in the pressure -- a shock crossing the ports -- ends the explanation
 until the readings agree with the model again. That is the intended
 behaviour. A separation's shock, up to 50 ms, is set aside and ends nothing
@@ -149,23 +144,19 @@ No flag and no state for one. What the flight carries:
   tree. An error that builds smoothly enough to stay inside an estimator's
   explanation would pass; that takes an error growing over ten seconds or
   more, which a Mach transition is not.
-- **A port error larger than the air's own pressure,** beyond the sensor's
-  range, can bring apogee early: by up to 2.4 s on the Python study's 45 km
-  flights (`docs/lumped_parameter_filter.md`).
 - **A fall whose climb was not seen is late by design:** 2 s. A sensor gap
   of more than 250 ms across apogee leaves the climb unseen and waits for a
   second of new samples as well.
 - **A port faking a descent also fools the launch detector.** It reads the
   climb below the pad, so the launch is declared only once the error fades,
   and T+0 with it.
-- **A sensor noisier in flight than on the pad** is followed: the estimators
-  measure the noise as they fly, and more noise widens the margin apogee
+- **A sensor noisier in flight than on the pad** is followed: the estimator
+  measures the noise as it flies, and more noise widens the margin apogee
   must clear.
 - **A reading a flash operation ran beside** is used like any other, noise
   and all (SNS-PRES-14, DD-106).
-- **The air's temperature is not measured in flight.** `lumped` anchors its
-  atmosphere on the sensor's temperature at the first reading; `constacc`
-  uses none.
+- **The air's temperature is not measured in flight.** Heights and speeds
+  are in the pad's air, its temperature frozen at launch (DD-114).
 
 ## Static ports
 

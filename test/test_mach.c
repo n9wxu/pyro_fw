@@ -507,7 +507,6 @@ static int rows_with(const char *name, const char *what) {
 /* [SNS-EST-06] The flight obeys the estimator config.ini names: its own
  * apogee is the flight's. */
 void test_SNS_EST_06_the_flight_obeys_the_configured_estimator(void) {
-    TEST_ASSERT_TRUE_MESSAGE(estimator_count() >= 2, "one estimator cannot show a choice");
     for (uint8_t e = 0; e < estimator_count(); e++) {
         flight_conditions_t c = obeying(e);
         c.port = PORT_READS_HIGH;

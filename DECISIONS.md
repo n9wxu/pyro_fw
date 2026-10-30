@@ -27,9 +27,8 @@ sequence has gaps.
   declares a barometer-only launch on height alone. No launch is declared
   while a USB host is attached and test mode is off (USB-01). T+0 is the
   first sample of the rise more than 50 cm above the pad (FLT-LAUNCH-03).
-- **Why no speed:** on the pad the filtered speed swings by up to 24 m/s in
-  gusts (`docs/lumped_parameter_filter.md`), and the height is what holds a
-  launch back; AltOS's own code ignores the barometer's speed on the pad as
+- **Why no speed:** on the pad a filtered speed swings in gusts, and the
+  height is what holds a launch back; AltOS's own code ignores the barometer's speed on the pad as
   "quite noisy". Barometric drift, a weather front and a board warming on
   the pad move the pressure slowly and never by 15 m. Arming (DD-017) keeps
   a false launch from firing anything. A height that is not a number is no
@@ -188,14 +187,14 @@ sequence has gaps.
   (issue 78) -- "take the recommendations." -- and on what the replay of
   AltOS's flights showed -- "drogue fire cannot pressurize the sensor bay.
   There is a pressure bulkhead. Fix the model.":
-  - `constacc` is the default estimator; `lumped` logs beside it (DD-092).
+  - `constacc` is the estimator the flight obeys (DD-092, DD-115).
   - No reading is weighed as surer than 0.5 m of height
     (`AF_READING_NOISE_M`), whatever the sensor's own noise: what the model
     leaves out is metres, not the sensor's decimetres. The tracked noise
     stays the sensor's, in pascals (DD-114).
   - A reading 6σ from the prediction is set aside for the first 50 ms of
     its run, however many readings that is; a longer run is data
-    (`bad_run_rejects()`, both estimators; SNS-EST-02). A reading set
+    (`bad_run_rejects()`; SNS-EST-02). A reading set
     aside says nothing of the model: `constacc` does not count it against
     explaining the readings.
   - Apogee (FLT-APO-07): the fall of AltOS's rule, and its error check,
@@ -212,8 +211,7 @@ sequence has gaps.
   - The sim's charge is a separation's shock: readings off by up to 5 kPa
     either way for up to 50 ms, at the board's own fire or another board's
     (`mp_shock_t`, PYR-MODE-06). The sensor sits behind the bay's pressure
-    bulkhead, so no charge pressurises its air. After its own pulse
-    `lumped` sets readings aside for those 50 ms.
+    bulkhead, so no charge pressurises its air.
 - **Why 0.5 m:** host flights with the floor and the fall margin varied,
   all suites:
 
@@ -273,7 +271,7 @@ sequence has gaps.
   `flight_profile_tests`
   (`test_FLT_APO_01_another_boards_separation_at_the_top_does_not_delay_apogee`,
   `test_FLT_APO_12_apogee_waits_for_the_users_lockout`), `mach_tests`,
-  `chamber_flight_tests`, `altos_flight_tests`, `lumped_port_check`.
+  `chamber_flight_tests`, `altos_flight_tests`.
 
 ### DD-114: Altitudes Inside, Heights In The Pad's Air
 - **Decision:** at the user's direction -- "switch the entire design to
@@ -284,10 +282,6 @@ sequence has gaps.
     `constacc` is constant acceleration in altitude with white jerk of
     7 m²/s⁵. Each estimator tracks the sensor's noise in pascals and weighs
     a reading by its metres per pascal (`atmos_m_per_pa()`).
-  - `lumped` keeps its own air, from the pad's pressure and the sensor's
-    temperature at its first reading, and its model in true metres
-    (DD-092). It takes each altitude as the pressure it is and reports its
-    state as altitudes.
   - The pad's air is the standard atmosphere offset at every height by the
     pad's temperature less the standard's there (`air_over_pad()`). The
     offset follows the sensor's temperature on the pad and is frozen with
@@ -326,11 +320,6 @@ sequence has gaps.
   error held the readings far up in thin air and stayed there for seconds,
   and `constacc` fired 0.25 s early on a port error twice the model's
   (`test_FLT_APO_07_no_fire_before_apogee_at_any_size_of_port_error`).
-- **Why `lumped` keeps its air:** its gravity and drag act on true metres.
-  On the standard's air it fired early four times in its study
-  (`docs/lumped_parameter_filter.md`), and fed altitudes as its height it
-  stayed at its greatest drag after a port error four times the model's and
-  deployed 1.67 s late.
 - **Why every cycle's temperature:** the MS5607 compensates each pressure
   with its die's temperature, about 241 Pa a kelvin with the datasheet's
   coefficients. In AltOS's flights the die moved 0.0 to 0.8 K from launch to
@@ -344,7 +333,30 @@ sequence has gaps.
   `flight_pad_tests`
   (`test_SNS_PRES_06_a_reading_of_zero_or_less_is_not_a_reading`),
   `flight_profile_tests`, `mach_tests`, `chamber_flight_tests`,
-  `recorded_flight_tests`, `altos_flight_tests`, `lumped_port_check`.
+  `recorded_flight_tests`, `altos_flight_tests`.
+
+### DD-115: One Estimator Carried
+- **Decision:** at the user's direction -- "Remove lumped" -- the build
+  carries `constacc` alone (`src/estimator_table.c`). The interface stays
+  (DD-092): another estimator is another table entry. A config.ini that
+  names an estimator the build does not carry flies `constacc`, and
+  `/api/status` names it (SNS-EST-06).
+- **Why:** obeyed, `lumped` was sure of a climb past the top. On the draggy
+  rocket with a port error twice the plant's, faking a descent, it said
+  +7.6 m/s with a standard deviation of 1.5 m/s at the true apogee and
+  explained the readings throughout. Its apogee came 1.85 s after the true
+  one on Linux's maths, past FLT-APO-07's 1.5 s, and 0.13 s after it on
+  macOS's; on other port errors it was 0.95 and 1.23 s late. The simple
+  filter, falling at 14 m/s, does not stand in for a model that explains
+  the readings (DD-109). `constacc` is within FLT-APO-07 on every case.
+- **What it frees:** 5776 bytes of MK1C's RAM, where the flight path runs
+  (DD-104).
+- **The Python filter stays as a study tool:** `sim/study/lumped.py` and
+  `sim/study/lumped_fly.py` are the filter and the flights the simple
+  filter's studies fly (`docs/apogee_fallback.md`).
+- **Proven by:** `estimators_tests`, `mach_tests`
+  (`test_SNS_EST_06_the_flight_obeys_the_configured_estimator`,
+  `test_SNS_EST_06_an_unknown_name_is_the_default`), `test_ui.spec.js`.
 
 ## Configuration & Features
 
@@ -1266,16 +1278,8 @@ in `docs/outstanding_tasks.md`.
   ones `src/estimator_table.c` lists. Every one is fed every reading. The
   flight obeys the one `estimator` in config.ini names, and logs what the
   others report and when each would have called apogee [SNS-EST-06..09].
-- **The two carried:**
-  - `constacc`, the default: the constant-acceleration Kalman filter of
-    DD-085, behind the interface, tuned as DD-113 sets out.
-  - `lumped`: one equation of motion from pad to ground,
-    dv/dt = a_T - g - beta (rho/rho_pad) v|v|, learning a_T and beta from the
-    readings (`docs/lumped_parameter_filter.md`). `src/estimator_lumped.c` is
-    the C port of `sim/study/lumped.py`, and
-    `sim/study/lumped_port_check.py` flies both on the same readings. It
-    has flown only in simulation, and logs beside `constacc` until it has
-    real flights.
+- **Carried:** `constacc`, the constant-acceleration Kalman filter of
+  DD-085, behind the interface, tuned as DD-113 sets out (DD-115).
 - **Replacing one:** in a build, link another table. In the field, set
   `estimator` and restart.
 - **Apogee is the model's verdict:** an estimator says whether its model
@@ -1289,26 +1293,21 @@ in `docs/outstanding_tasks.md`.
   needs starts again only after 250 ms without a used reading. A sensor that
   repeats itself for eight readings near apogee would otherwise cost 2 s, on
   2 of 1000 flights to 10 km.
-- **Measured:** host flights obeying each, hop to 45 km, cold and hot pads,
-  clean ports and three port errors (`test/test_mach.c`): never early with
-  either. The tuning in force and its measurements are DD-113's.
+- **Measured:** host flights, hop to 45 km, cold and hot pads,
+  clean ports and three port errors (`test/test_mach.c`): never early. The tuning in force and its measurements are DD-113's.
 - **The log:** `EST` text rows, rationed as script output is. PEAK and
   PEAK_AT_LEAST carry the peak, and the web page reads them. Events 5, 6 and
   8 (LOCK, UNLOCK, LOCK_FALLBACK) are not written; the page reads them in a
   log that carries them.
-- **The cost:** every reading runs both filters, and each sample carries
-  every estimator's state.
+- **The cost:** every reading runs every estimator carried, and each sample
+  carries each one's state.
 - **A prediction stops at the ground:** the model has no ground. A
   prediction with no reading behind it stops at the pad's level; carried on,
   a sensor repeating itself for ten minutes would put it 19 km below the
   pad.
 - **Flown on the bench, 2026-10-03:** a 3 km bench flight on MK1C-SD: launch
-  at 32 m, apogee called at the profile's apogee by both estimators, peak
+  at 32 m, apogee called at the profile's apogee, peak
   3000.06 m against 3000, main at 297.8 m against 300, landed at 0.1 m.
-- **Open:** `lumped` anchors its air at the first reading's pressure and the
-  sensor's temperature then; a long wait on a pad that warms is not followed
-  (task EST-4). On the pad its speed reads about 0.5 m/s downward: the thrust
-  term's fade pulls against the readings (task EST-1).
 
 ### DD-091: What Building The 2026-10 Review Settled
 - **Apogee bounds (FLT-APO-01):** measured on the firmware itself, on host
@@ -1426,7 +1425,7 @@ in `docs/outstanding_tasks.md`.
   stable. Every flight comparison is a height above the pad or a speed, in
   the pad's air (DD-114, SNS-EST-05). No altitude is clamped, at 8000 m or
   at zero (SNS-ALT-01). DD-092 puts this filter, `constacc`, behind the
-  estimator interface beside `lumped`.
+  estimator interface.
 - **Apogee at altitude:** the filtered state must show the slowing climb,
   apogee and descent at every height in the sensor's range. No fallback
   waits for the pressure to return to an earlier level: one would deploy a

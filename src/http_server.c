@@ -137,10 +137,10 @@ static conn_t *ota_conn; /* the OTA state below is one image at a time */
 
 /* pico_fota_bootloader's linker symbols: their addresses are the values. The
  * download slot ends where the files begin. */
-extern uint32_t __FLASH_DOWNLOAD_SLOT_START;
-extern uint32_t __FLASH_SWAP_SPACE_LENGTH;
-#define OTA_SLOT_OFF ((uint32_t) & __FLASH_DOWNLOAD_SLOT_START - XIP_BASE)
-#define OTA_SLOT_BYTES ((uint32_t) & __FLASH_SWAP_SPACE_LENGTH)
+extern uint8_t __FLASH_DOWNLOAD_SLOT_START[];
+extern uint8_t __FLASH_SWAP_SPACE_LENGTH[];
+#define OTA_SLOT_OFF ((uint32_t)__FLASH_DOWNLOAD_SLOT_START - XIP_BASE)
+#define OTA_SLOT_BYTES ((uint32_t)__FLASH_SWAP_SPACE_LENGTH)
 
 static uint8_t ota_buf[FLASH_SECTOR_SIZE] __attribute__((aligned(FLASH_PAGE_SIZE)));
 static uint32_t ota_offset; /* bytes written so far */

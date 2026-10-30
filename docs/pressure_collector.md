@@ -122,10 +122,10 @@ sensible continuation of the calibrated line, so no range check is applied.
 A zero code and a failed transfer are sections 3 and 4.
 
 **What remains** is the altitude's domain. `pp_feed_us()` in
-`src/pressure_processing.c` turns each reading into an altitude, and
-`estimator_lumped.c` takes ln(p) of it again. A value of zero or less has no
-altitude, and one such value would put a not-a-number into the filters for
-good, so `pp_feed_us()` feeds no such value to the estimators.
+`src/pressure_processing.c` turns each reading into an altitude. A value of
+zero or less has no altitude, and one such value would put a not-a-number
+into the filter for good, so `pp_feed_us()` feeds no such value to the
+estimator.
 
 ## 3. Making a zero code impossible
 

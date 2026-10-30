@@ -16,7 +16,7 @@ Two-channel rocket flight computer on the RP2040, for three boards and two varia
 - **mDNS/DNS-SD**: pyro.local hostname, _pyro._tcp service discovery
 - **OTA updates**: A/B bootloader (pico_fota_bootloader), web UI + CLI + GitHub release update
 - **Pressure sensors**: `src/pressure_collector.c` collects from either sensor, free-running from an alarm handler in RAM (DD-093); `src/ms5607_driver.c` (MK1C, MK1B) and `src/bmp280_driver.c` (MK1A, MK1B) hold each part's detection, description and arithmetic. Bring-up in `src/pressure_single_sensor.c`, or `boards/mk1b/pressure_board.c` for MK1B's two pads
-- **Pressure processing**: two estimators behind `src/estimator.h`, both fed every reading and one obeyed (DD-092): `src/estimator_constacc.c` (the constant-acceleration Kalman filter of `src/altitude_filter.c`, the default, DD-085) and `src/estimator_lumped.c` (an extended Kalman filter with lumped thrust and drag); `src/pressure_processing.c` (readings to altitudes, samples as heights in the pad's air, gaps, a stuck sensor; every reading used, DD-106, DD-114), `src/ground_reference.c` and `src/atmosphere.c` (the 1976 standard atmosphere, and the pad's air)
+- **Pressure processing**: the estimators behind `src/estimator.h`, each fed every reading and one obeyed (DD-092, DD-115): `src/estimator_constacc.c`, the one carried (the constant-acceleration Kalman filter of `src/altitude_filter.c`, DD-085); `src/pressure_processing.c` (readings to altitudes, samples as heights in the pad's air, gaps, a stuck sensor; every reading used, DD-106, DD-114), `src/ground_reference.c` and `src/atmosphere.c` (the 1976 standard atmosphere, and the pad's air)
 - **Fire rules**: `src/fire_control.c` and `src/fire_plan.c` — each channel's trigger, re-fire, emergency fire, and the gap between pulses (DD-082, DD-084)
 - **Resume**: `src/flight_resume.c` — the pad record `pad.mkr` and the decision to rejoin a flight after any restart (DD-086)
 - **Pyro backends**: `boards/<board>/pyro_board.c` behind `src/pyro.h`; MK1C's split into measure, faults and sequence files, with its PIO arm pump
@@ -203,7 +203,7 @@ lua_pixels=0
 | emergency_fire_speed | units/s; 0 off | 0 |
 | refire_interval | ms; 0 takes the board's default (1000) | 0 |
 | fire_gap | ms of quiet time between pulses; 0 takes the board's default (3000) | 0 |
-| estimator | constacc/lumped; any other name takes the default (SNS-EST-06) | constacc |
+| estimator | constacc; any other name takes the default (SNS-EST-06) | constacc |
 | model_decides | true: the estimator decides apogee, the simple filter standing in; false: the simple filter alone (FLT-APO-09, FLT-APO-10) | true |
 | apogee_lockout | seconds after T+0 before any apogee (FLT-APO-12) | 0 |
 | standard_atmosphere | true: heights in the 1976 standard's air; false: in the pad's (SNS-EST-05) | false |

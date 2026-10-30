@@ -107,9 +107,7 @@ than run it: `support/structure_check.py` (requirements that are properties of
 the source, such as HAL-01, TEL-12 and CODE-09), `support/trace_check.py`
 (every cited requirement exists, every requirement has a row),
 `support/trace_matrix.py --check` (`TRACEABILITY.md` is up to date),
-`support/wait_check.py` (no sleeps) and `scripts/format_check.sh`; and
-`sim/study/lumped_port_check.py`, which replays the study's flights through
-`src/estimator_lumped.c` (`test/estimator_replay.c`) against the study's filter.
+`support/wait_check.py` (no sleeps) and `scripts/format_check.sh`.
 
 ## Flights against their truth
 
@@ -236,7 +234,6 @@ test/
   flight_run.c/.h        a flight flown beside its truth
   collector_bus.h        the fake bus and clock under src/pressure_collector.c
   json_check.h           a strict JSON reader for the rendered routes
-  estimator_replay.c     one estimator over a file of readings, for sim/study/lumped_port_check.py
   fake_sdk/, fake_rtos/  the Pico SDK and the scheduler under a board file or a task
   test_*.c               one file per suite (table above)
   web/                   Playwright UI tests, mock_server.js, static_server.js, hw_ui_check.js

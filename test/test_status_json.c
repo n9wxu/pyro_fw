@@ -112,7 +112,7 @@ static void typical(status_snap_t *s) {
     s->sample_interval_us[1] = 10100;
     s->stamp_lag_max_us = 300;
     s->noise_mpa = 2400;
-    s->estimator = "lumped";
+    s->estimator = "constacc";
     s->estimator_explains = true;
     s->model_decides = true;
     s->usb_attached = true;
@@ -222,7 +222,7 @@ static const char *const TYPICAL[][2] = {
     {"sample_interval_us", "[9900,10100]"},
     {"stamp_lag_max_us", "300"},
     {"noise_mpa", "2400"},
-    {"estimator", "\"lumped\""},
+    {"estimator", "\"constacc\""},
     {"estimator_explains", "true"},
     {"model_decides", "true"},
     {"peak_lower_bound", "false"},

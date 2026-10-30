@@ -47,7 +47,7 @@ void test_FLT_RT_02_the_telemetry_sentences_are_the_librarys(void) {
 
 void test_FLT_RT_02_the_log_and_diagnostic_rows_are_the_librarys(void) {
     for (unsigned i = 0; i < sizeof(LONGS) / sizeof(LONGS[0]); i++) {
-        SAME(96, "%s cm=%ld cm/s=%ld explains=%d", "lumped", LONGS[i], -LONGS[i], INTS[i % 9]);
+        SAME(96, "%s cm=%ld cm/s=%ld explains=%d", "constacc", LONGS[i], -LONGS[i], INTS[i % 9]);
         SAME(96, "%s APOGEE", "constacc");
         SAME(96, "!PYRO %s ch=%u bus=%u vbat=%u\r\n", "FIRE", 2u, (unsigned)ULONGS[i % 9], 4095u);
         SAME(96, "!PYRO F10 ch=%u %s (%u, bus %u)\r\n", 1u, "fired", 0u, (unsigned)ULONGS[i % 9]);
@@ -68,7 +68,7 @@ void test_FLT_RT_02_the_log_and_diagnostic_rows_are_the_librarys(void) {
 void test_FLT_RT_02_a_short_buffer_is_cut_as_the_library_cuts_it(void) {
     for (size_t cap = 0; cap < 48; cap++) {
         SAME(cap, "PYRO_FIRE,%u,%ld,%lu", 2u, -123456L, 4294967295UL);
-        SAME(cap, "%s cm=%ld", "lumped", -2147483647L - 1);
+        SAME(cap, "%s cm=%ld", "constacc", -2147483647L - 1);
         SAME(cap, "x=%02X%%", 10u);
     }
 }

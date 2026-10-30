@@ -16,7 +16,7 @@ Flying a board? Start with the [Operator's guide](#operators-guide).
 - **Pressure Sensing** - MS5607 (MK1C) or BMP280 (MK1A), either on MK1B, collected by a free-running interrupt state machine at 53 or more readings a second, each stamped at its measurement; it clears its own bus and resets the part after three failed transfers (DD-093)
 - **Altitude, Speed and Acceleration** - a Kalman filter on the readings' altitudes; every flight comparison is made on heights above the pad in the pad's air, from the sensor's temperature on the pad, and the same heights are reported, unclamped (DD-085, DD-114)
 - **Estimators** - two filters fly on every reading; `estimator` in config.ini names the one obeyed, and the log shows what the other would have done (DD-092)
-- **Apogee Near Mach 1** - the estimator's apogee is taken only while its model explains the readings, which a port error near Mach 1 does not (`docs/lumped_parameter_filter.md`); a simple filter on the raw readings stands in once the measured speed has been low for 3 s, or decides alone with `model_decides=false` (`docs/apogee_fallback.md`)
+- **Apogee Near Mach 1** - the estimator's apogee is taken only while its model explains the readings, which a port error near Mach 1 does not (`docs/mach_lockout.md`); a simple filter on the raw readings stands in once the measured speed has been low for 3 s, or decides alone with `model_decides=false` (`docs/apogee_fallback.md`)
 - **Continuity Checking** - presence and shorts, continuously on the pad
 - **Web Interface** - live dashboard and configuration over USB networking
 - **OTA Firmware Updates** - A/B bootloader with automatic rollback
@@ -125,7 +125,7 @@ It arms once the burn is over, finds apogee from the pressure itself, and
 fires each channel as its mode says, then again as the fire rules say. Apogee
 is the estimator seen climbing and then falling while its model explains the
 readings; near Mach 1 it does not, and nothing is decided
-(`docs/lumped_parameter_filter.md`). It lands when still for 1 s below
+(`docs/mach_lockout.md`). It lands when still for 1 s below
 30 m, or when the landing timeout (60 s by default) has passed since apogee
 and it is still.
 
@@ -249,7 +249,7 @@ These are the defaults, written when the file is missing.
 - **Units:** `cm`, `m` or `ft` - applies to pyro values and altitude reporting
 - **pyro1_refire_speed, pyro2_refire_speed, emergency_fire_speed:** in units a second; `0` turns the rule off
 - **refire_interval, fire_gap:** milliseconds; `0` takes the board's default (1000 and 3000 where the board declares none). A value outside the board's range is brought into it and reported (`pyro_limited` on `/api/status`). `GET /api/limits` serves the defaults and ranges (PYR-BOARD-03)
-- **estimator:** the estimator the flight obeys, `constacc` or `lumped`; a name no estimator has selects the first, `constacc` (SNS-EST-06)
+- **estimator:** the estimator the flight obeys, `constacc`, the one the build carries; a name no estimator has selects it (SNS-EST-06)
 - **model_decides:** `true`, the estimator decides apogee with the simple filter standing in; `false`, the simple filter alone (FLT-APO-09, FLT-APO-10)
 - **apogee_lockout:** seconds after T+0 before any apogee; `0` is none (FLT-APO-12)
 - **standard_atmosphere:** `false`, heights are in the pad's air, from the sensor's temperature on the pad; `true`, in the 1976 standard's (SNS-EST-05)

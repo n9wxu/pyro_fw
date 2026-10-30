@@ -472,7 +472,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host test, a web test or a structural check | 332 |
+| ✅ Verified by a host test, a web test or a structural check | 333 |
 | ⚠️ Not verified, or not wholly | 24 |
 | ❌ Not implemented | 0 |
 | ✅ HW (verified on hardware only) | 14 |
