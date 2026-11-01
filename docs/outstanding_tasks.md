@@ -124,6 +124,7 @@ that owns the subject.
 | GT-1 | The ground test procedure (DD-071, DD-087) | wired both ways in turn, a switch to ground and across two pads: powered up closed, the alert; opened after it, a count a second from five, the pulse on channel 1 at zero, 3 s of tone, a second countdown and the pulse on channel 2, three long beeps. Closed again mid-countdown, nothing fires. Powered up open, the pad as usual | a person, dummy loads, a scope or meter on the firing pads |
 | R-4 | The ground test switch across the buzzer's pad | the pulsed read works on hardware (`docs/ground_test_on_buzzer_pad.md`, its bench list) | a person, a switch |
 | R-5 | The script through restarts | LUA-SAFE-01: restart within 15 s of a start with a script, and the script still runs. LUA-RUN-01: a script through a bench flight and through ground test mode. LUA-MGT-01: removing the script posts an empty body to `/api/lua/script` | MK1C with Lua |
+| WIN-1 | The support scripts on a Windows host | the board comes up as a network adapter with no driver installed; `py support\install.py` finds it, installs by OTA, by picotool and by BOOTSEL, and uploads the web files; `flash_picotool.sh` and `upload_www.sh` under Git Bash | a Windows 10 or 11 PC, Zadig |
 | R-6 | A failed drogue on the bench | `support/bench_flight.py --fail drogue` with the fire rules set: the re-fires and the emergency fire in the log (SIM-04) | MK1C or MK1C-SD |
 | R-7 | MK1C: a fire with the bus shorted | gated at its deadline, and the next fire still delivers (PYR-ARM-03, PYR-FAULT-01) | MK1C, a short on the firing bus |
 | P1 | MK1C's presence pulse | 8 ms on BIAS_BUS | a scope |
@@ -161,6 +162,7 @@ that owns the subject.
 | REL-1 | `release.yml` does not build or publish `mk1c_sd`, so MK1C-SD cannot update from a release |
 | WEB-1 | `test/web/mock_server.js` serves a "Mach lock" flight log, an event the flight software does not log (DD-092); `luaRemove()` in `www/app.js` posts an empty body, which the board answers 400 |
 | DOC-1 | Comments across the code: stale or false ones, history, restatements of the code, stand-ins for naming or structure, essays a document already holds, and constants with no source remain in many files. `hal_common.c` and `http_server.c` each hold many responsibilities, marked by section-banner comments; split by responsibility, the banners become file names |
+| WIN-2 | picotool on Windows needs WinUSB installed by hand on the reset interface: `src/usb_descriptors.c` gives it no Microsoft OS 2.0 descriptor, which the Pico SDK's own reset interface carries |
 | SD-2 | `FF_FS_LOCK` is 0 (review, Low): at 6, four power-cut cases in `hr_log_tests` fail |
 
 ---

@@ -5,6 +5,7 @@ Run from a checkout, or from the release's pyro-support.zip with the board's
 images beside it:
 
   python3 support/install.py [--board mk1c] [--host 192.168.N.1]
+  py support\\install.py [--board mk1c] [--host 192.168.N.1]     (Windows)
 
 With no --host, the board is the one attached; with several, --host names it.
 
@@ -20,7 +21,9 @@ Exits non-zero when anything did not install.
 import argparse
 import glob
 import os
+import platform
 import shutil
+import string
 import subprocess
 import sys
 import time
@@ -131,11 +134,19 @@ def finish(host, board):
     return 0
 
 
+def bootsel_drive():
+    """The RP2040's BOOTSEL drive: RPI-RP2 on macOS and Linux, a drive letter
+    holding INFO_UF2.TXT on Windows."""
+    if platform.system() == "Windows":
+        letters = (f"{c}:\\" for c in string.ascii_uppercase[2:])
+        return next((d for d in letters if os.path.isfile(os.path.join(d, "INFO_UF2.TXT"))), None)
+    return next((m for d in ["/Volumes/RPI-RP2", "/media/*/RPI-RP2", "/mnt/*/RPI-RP2"] for m in glob.glob(d)), None)
+
+
 def flash_bootsel(images):
     print("\n1. Hold BOOTSEL and plug in USB")
     input("   Press Enter when the Pico drive appears...")
-    drive = next((m for d in ["/Volumes/RPI-RP2", "/media/*/RPI-RP2", "/mnt/*/RPI-RP2"] for m in glob.glob(d)), None)
-    drive = drive or input("   Enter Pico drive path: ").strip()
+    drive = bootsel_drive() or input("   Enter Pico drive path: ").strip()
     if not os.path.isdir(drive):
         print(f"Error: {drive} not found")
         return False
@@ -143,6 +154,7 @@ def flash_bootsel(images):
     shutil.copy2(images["bootloader"], drive)
     print("\n3. Hold BOOTSEL and plug in USB again")
     input("   Press Enter when the Pico drive appears...")
+    drive = bootsel_drive() or drive
     print(f"\n4. Copying the application to {drive}...")
     shutil.copy2(images["app"], drive)
     return True
@@ -164,6 +176,8 @@ def flash_picotool(images):
         out, rc = run([picotool, "load", images[what]])
         if rc != 0:
             print(f"  Error: {out}")
+            if platform.system() == "Windows":
+                print("  On Windows picotool needs the WinUSB driver: see \"Windows\" in support/README.md")
             return False
     run([picotool, "reboot"])
     return True

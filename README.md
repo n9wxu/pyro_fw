@@ -488,6 +488,9 @@ After the initial flash, use picotool for all subsequent flashing (no BOOTSEL bu
 ```
 This forces BOOTSEL via the vendor reset interface, loads both bootloader and app, and reboots. It then waits up to 15 s for a USB network link that was not up before and pings the board at its address (DD-099).
 
+## Windows
+Run the installer, `py support\install.py`, from a checkout or a release's `pyro-support.zip`; the shell scripts run under Git Bash. picotool needs the WinUSB driver on the RP2040's BOOTSEL interface and on the board's reset interface, installed once with Zadig: see [Windows](support/README.md#windows) in `support/README.md`.
+
 ## OTA Firmware Updates
 For routine updates without reflashing the bootloader:
 ```bash

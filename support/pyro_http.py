@@ -88,19 +88,26 @@ def board_id_of(status):
 
 
 def interfaces():
-    """This host's addresses as `ip` prints them (Linux), or ifconfig."""
-    for cmd in (["ip", "-4", "-o", "addr"], ["ifconfig"]):
+    """This host's addresses as `ip` (Linux), ifconfig (macOS) or ipconfig
+    (Windows) prints them."""
+    cmds = [["ipconfig"]] if platform.system() == "Windows" else [["ip", "-4", "-o", "addr"], ["ifconfig"]]
+    for cmd in cmds:
         try:
-            return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+            return subprocess.run(cmd, capture_output=True, text=True, errors="replace", check=True).stdout
         except (OSError, subprocess.CalledProcessError):
             continue
     return ""
 
 
+# "inet 192.168.N.2" from ip and ifconfig; "IPv4 Address. . . : 192.168.N.2"
+# from ipconfig, whose label is translated but keeps "IPv4".
+HOST_SIDE = re.compile(r"(?:inet |IPv4[^:\n]*:\s*)192\.168\.(\d+)\.2\b")
+
+
 def discover():
-    """Board addresses, from this host's own interfaces."""
-    # 192.168.<n>.2 on a local interface means a board at 192.168.<n>.1
-    return sorted({f"192.168.{m}.1" for m in re.findall(r"inet 192\.168\.(\d+)\.2\b", interfaces())})
+    """Board addresses, from this host's own interfaces: 192.168.N.2 on a
+    local interface means a board at 192.168.N.1."""
+    return sorted({f"192.168.{m}.1" for m in HOST_SIDE.findall(interfaces())})
 
 
 def attached_board(host=None):
@@ -157,7 +164,9 @@ def find_picotool():
     found = shutil.which("picotool")
     if found:
         return found
-    for p in sorted(glob.glob(os.path.expanduser("~/.pico-sdk/picotool/*/picotool/picotool")), reverse=True):
+    installed = glob.glob(os.path.expanduser("~/.pico-sdk/picotool/*/picotool/picotool"))
+    installed += glob.glob(os.path.expanduser("~/.pico-sdk/picotool/*/picotool/picotool.exe"))
+    for p in sorted(installed, reverse=True):
         if os.access(p, os.X_OK):
             return p
     return None

@@ -16,7 +16,8 @@ two minutes.
 
 `flash_picotool.sh`, `install.py` and `test_network.py` run the picotool on
 `PATH`, or else the newest under `~/.pico-sdk/picotool/`, where the Pico VS
-Code extension installs it.
+Code extension installs it. Windows needs a driver for picotool: see
+[Windows](#windows).
 
 ## Scripts
 
@@ -315,6 +316,37 @@ picotool flash; without one, a BOOTSEL copy or picotool. It takes the newest
 anywhere under the directory above `support/`, or else a local build's
 `pyro_fw_<board>.uf2` and the `pyro_fw_c_fota_image.bin` beside it. It exits
 non-zero when anything did not install.
+
+### Windows
+
+The board is an RNDIS network adapter on Windows (`src/usb_descriptors.c`).
+`ipconfig` shows this host's side of it as `192.168.N.2`; the board is
+`192.168.N.1`.
+
+`install.py` is the installer on Windows, with Python 3 from python.org:
+
+```bat
+py support\install.py [--host 192.168.N.1] [--board mk1c]
+```
+
+It finds the board from `ipconfig`, the BOOTSEL drive by its `INFO_UF2.TXT`,
+and picotool on `PATH` or as `picotool.exe` under
+`%USERPROFILE%\.pico-sdk\picotool\`. `update_from_release.py` runs as it
+is. `flash_picotool.sh`, `upload_fw.sh` and `upload_www.sh` run under Git
+Bash (Git for Windows). `test_network.py` does not run on Windows: it needs
+curses, `dns-sd` and the Unix `ping`.
+
+picotool reaches two USB interfaces that Windows gives no driver of its own.
+Install WinUSB on each once, with [Zadig](https://zadig.akeo.ie/) (Options >
+List All Devices):
+
+| Interface | Board state | Without it |
+|---|---|---|
+| `RP2 Boot (Interface 1)` | in BOOTSEL | picotool cannot load images |
+| the board's `Reset` interface, `(Interface 2)` | running firmware | picotool cannot force BOOTSEL; hold BOOTSEL while plugging in, as the installer asks |
+
+Leave interfaces 0 and 1 of the running board alone: they are the network
+adapter.
 
 ## Web Files
 
