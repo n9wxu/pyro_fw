@@ -1808,6 +1808,27 @@ in `docs/outstanding_tasks.md`.
   samples; only each conversion, with when it was measured and when it was
   read, shows a stale read or a missed slot.
 
+### DD-117: A Log A File; Nothing In Flight Removes One
+- **Decision:** at the user's direction (2026-11-07) -- "A reset can start
+  a new log, but the OLD LOG MUST NOT BE DESTROYED. Or the reset looses the
+  data", and "The log is only allowed to write in flight, erasing is a
+  ground operation":
+  - Each flight log is its own file, `flight_NNNN.bin`, numbered one past
+    the highest the store holds (`src/log_files.c`) [FLT-LOG-12]. A
+    `flight_log.bin` from before is the oldest. The search runs from 1 and
+    ends after 8 missing numbers, so a log deleted on its own leaves a gap
+    the numbering goes past.
+  - The store's logs are read on the ground: at the mount, and again in the
+    storage task once a file call or a card changes them. A log open in
+    flight takes the next number from RAM.
+  - `/api/flight.csv` and `/flight_log.bin` serve the newest; `?n=N` any
+    other. The erase removes every log [WEB-API-06, WEB-API-09].
+    `/api/log/space` counts what is free: no log is replaced.
+- **Why:** the one slot was removed when the next log opened, so a flight
+  resumed after a reset lost what came before it, and a launch after a
+  reset on the pad lost the last flight. The flight-4 report came hours
+  after the event, from a board whose set-up was gone.
+
 ### DD-116: A Damaged Log Renders Past Its Damage
 - **Decision:** the CSV renderer passes over bytes that are no record and
   writes one row where they were: `<last time>,,,,,,,LOG DAMAGED at byte N:
@@ -1833,16 +1854,16 @@ in `docs/outstanding_tasks.md`.
 - **Decision:** at the user's direction (T8) -- "on-disk format should be
   binary. We can translate to csv on-the-fly when downloading", and "Give
   them a maximum flight time estimator":
-  - **`flight_log.bin`** holds binary records (`src/flight_log.h`): the magic,
+  - **Each log's file** (DD-117) holds binary records (`src/flight_log.h`): the magic,
     a header record, then 22-byte samples and text rows. `/api/flight.csv`
     renders them as CSV, with a `# Log rate:` line (DD-101). The response is
     framed by Content-Length: the server counts the rendered length first,
     4 kB of CSV a work unit, then streams the same rendering. A board
     holding a `flight_log.csv` serves it as it is; the erase removes both.
   - **`/api/log/space`** reports the room the next flight's log has -- what
-    is free plus the current log, which the next launch replaces, on
-    whichever store the log goes to, less 16 kB for the filesystem's own
-    metadata -- and the seconds that holds (DD-101). The Config tab shows the
+    is free on whichever store the log goes to, less 16 kB for the
+    filesystem's own metadata (DD-117) -- and the seconds that holds
+    (DD-101). The Config tab shows the
     longest flight that holds [WEB-UI-06, WEB-API-12].
 - **Why binary:** a sample is 22 bytes against about 38 as CSV, and the CSV
   is only for a person or a tool reading it, so it is made when it is read.

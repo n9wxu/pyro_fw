@@ -13,6 +13,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "log_files.h"
 
 /* ── The filesystem in flight [WEB-API-08, DD-058] ─────────────────
  *
@@ -41,6 +42,14 @@ bool hal_firmware_commit(void);
 void board_flash_service(uint32_t now_ms);
 
 uint32_t hal_log_dropped(void);
+
+/* [FLT-LOG-12] The newest flight log's name (log_files.h); false when the
+ * store holds none. */
+bool hal_log_newest(char out[LOG_FILES_NAME_MAX]);
+
+/* A file call changed what the store holds: its logs are read again, on the
+ * ground. */
+void hal_log_files_changed(void);
 
 /* The flight log takes rows: from launch until landing stops it. */
 bool hal_log_running(void);

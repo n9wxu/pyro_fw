@@ -28,6 +28,8 @@ extern flight_context_t ctx;
 
 /* Resets the mocks: a sea-level pad, the MS5607's noise seeded by seed. */
 void boot_like_hardware(uint32_t seed);
+/* The same, after a reset on the pad: the store's files stay. */
+void boot_keeping_files(uint32_t seed);
 /* config.ini as the board will find it at power-on [CFG-10]. */
 void harness_config(const char *ini);
 /* Before power-on: board.txt, the stamp of the image that last ran here. */

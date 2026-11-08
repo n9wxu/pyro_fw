@@ -239,6 +239,7 @@ not converge, or decides alone when `model_decides` is false
 - **FLT-LOG-09**: The flight log's writer shall have the first 3 ms of each period, and shall start a flash operation only when the operation will end, or can be suspended, within those 3 ms. ← FLT-RT-03, SYS-LUA-02, DD-104
 - **FLT-LOG-10**: From launch to landing the writer shall erase only when the log has no erased page left to write. An erase shall be suspended at the end of each of the writer's slots and resumed in its next. A part whose erase does not reach its end in such pieces shall not erase from launch to landing. ← FLT-LOG-09, DD-104
 - **FLT-LOG-11**: An erase or a program the flash chip holds suspended shall be resumed and run to its end before the flash is next written: at every start, since a reset can leave one, and on the ground after a flight that gave one up. A chip holding an erase suspended takes no other erase. ← FLT-LOG-10, DD-104
+- **FLT-LOG-12**: Each flight log shall be a file of its own, numbered one past the highest the store holds. No reset, resume or launch shall remove or overwrite a log; only an erase on the ground does (WEB-API-09). ← SYS-DATA-01, DD-117
 
 ### After landing
 - **BUZ-03**: The system shall play an altitude beep-out sequence after landing, holding it while a USB host is attached and resuming it when the host goes (USB-02, USB-04). ← SYS-DATA-03
@@ -422,10 +423,10 @@ not converge, or decides alone when `model_decides` is false
 - **WEB-API-03**: The system shall accept configuration updates at `/api/config` (POST) and write to persistent storage. ← SYS-WEB-01
 - **WEB-API-04**: The system shall accept firmware updates at `/api/ota` (POST), answer before it restarts, and answer `Expect: 100-continue`. ← SYS-WEB-01
 - **WEB-API-05**: The system shall trigger a device restart at `/api/reboot` (POST). ← SYS-WEB-01
-- **WEB-API-06**: The system shall serve flight data as CSV at `/api/flight.csv`, framed by Content-Length. ← SYS-WEB-01
+- **WEB-API-06**: The system shall serve flight data as CSV at `/api/flight.csv`, framed by Content-Length: the newest log, or the log `?n=N` names (FLT-LOG-12). `/flight_log.bin` serves the newest log's binary file. ← SYS-WEB-01
 - **WEB-API-07**: The API shall grant no cross-origin access (no `Access-Control-Allow-Origin`; `Cross-Origin-Resource-Policy: same-origin`), shall refuse with 403 a request whose Host is not one of the board's names or its address, and shall refuse with 403 a POST without `X-Pyro: 1`. ← SYS-WEB-01
 - **WEB-API-08**: The web API and USB shall stay live in flight. From launch until the flight's record is safe, only the flight's record shall be stored: any other storage access shall be refused, a web request with 423, and a web transfer that holds the storage when the flight starts shall be dropped. ← SYS-WEB-01
-- **WEB-API-09**: The system shall erase the flight log on request at `/api/flight/erase` (POST), unless the log is being written. ← DAT-06
+- **WEB-API-09**: The system shall erase every flight log on request at `/api/flight/erase` (POST), unless a log is being written. ← DAT-06, FLT-LOG-12
 - **WEB-API-10**: A request for a file shall be refused with 423 while the flight log is being written. ← WEB-API-08
 - **WEB-API-11**: `/api/status` shall be self-consistent, taken at one instant of the flight, shall keep its keys and their order, and shall be well-formed JSON whatever the configured rocket id and name contain. ← SYS-WEB-01
 - **WEB-API-12**: The system shall report at `/api/log/space` the bytes the next flight's log has room for, the size of a sample record, the samples a second, and the seconds of flight that room holds with each second's sync, and refuse with 423 while the flight log holds the storage. ← SYS-WEB-01

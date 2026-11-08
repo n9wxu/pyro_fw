@@ -49,6 +49,7 @@
 #include "pyro_release.h"
 #include "http_server.h"
 #include "flight_log.h"
+#include "log_files.h"
 #include "log_pad_ring.h"
 #include "small_fmt.h"
 #include "net_glue.h"
@@ -788,6 +789,8 @@ static StaticSemaphore_t whole_mutex_buf;
 /* Once, at boot, before the scheduler. The locks are made here, while one
  * thread runs, so no task can race their creation. A blank area mounts with
  * no file, and one holding anything else too: the cleanup erases it. */
+static void logs_scan(void);
+
 int hal_fs_mount(void) {
     if (!whole_mutex)
         whole_mutex = xSemaphoreCreateMutexStatic(&whole_mutex_buf);
@@ -798,6 +801,8 @@ int hal_fs_mount(void) {
         return 0;
     int err = vfs_mount(true);
     fs_ok = (err == 0);
+    if (fs_ok)
+        logs_scan();
     return err;
 }
 
@@ -1181,6 +1186,7 @@ typedef struct {
     /* The storage task's own. */
     vfs_file_t file;
     bool file_open;
+    char name[LOG_FILES_NAME_MAX]; /* this log's file, once chosen; empty between logs */
     uint32_t next_due_ms;
     uint32_t next_sync_ms;
     bool unsynced;
@@ -1398,9 +1404,37 @@ static void log_finish(void) {
     if (log_ring.file_open && !log_ring.to_host)
         vfs_close(&log_ring.file);
     log_ring.file_open = false;
+    log_ring.name[0] = '\0';
     log_ring.stop_seen = false;
     __dmb();
     log_ring.state = LOG_IDLE;
+}
+
+/* [FLT-LOG-12] The store's logs, read on the ground: at the mount, and again
+ * once a file call or a card changes what is held. */
+static log_files_t store_logs;
+static bool logs_known;
+static bool logs_card;
+
+static bool log_held(void *ctx, const char *name) {
+    (void)ctx;
+    return vfs_stat_size(name) >= 0;
+}
+
+static void logs_scan(void) {
+    log_files_scan(&store_logs, log_held, NULL);
+    logs_card = vfs_sd_mounted();
+    logs_known = true;
+}
+
+void hal_log_files_changed(void) {
+    logs_known = false;
+}
+
+bool hal_log_newest(char out[LOG_FILES_NAME_MAX]) {
+    if (!logs_known && fs_ok && !hal_log_active())
+        logs_scan();
+    return log_files_newest(&store_logs, out);
 }
 
 static void log_service(uint32_t now_ms) {
@@ -1436,10 +1470,12 @@ static void log_service(uint32_t now_ms) {
          * ring meanwhile. A log stopped before then opens under the lockout. */
         if (!fs_ok || (PYRO_FLIGHT_RAM && st == LOG_RUNNING && !flash_op_in_flight()))
             return;
-        /* The last flight's log goes first, so a reset in this flight finds
-         * this flight's: a write replaces a file only when it closes. */
-        vfs_remove(FLOG_PATH);
-        int rc = vfs_open(&log_ring.file, FLOG_PATH, VFS_WR, log_file_buf);
+        /* [FLT-LOG-12] A file of its own: no log is removed to make it. */
+        if (!logs_known)
+            logs_scan();
+        if (!log_ring.name[0] && !log_files_next(&store_logs, log_ring.name))
+            return; /* every number taken: the ring's rows are given up at the stop */
+        int rc = vfs_open(&log_ring.file, log_ring.name, VFS_WR, log_file_buf);
         if (rc == VFS_NOSPC && flash_op_can_erase())
             vfs_clean(); /* [FLT-LOG-10] no erased page for the log's first */
         if (rc != 0)
@@ -1493,6 +1529,8 @@ static void clean_service(uint32_t now_ms) {
 void hal_storage_service(uint32_t now_ms) {
     if (board_selftest_unsaved() && !hal_log_active())
         board_selftest_save();
+    if (fs_ok && !hal_log_active() && (!logs_known || logs_card != vfs_sd_mounted()))
+        logs_scan();
     log_service(now_ms);
     clean_service(now_ms);
     board_flash_service(now_ms);

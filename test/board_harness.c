@@ -64,8 +64,19 @@ flight_context_t ctx;
 uint32_t (*loop_lag_ms)(uint32_t t);
 static bool powered, usb_at_power_on;
 
+static void boot_from(uint32_t seed);
+
 void boot_like_hardware(uint32_t seed) {
     mock_reset_all();
+    boot_from(seed);
+}
+
+void boot_keeping_files(uint32_t seed) {
+    mock_reset_keeping_files();
+    boot_from(seed);
+}
+
+static void boot_from(uint32_t seed) {
     memset(&ctx, 0, sizeof(ctx));
     powered = false;
     usb_at_power_on = false;

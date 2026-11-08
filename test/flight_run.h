@@ -69,6 +69,7 @@ typedef struct {
     uint16_t main_m;        /* shorthand: an AGL trigger on pyro 2 at this height */
     float main_ms;          /* shorthand for rate_ms[1] */
     bool to_landed;         /* on past touchdown to LANDED, with the landing timeout off */
+    bool keep_store;        /* the files of the run before stay: a restart on the pad, then this flight */
     bool stop_after_apogee; /* 2 s after the true apogee */
     float pad_s;            /* on the pad before ignition; 0: 10 s */
 

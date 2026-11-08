@@ -13,6 +13,7 @@
 #include "../src/flight_events.h"
 #include "../src/flight_states.h"
 #include "../src/flight_log.h"
+#include "../src/log_files.h"
 #include "../src/log_pad_ring.h"
 #include "../src/loop_period.h"
 #include "mocks.h"
@@ -231,7 +232,7 @@ static void xip_stall(void) {
 }
 
 /* In-memory filesystem */
-#define SIM_FS_MAX_FILES 4
+#define SIM_FS_MAX_FILES 8
 #define SIM_FS_MAX_SIZE (2 * 1024 * 1024) /* a long flight's log at every sample */
 typedef struct {
     char path[32];
@@ -260,6 +261,14 @@ bool hal_ground_test_asserted(void) {
     return mock_ground_test_pin;
 }
 
+static bool keep_files_once;
+
+void mock_reset_keeping_files(void) {
+    keep_files_once = true;
+    mock_reset_all();
+    keep_files_once = false;
+}
+
 void mock_reset_all(void) {
     mock_ground_test_pin = false;
     mock_pressure_inits = 0;
@@ -268,7 +277,8 @@ void mock_reset_all(void) {
     mock_config_unreadable = false;
     mock_fs_write_count = 0;
     mock_fs_locked_count = 0;
-    memset(&sim_files, 0, sizeof(sim_files));
+    if (!keep_files_once)
+        memset(&sim_files, 0, sizeof(sim_files));
     memset(&mock_pressure, 0, sizeof(mock_pressure));
     mock_pressure.sensor_type = 2;
     mock_pressure.pending_until_ms = 0;
@@ -299,7 +309,8 @@ void mock_reset_all(void) {
     log_pad_clear(&test_log_pad);
     mock_estimator_row_count = 0;
     test_file.open = false;
-    memset(sim_files, 0, sizeof(sim_files));
+    if (!keep_files_once)
+        memset(sim_files, 0, sizeof(sim_files));
     last_pp_feed_ms = 0;
     mock_sample_interval_ms = 20;
     mock_sensor_stuck = false;
@@ -699,10 +710,25 @@ static void test_log_keep(const flog_sample_t *s) {
     hal_fs_write(test_log_file, (const char *)rec, flog_put_sample(rec, (int)sizeof(rec), s));
 }
 
+static bool sim_file_exists(void *ctx, const char *name) {
+    (void)ctx;
+    for (int i = 0; i < SIM_FS_MAX_FILES; i++)
+        if (sim_files[i].used && strcmp(sim_files[i].path, name) == 0)
+            return true;
+    return false;
+}
+
+/* As the hardware HAL: the store's logs, read at start-up. */
+static log_files_t test_logs;
+
 void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_ms) {
     if (test_log_active)
         return;
-    test_log_file = hal_fs_open(FLOG_PATH, false);
+    log_files_scan(&test_logs, sim_file_exists, NULL);
+    char name[LOG_FILES_NAME_MAX];
+    if (!log_files_next(&test_logs, name))
+        return;
+    test_log_file = hal_fs_open(name, false);
     if (!test_log_file)
         return;
     flog_header_t h = {
@@ -772,9 +798,9 @@ static int log_src_read(void *ctx, uint8_t *dst, int n) {
     return n;
 }
 
-int test_flight_log_csv(char *buf, int max_len) {
+int test_flight_log_csv_of(const char *name, char *buf, int max_len) {
     static uint8_t bin[SIM_FS_MAX_SIZE];
-    log_src_t src = {bin, mock_fs_peek(FLOG_PATH, (char *)bin, (int)sizeof(bin)), 0};
+    log_src_t src = {bin, mock_fs_peek(name, (char *)bin, (int)sizeof(bin)), 0};
     if (src.len <= 0)
         return 0;
     flog_csv_t r;
@@ -782,6 +808,13 @@ int test_flight_log_csv(char *buf, int max_len) {
     int n = flog_csv_read(&r, buf, max_len - 1);
     buf[n] = '\0';
     return n;
+}
+
+int test_flight_log_csv(char *buf, int max_len) {
+    log_files_t logs;
+    log_files_scan(&logs, sim_file_exists, NULL);
+    char name[LOG_FILES_NAME_MAX];
+    return log_files_newest(&logs, name) ? test_flight_log_csv_of(name, buf, max_len) : 0;
 }
 
 void hal_log_stop(void) {
