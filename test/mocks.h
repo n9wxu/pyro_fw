@@ -78,6 +78,7 @@ extern uint32_t mock_fs_locked_count; /* file calls refused while the flight log
 extern bool mock_prev_watchdog; /* what the watchdog's scratch said at this start-up */
 extern int32_t mock_prev_stage;
 extern uint32_t mock_prev_stage_ms;
+extern uint32_t mock_counters[]; /* [FLT-LOG-15] by log_counter_t */
 extern uint64_t mock_log_free_bytes; /* the store's free bytes at a log's open; 0: room for any */
 void mock_reset_keeping_files(void); /* mock_reset_all(), the store's files kept */
 int mock_fs_peek(const char *path, char *buf, int max_len); /* a test's look at a file, past the lock */

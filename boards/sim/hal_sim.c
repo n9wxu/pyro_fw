@@ -412,6 +412,10 @@ bool hal_log_estimator(uint32_t time_ms, const char *text, int len) {
     return true;
 }
 
+void hal_log_counters(void) {
+    /* the simulator counts nothing a post-mortem needs */
+}
+
 void hal_log_boot(const char *start, bool usb) {
     (void)start; /* the simulator keeps no store across a start-up */
     (void)usb;

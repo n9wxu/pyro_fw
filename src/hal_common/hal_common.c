@@ -52,6 +52,8 @@
 #include "log_files.h"
 #include "log_room.h"
 #include "boot_record.h"
+#include "log_counters.h"
+#include "core1_frame.h"
 #include "flash_timing.h"
 #include "version.h"
 #include "log_pad_ring.h"
@@ -1219,6 +1221,12 @@ bool hal_log_held_for_host(void) {
     return log_ring.state != LOG_IDLE ? log_ring.to_host : log_host_next;
 }
 
+/* [FLT-LOG-15] What the log last said of each counter, and the time of its
+ * last row, which a counter row takes so the log stays in time order. */
+static log_counters_t log_cnt;
+static int32_t log_last_row_ms;
+extern volatile uint32_t loop_overruns, loop_overruns_ground; /* main_hardware.c */
+
 static uint32_t log_used(void) {
     return log_ring.head - log_ring.tail;
 }
@@ -1236,6 +1244,7 @@ static bool log_put(const uint8_t *rec, uint32_t n) {
 }
 
 static void log_keep(const flog_sample_t *s) {
+    log_last_row_ms = s->time_ms;
     uint8_t rec[FLOG_SAMPLE_BYTES + 8];
     int n = flog_put_sample(rec, (int)sizeof(rec), s);
     if (n <= 0 || !log_put(rec, (uint32_t)n))
@@ -1309,6 +1318,9 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
     log_open.air = air_over_pad((float)ground_pressure_pa, pp_pad_k());
     log_open.boot_row = 0;
     log_open.boot_at = 0;
+    log_cnt = (log_counters_t){0};
+    log_counters_all(&log_cnt);
+    log_last_row_ms = 0;
     __dmb();
     log_ring.state = LOG_RUNNING;
 }
@@ -1686,6 +1698,50 @@ static bool log_rationed(uint32_t time_ms, uint8_t tag, const char *text, int le
     return log_tagged(time_ms, tag, text, len);
 }
 
+static void counters_now(uint32_t v[LOG_COUNTER_COUNT]) {
+    flash_op_slot_stats_t ss;
+    flash_op_slot_stats(&ss);
+    core1_frame_stats_t fr;
+    core1_frame_stats(&fr);
+    collector_stats_t col;
+    hal_pressure_collector(&col);
+    v[LOG_CNT_DROPPED] = log_ring.dropped;
+    v[LOG_CNT_TEXT_DROPPED] = log_ring.text_dropped;
+    v[LOG_CNT_PROGRAMS] = flash_op_programs();
+    v[LOG_CNT_ERASES] = flash_op_erases();
+    v[LOG_CNT_REFUSALS] = flash_op_refusals();
+    v[LOG_CNT_SKIPS] = flash_op_timeouts();
+    v[LOG_CNT_FLIGHT_REFUSALS] = ss.flight_refusals;
+    v[LOG_CNT_SUSPENDS] = ss.suspends;
+    v[LOG_CNT_WAITS] = ss.slot_waits;
+    v[LOG_CNT_OVERRUNS] = loop_overruns;
+    v[LOG_CNT_OVERRUNS_GROUND] = loop_overruns_ground;
+    v[LOG_CNT_WRITER_OVERRUNS] = fr.writer_overruns;
+    v[LOG_CNT_LUA_SKIPPED] = fr.lua_skipped;
+    v[LOG_CNT_PRES_REJECTS] = col.failed[COLLECTOR_ADDRESS_NACK] + col.failed[COLLECTOR_DATA_NACK] +
+                              col.failed[COLLECTOR_LINE_HELD] + col.failed[COLLECTOR_TIMEOUT];
+    v[LOG_CNT_PRES_RECOVERIES] = col.recoveries;
+    v[LOG_CNT_PRES_DROPPED] = col.dropped;
+    v[LOG_CNT_PRES_FLASHED] = hal_pressure_flashed();
+}
+
+/* The due counters' rows. Unrationed: a counter row is the evidence. */
+static void counters_say(const uint32_t v[LOG_COUNTER_COUNT]) {
+    char row[FLOG_TEXT_MAX + 1];
+    int n;
+    while ((n = log_counters_row(&log_cnt, v, row, (int)sizeof(row))) > 0)
+        (void)log_tagged((uint32_t)log_last_row_ms, FLOG_TAG_LOG, row, n);
+}
+
+void hal_log_counters(void) {
+    if (log_ring.state != LOG_RUNNING)
+        return;
+    uint32_t v[LOG_COUNTER_COUNT];
+    counters_now(v);
+    log_counters_note(&log_cnt, v);
+    counters_say(v);
+}
+
 bool hal_log_text(uint32_t time_ms, const char *text, int len) {
     return log_rationed(time_ms, FLOG_TAG_LUA, text, len);
 }
@@ -1708,6 +1764,10 @@ uint32_t hal_log_text_dropped(void) {
 void hal_log_stop(void) {
     if (log_ring.state != LOG_RUNNING)
         return;
+    uint32_t v[LOG_COUNTER_COUNT]; /* [FLT-LOG-15] every counter, at the close */
+    counters_now(v);
+    log_counters_all(&log_cnt);
+    counters_say(v);
     __dmb();
     log_ring.state = LOG_STOPPING;
 #if PYRO_FLIGHT_RAM

@@ -191,6 +191,10 @@ bool hal_log_active(void);
 #define BOOT_LOG_PATH "boot_log.txt"
 void hal_log_boot(const char *start, bool usb);
 
+/* [FLT-LOG-15] Each pass of the flight loop, while a log runs: the counters
+ * that changed since the log last said, as rows of their own. */
+void hal_log_counters(void);
+
 /* [USB-09] The next flight's log held in RAM for the host (log_live.h) in
  * place of the flash; a log already running keeps where it goes. */
 void hal_log_to_host(bool on);

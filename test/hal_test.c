@@ -16,6 +16,7 @@
 #include "../src/log_files.h"
 #include "../src/log_room.h"
 #include "../src/boot_record.h"
+#include "../src/log_counters.h"
 #include "../src/version.h"
 #include "../src/log_pad_ring.h"
 #include "../src/loop_period.h"
@@ -276,6 +277,7 @@ void mock_reset_keeping_files(void) {
 void mock_reset_all(void) {
     mock_ground_test_pin = false;
     mock_log_free_bytes = 0;
+    memset(mock_counters, 0, LOG_COUNTER_COUNT * sizeof(mock_counters[0]));
     mock_prev_watchdog = false;
     mock_prev_stage = -1;
     mock_prev_stage_ms = 0;
@@ -783,7 +785,31 @@ void hal_log_boot(const char *start, bool usb) {
         boot_log_keep();
 }
 
+/* [FLT-LOG-15] As the hardware HAL: the counters a test sets, said when
+ * they change and all of them at the open and the close. */
+uint32_t mock_counters[LOG_COUNTER_COUNT];
+static log_counters_t test_cnt;
+static int32_t test_last_row_ms;
+
+static void test_counters_say(void) {
+    char row[FLOG_TEXT_MAX + 1];
+    int n;
+    while ((n = log_counters_row(&test_cnt, mock_counters, row, (int)sizeof(row))) > 0) {
+        uint8_t rec[FLOG_RECORD_MAX];
+        int k = flog_put_text(rec, (int)sizeof(rec), (uint32_t)test_last_row_ms, FLOG_TAG_LOG, row, n);
+        test_log_write(rec, k, (uint32_t)test_last_row_ms);
+    }
+}
+
+void hal_log_counters(void) {
+    if (!test_log_active)
+        return;
+    log_counters_note(&test_cnt, mock_counters);
+    test_counters_say();
+}
+
 static void test_log_keep(const flog_sample_t *s) {
+    test_last_row_ms = s->time_ms;
     uint8_t rec[FLOG_SAMPLE_BYTES];
     test_log_write(rec, flog_put_sample(rec, (int)sizeof(rec), s), (uint32_t)s->time_ms);
 }
@@ -840,6 +866,8 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
                               (int)strlen(test_boot_rows[r]));
         test_log_write(row, n, (uint32_t)boot_at);
     }
+    memset(&test_cnt, 0, sizeof(test_cnt));
+    log_counters_all(&test_cnt);
     test_log_active = true;
 }
 
@@ -909,6 +937,8 @@ int test_flight_log_csv(char *buf, int max_len) {
 void hal_log_stop(void) {
     if (!test_log_active)
         return;
+    log_counters_all(&test_cnt);
+    test_counters_say();
     if (test_log_file) {
         hal_fs_close(test_log_file);
         test_log_file = NULL;

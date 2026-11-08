@@ -672,11 +672,12 @@ void test_DAT_11_the_log_starts_on_the_ground(void) {
     starts_on_the_ground(&five_to_one, "5:1 thrust to weight");
 }
 
-
 /* [FLT-LOG-13] A store with room for a few seconds of flight: the log's last
  * row says it ran out, nothing comes after it, and the flight goes on. */
 void test_FLT_LOG_13_a_full_store_ends_the_log_with_out_of_room(void) {
-    flight_conditions_t c = {.rate_ms = {20.0f, 6.0f}, .main_m = 150, .main_ms = 6.0f,
+    flight_conditions_t c = {.rate_ms = {20.0f, 6.0f},
+                             .main_m = 150,
+                             .main_ms = 6.0f,
                              .store_free_bytes = 40u * 248u}; /* about 8 s of rows at 50 a second */
     flown_t r = fly(subsonic(), &ISA, &c, 16, 200.0f);
     static char csv[262144];
@@ -688,6 +689,36 @@ void test_FLT_LOG_13_a_full_store_ends_the_log_with_out_of_room(void) {
     TEST_ASSERT_NOT_NULL_MESSAGE(strstr(last, ",,,,,,,LOG OUT OF ROOM"), "the last row says so");
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, harness_log_events("LOG OUT OF ROOM"), "once");
     TEST_ASSERT_TRUE_MESSAGE(r.drogue && r.main, "the flight is not the log's");
+}
+
+/* [FLT-LOG-15] Every counter at the open and the close; between them, a
+ * refused flash operation and dropped rows in the pass they happened, and
+ * nothing that did not change. */
+void test_FLT_LOG_15_a_counter_is_logged_in_the_pass_it_changes(void) {
+    flight_conditions_t c = {.rate_ms = {20.0f, 6.0f}, .to_landed = true, .counters_at_s = 5.0f};
+    fly(subsonic(), &ISA, &c, 17, 300.0f);
+    static char csv[4 * 1024 * 1024];
+    TEST_ASSERT_TRUE(test_flight_log_csv(csv, (int)sizeof(csv)) > 0);
+    const char *first = strstr(csv, ",,,,,,,LOG CNT ");
+    TEST_ASSERT_NOT_NULL_MESSAGE(first, "the open's counters");
+    TEST_ASSERT_NOT_NULL(strstr(first, " drop=0"));
+    const char *bump = strstr(csv, ",,,,,,,LOG CNT drop=22 refuse=1\n");
+    TEST_ASSERT_NOT_NULL_MESSAGE(bump, "only the two that changed, in one row");
+    const char *line = bump;
+    while (line > csv && line[-1] != '\n')
+        line--;
+    const char *before = line - 1;
+    while (before > csv && before[-1] != '\n')
+        before--;
+    long t = strtol(line, NULL, 10), sample_before = strtol(before, NULL, 10);
+    long sample_after = strtol(strchr(bump, '\n') + 1, NULL, 10);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(sample_before, t, "at the time of its pass's sample");
+    TEST_ASSERT_TRUE_MESSAGE(sample_after - sample_before <= 20, "and in that pass, not later");
+    TEST_ASSERT_INT_WITHIN_MESSAGE(200, 5000, t, "about when it changed");
+    TEST_ASSERT_NULL_MESSAGE(strstr(bump + 1, ",,,,,,,LOG CNT drop=22 refuse=1\n"), "said once");
+    const char *landing = strstr(csv, ",LANDING\n");
+    TEST_ASSERT_NOT_NULL(landing);
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(landing, ",,,,,,,LOG CNT drop=22 tdrop=0"), "every counter at the close");
 }
 
 int main(void) {
@@ -731,5 +762,6 @@ int main(void) {
     RUN_TEST(test_WEB_API_10_other_storage_access_is_refused_until_the_record_is_safe);
     RUN_TEST(test_SNS_REC_01_a_failed_sensor_is_logged_and_left_alone);
     RUN_TEST(test_FLT_LOG_13_a_full_store_ends_the_log_with_out_of_room);
+    RUN_TEST(test_FLT_LOG_15_a_counter_is_logged_in_the_pass_it_changes);
     return UNITY_END();
 }

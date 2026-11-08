@@ -17,7 +17,7 @@ FILES="$(cat src/flight_sources.txt) src/flight_internal.h src/flight_states.h s
     boards/mk1c/arm_pump.c boards/mk1c/arm_pump.h
     src/http_server.c src/http_server.h src/http_conn.c src/http_conn.h
     src/http_work.c src/http_work.h src/status_json.c src/status_json.h src/fs_json.c src/fs_json.h
-    src/flight_log.c src/flight_log.h src/log_files.c src/log_files.h test/test_log_files.c src/log_room.c src/log_room.h test/test_log_room.c src/boot_record.c src/boot_record.h test/test_boot_record.c src/pressure_trace.c src/pressure_trace.h
+    src/flight_log.c src/flight_log.h src/log_files.c src/log_files.h test/test_log_files.c src/log_room.c src/log_room.h test/test_log_room.c src/boot_record.c src/boot_record.h test/test_boot_record.c src/log_counters.c src/log_counters.h test/test_log_counters.c src/pressure_trace.c src/pressure_trace.h
     src/flash_chip.c src/flash_chip.h src/flash_chip_read.c
     src/flash_slot.c src/flash_slot.h src/flash_timing.c src/flash_timing.h
     src/core1_frame.h src/rtos/core1_frame.c test/test_flash_slot.c

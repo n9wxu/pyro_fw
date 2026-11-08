@@ -1807,6 +1807,29 @@ in `docs/outstanding_tasks.md`.
   samples; only each conversion, with when it was measured and when it was
   read, shows a stale read or a missed slot.
 
+### DD-119: The Counters In The Log, In The Pass They Change
+- **Decision:** at the user's direction (2026-11-07) -- "Counter updates
+  on change in the loop that happen is perfect. we don't need to log every
+  value for data that is unchanged since last update" [FLT-LOG-15]:
+  - `flight_update_outputs()` calls `hal_log_counters()` every pass. While a
+    log runs, the HAL reads 17 counters (`src/log_counters.h`: the log's
+    dropped rows and text, the flash's programs, erases, refusals, skips,
+    flight refusals, suspends and waits, the loop's and the writer's
+    overruns, Lua's skipped ticks, the sensor's rejects, recoveries,
+    dropped and flashed readings). Each one changed since the log last said
+    goes into a `LOG CNT name=value ...` row; all of them at the open and
+    the close.
+  - A row takes the time of the pass's sample, so the log stays in time
+    order (FLT-LOG-07), and goes into the ring unrationed: it is the
+    evidence.
+  - The row is built without printf. The pass runs from RAM (DD-104), and
+    printf took MK1C's RAM over its end by 1652 bytes. The counter path
+    still costs about 2.1 kB of RAM: MK1C has 6540 bytes below
+    0x20040000, its 2048-byte heap reserve included.
+- **Why:** flight-4's `/api/status` -- the counts that would have said
+  what the flash and the loop were doing -- was gone when the log was
+  read.
+
 ### DD-118: Every Start-Up Recorded
 - **Decision:** at the user's direction (2026-11-07) -- "If there is
   additional data needed for post-mortem diagnosis, then you must add it to
