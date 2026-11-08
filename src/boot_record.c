@@ -34,7 +34,7 @@ const char *boot_record_cause(int reset_cause) {
     }
 }
 
-int boot_record_lines(const boot_rows_t rows, char *out, int cap) {
+int boot_record_lines(boot_rows_t rows, char *out, int cap) {
     int len = 0;
     for (int r = 0; r < BOOT_RECORD_ROWS; r++) {
         int n = (int)strlen(rows[r]);

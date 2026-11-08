@@ -1676,7 +1676,7 @@ static void boot_log_keep(void) {
         vfs_close(&in);
     }
     char lines[BOOT_RECORD_ROWS * (BOOT_RECORD_ROW_MAX + 1)];
-    int n = boot_record_lines((const char(*)[BOOT_RECORD_ROW_MAX + 1]) boot_rows, lines, (int)sizeof(lines));
+    int n = boot_record_lines(boot_rows, lines, (int)sizeof(lines));
     vfs_write(&out, lines, (uint32_t)n);
     vfs_close(&out);
 }

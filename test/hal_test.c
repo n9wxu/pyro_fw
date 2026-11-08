@@ -754,7 +754,7 @@ static void boot_log_keep(void) {
     if (rotate)
         hal_fs_write_file(BOOT_LOG_OLDER_PATH, old, held);
     char lines[256];
-    int n = boot_record_lines((const char(*)[BOOT_RECORD_ROW_MAX + 1]) test_boot_rows, lines, (int)sizeof(lines));
+    int n = boot_record_lines(test_boot_rows, lines, (int)sizeof(lines));
     hal_file_t *f = hal_fs_open(BOOT_LOG_PATH, !rotate);
     if (f) {
         hal_fs_write(f, lines, n);

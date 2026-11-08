@@ -42,6 +42,6 @@ const char *boot_record_cause(int reset_cause);
 
 /* The rows as the boot log's lines, into out; the bytes, 0 when they do not
  * fit. */
-int boot_record_lines(const boot_rows_t rows, char *out, int cap);
+int boot_record_lines(boot_rows_t rows, char *out, int cap);
 
 #endif

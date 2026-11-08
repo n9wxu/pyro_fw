@@ -61,13 +61,13 @@ void test_FLT_LOG_14_the_rows_become_the_boot_log_s_lines(void) {
     boot_rows_t rows;
     boot_record_rows(&WATCHDOG, rows);
     char out[256];
-    int n = boot_record_lines((const char(*)[BOOT_RECORD_ROW_MAX + 1]) rows, out, (int)sizeof(out));
+    int n = boot_record_lines(rows, out, (int)sizeof(out));
     out[n] = '\0';
     TEST_ASSERT_EQUAL_STRING("BOOT cause=software wd=1 stage=7 at=4810 ms\n"
                              "BOOT fw=2.3.5 flash=BY25Q64ES 8192kB usb=0\n"
                              "BOOT start=resumed in descent last=flight_0012.bin\n",
                              out);
-    TEST_ASSERT_EQUAL_INT(0, boot_record_lines((const char(*)[BOOT_RECORD_ROW_MAX + 1]) rows, out, 60));
+    TEST_ASSERT_EQUAL_INT(0, boot_record_lines(rows, out, 60));
 }
 
 int main(void) {
