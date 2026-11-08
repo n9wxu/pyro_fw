@@ -367,6 +367,18 @@ int vfs_flash_space(uint64_t *free_bytes, uint64_t *total_bytes) {
     return 0;
 }
 
+int vfs_flash_erased(uint64_t *erased_bytes) {
+    if (!mounted || !fs_lock())
+        return VFS_FLASH_ERR;
+    alfs_fs_status_t st;
+    int rc = alfs_fs_status(&store, &st);
+    fs_unlock();
+    if (rc != ALFS_OK)
+        return VFS_FLASH_ERR;
+    *erased_bytes = (uint64_t)st.free * (area_of->page_size - PAGE_KEEPS);
+    return 0;
+}
+
 uint32_t vfs_flash_synced_cost(uint32_t bytes) {
     if (!area_of)
         return bytes;

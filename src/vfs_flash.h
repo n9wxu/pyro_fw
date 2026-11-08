@@ -79,6 +79,11 @@ int32_t vfs_flash_stat_size(const char *name);
  * every page no file holds, the pages the cleanup will erase among them. */
 int vfs_flash_space(uint64_t *free_bytes, uint64_t *total_bytes);
 
+/* [FLT-LOG-13] The bytes the free pages that read erased hold: what a write
+ * can take with no erase. Reads every page's header, so it is slow; on the
+ * ground. */
+int vfs_flash_erased(uint64_t *erased_bytes);
+
 /* The room bytes take when a sync follows them: whole pages, since a sync
  * stores its partial page. */
 uint32_t vfs_flash_synced_cost(uint32_t bytes);

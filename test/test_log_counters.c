@@ -72,10 +72,26 @@ void test_FLT_LOG_15_all_of_them_at_the_open_and_the_close(void) {
     TEST_ASSERT_EQUAL_INT(LOG_COUNTER_COUNT, items);
 }
 
+/* The flash's own activity moves with every page: said at the ends only. */
+void test_FLT_LOG_15_the_flash_s_activity_waits_for_the_close(void) {
+    char all[1024];
+    v[LOG_CNT_PROGRAMS] = 7;
+    v[LOG_CNT_WAITS] = 3;
+    v[LOG_CNT_PRES_FLASHED] = 2;
+    v[LOG_CNT_SUSPENDS] = 1;
+    log_counters_note(&c, v);
+    TEST_ASSERT_EQUAL_INT(0, drain(all, sizeof(all)));
+    log_counters_all(&c);
+    drain(all, sizeof(all));
+    TEST_ASSERT_NOT_NULL(strstr(all, " prog=7"));
+    TEST_ASSERT_NOT_NULL(strstr(all, " pflash=2"));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_FLT_LOG_15_nothing_changed_is_nothing_said);
     RUN_TEST(test_FLT_LOG_15_only_what_changed_is_said);
     RUN_TEST(test_FLT_LOG_15_all_of_them_at_the_open_and_the_close);
+    RUN_TEST(test_FLT_LOG_15_the_flash_s_activity_waits_for_the_close);
     return UNITY_END();
 }

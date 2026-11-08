@@ -860,10 +860,8 @@ sequence has gaps.
   alfs searches a nearly full filesystem for a free page -- and Lua shares
   core1 with it then: on MK1C with the filesystem full, 33 Lua ticks given
   no time. FLT-LOG-11's finish is tested on the host only.
-  `/api/log/space` and a log's room (FLT-LOG-13) count pages awaiting the
-  cleanup as room, which nothing erases in flight: 2,272 s reported on
-  MK1B-8MB with a few sectors erased. A log that finds no erased page
-  before its room is spent stops there without its OUT OF ROOM row.
+  A store with no erased page left opens no log at all, and writes no OUT
+  OF ROOM row: a log that spent its last page closes in none.
 
 ### DD-112: Missed Periods Counted; Ground Erases In Pieces
 - **Decision:** at the user's direction, after a bench soak showed the
@@ -1870,9 +1868,14 @@ in `docs/outstanding_tasks.md`.
     other. The erase removes every log [WEB-API-06, WEB-API-09].
     `/api/log/space` counts what is free: no log is replaced.
   - Nothing is erased from launch to landing: `slot_op()` refuses an erase
-    then and counts it [FLT-LOG-10]. A log has the room the store held free
-    when it opened, less two pages kept for its last row and its close; a
-    sync costs the rest of its page (`src/log_room.c`). A log that spends
+    then and counts it [FLT-LOG-10]. A log has the room the store held
+    erased and free when it opened, less two pages kept for its last row and
+    its close; a sync costs the rest of its page (`src/log_room.c`). Free
+    pages in a sector that still holds a live page are not erased, so the
+    erased count is what limits: `alfs_fs_status()` reads every page's
+    header for it, about 8 ms, in the storage task on the pad, again once
+    the flash has been written or erased since. `/api/log/space` counts the
+    same. A log that spends
     its room ends with a `LOG OUT OF ROOM` row, writes nothing after it,
     and counts what it drops [FLT-LOG-13].
 - **Why:** the one slot was removed when the next log opened, so a flight

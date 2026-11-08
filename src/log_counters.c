@@ -6,9 +6,12 @@
 #include "log_counters.h"
 #include <string.h>
 
-#define LOG_CNT_NAME(e, name) name,
+#define LOG_CNT_NAME(e, name, said) name,
 static const char *const NAMES[LOG_COUNTER_COUNT] = {LOG_COUNTERS(LOG_CNT_NAME)};
 #undef LOG_CNT_NAME
+#define LOG_CNT_SAID(e, name, said) (uint32_t)(said) << e |
+static const uint32_t ON_CHANGE = LOG_COUNTERS(LOG_CNT_SAID) 0u;
+#undef LOG_CNT_SAID
 
 _Static_assert(LOG_COUNTER_COUNT <= 32, "a bit a counter in due");
 
@@ -18,7 +21,7 @@ void log_counters_all(log_counters_t *c) {
 
 void log_counters_note(log_counters_t *c, const uint32_t now[LOG_COUNTER_COUNT]) {
     for (int i = 0; i < LOG_COUNTER_COUNT; i++)
-        if (now[i] != c->last[i])
+        if (now[i] != c->last[i] && (ON_CHANGE & (1u << i)))
             c->due |= 1u << i;
 }
 

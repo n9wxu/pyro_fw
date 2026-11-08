@@ -66,7 +66,7 @@ handlers from RAM.
 
 | ID | What | Tests first |
 |---|---|---|
-| PM-B | **The post-mortem log on a board** (DD-116 to DD-119, branch `post-mortem-logs`). Host-tested and proved, not yet flown on hardware. On an MK1B-8MB on a battery: a bench flight reset part-way leaves two logs, the second headed by its `LOG BOOT` rows naming the cause; `boot_log.txt` holds each start-up; `LOG CNT` rows appear at the open, the close and each change; `flash_erases` does not move from launch to landing; a store filled before launch ends its log with `LOG OUT OF ROOM` | bench: `support/bench_flight.py` with a reset from the RUN pin mid-flight, then `/api/flight.csv?n=1` and `?n=2` and `/boot_log.txt` |
+| PM-B | **A reset in flight on a board.** On MK1B-8MB 2026-11-08: two logs kept across a reset on the pad, BOOT rows and `boot_log.txt` on each start-up, counters only at the ends and on a fault change, no erase from launch to landing, `LOG OUT OF ROOM` last in a full log. Not shown on hardware: a reset in flight (the web's reboot waits for landing, FLT-RT-02) and a watchdog's stage in the BOOT row | bench: the RUN pin or the battery pulled mid-descent in a bench flight off USB; then `/api/flight.csv?n=` both logs and `/boot_log.txt` |
 
 ---|---|---|
 

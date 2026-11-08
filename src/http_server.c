@@ -1194,6 +1194,9 @@ static void serve_log_space(conn_t *c) {
         http_respond_str(hc, 500, JSON, "{\"error\":\"no filesystem\"}");
         return;
     }
+    uint64_t erased_b = 0; /* [FLT-LOG-13] a log writes only erased pages */
+    if (vfs_erased(FLOG_PATH, &erased_b) == 0 && erased_b < free_b)
+        free_b = erased_b;
     int64_t room = (int64_t)free_b - LOG_SPACE_RESERVE_BYTES; /* no log is replaced [FLT-LOG-12] */
     if (room < 0)
         room = 0;

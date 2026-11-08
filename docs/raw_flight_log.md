@@ -47,8 +47,8 @@ counted as `loop_overruns_ground` (FLT-RT-05).
 
 From launch to landing nothing erases: an erase asked for then is refused
 and counted (FLT-LOG-10, `src/flash_op.c`). A log has the room the store held
-free when it opened, less two pages kept for its OUT OF ROOM row and its
-close; a log that spends it ends with that row and writes nothing after it
+erased and free when it opened, less two pages kept for its OUT OF ROOM row
+and its close; a log that spends it ends with that row and writes nothing after it
 (FLT-LOG-13, `src/log_room.c`). An erase or program the
 chip holds suspended is run to its end at every start and on the ground
 after a flight that gave one up (FLT-LOG-11).
