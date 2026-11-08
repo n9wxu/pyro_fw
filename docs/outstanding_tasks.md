@@ -6,7 +6,7 @@ keeps its ID.
 | # | Section | Needs |
 |---|---|---|
 | — | [How every task runs](#how-every-task-runs) | read first |
-| 1 | [To do now](#1-to-do-now) | PM-1..4: the formats, your review |
+| 1 | [To do now](#1-to-do-now) | PM-2, PM-3 |
 | 2 | [Decisions](#2-decisions) | you: two left |
 | 3 | [To build](#3-to-build) | a decision above, or just the work |
 | 4 | [Known limits of the flight software](#4-known-limits-of-the-flight-software) | your judgement on which to take up |
@@ -72,10 +72,8 @@ old log must not be destroyed. The record formats go to review first.
 
 | ID | What | Tests first |
 |---|---|---|
-| PM-1 | **No reset destroys a log.** Today the one log slot is removed when the next log opens (`log_service()`, `hal_common.c`), so a resumed flight loses what came before (was L3), and so does the next launch after a reset on the pad. Each log becomes its own file. The log only writes in flight; erasing is a ground operation, and nothing in flight removes a file. A log that runs out of room ends with an OUT OF ROOM record, room for which is kept back, and writes nothing more | host: a flight restarted in ascent, in descent and on the pad leaves the first log whole, and a second beside it; the newest is what `/api/flight.csv` serves; a store filled mid-flight ends its log with OUT OF ROOM as the last record |
 | PM-2 | **Every start-up recorded.** The reset cause, the watchdog's verdict and the stage it caught, the resume verdict and why not, the firmware and the flash part, in a record every start-up appends, and at the head of each log that start-up opens. Flight-4's board went to the pad after its reset and opened no log, so today nothing of the reset survives | host: a watchdog reset in flight, a power reset and a reset that declines to resume each leave a record naming its cause |
 | PM-3 | **The counters in the log, at the flight loop's 10 ms.** What `/api/status` counts of the flash, the log, the loop and the sensor: all of them at the log's open and close, and each one in the loop pass it changes | host: a flight with a refused flash operation and a dropped row logs each in the 10 ms pass it happened |
-| PM-4 | **A damaged log says so.** The CSV stops without a word at the first byte that is not a record (`flog_csv_read()`, `flight_log.c`), so a page lost to a failed program reads as a flight that ended. The CSV names the byte, then picks up at the next whole record. Takes L4 with it | host: a log with a page of erased bytes and one of misaligned records renders every whole record, with a row at each break |
 
 ---
 

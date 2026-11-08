@@ -784,10 +784,8 @@ sequence has gaps.
     waits for a slot starts at the slot's start, from an alarm interrupt on
     core1: the writer's task shares core1 with the network task at its
     priority, which a notification does not preempt, and would wake up to a
-    millisecond into the slot. From launch to landing an erase comes only
-    when the log has no erased page left, and only on a part whose erase
-    ends in pieces; it is suspended at the end of each slot and resumed in
-    the next [FLT-LOG-10].
+    millisecond into the slot. From launch to landing nothing is erased
+    (DD-117) [FLT-LOG-10].
   - A chip holding an erase suspended takes no other erase, and holds it
     through a reboot of the RP2040. An operation the chip holds suspended is
     run to its end at every start, and on the ground by the first operation
@@ -862,9 +860,10 @@ sequence has gaps.
   alfs searches a nearly full filesystem for a free page -- and Lua shares
   core1 with it then: on MK1C with the filesystem full, 33 Lua ticks given
   no time. FLT-LOG-11's finish is tested on the host only.
-  `/api/log/space` counts pages awaiting the cleanup as room, which a part
-  that does not erase in flight cannot use: 2,272 s reported on MK1B-8MB
-  with a few sectors erased.
+  `/api/log/space` and a log's room (FLT-LOG-13) count pages awaiting the
+  cleanup as room, which nothing erases in flight: 2,272 s reported on
+  MK1B-8MB with a few sectors erased. A log that finds no erased page
+  before its room is spent stops there without its OUT OF ROOM row.
 
 ### DD-112: Missed Periods Counted; Ground Erases In Pieces
 - **Decision:** at the user's direction, after a bench soak showed the
@@ -1824,6 +1823,12 @@ in `docs/outstanding_tasks.md`.
   - `/api/flight.csv` and `/flight_log.bin` serve the newest; `?n=N` any
     other. The erase removes every log [WEB-API-06, WEB-API-09].
     `/api/log/space` counts what is free: no log is replaced.
+  - Nothing is erased from launch to landing: `slot_op()` refuses an erase
+    then and counts it [FLT-LOG-10]. A log has the room the store held free
+    when it opened, less two pages kept for its last row and its close; a
+    sync costs the rest of its page (`src/log_room.c`). A log that spends
+    its room ends with a `LOG OUT OF ROOM` row, writes nothing after it,
+    and counts what it drops [FLT-LOG-13].
 - **Why:** the one slot was removed when the next log opened, so a flight
   resumed after a reset lost what came before it, and a launch after a
   reset on the pad lost the last flight. The flight-4 report came hours

@@ -50,6 +50,7 @@
 #include "http_server.h"
 #include "flight_log.h"
 #include "log_files.h"
+#include "log_room.h"
 #include "log_pad_ring.h"
 #include "small_fmt.h"
 #include "net_glue.h"
@@ -1187,6 +1188,8 @@ typedef struct {
     vfs_file_t file;
     bool file_open;
     char name[LOG_FILES_NAME_MAX]; /* this log's file, once chosen; empty between logs */
+    log_room_t room;               /* [FLT-LOG-13] what the store held free at the open */
+    bool room_noted;               /* the OUT OF ROOM row is written, or was tried */
     uint32_t next_due_ms;
     uint32_t next_sync_ms;
     bool unsynced;
@@ -1269,6 +1272,8 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
     log_ring.dropped = 0;
     log_ring.head = log_ring.tail = 0;
     log_ring.to_host = log_host_next;
+    log_ring.room = (log_room_t){0};
+    log_ring.room_noted = false;
     flog_header_t h = {
         .board = PYRO_BOARD_NAME,
         .id = cfg->id,
@@ -1299,9 +1304,40 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
 static void log_sync_if_due(uint32_t now_ms) {
     if (!log_ring.file_open || !log_ring.unsynced || (int32_t)(now_ms - log_ring.next_sync_ms) < 0)
         return;
-    if (vfs_sync(&log_ring.file) == 0)
+    if (vfs_sync(&log_ring.file) == 0) {
         log_ring.unsynced = false;
+        log_room_synced(&log_ring.room);
+    }
     log_ring.next_sync_ms = now_ms + LOG_SYNC_MS;
+}
+
+/* [FLT-LOG-13] Nothing is erased in flight: the log's last row says it ran
+ * out of room, in the pages kept back for it, and nothing is written after
+ * it. Not after a record cut part-way, which the row would misalign. */
+static void log_out_of_room(void) {
+    log_ring.room.out = true;
+    if (log_ring.room_noted || !log_ring.file_open || log_open.part != 0)
+        return;
+    log_ring.room_noted = true;
+    uint8_t rec[FLOG_RECORD_MAX];
+    int n = flog_put_text(rec, (int)sizeof(rec), hal_time_ms() - log_open.t0_ms, FLOG_TAG_LOG, LOG_ROOM_TEXT,
+                          (int)sizeof(LOG_ROOM_TEXT) - 1);
+    if (vfs_write(&log_ring.file, rec, (uint32_t)n) == n)
+        (void)vfs_sync(&log_ring.file);
+}
+
+/* One write into the log's file, charged to its room. */
+static int log_file_write(const uint8_t *p, uint32_t len) {
+    if (!log_room_take(&log_ring.room, len)) {
+        log_out_of_room();
+        return VFS_NOSPC;
+    }
+    int n = vfs_write(&log_ring.file, p, len);
+    if (n == VFS_NOSPC)
+        log_out_of_room(); /* the store had less erased than free */
+    if (n > 0)
+        log_room_wrote(&log_ring.room, (uint32_t)n);
+    return n;
 }
 
 /* What is left of one record; true once all of it is out. A record is
@@ -1313,9 +1349,7 @@ static bool log_write_record(bool to_host, const uint8_t *rec, uint16_t len) {
         log_open.part = 0;
         return true;
     }
-    int n = vfs_write(&log_ring.file, rec + log_open.part, (uint32_t)(len - log_open.part));
-    if (n == VFS_NOSPC && flash_op_can_erase())
-        vfs_clean(); /* [FLT-LOG-10] */
+    int n = log_file_write(rec + log_open.part, (uint32_t)(len - log_open.part));
     if (n <= 0)
         return false;
     log_ring.unsynced = true;
@@ -1359,14 +1393,7 @@ static void log_write_out(void) {
         uint32_t span = h - t;
         if (span > LOG_BUF_SIZE - off)
             span = LOG_BUF_SIZE - off;
-        int n = vfs_write(&log_ring.file, log_ring.buf + off, span);
-        if (n == VFS_NOSPC) {
-            /* [FLT-LOG-10] No erased page left: one sector a removed file
-             * left, erased in the writer's slots, where the part can. */
-            if (flash_op_can_erase())
-                vfs_clean();
-            return;
-        }
+        int n = log_file_write(log_ring.buf + off, span);
         if (n <= 0)
             return; /* the bytes stay: the next pass retries */
         __dmb();
@@ -1453,6 +1480,16 @@ static void log_service(uint32_t now_ms) {
         return;
     }
 
+    if (log_ring.room.out) {
+        /* [FLT-LOG-13] What comes after the OUT OF ROOM row is counted, not
+         * kept; the file closes at the stop. */
+        log_ring.dropped += log_used();
+        log_ring.tail = log_ring.head;
+        if (st == LOG_STOPPING)
+            log_finish();
+        return;
+    }
+
     if (log_ring.to_host) {
         if (!log_ring.file_open) {
             log_live_reset();
@@ -1475,12 +1512,16 @@ static void log_service(uint32_t now_ms) {
             logs_scan();
         if (!log_ring.name[0] && !log_files_next(&store_logs, log_ring.name))
             return; /* every number taken: the ring's rows are given up at the stop */
+        uint64_t free_b = 0, total_b = 0;
+        if (vfs_space(log_ring.name, &free_b, &total_b) != 0)
+            free_b = 0;
         int rc = vfs_open(&log_ring.file, log_ring.name, VFS_WR, log_file_buf);
-        if (rc == VFS_NOSPC && flash_op_can_erase())
-            vfs_clean(); /* [FLT-LOG-10] no erased page for the log's first */
+        if (rc == VFS_NOSPC)
+            log_ring.room.out = true; /* [FLT-LOG-13] not a page for even its first */
         if (rc != 0)
             return; /* the next pass retries; the ring keeps the rows */
         log_ring.file_open = true;
+        log_room_open(&log_ring.room, free_b, vfs_synced_cost(log_ring.name, 1u));
         log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
         log_ring.next_sync_ms = now_ms;
         log_ring.unsynced = false;

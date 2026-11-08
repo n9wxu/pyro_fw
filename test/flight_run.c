@@ -140,6 +140,7 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
         boot_keeping_files(seed);
     else
         boot_like_hardware(seed);
+    mock_log_free_bytes = c->store_free_bytes;
     if (c->interval_ms)
         mock_sample_interval_ms = c->interval_ms;
     if (c->sensor_rms_pa > 0.0f)

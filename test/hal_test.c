@@ -14,6 +14,7 @@
 #include "../src/flight_states.h"
 #include "../src/flight_log.h"
 #include "../src/log_files.h"
+#include "../src/log_room.h"
 #include "../src/log_pad_ring.h"
 #include "../src/loop_period.h"
 #include "mocks.h"
@@ -271,6 +272,7 @@ void mock_reset_keeping_files(void) {
 
 void mock_reset_all(void) {
     mock_ground_test_pin = false;
+    mock_log_free_bytes = 0;
     mock_pressure_inits = 0;
     mock_fs_unusable = false;
     mock_lua_events[0] = '\0';
@@ -705,9 +707,32 @@ void hal_log_pad(uint32_t t_ms, int32_t pressure_pa) {
                      (int16_t)lroundf(mock_pressure.temperature_c * 10.0f));
 }
 
+uint64_t mock_log_free_bytes; /* what the store holds free at a log's open; 0: room for any */
+#define MOCK_PAGE_BYTES 248u
+static log_room_t test_log_room;
+static bool test_log_room_noted;
+
+/* As the hardware HAL's writer [FLT-LOG-13]: each record charged to the
+ * log's room, and the OUT OF ROOM row last. */
+static void test_log_write(const uint8_t *rec, int n, uint32_t time_ms) {
+    if (!test_log_file || n <= 0)
+        return;
+    if (mock_log_free_bytes == 0 || log_room_take(&test_log_room, (uint32_t)n)) {
+        hal_fs_write(test_log_file, (const char *)rec, n);
+        log_room_wrote(&test_log_room, (uint32_t)n);
+        return;
+    }
+    if (test_log_room_noted)
+        return;
+    test_log_room_noted = true;
+    uint8_t row[FLOG_RECORD_MAX];
+    int k = flog_put_text(row, (int)sizeof(row), time_ms, FLOG_TAG_LOG, LOG_ROOM_TEXT, (int)sizeof(LOG_ROOM_TEXT) - 1);
+    hal_fs_write(test_log_file, (const char *)row, k);
+}
+
 static void test_log_keep(const flog_sample_t *s) {
     uint8_t rec[FLOG_SAMPLE_BYTES];
-    hal_fs_write(test_log_file, (const char *)rec, flog_put_sample(rec, (int)sizeof(rec), s));
+    test_log_write(rec, flog_put_sample(rec, (int)sizeof(rec), s), (uint32_t)s->time_ms);
 }
 
 static bool sim_file_exists(void *ctx, const char *name) {
@@ -744,8 +769,10 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
         .estimator = cfg->estimator,
         .model_decides = cfg->model_decides,
     };
+    log_room_open(&test_log_room, mock_log_free_bytes, MOCK_PAGE_BYTES);
+    test_log_room_noted = false;
     uint8_t rec[128];
-    hal_fs_write(test_log_file, (const char *)rec, flog_put_header(rec, (int)sizeof(rec), &h));
+    test_log_write(rec, flog_put_header(rec, (int)sizeof(rec), &h), 0);
     flog_sample_t s;
     air_t air = air_over_pad((float)ground_pressure_pa, pp_pad_k());
     for (uint16_t i = 0; log_pad_row(&test_log_pad, i, t0_ms, &air, PAD_IDLE, &s); i++)

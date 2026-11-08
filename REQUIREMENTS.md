@@ -237,9 +237,10 @@ not converge, or decides alone when `model_decides` is false
 - **FLT-LOG-07**: The flight log shall keep a row for every sample of every flight cycle, and every event row at its own time, in time order. ← SYS-DATA-01, DD-101
 - **FLT-LOG-08**: Records the flight log could not keep shall be counted and reported on `/api/status`. ← SYS-DATA-01
 - **FLT-LOG-09**: The flight log's writer shall have the first 3 ms of each period, and shall start a flash operation only when the operation will end, or can be suspended, within those 3 ms. ← FLT-RT-03, SYS-LUA-02, DD-104
-- **FLT-LOG-10**: From launch to landing the writer shall erase only when the log has no erased page left to write. An erase shall be suspended at the end of each of the writer's slots and resumed in its next. A part whose erase does not reach its end in such pieces shall not erase from launch to landing. ← FLT-LOG-09, DD-104
+- **FLT-LOG-10**: From launch to landing the flash shall only be programmed, never erased: erasing is a ground operation. An erase asked for in flight shall be refused and counted (`flight_refusals`). ← FLT-LOG-09, DD-104, DD-117
 - **FLT-LOG-11**: An erase or a program the flash chip holds suspended shall be resumed and run to its end before the flash is next written: at every start, since a reset can leave one, and on the ground after a flight that gave one up. A chip holding an erase suspended takes no other erase. ← FLT-LOG-10, DD-104
 - **FLT-LOG-12**: Each flight log shall be a file of its own, numbered one past the highest the store holds. No reset, resume or launch shall remove or overwrite a log; only an erase on the ground does (WEB-API-09). ← SYS-DATA-01, DD-117
+- **FLT-LOG-13**: A flight log shall have the room the store held free when it opened, less what its last row and its close need. A log that runs out of room shall end with an OUT OF ROOM row, write nothing after it, and count what it could not keep (FLT-LOG-08). ← FLT-LOG-10, DD-117
 
 ### After landing
 - **BUZ-03**: The system shall play an altitude beep-out sequence after landing, holding it while a USB host is attached and resuming it when the host goes (USB-02, USB-04). ← SYS-DATA-03

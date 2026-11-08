@@ -70,6 +70,7 @@ typedef struct {
     float main_ms;          /* shorthand for rate_ms[1] */
     bool to_landed;         /* on past touchdown to LANDED, with the landing timeout off */
     bool keep_store;        /* the files of the run before stay: a restart on the pad, then this flight */
+    uint32_t store_free_bytes; /* what the store holds free when the log opens; 0: room for any */
     bool stop_after_apogee; /* 2 s after the true apogee */
     float pad_s;            /* on the pad before ignition; 0: 10 s */
 

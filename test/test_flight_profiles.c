@@ -672,6 +672,24 @@ void test_DAT_11_the_log_starts_on_the_ground(void) {
     starts_on_the_ground(&five_to_one, "5:1 thrust to weight");
 }
 
+
+/* [FLT-LOG-13] A store with room for a few seconds of flight: the log's last
+ * row says it ran out, nothing comes after it, and the flight goes on. */
+void test_FLT_LOG_13_a_full_store_ends_the_log_with_out_of_room(void) {
+    flight_conditions_t c = {.rate_ms = {20.0f, 6.0f}, .main_m = 150, .main_ms = 6.0f,
+                             .store_free_bytes = 40u * 248u}; /* about 8 s of rows at 50 a second */
+    flown_t r = fly(subsonic(), &ISA, &c, 16, 200.0f);
+    static char csv[262144];
+    int n = test_flight_log_csv(csv, (int)sizeof(csv));
+    TEST_ASSERT_TRUE(n > 0);
+    const char *last = csv + n - 1;
+    while (last > csv && last[-1] != '\n')
+        last--;
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(last, ",,,,,,,LOG OUT OF ROOM"), "the last row says so");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, harness_log_events("LOG OUT OF ROOM"), "once");
+    TEST_ASSERT_TRUE_MESSAGE(r.drogue && r.main, "the flight is not the log's");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_PYR_MODE_01_delay_after_apogee);
@@ -712,5 +730,6 @@ int main(void) {
     RUN_TEST(test_WEB_API_08_only_the_flight_record_is_stored_in_flight);
     RUN_TEST(test_WEB_API_10_other_storage_access_is_refused_until_the_record_is_safe);
     RUN_TEST(test_SNS_REC_01_a_failed_sensor_is_logged_and_left_alone);
+    RUN_TEST(test_FLT_LOG_13_a_full_store_ends_the_log_with_out_of_room);
     return UNITY_END();
 }

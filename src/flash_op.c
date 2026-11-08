@@ -413,15 +413,6 @@ bool flash_op_in_flight(void) {
     return flight;
 }
 
-bool flash_op_can_erase(void) {
-    if (!flight)
-        return true;
-    uint8_t jedec[3];
-    flash_chip_jedec(jedec);
-    const flash_timing_t *t = flash_timing_for(jedec);
-    return t && t->erase_suspends;
-}
-
 void flash_op_set_writer(void *task) {
     writer = (TaskHandle_t)task;
 }
@@ -639,7 +630,9 @@ static int io_at_slot_start(void *ctx, const flash_slot_req_t *r) {
 }
 
 static int slot_op(flash_slot_kind_t kind, uint32_t off, const uint8_t *data, uint32_t len) {
-    if (flight && xTaskGetCurrentTaskHandle() != writer) {
+    /* [FLT-LOG-10] Erasing is a ground operation: from launch to landing
+     * the flash is only programmed. */
+    if (flight && (kind == SLOT_ERASE || xTaskGetCurrentTaskHandle() != writer)) {
         slot_stats.flight_refusals++;
         refusals++;
         return -4;
