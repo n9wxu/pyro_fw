@@ -231,6 +231,7 @@ not converge, or decides alone when `model_decides` is false
 - **DAT-08**: The flight log shall carry what is needed to replay the flight through the estimator and the detectors, and `pyro_sim --replay` shall do so and set the replay's events against the log's. It shall refuse a log whose header says it kept fewer samples. ← DAT-02
 - **DAT-09**: Each board shall hold a flight log of the longest flight it supports, and shall declare that capacity. ← SYS-DATA-01, DD-084
 - **DAT-11**: The flight log shall begin on the pad: every PAD_IDLE sample the board held at launch, up to its last 110 ‡, timed from T+0. For a launch declared within 1 s of T+0 (FLT-LAUNCH-08), at up to 73 readings a second, that is at least 0.5 s before T+0. ← SYS-DATA-01, DD-110
+- **DAT-12**: A flight log shall render every whole record it holds. Bytes that are no record, such as erased flash or what a lost page left of one, shall render as one row naming the byte they start at and how many there are, and the records after them shall render. A record cut short at the file's end renders nothing. ← DAT-06, FLT-LOG-08, DD-116
 - **DAT-10**: Any record that holds a pressure not yet converted to altitude shall hold the temperature the sensor measured with it. Converted outputs need none. ← SYS-DATA-01
 - **FLT-LOG-06**: A flight that never lands shall keep its record: no more than the last second shall be lost. ← SYS-DATA-01
 - **FLT-LOG-07**: The flight log shall keep a row for every sample of every flight cycle, and every event row at its own time, in time order. ← SYS-DATA-01, DD-101

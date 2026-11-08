@@ -1808,6 +1808,27 @@ in `docs/outstanding_tasks.md`.
   samples; only each conversion, with when it was measured and when it was
   read, shows a stale read or a missed slot.
 
+### DD-116: A Damaged Log Renders Past Its Damage
+- **Decision:** the CSV renderer passes over bytes that are no record and
+  writes one row where they were: `<last time>,,,,,,,LOG DAMAGED at byte N:
+  M bytes skipped`. It then renders the records after them [DAT-12]. A
+  record is one this writer makes: a sample whose state, thrust flag and
+  event are in range, or a text row with a known tag, 1 to 64 characters,
+  and only the characters `flog_put_text()` lets through. The renderer
+  holds one record ahead (71 bytes) to judge it, inside the connection's
+  union beside the status snapshot, so RAM does not grow. A record cut
+  short at the file's end still renders nothing, as a power loss leaves it
+  (FLT-LOG-06).
+- **Why:** the CSV stopped without a word at the first byte that was no
+  record, so a page lost to a failed program read as a flight that ended.
+  Flight-4 (MK1B-8MB, 2026-11-07) and flight-2 end that way, and the
+  reports were read as resets. The data reaches the user hours after the
+  event, with the set-up gone (the user: "If there is additional data
+  needed for post-mortem diagnosis, then you must add it to the logs").
+- **The cost of a false record:** a run of damage that happens to read as
+  a record renders one row of nonsense, then the damage goes on. A random
+  byte passes as a sample about once in 10,000 positions.
+
 ### DD-062: Binary On Disk, CSV On Download
 - **Decision:** at the user's direction (T8) -- "on-disk format should be
   binary. We can translate to csv on-the-fly when downloading", and "Give

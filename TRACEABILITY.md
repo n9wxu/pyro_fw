@@ -156,6 +156,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | DAT-08 | The flight log shall carry what is needed to replay the flight through the estimator and the detectors,... | test_flight_log.c: test_FLOG_01_the_header_renders_with_every_sample_kept, test_DAT_08_the_header_names_the_estimator_and_the_deciding_filter, test_DAT_08_a_version_1_log_renders_as_it_did; test_flight_profiles.c: test_DAT_04_the_events_of_a_flight_in_order, test_DAT_08_a_log_replays_to_the_same_events, test_DAT_08_a_crlf_log_replays_as_its_lf_twin, test_DAT_08_a_thinned_log_is_refused | ✅ |
 | DAT-09 | Each board shall hold a flight log of the longest flight it supports, and shall declare that capacity | The room is reported at `/api/log/space` and each board declares its capacity in its `THEORY_OF_OPERATION.md`; no test flies a log to the declared length | ⚠️ |
 | DAT-11 | The flight log shall begin on the pad | test_flight_log.c: test_DAT_11_a_row_before_t0_renders_its_negative_time; test_flight_profiles.c: test_FLT_LAUNCH_08_the_slowest_rocket_is_seen_leaving_within_1_s, test_DAT_11_the_log_starts_on_the_ground; test_log_pad_ring.c: test_DAT_11_rows_come_oldest_first_timed_from_t0, test_DAT_11_a_full_ring_keeps_the_newest, test_DAT_11_times_are_placed_across_the_16_bit_wrap, test_DAT_11_a_gap_in_the_pads_samples_empties_the_ring and 3 more; Hardware: `support/bench_flight.py` | ✅ |
+| DAT-12 | A flight log shall render every whole record it holds | test_flight_log.c: test_DAT_08_a_version_1_log_renders_as_it_did, test_DAT_12_erased_bytes_inside_a_log_are_named_and_passed_over, test_DAT_12_a_record_cut_mid_log_is_passed_over_and_the_log_goes_on, test_DAT_12_damage_to_the_end_of_the_file_is_named and 1 more | ✅ |
 | DAT-10 | Any record that holds a pressure not yet converted to altitude shall hold the temperature the sensor... | test_log_pad_ring.c: test_DAT_10_each_row_keeps_the_temperature_measured_with_it; the suite test_flight_log.c | ✅ |
 | FLT-LOG-06 | A flight that never lands shall keep its record | test_vfs_flash.c: test_FLT_LOG_06_a_sync_survives_a_reset, test_WEB_API_12_a_synced_second_takes_whole_pages, test_WEB_API_18_a_log_that_cannot_close_reads_as_a_power_cut_left_it; the suite test_flight_log.c | ✅ |
 | FLT-LOG-07 | The flight log shall keep a row for every sample of every flight cycle, and every event row at its own... | test_config.c: test_config_a_log_rate_is_an_unknown_key, test_config_writes_no_inert_keys; test_flight_log.c: test_FLOG_01_the_header_renders_with_every_sample_kept; test_flight_profiles.c: test_FLT_LOG_07_every_sample_is_a_row; Hardware: `support/api_check.py`, `support/bench_flight.py` | ✅ |
@@ -472,7 +473,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host test, a web test or a structural check | 333 |
+| ✅ Verified by a host test, a web test or a structural check | 334 |
 | ⚠️ Not verified, or not wholly | 24 |
 | ❌ Not implemented | 0 |
 | ✅ HW (verified on hardware only) | 14 |
