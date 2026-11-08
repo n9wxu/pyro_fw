@@ -15,6 +15,8 @@
 #include "../src/flight_log.h"
 #include "../src/log_files.h"
 #include "../src/log_room.h"
+#include "../src/boot_record.h"
+#include "../src/version.h"
 #include "../src/log_pad_ring.h"
 #include "../src/loop_period.h"
 #include "mocks.h"
@@ -242,6 +244,7 @@ typedef struct {
     bool used;
 } sim_file_t;
 static sim_file_t sim_files[SIM_FS_MAX_FILES];
+static bool test_boot_known, test_boot_unkept; /* [FLT-LOG-14] the start-up's rows: had, and not yet in the boot log */
 static uint32_t last_pp_feed_ms = 0;
 uint32_t mock_fs_write_count = 0;
 uint32_t mock_fs_locked_count = 0;
@@ -273,6 +276,10 @@ void mock_reset_keeping_files(void) {
 void mock_reset_all(void) {
     mock_ground_test_pin = false;
     mock_log_free_bytes = 0;
+    mock_prev_watchdog = false;
+    mock_prev_stage = -1;
+    mock_prev_stage_ms = 0;
+    test_boot_known = test_boot_unkept = false;
     mock_pressure_inits = 0;
     mock_fs_unusable = false;
     mock_lua_events[0] = '\0';
@@ -730,6 +737,52 @@ static void test_log_write(const uint8_t *rec, int n, uint32_t time_ms) {
     hal_fs_write(test_log_file, (const char *)row, k);
 }
 
+/* [FLT-LOG-14] As the hardware HAL: the start-up's rows, at the head of each
+ * log it opens and in BOOT_LOG_PATH on the ground. */
+bool mock_prev_watchdog;
+int32_t mock_prev_stage = -1;
+uint32_t mock_prev_stage_ms;
+static bool sim_file_exists(void *ctx, const char *name);
+static boot_rows_t test_boot_rows;
+
+static void boot_log_keep(void) {
+    static char old[SIM_FS_MAX_SIZE];
+    int held = mock_fs_peek(BOOT_LOG_PATH, old, (int)sizeof(old));
+    bool rotate = held > BOOT_LOG_ROTATE_BYTES;
+    if (rotate)
+        hal_fs_write_file(BOOT_LOG_OLDER_PATH, old, held);
+    char lines[256];
+    int n = boot_record_lines((const char(*)[BOOT_RECORD_ROW_MAX + 1]) test_boot_rows, lines, (int)sizeof(lines));
+    hal_file_t *f = hal_fs_open(BOOT_LOG_PATH, !rotate);
+    if (f) {
+        hal_fs_write(f, lines, n);
+        hal_fs_close(f);
+    }
+    test_boot_unkept = false;
+}
+
+void hal_log_boot(const char *start, bool usb) {
+    log_files_t logs;
+    log_files_scan(&logs, sim_file_exists, NULL);
+    char last[LOG_FILES_NAME_MAX] = "";
+    log_files_newest(&logs, last);
+    boot_facts_t f = {boot_record_cause((int)mock_reset_cause),
+                      mock_prev_watchdog,
+                      mock_prev_stage,
+                      mock_prev_stage_ms,
+                      FW_VERSION,
+                      "mock",
+                      2048u,
+                      usb,
+                      start,
+                      last};
+    boot_record_rows(&f, test_boot_rows);
+    test_boot_known = true;
+    test_boot_unkept = true;
+    if (!test_log_active)
+        boot_log_keep();
+}
+
 static void test_log_keep(const flog_sample_t *s) {
     uint8_t rec[FLOG_SAMPLE_BYTES];
     test_log_write(rec, flog_put_sample(rec, (int)sizeof(rec), s), (uint32_t)s->time_ms);
@@ -775,9 +828,18 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
     test_log_write(rec, flog_put_header(rec, (int)sizeof(rec), &h), 0);
     flog_sample_t s;
     air_t air = air_over_pad((float)ground_pressure_pa, pp_pad_k());
-    for (uint16_t i = 0; log_pad_row(&test_log_pad, i, t0_ms, &air, PAD_IDLE, &s); i++)
+    int32_t boot_at = 0; /* the start-up's rows at the last pad row's time, in time order */
+    for (uint16_t i = 0; log_pad_row(&test_log_pad, i, t0_ms, &air, PAD_IDLE, &s); i++) {
         test_log_keep(&s);
+        boot_at = s.time_ms;
+    }
     log_pad_clear(&test_log_pad);
+    for (int r = 0; test_boot_known && r < BOOT_RECORD_ROWS; r++) {
+        uint8_t row[FLOG_RECORD_MAX];
+        int n = flog_put_text(row, (int)sizeof(row), (uint32_t)boot_at, FLOG_TAG_LOG, test_boot_rows[r],
+                              (int)strlen(test_boot_rows[r]));
+        test_log_write(row, n, (uint32_t)boot_at);
+    }
     test_log_active = true;
 }
 
@@ -852,6 +914,8 @@ void hal_log_stop(void) {
         test_log_file = NULL;
     }
     test_log_active = false;
+    if (test_boot_unkept)
+        boot_log_keep();
 }
 
 static bool test_log_to_host;

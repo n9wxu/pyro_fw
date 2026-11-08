@@ -1807,6 +1807,29 @@ in `docs/outstanding_tasks.md`.
   samples; only each conversion, with when it was measured and when it was
   read, shows a stale read or a missed slot.
 
+### DD-118: Every Start-Up Recorded
+- **Decision:** at the user's direction (2026-11-07) -- "If there is
+  additional data needed for post-mortem diagnosis, then you must add it to
+  the logs. I get the data many hours after the event and the system is no
+  longer setup" [FLT-LOG-14]:
+  - Once the start-up is decided, `flight_boot.c` hands its decision
+    (`flight_resume_text()`) to `hal_log_boot()`, and the HAL adds what only
+    it knows: the reset cause, the watchdog's verdict and the stage it
+    caught (`prev_watchdog`, `prev_stage`), the firmware, the flash part and
+    the newest log. Three `BOOT ...` rows (`src/boot_record.c`).
+  - The rows follow the header and the pad's rows of every log the start-up
+    opens, as `LOG BOOT` text rows at T+0, so a resumed flight's log says
+    what reset it.
+  - On the ground the storage task appends them to `boot_log.txt`. A
+    start-up that opens no log -- one that declines to resume, as flight-4's
+    board did -- is still recorded. The file is appended to and never
+    rewritten, so it needs no buffer; past 4 kB it becomes
+    `boot_log.1.txt` and the one before is dropped, keeping some 25 to 50
+    start-ups.
+- **Why:** the reset flight-4 reported left nothing behind. Its board went
+  to the pad after the reset and opened no log, and what `/api/status`
+  said of the reset was gone when the log was read.
+
 ### DD-117: A Log A File; Nothing In Flight Removes One
 - **Decision:** at the user's direction (2026-11-07) -- "A reset can start
   a new log, but the OLD LOG MUST NOT BE DESTROYED. Or the reset looses the

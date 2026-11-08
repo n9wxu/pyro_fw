@@ -51,6 +51,9 @@
 #include "flight_log.h"
 #include "log_files.h"
 #include "log_room.h"
+#include "boot_record.h"
+#include "flash_timing.h"
+#include "version.h"
 #include "log_pad_ring.h"
 #include "small_fmt.h"
 #include "net_glue.h"
@@ -1254,7 +1257,17 @@ static struct {
     uint16_t part; /* bytes of the record being written that are out */
     uint32_t t0_ms;
     air_t air;
+    uint8_t boot_row; /* [FLT-LOG-14] the start-up's rows written after the pad's */
+    int32_t boot_at;  /* their time: the last pad row's, so the rows stay in time order */
 } log_open;
+
+/* [FLT-LOG-14] This start-up's record: at the head of each log it opens, and
+ * in the boot log once on the ground. */
+extern volatile bool boot_prev_watchdog; /* main_hardware.c */
+extern volatile int32_t boot_prev_stage;
+extern volatile uint32_t boot_prev_stage_ms;
+static boot_rows_t boot_rows;
+static volatile bool boot_known, boot_unkept;
 
 void hal_log_pad(uint32_t t_ms, int32_t pressure_pa) {
     if (log_ring.state == LOG_IDLE)
@@ -1294,6 +1307,8 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
     log_open.part = 0;
     log_open.t0_ms = t0_ms;
     log_open.air = air_over_pad((float)ground_pressure_pa, pp_pad_k());
+    log_open.boot_row = 0;
+    log_open.boot_at = 0;
     __dmb();
     log_ring.state = LOG_RUNNING;
 }
@@ -1374,10 +1389,19 @@ static bool log_write_opening(bool to_host) {
         int n = flog_put_sample(rec, (int)sizeof(rec), &s);
         if (!log_write_record(to_host, rec, (uint16_t)n))
             return false;
+        log_open.boot_at = s.time_ms;
         log_open.next_row++;
     }
     log_pad_clear(&log_open.pad);
     log_open.next_row = 0;
+    while (boot_known && log_open.boot_row < BOOT_RECORD_ROWS) {
+        const char *row = boot_rows[log_open.boot_row];
+        uint8_t rec[FLOG_RECORD_MAX];
+        int n = flog_put_text(rec, (int)sizeof(rec), (uint32_t)log_open.boot_at, FLOG_TAG_LOG, row, (int)strlen(row));
+        if (!log_write_record(to_host, rec, (uint16_t)n))
+            return false;
+        log_open.boot_row++;
+    }
     return true;
 }
 
@@ -1567,11 +1591,54 @@ static void clean_service(uint32_t now_ms) {
     vfs_clean();
 }
 
+void hal_log_boot(const char *start, bool usb) {
+    char last[LOG_FILES_NAME_MAX] = "";
+    log_files_newest(&store_logs, last);
+    uint8_t jedec[3];
+    flash_chip_jedec(jedec);
+    const flash_timing_t *ft = flash_timing_for(jedec);
+    boot_facts_t f = {boot_record_cause((int)hal_reset_cause()),
+                      boot_prev_watchdog,
+                      boot_prev_stage,
+                      boot_prev_stage_ms,
+                      FW_VERSION,
+                      ft ? ft->part : "unknown",
+                      flash_chip_bytes() / 1024u,
+                      usb,
+                      start,
+                      last};
+    boot_record_rows(&f, boot_rows);
+    __dmb();
+    boot_known = true;
+    boot_unkept = true;
+}
+
+/* Appended, never rewritten, so it needs no buffer; past its size it moves
+ * to the older name, the one before it dropped. On the ground only. */
+static void boot_log_keep(void) {
+    boot_unkept = false;
+    if (vfs_stat_size(BOOT_LOG_PATH) > BOOT_LOG_ROTATE_BYTES) {
+        vfs_remove(BOOT_LOG_OLDER_PATH);
+        vfs_rename(BOOT_LOG_PATH, BOOT_LOG_OLDER_PATH);
+    }
+    char lines[BOOT_RECORD_ROWS * (BOOT_RECORD_ROW_MAX + 1)];
+    int n = boot_record_lines((const char(*)[BOOT_RECORD_ROW_MAX + 1]) boot_rows, lines, (int)sizeof(lines));
+    vfs_file_t f;
+    if (vfs_open(&f, BOOT_LOG_PATH, VFS_WR | VFS_APPEND, whole_buf) != 0)
+        return;
+    vfs_write(&f, lines, (uint32_t)n);
+    vfs_close(&f);
+}
+
 void hal_storage_service(uint32_t now_ms) {
     if (board_selftest_unsaved() && !hal_log_active())
         board_selftest_save();
     if (fs_ok && !hal_log_active() && (!logs_known || logs_card != vfs_sd_mounted()))
         logs_scan();
+    if (fs_ok && boot_unkept && !hal_log_active() && whole_take()) {
+        boot_log_keep();
+        whole_give();
+    }
     log_service(now_ms);
     clean_service(now_ms);
     board_flash_service(now_ms);

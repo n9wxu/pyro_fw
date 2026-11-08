@@ -6,7 +6,7 @@ keeps its ID.
 | # | Section | Needs |
 |---|---|---|
 | — | [How every task runs](#how-every-task-runs) | read first |
-| 1 | [To do now](#1-to-do-now) | PM-2, PM-3 |
+| 1 | [To do now](#1-to-do-now) | PM-3 |
 | 2 | [Decisions](#2-decisions) | you: two left |
 | 3 | [To build](#3-to-build) | a decision above, or just the work |
 | 4 | [Known limits of the flight software](#4-known-limits-of-the-flight-software) | your judgement on which to take up |
@@ -72,7 +72,6 @@ old log must not be destroyed. The record formats go to review first.
 
 | ID | What | Tests first |
 |---|---|---|
-| PM-2 | **Every start-up recorded.** The reset cause, the watchdog's verdict and the stage it caught, the resume verdict and why not, the firmware and the flash part, in a record every start-up appends, and at the head of each log that start-up opens. Flight-4's board went to the pad after its reset and opened no log, so today nothing of the reset survives | host: a watchdog reset in flight, a power reset and a reset that declines to resume each leave a record naming its cause |
 | PM-3 | **The counters in the log, at the flight loop's 10 ms.** What `/api/status` counts of the flash, the log, the loop and the sensor: all of them at the log's open and close, and each one in the loop pass it changes | host: a flight with a refused flash operation and a dropped row logs each in the 10 ms pass it happened |
 
 ---

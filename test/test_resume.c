@@ -179,8 +179,7 @@ void test_FLT_BROWN_02_every_cause_of_restart_resumes_the_flight(void) {
 void test_FLT_BROWN_06_a_descent_resumed_fires_every_channel_afresh(void) {
     const mp_rocket_t *r = &ROCKETS[SUBSONIC].r;
     float at = plant_apogee_s(r, &COLD) + 6.0f;
-    flight_conditions_t c = {
-        .config = RESUMED_CONFIG, .rate_ms = {20.0f, 6.0f}, .pad_s = 12.0f, .restart_at_s = at};
+    flight_conditions_t c = {.config = RESUMED_CONFIG, .rate_ms = {20.0f, 6.0f}, .pad_s = 12.0f, .restart_at_s = at};
     flown_t f = fly(r, &COLD, &c, 30, 200.0f);
     TEST_ASSERT_EQUAL_STRING("resumed in descent", flight_resume_text(&ctx));
     TEST_ASSERT_TRUE_MESSAGE(f.drogue_t < at, "pyro 1 had fired before the restart");
@@ -324,7 +323,6 @@ void test_FLT_BROWN_01_the_record_lasts_the_whole_flight(void) {
     TEST_ASSERT_TRUE(pad_record_stored());
 }
 
-
 /* ── No reset destroys a log [FLT-LOG-12] ─────────────────────────── */
 
 static char log_a[262144], log_b[262144];
@@ -372,6 +370,51 @@ void test_FLT_LOG_12_the_next_launch_keeps_the_last_flight_s_log(void) {
     TEST_ASSERT_NOT_NULL(strstr(log_b, "LANDING"));
 }
 
+/* ── Every start-up recorded [FLT-LOG-14] ──────────────────────────── */
+
+/* A watchdog reset in flight: the resumed log names the cause, the stage the
+ * watchdog caught, and the resume; so does the boot log. */
+void test_FLT_LOG_14_a_watchdog_reset_in_flight_is_in_the_resumed_log(void) {
+    const mp_rocket_t *r = &ROCKETS[SUBSONIC].r;
+    flight_conditions_t c = {.config = RESUMED_CONFIG,
+                             .rate_ms = {20.0f, 6.0f},
+                             .pad_s = 12.0f,
+                             .restart_at_s = plant_apogee_s(r, &COLD) + 6.0f,
+                             .restart_cause = (int)RESET_SOFTWARE,
+                             .restart_watchdog_stage = 7};
+    fly(r, &COLD, &c, 44, 200.0f);
+    TEST_ASSERT_TRUE(test_flight_log_csv_of("flight_0002.bin", log_b, (int)sizeof(log_b)) > 0);
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(log_b, "LOG BOOT cause=software wd=1 stage=7"), log_b);
+    TEST_ASSERT_NOT_NULL(strstr(log_b, "LOG BOOT start=resumed in descent last=flight_0001.bin"));
+    char boots[4096];
+    int n = mock_fs_peek(BOOT_LOG_PATH, boots, (int)sizeof(boots) - 1);
+    TEST_ASSERT_TRUE(n > 0);
+    boots[n] = '\0';
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(boots, "BOOT cause=software wd=1 stage=7"), boots);
+}
+
+/* A power reset on the ground after a flight does not rejoin it and opens no
+ * log: the boot log keeps the cause and why. */
+void test_FLT_LOG_14_a_reset_that_does_not_resume_is_in_the_boot_log(void) {
+    const mp_rocket_t *r = &ROCKETS[SUBSONIC].r;
+    flight_conditions_t c = {.rate_ms = {20.0f, 6.0f}, .pad_s = 12.0f};
+    flown_t whole = fly(r, &COLD, &c, 45, 400.0f);
+    TEST_ASSERT_TRUE(whole.touchdown_t > 0.0f);
+    c.restart_at_s = whole.touchdown_t + 1.0f;
+    c.restart_cause = (int)RESET_POWER_EVENT;
+    c.to_landed = true;
+    fly(r, &COLD, &c, 45, whole.touchdown_t + 20.0f);
+    char boots[4096];
+    int n = mock_fs_peek(BOOT_LOG_PATH, boots, (int)sizeof(boots) - 1);
+    TEST_ASSERT_TRUE(n > 0);
+    boots[n] = '\0';
+    const char *second = strstr(strstr(boots, "BOOT cause=") + 1, "BOOT cause=");
+    TEST_ASSERT_NOT_NULL_MESSAGE(second, boots);
+    TEST_ASSERT_EQUAL_INT(0, strncmp(second, "BOOT cause=power wd=0", 21));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(second, "BOOT start="), boots);
+    TEST_ASSERT_NULL_MESSAGE(strstr(second, "start=resumed"), boots);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_FLT_BROWN_02_above_the_ground_and_moving_is_a_flight);
@@ -396,5 +439,7 @@ int main(void) {
     RUN_TEST(test_FLT_LOG_12_a_restart_in_ascent_keeps_the_flight_s_first_log);
     RUN_TEST(test_FLT_LOG_12_a_restart_in_descent_keeps_the_flight_s_first_log);
     RUN_TEST(test_FLT_LOG_12_the_next_launch_keeps_the_last_flight_s_log);
+    RUN_TEST(test_FLT_LOG_14_a_watchdog_reset_in_flight_is_in_the_resumed_log);
+    RUN_TEST(test_FLT_LOG_14_a_reset_that_does_not_resume_is_in_the_boot_log);
     return UNITY_END();
 }

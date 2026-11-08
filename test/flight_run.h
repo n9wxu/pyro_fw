@@ -66,18 +66,19 @@ typedef struct {
     float coast_noise_to_s; /* ...until this flight time; 0: until the true apogee */
     uint32_t interval_ms;   /* between readings; 0: the test HAL's 20 ms */
 
-    uint16_t main_m;        /* shorthand: an AGL trigger on pyro 2 at this height */
-    float main_ms;          /* shorthand for rate_ms[1] */
-    bool to_landed;         /* on past touchdown to LANDED, with the landing timeout off */
-    bool keep_store;        /* the files of the run before stay: a restart on the pad, then this flight */
+    uint16_t main_m;           /* shorthand: an AGL trigger on pyro 2 at this height */
+    float main_ms;             /* shorthand for rate_ms[1] */
+    bool to_landed;            /* on past touchdown to LANDED, with the landing timeout off */
+    bool keep_store;           /* the files of the run before stay: a restart on the pad, then this flight */
     uint32_t store_free_bytes; /* what the store holds free when the log opens; 0: room for any */
-    bool stop_after_apogee; /* 2 s after the true apogee */
-    float pad_s;            /* on the pad before ignition; 0: 10 s */
+    bool stop_after_apogee;    /* 2 s after the true apogee */
+    float pad_s;               /* on the pad before ignition; 0: 10 s */
 
     /* A restart in flight [FLT-BROWN-02]: the processor starts again with
      * nothing but its stored files. restart_cause is a reset_cause_t. */
     float restart_at_s; /* 0: none */
     int restart_cause;
+    int restart_watchdog_stage; /* the stage the watchdog's scratch names; 0: it ended nothing */
 
     uint32_t (*loop_lag)(uint32_t t); /* the loop clock's lateness; NULL: none */
     /* Network, script and storage activity holds the flight software for 40

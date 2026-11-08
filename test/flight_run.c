@@ -186,6 +186,9 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
         if (c->restart_at_s > 0.0f && !restarted && tf >= c->restart_at_s) {
             restarted = true;
             harness_restart((reset_cause_t)c->restart_cause);
+            mock_prev_watchdog = c->restart_watchdog_stage > 0;
+            mock_prev_stage = c->restart_watchdog_stage > 0 ? c->restart_watchdog_stage : -1;
+            mock_prev_stage_ms = (uint32_t)(tf * 1000.0f);
             seen = 0;
         }
         tick(t);
