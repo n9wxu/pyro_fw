@@ -67,7 +67,7 @@ int vfs_mount(bool writable);
 int vfs_open(vfs_file_t *f, const char *path, int flags, void *buf);
 int vfs_read(vfs_file_t *f, void *buf, uint32_t n);        /* bytes, or <0 */
 int vfs_write(vfs_file_t *f, const void *buf, uint32_t n); /* bytes, or <0 */
-int vfs_sync(vfs_file_t *f); /* every byte written so far stored */
+int vfs_sync(vfs_file_t *f);                               /* every byte written so far stored */
 int vfs_close(vfs_file_t *f);
 int32_t vfs_size(vfs_file_t *f);
 int vfs_rewind(vfs_file_t *f);
@@ -78,14 +78,19 @@ int vfs_remove(const char *path); /* VFS_NOENT when there was none */
  * pad record. */
 bool vfs_is_internal(const char *path);
 int vfs_rename(const char *from, const char *to); /* on the flash, a copy */
-int vfs_mkdir(const char *path);         /* 0 also when it exists */
-int32_t vfs_stat_size(const char *path); /* size, or VFS_NOENT / VFS_ERR */
+int vfs_mkdir(const char *path);                  /* 0 also when it exists */
+int32_t vfs_stat_size(const char *path);          /* size, or VFS_NOENT / VFS_ERR */
 
 /* The store a path goes to now: VFS_FLASH or VFS_FAT. */
 int vfs_route(const char *path);
 
 /* Bytes free and in all, on the store a path goes to. */
 int vfs_space(const char *path, uint64_t *free_bytes, uint64_t *total_bytes);
+
+/* [FLT-LOG-13] Of the free bytes, those a write can take with no erase. On
+ * the flash it reads every page's header: slow, for the ground. A card's are
+ * all of them. */
+int vfs_erased(const char *path, uint64_t *erased_bytes);
 
 /* The room bytes written and then synced take there, as vfs_space() counts. */
 uint32_t vfs_synced_cost(const char *path, uint32_t bytes);

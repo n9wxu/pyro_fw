@@ -6,7 +6,7 @@ keeps its ID.
 | # | Section | Needs |
 |---|---|---|
 | — | [How every task runs](#how-every-task-runs) | read first |
-| 1 | [To do now](#1-to-do-now) | empty |
+| 1 | [To do now](#1-to-do-now) | bench proof of PM-1..4 |
 | 2 | [Decisions](#2-decisions) | you: two left |
 | 3 | [To build](#3-to-build) | a decision above, or just the work |
 | 4 | [Known limits of the flight software](#4-known-limits-of-the-flight-software) | your judgement on which to take up |
@@ -64,7 +64,11 @@ handlers from RAM.
 
 ## 1. To do now
 
-Nothing.
+| ID | What | Tests first |
+|---|---|---|
+| PM-B | **A reset in flight on a board.** On MK1B-8MB 2026-11-08: two logs kept across a reset on the pad, BOOT rows and `boot_log.txt` on each start-up, counters only at the ends and on a fault change, no erase from launch to landing, `LOG OUT OF ROOM` last in a full log. Not shown on hardware: a reset in flight (the web's reboot waits for landing, FLT-RT-02) and a watchdog's stage in the BOOT row | bench: the RUN pin or the battery pulled mid-descent in a bench flight off USB; then `/api/flight.csv?n=` both logs and `/boot_log.txt` |
+
+---|---|---|
 
 ---
 
@@ -85,8 +89,8 @@ Nothing.
 | R-3 | **A default script on every build** (DD-094, SYS-LUA-01): a hello world that prints the flight's events as they change and claims no I/O. MK1C-SD then runs a script too | host: the default script starts, prints each event once as the state changes, and holds no pin; `lua_tests` on the MK1C-SD build |
 | C6 | **The flight log prepared on the bench** (DD-094). A Log tab: download, erase, and prepare. Preparing creates an empty binary log for a chosen flight duration, 2 minutes by default; the file is opened, erased and closed on the bench. On the pad it is opened before OK to fly. A start-up is the pad unless USB is found; then every file is closed. In test mode the log records the test. A written log stays until cleared on the bench. Takes L3 and L4 with it | host: no flash is erased from launch to landing with a prepared log; a second flight does not overwrite a written log; OK to fly waits for the open; web tests for the tab |
 | R-9 | **HAL validation applications** (HAL-06, BLD-06, BRD-02). The options are in `docs/hal_validation_apps.md`. Each board's values marked *not measured* in its `THEORY_OF_OPERATION.md` are owed to it | the option chosen says |
-| L3 | **A resumed flight's log.** The log's open removes `flight_log.bin` first (`log_service()` in `hal_common.c`), so a flight resumed after a reset (DD-086) loses what was logged before it. Read from the code, not yet shown by a test | host: a flight restarted in ascent keeps its rows from before the restart (FLT-LOG-06) |
-| L4 | **A write failure in flight.** alfs drops the bytes of a page whose program fails and writes on: the records after the gap decode misaligned, and the bytes alfs counts as lost are not reported | host, with a store that fails part-way: the log decodes whole, and the loss is counted (FLT-LOG-08) |
+| L4 | **A write failure in flight.** alfs drops the bytes of a page whose program fails and writes on. The CSV renders past the gap (DAT-12), but the bytes alfs counts as lost are not reported, in the log or on `/api/status` | host, with a store that fails part-way: the loss is counted, and logged as a counter (FLT-LOG-08, FLT-LOG-15) |
+| APO-1 | **The model's say in apogee only on fast flights** (`docs/apogee_detection_review.md`). On 31-40 m flights at 9 Pa, `model_decides=true` declares about 2.2 s late on 25 of 80 host flights, pyro 1 as low as 7.7 m; the simple filter alone is 1.0-1.3 s after the top, and early on none of 96 subsonic flights. Proposed: a flight latched "fast" once its climb is measured above V keeps today's rule; any other flight takes whichever filter decides first. Modelled 2026-11-07 (`scratchpad` report, variant uncommitted): with V = 100 m/s and "fast" latched by the model's speed whether or not it explains, or the simple filter's, every flight suite passes unchanged and the 27 late hops become 0 (lowest pyro 1 24.2 m). V = 150 or 200 fire the drogue 12 to 14.5 s early on the draggy rocket with a port reading high (3 `mach_tests`), declare AltOS log 2012-05-28-319-005 3.2 s early, and are early on 2 and 19 of 504 Python port-error flights: a port error hides the climb from both filters, and only the unexplained model's speed, 131 m/s at the least, still sees it. V = 175 fails the same way: the same 3 `mach_tests` and the AltOS log, 9 of 504 Python flights early, worst -14.5 s; the failing Mach flights' model speed peaks at 131 to 161 m/s before the simple filter is met. A V above about 130 needs another sign of a fast flight first | host: a 35 m hop at 9 Pa fires within 1.5 s of the top on every seed; the port-error Mach flights stay early on none (*guard*) |
 | REC-1 | **The collector's recovery is shown only on the host's fake bus.** A BMP280 held off the bus until its power is removed (B-BZ) is beyond any recovery | bench: SDA held low on a running board with a wire, then released; `pres_recoveries` rises and readings return |
 
 ---

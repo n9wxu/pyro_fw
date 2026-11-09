@@ -182,6 +182,19 @@ bool hal_log_estimator(uint32_t time_ms, const char *text, int len);
 void hal_log_stop(void);
 bool hal_log_active(void);
 
+/* [FLT-LOG-14] The start-up's record, once the flight software has decided
+ * what the start-up is: start says what it decided (flight_resume_text()),
+ * and the HAL adds what only it knows -- the reset cause, the watchdog's
+ * verdict and the stage it caught, the firmware and the flash. Written at
+ * the head of each log the start-up opens, and into BOOT_LOG_PATH on the
+ * ground. */
+#define BOOT_LOG_PATH "boot_log.txt"
+void hal_log_boot(const char *start, bool usb);
+
+/* [FLT-LOG-15] Each pass of the flight loop, while a log runs: the counters
+ * that changed since the log last said, as rows of their own. */
+void hal_log_counters(void);
+
 /* [USB-09] The next flight's log held in RAM for the host (log_live.h) in
  * place of the flash; a log already running keeps where it goes. */
 void hal_log_to_host(bool on);

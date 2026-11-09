@@ -8,6 +8,7 @@
  * Verifies [BUZ-02, BUZ-04..06, BUZ-CODE-12, BUZ-CODE-14, GND-TEST-06, GND-TEST-07, USB-03].
  */
 #include "unity.h"
+#include <stdio.h>
 #include "mocks.h"
 #include "../src/buzzer.h"
 #include "../src/beep_store.h"
@@ -297,10 +298,12 @@ void test_BUZ_ACT_04_new_outcome_silences_the_old_one(void) {
 void test_BEEP_STORE_01_write_failure_is_not_a_digit_error(void) {
     /* Fill every slot of the in-memory filesystem so beep.ini cannot be
      * created. */
-    hal_fs_write_file("a.txt", "a", 1);
-    hal_fs_write_file("b.txt", "b", 1);
-    hal_fs_write_file("c.txt", "c", 1);
-    hal_fs_write_file("d.txt", "d", 1);
+    char name[16];
+    for (int i = 0; i < 64; i++) {
+        snprintf(name, sizeof(name), "%d.txt", i);
+        if (hal_fs_write_file(name, "x", 1) != 0)
+            break;
+    }
 
     beep_table_t t;
     beep_codes_defaults(&t);

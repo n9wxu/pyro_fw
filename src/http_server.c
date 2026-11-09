@@ -1096,12 +1096,36 @@ static int flog_reader(void *ctx, uint8_t *dst, int n) {
 /* [WEB-API-06, DD-062] The binary log, as the CSV it was once stored as. Its
  * length is counted a unit at a time (flight_csv_count()) before the head is
  * sent, then the same rendering streams through fill(). */
-static void serve_flight_csv(conn_t *c) {
+/* [FLT-LOG-12] /flight_log.bin, the one log of before, is the newest now. */
+static void serve_newest_log(conn_t *c) {
+    char name[LOG_FILES_NAME_MAX];
+    if (!hal_log_newest(name)) {
+        http_respond_str(&c->h, 404, TEXT, "Not found");
+        return;
+    }
+    serve_file(c, name, "application/octet-stream", WWW_HEADERS, 404, TEXT, "Not found");
+}
+
+/* [FLT-LOG-12] The log ?n=N names, else the newest. */
+static bool flight_log_named(const char *path, char out[LOG_FILES_NAME_MAX]) {
+    const char *q = strstr(path, "?n=");
+    if (q) {
+        unsigned long n = strtoul(q + 3, NULL, 10);
+        if (n == 0 || n > LOG_FILES_MAX)
+            return false;
+        log_files_name((uint32_t)n, out);
+        return true;
+    }
+    return hal_log_newest(out);
+}
+
+static void serve_flight_csv(conn_t *c, const char *path) {
     http_conn_t *hc = &c->h;
     if (!fs_take(c)) {
         return;
     }
-    if (vfs_open(&c->file, FLOG_PATH, VFS_RD, hc->work) == 0) {
+    char name[LOG_FILES_NAME_MAX];
+    if (flight_log_named(path, name) && vfs_open(&c->file, name, VFS_RD, hc->work) == 0) {
         c->file_open = true;
         c->route = R_FLOG;
         flog_csv_init(&c->flog.csv, flog_reader, c);
@@ -1170,8 +1194,10 @@ static void serve_log_space(conn_t *c) {
         http_respond_str(hc, 500, JSON, "{\"error\":\"no filesystem\"}");
         return;
     }
-    int32_t log_bytes = vfs_stat_size(FLOG_PATH);
-    int64_t room = (int64_t)free_b - LOG_SPACE_RESERVE_BYTES + (log_bytes > 0 ? log_bytes : 0);
+    uint64_t erased_b = 0; /* [FLT-LOG-13] a log writes only erased pages */
+    if (vfs_erased(FLOG_PATH, &erased_b) == 0 && erased_b < free_b)
+        free_b = erased_b;
+    int64_t room = (int64_t)free_b - LOG_SPACE_RESERVE_BYTES; /* no log is replaced [FLT-LOG-12] */
     if (room < 0)
         room = 0;
     uint32_t rate = hal_pressure_rate_hz();
@@ -1436,8 +1462,8 @@ static void serve_get(conn_t *c) {
         serve_file(c, "config.ini", TEXT, NULL, 404, TEXT, "No config.ini");
     } else if (strcmp(path, "/api/limits") == 0) {
         serve_api_limits(hc);
-    } else if (strcmp(path, "/api/flight.csv") == 0) {
-        serve_flight_csv(c);
+    } else if (strncmp(path, "/api/flight.csv", 15) == 0 && (path[15] == '\0' || path[15] == '?')) {
+        serve_flight_csv(c, path);
     } else if (strcmp(path, "/api/log/space") == 0) {
         serve_log_space(c);
     } else if (strcmp(path, "/api/fs") == 0) {
@@ -1470,6 +1496,8 @@ static void serve_get(conn_t *c) {
          * change, and without this browsers heuristically cache it and keep
          * showing the previous build. */
         serve_file(c, "/www/index.html", "text/html", WWW_HEADERS, 200, "text/html", DEFAULT_PAGE);
+    } else if (strcmp(path, "/" LOG_FILES_LEGACY) == 0 && vfs_stat_size(LOG_FILES_LEGACY) < 0) {
+        serve_newest_log(c);
     } else if (!vfs_path_ok(path)) {
         http_respond_str(hc, 400, TEXT, BAD_NAME);
     } else {
@@ -1527,6 +1555,7 @@ static void upload_complete(conn_t *c) {
     part_path(c, part, sizeof(part));
     if (ok) {
         ok = vfs_rename(part, c->dest) == 0;
+        hal_log_files_changed();
     }
     if (!ok) {
         vfs_remove(part);
@@ -1576,15 +1605,36 @@ static bool serial_valid(const char *s) {
     return (((hi << 4) | lo) & 0x01) == 0;
 }
 
+/* Every log the store holds, from the newest down [FLT-LOG-12]: 0 when one
+ * or more went, VFS_NOENT when there were none, else the first fault. */
+static int erase_flight_logs(void) {
+    char name[LOG_FILES_NAME_MAX];
+    int rc = vfs_remove(LOG_FILES_LEGACY);
+    if (rc != 0 && rc != VFS_NOENT)
+        return rc;
+    uint32_t newest = hal_log_newest(name) ? log_files_number(name) : 0u;
+    bool any = rc == 0;
+    for (uint32_t n = newest; n > 0; n--) {
+        log_files_name(n, name);
+        int r = vfs_remove(name);
+        if (r == 0)
+            any = true;
+        else if (r != VFS_NOENT)
+            return r;
+    }
+    return any ? 0 : VFS_NOENT;
+}
+
 static void apply_erase(http_conn_t *hc) {
-    /* [DAT-06, WEB-UI-04] There is one log slot, and the next launch
-     * overwrites it; this is how an operator clears it on purpose. Refused
-     * at the head while the log is being written (fs_take()). */
-    int rc = vfs_remove(FLOG_PATH);
+    /* [DAT-06, WEB-UI-04, FLT-LOG-12] Nothing in flight removes a log;
+     * this is how an operator clears them, on the bench. Refused at the head
+     * while a log is being written (fs_take()). */
+    int rc = erase_flight_logs();
     int old = vfs_remove(OLD_LOG_PATH);
     if (rc == VFS_NOENT) {
         rc = old;
     }
+    hal_log_files_changed();
     DBG("POST /api/flight/erase rc=%d", rc);
     if (rc == 0 || rc == VFS_NOENT) {
         http_respond_str(hc, 200, JSON, "{\"status\":\"erased\"}");
@@ -1597,6 +1647,7 @@ static void apply_erase(http_conn_t *hc) {
  * head. */
 static void apply_delete(http_conn_t *hc) {
     int rc = vfs_remove(delete_target(hc->path));
+    hal_log_files_changed();
     DBG("POST %s rc=%d", hc->path, rc);
     if (rc == 0) {
         http_respond_str(hc, 200, JSON, "{\"status\":\"deleted\"}");

@@ -637,10 +637,34 @@ static void test_names(void) {
     TEST_ASSERT_EQUAL(0, vfs_flash_close(&f));
 }
 
+/* [FLT-LOG-13] A removed file's pages are free at once and erased only once
+ * the cleanup has run: what a flight log may write into is what is erased. */
+static void test_FLT_LOG_13_erased_room_waits_for_the_cleanup(void) {
+    static uint8_t d[3000];
+    fill(d, sizeof(d), 13);
+    clean_all();
+    uint64_t free0, erased0, free1, erased1, total;
+    TEST_ASSERT_EQUAL(0, vfs_flash_space(&free0, &total));
+    TEST_ASSERT_EQUAL(0, vfs_flash_erased(&erased0));
+    TEST_ASSERT_TRUE_MESSAGE(erased0 <= free0, "never more erased than free");
+    TEST_ASSERT_TRUE_MESSAGE(erased0 + SECTOR / PAGE * 236u >= free0, "clean: within a sector of it");
+    TEST_ASSERT_EQUAL(0, write_whole("dead.bin", d, sizeof(d)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("dead.bin"));
+    TEST_ASSERT_EQUAL(0, vfs_flash_space(&free1, &total));
+    TEST_ASSERT_EQUAL(0, vfs_flash_erased(&erased1));
+    TEST_ASSERT_EQUAL(free0, free1);
+    TEST_ASSERT_TRUE_MESSAGE(erased1 + 13u * 236u <= erased0, "the dead pages are free, not erased");
+    clean_all();
+    TEST_ASSERT_EQUAL(0, vfs_flash_erased(&erased1));
+    TEST_ASSERT_TRUE_MESSAGE(erased1 + SECTOR / PAGE * 236u >= erased0 && erased1 <= erased0,
+                             "the cleanup erases them; the delete's own record stays");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_mount_read_only_then_writable);
     RUN_TEST(test_write_read_size);
+    RUN_TEST(test_FLT_LOG_13_erased_room_waits_for_the_cleanup);
     RUN_TEST(test_one_read_takes_the_whole_file);
     RUN_TEST(test_replace_whole);
     RUN_TEST(test_remove);

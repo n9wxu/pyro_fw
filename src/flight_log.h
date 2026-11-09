@@ -7,6 +7,9 @@
  * the order they were written. A sample's time is signed: the log opens on
  * the pad's last second before T+0 [DAT-11]. Multi-byte fields are little-endian. A record
  * cut short by a power loss ends the log; everything before it renders.
+ * Bytes that are no record -- erased flash, or what a dropped page left of
+ * one -- render as one row naming where they start and how many there are,
+ * and the records after them render [DAT-12].
  *
  * SPDX-License-Identifier: MIT
  */
@@ -26,7 +29,7 @@
 #define FLOG_TEXT_MAX 64
 #define FLOG_BOARD_MAX 32
 
-enum { FLOG_TAG_LUA, FLOG_TAG_MOCK, FLOG_TAG_ESTIMATOR };
+enum { FLOG_TAG_LUA, FLOG_TAG_MOCK, FLOG_TAG_ESTIMATOR, FLOG_TAG_LOG };
 
 typedef struct {
     const char *board;
@@ -57,6 +60,7 @@ int flog_put_text(uint8_t *dst, int cap, uint32_t time_ms, uint8_t tag, const ch
 typedef int (*flog_read_fn)(void *ctx, uint8_t *dst, int n);
 
 #define FLOG_LINE_MAX 384
+#define FLOG_RECORD_MAX (7 + FLOG_TEXT_MAX) /* a text record, the longest after the header */
 
 typedef struct {
     flog_read_fn read;
@@ -64,6 +68,11 @@ typedef struct {
     char line[FLOG_LINE_MAX];
     int line_len, line_pos;
     bool started, ended;
+    uint8_t ahead[FLOG_RECORD_MAX]; /* read, not yet rendered */
+    int ahead_len;
+    uint32_t at;     /* the file's offset of ahead[0] */
+    int32_t last_ms; /* the last record's time, for a damage row's */
+    uint32_t damaged_at, skipped;
 } flog_csv_t;
 
 void flog_csv_init(flog_csv_t *r, flog_read_fn read, void *ctx);

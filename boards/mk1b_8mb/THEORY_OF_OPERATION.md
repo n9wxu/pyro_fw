@@ -34,9 +34,8 @@ boards boot and run from it.
 Its datasheet suspends an erase (page 62), but an erase resumed and
 suspended in each 3 ms slot of the flight's log writer does not end within
 2,000 slots, and a chip holding an erase suspended ignores every later erase
-until it is resumed or powered off. So this board does not erase in flight
-(DD-104, FLT-LOG-10, `src/flash_timing.c`): its log has the room the pad's
-cleanup erased before launch. Its program cannot be suspended, and starts
+until it is resumed or powered off. No board erases in flight (FLT-LOG-10):
+its log has the room the pad's cleanup erased before launch. Its program cannot be suspended, and starts
 in a slot's first 300 us.
 
 Its unique ID is 128 bits (page 45). The SDK reads the first 64, the half two

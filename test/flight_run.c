@@ -6,6 +6,7 @@
 #include "flight_run.h"
 #include "board_harness.h"
 #include "mocks.h"
+#include "../src/log_counters.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -136,7 +137,11 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
             float until_s) {
     flown_t res;
     memset(&res, 0, sizeof(res));
-    boot_like_hardware(seed);
+    if (c->keep_store)
+        boot_keeping_files(seed);
+    else
+        boot_like_hardware(seed);
+    mock_log_free_bytes = c->store_free_bytes;
     if (c->interval_ms)
         mock_sample_interval_ms = c->interval_ms;
     if (c->sensor_rms_pa > 0.0f)
@@ -175,6 +180,10 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
             sensed += mp_shock_pa(&c->foreign, tf - foreign_at);
         mock_pressure.pressure_pa = sensed;
         set_sensor(c, rocket, &st, tf, &glitched);
+        if (c->counters_at_s > 0.0f && tf >= c->counters_at_s && mock_counters[LOG_CNT_REFUSALS] == 0) {
+            mock_counters[LOG_CNT_REFUSALS] = 1;
+            mock_counters[LOG_CNT_DROPPED] = 22;
+        }
         if (c->canopy_lost_below_m > 0.0f && st.apogee && st.canopy && !lost && st.h < c->canopy_lost_below_m) {
             st.canopy = false;
             lost = true;
@@ -182,6 +191,9 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
         if (c->restart_at_s > 0.0f && !restarted && tf >= c->restart_at_s) {
             restarted = true;
             harness_restart((reset_cause_t)c->restart_cause);
+            mock_prev_watchdog = c->restart_watchdog_stage > 0;
+            mock_prev_stage = c->restart_watchdog_stage > 0 ? c->restart_watchdog_stage : -1;
+            mock_prev_stage_ms = (uint32_t)(tf * 1000.0f);
             seen = 0;
         }
         tick(t);

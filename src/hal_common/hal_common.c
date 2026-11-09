@@ -49,6 +49,13 @@
 #include "pyro_release.h"
 #include "http_server.h"
 #include "flight_log.h"
+#include "log_files.h"
+#include "log_room.h"
+#include "boot_record.h"
+#include "log_counters.h"
+#include "core1_frame.h"
+#include "flash_timing.h"
+#include "version.h"
 #include "log_pad_ring.h"
 #include "small_fmt.h"
 #include "net_glue.h"
@@ -788,6 +795,8 @@ static StaticSemaphore_t whole_mutex_buf;
 /* Once, at boot, before the scheduler. The locks are made here, while one
  * thread runs, so no task can race their creation. A blank area mounts with
  * no file, and one holding anything else too: the cleanup erases it. */
+static void logs_scan(void);
+
 int hal_fs_mount(void) {
     if (!whole_mutex)
         whole_mutex = xSemaphoreCreateMutexStatic(&whole_mutex_buf);
@@ -798,6 +807,8 @@ int hal_fs_mount(void) {
         return 0;
     int err = vfs_mount(true);
     fs_ok = (err == 0);
+    if (fs_ok)
+        logs_scan();
     return err;
 }
 
@@ -1181,6 +1192,9 @@ typedef struct {
     /* The storage task's own. */
     vfs_file_t file;
     bool file_open;
+    char name[LOG_FILES_NAME_MAX]; /* this log's file, once chosen; empty between logs */
+    log_room_t room;               /* [FLT-LOG-13] what the store held free at the open */
+    bool room_noted;               /* the OUT OF ROOM row is written, or was tried */
     uint32_t next_due_ms;
     uint32_t next_sync_ms;
     bool unsynced;
@@ -1207,6 +1221,12 @@ bool hal_log_held_for_host(void) {
     return log_ring.state != LOG_IDLE ? log_ring.to_host : log_host_next;
 }
 
+/* [FLT-LOG-15] What the log last said of each counter, and the time of its
+ * last row, which a counter row takes so the log stays in time order. */
+static log_counters_t log_cnt;
+static int32_t log_last_row_ms;
+extern volatile uint32_t loop_overruns, loop_overruns_ground; /* main_hardware.c */
+
 static uint32_t log_used(void) {
     return log_ring.head - log_ring.tail;
 }
@@ -1224,6 +1244,7 @@ static bool log_put(const uint8_t *rec, uint32_t n) {
 }
 
 static void log_keep(const flog_sample_t *s) {
+    log_last_row_ms = s->time_ms;
     uint8_t rec[FLOG_SAMPLE_BYTES + 8];
     int n = flog_put_sample(rec, (int)sizeof(rec), s);
     if (n <= 0 || !log_put(rec, (uint32_t)n))
@@ -1245,7 +1266,17 @@ static struct {
     uint16_t part; /* bytes of the record being written that are out */
     uint32_t t0_ms;
     air_t air;
+    uint8_t boot_row; /* [FLT-LOG-14] the start-up's rows written after the pad's */
+    int32_t boot_at;  /* their time: the last pad row's, so the rows stay in time order */
 } log_open;
+
+/* [FLT-LOG-14] This start-up's record: at the head of each log it opens, and
+ * in the boot log once on the ground. */
+extern volatile bool boot_prev_watchdog; /* main_hardware.c */
+extern volatile int32_t boot_prev_stage;
+extern volatile uint32_t boot_prev_stage_ms;
+static boot_rows_t boot_rows;
+static volatile bool boot_known, boot_unkept;
 
 void hal_log_pad(uint32_t t_ms, int32_t pressure_pa) {
     if (log_ring.state == LOG_IDLE)
@@ -1263,6 +1294,8 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
     log_ring.dropped = 0;
     log_ring.head = log_ring.tail = 0;
     log_ring.to_host = log_host_next;
+    log_ring.room = (log_room_t){0};
+    log_ring.room_noted = false;
     flog_header_t h = {
         .board = PYRO_BOARD_NAME,
         .id = cfg->id,
@@ -1283,6 +1316,11 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
     log_open.part = 0;
     log_open.t0_ms = t0_ms;
     log_open.air = air_over_pad((float)ground_pressure_pa, pp_pad_k());
+    log_open.boot_row = 0;
+    log_open.boot_at = 0;
+    log_cnt = (log_counters_t){0};
+    log_counters_all(&log_cnt);
+    log_last_row_ms = 0;
     __dmb();
     log_ring.state = LOG_RUNNING;
 }
@@ -1293,9 +1331,40 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
 static void log_sync_if_due(uint32_t now_ms) {
     if (!log_ring.file_open || !log_ring.unsynced || (int32_t)(now_ms - log_ring.next_sync_ms) < 0)
         return;
-    if (vfs_sync(&log_ring.file) == 0)
+    if (vfs_sync(&log_ring.file) == 0) {
         log_ring.unsynced = false;
+        log_room_synced(&log_ring.room);
+    }
     log_ring.next_sync_ms = now_ms + LOG_SYNC_MS;
+}
+
+/* [FLT-LOG-13] Nothing is erased in flight: the log's last row says it ran
+ * out of room, in the pages kept back for it, and nothing is written after
+ * it. Not after a record cut part-way, which the row would misalign. */
+static void log_out_of_room(void) {
+    log_ring.room.out = true;
+    if (log_ring.room_noted || !log_ring.file_open || log_open.part != 0)
+        return;
+    log_ring.room_noted = true;
+    uint8_t rec[FLOG_RECORD_MAX];
+    int n = flog_put_text(rec, (int)sizeof(rec), hal_time_ms() - log_open.t0_ms, FLOG_TAG_LOG, LOG_ROOM_TEXT,
+                          (int)sizeof(LOG_ROOM_TEXT) - 1);
+    if (vfs_write(&log_ring.file, rec, (uint32_t)n) == n)
+        (void)vfs_sync(&log_ring.file);
+}
+
+/* One write into the log's file, charged to its room. */
+static int log_file_write(const uint8_t *p, uint32_t len) {
+    if (!log_room_take(&log_ring.room, len)) {
+        log_out_of_room();
+        return VFS_NOSPC;
+    }
+    int n = vfs_write(&log_ring.file, p, len);
+    if (n == VFS_NOSPC)
+        log_out_of_room(); /* the store had less erased than free */
+    if (n > 0)
+        log_room_wrote(&log_ring.room, (uint32_t)n);
+    return n;
 }
 
 /* What is left of one record; true once all of it is out. A record is
@@ -1307,9 +1376,7 @@ static bool log_write_record(bool to_host, const uint8_t *rec, uint16_t len) {
         log_open.part = 0;
         return true;
     }
-    int n = vfs_write(&log_ring.file, rec + log_open.part, (uint32_t)(len - log_open.part));
-    if (n == VFS_NOSPC && flash_op_can_erase())
-        vfs_clean(); /* [FLT-LOG-10] */
+    int n = log_file_write(rec + log_open.part, (uint32_t)(len - log_open.part));
     if (n <= 0)
         return false;
     log_ring.unsynced = true;
@@ -1334,10 +1401,19 @@ static bool log_write_opening(bool to_host) {
         int n = flog_put_sample(rec, (int)sizeof(rec), &s);
         if (!log_write_record(to_host, rec, (uint16_t)n))
             return false;
+        log_open.boot_at = s.time_ms;
         log_open.next_row++;
     }
     log_pad_clear(&log_open.pad);
     log_open.next_row = 0;
+    while (boot_known && log_open.boot_row < BOOT_RECORD_ROWS) {
+        const char *row = boot_rows[log_open.boot_row];
+        uint8_t rec[FLOG_RECORD_MAX];
+        int n = flog_put_text(rec, (int)sizeof(rec), (uint32_t)log_open.boot_at, FLOG_TAG_LOG, row, (int)strlen(row));
+        if (!log_write_record(to_host, rec, (uint16_t)n))
+            return false;
+        log_open.boot_row++;
+    }
     return true;
 }
 
@@ -1353,14 +1429,7 @@ static void log_write_out(void) {
         uint32_t span = h - t;
         if (span > LOG_BUF_SIZE - off)
             span = LOG_BUF_SIZE - off;
-        int n = vfs_write(&log_ring.file, log_ring.buf + off, span);
-        if (n == VFS_NOSPC) {
-            /* [FLT-LOG-10] No erased page left: one sector a removed file
-             * left, erased in the writer's slots, where the part can. */
-            if (flash_op_can_erase())
-                vfs_clean();
-            return;
-        }
+        int n = log_file_write(log_ring.buf + off, span);
         if (n <= 0)
             return; /* the bytes stay: the next pass retries */
         __dmb();
@@ -1398,9 +1467,57 @@ static void log_finish(void) {
     if (log_ring.file_open && !log_ring.to_host)
         vfs_close(&log_ring.file);
     log_ring.file_open = false;
+    log_ring.name[0] = '\0';
     log_ring.stop_seen = false;
     __dmb();
     log_ring.state = LOG_IDLE;
+}
+
+/* [FLT-LOG-12] The store's logs, read on the ground: at the mount, and again
+ * once a file call or a card changes what is held. */
+static log_files_t store_logs;
+static bool logs_known;
+static bool logs_card;
+
+static bool log_held(void *ctx, const char *name) {
+    (void)ctx;
+    return vfs_stat_size(name) >= 0;
+}
+
+/* [FLT-LOG-13] What the store holds erased, counted on the ground: a log
+ * has no more room than that. Good while the flash has not been written or
+ * erased since. */
+static uint64_t erased_bytes;
+#define ERASED_COUNT_MS 1000u /* on the pad: the count follows the cleanup */
+static uint32_t next_erased_ms;
+static uint32_t erased_at = UINT32_MAX; /* programs and erases when counted */
+
+static uint32_t flash_writes(void) {
+    return flash_op_programs() + flash_op_erases();
+}
+
+static void erased_count(void) {
+    uint32_t at = flash_writes();
+    if (at == erased_at)
+        return;
+    if (vfs_erased(FLOG_PATH, &erased_bytes) == 0)
+        erased_at = at;
+}
+
+static void logs_scan(void) {
+    log_files_scan(&store_logs, log_held, NULL);
+    logs_card = vfs_sd_mounted();
+    logs_known = true;
+}
+
+void hal_log_files_changed(void) {
+    logs_known = false;
+}
+
+bool hal_log_newest(char out[LOG_FILES_NAME_MAX]) {
+    if (!logs_known && fs_ok && !hal_log_active())
+        logs_scan();
+    return log_files_newest(&store_logs, out);
 }
 
 static void log_service(uint32_t now_ms) {
@@ -1416,6 +1533,16 @@ static void log_service(uint32_t now_ms) {
         log_ring.dropped += log_used();
         log_ring.tail = log_ring.head;
         log_finish();
+        return;
+    }
+
+    if (log_ring.room.out) {
+        /* [FLT-LOG-13] What comes after the OUT OF ROOM row is counted, not
+         * kept; the file closes at the stop. */
+        log_ring.dropped += log_used();
+        log_ring.tail = log_ring.head;
+        if (st == LOG_STOPPING)
+            log_finish();
         return;
     }
 
@@ -1436,15 +1563,24 @@ static void log_service(uint32_t now_ms) {
          * ring meanwhile. A log stopped before then opens under the lockout. */
         if (!fs_ok || (PYRO_FLIGHT_RAM && st == LOG_RUNNING && !flash_op_in_flight()))
             return;
-        /* The last flight's log goes first, so a reset in this flight finds
-         * this flight's: a write replaces a file only when it closes. */
-        vfs_remove(FLOG_PATH);
-        int rc = vfs_open(&log_ring.file, FLOG_PATH, VFS_WR, log_file_buf);
-        if (rc == VFS_NOSPC && flash_op_can_erase())
-            vfs_clean(); /* [FLT-LOG-10] no erased page for the log's first */
+        /* [FLT-LOG-12] A file of its own: no log is removed to make it. */
+        if (!logs_known)
+            logs_scan();
+        if (!log_ring.name[0] && !log_files_next(&store_logs, log_ring.name))
+            return; /* every number taken: the ring's rows are given up at the stop */
+        uint64_t free_b = 0, total_b = 0;
+        if (vfs_space(log_ring.name, &free_b, &total_b) != 0)
+            free_b = 0;
+        erased_count(); /* at once only when the pad's last count is stale */
+        if (erased_at != UINT32_MAX && erased_bytes < free_b)
+            free_b = erased_bytes;
+        int rc = vfs_open(&log_ring.file, log_ring.name, VFS_WR, log_file_buf);
+        if (rc == VFS_NOSPC)
+            log_ring.room.out = true; /* [FLT-LOG-13] not a page for even its first */
         if (rc != 0)
             return; /* the next pass retries; the ring keeps the rows */
         log_ring.file_open = true;
+        log_room_open(&log_ring.room, free_b, vfs_synced_cost(log_ring.name, 1u));
         log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
         log_ring.next_sync_ms = now_ms;
         log_ring.unsynced = false;
@@ -1490,9 +1626,74 @@ static void clean_service(uint32_t now_ms) {
     vfs_clean();
 }
 
+void hal_log_boot(const char *start, bool usb) {
+    char last[LOG_FILES_NAME_MAX] = "";
+    log_files_newest(&store_logs, last);
+    uint8_t jedec[3];
+    flash_chip_jedec(jedec);
+    const flash_timing_t *ft = flash_timing_for(jedec);
+    boot_facts_t f = {boot_record_cause((int)hal_reset_cause()),
+                      boot_prev_watchdog,
+                      boot_prev_stage,
+                      boot_prev_stage_ms,
+                      FW_VERSION,
+                      ft ? ft->part : "unknown",
+                      flash_chip_bytes() / 1024u,
+                      usb,
+                      start,
+                      last};
+    boot_record_rows(&f, boot_rows);
+    __dmb();
+    boot_known = true;
+    boot_unkept = true;
+}
+
+/* A new copy each start-up, the old one's rows streamed across and this
+ * one's added: a closed file on the flash takes no more (vfs_flash.h), and
+ * the copy replaces the old only once it closes, so a reset part-way keeps
+ * the old. Past its size it moves to the older name, the one before it
+ * dropped. On the ground only; the log's buffer is free then, in this task. */
+static void boot_log_keep(void) {
+    boot_unkept = false;
+    int32_t held = vfs_stat_size(BOOT_LOG_PATH);
+    if (held > BOOT_LOG_ROTATE_BYTES) {
+        vfs_remove(BOOT_LOG_OLDER_PATH);
+        vfs_rename(BOOT_LOG_PATH, BOOT_LOG_OLDER_PATH);
+        held = 0;
+    }
+    vfs_file_t in, out;
+    bool have_in = held > 0 && vfs_open(&in, BOOT_LOG_PATH, VFS_RD, log_file_buf) == 0;
+    if (vfs_open(&out, BOOT_LOG_PATH, VFS_WR, whole_buf) != 0) {
+        if (have_in)
+            vfs_close(&in);
+        return;
+    }
+    if (have_in) {
+        uint8_t piece[128];
+        int k;
+        while ((k = vfs_read(&in, piece, sizeof(piece))) > 0)
+            vfs_write(&out, piece, (uint32_t)k);
+        vfs_close(&in);
+    }
+    char lines[BOOT_RECORD_ROWS * (BOOT_RECORD_ROW_MAX + 1)];
+    int n = boot_record_lines(boot_rows, lines, (int)sizeof(lines));
+    vfs_write(&out, lines, (uint32_t)n);
+    vfs_close(&out);
+}
+
 void hal_storage_service(uint32_t now_ms) {
     if (board_selftest_unsaved() && !hal_log_active())
         board_selftest_save();
+    if (fs_ok && !hal_log_active() && (!logs_known || logs_card != vfs_sd_mounted()))
+        logs_scan();
+    if (fs_ok && !hal_log_active() && deadline_reached(now_ms, next_erased_ms)) {
+        next_erased_ms = now_ms + ERASED_COUNT_MS;
+        erased_count();
+    }
+    if (fs_ok && boot_unkept && !hal_log_active() && whole_take()) {
+        boot_log_keep();
+        whole_give();
+    }
     log_service(now_ms);
     clean_service(now_ms);
     board_flash_service(now_ms);
@@ -1540,6 +1741,58 @@ static bool log_rationed(uint32_t time_ms, uint8_t tag, const char *text, int le
     return log_tagged(time_ms, tag, text, len);
 }
 
+static void counters_now(uint32_t v[LOG_COUNTER_COUNT]) {
+    flash_op_slot_stats_t ss;
+    flash_op_slot_stats(&ss);
+    core1_frame_stats_t fr;
+    core1_frame_stats(&fr);
+    collector_stats_t col;
+    hal_pressure_collector(&col);
+    v[LOG_CNT_DROPPED] = log_ring.dropped;
+    v[LOG_CNT_TEXT_DROPPED] = log_ring.text_dropped;
+    v[LOG_CNT_PROGRAMS] = flash_op_programs();
+    v[LOG_CNT_ERASES] = flash_op_erases();
+    v[LOG_CNT_REFUSALS] = flash_op_refusals();
+    v[LOG_CNT_SKIPS] = flash_op_timeouts();
+    v[LOG_CNT_FLIGHT_REFUSALS] = ss.flight_refusals;
+    v[LOG_CNT_SUSPENDS] = ss.suspends;
+    v[LOG_CNT_WAITS] = ss.slot_waits;
+    v[LOG_CNT_OVERRUNS] = loop_overruns;
+    v[LOG_CNT_OVERRUNS_GROUND] = loop_overruns_ground;
+    v[LOG_CNT_WRITER_OVERRUNS] = fr.writer_overruns;
+    v[LOG_CNT_LUA_SKIPPED] = fr.lua_skipped;
+    v[LOG_CNT_PRES_REJECTS] = col.failed[COLLECTOR_ADDRESS_NACK] + col.failed[COLLECTOR_DATA_NACK] +
+                              col.failed[COLLECTOR_LINE_HELD] + col.failed[COLLECTOR_TIMEOUT];
+    v[LOG_CNT_PRES_RECOVERIES] = col.recoveries;
+    v[LOG_CNT_PRES_DROPPED] = col.dropped;
+    v[LOG_CNT_PRES_FLASHED] = hal_pressure_flashed();
+}
+
+/* The due counters' rows. Behind the samples: past the text ceiling they
+ * wait for a later pass, still due, so none is lost and no sample is. */
+static void counters_say(const uint32_t v[LOG_COUNTER_COUNT]) {
+    char row[FLOG_TEXT_MAX + 1];
+    while (log_used() < LOG_TEXT_CEILING) {
+        log_counters_t before = log_cnt;
+        int n = log_counters_row(&log_cnt, v, row, (int)sizeof(row));
+        if (n <= 0)
+            return;
+        if (!log_tagged((uint32_t)log_last_row_ms, FLOG_TAG_LOG, row, n)) {
+            log_cnt = before;
+            return;
+        }
+    }
+}
+
+void hal_log_counters(void) {
+    if (log_ring.state != LOG_RUNNING)
+        return;
+    uint32_t v[LOG_COUNTER_COUNT];
+    counters_now(v);
+    log_counters_note(&log_cnt, v);
+    counters_say(v);
+}
+
 bool hal_log_text(uint32_t time_ms, const char *text, int len) {
     return log_rationed(time_ms, FLOG_TAG_LUA, text, len);
 }
@@ -1562,6 +1815,13 @@ uint32_t hal_log_text_dropped(void) {
 void hal_log_stop(void) {
     if (log_ring.state != LOG_RUNNING)
         return;
+    uint32_t v[LOG_COUNTER_COUNT]; /* [FLT-LOG-15] every counter, at the close */
+    counters_now(v);
+    log_counters_all(&log_cnt);
+    char row[FLOG_TEXT_MAX + 1];
+    int n;
+    while ((n = log_counters_row(&log_cnt, v, row, (int)sizeof(row))) > 0)
+        (void)log_tagged((uint32_t)log_last_row_ms, FLOG_TAG_LOG, row, n); /* the ring drains to the end now */
     __dmb();
     log_ring.state = LOG_STOPPING;
 #if PYRO_FLIGHT_RAM

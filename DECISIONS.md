@@ -784,10 +784,8 @@ sequence has gaps.
     waits for a slot starts at the slot's start, from an alarm interrupt on
     core1: the writer's task shares core1 with the network task at its
     priority, which a notification does not preempt, and would wake up to a
-    millisecond into the slot. From launch to landing an erase comes only
-    when the log has no erased page left, and only on a part whose erase
-    ends in pieces; it is suspended at the end of each slot and resumed in
-    the next [FLT-LOG-10].
+    millisecond into the slot. From launch to landing nothing is erased
+    (DD-117) [FLT-LOG-10].
   - A chip holding an erase suspended takes no other erase, and holds it
     through a reboot of the RP2040. An operation the chip holds suspended is
     run to its end at every start, and on the ground by the first operation
@@ -862,9 +860,8 @@ sequence has gaps.
   alfs searches a nearly full filesystem for a free page -- and Lua shares
   core1 with it then: on MK1C with the filesystem full, 33 Lua ticks given
   no time. FLT-LOG-11's finish is tested on the host only.
-  `/api/log/space` counts pages awaiting the cleanup as room, which a part
-  that does not erase in flight cannot use: 2,272 s reported on MK1B-8MB
-  with a few sectors erased.
+  A store with no erased page left opens no log at all, and writes no OUT
+  OF ROOM row: a log that spent its last page closes in none.
 
 ### DD-112: Missed Periods Counted; Ground Erases In Pieces
 - **Decision:** at the user's direction, after a bench soak showed the
@@ -1808,20 +1805,119 @@ in `docs/outstanding_tasks.md`.
   samples; only each conversion, with when it was measured and when it was
   read, shows a stale read or a missed slot.
 
+### DD-119: The Counters In The Log, In The Pass They Change
+- **Decision:** at the user's direction (2026-11-07) -- "Counter updates
+  on change in the loop that happen is perfect. we don't need to log every
+  value for data that is unchanged since last update" [FLT-LOG-15]:
+  - `flight_update_outputs()` calls `hal_log_counters()` every pass. While a
+    log runs, the HAL reads 17 counters (`src/log_counters.h`: the log's
+    dropped rows and text, the flash's programs, erases, refusals, skips,
+    flight refusals, suspends and waits, the loop's and the writer's
+    overruns, Lua's skipped ticks, the sensor's rejects, recoveries,
+    dropped and flashed readings). Each one changed since the log last said
+    goes into a `LOG CNT name=value ...` row; all of them at the open and
+    the close.
+  - A row takes the time of the pass's sample, so the log stays in time
+    order (FLT-LOG-07), and goes into the ring unrationed: it is the
+    evidence.
+  - The row is built without printf. The pass runs from RAM (DD-104), and
+    printf took MK1C's RAM over its end by 1652 bytes. The counter path
+    still costs about 2.1 kB of RAM: MK1C has 6540 bytes below
+    0x20040000, its 2048-byte heap reserve included.
+- **Why:** flight-4's `/api/status` -- the counts that would have said
+  what the flash and the loop were doing -- was gone when the log was
+  read.
+
+### DD-118: Every Start-Up Recorded
+- **Decision:** at the user's direction (2026-11-07) -- "If there is
+  additional data needed for post-mortem diagnosis, then you must add it to
+  the logs. I get the data many hours after the event and the system is no
+  longer setup" [FLT-LOG-14]:
+  - Once the start-up is decided, `flight_boot.c` hands its decision
+    (`flight_resume_text()`) to `hal_log_boot()`, and the HAL adds what only
+    it knows: the reset cause, the watchdog's verdict and the stage it
+    caught (`prev_watchdog`, `prev_stage`), the firmware, the flash part and
+    the newest log. Three `BOOT ...` rows (`src/boot_record.c`).
+  - The rows follow the header and the pad's rows of every log the start-up
+    opens, as `LOG BOOT` text rows at T+0, so a resumed flight's log says
+    what reset it.
+  - On the ground the storage task appends them to `boot_log.txt`. A
+    start-up that opens no log -- one that declines to resume, as flight-4's
+    board did -- is still recorded. The file is appended to and never
+    rewritten, so it needs no buffer; past 4 kB it becomes
+    `boot_log.1.txt` and the one before is dropped, keeping some 25 to 50
+    start-ups.
+- **Why:** the reset flight-4 reported left nothing behind. Its board went
+  to the pad after the reset and opened no log, and what `/api/status`
+  said of the reset was gone when the log was read.
+
+### DD-117: A Log A File; Nothing In Flight Removes One
+- **Decision:** at the user's direction (2026-11-07) -- "A reset can start
+  a new log, but the OLD LOG MUST NOT BE DESTROYED. Or the reset looses the
+  data", and "The log is only allowed to write in flight, erasing is a
+  ground operation":
+  - Each flight log is its own file, `flight_NNNN.bin`, numbered one past
+    the highest the store holds (`src/log_files.c`) [FLT-LOG-12]. A
+    `flight_log.bin` from before is the oldest. The search runs from 1 and
+    ends after 8 missing numbers, so a log deleted on its own leaves a gap
+    the numbering goes past.
+  - The store's logs are read on the ground: at the mount, and again in the
+    storage task once a file call or a card changes them. A log open in
+    flight takes the next number from RAM.
+  - `/api/flight.csv` and `/flight_log.bin` serve the newest; `?n=N` any
+    other. The erase removes every log [WEB-API-06, WEB-API-09].
+    `/api/log/space` counts what is free: no log is replaced.
+  - Nothing is erased from launch to landing: `slot_op()` refuses an erase
+    then and counts it [FLT-LOG-10]. A log has the room the store held
+    erased and free when it opened, less two pages kept for its last row and
+    its close; a sync costs the rest of its page (`src/log_room.c`). Free
+    pages in a sector that still holds a live page are not erased, so the
+    erased count is what limits: `alfs_fs_status()` reads every page's
+    header for it, about 8 ms, in the storage task on the pad, again once
+    the flash has been written or erased since. `/api/log/space` counts the
+    same. A log that spends
+    its room ends with a `LOG OUT OF ROOM` row, writes nothing after it,
+    and counts what it drops [FLT-LOG-13].
+- **Why:** the one slot was removed when the next log opened, so a flight
+  resumed after a reset lost what came before it, and a launch after a
+  reset on the pad lost the last flight. The flight-4 report came hours
+  after the event, from a board whose set-up was gone.
+
+### DD-116: A Damaged Log Renders Past Its Damage
+- **Decision:** the CSV renderer passes over bytes that are no record and
+  writes one row where they were: `<last time>,,,,,,,LOG DAMAGED at byte N:
+  M bytes skipped`. It then renders the records after them [DAT-12]. A
+  record is one this writer makes: a sample whose state, thrust flag and
+  event are in range, or a text row with a known tag, 1 to 64 characters,
+  and only the characters `flog_put_text()` lets through. The renderer
+  holds one record ahead (71 bytes) to judge it, inside the connection's
+  union beside the status snapshot, so RAM does not grow. A record cut
+  short at the file's end still renders nothing, as a power loss leaves it
+  (FLT-LOG-06).
+- **Why:** the CSV stopped without a word at the first byte that was no
+  record, so a page lost to a failed program read as a flight that ended.
+  Flight-4 (MK1B-8MB, 2026-11-07) and flight-2 end that way, and the
+  reports were read as resets. The data reaches the user hours after the
+  event, with the set-up gone (the user: "If there is additional data
+  needed for post-mortem diagnosis, then you must add it to the logs").
+- **The cost of a false record:** a run of damage that happens to read as
+  a record renders one row of nonsense, then the damage goes on. A random
+  byte passes as a sample about once in 10,000 positions.
+
 ### DD-062: Binary On Disk, CSV On Download
 - **Decision:** at the user's direction (T8) -- "on-disk format should be
   binary. We can translate to csv on-the-fly when downloading", and "Give
   them a maximum flight time estimator":
-  - **`flight_log.bin`** holds binary records (`src/flight_log.h`): the magic,
+  - **Each log's file** (DD-117) holds binary records (`src/flight_log.h`): the magic,
     a header record, then 22-byte samples and text rows. `/api/flight.csv`
     renders them as CSV, with a `# Log rate:` line (DD-101). The response is
     framed by Content-Length: the server counts the rendered length first,
     4 kB of CSV a work unit, then streams the same rendering. A board
     holding a `flight_log.csv` serves it as it is; the erase removes both.
   - **`/api/log/space`** reports the room the next flight's log has -- what
-    is free plus the current log, which the next launch replaces, on
-    whichever store the log goes to, less 16 kB for the filesystem's own
-    metadata -- and the seconds that holds (DD-101). The Config tab shows the
+    is free on whichever store the log goes to, less 16 kB for the
+    filesystem's own metadata (DD-117) -- and the seconds that holds
+    (DD-101). The Config tab shows the
     longest flight that holds [WEB-UI-06, WEB-API-12].
 - **Why binary:** a sample is 22 bytes against about 38 as CSV, and the CSV
   is only for a person or a tool reading it, so it is made when it is read.

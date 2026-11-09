@@ -68,6 +68,7 @@ static uint8_t telemetry_flags(const flight_context_t *ctx) {
 
 void flight_update_outputs(flight_context_t *ctx, uint32_t now) {
     hal_pyro_update(now);
+    hal_log_counters();
     if (ctx->current_state == FAULT) {
         report_fault(ctx, now);
         return;

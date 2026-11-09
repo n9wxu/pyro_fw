@@ -722,11 +722,11 @@ function updateFlightSummary() {
   document.getElementById('dP2').innerHTML = pyroLine(2);
 }
 
-/* The board keeps one flight log and the next launch overwrites it, so this
-   is only ever a choice about the flight on screen. */
+/* The board keeps every flight's log until this erases them all (FLT-LOG-12):
+   the newest is the one on screen, the others are on the Filesystem tab. */
 function eraseFlight() {
   var msg = document.getElementById('dMsg');
-  if (!confirm('Erase the flight log on the board? Download it first if you want to keep it.')) return;
+  if (!confirm('Erase every flight log on the board? Download them first if you want to keep them.')) return;
   post('api/flight/erase')
     .then(function(r) { return r.json().catch(function(){ return {error:'HTTP ' + r.status}; }); })
     .then(function(d) {

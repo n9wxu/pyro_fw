@@ -27,9 +27,16 @@ state_event_t flight_detect_boot_settle(flight_context_t *ctx, uint32_t now) {
     return SEVT_TIMER;
 }
 
+/* [FLT-LOG-14] The start-up recorded once it is decided: before a resumed
+ * flight's log opens, so that log carries it too. */
+static void record_start(const flight_context_t *ctx) {
+    hal_log_boot(flight_resume_text(ctx), ctx->usb_attached);
+}
+
 static bool not_resumed(flight_context_t *ctx, not_resumed_t why) {
     ctx->resume = (uint8_t)RESUME_NOT_FLYING;
     ctx->not_resumed = (uint8_t)why;
+    record_start(ctx);
     return true;
 }
 
@@ -71,6 +78,7 @@ static bool decide_resume(flight_context_t *ctx, uint32_t now, state_event_t *ev
     ctx->resume = (uint8_t)verdict;
     if (verdict == RESUME_NOT_FLYING)
         return not_resumed(ctx, NOT_RESUMED_AT_GROUND);
+    record_start(ctx);
     if (verdict == RESUME_STILL)
         return true;
 

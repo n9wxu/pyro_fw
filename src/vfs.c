@@ -250,6 +250,17 @@ int vfs_space(const char *path, uint64_t *free_bytes, uint64_t *total_bytes) {
     return vfs_flash_space(free_bytes, total_bytes);
 }
 
+int vfs_erased(const char *path, uint64_t *erased_bytes) {
+#if PYRO_HAS_SD
+    if (vfs_route(path) == VFS_FAT) {
+        uint64_t total;
+        return vfs_space(path, erased_bytes, &total);
+    }
+#endif
+    (void)path;
+    return vfs_flash_erased(erased_bytes);
+}
+
 uint32_t vfs_synced_cost(const char *path, uint32_t bytes) {
 #if PYRO_HAS_SD
     if (vfs_route(path) == VFS_FAT)

@@ -4,6 +4,7 @@
 #include "flight_log.h"
 #include "config.h"
 #include "flight_events.h"
+#include "flight_states.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -18,7 +19,8 @@ enum { REC_HEADER = 'H', REC_SAMPLE = 'S', REC_TEXT = 'T' };
 #define PLAN_EVERY_SAMPLE 2
 #define TEXT_FIXED 7 /* type, time, tag, len */
 
-static const char *const TAG_NAMES[] = {"LUA", "MOCK", "EST"};
+static const char *const TAG_NAMES[] = {"LUA", "MOCK", "EST", "LOG"};
+#define TAG_COUNT (sizeof(TAG_NAMES) / sizeof(TAG_NAMES[0]))
 
 static void put16(uint8_t *p, uint16_t v) {
     p[0] = (uint8_t)v;
@@ -110,16 +112,29 @@ int flog_put_text(uint8_t *dst, int cap, uint32_t time_ms, uint8_t tag, const ch
 
 /* ── CSV ──────────────────────────────────────────────────────────── */
 
+/* Up to n bytes ahead held, fewer only at the log's end. */
+static int look_ahead(flog_csv_t *r, int n) {
+    while (r->ahead_len < n) {
+        int k = r->read(r->ctx, r->ahead + r->ahead_len, n - r->ahead_len);
+        if (k <= 0)
+            break;
+        r->ahead_len += k;
+    }
+    return r->ahead_len;
+}
+
+static void pass(flog_csv_t *r, int n) {
+    memmove(r->ahead, r->ahead + n, (size_t)(r->ahead_len - n));
+    r->ahead_len -= n;
+    r->at += (uint32_t)n;
+}
+
 /* All of n bytes, or false at the log's end. */
 static bool take(flog_csv_t *r, uint8_t *dst, int n) {
-    while (n > 0) {
-        int k = r->read(r->ctx, dst, n);
-        if (k <= 0) {
-            return false;
-        }
-        dst += k;
-        n -= k;
-    }
+    if (look_ahead(r, n) < n)
+        return false;
+    memcpy(dst, r->ahead, (size_t)n);
+    pass(r, n);
     return true;
 }
 
@@ -193,11 +208,9 @@ static int render_header(flog_csv_t *r, int fixed) {
     return n > 0 && n < (int)sizeof(r->line) ? n : 0;
 }
 
-static int render_sample(flog_csv_t *r) {
-    uint8_t s[FLOG_SAMPLE_BYTES - 1];
-    if (!take(r, s, sizeof(s))) {
-        return 0;
-    }
+/* s: the record after its type byte. */
+static int render_sample(flog_csv_t *r, const uint8_t *s) {
+    r->last_ms = (int32_t)get32(s);
     int16_t temp = (int16_t)get16(s + 16);
     uint32_t t_abs = temp < 0 ? 0u - (uint32_t)(int32_t)temp : (uint32_t)temp;
     char *o = r->line;
@@ -225,16 +238,14 @@ static int render_sample(flog_csv_t *r) {
     return (int)(o - r->line);
 }
 
-static int render_text(flog_csv_t *r) {
-    uint8_t t[TEXT_FIXED - 1];
-    uint8_t text[FLOG_TEXT_MAX];
-    if (!take(r, t, sizeof(t)) || t[5] > FLOG_TEXT_MAX || !take(r, text, t[5])) {
-        return 0;
-    }
+/* t: the record after its type byte. */
+static int render_text(flog_csv_t *r, const uint8_t *t) {
+    const uint8_t *text = t + TEXT_FIXED - 1;
+    r->last_ms = (int32_t)get32(t);
     char *o = r->line;
     o = put_u32(o, get32(t));
     o = put_str(o, ",,,,,,,");
-    o = put_str(o, t[4] < sizeof(TAG_NAMES) / sizeof(TAG_NAMES[0]) ? TAG_NAMES[t[4]] : "TEXT");
+    o = put_str(o, TAG_NAMES[t[4]]);
     *o++ = ' ';
     memcpy(o, text, t[5]);
     o += t[5];
@@ -242,7 +253,69 @@ static int render_text(flog_csv_t *r) {
     return (int)(o - r->line);
 }
 
-/* The next record's text into line, or false at the end. */
+/* The length of the record ahead: 0 while it is not all there, -1 when the
+ * bytes ahead are no record this writer makes. */
+static int record_ahead(flog_csv_t *r) {
+    int have = look_ahead(r, FLOG_RECORD_MAX);
+    if (have == 0)
+        return 0;
+    const uint8_t *p = r->ahead;
+    if (p[0] == REC_SAMPLE) {
+        if (have < FLOG_SAMPLE_BYTES)
+            return 0;
+        bool plausible = p[19] < STATE_COUNT && p[20] <= 1u && p[21] <= EVT_PEAK_AT_LEAST;
+        return plausible ? FLOG_SAMPLE_BYTES : -1;
+    }
+    if (p[0] == REC_TEXT) {
+        if (have < TEXT_FIXED)
+            return 0;
+        int len = p[6];
+        if (p[5] >= TAG_COUNT || len == 0 || len > FLOG_TEXT_MAX)
+            return -1;
+        if (have < TEXT_FIXED + len)
+            return 0;
+        for (int i = 0; i < len; i++)
+            if (p[TEXT_FIXED + i] < 0x20u || p[TEXT_FIXED + i] >= 0x7fu || p[TEXT_FIXED + i] == ',')
+                return -1;
+        return TEXT_FIXED + len;
+    }
+    return -1;
+}
+
+static int render_damage(flog_csv_t *r) {
+    char *o = r->line;
+    o = put_i32(o, r->last_ms);
+    o = put_str(o, ",,,,,,,LOG DAMAGED at byte ");
+    o = put_u32(o, r->damaged_at);
+    o = put_str(o, ": ");
+    o = put_u32(o, r->skipped);
+    o = put_str(o, " bytes skipped\n");
+    r->skipped = 0;
+    return (int)(o - r->line);
+}
+
+/* The next record's row, passing over bytes that are no record. A record
+ * the file's end cut short ends the log without a row [FLT-LOG-06]; bytes
+ * passed over end in a damage row first, whatever follows them [DAT-12]. */
+static int render_next(flog_csv_t *r) {
+    for (;;) {
+        int len = record_ahead(r);
+        if (len > 0 && r->skipped > 0)
+            return render_damage(r);
+        if (len > 0) {
+            int n = r->ahead[0] == REC_SAMPLE ? render_sample(r, r->ahead + 1) : render_text(r, r->ahead + 1);
+            pass(r, len);
+            return n;
+        }
+        if (len == 0)
+            return r->skipped > 0 ? render_damage(r) : 0;
+        if (r->skipped == 0)
+            r->damaged_at = r->at;
+        pass(r, 1);
+        r->skipped++;
+    }
+}
+
 static bool next_line(flog_csv_t *r) {
     if (r->ended) {
         return false;
@@ -258,10 +331,7 @@ static bool next_line(flog_csv_t *r) {
                 n = render_header(r, HDR_FIXED_V1);
         }
     } else {
-        uint8_t type;
-        if (take(r, &type, 1)) {
-            n = type == REC_SAMPLE ? render_sample(r) : type == REC_TEXT ? render_text(r) : 0;
-        }
+        n = render_next(r);
     }
     if (n <= 0) {
         r->ended = true;

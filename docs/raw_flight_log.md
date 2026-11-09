@@ -1,10 +1,10 @@
 # A Pre-Erased Flight Log On The QSPI Flash
 
-The flight log is `flight_log.bin`, a file on the board's flash store: alfs,
-format 6, in the area at the top of flash, behind `src/vfs.h` (DD-100). A
-flight only programs it. Every page the log takes was erased on the ground by
-the cleanup, and from launch to landing nothing erases unless the log has no
-erased page left (FLT-LOG-10).
+Each flight log is a file of its own, `flight_NNNN.bin`, on the board's flash
+store: alfs, format 6, in the area at the top of flash, behind `src/vfs.h`
+(DD-100, DD-117). A flight only programs it. Every page the log takes was
+erased on the ground by the cleanup, and from launch to landing nothing
+erases (FLT-LOG-10).
 
 The log keeps a row for every sample and every event row at its own time
 (FLT-LOG-07, DD-101), and a flight that never lands loses at most its last
@@ -45,12 +45,11 @@ both cores (`flash_op()`, DD-074): 50 to 70 ms with no pressure reading,
 launch detection and the ground reference held, and the periods it costs
 counted as `loop_overruns_ground` (FLT-RT-05).
 
-From launch to landing the writer erases only when the log has no erased
-page left, and only on a part whose erase ends in suspended pieces: one
-sector, suspended at the end of each of the writer's slots and resumed in
-the next (FLT-LOG-10, `src/flash_slot.c`). BY25Q64ES's erase does not end in
-such pieces, so MK1B-8MB does not erase in flight and its log has the room
-erased before launch (`src/flash_timing.c`, DD-104). An erase or program the
+From launch to landing nothing erases: an erase asked for then is refused
+and counted (FLT-LOG-10, `src/flash_op.c`). A log has the room the store held
+erased and free when it opened, less two pages kept for its OUT OF ROOM row
+and its close; a log that spends it ends with that row and writes nothing after it
+(FLT-LOG-13, `src/log_room.c`). An erase or program the
 chip holds suspended is run to its end at every start and on the ground
 after a flight that gave one up (FLT-LOG-11).
 

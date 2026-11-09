@@ -75,9 +75,16 @@ extern char mock_uart_buf[MOCK_UART_BUF_SIZE];
 extern int mock_uart_len;
 extern uint32_t mock_time_ms;
 extern uint32_t mock_fs_locked_count; /* file calls refused while the flight log held the filesystem */
+extern bool mock_prev_watchdog; /* what the watchdog's scratch said at this start-up */
+extern int32_t mock_prev_stage;
+extern uint32_t mock_prev_stage_ms;
+extern uint32_t mock_counters[]; /* [FLT-LOG-15] by log_counter_t */
+extern uint64_t mock_log_free_bytes; /* the store's free bytes at a log's open; 0: room for any */
+void mock_reset_keeping_files(void); /* mock_reset_all(), the store's files kept */
 int mock_fs_peek(const char *path, char *buf, int max_len); /* a test's look at a file, past the lock */
 /* The flight log as its download renders it: CSV, NUL-terminated. */
-int test_flight_log_csv(char *buf, int max_len);
+int test_flight_log_csv(char *buf, int max_len); /* the newest log's */
+int test_flight_log_csv_of(const char *name, char *buf, int max_len);
 
 /* ── XIP stall simulation ─────────────────────────────────────────── */
 /* On RP2040, flash writes disable XIP (Execute In Place), stalling the

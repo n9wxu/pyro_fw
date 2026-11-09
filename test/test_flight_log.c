@@ -9,7 +9,7 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Verifies [DAT-02, DAT-03, DAT-06, DAT-07, DAT-11, DAT-10, WEB-API-06, FLT-LOG-06].
+ * Verifies [DAT-02, DAT-03, DAT-06, DAT-07, DAT-11, DAT-10, DAT-12, WEB-API-06, FLT-LOG-06].
  */
 #include "unity.h"
 #include "../src/config.h"
@@ -280,6 +280,113 @@ void test_DAT_08_a_version_1_log_renders_as_it_did(void) {
     TEST_ASSERT_EQUAL_STRING(HDR_CSV_V1 COLUMNS "0,101325,0,4,1,101330,23.5,LAUNCH\n", csv);
 }
 
+/* ── A damaged log [DAT-12] ──────────────────────────────────────── */
+
+/* Each record's offset in bin, from a_flight(): the header's end first. */
+static int record_at[256];
+static int records;
+
+static void index_records(void) {
+    records = 0;
+    int i = FLOG_MAGIC_LEN + 2 + bin[FLOG_MAGIC_LEN + 1];
+    while (i < bin_len) {
+        record_at[records++] = i;
+        i += bin[i] == 'S' ? FLOG_SAMPLE_BYTES : 7 + bin[i + 6];
+    }
+    record_at[records] = bin_len;
+}
+
+/* The CSV's lines from the n-th record's to the m-th's, exclusive. */
+static const char *lines_of(const char *whole, int n, int m, char *out, size_t cap) {
+    const char *p = whole + strlen(HDR_CSV);
+    for (int i = 0; i < n; i++)
+        p = strchr(p, '\n') + 1;
+    const char *q = p;
+    for (int i = n; i < m; i++)
+        q = strchr(q, '\n') + 1;
+    size_t len = (size_t)(q - p);
+    TEST_ASSERT_TRUE(len < cap);
+    memcpy(out, p, len);
+    out[len] = '\0';
+    return out;
+}
+
+/* The time column of the n-th record's line. */
+static long time_of(const char *whole, int n) {
+    char line[512];
+    lines_of(whole, n, n + 1, line, sizeof(line));
+    return strtol(line, NULL, 10);
+}
+
+/* A page of erased flash where records should be: every record renders, and
+ * a row says where the log broke and how much was passed over. */
+void test_DAT_12_erased_bytes_inside_a_log_are_named_and_passed_over(void) {
+    static char want[65536], whole[65536], before[65536], after[65536];
+    a_flight(want, sizeof(want));
+    render(bin_len, 4096, 0);
+    strcpy(whole, csv);
+    index_records();
+    int k = records / 2, at = record_at[k];
+    memmove(bin + at + 256, bin + at, (size_t)(bin_len - at));
+    memset(bin + at, 0xff, 256);
+    bin_len += 256;
+    render(bin_len, 4096, 0);
+    char expect[65536];
+    snprintf(expect, sizeof(expect), "%s%s%ld,,,,,,,LOG DAMAGED at byte %d: 256 bytes skipped\n%s", HDR_CSV,
+             lines_of(whole, 0, k, before, sizeof(before)), time_of(whole, k - 1), at,
+             lines_of(whole, k, records, after, sizeof(after)));
+    TEST_ASSERT_EQUAL_STRING(expect, csv);
+}
+
+/* A page's bytes dropped from the middle of a record [L4]: the stream goes on
+ * mid-record. The broken record's remains are passed over, and the records
+ * after it render. */
+void test_DAT_12_a_record_cut_mid_log_is_passed_over_and_the_log_goes_on(void) {
+    static char want[65536], whole[65536], before[65536], after[65536];
+    a_flight(want, sizeof(want));
+    render(bin_len, 4096, 0);
+    strcpy(whole, csv);
+    index_records();
+    int k = records / 3;
+    TEST_ASSERT_EQUAL_CHAR('S', bin[record_at[k]]);
+    int cut = record_at[k] + 1, gone = 9; /* the type byte goes, and 9 of the record's bytes */
+    memmove(bin + record_at[k], bin + cut + gone, (size_t)(bin_len - cut - gone));
+    bin_len -= 1 + gone;
+    int left = FLOG_SAMPLE_BYTES - 1 - gone;
+    render(bin_len, 509, 0);
+    char expect[65536];
+    snprintf(expect, sizeof(expect), "%s%s%ld,,,,,,,LOG DAMAGED at byte %d: %d bytes skipped\n%s", HDR_CSV,
+             lines_of(whole, 0, k, before, sizeof(before)), time_of(whole, k - 1), record_at[k], left,
+             lines_of(whole, k + 1, records, after, sizeof(after)));
+    TEST_ASSERT_EQUAL_STRING(expect, csv);
+}
+
+/* Bytes that are no record run to the end of the file: the row says so, and
+ * nothing of them renders. */
+void test_DAT_12_damage_to_the_end_of_the_file_is_named(void) {
+    static char want[65536], whole[65536];
+    a_flight(want, sizeof(want));
+    render(bin_len, 4096, 0);
+    strcpy(whole, csv);
+    index_records();
+    int at = bin_len;
+    memset(bin + bin_len, 0xff, 300);
+    bin_len += 300;
+    render(bin_len, 4096, 0);
+    char expect[65536];
+    snprintf(expect, sizeof(expect), "%s%ld,,,,,,,LOG DAMAGED at byte %d: 300 bytes skipped\n", whole,
+             time_of(whole, records - 1), at);
+    TEST_ASSERT_EQUAL_STRING(expect, csv);
+}
+
+/* The rows the board writes about itself carry their own tag. */
+void test_DAT_12_the_log_s_own_rows_render_as_LOG(void) {
+    header(&HDR);
+    put(flog_put_text(bin + bin_len, (int)sizeof(bin) - bin_len, 4623, FLOG_TAG_LOG, "OUT OF ROOM", 11));
+    render(bin_len, 4096, 0);
+    TEST_ASSERT_EQUAL_STRING("4623,,,,,,,LOG OUT OF ROOM\n", csv + strlen(HDR_CSV));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_FLOG_01_the_header_renders_with_every_sample_kept);
@@ -293,5 +400,9 @@ int main(void) {
     RUN_TEST(test_DAT_11_a_row_before_t0_renders_its_negative_time);
     RUN_TEST(test_DAT_08_the_header_names_the_estimator_and_the_deciding_filter);
     RUN_TEST(test_DAT_08_a_version_1_log_renders_as_it_did);
+    RUN_TEST(test_DAT_12_erased_bytes_inside_a_log_are_named_and_passed_over);
+    RUN_TEST(test_DAT_12_a_record_cut_mid_log_is_passed_over_and_the_log_goes_on);
+    RUN_TEST(test_DAT_12_damage_to_the_end_of_the_file_is_named);
+    RUN_TEST(test_DAT_12_the_log_s_own_rows_render_as_LOG);
     return UNITY_END();
 }

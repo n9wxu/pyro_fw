@@ -13,6 +13,11 @@
 #include "../src/flight_events.h"
 #include "../src/flight_states.h"
 #include "../src/flight_log.h"
+#include "../src/log_files.h"
+#include "../src/log_room.h"
+#include "../src/boot_record.h"
+#include "../src/log_counters.h"
+#include "../src/version.h"
 #include "../src/log_pad_ring.h"
 #include "../src/loop_period.h"
 #include "mocks.h"
@@ -231,7 +236,7 @@ static void xip_stall(void) {
 }
 
 /* In-memory filesystem */
-#define SIM_FS_MAX_FILES 4
+#define SIM_FS_MAX_FILES 8
 #define SIM_FS_MAX_SIZE (2 * 1024 * 1024) /* a long flight's log at every sample */
 typedef struct {
     char path[32];
@@ -240,6 +245,7 @@ typedef struct {
     bool used;
 } sim_file_t;
 static sim_file_t sim_files[SIM_FS_MAX_FILES];
+static bool test_boot_known, test_boot_unkept; /* [FLT-LOG-14] the start-up's rows: had, and not yet in the boot log */
 static uint32_t last_pp_feed_ms = 0;
 uint32_t mock_fs_write_count = 0;
 uint32_t mock_fs_locked_count = 0;
@@ -260,15 +266,30 @@ bool hal_ground_test_asserted(void) {
     return mock_ground_test_pin;
 }
 
+static bool keep_files_once;
+
+void mock_reset_keeping_files(void) {
+    keep_files_once = true;
+    mock_reset_all();
+    keep_files_once = false;
+}
+
 void mock_reset_all(void) {
     mock_ground_test_pin = false;
+    mock_log_free_bytes = 0;
+    memset(mock_counters, 0, LOG_COUNTER_COUNT * sizeof(mock_counters[0]));
+    mock_prev_watchdog = false;
+    mock_prev_stage = -1;
+    mock_prev_stage_ms = 0;
+    test_boot_known = test_boot_unkept = false;
     mock_pressure_inits = 0;
     mock_fs_unusable = false;
     mock_lua_events[0] = '\0';
     mock_config_unreadable = false;
     mock_fs_write_count = 0;
     mock_fs_locked_count = 0;
-    memset(&sim_files, 0, sizeof(sim_files));
+    if (!keep_files_once)
+        memset(&sim_files, 0, sizeof(sim_files));
     memset(&mock_pressure, 0, sizeof(mock_pressure));
     mock_pressure.sensor_type = 2;
     mock_pressure.pending_until_ms = 0;
@@ -299,7 +320,8 @@ void mock_reset_all(void) {
     log_pad_clear(&test_log_pad);
     mock_estimator_row_count = 0;
     test_file.open = false;
-    memset(sim_files, 0, sizeof(sim_files));
+    if (!keep_files_once)
+        memset(sim_files, 0, sizeof(sim_files));
     last_pp_feed_ms = 0;
     mock_sample_interval_ms = 20;
     mock_sensor_stuck = false;
@@ -694,15 +716,123 @@ void hal_log_pad(uint32_t t_ms, int32_t pressure_pa) {
                      (int16_t)lroundf(mock_pressure.temperature_c * 10.0f));
 }
 
-static void test_log_keep(const flog_sample_t *s) {
-    uint8_t rec[FLOG_SAMPLE_BYTES];
-    hal_fs_write(test_log_file, (const char *)rec, flog_put_sample(rec, (int)sizeof(rec), s));
+uint64_t mock_log_free_bytes; /* what the store holds free at a log's open; 0: room for any */
+#define MOCK_PAGE_BYTES 248u
+static log_room_t test_log_room;
+static bool test_log_room_noted;
+
+/* As the hardware HAL's writer [FLT-LOG-13]: each record charged to the
+ * log's room, and the OUT OF ROOM row last. */
+static void test_log_write(const uint8_t *rec, int n, uint32_t time_ms) {
+    if (!test_log_file || n <= 0)
+        return;
+    if (mock_log_free_bytes == 0 || log_room_take(&test_log_room, (uint32_t)n)) {
+        hal_fs_write(test_log_file, (const char *)rec, n);
+        log_room_wrote(&test_log_room, (uint32_t)n);
+        return;
+    }
+    if (test_log_room_noted)
+        return;
+    test_log_room_noted = true;
+    uint8_t row[FLOG_RECORD_MAX];
+    int k = flog_put_text(row, (int)sizeof(row), time_ms, FLOG_TAG_LOG, LOG_ROOM_TEXT, (int)sizeof(LOG_ROOM_TEXT) - 1);
+    hal_fs_write(test_log_file, (const char *)row, k);
 }
+
+/* [FLT-LOG-14] As the hardware HAL: the start-up's rows, at the head of each
+ * log it opens and in BOOT_LOG_PATH on the ground. */
+bool mock_prev_watchdog;
+int32_t mock_prev_stage = -1;
+uint32_t mock_prev_stage_ms;
+static bool sim_file_exists(void *ctx, const char *name);
+static boot_rows_t test_boot_rows;
+
+static void boot_log_keep(void) {
+    static char old[SIM_FS_MAX_SIZE];
+    int held = mock_fs_peek(BOOT_LOG_PATH, old, (int)sizeof(old));
+    bool rotate = held > BOOT_LOG_ROTATE_BYTES;
+    if (rotate)
+        hal_fs_write_file(BOOT_LOG_OLDER_PATH, old, held);
+    char lines[256];
+    int n = boot_record_lines(test_boot_rows, lines, (int)sizeof(lines));
+    hal_file_t *f = hal_fs_open(BOOT_LOG_PATH, !rotate);
+    if (f) {
+        hal_fs_write(f, lines, n);
+        hal_fs_close(f);
+    }
+    test_boot_unkept = false;
+}
+
+void hal_log_boot(const char *start, bool usb) {
+    log_files_t logs;
+    log_files_scan(&logs, sim_file_exists, NULL);
+    char last[LOG_FILES_NAME_MAX] = "";
+    log_files_newest(&logs, last);
+    boot_facts_t f = {boot_record_cause((int)mock_reset_cause),
+                      mock_prev_watchdog,
+                      mock_prev_stage,
+                      mock_prev_stage_ms,
+                      FW_VERSION,
+                      "mock",
+                      2048u,
+                      usb,
+                      start,
+                      last};
+    boot_record_rows(&f, test_boot_rows);
+    test_boot_known = true;
+    test_boot_unkept = true;
+    if (!test_log_active)
+        boot_log_keep();
+}
+
+/* [FLT-LOG-15] As the hardware HAL: the counters a test sets, said when
+ * they change and all of them at the open and the close. */
+uint32_t mock_counters[LOG_COUNTER_COUNT];
+static log_counters_t test_cnt;
+static int32_t test_last_row_ms;
+
+static void test_counters_say(void) {
+    char row[FLOG_TEXT_MAX + 1];
+    int n;
+    while ((n = log_counters_row(&test_cnt, mock_counters, row, (int)sizeof(row))) > 0) {
+        uint8_t rec[FLOG_RECORD_MAX];
+        int k = flog_put_text(rec, (int)sizeof(rec), (uint32_t)test_last_row_ms, FLOG_TAG_LOG, row, n);
+        test_log_write(rec, k, (uint32_t)test_last_row_ms);
+    }
+}
+
+void hal_log_counters(void) {
+    if (!test_log_active)
+        return;
+    log_counters_note(&test_cnt, mock_counters);
+    test_counters_say();
+}
+
+static void test_log_keep(const flog_sample_t *s) {
+    test_last_row_ms = s->time_ms;
+    uint8_t rec[FLOG_SAMPLE_BYTES];
+    test_log_write(rec, flog_put_sample(rec, (int)sizeof(rec), s), (uint32_t)s->time_ms);
+}
+
+static bool sim_file_exists(void *ctx, const char *name) {
+    (void)ctx;
+    for (int i = 0; i < SIM_FS_MAX_FILES; i++)
+        if (sim_files[i].used && strcmp(sim_files[i].path, name) == 0)
+            return true;
+    return false;
+}
+
+/* As the hardware HAL: the store's logs, read at start-up. */
+static log_files_t test_logs;
 
 void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_ms) {
     if (test_log_active)
         return;
-    test_log_file = hal_fs_open(FLOG_PATH, false);
+    log_files_scan(&test_logs, sim_file_exists, NULL);
+    char name[LOG_FILES_NAME_MAX];
+    if (!log_files_next(&test_logs, name))
+        return;
+    test_log_file = hal_fs_open(name, false);
     if (!test_log_file)
         return;
     flog_header_t h = {
@@ -718,13 +848,26 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
         .estimator = cfg->estimator,
         .model_decides = cfg->model_decides,
     };
+    log_room_open(&test_log_room, mock_log_free_bytes, MOCK_PAGE_BYTES);
+    test_log_room_noted = false;
     uint8_t rec[128];
-    hal_fs_write(test_log_file, (const char *)rec, flog_put_header(rec, (int)sizeof(rec), &h));
+    test_log_write(rec, flog_put_header(rec, (int)sizeof(rec), &h), 0);
     flog_sample_t s;
     air_t air = air_over_pad((float)ground_pressure_pa, pp_pad_k());
-    for (uint16_t i = 0; log_pad_row(&test_log_pad, i, t0_ms, &air, PAD_IDLE, &s); i++)
+    int32_t boot_at = 0; /* the start-up's rows at the last pad row's time, in time order */
+    for (uint16_t i = 0; log_pad_row(&test_log_pad, i, t0_ms, &air, PAD_IDLE, &s); i++) {
         test_log_keep(&s);
+        boot_at = s.time_ms;
+    }
     log_pad_clear(&test_log_pad);
+    for (int r = 0; test_boot_known && r < BOOT_RECORD_ROWS; r++) {
+        uint8_t row[FLOG_RECORD_MAX];
+        int n = flog_put_text(row, (int)sizeof(row), (uint32_t)boot_at, FLOG_TAG_LOG, test_boot_rows[r],
+                              (int)strlen(test_boot_rows[r]));
+        test_log_write(row, n, (uint32_t)boot_at);
+    }
+    memset(&test_cnt, 0, sizeof(test_cnt));
+    log_counters_all(&test_cnt);
     test_log_active = true;
 }
 
@@ -772,9 +915,9 @@ static int log_src_read(void *ctx, uint8_t *dst, int n) {
     return n;
 }
 
-int test_flight_log_csv(char *buf, int max_len) {
+int test_flight_log_csv_of(const char *name, char *buf, int max_len) {
     static uint8_t bin[SIM_FS_MAX_SIZE];
-    log_src_t src = {bin, mock_fs_peek(FLOG_PATH, (char *)bin, (int)sizeof(bin)), 0};
+    log_src_t src = {bin, mock_fs_peek(name, (char *)bin, (int)sizeof(bin)), 0};
     if (src.len <= 0)
         return 0;
     flog_csv_t r;
@@ -784,14 +927,25 @@ int test_flight_log_csv(char *buf, int max_len) {
     return n;
 }
 
+int test_flight_log_csv(char *buf, int max_len) {
+    log_files_t logs;
+    log_files_scan(&logs, sim_file_exists, NULL);
+    char name[LOG_FILES_NAME_MAX];
+    return log_files_newest(&logs, name) ? test_flight_log_csv_of(name, buf, max_len) : 0;
+}
+
 void hal_log_stop(void) {
     if (!test_log_active)
         return;
+    log_counters_all(&test_cnt);
+    test_counters_say();
     if (test_log_file) {
         hal_fs_close(test_log_file);
         test_log_file = NULL;
     }
     test_log_active = false;
+    if (test_boot_unkept)
+        boot_log_keep();
 }
 
 static bool test_log_to_host;

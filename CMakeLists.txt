@@ -384,6 +384,10 @@ add_executable(pyro_fw_c
     src/net_stats.c
     src/net_txq.c
     src/flight_log.c
+    src/log_files.c
+    src/log_room.c
+    src/boot_record.c
+    src/log_counters.c
     src/log_live.c
     src/pressure_trace.c
     src/net_ring.c
@@ -575,6 +579,10 @@ find_program(HOST_CC NAMES gcc cc PATHS /usr/bin /usr/local/bin NO_CMAKE_FIND_RO
 set(PYRO_TEST_HAL_SOURCES
     ${CMAKE_CURRENT_LIST_DIR}/test/hal_test.c
     ${CMAKE_CURRENT_LIST_DIR}/src/flight_log.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/log_files.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/log_room.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/boot_record.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/log_counters.c
     ${CMAKE_CURRENT_LIST_DIR}/src/pyro_release.c
     ${CMAKE_CURRENT_LIST_DIR}/src/pad_claim.c
 )
@@ -838,6 +846,58 @@ add_custom_target(http_work_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_http_work
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "HTTP work unit scheduling tests"
+)
+
+# The flight logs' names: one file each, none removed in flight (FLT-LOG-12).
+add_custom_target(log_files_tests
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_log_files.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/log_files.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_log_files
+    COMMAND ${CMAKE_BINARY_DIR}/test_log_files
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flight log name tests"
+)
+
+# The room a flight log has, with nothing erased in flight (FLT-LOG-13).
+add_custom_target(log_room_tests
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_log_room.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/log_room.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_log_room
+    COMMAND ${CMAKE_BINARY_DIR}/test_log_room
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flight log room tests"
+)
+
+# The start-up's record, and the boot log that keeps the last of them (FLT-LOG-14).
+add_custom_target(boot_record_tests
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_boot_record.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/boot_record.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_boot_record
+    COMMAND ${CMAKE_BINARY_DIR}/test_boot_record
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Start-up record tests"
+)
+
+# The counters in the flight log, each in the pass it changes (FLT-LOG-15).
+add_custom_target(log_counters_tests
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_log_counters.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/log_counters.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_log_counters
+    COMMAND ${CMAKE_BINARY_DIR}/test_log_counters
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flight log counter tests"
 )
 
 # The flight log's binary records and the CSV they render as (DD-062).
