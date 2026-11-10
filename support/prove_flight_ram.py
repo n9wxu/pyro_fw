@@ -64,6 +64,9 @@ INTERRUPTS = [
     "period_isr", "collector_alarm_isr", "pulse_end_isr", "telem_uart_irq_handler",
     # The SDK's default alarm pool, set up on core0 before main().
     "alarm_pool_irq_handler",
+    # A fault taken while a log page programs finds flash unreadable: its
+    # handler stamps the fault only from RAM.
+    "isr_hardfault",
 ]
 
 # Tasks that can run on core0: the idle tasks have no affinity, and the
@@ -105,6 +108,8 @@ RUNTIME_TARGETS = {
     "dispatch_state": [],
     # The return into the task the switch chose.
     "xPortPendSVHandler": [],
+    # Its jump to the C half, on the stack the fault used.
+    "isr_hardfault": ["rtos_hardfault_c"],
 }
 
 # The SDK's float, double and memory shims call the ROM's routines through

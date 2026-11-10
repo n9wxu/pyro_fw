@@ -653,6 +653,7 @@ pyro_module_suite(launch_detector_tests test/test_launch_detector.c src/launch_d
 pyro_module_suite(apogee_detector_tests test/test_apogee_detector.c src/apogee_detector.c src/atmosphere.c)
 pyro_module_suite(simple_apogee_tests test/test_simple_apogee.c src/simple_apogee.c src/atmosphere.c)
 pyro_module_suite(log_pad_ring_tests test/test_log_pad_ring.c src/log_pad_ring.c src/atmosphere.c)
+pyro_module_suite(pyro_release_tests test/test_pyro_release.c src/pyro_release.c src/pad_claim.c)
 pyro_module_suite(estimators_tests test/test_estimators.c src/estimator_table.c src/estimator_constacc.c
                   src/altitude_filter.c src/atmosphere.c)
 pyro_module_suite(fire_control_tests test/test_fire_control.c src/fire_control.c src/atmosphere.c)

@@ -809,6 +809,11 @@ sequence has gaps.
   again with those sections renamed `.time_critical.flight.*`, which the
   linker script copies to RAM at start-up. Objects of the SDK, the kernel
   and the C library are renamed in copies; their sources are not touched.
+  A table the flight path reaches through a pointer set at run time is not
+  left to this: a pyro channel's operations are copied by value into
+  `pyro_release.c`'s own store at boot, so the flight path reads RAM whatever
+  the link placed. The HardFault handler is a root of the path: a fault
+  taken while a log page programs could not fetch a handler from flash.
   A C library built without a section per function, as Ubuntu's newlib
   is, keeps each function in its member's `.text`; such a member is
   renamed whole when every function in it is on the path. The SDK's

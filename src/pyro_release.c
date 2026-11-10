@@ -6,9 +6,10 @@
 #include "pyro_release.h"
 #include "pad_claim.h"
 
-static const pyro_ch_ops_t *real_ops;
 static pyro_mock_report_fn reporter;
-static const pyro_ch_ops_t *ch_ops[2];
+/* By value, assembled at boot: the flight path reads RAM whatever the linker
+ * did with the table they were copied from [FLT-RT-02]. */
+static pyro_ch_ops_t real_ops, ch_ops[2];
 static bool released[2];
 static uint32_t mocks;
 
@@ -53,9 +54,9 @@ static bool mock_fault(uint8_t channel) {
 static const pyro_ch_ops_t mock_ops = {mock_fire, mock_get, mock_fault};
 
 void pyro_release_init(const pyro_ch_ops_t *real, pyro_mock_report_fn rep) {
-    real_ops = real;
+    real_ops = *real;
     reporter = rep;
-    ch_ops[0] = ch_ops[1] = real;
+    ch_ops[0] = ch_ops[1] = real_ops;
     released[0] = released[1] = false;
     mocks = 0;
 }
@@ -69,7 +70,7 @@ int pyro_release_claim(pyro_pads_fn pads_of) {
          * holds cannot take them, so it cannot be given the real methods --
          * there is no branch here that could be written the other way. */
         bool mine = (pads != PAD_NONE) && pad_claim_take(pads, PAD_FLIGHT);
-        ch_ops[ch - 1] = mine ? real_ops : &mock_ops;
+        ch_ops[ch - 1] = mine ? real_ops : mock_ops;
         released[ch - 1] = !mine;
         kept += mine ? 1 : 0;
     }
@@ -78,8 +79,8 @@ int pyro_release_claim(pyro_pads_fn pads_of) {
 
 const pyro_ch_ops_t *pyro_ch(uint8_t channel) {
     if (channel == 1 || channel == 2) {
-        const pyro_ch_ops_t *o = ch_ops[channel - 1];
-        if (o) {
+        const pyro_ch_ops_t *o = &ch_ops[channel - 1];
+        if (o->fire) {
             return o;
         }
     }
