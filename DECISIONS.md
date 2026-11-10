@@ -1472,11 +1472,18 @@ in `docs/outstanding_tasks.md`.
   `fire_gap` of quiet separates a pulse on one from a pulse on the other; a
   first fire goes before a re-fire and pyro 1 before pyro 2
   (PYR-DEPLOY-02). The requirements name no drogue or main. The rules act
-  on the filtered state (FLT-EMRG-05).
+  on the filtered state (FLT-EMRG-05). The three speeds default to zero:
+  a board as shipped fires each channel once.
+- **Clock:** every timer in the rules runs on the loop's clock, in passes
+  with a sample and without. A sample's stamp is the middle of its
+  conversion, behind the loop's clock, so a timer that saw both would run
+  backwards and read as long past. A time taken from a sample, such as
+  apogee's, is only ever behind the clock, so the time since it is never
+  short. The host harness runs the loop 15 ms behind the stamps, as an
+  MS5607 board does.
 - **Why:** the user's rulings in the 2026-10 review. Any deployment reduces
-  the damage, and a pulse into a spent igniter is harmless.
-- **Open:** the defaults of the three speeds, zero until the modelling study
-  gives them.
+  the damage, and a pulse into a spent igniter is harmless. Zero speeds:
+  the user's ruling of 2026-11-09.
 
 ### DD-081: Never Early, Data Believed, Best Effort
 - **Decision:** a fire is decided only on measured evidence that its event

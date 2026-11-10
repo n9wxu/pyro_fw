@@ -81,7 +81,7 @@ typedef struct {
     int restart_cause;
     int restart_watchdog_stage; /* the stage the watchdog's scratch names; 0: it ended nothing */
 
-    uint32_t (*loop_lag)(uint32_t t); /* the loop clock's lateness; NULL: none */
+    uint32_t (*loop_lag)(uint32_t t); /* the loop clock's lateness; NULL: a board's */
     /* Network, script and storage activity holds the flight software for 40
      * to 73 ms at a time, about 1.3 times a second [FLT-RT-01]. */
     bool stalls;

@@ -138,6 +138,19 @@ void test_PYR_DEPLOY_01_a_low_flight_puts_both_out_on_one_event(void) {
     TEST_ASSERT_FLOAT_WITHIN(0.1f, 3.5f, r.main_t - r.drogue_t);
 }
 
+/* [PYR-DEPLOY-02] A pulse may end in a pass with a sample or in one
+ * without; the gap holds either way. */
+void test_PYR_DEPLOY_02_the_gap_holds_whichever_pass_ends_the_pulse(void) {
+    for (uint32_t seed = 1; seed <= 20; seed++) {
+        flight_conditions_t c = {.rate_ms = {6.0f, 6.0f}};
+        flown_t r = fly(&ROCKETS[HOP].r, &ISA, &c, seed, 30.0f);
+        TEST_ASSERT_TRUE(r.pulses >= 2);
+        for (int i = 1; i < r.pulses; i++)
+            if (r.pulse[i].channel != r.pulse[i - 1].channel)
+                TEST_ASSERT_TRUE_MESSAGE(r.pulse[i].t - r.pulse[i - 1].t >= 3.45f, "two channels closer than the gap");
+    }
+}
+
 /* ── Nothing before apogee [SYS-DEPLOY-03, PYR-SAFE-04, FLT-APO-04] ── */
 
 void test_PYR_SAFE_04_no_fire_before_apogee_whatever_the_triggers(void) {
@@ -512,8 +525,11 @@ void test_DAT_08_a_thinned_log_is_refused(void) {
 
 /* ── Processing lateness changes nothing [FLT-RATE-05] ────────────── */
 
+/* The loop falls 60 ms behind for 0.7 s at a time, then catches up. */
 static uint32_t late_loop(uint32_t t) {
-    return (t / 700u) % 2u ? 60u : 0u; /* the loop clock, 60 ms late for 0.7 s at a time */
+    uint32_t in = t % 1400u;
+    uint32_t behind = in < 700u ? (in < 60u ? in : 60u) : (in - 700u < 60u ? 60u - (in - 700u) : 0u);
+    return harness_stamp_lag_ms(t) + behind;
 }
 
 void test_FLT_RATE_05_a_late_loop_changes_no_decision(void) {
@@ -732,6 +748,7 @@ int main(void) {
     RUN_TEST(test_CFG_04_a_channel_set_to_none_never_fires);
     RUN_TEST(test_CFG_03_a_height_in_feet);
     RUN_TEST(test_PYR_DEPLOY_01_a_low_flight_puts_both_out_on_one_event);
+    RUN_TEST(test_PYR_DEPLOY_02_the_gap_holds_whichever_pass_ends_the_pulse);
     RUN_TEST(test_PYR_SAFE_04_no_fire_before_apogee_whatever_the_triggers);
     RUN_TEST(test_FLT_ASC_04_arms_in_the_coast_not_in_the_burn);
     RUN_TEST(test_FLT_ASC_03_the_thrust_report_ends_within_a_second_of_burnout);

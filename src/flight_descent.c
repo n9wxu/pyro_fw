@@ -99,7 +99,9 @@ static void run_fire_rules(flight_context_t *ctx, const pp_sample_t *s, uint32_t
 
 /* Every descent state takes the sample the same way; only the verdict on
  * the phase differs. With no sample the rules still run, so a DELAY whose
- * apogee is known fires on time [SYS-DEPLOY-04]. */
+ * apogee is known fires on time [SYS-DEPLOY-04]. The rules run on the loop's
+ * clock in every pass: a sample's stamp is behind it, and a timer that saw
+ * both would run backwards [PYR-DEPLOY-02]. */
 static bool descend(flight_context_t *ctx, uint32_t now, flight_state_t state, pp_sample_t *s) {
     if (!pp_read(s)) {
         flight_note_no_sample(ctx, now);
@@ -108,7 +110,7 @@ static bool descend(flight_context_t *ctx, uint32_t now, flight_state_t state, p
     }
     flight_take_sample(ctx, s, state);
     flight_note_sensor(ctx, s, now);
-    run_fire_rules(ctx, s, s->timestamp_ms);
+    run_fire_rules(ctx, s, now);
     return true;
 }
 

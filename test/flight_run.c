@@ -162,7 +162,7 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
     int seen = 0;
     float shock_at = -1.0f, foreign_at = -1.0f;
     bool glitched = false, lost = false, restarted = false;
-    loop_lag_ms = c->loop_lag;
+    loop_lag_ms = c->loop_lag ? c->loop_lag : harness_stamp_lag_ms;
     for (; t < ign + (uint32_t)(until_s * 1000.0f); t++) {
         float tf = ((float)t - (float)ign) / 1000.0f;
         if (tf >= 0.0f)

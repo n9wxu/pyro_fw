@@ -62,6 +62,13 @@ bool harness_last_said(beep_reason_t reason) {
 
 flight_context_t ctx;
 uint32_t (*loop_lag_ms)(uint32_t t);
+
+#define STAMP_LAG_MS 15u
+
+uint32_t harness_stamp_lag_ms(uint32_t t) {
+    (void)t;
+    return STAMP_LAG_MS;
+}
 static bool powered, usb_at_power_on;
 
 static void boot_from(uint32_t seed);
@@ -82,7 +89,7 @@ static void boot_from(uint32_t seed) {
     usb_at_power_on = false;
     harness_spec_plays = harness_usb_ok_plays = harness_altitude_plays = harness_gt_sound_n = harness_stops = 0;
     memset(&harness_last_spec, 0, sizeof(harness_last_spec));
-    loop_lag_ms = NULL;
+    loop_lag_ms = harness_stamp_lag_ms;
     mock_pressure.pressure_pa = 101325.0f;
     mock_noise_rms_pa = SENSOR_RMS_PA;
     mock_noise_seed = seed;
