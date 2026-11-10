@@ -802,7 +802,9 @@ sequence has gaps.
 - **Placement:** `support/flight_ram_link.py` runs every firmware link. It
   links once, has `support/prove_flight_ram.py` find the flight path in
   that image -- every function the roots reach by direct branch, through
-  the tables they read and through the pointers named for run time -- and
+  the tables they read and through the pointers named for run time, with
+  the tables those pointers reach, such as a pyro channel's operations --
+  and
   the read-only sections those functions refer to by relocation, then links
   again with those sections renamed `.time_critical.flight.*`, which the
   linker script copies to RAM at start-up. Objects of the SDK, the kernel

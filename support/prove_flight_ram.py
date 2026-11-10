@@ -10,7 +10,8 @@ image, so this works on the ELF, with prove_core0.py's disassembly.
 
 From each root it follows every direct branch, every function pointer held
 in a table the path reads, and the targets named in RUNTIME_TARGETS for
-pointers set at run time. It reports each function the closure reaches in
+pointers set at run time: a function, or a table of them, which the path
+then reads. It reports each function the closure reaches in
 flash, each indirect branch no rule covers, and each flash address the path
 reads.
 
@@ -81,7 +82,10 @@ OPTIONAL_ROOTS = {"pulse_end_isr", "collector_alarm_isr", "telem_uart_irq_handle
 # The buzzer's task is not among hal_tasks_tick()'s: its tick runs only while
 # a sound plays, entering flight stops the buzzer (main_hardware.c), and
 # nothing starts one again until landing has ended flight.
-PYRO_OPS = ["real_fire", "real_get", "real_fault", "mock_fire", "mock_get", "mock_fault"]
+# The tables a channel's operations are called through: pyro_release_claim()
+# points ch_ops[] at one of them, so the path reads the table itself, and then
+# calls what it holds.
+PYRO_OPS = ["real_pyro_ops", "mock_ops"]
 RUNTIME_TARGETS = {
     "hal_tasks_tick": ["pres_tick", "gts_tick"],
     "hardware_alarm_irq_handler": ["period_isr", "collector_alarm_isr", "pulse_end_isr"],
@@ -264,6 +268,9 @@ class Closure:
             covered = name in RUNTIME_TARGETS
             for t in RUNTIME_TARGETS.get(name, []):
                 todo.extend(img.by_name.get(t, []))
+                for start, _, oname in img.objects:
+                    if oname == t:
+                        self.read(start, name, todo, depth=0)
             recent = []
             for line in lines:
                 recent = (recent + [line])[-3:]
