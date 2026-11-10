@@ -609,9 +609,10 @@ int hal_fs_write_file(const char *path, const char *data, int len) {
 int hal_config_load(config_t *cfg) {
     char buf[CONFIG_INI_MAX];
     int n = hal_fs_read_file("config.ini", buf, (int)sizeof(buf) - 1);
-    switch (config_from_file(cfg, buf, (int)sizeof(buf), n, NULL)) {
+    int rejected = 0;
+    switch (config_from_file(cfg, buf, (int)sizeof(buf), n, &rejected)) {
     case CONFIG_FILE_LOADED:
-        return 0;
+        return rejected;
     case CONFIG_FILE_MISSING: {
         const char *def = config_default_ini();
         hal_fs_write_file("config.ini", def, (int)strlen(def));
@@ -653,9 +654,6 @@ void hal_tasks_tick(uint32_t now_ms) {
     }
 }
 
-void hal_sleep_until_event(void) {
-    /* No-op: test loop is tick-driven */
-}
 
 void hal_platform_init(void) {}
 void hal_platform_service(void) {}

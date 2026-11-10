@@ -12,7 +12,7 @@
 #define DIGITS 4
 
 void log_files_name(uint32_t n, char out[LOG_FILES_NAME_MAX]) {
-    snprintf(out, LOG_FILES_NAME_MAX, PREFIX "%04lu" SUFFIX, (unsigned long)n);
+    snprintf(out, LOG_FILES_NAME_MAX, PREFIX "%04u" SUFFIX, (unsigned)(n % (LOG_FILES_MAX + 1u)));
 }
 
 uint32_t log_files_number(const char *name) {

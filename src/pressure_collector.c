@@ -26,6 +26,7 @@ typedef enum {
 
 static struct {
     volatile uint8_t state;
+    volatile bool stopping;
     collector_part_t part; /* a copy: the handler reads nothing in flash */
     uint32_t bit_us;
     uint8_t step;
@@ -128,6 +129,10 @@ __force_inline static void clear_step(void) {
         collector_bus_sda(true);
     } else {
         collector_bus_lines_give();
+        if (machine.stopping) {
+            machine.state = (uint8_t)IDLE;
+            return;
+        }
         collector_bus_write(machine.part.reset, machine.part.reset_len);
         wait_until(collector_bus_now_us() + write_us(machine.part.reset_len) + TRANSFER_MARGIN_US, RESETTING);
         return;
@@ -176,6 +181,12 @@ __force_inline static void after_reset(void) {
 COLLECTOR_BUS_HANDLER static void __noinline __not_in_flash_func(collector_alarm_isr)(void) {
     collector_bus_alarm_ack();
     uint8_t state = machine.state;
+    /* Each alarm but a bus clear's comes once the transfer before it has
+     * had its time: the bus is idle here. */
+    if (machine.stopping && state != CLEARING) {
+        machine.state = (uint8_t)IDLE;
+        return;
+    }
     if (state == COMMANDED)
         after_command();
     else if (state == READING)
@@ -196,9 +207,15 @@ bool collector_begin(const collector_part_t *part, const collector_wiring_t *wir
     machine.part = *part;
     machine.bit_us = bit_us_at(wiring->hz);
     machine.step = 0;
+    machine.stopping = false;
     machine.state = (uint8_t)RETRYING;
     collector_bus_alarm_now();
     return true;
+}
+
+bool collector_stop(void) {
+    machine.stopping = true;
+    return machine.state == IDLE;
 }
 
 bool collector_take(collector_raw_t *out) {

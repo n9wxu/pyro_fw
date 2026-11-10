@@ -205,6 +205,29 @@ function setTestMode(on) {
 }
 
 /* ── Status polling ────────────────────────────────────────────── */
+/* [BUZ-CODE-03] The board's diagnosis in words. On USB the buzzer is silent,
+   so this is where a bench user reads it. */
+var FAULT_TEXT = {
+  sensor_fail: 'no pressure sensor answered: the board will not fly',
+  sensor_stuck: 'the pressure sensor repeats one reading',
+  sensor_lost: 'the pressure sensor stopped answering',
+  fs_fail: 'the filesystem did not mount: the board will not fly',
+  config_unreadable: 'config.ini could not be read: the board will not fly',
+  config_refused: 'config.ini holds a value the board refused, and that field is at its default: ' +
+    'check the Config tab, save and reboot',
+  board_mismatch: 'this firmware is built for another board: it will not arm or fire',
+  flight_resumed: 'this start resumed a flight',
+  pyro1_open: 'pyro 1 is open', pyro1_short: 'pyro 1 is shorted',
+  pyro2_open: 'pyro 2 is open', pyro2_short: 'pyro 2 is shorted'
+};
+
+function showFaults(faults) {
+  var box = document.getElementById('faultWarn');
+  box.style.display = faults.length ? 'block' : 'none';
+  box.textContent = faults.length
+    ? '⚠ ' + faults.map(function(f){ return FAULT_TEXT[f] || f; }).join('; ') + '.' : '';
+}
+
 function update() {
   getTimed('api/status').then(function(r){return r.json()}).then(function(d) {
     missCount = 0;
@@ -225,16 +248,24 @@ function update() {
 
     /* Pyro status [PYR-FIRE-01]: every pulse is counted, and a fault the
        board saw is shown beside it. Nothing here was withheld. */
-    function pyroStr(fired, pulses, fault, cont, adc) {
+    var faults = d.faults || [];
+    showFaults(faults);
+    /* [PYR-HEALTH-02] A channel whose mode is none is not a pyro channel. */
+    function pyroStr(n, fired, pulses, fault, cont, adc, mode) {
       var seen = fault ? ' <span class="warn-inline">the board reported a fault</span>' : '';
       if (fired) return '<span class="pyro-fired">FIRED</span>' + (pulses > 1 ? ' ×' + pulses : '') + seen +
         ' (ADC:' + adc + ')';
+      if (mode === 'none') return 'not used (ADC:' + adc + ')';
       if (cont) return '<span class="pyro-ok">OK</span>' + seen + ' (ADC:' + adc + ')';
-      return '<span class="pyro-open">FAULT</span>' + seen + ' (ADC:' + adc + ')';
+      var kind = faults.indexOf('pyro' + n + '_open') >= 0 ? ': open'
+        : faults.indexOf('pyro' + n + '_short') >= 0 ? ': short' : '';
+      return '<span class="pyro-open">FAULT' + kind + '</span>' + seen + ' (ADC:' + adc + ')';
     }
     var pulses = d.pyro_pulses || [0, 0], pfault = d.pyro_fault || [false, false];
-    document.getElementById('sP1').innerHTML = pyroStr(d.pyro1_fired, pulses[0], pfault[0], d.pyro1_cont, d.pyro1_adc);
-    document.getElementById('sP2').innerHTML = pyroStr(d.pyro2_fired, pulses[1], pfault[1], d.pyro2_cont, d.pyro2_adc);
+    document.getElementById('sP1').innerHTML =
+      pyroStr(1, d.pyro1_fired, pulses[0], pfault[0], d.pyro1_cont, d.pyro1_adc, d.pyro1_mode);
+    document.getElementById('sP2').innerHTML =
+      pyroStr(2, d.pyro2_fired, pulses[1], pfault[1], d.pyro2_cont, d.pyro2_adc, d.pyro2_mode);
     document.getElementById('sArm').textContent = d.armed ? 'YES' : 'No';
     document.getElementById('sEmrg').innerHTML = d.emergency_fire
       ? '<span class="warn-inline">FIRED: the descent was faster than the emergency speed</span>' : 'No';

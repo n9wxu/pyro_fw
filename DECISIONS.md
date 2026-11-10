@@ -502,6 +502,11 @@ sequence has gaps.
   (`launch_holdoff` in `src/hal_common/hal_common.c`). A full ring and a stop
   always write, so nothing is dropped to keep the flash quiet. After the
   holdoff the ring is written every 200 ms.
+- **Full leaves room for the opening.** The header and the pad's rows are
+  written ahead of the ring, up to 2.7 kB, and a growing file stores a page
+  in three periods, 7.9 kB/s. The ring counts as full with half the
+  opening's size still free (`src/log_drain.h`), and it goes to the file in
+  128-byte pieces, each piece's room given back as the file takes it.
 - **Why:** launch shock -- a battery connector bouncing -- is the likeliest
   cause of the brownout DD-026 exists to survive, and a flash write in
   progress is the worst moment to lose power. 4 kB is 186 samples of 22
@@ -1811,6 +1816,27 @@ in `docs/outstanding_tasks.md`.
 - **Why:** a duplicate reading cannot be told from a steady pressure in the
   samples; only each conversion, with when it was measured and when it was
   read, shows a stale read or a missed slot.
+
+### DD-120: A Refused Configuration Value Is Said On The Pad
+- **Decision:** a `config.ini` holding a value its field refuses
+  (SYS-CFG-03), or a pyro mode the system cannot name (CFG-04), is a
+  general fault on the pad: `config_refused` in `/api/status`'s `faults`,
+  the general-fault announcement, and the same words on the status tab
+  [FLT-BOOT-20]. The board goes on to PAD_IDLE and flies on the fields it
+  accepted; the refused field has its default.
+- **Why a fault:** a mode that does not parse is stored as none, so its
+  channel is off. Announced as OK to fly, the rocket would leave with a
+  channel the flier believes is set.
+- **Why not FAULT, as an unreadable file is (FLT-BOOT-18):** the accepted
+  fields are known and good. A rocket launched over the announcement
+  deploys on what was read, where a board in FAULT deploys nothing.
+- **Who meets it:** `/api/config` answers such a file 400 and stores
+  nothing, so it comes from a card edited on a PC, or from a file an
+  earlier firmware wrote with a value since put out of range.
+  `apogee_lockout` above 600 s and `landing_timeout` 0 are such values.
+- **The page:** the status tab shows every name in `faults` in words,
+  tells an open channel from a shorted one, and shows a channel whose mode
+  is none as not used (BUZ-CODE-03, PYR-HEALTH-02).
 
 ### DD-119: The Counters In The Log, In The Pass They Change
 - **Decision:** at the user's direction (2026-11-07) -- "Counter updates

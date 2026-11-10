@@ -204,6 +204,7 @@ not converge, or decides alone when `model_decides` is false
 - **FLT-BOOT-15**: `/api/status` shall report every fault found on the pad. The buzzer announces the one of highest priority (BUZ-CODE-02). ← SYS-STATUS-02
 - **FLT-BOOT-17**: The system shall enter FAULT, and announce general fault, at every start of an image built for a different board than the one it runs on, as the board's stored stamp shows, or as its flash chip shows by declaring less capacity than the image's flash map. ← FLT-BOOT-01, OTA-05
 - **FLT-BOOT-18**: The system shall enter FAULT, and announce general fault, when the configuration file exists and cannot be read. It shall leave the file as it is. ← FLT-BOOT-02, CFG-05
+- **FLT-BOOT-20**: A configuration file holding a value the system refuses (SYS-CFG-03, CFG-04) shall be a general fault on the pad, announced (BUZ-CODE-02) and named `config_refused` on `/api/status`. The system shall go on to the pad and fly on the fields it accepted. ← SYS-CFG-03, FLT-BOOT-15
 - **FLT-BOOT-19**: The system shall neither mount nor format the filesystem on a flash chip that declares less capacity than the image's flash map: the filesystem's addresses lie past the chip's end, which the chip wraps onto the bootloader. ← FLT-BOOT-17, OTA-04
 - **FLT-RATE-01**: The system shall take at least 50 pressure readings a second from PAD_IDLE to landing. ← FLT-PHASE-01
 - **FLT-RATE-06**: The flight software shall act on every sample in the loop it arrives in, each as a step of its own, however many a loop brings: no sample waits for a later loop. ← FLT-RATE-01, SNS-COL-03, DD-093
@@ -288,9 +289,9 @@ not converge, or decides alone when `model_decides` is false
 | `fire_gap` | quiet time between pulses on different channels, ms; 0 takes the board's default | 0: the board's, 3000 where it declares none |
 | `estimator` | the estimator the flight obeys (SNS-EST-06): constacc | constacc |
 | `model_decides` | true: the estimator decides apogee, the simple filter standing in (FLT-APO-10); false: the simple filter alone (FLT-APO-09) | true |
-| `apogee_lockout` | FLT-APO-12, seconds after T+0 before any apogee | 0 |
+| `apogee_lockout` | FLT-APO-12, seconds after T+0 before any apogee, 0 to 600 | 0 |
 | `standard_atmosphere` | SNS-EST-05, true: heights in the 1976 standard's air; false: in the pad's | false |
-| `landing_timeout` | FLT-LAND-07, seconds | 60 |
+| `landing_timeout` | FLT-LAND-07, seconds, 1 to 255 | 60 |
 | `lua_enabled`, `lua_baud`, `lua_pixels` | the script and its resources | false, 9600, 0 |
 
 ### Pyro values and the board
@@ -349,6 +350,7 @@ not converge, or decides alone when `model_decides` is false
 - **SNS-COL-03**: The collector shall keep the four newest cycles not yet taken. A fifth pushes the oldest out, and each one pushed out is counted on `/api/status`. ← SNS-COL-01, FLT-RT-01
 - **SNS-COL-04**: A bus transfer that fails shall be counted on `/api/status` by its cause: the address not acknowledged, a byte not acknowledged, the data line held, or the transfer not finishing in its time. A transfer not finished shall be aborted. The cycle starts again; a failed cycle is not handed on. ← SNS-COL-01
 - **SNS-COL-05**: After three failed transfers in a row the collector shall clear the bus (nine clocks and a STOP), reset the part, wait out its start-up, and go on; and again after every three more. Each recovery is counted on `/api/status`. ← SNS-COL-04
+- **SNS-COL-07**: A reset the system commands (a reboot, an update's restart, BOOTSEL) shall wait until the collector has ended the transfer on the bus and started no other, 100 ms at most: a sensor reset in the middle of a transfer can keep the bus until its power is removed. ← SNS-COL-01
 - **SNS-COL-06**: The collector's interrupt handler and everything it calls shall run from RAM. The build shall fail otherwise. ← SNS-PRES-08, SNS-COL-01
 
 ### Altitude
@@ -426,7 +428,7 @@ not converge, or decides alone when `model_decides` is false
 - **WEB-API-03**: The system shall accept configuration updates at `/api/config` (POST) and write to persistent storage. ← SYS-WEB-01
 - **WEB-API-04**: The system shall accept firmware updates at `/api/ota` (POST), answer before it restarts, and answer `Expect: 100-continue`. ← SYS-WEB-01
 - **WEB-API-05**: The system shall trigger a device restart at `/api/reboot` (POST). ← SYS-WEB-01
-- **WEB-API-06**: The system shall serve flight data as CSV at `/api/flight.csv`, framed by Content-Length: the newest log, or the log `?n=N` names (FLT-LOG-12). `/flight_log.bin` serves the newest log's binary file. ← SYS-WEB-01
+- **WEB-API-06**: The system shall serve flight data as CSV at `/api/flight.csv`, framed by Content-Length: the newest log, or the log `?n=N` names (FLT-LOG-12). `/flight_log.bin` serves the newest log's binary file, unless the store holds a log of that name, which it then serves. ← SYS-WEB-01
 - **WEB-API-07**: The API shall grant no cross-origin access (no `Access-Control-Allow-Origin`; `Cross-Origin-Resource-Policy: same-origin`), shall refuse with 403 a request whose Host is not one of the board's names or its address, and shall refuse with 403 a POST without `X-Pyro: 1`. ← SYS-WEB-01
 - **WEB-API-08**: The web API and USB shall stay live in flight. From launch until the flight's record is safe, only the flight's record shall be stored: any other storage access shall be refused, a web request with 423, and a web transfer that holds the storage when the flight starts shall be dropped. ← SYS-WEB-01
 - **WEB-API-09**: The system shall erase every flight log on request at `/api/flight/erase` (POST), unless a log is being written. ← DAT-06, FLT-LOG-12

@@ -51,7 +51,7 @@ static void store_config(const flight_conditions_t *c) {
     char ini[512];
     int n = snprintf(ini, sizeof(ini), "[pyro]\nunits=m\n");
     if (c->to_landed)
-        n += snprintf(ini + n, sizeof(ini) - (size_t)n, "landing_timeout=0\n");
+        n += snprintf(ini + n, sizeof(ini) - (size_t)n, "landing_timeout=255\n");
     if (c->main_m)
         n += snprintf(ini + n, sizeof(ini) - (size_t)n, "pyro2_mode=agl\npyro2_value=%u\n", (unsigned)c->main_m);
     if (c->estimator)

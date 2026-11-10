@@ -344,11 +344,6 @@ void hal_tasks_tick(uint32_t now_ms) {
     }
 }
 
-/* ── Sleep (sim: no-op) ───────────────────────────────────────────── */
-
-void hal_sleep_until_event(void) {
-    /* No-op: sim loop is driven by physics engine */
-}
 
 void hal_platform_init(void) {}
 void hal_platform_service(void) {}

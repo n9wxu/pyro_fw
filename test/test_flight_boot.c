@@ -172,6 +172,18 @@ void test_FLT_BOOT_18_an_unreadable_configuration_is_a_fault_and_the_file_is_kep
     assert_terminal_general_fault(DIAG_CONFIG_UNREADABLE);
 }
 
+void test_FLT_BOOT_20_a_refused_value_is_a_general_fault_on_the_pad(void) {
+    power_up(19);
+    harness_config("[pyro]\nunits=m\npyro1_mode=delay\npyro2_mode=AGL\npyro2_value=300\n");
+    run_to_pad(&now);
+    wait_ms(1500);
+    TEST_ASSERT_FALSE_MESSAGE(ctx.plan.enabled[1], "a mode that does not parse is none [CFG-04]");
+    TEST_ASSERT_TRUE_MESSAGE(ctx.plan.enabled[0], "the fields it accepted fly");
+    TEST_ASSERT_EQUAL_UINT16(DIAG_CONFIG_REJECTED, ctx.diag);
+    TEST_ASSERT_TRUE(harness_last_said(BR_GENERAL_FAULT));
+    TEST_ASSERT_EQUAL_STRING("config_refused", pad_check_fault_name(DIAG_CONFIG_REJECTED));
+}
+
 /* A chip smaller than the image's flash map leaves the filesystem unmounted
  * and the image another board's: the fault named is the cause, not the
  * filesystem it protects [FLT-BOOT-17, FLT-BOOT-19]. */
@@ -226,6 +238,7 @@ int main(void) {
     RUN_TEST(test_FLT_BOOT_13_a_calibration_with_no_samples_is_a_fault);
     RUN_TEST(test_FLT_BOOT_14_unusable_storage_is_a_terminal_general_fault);
     RUN_TEST(test_FLT_BOOT_18_an_unreadable_configuration_is_a_fault_and_the_file_is_kept);
+    RUN_TEST(test_FLT_BOOT_20_a_refused_value_is_a_general_fault_on_the_pad);
     RUN_TEST(test_FLT_BOOT_17_an_image_built_for_another_board_is_a_terminal_general_fault);
     RUN_TEST(test_FLT_BOOT_17_a_mismatch_whose_filesystem_did_not_mount_names_the_mismatch);
     RUN_TEST(test_FLT_BOOT_17_a_board_with_its_own_stamp_or_none_reaches_the_pad);

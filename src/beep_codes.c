@@ -272,10 +272,6 @@ static void spec_to_str(const beep_spec_t *sp, char *out, int max) {
     }
 }
 
-static bool parse_bool(const char *s) {
-    return strcmp(s, "true") == 0 || strcmp(s, "1") == 0;
-}
-
 /* Decimal digits only, at most max; false leaves *out alone. */
 static bool parse_count(const char *s, unsigned long max, unsigned long *out) {
     if (s[0] < '0' || s[0] > '9')

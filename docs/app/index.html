@@ -23,6 +23,7 @@
 <!-- ── Tab 1: Status ──────────────────────────────────────────── -->
 <div id="tab-status" class="tabpanel">
   <div id="pendingWarn" class="warn" style="display:none">⚠ Configuration saved but not applied — it takes effect at the next start. Press Reboot in the Config tab.<span id="pendingWhat"></span></div>
+  <div id="faultWarn" class="warn" style="display:none"></div>
   <div id="limitWarn" class="warn" style="display:none">⚠ A pyro timing value was outside what this board permits and has been brought into range — see the Config tab.</div>
   <div id="testWarn" class="warn" style="display:none">⚠ Test mode: on USB this board detects a launch, fires its pyros and beeps as it does on battery. A reboot ends it.</div>
   <table class="info" id="statusTable">
@@ -135,7 +136,7 @@
             </select>
             <div class="hint">The simple filter follows the raw readings and needs no model of the flight. Alone, it suits a pressure chamber; above about Mach 0.8 a static port's error can fool it.</div></td></tr>
     <tr><td class="lbl">Apogee lockout</td><td>
-      <input type="number" id="apogeeLockout" min="0" max="65535" value="0" oninput="cfgChanged()"> s
+      <input type="number" id="apogeeLockout" min="0" max="600" value="0" oninput="cfgChanged()"> s
       <div class="hint">No apogee until this long after launch; 0 for none. For a supersonic flight, past the time it is above Mach 0.8.</div></td></tr>
     <tr><td class="lbl">Heights are in</td>
         <td><select id="standardAtmosphere" onchange="cfgChanged()">

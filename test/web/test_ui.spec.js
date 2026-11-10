@@ -867,6 +867,41 @@ test.describe('Flown device', () => {
     await request.post(`${BASE}/api/_test/reset`);
   });
 
+  /* BUZ-CODE-03, FLT-BOOT-15, FLT-BOOT-20: on USB the buzzer is silent, so
+     the page says what the board found. */
+  test('the status tab names every fault the board reports', async ({ page, request }) => {
+    await request.post(`${BASE}/api/_test/reset`);
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await expect(page.locator('#faultWarn')).toBeHidden();
+    await request.post(`${BASE}/api/_test/status`,
+      { data: JSON.stringify({ faults: ['sensor_stuck', 'config_refused'] }) });
+    await expect(page.locator('#faultWarn')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('#faultWarn')).toContainText('pressure sensor repeats one reading');
+    await expect(page.locator('#faultWarn')).toContainText('config.ini holds a value the board refused');
+    await request.post(`${BASE}/api/_test/status`, { data: JSON.stringify({ faults: ['a_fault_new_to_the_page'] }) });
+    await expect(page.locator('#faultWarn')).toContainText('a_fault_new_to_the_page', { timeout: 5000 });
+    await request.post(`${BASE}/api/_test/reset`);
+  });
+
+  /* PYR-CONT-02, PYR-HEALTH-02: open and short are told apart, and a channel
+     that is not a pyro channel is not called faulty. */
+  test('the status tab tells open from short and leaves an unused channel alone', async ({ page, request }) => {
+    await request.post(`${BASE}/api/_test/reset`);
+    await page.goto(BASE);
+    await waitForStatus(page);
+    await request.post(`${BASE}/api/_test/status`, { data: JSON.stringify(
+      { pyro1_fired: false, pyro2_fired: false, pyro1_cont: false, pyro2_cont: false,
+        faults: ['pyro1_open', 'pyro2_short'] }) });
+    await expect(page.locator('#sP1')).toContainText('FAULT: open', { timeout: 5000 });
+    await expect(page.locator('#sP2')).toContainText('FAULT: short');
+    await request.post(`${BASE}/api/_test/status`, { data: JSON.stringify(
+      { pyro2_mode: 'none', faults: ['pyro1_open'] }) });
+    await expect(page.locator('#sP2')).toContainText('not used', { timeout: 5000 });
+    await expect(page.locator('#sP2')).not.toContainText('FAULT');
+    await request.post(`${BASE}/api/_test/reset`);
+  });
+
   test('flight data tab shows duration and apogee', async ({ page }) => {
     await page.goto(BASE);
     await waitForStatus(page);

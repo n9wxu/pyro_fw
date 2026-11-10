@@ -147,7 +147,7 @@ include(FetchContent)
 FetchContent_Declare(
     alfs
     GIT_REPOSITORY https://github.com/n9wxu/alfs.git
-    GIT_TAG b5d946be8155c0976abb6cab4e50dd2069a6690f # experiment/v6-frames, format 6
+    GIT_TAG 56a5f80b7706523458dfa363e57fd88401aa83f7 # experiment/v6-frames, format 6
 )
 
 # The TCP/IP stack [DD-102]: its sources are compiled into the firmware and
@@ -872,6 +872,18 @@ add_custom_target(log_room_tests
     COMMAND ${CMAKE_BINARY_DIR}/test_log_room
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Flight log room tests"
+)
+
+# The flight log's ring against a writer as slow as a board's (FLT-LOG-07).
+add_custom_target(log_drain_tests
+    COMMAND ${HOST_CC} -Wall -Wextra -I${CMAKE_CURRENT_LIST_DIR}/src
+               -I${unity_SOURCE_DIR}/src
+               ${CMAKE_CURRENT_LIST_DIR}/test/test_log_drain.c
+               ${unity_SOURCE_DIR}/src/unity.c
+               -o ${CMAKE_BINARY_DIR}/test_log_drain
+    COMMAND ${CMAKE_BINARY_DIR}/test_log_drain
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Flight log ring tests"
 )
 
 # The start-up's record, and the boot log that keeps the last of them (FLT-LOG-14).
