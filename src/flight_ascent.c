@@ -1,6 +1,6 @@
 /*
  * Ascent: the thrust report, arming, the peak and apogee
- * [FLT-ASC-01..07, FLT-APO-01..04, FLT-APO-07..10, FLT-APO-12].
+ * [FLT-ASC-01..07, FLT-APO-01..04, FLT-APO-07..10].
  *
  * SPDX-License-Identifier: MIT
  */
@@ -67,14 +67,11 @@ static uint32_t time_of_simple_apogee(const flight_context_t *ctx, const pp_samp
     return s->timestamp_ms - top <= APOGEE_BACKDATE_MAX_MS ? top : s->timestamp_ms;
 }
 
-/* [FLT-APO-07, FLT-APO-09, FLT-APO-10, FLT-APO-12] Once the user's lockout
- * has run, the obeyed estimator's apogee, the simple filter's standing in
- * where the model is blind to the top; with `model_decides` false, the simple
- * filter's alone [DD-109, DD-113]. */
+/* [FLT-APO-07, FLT-APO-09, FLT-APO-10] The obeyed estimator's apogee, the
+ * simple filter's standing in where the model is blind to the top; with
+ * `model_decides` false, the simple filter's alone [DD-109, DD-113]. */
 static apogee_by_t apogee_seen(flight_context_t *ctx, const pp_sample_t *s) {
     if (!ctx->pyros_armed || ctx->apogee_declared)
-        return APOGEE_NOT_YET;
-    if (s->timestamp_ms - ctx->launch_time < (uint32_t)ctx->config.apogee_lockout * 1000u)
         return APOGEE_NOT_YET;
     bool simple = simple_apogee_met(&ctx->simple, s->timestamp_ms);
     if (!ctx->config.model_decides)

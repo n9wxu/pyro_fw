@@ -182,7 +182,6 @@ refire_interval=0
 fire_gap=0
 estimator=constacc
 model_decides=true
-apogee_lockout=0
 standard_atmosphere=false
 landing_timeout=60
 lua_enabled=false
@@ -205,7 +204,6 @@ lua_pixels=0
 | fire_gap | ms of quiet time between pulses; 0 takes the board's default (3000) | 0 |
 | estimator | constacc; any other name takes the default (SNS-EST-06) | constacc |
 | model_decides | true: the estimator decides apogee, the simple filter standing in; false: the simple filter alone (FLT-APO-09, FLT-APO-10) | true |
-| apogee_lockout | seconds after T+0 before any apogee (FLT-APO-12) | 0 |
 | standard_atmosphere | true: heights in the 1976 standard's air; false: in the pad's (SNS-EST-05) | false |
 | landing_timeout | seconds, 0-255 | 60 |
 | lua_enabled | true/false | false |
