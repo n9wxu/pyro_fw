@@ -480,6 +480,42 @@ void test_SNS_COL_02_the_ms5607_is_read_after_its_worst_case(void) {
     TEST_ASSERT_TRUE_MESSAGE(MS5607_PART.reset_us >= 2800u, "the PROM's reload, pages 10 and 11");
 }
 
+/* ── Stopping for a reset [SNS-COL-07] ────────────────────────────── */
+
+void test_SNS_COL_07_a_stop_leaves_no_transfer_on_the_bus(void) {
+    uint32_t cycle = collector_cycle_us(&MS5607_PART, &MS5607_AT_400K);
+    for (uint32_t at = 0; at < cycle; at += 97u) {
+        TEST_ASSERT_TRUE(collector_begin(&MS5607_PART, &MS5607_AT_400K));
+        run_for(3u * cycle + at);
+        uint64_t asked = fake_bus.now;
+        while (!collector_stop()) {
+            TEST_ASSERT_TRUE_MESSAGE(fake_bus.now - asked < 2u * cycle, "it never stopped");
+            run_for(50u);
+        }
+        TEST_ASSERT_TRUE_MESSAGE(fake_bus.done_at <= fake_bus.now, "a transfer is on the bus");
+        uint32_t conversions = part.conversions, reads = part.reads;
+        run_for(2u * cycle);
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(conversions, part.conversions, "a command after the stop");
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(reads, part.reads, "a read after the stop");
+    }
+}
+
+void test_SNS_COL_07_a_stop_during_a_bus_clear_waits_for_the_lines(void) {
+    fake_bus.fail = COLLECTOR_ADDRESS_NACK;
+    fake_bus.fail_transfers = -1;
+    while (!fake_bus.lines_taken)
+        run_to(fake_bus.alarm_at);
+    uint64_t asked = fake_bus.now;
+    while (!collector_stop()) {
+        TEST_ASSERT_TRUE_MESSAGE(fake_bus.now - asked < 100000u, "it never stopped");
+        run_for(5u);
+    }
+    TEST_ASSERT_FALSE_MESSAGE(fake_bus.lines_taken, "the lines are still the machine's");
+    TEST_ASSERT_TRUE(fake_bus.scl_high && fake_bus.sda_high);
+    TEST_ASSERT_TRUE(fake_bus.done_at <= fake_bus.now);
+    fake_bus.fail_transfers = 0;
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_SNS_COL_01_it_runs_with_nothing_starting_it);
@@ -502,5 +538,7 @@ int main(void) {
     RUN_TEST(test_SNS_COL_05_a_silent_part_is_tried_until_it_answers);
     RUN_TEST(test_SNS_COL_02_the_bmp280_is_read_after_its_worst_case);
     RUN_TEST(test_SNS_COL_02_the_ms5607_is_read_after_its_worst_case);
+    RUN_TEST(test_SNS_COL_07_a_stop_leaves_no_transfer_on_the_bus);
+    RUN_TEST(test_SNS_COL_07_a_stop_during_a_bus_clear_waits_for_the_lines);
     return UNITY_END();
 }

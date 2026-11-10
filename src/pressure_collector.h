@@ -81,6 +81,12 @@ typedef struct {
 /* Starts the machine. False: no hardware alarm was free. */
 bool collector_begin(const collector_part_t *part, const collector_wiring_t *wiring);
 
+/* [SNS-COL-07] Asks the machine to end: it starts no transfer more. True
+ * once it has ended, with no transfer on the bus and the lines let go; a
+ * reset then finds the part between transfers. collector_begin() starts it
+ * again. */
+bool collector_stop(void);
+
 /* The oldest cycle not yet taken. */
 bool collector_take(collector_raw_t *out);
 

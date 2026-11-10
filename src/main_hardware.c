@@ -35,6 +35,12 @@
 
 /* The period is loop_period.h's [FLT-RT-04, DD-104]. */
 #include "loop_period.h"
+#include "pressure_collector.h"
+#include "board_support.h"
+
+/* The collector ends within a cycle, 20 ms; one that has not by now is not
+ * running, and the reset goes ahead. */
+#define RESET_BUS_QUIET_MS 100u
 
 /* Twice the board's declared worst case, so a board that exceeds its own
  * budget shows up in loop_overruns rather than being reset for it. */
@@ -207,11 +213,22 @@ static void __attribute__((noinline)) flight_task_start(void) {
  * meanwhile, so the HTTP response flushes first. An OTA reboots through
  * here too, once its reply is on its way. Returns whether a reboot is
  * armed. */
-static bool __attribute__((noinline)) service_reset(bool armed) {
+static bool __attribute__((noinline)) service_reset(bool armed, uint32_t now) {
     extern volatile uint8_t pending_reset;
+    static bool asked;
+    static uint32_t asked_ms;
+    if (pending_reset == 0 || armed)
+        return armed;
+    if (!asked) {
+        asked = true;
+        asked_ms = now;
+    }
+    /* [SNS-COL-07] A sensor reset mid-transfer keeps the bus. */
+    if (!collector_stop() && !deadline_reached(now, asked_ms + RESET_BUS_QUIET_MS))
+        return false;
     if (pending_reset == 1)
         rom_reset_usb_boot(0, 0); /* never returns; scratch does not survive it */
-    if (pending_reset == 2 && !armed) {
+    if (pending_reset == 2) {
 #if PYRO_HAS_LUA
         lua_app_restart_commanded();
 #endif
@@ -279,7 +296,7 @@ void flight_task(void *arg) {
         /* Both resets run from flash: one asked for in flight waits for
          * landing [FLT-RT-02]. */
         if (!flash_op_in_flight())
-            reset_armed = service_reset(reset_armed);
+            reset_armed = service_reset(reset_armed, now);
 
         /* Changes another task handed over: config, test mode, a buzzer
          * audition. Applied here, before the flight software reads them. */

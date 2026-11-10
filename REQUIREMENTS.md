@@ -350,6 +350,7 @@ not converge, or decides alone when `model_decides` is false
 - **SNS-COL-03**: The collector shall keep the four newest cycles not yet taken. A fifth pushes the oldest out, and each one pushed out is counted on `/api/status`. ← SNS-COL-01, FLT-RT-01
 - **SNS-COL-04**: A bus transfer that fails shall be counted on `/api/status` by its cause: the address not acknowledged, a byte not acknowledged, the data line held, or the transfer not finishing in its time. A transfer not finished shall be aborted. The cycle starts again; a failed cycle is not handed on. ← SNS-COL-01
 - **SNS-COL-05**: After three failed transfers in a row the collector shall clear the bus (nine clocks and a STOP), reset the part, wait out its start-up, and go on; and again after every three more. Each recovery is counted on `/api/status`. ← SNS-COL-04
+- **SNS-COL-07**: A reset the system commands (a reboot, an update's restart, BOOTSEL) shall wait until the collector has ended the transfer on the bus and started no other, 100 ms at most: a sensor reset in the middle of a transfer can keep the bus until its power is removed. ← SNS-COL-01
 - **SNS-COL-06**: The collector's interrupt handler and everything it calls shall run from RAM. The build shall fail otherwise. ← SNS-PRES-08, SNS-COL-01
 
 ### Altitude

@@ -236,6 +236,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | SNS-COL-03 | The collector shall keep the four newest cycles not yet taken | test_collector.c: test_SNS_COL_03_a_task_60_ms_late_loses_nothing, test_SNS_COL_03_four_are_kept_and_the_oldest_goes_first, test_SNS_COL_03_a_cycle_is_taken_once, test_SNS_COL_03_the_handler_does_not_run_inside_a_take | ✅ |
 | SNS-COL-04 | A bus transfer that fails shall be counted on /api/status by its cause | test_collector.c: test_SNS_PRES_14_a_flash_operation_marks_the_conversion_it_ran_beside, test_SNS_COL_04_a_failed_transfer_is_counted_by_its_cause, test_SNS_COL_04_a_transfer_that_never_ends_is_aborted, test_SNS_COL_04_a_failed_cycle_is_not_queued; Hardware: `support/api_check.py` | ✅ |
 | SNS-COL-05 | After three failed transfers in a row the collector shall clear the bus (nine clocks and a STOP), reset... | test_collector.c: test_SNS_COL_04_a_failed_cycle_is_not_queued, test_SNS_COL_05_three_failures_clear_the_bus_and_reset_the_part, test_SNS_COL_05_the_part_is_left_to_reload_after_its_reset, test_SNS_COL_05_a_silent_part_is_tried_until_it_answers | ✅ |
+| SNS-COL-07 | A reset the system commands (a reboot, an update's restart, BOOTSEL) shall wait until the collector has... | test_collector.c: test_SNS_COL_07_a_stop_leaves_no_transfer_on_the_bus, test_SNS_COL_07_a_stop_during_a_bus_clear_waits_for_the_lines | ✅ |
 | SNS-COL-06 | The collector's interrupt handler and everything it calls shall run from RAM. The build shall fail otherwise | CI runs `support/prove_core0.py` on every image: it fails if `collector_alarm_isr` or anything it calls is outside RAM | ✅ |
 | SNS-ALT-01 | Altitude shall be reported relative to the launch pad, as the height above the ground reference in the... | test_atmosphere.c: test_SNS_ALT_01_below_the_pad_is_negative; test_flight_profiles.c: test_SNS_ALT_01_the_reported_peak_is_not_clamped, test_SNS_ALT_01_below_the_pad_is_a_negative_altitude; Structure: `support/structure_check.py` | ✅ |
 | SNS-MAX-01 | Each board shall declare its sensor's pressure range and its height for proper operation, the greatest... | test_flight_profiles.c: test_SNS_MAX_01_above_the_ceiling_apogee_is_never_early, test_SNS_MAX_01_best_effort_above_the_sensors_range; Web UI: test_ui.spec.js; Hardware: `support/api_check.py` | ✅ |
@@ -478,7 +479,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host test, a web test or a structural check | 339 |
+| ✅ Verified by a host test, a web test or a structural check | 340 |
 | ⚠️ Not verified, or not wholly | 24 |
 | ❌ Not implemented | 0 |
 | ✅ HW (verified on hardware only) | 14 |
