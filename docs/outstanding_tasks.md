@@ -66,6 +66,8 @@ handlers from RAM.
 
 | ID | What | Tests first |
 |---|---|---|
+| PM-C | **A flight with real fires on the bench.** A bench flight mocks every fire (DD-078), so the real channel operations are flown only in a chamber or the air. With a build whose bench flight fires for real, MK1B-8MB on a battery with open connectors flew launch to landing, both channels pulsed, no reset (2026-11-10) | bench: a way to fly the profile with the real operations on a board with no igniter fitted; the flight lands, both channels pulse, `BOOT` rows show no reset |
+| PM-D | **A fault's stamp is overwritten.** A HardFault, panic, assertion or stack overflow on core0 writes its stamp to watchdog scratch 0, and core1's tasks then write their own crumbs there until the watchdog fires, so the `BOOT` row names a crumb, not the fault | host: a stamp from a fault handler survives later crumbs; bench: a forced fault on the flight task shows as its stamp and address in the `BOOT` row |
 | PM-B | **A reset in flight on a board.** On MK1B-8MB 2026-11-08: two logs kept across a reset on the pad, BOOT rows and `boot_log.txt` on each start-up, counters only at the ends and on a fault change, no erase from launch to landing, `LOG OUT OF ROOM` last in a full log. Not shown on hardware: a reset in flight (the web's reboot waits for landing, FLT-RT-02) and a watchdog's stage in the BOOT row | bench: the RUN pin or the battery pulled mid-descent in a bench flight off USB; then `/api/flight.csv?n=` both logs and `/boot_log.txt` |
 
 ---|---|---|
