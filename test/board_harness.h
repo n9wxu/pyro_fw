@@ -45,8 +45,11 @@ uint32_t run_to_pad(uint32_t *t); /* returns the time PAD_IDLE began */
 bool booting(void);
 
 /* The loop clock, late against the sample clock by what this returns for
- * each tick. NULL, the default: no lag. */
+ * each tick; it must not fall by more than a millisecond a tick. The default
+ * is a board's: a stamp is the middle of its conversion, the MS5607's at
+ * least 14.5 ms before the loop reads it. NULL: no lag. */
 extern uint32_t (*loop_lag_ms)(uint32_t t);
+uint32_t harness_stamp_lag_ms(uint32_t t);
 
 /* What the buzzer was asked to say. */
 extern int harness_spec_plays, harness_usb_ok_plays, harness_altitude_plays, harness_stops;

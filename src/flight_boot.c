@@ -46,12 +46,13 @@ static void resume_flight(flight_context_t *ctx, const pad_record_t *record, flo
     flight_read_pyro_health(ctx);
     ctx->diag |= DIAG_RESUMED;
     ctx->ground_pressure = record->ground_pressure_pa;
-    ctx->launch_time = now;
-    ctx->last_sample = now;
+    pp_sample_t newest;
+    ctx->launch_time = pp_newest(&newest) ? newest.timestamp_ms : now; /* no later stamp is before it */
+    ctx->last_sample = ctx->launch_time;
     ctx->pressure_pa = (int32_t)atmos_pressure_pa(altitude_m);
     ctx->altitude_cm = (int32_t)(pp_altitude_height_m(altitude_m) * 100.0f);
     ctx->max_altitude_cm = ctx->altitude_cm;
-    hal_log_start(&ctx->config, ctx->ground_pressure, now);
+    hal_log_start(&ctx->config, ctx->ground_pressure, ctx->launch_time);
     hal_log_sample(0, ctx->pressure_pa, ctx->altitude_cm, ASCENT, 0, EVT_LAUNCH);
     hal_log_sample(0, ctx->pressure_pa, ctx->altitude_cm, ASCENT, 0, EVT_RESUMED);
 }

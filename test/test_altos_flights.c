@@ -12,6 +12,7 @@
  */
 #include "unity.h"
 #include "mocks.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "board_harness.h"
@@ -33,10 +34,13 @@ typedef struct {
 
 static point_t logged[POINTS_MAX];
 static int points;
-static float altos_apogee_s, end_s;
+static float altos_apogee_s, lit_s, end_s;
 
-/* The columns of an AltOS CSV row this needs: time, state name, pressure. */
-static bool parse_row(char *line, float *t, char *state, float *pa) {
+#define LIT_MS2 19.6f /* 2 g: the motor has lit */
+
+/* The columns of an AltOS CSV row this needs: time, state name,
+ * acceleration, pressure. */
+static bool parse_row(char *line, float *t, char *state, float *accel, float *pa) {
     char *field[FIELDS];
     int n = 0;
     for (char *p = line; n < FIELDS; p++) {
@@ -46,7 +50,8 @@ static bool parse_row(char *line, float *t, char *state, float *pa) {
             break;
         *p = '\0';
     }
-    if (n < FIELDS || sscanf(field[4], "%f", t) != 1 || sscanf(field[11], "%f", pa) != 1)
+    if (n < FIELDS || sscanf(field[4], "%f", t) != 1 || sscanf(field[10], "%f", accel) != 1 ||
+        sscanf(field[11], "%f", pa) != 1)
         return false;
     sscanf(field[9], "%15s", state);
     return true;
@@ -59,18 +64,21 @@ static void load(const char *name) {
     TEST_ASSERT_NOT_NULL_MESSAGE(f, path);
     char line[1024];
     points = 0;
-    altos_apogee_s = -1.0f;
+    altos_apogee_s = lit_s = -1.0f;
     while (fgets(line, sizeof(line), f) && points < POINTS_MAX) {
-        float t, pa;
+        float t, accel, pa;
         char state[16] = "";
-        if (line[0] == '#' || !parse_row(line, &t, state, &pa))
+        if (line[0] == '#' || !parse_row(line, &t, state, &accel, &pa))
             continue;
+        if (lit_s < 0.0f && accel > LIT_MS2)
+            lit_s = t;
         if (altos_apogee_s < 0.0f && (strcmp(state, "drogue") == 0 || strcmp(state, "main") == 0))
             altos_apogee_s = t;
         logged[points++] = (point_t){t, pa};
     }
     fclose(f);
     TEST_ASSERT_TRUE(points > 100);
+    TEST_ASSERT_TRUE_MESSAGE(lit_s > logged[0].t_s, "the log begins on the pad");
     end_s = logged[points - 1].t_s;
 }
 
@@ -84,13 +92,13 @@ static void load(const char *name) {
  * is a stuck one [SNS-PRES-10]. */
 static float looped(float from_s, float to_s, float t_s) {
     float span = to_s - from_s;
-    float k = (float)(int)((t_s - from_s) / span);
+    float k = floorf((t_s - from_s) / span);
     return from_s + (t_s - from_s) - k * span;
 }
 
 static float logged_pa(float t_s) {
     if (t_s < logged[0].t_s)
-        t_s = looped(logged[0].t_s, 0.0f, t_s);
+        t_s = looped(logged[0].t_s, lit_s, t_s); /* the pad, without the motor's start in it */
     if (t_s >= end_s)
         t_s = looped(end_s - TAIL_S, end_s, t_s);
     for (int i = 1; i < points; i++)

@@ -29,7 +29,7 @@ typedef struct {
 } fire_plan_t;
 
 typedef struct {
-    uint32_t now_ms; /* sample time */
+    uint32_t now_ms; /* the loop's time; never behind an earlier pass's */
     bool apogee_declared;
     uint32_t apogee_ms;
     bool state_known;  /* false while the sensor gives no data [SNS-PRES-10, SNS-PRES-11] */
