@@ -51,6 +51,7 @@
 #include "flight_log.h"
 #include "log_files.h"
 #include "log_room.h"
+#include "log_drain.h"
 #include "boot_record.h"
 #include "log_counters.h"
 #include "core1_frame.h"
@@ -82,16 +83,7 @@ typedef struct {
     float temperature_c;
 } hal_pressure_t;
 
-#define HAL_PRESSURE_BATCH_SIZE 5
-
-typedef struct {
-    struct {
-        float pressure_pa;
-        float temperature_c;
-    } samples[HAL_PRESSURE_BATCH_SIZE];
-    uint32_t timestamps_ms[HAL_PRESSURE_BATCH_SIZE];
-    int count;
-} hal_pressure_batch_t;
+#define LED_TOGGLE_READINGS 5 /* a blink the eye follows at any sensor's rate */
 
 /* ── Async task runner ────────────────────────────────────────────── */
 
@@ -207,12 +199,6 @@ typedef struct {
     int sensor_type;      /* 1=MS5607  2=BMP280 */
     ms5607_temps_t temps; /* MS5607: the temperature, carried to each pressure [DD-093] */
 
-    /* Ping-pong batch buffers.  back is filled by the tick function;
-     * front is promoted atomically when full and read by the consumer. */
-    hal_pressure_batch_t back;
-    hal_pressure_batch_t front;
-    volatile bool front_ready; /* true when front is valid for consumer */
-
     /* Latest sample for hal_pressure_read() bridge (transparent mode). */
     hal_pressure_t last;
     bool has_last;
@@ -251,8 +237,8 @@ uint32_t hal_pressure_stamp_lag_max_us(void) {
     return pres.stamp_lag_max_us;
 }
 
-/* Append a completed reading to the batch, update the bridge sample,
- * and feed the pressure_processing pipeline (IIR + altitude ring).
+/* A completed reading: the bridge sample, and the pressure_processing
+ * pipeline (IIR + altitude ring).
  *
  * [SNS-PRES-08] The reading's time is the driver's: never the loop's, which a
  * flash stall between the conversion and the read would make late by the
@@ -265,7 +251,6 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
     bench_flight_pressure(rb.time_us, flight_get_state() == LANDED, &rb.pressure_pa);
 #endif
     uint64_t stamp_us = r->time_us;
-    uint32_t now_ms = (uint32_t)(stamp_us / 1000u);
     p->last.pressure_pa = r->pressure_pa;
     p->last.temperature_c = r->temperature_c;
     p->has_last = true;
@@ -288,27 +273,8 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
     pp_note_temperature(r->temperature_c);
     pp_feed_us((int32_t)r->pressure_pa, stamp_us);
 
-    int idx = p->back.count;
-    if (idx < HAL_PRESSURE_BATCH_SIZE) {
-        p->back.samples[idx].pressure_pa = r->pressure_pa;
-        p->back.samples[idx].temperature_c = r->temperature_c;
-        p->back.timestamps_ms[idx] = now_ms;
-        p->back.count++;
-    }
-
-    /* Promote back → front when the batch is full and the consumer has
-     * released the previous front.  If the consumer is slow we keep
-     * overwriting back; the flight filter handles repeated readings. */
-    if (p->back.count >= HAL_PRESSURE_BATCH_SIZE && !p->front_ready) {
-        p->front = p->back;
-        p->front_ready = true;
-        p->back.count = 0;
-    }
-
-    /* Proof-of-life heartbeat: toggle LED every HAL_PRESSURE_BATCH_SIZE
-     * samples (50 Hz / 5 = 10 Hz toggle = ~5 Hz visible blink). */
     static uint8_t led_n = 0;
-    if (++led_n >= HAL_PRESSURE_BATCH_SIZE) {
+    if (++led_n >= LED_TOGGLE_READINGS) {
         led_n = 0;
         board_led_toggle();
     }
@@ -492,17 +458,6 @@ static bool hal_pressure_fifo_start(void) {
             return true;
     hw_task_register(&pres.base);
     return true;
-}
-
-bool hal_pressure_fifo_get(hal_pressure_batch_t *batch) {
-    if (!pres.front_ready)
-        return false;
-    *batch = pres.front;
-    return true;
-}
-
-void hal_pressure_fifo_release(void) {
-    pres.front_ready = false;
 }
 
 bool hal_pressure_fifo_active(void) {
@@ -1011,7 +966,7 @@ int hal_config_load(config_t *cfg) {
                      rejected);
             hal_telemetry_send(line);
         }
-        return 0;
+        return rejected;
     case CONFIG_FILE_MISSING: {
         const char *def = config_default_ini();
         hal_fs_write_file("config.ini", def, (int)strlen(def));
@@ -1034,8 +989,6 @@ int hal_config_save(const config_t *cfg) {
 
 /* Deliberately a no-op: __wfe() is suspected of blocking USB NCM TX, which
  * shows up as the txf counter climbing and http stuck at zero. */
-
-void hal_sleep_until_event(void) {}
 
 /* ── Platform ─────────────────────────────────────────────────────── */
 
@@ -1154,13 +1107,14 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
 #define LOG_FLUSH_MS 200u
 #define LOG_HOLDOFF_MAX_MS 2000u /* [DD-027] */
 
-/* Written at once from here up, without waiting for the flush timer. */
-#define LOG_WATERMARK (LOG_BUF_SIZE - 96u)
-
 /* Script text shares the ring with the flight samples and ranks below them,
  * so it is admitted only in the lower half: a chatty script loses its own
  * lines rather than a single altitude reading. */
 #define LOG_TEXT_CEILING (LOG_BUF_SIZE / 2u)
+
+/* The estimators' rows, a few a second at most, rank between the two: the
+ * launch holdoff alone fills the ring past the script's half [DD-027]. */
+#define LOG_ESTIMATOR_CEILING (LOG_BUF_SIZE - LOG_BUF_SIZE / 8u)
 
 /* How much flight a power loss can take with it [FLT-LOG-06]. A sync stores
  * the bytes the file's buffer holds, which a whole page would otherwise wait
@@ -1425,11 +1379,7 @@ static void log_write_out(void) {
     __dmb();
     while (log_ring.tail != h) {
         uint32_t t = log_ring.tail;
-        uint32_t off = t & LOG_MASK;
-        uint32_t span = h - t;
-        if (span > LOG_BUF_SIZE - off)
-            span = LOG_BUF_SIZE - off;
-        int n = log_file_write(log_ring.buf + off, span);
+        int n = log_file_write(log_ring.buf + (t & LOG_MASK), log_drain_piece(h, t, LOG_BUF_SIZE));
         if (n <= 0)
             return; /* the bytes stay: the next pass retries */
         __dmb();
@@ -1458,6 +1408,14 @@ static void log_hand_to_host(void) {
 
 static bool log_opening_done(void) {
     return log_open.header_done && log_pad_count(&log_open.pad) == 0;
+}
+
+/* The opening's bytes still to write, ahead of the ring's. */
+static uint32_t log_opening_left(void) {
+    if (log_opening_done())
+        return 0;
+    return log_open.header_len + (uint32_t)log_pad_count(&log_open.pad) * FLOG_SAMPLE_BYTES +
+           BOOT_RECORD_ROWS * FLOG_RECORD_MAX;
 }
 
 /* The storage task's end of a log: the file closed, the filesystem free. */
@@ -1588,7 +1546,7 @@ static void log_service(uint32_t now_ms) {
         log_ring.started_ms = now_ms;
     }
 
-    bool full = log_used() >= LOG_WATERMARK;
+    bool full = log_drain_full(log_used(), LOG_BUF_SIZE, log_opening_left());
     if (full || now_ms - log_ring.started_ms >= LOG_HOLDOFF_MAX_MS)
         log_ring.launch_holdoff = false;
     /* The timer does not fire during the holdoff; a full ring and a stop
@@ -1733,8 +1691,8 @@ static bool log_tagged(uint32_t time_ms, uint8_t tag, const char *text, int len)
 
 /* Rationed: a script can flood, and neither script output nor the estimators'
  * rows may crowd out the flight samples they annotate. */
-static bool log_rationed(uint32_t time_ms, uint8_t tag, const char *text, int len) {
-    if (log_used() >= LOG_TEXT_CEILING) {
+static bool log_rationed(uint32_t ceiling, uint32_t time_ms, uint8_t tag, const char *text, int len) {
+    if (log_used() >= ceiling) {
         log_ring.text_dropped += (uint32_t)(len > 0 ? len : 0);
         return false;
     }
@@ -1794,11 +1752,11 @@ void hal_log_counters(void) {
 }
 
 bool hal_log_text(uint32_t time_ms, const char *text, int len) {
-    return log_rationed(time_ms, FLOG_TAG_LUA, text, len);
+    return log_rationed(LOG_TEXT_CEILING, time_ms, FLOG_TAG_LUA, text, len);
 }
 
 bool hal_log_estimator(uint32_t time_ms, const char *text, int len) {
-    return log_rationed(time_ms, FLOG_TAG_ESTIMATOR, text, len);
+    return log_rationed(LOG_ESTIMATOR_CEILING, time_ms, FLOG_TAG_ESTIMATOR, text, len);
 }
 
 bool hal_log_mock(uint32_t time_ms, const char *what) {

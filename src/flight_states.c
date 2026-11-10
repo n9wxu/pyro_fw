@@ -108,7 +108,9 @@ flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {
 void flight_init(flight_context_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     config_set_defaults(&ctx->config);
-    ctx->config_unreadable = hal_config_load(&ctx->config) == HAL_CONFIG_UNREADABLE;
+    int loaded = hal_config_load(&ctx->config);
+    ctx->config_unreadable = loaded == HAL_CONFIG_UNREADABLE;
+    ctx->config_refused = loaded > 0;
     ctx->board_mismatch = board_selftest_result() == BOARD_SELFTEST_FAIL;
     buzzer_init();
     beep_store_load(NULL, 0);

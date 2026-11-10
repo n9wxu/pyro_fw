@@ -117,6 +117,8 @@ state_event_t flight_detect_boot_sensor(flight_context_t *ctx, uint32_t now) {
         ctx->diag |= DIAG_CONFIG_UNREADABLE;
         return SEVT_FAULT;
     }
+    if (ctx->config_refused)
+        ctx->diag |= DIAG_CONFIG_REJECTED; /* [FLT-BOOT-20] said on the pad, which it still reaches */
     state_event_t resumed;
     if (!decide_resume(ctx, now, &resumed))
         return SEVT_NONE;

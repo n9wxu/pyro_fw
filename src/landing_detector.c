@@ -13,7 +13,7 @@
 bool landing_detected(landing_detector_t *d, const pp_sample_t *s, uint32_t descent_ms, uint32_t timeout_ms) {
     bool still = !s->suspect && s->speed < STILL_MS && s->speed > -STILL_MS;
     bool near_ground = s->height_m < NEAR_GROUND_M;
-    bool timed_out = timeout_ms > 0 && descent_ms >= timeout_ms;
+    bool timed_out = descent_ms >= timeout_ms;
 
     bool landed_near = held_for(still && near_ground, &d->near_ground_since, s->timestamp_ms, STILL_HOLD_MS);
     bool landed_late = held_for(still && timed_out, &d->timed_out_since, s->timestamp_ms, STILL_HOLD_MS);

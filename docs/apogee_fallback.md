@@ -264,7 +264,7 @@ throughout; LAUNCH at 0.15 s, ARMED at 0.59 s. Climb to 3,010 m at 3.3 s
 (2,700 m/s at launch), fall to the ground by 24 s, with three one-step breaks
 at 9.0, 13.0 and 18.5 s. The fall goes from −28 to −340 m/s in 4.5 s, about
 7 g downward; no falling body does more than 1 g. Neither estimator explained
-it after 0.19 s (`explains=0` in the log and in `test/estimator_replay.c`).
+it after 0.19 s (`explains=0` in the log).
 Today's firmware, which declares apogee only on an explained estimate
 (FLT-APO-07), declared none, and so no landing.
 

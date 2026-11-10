@@ -49,7 +49,7 @@ let status = JSON.parse(JSON.stringify(DEFAULTS[MODE]));
 /* Reached over USB, as every real board is. */
 Object.assign(status, {usb_attached: true, test_mode: false, buzzer_active: false,
   resume: 'not resumed: no record', emergency_fire: false, pyro_limited: false,
-  refire_interval_ms: 1000, fire_gap_ms: 3000,
+  refire_interval_ms: 1000, fire_gap_ms: 3000, faults: [],
   pyro_pulses: MODE === 'flown' ? [3, 1] : [0, 0], pyro_fault: [false, false]});
 /* [PYR-BOARD-03, SNS-MAX-01] What the board permits, and its sensor's reach:
    the general pyro ranges, and a BMP280's 9 km. */
@@ -636,6 +636,9 @@ const server = http.createServer((req, res) => {
     status.emergency_fire = false;
     status.pyro_limited = false;
     status.pyro_fault = [false, false];
+    status.faults = [];
+    for (const k of ['pyro1_cont', 'pyro2_cont', 'pyro1_fired', 'pyro2_fired', 'pyro1_mode', 'pyro2_mode'])
+      status[k] = DEFAULTS[MODE][k];
     configPosts = [];
     luaScript = '';
     luaScriptPosts = 0;

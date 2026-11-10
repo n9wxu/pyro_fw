@@ -153,7 +153,9 @@ void hal_fs_close(hal_file_t *f);
 /* ── Config [v2: replaces direct hal_fs_* in flight software] ──────── */
 
 /* The defaults, overlaid with the stored file. A missing file is written
- * with the defaults; an unreadable one is left as it is [FLT-BOOT-18]. */
+ * with the defaults; an unreadable one is left as it is [FLT-BOOT-18]. Above
+ * 0: the file's values that were refused, their fields left at the defaults
+ * [FLT-BOOT-20]. */
 #define HAL_CONFIG_DEFAULTED (-1)
 #define HAL_CONFIG_UNREADABLE (-2)
 int hal_config_load(config_t *cfg);
@@ -216,14 +218,6 @@ bool hal_ground_test_asserted(void);
  * The hardware HAL runs the pressure and telemetry tasks that are due. The
  * test and sim HALs implement this as a no-op. */
 void hal_tasks_tick(uint32_t now_ms);
-
-/* ── Power / sleep ────────────────────────────────────────────────── */
-
-/* Sleep the CPU until the next async task is due, a serial input event,
- * or any hardware interrupt (USB, timer).
- * Hardware HAL: sleep_until(earliest task next_due_ms) via alarm timer.
- * Test and sim HALs implement this as a no-op. */
-void hal_sleep_until_event(void);
 
 /* ── Platform (called from main, not flight code) ─────────────────── */
 

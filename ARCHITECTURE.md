@@ -36,7 +36,6 @@ core1 with them.
 | USB | the net task on core1: `tud_task()` from `hal_platform_service()`, woken by a TinyUSB event or each millisecond |
 | HTTP | the net task: the transport moves bytes between smallest_tcp and each connection's rings, and handlers are work units run between its passes (DD-073, DD-102) |
 | Flash writes | on the ground under a lockout that parks the other core; in flight the writer's alone, in pieces inside its slot (`src/flash_op.h`, `src/flash_slot.h`) |
-| CPU sleep | none: `hal_sleep_until_event()` is empty on the hardware |
 
 ## HAL Interface
 
@@ -243,7 +242,6 @@ The larger fixed buffers, from the code:
 |---|---|
 | X-macro config system | `config_fields.h`, `config_set_defaults()`, `config_parse_ini()`, `config_serialize_ini()` |
 | HAL config API | `hal_config_load()` / `hal_config_save()` |
-| CPU sleep | none: `hal_sleep_until_event()` is empty on the hardware |
 | Autonomous pressure sampling | the collector (DD-093) feeding the pressure layer's ring |
 | Telemetry formatter module | `src/telemetry.c`, `$PYRO` NMEA (DD-088) |
 | Buzzer pattern player | an `async_task_t` stepped by `hal_tasks_tick()` |

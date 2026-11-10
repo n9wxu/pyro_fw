@@ -15,6 +15,7 @@
 
 static uint8_t chip[AREA];
 static unsigned erases, prog_faults;
+static bool programs_refused; /* as the flash layer reports a program it could not run */
 
 void fs_lock_init(void) {}
 bool fs_lock(void) {
@@ -33,6 +34,8 @@ static int ram_read(void *ctx, uint32_t addr, void *buf, uint32_t len) {
 
 static int ram_prog(void *ctx, uint32_t addr, const void *buf, uint32_t len) {
     (void)ctx;
+    if (programs_refused)
+        return -1;
     if (addr / PAGE != (addr + len - 1u) / PAGE) {
         prog_faults++;
         return -1;
@@ -438,6 +441,31 @@ static void test_WEB_API_18_a_log_that_cannot_close_reads_as_a_power_cut_left_it
     TEST_ASSERT_EQUAL(0, vfs_flash_remove("flight_log.bin"));
 }
 
+/* [WEB-API-18] An update whose close cannot program leaves the file it
+ * would have replaced, now and after a reset, and the next update lands. */
+static void test_WEB_API_18_a_close_that_cannot_program_keeps_the_old_file(void) {
+    static uint8_t old[150], new[150], got[400];
+    fill(old, sizeof(old), 23);
+    fill(new, sizeof(new), 24);
+    clean_all();
+    TEST_ASSERT_EQUAL(0, write_whole("config.ini", old, sizeof(old)));
+    vfs_flash_file_t f;
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&f, "config.ini", VFS_FLASH_WRITE, wbuf));
+    TEST_ASSERT_EQUAL((int)sizeof(new), vfs_flash_write(&f, new, sizeof(new)));
+    programs_refused = true;
+    int rc = vfs_flash_close(&f);
+    programs_refused = false;
+    TEST_ASSERT_NOT_EQUAL(0, rc);
+    TEST_ASSERT_EQUAL((int32_t)sizeof(old), read_whole("config.ini", got, sizeof(got)));
+    TEST_ASSERT_EQUAL_MEMORY(old, got, sizeof(old));
+    TEST_ASSERT_EQUAL((int32_t)sizeof(old), read_after_reset("config.ini", got, sizeof(got)));
+    TEST_ASSERT_EQUAL_MEMORY(old, got, sizeof(old));
+    TEST_ASSERT_EQUAL(0, write_whole("config.ini", new, sizeof(new)));
+    TEST_ASSERT_EQUAL((int32_t)sizeof(new), read_whole("config.ini", got, sizeof(got)));
+    TEST_ASSERT_EQUAL_MEMORY(new, got, sizeof(new));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("config.ini"));
+}
+
 /* Data no other file holds at any offset, so damage() finds it alone. */
 static void fill_unique(uint8_t *p, uint32_t n, uint32_t seed) {
     uint32_t x = seed * 2654435761u;
@@ -678,6 +706,7 @@ int main(void) {
     RUN_TEST(test_WEB_API_17_a_file_open_is_not_deleted);
     RUN_TEST(test_WEB_API_18_a_write_that_cannot_close_is_let_go_without_a_restart);
     RUN_TEST(test_WEB_API_18_a_failed_write_is_let_go_when_no_other_file_is_open);
+    RUN_TEST(test_WEB_API_18_a_close_that_cannot_program_keeps_the_old_file);
     RUN_TEST(test_WEB_API_18_a_log_that_cannot_close_reads_as_a_power_cut_left_it);
     RUN_TEST(test_WEB_API_18_a_rename_that_cannot_copy_leaves_the_file_as_it_was);
     RUN_TEST(test_USB_10_the_cleanup_waits_only_off_usb);

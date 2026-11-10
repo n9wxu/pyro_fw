@@ -24,6 +24,7 @@ emergency speeds are set must also have fired a channel more than once.
 """
 import argparse
 import json
+import re
 import statistics
 import sys
 import time
@@ -41,6 +42,15 @@ def get(host, path):
 def get_bytes(host, path, timeout=5):
     with urllib.request.urlopen(f"http://{host}{path}", timeout=timeout) as r:
         return r.read()
+
+
+def newest_log(host):
+    """The path of the log this flight wrote: the highest-numbered one. A board
+    that still holds a flight_log.bin of its own serves that file under the
+    name, not the newest (WEB-API-06)."""
+    numbered = sorted(f["path"] for f in get(host, "/api/fs")["files"]
+                      if re.fullmatch(r"/flight_\d{4}\.bin", f["path"]))
+    return numbered[-1] if numbered else "/flight_log.bin"
 
 
 def sample_times(d):
@@ -225,7 +235,7 @@ def main():
               f"flash programs and erases from launch to landing {written}")
         ok &= live.lost == 0 and written == 0
     else:
-        t = sample_times(get_bytes(a.host, "/flight_log.bin", timeout=60))
+        t = sample_times(get_bytes(a.host, newest_log(a.host), timeout=60))
     widest, median = steps(t)
     print(f"log: {len(t)} sample rows, the widest step {widest} ms against a median {median:g} ms; "
           f"readings a flash operation ran beside +{counts['pres_flashed']}")
