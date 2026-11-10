@@ -112,7 +112,6 @@ not converge, or decides alone when `model_decides` is false
 - **FLT-APO-09**: A simple filter shall run from launch on the median of the heights of the last three raw readings the sensor is believed on. Its apogee is that median standing more than 2 m ‡ below the highest median since launch for 0.5 s ‡, once a median has been more than 30 m above the pad; a new highest median starts the 0.5 s again. It shall not declare before the true apogee, and on a flight below Mach 0.8 it shall declare within 1.5 s ‡ after it, at up to 35 Pa ‡ of sensor noise. With `model_decides` false its apogee is the flight's. ← FLT-APO-01, SYS-DEPLOY-04, DD-109
 - **FLT-APO-10**: With `model_decides` true, the flight's apogee shall be the obeyed estimator's (FLT-APO-07), or the simple filter's once its speed over 0.5 s has been under 50 m/s ‡ for the last 3 s ‡ and either the obeyed estimator does not explain the readings and that speed is a fall, or the estimator explains them and has seen no motion of more than two standard deviations of its speed for 2 s ‡. ← FLT-APO-01, SYS-DEPLOY-04, DD-109, DD-113
 - **FLT-APO-11**: The flight log shall say which filter declared apogee, as a row `apogee by` the estimator's name or `simple`; and from launch to landing it shall carry a row once a second with the simple filter's height, speed and whether its speed has been under 50 m/s for 3 s, and a row when its apogee rule is first met. ← SYS-DATA-01, DD-109
-- **FLT-APO-12**: No apogee shall be declared until `apogee_lockout` seconds have passed since T+0; 0, the default, is no lockout. ← FLT-APO-01, DD-113
 - **FLT-ASC-08**: No channel shall arm before the filtered height has been more than 30 m ‡ above the pad. ← PYR-SAFE-04
 
 ### Descent and landing
@@ -289,7 +288,6 @@ not converge, or decides alone when `model_decides` is false
 | `fire_gap` | quiet time between pulses on different channels, ms; 0 takes the board's default | 0: the board's, 3000 where it declares none |
 | `estimator` | the estimator the flight obeys (SNS-EST-06): constacc | constacc |
 | `model_decides` | true: the estimator decides apogee, the simple filter standing in (FLT-APO-10); false: the simple filter alone (FLT-APO-09) | true |
-| `apogee_lockout` | FLT-APO-12, seconds after T+0 before any apogee, 0 to 600 | 0 |
 | `standard_atmosphere` | SNS-EST-05, true: heights in the 1976 standard's air; false: in the pad's | false |
 | `landing_timeout` | FLT-LAND-07, seconds, 1 to 255 | 60 |
 | `lua_enabled`, `lua_baud`, `lua_pixels` | the script and its resources | false, 9600, 0 |

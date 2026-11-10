@@ -50,7 +50,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | FLT-ASC-05 | The system shall log an ARMED event when pyrotechnics are armed | test_flight_profiles.c: test_FLT_ASC_04_arms_in_the_coast_not_in_the_burn | ✅ |
 | FLT-ASC-06 | The system shall not arm pyrotechnics while vertical speed exceeds 10 m/s | test_flight_profiles.c: test_FLT_ASC_04_arms_in_the_coast_not_in_the_burn | ✅ |
 | FLT-ASC-07 | The system shall not arm pyrotechnics unless a vertical speed above 10 m/s was measured during ASCENT | test_flight_profiles.c: test_FLT_ASC_04_arms_in_the_coast_not_in_the_burn | ✅ |
-| FLT-APO-01 | The system shall declare apogee from the filtered pressure passing its minimum | test_flight_profiles.c: test_FLT_ASC_03_the_thrust_report_ends_within_a_second_of_burnout, test_FLT_APO_01_apogee_is_never_early_and_soon_after_at_every_height, test_FLT_APO_01_another_boards_separation_at_the_top_does_not_delay_apogee; test_recorded_flight.c: test_TST_02_apogee_is_declared_after_the_recorded_peak_and_soon | ✅ |
+| FLT-APO-01 | The system shall declare apogee from the filtered pressure passing its minimum | test_flight_profiles.c: test_FLT_ASC_03_the_thrust_report_ends_within_a_second_of_burnout, test_FLT_APO_01_apogee_is_never_early_and_soon_after_at_every_height, test_FLT_APO_01_another_boards_separation_at_the_top_does_not_delay_apogee, test_CFG_08_an_apogee_lockout_key_holds_no_apogee; test_recorded_flight.c: test_TST_02_apogee_is_declared_after_the_recorded_peak_and_soon | ✅ |
 | FLT-APO-02 | The system shall leave ASCENT for descent upon apogee detection | test_recorded_flight.c: test_TST_02_the_recorded_flight_runs_pad_to_landed | ✅ |
 | FLT-APO-03 | The system shall log an APOGEE event at the transition | the suite test_recorded_flight.c | ✅ |
 | FLT-APO-04 | The system shall not detect apogee before pyros are armed | test_flight_profiles.c: test_PYR_SAFE_04_no_fire_before_apogee_whatever_the_triggers | ✅ |
@@ -59,7 +59,6 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | FLT-APO-09 | A simple filter shall run from launch on the median of the heights of the last three raw readings the... | test_chamber_flight.c: test_FLT_APO_09_with_the_simple_filter_deciding_the_chamber_flight_has_its_apogee; test_simple_apogee.c: test_FLT_APO_09_a_coast_over_the_top_is_apogee_once_the_rise_has_held, test_FLT_APO_09_nothing_is_declared_below_30_m, test_FLT_APO_09_a_single_reading_off_is_not_seen, test_FLT_APO_09_an_ejection_spike_shorter_than_the_hold_is_not_apogee and 1 more; Web UI: test_ui.spec.js | ✅ |
 | FLT-APO-10 | With model_decides true, the flight's apogee shall be the obeyed estimator's (FLT-APO-07), or the simple... | test_chamber_flight.c: test_FLT_APO_10_with_the_model_deciding_the_chamber_flight_still_has_its_apogee, test_FLT_APO_10_after_a_fall_the_model_never_explained_the_simple_filter_stands_in; test_simple_apogee.c: test_FLT_APO_10_the_lockout_holds_while_the_speed_is_over_50_m_s, test_FLT_APO_10_the_lockout_releases_after_3_s_under_50_m_s_and_closes_on_a_fast_fall, test_FLT_APO_10_a_slow_spell_cut_short_does_not_release | ✅ |
 | FLT-APO-11 | The flight log shall say which filter declared apogee, as a row apogee by the estimator's name or simple;... | test_chamber_flight.c: test_FLT_APO_11_the_log_says_which_filter_declared_apogee | ✅ |
-| FLT-APO-12 | No apogee shall be declared until apogee_lockout seconds have passed since T+0; 0, the default, is no lockout | test_flight_profiles.c: test_FLT_APO_12_apogee_waits_for_the_users_lockout | ✅ |
 | FLT-ASC-08 | No channel shall arm before the filtered height has been more than 30 m ‡ above the pad | test_mach.c: test_FLT_ASC_08_nothing_arms_below_30_m | ✅ |
 | FLT-DESC-01 | The system shall determine the descent phase from the measured descent speed holding steady, not from... | test_flight_profiles.c: test_TST_06_a_canopy_slows_the_descent, test_FLT_DESC_01_the_phase_follows_the_rate_not_the_channel | ✅ |
 | FLT-DESC-02 | The system shall detect landing in every descent phase, so that a flight which deployed nothing still... | test_flight_profiles.c: test_FLT_DESC_02_a_ballistic_flight_reaches_landed | ✅ |
@@ -189,7 +188,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 | CFG-05 | The system shall create a default configuration if the config file is missing | test_config.c: test_CFG_05_only_a_missing_file_is_rewritten, test_CFG_05_a_file_that_filled_the_buffer_is_not_parsed, test_CFG_05_a_long_commented_file_is_read_whole; test_config_persistence.c: test_CFG_05_a_board_with_no_file_starts_on_the_defaults_and_stores_them | ✅ |
 | CFG-06 | The system shall preserve existing config fields not present in a partial config file | test_config.c: test_config_parse_preserves_unset, test_config_writes_no_inert_keys, test_config_serialize_refuses_to_overflow; Hardware: `support/api_check.py` | ✅ |
 | CFG-07 | The system shall truncate id and name fields to 8 characters | test_config.c: test_config_parse_id_truncated, test_config_default_name_is_not_truncated; Web UI: test_ui.spec.js | ✅ |
-| CFG-08 | The system shall ignore unknown keys in the config file | test_config.c: test_config_parse_unknown_keys, test_config_parse_comments, test_config_a_log_rate_is_an_unknown_key | ✅ |
+| CFG-08 | The system shall ignore unknown keys in the config file | test_config.c: test_config_parse_unknown_keys, test_config_parse_comments, test_config_a_log_rate_is_an_unknown_key; test_flight_profiles.c: test_CFG_08_an_apogee_lockout_key_holds_no_apogee | ✅ |
 | CFG-09 | The system shall handle both CR+LF and LF line endings | test_beep_codes.c: test_blanks_around_key_and_value_are_not_part_of_them; test_config.c: test_config_parse_unix_newlines, test_config_parse_no_trailing_newline, test_CFG_09_blanks_around_key_and_value_are_not_part_of_them, test_CFG_09_a_line_with_no_key_carries_nothing; test_pin_assign.c: test_PIN_INI_blanks_around_key_and_value_are_not_part_of_them | ✅ |
 | CFG-10 | Configuration and pin changes shall take effect at start-up | test_config_persistence.c: test_CFG_10_the_running_system_keeps_the_configuration_it_started_with; test_flight_pad.c: test_CFG_10_a_saved_change_waits_for_the_next_start; test_ground_test.c: test_CFG_10_a_change_saved_in_the_mode_waits_for_the_next_start; Web UI: test_ui.spec.js; Structure: `support/structure_check.py`; Hardware: `support/api_check.py` | ✅ |
 | CFG-TABLE-02 | Every configuration field shall survive a save and a load unchanged | test_config.c: test_config_roundtrip_defaults, test_config_serialize_refuses_to_overflow | ✅ |
@@ -479,7 +478,7 @@ citations, the rules of `support/structure_check.py`, and the notes in
 
 | Status | Count |
 |--------|-------|
-| ✅ Verified by a host test, a web test or a structural check | 340 |
+| ✅ Verified by a host test, a web test or a structural check | 339 |
 | ⚠️ Not verified, or not wholly | 24 |
 | ❌ Not implemented | 0 |
 | ✅ HW (verified on hardware only) | 14 |

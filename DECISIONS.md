@@ -206,8 +206,6 @@ sequence has gaps.
   - The simple filter also stands in when the model explains the readings
     and has seen the board still for 2 s (FLT-APO-10, DD-109).
   - Launch is on height alone (DD-016).
-  - `apogee_lockout`, seconds after T+0, holds any apogee, as AltOS's
-    does (FLT-APO-12).
   - The sim's charge is a separation's shock: readings off by up to 5 kPa
     either way for up to 50 ms, at the board's own fire or another board's
     (`mp_shock_t`, PYR-MODE-06). The sensor sits behind the bay's pressure
@@ -1833,7 +1831,7 @@ in `docs/outstanding_tasks.md`.
 - **Who meets it:** `/api/config` answers such a file 400 and stores
   nothing, so it comes from a card edited on a PC, or from a file an
   earlier firmware wrote with a value since put out of range.
-  `apogee_lockout` above 600 s and `landing_timeout` 0 are such values.
+  `landing_timeout` 0 is such a value.
 - **The page:** the status tab shows every name in `faults` in words,
   tells an open channel from a shorted one, and shows a channel whose mode
   is none as not used (BUZ-CODE-03, PYR-HEALTH-02).

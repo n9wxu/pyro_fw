@@ -253,19 +253,17 @@ void test_FLT_APO_01_another_boards_separation_at_the_top_does_not_delay_apogee(
     TEST_ASSERT_TRUE_MESSAGE(bad[0] == '\0', bad);
 }
 
-/* [FLT-APO-12] The user's lockout holds apogee until it has run from T+0,
- * which is a little after the flight's start. */
-void test_FLT_APO_12_apogee_waits_for_the_users_lockout(void) {
+/* [CFG-08, FLT-APO-01] Stored files hold an `apogee_lockout` key: it is not
+ * one of the system's, and holds no apogee. */
+void test_CFG_08_an_apogee_lockout_key_holds_no_apogee(void) {
     flown_t free = fly(subsonic(), &ISA, &(flight_conditions_t){0}, 1, 60.0f);
     TEST_ASSERT_TRUE(free.apogee_declared);
     char ini[48];
-    unsigned lockout_s = (unsigned)free.declared_t + 3u;
-    snprintf(ini, sizeof(ini), "apogee_lockout=%u\n", lockout_s);
-    flown_t held = fly(subsonic(), &ISA, &(flight_conditions_t){.config = ini}, 1, 60.0f);
-    TEST_ASSERT_TRUE(held.apogee_declared);
-    TEST_ASSERT_TRUE(held.declared_t >= (float)lockout_s);
-    TEST_ASSERT_TRUE(held.declared_t < held.launch_t + (float)lockout_s);
-    TEST_ASSERT_TRUE(held.drogue);
+    snprintf(ini, sizeof(ini), "apogee_lockout=%u\n", (unsigned)free.declared_t + 3u);
+    flown_t keyed = fly(subsonic(), &ISA, &(flight_conditions_t){.config = ini}, 1, 60.0f);
+    TEST_ASSERT_TRUE(keyed.apogee_declared);
+    TEST_ASSERT_EQUAL_FLOAT(free.declared_t, keyed.declared_t);
+    TEST_ASSERT_TRUE(keyed.drogue);
 }
 
 /* [SNS-MAX-01, TST-05] Above the ceiling apogee is still declared, and never
@@ -754,7 +752,7 @@ int main(void) {
     RUN_TEST(test_FLT_ASC_03_the_thrust_report_ends_within_a_second_of_burnout);
     RUN_TEST(test_FLT_APO_01_apogee_is_never_early_and_soon_after_at_every_height);
     RUN_TEST(test_FLT_APO_01_another_boards_separation_at_the_top_does_not_delay_apogee);
-    RUN_TEST(test_FLT_APO_12_apogee_waits_for_the_users_lockout);
+    RUN_TEST(test_CFG_08_an_apogee_lockout_key_holds_no_apogee);
     RUN_TEST(test_SNS_MAX_01_above_the_ceiling_apogee_is_never_early);
     RUN_TEST(test_SNS_MAX_01_best_effort_above_the_sensors_range);
     RUN_TEST(test_SNS_ALT_01_the_reported_peak_is_not_clamped);

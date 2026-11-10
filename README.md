@@ -236,7 +236,6 @@ refire_interval=0
 fire_gap=0
 estimator=constacc
 model_decides=true
-apogee_lockout=0
 standard_atmosphere=false
 landing_timeout=60
 lua_enabled=false
@@ -251,7 +250,6 @@ These are the defaults, written when the file is missing.
 - **refire_interval, fire_gap:** milliseconds; `0` takes the board's default (1000 and 3000 where the board declares none). A value outside the board's range is brought into it and reported (`pyro_limited` on `/api/status`). `GET /api/limits` serves the defaults and ranges (PYR-BOARD-03)
 - **estimator:** the estimator the flight obeys, `constacc`, the one the build carries; a name no estimator has selects it (SNS-EST-06)
 - **model_decides:** `true`, the estimator decides apogee with the simple filter standing in; `false`, the simple filter alone (FLT-APO-09, FLT-APO-10)
-- **apogee_lockout:** seconds after T+0 before any apogee; `0` is none (FLT-APO-12)
 - **standard_atmosphere:** `false`, heights are in the pad's air, from the sensor's temperature on the pad; `true`, in the 1976 standard's (SNS-EST-05)
 - **landing_timeout:** seconds of descent before a still rocket counts as landed (FLT-LAND-07)
 
