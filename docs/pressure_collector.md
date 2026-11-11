@@ -145,7 +145,7 @@ operation that holds the alarm off makes a read later, never earlier.
   pushes the oldest out, counted as `pres_dropped` on `/api/status`
   (SNS-COL-03).
 - The sensor task takes every cycle waiting, oldest first, each period
-  (`pres_tick` in `src/hal_common/hal_common.c`), and does the arithmetic
+  (`pres_run()` in `src/hal_common/hal_common.c`), and does the arithmetic
   outside the interrupt. A period held up by up to four cycles loses
   nothing.
 - The flight steps once for every sample waiting (FLT-RATE-06). The

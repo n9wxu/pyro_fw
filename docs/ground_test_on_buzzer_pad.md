@@ -11,11 +11,11 @@ The pair wiring (`ground_test=pair`, `ground_test_switch.h`) drives one pad
 and reads the other. Each loop the driven pad flips, the read pad's pull flips
 the other way, and the switch counts as closed only when the read pad has
 followed the drive both ways. A read pad touching ground or 3V3 follows one
-way only. The read is `gts_tick()` in `src/hal_common/hal_common.c`, a task
+way only. The read is `gts_step()` in `src/hal_common/hal_common.c`,
 run once a loop (10 ms, `LOOP_PERIOD_MS`), on the same core and in the same
-loop as the buzzer task.
+loop as the buzzer's step.
 
-Where the driven pad is the buzzer's, `gts_tick()` puts the level under test
+Where the driven pad is the buzzer's, `gts_step()` puts the level under test
 on it for the read alone and puts the buzzer's own level back
 (`read_under_a_pulse()`, option A). The buzzer keeps its own pattern.
 
@@ -61,7 +61,7 @@ A pulse long enough for a bare element needs a timed wait, which DD-053 and
 
 ### A. SIO pulse, no wait (recommended first step)
 
-Built: `read_under_a_pulse()`, called from `gts_tick()` with the read pad's
+Built: `read_under_a_pulse()`, called from `gts_step()` with the read pad's
 pull already set opposite to the coming pulse.
 
 1. remember the drive pad's current output level (`gpio_get_out_level()`);
@@ -77,7 +77,7 @@ PIO, no new module. `gt_switch_step()` compares the read with the level under
 test, the same comparison it makes for a driven pad of the switch's own.
 
 While a tone plays, the buzzer pad is high and the pulse is a 100 ns dropout:
-inaudible on any buzzer. The buzzer task and `gts_tick()` run in the same
+inaudible on any buzzer. The buzzer's step and `gts_step()` run in the same
 loop, so the restore cannot race a tone change.
 
 ### B. PIO-timed pulse

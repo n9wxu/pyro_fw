@@ -238,6 +238,45 @@ void test_PYR_HEALTH_02_a_channel_given_to_the_script_is_not_a_pyro(void) {
     TEST_ASSERT_TRUE(ctx.plan.enabled[1]);
 }
 
+/* [PYR-HEALTH-02, FLT-RT-07] The board is never asked about a channel that
+ * is the script's: its pad is not the flight software's to read. */
+void test_PYR_HEALTH_02_a_channel_given_to_the_script_is_never_asked_of_the_board(void) {
+    to_the_pad(7);
+    harness_config("[pyro]\npyro1_mode=delay\npyro1_value=0\n");
+    harness_give_to_script(1);
+    reach_pad();
+    wait_ms(5000);
+    TEST_ASSERT_EQUAL_INT(0, mock_pyro_asked[0]);
+    TEST_ASSERT_TRUE(mock_pyro_asked[1] > 0);
+    TEST_ASSERT_FALSE(ctx.channel_ready[0]);
+}
+
+/* ── What will fly is what was built [FLT-RT-08, SIM-05] ──────────── */
+
+void test_FLT_RT_08_flight_code_changed_in_ram_is_a_general_fault_on_the_pad(void) {
+    to_the_pad(9);
+    reach_pad();
+    TEST_ASSERT_TRUE(harness_last_said(BR_OK_TO_FLY));
+    mock_flight_code_damaged = true;
+    wait_ms(1500);
+    TEST_ASSERT_TRUE(ctx.diag & DIAG_FLIGHT_CODE);
+    TEST_ASSERT_TRUE(harness_last_said(BR_GENERAL_FAULT));
+    TEST_ASSERT_EQUAL_STRING("flight_code", pad_check_fault_name(DIAG_FLIGHT_CODE));
+    TEST_ASSERT_EQUAL(PAD_IDLE, ctx.current_state);
+}
+
+/* A bench flight stopped on the pad leaves every fire mocked until the board
+ * restarts [SIM-03]: a board that would fly and fire nothing says so. */
+void test_SIM_05_fires_left_mocked_are_a_general_fault_on_the_pad(void) {
+    to_the_pad(9);
+    reach_pad();
+    mock_fires_mocked = true;
+    wait_ms(1500);
+    TEST_ASSERT_TRUE(ctx.diag & DIAG_FIRES_MOCKED);
+    TEST_ASSERT_TRUE(harness_last_said(BR_GENERAL_FAULT));
+    TEST_ASSERT_EQUAL_STRING("fires_mocked", pad_check_fault_name(DIAG_FIRES_MOCKED));
+}
+
 /* ── Configuration takes effect at start-up [CFG-10] ──────────────── */
 
 void test_CFG_10_a_saved_change_waits_for_the_next_start(void) {
@@ -528,6 +567,9 @@ int main(void) {
     RUN_TEST(test_FLT_PHASE_04_a_state_that_is_no_state_is_a_fault);
     RUN_TEST(test_PYR_HEALTH_02_a_channel_set_to_none_is_not_a_fault);
     RUN_TEST(test_PYR_HEALTH_02_a_channel_given_to_the_script_is_not_a_pyro);
+    RUN_TEST(test_PYR_HEALTH_02_a_channel_given_to_the_script_is_never_asked_of_the_board);
+    RUN_TEST(test_FLT_RT_08_flight_code_changed_in_ram_is_a_general_fault_on_the_pad);
+    RUN_TEST(test_SIM_05_fires_left_mocked_are_a_general_fault_on_the_pad);
     RUN_TEST(test_CFG_10_a_saved_change_waits_for_the_next_start);
     RUN_TEST(test_FLT_LAUNCH_07_a_fast_climb_past_15_m_is_a_launch);
     RUN_TEST(test_FLT_LAUNCH_02_below_15_m_is_not_a_launch);

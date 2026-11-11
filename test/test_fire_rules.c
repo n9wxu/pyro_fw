@@ -120,6 +120,16 @@ void test_FLT_EMRG_01_no_canopy_fires_everything_and_keeps_firing(void) {
     }
 }
 
+/* [PYR-HEALTH-02] Everything is every channel that is a pyro: the script's
+ * pad is never driven, in the emergency as at any other time. */
+void test_FLT_EMRG_01_a_channel_given_to_the_script_is_never_fired(void) {
+    flight_conditions_t c = {.config = RULES, .lights_on_pulse = {-1, -1}, .script_channel = 1};
+    flown_t r = fly(&ROCKETS[LOW_DRAG].r, &ISA, &c, 4, 400.0f);
+    TEST_ASSERT_EQUAL_INT(0, pulses_on(&r, 1));
+    TEST_ASSERT_TRUE(pulses_on(&r, 2) >= 4);
+    TEST_ASSERT_TRUE(harness_log_events("EMERGENCY_FIRE") >= 1);
+}
+
 /* A main that opens on the emergency fire ends it. */
 void test_FLT_EMRG_01_a_canopy_that_opens_ends_it(void) {
     flight_conditions_t c = {.config = RULES, .rate_ms = {20.0f, 6.0f}, .lights_on_pulse = {-1, 1}};
@@ -283,6 +293,7 @@ int main(void) {
     RUN_TEST(test_PYR_REFIRE_01_a_charge_that_lights_on_the_third_pulse);
     RUN_TEST(test_SNS_EST_04_a_lost_canopy_is_seen_within_two_seconds);
     RUN_TEST(test_FLT_EMRG_01_no_canopy_fires_everything_and_keeps_firing);
+    RUN_TEST(test_FLT_EMRG_01_a_channel_given_to_the_script_is_never_fired);
     RUN_TEST(test_FLT_EMRG_01_a_canopy_that_opens_ends_it);
     RUN_TEST(test_FLT_EMRG_01_zero_leaves_each_channel_to_its_trigger);
     RUN_TEST(test_FLT_AIR_01_a_good_drogue_at_20_km_is_not_a_failed_one);

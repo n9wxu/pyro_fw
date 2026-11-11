@@ -216,6 +216,10 @@ var FAULT_TEXT = {
   config_refused: 'config.ini holds a value the board refused, and that field is at its default: ' +
     'check the Config tab, save and reboot',
   board_mismatch: 'this firmware is built for another board: it will not arm or fire',
+  flight_code: 'the flight code in RAM is not what the image holds: restart the board, and do not fly it ' +
+    'if this returns',
+  fires_mocked: 'a bench flight was started, so every fire is mocked until the board restarts: ' +
+    'restart it before flying',
   flight_resumed: 'this start resumed a flight',
   pyro1_open: 'pyro 1 is open', pyro1_short: 'pyro 1 is shorted',
   pyro2_open: 'pyro 2 is open', pyro2_short: 'pyro 2 is shorted'

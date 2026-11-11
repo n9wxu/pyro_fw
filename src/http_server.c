@@ -463,7 +463,7 @@ static void serve_api_sim(http_conn_t *hc) {
                      s.p.drogue_fails ? "true" : "false", s.p.main_fails ? "true" : "false", (double)e.pressure_pa,
                      (double)e.height_m, (double)e.speed, (double)e.accel, (double)e.speed_sigma,
                      estimated ? "true" : "false", e.suspect ? "true" : "false", e.sensor_stuck ? "true" : "false",
-                     e.explains ? "true" : "false", estimator_at(pp_obeyed())->name);
+                     e.explains ? "true" : "false", estimator_name(pp_obeyed()));
     http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
 }
 #endif
@@ -565,7 +565,7 @@ static void apply_api_beeps(http_conn_t *hc, char *body) {
 static int estimator_names_json(char *dst, int cap) {
     int n = snprintf(dst, (size_t)cap, "[");
     for (uint8_t i = 0; i < estimator_count() && n < cap; i++)
-        n += snprintf(dst + n, (size_t)(cap - n), "%s\"%s\"", i ? "," : "", estimator_at(i)->name);
+        n += snprintf(dst + n, (size_t)(cap - n), "%s\"%s\"", i ? "," : "", estimator_name(i));
     if (n < cap)
         n += snprintf(dst + n, (size_t)(cap - n), "]");
     return n;
@@ -929,7 +929,7 @@ static void status_name_flight(status_snap_t *s, const flight_take_t *t) {
     s->sample_interval_us[1] = t->interval_max_us;
     s->stamp_lag_max_us = t->stamp_lag_max_us;
     s->noise_mpa = (uint32_t)(t->noise_pa * 1000.0f);
-    s->estimator = estimator_at(t->obeyed)->name;
+    s->estimator = estimator_name(t->obeyed);
     s->estimator_explains = t->explains;
     s->model_decides = g->model_decides;
     s->peak_lower_bound = t->peak_lower_bound;
@@ -1012,7 +1012,6 @@ static bool status_capture(status_snap_t *s) {
     s->pyro_released[1] = pa->pyro2_released;
     const char *br_name;
     s->bridge = pin_store_bridge(&s->bridge_ch, &s->bridge_common, &br_name);
-    s->pyro_mocked = pyro_release_mocks();
     /* What the claim decided, beside what the assignment asked for: a channel
      * that could not take its pads shows as a disagreement. */
     s->pyro_real[0] = !pyro_release_is_released(1);

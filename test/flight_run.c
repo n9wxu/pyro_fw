@@ -148,6 +148,8 @@ flown_t fly(const mp_rocket_t *rocket, const mp_site_t *site, const flight_condi
         mock_noise_rms_pa = c->sensor_rms_pa;
     store_config(c);
     set_board(c);
+    if (c->script_channel)
+        harness_give_to_script(c->script_channel);
     mock_pressure.pressure_pa = mp_pad_pa(site);
     mock_pressure.temperature_c = site->temp_c;
     uint32_t t = 0;

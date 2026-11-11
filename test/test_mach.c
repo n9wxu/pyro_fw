@@ -197,7 +197,7 @@ void test_TST_03_report(void) {
                  {"fakes descent", &PORT_FAKES_DESCENT}};
     printf("  %-9s %-5s %-13s %-9s drogue from apogee, s:", "profile", "pad", "ports", "max Mach");
     for (uint8_t e = 0; e < estimator_count(); e++)
-        printf(" %-9s", estimator_at(e)->name);
+        printf(" %-9s", estimator_name(e));
     printf("\n");
     for (unsigned i = 0; i < N_ROCKETS; i++) {
         for (int si = 0; si < 2; si++) {
@@ -209,7 +209,7 @@ void test_TST_03_report(void) {
                 for (uint8_t e = 0; e < estimator_count(); e++) {
                     flight_conditions_t c;
                     memset(&c, 0, sizeof(c));
-                    c.estimator = estimator_at(e)->name;
+                    c.estimator = estimator_name(e);
                     c.stop_after_apogee = true;
                     if (ports[pi].port)
                         c.port = *ports[pi].port;
@@ -319,7 +319,7 @@ static void drogue_after_apogee(const flown_t *r, const char *what, float within
 static flight_conditions_t obeying(uint8_t estimator) {
     flight_conditions_t c;
     memset(&c, 0, sizeof(c));
-    c.estimator = estimator_at(estimator)->name;
+    c.estimator = estimator_name(estimator);
     c.stop_after_apogee = true;
     return c;
 }
@@ -542,7 +542,7 @@ void test_SNS_EST_07_every_estimator_is_flown_and_logged(void) {
     flown_t r = fly(&ROCKETS[SUBSONIC].r, &COLD, &c, 24, 400.0f);
     TEST_ASSERT_TRUE(r.landed_t > 0.0f);
     for (uint8_t e = 0; e < estimator_count(); e++) {
-        const char *name = estimator_at(e)->name;
+        const char *name = estimator_name(e);
         char msg[128];
         snprintf(msg, sizeof(msg), "%s: %d APOGEE rows, %d reports in %.0f s; said apogee %+.2f s from the true one",
                  name, rows_with(name, "APOGEE"), rows_with(name, "cm="), (double)r.touchdown_t,

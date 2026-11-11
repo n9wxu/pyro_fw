@@ -28,6 +28,9 @@ gt_sound_t harness_gt_sounds[32];
 int harness_gt_sound_n;
 
 void buzzer_init(void) {}
+void buzzer_service(uint32_t now_ms) {
+    (void)now_ms;
+}
 void buzzer_play_spec(const beep_spec_t *spec, uint16_t gap_ms, uint8_t repeat_count) {
     (void)gap_ms;
     (void)repeat_count;

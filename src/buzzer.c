@@ -1,20 +1,19 @@
 /*
- * Buzzer driver — one autonomous async task that encodes and then plays.
+ * Buzzer driver — encodes a request, then plays it a step at a time.
  *
- * buzzer_play_spec() and buzzer_play_altitude() store a request and arm the
- * task. The task encodes that request into a flat buzzer_pattern_t[] on its
- * first tick, then steps through the pattern on later ticks, toggling the
+ * buzzer_play_spec() and buzzer_play_altitude() store a request. The first
+ * buzzer_service() after it encodes the request into a flat
+ * buzzer_pattern_t[]; later ones step through the pattern, toggling the
  * GPIO through hal_buzzer_tone_on() and hal_buzzer_tone_off().
  *
- * The flight software never waits for a pattern: hal_buzzer_task_register()
- * puts the task on the platform runner alongside the pressure task.
+ * The flight software never waits for a pattern: the HAL calls
+ * buzzer_service() once a loop (hal_tasks_tick()).
  *
  * SPDX-License-Identifier: MIT
  */
 #include "hal.h"
 #include "buzzer.h"
 #include "beep_codes.h"
-#include "async_task.h"
 #include <string.h>
 
 /* ── Timing constants ─────────────────────────────────────────────── */
@@ -112,7 +111,7 @@ static int build_alt_pattern(int32_t value, buzzer_pattern_t *buf) {
     return idx;
 }
 
-/* ── Async task ───────────────────────────────────────────────────── */
+/* ── The player ───────────────────────────────────────────────────── */
 
 #define USB_OK_CHIRPS 5 /* per burst; a fifth of the ready-to-fly warble */
 #define USB_OK_GAP_MS 150
@@ -174,7 +173,7 @@ typedef enum {
 } bz_state_t;
 
 typedef struct {
-    async_task_t base; /* MUST be first */
+    uint32_t next_due_ms;
     bz_state_t state;
 
     /* Request fields — set by buzzer_play_* before arming */
@@ -249,15 +248,13 @@ static int build_spec_pattern(const beep_spec_t *sp, uint16_t gap_ms, buzzer_pat
     return idx;
 }
 
-/* ── Task tick function ───────────────────────────────────────────── */
+/* ── One step ─────────────────────────────────────────────────────── */
 
-static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
-    buzzer_task_t *t = (buzzer_task_t *)self;
+static void __attribute__((noinline)) buzzer_step(uint32_t now_ms) {
+    buzzer_task_t *t = &bz;
 
     switch (t->state) {
     case BZ_IDLE:
-        /* Nothing to do — tick should not fire, but be safe */
-        t->base.tick = NULL;
         return;
 
     case BZ_ENCODE_SPEC:
@@ -266,7 +263,7 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
         t->repeat_count = t->req_repeat_count;
         t->loops_done = 0;
         t->state = BZ_PLAYING;
-        t->base.next_due_ms = now_ms;
+        t->next_due_ms = now_ms;
         break;
 
     case BZ_ENCODE_ALT:
@@ -276,7 +273,7 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
         t->loops_done = 0;
         t->index = 0;
         t->state = BZ_PLAYING;
-        t->base.next_due_ms = now_ms; /* play first step immediately */
+        t->next_due_ms = now_ms; /* play first step immediately */
         return;
 
     case BZ_ENCODE_GT:
@@ -285,7 +282,7 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
         t->loops_done = 0;
         t->index = 0;
         t->state = BZ_PLAYING;
-        t->base.next_due_ms = now_ms;
+        t->next_due_ms = now_ms;
         return;
 
     case BZ_ENCODE_USB_OK:
@@ -295,7 +292,7 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
         t->loops_done = 0;
         t->index = 0;
         t->state = BZ_PLAYING;
-        t->base.next_due_ms = now_ms;
+        t->next_due_ms = now_ms;
         return;
 
     case BZ_PLAYING: {
@@ -304,7 +301,6 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
             /* Should not happen — sentinel should stop us first */
             hal_buzzer_tone_off();
             t->state = BZ_IDLE;
-            t->base.tick = NULL;
             return;
         }
 
@@ -316,12 +312,11 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
             /* repeat_count==0 means infinite; otherwise stop when done */
             if (t->repeat_count == 0 || t->loops_done < t->repeat_count) {
                 t->index = t->loop_start;
-                t->base.next_due_ms = now_ms;
+                t->next_due_ms = now_ms;
                 return;
             }
             hal_buzzer_tone_off();
             t->state = BZ_IDLE;
-            t->base.tick = NULL;
             return;
         }
 
@@ -331,22 +326,28 @@ static void buzzer_tick(async_task_t *self, uint32_t now_ms) {
         else
             hal_buzzer_tone_off();
 
-        t->base.next_due_ms = now_ms + step->duration_ms;
+        t->next_due_ms = now_ms + step->duration_ms;
         t->index++;
         return;
     }
     }
 }
 
+/* In flight this is the whole of the buzzer's part of a loop: entering
+ * flight stops it, so nothing past the test runs until landing. */
+void buzzer_service(uint32_t now_ms) {
+    if (bz.state == BZ_IDLE || (int32_t)(now_ms - bz.next_due_ms) < 0)
+        return;
+    buzzer_step(now_ms);
+}
+
 /* ── Public API ───────────────────────────────────────────────────── */
 
 void buzzer_init(void) {
     memset(&bz, 0, sizeof(bz));
-    bz.base.tick = NULL; /* inactive until first play */
-    bz.base.next_due_ms = 0;
+    bz.next_due_ms = 0;
     bz.state = BZ_IDLE;
     hal_buzzer_init();
-    hal_buzzer_task_register(&bz.base);
 }
 
 /* Play an outcome. gap_ms is the silence between re-announcements, so that a
@@ -362,8 +363,7 @@ void buzzer_play_spec(const beep_spec_t *spec, uint16_t gap_ms, uint8_t repeat_c
     bz.req_gap_ms = gap_ms;
     bz.req_repeat_count = repeat_count;
     bz.state = BZ_ENCODE_SPEC;
-    bz.base.next_due_ms = 0;
-    bz.base.tick = buzzer_tick;
+    bz.next_due_ms = 0;
 }
 
 void buzzer_play_altitude(int32_t value_in_units) {
@@ -371,29 +371,25 @@ void buzzer_play_altitude(int32_t value_in_units) {
     bz.req_altitude = value_in_units;
     bz.index = 0;
     bz.state = BZ_ENCODE_ALT;
-    bz.base.next_due_ms = 0;
-    bz.base.tick = buzzer_tick;
+    bz.next_due_ms = 0;
 }
 
 void buzzer_play_usb_ok(void) {
     hal_buzzer_tone_off();
     bz.state = BZ_ENCODE_USB_OK;
-    bz.base.next_due_ms = 0;
-    bz.base.tick = buzzer_tick;
+    bz.next_due_ms = 0;
 }
 
 void buzzer_play_ground_test(gt_sound_t sound) {
     hal_buzzer_tone_off();
     bz.req_gt = sound;
     bz.state = BZ_ENCODE_GT;
-    bz.base.next_due_ms = 0;
-    bz.base.tick = buzzer_tick;
+    bz.next_due_ms = 0;
 }
 
 void buzzer_stop(void) {
     hal_buzzer_tone_off();
     bz.state = BZ_IDLE;
-    bz.base.tick = NULL;
 }
 
 bool buzzer_is_active(void) {

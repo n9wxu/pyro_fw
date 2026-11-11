@@ -20,7 +20,8 @@
 #include "semphr.h"
 #include "board_id.h"
 #include "config.h"
-#include "async_task.h"
+#include "buzzer.h"
+#include "ram_check.h"
 #include "ms5607_driver.h"
 #include "board_if.h"   /* the contract every boards/<name>/ implements */
 #include "board_pins.h" /* board-supplied capability macros */
@@ -85,29 +86,9 @@ typedef struct {
 
 #define LED_TOGGLE_READINGS 5 /* a blink the eye follows at any sensor's rate */
 
-/* ── Async task runner ────────────────────────────────────────────── */
-
-#define HW_MAX_TASKS 8
-static async_task_t *hw_tasks[HW_MAX_TASKS];
-static int hw_task_count = 0;
-
-static void hw_task_register(async_task_t *task) {
-    if (hw_task_count < HW_MAX_TASKS)
-        hw_tasks[hw_task_count++] = task;
-}
-
-/* Run all tasks whose deadline has arrived. */
-void hal_tasks_tick(uint32_t now_ms) {
-    for (int i = 0; i < hw_task_count; i++) {
-        async_task_t *t = hw_tasks[i];
-        if (t->tick && (int32_t)(now_ms - t->next_due_ms) >= 0)
-            t->tick(t, now_ms);
-    }
-}
-
 /* ── The ground test switch [GND-TEST-12] ──────────────────────────
  *
- * Read once a loop, as a task, so however often the flight code asks it gets
+ * Read once a loop, so however often the flight code asks it gets
  * one reading a loop; across two pads the drive and the pull then change, and
  * settle for a loop before the next read.
  *
@@ -115,7 +96,6 @@ void hal_tasks_tick(uint32_t now_ms) {
  * for the read alone and the buzzer's own level put back: see
  * docs/ground_test_on_buzzer_pad.md, option A. */
 static struct {
-    async_task_t base; /* MUST be first */
     gt_switch_t sw;
     uint8_t pin, drive;
     bool on;
@@ -134,8 +114,7 @@ static bool read_under_a_pulse(bool test_level) {
     return read;
 }
 
-static void gts_tick(async_task_t *base, uint32_t now_ms) {
-    base->next_due_ms = now_ms;
+static void gts_step(void) {
     bool read = gts.drive_is_the_buzzers ? read_under_a_pulse(gts.sw.drive_high) : gpio_get(gts.pin);
     gt_switch_out_t o = gt_switch_step(&gts.sw, read);
     if (!gts.sw.pair)
@@ -144,8 +123,6 @@ static void gts_tick(async_task_t *base, uint32_t now_ms) {
         gpio_put(gts.drive, o.drive_high);
     gpio_set_pulls(gts.pin, o.pull_up, !o.pull_up);
 }
-
-static void hw_task_register(async_task_t *task);
 
 void hal_ground_test_configure(uint8_t wiring, uint8_t pin, uint8_t drive_pin) {
     if (wiring == GT_WIRING_NONE || pin >= NUM_BANK0_GPIOS)
@@ -164,38 +141,21 @@ void hal_ground_test_configure(uint8_t wiring, uint8_t pin, uint8_t drive_pin) {
     gts.pin = pin;
     gts.drive = drive_pin;
     gts.on = true;
-    gts.base.tick = gts_tick;
-    gts.base.next_due_ms = hal_time_ms();
-    hw_task_register(&gts.base);
 }
 
 bool hal_ground_test_asserted(void) {
     return gts.on && gt_switch_asserted(&gts.sw);
 }
 
-/* Return the earliest next_due_ms across all registered tasks.
- * Returns 0 if no tasks are registered. */
-static uint32_t hw_tasks_next_due(void) {
-    if (hw_task_count == 0)
-        return 0;
-    uint32_t min = hw_tasks[0]->next_due_ms;
-    for (int i = 1; i < hw_task_count; i++)
-        if ((int32_t)(hw_tasks[i]->next_due_ms - min) < 0)
-            min = hw_tasks[i]->next_due_ms;
-    return min;
-}
-
 /* Forward declarations for internal functions */
 static bool hal_pressure_fifo_start(void);
 
-/* ── Pressure sensor async state machine [v2 Task 4] ─────────────── */
+/* ── The pressure sensor, a step a loop ───────────────────────────── */
 
-/*
- * Pressure async task.  struct async_task MUST be the first member so
- * a pointer cast between pres_task_t * and async_task_t * is safe.
- */
+typedef enum { PRES_OFF, PRES_BRINGUP, PRES_RUNNING } pres_phase_t;
+
 typedef struct {
-    async_task_t base;    /* MUST be first */
+    pres_phase_t phase;
     int sensor_type;      /* 1=MS5607  2=BMP280 */
     ms5607_temps_t temps; /* MS5607: the temperature, carried to each pressure [DD-093] */
 
@@ -313,8 +273,7 @@ static void take_bmp280(pres_task_t *p, const collector_raw_t *raw, uint32_t rea
 #endif
 
 /* Every loop: whatever the collector has finished, oldest first. */
-static void pres_tick(async_task_t *base, uint32_t now_ms) {
-    pres_task_t *p = (pres_task_t *)base;
+static void pres_run(pres_task_t *p) {
     collector_raw_t raw;
     while (collector_take(&raw)) {
         uint32_t read_us = (uint32_t)time_us_64();
@@ -325,7 +284,6 @@ static void pres_tick(async_task_t *base, uint32_t now_ms) {
             take_bmp280(p, &raw, read_us);
 #endif
     }
-    p->base.next_due_ms = now_ms;
 }
 
 /* ── Time ─────────────────────────────────────────────────────────── */
@@ -363,23 +321,20 @@ static int hw_sensor_type = -1;
 /* [DD-053] The bring-up, a step a loop, on the pressure task's own slot. Once
  * it knows the sensor, the same slot samples it: the BMP280 at 50 Hz, the
  * MS5607 every loop. */
-static void pres_bringup_tick(async_task_t *base, uint32_t now_ms) {
-    base->next_due_ms = now_ms;
+static void __attribute__((noinline)) pres_bringup_step(uint32_t now_ms) {
     pressure_sensor_type_t t = pressure_sensor_step(now_ms);
     if (t == PRESSURE_SENSOR_PENDING)
         return;
     hw_sensor_type = (int)t;
     if (t == PRESSURE_SENSOR_NONE || !hal_pressure_fifo_start())
-        pres.base.tick = NULL;
+        pres.phase = PRES_OFF;
 }
 
 void hal_pressure_init(void) {
     hw_sensor_type = -1;
     pressure_sensor_begin();
     memset(&pres, 0, sizeof(pres));
-    pres.base.tick = pres_bringup_tick;
-    pres.base.next_due_ms = hal_time_ms();
-    hw_task_register(&pres.base);
+    pres.phase = PRES_BRINGUP;
 }
 
 int hal_pressure_sensor(void) {
@@ -442,8 +397,7 @@ static bool hal_pressure_fifo_start(void) {
     if (hw_sensor_type <= 0)
         return false;
     memset(&pres, 0, sizeof(pres));
-    pres.base.tick = pres_tick;
-    pres.base.next_due_ms = hal_time_ms(); /* run on first tick */
+    pres.phase = PRES_RUNNING;
     pres.sensor_type = hw_sensor_type;
     const collector_part_t *part = collector_part_of(pres.sensor_type);
     collector_wiring_t wiring = collector_wiring_of(pres.sensor_type);
@@ -452,67 +406,17 @@ static bool hal_pressure_fifo_start(void) {
         return false;
     }
     pres.cycle_us = collector_cycle_us(part, &wiring);
-    /* Register once (idempotent — re-calling changes rate but not slot). */
-    for (int i = 0; i < hw_task_count; i++)
-        if (hw_tasks[i] == &pres.base)
-            return true;
-    hw_task_register(&pres.base);
     return true;
 }
 
 bool hal_pressure_fifo_active(void) {
-    return pres.base.tick == pres_tick;
+    return pres.phase == PRES_RUNNING;
 }
 
 /* ── Pyro ─────────────────────────────────────────────────────────── */
 
-/* ── The real channel operations ──────────────────────────────────
- *
- * Installed per channel by pyro_release_claim(), and only for a channel whose
- * pads it could claim. A channel Lua already holds gets the mocked table, and
- * these are then simply not reachable for it. See pad_claim.h.
- *
- * Not named *_vt on purpose. That suffix means "core1 can reach this" and
- * prove_core0.py folds those into the core1 proof; these run on core0 only. */
-static void real_fire(uint8_t channel) {
-    pyro_fire(channel);
-}
-
-static void real_get(uint8_t channel, hal_continuity_t *out) {
-    pyro_continuity_t c;
-    pyro_get(channel, &c);
-    out->raw_adc = c.raw_adc;
-    out->good = c.good;
-    out->open = c.open;
-    out->shorted = c.shorted;
-}
-
-static bool real_fault(uint8_t channel) {
-    return pyro_fault(channel);
-}
-
-static const pyro_ch_ops_t real_pyro_ops = {real_fire, real_get, real_fault};
-
-/* Said in three places, because each reaches a different audience: the flight
- * log during the flight, the telemetry downlink at the time, and the counter
- * on /api/status afterwards. The log row is the one that matters -- a flight
- * log showing PYRO1 with nothing beside it is a record of an ignition that
- * did not happen. */
-static void report_mock(uint8_t channel, const char *what) {
-    char note[48];
-    small_snprintf(note, sizeof(note), "pyro%u %s: released to Lua", (unsigned)channel, what);
-    /* [DAT-02, N11] On the flight log's clock, since T+0, like every other row. */
-    const flight_context_t *fc = flight_get_context();
-    uint32_t now = to_ms_since_boot(get_absolute_time());
-    hal_log_mock(fc ? flight_elapsed_ms(fc, now) : now, note);
-
-    char line[64];
-    small_snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
-    hal_telemetry_send(line);
-}
-
 void hal_pyro_init(void) {
-    pyro_release_init(&real_pyro_ops, report_mock);
+    pyro_release_init();
     pyro_init();
 #if PYRO_HAS_BENCH_FLIGHT
     bench_flight_init();
@@ -561,7 +465,9 @@ void hal_pyro_get(uint8_t channel, hal_continuity_t *out) {
         return;
     }
 #endif
-    pyro_ch(channel)->get(channel, out);
+    pyro_continuity_t c;
+    pyro_get(channel, &c);
+    *out = (hal_continuity_t){.raw_adc = c.raw_adc, .good = c.good, .open = c.open, .shorted = c.shorted};
 }
 
 void hal_pyro_fire(uint8_t channel) {
@@ -571,7 +477,7 @@ void hal_pyro_fire(uint8_t channel) {
         return;
     }
 #endif
-    pyro_ch(channel)->fire(channel);
+    pyro_fire(channel);
 }
 void hal_pyro_update(uint32_t now_ms) {
     /* Same argument as hal_pyro_sample(): MK1A's background sense cycle and
@@ -594,7 +500,27 @@ bool hal_pyro_fault(uint8_t channel) {
     if (bench_flight_mocked())
         return false;
 #endif
-    return pyro_ch(channel)->fault(channel);
+    return pyro_fault(channel);
+}
+
+bool hal_fires_mocked(void) {
+#if PYRO_HAS_BENCH_FLIGHT
+    return bench_flight_mocked() && !bench_flight_flying();
+#else
+    return false;
+#endif
+}
+
+/* The flight path's code and constants, where flight_ram_link.py's linker
+ * script gathers them inside .data; __etext is where .data loads from. */
+extern const uint8_t __flight_ram_start__[], __flight_ram_end__[], __data_start__[], __etext[];
+#define RAM_CHECK_PIECE 512u /* a sweep of 40 KB in under a second of loops */
+
+bool hal_flight_code_intact(void) {
+    static ram_check_t check;
+    const uint8_t *image = __etext + (__flight_ram_start__ - __data_start__);
+    return ram_check_step(&check, __flight_ram_start__, image, (uint32_t)(__flight_ram_end__ - __flight_ram_start__),
+                          RAM_CHECK_PIECE);
 }
 
 void hal_pyro_limits(hal_pyro_limits_t *out) {
@@ -614,11 +540,16 @@ void hal_buzzer_tone_off(void) {
     board_buzzer_off();
 }
 
-/* Register the buzzer async task with the hardware task runner.
- * buzzer_init() calls this so the buzzer task runs alongside the
- * pressure task without any main-loop involvement. */
-void hal_buzzer_task_register(async_task_t *task) {
-    hw_task_register(task);
+/* Once a loop, each by name: what runs between launch and landing is what
+ * is written here [FLT-RT-07]. */
+void hal_tasks_tick(uint32_t now_ms) {
+    buzzer_service(now_ms);
+    if (pres.phase == PRES_RUNNING)
+        pres_run(&pres);
+    else if (pres.phase == PRES_BRINGUP)
+        pres_bringup_step(now_ms);
+    if (gts.on)
+        gts_step();
 }
 
 /* ── UART TX ring buffer (v2-10) ──────────────────────────────────── */

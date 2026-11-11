@@ -17,7 +17,8 @@ typedef struct {
     bool tone_on;
 } buzzer_pattern_t;
 
-#define BUZZER_PATTERN_END {0, false}
+#define BUZZER_PATTERN_END                                                                                             \
+    { 0, false }
 /* Max steps in one encoded pattern. An altitude beep-out spends ten beeps on
  * each zero digit, so a six-digit value needs up to 120; a shorter buffer
  * truncates the pattern silently and loops a garbled one. */
@@ -30,7 +31,7 @@ typedef struct {
 /* ── Public API ───────────────────────────────────────────────────── */
 
 /*
- * buzzer_init() — register the buzzer as an autonomous async task.
+ * buzzer_init() — silent, with nothing asked for.
  * Call once at boot before any buzzer_play_* call.
  * Calls hal_buzzer_init() internally for GPIO setup.
  */
@@ -47,7 +48,7 @@ void buzzer_play_spec(const beep_spec_t *spec, uint16_t gap_ms, uint8_t repeat_c
  * buzzer_play_altitude() — encode and play an altitude digit beep-out.
  * Sequence: long pause → long beep → each digit beep → repeat forever.
  * value_in_units is already in the configured units (m or ft).
- * Non-blocking: encoding and playback run in the async task runner.
+ * Non-blocking: encoding and playback run in buzzer_service().
  */
 void buzzer_play_altitude(int32_t value_in_units);
 
@@ -65,7 +66,11 @@ void buzzer_play_ground_test(gt_sound_t sound);
 /* Stop playback immediately and silence the buzzer. */
 void buzzer_stop(void);
 
-/* Returns true if the buzzer task is currently encoding or playing. */
+/* One step of whatever is playing, when it is due. The HAL calls it once a
+ * loop. */
+void buzzer_service(uint32_t now_ms);
+
+/* Returns true if the buzzer is currently encoding or playing. */
 bool buzzer_is_active(void);
 
 #endif

@@ -65,7 +65,6 @@ typedef struct {
     bool pyro_released[2];
     bool bridge;
     uint8_t bridge_ch, bridge_common;
-    uint32_t pyro_mocked;
     bool pyro_real[2];
     bool sensor_ok, fs_ok;
     const char *faults[STATUS_FAULTS_MAX];

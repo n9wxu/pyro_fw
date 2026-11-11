@@ -3,6 +3,7 @@
  * Wraps mock state variables for test control.
  * SPDX-License-Identifier: MIT
  */
+#include "../src/buzzer.h"
 #include "../src/hal.h"
 #include "../src/pyro_release.h"
 #include "../src/pad_claim.h"
@@ -418,20 +419,20 @@ static bool test_fault(uint8_t channel) {
     return mock_pyro.fault;
 }
 
-static const pyro_ch_ops_t test_pyro_ops = {test_fire, test_get, test_fault};
+int mock_pyro_asked[2];
+bool mock_flight_code_damaged, mock_fires_mocked;
 
-char mock_pyro_last_note[64];
-int mock_pyro_notes;
-
-static void test_report(uint8_t channel, const char *what) {
-    mock_pyro_notes++;
-    snprintf(mock_pyro_last_note, sizeof(mock_pyro_last_note), "pyro%u %s: released to Lua", (unsigned)channel, what);
+bool hal_flight_code_intact(void) {
+    return !mock_flight_code_damaged;
+}
+bool hal_fires_mocked(void) {
+    return mock_fires_mocked;
 }
 
 void hal_pyro_init(void) {
-    pyro_release_init(&test_pyro_ops, test_report);
-    mock_pyro_notes = 0;
-    mock_pyro_last_note[0] = '\0';
+    pyro_release_init();
+    mock_pyro_asked[0] = mock_pyro_asked[1] = 0;
+    mock_flight_code_damaged = mock_fires_mocked = false;
 }
 
 /* The host tests have no board capability table, so they say which pads a
@@ -457,11 +458,13 @@ void hal_pyro_sample(void) {
 }
 
 void hal_pyro_get(uint8_t channel, hal_continuity_t *out) {
-    pyro_ch(channel)->get(channel, out);
+    if (channel == 1 || channel == 2)
+        mock_pyro_asked[channel - 1]++;
+    test_get(channel, out);
 }
 
 void hal_pyro_fire(uint8_t channel) {
-    pyro_ch(channel)->fire(channel);
+    test_fire(channel);
 }
 
 void hal_pyro_update(uint32_t now_ms) {
@@ -482,7 +485,7 @@ bool hal_pyro_is_firing(void) {
     return mock_pyro.firing;
 }
 bool hal_pyro_fault(uint8_t channel) {
-    return pyro_ch(channel)->fault(channel);
+    return test_fault(channel);
 }
 
 int mock_buzzer_tone_on_count = 0;
@@ -507,17 +510,6 @@ void hal_buzzer_tone_on(void) {
 void hal_buzzer_tone_off(void) {
     mock_buzzer_tone_off_count++;
     buzzer_edge(false);
-}
-
-/* ── Buzzer async task (test) ─────────────────────────────────────── */
-/* Store the buzzer task pointer so hal_tasks_tick() can drive it.
- * This allows integration tests to advance mock_time_ms and verify
- * the complete tone-on/off sequence without any main-loop involvement. */
-
-static async_task_t *test_buzzer_task = NULL;
-
-void hal_buzzer_task_register(async_task_t *task) {
-    test_buzzer_task = task;
 }
 
 void hal_telemetry_send(const char *sentence) {
@@ -647,13 +639,8 @@ void hal_tasks_tick(uint32_t now_ms) {
         feed_reading(mock_pressure.pressure_pa, now_ms);
         last_pp_feed_ms = now_ms;
     }
-    /* Drive the buzzer async task so integration tests can step through
-     * tone-on/off sequences by advancing mock_time_ms. */
-    if (test_buzzer_task && test_buzzer_task->tick && (int32_t)(now_ms - test_buzzer_task->next_due_ms) >= 0) {
-        test_buzzer_task->tick(test_buzzer_task, now_ms);
-    }
+    buzzer_service(now_ms);
 }
-
 
 void hal_platform_init(void) {}
 void hal_platform_service(void) {}

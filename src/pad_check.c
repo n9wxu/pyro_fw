@@ -56,6 +56,10 @@ const char *pad_check_fault_name(uint16_t diag_bit) {
         return "sensor_stuck";
     case DIAG_SENSOR_LOST:
         return "sensor_lost";
+    case DIAG_FLIGHT_CODE:
+        return "flight_code";
+    case DIAG_FIRES_MOCKED:
+        return "fires_mocked";
     default:
         return "";
     }

@@ -31,7 +31,7 @@ static struct {
     bool estimators_started;
     uint32_t estimators_started_us;
     /* Each estimator as it stood when the present reading first appeared. */
-    uint8_t at_run_start[ESTIMATORS_MAX][ESTIMATOR_STATE_MAX];
+    uint8_t at_run_start[ESTIMATOR_STATE_MAX];
     float sensor_k; /* 0: not known */
     float pad_k;    /* the sensor's temperature on the pad, until the ground is frozen */
     bool standard_air;
@@ -169,22 +169,19 @@ static bool watch_for_gap_and_stuck(int32_t raw_pa, uint32_t us) {
 /* ── The estimators ───────────────────────────────────────────────── */
 
 static void remember_estimators(void) {
-    for (uint8_t i = 0; i < estimator_count(); i++)
-        memcpy(pp.at_run_start[i], estimator_at(i)->state, estimator_at(i)->state_size);
+    estimator_save(pp.at_run_start);
 }
 
 /* The first reading may already be the start of a run. */
 static void start_estimators(float altitude_m, float m_per_pa, uint32_t us) {
-    for (uint8_t i = 0; i < estimator_count(); i++)
-        estimator_at(i)->start(altitude_m, m_per_pa, us, pp.sensor_k);
+    estimator_start(altitude_m, m_per_pa, us, pp.sensor_k);
     pp.estimators_started = true;
     pp.estimators_started_us = us;
     remember_estimators();
 }
 
 static void put_estimators_back(void) {
-    for (uint8_t i = 0; i < estimator_count(); i++)
-        memcpy(estimator_at(i)->state, pp.at_run_start[i], estimator_at(i)->state_size);
+    estimator_restore(pp.at_run_start);
 }
 
 /* A sensor repeating itself gives no data [SNS-PRES-10]: the repeats the
@@ -197,12 +194,10 @@ static void feed_estimators(float altitude_m, float m_per_pa, uint32_t us) {
     }
     if (pp.stuck_readings == REPEATING_READINGS)
         put_estimators_back();
-    for (uint8_t i = 0; i < estimator_count(); i++) {
-        if (pp.repeating)
-            estimator_at(i)->no_reading(us);
-        else
-            estimator_at(i)->reading(altitude_m, m_per_pa, us);
-    }
+    if (pp.repeating)
+        estimator_no_reading(us);
+    else
+        estimator_reading(altitude_m, m_per_pa, us);
     if (pp.stuck_readings == 1)
         remember_estimators();
 }
@@ -210,8 +205,7 @@ static void feed_estimators(float altitude_m, float m_per_pa, uint32_t us) {
 void pp_note_pulse(void) {
     if (!pp.estimators_started)
         return;
-    for (uint8_t i = 0; i < estimator_count(); i++)
-        estimator_at(i)->pulse(pp.last_us);
+    estimator_pulse(pp.last_us);
 }
 
 /* ── Samples ──────────────────────────────────────────────────────── */
@@ -248,8 +242,7 @@ static void in_the_pads_air(pp_sample_t *s, const estimate_t *e) {
 
 static void produce_sample(int32_t raw_pa, float raw_altitude_m, uint32_t ms, uint32_t us, bool stuck) {
     pp_sample_t *s = push_sample();
-    for (uint8_t i = 0; i < estimator_count(); i++)
-        estimator_at(i)->estimate(&s->by_estimator[i]);
+    estimator_estimate(&s->by_estimator[0]);
     const estimate_t *e = &s->by_estimator[pp.obeyed];
     s->pressure_pa = atmos_pressure_pa(e->altitude_m);
     pp.last_filtered = (int32_t)(s->pressure_pa + 0.5f);
@@ -354,7 +347,7 @@ uint32_t pp_ground_reseeds(void) {
 
 static estimate_t obeyed_estimate(void) {
     estimate_t e;
-    estimator_at(pp.obeyed)->estimate(&e);
+    estimator_estimate(&e);
     return e;
 }
 

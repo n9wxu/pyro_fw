@@ -388,6 +388,7 @@ add_executable(pyro_fw_c
     src/log_room.c
     src/boot_record.c
     src/log_counters.c
+    src/ram_check.c
     src/log_live.c
     src/pressure_trace.c
     src/net_ring.c
@@ -654,7 +655,8 @@ pyro_module_suite(apogee_detector_tests test/test_apogee_detector.c src/apogee_d
 pyro_module_suite(simple_apogee_tests test/test_simple_apogee.c src/simple_apogee.c src/atmosphere.c)
 pyro_module_suite(log_pad_ring_tests test/test_log_pad_ring.c src/log_pad_ring.c src/atmosphere.c)
 pyro_module_suite(pyro_release_tests test/test_pyro_release.c src/pyro_release.c src/pad_claim.c)
-pyro_module_suite(estimators_tests test/test_estimators.c src/estimator_table.c src/estimator_constacc.c
+pyro_module_suite(ram_check_tests test/test_ram_check.c src/ram_check.c)
+pyro_module_suite(estimators_tests test/test_estimators.c src/estimator_constacc.c
                   src/altitude_filter.c src/atmosphere.c)
 pyro_module_suite(fire_control_tests test/test_fire_control.c src/fire_control.c src/atmosphere.c)
 

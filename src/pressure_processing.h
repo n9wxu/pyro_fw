@@ -33,7 +33,7 @@ typedef struct {
     float pad_ratio; /* sqrt(rho / rho_pad) here [FLT-AIR-01] */
     bool explains;   /* the estimator's model accounts for the readings [SNS-EST-08] */
 
-    /* Every estimator's state at this reading, in estimator_at()'s order
+    /* Every estimator's state at this reading, in estimator_name()'s order
      * [SNS-EST-07]. */
     estimate_t by_estimator[ESTIMATORS_MAX];
 
@@ -49,7 +49,7 @@ typedef struct {
 #define PP_CAL_SAMPLES 10 /* [FLT-BOOT-08] */
 
 void pp_init(void);
-/* Which estimator the samples carry as the filtered state, by estimator_at()'s
+/* Which estimator the samples carry as the filtered state, by estimator_name()'s
  * index [SNS-EST-06]. pp_init() chooses the default. */
 void pp_obey(uint8_t estimator);
 uint8_t pp_obeyed(void);

@@ -27,7 +27,7 @@ typedef struct {
     bool p1_open;
     bool p2_open;
     bool firing;
-    bool fault; /* injectable fault state */
+    bool fault;     /* injectable fault state */
     int fire_count; /* pulses commanded, energised or not */
     uint8_t last_fire_channel;
     /* The board takes the command and energises nothing: its protection has
@@ -69,16 +69,18 @@ extern mock_pyro_t mock_pyro;
 uint32_t mock_pyro_pads(uint8_t channel);
 
 /* The last mocked operation reported, and how many there have been. */
-extern char mock_pyro_last_note[64];
-extern int mock_pyro_notes;
+/* hal_pyro_get() calls, by channel. */
+extern int mock_pyro_asked[2];
+/* What hal_flight_code_intact() and hal_fires_mocked() answer. */
+extern bool mock_flight_code_damaged, mock_fires_mocked;
 extern char mock_uart_buf[MOCK_UART_BUF_SIZE];
 extern int mock_uart_len;
 extern uint32_t mock_time_ms;
 extern uint32_t mock_fs_locked_count; /* file calls refused while the flight log held the filesystem */
-extern bool mock_prev_watchdog; /* what the watchdog's scratch said at this start-up */
+extern bool mock_prev_watchdog;       /* what the watchdog's scratch said at this start-up */
 extern int32_t mock_prev_stage;
 extern uint32_t mock_prev_stage_ms;
-extern uint32_t mock_counters[]; /* [FLT-LOG-15] by log_counter_t */
+extern uint32_t mock_counters[];     /* [FLT-LOG-15] by log_counter_t */
 extern uint64_t mock_log_free_bytes; /* the store's free bytes at a log's open; 0: room for any */
 void mock_reset_keeping_files(void); /* mock_reset_all(), the store's files kept */
 int mock_fs_peek(const char *path, char *buf, int max_len); /* a test's look at a file, past the lock */

@@ -48,6 +48,8 @@ bool bench_flight_pressure(uint64_t stamp_us, bool landed, float *pa);
 
 /* Whether the channels are the bench's: from the first start until reboot. */
 bool bench_flight_mocked(void);
+/* A profile is flying. */
+bool bench_flight_flying(void);
 
 /* A mocked fire, and what the channel reads after it. A fire is energised
  * for BENCH_PULSE_MS, as a real one is, so the machine records it as fired
