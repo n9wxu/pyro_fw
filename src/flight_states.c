@@ -167,8 +167,14 @@ void flight_make_plan(flight_context_t *ctx) {
 void flight_read_pyro_health(flight_context_t *ctx) {
     hal_continuity_t reading[2];
     hal_pyro_sample();
-    hal_pyro_get(1, &reading[0]);
-    hal_pyro_get(2, &reading[1]);
+    for (uint8_t i = 0; i < 2; i++) {
+        /* A channel that is Lua's is not asked: no igniter circuit there is
+         * the flight software's, and open is what is true. */
+        if (pyro_release_is_released((uint8_t)(i + 1)))
+            reading[i] = (hal_continuity_t){.open = true};
+        else
+            hal_pyro_get((uint8_t)(i + 1), &reading[i]);
+    }
     for (int i = 0; i < 2; i++) {
         ctx->channel_ready[i] = reading[i].good;
         ctx->channel_adc[i] = reading[i].raw_adc;

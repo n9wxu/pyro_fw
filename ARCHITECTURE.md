@@ -58,11 +58,10 @@ void hal_pyro_update(uint32_t now_ms);
 bool hal_pyro_is_firing(void);
 bool hal_pyro_fault(uint8_t channel);
 
-/* Buzzer: raw on/off; buzzer.c's task sequences it */
+/* Buzzer: raw on/off; buzzer.c sequences it */
 void hal_buzzer_init(void);
 void hal_buzzer_tone_on(void);
 void hal_buzzer_tone_off(void);
-void hal_buzzer_task_register(struct async_task *task);
 
 /* Telemetry: raw async transport, best-effort */
 void hal_telemetry_send(const char *sentence);
@@ -244,7 +243,7 @@ The larger fixed buffers, from the code:
 | HAL config API | `hal_config_load()` / `hal_config_save()` |
 | Autonomous pressure sampling | the collector (DD-093) feeding the pressure layer's ring |
 | Telemetry formatter module | `src/telemetry.c`, `$PYRO` NMEA (DD-088) |
-| Buzzer pattern player | an `async_task_t` stepped by `hal_tasks_tick()` |
+| Buzzer pattern player | `buzzer_service()`, called by `hal_tasks_tick()` once a loop |
 | Flight processing | `dispatch_state()` steps once for every sample waiting, each through `pp_read()` (FLT-RATE-06) |
 | Fire-and-forget flight log | `hal_log_start()`, `hal_log_sample()`, `hal_log_stop()`; binary records, written in the writer's slots |
 | Non-blocking UART TX | an interrupt-driven 512-byte ring |

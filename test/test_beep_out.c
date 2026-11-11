@@ -8,11 +8,9 @@
  */
 #include "unity.h"
 #include "buzzer.h"
-#include "async_task.h"
 #include <stdint.h>
 #include <string.h>
 
-static async_task_t *task;
 static uint32_t now;
 static bool tone;
 
@@ -21,9 +19,6 @@ static uint32_t on_at[EDGES], off_at[EDGES];
 static int beeps;
 
 void hal_buzzer_init(void) {}
-void hal_buzzer_task_register(async_task_t *t) {
-    task = t;
-}
 void hal_buzzer_tone_on(void) {
     if (!tone && beeps < EDGES)
         on_at[beeps] = now;
@@ -37,8 +32,7 @@ void hal_buzzer_tone_off(void) {
 
 static void run_ms(uint32_t ms) {
     for (uint32_t end = now + ms; now < end; now++) {
-        if (task && task->tick && (int32_t)(now - task->next_due_ms) >= 0)
-            task->tick(task, now);
+        buzzer_service(now);
     }
 }
 

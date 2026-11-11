@@ -38,7 +38,7 @@ firmware, the host suites and the simulators all build):
 | `flight_descent.c` | firing, the descent phase, landing |
 | `flight_ground_test.c` | ground test mode |
 | `flight_outputs.c` | telemetry, the pad record |
-| `estimator.h`, `estimator_table.c` | the estimator interface, and the estimators this build carries |
+| `estimator.h` | the estimator interface, which the flight path calls directly |
 | `estimator_constacc.c` (with `altitude_filter.c`) | the estimator: altitude, its speed, its acceleration, and whether the model explains the readings |
 | `pressure_processing.c` | readings in to every estimator as altitudes, samples out from the obeyed one as heights in the pad's air: gaps, a stuck sensor, the ground reference |
 | `fire_control.c`, `fire_plan.c` | the fire rules, and the plan the configuration and the board make |
@@ -153,11 +153,11 @@ is the tests' margin (DD-094).
 
 ## The estimators
 
-An estimator turns the raw readings into the filtered state. Each sits behind
-`src/estimator.h`: a name and a table of functions. `estimator_table.c` lists
-the ones a build carries, the default first. Every one is given every
-reading. `estimator` in config.ini names the one the flight obeys, read at
-start-up (SNS-EST-06).
+An estimator turns the raw readings into the filtered state. It sits behind
+`src/estimator.h`: a name and its functions, called directly. The build
+carries one, given every reading. `estimator` in config.ini names an
+estimator, read at start-up; a name the build does not carry selects the one
+it does (SNS-EST-06).
 
 Each reports whether its model explains the readings (SNS-EST-08). Near
 Mach 1 the static ports misreport, and no rocket moves the way those readings

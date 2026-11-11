@@ -45,6 +45,7 @@ typedef struct {
      * that energises nothing takes each command and its protection ends it. */
     bool pyro_faulted[2];
     bool energises_nothing;
+    uint8_t script_channel;      /* this channel's pad is the script's; 0: neither */
     uint32_t verdict_after_ms;   /* how long after a pulse the board has a verdict on its channel */
     const pyro_limits_t *limits; /* NULL: the general ones */
 
@@ -113,7 +114,7 @@ typedef struct {
     float drogue_t, main_t, main_h;
 
     /* What each estimator's own apogee detector said, obeyed or not, in
-     * estimator_at()'s order. */
+     * estimator_name()'s order. */
     bool said_apogee[ESTIMATORS_MAX];
     float said_t[ESTIMATORS_MAX];
 

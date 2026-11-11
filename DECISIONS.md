@@ -335,8 +335,8 @@ sequence has gaps.
 
 ### DD-115: One Estimator Carried
 - **Decision:** at the user's direction -- "Remove lumped" -- the build
-  carries `constacc` alone (`src/estimator_table.c`). The interface stays
-  (DD-092): another estimator is another table entry. A config.ini that
+  carries `constacc` alone (`src/estimator_constacc.c`). The interface stays
+  (DD-092), and the flight path calls it directly (DD-121). A config.ini that
   names an estimator the build does not carry flies `constacc`, and
   `/api/status` names it (SNS-EST-06).
 - **Why:** obeyed, `lumped` was sure of a climb past the top. On the draggy
@@ -377,21 +377,18 @@ sequence has gaps.
   image that links `lua_iface_publish` with no `*_vt` symbol, or
   `http_work_run` without `http_unit_vt`. The naming is load-bearing.
 
-### DD-019: A Released Pyro Channel Is Mocked, Not Guarded
-- **Decision:** the flight software's per-channel pyro operations (`fire`,
-  `get`, `fault`) are a table installed once at boot from the pin assignment
-  (`src/pyro_release.h`). A channel released to Lua gets a mocked table that
-  touches no hardware; the real operations are not reachable for it. The two
-  shared entry points (`hal_pyro_sample()`, `hal_pyro_update()`) return early
-  once both channels are released, because they drive the common.
+### DD-019: A Released Pyro Channel Is Not A Pyro Channel
+- **Decision:** who owns each channel is settled once at boot, by the pad
+  claim (`src/pyro_release.h`). The fire plan takes it from there
+  (`fire_plan_from()`): a channel released to Lua is not enabled, so no fire
+  rule, emergency fire or ground test commands it [PYR-HEALTH-02]. The pad's
+  health read does not ask the board about it. The two shared entry points
+  (`hal_pyro_sample()`, `hal_pyro_update()`) return early once both channels
+  are released, because they drive the common.
 - **Why:** a released pad belongs to Lua on core1, and core0 writing it would
-  fight core1 for the same SIO register. A check at each call site has to be
-  remembered at every new one; a pointer that does not go there cannot be
-  got wrong. Same argument as DD-018.
-- **Nothing is silent:** every mocked operation is written to the flight log
-  as a `MOCK` row beside the event that commanded it, sent on the telemetry
-  downlink, and counted on `/api/status`. A log showing `PYRO1` with no note
-  beside it would record an ignition that did not occur.
+  fight core1 for the same SIO register. The decision is made where the
+  configuration is read, before launch, and the flight path's fire is a
+  direct call with no choice in it (DD-121).
 - **A released channel reports open, not good.** There is no igniter circuit
   the flight software controls there.
 
@@ -802,17 +799,14 @@ sequence has gaps.
 - **Placement:** `support/flight_ram_link.py` runs every firmware link. It
   links once, has `support/prove_flight_ram.py` find the flight path in
   that image -- every function the roots reach by direct branch, through
-  the tables they read and through the pointers named for run time, with
-  the tables those pointers reach, such as a pyro channel's operations --
-  and
+  the tables they read and through the pointers named for run time -- and
   the read-only sections those functions refer to by relocation, then links
   again with those sections renamed `.time_critical.flight.*`, which the
   linker script copies to RAM at start-up. Objects of the SDK, the kernel
   and the C library are renamed in copies; their sources are not touched.
-  A table the flight path reaches through a pointer set at run time is not
-  left to this: a pyro channel's operations are copied by value into
-  `pyro_release.c`'s own store at boot, so the flight path reads RAM whatever
-  the link placed. The HardFault handler is a root of the path: a fault
+  Both links use a copy of the linker script that gathers those sections
+  between `__flight_ram_start__` and `__flight_ram_end__` (DD-121).
+  The HardFault handler is a root of the path: a fault
   taken while a log page programs could not fetch a handler from flash.
   A C library built without a section per function, as Ubuntu's newlib
   is, keeps each function in its member's `.text`; such a member is
@@ -1281,10 +1275,10 @@ in `docs/outstanding_tasks.md`.
 
 ### DD-092: Estimators Behind One Interface, All Flown, One Obeyed
 - **Decision:** the filtered state comes from an estimator behind
-  `src/estimator.h`: a table of functions and a name. The build carries the
-  ones `src/estimator_table.c` lists. Every one is fed every reading. The
-  flight obeys the one `estimator` in config.ini names, and logs what the
-  others report and when each would have called apogee [SNS-EST-06..09].
+  `src/estimator.h`: its functions and a name. The build carries one, fed
+  every reading, and the flight obeys it; `estimator` in config.ini names
+  an estimator, and a name the build does not carry selects the one it does
+  [SNS-EST-06..09].
 - **Carried:** `constacc`, the constant-acceleration Kalman filter of
   DD-085, behind the interface, tuned as DD-113 sets out (DD-115).
 - **Replacing one:** in a build, link another table. In the field, set
@@ -1801,10 +1795,9 @@ in `docs/outstanding_tasks.md`.
   `test_bringup_mk1b_held_bmp280_is_bounded`). The fake bus times a
   transfer at its rate, so a bound too short for MK1B's 100 kHz fails.
 - **The proof, too:** `support/prove_core0.py` counts the SDK's blocking
-  I2C transfers as unbounded waits, and names as flight roots the task ticks
-  `hal_tasks_tick()` reaches through a function pointer (`pres_tick`,
-  `pres_bringup_tick`, `buzzer_tick`), which a call graph cannot follow. A
-  root missing from the image fails it.
+  I2C transfers as unbounded waits. `hal_tasks_tick()` is a flight root and
+  calls the sensor's and the buzzer's steps by name (DD-121), so the call
+  graph follows them. A root missing from the image fails it.
 
 ### DD-063: Every Pressure Conversion, Traced; 100 Hz Checked On Each Sensor
 - **Decision:** at the user's direction -- "We need to verify that 100hz
@@ -1821,6 +1814,43 @@ in `docs/outstanding_tasks.md`.
 - **Why:** a duplicate reading cannot be told from a steady pressure in the
   samples; only each conversion, with when it was measured and when it was
   read, shows a stale read or a missed slot.
+
+### DD-121: The Flight Path Calls By Name, And Is Compared On The Pad
+- **Decision:** at the user's direction -- "Ideally there would be no
+  decisions concerning optional behavior in the flight path" -- the flight
+  path reaches a pyro channel, the estimator, the sensor's readings, the
+  ground test switch and the buzzer by direct calls [FLT-RT-07].
+  - *Pyro:* `hal_pyro_fire()`, `hal_pyro_get()` and `hal_pyro_fault()` call
+    the board. What a channel released to Lua needs is decided in the fire
+    plan at boot (DD-019).
+  - *Estimator:* `pressure_processing.c` calls `estimator_reading()` and its
+    fellows; the build carries one estimator (DD-115).
+  - *Once a loop:* `hal_tasks_tick()` calls `buzzer_service()`, the sensor's
+    step and the ground test switch's read, each by name.
+- **Still through a pointer, and why:** the state machine's `detectors[]`
+  and `transitions[]` are constants indexed by the flight state, which the
+  RAM proof follows entry by entry; a `switch` compiles to the same jump
+  table. The hardware alarm and the interrupt vectors are how the processor
+  and the SDK deliver an interrupt. `flight_call_service()` runs a function
+  another task asks for, and in flight refuses one that is not in RAM.
+  `support/prove_flight_ram.py` names what each may reach, and an indirect
+  branch it has no rule for fails the build.
+- **Compared on the pad:** the flight path's code and constants are in RAM
+  (DD-104), where a stray write can change them. The image keeps the copy
+  they were loaded from, so on the pad the two are compared, 512 bytes a
+  loop: all of it in under a second. A difference is the general fault
+  `flight_code` until the board restarts [FLT-RT-08]. It is not checked in
+  flight: nothing better than carrying on could follow from it there.
+- **Mocked fires are said too:** a bench flight leaves every fire mocked
+  until the board restarts (SIM-03). A board on the pad in that state, with
+  no bench flight flying, holds the general fault `fires_mocked` [SIM-05]:
+  it would fly and fire nothing.
+- **Test:** `test_ram_check.c`, `test_pyro_release.c`,
+  `test_PYR_HEALTH_02_a_channel_given_to_the_script_is_never_asked_of_the_board`,
+  `test_FLT_EMRG_01_a_channel_given_to_the_script_is_never_fired`,
+  `test_FLT_RT_08_flight_code_changed_in_ram_is_a_general_fault_on_the_pad`,
+  `test_SIM_05_fires_left_mocked_are_a_general_fault_on_the_pad`; CI runs
+  `support/prove_flight_ram.py --strict` on every image.
 
 ### DD-120: A Refused Configuration Value Is Said On The Pad
 - **Decision:** a `config.ini` holding a value its field refuses

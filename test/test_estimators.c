@@ -19,7 +19,7 @@ void tearDown(void) {}
 #define STEP_US 20000u
 #define G 9.80665f
 
-static const estimator_vt *e;
+static const char *name;
 static uint32_t t_us;
 static uint32_t noise_state;
 
@@ -33,15 +33,15 @@ static int32_t noise_pa(void) {
  * metres a pascal is there. */
 static void give(float reading_pa) {
     float altitude_m = atmos_altitude_m(reading_pa);
-    e->reading(altitude_m, atmos_m_per_pa(altitude_m, reading_pa), t_us);
+    estimator_reading(altitude_m, atmos_m_per_pa(altitude_m, reading_pa), t_us);
 }
 
 static void on_the_pad(uint8_t estimator) {
-    e = estimator_at(estimator);
+    name = estimator_name(estimator);
     t_us = 5000000u;
     noise_state = 1u;
     float altitude_m = atmos_altitude_m(PAD_PA);
-    e->start(altitude_m, atmos_m_per_pa(altitude_m, PAD_PA), t_us, 288.15f);
+    estimator_start(altitude_m, atmos_m_per_pa(altitude_m, PAD_PA), t_us, 288.15f);
 }
 
 static float pressure_of(const estimate_t *out) {
@@ -54,17 +54,17 @@ static estimate_t read_for(float pressure_pa, uint32_t for_us) {
         give((float)((int32_t)pressure_pa + noise_pa()));
     }
     estimate_t out;
-    e->estimate(&out);
+    estimator_estimate(&out);
     return out;
 }
 
 static estimate_t nothing_for(uint32_t for_us) {
     for (uint32_t end = t_us + for_us; t_us != end;) {
         t_us += STEP_US;
-        e->no_reading(t_us);
+        estimator_no_reading(t_us);
     }
     estimate_t out;
-    e->estimate(&out);
+    estimator_estimate(&out);
     return out;
 }
 
@@ -84,7 +84,7 @@ static estimate_t fly_the_arc_to(float until_s) {
     if (until_s <= 0.0f)
         flown_s = 0.0f;
     estimate_t out;
-    e->estimate(&out);
+    estimator_estimate(&out);
     while (flown_s < until_s) {
         flown_s += (float)STEP_US * 1e-6f;
         out = read_for(standard_pressure_above_pa(PAD_PA, arc_height_m(flown_s)), STEP_US);
@@ -96,10 +96,9 @@ static estimate_t fly_the_arc_to(float until_s) {
 
 void test_SNS_EST_06_each_has_a_name_config_can_hold(void) {
     EVERY_ESTIMATOR {
-        const estimator_vt *a = estimator_at(i);
-        TEST_ASSERT_TRUE_MESSAGE(strlen(a->name) >= 1 && strlen(a->name) <= 8, a->name);
-        TEST_ASSERT_EQUAL_UINT8_MESSAGE(i, estimator_index(a->name), a->name);
-        TEST_ASSERT_TRUE_MESSAGE(a->state_size <= ESTIMATOR_STATE_MAX, a->name);
+        const char *a = estimator_name(i);
+        TEST_ASSERT_TRUE_MESSAGE(strlen(a) >= 1 && strlen(a) <= 8, a);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(i, estimator_index(a), a);
     }
     TEST_ASSERT_TRUE(estimator_count() <= ESTIMATORS_MAX);
 }
@@ -107,11 +106,11 @@ void test_SNS_EST_06_each_has_a_name_config_can_hold(void) {
 void test_SNS_EST_08_explaining_takes_a_second_of_readings(void) {
     EVERY_ESTIMATOR {
         on_the_pad(i);
-        TEST_ASSERT_FALSE_MESSAGE(read_for(PAD_PA, 500000u).explains, e->name);
+        TEST_ASSERT_FALSE_MESSAGE(read_for(PAD_PA, 500000u).explains, name);
         estimate_t later = read_for(PAD_PA, 1500000u);
-        TEST_ASSERT_TRUE_MESSAGE(later.explains, e->name);
-        TEST_ASSERT_FLOAT_WITHIN_MESSAGE(3.0f, PAD_PA, pressure_of(&later), e->name);
-        TEST_ASSERT_TRUE_MESSAGE(fabsf(later.speed) <= 4.0f * later.speed_sigma, e->name);
+        TEST_ASSERT_TRUE_MESSAGE(later.explains, name);
+        TEST_ASSERT_FLOAT_WITHIN_MESSAGE(3.0f, PAD_PA, pressure_of(&later), name);
+        TEST_ASSERT_TRUE_MESSAGE(fabsf(later.speed) <= 4.0f * later.speed_sigma, name);
     }
 }
 
@@ -119,11 +118,11 @@ void test_SNS_EST_08_explaining_takes_a_second_of_readings(void) {
 void test_SNS_EST_08_a_step_no_motion_makes_is_not_explained(void) {
     EVERY_ESTIMATOR {
         on_the_pad(i);
-        TEST_ASSERT_TRUE_MESSAGE(read_for(PAD_PA, 5000000u).explains, e->name);
+        TEST_ASSERT_TRUE_MESSAGE(read_for(PAD_PA, 5000000u).explains, name);
         bool explained_throughout = true;
         for (int k = 0; k < 25; k++)
             explained_throughout &= read_for(PAD_PA - 2000.0f, STEP_US).explains;
-        TEST_ASSERT_FALSE_MESSAGE(explained_throughout, e->name);
+        TEST_ASSERT_FALSE_MESSAGE(explained_throughout, name);
         TEST_ASSERT_TRUE_MESSAGE(read_for(PAD_PA - 2000.0f, 10000000u).explains, "and readings that stay are followed");
     }
 }
@@ -131,12 +130,12 @@ void test_SNS_EST_08_a_step_no_motion_makes_is_not_explained(void) {
 void test_SNS_EST_08_a_few_missing_readings_are_not_a_gap(void) {
     EVERY_ESTIMATOR {
         on_the_pad(i);
-        TEST_ASSERT_TRUE_MESSAGE(read_for(PAD_PA, 5000000u).explains, e->name);
-        TEST_ASSERT_TRUE_MESSAGE(nothing_for(160000u).explains, e->name);
-        TEST_ASSERT_TRUE_MESSAGE(read_for(PAD_PA, 100000u).explains, e->name);
-        TEST_ASSERT_FALSE_MESSAGE(nothing_for(400000u).explains, e->name);
-        TEST_ASSERT_FALSE_MESSAGE(read_for(PAD_PA, 500000u).explains, e->name);
-        TEST_ASSERT_TRUE_MESSAGE(read_for(PAD_PA, 1500000u).explains, e->name);
+        TEST_ASSERT_TRUE_MESSAGE(read_for(PAD_PA, 5000000u).explains, name);
+        TEST_ASSERT_TRUE_MESSAGE(nothing_for(160000u).explains, name);
+        TEST_ASSERT_TRUE_MESSAGE(read_for(PAD_PA, 100000u).explains, name);
+        TEST_ASSERT_FALSE_MESSAGE(nothing_for(400000u).explains, name);
+        TEST_ASSERT_FALSE_MESSAGE(read_for(PAD_PA, 500000u).explains, name);
+        TEST_ASSERT_TRUE_MESSAGE(read_for(PAD_PA, 1500000u).explains, name);
     }
 }
 
@@ -151,7 +150,7 @@ void test_SNS_EST_08_a_ballistic_arc_is_explained_over_the_top(void) {
         estimate_t after = fly_the_arc_to(ARC_APOGEE_S + 2.0f);
         char msg[160];
         snprintf(msg, sizeof(msg), "%s: 2 s before the top %.1f m/s (explains %d), 2 s after %.1f m/s (explains %d)",
-                 e->name, (double)before.speed, before.explains, (double)after.speed, after.explains);
+                 name, (double)before.speed, before.explains, (double)after.speed, after.explains);
         TEST_ASSERT_TRUE_MESSAGE(before.explains && after.explains, msg);
         TEST_ASSERT_FLOAT_WITHIN_MESSAGE(3.0f, 2.0f * G, before.speed, msg);
         TEST_ASSERT_FLOAT_WITHIN_MESSAGE(3.0f, -2.0f * G, after.speed, msg);
@@ -175,11 +174,11 @@ void test_SNS_EST_08_an_estimate_does_not_fall_through_the_ground(void) {
             lowest_m = fminf(lowest_m, after.altitude_m - atmos_altitude_m(PAD_PA));
         }
         char msg[128];
-        snprintf(msg, sizeof(msg), "%s: as low as %.0f m with no readings", e->name, (double)lowest_m);
+        snprintf(msg, sizeof(msg), "%s: as low as %.0f m with no readings", name, (double)lowest_m);
         TEST_ASSERT_FALSE_MESSAGE(after.explains, msg);
         TEST_ASSERT_TRUE_MESSAGE(lowest_m > -1.0f, msg);
         estimate_t back = read_for(PAD_PA, 10000000u);
-        snprintf(msg, sizeof(msg), "%s: %.0f Pa from the readings 10 s after they returned", e->name,
+        snprintf(msg, sizeof(msg), "%s: %.0f Pa from the readings 10 s after they returned", name,
                  (double)(pressure_of(&back) - PAD_PA));
         TEST_ASSERT_TRUE_MESSAGE(back.explains, msg);
         TEST_ASSERT_FLOAT_WITHIN_MESSAGE(20.0f, PAD_PA, pressure_of(&back), msg);
@@ -195,11 +194,11 @@ void test_SNS_EST_09_a_separation_shock_moves_no_estimate(void) {
         for (unsigned k = 0; k < sizeof(shocks_pa) / sizeof(shocks_pa[0]); k++) {
             on_the_pad(i);
             (void)read_for(PAD_PA, 5000000u);
-            e->pulse(t_us);
+            estimator_pulse(t_us);
             estimate_t during = read_for(PAD_PA + shocks_pa[k], 40000u);
             estimate_t after = read_for(PAD_PA, STEP_US);
             char msg[96];
-            snprintf(msg, sizeof(msg), "%s through %+.0f Pa: moved %.0f Pa", e->name, (double)shocks_pa[k],
+            snprintf(msg, sizeof(msg), "%s through %+.0f Pa: moved %.0f Pa", name, (double)shocks_pa[k],
                      (double)(pressure_of(&during) - PAD_PA));
             TEST_ASSERT_FLOAT_WITHIN_MESSAGE(30.0f, PAD_PA, pressure_of(&during), msg);
             TEST_ASSERT_FLOAT_WITHIN_MESSAGE(30.0f, PAD_PA, pressure_of(&after), msg);

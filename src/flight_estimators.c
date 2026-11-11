@@ -21,14 +21,14 @@ static void report(const flight_context_t *ctx, const pp_sample_t *s, uint8_t i,
     long height_cm = (long)(pp_altitude_height_m(e->altitude_m) * 100.0f);
     long speed_cms = (long)(e->speed * 100.0f);
     char row[FLIGHT_ESTIMATOR_ROW_MAX];
-    int n = small_snprintf(row, sizeof(row), "%s cm=%ld cm/s=%ld explains=%d", estimator_at(i)->name, height_cm,
-                           speed_cms, e->explains);
+    int n = small_snprintf(row, sizeof(row), "%s cm=%ld cm/s=%ld explains=%d", estimator_name(i), height_cm, speed_cms,
+                           e->explains);
     log_row(flight_ms, row, n);
 }
 
 static void say_apogee(uint8_t i, uint32_t flight_ms) {
     char row[FLIGHT_ESTIMATOR_ROW_MAX];
-    int n = small_snprintf(row, sizeof(row), "%s APOGEE", estimator_at(i)->name);
+    int n = small_snprintf(row, sizeof(row), "%s APOGEE", estimator_name(i));
     log_row(flight_ms, row, n);
 }
 
@@ -71,7 +71,7 @@ void flight_follow_estimators(flight_context_t *ctx, const pp_sample_t *s, uint3
 /* [FLT-APO-11] Which filter the declared apogee is from. */
 void flight_log_apogee_by(const flight_context_t *ctx) {
     char row[FLIGHT_ESTIMATOR_ROW_MAX];
-    const char *by = ctx->apogee_by_simple ? "simple" : estimator_at(pp_obeyed())->name;
+    const char *by = ctx->apogee_by_simple ? "simple" : estimator_name(pp_obeyed());
     int n = small_snprintf(row, sizeof(row), "apogee by %s", by);
     log_row(ctx->last_sample - ctx->launch_time, row, n);
 }

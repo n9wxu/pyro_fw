@@ -330,6 +330,17 @@ void test_SIM_03_the_channels_stay_mocked_after_a_stop(void) {
     TEST_ASSERT_EQUAL_UINT32(1, st.fires[1]);
 }
 
+/* What the pad check asks [SIM-05]: mocked, and nothing flying. */
+void test_SIM_05_a_stopped_bench_flight_is_mocked_and_not_flying(void) {
+    fsim_params_t p = high();
+    TEST_ASSERT_FALSE(bench_flight_flying());
+    TEST_ASSERT_EQUAL_INT(BF_STARTED, bench_flight_start(&p, SEA_PA, 0.0f, true, true, 0));
+    TEST_ASSERT_TRUE(bench_flight_flying());
+    bench_flight_stop();
+    TEST_ASSERT_FALSE(bench_flight_flying());
+    TEST_ASSERT_TRUE(bench_flight_mocked());
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_SIM_02_the_coast_peaks_at_the_apogee_asked_for);
@@ -347,5 +358,6 @@ int main(void) {
     RUN_TEST(test_SIM_04_a_failed_main_stays_at_the_drogues_rate);
     RUN_TEST(test_SIM_04_with_both_failed_it_falls_ballistic_to_the_ground);
     RUN_TEST(test_SIM_03_the_channels_stay_mocked_after_a_stop);
+    RUN_TEST(test_SIM_05_a_stopped_bench_flight_is_mocked_and_not_flying);
     return UNITY_END();
 }

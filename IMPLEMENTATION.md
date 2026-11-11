@@ -83,7 +83,7 @@ Pads are owned once: `pin_store_claim_pads()` gives each pad one owner, and `pyr
 |---|---|
 | `src/flight_sources.txt` | The flight software's file list, one responsibility a file (`docs/flight_states.md` has the table) |
 | `src/flight_states.c`, `src/flight_states.h` | The transition table, the dispatcher, the context |
-| `src/estimator.h`, `src/estimator_table.c`, `src/estimator_constacc.c` | The estimators: one interface, the table the build carries, the constant-acceleration filter (DD-092, DD-115) |
+| `src/estimator.h`, `src/estimator_constacc.c` | The estimator: its interface, and the constant-acceleration filter the build carries (DD-092, DD-115) |
 | `src/altitude_filter.c`, `src/pressure_processing.c`, `src/atmosphere.c` | The constant-acceleration Kalman filter, samples and the ground reference, the standard atmosphere and the pad's air |
 | `src/fire_control.c`, `src/fire_plan.c` | The fire rules; the plan from the configuration and the board |
 | `src/flight_resume.c` | The pad record and the resume decision |

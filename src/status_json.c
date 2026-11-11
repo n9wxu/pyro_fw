@@ -126,11 +126,11 @@ int status_json(const status_snap_t *s, char *buf, size_t cap) {
         "\"flash_opens\":%lu,\"flash_skips\":%lu,\"flash_refusals\":%lu,\"log_dropped\":%lu,"
         "\"flash_erases\":%lu,\"flash_programs\":%lu,\"flash_deferrals\":%lu,"
         "\"pins_reason\":\"%s\",\"pyro1_released\":%s,\"pyro2_released\":%s,\"bridge\":\"%s\","
-        "\"pyro_mocked\":%lu,\"pyro1_real\":%s,\"pyro2_real\":%s,\"sensor_ok\":%s,\"fs_ok\":%s,\"faults\":[",
+        "\"pyro1_real\":%s,\"pyro2_real\":%s,\"sensor_ok\":%s,\"fs_ok\":%s,\"faults\":[",
         (unsigned long)s->flash_opens, (unsigned long)s->flash_skips, (unsigned long)s->flash_refusals,
         (unsigned long)s->log_dropped, (unsigned long)s->flash_erases, (unsigned long)s->flash_programs,
         (unsigned long)s->flash_deferrals, reason, B(s->pyro_released[0]), B(s->pyro_released[1]), bridge,
-        (unsigned long)s->pyro_mocked, B(s->pyro_real[0]), B(s->pyro_real[1]), B(s->sensor_ok), B(s->fs_ok));
+        B(s->pyro_real[0]), B(s->pyro_real[1]), B(s->sensor_ok), B(s->fs_ok));
     for (int i = 0; i < s->n_faults && i < STATUS_FAULTS_MAX; i++) {
         put(&o, "%s\"%s\"", i ? "," : "", S(s->faults[i]));
     }

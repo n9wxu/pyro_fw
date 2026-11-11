@@ -24,6 +24,8 @@
 #define DIAG_CONFIG_UNREADABLE (1u << 10)
 #define DIAG_BOARD_MISMATCH (1u << 11)
 #define DIAG_CONFIG_REJECTED (1u << 12)
+#define DIAG_FLIGHT_CODE (1u << 13)
+#define DIAG_FIRES_MOCKED (1u << 14)
 
 #define DIAG_PYRO_1 (DIAG_P1_OPEN | DIAG_P1_SHORT)
 #define DIAG_PYRO_2 (DIAG_P2_OPEN | DIAG_P2_SHORT)
@@ -31,7 +33,7 @@
 /* What cannot be corrected at the rocket [BUZ-CODE-02, SNS-PRES-17]. */
 #define DIAG_GENERAL                                                                                                   \
     (DIAG_SENSOR_FAIL | DIAG_FS_FAIL | DIAG_SENSOR_STUCK | DIAG_SENSOR_LOST | DIAG_CONFIG_UNREADABLE |                 \
-     DIAG_BOARD_MISMATCH | DIAG_CONFIG_REJECTED)
+     DIAG_BOARD_MISMATCH | DIAG_CONFIG_REJECTED | DIAG_FLIGHT_CODE | DIAG_FIRES_MOCKED)
 
 /* The pyro faults of the enabled channels, as DIAG_* bits. */
 uint16_t pad_check_pyro_faults(const hal_continuity_t reading[2], const bool enabled[2]);

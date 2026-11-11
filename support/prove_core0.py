@@ -95,11 +95,6 @@ FLIGHT_ROOTS = [
     "dispatch_state",
     "flight_update_outputs",
     "hal_tasks_tick",
-    # hal_tasks_tick() calls these through async_task_t.tick, set at run time,
-    # which a call graph cannot follow.
-    "pres_bringup_tick",
-    "pres_tick",
-    "buzzer_tick",
     "hal_pyro_update",
     "pyro_update",
     "hal_pyro_fire",

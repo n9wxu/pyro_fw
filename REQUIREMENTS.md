@@ -67,6 +67,8 @@ flight this unit cannot (DD-081).
 - **FLT-RT-03**: From launch to landing no flash operation shall stop or delay the flight task. ← FLT-RT-01, DD-104
 - **FLT-RT-04**: The flight task shall run every 10 ms. ← FLT-RT-01, DD-104
 - **FLT-RT-05**: Every period the flight task misses shall be counted on `/api/status`, whatever kept it from running, its core's interrupts being off included: from launch to landing as `loop_overruns`, on the ground as `loop_overruns_ground`. ← FLT-RT-04, DD-112
+- **FLT-RT-07**: From launch to landing, the flight task shall reach a pyro channel, the estimator, the sensor's readings and the ground test switch by direct calls: none shall go through a pointer set at run time. The build shall fail otherwise. ← FLT-RT-02, DD-121
+- **FLT-RT-08**: On the pad, the system shall compare the flight path's code and constants in RAM with the image's copy of them, the whole of it at least once every 2 s. A difference shall be a general fault on the pad, announced (BUZ-CODE-02) and named `flight_code` on `/api/status`, until the board restarts. ← FLT-RT-02, DD-121
 - **FLT-RT-06**: On the ground, the log writer's erase on a part whose erase suspends shall stop the flight task's core for no longer than one of the writer's slots at a time. ← FLT-RT-04, DD-112
 
 ### Launch
@@ -337,7 +339,7 @@ not converge, or decides alone when `model_decides` is false
 - **SNS-EST-03**: Noise alone shall cross no threshold. A board on a pad, in gusts of 40 Pa rms (a gusty 20 mph wind, the NAR's launch limit), shall declare no launch, and a rocket descending steadily 20 % ‡ below a fire rule's speed shall not trip it, at any sensor noise up to the board's declared figure. ← SNS-EST-01
 - **SNS-EST-04**: The filtered state shall follow a real change: a descent speed that passes a fire rule's threshold shall be reported as past it within 2 s ‡. ← SNS-EST-01, SYS-DEPLOY-05
 - **SNS-EST-05**: Every flight comparison shall be made on a height above the pad or a speed, in the pad's air: the 1976 US Standard Atmosphere offset at every height by the pad's temperature, which the sensor reads on the pad until launch, or the standard itself when `standard_atmosphere` is set. An AGL trigger shall act within 3 % ‡ of its set height from any pad between sea level and 2000 m in the standard's air, and within 1 % ‡ and 1 m ‡ from a pad whose air is up to 32 K ‡ off the standard's. ← SNS-EST-01, DD-085, DD-114
-- **SNS-EST-06**: The filtered state shall come from one of the estimators the build carries, each behind one interface (`src/estimator.h`). `estimator` in config.ini names the one the flight obeys, read at start-up; a name no estimator has selects the default. `/api/status` shall name the estimator obeyed. ← SNS-EST-01, SYS-CFG-02, DD-092
+- **SNS-EST-06**: The filtered state shall come from the estimator the build carries, behind one interface (`src/estimator.h`). `estimator` in config.ini names an estimator, read at start-up; a name the build does not carry selects the one it does. `/api/status` shall name the estimator obeyed. ← SNS-EST-01, SYS-CFG-02, DD-092
 - **SNS-EST-07**: Every estimator the build carries shall be given every reading, whichever is obeyed. From launch to landing the flight log shall carry, for each, a row once a second with its height, its speed and whether it explains the readings, and a row when its own apogee rule (FLT-APO-07) is first met. Only the obeyed estimator's apogee is the flight's. ← SNS-EST-06, SYS-DATA-01, DD-092
 - **SNS-EST-08**: An estimator shall report whether its model explains the readings: they agree with its prediction, and it has had 1 s ‡ of them with no gap (SNS-PRES-11). ← SNS-EST-01, DD-092
 - **SNS-EST-09**: Each estimator shall be told when the board pulses a channel. ← SNS-EST-06, DD-092
@@ -565,6 +567,7 @@ not converge, or decides alone when `model_decides` is false
 - **SIM-01**: A bench flight shall start only from PAD_IDLE with test mode on, and only a profile that can fly. ← SYS-SIM-01
 - **SIM-02**: While one flies, the profile's pressure, from the 1976 US Standard Atmosphere, carrying each reading's own departure from the ground reference the flight started at, shall replace that reading after the pressure trace has recorded the sensor's, and the flight shall end once the profile and the flight software have both landed. ← SYS-SIM-01
 - **SIM-03**: From the start of a bench flight until the board restarts, every fire shall be mocked and logged as one; a stop shall not give the channels back. ← SYS-SIM-01
+- **SIM-05**: A board whose fires are mocked (SIM-03) and which is not flying a bench flight shall hold a general fault on the pad, announced (BUZ-CODE-02) and named `fires_mocked` on `/api/status`, until it restarts. ← SIM-03, DD-121
 - **SIM-04**: The bench flight shall offer profiles in which a canopy fails, so the re-fire and emergency rules can be seen on a board. ← SYS-SIM-01, PYR-REFIRE-01, FLT-EMRG-01
 
 ---

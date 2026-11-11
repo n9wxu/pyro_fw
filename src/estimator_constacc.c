@@ -11,6 +11,7 @@
 #include "estimator.h"
 #include "altitude_filter.h"
 #include <math.h>
+#include <string.h>
 
 #define ROUGH_SIGMAS 4.0f
 #define SMOOTH_US 1000000u
@@ -29,13 +30,13 @@ static void hold_rough_from(uint32_t t_us) {
     self.rough_until_us = t_us + SMOOTH_US;
 }
 
-static void start(float altitude_m, float m_per_pa, uint32_t t_us, float pad_temp_k) {
+void estimator_start(float altitude_m, float m_per_pa, uint32_t t_us, float pad_temp_k) {
     (void)pad_temp_k;
     af_start(&self.filter, altitude_m, m_per_pa, t_us);
     hold_rough_from(t_us);
 }
 
-static void reading(float altitude_m, float m_per_pa, uint32_t t_us) {
+void estimator_reading(float altitude_m, float m_per_pa, uint32_t t_us) {
     bool after_a_gap = t_us - self.filter.t_us > GAP_US;
     af_update(&self.filter, altitude_m, m_per_pa, t_us);
     bool off_the_arc = after_a_gap || fabsf(self.filter.accel) >= ARC_ACCEL_MAX ||
@@ -46,16 +47,16 @@ static void reading(float altitude_m, float m_per_pa, uint32_t t_us) {
         self.rough = false;
 }
 
-static void no_reading(uint32_t t_us) {
+void estimator_no_reading(uint32_t t_us) {
     if (t_us - self.filter.t_us > GAP_US)
         hold_rough_from(t_us);
 }
 
-static void pulse(uint32_t t_us) {
+void estimator_pulse(uint32_t t_us) {
     (void)t_us;
 }
 
-static void estimate(estimate_t *out) {
+void estimator_estimate(estimate_t *out) {
     af_estimate_t e = af_estimate(&self.filter);
     out->altitude_m = e.altitude_m;
     out->speed = e.speed;
@@ -66,13 +67,22 @@ static void estimate(estimate_t *out) {
     out->explains = !self.rough;
 }
 
-const estimator_vt estimator_constacc_vt = {
-    .name = "constacc",
-    .start = start,
-    .reading = reading,
-    .no_reading = no_reading,
-    .pulse = pulse,
-    .estimate = estimate,
-    .state = &self,
-    .state_size = sizeof(self),
-};
+_Static_assert(sizeof(self) <= ESTIMATOR_STATE_MAX, "raise ESTIMATOR_STATE_MAX");
+
+void estimator_save(uint8_t to[ESTIMATOR_STATE_MAX]) {
+    memcpy(to, &self, sizeof(self));
+}
+
+void estimator_restore(const uint8_t from[ESTIMATOR_STATE_MAX]) {
+    memcpy(&self, from, sizeof(self));
+}
+
+const char *estimator_name(uint8_t index) {
+    (void)index;
+    return "constacc";
+}
+
+uint8_t estimator_index(const char *name) {
+    (void)name;
+    return 0;
+}

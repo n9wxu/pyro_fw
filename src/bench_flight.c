@@ -61,6 +61,10 @@ bool bench_flight_mocked(void) {
     return bf.mocked;
 }
 
+bool bench_flight_flying(void) {
+    return bf.flying;
+}
+
 void bench_flight_fire(uint8_t channel, uint32_t now_ms) {
     if (channel < 1 || channel > 2)
         return;

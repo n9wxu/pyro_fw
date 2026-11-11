@@ -35,7 +35,17 @@ static void announce(flight_context_t *ctx) {
     beep_say(verdict);
 }
 
+/* [FLT-RT-08, SIM-05] Neither mends itself: once seen, it is a fault until
+ * the board restarts. */
+static void check_what_will_fly(flight_context_t *ctx) {
+    if (!hal_flight_code_intact())
+        ctx->diag |= DIAG_FLIGHT_CODE;
+    if (hal_fires_mocked())
+        ctx->diag |= DIAG_FIRES_MOCKED;
+}
+
 static void check_pad(flight_context_t *ctx, uint32_t now) {
+    check_what_will_fly(ctx);
     if (!health_check_due(ctx, now))
         return;
     flight_read_pyro_health(ctx);

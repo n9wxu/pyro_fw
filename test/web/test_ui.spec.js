@@ -878,6 +878,11 @@ test.describe('Flown device', () => {
     await expect(page.locator('#faultWarn')).toBeVisible({ timeout: 5000 });
     await expect(page.locator('#faultWarn')).toContainText('pressure sensor repeats one reading');
     await expect(page.locator('#faultWarn')).toContainText('config.ini holds a value the board refused');
+    /* FLT-RT-08, SIM-05 */
+    await request.post(`${BASE}/api/_test/status`,
+      { data: JSON.stringify({ faults: ['flight_code', 'fires_mocked'] }) });
+    await expect(page.locator('#faultWarn')).toContainText('flight code in RAM is not what the image holds', { timeout: 5000 });
+    await expect(page.locator('#faultWarn')).toContainText('every fire is mocked until the board restarts');
     await request.post(`${BASE}/api/_test/status`, { data: JSON.stringify({ faults: ['a_fault_new_to_the_page'] }) });
     await expect(page.locator('#faultWarn')).toContainText('a_fault_new_to_the_page', { timeout: 5000 });
     await request.post(`${BASE}/api/_test/reset`);

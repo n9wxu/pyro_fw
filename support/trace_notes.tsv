@@ -44,7 +44,7 @@ BRD-02	⚠️	Owed with HAL-06
 PYR-ARM-01	⚠️	MK1C: about 35 ms. MK1A and MK1B end a pulse from the loop, so a stopped loop leaves it energised until the watchdog, 1 s: the 50 ms bound is not met on those boards
 SYS-LUA-01	⚠️	MK1C-SD is built without a script: J3 carries its SPI bus
 FLT-RT-01		The bound on each board is declared and not yet measured on this revision: `loop_late_max_us` on `/api/status`
-GND-TEST-12		The pulsed read on the buzzer's pad (`gts_tick()`) is platform code: bench check owed, `docs/ground_test_on_buzzer_pad.md`
+GND-TEST-12		The pulsed read on the buzzer's pad (`gts_step()`) is platform code: bench check owed, `docs/ground_test_on_buzzer_pad.md`
 SNS-COL-06	✅	CI runs `support/prove_core0.py` on every image: it fails if `collector_alarm_isr` or anything it calls is outside RAM
 FLT-RT-02	✅	CI runs `support/prove_flight_ram.py --strict` on every image: it fails if the flight path, from the first period airborne to landing, reaches flash by a function, a read-only byte or an uncovered indirect branch
 FLT-RT-03	✅ HW	MK1C bench flights, 2026-10-18 (DD-104): from launch to landing no lockout and no loop overrun, the loop at most 97 us late, with 3,000 programs and 60 erases in flight
@@ -53,4 +53,7 @@ FLT-LOG-10	✅	Host tests above; on MK1C, 2026-10-18, 60 erases in flight in 690
 FLT-LOG-11		Host tests above; not yet seen on a board (DD-104)
 WEB-API-18		Host tests above; on MK1C twice and MK1B-8MB once, 2026-10-19, an upload past the room refused, let go, its name taken again, no restart (DD-105)
 FLT-RT-06		Tested on the host; a bench run on a part whose erase suspends (MK1A, MK1B, MK1C) is owed (DD-112)
+FLT-RT-07	✅	CI runs `support/prove_flight_ram.py --strict` on every image: an indirect branch on the flight path that no rule names fails it, and no rule names a pyro channel, the estimator or the once-a-loop steps
+FLT-RT-08	✅ HW	MK1B-8MB, 2026-11-10: 30 s on the pad, about 40 comparisons of 38.7 KB, with no fault and the pad's loop at most 0.43 ms. A changed byte is found on the host; on a board it is owed (PM-E)
+SIM-05	✅ HW	MK1B-8MB, 2026-11-10: a bench flight started and stopped on the pad gave `fires_mocked` and the general-fault announcement, which leaving test mode did not clear
 FLT-RT-05	✅ HW	MK1B-8MB bench flights, 2026-10-26 (DD-112): loop_overruns 0 in flight; the landing cleanup's whole erases counted 145 to 151 loop_overruns_ground

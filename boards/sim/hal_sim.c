@@ -7,6 +7,7 @@
  *
  * SPDX-License-Identifier: MIT
  */
+#include "buzzer.h"
 #include "../src/hal.h"
 #include "../src/pressure_processing.h"
 #include "../src/config.h"
@@ -222,17 +223,6 @@ void hal_buzzer_tone_off(void) {
     sim_buzzer_on = false;
 }
 
-/* ── Buzzer async task (sim) ──────────────────────────────────────── */
-/* Store the buzzer task pointer so hal_tasks_tick() can drive it.
- * sim_get_buzzer_state() reads the GPIO state set by tone_on/off,
- * which is correct because the buzzer task calls those directly. */
-
-static async_task_t *sim_buzzer_task = NULL;
-
-void hal_buzzer_task_register(async_task_t *task) {
-    sim_buzzer_task = task;
-}
-
 void hal_telemetry_send(const char *sentence) {
     int len = strlen(sentence);
     if (sim_telem_len + len < SIM_TELEM_BUF) {
@@ -330,6 +320,13 @@ static int32_t sensor_dither(void) {
     return (int32_t)((lcg >> 16) % 3u) - 1;
 }
 
+bool hal_flight_code_intact(void) {
+    return true;
+}
+bool hal_fires_mocked(void) {
+    return false;
+}
+
 void hal_tasks_tick(uint32_t now_ms) {
     /* Feed pressure_processing so detectors read altitude via pp_read(). */
     if (sim_sensor_type > 0 && (!sim_fed || now_ms - sim_last_feed_ms >= SIM_SAMPLE_MS)) {
@@ -338,12 +335,8 @@ void hal_tasks_tick(uint32_t now_ms) {
         sim_fed = true;
     }
 
-    /* Drive the buzzer task so the sim produces correct buzzer audio. */
-    if (sim_buzzer_task && sim_buzzer_task->tick && (int32_t)(now_ms - sim_buzzer_task->next_due_ms) >= 0) {
-        sim_buzzer_task->tick(sim_buzzer_task, now_ms);
-    }
+    buzzer_service(now_ms);
 }
-
 
 void hal_platform_init(void) {}
 void hal_platform_service(void) {}

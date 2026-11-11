@@ -19,6 +19,11 @@ itself, is taken out of the library, renamed, and linked ahead of it.
 
 The list follows the code and the compiler, at every link. CI's prover then
 checks the image (prove_flight_ram.py --strict).
+
+Both links use a copy of the linker script (<image>.flight_ram.ld) that
+gathers those sections together inside .data, between __flight_ram_start__
+and __flight_ram_end__: the firmware compares that range with the image's
+copy of it on the pad [FLT-RT-08].
 """
 import os
 import re
@@ -114,11 +119,37 @@ def placed(cmd, by_obj, tool, tmp):
     return out[:at] + extra + out[at:]
 
 
+SCRIPT_ARG = "-Wl,--script="
+ANCHOR_RE = re.compile(r"^([ \t]*)\*\(\.time_critical\*\)[ \t]*$", re.M)
+
+
+def gathered(cmd, image):
+    """The command, its linker script replaced by one that gathers the flight
+    sections. A link with no such script, or a script that places no
+    .time_critical sections, is left as it is."""
+    at = next((i for i, a in enumerate(cmd) if a.startswith(SCRIPT_ARG)), None)
+    if at is None:
+        return cmd
+    with open(cmd[at][len(SCRIPT_ARG):]) as f:
+        script = f.read()
+    m = ANCHOR_RE.search(script)
+    if not m:
+        return cmd
+    pad = m.group(1)
+    block = (f"{pad}__flight_ram_start__ = .;\n{pad}*({PREFIX}*)\n{pad}__flight_ram_end__ = .;\n"
+             f"{pad}*(.time_critical*)")
+    path = os.path.abspath(image) + ".flight_ram.ld"
+    with open(path, "w") as f:
+        f.write(script[:m.start()] + block + script[m.end():])
+    return cmd[:at] + [SCRIPT_ARG + path] + cmd[at + 1:]
+
+
 def main():
     argv = sys.argv[1:]
     sep = argv.index("--")
     tool, cmd = argv[0], argv[sep + 1:]
     image = cmd[cmd.index("-o") + 1]
+    cmd = gathered(cmd, image)
     tmp = tempfile.mkdtemp(prefix="flight_ram_")
     try:
         first = os.path.join(tmp, "first.elf")

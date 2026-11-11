@@ -223,10 +223,9 @@ grows with every capability core1 gains, and a call graph cannot settle it.
    if the pressure collector's alarm handler (`collector_alarm_isr`, DD-093)
    or `flash_op_park` can reach flash through a callee or a constant. The
    SDK's `i2c_write_blocking` and `i2c_read_blocking` count as unbounded
-   waits: a part holding SCL low holds the caller forever. The task ticks
-   `hal_tasks_tick()` reaches through a pointer (`pres_tick`,
-   `pres_bringup_tick`, `buzzer_tick`) are roots of their own, and a renamed
-   root fails rather than drops out (DD-069). Core1's indirect calls are
+   waits: a part holding SCL low holds the caller forever.
+   `hal_tasks_tick()` calls the sensor's and the buzzer's steps by name
+   (DD-121), and a renamed root fails rather than drops out (DD-069). Core1's indirect calls are
    followed through tables named `*_vt`, and an image that dispatches
    through a table without one fails (DD-018). It is not a safety case:
    inlined spin lock acquires and other indirect calls are outside what it

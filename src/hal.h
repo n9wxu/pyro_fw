@@ -17,8 +17,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "config.h"     /* config_t for hal_config_load/save */
-#include "async_task.h" /* async_task_t for hal_buzzer_task_register */
+#include "config.h" /* config_t for hal_config_load/save */
 #include "pyro_limits.h"
 
 /* ── Time ─────────────────────────────────────────────────────────── */
@@ -88,29 +87,29 @@ void hal_pyro_limits(hal_pyro_limits_t *out); /* [PYR-BOARD-01] */
  * operations for the channels that got them. Call once at boot, after the
  * pads have owners (pin_store_claim_pads()) and before the flight loop.
  *
- * A channel whose pads Lua already holds cannot claim them, so it is given
- * mocked operations instead -- the calls above then reach a function that
- * touches no hardware, because the real one was never installed for it.
+ * A channel whose pads Lua already holds cannot claim them, and is not a
+ * pyro channel: the fire plan leaves it out, so the calls above are never
+ * made for it (pyro_release.h).
  * pads_of answers which pads a channel switches, as a pad_claim.h mask. Passed
  * in rather than looked up, so this layer stays free of the pin assignment and
  * of Lua -- the caller already knows both.
  *
- * Returns how many channels the flight software kept. Every mocked operation
- * is logged and counted; see pyro_release.h and pad_claim.h. */
+ * Returns how many channels the flight software kept. */
 int hal_pyro_claim_channels(uint32_t (*pads_of)(uint8_t channel));
+
+/* [FLT-RT-08] One piece of the flight code in RAM compared with the image's
+ * copy; a call a loop goes round all of it. False once any of it differs. */
+bool hal_flight_code_intact(void);
+
+/* [SIM-05] The board's fires go nowhere and no bench flight is flying:
+ * true from a bench flight's end or stop until the board restarts. */
+bool hal_fires_mocked(void);
 
 /* ── Buzzer ───────────────────────────────────────────────────────── */
 
 void hal_buzzer_init(void);
 void hal_buzzer_tone_on(void);
 void hal_buzzer_tone_off(void);
-
-/* Register the buzzer async task with the platform task runner.
- * Called once from buzzer_init().  The task pointer must remain valid
- * for the lifetime of the program (it is a static in buzzer.c).
- * Hardware: delegates to hw_task_register() in hal_hardware.c.
- * Test/sim: stores the pointer; hal_tasks_tick() will drive it. */
-void hal_buzzer_task_register(struct async_task *task);
 
 /* ── Telemetry output ─────────────────────────────────────────────── */
 

@@ -81,29 +81,11 @@ OPTIONAL_ROOTS = {"pulse_end_isr", "collector_alarm_isr", "telem_uart_irq_handle
 # Pointers stored at run time, where no table in the image holds them: the
 # caller's indirect branch reaches these. flight_call_service() runs only a
 # function in RAM in flight (rtos_tasks.c, may_run()).
-#
-# The buzzer's task is not among hal_tasks_tick()'s: its tick runs only while
-# a sound plays, entering flight stops the buzzer (main_hardware.c), and
-# nothing starts one again until landing has ended flight.
-# The tables a channel's operations are called through: pyro_release_claim()
-# points ch_ops[] at one of them, so the path reads the table itself, and then
-# calls what it holds.
-PYRO_OPS = ["real_pyro_ops", "mock_ops"]
 RUNTIME_TARGETS = {
-    "hal_tasks_tick": ["pres_tick", "gts_tick"],
     "hardware_alarm_irq_handler": ["period_isr", "collector_alarm_isr", "pulse_end_isr"],
     # The one callback the image puts in that pool (pico_time, time.c).
     "alarm_pool_irq_handler": ["sleep_until_callback"],
     "flight_call_service": [],
-    "hal_pyro_fire": PYRO_OPS,
-    "hal_pyro_get": PYRO_OPS,
-    "hal_pyro_fault": PYRO_OPS,
-    "mock_fire": ["report_mock"],
-    "mock_get": ["report_mock"],
-    # Through estimators_vt, whose entries the table scan follows.
-    "pp_feed_us": [],
-    "pp_note_pulse": [],
-    "pp_noise_pa": [],
     # Through detectors[] and transitions[], whose in-flight entries are roots.
     "dispatch_state": [],
     # The return into the task the switch chose.
@@ -128,8 +110,8 @@ CUTS = {
     ("flight_set_usb_attached", "flight_grounded_on_usb"): "it returns at once while airborne",
     ("flight_set_usb_attached", "buzzer_play_usb_ok"): "it returns at once while airborne",
     ("flight_set_usb_attached", "buzzer_play_altitude"): "it returns at once while airborne",
-    ("buzzer_play_altitude", "buzzer_tick"): "stored for the buzzer's task, which ticks it after landing",
-    ("buzzer_play_spec", "buzzer_tick"): "stored for the buzzer's task: a fault ends flight first",
+    ("buzzer_service", "buzzer_step"): "entering flight stops the buzzer, and it stays idle until landing",
+    ("hal_tasks_tick", "pres_bringup_step"): "the sensor's bring-up ends before the pad",
     ("follow_the_pad", "air_over_pad"): "the pad's pressure and temperature are frozen at launch: it returns first",
 }
 
