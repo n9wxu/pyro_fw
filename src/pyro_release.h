@@ -41,8 +41,9 @@ typedef struct {
  * flight log and the debug console; the host tests capture it. */
 typedef void (*pyro_mock_report_fn)(uint8_t channel, const char *what);
 
-/* Install the real operations. Must have static storage. Call before
- * pyro_release_apply(). */
+/* Install the real operations, by value: the store keeps its own copy, in
+ * RAM, so the flight path never reads the caller's table, which may lie in
+ * flash [FLT-RT-02]. Call before pyro_release_claim(). */
 void pyro_release_init(const pyro_ch_ops_t *real, pyro_mock_report_fn report);
 
 /* Claim each channel's pads and install accordingly: the real methods for a
@@ -55,8 +56,9 @@ void pyro_release_init(const pyro_ch_ops_t *real, pyro_mock_report_fn report);
 typedef uint32_t (*pyro_pads_fn)(uint8_t channel);
 int pyro_release_claim(pyro_pads_fn pads_of);
 
-/* What the flight software reaches. Never NULL once initialised; an
- * out-of-range channel gets the mocked table rather than a null pointer,
+/* What the flight software reaches: the store's own copy, assembled at
+ * boot, long before launch. Never NULL; before the init, and for an
+ * out-of-range channel, it is the mocked table rather than a null pointer,
  * because a caller that passes 3 has a bug and should not fire anything. */
 const pyro_ch_ops_t *pyro_ch(uint8_t channel);
 

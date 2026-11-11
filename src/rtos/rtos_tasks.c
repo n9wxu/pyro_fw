@@ -216,7 +216,10 @@ void __attribute__((noreturn)) pyro_panic(const char *fmt, ...) {
 }
 
 /* A HardFault stamps 204 and the faulting PC, from whichever stack the fault
- * pushed its frame on. Overrides the SDK's weak handler. */
+ * pushed its frame on. Overrides the SDK's weak handler. Both halves are a
+ * root of the flight path's proof, so the link puts them in RAM: the fault
+ * most likely in flight is a read of flash while a log page programs, and a
+ * handler in flash could not then be fetched [FLT-RT-02]. */
 void __attribute__((used, noreturn)) rtos_hardfault_c(const uint32_t *frame) {
     watchdog_hw->scratch[0] = RTOS_STAMP(4);
     watchdog_hw->scratch[1] = frame[6];
