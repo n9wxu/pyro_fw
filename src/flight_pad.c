@@ -50,7 +50,8 @@ static void announce(flight_context_t *ctx) {
 /* [BUZ-07] Where the board prepares itself an unprepared store is a wait,
  * which ends; anywhere else it is a fault the bench mends. */
 static void check_the_store(flight_context_t *ctx) {
-    ctx->diag &= (uint16_t) ~(DIAG_STORE_CLEANING | DIAG_STORE_UNPREPARED);
+    const uint32_t store_bits = DIAG_STORE_CLEANING | DIAG_STORE_UNPREPARED;
+    ctx->diag &= (uint16_t)~store_bits;
     if (hal_fs_prepared()) {
         return;
     }

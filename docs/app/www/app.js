@@ -220,6 +220,9 @@ var FAULT_TEXT = {
     'if this returns',
   fires_mocked: 'a bench flight was started, so every fire is mocked until the board restarts: ' +
     'restart it before flying',
+  flash_cleanup: 'the flash is being prepared for the next flight: keep the board on USB until this clears',
+  store_unprepared: 'the flash is not prepared for a flight: connect the board to USB, out of test mode, ' +
+    'until this clears',
   flight_resumed: 'this start resumed a flight',
   pyro1_open: 'pyro 1 is open', pyro1_short: 'pyro 1 is shorted',
   pyro2_open: 'pyro 2 is open', pyro2_short: 'pyro 2 is shorted'
@@ -254,6 +257,8 @@ function update() {
        board saw is shown beside it. Nothing here was withheld. */
     var faults = d.faults || [];
     showFaults(faults);
+    /* [BUZ-07] */
+    document.getElementById('padReady').style.display = d.pad_ready ? 'block' : 'none';
     /* [PYR-HEALTH-02] A channel whose mode is none is not a pyro channel. */
     function pyroStr(n, fired, pulses, fault, cont, adc, mode) {
       var seen = fault ? ' <span class="warn-inline">the board reported a fault</span>' : '';
@@ -1771,7 +1776,7 @@ function fmtBytes(n) {
 function fsCleanText(d) {
   var n = d.cleaned_sectors + (d.cleaned_sectors === 1 ? ' sector' : ' sectors');
   if (d.cleanup === 'fast') return 'The cleanup is erasing at full speed while on USB: ' + n + ' so far.';
-  if (d.cleanup === 'slow') return 'The cleanup is erasing one sector a second, as on the pad: ' + n + ' so far.';
+  if (d.cleanup === 'held') return 'The cleanup waits: nothing is erased in test mode or on the pad. ' + n + ' so far.';
   return 'Nothing left for the cleanup to erase (' + n + ' since the board started).';
 }
 
