@@ -22,13 +22,16 @@ static float error_bound_m2(const estimate_t *e) {
 }
 
 static void follow_error(apogee_detector_t *d, float error_m, float bound_m2, uint32_t sample_ms) {
-    if (bad_run_rejects(&d->bad_run, error_m * error_m >= bound_m2, sample_ms * 1000u))
+    if (bad_run_rejects(&d->bad_run, (error_m * error_m) >= bound_m2, sample_ms * 1000u)) {
         return;
-    error_m = fminf(error_m, ERROR_CLAMP_M);
+    }
+    float clamped_m = fminf(error_m, ERROR_CLAMP_M);
     float weight = 1.0f;
-    if (d->error_at != 0)
-        weight = fminf(1.0f, (float)(sample_ms + 1u - d->error_at) * 1e-3f / ERROR_TAU_S);
-    d->error_m2 += weight * (error_m * error_m - d->error_m2);
+    if (d->error_at != 0u) {
+        uint32_t age_ms = (sample_ms + 1u) - d->error_at;
+        weight = fminf(1.0f, (float)age_ms * 1e-3f / ERROR_TAU_S);
+    }
+    d->error_m2 += weight * ((clamped_m * clamped_m) - d->error_m2);
     d->error_at = sample_ms + 1u;
 }
 
@@ -38,16 +41,19 @@ bool apogee_detected(apogee_detector_t *d, const estimate_t *e, float raw_altitu
         d->climb_seen = false;
         d->falling_since = 0;
     }
-    if (!believed)
+    if (!believed) {
         return false;
+    }
     float bound_m2 = error_bound_m2(e);
     follow_error(d, fabsf(raw_altitude_m - e->altitude_m), bound_m2, sample_ms);
-    if (!e->explains)
+    if (!e->explains) {
         return false;
+    }
     float margin = MOVING_SIGMAS * e->speed_sigma;
-    if (e->speed > margin)
+    if (e->speed > margin) {
         d->climb_seen = true;
-    bool falling = -e->speed > margin && d->error_m2 < bound_m2;
+    }
+    bool falling = ((-e->speed) > margin) && (d->error_m2 < bound_m2);
     bool held = held_for(falling, &d->falling_since, sample_ms, UNSEEN_CLIMB_FALL_MS);
     return falling && (d->climb_seen || held);
 }

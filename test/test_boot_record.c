@@ -52,8 +52,9 @@ void test_FLT_LOG_14_every_row_fits_a_text_record(void) {
                       "flight_9999.bin"};
     boot_rows_t rows;
     boot_record_rows(&f, rows);
-    for (int i = 0; i < BOOT_RECORD_ROWS; i++)
+    for (int i = 0; i < BOOT_RECORD_ROWS; i++) {
         TEST_ASSERT_TRUE(strlen(rows[i]) <= BOOT_RECORD_ROW_MAX);
+    }
 }
 
 /* The rows as the boot log's lines, or nothing when they do not fit. */

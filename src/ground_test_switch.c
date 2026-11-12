@@ -7,7 +7,7 @@
 #include <string.h>
 
 void gt_switch_begin(gt_switch_t *w, bool pair) {
-    memset(w, 0, sizeof(*w));
+    (void)memset(w, 0, sizeof(*w));
     w->pair = pair;
 }
 

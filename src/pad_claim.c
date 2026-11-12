@@ -11,29 +11,29 @@
 
 static uint8_t owner[PAD_CLAIM_MAX_GPIO];
 
-#define PAD_ALL ((PAD_CLAIM_MAX_GPIO >= 32) ? 0xffffffffu : ((1u << PAD_CLAIM_MAX_GPIO) - 1u))
+#define PAD_ALL ((PAD_CLAIM_MAX_GPIO >= 32u) ? 0xffffffffu : ((1u << PAD_CLAIM_MAX_GPIO) - 1u))
 
 void pad_claim_reset(void) {
-    for (int i = 0; i < PAD_CLAIM_MAX_GPIO; i++) {
+    for (uint32_t i = 0u; i < PAD_CLAIM_MAX_GPIO; i++) {
         owner[i] = PAD_FREE;
     }
 }
 
 bool pad_claim_take(uint32_t pads, pad_owner_t who) {
-    if (who == PAD_FREE || (pads & ~PAD_ALL)) {
+    if ((who == PAD_FREE) || ((pads & ~PAD_ALL) != 0u)) {
         return false;
     }
 
     /* Checked whole before anything is written. A partial claim would leave
      * pads owned by someone who believes the claim failed, which is worse
      * than the conflict it was meant to prevent. */
-    for (int i = 0; i < PAD_CLAIM_MAX_GPIO; i++) {
-        if ((pads & PAD(i)) && owner[i] != PAD_FREE && owner[i] != (uint8_t)who) {
+    for (uint32_t i = 0u; i < PAD_CLAIM_MAX_GPIO; i++) {
+        if (((pads & PAD(i)) != 0u) && (owner[i] != (uint8_t)PAD_FREE) && (owner[i] != (uint8_t)who)) {
             return false;
         }
     }
-    for (int i = 0; i < PAD_CLAIM_MAX_GPIO; i++) {
-        if (pads & PAD(i)) {
+    for (uint32_t i = 0u; i < PAD_CLAIM_MAX_GPIO; i++) {
+        if ((pads & PAD(i)) != 0u) {
             owner[i] = (uint8_t)who;
         }
     }
@@ -41,11 +41,11 @@ bool pad_claim_take(uint32_t pads, pad_owner_t who) {
 }
 
 bool pad_claim_held_by(uint32_t pads, pad_owner_t who) {
-    if (pads & ~PAD_ALL) {
+    if ((pads & ~PAD_ALL) != 0u) {
         return false;
     }
-    for (int i = 0; i < PAD_CLAIM_MAX_GPIO; i++) {
-        if ((pads & PAD(i)) && owner[i] != (uint8_t)who) {
+    for (uint32_t i = 0u; i < PAD_CLAIM_MAX_GPIO; i++) {
+        if (((pads & PAD(i)) != 0u) && (owner[i] != (uint8_t)who)) {
             return false;
         }
     }
@@ -53,12 +53,12 @@ bool pad_claim_held_by(uint32_t pads, pad_owner_t who) {
 }
 
 pad_owner_t pad_claim_owner(uint8_t pin) {
-    return (pin < PAD_CLAIM_MAX_GPIO) ? (pad_owner_t)owner[pin] : PAD_FREE;
+    return (pin < PAD_CLAIM_MAX_GPIO) ? (pad_owner_t)owner[pin] : (pad_owner_t)PAD_FREE;
 }
 
 int pad_claim_count(pad_owner_t who) {
     int n = 0;
-    for (int i = 0; i < PAD_CLAIM_MAX_GPIO; i++) {
+    for (uint32_t i = 0u; i < PAD_CLAIM_MAX_GPIO; i++) {
         if (owner[i] == (uint8_t)who) {
             n++;
         }

@@ -16,7 +16,7 @@
 #include "udp.h"
 #include "dhcpv4_server.h"
 #include "mdns.h"
-#include <stdio.h>
+#include "small_fmt.h"
 #include <string.h>
 
 #define FRAME_MAX CFG_TUD_NET_MTU
@@ -26,10 +26,8 @@ static net_t net;
 /* Never written: frames reach the stack in TinyUSB's own buffer. net_init()
  * wants one all the same, and takes the receive MSS from its size
  * (smallest_tcp issue 11). */
-static uint8_t rx_frame[FRAME_MAX];
-static uint8_t tx_frame[FRAME_MAX];
 static net_rx_slot_t rx_slot;
-static net_link_counts_t counts;
+static net_link_counts_t link_counts;
 
 /* Device-side MAC, from board_identity. Boards sharing one leave a host with
  * one usable board: the rest enumerate and are ignored. The stack takes the
@@ -44,9 +42,11 @@ static net_txq_t txq;
 static uint32_t settle_until_ms; /* 0: the host has had its time */
 
 static bool host_settled(void) {
-    if (settle_until_ms != 0) {
-        if ((int32_t)(to_ms_since_boot(get_absolute_time()) - settle_until_ms) < 0)
+    if (settle_until_ms != 0u) {
+        const uint32_t left = to_ms_since_boot(get_absolute_time()) - settle_until_ms;
+        if ((int32_t)left < 0) {
             return false;
+        }
         settle_until_ms = 0;
     }
     return true;
@@ -62,14 +62,14 @@ static bool ep_can_send(uint16_t len) {
 
 static void ep_send(const uint8_t *frame, uint16_t len) {
     tud_network_xmit((void *)(uintptr_t)frame, len);
-    counts.tx_sent++;
+    link_counts.tx_sent++;
 }
 
 static const net_tx_ops_t ep_ops = {ep_ready, ep_can_send, ep_send};
 
 uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg) {
     uint16_t n = net_tx_copy_len(arg, FRAME_MAX);
-    memcpy(dst, ref, n);
+    (void)memcpy(dst, ref, n);
     return n;
 }
 
@@ -79,10 +79,10 @@ static int mac_send(void *ctx, const uint8_t *frame, uint16_t len) {
     case NET_TX_SENT:
         return len;
     case NET_TX_HELD:
-        counts.tx_held++;
+        link_counts.tx_held++;
         return len;
     default:
-        counts.tx_refused++;
+        link_counts.tx_refused++;
         return 0; /* busy: the stack sends a SYN, data or FIN again at its next pass */
     }
 }
@@ -110,16 +110,14 @@ static void mac_discard(void *ctx) {
     (void)ctx;
 }
 
-static const net_mac_t usb_mac = {mac_init, mac_send, mac_poll, mac_peek, mac_discard, mac_discard};
-
 /* ── Receive [WEB-NET-07] ─────────────────────────────────────────── */
 
 bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
     if (!net_rx_take(&rx_slot, src, size, FRAME_MAX)) {
-        counts.rx_drops++;
+        link_counts.rx_drops++;
         return false;
     }
-    counts.rx_frames++;
+    link_counts.rx_frames++;
     return true;
 }
 
@@ -132,14 +130,6 @@ void tud_network_init_cb(void) {
 
 static char mdns_host[24] = "pyro.local";
 static char mdns_inst[40] = "pyro._pyro._tcp.local";
-static uint8_t mdns_suffix;
-static const char *const mdns_txt[] = {NULL};
-static const mdns_record_t mdns_records[] = {
-    {.type = DNS_TYPE_A, .ttl = MDNS_TTL_HOST, .name = mdns_host, .rdata.a = 0},
-    {.type = DNS_TYPE_PTR, .ttl = MDNS_TTL_OTHER, .name = "_pyro._tcp.local", .rdata.ptr = mdns_inst},
-    {.type = DNS_TYPE_SRV, .ttl = MDNS_TTL_HOST, .name = mdns_inst, .rdata.srv = {0, 0, 80, mdns_host}},
-    {.type = DNS_TYPE_TXT, .ttl = MDNS_TTL_OTHER, .name = mdns_inst, .rdata.txt = mdns_txt},
-};
 #define MDNS_PTR_RECORD (1u << 1)
 static mdns_t mdns;
 static bool mdns_start_due;
@@ -148,9 +138,10 @@ static void mdns_conflict(mdns_t *m, uint8_t index, void *ctx) {
     (void)index;
     (void)ctx;
     mdns_withdraw(m, MDNS_PTR_RECORD);
+    static uint8_t mdns_suffix;
     mdns_suffix++;
-    snprintf(mdns_host, sizeof(mdns_host), "pyro-%u.local", mdns_suffix);
-    snprintf(mdns_inst, sizeof(mdns_inst), "pyro-%u._pyro._tcp.local", mdns_suffix);
+    (void)small_snprintf(mdns_host, sizeof(mdns_host), "pyro-%u.local", mdns_suffix);
+    (void)small_snprintf(mdns_inst, sizeof(mdns_inst), "pyro-%u._pyro._tcp.local", mdns_suffix);
     mdns_start_due = true;
 }
 
@@ -163,7 +154,6 @@ void net_mdns_poll(void) {
 
 /* ── DHCP: the one host on the link [WEB-NET-02] ──────────────────── */
 
-static dhcpv4_server_cfg_t dhcp_cfg;
 static dhcpv4_server_t dhcp;
 
 static void dhcp_port(net_t *n, uint32_t src_ip, uint16_t src_port, const uint8_t *src_mac, const uint8_t *payload,
@@ -178,8 +168,6 @@ static void mdns_port(net_t *n, uint32_t src_ip, uint16_t src_port, const uint8_
     mdns_input(&mdns, src_ip, src_mac, src_port, payload, len);
 }
 
-static const udp_port_entry_t udp_ports[] = {{67, dhcp_port}, {MDNS_PORT, mdns_port}};
-
 /* ── USB lifecycle [WEB-API-13] ───────────────────────────────────── */
 
 static void host_settles(void) {
@@ -187,29 +175,29 @@ static void host_settles(void) {
 }
 
 void tud_mount_cb(void) {
-    counts.usb[0]++;
+    link_counts.usb[0]++;
     host_settles();
     mdns_start_due = true;
 }
 
 void tud_umount_cb(void) {
-    counts.usb[1]++;
+    link_counts.usb[1]++;
 }
 
 void tud_suspend_cb(bool remote_wakeup_en) {
     (void)remote_wakeup_en;
-    counts.usb[2]++;
+    link_counts.usb[2]++;
 }
 
 void tud_resume_cb(void) {
-    counts.usb[3]++;
+    link_counts.usb[3]++;
     host_settles();
 }
 
 /* ── The net task's calls ─────────────────────────────────────────── */
 
 void net_mac_init(void) {
-    memcpy(tud_network_mac_address, board_mac(), sizeof(tud_network_mac_address));
+    (void)memcpy(tud_network_mac_address, board_mac(), sizeof(tud_network_mac_address));
 }
 
 /* TCP's initial sequence numbers and mDNS's probe delays: they must differ
@@ -220,21 +208,36 @@ static void seed_from_ring_oscillator(void) {
     uint8_t entropy[16];
     for (unsigned i = 0; i < sizeof(entropy); i++) {
         uint8_t b = 0;
-        for (int k = 0; k < 8; k++)
-            b = (uint8_t)(b << 1 | (rosc_hw->randombit & 1u));
+        for (int k = 0; k < 8; k++) {
+            b = (uint8_t)((b << 1) | (rosc_hw->randombit & 1u));
+        }
         entropy[i] = b;
     }
     uint64_t t = time_us_64();
-    for (unsigned i = 0; i < sizeof(t); i++)
-        entropy[i] ^= (uint8_t)(t >> (8u * i));
+    for (unsigned i = 0; i < sizeof(t); i++) {
+        const unsigned shift = 8u * i;
+        entropy[i] ^= (uint8_t)(t >> shift);
+    }
     net_random_seed(&net, entropy, sizeof(entropy));
 }
 
 void net_init(void) {
+    static uint8_t rx_frame[FRAME_MAX];
+    static uint8_t tx_frame[FRAME_MAX];
+    static const net_mac_t usb_mac = {mac_init, mac_send, mac_poll, mac_peek, mac_discard, mac_discard};
+    static const char *const mdns_txt[] = {NULL};
+    static const mdns_record_t mdns_records[] = {
+        {.type = DNS_TYPE_A, .ttl = MDNS_TTL_HOST, .name = mdns_host, .rdata = {.a = 0}},
+        {.type = DNS_TYPE_PTR, .ttl = MDNS_TTL_OTHER, .name = "_pyro._tcp.local", .rdata = {.ptr = mdns_inst}},
+        {.type = DNS_TYPE_SRV, .ttl = MDNS_TTL_HOST, .name = mdns_inst, .rdata = {.srv = {0, 0, 80, mdns_host}}},
+        {.type = DNS_TYPE_TXT, .ttl = MDNS_TTL_OTHER, .name = mdns_inst, .rdata = {.txt = mdns_txt}},
+    };
+    static dhcpv4_server_cfg_t dhcp_cfg;
+    static const udp_port_entry_t udp_ports[] = {{67, dhcp_port}, {MDNS_PORT, mdns_port}};
     uint8_t mac[6];
-    memcpy(mac, tud_network_mac_address, sizeof(mac));
+    (void)memcpy(mac, tud_network_mac_address, sizeof(mac));
     mac[5] ^= 0x01;
-    stcp_net_init(&net, rx_frame, sizeof(rx_frame), tx_frame, sizeof(tx_frame), mac, &usb_mac, NULL);
+    (void)stcp_net_init(&net, rx_frame, sizeof(rx_frame), tx_frame, sizeof(tx_frame), mac, &usb_mac, NULL);
     seed_from_ring_oscillator();
 
     /* Each board is its own /24, from its MAC [WEB-NET-06]: every board is a
@@ -251,8 +254,8 @@ void net_init(void) {
         .subnet_mask = net.subnet_mask,
         .lease_time_s = 24u * 60u * 60u,
     };
-    dhcpv4_server_init(&dhcp, &net, &dhcp_cfg, NULL, NULL);
-    mdns_init(&mdns, &net, mdns_records, sizeof(mdns_records) / sizeof(mdns_records[0]), mdns_conflict, NULL);
+    (void)dhcpv4_server_init(&dhcp, &net, &dhcp_cfg, NULL, NULL);
+    (void)mdns_init(&mdns, &net, mdns_records, sizeof(mdns_records) / sizeof(mdns_records[0]), mdns_conflict, NULL);
     udp_set_ports(&net, udp_ports, sizeof(udp_ports) / sizeof(udp_ports[0]));
     http_transport_init(&net, http_server_exchanges());
 }
@@ -262,7 +265,7 @@ uint32_t net_last_http_us;
 void net_service(void) {
     static uint32_t ticked_ms;
     net_tx_drain(&txq, &ep_ops);
-    if (rx_slot.frame) {
+    if (rx_slot.frame != NULL) {
         eth_input(&net, (uint8_t *)(uintptr_t)rx_slot.frame, rx_slot.len);
         net_rx_done(&rx_slot);
         tud_network_recv_renew();
@@ -271,7 +274,7 @@ void net_service(void) {
      * also when TCP sends again what the endpoint was too busy to take. */
     uint32_t now = to_ms_since_boot(get_absolute_time());
     uint32_t elapsed = now - ticked_ms;
-    if (elapsed > 0) {
+    if (elapsed > 0u) {
         ticked_ms = now;
         net_tick(&net, elapsed);
         mdns_tick(&mdns, elapsed);
@@ -285,5 +288,5 @@ void net_service(void) {
 }
 
 const net_link_counts_t *net_link_counts(void) {
-    return &counts;
+    return &link_counts;
 }

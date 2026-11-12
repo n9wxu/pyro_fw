@@ -9,15 +9,15 @@
 #include "altitude_filter.h"
 #include <string.h>
 
-#define RING_MASK (PP_RING_SIZE - 1)
+#define RING_MASK (PP_RING_SIZE - 1u)
 #define RISE_M 0.5f           /* [FLT-LAUNCH-03] */
 #define GAP_US 250000u        /* [SNS-PRES-11] */
 #define SUSPECT_US 1000000u   /* decisions wait this long after a gap or a stuck run */
 #define STUCK_SPAN_US 950000u /* [SNS-PRES-10] a second of one reading, less the sampling's jitter */
-#define STUCK_MIN_READINGS 8
+#define STUCK_MIN_READINGS 8u
 /* A run of one reading this long is already not believed: a working sensor's
  * noise ends such a run within a few readings, a failed one never does. */
-#define REPEATING_READINGS 8
+#define REPEATING_READINGS 8u
 #define KELVIN 273.15f
 
 typedef enum { PP_IDLE, PP_CALIBRATING, PP_RUNNING } pp_state_t;
@@ -51,18 +51,22 @@ static struct {
     bool risen;
     uint32_t rise_ms;
 
-    int32_t last_raw, last_filtered, last_read_raw;
+    int32_t last_raw;
+    int32_t last_filtered;
+    int32_t last_read_raw;
 
     pp_sample_t ring[PP_RING_SIZE];
-    uint8_t head, tail, count;
+    uint8_t head;
+    uint8_t tail;
+    uint8_t count;
 } pp;
 
 void pp_init(void) {
-    memset(&pp, 0, sizeof(pp));
+    (void)memset(&pp, 0, sizeof(pp));
 }
 
 void pp_obey(uint8_t estimator) {
-    pp.obeyed = estimator < estimator_count() ? estimator : 0;
+    pp.obeyed = (estimator < estimator_count()) ? estimator : 0u;
 }
 
 uint8_t pp_obeyed(void) {
@@ -71,8 +75,9 @@ uint8_t pp_obeyed(void) {
 
 void pp_note_temperature(float temperature_c) {
     pp.sensor_k = temperature_c + KELVIN;
-    if (pp.ground.tracking)
+    if (pp.ground.tracking) {
         pp.pad_k = pp.sensor_k;
+    }
 }
 
 void pp_use_standard_air(bool standard) {
@@ -89,8 +94,9 @@ float pp_pad_k(void) {
 static void __attribute__((noinline)) follow_the_pad(void) {
     float pad_pa = (float)gref_pressure(&pp.ground);
     float pad_k = pp_pad_k();
-    if (pad_pa == pp.air.pad_pa && pad_k == pp.air_pad_k)
+    if ((pad_pa == pp.air.pad_pa) && (pad_k == pp.air_pad_k)) {
         return;
+    }
     pp.air = air_over_pad(pad_pa, pad_k);
     pp.air_pad_k = pad_k;
 }
@@ -101,17 +107,18 @@ static void sort_ascending(int32_t *v, int n) {
     for (int i = 1; i < n; i++) {
         int32_t x = v[i];
         int j = i - 1;
-        for (; j >= 0 && v[j] > x; j--)
+        for (; (j >= 0) && (v[j] > x); j--) {
             v[j + 1] = v[j];
+        }
         v[j + 1] = x;
     }
 }
 
 static int32_t calibration_median(void) {
     int32_t v[PP_CAL_SAMPLES];
-    memcpy(v, pp.cal, sizeof(v));
+    (void)memcpy(v, pp.cal, sizeof(v));
     sort_ascending(v, PP_CAL_SAMPLES);
-    return (v[PP_CAL_SAMPLES / 2 - 1] + v[PP_CAL_SAMPLES / 2]) / 2;
+    return (v[(PP_CAL_SAMPLES / 2) - 1] + v[PP_CAL_SAMPLES / 2]) / 2;
 }
 
 void pp_start_cal(void) {
@@ -124,9 +131,12 @@ bool pp_cal_done(void) {
 }
 
 static void calibrate_with(int32_t raw_pa) {
-    pp.cal[pp.cal_count++] = raw_pa;
-    if (pp.cal_count < PP_CAL_SAMPLES)
+    int at = pp.cal_count;
+    pp.cal_count = at + 1;
+    pp.cal[at] = raw_pa;
+    if (pp.cal_count < PP_CAL_SAMPLES) {
         return;
+    }
     gref_seed(&pp.ground, calibration_median());
     pp.state = PP_RUNNING;
 }
@@ -146,9 +156,10 @@ static void hold_suspect_from(uint32_t from_us) {
 }
 
 static bool watch_for_gap_and_stuck(int32_t raw_pa, uint32_t us) {
-    if (pp.have_reading && us - pp.last_us > GAP_US)
+    if (pp.have_reading && ((us - pp.last_us) > GAP_US)) {
         hold_suspect_from(us);
-    if (!pp.have_reading || raw_pa != pp.stuck_value) {
+    }
+    if ((!pp.have_reading) || (raw_pa != pp.stuck_value)) {
         pp.stuck_value = raw_pa;
         pp.stuck_since_us = us;
         pp.stuck_readings = 0;
@@ -157,11 +168,14 @@ static bool watch_for_gap_and_stuck(int32_t raw_pa, uint32_t us) {
     pp.have_reading = true;
     pp.last_us = us;
 
-    bool stuck = pp.stuck_readings >= STUCK_MIN_READINGS && us - pp.stuck_since_us >= STUCK_SPAN_US;
-    if (stuck)
+    bool stuck = (pp.stuck_readings >= STUCK_MIN_READINGS) && ((us - pp.stuck_since_us) >= STUCK_SPAN_US);
+    if (stuck) {
         hold_suspect_from(us);
-    if (pp.suspect && (int32_t)(us - pp.suspect_until_us) >= 0)
+    }
+    uint32_t suspect_left = us - pp.suspect_until_us;
+    if (pp.suspect && ((int32_t)suspect_left >= 0)) {
         pp.suspect = false;
+    }
     pp.repeating = pp.stuck_readings >= REPEATING_READINGS;
     return stuck;
 }
@@ -192,19 +206,23 @@ static void feed_estimators(float altitude_m, float m_per_pa, uint32_t us) {
         start_estimators(altitude_m, m_per_pa, us);
         return;
     }
-    if (pp.stuck_readings == REPEATING_READINGS)
+    if (pp.stuck_readings == REPEATING_READINGS) {
         put_estimators_back();
-    if (pp.repeating)
+    }
+    if (pp.repeating) {
         estimator_no_reading(us);
-    else
+    } else {
         estimator_reading(altitude_m, m_per_pa, us);
-    if (pp.stuck_readings == 1)
+    }
+    if (pp.stuck_readings == 1u) {
         remember_estimators();
+    }
 }
 
 void pp_note_pulse(void) {
-    if (!pp.estimators_started)
+    if (!pp.estimators_started) {
         return;
+    }
     estimator_pulse(pp.last_us);
 }
 
@@ -212,19 +230,21 @@ void pp_note_pulse(void) {
 
 static pp_sample_t *push_sample(void) {
     pp_sample_t *s = &pp.ring[pp.head];
-    memset(s, 0, sizeof(*s));
+    (void)memset(s, 0, sizeof(*s));
     pp.head = (uint8_t)((pp.head + 1u) & RING_MASK);
-    if (pp.count < PP_RING_SIZE)
+    if (pp.count < PP_RING_SIZE) {
         pp.count++;
-    else
+    } else {
         pp.tail = (uint8_t)((pp.tail + 1u) & RING_MASK);
+    }
     return s;
 }
 
 static void note_rise(pp_sample_t *s) {
     s->risen = s->raw_height_m > RISE_M;
-    if (s->risen && !pp.risen)
+    if (s->risen && !pp.risen) {
         pp.rise_ms = s->timestamp_ms;
+    }
     pp.risen = s->risen;
 }
 
@@ -268,17 +288,21 @@ void pp_feed_us(int32_t raw_pressure_pa, uint64_t timestamp_us) {
     uint32_t ms = (uint32_t)(timestamp_us / 1000u);
     uint32_t us = (uint32_t)timestamp_us;
     /* No altitude belongs to it. */
-    if (raw_pressure_pa <= 0)
+    if (raw_pressure_pa <= 0) {
         return;
+    }
     pp.last_raw = raw_pressure_pa;
     bool stuck = watch_for_gap_and_stuck(raw_pressure_pa, us);
     float altitude_m = atmos_altitude_m((float)raw_pressure_pa);
     feed_estimators(altitude_m, atmos_m_per_pa(altitude_m, (float)raw_pressure_pa), us);
 
-    if (pp.state == PP_CALIBRATING)
+    if (pp.state == PP_CALIBRATING) {
         calibrate_with(raw_pressure_pa);
-    else if (pp.state == PP_RUNNING)
+    } else if (pp.state == PP_RUNNING) {
         produce_sample(raw_pressure_pa, altitude_m, ms, us, stuck);
+    } else {
+        /* PP_IDLE: the estimators are fed and no sample is made. */
+    }
 }
 
 int pp_available(void) {
@@ -286,8 +310,9 @@ int pp_available(void) {
 }
 
 bool pp_read(pp_sample_t *out) {
-    if (pp.count == 0)
+    if (pp.count == 0u) {
         return false;
+    }
     *out = pp.ring[pp.tail];
     pp.last_read_raw = out->raw_pa;
     pp.tail = (uint8_t)((pp.tail + 1u) & RING_MASK);
@@ -352,8 +377,9 @@ static estimate_t obeyed_estimate(void) {
 }
 
 bool pp_estimate_after(uint32_t min_ms, float *altitude_m, float *speed) {
-    if (!pp.estimators_started || pp.last_us - pp.estimators_started_us < min_ms * 1000u)
+    if ((!pp.estimators_started) || ((pp.last_us - pp.estimators_started_us) < (min_ms * 1000u))) {
         return false;
+    }
     estimate_t e = obeyed_estimate();
     *altitude_m = e.altitude_m;
     *speed = e.speed;
@@ -373,15 +399,17 @@ int32_t pp_last_filtered_pa(void) {
 }
 
 bool pp_newest(pp_sample_t *out) {
-    if (pp.state != PP_RUNNING || !pp.have_reading)
+    if ((pp.state != PP_RUNNING) || (!pp.have_reading)) {
         return false;
+    }
     *out = pp.ring[(pp.head + PP_RING_SIZE - 1u) & RING_MASK];
     return true;
 }
 
 float pp_noise_pa(void) {
-    if (!pp.estimators_started)
+    if (!pp.estimators_started) {
         return AF_NOISE_FLOOR_PA;
+    }
     estimate_t e = obeyed_estimate();
     return e.noise_m / atmos_m_per_pa(e.altitude_m, atmos_pressure_pa(e.altitude_m));
 }

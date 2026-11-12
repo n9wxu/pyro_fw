@@ -16,7 +16,7 @@
 #include "task.h"
 #include "hardware/gpio.h"
 #include "hardware/timer.h"
-#include <stdio.h>
+#include "small_fmt.h"
 #include <string.h>
 
 /* The identification clock, 400 kHz at most. */
@@ -40,7 +40,6 @@ static sd_type_t type;
 static uint32_t sectors;
 static bool mounted;
 static uint32_t mount_count;
-static FATFS fatfs;
 static sd_stats_t st;
 static uint32_t data_hz;
 static bool use_crc = true;
@@ -61,8 +60,9 @@ static bool bus_take(uint32_t timeout_ms) {
 }
 
 static void bus_give(void) {
-    if (bus_held)
+    if (bus_held) {
         spi_bus_give();
+    }
     bus_held = false;
 }
 
@@ -73,8 +73,9 @@ static uint8_t crc7(const uint8_t *d, int n) {
         uint8_t b = d[i];
         for (int j = 0; j < 8; j++) {
             c = (uint8_t)(c << 1);
-            if ((b ^ c) & 0x80u)
+            if (((b ^ c) & 0x80u) != 0u) {
                 c ^= 0x09u;
+            }
             b = (uint8_t)(b << 1);
         }
     }
@@ -82,18 +83,20 @@ static uint8_t crc7(const uint8_t *d, int n) {
 }
 
 static void select(void) {
-    if (!bus_held)
+    if (!bus_held) {
         return;
+    }
     gpio_put(BOARD_PIN_SD_CS, 0);
-    spi_bus_byte(0xFF);
+    (void)spi_bus_byte(0xFF);
 }
 
 /* A card releases its data line on the clock after CS rises. */
 static void deselect(void) {
-    if (!bus_held)
+    if (!bus_held) {
         return;
+    }
     gpio_put(BOARD_PIN_SD_CS, 1);
-    spi_bus_byte(0xFF);
+    (void)spi_bus_byte(0xFF);
 }
 
 /* Until the card reads 0xFF, not busy. Past YIELD_AFTER_US the bus goes back
@@ -102,10 +105,11 @@ static void deselect(void) {
 static bool wait_ready(uint32_t timeout_us) {
     uint32_t t0 = time_us_32();
     for (;;) {
-        if (spi_bus_byte(0xFF) == 0xFF) {
+        if (spi_bus_byte(0xFF) == 0xFFu) {
             uint32_t d = time_us_32() - t0;
-            if (d > st.busy_max_us)
+            if (d > st.busy_max_us) {
                 st.busy_max_us = d;
+            }
             return true;
         }
         uint32_t el = time_us_32() - t0;
@@ -113,9 +117,10 @@ static bool wait_ready(uint32_t timeout_us) {
             st.timeouts++;
             return false;
         }
-        if (el > YIELD_AFTER_US && rtos_running()) {
-            if (data_hz == 0)
+        if ((el > YIELD_AFTER_US) && rtos_running()) {
+            if (data_hz == 0u) {
                 st.init_yields++;
+            }
             deselect();
             bus_give();
             vTaskDelay(1);
@@ -123,7 +128,7 @@ static bool wait_ready(uint32_t timeout_us) {
                 st.timeouts++;
                 return false;
             }
-            spi_bus_setup(data_hz ? data_hz : INIT_HZ, 0, 0);
+            (void)spi_bus_setup((data_hz != 0u) ? data_hz : INIT_HZ, 0, 0);
             select();
         }
     }
@@ -131,30 +136,35 @@ static bool wait_ready(uint32_t timeout_us) {
 
 /* R1, or 0xFF for no answer. Selects the card; the caller deselects. */
 static uint8_t send_cmd(uint8_t cmd, uint32_t arg) {
-    if (cmd & ACMD) {
-        cmd &= (uint8_t)~ACMD;
+    uint8_t c = cmd;
+    if ((c & ACMD) != 0u) {
+        c &= (uint8_t)~ACMD;
         uint8_t r = send_cmd(55, 0);
-        if (r > 1)
+        if (r > 1u) {
             return r;
+        }
     }
-    if (cmd != 12) {
+    if (c != 12u) {
         deselect();
         select();
         /* The card may still be programming the last write's block. */
-        if (cmd != 0 && !wait_ready(WRITE_TIMEOUT_US))
+        if ((c != 0u) && !wait_ready(WRITE_TIMEOUT_US)) {
             return 0xFF;
+        }
     }
-    uint8_t f[6] = {(uint8_t)(0x40u | cmd), (uint8_t)(arg >> 24), (uint8_t)(arg >> 16),
+    uint8_t f[6] = {(uint8_t)(0x40u | c), (uint8_t)(arg >> 24), (uint8_t)(arg >> 16),
                     (uint8_t)(arg >> 8),    (uint8_t)arg,         0};
     f[5] = crc7(f, 5);
     spi_bus_xfer(f, NULL, 6);
-    if (cmd == 12)
-        spi_bus_byte(0xFF); /* the stuff byte after CMD12 */
-    uint8_t r = 0xFF;
+    if (c == 12u) {
+        (void)spi_bus_byte(0xFF); /* the stuff byte after CMD12 */
+    }
+    uint8_t r = 0xFFu;
     for (int i = 0; i < 10; i++) {
         r = spi_bus_byte(0xFF);
-        if (!(r & 0x80u))
+        if ((r & 0x80u) == 0u) {
             break;
+        }
     }
     return r;
 }
@@ -166,12 +176,13 @@ static bool rcvr_block(uint8_t *buf, uint32_t n) {
     uint8_t tok;
     do {
         tok = spi_bus_byte(0xFF);
-    } while (tok == 0xFF && time_us_32() - t0 < READ_TIMEOUT_US);
-    if (tok != 0xFE) {
-        if (tok == 0xFF)
+    } while ((tok == 0xFFu) && ((time_us_32() - t0) < READ_TIMEOUT_US));
+    if (tok != 0xFEu) {
+        if (tok == 0xFFu) {
             st.timeouts++;
-        else
+        } else {
             st.cmd_errors++;
+        }
         return false;
     }
     spi_bus_xfer(NULL, buf, n);
@@ -188,35 +199,39 @@ static bool rcvr_block(uint8_t *buf, uint32_t n) {
  * token 0xFD alone. The data response xxx0 0101 is accepted, xxx0 1011 a CRC
  * error (PDF page 246). */
 static bool xmit_block(const uint8_t *buf, uint8_t token) {
-    if (!wait_ready(WRITE_TIMEOUT_US))
+    if (!wait_ready(WRITE_TIMEOUT_US)) {
         return false;
-    spi_bus_byte(token);
-    if (token == 0xFD)
+    }
+    (void)spi_bus_byte(token);
+    if (token == 0xFDu) {
         return true;
+    }
     spi_bus_xfer(buf, NULL, SD_SECTOR);
     uint16_t c = crc16(buf, SD_SECTOR);
-    spi_bus_byte((uint8_t)(c >> 8));
-    spi_bus_byte((uint8_t)c);
+    (void)spi_bus_byte((uint8_t)(c >> 8));
+    (void)spi_bus_byte((uint8_t)c);
     uint8_t resp = spi_bus_byte(0xFF);
     if ((resp & 0x1Fu) != 0x05u) {
-        if ((resp & 0x1Fu) == 0x0Bu)
+        if ((resp & 0x1Fu) == 0x0Bu) {
             st.crc_errors++;
-        else
+        } else {
             st.cmd_errors++;
+        }
         return false;
     }
     return true;
 }
 
 static void hexify(const uint8_t *b, int n, char *out) {
-    for (int i = 0; i < n; i++)
-        snprintf(out + 2 * i, 3, "%02X", b[i]);
+    for (int i = 0; i < n; i++) {
+        (void)small_snprintf(&out[2 * i], 3, "%02X", b[i]);
+    }
 }
 
 /* CSD version 2: C_SIZE in bytes 7-9; version 1: C_SIZE, C_SIZE_MULT and
  * READ_BL_LEN (the specification's section 5.3). */
 static uint32_t csd_sectors(const uint8_t *csd) {
-    if ((csd[0] >> 6) == 1) {
+    if ((csd[0] >> 6) == 1u) {
         uint32_t cs = ((uint32_t)(csd[7] & 0x3Fu) << 16) | ((uint32_t)csd[8] << 8) | csd[9];
         return (cs + 1u) << 10;
     }
@@ -227,9 +242,10 @@ static uint32_t csd_sectors(const uint8_t *csd) {
 }
 
 int sd_init_card(void) {
-    if (!bus_take(2000))
+    if (!bus_take(2000)) {
         return -1;
-    spi_bus_setup(INIT_HZ, 0, 0);
+    }
+    (void)spi_bus_setup(INIT_HZ, 0, 0);
     data_hz = 0;
     type = SD_NONE;
     /* At least 74 clocks with CS high before the first command (PDF pages
@@ -238,94 +254,116 @@ int sd_init_card(void) {
     spi_bus_xfer(NULL, NULL, 10);
 
     sd_type_t ty = SD_NONE;
-    memset(st.init_r1, 0xEE, sizeof(st.init_r1));
-    uint8_t r = 0xFF;
-    for (int i = 0; i < 10 && r != 1; i++)
+    (void)memset(st.init_r1, 0xEE, sizeof(st.init_r1));
+    uint8_t r = 0xFFu;
+    for (int i = 0; (i < 10) && (r != 1u); i++) {
         r = send_cmd(0, 0);
+    }
     st.init_r1[0] = r;
-    if (r == 1) {
+    if (r == 1u) {
         uint8_t r8 = send_cmd(8, 0x1AA);
         st.init_r1[1] = r8;
-        if (r8 == 1) {
+        if (r8 == 1u) {
             uint8_t *r7 = st.init_r7;
             spi_bus_xfer(NULL, r7, 4);
-            if (r7[2] == 0x01 && r7[3] == 0xAA) {
-                st.init_r1[2] = use_crc ? send_cmd(59, 1) : 0xCC; /* CRC on, before ACMD41 (PDF page 230) */
+            if ((r7[2] == 0x01u) && (r7[3] == 0xAAu)) {
+                st.init_r1[2] = use_crc ? send_cmd(59, 1) : 0xCCu; /* CRC on, before ACMD41 (PDF page 230) */
                 uint32_t t0 = time_us_32();
                 uint8_t r41;
                 st.acmd41_polls = 0;
                 st.cmd55_first = send_cmd(55, 0);
-                st.acmd41_first = send_cmd(41, 1u << 30);
+                st.acmd41_first = send_cmd(41, 0x40000000u);
                 r41 = st.acmd41_first;
                 st.acmd41_ones = 0;
                 st.acmd41_other_ms = 0;
                 st.acmd41_other = 0;
-                st.after_r58 = st.after_r0 = 0xEE;
+                st.after_r0 = 0xEE;
+                st.after_r58 = 0xEE;
                 st.restarts = 0;
-                memset(st.fail_ms, 0, sizeof(st.fail_ms));
-                while (r41 != 0 && time_us_32() - t0 < init_timeout_us) {
+                (void)memset(st.fail_ms, 0, sizeof(st.fail_ms));
+                while ((r41 != 0u) && ((time_us_32() - t0) < init_timeout_us)) {
                     spi_bus_xfer(NULL, NULL, 8);
-                    if (poll_gap_ms && rtos_running()) {
+                    if ((poll_gap_ms != 0u) && rtos_running()) {
                         deselect();
                         vTaskDelay(pdMS_TO_TICKS(poll_gap_ms));
                     }
-                    r41 = send_cmd(ACMD | 41, 1u << 30);
+                    r41 = send_cmd(ACMD | 41u, 0x40000000u);
                     st.acmd41_polls++;
-                    if (r41 == 0 || r41 == 1) {
+                    if ((r41 == 0u) || (r41 == 1u)) {
                         st.acmd41_ones += r41;
                         continue;
                     }
-                    uint32_t ms = (time_us_32() - t0) / 1000u + 1u;
-                    if (!st.acmd41_other_ms) {
+                    uint32_t ms = ((time_us_32() - t0) / 1000u) + 1u;
+                    if (st.acmd41_other_ms == 0u) {
                         st.acmd41_other_ms = ms;
                         st.acmd41_other = r41;
                     }
-                    if (st.restarts < sizeof(st.fail_ms) / sizeof(st.fail_ms[0]))
+                    if (st.restarts < (sizeof(st.fail_ms) / sizeof(st.fail_ms[0]))) {
                         st.fail_ms[st.restarts] = (uint16_t)ms;
+                    }
                     uint8_t ocr[4];
                     uint8_t r58 = send_cmd(58, 0);
                     spi_bus_xfer(NULL, ocr, 4);
                     uint8_t r0 = send_cmd(0, 0);
-                    if (st.after_r0 == 0xEE) {
+                    if (st.after_r0 == 0xEEu) {
                         st.after_r58 = r58;
                         st.after_r0 = r0;
                     }
-                    if (r0 != 1 || st.restarts >= init_restarts)
+                    if ((r0 != 1u) || (st.restarts >= init_restarts)) {
                         break;
-                    if (st.restarts < 255u)
+                    }
+                    if (st.restarts < 255u) {
                         st.restarts++;
-                    if (send_cmd(8, 0x1AA) != 1)
+                    }
+                    if (send_cmd(8, 0x1AA) != 1u) {
                         break;
+                    }
                     spi_bus_xfer(NULL, ocr, 4);
-                    if (use_crc)
-                        send_cmd(59, 1);
+                    if (use_crc) {
+                        (void)send_cmd(59, 1);
+                    }
                 }
                 st.init_r1[3] = r41;
-                uint8_t r58 = 0xEE;
-                if (r41 == 0 && (r58 = send_cmd(58, 0)) == 0) {
-                    uint8_t *ocr = st.init_ocr;
-                    spi_bus_xfer(NULL, ocr, 4);
-                    ty = (ocr[0] & 0x40u) ? SD_V2_HC : SD_V2_SC;
+                uint8_t r58 = 0xEEu;
+                if (r41 == 0u) {
+                    r58 = send_cmd(58, 0);
+                    if (r58 == 0u) {
+                        uint8_t *ocr = st.init_ocr;
+                        spi_bus_xfer(NULL, ocr, 4);
+                        ty = ((ocr[0] & 0x40u) != 0u) ? SD_V2_HC : SD_V2_SC;
+                    }
                 }
                 st.init_r1[4] = r58;
             }
         } else {
-            if (use_crc)
-                send_cmd(59, 1);
+            if (use_crc) {
+                (void)send_cmd(59, 1);
+            }
             uint32_t t0 = time_us_32();
-            while (send_cmd(ACMD | 41, 0) != 0 && time_us_32() - t0 < INIT_TIMEOUT_US)
+            while ((send_cmd(ACMD | 41u, 0) != 0u) && ((time_us_32() - t0) < INIT_TIMEOUT_US)) {
                 spi_bus_xfer(NULL, NULL, 8);
-            if (time_us_32() - t0 < INIT_TIMEOUT_US)
+            }
+            if ((time_us_32() - t0) < INIT_TIMEOUT_US) {
                 ty = SD_V1;
+            }
         }
     }
-    if (ty != SD_NONE && ty != SD_V2_HC && send_cmd(16, SD_SECTOR) != 0)
+    if ((ty != SD_NONE) && (ty != SD_V2_HC) && (send_cmd(16, SD_SECTOR) != 0u)) {
         ty = SD_NONE;
-    uint8_t csd[16], cid[16];
-    if (ty != SD_NONE && (st.init_r1[5] = send_cmd(9, 0)) == 0 && rcvr_block(csd, 16))
+    }
+    uint8_t csd[16];
+    uint8_t cid[16];
+    bool have_csd = false;
+    if (ty != SD_NONE) {
+        st.init_r1[5] = send_cmd(9, 0);
+        have_csd = (st.init_r1[5] == 0u) && rcvr_block(csd, 16);
+    }
+    if (have_csd) {
         sectors = csd_sectors(csd);
-    if (ty != SD_NONE && send_cmd(10, 0) == 0 && rcvr_block(cid, 16))
+    }
+    if ((ty != SD_NONE) && (send_cmd(10, 0) == 0u) && rcvr_block(cid, 16)) {
         hexify(cid, 16, cid_hex);
+    }
     deselect();
     if (ty != SD_NONE) {
         data_hz = spi_bus_setup(data_hz_asked, 0, 0);
@@ -333,69 +371,76 @@ int sd_init_card(void) {
     }
     type = ty;
     bus_give();
-    return ty != SD_NONE ? 0 : -1;
+    return (ty != SD_NONE) ? 0 : -1;
 }
 
 int sd_read(uint8_t *buf, uint32_t lba, uint32_t count) {
-    if (type == SD_NONE || count == 0)
+    if ((type == SD_NONE) || (count == 0u)) {
         return -1;
-    uint32_t addr = type == SD_V2_HC ? lba : lba * SD_SECTOR;
-    if (!bus_take(2000))
+    }
+    uint32_t addr = (type == SD_V2_HC) ? lba : (lba * SD_SECTOR);
+    if (!bus_take(2000)) {
         return -1;
-    spi_bus_setup(data_hz, 0, 0);
+    }
+    (void)spi_bus_setup(data_hz, 0, 0);
     bool ok = false;
-    for (int attempt = 0; attempt < RETRIES && !ok && bus_held; attempt++) {
-        if (attempt)
+    for (int attempt = 0; (attempt < RETRIES) && !ok && bus_held; attempt++) {
+        if (attempt != 0) {
             st.retries++;
+        }
         uint8_t *p = buf;
         uint32_t n = count;
-        if (count == 1) {
-            ok = send_cmd(17, addr) == 0 && rcvr_block(p, SD_SECTOR);
-        } else if (send_cmd(18, addr) == 0) {
-            while (n > 0 && rcvr_block(p, SD_SECTOR)) {
-                p += SD_SECTOR;
+        if (count == 1u) {
+            ok = (send_cmd(17, addr) == 0u) && rcvr_block(p, SD_SECTOR);
+        } else if (send_cmd(18, addr) == 0u) {
+            while ((n > 0u) && rcvr_block(p, SD_SECTOR)) {
+                p = &p[SD_SECTOR];
                 n--;
             }
-            send_cmd(12, 0);
-            ok = n == 0;
+            (void)send_cmd(12, 0);
+            ok = n == 0u;
         } else {
             st.cmd_errors++;
         }
         deselect();
     }
     st.reads++;
-    if (ok)
+    if (ok) {
         st.sectors_read += count;
+    }
     bus_give();
     return ok ? 0 : -1;
 }
 
 int sd_write(const uint8_t *buf, uint32_t lba, uint32_t count) {
-    if (type == SD_NONE || count == 0)
+    if ((type == SD_NONE) || (count == 0u)) {
         return -1;
-    uint32_t addr = type == SD_V2_HC ? lba : lba * SD_SECTOR;
+    }
+    uint32_t addr = (type == SD_V2_HC) ? lba : (lba * SD_SECTOR);
     uint32_t t0 = time_us_32();
-    if (!bus_take(2000))
+    if (!bus_take(2000)) {
         return -1;
-    spi_bus_setup(data_hz, 0, 0);
+    }
+    (void)spi_bus_setup(data_hz, 0, 0);
     bool ok = false;
-    for (int attempt = 0; attempt < RETRIES && !ok && bus_held; attempt++) {
-        if (attempt)
+    for (int attempt = 0; (attempt < RETRIES) && !ok && bus_held; attempt++) {
+        if (attempt != 0) {
             st.retries++;
+        }
         const uint8_t *p = buf;
         uint32_t n = count;
-        if (count == 1) {
-            ok = send_cmd(24, addr) == 0 && xmit_block(p, 0xFE);
+        if (count == 1u) {
+            ok = (send_cmd(24, addr) == 0u) && xmit_block(p, 0xFE);
         } else {
             /* ACMD23: the blocks about to be written, which a card may erase
              * ahead of them. */
-            send_cmd(ACMD | 23, count);
-            if (send_cmd(25, addr) == 0) {
-                while (n > 0 && xmit_block(p, 0xFC)) {
-                    p += SD_SECTOR;
+            (void)send_cmd(ACMD | 23u, count);
+            if (send_cmd(25, addr) == 0u) {
+                while ((n > 0u) && xmit_block(p, 0xFC)) {
+                    p = &p[SD_SECTOR];
                     n--;
                 }
-                ok = xmit_block(NULL, 0xFD) && n == 0;
+                ok = xmit_block(NULL, 0xFD) && (n == 0u);
             } else {
                 st.cmd_errors++;
             }
@@ -405,21 +450,25 @@ int sd_write(const uint8_t *buf, uint32_t lba, uint32_t count) {
         deselect();
     }
     st.writes++;
-    if (ok)
+    if (ok) {
         st.sectors_written += count;
+    }
     bus_give();
     uint32_t d = time_us_32() - t0;
-    if (d > st.write_max_us)
+    if (d > st.write_max_us) {
         st.write_max_us = d;
+    }
     return ok ? 0 : -1;
 }
 
 int sd_sync(void) {
-    if (type == SD_NONE)
+    if (type == SD_NONE) {
         return -1;
-    if (!bus_take(2000))
+    }
+    if (!bus_take(2000)) {
         return -1;
-    spi_bus_setup(data_hz, 0, 0);
+    }
+    (void)spi_bus_setup(data_hz, 0, 0);
     select();
     bool ok = wait_ready(WRITE_TIMEOUT_US);
     deselect();
@@ -444,10 +493,12 @@ bool sd_mounted(void) {
 }
 
 uint8_t sd_bus_probe_imu(void) {
-    if (!bus_take(1000))
+    if (!bus_take(1000)) {
         return 0;
-    spi_bus_setup(1000000u, 1, 1);
-    uint8_t tx[2] = {0x80u | 0x0Fu, 0xFF}, rx[2] = {0, 0};
+    }
+    (void)spi_bus_setup(1000000u, 1, 1);
+    uint8_t tx[2] = {0x80u | 0x0Fu, 0xFFu};
+    uint8_t rx[2] = {0, 0};
     gpio_put(BOARD_PIN_IMU_CS, 0);
     spi_bus_xfer(tx, rx, 2);
     gpio_put(BOARD_PIN_IMU_CS, 1);
@@ -476,28 +527,34 @@ void sd_set_data_hz(uint32_t hz) {
 }
 
 bool sd_clock_idle(uint32_t ms) {
-    if (!bus_take(2000))
+    if (!bus_take(2000)) {
         return false;
-    spi_bus_setup(INIT_HZ, 0, 0);
+    }
+    (void)spi_bus_setup(INIT_HZ, 0, 0);
     gpio_put(BOARD_PIN_SD_CS, 1);
     uint32_t t0 = time_us_32();
-    while (time_us_32() - t0 < ms * 1000u)
-        spi_bus_byte(0xFF);
-    if (data_hz)
-        spi_bus_setup(data_hz, 0, 0);
+    while ((time_us_32() - t0) < (ms * 1000u)) {
+        (void)spi_bus_byte(0xFF);
+    }
+    if (data_hz != 0u) {
+        (void)spi_bus_setup(data_hz, 0, 0);
+    }
     bus_give();
     return true;
 }
 
 int sd_start(void) {
     spi_bus_init();
-    if (sd_init_card() != 0)
+    if (sd_init_card() != 0) {
         return -1;
+    }
+    static FATFS fatfs;
     FRESULT r = f_mount(&fatfs, "", 1);
     st.mount_rc = (uint32_t)r;
-    mounted = r == FR_OK;
-    if (mounted)
+    mounted = (r == FR_OK);
+    if (mounted) {
         mount_count++;
+    }
     return mounted ? 0 : -2;
 }
 

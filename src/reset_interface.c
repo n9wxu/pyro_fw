@@ -7,6 +7,7 @@
 #include "pico/usb_reset_interface.h"
 #include "pico/bootrom.h"
 #include "hardware/watchdog.h"
+#include "reset_interface.h"
 
 static uint8_t itf_num;
 
@@ -18,9 +19,10 @@ static void resetd_reset(uint8_t rhport) { (void)rhport; itf_num = 0; }
 
 static uint16_t resetd_open(uint8_t rhport, tusb_desc_interface_t const *itf_desc, uint16_t max_len) {
     (void)rhport;
-    TU_VERIFY(TUSB_CLASS_VENDOR_SPECIFIC == itf_desc->bInterfaceClass &&
-              RESET_INTERFACE_SUBCLASS == itf_desc->bInterfaceSubClass &&
-              RESET_INTERFACE_PROTOCOL == itf_desc->bInterfaceProtocol, 0);
+    TU_VERIFY((TUSB_CLASS_VENDOR_SPECIFIC == itf_desc->bInterfaceClass) &&
+                  (RESET_INTERFACE_SUBCLASS == itf_desc->bInterfaceSubClass) &&
+                  (RESET_INTERFACE_PROTOCOL == itf_desc->bInterfaceProtocol),
+              0);
     TU_VERIFY(max_len >= sizeof(tusb_desc_interface_t), 0);
     itf_num = itf_desc->bInterfaceNumber;
     return sizeof(tusb_desc_interface_t);
@@ -47,19 +49,18 @@ static bool resetd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result
     return true;
 }
 
-static usbd_class_driver_t const _resetd_driver = {
-#if CFG_TUSB_DEBUG >= 2
-    .name = "RESET",
-#endif
-    .init            = resetd_init,
-    .reset           = resetd_reset,
-    .open            = resetd_open,
-    .control_xfer_cb = resetd_control_xfer_cb,
-    .xfer_cb         = resetd_xfer_cb,
-    .sof             = NULL
-};
-
 usbd_class_driver_t const *usbd_app_driver_get_cb(uint8_t *driver_count) {
+    static usbd_class_driver_t const resetd_driver = {
+#if CFG_TUSB_DEBUG >= 2
+        .name = "RESET",
+#endif
+        .init            = resetd_init,
+        .reset           = resetd_reset,
+        .open            = resetd_open,
+        .control_xfer_cb = resetd_control_xfer_cb,
+        .xfer_cb         = resetd_xfer_cb,
+        .sof             = NULL
+    };
     *driver_count = 1;
-    return &_resetd_driver;
+    return &resetd_driver;
 }

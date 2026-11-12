@@ -36,11 +36,12 @@ def erase_refusal(code, body):
 
 
 def cleanup_done(host, timeout_s=ERASE_WAIT_S):
-    """True once /api/fs reports the cleanup done."""
+    """True once /api/fs reports the cleanup done, or held: in test mode
+    nothing is erased (USB-10)."""
     end = time.monotonic() + timeout_s
     while time.monotonic() < end:
         fs = get_json(host, "/api/fs", timeout=10)
-        if fs and fs.get("cleanup") == "done":
+        if fs and fs.get("cleanup") in ("done", "held"):
             return True
         time.sleep(1)
     return False

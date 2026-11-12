@@ -9,3 +9,4 @@ AllowShortLoopsOnASingleLine: false
 SortIncludes: false
 PointerAlignment: Right
 SpaceAfterCStyleCast: false
+InsertBraces: true

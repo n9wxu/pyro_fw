@@ -24,7 +24,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define LOG_PAD_N 110
+#define LOG_PAD_N 110u
 
 typedef struct {
     int32_t pressure_pa;
@@ -35,7 +35,8 @@ typedef struct {
 typedef struct {
     log_pad_entry_t e[LOG_PAD_N];
     int8_t temp_less_first_dc[LOG_PAD_N];
-    uint16_t next, count;
+    uint16_t next;
+    uint16_t count;
     uint32_t newest_ms;
     int16_t first_temp_dc;
 } log_pad_ring_t;

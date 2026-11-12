@@ -10,7 +10,7 @@
 
 /* See THEORY_OF_OPERATION.md "Presence test". */
 #define TRACK_BIAS_US 8000u
-#define TRACK_PERIOD_MS 500
+#define TRACK_PERIOD_MS 500u
 #define NO_ALARM (-1)
 
 static struct {
@@ -18,7 +18,8 @@ static struct {
     bool alarm_asked;
     volatile bool biased;
     volatile bool result_is_new;
-    uint32_t start_ms, due_ms;
+    uint32_t start_ms;
+    uint32_t due_ms;
     tracking_t result;
 } tracking;
 
@@ -37,8 +38,9 @@ static void bias_bus(bool on) {
 /* The end of the pulse: read under the bias, then let it go. Runs in the
  * alarm's interrupt, or from the loop on a board with no alarm free. */
 static void take_reading(void) {
-    if (!tracking.biased)
+    if (!tracking.biased) {
         return; /* abandoned for a fire */
+    }
     tracking.result.bus = adc_read_median3(BOARD_ADC_CH_BUS);
     tracking.result.a = adc_read_median3(BOARD_ADC_CH_A);
     tracking.result.b = adc_read_median3(BOARD_ADC_CH_B);
@@ -62,13 +64,14 @@ static bool have_alarm(void) {
 void tracking_init(void) {
     int alarm = tracking.alarm;
     bool asked = tracking.alarm_asked;
-    memset(&tracking, 0, sizeof(tracking));
+    (void)memset(&tracking, 0, sizeof(tracking));
     tracking.alarm = asked ? alarm : NO_ALARM;
     tracking.alarm_asked = true;
     if (!asked) {
         tracking.alarm = hardware_alarm_claim_unused(false);
-        if (tracking.alarm != NO_ALARM)
+        if (tracking.alarm != NO_ALARM) {
             hardware_alarm_set_callback((uint)tracking.alarm, pulse_end_isr);
+        }
     }
 }
 
@@ -76,8 +79,9 @@ static void begin_pulse(uint32_t now_ms) {
     bias_bus(true);
     tracking.start_ms = now_ms;
     tracking.due_ms = now_ms + TRACK_PERIOD_MS;
-    if (have_alarm())
+    if (have_alarm()) {
         hardware_alarm_set_target((uint)tracking.alarm, make_timeout_time_us(TRACK_BIAS_US));
+    }
 }
 
 bool tracking_step(uint32_t now_ms) {
@@ -86,18 +90,21 @@ bool tracking_step(uint32_t now_ms) {
         return true;
     }
     if (tracking.biased) {
-        if (!have_alarm() && now_ms - tracking.start_ms >= TRACK_BIAS_US / 1000u)
+        if ((!have_alarm()) && ((now_ms - tracking.start_ms) >= (TRACK_BIAS_US / 1000u))) {
             take_reading();
+        }
         return false;
     }
-    if (deadline_reached(now_ms, tracking.due_ms))
+    if (deadline_reached(now_ms, tracking.due_ms)) {
         begin_pulse(now_ms);
+    }
     return false;
 }
 
 void tracking_abandon(void) {
-    if (tracking.alarm != NO_ALARM)
+    if (tracking.alarm != NO_ALARM) {
         hardware_alarm_cancel((uint)tracking.alarm);
+    }
     bias_bus(false);
     tracking.result_is_new = false;
 }

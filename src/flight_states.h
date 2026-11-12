@@ -52,12 +52,13 @@ typedef struct {
     uint8_t event;
 } flight_sample_t;
 
-#define FLIGHT_BUF_SIZE 64 /* the newest samples, for flight_save_csv() */
+#define FLIGHT_BUF_SIZE 64u /* the newest samples, for flight_save_csv() */
 
 typedef struct flight_context_t {
     config_t config;
     fire_plan_t plan;
-    bool refire_interval_limited, fire_gap_limited;
+    bool refire_interval_limited;
+    bool fire_gap_limited;
     flight_state_t current_state;
     uint32_t boot_timer;
 
@@ -86,14 +87,22 @@ typedef struct flight_context_t {
 
     /* The flight */
     int32_t ground_pressure;
-    uint32_t launch_time, armed_time, apogee_time, descent_start_time, landing_time;
+    uint32_t launch_time;
+    uint32_t armed_time;
+    uint32_t apogee_time;
+    uint32_t descent_start_time;
+    uint32_t landing_time;
     uint32_t last_sample; /* sample time of the newest sample */
-    int32_t pressure_pa, altitude_cm, speed_cms;
-    int32_t max_altitude_cm, max_speed_cms;
+    int32_t pressure_pa;
+    int32_t altitude_cm;
+    int32_t speed_cms;
+    int32_t max_altitude_cm;
+    int32_t max_speed_cms;
     /* The highest the estimator explained, or the simple filter's top, and its
      * pressure for the log. */
     bool have_peak;
-    float peak_m, peak_pa;
+    float peak_m;
+    float peak_pa;
     bool peak_lower_bound;
     /* One per estimator: the obeyed one's is the flight's apogee, the others'
      * are logged [SNS-EST-07]. */
@@ -109,7 +118,8 @@ typedef struct flight_context_t {
     bool pyros_armed;
     bool apogee_declared;
     bool under_thrust;
-    bool sensor_stuck, sensor_lost;
+    bool sensor_stuck;
+    bool sensor_lost;
     descent_phase_t descent;
     landing_detector_t landing;
     uint32_t landed_row_ms;
@@ -127,7 +137,8 @@ typedef struct flight_context_t {
     uint32_t last_telemetry;
 
     flight_sample_t flight_buffer[FLIGHT_BUF_SIZE];
-    uint16_t buf_head, buf_count;
+    uint16_t buf_head;
+    uint16_t buf_count;
 
     uint8_t events_held[FLIGHT_EVENTS_HELD]; /* [LUA-RUN-02] */
     uint32_t events_noted;

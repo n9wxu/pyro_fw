@@ -12,17 +12,17 @@
 #include <stdint.h>
 
 static inline bool ota_image_fits(uint32_t len, uint32_t slot_bytes) {
-    return len > 0 && len <= slot_bytes;
+    return (len > 0u) && (len <= slot_bytes);
 }
 
 static inline bool ota_sector_fits(uint32_t offset, uint32_t sector_bytes, uint32_t slot_bytes) {
-    return offset <= slot_bytes && sector_bytes <= slot_bytes - offset;
+    return (offset <= slot_bytes) && (sector_bytes <= (slot_bytes - offset));
 }
 
 /* The download slot lies on the chip [OTA-08]. A chip that does not say its
  * size (0) is not refused. */
 static inline bool ota_slot_on_chip(uint32_t slot_off, uint32_t slot_bytes, uint32_t chip_bytes) {
-    return chip_bytes == 0 || (slot_off <= chip_bytes && slot_bytes <= chip_bytes - slot_off);
+    return (chip_bytes == 0u) || ((slot_off <= chip_bytes) && (slot_bytes <= (chip_bytes - slot_off)));
 }
 
 #endif

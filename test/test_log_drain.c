@@ -26,20 +26,23 @@ static uint32_t head, tail, dropped, now_ms, next_sample_ms, sample_ms, block;
 
 static void pass_ms(uint32_t ms) {
     for (uint32_t end = now_ms + ms; now_ms != end; now_ms++) {
-        if (now_ms != next_sample_ms)
+        if (now_ms != next_sample_ms) {
             continue;
+        }
         next_sample_ms += sample_ms;
-        if (SAMPLE > RING - (head - tail))
+        if (SAMPLE > RING - (head - tail)) {
             dropped += SAMPLE;
-        else
+        } else {
             head += SAMPLE;
+        }
     }
 }
 
 static void file_write(uint32_t n) {
     block += n;
-    if (block < FILE_BLOCK)
+    if (block < FILE_BLOCK) {
         return;
+    }
     uint32_t pages = block / PAGE_DATA;
     block -= pages * PAGE_DATA;
     pass_ms(pages * PAGE_MS);
@@ -58,8 +61,9 @@ static void write_out(void) {
 static uint32_t fly(uint32_t period_ms, uint32_t seconds) {
     head = tail = dropped = now_ms = next_sample_ms = block = 0;
     sample_ms = period_ms;
-    while (now_ms < HOLDOFF_MS && !log_drain_full(head - tail, RING, OPENING))
+    while (now_ms < HOLDOFF_MS && !log_drain_full(head - tail, RING, OPENING)) {
         pass_ms(10);
+    }
     for (uint32_t left = OPENING; left;) {
         uint32_t n = left < LOG_DRAIN_PIECE ? left : LOG_DRAIN_PIECE;
         file_write(n);
@@ -68,8 +72,9 @@ static uint32_t fly(uint32_t period_ms, uint32_t seconds) {
     while (now_ms < seconds * 1000u) {
         write_out();
         uint32_t due = now_ms + FLUSH_MS;
-        while (now_ms < due && !log_drain_full(head - tail, RING, 0))
+        while (now_ms < due && !log_drain_full(head - tail, RING, 0)) {
             pass_ms(10);
+        }
     }
     return dropped;
 }

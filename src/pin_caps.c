@@ -23,7 +23,7 @@ static const pin_cap_t caps[] = {BOARD_PIN_CAPS(X_ROW)};
 #define CAP_COUNT (0 BOARD_PIN_CAPS(X_COUNT))
 
 const pin_cap_t *pin_caps_table(int *count) {
-    if (count) {
+    if (count != NULL) {
         *count = CAP_COUNT;
     }
     return caps;
@@ -40,11 +40,11 @@ const pin_cap_t *pin_caps_find(uint8_t pin) {
 
 const char *pin_caps_label(uint8_t pin) {
     const pin_cap_t *c = pin_caps_find(pin);
-    return c ? c->label : "";
+    return (c != NULL) ? c->label : "";
 }
 
 bool pin_caps_is_default_lua(const pin_cap_t *c) {
-    return c && (c->functions & FN_LUA_ANY) && !(c->functions & FN_BOARD_RESERVED);
+    return (c != NULL) && ((c->functions & FN_LUA_ANY) != 0u) && ((c->functions & FN_BOARD_RESERVED) == 0u);
 }
 
 /* A bridge needs one per-channel element and the common, and both have to be
@@ -53,7 +53,7 @@ bool pin_caps_is_default_lua(const pin_cap_t *c) {
  * it at a level does not hold the eFuse on. */
 bool pin_caps_has_buzzer(void) {
     for (int i = 0; i < CAP_COUNT; i++) {
-        if (caps[i].functions & FN_BUZZER) {
+        if ((caps[i].functions & FN_BUZZER) != 0u) {
             return true;
         }
     }
@@ -64,20 +64,22 @@ bool pin_caps_bridge_possible(void) {
     bool have_channel = false;
     bool have_common = false;
     for (int i = 0; i < CAP_COUNT; i++) {
-        if (!(caps[i].functions & FN_BRIDGE)) {
+        if ((caps[i].functions & FN_BRIDGE) == 0u) {
             continue;
         }
-        if (caps[i].group == PG_CH1 || caps[i].group == PG_CH2) {
+        if ((caps[i].group == PG_CH1) || (caps[i].group == PG_CH2)) {
             have_channel = true;
         } else if (caps[i].group == PG_COMMON) {
             have_common = true;
+        } else {
+            /* a bridge pad with no element role is refused at build time */
         }
     }
     return have_channel && have_common;
 }
 
 const char *pin_caps_topology_name(void) {
-    return BOARD_PYRO_TOPOLOGY == PYRO_TOPO_HIGH_SWITCHED ? "high_switched" : "low_switched";
+    return (BOARD_PYRO_TOPOLOGY == PYRO_TOPO_HIGH_SWITCHED) ? "high_switched" : "low_switched";
 }
 
 const char *pin_caps_protection_note(void) {

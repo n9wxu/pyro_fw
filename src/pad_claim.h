@@ -36,7 +36,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define PAD_CLAIM_MAX_GPIO 30 /* RP2040 has GPIO0..29 */
+#define PAD_CLAIM_MAX_GPIO 30u /* RP2040 has GPIO0..29 */
 
 /* A pad mask. PAD(n) is GPIO n. */
 #define PAD(n) (1u << (n))

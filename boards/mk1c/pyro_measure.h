@@ -12,11 +12,16 @@
 #include <stdint.h>
 
 typedef struct {
-    uint16_t vbat, bus, a, b;
+    uint16_t vbat;
+    uint16_t bus;
+    uint16_t a;
+    uint16_t b;
 } quiescent_t;
 
 typedef struct {
-    uint16_t bus, a, b;
+    uint16_t bus;
+    uint16_t a;
+    uint16_t b;
     bool valid;
 } tracking_t;
 

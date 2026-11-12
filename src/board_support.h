@@ -15,7 +15,8 @@
 #include <stdint.h>
 
 static inline bool deadline_reached(uint32_t now_ms, uint32_t due_ms) {
-    return (int32_t)(now_ms - due_ms) >= 0;
+    uint32_t late = now_ms - due_ms;
+    return (int32_t)late >= 0;
 }
 
 static inline uint16_t adc_read_raw(uint8_t channel) {
@@ -26,14 +27,17 @@ static inline uint16_t adc_read_raw(uint8_t channel) {
 /* The sense taps are RC filtered; the median drops a conversion that lands
  * on a switching edge elsewhere on the board. */
 static inline uint16_t adc_read_median3(uint8_t channel) {
-    uint16_t x = adc_read_raw(channel), y = adc_read_raw(channel), z = adc_read_raw(channel);
+    uint16_t x = adc_read_raw(channel);
+    uint16_t y = adc_read_raw(channel);
+    uint16_t z = adc_read_raw(channel);
     if (x > y) {
         uint16_t t = x;
         x = y;
         y = t;
     }
-    if (y > z)
+    if (y > z) {
         y = (x > z) ? x : z;
+    }
     return y;
 }
 

@@ -35,17 +35,17 @@ void flash_chip_read(void) {
     uint8_t jedec[3];
 
     uint32_t irq = save_and_disable_interrupts();
-    memset(tx, 0, sizeof(tx));
+    (void)memset(tx, 0, sizeof(tx));
     tx[0] = CMD_JEDEC_ID;
-    flash_do_cmd(tx, rx, 1 + sizeof(jedec));
-    memcpy(jedec, rx + 1, sizeof(jedec));
+    flash_do_cmd(tx, rx, 1u + sizeof(jedec));
+    (void)memcpy(jedec, &rx[1], sizeof(jedec));
     tx[0] = CMD_UNIQUE_ID;
     flash_do_cmd(tx, rx, sizeof(tx));
-    if (flash_timing_for(jedec)) {
+    if (flash_timing_for(jedec) != NULL) {
         flash_chip_io_t io = {NULL, chip_do_cmd, chip_now};
-        flash_chip_finish_suspended(&io, FLASH_CHIP_FINISH_MAX_US);
+        (void)flash_chip_finish_suspended(&io, FLASH_CHIP_FINISH_MAX_US);
     }
     restore_interrupts(irq);
 
-    flash_chip_set(jedec, rx + 1 + UNIQUE_ID_DUMMY);
+    flash_chip_set(jedec, &rx[1 + UNIQUE_ID_DUMMY]);
 }

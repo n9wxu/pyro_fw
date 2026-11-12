@@ -8,35 +8,40 @@
 #include "sd_card.h"
 
 DSTATUS disk_status(BYTE pdrv) {
-    return (pdrv == 0 && sd_type() != SD_NONE) ? 0 : STA_NOINIT;
+    return ((pdrv == 0u) && (sd_type() != SD_NONE)) ? 0 : STA_NOINIT;
 }
 
 DSTATUS disk_initialize(BYTE pdrv) {
-    if (pdrv != 0)
+    if (pdrv != 0u) {
         return STA_NOINIT;
-    if (sd_type() == SD_NONE)
-        sd_init_card();
+    }
+    if (sd_type() == SD_NONE) {
+        (void)sd_init_card();
+    }
     return disk_status(pdrv);
 }
 
 DRESULT disk_read(BYTE pdrv, BYTE *buff, LBA_t sector, UINT count) {
-    if (pdrv != 0 || sd_type() == SD_NONE)
+    if ((pdrv != 0u) || (sd_type() == SD_NONE)) {
         return RES_NOTRDY;
-    return sd_read(buff, (uint32_t)sector, count) == 0 ? RES_OK : RES_ERROR;
+    }
+    return (sd_read(buff, (uint32_t)sector, count) == 0) ? RES_OK : RES_ERROR;
 }
 
 DRESULT disk_write(BYTE pdrv, const BYTE *buff, LBA_t sector, UINT count) {
-    if (pdrv != 0 || sd_type() == SD_NONE)
+    if ((pdrv != 0u) || (sd_type() == SD_NONE)) {
         return RES_NOTRDY;
-    return sd_write(buff, (uint32_t)sector, count) == 0 ? RES_OK : RES_ERROR;
+    }
+    return (sd_write(buff, (uint32_t)sector, count) == 0) ? RES_OK : RES_ERROR;
 }
 
 DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buff) {
-    if (pdrv != 0 || sd_type() == SD_NONE)
+    if ((pdrv != 0u) || (sd_type() == SD_NONE)) {
         return RES_NOTRDY;
+    }
     switch (cmd) {
     case CTRL_SYNC:
-        return sd_sync() == 0 ? RES_OK : RES_ERROR;
+        return (sd_sync() == 0) ? RES_OK : RES_ERROR;
     case GET_SECTOR_COUNT:
         *(LBA_t *)buff = sd_sectors();
         return RES_OK;

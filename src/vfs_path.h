@@ -15,23 +15,24 @@
 #include <stddef.h>
 
 static inline bool vfs_name_char(char ch) {
-    return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' ||
-           ch == '-';
+    return ((ch >= 'A') && (ch <= 'Z')) || ((ch >= 'a') && (ch <= 'z')) || ((ch >= '0') && (ch <= '9')) || (ch == '.') ||
+           (ch == '_') || (ch == '-');
 }
 
 static inline bool vfs_path_ok(const char *path) {
-    if (!path) {
+    if (path == NULL) {
         return false;
     }
-    const char *p = (*path == '/') ? path + 1 : path;
+    const char *p = (*path == '/') ? &path[1] : path;
     for (;;) {
         const char *name = p;
         while (vfs_name_char(*p)) {
             p++;
         }
-        size_t n = (size_t)(p - name);
-        bool dots = (n == 1 && name[0] == '.') || (n == 2 && name[0] == '.' && name[1] == '.');
-        if (n == 0 || dots) {
+        ptrdiff_t len = p - name;
+        size_t n = (size_t)len;
+        bool dots = ((n == 1u) && (name[0] == '.')) || ((n == 2u) && (name[0] == '.') && (name[1] == '.'));
+        if ((n == 0u) || dots) {
             return false;
         }
         if (*p == '\0') {

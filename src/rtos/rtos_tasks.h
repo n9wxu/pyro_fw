@@ -70,7 +70,22 @@ void flight_call_service(void); /* the flight task only */
  * counted and the flight goes on. */
 void storage_checkin(uint32_t now_ms);
 bool storage_alive(uint32_t now_ms);
+
+/* The filesystem's driver, at each read: a pass that is reading the store is
+ * a pass checking in, for STORAGE_PASS_MAX_MS of one pass at most. From any
+ * task; only the storage task's reads count. */
+void storage_reading(void);
 uint32_t storage_stalls(void);
+
+/* The task bodies: main_hardware.c, net_task.c, storage_task.c. */
+void flight_task(void *arg);
+void net_task(void *arg);
+void storage_task(void *arg);
+
+/* The fault handlers, in RAM for the flight path's proof. */
+void pyro_panic(const char *fmt, ...) __attribute__((noreturn));
+void rtos_hardfault_c(const uint32_t *frame) __attribute__((noreturn));
+void isr_hardfault(void);
 
 /* Stack high-water marks, bytes never used, for /api/status. */
 typedef struct {

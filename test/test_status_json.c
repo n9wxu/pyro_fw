@@ -231,6 +231,7 @@ static const char *const TYPICAL[][2] = {
     {"buzzer_active", "false"},
     {"beep", "\"ready\""},
     {"beep_sound", "\"3-2\""},
+    {"pad_ready", "false"},
     {"serial", "\"0202840A6B01\""},
     {"serial_assigned", "true"},
     {"hw_id", "\"E6614104031F5A2B\""},

@@ -10,6 +10,7 @@ set(PYRO_FLASH_SIZE_KB 2048)
 set(PYRO_PFB_FS_KB     984)  # the files
 
 set(PYRO_HAS_LUA 1) # the J1 pad, GPIO8
+set(PYRO_HAS_BENCH_FLIGHT 1) # POST /api/sim/flight [DD-078]
 
 # The worst loop iteration; the watchdog is twice it. See
 # THEORY_OF_OPERATION.md "Build".

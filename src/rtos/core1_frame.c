@@ -13,11 +13,14 @@
 #include "hardware/sync.h"
 #include "pico/time.h"
 
-static TaskHandle_t storage_h, lua_h;
+static TaskHandle_t storage_h;
+static TaskHandle_t lua_h;
 static volatile uint32_t frame_t0;    /* the flight task */
 static volatile uint32_t writer_done; /* the storage task: the frame it gave up */
 static volatile bool lua_waiting;     /* the Lua task */
-static volatile uint32_t writer_max_us, writer_overruns, lua_skipped;
+static volatile uint32_t writer_max_us;
+static volatile uint32_t writer_overruns;
+static volatile uint32_t lua_skipped;
 
 void core1_frame_attach_storage(TaskHandle_t h) {
     storage_h = h;
@@ -30,8 +33,9 @@ void core1_frame_attach_lua(TaskHandle_t h) {
 void core1_frame_begin(uint32_t t0_us) {
     frame_t0 = t0_us;
     __dmb();
-    if (storage_h)
-        xTaskNotifyGive(storage_h);
+    if (storage_h != NULL) {
+        (void)xTaskNotifyGive(storage_h);
+    }
 }
 
 uint32_t core1_frame_t0(void) {
@@ -40,21 +44,25 @@ uint32_t core1_frame_t0(void) {
 
 void core1_frame_writer_done(void) {
     uint32_t t0 = frame_t0;
-    if (writer_done == t0)
+    if (writer_done == t0) {
         return;
+    }
     uint32_t held = time_us_32() - t0;
-    if (held < LOOP_PERIOD_US && held > writer_max_us)
+    if ((held < LOOP_PERIOD_US) && (held > writer_max_us)) {
         writer_max_us = held;
-    if (held > FRAME_WRITER_US && held < LOOP_PERIOD_US)
+    }
+    if ((held > FRAME_WRITER_US) && (held < LOOP_PERIOD_US)) {
         writer_overruns++;
+    }
     writer_done = t0;
     __dmb();
-    if (lua_waiting && lua_h)
-        xTaskNotifyGive(lua_h);
+    if (lua_waiting && (lua_h != NULL)) {
+        (void)xTaskNotifyGive(lua_h);
+    }
 }
 
 bool core1_frame_wait(uint32_t timeout_ms) {
-    return ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout_ms)) != 0;
+    return ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout_ms)) != 0u;
 }
 
 uint32_t core1_frame_lua_slot(uint32_t t0) {
@@ -63,16 +71,19 @@ uint32_t core1_frame_lua_slot(uint32_t t0) {
     for (;;) {
         uint32_t now = time_us_32();
         uint32_t left = frame_writer_left_us(t0, now);
-        if (writer_done == t0 || left == 0)
+        if ((writer_done == t0) || (left == 0u)) {
             break;
+        }
         /* A tick of the scheduler is a millisecond: wake on the writer's
          * word, or at the slot's end at the latest. */
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS((left + 999u) / 1000u));
+        uint32_t wait_ms = (left + 999u) / 1000u;
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(wait_ms));
     }
     lua_waiting = false;
     uint32_t budget = frame_lua_budget_us(t0, time_us_32());
-    if (!budget)
+    if (budget == 0u) {
         lua_skipped++;
+    }
     return budget;
 }
 

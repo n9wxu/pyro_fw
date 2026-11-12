@@ -13,12 +13,13 @@
  * sample time of 0 can start a hold; 0 means it does not hold. */
 static inline bool held_for(bool condition, uint32_t *since, uint32_t sample_ms, uint32_t hold_ms) {
     if (!condition) {
-        *since = 0;
+        *since = 0u;
         return false;
     }
-    if (*since == 0)
+    if (*since == 0u) {
         *since = sample_ms + 1u;
-    return sample_ms + 1u - *since >= hold_ms;
+    }
+    return ((sample_ms + 1u) - *since) >= hold_ms;
 }
 
 #endif

@@ -48,7 +48,7 @@ void test_WEB_API_19_a_store_with_no_file(void) {
 /* The most files the store holds, each with the longest name and size,
  * fits the connection's work buffer. */
 void test_WEB_API_19_the_widest_report_fits_the_work_buffer(void) {
-    fs_space_t s = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, "slow"};
+    fs_space_t s = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, "held"};
     fs_json_t j;
     fs_json_begin(&j, buf, (int)sizeof(buf), &s);
     char name[ALFS_NAME_MAX + 1];

@@ -23,22 +23,23 @@
 #define FRAME_LUA_US 6500u
 #define FRAME_LUA_END_US 9500u
 
-_Static_assert(FRAME_WRITER_US + FRAME_LUA_US <= FRAME_LUA_END_US, "Lua's slot follows the writer's");
+_Static_assert((FRAME_WRITER_US + FRAME_LUA_US) <= FRAME_LUA_END_US, "Lua's slot follows the writer's");
 _Static_assert(FRAME_LUA_END_US <= LOOP_PERIOD_US, "the frame is the period");
 
 /* Microseconds of the writer's slot left at now; 0 once it has ended. */
 static inline uint32_t frame_writer_left_us(uint32_t t0, uint32_t now) {
     uint32_t in = now - t0;
-    return in < FRAME_WRITER_US ? FRAME_WRITER_US - in : 0u;
+    return (in < FRAME_WRITER_US) ? (FRAME_WRITER_US - in) : 0u;
 }
 
 /* Lua's tick budget for a tick that starts at now; 0: too late this frame. */
 static inline uint32_t frame_lua_budget_us(uint32_t t0, uint32_t now) {
     uint32_t in = now - t0;
-    if (in >= FRAME_LUA_END_US)
+    if (in >= FRAME_LUA_END_US) {
         return 0u;
+    }
     uint32_t left = FRAME_LUA_END_US - in;
-    return left < FRAME_LUA_US ? left : FRAME_LUA_US;
+    return (left < FRAME_LUA_US) ? left : FRAME_LUA_US;
 }
 
 /* ── On the target (src/rtos/core1_frame.c) ───────────────────────── */

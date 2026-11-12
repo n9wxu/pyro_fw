@@ -96,6 +96,53 @@ void test_BUZ_CODE_02_pyro_1_is_announced_before_pyro_2(void) {
     TEST_ASSERT_TRUE(harness_last_said(BR_OK_TO_FLY));
 }
 
+/* [BUZ-07] While the board prepares its store the pad says nothing in OK
+ * to fly's place, names the cleanup on the status report, and says OK to
+ * fly once the store is prepared. */
+void test_BUZ_07_ok_to_fly_waits_for_the_stores_cleanup(void) {
+    to_the_pad(4);
+    mock_fs_unprepared = mock_fs_preparing = true;
+    reach_pad();
+    TEST_ASSERT_EQUAL_MESSAGE(0, harness_spec_plays, "nothing is announced");
+    TEST_ASSERT_EQUAL_UINT16(DIAG_STORE_CLEANING, ctx.diag);
+    TEST_ASSERT_EQUAL_STRING("flash_cleanup", pad_check_fault_name(DIAG_STORE_CLEANING));
+    TEST_ASSERT_TRUE(pad_check_withholds_ok(ctx.diag));
+    mock_fs_unprepared = false;
+    wait_ms(1500);
+    TEST_ASSERT_TRUE(harness_last_said(BR_OK_TO_FLY));
+    TEST_ASSERT_EQUAL_UINT16(0, ctx.diag);
+}
+
+/* [BUZ-07] A fault is announced through a cleanup, and silence follows its
+ * mending until the cleanup ends. */
+void test_BUZ_07_a_fault_is_announced_through_the_cleanup(void) {
+    to_the_pad(5);
+    mock_fs_unprepared = mock_fs_preparing = true;
+    fault(1, true);
+    reach_pad();
+    TEST_ASSERT_TRUE(harness_last_said(BR_CHECK_PYRO_1));
+    TEST_ASSERT_FALSE(pad_check_withholds_ok(ctx.diag));
+    int stops = harness_stops;
+    fault(1, false);
+    wait_ms(1500);
+    TEST_ASSERT_TRUE_MESSAGE(harness_stops > stops, "the fault's announcement stops");
+    TEST_ASSERT_TRUE(pad_check_withholds_ok(ctx.diag));
+    mock_fs_unprepared = false;
+    wait_ms(1500);
+    TEST_ASSERT_TRUE(harness_last_said(BR_OK_TO_FLY));
+}
+
+/* [BUZ-07] A store that is not prepared, where the board does not prepare
+ * it, is a general fault: the bench mends it. */
+void test_BUZ_07_an_unprepared_store_on_the_pad_is_a_general_fault(void) {
+    to_the_pad(6);
+    mock_fs_unprepared = true;
+    reach_pad();
+    TEST_ASSERT_TRUE(harness_last_said(BR_GENERAL_FAULT));
+    TEST_ASSERT_EQUAL_UINT16(DIAG_STORE_UNPREPARED, ctx.diag);
+    TEST_ASSERT_EQUAL_STRING("store_unprepared", pad_check_fault_name(DIAG_STORE_UNPREPARED));
+}
+
 void test_BUZ_CODE_02_a_general_fault_outranks_a_pyro_fault(void) {
     TEST_ASSERT_EQUAL(BR_GENERAL_FAULT, pad_check_announcement(DIAG_SENSOR_FAIL | DIAG_P1_OPEN | DIAG_P2_SHORT));
     TEST_ASSERT_EQUAL(BR_GENERAL_FAULT, pad_check_announcement(DIAG_FS_FAIL));
@@ -560,6 +607,9 @@ int main(void) {
     RUN_TEST(test_BUZ_01_a_clean_board_says_ok_to_fly);
     RUN_TEST(test_BUZ_01_a_pyro_fault_names_its_channel);
     RUN_TEST(test_BUZ_CODE_02_pyro_1_is_announced_before_pyro_2);
+    RUN_TEST(test_BUZ_07_ok_to_fly_waits_for_the_stores_cleanup);
+    RUN_TEST(test_BUZ_07_a_fault_is_announced_through_the_cleanup);
+    RUN_TEST(test_BUZ_07_an_unprepared_store_on_the_pad_is_a_general_fault);
     RUN_TEST(test_BUZ_CODE_02_a_general_fault_outranks_a_pyro_fault);
     RUN_TEST(test_PYR_CONT_03_a_fault_that_appears_on_the_pad_is_announced);
     RUN_TEST(test_PYR_CONT_01_health_is_checked_every_second);

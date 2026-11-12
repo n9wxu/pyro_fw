@@ -32,6 +32,7 @@
 
 #include "flash_timing.h"
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /* What a piece costs beside the chip's own time, measured on MK1C: each
@@ -64,7 +65,7 @@ bool flash_slot_plan(const flash_timing_t *t, flash_slot_kind_t kind, bool resum
 /* [FLT-RT-06] Whether the writer's operation runs in pieces on the ground:
  * an erase, on a part whose erase suspends. */
 static inline bool flash_slot_ground_sliced(const flash_timing_t *t, flash_slot_kind_t kind) {
-    return t && kind == SLOT_ERASE && t->erase_suspends;
+    return (t != NULL) && (kind == SLOT_ERASE) && t->erase_suspends;
 }
 
 /* <0: the chip or the bus failed. FLASH_SLOT_NOT_YET: no piece fits the slot. */

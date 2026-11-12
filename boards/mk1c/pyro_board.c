@@ -17,12 +17,11 @@
 #include "board_pins.h"
 #include "board_support.h"
 #include "flash_op.h"
+#include "hal.h"
 #include "pyro_faults.h"
 #include "pyro_measure.h"
 #include "pyro_sense.h"
 #include "pyro_sequence.h"
-
-extern void hal_telemetry_send(const char *sentence);
 
 #define STATUS_REPORT_MS 5000
 
@@ -40,7 +39,7 @@ void board_early_init(void) {
 bool board_pyro_raw(board_pyro_raw_t *out) {
     const tracking_t *t = tracking_result();
     out->bus_quiescent = quiescent.bus;
-    out->bus_biased = t->valid ? t->bus : 0;
+    out->bus_biased = t->valid ? t->bus : (uint16_t)0u;
     out->vbat = quiescent.vbat;
     return true;
 }
@@ -56,16 +55,18 @@ static void on_tracking_result(const tracking_t *t) {
 }
 
 static void report_status(uint32_t now_ms) {
-    if ((int32_t)(now_ms - last_report_ms) < STATUS_REPORT_MS)
+    uint32_t since_report_ms = now_ms - last_report_ms;
+    if ((int32_t)since_report_ms < STATUS_REPORT_MS) {
         return;
+    }
     last_report_ms = now_ms;
     const tracking_t *t = tracking_result();
     char line[160];
-    small_snprintf(line, sizeof(line),
-                   "!PYRO q[vbat=%u bus=%u a=%u b=%u] trk[bus=%u a=%u b=%u] vbat=%lumV seq=%u flt=0x%02x\r\n",
-                   quiescent.vbat, quiescent.bus, quiescent.a, quiescent.b, t->bus, t->a, t->b,
-                   (unsigned long)counts_to_node_mv(quiescent.vbat), (unsigned)sequence_current_step(),
-                   (unsigned)faults_latched());
+    (void)small_snprintf(line, sizeof(line),
+                         "!PYRO q[vbat=%u bus=%u a=%u b=%u] trk[bus=%u a=%u b=%u] vbat=%lumV seq=%u flt=0x%02x\r\n",
+                         quiescent.vbat, quiescent.bus, quiescent.a, quiescent.b, t->bus, t->a, t->b,
+                         (unsigned long)counts_to_node_mv(quiescent.vbat), (unsigned)sequence_current_step(),
+                         (unsigned)faults_latched());
     hal_telemetry_send(line);
 }
 
@@ -90,14 +91,15 @@ void pyro_init(void) {
 void pyro_sample(void) {}
 
 void pyro_get(uint8_t channel, pyro_continuity_t *out) {
-    if (channel != 1 && channel != 2)
+    if ((channel != 1u) && (channel != 2u)) {
         return;
+    }
     if (sequence_verdict_pending(channel)) {
         *out = (pyro_continuity_t){0}; /* no verdict yet [PYR-VERIFY-01] */
         return;
     }
     const tracking_t *t = tracking_result();
-    uint16_t counts = t->valid ? (channel == 1 ? t->a : t->b) : 0;
+    uint16_t counts = t->valid ? ((channel == 1u) ? t->a : t->b) : (uint16_t)0u;
     track_t verdict = t->valid ? track_channel(counts, t->bus) : TRACK_INVALID;
     out->raw_adc = counts;
     out->open = verdict != TRACK_PRESENT;
@@ -108,8 +110,9 @@ void pyro_get(uint8_t channel, pyro_continuity_t *out) {
 /* [PYR-FIRE-01, PYR-HEALTH-01] No reading withholds a fire. One sequence
  * runs at a time: the caller serialises the channels [PYR-DEPLOY-02]. */
 void pyro_fire(uint8_t channel) {
-    if ((channel != 1 && channel != 2) || sequence_firing())
+    if (((channel != 1u) && (channel != 2u)) || sequence_firing()) {
         return;
+    }
     tracking_abandon();
     sequence_arm(channel, &quiescent);
 }
@@ -117,8 +120,9 @@ void pyro_fire(uint8_t channel) {
 void pyro_update(uint32_t now_ms) {
     read_quiescent(&quiescent);
     sequence_step(now_ms, &quiescent);
-    if (sequence_current_step() == STEP_IDLE && tracking_step(now_ms))
+    if ((sequence_current_step() == STEP_IDLE) && tracking_step(now_ms)) {
         on_tracking_result(tracking_result());
+    }
     faults_watch_bus_hot(&quiescent, sequence_charged_the_bus(now_ms));
     report_status(now_ms);
 }
@@ -129,5 +133,5 @@ bool pyro_is_firing(void) {
 
 bool pyro_fault(uint8_t channel) {
     (void)channel; /* the bus's faults are both channels' */
-    return faults_latched() != FAULT_NONE;
+    return faults_latched() != (uint8_t)FAULT_NONE;
 }

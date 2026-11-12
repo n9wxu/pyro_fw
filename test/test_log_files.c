@@ -17,9 +17,11 @@ static int held_n, asked;
 static bool exists(void *ctx, const char *name) {
     (void)ctx;
     asked++;
-    for (int i = 0; i < held_n; i++)
-        if (strcmp(held[i], name) == 0)
+    for (int i = 0; i < held_n; i++) {
+        if (strcmp(held[i], name) == 0) {
             return true;
+        }
+    }
     return false;
 }
 

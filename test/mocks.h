@@ -73,6 +73,7 @@ uint32_t mock_pyro_pads(uint8_t channel);
 extern int mock_pyro_asked[2];
 /* What hal_flight_code_intact() and hal_fires_mocked() answer. */
 extern bool mock_flight_code_damaged, mock_fires_mocked;
+extern bool mock_fs_unprepared, mock_fs_preparing; /* hal_fs_prepared() is the first negated */
 extern char mock_uart_buf[MOCK_UART_BUF_SIZE];
 extern int mock_uart_len;
 extern uint32_t mock_time_ms;

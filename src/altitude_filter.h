@@ -27,8 +27,15 @@ typedef struct {
     bool started;
     float ref_m; /* the state is altitude less ref_m, which keeps a float exact enough */
     uint32_t t_us;
-    float altitude, speed, accel;
-    float var_hh, var_hv, var_ha, var_vv, var_va, var_aa;
+    float altitude;
+    float speed;
+    float accel;
+    float var_hh;
+    float var_hv;
+    float var_ha;
+    float var_vv;
+    float var_va;
+    float var_aa;
     float noise_var_pa2; /* the sensor's, which does not change with height */
     float m_per_pa;      /* the newest reading's */
     float last_innovation;

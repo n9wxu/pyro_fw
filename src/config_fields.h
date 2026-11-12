@@ -27,21 +27,21 @@
     X(STR, id, "id", "PYRO001", 0, 0)                                                                                  \
     X(STR, name, "name", "MyRocket", 0, 0)                                                                             \
     X(MODE, pyro1_mode, "pyro1_mode", PYRO_MODE_DELAY, 0, 0)                                                           \
-    X(U16, pyro1_value, "pyro1_value", 0, 0, 65535)                                                                    \
+    X(U16, pyro1_value, "pyro1_value", 0u, 0u, 65535u)                                                                 \
     X(MODE, pyro2_mode, "pyro2_mode", PYRO_MODE_AGL, 0, 0)                                                             \
-    X(U16, pyro2_value, "pyro2_value", 300, 0, 65535)                                                                  \
+    X(U16, pyro2_value, "pyro2_value", 300u, 0u, 65535u)                                                               \
     X(UNITS, units, "units", UNITS_M, 0, 0)                                                                            \
-    X(U16, pyro1_refire_speed, "pyro1_refire_speed", 0, 0, 65535)                                                      \
-    X(U16, pyro2_refire_speed, "pyro2_refire_speed", 0, 0, 65535)                                                      \
-    X(U16, emergency_fire_speed, "emergency_fire_speed", 0, 0, 65535)                                                  \
-    X(U16, refire_interval, "refire_interval", 0, 0, 65535)                                                            \
-    X(U16, fire_gap, "fire_gap", 0, 0, 65535)                                                                          \
+    X(U16, pyro1_refire_speed, "pyro1_refire_speed", 0u, 0u, 65535u)                                                   \
+    X(U16, pyro2_refire_speed, "pyro2_refire_speed", 0u, 0u, 65535u)                                                   \
+    X(U16, emergency_fire_speed, "emergency_fire_speed", 0u, 0u, 65535u)                                               \
+    X(U16, refire_interval, "refire_interval", 0u, 0u, 65535u)                                                         \
+    X(U16, fire_gap, "fire_gap", 0u, 0u, 65535u)                                                                       \
     X(STR, estimator, "estimator", "constacc", 0, 0)                                                                   \
     X(BOOL, model_decides, "model_decides", true, 0, 0)                                                                \
     X(BOOL, standard_atmosphere, "standard_atmosphere", false, 0, 0)                                                   \
-    X(U8, landing_timeout, "landing_timeout", 60, 1, 255)                                                              \
+    X(U8, landing_timeout, "landing_timeout", 60u, 1u, 255u)                                                           \
     X(BOOL, lua_enabled, "lua_enabled", false, 0, 0)                                                                   \
-    X(U32, lua_baud, "lua_baud", 9600, 300, 921600)                                                                    \
-    X(U16, lua_pixels, "lua_pixels", 0, 0, 65535)
+    X(U32, lua_baud, "lua_baud", 9600u, 300u, 921600u)                                                                 \
+    X(U16, lua_pixels, "lua_pixels", 0u, 0u, 65535u)
 
 #endif

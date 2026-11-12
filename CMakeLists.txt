@@ -147,7 +147,7 @@ include(FetchContent)
 FetchContent_Declare(
     alfs
     GIT_REPOSITORY https://github.com/n9wxu/alfs.git
-    GIT_TAG 56a5f80b7706523458dfa363e57fd88401aa83f7 # experiment/v6-frames, format 6
+    GIT_TAG e72a561d262a8154666bccd630836cfae9533bf2 # cleanup-resumable, format 6
 )
 
 # The TCP/IP stack [DD-102]: its sources are compiled into the firmware and
@@ -827,6 +827,7 @@ add_custom_target(http_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/test_http.c
                ${CMAKE_CURRENT_LIST_DIR}/src/http_conn.c
                ${CMAKE_CURRENT_LIST_DIR}/src/net_ring.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/small_fmt.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_http
     COMMAND ${CMAKE_COMMAND} -E echo "Running HTTP stream tests..."
@@ -961,6 +962,7 @@ add_custom_target(http_transport_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/net_ring.c
                ${CMAKE_CURRENT_LIST_DIR}/src/net_txq.c
                ${PYRO_STCP_SOURCES} ${_stcp}/tcp_buf_saw.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/small_fmt.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_http_transport
     COMMAND ${CMAKE_COMMAND} -E echo "Running HTTP transport tests..."
@@ -1067,6 +1069,7 @@ add_custom_target(hr_log_tests
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_trace.c
                ${CMAKE_CURRENT_LIST_DIR}/lib/fatfs/ff.c
                ${CMAKE_CURRENT_LIST_DIR}/lib/fatfs/ffunicode.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/small_fmt.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_hr_log
     COMMAND ${CMAKE_COMMAND} -E echo "Running high-rate log tests..."
@@ -1117,6 +1120,7 @@ add_custom_target(net_stats_tests
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_net_stats.c
                ${CMAKE_CURRENT_LIST_DIR}/src/net_stats.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/small_fmt.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_net_stats
     COMMAND ${CMAKE_COMMAND} -E echo "Running network counter tests..."
@@ -1131,6 +1135,7 @@ add_custom_target(fs_json_tests
                -I${CMAKE_CURRENT_LIST_DIR}/test -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_fs_json.c
                ${CMAKE_CURRENT_LIST_DIR}/src/fs_json.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/small_fmt.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_fs_json
     COMMAND ${CMAKE_COMMAND} -E echo "Running /api/fs rendering tests..."
@@ -1145,6 +1150,7 @@ add_custom_target(status_json_tests
                -I${unity_SOURCE_DIR}/src
                ${CMAKE_CURRENT_LIST_DIR}/test/test_status_json.c
                ${CMAKE_CURRENT_LIST_DIR}/src/status_json.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/small_fmt.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_status_json
     COMMAND ${CMAKE_COMMAND} -E echo "Running status rendering tests..."
@@ -1239,6 +1245,7 @@ add_custom_target(sensor_bringup_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_i2c.c
                ${CMAKE_CURRENT_LIST_DIR}/src/i2c_recover.c ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_driver.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_single_sensor.c ${CMAKE_CURRENT_LIST_DIR}/src/bmp280_driver.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/small_fmt.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_sensor_bringup_mk1a
     COMMAND ${CMAKE_COMMAND} -E echo "Running sensor bring-up tests: mk1a"
@@ -1250,6 +1257,7 @@ add_custom_target(sensor_bringup_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_i2c.c
                ${CMAKE_CURRENT_LIST_DIR}/src/i2c_recover.c ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_driver.c
                ${CMAKE_CURRENT_LIST_DIR}/boards/mk1b/pressure_board.c ${CMAKE_CURRENT_LIST_DIR}/src/bmp280_driver.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/small_fmt.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_sensor_bringup_mk1b
     COMMAND ${CMAKE_COMMAND} -E echo "Running sensor bring-up tests: mk1b"
@@ -1261,6 +1269,7 @@ add_custom_target(sensor_bringup_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_i2c.c
                ${CMAKE_CURRENT_LIST_DIR}/src/i2c_recover.c ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_driver.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_single_sensor.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/small_fmt.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_sensor_bringup_mk1c
     COMMAND ${CMAKE_COMMAND} -E echo "Running sensor bring-up tests: mk1c"
@@ -1272,6 +1281,7 @@ add_custom_target(sensor_bringup_tests
                ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_sdk.c ${CMAKE_CURRENT_LIST_DIR}/test/fake_sdk/fake_i2c.c
                ${CMAKE_CURRENT_LIST_DIR}/src/i2c_recover.c ${CMAKE_CURRENT_LIST_DIR}/src/ms5607_driver.c
                ${CMAKE_CURRENT_LIST_DIR}/src/pressure_single_sensor.c
+               ${CMAKE_CURRENT_LIST_DIR}/src/small_fmt.c
                ${unity_SOURCE_DIR}/src/unity.c
                -o ${CMAKE_BINARY_DIR}/test_sensor_bringup_reference
     COMMAND ${CMAKE_COMMAND} -E echo "Running sensor bring-up tests: reference"

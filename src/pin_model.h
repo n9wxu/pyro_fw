@@ -35,23 +35,23 @@
 #define FN_NONE 0u
 
 /* Owned by the flight software when assigned. */
-#define FN_PYRO_FIRE (1u << 0)   /* a per-channel firing element         */
-#define FN_PYRO_COMMON (1u << 1) /* the element both channels need       */
-#define FN_PYRO_SENSE (1u << 2)  /* continuity sense; ADC pads only      */
-#define FN_BUZZER (1u << 3)
-#define FN_UART_TX (1u << 4)
-#define FN_UART_RX (1u << 5)
-#define FN_I2C_SDA (1u << 6)
-#define FN_I2C_SCL (1u << 7)
-#define FN_LED (1u << 8)
+#define FN_PYRO_FIRE ((uint32_t)1u << 0)   /* a per-channel firing element         */
+#define FN_PYRO_COMMON ((uint32_t)1u << 1) /* the element both channels need       */
+#define FN_PYRO_SENSE ((uint32_t)1u << 2)  /* continuity sense; ADC pads only      */
+#define FN_BUZZER ((uint32_t)1u << 3)
+#define FN_UART_TX ((uint32_t)1u << 4)
+#define FN_UART_RX ((uint32_t)1u << 5)
+#define FN_I2C_SDA ((uint32_t)1u << 6)
+#define FN_I2C_SCL ((uint32_t)1u << 7)
+#define FN_LED ((uint32_t)1u << 8)
 
 /* Assignable to Lua. */
-#define FN_DIGITAL (1u << 16) /* out / in, plain SIO                    */
-#define FN_PWM (1u << 17)     /* dimmable out, software PWM on core1    */
-#define FN_SERIAL (1u << 18)  /* PIO uart tx / rx                       */
-#define FN_PIXEL (1u << 19)   /* WS2812 string                          */
-#define FN_BRIDGE (1u << 20)  /* one half of a half-bridge pair         */
-#define FN_ANALOG (1u << 21)  /* free-running sampled, read by a getter */
+#define FN_DIGITAL ((uint32_t)1u << 16) /* out / in, plain SIO                    */
+#define FN_PWM ((uint32_t)1u << 17)     /* dimmable out, software PWM on core1    */
+#define FN_SERIAL ((uint32_t)1u << 18)  /* PIO uart tx / rx                       */
+#define FN_PIXEL ((uint32_t)1u << 19)   /* WS2812 string                          */
+#define FN_BRIDGE ((uint32_t)1u << 20)  /* one half of a half-bridge pair         */
+#define FN_ANALOG ((uint32_t)1u << 21)  /* free-running sampled, read by a getter */
 
 #define FN_BOARD_RESERVED                                                                                              \
     (FN_PYRO_FIRE | FN_PYRO_COMMON | FN_PYRO_SENSE | FN_BUZZER | FN_UART_TX | FN_UART_RX | FN_I2C_SDA | FN_I2C_SCL |   \
@@ -96,7 +96,7 @@ typedef struct {
 } pin_cap_t;
 
 /* RP2040 ADC pads. FN_PYRO_SENSE and FN_ANALOG are meaningful only here. */
-#define PIN_IS_ADC_CAPABLE(p) ((p) >= 26 && (p) <= 29)
+#define PIN_IS_ADC_CAPABLE(p) (((p) >= 26) && ((p) <= 29))
 
 /* ── Build-time checks ────────────────────────────────────────────
  *
@@ -116,15 +116,15 @@ typedef struct {
 /* A bridge half is one element of a power group, so a pad offering FN_BRIDGE
  * has to say which element it is. */
 #define PIN_CAP_X_BRIDGE_HAS_GROUP(pin, fn, pg, lbl)                                                                        \
-    _Static_assert(!((fn) & FN_BRIDGE) || (pg) != PG_NONE,                                                             \
+    _Static_assert(!((fn) & FN_BRIDGE) || ((pg) != PG_NONE),                                                             \
                    "pin " #pin " offers FN_BRIDGE but declares no power-group role");
 
 #define PIN_CAP_X_ANALOG_IS_ADC(pin, fn, pg, lbl)                                                                           \
-    _Static_assert(!((fn) & (FN_PYRO_SENSE | FN_ANALOG)) || PIN_IS_ADC_CAPABLE(pin),                                   \
+    _Static_assert(!((fn) & (FN_PYRO_SENSE | FN_ANALOG)) || PIN_IS_ADC_CAPABLE((pin)),                                   \
                    "pin " #pin " is declared analog but is not an RP2040 ADC pad");
 
 #define PIN_CAP_X_GROUP_NEEDS_PYRO(pin, fn, pg, lbl)                                                                        \
-    _Static_assert((pg) == PG_NONE || ((fn) & (FN_PYRO_FIRE | FN_PYRO_COMMON)),                                        \
+    _Static_assert(((pg) == PG_NONE) || ((fn) & (FN_PYRO_FIRE | FN_PYRO_COMMON)),                                        \
                    "pin " #pin " has a power-group role but switches no pyro element");
 
 #define PIN_CAP_X_COUNT_COMMON(pin, fn, pg, lbl) +((pg) == PG_COMMON ? 1 : 0)
@@ -133,7 +133,7 @@ typedef struct {
 
 /* An unlabelled row is a pin the operator cannot find on the board. */
 #define PIN_CAP_X_HAS_LABEL(pin, fn, pg, lbl)                                                                          \
-    _Static_assert(sizeof(lbl) > 1, "pin " #pin " declares no connector label");
+    _Static_assert(sizeof(lbl) > 1u, "pin " #pin " declares no connector label");
 
 #define PIN_CAPS_ASSERT(TABLE)                                                                                         \
     TABLE(PIN_CAP_X_HAS_LABEL)                                                                                         \

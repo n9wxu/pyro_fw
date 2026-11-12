@@ -6,28 +6,38 @@
 #include "pad_check.h"
 
 static uint16_t fault_of(const hal_continuity_t *reading, uint16_t open_bit, uint16_t short_bit) {
-    if (reading->good)
+    if (reading->good) {
         return 0;
+    }
     return reading->open ? open_bit : short_bit;
 }
 
 uint16_t pad_check_pyro_faults(const hal_continuity_t reading[2], const bool enabled[2]) {
     uint16_t diag = 0;
-    if (enabled[0])
+    if (enabled[0]) {
         diag |= fault_of(&reading[0], DIAG_P1_OPEN, DIAG_P1_SHORT);
-    if (enabled[1])
+    }
+    if (enabled[1]) {
         diag |= fault_of(&reading[1], DIAG_P2_OPEN, DIAG_P2_SHORT);
+    }
     return diag;
 }
 
 beep_reason_t pad_check_announcement(uint16_t diag) {
-    if (diag & DIAG_GENERAL)
+    if ((diag & DIAG_GENERAL) != 0u) {
         return BR_GENERAL_FAULT;
-    if (diag & DIAG_PYRO_1)
+    }
+    if ((diag & DIAG_PYRO_1) != 0u) {
         return BR_CHECK_PYRO_1;
-    if (diag & DIAG_PYRO_2)
+    }
+    if ((diag & DIAG_PYRO_2) != 0u) {
         return BR_CHECK_PYRO_2;
+    }
     return BR_OK_TO_FLY;
+}
+
+bool pad_check_withholds_ok(uint16_t diag) {
+    return (pad_check_announcement(diag) == BR_OK_TO_FLY) && ((diag & DIAG_STORE_CLEANING) != 0u);
 }
 
 const char *pad_check_fault_name(uint16_t diag_bit) {
@@ -60,6 +70,10 @@ const char *pad_check_fault_name(uint16_t diag_bit) {
         return "flight_code";
     case DIAG_FIRES_MOCKED:
         return "fires_mocked";
+    case DIAG_STORE_CLEANING:
+        return "flash_cleanup";
+    case DIAG_STORE_UNPREPARED:
+        return "store_unprepared";
     default:
         return "";
     }

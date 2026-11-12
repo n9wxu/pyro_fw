@@ -49,7 +49,6 @@ static int script_len;
 
 static volatile uint32_t flight_seq;
 static lua_flight_t flight_data;
-static lua_flight_t flight_copy; /* the Lua task's last consistent read */
 
 void lua_core1_publish(const lua_flight_t *f) {
     flight_seq++;
@@ -60,9 +59,10 @@ void lua_core1_publish(const lua_flight_t *f) {
 }
 
 const lua_flight_t *lua_flight_snapshot(void) {
+    static lua_flight_t flight_copy; /* the Lua task's last consistent read */
     for (int tries = 0; tries < SNAPSHOT_TRIES; tries++) {
         uint32_t s1 = flight_seq;
-        if (s1 & 1u) {
+        if ((s1 & 1u) != 0u) {
             continue;
         }
         __dmb();
@@ -109,15 +109,17 @@ static void ring_put(c1_ring_t *r, const char *s, int len) {
     __dmb();
     r->head = h;
     if (i < len) {
-        r->dropped += (uint32_t)(len - i);
+        int lost = len - i;
+        r->dropped += (uint32_t)lost;
     }
 }
 
 static int ring_get(c1_ring_t *r, char *out, int max) {
     int n = 0;
     uint32_t t = r->tail;
-    while (n < max && t != r->head) {
-        out[n++] = r->buf[t];
+    while ((n < max) && (t != r->head)) {
+        out[n] = r->buf[t];
+        n++;
         t = (t + 1u) & RING_MASK;
     }
     __dmb();
@@ -152,7 +154,6 @@ uint32_t lua_core1_log_dropped(void) {
 /* ── The Lua task [DD-073] ────────────────────────────────────────── */
 
 static TaskHandle_t lua_task_h;
-static StaticTask_t lua_task_tcb;
 static volatile bool started;
 static volatile uint32_t ticks_asked; /* the flight task writes */
 static volatile uint32_t ticks_done;  /* the Lua task writes */
@@ -163,10 +164,10 @@ static volatile uint8_t c1_ready;
 static uint32_t dispatch_skipped;
 
 void lua_core1_dispatch(void) {
-    if (c1_state != LUA_C1_RUNNING || !c1_ready) {
+    if ((c1_state != (uint8_t)LUA_C1_RUNNING) || (c1_ready == 0u)) {
         return;
     }
-    if (c1_busy) {
+    if (c1_busy != 0u) {
         /* Skip rather than queue: queued ticks put the script further and
          * further behind the flight. */
         dispatch_skipped++;
@@ -175,7 +176,7 @@ void lua_core1_dispatch(void) {
     tick_t0 = core1_frame_t0();
     __dmb();
     ticks_asked++;
-    xTaskNotifyGive(lua_task_h);
+    (void)xTaskNotifyGive(lua_task_h);
 }
 
 bool lua_core1_ready(void) {
@@ -190,7 +191,7 @@ const char *lua_core1_refusal(void) {
  * the VM was driving is put down separately: a pin left high stays high, and
  * a PIO state machine keeps clocking a pad after the task is gone. */
 void lua_core1_kill(void) {
-    if (lua_task_h) {
+    if (lua_task_h != NULL) {
         vTaskSuspend(lua_task_h);
     }
     lua_plat_safe_outputs();
@@ -205,16 +206,15 @@ void lua_core1_kill(void) {
 
 static uint32_t tick_left(uint32_t start_us) {
     uint32_t spent = lua_plat_now_us() - start_us;
-    return spent < tick_budget_us ? tick_budget_us - spent : 1u;
+    return (spent < tick_budget_us) ? (tick_budget_us - spent) : 1u;
 }
 
-/* A kilobyte, so static rather than on the task's stack. */
-static lua_chk_result_t start_check;
-
 static bool script_matches_resources(void) {
+    /* A kilobyte, so static rather than on the task's stack. */
+    static lua_chk_result_t start_check;
     lua_chk_env_t env;
     lua_chk_env_from_platform(&env);
-    pyro_lua_check(script_src, (size_t)script_len, &env, &start_check);
+    (void)pyro_lua_check(script_src, (size_t)script_len, &env, &start_check);
     if (start_check.green) {
         return true;
     }
@@ -225,13 +225,13 @@ static bool script_matches_resources(void) {
 static void lua_task(void *arg) {
     (void)arg;
     while (!started) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     }
     LAUNCH_PHASE(20);
     if (!script_matches_resources()) {
         c1_ready = 1;
         for (;;) {
-            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         }
     }
     c1_loc = C1_LOC_INIT;
@@ -251,12 +251,12 @@ static void lua_task(void *arg) {
     c1_ready = 1;
 
     for (;;) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         if (ticks_done == ticks_asked) {
             continue;
         }
         tick_budget_us = core1_frame_lua_slot(tick_t0);
-        if (!tick_budget_us) {
+        if (tick_budget_us == 0u) {
             ticks_done = ticks_asked;
             continue;
         }
@@ -268,7 +268,7 @@ static void lua_task(void *arg) {
         c1_loc = C1_LOC_EVENT;
         pyro_lua_run_events(tick_left(start_us));
         c1_loc = C1_LOC_TICK;
-        pyro_lua_tick_slice(tick_left(start_us));
+        (void)pyro_lua_tick_slice(tick_left(start_us));
         c1_loc = C1_LOC_IDLE;
         ticks_done = ticks_asked;
         c1_busy = 0;
@@ -288,14 +288,15 @@ static void lua_task(void *arg) {
 static StackType_t c1_stack[C1_STACK_WORDS] __attribute__((aligned(8)));
 
 static bool lua_core1_stack_ok(void) {
-    return !lua_task_h || uxTaskGetStackHighWaterMark(lua_task_h) > C1_STACK_MARGIN_WORDS;
+    return (lua_task_h == NULL) || (uxTaskGetStackHighWaterMark(lua_task_h) > C1_STACK_MARGIN_WORDS);
 }
 
 uint32_t lua_core1_stack_free(void) {
-    return lua_task_h ? (uint32_t)uxTaskGetStackHighWaterMark(lua_task_h) * sizeof(StackType_t) : 0u;
+    return (lua_task_h != NULL) ? ((uint32_t)uxTaskGetStackHighWaterMark(lua_task_h) * sizeof(StackType_t)) : 0u;
 }
 
 void lua_task_create(void) {
+    static StaticTask_t lua_task_tcb;
     lua_task_h = xTaskCreateStaticAffinitySet(lua_task, "lua", C1_STACK_WORDS, NULL, PRIO_P, c1_stack, &lua_task_tcb,
                                               CORE1_ONLY);
     core1_frame_attach_lua(lua_task_h);
@@ -303,19 +304,21 @@ void lua_task_create(void) {
 
 bool lua_core1_start(const char *script, int len) {
     LAUNCH_PHASE(10);
-    if (!lua_task_h) {
+    if (lua_task_h == NULL) {
         start_err = "no Lua task";
         c1_state = LUA_C1_DEAD;
         return false;
     }
     script_src = script;
     script_len = len;
-    ring_console.head = ring_console.tail = 0;
-    ring_log.head = ring_log.tail = 0;
+    ring_console.head = 0u;
+    ring_console.tail = 0u;
+    ring_log.head = 0u;
+    ring_log.tail = 0u;
     c1_state = LUA_C1_RUNNING;
     __dmb();
     started = true;
-    xTaskNotifyGive(lua_task_h);
+    (void)xTaskNotifyGive(lua_task_h);
     LAUNCH_PHASE(16);
     return true;
 }
@@ -333,8 +336,8 @@ uint32_t lua_core1_heartbeat(void) {
 }
 
 void lua_core1_event(const char *name) {
-    if (c1_state == LUA_C1_RUNNING) {
-        pyro_lua_post_event(name);
+    if (c1_state == (uint8_t)LUA_C1_RUNNING) {
+        (void)pyro_lua_post_event(name);
     }
 }
 
@@ -358,14 +361,14 @@ void lua_core1_service(uint32_t now_ms) {
     static uint32_t last_ms;
     static bool init;
 
-    if (c1_state != LUA_C1_RUNNING) {
+    if (c1_state != (uint8_t)LUA_C1_RUNNING) {
         return;
     }
 
     /* No tick outstanding is normal -- nothing asked for one -- so keep the
      * clock moving, or the first observation after a quiet spell reads a
      * stale timestamp and stops a task that did nothing. */
-    if (!c1_busy && ticks_done == ticks_asked) {
+    if ((c1_busy == 0u) && (ticks_done == ticks_asked)) {
         last_hb = heartbeat;
         last_ms = now_ms;
         init = true;
@@ -384,13 +387,13 @@ void lua_core1_service(uint32_t now_ms) {
         return;
     }
     if ((uint32_t)(now_ms - last_ms) > C1_STALL_MS) {
-        start_err = c1_busy ? "Lua stalled in a tick" : "Lua never took its tick";
+        start_err = (c1_busy != 0u) ? "Lua stalled in a tick" : "Lua never took its tick";
         lua_core1_kill();
     }
 }
 
 void lua_core1_check_stack(void) {
-    if (c1_state == LUA_C1_RUNNING && !lua_core1_stack_ok()) {
+    if ((c1_state == (uint8_t)LUA_C1_RUNNING) && !lua_core1_stack_ok()) {
         start_err = "Lua stack overflow";
         lua_core1_kill();
     }

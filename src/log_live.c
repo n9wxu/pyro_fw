@@ -12,7 +12,7 @@
 #define PUBLISH() __atomic_thread_fence(__ATOMIC_SEQ_CST)
 #endif
 
-static uint8_t ring[LOG_LIVE_BYTES];
+static uint8_t live_ring[LOG_LIVE_BYTES];
 static volatile uint32_t head; /* bytes written since the log began */
 
 void log_live_reset(void) {
@@ -22,40 +22,43 @@ void log_live_reset(void) {
 
 void log_live_write(const uint8_t *src, uint32_t n) {
     uint32_t h = head;
-    if (n > LOG_LIVE_BYTES) {
-        src += n - LOG_LIVE_BYTES;
-        h += n - LOG_LIVE_BYTES;
-        n = LOG_LIVE_BYTES;
+    const uint8_t *s = src;
+    uint32_t len = n;
+    if (len > LOG_LIVE_BYTES) {
+        s = &s[len - LOG_LIVE_BYTES];
+        h += len - LOG_LIVE_BYTES;
+        len = LOG_LIVE_BYTES;
     }
     uint32_t at = h % LOG_LIVE_BYTES;
-    uint32_t first = n < LOG_LIVE_BYTES - at ? n : LOG_LIVE_BYTES - at;
-    memcpy(&ring[at], src, first);
-    memcpy(ring, src + first, n - first);
+    uint32_t first = (len < (LOG_LIVE_BYTES - at)) ? len : (LOG_LIVE_BYTES - at);
+    (void)memcpy(&live_ring[at], s, first);
+    (void)memcpy(live_ring, &s[first], len - first);
     PUBLISH();
-    head = h + n;
+    head = h + len;
 }
 
 static uint32_t oldest_of(uint32_t end) {
-    return end > LOG_LIVE_BYTES ? end - LOG_LIVE_BYTES : 0u;
+    return (end > LOG_LIVE_BYTES) ? (end - LOG_LIVE_BYTES) : 0u;
 }
 
 uint32_t log_live_read(uint32_t since, uint8_t *dst, uint32_t max, uint32_t *first, uint32_t *end) {
     uint32_t e = head;
     PUBLISH();
     uint32_t from = since;
-    if (from < oldest_of(e) || from > e)
+    if ((from < oldest_of(e)) || (from > e)) {
         from = oldest_of(e);
-    uint32_t n = e - from < max ? e - from : max;
+    }
+    uint32_t n = ((e - from) < max) ? (e - from) : max;
     uint32_t at = from % LOG_LIVE_BYTES;
-    uint32_t part = n < LOG_LIVE_BYTES - at ? n : LOG_LIVE_BYTES - at;
-    memcpy(dst, &ring[at], part);
-    memcpy(dst + part, ring, n - part);
+    uint32_t part = (n < (LOG_LIVE_BYTES - at)) ? n : (LOG_LIVE_BYTES - at);
+    (void)memcpy(dst, &live_ring[at], part);
+    (void)memcpy(&dst[part], live_ring, n - part);
     PUBLISH();
     /* Bytes the writer overwrote while they were copied are not the log's. */
     uint32_t still = oldest_of(head);
     if (still > from) {
-        uint32_t lost = still - from < n ? still - from : n;
-        memmove(dst, dst + lost, n - lost);
+        uint32_t lost = ((still - from) < n) ? (still - from) : n;
+        (void)memmove(dst, &dst[lost], n - lost);
         n -= lost;
         from += lost;
     }

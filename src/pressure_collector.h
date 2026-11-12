@@ -25,7 +25,7 @@
 #define COLLECTOR_STEPS_MAX 2
 #define COLLECTOR_READ_MAX 6
 #define COLLECTOR_COMMAND_MAX 2
-#define COLLECTOR_QUEUE 4
+#define COLLECTOR_QUEUE 4u
 
 /* One conversion: what starts it, how long it takes, and where its result
  * is read from. */
@@ -50,7 +50,8 @@ typedef struct {
 typedef struct {
     uint8_t i2c; /* the controller's number */
     uint8_t address;
-    uint8_t scl_pin, sda_pin;
+    uint8_t scl_pin;
+    uint8_t sda_pin;
     uint32_t hz;
 } collector_wiring_t;
 

@@ -61,8 +61,9 @@ static int replay_file(const char *path) {
     printf("%-8s %10u %10u\n", "pyro1", (unsigned)logged.pyro1_ms, (unsigned)decided.pyro1_ms);
     printf("%-8s %10u %10u\n", "pyro2", (unsigned)logged.pyro2_ms, (unsigned)decided.pyro2_ms);
     printf("%-8s %10u %10u\n", "landing", (unsigned)logged.landing_ms, (unsigned)decided.landing_ms);
-    if (decided.diverged_ms)
+    if (decided.diverged_ms) {
         printf("first state that differs from the log: at %u ms\n", (unsigned)decided.diverged_ms);
+    }
     return 0;
 }
 
@@ -105,16 +106,19 @@ static int usage(void) {
 }
 
 int main(int argc, char **argv) {
-    if (argc > 1 && strcmp(argv[1], "--replay") == 0)
+    if (argc > 1 && strcmp(argv[1], "--replay") == 0) {
         return argc == 3 ? replay_file(argv[2]) : usage();
-    if (argc > 1 && strcmp(argv[1], "--csv") == 0)
+    }
+    if (argc > 1 && strcmp(argv[1], "--csv") == 0) {
         return argc == 3 ? csv_file(argv[2]) : usage();
+    }
     float target = DEFAULT_APOGEE_M;
     if (argc > 1) {
         char *end;
         target = strtof(argv[1], &end);
-        if (argc > 2 || *end != '\0' || !(target > 0.0f))
+        if (argc > 2 || *end != '\0' || !(target > 0.0f)) {
             return usage();
+        }
     }
 
     physics_state_t phys;
@@ -136,17 +140,20 @@ int main(int argc, char **argv) {
         int fires = sim_get_pyro_fire_count();
         if (fires > prev_fires) {
             uint8_t ch = sim_get_pyro_last_channel();
-            if (ch == 1)
+            if (ch == 1) {
                 physics_deploy_drogue(&phys);
-            if (ch == 2)
+            }
+            if (ch == 2) {
                 physics_deploy_main(&phys);
+            }
             prev_fires = fires;
         }
 
         if (t >= PAD_DWELL_MS) {
             float ft = (float)(t - PAD_DWELL_MS) / 1000.0f;
-            for (uint32_t s = 0; s < step; s++)
+            for (uint32_t s = 0; s < step; s++) {
                 physics_step(&phys, ft + (float)s * PHYS_STEP_S);
+            }
         }
         sim_set_pressure(physics_pressure_pa(phys.alt_m));
         int state = sim_flight_tick(t);
@@ -154,15 +161,18 @@ int main(int argc, char **argv) {
         if (t % 1000 == 0 && t > 0) {
             printf("t=%5.1fs alt=%7.1fm vel=%6.1fm/s state=%d buz=%d", t / 1000.0, phys.alt_m, phys.vel_ms, state,
                    sim_get_buzzer_state());
-            if (phys.drogue_deployed)
+            if (phys.drogue_deployed) {
                 printf(" DROGUE");
-            if (phys.main_deployed)
+            }
+            if (phys.main_deployed) {
                 printf(" MAIN");
+            }
             printf("\n");
         }
 
-        if (state == LANDED)
+        if (state == LANDED) {
             break;
+        }
     }
 
     printf("\n=== Flight Complete ===\n");

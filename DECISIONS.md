@@ -1712,7 +1712,9 @@ in `docs/outstanding_tasks.md`.
   `vTaskSuspend()`; a runaway script is preempted, and its tick bounded by
   Lua's instruction hook.
 - **The watchdog:** fed by the flight task, and on the ground only while the
-  storage task checks in, so a stuck storage task resets the board there. In
+  storage task checks in, so a stuck storage task resets the board there. It
+  checks in each pass, and at each read of the store for up to 30 s of one
+  pass: the filesystem's cleanup reads a whole store in one call. In
   flight a stall is counted and the flight goes on. `/api/status` reports
   how the last start ended: `prev_watchdog`, true for a watchdog timeout
   rather than a requested reboot, and `prev_stage`/`prev_stage_ms`, the

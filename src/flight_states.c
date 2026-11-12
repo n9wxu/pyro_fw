@@ -69,7 +69,7 @@ static const transition_t transitions[] = {
     {DROGUE_DESCENT, SEVT_LANDING, LANDED, flight_action_landing},
     {CHUTE_DESCENT, SEVT_LANDING, LANDED, flight_action_landing},
 };
-#define NUM_TRANSITIONS (int)(sizeof(transitions) / sizeof(transitions[0]))
+#define NUM_TRANSITIONS (sizeof(transitions) / sizeof(transitions[0]))
 
 static flight_state_t step(flight_context_t *ctx, uint32_t now) {
     if (ctx->current_state >= STATE_COUNT) {
@@ -77,13 +77,16 @@ static flight_state_t step(flight_context_t *ctx, uint32_t now) {
         return FAULT;
     }
     state_event_t event = detectors[ctx->current_state](ctx, now);
-    if (event == SEVT_NONE)
+    if (event == SEVT_NONE) {
         return ctx->current_state;
-    for (int i = 0; i < NUM_TRANSITIONS; i++) {
-        if (transitions[i].from != ctx->current_state || transitions[i].event != event)
+    }
+    for (size_t i = 0; i < NUM_TRANSITIONS; i++) {
+        if ((transitions[i].from != ctx->current_state) || (transitions[i].event != event)) {
             continue;
-        if (transitions[i].action)
+        }
+        if (transitions[i].action != NULL) {
             transitions[i].action(ctx, now);
+        }
         return transitions[i].to;
     }
     return ctx->current_state;
@@ -99,14 +102,15 @@ flight_state_t dispatch_state(flight_context_t *ctx, uint32_t now) {
         int waiting = pp_available();
         ctx->current_state = step(ctx, now);
         bool took_one = pp_available() < waiting;
-        if (!took_one || pp_available() == 0)
+        if (!took_one || pp_available() == 0) {
             break;
+        }
     }
     return ctx->current_state;
 }
 
 void flight_init(flight_context_t *ctx) {
-    memset(ctx, 0, sizeof(*ctx));
+    (void)memset(ctx, 0, sizeof(*ctx));
     config_set_defaults(&ctx->config);
     int loaded = hal_config_load(&ctx->config);
     ctx->config_unreadable = loaded == HAL_CONFIG_UNREADABLE;
@@ -120,7 +124,7 @@ void flight_init(flight_context_t *ctx) {
     ctx->reset_cause = (uint8_t)hal_reset_cause();
     hal_pressure_init();
     int sensor = hal_pressure_sensor();
-    ctx->sensor_type = sensor < 0 ? SENSOR_PENDING : (uint8_t)sensor;
+    ctx->sensor_type = (sensor < 0) ? SENSOR_PENDING : (uint8_t)sensor;
     ctx->storage_ok = hal_fs_healthy();
     hal_pyro_init();
     ctx->boot_timer = hal_time_ms();
@@ -133,11 +137,11 @@ flight_context_t *flight_get_context(void) {
 }
 
 flight_state_t flight_get_state(void) {
-    return g_flight_ctx ? g_flight_ctx->current_state : BOOT_SETTLE;
+    return (g_flight_ctx != NULL) ? g_flight_ctx->current_state : BOOT_SETTLE;
 }
 
 bool flight_is_grounded_on_usb(void) {
-    return g_flight_ctx && flight_grounded_on_usb(g_flight_ctx);
+    return (g_flight_ctx != NULL) && flight_grounded_on_usb(g_flight_ctx);
 }
 
 /* ── Shared by the detectors ──────────────────────────────────────── */
@@ -147,18 +151,19 @@ bool flight_grounded_on_usb(const flight_context_t *ctx) {
 }
 
 bool flight_state_is_airborne(flight_state_t state) {
-    return state == ASCENT || state == FALLING || state == DROGUE_DESCENT || state == CHUTE_DESCENT;
+    return (state == ASCENT) || (state == FALLING) || (state == DROGUE_DESCENT) || (state == CHUTE_DESCENT);
 }
 
 static bool state_is_logged(flight_state_t state) {
-    return flight_state_is_airborne(state) || state == LANDED;
+    return flight_state_is_airborne(state) || (state == LANDED);
 }
 
 void flight_make_plan(flight_context_t *ctx) {
     hal_pyro_limits_t limits;
     hal_pyro_limits(&limits);
     bool pads_owned[2] = {!pyro_release_is_released(1), !pyro_release_is_released(2)};
-    fire_plan_result_t r = fire_plan_from(&ctx->config, &limits, pads_owned);
+    fire_plan_result_t r;
+    r = fire_plan_from(&ctx->config, &limits, pads_owned);
     ctx->plan = r.plan;
     ctx->refire_interval_limited = r.refire_interval_limited;
     ctx->fire_gap_limited = r.fire_gap_limited;
@@ -167,13 +172,14 @@ void flight_make_plan(flight_context_t *ctx) {
 void flight_read_pyro_health(flight_context_t *ctx) {
     hal_continuity_t reading[2];
     hal_pyro_sample();
-    for (uint8_t i = 0; i < 2; i++) {
+    for (uint8_t i = 0; i < 2u; i++) {
         /* A channel that is Lua's is not asked: no igniter circuit there is
          * the flight software's, and open is what is true. */
-        if (pyro_release_is_released((uint8_t)(i + 1)))
+        if (pyro_release_is_released((uint8_t)(i + 1u))) {
             reading[i] = (hal_continuity_t){.open = true};
-        else
-            hal_pyro_get((uint8_t)(i + 1), &reading[i]);
+        } else {
+            hal_pyro_get((uint8_t)(i + 1u), &reading[i]);
+        }
     }
     for (int i = 0; i < 2; i++) {
         ctx->channel_ready[i] = reading[i].good;
@@ -192,20 +198,24 @@ void flight_take_sample(flight_context_t *ctx, const pp_sample_t *s, flight_stat
     ctx->altitude_cm = (int32_t)(s->height_m * 100.0f);
     ctx->speed_cms = (int32_t)(s->speed * 100.0f);
 
-    uint32_t flight_ms = state == PAD_IDLE ? 0u : s->timestamp_ms - ctx->launch_time;
-    if (state == PAD_IDLE)
+    uint32_t flight_ms = (state == PAD_IDLE) ? 0u : (s->timestamp_ms - ctx->launch_time);
+    if (state == PAD_IDLE) {
         hal_log_pad(s->timestamp_ms, ctx->pressure_pa); /* [DAT-11] */
-    if (state_is_logged(state))
+    }
+    if (state_is_logged(state)) {
         hal_log_sample(flight_ms, ctx->pressure_pa, ctx->altitude_cm, (uint8_t)state, ctx->under_thrust, EVT_NONE);
-    if (flight_state_is_airborne(state))
+    }
+    if (flight_state_is_airborne(state)) {
         flight_follow_estimators(ctx, s, flight_ms);
+    }
 
     flight_sample_t *row = &ctx->flight_buffer[ctx->buf_head];
     *row =
         (flight_sample_t){flight_ms, ctx->pressure_pa, ctx->altitude_cm, (uint8_t)state, ctx->under_thrust, EVT_NONE};
     ctx->buf_head = (uint16_t)((ctx->buf_head + 1u) % FLIGHT_BUF_SIZE);
-    if (ctx->buf_count < FLIGHT_BUF_SIZE)
+    if (ctx->buf_count < FLIGHT_BUF_SIZE) {
         ctx->buf_count++;
+    }
 }
 
 /* [DAT-03] An event is a row at the newest sample's time. */
@@ -216,10 +226,12 @@ void flight_note_event(flight_context_t *ctx, uint8_t event) {
 
 bool flight_next_event(const flight_context_t *ctx, uint32_t *cursor, uint8_t *event) {
     uint32_t behind = ctx->events_noted - *cursor;
-    if (behind == 0)
+    if (behind == 0u) {
         return false;
-    if (behind > FLIGHT_EVENTS_HELD)
+    }
+    if (behind > FLIGHT_EVENTS_HELD) {
         *cursor = ctx->events_noted - FLIGHT_EVENTS_HELD;
+    }
     *event = ctx->events_held[*cursor % FLIGHT_EVENTS_HELD];
     (*cursor)++;
     return true;
@@ -229,8 +241,9 @@ void flight_log_event(flight_context_t *ctx, uint8_t event) {
     flight_note_event(ctx, event);
     flight_sample_t *row = newest_row(ctx);
     row->event = event;
-    if (hal_log_active() && state_is_logged((flight_state_t)row->state))
+    if (hal_log_active() && state_is_logged((flight_state_t)row->state)) {
         hal_log_sample(row->time_ms, row->pressure_pa, row->altitude_cm, row->state, row->under_thrust, event);
+    }
 }
 
 void flight_log_peak(const flight_context_t *ctx) {
@@ -249,8 +262,9 @@ void flight_note_sensor(flight_context_t *ctx, const pp_sample_t *s, uint32_t no
         ctx->sensor_stuck = false;
         return;
     }
-    if (ctx->sensor_stuck)
+    if (ctx->sensor_stuck) {
         return;
+    }
     ctx->sensor_stuck = true;
     ctx->diag |= DIAG_SENSOR_STUCK;
     flight_log_event(ctx, EVT_SENSOR_STUCK);
@@ -260,8 +274,9 @@ void flight_note_sensor(flight_context_t *ctx, const pp_sample_t *s, uint32_t no
 #define SENSOR_LOST_MS 500u
 
 void flight_note_no_sample(flight_context_t *ctx, uint32_t now) {
-    if (ctx->sensor_lost || now - ctx->last_sample < SENSOR_LOST_MS)
+    if (ctx->sensor_lost || ((now - ctx->last_sample) < SENSOR_LOST_MS)) {
         return;
+    }
     ctx->sensor_lost = true;
     ctx->diag |= DIAG_SENSOR_LOST;
     flight_log_event(ctx, EVT_SENSOR_LOST);
@@ -285,27 +300,32 @@ int32_t flight_to_units(int32_t cm, uint8_t units) {
 }
 
 uint32_t flight_elapsed_ms(const flight_context_t *ctx, uint32_t now) {
-    if (flight_state_is_airborne(ctx->current_state))
+    if (flight_state_is_airborne(ctx->current_state)) {
         return now - ctx->launch_time;
-    if (ctx->current_state == LANDED)
+    }
+    if (ctx->current_state == LANDED) {
         return ctx->landing_time - ctx->launch_time;
+    }
     return 0;
 }
 
 const char *flight_resume_text(const flight_context_t *ctx) {
-    if (ctx->resume == RESUME_NOT_FLYING)
+    if (ctx->resume == (uint8_t)RESUME_NOT_FLYING) {
         return not_resumed_name((not_resumed_t)ctx->not_resumed);
+    }
     return resume_verdict_name((resume_verdict_t)ctx->resume);
 }
 
 /* ── The simulator's export ───────────────────────────────────────── */
 
 int flight_save_csv(flight_context_t *ctx) {
-    if (ctx->buf_count == 0)
+    if (ctx->buf_count == 0u) {
         return -1;
+    }
     hal_file_t *f = hal_fs_open("flight.csv", false);
-    if (!f)
+    if (!f) {
         return -1;
+    }
     static const char *const unit_names[] = {"cm", "m", "ft"};
     char line[256];
     int n = snprintf(line, sizeof(line),
@@ -315,15 +335,15 @@ int flight_save_csv(flight_context_t *ctx) {
                      "time_ms,pressure_pa,altitude_cm,state,thrust,event\n",
                      ctx->config.id, ctx->config.name, config_mode_name(ctx->config.pyro1_mode),
                      ctx->config.pyro1_value, config_mode_name(ctx->config.pyro2_mode), ctx->config.pyro2_value,
-                     unit_names[ctx->config.units <= 2 ? ctx->config.units : 0], (long)ctx->ground_pressure,
+                     unit_names[(ctx->config.units <= 2u) ? ctx->config.units : 0u], (long)ctx->ground_pressure,
                      (long)ctx->max_altitude_cm);
-    hal_fs_write(f, line, n);
+    (void)hal_fs_write(f, line, n);
     uint16_t idx = (uint16_t)((ctx->buf_head + FLIGHT_BUF_SIZE - ctx->buf_count) % FLIGHT_BUF_SIZE);
-    for (int i = 0; i < ctx->buf_count; i++) {
+    for (int i = 0; i < (int)ctx->buf_count; i++) {
         const flight_sample_t *row = &ctx->flight_buffer[idx];
         n = snprintf(line, sizeof(line), "%lu,%ld,%ld,%u,%u,%s\n", (unsigned long)row->time_ms, (long)row->pressure_pa,
                      (long)row->altitude_cm, row->state, row->under_thrust, flight_event_name(row->event));
-        hal_fs_write(f, line, n);
+        (void)hal_fs_write(f, line, n);
         idx = (uint16_t)((idx + 1u) % FLIGHT_BUF_SIZE);
     }
     hal_fs_close(f);

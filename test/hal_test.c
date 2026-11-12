@@ -276,6 +276,7 @@ void mock_reset_keeping_files(void) {
 }
 
 void mock_reset_all(void) {
+    mock_fs_unprepared = mock_fs_preparing = false;
     mock_ground_test_pin = false;
     mock_log_free_bytes = 0;
     memset(mock_counters, 0, LOG_COUNTER_COUNT * sizeof(mock_counters[0]));
@@ -427,6 +428,13 @@ bool hal_flight_code_intact(void) {
 }
 bool hal_fires_mocked(void) {
     return mock_fires_mocked;
+}
+bool mock_fs_unprepared, mock_fs_preparing;
+bool hal_fs_prepared(void) {
+    return !mock_fs_unprepared;
+}
+bool hal_fs_preparing(void) {
+    return mock_fs_preparing;
 }
 
 void hal_pyro_init(void) {

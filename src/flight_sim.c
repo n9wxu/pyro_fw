@@ -11,22 +11,25 @@
 #define TOP_M 32000.0f /* the profile's ceiling: the top of the standard's third layer */
 
 bool fsim_start(fsim_t *s, const fsim_params_t *p, float ground_pa, float pad_k) {
-    if (p->boost_s <= 0.0f || p->apogee_m <= p->main_alt_m || p->main_alt_m < 0.0f || p->drogue_ms <= 0.0f ||
-        p->main_ms <= 0.0f || p->pad_s < 0.0f || ground_pa <= 0.0f)
+    if ((p->boost_s <= 0.0f) || (p->apogee_m <= p->main_alt_m) || (p->main_alt_m < 0.0f) ||
+        (p->drogue_ms <= 0.0f) || (p->main_ms <= 0.0f) || (p->pad_s < 0.0f) || (ground_pa <= 0.0f)) {
         return false;
+    }
     s->p = *p;
     s->air = air_over_pad(ground_pa, pad_k);
-    if (s->air.pad_altitude_m + p->apogee_m > TOP_M)
+    if ((s->air.pad_altitude_m + p->apogee_m) > TOP_M) {
         return false;
+    }
     /* apogee = a tb^2 / 2 + (a tb)^2 / 2g, solved for a. */
     float tb = p->boost_s;
-    s->accel = G0 * (-0.5f + sqrtf(0.25f + 2.0f * p->apogee_m / (G0 * tb * tb)));
+    s->accel = G0 * (-0.5f + sqrtf(0.25f + ((2.0f * p->apogee_m) / (G0 * tb * tb))));
     s->t_burn = tb;
     s->v_burn = s->accel * tb;
     s->h_burn = 0.5f * s->accel * tb * tb;
-    s->t_apogee = tb + s->v_burn / G0;
-    if (s->p.ballistic_ms <= 0.0f)
+    s->t_apogee = tb + (s->v_burn / G0);
+    if (s->p.ballistic_ms <= 0.0f) {
         s->p.ballistic_ms = FSIM_BALLISTIC_MS;
+    }
     s->t_desc = s->t_apogee;
     s->h_desc = p->apogee_m;
     s->v_desc = 0.0f;
@@ -40,10 +43,12 @@ bool fsim_start(fsim_t *s, const fsim_params_t *p, float ground_pa, float pad_k)
 /* The rate the rocket settles at, at this height. */
 static float terminal_rate(const fsim_t *s, float h) {
     float above_main = s->p.drogue_fails ? s->p.ballistic_ms : s->p.drogue_ms;
-    if (h <= s->p.main_alt_m)
+    if (h <= s->p.main_alt_m) {
         return s->p.main_fails ? above_main : s->p.main_ms;
-    if (!s->p.thin_air)
+    }
+    if (!s->p.thin_air) {
         return above_main;
+    }
     return above_main / air_pad_ratio(&s->air, air_altitude_m(&s->air, h));
 }
 
@@ -51,8 +56,8 @@ static float terminal_rate(const fsim_t *s, float h) {
  * rate. A canopy opening on a fast rocket slows it no further than that. */
 static float descent_speed_after(float v, float terminal, float dt) {
     float ratio = v / terminal;
-    float next = v + G0 * (1.0f - ratio * ratio) * dt;
-    return v > terminal && next < terminal ? terminal : next;
+    float next = v + (G0 * (1.0f - (ratio * ratio)) * dt);
+    return ((v > terminal) && (next < terminal)) ? terminal : next;
 }
 
 float fsim_altitude(fsim_t *s, float t) {
@@ -68,10 +73,10 @@ float fsim_altitude(fsim_t *s, float t) {
     if (tau < s->t_apogee) {
         float c = tau - s->t_burn;
         s->phase = FSIM_COAST;
-        return s->h_burn + s->v_burn * c - 0.5f * G0 * c * c;
+        return s->h_burn + (s->v_burn * c) - (0.5f * G0 * c * c);
     }
-    while (s->t_desc < tau && s->h_desc > 0.0f) {
-        float dt = tau - s->t_desc < DESCENT_STEP_S ? tau - s->t_desc : DESCENT_STEP_S;
+    while ((s->t_desc < tau) && (s->h_desc > 0.0f)) {
+        float dt = ((tau - s->t_desc) < DESCENT_STEP_S) ? (tau - s->t_desc) : DESCENT_STEP_S;
         s->v_desc = descent_speed_after(s->v_desc, terminal_rate(s, s->h_desc), dt);
         s->h_desc -= s->v_desc * dt;
         s->t_desc += dt;
@@ -80,7 +85,7 @@ float fsim_altitude(fsim_t *s, float t) {
             s->t_landed = s->t_desc;
         }
     }
-    s->phase = s->h_desc <= 0.0f ? FSIM_LANDED : (s->h_desc <= s->p.main_alt_m ? FSIM_MAIN : FSIM_DROGUE);
+    s->phase = (s->h_desc <= 0.0f) ? FSIM_LANDED : ((s->h_desc <= s->p.main_alt_m) ? FSIM_MAIN : FSIM_DROGUE);
     return s->h_desc;
 }
 

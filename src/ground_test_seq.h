@@ -45,7 +45,7 @@
 /* The steady tone after channel 1, before channel 2's countdown. */
 #define GT_TONE_MS 3000u
 /* Three long beeps, once. */
-#define GT_ALL_CLEAR_MS (3u * GT_LONG_ON_MS + 2u * GT_LONG_OFF_MS)
+#define GT_ALL_CLEAR_MS ((3u * GT_LONG_ON_MS) + (2u * GT_LONG_OFF_MS))
 
 typedef enum {
     GT_ALERT,       /* ground test mode, announced; waiting for the release */

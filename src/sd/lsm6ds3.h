@@ -31,7 +31,7 @@ typedef struct {
     int16_t a[3];
 } lsm6ds3_set_t;
 
-_Static_assert(sizeof(lsm6ds3_set_t) == 12, "a FIFO set is six 16-bit words");
+_Static_assert(sizeof(lsm6ds3_set_t) == 12u, "a FIFO set is six 16-bit words");
 
 /* Scale: 16 g full scale is 0.488 mg/LSB, 2000 dps is 70 mdps/LSB
  * (datasheet, page 19, Table 3). */

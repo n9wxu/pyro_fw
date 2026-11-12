@@ -7,10 +7,9 @@
  * SPDX-License-Identifier: MIT
  */
 #include "pyro.h"
+#include "hal.h"
 #include "board_if.h"
 #include "board_pins.h"
-
-extern void hal_telemetry_send(const char *sentence);
 
 void board_early_init(void) {
     /* TODO: drive every pyro output inactive, as boards/mk1c/pyro_board.c does. */
@@ -24,8 +23,9 @@ void pyro_init(void) {
 void pyro_sample(void) {}
 
 void pyro_get(uint8_t channel, pyro_continuity_t *out) {
-    if (channel != 1 && channel != 2)
+    if ((channel != 1u) && (channel != 2u)) {
         return;
+    }
     *out = (pyro_continuity_t){.raw_adc = 0, .good = false, .open = true, .shorted = false};
 }
 

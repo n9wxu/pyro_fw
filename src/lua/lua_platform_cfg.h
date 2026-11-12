@@ -72,7 +72,7 @@ uint32_t lua_plat_bridge_dropped(void);
 #define LUA_PWM_STEPS 100u
 
 static inline bool lua_pwm_level(uint32_t phase, int duty_percent) {
-    return (uint32_t)duty_percent * LUA_PWM_STEPS / 100u > phase % LUA_PWM_STEPS;
+    return (((uint32_t)duty_percent * LUA_PWM_STEPS) / 100u) > (phase % LUA_PWM_STEPS);
 }
 
 /* Called by the Lua task once per tick to advance software PWM. Never

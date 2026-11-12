@@ -16,24 +16,22 @@ static int n_res;
 __attribute__((weak)) void board_lua_publish(void) {}
 
 void lua_iface_reset(void) {
-    memset(table, 0, sizeof(table));
+    (void)memset(table, 0, sizeof(table));
     n_res = 0;
 }
 
-int lua_iface_publish(uint32_t pads, const char *name, lua_iface_kind_t kind, const void *vt, void *ctx) {
-    if (n_res >= LUA_IFACE_MAX || kind == LUA_IF_NONE || !vt) {
+int lua_iface_publish(uint32_t pads, const char *name_in, lua_iface_kind_t kind, const void *vt, void *ctx) {
+    if ((n_res >= LUA_IFACE_MAX) || (kind == LUA_IF_NONE) || (vt == NULL)) {
         return -1;
     }
-    if (!name) {
-        name = "";
-    }
+    const char *name = (name_in != NULL) ? name_in : "";
 
     /* Before the claim, so a refusal takes nothing. A duplicate would be
      * unreachable, because lookup resolves the first match; the pin
      * assignment refuses one, so this catches a publisher that invented a
      * name. */
     for (int i = 0; i < n_res; i++) {
-        if (table[i].kind != LUA_IF_NONE && strcmp(table[i].name, name) == 0) {
+        if ((table[i].kind != LUA_IF_NONE) && (strcmp(table[i].name, name) == 0)) {
             return -1;
         }
     }
@@ -45,7 +43,7 @@ int lua_iface_publish(uint32_t pads, const char *name, lua_iface_kind_t kind, co
     }
 
     lua_resource_t *r = &table[n_res];
-    strncpy(r->name, name, LUA_NAME_MAX - 1);
+    (void)strncpy(r->name, name, LUA_NAME_MAX - 1);
     r->name[LUA_NAME_MAX - 1] = '\0';
     r->kind = kind;
     r->vt = vt;
@@ -55,11 +53,11 @@ int lua_iface_publish(uint32_t pads, const char *name, lua_iface_kind_t kind, co
 }
 
 int lua_iface_find(const char *name, lua_iface_kind_t kind) {
-    if (!name || kind == LUA_IF_NONE) {
+    if ((name == NULL) || (kind == LUA_IF_NONE)) {
         return -1;
     }
     for (int i = 0; i < n_res; i++) {
-        if (table[i].kind == kind && strcmp(table[i].name, name) == 0) {
+        if ((table[i].kind == kind) && (strcmp(table[i].name, name) == 0)) {
             return i;
         }
     }
@@ -67,7 +65,7 @@ int lua_iface_find(const char *name, lua_iface_kind_t kind) {
 }
 
 const lua_resource_t *lua_iface_at(int idx) {
-    if (idx < 0 || idx >= n_res) {
+    if ((idx < 0) || (idx >= n_res)) {
         return NULL;
     }
     return &table[idx];
@@ -83,7 +81,8 @@ int lua_iface_count_kind(lua_iface_kind_t kind) {
     return n;
 }
 
-const lua_resource_t *lua_iface_nth_of_kind(lua_iface_kind_t kind, int n) {
+const lua_resource_t *lua_iface_nth_of_kind(lua_iface_kind_t kind, int n_in) {
+    int n = n_in;
     for (int i = 0; i < n_res; i++) {
         if (table[i].kind != kind) {
             continue;

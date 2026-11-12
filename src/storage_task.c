@@ -18,8 +18,10 @@
 #include "hal_storage.h"
 #include "flight_states.h"
 #include "loop_period.h"
+#include "loop_stats.h"
 #include "rtos_tasks.h"
 #include "core1_frame.h"
+#include <stddef.h>
 
 /* A new image commits once the flight task has turned over this many periods
  * and this task has run: five seconds of every task alive. A commit that
@@ -30,21 +32,22 @@
 
 void storage_task(void *arg) {
     (void)arg;
-    extern volatile uint32_t loop_count;
     bool committed = false;
     uint32_t commit_due_ms = 0;
     for (;;) {
-        core1_frame_wait(2u * LOOP_PERIOD_MS);
+        (void)core1_frame_wait(2u * LOOP_PERIOD_MS);
         uint32_t now = hal_time_ms();
         storage_checkin(now);
-        if (!committed && loop_count >= COMMIT_PERIODS && (int32_t)(now - commit_due_ms) >= 0) {
+        uint32_t since_due = now - commit_due_ms;
+        if (!committed && (main_loop_count >= COMMIT_PERIODS) && ((int32_t)since_due >= 0)) {
             committed = hal_firmware_commit();
             commit_due_ms = now + COMMIT_RETRY_MS;
         }
         hal_storage_service(now);
         flight_context_t *ctx = flight_get_context();
-        if (ctx)
+        if (ctx != NULL) {
             flight_storage_service(ctx, now);
+        }
         core1_frame_writer_done();
     }
 }

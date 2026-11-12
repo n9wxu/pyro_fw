@@ -42,8 +42,9 @@
 /* One step; the new write index. A full buffer keeps its last slot for the
  * end sentinel and drops the step. */
 static int pat_append(buzzer_pattern_t *buf, int idx, uint16_t dur, bool on) {
-    if (idx >= BUZZER_MAX_PATTERN - 1)
+    if (idx >= (BUZZER_MAX_PATTERN - 1)) {
         return idx;
+    }
     buf[idx].duration_ms = dur;
     buf[idx].tone_on = on;
     return idx + 1;
@@ -51,12 +52,14 @@ static int pat_append(buzzer_pattern_t *buf, int idx, uint16_t dur, bool on) {
 
 /* count beeps of on_ms, gap_ms apart; no gap after the last. */
 static int pat_append_beeps(buzzer_pattern_t *buf, int idx, int count, uint16_t on_ms, uint16_t gap_ms) {
+    int at = idx;
     for (int i = 0; i < count; i++) {
-        idx = pat_append(buf, idx, on_ms, true);
-        if (i < count - 1)
-            idx = pat_append(buf, idx, gap_ms, false);
+        at = pat_append(buf, at, on_ms, true);
+        if (i < (count - 1)) {
+            at = pat_append(buf, at, gap_ms, false);
+        }
     }
-    return idx;
+    return at;
 }
 
 /*
@@ -69,25 +72,28 @@ static int pat_append_beeps(buzzer_pattern_t *buf, int idx, int count, uint16_t 
 static int build_alt_pattern(int32_t value, buzzer_pattern_t *buf) {
     /* The magnitude, taken unsigned so INT32_MIN has one; past six digits,
      * the most that can be beeped, rather than six of them. */
-    uint32_t v = value < 0 ? 0u - (uint32_t)value : (uint32_t)value;
-    if (v > ALT_MAX_VALUE)
+    uint32_t v = (value < 0) ? (0u - (uint32_t)value) : (uint32_t)value;
+    if (v > ALT_MAX_VALUE) {
         v = ALT_MAX_VALUE;
+    }
 
     uint8_t digits[ALT_MAX_DIGITS];
     int num_digits = 0;
 
-    if (v == 0) {
+    if (v == 0u) {
         digits[0] = 0;
         num_digits = 1;
     } else {
         uint8_t tmp[ALT_MAX_DIGITS];
-        while (v > 0 && num_digits < ALT_MAX_DIGITS) {
-            tmp[num_digits++] = (uint8_t)(v % 10);
-            v /= 10;
+        while ((v > 0u) && (num_digits < ALT_MAX_DIGITS)) {
+            tmp[num_digits] = (uint8_t)(v % 10u);
+            num_digits++;
+            v /= 10u;
         }
         /* Reverse to get MSD first */
-        for (int i = 0; i < num_digits; i++)
+        for (int i = 0; i < num_digits; i++) {
             digits[i] = tmp[num_digits - 1 - i];
+        }
     }
 
     int idx = 0;
@@ -99,7 +105,7 @@ static int build_alt_pattern(int32_t value, buzzer_pattern_t *buf) {
 
     /* Each digit: a digit value of 0 beeps 10 times */
     for (int d = 0; d < num_digits; d++) {
-        int count = (digits[d] == 0) ? 10 : digits[d];
+        int count = (digits[d] == 0u) ? 10 : (int)digits[d];
         idx = pat_append_beeps(buf, idx, count, ALT_BEEP_ON_MS, ALT_BEEP_GAP_MS);
         idx = pat_append(buf, idx, ALT_DIGIT_GAP_MS, false);
     }
@@ -119,8 +125,9 @@ static int build_alt_pattern(int32_t value, buzzer_pattern_t *buf) {
 static int build_usb_ok_pattern(buzzer_pattern_t *buf) {
     int idx = 0;
     for (int burst = 0; burst < 2; burst++) {
-        if (burst > 0)
+        if (burst > 0) {
             idx = pat_append(buf, idx, USB_OK_GAP_MS, false);
+        }
         idx = pat_append_beeps(buf, idx, USB_OK_CHIRPS, CHIRP_ON_MS, CHIRP_GAP_MS);
     }
     buf[idx].duration_ms = 0;
@@ -143,7 +150,7 @@ static int build_gt_pattern(gt_sound_t sound, buzzer_pattern_t *buf, uint8_t *re
     case GT_SOUND_COUNTDOWN:
         for (int count = (int)GT_COUNT_FROM; count >= 1; count--) {
             idx = pat_append_beeps(buf, idx, count, GT_FAST_ON_MS, GT_FAST_OFF_MS);
-            uint16_t used = (uint16_t)(count * (int)(GT_FAST_ON_MS + GT_FAST_OFF_MS) - (int)GT_FAST_OFF_MS);
+            uint16_t used = (uint16_t)(((uint32_t)count * (GT_FAST_ON_MS + GT_FAST_OFF_MS)) - GT_FAST_OFF_MS);
             idx = pat_append(buf, idx, (uint16_t)(GT_COUNT_MS - used), false);
         }
         break;
@@ -222,9 +229,9 @@ static int build_spec_pattern(const beep_spec_t *sp, uint16_t gap_ms, buzzer_pat
         break;
 
     case BK_CODE: {
-        int d1 = sp->d1 < 1 ? 1 : sp->d1;
+        int d1 = (sp->d1 < 1u) ? 1 : (int)sp->d1;
         idx = pat_append_beeps(buf, idx, d1, BEEP_ON_MS, BEEP_GAP_MS);
-        if (sp->d2 > 0) {
+        if (sp->d2 > 0u) {
             idx = pat_append(buf, idx, DIGIT_GAP_MS, false);
             idx = pat_append_beeps(buf, idx, sp->d2, BEEP_ON_MS, BEEP_GAP_MS);
         }
@@ -235,11 +242,11 @@ static int build_spec_pattern(const beep_spec_t *sp, uint16_t gap_ms, buzzer_pat
     default:
         /* Still a pattern, so the task has something to schedule; it just
          * makes no sound. */
-        idx = pat_append(buf, idx, gap_ms ? gap_ms : CODE_GAP_MS, false);
+        idx = pat_append(buf, idx, (gap_ms != 0u) ? gap_ms : (uint16_t)CODE_GAP_MS, false);
         break;
     }
 
-    if (gap_ms > 0) {
+    if (gap_ms > 0u) {
         idx = pat_append(buf, idx, gap_ms, false);
     }
     buf[idx].duration_ms = 0;
@@ -307,10 +314,10 @@ static void __attribute__((noinline)) buzzer_step(uint32_t now_ms) {
         const buzzer_pattern_t *step = &t->pattern[t->index];
 
         /* Sentinel: zero-duration entry — one complete pass finished */
-        if (step->duration_ms == 0) {
+        if (step->duration_ms == 0u) {
             t->loops_done++;
             /* repeat_count==0 means infinite; otherwise stop when done */
-            if (t->repeat_count == 0 || t->loops_done < t->repeat_count) {
+            if ((t->repeat_count == 0u) || (t->loops_done < t->repeat_count)) {
                 t->index = t->loop_start;
                 t->next_due_ms = now_ms;
                 return;
@@ -321,30 +328,36 @@ static void __attribute__((noinline)) buzzer_step(uint32_t now_ms) {
         }
 
         /* Apply the step */
-        if (step->tone_on)
+        if (step->tone_on) {
             hal_buzzer_tone_on();
-        else
+        } else {
             hal_buzzer_tone_off();
+        }
 
         t->next_due_ms = now_ms + step->duration_ms;
         t->index++;
         return;
     }
+
+    default:
+        return;
     }
 }
 
 /* In flight this is the whole of the buzzer's part of a loop: entering
  * flight stops it, so nothing past the test runs until landing. */
 void buzzer_service(uint32_t now_ms) {
-    if (bz.state == BZ_IDLE || (int32_t)(now_ms - bz.next_due_ms) < 0)
+    uint32_t late = now_ms - bz.next_due_ms;
+    if ((bz.state == BZ_IDLE) || ((int32_t)late < 0)) {
         return;
+    }
     buzzer_step(now_ms);
 }
 
 /* ── Public API ───────────────────────────────────────────────────── */
 
 void buzzer_init(void) {
-    memset(&bz, 0, sizeof(bz));
+    (void)memset(&bz, 0, sizeof(bz));
     bz.next_due_ms = 0;
     bz.state = BZ_IDLE;
     hal_buzzer_init();

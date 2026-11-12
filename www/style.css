@@ -23,6 +23,7 @@ button:hover { background: #e8e8e8; }
 
 /* Warnings & tips */
 .warn { background: #fee; border: 1px solid #c33; color: #900; padding: 8px 12px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
+.ready { background: #efe; border: 1px solid #393; color: #060; padding: 8px 12px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
 .warn-inline { color: #c00; font-size: 12px; }
 .tips { background: #ffe; border: 1px solid #cc0; padding: 8px 12px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
 

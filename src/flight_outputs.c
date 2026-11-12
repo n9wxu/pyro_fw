@@ -32,37 +32,45 @@ static uint8_t telemetry_state_id(flight_state_t state) {
 }
 
 static bool state_sends_telemetry(flight_state_t state) {
-    return state == PAD_IDLE || state == LANDED || flight_state_is_airborne(state);
+    return (state == PAD_IDLE) || (state == LANDED) || flight_state_is_airborne(state);
 }
 
 static void report_fault(flight_context_t *ctx, uint32_t now) {
-    if (ctx->last_telemetry != 0 && now - ctx->last_telemetry < FAULT_REPORT_MS)
+    if ((ctx->last_telemetry != 0u) && ((now - ctx->last_telemetry) < FAULT_REPORT_MS)) {
         return;
+    }
     char line[96];
     int n = small_snprintf(line, sizeof(line), "!FAULT");
-    for (uint16_t bit = 1; bit != 0 && n < (int)sizeof(line) - 24; bit <<= 1) {
-        if ((ctx->diag & bit) && *pad_check_fault_name(bit))
-            n += small_snprintf(line + n, sizeof(line) - (size_t)n, " %s", pad_check_fault_name(bit));
+    for (uint16_t bit = 1u; (bit != 0u) && (n < ((int)sizeof(line) - 24)); bit <<= 1) {
+        if (((ctx->diag & bit) != 0u) && (*pad_check_fault_name(bit) != '\0')) {
+            n += small_snprintf(&line[n], sizeof(line) - (size_t)n, " %s", pad_check_fault_name(bit));
+        }
     }
-    small_snprintf(line + n, sizeof(line) - (size_t)n, "\r\n");
+    (void)small_snprintf(&line[n], sizeof(line) - (size_t)n, "\r\n");
     hal_telemetry_send(line);
     ctx->last_telemetry = now;
 }
 
 static uint8_t telemetry_flags(const flight_context_t *ctx) {
     uint8_t flags = 0;
-    if (ctx->channel_ready[0])
+    if (ctx->channel_ready[0]) {
         flags |= TELEM_FLAG_P1_READY;
-    if (ctx->channel_ready[1])
+    }
+    if (ctx->channel_ready[1]) {
         flags |= TELEM_FLAG_P2_READY;
-    if (ctx->fire.channel[0].fired)
+    }
+    if (ctx->fire.channel[0].fired) {
         flags |= TELEM_FLAG_P1_FIRED;
-    if (ctx->fire.channel[1].fired)
+    }
+    if (ctx->fire.channel[1].fired) {
         flags |= TELEM_FLAG_P2_FIRED;
-    if (ctx->pyros_armed)
+    }
+    if (ctx->pyros_armed) {
         flags |= TELEM_FLAG_ARMED;
-    if (ctx->apogee_declared)
+    }
+    if (ctx->apogee_declared) {
         flags |= TELEM_FLAG_APOGEE;
+    }
     return flags;
 }
 
@@ -73,12 +81,13 @@ void flight_update_outputs(flight_context_t *ctx, uint32_t now) {
         report_fault(ctx, now);
         return;
     }
-    if (!state_sends_telemetry(ctx->current_state) || now - ctx->last_telemetry < TELEMETRY_MS)
+    if ((!state_sends_telemetry(ctx->current_state)) || ((now - ctx->last_telemetry) < TELEMETRY_MS)) {
         return;
+    }
     telemetry_snapshot_t snapshot = {
         .seq = ctx->telemetry_seq,
         .state_id = telemetry_state_id(ctx->current_state),
-        .thrust = (ctx->current_state == ASCENT && ctx->under_thrust) ? 1u : 0u,
+        .thrust = ((ctx->current_state == ASCENT) && ctx->under_thrust) ? 1u : 0u,
         .flags = telemetry_flags(ctx),
         .alt_cm = ctx->altitude_cm,
         .max_alt_cm = ctx->max_altitude_cm,
@@ -100,14 +109,15 @@ static void write_record(const pad_record_t *record) {
 /* An invalid record, since the HAL has no delete. */
 static void clear_record(void) {
     pad_record_t cleared;
-    memset(&cleared, 0, sizeof(cleared));
+    (void)memset(&cleared, 0, sizeof(cleared));
     write_record(&cleared);
 }
 
 /* [FLT-BROWN-04] Cleared once the log has let go of the storage. */
 static void clear_record_after_flight(flight_context_t *ctx) {
-    if (ctx->record_cleared || hal_log_active())
+    if (ctx->record_cleared || hal_log_active()) {
         return;
+    }
     ctx->record_cleared = true;
     clear_record();
 }
@@ -116,27 +126,34 @@ static void clear_record_after_flight(flight_context_t *ctx) {
 static void clear_record_on_the_bench(void) {
     pad_record_t stored;
     int n = hal_fs_read_cached(PAD_RECORD_PATH, (char *)&stored, (int)sizeof(stored));
-    if (n == (int)sizeof(stored) && pad_record_valid(&stored))
+    if (n == (int)sizeof(stored) && pad_record_valid(&stored)) {
         clear_record();
+    }
 }
 
 /* [FLT-BROWN-01] Kept well before the launch it protects against: nothing
  * is stored at launch, when a connector bouncing is likeliest. */
 static void keep_record_on_pad(flight_context_t *ctx, uint32_t now) {
-    if (ctx->record_written || now - ctx->boot_timer < PAD_RECORD_DWELL_MS)
+    if (ctx->record_written || ((now - ctx->boot_timer) < PAD_RECORD_DWELL_MS)) {
         return;
+    }
     ctx->record_written = true;
     pad_record_t record;
-    pad_record_fill(&record, pp_ground_pressure(), (uint32_t)(pp_noise_pa() * 1000.0f),
-                    (uint32_t)(pp_pad_k() * 100.0f + 0.5f));
+    int32_t ground_pa = pp_ground_pressure();
+    float noise_mpa = pp_noise_pa() * 1000.0f;
+    float pad_ck = (pp_pad_k() * 100.0f) + 0.5f;
+    pad_record_fill(&record, ground_pa, (uint32_t)noise_mpa, (uint32_t)pad_ck);
     write_record(&record);
 }
 
 void flight_storage_service(flight_context_t *ctx, uint32_t now) {
-    if (ctx->current_state == LANDED)
+    if (ctx->current_state == LANDED) {
         clear_record_after_flight(ctx);
-    else if (ctx->current_state == PAD_IDLE && flight_grounded_on_usb(ctx))
+    } else if ((ctx->current_state == PAD_IDLE) && flight_grounded_on_usb(ctx)) {
         clear_record_on_the_bench();
-    else if (ctx->current_state == PAD_IDLE)
+    } else if (ctx->current_state == PAD_IDLE) {
         keep_record_on_pad(ctx, now);
+    } else {
+        /* no record is kept or cleared in the other states */
+    }
 }

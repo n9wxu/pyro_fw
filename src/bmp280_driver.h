@@ -55,7 +55,8 @@ static const collector_part_t BMP280_PART = {
               BMP280_REG_DATA,
               BMP280_DATA_BYTES,
               BMP280_MEAS_MAX_US,
-              BMP280_P_MID_US}},
+              BMP280_P_MID_US},
+             {{0u, 0u}, 0u, 0u, 0u, 0u, 0u}},
     .reset = {BMP280_REG_RESET, BMP280_SOFT_RESET},
     .reset_len = 2,
     .reset_us = BMP280_STARTUP_MS * 1000u,
@@ -70,7 +71,8 @@ uint8_t bmp280_address(void);
 
 typedef struct {
     pressure_reading_t reading; /* its time is the caller's to set */
-    uint32_t adc_p, adc_t;      /* the raw codes, for the pressure trace */
+    uint32_t adc_p;
+    uint32_t adc_t; /* the raw codes, for the pressure trace */
 } bmp280_reading_t;
 
 /* Bosch's compensation of one cycle's bytes, with this part's calibration.

@@ -95,11 +95,16 @@ int vfs_erased(const char *path, uint64_t *erased_bytes);
 /* The room bytes written and then synced take there, as vfs_space() counts. */
 uint32_t vfs_synced_cost(const char *path, uint32_t bytes);
 
+/* Reserves the flash's pages for a file to be written [FLT-LOG-16]. A file
+ * the card takes needs none: 0. */
+int vfs_reserve(const char *path, uint32_t bytes);
+
 /* True while an SD card is mounted and taking files. */
 bool vfs_sd_mounted(void);
 
-/* One sector of the flash erased, if one holds nothing a file needs: 1 when
- * there may be more, 0 when every unused page is erased, <0 on a fault. */
+/* One sector of the flash looked at, and erased if it holds nothing a file
+ * needs and does not read erased: 1 when there may be more, 0 when every unused page
+ * is erased, <0 on a fault. */
 int vfs_clean(void);
 
 /* At boot, the configuration files: each the card holds and the flash does

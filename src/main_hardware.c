@@ -10,7 +10,6 @@
  */
 #include <string.h>
 #include <stdbool.h>
-#include <stdio.h>
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
 #include "hardware/watchdog.h"
@@ -35,34 +34,38 @@
 
 /* The period is loop_period.h's [FLT-RT-04, DD-104]. */
 #include "loop_period.h"
+#include "loop_stats.h"
+#include "reset_interface.h"
 #include "pressure_collector.h"
 #include "board_support.h"
+#if PYRO_HAS_LUA
+#include "lua_app.h"
+#endif
 
 /* The collector ends within a cycle, 20 ms; one that has not by now is not
  * running, and the reset goes ahead. */
 #define RESET_BUS_QUIET_MS 100u
 
 /* Twice the board's declared worst case, so a board that exceeds its own
- * budget shows up in loop_overruns rather than being reset for it. */
+ * budget shows up in main_loop_overruns rather than being reset for it. */
 #ifndef PYRO_LOOP_WORST_MS
 #error "PYRO_LOOP_WORST_MS not defined - boards/<name>/board.cmake must set it"
 #endif
-#define WATCHDOG_MS (2u * PYRO_LOOP_WORST_MS)
+#define WATCHDOG_MS (2u * (uint32_t)PYRO_LOOP_WORST_MS)
 
 /* High-water marks, reported by /api/status, so PYRO_LOOP_WORST_MS can be set
- * from measurement. loop_overruns above zero means a period's work did not
- * finish before the next period began; stage_max_us says which stage to look
+ * from measurement. main_loop_overruns above zero means a period's work did not
+ * finish before the next period began; main_loop_stage_max_us says which stage to look
  * at. Stage 1 was the USB and network pass, now the net task's; stage 8 is
  * the time the flight task spends waiting for its next period. */
-#define STAGE_COUNT 9
-#define STAGE_SLACK 8
+#define STAGE_SLACK 8u
 
-volatile uint32_t loop_count;
-volatile uint32_t loop_max_us;          /* longest period of work, the wait excluded */
-volatile uint32_t loop_overruns;        /* periods missed from launch to landing */
-volatile uint32_t loop_overruns_ground; /* periods missed on the ground          */
-volatile uint32_t loop_late_max_us;     /* worst delay from the alarm to the wake    */
-volatile uint32_t stage_max_us[STAGE_COUNT];
+volatile uint32_t main_loop_count;
+volatile uint32_t main_loop_max_us;          /* longest period of work, the wait excluded */
+volatile uint32_t main_loop_overruns;        /* periods missed from launch to landing */
+volatile uint32_t main_loop_overruns_ground; /* periods missed on the ground          */
+volatile uint32_t main_loop_late_max_us;     /* worst delay from the alarm to the wake    */
+volatile uint32_t main_loop_stage_max_us[STAGE_COUNT];
 
 static uint32_t stage_mark_us;
 static uint8_t stage_cur;
@@ -73,10 +76,11 @@ static uint8_t stage_cur;
 static inline void stage_enter(uint8_t n, uint32_t now) {
     uint32_t t = time_us_32();
     uint32_t d = t - stage_mark_us;
-    if (stage_cur < STAGE_COUNT && d > stage_max_us[stage_cur])
-        stage_max_us[stage_cur] = d;
+    if ((stage_cur < STAGE_COUNT) && (d > main_loop_stage_max_us[stage_cur])) {
+        main_loop_stage_max_us[stage_cur] = d;
+    }
     stage_mark_us = t;
-    stage_cur = (n < STAGE_COUNT) ? n : (uint8_t)(STAGE_COUNT - 1);
+    stage_cur = (n < STAGE_COUNT) ? n : (uint8_t)(STAGE_COUNT - 1u);
     watchdog_hw->scratch[0] = 0x53540000u | (uint32_t)n;
     watchdog_hw->scratch[1] = now;
 }
@@ -96,10 +100,6 @@ static inline void stage_enter(uint8_t n, uint32_t now) {
  * an RTOS assertion, a stack overflow and a panic (rtos_tasks.c), with the
  * detail in scratch[1]; 100-109 the boot, in main(). */
 
-#if PYRO_HAS_LUA
-#include "lua_app.h"
-#endif
-
 volatile device_status_t g_status = {0};
 
 /* How the last boot ended, read before anything here restamps the scratch
@@ -112,7 +112,8 @@ static void note_last_boot(void) {
     boot_prev_watchdog = watchdog_enable_caused_reboot();
     uint32_t st = watchdog_hw->scratch[0];
     if ((st & 0xffff0000u) == 0x53540000u) {
-        boot_prev_stage = (int32_t)(st & 0xffffu);
+        uint32_t stage = st & 0xffffu;
+        boot_prev_stage = (int32_t)stage;
         boot_prev_stage_ms = watchdog_hw->scratch[1];
     }
 }
@@ -135,7 +136,7 @@ static bool usb_host_active(uint32_t now) {
         moved_ms = now;
         moved = true;
     }
-    return moved && now - moved_ms < USB_HOST_QUIET_MS;
+    return moved && ((now - moved_ms) < USB_HOST_QUIET_MS);
 }
 
 static void update_status(flight_context_t *ctx, uint32_t now) {
@@ -159,8 +160,8 @@ static void update_status(flight_context_t *ctx, uint32_t now) {
     g_status.pyro2_value = ctx->config.pyro2_value;
     g_status.units = ctx->config.units;
     g_status.model_decides = ctx->config.model_decides;
-    memcpy((char *)g_status.rocket_id, ctx->config.id, 9);
-    memcpy((char *)g_status.rocket_name, ctx->config.name, 9);
+    (void)memcpy((char *)g_status.rocket_id, ctx->config.id, 9);
+    (void)memcpy((char *)g_status.rocket_name, ctx->config.name, 9);
 }
 
 /* ── The period ───────────────────────────────────────────────────────
@@ -172,14 +173,13 @@ static void update_status(flight_context_t *ctx, uint32_t now) {
  * core's interrupts being off both show as more than one period between
  * wakes [FLT-RT-05]. */
 static TaskHandle_t flight_h;
-static int period_alarm = -1;
 static volatile uint64_t period_target_us;
 static volatile uint32_t period_fires;
 
 static void period_isr(uint alarm) {
     uint64_t now = time_us_64();
     uint32_t skipped = loop_periods_skipped(period_target_us, now);
-    uint64_t next = skipped ? now + LOOP_PERIOD_US : period_target_us + LOOP_PERIOD_US;
+    uint64_t next = (skipped != 0u) ? (now + LOOP_PERIOD_US) : (period_target_us + LOOP_PERIOD_US);
     period_target_us = next;
     hardware_alarm_set_target(alarm, from_us_since_boot(next));
     period_fires += 1u + skipped;
@@ -190,6 +190,7 @@ static void period_isr(uint alarm) {
 
 /* From the flight task, so the alarm's interrupt belongs to core0. */
 static void period_start(void) {
+    static int period_alarm = -1;
     flight_h = xTaskGetCurrentTaskHandle();
     period_alarm = hardware_alarm_claim_unused(true);
     hardware_alarm_set_callback((uint)period_alarm, period_isr);
@@ -214,21 +215,23 @@ static void __attribute__((noinline)) flight_task_start(void) {
  * here too, once its reply is on its way. Returns whether a reboot is
  * armed. */
 static bool __attribute__((noinline)) service_reset(bool armed, uint32_t now) {
-    extern volatile uint8_t pending_reset;
     static bool asked;
     static uint32_t asked_ms;
-    if (pending_reset == 0 || armed)
+    if ((pending_reset == 0u) || armed) {
         return armed;
+    }
     if (!asked) {
         asked = true;
         asked_ms = now;
     }
     /* [SNS-COL-07] A sensor reset mid-transfer keeps the bus. */
-    if (!collector_stop() && !deadline_reached(now, asked_ms + RESET_BUS_QUIET_MS))
+    if (!collector_stop() && !deadline_reached(now, asked_ms + RESET_BUS_QUIET_MS)) {
         return false;
-    if (pending_reset == 1)
+    }
+    if (pending_reset == 1u) {
         rom_reset_usb_boot(0, 0); /* never returns; scratch does not survive it */
-    if (pending_reset == 2) {
+    }
+    if (pending_reset == 2u) {
 #if PYRO_HAS_LUA
         lua_app_restart_commanded();
 #endif
@@ -246,14 +249,15 @@ void flight_task(void *arg) {
 
     for (;;) {
         /* The flight task's only blocking call [plan 2, section 8]. */
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         uint32_t fires = period_fires;
         uint32_t missed = fires - fires_seen - 1u;
-        if (missed && flight_state_is_airborne(ctx->current_state))
-            loop_overruns += missed;
-        else
-            loop_overruns_ground += missed;
+        if ((missed != 0u) && flight_state_is_airborne(ctx->current_state)) {
+            main_loop_overruns += missed;
+        } else {
+            main_loop_overruns_ground += missed;
+        }
         fires_seen = fires;
         uint64_t period_t0 = period_target_us - LOOP_PERIOD_US;
 #if PYRO_FLIGHT_RAM
@@ -268,14 +272,17 @@ void flight_task(void *arg) {
             }
         } else if (flash_op_in_flight()) {
             flash_op_flight_end();
+        } else {
+            /* not airborne and no flight window open */
         }
 #endif
         /* Core1's frame starts with the period: the log writer's slot, then
          * Lua's [FLT-LOG-09, LUA-RUN-04]. Never waits. */
         core1_frame_begin((uint32_t)period_t0);
         uint32_t late = (uint32_t)(time_us_64() - period_t0);
-        if (late < LOOP_PERIOD_US && late > loop_late_max_us)
-            loop_late_max_us = late;
+        if ((late < LOOP_PERIOD_US) && (late > main_loop_late_max_us)) {
+            main_loop_late_max_us = late;
+        }
 
         uint32_t now = hal_time_ms();
         uint32_t iter_t0 = time_us_32();
@@ -295,8 +302,9 @@ void flight_task(void *arg) {
 
         /* Both resets run from flash: one asked for in flight waits for
          * landing [FLT-RT-02]. */
-        if (!flash_op_in_flight())
+        if (!flash_op_in_flight()) {
             reset_armed = service_reset(reset_armed, now);
+        }
 
         /* Changes another task handed over: config, test mode, a buzzer
          * audition. Applied here, before the flight software reads them. */
@@ -319,24 +327,24 @@ void flight_task(void *arg) {
 
         STAGE(STAGE_SLACK);
         uint32_t work_us = time_us_32() - iter_t0;
-        if (work_us > loop_max_us)
-            loop_max_us = work_us;
-        loop_count++;
+        if (work_us > main_loop_max_us) {
+            main_loop_max_us = work_us;
+        }
+        main_loop_count++;
     }
 }
 
-static flight_context_t ctx;
-
 #define BOOT(n) (watchdog_hw->scratch[0] = 0x53540000u | (100u + (n)))
 
-int main() {
+int main(void) {
+    static flight_context_t ctx;
     note_last_boot();
-    BOOT(0);
+    BOOT(0u);
     hal_platform_init();
-    BOOT(1);
+    BOOT(1u);
 
     flight_init(&ctx);
-    BOOT(2);
+    BOOT(2u);
 
     /* Before lua_app_init(), which configures Lua from the assignment. A
      * rejected pins.ini falls back to the board defaults and says so on
@@ -349,7 +357,7 @@ int main() {
      * lua_plat_configure() can no longer publish, and the pads it could not
      * claim are Lua's. See pad_claim.h. */
     pin_store_claim_pads();
-    hal_pyro_claim_channels(pin_store_pyro_pads);
+    (void)hal_pyro_claim_channels(pin_store_pyro_pads);
 
     /* Move the buzzer to whatever pad the assignment names. After the claim
      * pass, because that is what reserved the pad; a saved pins.ini reports
@@ -368,7 +376,7 @@ int main() {
     lua_app_init(&ctx.config);
 #endif
 
-    BOOT(3);
+    BOOT(3u);
     rtos_start(&ctx); /* never returns */
     return 0;
 }

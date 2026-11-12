@@ -9,45 +9,71 @@
 #include "atmosphere.h"
 #include "beep_store.h"
 #include "buzzer.h"
+#include "hal_storage.h"
 #include "pressure_processing.h"
 
 #define HEALTH_CHECK_MS 1000u
 #define GROUND_RESEED_MS 5000u
-#define STILL_CMS 100
+#define STILL_CMS 100.0f
 
 static bool health_check_due(flight_context_t *ctx, uint32_t now) {
-    if (now - ctx->last_health_check < HEALTH_CHECK_MS)
+    if ((now - ctx->last_health_check) < HEALTH_CHECK_MS) {
         return false;
+    }
     ctx->last_health_check = now;
     return true;
 }
 
+#define SAID_NOTHING 0xffu /* no beep_reason_t */
+
 /* Said again whenever the verdict changes, and otherwise left to repeat on
  * the personality's cadence. Not said on USB [USB-02]. */
 static void announce(flight_context_t *ctx) {
-    if (flight_grounded_on_usb(ctx))
+    if (flight_grounded_on_usb(ctx)) {
         return;
+    }
     beep_reason_t verdict = pad_check_announcement(ctx->diag);
-    if (ctx->announced && verdict == (beep_reason_t)ctx->announcement)
+    bool withheld = pad_check_withholds_ok(ctx->diag);
+    uint8_t said = withheld ? SAID_NOTHING : (uint8_t)verdict;
+    if (ctx->announced && (said == ctx->announcement)) {
         return;
+    }
     ctx->announced = true;
-    ctx->announcement = (uint8_t)verdict;
-    beep_say(verdict);
+    ctx->announcement = said;
+    if (withheld) {
+        buzzer_stop();
+    } else {
+        beep_say(verdict);
+    }
+}
+
+/* [BUZ-07] Where the board prepares itself an unprepared store is a wait,
+ * which ends; anywhere else it is a fault the bench mends. */
+static void check_the_store(flight_context_t *ctx) {
+    ctx->diag &= (uint16_t) ~(DIAG_STORE_CLEANING | DIAG_STORE_UNPREPARED);
+    if (hal_fs_prepared()) {
+        return;
+    }
+    ctx->diag |= (uint16_t)(hal_fs_preparing() ? DIAG_STORE_CLEANING : DIAG_STORE_UNPREPARED);
 }
 
 /* [FLT-RT-08, SIM-05] Neither mends itself: once seen, it is a fault until
  * the board restarts. */
 static void check_what_will_fly(flight_context_t *ctx) {
-    if (!hal_flight_code_intact())
+    if (!hal_flight_code_intact()) {
         ctx->diag |= DIAG_FLIGHT_CODE;
-    if (hal_fires_mocked())
+    }
+    if (hal_fires_mocked()) {
         ctx->diag |= DIAG_FIRES_MOCKED;
+    }
 }
 
 static void check_pad(flight_context_t *ctx, uint32_t now) {
     check_what_will_fly(ctx);
-    if (!health_check_due(ctx, now))
+    check_the_store(ctx);
+    if (!health_check_due(ctx, now)) {
         return;
+    }
     flight_read_pyro_health(ctx);
     announce(ctx);
 }
@@ -55,9 +81,10 @@ static void check_pad(flight_context_t *ctx, uint32_t now) {
 /* [GND-CAL-06] */
 static void follow_a_moved_board(flight_context_t *ctx, const pp_sample_t *s, uint32_t now) {
     float speed_cms = s->speed * 100.0f;
-    bool still = speed_cms < STILL_CMS && speed_cms > -STILL_CMS;
-    if (pp_ground_rejecting_ms(s->timestamp_ms) < GROUND_RESEED_MS || !still)
+    bool still = (speed_cms < STILL_CMS) && (speed_cms > -STILL_CMS);
+    if ((pp_ground_rejecting_ms(s->timestamp_ms) < GROUND_RESEED_MS) || !still) {
         return;
+    }
     pp_ground_reseed();
     hal_telemetry_send("!GND reseed\r\n");
     ctx->boot_timer = now;
@@ -78,7 +105,7 @@ state_event_t flight_detect_pad_idle(flight_context_t *ctx, uint32_t now) {
     flight_note_sensor(ctx, &s, now);
 
     bool launch = launch_detected(&s);
-    return launch && !flight_grounded_on_usb(ctx) ? SEVT_LAUNCH : SEVT_NONE;
+    return (launch && !flight_grounded_on_usb(ctx)) ? SEVT_LAUNCH : SEVT_NONE;
 }
 
 /* [FLT-LAUNCH-03..05, GND-CAL-04, GND-CAL-05] */
@@ -88,7 +115,8 @@ void flight_action_launch(flight_context_t *ctx, uint32_t now) {
     ctx->launch_time = pp_time_of_rise_ms();
     (void)pp_ground_freeze_before(ctx->launch_time);
     ctx->ground_pressure = pp_ground_pressure();
-    ctx->altitude_cm = (int32_t)(pp_height_m((float)ctx->pressure_pa) * 100.0f);
+    float height_scaled = pp_height_m((float)ctx->pressure_pa) * 100.0f;
+    ctx->altitude_cm = (int32_t)height_scaled;
     ctx->under_thrust = true;
 
     uint32_t flight_ms = ctx->last_sample - ctx->launch_time;
@@ -101,8 +129,9 @@ void flight_action_launch(flight_context_t *ctx, uint32_t now) {
 
 static void grounding_changed(flight_context_t *ctx, bool was_grounded, uint32_t now) {
     bool grounded = flight_grounded_on_usb(ctx);
-    if (grounded == was_grounded || ctx->current_state == GROUND_TEST)
+    if ((grounded == was_grounded) || (ctx->current_state == GROUND_TEST)) {
         return;
+    }
     if (grounded) {
         buzzer_play_usb_ok();
         ctx->announced = false;
@@ -125,16 +154,18 @@ static void grounding_changed(flight_context_t *ctx, bool was_grounded, uint32_t
 }
 
 void flight_set_usb_attached(flight_context_t *ctx, bool attached, uint32_t now) {
-    if (attached == ctx->usb_attached || flight_state_is_airborne(ctx->current_state))
+    if ((attached == ctx->usb_attached) || flight_state_is_airborne(ctx->current_state)) {
         return;
+    }
     bool was_grounded = flight_grounded_on_usb(ctx);
     ctx->usb_attached = attached;
     grounding_changed(ctx, was_grounded, now);
 }
 
 void flight_set_test_mode(flight_context_t *ctx, bool on, uint32_t now) {
-    if (on == ctx->test_mode || flight_state_is_airborne(ctx->current_state))
+    if ((on == ctx->test_mode) || flight_state_is_airborne(ctx->current_state)) {
         return;
+    }
     bool was_grounded = flight_grounded_on_usb(ctx);
     ctx->test_mode = on;
     grounding_changed(ctx, was_grounded, now);

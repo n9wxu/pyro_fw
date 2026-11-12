@@ -19,7 +19,8 @@ typedef struct {
     bool watchdog;     /* the watchdog ended the last start-up */
     int32_t stage;     /* the stage it caught; -1: none recorded */
     uint32_t stage_ms; /* the uptime it caught it at */
-    const char *fw, *flash;
+    const char *fw;
+    const char *flash;
     uint32_t flash_kb;
     bool usb;
     const char *start;    /* what the flight software decided: resumed, or why not */

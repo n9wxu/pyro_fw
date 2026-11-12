@@ -27,7 +27,8 @@
 
 typedef struct {
     uint8_t buf[NET_TXQ_BYTES]; /* each frame its length, two bytes, then itself */
-    uint16_t head, tail;
+    uint16_t head;
+    uint16_t tail;
     uint8_t n;
 } net_txq_t;
 

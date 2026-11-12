@@ -22,7 +22,8 @@
 #define MAC_FILE_MAX 24
 
 typedef struct {
-    uint64_t a, b;
+    uint64_t a;
+    uint64_t b;
     uint32_t n;
 } mac_pool_t;
 

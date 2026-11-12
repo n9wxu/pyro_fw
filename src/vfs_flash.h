@@ -88,23 +88,28 @@ int vfs_flash_erased(uint64_t *erased_bytes);
  * stores its partial page. */
 uint32_t vfs_flash_synced_cost(uint32_t bytes);
 
-/* One sector erased, if one holds nothing live: 1 when there may be more, 0
- * when the area is clean, <0 on a fault. Never waits for the lock, and waits
- * while a file is open for reading: 1 then too. */
+/* A cleanup call looks at one sector, a read of it; the caller repeats it
+ * for as long as it has. */
+#define VFS_FLASH_CLEAN_LOOKS 1u
+
+/* Reserves erased pages for bytes of file name and links them, so that the
+ * write that follows programs them and searches for none: the next open for
+ * writing takes the reservation. Beside a closed file of the name, which
+ * stays the one read until that write closes. VFS_FLASH_NOSPC. */
+int vfs_flash_reserve(const char *name, uint32_t bytes);
+
+/* One sector looked at, and erased if it holds nothing live and does not
+ * read erased: 1 when there may be more, 0 when the area is clean, <0
+ * on a fault. vfs_flash_cleanup_state() counts the erases. Never waits for
+ * the lock, and waits while a file is open for reading: 1 then too. */
 int vfs_flash_clean(void);
 
-/* [USB-10] The wait between the pad's cleanup steps: none while a USB host
- * is attached and test mode is off, where no launch can be declared; a
- * second otherwise, so an erase stalls the pad no more than once a second. */
-#define VFS_FLASH_CLEAN_PERIOD_MS 1000u
-static inline uint32_t vfs_flash_clean_wait_ms(bool grounded_on_usb) {
-    return grounded_on_usb ? 0u : VFS_FLASH_CLEAN_PERIOD_MS;
-}
-
-/* [WEB-API-19] The cleanup, read from no page: whether it has sectors left
- * to erase, and the sectors it has erased since the mount. */
+/* [WEB-API-19, LUA-RUN-05] The cleanup, read from no page: whether it has
+ * sectors left to erase, whether a file is open for writing, and the sectors
+ * it has erased since the mount. */
 typedef struct {
     bool cleaning;
+    bool writing;
     uint32_t erased;
 } vfs_flash_cleanup_t;
 void vfs_flash_cleanup_state(vfs_flash_cleanup_t *out);
@@ -113,7 +118,9 @@ void vfs_flash_cleanup_state(vfs_flash_cleanup_t *out);
  * bytes a page holds, as vfs_flash_space() counts them. Zeros before a
  * mount. */
 typedef struct {
-    uint32_t sectors, sector_pages, page_bytes;
+    uint32_t sectors;
+    uint32_t sector_pages;
+    uint32_t page_bytes;
 } vfs_flash_geometry_t;
 void vfs_flash_geometry(vfs_flash_geometry_t *out);
 

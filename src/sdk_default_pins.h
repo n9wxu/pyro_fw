@@ -67,9 +67,9 @@
 #endif
 
 #define SDK_DEFAULT_NAMES(pin)                                                                                         \
-    ((pin) == SDK_PIN_UART_TX || (pin) == SDK_PIN_UART_RX || (pin) == SDK_PIN_LED || (pin) == SDK_PIN_WS2812 ||        \
-     (pin) == SDK_PIN_I2C_SDA || (pin) == SDK_PIN_I2C_SCL || (pin) == SDK_PIN_SPI_SCK || (pin) == SDK_PIN_SPI_TX ||    \
-     (pin) == SDK_PIN_SPI_RX || (pin) == SDK_PIN_SPI_CSN)
+    (((pin) == SDK_PIN_UART_TX) || ((pin) == SDK_PIN_UART_RX) || ((pin) == SDK_PIN_LED) || ((pin) == SDK_PIN_WS2812) || \
+     ((pin) == SDK_PIN_I2C_SDA) || ((pin) == SDK_PIN_I2C_SCL) || ((pin) == SDK_PIN_SPI_SCK) || ((pin) == SDK_PIN_SPI_TX) || \
+     ((pin) == SDK_PIN_SPI_RX) || ((pin) == SDK_PIN_SPI_CSN))
 
 #define SDK_DEFAULT_PIN_IS_FREE(pin)                                                                                   \
     _Static_assert(!SDK_DEFAULT_NAMES(pin), #pin " is a PICO_DEFAULT_*_PIN in the SDK board header")

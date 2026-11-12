@@ -32,7 +32,7 @@
 #include <stdio.h>
 #include <string.h>
 
-_Static_assert(sizeof(lua_Number) == 4 && sizeof(lua_Integer) == 4,
+_Static_assert((sizeof(lua_Number) == 4u) && (sizeof(lua_Integer) == 4u),
                "Lua is not the 32-bit build: src/lua/lua_patch.cmake was not applied");
 
 /* 32 kB on the 32-bit target. A 64-bit host build -- the native simulator and
@@ -40,7 +40,7 @@ _Static_assert(sizeof(lua_Number) == 4 && sizeof(lua_Integer) == 4,
  * headers are twice the size, so a script fits on the host when it fits on
  * the board. */
 #ifndef PYRO_LUA_ARENA_BYTES
-#define PYRO_LUA_ARENA_BYTES (32 * 1024 * (sizeof(void *) == 8 ? 3 : 2) / 2)
+#define PYRO_LUA_ARENA_BYTES (32u * 1024u * ((sizeof(void *) == 8u) ? 3u : 2u) / 2u)
 #endif
 
 /* VM instructions, or matcher steps, between two looks at the limits. */
@@ -85,8 +85,6 @@ static bool hard_boxed;
 /* Raised as light userdata, which no script can construct, and remembered:
  * pcall and xpcall re-raise while one is set, so a script cannot catch the
  * error that stops it (see l_pcall). */
-static const char BUDGET_EXHAUSTED[] = "instruction budget exhausted";
-static const char TIME_BOX_EXHAUSTED[] = "time box exhausted";
 static const char *limit_hit;
 
 static int raise_limit(lua_State *Ls, const char *which) {
@@ -96,7 +94,8 @@ static int raise_limit(lua_State *Ls, const char *which) {
 }
 
 static bool past(uint32_t deadline_us) {
-    return (int32_t)(lua_plat_now_us() - deadline_us) >= 0;
+    uint32_t late_us = lua_plat_now_us() - deadline_us;
+    return (int32_t)late_us >= 0;
 }
 
 static void count_hook(lua_State *Ls, lua_Debug *ar);
@@ -109,6 +108,8 @@ static bool hook_hastened;
  * first point that can. Elsewhere a slice that cannot yield is let run
  * PYRO_LUA_OVERRUN_US past its box and is then raised. */
 static void charge(lua_State *Ls, bool in_matcher) {
+    static const char BUDGET_EXHAUSTED[] = "instruction budget exhausted";
+    static const char TIME_BOX_EXHAUSTED[] = "time box exhausted";
     if (slice_boxed) {
         if (!past(slice_deadline_us)) {
             return;
@@ -118,7 +119,7 @@ static void charge(lua_State *Ls, bool in_matcher) {
             return;
         }
         if (past(slice_deadline_us + PYRO_LUA_OVERRUN_US)) {
-            raise_limit(Ls, TIME_BOX_EXHAUSTED);
+            (void)raise_limit(Ls, TIME_BOX_EXHAUSTED);
         }
         if (in_matcher && !hook_hastened) {
             hook_hastened = true;
@@ -126,12 +127,12 @@ static void charge(lua_State *Ls, bool in_matcher) {
         }
         return;
     }
-    if (budget_left == 0) {
-        raise_limit(Ls, BUDGET_EXHAUSTED);
+    if (budget_left == 0u) {
+        (void)raise_limit(Ls, BUDGET_EXHAUSTED);
     }
     budget_left--;
     if (hard_boxed && past(hard_deadline_us)) {
-        raise_limit(Ls, TIME_BOX_EXHAUSTED);
+        (void)raise_limit(Ls, TIME_BOX_EXHAUSTED);
     }
 }
 
@@ -162,9 +163,9 @@ void pyro_lua_match_step(lua_State *Ls) {
 static void limits_start(uint32_t budget_us, bool boxed_slice) {
     limit_hit = NULL;
     match_steps = 0;
-    slice_boxed = boxed_slice && budget_us != 0u;
+    slice_boxed = boxed_slice && (budget_us != 0u);
     slice_deadline_us = lua_plat_now_us() + budget_us;
-    hard_boxed = !boxed_slice && budget_us != 0u;
+    hard_boxed = !boxed_slice && (budget_us != 0u);
     hard_deadline_us = slice_deadline_us;
     budget_left = PYRO_LUA_BUDGET;
 }
@@ -172,16 +173,16 @@ static void limits_start(uint32_t budget_us, bool boxed_slice) {
 /* Never converts the error object in place: lua_tostring on a number would
  * allocate, outside protection. */
 static void record_error(lua_State *Ls) {
-    if (limit_hit) {
-        snprintf(last_error, sizeof(last_error), "%s", limit_hit);
+    if (limit_hit != NULL) {
+        (void)snprintf(last_error, sizeof(last_error), "%s", limit_hit);
     } else if (lua_type(Ls, -1) == LUA_TSTRING) {
-        snprintf(last_error, sizeof(last_error), "%s", lua_tostring(Ls, -1));
+        (void)snprintf(last_error, sizeof(last_error), "%s", lua_tostring(Ls, -1));
     } else if (lua_isinteger(Ls, -1)) {
-        snprintf(last_error, sizeof(last_error), "%ld", (long)lua_tointeger(Ls, -1));
+        (void)snprintf(last_error, sizeof(last_error), "%ld", (long)lua_tointeger(Ls, -1));
     } else if (lua_type(Ls, -1) == LUA_TNUMBER) {
-        snprintf(last_error, sizeof(last_error), "%.7g", (double)lua_tonumber(Ls, -1));
+        (void)snprintf(last_error, sizeof(last_error), "%.7g", (double)lua_tonumber(Ls, -1));
     } else {
-        snprintf(last_error, sizeof(last_error), "(error object is a %s value)", luaL_typename(Ls, -1));
+        (void)snprintf(last_error, sizeof(last_error), "(error object is a %s value)", luaL_typename(Ls, -1));
     }
     lua_pop(Ls, 1);
 }
@@ -192,11 +193,11 @@ static void record_error(lua_State *Ls) {
  * been raised the call re-raises it, whatever the error object became. */
 
 static int finish_pcall(lua_State *Ls, int status, lua_KContext extra) {
-    if (limit_hit) {
+    if (limit_hit != NULL) {
         lua_pushlightuserdata(Ls, (void *)limit_hit);
         return lua_error(Ls);
     }
-    if (status != LUA_OK && status != LUA_YIELD) {
+    if ((status != LUA_OK) && (status != LUA_YIELD)) {
         lua_pushboolean(Ls, 0);
         lua_pushvalue(Ls, -2);
         return 2;
@@ -227,7 +228,7 @@ static int l_xpcall(lua_State *Ls) {
  * setmetatable is called (§2.5.3), so refusing it here is sufficient. */
 static int l_setmetatable(lua_State *Ls) {
     if (lua_type(Ls, 2) == LUA_TTABLE) {
-        lua_pushliteral(Ls, "__gc");
+        (void)lua_pushliteral(Ls, "__gc");
         if (lua_rawget(Ls, 2) != LUA_TNIL) {
             return luaL_error(Ls, "__gc metamethods are not allowed (finalisers run outside the limits)");
         }
@@ -247,9 +248,9 @@ static int l_setmetatable(lua_State *Ls) {
 static jmp_buf *panic_exit;
 
 static int on_panic(lua_State *Ls) {
-    const char *m = lua_type(Ls, -1) == LUA_TSTRING ? lua_tostring(Ls, -1) : "?";
-    snprintf(last_error, sizeof(last_error), "panic: %s", m);
-    if (panic_exit) {
+    const char *m = (lua_type(Ls, -1) == LUA_TSTRING) ? lua_tostring(Ls, -1) : "?";
+    (void)snprintf(last_error, sizeof(last_error), "panic: %s", m);
+    if (panic_exit != NULL) {
         longjmp(*panic_exit, 1);
     }
     return 0;
@@ -269,8 +270,9 @@ static int l_print(lua_State *Ls) {
     for (int i = 1; i <= n; i++) {
         size_t len;
         const char *s = luaL_tolstring(Ls, i, &len);
-        if (i > 1)
+        if (i > 1) {
             lua_plat_console_out("\t", 1);
+        }
         lua_plat_console_out(s, (int)len);
         lua_pop(Ls, 1);
     }
@@ -294,7 +296,7 @@ static int push_names(lua_State *Ls, lua_iface_kind_t kind) {
     int n = lua_iface_count_kind(kind);
     lua_createtable(Ls, n, 0);
     for (int i = 0; i < n; i++) {
-        lua_pushstring(Ls, lua_iface_nth_of_kind(kind, i)->name);
+        (void)lua_pushstring(Ls, lua_iface_nth_of_kind(kind, i)->name);
         lua_rawseti(Ls, -2, i + 1);
     }
     return 1;
@@ -312,12 +314,15 @@ static int l_output_set(lua_State *Ls) {
         v = lua_toboolean(Ls, 2) ? 100 : 0;
     } else {
         v = (int)luaL_checkinteger(Ls, 2);
-        if (v < 0)
+        if (v < 0) {
             v = 0;
-        if (v > 100)
+        }
+        if (v > 100) {
             v = 100;
-        if (v != 0 && v != 100 && !vt->dimmable)
+        }
+        if ((v != 0) && (v != 100) && !vt->dimmable) {
             return luaL_error(Ls, "output '%s' is not dimmable", name);
+        }
     }
     vt->set(r->ctx, v);
     return 0;
@@ -365,17 +370,19 @@ static int l_serial_read(lua_State *Ls) {
     const char *name = luaL_checkstring(Ls, 1);
     lua_Integer max = luaL_optinteger(Ls, 2, SERIAL_READ_DEFAULT);
     const lua_resource_t *r = need(Ls, LUA_IF_SERIAL, "serial", name);
-    if (max < 1)
+    if (max < 1) {
         max = 1;
-    if (max > SERIAL_READ_MAX)
+    }
+    if (max > SERIAL_READ_MAX) {
         max = SERIAL_READ_MAX;
+    }
     char buf[SERIAL_READ_MAX];
     int n = ((const lua_if_serial_t *)r->vt)->read(r->ctx, buf, (int)max);
     if (n <= 0) {
         lua_pushnil(Ls);
         return 1;
     }
-    lua_pushlstring(Ls, buf, (size_t)n);
+    (void)lua_pushlstring(Ls, buf, (size_t)n);
     return 1;
 }
 
@@ -388,30 +395,33 @@ static const lua_resource_t *the_string(void) {
     return lua_iface_nth_of_kind(LUA_IF_PIXEL, 0);
 }
 
-static int px_len(void) {
+static int pixel_count(void) {
     const lua_resource_t *r = the_string();
-    return r ? ((const lua_if_pixel_t *)r->vt)->count(r->ctx) : 0;
+    return (r != NULL) ? ((const lua_if_pixel_t *)r->vt)->count(r->ctx) : 0;
 }
 
 static int l_pixel_count(lua_State *Ls) {
-    lua_pushinteger(Ls, px_len());
+    lua_pushinteger(Ls, pixel_count());
     return 1;
 }
 
 static int check_channel(lua_State *Ls, int arg) {
     lua_Integer v = luaL_checkinteger(Ls, arg);
-    if (v < 0)
+    if (v < 0) {
         v = 0;
-    if (v > 255)
+    }
+    if (v > 255) {
         v = 255;
+    }
     return (int)v;
 }
 
 static int l_pixel_set(lua_State *Ls) {
     lua_Integer i = luaL_checkinteger(Ls, 1); /* 1-based, as Lua tables are */
-    int n = px_len();
-    if (i < 1 || i > n)
+    int n = pixel_count();
+    if ((i < 1) || (i > n)) {
         return luaL_error(Ls, "pixel %d out of range (1..%d)", (int)i, n);
+    }
     const lua_resource_t *r = the_string();
     ((const lua_if_pixel_t *)r->vt)
         ->set(r->ctx, (int)i - 1, (uint8_t)check_channel(Ls, 2), (uint8_t)check_channel(Ls, 3),
@@ -419,31 +429,35 @@ static int l_pixel_set(lua_State *Ls) {
     return 0;
 }
 
-static void fill(int r_, int g, int b) {
+static void fill_pixels(int r_, int g, int b) {
     const lua_resource_t *r = the_string();
-    if (!r)
+    if (!r) {
         return;
+    }
     const lua_if_pixel_t *vt = r->vt;
-    for (int i = 0, n = vt->count(r->ctx); i < n; i++)
+    const int n = vt->count(r->ctx);
+    for (int i = 0; i < n; i++) {
         vt->set(r->ctx, i, (uint8_t)r_, (uint8_t)g, (uint8_t)b);
+    }
 }
 
 static int l_pixel_fill(lua_State *Ls) {
-    fill(check_channel(Ls, 1), check_channel(Ls, 2), check_channel(Ls, 3));
+    fill_pixels(check_channel(Ls, 1), check_channel(Ls, 2), check_channel(Ls, 3));
     return 0;
 }
 
 static int l_pixel_clear(lua_State *Ls) {
     (void)Ls;
-    fill(0, 0, 0);
+    fill_pixels(0, 0, 0);
     return 0;
 }
 
 static int l_pixel_show(lua_State *Ls) {
     (void)Ls;
     const lua_resource_t *r = the_string();
-    if (r)
+    if (r != NULL) {
         ((const lua_if_pixel_t *)r->vt)->show(r->ctx);
+    }
     return 0;
 }
 
@@ -490,17 +504,18 @@ static int l_flight_seq(lua_State *Ls) {
 
 static int l_pyro_status(lua_State *Ls) {
     lua_Integer ch = luaL_checkinteger(Ls, 1);
-    if (ch != 1 && ch != 2)
+    if ((ch != 1) && (ch != 2)) {
         return luaL_error(Ls, "pyro channel must be 1 or 2");
+    }
     int st = lua_plat_pyro_status((int)ch);
     lua_createtable(Ls, 0, PYRO_STATUS_FIELDS);
-    lua_pushboolean(Ls, st & LUA_PYRO_CONTINUITY);
+    lua_pushboolean(Ls, st & (int)LUA_PYRO_CONTINUITY);
     lua_setfield(Ls, -2, "continuity");
-    lua_pushboolean(Ls, st & LUA_PYRO_FIRED);
+    lua_pushboolean(Ls, st & (int)LUA_PYRO_FIRED);
     lua_setfield(Ls, -2, "fired");
-    lua_pushboolean(Ls, st & LUA_PYRO_FAULT);
+    lua_pushboolean(Ls, st & (int)LUA_PYRO_FAULT);
     lua_setfield(Ls, -2, "fault");
-    lua_pushboolean(Ls, st & LUA_PYRO_ARMED);
+    lua_pushboolean(Ls, st & (int)LUA_PYRO_ARMED);
     lua_setfield(Ls, -2, "armed");
     /* The raw count rides with the booleans, so a script judging a channel
      * gets both. It is sampled after a release too, when on MK1A it reads
@@ -561,7 +576,7 @@ static int l_log_line(lua_State *Ls) {
 #endif
 
 /* Below this the per-position loop costs more call overhead than it saves. */
-#define PATTERN_DIRECT_MAX 64
+#define PATTERN_DIRECT_MAX 64u
 
 /* Upvalues on every wrapper. */
 #define PU_ORIG 1  /* the original C function, as light userdata */
@@ -577,7 +592,8 @@ static int pattern_k(lua_State *Ls, int status, lua_KContext ctx) {
     return pattern_loop(Ls, (lua_Integer)ctx);
 }
 
-static int pattern_loop(lua_State *Ls, lua_Integer pos) {
+static int pattern_loop(lua_State *Ls, lua_Integer first) {
+    lua_Integer pos = first;
     size_t len = 0;
     (void)lua_tolstring(Ls, 1, &len);
     lua_CFunction orig = (lua_CFunction)lua_touserdata(Ls, lua_upvalueindex(PU_ORIG));
@@ -595,7 +611,7 @@ static int pattern_loop(lua_State *Ls, lua_Integer pos) {
         lua_replace(Ls, 3);
 
         int n = orig(Ls);
-        if (n > 0 && !lua_isnil(Ls, -n)) {
+        if ((n > 0) && !lua_isnil(Ls, -n)) {
             return n;
         }
         lua_settop(Ls, 3);
@@ -631,12 +647,12 @@ static int l_pattern_guard(lua_State *Ls) {
     if (!p) {
         return orig(Ls);
     }
-    if (!lua_isyieldable(Ls) && len > (size_t)PYRO_LUA_PATTERN_MAX) {
+    if (!lua_isyieldable(Ls) && (len > (size_t)PYRO_LUA_PATTERN_MAX)) {
         return refuse_long_subject(Ls, len);
     }
     /* An anchored pattern tries one position already; a second "^" would
      * change its meaning. */
-    if (plen > 0 && p[0] == '^') {
+    if ((plen > 0u) && (p[0] == '^')) {
         return orig(Ls);
     }
 
@@ -652,7 +668,7 @@ static int l_pattern_guard(lua_State *Ls) {
      * activation: string.find is one closure shared by every caller, so an
      * upvalue would be overwritten by an on_event() handler's search while a
      * tick()'s is suspended. */
-    lua_pushliteral(Ls, "^");
+    (void)lua_pushliteral(Ls, "^");
     lua_pushvalue(Ls, 2);
     lua_concat(Ls, 2);
     lua_replace(Ls, 2);
@@ -672,7 +688,7 @@ static void wrap_string_fn(lua_State *Ls, const char *name, lua_CFunction wrappe
     lua_pushlightuserdata(Ls, (void *)orig);
     lua_pushinteger(Ls, plain_arg);
     if (named) {
-        lua_pushstring(Ls, name);
+        (void)lua_pushstring(Ls, name);
     } else {
         lua_pushnil(Ls);
     }
@@ -720,47 +736,56 @@ static void guard_patterns(lua_State *Ls) {
 
 float pyro_lua_str2number(const char *s, char **endptr) {
     const char *p = s;
-    while (*p == ' ' || (*p >= '\t' && *p <= '\r'))
+    while ((*p == ' ') || ((*p >= '\t') && (*p <= '\r'))) {
         p++;
+    }
     bool negative = (*p == '-');
-    if (*p == '-' || *p == '+')
+    if ((*p == '-') || (*p == '+')) {
         p++;
+    }
 
     uint64_t mant = 0;
-    int digits = 0, exp10 = 0;
+    int digits = 0;
+    int exp10 = 0;
     bool any = false;
-    for (; *p >= '0' && *p <= '9'; p++, any = true) {
+    while ((*p >= '0') && (*p <= '9')) {
         if (digits < STR2NUM_DIGITS) {
-            mant = mant * 10u + (uint64_t)(*p - '0');
-            digits += (mant != 0);
+            mant = (mant * 10u) + (uint64_t)(*p - '0');
+            digits += (mant != 0u) ? 1 : 0;
         } else {
             exp10++;
         }
+        p++;
+        any = true;
     }
     if (*p == '.') {
         p++;
-        for (; *p >= '0' && *p <= '9'; p++, any = true) {
+        while ((*p >= '0') && (*p <= '9')) {
             if (digits < STR2NUM_DIGITS) {
-                mant = mant * 10u + (uint64_t)(*p - '0');
-                digits += (mant != 0);
+                mant = (mant * 10u) + (uint64_t)(*p - '0');
+                digits += (mant != 0u) ? 1 : 0;
                 exp10--;
             }
+            p++;
+            any = true;
         }
     }
     if (!any) {
         *endptr = (char *)s;
         return 0.0f;
     }
-    if (*p == 'e' || *p == 'E') {
-        const char *e = p + 1;
+    if ((*p == 'e') || (*p == 'E')) {
+        const char *e = &p[1];
         bool eneg = (*e == '-');
-        if (*e == '-' || *e == '+')
+        if ((*e == '-') || (*e == '+')) {
             e++;
-        if (*e >= '0' && *e <= '9') {
+        }
+        if ((*e >= '0') && (*e <= '9')) {
             int ev = 0;
-            for (; *e >= '0' && *e <= '9'; e++) {
-                if (ev < STR2NUM_EXP_MAX)
-                    ev = ev * 10 + (*e - '0');
+            for (; (*e >= '0') && (*e <= '9'); e++) {
+                if (ev < STR2NUM_EXP_MAX) {
+                    ev = (ev * 10) + (*e - '0');
+                }
             }
             exp10 += eneg ? -ev : ev;
             p = e;
@@ -769,12 +794,17 @@ float pyro_lua_str2number(const char *s, char **endptr) {
     *endptr = (char *)p;
 
     double v = (double)mant;
-    double scale = 1.0, base = 10.0;
-    for (int n = exp10 < 0 ? -exp10 : exp10; n > 0 && mant != 0; n >>= 1, base *= base) {
-        if (n & 1)
+    double scale = 1.0;
+    double base = 10.0;
+    int n = (exp10 < 0) ? -exp10 : exp10;
+    while ((n > 0) && (mant != 0u)) {
+        if ((n & 1) != 0) {
             scale *= base;
+        }
+        n >>= 1;
+        base *= base;
     }
-    v = (exp10 < 0) ? v / scale : v * scale;
+    v = (exp10 < 0) ? (v / scale) : (v * scale);
     return (float)(negative ? -v : v);
 }
 
@@ -784,8 +814,9 @@ float pyro_lua_str2number(const char *s, char **endptr) {
  * computes a pointer size when the table arrives as a parameter. */
 static void reg_table(lua_State *Ls, const char *name, const luaL_Reg *fns) {
     int n = 0;
-    while (fns[n].name)
+    while (fns[n].name != NULL) {
         n++;
+    }
     lua_createtable(Ls, 0, n);
     luaL_setfuncs(Ls, fns, 0);
     lua_setglobal(Ls, name);
@@ -795,23 +826,23 @@ static void reg_table(lua_State *Ls, const char *name, const luaL_Reg *fns) {
  * from flight_state_t. No flight.BOOT: boot is four states, and any one
  * number would miss three of them. */
 #define FLIGHT_STATE(name)                                                                                             \
-    { #name, name }
-static const struct {
-    const char *name;
-    flight_state_t value;
-} flight_state_names[] = {
-    FLIGHT_STATE(BOOT_SETTLE),    FLIGHT_STATE(BOOT_CONTINUITY), FLIGHT_STATE(BOOT_CALIBRATE),
-    FLIGHT_STATE(PAD_IDLE),       FLIGHT_STATE(ASCENT),          FLIGHT_STATE(FALLING),
-    FLIGHT_STATE(DROGUE_DESCENT), FLIGHT_STATE(CHUTE_DESCENT),   FLIGHT_STATE(LANDED),
-    FLIGHT_STATE(BOOT_SENSOR),    FLIGHT_STATE(FAULT),           FLIGHT_STATE(GROUND_TEST),
-    {"DROGUE", DROGUE_DESCENT},   {"CHUTE", CHUTE_DESCENT},
-};
-_Static_assert(STATE_COUNT == 12, "flight_state_t changed: name the new state here and in docs/lua.html");
+    { #name, (name) }
 
 /* Invariant L4: a capability with no resources gets no table, so
  * `serial.write(...)` without serial fails as "attempt to index a nil value
  * (global 'serial')", naming what is missing. */
 static void build_env(lua_State *Ls) {
+    static const struct {
+        const char *name;
+        flight_state_t value;
+    } flight_state_names[] = {
+        FLIGHT_STATE(BOOT_SETTLE),    FLIGHT_STATE(BOOT_CONTINUITY), FLIGHT_STATE(BOOT_CALIBRATE),
+        FLIGHT_STATE(PAD_IDLE),       FLIGHT_STATE(ASCENT),          FLIGHT_STATE(FALLING),
+        FLIGHT_STATE(DROGUE_DESCENT), FLIGHT_STATE(CHUTE_DESCENT),   FLIGHT_STATE(LANDED),
+        FLIGHT_STATE(BOOT_SENSOR),    FLIGHT_STATE(FAULT),           FLIGHT_STATE(GROUND_TEST),
+        {"DROGUE", DROGUE_DESCENT},   {"CHUTE", CHUTE_DESCENT},
+    };
+    _Static_assert((int)STATE_COUNT == 12, "flight_state_t changed: name the new state here and in docs/lua.html");
     static const luaL_Reg output_fns[] = {
         {"set", l_output_set}, {"get", l_output_get}, {"list", l_output_list}, {NULL, NULL}};
     static const luaL_Reg input_fns[] = {{"get", l_input_get}, {"list", l_input_list}, {NULL, NULL}};
@@ -832,14 +863,18 @@ static void build_env(lua_State *Ls) {
     static const luaL_Reg pixel_fns[] = {{"count", l_pixel_count}, {"set", l_pixel_set},   {"fill", l_pixel_fill},
                                          {"clear", l_pixel_clear}, {"show", l_pixel_show}, {NULL, NULL}};
 
-    if (lua_iface_count_kind(LUA_IF_OUTPUT) > 0)
+    if (lua_iface_count_kind(LUA_IF_OUTPUT) > 0) {
         reg_table(Ls, "output", output_fns);
-    if (lua_iface_count_kind(LUA_IF_INPUT) > 0)
+    }
+    if (lua_iface_count_kind(LUA_IF_INPUT) > 0) {
         reg_table(Ls, "input", input_fns);
-    if (lua_iface_count_kind(LUA_IF_SERIAL) > 0)
+    }
+    if (lua_iface_count_kind(LUA_IF_SERIAL) > 0) {
         reg_table(Ls, "serial", serial_fns);
-    if (lua_iface_count_kind(LUA_IF_PIXEL) > 0)
+    }
+    if (lua_iface_count_kind(LUA_IF_PIXEL) > 0) {
         reg_table(Ls, "pixel", pixel_fns);
+    }
 
     /* Always present: reading state grants nothing. */
     reg_table(Ls, "sensor", sensor_fns);
@@ -907,10 +942,10 @@ void pyro_lua_init(void) {
 
     L = lua_newstate(lua_arena_alloc, &arena);
     if (!L) {
-        snprintf(last_error, sizeof(last_error), "arena too small for a VM");
+        (void)snprintf(last_error, sizeof(last_error), "arena too small for a VM");
         return;
     }
-    lua_atpanic(L, on_panic);
+    (void)lua_atpanic(L, on_panic);
     lua_pushcfunction(L, setup_env);
     if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
         record_error(L);
@@ -922,7 +957,7 @@ void pyro_lua_init(void) {
 }
 
 void pyro_lua_shutdown(void) {
-    if (L) {
+    if (L != NULL) {
         lua_close(L);
         L = NULL;
     }
@@ -954,10 +989,10 @@ static int call_global(lua_State *Ls) {
     if (lua_getglobal(Ls, name) != LUA_TFUNCTION) {
         return 0;
     }
-    if (arg) {
-        lua_pushstring(Ls, arg);
+    if (arg != NULL) {
+        (void)lua_pushstring(Ls, arg);
     }
-    lua_call(Ls, arg ? 1 : 0, 0);
+    lua_call(Ls, (arg != NULL) ? 1 : 0, 0);
     return 0;
 }
 
@@ -969,7 +1004,7 @@ static bool call_global_protected(const char *name, const char *arg, uint32_t bu
 }
 
 static int new_thread(lua_State *Ls) {
-    lua_newthread(Ls);
+    (void)lua_newthread(Ls);
     return 1;
 }
 
@@ -1042,7 +1077,7 @@ static pyro_lua_status_t tick_slice(uint32_t budget_us) {
     slice_running = false;
     if (rc != LUA_OK) {
         record_error(co);
-        make_coroutine();
+        (void)make_coroutine();
         return PYRO_LUA_ERROR;
     }
     lua_settop(co, 0);
@@ -1060,8 +1095,9 @@ static bool eval(const char *src) {
 /* The public entries below set the panic handler's way back. */
 
 bool pyro_lua_load(const char *chunkname, const char *src, size_t len) {
-    if (!L)
+    if (!L) {
         return false;
+    }
     jmp_buf here;
     if (setjmp(here) != 0) {
         abandon_vm();
@@ -1094,8 +1130,9 @@ bool pyro_lua_tick(void) {
 }
 
 bool pyro_lua_event(const char *event_name, uint32_t budget_us) {
-    if (!L)
+    if (!L) {
         return true;
+    }
     jmp_buf here;
     if (setjmp(here) != 0) {
         abandon_vm();
@@ -1108,8 +1145,9 @@ bool pyro_lua_event(const char *event_name, uint32_t budget_us) {
 }
 
 bool pyro_lua_eval(const char *src) {
-    if (!L)
+    if (!L) {
         return false;
+    }
     jmp_buf here;
     if (setjmp(here) != 0) {
         abandon_vm();
@@ -1134,7 +1172,7 @@ void pyro_lua_get_stats(lua_arena_stats_t *out) {
 }
 
 bool pyro_lua_check(const char *src, size_t len, const lua_chk_env_t *env, lua_chk_result_t *out) {
-    if (L) {
+    if (L != NULL) {
         return false;
     }
     lua_check_in(arena_buf, sizeof(arena_buf), src, len, env, out);
@@ -1157,13 +1195,13 @@ static atomic_uint events_dropped; /* the poster's */
 bool pyro_lua_post_event(const char *name) {
     unsigned head = atomic_load_explicit(&event_head, memory_order_relaxed);
     unsigned tail = atomic_load_explicit(&event_tail, memory_order_acquire);
-    if (head - tail >= EVENT_QUEUE_LEN) {
+    if ((head - tail) >= EVENT_QUEUE_LEN) {
         atomic_store_explicit(&events_dropped, atomic_load_explicit(&events_dropped, memory_order_relaxed) + 1u,
                               memory_order_relaxed);
         return false;
     }
     char *slot = event_names[head % EVENT_QUEUE_LEN];
-    strncpy(slot, name, EVENT_NAME_MAX - 1);
+    (void)strncpy(slot, name, EVENT_NAME_MAX - 1);
     slot[EVENT_NAME_MAX - 1] = '\0';
     atomic_store_explicit(&event_head, head + 1u, memory_order_release);
     return true;
@@ -1177,9 +1215,9 @@ void pyro_lua_run_events(uint32_t budget_us) {
         uint32_t left = 0u;
         if (budget_us != 0u) {
             uint32_t spent = lua_plat_now_us() - start_us;
-            left = spent < budget_us ? budget_us - spent : 1u;
+            left = (spent < budget_us) ? (budget_us - spent) : 1u;
         }
-        pyro_lua_event(event_names[tail % EVENT_QUEUE_LEN], left);
+        (void)pyro_lua_event(event_names[tail % EVENT_QUEUE_LEN], left);
         atomic_store_explicit(&event_tail, tail + 1u, memory_order_release);
     }
 }

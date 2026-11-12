@@ -33,9 +33,12 @@ enum { FLOG_TAG_LUA, FLOG_TAG_MOCK, FLOG_TAG_ESTIMATOR, FLOG_TAG_LOG };
 
 typedef struct {
     const char *board;
-    const char *id, *name; /* up to 8 characters each */
-    uint8_t pyro1_mode, pyro2_mode;
-    uint16_t pyro1_value, pyro2_value;
+    const char *id;
+    const char *name; /* up to 8 characters each */
+    uint8_t pyro1_mode;
+    uint8_t pyro2_mode;
+    uint16_t pyro1_value;
+    uint16_t pyro2_value;
     uint8_t units;
     int32_t ground_pa;
     const char *estimator; /* up to 8 characters [SNS-EST-06] */
@@ -44,9 +47,13 @@ typedef struct {
 
 typedef struct {
     int32_t time_ms; /* from T+0: the pad's rows are before it [DAT-11] */
-    int32_t pressure_pa, altitude_cm, raw_pa;
+    int32_t pressure_pa;
+    int32_t altitude_cm;
+    int32_t raw_pa;
     int16_t temp_dc; /* tenths of a degree C */
-    uint8_t state, thrust, event;
+    uint8_t state;
+    uint8_t thrust;
+    uint8_t event;
 } flog_sample_t;
 
 /* Each returns the bytes written, or 0 when they do not fit in cap. */
@@ -66,13 +73,16 @@ typedef struct {
     flog_read_fn read;
     void *ctx;
     char line[FLOG_LINE_MAX];
-    int line_len, line_pos;
-    bool started, ended;
+    int line_len;
+    int line_pos;
+    bool started;
+    bool ended;
     uint8_t ahead[FLOG_RECORD_MAX]; /* read, not yet rendered */
     int ahead_len;
     uint32_t at;     /* the file's offset of ahead[0] */
     int32_t last_ms; /* the last record's time, for a damage row's */
-    uint32_t damaged_at, skipped;
+    uint32_t damaged_at;
+    uint32_t skipped;
 } flog_csv_t;
 
 void flog_csv_init(flog_csv_t *r, flog_read_fn read, void *ctx);

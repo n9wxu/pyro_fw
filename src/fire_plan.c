@@ -24,18 +24,19 @@ float fire_plan_units_to_m(uint16_t value, uint8_t units) {
 /* A configured 0 asks for the board's own default. */
 static uint32_t within_limits(uint16_t configured, uint16_t board_default, uint16_t min, uint16_t max, bool *limited) {
     *limited = false;
-    if (configured == 0)
+    if (configured == 0u) {
         return board_default;
-    if (configured < min || configured > max) {
+    }
+    if ((configured < min) || (configured > max)) {
         *limited = true;
-        return configured < min ? min : max;
+        return (configured < min) ? min : max;
     }
     return configured;
 }
 
 static void plan_channel(fire_plan_t *plan, int i, uint8_t mode, uint16_t value, uint16_t refire_speed, uint8_t units,
                          bool pads_owned) {
-    plan->enabled[i] = pads_owned && mode != PYRO_MODE_NONE;
+    plan->enabled[i] = pads_owned && (mode != (uint8_t)PYRO_MODE_NONE);
     plan->mode[i] = mode;
     plan->trigger_m[i] = fire_plan_units_to_m(value, units);
     plan->trigger_ms[i] = fire_plan_units_to_m(value, units);

@@ -18,8 +18,9 @@ static bool arm_pio_loaded;
 /* At boot: a PIO that is full fails there, not at a fire, and a fire in
  * flight loads and claims nothing [FLT-RT-02]. */
 void arm_pump_init(void) {
-    if (arm_pio_loaded)
+    if (arm_pio_loaded) {
         return;
+    }
     arm_offset = pio_add_program(ARM_PIO, &arm_pump_program);
     arm_sm = (uint)pio_claim_unused_sm(ARM_PIO, true);
     /* 125 MHz / (50 clocks per period / period_us * 1e6) */
@@ -32,13 +33,15 @@ void arm_pump_start(void) {
 }
 
 void arm_pump_feed(void) {
-    while (!pio_sm_is_tx_fifo_full(ARM_PIO, arm_sm))
+    while (!pio_sm_is_tx_fifo_full(ARM_PIO, arm_sm)) {
         pio_sm_put(ARM_PIO, arm_sm, ARM_PUMP_BURST - 1u); /* `jmp x--` runs x+1 cycles */
+    }
 }
 
 void arm_pump_stop(void) {
-    if (!arm_pio_loaded)
+    if (!arm_pio_loaded) {
         return;
+    }
     pio_sm_set_enabled(ARM_PIO, arm_sm, false);
     pio_sm_clear_fifos(ARM_PIO, arm_sm);
     /* Back to plain GPIO, low: nothing can toggle it. */

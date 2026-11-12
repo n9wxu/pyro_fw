@@ -23,8 +23,9 @@
  * longer than a period lands here. The watchdog bounds the lateness far
  * inside 32 bits. */
 static inline uint32_t loop_periods_skipped(uint64_t target_us, uint64_t now_us) {
-    if (now_us + LOOP_ARM_MIN_US <= target_us + LOOP_PERIOD_US)
+    if ((now_us + LOOP_ARM_MIN_US) <= (target_us + LOOP_PERIOD_US)) {
         return 0u;
+    }
     uint32_t late = (uint32_t)(now_us + LOOP_ARM_MIN_US - target_us);
     return (late - 1u) / LOOP_PERIOD_US;
 }

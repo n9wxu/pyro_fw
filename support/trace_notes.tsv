@@ -14,6 +14,8 @@ OTA-03	⚠️	Hardware only: an image that never commits is rolled back by the b
 OTA-04	⚠️	Hardware only: no scripted check
 LUA-SAFE-01	⚠️	The start-up gate is in `src/lua/lua_app.c`; a commanded restart now clears its mark (`lua_app_restart_commanded()`). Bench check owed: reboot within 15 s of start, script still runs
 LUA-RUN-01	⚠️	`lua_app_service()` is called every loop whatever the flight state, by inspection. Bench check owed: a script running through a bench flight and through ground test mode
+LUA-RUN-05	⚠️	`lua_app_service()` launches and `lua_app_dispatch()` asks for a tick only while `hal_fs_settled()`, by inspection. Bench check owed: a script on a 16 MB board through a file upload, no watchdog reset
+FLT-LOG-16	⚠️	`prepare_service()` in `src/hal_common/hal_common.c`, by inspection; the store's part in test_vfs_flash.c. Bench check: a board prepared on USB says OK to fly at once on battery, with no erase before landing
 SD-01	✅ HW	Hardware only, on MK1C-SD: the card pulled and refitted, the board on its internal storage meanwhile
 SD-02	✅ HW	Hardware only, on MK1C-SD: `/api/log/space` store `sd`, config and pages served from the card
 SYS-PWR-01	⚠️	No measurement. Battery sizing is the user's, by characterisation

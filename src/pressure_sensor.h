@@ -44,7 +44,8 @@ const char *pressure_sensor_name(void);
 #define DESIGN_CEILING_M 9144 /* 30,000 ft: above it the noise needs more filtering than apogee allows [DD-111] */
 
 typedef struct {
-    int32_t min_pa, max_pa;
+    int32_t min_pa;
+    int32_t max_pa;
     int32_t height_m;
 } pressure_sensor_range_t;
 
