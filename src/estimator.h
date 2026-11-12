@@ -44,7 +44,7 @@ void estimator_estimate(estimate_t *out);
 
 /* The whole of the estimator's state, so a caller can put it back as it
  * was [SNS-PRES-10]. */
-#define ESTIMATOR_STATE_MAX 192
+#define ESTIMATOR_STATE_MAX 192u
 void estimator_save(uint8_t to[ESTIMATOR_STATE_MAX]);
 void estimator_restore(const uint8_t from[ESTIMATOR_STATE_MAX]);
 

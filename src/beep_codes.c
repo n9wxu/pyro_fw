@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define X_ROW(name, key, desc) {key, desc},
+#define X_ROW(name, key, desc) {(key), (desc)},
 static const struct {
     const char *key;
     const char *desc;
@@ -18,17 +18,18 @@ static const struct {
 #undef X_ROW
 
 static const char *kind_names[] = {"silent", "chirp", "tone", "code"};
+static const size_t kind_count = sizeof(kind_names) / sizeof(kind_names[0]);
 
 const char *beep_codes_kind_name(beep_kind_t k) {
-    return (k >= 0 && k < (int)(sizeof(kind_names) / sizeof(kind_names[0]))) ? kind_names[k] : "silent";
+    return (((int)k >= 0) && ((size_t)k < kind_count)) ? kind_names[k] : "silent";
 }
 
 const char *beep_codes_key(beep_reason_t r) {
-    return (r >= 0 && r < BEEP_REASON_COUNT) ? rows[r].key : "";
+    return (((int)r >= 0) && ((int)r < (int)BEEP_REASON_COUNT)) ? rows[r].key : "";
 }
 
 const char *beep_codes_description(beep_reason_t r) {
-    return (r >= 0 && r < BEEP_REASON_COUNT) ? rows[r].desc : "";
+    return (((int)r >= 0) && ((int)r < (int)BEEP_REASON_COUNT)) ? rows[r].desc : "";
 }
 
 /* ── The shipped personality ──────────────────────────────────────
@@ -49,8 +50,8 @@ const char *beep_codes_description(beep_reason_t r) {
  * Eggtimer counts its codes with a high-low tone; a single-tone buzzer cannot,
  * so these are beep counts with a gap between repeats. */
 static void shipped(beep_personality_t *p, const char *name) {
-    memset(p, 0, sizeof(*p));
-    snprintf(p->name, sizeof(p->name), "%s", name);
+    (void)memset(p, 0, sizeof(*p));
+    (void)snprintf(p->name, sizeof(p->name), "%s", name);
 
     p->spec[BR_OK_TO_FLY] = (beep_spec_t){BK_CHIRP, 0, 0};
     p->spec[BR_CHECK_PYRO_1] = (beep_spec_t){BK_CODE, 5, 0};
@@ -62,7 +63,7 @@ static void shipped(beep_personality_t *p, const char *name) {
 }
 
 void beep_codes_defaults(beep_table_t *t) {
-    memset(t, 0, sizeof(*t));
+    (void)memset(t, 0, sizeof(*t));
     shipped(&t->p[0], "Default");
     shipped(&t->p[1], "Custom 1");
     shipped(&t->p[2], "Custom 2");
@@ -77,7 +78,7 @@ const beep_personality_t *beep_codes_active(const beep_table_t *t) {
      * selection of a wholly silent personality, and the board would say
      * nothing at all. It matters because a board beeps its self-test early,
      * and because the host tests build a context by hand. */
-    bool usable = t && t->active < BEEP_PERSONALITY_COUNT && t->p[t->active].name[0] != '\0';
+    bool usable = (t != NULL) && (t->active < (uint8_t)BEEP_PERSONALITY_COUNT) && (t->p[t->active].name[0] != '\0');
     if (!usable) {
         shipped(&fallback, "Default");
         return &fallback;
@@ -87,7 +88,7 @@ const beep_personality_t *beep_codes_active(const beep_table_t *t) {
 
 beep_spec_t beep_codes_spec(const beep_table_t *t, beep_reason_t r) {
     const beep_personality_t *p = beep_codes_active(t);
-    if (r < 0 || r >= BEEP_REASON_COUNT) {
+    if (((int)r < 0) || ((int)r >= (int)BEEP_REASON_COUNT)) {
         return p->spec[BR_GENERAL_FAULT];
     }
     return p->spec[r];
@@ -120,21 +121,22 @@ static bool spec_same(const beep_spec_t *a, const beep_spec_t *b) {
     if (a->kind != b->kind) {
         return false;
     }
-    if (a->kind != BK_CODE) {
+    if (a->kind != (uint8_t)BK_CODE) {
         return true; /* two chirps, two tones, two silences all sound alike */
     }
-    return a->d1 == b->d1 && a->d2 == b->d2;
+    return (a->d1 == b->d1) && (a->d2 == b->d2);
 }
 
 /* A beep count that cannot be heard or cannot be counted. Returns the
  * offending outcome, or -1. */
 static int find_bad_count(const beep_personality_t *p) {
-    for (int i = 0; i < BEEP_REASON_COUNT; i++) {
-        if (p->spec[i].kind != BK_CODE) {
+    for (int i = 0; i < (int)BEEP_REASON_COUNT; i++) {
+        if (p->spec[i].kind != (uint8_t)BK_CODE) {
             continue;
         }
-        uint8_t d1 = p->spec[i].d1, d2 = p->spec[i].d2;
-        if (d1 < BEEP_DIGIT_MIN || d1 > BEEP_DIGIT_MAX || d2 > BEEP_DIGIT_MAX) {
+        uint8_t d1 = p->spec[i].d1;
+        uint8_t d2 = p->spec[i].d2;
+        if ((d1 < (uint8_t)BEEP_DIGIT_MIN) || (d1 > (uint8_t)BEEP_DIGIT_MAX) || (d2 > (uint8_t)BEEP_DIGIT_MAX)) {
             return i;
         }
     }
@@ -146,12 +148,12 @@ static int find_bad_count(const beep_personality_t *p) {
  * -- an outcome deliberately muted is not a collision. Returns the later of
  * the pair, or -1. */
 static int find_duplicate(const beep_personality_t *p) {
-    for (int i = 0; i < BEEP_REASON_COUNT; i++) {
-        if (p->spec[i].kind == BK_SILENT) {
+    for (int i = 0; i < (int)BEEP_REASON_COUNT; i++) {
+        if (p->spec[i].kind == (uint8_t)BK_SILENT) {
             continue;
         }
-        for (int j = i + 1; j < BEEP_REASON_COUNT; j++) {
-            if (p->spec[j].kind == BK_SILENT) {
+        for (int j = i + 1; j < (int)BEEP_REASON_COUNT; j++) {
+            if (p->spec[j].kind == (uint8_t)BK_SILENT) {
                 continue;
             }
             if (spec_same(&p->spec[i], &p->spec[j])) {
@@ -164,8 +166,8 @@ static int find_duplicate(const beep_personality_t *p) {
 
 static int count_audible(const beep_personality_t *p) {
     int n = 0;
-    for (int i = 0; i < BEEP_REASON_COUNT; i++) {
-        if (p->spec[i].kind != BK_SILENT) {
+    for (int i = 0; i < (int)BEEP_REASON_COUNT; i++) {
+        if (p->spec[i].kind != (uint8_t)BK_SILENT) {
             n++;
         }
     }
@@ -187,7 +189,7 @@ static beep_verdict_t check_personality(const beep_personality_t *p, int idx) {
         v.what = beep_codes_strerror(v.err);
         return v;
     }
-    if (p->spec[BR_OK_TO_FLY].kind == BK_SILENT) {
+    if (p->spec[BR_OK_TO_FLY].kind == (uint8_t)BK_SILENT) {
         v.reason = BR_OK_TO_FLY;
         v.err = BEEP_ERR_OK_SILENT;
         v.what = beep_codes_strerror(v.err);
@@ -206,12 +208,12 @@ static beep_verdict_t check_personality(const beep_personality_t *p, int idx) {
 beep_verdict_t beep_codes_validate(const beep_table_t *t) {
     beep_verdict_t v = {BEEP_OK, -1, -1, "ok"};
 
-    if (t->active >= BEEP_PERSONALITY_COUNT) {
+    if (t->active >= (uint8_t)BEEP_PERSONALITY_COUNT) {
         v.err = BEEP_ERR_NO_ACTIVE;
         v.what = beep_codes_strerror(v.err);
         return v;
     }
-    for (int i = 0; i < BEEP_PERSONALITY_COUNT; i++) {
+    for (int i = 0; i < (int)BEEP_PERSONALITY_COUNT; i++) {
         v = check_personality(&t->p[i], i);
         if (v.err != BEEP_OK) {
             return v;
@@ -234,53 +236,58 @@ beep_verdict_t beep_codes_validate(const beep_table_t *t) {
  * A spec reads the way it sounds. "code:5" is five beeps; "code:2-2" is two
  * groups of two. The file is what an operator edits. */
 
-static bool parse_spec(const char *s, beep_spec_t *out) {
-    for (int k = 0; k < (int)(sizeof(kind_names) / sizeof(kind_names[0])); k++) {
+static bool parse_beep_spec(const char *s, beep_spec_t *out) {
+    for (int k = 0; (size_t)k < kind_count; k++) {
         if (strcmp(s, kind_names[k]) == 0) {
             out->kind = (uint8_t)k;
-            out->d1 = out->d2 = 0;
+            out->d1 = 0;
+            out->d2 = 0;
             return true;
         }
     }
     if (strncmp(s, "code:", 5) != 0) {
         return false;
     }
-    const char *d = s + 5;
-    if (d[0] < '0' || d[0] > '9') {
+    const char *d = &s[5];
+    if ((d[0] < '0') || (d[0] > '9')) {
         return false;
     }
-    out->kind = BK_CODE;
-    out->d1 = (uint8_t)(d[0] - '0');
+    out->kind = (uint8_t)BK_CODE;
+    int first = d[0] - '0';
+    out->d1 = (uint8_t)first;
     out->d2 = 0;
     if (d[1] == '\0') {
         return true;
     }
-    if (d[1] != '-' || d[2] < '0' || d[2] > '9' || d[3] != '\0') {
+    if ((d[1] != '-') || (d[2] < '0') || (d[2] > '9') || (d[3] != '\0')) {
         return false;
     }
-    out->d2 = (uint8_t)(d[2] - '0');
+    int second = d[2] - '0';
+    out->d2 = (uint8_t)second;
     return true;
 }
 
 static void spec_to_str(const beep_spec_t *sp, char *out, int max) {
-    if (sp->kind != BK_CODE) {
-        snprintf(out, (size_t)max, "%s", beep_codes_kind_name((beep_kind_t)sp->kind));
-    } else if (sp->d2 == 0) {
-        snprintf(out, (size_t)max, "code:%u", (unsigned)sp->d1);
+    if (sp->kind != (uint8_t)BK_CODE) {
+        (void)snprintf(out, (size_t)max, "%s", beep_codes_kind_name((beep_kind_t)sp->kind));
+    } else if (sp->d2 == 0u) {
+        (void)snprintf(out, (size_t)max, "code:%u", (unsigned)sp->d1);
     } else {
-        snprintf(out, (size_t)max, "code:%u-%u", (unsigned)sp->d1, (unsigned)sp->d2);
+        (void)snprintf(out, (size_t)max, "code:%u-%u", (unsigned)sp->d1, (unsigned)sp->d2);
     }
 }
 
 /* Decimal digits only, at most max; false leaves *out alone. */
 static bool parse_count(const char *s, unsigned long max, unsigned long *out) {
-    if (s[0] < '0' || s[0] > '9')
+    if ((s[0] < '0') || (s[0] > '9')) {
         return false;
+    }
     char *end;
     errno = 0;
     unsigned long v = strtoul(s, &end, 10);
-    if (*end != '\0' || errno == ERANGE || v > max)
+    if ((*end != '\0') || (errno == ERANGE) || (v > max)) {
         return false;
+    }
     *out = v;
     return true;
 }
@@ -291,27 +298,32 @@ static void apply_personality_field(beep_personality_t *p, const char *field, co
     unsigned long v;
     if (strcmp(field, "name") == 0) {
         /* An empty name reads as a table never loaded (beep_codes_active()). */
-        if (val[0])
-            snprintf(p->name, sizeof(p->name), "%s", val);
+        if (val[0] != '\0') {
+            (void)snprintf(p->name, sizeof(p->name), "%s", val);
+        }
         return;
     }
     if (strcmp(field, "gap") == 0) {
-        if (parse_count(val, UINT16_MAX, &v))
+        if (parse_count(val, (unsigned long)UINT16_MAX, &v)) {
             p->gap_ms = (uint16_t)v;
+        }
         return;
     }
     if (strcmp(field, "repeat") == 0) {
-        if (parse_count(val, UINT8_MAX, &v))
+        if (parse_count(val, (unsigned long)UINT8_MAX, &v)) {
             p->repeat = (uint8_t)v;
+        }
         return;
     }
     /* A table stored before the outcome was renamed [BUZ-CODE-04]. */
-    if (strcmp(field, "system_failure") == 0)
-        field = beep_codes_key(BR_GENERAL_FAULT);
-    for (int i = 0; i < BEEP_REASON_COUNT; i++) {
-        if (strcmp(field, rows[i].key) == 0) {
+    const char *outcome = field;
+    if (strcmp(field, "system_failure") == 0) {
+        outcome = beep_codes_key(BR_GENERAL_FAULT);
+    }
+    for (int i = 0; i < (int)BEEP_REASON_COUNT; i++) {
+        if (strcmp(outcome, rows[i].key) == 0) {
             beep_spec_t sp;
-            if (parse_spec(val, &sp)) {
+            if (parse_beep_spec(val, &sp)) {
                 p->spec[i] = sp;
             }
             return;
@@ -325,10 +337,13 @@ static void apply_pair(const char *key, const char *val, void *ctx) {
     beep_table_t *t = ctx;
     unsigned long a;
     if (strcmp(key, "active") == 0) {
-        if (parse_count(val, BEEP_PERSONALITY_COUNT - 1, &a))
+        if (parse_count(val, (unsigned long)BEEP_PERSONALITY_COUNT - 1u, &a)) {
             t->active = (uint8_t)a;
-    } else if (key[0] == 'p' && key[1] >= '0' && key[1] < ('0' + BEEP_PERSONALITY_COUNT) && key[2] == '_') {
-        apply_personality_field(&t->p[key[1] - '0'], key + 3, val);
+        }
+    } else if ((key[0] == 'p') && (key[1] >= '0') && (key[1] < ('0' + BEEP_PERSONALITY_COUNT)) && (key[2] == '_')) {
+        apply_personality_field(&t->p[key[1] - '0'], &key[3], val);
+    } else {
+        /* any other key is not a personality field */
     }
 }
 
@@ -343,21 +358,24 @@ int beep_codes_serialize_ini(const beep_table_t *t, char *buf, int max_len) {
  * written, so an unguarded pos += n runs past the buffer. */
 #define APPEND(fmt, ...)                                                                                               \
     do {                                                                                                               \
-        if (pos >= max_len)                                                                                            \
+        if (pos >= max_len) {                                                                                          \
             return -1;                                                                                                 \
-        int n = snprintf(buf + pos, (size_t)(max_len - pos), fmt, ##__VA_ARGS__);                                      \
-        if (n < 0 || n >= max_len - pos)                                                                               \
+        }                                                                                                              \
+        int room = max_len - pos;                                                                                      \
+        int n = snprintf(&buf[pos], (size_t)room, fmt, ##__VA_ARGS__);                                                 \
+        if ((n < 0) || (n >= room)) {                                                                                  \
             return -1;                                                                                                 \
+        }                                                                                                              \
         pos += n;                                                                                                      \
     } while (0)
 
     APPEND("[beeps]\r\nactive=%u\r\n", (unsigned)t->active);
-    for (int i = 0; i < BEEP_PERSONALITY_COUNT; i++) {
+    for (int i = 0; i < (int)BEEP_PERSONALITY_COUNT; i++) {
         const beep_personality_t *p = &t->p[i];
         APPEND("p%d_name=%s\r\n", i, p->name);
         APPEND("p%d_gap=%u\r\n", i, (unsigned)p->gap_ms);
         APPEND("p%d_repeat=%u\r\n", i, (unsigned)p->repeat);
-        for (int r = 0; r < BEEP_REASON_COUNT; r++) {
+        for (int r = 0; r < (int)BEEP_REASON_COUNT; r++) {
             char sv[16];
             spec_to_str(&p->spec[r], sv, (int)sizeof(sv));
             APPEND("p%d_%s=%s\r\n", i, rows[r].key, sv);

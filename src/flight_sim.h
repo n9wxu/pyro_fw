@@ -45,7 +45,8 @@ typedef struct {
     /* [SIM-04] A canopy that never opens: the drogue's leaves the rocket
      * falling at ballistic_ms to the main's height, the main's leaves it at
      * whatever it was falling at above. */
-    bool drogue_fails, main_fails;
+    bool drogue_fails;
+    bool main_fails;
     float ballistic_ms; /* 0: FSIM_BALLISTIC_MS */
 } fsim_params_t;
 
@@ -56,10 +57,15 @@ typedef enum { FSIM_PAD, FSIM_BOOST, FSIM_COAST, FSIM_DROGUE, FSIM_MAIN, FSIM_LA
 typedef struct {
     fsim_params_t p;
     float accel; /* boost, m/s^2 */
-    float h_burn, v_burn, t_burn, t_apogee;
+    float h_burn;
+    float v_burn;
+    float t_burn;
+    float t_apogee;
     air_t air; /* the pad's, as the board's heights take it [DD-114] */
     /* descent, stepped forward as time is asked for */
-    float t_desc, h_desc, v_desc;
+    float t_desc;
+    float h_desc;
+    float v_desc;
     fsim_phase_t phase;
     float t_landed;
 } fsim_t;

@@ -49,7 +49,7 @@ def newest_log(host):
     that still holds a flight_log.bin of its own serves that file under the
     name, not the newest (WEB-API-06)."""
     numbered = sorted(f["path"] for f in get(host, "/api/fs")["files"]
-                      if re.fullmatch(r"/flight_\d{4}\.bin", f["path"]))
+                      if re.fullmatch(r"/flight_\d{4}\.bin", f["path"]) and f["closed"])  # not the next one's reservation
     return numbered[-1] if numbered else "/flight_log.bin"
 
 

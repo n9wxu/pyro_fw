@@ -60,10 +60,15 @@ bool bench_flight_fired(uint8_t channel);
 bool bench_flight_firing(uint32_t now_ms);
 
 typedef struct {
-    bool flying, mocked;
+    bool flying;
+    bool mocked;
     fsim_params_t p;
     fsim_phase_t phase;
-    float t_s, alt_m, pa, ground_pa, peak_m;
+    float t_s;
+    float alt_m;
+    float pa;
+    float ground_pa;
+    float peak_m;
     float t_apogee_s; /* the profile's, from the start */
     uint32_t flights;
     uint32_t fires[2];

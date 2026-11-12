@@ -45,18 +45,21 @@ static void release_pad(uint8_t pad) {
 }
 
 BOARD_DEFAULT void board_buzzer_init(void) {
-    if (!buzzer_fitted())
+    if (!buzzer_fitted()) {
         return;
+    }
     gpio_init(buzzer_pad);
     gpio_set_dir(buzzer_pad, GPIO_OUT);
     gpio_put(buzzer_pad, 0);
 }
 
 BOARD_DEFAULT void board_buzzer_set_pin(uint8_t pin) {
-    if (pin == buzzer_pad)
+    if (pin == buzzer_pad) {
         return;
-    if (buzzer_fitted())
+    }
+    if (buzzer_fitted()) {
         release_pad(buzzer_pad);
+    }
     buzzer_pad = pin;
     board_buzzer_init();
 }
@@ -66,13 +69,15 @@ BOARD_DEFAULT uint8_t board_buzzer_pin(void) {
 }
 
 BOARD_DEFAULT void board_buzzer_on(void) {
-    if (buzzer_fitted())
+    if (buzzer_fitted()) {
         gpio_put(buzzer_pad, 1);
+    }
 }
 
 BOARD_DEFAULT void board_buzzer_off(void) {
-    if (buzzer_fitted())
+    if (buzzer_fitted()) {
         gpio_put(buzzer_pad, 0);
+    }
 }
 
 BOARD_DEFAULT bool board_pyro_raw(board_pyro_raw_t *out) {

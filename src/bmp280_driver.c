@@ -8,6 +8,7 @@
 #include "board_pins.h"
 #if BOARD_HAS_BMP280
 #include "bmp280_driver.h"
+#include "hal.h"
 #include "hardware/i2c.h"
 #include <stdio.h>
 
@@ -44,16 +45,18 @@ static bool bmp280_write_reg(uint8_t reg, uint8_t value) {
 }
 
 static bool bmp280_read_reg(uint8_t reg, uint8_t *data, size_t len) {
-    if (i2c_write_timeout_us(I2C_PORT, bmp280_addr, &reg, 1, true, bus_timeout_us(1)) != 1)
+    if (i2c_write_timeout_us(I2C_PORT, bmp280_addr, &reg, 1, true, bus_timeout_us(1)) != 1) {
         return false;
+    }
     return i2c_read_timeout_us(I2C_PORT, bmp280_addr, data, len, false, bus_timeout_us(len)) == (int)len;
 }
 
 static bool bmp280_read_calibration(void) {
     uint8_t calib[24];
 
-    if (!bmp280_read_reg(BMP280_REG_CALIB, calib, 24))
+    if (!bmp280_read_reg(BMP280_REG_CALIB, calib, 24)) {
         return false;
+    }
 
     dig_T1 = (calib[1] << 8) | calib[0];
     dig_T2 = (calib[3] << 8) | calib[2];
@@ -74,8 +77,6 @@ static bool bmp280_read_calibration(void) {
 uint8_t bmp280_address(void) {
     return bmp280_addr;
 }
-
-extern void hal_telemetry_send(const char *sentence);
 
 bool bmp280_detect(void) {
     char buf[64];
@@ -130,8 +131,9 @@ bool bmp280_compensate(const uint8_t data[BMP280_DATA_BYTES], bmp280_reading_t *
     var1_64 = ((var1_64 * var1_64 * (int64_t)dig_P3) >> 8) + ((var1_64 * (int64_t)dig_P2) << 12);
     var1_64 = (((((int64_t)1) << 47) + var1_64)) * ((int64_t)dig_P1) >> 33;
 
-    if (var1_64 == 0)
+    if (var1_64 == 0) {
         return false;
+    }
 
     int64_t p = 1048576 - adc_P;
     p = (((p << 31) - var2_64) * 3125) / var1_64;

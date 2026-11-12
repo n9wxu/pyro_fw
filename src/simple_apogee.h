@@ -18,12 +18,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define SIMPLE_MEDIAN_N 3
-#define SIMPLE_SPEED_N 5 /* heights 100 ms apart: a speed over 0.4 to 0.5 s */
+#define SIMPLE_MEDIAN_N 3u
+#define SIMPLE_SPEED_N 5u /* heights 100 ms apart: a speed over 0.4 to 0.5 s */
 
 typedef struct {
     float raw_m[SIMPLE_MEDIAN_N];
-    uint8_t raw_count, raw_next;
+    uint8_t raw_count;
+    uint8_t raw_next;
 
     float median_m;
     bool have_top;
@@ -35,7 +36,8 @@ typedef struct {
 
     float height_m[SIMPLE_SPEED_N];
     uint32_t height_ms[SIMPLE_SPEED_N];
-    uint8_t heights, height_next;
+    uint8_t heights;
+    uint8_t height_next;
     bool have_speed;
     float speed_ms; /* up is positive */
     bool slow;

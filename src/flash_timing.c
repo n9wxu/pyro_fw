@@ -25,17 +25,18 @@ typedef struct {
     flash_timing_t t;
 } part_t;
 
-static const part_t parts[] = {
-    {{0xEF, 0x40, 0x15}, {"W25Q16JV", 3000u, 400000u, 20u, 20u, true, true}},
-    {{0xEF, 0x40, 0x18}, {"W25Q128JV", 3000u, 400000u, 20u, 20u, true, true}},
-    {{0xEF, 0x70, 0x18}, {"W25Q128JV", 3000u, 400000u, 20u, 20u, true, true}},
-    {{0x0B, 0x40, 0x18}, {"XT25F128F", 2000u, 800000u, 20u, 500u, true, true}},
-    {{0x68, 0x40, 0x17}, {"BY25Q64ES", 2400u, 400000u, 35u, 20u, false, false}},
-};
-
 const flash_timing_t *flash_timing_for(const uint8_t jedec[3]) {
-    for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); i++)
-        if (parts[i].jedec[0] == jedec[0] && parts[i].jedec[1] == jedec[1] && parts[i].jedec[2] == jedec[2])
+    static const part_t parts[] = {
+        {{0xEF, 0x40, 0x15}, {"W25Q16JV", 3000u, 400000u, 20u, 20u, true, true}},
+        {{0xEF, 0x40, 0x18}, {"W25Q128JV", 3000u, 400000u, 20u, 20u, true, true}},
+        {{0xEF, 0x70, 0x18}, {"W25Q128JV", 3000u, 400000u, 20u, 20u, true, true}},
+        {{0x0B, 0x40, 0x18}, {"XT25F128F", 2000u, 800000u, 20u, 500u, true, true}},
+        {{0x68, 0x40, 0x17}, {"BY25Q64ES", 2400u, 400000u, 35u, 20u, false, false}},
+    };
+    for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); i++) {
+        if ((parts[i].jedec[0] == jedec[0]) && (parts[i].jedec[1] == jedec[1]) && (parts[i].jedec[2] == jedec[2])) {
             return &parts[i].t;
+        }
+    }
     return NULL;
 }

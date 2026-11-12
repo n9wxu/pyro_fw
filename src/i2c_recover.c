@@ -33,7 +33,7 @@ static void od_init(uint8_t pin) {
 
 void i2c_recover_begin(i2c_recover_t *r, uint8_t scl, const uint8_t *sda, uint8_t n_sda) {
     r->scl = scl;
-    r->n_sda = n_sda > I2C_RECOVER_MAX_SDA ? I2C_RECOVER_MAX_SDA : n_sda;
+    r->n_sda = (n_sda > (uint8_t)I2C_RECOVER_MAX_SDA) ? (uint8_t)I2C_RECOVER_MAX_SDA : n_sda;
     for (uint8_t i = 0; i < r->n_sda; i++) {
         r->sda[i] = sda[i];
         od_init(sda[i]);
@@ -43,23 +43,27 @@ void i2c_recover_begin(i2c_recover_t *r, uint8_t scl, const uint8_t *sda, uint8_
 }
 
 bool i2c_recover_step(i2c_recover_t *r) {
-    uint8_t s = ++r->step;
+    r->step++;
+    uint8_t s = r->step;
     if (s <= CLOCK_EDGES) {
-        if (s & 1u)
+        if ((s & 1u) != 0u) {
             od_low(r->scl);
-        else
+        } else {
             od_release(r->scl);
+        }
         return false;
     }
     if (s == STEP_SDA_LOW) {
         /* With SCL high, so that letting SDA go is a STOP. */
-        for (uint8_t i = 0; i < r->n_sda; i++)
+        for (uint8_t i = 0; i < r->n_sda; i++) {
             od_low(r->sda[i]);
+        }
         return false;
     }
     if (s == STEP_STOP) {
-        for (uint8_t i = 0; i < r->n_sda; i++)
+        for (uint8_t i = 0; i < r->n_sda; i++) {
             od_release(r->sda[i]);
+        }
         return false;
     }
     r->step = STEP_DONE;

@@ -92,17 +92,31 @@ typedef struct __attribute__((packed)) {
 } hr_flight_t;
 
 typedef struct {
-    bool logging, preparing, prepared, imu_ok, card;
+    bool logging;
+    bool preparing;
+    bool prepared;
+    bool imu_ok;
+    bool card;
     uint32_t odr_hz;
     char file[20];
     uint32_t file_bytes;     /* this file so far */
     uint32_t expanded_bytes; /* preallocated */
-    uint32_t ring_used, ring_max;
-    uint32_t dropped_records, dropped_bytes; /* the ring was full */
-    uint32_t imu_sets, imu_reads, imu_overruns, imu_backlog_max, imu_read_fails;
-    uint32_t pres_records, flight_records;
-    uint32_t writes, write_max_us, write_errors;
-    uint32_t syncs, sync_max_us;
+    uint32_t ring_used;
+    uint32_t ring_max;
+    uint32_t dropped_records;
+    uint32_t dropped_bytes; /* the ring was full */
+    uint32_t imu_sets;
+    uint32_t imu_reads;
+    uint32_t imu_overruns;
+    uint32_t imu_backlog_max;
+    uint32_t imu_read_fails;
+    uint32_t pres_records;
+    uint32_t flight_records;
+    uint32_t writes;
+    uint32_t write_max_us;
+    uint32_t write_errors;
+    uint32_t syncs;
+    uint32_t sync_max_us;
     uint32_t prepare_us;  /* the last create and f_expand */
     uint32_t logs;        /* files closed since boot */
     uint32_t reopens;     /* files given up: the card remounted under one, or

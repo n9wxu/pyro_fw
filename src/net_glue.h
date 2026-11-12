@@ -11,9 +11,12 @@
 #include <stdint.h>
 
 typedef struct {
-    uint32_t rx_frames, rx_drops;
-    uint32_t tx_sent, tx_held, tx_refused; /* held: waited for the endpoint (net_txq.h) */
-    uint32_t usb[4];                       /* mounts, unmounts, suspends, resumes */
+    uint32_t rx_frames;
+    uint32_t rx_drops;
+    uint32_t tx_sent;
+    uint32_t tx_held; /* held: waited for the endpoint (net_txq.h) */
+    uint32_t tx_refused;
+    uint32_t usb[4]; /* mounts, unmounts, suspends, resumes */
 } net_link_counts_t;
 
 /* Before tud_init(): the MAC goes into the ECM descriptor, which the host

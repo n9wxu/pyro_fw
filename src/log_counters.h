@@ -31,8 +31,8 @@
     X(LOG_CNT_FLIGHT_REFUSALS, "fref", LOG_CNT_ON_CHANGE) /* flight_refusals */                                        \
     X(LOG_CNT_SUSPENDS, "susp", LOG_CNT_AT_ENDS)          /* suspends */                                               \
     X(LOG_CNT_WAITS, "wait", LOG_CNT_AT_ENDS)             /* waits */                                                  \
-    X(LOG_CNT_OVERRUNS, "ovr", LOG_CNT_ON_CHANGE)         /* loop_overruns */                                          \
-    X(LOG_CNT_OVERRUNS_GROUND, "ovrg", LOG_CNT_ON_CHANGE) /* loop_overruns_ground */                                   \
+    X(LOG_CNT_OVERRUNS, "ovr", LOG_CNT_ON_CHANGE)         /* main_loop_overruns */                                     \
+    X(LOG_CNT_OVERRUNS_GROUND, "ovrg", LOG_CNT_ON_CHANGE) /* main_loop_overruns_ground */                              \
     X(LOG_CNT_WRITER_OVERRUNS, "wovr", LOG_CNT_ON_CHANGE) /* writer_overruns */                                        \
     X(LOG_CNT_LUA_SKIPPED, "lskip", LOG_CNT_ON_CHANGE)    /* lua_skipped */                                            \
     X(LOG_CNT_PRES_REJECTS, "prej", LOG_CNT_ON_CHANGE)    /* pres_rejects */                                           \

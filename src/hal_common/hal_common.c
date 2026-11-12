@@ -65,6 +65,9 @@
 #include "ground_test_switch.h"
 #include "pressure_trace.h"
 #include "loop_period.h"
+#include "loop_stats.h"
+#include "reset_interface.h"
+#include "hal_pressure_stats.h"
 #if PYRO_HAS_BENCH_FLIGHT
 #include "bench_flight.h"
 #endif
@@ -97,7 +100,8 @@ typedef struct {
  * docs/ground_test_on_buzzer_pad.md, option A. */
 static struct {
     gt_switch_t sw;
-    uint8_t pin, drive;
+    uint8_t pin;
+    uint8_t drive;
     bool on;
     bool drive_is_the_buzzers;
 } gts;
@@ -117,21 +121,24 @@ static bool read_under_a_pulse(bool test_level) {
 static void gts_step(void) {
     bool read = gts.drive_is_the_buzzers ? read_under_a_pulse(gts.sw.drive_high) : gpio_get(gts.pin);
     gt_switch_out_t o = gt_switch_step(&gts.sw, read);
-    if (!gts.sw.pair)
+    if (!gts.sw.pair) {
         return;
-    if (!gts.drive_is_the_buzzers)
+    }
+    if (!gts.drive_is_the_buzzers) {
         gpio_put(gts.drive, o.drive_high);
+    }
     gpio_set_pulls(gts.pin, o.pull_up, !o.pull_up);
 }
 
 void hal_ground_test_configure(uint8_t wiring, uint8_t pin, uint8_t drive_pin) {
-    if (wiring == GT_WIRING_NONE || pin >= NUM_BANK0_GPIOS)
+    if ((wiring == GT_WIRING_NONE) || (pin >= NUM_BANK0_GPIOS)) {
         return;
-    bool pair = wiring == GT_WIRING_PAIR && drive_pin < NUM_BANK0_GPIOS;
+    }
+    bool pair = (wiring == GT_WIRING_PAIR) && (drive_pin < NUM_BANK0_GPIOS);
     gpio_init(pin);
     gpio_set_dir(pin, GPIO_IN);
     gpio_set_pulls(pin, true, false);
-    gts.drive_is_the_buzzers = pair && drive_pin == board_buzzer_pin();
+    gts.drive_is_the_buzzers = pair && (drive_pin == board_buzzer_pin());
     if (pair && !gts.drive_is_the_buzzers) {
         gpio_init(drive_pin);
         gpio_set_dir(drive_pin, GPIO_OUT);
@@ -159,12 +166,14 @@ typedef struct {
     int sensor_type;      /* 1=MS5607  2=BMP280 */
     ms5607_temps_t temps; /* MS5607: the temperature, carried to each pressure [DD-093] */
 
-    /* Latest sample for hal_pressure_read() bridge (transparent mode). */
+    /* Latest sample. */
     hal_pressure_t last;
     bool has_last;
 
     uint64_t last_stamp_us; /* the previous sample's time, for the interval */
-    uint32_t interval_min_us, interval_max_us, stamp_lag_max_us;
+    uint32_t interval_min_us;
+    uint32_t interval_max_us;
+    uint32_t stamp_lag_max_us;
     uint32_t flashed;  /* [DD-106] readings a flash operation ran beside, used like any other */
     uint32_t cycle_us; /* the collector's, when nothing fails */
 } pres_task_t;
@@ -188,7 +197,7 @@ uint32_t hal_pressure_interval_min_us(void) {
 /* Pressure samples a second, and so the full log rate [DD-062]: the
  * collector's own, rounded up [DD-093]. 0 before bring-up. */
 uint32_t hal_pressure_rate_hz(void) {
-    return pres.cycle_us ? (1000000u + pres.cycle_us - 1u) / pres.cycle_us : 0u;
+    return (pres.cycle_us != 0u) ? ((1000000u + pres.cycle_us - 1u) / pres.cycle_us) : 0u;
 }
 uint32_t hal_pressure_interval_max_us(void) {
     return pres.interval_max_us;
@@ -208,7 +217,7 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
     const pressure_reading_t *r = &rb;
 #if PYRO_HAS_BENCH_FLIGHT
     /* [SIM-02] After the trace took the sensor's reading. */
-    bench_flight_pressure(rb.time_us, flight_get_state() == LANDED, &rb.pressure_pa);
+    (void)bench_flight_pressure(rb.time_us, flight_get_state() == LANDED, &rb.pressure_pa);
 #endif
     uint64_t stamp_us = r->time_us;
     p->last.pressure_pa = r->pressure_pa;
@@ -217,14 +226,17 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
 
     uint64_t read_us = time_us_64();
     uint32_t lag = (uint32_t)(read_us - stamp_us);
-    if (lag > p->stamp_lag_max_us)
+    if (lag > p->stamp_lag_max_us) {
         p->stamp_lag_max_us = lag;
-    if (p->last_stamp_us != 0) {
+    }
+    if (p->last_stamp_us != 0u) {
         uint32_t iv = (uint32_t)(stamp_us - p->last_stamp_us);
-        if (p->interval_min_us == 0 || iv < p->interval_min_us)
+        if ((p->interval_min_us == 0u) || (iv < p->interval_min_us)) {
             p->interval_min_us = iv;
-        if (iv > p->interval_max_us)
+        }
+        if (iv > p->interval_max_us) {
             p->interval_max_us = iv;
+        }
     }
     p->last_stamp_us = stamp_us;
 
@@ -247,23 +259,25 @@ static void pres_append(pres_task_t *p, const pressure_reading_t *r_in) {
  * [DD-106] A conversion a flash operation ran beside is counted. */
 static void take_ms5607(pres_task_t *p, const collector_raw_t *raw, uint32_t read_us) {
     ms5607_pair_t codes = ms5607_cycle(&p->temps, raw);
-    bool d1_flashed = raw->flashed[MS5607_PRESSURE], d2_flashed = raw->flashed[MS5607_TEMPERATURE];
+    bool d1_flashed = raw->flashed[MS5607_PRESSURE];
+    bool d2_flashed = raw->flashed[MS5607_TEMPERATURE];
     ptrace_note((uint32_t)raw->at_us[MS5607_TEMPERATURE], read_us, ms5607_code(raw->data[MS5607_TEMPERATURE]), 0, 0,
                 d2_flashed ? PTRACE_FLASHED_T : PTRACE_TEMPERATURE);
     pressure_reading_t r;
-    ms5607_compensate(codes.d1, codes.d2, &r);
+    (void)ms5607_compensate(codes.d1, codes.d2, &r);
     r.time_us = raw->at_us[MS5607_PRESSURE];
     ptrace_note((uint32_t)r.time_us, read_us, codes.d1, 0, (int32_t)lroundf(r.pressure_pa * 100.0f),
                 d1_flashed ? PTRACE_FLASHED : PTRACE_PRESSURE);
-    p->flashed += (uint32_t)d1_flashed + (uint32_t)d2_flashed;
+    p->flashed += (d1_flashed ? 1u : 0u) + (d2_flashed ? 1u : 0u);
     pres_append(p, &r);
 }
 
 #if BOARD_HAS_BMP280
 static void take_bmp280(pres_task_t *p, const collector_raw_t *raw, uint32_t read_us) {
     bmp280_reading_t r;
-    if (!bmp280_compensate(raw->data[0], &r))
+    if (!bmp280_compensate(raw->data[0], &r)) {
         return;
+    }
     r.reading.time_us = raw->at_us[0];
     ptrace_note((uint32_t)r.reading.time_us, read_us, r.adc_p, r.adc_t,
                 (int32_t)lroundf(r.reading.pressure_pa * 100.0f), raw->flashed[0] ? PTRACE_FLASHED : PTRACE_PRESSURE);
@@ -277,11 +291,13 @@ static void pres_run(pres_task_t *p) {
     collector_raw_t raw;
     while (collector_take(&raw)) {
         uint32_t read_us = (uint32_t)time_us_64();
-        if (p->sensor_type == PRESSURE_SENSOR_MS5607)
+        if (p->sensor_type == (int)PRESSURE_SENSOR_MS5607) {
             take_ms5607(p, &raw, read_us);
+        }
 #if BOARD_HAS_BMP280
-        else
+        else {
             take_bmp280(p, &raw, read_us);
+        }
 #endif
     }
 }
@@ -302,10 +318,10 @@ reset_cause_t hal_reset_cause(void) {
         return RESET_SOFTWARE;
     }
     uint32_t r = vreg_and_chip_reset_hw->chip_reset;
-    if (r & VREG_AND_CHIP_RESET_CHIP_RESET_HAD_RUN_BITS) {
+    if ((r & VREG_AND_CHIP_RESET_CHIP_RESET_HAD_RUN_BITS) != 0u) {
         return RESET_RUN_PIN;
     }
-    if (r & VREG_AND_CHIP_RESET_CHIP_RESET_HAD_PSM_RESTART_BITS) {
+    if ((r & VREG_AND_CHIP_RESET_CHIP_RESET_HAD_PSM_RESTART_BITS) != 0u) {
         return RESET_DEBUG;
     }
     /* HAD_POR, or none of them: treat an unreadable cause as a power event,
@@ -323,34 +339,24 @@ static int hw_sensor_type = -1;
  * MS5607 every loop. */
 static void __attribute__((noinline)) pres_bringup_step(uint32_t now_ms) {
     pressure_sensor_type_t t = pressure_sensor_step(now_ms);
-    if (t == PRESSURE_SENSOR_PENDING)
+    if (t == PRESSURE_SENSOR_PENDING) {
         return;
+    }
     hw_sensor_type = (int)t;
-    if (t == PRESSURE_SENSOR_NONE || !hal_pressure_fifo_start())
+    if ((t == PRESSURE_SENSOR_NONE) || !hal_pressure_fifo_start()) {
         pres.phase = PRES_OFF;
+    }
 }
 
 void hal_pressure_init(void) {
     hw_sensor_type = -1;
     pressure_sensor_begin();
-    memset(&pres, 0, sizeof(pres));
+    (void)memset(&pres, 0, sizeof(pres));
     pres.phase = PRES_BRINGUP;
 }
 
 int hal_pressure_sensor(void) {
     return hw_sensor_type;
-}
-
-/* Returns the most recent async sample.  In the v2 architecture all
- * pressure reads come from the async task — there is no synchronous
- * fallback.  Returns false when the async task hasn't produced a
- * sample yet (the MS5607's first pressure waits on its first temperature). */
-bool hal_pressure_read(hal_pressure_t *out) {
-    if (pres.has_last) {
-        *out = pres.last;
-        return true;
-    }
-    return false;
 }
 
 /* ── Pressure FIFO (v2 async batch API) ───────────────────────────── */
@@ -367,15 +373,16 @@ bool hal_pressure_read(hal_pressure_t *out) {
 
 static const collector_part_t *collector_part_of(int sensor_type) {
 #if BOARD_HAS_BMP280
-    if (sensor_type == PRESSURE_SENSOR_BMP280)
+    if (sensor_type == PRESSURE_SENSOR_BMP280) {
         return &BMP280_PART;
+    }
 #endif
     (void)sensor_type;
     return &MS5607_PART;
 }
 
 static collector_wiring_t collector_wiring_of(int sensor_type) {
-    collector_wiring_t w = {.i2c = BOARD_I2C_INST == i2c0 ? 0u : 1u, .scl_pin = BOARD_PIN_I2C_SCL};
+    collector_wiring_t w = {.i2c = (BOARD_I2C_INST == i2c0) ? 0u : 1u, .scl_pin = BOARD_PIN_I2C_SCL};
 #if BOARD_HAS_BMP280
     if (sensor_type == PRESSURE_SENSOR_BMP280) {
         w.address = bmp280_address();
@@ -394,9 +401,10 @@ static collector_wiring_t collector_wiring_of(int sensor_type) {
 }
 
 static bool hal_pressure_fifo_start(void) {
-    if (hw_sensor_type <= 0)
+    if (hw_sensor_type <= 0) {
         return false;
-    memset(&pres, 0, sizeof(pres));
+    }
+    (void)memset(&pres, 0, sizeof(pres));
     pres.phase = PRES_RUNNING;
     pres.sensor_type = hw_sensor_type;
     const collector_part_t *part = collector_part_of(pres.sensor_type);
@@ -407,10 +415,6 @@ static bool hal_pressure_fifo_start(void) {
     }
     pres.cycle_us = collector_cycle_us(part, &wiring);
     return true;
-}
-
-bool hal_pressure_fifo_active(void) {
-    return pres.phase == PRES_RUNNING;
 }
 
 /* ── Pyro ─────────────────────────────────────────────────────────── */
@@ -450,10 +454,10 @@ static void bench_fire(uint8_t channel) {
     bench_flight_fire(channel, now);
     const flight_context_t *fc = flight_get_context();
     char note[40];
-    small_snprintf(note, sizeof(note), "pyro%u fire: bench flight", (unsigned)channel);
-    hal_log_mock(fc ? flight_elapsed_ms(fc, now) : now, note);
+    (void)small_snprintf(note, sizeof(note), "pyro%u fire: bench flight", (unsigned)channel);
+    (void)hal_log_mock((fc != NULL) ? flight_elapsed_ms(fc, now) : now, note);
     char line[56];
-    small_snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
+    (void)small_snprintf(line, sizeof(line), "!MOCK %s\r\n", note);
     hal_telemetry_send(line);
 }
 #endif
@@ -490,15 +494,17 @@ void hal_pyro_update(uint32_t now_ms) {
 }
 bool hal_pyro_is_firing(void) {
 #if PYRO_HAS_BENCH_FLIGHT
-    if (bench_flight_mocked())
+    if (bench_flight_mocked()) {
         return bench_flight_firing(to_ms_since_boot(get_absolute_time()));
+    }
 #endif
     return pyro_is_firing();
 }
 bool hal_pyro_fault(uint8_t channel) {
 #if PYRO_HAS_BENCH_FLIGHT
-    if (bench_flight_mocked())
+    if (bench_flight_mocked()) {
         return false;
+    }
 #endif
     return pyro_fault(channel);
 }
@@ -513,14 +519,17 @@ bool hal_fires_mocked(void) {
 
 /* The flight path's code and constants, where flight_ram_link.py's linker
  * script gathers them inside .data; __etext is where .data loads from. */
-extern const uint8_t __flight_ram_start__[], __flight_ram_end__[], __data_start__[], __etext[];
+extern const uint8_t __flight_ram_start__[];
+extern const uint8_t __flight_ram_end__[];
+extern const uint8_t __data_start__[];
+extern const uint8_t __etext[];
 #define RAM_CHECK_PIECE 512u /* a sweep of 40 KB in under a second of loops */
 
 bool hal_flight_code_intact(void) {
     static ram_check_t check;
-    const uint8_t *image = __etext + (__flight_ram_start__ - __data_start__);
-    return ram_check_step(&check, __flight_ram_start__, image, (uint32_t)(__flight_ram_end__ - __flight_ram_start__),
-                          RAM_CHECK_PIECE);
+    const uint8_t *image = &__etext[__flight_ram_start__ - __data_start__];
+    ptrdiff_t span = __flight_ram_end__ - __flight_ram_start__;
+    return ram_check_step(&check, __flight_ram_start__, image, (uint32_t)span, RAM_CHECK_PIECE);
 }
 
 void hal_pyro_limits(hal_pyro_limits_t *out) {
@@ -544,12 +553,16 @@ void hal_buzzer_tone_off(void) {
  * is written here [FLT-RT-07]. */
 void hal_tasks_tick(uint32_t now_ms) {
     buzzer_service(now_ms);
-    if (pres.phase == PRES_RUNNING)
+    if (pres.phase == PRES_RUNNING) {
         pres_run(&pres);
-    else if (pres.phase == PRES_BRINGUP)
+    } else if (pres.phase == PRES_BRINGUP) {
         pres_bringup_step(now_ms);
-    if (gts.on)
+    } else {
+        /* PRES_OFF: no sensor to run */
+    }
+    if (gts.on) {
         gts_step();
+    }
 }
 
 /* ── UART TX ring buffer (v2-10) ──────────────────────────────────── */
@@ -568,8 +581,9 @@ void hal_tasks_tick(uint32_t now_ms) {
  * the TX ISR does not make a cross-module call on every byte. */
 static uart_inst_t *s_uart;
 static inline uart_inst_t *tuart(void) {
-    if (!s_uart)
+    if (!s_uart) {
         s_uart = board_uart();
+    }
     return s_uart;
 }
 
@@ -580,19 +594,21 @@ static volatile int uart_tx_tail = 0;
 static void uart_tx_drain_isr(void) {
     while (uart_is_writable(tuart())) {
         int t = uart_tx_tail;
-        if (t == uart_tx_head)
+        if (t == uart_tx_head) {
             break;
+        }
         uart_get_hw(tuart())->dr = uart_tx_buf[t];
         uart_tx_tail = (t + 1) & UART_TX_BUF_MASK;
     }
-    if (uart_tx_tail == uart_tx_head)
+    if (uart_tx_tail == uart_tx_head) {
         hw_clear_bits(&uart_get_hw(tuart())->imsc, UART_UARTIMSC_TXIM_BITS);
+    }
 }
 
 static spin_lock_t *uart_tx_lock;
 
 static void telem_uart_irq_handler(void) {
-    if (uart_get_hw(tuart())->mis & UART_UARTMIS_TXMIS_BITS) {
+    if ((uart_get_hw(tuart())->mis & UART_UARTMIS_TXMIS_BITS) != 0u) {
         uint32_t irq = spin_lock_blocking(uart_tx_lock);
         uart_tx_drain_isr();
         spin_unlock(uart_tx_lock, irq);
@@ -614,32 +630,35 @@ static void uart_tx_ring_init(void) {
 /* ── Telemetry ────────────────────────────────────────────────────── */
 
 void hal_telemetry_send(const char *sentence) {
-    if (!sentence || !uart_tx_lock)
+    if (!sentence || !uart_tx_lock) {
         return;
+    }
     uint32_t irq = spin_lock_blocking(uart_tx_lock);
 
     /* Check if ring was empty before adding new data */
     bool was_empty = (uart_tx_head == uart_tx_tail);
 
-    for (const char *p = sentence; *p; p++) {
+    for (const char *p = sentence; *p != '\0'; p++) {
         int next = (uart_tx_head + 1) & UART_TX_BUF_MASK;
-        if (next == uart_tx_tail)
+        if (next == uart_tx_tail) {
             break; /* ring full — drop */
+        }
         uart_tx_buf[uart_tx_head] = (uint8_t)*p;
         uart_tx_head = next;
     }
 
     /* If ring was empty, manually prime the UART FIFO to trigger first interrupt */
-    if (was_empty && uart_tx_head != uart_tx_tail) {
-        while (uart_is_writable(tuart()) && uart_tx_tail != uart_tx_head) {
+    if (was_empty && (uart_tx_head != uart_tx_tail)) {
+        while (uart_is_writable(tuart()) && (uart_tx_tail != uart_tx_head)) {
             uart_get_hw(tuart())->dr = uart_tx_buf[uart_tx_tail];
             uart_tx_tail = (uart_tx_tail + 1) & UART_TX_BUF_MASK;
         }
     }
 
     /* Enable TX interrupt to continue draining ring buffer */
-    if (uart_tx_head != uart_tx_tail)
+    if (uart_tx_head != uart_tx_tail) {
         hw_set_bits(&uart_get_hw(tuart())->imsc, UART_UARTIMSC_TXIM_BITS);
+    }
     spin_unlock(uart_tx_lock, irq);
 }
 
@@ -656,15 +675,17 @@ bool hal_fs_locked(void) {
 }
 
 int hal_fs_enter(void) {
-    if (hal_fs_locked())
+    if (hal_fs_locked()) {
         return HAL_FS_LOCKED;
+    }
     fs_borrowed++;
     return 0;
 }
 
 void hal_fs_leave(void) {
-    if (fs_borrowed > 0)
+    if (fs_borrowed > 0) {
         fs_borrowed--;
+    }
 }
 
 bool hal_fs_healthy(void) {
@@ -676,7 +697,6 @@ bool hal_fs_healthy(void) {
  * open-read-close. Never the flight task's. */
 static uint8_t whole_buf[VFS_BUF_SIZE];
 static SemaphoreHandle_t whole_mutex;
-static StaticSemaphore_t whole_mutex_buf;
 
 /* Once, at boot, before the scheduler. The locks are made here, while one
  * thread runs, so no task can race their creation. A blank area mounts with
@@ -684,17 +704,22 @@ static StaticSemaphore_t whole_mutex_buf;
 static void logs_scan(void);
 
 int hal_fs_mount(void) {
-    if (!whole_mutex)
+    static StaticSemaphore_t whole_mutex_buf;
+    if (!whole_mutex) {
         whole_mutex = xSemaphoreCreateMutexStatic(&whole_mutex_buf);
+    }
     fs_lock_init();
-    if (board_selftest_flash_too_small())
+    if (board_selftest_flash_too_small()) {
         return -1; /* its cleanup would erase past the chip's end, into the bootloader [FLT-BOOT-19] */
-    if (fs_ok)
+    }
+    if (fs_ok) {
         return 0;
+    }
     int err = vfs_mount(true);
     fs_ok = (err == 0);
-    if (fs_ok)
+    if (fs_ok) {
         logs_scan();
+    }
     return err;
 }
 
@@ -703,42 +728,48 @@ void hal_fs_unmount(void) {
 }
 
 static bool whole_take(void) {
-    if (!rtos_running())
+    if (!rtos_running()) {
         return true;
-    if (rtos_in_flight_task() || !whole_mutex)
+    }
+    if (rtos_in_flight_task() || !whole_mutex) {
         return false;
+    }
     return xSemaphoreTake(whole_mutex, pdMS_TO_TICKS(5000)) == pdTRUE;
 }
 
 static void whole_give(void) {
-    if (rtos_running() && whole_mutex)
-        xSemaphoreGive(whole_mutex);
+    if (rtos_running() && whole_mutex) {
+        (void)xSemaphoreGive(whole_mutex);
+    }
 }
 
 static int read_vfs(const char *path, char *buf, int max_len) {
     vfs_file_t f;
     int err = vfs_open(&f, path, VFS_RD, whole_buf);
-    if (err < 0)
+    if (err < 0) {
         return err;
+    }
     int n = vfs_read(&f, buf, (uint32_t)max_len);
-    vfs_close(&f);
+    (void)vfs_close(&f);
     return n;
 }
 
 static int read_file(const char *path, char *buf, int max_len) {
-    if (!whole_take())
+    if (!whole_take()) {
         return -1;
+    }
     /* Before hal_fs_mount(), board_identity_init() reads /serial.txt through
      * a mount that cannot write. */
-    int n = (fs_ok || vfs_mount(false) == 0) ? read_vfs(path, buf, max_len) : -1;
+    int n = (fs_ok || (vfs_mount(false) == 0)) ? read_vfs(path, buf, max_len) : -1;
     whole_give();
     return n;
 }
 
 int hal_fs_read_file(const char *path, char *buf, int max_len) {
     int err = hal_fs_enter();
-    if (err != 0)
+    if (err != 0) {
         return err;
+    }
     int n = read_file(path, buf, max_len);
     hal_fs_leave();
     return n;
@@ -763,79 +794,93 @@ typedef struct {
 static cached_file_t cached[] = {{PAD_RECORD_PATH, 0, -2, {0}}};
 
 static cached_file_t *cached_find(const char *path) {
-    for (unsigned i = 0; i < sizeof(cached) / sizeof(cached[0]); i++)
-        if (strcmp(cached[i].path, path) == 0)
+    for (unsigned i = 0; i < (sizeof(cached) / sizeof(cached[0])); i++) {
+        if (strcmp(cached[i].path, path) == 0) {
             return &cached[i];
+        }
+    }
     return NULL;
 }
 
 static void cached_store(cached_file_t *c, const char *data, int len) {
+    int kept = len;
     c->seq++;
     __dmb();
-    if (len > CACHED_MAX)
-        len = CACHED_MAX;
-    if (len > 0)
-        memcpy(c->data, data, (size_t)len);
-    c->len = len;
+    if (kept > CACHED_MAX) {
+        kept = CACHED_MAX;
+    }
+    if (kept > 0) {
+        (void)memcpy(c->data, data, (size_t)kept);
+    }
+    c->len = kept;
     __dmb();
     c->seq++;
 }
 
 int hal_fs_read_cached(const char *path, char *buf, int max_len) {
     cached_file_t *c = cached_find(path);
-    if (!c)
+    if (!c) {
         return -1;
+    }
     for (int tries = 0; tries < 4; tries++) {
         uint32_t s = c->seq;
-        if (s & 1u)
+        if ((s & 1u) != 0u) {
             continue;
+        }
         __dmb();
         int n = c->len;
-        if (n > max_len)
+        if (n > max_len) {
             n = max_len;
-        if (n > 0)
-            memcpy(buf, c->data, (size_t)n);
+        }
+        if (n > 0) {
+            (void)memcpy(buf, c->data, (size_t)n);
+        }
         __dmb();
-        if (c->seq == s)
+        if (c->seq == s) {
             return n;
+        }
     }
     return -1;
 }
 
 /* At boot, after the mount: every cached file, read once. */
 static void cached_fill(void) {
-    for (unsigned i = 0; i < sizeof(cached) / sizeof(cached[0]); i++) {
+    for (unsigned i = 0; i < (sizeof(cached) / sizeof(cached[0])); i++) {
         char buf[CACHED_MAX];
         int n = read_file(cached[i].path, buf, (int)sizeof(buf));
-        cached_store(&cached[i], buf, n >= 0 ? n : -2);
+        cached_store(&cached[i], buf, (n >= 0) ? n : -2);
     }
 }
 
 static int write_file(const char *path, const char *data, int len) {
-    if (!fs_ok || !whole_take())
+    if (!fs_ok || !whole_take()) {
         return -1;
+    }
     vfs_file_t f;
     int rc = -1;
     if (vfs_open(&f, path, VFS_WR, whole_buf) == 0) {
         bool wrote = vfs_write(&f, data, (uint32_t)len) == len;
         /* Close commits: a close that fails leaves the previous file
          * whole. */
-        rc = (vfs_close(&f) == 0 && wrote) ? 0 : -1;
+        rc = ((vfs_close(&f) == 0) && wrote) ? 0 : -1;
     }
     /* A configuration file written to the card is copied into the flash. */
-    if (rc == 0)
-        vfs_mirror_one(path);
+    if (rc == 0) {
+        (void)vfs_mirror_one(path);
+    }
     whole_give();
     cached_file_t *c = cached_find(path);
-    if (c && rc == 0)
+    if ((c != NULL) && (rc == 0)) {
         cached_store(c, data, len);
+    }
     return rc;
 }
 
 int hal_fs_write_file(const char *path, const char *data, int len) {
     int err = hal_fs_enter();
-    if (err != 0)
+    if (err != 0) {
         return err;
+    }
     err = write_file(path, data, len);
     hal_fs_leave();
     return err;
@@ -850,11 +895,11 @@ struct hal_file {
     bool open;
 };
 
-static struct hal_file hw_file;
-
 hal_file_t *hal_fs_open(const char *path, bool append) {
-    if (!fs_ok || hw_file.open || hal_fs_enter() != 0)
+    static struct hal_file hw_file;
+    if (!fs_ok || hw_file.open || (hal_fs_enter() != 0)) {
         return NULL;
+    }
     if (!whole_take()) {
         hal_fs_leave();
         return NULL;
@@ -869,15 +914,17 @@ hal_file_t *hal_fs_open(const char *path, bool append) {
 }
 
 int hal_fs_write(hal_file_t *f, const char *data, int len) {
-    if (!f || !f->open)
+    if (!f || !f->open) {
         return -1;
+    }
     return vfs_write(&f->file, data, (uint32_t)len);
 }
 
 void hal_fs_close(hal_file_t *f) {
-    if (!f || !f->open)
+    if (!f || !f->open) {
         return;
-    vfs_close(&f->file);
+    }
+    (void)vfs_close(&f->file);
     f->open = false;
     whole_give();
     hal_fs_leave();
@@ -893,18 +940,18 @@ int hal_config_load(config_t *cfg) {
     switch (config_from_file(cfg, buf, (int)sizeof(buf), n, &rejected)) {
     case CONFIG_FILE_LOADED:
         if (rejected > 0) {
-            snprintf(line, sizeof(line), "!CFG %d value(s) in config.ini refused; those fields keep defaults\r\n",
-                     rejected);
+            (void)snprintf(line, sizeof(line), "!CFG %d value(s) in config.ini refused; those fields keep defaults\r\n",
+                           rejected);
             hal_telemetry_send(line);
         }
         return rejected;
     case CONFIG_FILE_MISSING: {
         const char *def = config_default_ini();
-        hal_fs_write_file("config.ini", def, (int)strlen(def));
+        (void)hal_fs_write_file("config.ini", def, (int)strlen(def));
         return HAL_CONFIG_DEFAULTED;
     }
     default:
-        snprintf(line, sizeof(line), "!CFG config.ini unreadable (%d): defaults, file kept\r\n", n);
+        (void)snprintf(line, sizeof(line), "!CFG config.ini unreadable (%d): defaults, file kept\r\n", n);
         hal_telemetry_send(line);
         return HAL_CONFIG_UNREADABLE;
     }
@@ -913,8 +960,9 @@ int hal_config_load(config_t *cfg) {
 int hal_config_save(const config_t *cfg) {
     char buf[CONFIG_INI_MAX];
     int n = config_serialize_ini(cfg, buf, (int)sizeof(buf));
-    if (n <= 0)
+    if (n <= 0) {
         return -1;
+    }
     return hal_fs_write_file("config.ini", buf, n);
 }
 
@@ -968,15 +1016,16 @@ void hal_platform_init(void) {
     net_init();
 
     /* Mounted once, for good: every task shares this mount. */
-    hal_fs_mount();
+    (void)hal_fs_mount();
     cached_fill();
 
 #if PYRO_HAS_SD
     /* Before flight_init() loads the configuration, which is the card's when
      * there is one [DD-076]. No card, or one that will not mount: every file
      * stays on the flash. */
-    if (sd_start() == 0)
-        vfs_mirror();
+    if (sd_start() == 0) {
+        (void)vfs_mirror();
+    }
 #endif
 
     /* The sensor's I2C is its bring-up's to set up: pressure_sensor_begin()
@@ -984,11 +1033,12 @@ void hal_platform_init(void) {
 }
 
 /* The net task's pass, by part: TinyUSB, the stack, HTTP transport, mDNS. */
-volatile uint32_t stage1_part_max_us[4];
+volatile uint32_t stage1_part_max_us[STAGE1_PART_COUNT];
 
 static void note_part(int part, uint32_t us) {
-    if (us > stage1_part_max_us[part])
+    if (us > stage1_part_max_us[part]) {
         stage1_part_max_us[part] = us;
+    }
 }
 
 void hal_platform_service(void) {
@@ -1003,18 +1053,6 @@ void hal_platform_service(void) {
     note_part(1, (t2 - t1) - net_last_http_us);
     note_part(2, net_last_http_us);
     note_part(3, t3 - t2);
-}
-
-/* ── Pressure sample override [v2-8] ─────────────────────────────── */
-
-void hal_pressure_push_sample(const hal_pressure_t *sample) {
-    if (sample) {
-        pres.last = *sample;
-        pres.has_last = true;
-    } else {
-        /* clear override — next read comes from the async task as normal */
-        pres.has_last = false;
-    }
 }
 
 /* ── In-flight data logging (REQUIREMENTS.md v2-9) ───────────────
@@ -1045,7 +1083,7 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
 
 /* The estimators' rows, a few a second at most, rank between the two: the
  * launch holdoff alone fills the ring past the script's half [DD-027]. */
-#define LOG_ESTIMATOR_CEILING (LOG_BUF_SIZE - LOG_BUF_SIZE / 8u)
+#define LOG_ESTIMATOR_CEILING (LOG_BUF_SIZE - (LOG_BUF_SIZE / 8u))
 
 /* How much flight a power loss can take with it [FLT-LOG-06]. A sync stores
  * the bytes the file's buffer holds, which a whole page would otherwise wait
@@ -1056,7 +1094,7 @@ void hal_pressure_push_sample(const hal_pressure_t *sample) {
 /* The largest record the producer builds: a text row. */
 #define LOG_REC_MAX 96
 
-_Static_assert((LOG_BUF_SIZE & LOG_MASK) == 0, "the ring's size is a power of two");
+_Static_assert((LOG_BUF_SIZE & LOG_MASK) == 0u, "the ring's size is a power of two");
 
 enum { LOG_IDLE, LOG_RUNNING, LOG_STOPPING };
 
@@ -1103,14 +1141,13 @@ void hal_log_to_host(bool on) {
 }
 
 bool hal_log_held_for_host(void) {
-    return log_ring.state != LOG_IDLE ? log_ring.to_host : log_host_next;
+    return (log_ring.state != LOG_IDLE) ? log_ring.to_host : log_host_next;
 }
 
 /* [FLT-LOG-15] What the log last said of each counter, and the time of its
  * last row, which a counter row takes so the log stays in time order. */
 static log_counters_t log_cnt;
 static int32_t log_last_row_ms;
-extern volatile uint32_t loop_overruns, loop_overruns_ground; /* main_hardware.c */
 
 static uint32_t log_used(void) {
     return log_ring.head - log_ring.tail;
@@ -1118,11 +1155,13 @@ static uint32_t log_used(void) {
 
 /* The flight task's side. False, and nothing written, when it does not fit. */
 static bool log_put(const uint8_t *rec, uint32_t n) {
-    if (n > LOG_BUF_SIZE - log_used())
+    if (n > (LOG_BUF_SIZE - log_used())) {
         return false;
+    }
     uint32_t h = log_ring.head;
-    for (uint32_t i = 0; i < n; i++)
+    for (uint32_t i = 0; i < n; i++) {
         log_ring.buf[(h + i) & LOG_MASK] = rec[i];
+    }
     __dmb();
     log_ring.head = h + n;
     return true;
@@ -1132,8 +1171,9 @@ static void log_keep(const flog_sample_t *s) {
     log_last_row_ms = s->time_ms;
     uint8_t rec[FLOG_SAMPLE_BYTES + 8];
     int n = flog_put_sample(rec, (int)sizeof(rec), s);
-    if (n <= 0 || !log_put(rec, (uint32_t)n))
-        log_ring.dropped += FLOG_SAMPLE_BYTES;
+    if ((n <= 0) || !log_put(rec, (uint32_t)n)) {
+        log_ring.dropped += (uint32_t)FLOG_SAMPLE_BYTES;
+    }
 }
 
 uint32_t hal_log_dropped(void) {
@@ -1157,27 +1197,28 @@ static struct {
 
 /* [FLT-LOG-14] This start-up's record: at the head of each log it opens, and
  * in the boot log once on the ground. */
-extern volatile bool boot_prev_watchdog; /* main_hardware.c */
-extern volatile int32_t boot_prev_stage;
-extern volatile uint32_t boot_prev_stage_ms;
 static boot_rows_t boot_rows;
-static volatile bool boot_known, boot_unkept;
+static volatile bool boot_known;
+static volatile bool boot_unkept;
 
 void hal_log_pad(uint32_t t_ms, int32_t pressure_pa) {
-    if (log_ring.state == LOG_IDLE)
+    if (log_ring.state == LOG_IDLE) {
         log_pad_push(&log_open.pad, t_ms, pressure_pa, pp_last_read_raw_pa(),
                      (int16_t)lroundf(pres.last.temperature_c * 10.0f));
+    }
 }
 
 void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_ms) {
-    if (log_ring.state != LOG_IDLE)
+    if (log_ring.state != LOG_IDLE) {
         return;
+    }
 
     /* Called at liftoff, so it opens no file and writes no flash: a launch
      * that waited for an erase would be a launch detected late. The storage
      * task is idle on the ring until the state below says RUNNING. */
     log_ring.dropped = 0;
-    log_ring.head = log_ring.tail = 0;
+    log_ring.tail = 0;
+    log_ring.head = 0;
     log_ring.to_host = log_host_next;
     log_ring.room = (log_room_t){0};
     log_ring.room_noted = false;
@@ -1195,7 +1236,7 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
         .model_decides = cfg->model_decides,
     };
     int n = flog_put_header(log_open.header, (int)sizeof(log_open.header), &h);
-    log_open.header_len = n > 0 ? (uint16_t)n : 0u;
+    log_open.header_len = (n > 0) ? (uint16_t)n : 0u;
     log_open.header_done = false;
     log_open.next_row = 0;
     log_open.part = 0;
@@ -1214,8 +1255,9 @@ void hal_log_start(const config_t *cfg, int32_t ground_pressure_pa, uint32_t t0_
  * only a delay: the ring keeps its bytes until a write takes them. Only a
  * ring that filled faster than the task drained it loses anything. */
 static void log_sync_if_due(uint32_t now_ms) {
-    if (!log_ring.file_open || !log_ring.unsynced || (int32_t)(now_ms - log_ring.next_sync_ms) < 0)
+    if (!log_ring.file_open || !log_ring.unsynced || !deadline_reached(now_ms, log_ring.next_sync_ms)) {
         return;
+    }
     if (vfs_sync(&log_ring.file) == 0) {
         log_ring.unsynced = false;
         log_room_synced(&log_ring.room);
@@ -1228,14 +1270,16 @@ static void log_sync_if_due(uint32_t now_ms) {
  * it. Not after a record cut part-way, which the row would misalign. */
 static void log_out_of_room(void) {
     log_ring.room.out = true;
-    if (log_ring.room_noted || !log_ring.file_open || log_open.part != 0)
+    if (log_ring.room_noted || !log_ring.file_open || (log_open.part != 0u)) {
         return;
+    }
     log_ring.room_noted = true;
     uint8_t rec[FLOG_RECORD_MAX];
     int n = flog_put_text(rec, (int)sizeof(rec), hal_time_ms() - log_open.t0_ms, FLOG_TAG_LOG, LOG_ROOM_TEXT,
                           (int)sizeof(LOG_ROOM_TEXT) - 1);
-    if (vfs_write(&log_ring.file, rec, (uint32_t)n) == n)
+    if (vfs_write(&log_ring.file, rec, (uint32_t)n) == n) {
         (void)vfs_sync(&log_ring.file);
+    }
 }
 
 /* One write into the log's file, charged to its room. */
@@ -1245,10 +1289,12 @@ static int log_file_write(const uint8_t *p, uint32_t len) {
         return VFS_NOSPC;
     }
     int n = vfs_write(&log_ring.file, p, len);
-    if (n == VFS_NOSPC)
+    if (n == VFS_NOSPC) {
         log_out_of_room(); /* the store had less erased than free */
-    if (n > 0)
+    }
+    if (n > 0) {
         log_room_wrote(&log_ring.room, (uint32_t)n);
+    }
     return n;
 }
 
@@ -1257,17 +1303,20 @@ static int log_file_write(const uint8_t *p, uint32_t len) {
  * stopped. */
 static bool log_write_record(bool to_host, const uint8_t *rec, uint16_t len) {
     if (to_host) {
-        log_live_write(rec + log_open.part, (uint32_t)(len - log_open.part));
+        log_live_write(&rec[log_open.part], (uint32_t)(len - log_open.part));
         log_open.part = 0;
         return true;
     }
-    int n = log_file_write(rec + log_open.part, (uint32_t)(len - log_open.part));
-    if (n <= 0)
+    int n = log_file_write(&rec[log_open.part], (uint32_t)(len - log_open.part));
+    if (n <= 0) {
         return false;
+    }
     log_ring.unsynced = true;
-    log_open.part = (uint16_t)(log_open.part + n);
-    if (log_open.part < len)
+    int end = (int)log_open.part + n;
+    log_open.part = (uint16_t)end;
+    if (log_open.part < len) {
         return false;
+    }
     log_open.part = 0;
     return true;
 }
@@ -1276,27 +1325,30 @@ static bool log_write_record(bool to_host, const uint8_t *rec, uint16_t len) {
  * still to go. */
 static bool log_write_opening(bool to_host) {
     if (!log_open.header_done) {
-        if (!log_write_record(to_host, log_open.header, log_open.header_len))
+        if (!log_write_record(to_host, log_open.header, log_open.header_len)) {
             return false;
+        }
         log_open.header_done = true;
     }
     flog_sample_t s;
     while (log_pad_row(&log_open.pad, log_open.next_row, log_open.t0_ms, &log_open.air, PAD_IDLE, &s)) {
         uint8_t rec[FLOG_SAMPLE_BYTES];
         int n = flog_put_sample(rec, (int)sizeof(rec), &s);
-        if (!log_write_record(to_host, rec, (uint16_t)n))
+        if (!log_write_record(to_host, rec, (uint16_t)n)) {
             return false;
+        }
         log_open.boot_at = s.time_ms;
         log_open.next_row++;
     }
     log_pad_clear(&log_open.pad);
     log_open.next_row = 0;
-    while (boot_known && log_open.boot_row < BOOT_RECORD_ROWS) {
+    while (boot_known && (log_open.boot_row < (uint8_t)BOOT_RECORD_ROWS)) {
         const char *row = boot_rows[log_open.boot_row];
         uint8_t rec[FLOG_RECORD_MAX];
         int n = flog_put_text(rec, (int)sizeof(rec), (uint32_t)log_open.boot_at, FLOG_TAG_LOG, row, (int)strlen(row));
-        if (!log_write_record(to_host, rec, (uint16_t)n))
+        if (!log_write_record(to_host, rec, (uint16_t)n)) {
             return false;
+        }
         log_open.boot_row++;
     }
     return true;
@@ -1304,15 +1356,17 @@ static bool log_write_opening(bool to_host) {
 
 /* Everything the ring holds now, in at most two spans. */
 static void log_write_out(void) {
-    if (!log_write_opening(false))
+    if (!log_write_opening(false)) {
         return;
+    }
     uint32_t h = log_ring.head;
     __dmb();
     while (log_ring.tail != h) {
         uint32_t t = log_ring.tail;
-        int n = log_file_write(log_ring.buf + (t & LOG_MASK), log_drain_piece(h, t, LOG_BUF_SIZE));
-        if (n <= 0)
+        int n = log_file_write(&log_ring.buf[t & LOG_MASK], log_drain_piece(h, t, LOG_BUF_SIZE));
+        if (n <= 0) {
             return; /* the bytes stay: the next pass retries */
+        }
         __dmb();
         log_ring.tail = t + (uint32_t)n;
         log_ring.unsynced = true;
@@ -1329,32 +1383,37 @@ static void log_hand_to_host(void) {
         uint32_t t = log_ring.tail;
         uint32_t off = t & LOG_MASK;
         uint32_t span = h - t;
-        if (span > LOG_BUF_SIZE - off)
+        if (span > (LOG_BUF_SIZE - off)) {
             span = LOG_BUF_SIZE - off;
-        log_live_write(log_ring.buf + off, span);
+        }
+        log_live_write(&log_ring.buf[off], span);
         __dmb();
         log_ring.tail = t + span;
     }
 }
 
 static bool log_opening_done(void) {
-    return log_open.header_done && log_pad_count(&log_open.pad) == 0;
+    return log_open.header_done && (log_pad_count(&log_open.pad) == 0u);
 }
 
 /* The opening's bytes still to write, ahead of the ring's. */
 static uint32_t log_opening_left(void) {
-    if (log_opening_done())
+    if (log_opening_done()) {
         return 0;
-    return log_open.header_len + (uint32_t)log_pad_count(&log_open.pad) * FLOG_SAMPLE_BYTES +
-           BOOT_RECORD_ROWS * FLOG_RECORD_MAX;
+    }
+    const uint32_t record_max = FLOG_RECORD_MAX;
+    return log_open.header_len + ((uint32_t)log_pad_count(&log_open.pad) * (uint32_t)FLOG_SAMPLE_BYTES) +
+           ((uint32_t)BOOT_RECORD_ROWS * record_max);
 }
 
 /* The storage task's end of a log: the file closed, the filesystem free. */
 static void log_finish(void) {
     log_pad_clear(&log_open.pad);
-    log_open.next_row = log_open.part = 0;
-    if (log_ring.file_open && !log_ring.to_host)
-        vfs_close(&log_ring.file);
+    log_open.part = 0;
+    log_open.next_row = 0;
+    if (log_ring.file_open && !log_ring.to_host) {
+        (void)vfs_close(&log_ring.file);
+    }
     log_ring.file_open = false;
     log_ring.name[0] = '\0';
     log_ring.stop_seen = false;
@@ -1368,9 +1427,11 @@ static log_files_t store_logs;
 static bool logs_known;
 static bool logs_card;
 
+/* A log reserved and not yet written holds no byte, and is no log yet
+ * [FLT-LOG-16]. */
 static bool log_held(void *ctx, const char *name) {
     (void)ctx;
-    return vfs_stat_size(name) >= 0;
+    return vfs_stat_size(name) > 0;
 }
 
 /* [FLT-LOG-13] What the store holds erased, counted on the ground: a log
@@ -1385,12 +1446,20 @@ static uint32_t flash_writes(void) {
     return flash_op_programs() + flash_op_erases();
 }
 
+static bool cleanup_owed(void) {
+    vfs_flash_cleanup_t cleanup;
+    vfs_flash_cleanup_state(&cleanup);
+    return cleanup.cleaning;
+}
+
 static void erased_count(void) {
     uint32_t at = flash_writes();
-    if (at == erased_at)
+    if (at == erased_at) {
         return;
-    if (vfs_erased(FLOG_PATH, &erased_bytes) == 0)
+    }
+    if (vfs_erased(FLOG_PATH, &erased_bytes) == 0) {
         erased_at = at;
+    }
 }
 
 static void logs_scan(void) {
@@ -1404,21 +1473,23 @@ void hal_log_files_changed(void) {
 }
 
 bool hal_log_newest(char out[LOG_FILES_NAME_MAX]) {
-    if (!logs_known && fs_ok && !hal_log_active())
+    if (!logs_known && fs_ok && !hal_log_active()) {
         logs_scan();
+    }
     return log_files_newest(&store_logs, out);
 }
 
 static void log_service(uint32_t now_ms) {
     uint8_t st = log_ring.state;
-    if (st == LOG_IDLE)
+    if (st == LOG_IDLE) {
         return;
+    }
 
-    if (st == LOG_STOPPING && !log_ring.stop_seen) {
+    if ((st == LOG_STOPPING) && !log_ring.stop_seen) {
         log_ring.stop_seen = true;
         log_ring.stop_seen_ms = now_ms;
     }
-    if (st == LOG_STOPPING && deadline_reached(now_ms, log_ring.stop_seen_ms + LOG_STOP_MAX_MS)) {
+    if ((st == LOG_STOPPING) && deadline_reached(now_ms, log_ring.stop_seen_ms + LOG_STOP_MAX_MS)) {
         log_ring.dropped += log_used();
         log_ring.tail = log_ring.head;
         log_finish();
@@ -1430,8 +1501,9 @@ static void log_service(uint32_t now_ms) {
          * kept; the file closes at the stop. */
         log_ring.dropped += log_used();
         log_ring.tail = log_ring.head;
-        if (st == LOG_STOPPING)
+        if (st == LOG_STOPPING) {
             log_finish();
+        }
         return;
     }
 
@@ -1441,8 +1513,9 @@ static void log_service(uint32_t now_ms) {
             log_ring.file_open = true; /* the host's RAM stands in for the file */
         }
         log_hand_to_host();
-        if (st == LOG_STOPPING && log_opening_done())
+        if ((st == LOG_STOPPING) && log_opening_done()) {
             log_finish();
+        }
         return;
     }
 
@@ -1450,24 +1523,32 @@ static void log_service(uint32_t now_ms) {
         /* [FLT-RT-03] A flight log opens once the flight's flash operations
          * run in slots, from the first period airborne; its rows wait in the
          * ring meanwhile. A log stopped before then opens under the lockout. */
-        if (!fs_ok || (PYRO_FLIGHT_RAM && st == LOG_RUNNING && !flash_op_in_flight()))
+        if (!fs_ok || (PYRO_FLIGHT_RAM && (st == LOG_RUNNING) && !flash_op_in_flight())) {
             return;
+        }
         /* [FLT-LOG-12] A file of its own: no log is removed to make it. */
-        if (!logs_known)
+        if (!logs_known) {
             logs_scan();
-        if (!log_ring.name[0] && !log_files_next(&store_logs, log_ring.name))
+        }
+        if ((log_ring.name[0] == '\0') && !log_files_next(&store_logs, log_ring.name)) {
             return; /* every number taken: the ring's rows are given up at the stop */
-        uint64_t free_b = 0, total_b = 0;
-        if (vfs_space(log_ring.name, &free_b, &total_b) != 0)
+        }
+        uint64_t free_b = 0;
+        uint64_t total_b = 0;
+        if (vfs_space(log_ring.name, &free_b, &total_b) != 0) {
             free_b = 0;
-        erased_count(); /* at once only when the pad's last count is stale */
-        if (erased_at != UINT32_MAX && erased_bytes < free_b)
+        }
+        /* The pad's last count: nothing reads the whole store at a launch. */
+        if ((erased_at != UINT32_MAX) && (erased_bytes < free_b)) {
             free_b = erased_bytes;
+        }
         int rc = vfs_open(&log_ring.file, log_ring.name, VFS_WR, log_file_buf);
-        if (rc == VFS_NOSPC)
+        if (rc == VFS_NOSPC) {
             log_ring.room.out = true; /* [FLT-LOG-13] not a page for even its first */
-        if (rc != 0)
+        }
+        if (rc != 0) {
             return; /* the next pass retries; the ring keeps the rows */
+        }
         log_ring.file_open = true;
         log_room_open(&log_ring.room, free_b, vfs_synced_cost(log_ring.name, 1u));
         log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
@@ -1478,13 +1559,15 @@ static void log_service(uint32_t now_ms) {
     }
 
     bool full = log_drain_full(log_used(), LOG_BUF_SIZE, log_opening_left());
-    if (full || now_ms - log_ring.started_ms >= LOG_HOLDOFF_MAX_MS)
+    if (full || ((now_ms - log_ring.started_ms) >= LOG_HOLDOFF_MAX_MS)) {
         log_ring.launch_holdoff = false;
+    }
     /* The timer does not fire during the holdoff; a full ring and a stop
      * always do, so nothing is ever dropped to keep the flash quiet. */
-    bool due = !log_ring.launch_holdoff && (int32_t)(now_ms - log_ring.next_due_ms) >= 0;
-    if (full || st == LOG_STOPPING)
+    bool due = !log_ring.launch_holdoff && deadline_reached(now_ms, log_ring.next_due_ms);
+    if (full || (st == LOG_STOPPING)) {
         due = true;
+    }
     if (!due) {
         /* In a pass with no write in it, so a sync and a block write never
          * share one pass's stop. */
@@ -1495,8 +1578,9 @@ static void log_service(uint32_t now_ms) {
     log_write_out();
     log_ring.next_due_ms = now_ms + LOG_FLUSH_MS;
 
-    if (st == LOG_STOPPING && log_ring.tail == log_ring.head && log_opening_done())
+    if ((st == LOG_STOPPING) && (log_ring.tail == log_ring.head) && log_opening_done()) {
         log_finish();
+    }
 }
 
 /* Weak and empty: most boards queue no flash work of their own. */
@@ -1504,29 +1588,140 @@ __attribute__((weak)) void board_flash_service(uint32_t now_ms) {
     (void)now_ms;
 }
 
-static uint32_t next_clean_ms;
+/* [USB-10, FLT-LOG-10] The cleanup erases where no launch can be declared,
+ * and once a flight has landed: never on the pad. */
+static bool store_may_erase(void) {
+    return flight_is_grounded_on_usb() || (flight_get_state() == LANDED);
+}
+
+/* A pass of the storage task reads sectors for this long at most, most of a
+ * period: a sector's read is 1 ms on MK1A and 6 ms on MK1C. */
+#define CLEAN_LOOK_US 6000u
 
 /* Never in flight: the next flight finds every page it needs erased, and its
  * log appends without an erase. */
-static void clean_service(uint32_t now_ms) {
-    if (!fs_ok || hal_log_active() || !deadline_reached(now_ms, next_clean_ms))
+static void clean_service(void) {
+    if (!fs_ok || hal_log_active() || !store_may_erase()) {
         return;
-    next_clean_ms = now_ms + vfs_flash_clean_wait_ms(flight_is_grounded_on_usb());
-    vfs_clean();
+    }
+    vfs_flash_cleanup_t before;
+    vfs_flash_cleanup_t after;
+    vfs_flash_cleanup_state(&before);
+    uint32_t t0 = time_us_32();
+    bool more;
+    do {
+        more = vfs_clean() == 1;
+        vfs_flash_cleanup_state(&after);
+    } while (more && (after.erased == before.erased) && ((uint32_t)(time_us_32() - t0) < CLEAN_LOOK_US));
+}
+
+/* ── Prepared for the pad [FLT-LOG-16] ────────────────────────────── */
+
+/* Five minutes of flight, or half of what is free where that is less: a
+ * longer log goes on into free pages, as an unreserved one does throughout. */
+#define LOG_RESERVE_S 300u
+
+static bool boot_log_reserved;        /* since this start-up's own was kept */
+static volatile bool reserve_refused; /* the next log's: asked for again once the flash has changed */
+
+static void next_log_name(char name[LOG_FILES_NAME_MAX]) {
+    log_files_name(store_logs.newest + 1u, name);
+}
+
+static bool next_log_reserved(void) {
+    char name[LOG_FILES_NAME_MAX];
+    next_log_name(name);
+    return logs_known && (store_logs.newest < LOG_FILES_MAX) && (vfs_stat_size(name) == 0);
+}
+
+static void reserve_next_log(void) {
+    char name[LOG_FILES_NAME_MAX];
+    next_log_name(name);
+    uint64_t free_b = 0;
+    uint64_t total_b = 0;
+    if (vfs_space(name, &free_b, &total_b) != 0) {
+        return;
+    }
+    uint64_t want =
+        (uint64_t)LOG_RESERVE_S * vfs_synced_cost(name, hal_pressure_rate_hz() * (uint32_t)FLOG_SAMPLE_BYTES);
+    if (want > (free_b / 2u)) {
+        want = free_b / 2u;
+    }
+    reserve_refused = vfs_reserve(name, (uint32_t)want) != 0;
+}
+
+static void reserve_boot_log(void) {
+    int32_t held = vfs_stat_size(BOOT_LOG_PATH);
+    uint32_t rows = (uint32_t)BOOT_RECORD_ROWS * ((uint32_t)BOOT_RECORD_ROW_MAX + 1u);
+    (void)vfs_reserve(BOOT_LOG_PATH, ((held > 0) ? (uint32_t)held : 0u) + rows);
+    boot_log_reserved = true;
+}
+
+/* After the cleanup and its count, where erasing is allowed: the next
+ * start-up's record and the next flight's log each get their pages, so that
+ * on the pad both are programmed and nothing is searched for or erased. */
+static void prepare_service(void) {
+    static uint32_t tried_at = UINT32_MAX; /* a reservation refused is asked for again once the flash has changed */
+    if (!fs_ok || hal_log_active() || boot_unkept || !logs_known || !store_may_erase() || cleanup_owed() ||
+        (erased_at != flash_writes()) || (tried_at == erased_at)) {
+        return;
+    }
+    tried_at = erased_at;
+    reserve_refused = false;
+    if (!boot_log_reserved) {
+        reserve_boot_log();
+    }
+    if (!next_log_reserved() && (store_logs.newest < LOG_FILES_MAX)) {
+        reserve_next_log();
+    }
+}
+
+/* The flight task asks, and takes no lock: the storage task looks again
+ * whenever the flash has been written. */
+static volatile bool store_prepared;
+
+static void prepared_service(void) {
+    static uint32_t looked_at = UINT32_MAX;
+    uint32_t at = flash_writes();
+    if (!fs_ok || hal_log_active() || !logs_known || (looked_at == at)) {
+        return;
+    }
+    store_prepared = next_log_reserved();
+    looked_at = at;
+}
+
+bool hal_fs_prepared(void) {
+    return store_prepared;
+}
+
+bool hal_fs_preparing(void) {
+    return fs_ok && store_may_erase() && !hal_log_active();
+}
+
+bool hal_fs_busy(void) {
+    bool owed = cleanup_owed() || (erased_at != flash_writes()) || (!store_prepared && !reserve_refused);
+    return hal_fs_preparing() && owed;
+}
+
+bool hal_fs_settled(void) {
+    vfs_flash_cleanup_t cleanup;
+    vfs_flash_cleanup_state(&cleanup);
+    bool cleaning = cleanup.cleaning && store_may_erase();
+    return hal_log_active() || (!cleaning && !cleanup.writing);
 }
 
 void hal_log_boot(const char *start, bool usb) {
-    char last[LOG_FILES_NAME_MAX] = "";
-    log_files_newest(&store_logs, last);
+    char last[LOG_FILES_NAME_MAX] = {0};
+    (void)log_files_newest(&store_logs, last);
     uint8_t jedec[3];
-    flash_chip_jedec(jedec);
+    (void)flash_chip_jedec(jedec);
     const flash_timing_t *ft = flash_timing_for(jedec);
     boot_facts_t f = {boot_record_cause((int)hal_reset_cause()),
                       boot_prev_watchdog,
                       boot_prev_stage,
                       boot_prev_stage_ms,
                       FW_VERSION,
-                      ft ? ft->part : "unknown",
+                      (ft != NULL) ? ft->part : "unknown",
                       flash_chip_bytes() / 1024u,
                       usb,
                       start,
@@ -1546,36 +1741,47 @@ static void boot_log_keep(void) {
     boot_unkept = false;
     int32_t held = vfs_stat_size(BOOT_LOG_PATH);
     if (held > BOOT_LOG_ROTATE_BYTES) {
-        vfs_remove(BOOT_LOG_OLDER_PATH);
-        vfs_rename(BOOT_LOG_PATH, BOOT_LOG_OLDER_PATH);
+        (void)vfs_remove(BOOT_LOG_OLDER_PATH);
+        (void)vfs_rename(BOOT_LOG_PATH, BOOT_LOG_OLDER_PATH);
         held = 0;
     }
-    vfs_file_t in, out;
-    bool have_in = held > 0 && vfs_open(&in, BOOT_LOG_PATH, VFS_RD, log_file_buf) == 0;
+    vfs_file_t in;
+    vfs_file_t out;
+    bool have_in = (held > 0) && (vfs_open(&in, BOOT_LOG_PATH, VFS_RD, log_file_buf) == 0);
     if (vfs_open(&out, BOOT_LOG_PATH, VFS_WR, whole_buf) != 0) {
-        if (have_in)
-            vfs_close(&in);
+        if (have_in) {
+            (void)vfs_close(&in);
+        }
         return;
     }
     if (have_in) {
         uint8_t piece[128];
-        int k;
-        while ((k = vfs_read(&in, piece, sizeof(piece))) > 0)
-            vfs_write(&out, piece, (uint32_t)k);
-        vfs_close(&in);
+        for (;;) {
+            int k = vfs_read(&in, piece, sizeof(piece));
+            if (k <= 0) {
+                break;
+            }
+            (void)vfs_write(&out, piece, (uint32_t)k);
+        }
+        (void)vfs_close(&in);
     }
     char lines[BOOT_RECORD_ROWS * (BOOT_RECORD_ROW_MAX + 1)];
     int n = boot_record_lines(boot_rows, lines, (int)sizeof(lines));
-    vfs_write(&out, lines, (uint32_t)n);
-    vfs_close(&out);
+    (void)vfs_write(&out, lines, (uint32_t)n);
+    (void)vfs_close(&out);
 }
 
 void hal_storage_service(uint32_t now_ms) {
-    if (board_selftest_unsaved() && !hal_log_active())
+    if (board_selftest_unsaved() && !hal_log_active()) {
         board_selftest_save();
-    if (fs_ok && !hal_log_active() && (!logs_known || logs_card != vfs_sd_mounted()))
+    }
+    if (fs_ok && !hal_log_active() && (!logs_known || (logs_card != vfs_sd_mounted()))) {
         logs_scan();
-    if (fs_ok && !hal_log_active() && deadline_reached(now_ms, next_erased_ms)) {
+    }
+    /* The count reads every page of the store: once the cleanup has ended,
+     * not between its erases. */
+    if (fs_ok && !hal_log_active() && !(cleanup_owed() && store_may_erase()) &&
+        deadline_reached(now_ms, next_erased_ms)) {
         next_erased_ms = now_ms + ERASED_COUNT_MS;
         erased_count();
     }
@@ -1584,14 +1790,17 @@ void hal_storage_service(uint32_t now_ms) {
         whole_give();
     }
     log_service(now_ms);
-    clean_service(now_ms);
+    clean_service();
+    prepare_service();
+    prepared_service();
     board_flash_service(now_ms);
 }
 
 void hal_log_sample(int32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, uint8_t state, uint8_t under_thrust,
                     uint8_t event) {
-    if (log_ring.state != LOG_RUNNING)
+    if (log_ring.state != LOG_RUNNING) {
         return;
+    }
     flog_sample_t s = {
         .time_ms = time_ms,
         .pressure_pa = pressure_pa,
@@ -1609,11 +1818,12 @@ void hal_log_sample(int32_t time_ms, int32_t pressure_pa, int32_t altitude_cm, u
  * do. Its numeric columns render empty: neither is a sample, and a zero
  * altitude is a reading a plot would draw. */
 static bool log_tagged(uint32_t time_ms, uint8_t tag, const char *text, int len) {
-    if (log_ring.state != LOG_RUNNING || len <= 0)
+    if ((log_ring.state != LOG_RUNNING) || (len <= 0)) {
         return false;
+    }
     uint8_t rec[LOG_REC_MAX];
     int n = flog_put_text(rec, (int)sizeof(rec), time_ms, tag, text, len);
-    if (n <= 0 || !log_put(rec, (uint32_t)n)) {
+    if ((n <= 0) || !log_put(rec, (uint32_t)n)) {
         log_ring.text_dropped += (uint32_t)len;
         return false;
     }
@@ -1624,7 +1834,7 @@ static bool log_tagged(uint32_t time_ms, uint8_t tag, const char *text, int len)
  * rows may crowd out the flight samples they annotate. */
 static bool log_rationed(uint32_t ceiling, uint32_t time_ms, uint8_t tag, const char *text, int len) {
     if (log_used() >= ceiling) {
-        log_ring.text_dropped += (uint32_t)(len > 0 ? len : 0);
+        log_ring.text_dropped += (uint32_t)((len > 0) ? len : 0);
         return false;
     }
     return log_tagged(time_ms, tag, text, len);
@@ -1646,8 +1856,8 @@ static void counters_now(uint32_t v[LOG_COUNTER_COUNT]) {
     v[LOG_CNT_FLIGHT_REFUSALS] = ss.flight_refusals;
     v[LOG_CNT_SUSPENDS] = ss.suspends;
     v[LOG_CNT_WAITS] = ss.slot_waits;
-    v[LOG_CNT_OVERRUNS] = loop_overruns;
-    v[LOG_CNT_OVERRUNS_GROUND] = loop_overruns_ground;
+    v[LOG_CNT_OVERRUNS] = main_loop_overruns;
+    v[LOG_CNT_OVERRUNS_GROUND] = main_loop_overruns_ground;
     v[LOG_CNT_WRITER_OVERRUNS] = fr.writer_overruns;
     v[LOG_CNT_LUA_SKIPPED] = fr.lua_skipped;
     v[LOG_CNT_PRES_REJECTS] = col.failed[COLLECTOR_ADDRESS_NACK] + col.failed[COLLECTOR_DATA_NACK] +
@@ -1664,8 +1874,9 @@ static void counters_say(const uint32_t v[LOG_COUNTER_COUNT]) {
     while (log_used() < LOG_TEXT_CEILING) {
         log_counters_t before = log_cnt;
         int n = log_counters_row(&log_cnt, v, row, (int)sizeof(row));
-        if (n <= 0)
+        if (n <= 0) {
             return;
+        }
         if (!log_tagged((uint32_t)log_last_row_ms, FLOG_TAG_LOG, row, n)) {
             log_cnt = before;
             return;
@@ -1674,8 +1885,9 @@ static void counters_say(const uint32_t v[LOG_COUNTER_COUNT]) {
 }
 
 void hal_log_counters(void) {
-    if (log_ring.state != LOG_RUNNING)
+    if (log_ring.state != LOG_RUNNING) {
         return;
+    }
     uint32_t v[LOG_COUNTER_COUNT];
     counters_now(v);
     log_counters_note(&log_cnt, v);
@@ -1702,15 +1914,20 @@ uint32_t hal_log_text_dropped(void) {
 }
 
 void hal_log_stop(void) {
-    if (log_ring.state != LOG_RUNNING)
+    if (log_ring.state != LOG_RUNNING) {
         return;
+    }
     uint32_t v[LOG_COUNTER_COUNT]; /* [FLT-LOG-15] every counter, at the close */
     counters_now(v);
     log_counters_all(&log_cnt);
     char row[FLOG_TEXT_MAX + 1];
-    int n;
-    while ((n = log_counters_row(&log_cnt, v, row, (int)sizeof(row))) > 0)
+    for (;;) {
+        int n = log_counters_row(&log_cnt, v, row, (int)sizeof(row));
+        if (n <= 0) {
+            break;
+        }
         (void)log_tagged((uint32_t)log_last_row_ms, FLOG_TAG_LOG, row, n); /* the ring drains to the end now */
+    }
     __dmb();
     log_ring.state = LOG_STOPPING;
 #if PYRO_FLIGHT_RAM
@@ -1741,13 +1958,15 @@ static void commit_op(void *arg) {
  * where there is one: after it, this image and what it would say are gone. */
 static void report_board_mismatch(const char *what) {
     char line[128];
-    if (board_selftest_flash_too_small())
-        snprintf(line, sizeof(line),
-                 "!BOARD MISMATCH this image is " BOARD_SHORT_STR " for %lu kB of flash, the chip has %lu kB -- %s\r\n",
-                 (unsigned long)(PICO_FLASH_SIZE_BYTES / 1024u), (unsigned long)(flash_chip_bytes() / 1024u), what);
-    else
-        snprintf(line, sizeof(line), "!BOARD MISMATCH this image is " BOARD_SHORT_STR ", board is %s -- %s\r\n",
-                 board_selftest_stored(), what);
+    if (board_selftest_flash_too_small()) {
+        (void)snprintf(
+            line, sizeof(line),
+            "!BOARD MISMATCH this image is " BOARD_SHORT_STR " for %lu kB of flash, the chip has %lu kB -- %s\r\n",
+            (unsigned long)(PICO_FLASH_SIZE_BYTES / 1024u), (unsigned long)(flash_chip_bytes() / 1024u), what);
+    } else {
+        (void)snprintf(line, sizeof(line), "!BOARD MISMATCH this image is " BOARD_SHORT_STR ", board is %s -- %s\r\n",
+                       board_selftest_stored(), what);
+    }
     hal_telemetry_send(line);
 }
 
@@ -1759,7 +1978,6 @@ bool hal_firmware_commit(void) {
         /* The main loop's reset path, which lets the net task flush the line
          * above and is the way an OTA reboots, rather than the watchdog armed
          * from here on core1. */
-        extern volatile uint8_t pending_reset;
         pending_reset = 2;
         return true;
     }
@@ -1769,6 +1987,6 @@ bool hal_firmware_commit(void) {
     case BOARD_IMAGE_RUN:
     default:
         /* Only the first boot after an update writes flash here. */
-        return !after_update || flash_op(commit_op, NULL) == 0;
+        return !after_update || (flash_op(commit_op, NULL) == 0);
     }
 }

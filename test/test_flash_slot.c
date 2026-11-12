@@ -65,21 +65,24 @@ static bool sliced(void *c) {
  * writer's task wakes later. */
 static int at_slot_start(void *v, const flash_slot_req_t *r) {
     chip_t *c = v;
-    while ((int32_t)(c->t0 + LOOP_PERIOD_US - c->now) <= 0)
+    while ((int32_t)(c->t0 + LOOP_PERIOD_US - c->now) <= 0) {
         c->t0 += LOOP_PERIOD_US;
+    }
     c->t0 += LOOP_PERIOD_US;
     c->now = c->t0 + IRQ_US;
     c->slots++;
     int rc = flash_slot_try(r, c->t0);
-    if ((int32_t)(c->t0 + TASK_WAKE_US - c->now) > 0)
+    if ((int32_t)(c->t0 + TASK_WAKE_US - c->now) > 0) {
         c->now = c->t0 + TASK_WAKE_US;
+    }
     return rc;
 }
 
 static void note_end(chip_t *c) {
     uint32_t end = c->t0 + FRAME_WRITER_US;
-    if ((int32_t)(c->now - end) > 0 && c->now - end > c->over_us)
+    if ((int32_t)(c->now - end) > 0 && c->now - end > c->over_us) {
         c->over_us = c->now - end;
+    }
 }
 
 static int piece(void *v, flash_slot_kind_t kind, uint32_t addr, const uint8_t *data, uint32_t len,
@@ -91,10 +94,12 @@ static int piece(void *v, flash_slot_kind_t kind, uint32_t addr, const uint8_t *
     chip_t *c = v;
     uint32_t began = c->now;
     c->pieces++;
-    if (frame_writer_left_us(c->t0, c->now) == 0)
+    if (frame_writer_left_us(c->t0, c->now) == 0) {
         c->piece_in_slot++;
-    if (c->fail_at && (int)c->pieces == c->fail_at)
+    }
+    if (c->fail_at && (int)c->pieces == c->fail_at) {
         return -5;
+    }
     if (p->resume) {
         TEST_ASSERT_TRUE_MESSAGE(c->suspended, "a resume with nothing suspended");
         c->suspended = false;
@@ -107,8 +112,9 @@ static int piece(void *v, flash_slot_kind_t kind, uint32_t addr, const uint8_t *
     c->resumed_at = c->now;
     int rc = PIECE_DONE;
     uint32_t at = p->suspend_at;
-    if ((int32_t)(p->suspend_from - at) > 0)
+    if ((int32_t)(p->suspend_from - at) > 0) {
         at = p->suspend_from;
+    }
     if (!p->may_suspend || (int32_t)(c->now + c->work_left - at) <= 0) {
         c->now += c->work_left + POLL_US;
         c->work_left = 0;
@@ -129,10 +135,12 @@ static int piece(void *v, flash_slot_kind_t kind, uint32_t addr, const uint8_t *
         }
     }
     note_end(c);
-    if (c->now - began > c->piece_max_us)
+    if (c->now - began > c->piece_max_us) {
         c->piece_max_us = c->now - began;
-    if (c->leave_flight_after && c->pieces >= c->leave_flight_after)
+    }
+    if (c->leave_flight_after && c->pieces >= c->leave_flight_after) {
         c->flight = false;
+    }
     if (c->launch_after && c->pieces >= c->launch_after) {
         c->flight = true;
         c->ground = false;

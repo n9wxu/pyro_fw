@@ -59,7 +59,8 @@ typedef struct {
 } http_handlers_t;
 
 struct http_conn {
-    net_ring_t rx, tx;
+    net_ring_t rx;
+    net_ring_t tx;
     uint8_t rx_mem[HTTP_RX_RING];
     uint8_t tx_mem[HTTP_TX_RING];
     /* One of: the gathered request body, the part of a response body that did

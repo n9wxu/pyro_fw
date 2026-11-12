@@ -24,7 +24,8 @@ float atmos_m_per_pa(float altitude_m, float pressure_pa);
 /* The standard atmosphere offset by the pad's temperature, at every height
  * the same offset. */
 typedef struct {
-    float pad_pa, pad_altitude_m;
+    float pad_pa;
+    float pad_altitude_m;
     float offset_k; /* the pad's temperature less the standard's there */
     float pad_k;
 } air_t;

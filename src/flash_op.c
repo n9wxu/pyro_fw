@@ -36,16 +36,21 @@ enum { LK_IDLE, LK_WANTED, LK_PARKED, LK_RELEASE };
 static volatile uint8_t lk[2];
 static spin_lock_t *lk_lock;
 static TaskHandle_t helper[2];
-static StaticTask_t helper_tcb[2];
-static StackType_t helper_stack[2][HELPER_STACK_WORDS];
 
 volatile uint32_t flash_op_seq;
-static volatile uint32_t lockouts, timeouts, refusals, waits, erases, programs, max_us;
+static volatile uint32_t lockouts;
+static volatile uint32_t timeouts;
+static volatile uint32_t refusals;
+static volatile uint32_t waits;
+static volatile uint32_t erases;
+static volatile uint32_t programs;
+static volatile uint32_t max_us;
 
 /* From launch to landing. flight is the flight task's, piece_busy core1's,
  * and both change under lk_lock: a piece starts only while flight holds,
  * and flight ends only while no piece runs. */
-static volatile bool flight, piece_busy;
+static volatile bool flight;
+static volatile bool piece_busy;
 static TaskHandle_t writer;
 static flash_op_slot_stats_t slot_stats;
 
@@ -75,12 +80,13 @@ void __noinline __not_in_flash_func(flash_op_park)(uint core) {
     uint32_t irq = save_and_disable_interrupts();
     uint32_t s = spin_lock_blocking(lk_lock);
     bool wanted = lk[core] == LK_WANTED;
-    if (wanted)
+    if (wanted) {
         lk[core] = LK_PARKED;
+    }
     spin_unlock(lk_lock, s);
     if (wanted) {
         uint32_t t0 = timer_hw->timerawl;
-        while (lk[core] == LK_PARKED && (uint32_t)(timer_hw->timerawl - t0) < PARK_MAX_US) {
+        while ((lk[core] == LK_PARKED) && ((uint32_t)(timer_hw->timerawl - t0) < PARK_MAX_US)) {
             __asm volatile("nop");
         }
         lk[core] = LK_IDLE;
@@ -91,14 +97,16 @@ void __noinline __not_in_flash_func(flash_op_park)(uint core) {
 static void helper_task(void *arg) {
     uint core = (uint)(uintptr_t)arg;
     for (;;) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         flash_op_park(core);
     }
 }
 
 void flash_op_init(void) {
     lk_lock = spin_lock_instance((uint)spin_lock_claim_unused(true));
-    static const char *names[2] = {"lockout0", "lockout1"};
+    static StaticTask_t helper_tcb[2];
+    static StackType_t helper_stack[2][HELPER_STACK_WORDS];
+    static const char *const names[2] = {"lockout0", "lockout1"};
     for (uint c = 0; c < 2; c++) {
         lk[c] = LK_IDLE;
         helper[c] = xTaskCreateStaticAffinitySet(helper_task, names[c], HELPER_STACK_WORDS, (void *)(uintptr_t)c,
@@ -109,8 +117,9 @@ void flash_op_init(void) {
 static bool wait_state(uint core, uint8_t want, uint32_t limit_us) {
     uint32_t t0 = timer_hw->timerawl;
     while (lk[core] != want) {
-        if ((uint32_t)(timer_hw->timerawl - t0) >= limit_us)
+        if ((uint32_t)(timer_hw->timerawl - t0) >= limit_us) {
             return false;
+        }
     }
     return true;
 }
@@ -120,24 +129,27 @@ static void run_direct(flash_op_fn fn, void *arg) {
     uint32_t t0 = timer_hw->timerawl;
     if (held_suspended) {
         flash_chip_io_t io = {NULL, held_cmd, held_now};
-        flash_chip_finish_suspended(&io, FLASH_CHIP_FINISH_MAX_US);
+        (void)flash_chip_finish_suspended(&io, FLASH_CHIP_FINISH_MAX_US);
         held_suspended = false;
     }
     fn(arg);
     flash_op_seq++;
     uint32_t d = timer_hw->timerawl - t0;
     restore_interrupts(irq);
-    if (d > max_us)
+    if (d > max_us) {
         max_us = d;
+    }
 }
 
 /* Whether the board allows an operation now, waiting for it, bounded. */
 static bool board_ready(void) {
-    if (board_flash_ok())
+    if (board_flash_ok()) {
         return true;
+    }
     waits++;
-    for (uint32_t i = 0; i < BOARD_WAIT_MS && !board_flash_ok(); i++)
+    for (uint32_t i = 0; (i < BOARD_WAIT_MS) && !board_flash_ok(); i++) {
         vTaskDelay(pdMS_TO_TICKS(1));
+    }
     return board_flash_ok();
 }
 
@@ -150,14 +162,15 @@ static int locked_out(void (*body)(void *), void *arg) {
 
     uint32_t s = spin_lock_blocking(lk_lock);
     bool flying = flight;
-    if (!flying)
+    if (!flying) {
         lk[other] = LK_WANTED;
+    }
     spin_unlock(lk_lock, s);
     if (flying) {
         vTaskPrioritySet(NULL, prio);
         return -4;
     }
-    xTaskNotifyGive(helper[other]);
+    (void)xTaskNotifyGive(helper[other]);
 
     int rc = 0;
     if (!wait_state(other, LK_PARKED, PARK_WAIT_US)) {
@@ -165,8 +178,9 @@ static int locked_out(void (*body)(void *), void *arg) {
          * nothing wanted and goes back to sleep. */
         s = spin_lock_blocking(lk_lock);
         bool parked = lk[other] == LK_PARKED;
-        if (!parked)
+        if (!parked) {
             lk[other] = LK_IDLE;
+        }
         spin_unlock(lk_lock, s);
         if (!parked) {
             timeouts++;
@@ -177,7 +191,7 @@ static int locked_out(void (*body)(void *), void *arg) {
         body(arg);
         lockouts++;
         lk[other] = LK_RELEASE;
-        wait_state(other, LK_IDLE, PARK_WAIT_US);
+        (void)wait_state(other, LK_IDLE, PARK_WAIT_US);
     }
     vTaskPrioritySet(NULL, prio);
     return rc;
@@ -189,7 +203,7 @@ typedef struct {
 } direct_t;
 
 static void direct_body(void *v) {
-    const direct_t *d = (const direct_t *)v;
+    direct_t *d = (direct_t *)v;
     run_direct(d->fn, d->arg);
 }
 
@@ -198,14 +212,14 @@ int flash_op(flash_op_fn fn, void *arg) {
         run_direct(fn, arg);
         return 0;
     }
-    if (__get_current_exception() != 0 || rtos_in_flight_task()) {
+    if ((__get_current_exception() != 0u) || rtos_in_flight_task()) {
         refusals++;
         return -1;
     }
     /* Before the raise to T, which under mode 0 would stop the flight task;
      * the claim checks again under the lock. */
     int rc = flight ? -4 : 0;
-    if (rc == 0 && !board_ready()) {
+    if ((rc == 0) && !board_ready()) {
         refusals++;
         return -2;
     }
@@ -239,16 +253,18 @@ static void do_program(void *a) {
 int flash_op_erase(uint32_t offset, uint32_t len) {
     span_t sp = {offset, NULL, len};
     int rc = flash_op(do_erase, &sp);
-    if (rc == 0)
+    if (rc == 0) {
         erases++;
+    }
     return rc;
 }
 
 int flash_op_program(uint32_t offset, const uint8_t *data, uint32_t len) {
     span_t sp = {offset, data, len};
     int rc = flash_op(do_program, &sp);
-    if (rc == 0)
+    if (rc == 0) {
         programs++;
+    }
     return rc;
 }
 
@@ -269,8 +285,9 @@ static void __no_inline_not_in_flash_func(do_program_bytes)(void *a) {
     cmdp[1] = (uint8_t)(sp->off >> 16);
     cmdp[2] = (uint8_t)(sp->off >> 8);
     cmdp[3] = (uint8_t)sp->off;
-    for (uint32_t i = 0; i < sp->len; i++)
+    for (uint32_t i = 0; i < sp->len; i++) {
         cmdp[4u + i] = sp->data[i];
+    }
     uint8_t cmd[2] = {CMD_WRITE_ENABLE, 0};
     flash_do_cmd(cmd, cmd, 1);
     flash_do_cmd(page_cmd, page_cmd, 4u + sp->len);
@@ -278,7 +295,7 @@ static void __no_inline_not_in_flash_func(do_program_bytes)(void *a) {
         cmd[0] = FLASH_CMD_READ_STATUS;
         cmd[1] = 0;
         flash_do_cmd(cmd, cmd, 2);
-    } while (cmd[1] & FLASH_STATUS_BUSY);
+    } while ((cmd[1] & FLASH_STATUS_BUSY) != 0u);
 }
 
 uint32_t flash_op_lockouts(void) {
@@ -346,13 +363,14 @@ static void __no_inline_not_in_flash_func(chip_cmd)(uint8_t cmd) {
 static void __no_inline_not_in_flash_func(chip_start)(const piece_args_t *a) {
     volatile uint8_t *cmdp = page_cmd; /* volatile: no memcpy() call, which lives in flash */
     uint32_t n = 4u;
-    cmdp[0] = a->kind == SLOT_ERASE ? CMD_ERASE_SECTOR : CMD_PAGE_PROGRAM;
+    cmdp[0] = (a->kind == SLOT_ERASE) ? CMD_ERASE_SECTOR : CMD_PAGE_PROGRAM;
     cmdp[1] = (uint8_t)(a->off >> 16);
     cmdp[2] = (uint8_t)(a->off >> 8);
     cmdp[3] = (uint8_t)a->off;
     if (a->kind == SLOT_PROGRAM) {
-        for (uint32_t i = 0; i < a->len; i++)
+        for (uint32_t i = 0; i < a->len; i++) {
             cmdp[4u + i] = a->data[i];
+        }
         n += a->len;
     }
     chip_cmd(CMD_WRITE_ENABLE);
@@ -364,19 +382,23 @@ static void __no_inline_not_in_flash_func(chip_start)(const piece_args_t *a) {
  * caller has core1's interrupts off. flash_do_cmd() gives XIP back after
  * each command, and the last command here finds the chip idle. */
 static int __no_inline_not_in_flash_func(run_piece)(const piece_args_t *a) {
-    if (a->p->resume)
+    if (a->p->resume) {
         chip_cmd(FLASH_CMD_RESUME);
-    else
+    } else {
         chip_start(a);
+    }
     uint32_t t0 = timer_hw->timerawl;
     for (;;) {
-        if (!(chip_status(FLASH_CMD_READ_STATUS) & FLASH_STATUS_BUSY))
+        if (!(chip_status(FLASH_CMD_READ_STATUS) & FLASH_STATUS_BUSY)) {
             return PIECE_DONE;
+        }
         uint32_t now = timer_hw->timerawl;
-        if (a->p->may_suspend && (int32_t)(now - a->p->suspend_at) >= 0 && (int32_t)(now - a->p->suspend_from) >= 0)
+        if (a->p->may_suspend && (int32_t)(now - a->p->suspend_at) >= 0 && (int32_t)(now - a->p->suspend_from) >= 0) {
             break;
-        if ((uint32_t)(now - t0) > PIECE_HARD_MAX_US)
+        }
+        if ((uint32_t)(now - t0) > PIECE_HARD_MAX_US) {
             return PIECE_ENDLESS;
+        }
     }
     chip_cmd(CMD_SUSPEND);
     uint32_t ts = timer_hw->timerawl;
@@ -384,8 +406,9 @@ static int __no_inline_not_in_flash_func(run_piece)(const piece_args_t *a) {
         __asm volatile("nop");
     }
     while (chip_status(FLASH_CMD_READ_STATUS) & FLASH_STATUS_BUSY) {
-        if ((uint32_t)(timer_hw->timerawl - ts) > SUSPEND_HARD_MAX_US)
+        if ((uint32_t)(timer_hw->timerawl - ts) > SUSPEND_HARD_MAX_US) {
             return PIECE_ESUSPEND;
+        }
     }
     return (chip_status(FLASH_CMD_READ_STATUS2) & FLASH_STATUS2_SUSPENDED) ? PIECE_SUSPENDED : PIECE_DONE;
 }
@@ -400,12 +423,14 @@ void flash_op_flight_end(void) {
     uint32_t t0 = timer_hw->timerawl;
     for (;;) {
         uint32_t s = spin_lock_blocking(lk_lock);
-        bool idle = !piece_busy || (uint32_t)(timer_hw->timerawl - t0) > PIECE_HARD_MAX_US;
-        if (idle)
+        bool idle = !piece_busy || ((uint32_t)(timer_hw->timerawl - t0) > PIECE_HARD_MAX_US);
+        if (idle) {
             flight = false;
+        }
         spin_unlock(lk_lock, s);
-        if (idle)
+        if (idle) {
             return;
+        }
     }
 }
 
@@ -436,10 +461,11 @@ static void __no_inline_not_in_flash_func(do_resume_finish)(void *a) {
 static void do_whole(void *a) {
     const whole_args_t *w = (const whole_args_t *)a;
     span_t sp = {w->off, w->data, w->len};
-    if (w->kind == SLOT_ERASE)
+    if (w->kind == SLOT_ERASE) {
         do_erase(&sp);
-    else
+    } else {
         do_program_bytes(&sp);
+    }
 }
 
 static uint32_t io_now(void *ctx) {
@@ -474,16 +500,19 @@ static int run_piece_counted(const piece_args_t *a) {
     uint32_t irq = save_and_disable_interrupts();
     uint32_t t0 = timer_hw->timerawl;
     int rc = run_piece(a);
-    held_suspended = flash_slot_held(held_suspended, a->p->resume, rc == PIECE_SUSPENDED || rc == PIECE_ESUSPEND);
+    held_suspended = flash_slot_held(held_suspended, a->p->resume,
+                                  (rc == PIECE_SUSPENDED) || (rc == PIECE_ESUSPEND));
     flash_op_seq++;
     uint32_t d = timer_hw->timerawl - t0;
     piece_busy = false;
     restore_interrupts(irq);
     slot_stats.pieces++;
-    if (rc == PIECE_SUSPENDED)
+    if (rc == PIECE_SUSPENDED) {
         slot_stats.suspends++;
-    if (d > slot_stats.piece_max_us)
+    }
+    if (d > slot_stats.piece_max_us) {
         slot_stats.piece_max_us = d;
+    }
     return rc;
 }
 
@@ -492,13 +521,15 @@ static int slot_piece(void *ctx, flash_slot_kind_t kind, uint32_t addr, const ui
                       const flash_piece_t *p) {
     uint32_t s = spin_lock_blocking(lk_lock);
     bool go = flight;
-    if (go)
+    if (go) {
         piece_busy = true;
+    }
     spin_unlock(lk_lock, s);
-    if (!go)
+    if (!go) {
         return FLASH_SLOT_NOT_YET;
+    }
     const flash_timing_t *t = ((const slot_ctx_t *)ctx)->t;
-    piece_args_t a = {kind, addr, data, len, p, t ? t->suspend_us : 0u};
+    piece_args_t a = {kind, addr, data, len, p, (t != NULL) ? t->suspend_us : 0u};
     return run_piece_counted(&a);
 }
 
@@ -529,17 +560,19 @@ static void ground_piece_body(void *v) {
  * again, and a launch meanwhile hands the rest to the flight's slots. */
 static int ground_piece(const slot_ctx_t *c, flash_slot_kind_t kind, uint32_t addr, const uint8_t *data, uint32_t len,
                         const flash_piece_t *p) {
-    if (flight || !board_ready())
+    if (flight || !board_ready()) {
         return FLASH_SLOT_NOT_YET;
+    }
     ground_piece_t g = {c->t, kind, p->resume, addr, data, len, FLASH_SLOT_NOT_YET};
-    return locked_out(ground_piece_body, &g) == 0 ? g.rc : FLASH_SLOT_NOT_YET;
+    return (locked_out(ground_piece_body, &g) == 0) ? g.rc : FLASH_SLOT_NOT_YET;
 }
 
 static int io_piece(void *ctx, flash_slot_kind_t kind, uint32_t addr, const uint8_t *data, uint32_t len,
                     const flash_piece_t *p) {
     int rc = slot_piece(ctx, kind, addr, data, len, p);
-    if (rc != FLASH_SLOT_NOT_YET)
+    if (rc != FLASH_SLOT_NOT_YET) {
         return rc;
+    }
     const slot_ctx_t *c = (const slot_ctx_t *)ctx;
     return c->ground ? ground_piece(c, kind, addr, data, len, p) : io_whole(ctx, kind, p->resume, addr, data, len);
 }
@@ -564,8 +597,9 @@ static volatile bool slot_ran;
 static void slot_isr(uint alarm) {
     (void)alarm;
     const flash_slot_req_t *r = slot_req;
-    if (!r)
+    if (!r) {
         return;
+    }
     flash_slot_io_t io = {r->io->ctx, io_now, io_t0, NULL, io_sliced, slot_piece, NULL};
     flash_slot_req_t here = *r;
     here.io = &io;
@@ -581,8 +615,9 @@ static void slot_isr(uint alarm) {
 static bool slot_alarm_ready(void) {
     if (slot_alarm < 0) {
         int a = hardware_alarm_claim_unused(false);
-        if (a < 0)
+        if (a < 0) {
             return false;
+        }
         hardware_alarm_set_callback((uint)a, slot_isr);
         slot_alarm = a;
     }
@@ -593,8 +628,11 @@ static bool slot_alarm_ready(void) {
 static uint64_t next_slot_start(uint32_t *t0) {
     uint64_t now = time_us_64();
     uint32_t at = core1_frame_t0() + LOOP_PERIOD_US;
-    while ((int32_t)(at - (uint32_t)now) < (int32_t)SLOT_ARM_MIN_US)
+    uint32_t ahead = at - (uint32_t)now;
+    while ((int32_t)ahead < (int32_t)SLOT_ARM_MIN_US) {
         at += LOOP_PERIOD_US;
+        ahead = at - (uint32_t)now;
+    }
     *t0 = at;
     return now + (uint32_t)(at - (uint32_t)now);
 }
@@ -606,7 +644,7 @@ static int io_at_slot_start(void *ctx, const flash_slot_req_t *r) {
     slot_stats.slot_waits++;
     core1_frame_writer_done();
     if (!flight || !slot_alarm_ready()) {
-        core1_frame_wait(2u * LOOP_PERIOD_MS);
+        (void)core1_frame_wait(2u * LOOP_PERIOD_MS);
         return flash_slot_try(r, core1_frame_t0());
     }
     uint32_t t0;
@@ -618,8 +656,9 @@ static int io_at_slot_start(void *ctx, const flash_slot_req_t *r) {
         at += LOOP_PERIOD_US;
         slot_start = t0 += LOOP_PERIOD_US;
     }
-    for (uint32_t i = 0; i < SLOT_WAITS && !slot_ran; i++)
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(LOOP_PERIOD_MS));
+    for (uint32_t i = 0; (i < SLOT_WAITS) && !slot_ran; i++) {
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(LOOP_PERIOD_MS));
+    }
     uint32_t irq = save_and_disable_interrupts();
     if (!slot_ran) {
         hardware_alarm_cancel((uint)slot_alarm);
@@ -632,7 +671,7 @@ static int io_at_slot_start(void *ctx, const flash_slot_req_t *r) {
 static int slot_op(flash_slot_kind_t kind, uint32_t off, const uint8_t *data, uint32_t len) {
     /* [FLT-LOG-10] Erasing is a ground operation: from launch to landing
      * the flash is only programmed. */
-    if (flight && (kind == SLOT_ERASE || xTaskGetCurrentTaskHandle() != writer)) {
+    if (flight && ((kind == SLOT_ERASE) || (xTaskGetCurrentTaskHandle() != writer))) {
         slot_stats.flight_refusals++;
         refusals++;
         return -4;
@@ -642,15 +681,16 @@ static int slot_op(flash_slot_kind_t kind, uint32_t off, const uint8_t *data, ui
     const flash_timing_t *t = flash_timing_for(jedec);
     /* A chip holding an operation suspended runs this one whole, which
      * finishes the held one first [FLT-LOG-11]. */
-    slot_ctx_t c = {t, !flight && xTaskGetCurrentTaskHandle() == writer && !held_suspended &&
+    slot_ctx_t c = {t, !flight && (xTaskGetCurrentTaskHandle() == writer) && !held_suspended &&
                            flash_slot_ground_sliced(t, kind)};
     flash_slot_io_t io = {&c, io_now, io_t0, io_at_slot_start, io_sliced, io_piece, io_whole};
     int rc = flash_slot_run(&io, t, kind, off, data, len);
     if (rc == 0) {
-        if (kind == SLOT_ERASE)
+        if (kind == SLOT_ERASE) {
             erases++;
-        else
+        } else {
             programs++;
+        }
     }
     return rc;
 }
@@ -660,8 +700,9 @@ int flash_op_slot_erase(uint32_t offset) {
 }
 
 int flash_op_slot_program(uint32_t offset, const uint8_t *data, uint32_t len) {
-    if (!len || len > FLASH_PAGE_SIZE || (offset % FLASH_PAGE_SIZE) + len > FLASH_PAGE_SIZE)
+    if ((len == 0u) || (len > FLASH_PAGE_SIZE) || (((offset % FLASH_PAGE_SIZE) + len) > FLASH_PAGE_SIZE)) {
         return -4;
+    }
     return slot_op(SLOT_PROGRAM, offset, data, len);
 }
 

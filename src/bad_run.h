@@ -23,12 +23,13 @@ typedef struct {
 /* True when a reading this far off, at t_us, is not to be used. */
 static inline bool bad_run_rejects(bad_run_t *r, bool far, uint32_t t_us) {
     if (!far) {
-        r->since_us = 0;
+        r->since_us = 0u;
         return false;
     }
-    if (r->since_us == 0)
+    if (r->since_us == 0u) {
         r->since_us = t_us + 1u;
-    return t_us + 1u - r->since_us < BAD_RUN_US;
+    }
+    return ((t_us + 1u) - r->since_us) < BAD_RUN_US;
 }
 
 #endif

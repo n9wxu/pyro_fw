@@ -71,8 +71,9 @@ static float fly_to_apogee(float target_m) {
 
 void test_the_profile_reaches_the_apogee_asked_for(void) {
     const float targets[] = {30.48f, 1524.0f, 30480.0f, 100000.0f};
-    for (unsigned i = 0; i < sizeof(targets) / sizeof(targets[0]); i++)
+    for (unsigned i = 0; i < sizeof(targets) / sizeof(targets[0]); i++) {
         TEST_ASSERT_FLOAT_WITHIN(targets[i] * 0.01f, targets[i], fly_to_apogee(targets[i]));
+    }
 }
 
 void test_the_main_descends_at_its_damping_terminal_speed(void) {
@@ -80,8 +81,9 @@ void test_the_main_descends_at_its_damping_terminal_speed(void) {
     physics_reset(&ps);
     ps.alt_m = 300.0f;
     physics_deploy_main(&ps);
-    for (float t = 0.0f; t < 20.0f; t += PHYS_STEP_S)
+    for (float t = 0.0f; t < 20.0f; t += PHYS_STEP_S) {
         physics_step(&ps, 100.0f + t);
+    }
     float sigma = physics_density_kg_m3(ps.alt_m) / physics_density_kg_m3(0.0f);
     TEST_ASSERT_FLOAT_WITHIN(0.05f, -PHYS_G0 / (ps.main_damping_per_s * sigma), ps.vel_ms);
 }

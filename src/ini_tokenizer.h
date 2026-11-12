@@ -20,39 +20,47 @@
 typedef void (*ini_pair_fn)(const char *key, const char *val, void *ctx);
 
 static inline bool ini_is_blank(char c) {
-    return c == ' ' || c == '\t';
+    return (c == ' ') || (c == '\t');
 }
 
 /* s with its leading and trailing blanks cut, in place. */
 static inline char *ini_trim(char *s) {
-    while (ini_is_blank(*s))
-        s++;
-    char *end = s + strlen(s);
-    while (end > s && ini_is_blank(end[-1]))
-        *--end = '\0';
-    return s;
+    size_t start = 0u;
+    while (ini_is_blank(s[start])) {
+        start++;
+    }
+    char *text = &s[start];
+    size_t len = strlen(text);
+    while ((len > 0u) && ini_is_blank(text[len - 1u])) {
+        len--;
+        text[len] = '\0';
+    }
+    return text;
 }
 
 static inline void ini_for_each(char *buf, ini_pair_fn fn, void *ctx) {
     char *line = buf;
-    while (*line) {
-        char *eol = line;
-        while (*eol && *eol != '\r' && *eol != '\n')
+    while (*line != '\0') {
+        size_t eol = 0u;
+        while ((line[eol] != '\0') && (line[eol] != '\r') && (line[eol] != '\n')) {
             eol++;
-        char *next = eol;
-        while (*next == '\r' || *next == '\n')
+        }
+        size_t next = eol;
+        while ((line[next] == '\r') || (line[next] == '\n')) {
             next++;
-        *eol = '\0';
+        }
+        line[eol] = '\0';
 
         char *text = ini_trim(line);
         char *eq = strchr(text, '=');
-        if (eq && text[0] != '[' && text[0] != ';' && text[0] != '#') {
+        if ((eq != NULL) && (text[0] != '[') && (text[0] != ';') && (text[0] != '#')) {
             *eq = '\0';
             char *key = ini_trim(text);
-            if (key[0])
-                fn(key, ini_trim(eq + 1), ctx);
+            if (key[0] != '\0') {
+                fn(key, ini_trim(&eq[1]), ctx);
+            }
         }
-        line = next;
+        line = &line[next];
     }
 }
 

@@ -25,41 +25,47 @@ static const layer_t USSA76[] = {
 static const double HYDROSTATIC_K = (double)PHYS_G0 / PHYS_R_AIR; /* g0·M0/R*, 1/K·m⁻¹ */
 
 static double layer_ratio(const layer_t *l, double dh) {
-    if (l->lapse_k_per_m == 0.0)
+    if (l->lapse_k_per_m == 0.0) {
         return exp(-HYDROSTATIC_K * dh / l->base_k);
+    }
     return pow(l->base_k / (l->base_k + l->lapse_k_per_m * dh), HYDROSTATIC_K / l->lapse_k_per_m);
 }
 
 static double base_pa[N_LAYERS];
 
 static void integrate_base_pressures(void) {
-    if (base_pa[0] != 0.0)
+    if (base_pa[0] != 0.0) {
         return;
+    }
     base_pa[0] = PHYS_SEA_LEVEL_PA;
-    for (int i = 1; i < N_LAYERS; i++)
+    for (int i = 1; i < N_LAYERS; i++) {
         base_pa[i] = base_pa[i - 1] * layer_ratio(&USSA76[i - 1], USSA76[i].base_m - USSA76[i - 1].base_m);
+    }
 }
 
 static int layer_index(double h) {
     int i = N_LAYERS - 1;
-    while (i > 0 && h < USSA76[i].base_m)
+    while (i > 0 && h < USSA76[i].base_m) {
         i--;
+    }
     return i;
 }
 
 static double temperature_k(double h) {
     const layer_t *l = &USSA76[layer_index(h)];
     double top_k = l->base_k + l->lapse_k_per_m * (USSA76_TOP_M - l->base_m);
-    if (h > USSA76_TOP_M)
+    if (h > USSA76_TOP_M) {
         return top_k;
+    }
     return l->base_k + l->lapse_k_per_m * (h - l->base_m);
 }
 
 static double pressure_pa(double h) {
     integrate_base_pressures();
     int i = layer_index(h);
-    if (h <= USSA76_TOP_M)
+    if (h <= USSA76_TOP_M) {
         return base_pa[i] * layer_ratio(&USSA76[i], h - USSA76[i].base_m);
+    }
     double top_pa = base_pa[i] * layer_ratio(&USSA76[i], USSA76_TOP_M - USSA76[i].base_m);
     return top_pa * exp(-HYDROSTATIC_K * (h - USSA76_TOP_M) / temperature_k(h));
 }
@@ -91,17 +97,19 @@ float physics_density_kg_m3(float alt_m) {
  * cannot lift the rocket at all. */
 static float vacuum_burn_time_s(float thrust_accel_ms2, float target_m) {
     float a_net = thrust_accel_ms2 - PHYS_G0;
-    if (a_net <= 0.0f)
+    if (a_net <= 0.0f) {
         return 0.0f;
+    }
     float lo = 0.0f, hi = BURN_SEARCH_MAX_S;
     for (int i = 0; i < BURN_SEARCH_STEPS; i++) {
         float t = (lo + hi) / 2.0f;
         float v_burnout = a_net * t;
         float apogee = 0.5f * a_net * t * t + v_burnout * v_burnout / (2.0f * PHYS_G0);
-        if (apogee < target_m)
+        if (apogee < target_m) {
             lo = t;
-        else
+        } else {
             hi = t;
+        }
     }
     return (lo + hi) / 2.0f;
 }
@@ -116,12 +124,13 @@ void physics_reset(physics_state_t *ps) {
 
 void physics_init(physics_state_t *ps, float target_alt_m) {
     physics_reset(ps);
-    if (target_alt_m > 50000.0f)
+    if (target_alt_m > 50000.0f) {
         ps->thrust_accel_ms2 = 5.0f * PHYS_G0;
-    else if (target_alt_m > 500.0f)
+    } else if (target_alt_m > 500.0f) {
         ps->thrust_accel_ms2 = 10.0f * PHYS_G0;
-    else
+    } else {
         ps->thrust_accel_ms2 = 20.0f * PHYS_G0;
+    }
     ps->burn_time_s = vacuum_burn_time_s(ps->thrust_accel_ms2, target_alt_m);
 }
 
@@ -137,20 +146,24 @@ void physics_set_damping(physics_state_t *ps, float drogue_per_s, float main_per
 }
 
 static float descent_damping_per_s(const physics_state_t *ps) {
-    if (ps->main_deployed)
+    if (ps->main_deployed) {
         return ps->main_damping_per_s;
-    if (ps->drogue_deployed)
+    }
+    if (ps->drogue_deployed) {
         return ps->drogue_damping_per_s;
+    }
     return ps->ballistic_damping_per_s;
 }
 
 void physics_step(physics_state_t *ps, float since_launch_s) {
-    if (ps->on_ground)
+    if (ps->on_ground) {
         return;
+    }
 
     float a = -PHYS_G0;
-    if (since_launch_s < ps->burn_time_s)
+    if (since_launch_s < ps->burn_time_s) {
         a += ps->thrust_accel_ms2;
+    }
     if (ps->vel_ms < 0.0f) {
         float sigma = physics_density_kg_m3(ps->alt_m) / physics_density_kg_m3(0.0f);
         a += descent_damping_per_s(ps) * sigma * -ps->vel_ms;
@@ -159,8 +172,9 @@ void physics_step(physics_state_t *ps, float since_launch_s) {
     ps->vel_ms += a * PHYS_STEP_S;
     ps->alt_m += ps->vel_ms * PHYS_STEP_S;
 
-    if (ps->alt_m > ps->apogee_m)
+    if (ps->alt_m > ps->apogee_m) {
         ps->apogee_m = ps->alt_m;
+    }
 
     if (ps->alt_m <= 0.0f) {
         ps->alt_m = 0;

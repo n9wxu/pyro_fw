@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "pressure_sensor.h"
+#include "hal.h"
 #include "board_pins.h"
 #include "board_support.h"
 #include "bmp280_driver.h"
@@ -26,8 +27,6 @@ _Static_assert(BOARD_BMP280_I2C_HZ <= BMP280_I2C_MAX_HZ, "faster than the BMP280
 
 #define BMP280_ADDR_SDO_LOW 0x76
 #define BMP280_ADDR_SDO_HIGH 0x77
-
-extern void hal_telemetry_send(const char *sentence);
 
 /* Each state is a step a loop takes [DD-053]. */
 typedef enum {
@@ -57,7 +56,7 @@ static void configure_i2c_pins(uint sda_pin) {
 
 void pressure_sensor_begin(void) {
     hal_telemetry_send("!PRES sensor init start\r\n");
-    uint32_t i2c_block = BOARD_I2C_INST == i2c0 ? RESETS_RESET_I2C0_BITS : RESETS_RESET_I2C1_BITS;
+    uint32_t i2c_block = (BOARD_I2C_INST == i2c0) ? RESETS_RESET_I2C0_BITS : RESETS_RESET_I2C1_BITS;
     reset_block(i2c_block);
     unreset_block_wait(i2c_block);
     /* A STOP on both pads: either sensor may be the one left mid-transfer. */
@@ -69,9 +68,9 @@ void pressure_sensor_begin(void) {
 
 static pressure_sensor_type_t done(pressure_sensor_type_t t) {
     detected_sensor = t;
-    hal_telemetry_send(t == PRESSURE_SENSOR_BMP280   ? "!PRES init OK: BMP280\r\n"
-                       : t == PRESSURE_SENSOR_MS5607 ? "!PRES init OK: MS5607\r\n"
-                                                     : "!PRES init FAIL: no sensor found\r\n");
+    hal_telemetry_send((t == PRESSURE_SENSOR_BMP280)   ? "!PRES init OK: BMP280\r\n"
+                       : (t == PRESSURE_SENSOR_MS5607) ? "!PRES init OK: MS5607\r\n"
+                                                       : "!PRES init FAIL: no sensor found\r\n");
     bu.state = BU_DONE;
     return t;
 }
@@ -79,8 +78,9 @@ static pressure_sensor_type_t done(pressure_sensor_type_t t) {
 pressure_sensor_type_t pressure_sensor_step(uint32_t now_ms) {
     switch (bu.state) {
     case BU_RECOVER:
-        if (!i2c_recover_step(&bu.recover))
+        if (!i2c_recover_step(&bu.recover)) {
             return PRESSURE_SENSOR_PENDING;
+        }
         hal_telemetry_send("!PRES bus recovery done\r\n");
         i2c_init(BOARD_I2C_INST, BOARD_BMP280_I2C_HZ);
         hal_telemetry_send("!PRES trying BMP280 (SDA=6)\r\n");
@@ -90,23 +90,26 @@ pressure_sensor_type_t pressure_sensor_step(uint32_t now_ms) {
         return PRESSURE_SENSOR_PENDING;
 
     case BU_BMP280_SETTLE: {
-        if (!deadline_reached(now_ms, bu.due_ms))
+        if (!deadline_reached(now_ms, bu.due_ms)) {
             return PRESSURE_SENSOR_PENDING;
+        }
         /* At either address: a missing sensor NACKs, and a held bus times
          * out, since this also runs after a reset in flight. */
         static const uint8_t reset_cmd[2] = {BMP280_REG_RESET, BMP280_SOFT_RESET};
-        i2c_write_timeout_us(BOARD_I2C_INST, BMP280_ADDR_SDO_LOW, reset_cmd, 2, false, 2000u);
-        i2c_write_timeout_us(BOARD_I2C_INST, BMP280_ADDR_SDO_HIGH, reset_cmd, 2, false, 2000u);
+        (void)i2c_write_timeout_us(BOARD_I2C_INST, BMP280_ADDR_SDO_LOW, reset_cmd, 2, false, 2000u);
+        (void)i2c_write_timeout_us(BOARD_I2C_INST, BMP280_ADDR_SDO_HIGH, reset_cmd, 2, false, 2000u);
         bu.due_ms = now_ms + BMP280_STARTUP_MS;
         bu.state = BU_BMP280_START;
         return PRESSURE_SENSOR_PENDING;
     }
 
     case BU_BMP280_START:
-        if (!deadline_reached(now_ms, bu.due_ms))
+        if (!deadline_reached(now_ms, bu.due_ms)) {
             return PRESSURE_SENSOR_PENDING;
-        if (bmp280_detect())
+        }
+        if (bmp280_detect()) {
             return done(PRESSURE_SENSOR_BMP280);
+        }
         gpio_init(BMP280_SDA); /* back to a plain input: the pad is let go */
         i2c_set_baudrate(BOARD_I2C_INST, BOARD_MS5607_I2C_HZ);
         hal_telemetry_send("!PRES trying MS5607 (SDA=10)\r\n");
@@ -116,17 +119,19 @@ pressure_sensor_type_t pressure_sensor_step(uint32_t now_ms) {
         return PRESSURE_SENSOR_PENDING;
 
     case BU_MS5607_SETTLE:
-        if (!deadline_reached(now_ms, bu.due_ms))
+        if (!deadline_reached(now_ms, bu.due_ms)) {
             return PRESSURE_SENSOR_PENDING;
+        }
         ms5607_detect_begin(&bu.detect);
         bu.state = BU_MS5607_DETECT;
         return PRESSURE_SENSOR_PENDING;
 
     case BU_MS5607_DETECT: {
         ms5607_detect_result_t r = ms5607_detect_step(&bu.detect, now_ms);
-        if (r == MS5607_DETECT_PENDING)
+        if (r == MS5607_DETECT_PENDING) {
             return PRESSURE_SENSOR_PENDING;
-        return done(r == MS5607_DETECT_FOUND ? PRESSURE_SENSOR_MS5607 : PRESSURE_SENSOR_NONE);
+        }
+        return done((r == MS5607_DETECT_FOUND) ? PRESSURE_SENSOR_MS5607 : PRESSURE_SENSOR_NONE);
     }
 
     case BU_DONE:

@@ -27,14 +27,15 @@ static TaskHandle_t net_h;
 void tud_event_hook_cb(uint8_t rhport, uint32_t eventid, bool in_isr) {
     (void)rhport;
     (void)eventid;
-    if (!net_h)
+    if (net_h == NULL) {
         return;
+    }
     if (in_isr) {
         BaseType_t woken = pdFALSE;
         vTaskNotifyGiveFromISR(net_h, &woken);
         portYIELD_FROM_ISR(woken);
     } else {
-        xTaskNotifyGive(net_h);
+        (void)xTaskNotifyGive(net_h);
     }
 }
 
@@ -48,6 +49,8 @@ void net_task(void *arg) {
     net_h = xTaskGetCurrentTaskHandle();
     tud_init(BOARD_TUD_RHPORT);
     uint32_t period_t0 = time_us_32();
+    const uint32_t period_us = LOOP_PERIOD_US;
+    const int32_t unit_budget_us = (int32_t)period_us;
     for (;;) {
         hal_platform_service();
         if ((uint32_t)(time_us_32() - period_t0) >= LOOP_PERIOD_US) {
@@ -55,9 +58,10 @@ void net_task(void *arg) {
             http_server_period();
         }
         for (int i = 0; i < UNITS_PER_PASS; i++) {
-            if (!http_server_work((int32_t)LOOP_PERIOD_US))
+            if (!http_server_work(unit_budget_us)) {
                 break;
+            }
         }
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1));
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1));
     }
 }

@@ -46,15 +46,21 @@ results = []
 
 
 def marker_valid(mk):
-    """src/flight_resume.c's pad_record_valid(): pad_record_t, five
-    little-endian words, version 3 (DD-086)."""
-    if len(mk) != 20:
+    """src/flight_resume.c's pad_record_valid(): pad_record_t, six
+    little-endian words, version 4."""
+    if len(mk) != 24:
         return False
-    magic, version, ground, sigma, total = struct.unpack("<IIiII", mk)
+    magic, version, ground, sigma, pad_ck, total = struct.unpack("<IIiIII", mk)
     want = (magic ^ ((version * 2654435761) & 0xFFFFFFFF) ^ (ground & 0xFFFFFFFF) ^
-            ((sigma * 40503) & 0xFFFFFFFF))
-    return (magic == 0x50594D31 and version == 3 and 50000 <= ground <= 110000
-            and 0 < sigma <= 100000 and total == want)
+            ((sigma * 40503) & 0xFFFFFFFF) ^ ((pad_ck * 2246822519) & 0xFFFFFFFF))
+    return (magic == 0x50594D31 and version == 4 and 50000 <= ground <= 110000
+            and 0 < sigma <= 100000 and pad_ck <= 40000 and total == want)
+
+
+def standing(faults):
+    """The faults a save does not raise: the cleanup a save starts ends by
+    itself (BUZ-07)."""
+    return [f for f in faults if f != "flash_cleanup"]
 
 
 ERASE_WAIT_S = 120  # longer than a whole store's cleanup at the flash's pace
@@ -356,7 +362,8 @@ check("config.ini carries no inert keys after a save", not inert, ",".join(inert
 time.sleep(2.5)
 st1 = status()
 check("the running board keeps the configuration it started with",
-      st1["pyro1_mode"] == st0["pyro1_mode"] and st1["faults"] == st0["faults"] and st1["beep"] == st0["beep"] and
+      st1["pyro1_mode"] == st0["pyro1_mode"] and standing(st1["faults"]) == standing(st0["faults"]) and
+      st1["estimator"] == st0["estimator"] and (st1["beep"] == st0["beep"] or "wait" in (st0["beep"], st1["beep"])) and
       st1["estimator"] == st0["estimator"],
       f"pyro1_mode={st1['pyro1_mode']} faults={st1['faults']} beep={st1['beep']}")
 

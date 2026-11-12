@@ -90,18 +90,19 @@ typedef struct {
  * two released pyro pads rather than one entry in LUA_PIN_LIST. */
 static out_t outs[LUA_MAX_OUT + 1];
 static int n_out;
-static in_t ins[LUA_MAX_IN];
 static int n_in;
 
 /* Every pad a successful publish handed to Lua, which is what safing puts
  * down. Never a pad whose publish was refused: that pad is someone else's. */
-static uint8_t claimed[LUA_CFG_MAX + 2];
+#define LUA_CLAIMED_MAX (LUA_CFG_MAX + 2)
+static uint8_t claimed[LUA_CLAIMED_MAX];
 static int n_claimed;
 
 static void remember_claim(uint32_t pads) {
     for (uint8_t pin = 0; pin < PAD_CLAIM_MAX_GPIO; pin++) {
-        if ((pads & PAD(pin)) && n_claimed < (int)(sizeof(claimed) / sizeof(claimed[0]))) {
-            claimed[n_claimed++] = pin;
+        if (((pads & PAD(pin)) != 0u) && (n_claimed < LUA_CLAIMED_MAX)) {
+            claimed[n_claimed] = pin;
+            n_claimed++;
         }
     }
 }
@@ -115,7 +116,8 @@ static bool publish(uint32_t pads, const char *name, lua_iface_kind_t kind, cons
     return true;
 }
 
-static int tx_sm = -1, rx_sm = -1;
+static int tx_sm = -1;
+static int rx_sm = -1;
 
 /* The half-bridge, on the pyro PIO (see above). */
 static int bridge_sm = -1;
@@ -133,9 +135,9 @@ static uint32_t px_wire[LUA_MAX_PIXELS]; /* what show() handed to DMA */
  * slice number, so two Lua pads could fight over one slice's period. On SIO
  * every pad has one owner, and safing it is the same gpio_init() as any
  * other pad. */
-static uint32_t pwm_phase;
 
 void lua_plat_pin_service(void) {
+    static uint32_t pwm_phase;
     pwm_phase = (pwm_phase + 1u) % LUA_PWM_STEPS;
     for (int i = 0; i < n_out; i++) {
         if (outs[i].dimmable) {
@@ -192,7 +194,7 @@ static int serial_write(void *ctx, const char *s, int len) {
         return 0;
     }
     int n = 0;
-    while (n < len && !pio_sm_is_tx_fifo_full(LUA_PIO, (uint)tx_sm)) {
+    while ((n < len) && !pio_sm_is_tx_fifo_full(LUA_PIO, (uint)tx_sm)) {
         pio_sm_put(LUA_PIO, (uint)tx_sm, (uint32_t)(uint8_t)s[n]);
         n++;
     }
@@ -205,9 +207,10 @@ static int serial_read(void *ctx, char *buf, int max) {
         return 0;
     }
     int n = 0;
-    while (n < max && !pio_sm_is_rx_fifo_empty(LUA_PIO, (uint)rx_sm)) {
+    while ((n < max) && !pio_sm_is_rx_fifo_empty(LUA_PIO, (uint)rx_sm)) {
         /* Shifted right into a 32-bit ISR: the byte is the top 8 bits. */
-        buf[n++] = (char)(pio_sm_get(LUA_PIO, (uint)rx_sm) >> 24);
+        buf[n] = (char)(pio_sm_get(LUA_PIO, (uint)rx_sm) >> 24);
+        n++;
     }
     return n;
 }
@@ -225,7 +228,7 @@ static void px_set(void *ctx, int idx, uint8_t r, uint8_t g, uint8_t b) {
 
 static void px_show(void *ctx) {
     (void)ctx;
-    if (px_sm < 0 || px_count == 0) {
+    if ((px_sm < 0) || (px_count == 0)) {
         return;
     }
     /* Not dma_channel_wait_for_finish_blocking(): it is bounded only while
@@ -234,7 +237,7 @@ static void px_show(void *ctx) {
     if (dma_channel_is_busy((uint)px_dma)) {
         return;
     }
-    memcpy(px_wire, px_buf, sizeof(uint32_t) * (size_t)px_count);
+    (void)memcpy(px_wire, px_buf, sizeof(uint32_t) * (size_t)px_count);
     dma_channel_set_read_addr((uint)px_dma, px_wire, false);
     dma_channel_set_trans_count((uint)px_dma, (uint32_t)px_count, true);
 }
@@ -248,14 +251,16 @@ static const lua_if_pixel_t ws2812_vt = {px_len, px_set, px_show};
 
 /* ── Boot-time configuration ──────────────────────────────────────── */
 
-static uint px_offset, tx_offset, rx_offset;
+static uint px_offset;
+static uint tx_offset;
+static uint rx_offset;
 
 static bool baud_usable(uint32_t baud) {
     if (baud == 0u) {
         return false;
     }
     uint32_t div = clock_get_hz(clk_sys) / (UART_SM_CYCLES_PER_BIT * baud);
-    return div >= 1u && div <= PIO_CLKDIV_MAX;
+    return (div >= 1u) && (div <= PIO_CLKDIV_MAX);
 }
 
 /* A state machine and the program's slots, both or neither. */
@@ -290,6 +295,7 @@ static void configure_output(const lua_pin_cfg_t *c) {
 }
 
 static void configure_input(const lua_pin_cfg_t *c) {
+    static in_t ins[LUA_MAX_IN];
     if (n_in >= LUA_MAX_IN) {
         return;
     }
@@ -305,7 +311,7 @@ static void configure_input(const lua_pin_cfg_t *c) {
 }
 
 static void configure_pixels(const lua_pin_cfg_t *c, int pixels) {
-    if (px_sm < 0 || !publish(PAD(c->pin), c->name, LUA_IF_PIXEL, &ws2812_vt, NULL)) {
+    if ((px_sm < 0) || !publish(PAD(c->pin), c->name, LUA_IF_PIXEL, &ws2812_vt, NULL)) {
         return;
     }
     px_count = (pixels > LUA_MAX_PIXELS) ? LUA_MAX_PIXELS : pixels;
@@ -322,25 +328,25 @@ static void configure_pixels(const lua_pin_cfg_t *c, int pixels) {
  * claim covers both at once: publishing on the first pad seen would leave
  * the second unclaimed. */
 static void configure_serial(const lua_pin_cfg_t *tx, const lua_pin_cfg_t *rx, uint32_t baud) {
-    uint32_t pads = (tx ? PAD(tx->pin) : PAD_NONE) | (rx ? PAD(rx->pin) : PAD_NONE);
-    const char *name = tx ? tx->name : rx->name;
+    uint32_t pads = ((tx != NULL) ? PAD(tx->pin) : PAD_NONE) | ((rx != NULL) ? PAD(rx->pin) : PAD_NONE);
+    const char *name = (tx != NULL) ? tx->name : rx->name;
     if (!publish(pads, name, LUA_IF_SERIAL, &pio_uart_vt, NULL)) {
         return;
     }
-    if (tx) {
+    if (tx != NULL) {
         lua_uart_tx_program_init(LUA_PIO, (uint)tx_sm, tx_offset, tx->pin, baud);
     }
-    if (rx) {
+    if (rx != NULL) {
         lua_uart_rx_program_init(LUA_PIO, (uint)rx_sm, rx_offset, rx->pin, baud);
     }
 }
 
 int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, uint32_t baud, int pixels) {
-    static_assert(LUA_PIO_BUDGET_INSTR <= 32, "Lua PIO programs exceed pio1 instruction memory");
+    static_assert(LUA_PIO_BUDGET_INSTR <= 32u, "Lua PIO programs exceed pio1 instruction memory");
     static_assert(LUA_PIO_BUDGET_SMS <= 4, "Lua PIO roles exceed pio1 state machines");
-    static_assert(PYRO_PIO_BUDGET_INSTR <= 32, "pyro PIO programs exceed pio0 instruction memory");
+    static_assert(PYRO_PIO_BUDGET_INSTR <= 32u, "pyro PIO programs exceed pio0 instruction memory");
     static_assert(PYRO_PIO_BUDGET_SMS <= 4, "pyro PIO roles exceed pio0 state machines");
-    static_assert(LUA_PIN_COUNT + 3 <= LUA_CFG_MAX, "this board's pads plus a released pyro block exceed LUA_CFG_MAX");
+    static_assert((LUA_PIN_COUNT + 3) <= LUA_CFG_MAX, "this board's pads plus a released pyro block exceed LUA_CFG_MAX");
 
     /* LUA_PIN_LIST and the capability table state the same fact twice. A
      * listed pin the table reserves would hand a script something the flight
@@ -349,41 +355,57 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, uint32_t baud, int pixel
         return LUA_PLAT_CLAIM_FAILED;
     }
 
-    n_out = n_in = px_count = n_claimed = 0;
+    n_out = 0;
+    n_in = 0;
+    px_count = 0;
+    n_claimed = 0;
     lua_iface_reset();
-    tx_sm = rx_sm = px_sm = px_dma = -1;
+    tx_sm = -1;
+    rx_sm = -1;
+    px_sm = -1;
+    px_dma = -1;
 
-    const lua_pin_cfg_t *px = NULL, *tx = NULL, *rx = NULL;
-    for (int i = 0; i < n && i < LUA_CFG_MAX; i++) {
-        if (cfg[i].role == LUA_ROLE_PIXEL && !px) {
+    const lua_pin_cfg_t *px = NULL;
+    const lua_pin_cfg_t *tx = NULL;
+    const lua_pin_cfg_t *rx = NULL;
+    for (int i = 0; (i < n) && (i < LUA_CFG_MAX); i++) {
+        if ((cfg[i].role == LUA_ROLE_PIXEL) && (px == NULL)) {
             px = &cfg[i];
-        } else if (cfg[i].role == LUA_ROLE_TX && !tx) {
+        } else if ((cfg[i].role == LUA_ROLE_TX) && (tx == NULL)) {
             tx = &cfg[i];
-        } else if (cfg[i].role == LUA_ROLE_RX && !rx) {
+        } else if ((cfg[i].role == LUA_ROLE_RX) && (rx == NULL)) {
             rx = &cfg[i];
+        } else {
+            /* a second pad of a role that has one resource, or a role that is not PIO's */
         }
     }
-    if ((tx || rx) && !baud_usable(baud)) {
+    if (((tx != NULL) || (rx != NULL)) && !baud_usable(baud)) {
         return LUA_PLAT_BAD_BAUD;
     }
 
     /* PIO and DMA first. By the budget above none of these can fail, so the
      * non-asserting variants report rather than panic. */
-    if (px) {
+    if (px != NULL) {
         px_dma = dma_claim_unused_channel(false);
         px_sm = claim_program(&lua_ws2812_program, &px_offset);
-        if (px_sm < 0 || px_dma < 0) {
+        if ((px_sm < 0) || (px_dma < 0)) {
             return LUA_PLAT_CLAIM_FAILED;
         }
     }
-    if (tx && (tx_sm = claim_program(&lua_uart_tx_program, &tx_offset)) < 0) {
-        return LUA_PLAT_CLAIM_FAILED;
+    if (tx != NULL) {
+        tx_sm = claim_program(&lua_uart_tx_program, &tx_offset);
+        if (tx_sm < 0) {
+            return LUA_PLAT_CLAIM_FAILED;
+        }
     }
-    if (rx && (rx_sm = claim_program(&lua_uart_rx_program, &rx_offset)) < 0) {
-        return LUA_PLAT_CLAIM_FAILED;
+    if (rx != NULL) {
+        rx_sm = claim_program(&lua_uart_rx_program, &rx_offset);
+        if (rx_sm < 0) {
+            return LUA_PLAT_CLAIM_FAILED;
+        }
     }
 
-    for (int i = 0; i < n && i < LUA_CFG_MAX; i++) {
+    for (int i = 0; (i < n) && (i < LUA_CFG_MAX); i++) {
         switch (cfg[i].role) {
         case LUA_ROLE_OUT:
         case LUA_ROLE_PWM:
@@ -396,10 +418,10 @@ int lua_plat_configure(const lua_pin_cfg_t *cfg, int n, uint32_t baud, int pixel
             break;
         }
     }
-    if (px) {
+    if (px != NULL) {
         configure_pixels(px, pixels);
     }
-    if (tx || rx) {
+    if ((tx != NULL) || (rx != NULL)) {
         configure_serial(tx, rx, baud);
     }
 
@@ -416,7 +438,7 @@ uint32_t lua_plat_bridge_dropped(void) {
 }
 
 int lua_plat_configure_bridge(uint8_t channel_pin, uint8_t common_pin, const char *name, unsigned deadtime_cycles) {
-    if (n_out >= (int)(sizeof(outs) / sizeof(outs[0]))) {
+    if (n_out >= (LUA_MAX_OUT + 1)) {
         return -1;
     }
     int sm = pio_claim_unused_sm(PYRO_PIO_INST, false);
@@ -431,7 +453,7 @@ int lua_plat_configure_bridge(uint8_t channel_pin, uint8_t common_pin, const cha
     /* Both pads or neither: a half-claimed bridge would be one FET gate this
      * side owns and one it does not. */
     out_t *o = &outs[n_out];
-    memset(o, 0, sizeof(*o));
+    (void)memset(o, 0, sizeof(*o));
     o->pin = channel_pin;
     if (!publish(PAD(channel_pin) | PAD(common_pin), name, LUA_IF_OUTPUT, &bridge_vt, o)) {
         pio_sm_unclaim(PYRO_PIO_INST, (uint)sm);
@@ -490,7 +512,7 @@ int lua_plat_under_thrust(void) {
     return lua_flight_snapshot()->under_thrust;
 }
 int lua_plat_apogee_detected(void) {
-    return lua_flight_snapshot()->apogee_detected;
+    return lua_flight_snapshot()->apogee_seen;
 }
 uint32_t lua_plat_telem_seq(void) {
     return lua_flight_snapshot()->telem_seq;

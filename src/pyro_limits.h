@@ -9,8 +9,12 @@
 #include <stdint.h>
 
 typedef struct {
-    uint16_t refire_interval_default_ms, refire_interval_min_ms, refire_interval_max_ms;
-    uint16_t fire_gap_default_ms, fire_gap_min_ms, fire_gap_max_ms;
+    uint16_t refire_interval_default_ms;
+    uint16_t refire_interval_min_ms;
+    uint16_t refire_interval_max_ms;
+    uint16_t fire_gap_default_ms;
+    uint16_t fire_gap_min_ms;
+    uint16_t fire_gap_max_ms;
 } pyro_limits_t;
 
 /* The general values, where a board declares none. */

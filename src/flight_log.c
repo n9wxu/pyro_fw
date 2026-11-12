@@ -5,6 +5,7 @@
 #include "config.h"
 #include "flight_events.h"
 #include "flight_states.h"
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -27,9 +28,9 @@ static void put16(uint8_t *p, uint16_t v) {
     p[1] = (uint8_t)(v >> 8);
 }
 
-static void put32(uint8_t *p, uint32_t v) {
+static void put_log_le32(uint8_t *p, uint32_t v) {
     put16(p, (uint16_t)v);
-    put16(p + 2, (uint16_t)(v >> 16));
+    put16(&p[2], (uint16_t)(v >> 16));
 }
 
 static uint16_t get16(const uint8_t *p) {
@@ -37,41 +38,42 @@ static uint16_t get16(const uint8_t *p) {
 }
 
 static uint32_t get32(const uint8_t *p) {
-    return (uint32_t)get16(p) | ((uint32_t)get16(p + 2) << 16);
+    return (uint32_t)get16(p) | ((uint32_t)get16(&p[2]) << 16);
 }
 
 static void put_str8(uint8_t *p, const char *s) {
-    memset(p, 0, 8);
-    for (int i = 0; i < 8 && s && s[i]; i++) {
+    (void)memset(p, 0, 8);
+    for (int i = 0; (i < 8) && (s != NULL) && (s[i] != '\0'); i++) {
         p[i] = (uint8_t)s[i];
     }
 }
 
 int flog_put_header(uint8_t *dst, int cap, const flog_header_t *h) {
     int board = 0;
-    while (h->board && h->board[board] && board < FLOG_BOARD_MAX) {
+    while ((h->board != NULL) && (h->board[board] != '\0') && (board < FLOG_BOARD_MAX)) {
         board++;
     }
     int n = FLOG_MAGIC_LEN + HDR_FIXED + board;
     if (n > cap) {
         return 0;
     }
-    memcpy(dst, FLOG_MAGIC, FLOG_MAGIC_LEN);
-    uint8_t *p = dst + FLOG_MAGIC_LEN;
+    (void)memcpy(dst, FLOG_MAGIC, FLOG_MAGIC_LEN);
+    uint8_t *p = &dst[FLOG_MAGIC_LEN];
     p[0] = REC_HEADER;
-    p[1] = (uint8_t)(HDR_FIXED - 2 + board);
-    put_str8(p + 2, h->id);
-    put_str8(p + 10, h->name);
+    int body_len = (HDR_FIXED - 2) + board;
+    p[1] = (uint8_t)body_len;
+    put_str8(&p[2], h->id);
+    put_str8(&p[10], h->name);
     p[18] = h->pyro1_mode;
-    put16(p + 19, h->pyro1_value);
+    put16(&p[19], h->pyro1_value);
     p[21] = h->pyro2_mode;
-    put16(p + 22, h->pyro2_value);
+    put16(&p[22], h->pyro2_value);
     p[24] = h->units;
-    put32(p + 25, (uint32_t)h->ground_pa);
+    put_log_le32(&p[25], (uint32_t)h->ground_pa);
     p[29] = PLAN_EVERY_SAMPLE;
-    put_str8(p + 30, h->estimator);
+    put_str8(&p[30], h->estimator);
     p[38] = h->model_decides ? 1u : 0u;
-    memcpy(p + HDR_FIXED, h->board, (size_t)board);
+    (void)memcpy(&p[HDR_FIXED], h->board, (size_t)board);
     return n;
 }
 
@@ -80,11 +82,11 @@ int flog_put_sample(uint8_t *dst, int cap, const flog_sample_t *s) {
         return 0;
     }
     dst[0] = REC_SAMPLE;
-    put32(dst + 1, (uint32_t)s->time_ms);
-    put32(dst + 5, (uint32_t)s->pressure_pa);
-    put32(dst + 9, (uint32_t)s->altitude_cm);
-    put32(dst + 13, (uint32_t)s->raw_pa);
-    put16(dst + 17, (uint16_t)s->temp_dc);
+    put_log_le32(&dst[1], (uint32_t)s->time_ms);
+    put_log_le32(&dst[5], (uint32_t)s->pressure_pa);
+    put_log_le32(&dst[9], (uint32_t)s->altitude_cm);
+    put_log_le32(&dst[13], (uint32_t)s->raw_pa);
+    put16(&dst[17], (uint16_t)s->temp_dc);
     dst[19] = s->state;
     dst[20] = s->thrust;
     dst[21] = s->event;
@@ -92,22 +94,20 @@ int flog_put_sample(uint8_t *dst, int cap, const flog_sample_t *s) {
 }
 
 int flog_put_text(uint8_t *dst, int cap, uint32_t time_ms, uint8_t tag, const char *text, int len) {
-    if (len > FLOG_TEXT_MAX) {
-        len = FLOG_TEXT_MAX;
-    }
-    if (len < 0 || TEXT_FIXED + len > cap) {
+    int n = (len > FLOG_TEXT_MAX) ? FLOG_TEXT_MAX : len;
+    if ((n < 0) || ((TEXT_FIXED + n) > cap)) {
         return 0;
     }
     dst[0] = REC_TEXT;
-    put32(dst + 1, time_ms);
+    put_log_le32(&dst[1], time_ms);
     dst[5] = tag;
-    dst[6] = (uint8_t)len;
-    for (int i = 0; i < len; i++) {
+    dst[6] = (uint8_t)n;
+    for (int i = 0; i < n; i++) {
         /* unsigned: plain char is signed on the host and unsigned on ARM. */
         unsigned char c = (unsigned char)text[i];
-        dst[TEXT_FIXED + i] = (c == ',' || c < 0x20u || c >= 0x7fu) ? ' ' : c;
+        dst[TEXT_FIXED + i] = ((c == 0x2cu) || (c < 0x20u) || (c >= 0x7fu)) ? 0x20u : c;
     }
-    return TEXT_FIXED + len;
+    return TEXT_FIXED + n;
 }
 
 /* ── CSV ──────────────────────────────────────────────────────────── */
@@ -115,168 +115,194 @@ int flog_put_text(uint8_t *dst, int cap, uint32_t time_ms, uint8_t tag, const ch
 /* Up to n bytes ahead held, fewer only at the log's end. */
 static int look_ahead(flog_csv_t *r, int n) {
     while (r->ahead_len < n) {
-        int k = r->read(r->ctx, r->ahead + r->ahead_len, n - r->ahead_len);
-        if (k <= 0)
+        int k = r->read(r->ctx, &r->ahead[r->ahead_len], n - r->ahead_len);
+        if (k <= 0) {
             break;
+        }
         r->ahead_len += k;
     }
     return r->ahead_len;
 }
 
 static void pass(flog_csv_t *r, int n) {
-    memmove(r->ahead, r->ahead + n, (size_t)(r->ahead_len - n));
+    int rest = r->ahead_len - n;
+    (void)memmove(r->ahead, &r->ahead[n], (size_t)rest);
     r->ahead_len -= n;
     r->at += (uint32_t)n;
 }
 
 /* All of n bytes, or false at the log's end. */
 static bool take(flog_csv_t *r, uint8_t *dst, int n) {
-    if (look_ahead(r, n) < n)
+    if (look_ahead(r, n) < n) {
         return false;
-    memcpy(dst, r->ahead, (size_t)n);
+    }
+    (void)memcpy(dst, r->ahead, (size_t)n);
     pass(r, n);
     return true;
 }
 
 /* Decimal without printf: a row is rendered for every download, and for the
  * Content-Length before it. */
-static char *put_u32(char *o, uint32_t v) {
+static char *put_ch(char *o, char c) {
+    *o = c;
+    return &o[1];
+}
+
+static char *put_decimal(char *o, uint32_t v) {
     char tmp[10];
     int n = 0;
+    uint32_t rest = v;
+    char *w = o;
     do {
-        tmp[n++] = (char)('0' + v % 10u);
-        v /= 10u;
-    } while (v);
-    while (n) {
-        *o++ = tmp[--n];
+        tmp[n] = (char)('0' + (rest % 10u));
+        n++;
+        rest /= 10u;
+    } while (rest != 0u);
+    while (n != 0) {
+        n--;
+        w = put_ch(w, tmp[n]);
     }
-    return o;
+    return w;
 }
 
 static char *put_i32(char *o, int32_t v) {
     if (v < 0) {
-        *o++ = '-';
-        return put_u32(o, 0u - (uint32_t)v);
+        return put_decimal(put_ch(o, '-'), 0u - (uint32_t)v);
     }
-    return put_u32(o, (uint32_t)v);
+    return put_decimal(o, (uint32_t)v);
 }
 
 static char *put_str(char *o, const char *s) {
-    while (*s) {
-        *o++ = *s++;
+    char *w = o;
+    const char *c = s;
+    while (*c != '\0') {
+        w = put_ch(w, *c);
+        c++;
     }
-    return o;
+    return w;
 }
 
 /* The estimator and the deciding filter, which version 1 did not record. */
 static int render_decider(char *dst, int cap, const uint8_t *h) {
     char estimator[9] = {0};
-    memcpy(estimator, h + 28, 8);
+    (void)memcpy(estimator, &h[28], 8);
     return snprintf(dst, (size_t)cap, "# Estimator: %s\n# Apogee decided by: %s\n", estimator,
-                    h[36] ? "estimator" : "simple filter");
+                    (h[36] != 0u) ? "estimator" : "simple filter");
 }
 
 static int render_header(flog_csv_t *r, int fixed) {
     uint8_t h[HDR_FIXED - 2 + FLOG_BOARD_MAX];
     uint8_t lead[2];
-    if (!take(r, lead, 2) || lead[0] != REC_HEADER || lead[1] < fixed - 2 || lead[1] > fixed - 2 + FLOG_BOARD_MAX ||
-        !take(r, h, lead[1])) {
+    if (!take(r, lead, 2) || (lead[0] != REC_HEADER) || ((int)lead[1] < (fixed - 2)) ||
+        ((int)lead[1] > ((fixed - 2) + FLOG_BOARD_MAX)) || !take(r, h, lead[1])) {
         return 0;
     }
     char board[FLOG_BOARD_MAX + 1];
-    int board_len = lead[1] - (fixed - 2);
-    memcpy(board, h + fixed - 2, (size_t)board_len);
+    int board_len = (int)lead[1] - (fixed - 2);
+    (void)memcpy(board, &h[fixed - 2], (size_t)board_len);
     board[board_len] = '\0';
-    char id[9] = {0}, name[9] = {0};
-    memcpy(id, h, 8);
-    memcpy(name, h + 8, 8);
+    char id[9] = {0};
+    char name[9] = {0};
+    (void)memcpy(id, h, 8);
+    (void)memcpy(name, &h[8], 8);
     uint8_t units = h[22];
     int n = snprintf(r->line, sizeof(r->line),
                      "# %s Flight Data\n# ID: %s\n# Name: %s\n# Pyro1: %s %u\n# Pyro2: %s %u\n# Units: %s\n"
                      "# Ground Pa: %ld\n# Log rate: every sample\n",
-                     board, id, name, config_mode_name(h[16]), (unsigned)get16(h + 17), config_mode_name(h[19]),
-                     (unsigned)get16(h + 20),
-                     units == 2   ? "ft"
-                     : units == 1 ? "m"
-                                  : "cm",
-                     (long)(int32_t)get32(h + 23));
-    if (n > 0 && fixed == HDR_FIXED)
-        n += render_decider(r->line + n, (int)sizeof(r->line) - n, h);
-    if (n > 0 && n < (int)sizeof(r->line))
-        n += snprintf(r->line + n, sizeof(r->line) - (size_t)n,
+                     board, id, name, config_mode_name(h[16]), (unsigned)get16(&h[17]), config_mode_name(h[19]),
+                     (unsigned)get16(&h[20]),
+                     (units == 2u)   ? "ft"
+                     : (units == 1u) ? "m"
+                                     : "cm",
+                     (long)(int32_t)get32(&h[23]));
+    if ((n > 0) && (fixed == HDR_FIXED)) {
+        n += render_decider(&r->line[n], (int)sizeof(r->line) - n, h);
+    }
+    if ((n > 0) && (n < (int)sizeof(r->line))) {
+        n += snprintf(&r->line[n], sizeof(r->line) - (size_t)n,
                       "time_ms,pressure_pa,altitude_cm,state,thrust,raw_pa,temp_c,event\n");
-    return n > 0 && n < (int)sizeof(r->line) ? n : 0;
+    }
+    return ((n > 0) && (n < (int)sizeof(r->line))) ? n : 0;
 }
 
 /* s: the record after its type byte. */
 static int render_sample(flog_csv_t *r, const uint8_t *s) {
     r->last_ms = (int32_t)get32(s);
-    int16_t temp = (int16_t)get16(s + 16);
-    uint32_t t_abs = temp < 0 ? 0u - (uint32_t)(int32_t)temp : (uint32_t)temp;
+    int16_t temp = (int16_t)get16(&s[16]);
+    uint32_t t_abs = (temp < 0) ? 0u - (uint32_t)(int32_t)temp : (uint32_t)temp;
     char *o = r->line;
     o = put_i32(o, (int32_t)get32(s));
-    *o++ = ',';
-    o = put_i32(o, (int32_t)get32(s + 4));
-    *o++ = ',';
-    o = put_i32(o, (int32_t)get32(s + 8));
-    *o++ = ',';
-    o = put_u32(o, s[18]);
-    *o++ = ',';
-    o = put_u32(o, s[19]);
-    *o++ = ',';
-    o = put_i32(o, (int32_t)get32(s + 12));
-    *o++ = ',';
+    o = put_ch(o, ',');
+    o = put_i32(o, (int32_t)get32(&s[4]));
+    o = put_ch(o, ',');
+    o = put_i32(o, (int32_t)get32(&s[8]));
+    o = put_ch(o, ',');
+    o = put_decimal(o, s[18]);
+    o = put_ch(o, ',');
+    o = put_decimal(o, s[19]);
+    o = put_ch(o, ',');
+    o = put_i32(o, (int32_t)get32(&s[12]));
+    o = put_ch(o, ',');
     if (temp < 0) {
-        *o++ = '-';
+        o = put_ch(o, '-');
     }
-    o = put_u32(o, t_abs / 10u);
-    *o++ = '.';
-    *o++ = (char)('0' + t_abs % 10u);
-    *o++ = ',';
+    o = put_decimal(o, t_abs / 10u);
+    o = put_ch(o, '.');
+    o = put_ch(o, (char)('0' + (t_abs % 10u)));
+    o = put_ch(o, ',');
     o = put_str(o, flight_event_name(s[20]));
-    *o++ = '\n';
-    return (int)(o - r->line);
+    o = put_ch(o, '\n');
+    ptrdiff_t used = o - r->line;
+    return (int)used;
 }
 
 /* t: the record after its type byte. */
 static int render_text(flog_csv_t *r, const uint8_t *t) {
-    const uint8_t *text = t + TEXT_FIXED - 1;
+    const uint8_t *text = &t[TEXT_FIXED - 1];
     r->last_ms = (int32_t)get32(t);
     char *o = r->line;
-    o = put_u32(o, get32(t));
+    o = put_decimal(o, get32(t));
     o = put_str(o, ",,,,,,,");
     o = put_str(o, TAG_NAMES[t[4]]);
-    *o++ = ' ';
-    memcpy(o, text, t[5]);
-    o += t[5];
-    *o++ = '\n';
-    return (int)(o - r->line);
+    o = put_ch(o, ' ');
+    (void)memcpy(o, text, t[5]);
+    o = &o[t[5]];
+    o = put_ch(o, '\n');
+    ptrdiff_t used = o - r->line;
+    return (int)used;
 }
 
 /* The length of the record ahead: 0 while it is not all there, -1 when the
  * bytes ahead are no record this writer makes. */
 static int record_ahead(flog_csv_t *r) {
     int have = look_ahead(r, FLOG_RECORD_MAX);
-    if (have == 0)
+    if (have == 0) {
         return 0;
+    }
     const uint8_t *p = r->ahead;
     if (p[0] == REC_SAMPLE) {
-        if (have < FLOG_SAMPLE_BYTES)
+        if (have < FLOG_SAMPLE_BYTES) {
             return 0;
-        bool plausible = p[19] < STATE_COUNT && p[20] <= 1u && p[21] <= EVT_PEAK_AT_LEAST;
+        }
+        bool plausible = ((int)p[19] < (int)STATE_COUNT) && (p[20] <= 1u) && ((int)p[21] <= (int)EVT_PEAK_AT_LEAST);
         return plausible ? FLOG_SAMPLE_BYTES : -1;
     }
     if (p[0] == REC_TEXT) {
-        if (have < TEXT_FIXED)
+        if (have < TEXT_FIXED) {
             return 0;
+        }
         int len = p[6];
-        if (p[5] >= TAG_COUNT || len == 0 || len > FLOG_TEXT_MAX)
+        if ((p[5] >= TAG_COUNT) || (len == 0) || (len > FLOG_TEXT_MAX)) {
             return -1;
-        if (have < TEXT_FIXED + len)
+        }
+        if (have < (TEXT_FIXED + len)) {
             return 0;
-        for (int i = 0; i < len; i++)
-            if (p[TEXT_FIXED + i] < 0x20u || p[TEXT_FIXED + i] >= 0x7fu || p[TEXT_FIXED + i] == ',')
+        }
+        for (int i = 0; i < len; i++) {
+            if ((p[TEXT_FIXED + i] < 0x20u) || (p[TEXT_FIXED + i] >= 0x7fu) || (p[TEXT_FIXED + i] == 0x2cu)) {
                 return -1;
+            }
+        }
         return TEXT_FIXED + len;
     }
     return -1;
@@ -286,12 +312,13 @@ static int render_damage(flog_csv_t *r) {
     char *o = r->line;
     o = put_i32(o, r->last_ms);
     o = put_str(o, ",,,,,,,LOG DAMAGED at byte ");
-    o = put_u32(o, r->damaged_at);
+    o = put_decimal(o, r->damaged_at);
     o = put_str(o, ": ");
-    o = put_u32(o, r->skipped);
+    o = put_decimal(o, r->skipped);
     o = put_str(o, " bytes skipped\n");
     r->skipped = 0;
-    return (int)(o - r->line);
+    ptrdiff_t used = o - r->line;
+    return (int)used;
 }
 
 /* The next record's row, passing over bytes that are no record. A record
@@ -300,17 +327,20 @@ static int render_damage(flog_csv_t *r) {
 static int render_next(flog_csv_t *r) {
     for (;;) {
         int len = record_ahead(r);
-        if (len > 0 && r->skipped > 0)
+        if ((len > 0) && (r->skipped > 0u)) {
             return render_damage(r);
+        }
         if (len > 0) {
-            int n = r->ahead[0] == REC_SAMPLE ? render_sample(r, r->ahead + 1) : render_text(r, r->ahead + 1);
+            int n = (r->ahead[0] == REC_SAMPLE) ? render_sample(r, &r->ahead[1]) : render_text(r, &r->ahead[1]);
             pass(r, len);
             return n;
         }
-        if (len == 0)
-            return r->skipped > 0 ? render_damage(r) : 0;
-        if (r->skipped == 0)
+        if (len == 0) {
+            return (r->skipped > 0u) ? render_damage(r) : 0;
+        }
+        if (r->skipped == 0u) {
             r->damaged_at = r->at;
+        }
         pass(r, 1);
         r->skipped++;
     }
@@ -325,10 +355,13 @@ static bool next_line(flog_csv_t *r) {
         uint8_t magic[FLOG_MAGIC_LEN];
         r->started = true;
         if (take(r, magic, FLOG_MAGIC_LEN)) {
-            if (memcmp(magic, FLOG_MAGIC, FLOG_MAGIC_LEN) == 0)
+            if (memcmp(magic, FLOG_MAGIC, FLOG_MAGIC_LEN) == 0) {
                 n = render_header(r, HDR_FIXED);
-            else if (memcmp(magic, FLOG_MAGIC_V1, FLOG_MAGIC_LEN) == 0)
+            } else if (memcmp(magic, FLOG_MAGIC_V1, FLOG_MAGIC_LEN) == 0) {
                 n = render_header(r, HDR_FIXED_V1);
+            } else {
+                /* no magic of this writer's: the log ends */
+            }
         }
     } else {
         n = render_next(r);
@@ -343,7 +376,7 @@ static bool next_line(flog_csv_t *r) {
 }
 
 void flog_csv_init(flog_csv_t *r, flog_read_fn read, void *ctx) {
-    memset(r, 0, sizeof(*r));
+    (void)memset(r, 0, sizeof(*r));
     r->read = read;
     r->ctx = ctx;
 }
@@ -351,15 +384,15 @@ void flog_csv_init(flog_csv_t *r, flog_read_fn read, void *ctx) {
 int flog_csv_read(flog_csv_t *r, char *dst, int max) {
     int done = 0;
     while (done < max) {
-        if (r->line_pos == r->line_len && !next_line(r)) {
+        if ((r->line_pos == r->line_len) && !next_line(r)) {
             break;
         }
         int k = r->line_len - r->line_pos;
-        if (k > max - done) {
+        if (k > (max - done)) {
             k = max - done;
         }
-        if (dst) {
-            memcpy(dst + done, r->line + r->line_pos, (size_t)k);
+        if (dst != NULL) {
+            (void)memcpy(&dst[done], &r->line[r->line_pos], (size_t)k);
         }
         r->line_pos += k;
         done += k;

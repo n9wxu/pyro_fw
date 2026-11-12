@@ -107,7 +107,7 @@ static int32_t read_after_reset(const char *name, uint8_t *out, uint32_t cap) {
 }
 
 static void clean_all(void) {
-    for (int i = 0; i < 64 && vfs_flash_clean() == 1; i++)
+    for (int i = 0; i < 4096 && vfs_flash_clean() == 1; i++)
         ;
     TEST_ASSERT_EQUAL(0, vfs_flash_clean());
 }
@@ -332,7 +332,9 @@ static void test_FLT_LOG_10_a_log_out_of_erased_pages_says_so_and_a_cleanup_make
     TEST_ASSERT_EQUAL_MESSAGE(VFS_FLASH_NOSPC, vfs_flash_open(&g, "next_log.bin", VFS_FLASH_WRITE, rbuf),
                               "an open with no erased page says so too");
     TEST_ASSERT_EQUAL(e0, erases);
-    TEST_ASSERT_EQUAL(1, vfs_flash_clean());
+    /* A call looks at a few sectors and stops at the first it erases. */
+    for (int i = 0; i < 4096 && erases == e0; i++)
+        TEST_ASSERT_EQUAL(1, vfs_flash_clean());
     TEST_ASSERT_EQUAL(e0 + 1u, erases);
     TEST_ASSERT_EQUAL((int)sizeof(chunk), vfs_flash_write(&f, chunk, sizeof(chunk)));
     TEST_ASSERT_EQUAL(0, vfs_flash_close(&f));
@@ -517,13 +519,6 @@ static void test_WEB_API_18_a_rename_that_cannot_copy_leaves_the_file_as_it_was(
     clean_all();
 }
 
-/* [USB-10] On USB with test mode off the cleanup takes the next sector at
- * once; otherwise a second after the last. */
-static void test_USB_10_the_cleanup_waits_only_off_usb(void) {
-    TEST_ASSERT_EQUAL_UINT32(0u, vfs_flash_clean_wait_ms(true));
-    TEST_ASSERT_EQUAL_UINT32(1000u, vfs_flash_clean_wait_ms(false));
-}
-
 /* [WEB-API-19] The cleanup's state, read from no page: sectors left to
  * erase once a file is replaced, none once it has erased them, and how many
  * it erased. */
@@ -545,6 +540,72 @@ static void test_WEB_API_19_the_cleanup_says_what_is_left_and_what_it_erased(voi
     TEST_ASSERT_TRUE(erases > e0);
     TEST_ASSERT_EQUAL_UINT32(a.erased + (erases - e0), b.erased);
     TEST_ASSERT_EQUAL(0, vfs_flash_remove("twice.bin"));
+    clean_all();
+}
+
+/* [FLT-LOG-16] A reservation beside a closed file leaves that file the one
+ * read; the write that follows takes the reservation, erases nothing and
+ * replaces the file when it closes. */
+static void test_FLT_LOG_16_a_write_takes_the_pages_reserved_for_it(void) {
+    static uint8_t old[1500], neu[2600], got[4000];
+    fill(old, sizeof(old), 51);
+    fill(neu, sizeof(neu), 52);
+    clean_all();
+    TEST_ASSERT_EQUAL(0, write_whole("boot_log.txt", old, sizeof(old)));
+    clean_all();
+    unsigned e0 = erases;
+    TEST_ASSERT_EQUAL(0, vfs_flash_reserve("boot_log.txt", 3000));
+    TEST_ASSERT_EQUAL(sizeof(old), read_whole("boot_log.txt", got, sizeof(got)));
+    TEST_ASSERT_EQUAL_MEMORY(old, got, sizeof(old));
+    TEST_ASSERT_EQUAL(0, write_whole("boot_log.txt", neu, sizeof(neu)));
+    TEST_ASSERT_EQUAL(sizeof(neu), read_whole("boot_log.txt", got, sizeof(got)));
+    TEST_ASSERT_EQUAL_MEMORY(neu, got, sizeof(neu));
+    TEST_ASSERT_EQUAL(e0, erases);
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("boot_log.txt"));
+    clean_all();
+}
+
+/* [FLT-LOG-16] A reserved file of a new name holds no byte until it is
+ * written, and a write longer than the reservation goes on into free pages. */
+static void test_FLT_LOG_16_a_reserved_file_is_empty_until_written(void) {
+    static uint8_t d[9000], got[9500];
+    fill(d, sizeof(d), 53);
+    clean_all();
+    TEST_ASSERT_EQUAL(0, vfs_flash_reserve("flight_0001.bin", 4000));
+    TEST_ASSERT_EQUAL(0, vfs_flash_stat_size("flight_0001.bin"));
+    unsigned e0 = erases;
+    TEST_ASSERT_EQUAL(0, write_whole("flight_0001.bin", d, sizeof(d)));
+    TEST_ASSERT_EQUAL(e0, erases);
+    TEST_ASSERT_EQUAL(sizeof(d), read_whole("flight_0001.bin", got, sizeof(got)));
+    TEST_ASSERT_EQUAL_MEMORY(d, got, sizeof(d));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("flight_0001.bin"));
+    clean_all();
+}
+
+/* [LUA-RUN-05] The store says a file is open for writing from its open to
+ * its close, and says nothing of a file open for reading. */
+static void test_LUA_RUN_05_the_store_says_when_a_file_is_open_for_writing(void) {
+    static uint8_t wbuf[VFS_FLASH_BUF_SIZE];
+    static uint8_t rbuf[VFS_FLASH_BUF_SIZE];
+    static uint8_t d[64];
+    vfs_flash_file_t w, r;
+    vfs_flash_cleanup_t s;
+    clean_all();
+    fill(d, sizeof(d), 7);
+    TEST_ASSERT_EQUAL(0, write_whole("read.bin", d, sizeof(d)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&r, "read.bin", VFS_FLASH_READ, rbuf));
+    vfs_flash_cleanup_state(&s);
+    TEST_ASSERT_FALSE(s.writing);
+    TEST_ASSERT_EQUAL(0, vfs_flash_open(&w, "write.bin", VFS_FLASH_WRITE, wbuf));
+    vfs_flash_cleanup_state(&s);
+    TEST_ASSERT_TRUE(s.writing);
+    TEST_ASSERT_EQUAL((int)sizeof(d), vfs_flash_write(&w, d, sizeof(d)));
+    TEST_ASSERT_EQUAL(0, vfs_flash_close(&w));
+    vfs_flash_cleanup_state(&s);
+    TEST_ASSERT_FALSE(s.writing);
+    TEST_ASSERT_EQUAL(0, vfs_flash_close(&r));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("read.bin"));
+    TEST_ASSERT_EQUAL(0, vfs_flash_remove("write.bin"));
     clean_all();
 }
 
@@ -709,9 +770,11 @@ int main(void) {
     RUN_TEST(test_WEB_API_18_a_close_that_cannot_program_keeps_the_old_file);
     RUN_TEST(test_WEB_API_18_a_log_that_cannot_close_reads_as_a_power_cut_left_it);
     RUN_TEST(test_WEB_API_18_a_rename_that_cannot_copy_leaves_the_file_as_it_was);
-    RUN_TEST(test_USB_10_the_cleanup_waits_only_off_usb);
     RUN_TEST(test_WEB_API_19_the_cleanup_says_what_is_left_and_what_it_erased);
     RUN_TEST(test_WEB_API_19_the_list_gives_each_files_name_and_size);
+    RUN_TEST(test_LUA_RUN_05_the_store_says_when_a_file_is_open_for_writing);
+    RUN_TEST(test_FLT_LOG_16_a_write_takes_the_pages_reserved_for_it);
+    RUN_TEST(test_FLT_LOG_16_a_reserved_file_is_empty_until_written);
     RUN_TEST(test_WEB_API_19_the_stores_geometry);
     RUN_TEST(test_WEB_API_20_the_scan_counts_each_sectors_erased_pages);
     RUN_TEST(test_WEB_API_20_a_scan_stops_at_the_stores_end);

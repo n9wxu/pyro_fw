@@ -37,19 +37,26 @@ void estimator_start(float altitude_m, float m_per_pa, uint32_t t_us, float pad_
 }
 
 void estimator_reading(float altitude_m, float m_per_pa, uint32_t t_us) {
-    bool after_a_gap = t_us - self.filter.t_us > GAP_US;
+    bool after_a_gap = (t_us - self.filter.t_us) > GAP_US;
     af_update(&self.filter, altitude_m, m_per_pa, t_us);
     bool off_the_arc = after_a_gap || fabsf(self.filter.accel) >= ARC_ACCEL_MAX ||
                        (!self.filter.rejected && fabsf(self.filter.innovation_sigmas) > ROUGH_SIGMAS);
-    if (off_the_arc)
+    if (off_the_arc) {
         hold_rough_from(t_us);
-    else if (self.rough && (int32_t)(t_us - self.rough_until_us) >= 0)
-        self.rough = false;
+    } else if (self.rough) {
+        uint32_t smooth_left = t_us - self.rough_until_us;
+        if ((int32_t)smooth_left >= 0) {
+            self.rough = false;
+        }
+    } else {
+        /* already smooth */
+    }
 }
 
 void estimator_no_reading(uint32_t t_us) {
-    if (t_us - self.filter.t_us > GAP_US)
+    if ((t_us - self.filter.t_us) > GAP_US) {
         hold_rough_from(t_us);
+    }
 }
 
 void estimator_pulse(uint32_t t_us) {
@@ -70,11 +77,13 @@ void estimator_estimate(estimate_t *out) {
 _Static_assert(sizeof(self) <= ESTIMATOR_STATE_MAX, "raise ESTIMATOR_STATE_MAX");
 
 void estimator_save(uint8_t to[ESTIMATOR_STATE_MAX]) {
-    memcpy(to, &self, sizeof(self));
+    void *dst = to;
+    (void)memcpy(dst, &self, sizeof(self));
 }
 
 void estimator_restore(const uint8_t from[ESTIMATOR_STATE_MAX]) {
-    memcpy(&self, from, sizeof(self));
+    const void *src = from;
+    (void)memcpy(&self, src, sizeof(self));
 }
 
 const char *estimator_name(uint8_t index) {

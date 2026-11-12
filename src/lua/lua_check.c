@@ -32,7 +32,7 @@
  * it is reported as "not enough memory". Half as much again on a 64-bit
  * host, as for the VM's arena (pyro_lua.c). */
 #ifndef LUA_CHECK_SCRATCH_BYTES
-#define LUA_CHECK_SCRATCH_BYTES (16 * 1024 * (sizeof(void *) == 8 ? 3 : 2) / 2)
+#define LUA_CHECK_SCRATCH_BYTES (16u * 1024u * ((sizeof(void *) == 8u) ? 3u : 2u) / 2u)
 #endif
 
 /* Distinct literals remembered. Beyond this a per-name report stops being
@@ -48,7 +48,7 @@ typedef struct {
 #define SEEN_BYTES ((sizeof(seen_t) + 7u) & ~(size_t)7u)
 
 static void seen_add(seen_t *sn, const char *s) {
-    if (sn->n >= SEEN_MAX || strlen(s) >= SEEN_LEN) {
+    if ((sn->n >= SEEN_MAX) || (strlen(s) >= (size_t)SEEN_LEN)) {
         return;
     }
     for (int i = 0; i < sn->n; i++) {
@@ -56,7 +56,8 @@ static void seen_add(seen_t *sn, const char *s) {
             return;
         }
     }
-    strcpy(sn->s[sn->n++], s);
+    (void)strcpy(sn->s[sn->n], s);
+    sn->n++;
 }
 
 static bool seen_has(const seen_t *sn, const char *s) {
@@ -87,26 +88,25 @@ static void add(lua_chk_result_t *r, lua_chk_kind_t kind, const char *fmt, ...) 
     }
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(r->items[r->count].detail, sizeof(r->items[0].detail), fmt, ap);
+    (void)vsnprintf(r->items[r->count].detail, sizeof(r->items[0].detail), fmt, ap);
     va_end(ap);
     r->items[r->count].kind = kind;
     r->count++;
-    if (kind == LUA_CHK_SYNTAX || kind == LUA_CHK_MISSING) {
+    if ((kind == LUA_CHK_SYNTAX) || (kind == LUA_CHK_MISSING)) {
         r->green = false;
     }
 }
 
 /* Names the API itself uses, plus the namespaces. A constant matching one of
  * these is structure, not a resource reference. */
-static const char *api_words[] = {
-    "output",   "input",  "serial", "pixel", "sensor", "flight",   "pyro",  "set",    "get",    "write",
-    "read",     "show",   "fill",   "clear", "count",  "state",    "alt",   "speed",  "maxalt", "pressure",
-    "time",     "status", "print",  "tick",  "init",   "on_event", "math",  "string", "table",  "tostring",
-    "tonumber", "pairs",  "ipairs", "type",  "select", "error",    "pcall", "assert", "len",    "format",
-    "log",      "line",   "adc",    "seq",   "apogee", "thrust",
-};
-
 static bool is_api_word(const char *s) {
+    static const char *api_words[] = {
+        "output",   "input",  "serial", "pixel", "sensor", "flight",   "pyro",  "set",    "get",    "write",
+        "read",     "show",   "fill",   "clear", "count",  "state",    "alt",   "speed",  "maxalt", "pressure",
+        "time",     "status", "print",  "tick",  "init",   "on_event", "math",  "string", "table",  "tostring",
+        "tonumber", "pairs",  "ipairs", "type",  "select", "error",    "pcall", "assert", "len",    "format",
+        "log",      "line",   "adc",    "seq",   "apogee", "thrust",
+    };
     for (size_t i = 0; i < sizeof(api_words) / sizeof(api_words[0]); i++) {
         if (strcmp(api_words[i], s) == 0) {
             return true;
@@ -120,12 +120,14 @@ static bool is_api_word(const char *s) {
  * 'hi' in serial.write('radio', 'hi'), and a checker that cries wolf on
  * message text is one operators learn to ignore. */
 static int edit_distance(const char *a, const char *b, int cap) {
-    int la = (int)strlen(a), lb = (int)strlen(b);
-    if (la - lb > cap || lb - la > cap) {
+    int la = (int)strlen(a);
+    int lb = (int)strlen(b);
+    if (((la - lb) > cap) || ((lb - la) > cap)) {
         return cap + 1;
     }
-    int prev[SEEN_LEN], cur[SEEN_LEN];
-    if (lb + 1 > SEEN_LEN) {
+    int prev[SEEN_LEN];
+    int cur[SEEN_LEN];
+    if ((lb + 1) > SEEN_LEN) {
         return cap + 1;
     }
     for (int j = 0; j <= lb; j++) {
@@ -136,10 +138,10 @@ static int edit_distance(const char *a, const char *b, int cap) {
         for (int j = 1; j <= lb; j++) {
             int cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
             int m = prev[j] + 1;
-            if (cur[j - 1] + 1 < m) {
+            if ((cur[j - 1] + 1) < m) {
                 m = cur[j - 1] + 1;
             }
-            if (prev[j - 1] + cost < m) {
+            if ((prev[j - 1] + cost) < m) {
                 m = prev[j - 1] + cost;
             }
             cur[j] = m;
@@ -155,11 +157,11 @@ static int edit_distance(const char *a, const char *b, int cap) {
  * distance 1 of almost anything else. */
 static bool identifier_shaped(const char *s) {
     size_t n = strlen(s);
-    if (n < 3 || n > LUA_NAME_MAX - 1) {
+    if ((n < 3u) || (n > ((size_t)LUA_NAME_MAX - 1u))) {
         return false;
     }
-    for (const char *p = s; *p; p++) {
-        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_')) {
+    for (const char *p = s; *p != '\0'; p++) {
+        if (!(((*p >= 'a') && (*p <= 'z')) || ((*p >= 'A') && (*p <= 'Z')) || ((*p >= '0') && (*p <= '9')) || (*p == '_'))) {
             return false;
         }
     }
@@ -168,7 +170,7 @@ static bool identifier_shaped(const char *s) {
 
 static bool provides(const lua_chk_env_t *env, const char *s) {
     for (int i = 0; i < env->n; i++) {
-        if (env->names[i][0] && strcmp(env->names[i], s) == 0) {
+        if ((env->names[i][0] != '\0') && (strcmp(env->names[i], s) == 0)) {
             return true;
         }
     }
@@ -176,11 +178,12 @@ static bool provides(const lua_chk_env_t *env, const char *s) {
 }
 
 void lua_chk_env_from_platform(lua_chk_env_t *env) {
-    memset(env, 0, sizeof(*env));
+    (void)memset(env, 0, sizeof(*env));
     static const lua_iface_kind_t named[] = {LUA_IF_OUTPUT, LUA_IF_INPUT, LUA_IF_SERIAL};
     for (unsigned k = 0; k < sizeof(named) / sizeof(named[0]); k++) {
-        for (int i = 0; i < lua_iface_count_kind(named[k]) && env->n < LUA_CHK_MAX_NAMES; i++) {
-            strncpy(env->names[env->n++], lua_iface_nth_of_kind(named[k], i)->name, LUA_NAME_MAX - 1);
+        for (int i = 0; (i < lua_iface_count_kind(named[k])) && (env->n < LUA_CHK_MAX_NAMES); i++) {
+            (void)strncpy(env->names[env->n], lua_iface_nth_of_kind(named[k], i)->name, LUA_NAME_MAX - 1);
+            env->n++;
         }
     }
     env->has_output = lua_iface_count_kind(LUA_IF_OUTPUT) > 0;
@@ -195,13 +198,13 @@ static bool collect_literals(void *mem, size_t mem_len, const char *src, size_t 
     lua_arena_t arena;
     lua_arena_init(&arena, mem, mem_len);
     lua_State *L = lua_newstate(lua_arena_alloc, &arena);
-    if (!L) {
+    if (L == NULL) {
         add(out, LUA_CHK_SYNTAX, "no memory to compile");
         return false;
     }
     if (luaL_loadbufferx(L, src, len, "check", "t") != LUA_OK) {
-        const char *e = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : NULL;
-        add(out, LUA_CHK_SYNTAX, "%s", e ? e : "syntax error");
+        const char *e = (lua_type(L, -1) == LUA_TSTRING) ? lua_tostring(L, -1) : NULL;
+        add(out, LUA_CHK_SYNTAX, "%s", (e != NULL) ? e : "syntax error");
         lua_close(L);
         return false;
     }
@@ -213,7 +216,7 @@ static bool collect_literals(void *mem, size_t mem_len, const char *src, size_t 
 
 void lua_check_in(void *mem, size_t mem_len, const char *src, size_t len, const lua_chk_env_t *env,
                   lua_chk_result_t *out) {
-    memset(out, 0, sizeof(*out));
+    (void)memset(out, 0, sizeof(*out));
     out->green = true;
 
     if (mem_len <= SEEN_BYTES) {
@@ -235,7 +238,7 @@ void lua_check_in(void *mem, size_t mem_len, const char *src, size_t len, const 
             continue;
         }
         for (int j = 0; j < env->n; j++) {
-            if (env->names[j][0] && edit_distance(s, env->names[j], 1) <= 1) {
+            if ((env->names[j][0] != '\0') && (edit_distance(s, env->names[j], 1) <= 1)) {
                 add(out, LUA_CHK_UNKNOWN, "'%s' matches no resource -- did you mean '%s'?", s, env->names[j]);
                 break;
             }
@@ -260,7 +263,7 @@ void lua_check_in(void *mem, size_t mem_len, const char *src, size_t len, const 
     if (out->count == 0) {
         int named = 0;
         for (int i = 0; i < env->n; i++) {
-            named += env->names[i][0] ? 1 : 0;
+            named += (env->names[i][0] != '\0') ? 1 : 0;
         }
         add(out, LUA_CHK_OK, "%d resources, all references resolved", named);
     }

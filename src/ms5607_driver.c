@@ -9,10 +9,10 @@
 
 #define I2C_PORT i2c1
 
-#define MS5607_ADDR_CSB_LOW 0x76
-#define MS5607_ADDR_CSB_HIGH 0x77
+#define MS5607_ADDR_CSB_LOW 0x76u
+#define MS5607_ADDR_CSB_HIGH 0x77u
 
-#define MS5607_CMD_PROM_READ 0xA0 /* the first of eight words */
+#define MS5607_CMD_PROM_READ 0xA0u /* the first of eight words */
 
 /* Every transfer is bounded: the SDK's blocking calls wait forever on a part
  * holding SCL low, and detection also runs after a reset in flight. */
@@ -35,15 +35,17 @@ uint8_t ms5607_address(void) {
 }
 
 static bool ms5607_read_prom(void) {
-    for (int i = 0; i < 8; i++) {
-        uint8_t cmd = MS5607_CMD_PROM_READ + (i * 2);
+    for (uint8_t i = 0; i < 8u; i++) {
+        uint8_t cmd = (uint8_t)(MS5607_CMD_PROM_READ + (i * 2u));
         uint8_t data[2];
 
-        if (i2c_write_timeout_us(I2C_PORT, ms5607_addr, &cmd, 1, true, MS5607_DETECT_TIMEOUT_US) != 1)
+        if (i2c_write_timeout_us(I2C_PORT, ms5607_addr, &cmd, 1, true, MS5607_DETECT_TIMEOUT_US) != 1) {
             return false;
+        }
 
-        if (i2c_read_timeout_us(I2C_PORT, ms5607_addr, data, 2, false, MS5607_DETECT_TIMEOUT_US) != 2)
+        if (i2c_read_timeout_us(I2C_PORT, ms5607_addr, data, 2, false, MS5607_DETECT_TIMEOUT_US) != 2) {
             return false;
+        }
 
         prom[i] = ((uint16_t)data[0] << 8) | data[1];
     }
@@ -66,13 +68,16 @@ ms5607_detect_result_t ms5607_detect_step(ms5607_detect_t *d, uint32_t now_ms) {
                 return MS5607_DETECT_PENDING;
             }
         } else {
-            if ((int32_t)(now_ms - d->due_ms) < 0)
+            uint32_t wait_left = now_ms - d->due_ms;
+            if ((int32_t)wait_left < 0) {
                 return MS5607_DETECT_PENDING;
+            }
             d->reloading = false;
             /* A blank PROM reads all zeros or all ones; all zeros carries a
              * good CRC. */
-            if (ms5607_read_prom() && prom[0] != 0 && prom[0] != 0xFFFF && ms5607_prom_crc_ok(prom))
+            if (ms5607_read_prom() && (prom[0] != 0u) && (prom[0] != 0xFFFFu) && ms5607_prom_crc_ok(prom)) {
                 return MS5607_DETECT_FOUND;
+            }
         }
         d->addr++;
     }

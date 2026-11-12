@@ -17,11 +17,10 @@
 #include "pin_store.h"
 #include "hardware/watchdog.h"
 #include "hardware/structs/watchdog.h"
-#include <stdio.h>
 #include <string.h>
 
 static char script_buf[LUA_SCRIPT_MAX];
-static int script_len;
+static int app_script_len;
 static char status_line[96] = "off";
 static bool launch_pending;
 static uint32_t launch_at_ms;
@@ -75,10 +74,6 @@ static bool launched;
 #define PHASE_TAG 0x50480000u /* "PH" */
 #define STAGE_TAG 0x53540000u /* "ST", main_hardware.c's BOOT() */
 
-static uint32_t boot_phase;
-static uint32_t last_stage;
-static uint32_t last_stage_ms;
-
 static void phase(uint32_t p) {
     watchdog_hw->scratch[LUA_PHASE_SCRATCH] = PHASE_TAG | p;
 }
@@ -101,18 +96,20 @@ int lua_app_script_read(char *buf, int max) {
  * nothing, so the verdict is for the assignment as saved rather than for
  * whatever the running VM holds. */
 static void env_from_assignment(const config_t *cfg, lua_chk_env_t *env) {
-    memset(env, 0, sizeof(*env));
+    (void)memset(env, 0, sizeof(*env));
 
     lua_pin_cfg_t pins[LUA_CFG_MAX];
     int n = pin_store_lua_pins(pins, LUA_CFG_MAX);
 
     for (int i = 0; i < n; i++) {
+        if (pins[i].role == LUA_ROLE_OFF) {
+            continue;
+        }
+        if (pins[i].role == LUA_ROLE_PIXEL) {
+            env->has_pixel = (cfg != NULL) && (cfg->lua_pixels > 0u);
+            continue;
+        }
         switch (pins[i].role) {
-        case LUA_ROLE_OFF:
-            continue;
-        case LUA_ROLE_PIXEL:
-            env->has_pixel = cfg && cfg->lua_pixels > 0;
-            continue;
         case LUA_ROLE_OUT:
         case LUA_ROLE_PWM:
         case LUA_ROLE_BRIDGE: /* the pair is one output to a script */
@@ -128,26 +125,29 @@ static void env_from_assignment(const config_t *cfg, lua_chk_env_t *env) {
         default:
             break;
         }
-        if (pins[i].name && pins[i].name[0] && env->n < LUA_CHK_MAX_NAMES) {
-            strncpy(env->names[env->n++], pins[i].name, LUA_NAME_MAX - 1);
+        if ((pins[i].name != NULL) && (pins[i].name[0] != '\0') && (env->n < LUA_CHK_MAX_NAMES)) {
+            (void)strncpy(env->names[env->n], pins[i].name, LUA_NAME_MAX - 1);
+            env->n++;
         }
     }
 
     /* The bridge is configured apart from the pad list, on two released pyro
      * pads; its name still has to resolve. */
-    uint8_t br_ch, br_common;
+    uint8_t br_ch;
+    uint8_t br_common;
     const char *br_name;
-    if (pin_store_bridge(&br_ch, &br_common, &br_name) && br_name && br_name[0]) {
+    if (pin_store_bridge(&br_ch, &br_common, &br_name) && (br_name != NULL) && (br_name[0] != '\0')) {
         env->has_output = true;
         if (env->n < LUA_CHK_MAX_NAMES) {
-            strncpy(env->names[env->n++], br_name, LUA_NAME_MAX - 1);
+            (void)strncpy(env->names[env->n], br_name, LUA_NAME_MAX - 1);
+            env->n++;
         }
     }
 }
 
 void lua_app_check(const char *src, int len, const config_t *cfg, lua_chk_result_t *out) {
     lua_chk_env_t env;
-    if (cfg) {
+    if (cfg != NULL) {
         env_from_assignment(cfg, &env);
     } else {
         lua_chk_env_from_platform(&env);
@@ -178,7 +178,7 @@ static int line_len;
 static uint32_t log_written;
 
 static void line_emit(uint32_t now_ms) {
-    if (line_len > 0 && hal_log_text(now_ms, line_buf, line_len)) {
+    if ((line_len > 0) && hal_log_text(now_ms, line_buf, line_len)) {
         log_written += (uint32_t)line_len;
     }
     line_len = 0;
@@ -188,14 +188,15 @@ static void line_emit(uint32_t now_ms) {
  * serial terminal does not produce one row per flight. */
 static void log_drain(uint32_t now_ms) {
     char buf[128];
-    int n;
-    while ((n = lua_core1_log_read(buf, (int)sizeof(buf))) > 0) {
+    int n = lua_core1_log_read(buf, (int)sizeof(buf));
+    while (n > 0) {
         for (int i = 0; i < n; i++) {
             char c = buf[i];
-            if (c == '\n' || c == '\r') {
+            if ((c == '\n') || (c == '\r')) {
                 line_emit(now_ms);
             } else {
-                line_buf[line_len++] = c;
+                line_buf[line_len] = c;
+                line_len++;
                 if (line_len == LUA_LINE_MAX) {
                     line_emit(now_ms);
                 }
@@ -204,6 +205,7 @@ static void log_drain(uint32_t now_ms) {
         if (n < (int)sizeof(buf)) {
             break;
         }
+        n = lua_core1_log_read(buf, (int)sizeof(buf));
     }
 }
 
@@ -216,8 +218,12 @@ const char *lua_app_status(void) {
 }
 
 void lua_app_init(const config_t *cfg) {
+    static uint32_t boot_phase;
+    static uint32_t last_stage;
+    static uint32_t last_stage_ms;
+
     if (!cfg->lua_enabled) {
-        snprintf(status_line, sizeof(status_line), "disabled");
+        (void)small_snprintf(status_line, sizeof(status_line), "disabled");
         return;
     }
 
@@ -226,31 +232,32 @@ void lua_app_init(const config_t *cfg) {
 
     /* The bridge is wired after the board's own pads: its two pins became
      * available only when configuration released the channel. */
-    uint8_t br_ch = 0, br_common = 0;
+    uint8_t br_ch = 0;
+    uint8_t br_common = 0;
     const char *br_name = NULL;
     bool want_bridge = pin_store_bridge(&br_ch, &br_common, &br_name);
 
     int rc = lua_plat_configure(pins, n_pins, cfg->lua_baud, cfg->lua_pixels);
     if (rc == LUA_PLAT_BAD_BAUD) {
-        snprintf(status_line, sizeof(status_line), "not started: lua_baud %lu is unusable",
+        (void)small_snprintf(status_line, sizeof(status_line), "not started: lua_baud %lu is unusable",
                  (unsigned long)cfg->lua_baud);
         return;
     }
     if (rc != LUA_PLAT_OK) {
         /* Unreachable by the budget in lua_pio_platform.c: a build-time
          * mistake, not an operating condition, so say so plainly. */
-        snprintf(status_line, sizeof(status_line), "resource claim failed (firmware bug)");
+        (void)small_snprintf(status_line, sizeof(status_line), "resource claim failed (firmware bug)");
         return;
     }
 
     if (want_bridge && lua_plat_configure_bridge(br_ch, br_common, br_name, PYRO_BRIDGE_DEADTIME_CYCLES) != 0) {
-        snprintf(status_line, sizeof(status_line), "bridge claim failed (firmware bug)");
+        (void)small_snprintf(status_line, sizeof(status_line), "bridge claim failed (firmware bug)");
         return;
     }
 
-    script_len = lua_app_script_read(script_buf, sizeof(script_buf));
-    if (script_len == 0) {
-        snprintf(status_line, sizeof(status_line), "enabled, no script (read %s = %d)", LUA_SCRIPT_PATH,
+    app_script_len = lua_app_script_read(script_buf, sizeof(script_buf));
+    if (app_script_len == 0) {
+        (void)small_snprintf(status_line, sizeof(status_line), "enabled, no script (read %s = %d)", LUA_SCRIPT_PATH,
                  script_read_err);
         return;
     }
@@ -264,7 +271,7 @@ void lua_app_init(const config_t *cfg) {
     if (watchdog_hw->scratch[LUA_BOOT_SCRATCH] == LUA_BOOT_MARK) {
         /* Last boot set this and never got far enough to clear it. */
         watchdog_hw->scratch[LUA_BOOT_SCRATCH] = 0;
-        snprintf(status_line, sizeof(status_line), "disabled: last boot died in stage %lu at %lu ms (phase %lu)",
+        (void)small_snprintf(status_line, sizeof(status_line), "disabled: last boot died in stage %lu at %lu ms (phase %lu)",
                  (unsigned long)last_stage, (unsigned long)last_stage_ms, (unsigned long)boot_phase);
         phase(PH_NO_LUA);
         return;
@@ -275,7 +282,7 @@ void lua_app_init(const config_t *cfg) {
     launch_pending = true;
     launch_at_ms = 0;
     phase(PH_PRELAUNCH);
-    snprintf(status_line, sizeof(status_line), "starting");
+    (void)small_snprintf(status_line, sizeof(status_line), "starting");
 }
 
 void lua_app_restart_commanded(void) {
@@ -290,10 +297,10 @@ static void launch(void) {
     phase(PH_LAUNCHED);
     launched = true;
     flash_op_crumb(60);
-    lua_core1_start(script_buf, script_len);
+    (void)lua_core1_start(script_buf, app_script_len);
     flash_op_crumb(61);
     phase(PH_STARTED);
-    small_snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)",
+    (void)small_snprintf(status_line, sizeof(status_line), "running (%d out, %d in, %d serial, %d px)",
              lua_iface_count_kind(LUA_IF_OUTPUT), lua_iface_count_kind(LUA_IF_INPUT),
              lua_iface_count_kind(LUA_IF_SERIAL), lua_iface_count_kind(LUA_IF_PIXEL));
     phase(PH_REPORTED);
@@ -308,13 +315,13 @@ static void publish_flight(const flight_context_t *ctx, uint32_t now_ms) {
     f.state = (int)ctx->current_state;
     f.time_ms = now_ms;
     for (int i = 0; i < 2; i++) {
-        f.pyro[i] = (ctx->channel_ready[i] ? LUA_PYRO_CONTINUITY : 0) |
-                    (ctx->fire.channel[i].fired ? LUA_PYRO_FIRED : 0) | (ctx->channel_fault[i] ? LUA_PYRO_FAULT : 0) |
-                    (ctx->pyros_armed ? LUA_PYRO_ARMED : 0);
+        f.pyro[i] = (ctx->channel_ready[i] ? LUA_PYRO_CONTINUITY : 0u) |
+                    (ctx->fire.channel[i].fired ? LUA_PYRO_FIRED : 0u) | (ctx->channel_fault[i] ? LUA_PYRO_FAULT : 0u) |
+                    (ctx->pyros_armed ? LUA_PYRO_ARMED : 0u);
         f.pyro_adc[i] = ctx->channel_adc[i];
     }
     f.under_thrust = ctx->under_thrust ? 1 : 0;
-    f.apogee_detected = ctx->apogee_declared ? 1 : 0;
+    f.apogee_seen = ctx->apogee_declared ? 1 : 0;
     f.telem_seq = ctx->telemetry_seq;
     lua_core1_publish(&f);
 }
@@ -323,16 +330,23 @@ static void publish_flight(const flight_context_t *ctx, uint32_t now_ms) {
 static void offer_events(const flight_context_t *ctx) {
     static uint32_t offered;
     uint8_t event;
-    while (flight_next_event(ctx, &offered, &event))
+    while (flight_next_event(ctx, &offered, &event)) {
         lua_core1_event(flight_event_name(event));
+    }
 }
 
 void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     if (launch_pending) {
-        if (launch_at_ms == 0) {
+        uint32_t waited = now_ms - launch_at_ms;
+        if (launch_at_ms == 0u) {
             launch_at_ms = now_ms + LUA_LAUNCH_DELAY_MS;
-        } else if ((int32_t)(now_ms - launch_at_ms) >= 0) {
+        } else if (((int32_t)waited >= 0) && hal_fs_settled()) {
+            launch_at_ms = now_ms; /* the start-up limit runs from the launch */
             launch();
+        } else if ((int32_t)waited >= 0) {
+            (void)small_snprintf(status_line, sizeof(status_line), "waiting: the filesystem's cleanup");
+        } else {
+            /* the launch delay has not run out */
         }
         return;
     }
@@ -342,7 +356,7 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
 
     /* Clear the safe-boot marker once the board has demonstrably survived
      * with the script running. A later crash is then a crash, not a bad boot. */
-    if (now_ms > LUA_SETTLE_MS && watchdog_hw->scratch[LUA_BOOT_SCRATCH] == LUA_BOOT_MARK) {
+    if (((uint32_t)(now_ms - launch_at_ms) > LUA_SETTLE_MS) && (watchdog_hw->scratch[LUA_BOOT_SCRATCH] == LUA_BOOT_MARK)) {
         watchdog_hw->scratch[LUA_BOOT_SCRATCH] = 0;
         phase(PH_SETTLED);
     }
@@ -356,36 +370,43 @@ void lua_app_service(const flight_context_t *ctx, uint32_t now_ms) {
     log_drain(flight_elapsed_ms(ctx, now_ms));
 
     const char *refused = lua_core1_refusal();
-    if (refused && lua_core1_state() == LUA_C1_RUNNING) {
-        small_snprintf(status_line, sizeof(status_line), "not started: %s", refused);
+    if ((refused != NULL) && (lua_core1_state() == LUA_C1_RUNNING)) {
+        (void)small_snprintf(status_line, sizeof(status_line), "not started: %s", refused);
         lua_core1_kill();
         return;
     }
 
-    if (!lua_core1_ready() && launched && (int32_t)(now_ms - (launch_at_ms + LUA_BOOT_LIMIT_MS)) >= 0 &&
-        lua_core1_state() == LUA_C1_RUNNING) {
-        small_snprintf(status_line, sizeof(status_line), "killed: startup exceeded %lums",
+    uint32_t starting_ms = now_ms - (launch_at_ms + LUA_BOOT_LIMIT_MS);
+    if (!lua_core1_ready() && launched && ((int32_t)starting_ms >= 0) && (lua_core1_state() == LUA_C1_RUNNING)) {
+        (void)small_snprintf(status_line, sizeof(status_line), "killed: startup exceeded %lums",
                        (unsigned long)LUA_BOOT_LIMIT_MS);
         lua_core1_kill();
     }
 
-    if (lua_core1_state() == LUA_C1_DEAD && !refused && strncmp(status_line, "stopped", 7) != 0) {
+    if ((lua_core1_state() == LUA_C1_DEAD) && (refused == NULL) && (strncmp(status_line, "stopped", 7) != 0)) {
         phase(PH_KILLED);
-        uint32_t ok, rq, ak, hb;
+        uint32_t ok;
+        uint32_t rq;
+        uint32_t ak;
+        uint32_t hb;
         lua_core1_dispatch_stats(&ok, &rq, &ak, &hb);
         uint32_t loc = lua_core1_loc();
-        small_snprintf(status_line, sizeof(status_line),
+        uint32_t loc_lo = loc & 0xffu;
+        uint32_t loc_mid = (loc >> 8) & 0xffu;
+        uint32_t loc_hi = (loc >> 16) & 0xffu;
+        (void)small_snprintf(status_line, sizeof(status_line),
                        "stopped: %s [ok=%lu req=%lu ack=%lu hb=%lu loc=%lu failloc=%lu preq=%lu stack=%lu]",
                        lua_core1_error(), (unsigned long)ok, (unsigned long)rq, (unsigned long)ak, (unsigned long)hb,
-                       (unsigned long)(loc & 0xff), (unsigned long)((loc >> 8) & 0xff),
-                       (unsigned long)((loc >> 16) & 0xff), (unsigned long)lua_core1_stack_free());
+                       (unsigned long)loc_lo, (unsigned long)loc_mid,
+                       (unsigned long)loc_hi, (unsigned long)lua_core1_stack_free());
     }
 }
 
 /* Once a period, after the flight work. Returning without asking is normal
  * while the script is still starting. */
 void lua_app_dispatch(void) {
-    if (!lua_core1_ready()) {
+    /* [LUA-RUN-05] The cleanup's scan and a script share core1. */
+    if (!lua_core1_ready() || !hal_fs_settled()) {
         return;
     }
     lua_core1_dispatch();

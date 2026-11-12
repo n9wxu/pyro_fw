@@ -63,7 +63,8 @@ typedef struct {
      * it, the rules see nothing lower or faster than free fall from here. */
     bool charge_guard;
     uint32_t guard_from_ms;
-    float guard_height_m, guard_speed;
+    float guard_height_m;
+    float guard_speed;
 } fire_state_t;
 
 void fire_control_reset(fire_state_t *s);

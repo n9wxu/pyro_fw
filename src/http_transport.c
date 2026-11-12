@@ -11,7 +11,7 @@
 /* A link we have closed, whose peer never finishes: taken back. */
 #define DRAIN_MS 5000u
 
-typedef enum { LINK_LISTENING, LINK_WAITING, LINK_BOUND, LINK_DRAINING } link_phase_t;
+enum { LINK_LISTENING, LINK_WAITING, LINK_BOUND, LINK_DRAINING };
 
 typedef struct {
     tcp_conn_t tcp; /* MUST be first: the stack's event hands it back */
@@ -26,23 +26,21 @@ typedef struct {
 } link_t;
 
 static link_t links[HTTP_LINKS];
-static tcp_conn_t *table[HTTP_LINKS];
 static net_t *stack;
 static const http_exchanges_t *xs;
-static http_transport_counts_t counts;
-static uint32_t link_seq;
+static http_transport_counts_t transport_counts;
 
 static link_t *link_of(void *ctx) {
     return (link_t *)ctx;
 }
 
 static bool link_carries(const link_t *l) {
-    return l->phase == LINK_BOUND && !l->closing;
+    return (l->phase == (uint8_t)LINK_BOUND) && !l->closing;
 }
 
 /* Closed on our side: what the peer still sends is taken and dropped. */
 static bool link_swallows(const link_t *l) {
-    return l->phase == LINK_DRAINING || l->closing;
+    return (l->phase == (uint8_t)LINK_DRAINING) || l->closing;
 }
 
 /* ── The stack's view of the rings (tcp_buf.h) ────────────────────── */
@@ -50,9 +48,10 @@ static bool link_swallows(const link_t *l) {
 static uint16_t rx_deliver(void *ctx, const uint8_t *data, uint16_t len) {
     link_t *l = link_of(ctx);
     l->moved = true;
-    if (link_carries(l))
+    if (link_carries(l)) {
         return net_ring_write(&l->hc->rx, data, len);
-    return link_swallows(l) ? len : 0;
+    }
+    return link_swallows(l) ? len : 0u;
 }
 
 static uint16_t rx_read(void *ctx, uint8_t *dst, uint16_t maxlen) {
@@ -64,17 +63,16 @@ static uint16_t rx_read(void *ctx, uint8_t *dst, uint16_t maxlen) {
 
 static uint16_t rx_readable(const void *ctx) {
     const link_t *l = (const link_t *)ctx;
-    return link_carries(l) ? net_ring_readable(&l->hc->rx) : 0;
+    return link_carries(l) ? net_ring_readable(&l->hc->rx) : 0u;
 }
 
 static uint16_t rx_available(const void *ctx) {
     const link_t *l = (const link_t *)ctx;
-    if (link_carries(l))
+    if (link_carries(l)) {
         return net_ring_writable(&l->hc->rx);
-    return link_swallows(l) ? DRAIN_WINDOW : 0;
+    }
+    return link_swallows(l) ? DRAIN_WINDOW : 0u;
 }
-
-static const tcp_rxbuf_ops_t rx_ops = {rx_deliver, rx_read, rx_readable, rx_available};
 
 static uint16_t tx_write(void *ctx, const uint8_t *data, uint16_t len) {
     (void)ctx;
@@ -85,7 +83,7 @@ static uint16_t tx_write(void *ctx, const uint8_t *data, uint16_t len) {
 
 /* The response has bytes the handler has not put in the tx ring yet. */
 static bool more_to_come(const http_conn_t *hc) {
-    return hc->phase == HTTP_SEND && (hc->out_left > 0 || (hc->streaming && hc->stream_left > 0));
+    return (hc->phase == HTTP_SEND) && ((hc->out_left > 0u) || (hc->streaming && (hc->stream_left > 0u)));
 }
 
 /* One segment in flight is the stack's rule. Copied out, so a ring that
@@ -93,25 +91,29 @@ static bool more_to_come(const http_conn_t *hc) {
  * fill the ring, which an acknowledgement has only just emptied. */
 static uint16_t tx_copy_segment(void *ctx, uint8_t *dst, uint16_t mss) {
     link_t *l = link_of(ctx);
-    if (l->phase != LINK_BOUND || l->in_flight > 0)
+    if ((l->phase != (uint8_t)LINK_BOUND) || (l->in_flight > 0u)) {
         return 0;
+    }
     const net_ring_t *r = &l->hc->tx;
-    if (r->len < mss && more_to_come(l->hc))
+    if ((r->len < mss) && more_to_come(l->hc)) {
         return 0;
-    uint16_t n = r->len < mss ? r->len : mss;
+    }
+    uint16_t n = (r->len < mss) ? r->len : mss;
     uint16_t to_end = (uint16_t)(r->cap - r->tail);
-    uint16_t first = n < to_end ? n : to_end;
-    memcpy(dst, r->buf + r->tail, first);
-    memcpy(dst + first, r->buf, (size_t)(n - first));
+    uint16_t first = (n < to_end) ? n : to_end;
+    const size_t rest = (size_t)n - (size_t)first;
+    (void)memcpy(dst, &r->buf[r->tail], first);
+    (void)memcpy(&dst[first], r->buf, rest);
     l->in_flight = n;
     return n;
 }
 
 static void tx_ack(void *ctx, uint32_t bytes) {
     link_t *l = link_of(ctx);
-    uint16_t n = bytes < l->in_flight ? (uint16_t)bytes : l->in_flight;
-    if (l->phase == LINK_BOUND)
+    uint16_t n = (bytes < l->in_flight) ? (uint16_t)bytes : l->in_flight;
+    if (l->phase == (uint8_t)LINK_BOUND) {
         net_ring_discard(&l->hc->tx, n);
+    }
     l->in_flight = (uint16_t)(l->in_flight - n);
     l->moved = true;
 }
@@ -127,36 +129,29 @@ static uint16_t tx_in_flight(const void *ctx) {
  * PSH for 100 ms, about one time in fifteen (smallest_tcp issue 9). */
 static uint16_t tx_queued(const void *ctx) {
     const link_t *l = (const link_t *)ctx;
-    if (l->phase != LINK_BOUND)
+    if (l->phase != (uint8_t)LINK_BOUND) {
         return 0;
-    if (l->in_flight > 0)
+    }
+    if (l->in_flight > 0u) {
         return l->in_flight;
+    }
     uint16_t held = net_ring_readable(&l->hc->tx);
     uint16_t mss = l->tcp.snd_mss;
-    if (held < mss)
-        return more_to_come(l->hc) ? 0 : held;
+    if (held < mss) {
+        return more_to_come(l->hc) ? 0u : held;
+    }
     return mss;
 }
 
 static uint16_t tx_writable(const void *ctx) {
     const link_t *l = (const link_t *)ctx;
-    return l->phase == LINK_BOUND ? net_ring_writable(&l->hc->tx) : 0;
+    return (l->phase == (uint8_t)LINK_BOUND) ? net_ring_writable(&l->hc->tx) : 0u;
 }
 
 static void tx_mark_retransmit(void *ctx) {
     link_of(ctx)->in_flight = 0;
-    counts.retransmits++;
+    transport_counts.retransmits++;
 }
-
-static const tcp_txbuf_ops_t tx_ops = {
-    .write = tx_write,
-    .ack = tx_ack,
-    .in_flight = tx_in_flight,
-    .queued = tx_queued,
-    .writable = tx_writable,
-    .mark_retransmit = tx_mark_retransmit,
-    .copy_segment = tx_copy_segment,
-};
 
 /* ── Links ────────────────────────────────────────────────────────── */
 
@@ -167,49 +162,69 @@ static void on_event(tcp_conn_t *tcp, uint8_t events) {
 }
 
 static void link_listen(link_t *l) {
+    static const tcp_rxbuf_ops_t rx_ops = {rx_deliver, rx_read, rx_readable, rx_available};
+    static const tcp_txbuf_ops_t tx_ops = {
+        .write = tx_write,
+        .ack = tx_ack,
+        .in_flight = tx_in_flight,
+        .queued = tx_queued,
+        .writable = tx_writable,
+        .mark_retransmit = tx_mark_retransmit,
+        .copy_segment = tx_copy_segment,
+    };
     l->phase = LINK_LISTENING;
     l->closing = false;
     l->counted_wait = false;
     l->in_flight = 0;
     l->hc = NULL;
-    tcp_conn_init(&l->tcp, &tx_ops, l, &rx_ops, l, on_event);
-    tcp_listen(&l->tcp, 80);
+    (void)tcp_conn_init(&l->tcp, &tx_ops, l, &rx_ops, l, on_event);
+    (void)tcp_listen(&l->tcp, 80);
 }
 
 static void link_free(link_t *l) {
-    if (l->hc)
+    if (l->hc != NULL) {
         xs->give_back(l->hc);
+    }
     link_listen(l);
 }
 
 static void link_abort(link_t *l) {
-    counts.http_err++;
-    tcp_abort(stack, &l->tcp);
+    transport_counts.http_err++;
+    (void)tcp_abort(stack, &l->tcp);
     link_free(l);
 }
 
 static bool peer_is_there(tcp_state_t st) {
-    return st == TCP_ESTABLISHED || st == TCP_CLOSE_WAIT;
+    return (st == TCP_ESTABLISHED) || (st == TCP_CLOSE_WAIT);
+}
+
+static bool seq_before(uint32_t a, uint32_t b) {
+    const uint32_t d = a - b;
+    return (int32_t)d < 0;
 }
 
 static link_t *oldest_waiting(void) {
     link_t *oldest = NULL;
     for (int i = 0; i < HTTP_LINKS; i++) {
         link_t *l = &links[i];
-        if (l->phase == LINK_WAITING && (!oldest || (int32_t)(l->seq - oldest->seq) < 0))
+        if ((l->phase == (uint8_t)LINK_WAITING) && ((oldest == NULL) || seq_before(l->seq, oldest->seq))) {
             oldest = l;
+        }
     }
     return oldest;
 }
 
 /* Free exchanges go to the connected links in the order they connected. */
 static void attach_waiting(void) {
-    link_t *l;
-    while ((l = oldest_waiting()) != NULL) {
+    while (true) {
+        link_t *l = oldest_waiting();
+        if (l == NULL) {
+            break;
+        }
         http_conn_t *hc = xs->take();
-        if (!hc) {
+        if (hc == NULL) {
             if (!l->counted_wait) {
-                counts.conn_full++;
+                transport_counts.conn_full++;
                 l->counted_wait = true;
             }
             return;
@@ -221,21 +236,24 @@ static void attach_waiting(void) {
 }
 
 static void finish_closing(link_t *l, tcp_state_t st, uint32_t now) {
-    if (net_ring_readable(&l->hc->tx) == 0) {
-        counts.served++;
+    if (net_ring_readable(&l->hc->tx) == 0u) {
+        transport_counts.served++;
         xs->give_back(l->hc);
         l->hc = NULL;
         l->phase = LINK_DRAINING;
         l->last_ms = now;
-    } else if (st == TCP_CLOSED || now - l->last_ms > HTTP_IDLE_MS) {
+    } else if ((st == TCP_CLOSED) || ((now - l->last_ms) > HTTP_IDLE_MS)) {
         link_abort(l);
+    } else {
+        /* still flushing: the peer has yet to take the rest */
     }
 }
 
 static void transport_bound(link_t *l, tcp_state_t st, uint32_t now) {
     http_conn_t *hc = l->hc;
-    if (xs->held(hc))
+    if (xs->held(hc)) {
         return;
+    }
     if (xs->must_let_go(hc)) {
         link_abort(l);
         return;
@@ -245,36 +263,41 @@ static void transport_bound(link_t *l, tcp_state_t st, uint32_t now) {
         return;
     }
     if (!peer_is_there(st)) {
-        counts.http_err++;
+        transport_counts.http_err++;
         link_free(l);
         return;
     }
-    hc->rx_eof = st == TCP_CLOSE_WAIT;
-    if (http_conn_take_consumed(hc) > 0) {
+    hc->rx_eof = (st == TCP_CLOSE_WAIT);
+    if (http_conn_take_consumed(hc) > 0u) {
         tcp_window_update(stack, &l->tcp);
         l->last_ms = now;
     }
-    if (l->in_flight == 0 && net_ring_readable(&hc->tx) > 0)
+    if ((l->in_flight == 0u) && (net_ring_readable(&hc->tx) > 0u)) {
         tcp_output(stack, &l->tcp);
+    }
     /* The handler fills the ring after this pass: come straight back for
      * what it adds. */
-    if (l->in_flight == 0 && more_to_come(hc) && http_conn_wants_service(hc))
+    if ((l->in_flight == 0u) && more_to_come(hc) && http_conn_wants_service(hc)) {
         xs->wake();
+    }
 
     if (hc->failed) {
         link_abort(l);
     } else if (http_conn_done(hc) && net_ring_readable(&hc->tx) == l->in_flight) {
         /* Once the last of the tx ring is on its way: the stack sends a FIN
          * behind what tx_queued() shows it, and that is one segment. */
-        tcp_close(stack, &l->tcp);
+        (void)tcp_close(stack, &l->tcp);
         l->closing = true;
-    } else if (now - l->last_ms > HTTP_IDLE_MS) {
-        counts.idle_aborts++;
+    } else if ((now - l->last_ms) > HTTP_IDLE_MS) {
+        transport_counts.idle_aborts++;
         link_abort(l);
+    } else {
+        /* the exchange is still running */
     }
 }
 
 static void transport_link(link_t *l, uint32_t now) {
+    static uint32_t link_seq;
     tcp_state_t st = tcp_status(&l->tcp);
     if (l->moved) {
         l->moved = false;
@@ -283,60 +306,71 @@ static void transport_link(link_t *l, uint32_t now) {
     switch (l->phase) {
     case LINK_LISTENING:
         if (peer_is_there(st)) {
-            counts.accepts++;
-            counts.last_accept_ms = now;
-            l->seq = ++link_seq;
+            transport_counts.accepts++;
+            transport_counts.last_accept_ms = now;
+            link_seq++;
+            l->seq = link_seq;
             l->last_ms = now;
             l->phase = LINK_WAITING;
         } else if (st == TCP_CLOSED) {
             link_listen(l);
+        } else {
+            /* the handshake is still under way */
         }
         break;
     case LINK_WAITING:
         if (!peer_is_there(st)) {
             link_abort(l);
-        } else if (now - l->last_ms > HTTP_IDLE_MS) {
-            counts.idle_aborts++;
+        } else if ((now - l->last_ms) > HTTP_IDLE_MS) {
+            transport_counts.idle_aborts++;
             link_abort(l);
+        } else {
+            /* connected, waiting for an exchange */
         }
         break;
     case LINK_BOUND:
         transport_bound(l, st, now);
         break;
     default: /* LINK_DRAINING */
-        if (st == TCP_CLOSED || st == TCP_TIME_WAIT) {
+        if ((st == TCP_CLOSED) || (st == TCP_TIME_WAIT)) {
             link_listen(l);
-        } else if (now - l->last_ms > DRAIN_MS) {
-            tcp_abort(stack, &l->tcp);
+        } else if ((now - l->last_ms) > DRAIN_MS) {
+            (void)tcp_abort(stack, &l->tcp);
             link_listen(l);
+        } else {
+            /* the peer has yet to finish */
         }
         break;
     }
 }
 
 void http_transport_pass(uint32_t now_ms) {
-    for (int i = 0; i < HTTP_LINKS; i++)
+    for (int i = 0; i < HTTP_LINKS; i++) {
         transport_link(&links[i], now_ms);
+    }
     attach_waiting();
 }
 
 void http_transport_states(uint16_t states[11], uint32_t *nrtx_max) {
-    memset(states, 0, 11 * sizeof(states[0]));
+    (void)memset(states, 0, 11u * sizeof(states[0]));
     *nrtx_max = 0;
     for (int i = 0; i < HTTP_LINKS; i++) {
         unsigned st = (unsigned)tcp_status(&links[i].tcp);
-        if (st < 11u)
+        if (st < 11u) {
             states[st]++;
-        if (links[i].tcp.retransmits > *nrtx_max)
+        }
+        if (links[i].tcp.retransmits > *nrtx_max) {
             *nrtx_max = links[i].tcp.retransmits;
+        }
     }
 }
 
 const http_transport_counts_t *http_transport_counts(void) {
-    return &counts;
+    return &transport_counts;
 }
 
 void http_transport_init(net_t *net, const http_exchanges_t *x) {
+    static tcp_conn_t *table[HTTP_LINKS];
     stack = net;
     xs = x;
     for (int i = 0; i < HTTP_LINKS; i++) {

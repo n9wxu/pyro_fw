@@ -10,7 +10,7 @@
 
 #include "loop_period.h"
 
-#define ARM_PUMP_PERIOD_US 100 /* 10 kHz: DESIGN.md 5.1's band is 10-50 */
+#define ARM_PUMP_PERIOD_US 100u /* 10 kHz: DESIGN.md 5.1's band is 10-50 */
 
 /* Toggle cycles per pushed word. The four FIFO words and the one running
  * carry the pump across a loop and a quarter: a feed a little late does not

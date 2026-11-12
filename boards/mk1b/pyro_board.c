@@ -15,18 +15,17 @@
 #include "pico/stdlib.h"
 
 /* See THEORY_OF_OPERATION.md "Continuity check" [DD-059]. */
-#define PATH_TO_GROUND_MAX_COUNTS 500
-#define NO_PATH_MIN_COUNTS 3000
-#define PRESENCE_SETTLE_MS 10
-#define CHECK_PERIOD_MS 1000
-#define NODE_RECHARGE_MS 50 /* 5 x 100.1k x 100 nF */
+#define PATH_TO_GROUND_MAX_COUNTS 500u
+#define NO_PATH_MIN_COUNTS 3000u
+#define PRESENCE_SETTLE_MS 10u
+#define CHECK_PERIOD_MS 1000u
+#define NODE_RECHARGE_MS 50u /* 5 x 100.1k x 100 nF */
 
-#define FIRE_PULSE_MS 500
+#define FIRE_PULSE_MS 500u
 
 static const uint8_t pyro_outputs[] = {BOARD_PIN_PYRO_COMMON_EN, BOARD_PIN_PYRO1_EN, BOARD_PIN_PYRO2_EN};
 static const uint8_t high_side_pin[2] = {BOARD_PIN_PYRO1_EN, BOARD_PIN_PYRO2_EN};
 static const uint8_t fault_flag_pin[2] = {BOARD_PIN_PYRO1_FLAG, BOARD_PIN_PYRO2_FLAG};
-static const uint8_t sense_adc[2] = {BOARD_ADC_CH_SENSE1, BOARD_ADC_CH_SENSE2};
 
 typedef enum {
     CHECK_IDLE,     /* common off; ends with the short reading   */
@@ -35,7 +34,8 @@ typedef enum {
 
 static struct {
     check_phase_t phase;
-    uint32_t due_ms, started_ms;
+    uint32_t due_ms;
+    uint32_t started_ms;
     uint16_t short_counts[2];
     bool complete;
     bool fired_since[2]; /* fired, and no check begun after its pulse has ended */
@@ -52,8 +52,10 @@ void board_early_init(void) {
 }
 
 static void read_sense(uint16_t counts[2]) {
-    for (int i = 0; i < 2; i++)
+    static const uint8_t sense_adc[2] = {BOARD_ADC_CH_SENSE1, BOARD_ADC_CH_SENSE2};
+    for (int i = 0; i < 2; i++) {
         counts[i] = adc_read_raw(sense_adc[i]);
+    }
 }
 
 static pyro_continuity_t classify(uint16_t presence, uint16_t shorts) {
@@ -61,20 +63,23 @@ static pyro_continuity_t classify(uint16_t presence, uint16_t shorts) {
     c.raw_adc = presence;
     c.shorted = shorts < PATH_TO_GROUND_MAX_COUNTS;
     c.open = presence > NO_PATH_MIN_COUNTS;
-    c.good = presence < PATH_TO_GROUND_MAX_COUNTS && !c.shorted;
+    c.good = (presence < PATH_TO_GROUND_MAX_COUNTS) && !c.shorted;
     return c;
 }
 
 /* A released channel's enable is a Lua pad: only the owned ones are driven. */
 static void hold_high_sides_off(void) {
-    for (int i = 0; i < 2; i++)
-        if (pin_store_owns(high_side_pin[i]))
+    for (int i = 0; i < 2; i++) {
+        if (pin_store_owns(high_side_pin[i])) {
             gpio_put(high_side_pin[i], 0);
+        }
+    }
 }
 
 static void begin_presence(uint32_t now_ms, bool read_shorts_first) {
-    if (read_shorts_first)
+    if (read_shorts_first) {
         read_sense(check.short_counts);
+    }
     hold_high_sides_off();
     gpio_put(BOARD_PIN_PYRO_COMMON_EN, 1);
     check.phase = CHECK_PRESENCE;
@@ -83,6 +88,7 @@ static void begin_presence(uint32_t now_ms, bool read_shorts_first) {
 }
 
 static void finish_presence(uint32_t now_ms) {
+    (void)now_ms;
     uint16_t presence[2];
     read_sense(presence);
     gpio_put(BOARD_PIN_PYRO_COMMON_EN, 0);
@@ -97,12 +103,14 @@ static void finish_presence(uint32_t now_ms) {
 }
 
 static void check_step(uint32_t now_ms) {
-    if (!deadline_reached(now_ms, check.due_ms))
+    if (!deadline_reached(now_ms, check.due_ms)) {
         return;
-    if (check.phase == CHECK_IDLE)
+    }
+    if (check.phase == CHECK_IDLE) {
         begin_presence(now_ms, true);
-    else
+    } else {
         finish_presence(now_ms);
+    }
 }
 
 /* ── pyro.h ───────────────────────────────────────────────────────── */
@@ -124,8 +132,10 @@ void pyro_init(void) {
     check.phase = CHECK_IDLE;
     check.due_ms = to_ms_since_boot(get_absolute_time()) + NODE_RECHARGE_MS;
     check.complete = false;
-    check.fired_since[0] = check.fired_since[1] = false;
-    check.short_counts[0] = check.short_counts[1] = 4095;
+    check.fired_since[1] = false;
+    check.fired_since[0] = false;
+    check.short_counts[1] = 4095;
+    check.short_counts[0] = 4095;
 }
 
 void pyro_sample(void) {}
@@ -133,13 +143,14 @@ void pyro_sample(void) {}
 /* [PYR-HEALTH-01] A board that cannot judge a channel reports it ready, with
  * the count it read. */
 static pyro_continuity_t ready_unjudged(uint8_t channel) {
-    return (pyro_continuity_t){.raw_adc = check.complete ? check.result[channel - 1].raw_adc : 0, .good = true};
+    return (pyro_continuity_t){.raw_adc = check.complete ? check.result[channel - 1u].raw_adc : 0u, .good = true};
 }
 
 void pyro_get(uint8_t channel, pyro_continuity_t *out) {
-    if (channel != 1 && channel != 2)
+    if ((channel != 1u) && (channel != 2u)) {
         return;
-    if (check.fired_since[channel - 1]) {
+    }
+    if (check.fired_since[channel - 1u]) {
         *out = (pyro_continuity_t){0}; /* no verdict yet [PYR-VERIFY-01] */
         return;
     }
@@ -151,39 +162,43 @@ void pyro_get(uint8_t channel, pyro_continuity_t *out) {
         *out = (pyro_continuity_t){.raw_adc = 0, .good = false, .open = true, .shorted = false};
         return;
     }
-    *out = check.result[channel - 1];
+    *out = check.result[channel - 1u];
 }
 
 /* [PYR-DEPLOY-02] One channel at a time, whatever the caller checked. */
 void pyro_fire(uint8_t channel) {
-    if ((channel != 1 && channel != 2) || pulse.channel != 0)
+    if (((channel != 1u) && (channel != 2u)) || (pulse.channel != 0u)) {
         return;
+    }
     gpio_put(BOARD_PIN_PYRO_COMMON_EN, 1);
-    gpio_put(high_side_pin[channel - 1], 1);
+    gpio_put(high_side_pin[channel - 1u], 1);
     pulse.channel = channel;
     pulse.start_ms = to_ms_since_boot(get_absolute_time());
-    check.fired_since[channel - 1] = true;
+    check.fired_since[channel - 1u] = true;
 }
 
 /* See THEORY_OF_OPERATION.md "Firing": the common stays on into a fresh
  * presence reading, and the last short reading stands. */
 static void end_pulse(uint32_t now_ms) {
-    gpio_put(high_side_pin[pulse.channel - 1], 0);
+    gpio_put(high_side_pin[pulse.channel - 1u], 0);
     pulse.channel = 0;
     begin_presence(now_ms, false);
 }
 
 void pyro_update(uint32_t now_ms) {
-    if (pulse.channel == 0)
+    if (pulse.channel == 0u) {
         check_step(now_ms);
-    else if (deadline_reached(now_ms, pulse.start_ms + FIRE_PULSE_MS))
+    } else if (deadline_reached(now_ms, pulse.start_ms + FIRE_PULSE_MS)) {
         end_pulse(now_ms);
+    } else {
+        /* the pulse is still running */
+    }
 }
 
 bool pyro_is_firing(void) {
-    return pulse.channel != 0;
+    return pulse.channel != 0u;
 }
 
 bool pyro_fault(uint8_t channel) {
-    return !gpio_get(fault_flag_pin[channel - 1]); /* AP2192 FLG: low is a fault */
+    return !gpio_get(fault_flag_pin[channel - 1u]); /* AP2192 FLG: low is a fault */
 }

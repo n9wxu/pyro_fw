@@ -5,24 +5,25 @@
 #include "pyro_sense.h"
 #include <string.h>
 
-#define AGREEING_SAMPLES 3 /* DESIGN.md invariant 8 */
-#define PACK_PRESENT_MIN_COUNTS 200
+#define AGREEING_SAMPLES 3u /* DESIGN.md invariant 8 */
+#define PACK_PRESENT_MIN_COUNTS 200u
 
 static struct {
     uint8_t latched;
-    uint8_t hot_run, short_run;
+    uint8_t hot_run;
+    uint8_t short_run;
 } faults;
 
 void faults_init(void) {
-    memset(&faults, 0, sizeof(faults));
+    (void)memset(&faults, 0, sizeof(faults));
 }
 
 bool bus_is_hot(const quiescent_t *q) {
-    return q->vbat > PACK_PRESENT_MIN_COUNTS && q->bus > (uint16_t)(q->vbat - q->vbat / 4u);
+    return (q->vbat > PACK_PRESENT_MIN_COUNTS) && (q->bus > (uint16_t)(q->vbat - (q->vbat / 4u)));
 }
 
 static void count_toward(bus_fault_t fault, uint8_t *run, bool seen) {
-    *run = seen ? (uint8_t)(*run + 1) : 0;
+    *run = seen ? (uint8_t)(*run + 1u) : (uint8_t)0u;
     if (*run >= AGREEING_SAMPLES) {
         *run = AGREEING_SAMPLES;
         faults.latched |= fault;
@@ -43,7 +44,8 @@ void faults_latch(bus_fault_t fault) {
 }
 
 void faults_clear(bus_fault_t fault) {
-    faults.latched &= (uint8_t)~fault;
+    uint32_t keep = ~(uint32_t)fault;
+    faults.latched &= (uint8_t)keep;
 }
 
 uint8_t faults_latched(void) {

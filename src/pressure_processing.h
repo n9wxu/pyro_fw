@@ -45,7 +45,7 @@ typedef struct {
 /* Samples between intake and the flight's steps. The collector holds four
  * cycles and the flight steps up to eight a period [FLT-RATE-06], so no more
  * than four ever wait. */
-#define PP_RING_SIZE 16
+#define PP_RING_SIZE 16u
 #define PP_CAL_SAMPLES 10 /* [FLT-BOOT-08] */
 
 void pp_init(void);

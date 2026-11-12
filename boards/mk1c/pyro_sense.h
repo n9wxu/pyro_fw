@@ -13,18 +13,18 @@
 /* ── Scaling ─────────────────────────────────────────────────────── */
 
 /* Every divider is 0.3329 against a 3.3 V, 12-bit ADC. */
-#define NODE_UV_PER_COUNT 2421
+#define NODE_UV_PER_COUNT 2421u
 
 static inline uint32_t counts_to_node_mv(uint16_t counts) {
     return ((uint32_t)counts * NODE_UV_PER_COUNT) / 1000u;
 }
 
 /* DESIGN.md 4's levels, which a change of divider or reference breaks. */
-_Static_assert((1058u * NODE_UV_PER_COUNT) / 1000u >= 2550 && (1058u * NODE_UV_PER_COUNT) / 1000u <= 2570,
+_Static_assert((((1058u * NODE_UV_PER_COUNT) / 1000u) >= 2550u) && (((1058u * NODE_UV_PER_COUNT) / 1000u) <= 2570u),
                "bus bias, no match: 1058 counts should be ~2.56 V");
-_Static_assert((1214u * NODE_UV_PER_COUNT) / 1000u >= 2930 && (1214u * NODE_UV_PER_COUNT) / 1000u <= 2950,
+_Static_assert((((1214u * NODE_UV_PER_COUNT) / 1000u) >= 2930u) && (((1214u * NODE_UV_PER_COUNT) / 1000u) <= 2950u),
                "channel bias, match off: 1214 counts should be ~2.94 V");
-_Static_assert((3469u * NODE_UV_PER_COUNT) / 1000u >= 8390 && (3469u * NODE_UV_PER_COUNT) / 1000u <= 8410,
+_Static_assert((((3469u * NODE_UV_PER_COUNT) / 1000u) >= 8390u) && (((3469u * NODE_UV_PER_COUNT) / 1000u) <= 8410u),
                "full 2S bus: 3469 counts should be ~8.4 V");
 
 /* ── The board as measured (DD-054) ──────────────────────────────── */
@@ -43,7 +43,7 @@ _Static_assert((3469u * NODE_UV_PER_COUNT) / 1000u >= 8390 && (3469u * NODE_UV_P
 
 /* ── Levels ──────────────────────────────────────────────────────── */
 
-#define COLD_NODE_MAX_COUNTS 50   /* an unbiased node with nothing on it   */
+#define COLD_NODE_MAX_COUNTS 50u  /* an unbiased node with nothing on it   */
 #define TRACK_BUS_MIN_COUNTS 200u /* a biased bus below this did not rise */
 
 /* ── The presence verdict ────────────────────────────────────────── */
@@ -51,8 +51,9 @@ _Static_assert((3469u * NODE_UV_PER_COUNT) / 1000u >= 8390 && (3469u * NODE_UV_P
 typedef enum { TRACK_OPEN, TRACK_PRESENT, TRACK_INVALID } track_t;
 
 static inline track_t track_channel(uint16_t channel, uint16_t bus) {
-    if (bus < TRACK_BUS_MIN_COUNTS)
+    if (bus < TRACK_BUS_MIN_COUNTS) {
         return TRACK_INVALID;
+    }
     return (2u * (uint32_t)channel >= bus) ? TRACK_PRESENT : TRACK_OPEN;
 }
 

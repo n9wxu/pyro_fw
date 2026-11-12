@@ -73,7 +73,7 @@ typedef struct {
 #define DELETE_ROUTE "/api/delete"
 
 static inline const char *delete_target(const char *path) {
-    return path + sizeof(DELETE_ROUTE) - 1u;
+    return &path[sizeof(DELETE_ROUTE) - 1u];
 }
 
 static const post_route_t post_routes[] = {
@@ -112,7 +112,7 @@ static inline bool route_matches(const post_route_t *r, const char *path) {
     case MATCH_PREFIX:
         return strncmp(path, r->path, n) == 0;
     case MATCH_QUERY:
-        return strncmp(path, r->path, n) == 0 && (path[n] == '\0' || path[n] == '?');
+        return (strncmp(path, r->path, n) == 0) && ((path[n] == '\0') || (path[n] == '?'));
     default:
         return strcmp(path, r->path) == 0;
     }

@@ -35,8 +35,9 @@ static struct {
     uint32_t flash_ops; /* as the present conversion began */
     /* The cycles to take, oldest at head, and after them the one being
      * built: the handler copies nothing. */
-    collector_raw_t queue[COLLECTOR_QUEUE + 1];
-    volatile uint8_t head, count;
+    collector_raw_t queue[COLLECTOR_QUEUE + 1u];
+    volatile uint8_t head;
+    volatile uint8_t count;
     collector_stats_t stats;
 } machine;
 
@@ -120,12 +121,13 @@ __force_inline static void failed(collector_cause_t cause) {
 /* One edge an alarm. After the clocks: SDA low with SCL high, then let go,
  * which is a STOP. */
 __force_inline static void clear_step(void) {
-    uint8_t edge = machine.clear_edge++;
+    uint8_t edge = machine.clear_edge;
+    machine.clear_edge++;
     if (edge < CLEAR_CLOCK_EDGES) {
         collector_bus_scl((edge & 1u) != 0u);
     } else if (edge == CLEAR_CLOCK_EDGES) {
         collector_bus_sda(false);
-    } else if (edge == CLEAR_CLOCK_EDGES + 1u) {
+    } else if (edge == (CLEAR_CLOCK_EDGES + 1u)) {
         collector_bus_sda(true);
     } else {
         collector_bus_lines_give();
@@ -183,27 +185,32 @@ COLLECTOR_BUS_HANDLER static void __noinline __not_in_flash_func(collector_alarm
     uint8_t state = machine.state;
     /* Each alarm but a bus clear's comes once the transfer before it has
      * had its time: the bus is idle here. */
-    if (machine.stopping && state != CLEARING) {
+    if (machine.stopping && (state != (uint8_t)CLEARING)) {
         machine.state = (uint8_t)IDLE;
         return;
     }
-    if (state == COMMANDED)
+    if (state == (uint8_t)COMMANDED) {
         after_command();
-    else if (state == READING)
+    } else if (state == (uint8_t)READING) {
         after_read();
-    else if (state == RETRYING || state == RELOADING)
+    } else if ((state == (uint8_t)RETRYING) || (state == (uint8_t)RELOADING)) {
         command();
-    else if (state == CLEARING)
+    } else if (state == (uint8_t)CLEARING) {
         clear_step();
-    else if (state == RESETTING)
+    } else if (state == (uint8_t)RESETTING) {
         after_reset();
+    } else {
+        /* IDLE: an alarm that nothing is waiting for. */
+    }
 }
 
 bool collector_begin(const collector_part_t *part, const collector_wiring_t *wiring) {
-    if (machine.state != IDLE)
+    if (machine.state != (uint8_t)IDLE) {
         return true;
-    if (!collector_bus_begin(wiring, collector_alarm_isr))
+    }
+    if (!collector_bus_begin(wiring, collector_alarm_isr)) {
         return false;
+    }
     machine.part = *part;
     machine.bit_us = bit_us_at(wiring->hz);
     machine.step = 0;
@@ -215,12 +222,12 @@ bool collector_begin(const collector_part_t *part, const collector_wiring_t *wir
 
 bool collector_stop(void) {
     machine.stopping = true;
-    return machine.state == IDLE;
+    return machine.state == (uint8_t)IDLE;
 }
 
 bool collector_take(collector_raw_t *out) {
     collector_bus_hold_off();
-    bool any = machine.count > 0;
+    bool any = machine.count > 0u;
     if (any) {
         *out = machine.queue[machine.head];
         machine.head = wrapped((uint8_t)(machine.head + 1u));
@@ -237,7 +244,8 @@ void collector_stats(collector_stats_t *out) {
 }
 
 uint32_t collector_cycle_us(const collector_part_t *part, const collector_wiring_t *wiring) {
-    uint32_t bits = 0, waits = 0;
+    uint32_t bits = 0;
+    uint32_t waits = 0;
     for (uint8_t i = 0; i < part->steps; i++) {
         const collector_step_t *s = &part->step[i];
         bits += write_bits(s->command_len) + read_bits(s->read_len);

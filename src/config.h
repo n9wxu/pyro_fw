@@ -7,6 +7,7 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#include "config_fields.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -27,8 +28,6 @@ typedef enum {
 
 /* The longest config.ini the board reads back, and so the longest it writes. */
 #define CONFIG_INI_MAX 1024
-
-#include "config_fields.h"
 
 #define X_FIELD_STR(field) char field[9];
 #define X_FIELD_U8(field) uint8_t field;

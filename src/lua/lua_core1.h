@@ -48,7 +48,7 @@ typedef struct {
      * the raw count shows the difference. */
     int pyro_adc[2];
     int under_thrust;
-    int apogee_detected;
+    int apogee_seen;
     uint32_t telem_seq;
 } lua_flight_t;
 

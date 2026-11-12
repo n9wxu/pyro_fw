@@ -14,7 +14,7 @@
 
 #include <stdint.h>
 
-#define PTRACE_N 256
+#define PTRACE_N 256u
 #define PTRACE_MAGIC "PTR1"
 
 typedef enum {

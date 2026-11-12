@@ -46,8 +46,10 @@ sd_type_t sd_type(void);
 /* Counters for /api/sd. */
 typedef struct {
     uint32_t hz;            /* the data clock in use */
-    uint32_t reads, writes; /* commands */
-    uint32_t sectors_read, sectors_written;
+    uint32_t reads;
+    uint32_t writes; /* commands */
+    uint32_t sectors_read;
+    uint32_t sectors_written;
     uint32_t crc_errors; /* a data block whose CRC16 did not match */
     uint32_t cmd_errors; /* a command the card refused or did not answer */
     uint32_t timeouts;
@@ -58,14 +60,17 @@ typedef struct {
     uint8_t init_r1[6];    /* CMD0, CMD8, CMD59, ACMD41, CMD58, CMD9: the last init's R1s */
     uint8_t init_r7[4];    /* CMD8's echo */
     uint8_t init_ocr[4];
-    uint8_t cmd55_first, acmd41_first;
-    uint32_t acmd41_polls, acmd41_ones;
+    uint8_t cmd55_first;
+    uint8_t acmd41_first;
+    uint32_t acmd41_polls;
+    uint32_t acmd41_ones;
     uint32_t acmd41_other_ms; /* when a poll first answered neither 0 nor 1 */
     uint8_t acmd41_other;
     /* After that answer: CMD58, which a card still in SPI mode answers, then
      * CMD0, which one that has reset to SD mode answers too. Each CMD0 that
      * answers idle restarts the initialisation, up to SD_INIT_RESTARTS. */
-    uint8_t after_r58, after_r0;
+    uint8_t after_r58;
+    uint8_t after_r0;
     uint8_t restarts;
     uint16_t fail_ms[4];   /* since the first ACMD41, each attempt's end */
     uint32_t init_yields; /* bus given away during an initialisation */

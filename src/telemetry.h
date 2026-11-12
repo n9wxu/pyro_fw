@@ -21,8 +21,12 @@ typedef struct {
     uint8_t state_id; /* [TEL-07] */
     uint8_t thrust;
     uint8_t flags;
-    int32_t alt_cm, max_alt_cm, speed_cms, press_pa;
-    uint16_t p1_adc, p2_adc;
+    int32_t alt_cm;
+    int32_t max_alt_cm;
+    int32_t speed_cms;
+    int32_t press_pa;
+    uint16_t p1_adc;
+    uint16_t p2_adc;
     uint32_t time_ms;
 } telemetry_snapshot_t;
 
@@ -36,7 +40,7 @@ typedef struct {
 } telemetry_event_t;
 
 /* Events wait here for the next message [TEL-11]. */
-#define TELEM_QUEUE_SIZE 12
+#define TELEM_QUEUE_SIZE 12u
 typedef struct {
     telemetry_event_t event[TELEM_QUEUE_SIZE];
     uint8_t count;

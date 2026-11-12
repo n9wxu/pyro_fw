@@ -14,16 +14,15 @@
 #include "pico/time.h"
 
 /* See THEORY_OF_OPERATION.md "Continuity check". */
-#define PATH_TO_GROUND_MAX_COUNTS 500
-#define NO_PATH_MIN_COUNTS 3000
-#define NODE_SETTLE_MS 50 /* 5 x 101k x 100 nF */
-#define IDLE_BETWEEN_CHECKS_MS 400
+#define PATH_TO_GROUND_MAX_COUNTS 500u
+#define NO_PATH_MIN_COUNTS 3000u
+#define NODE_SETTLE_MS 50u /* 5 x 101k x 100 nF */
+#define IDLE_BETWEEN_CHECKS_MS 400u
 
-#define FIRE_PULSE_MS 500
+#define FIRE_PULSE_MS 500u
 
 static const uint8_t pyro_outputs[] = {BOARD_PIN_FIRE1, BOARD_PIN_FIRE2, BOARD_PIN_PYRO_LOW};
 static const uint8_t high_side_pin[2] = {BOARD_PIN_FIRE1, BOARD_PIN_FIRE2};
-static const uint8_t sense_adc[2] = {BOARD_ADC_CH_SENSE1, BOARD_ADC_CH_SENSE2};
 
 typedef enum {
     CHECK_PRESENCE, /* low side on: a channel pulled low has its igniter */
@@ -54,8 +53,10 @@ static void low_side(bool on) {
 }
 
 static void read_sense(uint16_t counts[2]) {
-    for (int i = 0; i < 2; i++)
+    static const uint8_t sense_adc[2] = {BOARD_ADC_CH_SENSE1, BOARD_ADC_CH_SENSE2};
+    for (int i = 0; i < 2; i++) {
         counts[i] = adc_read_median3(sense_adc[i]);
+    }
 }
 
 static pyro_continuity_t classify(uint16_t presence, uint16_t shorts) {
@@ -63,7 +64,7 @@ static pyro_continuity_t classify(uint16_t presence, uint16_t shorts) {
     c.raw_adc = presence;
     c.shorted = shorts < PATH_TO_GROUND_MAX_COUNTS;
     c.open = presence > NO_PATH_MIN_COUNTS;
-    c.good = presence < PATH_TO_GROUND_MAX_COUNTS && !c.shorted;
+    c.good = (presence < PATH_TO_GROUND_MAX_COUNTS) && !c.shorted;
     return c;
 }
 
@@ -74,8 +75,9 @@ static void begin_check(uint32_t now_ms) {
 }
 
 static void check_step(uint32_t now_ms) {
-    if (!deadline_reached(now_ms, check.due_ms))
+    if (!deadline_reached(now_ms, check.due_ms)) {
         return;
+    }
     switch (check.phase) {
     case CHECK_PRESENCE:
         read_sense(check.presence_counts);
@@ -98,6 +100,8 @@ static void check_step(uint32_t now_ms) {
     case CHECK_IDLE:
         begin_check(now_ms);
         break;
+    default:
+        break;
     }
 }
 
@@ -110,53 +114,59 @@ void pyro_init(void) {
     adc_gpio_init(BOARD_PIN_PYRO2_SENSE);
     pulse.channel = 0;
     check.complete = false;
-    check.fired_since[0] = check.fired_since[1] = false;
+    check.fired_since[1] = false;
+    check.fired_since[0] = false;
     begin_check(to_ms_since_boot(get_absolute_time()));
 }
 
 void pyro_sample(void) {}
 
 void pyro_get(uint8_t channel, pyro_continuity_t *out) {
-    if (channel != 1 && channel != 2)
+    if ((channel != 1u) && (channel != 2u)) {
         return;
+    }
     if (!check.complete) {
         *out = (pyro_continuity_t){.raw_adc = 0, .good = false, .open = true, .shorted = false};
         return;
     }
-    if (check.fired_since[channel - 1]) {
+    if (check.fired_since[channel - 1u]) {
         *out = (pyro_continuity_t){0}; /* no verdict yet [PYR-VERIFY-01] */
         return;
     }
-    *out = check.result[channel - 1];
+    *out = check.result[channel - 1u];
 }
 
 /* [PYR-DEPLOY-02] One channel at a time, whatever the caller checked. */
 void pyro_fire(uint8_t channel) {
-    if ((channel != 1 && channel != 2) || pulse.channel != 0)
+    if (((channel != 1u) && (channel != 2u)) || (pulse.channel != 0u)) {
         return;
+    }
     low_side(true);
-    gpio_put(high_side_pin[channel - 1], 1);
+    gpio_put(high_side_pin[channel - 1u], 1);
     pulse.channel = channel;
     pulse.start_ms = to_ms_since_boot(get_absolute_time());
-    check.fired_since[channel - 1] = true;
+    check.fired_since[channel - 1u] = true;
 }
 
 /* See THEORY_OF_OPERATION.md "Firing" for why a check restarts at once. */
 static void end_pulse(uint32_t now_ms) {
-    gpio_put(high_side_pin[pulse.channel - 1], 0);
+    gpio_put(high_side_pin[pulse.channel - 1u], 0);
     pulse.channel = 0;
     begin_check(now_ms);
 }
 
 void pyro_update(uint32_t now_ms) {
-    if (pulse.channel == 0)
+    if (pulse.channel == 0u) {
         check_step(now_ms);
-    else if (deadline_reached(now_ms, pulse.start_ms + FIRE_PULSE_MS))
+    } else if (deadline_reached(now_ms, pulse.start_ms + FIRE_PULSE_MS)) {
         end_pulse(now_ms);
+    } else {
+        /* the pulse is still running */
+    }
 }
 
 bool pyro_is_firing(void) {
-    return pulse.channel != 0;
+    return pulse.channel != 0u;
 }
 
 bool pyro_fault(uint8_t channel) {

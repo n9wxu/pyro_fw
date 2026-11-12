@@ -8,19 +8,18 @@
 #include "pyro_faults.h"
 #include "pyro_sense.h"
 #include "board_support.h"
+#include "hal.h"
 #include "hardware/gpio.h"
 #include "pico/time.h"
 #include <string.h>
 
-extern void hal_telemetry_send(const char *sentence);
-
 /* See THEORY_OF_OPERATION.md "Firing sequence". */
-#define FIRE_AT_TENTHS_OF_PACK 9
-#define PUMP_TO_ENABLE_US 400
-#define RAMP_MV_PER_MS 890
-#define ENABLE_COLLAPSE_MS 10
-#define HOLD_MAX_MS 30
-#define FLAT_BUS_COUNTS 25
+#define FIRE_AT_TENTHS_OF_PACK 9u
+#define PUMP_TO_ENABLE_US 400u
+#define RAMP_MV_PER_MS 890u
+#define ENABLE_COLLAPSE_MS 10u
+#define HOLD_MAX_MS 30u
+#define FLAT_BUS_COUNTS 25u
 #define BLEED_BELOW_HOT_MS 100
 
 static const uint8_t gate_pin[2] = {BOARD_PIN_FIRE_A, BOARD_PIN_FIRE_B};
@@ -28,29 +27,32 @@ static const uint8_t gate_pin[2] = {BOARD_PIN_FIRE_A, BOARD_PIN_FIRE_B};
 static struct {
     fire_step_t step;
     uint8_t channel; /* 1 or 2 */
-    uint32_t armed_ms, timeout_ms, fired_ms, disarmed_ms;
+    uint32_t armed_ms;
+    uint32_t timeout_ms;
+    uint32_t fired_ms;
+    uint32_t disarmed_ms;
     uint16_t last_hold_bus;
     bool fired_since_tracking[2];
 } seq;
 
-static void report(const char *what, const quiescent_t *q) {
+static void report_quiescent(const char *what, const quiescent_t *q) {
     char line[112];
-    small_snprintf(line, sizeof(line), "!PYRO %s ch=%u bus=%u vbat=%u\r\n", what, seq.channel, q->bus, q->vbat);
+    (void)small_snprintf(line, sizeof(line), "!PYRO %s ch=%u bus=%u vbat=%u\r\n", what, seq.channel, q->bus, q->vbat);
     hal_telemetry_send(line);
 }
 
 static uint32_t precharge_timeout_ms(const quiescent_t *q) {
     uint32_t ramp_us = (counts_to_node_mv(q->vbat) * FIRE_AT_TENTHS_OF_PACK * 100u) / RAMP_MV_PER_MS;
     uint32_t expected_us = PUMP_TO_ENABLE_US + ramp_us;
-    return (expected_us * 3u / 2u + 999u) / 1000u;
+    return ((((expected_us * 3u) / 2u) + 999u) / 1000u);
 }
 
 static bool bus_charged(const quiescent_t *q) {
-    return 10u * (uint32_t)q->bus >= FIRE_AT_TENTHS_OF_PACK * (uint32_t)q->vbat;
+    return (10u * (uint32_t)q->bus) >= (FIRE_AT_TENTHS_OF_PACK * (uint32_t)q->vbat);
 }
 
 static uint16_t bus_change(const quiescent_t *q) {
-    uint16_t d = q->bus > seq.last_hold_bus ? q->bus - seq.last_hold_bus : seq.last_hold_bus - q->bus;
+    uint16_t d = (q->bus > seq.last_hold_bus) ? (q->bus - seq.last_hold_bus) : (seq.last_hold_bus - q->bus);
     seq.last_hold_bus = q->bus;
     return d;
 }
@@ -61,7 +63,7 @@ static void disarm(uint32_t now_ms) {
 }
 
 void sequence_init(void) {
-    memset(&seq, 0, sizeof(seq));
+    (void)memset(&seq, 0, sizeof(seq));
 }
 
 void sequence_arm(uint8_t channel, const quiescent_t *q) {
@@ -72,16 +74,16 @@ void sequence_arm(uint8_t channel, const quiescent_t *q) {
     seq.step = STEP_PRECHARGE;
     arm_pump_start();
     arm_pump_feed();
-    report("ARM", q);
+    report_quiescent("ARM", q);
 }
 
 static void close_gate(uint32_t now_ms, const quiescent_t *q, const char *what) {
-    gpio_put(gate_pin[seq.channel - 1], 1);
+    gpio_put(gate_pin[seq.channel - 1u], 1);
     disarm(now_ms);
     seq.fired_ms = now_ms;
     seq.last_hold_bus = q->bus;
     seq.step = STEP_HOLD;
-    report(what, q);
+    report_quiescent(what, q);
 }
 
 /* [PYR-ARM-03] The gate closes on a charged bus, or at the deadline on
@@ -101,8 +103,8 @@ static void hold_step(uint32_t now_ms, const quiescent_t *q) {
     bool flat = bus_change(q) <= FLAT_BUS_COUNTS;
     if ((deadline_reached(now_ms, seq.fired_ms + ENABLE_COLLAPSE_MS) && flat) ||
         deadline_reached(now_ms, seq.fired_ms + HOLD_MAX_MS)) {
-        gpio_put(gate_pin[seq.channel - 1], 0);
-        seq.fired_since_tracking[seq.channel - 1] = true;
+        gpio_put(gate_pin[seq.channel - 1u], 0);
+        seq.fired_since_tracking[seq.channel - 1u] = true;
         seq.step = STEP_DRAIN;
     }
 }
@@ -126,6 +128,7 @@ void sequence_step(uint32_t now_ms, const quiescent_t *q) {
         drain_step(now_ms, q);
         break;
     case STEP_IDLE:
+    default:
         break;
     }
 }
@@ -135,36 +138,38 @@ fire_step_t sequence_current_step(void) {
 }
 
 bool sequence_firing(void) {
-    return seq.step == STEP_PRECHARGE || seq.step == STEP_HOLD;
+    return (seq.step == STEP_PRECHARGE) || (seq.step == STEP_HOLD);
 }
 
 bool sequence_charged_the_bus(uint32_t now_ms) {
-    if (sequence_firing())
+    if (sequence_firing()) {
         return true;
-    return seq.step == STEP_DRAIN && (int32_t)(now_ms - seq.disarmed_ms) < BLEED_BELOW_HOT_MS;
+    }
+    uint32_t since_disarm_ms = now_ms - seq.disarmed_ms;
+    return (seq.step == STEP_DRAIN) && ((int32_t)since_disarm_ms < BLEED_BELOW_HOT_MS);
 }
 
 /* From the arm until the presence test after the fire, if there is one. */
 bool sequence_verdict_pending(uint8_t channel) {
-    return seq.fired_since_tracking[channel - 1] || (seq.step != STEP_IDLE && seq.channel == channel);
+    return seq.fired_since_tracking[channel - 1u] || ((seq.step != STEP_IDLE) && (seq.channel == channel));
 }
 
 static void report_verdict(uint8_t channel, uint16_t counts, uint16_t bus) {
     track_t t = track_channel(counts, bus);
     char line[112];
-    small_snprintf(line, sizeof(line), "!PYRO F10 ch=%u %s (%u, bus %u)\r\n", channel,
-                   t == TRACK_OPEN      ? "open: fired"
-                   : t == TRACK_PRESENT ? "still present: misfire, treat as live"
-                                        : "unverified: the bus did not rise",
-                   counts, bus);
+    (void)small_snprintf(line, sizeof(line), "!PYRO F10 ch=%u %s (%u, bus %u)\r\n", channel,
+                         (t == TRACK_OPEN)      ? "open: fired"
+                         : (t == TRACK_PRESENT) ? "still present: misfire, treat as live"
+                                                : "unverified: the bus did not rise",
+                         counts, bus);
     hal_telemetry_send(line);
 }
 
 void sequence_verify_fired(const tracking_t *t) {
-    for (uint8_t i = 0; i < 2; i++) {
+    for (uint8_t i = 0; i < 2u; i++) {
         if (seq.fired_since_tracking[i]) {
             seq.fired_since_tracking[i] = false;
-            report_verdict((uint8_t)(i + 1), i == 0 ? t->a : t->b, t->bus);
+            report_verdict((uint8_t)((uint32_t)i + 1u), (i == 0u) ? t->a : t->b, t->bus);
         }
     }
 }

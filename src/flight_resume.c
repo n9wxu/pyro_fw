@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "flight_resume.h"
+#include <stddef.h>
 
 #define PAD_RECORD_MAGIC 0x50594d31u /* "PYM1" */
 #define PAD_RECORD_VERSION 4u
@@ -31,22 +32,28 @@ void pad_record_fill(pad_record_t *r, int32_t ground_pressure_pa, uint32_t noise
 }
 
 bool pad_record_valid(const pad_record_t *r) {
-    if (!r || r->magic != PAD_RECORD_MAGIC || r->version != PAD_RECORD_VERSION)
+    if ((r == NULL) || (r->magic != PAD_RECORD_MAGIC) || (r->version != PAD_RECORD_VERSION)) {
         return false;
-    if (r->ground_pressure_pa < GROUND_PA_MIN || r->ground_pressure_pa > GROUND_PA_MAX)
+    }
+    if ((r->ground_pressure_pa < GROUND_PA_MIN) || (r->ground_pressure_pa > GROUND_PA_MAX)) {
         return false;
-    if (r->noise_mpa == 0 || r->noise_mpa > NOISE_MPA_MAX || r->pad_ck > PAD_CK_MAX)
+    }
+    if ((r->noise_mpa == 0u) || (r->noise_mpa > NOISE_MPA_MAX) || (r->pad_ck > PAD_CK_MAX)) {
         return false;
+    }
     return r->sum == record_sum(r);
 }
 
 resume_verdict_t resume_assess(bool record_ok, int32_t height_cm, int32_t speed_cms) {
-    if (!record_ok || height_cm <= RESUME_HEIGHT_CM)
+    if ((!record_ok) || (height_cm <= RESUME_HEIGHT_CM)) {
         return RESUME_NOT_FLYING;
-    if (speed_cms >= RESUME_SPEED_CMS)
+    }
+    if (speed_cms >= RESUME_SPEED_CMS) {
         return RESUME_ASCENT;
-    if (speed_cms <= -RESUME_SPEED_CMS)
+    }
+    if (speed_cms <= -RESUME_SPEED_CMS) {
         return RESUME_DESCENT;
+    }
     return RESUME_STILL;
 }
 

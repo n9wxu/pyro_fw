@@ -16,7 +16,7 @@
 #include "task.h"
 #include "hardware/sync.h"
 #include "hardware/timer.h"
-#include <stdio.h>
+#include "small_fmt.h"
 #include <string.h>
 
 #define RING_SIZE 32768u /* a power of two */
@@ -46,10 +46,7 @@ static volatile bool odr_changed;
 static volatile bool manual; /* the bench asked for a log */
 static char manual_reason[16];
 
-static TaskHandle_t h_reader, h_writer;
-static StaticTask_t tcb_reader, tcb_writer;
-static StackType_t stack_reader[768];
-static StackType_t stack_writer[1024];
+static TaskHandle_t h_writer;
 
 /* ── The ring ─────────────────────────────────────────────────────── */
 
@@ -59,17 +56,19 @@ static uint32_t ring_used(void) {
 
 static void ring_copy_in(uint32_t at, const void *src, uint32_t n) {
     const uint8_t *s = (const uint8_t *)src;
-    for (uint32_t i = 0; i < n; i++)
+    for (uint32_t i = 0; i < n; i++) {
         ring[(at + i) & RING_MASK] = s[i];
+    }
 }
 
 static void ring_copy_out(uint32_t at, void *dst, uint32_t n) {
     uint8_t *d = (uint8_t *)dst;
     uint32_t off = at & RING_MASK;
-    uint32_t first = n < RING_SIZE - off ? n : RING_SIZE - off;
-    memcpy(d, ring + off, first);
-    if (first < n)
-        memcpy(d + first, ring, n - first);
+    uint32_t first = (n < (RING_SIZE - off)) ? n : (RING_SIZE - off);
+    (void)memcpy(d, &ring[off], first);
+    if (first < n) {
+        (void)memcpy(&d[first], ring, n - first);
+    }
 }
 
 /* The reader's side: a record, whole or not at all. */
@@ -77,7 +76,7 @@ static bool put_record(uint8_t type, const void *a, uint32_t na, const void *b, 
     uint16_t crc = crc16_update(crc16((const uint8_t *)a, na), (const uint8_t *)b, nb);
     hr_rec_t h = {type, 0, (uint16_t)(na + nb), crc};
     uint32_t n = sizeof(h) + na + nb;
-    if (n > RING_SIZE - ring_used()) {
+    if (n > (RING_SIZE - ring_used())) {
         st.dropped_records++;
         st.dropped_bytes += n;
         return false;
@@ -85,55 +84,62 @@ static bool put_record(uint8_t type, const void *a, uint32_t na, const void *b, 
     uint32_t at = r_head;
     ring_copy_in(at, &h, sizeof(h));
     ring_copy_in(at + sizeof(h), a, na);
-    if (nb)
+    if (nb != 0u) {
         ring_copy_in(at + sizeof(h) + na, b, nb);
+    }
     __dmb();
     r_head = at + n;
     uint32_t used = ring_used();
-    if (used > st.ring_max)
+    if (used > st.ring_max) {
         st.ring_max = used;
+    }
     return true;
 }
 
 /* ── The reader ───────────────────────────────────────────────────── */
 
-static lsm6ds3_set_t imu_buf[IMU_MAX_SETS];
-static uint8_t ptrace_buf[12 + 16 * sizeof(ptrace_rec_t)];
-
 static uint32_t ptrace_next(void) {
     uint8_t head[12];
-    ptrace_read(0xFFFFFFFFu, head, sizeof(head));
+    (void)ptrace_read(0xFFFFFFFFu, head, sizeof(head));
     return (uint32_t)head[8] | ((uint32_t)head[9] << 8) | ((uint32_t)head[10] << 16) | ((uint32_t)head[11] << 24);
 }
 
 static void read_imu(void) {
+    static lsm6ds3_set_t imu_buf[IMU_MAX_SETS];
     lsm6ds3_read_t r;
     if (!lsm6ds3_read(imu_buf, IMU_MAX_SETS, &r)) {
         st.imu_read_fails++;
         return;
     }
     st.imu_reads++;
-    if (r.overrun)
+    if (r.overrun) {
         st.imu_overruns++;
-    if (r.backlog > st.imu_backlog_max)
+    }
+    if (r.backlog > st.imu_backlog_max) {
         st.imu_backlog_max = r.backlog;
-    if (!r.sets)
+    }
+    if (!r.sets) {
         return;
-    st.last = imu_buf[r.sets - 1];
+    }
+    st.last = imu_buf[r.sets - 1u];
     hr_imu_t m = {r.at_us, r.backlog, (uint8_t)(r.overrun ? 1 : 0), 0};
-    if (put_record(HR_REC_IMU, &m, sizeof(m), imu_buf, r.sets * sizeof(lsm6ds3_set_t)))
+    if (put_record(HR_REC_IMU, &m, sizeof(m), imu_buf, r.sets * sizeof(lsm6ds3_set_t))) {
         st.imu_sets += r.sets;
+    }
 }
 
 static uint32_t read_pressure(uint32_t since) {
+    static uint8_t ptrace_buf[12u + (16u * sizeof(ptrace_rec_t))];
     int n = ptrace_read(since, ptrace_buf, (int)sizeof(ptrace_buf));
-    if (n < 12)
+    if (n < 12) {
         return since;
+    }
     uint32_t next = (uint32_t)ptrace_buf[8] | ((uint32_t)ptrace_buf[9] << 8) | ((uint32_t)ptrace_buf[10] << 16) |
                     ((uint32_t)ptrace_buf[11] << 24);
     for (int o = 12; o + (int)sizeof(ptrace_rec_t) <= n; o += (int)sizeof(ptrace_rec_t)) {
-        if (put_record(HR_REC_PRES, ptrace_buf + o, sizeof(ptrace_rec_t), NULL, 0))
+        if (put_record(HR_REC_PRES, &ptrace_buf[o], sizeof(ptrace_rec_t), NULL, 0)) {
             st.pres_records++;
+        }
     }
     return next;
 }
@@ -147,11 +153,13 @@ static void read_flight(void) {
         .speed_cms = g_status.vertical_speed_cms,
         .pressure_pa = g_status.pressure_pa,
     };
-    if (put_record(HR_REC_FLIGHT, &f, sizeof(f), NULL, 0))
+    if (put_record(HR_REC_FLIGHT, &f, sizeof(f), NULL, 0)) {
         st.flight_records++;
+    }
 }
 
-static uint32_t pseq, reads;
+static uint32_t pseq;
+static uint32_t reads;
 
 void hr_reader_begin(void) {
     st.imu_ok = lsm6ds3_start(odr);
@@ -166,11 +174,14 @@ void hr_reader_step(void) {
         st.imu_ok = lsm6ds3_start(odr);
         st.odr_hz = lsm6ds3_odr_hz(odr);
     }
-    if (st.imu_ok)
+    if (st.imu_ok) {
         read_imu();
+    }
     pseq = read_pressure(pseq);
-    if (++reads % FLIGHT_EVERY == 0)
+    reads++;
+    if ((reads % FLIGHT_EVERY) == 0u) {
         read_flight();
+    }
     st.ring_used = ring_used();
 }
 
@@ -181,7 +192,7 @@ static void reader_task(void *arg) {
     for (;;) {
         vTaskDelayUntil(&last, pdMS_TO_TICKS(READ_MS));
         hr_reader_step();
-        xTaskNotifyGive(h_writer);
+        (void)xTaskNotifyGive(h_writer);
     }
 }
 
@@ -196,13 +207,12 @@ static uint32_t fails_in_row;
 static uint32_t rec_next;
 #define WRITE_FAILS_MAX 3u
 static uint8_t stage[STAGE] __attribute__((aligned(4)));
-static uint32_t next_n = 1;
 static uint32_t last_sync_ms;
 
 /* Between logs the ring keeps its newest half: whole records are dropped
  * from the tail. */
 static void trim(void) {
-    while (ring_used() > RING_SIZE / 2) {
+    while (ring_used() > (RING_SIZE / 2u)) {
         hr_rec_t h;
         ring_copy_out(r_tail, &h, sizeof(h));
         __dmb();
@@ -212,11 +222,13 @@ static void trim(void) {
 }
 
 static bool free_name(char *out, size_t cap) {
+    static uint32_t next_n = 1;
     FILINFO fi;
     for (; next_n < 10000u; next_n++) {
-        snprintf(out, cap, "/logs/hr%04lu.bin", (unsigned long)next_n);
-        if (f_stat(out, &fi) != FR_OK)
+        (void)small_snprintf(out, cap, "/logs/hr%04lu.bin", (unsigned long)next_n);
+        if (f_stat(out, &fi) != FR_OK) {
             return true;
+        }
     }
     return false;
 }
@@ -229,23 +241,25 @@ static bool free_name(char *out, size_t cap) {
 static bool recover_next(void) {
     FIL f;
     FRESULT r = f_open(&f, NEXT_PATH, FA_READ);
-    if (r != FR_OK)
+    if (r != FR_OK) {
         return r == FR_NO_FILE;
-    uint8_t head[sizeof(hr_rec_t) + 4];
+    }
+    uint8_t head[sizeof(hr_rec_t) + 4u];
     UINT got = 0;
     r = f_read(&f, head, sizeof(head), &got);
-    f_close(&f);
-    if (r != FR_OK)
+    (void)f_close(&f);
+    if (r != FR_OK) {
         return false;
-    bool log = got == sizeof(head) && head[0] == HR_REC_HEADER && memcmp(head + sizeof(hr_rec_t), HR_MAGIC, 4) == 0;
+    }
+    bool log = (got == sizeof(head)) && (head[0] == HR_REC_HEADER) && (memcmp(&head[sizeof(hr_rec_t)], HR_MAGIC, 4) == 0);
     char name[24];
-    return !log || (free_name(name, sizeof(name)) && f_rename(NEXT_PATH, name) == FR_OK);
+    return !log || (free_name(name, sizeof(name)) && (f_rename(NEXT_PATH, name) == FR_OK));
 }
 
 static void prepare(void) {
     st.preparing = true;
     uint32_t t0 = time_us_32();
-    f_mkdir("/logs");
+    (void)f_mkdir("/logs");
     if (!recover_next()) {
         st.preparing = false;
         return;
@@ -255,10 +269,11 @@ static void prepare(void) {
     DWORD free_cl;
     if (f_getfree("", &free_cl, &fs) == FR_OK) {
         uint64_t free_b = (uint64_t)free_cl * fs->csize * 512u;
-        if (free_b / 2u < want)
+        if ((free_b / 2u) < want) {
             want = free_b / 2u;
+        }
     }
-    if (want < EXPAND_MIN || f_open(&fil, NEXT_PATH, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) {
+    if ((want < EXPAND_MIN) || (f_open(&fil, NEXT_PATH, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)) {
         st.preparing = false;
         return;
     }
@@ -275,10 +290,10 @@ static void prepare(void) {
             break;
         }
     }
-    f_lseek(&fil, 0);
+    (void)f_lseek(&fil, 0);
     /* The directory then holds the expanded size: a log begun in this file
      * is recoverable whole, whatever happens before its first sync. */
-    f_sync(&fil);
+    (void)f_sync(&fil);
     st.prepare_us = time_us_32() - t0;
     st.prepared = true;
     st.preparing = false;
@@ -290,14 +305,16 @@ static bool write_out(const void *buf, uint32_t n) {
     FRESULT r = f_write(&fil, buf, n, &put);
     uint32_t d = time_us_32() - t0;
     st.writes++;
-    if (d > st.write_max_us)
+    if (d > st.write_max_us) {
         st.write_max_us = d;
-    if (r != FR_OK || put != n) {
+    }
+    if ((r != FR_OK) || (put != n)) {
         /* A short write (a full volume) moved the file on by what it put:
          * moved back, so the retry writes the same bytes in the same place
          * rather than after a copy of their start. */
-        if (r == FR_OK && put > 0)
-            f_lseek(&fil, f_tell(&fil) - put);
+        if ((r == FR_OK) && (put > 0u)) {
+            (void)f_lseek(&fil, f_tell(&fil) - put);
+        }
         st.write_errors++;
         fails_in_row++;
         return false;
@@ -310,11 +327,12 @@ static bool write_out(const void *buf, uint32_t n) {
 
 static void sync_now(void) {
     uint32_t t0 = time_us_32();
-    f_sync(&fil);
+    (void)f_sync(&fil);
     uint32_t d = time_us_32() - t0;
     st.syncs++;
-    if (d > st.sync_max_us)
+    if (d > st.sync_max_us) {
         st.sync_max_us = d;
+    }
     last_sync_ms = hal_time_ms();
 }
 
@@ -322,9 +340,9 @@ _Static_assert(HEADER_BYTES <= STAGE, "the header is built in the stage");
 
 static void begin(const char *reason) {
     hr_header_t h;
-    memset(stage, 0, HEADER_BYTES);
-    memset(&h, 0, sizeof(h));
-    memcpy(h.magic, HR_MAGIC, 4);
+    (void)memset(stage, 0, HEADER_BYTES);
+    (void)memset(&h, 0, sizeof(h));
+    (void)memcpy(h.magic, HR_MAGIC, 4);
     h.version = HR_VERSION;
     h.header_len = sizeof(h);
     h.odr_hz = lsm6ds3_odr_hz(odr);
@@ -332,31 +350,34 @@ static void begin(const char *reason) {
     h.mdps_per_lsb = LSM6DS3_MDPS_PER_LSB;
     h.open_us = time_us_32();
     h.open_ms = hal_time_ms();
-    strncpy(h.board, PYRO_BOARD_NAME, sizeof(h.board) - 1);
-    strncpy(h.reason, reason, sizeof(h.reason) - 1);
+    (void)strncpy(h.board, PYRO_BOARD_NAME, sizeof(h.board) - 1u);
+    (void)strncpy(h.reason, reason, sizeof(h.reason) - 1u);
     hr_rec_t rh = {HR_REC_HEADER, 0, (uint16_t)(HEADER_BYTES - sizeof(hr_rec_t)), 0};
-    memcpy(stage + sizeof(rh), &h, sizeof(h));
-    rh.crc = crc16(stage + sizeof(rh), rh.len);
-    memcpy(stage, &rh, sizeof(rh));
+    (void)memcpy(&stage[sizeof(rh)], &h, sizeof(h));
+    rh.crc = crc16(&stage[sizeof(rh)], rh.len);
+    (void)memcpy(stage, &rh, sizeof(rh));
     st.file_bytes = 0;
     st.logging = true;
-    snprintf(st.file, sizeof(st.file), "%s", "logs/next.bin");
-    write_out(stage, HEADER_BYTES);
+    (void)small_snprintf(st.file, sizeof(st.file), "%s", "logs/next.bin");
+    (void)write_out(stage, HEADER_BYTES);
     rec_next = r_tail;
     sync_now();
 }
 
 /* The ring's whole content, in stages; the last one short. */
 static void drain(bool all) {
-    while (ring_used() >= STAGE || (all && ring_used() > 0)) {
-        uint32_t n = ring_used() < STAGE ? ring_used() : STAGE;
+    while ((ring_used() >= STAGE) || (all && (ring_used() > 0u))) {
+        uint32_t n = (ring_used() < STAGE) ? ring_used() : STAGE;
         ring_copy_out(r_tail, stage, n);
-        if (!write_out(stage, n))
+        if (!write_out(stage, n)) {
             return; /* kept: the next pass retries */
-        while ((int32_t)(rec_next - (r_tail + n)) < 0) {
+        }
+        uint32_t ahead = rec_next - (r_tail + n);
+        while ((int32_t)ahead < 0) {
             hr_rec_t h;
             ring_copy_out(rec_next, &h, sizeof(h));
             rec_next += sizeof(h) + h.len;
+            ahead = rec_next - (r_tail + n);
         }
         __dmb();
         r_tail += n;
@@ -365,12 +386,13 @@ static void drain(bool all) {
 
 static void finish(void) {
     drain(true);
-    f_truncate(&fil);
-    f_close(&fil);
+    (void)f_truncate(&fil);
+    (void)f_close(&fil);
     fil_open = false;
     char name[24];
-    if (free_name(name, sizeof(name)) && f_rename(NEXT_PATH, name) == FR_OK)
-        snprintf(st.file, sizeof(st.file), "%s", name + 1);
+    if (free_name(name, sizeof(name)) && (f_rename(NEXT_PATH, name) == FR_OK)) {
+        (void)small_snprintf(st.file, sizeof(st.file), "%s", &name[1]);
+    }
     st.logging = false;
     st.prepared = false;
     st.logs++;
@@ -380,7 +402,7 @@ static void finish(void) {
  * it, or it keeps failing. What reached it stays, and the next prepare
  * renames it; the ring keeps what did not, and a new file takes it. */
 static void give_up(void) {
-    f_close(&fil);
+    (void)f_close(&fil);
     __dmb();
     r_tail = rec_next;
     fil_open = false;
@@ -393,19 +415,22 @@ static void give_up(void) {
 void hr_writer_step(void) {
     st.card = sd_mounted();
     bool want = manual || hal_log_active();
-    if (fil_open && (fil_mount != sd_mount_count() || fails_in_row >= WRITE_FAILS_MAX))
+    if (fil_open && ((fil_mount != sd_mount_count()) || (fails_in_row >= WRITE_FAILS_MAX))) {
         give_up();
+    }
     if (!st.card) {
         trim();
         return;
     }
     if (!st.logging) {
-        if (!fil_open)
+        if (!fil_open) {
             prepare();
-        if (want && fil_open)
+        }
+        if (want && fil_open) {
             begin(manual ? manual_reason : "flight");
-        else
+        } else {
             trim();
+        }
         return;
     }
     if (!want) {
@@ -413,14 +438,15 @@ void hr_writer_step(void) {
         return;
     }
     drain(false);
-    if (hal_time_ms() - last_sync_ms >= SYNC_MS)
+    if ((hal_time_ms() - last_sync_ms) >= SYNC_MS) {
         sync_now();
+    }
 }
 
 static void writer_task(void *arg) {
     (void)arg;
     for (;;) {
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(50));
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(50));
         hr_writer_step();
     }
 }
@@ -433,10 +459,16 @@ void hr_log_init(void) {
     st.logging = false;
     st.prepared = false;
     manual = false;
-    r_head = r_tail = 0;
+    r_tail = 0;
+    r_head = 0;
 }
 
 void hr_log_create_tasks(void) {
+    static TaskHandle_t h_reader;
+    static StaticTask_t tcb_reader;
+    static StaticTask_t tcb_writer;
+    static StackType_t stack_reader[768];
+    static StackType_t stack_writer[1024];
     hr_log_init();
     h_writer = xTaskCreateStaticAffinitySet(writer_task, "hrwrite", sizeof(stack_writer) / sizeof(stack_writer[0]),
                                             NULL, PRIO_P, stack_writer, &tcb_writer, CORE1_ONLY);
@@ -445,9 +477,10 @@ void hr_log_create_tasks(void) {
 }
 
 bool hr_log_start(const char *reason) {
-    if (!sd_mounted())
+    if (!sd_mounted()) {
         return false;
-    snprintf(manual_reason, sizeof(manual_reason), "%s", reason);
+    }
+    (void)small_snprintf(manual_reason, sizeof(manual_reason), "%s", reason);
     manual = true;
     return true;
 }
@@ -457,10 +490,12 @@ void hr_log_stop(void) {
 }
 
 bool hr_log_set_odr(lsm6ds3_odr_t o) {
-    if (lsm6ds3_odr_hz(o) == 0 || st.logging)
+    if ((lsm6ds3_odr_hz(o) == 0u) || st.logging) {
         return false;
-    if (o == odr)
+    }
+    if (o == odr) {
         return true; /* a restart empties the FIFO */
+    }
     odr = o;
     odr_changed = true;
     return true;

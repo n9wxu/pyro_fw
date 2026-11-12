@@ -11,7 +11,7 @@
 #define NEAR_GROUND_M 30.0f
 
 bool landing_detected(landing_detector_t *d, const pp_sample_t *s, uint32_t descent_ms, uint32_t timeout_ms) {
-    bool still = !s->suspect && s->speed < STILL_MS && s->speed > -STILL_MS;
+    bool still = !s->suspect && (s->speed < STILL_MS) && (s->speed > -STILL_MS);
     bool near_ground = s->height_m < NEAR_GROUND_M;
     bool timed_out = descent_ms >= timeout_ms;
 

@@ -68,28 +68,22 @@
 #include "flight_log.h"
 #include "pressure_trace.h"
 #include "net_stats.h"
+#include "hal.h"
+#include "hal_pressure_stats.h"
+#include "loop_stats.h"
+#include "reset_interface.h"
+#include "board_identity.h"
+#include "board_selftest.h"
 #if PYRO_HAS_BENCH_FLIGHT
 #include "bench_flight.h"
 #endif
 
-extern uint32_t hal_time_ms(void);
-
-extern void hal_telemetry_send(const char *sentence);
 #define DBG(fmt, ...)                                                                                                  \
     do {                                                                                                               \
         char _b[128];                                                                                                  \
-        snprintf(_b, sizeof(_b), "HTTP: " fmt "\r\n", ##__VA_ARGS__);                                                  \
+        (void)snprintf(_b, sizeof(_b), "HTTP: " fmt "\r\n", ##__VA_ARGS__);                                            \
         hal_telemetry_send(_b);                                                                                        \
     } while (0)
-
-/* hal_common.c: sensor reads deferred for an unfinished conversion, and
- * readings refused as impossible. The second must stay at zero. */
-extern uint32_t hal_pressure_interval_min_us(void);
-extern uint32_t hal_pressure_interval_max_us(void);
-extern uint32_t hal_pressure_stamp_lag_max_us(void);
-extern void hal_pressure_collector(collector_stats_t *out);
-extern uint32_t hal_pressure_rate_hz(void);
-extern uint32_t hal_pressure_flashed(void);
 
 /* [WEB-API-07] Every page that talks to the board is served by the board, so
  * every legitimate request is same-origin and no Access-Control-Allow-Origin
@@ -151,16 +145,21 @@ static bool pfb_started; /* pfb_begin_op() has run for this image */
 /* One sector: an erase and a program, each its own lockout, so the system
  * stops for one operation at a time. */
 static bool ota_flush(void) {
-    if (ota_buf_fill == 0)
+    if (ota_buf_fill == 0u) {
         return true;
-    if (!ota_sector_fits(ota_offset, FLASH_SECTOR_SIZE, OTA_SLOT_BYTES))
+    }
+    if (!ota_sector_fits(ota_offset, FLASH_SECTOR_SIZE, OTA_SLOT_BYTES)) {
         return false;
+    }
     /* pad to page alignment */
-    while (ota_buf_fill & (FLASH_PAGE_SIZE - 1))
-        ota_buf[ota_buf_fill++] = 0xFF;
+    while ((ota_buf_fill & (FLASH_PAGE_SIZE - 1u)) != 0u) {
+        ota_buf[ota_buf_fill] = 0xFF;
+        ota_buf_fill++;
+    }
     uint32_t addr = OTA_SLOT_OFF + ota_offset;
-    if (flash_op_erase(addr, FLASH_SECTOR_SIZE) != 0 || flash_op_program(addr, ota_buf, ota_buf_fill) != 0)
+    if ((flash_op_erase(addr, FLASH_SECTOR_SIZE) != 0) || (flash_op_program(addr, ota_buf, ota_buf_fill) != 0)) {
         return false;
+    }
     ota_offset += FLASH_SECTOR_SIZE;
     ota_buf_fill = 0;
     return true;
@@ -189,16 +188,18 @@ static void pfb_valid_op(void *arg) {
 static uint16_t ota_write(const void *data, uint16_t len) {
     const uint8_t *src = (const uint8_t *)data;
     uint16_t done = 0;
-    while (len > 0) {
+    uint16_t remaining = len;
+    while (remaining > 0u) {
         uint16_t space = FLASH_SECTOR_SIZE - ota_buf_fill;
-        uint16_t chunk = (len < space) ? len : space;
-        memcpy(ota_buf + ota_buf_fill, src, chunk);
+        uint16_t chunk = (remaining < space) ? remaining : space;
+        (void)memcpy(&ota_buf[ota_buf_fill], src, chunk);
         ota_buf_fill += chunk;
-        src += chunk;
-        len -= chunk;
+        src = &src[chunk];
+        remaining -= chunk;
         done += chunk;
-        if (ota_buf_fill == FLASH_SECTOR_SIZE && !ota_flush())
+        if ((ota_buf_fill == FLASH_SECTOR_SIZE) && !ota_flush()) {
             break;
+        }
     }
     return done;
 }
@@ -207,18 +208,24 @@ static uint16_t ota_write(const void *data, uint16_t len) {
 
 static const char *content_type_hdr(const char *path) {
     const char *ext = strrchr(path, '.');
-    if (!ext)
+    if (!ext) {
         return "application/octet-stream";
-    if (strcmp(ext, ".html") == 0 || strcmp(ext, ".htm") == 0)
+    }
+    if ((strcmp(ext, ".html") == 0) || (strcmp(ext, ".htm") == 0)) {
         return "text/html";
-    if (strcmp(ext, ".js") == 0)
+    }
+    if (strcmp(ext, ".js") == 0) {
         return "application/javascript";
-    if (strcmp(ext, ".css") == 0)
+    }
+    if (strcmp(ext, ".css") == 0) {
         return "text/css";
-    if (strcmp(ext, ".json") == 0)
+    }
+    if (strcmp(ext, ".json") == 0) {
         return "application/json";
-    if (strcmp(ext, ".csv") == 0)
+    }
+    if (strcmp(ext, ".csv") == 0) {
         return "text/csv";
+    }
     return "application/octet-stream";
 }
 
@@ -234,9 +241,7 @@ static void respond_fs_locked(http_conn_t *hc) {
  * yet to erase, and run out partway: the client sends it again once
  * /api/fs reports the cleanup done. */
 static bool fs_erasing(void) {
-    vfs_flash_cleanup_t cl;
-    vfs_flash_cleanup_state(&cl);
-    return cl.cleaning;
+    return hal_fs_busy();
 }
 
 static void respond_fs_erasing(http_conn_t *hc) {
@@ -245,6 +250,8 @@ static void respond_fs_erasing(http_conn_t *hc) {
                           "done\",\"erasing\":true}",
                           "Retry-After: 1\r\n");
 }
+
+static int slot_of(const conn_t *c);
 
 static bool fs_take(conn_t *c) {
     if (c->fs_held) {
@@ -270,20 +277,7 @@ static bool fs_take(conn_t *c) {
 static const char *state_names[] = {"BOOT_SETTLE", "BOOT_CONTINUITY", "BOOT_CALIBRATE", "PAD_IDLE",
                                     "ASCENT",      "FALLING",         "DROGUE_DESCENT", "CHUTE_DESCENT",
                                     "LANDED",      "BOOT_SENSOR",     "FAULT",          "GROUND_TEST"};
-#define STATE_NAME_COUNT ((int)(sizeof(state_names) / sizeof(state_names[0])))
-
-/* Main-loop pacing counters (main_hardware.c). Reported so the budget a
- * board declares in board.cmake can be checked against what it actually
- * does, rather than being taken on trust. */
-extern volatile uint32_t loop_count, loop_max_us, loop_overruns, loop_overruns_ground, loop_late_max_us;
-extern volatile uint32_t stage_max_us[];
-extern volatile uint32_t stage1_part_max_us[]; /* hal_common.c: TinyUSB, the stack, HTTP transport, mDNS */
-extern volatile bool boot_prev_watchdog;       /* main_hardware.c */
-extern volatile int32_t boot_prev_stage;
-extern volatile uint32_t boot_prev_stage_ms;
-
-#include "board_identity.h"
-#include "board_selftest.h"
+#define STATE_NAME_COUNT (sizeof(state_names) / sizeof(state_names[0]))
 
 /* POST /api/beeps/play : play one sound, once.
  *
@@ -301,21 +295,19 @@ static void beep_play_call(void *arg) {
 }
 
 static void apply_api_beep_play(http_conn_t *hc, const char *body) {
-    extern flight_state_t flight_get_state(void);
-
     char jb[192];
     int jn;
     uint16_t status;
 
     beep_spec_t sp = {BK_CODE, 0, 0};
     const char *pk = strstr(body, "\"kind\"");
-    if (pk) {
-        const char *q = strchr(pk + 6, '"');
-        const char *q2 = q ? strchr(q + 1, '"') : NULL;
-        if (q && q2) {
-            for (int k = 0; k <= BK_CODE; k++) {
+    if (pk != NULL) {
+        const char *q = strchr(&pk[6], '"');
+        const char *q2 = (q != NULL) ? strchr(&q[1], '"') : NULL;
+        if ((q != NULL) && (q2 != NULL)) {
+            for (int k = 0; k <= (int)BK_CODE; k++) {
                 const char *kn = beep_codes_kind_name((beep_kind_t)k);
-                if ((size_t)(q2 - q - 1) == strlen(kn) && strncmp(q + 1, kn, strlen(kn)) == 0) {
+                if ((strncmp(&q[1], kn, strlen(kn)) == 0) && (q[strlen(kn) + 1u] == '"')) {
                     sp.kind = (uint8_t)k;
                     break;
                 }
@@ -324,19 +316,19 @@ static void apply_api_beep_play(http_conn_t *hc, const char *body) {
     }
     const char *p1 = strstr(body, "\"d1\"");
     const char *p2 = strstr(body, "\"d2\"");
-    if (p1 && strchr(p1, ':')) {
-        sp.d1 = (uint8_t)atoi(strchr(p1, ':') + 1);
+    if ((p1 != NULL) && (strchr(p1, ':') != NULL)) {
+        sp.d1 = (uint8_t)atoi(&strchr(p1, ':')[1]);
     }
-    if (p2 && strchr(p2, ':')) {
-        sp.d2 = (uint8_t)atoi(strchr(p2, ':') + 1);
+    if ((p2 != NULL) && (strchr(p2, ':') != NULL)) {
+        sp.d2 = (uint8_t)atoi(&strchr(p2, ':')[1]);
     }
 
-    bool code_ok =
-        sp.kind != BK_CODE || (sp.d1 >= BEEP_DIGIT_MIN && sp.d1 <= BEEP_DIGIT_MAX && sp.d2 <= BEEP_DIGIT_MAX);
+    bool code_ok = ((beep_kind_t)sp.kind != BK_CODE) ||
+                   (((int)sp.d1 >= BEEP_DIGIT_MIN) && ((int)sp.d1 <= BEEP_DIGIT_MAX) && ((int)sp.d2 <= BEEP_DIGIT_MAX));
 
     if (flight_get_state() != PAD_IDLE) {
         jn = snprintf(jb, sizeof(jb), "{\"error\":\"Device not ready (state=%s)\"}",
-                      state_names[flight_get_state() < STATE_NAME_COUNT ? flight_get_state() : 0]);
+                      state_names[((size_t)flight_get_state() < STATE_NAME_COUNT) ? (size_t)flight_get_state() : 0u]);
         status = 409;
     } else if (!code_ok) {
         jn = snprintf(jb, sizeof(jb), "{\"error\":\"each beep count must be %d to %d\"}", BEEP_DIGIT_MIN,
@@ -409,13 +401,14 @@ static void sim_stop_call(void *arg) {
 
 static float query_f(const char *path, const char *key, float dflt) {
     const char *q = strstr(path, key);
-    return q ? strtof(q + strlen(key), NULL) : dflt;
+    return (q != NULL) ? strtof(&q[strlen(key)], NULL) : dflt;
 }
 
 static bool query_is(const char *path, const char *key, const char *value) {
     const char *q = strstr(path, key);
     size_t n = strlen(value);
-    return q && strncmp(q + strlen(key), value, n) == 0 && (q[strlen(key) + n] == '&' || q[strlen(key) + n] == '\0');
+    return (q != NULL) && (strncmp(&q[strlen(key)], value, n) == 0) &&
+           ((q[strlen(key) + n] == '&') || (q[strlen(key) + n] == '\0'));
 }
 
 static void apply_sim_flight(http_conn_t *hc, const char *path) {
@@ -438,8 +431,8 @@ static void apply_sim_flight(http_conn_t *hc, const char *path) {
     static const char *const why[] = {"started", "not on the pad", "test mode is off", "one is flying",
                                       "the profile cannot fly"};
     char jb[80];
-    int jn = snprintf(jb, sizeof(jb), a.rc == BF_STARTED ? "{\"status\":\"%s\"}" : "{\"error\":\"%s\"}", why[a.rc]);
-    http_respond(hc, a.rc == BF_STARTED ? 200 : a.rc == BF_BAD_PROFILE ? 400 : 409, JSON, jb, (uint32_t)jn);
+    int jn = snprintf(jb, sizeof(jb), (a.rc == BF_STARTED) ? "{\"status\":\"%s\"}" : "{\"error\":\"%s\"}", why[a.rc]);
+    http_respond(hc, (a.rc == BF_STARTED) ? 200 : ((a.rc == BF_BAD_PROFILE) ? 400 : 409), JSON, jb, (uint32_t)jn);
 }
 
 static void serve_api_sim(http_conn_t *hc) {
@@ -468,18 +461,19 @@ static void serve_api_sim(http_conn_t *hc) {
 }
 #endif
 
-static int append_personality(char *buf, size_t cap, int pos, const char *lead, const beep_personality_t *p) {
-    char nm[BEEP_NAME_MAX * 2 + 2];
+static int append_personality(char *buf, size_t cap, int start, const char *lead, const beep_personality_t *p) {
+    int pos = start;
+    char nm[(BEEP_NAME_MAX * 2) + 2];
     json_escape(nm, (int)sizeof(nm), p->name, (int)strlen(p->name));
-    pos += snprintf(buf + pos, cap - (size_t)pos, "%s{\"name\":\"%s\",\"gap\":%u,\"repeat\":%u,\"spec\":{", lead, nm,
+    pos += snprintf(&buf[pos], cap - (size_t)pos, "%s{\"name\":\"%s\",\"gap\":%u,\"repeat\":%u,\"spec\":{", lead, nm,
                     (unsigned)p->gap_ms, (unsigned)p->repeat);
-    for (int r = 0; r < BEEP_REASON_COUNT && pos > 0 && pos < (int)cap; r++) {
-        pos += snprintf(buf + pos, cap - (size_t)pos, "%s\"%s\":{\"kind\":\"%s\",\"d1\":%u,\"d2\":%u}", r ? "," : "",
+    for (int r = 0; (r < (int)BEEP_REASON_COUNT) && (pos > 0) && (pos < (int)cap); r++) {
+        pos += snprintf(&buf[pos], cap - (size_t)pos, "%s\"%s\":{\"kind\":\"%s\",\"d1\":%u,\"d2\":%u}", r ? "," : "",
                         beep_codes_key((beep_reason_t)r), beep_codes_kind_name((beep_kind_t)p->spec[r].kind),
                         (unsigned)p->spec[r].d1, (unsigned)p->spec[r].d2);
     }
-    if (pos > 0 && pos < (int)cap) {
-        pos += snprintf(buf + pos, cap - (size_t)pos, "}}");
+    if ((pos > 0) && (pos < (int)cap)) {
+        pos += snprintf(&buf[pos], cap - (size_t)pos, "}}");
     }
     return pos;
 }
@@ -506,31 +500,31 @@ static void serve_api_beeps(http_conn_t *hc) {
                        BEEP_DIGIT_MIN, BEEP_DIGIT_MAX, pin_store_has_buzzer() ? "true" : "false", (unsigned)t->active,
                        reason_esc);
 
-    for (int i = 0; i < BEEP_REASON_COUNT && pos > 0 && pos < (int)cap; i++) {
+    for (int i = 0; (i < (int)BEEP_REASON_COUNT) && (pos > 0) && (pos < (int)cap); i++) {
         char desc[192];
         const char *d = beep_codes_description((beep_reason_t)i);
         json_escape(desc, (int)sizeof(desc), d, (int)strlen(d));
-        pos += snprintf(buf + pos, cap - (size_t)pos, "%s{\"key\":\"%s\",\"what\":\"%s\"}", i ? "," : "",
+        pos += snprintf(&buf[pos], cap - (size_t)pos, "%s{\"key\":\"%s\",\"what\":\"%s\"}", i ? "," : "",
                         beep_codes_key((beep_reason_t)i), desc);
     }
 
-    if (pos > 0 && pos < (int)cap) {
-        pos += snprintf(buf + pos, cap - (size_t)pos, "],\"personalities\":[");
+    if ((pos > 0) && (pos < (int)cap)) {
+        pos += snprintf(&buf[pos], cap - (size_t)pos, "],\"personalities\":[");
     }
-    for (int i = 0; i < BEEP_PERSONALITY_COUNT && pos > 0 && pos < (int)cap; i++) {
+    for (int i = 0; (i < (int)BEEP_PERSONALITY_COUNT) && (pos > 0) && (pos < (int)cap); i++) {
         pos = append_personality(buf, cap, pos, i ? "," : "", &t->p[i]);
     }
 
     static beep_table_t shipped;
     beep_codes_defaults(&shipped);
-    if (pos > 0 && pos < (int)cap) {
+    if ((pos > 0) && (pos < (int)cap)) {
         pos = append_personality(buf, cap, pos, "],\"shipped\":", &shipped.p[0]);
     }
-    if (pos > 0 && pos < (int)cap) {
-        pos += snprintf(buf + pos, cap - (size_t)pos, "}");
+    if ((pos > 0) && (pos < (int)cap)) {
+        pos += snprintf(&buf[pos], cap - (size_t)pos, "}");
     }
 
-    if (pos < 0 || pos >= (int)cap) {
+    if ((pos < 0) || (pos >= (int)cap)) {
         http_respond_str(hc, 500, JSON, "{\"error\":\"beep table exceeds the response buffer\"}");
         return;
     }
@@ -556,7 +550,7 @@ static void apply_api_beeps(http_conn_t *hc, char *body) {
         /* Which personality, as well as which outcome: with three slots, "two
          * outcomes sound the same" is not actionable without knowing where. */
         jn = snprintf(jb, sizeof(jb), "{\"error\":\"%s\",\"personality\":%d,\"reason\":\"%s\",\"code\":%d}", esc,
-                      v.personality, v.reason >= 0 ? beep_codes_key((beep_reason_t)v.reason) : "", (int)v.err);
+                      v.personality, (v.reason >= 0) ? beep_codes_key((beep_reason_t)v.reason) : "", (int)v.err);
         status = 400;
     }
     http_respond(hc, status, JSON, jb, (uint32_t)jn);
@@ -564,10 +558,14 @@ static void apply_api_beeps(http_conn_t *hc, char *body) {
 
 static int estimator_names_json(char *dst, int cap) {
     int n = snprintf(dst, (size_t)cap, "[");
-    for (uint8_t i = 0; i < estimator_count() && n < cap; i++)
-        n += snprintf(dst + n, (size_t)(cap - n), "%s\"%s\"", i ? "," : "", estimator_name(i));
-    if (n < cap)
-        n += snprintf(dst + n, (size_t)(cap - n), "]");
+    for (uint8_t i = 0; (i < estimator_count()) && (n < cap); i++) {
+        int left = cap - n;
+        n += snprintf(&dst[n], (size_t)left, "%s\"%s\"", (i != 0u) ? "," : "", estimator_name(i));
+    }
+    if (n < cap) {
+        int left = cap - n;
+        n += snprintf(&dst[n], (size_t)left, "]");
+    }
     return n;
 }
 
@@ -579,19 +577,20 @@ static void serve_api_limits(http_conn_t *hc) {
     hal_pyro_limits_t l;
     hal_pyro_limits(&l);
     const flight_context_t *ctx = flight_get_context();
-    pressure_sensor_range_t r = pressure_sensor_range((pressure_sensor_type_t)(ctx ? ctx->sensor_type : 0));
-    char names[ESTIMATORS_MAX * 12 + 4];
+    pressure_sensor_range_t r = pressure_sensor_range((pressure_sensor_type_t)((ctx != NULL) ? ctx->sensor_type : 0u));
+    char names[(ESTIMATORS_MAX * 12) + 4];
     (void)estimator_names_json(names, (int)sizeof(names));
     char jb[400];
-    int jn = snprintf(jb, sizeof(jb),
-                      "{\"refire_interval_ms\":{\"default\":%u,\"min\":%u,\"max\":%u,\"in_force\":%lu},"
-                      "\"fire_gap_ms\":{\"default\":%u,\"min\":%u,\"max\":%u,\"in_force\":%lu},"
-                      "\"sensor\":{\"min_pa\":%ld,\"max_pa\":%ld,\"height_m\":%ld},\"estimators\":%s}",
-                      (unsigned)l.refire_interval_default_ms, (unsigned)l.refire_interval_min_ms,
-                      (unsigned)l.refire_interval_max_ms, (unsigned long)(ctx ? ctx->plan.refire_interval_ms : 0u),
-                      (unsigned)l.fire_gap_default_ms, (unsigned)l.fire_gap_min_ms, (unsigned)l.fire_gap_max_ms,
-                      (unsigned long)(ctx ? ctx->plan.fire_gap_ms : 0u), (long)r.min_pa, (long)r.max_pa,
-                      (long)r.height_m, names);
+    int jn =
+        snprintf(jb, sizeof(jb),
+                 "{\"refire_interval_ms\":{\"default\":%u,\"min\":%u,\"max\":%u,\"in_force\":%lu},"
+                 "\"fire_gap_ms\":{\"default\":%u,\"min\":%u,\"max\":%u,\"in_force\":%lu},"
+                 "\"sensor\":{\"min_pa\":%ld,\"max_pa\":%ld,\"height_m\":%ld},\"estimators\":%s}",
+                 (unsigned)l.refire_interval_default_ms, (unsigned)l.refire_interval_min_ms,
+                 (unsigned)l.refire_interval_max_ms, (ctx != NULL) ? (unsigned long)ctx->plan.refire_interval_ms : 0UL,
+                 (unsigned)l.fire_gap_default_ms, (unsigned)l.fire_gap_min_ms, (unsigned)l.fire_gap_max_ms,
+                 (ctx != NULL) ? (unsigned long)ctx->plan.fire_gap_ms : 0UL, (long)r.min_pa, (long)r.max_pa,
+                 (long)r.height_m, names);
     http_respond(hc, 200, JSON, jb, (uint32_t)jn);
 }
 
@@ -718,51 +717,51 @@ static void serve_api_pin_caps(http_conn_t *hc) {
         /* buzzer_pin is the SETTING (-1 = leave it where the
          * board put it); buzzer_on is where it actually is, so
          * the UI can show the default without resolving it. */
-        pa->buzzer_pin == PIN_BUZZER_BOARD ? -1 : (int)pa->buzzer_pin,
-        pin_assign_buzzer_pin(pa) == PIN_BUZZER_BOARD ? -1 : (int)pin_assign_buzzer_pin(pa),
+        (pa->buzzer_pin == PIN_BUZZER_BOARD) ? -1 : (int)pa->buzzer_pin,
+        (pin_assign_buzzer_pin(pa) == PIN_BUZZER_BOARD) ? -1 : (int)pin_assign_buzzer_pin(pa),
         /* [GND-TEST-12] -1 where a pad is not assigned. */
-        pa->gt_wiring == GT_WIRING_GROUND ? "ground" : (pa->gt_wiring == GT_WIRING_PAIR ? "pair" : "none"),
-        pa->gt_pin == PIN_GT_UNSET ? -1 : (int)pa->gt_pin,
-        pa->gt_drive_pin == PIN_GT_UNSET ? -1 : (int)pa->gt_drive_pin);
+        (pa->gt_wiring == GT_WIRING_GROUND) ? "ground" : ((pa->gt_wiring == GT_WIRING_PAIR) ? "pair" : "none"),
+        (pa->gt_pin == PIN_GT_UNSET) ? -1 : (int)pa->gt_pin,
+        (pa->gt_drive_pin == PIN_GT_UNSET) ? -1 : (int)pa->gt_drive_pin);
 
-    for (unsigned i = 0; i < sizeof(fn_bits) / sizeof(fn_bits[0]) && pos > 0 && pos < (int)cap; i++) {
-        pos += snprintf(buf + pos, cap - (size_t)pos, "%s\"%s\":%u", i ? "," : "", fn_bits[i].name,
+    for (unsigned i = 0; (i < (sizeof(fn_bits) / sizeof(fn_bits[0]))) && (pos > 0) && (pos < (int)cap); i++) {
+        pos += snprintf(&buf[pos], cap - (size_t)pos, "%s\"%s\":%u", (i != 0u) ? "," : "", fn_bits[i].name,
                         (unsigned)fn_bits[i].bit);
     }
 
-    if (pos > 0 && pos < (int)cap) {
-        pos += snprintf(buf + pos, cap - (size_t)pos, "},\"roles\":[");
+    if ((pos > 0) && (pos < (int)cap)) {
+        pos += snprintf(&buf[pos], cap - (size_t)pos, "},\"roles\":[");
     }
-    for (int i = 0; i < pin_assign_role_count() && pos > 0 && pos < (int)cap; i++) {
-        pos += snprintf(buf + pos, cap - (size_t)pos, "%s{\"r\":\"%s\",\"needs\":%u}", i ? "," : "",
+    for (int i = 0; (i < pin_assign_role_count()) && (pos > 0) && (pos < (int)cap); i++) {
+        pos += snprintf(&buf[pos], cap - (size_t)pos, "%s{\"r\":\"%s\",\"needs\":%u}", i ? "," : "",
                         pin_assign_role_name(i), (unsigned)pin_assign_role_needs(i));
     }
 
-    if (pos > 0 && pos < (int)cap) {
-        pos += snprintf(buf + pos, cap - (size_t)pos, "],\"pins\":[");
+    if ((pos > 0) && (pos < (int)cap)) {
+        pos += snprintf(&buf[pos], cap - (size_t)pos, "],\"pins\":[");
     }
-    for (int i = 0; i < n_caps && pos > 0 && pos < (int)cap; i++) {
+    for (int i = 0; (i < n_caps) && (pos > 0) && (pos < (int)cap); i++) {
         uint8_t pin = caps[i].pin;
-        uint8_t role = (pin < PIN_ASSIGN_MAX_GPIO) ? pa->role[pin] : LUA_ROLE_OFF;
-        const char *nm = (pin < PIN_ASSIGN_MAX_GPIO) ? pa->name[pin] : "";
-        char nesc[LUA_NAME_MAX * 2 + 2];
+        uint8_t role = ((int)pin < PIN_ASSIGN_MAX_GPIO) ? pa->role[pin] : (uint8_t)LUA_ROLE_OFF;
+        const char *nm = ((int)pin < PIN_ASSIGN_MAX_GPIO) ? pa->name[pin] : "";
+        char nesc[(LUA_NAME_MAX * 2) + 2];
         json_escape(nesc, (int)sizeof(nesc), nm, (int)strlen(nm));
         char lesc[64];
         json_escape(lesc, (int)sizeof(lesc), caps[i].label, (int)strlen(caps[i].label));
-        pos += snprintf(buf + pos, cap - (size_t)pos,
+        pos += snprintf(&buf[pos], cap - (size_t)pos,
                         "%s{\"p\":%u,\"f\":%u,\"g\":\"%s\",\"lbl\":\"%s\",\"role\":\"%s\",\"name\":\"%s\","
                         "\"held\":%s}",
                         i ? "," : "", (unsigned)pin, (unsigned)caps[i].functions, group_names[caps[i].group], lesc,
                         pin_assign_role_name_of(role), nesc, pin_assign_is_reserved(pa, pin) ? "true" : "false");
     }
-    if (pos > 0 && pos < (int)cap) {
-        pos += snprintf(buf + pos, cap - (size_t)pos, "]}");
+    if ((pos > 0) && (pos < (int)cap)) {
+        pos += snprintf(&buf[pos], cap - (size_t)pos, "]}");
     }
 
     /* Truncated JSON parses as nothing and would leave the tab silently
      * empty, so say so instead. The buffer is sized for the largest board's
      * table with room to spare; reaching here means one outgrew it. */
-    if (pos < 0 || pos >= (int)cap) {
+    if ((pos < 0) || (pos >= (int)cap)) {
         http_respond_str(hc, 500, JSON, "{\"error\":\"capability table exceeds the response buffer\"}");
         return;
     }
@@ -775,20 +774,44 @@ static void serve_api_pin_caps(http_conn_t *hc) {
  * and the net task names them (status_name_flight()). */
 typedef struct {
     device_status_t st;
-    bool have_ctx, storage_ok, emergency_fire, limited, peak_lower_bound, usb_attached, test_mode;
-    uint8_t current_state, sensor_type, reset_cause, resume, not_resumed;
-    uint16_t diag, pulses[2];
+    bool have_ctx;
+    bool storage_ok;
+    bool emergency_fire;
+    bool limited;
+    bool peak_lower_bound;
+    bool usb_attached;
+    bool test_mode;
+    uint8_t current_state;
+    uint8_t sensor_type;
+    uint8_t reset_cause;
+    uint8_t resume;
+    uint8_t not_resumed;
+    uint16_t diag;
+    uint16_t pulses[2];
     bool channel_fault[2];
-    uint32_t refire_interval_ms, fire_gap_ms;
+    uint32_t refire_interval_ms;
+    uint32_t fire_gap_ms;
     int32_t speed_cms;
     bool raw_ok;
     board_pyro_raw_t praw;
-    uint32_t loop_max_us, loop_overruns, loop_overruns_ground, loop_late_max_us, loop_count;
-    uint32_t stage_max_us[STATUS_STAGES], stage1_parts_us[STATUS_STAGE1_PARTS];
+    uint32_t loop_max_us;
+    uint32_t loop_overruns;
+    uint32_t loop_overruns_ground;
+    uint32_t loop_late_max_us;
+    uint32_t loop_count;
+    uint32_t stage_max_us[STATUS_STAGES];
+    uint32_t stage1_parts_us[STATUS_STAGE1_PARTS];
     collector_stats_t collector;
-    uint32_t pres_flashed, ground_reseeds, interval_min_us, interval_max_us, stamp_lag_max_us;
+    uint32_t pres_flashed;
+    uint32_t ground_reseeds;
+    uint32_t interval_min_us;
+    uint32_t interval_max_us;
+    uint32_t stamp_lag_max_us;
     int32_t raw_pa;
-    bool ground_degraded, explains, held_for_host, buzzer_active;
+    bool ground_degraded;
+    bool explains;
+    bool held_for_host;
+    bool buzzer_active;
     float noise_pa;
     uint8_t obeyed;
 } flight_take_t;
@@ -798,7 +821,7 @@ static void status_take_flight(void *arg) {
     const flight_context_t *fctx = flight_get_context();
     t->st = *(const device_status_t *)&g_status;
     t->have_ctx = fctx != NULL;
-    if (fctx) {
+    if (fctx != NULL) {
         t->current_state = (uint8_t)fctx->current_state;
         t->sensor_type = (uint8_t)fctx->sensor_type;
         t->storage_ok = fctx->storage_ok;
@@ -821,15 +844,17 @@ static void status_take_flight(void *arg) {
     }
     /* Raw counts rather than volts, so a marginal reading stays visible. */
     t->raw_ok = board_pyro_raw(&t->praw);
-    t->loop_max_us = loop_max_us;
-    t->loop_overruns = loop_overruns;
-    t->loop_overruns_ground = loop_overruns_ground;
-    t->loop_late_max_us = loop_late_max_us;
-    t->loop_count = loop_count;
-    for (int i = 0; i < STATUS_STAGES; i++)
-        t->stage_max_us[i] = stage_max_us[i];
-    for (int i = 0; i < STATUS_STAGE1_PARTS; i++)
+    t->loop_max_us = main_loop_max_us;
+    t->loop_overruns = main_loop_overruns;
+    t->loop_overruns_ground = main_loop_overruns_ground;
+    t->loop_late_max_us = main_loop_late_max_us;
+    t->loop_count = main_loop_count;
+    for (int i = 0; i < STATUS_STAGES; i++) {
+        t->stage_max_us[i] = main_loop_stage_max_us[i];
+    }
+    for (int i = 0; i < STATUS_STAGE1_PARTS; i++) {
         t->stage1_parts_us[i] = stage1_part_max_us[i];
+    }
     hal_pressure_collector(&t->collector);
     t->pres_flashed = hal_pressure_flashed();
     t->raw_pa = pp_last_raw_pa();
@@ -863,13 +888,13 @@ static void status_name_flight(status_snap_t *s, const flight_take_t *t) {
     s->pyro_fired[1] = g->pyro2_fired;
     s->armed = g->pyros_armed;
     s->flight_ms = g->flight_time_ms;
-    s->pyro_mode[0] = g->pyro1_mode < 5 ? mode_names[g->pyro1_mode] : "?";
-    s->pyro_mode[1] = g->pyro2_mode < 5 ? mode_names[g->pyro2_mode] : "?";
+    s->pyro_mode[0] = (g->pyro1_mode < 5u) ? mode_names[g->pyro1_mode] : "?";
+    s->pyro_mode[1] = (g->pyro2_mode < 5u) ? mode_names[g->pyro2_mode] : "?";
     s->pyro_value[0] = g->pyro1_value;
     s->pyro_value[1] = g->pyro2_value;
     s->units = g->units;
-    memcpy(s->rocket_id, g->rocket_id, sizeof(s->rocket_id) - 1);
-    memcpy(s->rocket_name, g->rocket_name, sizeof(s->rocket_name) - 1);
+    (void)memcpy(s->rocket_id, g->rocket_id, sizeof(s->rocket_id) - 1u);
+    (void)memcpy(s->rocket_name, g->rocket_name, sizeof(s->rocket_name) - 1u);
     s->sensor = pressure_sensor_name();
 
     s->pyro_bus_q = t->raw_ok ? (int32_t)t->praw.bus_quiescent : -1;
@@ -881,27 +906,32 @@ static void status_name_flight(status_snap_t *s, const flight_take_t *t) {
     s->loop_overruns_ground = t->loop_overruns_ground;
     s->loop_late_max_us = t->loop_late_max_us;
     s->loop_count = t->loop_count;
-    for (int i = 0; i < STATUS_STAGES; i++)
+    for (int i = 0; i < STATUS_STAGES; i++) {
         s->stage_max_us[i] = t->stage_max_us[i];
-    for (int i = 0; i < STATUS_STAGE1_PARTS; i++)
+    }
+    for (int i = 0; i < STATUS_STAGE1_PARTS; i++) {
         s->stage1_parts_us[i] = t->stage1_parts_us[i];
+    }
 
     /* The power-up self-test: a board that cannot measure altitude must not
      * report itself healthy. */
-    s->sensor_ok = t->have_ctx && t->sensor_type && t->sensor_type != SENSOR_PENDING;
+    s->sensor_ok = t->have_ctx && (t->sensor_type != 0u) && ((int)t->sensor_type != (int)SENSOR_PENDING);
     s->fs_ok = t->have_ctx && t->storage_ok;
-    for (uint16_t bit = 1; bit != 0 && s->n_faults < STATUS_FAULTS_MAX; bit <<= 1) {
-        if ((t->diag & bit) && *pad_check_fault_name(bit)) {
-            s->faults[s->n_faults++] = pad_check_fault_name(bit);
+    for (uint16_t bit = 1; (bit != 0u) && ((int)s->n_faults < STATUS_FAULTS_MAX); bit <<= 1) {
+        if (((t->diag & bit) != 0u) && (*pad_check_fault_name(bit) != '\0')) {
+            uint8_t slot = s->n_faults;
+            s->n_faults = (uint8_t)(slot + 1u);
+            s->faults[slot] = pad_check_fault_name(bit);
         }
     }
     s->reset_cause = t->reset_cause;
-    if (!t->have_ctx)
+    if (!t->have_ctx) {
         s->resume = resume_verdict_name(RESUME_NOT_FLYING);
-    else if (t->resume == RESUME_NOT_FLYING)
+    } else if ((resume_verdict_t)t->resume == RESUME_NOT_FLYING) {
         s->resume = not_resumed_name((not_resumed_t)t->not_resumed);
-    else
+    } else {
         s->resume = resume_verdict_name((resume_verdict_t)t->resume);
+    }
     s->prev_watchdog = boot_prev_watchdog;
     s->prev_stage = boot_prev_stage;
     s->prev_stage_ms = boot_prev_stage_ms;
@@ -915,14 +945,14 @@ static void status_name_flight(status_snap_t *s, const flight_take_t *t) {
     s->pyro_limited = t->limited;
     s->pres_rejects = 0;
     for (int i = 0; i < 4; i++) {
-        s->pres_bus[i] = t->collector.failed[COLLECTOR_ADDRESS_NACK + i];
+        s->pres_bus[i] = t->collector.failed[(int)COLLECTOR_ADDRESS_NACK + i];
         s->pres_rejects += s->pres_bus[i];
     }
     s->pres_recoveries = t->collector.recoveries;
     s->pres_dropped = t->collector.dropped;
     s->pres_flashed = t->pres_flashed;
     s->raw_pa = t->raw_pa;
-    s->pad_speed_cms = t->have_ctx && t->current_state == PAD_IDLE ? t->speed_cms : 0;
+    s->pad_speed_cms = (t->have_ctx && ((flight_state_t)t->current_state == PAD_IDLE)) ? t->speed_cms : 0;
     s->ground_degraded = t->ground_degraded;
     s->ground_reseeds = t->ground_reseeds;
     s->sample_interval_us[0] = t->interval_min_us;
@@ -942,9 +972,14 @@ static void status_name_flight(status_snap_t *s, const flight_take_t *t) {
      * than counted. */
     beep_reason_t r = pad_check_announcement(t->diag);
     beep_spec_t sp = beep_for(r);
-    s->beep = beep_codes_key(r);
+    bool withheld = pad_check_withholds_ok(t->diag);
+    if (withheld) {
+        sp = (beep_spec_t){0}; /* [BUZ-07] silence */
+    }
+    s->pad_ready = (r == BR_OK_TO_FLY) && !withheld;
+    s->beep = withheld ? "wait" : beep_codes_key(r);
     s->beep_kind = beep_codes_kind_name((beep_kind_t)sp.kind);
-    s->beep_is_code = sp.kind == BK_CODE;
+    s->beep_is_code = (beep_kind_t)sp.kind == BK_CODE;
     s->beep_d1 = sp.d1;
     s->beep_d2 = sp.d2;
 }
@@ -953,7 +988,7 @@ static void status_name_flight(status_snap_t *s, const flight_take_t *t) {
  * the net task and the board's identity hold. False when the flight task did
  * not take the call. */
 static bool status_capture(status_snap_t *s) {
-    memset(s, 0, sizeof(*s));
+    (void)memset(s, 0, sizeof(*s));
     flight_take_t take;
     if (!flight_call(status_take_flight, &take, CALL_MS)) {
         return false;
@@ -1007,7 +1042,7 @@ static bool status_capture(status_snap_t *s) {
     s->piece_max_us = ss.piece_max_us;
 
     const pin_assign_t *pa = pin_store_current();
-    snprintf(s->pins_reason, sizeof(s->pins_reason), "%s", pin_store_reason());
+    (void)snprintf(s->pins_reason, sizeof(s->pins_reason), "%s", pin_store_reason());
     s->pyro_released[0] = pa->pyro1_released;
     s->pyro_released[1] = pa->pyro2_released;
     const char *br_name;
@@ -1017,13 +1052,13 @@ static bool status_capture(status_snap_t *s) {
     s->pyro_real[0] = !pyro_release_is_released(1);
     s->pyro_real[1] = !pyro_release_is_released(2);
 
-    snprintf(s->serial, sizeof(s->serial), "%s", board_serial());
+    (void)snprintf(s->serial, sizeof(s->serial), "%s", board_serial());
     s->serial_assigned = board_serial_assigned();
-    strncpy(s->mac_source, board_mac_source(), sizeof(s->mac_source) - 1);
+    (void)strncpy(s->mac_source, board_mac_source(), sizeof(s->mac_source) - 1u);
     flash_chip_jedec_hex(s->flash_jedec, sizeof(s->flash_jedec));
     s->flash_kb = flash_chip_bytes() / 1024u;
     flash_chip_uid_hex(s->flash_uid, sizeof(s->flash_uid));
-    snprintf(s->hw_id, sizeof(s->hw_id), "%s", board_hw_id());
+    (void)snprintf(s->hw_id, sizeof(s->hw_id), "%s", board_hw_id());
     s->subnet = board_subnet_octet();
     return true;
 }
@@ -1041,7 +1076,7 @@ static void unit_status(int slot) {
 
 enum { HTTP_UNIT_STATUS };
 
-const http_unit_fn http_unit_vt[] = {
+const http_unit_fn http_unit_vt[HTTP_UNIT_STATUS + 1] = {
     [HTTP_UNIT_STATUS] = unit_status,
 };
 
@@ -1072,16 +1107,16 @@ static void serve_file(conn_t *c, const char *path, const char *ctype, const cha
     http_respond_str(hc, fb_status, fb_ctype, fb_body);
 }
 
-static uint16_t fill(http_conn_t *hc, uint8_t *dst, uint16_t max) {
+static uint16_t fill_response(http_conn_t *hc, uint8_t *dst, uint16_t max) {
     conn_t *c = (conn_t *)hc;
     if (c->route == R_FLOG) {
         return (uint16_t)flog_csv_read(&c->flog.csv, (char *)dst, max);
     }
-    if (c->route != R_FILE || !c->file_open) {
+    if ((c->route != R_FILE) || !c->file_open) {
         return 0;
     }
     int n = vfs_read(&c->file, dst, max);
-    return n > 0 ? (uint16_t)n : 0;
+    return (n > 0) ? (uint16_t)n : (uint16_t)0u;
 }
 
 /* ── The flight log ───────────────────────────────────────────────── */
@@ -1089,7 +1124,7 @@ static uint16_t fill(http_conn_t *hc, uint8_t *dst, uint16_t max) {
 static int flog_reader(void *ctx, uint8_t *dst, int n) {
     conn_t *c = (conn_t *)ctx;
     int k = vfs_read(&c->file, dst, (uint32_t)n);
-    return k > 0 ? (int)k : 0;
+    return (k > 0) ? (int)k : 0;
 }
 
 /* [WEB-API-06, DD-062] The binary log, as the CSV it was once stored as. Its
@@ -1108,10 +1143,11 @@ static void serve_newest_log(conn_t *c) {
 /* [FLT-LOG-12] The log ?n=N names, else the newest. */
 static bool flight_log_named(const char *path, char out[LOG_FILES_NAME_MAX]) {
     const char *q = strstr(path, "?n=");
-    if (q) {
-        unsigned long n = strtoul(q + 3, NULL, 10);
-        if (n == 0 || n > LOG_FILES_MAX)
+    if (q != NULL) {
+        unsigned long n = strtoul(&q[3], NULL, 10);
+        if ((n == 0u) || (n > LOG_FILES_MAX)) {
             return false;
+        }
         log_files_name((uint32_t)n, out);
         return true;
     }
@@ -1143,11 +1179,11 @@ static bool flight_csv_count(conn_t *c) {
     if (k == FLOG_COUNT_STEP) {
         return false; /* more to count, next unit */
     }
-    if (c->flog.len == 0) {
+    if (c->flog.len == 0u) {
         http_respond_str(&c->h, 200, "text/csv", EMPTY_LOG_CSV);
         return true;
     }
-    vfs_rewind(&c->file);
+    (void)vfs_rewind(&c->file);
     flog_csv_init(&c->flog.csv, flog_reader, c);
     http_respond_stream(&c->h, 200, "text/csv", c->flog.len, CSV_DISPOSITION);
     return true;
@@ -1157,7 +1193,7 @@ static bool flight_csv_count(conn_t *c) {
  * the current log's own, which the next launch replaces, on whichever store
  * the log goes to. Some is kept back for the filesystem's own metadata. The
  * seconds it holds are a second's samples as the store keeps them synced. */
-#define LOG_SPACE_RESERVE_BYTES (16u * 1024u)
+#define LOG_SPACE_RESERVE_BYTES (16 * 1024)
 
 static void serve_api_net(http_conn_t *hc);
 
@@ -1175,11 +1211,12 @@ static void put_le32(uint8_t *p, uint32_t v) {
 
 static void serve_flight_live(http_conn_t *hc, const char *path) {
     const char *q = strstr(path, "since=");
-    uint32_t since = q ? (uint32_t)strtoul(q + 6, NULL, 10) : 0u;
-    uint32_t first, end;
-    uint32_t n = log_live_read(since, hc->work + LIVE_HEAD, sizeof(hc->work) - LIVE_HEAD, &first, &end);
+    uint32_t since = (q != NULL) ? (uint32_t)strtoul(&q[6], NULL, 10) : 0u;
+    uint32_t first;
+    uint32_t end;
+    uint32_t n = log_live_read(since, &hc->work[LIVE_HEAD], sizeof(hc->work) - LIVE_HEAD, &first, &end);
     put_le32(hc->work, first);
-    put_le32(hc->work + 4, end);
+    put_le32(&hc->work[4], end);
     http_respond(hc, 200, "application/octet-stream", hc->work, LIVE_HEAD + n);
 }
 
@@ -1188,25 +1225,28 @@ static void serve_log_space(conn_t *c) {
     if (!fs_take(c)) {
         return;
     }
-    uint64_t free_b = 0, total_b = 0;
+    uint64_t free_b = 0;
+    uint64_t total_b = 0;
     if (vfs_space(FLOG_PATH, &free_b, &total_b) != 0) {
         http_respond_str(hc, 500, JSON, "{\"error\":\"no filesystem\"}");
         return;
     }
     uint64_t erased_b = 0; /* [FLT-LOG-13] a log writes only erased pages */
-    if (vfs_erased(FLOG_PATH, &erased_b) == 0 && erased_b < free_b)
+    if ((vfs_erased(FLOG_PATH, &erased_b) == 0) && (erased_b < free_b)) {
         free_b = erased_b;
+    }
     int64_t room = (int64_t)free_b - LOG_SPACE_RESERVE_BYTES; /* no log is replaced [FLT-LOG-12] */
-    if (room < 0)
+    if (room < 0) {
         room = 0;
+    }
     uint32_t rate = hal_pressure_rate_hz();
-    uint32_t second = rate ? vfs_synced_cost(FLOG_PATH, rate * FLOG_SAMPLE_BYTES) : 0u;
+    uint32_t second = (rate != 0u) ? vfs_synced_cost(FLOG_PATH, rate * (uint32_t)FLOG_SAMPLE_BYTES) : 0u;
     char *buf = (char *)hc->work;
     int n = snprintf(buf, sizeof(hc->work),
                      "{\"bytes_free\":%llu,\"record_bytes\":%u,\"rate_hz\":%lu,\"seconds\":%llu,\"store\":\"%s\"}",
                      (unsigned long long)room, (unsigned)FLOG_SAMPLE_BYTES, (unsigned long)rate,
-                     (unsigned long long)(second ? (uint64_t)room / second : 0u),
-                     vfs_route(FLOG_PATH) == VFS_FAT ? "sd" : "flash");
+                     (unsigned long long)((second != 0u) ? ((uint64_t)room / second) : 0u),
+                     (vfs_route(FLOG_PATH) == VFS_FAT) ? "sd" : "flash");
     http_respond(hc, 200, JSON, buf, (uint32_t)n);
 }
 
@@ -1221,14 +1261,15 @@ static void serve_api_fs(conn_t *c) {
     if (!fs_take(c)) {
         return;
     }
-    uint64_t free_b = 0, total_b = 0;
+    uint64_t free_b = 0;
+    uint64_t total_b = 0;
     if (vfs_flash_space(&free_b, &total_b) != 0) {
         http_respond_str(hc, 500, JSON, "{\"error\":\"no filesystem\"}");
         return;
     }
     vfs_flash_cleanup_t k;
     vfs_flash_cleanup_state(&k);
-    const char *pace = !k.cleaning ? "done" : flight_is_grounded_on_usb() ? "fast" : "slow";
+    const char *pace = hal_fs_busy() ? "fast" : (k.cleaning ? "held" : "done");
     vfs_flash_geometry_t g;
     vfs_flash_geometry(&g);
     fs_space_t s = {(uint32_t)total_b, (uint32_t)(total_b - free_b),
@@ -1237,7 +1278,7 @@ static void serve_api_fs(conn_t *c) {
                     g.page_bytes,      pace};
     fs_json_t j;
     fs_json_begin(&j, (char *)hc->work, (int)sizeof(hc->work), &s);
-    vfs_flash_list(fs_list_one, &j);
+    (void)vfs_flash_list(fs_list_one, &j);
     int n = fs_json_end(&j);
     if (n < 0) {
         http_respond_str(hc, 500, JSON, "{\"error\":\"the list does not fit\"}");
@@ -1253,12 +1294,13 @@ static void serve_api_fs_scan(conn_t *c, const char *path) {
     if (!fs_take(c)) {
         return;
     }
-    const char *k = strstr(path, "sector="), *n = strstr(path, "count=");
-    uint32_t sector = k ? (uint32_t)strtoul(k + 7, NULL, 10) : 0u;
-    uint32_t count = n ? (uint32_t)strtoul(n + 6, NULL, 10) : VFS_FLASH_SCAN_MAX;
+    const char *k = strstr(path, "sector=");
+    const char *n = strstr(path, "count=");
+    uint32_t sector = (k != NULL) ? (uint32_t)strtoul(&k[7], NULL, 10) : 0u;
+    uint32_t count = (n != NULL) ? (uint32_t)strtoul(&n[6], NULL, 10) : VFS_FLASH_SCAN_MAX;
     uint8_t erased[VFS_FLASH_SCAN_MAX];
     int got = vfs_flash_scan(sector, count, erased);
-    int len = got < 0 ? -1 : fs_json_scan((char *)hc->work, (int)sizeof(hc->work), sector, erased, got);
+    int len = (got < 0) ? -1 : fs_json_scan((char *)hc->work, (int)sizeof(hc->work), sector, erased, got);
     if (len < 0) {
         http_respond_str(hc, 500, JSON, "{\"error\":\"no filesystem\"}");
         return;
@@ -1272,8 +1314,9 @@ static void serve_api_sd(conn_t *c) {
     http_conn_t *hc = &c->h;
     sd_stats_t s;
     sd_get_stats(&s);
-    uint64_t free_b = 0, total_b = 0;
-    bool fat = vfs_sd_mounted() && vfs_space("/", &free_b, &total_b) == 0;
+    uint64_t free_b = 0;
+    uint64_t total_b = 0;
+    bool fat = vfs_sd_mounted() && (vfs_space("/", &free_b, &total_b) == 0);
     static const char *types[] = {"none", "v1", "v2_sc", "v2_hc"};
     int n = snprintf((char *)hc->work, sizeof(hc->work),
                      "{\"mounted\":%s,\"type\":\"%s\",\"sectors\":%lu,\"cid\":\"%s\",\"mount_rc\":%lu,"
@@ -1286,8 +1329,8 @@ static void serve_api_sd(conn_t *c) {
                      "\"after_r58\":%u,\"after_r0\":%u,\"restarts\":%u,\"fail_ms\":[%u,%u,%u,%u],"
                      "\"init_yields\":%lu}",
                      vfs_sd_mounted() ? "true" : "false", types[sd_type()], (unsigned long)sd_sectors(), sd_cid(),
-                     (unsigned long)s.mount_rc, (unsigned long long)(fat ? free_b : 0),
-                     (unsigned long long)(fat ? total_b : 0), (unsigned long)s.hz, (unsigned long)s.reads,
+                     (unsigned long)s.mount_rc, (unsigned long long)(fat ? free_b : 0u),
+                     (unsigned long long)(fat ? total_b : 0u), (unsigned long)s.hz, (unsigned long)s.reads,
                      (unsigned long)s.writes, (unsigned long)s.sectors_read, (unsigned long)s.sectors_written,
                      (unsigned long)s.crc_errors, (unsigned long)s.cmd_errors, (unsigned long)s.timeouts,
                      (unsigned long)s.retries, (unsigned long)s.busy_max_us, (unsigned long)s.write_max_us,
@@ -1332,55 +1375,57 @@ static void serve_api_hr(http_conn_t *hc) {
  * write, on the bench only: the net task does nothing else meanwhile. */
 static void apply_sd_bench(http_conn_t *hc, const char *path) {
     const char *q = strstr(path, "kb=");
-    uint32_t kb = q ? (uint32_t)strtoul(q + 3, NULL, 10) : 1024u;
+    uint32_t kb = (q != NULL) ? (uint32_t)strtoul(&q[3], NULL, 10) : 1024u;
     q = strstr(path, "chunk=");
-    uint32_t chunk = q ? (uint32_t)strtoul(q + 6, NULL, 10) : 4096u;
-    if (chunk < 512u || chunk > sizeof(hc->work) - 64u || kb == 0 || kb > 65536u) {
+    uint32_t chunk = (q != NULL) ? (uint32_t)strtoul(&q[6], NULL, 10) : 4096u;
+    if ((chunk < 512u) || (chunk > (sizeof(hc->work) - 64u)) || (kb == 0u) || (kb > 65536u)) {
         http_respond_str(hc, 400, JSON, "{\"error\":\"kb 1-65536, chunk 512 to the work buffer\"}");
         return;
     }
     static FIL f;
-    if (!vfs_sd_mounted() || f_open(&f, "/bench.bin", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) {
+    if (!vfs_sd_mounted() || (f_open(&f, "/bench.bin", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)) {
         http_respond_str(hc, 409, JSON, "{\"error\":\"no card\"}");
         return;
     }
     uint8_t *buf = hc->work;
-    for (uint32_t i = 0; i < chunk; i++)
+    for (uint32_t i = 0; i < chunk; i++) {
         buf[i] = (uint8_t)i;
-    uint32_t total = kb * 1024u, done = 0, worst = 0, errors = 0;
+    }
+    uint32_t total = kb * 1024u;
+    uint32_t done = 0;
+    uint32_t worst = 0;
+    uint32_t errors = 0;
     uint32_t t0 = time_us_32();
     while (done < total) {
-        uint32_t n = total - done < chunk ? total - done : chunk;
+        uint32_t n = ((total - done) < chunk) ? (total - done) : chunk;
         UINT put = 0;
         uint32_t a = time_us_32();
-        if (f_write(&f, buf, n, &put) != FR_OK || put != n)
+        if ((f_write(&f, buf, n, &put) != FR_OK) || (put != n)) {
             errors++;
+        }
         uint32_t d = time_us_32() - a;
-        if (d > worst)
+        if (d > worst) {
             worst = d;
+        }
         done += n;
     }
     uint32_t w_us = time_us_32() - t0;
     uint32_t s0 = time_us_32();
-    f_close(&f);
+    (void)f_close(&f);
     uint32_t close_us = time_us_32() - s0;
-    f_unlink("/bench.bin");
+    (void)f_unlink("/bench.bin");
     char jb[256];
     int jn = snprintf(jb, sizeof(jb),
                       "{\"bytes\":%lu,\"chunk\":%lu,\"us\":%lu,\"kb_per_s\":%lu,\"worst_write_us\":%lu,"
                       "\"close_us\":%lu,\"errors\":%lu}",
                       (unsigned long)total, (unsigned long)chunk, (unsigned long)w_us,
-                      (unsigned long)(w_us ? (uint64_t)total * 1000000u / 1024u / w_us : 0u), (unsigned long)worst,
-                      (unsigned long)close_us, (unsigned long)errors);
+                      (unsigned long)((w_us != 0u) ? ((uint64_t)total * 1000000u / 1024u / w_us) : 0u),
+                      (unsigned long)worst, (unsigned long)close_us, (unsigned long)errors);
     http_respond(hc, 200, JSON, jb, (uint32_t)jn);
 }
 #endif
 
 /* ── Default page if /www/index.html missing ──────────────────────── */
-
-static const char DEFAULT_PAGE[] = "<!DOCTYPE html><html><body><h2>" PYRO_BOARD_NAME "</h2>"
-                                   "<p>No web files uploaded. POST files to /www/ to set up the UI.</p>"
-                                   "<p><a href=\"/api/status\">Status JSON</a></p></body></html>";
 
 #if PYRO_HAS_LUA
 /* GET /api/lua/console: the console ring, drained, and the VM's liveness: a
@@ -1402,7 +1447,10 @@ static void serve_lua_console(http_conn_t *hc) {
     json_escape(esc_status, sizeof(esc_status), st, (int)strlen(st));
     /* c1_go ahead of c1_seen: a tick dispatched that the VM never took,
      * which otherwise looks the same as a VM stuck mid-tick. */
-    uint32_t dbg_go, dbg_seen, dbg_skipped, dbg_hb;
+    uint32_t dbg_go;
+    uint32_t dbg_seen;
+    uint32_t dbg_skipped;
+    uint32_t dbg_hb;
     lua_core1_dispatch_stats(&dbg_go, &dbg_seen, &dbg_skipped, &dbg_hb);
     uint32_t dbg_loc = lua_core1_loc();
     char *body = (char *)hc->work;
@@ -1418,11 +1466,11 @@ static void serve_lua_console(http_conn_t *hc) {
                  esc_status, (unsigned long)lua_core1_heartbeat(), (unsigned long)lua_app_log_written(),
                  (unsigned long)lua_core1_console_dropped(), (unsigned long)lua_core1_log_dropped(),
                  (unsigned long)hal_log_text_dropped(), hal_log_active() ? "true" : "false", (int)lua_core1_state(),
-                 (unsigned long)(dbg_loc & 0xffu), (unsigned long)((dbg_loc >> 8) & 0xffu), (unsigned long)dbg_go,
+                 ((unsigned long)dbg_loc & 0xfful), (((unsigned long)dbg_loc >> 8) & 0xfful), (unsigned long)dbg_go,
                  (unsigned long)dbg_seen, (unsigned long)dbg_skipped, lua_core1_ready() ? "true" : "false",
                  (unsigned long)pyro_lua_events_dropped(), (unsigned long)lua_plat_bridge_dropped(),
                  (unsigned long)lua_core1_stack_free(), esc);
-    if (blen < 0 || blen >= (int)sizeof(hc->work)) {
+    if ((blen < 0) || (blen >= (int)sizeof(hc->work))) {
         http_respond_str(hc, 500, JSON, "{\"error\":\"console exceeds the response buffer\"}");
         return;
     }
@@ -1433,6 +1481,9 @@ static void serve_lua_console(http_conn_t *hc) {
 #define BAD_NAME "a file name is letters, digits, '.', '_' and '-', in '/' segments"
 
 static void serve_get(conn_t *c) {
+    static const char DEFAULT_PAGE[] = "<!DOCTYPE html><html><body><h2>" PYRO_BOARD_NAME "</h2>"
+                                       "<p>No web files uploaded. POST files to /www/ to set up the UI.</p>"
+                                       "<p><a href=\"/api/status\">Status JSON</a></p></body></html>";
     http_conn_t *hc = &c->h;
     const char *path = hc->path;
 
@@ -1442,7 +1493,7 @@ static void serve_get(conn_t *c) {
             return;
         }
         c->route = R_STATUS;
-        http_work_offer((int)(c - conns), HTTP_UNIT_STATUS);
+        http_work_offer(slot_of(c), HTTP_UNIT_STATUS);
 #if PYRO_HAS_LUA
     } else if (strcmp(path, "/api/lua/script") == 0) {
         /* No script yet is a normal state, not an error: the editor should
@@ -1461,13 +1512,13 @@ static void serve_get(conn_t *c) {
         serve_file(c, "config.ini", TEXT, NULL, 404, TEXT, "No config.ini");
     } else if (strcmp(path, "/api/limits") == 0) {
         serve_api_limits(hc);
-    } else if (strncmp(path, "/api/flight.csv", 15) == 0 && (path[15] == '\0' || path[15] == '?')) {
+    } else if ((strncmp(path, "/api/flight.csv", 15) == 0) && ((path[15] == '\0') || (path[15] == '?'))) {
         serve_flight_csv(c, path);
     } else if (strcmp(path, "/api/log/space") == 0) {
         serve_log_space(c);
     } else if (strcmp(path, "/api/fs") == 0) {
         serve_api_fs(c);
-    } else if (strncmp(path, "/api/fs/scan", 12) == 0 && (path[12] == '\0' || path[12] == '?')) {
+    } else if ((strncmp(path, "/api/fs/scan", 12) == 0) && ((path[12] == '\0') || (path[12] == '?'))) {
         serve_api_fs_scan(c, path);
     } else if (strcmp(path, "/api/net") == 0) {
         serve_api_net(hc);
@@ -1481,21 +1532,21 @@ static void serve_get(conn_t *c) {
     } else if (strcmp(path, "/api/hr") == 0) {
         serve_api_hr(hc);
 #endif
-    } else if (strncmp(path, "/api/pressure/trace", 19) == 0 && (path[19] == '\0' || path[19] == '?')) {
+    } else if ((strncmp(path, "/api/pressure/trace", 19) == 0) && ((path[19] == '\0') || (path[19] == '?'))) {
         /* Every conversion since ?since=N, in binary (pressure_trace.h), for
          * support/pressure_trace.py. */
         const char *q = strstr(path, "since=");
-        uint32_t since = q ? (uint32_t)strtoul(q + 6, NULL, 10) : 0u;
+        uint32_t since = (q != NULL) ? (uint32_t)strtoul(&q[6], NULL, 10) : 0u;
         int n = ptrace_read(since, hc->work, (int)sizeof(hc->work));
         http_respond(hc, 200, "application/octet-stream", hc->work, (uint32_t)n);
-    } else if (strncmp(path, "/api/flight/live", 16) == 0 && (path[16] == '\0' || path[16] == '?')) {
+    } else if ((strncmp(path, "/api/flight/live", 16) == 0) && ((path[16] == '\0') || (path[16] == '?'))) {
         serve_flight_live(hc, path);
     } else if (strcmp(path, "/") == 0) {
         /* no-store: the UI is re-uploaded whenever the firmware or web files
          * change, and without this browsers heuristically cache it and keep
          * showing the previous build. */
         serve_file(c, "/www/index.html", "text/html", WWW_HEADERS, 200, "text/html", DEFAULT_PAGE);
-    } else if (strcmp(path, "/" LOG_FILES_LEGACY) == 0 && vfs_stat_size(LOG_FILES_LEGACY) < 0) {
+    } else if ((strcmp(path, "/" LOG_FILES_LEGACY) == 0) && (vfs_stat_size(LOG_FILES_LEGACY) < 0)) {
         serve_newest_log(c);
     } else if (!vfs_path_ok(path)) {
         http_respond_str(hc, 400, TEXT, BAD_NAME);
@@ -1511,12 +1562,12 @@ static void serve_get(conn_t *c) {
  * part file of one that dies is removed when its connection is released. */
 
 static void part_path(const conn_t *c, char *out, size_t cap) {
-    snprintf(out, cap, "%s.part", c->dest);
+    (void)snprintf(out, cap, "%s.part", c->dest);
 }
 
 static bool upload_open(conn_t *c) {
     if (strncmp(c->dest, "/www/", 5) == 0) {
-        vfs_mkdir("/www");
+        (void)vfs_mkdir("/www");
     }
     char part[HTTP_PATH_MAX + 8];
     part_path(c, part, sizeof(part));
@@ -1547,7 +1598,7 @@ static uint16_t upload_body(conn_t *c, const uint8_t *data, uint16_t len) {
 static void upload_complete(conn_t *c) {
     /* Close flushes the last partial block, so a refusal there
      * loses the tail of the file as quietly as a refused write does. */
-    bool ok = c->file_open && vfs_close(&c->file) == 0;
+    bool ok = c->file_open && (vfs_close(&c->file) == 0);
     c->file_open = false;
     c->file_writing = false;
     char part[HTTP_PATH_MAX + 8];
@@ -1557,12 +1608,12 @@ static void upload_complete(conn_t *c) {
         hal_log_files_changed();
     }
     if (!ok) {
-        vfs_remove(part);
+        (void)vfs_remove(part);
     } else {
         /* The Lua program is configuration: the flash keeps a copy. */
-        vfs_mirror_one(c->dest);
+        (void)vfs_mirror_one(c->dest);
     }
-    DBG("POST %s done ok=%d", c->dest, (int)ok);
+    DBG("POST %s done ok=%d", c->dest, ok ? 1 : 0);
     if (ok) {
         http_respond_str(&c->h, 201, TEXT, "OK");
     } else {
@@ -1593,15 +1644,19 @@ static uint16_t ota_body(conn_t *c, const uint8_t *data, uint16_t len) {
 static bool serial_valid(const char *s) {
     for (int i = 0; i < 12; i++) {
         char ch = s[i];
-        if (!((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f'))) {
+        if (!(((ch >= '0') && (ch <= '9')) || ((ch >= 'A') && (ch <= 'F')) || ((ch >= 'a') && (ch <= 'f')))) {
             return false;
         }
     }
     /* Bit 0 of the first octet is the multicast bit. A NIC that sources
      * frames from a multicast address is not something to debug later. */
-    int hi = (s[0] >= '0' && s[0] <= '9') ? s[0] - '0' : (s[0] | 32) - 'a' + 10;
-    int lo = (s[1] >= '0' && s[1] <= '9') ? s[1] - '0' : (s[1] | 32) - 'a' + 10;
-    return (((hi << 4) | lo) & 0x01) == 0;
+    uint32_t c0 = (uint32_t)(uint8_t)s[0];
+    uint32_t c1 = (uint32_t)(uint8_t)s[1];
+    uint32_t hi =
+        ((c0 >= (uint32_t)'0') && (c0 <= (uint32_t)'9')) ? (c0 - (uint32_t)'0') : (((c0 | 32u) - (uint32_t)'a') + 10u);
+    uint32_t lo =
+        ((c1 >= (uint32_t)'0') && (c1 <= (uint32_t)'9')) ? (c1 - (uint32_t)'0') : (((c1 | 32u) - (uint32_t)'a') + 10u);
+    return (((hi << 4) | lo) & 0x01u) == 0u;
 }
 
 /* Every log the store holds, from the newest down [FLT-LOG-12]: 0 when one
@@ -1609,19 +1664,29 @@ static bool serial_valid(const char *s) {
 static int erase_flight_logs(void) {
     char name[LOG_FILES_NAME_MAX];
     int rc = vfs_remove(LOG_FILES_LEGACY);
-    if (rc != 0 && rc != VFS_NOENT)
+    if ((rc != 0) && (rc != VFS_NOENT)) {
         return rc;
+    }
     uint32_t newest = hal_log_newest(name) ? log_files_number(name) : 0u;
-    bool any = rc == 0;
-    for (uint32_t n = newest; n > 0; n--) {
+    bool any = (rc == 0);
+    /* [FLT-LOG-16] The next log's reservation goes with them: the numbering
+     * starts again below it. */
+    if (newest < LOG_FILES_MAX) {
+        log_files_name(newest + 1u, name);
+        (void)vfs_remove(name);
+    }
+    for (uint32_t n = newest; n > 0u; n--) {
         log_files_name(n, name);
         int r = vfs_remove(name);
-        if (r == 0)
+        if (r == 0) {
             any = true;
-        else if (r != VFS_NOENT)
+        } else if (r != VFS_NOENT) {
             return r;
+        } else {
+            /* VFS_NOENT: already gone. */
+        }
     }
-    return any ? 0 : VFS_NOENT;
+    return any ? 0 : (int)VFS_NOENT;
 }
 
 static void apply_erase(http_conn_t *hc) {
@@ -1635,7 +1700,7 @@ static void apply_erase(http_conn_t *hc) {
     }
     hal_log_files_changed();
     DBG("POST /api/flight/erase rc=%d", rc);
-    if (rc == 0 || rc == VFS_NOENT) {
+    if ((rc == 0) || (rc == VFS_NOENT)) {
         http_respond_str(hc, 200, JSON, "{\"status\":\"erased\"}");
     } else {
         http_respond_str(hc, 500, JSON, "{\"error\":\"could not erase\"}");
@@ -1679,18 +1744,20 @@ static void apply_lua_check(http_conn_t *hc) {
      * blen is bounded on every append because snprintf returns what it WOULD
      * have written: letting it run past cap hands the next call a negative
      * size. */
-    for (int i = 0; i < chk.count && blen > 0 && blen < cap - 2; i++) {
-        char esc_detail[sizeof(chk.items[i].detail) * 2 + 8];
+    for (int i = 0; (i < chk.count) && (blen > 0) && (blen < (cap - 2)); i++) {
+        char esc_detail[(sizeof(chk.items[i].detail) * 2u) + 8u];
         json_escape(esc_detail, (int)sizeof(esc_detail), chk.items[i].detail, (int)strlen(chk.items[i].detail));
-        int n = snprintf(body + blen, (size_t)(cap - blen), "%s{\"kind\":%d,\"detail\":\"%s\"}", i ? "," : "",
+        int room = cap - blen;
+        int n = snprintf(&body[blen], (size_t)room, "%s{\"kind\":%d,\"detail\":\"%s\"}", (i != 0) ? "," : "",
                          (int)chk.items[i].kind, esc_detail);
-        if (n < 0 || n >= cap - blen) {
+        if ((n < 0) || (n >= room)) {
             break;
         }
         blen += n;
     }
-    if (blen > 0 && blen < cap - 3) {
-        blen += snprintf(body + blen, (size_t)(cap - blen), "]}");
+    if ((blen > 0) && (blen < (cap - 3))) {
+        int room = cap - blen;
+        blen += snprintf(&body[blen], (size_t)room, "]}");
     }
     http_respond(hc, 200, JSON, body, (uint32_t)blen);
 }
@@ -1701,14 +1768,14 @@ static void apply_lua_check(http_conn_t *hc) {
 #if PYRO_HAS_SD
 static void apply_hr_start(http_conn_t *hc, const char *path) {
     const char *q = strstr(path, "odr=");
-    if (q) {
-        uint32_t hz = (uint32_t)strtoul(q + 4, NULL, 10);
-        lsm6ds3_odr_t o = hz >= 1660  ? LSM6DS3_ODR_1660
-                          : hz >= 833 ? LSM6DS3_ODR_833
-                          : hz >= 416 ? LSM6DS3_ODR_416
-                          : hz >= 208 ? LSM6DS3_ODR_208
-                                      : LSM6DS3_ODR_104;
-        hr_log_set_odr(o);
+    if (q != NULL) {
+        uint32_t hz = (uint32_t)strtoul(&q[4], NULL, 10);
+        lsm6ds3_odr_t o = (hz >= 1660u)  ? LSM6DS3_ODR_1660
+                          : (hz >= 833u) ? LSM6DS3_ODR_833
+                          : (hz >= 416u) ? LSM6DS3_ODR_416
+                          : (hz >= 208u) ? LSM6DS3_ODR_208
+                                         : LSM6DS3_ODR_104;
+        (void)hr_log_set_odr(o);
     }
     bool ok = hr_log_start("bench");
     http_respond_str(hc, ok ? 200 : 409, JSON, ok ? "{\"status\":\"logging\"}" : "{\"error\":\"no card\"}");
@@ -1721,13 +1788,13 @@ static void apply_hr_start(http_conn_t *hc, const char *path) {
 static void apply_sd_init(http_conn_t *hc, const char *path) {
     sd_set_crc(strstr(path, "crc=0") == NULL);
     const char *to = strstr(path, "timeout=");
-    sd_set_init_timeout_ms(to ? (uint32_t)strtoul(to + 8, NULL, 10) : 1000u);
+    sd_set_init_timeout_ms((to != NULL) ? (uint32_t)strtoul(&to[8], NULL, 10) : 1000u);
     const char *gap = strstr(path, "gap=");
-    sd_set_poll_gap_ms(gap ? (uint32_t)strtoul(gap + 4, NULL, 10) : 0u);
+    sd_set_poll_gap_ms((gap != NULL) ? (uint32_t)strtoul(&gap[4], NULL, 10) : 0u);
     const char *rs = strstr(path, "restarts=");
-    sd_set_init_restarts(rs ? (uint32_t)strtoul(rs + 9, NULL, 10) : 3u);
+    sd_set_init_restarts((rs != NULL) ? (uint32_t)strtoul(&rs[9], NULL, 10) : 3u);
     const char *hz = strstr(path, "hz=");
-    sd_set_data_hz(hz ? (uint32_t)strtoul(hz + 3, NULL, 10) : BOARD_SD_SPI_HZ);
+    sd_set_data_hz((hz != NULL) ? (uint32_t)strtoul(&hz[3], NULL, 10) : BOARD_SD_SPI_HZ);
     int rc = sd_start();
     char jb[64];
     int jn = snprintf(jb, sizeof(jb), "{\"rc\":%d,\"mounted\":%s}", rc, vfs_sd_mounted() ? "true" : "false");
@@ -1736,7 +1803,7 @@ static void apply_sd_init(http_conn_t *hc, const char *path) {
 
 static void apply_sd_idle(http_conn_t *hc, const char *path) {
     const char *q = strstr(path, "ms=");
-    bool ok = sd_clock_idle(q ? (uint32_t)strtoul(q + 3, NULL, 10) : 2000u);
+    bool ok = sd_clock_idle((q != NULL) ? (uint32_t)strtoul(&q[3], NULL, 10) : 2000u);
     http_respond_str(hc, ok ? 200 : 503, JSON, ok ? "{\"status\":\"clocked\"}" : "{\"error\":\"bus\"}");
 }
 #endif
@@ -1808,11 +1875,12 @@ static void route_post(conn_t *c) {
         http_respond_str(hc, 404, TEXT, "Not found");
         return;
     }
-    if ((r->route == R_UPLOAD && !vfs_path_ok(path)) || (r->route == R_DELETE && !vfs_path_ok(delete_target(path)))) {
+    if (((r->route == R_UPLOAD) && !vfs_path_ok(path)) ||
+        ((r->route == R_DELETE) && !vfs_path_ok(delete_target(path)))) {
         http_respond_str(hc, 400, TEXT, BAD_NAME);
         return;
     }
-    if (r->route == R_DELETE && vfs_is_internal(delete_target(path))) {
+    if ((r->route == R_DELETE) && vfs_is_internal(delete_target(path))) {
         http_respond_str(hc, 403, JSON, "{\"error\":\"the board's own file\"}");
         return;
     }
@@ -1827,12 +1895,12 @@ static void route_post(conn_t *c) {
         apply_path_post(c, r->route);
         return;
     }
-    if (hc->content_length == 0) {
+    if (hc->content_length == 0u) {
         http_respond_str(hc, 400, TEXT, "this request needs a body");
         return;
     }
     if (r->route == R_OTA) {
-        if (ota_conn && ota_conn != c) {
+        if ((ota_conn != NULL) && (ota_conn != c)) {
             http_respond_str(hc, 409, TEXT, "another update is in progress");
             return;
         }
@@ -1858,22 +1926,24 @@ static void route_post(conn_t *c) {
     } else if (r->route == R_UPLOAD) {
 #if PYRO_HAS_LUA
         if (strcmp(path, "/api/lua/script") == 0) {
-            snprintf(c->dest, sizeof(c->dest), "/%s", LUA_SCRIPT_PATH);
+            (void)snprintf(c->dest, sizeof(c->dest), "/%s", LUA_SCRIPT_PATH);
         } else
 #endif
         {
-            snprintf(c->dest, sizeof(c->dest), "%s", path);
+            (void)snprintf(c->dest, sizeof(c->dest), "%s", path);
         }
         DBG("POST %s cl=%lu", c->dest, (unsigned long)hc->content_length);
+    } else {
+        /* A gathered or streamed body with a handler of its own needs no setup here. */
     }
 }
 
 static void on_head(http_conn_t *hc) {
     conn_t *c = (conn_t *)hc;
     uint16_t refusal = http_origin_refusal(hc, board_subnet_octet());
-    if (refusal) {
+    if (refusal != 0u) {
         http_respond_str(hc, refusal, TEXT,
-                         refusal == 400 ? "a request names its Host" : "not from this board's own page");
+                         (refusal == 400u) ? "a request names its Host" : "not from this board's own page");
         return;
     }
     if (strcmp(hc->method, "POST") == 0) {
@@ -1914,7 +1984,7 @@ static bool on_complete(http_conn_t *hc) {
         return true;
 #endif
     case R_SERIAL:
-        if (hc->gathered != 12 || !serial_valid(body)) {
+        if ((hc->gathered != 12u) || !serial_valid(body)) {
             http_respond_str(hc, 400, TEXT, "expected 12 hex digits, unicast (first octet even)");
             return true;
         }
@@ -1928,7 +1998,7 @@ static bool on_complete(http_conn_t *hc) {
         upload_complete(c);
         break;
     case R_OTA:
-        if (ota_failed || !ota_flush() || flash_op(pfb_valid_op, NULL) != 0) {
+        if (ota_failed || !ota_flush() || (flash_op(pfb_valid_op, NULL) != 0)) {
             http_respond_str(hc, 500, TEXT, "OTA failed: the image did not write");
             break;
         }
@@ -1969,21 +2039,13 @@ static bool on_complete(http_conn_t *hc) {
     return true;
 }
 
-static const http_handlers_t handlers = {
-    .common_headers = COMMON_HDRS,
-    .on_head = on_head,
-    .on_body = on_body,
-    .on_complete = on_complete,
-    .fill = fill,
-};
-
 /* ── The transport's view ─────────────────────────────────────────── */
 
 /* GET /api/net: TCP's links by state, what was sent again, what the
  * transport refused, and the frames each way (net_stats.h). */
 static void serve_api_net(http_conn_t *hc) {
     net_snap_t s;
-    memset(&s, 0, sizeof(s));
+    (void)memset(&s, 0, sizeof(s));
     http_transport_states(s.states, &s.nrtx_max);
     const http_transport_counts_t *t = http_transport_counts();
     const net_link_counts_t *l = net_link_counts();
@@ -1999,26 +2061,28 @@ static void serve_api_net(http_conn_t *hc) {
     s.tx_sent = l->tx_sent;
     s.tx_held = l->tx_held;
     s.tx_refused = l->tx_refused;
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 4; i++) {
         s.usb[i] = l->usb[i];
+    }
     int n = net_json(&s, (char *)hc->work, sizeof(hc->work));
     http_respond(hc, 200, JSON, hc->work, (uint32_t)n);
 }
 
 static int slot_of(const conn_t *c) {
-    return (int)(c - conns);
+    ptrdiff_t d = c - conns;
+    return (int)d;
 }
 
 static void conn_release(conn_t *c) {
-    http_work_cancel(slot_of(c));
+    (void)http_work_cancel(slot_of(c));
     if (c->file_open) {
         /* An upload that did not finish: its part file goes, and dest keeps
          * whatever it held before. */
-        vfs_close(&c->file);
+        (void)vfs_close(&c->file);
         if (c->file_writing) {
             char part[HTTP_PATH_MAX + 8];
             part_path(c, part, sizeof(part));
-            vfs_remove(part);
+            (void)vfs_remove(part);
         }
     }
     c->file_open = false;
@@ -2033,7 +2097,6 @@ static void conn_release(conn_t *c) {
     if (c->reboot_when_sent) {
         /* The main loop arms a 100 ms watchdog and keeps the net task
          * running, so the reply on its way reaches the client. */
-        extern volatile uint8_t pending_reset;
         pending_reset = 2;
     }
     c->linked = false;
@@ -2094,9 +2157,8 @@ static void x_wake(void) {
     tud_event_hook_cb(0, 0, false);
 }
 
-static const http_exchanges_t exchanges = {x_take, x_give_back, x_held, x_must_let_go, x_wake};
-
 const struct http_exchanges *http_server_exchanges(void) {
+    static const http_exchanges_t exchanges = {x_take, x_give_back, x_held, x_must_let_go, x_wake};
     return &exchanges;
 }
 
@@ -2105,12 +2167,12 @@ const struct http_exchanges *http_server_exchanges(void) {
 static void take_back_from_worker(void) {
     uint8_t lost;
     uint8_t back = http_work_reclaim(true, &lost);
-    for (int i = 0; i < CONN_POOL_SIZE && back; i++) {
+    for (uint32_t i = 0; (i < (uint32_t)CONN_POOL_SIZE) && (back != 0u); i++) {
         conn_t *c = &conns[i];
-        if (!(back & (1u << i))) {
+        if ((back & (1u << i)) == 0u) {
             continue;
         }
-        if (lost & (1u << i)) {
+        if ((lost & (1u << i)) != 0u) {
             c->h.failed = true;
         }
         if (c->orphan) {
@@ -2134,6 +2196,13 @@ void http_server_period(void) {
 }
 
 bool http_server_work(int32_t remaining_us) {
+    static const http_handlers_t handlers = {
+        .common_headers = COMMON_HDRS,
+        .on_head = on_head,
+        .on_body = on_body,
+        .on_complete = on_complete,
+        .fill = fill_response,
+    };
     bool runnable[CONN_POOL_SIZE];
     for (int i = 0; i < CONN_POOL_SIZE; i++) {
         runnable[i] = conns[i].linked && !http_work_held(i) && http_conn_wants_service(&conns[i].h);

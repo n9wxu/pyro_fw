@@ -59,16 +59,18 @@ void test_FLT_LOG_15_only_what_changed_is_said(void) {
 /* At the open and the close, every counter, over as many rows as it takes. */
 void test_FLT_LOG_15_all_of_them_at_the_open_and_the_close(void) {
     char all[2048];
-    for (int i = 0; i < LOG_COUNTER_COUNT; i++)
+    for (int i = 0; i < LOG_COUNTER_COUNT; i++) {
         v[i] = 4000000000u - (uint32_t)i;
+    }
     log_counters_all(&c);
     int rows = drain(all, sizeof(all));
     TEST_ASSERT_TRUE(rows >= 2);
     TEST_ASSERT_NOT_NULL(strstr(all, " drop=4000000000"));
     TEST_ASSERT_NOT_NULL(strstr(all, " pflash=3999999984"));
     int items = 0;
-    for (const char *p = all; (p = strchr(p, '=')) != NULL; p++)
+    for (const char *p = all; (p = strchr(p, '=')) != NULL; p++) {
         items++;
+    }
     TEST_ASSERT_EQUAL_INT(LOG_COUNTER_COUNT, items);
 }
 

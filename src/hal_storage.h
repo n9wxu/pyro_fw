@@ -26,6 +26,20 @@ bool hal_fs_locked(void);
 int hal_fs_enter(void);
 void hal_fs_leave(void);
 
+/* [LUA-RUN-05] No cleanup of the filesystem is running and no file is open
+ * for writing, or the flight log holds the filesystem. */
+bool hal_fs_settled(void);
+
+/* [FLT-LOG-16, BUZ-07] The next flight's log has its pages reserved. And,
+ * when it has not, whether the board is where it prepares itself: on USB
+ * out of test mode, or landed. */
+bool hal_fs_prepared(void);
+bool hal_fs_preparing(void);
+
+/* [WEB-API-21] The board is erasing, counting or reserving now: a file
+ * written meanwhile would wait on it, or run out of erased pages. */
+bool hal_fs_busy(void);
+
 /* The storage task's pass: the board's self-test stamp, the flight log's ring
  * into its file, the filesystem's cleanup, and whatever flash work the board
  * queued. Never from the flight task. */

@@ -76,7 +76,11 @@ int flash_op_slot_program(uint32_t offset, const uint8_t *data, uint32_t len);
 /* /api/status: pieces run in slots, of which suspended; slots given up
  * waiting; operations refused in flight; the longest piece. */
 typedef struct {
-    uint32_t pieces, suspends, slot_waits, flight_refusals, piece_max_us;
+    uint32_t pieces;
+    uint32_t suspends;
+    uint32_t slot_waits;
+    uint32_t flight_refusals;
+    uint32_t piece_max_us;
 } flash_op_slot_stats_t;
 void flash_op_slot_stats(flash_op_slot_stats_t *out);
 

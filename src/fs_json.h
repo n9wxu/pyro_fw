@@ -17,16 +17,24 @@
 /* Bytes of file data, free counting pages the cleanup has yet to erase;
  * the sectors the cleanup has erased since the start; the store's sectors,
  * their pages and the file bytes a page holds; cleanup "done", or erasing
- * "fast" (USB-10) or "slow". */
+ * "fast" (USB-10) or "held". */
 typedef struct {
-    uint32_t bytes, in_files, free, cleaned, sectors, sector_pages, page_bytes;
+    uint32_t bytes;
+    uint32_t in_files;
+    uint32_t free;
+    uint32_t cleaned;
+    uint32_t sectors;
+    uint32_t sector_pages;
+    uint32_t page_bytes;
     const char *cleanup;
 } fs_space_t;
 
 typedef struct {
     char *buf;
-    int cap, len;
-    bool first, overflow;
+    int cap;
+    int len;
+    bool first;
+    bool overflow;
 } fs_json_t;
 
 void fs_json_begin(fs_json_t *j, char *buf, int cap, const fs_space_t *s);

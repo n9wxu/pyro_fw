@@ -46,20 +46,20 @@ static const collector_part_t MS5607_PART = {
     .steps = 2,
     .step =
         {
-            [MS5607_PRESSURE] = {.command = {MS5607_CMD_CONVERT_D1},
+            [MS5607_PRESSURE] = {.command = {MS5607_CMD_CONVERT_D1, 0u},
                                  .command_len = 1,
                                  .read_register = MS5607_CMD_ADC_READ,
                                  .read_len = 3,
                                  .convert_us = MS5607_CONV_DONE_US,
                                  .middle_us = MS5607_HALF_CONV_US},
-            [MS5607_TEMPERATURE] = {.command = {MS5607_CMD_CONVERT_D2},
+            [MS5607_TEMPERATURE] = {.command = {MS5607_CMD_CONVERT_D2, 0u},
                                     .command_len = 1,
                                     .read_register = MS5607_CMD_ADC_READ,
                                     .read_len = 3,
                                     .convert_us = MS5607_CONV_DONE_US,
                                     .middle_us = MS5607_HALF_CONV_US},
         },
-    .reset = {MS5607_CMD_RESET},
+    .reset = {MS5607_CMD_RESET, 0u},
     .reset_len = 1,
     .reset_us = MS5607_RESET_MS * 1000u,
 };
@@ -73,11 +73,12 @@ static inline uint32_t ms5607_code(const uint8_t bytes[3]) {
  * algorithm is TE's application note AN520). */
 static inline bool ms5607_prom_crc_ok(const uint16_t prom[8]) {
     uint16_t remainder = 0;
-    for (int i = 0; i < 16; i++) {
-        uint16_t word = i >> 1 == 7 ? (uint16_t)(prom[7] & 0xFF00u) : prom[i >> 1];
-        remainder ^= (i & 1) ? (uint16_t)(word & 0x00FFu) : (uint16_t)(word >> 8);
-        for (int bit = 0; bit < 8; bit++)
+    for (unsigned i = 0; i < 16u; i++) {
+        uint16_t word = ((i >> 1u) == 7u) ? (uint16_t)(prom[7] & 0xFF00u) : prom[i >> 1u];
+        remainder ^= ((i & 1u) != 0u) ? (uint16_t)(word & 0x00FFu) : (uint16_t)(word >> 8);
+        for (int bit = 0; bit < 8; bit++) {
             remainder = (remainder & 0x8000u) ? (uint16_t)((remainder << 1) ^ 0x3000u) : (uint16_t)(remainder << 1);
+        }
     }
     return (remainder >> 12) == (prom[7] & 0x000Fu);
 }
@@ -85,16 +86,16 @@ static inline bool ms5607_prom_crc_ok(const uint16_t prom[8]) {
 /* The datasheet's compensation from the PROM's C1-C6: first order (page 8),
  * and below 20 C the second order it recommends (page 9). */
 static inline void ms5607_compensate_prom(const uint16_t prom[8], uint32_t d1, uint32_t d2, pressure_reading_t *out) {
-    int32_t dT = (int32_t)d2 - ((int32_t)prom[5] << 8);
+    int32_t dT = (int32_t)d2 - ((int32_t)prom[5] * 256);
     int32_t temp = 2000 + (int32_t)(((int64_t)dT * prom[6]) >> 23);
     int64_t off = ((int64_t)prom[2] << 17) + (((int64_t)prom[4] * dT) >> 6);
     int64_t sens = ((int64_t)prom[1] << 16) + (((int64_t)prom[3] * dT) >> 7);
     if (temp < 2000) {
-        int64_t below_20 = temp - 2000;
+        int64_t below_20 = (int64_t)temp - 2000;
         int64_t off2 = (61 * below_20 * below_20) >> 4;
         int64_t sens2 = 2 * below_20 * below_20;
         if (temp < -1500) {
-            int64_t below_minus_15 = temp + 1500;
+            int64_t below_minus_15 = (int64_t)temp + 1500;
             off2 += 15 * below_minus_15 * below_minus_15;
             sens2 += 8 * below_minus_15 * below_minus_15;
         }
@@ -123,58 +124,75 @@ static inline void ms5607_compensate_prom(const uint16_t prom[8], uint32_t d1, u
 typedef struct {
     uint32_t d2[MS5607_TEMPS];
     uint64_t us[MS5607_TEMPS]; /* the middle of each conversion */
-    uint8_t head, n;
+    uint8_t head;
+    uint8_t n;
 } ms5607_temps_t;
 
 static inline void ms5607_temps_note(ms5607_temps_t *t, uint32_t d2, uint64_t at_us) {
     t->d2[t->head] = d2;
     t->us[t->head] = at_us;
     t->head = (uint8_t)((t->head + 1u) % MS5607_TEMPS);
-    if (t->n < MS5607_TEMPS)
+    if (t->n < MS5607_TEMPS) {
         t->n++;
+    }
 }
 
 /* D2 at at_us. Times and counts are taken from the newest reading, so the
  * least-squares sums stay small enough for float. */
 static inline uint32_t ms5607_temps_at(const ms5607_temps_t *t, uint64_t at_us) {
     unsigned newest = (t->head + MS5607_TEMPS - 1u) % MS5607_TEMPS;
-    if (t->n < 2)
+    if (t->n < 2u) {
         return t->d2[newest];
-    float x[MS5607_TEMPS], y[MS5607_TEMPS], mx = 0.0f, my = 0.0f;
+    }
+    float x[MS5607_TEMPS];
+    float y[MS5607_TEMPS];
+    float mx = 0.0f;
+    float my = 0.0f;
     for (unsigned i = 0; i < t->n; i++) {
         unsigned k = (newest + MS5607_TEMPS - i) % MS5607_TEMPS;
-        x[i] = (float)(int64_t)(t->us[k] - t->us[newest]) * 1e-6f;
-        y[i] = (float)((int32_t)t->d2[k] - (int32_t)t->d2[newest]);
+        uint64_t dus = t->us[k] - t->us[newest];
+        int32_t dd2 = (int32_t)t->d2[k] - (int32_t)t->d2[newest];
+        x[i] = (float)(int64_t)dus * 1e-6f;
+        y[i] = (float)dd2;
         mx += x[i];
         my += y[i];
     }
     mx /= (float)t->n;
     my /= (float)t->n;
-    float sxx = 0.0f, sxy = 0.0f;
+    float sxx = 0.0f;
+    float sxy = 0.0f;
     for (unsigned i = 0; i < t->n; i++) {
         sxx += (x[i] - mx) * (x[i] - mx);
         sxy += (x[i] - mx) * (y[i] - my);
     }
-    if (sxx <= 0.0f)
+    if (sxx <= 0.0f) {
         return t->d2[newest];
+    }
     /* Anywhere along the readings, and a little past the newest; never
      * before the oldest. */
     unsigned oldest = (newest + MS5607_TEMPS - (t->n - 1u)) % MS5607_TEMPS;
-    int64_t ahead = (int64_t)(at_us - t->us[newest]);
-    int64_t back = (int64_t)(t->us[oldest] - t->us[newest]);
-    if (ahead < back)
+    uint64_t ahead_us = at_us - t->us[newest];
+    uint64_t back_us = t->us[oldest] - t->us[newest];
+    int64_t ahead = (int64_t)ahead_us;
+    int64_t back = (int64_t)back_us;
+    if (ahead < back) {
         ahead = back;
-    if (ahead > (int64_t)MS5607_TEMPS_AHEAD_US)
+    }
+    if (ahead > (int64_t)MS5607_TEMPS_AHEAD_US) {
         ahead = MS5607_TEMPS_AHEAD_US;
-    float d = my + sxy / sxx * ((float)ahead * 1e-6f - mx);
-    return (uint32_t)((int64_t)t->d2[newest] + (int64_t)(d >= 0.0f ? d + 0.5f : d - 0.5f));
+    }
+    float d = my + ((sxy / sxx) * (((float)ahead * 1e-6f) - mx));
+    float rounded = (d >= 0.0f) ? (d + 0.5f) : (d - 0.5f);
+    int64_t estimate = (int64_t)t->d2[newest] + (int64_t)rounded;
+    return (uint32_t)estimate;
 }
 
 /* One collector cycle: its temperature goes on the line first, and its
  * pressure takes the line's temperature at its own time, between this
  * temperature and the last. The codes ms5607_compensate() takes. */
 typedef struct {
-    uint32_t d1, d2;
+    uint32_t d1;
+    uint32_t d2;
 } ms5607_pair_t;
 
 static inline ms5607_pair_t ms5607_cycle(ms5607_temps_t *t, const collector_raw_t *raw) {

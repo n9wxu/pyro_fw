@@ -22,10 +22,17 @@ typedef struct {
     uint16_t states[11];  /* links in each TCP state, CLOSED through TIME_WAIT */
     uint32_t retransmits; /* segments sent again */
     uint32_t nrtx_max;    /* the most retransmissions any link is on */
-    uint32_t accepts, conn_full, http_err, idle_aborts, served;
-    uint32_t rx_frames, rx_drops;
-    uint32_t tx_sent, tx_held, tx_refused; /* held: waited for the endpoint (net_txq.h) */
-    uint32_t usb[4];                       /* mounts, unmounts, suspends, resumes */
+    uint32_t accepts;
+    uint32_t conn_full;
+    uint32_t http_err;
+    uint32_t idle_aborts;
+    uint32_t served;
+    uint32_t rx_frames;
+    uint32_t rx_drops;
+    uint32_t tx_sent;
+    uint32_t tx_held; /* held: waited for the endpoint (net_txq.h) */
+    uint32_t tx_refused;
+    uint32_t usb[4];      /* mounts, unmounts, suspends, resumes */
     uint32_t last_accept_ms;
 } net_snap_t;
 

@@ -23,7 +23,7 @@
 
 #define FS_SIZE (PYRO_FS_SIZE_KB * 1024u)
 
-_Static_assert(FS_SIZE % FLASH_SECTOR_SIZE == 0, "filesystem size must be a whole number of flash sectors");
+_Static_assert((FS_SIZE % FLASH_SECTOR_SIZE) == 0u, "filesystem size must be a whole number of flash sectors");
 _Static_assert(FS_SIZE < PICO_FLASH_SIZE_BYTES, "filesystem does not fit in flash");
 
 const alfs_area_t fs_area = {
@@ -36,7 +36,8 @@ const alfs_area_t fs_area = {
 
 static int fs_read(void *ctx, uint32_t addr, void *buf, uint32_t len) {
     (void)ctx;
-    memcpy(buf, (const void *)(XIP_NOCACHE_NOALLOC_BASE + addr), len);
+    storage_reading();
+    (void)memcpy(buf, (const void *)(XIP_NOCACHE_NOALLOC_BASE + addr), len);
     return 0;
 }
 
@@ -49,15 +50,16 @@ static int fs_read(void *ctx, uint32_t addr, void *buf, uint32_t len) {
 #define REFUSAL_TRIES 8
 
 static bool refused_for_now(int rc) {
-    return rc == -2 || rc == -3;
+    return (rc == -2) || (rc == -3);
 }
 
 static int fs_prog(void *ctx, uint32_t addr, const void *buf, uint32_t len) {
     (void)ctx;
     int rc = -1;
     flash_op_crumb(97);
-    for (int i = 0; i < REFUSAL_TRIES && (i == 0 || refused_for_now(rc)); i++)
+    for (int i = 0; (i < REFUSAL_TRIES) && ((i == 0) || refused_for_now(rc)); i++) {
         rc = flash_op_slot_program(addr, (const uint8_t *)buf, len);
+    }
     flash_op_crumb(98);
     return rc;
 }
@@ -66,8 +68,9 @@ static int fs_erase(void *ctx, uint32_t addr) {
     (void)ctx;
     int rc = -1;
     flash_op_crumb(95);
-    for (int i = 0; i < REFUSAL_TRIES && (i == 0 || refused_for_now(rc)); i++)
+    for (int i = 0; (i < REFUSAL_TRIES) && ((i == 0) || refused_for_now(rc)); i++) {
         rc = flash_op_slot_erase(addr);
+    }
     flash_op_crumb(96);
     return rc;
 }
@@ -80,32 +83,38 @@ const alfs_driver_t fs_driver = {
 };
 
 static SemaphoreHandle_t fs_mutex;
-static StaticSemaphore_t fs_mutex_buf;
 
 #define FS_LOCK_WAIT_MS 10000u
 
 void fs_lock_init(void) {
-    if (!fs_mutex)
+    static StaticSemaphore_t fs_mutex_buf;
+    if (fs_mutex == NULL) {
         fs_mutex = xSemaphoreCreateMutexStatic(&fs_mutex_buf);
+    }
 }
 
 bool fs_lock(void) {
-    if (!rtos_running())
+    if (!rtos_running()) {
         return true;
-    if (rtos_in_flight_task() || !fs_mutex)
+    }
+    if (rtos_in_flight_task() || (fs_mutex == NULL)) {
         return false;
+    }
     return xSemaphoreTake(fs_mutex, pdMS_TO_TICKS(FS_LOCK_WAIT_MS)) == pdTRUE;
 }
 
 void fs_unlock(void) {
-    if (rtos_running() && fs_mutex)
-        xSemaphoreGive(fs_mutex);
+    if (rtos_running() && (fs_mutex != NULL)) {
+        (void)xSemaphoreGive(fs_mutex);
+    }
 }
 
 bool fs_try_lock(void) {
-    if (!rtos_running())
+    if (!rtos_running()) {
         return true;
-    if (rtos_in_flight_task() || !fs_mutex)
+    }
+    if (rtos_in_flight_task() || (fs_mutex == NULL)) {
         return false;
+    }
     return xSemaphoreTake(fs_mutex, 0) == pdTRUE;
 }

@@ -9,34 +9,34 @@
 #include <stdio.h>
 #include <string.h>
 
-static beep_table_t live;
-static char load_reason[96];
+static beep_table_t live_beeps;
+static char beeps_load_reason[96];
 
 const beep_table_t *beep_store_current(void) {
-    return &live;
+    return &live_beeps;
 }
 
 const char *beep_store_reason(void) {
-    return load_reason;
+    return beeps_load_reason;
 }
 
 beep_spec_t beep_for(beep_reason_t r) {
-    return beep_codes_spec(&live, r);
+    return beep_codes_spec(&live_beeps, r);
 }
 
 void beep_say(beep_reason_t r) {
-    const beep_personality_t *p = beep_codes_active(&live);
-    beep_spec_t sp = beep_codes_spec(&live, r);
+    const beep_personality_t *p = beep_codes_active(&live_beeps);
+    beep_spec_t sp = beep_codes_spec(&live_beeps, r);
     buzzer_play_spec(&sp, p->gap_ms, p->repeat);
 }
 
 void beep_store_load(char *reason, int reason_len) {
-    load_reason[0] = '\0';
+    beeps_load_reason[0] = '\0';
 
     beep_table_t defaults;
     beep_codes_defaults(&defaults);
 
-    live = defaults;
+    live_beeps = defaults;
     char buf[BEEP_STORE_MAX];
     int n = hal_fs_read_file(BEEP_STORE_PATH, buf, (int)sizeof(buf) - 1);
     if (n == HAL_FS_NOENT) {
@@ -44,11 +44,11 @@ void beep_store_load(char *reason, int reason_len) {
         char out[BEEP_STORE_MAX];
         int w = beep_codes_serialize_ini(&defaults, out, (int)sizeof(out));
         bool wrote = (w > 0) && (hal_fs_write_file(BEEP_STORE_PATH, out, w) == 0);
-        snprintf(load_reason, sizeof(load_reason), "no %s; shipped codes%s", BEEP_STORE_PATH,
-                 wrote ? " written" : " (could not write)");
-    } else if (n < 0 || n >= (int)sizeof(buf) - 1) {
-        snprintf(load_reason, sizeof(load_reason), "%s %s (%d); shipped codes, file kept", BEEP_STORE_PATH,
-                 n < 0 ? "unreadable" : "too long", n);
+        (void)snprintf(beeps_load_reason, sizeof(beeps_load_reason), "no %s; shipped codes%s", BEEP_STORE_PATH,
+                       wrote ? " written" : " (could not write)");
+    } else if ((n < 0) || (n >= ((int)sizeof(buf) - 1))) {
+        (void)snprintf(beeps_load_reason, sizeof(beeps_load_reason), "%s %s (%d); shipped codes, file kept",
+                       BEEP_STORE_PATH, (n < 0) ? "unreadable" : "too long", n);
     } else {
         buf[n] = '\0';
         beep_table_t from_file = defaults;
@@ -56,15 +56,16 @@ void beep_store_load(char *reason, int reason_len) {
 
         beep_verdict_t v = beep_codes_validate(&from_file);
         if (v.err == BEEP_OK) {
-            live = from_file;
+            live_beeps = from_file;
         } else {
-            snprintf(load_reason, sizeof(load_reason), "beep.ini rejected: %s (%s)", beep_codes_strerror(v.err),
-                     v.reason >= 0 ? beep_codes_key((beep_reason_t)v.reason) : "table");
+            (void)snprintf(beeps_load_reason, sizeof(beeps_load_reason), "beep.ini rejected: %s (%s)",
+                           beep_codes_strerror(v.err),
+                           (v.reason >= 0) ? beep_codes_key((beep_reason_t)v.reason) : "table");
         }
     }
 
-    if (reason && reason_len > 0) {
-        snprintf(reason, (size_t)reason_len, "%s", load_reason);
+    if ((reason != NULL) && (reason_len > 0)) {
+        (void)snprintf(reason, (size_t)reason_len, "%s", beeps_load_reason);
     }
 }
 
@@ -85,6 +86,6 @@ beep_verdict_t beep_store_save(const beep_table_t *t) {
         return bad;
     }
 
-    live = *t;
+    live_beeps = *t;
     return v;
 }

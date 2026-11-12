@@ -12,14 +12,18 @@
 #define REPORT_MS 1000u
 
 static void log_row(uint32_t flight_ms, const char *text, int len) {
-    if (len > 0)
-        hal_log_estimator(flight_ms, text, len);
+    if (len > 0) {
+        (void)hal_log_estimator(flight_ms, text, len);
+    }
 }
 
-static void report(const flight_context_t *ctx, const pp_sample_t *s, uint8_t i, uint32_t flight_ms) {
+static void report_estimator_row(const flight_context_t *ctx, const pp_sample_t *s, uint8_t i, uint32_t flight_ms) {
+    (void)ctx;
     const estimate_t *e = &s->by_estimator[i];
-    long height_cm = (long)(pp_altitude_height_m(e->altitude_m) * 100.0f);
-    long speed_cms = (long)(e->speed * 100.0f);
+    float height_scaled = pp_altitude_height_m(e->altitude_m) * 100.0f;
+    float speed_scaled = e->speed * 100.0f;
+    long height_cm = (long)height_scaled;
+    long speed_cms = (long)speed_scaled;
     char row[FLIGHT_ESTIMATOR_ROW_MAX];
     int n = small_snprintf(row, sizeof(row), "%s cm=%ld cm/s=%ld explains=%d", estimator_name(i), height_cm, speed_cms,
                            e->explains);
@@ -35,25 +39,29 @@ static void say_apogee(uint8_t i, uint32_t flight_ms) {
 /* [FLT-APO-09] The simple filter beside them, from the flight's ground. */
 static void follow_simple(flight_context_t *ctx, const pp_sample_t *s, uint32_t flight_ms, bool report_due) {
     simple_apogee_t *f = &ctx->simple;
-    if (!s->suspect)
+    if (!s->suspect) {
         simple_apogee_reading(f, s->raw_height_m, s->timestamp_ms);
+    }
     if (simple_apogee_met(f, s->timestamp_ms) && !ctx->simple_said_apogee) {
         ctx->simple_said_apogee = true;
         log_row(flight_ms, "simple APOGEE", 13);
     }
-    if (!report_due)
+    if (!report_due) {
         return;
+    }
     char row[FLIGHT_ESTIMATOR_ROW_MAX];
-    int n = small_snprintf(row, sizeof(row), "simple cm=%ld cm/s=%ld released=%d",
-                           (long)(simple_apogee_height_m(f) * 100.0f), (long)(simple_apogee_speed_ms(f) * 100.0f),
-                           simple_apogee_released(f));
+    float height_scaled = simple_apogee_height_m(f) * 100.0f;
+    float speed_scaled = simple_apogee_speed_ms(f) * 100.0f;
+    int n = small_snprintf(row, sizeof(row), "simple cm=%ld cm/s=%ld released=%d", (long)height_scaled,
+                           (long)speed_scaled, simple_apogee_released(f));
     log_row(flight_ms, row, n);
 }
 
 void flight_follow_estimators(flight_context_t *ctx, const pp_sample_t *s, uint32_t flight_ms) {
-    bool report_due = s->timestamp_ms - ctx->estimators_logged_ms >= REPORT_MS;
-    if (report_due)
+    bool report_due = (s->timestamp_ms - ctx->estimators_logged_ms) >= REPORT_MS;
+    if (report_due) {
         ctx->estimators_logged_ms = s->timestamp_ms;
+    }
     follow_simple(ctx, s, flight_ms, report_due);
     for (uint8_t i = 0; i < estimator_count(); i++) {
         bool met = apogee_detected(&ctx->apogee_detector[i], &s->by_estimator[i], s->raw_altitude_m, !s->suspect,
@@ -63,8 +71,9 @@ void flight_follow_estimators(flight_context_t *ctx, const pp_sample_t *s, uint3
             ctx->estimator_said_apogee[i] = true;
             say_apogee(i, flight_ms);
         }
-        if (report_due)
-            report(ctx, s, i, flight_ms);
+        if (report_due) {
+            report_estimator_row(ctx, s, i, flight_ms);
+        }
     }
 }
 
