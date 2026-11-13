@@ -15,7 +15,7 @@ Flying a board? Start with the [Operator's guide](#operators-guide).
 - **Real-time Telemetry** - `$PYRO` NMEA on UART0 through an interrupt-driven ring, one message a second; apogee, fire and landing events ride the next message (DD-088)
 - **Pressure Sensing** - MS5607 (MK1C) or BMP280 (MK1A), either on MK1B, collected by a free-running interrupt state machine at 53 or more readings a second, each stamped at its measurement; it clears its own bus and resets the part after three failed transfers (DD-093)
 - **Altitude, Speed and Acceleration** - a Kalman filter on the readings' altitudes; every flight comparison is made on heights above the pad in the pad's air, from the sensor's temperature on the pad, and the same heights are reported, unclamped (DD-085, DD-114)
-- **Estimators** - two filters fly on every reading; `estimator` in config.ini names the one obeyed, and the log shows what the other would have done (DD-092)
+- **Estimators** - the estimator the flight obeys, `constacc`, and a simple filter on the raw readings both fly on every reading, and the log shows what each made of the flight (DD-092, DD-115)
 - **Apogee Near Mach 1** - the estimator's apogee is taken only while its model explains the readings, which a port error near Mach 1 does not (`docs/mach_lockout.md`); a simple filter on the raw readings stands in once the measured speed has been low for 3 s, or decides alone with `model_decides=false` (`docs/apogee_fallback.md`)
 - **Continuity Checking** - presence and shorts, continuously on the pad
 - **Web Interface** - live dashboard and configuration over USB networking
@@ -169,6 +169,10 @@ To send a board's logs and settings to someone else, see
 fires and beeps on USB as it does on battery -- for a vacuum-chamber test
 with the web page open (USB-08). A reboot ends it.
 
+Prepare the board first (see Preparing for the pad): nothing is erased or
+reserved in test mode, so a board put into it unprepared says general fault
+(BUZ-07).
+
 ### Ground test
 
 A switch that fires the pyros on the ground, in a fixed, announced order
@@ -288,7 +292,7 @@ A beep says what to do. There are four outcomes; the diagnosis behind them is on
 
 | Outcome | Default sound | Means |
 |---------|---------------|-------|
-| ok_to_fly | rapid chirp, never counted | sensor, storage and every enabled pyro channel are good |
+| ok_to_fly | rapid chirp, never counted | sensor, storage and every enabled pyro channel are good, and the flash is prepared for the flight (BUZ-07) |
 | check_pyro_1 | 5 beeps | pyro 1's igniter or leads need attention |
 | check_pyro_2 | 4 beeps | pyro 2's igniter or leads need attention |
 | general_fault | 2 beeps | safe the system and take it to the workbench |
@@ -530,7 +534,7 @@ The A/B bootloader ([pico_fota_bootloader](https://github.com/JZimnol/pico_fota_
 Connect the board via USB. It appears as a network adapter (RNDIS on Windows, ECM on macOS and Linux) with DHCP.
 
 - **Address:** http://pyro.local/, or http://192.168.N.1/, where N is the last octet of the board's MAC (`subnet` on `/api/status`). Each board has its own /24, so several can be attached at once.
-- **Status tab:** live state, altitude, speed, pressure, pyro channels with their pulse counts and faults, emergency fire, whether this start resumed a flight, USB and test mode
+- **Status tab:** live state, altitude, speed, pressure, pyro channels with their pulse counts and faults, emergency fire, whether this start resumed a flight, USB and test mode, and whether the board is ready for the pad or still preparing its flash (BUZ-07)
 - **Config tab:** guided pyro editor, the fire rules with the board's ranges, the flight time the log holds, pyro release, buzzer pad and ground test switch
 - **Flight Data tab:** summary, CSV download, erase, altitude graph
 - **Beep Codes tab:** the personalities, with an audition button
@@ -539,12 +543,12 @@ Connect the board via USB. It appears as a network adapter (RNDIS on Windows, EC
 - **Update tab:** firmware and web upload, GitHub release checker
 - **Test mode:** with it on, a board on USB detects a launch, fires and beeps as on battery. It lives in RAM, so every boot starts with it off, and it cannot change from launch to landing (USB-08, DD-038). Set with `?log=host`, the flight log is held in RAM for the host to read as it is written, at `/api/flight/live?since=N`, and nothing is written to the flash from launch to landing (USB-09, DD-103).
 - **APIs** (same origin only, WEB-API-07):
-  - `GET /api/status`, `/api/net` (network counters, WEB-API-13), `/api/pressure/trace` (the last 256 conversions, DD-063), `/api/log/space`, `/api/fs` (the flash store and its files, WEB-API-19), `/api/fs/scan?sector=K&count=N` (each sector's erased pages, WEB-API-20), `/api/limits` (the board's pyro timing ranges and its sensor's range, PYR-BOARD-03), `/api/flight.csv`, `/api/pins/caps`, `/api/lua/console`
+  - `GET /api/status`, `/api/net` (network counters, WEB-API-13), `/api/pressure/trace` (the last 256 conversions, DD-063), `/api/log/space`, `/api/fs` (the flash store and its files, WEB-API-19), `/api/fs/scan?sector=K&count=N` (each sector's erased pages, WEB-API-20), `/api/limits` (the board's pyro timing ranges and its sensor's range, PYR-BOARD-03), `/api/flight.csv`, `/api/flight/live?since=N`, `/api/sim` (the bench flight, DD-078), `/api/pins/caps`, `/api/lua/console`
   - `GET`/`POST /api/config`, `/api/pins`, `/api/beeps`, `/api/lua/script`
-  - `POST /api/beeps/play`, `/api/lua/check`, `/api/flight/erase`, `/api/delete/<path>`, `/api/test_mode/on[?log=host]`, `/api/test_mode/off`, `/api/reboot`, `/api/ota`, `/api/serial`, `/www/<file>`
+  - `POST /api/beeps/play`, `/api/lua/check`, `/api/flight/erase`, `/api/delete/<path>`, `/api/test_mode/on[?log=host]`, `/api/test_mode/off`, `/api/sim/flight`, `/api/sim/stop`, `/api/reboot`, `/api/ota`, `/api/serial`, `/www/<file>`
   - `GET /<path>` serves any file on the flash
 
-The API and USB stay live in flight; only the flight log touches the filesystem then, and a request that needs a file is answered 423 (DD-058). A request that writes a file while the cleanup erases is answered 503 with `Retry-After: 1` before any of it is written; the page holds the change, says it waits for the erase, and sends it again once `/api/fs` reports the cleanup done (WEB-API-21, WEB-UI-08, DD-108). A saved `config.ini` or `pins.ini` is stored and takes effect at the next start (CFG-10).
+The API and USB stay live in flight; only the flight log touches the filesystem then, and a request that needs a file is answered 423 (DD-058). A request that writes a file while the board prepares its flash -- erasing its unused sectors, counting them or reserving the next log -- is answered 503 with `Retry-After: 1` before any of it is written; the page holds the change, says it waits for the erase, and sends it again once `/api/fs` reports the cleanup done. In test mode, where none of that runs, it is not refused (WEB-API-21, WEB-UI-08, DD-108). A saved `config.ini` or `pins.ini` is stored and takes effect at the next start (CFG-10).
 
 ### Network Architecture
 Each tracker advertises a `_pyro._tcp` DNS-SD service via mDNS. A board whose name is taken renames itself `pyro-1`, `pyro-2`, and so on.
