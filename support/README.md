@@ -9,8 +9,8 @@ the last byte of its MAC, which comes from its flash chip's unique ID (DD-099);
 `install.py` and `update_from_release.py` take the one board attached unless
 `--host` names another, and `pyro.local` finds one board.
 
-A write the board refuses while its cleanup erases (503, WEB-API-21) is sent
-again: `pyro_http.py`'s `post()` and the bench checks send it once `/api/fs`
+A write the board refuses while it prepares its flash for the pad (503,
+WEB-API-21) is sent again: `pyro_http.py`'s `post()` and the bench checks send it once `/api/fs`
 reports the cleanup done, and `upload_www.sh` sends it each second for up to
 two minutes.
 
@@ -31,6 +31,7 @@ Code extension installs it. Windows needs a driver for picotool: see
 | `noise_baseline.py` | A still board's pressure noise and pad speed noise, from `/api/status` |
 | `pressure_disturbance.py` | Whether a board's own buzzer or flash writes disturb its pressure sensor: every conversion through rest, beeps, rest and config saves (DD-106) |
 | `compensation_range.py` | Both sensors' compensation, integer for integer as the firmware does it, over every ADC code and past the rated ranges (`docs/pressure_collector.md`) |
+| `collect_board_data.py` | Everything a board reports and holds, into one zip file to e-mail: status, settings, every flight and boot log, ten seconds of pressure readings. Reads only; one file, no dependencies |
 | `register_board.py` | Record the attached boards in `boards/BOARD_REGISTRY.json` and report subnet collisions |
 | `bench_flight.py` | Fly a profile on a board through its flight software, channels mocked, with a canopy that fails if asked (DD-078, SIM-04) |
 | `hr_log.py` | Decode a high-rate log from the SD card into CSV (DD-077) |
@@ -138,6 +139,48 @@ When a user reports a problem:
 
 The log contains everything needed for diagnosis without device access.
 
+## Collecting a board's data
+
+For a board that misbehaves somewhere else: its operator runs one program
+and e-mails one file.
+
+```bash
+python3 support/collect_board_data.py
+python3 support/collect_board_data.py --note "three beeps, pause, repeating, on a charger"
+python3 support/collect_board_data.py --host 192.168.<n>.1 --out board.zip
+```
+
+On Windows, `py collect_board_data.py`. The script is one file with no
+dependency but Python 3.8 or later, so it can be sent by itself; it is also
+in a release's `pyro-support.zip`.
+
+It finds every attached board from the computer's own interfaces, as
+`register_board.py` does, and `--host` names one where that fails (the
+address is in the browser when the board's page is open). It sends only GET
+requests: nothing on the board is changed, erased or restarted.
+
+**Run it before removing the board's power** when the question is what the
+board is doing now. The state, the fault list and the announcement are lost
+at a restart; the logs are not.
+
+It writes `pyro_data_<date>_<time>.zip` in the current directory, with a
+folder for each board named by its serial number:
+
+| Entry | Holds |
+|---|---|
+| `status_1.json` .. `status_3.json`, `status_end.json` | `/api/status` three times, 3 s apart, and once at the end: the state, the faults, the announcement and every counter |
+| `config.txt`, `pins.txt`, `pins_caps.json`, `beeps.txt`, `limits.json` | the settings, the ground test switch's wiring among them |
+| `fs.json`, `log_space.json`, `net.json`, `lua_console.json`, `sim.json` | the file list and the store's state, the network, the script's console |
+| `files/` | every file on the board but the web pages: each `flight_NNNN.bin`, `boot_log.txt` and `boot_log.1.txt` with every start-up and its cause (FLT-LOG-14), the settings files |
+| `flight.csv` | the newest flight as `/api/flight.csv` gives it |
+| `pressure_trace/` | about 10 s of `/api/pressure/trace`, in the parts it was polled in |
+| `manifest.json` | what was fetched, and what was not with the board's reason |
+
+`sd.json` and `hr.json` are fetched too and are listed as not available on a
+board without a card. In flight the log holds the filesystem, so the files
+are refused (423) and the manifest says so. Older flights come only as the
+binary logs; the newest is in CSV as well.
+
 ## Bench Checks
 
 Each capture takes the board's address. `api_check.py`, `http_stream_check.py`,
@@ -183,7 +226,7 @@ python3 support/hr_log.py --fetch <board-ip> hr0001              # the high-rate
 
 `bench_flight.py` turns test mode on, starts the profile (`POST
 /api/sim/flight`), and follows `/api/sim` and `/api/status` until the board
-lands. It fails a flight whose pyro 1 is not within 4 s of the profile's
+lands. MK1A, MK1B, MK1B-8MB and MK1C carry the profile. It fails a flight whose pyro 1 is not within 4 s of the profile's
 apogee, whose pyro 2 did not fire, during which the loop overran or a flash
 operation was refused, or whose log misses a reading: a step between sample
 rows wider than 1.5 times the median (FLT-LOG-07, SNS-PRES-14). From the start
@@ -332,7 +375,8 @@ py support\install.py [--host 192.168.N.1] [--board mk1c]
 It finds the board from `ipconfig`, the BOOTSEL drive by its `INFO_UF2.TXT`,
 and picotool on `PATH` or as `picotool.exe` under
 `%USERPROFILE%\.pico-sdk\picotool\`. `update_from_release.py` runs as it
-is. `flash_picotool.sh`, `upload_fw.sh` and `upload_www.sh` run under Git
+is. `collect_board_data.py` runs as it is too.
+`flash_picotool.sh`, `upload_fw.sh` and `upload_www.sh` run under Git
 Bash (Git for Windows). `test_network.py` does not run on Windows: it needs
 curses, `dns-sd` and the Unix `ping`.
 

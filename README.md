@@ -11,7 +11,7 @@ Flying a board? Start with the [Operator's guide](#operators-guide).
 - **Fault Detection** - every pulse is recorded with what the board saw of it; MK1B's AP2192 flags overcurrent; MK1C reports bus shorts. No reading withholds a fire (PYR-HEALTH-01)
 - **Fire Rules** - a channel fires again while the descent stays too fast, and every channel fires above an emergency speed (PYR-REFIRE-01, FLT-EMRG-01)
 - **Resume** - any restart in flight rejoins the flight from a record made on the pad (DD-086)
-- **Flight Log** - binary records (`flight_log.bin`) written in the log writer's 3 ms of each period while the flight path runs from RAM, rendered as CSV on download; every sample of the flight (DD-062, DD-101, DD-104)
+- **Flight Log** - binary records (`flight_NNNN.bin`, a file a flight) written in the log writer's 3 ms of each period while the flight path runs from RAM, rendered as CSV on download; every sample of the flight (DD-062, DD-101, DD-104)
 - **Real-time Telemetry** - `$PYRO` NMEA on UART0 through an interrupt-driven ring, one message a second; apogee, fire and landing events ride the next message (DD-088)
 - **Pressure Sensing** - MS5607 (MK1C) or BMP280 (MK1A), either on MK1B, collected by a free-running interrupt state machine at 53 or more readings a second, each stamped at its measurement; it clears its own bus and resets the part after three failed transfers (DD-093)
 - **Altitude, Speed and Acceleration** - a Kalman filter on the readings' altitudes; every flight comparison is made on heights above the pad in the pad's air, from the sensor's temperature on the pad, and the same heights are reported, unclamped (DD-085, DD-114)
@@ -98,6 +98,25 @@ battery.
 
 **Save**, then **Reboot**. A saved change takes effect at the next start (CFG-10); until then the board flies on what it started with.
 
+### Preparing for the pad
+
+Do this on the bench, before the board goes to the field. Connect USB, with
+test mode off, and leave the board attached while the **Status** tab says
+*the flash is being prepared for the next flight*. Meanwhile the board
+erases every unused part of its flash and sets aside erased room for the
+next start-up's record and the next flight's log, so that on the pad and in
+flight it only writes and never erases (USB-10, FLT-LOG-16). This takes from
+a few seconds to a minute or two after the logs are erased. Saving a setting
+or uploading a file starts it again: wait for the line to clear once more
+before unplugging.
+
+With igniters fitted and nothing else wrong the page then shows **Ready for
+the pad**: the board will say OK to fly. On the bench with igniters out it
+shows the open channels in its place, as it should.
+
+A board that reaches the pad unprepared says general fault, not OK to fly
+(BUZ-07). Take it back to USB; it cannot prepare itself on battery.
+
 ### On the pad
 
 Power the board from its battery. It waits 2.5 s, tests the pressure sensor,
@@ -109,7 +128,7 @@ and repeats it every 5 s until launch (BUZ-01, BUZ-02):
 | a rapid chirp | OK to fly | fly |
 | 5 beeps | check pyro 1 | fix pyro 1's igniter or leads |
 | 4 beeps | check pyro 2 | fix pyro 2's igniter or leads |
-| 2 beeps | general fault | safe the rocket and take it to the workbench: it cannot be fixed at the pad |
+| 2 beeps | general fault | safe the rocket and take it to the workbench: it cannot be fixed at the pad. A flash not prepared for the flight is one cause (see Preparing for the pad) |
 
 One outcome is announced at a time, in the priority general fault, pyro 1,
 pyro 2 (BUZ-CODE-02). These are the shipped sounds; the **Beep Codes** tab
@@ -136,8 +155,13 @@ over: a long beep, then each digit counted out, zero as ten beeps (BUZ-03..06).
 
 Connect USB and open the **Flight Data** tab: the duration, apogee, each
 channel's outcome and the altitude profile. **Download Flight CSV** saves
-the log. Download it before the next flight: the board keeps one flight
-log, and the next launch starts it afresh.
+the newest log. Each flight is a file of its own, `flight_NNNN.bin`, and
+no launch or restart removes one (FLT-LOG-12); the **Filesystem** tab lists
+them. **Erase flight logs** removes them all, and the board then prepares
+its flash again (see Preparing for the pad).
+
+To send a board's logs and settings to someone else, see
+[Reporting a problem](#reporting-a-problem).
 
 ### Test mode: flying on USB
 
@@ -289,7 +313,7 @@ With a USB host attached the board plays one double chirp and announces nothing 
 | Buzzer | none | 16 | 11 |
 
 ## Data Logging
-From launch to landing the flight software hands every sample to `hal_log_sample()`, and `flight_log.bin` keeps each one: a row for every sample, 53 a second from an MS5607 and about 70 from a BMP280, so `pyro_sim --replay` can fly the log again (FLT-LOG-07, DAT-08, DD-101). Every event row is kept at its own time. Records go to a 4 KB RAM buffer, written out every 200 ms in the log writer's slot, and the file is synced once a second, so a flight that never lands keeps its record (FLT-LOG-06).
+From launch to landing the flight software hands every sample to `hal_log_sample()`, and the flight's log, `flight_NNNN.bin`, keeps each one: a row for every sample, 53 a second from an MS5607 and about 70 from a BMP280, so `pyro_sim --replay` can fly the log again (FLT-LOG-07, DAT-08, DD-101). Every event row is kept at its own time. Records go to a 4 KB RAM buffer, written out every 200 ms in the log writer's slot, and the file is synced once a second, so a flight that never lands keeps its record (FLT-LOG-06).
 
 - **CSV export:** `/api/flight.csv` renders the binary log as CSV, with a header naming the board, the configuration and the ground pressure, and saying every sample was kept
 - **Columns:** `time_ms, pressure_pa, altitude_cm, state, thrust, raw_pa, temp_c, event`
@@ -298,7 +322,8 @@ From launch to landing the flight software hands every sample to `hal_log_sample
 - **Lua:** a script's `log.line()` and `log.write()` output lands in the log as `LUA` rows, during a flight only; `print()` goes to `/api/lua/console`
 - **Space:** `/api/log/space` reports the room the next flight has and the seconds of flight it holds, each second costing what its sync stores; the Config tab shows that time
 - **Erase:** `POST /api/flight/erase`; any other file: `POST /api/delete/<path>`
-- **Cleanup:** the pages a replaced or deleted file leaves are erased by the pad's cleanup: on USB with test mode off, one sector after another at the flash's pace; otherwise one a second, so an erase stalls the pad no more than once a second (USB-10)
+- **Cleanup:** the pages a replaced or deleted file leaves are erased by the cleanup, one sector after another at the flash's pace, on USB with test mode off and once a flight has landed. Anywhere else, the pad and the flight included, nothing is erased (USB-10)
+- **Prepared store:** after the cleanup the board reserves erased pages for the next start-up's record and the next flight's log, five minutes of it or half the free room where that is less; a longer flight goes on into free pages (FLT-LOG-16). `/api/status` reports `pad_ready`, and the faults `flash_cleanup` while it prepares and `store_unprepared` where it cannot (BUZ-07)
 
 In flight the flight log holds the filesystem: every other file request is answered 423 (DD-058).
 
@@ -577,10 +602,26 @@ All development and deployment scripts are in the `support/` directory:
 | `support/upload_www.sh` | Upload web files |
 | `support/update_from_release.py` | Update firmware from GitHub releases |
 | `support/register_board.py` | Record attached boards in `boards/BOARD_REGISTRY.json` |
+| `support/collect_board_data.py` | Everything a board reports and holds, into one zip to e-mail |
 | `support/trace_check.py` | Requirement, decision and function names agree with the code |
 | `support/wait_check.py` | No sleep or busy-wait in the firmware (DD-053) |
 | `support/prove_core0.py` | Core1 cannot hang core0; the pressure collector's handler is RAM-only |
 | `support/prove_flight_ram.py` | The flight path runs from RAM from launch to landing (FLT-RT-02) |
+
+## Reporting a problem
+
+`support/collect_board_data.py` gathers what is needed to diagnose a board
+into one zip file. It is a single file that needs only Python 3.8 or later,
+on Windows, macOS or Linux, and it only reads from the board.
+
+1. If the board is doing something odd -- a sound, a fault -- leave it
+   powered. A restart loses what it is doing now.
+2. Plug it into the computer by USB.
+3. Run `python collect_board_data.py --note "what you saw or heard"`
+   (`py collect_board_data.py` on Windows).
+4. E-mail the `pyro_data_<date>_<time>.zip` it writes.
+
+See [Collecting a board's data](support/README.md#collecting-a-boards-data).
 
 ## Releasing
 
