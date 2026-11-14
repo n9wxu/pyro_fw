@@ -401,6 +401,31 @@ void test_SNS_EST_02_one_or_two_bad_readings_are_not_a_launch(void) {
     }
 }
 
+/* A sensor pressed or covered for half a second, then let go: the pressure
+ * climbs 1,500 Pa and is back at the pad's a reading later. The filtered
+ * height swings through the pad's and past 15 m with the reading on the pad. */
+void test_FLT_LAUNCH_07_a_pressure_pulse_let_go_is_not_a_launch(void) {
+    const float pulses_pa[] = {300.0f, 1500.0f, 6000.0f};
+    const uint32_t lengths_ms[] = {200u, 450u, 1500u};
+    for (unsigned p = 0; p < 3; p++) {
+        for (unsigned l = 0; l < 3; l++) {
+            to_the_pad(30 + 3 * p + l);
+            reach_pad();
+            wait_ms(6000);
+            uint32_t start = now;
+            for (; now < start + lengths_ms[l]; now++) {
+                mock_pressure.pressure_pa = PAD_PA + pulses_pa[p] * (float)(now - start) / (float)lengths_ms[l];
+                tick(now);
+            }
+            mock_pressure.pressure_pa = PAD_PA;
+            wait_ms(5000);
+            char msg[64];
+            snprintf(msg, sizeof(msg), "%.0f Pa over %lu ms", (double)pulses_pa[p], (unsigned long)lengths_ms[l]);
+            TEST_ASSERT_EQUAL_MESSAGE(PAD_IDLE, ctx.current_state, msg);
+        }
+    }
+}
+
 /* Half an hour of gusts at 40 Pa rms, on sensors from 1.2 to 9 Pa. */
 void test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch(void) {
     const float noises[] = {SENSOR_RMS_PA, NOISY_SENSOR_RMS_PA};
@@ -624,6 +649,7 @@ int main(void) {
     RUN_TEST(test_FLT_LAUNCH_07_a_fast_climb_past_15_m_is_a_launch);
     RUN_TEST(test_FLT_LAUNCH_02_below_15_m_is_not_a_launch);
     RUN_TEST(test_FLT_LAUNCH_07_a_slow_rise_is_not_a_launch);
+    RUN_TEST(test_FLT_LAUNCH_07_a_pressure_pulse_let_go_is_not_a_launch);
     RUN_TEST(test_SNS_EST_02_one_or_two_bad_readings_are_not_a_launch);
     RUN_TEST(test_SNS_EST_03_gusts_on_the_pad_are_not_a_launch);
     RUN_TEST(test_GND_CAL_01_the_reference_follows_the_weather);
