@@ -76,7 +76,7 @@ flight this unit cannot (DD-081).
 - **FLT-LAUNCH-03**: T+0 shall be the time of the first sample of the rise more than 50 cm above the pad, not the moment of detection. ← FLT-PHASE-01
 - **FLT-LAUNCH-04**: The system shall log a LAUNCH event at the transition. ← FLT-PHASE-01
 - **FLT-LAUNCH-05**: The system shall stop the buzzer upon launch detection. ← FLT-PHASE-01
-- **FLT-LAUNCH-07**: The system shall declare launch, and enter ASCENT, only when the filtered state shows a height more than 15 m above the ground reference, and never while a USB host is attached (USB-01). Neither a speed nor a hold time is added: on the pad the filtered speed swings with gusts, and the filtered height is the guard against noise (SNS-EST-02, SNS-EST-03). ← FLT-PHASE-01, DD-016, DD-091
+- **FLT-LAUNCH-07**: The system shall declare launch, and enter ASCENT, only when the filtered state shows a height more than 15 m above the ground reference and the reading it was made from is itself more than 15 m above it, and never while a USB host is attached (USB-01). Neither a speed nor a hold time is added: on the pad the filtered speed swings with gusts, and the filtered height is the guard against noise (SNS-EST-02, SNS-EST-03). The reading is the guard against the filtered state: after a pressure pulse that ends at once, the filtered height swings past the pad's with the reading on the pad (DD-122). ← FLT-PHASE-01, DD-016, DD-091, DD-122
 - **FLT-LAUNCH-08**: The system shall be designed for rockets of at least 5:1 thrust to weight off a 1.7 m launch rail (11.5 m/s at its end, enough for the fins to stabilise the rocket), and shall declare launch within 1 s ‡ of T+0 for them, and sooner for faster rockets. ← FLT-PHASE-01, DD-016, DD-110
 
 ### Ground reference

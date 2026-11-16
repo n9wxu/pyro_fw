@@ -8,5 +8,5 @@
 #define LAUNCH_HEIGHT_M 15.0f
 
 bool launch_detected(const pp_sample_t *s) {
-    return s->height_m > LAUNCH_HEIGHT_M;
+    return (s->height_m > LAUNCH_HEIGHT_M) && (s->raw_height_m > LAUNCH_HEIGHT_M);
 }

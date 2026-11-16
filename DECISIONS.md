@@ -1817,6 +1817,30 @@ in `docs/outstanding_tasks.md`.
   samples; only each conversion, with when it was measured and when it was
   read, shows a stale read or a missed slot.
 
+### DD-122: Launch Needs The Reading Past 15 m As Well
+- **Decision:** launch is declared when the filtered height and the height of
+  the reading it was made from are both more than 15 m above the pad
+  (`src/launch_detector.c`, FLT-LAUNCH-07).
+- **Why the filtered height alone is not enough:** `constacc` carries a speed
+  and an acceleration. A pressure pulse on the pad that outlasts the 50 ms a
+  far reading is set aside for (SNS-EST-02) is followed, and when it ends in
+  one reading the filtered height swings back through the pad's and past it.
+  A sensor pressed for 0.45 s and let go, 1,500 Pa, takes the filtered height
+  to 152 m below the pad and then 27 m above it, with every reading of the
+  swing on the pad.
+- **Why 15 m on the reading:** one number for both. On a climb the filtered
+  height trails the readings, so the reading is past 15 m when the filtered
+  height is, or within a reading or two of it; T+0 is the start of the rise
+  whichever reading declares it (FLT-LAUNCH-03). On the pad a reading 15 m up
+  is 180 Pa from the pad's, five times the noise of the noisiest board.
+- **What it does not catch:** a pulse of falling pressure, held: the readings
+  and the filtered height agree that the board has climbed.
+- **Tests:** `test_FLT_LAUNCH_07_the_reading_must_be_past_15_m_too`
+  (`test/test_launch_detector.c`);
+  `test_FLT_LAUNCH_07_a_pressure_pulse_let_go_is_not_a_launch`
+  (`test/test_flight_pad.c`): 300, 1,500 and 6,000 Pa over 0.2, 0.45 and
+  1.5 s.
+
 ### DD-121: The Flight Path Calls By Name, And Is Compared On The Pad
 - **Decision:** at the user's direction -- "Ideally there would be no
   decisions concerning optional behavior in the flight path" -- the flight
